@@ -40,6 +40,21 @@ API key dan setelan awal disimpan di **`config.json`** (satu folder dengan
   **💾 Simpan ke config.json** agar permanen.
 - Jika file terhapus, template kosong dibuat ulang otomatis saat app dijalankan.
 
+## ⏰ Daily snapshot cron (GitHub Actions)
+
+Watchlisted CAs are snapshotted **automatically every day at 00:00 WIB**
+by `.github/workflows/daily-snapshot.yml` — history keeps building even if
+you never open the dashboard.
+
+**One-time setup:** add your Helius key as a repo secret:
+GitHub → repo **Settings → Secrets and variables → Actions →
+New repository secret** → Name: `HELIUS_API_KEY`, Value: your key.
+
+- Manual run: GitHub → **Actions → Daily watchlist snapshot → Run workflow**.
+- The job commits `history.json` + `watchlist.json` back to the repo.
+- Manage the list on the **⭐ Watchlist** page (add note / remove when done),
+  or with the **⭐ Add to watchlist** button under Analyze.
+
 ## Instalasi
 
 ```bash

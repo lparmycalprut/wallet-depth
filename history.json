@@ -1,0 +1,32 @@
+{
+ "AkchGAUdXXRGHt3HXaHbTvw3JLGUwtJRmYnkG66wpump": {
+  "2026-07-26": {
+   "total_holders": 6242,
+   "dust": 4281,
+   "real": 1961,
+   "real_mc_pct": 88.30600269005224,
+   "dust_mc_pct": 1.2770605935622525,
+   "marketcap": 640855.0,
+   "price": 0.0006665,
+   "tiers": {
+    ">$10": 1961,
+    ">$100": 630,
+    ">$1K": 112,
+    ">$10K": 6,
+    ">$100K": 0,
+    ">$1M": 0
+   },
+   "ts": "2026-07-26T16:43:25",
+   "score": 74,
+   "top10_pct": 18.29,
+   "top5_pct": 11.51,
+   "top100_pct": 53.48,
+   "liq_pct_mc": 13.16,
+   "symbol": "looong",
+   "buys24": 10305,
+   "sells24": 9711,
+   "vol24": 1419375.81,
+   "source": "cron"
+  }
+ }
+}

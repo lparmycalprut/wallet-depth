@@ -370,6 +370,31 @@ ca = st.text_input("Solana token Contract Address (CA)", value="",
                    ).strip()
 analyze = st.button("🔍 Analyze", type="primary", use_container_width=True)
 
+# Watchlist controls (below Analyze — add only tokens that pass your criteria)
+from watchlist import load_watchlist, add_to_watchlist, remove_from_watchlist
+
+_wl = load_watchlist()
+wcol1, wcol2 = st.columns([1, 3])
+if ca and ca in _wl:
+    if wcol1.button("💔 Remove from watchlist", use_container_width=True):
+        remove_from_watchlist(ca)
+        st.rerun()
+    wcol2.caption(f"⭐ This CA is on your watchlist (added "
+                  f"{_wl[ca].get('added', '?')}) — snapshotted daily by the "
+                  f"cron. Manage it on the **⭐ Watchlist** page.")
+elif ca:
+    if wcol1.button("⭐ Add to watchlist", use_container_width=True):
+        _sym = "?"
+        try:
+            _m = fetch_dexscreener(ca)
+            _sym = (_m or {}).get("symbol", "?")
+        except Exception:
+            pass
+        add_to_watchlist(ca, symbol=_sym)
+        st.rerun()
+    wcol2.caption("Add only if the token passes your criteria — watchlisted "
+                  "CAs get a daily automatic snapshot (00:00 WIB).")
+
 if not ca:
     st.info("Paste a Solana token Contract Address (CA) and click **Analyze**.")
     st.stop()
