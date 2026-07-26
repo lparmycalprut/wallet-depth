@@ -897,86 +897,87 @@ border-radius:8px;padding:7px 16px;font-size:13px;font-weight:700;
 cursor:pointer;">📸 Screenshot full page (PNG)</button>
 <span id="msg" style="font-size:12px;color:#94a3b8;align-self:center;"></span>
 </div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
 const SHARE_URL = {json.dumps(share_url)};
 const FNAME = '{market["symbol"]}_holder_analysis';
-// max height of one image slice, in CSS pixels (before 2x scale).
-// ~ one screen worth of content -> long pages become several images.
-const PAGE_H_CSS = 900;
 
-function capture(thenShare) {{
+// Native pixel-perfect capture via getDisplayMedia (same as screen sharing).
+// We auto-scroll the page and grab a frame per screen -> several PNGs.
+async function capture(thenShare) {{
   const msg = document.getElementById('msg');
-  msg.textContent = 'Rendering full page…';
   const doc = window.parent.document;
-  const target = doc.querySelector('[data-testid="stAppViewContainer"] .main')
-                 || doc.querySelector('[data-testid="stAppViewContainer"]')
-                 || doc.body;
-  const fullH = Math.max(target.scrollHeight, target.offsetHeight);
-  const fullW = target.scrollWidth;
-  html2canvas(target, {{
-      useCORS: true, allowTaint: true, scale: 2,
-      backgroundColor: getComputedStyle(doc.body).backgroundColor,
-      width: fullW, height: fullH,
-      windowWidth: fullW, windowHeight: fullH,
-      scrollX: 0, scrollY: 0
-  }})
-  .then(function(canvas) {{
-    const scale = 2;
-    const pageH = PAGE_H_CSS * scale;
-    const pages = Math.max(1, Math.ceil(canvas.height / pageH));
-    let firstBlob = null, done = 0;
+  const win = window.parent;
+  // the scrollable main area in Streamlit
+  const scroller = doc.querySelector('[data-testid="stAppViewContainer"] > .main')
+                || doc.querySelector('[data-testid="stMain"]')
+                || doc.querySelector('[data-testid="stAppViewContainer"]')
+                || doc.documentElement;
+  try {{
+    msg.textContent = 'Pick "This Tab" in the popup…';
+    const stream = await navigator.mediaDevices.getDisplayMedia({{
+      video: {{ displaySurface: 'browser' }},
+      preferCurrentTab: true,
+      selfBrowserSurface: 'include',
+      audio: false
+    }});
+    const track = stream.getVideoTracks()[0];
+    const video = document.createElement('video');
+    video.srcObject = stream;
+    await video.play();
+    await new Promise(r => setTimeout(r, 400));
 
-    function saveSlice(i) {{
-      const sliceH = Math.min(pageH, canvas.height - i * pageH);
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const viewH = scroller.clientHeight || win.innerHeight;
+    const totalH = scroller.scrollHeight;
+    const pages = Math.max(1, Math.ceil(totalH / viewH));
+    const oldScroll = scroller.scrollTop;
+    let firstBlob = null;
+
+    for (let i = 0; i < pages; i++) {{
+      scroller.scrollTo(0, i * viewH);
+      await new Promise(r => setTimeout(r, 650)); // wait for render
       const c = document.createElement('canvas');
-      c.width = canvas.width;
-      c.height = sliceH;
-      const ctx = c.getContext('2d');
-      ctx.fillStyle = getComputedStyle(doc.body).backgroundColor || '#0e1117';
-      ctx.fillRect(0, 0, c.width, c.height);
-      ctx.drawImage(canvas, 0, i * pageH, canvas.width, sliceH,
-                    0, 0, canvas.width, sliceH);
-      c.toBlob(function(blob) {{
-        const a = document.createElement('a');
-        a.download = pages > 1 ? FNAME + '_' + (i + 1) + 'of' + pages + '.png'
-                               : FNAME + '.png';
-        a.href = URL.createObjectURL(blob);
-        a.click();
-        if (i === 0) firstBlob = blob;
-        done++;
-        msg.textContent = 'Saved ' + done + '/' + pages + ' image(s)…';
-        if (done === pages) finish();
-        else setTimeout(function() {{ saveSlice(i + 1); }}, 350);
-      }}, 'image/png');
+      c.width = vw; c.height = vh;
+      c.getContext('2d').drawImage(video, 0, 0, vw, vh);
+      const blob = await new Promise(res => c.toBlob(res, 'image/png'));
+      if (i === 0) firstBlob = blob;
+      const a = document.createElement('a');
+      a.download = pages > 1 ? FNAME + '_' + (i+1) + 'of' + pages + '.png'
+                             : FNAME + '.png';
+      a.href = URL.createObjectURL(blob);
+      a.click();
+      msg.textContent = 'Captured ' + (i+1) + '/' + pages + '…';
+      await new Promise(r => setTimeout(r, 350));
     }}
 
-    function finish() {{
-      try {{
-        navigator.clipboard.write(
-          [new ClipboardItem({{'image/png': firstBlob}})]);
-        msg.textContent = pages + ' image(s) saved · first one copied — '
-          + (thenShare ? 'paste (Ctrl+V) into the X composer, then attach the rest!'
-                       : 'paste anywhere with Ctrl+V.');
-      }} catch(e) {{
-        msg.textContent = pages + ' image(s) saved! Attach them to your X post.';
-      }}
-      if (thenShare) {{
-        setTimeout(function() {{ window.open(SHARE_URL, '_blank'); }}, 600);
-      }}
+    track.stop();
+    scroller.scrollTo(0, oldScroll);
+    try {{
+      await navigator.clipboard.write(
+        [new ClipboardItem({{'image/png': firstBlob}})]);
+      msg.textContent = pages + ' image(s) saved · first copied — '
+        + (thenShare ? 'paste (Ctrl+V) into the X composer!'
+                     : 'paste anywhere with Ctrl+V.');
+    }} catch(e) {{
+      msg.textContent = pages + ' image(s) saved!';
     }}
-
-    saveSlice(0);
-  }}).catch(function(e) {{ msg.textContent = 'Failed: ' + e; }});
+    if (thenShare) {{
+      setTimeout(() => win.open(SHARE_URL, '_blank'), 500);
+    }}
+  }} catch(err) {{
+    msg.textContent = (err && err.name === 'NotAllowedError')
+      ? 'Cancelled. Tip: choose "This Tab" and click Share.'
+      : 'Failed: ' + err;
+  }}
 }}
 function shareX() {{ capture(true); }}
 </script>
 """, height=42)
-st.caption("📸 captures the ENTIRE page top-to-bottom (like Streamlit's print) "
-           "and splits it into numbered PNGs (~1 screen each, X-friendly). "
-           "𝕏 Share also opens the composer with formatted stats — the first "
-           "image is on your clipboard, press Ctrl+V to attach, then add the "
-           "rest from your downloads.")
+st.caption('📸 uses the browser\'s NATIVE capture (pixel-perfect, exactly what '
+           'you see). A popup will ask what to share — pick **"This Tab"** '
+           'once, then the page auto-scrolls and saves one numbered PNG per '
+           'screen. 𝕏 Share then opens the composer with formatted stats; the '
+           'first image is on your clipboard — press Ctrl+V to attach it.')
 
 # ----------------------------------------------------------------------------
 # DETAILS — open by default
