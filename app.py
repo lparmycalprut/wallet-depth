@@ -598,345 +598,298 @@ elif prev:
     holder_delta_src = f"snapshot lokal {prev_key}"
 
 # ----------------------------------------------------------------------------
-# Header token
+# CSS compact — semua muat 1 halaman
 # ----------------------------------------------------------------------------
-c0, c1, c2, c3, c4 = st.columns([1, 3, 2, 2, 2])
-with c0:
-    if market.get("image"):
-        st.image(market["image"], width=64)
-with c1:
-    st.subheader(f"{market['name']} (${market['symbol']})")
-    st.caption(f"`{ca}`")
-with c2:
-    st.metric("Harga", f"${price:,.8f}".rstrip("0").rstrip("."))
-with c3:
-    st.metric("Marketcap", f"${marketcap:,.0f}")
-with c4:
-    st.metric("Total Holder", f"{total_holders:,}",
-              delta=(f"{holder_delta:+,} vs kemarin" if holder_delta is not None
-                     else None))
+st.markdown("""<style>
+.block-container {padding-top: 1.2rem; padding-bottom: 1rem; max-width: 1400px;}
+h1 {font-size: 1.3rem !important; margin-bottom: 0 !important;}
+h2, h3 {font-size: 1.0rem !important; margin: 0.2rem 0 0.2rem 0 !important;
+        padding: 0 !important;}
+[data-testid="stMetric"] {padding: 0.2rem 0.5rem; background: rgba(128,128,128,0.07);
+        border-radius: 8px;}
+[data-testid="stMetricLabel"] {font-size: 0.72rem !important;}
+[data-testid="stMetricValue"] {font-size: 1.15rem !important;}
+[data-testid="stMetricDelta"] {font-size: 0.72rem !important;}
+[data-testid="stCaptionContainer"] {font-size: 0.7rem !important;
+        margin: 0 !important; line-height: 1.2;}
+hr {margin: 0.4rem 0 !important;}
+[data-testid="stExpander"] summary {font-size: 0.8rem;}
+div[data-testid="stAlert"] {padding: 0.4rem 0.75rem; font-size: 0.82rem;
+        margin-bottom: 0.25rem;}
+div[data-testid="stAlert"] p {font-size: 0.82rem; margin: 0;}
+</style>""", unsafe_allow_html=True)
 
-if holder_delta_src:
-    st.caption(f"📈 Perubahan holder harian — sumber: {holder_delta_src}")
-if exclude_lp and lp_wallets:
-    st.caption(f"ℹ️ {len(lp_wallets)} wallet liquidity pool dikecualikan "
-               f"(≈ ${lp_value_usd:,.0f} nilai token di LP).")
 
-st.divider()
-
-# ----------------------------------------------------------------------------
-# Token Holder — perubahan day by day (ala Solscan "Token Holder")
-# ----------------------------------------------------------------------------
-st.header("📈 Token Holder — Day by Day")
-
-# Gabungkan: riwayat Solscan + snapshot lokal (analisa kita sendiri)
-hist_rows = []
-if not solscan_hist.empty:
-    hist_rows += solscan_hist.to_dict("records")
-known_dates = {r["date"] for r in hist_rows}
-for dkey in sorted(ca_hist.keys()):
-    if dkey not in known_dates:
-        hist_rows.append({"date": dkey,
-                          "holders": ca_hist[dkey]["total_holders"],
-                          "source": "Snapshot lokal"})
-hist_df = pd.DataFrame(hist_rows).sort_values("date").reset_index(drop=True)
-
-if len(hist_df) >= 2:
-    hist_df["delta"] = hist_df["holders"].diff()
-    latest_delta = hist_df["delta"].iloc[-1]
-    pct_chg = (latest_delta / hist_df["holders"].iloc[-2] * 100
-               if hist_df["holders"].iloc[-2] else 0)
-
-    hc1, hc2, hc3 = st.columns(3)
-    hc1.metric("Holder terbaru", f"{int(hist_df['holders'].iloc[-1]):,}")
-    hc2.metric("Perubahan vs hari sebelumnya", f"{int(latest_delta):+,}",
-               f"{pct_chg:+.2f}%")
-    total_chg = int(hist_df["holders"].iloc[-1] - hist_df["holders"].iloc[0])
-    hc3.metric(f"Perubahan sejak {hist_df['date'].iloc[0]}", f"{total_chg:+,}")
-
-    if latest_delta > 0:
-        st.success(f"📈 Holder **bertambah {int(latest_delta):+,}** "
-                   f"({pct_chg:+.2f}%) dibanding hari sebelumnya.")
-    elif latest_delta < 0:
-        st.markdown(
-            f"""<div style="background:#7f1d1d;border:2px solid #ef4444;
-            border-radius:10px;padding:12px 18px;color:#fecaca;">
-            📉 <b style="color:#f87171;">Holder BERKURANG {int(latest_delta):,}
-            ({pct_chg:+.2f}%)</b> dibanding hari sebelumnya — banyak wallet
-            keluar/jual habis. Perhatikan trennya.
-            </div>""", unsafe_allow_html=True)
-    else:
-        st.info("Holder tidak berubah dibanding hari sebelumnya.")
-
-    # Grafik: garis holder + bar perubahan harian
-    figh = go.Figure()
-    figh.add_trace(go.Scatter(
-        x=hist_df["date"], y=hist_df["holders"],
-        mode="lines+markers+text", name="Total holder",
-        text=[f"{int(v):,}" for v in hist_df["holders"]],
-        textposition="top center", line=dict(color="#38bdf8", width=3)))
-    figh.add_trace(go.Bar(
-        x=hist_df["date"], y=hist_df["delta"].fillna(0),
-        name="Perubahan harian", yaxis="y2", opacity=0.6,
-        marker=dict(color=["#22c55e" if (v or 0) >= 0 else "#ef4444"
-                           for v in hist_df["delta"].fillna(0)]),
-        text=[f"{int(v):+,}" if pd.notna(v) and v != 0 else ""
-              for v in hist_df["delta"]],
-        textposition="outside"))
-    figh.update_layout(
-        height=400, yaxis=dict(title="Total holder"),
-        yaxis2=dict(title="Δ harian", overlaying="y", side="right",
-                    showgrid=False),
-        legend=dict(orientation="h", y=1.12),
-        margin=dict(t=30, b=10))
-    st.plotly_chart(figh, use_container_width=True)
-
-    tbl = hist_df.copy()
-    tbl["Holder"] = tbl["holders"].map(lambda v: f"{int(v):,}")
-    tbl["Perubahan"] = tbl["delta"].map(
-        lambda v: f"{int(v):+,}" if pd.notna(v) else "—")
-    tbl["%"] = (hist_df["delta"] / hist_df["holders"].shift(1) * 100).map(
-        lambda v: f"{v:+.2f}%" if pd.notna(v) else "—")
-    st.dataframe(tbl[["date", "Holder", "Perubahan", "%", "source"]].rename(
-        columns={"date": "Tanggal", "source": "Sumber"}),
-        use_container_width=True, hide_index=True)
-    st.caption("Sumber: grafik 'Token Holder' Solscan (±7 hari terakhir) + "
-               "snapshot lokal dari analisa sebelumnya. Angka Solscan dihitung "
-               "termasuk semua token account, jadi bisa sedikit beda dengan "
-               "hitungan kami (yang menggabungkan per-owner & exclude LP).")
-elif len(hist_df) == 1:
-    st.info("Baru ada 1 titik data. Riwayat Solscan untuk token ini belum "
-            "tersedia — analisa lagi besok, perubahan day-by-day akan muncul "
-            "dari snapshot lokal.")
-else:
-    st.warning("Riwayat holder Solscan tidak tersedia untuk token ini "
-               "(endpoint diblokir/kosong). Snapshot lokal tetap dicatat "
-               "setiap analisa — perbandingan muncul mulai besok.")
-
-st.divider()
-
-# ----------------------------------------------------------------------------
-# Verdict: Dust vs Real
-# ----------------------------------------------------------------------------
-st.header("🧮 Dust Holder vs Real Holder")
-
-m1, m2, m3 = st.columns(3)
-m1.metric(f"🪙 Dust Holder (< ${dust_limit:g})", f"{n_dust:,}",
-          (f"{n_dust - prev['dust']:+,} vs {prev_key}" if prev else
-           f"{dust_mc_pct:.2f}% dari marketcap"),
-          delta_color="inverse" if prev else "off")
-m2.metric(f"💎 Real Holder (≥ ${dust_limit:g})", f"{n_real:,}",
-          (f"{n_real - prev['real']:+,} vs {prev_key}" if prev else
-           f"{real_mc_pct:.2f}% dari marketcap"),
-          delta_color="normal" if prev else "off")
-m3.metric("Rasio Real / Dust", f"{ratio*100:,.1f}%" if n_dust else "∞",
-          f"ambang: > {REAL_RATIO_OK*100:.0f}%", delta_color="off")
-if prev:
-    st.caption(f"Dust: {dust_mc_pct:.2f}% MC | Real: {real_mc_pct:.2f}% MC | "
-               f"Δ dibanding snapshot {prev_key}")
-
-if n_dust == 0 or ratio > REAL_RATIO_OK:
-    st.success(
-        f"✅ **HOLDER OK** — Jumlah real holder ({n_real:,}) adalah "
-        f"**{ratio*100:,.1f}%** dari dust holder ({n_dust:,}), di atas ambang "
-        f"{REAL_RATIO_OK*100:.0f}%. Basis holder didominasi wallet dengan nilai "
-        f"riil (≥ ${dust_limit:g}), memegang **{real_mc_pct:.2f}%** dari marketcap. "
-        f"Distribusi holder terlihat sehat."
-    )
-else:
+def strip(color: str, border: str, textcolor: str, html: str):
     st.markdown(
-        f"""<div style="background:#7f1d1d;border:2px solid #ef4444;border-radius:10px;
-        padding:16px 20px;color:#fecaca;font-size:1.05rem;">
-        🚨 <b style="color:#f87171;">PERINGATAN — HOLDER TIDAK SEHAT</b><br><br>
-        Real holder ({n_real:,}) hanya <b>{ratio*100:,.1f}%</b> dari dust holder
-        ({n_dust:,}) — di bawah ambang {REAL_RATIO_OK*100:.0f}%.<br>
-        Mayoritas "holder" hanyalah wallet debu (&lt; ${dust_limit:g}) yang biasanya
-        berasal dari airdrop / bundling / sisa jual — jumlah holder terlihat besar
-        tapi <b>semu</b>. Real holder hanya memegang <b>{real_mc_pct:.2f}%</b>
-        marketcap. Hati-hati sebelum masuk.
-        </div>""",
-        unsafe_allow_html=True,
-    )
+        f"""<div style="background:{color};border:1px solid {border};
+        border-radius:8px;padding:6px 12px;color:{textcolor};
+        font-size:0.85rem;margin-bottom:6px;">{html}</div>""",
+        unsafe_allow_html=True)
 
-# Pie perbandingan
-pc1, pc2 = st.columns(2)
-with pc1:
+
+def red_strip(html):
+    strip("#7f1d1d", "#ef4444", "#fecaca", html)
+
+
+def green_strip(html):
+    strip("#14532d", "#22c55e", "#bbf7d0", html)
+
+
+# ----------------------------------------------------------------------------
+# BARIS 1 — Header token + metrics utama (1 baris)
+# ----------------------------------------------------------------------------
+h0, h1c, h2c, h3c, h4c, h5c, h6c = st.columns([0.5, 2.2, 1.3, 1.4, 1.4, 1.4, 1.6])
+with h0:
+    if market.get("image"):
+        st.image(market["image"], width=44)
+with h1c:
+    st.markdown(f"**{market['name']} (${market['symbol']})**  \n"
+                f"<span style='font-size:0.65rem;opacity:0.6'>`{ca[:20]}…`</span>",
+                unsafe_allow_html=True)
+with h2c:
+    st.metric("Harga", f"${price:,.8f}".rstrip("0").rstrip("."))
+with h3c:
+    st.metric("Marketcap", f"${marketcap:,.0f}")
+with h4c:
+    st.metric("Total Holder", f"{total_holders:,}",
+              delta=(f"{holder_delta:+,}" if holder_delta is not None else None))
+with h5c:
+    st.metric(f"🪙 Dust <${dust_limit:g}", f"{n_dust:,}",
+              (f"{n_dust - prev['dust']:+,}" if prev else f"{dust_mc_pct:.1f}% MC"),
+              delta_color="inverse" if prev else "off")
+with h6c:
+    st.metric(f"💎 Real ≥${dust_limit:g}", f"{n_real:,}",
+              (f"{n_real - prev['real']:+,}" if prev else f"{real_mc_pct:.1f}% MC"),
+              delta_color="normal" if prev else "off")
+
+# ----------------------------------------------------------------------------
+# BARIS 2 — Verdict strips (ringkas)
+# ----------------------------------------------------------------------------
+if n_dust == 0 or ratio > REAL_RATIO_OK:
+    green_strip(
+        f"✅ <b>HOLDER OK</b> — Real holder ({n_real:,}) = "
+        f"<b>{ratio*100:,.1f}%</b> dari dust ({n_dust:,}), di atas ambang "
+        f"{REAL_RATIO_OK*100:.0f}%. Real pegang <b>{real_mc_pct:.2f}%</b> MC, "
+        f"dust hanya {dust_mc_pct:.2f}% MC. Distribusi sehat.")
+else:
+    red_strip(
+        f"🚨 <b>PERINGATAN — HOLDER TIDAK SEHAT</b> — Real holder ({n_real:,}) "
+        f"hanya <b>{ratio*100:,.1f}%</b> dari dust ({n_dust:,}), di bawah ambang "
+        f"{REAL_RATIO_OK*100:.0f}%. Mayoritas holder = wallet debu (&lt;${dust_limit:g}) "
+        f"dari airdrop/bundling — holder count <b>semu</b>. Real hanya pegang "
+        f"<b>{real_mc_pct:.2f}%</b> MC. Hati-hati!")
+
+# ----------------------------------------------------------------------------
+# BARIS 3 — 3 kolom: Depth chart | Dust vs Real pie | Day-by-day
+# ----------------------------------------------------------------------------
+CHART_H = 240
+col_a, col_b, col_c = st.columns([1.5, 1, 1.4])
+
+with col_a:
+    st.markdown("**📶 Wallet Depth by Threshold**")
+    rows = []
+    for label, thr in [("> $0", 0.0)] + TIERS:
+        sub = df[df["usd_value"] > thr]
+        usd = sub["usd_value"].sum()
+        rows.append({"Tier": label, "Wallet": len(sub),
+                     "% Holder": len(sub) / total_holders * 100 if total_holders else 0,
+                     "Nilai USD": usd,
+                     "% MC": usd / marketcap * 100 if marketcap else 0})
+    tier_df = pd.DataFrame(rows)
+    bar = go.Figure(go.Bar(
+        x=tier_df["Tier"], y=tier_df["Wallet"],
+        text=[f"{w:,}" for w in tier_df["Wallet"]], textposition="outside",
+        marker=dict(color=["#38bdf8", "#4ade80", "#a3e635", "#facc15",
+                           "#fb923c", "#f87171", "#c084fc"]),
+        customdata=tier_df[["% MC", "Nilai USD"]].values,
+        hovertemplate=("<b>%{x}</b><br>Wallet: %{y:,}<br>"
+                       "Nilai: $%{customdata[1]:,.0f}<br>"
+                       "%{customdata[0]:.2f}% MC<extra></extra>")))
+    bar.update_layout(height=CHART_H, margin=dict(t=10, b=0, l=0, r=0),
+                      yaxis=dict(visible=False),
+                      xaxis=dict(tickfont=dict(size=9)))
+    st.plotly_chart(bar, use_container_width=True,
+                    config={"displayModeBar": False})
+
+with col_b:
+    st.markdown("**🧮 Dust vs Real**")
     fig = go.Figure(go.Pie(
-        labels=[f"Dust (< ${dust_limit:g})", f"Real (≥ ${dust_limit:g})"],
-        values=[n_dust, n_real], hole=0.55,
-        marker=dict(colors=["#64748b", "#22c55e"])))
-    fig.update_layout(title="Jumlah Wallet", height=320,
-                      margin=dict(t=40, b=10, l=10, r=10))
-    st.plotly_chart(fig, use_container_width=True)
-with pc2:
-    fig = go.Figure(go.Pie(
-        labels=["Dust", "Real"], values=[max(dust_usd, 0.01), max(real_usd, 0.01)],
-        hole=0.55, marker=dict(colors=["#64748b", "#22c55e"])))
-    fig.update_layout(title="Nilai USD yang Dipegang", height=320,
-                      margin=dict(t=40, b=10, l=10, r=10))
-    st.plotly_chart(fig, use_container_width=True)
+        labels=[f"Dust", f"Real"], values=[n_dust, n_real], hole=0.55,
+        marker=dict(colors=["#64748b", "#22c55e"]),
+        textinfo="label+percent", textfont=dict(size=10)))
+    fig.add_annotation(text=f"{ratio*100:,.0f}%" if n_dust else "∞",
+                       showarrow=False, font=dict(size=16))
+    fig.update_layout(height=CHART_H, margin=dict(t=10, b=0, l=0, r=0),
+                      showlegend=False)
+    st.plotly_chart(fig, use_container_width=True,
+                    config={"displayModeBar": False})
+    st.caption(f"Rasio real/dust: {ratio*100:,.1f}% (ambang "
+               f">{REAL_RATIO_OK*100:.0f}%) | Real: {real_mc_pct:.1f}% MC, "
+               f"Dust: {dust_mc_pct:.1f}% MC")
 
-st.divider()
+with col_c:
+    st.markdown("**📈 Holder Day-by-Day**")
+    hist_rows = []
+    if not solscan_hist.empty:
+        hist_rows += solscan_hist.to_dict("records")
+    known_dates = {r["date"] for r in hist_rows}
+    for dkey in sorted(ca_hist.keys()):
+        if dkey not in known_dates:
+            hist_rows.append({"date": dkey,
+                              "holders": ca_hist[dkey]["total_holders"],
+                              "source": "Lokal"})
+    hist_df = pd.DataFrame(hist_rows).sort_values("date").reset_index(drop=True)
+
+    if len(hist_df) >= 2:
+        hist_df["delta"] = hist_df["holders"].diff()
+        latest_delta = int(hist_df["delta"].iloc[-1])
+        pct_chg = (latest_delta / hist_df["holders"].iloc[-2] * 100
+                   if hist_df["holders"].iloc[-2] else 0)
+        figh = go.Figure()
+        figh.add_trace(go.Scatter(
+            x=hist_df["date"], y=hist_df["holders"], mode="lines+markers",
+            name="Holder", line=dict(color="#38bdf8", width=2.5)))
+        figh.add_trace(go.Bar(
+            x=hist_df["date"], y=hist_df["delta"].fillna(0), yaxis="y2",
+            opacity=0.55, name="Δ",
+            marker=dict(color=["#22c55e" if (v or 0) >= 0 else "#ef4444"
+                               for v in hist_df["delta"].fillna(0)]),
+            text=[f"{int(v):+,}" if pd.notna(v) and v else ""
+                  for v in hist_df["delta"]], textposition="outside",
+            textfont=dict(size=9)))
+        figh.update_layout(height=CHART_H - 30, showlegend=False,
+                           margin=dict(t=10, b=0, l=0, r=0),
+                           yaxis=dict(tickfont=dict(size=9)),
+                           yaxis2=dict(overlaying="y", side="right",
+                                       visible=False),
+                           xaxis=dict(tickfont=dict(size=9)))
+        st.plotly_chart(figh, use_container_width=True,
+                        config={"displayModeBar": False})
+        arrow = "📈" if latest_delta > 0 else ("📉" if latest_delta < 0 else "➖")
+        color = "#22c55e" if latest_delta > 0 else ("#ef4444" if latest_delta < 0 else "#94a3b8")
+        st.markdown(f"<span style='color:{color};font-size:0.85rem'>"
+                    f"{arrow} <b>{latest_delta:+,}</b> ({pct_chg:+.2f}%) vs hari "
+                    f"sebelumnya</span>", unsafe_allow_html=True)
+    else:
+        st.caption("Belum ada riwayat ≥2 hari. Snapshot hari ini tercatat — "
+                   "delta muncul mulai besok.")
 
 # ----------------------------------------------------------------------------
-# Wallet Depth by Threshold (ala Solscan)
+# BARIS 4 — Bundler / Cluster (strip ringkas + tabel di expander)
 # ----------------------------------------------------------------------------
-st.header("📶 Wallet Depth by Threshold")
-st.caption("Jumlah wallet dengan nilai holding di atas tiap ambang (kumulatif), "
-           "seperti di Solscan Analytics.")
-
-rows = []
-for label, thr in [(f"Semua (>$0)", 0.0)] + TIERS:
-    sub = df[df["usd_value"] > thr]
-    usd = sub["usd_value"].sum()
-    rows.append({
-        "Tier": label,
-        "Wallet": len(sub),
-        "% dari Total Holder": len(sub) / total_holders * 100 if total_holders else 0,
-        "Nilai USD": usd,
-        "% dari Marketcap": usd / marketcap * 100 if marketcap else 0,
-    })
-tier_df = pd.DataFrame(rows)
-
-bar = go.Figure()
-bar.add_bar(
-    x=tier_df["Tier"], y=tier_df["Wallet"],
-    text=[f"{w:,}" for w in tier_df["Wallet"]],
-    textposition="outside",
-    marker=dict(color=["#38bdf8", "#4ade80", "#a3e635", "#facc15",
-                       "#fb923c", "#f87171", "#c084fc"]),
-    customdata=tier_df[["% dari Marketcap", "Nilai USD"]].values,
-    hovertemplate=("<b>%{x}</b><br>Wallet: %{y:,}<br>"
-                   "Nilai: $%{customdata[1]:,.0f}<br>"
-                   "%{customdata[0]:.2f}% dari marketcap<extra></extra>"),
-)
-bar.update_layout(height=420, yaxis_title="Jumlah wallet",
-                  margin=dict(t=20, b=10))
-st.plotly_chart(bar, use_container_width=True)
-
-show = tier_df.copy()
-show["% dari Total Holder"] = show["% dari Total Holder"].map(lambda v: f"{v:.2f}%")
-show["Nilai USD"] = show["Nilai USD"].map(lambda v: f"${v:,.0f}")
-show["% dari Marketcap"] = show["% dari Marketcap"].map(lambda v: f"{v:.2f}%")
-show["Wallet"] = show["Wallet"].map(lambda v: f"{v:,}")
-st.dataframe(show, use_container_width=True, hide_index=True)
-
-st.divider()
-
-# ----------------------------------------------------------------------------
-# Bundler / Cluster
-# ----------------------------------------------------------------------------
-st.header("🕸️ Bundler / Cluster Detection")
-st.caption(
-    "Melacak **wallet pendana pertama** (first funder) dari tiap top holder. "
-    "Wallet-wallet yang didanai oleh pendana yang sama dikelompokkan sebagai "
-    "1 cluster — pola khas **bundler** (satu orang mengontrol banyak wallet). "
-    "Pendanaan dari CEX (Binance dll.) ditandai dan tidak dihitung sebagai bundle."
-)
-
 rpc_endpoint = (f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
                 if helius_key else custom_rpc)
-
-if not scan_clusters:
-    st.info("Scan bundler/cluster dimatikan di sidebar.")
-elif not rpc_endpoint:
-    st.warning("Butuh Helius API key / custom RPC untuk scan cluster.")
-else:
+clusters = None
+bundles = None
+if scan_clusters and rpc_endpoint:
     top_n = df.sort_values("ui_amount", ascending=False).head(n_scan)
     cache_key = f"clusters::{ca}::{n_scan}"
     if cache_key not in st.session_state:
-        pbar = st.progress(0.0, text="Melacak funder tiap top holder...")
+        pbar = st.progress(0.0, text="🕸️ Melacak funder top holder...")
 
         def _cb(frac, wallet):
-            pbar.progress(frac, text=f"Melacak funder... {frac*100:.0f}% ({wallet[:8]}…)")
+            pbar.progress(frac, text=f"🕸️ Scan cluster... {frac*100:.0f}%")
 
         st.session_state[cache_key] = detect_clusters(
             rpc_endpoint, top_n[["owner", "ui_amount"]], supply, progress_cb=_cb)
         pbar.empty()
     clusters = st.session_state[cache_key]
-
-    # hanya funder non-CEX dengan >= 2 wallet yang dianggap bundle
-    bundles = clusters[(clusters["wallets"] >= 2) & (clusters["cex"] == "")] \
-        if not clusters.empty else clusters
+    bundles = (clusters[(clusters["wallets"] >= 2) & (clusters["cex"] == "")]
+               if clusters is not None and not clusters.empty else clusters)
 
     if bundles is None or bundles.empty:
-        st.success(
-            f"✅ Tidak terdeteksi bundler/cluster di antara {len(top_n)} top holder — "
-            f"tidak ada 2+ wallet yang didanai oleh pendana yang sama."
-        )
+        green_strip(f"🕸️ <b>Cluster:</b> ✅ Tidak terdeteksi bundler di antara "
+                    f"{len(top_n)} top holder.")
     else:
         worst = bundles.iloc[0]
         bundled_supply = bundles["pct_supply"].sum()
-
         if worst["pct_supply"] > cluster_warn_pct:
-            st.markdown(
-                f"""<div style="background:#7f1d1d;border:2px solid #ef4444;
-                border-radius:10px;padding:16px 20px;color:#fecaca;font-size:1.05rem;">
-                🚨 <b style="color:#f87171;">WARNING — BUNDLER/CLUSTER TERDETEKSI</b><br><br>
-                Cluster terbesar: <b>{int(worst['wallets'])} wallet</b> yang semuanya
-                didanai oleh <code>{worst['funder'][:6]}…{worst['funder'][-4:]}</code>
-                memegang <b>{worst['pct_supply']:.2f}%</b> dari total supply —
-                di atas ambang {cluster_warn_pct:g}%.<br>
-                Total {len(bundles)} cluster memegang
-                <b>{bundled_supply:.2f}%</b> supply. Satu entitas kemungkinan besar
-                mengontrol banyak wallet ini dan bisa dump kapan saja. <b>Hati-hati!</b>
-                </div>""",
-                unsafe_allow_html=True,
-            )
+            red_strip(
+                f"🕸️ 🚨 <b>BUNDLER TERDETEKSI</b> — cluster terbesar: "
+                f"<b>{int(worst['wallets'])} wallet</b> (funder "
+                f"<code>{worst['funder'][:6]}…</code>) pegang "
+                f"<b>{worst['pct_supply']:.2f}%</b> supply (ambang "
+                f"{cluster_warn_pct:g}%). Total {len(bundles)} cluster = "
+                f"{bundled_supply:.2f}% supply. Bisa dump kapan saja!")
         else:
-            st.success(
-                f"✅ Terdeteksi {len(bundles)} cluster kecil, tapi yang terbesar hanya "
-                f"memegang {worst['pct_supply']:.2f}% supply (ambang "
-                f"{cluster_warn_pct:g}%). Total semua cluster: {bundled_supply:.2f}% "
-                f"supply. Masih dalam batas wajar."
-            )
-
-        show_c = bundles.copy()
-        show_c["Funder"] = show_c["funder"]
-        show_c["Jml Wallet"] = show_c["wallets"]
-        show_c["Wallet Anggota"] = show_c["members"].map(
-            lambda ms: ", ".join(m[:6] + "…" for m in ms[:8]) +
-                       (f" (+{len(ms)-8} lagi)" if len(ms) > 8 else ""))
-        show_c["Total Token"] = show_c["total_tokens"].map(lambda v: f"{v:,.0f}")
-        show_c["% Supply"] = show_c["pct_supply"].map(lambda v: f"{v:.2f}%")
-        show_c["⚠️"] = show_c["pct_supply"].map(
-            lambda v: "🚨" if v > cluster_warn_pct else "")
-        st.dataframe(
-            show_c[["⚠️", "Funder", "Jml Wallet", "Total Token", "% Supply",
-                    "Wallet Anggota"]],
-            use_container_width=True, hide_index=True)
-
-    # info pendanaan CEX (bukan bundle, hanya info)
-    if clusters is not None and not clusters.empty:
-        cex_rows = clusters[clusters["cex"] != ""]
-        if not cex_rows.empty:
-            st.caption("ℹ️ Wallet berikut didanai dari CEX (bukan indikasi bundling): " +
-                       "; ".join(f"{r['cex']}: {int(r['wallets'])} wallet "
-                                 f"({r['pct_supply']:.2f}% supply)"
-                                 for _, r in cex_rows.iterrows()))
-
-    st.caption(
-        f"Metode: first-funder heuristic pada {len(top_n)} top holder. Wallet lama "
-        f"(>5.000 transaksi) dilewati karena bukan tipikal wallet bundle. "
-        f"Deteksi ini heuristik — bundler canggih (multi-hop funding) mungkin lolos."
-    )
-
-st.divider()
+            green_strip(
+                f"🕸️ <b>Cluster:</b> ✅ {len(bundles)} cluster kecil, terbesar "
+                f"{worst['pct_supply']:.2f}% supply (ambang {cluster_warn_pct:g}%). "
+                f"Total {bundled_supply:.2f}% — wajar.")
+elif scan_clusters:
+    st.caption("🕸️ Cluster scan: butuh Helius API key / custom RPC.")
 
 # ----------------------------------------------------------------------------
-# Top holders
+# DETAIL — semua tabel di dalam expander (klik untuk buka)
 # ----------------------------------------------------------------------------
-st.header("🏆 Top 20 Holder")
-top = df.sort_values("usd_value", ascending=False).head(20).copy()
-top["Wallet"] = top["owner"]
-top["Jumlah Token"] = top["ui_amount"].map(lambda v: f"{v:,.0f}")
-top["Nilai USD"] = top["usd_value"].map(lambda v: f"${v:,.2f}")
-top["% Supply"] = top["pct_supply"].map(lambda v: f"{v:.2f}%")
-st.dataframe(top[["Wallet", "Jumlah Token", "Nilai USD", "% Supply"]],
-             use_container_width=True, hide_index=True)
+ex1, ex2 = st.columns(2)
+with ex1:
+    with st.expander("📶 Tabel Wallet Depth"):
+        show = tier_df.copy()
+        show["% Holder"] = show["% Holder"].map(lambda v: f"{v:.2f}%")
+        show["Nilai USD"] = show["Nilai USD"].map(lambda v: f"${v:,.0f}")
+        show["% MC"] = show["% MC"].map(lambda v: f"{v:.2f}%")
+        show["Wallet"] = show["Wallet"].map(lambda v: f"{v:,}")
+        st.dataframe(show, use_container_width=True, hide_index=True)
+    with st.expander("🏆 Top 20 Holder"):
+        top = df.sort_values("usd_value", ascending=False).head(20).copy()
+        top["Wallet"] = top["owner"]
+        top["Token"] = top["ui_amount"].map(lambda v: f"{v:,.0f}")
+        top["USD"] = top["usd_value"].map(lambda v: f"${v:,.2f}")
+        top["% Supply"] = top["pct_supply"].map(lambda v: f"{v:.2f}%")
+        st.dataframe(top[["Wallet", "Token", "USD", "% Supply"]],
+                     use_container_width=True, hide_index=True)
+with ex2:
+    with st.expander("📈 Tabel Holder Day-by-Day"):
+        if len(hist_df) >= 1:
+            tbl = hist_df.copy()
+            if "delta" not in tbl:
+                tbl["delta"] = tbl["holders"].diff()
+            tbl["Holder"] = tbl["holders"].map(lambda v: f"{int(v):,}")
+            tbl["Δ"] = tbl["delta"].map(
+                lambda v: f"{int(v):+,}" if pd.notna(v) else "—")
+            tbl["%"] = (tbl["delta"] / tbl["holders"].shift(1) * 100).map(
+                lambda v: f"{v:+.2f}%" if pd.notna(v) else "—")
+            st.dataframe(tbl[["date", "Holder", "Δ", "%", "source"]].rename(
+                columns={"date": "Tanggal", "source": "Sumber"}),
+                use_container_width=True, hide_index=True)
+            st.caption("Sumber: Solscan (±7 hari) + snapshot lokal. Angka Solscan "
+                       "hitung semua token account, bisa sedikit beda.")
+        else:
+            st.caption("Belum ada data riwayat.")
+    with st.expander("🕸️ Tabel Bundler / Cluster"):
+        if bundles is not None and not bundles.empty:
+            show_c = bundles.copy()
+            show_c["Funder"] = show_c["funder"]
+            show_c["Wallet"] = show_c["wallets"]
+            show_c["Anggota"] = show_c["members"].map(
+                lambda ms: ", ".join(m[:6] + "…" for m in ms[:8]) +
+                           (f" (+{len(ms)-8})" if len(ms) > 8 else ""))
+            show_c["Token"] = show_c["total_tokens"].map(lambda v: f"{v:,.0f}")
+            show_c["% Supply"] = show_c["pct_supply"].map(lambda v: f"{v:.2f}%")
+            show_c["⚠️"] = show_c["pct_supply"].map(
+                lambda v: "🚨" if v > cluster_warn_pct else "")
+            st.dataframe(show_c[["⚠️", "Funder", "Wallet", "Token",
+                                 "% Supply", "Anggota"]],
+                         use_container_width=True, hide_index=True)
+            if clusters is not None and not clusters.empty:
+                cex_rows = clusters[clusters["cex"] != ""]
+                if not cex_rows.empty:
+                    st.caption("ℹ️ Didanai CEX (bukan bundle): " + "; ".join(
+                        f"{r['cex']}: {int(r['wallets'])} wallet "
+                        f"({r['pct_supply']:.2f}%)"
+                        for _, r in cex_rows.iterrows()))
+            st.caption("Metode: first-funder heuristic. Wallet lama (>5rb tx) "
+                       "dilewati. Bundler multi-hop bisa lolos.")
+        else:
+            st.caption("Tidak ada cluster terdeteksi / scan dimatikan.")
 
-st.caption(
-    f"Sumber: DexScreener (harga/MC) + Helius/RPC (holder). "
-    f"Supply: {supply:,.0f} | Decimals: {decimals} | "
-    f"Data di-cache 2 menit."
-)
+# Footer ringkas
+foot = (f"DexScreener (harga/MC) + Helius (holder) + Solscan (riwayat) | "
+        f"Supply: {supply:,.0f} | Dec: {decimals}")
+if exclude_lp and lp_wallets:
+    foot += f" | {len(lp_wallets)} LP wallet dikecualikan (≈${lp_value_usd:,.0f})"
+if holder_delta_src:
+    foot += f" | Δ holder: {holder_delta_src}"
+st.caption(foot)
