@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Page: Perbandingan beberapa token side-by-side."""
+"""Page: Compare multiple tokens side-by-side."""
 import os
 import sys
 
@@ -11,7 +11,7 @@ from core import (concentration, get_holders, get_market, get_rugcheck,
                   get_supply, health_score, load_config, score_color,
                   score_label)
 
-st.set_page_config(page_title="Perbandingan Token", page_icon="⚖️",
+st.set_page_config(page_title="Compare Tokens", page_icon="⚖️",
                    layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown("""<style>
@@ -20,27 +20,27 @@ h1 {font-size: 1.3rem !important;}
 [data-testid="stCaptionContainer"] {font-size: 0.72rem !important;}
 </style>""", unsafe_allow_html=True)
 
-st.title("⚖️ Perbandingan Token")
-st.caption("Bandingkan 2-3 token side-by-side: skor, holder, dust/real, "
-           "konsentrasi, likuiditas, buy/sell.")
+st.title("⚖️ Compare Tokens")
+st.caption("Compare 2-3 tokens side-by-side: score, holders, dust/real, "
+           "concentration, liquidity, buy/sell.")
 
 CONFIG = load_config()
 helius_key = CONFIG.get("helius_api_key") or ""
 dust_limit = float(CONFIG.get("dust_limit_usd", 10))
 
 c1, c2, c3 = st.columns(3)
-ca1 = c1.text_input("CA Token 1", placeholder="Contract address...").strip()
-ca2 = c2.text_input("CA Token 2", placeholder="Contract address...").strip()
-ca3 = c3.text_input("CA Token 3 (opsional)", placeholder="...").strip()
+ca1 = c1.text_input("Token 1 CA", placeholder="Contract address...").strip()
+ca2 = c2.text_input("Token 2 CA", placeholder="Contract address...").strip()
+ca3 = c3.text_input("Token 3 CA (optional)", placeholder="...").strip()
 cas = [c for c in (ca1, ca2, ca3) if c]
 
-if not st.button("⚖️ Bandingkan", type="primary", use_container_width=True):
+if not st.button("⚖️ Compare", type="primary", use_container_width=True):
     st.stop()
 if len(cas) < 2:
-    st.warning("Isi minimal 2 CA untuk dibandingkan.")
+    st.warning("Enter at least 2 CAs to compare.")
     st.stop()
 if not helius_key:
-    st.error("Helius API key belum diisi (config.json / secrets).")
+    st.error("Helius API key missing (config.json / secrets).")
     st.stop()
 
 
@@ -48,7 +48,7 @@ if not helius_key:
 def analyze(ca: str) -> dict:
     m = get_market(ca)
     if not m:
-        return {"error": "tidak ditemukan di DexScreener"}
+        return {"error": "not found on DexScreener"}
     supply, dec = get_supply(helius_key, ca)
     hd = get_holders(helius_key, ca)
     hd["ui_amount"] = hd["raw_amount"] / (10 ** dec)
@@ -91,10 +91,9 @@ def analyze(ca: str) -> dict:
 
 
 results = {}
-prog = st.progress(0.0, text="Menganalisa...")
+prog = st.progress(0.0, text="Analyzing...")
 for i, ca in enumerate(cas):
-    prog.progress((i) / len(cas), text=f"Menganalisa {ca[:10]}… "
-                  f"({i+1}/{len(cas)})")
+    prog.progress(i / len(cas), text=f"Analyzing {ca[:10]}… ({i+1}/{len(cas)})")
     try:
         results[ca] = analyze(ca)
     except Exception as e:
@@ -108,7 +107,6 @@ for ca, r in results.items():
 if len(ok) < 2:
     st.stop()
 
-# --- Header kartu skor
 cols = st.columns(len(ok))
 best_ca = max(ok, key=lambda c: ok[c]["score"])
 for col, (ca, r) in zip(cols, ok.items()):
@@ -129,35 +127,34 @@ for col, (ca, r) in zip(cols, ok.items()):
 st.markdown("")
 
 
-def fmt_row(label, fn, best=None):
-    row = {"Metrik": label}
-    vals = {ca: fn(r) for ca, r in ok.items()}
+def fmt_row(label, fn):
+    row = {"Metric": label}
     for ca, r in ok.items():
-        row[r["name"]] = vals[ca]
+        row[r["name"]] = fn(r)
     return row
 
 
 rows = [
-    fmt_row("Skor Kesehatan", lambda r: f"{r['score']}/100"),
+    fmt_row("Health Score", lambda r: f"{r['score']}/100"),
     fmt_row("Marketcap", lambda r: f"${r['mc']:,.0f}"),
-    fmt_row("Harga", lambda r: f"${r['price']:.10f}".rstrip("0")),
-    fmt_row("Total Holder", lambda r: f"{r['holders']:,}"),
-    fmt_row("Real Holder", lambda r: f"{r['real']:,} ({r['real_mc']:.1f}% MC)"),
-    fmt_row("Dust Holder", lambda r: f"{r['dust']:,}"),
-    fmt_row("Rasio Real/Dust", lambda r: f"{r['ratio_pct']:.1f}%"),
+    fmt_row("Price", lambda r: f"${r['price']:.10f}".rstrip("0")),
+    fmt_row("Total Holders", lambda r: f"{r['holders']:,}"),
+    fmt_row("Real Holders", lambda r: f"{r['real']:,} ({r['real_mc']:.1f}% MC)"),
+    fmt_row("Dust Holders", lambda r: f"{r['dust']:,}"),
+    fmt_row("Real/Dust Ratio", lambda r: f"{r['ratio_pct']:.1f}%"),
     fmt_row("Top-10 % Supply", lambda r: f"{r['top10']:.1f}%"),
-    fmt_row("Likuiditas", lambda r: f"${r['liq_usd']:,.0f} ({r['liq_pct']:.1f}% MC)"),
+    fmt_row("Liquidity", lambda r: f"${r['liq_usd']:,.0f} ({r['liq_pct']:.1f}% MC)"),
     fmt_row("LP Locked", lambda r: (f"{r['lp_locked']:.0f}%"
                                     if r['lp_locked'] is not None else "n/a")),
-    fmt_row("Buy/Sell 24h", lambda r: f"{r['buys']:,} / {r['sells']:,} "
+    fmt_row("Buys/Sells 24h", lambda r: f"{r['buys']:,} / {r['sells']:,} "
             f"({r['bs']:.2f})"),
     fmt_row("Volume 24h", lambda r: f"${r['vol24']:,.0f}"),
-    fmt_row("Mint Authority", lambda r: "⚠️ aktif" if r["mint_auth"] else "✅ dicabut"),
-    fmt_row("Freeze Authority", lambda r: "⚠️ aktif" if r["freeze_auth"] else "✅ dicabut"),
-    fmt_row("RugCheck Rugged", lambda r: "🚨 YA" if r["rugged"] else "✅ tidak"),
+    fmt_row("Mint Authority", lambda r: "⚠️ active" if r["mint_auth"] else "✅ revoked"),
+    fmt_row("Freeze Authority", lambda r: "⚠️ active" if r["freeze_auth"] else "✅ revoked"),
+    fmt_row("RugCheck Rugged", lambda r: "🚨 YES" if r["rugged"] else "✅ no"),
 ]
 st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True,
              height=560)
-st.caption("👑 = skor tertinggi. Perbandingan tidak memasukkan cluster scan "
-           "(terlalu lama untuk banyak token) — buka dashboard utama untuk "
-           "analisa lengkap per token.")
+st.caption("👑 = highest score. Comparison skips the cluster scan (too slow "
+           "for multiple tokens) — open the main dashboard for a full "
+           "per-token analysis.")

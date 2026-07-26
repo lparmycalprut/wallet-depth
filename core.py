@@ -62,6 +62,13 @@ def get_market(ca: str) -> dict:
         "volume": b.get("volume") or {},
         "price_change": b.get("priceChange") or {},
         "pair_created_at": b.get("pairCreatedAt"),
+        "pairs_detail": [{
+            "dex": p.get("dexId", "?"),
+            "pair": p.get("pairAddress"),
+            "liq": float((p.get("liquidity") or {}).get("usd") or 0),
+            "url": p.get("url", ""),
+            "quote": (p.get("quoteToken") or {}).get("symbol", "?"),
+        } for p in pairs],
     }
 
 
@@ -237,5 +244,5 @@ def score_color(score: int) -> str:
 
 
 def score_label(score: int) -> str:
-    return ("SEHAT ✅" if score >= 70 else
-            ("WASPADA ⚠️" if score >= 45 else "BAHAYA 🚨"))
+    return ("HEALTHY ✅" if score >= 70 else
+            ("CAUTION ⚠️" if score >= 45 else "DANGER 🚨"))
