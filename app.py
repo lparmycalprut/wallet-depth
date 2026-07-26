@@ -891,52 +891,92 @@ components.html(f"""
 <div style="display:flex;gap:8px;font-family:sans-serif;">
 <button onclick="shareX()" style="background:#000;color:#fff;border:1px solid #333;
 border-radius:8px;padding:7px 16px;font-size:13px;font-weight:700;
-cursor:pointer;">𝕏 Share (text + screenshot)</button>
+cursor:pointer;">𝕏 Share (text + screenshots)</button>
 <button onclick="capture(false)" style="background:#1d4ed8;color:#fff;border:none;
 border-radius:8px;padding:7px 16px;font-size:13px;font-weight:700;
-cursor:pointer;">📸 Screenshot only (PNG)</button>
+cursor:pointer;">📸 Screenshot full page (PNG)</button>
 <span id="msg" style="font-size:12px;color:#94a3b8;align-self:center;"></span>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
 const SHARE_URL = {json.dumps(share_url)};
+const FNAME = '{market["symbol"]}_holder_analysis';
+// max height of one image slice, in CSS pixels (before 2x scale).
+// ~ one screen worth of content -> long pages become several images.
+const PAGE_H_CSS = 900;
+
 function capture(thenShare) {{
   const msg = document.getElementById('msg');
-  msg.textContent = 'Rendering screenshot…';
+  msg.textContent = 'Rendering full page…';
   const doc = window.parent.document;
-  const target = doc.querySelector('[data-testid="stAppViewContainer"]')
-                 || doc.querySelector('.main') || doc.body;
-  html2canvas(target, {{useCORS: true, allowTaint: true, scale: 2,
-    backgroundColor: getComputedStyle(doc.body).backgroundColor}})
+  const target = doc.querySelector('[data-testid="stAppViewContainer"] .main')
+                 || doc.querySelector('[data-testid="stAppViewContainer"]')
+                 || doc.body;
+  const fullH = Math.max(target.scrollHeight, target.offsetHeight);
+  const fullW = target.scrollWidth;
+  html2canvas(target, {{
+      useCORS: true, allowTaint: true, scale: 2,
+      backgroundColor: getComputedStyle(doc.body).backgroundColor,
+      width: fullW, height: fullH,
+      windowWidth: fullW, windowHeight: fullH,
+      scrollX: 0, scrollY: 0
+  }})
   .then(function(canvas) {{
-    canvas.toBlob(function(blob) {{
-      // 1) download PNG
-      const a = document.createElement('a');
-      a.download = '{market["symbol"]}_holder_analysis.png';
-      a.href = URL.createObjectURL(blob);
-      a.click();
-      // 2) also copy to clipboard so it can be pasted (Ctrl+V) into the X composer
+    const scale = 2;
+    const pageH = PAGE_H_CSS * scale;
+    const pages = Math.max(1, Math.ceil(canvas.height / pageH));
+    let firstBlob = null, done = 0;
+
+    function saveSlice(i) {{
+      const sliceH = Math.min(pageH, canvas.height - i * pageH);
+      const c = document.createElement('canvas');
+      c.width = canvas.width;
+      c.height = sliceH;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = getComputedStyle(doc.body).backgroundColor || '#0e1117';
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.drawImage(canvas, 0, i * pageH, canvas.width, sliceH,
+                    0, 0, canvas.width, sliceH);
+      c.toBlob(function(blob) {{
+        const a = document.createElement('a');
+        a.download = pages > 1 ? FNAME + '_' + (i + 1) + 'of' + pages + '.png'
+                               : FNAME + '.png';
+        a.href = URL.createObjectURL(blob);
+        a.click();
+        if (i === 0) firstBlob = blob;
+        done++;
+        msg.textContent = 'Saved ' + done + '/' + pages + ' image(s)…';
+        if (done === pages) finish();
+        else setTimeout(function() {{ saveSlice(i + 1); }}, 350);
+      }}, 'image/png');
+    }}
+
+    function finish() {{
       try {{
-        navigator.clipboard.write([new ClipboardItem({{'image/png': blob}})]);
-        msg.textContent = thenShare
-          ? 'Screenshot saved & copied — paste (Ctrl+V) into the X composer!'
-          : 'Screenshot saved & copied to clipboard!';
+        navigator.clipboard.write(
+          [new ClipboardItem({{'image/png': firstBlob}})]);
+        msg.textContent = pages + ' image(s) saved · first one copied — '
+          + (thenShare ? 'paste (Ctrl+V) into the X composer, then attach the rest!'
+                       : 'paste anywhere with Ctrl+V.');
       }} catch(e) {{
-        msg.textContent = 'Screenshot saved! Attach it to your X post.';
+        msg.textContent = pages + ' image(s) saved! Attach them to your X post.';
       }}
       if (thenShare) {{
         setTimeout(function() {{ window.open(SHARE_URL, '_blank'); }}, 600);
       }}
-    }}, 'image/png');
+    }}
+
+    saveSlice(0);
   }}).catch(function(e) {{ msg.textContent = 'Failed: ' + e; }});
 }}
 function shareX() {{ capture(true); }}
 </script>
 """, height=42)
-st.caption("𝕏 Share opens the composer with the formatted stats and copies the "
-           "dashboard screenshot to your clipboard — just press Ctrl+V (Cmd+V) "
-           "in the tweet to attach it. (X doesn't allow auto-attaching images "
-           "via URL.)")
+st.caption("📸 captures the ENTIRE page top-to-bottom (like Streamlit's print) "
+           "and splits it into numbered PNGs (~1 screen each, X-friendly). "
+           "𝕏 Share also opens the composer with formatted stats — the first "
+           "image is on your clipboard, press Ctrl+V to attach, then add the "
+           "rest from your downloads.")
 
 # ----------------------------------------------------------------------------
 # DETAILS — open by default
