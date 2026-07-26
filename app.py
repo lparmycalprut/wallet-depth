@@ -1052,22 +1052,26 @@ with ex2:
                                  "Pool", display_text=r"account/(.{6}).*"),
                              "Chart": st.column_config.LinkColumn(
                                  "Chart", display_text="DexScreener")})
-            # distribution bar
+            # LP distribution — donut chart (clear % labels per DEX)
             if len(active) > 1:
-                dist = go.Figure()
-                for p in active:
-                    dist.add_bar(y=["LP spread"], x=[p["liq"]],
-                                 name=f"{p['dex'].capitalize()} "
-                                      f"({p['liq']/total_pool_liq*100:.1f}%)",
-                                 orientation="h",
-                                 text=f"{p['dex'].capitalize()} "
-                                      f"{p['liq']/total_pool_liq*100:.1f}%",
-                                 textposition="inside")
-                dist.update_layout(barmode="stack", height=90,
-                                   margin=dict(t=5, b=5, l=5, r=5),
-                                   showlegend=False,
-                                   xaxis=dict(visible=False),
-                                   yaxis=dict(visible=False))
+                dist = go.Figure(go.Pie(
+                    labels=[f"{p['dex'].capitalize()} ({p['quote']})"
+                            for p in active],
+                    values=[p["liq"] for p in active],
+                    hole=0.5,
+                    marker=dict(colors=["#38bdf8", "#a78bfa", "#4ade80",
+                                        "#facc15", "#fb923c", "#f87171"]),
+                    texttemplate="<b>%{label}</b><br>%{percent} · $%{value:,.0f}",
+                    textposition="outside",
+                    textfont=dict(size=12),
+                    hovertemplate="<b>%{label}</b><br>$%{value:,.0f} "
+                                  "(%{percent})<extra></extra>"))
+                dist.add_annotation(
+                    text=f"<b>${total_pool_liq:,.0f}</b><br>"
+                         f"<span style='font-size:10px'>total LP</span>",
+                    showarrow=False, font=dict(size=13))
+                dist.update_layout(height=260, showlegend=False,
+                                   margin=dict(t=30, b=30, l=80, r=80))
                 st.plotly_chart(dist, use_container_width=True,
                                 config={"displayModeBar": False})
             st.caption((f"Total: ${total_pool_liq:,.0f} across {len(active)} "
