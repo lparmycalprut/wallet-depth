@@ -206,7 +206,35 @@ def fetch_dexscreener(ca: str) -> dict:
         "pair_addresses": [p.get("pairAddress") for p in pairs if p.get("pairAddress")],
         "url": best.get("url", ""),
         "image": ((best.get("info") or {}).get("imageUrl") or ""),
+        "txns": best.get("txns") or {},
+        "volume": best.get("volume") or {},
+        "price_change": best.get("priceChange") or {},
     }
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_rugcheck(ca: str) -> dict:
+    from core import get_rugcheck
+    return get_rugcheck(ca)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_ohlcv(pair_address: str) -> pd.DataFrame:
+    from core import get_ohlcv_daily
+    return get_ohlcv_daily(pair_address)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_mint_info(endpoint: str, ca: str) -> dict:
+    """Mint & freeze authority langsung dari chain."""
+    try:
+        res = rpc_call(endpoint, "getAccountInfo",
+                       [ca, {"encoding": "jsonParsed"}], timeout=30)
+        info = res["value"]["data"]["parsed"]["info"]
+        return {"mint_authority": info.get("mintAuthority"),
+                "freeze_authority": info.get("freezeAuthority")}
+    except Exception:
+        return {"mint_authority": None, "freeze_authority": None}
 
 
 def rpc_call(endpoint: str, method: str, params: list, timeout: int = 120):
@@ -309,10 +337,9 @@ def fetch_holders_gpa(endpoint: str, ca: str) -> pd.DataFrame:
 # ----------------------------------------------------------------------------
 @st.cache_data(ttl=900, show_spinner=False)
 def find_funder(endpoint: str, wallet: str, max_pages: int = 5):
-    """Cari wallet yang PERTAMA KALI mendanai `wallet` (fee payer transaksi
-    tertua). Wallet hasil bundling biasanya masih baru (sedikit transaksi),
-    jadi kita batasi max_pages — wallet lama/organik dilewati."""
-    before, last_sig = None, None
+    """Cari (wallet pendana pertama, blockTime tx pertama).
+    Wallet lama (> max_pages*1000 tx) -> (None, None)."""
+    before, last_sig, last_bt = None, None, None
     for _ in range(max_pages):
         params = [wallet, {"limit": 1000}]
         if before:
@@ -320,17 +347,18 @@ def find_funder(endpoint: str, wallet: str, max_pages: int = 5):
         try:
             res = rpc_call(endpoint, "getSignaturesForAddress", params, timeout=30)
         except Exception:
-            return None
+            return None, None
         if not res:
             break
         last_sig = res[-1]["signature"]
+        last_bt = res[-1].get("blockTime")
         if len(res) < 1000:
             break
         before = last_sig
     else:
-        return None  # > max_pages*1000 transaksi -> wallet lama, skip
+        return None, None  # wallet lama/organik, skip
     if not last_sig:
-        return None
+        return None, None
     try:
         tx = rpc_call(
             endpoint, "getTransaction",
@@ -339,16 +367,16 @@ def find_funder(endpoint: str, wallet: str, max_pages: int = 5):
             timeout=30,
         )
     except Exception:
-        return None
+        return None, last_bt
     if not tx:
-        return None
+        return None, last_bt
     try:
         keys = tx["transaction"]["message"]["accountKeys"]
         fee_payer = keys[0]["pubkey"] if isinstance(keys[0], dict) else keys[0]
     except Exception:
-        return None
+        return None, last_bt
     if fee_payer and fee_payer != wallet:
-        return fee_payer
+        return fee_payer, last_bt
     # fee payer = wallet itu sendiri -> cari pengirim SOL di instruksi
     try:
         for ins in tx["transaction"]["message"].get("instructions", []):
@@ -357,24 +385,28 @@ def find_funder(endpoint: str, wallet: str, max_pages: int = 5):
             if parsed.get("type") == "transfer" and info.get("destination") == wallet:
                 src = info.get("source")
                 if src and src != wallet:
-                    return src
+                    return src, last_bt
     except Exception:
         pass
-    return None
+    return None, last_bt
 
 
 def detect_clusters(endpoint: str, top_holders: pd.DataFrame, supply: float,
-                    progress_cb=None) -> pd.DataFrame:
-    """Kelompokkan top holder berdasarkan wallet pendana pertama yang sama."""
-    funders: dict[str, str | None] = {}
+                    progress_cb=None):
+    """Kelompokkan top holder berdasarkan wallet pendana pertama yang sama.
+    Return (cluster_df, wallet_info_df dengan first_tx_time)."""
+    funders: dict = {}
+    first_time: dict = {}
     wallets = top_holders["owner"].tolist()
     for i, w in enumerate(wallets):
-        funders[w] = find_funder(endpoint, w)
+        f, bt = find_funder(endpoint, w)
+        funders[w] = f
+        first_time[w] = bt
         if progress_cb:
             progress_cb((i + 1) / len(wallets), w)
         time.sleep(0.12)  # jaga rate limit Helius free tier (10 req/s)
 
-    groups: dict[str, list[str]] = {}
+    groups: dict = {}
     for w, f in funders.items():
         if f:
             groups.setdefault(f, []).append(w)
@@ -383,7 +415,6 @@ def detect_clusters(endpoint: str, top_holders: pd.DataFrame, supply: float,
     rows = []
     for funder, members in groups.items():
         total_ui = sum(amt.get(m, 0.0) for m in members)
-        # jika funder sendiri juga holder, masukkan ke cluster
         if funder in amt and funder not in members:
             members = members + [funder]
             total_ui += amt[funder]
@@ -398,7 +429,9 @@ def detect_clusters(endpoint: str, top_holders: pd.DataFrame, supply: float,
     cdf = pd.DataFrame(rows)
     if not cdf.empty:
         cdf = cdf.sort_values("pct_supply", ascending=False).reset_index(drop=True)
-    return cdf
+    info = pd.DataFrame({"owner": wallets,
+                         "first_tx_time": [first_time.get(w) for w in wallets]})
+    return cdf, info
 
 
 # ----------------------------------------------------------------------------
@@ -597,6 +630,78 @@ elif prev:
     holder_delta = int(total_holders - prev["total_holders"])
     holder_delta_src = f"snapshot lokal {prev_key}"
 
+# --- Data tambahan: RugCheck, mint authority, OHLCV, konsentrasi -------------
+from core import concentration, health_score, score_color, score_label
+
+rpc_endpoint = (f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
+                if helius_key else custom_rpc)
+
+with st.spinner("Mengambil data keamanan (RugCheck) & harga historis..."):
+    rug = fetch_rugcheck(ca)
+    mint_info = fetch_mint_info(rpc_endpoint, ca) if rpc_endpoint else {}
+    pair0 = (market.get("pair_addresses") or [None])[0]
+    ohlcv = fetch_ohlcv(pair0) if pair0 else pd.DataFrame()
+
+mint_auth = mint_info.get("mint_authority") or rug.get("mint_authority")
+freeze_auth = mint_info.get("freeze_authority") or rug.get("freeze_authority")
+creator = rug.get("creator")
+creator_balance = rug.get("creator_balance") or 0.0
+creator_pct = creator_balance / (10 ** decimals) / supply * 100 if supply else 0
+lp_locked_pct = rug.get("lp_locked_pct")
+liq_pct_mc = (market["liquidity_usd"] / marketcap * 100) if marketcap else 0
+
+conc = concentration(df, supply)
+
+# --- Cluster scan + fresh wallet (dipindah ke awal agar masuk skor) ----------
+clusters, wallet_info, bundles = None, None, None
+max_cluster_pct, fresh_pct = None, None
+if scan_clusters and rpc_endpoint:
+    top_n = df.sort_values("ui_amount", ascending=False).head(n_scan)
+    cache_key = f"clusters::{ca}::{n_scan}"
+    if cache_key not in st.session_state:
+        pbar = st.progress(0.0, text="🕸️ Scan cluster & umur wallet...")
+
+        def _cb(frac, wallet):
+            pbar.progress(frac, text=f"🕸️ Scan cluster & fresh wallet... {frac*100:.0f}%")
+
+        st.session_state[cache_key] = detect_clusters(
+            rpc_endpoint, top_n[["owner", "ui_amount"]], supply, progress_cb=_cb)
+        pbar.empty()
+    clusters, wallet_info = st.session_state[cache_key]
+    bundles = (clusters[(clusters["wallets"] >= 2) & (clusters["cex"] == "")]
+               if clusters is not None and not clusters.empty else clusters)
+    if bundles is not None and not bundles.empty:
+        max_cluster_pct = float(bundles.iloc[0]["pct_supply"])
+    else:
+        max_cluster_pct = 0.0
+    # fresh wallet: first tx < 7 hari
+    if wallet_info is not None and not wallet_info.empty:
+        now_ts = time.time()
+        known = wallet_info.dropna(subset=["first_tx_time"])
+        if len(known) > 0:
+            fresh_n = int((now_ts - known["first_tx_time"] < 7 * 86400).sum())
+            fresh_pct = fresh_n / len(wallet_info) * 100
+            fresh_wallets_n = fresh_n
+        else:
+            fresh_wallets_n = 0
+
+# --- Skor Kesehatan 0-100 -----------------------------------------------------
+ratio_pct_val = ratio * 100 if n_dust else 100.0
+score, score_parts = health_score(
+    ratio_pct=ratio_pct_val, real_mc_pct=real_mc_pct, top10_pct=conc["top10"],
+    liq_pct_mc=liq_pct_mc, lp_locked_pct=lp_locked_pct, mint_auth=mint_auth,
+    freeze_auth=freeze_auth, holder_delta=holder_delta,
+    max_cluster_pct=max_cluster_pct, fresh_pct=fresh_pct)
+s_color, s_label = score_color(score), score_label(score)
+
+# update snapshot dengan skor & data baru (untuk page Riwayat)
+snapshot.update({"score": score, "top10_pct": round(conc["top10"], 2),
+                 "liq_pct_mc": round(liq_pct_mc, 2),
+                 "max_cluster_pct": (round(max_cluster_pct, 2)
+                                     if max_cluster_pct is not None else None),
+                 "symbol": market.get("symbol", "?")})
+history = save_snapshot(ca, snapshot)
+
 # ----------------------------------------------------------------------------
 # CSS compact — semua muat 1 halaman
 # ----------------------------------------------------------------------------
@@ -637,9 +742,20 @@ def green_strip(html):
 
 
 # ----------------------------------------------------------------------------
-# BARIS 1 — Header token + metrics utama (1 baris)
+# BARIS 1 — Skor + header token + metrics utama (1 baris)
 # ----------------------------------------------------------------------------
-h0, h1c, h2c, h3c, h4c, h5c, h6c = st.columns([0.5, 2.2, 1.3, 1.4, 1.4, 1.4, 1.6])
+hs, h0, h1c, h2c, h3c, h4c, h5c, h6c = st.columns(
+    [1.1, 0.5, 1.9, 1.2, 1.3, 1.3, 1.3, 1.4])
+with hs:
+    st.markdown(
+        f"""<div style="text-align:center;border:2px solid {s_color};
+        border-radius:10px;padding:4px 2px;">
+        <div style="font-size:1.5rem;font-weight:800;color:{s_color};
+        line-height:1;">{score}</div>
+        <div style="font-size:0.62rem;color:{s_color};font-weight:700;">
+        {s_label}</div>
+        <div style="font-size:0.55rem;opacity:0.6;">Skor Kesehatan</div>
+        </div>""", unsafe_allow_html=True)
 with h0:
     if market.get("image"):
         st.image(market["image"], width=44)
@@ -679,6 +795,53 @@ else:
         f"{REAL_RATIO_OK*100:.0f}%. Mayoritas holder = wallet debu (&lt;${dust_limit:g}) "
         f"dari airdrop/bundling — holder count <b>semu</b>. Real hanya pegang "
         f"<b>{real_mc_pct:.2f}%</b> MC. Hati-hati!")
+
+# --- Strip keamanan gabungan: dev, authority, LP, konsentrasi, fresh ---------
+sec_bad, sec_ok = [], []
+if rug.get("rugged"):
+    sec_bad.append("<b>RUGCHECK: token ditandai RUGGED!</b>")
+if mint_auth:
+    sec_bad.append(f"mint authority AKTIF (<code>{str(mint_auth)[:6]}…</code>)")
+else:
+    sec_ok.append("mint auth dicabut")
+if freeze_auth:
+    sec_bad.append("freeze authority AKTIF")
+else:
+    sec_ok.append("freeze auth dicabut")
+if creator is not None:
+    if creator_pct > 5:
+        sec_bad.append(f"dev masih pegang {creator_pct:.1f}% supply")
+    elif creator_pct > 0:
+        sec_ok.append(f"dev pegang {creator_pct:.2f}%")
+    else:
+        sec_ok.append("dev balance 0")
+if lp_locked_pct is not None:
+    if lp_locked_pct < 50:
+        sec_bad.append(f"LP locked/burned hanya {lp_locked_pct:.0f}%")
+    else:
+        sec_ok.append(f"LP locked {lp_locked_pct:.0f}%")
+if liq_pct_mc < 3:
+    sec_bad.append(f"likuiditas tipis ({liq_pct_mc:.1f}% MC — susah exit)")
+else:
+    sec_ok.append(f"likuiditas {liq_pct_mc:.1f}% MC")
+if conc["top10"] > 30:
+    sec_bad.append(f"Top-10 holder pegang {conc['top10']:.1f}% supply")
+else:
+    sec_ok.append(f"Top-10 = {conc['top10']:.1f}% supply")
+if fresh_pct is not None and fresh_pct > 50:
+    sec_bad.append(f"{fresh_pct:.0f}% top holder = wallet fresh (<7 hari)")
+elif fresh_pct is not None:
+    sec_ok.append(f"fresh wallet {fresh_pct:.0f}%")
+for r in rug.get("risks") or []:
+    if (r.get("level") or "").lower() in ("danger", "warn", "warning"):
+        sec_bad.append(f"RugCheck: {r['name']}")
+
+if sec_bad:
+    red_strip("🛡️ <b>Keamanan:</b> ⚠️ " + " · ".join(sec_bad) +
+              (("<span style='opacity:0.7'> | ✅ " + " · ".join(sec_ok) +
+                "</span>") if sec_ok else ""))
+else:
+    green_strip("🛡️ <b>Keamanan:</b> ✅ " + " · ".join(sec_ok))
 
 # ----------------------------------------------------------------------------
 # BARIS 3 — 3 kolom: Depth chart | Dust vs Real pie | Day-by-day
@@ -750,6 +913,14 @@ with col_c:
         figh.add_trace(go.Scatter(
             x=hist_df["date"], y=hist_df["holders"], mode="lines+markers",
             name="Holder", line=dict(color="#38bdf8", width=2.5)))
+        # overlay harga (GeckoTerminal) di tanggal yang sama -> deteksi divergensi
+        if not ohlcv.empty:
+            oh = ohlcv[ohlcv["date"].isin(set(hist_df["date"]))]
+            if len(oh) >= 2:
+                figh.add_trace(go.Scatter(
+                    x=oh["date"], y=oh["close"], mode="lines", name="Harga",
+                    yaxis="y3", line=dict(color="#facc15", width=1.5,
+                                          dash="dot")))
         figh.add_trace(go.Bar(
             x=hist_df["date"], y=hist_df["delta"].fillna(0), yaxis="y2",
             opacity=0.55, name="Δ",
@@ -763,47 +934,67 @@ with col_c:
                            yaxis=dict(tickfont=dict(size=9)),
                            yaxis2=dict(overlaying="y", side="right",
                                        visible=False),
+                           yaxis3=dict(overlaying="y", side="right",
+                                       visible=False),
                            xaxis=dict(tickfont=dict(size=9)))
         st.plotly_chart(figh, use_container_width=True,
                         config={"displayModeBar": False})
         arrow = "📈" if latest_delta > 0 else ("📉" if latest_delta < 0 else "➖")
         color = "#22c55e" if latest_delta > 0 else ("#ef4444" if latest_delta < 0 else "#94a3b8")
+        extra = ""
+        # divergensi: holder naik tapi harga turun (atau sebaliknya)
+        if not ohlcv.empty and len(ohlcv) >= 2:
+            price_chg = ohlcv["close"].iloc[-1] - ohlcv["close"].iloc[-2]
+            if latest_delta > 0 and price_chg < 0:
+                extra = " · ⚠️ holder naik tapi harga turun (distribusi?)"
+            elif latest_delta < 0 and price_chg > 0:
+                extra = " · holder turun, harga naik (akumulasi whale?)"
         st.markdown(f"<span style='color:{color};font-size:0.85rem'>"
                     f"{arrow} <b>{latest_delta:+,}</b> ({pct_chg:+.2f}%) vs hari "
-                    f"sebelumnya</span>", unsafe_allow_html=True)
+                    f"sebelumnya{extra}</span>", unsafe_allow_html=True)
     else:
         st.caption("Belum ada riwayat ≥2 hari. Snapshot hari ini tercatat — "
                    "delta muncul mulai besok.")
 
 # ----------------------------------------------------------------------------
-# BARIS 4 — Bundler / Cluster (strip ringkas + tabel di expander)
+# BARIS 3.5 — Buy/Sell pressure + konsentrasi + info pasar (1 baris metrics)
 # ----------------------------------------------------------------------------
-rpc_endpoint = (f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
-                if helius_key else custom_rpc)
-clusters = None
-bundles = None
+tx24 = (market.get("txns") or {}).get("h24") or {}
+tx1 = (market.get("txns") or {}).get("h1") or {}
+buys, sells = int(tx24.get("buys") or 0), int(tx24.get("sells") or 0)
+bs_ratio = buys / sells if sells else float("inf")
+vol24 = float((market.get("volume") or {}).get("h24") or 0)
+
+b1, b2, b3, b4, b5, b6 = st.columns(6)
+b1.metric("🟢 Buy 24h", f"{buys:,}",
+          f"1h: {int(tx1.get('buys') or 0):,}", delta_color="off")
+b2.metric("🔴 Sell 24h", f"{sells:,}",
+          f"1h: {int(tx1.get('sells') or 0):,}", delta_color="off")
+b3.metric("Buy/Sell Ratio", f"{bs_ratio:.2f}" if sells else "∞",
+          "tekanan beli" if bs_ratio >= 1 else "tekanan jual",
+          delta_color="normal" if bs_ratio >= 1 else "inverse")
+b4.metric("Vol 24h", f"${vol24:,.0f}")
+b5.metric("Top-10 Holder", f"{conc['top10']:.1f}%",
+          "supply" + (" ⚠️" if conc['top10'] > 30 else ""), delta_color="off")
+b6.metric("Likuiditas", f"${market['liquidity_usd']:,.0f}",
+          f"{liq_pct_mc:.1f}% MC" + (
+              f" | LP lock {lp_locked_pct:.0f}%" if lp_locked_pct is not None
+              else ""), delta_color="off")
+
+# ----------------------------------------------------------------------------
+# BARIS 4 — Cluster strip (hasil scan yang sudah dilakukan di atas)
+# ----------------------------------------------------------------------------
 if scan_clusters and rpc_endpoint:
-    top_n = df.sort_values("ui_amount", ascending=False).head(n_scan)
-    cache_key = f"clusters::{ca}::{n_scan}"
-    if cache_key not in st.session_state:
-        pbar = st.progress(0.0, text="🕸️ Melacak funder top holder...")
-
-        def _cb(frac, wallet):
-            pbar.progress(frac, text=f"🕸️ Scan cluster... {frac*100:.0f}%")
-
-        st.session_state[cache_key] = detect_clusters(
-            rpc_endpoint, top_n[["owner", "ui_amount"]], supply, progress_cb=_cb)
-        pbar.empty()
-    clusters = st.session_state[cache_key]
-    bundles = (clusters[(clusters["wallets"] >= 2) & (clusters["cex"] == "")]
-               if clusters is not None and not clusters.empty else clusters)
-
     if bundles is None or bundles.empty:
+        fresh_txt = (f" · Fresh wallet: {fresh_pct:.0f}%"
+                     if fresh_pct is not None else "")
         green_strip(f"🕸️ <b>Cluster:</b> ✅ Tidak terdeteksi bundler di antara "
-                    f"{len(top_n)} top holder.")
+                    f"{n_scan} top holder.{fresh_txt}")
     else:
         worst = bundles.iloc[0]
         bundled_supply = bundles["pct_supply"].sum()
+        fresh_txt = (f" · Fresh wallet: {fresh_pct:.0f}% dari top holder"
+                     if fresh_pct is not None else "")
         if worst["pct_supply"] > cluster_warn_pct:
             red_strip(
                 f"🕸️ 🚨 <b>BUNDLER TERDETEKSI</b> — cluster terbesar: "
@@ -811,14 +1002,74 @@ if scan_clusters and rpc_endpoint:
                 f"<code>{worst['funder'][:6]}…</code>) pegang "
                 f"<b>{worst['pct_supply']:.2f}%</b> supply (ambang "
                 f"{cluster_warn_pct:g}%). Total {len(bundles)} cluster = "
-                f"{bundled_supply:.2f}% supply. Bisa dump kapan saja!")
+                f"{bundled_supply:.2f}% supply. Bisa dump kapan saja!{fresh_txt}")
         else:
             green_strip(
                 f"🕸️ <b>Cluster:</b> ✅ {len(bundles)} cluster kecil, terbesar "
                 f"{worst['pct_supply']:.2f}% supply (ambang {cluster_warn_pct:g}%). "
-                f"Total {bundled_supply:.2f}% — wajar.")
+                f"Total {bundled_supply:.2f}% — wajar.{fresh_txt}")
 elif scan_clusters:
     st.caption("🕸️ Cluster scan: butuh Helius API key / custom RPC.")
+
+# ----------------------------------------------------------------------------
+# BARIS 5 — Quick links + Share ke X
+# ----------------------------------------------------------------------------
+verdict_emoji = "✅" if (n_dust == 0 or ratio > REAL_RATIO_OK) else "🚨"
+cluster_txt_share = ""
+if bundles is not None and not bundles.empty:
+    w0 = bundles.iloc[0]
+    cluster_txt_share = (f"🕸️ Cluster terbesar: {int(w0['wallets'])} wallet "
+                         f"= {w0['pct_supply']:.1f}% supply\n")
+elif bundles is not None:
+    cluster_txt_share = "🕸️ Tidak ada bundler terdeteksi\n"
+
+share_text = (
+    f"${market['symbol']} — Holder Analysis {verdict_emoji}\n\n"
+    f"🧬 Skor Kesehatan: {score}/100 ({s_label.split()[0]})\n"
+    f"👥 Holder: {total_holders:,}"
+    + (f" ({holder_delta:+,} vs kemarin)" if holder_delta is not None else "")
+    + "\n"
+    f"💎 Real (≥${dust_limit:g}): {n_real:,} ({real_mc_pct:.1f}% MC)\n"
+    f"🪙 Dust (<${dust_limit:g}): {n_dust:,}\n"
+    f"📊 Top-10: {conc['top10']:.1f}% supply · Liq: {liq_pct_mc:.1f}% MC\n"
+    + cluster_txt_share +
+    f"💰 MC: ${marketcap:,.0f}\n\n"
+    f"{ca}"
+)
+import urllib.parse as _up
+share_url = "https://twitter.com/intent/tweet?text=" + _up.quote(share_text)
+
+lk = st.columns([1.2, 1, 1, 1, 1, 1, 2.8])
+lk[0].markdown(
+    f"""<a href="{share_url}" target="_blank" style="text-decoration:none;">
+    <div style="background:#000;border:1px solid #333;border-radius:8px;
+    padding:5px 10px;text-align:center;color:#fff;font-size:0.8rem;
+    font-weight:700;">𝕏 Share</div></a>""", unsafe_allow_html=True)
+
+
+def _link_btn(col, label, url):
+    col.markdown(
+        f"""<a href="{url}" target="_blank" style="text-decoration:none;">
+        <div style="background:rgba(128,128,128,0.12);border:1px solid
+        rgba(128,128,128,0.3);border-radius:8px;padding:5px 8px;
+        text-align:center;font-size:0.75rem;">{label}</div></a>""",
+        unsafe_allow_html=True)
+
+
+_link_btn(lk[1], "GMGN", f"https://gmgn.ai/sol/token/{ca}")
+_link_btn(lk[2], "DexScreener", market.get("url") or
+          f"https://dexscreener.com/solana/{ca}")
+_link_btn(lk[3], "Solscan", f"https://solscan.io/token/{ca}#analytics_holder")
+_link_btn(lk[4], "RugCheck", f"https://rugcheck.xyz/tokens/{ca}")
+_link_btn(lk[5], "Birdeye", f"https://birdeye.so/token/{ca}?chain=solana")
+
+with st.expander("🧬 Rincian Skor Kesehatan"):
+    sp = pd.DataFrame(
+        [{"Komponen": n, "Poin": f"{p:.1f}", "Maks": m, "Nilai": ket}
+         for n, p, m, ket in score_parts])
+    st.dataframe(sp, use_container_width=True, hide_index=True)
+    st.caption("Skor = penjumlahan komponen. ≥70 SEHAT · 45-69 WASPADA · "
+               "<45 BAHAYA. Heuristik — bukan nasihat finansial, DYOR!")
 
 # ----------------------------------------------------------------------------
 # DETAIL — semua tabel di dalam expander (klik untuk buka)
@@ -884,6 +1135,38 @@ with ex2:
                        "dilewati. Bundler multi-hop bisa lolos.")
         else:
             st.caption("Tidak ada cluster terdeteksi / scan dimatikan.")
+    with st.expander("🎯 Holder Concentration & Dev Info"):
+        cc = pd.DataFrame([
+            {"Grup": "Top 1-5", "% Supply": f"{conc['top5']:.2f}%"},
+            {"Grup": "Top 6-10", "% Supply": f"{conc['top6_10']:.2f}%"},
+            {"Grup": "Top 11-25", "% Supply": f"{conc['top11_25']:.2f}%"},
+            {"Grup": "Top 26-50", "% Supply": f"{conc['top26_50']:.2f}%"},
+            {"Grup": "Top 51-100", "% Supply": f"{conc['top51_100']:.2f}%"},
+            {"Grup": "TOTAL Top-100", "% Supply": f"{conc['top100']:.2f}%"},
+        ])
+        st.dataframe(cc, use_container_width=True, hide_index=True)
+        if creator:
+            st.markdown(
+                f"**👨‍💻 Dev/Creator:** `{creator}`  \n"
+                f"Sisa holding: **{creator_pct:.2f}%** supply · "
+                f"Mint auth: {'⚠️ AKTIF' if mint_auth else '✅ dicabut'} · "
+                f"Freeze auth: {'⚠️ AKTIF' if freeze_auth else '✅ dicabut'}")
+        if rug.get("risks"):
+            st.caption("RugCheck risks: " + "; ".join(
+                f"{r['name']} ({r.get('level','?')})"
+                for r in rug["risks"][:8]))
+        if wallet_info is not None and not wallet_info.empty:
+            known = wallet_info.dropna(subset=["first_tx_time"])
+            if len(known) > 0:
+                import datetime as _dt2
+                fresh_tbl = known.copy()
+                fresh_tbl["umur_hari"] = ((time.time() -
+                                           fresh_tbl["first_tx_time"]) / 86400)
+                n7 = int((fresh_tbl["umur_hari"] < 7).sum())
+                n30 = int((fresh_tbl["umur_hari"] < 30).sum())
+                st.caption(f"🐣 Fresh wallet (top {len(wallet_info)} holder): "
+                           f"{n7} wallet < 7 hari, {n30} wallet < 30 hari. "
+                           f"Wallet lama (>5rb tx) tidak terdata umurnya.")
 
 # Footer ringkas
 foot = (f"DexScreener (harga/MC) + Helius (holder) + Solscan (riwayat) | "
