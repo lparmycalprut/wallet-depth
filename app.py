@@ -1097,3 +1097,14 @@ if exclude_lp and lp_wallets:
 if holder_delta_src:
     foot += f" | Holder Δ: {holder_delta_src}"
 st.caption(foot)
+
+# After analysis finishes, scroll back to the top so the header isn't cut off
+if analyze:
+    components.html("""<script>
+    const doc = window.parent.document;
+    const scroller = doc.querySelector('[data-testid="stAppViewContainer"] > .main')
+                  || doc.querySelector('[data-testid="stMain"]')
+                  || doc.querySelector('[data-testid="stAppViewContainer"]');
+    if (scroller) { setTimeout(() => scroller.scrollTo({top: 0}), 300); }
+    window.parent.scrollTo({top: 0});
+    </script>""", height=0)
