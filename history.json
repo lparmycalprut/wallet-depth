@@ -1,32 +1,32 @@
 {
  "AkchGAUdXXRGHt3HXaHbTvw3JLGUwtJRmYnkG66wpump": {
   "2026-07-26": {
-   "total_holders": 6213,
-   "dust": 4354,
-   "real": 1859,
-   "real_mc_pct": 87.10131337726918,
-   "dust_mc_pct": 1.4162154020667603,
-   "marketcap": 578598.0,
-   "price": 0.0006017,
+   "total_holders": 6193,
+   "dust": 4370,
+   "real": 1823,
+   "real_mc_pct": 86.63648925877872,
+   "dust_mc_pct": 1.4476793580604337,
+   "marketcap": 560403.0,
+   "price": 0.0005828,
    "tiers": {
-    ">$10": 1859,
-    ">$100": 583,
-    ">$1K": 98,
+    ">$10": 1823,
+    ">$100": 566,
+    ">$1K": 95,
     ">$10K": 5,
     ">$100K": 0,
     ">$1M": 0
    },
-   "ts": "2026-07-26T17:32:02",
-   "score": 87,
+   "ts": "2026-07-26T17:57:08",
+   "score": 72,
    "top10_pct": 18.29,
-   "liq_pct_mc": 13.82,
-   "max_cluster_pct": 0.0,
-   "symbol": "looong",
-   "buys24": 9874,
-   "sells24": 9212,
-   "vol24": 1377913.68,
    "top5_pct": 11.51,
-   "top100_pct": 53.14
+   "top100_pct": 53.18,
+   "liq_pct_mc": 14.04,
+   "symbol": "looong",
+   "buys24": 9611,
+   "sells24": 8833,
+   "vol24": 1330314.81,
+   "source": "cron"
   }
  }
 }
