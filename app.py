@@ -678,9 +678,11 @@ else:
 
 # --- Liquidity strip: neutral, per-pool detail (LP can be split across DEXes)
 pools = market.get("pairs_detail") or []
+total_pool_liq = sum(p["liq"] for p in pools) or 1
 pool_txt = " · ".join(
     f"<a href='{p['url']}' target='_blank' style='color:inherit'>"
-    f"{p['dex'].capitalize()}</a> ${p['liq']:,.0f} ({p['quote']})"
+    f"{p['dex'].capitalize()}</a> ${p['liq']:,.0f} "
+    f"(<b>{p['liq']/total_pool_liq*100:.1f}%</b>, {p['quote']})"
     for p in pools[:6] if p["liq"] > 0)
 lp_lock_txt = (f" · LP locked/burned (main pool per RugCheck): "
                f"<b>{lp_locked_pct:.0f}%</b>" if lp_locked_pct is not None else "")
@@ -858,35 +860,83 @@ elif scan_clusters:
     st.caption("🕸️ Cluster scan: needs a Helius API key / custom RPC.")
 
 # ----------------------------------------------------------------------------
-# Screenshot button (captures the page as PNG — attach it to your X post)
+# Share to X (formatted text) + dashboard screenshot in one flow
 # ----------------------------------------------------------------------------
+verdict_emoji = "✅" if (n_dust == 0 or ratio > REAL_RATIO_OK) else "🚨"
+cluster_txt_share = ""
+if bundles is not None and not bundles.empty:
+    w0 = bundles.iloc[0]
+    cluster_txt_share = (f"🕸️ Largest cluster: {int(w0['wallets'])} wallets "
+                         f"= {w0['pct_supply']:.1f}% supply\n")
+elif bundles is not None:
+    cluster_txt_share = "🕸️ No bundlers detected\n"
+
+share_text = (
+    f"${market['symbol']} — Holder Analysis {verdict_emoji}\n\n"
+    f"🧬 Health Score: {score}/100 ({s_label.split()[0]})\n"
+    f"👥 Holders: {total_holders:,}"
+    + (f" ({holder_delta:+,} vs yesterday)" if holder_delta is not None else "")
+    + "\n"
+    f"💎 Real (≥${dust_limit:g}): {n_real:,} ({real_mc_pct:.1f}% MC)\n"
+    f"🪙 Dust (<${dust_limit:g}): {n_dust:,}\n"
+    f"📊 Top-10: {conc['top10']:.1f}% supply · Liq: {liq_pct_mc:.1f}% MC\n"
+    + cluster_txt_share +
+    f"💰 MC: ${marketcap:,.0f}\n\n"
+    f"{ca}"
+)
+share_url = ("https://twitter.com/intent/tweet?text=" +
+             urllib.parse.quote(share_text))
+
 components.html(f"""
 <div style="display:flex;gap:8px;font-family:sans-serif;">
-<button onclick="capture()" style="background:#1d4ed8;color:#fff;border:none;
+<button onclick="shareX()" style="background:#000;color:#fff;border:1px solid #333;
 border-radius:8px;padding:7px 16px;font-size:13px;font-weight:700;
-cursor:pointer;">📸 Screenshot this dashboard (PNG)</button>
+cursor:pointer;">𝕏 Share (text + screenshot)</button>
+<button onclick="capture(false)" style="background:#1d4ed8;color:#fff;border:none;
+border-radius:8px;padding:7px 16px;font-size:13px;font-weight:700;
+cursor:pointer;">📸 Screenshot only (PNG)</button>
 <span id="msg" style="font-size:12px;color:#94a3b8;align-self:center;"></span>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
-function capture() {{
+const SHARE_URL = {json.dumps(share_url)};
+function capture(thenShare) {{
   const msg = document.getElementById('msg');
-  msg.textContent = 'Rendering…';
+  msg.textContent = 'Rendering screenshot…';
   const doc = window.parent.document;
   const target = doc.querySelector('[data-testid="stAppViewContainer"]')
                  || doc.querySelector('.main') || doc.body;
   html2canvas(target, {{useCORS: true, allowTaint: true, scale: 2,
     backgroundColor: getComputedStyle(doc.body).backgroundColor}})
   .then(function(canvas) {{
-    const a = document.createElement('a');
-    a.download = '{market["symbol"]}_holder_analysis.png';
-    a.href = canvas.toDataURL('image/png');
-    a.click();
-    msg.textContent = 'Saved! Attach it to your X post.';
+    canvas.toBlob(function(blob) {{
+      // 1) download PNG
+      const a = document.createElement('a');
+      a.download = '{market["symbol"]}_holder_analysis.png';
+      a.href = URL.createObjectURL(blob);
+      a.click();
+      // 2) also copy to clipboard so it can be pasted (Ctrl+V) into the X composer
+      try {{
+        navigator.clipboard.write([new ClipboardItem({{'image/png': blob}})]);
+        msg.textContent = thenShare
+          ? 'Screenshot saved & copied — paste (Ctrl+V) into the X composer!'
+          : 'Screenshot saved & copied to clipboard!';
+      }} catch(e) {{
+        msg.textContent = 'Screenshot saved! Attach it to your X post.';
+      }}
+      if (thenShare) {{
+        setTimeout(function() {{ window.open(SHARE_URL, '_blank'); }}, 600);
+      }}
+    }}, 'image/png');
   }}).catch(function(e) {{ msg.textContent = 'Failed: ' + e; }});
 }}
+function shareX() {{ capture(true); }}
 </script>
 """, height=42)
+st.caption("𝕏 Share opens the composer with the formatted stats and copies the "
+           "dashboard screenshot to your clipboard — just press Ctrl+V (Cmd+V) "
+           "in the tweet to attach it. (X doesn't allow auto-attaching images "
+           "via URL.)")
 
 # ----------------------------------------------------------------------------
 # DETAILS — open by default
@@ -987,22 +1037,44 @@ with ex2:
             st.caption("No clusters detected / scan disabled.")
     with st.expander("💧 Liquidity pools detail", expanded=True):
         if pools:
+            active = [p for p in pools if p["liq"] > 0]
             pl = pd.DataFrame([{
                 "DEX": p["dex"].capitalize(),
                 "Pool": sol_link(p["pair"]) if p["pair"] else "",
                 "Quote": p["quote"],
                 "Liquidity": f"${p['liq']:,.0f}",
+                "% of Total LP": f"{p['liq']/total_pool_liq*100:.1f}%",
                 "Chart": p["url"],
-            } for p in pools if p["liq"] > 0])
+            } for p in active])
             st.dataframe(pl, use_container_width=True, hide_index=True,
                          column_config={
                              "Pool": st.column_config.LinkColumn(
                                  "Pool", display_text=r"account/(.{6}).*"),
                              "Chart": st.column_config.LinkColumn(
                                  "Chart", display_text="DexScreener")})
-            st.caption(f"LP locked/burned (main pool, RugCheck): "
-                       f"{lp_locked_pct:.0f}%" if lp_locked_pct is not None
-                       else "LP lock data unavailable.")
+            # distribution bar
+            if len(active) > 1:
+                dist = go.Figure()
+                for p in active:
+                    dist.add_bar(y=["LP spread"], x=[p["liq"]],
+                                 name=f"{p['dex'].capitalize()} "
+                                      f"({p['liq']/total_pool_liq*100:.1f}%)",
+                                 orientation="h",
+                                 text=f"{p['dex'].capitalize()} "
+                                      f"{p['liq']/total_pool_liq*100:.1f}%",
+                                 textposition="inside")
+                dist.update_layout(barmode="stack", height=90,
+                                   margin=dict(t=5, b=5, l=5, r=5),
+                                   showlegend=False,
+                                   xaxis=dict(visible=False),
+                                   yaxis=dict(visible=False))
+                st.plotly_chart(dist, use_container_width=True,
+                                config={"displayModeBar": False})
+            st.caption((f"Total: ${total_pool_liq:,.0f} across {len(active)} "
+                        f"pool(s). LP locked/burned (main pool, RugCheck): "
+                        f"{lp_locked_pct:.0f}%") if lp_locked_pct is not None
+                       else f"Total: ${total_pool_liq:,.0f} across "
+                            f"{len(active)} pool(s). LP lock data unavailable.")
         else:
             st.caption("No pool data.")
     with st.expander("🧬 Health Score breakdown", expanded=True):
