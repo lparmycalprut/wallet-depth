@@ -1245,6 +1245,118 @@ if card_png:
                    "images from websites.)")
 
 # ----------------------------------------------------------------------------
+# ROW 4.5 — 📊 On-chain CVD (H4) + divergence detection
+# ----------------------------------------------------------------------------
+try:
+    from cvd import get_h4_series, fetch_h4_price, detect_divergence
+    cvd_s = get_h4_series(ca)
+except Exception:
+    cvd_s = None
+
+st.markdown("**📊 On-chain CVD (H4) — real swap flow from Helius**")
+if cvd_s and len(cvd_s["ts"]) >= 2:
+    import datetime as _dtm
+    _fmt_ts = lambda t: _dtm.datetime.utcfromtimestamp(t).strftime("%m-%d %Hh")
+    x_lbl = [_fmt_ts(t) for t in cvd_s["ts"]]
+    price_map = fetch_h4_price(pair0) if pair0 else {}
+    price_series = [price_map.get(t) for t in cvd_s["ts"]]
+
+    cc1, cc2 = st.columns([2, 1])
+    with cc1:
+        figc = go.Figure()
+        figc.add_trace(go.Scatter(x=x_lbl, y=cvd_s["cvd"], name="CVD (all)",
+                                  mode="lines+markers",
+                                  line=dict(color="#38bdf8", width=3)))
+        figc.add_trace(go.Scatter(x=x_lbl, y=cvd_s["whale"],
+                                  name=f"Whale CVD (≥3 SOL)",
+                                  mode="lines", line=dict(color="#c084fc",
+                                                          width=2)))
+        figc.add_trace(go.Scatter(x=x_lbl, y=cvd_s["retail"],
+                                  name="Retail CVD",
+                                  mode="lines", line=dict(color="#64748b",
+                                                          width=1.5,
+                                                          dash="dot")))
+        if any(p is not None for p in price_series):
+            figc.add_trace(go.Scatter(
+                x=x_lbl, y=price_series, name="Price", yaxis="y2",
+                mode="lines", line=dict(color="#facc15", width=1.5,
+                                        dash="dash")))
+        figc.update_layout(height=260, margin=dict(t=10, b=0, l=0, r=0),
+                           legend=dict(orientation="h", font=dict(size=10)),
+                           yaxis=dict(title="Δ SOL", tickfont=dict(size=9)),
+                           yaxis2=dict(overlaying="y", side="right",
+                                       visible=False),
+                           xaxis=dict(tickfont=dict(size=9)))
+        st.plotly_chart(figc, use_container_width=True,
+                        config={"displayModeBar": False})
+    with cc2:
+        net = cvd_s["cvd"][-1]
+        wnet = cvd_s["whale"][-1]
+        rnet = cvd_s["retail"][-1]
+        st.metric("Net CVD (window)", f"{net:+,.1f} SOL",
+                  "net buying" if net >= 0 else "net selling",
+                  delta_color="normal" if net >= 0 else "inverse")
+        st.metric("🐋 Whale CVD (≥3 SOL swaps)", f"{wnet:+,.1f} SOL",
+                  "whales accumulating" if wnet >= 0 else "whales exiting",
+                  delta_color="normal" if wnet >= 0 else "inverse")
+        st.metric("🐟 Retail CVD", f"{rnet:+,.1f} SOL", delta_color="off")
+        if (wnet >= 0) != (rnet >= 0):
+            who = ("whales BUY what retail sells — stealth accumulation"
+                   if wnet >= 0 else
+                   "whales SELL into retail buying — distribution to retail")
+            st.markdown(f"<span style='color:"
+                        f"{'#22c55e' if wnet >= 0 else '#ef4444'};"
+                        f"font-size:0.82rem'>⚡ {who}</span>",
+                        unsafe_allow_html=True)
+
+    # --- pivot-based divergence (needs enough H4 bars) ---
+    p_ok = [p for p in price_series if p is not None]
+    if len(cvd_s["ts"]) >= 7 and len(p_ok) == len(price_series):
+        divs = detect_divergence(price_series, cvd_s["cvd"])
+        divs += [dict(dv, src="whale") for dv in
+                 detect_divergence(price_series, cvd_s["whale"])]
+        shown = set()
+        for dv in divs:
+            key = (dv["type"], dv["kind"], dv.get("src", "all"))
+            if key in shown:
+                continue
+            shown.add(key)
+            src = "Whale CVD" if dv.get("src") == "whale" else "CVD"
+            rng = f"{x_lbl[dv['i1']]} → {x_lbl[dv['i2']]}"
+            if dv["type"] == "bullish":
+                green_strip(f"📈 <b>{dv['kind'].upper()} BULLISH divergence "
+                            f"({src})</b> · {rng} — {dv['detail']}")
+            else:
+                red_strip(f"📉 <b>{dv['kind'].upper()} BEARISH divergence "
+                          f"({src})</b> · {rng} — {dv['detail']}")
+        if not divs:
+            st.caption("No price/CVD divergence at the last confirmed pivots. "
+                       "Pivots need 2 bars of confirmation (non-repainting).")
+    else:
+        st.caption(f"Divergence detection unlocks at ≥7 H4 bars "
+                   f"(now: {len(cvd_s['ts'])}). The 4-hourly cron keeps "
+                   f"collecting — check back in a day.")
+    upd = cvd_s.get("updated")
+    upd_txt = (_dtm.datetime.utcfromtimestamp(upd).strftime("%m-%d %H:%M UTC")
+               if upd else "?")
+    gap_txt = (" ⚠️ history gap (very active token — some swaps between "
+               "cron runs were missed)" if cvd_s.get("gap") else "")
+    st.caption(f"CVD = cumulative (buys − sells) in SOL, from on-chain swaps "
+               f"via Helius (definite direction, no aggressor guessing). "
+               f"Swaps <0.05 SOL filtered as bot noise; whale = ≥3 SOL. "
+               f"Last update: {upd_txt} (auto every 4h via cron).{gap_txt}")
+else:
+    if ca in _wl:
+        st.caption("📊 CVD data is still empty for this token — the 4-hourly "
+                   "cron will start filling it (or run "
+                   "`python scripts/update_cvd.py` manually). Requires the "
+                   "CA to be on the watchlist.")
+    else:
+        st.caption("📊 CVD tracking requires this CA to be on the "
+                   "**watchlist** (the 4-hourly cron only collects swaps "
+                   "for watched tokens). Add it above.")
+
+# ----------------------------------------------------------------------------
 # DETAILS — open by default
 # ----------------------------------------------------------------------------
 ex1, ex2 = st.columns(2)

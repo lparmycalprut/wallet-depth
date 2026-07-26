@@ -1,0 +1,36 @@
+name: CVD update (4-hourly)
+
+on:
+  schedule:
+    - cron: "20 */4 * * *"   # every 4 hours at :20
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  cvd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install requests pandas
+
+      - name: Update CVD buckets
+        env:
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+        run: python scripts/update_cvd.py 80
+
+      - name: Commit cvd.json
+        run: |
+          git config user.name "cvd-bot"
+          git config user.email "actions@github.com"
+          git pull --rebase || true
+          git add cvd.json
+          git diff --cached --quiet || git commit -m "chore: cvd update $(date -u +%FT%H:%M)"
+          git push
