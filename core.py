@@ -167,7 +167,7 @@ def get_supply(helius_key: str, ca: str):
 
 
 def concentration(df: pd.DataFrame, supply: float) -> dict:
-    """% supply yang dipegang Top 1-5 / 6-10 / 11-25 / 26-50 / 51-100."""
+    """% of supply held by Top 1-5 / 6-10 / 11-25 / 26-50 / 51-100."""
     s = df.sort_values("ui_amount", ascending=False)["ui_amount"].values
     def seg(a, b):
         return float(s[a:b].sum()) / supply * 100 if supply and len(s) > a else 0.0
@@ -190,31 +190,31 @@ def health_score(*, ratio_pct, real_mc_pct, top10_pct, liq_pct_mc,
         p = 10.0
     else:
         p = clamp((ratio_pct - 10) / (60 - 10), 0, 1) * 20
-    br.append(("Rasio real/dust", p, 20,
+    br.append(("Real/dust ratio", p, 20,
                f"{ratio_pct:.0f}%" if ratio_pct is not None else "n/a"))
     # 2. Real % MC (maks 10)
     p = clamp((real_mc_pct or 0) / 60, 0, 1) * 10
-    br.append(("Real holder % MC", p, 10, f"{real_mc_pct:.1f}% MC"))
+    br.append(("Real holders % MC", p, 10, f"{real_mc_pct:.1f}% MC"))
     # 3. Konsentrasi top10 (maks 15) — makin kecil makin bagus
     p = clamp((45 - (top10_pct or 45)) / (45 - 10), 0, 1) * 15
-    br.append(("Konsentrasi Top-10", p, 15, f"{top10_pct:.1f}% supply"))
+    br.append(("Top-10 concentration", p, 15, f"{top10_pct:.1f}% supply"))
     # 4. Cluster terbesar (maks 15)
     if max_cluster_pct is None:
-        p, note = 7.5, "belum discan"
+        p, note = 7.5, "not scanned"
     else:
         p = clamp((10 - max_cluster_pct) / 10, 0, 1) * 15
         note = f"{max_cluster_pct:.1f}% supply"
     br.append(("Bundler/cluster", p, 15, note))
     # 5. Fresh wallet di top holder (maks 10)
     if fresh_pct is None:
-        p, note = 5.0, "belum discan"
+        p, note = 5.0, "not scanned"
     else:
         p = clamp((60 - fresh_pct) / 60, 0, 1) * 10
         note = f"{fresh_pct:.0f}% fresh"
     br.append(("Fresh wallets", p, 10, note))
     # 6. Likuiditas vs MC (maks 10)
     p = clamp((liq_pct_mc or 0) / 12, 0, 1) * 10
-    br.append(("Likuiditas/MC", p, 10, f"{liq_pct_mc:.1f}%"))
+    br.append(("Liquidity/MC", p, 10, f"{liq_pct_mc:.1f}%"))
     # 7. LP locked/burned (maks 5)
     if lp_locked_pct is None:
         p, note = 2.5, "n/a"
@@ -233,7 +233,7 @@ def health_score(*, ratio_pct, real_mc_pct, top10_pct, liq_pct_mc,
     else:
         p = 5.0 if holder_delta > 0 else (2.0 if holder_delta == 0 else 0.0)
         note = f"{holder_delta:+,}"
-    br.append(("Tren holder", p, 5, note))
+    br.append(("Holder trend", p, 5, note))
 
     total = round(sum(x[1] for x in br))
     return total, br

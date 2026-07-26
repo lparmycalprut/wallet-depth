@@ -69,7 +69,7 @@ def holders_helius(key, ca):
         for a in accs:
             owners[a["owner"]] = owners.get(a["owner"], 0) + float(a["amount"])
         cursor = res.get("cursor")
-        print(f"  ...{len(owners):,} owner", end="\r")
+        print(f"  ...{len(owners):,} owners", end="\r")
         if not cursor or not accs:
             break
         time.sleep(0.15)
@@ -91,27 +91,27 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("ca", nargs="?", default="")
     ap.add_argument("--helius-key", default=cfg.get("helius_api_key") or "",
-                    help="Opsional jika sudah diisi di config.json")
+                    help="Optional if already set in config.json")
     ap.add_argument("--dust", type=float,
                     default=float(cfg.get("dust_limit_usd", DUST_LIMIT)))
     args = ap.parse_args()
 
     if not args.helius_key:
-        sys.exit("Helius API key belum ada. Isi di config.json "
-                 "(helius_api_key) atau pakai --helius-key.")
+        sys.exit("Missing Helius API key. Set it in config.json "
+                 "(helius_api_key) or pass --helius-key.")
 
-    ca = args.ca or input("Masukkan CA token Solana: ").strip()
+    ca = args.ca or input("Enter Solana token CA: ").strip()
     if not ca:
-        sys.exit("CA kosong.")
+        sys.exit("Empty CA.")
 
-    print(f"\n{BOLD}Fetch DexScreener...{END}")
+    print(f"\n{BOLD}Fetching DexScreener...{END}")
     m = dexscreener(ca)
     if not m:
-        sys.exit("Token tidak ditemukan di DexScreener.")
-    print(f"  {m['name']} (${m['symbol']}) | harga ${m['price']:.10f} | MC ${m['mc']:,.0f}")
+        sys.exit("Token not found on DexScreener.")
+    print(f"  {m['name']} (${m['symbol']}) | price ${m['price']:.10f} | MC ${m['mc']:,.0f}")
 
     dec, supply = decimals_of(args.helius_key, ca)
-    print(f"{BOLD}Fetch semua holder via Helius...{END}")
+    print(f"{BOLD}Fetching all holders via Helius...{END}")
     owners = holders_helius(args.helius_key, ca)
 
     vals = []
@@ -130,20 +130,20 @@ def main():
     real_pct = sum(real) / m["mc"] * 100 if m["mc"] else 0
 
     print(f"\n{BOLD}=== DUST vs REAL ==={END}")
-    print(f"  Total holder : {total:,}")
-    print(f"  Dust (<${args.dust:g})  : {len(dust):,}  -> {dust_pct:.2f}% dari MC")
-    print(f"  Real (>=${args.dust:g}) : {len(real):,}  -> {real_pct:.2f}% dari MC")
-    print(f"  Rasio real/dust: {ratio*100:,.1f}% (ambang {REAL_RATIO_OK*100:.0f}%)")
+    print(f"  Total holders: {total:,}")
+    print(f"  Dust (<${args.dust:g})  : {len(dust):,}  -> {dust_pct:.2f}% of MC")
+    print(f"  Real (>=${args.dust:g}) : {len(real):,}  -> {real_pct:.2f}% of MC")
+    print(f"  Real/dust ratio: {ratio*100:,.1f}% (threshold {REAL_RATIO_OK*100:.0f}%)")
     if not dust or ratio > REAL_RATIO_OK:
-        print(f"\n{GREEN}{BOLD}✅ HOLDER OK — real holder cukup dominan, "
-              f"memegang {real_pct:.2f}% marketcap.{END}")
+        print(f"\n{GREEN}{BOLD}✅ HOLDERS OK — real holders are dominant, "
+              f"controlling {real_pct:.2f}% of marketcap.{END}")
     else:
-        print(f"\n{RED}{BOLD}🚨 PERINGATAN — mayoritas holder adalah wallet debu! "
-              f"Real holder hanya {ratio*100:.1f}% dari dust holder "
-              f"dan cuma pegang {real_pct:.2f}% marketcap.{END}")
+        print(f"\n{RED}{BOLD}🚨 WARNING — most holders are dust wallets! "
+              f"Real holders are only {ratio*100:.1f}% of dust holders "
+              f"and control just {real_pct:.2f}% of marketcap.{END}")
 
     print(f"\n{BOLD}=== WALLET DEPTH BY THRESHOLD ==={END}")
-    print(f"  {'Tier':8} {'Wallet':>10} {'%Holder':>9} {'Nilai USD':>16} {'%MC':>8}")
+    print(f"  {'Tier':8} {'Wallet':>10} {'%Holders':>9} {'USD Value':>16} {'%MC':>8}")
     for label, thr in [(">$0", 0.0)] + TIERS:
         sub = [v for v in vals if v > thr]
         usd = sum(sub)
