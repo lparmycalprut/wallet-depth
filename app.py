@@ -518,6 +518,12 @@ if scan_clusters and rpc_endpoint:
             fresh_pct = fresh_n / len(wallet_info) * 100
 
 # Health score
+tx24 = (market.get("txns") or {}).get("h24") or {}
+tx1 = (market.get("txns") or {}).get("h1") or {}
+buys, sells = int(tx24.get("buys") or 0), int(tx24.get("sells") or 0)
+bs_ratio = buys / sells if sells else float("inf")
+vol24 = float((market.get("volume") or {}).get("h24") or 0)
+
 ratio_pct_val = ratio * 100 if n_dust else 100.0
 score, score_parts = health_score(
     ratio_pct=ratio_pct_val, real_mc_pct=real_mc_pct, top10_pct=conc["top10"],
@@ -530,7 +536,10 @@ snapshot.update({"score": score, "top10_pct": round(conc["top10"], 2),
                  "liq_pct_mc": round(liq_pct_mc, 2),
                  "max_cluster_pct": (round(max_cluster_pct, 2)
                                      if max_cluster_pct is not None else None),
-                 "symbol": market.get("symbol", "?")})
+                 "symbol": market.get("symbol", "?"),
+                 "buys24": buys, "sells24": sells, "vol24": vol24,
+                 "top5_pct": round(conc["top5"], 2),
+                 "top100_pct": round(conc["top100"], 2)})
 history = save_snapshot(ca, snapshot)
 
 # ----------------------------------------------------------------------------
@@ -793,9 +802,11 @@ with col_c:
         if not ohlcv.empty and len(ohlcv) >= 2:
             price_chg = ohlcv["close"].iloc[-1] - ohlcv["close"].iloc[-2]
             if latest_delta > 0 and price_chg < 0:
-                extra = " · ⚠️ holders up but price down (distribution?)"
+                extra = (" · ⚠️ divergence: holders ↑ price ↓ — see "
+                         "🔬 Divergence Check below")
             elif latest_delta < 0 and price_chg > 0:
-                extra = " · holders down, price up (whale accumulation?)"
+                extra = (" · divergence: holders ↓ price ↑ — see "
+                         "🔬 Divergence Check below")
         st.markdown(f"<span style='color:{color};font-size:0.85rem'>"
                     f"{arrow} <b>{latest_delta:+,}</b> ({pct_chg:+.2f}%) vs "
                     f"previous day{extra}</span>", unsafe_allow_html=True)
@@ -806,12 +817,6 @@ with col_c:
 # ----------------------------------------------------------------------------
 # ROW 3.5 — Buy/Sell pressure + concentration + market info
 # ----------------------------------------------------------------------------
-tx24 = (market.get("txns") or {}).get("h24") or {}
-tx1 = (market.get("txns") or {}).get("h1") or {}
-buys, sells = int(tx24.get("buys") or 0), int(tx24.get("sells") or 0)
-bs_ratio = buys / sells if sells else float("inf")
-vol24 = float((market.get("volume") or {}).get("h24") or 0)
-
 b1, b2, b3, b4, b5, b6 = st.columns(6)
 b1.metric("🟢 Buys 24h", f"{buys:,}", f"1h: {int(tx1.get('buys') or 0):,}",
           delta_color="off")
@@ -825,6 +830,212 @@ b5.metric("Top-10 Holders", f"{conc['top10']:.1f}%",
           "of supply" + (" ⚠️" if conc['top10'] > 30 else ""), delta_color="off")
 b6.metric("Liquidity", f"${market['liquidity_usd']:,.0f}",
           f"{liq_pct_mc:.1f}% MC", delta_color="off")
+
+# ----------------------------------------------------------------------------
+# ROW 3.7 — 🔬 Divergence Check: accumulation or not?
+# ----------------------------------------------------------------------------
+div_type = None
+div_holder_delta, div_price_pct = None, None
+if len(hist_df) >= 2 and not ohlcv.empty and len(ohlcv) >= 2:
+    div_holder_delta = int(hist_df["holders"].diff().iloc[-1])
+    _pc0, _pc1 = float(ohlcv["close"].iloc[-2]), float(ohlcv["close"].iloc[-1])
+    div_price_pct = (_pc1 / _pc0 - 1) * 100 if _pc0 else 0.0
+    if div_holder_delta < 0 and div_price_pct > 0:
+        div_type = "accumulation"     # holders down, price up
+    elif div_holder_delta > 0 and div_price_pct < 0:
+        div_type = "distribution"     # holders up, price down
+
+if div_type:
+    evidence = []   # (check, value, reading, +1 supports / -1 against / 0)
+    thesis = ("WHALE ACCUMULATION" if div_type == "accumulation"
+              else "DISTRIBUTION / EXIT")
+
+    # -- 1) WHO left/joined: dust vs real (needs previous local snapshot) ----
+    if prev:
+        d_dust = n_dust - prev["dust"]
+        d_real = n_real - prev["real"]
+        d_total = (d_dust + d_real) or 1
+        dust_share = abs(d_dust) / (abs(d_dust) + abs(d_real) or 1) * 100
+        val = (f"dust {d_dust:+,} · real {d_real:+,} "
+               f"(vs snapshot {prev_key})")
+        if div_type == "accumulation":
+            if d_real < 0 and abs(d_real) > abs(d_dust):
+                evidence.append(("Who left?", val,
+                                 "mostly REAL holders exited → their supply "
+                                 "was absorbed by bigger buyers", +1))
+            elif d_dust < 0 and dust_share >= 70:
+                evidence.append(("Who left?", val,
+                                 f"~{dust_share:.0f}% of the change is dust "
+                                 f"wallets → just churn, weak signal", -1))
+            else:
+                evidence.append(("Who left?", val,
+                                 "mixed dust/real exits", 0))
+        else:  # distribution
+            if d_dust > 0 and dust_share >= 70:
+                evidence.append(("Who joined?", val,
+                                 f"~{dust_share:.0f}% of new holders are dust "
+                                 f"→ airdrop/bot inflation, supports "
+                                 f"distribution", +1))
+            elif d_real > 0 and abs(d_real) > abs(d_dust):
+                evidence.append(("Who joined?", val,
+                                 "mostly REAL money entering → argues "
+                                 "against pure distribution", -1))
+            else:
+                evidence.append(("Who joined?", val, "mixed inflow", 0))
+    else:
+        evidence.append(("Who left/joined?", "n/a",
+                         "needs a previous local snapshot — scan this CA "
+                         "daily to unlock this check", 0))
+
+    # -- 2) Top-10 concentration change ---------------------------------------
+    prev_top10 = prev.get("top10_pct") if prev else None
+    if prev_top10 is not None:
+        d_conc = conc["top10"] - float(prev_top10)
+        val = f"{float(prev_top10):.1f}% → {conc['top10']:.1f}% ({d_conc:+.2f}pp)"
+        if div_type == "accumulation":
+            if d_conc > 0.5:
+                evidence.append(("Top-10 concentration", val,
+                                 "whales' share GREW → supply consolidating "
+                                 "into big hands", +1))
+            elif d_conc < -0.5:
+                evidence.append(("Top-10 concentration", val,
+                                 "whales' share SHRANK → absorber isn't the "
+                                 "top holders", -1))
+            else:
+                evidence.append(("Top-10 concentration", val,
+                                 "flat → no visible whale consolidation", 0))
+        else:
+            if d_conc < -0.5:
+                evidence.append(("Top-10 concentration", val,
+                                 "whales' share SHRANK → top holders are "
+                                 "offloading to retail", +1))
+            elif d_conc > 0.5:
+                evidence.append(("Top-10 concentration", val,
+                                 "whales still adding → not classic "
+                                 "distribution", -1))
+            else:
+                evidence.append(("Top-10 concentration", val, "flat", 0))
+    else:
+        evidence.append(("Top-10 concentration", f"{conc['top10']:.1f}% today",
+                         "no previous snapshot to compare — scan daily", 0))
+
+    # -- 3) Top-100 concentration change --------------------------------------
+    prev_top100 = prev.get("top100_pct") if prev else None
+    if prev_top100 is not None:
+        d_c100 = conc["top100"] - float(prev_top100)
+        val = f"{float(prev_top100):.1f}% → {conc['top100']:.1f}% ({d_c100:+.2f}pp)"
+        if div_type == "accumulation":
+            sup = +1 if d_c100 > 0.5 else (-1 if d_c100 < -0.5 else 0)
+        else:
+            sup = +1 if d_c100 < -0.5 else (-1 if d_c100 > 0.5 else 0)
+        evidence.append(("Top-100 concentration", val,
+                         "broader smart-money share " +
+                         ("grew" if d_c100 > 0 else
+                          ("shrank" if d_c100 < 0 else "flat")), sup))
+
+    # -- 4) Buy/Sell ratio ------------------------------------------------------
+    val = f"{bs_ratio:.2f} ({buys:,} buys / {sells:,} sells 24h)"
+    if div_type == "accumulation":
+        if bs_ratio >= 1.05:
+            evidence.append(("Buy/Sell ratio", val,
+                             "net buy pressure → consistent with real "
+                             "accumulation", +1))
+        elif bs_ratio <= 0.95:
+            evidence.append(("Buy/Sell ratio", val,
+                             "net SELL pressure → price rise likely thin/"
+                             "manipulated, not broad accumulation", -1))
+        else:
+            evidence.append(("Buy/Sell ratio", val, "balanced flow", 0))
+    else:
+        if bs_ratio <= 0.95:
+            evidence.append(("Buy/Sell ratio", val,
+                             "net sell pressure → supports distribution", +1))
+        elif bs_ratio >= 1.05:
+            evidence.append(("Buy/Sell ratio", val,
+                             "net buy pressure → argues against "
+                             "distribution", -1))
+        else:
+            evidence.append(("Buy/Sell ratio", val, "balanced flow", 0))
+
+    # -- 5) Volume health --------------------------------------------------------
+    vol_mc = vol24 / marketcap * 100 if marketcap else 0
+    val = f"${vol24:,.0f} = {vol_mc:.0f}% of MC"
+    if vol_mc >= 20:
+        evidence.append(("Volume health", val,
+                         "healthy, liquid volume → the move is 'real', not "
+                         "a few thin trades", +1 if div_type == "accumulation"
+                         else 0))
+    elif vol_mc < 5:
+        evidence.append(("Volume health", val,
+                         "very thin volume → price move is unreliable, "
+                         "could be a single wallet painting the chart", -1))
+    else:
+        evidence.append(("Volume health", val, "moderate volume", 0))
+
+    # -- 6) Volume vs previous day ------------------------------------------------
+    prev_vol = prev.get("vol24") if prev else None
+    if prev_vol:
+        d_vol = (vol24 / float(prev_vol) - 1) * 100
+        val = f"${float(prev_vol):,.0f} → ${vol24:,.0f} ({d_vol:+.0f}%)"
+        if div_type == "accumulation":
+            sup = +1 if d_vol > 30 else (0 if d_vol > -30 else -1)
+            note = ("rising volume with rising price → conviction" if sup > 0
+                    else ("volume fading → move losing steam" if sup < 0
+                          else "volume roughly flat"))
+        else:
+            sup = +1 if d_vol > 30 else 0
+            note = ("volume spike on the way down → active exit" if sup > 0
+                    else "no volume spike")
+        evidence.append(("Volume vs prev day", val, note, sup))
+
+    # -- verdict --------------------------------------------------------------
+    score_ev = sum(e[3] for e in evidence)
+    n_for = sum(1 for e in evidence if e[3] > 0)
+    n_against = sum(1 for e in evidence if e[3] < 0)
+    if score_ev >= 2:
+        v_txt = f"EVIDENCE LEANS: {thesis}"
+        if div_type == "accumulation":
+            v_bg, v_col, v_fg = "#14532d", "#22c55e", "#bbf7d0"
+        else:
+            v_bg, v_col, v_fg = "#7f1d1d", "#ef4444", "#fecaca"
+    elif score_ev <= -1:
+        v_txt = (f"LIKELY NOT {thesis} — probably dust churn / noise"
+                 if div_type == "accumulation" else
+                 f"LIKELY NOT {thesis} — inflow looks organic")
+        v_bg, v_col, v_fg = "#1e293b", "#94a3b8", "#cbd5e1"
+    else:
+        v_txt = f"INCONCLUSIVE — mixed evidence for {thesis.lower()}"
+        v_bg, v_col, v_fg = "#3f3411", "#facc15", "#fef08a"
+
+    st.markdown("**🔬 Divergence Check — accumulation or not?**")
+    dir_txt = ("holders ↓ " + f"{div_holder_delta:+,}" +
+               f" while price ↑ {div_price_pct:+.1f}%"
+               if div_type == "accumulation" else
+               "holders ↑ " + f"{div_holder_delta:+,}" +
+               f" while price ↓ {div_price_pct:+.1f}%")
+    st.markdown(
+        f"""<div style="background:{v_bg};border:2px solid {v_col};
+        border-radius:10px;padding:10px 16px;color:{v_fg};font-size:0.9rem;
+        margin-bottom:6px;">
+        <b style="color:{v_col};">{v_txt}</b> &nbsp;·&nbsp; {dir_txt}
+        &nbsp;·&nbsp; {n_for} check(s) for, {n_against} against
+        </div>""", unsafe_allow_html=True)
+
+    ev_df = pd.DataFrame([{
+        "Verdict": ("✅ supports" if s > 0 else
+                    ("❌ against" if s < 0 else "➖ neutral")),
+        "Check": c, "Value": v, "Reading": r,
+    } for c, v, r, s in evidence])
+    st.dataframe(ev_df, use_container_width=True, hide_index=True)
+    st.caption(
+        "How to read this: a holder/price divergence alone proves nothing. "
+        "It only becomes an accumulation signal when concentration rises, "
+        "buy pressure and volume confirm it, AND the wallets leaving are "
+        "real holders (not dust churn). Checks marked 'n/a' unlock after "
+        "you scan this CA on consecutive days. Heuristic — always DYOR.")
+elif len(hist_df) >= 2 and not ohlcv.empty:
+    st.caption("🔬 Divergence Check: no holder/price divergence today "
+               "(holders and price moved the same direction).")
 
 # ----------------------------------------------------------------------------
 # ROW 4 — Cluster strip
