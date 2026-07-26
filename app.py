@@ -887,97 +887,55 @@ share_text = (
 share_url = ("https://twitter.com/intent/tweet?text=" +
              urllib.parse.quote(share_text))
 
-components.html(f"""
-<div style="display:flex;gap:8px;font-family:sans-serif;">
-<button onclick="shareX()" style="background:#000;color:#fff;border:1px solid #333;
-border-radius:8px;padding:7px 16px;font-size:13px;font-weight:700;
-cursor:pointer;">𝕏 Share (text + screenshots)</button>
-<button onclick="capture(false)" style="background:#1d4ed8;color:#fff;border:none;
-border-radius:8px;padding:7px 16px;font-size:13px;font-weight:700;
-cursor:pointer;">📸 Screenshot full page (PNG)</button>
-<span id="msg" style="font-size:12px;color:#94a3b8;align-self:center;"></span>
-</div>
-<script>
-const SHARE_URL = {json.dumps(share_url)};
-const FNAME = '{market["symbol"]}_holder_analysis';
+# --- Build the custom share card image (self-designed, always renders clean)
+from share_card import build_share_card
 
-// Native pixel-perfect capture via getDisplayMedia (same as screen sharing).
-// We auto-scroll the page and grab a frame per screen -> several PNGs.
-async function capture(thenShare) {{
-  const msg = document.getElementById('msg');
-  const doc = window.parent.document;
-  const win = window.parent;
-  // the scrollable main area in Streamlit
-  const scroller = doc.querySelector('[data-testid="stAppViewContainer"] > .main')
-                || doc.querySelector('[data-testid="stMain"]')
-                || doc.querySelector('[data-testid="stAppViewContainer"]')
-                || doc.documentElement;
-  try {{
-    msg.textContent = 'Pick "This Tab" in the popup…';
-    const stream = await navigator.mediaDevices.getDisplayMedia({{
-      video: {{ displaySurface: 'browser' }},
-      preferCurrentTab: true,
-      selfBrowserSurface: 'include',
-      audio: false
-    }});
-    const track = stream.getVideoTracks()[0];
-    const video = document.createElement('video');
-    video.srcObject = stream;
-    await video.play();
-    await new Promise(r => setTimeout(r, 400));
+hist_dates_share = list(hist_df["date"].tail(7)) if len(hist_df) else []
+hist_holders_share = ([int(v) for v in hist_df["holders"].tail(7)]
+                      if len(hist_df) else [])
+cluster_card_txt = ""
+if bundles is not None and not bundles.empty:
+    _w0 = bundles.iloc[0]
+    cluster_card_txt = (f"Largest cluster {int(_w0['wallets'])} wallets = "
+                        f"{_w0['pct_supply']:.1f}% supply")
+elif bundles is not None:
+    cluster_card_txt = "No bundlers detected"
 
-    const vw = video.videoWidth, vh = video.videoHeight;
-    const viewH = scroller.clientHeight || win.innerHeight;
-    const totalH = scroller.scrollHeight;
-    const pages = Math.max(1, Math.ceil(totalH / viewH));
-    const oldScroll = scroller.scrollTop;
-    let firstBlob = null;
+try:
+    card_png = build_share_card(
+        symbol=market["symbol"], name=market["name"], ca=ca,
+        score=score, score_label=s_label.split()[0],
+        holders=total_holders, holder_delta=holder_delta,
+        n_real=n_real, n_dust=n_dust,
+        ratio_pct=(ratio * 100 if n_dust else 100.0),
+        real_mc_pct=real_mc_pct, marketcap=marketcap,
+        liquidity_usd=market["liquidity_usd"], liq_pct_mc=liq_pct_mc,
+        top10_pct=conc["top10"],
+        tier_labels=[t[0] for t in [(">$0", 0)] + TIERS],
+        tier_counts=[int((df["usd_value"] > thr).sum())
+                     for _, thr in [(">$0", 0)] + TIERS],
+        hist_dates=hist_dates_share, hist_holders=hist_holders_share,
+        buys24=buys, sells24=sells,
+        cluster_txt=cluster_card_txt,
+        verdict_ok=(n_dust == 0 or ratio > REAL_RATIO_OK))
+except Exception as _e:
+    card_png = None
+    st.caption(f"Share card generation failed: {_e}")
 
-    for (let i = 0; i < pages; i++) {{
-      scroller.scrollTo(0, i * viewH);
-      await new Promise(r => setTimeout(r, 650)); // wait for render
-      const c = document.createElement('canvas');
-      c.width = vw; c.height = vh;
-      c.getContext('2d').drawImage(video, 0, 0, vw, vh);
-      const blob = await new Promise(res => c.toBlob(res, 'image/png'));
-      if (i === 0) firstBlob = blob;
-      const a = document.createElement('a');
-      a.download = pages > 1 ? FNAME + '_' + (i+1) + 'of' + pages + '.png'
-                             : FNAME + '.png';
-      a.href = URL.createObjectURL(blob);
-      a.click();
-      msg.textContent = 'Captured ' + (i+1) + '/' + pages + '…';
-      await new Promise(r => setTimeout(r, 350));
-    }}
-
-    track.stop();
-    scroller.scrollTo(0, oldScroll);
-    try {{
-      await navigator.clipboard.write(
-        [new ClipboardItem({{'image/png': firstBlob}})]);
-      msg.textContent = pages + ' image(s) saved · first copied — '
-        + (thenShare ? 'paste (Ctrl+V) into the X composer!'
-                     : 'paste anywhere with Ctrl+V.');
-    }} catch(e) {{
-      msg.textContent = pages + ' image(s) saved!';
-    }}
-    if (thenShare) {{
-      setTimeout(() => win.open(SHARE_URL, '_blank'), 500);
-    }}
-  }} catch(err) {{
-    msg.textContent = (err && err.name === 'NotAllowedError')
-      ? 'Cancelled. Tip: choose "This Tab" and click Share.'
-      : 'Failed: ' + err;
-  }}
-}}
-function shareX() {{ capture(true); }}
-</script>
-""", height=42)
-st.caption('📸 uses the browser\'s NATIVE capture (pixel-perfect, exactly what '
-           'you see). A popup will ask what to share — pick **"This Tab"** '
-           'once, then the page auto-scrolls and saves one numbered PNG per '
-           'screen. 𝕏 Share then opens the composer with formatted stats; the '
-           'first image is on your clipboard — press Ctrl+V to attach it.')
+if card_png:
+    sc1, sc2 = st.columns([1.1, 1])
+    with sc1:
+        st.image(card_png, caption="Share card preview (1200×675 — X ready)")
+    with sc2:
+        st.download_button("⬇️ Download share card (PNG)", data=card_png,
+                           file_name=f"{market['symbol']}_holder_card.png",
+                           mime="image/png", use_container_width=True)
+        st.link_button("𝕏 Share to X (opens composer)", share_url,
+                       use_container_width=True)
+        st.caption("1️⃣ Download the card · 2️⃣ Click 𝕏 Share — the composer "
+                   "opens with the stats text pre-filled · 3️⃣ Attach the "
+                   "downloaded card image. (X doesn't allow auto-attaching "
+                   "images from websites.)")
 
 # ----------------------------------------------------------------------------
 # DETAILS — open by default
