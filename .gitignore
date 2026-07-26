@@ -1,0 +1,11 @@
+# JANGAN commit API key!
+config.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Streamlit secrets lokal
+.streamlit/secrets.toml
