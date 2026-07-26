@@ -3,3 +3,4 @@ requests
 pandas
 plotly
 base58
+curl_cffi

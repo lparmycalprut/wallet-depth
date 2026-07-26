@@ -60,6 +60,79 @@ def save_config(cfg: dict) -> None:
 
 CONFIG = load_config()
 
+# ----------------------------------------------------------------------------
+# History — snapshot holder per hari (disimpan di history.json)
+# ----------------------------------------------------------------------------
+HISTORY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "history.json")
+
+
+def load_history() -> dict:
+    try:
+        with open(HISTORY_PATH, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def save_snapshot(ca: str, snap: dict) -> dict:
+    """Simpan snapshot hari ini (overwrite jika hari yang sama dianalisa ulang)."""
+    from datetime import date
+    hist = load_history()
+    hist.setdefault(ca, {})[date.today().isoformat()] = snap
+    try:
+        with open(HISTORY_PATH, "w", encoding="utf-8") as f:
+            json.dump(hist, f, indent=1)
+    except Exception:
+        pass
+    return hist
+
+
+def delta_str(cur, prev, pct=False):
+    """Format perubahan: +123 / -45 / 0."""
+    if prev is None:
+        return None
+    d = cur - prev
+    sign = "+" if d > 0 else ""
+    return f"{sign}{d:,.2f}%" if pct else f"{sign}{d:,.0f}"
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_solscan_holder_history(ca: str) -> pd.DataFrame:
+    """Riwayat jumlah holder per hari dari endpoint internal Solscan
+    (sama dengan grafik 'Token Holder' di halaman analytics).
+    Butuh curl_cffi dengan impersonasi Safari untuk melewati Cloudflare.
+    Riwayat yang tersedia biasanya ±7 hari terakhir."""
+    try:
+        from curl_cffi import requests as creq
+    except ImportError:
+        return pd.DataFrame()
+    try:
+        r = creq.get(
+            "https://api-v2.solscan.io/v2/analytics/token/his-token-holders",
+            params={"address": ca},
+            impersonate="safari17_0",
+            headers={"origin": "https://solscan.io",
+                     "referer": "https://solscan.io/"},
+            timeout=20,
+        )
+        data = (r.json() or {}).get("data") or []
+    except Exception:
+        return pd.DataFrame()
+    rows = []
+    for it in data:
+        d = str(it.get("d_date", ""))
+        if len(d) == 8:
+            rows.append({
+                "date": f"{d[:4]}-{d[4:6]}-{d[6:]}",
+                "holders": int(it.get("num_holder") or 0),
+                "source": "Solscan",
+            })
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values("date").reset_index(drop=True)
+    return df
+
+
 # Di Streamlit Cloud, API key disimpan di Secrets (bukan di repo).
 # Secrets menimpa config.json jika ada.
 try:
@@ -484,6 +557,46 @@ dust_mc_pct = dust_usd / marketcap * 100 if marketcap else 0
 real_mc_pct = real_usd / marketcap * 100 if marketcap else 0
 ratio = (n_real / n_dust) if n_dust else float("inf")
 
+# --- Snapshot harian + perbandingan dengan hari sebelumnya -------------------
+from datetime import date, datetime
+
+tier_counts = {}
+for label, thr in TIERS:
+    tier_counts[label] = int((df["usd_value"] > thr).sum())
+
+snapshot = {
+    "total_holders": int(total_holders),
+    "dust": int(n_dust),
+    "real": int(n_real),
+    "real_mc_pct": float(real_mc_pct),
+    "dust_mc_pct": float(dust_mc_pct),
+    "marketcap": float(marketcap),
+    "price": float(price),
+    "tiers": tier_counts,
+    "ts": datetime.now().isoformat(timespec="seconds"),
+}
+history = save_snapshot(ca, snapshot)
+
+ca_hist = history.get(ca, {})
+today_key = date.today().isoformat()
+prev_days = sorted(k for k in ca_hist.keys() if k < today_key)
+prev_key = prev_days[-1] if prev_days else None
+prev = ca_hist.get(prev_key) if prev_key else None
+
+# --- Riwayat holder harian dari Solscan (grafik "Token Holder") --------------
+with st.spinner("Mengambil riwayat holder harian dari Solscan..."):
+    solscan_hist = fetch_solscan_holder_history(ca)
+
+# delta holder vs kemarin: prioritas data Solscan, fallback snapshot lokal
+holder_delta = None
+holder_delta_src = None
+if len(solscan_hist) >= 2:
+    holder_delta = int(solscan_hist.iloc[-1]["holders"] - solscan_hist.iloc[-2]["holders"])
+    holder_delta_src = f"Solscan: {solscan_hist.iloc[-2]['date']} → {solscan_hist.iloc[-1]['date']}"
+elif prev:
+    holder_delta = int(total_holders - prev["total_holders"])
+    holder_delta_src = f"snapshot lokal {prev_key}"
+
 # ----------------------------------------------------------------------------
 # Header token
 # ----------------------------------------------------------------------------
@@ -499,11 +612,106 @@ with c2:
 with c3:
     st.metric("Marketcap", f"${marketcap:,.0f}")
 with c4:
-    st.metric("Total Holder", f"{total_holders:,}")
+    st.metric("Total Holder", f"{total_holders:,}",
+              delta=(f"{holder_delta:+,} vs kemarin" if holder_delta is not None
+                     else None))
 
+if holder_delta_src:
+    st.caption(f"📈 Perubahan holder harian — sumber: {holder_delta_src}")
 if exclude_lp and lp_wallets:
     st.caption(f"ℹ️ {len(lp_wallets)} wallet liquidity pool dikecualikan "
                f"(≈ ${lp_value_usd:,.0f} nilai token di LP).")
+
+st.divider()
+
+# ----------------------------------------------------------------------------
+# Token Holder — perubahan day by day (ala Solscan "Token Holder")
+# ----------------------------------------------------------------------------
+st.header("📈 Token Holder — Day by Day")
+
+# Gabungkan: riwayat Solscan + snapshot lokal (analisa kita sendiri)
+hist_rows = []
+if not solscan_hist.empty:
+    hist_rows += solscan_hist.to_dict("records")
+known_dates = {r["date"] for r in hist_rows}
+for dkey in sorted(ca_hist.keys()):
+    if dkey not in known_dates:
+        hist_rows.append({"date": dkey,
+                          "holders": ca_hist[dkey]["total_holders"],
+                          "source": "Snapshot lokal"})
+hist_df = pd.DataFrame(hist_rows).sort_values("date").reset_index(drop=True)
+
+if len(hist_df) >= 2:
+    hist_df["delta"] = hist_df["holders"].diff()
+    latest_delta = hist_df["delta"].iloc[-1]
+    pct_chg = (latest_delta / hist_df["holders"].iloc[-2] * 100
+               if hist_df["holders"].iloc[-2] else 0)
+
+    hc1, hc2, hc3 = st.columns(3)
+    hc1.metric("Holder terbaru", f"{int(hist_df['holders'].iloc[-1]):,}")
+    hc2.metric("Perubahan vs hari sebelumnya", f"{int(latest_delta):+,}",
+               f"{pct_chg:+.2f}%")
+    total_chg = int(hist_df["holders"].iloc[-1] - hist_df["holders"].iloc[0])
+    hc3.metric(f"Perubahan sejak {hist_df['date'].iloc[0]}", f"{total_chg:+,}")
+
+    if latest_delta > 0:
+        st.success(f"📈 Holder **bertambah {int(latest_delta):+,}** "
+                   f"({pct_chg:+.2f}%) dibanding hari sebelumnya.")
+    elif latest_delta < 0:
+        st.markdown(
+            f"""<div style="background:#7f1d1d;border:2px solid #ef4444;
+            border-radius:10px;padding:12px 18px;color:#fecaca;">
+            📉 <b style="color:#f87171;">Holder BERKURANG {int(latest_delta):,}
+            ({pct_chg:+.2f}%)</b> dibanding hari sebelumnya — banyak wallet
+            keluar/jual habis. Perhatikan trennya.
+            </div>""", unsafe_allow_html=True)
+    else:
+        st.info("Holder tidak berubah dibanding hari sebelumnya.")
+
+    # Grafik: garis holder + bar perubahan harian
+    figh = go.Figure()
+    figh.add_trace(go.Scatter(
+        x=hist_df["date"], y=hist_df["holders"],
+        mode="lines+markers+text", name="Total holder",
+        text=[f"{int(v):,}" for v in hist_df["holders"]],
+        textposition="top center", line=dict(color="#38bdf8", width=3)))
+    figh.add_trace(go.Bar(
+        x=hist_df["date"], y=hist_df["delta"].fillna(0),
+        name="Perubahan harian", yaxis="y2", opacity=0.6,
+        marker=dict(color=["#22c55e" if (v or 0) >= 0 else "#ef4444"
+                           for v in hist_df["delta"].fillna(0)]),
+        text=[f"{int(v):+,}" if pd.notna(v) and v != 0 else ""
+              for v in hist_df["delta"]],
+        textposition="outside"))
+    figh.update_layout(
+        height=400, yaxis=dict(title="Total holder"),
+        yaxis2=dict(title="Δ harian", overlaying="y", side="right",
+                    showgrid=False),
+        legend=dict(orientation="h", y=1.12),
+        margin=dict(t=30, b=10))
+    st.plotly_chart(figh, use_container_width=True)
+
+    tbl = hist_df.copy()
+    tbl["Holder"] = tbl["holders"].map(lambda v: f"{int(v):,}")
+    tbl["Perubahan"] = tbl["delta"].map(
+        lambda v: f"{int(v):+,}" if pd.notna(v) else "—")
+    tbl["%"] = (hist_df["delta"] / hist_df["holders"].shift(1) * 100).map(
+        lambda v: f"{v:+.2f}%" if pd.notna(v) else "—")
+    st.dataframe(tbl[["date", "Holder", "Perubahan", "%", "source"]].rename(
+        columns={"date": "Tanggal", "source": "Sumber"}),
+        use_container_width=True, hide_index=True)
+    st.caption("Sumber: grafik 'Token Holder' Solscan (±7 hari terakhir) + "
+               "snapshot lokal dari analisa sebelumnya. Angka Solscan dihitung "
+               "termasuk semua token account, jadi bisa sedikit beda dengan "
+               "hitungan kami (yang menggabungkan per-owner & exclude LP).")
+elif len(hist_df) == 1:
+    st.info("Baru ada 1 titik data. Riwayat Solscan untuk token ini belum "
+            "tersedia — analisa lagi besok, perubahan day-by-day akan muncul "
+            "dari snapshot lokal.")
+else:
+    st.warning("Riwayat holder Solscan tidak tersedia untuk token ini "
+               "(endpoint diblokir/kosong). Snapshot lokal tetap dicatat "
+               "setiap analisa — perbandingan muncul mulai besok.")
 
 st.divider()
 
@@ -514,11 +722,18 @@ st.header("🧮 Dust Holder vs Real Holder")
 
 m1, m2, m3 = st.columns(3)
 m1.metric(f"🪙 Dust Holder (< ${dust_limit:g})", f"{n_dust:,}",
-          f"{dust_mc_pct:.2f}% dari marketcap", delta_color="off")
+          (f"{n_dust - prev['dust']:+,} vs {prev_key}" if prev else
+           f"{dust_mc_pct:.2f}% dari marketcap"),
+          delta_color="inverse" if prev else "off")
 m2.metric(f"💎 Real Holder (≥ ${dust_limit:g})", f"{n_real:,}",
-          f"{real_mc_pct:.2f}% dari marketcap", delta_color="off")
+          (f"{n_real - prev['real']:+,} vs {prev_key}" if prev else
+           f"{real_mc_pct:.2f}% dari marketcap"),
+          delta_color="normal" if prev else "off")
 m3.metric("Rasio Real / Dust", f"{ratio*100:,.1f}%" if n_dust else "∞",
           f"ambang: > {REAL_RATIO_OK*100:.0f}%", delta_color="off")
+if prev:
+    st.caption(f"Dust: {dust_mc_pct:.2f}% MC | Real: {real_mc_pct:.2f}% MC | "
+               f"Δ dibanding snapshot {prev_key}")
 
 if n_dust == 0 or ratio > REAL_RATIO_OK:
     st.success(

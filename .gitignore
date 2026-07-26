@@ -9,3 +9,4 @@ venv/
 
 # Streamlit secrets lokal
 .streamlit/secrets.toml
+history.json
