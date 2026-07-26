@@ -17,7 +17,7 @@ Repo git lokal sudah disiapkan (sudah `git init` + commit pertama).
 2. Dari folder `wallet-depth/`, jalankan:
 
 ```bash
-git remote add origin https://github.com/USERNAME-KAMU/wallet-depth.git
+git remote add origin https://github.com/lparmycalprut/wallet-depth.git
 git branch -M main
 git push -u origin main
 ```
@@ -58,7 +58,7 @@ auto-deploy juga.
 ## Menjalankan di komputer lain
 
 ```bash
-git clone https://github.com/USERNAME-KAMU/wallet-depth.git
+git clone https://github.com/lparmycalprut/wallet-depth.git
 cd wallet-depth
 cp config.example.json config.json   # lalu isi API key
 pip install -r requirements.txt
