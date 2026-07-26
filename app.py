@@ -358,6 +358,41 @@ if st.sidebar.button("💾 Save to config.json", use_container_width=True):
                  "cluster_scan_top_n": n_scan, "exclude_lp": exclude_lp})
     st.sidebar.success("Saved ✅")
 
+@st.cache_data(ttl=30, show_spinner=False)
+def fetch_watchlist_prices(cas: tuple) -> dict:
+    """Batch price fetch for the watchlist ticker (DexScreener, 1 request)."""
+    out = {}
+    if not cas:
+        return out
+    try:
+        r = requests.get("https://api.dexscreener.com/latest/dex/tokens/" +
+                         ",".join(cas[:30]), timeout=15)
+        pairs = (r.json() or {}).get("pairs") or []
+    except Exception:
+        return out
+    best = {}
+    for p in pairs:
+        addr = (p.get("baseToken") or {}).get("address")
+        liq = (p.get("liquidity") or {}).get("usd") or 0
+        if addr and (addr not in best or liq > best[addr][0]):
+            best[addr] = (liq, p)
+    for addr, (_, p) in best.items():
+        out[addr] = {
+            "symbol": (p.get("baseToken") or {}).get("symbol", "?"),
+            "price": float(p.get("priceUsd") or 0),
+            "chg24": float((p.get("priceChange") or {}).get("h24") or 0),
+            "mc": float(p.get("marketCap") or p.get("fdv") or 0),
+        }
+    return out
+
+
+def _fmt_price(v: float) -> str:
+    if v >= 1:
+        return f"${v:,.2f}"
+    s = f"{v:.10f}".rstrip("0")
+    return f"${s}"
+
+
 # ----------------------------------------------------------------------------
 # Main input
 # ----------------------------------------------------------------------------
@@ -365,15 +400,51 @@ st.title("📊 Wallet Depth by Threshold")
 st.caption("Solscan-style holder analytics — Dust vs Real holders for any "
            "Solana token. ⚙️ Settings live in the **sidebar** (» top-left).")
 
-ca = st.text_input("Solana token Contract Address (CA)", value="",
-                   placeholder="e.g. AkchGAUdXXRGHt3HXaHbTvw3JLGUwtJRmYnkG66wpump"
-                   ).strip()
-analyze = st.button("🔍 Analyze", type="primary", use_container_width=True)
-
-# Watchlist controls (below Analyze — add only tokens that pass your criteria)
+# Watchlist ticker bar — scrollable, clickable, live prices (30s cache)
 from watchlist import load_watchlist, add_to_watchlist, remove_from_watchlist
 
 _wl = load_watchlist()
+if _wl:
+    _prices = fetch_watchlist_prices(tuple(_wl.keys()))
+    chips = []
+    for _ca, _meta in _wl.items():
+        p = _prices.get(_ca)
+        sym = (p or {}).get("symbol") or _meta.get("symbol", "?")
+        if p:
+            chg = p["chg24"]
+            chg_col = "#22c55e" if chg >= 0 else "#ef4444"
+            arrow = "▲" if chg >= 0 else "▼"
+            body = (f"<span style='color:#e2e8f0;font-weight:700;'>{sym}</span>"
+                    f"<span style='color:#94a3b8;margin-left:6px;'>"
+                    f"{_fmt_price(p['price'])}</span>"
+                    f"<span style='color:{chg_col};margin-left:6px;"
+                    f"font-weight:700;'>{arrow}{abs(chg):.1f}%</span>")
+        else:
+            body = (f"<span style='color:#e2e8f0;font-weight:700;'>{sym}</span>"
+                    f"<span style='color:#64748b;margin-left:6px;'>n/a</span>")
+        chips.append(
+            f"<a href='?ca={_ca}' target='_self' style='text-decoration:none;'>"
+            f"<span style='display:inline-flex;align-items:center;"
+            f"background:#161b26;border:1px solid #2d3748;border-radius:9px;"
+            f"padding:5px 12px;margin-right:8px;font-size:0.8rem;"
+            f"white-space:nowrap;cursor:pointer;'>⭐ {body}</span></a>")
+    st.markdown(
+        "<div style='display:flex;overflow-x:auto;padding:4px 2px 8px 2px;"
+        "scrollbar-width:thin;-webkit-overflow-scrolling:touch;'>"
+        + "".join(chips) + "</div>",
+        unsafe_allow_html=True)
+
+# clicking a ticker chip sets ?ca=... -> prefill + auto-analyze
+qp_ca = st.query_params.get("ca", "").strip()
+
+ca = st.text_input("Solana token Contract Address (CA)", value=qp_ca,
+                   placeholder="e.g. AkchGAUdXXRGHt3HXaHbTvw3JLGUwtJRmYnkG66wpump"
+                   ).strip()
+analyze = st.button("🔍 Analyze", type="primary", use_container_width=True)
+if ca and qp_ca == ca:
+    analyze = True  # auto-run when opened from the ticker
+
+# Watchlist controls (below Analyze — add only tokens that pass your criteria)
 wcol1, wcol2 = st.columns([1, 3])
 if ca and ca in _wl:
     if wcol1.button("💔 Remove from watchlist", use_container_width=True):
