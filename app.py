@@ -1393,9 +1393,31 @@ if run_cvd_auto and rpc_endpoint:
             time.sleep(0.1)
         return swaps
 
-    with st.spinner(f"Fetching live swaps (last {cvd_window}h, max 40 "
-                    f"pages)…"):
-        live_swaps = fetch_live_swaps(ca, pair0, cvd_window) if pair0 else []
+    in_watchlist = ca in _wl
+    if in_watchlist:
+        # Incremental top-up: only fetches swaps NEWER than the last stored
+        # one, then reads the complete window from the 24h raw-swap store.
+        from cvd import update_token_cvd, get_recent_swaps
+
+        @st.cache_data(ttl=600, show_spinner=False)
+        def topup_and_load(ca: str, pool: str, hours: int):
+            try:
+                update_token_cvd(helius_key, ca, pool, max_pages=40)
+            except Exception:
+                pass
+            return get_recent_swaps(ca, hours)
+
+        with st.spinner(f"Topping up CVD store (incremental) & loading "
+                        f"last {cvd_window}h…"):
+            live_swaps = topup_and_load(ca, pair0, cvd_window) \
+                if pair0 else []
+        if not live_swaps:  # store still empty -> fall back to live fetch
+            in_watchlist = False
+    if not in_watchlist:
+        with st.spinner(f"Fetching live swaps (last {cvd_window}h, max 40 "
+                        f"pages)…"):
+            live_swaps = fetch_live_swaps(ca, pair0, cvd_window) \
+                if pair0 else []
 
     if live_swaps:
         ldf = pd.DataFrame(live_swaps,
@@ -1656,12 +1678,23 @@ if run_cvd_auto and rpc_endpoint:
             pass
 
         if covered_h < cvd_window * 0.9:
-            st.caption(f"⚠️ Very active token: page cap reached "
-                       f"{covered_h:.1f}h of the requested {cvd_window}h. "
-                       f"Open the 📊 CVD page for a deeper fetch.")
-        st.caption(f"Swaps <{_MINSOL:g} SOL filtered · whale ≥{_WHSOL:g} SOL "
-                   f"· cached 10 min · full analysis (top wallets, biggest "
-                   f"swaps, size brackets) on the **📊 CVD** page.")
+            if in_watchlist:
+                st.caption(f"ℹ️ Store covers {covered_h:.1f}h so far — it "
+                           f"fills up incrementally (2-hourly cron + every "
+                           f"Analyze). Within ~{max(0, cvd_window - covered_h):.0f}h "
+                           f"the full {cvd_window}h window will be complete "
+                           f"and stay complete.")
+            else:
+                st.caption(f"⚠️ Very active token: page cap reached "
+                           f"{covered_h:.1f}h of the requested {cvd_window}h. "
+                           f"💡 Add it to the **watchlist** — the incremental "
+                           f"store then builds a COMPLETE window that never "
+                           f"gets cut off.")
+        src_txt = ("incremental store (complete window)" if in_watchlist
+                   else "live fetch")
+        st.caption(f"Source: {src_txt} · swaps <{_MINSOL:g} SOL filtered · "
+                   f"whale ≥{_WHSOL:g} SOL · full analysis (top wallets, "
+                   f"biggest swaps, size brackets) on the **📊 CVD** page.")
     else:
         st.caption("No swaps found in the window (or fetch failed).")
 elif not run_cvd_auto:

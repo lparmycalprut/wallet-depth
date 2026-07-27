@@ -130,7 +130,9 @@ def bucketize(swaps) -> dict:
 
 def update_token_cvd(api_key: str, ca: str, pool: str, *,
                      max_pages=40) -> dict:
-    """Incremental update: fetch swaps since last stored signature."""
+    """Incremental update: fetch swaps since last stored signature.
+    Also keeps raw swaps of the last 24h (with wallets) so the dashboard
+    can show a COMPLETE window without a huge live fetch."""
     state = load_cvd()
     entry = state.get(ca) or {"pool": pool, "buckets": {}}
     stop_sig = entry.get("newest_sig")
@@ -146,6 +148,11 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
                 old[k] = old.get(k, 0) + c[k]
         else:
             entry["buckets"][b] = c
+    # --- raw swap store (last 24h, incl. wallet) for complete-window UI ----
+    cutoff_raw = time.time() - 24 * 3600
+    raw = entry.get("swaps") or []
+    raw.extend([list(s) for s in swaps])
+    entry["swaps"] = [s for s in raw if (s[2] or 0) >= cutoff_raw]
     if new_sig:
         entry["newest_sig"] = new_sig
         entry["newest_ts"] = new_ts
@@ -160,6 +167,18 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
     save_cvd(state)
     return {"new_swaps": len(swaps), "buckets": len(entry["buckets"]),
             "gap": entry["gap"]}
+
+
+def get_recent_swaps(ca: str, hours: int = 12):
+    """Raw swaps [(side, sol, ts, wallet)] from the store, last N hours."""
+    state = load_cvd()
+    entry = state.get(ca)
+    if not entry or not entry.get("swaps"):
+        return []
+    cutoff = time.time() - hours * 3600
+    out = [tuple(s) for s in entry["swaps"] if (s[2] or 0) >= cutoff]
+    out.sort(key=lambda s: s[2])
+    return out
 
 
 # ---------------------------------------------------------------------------
