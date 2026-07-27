@@ -14,7 +14,35 @@ import requests
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WATCHLIST_PATH = os.path.join(BASE_DIR, "watchlist.json")
+PENDING_PATH = os.path.join(BASE_DIR, "watchlist_pending.json")
 GITHUB_REPO = "lparmycalprut/wallet-depth"
+
+
+def _load_pending() -> list:
+    try:
+        with open(PENDING_PATH, "r", encoding="utf-8") as f:
+            return json.load(f) or []
+    except Exception:
+        return []
+
+
+def _save_pending(ops: list) -> None:
+    try:
+        with open(PENDING_PATH, "w", encoding="utf-8") as f:
+            json.dump(ops, f)
+    except Exception:
+        pass
+
+
+def _apply_ops(wl: dict, ops: list) -> dict:
+    for op in ops:
+        if op.get("op") == "add":
+            wl.setdefault(op["ca"], {"symbol": op.get("symbol", "?"),
+                                     "note": op.get("note", ""),
+                                     "added": op.get("added", "")})
+        elif op.get("op") == "remove":
+            wl.pop(op["ca"], None)
+    return wl
 
 
 def _github_token() -> str:
@@ -86,39 +114,42 @@ def _github_push(wl: dict, action: str) -> bool:
 
 
 def load_watchlist() -> dict:
-    """Repo copy is the source of truth (survives redeploys), BUT if the
-    local file was written in the last 2 minutes (user just clicked
-    add/remove), prefer it — the GitHub API can serve a stale read for a
-    few seconds after a commit."""
-    try:
-        import time as _t
-        if os.path.exists(WATCHLIST_PATH) and \
-                _t.time() - os.path.getmtime(WATCHLIST_PATH) < 120:
+    """Merge: repo copy (durable truth) + pending journal (recent local
+    ops). Pending ops always win; they are dropped only once the repo
+    reflects them. An add/remove therefore never visually reverts."""
+    remote = _github_pull()
+    if remote is None:  # offline -> local file
+        try:
             with open(WATCHLIST_PATH, "r", encoding="utf-8") as f:
-                return json.load(f) or {}
+                remote = json.load(f) or {}
+        except Exception:
+            remote = {}
+    pending = _load_pending()
+    if pending:
+        still = []
+        for op in pending:
+            in_repo = op["ca"] in remote
+            if (op["op"] == "add" and in_repo) or \
+               (op["op"] == "remove" and not in_repo):
+                continue  # repo caught up -> journal entry done
+            still.append(op)
+        if still != pending:
+            _save_pending(still)
+        if still:
+            remote = _apply_ops(remote, still)
+            # opportunistic flush: try committing the merged state
+            if _github_token() and _github_push(remote, "sync pending ops"):
+                _save_pending([])
+    try:
+        with open(WATCHLIST_PATH, "w", encoding="utf-8") as f:
+            json.dump(remote, f, indent=1)
     except Exception:
         pass
-    remote = _github_pull()
-    if remote is not None:
-        try:  # keep local copy in sync for cron/local runs
-            with open(WATCHLIST_PATH, "w", encoding="utf-8") as f:
-                json.dump(remote, f, indent=1)
-            # don't let this sync-write count as a "fresh user edit"
-            old = __import__("time").time() - 3600
-            os.utime(WATCHLIST_PATH, (old, old))
-        except Exception:
-            pass
-        return remote
-    try:
-        with open(WATCHLIST_PATH, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
+    return remote
 
 
 def save_watchlist(wl: dict, action: str = "update") -> bool:
-    """Write locally AND commit to GitHub (if token available).
-    Returns True if the change is durable (committed to repo)."""
+    """Write locally AND commit to GitHub. Returns True if committed."""
     try:
         with open(WATCHLIST_PATH, "w", encoding="utf-8") as f:
             json.dump(wl, f, indent=1)
@@ -127,17 +158,29 @@ def save_watchlist(wl: dict, action: str = "update") -> bool:
     return _github_push(wl, action)
 
 
+def _journal(op: dict) -> None:
+    """Append an op to the pending journal; an add cancels earlier removes
+    for the same CA and vice versa (last op wins)."""
+    pending = [p for p in _load_pending() if p.get("ca") != op.get("ca")]
+    pending.append(op)
+    _save_pending(pending)
+
+
 def add_to_watchlist(ca: str, symbol: str = "?", note: str = "") -> bool:
+    entry = {"symbol": symbol, "note": note,
+             "added": datetime.now().strftime("%Y-%m-%d")}
+    # journal FIRST -> the change can never visually revert (stale reads,
+    # failed commits, redeploys); journal is cleaned once repo reflects it
+    _journal({"op": "add", "ca": ca, **entry})
     wl = load_watchlist()
-    if ca not in wl:
-        wl[ca] = {"symbol": symbol, "note": note,
-                  "added": datetime.now().strftime("%Y-%m-%d")}
-    elif symbol and symbol != "?":
+    wl[ca] = {**entry, **(wl.get(ca) or {})}
+    if symbol and symbol != "?":
         wl[ca]["symbol"] = symbol
     return save_watchlist(wl, f"add {symbol} ({ca[:8]}…)")
 
 
 def remove_from_watchlist(ca: str) -> bool:
+    _journal({"op": "remove", "ca": ca})
     wl = load_watchlist()
     meta = wl.pop(ca, None) or {}
     return save_watchlist(wl, f"remove {meta.get('symbol', '?')} "

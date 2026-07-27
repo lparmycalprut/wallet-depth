@@ -36,7 +36,12 @@ with st.expander("➕ Add a CA manually", expanded=not wl):
                              label_visibility="collapsed").strip()
     if c3.button("Add", use_container_width=True, type="primary"):
         if new_ca:
-            add_to_watchlist(new_ca, note=new_note)
+            if not add_to_watchlist(new_ca, note=new_note):
+                st.warning("Added, but GitHub commit failed — set "
+                           "`github_token` in Streamlit Secrets so changes "
+                           "survive restarts.")
+                import time as _t
+                _t.sleep(2.5)
             st.rerun()
         else:
             st.warning("CA is empty.")
@@ -106,7 +111,12 @@ for _, r in df.iterrows():
     c[9].write(r["Note"] or "")
     c[10].write(str(r["Snapshots"]))
     if c[11].button("🗑️", key=f"rm_{r['ca']}", help="Remove from watchlist"):
-        remove_from_watchlist(r["ca"])
+        if not remove_from_watchlist(r["ca"]):
+            st.warning("Removed, but GitHub commit failed — set "
+                       "`github_token` in Streamlit Secrets so changes "
+                       "survive restarts.")
+            import time as _t
+            _t.sleep(2.5)
         st.rerun()
 
 st.caption("🗑️ removes the CA from the watchlist (its history is kept in "

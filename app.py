@@ -505,7 +505,12 @@ if ca and qp_ca == ca:
 wcol1, wcol2 = st.columns([1, 3])
 if ca and ca in _wl:
     if wcol1.button("💔 Remove from watchlist", use_container_width=True):
-        remove_from_watchlist(ca)
+        _committed = remove_from_watchlist(ca)
+        if not _committed:
+            st.warning("Removed, but could NOT commit to GitHub — add "
+                       "`github_token` to Streamlit Secrets to make it "
+                       "permanent.")
+            time.sleep(2.5)
         st.rerun()
     wcol2.caption(f"⭐ This CA is on your watchlist (added "
                   f"{_wl[ca].get('added', '?')}) — snapshotted daily by the "
@@ -518,7 +523,15 @@ elif ca:
             _sym = (_m or {}).get("symbol", "?")
         except Exception:
             pass
-        add_to_watchlist(ca, symbol=_sym)
+        _committed = add_to_watchlist(ca, symbol=_sym)
+        if not _committed:
+            st.warning(
+                "⭐ Added, but could NOT commit to GitHub — the change may "
+                "revert after an app restart. Add `github_token = \"...\"` "
+                "to your Streamlit Cloud **Secrets** (a fine-grained PAT "
+                "with Contents read/write) to make watchlist changes "
+                "permanent.")
+            time.sleep(2.5)
         st.rerun()
     wcol2.caption("Add only if the token passes your criteria — watchlisted "
                   "CAs get a daily automatic snapshot (00:00 WIB).")
