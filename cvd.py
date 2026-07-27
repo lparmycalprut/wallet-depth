@@ -169,6 +169,62 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
             "gap": entry["gap"]}
 
 
+# ---------------------------------------------------------------------------
+# Wallet behaviour profiling — pure accumulators / distributors
+# ---------------------------------------------------------------------------
+def wallet_profiles(swaps, *, pure_tol=0.05):
+    """Classify wallets by behaviour within the window.
+    swaps: iterable of (side, sol, ts, wallet).
+    profile: 'pure_accum' (sells <= 5% of buys), 'pure_dist'
+    (buys <= 5% of sells), or 'two_way'."""
+    w = {}
+    for side, sol, ts, wallet in swaps:
+        if not wallet:
+            continue
+        d = w.setdefault(wallet, {"buy": 0.0, "sell": 0.0, "n_buy": 0,
+                                  "n_sell": 0, "max_swap": 0.0,
+                                  "first_ts": ts, "last_ts": ts})
+        if side == "buy":
+            d["buy"] += sol
+            d["n_buy"] += 1
+        else:
+            d["sell"] += sol
+            d["n_sell"] += 1
+        d["max_swap"] = max(d["max_swap"], sol)
+        d["first_ts"] = min(d["first_ts"], ts)
+        d["last_ts"] = max(d["last_ts"], ts)
+    for wallet, d in w.items():
+        if d["buy"] > 0 and d["sell"] <= d["buy"] * pure_tol:
+            d["profile"] = "pure_accum"
+        elif d["sell"] > 0 and d["buy"] <= d["sell"] * pure_tol:
+            d["profile"] = "pure_dist"
+        else:
+            d["profile"] = "two_way"
+        vol = d["buy"] + d["sell"]
+        d["dca"] = (d["n_buy"] + d["n_sell"]) >= 4 and \
+            d["max_swap"] < vol * 0.5
+    return w
+
+
+def conviction_split(profiles, *, whale_min_sol=3.0):
+    """How much whale-sized buy volume is 'pure' (bought & held) vs
+    recycled by two-way traders. Same for the sell side."""
+    pure_buy = tw_buy = pure_sell = tw_sell = 0.0
+    for d in profiles.values():
+        if d["profile"] == "pure_accum" and d["buy"] >= whale_min_sol:
+            pure_buy += d["buy"]
+        elif d["profile"] == "pure_dist" and d["sell"] >= whale_min_sol:
+            pure_sell += d["sell"]
+        elif d["profile"] == "two_way":
+            tw_buy += d["buy"]
+            tw_sell += d["sell"]
+    total_buy = pure_buy + tw_buy
+    conviction = pure_buy / total_buy * 100 if total_buy else 0.0
+    return {"pure_buy": pure_buy, "pure_sell": pure_sell,
+            "tw_buy": tw_buy, "tw_sell": tw_sell,
+            "conviction_pct": conviction}
+
+
 def get_recent_swaps(ca: str, hours: int = 12):
     """Raw swaps [(side, sol, ts, wallet)] from the store, last N hours."""
     state = load_cvd()

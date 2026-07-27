@@ -1629,6 +1629,132 @@ if run_cvd_auto and rpc_endpoint:
             who_rows = None
             who_title = None
 
+        # --------------------------------------------------------------------
+        # 💎 Pure Accumulators vs Distributors (battle-tested filter:
+        # bought-and-held vs sold-and-gone; two-way bots excluded)
+        # --------------------------------------------------------------------
+        from cvd import wallet_profiles, conviction_split
+        profiles = wallet_profiles(
+            list(ldf[["side", "sol", "ts", "wallet"]].itertuples(
+                index=False, name=None)))
+        conv = conviction_split(profiles, whale_min_sol=_WHSOL)
+
+        st.markdown("**💎 Pure flow — who bought & HELD vs sold & LEFT** "
+                    "<span style='opacity:0.6;font-size:0.75rem'>(two-way "
+                    "bots/MMs excluded — sells ≤5% of buys counts as "
+                    "pure)</span>", unsafe_allow_html=True)
+        pc1, pc2, pc3, pc4 = st.columns(4)
+        pc1.metric("💎 Pure accum (whale-size)",
+                   f"{conv['pure_buy']:+,.1f} SOL",
+                   "bought & held", delta_color="off")
+        pc2.metric("🩸 Pure distribution",
+                   f"-{conv['pure_sell']:,.1f} SOL",
+                   "sold & left", delta_color="off")
+        pc3.metric("🔄 Two-way churn",
+                   f"{conv['tw_buy']:,.0f}/{conv['tw_sell']:,.0f}",
+                   "bot/MM volume (noise)", delta_color="off")
+        pc4.metric("Conviction ratio", f"{conv['conviction_pct']:.0f}%",
+                   "of whale buys are held",
+                   delta_color="normal" if conv["conviction_pct"] >= 50
+                   else "inverse")
+
+        net_pure = conv["pure_buy"] - conv["pure_sell"]
+        if conv["pure_buy"] >= 10 and net_pure > 0 and \
+                conv["conviction_pct"] >= 50:
+            green_strip(f"💎 <b>High-conviction accumulation</b> — "
+                        f"{conv['pure_buy']:,.0f} SOL bought by wallets that "
+                        f"did NOT sell ({conv['conviction_pct']:.0f}% "
+                        f"conviction). This is the strongest accumulation "
+                        f"signature this tool can detect.")
+        elif conv["pure_sell"] >= 10 and net_pure < 0:
+            red_strip(f"🩸 <b>Hard distribution</b> — {conv['pure_sell']:,.0f} "
+                      f"SOL sold by wallets that did NOT buy back. This is "
+                      f"the 'invisible seller': steady one-way supply "
+                      f"hitting every bounce.")
+
+        # tables: top pure accumulators & pure distributors with badges
+        pa1, pa2 = st.columns(2)
+        holder_amt2 = dict(zip(df["owner"], df["pct_supply"]))
+        funder_disk2 = load_funder_cache()
+        cluster_members2 = set()
+        if bundles is not None and not bundles.empty:
+            for ms in bundles["members"]:
+                cluster_members2.update(ms)
+
+        def _mini_badges(w, d):
+            b = []
+            fu = funder_disk2.get(w)
+            if fu and fu[1]:
+                ad = (time.time() - fu[1]) / 86400
+                b.append("🐣<3d" if ad < 3 else f"🌳{ad:.0f}d")
+            hp = holder_amt2.get(w)
+            if hp and hp >= 0.1:
+                b.append(f"📦{hp:.1f}%")
+            elif w not in holder_amt2 and d["profile"] == "pure_accum":
+                b.append("👻gone?")
+            if w in cluster_members2:
+                b.append("🕸️CLUSTER")
+            if d.get("dca"):
+                b.append("🎯DCA")
+            return " ".join(b)
+
+        with pa1:
+            accs = sorted(
+                [(w, d) for w, d in profiles.items()
+                 if d["profile"] == "pure_accum" and d["buy"] >= _WHSOL],
+                key=lambda x: -x[1]["buy"])[:8]
+            if accs:
+                # same-funder detection among accumulators
+                fmap = {}
+                for w, _d in accs:
+                    fu = funder_disk2.get(w)
+                    if fu and fu[0]:
+                        fmap.setdefault(fu[0], []).append(w)
+                same_funder = {w for ws in fmap.values() if len(ws) > 1
+                               for w in ws}
+                st.dataframe(pd.DataFrame([{
+                    "Wallet": sol_link(w),
+                    "Bought": f"{d['buy']:,.1f}",
+                    "Swaps": d["n_buy"],
+                    "Badges": _mini_badges(w, d) +
+                              (" ⚠️same-funder" if w in same_funder else ""),
+                } for w, d in accs]), use_container_width=True,
+                    hide_index=True,
+                    column_config={"Wallet": st.column_config.LinkColumn(
+                        "💎 Pure accumulator",
+                        display_text=r"account/(.{6}).*")})
+                if same_funder:
+                    st.caption("⚠️ some accumulators share the SAME funder — "
+                               "likely one entity split across wallets "
+                               "(smart-money discipline or dev reloading — "
+                               "check wallet age).")
+            else:
+                st.caption("No whale-size pure accumulators in this window.")
+        with pa2:
+            dists = sorted(
+                [(w, d) for w, d in profiles.items()
+                 if d["profile"] == "pure_dist" and d["sell"] >= _WHSOL],
+                key=lambda x: -x[1]["sell"])[:8]
+            if dists:
+                st.dataframe(pd.DataFrame([{
+                    "Wallet": sol_link(w),
+                    "Sold": f"{d['sell']:,.1f}",
+                    "Swaps": d["n_sell"],
+                    "Badges": _mini_badges(w, d),
+                } for w, d in dists]), use_container_width=True,
+                    hide_index=True,
+                    column_config={"Wallet": st.column_config.LinkColumn(
+                        "🩸 Pure distributor",
+                        display_text=r"account/(.{6}).*")})
+            else:
+                st.caption("No whale-size pure distributors in this window.")
+        st.caption("💎 = bought, never sold (≤5% tol) in the window · "
+                   "🩸 = sold, never bought back · 🎯DCA = ≥4 spread-out "
+                   "swaps (patient) · 📦 = current holding · ⚠️same-funder = "
+                   "multiple 'accumulators' funded by one wallet = one "
+                   "entity. Conviction ≥50% + aged 🌳 + 📦 holding = the "
+                   "battle-tested accumulation profile.")
+
         # chart with chosen bucket
         lfreq = f"{cvd_bucket}min"
         lg = ldf.set_index("dt").sort_index()
