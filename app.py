@@ -1450,6 +1450,19 @@ if run_cvd_auto and rpc_endpoint:
         if (lwh_net >= 0) != (lrt_net >= 0) and \
                 max(abs(lwh_net), abs(lrt_net)) >= 5:
             flow_flag = "accum" if lwh_net >= 0 else "dist"
+            # record to the signal log (dedupe handled inside)
+            try:
+                from signals import record_signal
+                record_signal(
+                    ca, market.get("symbol", "?"),
+                    "accumulation" if flow_flag == "accum" else "distribution",
+                    f"whales {lwh_net:+,.1f} SOL vs retail {lrt_net:+,.1f} "
+                    f"SOL (last {cvd_window}h, {len(ldf)} swaps)",
+                    src="analyze", window_h=int(cvd_window),
+                    whale_net=float(lwh_net), retail_net=float(lrt_net),
+                    price=float(price))
+            except Exception:
+                pass
             if flow_flag == "accum":
                 green_strip("⚡ <b>Whales buy what retail sells — possible "
                             "stealth accumulation.</b> Verify with the "
@@ -1664,6 +1677,19 @@ if run_cvd_auto and rpc_endpoint:
                         if kk in seen_d:
                             continue
                         seen_d.add(kk)
+                        try:
+                            from signals import record_signal
+                            record_signal(
+                                ca, market.get("symbol", "?"),
+                                "bullish_div" if dv["type"] == "bullish"
+                                else "bearish_div",
+                                f"{dv['kind']} {dv['type']} divergence on "
+                                f"{'whale CVD' if dv.get('src') == 'whale' else 'CVD'}"
+                                f" ({cvd_bucket}m buckets): {dv['detail']}",
+                                src="analyze", window_h=int(cvd_window),
+                                price=float(price))
+                        except Exception:
+                            pass
                         src = ("Whale CVD" if dv.get("src") == "whale"
                                else "CVD")
                         if dv["type"] == "bullish":

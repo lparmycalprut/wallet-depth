@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import requests  # noqa: E402
 from cvd import update_token_cvd  # noqa: E402
+from signals import detect_and_record  # noqa: E402
 from watchlist import load_watchlist  # noqa: E402
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -28,9 +29,11 @@ def main_pool(ca: str):
         pairs = (r.json() or {}).get("pairs") or []
         pairs.sort(key=lambda p: (p.get("liquidity") or {}).get("usd") or 0,
                    reverse=True)
-        return pairs[0]["pairAddress"] if pairs else None
+        if not pairs:
+            return None, None
+        return pairs[0]["pairAddress"], float(pairs[0].get("priceUsd") or 0)
     except Exception:
-        return None
+        return None, None
 
 
 def main():
@@ -50,16 +53,20 @@ def main():
         print("Watchlist empty.")
         return
     for ca, meta in wl.items():
-        pool = main_pool(ca)
+        pool, price_now = main_pool(ca)
         if not pool:
             print(f"❌ {ca[:8]}… no pool found")
             continue
         try:
             res = update_token_cvd(api_key, ca, pool, max_pages=max_pages)
             gap = " ⚠️gap(pages exhausted)" if res["gap"] else ""
+            sigs = detect_and_record(ca, meta.get("symbol", "?"),
+                                     src="cron", window_h=6,
+                                     price_now=price_now, pool=pool)
+            sig_txt = (" 🔔 " + ",".join(sigs)) if sigs else ""
             print(f"✅ {meta.get('symbol', '?'):>10} {ca[:8]}… "
                   f"+{res['new_swaps']} swaps, {res['buckets']} hourly "
-                  f"buckets{gap}")
+                  f"buckets{gap}{sig_txt}")
         except Exception as e:
             print(f"❌ {ca[:8]}… {str(e)[:100]}")
 
