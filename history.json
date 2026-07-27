@@ -56,5 +56,95 @@
    "top5_pct": 12.41,
    "top100_pct": 55.71
   }
+ },
+ "23LGuH8WeZYVXRUSvqHcxzAZpSZT1PzTG8yYJfXPpump": {
+  "2026-07-27": {
+   "total_holders": 1497,
+   "dust": 967,
+   "real": 530,
+   "real_mc_pct": 87.44966809861533,
+   "dust_mc_pct": 0.7074998901290405,
+   "marketcap": 188546.0,
+   "price": 0.0001946,
+   "tiers": {
+    ">$10": 530,
+    ">$100": 237,
+    ">$1K": 39,
+    ">$10K": 0,
+    ">$100K": 0,
+    ">$1M": 0
+   },
+   "ts": "2026-07-27T09:53:27",
+   "score": 79,
+   "top10_pct": 20.26,
+   "top5_pct": 11.86,
+   "top100_pct": 66.72,
+   "liq_pct_mc": 19.48,
+   "symbol": "BUNKEE",
+   "buys24": 3264,
+   "sells24": 3692,
+   "vol24": 495378.83,
+   "source": "cron"
+  }
+ },
+ "2vBS6D5mTPbQHChbZevmJ3Ck4uyrmdhbt1LkbyLopump": {
+  "2026-07-27": {
+   "total_holders": 3086,
+   "dust": 2650,
+   "real": 436,
+   "real_mc_pct": 77.49680001946892,
+   "dust_mc_pct": 4.026152458883421,
+   "marketcap": 77860.0,
+   "price": 8.082e-05,
+   "tiers": {
+    ">$10": 436,
+    ">$100": 132,
+    ">$1K": 10,
+    ">$10K": 0,
+    ">$100K": 0,
+    ">$1M": 0
+   },
+   "ts": "2026-07-27T09:53:28",
+   "score": 64,
+   "top10_pct": 18.63,
+   "top5_pct": 11.05,
+   "top100_pct": 58.25,
+   "liq_pct_mc": 34.85,
+   "symbol": "MEMENOTE",
+   "buys24": 4935,
+   "sells24": 4942,
+   "vol24": 577398.59,
+   "source": "cron"
+  }
+ },
+ "B62socheoeJVqiKnihcR96g61tzALYwcMsE91Sw6pump": {
+  "2026-07-27": {
+   "total_holders": 7108,
+   "dust": 6605,
+   "real": 503,
+   "real_mc_pct": 71.53102558106363,
+   "dust_mc_pct": 6.065453842851774,
+   "marketcap": 79034.0,
+   "price": 8.216e-05,
+   "tiers": {
+    ">$10": 503,
+    ">$100": 115,
+    ">$1K": 12,
+    ">$10K": 0,
+    ">$100K": 0,
+    ">$1M": 0
+   },
+   "ts": "2026-07-27T09:53:31",
+   "score": 61,
+   "top10_pct": 18.35,
+   "top5_pct": 10.83,
+   "top100_pct": 52.92,
+   "liq_pct_mc": 37.4,
+   "symbol": "BOP",
+   "buys24": 2115,
+   "sells24": 1865,
+   "vol24": 172622.04,
+   "source": "cron"
+  }
  }
 }
