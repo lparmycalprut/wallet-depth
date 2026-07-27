@@ -491,7 +491,10 @@ if _wl:
 # clicking a ticker chip sets ?ca=... -> prefill + auto-analyze
 qp_ca = st.query_params.get("ca", "").strip()
 
-ca = st.text_input("Solana token Contract Address (CA)", value=qp_ca,
+# keep the last analyzed CA when returning from another page (no reset)
+default_ca = qp_ca or st.session_state.get("last_ca", "")
+
+ca = st.text_input("Solana token Contract Address (CA)", value=default_ca,
                    placeholder="e.g. AkchGAUdXXRGHt3HXaHbTvw3JLGUwtJRmYnkG66wpump"
                    ).strip()
 analyze = st.button("🔍 Analyze", type="primary", use_container_width=True)
@@ -1421,17 +1424,101 @@ if run_cvd_auto and rpc_endpoint:
         k5.metric("Buy/Sell vol", f"{v_buy:,.0f} / {v_sell:,.0f}",
                   "SOL", delta_color="off")
 
+        flow_flag = None
         if (lwh_net >= 0) != (lrt_net >= 0) and \
                 max(abs(lwh_net), abs(lrt_net)) >= 5:
-            if lwh_net >= 0:
+            flow_flag = "accum" if lwh_net >= 0 else "dist"
+            if flow_flag == "accum":
                 green_strip("⚡ <b>Whales buy what retail sells — possible "
-                            "stealth accumulation.</b> Verify: consistent "
-                            "across windows? Who are the buyers (CVD page → "
-                            "top wallets)?")
+                            "stealth accumulation.</b> Verify with the "
+                            "buyer list below: real accumulators are aged, "
+                            "organic wallets — not fresh/bundled ones.")
             else:
                 red_strip("⚡ <b>Whales sell into retail buying — "
                           "distribution to retail.</b> Big tickets are "
-                          "using retail liquidity to exit.")
+                          "using retail liquidity to exit. Check the top "
+                          "sellers below.")
+
+        # --- Who is behind the flow? (top net wallets + badges) --------------
+        if flow_flag:
+            wsum = (ldf.groupby("wallet")
+                    .agg(net=("signed", "sum"), n=("signed", "size"),
+                         vol=("sol", "sum"), mx=("sol", "max")))
+            if flow_flag == "accum":
+                actors = wsum.sort_values("net", ascending=False).head(8)
+                who_title = "🕵️ Top net BUYERS in this window — verify them"
+            else:
+                actors = wsum.sort_values("net").head(8)
+                who_title = "🕵️ Top net SELLERS in this window — verify them"
+            actors = actors[abs(actors["net"]) >= 1.0]
+
+            # enrichment lookups (all cached / cheap)
+            holder_amt = dict(zip(df["owner"], df["pct_supply"]))
+            funder_disk = load_funder_cache()
+            cluster_members = set()
+            if bundles is not None and not bundles.empty:
+                for ms in bundles["members"]:
+                    cluster_members.update(ms)
+            new_lookups = 0
+            rows_w = []
+            now_s = time.time()
+            for w, r in actors.iterrows():
+                badges = []
+                # wallet age via funder cache (scan a few if unknown, cheap)
+                if w in funder_disk:
+                    bt = funder_disk[w][1]
+                elif new_lookups < 8 and rpc_endpoint:
+                    _f, bt = find_funder(rpc_endpoint, w, max_pages=2)
+                    funder_disk[w] = [_f, bt]
+                    new_lookups += 1
+                else:
+                    bt = None
+                if bt:
+                    age_d = (now_s - bt) / 86400
+                    if age_d < 3:
+                        badges.append("🐣 FRESH <3d")
+                    elif age_d < 14:
+                        badges.append(f"🌱 {age_d:.0f}d old")
+                    else:
+                        badges.append(f"🌳 {age_d:.0f}d old")
+                else:
+                    badges.append("🌳 aged (busy wallet)")
+                if r["mx"] >= _WHSOL:
+                    badges.append("🐋 whale tickets")
+                pct_hold = holder_amt.get(w)
+                if pct_hold and pct_hold >= 0.1:
+                    badges.append(f"📦 holds {pct_hold:.2f}% supply")
+                elif w not in holder_amt and r["net"] > 0:
+                    badges.append("👻 not a holder yet/anymore")
+                if w in cluster_members:
+                    badges.append("🕸️ IN A CLUSTER!")
+                if w in KNOWN_CEX_FUNDERS:
+                    badges.append(f"🏦 {KNOWN_CEX_FUNDERS[w]}")
+                if r["n"] >= 30:
+                    badges.append(f"🤖 {int(r['n'])} swaps (bot-like)")
+                rows_w.append({
+                    "Wallet": sol_link(w),
+                    "Net SOL": f"{r['net']:+,.1f}",
+                    "Swaps": int(r["n"]),
+                    "Max swap": f"{r['mx']:.1f}",
+                    "Badges": " · ".join(badges),
+                })
+            if new_lookups:
+                save_funder_cache(funder_disk)
+            if rows_w:
+                st.markdown(f"**{who_title}**")
+                st.dataframe(pd.DataFrame(rows_w),
+                             use_container_width=True, hide_index=True,
+                             column_config={"Wallet":
+                                            st.column_config.LinkColumn(
+                                                "Wallet",
+                                                display_text=r"account/(.{6}).*")})
+                st.caption(
+                    "How to read: real stealth accumulation = 🌳 aged wallets "
+                    "+ 🐋 big tickets + already 📦 holding supply, spread over "
+                    "several wallets NOT in the same 🕸️ cluster. Red flags: "
+                    "🐣 fresh wallets, 🕸️ same-cluster buyers (could be dev/"
+                    "bundler re-loading), or one 🤖 bot doing all the flow.")
 
         # chart with chosen bucket
         lfreq = f"{cvd_bucket}min"
@@ -1636,6 +1723,52 @@ if exclude_lp and lp_wallets:
 if holder_delta_src:
     foot += f" | Holder Δ: {holder_delta_src}"
 st.caption(foot)
+
+# ----------------------------------------------------------------------------
+# Save the full analysis result in the session so other pages (📒 History)
+# can display it instantly WITHOUT re-fetching anything.
+# ----------------------------------------------------------------------------
+try:
+    _top20 = df.sort_values("usd_value", ascending=False).head(20)[
+        ["owner", "ui_amount", "usd_value", "pct_supply"]].copy()
+    _cvd_summary = None
+    if run_cvd_auto and 'ldf' in dir() and isinstance(
+            locals().get("ldf"), pd.DataFrame) and len(ldf):
+        _cvd_summary = {
+            "swaps": int(len(ldf)), "net": float(lnet),
+            "whale_net": float(lwh_net), "retail_net": float(lrt_net),
+            "buy_vol": float(v_buy), "sell_vol": float(v_sell),
+            "window_h": int(cvd_window),
+            "agg": lagg[["buy", "sell", "delta", "cvd", "wcvd",
+                         "rcvd"]].copy(),
+        }
+    st.session_state.setdefault("analyses", {})
+    st.session_state["analyses"][ca] = {
+        "when": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "symbol": market.get("symbol", "?"),
+        "name": market.get("name", "?"),
+        "score": int(score), "score_label": s_label,
+        "price": float(price), "marketcap": float(marketcap),
+        "holders": int(total_holders), "dust": int(n_dust),
+        "real": int(n_real), "ratio_pct": float(ratio_pct_val),
+        "real_mc_pct": float(real_mc_pct),
+        "holder_delta": holder_delta,
+        "liq_usd": float(market["liquidity_usd"]),
+        "liq_pct_mc": float(liq_pct_mc),
+        "lp_locked_pct": lp_locked_pct,
+        "conc": dict(conc),
+        "checks": checks,
+        "tier_df": tier_df.copy(),
+        "top20": _top20,
+        "hist_df": hist_df.copy() if len(hist_df) else None,
+        "bundles": (bundles.copy() if bundles is not None and
+                    not bundles.empty else None),
+        "fresh_pct": fresh_pct,
+        "cvd": _cvd_summary,
+        "score_parts": score_parts,
+    }
+except Exception:
+    pass
 
 # After analysis finishes, scroll back to the top so the header isn't cut off
 if analyze:
