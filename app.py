@@ -32,7 +32,8 @@ DEFAULT_CONFIG = {"helius_api_key": "", "custom_rpc": "", "dust_limit_usd": 10,
                   "cluster_warn_pct": 5, "cluster_scan_top_n": 50,
                   "exclude_lp": True}
 DUST_LIMIT_USD = 10.0
-REAL_RATIO_OK = 0.30
+REAL_RATIO_OK = 0.50       # healthy: real >= 50% of dust
+REAL_RATIO_MIN = 0.30      # acceptable floor (yellow) if real also controls MC
 TIERS = [(">$10", 10.0), (">$100", 100.0), (">$1K", 1e3),
          (">$10K", 1e4), (">$100K", 1e5), (">$1M", 1e6)]
 TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
@@ -150,7 +151,7 @@ def fetch_mint_info(endpoint: str, ca: str) -> dict:
         return {"mint_authority": None, "freeze_authority": None}
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=600, show_spinner=False)
 def fetch_holders_helius(api_key: str, ca: str) -> pd.DataFrame:
     endpoint = f"https://mainnet.helius-rpc.com/?api-key={api_key}"
     owners, cursor, pages = {}, None, 0
@@ -234,6 +235,29 @@ def fetch_solscan_holder_history(ca: str) -> pd.DataFrame:
     return df.sort_values("date").reset_index(drop=True) if not df.empty else df
 
 
+# ----------------------------------------------------------------------------
+# Persistent funder cache — a wallet's first funder / first-tx time NEVER
+# changes, so cache it on disk forever. Saves a lot of Helius credits.
+# ----------------------------------------------------------------------------
+FUNDERS_PATH = os.path.join(BASE_DIR, "funders_cache.json")
+
+
+def load_funder_cache() -> dict:
+    try:
+        with open(FUNDERS_PATH, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def save_funder_cache(cache: dict) -> None:
+    try:
+        with open(FUNDERS_PATH, "w", encoding="utf-8") as f:
+            json.dump(cache, f, separators=(",", ":"))
+    except Exception:
+        pass
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def find_funder(endpoint: str, wallet: str, max_pages: int = 5):
     """Return (first funder wallet, first tx blockTime). Old wallets skipped."""
@@ -286,15 +310,25 @@ def find_funder(endpoint: str, wallet: str, max_pages: int = 5):
     return None, last_bt
 
 
-def detect_clusters(endpoint, top_holders, supply, progress_cb=None):
+def detect_clusters(endpoint, top_holders, supply, progress_cb=None,
+                    max_pages=5):
     funders, first_time = {}, {}
     wallets = top_holders["owner"].tolist()
+    disk = load_funder_cache()
+    new_entries = 0
     for i, w in enumerate(wallets):
-        f, bt = find_funder(endpoint, w)
+        if w in disk:                      # immutable -> free lookup
+            f, bt = disk[w][0], disk[w][1]
+        else:
+            f, bt = find_funder(endpoint, w, max_pages=max_pages)
+            disk[w] = [f, bt]
+            new_entries += 1
+            time.sleep(0.1)                # rate-limit only on real calls
         funders[w], first_time[w] = f, bt
         if progress_cb:
             progress_cb((i + 1) / len(wallets), w)
-        time.sleep(0.12)
+    if new_entries:
+        save_funder_cache(disk)
     groups = {}
     for w, f in funders.items():
         if f:
@@ -349,6 +383,26 @@ n_scan = st.sidebar.slider("Top holders to scan", 20, 100,
 cluster_warn_pct = st.sidebar.number_input(
     "Cluster warning threshold (% supply)",
     value=float(CONFIG.get("cluster_warn_pct", 5.0)), min_value=0.5, step=0.5)
+
+st.sidebar.divider()
+st.sidebar.markdown("**⚡ Speed / API-credit filters**")
+scan_mode = st.sidebar.radio(
+    "Scan mode", ["Fast", "Balanced", "Deep"], index=1, horizontal=True,
+    help="Fast: top-30 holders, 2 pages of tx history per wallet, skips "
+         "holders <0.1% supply. Balanced: your slider, 3 pages. "
+         "Deep: your slider, 5 pages (old behaviour).")
+min_holder_pct = st.sidebar.number_input(
+    "Skip cluster-scan for holders below (% supply)", value=0.05,
+    min_value=0.0, step=0.05, format="%.2f",
+    help="Wallets this small can't form a dangerous cluster — skipping them "
+         "saves credits & time.")
+run_cvd_auto = st.sidebar.checkbox(
+    "Auto-run CVD analysis after Analyze", value=True,
+    help="Fetches live swaps (12h window by default). Disable to save "
+         "credits on quick checks.")
+_mode_cfg = {"Fast": {"pages": 2, "cap": 30},
+             "Balanced": {"pages": 3, "cap": None},
+             "Deep": {"pages": 5, "cap": None}}[scan_mode]
 
 st.sidebar.divider()
 if st.sidebar.button("💾 Save to config.json", use_container_width=True):
@@ -590,8 +644,12 @@ conc = concentration(df, supply)
 clusters, wallet_info, bundles = None, None, None
 max_cluster_pct, fresh_pct = None, None
 if scan_clusters and rpc_endpoint:
-    top_n = df.sort_values("ui_amount", ascending=False).head(n_scan)
-    cache_key = f"clusters::{ca}::{n_scan}"
+    eff_n = min(n_scan, _mode_cfg["cap"] or n_scan)
+    top_n = df.sort_values("ui_amount", ascending=False).head(eff_n)
+    # speed filter: skip wallets too small to matter for clusters
+    if min_holder_pct > 0:
+        top_n = top_n[top_n["pct_supply"] >= min_holder_pct]
+    cache_key = f"clusters::{ca}::{eff_n}::{scan_mode}::{min_holder_pct}"
     if cache_key not in st.session_state:
         pbar = st.progress(0.0, text="🕸️ Scanning clusters & wallet age...")
 
@@ -600,7 +658,8 @@ if scan_clusters and rpc_endpoint:
                                      f"{frac*100:.0f}%")
 
         st.session_state[cache_key] = detect_clusters(
-            rpc_endpoint, top_n[["owner", "ui_amount"]], supply, progress_cb=_cb)
+            rpc_endpoint, top_n[["owner", "ui_amount"]], supply,
+            progress_cb=_cb, max_pages=_mode_cfg["pages"])
         pbar.empty()
     clusters, wallet_info = st.session_state[cache_key]
     bundles = (clusters[(clusters["wallets"] >= 2) & (clusters["cex"] == "")]
@@ -725,78 +784,113 @@ with h6c:
               delta_color="normal" if prev else "off")
 
 # ----------------------------------------------------------------------------
-# ROW 2 — Verdict strips
+# ROW 2 — Verdict + Security checklist + Liquidity health donut
 # ----------------------------------------------------------------------------
-if n_dust == 0 or ratio > REAL_RATIO_OK:
-    green_strip(
-        f"✅ <b>HOLDERS OK</b> — Real holders ({n_real:,}) = "
-        f"<b>{ratio*100:,.1f}%</b> of dust holders ({n_dust:,}), above the "
-        f"{REAL_RATIO_OK*100:.0f}% threshold. Real holders control "
-        f"<b>{real_mc_pct:.2f}%</b> of MC, dust only {dust_mc_pct:.2f}%. "
-        f"Healthy distribution.")
-else:
-    red_strip(
-        f"🚨 <b>WARNING — UNHEALTHY HOLDER BASE</b> — Real holders ({n_real:,}) "
-        f"are only <b>{ratio*100:,.1f}%</b> of dust holders ({n_dust:,}), below "
-        f"the {REAL_RATIO_OK*100:.0f}% threshold. Most 'holders' are dust "
-        f"wallets (&lt;${dust_limit:g}) from airdrops/bundling — the holder "
-        f"count is <b>inflated</b>. Real holders control just "
-        f"<b>{real_mc_pct:.2f}%</b> of MC. Be careful!")
-
-# --- Security strip (facts that are clearly red flags only) ------------------
-sec_bad, sec_ok = [], []
-if rug.get("rugged"):
-    sec_bad.append("<b>RUGCHECK: token flagged as RUGGED!</b>")
-if mint_auth:
-    sec_bad.append(f"mint authority ACTIVE (<code>{str(mint_auth)[:6]}…</code>)")
-else:
-    sec_ok.append("mint auth revoked")
-if freeze_auth:
-    sec_bad.append("freeze authority ACTIVE")
-else:
-    sec_ok.append("freeze auth revoked")
-if creator is not None:
-    if creator_pct > 5:
-        sec_bad.append(f"dev still holds {creator_pct:.1f}% of supply")
-    elif creator_pct > 0:
-        sec_ok.append(f"dev holds {creator_pct:.2f}%")
-    else:
-        sec_ok.append("dev balance 0")
-if conc["top10"] > 30:
-    sec_bad.append(f"Top-10 holders control {conc['top10']:.1f}% of supply")
-else:
-    sec_ok.append(f"Top-10 = {conc['top10']:.1f}% supply")
-if fresh_pct is not None and fresh_pct > 50:
-    sec_bad.append(f"{fresh_pct:.0f}% of top holders are fresh wallets (<7d)")
-elif fresh_pct is not None:
-    sec_ok.append(f"fresh wallets {fresh_pct:.0f}%")
-for r in rug.get("risks") or []:
-    if (r.get("level") or "").lower() in ("danger", "warn", "warning"):
-        sec_bad.append(f"RugCheck: {r['name']}")
-
-if sec_bad:
-    red_strip("🛡️ <b>Security:</b> ⚠️ " + " · ".join(sec_bad) +
-              (("<span style='opacity:0.7'> | ✅ " + " · ".join(sec_ok) +
-                "</span>") if sec_ok else ""))
-else:
-    green_strip("🛡️ <b>Security:</b> ✅ " + " · ".join(sec_ok))
-
-# --- Liquidity strip: neutral, per-pool detail (LP can be split across DEXes)
 pools = market.get("pairs_detail") or []
 total_pool_liq = sum(p["liq"] for p in pools) or 1
-pool_txt = " · ".join(
-    f"<a href='{p['url']}' target='_blank' style='color:inherit'>"
-    f"{p['dex'].capitalize()}</a> ${p['liq']:,.0f} "
-    f"(<b>{p['liq']/total_pool_liq*100:.1f}%</b>, {p['quote']})"
-    for p in pools[:6] if p["liq"] > 0)
-lp_lock_txt = (f" · LP locked/burned (main pool per RugCheck): "
-               f"<b>{lp_locked_pct:.0f}%</b>" if lp_locked_pct is not None else "")
-info_strip(
-    f"💧 <b>Liquidity:</b> total <b>${market['liquidity_usd']:,.0f}</b> "
-    f"({liq_pct_mc:.1f}% of MC) across {len([p for p in pools if p['liq']>0])} "
-    f"pool(s): {pool_txt}{lp_lock_txt}. "
-    f"<span style='opacity:0.7'>Note: LP can be spread across multiple DEXes "
-    f"(e.g. Meteora, PumpSwap) — verify each pool before judging.</span>")
+
+col_left, col_liq = st.columns([2.1, 1])
+
+with col_left:
+    # --- Holder verdict (3 tiers: green / yellow / red) ----------------------
+    if n_dust == 0 or ratio >= REAL_RATIO_OK:
+        green_strip(
+            f"✅ <b>HOLDERS OK</b> — Real holders ({n_real:,}) = "
+            f"<b>{ratio*100:,.1f}%</b> of dust holders ({n_dust:,}), above the "
+            f"{REAL_RATIO_OK*100:.0f}% threshold. Real holders control "
+            f"<b>{real_mc_pct:.2f}%</b> of MC, dust only {dust_mc_pct:.2f}%. "
+            f"Healthy distribution.")
+    elif ratio >= REAL_RATIO_MIN and real_mc_pct >= 70:
+        strip("#3f3411", "#facc15", "#fef08a",
+              f"⚠️ <b>ACCEPTABLE (borderline)</b> — Real/dust ratio is only "
+              f"<b>{ratio*100:,.1f}%</b> (below the {REAL_RATIO_OK*100:.0f}% "
+              f"healthy bar), BUT real holders still control "
+              f"<b>{real_mc_pct:.1f}%</b> of MC — the dust crowd is noisy but "
+              f"economically irrelevant. Watch the trend.")
+    else:
+        red_strip(
+            f"🚨 <b>WARNING — UNHEALTHY HOLDER BASE</b> — Real holders "
+            f"({n_real:,}) are only <b>{ratio*100:,.1f}%</b> of dust holders "
+            f"({n_dust:,}), below the {REAL_RATIO_OK*100:.0f}% threshold. Most "
+            f"'holders' are dust wallets (&lt;${dust_limit:g}) from airdrops/"
+            f"bundling — the holder count is <b>inflated</b>. Real holders "
+            f"control just <b>{real_mc_pct:.2f}%</b> of MC. Be careful!")
+
+    # --- Security checklist card ---------------------------------------------
+    checks = []   # (ok: True/False/None, label)
+    if rug.get("rugged"):
+        checks.append((False, "RugCheck: flagged as RUGGED"))
+    checks.append((not mint_auth,
+                   "Mint authority revoked" if not mint_auth else
+                   f"Mint authority ACTIVE ({str(mint_auth)[:6]}…)"))
+    checks.append((not freeze_auth,
+                   "Freeze authority revoked" if not freeze_auth else
+                   "Freeze authority ACTIVE"))
+    if creator is not None:
+        if creator_pct > 5:
+            checks.append((False, f"Dev still holds {creator_pct:.1f}% supply"))
+        else:
+            checks.append((True, f"Dev holds {creator_pct:.2f}% supply"))
+    checks.append((conc["top10"] <= 30,
+                   f"Top-10 = {conc['top10']:.1f}% of supply" +
+                   ("" if conc["top10"] <= 30 else " (concentrated!)")))
+    if fresh_pct is not None:
+        checks.append((fresh_pct <= 50,
+                       f"Fresh wallets {fresh_pct:.0f}% of top holders"))
+    for r in (rug.get("risks") or [])[:4]:
+        if (r.get("level") or "").lower() in ("danger", "warn", "warning"):
+            checks.append((False, f"RugCheck: {r['name']}"))
+    n_fail = sum(1 for ok, _ in checks if ok is False)
+    items_html = "".join(
+        f"<div style='flex:0 0 49%;padding:3px 6px;font-size:0.82rem;"
+        f"color:{'#bbf7d0' if ok else '#fecaca'};'>"
+        f"{'✅' if ok else '❌'} {lab}</div>"
+        for ok, lab in checks)
+    hdr_col = "#22c55e" if n_fail == 0 else "#ef4444"
+    st.markdown(
+        f"""<div style="background:{'#14261b' if n_fail == 0 else '#2a1517'};
+        border:1px solid {hdr_col};border-radius:10px;padding:8px 12px;
+        margin-bottom:6px;">
+        <div style="font-size:0.85rem;font-weight:700;color:{hdr_col};
+        margin-bottom:4px;">🛡️ Security checklist —
+        {('all ' + str(len(checks)) + ' passed') if n_fail == 0
+         else f'{n_fail} issue(s) found'}</div>
+        <div style="display:flex;flex-wrap:wrap;">{items_html}</div>
+        </div>""", unsafe_allow_html=True)
+
+with col_liq:
+    # --- Liquidity health donut ----------------------------------------------
+    liq_health = ("HEALTHY" if liq_pct_mc >= 10 else
+                  ("MODERATE" if liq_pct_mc >= 5 else "THIN"))
+    liq_col = ("#22c55e" if liq_pct_mc >= 10 else
+               ("#facc15" if liq_pct_mc >= 5 else "#ef4444"))
+    active_pools = [p for p in pools if p["liq"] > total_pool_liq * 0.005]
+    figl = go.Figure(go.Pie(
+        labels=[f"{p['dex'].capitalize()} ({p['quote']})"
+                for p in active_pools],
+        values=[p["liq"] for p in active_pools], hole=0.62,
+        marker=dict(colors=["#38bdf8", "#a78bfa", "#4ade80", "#facc15",
+                            "#fb923c"]),
+        textinfo="label+percent", textfont=dict(size=10),
+        hovertemplate="<b>%{label}</b><br>$%{value:,.0f} "
+                      "(%{percent})<extra></extra>"))
+    figl.add_annotation(
+        text=f"<b style='font-size:17px'>{liq_pct_mc:.1f}%</b><br>"
+             f"<span style='font-size:10px'>of MC</span><br>"
+             f"<span style='font-size:11px;color:{liq_col}'>"
+             f"<b>{liq_health}</b></span>",
+        showarrow=False)
+    figl.update_layout(height=205, showlegend=False,
+                       margin=dict(t=24, b=2, l=8, r=8),
+                       title=dict(text="💧 Liquidity vs MC",
+                                  font=dict(size=13)))
+    st.plotly_chart(figl, use_container_width=True,
+                    config={"displayModeBar": False})
+    lock_txt = (f"LP locked/burned: {lp_locked_pct:.0f}% (main pool)"
+                if lp_locked_pct is not None else "LP lock: n/a")
+    st.caption(f"Total ${market['liquidity_usd']:,.0f} across "
+               f"{len(active_pools)} pool(s) · {lock_txt} · health bar: "
+               f"≥10% MC healthy, 5-10% moderate, <5% thin")
 
 # ----------------------------------------------------------------------------
 # ROW 3 — 3 charts side by side
@@ -1141,7 +1235,7 @@ if scan_clusters and rpc_endpoint:
         fresh_txt = (f" · Fresh wallets: {fresh_pct:.0f}%"
                      if fresh_pct is not None else "")
         green_strip(f"🕸️ <b>Clusters:</b> ✅ No bundlers detected among the top "
-                    f"{n_scan} holders.{fresh_txt}")
+                    f"{len(top_n)} scanned holders.{fresh_txt}")
     else:
         worst = bundles.iloc[0]
         bundled_supply = bundles["pct_supply"].sum()
@@ -1245,116 +1339,188 @@ if card_png:
                    "images from websites.)")
 
 # ----------------------------------------------------------------------------
-# ROW 4.5 — 📊 On-chain CVD (H4) + divergence detection
+# ROW 4.5 — 📊 Live CVD analysis (auto-runs with Analyze)
 # ----------------------------------------------------------------------------
-try:
-    from cvd import get_h4_series, fetch_h4_price, detect_divergence
-    cvd_s = get_h4_series(ca)
-except Exception:
-    cvd_s = None
+st.markdown("**📊 On-chain CVD — live swap flow (Helius)**")
+cvd_c1, cvd_c2, cvd_c3 = st.columns([1, 1, 3])
+cvd_window = cvd_c1.selectbox("Window", [6, 12, 24], index=1,
+                              format_func=lambda h: f"last {h}h",
+                              key="cvd_win")
+cvd_bucket = cvd_c2.selectbox("Candle", [30, 60, 240], index=1,
+                              format_func=lambda m: f"{m}m" if m < 60
+                              else f"{m//60}h", key="cvd_bkt")
 
-st.markdown("**📊 On-chain CVD (H4) — real swap flow from Helius**")
-if cvd_s and len(cvd_s["ts"]) >= 2:
-    import datetime as _dtm
-    _fmt_ts = lambda t: _dtm.datetime.utcfromtimestamp(t).strftime("%m-%d %Hh")
-    x_lbl = [_fmt_ts(t) for t in cvd_s["ts"]]
-    price_map = fetch_h4_price(pair0) if pair0 else {}
-    price_series = [price_map.get(t) for t in cvd_s["ts"]]
+if run_cvd_auto and rpc_endpoint:
+    from cvd import classify_swap as _cls, MIN_SOL as _MINSOL, \
+        WHALE_SOL as _WHSOL, detect_divergence as _detdiv
 
-    cc1, cc2 = st.columns([2, 1])
-    with cc1:
-        figc = go.Figure()
-        figc.add_trace(go.Scatter(x=x_lbl, y=cvd_s["cvd"], name="CVD (all)",
-                                  mode="lines+markers",
-                                  line=dict(color="#38bdf8", width=3)))
-        figc.add_trace(go.Scatter(x=x_lbl, y=cvd_s["whale"],
-                                  name=f"Whale CVD (≥3 SOL)",
-                                  mode="lines", line=dict(color="#c084fc",
-                                                          width=2)))
-        figc.add_trace(go.Scatter(x=x_lbl, y=cvd_s["retail"],
-                                  name="Retail CVD",
-                                  mode="lines", line=dict(color="#64748b",
-                                                          width=1.5,
-                                                          dash="dot")))
-        if any(p is not None for p in price_series):
-            figc.add_trace(go.Scatter(
-                x=x_lbl, y=price_series, name="Price", yaxis="y2",
-                mode="lines", line=dict(color="#facc15", width=1.5,
-                                        dash="dash")))
-        figc.update_layout(height=260, margin=dict(t=10, b=0, l=0, r=0),
-                           legend=dict(orientation="h", font=dict(size=10)),
-                           yaxis=dict(title="Δ SOL", tickfont=dict(size=9)),
-                           yaxis2=dict(overlaying="y", side="right",
-                                       visible=False),
-                           xaxis=dict(tickfont=dict(size=9)))
-        st.plotly_chart(figc, use_container_width=True,
-                        config={"displayModeBar": False})
-    with cc2:
-        net = cvd_s["cvd"][-1]
-        wnet = cvd_s["whale"][-1]
-        rnet = cvd_s["retail"][-1]
-        st.metric("Net CVD (window)", f"{net:+,.1f} SOL",
-                  "net buying" if net >= 0 else "net selling",
-                  delta_color="normal" if net >= 0 else "inverse")
-        st.metric("🐋 Whale CVD (≥3 SOL swaps)", f"{wnet:+,.1f} SOL",
-                  "whales accumulating" if wnet >= 0 else "whales exiting",
-                  delta_color="normal" if wnet >= 0 else "inverse")
-        st.metric("🐟 Retail CVD", f"{rnet:+,.1f} SOL", delta_color="off")
-        if (wnet >= 0) != (rnet >= 0):
-            who = ("whales BUY what retail sells — stealth accumulation"
-                   if wnet >= 0 else
-                   "whales SELL into retail buying — distribution to retail")
-            st.markdown(f"<span style='color:"
-                        f"{'#22c55e' if wnet >= 0 else '#ef4444'};"
-                        f"font-size:0.82rem'>⚡ {who}</span>",
-                        unsafe_allow_html=True)
+    @st.cache_data(ttl=600, show_spinner=False)
+    def fetch_live_swaps(ca: str, pool: str, hours: int,
+                         max_pages: int = 40):
+        """Live swap fetch, newest-first, capped pages to protect credits."""
+        cutoff = int(time.time()) - hours * 3600
+        swaps, before = [], None
+        for _pg in range(max_pages):
+            params = {"api-key": helius_key, "limit": 100, "type": "SWAP"}
+            if before:
+                params["before"] = before
+            try:
+                rr = requests.get(
+                    f"https://api.helius.xyz/v0/addresses/{pool}/transactions",
+                    params=params, headers={"User-Agent": "Mozilla/5.0"},
+                    timeout=40)
+                if rr.status_code != 200:
+                    break
+                page = rr.json()
+            except Exception:
+                break
+            if not page:
+                break
+            done = False
+            for tx in page:
+                if (tx.get("timestamp") or 0) <= cutoff:
+                    done = True
+                    break
+                s = _cls(tx, pool, ca)
+                if s and s[1] >= _MINSOL:
+                    swaps.append(s)
+            if done:
+                break
+            before = page[-1].get("signature")
+            time.sleep(0.1)
+        return swaps
 
-    # --- pivot-based divergence (needs enough H4 bars) ---
-    p_ok = [p for p in price_series if p is not None]
-    if len(cvd_s["ts"]) >= 7 and len(p_ok) == len(price_series):
-        divs = detect_divergence(price_series, cvd_s["cvd"])
-        divs += [dict(dv, src="whale") for dv in
-                 detect_divergence(price_series, cvd_s["whale"])]
-        shown = set()
-        for dv in divs:
-            key = (dv["type"], dv["kind"], dv.get("src", "all"))
-            if key in shown:
-                continue
-            shown.add(key)
-            src = "Whale CVD" if dv.get("src") == "whale" else "CVD"
-            rng = f"{x_lbl[dv['i1']]} → {x_lbl[dv['i2']]}"
-            if dv["type"] == "bullish":
-                green_strip(f"📈 <b>{dv['kind'].upper()} BULLISH divergence "
-                            f"({src})</b> · {rng} — {dv['detail']}")
+    with st.spinner(f"Fetching live swaps (last {cvd_window}h, max 40 "
+                    f"pages)…"):
+        live_swaps = fetch_live_swaps(ca, pair0, cvd_window) if pair0 else []
+
+    if live_swaps:
+        ldf = pd.DataFrame(live_swaps,
+                           columns=["side", "sol", "ts", "wallet"])
+        ldf["dt"] = pd.to_datetime(ldf["ts"], unit="s")
+        ldf["signed"] = ldf.apply(
+            lambda r: r["sol"] if r["side"] == "buy" else -r["sol"], axis=1)
+        covered_h = (ldf["dt"].max() - ldf["dt"].min()).total_seconds() / 3600
+        v_buy = float(ldf.loc[ldf["side"] == "buy", "sol"].sum())
+        v_sell = float(ldf.loc[ldf["side"] == "sell", "sol"].sum())
+        lnet = v_buy - v_sell
+        lwh = ldf[ldf["sol"] >= _WHSOL]
+        lwh_net = float(lwh["signed"].sum())
+        lrt_net = lnet - lwh_net
+
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("Swaps analyzed", f"{len(ldf):,}",
+                  f"{covered_h:.1f}h covered", delta_color="off")
+        k2.metric("Net CVD", f"{lnet:+,.1f} SOL",
+                  "net buying" if lnet >= 0 else "net selling",
+                  delta_color="normal" if lnet >= 0 else "inverse")
+        k3.metric(f"🐋 Whale net (≥{_WHSOL:g} SOL)", f"{lwh_net:+,.1f} SOL",
+                  f"{len(lwh):,} swaps",
+                  delta_color="normal" if lwh_net >= 0 else "inverse")
+        k4.metric("🐟 Retail net", f"{lrt_net:+,.1f} SOL", delta_color="off")
+        k5.metric("Buy/Sell vol", f"{v_buy:,.0f} / {v_sell:,.0f}",
+                  "SOL", delta_color="off")
+
+        if (lwh_net >= 0) != (lrt_net >= 0) and \
+                max(abs(lwh_net), abs(lrt_net)) >= 5:
+            if lwh_net >= 0:
+                green_strip("⚡ <b>Whales buy what retail sells — possible "
+                            "stealth accumulation.</b> Verify: consistent "
+                            "across windows? Who are the buyers (CVD page → "
+                            "top wallets)?")
             else:
-                red_strip(f"📉 <b>{dv['kind'].upper()} BEARISH divergence "
-                          f"({src})</b> · {rng} — {dv['detail']}")
-        if not divs:
-            st.caption("No price/CVD divergence at the last confirmed pivots. "
-                       "Pivots need 2 bars of confirmation (non-repainting).")
+                red_strip("⚡ <b>Whales sell into retail buying — "
+                          "distribution to retail.</b> Big tickets are "
+                          "using retail liquidity to exit.")
+
+        # chart with chosen bucket
+        lfreq = f"{cvd_bucket}min"
+        lg = ldf.set_index("dt").sort_index()
+        lagg = lg.groupby([pd.Grouper(freq=lfreq), "side"])["sol"].sum() \
+            .unstack(fill_value=0.0)
+        lagg["buy"] = lagg.get("buy", 0.0)
+        lagg["sell"] = lagg.get("sell", 0.0)
+        lagg["delta"] = lagg["buy"] - lagg["sell"]
+        lagg["cvd"] = lagg["delta"].cumsum()
+        lwagg = (lg[lg["sol"] >= _WHSOL]
+                 .groupby([pd.Grouper(freq=lfreq), "side"])["sol"].sum()
+                 .unstack(fill_value=0.0)).reindex(lagg.index, fill_value=0.0)
+        lagg["wcvd"] = (lwagg.get("buy", 0.0) -
+                        lwagg.get("sell", 0.0)).cumsum()
+        lagg["rcvd"] = lagg["cvd"] - lagg["wcvd"]
+
+        lx = lagg.index
+        figv = go.Figure()
+        figv.add_trace(go.Scatter(x=lx, y=lagg["cvd"], name="CVD (all)",
+                                  line=dict(color="#38bdf8", width=3)))
+        figv.add_trace(go.Scatter(x=lx, y=lagg["wcvd"], name="🐋 Whale",
+                                  line=dict(color="#c084fc", width=2)))
+        figv.add_trace(go.Scatter(x=lx, y=lagg["rcvd"], name="🐟 Retail",
+                                  line=dict(color="#64748b", width=1.5,
+                                            dash="dot")))
+        figv.add_bar(x=lx, y=lagg["delta"], name="Δ", yaxis="y2",
+                     opacity=0.3,
+                     marker=dict(color=["#22c55e" if v >= 0 else "#ef4444"
+                                        for v in lagg["delta"]]))
+        figv.update_layout(height=280, margin=dict(t=10, b=0, l=0, r=0),
+                           legend=dict(orientation="h", font=dict(size=10)),
+                           yaxis=dict(title="SOL", tickfont=dict(size=9)),
+                           yaxis2=dict(overlaying="y", side="right",
+                                       visible=False))
+        st.plotly_chart(figv, use_container_width=True,
+                        config={"displayModeBar": False})
+
+        # divergence vs price on same buckets
+        try:
+            from cvd import fetch_price_series
+            pmap = fetch_price_series(pair0, max(1, cvd_bucket // 60)) \
+                if cvd_bucket >= 60 else {}
+            if pmap:
+                pser, lastp = [], None
+                for t in lx:
+                    key = int(t.timestamp())
+                    lastp = pmap.get(key, lastp)
+                    pser.append(lastp)
+                if pser and pser[0] is None:
+                    fv = next((p for p in pser if p is not None), None)
+                    pser = [fv if p is None else p for p in pser]
+                if all(p is not None for p in pser) and len(pser) >= 7:
+                    ldivs = _detdiv(pser, list(lagg["cvd"]))
+                    ldivs += [dict(dv, src="whale") for dv in
+                              _detdiv(pser, list(lagg["wcvd"]))]
+                    seen_d = set()
+                    for dv in ldivs:
+                        kk = (dv["type"], dv["kind"], dv.get("src", "a"))
+                        if kk in seen_d:
+                            continue
+                        seen_d.add(kk)
+                        src = ("Whale CVD" if dv.get("src") == "whale"
+                               else "CVD")
+                        if dv["type"] == "bullish":
+                            green_strip(f"📈 <b>{dv['kind'].upper()} BULLISH "
+                                        f"divergence ({src})</b> — "
+                                        f"{dv['detail']}")
+                        else:
+                            red_strip(f"📉 <b>{dv['kind'].upper()} BEARISH "
+                                      f"divergence ({src})</b> — "
+                                      f"{dv['detail']}")
+        except Exception:
+            pass
+
+        if covered_h < cvd_window * 0.9:
+            st.caption(f"⚠️ Very active token: page cap reached "
+                       f"{covered_h:.1f}h of the requested {cvd_window}h. "
+                       f"Open the 📊 CVD page for a deeper fetch.")
+        st.caption(f"Swaps <{_MINSOL:g} SOL filtered · whale ≥{_WHSOL:g} SOL "
+                   f"· cached 10 min · full analysis (top wallets, biggest "
+                   f"swaps, size brackets) on the **📊 CVD** page.")
     else:
-        st.caption(f"Divergence detection unlocks at ≥7 H4 bars "
-                   f"(now: {len(cvd_s['ts'])}). The 4-hourly cron keeps "
-                   f"collecting — check back in a day.")
-    upd = cvd_s.get("updated")
-    upd_txt = (_dtm.datetime.utcfromtimestamp(upd).strftime("%m-%d %H:%M UTC")
-               if upd else "?")
-    gap_txt = (" ⚠️ history gap (very active token — some swaps between "
-               "cron runs were missed)" if cvd_s.get("gap") else "")
-    st.caption(f"CVD = cumulative (buys − sells) in SOL, from on-chain swaps "
-               f"via Helius (definite direction, no aggressor guessing). "
-               f"Swaps <0.05 SOL filtered as bot noise; whale = ≥3 SOL. "
-               f"Last update: {upd_txt} (auto every 4h via cron).{gap_txt}")
-else:
-    if ca in _wl:
-        st.caption("📊 CVD data is still empty for this token — the 4-hourly "
-                   "cron will start filling it (or run "
-                   "`python scripts/update_cvd.py` manually). Requires the "
-                   "CA to be on the watchlist.")
-    else:
-        st.caption("📊 CVD tracking requires this CA to be on the "
-                   "**watchlist** (the 4-hourly cron only collects swaps "
-                   "for watched tokens). Add it above.")
+        st.caption("No swaps found in the window (or fetch failed).")
+elif not run_cvd_auto:
+    st.caption("Auto CVD is off (sidebar → ⚡ filters). Use the 📊 CVD page "
+               "for on-demand analysis.")
+
+
 
 # ----------------------------------------------------------------------------
 # DETAILS — open by default
@@ -1453,52 +1619,6 @@ with ex2:
                        "are skipped. Multi-hop bundlers may evade detection.")
         else:
             st.caption("No clusters detected / scan disabled.")
-    with st.expander("💧 Liquidity pools detail", expanded=True):
-        if pools:
-            active = [p for p in pools if p["liq"] > 0]
-            pl = pd.DataFrame([{
-                "DEX": p["dex"].capitalize(),
-                "Pool": sol_link(p["pair"]) if p["pair"] else "",
-                "Quote": p["quote"],
-                "Liquidity": f"${p['liq']:,.0f}",
-                "% of Total LP": f"{p['liq']/total_pool_liq*100:.1f}%",
-                "Chart": p["url"],
-            } for p in active])
-            st.dataframe(pl, use_container_width=True, hide_index=True,
-                         column_config={
-                             "Pool": st.column_config.LinkColumn(
-                                 "Pool", display_text=r"account/(.{6}).*"),
-                             "Chart": st.column_config.LinkColumn(
-                                 "Chart", display_text="DexScreener")})
-            # LP distribution — donut chart (clear % labels per DEX)
-            if len(active) > 1:
-                dist = go.Figure(go.Pie(
-                    labels=[f"{p['dex'].capitalize()} ({p['quote']})"
-                            for p in active],
-                    values=[p["liq"] for p in active],
-                    hole=0.5,
-                    marker=dict(colors=["#38bdf8", "#a78bfa", "#4ade80",
-                                        "#facc15", "#fb923c", "#f87171"]),
-                    texttemplate="<b>%{label}</b><br>%{percent} · $%{value:,.0f}",
-                    textposition="outside",
-                    textfont=dict(size=12),
-                    hovertemplate="<b>%{label}</b><br>$%{value:,.0f} "
-                                  "(%{percent})<extra></extra>"))
-                dist.add_annotation(
-                    text=f"<b>${total_pool_liq:,.0f}</b><br>"
-                         f"<span style='font-size:10px'>total LP</span>",
-                    showarrow=False, font=dict(size=13))
-                dist.update_layout(height=260, showlegend=False,
-                                   margin=dict(t=30, b=30, l=80, r=80))
-                st.plotly_chart(dist, use_container_width=True,
-                                config={"displayModeBar": False})
-            st.caption((f"Total: ${total_pool_liq:,.0f} across {len(active)} "
-                        f"pool(s). LP locked/burned (main pool, RugCheck): "
-                        f"{lp_locked_pct:.0f}%") if lp_locked_pct is not None
-                       else f"Total: ${total_pool_liq:,.0f} across "
-                            f"{len(active)} pool(s). LP lock data unavailable.")
-        else:
-            st.caption("No pool data.")
     with st.expander("🧬 Health Score breakdown", expanded=True):
         sp = pd.DataFrame(
             [{"Component": n, "Points": f"{p:.1f}", "Max": m, "Value": ket}

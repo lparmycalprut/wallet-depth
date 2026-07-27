@@ -251,6 +251,62 @@ def get_h4_series(ca: str, hours_span=None):
             "gap": entry.get("gap", False)}
 
 
+def get_series(ca: str, bucket_hours: int = 1, hours_span: int = None):
+    """Resample hourly buckets into N-hour candles. Returns dict with ts,
+    cvd, whale, retail, buy, sell lists (oldest->newest) or None."""
+    state = load_cvd()
+    entry = state.get(ca)
+    if not entry or not entry.get("buckets"):
+        return None
+    buckets = {int(k): v for k, v in entry["buckets"].items()}
+    tmax = max(buckets)
+    tmin = min(buckets)
+    if hours_span:
+        tmin = max(tmin, tmax - hours_span * 3600)
+    step = bucket_hours * 3600
+    agg = {}
+    for ts, c in buckets.items():
+        if ts < tmin:
+            continue
+        b = ts // step * step
+        a = agg.setdefault(b, {"bs": 0.0, "ss": 0.0, "wbs": 0.0,
+                               "wss": 0.0, "nb": 0, "ns": 0})
+        for k in a:
+            a[k] += c.get(k, 0)
+    ts_sorted = sorted(agg)
+    cvd, wcvd, rcvd, bv, sv = [], [], [], [], []
+    c = w = rr = 0.0
+    for t in ts_sorted:
+        a = agg[t]
+        c += a["bs"] - a["ss"]
+        w += a["wbs"] - a["wss"]
+        rr += (a["bs"] - a["wbs"]) - (a["ss"] - a["wss"])
+        cvd.append(c)
+        wcvd.append(w)
+        rcvd.append(rr)
+        bv.append(a["bs"])
+        sv.append(a["ss"])
+    return {"ts": ts_sorted, "cvd": cvd, "whale": wcvd, "retail": rcvd,
+            "buy": bv, "sell": sv, "updated": entry.get("updated"),
+            "gap": entry.get("gap", False)}
+
+
+def fetch_price_series(pool: str, bucket_hours: int = 1, limit: int = 100):
+    """GeckoTerminal candles -> {bucket_ts: close}."""
+    res, aggr = ("hour", bucket_hours) if bucket_hours in (1, 4, 12) else \
+        ("hour", 1)
+    try:
+        r = requests.get(
+            f"https://api.geckoterminal.com/api/v2/networks/solana/pools/"
+            f"{pool}/ohlcv/{res}", params={"aggregate": aggr, "limit": limit},
+            headers={"accept": "application/json"}, timeout=20)
+        lst = (((r.json() or {}).get("data") or {}).get("attributes") or {}) \
+            .get("ohlcv_list") or []
+    except Exception:
+        return {}
+    return {int(x[0]): float(x[4]) for x in reversed(lst)}
+
+
 def fetch_h4_price(pool: str, limit=42):
     """GeckoTerminal 4h candles -> {ts: close} oldest->newest."""
     try:

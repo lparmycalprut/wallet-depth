@@ -24,7 +24,7 @@ jobs:
       - name: Update CVD buckets
         env:
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
-        run: python scripts/update_cvd.py 80
+        run: python scripts/update_cvd.py 60
 
       - name: Commit cvd.json
         run: |
