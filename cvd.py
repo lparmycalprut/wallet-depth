@@ -42,7 +42,7 @@ def save_cvd(state: dict) -> None:
 
 
 def classify_swap(tx: dict, pool: str, ca: str):
-    """Return (side, sol_amount, ts) or None."""
+    """Return (side, sol_amount, ts, wallet) or None."""
     ca_in = ca_out = sol_in = sol_out = 0.0
     for x in (tx.get("tokenTransfers") or []):
         amt = float(x.get("tokenAmount") or 0)
@@ -58,10 +58,11 @@ def classify_swap(tx: dict, pool: str, ca: str):
             elif x.get("toUserAccount") == pool:
                 sol_in += amt
     ts = tx.get("timestamp") or 0
+    wallet = tx.get("feePayer") or ""
     if ca_out > ca_in and sol_in > 0:      # token left pool -> BUY
-        return ("buy", sol_in, ts)
+        return ("buy", sol_in, ts, wallet)
     if ca_in > ca_out and sol_out > 0:     # token entered pool -> SELL
-        return ("sell", sol_out, ts)
+        return ("sell", sol_out, ts, wallet)
     return None
 
 
@@ -109,7 +110,8 @@ def fetch_swaps(api_key: str, pool: str, ca: str, *, stop_sig=None,
 
 def bucketize(swaps) -> dict:
     out = {}
-    for side, sol, ts in swaps:
+    for s in swaps:
+        side, sol, ts = s[0], s[1], s[2]
         b = str(int(ts // BUCKET * BUCKET))
         c = out.setdefault(b, {"bs": 0.0, "ss": 0.0, "nb": 0, "ns": 0,
                                "wbs": 0.0, "wss": 0.0})
