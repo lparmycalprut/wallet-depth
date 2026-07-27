@@ -276,12 +276,75 @@ def load_funder_cache():
 funder_disk = load_funder_cache()
 
 
-def _badges(w, d):
-    b = []
+def _save_funder_cache(cache):
+    import json as _j
+    try:
+        p = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "funders_cache.json")
+        with open(p, "w") as f:
+            _j.dump(cache, f, separators=(",", ":"))
+    except Exception:
+        pass
+
+
+def _lookup_first_tx(wallet, max_pages=2):
+    """(funder, first_tx_time) via Helius RPC — cached forever on disk."""
+    url = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
+    before, last_sig, last_bt = None, None, None
+    for _ in range(max_pages):
+        params = [wallet, {"limit": 1000}]
+        if before:
+            params[1]["before"] = before
+        try:
+            r = requests.post(url, json={"jsonrpc": "2.0", "id": 1,
+                                         "method": "getSignaturesForAddress",
+                                         "params": params}, timeout=30)
+            res = r.json().get("result") or []
+        except Exception:
+            return None, None
+        if not res:
+            break
+        last_sig = res[-1]["signature"]
+        last_bt = res[-1].get("blockTime")
+        if len(res) < 1000:
+            break
+        before = last_sig
+    else:
+        return None, None  # busy wallet -> aged
+    if not last_sig:
+        return None, None
+    try:
+        r = requests.post(url, json={
+            "jsonrpc": "2.0", "id": 1, "method": "getTransaction",
+            "params": [last_sig, {"encoding": "jsonParsed",
+                                  "maxSupportedTransactionVersion": 0}]},
+            timeout=30)
+        tx = r.json().get("result")
+        keys = tx["transaction"]["message"]["accountKeys"]
+        fp = keys[0]["pubkey"] if isinstance(keys[0], dict) else keys[0]
+        return (fp if fp != wallet else None), last_bt
+    except Exception:
+        return None, last_bt
+
+
+def _age_str(w):
     fu = funder_disk.get(w)
     if fu and fu[1]:
         ad = (time.time() - fu[1]) / 86400
-        b.append("🐣<3d" if ad < 3 else f"🌳{ad:.0f}d")
+        if ad < 1:
+            return f"🐣 {ad*24:.0f}h"
+        if ad < 3:
+            return f"🐣 {ad:.1f}d"
+        if ad < 14:
+            return f"🌱 {ad:.0f}d"
+        return f"🌳 {ad:.0f}d"
+    if fu:
+        return "🌳 aged*"
+    return "—"
+
+
+def _badges(w, d):
+    b = []
     hp = holder_pct_map.get(w)
     if hp and hp >= 0.1:
         b.append(f"📦{hp:.2f}%")
@@ -295,10 +358,28 @@ def _badges(w, d):
 
 
 pa1, pa2 = st.columns(2)
+accs = sorted([(w, d) for w, d in profiles.items()
+               if d["profile"] == "pure_accum" and d["buy"] >= WHALE_SOL],
+              key=lambda x: -x[1]["buy"])[:10]
+dists = sorted([(w, d) for w, d in profiles.items()
+                if d["profile"] == "pure_dist" and
+                d["sell"] >= WHALE_SOL],
+               key=lambda x: -x[1]["sell"])[:10]
+
+# wallet-age lookup for listed wallets not yet in the cache (cached forever)
+_age_targets = [w for w, _ in accs + dists if w not in funder_disk]
+if _age_targets and helius_key:
+    _apb = st.progress(0.0, text="Looking up wallet ages…")
+    for _i, _w in enumerate(_age_targets[:20]):
+        funder_disk[_w] = list(_lookup_first_tx(_w))
+        _apb.progress((_i + 1) / min(len(_age_targets), 20),
+                      text=f"Looking up wallet ages… {_i+1}/"
+                           f"{min(len(_age_targets), 20)}")
+        time.sleep(0.1)
+    _apb.empty()
+    _save_funder_cache(funder_disk)
+
 with pa1:
-    accs = sorted([(w, d) for w, d in profiles.items()
-                   if d["profile"] == "pure_accum" and d["buy"] >= WHALE_SOL],
-                  key=lambda x: -x[1]["buy"])[:10]
     if accs:
         fmap = {}
         for w, _d in accs:
@@ -310,6 +391,7 @@ with pa1:
             "Wallet": f"https://solscan.io/account/{w}",
             "Bought": f"{d['buy']:,.1f}",
             "Swaps": d["n_buy"],
+            "Age": _age_str(w),
             "Badges": _badges(w, d) +
                       (" ⚠️same-funder" if w in same_funder else ""),
         } for w, d in accs]), use_container_width=True, hide_index=True,
@@ -321,15 +403,12 @@ with pa1:
     else:
         st.caption("No whale-size pure accumulators in this window.")
 with pa2:
-    dists = sorted([(w, d) for w, d in profiles.items()
-                    if d["profile"] == "pure_dist" and
-                    d["sell"] >= WHALE_SOL],
-                   key=lambda x: -x[1]["sell"])[:10]
     if dists:
         st.dataframe(pd.DataFrame([{
             "Wallet": f"https://solscan.io/account/{w}",
             "Sold": f"{d['sell']:,.1f}",
             "Swaps": d["n_sell"],
+            "Age": _age_str(w),
             "Badges": _badges(w, d),
         } for w, d in dists]), use_container_width=True, hide_index=True,
             column_config={"Wallet": st.column_config.LinkColumn(
@@ -337,9 +416,11 @@ with pa2:
     else:
         st.caption("No whale-size pure distributors in this window.")
 st.caption("💎 bought & never sold (≤5% tol) · 🩸 sold & never bought back · "
-           "🎯DCA = ≥4 spread-out swaps · 📦/🕸️ badges need a main-page "
-           "Analyze of this CA in the current session · conviction ≥50% + "
-           "🌳 aged + 📦 holding = battle-tested accumulation profile.")
+           "Age: 🐣 <3d (fresh — suspicious), 🌱 3-14d, 🌳 aged, 🌳 aged* = "
+           ">2k txs (organic, exact age not scanned) · 🎯DCA = ≥4 spread-out "
+           "swaps · 📦/🕸️ badges need a main-page Analyze this session · "
+           "conviction ≥50% + 🌳 aged + 📦 holding = battle-tested "
+           "accumulation profile.")
 
 # ---------------------------------------------------------------------------
 # 🔎 Wallet drill-down

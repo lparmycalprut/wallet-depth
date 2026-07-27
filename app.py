@@ -1681,12 +1681,50 @@ if run_cvd_auto and rpc_endpoint:
             for ms in bundles["members"]:
                 cluster_members2.update(ms)
 
-        def _mini_badges(w, d):
-            b = []
+        accs = sorted(
+            [(w, d) for w, d in profiles.items()
+             if d["profile"] == "pure_accum" and d["buy"] >= _WHSOL],
+            key=lambda x: -x[1]["buy"])[:8]
+        dists = sorted(
+            [(w, d) for w, d in profiles.items()
+             if d["profile"] == "pure_dist" and d["sell"] >= _WHSOL],
+            key=lambda x: -x[1]["sell"])[:8]
+
+        # --- wallet age lookup for every listed wallet (cached forever) -----
+        _age_targets = [w for w, _ in accs + dists
+                        if w not in funder_disk2]
+        if _age_targets and rpc_endpoint:
+            _apb = st.progress(0.0, text="Looking up wallet ages…")
+            _new = 0
+            for _i, _w in enumerate(_age_targets[:16]):
+                _f, _bt = find_funder(rpc_endpoint, _w, max_pages=2)
+                funder_disk2[_w] = [_f, _bt]
+                _new += 1
+                _apb.progress((_i + 1) / min(len(_age_targets), 16),
+                              text=f"Looking up wallet ages… {_i+1}/"
+                                   f"{min(len(_age_targets), 16)}")
+                time.sleep(0.1)
+            _apb.empty()
+            if _new:
+                save_funder_cache(funder_disk2)
+
+        def _age_str(w):
             fu = funder_disk2.get(w)
             if fu and fu[1]:
                 ad = (time.time() - fu[1]) / 86400
-                b.append("🐣<3d" if ad < 3 else f"🌳{ad:.0f}d")
+                if ad < 1:
+                    return f"🐣 {ad*24:.0f}h"
+                if ad < 3:
+                    return f"🐣 {ad:.1f}d"
+                if ad < 14:
+                    return f"🌱 {ad:.0f}d"
+                return f"🌳 {ad:.0f}d"
+            if fu:  # looked up but too busy (>2k txs) -> old organic wallet
+                return "🌳 aged*"
+            return "—"
+
+        def _mini_badges(w, d):
+            b = []
             hp = holder_amt2.get(w)
             if hp and hp >= 0.1:
                 b.append(f"📦{hp:.1f}%")
@@ -1699,10 +1737,6 @@ if run_cvd_auto and rpc_endpoint:
             return " ".join(b)
 
         with pa1:
-            accs = sorted(
-                [(w, d) for w, d in profiles.items()
-                 if d["profile"] == "pure_accum" and d["buy"] >= _WHSOL],
-                key=lambda x: -x[1]["buy"])[:8]
             if accs:
                 # same-funder detection among accumulators
                 fmap = {}
@@ -1716,6 +1750,7 @@ if run_cvd_auto and rpc_endpoint:
                     "Wallet": sol_link(w),
                     "Bought": f"{d['buy']:,.1f}",
                     "Swaps": d["n_buy"],
+                    "Age": _age_str(w),
                     "Badges": _mini_badges(w, d) +
                               (" ⚠️same-funder" if w in same_funder else ""),
                 } for w, d in accs]), use_container_width=True,
@@ -1731,15 +1766,12 @@ if run_cvd_auto and rpc_endpoint:
             else:
                 st.caption("No whale-size pure accumulators in this window.")
         with pa2:
-            dists = sorted(
-                [(w, d) for w, d in profiles.items()
-                 if d["profile"] == "pure_dist" and d["sell"] >= _WHSOL],
-                key=lambda x: -x[1]["sell"])[:8]
             if dists:
                 st.dataframe(pd.DataFrame([{
                     "Wallet": sol_link(w),
                     "Sold": f"{d['sell']:,.1f}",
                     "Swaps": d["n_sell"],
+                    "Age": _age_str(w),
                     "Badges": _mini_badges(w, d),
                 } for w, d in dists]), use_container_width=True,
                     hide_index=True,
@@ -1749,11 +1781,13 @@ if run_cvd_auto and rpc_endpoint:
             else:
                 st.caption("No whale-size pure distributors in this window.")
         st.caption("💎 = bought, never sold (≤5% tol) in the window · "
-                   "🩸 = sold, never bought back · 🎯DCA = ≥4 spread-out "
-                   "swaps (patient) · 📦 = current holding · ⚠️same-funder = "
-                   "multiple 'accumulators' funded by one wallet = one "
-                   "entity. Conviction ≥50% + aged 🌳 + 📦 holding = the "
-                   "battle-tested accumulation profile.")
+                   "🩸 = sold, never bought back · Age: 🐣 <3d (fresh — "
+                   "suspicious), 🌱 3-14d, 🌳 aged, 🌳 aged* = wallet with "
+                   ">2k txs (organic, exact age not scanned) · 🎯DCA = ≥4 "
+                   "spread-out swaps · 📦 = current holding · ⚠️same-funder "
+                   "= one entity behind several wallets. Conviction ≥50% + "
+                   "🌳 aged + 📦 holding = the battle-tested accumulation "
+                   "profile.")
 
         # chart with chosen bucket
         lfreq = f"{cvd_bucket}min"

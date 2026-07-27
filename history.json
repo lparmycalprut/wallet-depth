@@ -29,6 +29,7 @@
    "source": "cron"
   },
   "2026-07-27": {
+<<<<<<< Updated upstream
    "total_holders": 5300,
    "dust": 4562,
    "real": 738,
@@ -40,10 +41,24 @@
     ">$10": 738,
     ">$100": 221,
     ">$1K": 30,
+=======
+   "total_holders": 5286,
+   "dust": 4601,
+   "real": 685,
+   "real_mc_pct": 78.15988168931506,
+   "dust_mc_pct": 3.4121188083843306,
+   "marketcap": 140610.0,
+   "price": 0.0001462,
+   "tiers": {
+    ">$10": 685,
+    ">$100": 200,
+    ">$1K": 22,
+>>>>>>> Stashed changes
     ">$10K": 0,
     ">$100K": 0,
     ">$1M": 0
    },
+<<<<<<< Updated upstream
    "ts": "2026-07-27T14:36:03",
    "score": 64,
    "top10_pct": 18.22,
@@ -55,6 +70,19 @@
    "sells24": 5885,
    "vol24": 745662.62,
    "source": "cron"
+=======
+   "ts": "2026-07-27T14:59:31",
+   "score": 71,
+   "top10_pct": 17.76,
+   "liq_pct_mc": 28.3,
+   "max_cluster_pct": 0.0,
+   "symbol": "looong",
+   "buys24": 5845,
+   "sells24": 5784,
+   "vol24": 729057.88,
+   "top5_pct": 11.1,
+   "top100_pct": 56.29
+>>>>>>> Stashed changes
   }
  },
  "23LGuH8WeZYVXRUSvqHcxzAZpSZT1PzTG8yYJfXPpump": {
