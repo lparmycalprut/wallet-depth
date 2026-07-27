@@ -123,12 +123,35 @@ if not pool:
     st.error("Token not found on DexScreener.")
     st.stop()
 
-cache_key = f"cvd_live::{ca}"
+# --- hybrid source: watchlist tokens use the incremental store (complete
+# window that never gets cut off); others use live fetch --------------------
+from watchlist import load_watchlist
+from cvd import update_token_cvd, get_recent_swaps
+
+_wl_cvd = load_watchlist()
+in_watchlist = ca in _wl_cvd
+
+cache_key = f"cvd_live::{ca}::{hours_back}"
 if run or cache_key not in st.session_state:
     cutoff = int(time.time()) - hours_back * 3600
+    if in_watchlist:
+        with st.spinner("Topping up incremental store & loading window…"):
+            try:
+                update_token_cvd(helius_key, ca, pool, max_pages=60)
+            except Exception:
+                pass
+            got = get_recent_swaps(ca, hours_back)
+        if not got:  # store empty -> fall back to live
+            got = live_fetch(ca, pool, cutoff)
+            src = "live fetch"
+        else:
+            src = "incremental store (complete window)"
+    else:
+        got = live_fetch(ca, pool, cutoff)
+        src = "live fetch"
     st.session_state[cache_key] = {
-        "swaps": live_fetch(ca, pool, cutoff),
-        "cutoff": cutoff, "hours": hours_back, "ts": time.time()}
+        "swaps": got, "cutoff": cutoff, "hours": hours_back,
+        "ts": time.time(), "src": src}
 data = st.session_state[cache_key]
 swaps = data["swaps"]
 
@@ -160,9 +183,15 @@ st.markdown(f"### ${symbol} — {len(df):,} swaps · "
             f"{oldest_dt:%m-%d %H:%M} → {newest_dt:%m-%d %H:%M} UTC "
             f"({covered_h:.1f}h covered)")
 if covered_h < data["hours"] * 0.9:
-    st.warning(f"Requested {data['hours']}h but page limit only reached "
-               f"{covered_h:.1f}h back — token is very active. The stats "
-               f"below cover the shown range only.")
+    if in_watchlist:
+        st.info(f"ℹ️ Store covers {covered_h:.1f}h so far — it keeps filling "
+                f"incrementally (2-hourly cron + every run). The window "
+                f"will soon be complete and stay complete.")
+    else:
+        st.warning(f"Requested {data['hours']}h but page limit only reached "
+                   f"{covered_h:.1f}h back — token is very active. 💡 Add it "
+                   f"to the watchlist for complete, never-cut windows.")
+st.caption(f"Source: {data.get('src', 'live fetch')}")
 
 m1, m2, m3, m4, m5, m6 = st.columns(6)
 m1.metric("Buys", f"{n_buy:,}", f"{v_buy:,.1f} SOL", delta_color="off")
@@ -184,6 +213,187 @@ if (wh_net >= 0) != (rt_net >= 0):
            if wh_net >= 0 else
            "⚡ **Whales sell into retail buying — distribution to retail**")
     (st.success if wh_net >= 0 else st.error)(msg)
+
+# ---------------------------------------------------------------------------
+# 💎 Pure flow — accumulators vs distributors (bots excluded)
+# ---------------------------------------------------------------------------
+from cvd import wallet_profiles, conviction_split
+
+profiles = wallet_profiles(swaps)
+conv = conviction_split(profiles, whale_min_sol=WHALE_SOL)
+
+st.markdown("**💎 Pure flow — who bought & HELD vs sold & LEFT** "
+            "<span style='opacity:0.6;font-size:0.75rem'>(two-way bots/MMs "
+            "excluded — sells ≤5% of buys counts as pure)</span>",
+            unsafe_allow_html=True)
+pc1, pc2, pc3, pc4 = st.columns(4)
+pc1.metric("💎 Pure accum (whale-size)", f"{conv['pure_buy']:+,.1f} SOL",
+           "bought & held", delta_color="off")
+pc2.metric("🩸 Pure distribution", f"-{conv['pure_sell']:,.1f} SOL",
+           "sold & left", delta_color="off")
+pc3.metric("🔄 Two-way churn",
+           f"{conv['tw_buy']:,.0f}/{conv['tw_sell']:,.0f}",
+           "bot/MM volume (noise)", delta_color="off")
+pc4.metric("Conviction ratio", f"{conv['conviction_pct']:.0f}%",
+           "of whale buys are held",
+           delta_color="normal" if conv["conviction_pct"] >= 50
+           else "inverse")
+
+net_pure = conv["pure_buy"] - conv["pure_sell"]
+if conv["pure_buy"] >= 10 and net_pure > 0 and conv["conviction_pct"] >= 50:
+    st.success(f"💎 **High-conviction accumulation** — {conv['pure_buy']:,.0f} "
+               f"SOL bought by wallets that did NOT sell "
+               f"({conv['conviction_pct']:.0f}% conviction). The strongest "
+               f"accumulation signature this tool can detect.")
+elif conv["pure_sell"] >= 10 and net_pure < 0:
+    st.error(f"🩸 **Hard distribution** — {conv['pure_sell']:,.0f} SOL sold "
+             f"by wallets that did NOT buy back. The 'invisible seller': "
+             f"steady one-way supply hitting every bounce.")
+
+# --- enrichment data: session analysis (if the main page analyzed this CA),
+#     funder cache (wallet ages) --------------------------------------------
+_sess_a = (st.session_state.get("analyses") or {}).get(ca) or {}
+holder_pct_map = {}
+if _sess_a.get("top20") is not None:
+    holder_pct_map = dict(zip(_sess_a["top20"]["owner"],
+                              _sess_a["top20"]["pct_supply"]))
+cluster_members = set()
+if _sess_a.get("bundles") is not None:
+    for ms in _sess_a["bundles"]["members"]:
+        cluster_members.update(ms)
+def load_funder_cache():
+    """Read the shared funder cache directly (do NOT import app.py —
+    importing it would execute the whole Streamlit script)."""
+    import json as _j
+    try:
+        with open(os.path.join(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__))), "funders_cache.json")) as f:
+            return _j.load(f) or {}
+    except Exception:
+        return {}
+
+
+funder_disk = load_funder_cache()
+
+
+def _badges(w, d):
+    b = []
+    fu = funder_disk.get(w)
+    if fu and fu[1]:
+        ad = (time.time() - fu[1]) / 86400
+        b.append("🐣<3d" if ad < 3 else f"🌳{ad:.0f}d")
+    hp = holder_pct_map.get(w)
+    if hp and hp >= 0.1:
+        b.append(f"📦{hp:.2f}%")
+    if w in cluster_members:
+        b.append("🕸️CLUSTER")
+    if d.get("dca"):
+        b.append("🎯DCA")
+    if (d["n_buy"] + d["n_sell"]) >= 30:
+        b.append("🤖bot-like")
+    return " ".join(b)
+
+
+pa1, pa2 = st.columns(2)
+with pa1:
+    accs = sorted([(w, d) for w, d in profiles.items()
+                   if d["profile"] == "pure_accum" and d["buy"] >= WHALE_SOL],
+                  key=lambda x: -x[1]["buy"])[:10]
+    if accs:
+        fmap = {}
+        for w, _d in accs:
+            fu = funder_disk.get(w)
+            if fu and fu[0]:
+                fmap.setdefault(fu[0], []).append(w)
+        same_funder = {w for ws in fmap.values() if len(ws) > 1 for w in ws}
+        st.dataframe(pd.DataFrame([{
+            "Wallet": f"https://solscan.io/account/{w}",
+            "Bought": f"{d['buy']:,.1f}",
+            "Swaps": d["n_buy"],
+            "Badges": _badges(w, d) +
+                      (" ⚠️same-funder" if w in same_funder else ""),
+        } for w, d in accs]), use_container_width=True, hide_index=True,
+            column_config={"Wallet": st.column_config.LinkColumn(
+                "💎 Pure accumulator", display_text=r"account/(.{6}).*")})
+        if same_funder:
+            st.caption("⚠️ some accumulators share the SAME funder — likely "
+                       "one entity split across wallets.")
+    else:
+        st.caption("No whale-size pure accumulators in this window.")
+with pa2:
+    dists = sorted([(w, d) for w, d in profiles.items()
+                    if d["profile"] == "pure_dist" and
+                    d["sell"] >= WHALE_SOL],
+                   key=lambda x: -x[1]["sell"])[:10]
+    if dists:
+        st.dataframe(pd.DataFrame([{
+            "Wallet": f"https://solscan.io/account/{w}",
+            "Sold": f"{d['sell']:,.1f}",
+            "Swaps": d["n_sell"],
+            "Badges": _badges(w, d),
+        } for w, d in dists]), use_container_width=True, hide_index=True,
+            column_config={"Wallet": st.column_config.LinkColumn(
+                "🩸 Pure distributor", display_text=r"account/(.{6}).*")})
+    else:
+        st.caption("No whale-size pure distributors in this window.")
+st.caption("💎 bought & never sold (≤5% tol) · 🩸 sold & never bought back · "
+           "🎯DCA = ≥4 spread-out swaps · 📦/🕸️ badges need a main-page "
+           "Analyze of this CA in the current session · conviction ≥50% + "
+           "🌳 aged + 📦 holding = battle-tested accumulation profile.")
+
+# ---------------------------------------------------------------------------
+# 🔎 Wallet drill-down
+# ---------------------------------------------------------------------------
+_drill = ([w for w, _ in accs] if accs else []) + \
+         ([w for w, _ in dists] if dists else [])
+if _drill:
+    dd_badge = {w: _badges(w, profiles[w]) for w in _drill}
+    pick_w = st.selectbox(
+        "🔎 Inspect a wallet in detail",
+        ["— select —"] + _drill,
+        format_func=lambda w: (w if w == "— select —" else
+                               f"{w[:8]}…{w[-4:]} · "
+                               f"{'💎' if profiles[w]['profile'] == 'pure_accum' else '🩸'} "
+                               f"{dd_badge.get(w, '')}"))
+    if pick_w != "— select —":
+        wdf = df[df["wallet"] == pick_w].sort_values("dt")
+        wb = float(wdf.loc[wdf["side"] == "buy", "sol"].sum())
+        ws_ = float(wdf.loc[wdf["side"] == "sell", "sol"].sum())
+        fu = funder_disk.get(pick_w) or [None, None]
+        d1, d2, d3, d4 = st.columns(4)
+        d1.metric("Bought", f"{wb:,.2f} SOL",
+                  f"{int((wdf['side'] == 'buy').sum())} swaps",
+                  delta_color="off")
+        d2.metric("Sold", f"{ws_:,.2f} SOL",
+                  f"{int((wdf['side'] == 'sell').sum())} swaps",
+                  delta_color="off")
+        d3.metric("Net", f"{wb - ws_:+,.2f} SOL",
+                  delta_color="normal" if wb >= ws_ else "inverse")
+        d4.metric("Profile", profiles[pick_w]["profile"].replace("_", " "),
+                  delta_color="off")
+        if fu[1]:
+            age_days = (time.time() - fu[1]) / 86400
+            fu_txt = (f"First tx: {age_days:.1f} days ago · funded by "
+                      f"[`{str(fu[0])[:8]}…`]"
+                      f"(https://solscan.io/account/{fu[0]})"
+                      if fu[0] else f"First tx: {age_days:.1f} days ago")
+            st.markdown(f"🧬 {fu_txt} · [open on Solscan]"
+                        f"(https://solscan.io/account/{pick_w})")
+        figw = go.Figure()
+        figw.add_bar(x=wdf["dt"], y=wdf["signed"],
+                     marker=dict(color=["#22c55e" if v >= 0 else "#ef4444"
+                                        for v in wdf["signed"]]),
+                     hovertemplate="%{x}<br>%{y:+.2f} SOL<extra></extra>")
+        figw.add_trace(go.Scatter(x=wdf["dt"], y=wdf["signed"].cumsum(),
+                                  name="cum net",
+                                  line=dict(color="#38bdf8", width=2)))
+        figw.update_layout(height=200, showlegend=False,
+                           margin=dict(t=20, b=0, l=0, r=0),
+                           yaxis_title="SOL",
+                           title=dict(text=f"Swap timeline — {pick_w[:8]}…",
+                                      font=dict(size=12)))
+        st.plotly_chart(figw, use_container_width=True,
+                        config={"displayModeBar": False})
 
 # ---------------------------------------------------------------------------
 # CVD chart (chosen bucket) + price overlay
