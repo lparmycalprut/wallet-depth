@@ -105,6 +105,21 @@ if sess:
                            delta_color="off")
                 cc3.metric("🐟 Retail", f"{c['retail_net']:+,.1f}",
                            delta_color="off")
+                if c.get("flow_flag"):
+                    if c["flow_flag"] == "accum":
+                        st.success("⚡ Stealth accumulation was flagged at "
+                                   "scan time")
+                    else:
+                        st.error("⚡ Distribution to retail was flagged at "
+                                 "scan time")
+                if c.get("who_rows"):
+                    st.markdown(f"**{c.get('who_title', 'Flow actors')}**")
+                    st.dataframe(pd.DataFrame(c["who_rows"]),
+                                 use_container_width=True, hide_index=True,
+                                 column_config={"Wallet":
+                                                st.column_config.LinkColumn(
+                                                    "Wallet",
+                                                    display_text=r"account/(.{6}).*")})
                 import plotly.graph_objects as go
                 lagg = c["agg"]
                 figc = go.Figure()

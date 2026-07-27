@@ -151,7 +151,7 @@ def fetch_mint_info(endpoint: str, ca: str) -> dict:
         return {"mint_authority": None, "freeze_authority": None}
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_holders_helius(api_key: str, ca: str) -> pd.DataFrame:
     endpoint = f"https://mainnet.helius-rpc.com/?api-key={api_key}"
     owners, cursor, pages = {}, None, 0
@@ -1357,7 +1357,7 @@ if run_cvd_auto and rpc_endpoint:
     from cvd import classify_swap as _cls, MIN_SOL as _MINSOL, \
         WHALE_SOL as _WHSOL, detect_divergence as _detdiv
 
-    @st.cache_data(ttl=600, show_spinner=False)
+    @st.cache_data(ttl=3600, show_spinner=False)
     def fetch_live_swaps(ca: str, pool: str, hours: int,
                          max_pages: int = 40):
         """Live swap fetch, newest-first, capped pages to protect credits."""
@@ -1505,6 +1505,7 @@ if run_cvd_auto and rpc_endpoint:
                 })
             if new_lookups:
                 save_funder_cache(funder_disk)
+            who_rows = rows_w  # saved into session for the History page
             if rows_w:
                 st.markdown(f"**{who_title}**")
                 st.dataframe(pd.DataFrame(rows_w),
@@ -1519,6 +1520,66 @@ if run_cvd_auto and rpc_endpoint:
                     "several wallets NOT in the same 🕸️ cluster. Red flags: "
                     "🐣 fresh wallets, 🕸️ same-cluster buyers (could be dev/"
                     "bundler re-loading), or one 🤖 bot doing all the flow.")
+
+                # --- 🔎 Per-wallet drill-down dropdown -----------------------
+                wallet_opts = [r["Wallet"].split("account/")[-1]
+                               for r in rows_w]
+                badge_map = {r["Wallet"].split("account/")[-1]: r["Badges"]
+                             for r in rows_w}
+                pick_w = st.selectbox(
+                    "🔎 Inspect a wallet in detail",
+                    ["— select —"] + wallet_opts,
+                    format_func=lambda w: (w if w == "— select —" else
+                                           f"{w[:8]}…{w[-4:]}  ·  "
+                                           f"{badge_map.get(w, '')}"))
+                if pick_w != "— select —":
+                    wdf = ldf[ldf["wallet"] == pick_w].sort_values("dt")
+                    wb = float(wdf.loc[wdf["side"] == "buy", "sol"].sum())
+                    ws = float(wdf.loc[wdf["side"] == "sell", "sol"].sum())
+                    fu = funder_disk.get(pick_w) or [None, None]
+                    d1, d2, d3, d4 = st.columns(4)
+                    d1.metric("Bought", f"{wb:,.2f} SOL",
+                              f"{int((wdf['side'] == 'buy').sum())} swaps",
+                              delta_color="off")
+                    d2.metric("Sold", f"{ws:,.2f} SOL",
+                              f"{int((wdf['side'] == 'sell').sum())} swaps",
+                              delta_color="off")
+                    d3.metric("Net", f"{wb - ws:+,.2f} SOL",
+                              delta_color="normal" if wb >= ws else "inverse")
+                    hold_now = holder_amt.get(pick_w, 0.0)
+                    d4.metric("Holds now", f"{hold_now:.3f}% supply",
+                              delta_color="off")
+                    if fu[1]:
+                        age_days = (time.time() - fu[1]) / 86400
+                        fu_txt = (f"First tx: {age_days:.1f} days ago · "
+                                  f"funded by "
+                                  f"[`{str(fu[0])[:8]}…`]({sol_link(fu[0])})"
+                                  if fu[0] else
+                                  f"First tx: {age_days:.1f} days ago")
+                        st.markdown(f"🧬 {fu_txt} · "
+                                    f"[open wallet on Solscan]"
+                                    f"({sol_link(pick_w)})")
+                    # timeline of this wallet's swaps in the window
+                    figw = go.Figure()
+                    figw.add_bar(
+                        x=wdf["dt"], y=wdf["signed"],
+                        marker=dict(color=["#22c55e" if v >= 0 else "#ef4444"
+                                           for v in wdf["signed"]]),
+                        hovertemplate="%{x}<br>%{y:+.2f} SOL<extra></extra>")
+                    figw.add_trace(go.Scatter(
+                        x=wdf["dt"], y=wdf["signed"].cumsum(),
+                        name="cum net", line=dict(color="#38bdf8", width=2)))
+                    figw.update_layout(
+                        height=200, showlegend=False,
+                        margin=dict(t=20, b=0, l=0, r=0),
+                        yaxis_title="SOL",
+                        title=dict(text=f"Swap timeline — {pick_w[:8]}…",
+                                   font=dict(size=12)))
+                    st.plotly_chart(figw, use_container_width=True,
+                                    config={"displayModeBar": False})
+        else:
+            who_rows = None
+            who_title = None
 
         # chart with chosen bucket
         lfreq = f"{cvd_bucket}min"
@@ -1739,6 +1800,9 @@ try:
             "whale_net": float(lwh_net), "retail_net": float(lrt_net),
             "buy_vol": float(v_buy), "sell_vol": float(v_sell),
             "window_h": int(cvd_window),
+            "flow_flag": locals().get("flow_flag"),
+            "who_title": locals().get("who_title"),
+            "who_rows": locals().get("who_rows"),
             "agg": lagg[["buy", "sell", "delta", "cvd", "wcvd",
                          "rcvd"]].copy(),
         }
