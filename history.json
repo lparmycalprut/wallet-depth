@@ -27,6 +27,34 @@
    "sells24": 2588,
    "vol24": 328625.05,
    "source": "cron"
+  },
+  "2026-07-28": {
+   "total_holders": 1436,
+   "dust": 942,
+   "real": 494,
+   "real_mc_pct": 89.30510043839361,
+   "dust_mc_pct": 0.6228974064328182,
+   "marketcap": 225703.0,
+   "price": 0.0002329,
+   "tiers": {
+    ">$10": 494,
+    ">$100": 248,
+    ">$1K": 52,
+    ">$10K": 0,
+    ">$100K": 0,
+    ">$1M": 0
+   },
+   "ts": "2026-07-28T02:34:30",
+   "score": 77,
+   "top10_pct": 21.01,
+   "top5_pct": 12.25,
+   "top100_pct": 70.85,
+   "liq_pct_mc": 17.76,
+   "symbol": "BUNKEE",
+   "buys24": 2070,
+   "sells24": 2601,
+   "vol24": 351405.36,
+   "source": "cron"
   }
  },
  "AkchGAUdXXRGHt3HXaHbTvw3JLGUwtJRmYnkG66wpump": {
@@ -56,6 +84,64 @@
    "buys24": 5255,
    "sells24": 5398,
    "vol24": 658523.05,
+   "source": "cron"
+  },
+  "2026-07-28": {
+   "total_holders": 5119,
+   "dust": 4508,
+   "real": 611,
+   "real_mc_pct": 77.87466694112442,
+   "dust_mc_pct": 3.5033242113804675,
+   "marketcap": 123250.0,
+   "price": 0.0001281,
+   "tiers": {
+    ">$10": 611,
+    ">$100": 181,
+    ">$1K": 19,
+    ">$10K": 0,
+    ">$100K": 0,
+    ">$1M": 0
+   },
+   "ts": "2026-07-28T02:34:32",
+   "score": 64,
+   "top10_pct": 15.46,
+   "top5_pct": 9.16,
+   "top100_pct": 56.77,
+   "liq_pct_mc": 29.97,
+   "symbol": "looong",
+   "buys24": 3568,
+   "sells24": 4102,
+   "vol24": 457029.33,
+   "source": "cron"
+  }
+ },
+ "3VK1F5r5aykheirDsqJYTsYKzgYxmmvcjQEB1Y5opump": {
+  "2026-07-28": {
+   "total_holders": 1452,
+   "dust": 1122,
+   "real": 330,
+   "real_mc_pct": 82.65379423826393,
+   "dust_mc_pct": 0.9192111865652348,
+   "marketcap": 144975.0,
+   "price": 0.0001488,
+   "tiers": {
+    ">$10": 330,
+    ">$100": 132,
+    ">$1K": 25,
+    ">$10K": 1,
+    ">$100K": 0,
+    ">$1M": 0
+   },
+   "ts": "2026-07-28T02:34:33",
+   "score": 61,
+   "top10_pct": 36.63,
+   "top5_pct": 24.6,
+   "top100_pct": 74.7,
+   "liq_pct_mc": 30.92,
+   "symbol": "fomo",
+   "buys24": 8929,
+   "sells24": 8331,
+   "vol24": 622780.25,
    "source": "cron"
   }
  }
