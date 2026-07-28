@@ -31,7 +31,15 @@ jobs:
         run: |
           git config user.name "cvd-bot"
           git config user.email "actions@github.com"
+          git stash -u || true
           git pull --rebase || true
+          git stash pop || true
+          # never commit conflict markers into JSON data files
+          for f in cvd.json signals.json conviction.json; do
+            if grep -q "<<<<<<<" "$f" 2>/dev/null; then
+              git checkout --theirs "$f" 2>/dev/null || git checkout HEAD -- "$f" || true
+            fi
+          done
           git add cvd.json signals.json conviction.json
           git diff --cached --quiet || git commit -m "chore: cvd update $(date -u +%FT%H:%M)"
-          git push
+          git push || (git pull --rebase && git push) || true

@@ -135,12 +135,33 @@ def _quote_rates() -> dict:
     return {SOL_MINT: 1.0, USDC_MINT: usd_to_sol, USDT_MINT: usd_to_sol}
 
 
-def load_cvd() -> dict:
+def _load_json_tolerant(path):
+    """Load JSON; if the file contains git conflict markers, parse the
+    newest side of the conflict instead of failing."""
     try:
-        with open(CVD_PATH, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
+        with open(path, "r", encoding="utf-8") as f:
+            raw = f.read()
     except Exception:
-        return {}
+        return None
+    try:
+        return json.loads(raw)
+    except Exception:
+        pass
+    if "<<<<<<<" in raw:
+        import re as _re
+        m = _re.search(r"<<<<<<<[^\n]*\n(.*?)\n=======\n(.*?)\n>>>>>>>",
+                       raw, _re.S)
+        if m:
+            for side in (m.group(2), m.group(1)):  # prefer incoming side
+                try:
+                    return json.loads(side)
+                except Exception:
+                    continue
+    return None
+
+
+def load_cvd() -> dict:
+    return _load_json_tolerant(CVD_PATH) or {}
 
 
 def save_cvd(state: dict) -> None:
@@ -368,12 +389,7 @@ def load_conviction() -> dict:
     hourly cron keeps committing fresh points to the repo — so if the
     local copy looks stale (newest point older than ~90 min), pull the
     fresh copy from GitHub raw (cached 10 min) and merge."""
-    local = {}
-    try:
-        with open(CONV_PATH, "r", encoding="utf-8") as f:
-            local = json.load(f) or {}
-    except Exception:
-        local = {}
+    local = _load_json_tolerant(CONV_PATH) or {}
 
     newest = 0
     for pts in local.values():
