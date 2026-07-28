@@ -1438,7 +1438,7 @@ if card_png:
 # ----------------------------------------------------------------------------
 st.markdown("**📊 On-chain CVD — live swap flow (Helius)**")
 cvd_c1, cvd_c2, cvd_c3 = st.columns([1, 1, 3])
-cvd_window = cvd_c1.selectbox("Window", [6, 12, 24], index=1,
+cvd_window = cvd_c1.selectbox("Window", [6, 12, 24, 48], index=3,
                               format_func=lambda h: f"last {h}h",
                               key="cvd_win")
 cvd_bucket = cvd_c2.selectbox("Candle", [30, 60, 240], index=1,
@@ -1451,11 +1451,15 @@ if run_cvd_auto and rpc_endpoint:
 
     @st.cache_data(ttl=3600, show_spinner=False)
     def fetch_live_swaps(ca: str, pool: str, hours: int,
-                         max_pages: int = 40):
-        """Live swap fetch, newest-first, retries per page (429-proof)."""
+                         max_pages: int = 700):
+        """Full live swap fetch — enough pages for a complete 48h window
+        even on very active tokens (each page retried, 429-proof)."""
         from cvd import _fetch_page
         cutoff = int(time.time()) - hours * 3600
         swaps, before = [], None
+        _pb = st.progress(0.0, text="Fetching swaps…")
+        _t0 = time.time()
+        oldest = time.time()
         for _pg in range(max_pages):
             page = _fetch_page(helius_key, pool, before)
             if page is None or not page:
@@ -1468,22 +1472,29 @@ if run_cvd_auto and rpc_endpoint:
                 s = _cls(tx, pool, ca)
                 if s and s[1] >= _MINSOL:
                     swaps.append(s)
+            oldest = page[-1].get("timestamp") or oldest
+            frac = min(1.0, max(0.02, (time.time() - oldest) /
+                                max(time.time() - cutoff, 1)))
+            _pb.progress(frac, text=f"Fetching… page {_pg+1} · "
+                                    f"{len(swaps):,} swaps · "
+                                    f"{time.time()-_t0:.0f}s")
             if done:
                 break
             before = page[-1].get("signature")
             time.sleep(0.1)
+        _pb.empty()
         return swaps
 
     in_watchlist = ca in _wl
     if in_watchlist:
         # Incremental top-up: only fetches swaps NEWER than the last stored
-        # one, then reads the complete window from the 24h raw-swap store.
+        # one, then reads the complete window from the 48h raw-swap store.
         from cvd import update_token_cvd, get_recent_swaps
 
         @st.cache_data(ttl=600, show_spinner=False)
         def topup_and_load(ca: str, pool: str, hours: int):
             try:
-                update_token_cvd(helius_key, ca, pool, max_pages=40)
+                update_token_cvd(helius_key, ca, pool, max_pages=200)
             except Exception:
                 pass
             return get_recent_swaps(ca, hours)
@@ -1495,8 +1506,8 @@ if run_cvd_auto and rpc_endpoint:
         if not live_swaps:  # store still empty -> fall back to live fetch
             in_watchlist = False
     if not in_watchlist:
-        with st.spinner(f"Fetching live swaps (last {cvd_window}h, max 40 "
-                        f"pages)…"):
+        with st.spinner(f"Fetching complete last {cvd_window}h of swaps "
+                        f"(full fetch — active tokens can take minutes)…"):
             live_swaps = fetch_live_swaps(ca, pair0, cvd_window) \
                 if pair0 else []
 
@@ -1952,11 +1963,10 @@ if run_cvd_auto and rpc_endpoint:
                            f"the full {cvd_window}h window will be complete "
                            f"and stay complete.")
             else:
-                st.caption(f"⚠️ Very active token: page cap reached "
-                           f"{covered_h:.1f}h of the requested {cvd_window}h. "
-                           f"💡 Add it to the **watchlist** — the incremental "
-                           f"store then builds a COMPLETE window that never "
-                           f"gets cut off.")
+                st.caption(f"ℹ️ Token history only goes back "
+                           f"{covered_h:.1f}h (younger than the requested "
+                           f"{cvd_window}h window), or the fetch was "
+                           f"interrupted — stats cover the shown range.")
         src_txt = ("incremental store (complete window)" if in_watchlist
                    else "live fetch")
         st.caption(f"Source: {src_txt} · swaps <{_MINSOL:g} SOL filtered · "
