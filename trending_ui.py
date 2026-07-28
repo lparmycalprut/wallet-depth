@@ -11,20 +11,25 @@ from gmgn_screener import (FIT_OK, FIT_PRIME, FIT_WEAK, fit_color,
                            screen as gmgn_screen)
 
 #: layout of the result table (label, relative width)
-COLUMNS = [("Fit", 0.75), ("Token", 1.6), ("MC", 1.15), ("Liq", 1.0),
-           ("T10", 0.75), ("🧠 Smart", 0.85), ("Holders", 0.95),
-           ("24h", 0.85), ("Age", 0.7), ("Notes", 2.6), ("", 1.3)]
+COLUMNS = [("Fit", 0.75), ("Token", 1.5), ("MC", 1.1), ("Liq", 0.9),
+           ("T10", 0.7), ("🧠 Smart", 0.85), ("Holders", 0.9),
+           ("24h", 0.8), ("Age", 0.6), ("🕸️ Risk", 1.5), ("Notes", 2.2),
+           ("", 1.25)]
 
 CAPTION = (
     f"**Fit score (strict):** price base (22) + T10 concentration (20) + "
     f"liquidity (15) + smart money (14) + rug score (12) + volume sanity (9) "
-    f"+ holders (4) + age (4), **minus penalties** for insider/bundler "
-    f"pressure, rug risk and thin liquidity. A single broken pillar "
-    f"(already pumped >25%, T10 >25%, liq <5% MC, <10 smart wallets, "
-    f"<1000 holders, <2d old…) caps the score at {FIT_OK - 1}, and any hard "
-    f"red flag caps it at 40 — so **≥{FIT_PRIME} 🟢 PRIME is rare and means "
-    f"every pillar is clean**. {FIT_OK}-{FIT_PRIME - 1} 🟡 OK = worth a "
-    f"manual check · {FIT_WEAK}-{FIT_OK - 1} ⚪ WEAK · <{FIT_WEAK} POOR. "
+    f"+ holders (4) + age (4), **minus penalties** for bundler/insider "
+    f"pressure, entrapment & bot-degen flow, snipers still holding, rug risk "
+    f"and thin liquidity. A single broken pillar (already pumped >25%, "
+    f"T10 >25%, liq <5% MC, <10 smart wallets, <1000 holders, <2d old…) caps "
+    f"the score at {FIT_OK - 1} — and the cap drops further with each extra "
+    f"flaw — while any hard red flag caps it at 40. So **≥{FIT_PRIME} 🟢 "
+    f"PRIME is rare and means every pillar is clean**. "
+    f"{FIT_OK}-{FIT_PRIME - 1} 🟡 OK = worth a manual check · "
+    f"{FIT_WEAK}-{FIT_OK - 1} ⚪ WEAK · <{FIT_WEAK} POOR. "
+    "🕸️ Risk column: bndl = bundler-traded supply · insd = dev/team hold · "
+    "trap = entrapment traders · bot = bot-degen flow. "
     "Source: GMGN internal API (unofficial, may break anytime). Always run a "
     "full **Analyze** before acting — this is a filter, not a signal."
 )
@@ -118,9 +123,23 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
             f"<span style='color:{'#22c55e' if chg >= 0 else '#ef4444'}'>"
             f"{chg:+.0f}%</span>", unsafe_allow_html=True)
         cc[8].write(f"{r['age_d']}d")
+        # 🕸️ live risk metrics (real GMGN fields: bdrr / dhr / etpr / bdr)
+        bits = []
+        for lab, val, warn in (("bndl", r.get("bundler_rate", 0), 0.10),
+                               ("insd", r.get("insider_ratio", 0), 0.10),
+                               ("trap", r.get("entrap_rate", 0), 0.30),
+                               ("bot", r.get("botdegen_rate", 0), 0.30)):
+            if val:
+                c = "#ef4444" if val >= warn else "#94a3b8"
+                bits.append(f"<span style='color:{c}'>{lab} "
+                            f"{val * 100:.0f}%</span>")
+        cc[9].markdown(
+            "<span style='font-size:0.62rem'>" +
+            (" · ".join(bits) if bits else "—") + "</span>",
+            unsafe_allow_html=True)
         detail = r.get("notes") or r.get("wins") or "—"
-        cc[9].caption(detail)
-        with cc[10]:
+        cc[10].caption(detail)
+        with cc[11]:
             if on_analyze is not None:
                 if st.button("Analyze →", key=f"{key_prefix}_an_{ca}",
                              use_container_width=True):

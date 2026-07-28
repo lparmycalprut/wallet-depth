@@ -7,10 +7,53 @@ import time
 import uuid
 
 DEVICE_ID = str(uuid.uuid4())
-GMGN_URL = ("https://gmgn.ai/trs/api/v1/trending_rank?"
-            "device_id=" + DEVICE_ID + "&client_id=gmgn_web_20250101&"
-            "from_app=gmgn&app_ver=20250101&tz_name=Asia%2FJakarta&"
-            "tz_offset=25200&app_lang=en&os=web&worker=0")
+#: browser-fingerprint id — GMGN only checks that it's present & hex-ish
+FP_DID = uuid.uuid4().hex
+GMGN_ORIGIN = "https://gmgn.ai"
+TRENDING_PATH = "/trs/api/v1/trending_rank"
+VERSION_URL = GMGN_ORIGIN + "/version.json"
+
+#: fallback build tag; the real one is fetched from /version.json at runtime
+#: (verified against a browser HAR capture — the web app sends its build tag
+#: as both client_id and app_ver, and a stale value gets soft-blocked).
+DEFAULT_BUILD = "20260728-2617-057cd43"
+_build_cache = {"tag": "", "ts": 0.0}
+
+
+def _build_tag(timeout=10):
+    """Current GMGN web build tag, cached for an hour.
+
+    GMGN bumps this on every deploy and rejects/soft-blocks obviously stale
+    clients, which is why a hard-coded ``20250101`` eventually stops working.
+    """
+    now = time.time()
+    if _build_cache["tag"] and now - _build_cache["ts"] < 3600:
+        return _build_cache["tag"]
+    tag = DEFAULT_BUILD
+    try:
+        from curl_cffi import requests as cr
+        r = cr.get(VERSION_URL, impersonate="chrome", timeout=timeout)
+        if r.status_code == 200:
+            # {"buildTag":"20260728-2617-master-057cd43","seq":2617,...}
+            raw = (r.json() or {}).get("buildTag") or ""
+            # query params use the tag WITHOUT the "master-" branch segment
+            parts = [p for p in raw.split("-") if p and p != "master"]
+            if len(parts) >= 3:
+                tag = "-".join(parts[:3])
+    except Exception:
+        pass
+    _build_cache.update(tag=tag, ts=now)
+    return tag
+
+
+def _trending_url():
+    """Full trending_rank URL with the query params the web app sends."""
+    build = _build_tag()
+    return (f"{GMGN_ORIGIN}{TRENDING_PATH}?"
+            f"device_id={DEVICE_ID}&fp_did={FP_DID}&"
+            f"client_id=gmgn_web_{build}&from_app=gmgn&app_ver={build}&"
+            f"tz_name=Asia%2FJakarta&tz_offset=25200&app_lang=en-US&"
+            f"os=web&worker=0")
 
 FILTER_BODY = {
     "meta": {},
@@ -33,30 +76,74 @@ FILTER_BODY = {
     }],
 }
 
+# Header set copied from a real browser capture (HAR). curl_cffi's "chrome"
+# fingerprint + these headers is what gets past GMGN's Cloudflare check.
+# No cookie/auth is needed — the trending endpoint is public.
 HEADERS = {
     "accept": "application/json, text/plain, */*",
-    "accept-language": "en-US,en;q=0.9",
+    "accept-language": "en-US,en;q=0.9,id;q=0.8",
     "content-type": "application/json",
-    "origin": "https://gmgn.ai",
-    "referer": "https://gmgn.ai/trend?chain=sol",
+    "origin": GMGN_ORIGIN,
+    "referer": GMGN_ORIGIN + "/trend?chain=sol",
+    "priority": "u=1, i",
+    "sec-ch-ua": ('"Not;A=Brand";v="8", "Chromium";v="150", '
+                  '"Google Chrome";v="150"'),
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                   "Chrome/150.0.0.0 Safari/537.36"),
 }
 
 
-def fetch_trending(timeout=25):
-    """Return raw token dicts from GMGN trending (may be empty)."""
+def fetch_trending(timeout=25, debug=False):
+    """Return raw token dicts from GMGN trending (may be empty).
+
+    Set ``debug=True`` to print why a fetch came back empty instead of
+    silently swallowing it.
+    """
     try:
         from curl_cffi import requests as cr
     except ImportError:
+        if debug:
+            print("curl_cffi not installed — run: pip install curl_cffi")
         return []
-    try:
-        r = cr.post(GMGN_URL, impersonate="safari17_0", timeout=timeout,
-                    headers=HEADERS, data=json.dumps(FILTER_BODY))
-        if r.status_code != 200 or not r.text.startswith("{"):
-            return []
-        data = r.json()
-        return ((data.get("data") or [{}])[0].get("tokens")) or []
-    except Exception:
-        return []
+
+    last = ""
+    # a couple of fingerprints, in case one gets stale with a CF update
+    for imp in ("chrome", "chrome131", "safari17_0"):
+        try:
+            r = cr.post(_trending_url(), impersonate=imp, timeout=timeout,
+                        headers=HEADERS, data=json.dumps(FILTER_BODY))
+        except Exception as exc:                        # noqa: BLE001
+            last = f"{imp}: {type(exc).__name__}: {exc}"
+            continue
+        if r.status_code != 200:
+            last = f"{imp}: HTTP {r.status_code}"
+            continue
+        try:
+            data = r.json()
+        except Exception:
+            last = f"{imp}: non-JSON reply ({r.text[:80]!r})"
+            continue
+        if data.get("code") not in (0, None):
+            last = f"{imp}: api code={data.get('code')} {data.get('message')}"
+            continue
+        blocks = data.get("data") or []
+        if isinstance(blocks, dict):          # tolerate a shape change
+            blocks = [blocks]
+        toks = []
+        for b in blocks:
+            toks.extend((b or {}).get("tokens") or [])
+        if toks:
+            return toks
+        last = f"{imp}: 200 OK but 0 tokens (filters too strict?)"
+    if debug and last:
+        print("GMGN fetch failed —", last)
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -76,22 +163,30 @@ WEIGHTS = {"price": 22, "t10": 20, "liq": 15, "smart": 14, "rug": 12,
 
 
 def _f(v, default=0.0):
-    """float() that never raises (GMGN sometimes sends null/str/absent)."""
+    """float() that never raises and never returns NaN/inf.
+
+    GMGN occasionally sends null, "", or a string; a corrupted/hostile reply
+    could carry NaN or inf, which would silently poison every comparison
+    below (NaN compares False against everything) — so those collapse to
+    *default* too.
+    """
     try:
-        if v is None or v == "":
+        if v is None or isinstance(v, bool) or v == "":
             return default
-        return float(v)
+        f = float(v)
     except (TypeError, ValueError):
         return default
+    if f != f or f in (float("inf"), float("-inf")):   # NaN / ±inf
+        return default
+    return f
 
 
 def _i(v, default=0):
-    """int() that never raises."""
+    """int() that never raises (NaN/inf-safe, see :func:`_f`)."""
+    f = _f(v, float(default))
     try:
-        if v is None or v == "":
-            return default
-        return int(float(v))
-    except (TypeError, ValueError):
+        return int(max(-1e15, min(1e15, f)))
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -137,6 +232,10 @@ def score_token(t):
     any. Anything tripping a hard risk flag is capped at
     :data:`HIGH_RISK_CAP` so it can never show up green.
     """
+    # Field names verified against a real browser capture of
+    # POST /trs/api/v1/trending_rank (see docs/gmgn_api.md). The long-form
+    # aliases are what /api/v1/token_stat returns, kept as a fallback in
+    # case GMGN ever switches the trending payload to the verbose shape.
     now = time.time()
     mc = _first(t, "mc", "market_cap", "usd_market_cap")
     lq = _first(t, "lq", "liquidity")
@@ -149,8 +248,17 @@ def score_token(t):
     age_d = max(0.0, (now - ot) / 86400.0)
     chg24 = _first(t, "pcp", "price_change_percent24h")
     chg1h = _first(t, "pcp1h", "price_change_percent1h")
-    insider = _first(t, "insider_ratio", "ins")
-    bundler = _first(t, "bundler_rate", "bundler_ratio")
+    # ⚠️ trending_rank has NO "insider_ratio"/"bundler_rate" key — the real
+    # ones are bdrr / bdr / dhr / snp. Using the old names meant these
+    # penalties never fired on live data.
+    bundler = _first(t, "bdrr", "top_bundler_trader_percentage",
+                     "bundler_rate")          # bundler-traded supply share
+    insider = _first(t, "dhr", "dev_team_hold_rate", "insider_ratio")
+    entrap = _first(t, "etpr", "top_entrapment_trader_percentage")
+    botdeg = _first(t, "bdr", "bot_degen_rate")
+    sniper = _first(t, "t70_shr", "top70_sniper_hold_rate")
+    snipers = _i(t.get("snp"))                # sniper wallet count
+    kol = _i(t.get("kol"))                    # KOL/influencer wallets
     liq_pct = lq / mc * 100 if mc else 0.0
     vol_mc = vol / mc if mc else 0.0
 
@@ -237,6 +345,13 @@ def score_token(t):
     elif age_d >= 4:
         score += 2
 
+    # 9. Smart-money quality bonus: KOL wallets alongside smart money is a
+    #    stronger signal than raw count alone. Clamped to 100 below.
+    if kol >= 5 and smt >= 10:
+        score += 3
+        wins.append(f"{kol} KOL wallets")
+    score = min(100, score)
+
     # ---- Penalties: red flags cost points, they don't just miss them ------
     penalty = 0
     if insider > 0.20:
@@ -247,6 +362,23 @@ def score_token(t):
         penalty += 18
     elif bundler > 0.10:
         penalty += 8
+    # entrapment = wallets that trap buyers (honeypot-ish behaviour)
+    if entrap > 0.40:
+        penalty += 14
+    elif entrap > 0.25:
+        penalty += 6
+    # bot-degen dominated flow = fake activity
+    if botdeg > 0.35:
+        penalty += 12
+    elif botdeg > 0.20:
+        penalty += 5
+    # snipers still sitting on supply
+    if sniper > 0.10:
+        penalty += 10
+    elif sniper > 0.03:
+        penalty += 4
+    if snipers >= 30:
+        penalty += 5
     if rug > 0.60:
         penalty += 15
     if t10 > 35:
@@ -280,8 +412,17 @@ def score_token(t):
         caps.append((FIT_OK - 1, f"only {hd:,} holders"))
     if insider > 0.10 or bundler > 0.10:
         caps.append((FIT_OK - 1, "insider/bundler pressure"))
+    if entrap > 0.30:
+        caps.append((FIT_OK - 1, f"entrapment traders {entrap * 100:.0f}%"))
+    if botdeg > 0.30:
+        caps.append((FIT_OK - 1, f"bot-degen flow {botdeg * 100:.0f}%"))
     if caps:
-        cap_val = min(c for c, _ in caps)
+        # The cap drops with BOTH the number of broken pillars and how much
+        # penalty the token accrued — otherwise every flawed token piles up
+        # on the exact same number and the list stops being rankable.
+        cap_val = max(0, min(c for c, _ in caps)
+                      - 3 * (len(caps) - 1)
+                      - min(12, penalty // 2))
         if score > cap_val:
             score = cap_val
         notes.extend(reason for _, reason in caps
@@ -301,6 +442,10 @@ def score_token(t):
         risk_reasons.append(f"Liquidity only {liq_pct:.1f}% of MC")
     if vol_mc > 8:
         risk_reasons.append(f"Volume {vol_mc:.0f}x MC (wash-trade smell)")
+    if entrap > 0.40:
+        risk_reasons.append(f"Entrapment traders {entrap * 100:.0f}%")
+    if sniper > 0.10:
+        risk_reasons.append(f"Snipers hold {sniper * 100:.0f}%")
     high_risk = bool(risk_reasons)
     if high_risk:
         score = min(score, HIGH_RISK_CAP)
@@ -320,8 +465,15 @@ def score_token(t):
         "wins": "; ".join(wins),
         "high_risk": high_risk,
         "risk_reasons": risk_reasons,
-        "insider_ratio": round(insider, 3),
-        "bundler_rate": round(bundler, 3),
+        "insider_ratio": round(insider, 4),
+        "bundler_rate": round(bundler, 4),
+        "entrap_rate": round(entrap, 4),
+        "botdegen_rate": round(botdeg, 4),
+        "sniper_hold": round(sniper, 4),
+        "snipers": snipers,
+        "kol": kol,
+        "price": _first(t, "p", "price"),
+        "logo": t.get("l") or "",
     }
 
 
@@ -432,15 +584,23 @@ def gmgn_trades_to_swaps(trades):
 
 
 if __name__ == "__main__":
-    rows = screen()
-    print("tokens:", len(rows))
+    print("build tag:", _build_tag())
+    raw = fetch_trending(debug=True)
+    print("raw tokens:", len(raw))
+    rows = sorted((score_token(t) for t in raw if isinstance(t, dict)),
+                  key=lambda r: -r["fit"])
+    if not rows:
+        print("Nothing returned — see docs/gmgn_api.md for what to re-check.")
     for r in rows:
-        print(str(r["fit"]).rjust(3), (r["symbol"] or "?").ljust(10),
+        print(str(r["fit"]).rjust(3), (r["grade"] or "").ljust(6),
+              (r["symbol"] or "?").ljust(10),
               "MC $" + format(r["mc"], ",.0f"),
               "| T10 " + str(r["t10_pct"]) + "%",
               "| smart " + str(r["smart"]),
               "| 24h " + str(r["chg24"]) + "%",
-              "|", r["notes"])
+              "| bndl " + format(r["bundler_rate"] * 100, ".0f") + "%",
+              "| trap " + format(r["entrap_rate"] * 100, ".0f") + "%",
+              "|", r["notes"] or r["wins"])
 
     # Contoh fetch trades
     if rows:
