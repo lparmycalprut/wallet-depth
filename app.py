@@ -508,7 +508,7 @@ with title_col:
                "Solana token. ⚙️ Settings live in the **sidebar** (» top-left).")
 with trend_col:
     st.markdown("<div style='height: 8px'></div>", unsafe_allow_html=True)
-    if st.button("🔥 Scan Trending Now", type="primary", use_container_width=True):
+    if st.button("🔥 Scan Trending Now", key="trending_top_v4_final", type="primary", use_container_width=True):
         with st.spinner("Fetching GMGN trending…"):
             try:
                 trending = gmgn_screen()
@@ -675,7 +675,7 @@ default_ca = qp_ca or st.session_state.get("last_ca", "")
 st.markdown("**🔥 Trending tokens from GMGN**")
 col_ca, col_trend = st.columns([2.5, 1.5])
 with col_trend:
-    if st.button("🔥 Scan Trending Now", type="primary", use_container_width=True):
+    if st.button("🔥 Scan Trending Now", key="trending_inline_v4_final", type="primary", use_container_width=True):
         with st.spinner("Fetching GMGN trending…"):
             try:
                 trending = gmgn_screen()
