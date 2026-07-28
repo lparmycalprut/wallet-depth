@@ -31,6 +31,6 @@ jobs:
           git config user.name "cvd-bot"
           git config user.email "actions@github.com"
           git pull --rebase || true
-          git add cvd.json signals.json
+          git add cvd.json signals.json conviction.json
           git diff --cached --quiet || git commit -m "chore: cvd update $(date -u +%FT%H:%M)"
           git push

@@ -276,6 +276,51 @@ def conviction_split(profiles, *, whale_min_sol=3.0):
             "conviction_pct": conviction}
 
 
+# ---------------------------------------------------------------------------
+# Conviction history — recorded by the cron every run, shown on the landing
+# page so LP players can see at a glance whether a pair is still alive.
+# ---------------------------------------------------------------------------
+CONV_PATH = os.path.join(BASE_DIR, "conviction.json")
+
+
+def load_conviction() -> dict:
+    """{ca: [{ts, conviction, pure_buy, pure_sell, net_pure, vol6h}]}"""
+    try:
+        with open(CONV_PATH, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def record_conviction(ca: str, *, window_h: int = 6) -> dict | None:
+    """Compute conviction over the last `window_h` from the swap store and
+    append it to conviction.json. Returns the point or None."""
+    swaps = get_recent_swaps(ca, window_h)
+    if not swaps:
+        return None
+    profiles = wallet_profiles(swaps)
+    conv = conviction_split(profiles, whale_min_sol=WHALE_SOL)
+    vol = sum(s[1] for s in swaps)
+    point = {"ts": int(time.time()),
+             "conviction": round(conv["conviction_pct"], 1),
+             "pure_buy": round(conv["pure_buy"], 1),
+             "pure_sell": round(conv["pure_sell"], 1),
+             "net_pure": round(conv["pure_buy"] - conv["pure_sell"], 1),
+             "vol": round(vol, 1), "swaps": len(swaps)}
+    hist = load_conviction()
+    arr = hist.setdefault(ca, [])
+    arr.append(point)
+    # keep last 7 days of points
+    cutoff = time.time() - 7 * 86400
+    hist[ca] = [p for p in arr if p["ts"] >= cutoff]
+    try:
+        with open(CONV_PATH, "w", encoding="utf-8") as f:
+            json.dump(hist, f, separators=(",", ":"))
+    except Exception:
+        pass
+    return point
+
+
 def get_recent_swaps(ca: str, hours: int = 12):
     """Raw swaps [(side, sol, ts, wallet)] from the store, last N hours (store keeps 48h)."""
     state = load_cvd()

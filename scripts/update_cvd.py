@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import requests  # noqa: E402
-from cvd import update_token_cvd  # noqa: E402
+from cvd import update_token_cvd, record_conviction  # noqa: E402
 from signals import detect_and_record  # noqa: E402
 from watchlist import load_watchlist  # noqa: E402
 
@@ -63,10 +63,12 @@ def main():
             sigs = detect_and_record(ca, meta.get("symbol", "?"),
                                      src="cron", window_h=6,
                                      price_now=price_now, pool=pool)
+            cp = record_conviction(ca, window_h=6)
+            conv_txt = (f" conv={cp['conviction']:.0f}%" if cp else "")
             sig_txt = (" 🔔 " + ",".join(sigs)) if sigs else ""
             print(f"✅ {meta.get('symbol', '?'):>10} {ca[:8]}… "
                   f"+{res['new_swaps']} swaps, {res['buckets']} hourly "
-                  f"buckets{gap}{sig_txt}")
+                  f"buckets{gap}{conv_txt}{sig_txt}")
         except Exception as e:
             print(f"❌ {ca[:8]}… {str(e)[:100]}")
 

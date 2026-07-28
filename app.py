@@ -488,6 +488,85 @@ if _wl:
         + "".join(chips) + "</div>",
         unsafe_allow_html=True)
 
+    # ------------------------------------------------------------------
+    # 💧 LP Radar — conviction trend per cron for every watchlist token.
+    # Growing / >30% conviction = pair still actively traded = LP fees.
+    # ------------------------------------------------------------------
+    try:
+        from cvd import load_conviction
+        _conv_hist = load_conviction()
+    except Exception:
+        _conv_hist = {}
+    if _conv_hist:
+        st.markdown("**💧 LP Radar — conviction per cron (6h window)** "
+                    "<span style='opacity:0.6;font-size:0.72rem'>growing or "
+                    ">30% = pair alive & fee-worthy</span>",
+                    unsafe_allow_html=True)
+        _cards = []
+        for _ca, _meta in _wl.items():
+            pts = _conv_hist.get(_ca) or []
+            if not pts:
+                continue
+            sym = _meta.get("symbol", "?")
+            last = pts[-1]
+            cv = last["conviction"]
+            prev_cv = pts[-2]["conviction"] if len(pts) >= 2 else None
+            growing = prev_cv is not None and cv > prev_cv
+            hot = growing or cv > 30
+            # sparkline (last 12 points)
+            spark_pts = pts[-12:]
+            vals = [p["conviction"] for p in spark_pts]
+            vmax = max(max(vals), 50) or 1
+            bars = "".join(
+                f"<span style='display:inline-block;width:5px;"
+                f"margin-right:1px;background:"
+                f"{'#22c55e' if v > 30 else '#64748b'};"
+                f"height:{max(3, v / vmax * 26):.0f}px;"
+                f"vertical-align:bottom;border-radius:1px;'></span>"
+                for v in vals)
+            trend_txt = (f"{prev_cv:.0f}→{cv:.0f}%" if prev_cv is not None
+                         else f"{cv:.0f}%")
+            trend_ic = "📈" if growing else ("➖" if prev_cv is not None and
+                                             cv == prev_cv else
+                                             ("📉" if prev_cv is not None
+                                              else ""))
+            border = "#22c55e" if hot else "#2d3748"
+            glow = ("box-shadow:0 0 12px rgba(34,197,94,0.45);" if hot
+                    else "")
+            cv_col = "#22c55e" if hot else "#94a3b8"
+            vol_txt = f"{last['vol']:,.0f} SOL/6h · {last['swaps']:,} swaps"
+            np_col = "#22c55e" if last["net_pure"] >= 0 else "#ef4444"
+            _cards.append(
+                f"<a href='?ca={_ca}' target='_self' "
+                f"style='text-decoration:none;'>"
+                f"<div style='flex:0 0 auto;background:#131a26;"
+                f"border:2px solid {border};{glow}border-radius:12px;"
+                f"padding:8px 14px;margin-right:10px;cursor:pointer;"
+                f"min-width:150px;'>"
+                f"<div style='font-weight:800;color:#e2e8f0;"
+                f"font-size:0.85rem;'>{sym} "
+                f"<span style='color:{cv_col};font-size:1.05rem;'>"
+                f"{cv:.0f}%</span> <span style='font-size:0.72rem;'>"
+                f"{trend_ic}</span></div>"
+                f"<div style='height:28px;margin:3px 0;'>{bars}</div>"
+                f"<div style='font-size:0.62rem;color:#64748b;'>"
+                f"conv {trend_txt} · <span style='color:{np_col};'>"
+                f"net {last['net_pure']:+,.0f}</span></div>"
+                f"<div style='font-size:0.62rem;color:#64748b;'>"
+                f"{vol_txt}</div>"
+                f"</div></a>")
+        if _cards:
+            st.markdown(
+                "<div style='display:flex;overflow-x:auto;"
+                "padding:2px 2px 10px 2px;scrollbar-width:thin;'>"
+                + "".join(_cards) + "</div>",
+                unsafe_allow_html=True)
+            st.caption("🟢 glowing = conviction growing vs previous cron OR "
+                       ">30% — the pair is actively traded (LP fees "
+                       "flowing). Bars = conviction per cron run (7d kept, "
+                       "green bar = >30%). Volume shown = swap volume in "
+                       "the 6h window. Click a card to analyze.")
+
 # clicking a ticker chip sets ?ca=... -> prefill + auto-analyze
 qp_ca = st.query_params.get("ca", "").strip()
 
