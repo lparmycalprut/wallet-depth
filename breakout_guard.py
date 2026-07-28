@@ -253,6 +253,43 @@ def run_guard(ca, symbol, pool, price_now):
             return f"${v:,.2f}"
         return f"${v:.10f}".rstrip("0")
 
+    def plan_up(level, lows, highs):
+        stop = level * 0.97
+        hard = next((s for s in lows if s < level), None)
+        tps = [h for h in highs if h > level][:2]
+        txt = ("\n\n\U0001F4CB <b>ACTION PLAN</b>"
+               f"\n\U0001F6D1 Stop (failed breakout): close H1 &lt; "
+               f"{fmt(stop)} (-3% = back inside range)")
+        if hard:
+            txt += (f"\n\U0001F6D1 Hard invalidation: {fmt(hard)} "
+                    f"(next support)")
+        if tps:
+            txt += ("\n\U0001F3AF TP zones: " +
+                    " \u2192 ".join(fmt(t) for t in tps))
+            risk = price_now - stop
+            if risk > 0 and tps[0] > price_now:
+                rr = (tps[0] - price_now) / risk
+                txt += f"\n\U0001F4D0 R:R to TP1 \u2248 {rr:.1f}"
+        txt += ("\n\U0001F4A1 close back below the level = failed "
+                "breakout \u2014 act on the stop, not on hope.")
+        return txt
+
+    def plan_down(level, lows):
+        reclaim = level * 1.02
+        nxt = next((s for s in lows if s < level), None)
+        txt = ("\n\n\U0001F4CB <b>ACTION PLAN</b>"
+               f"\n\U0001F7E2 Thesis alive again only if fast reclaim: "
+               f"close H1 &gt; {fmt(reclaim)} within 1-3 candles (spring)")
+        if nxt:
+            txt += (f"\n\U0001F6D1 If no reclaim: next support "
+                    f"{fmt(nxt)} \u2014 cut there at the latest")
+        else:
+            txt += ("\n\U0001F6D1 No support left below \u2014 if no "
+                    "fast reclaim, cut immediately")
+        txt += ("\n\U0001F4A1 holding a lost support without a reclaim "
+                "is how small losses become big ones.")
+        return txt
+
     link = f"https://dexscreener.com/solana/{ca}"
 
     if prev_price:
@@ -262,6 +299,7 @@ def run_guard(ca, symbol, pool, price_now):
             if prev_price < level <= price_now and not recently(key):
                 d = diagnose_breakout(ca)
                 v, emo, why = verdict_up(d)
+                plan = plan_up(level, lows, highs)
                 extra = ""
                 if d:
                     extra = (f"\n🐋 whale net: <b>{d['whale_net']:+.0f}</b> SOL"
@@ -275,7 +313,7 @@ def run_guard(ca, symbol, pool, price_now):
                              f"{' 📈' if d['conviction_rising'] else ''}")
                 msg = (f"{emo} <b>${symbol} BREAKOUT above "
                        f"{fmt(level)}</b> → {fmt(price_now)}\n"
-                       f"Verdict: <b>{v}</b>\n{why}{extra}\n"
+                       f"Verdict: <b>{v}</b>\n{why}{extra}{plan}\n"
                        f"⚠️ wait for 2-3 candle follow-through before "
                        f"acting.\n<a href='{link}'>chart</a>")
                 if send_telegram(msg):
@@ -297,9 +335,10 @@ def run_guard(ca, symbol, pool, price_now):
             if prev_price > level >= price_now and not recently(key):
                 d = diagnose_breakout(ca)
                 v, emo, why = verdict_down(d)
+                plan = plan_down(level, lows)
                 msg = (f"{emo} <b>${symbol} broke SUPPORT "
                        f"{fmt(level)}</b> → {fmt(price_now)}\n"
-                       f"Verdict: <b>{v}</b>\n{why}\n"
+                       f"Verdict: <b>{v}</b>\n{why}{plan}\n"
                        f"<a href='{link}'>chart</a>")
                 if send_telegram(msg):
                     sent.append(("breakdown", level, v))
