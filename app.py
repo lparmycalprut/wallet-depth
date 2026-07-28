@@ -501,7 +501,7 @@ if _wl:
     # Growing / >30% conviction = pair still actively traded = LP fees.
     # ------------------------------------------------------------------
     try:
-        from cvd import load_conviction
+        from cvd import load_conviction, detect_phase, PHASE_COLORS
         _conv_hist = load_conviction()
     except Exception:
         _conv_hist = {}
@@ -547,8 +547,27 @@ if _wl:
             cv_col = "#22c55e" if hot else "#94a3b8"
             vol_txt = f"{last['vol']:,.0f} SOL/6h · {last['swaps']:,} swaps"
             np_col = "#22c55e" if last["net_pure"] >= 0 else "#ef4444"
+            # market phase badge (heuristic, read-only from existing data)
+            try:
+                _ph = detect_phase(_ca, (_prices.get(_ca) or {}).get("chg24"))
+            except Exception:
+                _ph = {"phase": "Neutral/Choppy", "confidence": "low",
+                       "reason": "phase detection unavailable"}
+            _ph_col = PHASE_COLORS.get(_ph["phase"], "#64748b")
+            _conf_dots = {"low": "·", "medium": "··", "high": "···"}.get(
+                _ph.get("confidence", "low"), "·")
+            _ph_reason = (_ph.get("reason", "") or "").replace("'", "&#39;")
+            phase_html = (
+                f"<div style='margin-top:3px;'>"
+                f"<span title='{_ph_reason} (confidence: "
+                f"{_ph.get('confidence', 'low')}) — heuristic, not a "
+                f"signal' style='background:{_ph_col}22;border:1px solid "
+                f"{_ph_col};color:{_ph_col};border-radius:6px;"
+                f"padding:1px 7px;font-size:0.6rem;font-weight:700;"
+                f"white-space:nowrap;'>{_ph['phase']} {_conf_dots}</span>"
+                f"</div>")
             _cards.append(
-                f"<a href='?ca={_ca}' target='_self' "
+                f"<a href='/CVD?ca={_ca}' target='_self' "
                 f"style='text-decoration:none;'>"
                 f"<div style='flex:0 0 auto;background:#131a26;"
                 f"border:2px solid {border};{glow}border-radius:12px;"
@@ -559,6 +578,7 @@ if _wl:
                 f"<span style='color:{cv_col};font-size:1.05rem;'>"
                 f"{cv:.0f}%</span> <span style='font-size:0.72rem;'>"
                 f"{trend_ic}</span></div>"
+                f"{phase_html}"
                 f"<div style='height:28px;margin:3px 0;'>{bars}</div>"
                 f"<div style='font-size:0.62rem;color:#64748b;'>"
                 f"conv {trend_txt} · <span style='color:{np_col};'>"
@@ -576,7 +596,10 @@ if _wl:
                        ">30% — the pair is actively traded (LP fees "
                        "flowing). Bars = conviction per cron run (7d kept, "
                        "green bar = >30%). Volume shown = swap volume in "
-                       "the 6h window. Click a card to analyze.")
+                       "the 6h window. Phase badge = Wyckoff-style "
+                       "heuristic (hover for the reason; ·/··/··· = "
+                       "confidence) — NOT a trading signal. Click a card "
+                       "to open the full 48h CVD analysis.")
 
 # clicking a ticker chip sets ?ca=... -> prefill + auto-analyze
 qp_ca = st.query_params.get("ca", "").strip()

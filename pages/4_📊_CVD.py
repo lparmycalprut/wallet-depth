@@ -42,9 +42,17 @@ helius_key = CONFIG.get("helius_api_key") or ""
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WINDOWS = [6, 12, 24, 48]
 
-ca = st.text_input("Contract Address", placeholder="Solana CA...").strip()
+# CA can arrive via query param (?ca=...) from the LP Radar cards on the
+# main page — prefill and auto-run the full analysis (same pattern as the
+# main page's qp_ca auto-analyze).
+qp_ca = st.query_params.get("ca", "").strip()
+
+ca = st.text_input("Contract Address", value=qp_ca,
+                   placeholder="Solana CA...").strip()
 run = st.button("📊 Analyze (full 48h fetch + all windows)", type="primary",
                 use_container_width=True)
+if ca and qp_ca == ca and f"cvd48::{ca}" not in st.session_state:
+    run = True  # arrived from an LP Radar card -> analyze immediately
 if not ca:
     st.info("Paste a CA. The fetch pulls the complete last 48h — very "
             "active tokens can take a few minutes, progress is shown.")

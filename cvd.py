@@ -409,6 +409,114 @@ def get_recent_swaps(ca: str, hours: int = 12):
 
 
 # ---------------------------------------------------------------------------
+# Market phase detection (Wyckoff-style heuristic, read-only)
+# ---------------------------------------------------------------------------
+def detect_phase(ca: str, price_change_24h: float | None = None) -> dict:
+    """Classify the market phase from data we ALREADY have:
+    conviction history (conviction.json) + 24h price change (DexScreener,
+    passed in by the caller — no new fetches here).
+
+    Returns {"phase": str, "confidence": "low"|"medium"|"high",
+             "reason": short explanation for the tooltip}.
+    Heuristic only — not a trading signal.
+    """
+    pts = (load_conviction() or {}).get(ca) or []
+    if not pts:
+        return {"phase": "Neutral/Choppy", "confidence": "low",
+                "reason": "no conviction history yet (cron still filling)"}
+
+    last = pts[-1]
+    cv = float(last.get("conviction") or 0)
+    np_now = float(last.get("net_pure") or 0)
+    vol_now = float(last.get("vol") or 0)
+    chg = price_change_24h  # may be None
+
+    prev = pts[-2] if len(pts) >= 2 else None
+    prev2 = pts[-3] if len(pts) >= 3 else None
+    cv_prev = float(prev["conviction"]) if prev else None
+    np_prev = float(prev.get("net_pure") or 0) if prev else None
+    vol_prev = float(prev.get("vol") or 0) if prev else None
+
+    cv_rising = cv_prev is not None and cv > cv_prev
+    cv_falling = cv_prev is not None and cv < cv_prev
+    np_flipped_neg = np_prev is not None and np_prev >= 0 and np_now < 0
+    vol_rising = vol_prev is not None and vol_prev > 0 and \
+        vol_now > vol_prev * 1.15
+
+    # confidence: need >=3 cron points to talk about "trend"
+    confidence = "low" if len(pts) < 3 else "medium"
+    if len(pts) >= 3 and chg is not None:
+        confidence = "high"
+
+    price_flat = chg is not None and -8 <= chg <= 8
+    price_up_big = chg is not None and chg > 15
+    price_up_small = chg is not None and 0 < chg <= 15
+    price_down_big = chg is not None and chg < -15
+    price_down = chg is not None and chg < 0
+
+    # --- ordered rules (most specific first) --------------------------------
+    # 5. Distribution-Late / Markdown
+    if (price_down_big or (price_down and np_now < -10)) and \
+            np_now < 0 and cv < 30:
+        return {"phase": "Markdown", "confidence": confidence,
+                "reason": f"price {chg:+.0f}% 24h, net pure {np_now:+.0f} "
+                          f"SOL (sellers one-way), conviction {cv:.0f}% — "
+                          f"distribution done, supply overhang"}
+    # 4. Distribution-Early
+    if (chg is None or chg > -8) and (cv_falling or np_flipped_neg) and \
+            (np_now < 0 or (cv_prev is not None and cv < cv_prev - 5)):
+        r_bits = []
+        if chg is not None:
+            r_bits.append(f"price still holding ({chg:+.0f}% 24h)")
+        if cv_falling:
+            r_bits.append(f"conviction dropping {cv_prev:.0f}→{cv:.0f}%")
+        if np_flipped_neg:
+            r_bits.append("net pure flipped negative")
+        return {"phase": "Distribution-Early", "confidence": confidence,
+                "reason": ", ".join(r_bits) or "early distribution signs"}
+    # 3. Markup
+    if price_up_big and np_now >= -5:
+        return {"phase": "Markup", "confidence": confidence,
+                "reason": f"price {chg:+.0f}% 24h with net pure "
+                          f"{np_now:+.0f} SOL — trend leg in progress"
+                          f"{', volume rising' if vol_rising else ''}"}
+    # 2. Accumulation-Late
+    if cv >= 50 and (cv_rising or (cv_prev is not None and
+                                   abs(cv - cv_prev) <= 5)) and \
+            np_now > 0 and (chg is None or price_flat or price_up_small):
+        return {"phase": "Accumulation-Late", "confidence": confidence,
+                "reason": f"conviction {cv:.0f}% (high & holding), net pure "
+                          f"{np_now:+.0f} SOL, price quiet — mature "
+                          f"accumulation"}
+    # 1. Accumulation-Early
+    if cv_rising and np_now > 0 and \
+            (chg is None or price_flat or price_down) and cv < 50:
+        return {"phase": "Accumulation-Early", "confidence": confidence,
+                "reason": f"conviction climbing {cv_prev:.0f}→{cv:.0f}% "
+                          f"from a low base, net pure {np_now:+.0f} SOL"
+                          f"{', volume picking up' if vol_rising else ''}"}
+    # 6. fallback
+    bits = [f"conviction {cv:.0f}%"]
+    if cv_prev is not None:
+        bits.append(f"prev {cv_prev:.0f}%")
+    bits.append(f"net pure {np_now:+.0f}")
+    if chg is not None:
+        bits.append(f"price {chg:+.0f}%/24h")
+    return {"phase": "Neutral/Choppy", "confidence": confidence,
+            "reason": "mixed signals: " + ", ".join(bits)}
+
+
+PHASE_COLORS = {
+    "Accumulation-Early": "#38bdf8",   # blue
+    "Accumulation-Late": "#2563eb",    # deeper blue
+    "Markup": "#22c55e",               # green
+    "Distribution-Early": "#fb923c",   # orange
+    "Markdown": "#ef4444",             # red
+    "Neutral/Choppy": "#64748b",       # grey
+}
+
+
+# ---------------------------------------------------------------------------
 # Divergence detection (pivot-based, non-repainting)
 # ---------------------------------------------------------------------------
 def find_pivots(vals, left=2, right=2):
