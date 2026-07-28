@@ -74,9 +74,19 @@ def main():
             cp = record_conviction(ca, window_h=6)
             conv_txt = (f" conv={cp['conviction']:.0f}%" if cp else "")
             sig_txt = (" 🔔 " + ",".join(sigs)) if sigs else ""
+            # Breakout Guard: level tracking + on-chain diagnosed alerts
+            guard_txt = ""
+            try:
+                from breakout_guard import run_guard
+                alerts = run_guard(ca, meta.get("symbol", "?"), pool,
+                                   price_now)
+                if alerts:
+                    guard_txt = " 🚨" + ",".join(a[2] for a in alerts)
+            except Exception as ge:
+                guard_txt = f" guard-err:{str(ge)[:40]}"
             print(f"✅ {meta.get('symbol', '?'):>10} {ca[:8]}… "
                   f"+{res['new_swaps']} swaps, {res['buckets']} hourly "
-                  f"buckets{gap}{conv_txt}{sig_txt}")
+                  f"buckets{gap}{conv_txt}{sig_txt}{guard_txt}")
         except Exception as e:
             print(f"❌ {ca[:8]}… {str(e)[:100]}")
     if wl_changed:

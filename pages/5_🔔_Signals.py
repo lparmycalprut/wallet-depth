@@ -32,6 +32,10 @@ TYPE_META = {
     "distribution": ("🔴", "Distribution to retail", "#ef4444"),
     "bullish_div": ("📈", "Bullish divergence", "#4ade80"),
     "bearish_div": ("📉", "Bearish divergence", "#f87171"),
+    "breakout_real": ("🚀", "Breakout (real markup)", "#22c55e"),
+    "breakout_trap": ("🪤", "Breakout (bull trap)", "#ef4444"),
+    "breakout_unclear": ("❔", "Breakout (unclear)", "#facc15"),
+    "breakdown": ("⬇️", "Support breakdown", "#f87171"),
 }
 WIB = dtm.timezone(dtm.timedelta(hours=7))
 

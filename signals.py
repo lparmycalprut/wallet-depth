@@ -51,6 +51,18 @@ def record_signal(ca: str, symbol: str, sig_type: str, detail: str, *,
                  "whale_net": whale_net, "retail_net": retail_net,
                  "price": price})
     save_signals(sigs)
+    # push important signals to Telegram too (best effort)
+    try:
+        from breakout_guard import send_telegram
+        emo = {"accumulation": "🟢", "distribution": "🔴",
+               "bullish_div": "📈", "bearish_div": "📉"}.get(sig_type)
+        if emo and src == "cron":
+            send_telegram(
+                f"{emo} <b>${symbol}</b> — {sig_type.replace('_', ' ')}\n"
+                f"{detail}\n"
+                f"<a href='https://dexscreener.com/solana/{ca}'>chart</a>")
+    except Exception:
+        pass
     return True
 
 
