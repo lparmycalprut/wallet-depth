@@ -397,9 +397,10 @@ min_holder_pct = st.sidebar.number_input(
     help="Wallets this small can't form a dangerous cluster — skipping them "
          "saves credits & time.")
 run_cvd_auto = st.sidebar.checkbox(
-    "Auto-run CVD analysis after Analyze", value=True,
-    help="Fetches live swaps (12h window by default). Disable to save "
-         "credits on quick checks.")
+    "Auto-run CVD analysis after Analyze", value=False,
+    help="OFF (default): CVD runs only when you press the ▶ Run CVD "
+         "button — check holders/security first, skip flawed tokens, "
+         "save credits. ON: CVD runs automatically with every Analyze.")
 _mode_cfg = {"Fast": {"pages": 2, "cap": 30},
              "Balanced": {"pages": 3, "cap": None},
              "Deep": {"pages": 5, "cap": None}}[scan_mode]
@@ -1447,8 +1448,19 @@ cvd_window = cvd_c1.selectbox("Window", [6, 12, 24, 48], index=3,
 cvd_bucket = cvd_c2.selectbox("Candle", [30, 60, 240], index=1,
                               format_func=lambda m: f"{m}m" if m < 60
                               else f"{m//60}h", key="cvd_bkt")
+with cvd_c3:
+    st.markdown("<div style='height:1.72rem'></div>", unsafe_allow_html=True)
+    cvd_clicked = st.button("▶ Run CVD analysis", type="secondary",
+                            use_container_width=True,
+                            disabled=not rpc_endpoint)
 
-if run_cvd_auto and rpc_endpoint:
+# manual trigger: once clicked, CVD stays active for this CA (until CA changes)
+_cvd_flag = f"cvd_on::{ca}"
+if cvd_clicked:
+    st.session_state[_cvd_flag] = True
+run_cvd_now = run_cvd_auto or st.session_state.get(_cvd_flag, False)
+
+if run_cvd_now and rpc_endpoint:
     from cvd import classify_swap as _cls, MIN_SOL as _MINSOL, \
         WHALE_SOL as _WHSOL, detect_divergence as _detdiv
 
@@ -1977,9 +1989,11 @@ if run_cvd_auto and rpc_endpoint:
                    f"biggest swaps, size brackets) on the **📊 CVD** page.")
     else:
         st.caption("No swaps found in the window (or fetch failed).")
-elif not run_cvd_auto:
-    st.caption("Auto CVD is off (sidebar → ⚡ filters). Use the 📊 CVD page "
-               "for on-demand analysis.")
+elif not run_cvd_now:
+    st.caption("CVD not run yet for this token — check the holder & "
+               "security data above first; if the token looks worth it, "
+               "press **▶ Run CVD analysis**. (Enable auto-run in the "
+               "sidebar → ⚡ filters if you prefer the old behaviour.)")
 
 
 
@@ -2106,7 +2120,7 @@ try:
     _top20 = df.sort_values("usd_value", ascending=False).head(20)[
         ["owner", "ui_amount", "usd_value", "pct_supply"]].copy()
     _cvd_summary = None
-    if run_cvd_auto and 'ldf' in dir() and isinstance(
+    if run_cvd_now and 'ldf' in dir() and isinstance(
             locals().get("ldf"), pd.DataFrame) and len(ldf):
         _cvd_summary = {
             "swaps": int(len(ldf)), "net": float(lnet),
