@@ -522,8 +522,14 @@ if _wl:
             last = pts[-1]
             cv = last["conviction"]
             prev_cv = pts[-2]["conviction"] if len(pts) >= 2 else None
-            growing = prev_cv is not None and cv > prev_cv
-            hot = growing or cv > 30
+            prev2_cv = pts[-3]["conviction"] if len(pts) >= 3 else None
+            grow1 = prev_cv is not None and cv > prev_cv
+            grow2 = grow1 and prev2_cv is not None and prev_cv > prev2_cv
+            # Radar entry criteria: only tokens whose conviction is growing.
+            #   1x growing  -> yellow card
+            #   2x in a row -> green glowing card (confirmed trend)
+            if not grow1:
+                continue
             # sparkline (last 12 points)
             spark_pts = pts[-12:]
             vals = [p["conviction"] for p in spark_pts]
@@ -537,14 +543,13 @@ if _wl:
                 for v in vals)
             trend_txt = (f"{prev_cv:.0f}→{cv:.0f}%" if prev_cv is not None
                          else f"{cv:.0f}%")
-            trend_ic = "📈" if growing else ("➖" if prev_cv is not None and
-                                             cv == prev_cv else
-                                             ("📉" if prev_cv is not None
-                                              else ""))
-            border = "#22c55e" if hot else "#2d3748"
-            glow = ("box-shadow:0 0 12px rgba(34,197,94,0.45);" if hot
-                    else "")
-            cv_col = "#22c55e" if hot else "#94a3b8"
+            trend_ic = "📈📈" if grow2 else "📈"
+            if grow2:      # confirmed: 2 consecutive rises -> green glow
+                border, cv_col = "#22c55e", "#22c55e"
+                glow = "box-shadow:0 0 12px rgba(34,197,94,0.45);"
+            else:          # 1 rise -> yellow (watch, not confirmed yet)
+                border, cv_col = "#facc15", "#facc15"
+                glow = "box-shadow:0 0 10px rgba(250,204,21,0.35);"
             vol_txt = f"{last['vol']:,.0f} SOL/6h · {last['swaps']:,} swaps"
             np_col = "#22c55e" if last["net_pure"] >= 0 else "#ef4444"
             # market phase badge (heuristic, read-only from existing data)
@@ -592,14 +597,19 @@ if _wl:
                 "padding:2px 2px 10px 2px;scrollbar-width:thin;'>"
                 + "".join(_cards) + "</div>",
                 unsafe_allow_html=True)
-            st.caption("🟢 glowing = conviction growing vs previous cron OR "
-                       ">30% — the pair is actively traded (LP fees "
-                       "flowing). Bars = conviction per cron run (7d kept, "
-                       "green bar = >30%). Volume shown = swap volume in "
-                       "the 6h window. Phase badge = Wyckoff-style "
-                       "heuristic (hover for the reason; ·/··/··· = "
-                       "confidence) — NOT a trading signal. Click a card "
-                       "to open the full 48h CVD analysis.")
+            st.caption("Radar shows ONLY tokens with growing conviction: "
+                       "🟡 yellow = grew once (watch, unconfirmed) · "
+                       "🟢 green glow = grew 2 crons in a row (confirmed "
+                       "trend — pair alive, LP fees flowing). Bars = "
+                       "conviction per cron (7d kept, green bar = >30%). "
+                       "Phase badge = Wyckoff-style heuristic (hover for "
+                       "reason; ·/··/··· = confidence) — NOT a trading "
+                       "signal. Click a card for the full 48h CVD "
+                       "analysis.")
+        else:
+            st.caption("💧 LP Radar: no watchlist token has growing "
+                       "conviction right now — cards appear when a token's "
+                       "conviction rises vs the previous cron run.")
 
 # clicking a ticker chip sets ?ca=... -> prefill + auto-analyze
 qp_ca = st.query_params.get("ca", "").strip()
@@ -2032,14 +2042,14 @@ elif not run_cvd_now:
 # ----------------------------------------------------------------------------
 ex1, ex2 = st.columns(2)
 with ex1:
-    with st.expander("📶 Wallet Depth table", expanded=True):
+    with st.expander("📶 Wallet Depth table", expanded=False):
         show = tier_df.copy()
         show["% Holders"] = show["% Holders"].map(lambda v: f"{v:.2f}%")
         show["USD Value"] = show["USD Value"].map(lambda v: f"${v:,.0f}")
         show["% MC"] = show["% MC"].map(lambda v: f"{v:.2f}%")
         show["Wallets"] = show["Wallets"].map(lambda v: f"{v:,}")
         st.dataframe(show, use_container_width=True, hide_index=True)
-    with st.expander("🏆 Top 20 Holders", expanded=True):
+    with st.expander("🏆 Top 20 Holders", expanded=False):
         top = df.sort_values("usd_value", ascending=False).head(20).copy()
         top["Wallet"] = top["owner"].map(sol_link)
         top["Tokens"] = top["ui_amount"].map(lambda v: f"{v:,.0f}")
@@ -2049,7 +2059,7 @@ with ex1:
                      use_container_width=True, hide_index=True,
                      column_config={"Wallet": WALLET_COL})
         st.caption("Click a wallet to open it on Solscan.")
-    with st.expander("🎯 Holder Concentration & Dev info", expanded=True):
+    with st.expander("🎯 Holder Concentration & Dev info", expanded=False):
         cc = pd.DataFrame([
             {"Group": "Top 1-5", "% Supply": f"{conc['top5']:.2f}%"},
             {"Group": "Top 6-10", "% Supply": f"{conc['top6_10']:.2f}%"},
@@ -2079,7 +2089,7 @@ with ex1:
                            f"{n7} wallets < 7 days old, {n30} < 30 days. Old "
                            f"wallets (>5k txs) have no age data.")
 with ex2:
-    with st.expander("📈 Holders Day-by-Day table", expanded=True):
+    with st.expander("📈 Holders Day-by-Day table", expanded=False):
         if len(hist_df) >= 1:
             tbl = hist_df.copy()
             if "delta" not in tbl:
@@ -2097,7 +2107,7 @@ with ex2:
                        "differ slightly from ours (per-owner, LP excluded).")
         else:
             st.caption("No history yet.")
-    with st.expander("🕸️ Bundler / Cluster table", expanded=True):
+    with st.expander("🕸️ Bundler / Cluster table", expanded=False):
         if bundles is not None and not bundles.empty:
             show_c = bundles.copy()
             show_c["Funder"] = show_c["funder"].map(sol_link)
@@ -2124,7 +2134,7 @@ with ex2:
                        "are skipped. Multi-hop bundlers may evade detection.")
         else:
             st.caption("No clusters detected / scan disabled.")
-    with st.expander("🧬 Health Score breakdown", expanded=True):
+    with st.expander("🧬 Health Score breakdown", expanded=False):
         sp = pd.DataFrame(
             [{"Component": n, "Points": f"{p:.1f}", "Max": m, "Value": ket}
              for n, p, m, ket in score_parts])

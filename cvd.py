@@ -358,13 +358,63 @@ def conviction_split(profiles, *, whale_min_sol=3.0):
 CONV_PATH = os.path.join(BASE_DIR, "conviction.json")
 
 
+_conv_remote_cache = {"data": None, "ts": 0.0}
+
+
 def load_conviction() -> dict:
-    """{ca: [{ts, conviction, pure_buy, pure_sell, net_pure, vol6h}]}"""
+    """{ca: [{ts, conviction, pure_buy, pure_sell, net_pure, vol}]}
+
+    On Streamlit Cloud the local file is frozen at deploy time while the
+    hourly cron keeps committing fresh points to the repo — so if the
+    local copy looks stale (newest point older than ~90 min), pull the
+    fresh copy from GitHub raw (cached 10 min) and merge."""
+    local = {}
     try:
         with open(CONV_PATH, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
+            local = json.load(f) or {}
     except Exception:
-        return {}
+        local = {}
+
+    newest = 0
+    for pts in local.values():
+        if pts:
+            newest = max(newest, pts[-1].get("ts") or 0)
+    fresh_enough = newest and (time.time() - newest) < 90 * 60
+    if fresh_enough:
+        return local
+
+    now = time.time()
+    if _conv_remote_cache["data"] is not None and \
+            now - _conv_remote_cache["ts"] < 600:
+        remote = _conv_remote_cache["data"]
+    else:
+        remote = None
+        try:
+            r = requests.get(
+                "https://raw.githubusercontent.com/lparmycalprut/"
+                "wallet-depth/main/conviction.json",
+                params={"t": int(now)}, timeout=10)
+            if r.status_code == 200:
+                remote = r.json() or {}
+                _conv_remote_cache.update(data=remote, ts=now)
+        except Exception:
+            pass
+    if not remote:
+        return local
+
+    # merge: union of points per CA, dedup by ts
+    merged = dict(local)
+    for ca, pts in remote.items():
+        seen = {p["ts"] for p in merged.get(ca, [])}
+        merged.setdefault(ca, [])
+        merged[ca].extend([p for p in pts if p["ts"] not in seen])
+        merged[ca].sort(key=lambda p: p["ts"])
+    try:
+        with open(CONV_PATH, "w", encoding="utf-8") as f:
+            json.dump(merged, f, separators=(",", ":"))
+    except Exception:
+        pass
+    return merged
 
 
 def record_conviction(ca: str, *, window_h: int = 6) -> dict | None:
