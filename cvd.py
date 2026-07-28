@@ -149,7 +149,7 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
         else:
             entry["buckets"][b] = c
     # --- raw swap store (last 24h, incl. wallet) for complete-window UI ----
-    cutoff_raw = time.time() - 24 * 3600
+    cutoff_raw = time.time() - 48 * 3600
     raw = entry.get("swaps") or []
     raw.extend([list(s) for s in swaps])
     entry["swaps"] = [s for s in raw if (s[2] or 0) >= cutoff_raw]
@@ -226,7 +226,7 @@ def conviction_split(profiles, *, whale_min_sol=3.0):
 
 
 def get_recent_swaps(ca: str, hours: int = 12):
-    """Raw swaps [(side, sol, ts, wallet)] from the store, last N hours."""
+    """Raw swaps [(side, sol, ts, wallet)] from the store, last N hours (store keeps 48h)."""
     state = load_cvd()
     entry = state.get(ca)
     if not entry or not entry.get("swaps"):
