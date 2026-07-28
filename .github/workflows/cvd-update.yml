@@ -1,8 +1,8 @@
-name: CVD update (4-hourly)
+name: CVD update (hourly)
 
 on:
   schedule:
-    - cron: "20 */2 * * *"   # every 2 hours at :20
+    - cron: "20 * * * *"   # every hour at :20
   workflow_dispatch: {}
 
 permissions:
@@ -24,6 +24,7 @@ jobs:
       - name: Update CVD buckets
         env:
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+          HELIUS_API_KEYS: ${{ secrets.HELIUS_API_KEYS }}
         run: python scripts/update_cvd.py 60
 
       - name: Commit cvd.json

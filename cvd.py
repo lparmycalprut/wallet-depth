@@ -31,6 +31,79 @@ BUCKET = 3600       # 1-hour buckets (resampled to H4 for divergence)
 
 _sol_price_cache = {"price": 0.0, "ts": 0.0}
 
+# ---------------------------------------------------------------------------
+# Helius key pool — rotate across multiple free keys on rate limits.
+# Sources (merged): env HELIUS_API_KEYS (comma-sep), env HELIUS_API_KEY,
+# config.json helius_api_key + helius_extra_keys, streamlit secrets.
+# ---------------------------------------------------------------------------
+_key_pool = {"keys": [], "idx": 0, "loaded": 0.0}
+
+
+def _load_key_pool() -> list:
+    now = time.time()
+    if _key_pool["keys"] and now - _key_pool["loaded"] < 300:
+        return _key_pool["keys"]
+    keys = []
+
+    def _add(v):
+        for k in str(v or "").replace("\n", ",").split(","):
+            k = k.strip()
+            if k and k not in keys:
+                keys.append(k)
+
+    _add(os.environ.get("HELIUS_API_KEYS"))
+    _add(os.environ.get("HELIUS_API_KEY"))
+    try:
+        with open(os.path.join(BASE_DIR, "config.json")) as f:
+            cfg = json.load(f) or {}
+        _add(cfg.get("helius_api_key"))
+        _add(cfg.get("helius_extra_keys"))
+    except Exception:
+        pass
+    try:
+        import streamlit as st
+        _add(st.secrets.get("helius_api_key", ""))
+        _add(st.secrets.get("helius_extra_keys", ""))
+    except Exception:
+        pass
+    _key_pool["keys"] = keys
+    _key_pool["loaded"] = now
+    return keys
+
+
+def _next_key(current: str | None = None) -> str | None:
+    """Round-robin to the next key in the pool (skipping `current`)."""
+    keys = _load_key_pool()
+    if not keys:
+        return current
+    _key_pool["idx"] = (_key_pool["idx"] + 1) % len(keys)
+    k = keys[_key_pool["idx"]]
+    if k == current and len(keys) > 1:
+        _key_pool["idx"] = (_key_pool["idx"] + 1) % len(keys)
+        k = keys[_key_pool["idx"]]
+    return k
+
+
+def helius_rpc_post(payload: dict, timeout: int = 30, retries: int = 3):
+    """JSON-RPC POST with key rotation on 429/5xx. Returns dict or None."""
+    key = _load_key_pool()[0] if _load_key_pool() else None
+    if not key:
+        return None
+    delay = 0.5
+    for _ in range(retries):
+        try:
+            r = requests.post(f"https://mainnet.helius-rpc.com/?api-key={key}",
+                              json=payload, timeout=timeout)
+            if r.status_code == 200:
+                return r.json()
+            if r.status_code == 429 or r.status_code >= 500:
+                key = _next_key(key) or key
+        except Exception:
+            pass
+        time.sleep(delay)
+        delay *= 2
+    return None
+
 
 def get_sol_price() -> float:
     """SOL/USD price, cached 10 min — used to convert USDC/USDT-quoted
@@ -105,21 +178,23 @@ def classify_swap(tx: dict, pool: str, ca: str):
 
 
 def _fetch_page(api_key: str, pool: str, before=None, *, retries=4):
-    """One Enhanced-API page with retries + exponential backoff.
-    Returns list (possibly empty) or None if all retries failed."""
-    params = {"api-key": api_key, "limit": 100, "type": "SWAP"}
+    """One Enhanced-API page with retries + backoff + KEY ROTATION.
+    On 429/5xx the next attempt uses the next key in the pool."""
+    params = {"limit": 100, "type": "SWAP"}
     if before:
         params["before"] = before
+    key = api_key or _next_key()
     delay = 0.6
     for attempt in range(retries):
         try:
             r = requests.get(
                 f"https://api.helius.xyz/v0/addresses/{pool}/transactions",
-                params=params, headers={"User-Agent": "Mozilla/5.0"},
-                timeout=40)
+                params={**params, "api-key": key},
+                headers={"User-Agent": "Mozilla/5.0"}, timeout=40)
             if r.status_code == 200:
                 return r.json()
-            # 429/5xx -> back off and retry
+            if r.status_code == 429 or r.status_code >= 500:
+                key = _next_key(key) or key   # rotate to another free key
         except Exception:
             pass
         time.sleep(delay)

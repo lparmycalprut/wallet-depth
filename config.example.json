@@ -4,5 +4,6 @@
   "dust_limit_usd": 10,
   "cluster_warn_pct": 5,
   "cluster_scan_top_n": 50,
-  "exclude_lp": true
+  "exclude_lp": true,
+  "helius_extra_keys": "KEY2,KEY3 (optional \u2014 comma separated)"
 }

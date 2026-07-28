@@ -365,6 +365,12 @@ st.sidebar.caption("Defaults are loaded from `config.json` — paste your API ke
                    "there, or edit here and click **Save**.")
 helius_key = st.sidebar.text_input("Helius API Key", type="password",
                                    value=str(CONFIG.get("helius_api_key") or ""))
+helius_extra = st.sidebar.text_input(
+    "Extra Helius keys (optional, comma-separated)", type="password",
+    value=str(CONFIG.get("helius_extra_keys") or ""),
+    help="Add 2-3 more FREE Helius keys (different accounts). The tool "
+         "auto-rotates to the next key whenever one hits its rate limit — "
+         "multiplying your free capacity.")
 custom_rpc = st.sidebar.text_input("Custom RPC URL (optional)",
                                    value=str(CONFIG.get("custom_rpc") or ""),
                                    placeholder="https://...")
@@ -408,6 +414,7 @@ _mode_cfg = {"Fast": {"pages": 2, "cap": 30},
 st.sidebar.divider()
 if st.sidebar.button("💾 Save to config.json", use_container_width=True):
     save_config({"helius_api_key": helius_key, "custom_rpc": custom_rpc,
+                 "helius_extra_keys": helius_extra,
                  "dust_limit_usd": dust_limit,
                  "cluster_warn_pct": cluster_warn_pct,
                  "cluster_scan_top_n": n_scan, "exclude_lp": exclude_lp})
