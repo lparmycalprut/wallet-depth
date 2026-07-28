@@ -97,10 +97,20 @@ python cli.py <CA> --helius-key <API_KEY>   # atau override manual
   kewajaran volume 9 · jumlah holder 4 · umur 4), **dikurangi penalti**
   untuk tekanan insider/bundler, rug risk, dan likuiditas tipis.
   Satu pilar rusak saja (sudah pump >25%, T10 >25%, likuiditas <5% MC,
-  smart money <10, holder <1000, umur <2 hari) langsung membatasi skor
+  smart money <10, holder <1000, umur <2 hari) membatasi skor
   di **54**, dan red flag keras membatasi di **40** — jadi
   **🟢 PRIME (≥75) memang jarang** dan berarti semua pilar bersih.
   🟡 OK 55-74 · ⚪ WEAK 35-54 · POOR <35.
+- **Ramp kontinu, bukan ambang tangga** — tiap pilar, penalti, dan gate
+  diinterpolasi linear di antara titik kalibrasinya (lihat `CURVES` /
+  `PENALTY_CURVES` / `CAP_CURVE` di `gmgn_screener.py`), bukan lagi tumpukan
+  `if/elif`. Dulu selisih **satu** smart wallet bisa membalik skor:
+  RAKO dengan 9 wallet = 54 (WEAK), dengan 10 wallet = 77 (PRIME), padahal
+  tokennya sama. Sekarang perubahan kecil menggeser skor beberapa poin saja
+  (dijaga uji regresi di `tests/test_scoring_continuity.py`, maks 4 poin per
+  langkah), ambang lama tetap jadi titik tengah tiap ramp sehingga kalibrasi
+  PRIME/AVOID tidak berubah, dan token yang mirip jadi bisa **diurutkan**
+  (field `fit_exact` menyimpan skor sebelum pembulatan).
 - **Sidebar bisa disembunyikan** — default tertutup; klik tanda **»** di kiri
   atas untuk buka, **×** untuk tutup. Semua pengaturan ada di sana.
 - **Dust vs Real holder** + verdict OK / peringatan merah.

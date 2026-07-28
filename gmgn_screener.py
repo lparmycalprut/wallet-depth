@@ -161,6 +161,109 @@ HIGH_RISK_CAP = 40
 WEIGHTS = {"price": 22, "t10": 20, "liq": 15, "smart": 14, "rug": 12,
            "vol": 9, "holders": 4, "age": 4}
 
+# ---------------------------------------------------------------------------
+# Continuous ramps instead of step thresholds
+# ---------------------------------------------------------------------------
+# The old scoring was a stack of if/elif ladders, so a hair's-breadth move in
+# one input could swing the final score by 20+ points: RAKO with 9 smart
+# wallets scored 54 (WEAK), the very same token with 10 scored 77 (PRIME).
+# Every pillar, penalty and gate below is now a piecewise-LINEAR curve that
+# passes through the old thresholds — same calibration at the anchor points,
+# but the values in between are interpolated instead of jumping.
+#
+# Each curve is a list of ``(x, y)`` anchors with x ascending; y is a
+# *fraction* (0-1) of that pillar's weight for the reward curves, and raw
+# penalty points for the penalty curves.
+
+#: reward curves — fraction of WEIGHTS[pillar] earned at each anchor
+CURVES = {
+    # 24h price change: flat base is what we want, pumps and dumps are not
+    "price": [(-40, 0.0), (-25, 0.27), (-12, 0.68), (-6, 1.0),
+              (8, 1.0), (15, 0.68), (30, 0.27), (60, 0.09), (90, 0.0)],
+    # 1h chop multiplier applied on top of the 24h curve (0.68-1.0)
+    "chg1h": [(5, 1.0), (12, 0.68)],
+    # top-10 holder concentration, %
+    "t10": [(12, 1.0), (18, 0.75), (25, 0.40), (30, 0.15), (35, 0.0)],
+    # liquidity as % of market cap
+    "liq": [(0, 0.0), (3, 0.13), (6, 0.47), (10, 0.80), (15, 1.0)],
+    # smart-money wallet count
+    "smart": [(0, 0.0), (5, 0.14), (10, 0.43), (20, 0.79), (30, 1.0)],
+    # GMGN rug score (0-1)
+    "rug": [(0.15, 1.0), (0.30, 0.67), (0.45, 0.25), (0.60, 0.0)],
+    # 24h volume / MC — too little is dead, too much is wash trading
+    "vol": [(0.05, 0.0), (0.25, 0.56), (0.40, 1.0),
+            (2.0, 1.0), (3.0, 0.56), (5.0, 0.0)],
+    "holders": [(500, 0.0), (1000, 0.25), (2500, 0.75), (5000, 1.0)],
+    "age": [(1, 0.0), (4, 0.5), (7, 1.0)],
+}
+
+#: penalty curves — raw points subtracted at each anchor
+PENALTY_CURVES = {
+    "insider": [(0.08, 0), (0.12, 8), (0.22, 18), (0.35, 26)],
+    "bundler": [(0.08, 0), (0.12, 8), (0.22, 18), (0.35, 26)],
+    "entrap": [(0.20, 0), (0.27, 6), (0.42, 14), (0.60, 20)],
+    "botdeg": [(0.16, 0), (0.22, 5), (0.37, 12), (0.55, 18)],
+    "sniper": [(0.02, 0), (0.04, 4), (0.11, 10), (0.25, 16)],
+    "snipers": [(20, 0), (30, 5), (60, 9)],
+    "rug": [(0.52, 0), (0.62, 15), (0.85, 22)],
+    "t10": [(32, 0), (36, 12), (50, 20)],
+    "smt_thin": [(0, 6), (3, 0)],
+    "liq_thin": [(0, 10), (3, 0)],
+}
+
+#: KOL bonus (points) once smart money is already present
+KOL_BONUS = 3
+
+#: How the score ceiling slides with the worst gate's severity (0-1).
+#: 0.0 → no cap at all · 0.5 (= the old hard threshold) → just under PRIME,
+#: so crossing the line still costs the green badge · 1.0 → FIT_OK - 1,
+#: exactly what the old code clamped to.
+CAP_CURVE = [(0.0, 100.0), (0.25, 88.0), (0.5, FIT_PRIME - 1.0),
+             (1.0, FIT_OK - 1.0)]
+
+
+def _curve(x, anchors):
+    """Piecewise-linear interpolation of *x* over ``(x, y)`` *anchors*.
+
+    Anchors must have ascending x. Outside the range the nearest endpoint
+    value is held, so the result is continuous everywhere — no cliffs.
+    """
+    x = _f(x)
+    if x <= anchors[0][0]:
+        return float(anchors[0][1])
+    for (x0, y0), (x1, y1) in zip(anchors, anchors[1:]):
+        if x <= x1:
+            span = x1 - x0
+            if span <= 0:
+                return float(y1)
+            return float(y0) + (float(y1) - float(y0)) * (x - x0) / span
+    return float(anchors[-1][1])
+
+
+def _pillar(name, x):
+    """Points earned on *name* pillar = curve fraction × its weight."""
+    return WEIGHTS[name] * _curve(x, CURVES[name])
+
+
+def _sev(x, ok, bad):
+    """Gate severity 0-1: 0 at (and beyond) *ok*, 1 at (and beyond) *bad*.
+
+    Replaces a hard ``if x > threshold`` gate with a transition zone
+    straddling that threshold, so a token sitting right on the line is
+    only *partially* gated instead of losing 20 points to a rounding
+    difference. The old hard threshold sits at the **midpoint** of the
+    ``ok``→``bad`` band, i.e. severity 0.5, which keeps the calibration.
+
+    The ramp is linear on purpose: a smoothstep is 1.5x steeper at its
+    midpoint, and the midpoint is exactly the old threshold — the spot we
+    most need to be gentle. Nothing jumps when a gate switches on either,
+    because :data:`CAP_CURVE` starts at 100 (a no-op) at severity 0.
+    """
+    x = _f(x)
+    if ok == bad:
+        return 1.0 if ((x >= bad) if bad > ok else (x <= bad)) else 0.0
+    return max(0.0, min(1.0, (x - ok) / (bad - ok)))
+
 
 def _f(v, default=0.0):
     """float() that never raises and never returns NaN/inf.
@@ -231,6 +334,12 @@ def score_token(t):
     and red flags actively *subtract* points instead of merely not adding
     any. Anything tripping a hard risk flag is capped at
     :data:`HIGH_RISK_CAP` so it can never show up green.
+
+    Scoring is **continuous**: every pillar, penalty and gate interpolates
+    between the calibration anchors in :data:`CURVES` / :data:`PENALTY_CURVES`
+    (see :func:`_curve` and :func:`_sev`). A token sitting one wallet or one
+    tenth of a percent from a threshold now scores one or two points apart,
+    not twenty.
     """
     # Field names verified against a real browser capture of
     # POST /trs/api/v1/trending_rank (see docs/gmgn_api.md). The long-form
@@ -262,171 +371,139 @@ def score_token(t):
     liq_pct = lq / mc * 100 if mc else 0.0
     vol_mc = vol / mc if mc else 0.0
 
-    score = 0
+    raw = 0.0
     notes = []
     wins = []
 
     # 1. Price action — we want a FLAT base, not a pump (max 22) ------------
-    if -6 <= chg24 <= 8 and abs(chg1h) <= 5:
-        score += 22
+    # 24h shape sets the level, 1h chop scales it down (a token that is flat
+    # on the day but whipsawing hourly is not a calm base).
+    price_pts = _pillar("price", chg24) * _curve(abs(chg1h), CURVES["chg1h"])
+    raw += price_pts
+    if price_pts >= WEIGHTS["price"] * 0.9:
         wins.append("tight flat base")
-    elif -12 <= chg24 <= 15:
-        score += 15
+    elif price_pts >= WEIGHTS["price"] * 0.6:
         wins.append("price flat (accum window)")
-    elif -25 <= chg24 <= 30:
-        score += 6
-    elif chg24 > 30:
-        score += 2 if chg24 <= 60 else 0
-    # (>30% / <-25% are called out by the gating section below)
+    # (big pumps / dumps are called out by the gating section below)
 
     # 2. Top-10 concentration (max 20) --------------------------------------
-    if t10 <= 12:
-        score += 20
+    t10_pts = _pillar("t10", t10)
+    raw += t10_pts
+    if t10_pts >= WEIGHTS["t10"] * 0.9:
         wins.append(f"T10 only {t10:.0f}%")
-    elif t10 <= 18:
-        score += 15
-    elif t10 <= 25:
-        score += 8
-    elif t10 <= 30:
-        score += 3
 
     # 3. Liquidity vs MC (max 15) -------------------------------------------
-    if liq_pct >= 15:
-        score += 15
+    liq_pts = _pillar("liq", liq_pct)
+    raw += liq_pts
+    if liq_pts >= WEIGHTS["liq"] * 0.9:
         wins.append(f"deep liq {liq_pct:.0f}% MC")
-    elif liq_pct >= 10:
-        score += 12
-    elif liq_pct >= 6:
-        score += 7
-    elif liq_pct >= 3:
-        score += 2
 
     # 4. Smart-money presence (max 14) --------------------------------------
-    if smt >= 30:
-        score += 14
+    smart_pts = _pillar("smart", smt)
+    raw += smart_pts
+    if smart_pts >= WEIGHTS["smart"] * 0.75:
         wins.append(f"{smt} smart wallets")
-    elif smt >= 20:
-        score += 11
-        wins.append(f"{smt} smart wallets")
-    elif smt >= 10:
-        score += 6
-    elif smt >= 5:
-        score += 2
 
     # 5. Rug score (max 12) --------------------------------------------------
-    if rug <= 0.15:
-        score += 12
-    elif rug <= 0.30:
-        score += 8
-    elif rug <= 0.45:
-        score += 3
+    raw += _pillar("rug", rug)
 
     # 6. Volume / MC sanity (max 9) -----------------------------------------
-    if 0.4 <= vol_mc <= 2.0:
-        score += 9
-    elif 0.25 <= vol_mc <= 3.0:
-        score += 5
-    elif vol_mc > 5:
+    raw += _pillar("vol", vol_mc)
+    if vol_mc > 5:
         notes.append(f"suspicious vol {vol_mc:.1f}x MC")
     elif vol_mc < 0.1:
         notes.append(f"illiquid vol {vol_mc:.2f}x MC")
 
     # 7. Holder base (max 4) -------------------------------------------------
-    if hd >= 5000:
-        score += 4
-    elif hd >= 2500:
-        score += 3
-    elif hd >= 1000:
-        score += 1
+    raw += _pillar("holders", hd)
 
     # 8. Age — survived long enough to prove itself (max 4) ------------------
-    if age_d >= 7:
-        score += 4
-    elif age_d >= 4:
-        score += 2
+    raw += _pillar("age", age_d)
 
     # 9. Smart-money quality bonus: KOL wallets alongside smart money is a
-    #    stronger signal than raw count alone. Clamped to 100 below.
-    if kol >= 5 and smt >= 10:
-        score += 3
+    #    stronger signal than raw count alone. Ramped on both inputs so a
+    #    5th KOL wallet is worth a fraction of a point, not a step.
+    kol_bonus = (KOL_BONUS * _curve(kol, [(2, 0.0), (5, 1.0)])
+                 * _curve(smt, [(6, 0.0), (10, 1.0)]))
+    raw += kol_bonus
+    if kol_bonus >= KOL_BONUS * 0.6:
         wins.append(f"{kol} KOL wallets")
-    score = min(100, score)
+    raw = min(100.0, raw)
 
     # ---- Penalties: red flags cost points, they don't just miss them ------
-    penalty = 0
-    if insider > 0.20:
-        penalty += 18
-    elif insider > 0.10:
-        penalty += 8
-    if bundler > 0.20:
-        penalty += 18
-    elif bundler > 0.10:
-        penalty += 8
+    # Same anchor values as the old if/elif ladders, interpolated in between.
+    penalty_f = 0.0
+    penalty_f += _curve(insider, PENALTY_CURVES["insider"])
+    penalty_f += _curve(bundler, PENALTY_CURVES["bundler"])
     # entrapment = wallets that trap buyers (honeypot-ish behaviour)
-    if entrap > 0.40:
-        penalty += 14
-    elif entrap > 0.25:
-        penalty += 6
+    penalty_f += _curve(entrap, PENALTY_CURVES["entrap"])
     # bot-degen dominated flow = fake activity
-    if botdeg > 0.35:
-        penalty += 12
-    elif botdeg > 0.20:
-        penalty += 5
+    penalty_f += _curve(botdeg, PENALTY_CURVES["botdeg"])
     # snipers still sitting on supply
-    if sniper > 0.10:
-        penalty += 10
-    elif sniper > 0.03:
-        penalty += 4
-    if snipers >= 30:
-        penalty += 5
-    if rug > 0.60:
-        penalty += 15
-    if t10 > 35:
-        penalty += 12
-    if smt < 3:
-        penalty += 6
-    if liq_pct < 3:
-        penalty += 8
-    score = max(0, score - penalty)
+    penalty_f += _curve(sniper, PENALTY_CURVES["sniper"])
+    penalty_f += _curve(snipers, PENALTY_CURVES["snipers"])
+    penalty_f += _curve(rug, PENALTY_CURVES["rug"])
+    penalty_f += _curve(t10, PENALTY_CURVES["t10"])
+    penalty_f += _curve(smt, PENALTY_CURVES["smt_thin"])
+    penalty_f += _curve(liq_pct, PENALTY_CURVES["liq_thin"])
+    score = max(0.0, raw - penalty_f)
+    penalty = penalty_f
 
     # ---- Gating: a single broken pillar disqualifies the top grades -------
     # Without this a token can coast to PRIME on 7 good pillars while the
-    # one that actually matters (e.g. "already +80%") is broken. Each failed
-    # gate clamps the score, so PRIME really does mean "all-round clean".
-    caps = []
-    if chg24 > 25:
-        caps.append((FIT_OK - 1, f"already ran +{chg24:.0f}%"))
-    if chg24 < -25:
-        caps.append((FIT_OK - 1, f"downtrend {chg24:.0f}%"))
-    if smt < 10:
-        caps.append((FIT_OK - 1, f"thin smart-money interest ({smt})"))
-    if t10 > 25:
-        caps.append((FIT_OK - 1, f"T10 {t10:.0f}% too concentrated"))
-    if liq_pct < 5:
-        caps.append((FIT_OK - 1, f"liq only {liq_pct:.1f}% MC"))
-    if rug > 0.45:
-        caps.append((FIT_OK - 1, f"rug score {rug:.2f}"))
-    if age_d < 2:
-        caps.append((FIT_OK - 1, f"only {age_d:.1f}d old"))
-    if hd < 1000:
-        caps.append((FIT_OK - 1, f"only {hd:,} holders"))
-    if insider > 0.10 or bundler > 0.10:
-        caps.append((FIT_OK - 1, "insider/bundler pressure"))
-    if entrap > 0.30:
-        caps.append((FIT_OK - 1, f"entrapment traders {entrap * 100:.0f}%"))
-    if botdeg > 0.30:
-        caps.append((FIT_OK - 1, f"bot-degen flow {botdeg * 100:.0f}%"))
-    if caps:
-        # The cap drops with BOTH the number of broken pillars and how much
-        # penalty the token accrued — otherwise every flawed token piles up
-        # on the exact same number and the list stops being rankable.
-        cap_val = max(0, min(c for c, _ in caps)
-                      - 3 * (len(caps) - 1)
-                      - min(12, penalty // 2))
+    # one that actually matters (e.g. "already +80%") is broken.
+    #
+    # Each gate now has a *transition zone* instead of a bright line: the
+    # severity ramps 0→1 between "still fine" and "definitely broken", and
+    # the cap slides from PRIME down to FIT_OK-1 in proportion. A token that
+    # just grazes a gate keeps most of its score; one that blows through it
+    # is clamped exactly as hard as before.
+    # Each band is centred on the OLD hard threshold (severity 0.5 sits
+    # exactly where the if-statement used to fire) and is wide enough that
+    # one wallet / one percent / a few hours of age can never move the
+    # result by more than a couple of points.
+    gates = []          # (severity 0-1, reason)
+    gates.append((_sev(chg24, 15, 35), f"already ran +{chg24:.0f}%"))
+    gates.append((_sev(chg24, -15, -35), f"downtrend {chg24:.0f}%"))
+    # smt is an integer count, so this band is extra wide: it has to spread
+    # the gate over enough wallets that adding ONE never swings the score
+    # much (the original bug was 9 vs 10 wallets = 54 vs 77).
+    gates.append((_sev(smt, 20, 0), f"thin smart-money interest ({smt})"))
+    gates.append((_sev(t10, 19, 31), f"T10 {t10:.0f}% too concentrated"))
+    gates.append((_sev(liq_pct, 9.0, 1.0), f"liq only {liq_pct:.1f}% MC"))
+    gates.append((_sev(rug, 0.33, 0.57), f"rug score {rug:.2f}"))
+    gates.append((_sev(age_d, 4.0, 0.0), f"only {age_d:.1f}d old"))
+    gates.append((_sev(hd, 1600, 400), f"only {hd:,} holders"))
+    gates.append((max(_sev(insider, 0.05, 0.15), _sev(bundler, 0.05, 0.15)),
+                  "insider/bundler pressure"))
+    gates.append((_sev(entrap, 0.22, 0.38),
+                  f"entrapment traders {entrap * 100:.0f}%"))
+    gates.append((_sev(botdeg, 0.22, 0.38),
+                  f"bot-degen flow {botdeg * 100:.0f}%"))
+
+    hit = [(sev, reason) for sev, reason in gates if sev > 0]
+    if hit:
+        worst = max(sev for sev, _ in hit)
+        total = sum(sev for sev, _ in hit)
+        # The cap slides along CAP_CURVE: a no-op at severity 0 (so a gate
+        # can never appear out of nowhere and knock points off), through
+        # "just lost PRIME" at severity 0.5 — which is exactly where the old
+        # hard threshold sat — down to FIT_OK - 1 at full severity, the
+        # value the old code clamped to. Same verdicts at the anchors,
+        # interpolated in between.
+        cap_val = _curve(worst, CAP_CURVE)
+        # Extra flaws and accrued penalty push the cap down further, each
+        # weighted by severity so they too fade in smoothly.
+        cap_val -= 3.0 * (total - worst)
+        cap_val -= min(12.0, penalty_f / 2.0) * min(1.0, total)
+        cap_val = max(0.0, cap_val)
         if score > cap_val:
             score = cap_val
-        notes.extend(reason for _, reason in caps
-                     if reason not in notes)
+        # Only *name* the gates that are meaningfully broken, so the notes
+        # column doesn't fill up with "0.02 over the line" noise.
+        notes.extend(reason for sev, reason in hit
+                     if sev >= 0.5 and reason not in notes)
+    score = max(0.0, min(100.0, score))
 
     # ---- Hard risk flags ---------------------------------------------------
     risk_reasons = []
@@ -448,7 +525,8 @@ def score_token(t):
         risk_reasons.append(f"Snipers hold {sniper * 100:.0f}%")
     high_risk = bool(risk_reasons)
     if high_risk:
-        score = min(score, HIGH_RISK_CAP)
+        score = min(score, float(HIGH_RISK_CAP))
+    fit = int(round(score))
 
     return {
         "ca": t.get("a") or t.get("address"),
@@ -459,8 +537,11 @@ def score_token(t):
         "holders": hd, "t10_pct": round(t10, 1), "smart": smt,
         "rug": round(rug, 2), "age_d": round(age_d, 1),
         "chg24": round(chg24, 1), "chg1h": round(chg1h, 1),
-        "fit": int(score), "penalty": int(penalty),
-        "grade": fit_grade(int(score), high_risk),
+        "fit": fit, "penalty": int(round(penalty)),
+        # unrounded score — lets the UI sort/rank tokens that land on the
+        # same displayed integer, which the ramps make far more common
+        "fit_exact": round(score, 2),
+        "grade": fit_grade(fit, high_risk),
         "notes": "; ".join(notes),
         "wins": "; ".join(wins),
         "high_risk": high_risk,
@@ -496,7 +577,8 @@ def screen():
             continue
         seen.add(ca)
         rows.append(row)
-    rows.sort(key=lambda r: (-r["fit"], -r["smart"], r["t10_pct"]))
+    rows.sort(key=lambda r: (-r.get("fit_exact", r["fit"]), -r["smart"],
+                             r["t10_pct"]))
     return rows
 
 
@@ -588,7 +670,7 @@ if __name__ == "__main__":
     raw = fetch_trending(debug=True)
     print("raw tokens:", len(raw))
     rows = sorted((score_token(t) for t in raw if isinstance(t, dict)),
-                  key=lambda r: -r["fit"])
+                  key=lambda r: -r.get("fit_exact", r["fit"]))
     if not rows:
         print("Nothing returned — see docs/gmgn_api.md for what to re-check.")
     for r in rows:
