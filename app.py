@@ -21,29 +21,8 @@ import streamlit.components.v1 as components
 
 from core import (concentration, health_score, score_color, score_label,
                   get_rugcheck, get_ohlcv_daily)
-
-def detect_sr_levels(ohlcv: pd.DataFrame, window: int = 25):
-    """Deteksi swing high/low + daily pivot sederhana."""
-    if ohlcv.empty or len(ohlcv) < window:
-        return None, None, None
-
-    df = ohlcv.tail(window).copy()
-    highs = df["high"].values
-    lows = df["low"].values
-    closes = df["close"].values
-
-    # Swing High / Low
-    swing_high = max(highs[-10:])
-    swing_low = min(lows[-10:])
-
-    # Daily Pivot (dari candle terakhir)
-    last = df.iloc[-1]
-    pivot = (last["high"] + last["low"] + last["close"]) / 3
-    r1 = 2 * pivot - last["low"]
-    s1 = 2 * pivot - last["high"]
-
-    return swing_high, swing_low, {"pivot": pivot, "r1": r1, "s1": s1}
-from gmgn_screener import screen as gmgn_screen, fetch_gmgn_trades, gmgn_trades_to_swaps
+from gmgn_screener import fetch_gmgn_trades, gmgn_trades_to_swaps
+from trending_ui import render_trending, run_screen
 
 
 def detect_sr_levels(ohlcv: pd.DataFrame, window: int = 30):
@@ -501,20 +480,9 @@ def _fmt_price(v: float) -> str:
 # ----------------------------------------------------------------------------
 # Main input
 # ----------------------------------------------------------------------------
-title_col, trend_col = st.columns([3, 1.2])
-with title_col:
-    st.title("📊 Wallet Depth by Threshold")
-    st.caption("Solscan-style holder analytics — Dust vs Real holders for any "
-               "Solana token. ⚙️ Settings live in the **sidebar** (» top-left).")
-with trend_col:
-    st.markdown("<div style='height: 8px'></div>", unsafe_allow_html=True)
-    if st.button("🔥 Scan Trending Now", key="trending_top_v4_final", type="primary", use_container_width=True):
-        with st.spinner("Fetching GMGN trending…"):
-            try:
-                trending = gmgn_screen()
-                st.session_state["trending_tokens"] = trending
-            except Exception as e:
-                st.error(f"Failed to fetch trending: {e}")
+st.title("📊 Wallet Depth by Threshold")
+st.caption("Solscan-style holder analytics — Dust vs Real holders for any "
+           "Solana token. ⚙️ Settings live in the **sidebar** (» top-left).")
 
 # Watchlist ticker bar — scrollable, clickable, live prices (30s cache)
 from watchlist import load_watchlist, add_to_watchlist, remove_from_watchlist
@@ -671,52 +639,36 @@ qp_ca = st.query_params.get("ca", "").strip()
 # keep the last analyzed CA when returning from another page (no reset)
 default_ca = qp_ca or st.session_state.get("last_ca", "")
 
-# ------------------ TRENDING SCREENER (inline) ------------------
-st.markdown("**🔥 Trending tokens from GMGN**")
-col_ca, col_trend = st.columns([2.5, 1.5])
-with col_trend:
-    if st.button("🔥 Scan Trending Now", key="trending_inline_v4_final", type="primary", use_container_width=True):
-        with st.spinner("Fetching GMGN trending…"):
-            try:
-                trending = gmgn_screen()
-                st.session_state["trending_tokens"] = trending
-            except Exception as e:
-                st.error(f"Failed to fetch trending: {e}")
+# ------------------ TRENDING SCREENER (inline, full detail) ------------------
+# One button. Results are rendered by the SAME renderer the 🔎 Screener page
+# uses, so every detail (fit, grade, MC, liq, T10, smart money, holders, 24h,
+# age, notes, risk banners) is visible right here.
+picked_ca = None          # set when "Analyze →" is pressed inside the table
 
-trending_tokens = st.session_state.get("trending_tokens", [])
-selected_ca = None
-if trending_tokens:
-    options = []
-    for t in trending_tokens:
-        risk_tag = " 🚨 HIGH RISK" if t.get("high_risk") else ""
-        options.append(f"{t['symbol']}{risk_tag} | Fit:{t['fit']} | ${t['mc']:,.0f} | {t['ca'][:6]}…")
-    
-    choice = st.selectbox("🔥 Trending tokens (click to analyze)", 
-                          ["— select token —"] + options,
-                          key="trending_select")
-    if choice != "— select token —":
-        idx = options.index(choice)
-        token = trending_tokens[idx]
-        selected_ca = token["ca"]
-        
-        # WARNING BESAR jika high risk
-        if token.get("high_risk"):
-            reasons = " • ".join(token.get("risk_reasons", []))
-            st.markdown(f"""
-            <div style="background:#7f1d1d;border:3px solid #ef4444;border-radius:12px;
-                        padding:14px 20px;margin:8px 0;color:#fecaca;font-size:1.05rem;
-                        font-weight:800;text-align:center;">
-                🚨 <b>TOKEN SANGAT RISIKAN</b> 🚨<br>
-                <span style="font-size:0.95rem;font-weight:700;">{reasons}</span>
-            </div>
-            """, unsafe_allow_html=True)
+scan_trending = st.button("🔥 Scan Trending Now", key="trending_scan",
+                          type="primary", use_container_width=True)
+if scan_trending or "screener_rows" in st.session_state:
+    with st.expander("🔥 Trending tokens from GMGN — scored", expanded=True):
+        _rows, _err = run_screen(force=scan_trending)
+        if _err:
+            st.error(f"Failed to fetch trending: {_err}")
+        if not _rows and not _err:
+            st.warning("GMGN returned nothing (Cloudflare block or every "
+                       "token was filtered out). Try again in a minute.")
 
-ca = st.text_input("Solana token Contract Address (CA)", value=selected_ca or default_ca,
+        def _pick(c):
+            global picked_ca
+            picked_ca = c
+
+        render_trending(_rows, key_prefix="home", on_analyze=_pick)
+
+ca = st.text_input("Solana token Contract Address (CA)",
+                   value=picked_ca or default_ca,
                    placeholder="e.g. AkchGAUdXXRGHt3HXaHbTvw3JLGUwtJRmYnkG66wpump"
                    ).strip()
 analyze = st.button("🔍 Analyze", type="primary", use_container_width=True)
-if ca and qp_ca == ca:
-    analyze = True  # auto-run when opened from the ticker
+if ca and (qp_ca == ca or picked_ca == ca):
+    analyze = True  # auto-run when opened from the ticker / trending table
 
 # Watchlist controls (below Analyze — add only tokens that pass your criteria)
 wcol1, wcol2 = st.columns([1, 3])

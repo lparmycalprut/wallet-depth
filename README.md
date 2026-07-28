@@ -86,6 +86,21 @@ python cli.py <CA> --helius-key <API_KEY>   # atau override manual
 
 ## Fitur
 
+- **🔥 Scan Trending Now** — satu tombol di halaman utama. Hasilnya tampil
+  **lengkap langsung di situ** (tabel yang sama persis dengan halaman
+  **🔎 Screener**): Fit + grade, MC, likuiditas, T10, smart money, holder,
+  perubahan 24 jam, umur token, catatan, dan banner merah untuk token
+  berisiko. Tiap baris punya tombol **Analyze →** (langsung analisa CA itu)
+  dan **⭐ watch**.
+- **Scoring screener ketat** — skor Fit 0-100 dari 8 pilar (base harga 22 ·
+  konsentrasi T10 20 · likuiditas 15 · smart money 14 · rug score 12 ·
+  kewajaran volume 9 · jumlah holder 4 · umur 4), **dikurangi penalti**
+  untuk tekanan insider/bundler, rug risk, dan likuiditas tipis.
+  Satu pilar rusak saja (sudah pump >25%, T10 >25%, likuiditas <5% MC,
+  smart money <10, holder <1000, umur <2 hari) langsung membatasi skor
+  di **54**, dan red flag keras membatasi di **40** — jadi
+  **🟢 PRIME (≥75) memang jarang** dan berarti semua pilar bersih.
+  🟡 OK 55-74 · ⚪ WEAK 35-54 · POOR <35.
 - **Sidebar bisa disembunyikan** — default tertutup; klik tanda **»** di kiri
   atas untuk buka, **×** untuk tutup. Semua pengaturan ada di sana.
 - **Dust vs Real holder** + verdict OK / peringatan merah.
