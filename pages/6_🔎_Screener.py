@@ -60,6 +60,18 @@ if scan or "screener_rows" in st.session_state:
         cc[5].write(str(r["smart"]))
         cc[6].write(f"{r['chg24']:+.0f}%")
         cc[7].caption(r["notes"] or "—")
+        
+        # Warning besar di screener page
+        if r.get("high_risk"):
+            reasons = " • ".join(r.get("risk_reasons", []))
+            st.markdown(f"""
+            <div style="background:#7f1d1d;border:2px solid #ef4444;border-radius:8px;
+                        padding:6px 10px;margin:4px 0;color:#fecaca;font-size:0.85rem;
+                        font-weight:800;">
+                🚨 HIGH RISK: {reasons}
+            </div>
+            """, unsafe_allow_html=True)
+        
         with cc[8]:
             st.link_button("Analyze →", f"/CVD?ca={r['ca']}",
                            use_container_width=True)

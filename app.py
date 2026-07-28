@@ -21,6 +21,7 @@ import streamlit.components.v1 as components
 
 from core import (concentration, health_score, score_color, score_label,
                   get_rugcheck, get_ohlcv_daily)
+from gmgn_screener import screen as gmgn_screen, fetch_gmgn_trades, gmgn_trades_to_swaps
 
 # ----------------------------------------------------------------------------
 # Config
@@ -617,7 +618,46 @@ qp_ca = st.query_params.get("ca", "").strip()
 # keep the last analyzed CA when returning from another page (no reset)
 default_ca = qp_ca or st.session_state.get("last_ca", "")
 
-ca = st.text_input("Solana token Contract Address (CA)", value=default_ca,
+# ------------------ TRENDING SCREENER (inline) ------------------
+col_ca, col_trend = st.columns([3, 1])
+with col_trend:
+    if st.button("🔥 Trending now", use_container_width=True):
+        with st.spinner("Fetching GMGN trending…"):
+            try:
+                trending = gmgn_screen()
+                st.session_state["trending_tokens"] = trending
+            except Exception as e:
+                st.error(f"Failed to fetch trending: {e}")
+
+trending_tokens = st.session_state.get("trending_tokens", [])
+selected_ca = None
+if trending_tokens:
+    options = []
+    for t in trending_tokens:
+        risk_tag = " 🚨 HIGH RISK" if t.get("high_risk") else ""
+        options.append(f"{t['symbol']}{risk_tag} | Fit:{t['fit']} | ${t['mc']:,.0f} | {t['ca'][:6]}…")
+    
+    choice = st.selectbox("🔥 Trending tokens (click to analyze)", 
+                          ["— select token —"] + options,
+                          key="trending_select")
+    if choice != "— select token —":
+        idx = options.index(choice)
+        token = trending_tokens[idx]
+        selected_ca = token["ca"]
+        
+        # WARNING BESAR jika high risk
+        if token.get("high_risk"):
+            reasons = " • ".join(token.get("risk_reasons", []))
+            st.markdown(f"""
+            <div style="background:#7f1d1d;border:3px solid #ef4444;border-radius:12px;
+                        padding:14px 20px;margin:8px 0;color:#fecaca;font-size:1.05rem;
+                        font-weight:800;text-align:center;">
+                🚨 <b>TOKEN SANGAT RISIKAN</b> 🚨<br>
+                <span style="font-size:0.95rem;font-weight:700;">{reasons}</span>
+            </div>
+            """, unsafe_allow_html=True)
+
+ca = st.text_input("Solana token Contract Address (CA)", value=selected_ca or default_ca,
                    placeholder="e.g. AkchGAUdXXRGHt3HXaHbTvw3JLGUwtJRmYnkG66wpump"
                    ).strip()
 analyze = st.button("🔍 Analyze", type="primary", use_container_width=True)
@@ -1481,13 +1521,15 @@ if card_png:
 # ROW 4.5 — 📊 Live CVD analysis (auto-runs with Analyze)
 # ----------------------------------------------------------------------------
 st.markdown("**📊 On-chain CVD — live swap flow (Helius)**")
-cvd_c1, cvd_c2, cvd_c3 = st.columns([1, 1, 3])
+cvd_c1, cvd_c2, cvd_c3, cvd_c4 = st.columns([1, 1, 2, 1])
 cvd_window = cvd_c1.selectbox("Window", [6, 12, 24, 48], index=3,
                               format_func=lambda h: f"last {h}h",
                               key="cvd_win")
 cvd_bucket = cvd_c2.selectbox("Candle", [30, 60, 240], index=1,
                               format_func=lambda m: f"{m}m" if m < 60
                               else f"{m//60}h", key="cvd_bkt")
+use_gmgn_trades = cvd_c4.checkbox("Use GMGN trades", value=False,
+                                  help="Gunakan data trades dari GMGN sebagai alternatif Helius (lebih cepat, tapi estimasi SOL)")
 with cvd_c3:
     st.markdown("<div style='height:1.72rem'></div>", unsafe_allow_html=True)
     cvd_clicked = st.button("▶ Run CVD analysis", type="secondary",
@@ -1560,11 +1602,20 @@ if run_cvd_now and rpc_endpoint:
                 if pair0 else []
         if not live_swaps:  # store still empty -> fall back to live fetch
             in_watchlist = False
+            if use_gmgn_trades:
+                gmgn_trades = fetch_gmgn_trades(ca, limit=300)
+                live_swaps = gmgn_trades_to_swaps(gmgn_trades)
     if not in_watchlist:
-        with st.spinner(f"Fetching complete last {cvd_window}h of swaps "
-                        f"(full fetch — active tokens can take minutes)…"):
-            live_swaps = fetch_live_swaps(ca, pair0, cvd_window) \
-                if pair0 else []
+        # GMGN trades fallback
+        if use_gmgn_trades:
+            with st.spinner("Fetching trades from GMGN..."):
+                gmgn_trades = fetch_gmgn_trades(ca, limit=300)
+                live_swaps = gmgn_trades_to_swaps(gmgn_trades)
+        else:
+            with st.spinner(f"Fetching complete last {cvd_window}h of swaps "
+                            f"(full fetch — active tokens can take minutes)…"):
+                live_swaps = fetch_live_swaps(ca, pair0, cvd_window) \
+                    if pair0 else []
 
     if live_swaps:
         ldf = pd.DataFrame(live_swaps,
