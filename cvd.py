@@ -23,9 +23,43 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CVD_PATH = os.path.join(BASE_DIR, "cvd.json")
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
+USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
 MIN_SOL = 0.05      # ignore swaps below (~$10) — bot/dust noise
 WHALE_SOL = 3.0     # swaps >= this (~$500+) count as whale flow
 BUCKET = 3600       # 1-hour buckets (resampled to H4 for divergence)
+
+_sol_price_cache = {"price": 0.0, "ts": 0.0}
+
+
+def get_sol_price() -> float:
+    """SOL/USD price, cached 10 min — used to convert USDC/USDT-quoted
+    pools into SOL-equivalent so thresholds stay consistent."""
+    now = time.time()
+    if _sol_price_cache["price"] > 0 and \
+            now - _sol_price_cache["ts"] < 600:
+        return _sol_price_cache["price"]
+    try:
+        r = requests.get(
+            "https://api.dexscreener.com/latest/dex/tokens/" + SOL_MINT,
+            timeout=15)
+        pairs = (r.json() or {}).get("pairs") or []
+        pairs.sort(key=lambda p: (p.get("liquidity") or {}).get("usd") or 0,
+                   reverse=True)
+        px = float(pairs[0].get("priceUsd") or 0) if pairs else 0.0
+        if px > 0:
+            _sol_price_cache.update(price=px, ts=now)
+            return px
+    except Exception:
+        pass
+    return _sol_price_cache["price"] or 150.0  # sane fallback
+
+
+def _quote_rates() -> dict:
+    """mint -> SOL per 1 unit of that quote token."""
+    sp = get_sol_price()
+    usd_to_sol = 1.0 / sp if sp else 0.0
+    return {SOL_MINT: 1.0, USDC_MINT: usd_to_sol, USDT_MINT: usd_to_sol}
 
 
 def load_cvd() -> dict:
@@ -42,8 +76,11 @@ def save_cvd(state: dict) -> None:
 
 
 def classify_swap(tx: dict, pool: str, ca: str):
-    """Return (side, sol_amount, ts, wallet) or None."""
-    ca_in = ca_out = sol_in = sol_out = 0.0
+    """Return (side, sol_equivalent, ts, wallet) or None.
+    Works for SOL-quoted AND USDC/USDT-quoted pools (converted to SOL)."""
+    rates = _quote_rates()
+    ca_in = ca_out = 0.0
+    q_in = q_out = 0.0   # quote value in SOL-equivalent
     for x in (tx.get("tokenTransfers") or []):
         amt = float(x.get("tokenAmount") or 0)
         mint = x.get("mint")
@@ -52,17 +89,41 @@ def classify_swap(tx: dict, pool: str, ca: str):
                 ca_out += amt
             elif x.get("toUserAccount") == pool:
                 ca_in += amt
-        elif mint == SOL_MINT:
+        elif mint in rates:
+            sol_eq = amt * rates[mint]
             if x.get("fromUserAccount") == pool:
-                sol_out += amt
+                q_out += sol_eq
             elif x.get("toUserAccount") == pool:
-                sol_in += amt
+                q_in += sol_eq
     ts = tx.get("timestamp") or 0
     wallet = tx.get("feePayer") or ""
-    if ca_out > ca_in and sol_in > 0:      # token left pool -> BUY
-        return ("buy", sol_in, ts, wallet)
-    if ca_in > ca_out and sol_out > 0:     # token entered pool -> SELL
-        return ("sell", sol_out, ts, wallet)
+    if ca_out > ca_in and q_in > 0:        # token left pool -> BUY
+        return ("buy", q_in, ts, wallet)
+    if ca_in > ca_out and q_out > 0:       # token entered pool -> SELL
+        return ("sell", q_out, ts, wallet)
+    return None
+
+
+def _fetch_page(api_key: str, pool: str, before=None, *, retries=4):
+    """One Enhanced-API page with retries + exponential backoff.
+    Returns list (possibly empty) or None if all retries failed."""
+    params = {"api-key": api_key, "limit": 100, "type": "SWAP"}
+    if before:
+        params["before"] = before
+    delay = 0.6
+    for attempt in range(retries):
+        try:
+            r = requests.get(
+                f"https://api.helius.xyz/v0/addresses/{pool}/transactions",
+                params=params, headers={"User-Agent": "Mozilla/5.0"},
+                timeout=40)
+            if r.status_code == 200:
+                return r.json()
+            # 429/5xx -> back off and retry
+        except Exception:
+            pass
+        time.sleep(delay)
+        delay *= 2
     return None
 
 
@@ -73,18 +134,8 @@ def fetch_swaps(api_key: str, pool: str, ca: str, *, stop_sig=None,
     swaps, before = [], None
     newest_sig, newest_ts, hit_stop = None, None, False
     for _ in range(max_pages):
-        params = {"api-key": api_key, "limit": 100, "type": "SWAP"}
-        if before:
-            params["before"] = before
-        try:
-            r = requests.get(
-                f"https://api.helius.xyz/v0/addresses/{pool}/transactions",
-                params=params, headers={"User-Agent": "Mozilla/5.0"},
-                timeout=40)
-            if r.status_code != 200:
-                break
-            page = r.json()
-        except Exception:
+        page = _fetch_page(api_key, pool, before)
+        if page is None:   # all retries failed -> stop but keep what we have
             break
         if not page:
             break

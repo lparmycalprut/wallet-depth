@@ -72,27 +72,26 @@ def get_pool(ca: str):
 
 
 def full_fetch(ca: str, pool: str, cutoff_ts: int):
-    """Fetch ALL swaps back to cutoff — no page cap (hard safety 1500)."""
+    """Fetch ALL swaps back to cutoff — no page cap (hard safety 1500).
+    Uses per-page retries with backoff so transient 429/5xx don't abort."""
+    from cvd import _fetch_page
     swaps, before = [], None
     pbar = st.progress(0.0, text="Fetching full 48h of swaps…")
     t0 = time.time()
     oldest = time.time()
+    consecutive_fail = 0
     for page in range(1500):
-        params = {"api-key": helius_key, "limit": 100, "type": "SWAP"}
-        if before:
-            params["before"] = before
-        try:
-            r = requests.get(
-                f"https://api.helius.xyz/v0/addresses/{pool}/transactions",
-                params=params, headers={"User-Agent": "Mozilla/5.0"},
-                timeout=40)
-            if r.status_code != 200:
-                time.sleep(1.0)
-                continue
-            data = r.json()
-        except Exception:
-            time.sleep(1.0)
+        data = _fetch_page(helius_key, pool, before)
+        if data is None:
+            consecutive_fail += 1
+            if consecutive_fail >= 3:
+                st.warning(f"Fetch aborted after repeated API failures at "
+                           f"page {page+1} — showing the "
+                           f"{len(swaps):,} swaps retrieved so far.")
+                break
+            time.sleep(2.0)
             continue
+        consecutive_fail = 0
         if not data:
             break
         done = False

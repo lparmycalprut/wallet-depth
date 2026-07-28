@@ -1373,24 +1373,13 @@ if run_cvd_auto and rpc_endpoint:
     @st.cache_data(ttl=3600, show_spinner=False)
     def fetch_live_swaps(ca: str, pool: str, hours: int,
                          max_pages: int = 40):
-        """Live swap fetch, newest-first, capped pages to protect credits."""
+        """Live swap fetch, newest-first, retries per page (429-proof)."""
+        from cvd import _fetch_page
         cutoff = int(time.time()) - hours * 3600
         swaps, before = [], None
         for _pg in range(max_pages):
-            params = {"api-key": helius_key, "limit": 100, "type": "SWAP"}
-            if before:
-                params["before"] = before
-            try:
-                rr = requests.get(
-                    f"https://api.helius.xyz/v0/addresses/{pool}/transactions",
-                    params=params, headers={"User-Agent": "Mozilla/5.0"},
-                    timeout=40)
-                if rr.status_code != 200:
-                    break
-                page = rr.json()
-            except Exception:
-                break
-            if not page:
+            page = _fetch_page(helius_key, pool, before)
+            if page is None or not page:
                 break
             done = False
             for tx in page:
