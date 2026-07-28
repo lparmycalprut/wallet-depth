@@ -507,7 +507,10 @@ if _wl:
             pts = _conv_hist.get(_ca) or []
             if not pts:
                 continue
-            sym = _meta.get("symbol", "?")
+            sym = _meta.get("symbol") or "?"
+            if sym == "?":  # resolve from live prices (already fetched)
+                sym = ((_prices.get(_ca) or {}).get("symbol")
+                       or _ca[:4] + "…")
             last = pts[-1]
             cv = last["conviction"]
             prev_cv = pts[-2]["conviction"] if len(pts) >= 2 else None

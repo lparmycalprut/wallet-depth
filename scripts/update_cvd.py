@@ -30,10 +30,12 @@ def main_pool(ca: str):
         pairs.sort(key=lambda p: (p.get("liquidity") or {}).get("usd") or 0,
                    reverse=True)
         if not pairs:
-            return None, None
-        return pairs[0]["pairAddress"], float(pairs[0].get("priceUsd") or 0)
+            return None, None, None
+        b = pairs[0]
+        return (b["pairAddress"], float(b.get("priceUsd") or 0),
+                (b.get("baseToken") or {}).get("symbol") or "?")
     except Exception:
-        return None, None
+        return None, None, None
 
 
 def main():
@@ -52,11 +54,17 @@ def main():
     if not wl:
         print("Watchlist empty.")
         return
+    wl_changed = False
     for ca, meta in wl.items():
-        pool, price_now = main_pool(ca)
+        pool, price_now, live_sym = main_pool(ca)
         if not pool:
             print(f"❌ {ca[:8]}… no pool found")
             continue
+        # auto-fix missing symbols
+        if (meta.get("symbol") in (None, "", "?")) and live_sym and \
+                live_sym != "?":
+            meta["symbol"] = live_sym
+            wl_changed = True
         try:
             res = update_token_cvd(api_key, ca, pool, max_pages=max_pages)
             gap = " ⚠️gap(pages exhausted)" if res["gap"] else ""
@@ -71,6 +79,10 @@ def main():
                   f"buckets{gap}{conv_txt}{sig_txt}")
         except Exception as e:
             print(f"❌ {ca[:8]}… {str(e)[:100]}")
+    if wl_changed:
+        from watchlist import save_watchlist
+        save_watchlist(wl, "auto-fix symbols")
+        print("watchlist symbols updated")
 
 
 if __name__ == "__main__":
