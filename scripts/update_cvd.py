@@ -89,6 +89,16 @@ def main():
                   f"buckets{gap}{conv_txt}{sig_txt}{guard_txt}")
         except Exception as e:
             print(f"❌ {ca[:8]}… {str(e)[:100]}")
+    # Retry any guard alert whose Telegram send failed on an earlier run —
+    # the message text is cached in breakouts.json until it is delivered.
+    try:
+        from breakout_guard import flush_pending_alerts
+        n_retry = flush_pending_alerts()
+        if n_retry:
+            print(f"🔁 re-sent {n_retry} pending alert(s)")
+    except Exception as e:
+        print(f"retry-err: {str(e)[:80]}")
+
     if wl_changed:
         from watchlist import save_watchlist
         save_watchlist(wl, "auto-fix symbols")

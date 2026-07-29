@@ -17,6 +17,12 @@ SIGNALS_PATH = os.path.join(BASE_DIR, "signals.json")
 DEDUPE_SEC = 4 * 3600     # same signal type per token max once per 4h
 MAX_SIGNALS = 2000
 
+#: Caption prefix so a Telegram reader can tell at a glance which subsystem
+#: is talking. The Breakout Guard uses its own tag (see breakout_guard.py):
+#: this one is flow/divergence monitoring, NOT a level event.
+CVD_TAG = "\U0001F4CA <b>CVD MONITOR</b>"
+CVD_SUB = "<i>order-flow &amp; divergence \u00b7 rolling window</i>"
+
 
 def load_signals() -> list:
     try:
@@ -58,6 +64,7 @@ def record_signal(ca: str, symbol: str, sig_type: str, detail: str, *,
                "bullish_div": "📈", "bearish_div": "📉"}.get(sig_type)
         if emo and src == "cron":
             send_telegram(
+                f"{CVD_TAG}\n{CVD_SUB}\n\n"
                 f"{emo} <b>${symbol}</b> — {sig_type.replace('_', ' ')}\n"
                 f"{detail}\n"
                 f"<a href='https://dexscreener.com/solana/{ca}'>chart</a>")
