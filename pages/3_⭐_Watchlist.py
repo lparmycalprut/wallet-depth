@@ -70,6 +70,7 @@ if quick_pick_options:
             label_visibility="collapsed")
         qp_note = qp_cols[1].text_input(
             "Note (optional)", placeholder="note...",
+            key="qp_note_input",
             label_visibility="collapsed").strip()
         if qp_cols[2].button("Add", use_container_width=True,
                              type="primary", key="qp_add"):
@@ -88,8 +89,10 @@ if quick_pick_options:
 with st.expander("➕ Add a CA manually", expanded=not wl):
     c1, c2, c3 = st.columns([3, 1.2, 0.8])
     new_ca = c1.text_input("Contract Address", placeholder="Solana CA...",
+                           key="manual_ca_input",
                            label_visibility="collapsed").strip()
     new_note = c2.text_input("Note (optional)", placeholder="note...",
+                             key="manual_note_input",
                              label_visibility="collapsed").strip()
     if c3.button("Add", use_container_width=True, type="primary"):
         if new_ca:
