@@ -7,6 +7,38 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-07-29 — Markup safety watchlist + Prompt to AI
+
+### Yang berubah
+
+1. `cvd.markup_from_candles()` mengukur kenaikan dari low harian terendah
+   dalam 30 candle terakhir: warning +150%, danger +300%, lengkap dengan
+   peak markup, jarak dari peak, label, dan kalimat warning.
+2. Halaman utama menyapu **semua token watchlist** untuk danger +300% dan
+   menampilkan banner merah sebelum filter `grow1`. Token dengan conviction
+   datar tetap terlihat walaupun tidak mendapat card LP Radar.
+3. `ai_prompt.py` membangun prompt CVD siap-salin untuk DeepSeek. Glosarium
+   angka tampil sebelum data; cakupan window yang kurang diumumkan eksplisit;
+   flow dipecah menjadi empat periode lama → baru; tabel pure wallet membawa
+   umur 🐣/🌱/🌳; tugas AI mencakup skenario, verdict panik/tidak, dan
+   invalidation tanpa target harga.
+4. Tombol **Prompt to AI** memakai dropdown Time window yang sudah ada dan
+   mempertahankan hasil analisis di rerun tanpa fetch kedua.
+
+Perubahan dari `main` sebelum pekerjaan ini tetap dipertahankan: badge
+EXTREME/HIGH, shortcut DexScreener/GMGN, dropdown CVD 4–48 jam, serta file
+`docs/agents.md` dan `docs/progress.md` huruf kecil.
+
+### Verifikasi
+
+- `tests/test_breakout_guard.py` — semua 67 assertion lulus.
+- `tests/test_scoring_continuity.py` — seluruh continuity/calibration lulus.
+- `tests/test_markup_ai_prompt.py` — threshold 30D, kejujuran cakupan,
+  urutan prompt, umur wallet, dan wiring UI lulus; tanpa pytest/jaringan.
+- `python -m py_compile` untuk seluruh file Python yang diubah — lulus.
+
+---
+
 ## 2026-07-29 — Breakout Guard: level D1, konfirmasi H4, atribusi flow
 
 **Commit:** `58b5f35` (kode) + `0169f05` (workflow, oleh pemilik)

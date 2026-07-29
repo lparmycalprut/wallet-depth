@@ -444,16 +444,19 @@ if st.sidebar.button("💾 Save to config.json", use_container_width=True):
 
 @st.cache_data(ttl=30, show_spinner=False)
 def fetch_watchlist_prices(cas: tuple) -> dict:
-    """Batch price fetch for the watchlist ticker (DexScreener, 1 request)."""
+    """Batched prices/pairs for every token in the watchlist ticker."""
     out = {}
     if not cas:
         return out
-    try:
-        r = requests.get("https://api.dexscreener.com/latest/dex/tokens/" +
-                         ",".join(cas[:30]), timeout=15)
-        pairs = (r.json() or {}).get("pairs") or []
-    except Exception:
-        return out
+    pairs = []
+    for offset in range(0, len(cas), 30):
+        try:
+            r = requests.get(
+                "https://api.dexscreener.com/latest/dex/tokens/" +
+                ",".join(cas[offset:offset + 30]), timeout=15)
+            pairs.extend((r.json() or {}).get("pairs") or [])
+        except Exception:
+            continue
     best = {}
     for p in pairs:
         addr = (p.get("baseToken") or {}).get("address")
@@ -466,8 +469,17 @@ def fetch_watchlist_prices(cas: tuple) -> dict:
             "price": float(p.get("priceUsd") or 0),
             "chg24": float((p.get("priceChange") or {}).get("h24") or 0),
             "mc": float(p.get("marketCap") or p.get("fdv") or 0),
+            "pair": p.get("pairAddress"),
         }
     return out
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_watchlist_daily_candles(pair_address: str) -> list:
+    """Daily candles for the watchlist-wide markup safety sweep."""
+    from cvd import fetch_candles
+    return fetch_candles(pair_address, timeframe="day", aggregate=1,
+                         limit=30, timeout=8)
 
 
 def _fmt_price(v: float) -> str:
@@ -517,6 +529,28 @@ if _wl:
         "scrollbar-width:thin;-webkit-overflow-scrolling:touch;'>"
         + "".join(chips) + "</div>",
         unsafe_allow_html=True)
+
+    # This safety sweep deliberately runs before, and independently of, the
+    # LP Radar's `grow1` filter. A +300% token must remain visible even when
+    # its conviction is flat and therefore has no radar card.
+    from cvd import markup_from_candles, markup_label, markup_warning
+    _markup_dangers = []
+    for _ca, _meta in _wl.items():
+        _market = _prices.get(_ca) or {}
+        if not _market.get("pair") or not _market.get("price"):
+            continue
+        _markup = markup_from_candles(
+            fetch_watchlist_daily_candles(_market["pair"]),
+            price_now=_market["price"])
+        if _markup and _markup["level"] == "danger":
+            _symbol = (_market.get("symbol") or _meta.get("symbol") or
+                       _ca[:4] + "…")
+            _markup_dangers.append(
+                f"**${_symbol} · {markup_label(_markup)}** — "
+                f"{markup_warning(_markup)}")
+    if _markup_dangers:
+        st.error("🚨 **WATCHLIST MARKUP SAFETY**\n\n" +
+                 "\n\n".join(_markup_dangers))
 
     # ------------------------------------------------------------------
     # 💧 LP Radar — conviction trend per cron for every watchlist token.

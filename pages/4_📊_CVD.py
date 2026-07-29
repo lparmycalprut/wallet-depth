@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Page: deep CVD analysis — one click fetches the FULL last 48h of swaps
-(no page cap), analyzes every window (6/12/24/48h) automatically, flags
-high-conviction whale accumulation, and exports a report."""
+"""Deep CVD analysis for a user-selected 4-48h swap window.
+
+Flags high-conviction whale accumulation, exports reports, and builds an
+honest, ready-to-copy prompt for an external AI chat.
+"""
 import datetime as dtm
 import io
 import json
@@ -15,6 +17,7 @@ import requests
 import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from ai_prompt import build_ai_prompt
 from core import load_config
 from cvd import (MIN_SOL, WHALE_SOL, classify_swap, detect_divergence,
                  wallet_profiles, conviction_split)
@@ -60,9 +63,14 @@ if not ca:
             "selected time window — very active tokens can take a few "
             "minutes, progress is shown.")
     st.stop()
-if not run:
+
+# Keep a completed analysis renderable across reruns. This is required for
+# the Prompt to AI button: clicking it reruns Streamlit but must not force a
+# second fetch or a second time-window selector.
+skey = f"cvd::{hours}h::{ca}"
+if not run and skey not in st.session_state:
     st.stop()
-if not helius_key:
+if not helius_key and (run or skey not in st.session_state):
     st.error("Helius API key missing (config.json / secrets).")
     st.stop()
 
@@ -193,8 +201,8 @@ if not pool:
 WINDOWS = sorted(set([hours // 4, hours // 2, hours, 48]))
 WINDOWS = [w for w in WINDOWS if w >= 4 and w <= 48]
 
-skey = f"cvd::{hours}h::{ca}"
 if run or skey not in st.session_state:
+    st.session_state.pop(f"ai_prompt::{skey}", None)
     cutoff = int(time.time()) - hours * 3600
     # Hybrid: watchlist tokens use the incremental store (top-up only the
     # missing newest part — fast). Others need a full historical fetch.
@@ -487,6 +495,44 @@ with pa2:
                          display_text=r"account/(.{6}).*")})
     else:
         st.caption(f"No whale-size pure distributors in {hours}h.")
+
+# ---------------------------------------------------------------------------
+# 🤖 Ready-to-copy prompt for a free AI chat
+# ---------------------------------------------------------------------------
+prompt_wallets = []
+for wallet, profile in accs:
+    flags = (("DCA; " if profile.get("dca") else "") +
+             ("same-funder" if wallet in same_funder else "")).strip("; ")
+    prompt_wallets.append({
+        "wallet": wallet, "role": "pure accumulator",
+        "buy": profile["buy"], "sell": profile["sell"],
+        "swaps": profile["n_buy"] + profile["n_sell"],
+        "age": age_str(wallet), "flags": flags,
+    })
+for wallet, profile in dists:
+    prompt_wallets.append({
+        "wallet": wallet, "role": "pure distributor",
+        "buy": profile["buy"], "sell": profile["sell"],
+        "swaps": profile["n_buy"] + profile["n_sell"],
+        "age": age_str(wallet),
+        "flags": "DCA" if profile.get("dca") else "",
+    })
+
+prompt_key = f"ai_prompt::{skey}"
+if st.button("🤖 Prompt to AI", use_container_width=True,
+             help="Build a copy-ready Indonesian prompt for DeepSeek"):
+    st.session_state[prompt_key] = build_ai_prompt(
+        symbol=symbol, ca=ca, requested_hours=hours,
+        available_hours=covered_h, swaps=swaps_all,
+        window_stats=win_stats, wallet_rows=prompt_wallets,
+        price_now=price_now, market_cap=mc_now, now_ts=now_ts)
+if prompt_key in st.session_state:
+    st.markdown("### 🤖 Prompt siap salin")
+    st.caption("Klik ikon copy pada blok berikut, lalu tempel ke DeepSeek. "
+               "Prompt sudah membawa definisi, batas data, urutan waktu, "
+               "dan umur dompet; tidak ada data yang dikirim otomatis.")
+    st.code(st.session_state[prompt_key], language=None)
+    st.markdown("[Buka DeepSeek gratis ↗](https://chat.deepseek.com/)")
 
 # ---------------------------------------------------------------------------
 # 📄 Exportable report
