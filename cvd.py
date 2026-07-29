@@ -739,3 +739,224 @@ def fetch_h4_price(pool: str, limit=42):
     except Exception:
         return {}
     return {int(x[0]): float(x[4]) for x in reversed(lst)}
+
+
+# ---------------------------------------------------------------------------
+# OHLC candles + flow attribution for the Breakout Guard
+# ---------------------------------------------------------------------------
+def fetch_candles(pool: str, *, timeframe: str = "hour", aggregate: int = 4,
+                  limit: int = 100, timeout: int = 20):
+    """GeckoTerminal OHLCV -> list of candle dicts, oldest -> newest.
+
+    Each candle: ``{ts, o, h, l, c, v}`` with ``ts`` the candle's OPEN time
+    (unix seconds), which is how GeckoTerminal labels them.
+
+    ``timeframe`` is ``day`` / ``hour`` / ``minute``; ``aggregate`` multiplies
+    it (``hour`` + 4 = H4). Returns [] on any failure — every caller must
+    treat an empty list as "no data, do nothing".
+    """
+    try:
+        r = requests.get(
+            f"https://api.geckoterminal.com/api/v2/networks/solana/pools/"
+            f"{pool}/ohlcv/{timeframe}",
+            params={"aggregate": aggregate, "limit": limit},
+            headers={"accept": "application/json"}, timeout=timeout)
+        lst = (((r.json() or {}).get("data") or {}).get("attributes") or {}) \
+            .get("ohlcv_list") or []
+    except Exception:
+        return []
+    out = []
+    for x in lst:
+        try:
+            out.append({"ts": int(x[0]), "o": float(x[1]), "h": float(x[2]),
+                        "l": float(x[3]), "c": float(x[4]),
+                        "v": float(x[5] or 0)})
+        except (TypeError, ValueError, IndexError):
+            continue
+    out.sort(key=lambda c: c["ts"])
+    return out
+
+
+def swaps_between(ca: str, t0: float, t1: float):
+    """Raw swaps from the store with ``t0 <= ts < t1`` (oldest first)."""
+    state = load_cvd()
+    entry = state.get(ca)
+    if not entry or not entry.get("swaps"):
+        return []
+    out = [tuple(s) for s in entry["swaps"]
+           if t0 <= (s[2] or 0) < t1]
+    out.sort(key=lambda s: s[2])
+    return out
+
+
+def flow_report(swaps) -> dict:
+    """Who was actually behind these swaps?
+
+    Splits the window's flow into whale (>= :data:`WHALE_SOL`) vs retail,
+    counts distinct wallets on each side, folds in the pure-accumulator /
+    pure-distributor profiling, and names the dominant actor. This is what
+    turns "price broke the level" into "whales sold into retail buying".
+    """
+    empty = {"n": 0, "buy_vol": 0.0, "sell_vol": 0.0, "net": 0.0,
+             "whale_buy": 0.0, "whale_sell": 0.0, "whale_net": 0.0,
+             "retail_buy": 0.0, "retail_sell": 0.0, "retail_net": 0.0,
+             "n_whale_buyers": 0, "n_whale_sellers": 0,
+             "n_retail_buyers": 0, "n_retail_sellers": 0,
+             "biggest_buy": 0.0, "biggest_sell": 0.0,
+             "pure_buy": 0.0, "pure_sell": 0.0, "net_pure": 0.0,
+             "actor": "no data", "actor_side": "none"}
+    if not swaps:
+        return empty
+
+    r = dict(empty)
+    r["n"] = len(swaps)
+    wb, ws, rb, rs = set(), set(), set(), set()
+    for side, sol, _ts, w in swaps:
+        sol = float(sol or 0)
+        whale = sol >= WHALE_SOL
+        if side == "buy":
+            r["buy_vol"] += sol
+            r["biggest_buy"] = max(r["biggest_buy"], sol)
+            if whale:
+                r["whale_buy"] += sol
+                wb.add(w)
+            else:
+                r["retail_buy"] += sol
+                rb.add(w)
+        else:
+            r["sell_vol"] += sol
+            r["biggest_sell"] = max(r["biggest_sell"], sol)
+            if whale:
+                r["whale_sell"] += sol
+                ws.add(w)
+            else:
+                r["retail_sell"] += sol
+                rs.add(w)
+
+    r["net"] = r["buy_vol"] - r["sell_vol"]
+    r["whale_net"] = r["whale_buy"] - r["whale_sell"]
+    r["retail_net"] = r["retail_buy"] - r["retail_sell"]
+    r["n_whale_buyers"] = len(wb)
+    r["n_whale_sellers"] = len(ws)
+    r["n_retail_buyers"] = len(rb)
+    r["n_retail_sellers"] = len(rs)
+
+    prof = wallet_profiles(swaps)
+    conv = conviction_split(prof, whale_min_sol=WHALE_SOL)
+    r["pure_buy"] = conv["pure_buy"]
+    r["pure_sell"] = conv["pure_sell"]
+    r["net_pure"] = conv["pure_buy"] - conv["pure_sell"]
+
+    # Who dominated? Compare the four flows by absolute size.
+    flows = [("whale buying", r["whale_buy"], "buy"),
+             ("whale selling", r["whale_sell"], "sell"),
+             ("retail buying", r["retail_buy"], "buy"),
+             ("retail selling", r["retail_sell"], "sell")]
+    label, size, side = max(flows, key=lambda f: f[1])
+    total = r["buy_vol"] + r["sell_vol"]
+    if total <= 0 or size <= 0:
+        r["actor"], r["actor_side"] = "no meaningful flow", "none"
+    else:
+        r["actor"] = f"{label} ({size / total * 100:.0f}% of window volume)"
+        r["actor_side"] = side
+    return r
+
+
+def describe_flow(f: dict) -> str:
+    """Plain-language read of :func:`flow_report`, for the alert body."""
+    if not f or not f.get("n"):
+        return ("\u26a0\ufe0f no on-chain swaps stored for this candle "
+                "\u2014 flow unknown (cron may have missed the window)")
+    bits = [
+        f"\U0001F40B whales: <b>{f['whale_net']:+.1f}</b> SOL "
+        f"(+{f['whale_buy']:.1f} / -{f['whale_sell']:.1f}) \u00b7 "
+        f"{f['n_whale_buyers']} buyer / {f['n_whale_sellers']} seller",
+        f"\U0001F41F retail: <b>{f['retail_net']:+.1f}</b> SOL "
+        f"(+{f['retail_buy']:.1f} / -{f['retail_sell']:.1f}) \u00b7 "
+        f"{f['n_retail_buyers']} buyer / {f['n_retail_sellers']} seller",
+        f"\U0001F48E pure: +{f['pure_buy']:.1f} / -{f['pure_sell']:.1f} "
+        f"(net {f['net_pure']:+.1f}) \u00b7 {f['n']} swaps",
+        f"\U0001F3AD dominant: <b>{f['actor']}</b>",
+    ]
+    return "\n".join(bits)
+
+
+def flow_warning(f: dict, direction: str = "up") -> str:
+    """The 'so what do I do' line — the whole point of the flow block.
+
+    *direction* is the direction of the price event (``up`` for a
+    breakout/reclaim, ``down`` for a breakdown), because the same flow
+    means opposite things depending on which way price moved.
+    """
+    if not f or not f.get("n"):
+        return ("\u2753 no flow data \u2014 treat this level event as "
+                "unconfirmed.")
+    wn, rn = f["whale_net"], f["retail_net"]
+    if direction == "up":
+        if wn > 0 and rn < 0:
+            return ("\u2705 whales BOUGHT this move while retail sold "
+                    "\u2014 strongest confirmation.")
+        if wn < 0 and rn > 0:
+            return ("\U0001F6A8 CAREFUL: whales SOLD into retail buying "
+                    "\u2014 classic distribution into strength.")
+        if wn > 0 and rn > 0:
+            return ("\u26a0\ufe0f everyone bought \u2014 real demand but "
+                    "crowded; watch for a fast fade.")
+        return ("\u26a0\ufe0f both sides net sellers \u2014 the move is not "
+                "backed by buying, likely thin-liquidity drift.")
+    if wn < 0 and rn > 0:
+        return ("\U0001F6A8 CAREFUL: whales DUMPED and retail absorbed it "
+                "\u2014 retail is holding the bag.")
+    if wn > 0 and rn < 0:
+        return ("\U0001F440 whales BOUGHT the breakdown while retail "
+                "panic-sold \u2014 possible shakeout, watch for a reclaim.")
+    if wn < 0 and rn < 0:
+        return ("\U0001F6A8 broad selling from both whales and retail "
+                "\u2014 no bid underneath.")
+    return ("\u26a0\ufe0f whales quiet, retail drove it \u2014 low-conviction "
+            "move, needs confirmation.")
+
+
+def daily_levels(pool: str, *, limit: int = 60, left: int = 2, right: int = 2,
+                 merge_pct: float = 0.015, max_levels: int = 6):
+    """Support/resistance from DAILY candles (pivot highs/lows).
+
+    Daily pivots are far fewer and far more meaningful than the H1 pivots
+    this used to run on: a level that held for a day is a level other
+    traders can see too.
+
+    ``right`` bars must exist AFTER a pivot for it to be confirmed, so the
+    still-forming session can never invent a level. Returns
+    ``{"highs": [...], "lows": [...], "price": float, "candles": n}`` with
+    highs sorted ascending (nearest resistance first) and lows descending
+    (nearest support first), or None when there is not enough history.
+    """
+    candles = fetch_candles(pool, timeframe="day", aggregate=1, limit=limit)
+    if len(candles) < left + right + 3:
+        return None
+    highs = [c["h"] for c in candles]
+    lows = [c["l"] for c in candles]
+    price = candles[-1]["c"]
+
+    piv_h, piv_l = [], []
+    for i in range(left, len(candles) - right):
+        seg_h = highs[i - left:i + right + 1]
+        seg_l = lows[i - left:i + right + 1]
+        if highs[i] == max(seg_h):
+            piv_h.append(highs[i])
+        if lows[i] == min(seg_l):
+            piv_l.append(lows[i])
+
+    def merge(vals, prefer_recent=True):
+        """Collapse levels within merge_pct of each other."""
+        out = []
+        for v in (reversed(vals) if prefer_recent else vals):
+            if v and not any(abs(v - o) / o < merge_pct for o in out if o):
+                out.append(v)
+        return out
+
+    res = sorted(v for v in merge(piv_h) if v > price)[:max_levels]
+    sup = sorted((v for v in merge(piv_l) if v < price),
+                 reverse=True)[:max_levels]
+    return {"highs": res, "lows": sup, "price": price,
+            "candles": len(candles)}

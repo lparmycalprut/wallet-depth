@@ -37,11 +37,11 @@ jobs:
           git pull --rebase || true
           git stash pop || true
           # never commit conflict markers into JSON data files
-          for f in cvd.json signals.json conviction.json levels.json; do
+          for f in cvd.json signals.json conviction.json levels.json breakouts.json; do
             if grep -q "<<<<<<<" "$f" 2>/dev/null; then
               git checkout --theirs "$f" 2>/dev/null || git checkout HEAD -- "$f" || true
             fi
           done
-          git add cvd.json signals.json conviction.json levels.json
+          git add cvd.json signals.json conviction.json levels.json breakouts.json
           git diff --cached --quiet || git commit -m "chore: cvd update $(date -u +%FT%H:%M)"
           git push || (git pull --rebase && git push) || true
