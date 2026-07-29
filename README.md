@@ -3,6 +3,11 @@
 Meniru fitur **Wallet Depth by Threshold** di Solscan Analytics, plus analisa
 **Dust Holder vs Real Holder** untuk token Solana apa pun.
 
+> 🤖 **Pakai AI agent?** Baca [`AGENTS.md`](AGENTS.md) dulu (aturan & jebakan
+> repo ini), lalu [`docs/PROGRESS.md`](docs/PROGRESS.md) (riwayat keputusan
+> & status). Keduanya sengaja dibuat supaya sesi baru tidak perlu dijelasi
+> ulang dari nol.
+
 ## Kenapa butuh API key Helius?
 
 Data yang **100% gratis tanpa key**:
