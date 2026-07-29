@@ -566,6 +566,20 @@ if _wl:
             trend_txt = (f"{prev_cv:.0f}→{cv:.0f}%" if prev_cv is not None
                          else f"{cv:.0f}%")
             trend_ic = "📈📈" if grow2 else "📈"
+            # warning badge when conviction is extreme (≥100%)
+            extreme_warn = ""
+            if cv >= 100:
+                extreme_warn = (
+                    f"<span style='background:#ef4444;color:white;"
+                    f"border-radius:4px;padding:0 5px;margin-left:4px;"
+                    f"font-size:0.55rem;font-weight:800;"
+                    f"white-space:nowrap;'>⚠️ EXTREME</span>")
+            elif cv >= 50:
+                extreme_warn = (
+                    f"<span style='background:#f97316;color:white;"
+                    f"border-radius:4px;padding:0 5px;margin-left:4px;"
+                    f"font-size:0.55rem;font-weight:800;"
+                    f"white-space:nowrap;'>⚠️ HIGH</span>")
             if grow2:      # confirmed: 2 consecutive rises -> green glow
                 border, cv_col = "#22c55e", "#22c55e"
                 glow = "box-shadow:0 0 12px rgba(34,197,94,0.45);"
@@ -604,7 +618,17 @@ if _wl:
                 f"font-size:0.85rem;'>{sym} "
                 f"<span style='color:{cv_col};font-size:1.05rem;'>"
                 f"{cv:.0f}%</span> <span style='font-size:0.72rem;'>"
-                f"{trend_ic}</span></div>"
+                f"{trend_ic}</span>{extreme_warn}"
+                f"<span style='float:right;font-size:0.7rem;'>"
+                f"<a href='https://dexscreener.com/solana/{_ca}' "
+                f"target='_blank' title='DexScreener' "
+                f"style='color:#64748b;text-decoration:none;'>"
+                f"<span style='margin:0 2px;'>🦆</span></a>"
+                f"<a href='https://gmgn.ai/sol/token/{_ca}' "
+                f"target='_blank' title='GMGN' "
+                f"style='color:#64748b;text-decoration:none;'>"
+                f"<span style='margin:0 2px;'>⚡</span></a>"
+                f"</span></div>"
                 f"{phase_html}"
                 f"<div style='height:28px;margin:3px 0;'>{bars}</div>"
                 f"<div style='font-size:0.62rem;color:#64748b;'>"
@@ -626,7 +650,8 @@ if _wl:
                        "conviction per cron (7d kept, green bar = >30%). "
                        "Phase badge = Wyckoff-style heuristic (hover for "
                        "reason; ·/··/··· = confidence) — NOT a trading "
-                       "signal. Click a card for the full 48h CVD "
+                       "signal. 🟠 HIGH = conviction ≥50%, 🔴 EXTREME = "
+                       "≥100% — Click a card for the full CVD page "
                        "analysis.")
         else:
             st.caption("💧 LP Radar: no watchlist token has growing "

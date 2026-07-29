@@ -33,31 +33,34 @@ h1 {font-size: 1.3rem !important;}
 </style>""", unsafe_allow_html=True)
 
 st.title("📊 CVD Deep Analysis")
-st.caption("One click = full 48h swap fetch (no page cap) + automatic "
-           "multi-window analysis (6/12/24/48h). Built to answer one "
-           "question: **is a whale accumulating this with high conviction?**")
+st.caption("Pick a time window and analyze swap data for conviction, "
+           "whale accumulation, and CVD trends.")
 
 CONFIG = load_config()
 helius_key = CONFIG.get("helius_api_key") or ""
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WINDOWS = [6, 12, 24, 48]
 
 # CA can arrive via query param (?ca=...) from the LP Radar cards on the
-# main page — prefill and auto-run the full analysis (same pattern as the
-# main page's qp_ca auto-analyze).
+# main page — prefill but do NOT auto-analyze, user picks hours first.
 qp_ca = st.query_params.get("ca", "").strip()
 
 ca = st.text_input("Contract Address", value=qp_ca,
                    placeholder="Solana CA...").strip()
-run = st.button("📊 Analyze (full 48h fetch + all windows)", type="primary",
-                use_container_width=True)
-if ca and qp_ca == ca and f"cvd48::{ca}" not in st.session_state:
-    run = True  # arrived from an LP Radar card -> analyze immediately
+
+col1, col2 = st.columns([1, 2])
+with col1:
+    hours = st.selectbox("Time window", [4, 6, 8, 12, 24, 36, 48],
+                         index=5, help="Fetch swaps for this many hours back")
+with col2:
+    run = st.button("📊 Analyze", type="primary",
+                    use_container_width=True)
+
 if not ca:
-    st.info("Paste a CA. The fetch pulls the complete last 48h — very "
-            "active tokens can take a few minutes, progress is shown.")
+    st.info("Paste a CA. The fetch pulls the complete swap history for the "
+            "selected time window — very active tokens can take a few "
+            "minutes, progress is shown.")
     st.stop()
-if not run and f"cvd48::{ca}" not in st.session_state:
+if not run:
     st.stop()
 if not helius_key:
     st.error("Helius API key missing (config.json / secrets).")
@@ -84,7 +87,7 @@ def full_fetch(ca: str, pool: str, cutoff_ts: int):
     Uses per-page retries with backoff so transient 429/5xx don't abort."""
     from cvd import _fetch_page
     swaps, before = [], None
-    pbar = st.progress(0.0, text="Fetching full 48h of swaps…")
+    pbar = st.progress(0.0, text=f"Fetching swaps for {hours}h…")
     t0 = time.time()
     oldest = time.time()
     consecutive_fail = 0
@@ -186,9 +189,13 @@ if not pool:
     st.error("Token not found on DexScreener.")
     st.stop()
 
-skey = f"cvd48::{ca}"
+# Build windows relative to the selected hours window
+WINDOWS = sorted(set([hours // 4, hours // 2, hours, 48]))
+WINDOWS = [w for w in WINDOWS if w >= 4 and w <= 48]
+
+skey = f"cvd::{hours}h::{ca}"
 if run or skey not in st.session_state:
-    cutoff = int(time.time()) - 48 * 3600
+    cutoff = int(time.time()) - hours * 3600
     # Hybrid: watchlist tokens use the incremental store (top-up only the
     # missing newest part — fast). Others need a full historical fetch.
     from watchlist import load_watchlist
@@ -200,12 +207,12 @@ if run or skey not in st.session_state:
                 update_token_cvd(helius_key, ca, pool, max_pages=200)
             except Exception:
                 pass
-            got = get_recent_swaps(ca, 48)
+            got = get_recent_swaps(ca, hours)
             src = "incremental store"
     if not got:
-        st.info("Full 48h fetch — very active tokens can take several "
-                "minutes. 💡 Watchlist tokens skip this via the "
-                "incremental store.")
+        st.info(f"Fetching last {hours}h of swaps — very active tokens can "
+                "take several minutes. 💡 Watchlist tokens skip this via "
+                "the incremental store.")
         got = full_fetch(ca, pool, cutoff)
         src = "full fetch"
     st.session_state[skey] = {"swaps": got, "ts": time.time(), "src": src}
@@ -213,7 +220,7 @@ swaps_all = st.session_state[skey]["swaps"]
 fetched_at = st.session_state[skey]["ts"]
 st.caption(f"Source: {st.session_state[skey].get('src', '?')}")
 if not swaps_all:
-    st.warning("No swaps ≥ 0.05 SOL found in the last 48h.")
+    st.warning(f"No swaps ≥ 0.05 SOL found in the last {hours}h.")
     st.stop()
 
 df = pd.DataFrame(swaps_all, columns=["side", "sol", "ts", "wallet"])
@@ -324,7 +331,7 @@ figc.add_hline(y=30, line_dash="dot", line_color="#ef4444",
                annotation_text="noise <30%")
 figc.update_layout(height=220, margin=dict(t=10, b=0, l=0, r=0),
                    yaxis=dict(title="conviction %", range=[0, 100]),
-                   title=dict(text="Conviction across windows (48h → 6h)",
+                   title=dict(text=f"Conviction across windows ({hours}h → {WINDOWS[0]}h)",
                               font=dict(size=13)))
 st.plotly_chart(figc, use_container_width=True,
                 config={"displayModeBar": False})
@@ -359,7 +366,7 @@ fig.update_layout(height=320, margin=dict(t=25, b=0, l=0, r=0),
                   legend=dict(orientation="h", font=dict(size=10)),
                   yaxis=dict(title="cumulative SOL"),
                   yaxis2=dict(overlaying="y", side="right", visible=False),
-                  title=dict(text="48h CVD — hourly", font=dict(size=13)))
+                  title=dict(text=f"{hours}h CVD — hourly", font=dict(size=13)))
 st.plotly_chart(fig, use_container_width=True,
                 config={"displayModeBar": False})
 
@@ -461,10 +468,10 @@ with pa1:
         st.dataframe(pd.DataFrame(acc_rows), use_container_width=True,
                      hide_index=True,
                      column_config={"Wallet": st.column_config.LinkColumn(
-                         "💎 Pure accumulator (48h)",
+                         f"💎 Pure accumulator ({hours}h)",
                          display_text=r"account/(.{6}).*")})
     else:
-        st.caption("No whale-size pure accumulators in 48h.")
+        st.caption(f"No whale-size pure accumulators in {hours}h.")
 with pa2:
     if dists:
         dist_rows = [{
@@ -476,10 +483,10 @@ with pa2:
         st.dataframe(pd.DataFrame(dist_rows), use_container_width=True,
                      hide_index=True,
                      column_config={"Wallet": st.column_config.LinkColumn(
-                         "🩸 Pure distributor (48h)",
+                         f"🩸 Pure distributor ({hours}h)",
                          display_text=r"account/(.{6}).*")})
     else:
-        st.caption("No whale-size pure distributors in 48h.")
+        st.caption(f"No whale-size pure distributors in {hours}h.")
 
 # ---------------------------------------------------------------------------
 # 📄 Exportable report
@@ -494,7 +501,7 @@ rep.write(f"# CVD Report — ${symbol}\n\n")
 rep.write(f"- CA: `{ca}`\n- Generated: {now_str} ({wib_str})\n")
 rep.write(f"- Price: ${price_now:.10f} · MC: ${mc_now:,.0f}\n")
 rep.write(f"- Data: {len(df):,} swaps, {covered_h:.1f}h covered "
-          f"(complete fetch)\n\n")
+          f"(fetch: {hours}h window)\n\n")
 rep.write("## Verdict\n\n")
 if is_candidate:
     rep.write(f"**💎 WHALE ACCUMULATION CANDIDATE** — conviction "
@@ -518,10 +525,10 @@ for h in sorted(win_stats):
               f"{s['net_pure']:+,.0f} | {s['conviction']:.0f}% | "
               f"{s['verdict']} |\n")
 if div_lines:
-    rep.write("\n## Divergences (H1, 48h)\n\n")
+    rep.write(f"\n## Divergences (H1, {hours}h)\n\n")
     for line in div_lines:
         rep.write(f"- {line}\n")
-rep.write("\n## Top pure accumulators (48h)\n\n")
+rep.write(f"\n## Top pure accumulators ({hours}h)\n\n")
 if acc_rows:
     rep.write("| Wallet | Bought (SOL) | Swaps | Age | Flags |\n")
     rep.write("|---|---|---|---|---|\n")
@@ -531,7 +538,7 @@ if acc_rows:
                   f"{r_['Swaps']} | {r_['Age']} | {r_['Flags']} |\n")
 else:
     rep.write("None.\n")
-rep.write("\n## Top pure distributors (48h)\n\n")
+rep.write(f"\n## Top pure distributors ({hours}h)\n\n")
 if dist_rows:
     rep.write("| Wallet | Sold (SOL) | Swaps | Age | Flags |\n")
     rep.write("|---|---|---|---|---|\n")
