@@ -573,7 +573,7 @@ if _wl:
     # volume-quality indicator, market phase, dan shortcut DexS/GMGN.
     # ------------------------------------------------------------------
     try:
-        from cvd import load_conviction, detect_phase, PHASE_COLORS
+        from cvd import load_conviction, detect_phase, PHASE_COLORS, flow_check_panel, markup_from_candles, markup_warning
         _conv_hist = load_conviction()
     except Exception:
         _conv_hist = {}
@@ -688,6 +688,76 @@ if _wl:
                 border, cv_col = "#ef4444", "#ef4444"
                 glow = ""
 
+            # ---- Why is this card flagged? ----
+            _reasons = []
+            try:
+                _panel = flow_check_panel(_ca)
+                if not _panel["freshness"]["ok"]:
+                    _full = _panel["freshness"]["reason"]
+                    _reasons.append(("⏰", _full[:42], _full, "warn"))
+                if _panel["persistence"]["ok"]:
+                    _full = _panel["persistence"]["reason"]
+                    _dir = _panel["persistence"]["direction"]
+                    _ic = "💪" if _dir == "accum" else "🩸"
+                    _lvl = "info" if _dir == "accum" else "warn"
+                    _reasons.append((_ic, _full[:42], _full, _lvl))
+                if _panel["distribution"]["ok"]:
+                    _full = _panel["distribution"]["reason"]
+                    _lvl = _panel["distribution"].get("level", "warn")
+                    _ic = "🩸" if _lvl == "danger" else "⚠️"
+                    _reasons.append((_ic, _full[:42], _full, _lvl))
+                if _panel["quality"]["level"] in ("warn", "danger"):
+                    _full = _panel["quality"]["reason"]
+                    _lvl = _panel["quality"]["level"]
+                    _reasons.append(("⚠️", _full[:42], _full, _lvl))
+            except Exception:
+                pass
+
+            try:
+                _market = _prices.get(_ca) or {}
+                _pair = _market.get("pair")
+                _price = _market.get("price")
+                if _pair and _price:
+                    _daily = _daily_candles.get(_pair, [])
+                    _markup = markup_from_candles(_daily, price_now=_price)
+                    if _markup and _markup["level"] in ("warn", "danger"):
+                        _full = markup_warning(_markup)
+                        _lvl = _markup["level"]
+                        _ic = "🔴" if _lvl == "danger" else "⚠️"
+                        _reasons.append((_ic, _full[:42], _full, _lvl))
+            except Exception:
+                pass
+
+            has_danger = any(lvl == "danger" or ic in ("🩸", "🔴") for ic, short, full, lvl in _reasons)
+            has_warn = any(lvl in ("warn", "warning") or ic in ("⏰", "⚠️") for ic, short, full, lvl in _reasons)
+
+            if has_danger:
+                border, cv_col = "#ef4444", "#ef4444"
+                glow = "box-shadow:0 0 12px rgba(239,68,68,0.45);"
+            elif has_warn:
+                border, cv_col = "#facc15", "#facc15"
+                glow = "box-shadow:0 0 10px rgba(250,204,21,0.35);"
+
+            reasons_html = ""
+            if _reasons:
+                rows_html = "".join(
+                    f"<div title='{full}' style='font-size:0.53rem;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;'>{ic} {short}</div>"
+                    for ic, short, full, lvl in _reasons[:3]
+                )
+                full_rows_html = "".join(
+                    f"<div style='font-size:0.48rem;color:#94a3b8;margin-top:1px;'>{ic} {full}</div>"
+                    for ic, short, full, lvl in _reasons
+                )
+                reasons_html = (
+                    f"<div style='border-top:1px solid #1e293b;margin-top:4px;padding-top:3px;'>"
+                    f"<div style='font-size:0.5rem;font-weight:700;color:#facc15;margin-bottom:1px;'>⚠️ Why flagged:</div>"
+                    f"{rows_html}"
+                    f"<details style='font-size:0.48rem;color:#64748b;margin-top:2px;'><summary style='cursor:pointer;font-size:0.48rem;color:#38bdf8;'>all ({len(_reasons)})</summary>"
+                    f"<div style='margin-top:2px;'>{full_rows_html}</div>"
+                    f"</details>"
+                    f"</div>"
+                )
+
             trend_txt = (f"{prev_cv:.0f}→{cv:.0f}%" if prev_cv is not None
                          else f"{cv:.0f}%")
             trend_ic = "📈📈" if grow2 else ("📈" if grow1 else "📉" if prev_cv is not None and cv < prev_cv else "➡️")
@@ -746,6 +816,7 @@ if _wl:
                 f"net {last['net_pure']:+,.0f}</span></div>"
                 f"<div style='font-size:0.62rem;color:#64748b;'>"
                 f"{vol_txt}</div></a>"
+                f"{reasons_html}"
                 f"</div>")
         if _cards:
             st.markdown(

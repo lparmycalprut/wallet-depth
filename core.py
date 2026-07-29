@@ -199,10 +199,20 @@ def health_score(*, ratio_pct, real_mc_pct, top10_pct, liq_pct_mc,
     p = clamp((45 - (top10_pct or 45)) / (45 - 10), 0, 1) * 15
     br.append(("Top-10 concentration", p, 15, f"{top10_pct:.1f}% supply"))
     # 4. Cluster terbesar (maks 15)
+    cluster_warn_pct = 5.0
+    try:
+        cfg = load_config()
+        cluster_warn_pct = float(cfg.get("cluster_warn_pct", 5.0))
+    except Exception:
+        pass
+
     if max_cluster_pct is None:
         p, note = 7.5, "not scanned"
+    elif max_cluster_pct > cluster_warn_pct:
+        p = 0.0
+        note = f"{max_cluster_pct:.1f}% supply (⚠️ BUNDLER >{cluster_warn_pct:g}%)"
     else:
-        p = clamp((10 - max_cluster_pct) / 10, 0, 1) * 15
+        p = clamp((cluster_warn_pct - max_cluster_pct) / cluster_warn_pct, 0, 1) * 7.5 + 7.5
         note = f"{max_cluster_pct:.1f}% supply"
     br.append(("Bundler/cluster", p, 15, note))
     # 5. Fresh wallet di top holder (maks 10)
