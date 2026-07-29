@@ -50,11 +50,17 @@ qp_ca = st.query_params.get("ca", "").strip()
 ca = st.text_input("Contract Address", value=qp_ca,
                    placeholder="Solana CA...").strip()
 
-col1, col2 = st.columns([1, 2])
+col1, col2, col3 = st.columns([1, 1, 2])
 with col1:
     hours = st.selectbox("Time window", [4, 6, 8, 12, 24, 36, 48],
                          index=5, help="Fetch swaps for this many hours back")
 with col2:
+    use_gmgn_trades = st.checkbox(
+        "🔄 Use GMGN Trades API", value=False,
+        help=("OFF/default: Helius RPC. ON: use GMGN "
+              "https://gmgn.ai/vas/api/v1/token_trades/sol/{ca}; "
+              "quote_amount/amount_usd is converted to SOL-equivalent."))
+with col3:
     run = st.button("📊 Analyze", type="primary",
                     use_container_width=True)
 
@@ -67,10 +73,12 @@ if not ca:
 # Keep a completed analysis renderable across reruns. This is required for
 # the Prompt to AI button: clicking it reruns Streamlit but must not force a
 # second fetch or a second time-window selector.
-skey = f"cvd::{hours}h::{ca}"
+source_key = "gmgn" if use_gmgn_trades else "helius"
+skey = f"cvd::{source_key}::{hours}h::{ca}"
 if not run and skey not in st.session_state:
     st.stop()
-if not helius_key and (run or skey not in st.session_state):
+if (not helius_key and not use_gmgn_trades and
+        (run or skey not in st.session_state)):
     st.error("Helius API key missing (config.json / secrets).")
     st.stop()
 
@@ -90,9 +98,26 @@ def get_pool(ca: str):
             float(b.get("marketCap") or b.get("fdv") or 0))
 
 
-def full_fetch(ca: str, pool: str, cutoff_ts: int):
-    """Fetch ALL swaps back to cutoff — no page cap (hard safety 1500).
-    Uses per-page retries with backoff so transient 429/5xx don't abort."""
+def full_fetch(ca: str, pool: str, cutoff_ts: int, *,
+               use_gmgn: bool = False):
+    """Fetch ALL swaps back to cutoff for the selected data source."""
+    if use_gmgn:
+        from cvd import fetch_swaps, get_gmgn_last_error
+        pbar = st.progress(0.0, text=f"Fetching GMGN trades for {hours}h…")
+        try:
+            swaps, _sig, _ts, _hit = fetch_swaps(
+                "", pool or "", ca, stop_ts=cutoff_ts, max_pages=120,
+                sleep=0.05, use_gmgn=True)
+        except Exception as exc:  # noqa: BLE001
+            st.warning(f"GMGN Trades API fetch failed: {exc}")
+            swaps = []
+        finally:
+            pbar.empty()
+        err = get_gmgn_last_error()
+        if err and not swaps:
+            st.warning("GMGN Trades API gagal/kosong: " + err +
+                       " Matikan checkbox untuk memakai Helius RPC.")
+        return swaps
     from cvd import _fetch_page
     swaps, before = [], None
     pbar = st.progress(0.0, text=f"Fetching swaps for {hours}h…")
@@ -203,31 +228,42 @@ WINDOWS = analysis_windows(hours)
 if run or skey not in st.session_state:
     st.session_state.pop(f"ai_prompt::{skey}", None)
     cutoff = int(time.time()) - hours * 3600
-    # Hybrid: watchlist tokens use the incremental store (top-up only the
-    # missing newest part — fast). Others need a full historical fetch.
-    from watchlist import load_watchlist
-    from cvd import update_token_cvd, get_recent_swaps
-    got, src = [], "full fetch"
-    if ca in load_watchlist():
-        with st.spinner("Topping up incremental store (only new swaps)…"):
-            try:
-                update_token_cvd(helius_key, ca, pool, max_pages=200)
-            except Exception:
-                pass
-            got = get_recent_swaps(ca, hours)
-            src = "incremental store"
-    if not got:
-        st.info(f"Fetching last {hours}h of swaps — very active tokens can "
-                "take several minutes. 💡 Watchlist tokens skip this via "
-                "the incremental store.")
-        got = full_fetch(ca, pool, cutoff)
+    got = []
+    if use_gmgn_trades:
+        st.info(f"Fetching last {hours}h from GMGN Trades API…")
+        got = full_fetch(ca, pool, cutoff, use_gmgn=True)
+        src = "GMGN Trades API"
+    else:
+        # Hybrid: watchlist tokens use the incremental store (top-up only
+        # newest swaps). Others need a full historical Helius fetch.
+        from watchlist import load_watchlist
+        from cvd import update_token_cvd, get_recent_swaps
         src = "full fetch"
+        if ca in load_watchlist():
+            with st.spinner("Topping up incremental store (only new swaps)…"):
+                try:
+                    update_token_cvd(helius_key, ca, pool, max_pages=200)
+                except Exception:
+                    pass
+                got = get_recent_swaps(ca, hours)
+                src = "incremental store"
+        if not got:
+            st.info(f"Fetching last {hours}h of swaps — very active tokens "
+                    "can take several minutes. 💡 Watchlist tokens skip "
+                    "this via the incremental store.")
+            got = full_fetch(ca, pool, cutoff)
+            src = "full fetch"
     st.session_state[skey] = {"swaps": got, "ts": time.time(), "src": src}
 swaps_all = st.session_state[skey]["swaps"]
 fetched_at = st.session_state[skey]["ts"]
 st.caption(f"Source: {st.session_state[skey].get('src', '?')}")
 if not swaps_all:
-    st.warning(f"No swaps ≥ 0.05 SOL found in the last {hours}h.")
+    if use_gmgn_trades:
+        from cvd import get_gmgn_last_error
+        st.warning("No usable GMGN swaps ≥ 0.05 SOL found in the last "
+                   f"{hours}h. {get_gmgn_last_error()}")
+    else:
+        st.warning(f"No swaps ≥ 0.05 SOL found in the last {hours}h.")
     st.stop()
 
 df = pd.DataFrame(swaps_all, columns=["side", "sol", "ts", "wallet"])
@@ -429,7 +465,7 @@ dists = sorted([(w, d) for w, d in full_profiles.items()
 
 fcache = load_funder_cache()
 targets = [w for w, _ in accs + dists if w not in fcache]
-if targets:
+if targets and helius_key:
     apb = st.progress(0.0, text="Looking up wallet ages…")
     for i, w in enumerate(targets[:20]):
         fcache[w] = list(lookup_first_tx(w))
@@ -438,6 +474,8 @@ if targets:
         time.sleep(0.1)
     apb.empty()
     save_funder_cache(fcache)
+elif targets:
+    st.caption("Wallet age lookup skipped: Helius API key missing.")
 
 
 def age_str(w):

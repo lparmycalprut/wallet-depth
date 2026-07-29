@@ -21,7 +21,6 @@ import streamlit.components.v1 as components
 
 from core import (concentration, health_score, score_color, score_label,
                   get_rugcheck, get_ohlcv_daily)
-from gmgn_screener import fetch_gmgn_trades, gmgn_trades_to_swaps
 from trending_ui import render_trending, run_screen
 
 
@@ -1734,7 +1733,7 @@ if card_png:
 # ----------------------------------------------------------------------------
 # ROW 4.5 — 📊 Live CVD analysis (auto-runs with Analyze)
 # ----------------------------------------------------------------------------
-st.markdown("**📊 On-chain CVD — live swap flow (Helius)**")
+st.markdown("**📊 On-chain CVD — live swap flow (Helius / GMGN)**")
 cvd_c1, cvd_c2, cvd_c3, cvd_c4 = st.columns([1, 1, 2, 1])
 cvd_window = cvd_c1.selectbox("Window", [6, 12, 24, 48], index=3,
                               format_func=lambda h: f"last {h}h",
@@ -1742,13 +1741,16 @@ cvd_window = cvd_c1.selectbox("Window", [6, 12, 24, 48], index=3,
 cvd_bucket = cvd_c2.selectbox("Candle", [30, 60, 240], index=2,
                               format_func=lambda m: f"{m}m" if m < 60
                               else f"{m//60}h", key="cvd_bkt")
-use_gmgn_trades = cvd_c4.checkbox("Use GMGN trades", value=False,
-                                  help="Gunakan data trades dari GMGN sebagai alternatif Helius (lebih cepat, tapi estimasi SOL)")
+use_gmgn_trades = cvd_c4.checkbox(
+    "🔄 Use GMGN Trades API", value=False, key="cvd_use_gmgn_trades",
+    help=("OFF/default: Helius RPC/Enhanced API. ON: use GMGN "
+          "https://gmgn.ai/vas/api/v1/token_trades/sol/{ca} for swap "
+          "flow; quote_amount/amount_usd is converted to SOL-equivalent."))
 with cvd_c3:
     st.markdown("<div style='height:1.72rem'></div>", unsafe_allow_html=True)
     cvd_clicked = st.button("▶ Run CVD analysis", type="secondary",
                             use_container_width=True,
-                            disabled=not rpc_endpoint)
+                            disabled=not (rpc_endpoint or use_gmgn_trades))
 
 # manual trigger: once clicked, CVD stays active for this CA (until CA changes)
 _cvd_flag = f"cvd_on::{ca}"
@@ -1756,15 +1758,14 @@ if cvd_clicked:
     st.session_state[_cvd_flag] = True
 run_cvd_now = run_cvd_auto or st.session_state.get(_cvd_flag, False)
 
-if run_cvd_now and rpc_endpoint:
+if run_cvd_now and (rpc_endpoint or use_gmgn_trades):
     from cvd import classify_swap as _cls, MIN_SOL as _MINSOL, \
         WHALE_SOL as _WHSOL, detect_divergence as _detdiv
 
     @st.cache_data(ttl=3600, show_spinner=False)
     def fetch_live_swaps(ca: str, pool: str, hours: int,
                          max_pages: int = 700):
-        """Full live swap fetch — enough pages for a complete 48h window
-        even on very active tokens (each page retried, 429-proof)."""
+        """Full live Helius swap fetch for complete CVD windows."""
         from cvd import _fetch_page
         cutoff = int(time.time()) - hours * 3600
         swaps, before = [], None
@@ -1796,41 +1797,58 @@ if run_cvd_now and rpc_endpoint:
         _pb.empty()
         return swaps
 
-    in_watchlist = ca in _wl
-    if in_watchlist:
-        # Incremental top-up: only fetches swaps NEWER than the last stored
-        # one, then reads the complete window from the 48h raw-swap store.
-        from cvd import update_token_cvd, get_recent_swaps
+    @st.cache_data(ttl=120, show_spinner=False)
+    def fetch_live_gmgn_swaps(ca: str, pool: str | None, hours: int,
+                              max_pages: int = 80):
+        """GMGN Token Trades API path; returns swaps plus readable error."""
+        from cvd import fetch_swaps as _fetch_swaps, get_gmgn_last_error
+        cutoff = int(time.time()) - hours * 3600
+        swaps, _sig, _ts, _hit = _fetch_swaps(
+            "", pool or "", ca, stop_ts=cutoff, max_pages=max_pages,
+            sleep=0.05, use_gmgn=True)
+        return swaps, get_gmgn_last_error()
 
-        @st.cache_data(ttl=600, show_spinner=False)
-        def topup_and_load(ca: str, pool: str, hours: int):
-            try:
-                update_token_cvd(helius_key, ca, pool, max_pages=200)
-            except Exception:
-                pass
-            return get_recent_swaps(ca, hours)
+    live_swaps, gmgn_error, live_src = [], "", ""
+    in_watchlist = False
 
-        with st.spinner(f"Topping up CVD store (incremental) & loading "
-                        f"last {cvd_window}h…"):
-            live_swaps = topup_and_load(ca, pair0, cvd_window) \
-                if pair0 else []
-        if not live_swaps:  # store still empty -> fall back to live fetch
-            in_watchlist = False
-            if use_gmgn_trades:
-                gmgn_trades = fetch_gmgn_trades(ca, limit=300)
-                live_swaps = gmgn_trades_to_swaps(gmgn_trades)
-    if not in_watchlist:
-        # GMGN trades fallback
-        if use_gmgn_trades:
-            with st.spinner("Fetching trades from GMGN..."):
-                gmgn_trades = fetch_gmgn_trades(ca, limit=300)
-                live_swaps = gmgn_trades_to_swaps(gmgn_trades)
-        else:
+    if use_gmgn_trades:
+        with st.spinner("Fetching swaps from GMGN Trades API…"):
+            live_swaps, gmgn_error = fetch_live_gmgn_swaps(
+                ca, pair0, cvd_window)
+        live_src = "GMGN Trades API"
+        if gmgn_error and not live_swaps:
+            st.warning("GMGN Trades API gagal/kosong: " + gmgn_error +
+                       " Coba refresh, atau matikan checkbox untuk memakai "
+                       "Helius RPC standar.")
+    else:
+        in_watchlist = ca in _wl
+        if in_watchlist:
+            # Incremental top-up: only fetches swaps NEWER than the last
+            # stored one, then reads the complete window from raw-swap store.
+            from cvd import update_token_cvd, get_recent_swaps
+
+            @st.cache_data(ttl=600, show_spinner=False)
+            def topup_and_load(ca: str, pool: str, hours: int):
+                try:
+                    update_token_cvd(helius_key, ca, pool, max_pages=200)
+                except Exception:
+                    pass
+                return get_recent_swaps(ca, hours)
+
+            with st.spinner(f"Topping up CVD store (incremental) & loading "
+                            f"last {cvd_window}h…"):
+                live_swaps = topup_and_load(ca, pair0, cvd_window) \
+                    if pair0 else []
+            live_src = "incremental store (Helius)"
+            if not live_swaps:  # store still empty -> fall back to live fetch
+                in_watchlist = False
+        if not in_watchlist:
             with st.spinner(f"Fetching complete last {cvd_window}h of swaps "
-                            f"(full fetch — active tokens can take minutes)…"):
+                            f"(Helius full fetch — active tokens can take "
+                            "minutes)…"):
                 live_swaps = fetch_live_swaps(ca, pair0, cvd_window) \
                     if pair0 else []
-
+            live_src = "Helius live fetch"
     if live_swaps:
         ldf = pd.DataFrame(live_swaps,
                            columns=["side", "sol", "ts", "wallet"])
@@ -2306,13 +2324,17 @@ if run_cvd_now and rpc_endpoint:
                            f"{covered_h:.1f}h (younger than the requested "
                            f"{cvd_window}h window), or the fetch was "
                            f"interrupted — stats cover the shown range.")
-        src_txt = ("incremental store (complete window)" if in_watchlist
-                   else "live fetch")
+        src_txt = live_src or ("incremental store (complete window)"
+                               if in_watchlist else "live fetch")
         st.caption(f"Source: {src_txt} · swaps <{_MINSOL:g} SOL filtered · "
                    f"whale ≥{_WHSOL:g} SOL · full analysis (top wallets, "
                    f"biggest swaps, size brackets) on the **📊 CVD** page.")
     else:
-        st.caption("No swaps found in the window (or fetch failed).")
+        if use_gmgn_trades:
+            st.caption("No usable GMGN swaps found in the window. "
+                       + (gmgn_error or "GMGN returned an empty response."))
+        else:
+            st.caption("No swaps found in the window (or fetch failed).")
 elif not run_cvd_now:
     st.caption("CVD not run yet for this token — check the holder & "
                "security data above first; if the token looks worth it, "
