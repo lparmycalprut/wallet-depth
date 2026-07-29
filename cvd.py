@@ -499,7 +499,6 @@ def detect_phase(ca: str, price_change_24h: float | None = None) -> dict:
     chg = price_change_24h  # may be None
 
     prev = pts[-2] if len(pts) >= 2 else None
-    prev2 = pts[-3] if len(pts) >= 3 else None
     cv_prev = float(prev["conviction"]) if prev else None
     np_prev = float(prev.get("net_pure") or 0) if prev else None
     vol_prev = float(prev.get("vol") or 0) if prev else None
@@ -1045,3 +1044,22 @@ def markup_warning(markup) -> str:
                 "tinggi; conviction datar bukan tanda aman.")
     return (f"Harga sudah +{current:.0f}% dari low 30D{peak_note}. "
             "Entry mulai jauh dari base; tunggu struktur dan flow baru.")
+
+
+def analysis_windows(requested_hours) -> list:
+    """Nested CVD windows that never exceed the fetched time range.
+
+    The old page always appended a 48h row, even after fetching only 4-36h.
+    That mislabeled the same short dataset as a 48h reading. Keep a minimum
+    useful slice of four hours and cap every row at the selected window.
+    """
+    try:
+        requested = int(float(requested_hours))
+    except (TypeError, ValueError, OverflowError):
+        return []
+    if requested < 4:
+        return []
+    candidates = (max(4, requested // 4),
+                  max(4, requested // 2), requested)
+    return sorted({window for window in candidates
+                   if 4 <= window <= requested})

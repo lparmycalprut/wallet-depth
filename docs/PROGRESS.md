@@ -7,6 +7,44 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-07-29 — Audit bug/efisiensi + README sesuai perilaku program
+
+### Bug dan risiko yang diperbaiki
+
+1. CVD dulu selalu menambahkan row 48h walau user hanya fetch 4–36h. Sekarang
+   `analysis_windows()` menjamin semua row berada di dalam window terpilih.
+2. Rerun Streamlit memakai `time.time()` baru sehingga swap cache tampak
+   mencakup makin banyak jam. Semua window/prompt sekarang di-anchor ke
+   `fetched_at` snapshot asli.
+3. Periode prompt di luar cakupan dulu tampak sebagai angka nol. Sekarang
+   tiap row diberi status `lengkap`, `SEBAGIAN`, atau `TIDAK TERCAKUP`.
+4. Card LP Radar memakai `<a>` bersarang untuk card + shortcut eksternal
+   (HTML tidak valid). Link card, DexScreener, dan GMGN sekarang bersaudara.
+5. Fetch candle harian watchlist yang semula serial sekarang concurrent
+   (maksimum 8 worker) dan tetap di-cache 15 menit.
+6. Event `guard_*` sudah ditulis ke `signals.json` tetapi tidak ada di metadata
+   halaman Signals, sehingga hilang dari chart/filter. Lima tipe Guard kini
+   dirender.
+7. Contoh deploy berisi key nyata; diganti placeholder. Key yang pernah
+   dipublikasikan tetap harus dirotasi karena masih ada di riwayat Git.
+8. Label cron 2/4-hourly yang sudah basi diselaraskan dengan workflow hourly
+   menit :20.
+
+### Dokumentasi
+
+`README.md` diganti penuh agar menjelaskan apa yang benar-benar dilakukan
+program: holder/security, cluster, CVD, Prompt to AI, watchlist/markup safety,
+GMGN screener, dua sistem alert, sumber data, instalasi, cron, state file,
+tes, dan batasan.
+
+### Verifikasi
+
+- Seluruh suite di `tests/` lulus tanpa pytest/jaringan.
+- Seluruh file Python lulus `py_compile`.
+- `ruff` kategori fatal (`F`/`E9`) diperiksa; temuan baru dibersihkan.
+
+---
+
 ## 2026-07-29 — Markup safety watchlist + Prompt to AI
 
 ### Yang berubah

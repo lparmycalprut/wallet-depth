@@ -475,11 +475,22 @@ def fetch_watchlist_prices(cas: tuple) -> dict:
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def fetch_watchlist_daily_candles(pair_address: str) -> list:
-    """Daily candles for the watchlist-wide markup safety sweep."""
+def fetch_watchlist_daily_candles(pair_addresses: tuple) -> dict:
+    """Fetch watchlist daily candles concurrently, cached for 15 minutes."""
+    from concurrent.futures import ThreadPoolExecutor
     from cvd import fetch_candles
-    return fetch_candles(pair_address, timeframe="day", aggregate=1,
-                         limit=30, timeout=8)
+
+    pairs = tuple(dict.fromkeys(pair for pair in pair_addresses if pair))
+    if not pairs:
+        return {}
+
+    def fetch_one(pair):
+        return pair, fetch_candles(pair, timeframe="day", aggregate=1,
+                                   limit=30, timeout=8)
+
+    workers = min(8, len(pairs))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        return dict(executor.map(fetch_one, pairs))
 
 
 def _fmt_price(v: float) -> str:
@@ -534,13 +545,17 @@ if _wl:
     # LP Radar's `grow1` filter. A +300% token must remain visible even when
     # its conviction is flat and therefore has no radar card.
     from cvd import markup_from_candles, markup_label, markup_warning
+    _watchlist_pairs = tuple(
+        market.get("pair") for market in _prices.values()
+        if market.get("pair"))
+    _daily_candles = fetch_watchlist_daily_candles(_watchlist_pairs)
     _markup_dangers = []
     for _ca, _meta in _wl.items():
         _market = _prices.get(_ca) or {}
         if not _market.get("pair") or not _market.get("price"):
             continue
         _markup = markup_from_candles(
-            fetch_watchlist_daily_candles(_market["pair"]),
+            _daily_candles.get(_market["pair"], []),
             price_now=_market["price"])
         if _markup and _markup["level"] == "danger":
             _symbol = (_market.get("symbol") or _meta.get("symbol") or
@@ -604,16 +619,16 @@ if _wl:
             extreme_warn = ""
             if cv >= 100:
                 extreme_warn = (
-                    f"<span style='background:#ef4444;color:white;"
-                    f"border-radius:4px;padding:0 5px;margin-left:4px;"
-                    f"font-size:0.55rem;font-weight:800;"
-                    f"white-space:nowrap;'>⚠️ EXTREME</span>")
+                    "<span style='background:#ef4444;color:white;"
+                    "border-radius:4px;padding:0 5px;margin-left:4px;"
+                    "font-size:0.55rem;font-weight:800;"
+                    "white-space:nowrap;'>⚠️ EXTREME</span>")
             elif cv >= 50:
                 extreme_warn = (
-                    f"<span style='background:#f97316;color:white;"
-                    f"border-radius:4px;padding:0 5px;margin-left:4px;"
-                    f"font-size:0.55rem;font-weight:800;"
-                    f"white-space:nowrap;'>⚠️ HIGH</span>")
+                    "<span style='background:#f97316;color:white;"
+                    "border-radius:4px;padding:0 5px;margin-left:4px;"
+                    "font-size:0.55rem;font-weight:800;"
+                    "white-space:nowrap;'>⚠️ HIGH</span>")
             if grow2:      # confirmed: 2 consecutive rises -> green glow
                 border, cv_col = "#22c55e", "#22c55e"
                 glow = "box-shadow:0 0 12px rgba(34,197,94,0.45);"
@@ -641,18 +656,19 @@ if _wl:
                 f"padding:1px 7px;font-size:0.6rem;font-weight:700;"
                 f"white-space:nowrap;'>{_ph['phase']} {_conf_dots}</span>"
                 f"</div>")
+            _cvd_link = f"/CVD?ca={_ca}"
             _cards.append(
-                f"<a href='/CVD?ca={_ca}' target='_self' "
-                f"style='text-decoration:none;'>"
                 f"<div style='flex:0 0 auto;background:#131a26;"
                 f"border:2px solid {border};{glow}border-radius:12px;"
                 f"padding:8px 14px;margin-right:10px;cursor:pointer;"
                 f"min-width:150px;'>"
                 f"<div style='font-weight:800;color:#e2e8f0;"
-                f"font-size:0.85rem;'>{sym} "
+                f"font-size:0.85rem;'>"
+                f"<a href='{_cvd_link}' target='_self' "
+                f"style='color:inherit;text-decoration:none;'>{sym} "
                 f"<span style='color:{cv_col};font-size:1.05rem;'>"
                 f"{cv:.0f}%</span> <span style='font-size:0.72rem;'>"
-                f"{trend_ic}</span>{extreme_warn}"
+                f"{trend_ic}</span>{extreme_warn}</a>"
                 f"<span style='float:right;font-size:0.7rem;'>"
                 f"<a href='https://dexscreener.com/solana/{_ca}' "
                 f"target='_blank' title='DexScreener' "
@@ -663,14 +679,16 @@ if _wl:
                 f"style='color:#64748b;text-decoration:none;'>"
                 f"<span style='margin:0 2px;'>⚡</span></a>"
                 f"</span></div>"
+                f"<a href='{_cvd_link}' target='_self' "
+                f"style='display:block;text-decoration:none;'>"
                 f"{phase_html}"
                 f"<div style='height:28px;margin:3px 0;'>{bars}</div>"
                 f"<div style='font-size:0.62rem;color:#64748b;'>"
                 f"conv {trend_txt} · <span style='color:{np_col};'>"
                 f"net {last['net_pure']:+,.0f}</span></div>"
                 f"<div style='font-size:0.62rem;color:#64748b;'>"
-                f"{vol_txt}</div>"
-                f"</div></a>")
+                f"{vol_txt}</div></a>"
+                f"</div>")
         if _cards:
             st.markdown(
                 "<div style='display:flex;overflow-x:auto;"
@@ -2147,8 +2165,9 @@ if run_cvd_now and rpc_endpoint:
         if covered_h < cvd_window * 0.9:
             if in_watchlist:
                 st.caption(f"ℹ️ Store covers {covered_h:.1f}h so far — it "
-                           f"fills up incrementally (2-hourly cron + every "
-                           f"Analyze). Within ~{max(0, cvd_window - covered_h):.0f}h "
+                           f"fills up incrementally (hourly cron + every "
+                           f"Analyze). Within ~"
+                           f"{max(0, cvd_window - covered_h):.0f}h "
                            f"the full {cvd_window}h window will be complete "
                            f"and stay complete.")
             else:

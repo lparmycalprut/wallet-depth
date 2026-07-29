@@ -102,6 +102,12 @@ Sekarang interpolasi linear lewat `CURVES` / `PENALTY_CURVES` / `CAP_CURVE`.
   lama → baru dan tabel dompet harus membawa umur 🐣/🌱/🌳.
 - Tombol Prompt to AI memakai dropdown Time window yang sudah ada. Jangan
   membuat pemilih window kedua.
+- Nested CVD window tidak boleh melebihi window yang di-fetch
+  (`cvd.analysis_windows`). Semua perhitungan rerun harus tetap di-anchor ke
+  `fetched_at`; memakai `time.time()` akan membuat data stale tampak makin
+  lengkap.
+- Periode prompt yang belum tercakup wajib diberi label `TIDAK TERCAKUP` atau
+  `SEBAGIAN`, bukan ditampilkan sebagai flow nol tanpa penjelasan.
 
 ## 7. Cara kerja & jebakan
 

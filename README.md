@@ -1,206 +1,328 @@
-# 📊 Wallet Depth by Threshold — Solana Holder Analyzer
+# Wallet Depth — Analisis Holder, Order Flow, dan Risiko Token Solana
 
-Meniru fitur **Wallet Depth by Threshold** di Solscan Analytics, plus analisa
-**Dust Holder vs Real Holder** untuk token Solana apa pun.
+Wallet Depth adalah dashboard Streamlit dan rangkaian cron untuk memeriksa
+kesehatan token Solana sebelum trade atau menyediakan likuiditas. Program ini
+menggabungkan struktur holder, keamanan token, perilaku wallet, swap on-chain,
+CVD, level harga D1/H4, watchlist, screener GMGN, dan notifikasi Telegram.
 
-> 🤖 **Pakai AI agent?** Baca [`AGENTS.md`](AGENTS.md) dulu (aturan & jebakan
-> repo ini), lalu [`docs/PROGRESS.md`](docs/PROGRESS.md) (riwayat keputusan
-> & status). Keduanya sengaja dibuat supaya sesi baru tidak perlu dijelasi
-> ulang dari nol.
+Program ini membantu menjawab pertanyaan seperti:
 
-## Kenapa butuh API key Helius?
+- Apakah jumlah holder terlihat organik atau didominasi dust wallet?
+- Seberapa terkonsentrasi supply di holder dan cluster yang saling terhubung?
+- Apakah whale sedang akumulasi, distribusi ke retail, atau hanya churn?
+- Apakah token sudah terlalu jauh naik dari low 30 hari untuk entry/LP baru?
+- Apakah breakout benar-benar terkonfirmasi pada close H4?
+- Apa yang berubah pada token di watchlist sejak snapshot sebelumnya?
 
-Data yang **100% gratis tanpa key**:
-- ✅ Harga, marketcap, likuiditas → **DexScreener API** (dipakai otomatis)
-- ✅ Supply & decimals → RPC publik Solana
+> **Peringatan:** seluruh skor, fase, sinyal, dan prompt AI di repo ini adalah
+> heuristik. Tidak ada fitur yang menjamin arah harga atau menggantikan
+> verifikasi transaksi dan manajemen risiko.
 
-Data yang butuh key (tetap **gratis**):
-- Daftar **SEMUA holder** sebuah token. RPC publik Solana memblokir
-  `getProgramAccounts` untuk token program (terlalu berat), dan API internal
-  Solscan/GMGN dilindungi Cloudflare. Solusi gratis yang paling stabil:
-  **Helius free tier** — daftar di [helius.dev](https://www.helius.dev)
-  (tanpa kartu kredit), free tier dapat jutaan credit/bulan, lebih dari cukup.
+## Alur kerja program
 
-Alternatif: isi **Custom RPC URL** (QuickNode/Alchemy/dll free tier milikmu)
-yang mengizinkan `getProgramAccounts`.
+```text
+CA token
+  ├─ DexScreener / GeckoTerminal / RugCheck
+  │    └─ harga, market cap, likuiditas, OHLC, keamanan
+  ├─ Helius / RPC Solana
+  │    └─ seluruh holder, supply, swap, umur dan funder wallet
+  ├─ Analisis dashboard
+  │    ├─ dust vs real holder + wallet depth
+  │    ├─ health score + konsentrasi + cluster
+  │    ├─ CVD + whale/retail + pure wallet
+  │    └─ laporan, share card, dan Prompt to AI
+  └─ Watchlist + GitHub Actions
+       ├─ snapshot holder/history
+       ├─ update CVD dan conviction tiap jam
+       ├─ Signal Monitor
+       └─ Breakout Guard + Telegram
+```
 
-## ⚙️ Konfigurasi — `config.json`
+## Fitur utama
 
-API key dan setelan awal disimpan di **`config.json`** (satu folder dengan
-`app.py`). Tinggal copy-paste key kamu di situ:
+### 1. Analisis holder dan keamanan
+
+Halaman utama mengambil seluruh holder token, menggabungkan akun berdasarkan
+owner, menghapus wallet LP bila opsi aktif, lalu menghitung:
+
+- **Dust vs real holder** — ambang default `$10`, dapat diubah di sidebar.
+- **Wallet Depth by Threshold** — jumlah dan nilai wallet pada tier `>$10`,
+  `>$100`, `>$1K`, `>$10K`, `>$100K`, dan `>$1M`.
+- **Konsentrasi supply** — Top 5, Top 10, Top 25, Top 50, dan Top 100.
+- **Health score 0–100** — menggabungkan kualitas holder, konsentrasi,
+  likuiditas/MC, LP lock, authority, pertumbuhan holder, cluster, dan umur
+  wallet. Skor ini adalah ringkasan heuristik, bukan probabilitas sukses.
+- **Security check** — mint/freeze authority, status rugged, risiko RugCheck,
+  dan LP lock/liquidity.
+- **Buy/sell dan divergence check** — membandingkan holder, harga, volume,
+  konsentrasi, dan flow untuk mencari perubahan yang tidak sejalan.
+
+Interpretasi rasio holder pada dashboard:
+
+| Rasio real terhadap dust | Pembacaan |
+|---|---|
+| `≥50%` | sehat |
+| `30–<50%` | borderline |
+| `<30%` | holder count berisiko semu/noisy |
+
+### 2. Cluster, funder, dan umur wallet
+
+Top holder dapat dipindai berdasarkan transaksi/funder pertamanya:
+
+- wallet dengan funder sama dikelompokkan sebagai cluster;
+- cluster yang melewati ambang supply menyalakan warning;
+- funder CEX yang dikenal ditandai dan tidak otomatis dianggap bundle;
+- wallet baru diberi umur 🐣, 🌱, atau 🌳;
+- mode **Fast / Balanced / Deep** mengatur jumlah wallet dan kedalaman scan
+  agar pemakaian API dapat dikontrol.
+
+Deteksi ini tidak dapat menjamin bundler multi-hop atau wallet yang sengaja
+memutus jejak pendanaan akan ditemukan.
+
+### 3. CVD dan atribusi order flow
+
+CVD dibangun dari swap pool on-chain, bukan dari tebakan aggressor seperti
+pada order book CEX. Transfer token keluar pool dibaca sebagai buy; transfer
+masuk pool dibaca sebagai sell. Quote SOL, USDC, dan USDT dinormalisasi ke
+SOL-equivalent.
+
+Definisi penting:
+
+- **Whale** = satu swap `≥3 SOL`.
+- **Retail** = swap di bawah ambang whale.
+- **Pure accumulator/distributor** = wallet satu arah dengan toleransi lawan
+  arah maksimal `5%` pada window yang dihitung.
+- **Conviction** = persentase buy ukuran-whale yang masih ditahan oleh pure
+  accumulator; bukan peluang harga akan naik.
+
+Halaman **📊 CVD Deep Analysis** menyediakan:
+
+- satu dropdown window `4/6/8/12/24/36/48 jam`;
+- nested window yang selalu berada di dalam data yang benar-benar dipilih;
+- net CVD total, whale, retail, pure buy/sell, dan conviction;
+- chart CVD per jam dan divergence harga/CVD;
+- daftar pure accumulator/distributor beserta umur dan same-funder flag;
+- ekspor Markdown/CSV;
+- tombol **Prompt to AI**.
+
+### 4. Prompt to AI
+
+Tombol **Prompt to AI** membuat teks siap salin untuk layanan chat seperti
+DeepSeek. Data tidak dikirim otomatis. Prompt berisi:
+
+1. glosarium dan ambang angka sebelum metrik;
+2. status kejujuran cakupan data;
+3. ringkasan multi-window;
+4. alur waktu dari periode lama ke terbaru;
+5. tabel pure wallet dengan umur 🐣/🌱/🌳;
+6. tugas untuk membandingkan take profit, distribusi ke retail, rotasi
+   antar-whale, akumulasi, shakeout, dan churn;
+7. verdict panik/tidak dan syarat yang membatalkan pembacaan.
+
+Jika data lebih pendek daripada window yang diminta, prompt menandai periode
+**tidak tercakup/sebagian** dan melarang AI menyimpulkan tren. Prompt juga
+melarang AI mengarang angka atau memberi target harga.
+
+### 5. Watchlist, LP Radar, dan markup safety
+
+Watchlist menampilkan harga live dan menjadi sumber token untuk cron.
+
+- **LP Radar** hanya menggambar card saat conviction naik dibanding cron
+  sebelumnya. Dua kenaikan berturut-turut menghasilkan green glow.
+- Badge **HIGH** dan **EXTREME** menunjukkan conviction tinggi; badge itu
+  bukan indikator kenaikan harga.
+- Shortcut card membuka DexScreener, GMGN, atau halaman CVD.
+- **Markup safety** berjalan terpisah dari filter conviction. Semua token
+  watchlist diperiksa dari 30 candle harian:
+  - `+150%` dari low 30D = warning;
+  - `+300%` dari low 30D = danger dan banner merah.
+
+Pemisahan ini penting: token yang sudah naik +300% tetap diperingatkan walau
+conviction datar sehingga tidak mempunyai card LP Radar.
+
+### 6. GMGN trending screener
+
+Screener mengambil daftar trending GMGN lalu memberi **Fit score 0–100**
+berdasarkan delapan pilar: price action, konsentrasi Top 10, likuiditas,
+smart money, rug score, volume/MC, jumlah holder, dan umur token.
+
+Penalti mencakup insider, bundler, entrapment, bot-degen, sniper, rug risk,
+konsentrasi, dan likuiditas tipis. Kurva skor menggunakan interpolasi linear,
+bukan tangga `if/elif`, agar perubahan kecil pada input tidak menyebabkan
+lompatan puluhan poin.
+
+Grade: `PRIME ≥75`, `OK 55–74`, `WEAK 35–54`, dan `POOR <35`. Hard risk
+mendapat `AVOID` dan dibatasi maksimal 40.
+
+Endpoint GMGN bersifat tidak resmi dan dapat berubah atau diblokir
+Cloudflare. Hasil kosong tidak selalu berarti tidak ada token.
+
+### 7. Signal Monitor dan Breakout Guard
+
+Cron menghasilkan dua jenis pesan yang sengaja dipisahkan:
+
+| Sistem | Dasar | Dedupe |
+|---|---|---|
+| 📊 **CVD MONITOR** | flow 6 jam + divergence H1 | 4 jam per token/tipe |
+| 🛡️ **BREAKOUT GUARD** | level D1 + close H4 | 12 jam per level |
+
+Breakout Guard hanya menilai candle H4 yang sudah close. Level berasal dari
+pivot harian, digabung bila berjarak kurang dari 1,5%, maksimal enam level per
+sisi. Event yang dicatat:
+
+- `breakout`;
+- `failed_breakout`;
+- `breakdown`;
+- `spring`;
+- `reclaim` maksimal lima candle H4 setelah breakdown.
+
+Pesan menyebut whale vs retail, jumlah wallet, pure flow, aktor dominan, dan
+langkah kehati-hatian. Event disimpan di `breakouts.json` dengan hubungan
+parent/outcome. Alert Telegram yang gagal disimpan dan dicoba lagi pada cron
+berikutnya.
+
+## Halaman dashboard
+
+| Halaman | Fungsi |
+|---|---|
+| `app.py` | holder/security, cluster, CVD, LP Radar, dan screener inline |
+| ⚖️ Compare | membandingkan 2–3 token tanpa cluster scan |
+| 📒 History | jurnal hasil analisis dan snapshot per tanggal |
+| ⭐ Watchlist | menambah, memberi catatan, dan menghapus token |
+| 📊 CVD | analisis flow mendalam, ekspor, dan Prompt to AI |
+| 🔔 Signals | filter dan timeline signal CVD/guard |
+| 🔎 Screener | GMGN trending dengan Fit score |
+
+## Sumber data
+
+| Sumber | Digunakan untuk |
+|---|---|
+| DexScreener | harga, market cap, likuiditas, pair, transaksi, volume |
+| Helius Enhanced API/RPC | seluruh holder, supply, transaksi, dan swap |
+| GeckoTerminal | candle harga harian/H1/H4 |
+| RugCheck | authority, LP lock, rugged, dan security risks |
+| GMGN | trending/risk fields dan fallback trade terkini |
+| Solscan | riwayat holder dan link verifikasi wallet |
+| GitHub | penyimpanan durable watchlist/history dan GitHub Actions |
+
+Helius API key diperlukan untuk fitur holder dan CVD penuh. Custom RPC yang
+mengizinkan `getProgramAccounts` dapat dipakai untuk holder, tetapi tidak
+menggantikan seluruh endpoint Enhanced API yang dipakai CVD.
+
+## Instalasi lokal
+
+Disarankan memakai virtual environment:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate       # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp config.example.json config.json
+```
+
+Isi `config.json` dengan key milik sendiri. File ini sudah diabaikan Git:
 
 ```json
 {
-  "helius_api_key": "API-KEY-KAMU-DISINI",
+  "helius_api_key": "PASTE-KEY-DI-SINI",
   "custom_rpc": "",
   "dust_limit_usd": 10,
   "cluster_warn_pct": 5,
   "cluster_scan_top_n": 50,
-  "exclude_lp": true
+  "exclude_lp": true,
+  "helius_extra_keys": "",
+  "telegram_bot_token": "",
+  "telegram_chat_id": ""
 }
 ```
 
-- Dashboard & CLI **otomatis membaca** file ini saat start.
-- Kamu juga bisa mengubah setelan dari sidebar lalu klik
-  **💾 Simpan ke config.json** agar permanen.
-- Jika file terhapus, template kosong dibuat ulang otomatis saat app dijalankan.
-
-## 🔔 Notifikasi Telegram — dua jenis pesan
-
-Cron `cvd-update.yml` (tiap jam) mengirim **dua jenis pesan yang berbeda**,
-dan tiap pesan diberi caption di baris pertama supaya langsung kelihatan
-yang mana:
-
-| Caption | Sumber | Dasar | Isi |
-|---|---|---|---|
-| 📊 **CVD MONITOR** | `signals.py` | flow 6 jam + divergensi H1 | akumulasi/distribusi & divergensi |
-| 🛡️ **BREAKOUT GUARD** | `breakout_guard.py` | **level D1**, konfirmasi **close H4** | event level + siapa pelakunya + action plan |
-
-### Breakout Guard — cara kerjanya
-
-- **Support/resistance dari candle HARIAN (D1)**, pivot dengan konfirmasi 2
-  bar kiri-kanan, level yang berjarak <1,5% digabung. Level yang bertahan
-  satu hari penuh jauh lebih berarti daripada pivot H1.
-- **Keputusan hanya diambil saat candle H4 CLOSE.** Candle yang masih
-  berjalan selalu dibuang, jadi wick yang sudah dibeli balik di tengah
-  candle tidak pernah dianggap break.
-- **Lima jenis event:**
-
-  | Event | Arti |
-  |---|---|
-  | `breakout` | close H4 **di atas** resistance D1 |
-  | `failed_breakout` | wick menembus resistance tapi close balik di bawah |
-  | `breakdown` | close H4 **di bawah** support D1 |
-  | `spring` | wick menembus support tapi close balik di atas |
-  | `reclaim` | support yang hilang direbut lagi, maks **5 candle H4** |
-
-- **Tiap notifikasi menyebut siapa di balik candle itu** — whale vs retail,
-  jumlah wallet pembeli/penjual di tiap sisi, pure accumulator vs
-  distributor, dan aktor dominan. Jadi bukan cuma "harga break", tapi
-  "whale jual ke retail yang beli" (hati-hati) atau "whale yang reclaim"
-  (lebih kuat).
-- **Semua event dicatat di `breakouts.json`** (file terpisah dari
-  `signals.json`), lengkap dengan candle + flow-nya. Event lanjutan
-  menyimpan `parent_id` ke break yang diselesaikannya dan mengisi
-  `outcome` (`reclaimed` / `failed` / `held` / `no_reclaim`), sehingga saat
-  terjadi spring atau reclaim riwayatnya bisa dianalisa.
-- **Notifikasi tidak hilang saat Telegram error** — teks pesan disimpan di
-  `breakouts.json` sampai benar-benar terkirim, lalu dicoba lagi di run
-  berikutnya (`flush_pending_alerts`).
-
-Uji tanpa jaringan: `python tests/test_breakout_guard.py`
-
-> ⚠️ **Satu langkah manual.** File `breakouts.json` perlu ikut di-commit oleh
-> cron, tapi workflow tidak bisa diubah dari sini (GitHub App tidak punya izin
-> `workflows`). Edit `.github/workflows/cvd-update.yml` dan tambahkan
-> `breakouts.json` di dua tempat pada step **Commit cvd.json**:
->
-> ```yaml
->           for f in cvd.json signals.json conviction.json levels.json breakouts.json; do
->           ...
->           git add cvd.json signals.json conviction.json levels.json breakouts.json
-> ```
->
-> Tanpa ini guard tetap jalan dan notifikasi tetap terkirim, hanya riwayat
-> event-nya tidak tersimpan antar-run cron (jadi `parent_id` / `outcome`
-> dan retry alert tidak berfungsi).
-
-## ⏰ Daily snapshot cron (GitHub Actions)
-
-Watchlisted CAs are snapshotted **automatically every day at 00:00 WIB**
-by `.github/workflows/daily-snapshot.yml` — history keeps building even if
-you never open the dashboard.
-
-**One-time setup:** add your Helius key as a repo secret:
-GitHub → repo **Settings → Secrets and variables → Actions →
-New repository secret** → Name: `HELIUS_API_KEY`, Value: your key.
-
-- Manual run: GitHub → **Actions → Daily watchlist snapshot → Run workflow**.
-- The job commits `history.json` + `watchlist.json` back to the repo.
-- Manage the list on the **⭐ Watchlist** page (add note / remove when done),
-  or with the **⭐ Add to watchlist** button under Analyze.
-
-## Instalasi
-
-```bash
-pip install -r requirements.txt
-```
-
-## Menjalankan dashboard
+Jalankan dashboard:
 
 ```bash
 streamlit run app.py
 ```
 
-1. Masukkan **Helius API key** di sidebar (sekali saja per sesi).
-2. Masukkan **CA** token → klik **Analisa**. (Input pertama sengaja kosong.)
-
-## Menjalankan versi CLI
+Versi CLI hanya menjalankan analisis dasar dust/real dan wallet depth:
 
 ```bash
-python cli.py <CA>              # key otomatis dari config.json
-python cli.py <CA> --helius-key <API_KEY>   # atau override manual
+python cli.py <CONTRACT_ADDRESS>
+python cli.py <CONTRACT_ADDRESS> --helius-key <KEY> --dust 10
 ```
 
-## File
+## Deploy dan otomatisasi
 
-- `app.py` — dashboard Streamlit
-- `cli.py` — versi terminal
-- `config.json` — API key & setelan awal (edit di sini)
-- `requirements.txt` — dependensi
+Panduan Streamlit Cloud ada di [`DEPLOY.md`](DEPLOY.md). Jangan pernah
+menaruh API key di README, source code, atau file yang di-commit. Gunakan
+Streamlit Secrets dan GitHub Actions Secrets.
 
-## Fitur
+Workflow yang tersedia:
 
-- **🔥 Scan Trending Now** — satu tombol di halaman utama. Hasilnya tampil
-  **lengkap langsung di situ** (tabel yang sama persis dengan halaman
-  **🔎 Screener**): Fit + grade, MC, likuiditas, T10, smart money, holder,
-  perubahan 24 jam, umur token, catatan, dan banner merah untuk token
-  berisiko. Tiap baris punya tombol **Analyze →** (langsung analisa CA itu)
-  dan **⭐ watch**.
-- **Scoring screener ketat** — skor Fit 0-100 dari 8 pilar (base harga 22 ·
-  konsentrasi T10 20 · likuiditas 15 · smart money 14 · rug score 12 ·
-  kewajaran volume 9 · jumlah holder 4 · umur 4), **dikurangi penalti**
-  untuk tekanan insider/bundler, rug risk, dan likuiditas tipis.
-  Satu pilar rusak saja (sudah pump >25%, T10 >25%, likuiditas <5% MC,
-  smart money <10, holder <1000, umur <2 hari) membatasi skor
-  di **54**, dan red flag keras membatasi di **40** — jadi
-  **🟢 PRIME (≥75) memang jarang** dan berarti semua pilar bersih.
-  🟡 OK 55-74 · ⚪ WEAK 35-54 · POOR <35.
-- **Ramp kontinu, bukan ambang tangga** — tiap pilar, penalti, dan gate
-  diinterpolasi linear di antara titik kalibrasinya (lihat `CURVES` /
-  `PENALTY_CURVES` / `CAP_CURVE` di `gmgn_screener.py`), bukan lagi tumpukan
-  `if/elif`. Dulu selisih **satu** smart wallet bisa membalik skor:
-  RAKO dengan 9 wallet = 54 (WEAK), dengan 10 wallet = 77 (PRIME), padahal
-  tokennya sama. Sekarang perubahan kecil menggeser skor beberapa poin saja
-  (dijaga uji regresi di `tests/test_scoring_continuity.py`, maks 4 poin per
-  langkah), ambang lama tetap jadi titik tengah tiap ramp sehingga kalibrasi
-  PRIME/AVOID tidak berubah, dan token yang mirip jadi bisa **diurutkan**
-  (field `fit_exact` menyimpan skor sebelum pembulatan).
-- **Sidebar bisa disembunyikan** — default tertutup; klik tanda **»** di kiri
-  atas untuk buka, **×** untuk tutup. Semua pengaturan ada di sana.
-- **Dust vs Real holder** + verdict OK / peringatan merah.
-- **Wallet Depth by Threshold** dengan tier ala Solscan.
-- **🕸️ Bundler / Cluster detection** — melacak *wallet pendana pertama* dari
-  tiap top holder (default 50 teratas, bisa 20–100). Wallet-wallet yang didanai
-  oleh pendana yang sama = 1 cluster/bundle:
-  - Jika 1 cluster memegang **> 5% total supply** (ambang bisa diubah) →
-    **warning merah**.
-  - Pendanaan dari CEX terkenal (Binance, Bybit, OKX, dll.) ditandai dan
-    **tidak** dihitung sebagai bundle.
-  - Wallet lama (> 5.000 transaksi) dilewati — bukan tipikal wallet bundle.
-  - Catatan: ini heuristik; bundler canggih dengan multi-hop funding bisa lolos.
+- `.github/workflows/cvd-update.yml` — tiap jam pada menit `:20`; memperbarui
+  `cvd.json`, `conviction.json`, `signals.json`, `levels.json`, dan
+  `breakouts.json`.
+- `.github/workflows/daily-snapshot.yml` — runner setiap enam jam; menyimpan
+  snapshot watchlist ke `history.json` dengan satu entri per token/tanggal
+  (run berikutnya pada tanggal yang sama memperbarui entri itu).
 
-## Logika analisa
+Secrets GitHub Actions yang dipakai:
 
-| Hal | Aturan |
-|---|---|
-| **Dust holder** | nilai holding **< $10** (bisa diubah di sidebar) |
-| **Real holder** | nilai holding **≥ $10** |
-| **✅ HOLDER OK** | jumlah real holder **> 30%** dari jumlah dust holder |
-| **🚨 Peringatan merah** | jika rasio ≤ 30% → holder count kemungkinan besar semu (airdrop/bundle) |
-| **% marketcap** | total nilai USD yang dipegang tiap kelompok ÷ marketcap |
-| **Tier** | sama seperti Solscan: `>$10`, `>$100`, `>$1K`, `>$10K`, `>$100K`, `>$1M` (kumulatif) |
+- `HELIUS_API_KEY` atau `HELIUS_API_KEYS`;
+- `TELEGRAM_BOT_TOKEN` dan `TELEGRAM_CHAT_ID` bila notifikasi diaktifkan.
 
-Wallet **liquidity pool** (dari DexScreener) otomatis dikecualikan agar tidak
-mendistorsi angka (bisa dimatikan di sidebar).
+Agar perubahan watchlist dari Streamlit Cloud langsung persisten ke repo,
+`github_token` dapat ditambahkan ke Streamlit Secrets. Tanpa token, perubahan
+lokal cloud dapat hilang saat redeploy; pending journal hanya membantu selama
+filesystem instance masih hidup.
 
+## File data dan modul penting
+
+File data berikut sengaja di-commit agar state cron bertahan antar-run:
+
+- `watchlist.json`;
+- `history.json`;
+- `cvd.json`;
+- `conviction.json`;
+- `signals.json`;
+- `levels.json`;
+- `breakouts.json`.
+
+Modul utama:
+
+- `core.py` — fetcher dan health score;
+- `cvd.py` — swap store, CVD, wallet profile, phase, divergence, level, dan
+  markup safety;
+- `ai_prompt.py` — prompt CVD network-free;
+- `gmgn_screener.py` — fetch dan scoring trending;
+- `signals.py` — deteksi/log CVD Monitor;
+- `breakout_guard.py` dan `breakout_log.py` — level event dan retry Telegram;
+- `watchlist.py` — watchlist lokal/GitHub dan pending journal;
+- `scripts/update_cvd.py` — cron order flow;
+- `scripts/daily_snapshot.py` — cron snapshot holder.
+
+## Menjalankan tes
+
+Suite tidak membutuhkan pytest dan tidak melakukan request jaringan:
+
+```bash
+python tests/test_breakout_guard.py
+python tests/test_scoring_continuity.py
+python tests/test_markup_ai_prompt.py
+```
+
+Tes memindahkan seluruh path file state ke temporary directory agar
+`cvd.json`, `signals.json`, dan data produksi lain tidak tersentuh.
+
+## Batasan yang harus dipahami
+
+- Data API dapat terlambat, kosong, berubah format, atau terkena rate limit.
+- CVD menunjukkan flow swap pada pool yang dipilih, bukan seluruh niat pasar.
+- Label whale berdasarkan ukuran swap, bukan kekayaan/identitas wallet.
+- Conviction tinggi dapat muncul saat harga sudah terlalu jauh naik; karena
+  itu markup safety dinilai terpisah.
+- Cluster/funder dan market phase adalah heuristik, bukan bukti identitas.
+- Periode tanpa cakupan data tidak sama dengan periode tanpa transaksi.
+- Selalu cek CA, pool, chart, transaksi wallet, likuiditas, dan keamanan secara
+  manual sebelum mengambil keputusan uang sungguhan.
+
+Untuk aturan pengembangan dan riwayat keputusan, baca [`AGENTS.md`](AGENTS.md)
+dan [`docs/PROGRESS.md`](docs/PROGRESS.md).

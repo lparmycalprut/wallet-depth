@@ -33,7 +33,7 @@ git push -u origin main
 4. Sebelum klik Deploy, buka **Advanced settings → Secrets**, lalu paste:
 
 ```toml
-helius_api_key = "1f345bdf-2975-456a-bad5-c17b3c9bc912"
+helius_api_key = "PASTE-HELIUS-API-KEY-DI-SINI"
 ```
 
 5. Klik **Deploy**. Tunggu ±2 menit → app online! 🎉

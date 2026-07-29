@@ -23,8 +23,9 @@ h1 {font-size: 1.3rem !important;}
 st.title("🔔 Signal Log")
 st.caption("Every CVD event the tool detects — stealth accumulation, "
            "distribution, price/CVD divergences — recorded with the exact "
-           "detection time (WIB & UTC). The 2-hourly cron watches your "
-           "watchlist even when you're away; Analyze runs add signals too. "
+           "detection time (WIB & UTC). The hourly cron watches your "
+           "watchlist at minute :20 even when you're away; Analyze runs add "
+           "signals too. "
            "Use the timestamps to line events up with your chart.")
 
 TYPE_META = {
@@ -36,13 +37,18 @@ TYPE_META = {
     "breakout_trap": ("🪤", "Breakout (bull trap)", "#ef4444"),
     "breakout_unclear": ("❔", "Breakout (unclear)", "#facc15"),
     "breakdown": ("⬇️", "Support breakdown", "#f87171"),
+    "guard_breakout": ("🚀", "Guard: breakout", "#22c55e"),
+    "guard_failed_breakout": ("🪤", "Guard: failed breakout", "#ef4444"),
+    "guard_breakdown": ("⬇️", "Guard: breakdown", "#f87171"),
+    "guard_spring": ("🌱", "Guard: spring", "#4ade80"),
+    "guard_reclaim": ("↩️", "Guard: reclaim", "#38bdf8"),
 }
 WIB = dtm.timezone(dtm.timedelta(hours=7))
 
 sigs = load_signals()
 if not sigs:
     st.info("No signals recorded yet. They appear automatically once the "
-            "2-hourly cron (or an Analyze run) detects accumulation, "
+            "hourly cron (or an Analyze run) detects accumulation, "
             "distribution, or a divergence on a watchlist token.")
     st.stop()
 
@@ -132,4 +138,4 @@ st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True,
 st.caption("Dedupe: the same signal type per token is recorded at most once "
            "per 4h. 'Price then' = price at detection — compare it with the "
            "current chart to judge how the signal played out. Src: cron = "
-           "automatic 2-hourly check, analyze = you ran it.")
+           "automatic hourly check, analyze = you ran it.")

@@ -19,8 +19,8 @@ import streamlit as st
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ai_prompt import build_ai_prompt
 from core import load_config
-from cvd import (MIN_SOL, WHALE_SOL, classify_swap, detect_divergence,
-                 wallet_profiles, conviction_split)
+from cvd import (MIN_SOL, WHALE_SOL, analysis_windows, classify_swap,
+                 conviction_split, detect_divergence, wallet_profiles)
 
 st.set_page_config(page_title="CVD Analysis", page_icon="📊",
                    layout="wide", initial_sidebar_state="collapsed")
@@ -197,9 +197,8 @@ if not pool:
     st.error("Token not found on DexScreener.")
     st.stop()
 
-# Build windows relative to the selected hours window
-WINDOWS = sorted(set([hours // 4, hours // 2, hours, 48]))
-WINDOWS = [w for w in WINDOWS if w >= 4 and w <= 48]
+# Every analysis row must fit inside the selected/fetched time range.
+WINDOWS = analysis_windows(hours)
 
 if run or skey not in st.session_state:
     st.session_state.pop(f"ai_prompt::{skey}", None)
@@ -235,8 +234,10 @@ df = pd.DataFrame(swaps_all, columns=["side", "sol", "ts", "wallet"])
 df["dt"] = pd.to_datetime(df["ts"], unit="s")
 df["signed"] = df.apply(lambda r: r["sol"] if r["side"] == "buy"
                         else -r["sol"], axis=1)
-now_ts = time.time()
-covered_h = (now_ts - df["ts"].min()) / 3600
+# Anchor all windows to the fetch snapshot. A later Streamlit rerun (for
+# example, Prompt to AI) must not make stale swaps appear to cover more time.
+now_ts = fetched_at
+covered_h = max(0.0, (now_ts - df["ts"].min()) / 3600)
 
 # ---------------------------------------------------------------------------
 # Multi-window analysis
@@ -345,7 +346,7 @@ st.plotly_chart(figc, use_container_width=True,
                 config={"displayModeBar": False})
 
 # ---------------------------------------------------------------------------
-# CVD chart (full 48h, hourly)
+# CVD chart for the selected window, bucketed hourly
 # ---------------------------------------------------------------------------
 g = df.set_index("dt").sort_index()
 agg = g.groupby([pd.Grouper(freq="60min"), "side"])["sol"].sum() \
@@ -416,13 +417,13 @@ if pser and all(p is not None for p in pser) and len(pser) >= 7:
             d["detail"])
 
 # ---------------------------------------------------------------------------
-# Pure accumulators / distributors (48h window) with age
+# Pure accumulators / distributors in the full selected window, with age
 # ---------------------------------------------------------------------------
-prof48 = win_stats[max(win_stats)]["profiles"]
-accs = sorted([(w, d) for w, d in prof48.items()
+full_profiles = win_stats[max(win_stats)]["profiles"]
+accs = sorted([(w, d) for w, d in full_profiles.items()
                if d["profile"] == "pure_accum" and d["buy"] >= WHALE_SOL],
               key=lambda x: -x[1]["buy"])[:10]
-dists = sorted([(w, d) for w, d in prof48.items()
+dists = sorted([(w, d) for w, d in full_profiles.items()
                 if d["profile"] == "pure_dist" and d["sell"] >= WHALE_SOL],
                key=lambda x: -x[1]["sell"])[:10]
 

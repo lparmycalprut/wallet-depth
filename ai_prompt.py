@@ -51,14 +51,15 @@ def _clean_swaps(swaps):
     return sorted(out, key=lambda swap: swap[2])
 
 
-def _timeline_table(swaps, requested_hours, now_ts, period_count):
+def _timeline_table(swaps, requested_hours, available_hours, now_ts,
+                    period_count):
     """Return oldest-to-newest flow periods anchored to ``now_ts``."""
     count = max(2, min(int(period_count or PERIOD_COUNT), 12))
     width = requested_hours / count
     lines = [
-        "| Urutan waktu | Rentang UTC | Swap | Net CVD | Whale | Retail | "
-        "Pure buy | Pure sell | Conviction |",
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| Urutan waktu | Cakupan data | Rentang UTC | Swap | Net CVD | "
+        "Whale | Retail | Pure buy | Pure sell | Conviction |",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for index in range(count):
         older_h = requested_hours - index * width
@@ -77,8 +78,15 @@ def _timeline_table(swaps, requested_hours, now_ts, period_count):
             "%m-%d %H:%M")
         newest = "sekarang" if newer_h == 0 else f"T-{_hours(newer_h)}h"
         label = f"T-{_hours(older_h)}h → {newest}"
+        if older_h <= available_hours:
+            coverage = "lengkap"
+        elif newer_h >= available_hours:
+            coverage = "TIDAK TERCAKUP"
+        else:
+            coverage = "SEBAGIAN"
         lines.append(
-            f"| {label} | {start_s} → {end_s} | {flow['n']} | "
+            f"| {label} | {coverage} | {start_s} → {end_s} | "
+            f"{flow['n']} | "
             f"{flow['net']:+.1f} | {flow['whale_net']:+.1f} | "
             f"{flow['retail_net']:+.1f} | {flow['pure_buy']:.1f} | "
             f"{flow['pure_sell']:.1f} | "
@@ -86,18 +94,21 @@ def _timeline_table(swaps, requested_hours, now_ts, period_count):
     return "\n".join(lines)
 
 
-def _window_table(window_stats, max_hours=None):
+def _window_table(window_stats, max_hours=None, available_hours=0):
     lines = [
-        "| Window | Swap | Net CVD | Whale | Retail | Pure buy | "
+        "| Window | Cakupan | Swap | Net CVD | Whale | Retail | Pure buy | "
         "Pure sell | Net pure | Conviction | Verdict dashboard |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
     ]
     for window in sorted(window_stats or {}, reverse=True):
         if max_hours is not None and _number(window) > max_hours:
             continue
         stats = window_stats[window] or {}
+        coverage = ("lengkap" if _number(window) <= available_hours
+                    else "tidak penuh")
         lines.append(
-            f"| {_hours(window)}h | {int(_number(stats.get('swaps')))} | "
+            f"| {_hours(window)}h | {coverage} | "
+            f"{int(_number(stats.get('swaps')))} | "
             f"{_number(stats.get('net')):+.1f} | "
             f"{_number(stats.get('whale_net')):+.1f} | "
             f"{_number(stats.get('retail_net')):+.1f} | "
@@ -107,8 +118,8 @@ def _window_table(window_stats, max_hours=None):
             f"{_number(stats.get('conviction')):.1f}% | "
             f"{_cell(stats.get('verdict'))} |")
     if len(lines) == 2:
-        lines.append("| — | 0 | +0.0 | +0.0 | +0.0 | 0.0 | 0.0 | "
-                     "+0.0 | 0.0% | data tidak tersedia |")
+        lines.append("| — | tidak tersedia | 0 | +0.0 | +0.0 | +0.0 | "
+                     "0.0 | 0.0 | +0.0 | 0.0% | data tidak tersedia |")
     return "\n".join(lines)
 
 
@@ -228,9 +239,9 @@ atau rekomendasi beli/jual. Gunakan hanya data di bawah ini.
             "## KEJUJURAN DAN CAKUPAN DATA\n\n" + honesty + "\n\n" +
             "## IDENTITAS SNAPSHOT\n\n" + "\n".join(identity) +
             "\n\n## RINGKASAN MULTI-WINDOW\n\n" +
-            _window_table(window_stats, requested) +
+            _window_table(window_stats, requested, available) +
             f"\n\n## URUTAN WAKTU — {_hours(requested)} JAM DIBAGI "
             f"{periods} PERIODE\n\n" +
-            _timeline_table(swaps, requested, now_ts, periods) +
+            _timeline_table(swaps, requested, available, now_ts, periods) +
             "\n\n## DOMPET PURE UKURAN-WHALE\n\n" +
             _wallet_table(wallet_rows) + "\n\n" + tasks)

@@ -83,6 +83,22 @@ def test_markup_contract():
         check(below["level"] == "ok", "below +150% remains ok")
 
 
+def test_analysis_windows():
+    print("\n[windows] every CVD row fits inside the selected fetch")
+    expected = {
+        4: [4], 6: [4, 6], 8: [4, 8], 12: [4, 6, 12],
+        24: [6, 12, 24], 36: [9, 18, 36], 48: [12, 24, 48],
+    }
+    for requested, windows in expected.items():
+        got = cvd.analysis_windows(requested)
+        check(got == windows,
+              f"{requested}h selection produces supported rows {got}")
+        check(all(window <= requested for window in got),
+              f"{requested}h selection never claims a longer window")
+    check(cvd.analysis_windows("bad") == [],
+          "invalid selected window degrades to an empty list")
+
+
 def test_markup_copy():
     print("\n[markup] UI labels and warnings")
     danger = {"level": "danger", "markup_pct": 320,
@@ -163,6 +179,11 @@ def test_prompt_order_and_honesty():
           "incomplete data forbids a trend conclusion")
     check("| 48h |" not in prompt,
           "summary omits windows longer than the selected 24h fetch")
+    check("| 24h | tidak penuh |" in prompt and
+          "| 6h | lengkap |" in prompt,
+          "each summary row states whether its own window is covered")
+    check("TIDAK TERCAKUP" in prompt and "SEBAGIAN" in prompt,
+          "timeline does not disguise missing periods as zero flow")
 
 
 def test_prompt_tables_and_tasks():
@@ -200,6 +221,11 @@ def test_ui_integration_guards():
     with open(os.path.join(ROOT, "pages", "4_📊_CVD.py"),
               encoding="utf-8") as handle:
         page_source = handle.read()
+    with open(os.path.join(ROOT, "pages", "5_🔔_Signals.py"),
+              encoding="utf-8") as handle:
+        signals_source = handle.read()
+    with open(os.path.join(ROOT, "DEPLOY.md"), encoding="utf-8") as handle:
+        deploy_source = handle.read()
 
     sweep_at = app_source.index("WATCHLIST MARKUP SAFETY")
     radar_at = app_source.index("if _conv_hist:")
@@ -209,6 +235,12 @@ def test_ui_integration_guards():
     check("for offset in range(0, len(cas), 30)" in app_source and
           "cas[:30]" not in app_source,
           "DexScreener batching covers the entire watchlist")
+    check("ThreadPoolExecutor" in app_source and
+          "executor.map(fetch_one, pairs)" in app_source,
+          "daily-candle sweep fetches watchlist pools concurrently")
+    check(app_source.count("href='{_cvd_link}'") == 2 and
+          'f"<a href=\'/CVD?ca={_ca}\'' not in app_source,
+          "LP Radar card avoids invalid nested anchor markup")
     check("_markup[\"level\"] == \"danger\"" in app_source,
           "the independent red banner is limited to +300% danger")
     check("⚠️ EXTREME" in app_source and "⚠️ HIGH" in app_source,
@@ -217,13 +249,24 @@ def test_ui_integration_guards():
           "existing DexScreener and GMGN shortcuts are preserved")
     check(page_source.count('selectbox("Time window"') == 1,
           "CVD page still has exactly one time-window dropdown")
+    check("WINDOWS = analysis_windows(hours)" in page_source,
+          "CVD page never adds an unsupported 48h row")
+    check("now_ts = fetched_at" in page_source,
+          "cached reruns stay anchored to the original data snapshot")
     check('st.button("🤖 Prompt to AI"' in page_source and
           "build_ai_prompt(" in page_source,
           "CVD page exposes and wires the Prompt to AI button")
+    guard_types = ("guard_breakout", "guard_failed_breakout",
+                   "guard_breakdown", "guard_spring", "guard_reclaim")
+    check(all(kind in signals_source for kind in guard_types),
+          "Signals page renders every Breakout Guard event type")
+    check('helius_api_key = "PASTE-HELIUS-API-KEY-DI-SINI"' in deploy_source,
+          "deployment docs contain a placeholder, not a live API key")
 
 
 if __name__ == "__main__":
     test_markup_contract()
+    test_analysis_windows()
     test_markup_copy()
     test_prompt_order_and_honesty()
     test_prompt_tables_and_tasks()
