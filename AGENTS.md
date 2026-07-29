@@ -29,11 +29,12 @@ buktikan kalibrasinya tidak bergeser (lihat §5).
 | `core.py` | helper Helius/DexScreener/GeckoTerminal |
 | `cvd.py` | store swap, bucket CVD, profil wallet, **level D1**, **flow attribution** |
 | `gmgn_screener.py` | screener GMGN + **scoring ramp kontinu** |
+| `ai_prompt.py` | builder prompt CVD siap-salin, jujur soal cakupan data |
 | `breakout_guard.py` | **Breakout Guard**: level D1 + konfirmasi close H4 |
 | `breakout_log.py` | log event level → `breakouts.json` |
 | `signals.py` | log sinyal CVD → `signals.json` + notif Telegram |
 | `scripts/update_cvd.py` | entry point cron (tiap jam, menit :20) |
-| `tests/` | 2 suite, **jalan tanpa pytest & tanpa jaringan** |
+| `tests/` | 3 suite, **jalan tanpa pytest & tanpa jaringan** |
 
 **File data yang di-commit cron** (jangan di-`.gitignore`):
 `cvd.json` · `signals.json` · `conviction.json` · `levels.json` ·
@@ -87,11 +88,33 @@ Sekarang interpolasi linear lewat `CURVES` / `PENALTY_CURVES` / `CAP_CURVE`.
 3. Bandingkan distribusi grade lama vs baru di token sintetis. Patokan
    terakhir: PRIME ~1,7%→2,9%, flag high-risk **100% identik**.
 
-## 6. Cara kerja & jebakan
+## 6. Markup safety + Prompt to AI
+
+- Risiko markup dihitung oleh `cvd.markup_from_candles()` dari **low harian
+  terendah dalam 30 candle terakhir**. Warning = +150%; danger = +300%.
+- Banner merah danger di `app.py` wajib menyapu **seluruh watchlist sebelum
+  filter `grow1` LP Radar**. Jangan pindahkan ke dalam loop card; conviction
+  datar justru kasus yang tidak punya card.
+- `ai_prompt.build_ai_prompt()` wajib tetap network-free. Glosarium (whale
+  ≥3 SOL, pure toleransi 5%, definisi conviction) harus tampil sebelum angka.
+- Kalau window diminta lebih panjang dari data tersedia, prompt wajib bilang
+  data tidak penuh dan **melarang AI menyimpulkan tren**. Tabel waktu harus
+  lama → baru dan tabel dompet harus membawa umur 🐣/🌱/🌳.
+- Tombol Prompt to AI memakai dropdown Time window yang sudah ada. Jangan
+  membuat pemilih window kedua.
+- Nested CVD window tidak boleh melebihi window yang di-fetch
+  (`cvd.analysis_windows`). Semua perhitungan rerun harus tetap di-anchor ke
+  `fetched_at`; memakai `time.time()` akan membuat data stale tampak makin
+  lengkap.
+- Periode prompt yang belum tercakup wajib diberi label `TIDAK TERCAKUP` atau
+  `SEBAGIAN`, bukan ditampilkan sebagai flow nol tanpa penjelasan.
+
+## 7. Cara kerja & jebakan
 
 ```bash
 python tests/test_breakout_guard.py       # 67 assertion
 python tests/test_scoring_continuity.py
+python tests/test_markup_ai_prompt.py
 ```
 
 Tanpa pytest, tanpa jaringan. **Tes wajib mem-patch semua path file**
@@ -111,7 +134,7 @@ Jebakan yang sudah pernah menggigit:
   Lihat `docs/gmgn_api.md`.
 - **Jangan commit `config.json`** (berisi API key, sudah di `.gitignore`).
 
-## 7. Status & langkah berikutnya
+## 8. Status & langkah berikutnya
 
 Lihat `docs/PROGRESS.md` untuk riwayat keputusan dan daftar yang belum
 terverifikasi.

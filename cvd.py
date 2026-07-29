@@ -14,6 +14,7 @@ Data is stored in cvd.json as hourly buckets per CA:
 Small swaps below MIN_SOL are ignored entirely (bot dust noise).
 """
 import json
+import math
 import os
 import time
 
@@ -498,7 +499,6 @@ def detect_phase(ca: str, price_change_24h: float | None = None) -> dict:
     chg = price_change_24h  # may be None
 
     prev = pts[-2] if len(pts) >= 2 else None
-    prev2 = pts[-3] if len(pts) >= 3 else None
     cv_prev = float(prev["conviction"]) if prev else None
     np_prev = float(prev.get("net_pure") or 0) if prev else None
     vol_prev = float(prev.get("vol") or 0) if prev else None
@@ -960,3 +960,106 @@ def daily_levels(pool: str, *, limit: int = 60, left: int = 2, right: int = 2,
                  reverse=True)[:max_levels]
     return {"highs": res, "lows": sup, "price": price,
             "candles": len(candles)}
+
+
+# ---------------------------------------------------------------------------
+# Thirty-day markup risk
+# ---------------------------------------------------------------------------
+MARKUP_DANGER = 300.0
+MARKUP_WARN = 150.0
+
+
+def markup_from_candles(candles, price_now=None):
+    """Measure current markup from the lowest daily low in the last 30 bars.
+
+    ``candles`` uses the same ``{o, h, l, c}`` shape as
+    :func:`fetch_candles`. At least three valid candles are required. When
+    ``price_now`` is omitted, the newest candle close is used. The historical
+    peak includes ``price_now`` so a fresh high cannot produce a positive
+    ``off_peak_pct``.
+    """
+    recent = list(candles or [])[-30:]
+    valid = []
+    for candle in recent:
+        try:
+            low = float(candle["l"])
+            high = float(candle["h"])
+            close = float(candle["c"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if (math.isfinite(low) and math.isfinite(high) and
+                math.isfinite(close) and low > 0 and high > 0 and close > 0):
+            valid.append((low, high, close))
+    if len(valid) < 3:
+        return None
+
+    try:
+        price = valid[-1][2] if price_now is None else float(price_now)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(price) or price <= 0:
+        return None
+
+    base = min(candle[0] for candle in valid)
+    peak = max(max(candle[1] for candle in valid), price)
+    markup_pct = (price / base - 1.0) * 100.0
+    peak_markup_pct = (peak / base - 1.0) * 100.0
+    off_peak_pct = (price / peak - 1.0) * 100.0
+    if markup_pct >= MARKUP_DANGER:
+        level = "danger"
+    elif markup_pct >= MARKUP_WARN:
+        level = "warn"
+    else:
+        level = "ok"
+    return {"markup_pct": markup_pct,
+            "peak_markup_pct": peak_markup_pct,
+            "off_peak_pct": off_peak_pct,
+            "past_peak": price < peak,
+            "level": level}
+
+
+def markup_label(markup) -> str:
+    """Short UI label for a :func:`markup_from_candles` result."""
+    level = (markup or {}).get("level") if isinstance(markup, dict) else markup
+    return {"danger": "🔴 MARKUP DANGER",
+            "warn": "🟠 MARKUP WARNING",
+            "ok": "🟢 MARKUP OK"}.get(level, "")
+
+
+def markup_warning(markup) -> str:
+    """Action-oriented warning for elevated 30-day markup."""
+    if not isinstance(markup, dict) or markup.get("level") == "ok":
+        return ""
+    try:
+        current = float(markup["markup_pct"])
+        off_peak = float(markup.get("off_peak_pct") or 0)
+    except (KeyError, TypeError, ValueError):
+        return ""
+    peak_note = ""
+    if markup.get("past_peak") and off_peak < 0:
+        peak_note = f", kini {abs(off_peak):.0f}% di bawah puncak"
+    if markup.get("level") == "danger":
+        return (f"Harga sudah +{current:.0f}% dari low 30D{peak_note}. "
+                "Risiko mengejar markup dan menjadi exit liquidity sangat "
+                "tinggi; conviction datar bukan tanda aman.")
+    return (f"Harga sudah +{current:.0f}% dari low 30D{peak_note}. "
+            "Entry mulai jauh dari base; tunggu struktur dan flow baru.")
+
+
+def analysis_windows(requested_hours) -> list:
+    """Nested CVD windows that never exceed the fetched time range.
+
+    The old page always appended a 48h row, even after fetching only 4-36h.
+    That mislabeled the same short dataset as a 48h reading. Keep a minimum
+    useful slice of four hours and cap every row at the selected window.
+    """
+    try:
+        requested = int(float(requested_hours))
+    except (TypeError, ValueError, OverflowError):
+        return []
+    if requested < 4:
+        return []
+    candidates = (max(4, requested // 4),
+                  max(4, requested // 2), requested)
+    return sorted({window for window in candidates
+                   if 4 <= window <= requested})

@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""4-hourly CVD updater (GitHub Actions cron).
+"""Hourly CVD updater (GitHub Actions cron, scheduled at minute :20).
 
 For every CA in the watchlist, incrementally fetches new swaps from the
 main pool via Helius Enhanced API and appends hourly buy/sell buckets to
-cvd.json. Run every 4 hours so even very active tokens stay within a
-reasonable number of requests per run.
+cvd.json. Incremental signatures keep each hourly run bounded even for
+active tokens.
 
 Usage: HELIUS_API_KEY=xxx python scripts/update_cvd.py [max_pages]
 """

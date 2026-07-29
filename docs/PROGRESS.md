@@ -7,6 +7,76 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-07-29 — Audit bug/efisiensi + README sesuai perilaku program
+
+### Bug dan risiko yang diperbaiki
+
+1. CVD dulu selalu menambahkan row 48h walau user hanya fetch 4–36h. Sekarang
+   `analysis_windows()` menjamin semua row berada di dalam window terpilih.
+2. Rerun Streamlit memakai `time.time()` baru sehingga swap cache tampak
+   mencakup makin banyak jam. Semua window/prompt sekarang di-anchor ke
+   `fetched_at` snapshot asli.
+3. Periode prompt di luar cakupan dulu tampak sebagai angka nol. Sekarang
+   tiap row diberi status `lengkap`, `SEBAGIAN`, atau `TIDAK TERCAKUP`.
+4. Card LP Radar memakai `<a>` bersarang untuk card + shortcut eksternal
+   (HTML tidak valid). Link card, DexScreener, dan GMGN sekarang bersaudara.
+5. Fetch candle harian watchlist yang semula serial sekarang concurrent
+   (maksimum 8 worker) dan tetap di-cache 15 menit.
+6. Event `guard_*` sudah ditulis ke `signals.json` tetapi tidak ada di metadata
+   halaman Signals, sehingga hilang dari chart/filter. Lima tipe Guard kini
+   dirender.
+7. Contoh deploy berisi key nyata; diganti placeholder. Key yang pernah
+   dipublikasikan tetap harus dirotasi karena masih ada di riwayat Git.
+8. Label cron 2/4-hourly yang sudah basi diselaraskan dengan workflow hourly
+   menit :20.
+
+### Dokumentasi
+
+`README.md` diganti penuh agar menjelaskan apa yang benar-benar dilakukan
+program: holder/security, cluster, CVD, Prompt to AI, watchlist/markup safety,
+GMGN screener, dua sistem alert, sumber data, instalasi, cron, state file,
+tes, dan batasan.
+
+### Verifikasi
+
+- Seluruh suite di `tests/` lulus tanpa pytest/jaringan.
+- Seluruh file Python lulus `py_compile`.
+- `ruff` kategori fatal (`F`/`E9`) diperiksa; temuan baru dibersihkan.
+
+---
+
+## 2026-07-29 — Markup safety watchlist + Prompt to AI
+
+### Yang berubah
+
+1. `cvd.markup_from_candles()` mengukur kenaikan dari low harian terendah
+   dalam 30 candle terakhir: warning +150%, danger +300%, lengkap dengan
+   peak markup, jarak dari peak, label, dan kalimat warning.
+2. Halaman utama menyapu **semua token watchlist** untuk danger +300% dan
+   menampilkan banner merah sebelum filter `grow1`. Token dengan conviction
+   datar tetap terlihat walaupun tidak mendapat card LP Radar.
+3. `ai_prompt.py` membangun prompt CVD siap-salin untuk DeepSeek. Glosarium
+   angka tampil sebelum data; cakupan window yang kurang diumumkan eksplisit;
+   flow dipecah menjadi empat periode lama → baru; tabel pure wallet membawa
+   umur 🐣/🌱/🌳; tugas AI mencakup skenario, verdict panik/tidak, dan
+   invalidation tanpa target harga.
+4. Tombol **Prompt to AI** memakai dropdown Time window yang sudah ada dan
+   mempertahankan hasil analisis di rerun tanpa fetch kedua.
+
+Perubahan dari `main` sebelum pekerjaan ini tetap dipertahankan: badge
+EXTREME/HIGH, shortcut DexScreener/GMGN, dropdown CVD 4–48 jam, serta file
+`docs/agents.md` dan `docs/progress.md` huruf kecil.
+
+### Verifikasi
+
+- `tests/test_breakout_guard.py` — semua 67 assertion lulus.
+- `tests/test_scoring_continuity.py` — seluruh continuity/calibration lulus.
+- `tests/test_markup_ai_prompt.py` — threshold 30D, kejujuran cakupan,
+  urutan prompt, umur wallet, dan wiring UI lulus; tanpa pytest/jaringan.
+- `python -m py_compile` untuk seluruh file Python yang diubah — lulus.
+
+---
+
 ## 2026-07-29 — Breakout Guard: level D1, konfirmasi H4, atribusi flow
 
 **Commit:** `58b5f35` (kode) + `0169f05` (workflow, oleh pemilik)
