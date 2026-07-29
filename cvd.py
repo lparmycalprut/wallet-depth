@@ -1068,3 +1068,220 @@ def analysis_windows(requested_hours) -> list:
                   max(4, requested // 2), requested)
     return sorted({window for window in candidates
                    if 4 <= window <= requested})
+
+
+# ---------------------------------------------------------------------------
+# Flow quality / distribution / persistence / freshness checks.
+# A "check" is a single named flag the UI can surface in plain language,
+# e.g. "🩸 hard distribution" or "⏰ data stale (4.2h)". They are *advisory*
+# — none of them block scoring, they only colour the panel.
+# ---------------------------------------------------------------------------
+FRESH_MAX_AGE_S = 90 * 60       # 90 min — the cron target cadence
+PERSISTENCE_MIN_RUN = 3         # 3 consecutive cron points all the same way
+PERSISTENCE_MIN_NET_SOL = 5.0   # each of those 3 points must move ≥5 SOL net
+DISTRIBUTION_DROP_PCT = 30.0    # 30% drop of net_pure from peak = signal
+QUALITY_MIN_SOL = 30.0          # window volume that earns a "real flow" tag
+QUALITY_SWAP_BAND = (5, 50)     # swap count below this = dead window
+
+
+def flow_freshness(ca: str) -> dict:
+    """Is the conviction history still being updated?
+
+    Returns ``{"ok": bool, "age_min": float, "reason": str, "last_ts": int}``.
+    *ok* is True when the most recent cron point is younger than
+    :data:`FRESH_MAX_AGE_S`. The reason is a short, UI-ready sentence
+    ("fresh", "stale (4.2h)", "never seen"…).
+    """
+    pts = (load_conviction() or {}).get(ca) or []
+    if not pts:
+        return {"ok": False, "age_min": float("inf"),
+                "reason": "never seen — cron has not run for this CA yet",
+                "last_ts": 0}
+    last_ts = int(pts[-1].get("ts") or 0)
+    if last_ts <= 0:
+        return {"ok": False, "age_min": float("inf"),
+                "reason": "no timestamp on last point", "last_ts": 0}
+    age = max(0.0, time.time() - last_ts)
+    age_min = age / 60.0
+    if age_min <= FRESH_MAX_AGE_S / 60:
+        msg = f"fresh ({age_min:.0f} min ago)"
+    elif age_min <= 6 * 60:
+        msg = f"stale ({age_min / 60:.1f}h ago — cron may be lagging)"
+    else:
+        msg = f"very stale ({age_min / 60:.1f}h ago — do not trust the read)"
+    return {"ok": age_min <= FRESH_MAX_AGE_S / 60,
+            "age_min": age_min, "reason": msg, "last_ts": last_ts}
+
+
+def flow_persistence(ca: str, *, last_n: int = 3) -> dict:
+    """Are the last *last_n* points all pushing the same direction?
+
+    A genuine accumulation rarely appears in a single 6h window — it shows
+    up as several cron points in a row, each adding ≥
+    :data:`PERSISTENCE_MIN_NET_SOL` SOL to ``net_pure``. Distribution
+    persistence is the mirror image.
+
+    Returns ``{"direction": "accum"|"dist"|"choppy",
+                "runs": int, "delta": float, "ok": bool, "reason": str}``.
+    *ok* is True only when the run length meets both the *count* and the
+    *size* thresholds; the UI uses it to colour the persistence badge.
+    """
+    pts = (load_conviction() or {}).get(ca) or []
+    if len(pts) < 2:
+        return {"direction": "choppy", "runs": 0, "delta": 0.0,
+                "ok": False, "reason": "not enough points yet"}
+    window = pts[-last_n:]
+    nets = [float(p.get("net_pure") or 0) for p in window]
+    # A point with net_pure == 0 is noise (no flow at all) and never
+    # contributes to a run. A point that flips sign (positive→negative or
+    # vice-versa) breaks the run.
+    signs = [(1 if n > 0 else (-1 if n < 0 else 0)) for n in nets]
+    direction = ("accum" if signs[-1] > 0 else
+                 "dist" if signs[-1] < 0 else "choppy")
+    if direction == "choppy":
+        return {"direction": "choppy", "runs": 0,
+                "delta": float(nets[-1]), "ok": False,
+                "reason": "last 3 windows mixed — no clear direction"}
+    target = 1 if direction == "accum" else -1
+    # Count consecutive trailing points matching the current direction.
+    # Example [8, 10, 12] (all +) → runs = 3; [8, -10, 12] (last 1 +) → 1.
+    runs = 0
+    for s in reversed(signs):
+        if s == target:
+            runs += 1
+        else:
+            break
+    if runs < PERSISTENCE_MIN_RUN:
+        return {"direction": direction, "runs": runs,
+                "delta": float(nets[-1]), "ok": False,
+                "reason": (f"only {runs} consecutive "
+                           f"{'buy' if direction == 'accum' else 'sell'} "
+                           "window(s) — need 3 for persistence")}
+    # All-N in the trailing run AND each ≥ min size = persistent run.
+    if all(abs(n) >= PERSISTENCE_MIN_NET_SOL for n in nets[-runs:]):
+        return {"direction": direction, "runs": runs,
+                "delta": float(nets[-1]), "ok": True,
+                "reason": (f"{runs} consecutive "
+                           f"{'accumulation' if direction == 'accum' else 'distribution'} "
+                           f"windows ≥{PERSISTENCE_MIN_NET_SOL:g} SOL — "
+                           "this is a sustained run, not a single spike")}
+    return {"direction": direction, "runs": runs,
+            "delta": float(nets[-1]), "ok": False,
+            "reason": (f"direction is consistent but each move is small "
+                       f"(<{PERSISTENCE_MIN_NET_SOL:g} SOL) — could be noise")}
+
+
+def flow_distribution(ca: str) -> dict:
+    """Is the current read a distribution event?
+
+    A distribution event needs both:
+      * ``net_pure`` is now *materially* below its 24h peak, AND
+      * at least one of: conviction also dropped, OR whale-side flipped
+        negative while retail is still positive (classic dump into strength).
+
+    Returns ``{"ok": bool, "drop_pct": float, "level": "ok"|"warn"|"danger",
+                "reason": str}``. ``ok=False`` means a distribution event
+    is currently being flagged. ``level`` follows the same warn/danger
+    scale the markup warnings use, so the UI can colour consistently.
+    """
+    pts = (load_conviction() or {}).get(ca) or []
+    if len(pts) < 4:
+        return {"ok": False, "drop_pct": 0.0, "level": "ok",
+                "reason": "not enough history (need ≥4 points)"}
+    np_now = float(pts[-1].get("net_pure") or 0)
+    # use the last 4 points (≈24h on a 6h cron) as the comparison window
+    recent = [float(p.get("net_pure") or 0) for p in pts[-4:]]
+    peak = max(recent)
+    if peak <= 0:
+        # never had net positive flow → not a distribution, just no inflow
+        return {"ok": False, "drop_pct": 0.0, "level": "ok",
+                "reason": "no net-buy peak in the last 24h — no "
+                          "distribution to flag"}
+    drop_pct = (peak - np_now) / peak * 100
+    cv_now = float(pts[-1].get("conviction") or 0)
+    cv_peak = max(float(p.get("conviction") or 0) for p in pts[-4:])
+    cv_drop = (cv_peak - cv_now) / cv_peak * 100 if cv_peak else 0
+    if drop_pct < DISTRIBUTION_DROP_PCT:
+        return {"ok": False, "drop_pct": round(drop_pct, 1), "level": "ok",
+                "reason": (f"net_pure only {drop_pct:.0f}% below 24h peak "
+                           "— still well within normal volatility")}
+    if drop_pct >= 60 and cv_drop >= 30:
+        level = "danger"
+        reason = (f"net_pure crashed {drop_pct:.0f}% from peak AND "
+                  f"conviction fell {cv_drop:.0f}% — classic late-stage "
+                  "distribution / supply overhang")
+    elif drop_pct >= DISTRIBUTION_DROP_PCT:
+        level = "warn"
+        reason = (f"net_pure {drop_pct:.0f}% below 24h peak — early "
+                  "distribution, watch for conviction to follow")
+    else:
+        level = "ok"
+        reason = ""
+    return {"ok": drop_pct >= DISTRIBUTION_DROP_PCT,
+            "drop_pct": round(drop_pct, 1), "level": level,
+            "reason": reason}
+
+
+def flow_quality(ca: str) -> dict:
+    """Coarse 'is this window worth reading' flag.
+
+    Combines three things:
+      * enough swap activity (``vol`` above :data:`QUALITY_MIN_SOL`),
+      * swap count inside :data:`QUALITY_SWAP_BAND` (very low = dead
+        token, very high = a single wash-trade event can look like
+        a real move),
+      * not all the volume is the same wallet (basic concentration).
+
+    Returns ``{"ok": bool, "level": "ok"|"warn"|"danger", "reason": str,
+                "vol": float, "n_swaps": int, "n_wallets": int}``.
+    """
+    pts = (load_conviction() or {}).get(ca) or []
+    if not pts:
+        return {"ok": False, "level": "ok", "reason": "no conviction yet",
+                "vol": 0.0, "n_swaps": 0, "n_wallets": 0}
+    last = pts[-1]
+    vol = float(last.get("vol") or 0)
+    n_swaps = int(last.get("swaps") or 0)
+    # count distinct wallets in the same window the conviction point covers
+    try:
+        swaps = get_recent_swaps(ca, 6)
+    except Exception:
+        swaps = []
+    n_wallets = len({s[3] for s in swaps if s and s[3]})
+    if vol < QUALITY_MIN_SOL:
+        return {"ok": False, "level": "warn",
+                "reason": (f"only {vol:.1f} SOL in 6h (below "
+                           f"{QUALITY_MIN_SOL:g}) — too quiet to read "
+                           "conviction meaningfully"),
+                "vol": vol, "n_swaps": n_swaps, "n_wallets": n_wallets}
+    lo, hi = QUALITY_SWAP_BAND
+    if n_swaps and n_swaps < lo:
+        return {"ok": False, "level": "warn",
+                "reason": (f"only {n_swaps} swaps in 6h — window too thin "
+                           "to draw a conclusion"),
+                "vol": vol, "n_swaps": n_swaps, "n_wallets": n_wallets}
+    if n_swaps and n_swaps > hi and n_wallets <= max(2, n_swaps // 20):
+        return {"ok": False, "level": "warn",
+                "reason": (f"{n_swaps} swaps but only {n_wallets} wallets "
+                           "— one or two wallets dominate, treat the read "
+                           "with caution"),
+                "vol": vol, "n_swaps": n_swaps, "n_wallets": n_wallets}
+    return {"ok": True, "level": "ok",
+            "reason": (f"{vol:.0f} SOL · {n_swaps} swaps · "
+                       f"{n_wallets} wallets — real flow"),
+            "vol": vol, "n_swaps": n_swaps, "n_wallets": n_wallets}
+
+
+def flow_check_panel(ca: str) -> dict:
+    """Run every check at once and return a single dict the UI can iterate.
+
+    Each entry has ``ok``, ``level`` ("ok"|"warn"|"danger") and a short
+    ``reason`` string. The panel is the source of truth for the "CVD
+    safety diagnostics" the LP Radar card surfaces.
+    """
+    return {
+        "freshness": flow_freshness(ca),
+        "persistence": flow_persistence(ca),
+        "distribution": flow_distribution(ca),
+        "quality": flow_quality(ca),
+    }

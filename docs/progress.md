@@ -7,6 +7,79 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-07-29 — LP Radar 48h + CVD flow safety + GMGN new penalties + Watchlist quick-pick
+
+### Yang berubah
+
+1. **LP Radar multi-window sparkline** sekarang punya **4 baris** —
+   `6h → 12h → 24h → 48h` (sebelumnya 3). Baris ke-4 butuh ≥8 cron
+   point (≥2 hari) untuk diisi; sebelum itu mirror 24h supaya tidak
+   misleading ke 0%. Caption diperbarui menjelaskan perilaku ini.
+
+2. **CVD flow safety checks** (4 function baru di `cvd.py`):
+   - `flow_freshness(ca)` — umur conviction point terakhir, OK bila <90m
+   - `flow_persistence(ca)` — 3 cron point beruntun searah, masing-masing
+     ≥5 SOL net
+   - `flow_distribution(ca)` — `net_pure` drop ≥30% dari peak 24h
+   - `flow_quality(ca)` — window cukup aktif, tidak dominated 1 wallet
+   - `flow_check_panel(ca)` — wrapper, kembalikan keempatnya sekaligus
+
+3. **GMGN screener: 2 penalty curve + 2 hard risk baru** (PR #5 eksplisit
+   sebut tapi belum masuk):
+   - `fresh_wallet` — anchor 0.25/0.40/0.55, hard risk pada 0.50
+   - `holder_conc` — top-50 holder share, anchor 0.65/0.75/0.85,
+     hard risk pada 0.85 (tidak ada public float)
+   - Field `fwr` / `fresh_wallet_rate` dan `t50` /
+     `top_50_holder_rate` di payload; fallback ke `top-10 × 1.1` kalau
+     GMGN tidak kirim `t50` (t10-derived 0-1)
+
+4. **Watchlist quick-pick** — `pages/3_⭐_Watchlist.py` punya expander
+   "⚡ Quick-pick" di atas input manual. Pilih dari CA yang sudah
+   dianalisis (`history.json`) atau yang barusan muncul di trending
+   screener sesi ini. Manual CA input tetap di bawah, jadi quick-pick
+   additive, bukan replacement.
+
+5. **Line endings** — PR #5 di-upstream akhirnya CRLF lagi (squash
+   merge + GitHub CRLF autosave). PR ini tetap CRLF karena itu
+   konvensi repo (`tests/*.py` semua CRLF, `.gitattributes` tidak ada
+   untuk override).
+
+### Verifikasi
+
+- `tests/test_flow_safety.py` (baru) — 8 sub-test, 33 assertion,
+  tanpa pytest/jaringan. Coverage:
+  - freshness: no history / fresh / stale 4h
+  - persistence: <2 points / 3-point accum / 3-point dist / small
+    moves / sign-flip / zero trailing
+  - distribution: <4 points / no net-buy peak / mild 25% drop /
+    40% drop flagged
+  - quality: no history / quiet / normal
+  - panel: keempat sub-check muncul
+  - fresh-wallet: penalty kontinu, 25% ≤ 8 pts, 55% → AVOID
+  - holder-conc: penalty kontinu, 65% ≤ 8 pts, 90% → AVOID
+  - contract: `fresh_wallet_rate` & `holder_conc` di row output
+- `python -m py_compile` untuk 4 file Python yang diubah — lulus.
+- `python -m pytest tests/` — 33/33 passed (25 lama + 8 baru).
+
+### Tidak dilakukan
+
+- **Cron schedule tidak diubah** (4h CVD / 8h watchlist). `AGENTS.md`
+  tegas bilang agen tidak boleh edit `.github/workflows/`. Kalau mau
+  balik ke hourly, pemilik sendiri yang harus commit.
+- Tidak menambah field baru di `trending_rank` parser. Yang dipakai
+  mengikuti apa yang GMGN kirim; kalau payload berubah, `_first()`
+  graceful jatuh ke 0.0 → penalty tidak kena → token akan kelihatan
+  lebih baik dari yang sebenarnya. Pantau di run berikutnya.
+
+### Belum terverifikasi ⚠️
+
+- `fwr` / `t50` belum pernah kena payload GMGN sungguhan (key belum
+  dikonfirmasi). Kalau GMGN kasih nama lain, field baru akan jadi 0
+  dan penalty tidak firing — test hanya pakai path yang sudah
+  diverifikasi kontinuitasnya.
+
+---
+
 ## 2026-07-29 — LP Radar rewrite: semua token + stability + multi-window + volume
 
 ### Yang berubah

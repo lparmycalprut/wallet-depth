@@ -27,6 +27,63 @@ st.caption("Tokens on this list are snapshotted automatically every day at "
 wl = load_watchlist()
 hist = load_history()
 
+# --- quick pick -------------------------------------------------------------
+# Re-use tokens the user has already analyzed (or snapshotted) so adding to
+# the watchlist is one click. Pulls from history.json (any CA with at least
+# one local snapshot) and from the live GMGN trending screener rows the
+# user has already loaded into this session. The manual CA input below
+# stays the source of truth for brand-new CAs.
+quick_pick_options = []
+for ca_key, days in (hist or {}).items():
+    if ca_key in wl:
+        continue
+    if not isinstance(days, dict) or not days:
+        continue
+    last_date = max(days.keys())
+    snap = days.get(last_date) or {}
+    sym = (snap.get("symbol") or "?").strip() or "?"
+    quick_pick_options.append((ca_key, sym, last_date, "history"))
+# also expose screener rows the user has already loaded in this session
+for r in (st.session_state.get("screener_rows") or []):
+    ca_r = r.get("ca")
+    sym_r = (r.get("symbol") or "?").strip() or "?"
+    if ca_r and ca_r not in wl and not any(
+            q[0] == ca_r for q in quick_pick_options):
+        quick_pick_options.append((ca_r, sym_r, "trending", "screener"))
+
+quick_pick_options.sort(key=lambda x: (x[0] not in (hist or {}),
+                                       -ord((x[1] or "?")[0])))
+
+if quick_pick_options:
+    with st.expander("⚡ Quick-pick — add a token you've already analyzed",
+                     expanded=False):
+        st.caption("Pick from CAs you've analyzed before (history) or that "
+                   "are in this session's trending screener. Manual CA "
+                   "input below still works for anything new.")
+        qp_cols = st.columns([3, 1.2, 0.8])
+        labels = [f"{sym}  ·  {ca[:8]}…{ca[-4:]}  ·  ({src})"
+                  for ca, sym, _date, src in quick_pick_options]
+        label_to_ca = {labels[i]: quick_pick_options[i][0]
+                       for i in range(len(quick_pick_options))}
+        chosen = qp_cols[0].selectbox(
+            "Token", ["— pick one —"] + labels,
+            label_visibility="collapsed")
+        qp_note = qp_cols[1].text_input(
+            "Note (optional)", placeholder="note...",
+            label_visibility="collapsed").strip()
+        if qp_cols[2].button("Add", use_container_width=True,
+                             type="primary", key="qp_add"):
+            if chosen and chosen != "— pick one —":
+                if not add_to_watchlist(label_to_ca[chosen], note=qp_note):
+                    st.warning("Added, but GitHub commit failed — set "
+                               "`github_token` in Streamlit Secrets so "
+                               "changes survive restarts.")
+                    import time as _t
+                    _t.sleep(2.5)
+                st.rerun()
+            else:
+                st.warning("Pick a token first.")
+
 # --- manual add -------------------------------------------------------------
 with st.expander("➕ Add a CA manually", expanded=not wl):
     c1, c2, c3 = st.columns([3, 1.2, 0.8])

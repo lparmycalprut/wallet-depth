@@ -209,6 +209,15 @@ PENALTY_CURVES = {
     "t10": [(32, 0), (36, 12), (50, 20)],
     "smt_thin": [(0, 6), (3, 0)],
     "liq_thin": [(0, 10), (3, 0)],
+    # Fresh-wallet rate (% of holders whose first tx is <7 days old).
+    # Anchored so a 25%+ fresh-wallet base starts hurting and 50%+ clearly
+    # marks the token as a likely launch-and-dump.
+    "fresh_wallet": [(0.15, 0), (0.25, 5), (0.40, 12), (0.55, 18)],
+    # Holder concentration beyond the Top-10 already covered by t10. This
+    # is a *cumulative* top-50+ holder band: when the top 50 alone hold
+    # ≥80% of supply there is almost no public float, so the cap should
+    # sit on AVOID regardless of other pillars.
+    "holder_conc": [(0.55, 0), (0.65, 6), (0.75, 12), (0.85, 18)],
 }
 
 #: KOL bonus (points) once smart money is already present
@@ -368,6 +377,24 @@ def score_token(t):
     sniper = _first(t, "t70_shr", "top70_sniper_hold_rate")
     snipers = _i(t.get("snp"))                # sniper wallet count
     kol = _i(t.get("kol"))                    # KOL/influencer wallets
+    # fresh_wallet_rate: % of holders whose first tx is <7 days old. GMGN
+    # exposes it under a few different keys depending on the payload shape;
+    # _first() walks them in order. 0.0 when missing — the curve naturally
+    # produces no penalty for missing data.
+    fresh_wallet = _first(t, "fwr", "fresh_wallet_rate",
+                          "fresh_holder_rate",
+                          default=0.0)
+    # holder_concentration: top-50 holder share (0-1). Falls back to top-10
+    # if GMGN only sends that — Top-50 is the stricter metric, but the
+    # penalty curves are calibrated so a 0.55+ reading is the same story
+    # either way (top 10 at 0.55% would be unrealistic).
+    holder_conc = _first(t, "t50", "top_50_holder_rate",
+                         default=max(0.0, t10 / 100.0 * 1.1))
+    # clamp t10-derived fallback into 0-1 (it's already a percent, so
+    # divide by 100). The +10% bump rewards the user for sending the
+    # real top-50 number; if only top-10 is available, we use a
+    # slightly harsher version (top-50 ≥ top-10).
+    holder_conc = holder_conc if holder_conc <= 1.0 else holder_conc / 100.0
     liq_pct = lq / mc * 100 if mc else 0.0
     vol_mc = vol / mc if mc else 0.0
 
@@ -446,6 +473,15 @@ def score_token(t):
     penalty_f += _curve(t10, PENALTY_CURVES["t10"])
     penalty_f += _curve(smt, PENALTY_CURVES["smt_thin"])
     penalty_f += _curve(liq_pct, PENALTY_CURVES["liq_thin"])
+    # fresh-wallet rate (PR #5 explicit ask) — a mostly-fresh holder base
+    # means the token just launched and any "fit" reading is built on
+    # noise. Curves anchor so 25% is the first warning, 40%+ clearly
+    # hurtful, 55%+ cap-killing.
+    penalty_f += _curve(fresh_wallet, PENALTY_CURVES["fresh_wallet"])
+    # holder concentration beyond T10 (also from PR #5). The top-50
+    # share caps the public float; if insiders + bundles + sniper + T10
+    # already own 80%+, retail is the exit liquidity.
+    penalty_f += _curve(holder_conc, PENALTY_CURVES["holder_conc"])
     score = max(0.0, raw - penalty_f)
     penalty = penalty_f
 
@@ -523,6 +559,18 @@ def score_token(t):
         risk_reasons.append(f"Entrapment traders {entrap * 100:.0f}%")
     if sniper > 0.10:
         risk_reasons.append(f"Snipers hold {sniper * 100:.0f}%")
+    # Fresh-wallet rate above 50% means the holder base is almost entirely
+    # brand-new accounts. Real accumulation needs aged wallets; without
+    # them every "good" pillar reading is built on a launch-day mirage.
+    if fresh_wallet > 0.50:
+        risk_reasons.append(
+            f"Fresh-wallet base {fresh_wallet * 100:.0f}% "
+            "(mostly brand-new holders)")
+    # Top-50 share above 85% means there is basically no public float
+    # left to absorb any buying — AVOID regardless of other pillars.
+    if holder_conc > 0.85:
+        risk_reasons.append(
+            f"Top-50 hold {holder_conc * 100:.0f}% of supply (no float)")
     high_risk = bool(risk_reasons)
     if high_risk:
         score = min(score, float(HIGH_RISK_CAP))
@@ -553,6 +601,8 @@ def score_token(t):
         "sniper_hold": round(sniper, 4),
         "snipers": snipers,
         "kol": kol,
+        "fresh_wallet_rate": round(fresh_wallet, 4),
+        "holder_conc": round(holder_conc, 4),
         "price": _first(t, "p", "price"),
         "logo": t.get("l") or "",
     }

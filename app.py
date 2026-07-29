@@ -618,12 +618,28 @@ if _wl:
                 stab_badge = "<span style='background:#ef4444;color:white;border-radius:4px;padding:0 5px;font-size:0.55rem;font-weight:800;white-space:nowrap;'>🔴 MELEMAH</span>"
                 stab_col = "#ef4444"
 
-            # ---- Multi-window sparkline (6h / 12h / 24h) ----
-            # Each point = 6h window. Approx 12h = avg last 2, 24h = avg last 4.
+            # ---- Multi-window sparkline (6h / 12h / 24h / 48h) ----
+            # Each cron point = 6h window. 12h = avg last 2, 24h = avg last 4,
+            # 48h = avg last 8. Conviction that holds across ALL four windows
+            # is the rare signal; conviction that is high in 6h but already
+            # fading in 24h/48h is a short spike, not a real build.
             cv_6h = cv
-            cv_12h = sum(p["conviction"] for p in pts[-2:]) / max(len(pts[-2:]), 1) if len(pts) >= 2 else cv
-            cv_24h = sum(p["conviction"] for p in pts[-4:]) / max(len(pts[-4:]), 1) if len(pts) >= 4 else cv
-            spark_max = max(cv_6h, cv_12h, cv_24h, 50) or 1
+            cv_12h = (sum(p["conviction"] for p in pts[-2:]) /
+                      max(len(pts[-2:]), 1) if len(pts) >= 2 else cv)
+            cv_24h = (sum(p["conviction"] for p in pts[-4:]) /
+                      max(len(pts[-4:]), 1) if len(pts) >= 4 else cv)
+            if len(pts) >= 8:
+                cv_48h = (sum(p["conviction"] for p in pts[-8:]) /
+                          max(len(pts[-8:]), 1))
+            elif len(pts) >= 4:
+                # not enough history for a real 48h — mirror 24h so the bar
+                # is at least visible (capped at 24h real value) instead of
+                # a misleading zero
+                cv_48h = cv_24h
+            else:
+                cv_48h = cv
+            spark_max = max(cv_6h, cv_12h, cv_24h, cv_48h, 50) or 1
+
             def _spark_bar(val, label):
                 h = max(4, val / spark_max * 22)
                 c = "#22c55e" if val > 30 else "#64748b"
@@ -639,7 +655,8 @@ if _wl:
                         f"margin-left:2px;'>{val:.0f}%</span></div>")
             multi_bars = (_spark_bar(cv_6h, "6h")
                           + _spark_bar(cv_12h, "12h")
-                          + _spark_bar(cv_24h, "24h"))
+                          + _spark_bar(cv_24h, "24h")
+                          + _spark_bar(cv_48h, "48h"))
 
             # ---- Volume-quality indicator ----
             vol = last.get("vol") or 0
@@ -743,9 +760,11 @@ if _wl:
                        "**🟡 NOISY** = volume besar tapi conviction rendah · "
                        "**👍 LIGHT** = volume sedang, conviction ok · "
                        "**⚪ THIN** = volume tipis · **💤 QUIET** = hampir tanpa volume. "
-                       "Multi-window sparkline: 6h (kiri) → 24h (kanan). "
-                       "Batang hijau = conviction >30%. Phase badge = Wyckoff-style "
-                       "heuristic — NOT a trading signal. Click card → CVD analysis.")
+                       "Multi-window sparkline: 6h → 12h → 24h → 48h (kiri→kanan). "
+                       "48h butuh ≥8 cron point (≥2 hari) untuk diisi; sebelum "
+                       "itu tampil abu-abu mengikuti 24h. Batang hijau = "
+                       "conviction >30%. Phase badge = Wyckoff-style heuristic "
+                       "— NOT a trading signal. Click card → CVD analysis.")
         else:
             st.caption("💧 LP Radar: semua watchlist token ditampilkan — "
                        "card dengan border merah artinya conviction melemah, "

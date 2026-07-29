@@ -27,14 +27,15 @@ buktikan kalibrasinya tidak bergeser (lihat §5).
 | `app.py` | dashboard utama (besar, ~110KB) |
 | `pages/` | halaman Streamlit tambahan |
 | `core.py` | helper Helius/DexScreener/GeckoTerminal |
-| `cvd.py` | store swap, bucket CVD, profil wallet, **level D1**, **flow attribution** |
-| `gmgn_screener.py` | screener GMGN + **scoring ramp kontinu** |
+| `cvd.py` | store swap, bucket CVD, profil wallet, **level D1**, **flow attribution**, **flow safety checks** (freshness / persistence / distribution / quality) |
+| `gmgn_screener.py` | screener GMGN + **scoring ramp kontinu** + **fresh-wallet & top-50 concentration penalties** |
 | `ai_prompt.py` | builder prompt CVD siap-salin, jujur soal cakupan data |
 | `breakout_guard.py` | **Breakout Guard**: level D1 + konfirmasi close H4 |
 | `breakout_log.py` | log event level → `breakouts.json` |
 | `signals.py` | log sinyal CVD → `signals.json` + notif Telegram |
+| `watchlist.py` | watchlist helpers (load/save/add/remove + GitHub commit) |
 | `scripts/update_cvd.py` | entry point cron (tiap jam, menit :20) |
-| `tests/` | 3 suite, **jalan tanpa pytest & tanpa jaringan** |
+| `tests/` | 4 suite, **jalan tanpa pytest & tanpa jaringan** |
 
 **File data yang di-commit cron** (jangan di-`.gitignore`):
 `cvd.json` · `signals.json` · `conviction.json` · `levels.json` ·
@@ -115,6 +116,7 @@ Sekarang interpolasi linear lewat `CURVES` / `PENALTY_CURVES` / `CAP_CURVE`.
 python tests/test_breakout_guard.py       # 67 assertion
 python tests/test_scoring_continuity.py
 python tests/test_markup_ai_prompt.py
+python tests/test_flow_safety.py          # LP Radar 4-window + flow checks + GMGN new penalties
 ```
 
 Tanpa pytest, tanpa jaringan. **Tes wajib mem-patch semua path file**
@@ -131,8 +133,17 @@ Jebakan yang sudah pernah menggigit:
   Kalau perlu ubah workflow, **minta pemilik** melakukannya lewat web GitHub.
 - **Field GMGN.** Payload `trending_rank` TIDAK punya `insider_ratio` /
   `bundler_rate`. Yang benar: `bdrr` `dhr` `etpr` `bdr` `t70_shr` `snp`.
-  Lihat `docs/gmgn_api.md`.
+  Lihat `docs/gmgn_api.md`. PR #5 tambah `fwr` (`fresh_wallet_rate`) dan
+  `t50` (`top_50_holder_rate`) — kalau GMGN rename, `_first()` akan jatuh
+  ke default 0.0 dan penalty tidak kena. Pantau di run berikutnya.
 - **Jangan commit `config.json`** (berisi API key, sudah di `.gitignore`).
+- **LP Radar 48h butuh ≥8 cron point (≥2 hari).** Sebelum itu, sparkline
+  baris ke-4 mirror 24h supaya tidak misleading ke 0%. Konvensi ini di-
+  encode di `app.py` — jangan disederhanakan.
+- **CVD flow checks** (`cvd.flow_freshness`/`persistence`/`distribution`/
+  `quality`) adalah *advisory*, bukan blocker. Mereka tidak masuk ke
+  scoring; hanya menampilkan badge di panel. Kalau mau dipakai sebagai
+  gate, tambahkan test dulu, jangan diubah diam-diam.
 
 ## 8. Status & langkah berikutnya
 
