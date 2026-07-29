@@ -7,9 +7,11 @@ honest, ready-to-copy prompt for an external AI chat.
 import datetime as dtm
 import io
 import json
+import math
 import os
 import sys
 import time
+import zoneinfo
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -20,7 +22,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ai_prompt import build_ai_prompt
 from core import load_config
 from cvd import (MIN_SOL, WHALE_SOL, analysis_windows, classify_swap,
-                 conviction_split, detect_divergence, wallet_profiles)
+                 conviction_split, detect_divergence, wallet_profiles,
+                 filter_swaps_by_time, summarize_swap_range,
+                 get_gmgn_wallet_metadata)
 
 st.set_page_config(page_title="CVD Analysis", page_icon="📊",
                    layout="wide", initial_sidebar_state="collapsed")
@@ -64,6 +68,82 @@ with col3:
     run = st.button("📊 Analyze", type="primary",
                     use_container_width=True)
 
+# ---------------------------------------------------------------------------
+# Focus time range (WIB) — optional deep-dive into a specific window
+# ---------------------------------------------------------------------------
+WIB = zoneinfo.ZoneInfo("Asia/Jakarta")
+_now_wib = dtm.datetime.now(WIB)
+focus_start_ts = None
+focus_end_ts = None
+focus_enabled = False
+
+with st.expander("🔎 Focus time range (WIB)", expanded=False):
+    focus_enabled = st.checkbox(
+        "Enable custom time range", value=False,
+        help=("Focus analysis on a specific date/time window. "
+              "All timestamps shown in WIB (Asia/Jakarta, UTC+7)."))
+    if focus_enabled:
+        _preset = st.radio(
+            "Quick preset",
+            ["Last 15m", "Last 1h", "Last 4h", "Custom"],
+            horizontal=True, index=3)
+        if _preset == "Last 15m":
+            focus_end_ts = int(time.time())
+            focus_start_ts = focus_end_ts - 15 * 60
+            _s_wib = dtm.datetime.fromtimestamp(focus_start_ts, WIB)
+            _e_wib = dtm.datetime.fromtimestamp(focus_end_ts, WIB)
+            st.caption(f"▶ {_s_wib:%Y-%m-%d %H:%M} → {_e_wib:%Y-%m-%d %H:%M} WIB")
+        elif _preset == "Last 1h":
+            focus_end_ts = int(time.time())
+            focus_start_ts = focus_end_ts - 3600
+            _s_wib = dtm.datetime.fromtimestamp(focus_start_ts, WIB)
+            _e_wib = dtm.datetime.fromtimestamp(focus_end_ts, WIB)
+            st.caption(f"▶ {_s_wib:%Y-%m-%d %H:%M} → {_e_wib:%Y-%m-%d %H:%M} WIB")
+        elif _preset == "Last 4h":
+            focus_end_ts = int(time.time())
+            focus_start_ts = focus_end_ts - 4 * 3600
+            _s_wib = dtm.datetime.fromtimestamp(focus_start_ts, WIB)
+            _e_wib = dtm.datetime.fromtimestamp(focus_end_ts, WIB)
+            st.caption(f"▶ {_s_wib:%Y-%m-%d %H:%M} → {_e_wib:%Y-%m-%d %H:%M} WIB")
+        else:  # Custom
+            _cs1, _cs2 = st.columns(2)
+            with _cs1:
+                _start_date = st.date_input(
+                    "Start date (WIB)", value=_now_wib.date())
+                _start_time = st.time_input(
+                    "Start time (WIB)",
+                    value=_now_wib.replace(minute=0, second=0,
+                                           microsecond=0).time())
+            with _cs2:
+                _end_date = st.date_input(
+                    "End date (WIB)", value=_now_wib.date())
+                _end_time = st.time_input(
+                    "End time (WIB)", value=_now_wib.time())
+            _start_wib = dtm.datetime.combine(
+                _start_date, _start_time, tzinfo=WIB)
+            _end_wib = dtm.datetime.combine(
+                _end_date, _end_time, tzinfo=WIB)
+            focus_start_ts = int(_start_wib.timestamp())
+            focus_end_ts = int(_end_wib.timestamp())
+            # validations
+            if focus_start_ts >= focus_end_ts:
+                st.error("Start must be before end.")
+                focus_start_ts = focus_end_ts = None
+            else:
+                _now_ts = int(time.time())
+                if focus_end_ts > _now_ts + 300:
+                    st.warning("End time is in the future — clamping to now.")
+                    focus_end_ts = _now_ts
+                _range_h = (focus_end_ts - focus_start_ts) / 3600
+                if _range_h > 48:
+                    st.warning(
+                        f"Range {_range_h:.1f}h exceeds 48h limit — "
+                        "clamping start to 48h before end.")
+                    focus_start_ts = focus_end_ts - 48 * 3600
+                if focus_start_ts and focus_start_ts > _now_ts:
+                    st.warning("Start time is in the future — no data.")
+                    focus_start_ts = focus_end_ts = None
+
 if not ca:
     st.info("Paste a CA. The fetch pulls the complete swap history for the "
             "selected time window — very active tokens can take a few "
@@ -74,7 +154,10 @@ if not ca:
 # the Prompt to AI button: clicking it reruns Streamlit but must not force a
 # second fetch or a second time-window selector.
 source_key = "gmgn" if use_gmgn_trades else "helius"
-skey = f"cvd::{source_key}::{hours}h::{ca}"
+_focus_key = ""
+if focus_enabled and focus_start_ts and focus_end_ts:
+    _focus_key = f"::f({focus_start_ts},{focus_end_ts})"
+skey = f"cvd::{source_key}::{hours}h::{ca}{_focus_key}"
 if not run and skey not in st.session_state:
     st.stop()
 if (not helius_key and not use_gmgn_trades and
@@ -99,15 +182,20 @@ def get_pool(ca: str):
 
 
 def full_fetch(ca: str, pool: str, cutoff_ts: int, *,
-               use_gmgn: bool = False):
-    """Fetch ALL swaps back to cutoff for the selected data source."""
+               use_gmgn: bool = False, from_ts=None, to_ts=None):
+    """Fetch ALL swaps back to cutoff for the selected data source.
+
+    When *from_ts*/*to_ts* are given and *use_gmgn* is True, the GMGN API
+    receives ``from``/``to`` query params for efficient server-side filtering.
+    """
     if use_gmgn:
         from cvd import fetch_swaps, get_gmgn_last_error
-        pbar = st.progress(0.0, text=f"Fetching GMGN trades for {hours}h…")
+        _lbl = "GMGN focus range" if (from_ts and to_ts) else f"GMGN {hours}h"
+        pbar = st.progress(0.0, text=f"Fetching {_lbl}…")
         try:
             swaps, _sig, _ts, _hit = fetch_swaps(
                 "", pool or "", ca, stop_ts=cutoff_ts, max_pages=120,
-                sleep=0.05, use_gmgn=True)
+                sleep=0.05, use_gmgn=True, from_ts=from_ts, to_ts=to_ts)
         except Exception as exc:  # noqa: BLE001
             st.warning(f"GMGN Trades API fetch failed: {exc}")
             swaps = []
@@ -228,10 +316,20 @@ WINDOWS = analysis_windows(hours)
 if run or skey not in st.session_state:
     st.session_state.pop(f"ai_prompt::{skey}", None)
     cutoff = int(time.time()) - hours * 3600
+    # If focus range needs a wider fetch window, extend cutoff
+    if focus_enabled and focus_start_ts:
+        _needed_h = math.ceil((time.time() - focus_start_ts) / 3600)
+        _extended_h = min(48, max(hours, _needed_h))
+        cutoff = int(time.time()) - _extended_h * 3600
     got = []
     if use_gmgn_trades:
-        st.info(f"Fetching last {hours}h from GMGN Trades API…")
-        got = full_fetch(ca, pool, cutoff, use_gmgn=True)
+        if focus_enabled and focus_start_ts and focus_end_ts:
+            st.info(f"Fetching focus range from GMGN Trades API…")
+            got = full_fetch(ca, pool, cutoff, use_gmgn=True,
+                             from_ts=focus_start_ts, to_ts=focus_end_ts)
+        else:
+            st.info(f"Fetching last {hours}h from GMGN Trades API…")
+            got = full_fetch(ca, pool, cutoff, use_gmgn=True)
         src = "GMGN Trades API"
     else:
         # Hybrid: watchlist tokens use the incremental store (top-up only
@@ -253,7 +351,11 @@ if run or skey not in st.session_state:
                     "this via the incremental store.")
             got = full_fetch(ca, pool, cutoff)
             src = "full fetch"
-    st.session_state[skey] = {"swaps": got, "ts": time.time(), "src": src}
+    st.session_state[skey] = {
+        "swaps": got, "ts": time.time(), "src": src,
+        "focus_start": focus_start_ts if focus_enabled else None,
+        "focus_end": focus_end_ts if focus_enabled else None,
+    }
 swaps_all = st.session_state[skey]["swaps"]
 fetched_at = st.session_state[skey]["ts"]
 st.caption(f"Source: {st.session_state[skey].get('src', '?')}")
@@ -536,6 +638,228 @@ with pa2:
         st.caption(f"No whale-size pure distributors in {hours}h.")
 
 # ---------------------------------------------------------------------------
+# 🔎 Focus range deep analysis
+# ---------------------------------------------------------------------------
+_f_start = st.session_state[skey].get("focus_start")
+_f_end = st.session_state[skey].get("focus_end")
+if _f_start and _f_end and swaps_all:
+    focus_swaps = filter_swaps_by_time(swaps_all, _f_start, _f_end)
+    if focus_swaps:
+        fs = summarize_swap_range(focus_swaps, whale_min_sol=WHALE_SOL)
+        _f_s_wib = dtm.datetime.fromtimestamp(_f_start, WIB)
+        _f_e_wib = dtm.datetime.fromtimestamp(_f_end, WIB)
+        _f_dur_min = (_f_end - _f_start) / 60
+
+        st.markdown(f"### 🔎 Focus range: {_f_s_wib:%Y-%m-%d %H:%M} → "
+                    f"{_f_e_wib:%H:%M} WIB ({_f_dur_min:.0f}m)")
+
+        # Coverage check — does fetched data actually cover the range?
+        if focus_swaps:
+            _earliest = focus_swaps[0][2]
+            _latest = focus_swaps[-1][2]
+            _gap_start = _earliest > _f_start + 300  # 5 min tolerance
+            _gap_end = _latest < _f_end - 300
+            if _gap_start or _gap_end:
+                _labels = []
+                if _gap_start:
+                    _labels.append("start not covered")
+                if _gap_end:
+                    _labels.append("end not covered")
+                st.warning(
+                    f"⚠️ Data coverage: SEBAGIAN — {', '.join(_labels)}. "
+                    f"Earliest swap: {dtm.datetime.fromtimestamp(_earliest, WIB):%H:%M} WIB, "
+                    f"Latest: {dtm.datetime.fromtimestamp(_latest, WIB):%H:%M} WIB.")
+
+        # Summary metrics
+        fm1, fm2, fm3, fm4 = st.columns(4)
+        fm1.metric("Swaps", f"{fs['swaps']:,}",
+                   delta=f"{fs['net_sol']:+.1f} SOL net")
+        fm2.metric("Buy / Sell",
+                   f"{fs['buy_sol']:+,.0f} / {fs['sell_sol']:+,.0f}")
+        fm3.metric("🐋 Whale net", f"{fs['whale_net']:+,.1f}",
+                   delta=f"buy {fs['whale_buy']:.0f} / sell {fs['whale_sell']:.0f}")
+        fm4.metric("🐟 Retail net", f"{fs['retail_net']:+,.1f}")
+
+        # Conviction + dominance
+        _conv = fs["conviction"]
+        _net_pure = _conv["pure_buy"] - _conv["pure_sell"]
+        fm5, fm6, fm7, fm8 = st.columns(4)
+        fm5.metric("💎 Pure buy", f"{_conv['pure_buy']:,.1f}")
+        fm6.metric("🩸 Pure sell", f"{_conv['pure_sell']:,.1f}")
+        fm7.metric("Conviction", f"{_conv['conviction_pct']:.0f}%")
+        fm8.metric("Dominance", f"{fs['dominance_pct']:.1f}%",
+                   help="Largest single wallet's share of total volume")
+
+        # Verdict for the focus range
+        if _conv["conviction_pct"] >= 50 and _net_pure > 0 and \
+                _conv["pure_buy"] >= 3:
+            _fv = "💎 FOCUS: HIGH-CONVICTION ACCUMULATION"
+            st.success(_fv)
+        elif _conv["pure_sell"] >= 3 and _net_pure < 0:
+            _fv = "🩸 FOCUS: DISTRIBUTION"
+            st.error(_fv)
+        elif fs["dominance_pct"] > 50:
+            _fv = "⚠️ FOCUS: DOMINATED by 1-2 wallets — fake/churn risk"
+            st.warning(_fv)
+        elif _net_pure > 0:
+            _fv = "🟢 FOCUS: Net buying, moderate conviction"
+            st.info(_fv)
+        else:
+            _fv = "⚪ FOCUS: Neutral / churn"
+            st.caption(_fv)
+
+        # GMGN wallet metadata enrichment
+        gmgn_meta = get_gmgn_wallet_metadata()
+        if gmgn_meta:
+            # Build enriched buyer/seller tables
+            _tag_counts = {}
+            _tok_tag_counts = {}
+            _zero_balance_buys = 0
+            _high_trade_wallets = 0
+            _paper_hands = 0
+            _bundlers = 0
+            for w in set(fs["profiles"]):
+                m = gmgn_meta.get(w)
+                if not m:
+                    continue
+                for t in m.get("maker_tags", []):
+                    _tag_counts[t] = _tag_counts.get(t, 0) + 1
+                for t in m.get("maker_token_tags", []):
+                    _tok_tag_counts[t] = _tok_tag_counts.get(t, 0) + 1
+                if m.get("balance", -1) == 0:
+                    _zero_balance_buys += 1
+                if m.get("total_trade", 0) > 20:
+                    _high_trade_wallets += 1
+                if "paper_hands" in (m.get("maker_tags") or []):
+                    _paper_hands += 1
+                if "bundler" in (m.get("maker_token_tags") or []):
+                    _bundlers += 1
+
+            # GMGN flags summary
+            st.markdown("#### 🏷️ GMGN wallet flags")
+            _flag_cols = st.columns(4)
+            _flag_cols[0].metric("Fresh wallets",
+                                str(_tag_counts.get("fresh_wallet", 0)))
+            _flag_cols[1].metric("Paper hands", str(_paper_hands))
+            _flag_cols[2].metric("Bundlers", str(_bundlers))
+            _flag_cols[3].metric("High-trade (bot?)",
+                                str(_high_trade_wallets))
+
+            if _zero_balance_buys > 0:
+                st.warning(
+                    f"⚠️ {_zero_balance_buys} buyer wallet(s) have "
+                    "balance=0 after buying — possible sold-out / exit "
+                    "liquidity / bot.")
+
+            # Enriched top buyers table
+            if fs["top_buyers"]:
+                _brows = []
+                for w, sol in fs["top_buyers"]:
+                    m = gmgn_meta.get(w) or {}
+                    tags = ", ".join(m.get("maker_tags", [])) or "—"
+                    tok_tags = ", ".join(m.get("maker_token_tags", [])) or "—"
+                    bal = m.get("balance", "")
+                    tt = m.get("total_trade", "")
+                    hb = m.get("history_bought_amount", 0)
+                    hs = m.get("history_sold_amount", 0)
+                    _brows.append({
+                        "Wallet": f"https://solscan.io/account/{w}",
+                        "Bought (SOL)": f"{sol:,.2f}",
+                        "Tags": tags,
+                        "Token tags": tok_tags,
+                        "Balance": f"{bal}" if bal != "" else "—",
+                        "Trades": f"{tt}" if tt != "" else "—",
+                        "Hist bought": f"{hb:,.2f}" if hb else "—",
+                        "Hist sold": f"{hs:,.2f}" if hs else "—",
+                        "Hold?" : ("✅" if (isinstance(bal, (int, float))
+                                            and bal > 0) else
+                                   ("❌ sold" if bal == 0 else "—")),
+                    })
+                st.dataframe(
+                    pd.DataFrame(_brows), use_container_width=True,
+                    hide_index=True,
+                    column_config={"Wallet": st.column_config.LinkColumn(
+                        "🔎 Top buyers (focus)", display_text=r"account/(.{6}).*")})
+
+            # Enriched top sellers table
+            if fs["top_sellers"]:
+                _srows = []
+                for w, sol in fs["top_sellers"]:
+                    m = gmgn_meta.get(w) or {}
+                    tags = ", ".join(m.get("maker_tags", [])) or "—"
+                    tok_tags = ", ".join(m.get("maker_token_tags", [])) or "—"
+                    rp = m.get("realized_profit", 0)
+                    _srows.append({
+                        "Wallet": f"https://solscan.io/account/{w}",
+                        "Sold (SOL)": f"{sol:,.2f}",
+                        "Tags": tags,
+                        "Token tags": tok_tags,
+                        "Realized P/L": f"{rp:+,.2f}" if rp else "—",
+                    })
+                st.dataframe(
+                    pd.DataFrame(_srows), use_container_width=True,
+                    hide_index=True,
+                    column_config={"Wallet": st.column_config.LinkColumn(
+                        "🔎 Top sellers (focus)", display_text=r"account/(.{6}).*")})
+
+            # Churn / fake verdict enrichment
+            _churn_signals = []
+            if _paper_hands >= max(2, fs["wallets"] * 0.2):
+                _churn_signals.append(
+                    f"{_paper_hands} paper_hands wallets")
+            if _bundlers >= max(2, fs["wallets"] * 0.15):
+                _churn_signals.append(
+                    f"{_bundlers} bundler wallets")
+            if _high_trade_wallets >= max(2, fs["wallets"] * 0.15):
+                _churn_signals.append(
+                    f"{_high_trade_wallets} high-trade (bot/churn) wallets")
+            if _zero_balance_buys >= max(2, fs["buyers"] * 0.3):
+                _churn_signals.append(
+                    f"{_zero_balance_buys} buyers with balance=0")
+            if fs["dominance_pct"] > 40:
+                _churn_signals.append(
+                    f"single-wallet dominance {fs['dominance_pct']:.0f}%")
+            if _churn_signals:
+                st.warning(
+                    "🚨 **Fake/churn/exit-liquidity signals:** " +
+                    "; ".join(_churn_signals))
+            else:
+                st.success("✅ No major fake/churn flags detected in focus range.")
+        else:
+            st.caption("GMGN metadata not available (Helius source or "
+                       "empty GMGN response). Enable GMGN Trades API for "
+                       "wallet tags, balance, and churn detection.")
+
+        # Top net wallets (cross-side)
+        if fs["top_net_wallets"]:
+            st.markdown("#### 📊 Top net wallets (buy − sell)")
+            _nrows = []
+            for w, net in fs["top_net_wallets"]:
+                p = fs["profiles"].get(w, {})
+                profile = p.get("profile", "?")
+                _nrows.append({
+                    "Wallet": f"https://solscan.io/account/{w}",
+                    "Net (SOL)": f"{net:+,.2f}",
+                    "Buy": f"{p.get('buy', 0):,.2f}",
+                    "Sell": f"{p.get('sell', 0):,.2f}",
+                    "Profile": profile,
+                    "Swaps": p.get("n_buy", 0) + p.get("n_sell", 0),
+                })
+            st.dataframe(
+                pd.DataFrame(_nrows), use_container_width=True,
+                hide_index=True,
+                column_config={"Wallet": st.column_config.LinkColumn(
+                    "Net wallets", display_text=r"account/(.{6}).*")})
+
+    elif focus_enabled:
+        _f_s_wib = dtm.datetime.fromtimestamp(_f_start, WIB)
+        _f_e_wib = dtm.datetime.fromtimestamp(_f_end, WIB)
+        st.warning(
+            f"⚠️ No swaps found in focus range "
+            f"{_f_s_wib:%Y-%m-%d %H:%M} → {_f_e_wib:%H:%M} WIB. "
+            "Data may not cover this period — TIDAK TERCAKUP.")
+
+# ---------------------------------------------------------------------------
 # 🤖 Ready-to-copy prompt for a free AI chat
 # ---------------------------------------------------------------------------
 prompt_wallets = []
@@ -633,6 +957,39 @@ if dist_rows:
                   f"{r_['Swaps']} | {r_['Age']} | {r_['Flags']} |\n")
 else:
     rep.write("None.\n")
+# Focus range section (if enabled)
+_f_s = st.session_state[skey].get("focus_start")
+_f_e = st.session_state[skey].get("focus_end")
+if _f_s and _f_e:
+    _fs_swaps = filter_swaps_by_time(swaps_all, _f_s, _f_e)
+    if _fs_swaps:
+        _fs = summarize_swap_range(_fs_swaps, whale_min_sol=WHALE_SOL)
+        _fs_wib_s = dtm.datetime.fromtimestamp(_f_s, WIB)
+        _fs_wib_e = dtm.datetime.fromtimestamp(_f_e, WIB)
+        rep.write(f"\n## Focus Range ({_fs_wib_s:%Y-%m-%d %H:%M} → "
+                  f"{_fs_wib_e:%H:%M} WIB)\n\n")
+        rep.write(f"- Swaps: {_fs['swaps']:,}\n")
+        rep.write(f"- Buy: {_fs['buy_sol']:+,.1f} SOL · "
+                  f"Sell: {_fs['sell_sol']:+,.1f} SOL · "
+                  f"Net: {_fs['net_sol']:+,.1f}\n")
+        rep.write(f"- Whale net: {_fs['whale_net']:+,.1f} · "
+                  f"Retail net: {_fs['retail_net']:+,.1f}\n")
+        _fconv = _fs["conviction"]
+        rep.write(f"- Conviction: {_fconv['conviction_pct']:.0f}% · "
+                  f"Dominance: {_fs['dominance_pct']:.1f}%\n")
+        if _fs["top_buyers"]:
+            rep.write("\n### Top buyers (focus)\n\n")
+            rep.write("| Wallet | SOL | Profile |\n|---|---|---|\n")
+            for _w, _sol in _fs["top_buyers"][:5]:
+                _p = _fs["profiles"].get(_w, {}).get("profile", "?")
+                rep.write(f"| {_w[:8]}… | {_sol:,.2f} | {_p} |\n")
+        if _fs["top_sellers"]:
+            rep.write("\n### Top sellers (focus)\n\n")
+            rep.write("| Wallet | SOL | Profile |\n|---|---|---|\n")
+            for _w, _sol in _fs["top_sellers"][:5]:
+                _p = _fs["profiles"].get(_w, {}).get("profile", "?")
+                rep.write(f"| {_w[:8]}… | {_sol:,.2f} | {_p} |\n")
+
 rep.write("\n---\n*Whale = swap ≥3 SOL · pure = one-way (≤5% tol) · "
           "conviction = % of whale-size buys that were held · generated by "
           "Wallet Depth by Threshold*\n")

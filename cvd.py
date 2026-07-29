@@ -145,8 +145,53 @@ GMGN_HEADERS = {
     "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                    "AppleWebKit/537.36 (KHTML, like Gecko) "
                    "Chrome/150.0.0.0 Safari/537.36"),
+    "sec-ch-ua": ('"Not;A=Brand";v="8", "Chromium";v="150", '
+                  '"Google Chrome";v="150"'),
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"Windows"',
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
 }
 _gmgn_last = {"error": ""}
+_gmgn_wallet_meta = {"data": {}}
+
+
+def get_gmgn_wallet_metadata() -> dict:
+    """Per-wallet metadata from the most recent GMGN fetch.
+
+    Only populated when ``use_gmgn=True`` is used.  Keys are wallet
+    addresses; values are dicts with ``maker_tags``, ``maker_token_tags``,
+    ``total_trade``, ``balance``, ``history_bought_amount``,
+    ``history_sold_amount``, ``realized_profit``, ``unrealized_profit``.
+    """
+    return _gmgn_wallet_meta.get("data") or {}
+
+
+def _gmgn_build_params() -> dict:
+    """Query params matching the live GMGN web client (build tag, device id)."""
+    import uuid as _uuid
+    params = {
+        "from_app": "gmgn",
+        "tz_name": "Asia%2FJakarta",
+        "tz_offset": "25200",
+        "app_lang": "en-US",
+        "os": "web",
+        "worker": "0",
+    }
+    try:
+        from gmgn_screener import _build_tag, DEVICE_ID, FP_DID
+        build = _build_tag()
+        params["device_id"] = DEVICE_ID
+        params["fp_did"] = FP_DID
+        params["client_id"] = f"gmgn_web_{build}"
+        params["app_ver"] = build
+    except Exception:
+        params["device_id"] = str(_uuid.uuid4())
+        params["fp_did"] = _uuid.uuid4().hex
+        params["client_id"] = "gmgn_web_20260728-2617-057cd43"
+        params["app_ver"] = "20260728-2617-057cd43"
+    return params
 
 
 def _set_gmgn_error(message: str) -> None:
@@ -323,11 +368,16 @@ def _gmgn_http_get(url: str, *, params: dict, timeout: int):
 
 
 def _fetch_gmgn_page(ca: str, *, cursor=None, limit=GMGN_PAGE_LIMIT,
-                     timeout=25, retries=3):
+                     timeout=25, retries=3, from_ts=None, to_ts=None):
     url = GMGN_TRADES_URL.format(ca=ca)
-    params = {"limit": max(1, min(int(limit or GMGN_PAGE_LIMIT), 100))}
+    params = _gmgn_build_params()
+    params["limit"] = max(1, min(int(limit or GMGN_PAGE_LIMIT), 100))
     if cursor:
         params["cursor"] = cursor
+    if from_ts is not None:
+        params["from"] = int(from_ts)
+    if to_ts is not None:
+        params["to"] = int(to_ts)
     delay = 0.5
     last = ""
     for _ in range(retries):
@@ -360,8 +410,44 @@ def _fetch_gmgn_page(ca: str, *, cursor=None, limit=GMGN_PAGE_LIMIT,
     return None, None
 
 
+def _extract_gmgn_trade_meta(trade: dict) -> dict:
+    """Pull GMGN-specific metadata fields from one trade dict.
+
+    Returns a dict suitable for per-wallet annotation — keys are the
+    ``maker_tags``, ``balance``, ``total_trade``, etc. fields the user
+    wants surfaced alongside the standard 4-tuple swap.
+    """
+    tags_raw = _first_nested(trade, "maker_tags", "makerTags", default=[])
+    if isinstance(tags_raw, str):
+        tags_raw = [t.strip() for t in tags_raw.split(",") if t.strip()]
+    tok_tags_raw = _first_nested(trade, "maker_token_tags", "makerTokenTags",
+                                 default=[])
+    if isinstance(tok_tags_raw, str):
+        tok_tags_raw = [t.strip() for t in tok_tags_raw.split(",")
+                        if t.strip()]
+    return {
+        "maker_tags": list(tags_raw) if isinstance(tags_raw, list) else [],
+        "maker_token_tags": (list(tok_tags_raw)
+                             if isinstance(tok_tags_raw, list) else []),
+        "total_trade": int(_as_float(
+            _first_nested(trade, "total_trade", "totalTrade", default=0))),
+        "balance": _as_float(
+            _first_nested(trade, "balance", "token_balance", default=0)),
+        "history_bought_amount": _as_float(_first_nested(
+            trade, "history_bought_amount", "historyBoughtAmount",
+            default=0)),
+        "history_sold_amount": _as_float(_first_nested(
+            trade, "history_sold_amount", "historySoldAmount", default=0)),
+        "realized_profit": _as_float(_first_nested(
+            trade, "realized_profit", "realizedProfit", default=0)),
+        "unrealized_profit": _as_float(_first_nested(
+            trade, "unrealized_profit", "unrealizedProfit", default=0)),
+    }
+
+
 def fetch_gmgn_swaps(ca: str, *, stop_sig=None, stop_ts=None, max_pages=40,
-                     sleep=0.15, page_limit=GMGN_PAGE_LIMIT):
+                     sleep=0.15, page_limit=GMGN_PAGE_LIMIT,
+                     from_ts=None, to_ts=None):
     """Fetch GMGN Token Trades and map them to CVD swap tuples.
 
     GMGN fields are mapped as requested:
@@ -374,15 +460,18 @@ def fetch_gmgn_swaps(ca: str, *, stop_sig=None, stop_ts=None, max_pages=40,
     :func:`get_gmgn_last_error` instead of raising.
     """
     _set_gmgn_error("")
+    _gmgn_wallet_meta["data"] = {}
     swaps, cursor = [], None
     newest_sig, newest_ts, hit_stop = None, None, False
     seen_trades, seen_cursors = set(), set()
     raw_seen = mapped_seen = 0
     stopped_by_cutoff = False
+    wallet_meta = {}
 
     for _ in range(max_pages):
         raw_trades, next_cursor = _fetch_gmgn_page(
-            ca, cursor=cursor, limit=page_limit)
+            ca, cursor=cursor, limit=page_limit,
+            from_ts=from_ts, to_ts=to_ts)
         if raw_trades is None:
             break
         if not raw_trades:
@@ -416,6 +505,13 @@ def fetch_gmgn_swaps(ca: str, *, stop_sig=None, stop_ts=None, max_pages=40,
                 mapped_seen += 1
                 if s[1] >= MIN_SOL:
                     swaps.append(s)
+                # collect per-wallet metadata (last trade wins)
+                w = s[3]
+                if w:
+                    try:
+                        wallet_meta[w] = _extract_gmgn_trade_meta(trade)
+                    except Exception:
+                        pass
         if hit_stop:
             break
         if new_on_page == 0:
@@ -441,6 +537,7 @@ def fetch_gmgn_swaps(ca: str, *, stop_sig=None, stop_ts=None, max_pages=40,
     elif mapped_seen and not swaps and not get_gmgn_last_error():
         _set_gmgn_error(
             f"GMGN returned trades, but all were below {MIN_SOL:g} SOL.")
+    _gmgn_wallet_meta["data"] = wallet_meta
     return swaps, newest_sig, newest_ts, hit_stop
 
 
@@ -534,7 +631,7 @@ def _fetch_page(api_key: str, pool: str, before=None, *, retries=4):
 
 def fetch_swaps(api_key: str, pool: str, ca: str, *, stop_sig=None,
                 stop_ts=None, max_pages=40, sleep=0.15,
-                use_gmgn: bool = False):
+                use_gmgn: bool = False, from_ts=None, to_ts=None):
     """Fetch swaps newest-first until stop_sig/stop_ts/max_pages.
 
     By default this uses the existing Helius Enhanced API path. When
@@ -543,7 +640,8 @@ def fetch_swaps(api_key: str, pool: str, ca: str, *, stop_sig=None,
     """
     if use_gmgn:
         return fetch_gmgn_swaps(ca, stop_sig=stop_sig, stop_ts=stop_ts,
-                                max_pages=max_pages, sleep=sleep)
+                                max_pages=max_pages, sleep=sleep,
+                                from_ts=from_ts, to_ts=to_ts)
     swaps, before = [], None
     newest_sig, newest_ts, hit_stop = None, None, False
     for _ in range(max_pages):
@@ -1103,6 +1201,111 @@ def swaps_between(ca: str, t0: float, t1: float):
            if t0 <= (s[2] or 0) < t1]
     out.sort(key=lambda s: s[2])
     return out
+
+
+def filter_swaps_by_time(swaps, start_ts: int, end_ts: int) -> list:
+    """Pure filter: return swaps where ``start_ts <= ts <= end_ts``.
+
+    ``swaps`` is an iterable of ``(side, sol, ts, wallet)`` tuples (the
+    standard CVD format).  Returns a new list, sorted by *ts* ascending.
+    Useful for focus-range analysis after a broader fetch.
+    """
+    out = [s for s in swaps if start_ts <= (s[2] or 0) <= end_ts]
+    out.sort(key=lambda s: s[2])
+    return out
+
+
+def summarize_swap_range(swaps, *, whale_min_sol=WHALE_SOL) -> dict:
+    """Comprehensive summary of a swap list.
+
+    Returns a dict with aggregate volume, wallet counts, conviction
+    split, top actors, and dominance — everything the focus-range panel
+    needs in a single call.
+
+    Keys: ``swaps``, ``buy_sol``, ``sell_sol``, ``net_sol``, ``buyers``,
+    ``sellers``, ``wallets``, ``whale_buy``, ``whale_sell``, ``whale_net``,
+    ``retail_net``, ``profiles``, ``conviction``, ``top_buyers``,
+    ``top_sellers``, ``top_net_wallets``, ``dominance_pct``.
+    """
+    if not swaps:
+        return {
+            "swaps": 0, "buy_sol": 0.0, "sell_sol": 0.0, "net_sol": 0.0,
+            "buyers": 0, "sellers": 0, "wallets": 0,
+            "whale_buy": 0.0, "whale_sell": 0.0, "whale_net": 0.0,
+            "retail_net": 0.0, "profiles": {}, "conviction": {},
+            "top_buyers": [], "top_sellers": [], "top_net_wallets": [],
+            "dominance_pct": 0.0,
+        }
+
+    buy_vol = sell_vol = 0.0
+    whale_buy = whale_sell = 0.0
+    buyer_wallets, seller_wallets = set(), set()
+    all_wallets = set()
+    wallet_buy = {}
+    wallet_sell = {}
+
+    for side, sol, ts, wallet in swaps:
+        sol = float(sol or 0)
+        if wallet:
+            all_wallets.add(wallet)
+        if side == "buy":
+            buy_vol += sol
+            if wallet:
+                buyer_wallets.add(wallet)
+                wallet_buy[wallet] = wallet_buy.get(wallet, 0.0) + sol
+            if sol >= whale_min_sol:
+                whale_buy += sol
+        else:
+            sell_vol += sol
+            if wallet:
+                seller_wallets.add(wallet)
+                wallet_sell[wallet] = wallet_sell.get(wallet, 0.0) + sol
+            if sol >= whale_min_sol:
+                whale_sell += sol
+
+    profiles = wallet_profiles(swaps)
+    conv = conviction_split(profiles, whale_min_sol=whale_min_sol)
+
+    # top buyers by SOL volume
+    top_buyers = sorted(
+        [(w, wallet_buy.get(w, 0.0)) for w in buyer_wallets],
+        key=lambda x: -x[1])[:10]
+    # top sellers by SOL volume
+    top_sellers = sorted(
+        [(w, wallet_sell.get(w, 0.0)) for w in seller_wallets],
+        key=lambda x: -x[1])[:10]
+    # top net wallets (buy - sell)
+    wallet_net = {}
+    for w in all_wallets:
+        wallet_net[w] = wallet_buy.get(w, 0.0) - wallet_sell.get(w, 0.0)
+    top_net_wallets = sorted(wallet_net.items(), key=lambda x: -abs(x[1]))[:10]
+
+    # dominance: largest single-wallet share of total volume
+    total_vol = buy_vol + sell_vol
+    max_single = max(
+        [wallet_buy.get(w, 0) + wallet_sell.get(w, 0)
+         for w in all_wallets] or [0])
+    dominance_pct = (max_single / total_vol * 100) if total_vol > 0 else 0.0
+
+    return {
+        "swaps": len(swaps),
+        "buy_sol": buy_vol,
+        "sell_sol": sell_vol,
+        "net_sol": buy_vol - sell_vol,
+        "buyers": len(buyer_wallets),
+        "sellers": len(seller_wallets),
+        "wallets": len(all_wallets),
+        "whale_buy": whale_buy,
+        "whale_sell": whale_sell,
+        "whale_net": whale_buy - whale_sell,
+        "retail_net": (buy_vol - whale_buy) - (sell_vol - whale_sell),
+        "profiles": profiles,
+        "conviction": conv,
+        "top_buyers": top_buyers,
+        "top_sellers": top_sellers,
+        "top_net_wallets": top_net_wallets,
+        "dominance_pct": dominance_pct,
+    }
 
 
 def flow_report(swaps) -> dict:
