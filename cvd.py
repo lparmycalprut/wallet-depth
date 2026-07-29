@@ -963,14 +963,19 @@ def daily_levels(pool: str, *, limit: int = 60, left: int = 2, right: int = 2,
 
 
 # ---------------------------------------------------------------------------
-# Thirty-day markup risk
+# Short-term markup risk (48h window)
 # ---------------------------------------------------------------------------
-MARKUP_DANGER = 300.0
-MARKUP_WARN = 150.0
+MARKUP_DANGER = 100.0   # +100% in 48h → red banner
+MARKUP_WARN = 50.0      # +50%  in 48h → orange warning
 
 
 def markup_from_candles(candles, price_now=None):
-    """Measure current markup from the lowest daily low in the last 30 bars.
+    """Measure current markup from the first candle's close in the window.
+
+    This covers the last 24-48h (depending on what the caller fetched).
+    The base is the closing price of the first candle, NOT the lowest low,
+    so a token that launched cheap 30 days ago won't falsely trigger as
+    ``+1500%`` — only the move within the window matters.
 
     ``candles`` uses the same ``{o, h, l, c}`` shape as
     :func:`fetch_candles`. At least three valid candles are required. When
@@ -978,9 +983,8 @@ def markup_from_candles(candles, price_now=None):
     peak includes ``price_now`` so a fresh high cannot produce a positive
     ``off_peak_pct``.
     """
-    recent = list(candles or [])[-30:]
     valid = []
-    for candle in recent:
+    for candle in (candles or []):
         try:
             low = float(candle["l"])
             high = float(candle["h"])
@@ -1000,7 +1004,8 @@ def markup_from_candles(candles, price_now=None):
     if not math.isfinite(price) or price <= 0:
         return None
 
-    base = min(candle[0] for candle in valid)
+    # Use the first candle's close as the base — measures move within window
+    base = valid[0][2]
     peak = max(max(candle[1] for candle in valid), price)
     markup_pct = (price / base - 1.0) * 100.0
     peak_markup_pct = (peak / base - 1.0) * 100.0
@@ -1019,7 +1024,7 @@ def markup_from_candles(candles, price_now=None):
 
 
 def markup_label(markup) -> str:
-    """Short UI label for a :func:`markup_from_candles` result."""
+    """Short UI label for a :func:`markup_from_candles` result (48h window)."""
     level = (markup or {}).get("level") if isinstance(markup, dict) else markup
     return {"danger": "🔴 MARKUP DANGER",
             "warn": "🟠 MARKUP WARNING",
@@ -1027,7 +1032,7 @@ def markup_label(markup) -> str:
 
 
 def markup_warning(markup) -> str:
-    """Action-oriented warning for elevated 30-day markup."""
+    """Action-oriented warning for elevated short-term markup."""
     if not isinstance(markup, dict) or markup.get("level") == "ok":
         return ""
     try:
@@ -1039,10 +1044,10 @@ def markup_warning(markup) -> str:
     if markup.get("past_peak") and off_peak < 0:
         peak_note = f", kini {abs(off_peak):.0f}% di bawah puncak"
     if markup.get("level") == "danger":
-        return (f"Harga sudah +{current:.0f}% dari low 30D{peak_note}. "
+        return (f"Harga sudah +{current:.0f}% dari low 24-48h{peak_note}. "
                 "Risiko mengejar markup dan menjadi exit liquidity sangat "
                 "tinggi; conviction datar bukan tanda aman.")
-    return (f"Harga sudah +{current:.0f}% dari low 30D{peak_note}. "
+    return (f"Harga sudah +{current:.0f}% dari low 24-48h{peak_note}. "
             "Entry mulai jauh dari base; tunggu struktur dan flow baru.")
 
 

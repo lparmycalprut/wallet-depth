@@ -1,9 +1,9 @@
-name: Watchlist snapshot (6-hourly)
+name: Watchlist snapshot (8-hourly)
 
 on:
   schedule:
-    # every 6 hours (00/06/12/18 UTC = 07/13/19/01 WIB)
-    - cron: "0 */6 * * *"
+    # every 8 hours (00/08/16 UTC = 07/15/23 WIB)
+    - cron: "0 */8 * * *"
   workflow_dispatch: {}   # manual run button
 
 permissions:

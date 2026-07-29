@@ -7,6 +7,24 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-07-29 — Markup 48h + red notes + cron 4h/8h
+
+### Yang berubah
+
+1. **`markup_from_candles()`** — base diganti dari lowest low 30D ke **first candle close** dalam window. Threshold: danger ≥+100%, warn ≥+50% (dulu 300/150). Fetch candle: **hourly 48h** (dulu daily 30). Token baru tidak kena false positive markup.
+2. **`fetch_watchlist_daily_candles()`** — sekarang fetch hourly 48h, bukan daily 30.
+3. **Screener notes** — notes berbahaya ("already ran", "entrapment", "downtrend", dll) di-highlight **merah menyala** di kolom Notes.
+4. **CVD workflow** — `cron: "20 */4 * * *"` (tiap 4 jam, dulu tiap jam).
+5. **Snapshot workflow** — `cron: "0 */8 * * *"` (tiap 8 jam, dulu tiap 6 jam).
+6. **Test** — `test_markup_contract` disesuaikan dengan base first-close 48h.
+
+### Verifikasi
+
+- `tests/test_markup_ai_prompt.py` — threshold 48h base first-close lulus.
+- Semua file Python yang diubah lulus `py_compile`.
+
+---
+
 ## 2026-07-29 — Audit bug/efisiensi + README sesuai perilaku program
 
 ### Bug dan risiko yang diperbaiki

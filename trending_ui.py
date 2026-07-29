@@ -141,7 +141,24 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
             (" · ".join(bits) if bits else "—") + "</span>",
             unsafe_allow_html=True)
         detail = r.get("notes") or r.get("wins") or "—"
-        cc[10].caption(detail)
+        # Highlight dangerous notes with red styling
+        danger_keywords = ["already ran", "downtrend", "entrapment", "trap",
+                          "pump", "dumped", "distribution", "rug",
+                          "insider", "bundler", "bot-degen"]
+        parts = detail.split("; ")
+        highlighted = []
+        for p in parts:
+            is_danger = any(kw in p.lower() for kw in danger_keywords)
+            if is_danger:
+                highlighted.append(
+                    f"<span style='color:#ef4444;font-weight:700;'>"
+                    f"{p}</span>")
+            else:
+                highlighted.append(p)
+        cc[10].markdown(
+            "<span style='font-size:0.62rem'>" +
+            "; ".join(highlighted) + "</span>",
+            unsafe_allow_html=True)
         with cc[11]:
             if on_analyze is not None:
                 if st.button("Analyze →", key=f"{key_prefix}_an_{ca}",

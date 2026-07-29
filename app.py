@@ -476,7 +476,7 @@ def fetch_watchlist_prices(cas: tuple) -> dict:
 
 @st.cache_data(ttl=900, show_spinner=False)
 def fetch_watchlist_daily_candles(pair_addresses: tuple) -> dict:
-    """Fetch watchlist daily candles concurrently, cached for 15 minutes."""
+    """Fetch watchlist hourly candles (48h), cached for 15 minutes."""
     from concurrent.futures import ThreadPoolExecutor
     from cvd import fetch_candles
 
@@ -485,8 +485,8 @@ def fetch_watchlist_daily_candles(pair_addresses: tuple) -> dict:
         return {}
 
     def fetch_one(pair):
-        return pair, fetch_candles(pair, timeframe="day", aggregate=1,
-                                   limit=30, timeout=8)
+        return pair, fetch_candles(pair, timeframe="hour", aggregate=1,
+                                   limit=48, timeout=8)
 
     workers = min(8, len(pairs))
     with ThreadPoolExecutor(max_workers=workers) as executor:

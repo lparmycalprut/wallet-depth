@@ -49,7 +49,7 @@ class TempPaths:
 
 
 def test_markup_contract():
-    print("\n[markup] 30-day base, thresholds, peak, and invalid input")
+    print("\n[markup] 48h window base (first candle close), thresholds, peak, and invalid input")
     with TempPaths():
         check(cvd.markup_from_candles([candle(1, 2, 1)] * 2) is None,
               "fewer than 3 candles returns None")
@@ -59,14 +59,16 @@ def test_markup_contract():
         check(cvd.markup_from_candles(sample, price_now="bad") is None,
               "invalid current price returns None")
 
-        # The very old low=1 must be ignored: only the latest 30 bars count.
-        bars = [candle(1, 2, 1)] + [candle(10, 50, 25, i)
-                                    for i in range(30)]
+        # Base is the FIRST candle's close, not the lowest low
+        # So a token that had a very old low=1 but recent candles at 10-50
+        # will only see the 48h move, not the ancient low.
+        bars = [candle(10, 20, 10)] + [candle(15, 50, 40, i)
+                                        for i in range(4)]
         result = cvd.markup_from_candles(bars, price_now=40)
         check(close(result["markup_pct"], 300.0),
-              "base is the lowest low in the latest 30 daily candles")
+              "base is the first candle close (10), so +300%")
         check(close(result["peak_markup_pct"], 400.0),
-              "peak markup is measured from the same 30D base")
+              "peak markup is measured from the same base")
         check(close(result["off_peak_pct"], -20.0),
               "off-peak is the signed drawdown from the peak")
         check(result["past_peak"] is True,
@@ -75,12 +77,12 @@ def test_markup_contract():
               "exactly +300% reaches danger")
 
         default_price = cvd.markup_from_candles(bars)
-        check(close(default_price["markup_pct"], 150.0),
-              "price_now=None uses the latest close")
-        check(default_price["level"] == "warn",
-              "exactly +150% reaches warning")
-        below = cvd.markup_from_candles(bars, price_now=24.9)
-        check(below["level"] == "ok", "below +150% remains ok")
+        check(close(default_price["markup_pct"], 300.0),
+              "price_now=None uses the latest close (40)")
+        check(default_price["level"] == "danger",
+              "+300% is still danger")
+        below = cvd.markup_from_candles(bars, price_now=14.9)
+        check(below["level"] == "ok", "below +50% remains ok")
 
 
 def test_analysis_windows():
