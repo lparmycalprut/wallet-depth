@@ -5,6 +5,7 @@ Both the main dashboard (``app.py``) and the 🔎 Screener page call
 :func:`render_trending` so the **exact same full detail** is shown in either
 place — one table, one set of columns, one caption, one code path to fix.
 """
+import re
 import streamlit as st
 
 from gmgn_screener import (FIT_OK, FIT_PRIME, FIT_WEAK, fit_color,
@@ -141,14 +142,23 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
             (" · ".join(bits) if bits else "—") + "</span>",
             unsafe_allow_html=True)
         detail = r.get("notes") or r.get("wins") or "—"
-        # Highlight dangerous notes with red styling
-        danger_keywords = ["already ran", "downtrend", "entrapment", "trap",
-                          "pump", "dumped", "distribution", "rug",
-                          "insider", "bundler", "bot-degen"]
+        # Highlight dangerous notes with red styling — only extreme %
         parts = detail.split("; ")
         highlighted = []
         for p in parts:
-            is_danger = any(kw in p.lower() for kw in danger_keywords)
+            is_danger = False
+            # Check for extreme percentages (≥100%) in the note
+            for kw in ["already ran", "downtrend", "entrapment", "trap",
+                       "pump", "dumped", "distribution", "rug",
+                       "insider", "bundler", "bot-degen"]:
+                if kw in p.lower():
+                    nums = re.findall(r'[+-]?\d+', p)
+                    extreme = any(int(n) >= 100 for n in nums)
+                    if extreme or kw in ("rug", "insider", "bundler",
+                                        "entrapment", "trap", "bot-degen",
+                                        "dumped", "distribution"):
+                        is_danger = True
+                    break
             if is_danger:
                 highlighted.append(
                     f"<span style='color:#ef4444;font-weight:700;'>"

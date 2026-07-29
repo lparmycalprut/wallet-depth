@@ -463,7 +463,7 @@ def score_token(t):
     # one wallet / one percent / a few hours of age can never move the
     # result by more than a couple of points.
     gates = []          # (severity 0-1, reason)
-    gates.append((_sev(chg24, 15, 35), f"already ran +{chg24:.0f}%"))
+    gates.append((_sev(chg24, 15, 60), f"already ran +{chg24:.0f}%"))
     gates.append((_sev(chg24, -15, -35), f"downtrend {chg24:.0f}%"))
     # smt is an integer count, so this band is extra wide: it has to spread
     # the gate over enough wallets that adding ONE never swings the score

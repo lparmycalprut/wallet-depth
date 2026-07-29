@@ -2,6 +2,13 @@
 
 ## Recent changes (2026-07-29)
 
+### 💧 LP Radar — rewrite total (`app.py`)
+- **Semua watchlist token** ditampilkan, tidak hanya yang growing
+- **Stability badge**: 🟢 KOKOH (conviction stabil ≥30%) · 🟡 GOYAH · 🔴 MELEMAH
+- **Multi-window sparkline**: 3 baris (6h / 12h / 24h) — lihat konsistensi conviction
+- **Volume-quality indicator**: 💪 STRONG (≥100 SOL + ≥40%) · 🟡 NOISY · 👍 LIGHT · ⚪ THIN · 💤 QUIET
+- Border card: hijau = kokoh, kuning = goyah, merah = melemah, glow hijau = grow 2x + kokoh
+
 ### 🎯 LP Radar — Warning badge (`app.py`)
 - Jika conviction **≥100%** → badge merah `⚠️ EXTREME`
 - Jika conviction **≥50%** → badge oranye `⚠️ HIGH`

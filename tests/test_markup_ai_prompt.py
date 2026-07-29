@@ -231,9 +231,12 @@ def test_ui_integration_guards():
 
     sweep_at = app_source.index("WATCHLIST MARKUP SAFETY")
     radar_at = app_source.index("if _conv_hist:")
-    grow_filter_at = app_source.index("if not grow1:")
-    check(sweep_at < radar_at < grow_filter_at,
-          "watchlist markup sweep runs outside the growing-card filter")
+    check(sweep_at < radar_at,
+          "watchlist markup sweep runs before the LP Radar block")
+    check("KOKOH" in app_source and "GOYAH" in app_source and "MELEMAH" in app_source,
+          "LP Radar has stability badges (KOKOH/GOYAH/MELEMAH)")
+    check("💪 STRONG" in app_source and "NOISY" in app_source and "QUIET" in app_source,
+          "LP Radar has volume-quality indicators")
     check("for offset in range(0, len(cas), 30)" in app_source and
           "cas[:30]" not in app_source,
           "DexScreener batching covers the entire watchlist")
@@ -245,8 +248,6 @@ def test_ui_integration_guards():
           "LP Radar card avoids invalid nested anchor markup")
     check("_markup[\"level\"] == \"danger\"" in app_source,
           "the independent red banner is limited to +300% danger")
-    check("⚠️ EXTREME" in app_source and "⚠️ HIGH" in app_source,
-          "existing LP Radar conviction badges are preserved")
     check("dexscreener.com" in app_source and "gmgn.ai" in app_source,
           "existing DexScreener and GMGN shortcuts are preserved")
     check(page_source.count('selectbox("Time window"') == 1,

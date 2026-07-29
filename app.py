@@ -568,8 +568,9 @@ if _wl:
                  "\n\n".join(_markup_dangers))
 
     # ------------------------------------------------------------------
-    # 💧 LP Radar — conviction trend per cron for every watchlist token.
-    # Growing / >30% conviction = pair still actively traded = LP fees.
+    # 💧 LP Radar — semua watchlist token.
+    # Setiap token punya card: stability badge, multi-window sparkline,
+    # volume-quality indicator, market phase, dan shortcut DexS/GMGN.
     # ------------------------------------------------------------------
     try:
         from cvd import load_conviction, detect_phase, PHASE_COLORS
@@ -577,9 +578,9 @@ if _wl:
     except Exception:
         _conv_hist = {}
     if _conv_hist:
-        st.markdown("**💧 LP Radar — conviction per cron (6h window)** "
-                    "<span style='opacity:0.6;font-size:0.72rem'>growing or "
-                    ">30% = pair alive & fee-worthy</span>",
+        st.markdown("**💧 LP Radar — semua watchlist token** "
+                    "<span style='opacity:0.6;font-size:0.72rem'>stabilitas "
+                    "conviction + multi-window + volume quality</span>",
                     unsafe_allow_html=True)
         _cards = []
         for _ca, _meta in _wl.items():
@@ -587,7 +588,7 @@ if _wl:
             if not pts:
                 continue
             sym = _meta.get("symbol") or "?"
-            if sym == "?":  # resolve from live prices (already fetched)
+            if sym == "?":
                 sym = ((_prices.get(_ca) or {}).get("symbol")
                        or _ca[:4] + "…")
             last = pts[-1]
@@ -596,48 +597,86 @@ if _wl:
             prev2_cv = pts[-3]["conviction"] if len(pts) >= 3 else None
             grow1 = prev_cv is not None and cv > prev_cv
             grow2 = grow1 and prev2_cv is not None and prev_cv > prev2_cv
-            # Radar entry criteria: only tokens whose conviction is growing.
-            #   1x growing  -> yellow card
-            #   2x in a row -> green glowing card (confirmed trend)
-            if not grow1:
-                continue
-            # sparkline (last 12 points)
-            spark_pts = pts[-12:]
-            vals = [p["conviction"] for p in spark_pts]
-            vmax = max(max(vals), 50) or 1
-            bars = "".join(
-                f"<span style='display:inline-block;width:5px;"
-                f"margin-right:1px;background:"
-                f"{'#22c55e' if v > 30 else '#64748b'};"
-                f"height:{max(3, v / vmax * 26):.0f}px;"
-                f"vertical-align:bottom;border-radius:1px;'></span>"
-                for v in vals)
-            trend_txt = (f"{prev_cv:.0f}→{cv:.0f}%" if prev_cv is not None
-                         else f"{cv:.0f}%")
-            trend_ic = "📈📈" if grow2 else "📈"
-            # warning badge when conviction is extreme (≥100%)
-            extreme_warn = ""
-            if cv >= 100:
-                extreme_warn = (
-                    "<span style='background:#ef4444;color:white;"
-                    "border-radius:4px;padding:0 5px;margin-left:4px;"
-                    "font-size:0.55rem;font-weight:800;"
-                    "white-space:nowrap;'>⚠️ EXTREME</span>")
-            elif cv >= 50:
-                extreme_warn = (
-                    "<span style='background:#f97316;color:white;"
-                    "border-radius:4px;padding:0 5px;margin-left:4px;"
-                    "font-size:0.55rem;font-weight:800;"
-                    "white-space:nowrap;'>⚠️ HIGH</span>")
-            if grow2:      # confirmed: 2 consecutive rises -> green glow
+
+            # ---- Stability badge (KOKOH / GOYAH / MELEMAH) ----
+            # Compare recent 3 points vs prior 3 points for momentum
+            recent3 = [p["conviction"] for p in pts[-3:]]
+            prior3 = [p["conviction"] for p in pts[-6:-3]] if len(pts) >= 6 else []
+            cv_avg_recent = sum(recent3) / len(recent3)
+            cv_avg_prior = sum(prior3) / len(prior3) if prior3 else cv_avg_recent
+            momentum = cv_avg_recent - cv_avg_prior
+            peak4 = max(p["conviction"] for p in pts[-4:]) if len(pts) >= 4 else cv
+            drop_from_peak = peak4 - cv
+
+            if cv >= 30 and momentum > -10 and drop_from_peak < 15:
+                stab_badge = "<span style='background:#22c55e;color:#0a0f1a;border-radius:4px;padding:0 5px;font-size:0.55rem;font-weight:800;white-space:nowrap;'>🟢 KOKOH</span>"
+                stab_col = "#22c55e"
+            elif cv >= 15 and drop_from_peak < 30:
+                stab_badge = "<span style='background:#facc15;color:#0a0f1a;border-radius:4px;padding:0 5px;font-size:0.55rem;font-weight:800;white-space:nowrap;'>🟡 GOYAH</span>"
+                stab_col = "#facc15"
+            else:
+                stab_badge = "<span style='background:#ef4444;color:white;border-radius:4px;padding:0 5px;font-size:0.55rem;font-weight:800;white-space:nowrap;'>🔴 MELEMAH</span>"
+                stab_col = "#ef4444"
+
+            # ---- Multi-window sparkline (6h / 12h / 24h) ----
+            # Each point = 6h window. Approx 12h = avg last 2, 24h = avg last 4.
+            cv_6h = cv
+            cv_12h = sum(p["conviction"] for p in pts[-2:]) / max(len(pts[-2:]), 1) if len(pts) >= 2 else cv
+            cv_24h = sum(p["conviction"] for p in pts[-4:]) / max(len(pts[-4:]), 1) if len(pts) >= 4 else cv
+            spark_max = max(cv_6h, cv_12h, cv_24h, 50) or 1
+            def _spark_bar(val, label):
+                h = max(4, val / spark_max * 22)
+                c = "#22c55e" if val > 30 else "#64748b"
+                return (f"<div style='display:flex;align-items:center;"
+                        f"margin:1px 0;'>"
+                        f"<span style='font-size:0.5rem;color:#64748b;"
+                        f"width:16px;'>{label}</span>"
+                        f"<span style='display:inline-block;width:5px;"
+                        f"margin-right:2px;background:{c};"
+                        f"height:{h:.0f}px;"
+                        f"vertical-align:middle;border-radius:1px;'></span>"
+                        f"<span style='font-size:0.5rem;color:{c};"
+                        f"margin-left:2px;'>{val:.0f}%</span></div>")
+            multi_bars = (_spark_bar(cv_6h, "6h")
+                          + _spark_bar(cv_12h, "12h")
+                          + _spark_bar(cv_24h, "24h"))
+
+            # ---- Volume-quality indicator ----
+            vol = last.get("vol") or 0
+            if vol >= 100 and cv >= 40:
+                vol_badge = "<span style='color:#22c55e;font-weight:800;'>💪 STRONG</span>"
+            elif vol >= 100 and cv < 40:
+                vol_badge = "<span style='color:#facc15;font-weight:800;'>🟡 NOISY</span>"
+            elif vol >= 30 and cv >= 40:
+                vol_badge = "<span style='color:#94a3b8;font-weight:800;'>👍 LIGHT</span>"
+            elif vol >= 30:
+                vol_badge = "<span style='color:#64748b;font-weight:800;'>⚪ THIN</span>"
+            else:
+                vol_badge = "<span style='color:#64748b;font-weight:800;'>💤 QUIET</span>"
+
+            # ---- Card border/glow based on stability + growth ----
+            if grow2 and stab_col == "#22c55e":
                 border, cv_col = "#22c55e", "#22c55e"
                 glow = "box-shadow:0 0 12px rgba(34,197,94,0.45);"
-            else:          # 1 rise -> yellow (watch, not confirmed yet)
+            elif grow1:
                 border, cv_col = "#facc15", "#facc15"
                 glow = "box-shadow:0 0 10px rgba(250,204,21,0.35);"
-            vol_txt = f"{last['vol']:,.0f} SOL/6h · {last['swaps']:,} swaps"
+            elif stab_col == "#22c55e":
+                border, cv_col = "#22c55e", "#64748b"
+                glow = ""
+            elif stab_col == "#facc15":
+                border, cv_col = "#facc15", "#64748b"
+                glow = ""
+            else:
+                border, cv_col = "#ef4444", "#ef4444"
+                glow = ""
+
+            trend_txt = (f"{prev_cv:.0f}→{cv:.0f}%" if prev_cv is not None
+                         else f"{cv:.0f}%")
+            trend_ic = "📈📈" if grow2 else ("📈" if grow1 else "📉" if prev_cv is not None and cv < prev_cv else "➡️")
+            vol_txt = f"{vol:,.0f} SOL/6h · {last.get('swaps') or 0:,} swaps"
             np_col = "#22c55e" if last["net_pure"] >= 0 else "#ef4444"
-            # market phase badge (heuristic, read-only from existing data)
+            # market phase badge
             try:
                 _ph = detect_phase(_ca, (_prices.get(_ca) or {}).get("chg24"))
             except Exception:
@@ -648,7 +687,7 @@ if _wl:
                 _ph.get("confidence", "low"), "·")
             _ph_reason = (_ph.get("reason", "") or "").replace("'", "&#39;")
             phase_html = (
-                f"<div style='margin-top:3px;'>"
+                f"<div style='margin-top:2px;'>"
                 f"<span title='{_ph_reason} (confidence: "
                 f"{_ph.get('confidence', 'low')}) — heuristic, not a "
                 f"signal' style='background:{_ph_col}22;border:1px solid "
@@ -660,15 +699,15 @@ if _wl:
             _cards.append(
                 f"<div style='flex:0 0 auto;background:#131a26;"
                 f"border:2px solid {border};{glow}border-radius:12px;"
-                f"padding:8px 14px;margin-right:10px;cursor:pointer;"
-                f"min-width:150px;'>"
+                f"padding:8px 12px;margin-right:10px;cursor:pointer;"
+                f"min-width:160px;'>"
                 f"<div style='font-weight:800;color:#e2e8f0;"
                 f"font-size:0.85rem;'>"
                 f"<a href='{_cvd_link}' target='_self' "
                 f"style='color:inherit;text-decoration:none;'>{sym} "
                 f"<span style='color:{cv_col};font-size:1.05rem;'>"
                 f"{cv:.0f}%</span> <span style='font-size:0.72rem;'>"
-                f"{trend_ic}</span>{extreme_warn}</a>"
+                f"{trend_ic}</span></a>"
                 f"<span style='float:right;font-size:0.7rem;'>"
                 f"<a href='https://dexscreener.com/solana/{_ca}' "
                 f"target='_blank' title='DexScreener' "
@@ -679,10 +718,12 @@ if _wl:
                 f"style='color:#64748b;text-decoration:none;'>"
                 f"<span style='margin:0 2px;'>⚡</span></a>"
                 f"</span></div>"
+                f"<div style='margin:2px 0 3px 0;display:flex;"
+                f"gap:4px;flex-wrap:wrap;'>{stab_badge} {vol_badge}</div>"
                 f"<a href='{_cvd_link}' target='_self' "
                 f"style='display:block;text-decoration:none;'>"
                 f"{phase_html}"
-                f"<div style='height:28px;margin:3px 0;'>{bars}</div>"
+                f"<div style='margin:3px 0;'>{multi_bars}</div>"
                 f"<div style='font-size:0.62rem;color:#64748b;'>"
                 f"conv {trend_txt} · <span style='color:{np_col};'>"
                 f"net {last['net_pure']:+,.0f}</span></div>"
@@ -695,20 +736,20 @@ if _wl:
                 "padding:2px 2px 10px 2px;scrollbar-width:thin;'>"
                 + "".join(_cards) + "</div>",
                 unsafe_allow_html=True)
-            st.caption("Radar shows ONLY tokens with growing conviction: "
-                       "🟡 yellow = grew once (watch, unconfirmed) · "
-                       "🟢 green glow = grew 2 crons in a row (confirmed "
-                       "trend — pair alive, LP fees flowing). Bars = "
-                       "conviction per cron (7d kept, green bar = >30%). "
-                       "Phase badge = Wyckoff-style heuristic (hover for "
-                       "reason; ·/··/··· = confidence) — NOT a trading "
-                       "signal. 🟠 HIGH = conviction ≥50%, 🔴 EXTREME = "
-                       "≥100% — Click a card for the full CVD page "
-                       "analysis.")
+            st.caption("**🟢 KOKOH** = conviction stabil ≥30%, turun <15% dari puncak · "
+                       "**🟡 GOYAH** = conviction ≥15%, masih di atas zona mati · "
+                       "**🔴 MELEMAH** = conviction rendah atau anjlok >30% dari puncak. "
+                       "**💪 STRONG** = volume ≥100 SOL + conviction ≥40% · "
+                       "**🟡 NOISY** = volume besar tapi conviction rendah · "
+                       "**👍 LIGHT** = volume sedang, conviction ok · "
+                       "**⚪ THIN** = volume tipis · **💤 QUIET** = hampir tanpa volume. "
+                       "Multi-window sparkline: 6h (kiri) → 24h (kanan). "
+                       "Batang hijau = conviction >30%. Phase badge = Wyckoff-style "
+                       "heuristic — NOT a trading signal. Click card → CVD analysis.")
         else:
-            st.caption("💧 LP Radar: no watchlist token has growing "
-                       "conviction right now — cards appear when a token's "
-                       "conviction rises vs the previous cron run.")
+            st.caption("💧 LP Radar: semua watchlist token ditampilkan — "
+                       "card dengan border merah artinya conviction melemah, "
+                       "kuning = goyah, hijau = kokoh.")
 
 # clicking a ticker chip sets ?ca=... -> prefill + auto-analyze
 qp_ca = st.query_params.get("ca", "").strip()

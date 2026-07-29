@@ -7,6 +7,22 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-07-29 — LP Radar rewrite: semua token + stability + multi-window + volume
+
+### Yang berubah
+
+1. **LP Radar sekarang menampilkan SEMUA watchlist token**, tidak hanya yang growing. Border card: hijau = kokoh, kuning = goyah, merah = melemah, glow hijau = grow 2x + kokoh.
+2. **Stability badge**: 🟢 KOKOH (conviction stabil ≥30%, turun <15% dari puncak) · 🟡 GOYAH · 🔴 MELEMAH.
+3. **Multi-window sparkline**: 3 baris (6h / 12h / 24h) — lihat apakah conviction konsisten di semua jendela atau hanya spike sesaat.
+4. **Volume-quality indicator**: 💪 STRONG (≥100 SOL + ≥40%) · 🟡 NOISY · 👍 LIGHT · ⚪ THIN · 💤 QUIET.
+5. **Test** — `test_ui_integration_guards` diperbarui: cek keberadaan badge KOKOH/GOYAH/MELEMAH dan volume-quality indicator.
+
+### Verifikasi
+
+- Semua 3 suite tes lulus (markup + guard + scoring).
+
+---
+
 ## 2026-07-29 — Markup 48h + red notes + cron 4h/8h
 
 ### Yang berubah
