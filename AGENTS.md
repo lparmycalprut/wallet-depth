@@ -136,6 +136,15 @@ Jebakan yang sudah pernah menggigit:
   Lihat `docs/gmgn_api.md`. PR #5 tambah `fwr` (`fresh_wallet_rate`) dan
   `t50` (`top_50_holder_rate`) — kalau GMGN rename, `_first()` akan jatuh
   ke default 0.0 dan penalty tidak kena. Pantau di run berikutnya.
+- **Toggle CVD GMGN Trades API.** `app.py` dan `pages/4_📊_CVD.py`
+  punya checkbox `🔄 Use GMGN Trades API` (default OFF). OFF tetap Helius;
+  ON wajib lewat `cvd.fetch_swaps(..., use_gmgn=True)` ke
+  `https://gmgn.ai/vas/api/v1/token_trades/sol/{ca}`. Mapping ada di
+  `cvd.gmgn_trade_to_swap`: `event` → buy/sell,
+  `quote_amount`/`amount_usd` → SOL-equivalent, `timestamp` → ts,
+  `maker` → wallet. Jangan balik ke helper lama `gmgn_screener` yang
+  memakai estimasi SOL fixed; error GMGN harus tampil via
+  `cvd.get_gmgn_last_error()` dan tidak boleh crash.
 - **Jangan commit `config.json`** (berisi API key, sudah di `.gitignore`).
 - **LP Radar 48h butuh ≥8 cron point (≥2 hari).** Sebelum itu, sparkline
   baris ke-4 mirror 24h supaya tidak misleading ke 0%. Konvensi ini di-

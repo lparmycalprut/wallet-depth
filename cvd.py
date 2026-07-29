@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""On-chain CVD (Cumulative Volume Delta) via Helius Enhanced API.
+"""On-chain CVD via Helius Enhanced API, with optional GMGN trades.
 
 Every DEX swap has a definite direction (no aggressor guessing like on CEX):
   token OUT of pool  -> user BUY
@@ -135,6 +135,314 @@ def _quote_rates() -> dict:
     usd_to_sol = 1.0 / sp if sp else 0.0
     return {SOL_MINT: 1.0, USDC_MINT: usd_to_sol, USDT_MINT: usd_to_sol}
 
+GMGN_TRADES_URL = "https://gmgn.ai/vas/api/v1/token_trades/sol/{ca}"
+GMGN_PAGE_LIMIT = 100
+GMGN_HEADERS = {
+    "accept": "application/json, text/plain, */*",
+    "accept-language": "en-US,en;q=0.9,id;q=0.8",
+    "origin": "https://gmgn.ai",
+    "referer": "https://gmgn.ai/",
+    "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                   "Chrome/150.0.0.0 Safari/537.36"),
+}
+_gmgn_last = {"error": ""}
+
+
+def _set_gmgn_error(message: str) -> None:
+    _gmgn_last["error"] = str(message or "").strip()
+
+
+def get_gmgn_last_error() -> str:
+    """Last human-readable GMGN fetch problem, if any.
+
+    The UI reads this after an empty GMGN result so users see whether the
+    endpoint was empty, Cloudflare-blocked, rate-limited, or shape-changed.
+    """
+    return _gmgn_last.get("error") or ""
+
+
+def _as_float(value, default=0.0) -> float:
+    if value is None or isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        s = str(value).strip().replace(",", "")
+        if not s:
+            return default
+        return float(s)
+    except Exception:
+        return default
+
+
+def _first_nested(obj, *paths, default=None):
+    """First non-empty value from dotted paths in a nested GMGN dict."""
+    if not isinstance(obj, dict):
+        return default
+    for path in paths:
+        cur = obj
+        ok = True
+        for part in str(path).split("."):
+            if isinstance(cur, dict) and part in cur:
+                cur = cur.get(part)
+            else:
+                ok = False
+                break
+        if ok and cur not in (None, ""):
+            return cur
+    return default
+
+
+def _normalize_ts(value) -> int:
+    ts = _as_float(value, 0.0)
+    if ts > 10_000_000_000:  # milliseconds / microseconds-ish
+        ts /= 1000.0
+    if ts > 10_000_000_000:
+        ts /= 1000.0
+    return int(ts) if ts > 0 else 0
+
+
+def _gmgn_trade_key(trade: dict) -> str:
+    key = _first_nested(
+        trade, "id", "transaction_hash", "tx_hash", "txHash", "signature",
+        "hash", "tx", default="")
+    if key:
+        return str(key)
+    maker = _first_nested(trade, "maker", "wallet", "maker_info.address",
+                          "address", default="")
+    ts = _normalize_ts(_first_nested(trade, "timestamp", "time",
+                                     "block_time", "created_at"))
+    ev = _first_nested(trade, "event", "side", "action", default="")
+    return f"gmgn:{maker}:{ts}:{ev}"
+
+
+def _gmgn_side(trade: dict) -> str | None:
+    raw = str(_first_nested(trade, "event", "side", "action",
+                            "trade_type", default="")).lower()
+    if "buy" in raw:
+        return "buy"
+    if "sell" in raw:
+        return "sell"
+    return None
+
+
+def _gmgn_sol_equivalent(trade: dict) -> float:
+    """Map GMGN quote_amount/amount_usd into SOL-equivalent volume."""
+    quote_amount = _as_float(_first_nested(
+        trade, "quote_amount", "quoteAmount", "quote_amount_ui",
+        "quoteAmountUi", "quote_amount_decimal"), 0.0)
+    quote_addr = str(_first_nested(
+        trade, "quote_address", "quote_token_address", "quote_mint",
+        "quote_token.address", "quoteToken.address", default="") or "")
+    quote_sym = str(_first_nested(
+        trade, "quote_symbol", "quote_token.symbol", "quoteToken.symbol",
+        default="") or "").lower()
+
+    if quote_amount > 0:
+        if quote_addr in (USDC_MINT, USDT_MINT) or quote_sym in ("usdc",
+                                                                  "usdt"):
+            sp = get_sol_price()
+            return quote_amount / sp if sp else 0.0
+        # Most GMGN payloads use decimal SOL here. If the value is raw
+        # lamports, normalize it instead of producing absurd whale volume.
+        if (not quote_addr or quote_addr == SOL_MINT or quote_sym in
+                ("sol", "wsol")) and quote_amount > 10_000_000:
+            quote_amount /= 1_000_000_000
+        return quote_amount
+
+    usd_amount = _as_float(_first_nested(
+        trade, "amount_usd", "amountUSD", "cost_usd", "costUsd", "usd",
+        "value_usd", "valueUsd"), 0.0)
+    if usd_amount > 0:
+        sp = get_sol_price()
+        return usd_amount / sp if sp else 0.0
+    return 0.0
+
+
+def gmgn_trade_to_swap(trade: dict):
+    """Convert one GMGN trade into (side, sol_equivalent, ts, wallet)."""
+    if not isinstance(trade, dict):
+        return None
+    side = _gmgn_side(trade)
+    sol_eq = _gmgn_sol_equivalent(trade)
+    ts = _normalize_ts(_first_nested(
+        trade, "timestamp", "time", "block_time", "created_at",
+        "createdAt"))
+    wallet = _first_nested(trade, "maker", "wallet", "maker_info.address",
+                           "address", "user_address", default="") or ""
+    if side not in ("buy", "sell") or sol_eq <= 0 or ts <= 0:
+        return None
+    return (side, float(sol_eq), int(ts), str(wallet))
+
+
+def _find_trade_list(obj):
+    """Locate the trade array across several GMGN response shapes."""
+    if isinstance(obj, list):
+        return [x for x in obj if isinstance(x, dict)]
+    if not isinstance(obj, dict):
+        return []
+    priority = ("trades", "history", "activities", "items", "list",
+                "rows", "transactions", "result", "data")
+    for key in priority:
+        if key in obj:
+            found = _find_trade_list(obj.get(key))
+            if found:
+                return found
+    for val in obj.values():
+        found = _find_trade_list(val)
+        if found:
+            return found
+    return []
+
+
+def _gmgn_cursor(payload, trades) -> str | None:
+    cur = _first_nested(
+        payload, "data.next", "data.next_cursor", "data.nextCursor",
+        "data.cursor", "pagination.next", "pagination.next_cursor",
+        "next", "next_cursor", "nextCursor", "cursor", default=None)
+    return str(cur) if cur else None
+
+
+def _gmgn_http_get(url: str, *, params: dict, timeout: int):
+    """GET GMGN with curl_cffi browser TLS when installed; fallback safe."""
+    try:
+        from curl_cffi import requests as cr
+        last_exc = None
+        for imp in ("chrome", "chrome131", "safari17_0"):
+            try:
+                return cr.get(url, params=params, headers=GMGN_HEADERS,
+                              impersonate=imp, timeout=timeout)
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+        if last_exc:
+            raise last_exc
+    except ImportError:
+        return requests.get(url, params=params, headers=GMGN_HEADERS,
+                            timeout=timeout)
+
+
+def _fetch_gmgn_page(ca: str, *, cursor=None, limit=GMGN_PAGE_LIMIT,
+                     timeout=25, retries=3):
+    url = GMGN_TRADES_URL.format(ca=ca)
+    params = {"limit": max(1, min(int(limit or GMGN_PAGE_LIMIT), 100))}
+    if cursor:
+        params["cursor"] = cursor
+    delay = 0.5
+    last = ""
+    for _ in range(retries):
+        try:
+            r = _gmgn_http_get(url, params=params, timeout=timeout)
+            status = getattr(r, "status_code", None)
+            if status != 200:
+                last = f"HTTP {status}"
+                if status in (408, 425, 429) or (status and status >= 500):
+                    time.sleep(delay)
+                    delay *= 2
+                    continue
+                _set_gmgn_error(f"GMGN Trades API returned {last}.")
+                return None, None
+            payload = r.json() or {}
+            if isinstance(payload, dict):
+                code = payload.get("code")
+                if code not in (None, 0, "0", "success"):
+                    msg = payload.get("message") or payload.get("msg") or code
+                    last = f"api code={code} {msg}"
+                    _set_gmgn_error(f"GMGN Trades API returned {last}.")
+                    return None, None
+            trades = _find_trade_list(payload)
+            return trades, _gmgn_cursor(payload, trades)
+        except Exception as exc:  # noqa: BLE001
+            last = f"{type(exc).__name__}: {exc}"
+            time.sleep(delay)
+            delay *= 2
+    _set_gmgn_error(f"GMGN Trades API fetch failed: {last or 'no response'}.")
+    return None, None
+
+
+def fetch_gmgn_swaps(ca: str, *, stop_sig=None, stop_ts=None, max_pages=40,
+                     sleep=0.15, page_limit=GMGN_PAGE_LIMIT):
+    """Fetch GMGN Token Trades and map them to CVD swap tuples.
+
+    GMGN fields are mapped as requested:
+    ``event`` -> buy/sell, ``quote_amount``/``amount_usd`` -> SOL-equivalent,
+    ``timestamp`` -> ts, and ``maker`` -> wallet.
+
+    Returns the same tuple shape as :func:`fetch_swaps`:
+    ``(swaps, newest_sig, newest_ts, hit_stop)``. On API failure or an empty
+    response it returns an empty list and records a readable reason in
+    :func:`get_gmgn_last_error` instead of raising.
+    """
+    _set_gmgn_error("")
+    swaps, cursor = [], None
+    newest_sig, newest_ts, hit_stop = None, None, False
+    seen_trades, seen_cursors = set(), set()
+    raw_seen = mapped_seen = 0
+    stopped_by_cutoff = False
+
+    for _ in range(max_pages):
+        raw_trades, next_cursor = _fetch_gmgn_page(
+            ca, cursor=cursor, limit=page_limit)
+        if raw_trades is None:
+            break
+        if not raw_trades:
+            break
+        raw_seen += len(raw_trades)
+        raw_trades = sorted(
+            raw_trades,
+            key=lambda t: _normalize_ts(_first_nested(
+                t, "timestamp", "time", "block_time", "created_at")),
+            reverse=True)
+        new_on_page = 0
+        for trade in raw_trades:
+            key = _gmgn_trade_key(trade)
+            if key in seen_trades:
+                continue
+            seen_trades.add(key)
+            new_on_page += 1
+            ts = _normalize_ts(_first_nested(
+                trade, "timestamp", "time", "block_time", "created_at"))
+            if newest_sig is None:
+                newest_sig, newest_ts = key, ts
+            if stop_sig and key == stop_sig:
+                hit_stop = True
+                break
+            if stop_ts and ts and ts <= stop_ts:
+                hit_stop = True
+                stopped_by_cutoff = True
+                break
+            s = gmgn_trade_to_swap(trade)
+            if s:
+                mapped_seen += 1
+                if s[1] >= MIN_SOL:
+                    swaps.append(s)
+        if hit_stop:
+            break
+        if new_on_page == 0:
+            _set_gmgn_error("GMGN pagination returned duplicate trades only.")
+            break
+        cursor = next_cursor
+        if not cursor and len(raw_trades) >= page_limit:
+            cursor = _gmgn_trade_key(raw_trades[-1])
+        if not cursor or cursor in seen_cursors:
+            break
+        seen_cursors.add(cursor)
+        time.sleep(sleep)
+
+    if not raw_seen and not get_gmgn_last_error():
+        _set_gmgn_error("GMGN Trades API returned no trades for this token.")
+    elif stopped_by_cutoff and not swaps and not get_gmgn_last_error():
+        _set_gmgn_error("GMGN returned no trades newer than the selected "
+                        "window.")
+    elif raw_seen and not mapped_seen and not get_gmgn_last_error():
+        _set_gmgn_error(
+            "GMGN returned trades, but none had event/timestamp/volume "
+            "fields that could be mapped to CVD swaps.")
+    elif mapped_seen and not swaps and not get_gmgn_last_error():
+        _set_gmgn_error(
+            f"GMGN returned trades, but all were below {MIN_SOL:g} SOL.")
+    return swaps, newest_sig, newest_ts, hit_stop
+
 
 def _load_json_tolerant(path):
     """Load JSON; if the file contains git conflict markers, parse the
@@ -225,9 +533,17 @@ def _fetch_page(api_key: str, pool: str, before=None, *, retries=4):
 
 
 def fetch_swaps(api_key: str, pool: str, ca: str, *, stop_sig=None,
-                stop_ts=None, max_pages=40, sleep=0.15):
+                stop_ts=None, max_pages=40, sleep=0.15,
+                use_gmgn: bool = False):
     """Fetch swaps newest-first until stop_sig/stop_ts/max_pages.
-    Returns (swaps, newest_sig, newest_ts, hit_stop)."""
+
+    By default this uses the existing Helius Enhanced API path. When
+    ``use_gmgn`` is true, it uses GMGN Token Trades API instead and returns
+    the same tuple shape.
+    """
+    if use_gmgn:
+        return fetch_gmgn_swaps(ca, stop_sig=stop_sig, stop_ts=stop_ts,
+                                max_pages=max_pages, sleep=sleep)
     swaps, before = [], None
     newest_sig, newest_ts, hit_stop = None, None, False
     for _ in range(max_pages):

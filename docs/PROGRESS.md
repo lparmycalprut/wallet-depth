@@ -7,6 +7,30 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-07-29 — Toggle GMGN Trades API untuk sumber CVD
+
+### Perubahan
+
+- `cvd.py` sekarang punya jalur GMGN Token Trades API: `fetch_swaps(...,
+  use_gmgn=True)` memanggil `https://gmgn.ai/vas/api/v1/token_trades/sol/{ca}`.
+- Mapping GMGN: `event` → buy/sell, `quote_amount` (atau fallback
+  `amount_usd`/harga SOL) → SOL-equivalent, `timestamp` → ts, dan `maker`
+  → wallet. Ada normalisasi timestamp ms dan heuristik lamports untuk
+  `quote_amount` SOL yang raw.
+- UI utama (`app.py`) dan halaman deep CVD (`pages/4_📊_CVD.py`) punya
+  checkbox `🔄 Use GMGN Trades API`. Default OFF tetap Helius/incremental
+  store seperti sebelumnya; ON bypass Helius untuk fetch swap dan menampilkan
+  pesan jelas jika GMGN kosong/gagal.
+- Error GMGN disimpan lewat `cvd.get_gmgn_last_error()` supaya kegagalan API,
+  response kosong, schema berubah, atau semua trade di bawah threshold tidak
+  membuat aplikasi crash.
+
+### Verifikasi
+
+- `.venv/bin/python -m pytest tests/` — **33 passed**.
+
+---
+
 ## 2026-07-29 — LP Radar rewrite: semua token + stability + multi-window + volume
 
 ### Yang berubah
