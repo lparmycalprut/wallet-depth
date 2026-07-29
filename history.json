@@ -55,6 +55,34 @@
    "sells24": 2572,
    "vol24": 350758.83,
    "source": "cron"
+  },
+  "2026-07-29": {
+   "total_holders": 1414,
+   "dust": 959,
+   "real": 455,
+   "real_mc_pct": 88.44119465671609,
+   "dust_mc_pct": 0.6629387372411895,
+   "marketcap": 195022.0,
+   "price": 0.0002013,
+   "tiers": {
+    ">$10": 455,
+    ">$100": 228,
+    ">$1K": 48,
+    ">$10K": 0,
+    ">$100K": 0,
+    ">$1M": 0
+   },
+   "ts": "2026-07-29T02:40:40",
+   "score": 75,
+   "top10_pct": 20.97,
+   "top5_pct": 12.29,
+   "top100_pct": 70.29,
+   "liq_pct_mc": 19.32,
+   "symbol": "BUNKEE",
+   "buys24": 1346,
+   "sells24": 1971,
+   "vol24": 216503.62,
+   "source": "cron"
   }
  },
  "AkchGAUdXXRGHt3HXaHbTvw3JLGUwtJRmYnkG66wpump": {
@@ -173,6 +201,34 @@
    "sells24": 2939,
    "vol24": 325110.52,
    "source": "cron"
+  },
+  "2026-07-29": {
+   "total_holders": 3384,
+   "dust": 1778,
+   "real": 1606,
+   "real_mc_pct": 91.65184823862134,
+   "dust_mc_pct": 0.8078009621710652,
+   "marketcap": 477338.0,
+   "price": 0.000488,
+   "tiers": {
+    ">$10": 1606,
+    ">$100": 631,
+    ">$1K": 88,
+    ">$10K": 2,
+    ">$100K": 0,
+    ">$1M": 0
+   },
+   "ts": "2026-07-29T02:40:38",
+   "score": 82,
+   "top10_pct": 17.14,
+   "top5_pct": 11.52,
+   "top100_pct": 51.58,
+   "liq_pct_mc": 12.75,
+   "symbol": "RAKO",
+   "buys24": 2402,
+   "sells24": 3059,
+   "vol24": 374222.86,
+   "source": "cron"
   }
  },
  "MeDy6nEaqwRs6g8bDuthTrMJfV8WEQDHA7bSHm3pump": {
@@ -202,6 +258,126 @@
    "buys24": 9574,
    "sells24": 4473,
    "vol24": 269916.57,
+   "source": "cron"
+  }
+ },
+ "9gAVAtdnsrniW3GCwsvDeRPf5eJDjtT9S5bu1j7tpump": {
+  "2026-07-29": {
+   "total_holders": 1348,
+   "dust": 1140,
+   "real": 208,
+   "real_mc_pct": 93.373487115512,
+   "dust_mc_pct": 0.2409064752992002,
+   "marketcap": 497888.0,
+   "price": 0.0004979,
+   "tiers": {
+    ">$10": 208,
+    ">$100": 76,
+    ">$1K": 17,
+    ">$10K": 1,
+    ">$100K": 1,
+    ">$1M": 0
+   },
+   "ts": "2026-07-29T02:40:43",
+   "score": 53,
+   "top10_pct": 85.81,
+   "top5_pct": 83.09,
+   "top100_pct": 92.86,
+   "liq_pct_mc": 12.79,
+   "symbol": "dog",
+   "buys24": 3904,
+   "sells24": 3847,
+   "vol24": 631707.39,
+   "source": "cron"
+  }
+ },
+ "6Z6qeAuA45G8RrxG7hjZVdPHn1rNHtedJy9WAXg9pump": {
+  "2026-07-29": {
+   "total_holders": 1935,
+   "dust": 1430,
+   "real": 505,
+   "real_mc_pct": 85.38897854697764,
+   "dust_mc_pct": 1.1532893442249659,
+   "marketcap": 160602.0,
+   "price": 0.0001606,
+   "tiers": {
+    ">$10": 505,
+    ">$100": 189,
+    ">$1K": 40,
+    ">$10K": 0,
+    ">$100K": 0,
+    ">$1M": 0
+   },
+   "ts": "2026-07-29T02:40:45",
+   "score": 71,
+   "top10_pct": 20.49,
+   "top5_pct": 11.3,
+   "top100_pct": 69.28,
+   "liq_pct_mc": 26.8,
+   "symbol": "Tilly",
+   "buys24": 1522,
+   "sells24": 1852,
+   "vol24": 192675.37,
+   "source": "cron"
+  }
+ },
+ "DUYw2p3NC6zDdsSrazV4JdDFKtRk2K4mw764EWs2pump": {
+  "2026-07-29": {
+   "total_holders": 1755,
+   "dust": 1325,
+   "real": 430,
+   "real_mc_pct": 84.00875602302455,
+   "dust_mc_pct": 1.4129383635528043,
+   "marketcap": 112038.0,
+   "price": 0.0001147,
+   "tiers": {
+    ">$10": 430,
+    ">$100": 171,
+    ">$1K": 21,
+    ">$10K": 0,
+    ">$100K": 0,
+    ">$1M": 0
+   },
+   "ts": "2026-07-29T02:40:47",
+   "score": 69,
+   "top10_pct": 20.8,
+   "top5_pct": 12.67,
+   "top100_pct": 65.93,
+   "liq_pct_mc": 27.53,
+   "symbol": "Hoppy",
+   "buys24": 2392,
+   "sells24": 1998,
+   "vol24": 179800.8,
+   "source": "cron"
+  }
+ },
+ "6LLNiWXRZp8hn5oTFTHEo8ERbJS3QJfHSKhnTCqipump": {
+  "2026-07-29": {
+   "total_holders": 1289,
+   "dust": 789,
+   "real": 500,
+   "real_mc_pct": 87.28273155963213,
+   "dust_mc_pct": 0.7384118384713101,
+   "marketcap": 156626.0,
+   "price": 0.0001566,
+   "tiers": {
+    ">$10": 500,
+    ">$100": 218,
+    ">$1K": 29,
+    ">$10K": 0,
+    ">$100K": 0,
+    ">$1M": 0
+   },
+   "ts": "2026-07-29T02:40:49",
+   "score": 77,
+   "top10_pct": 26.17,
+   "top5_pct": 15.94,
+   "top100_pct": 67.74,
+   "liq_pct_mc": 21.4,
+   "symbol": "MEMIPEDE",
+   "buys24": 1012,
+   "sells24": 968,
+   "vol24": 99673.23,
    "source": "cron"
   }
  }
