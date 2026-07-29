@@ -40,6 +40,66 @@ API key dan setelan awal disimpan di **`config.json`** (satu folder dengan
   **💾 Simpan ke config.json** agar permanen.
 - Jika file terhapus, template kosong dibuat ulang otomatis saat app dijalankan.
 
+## 🔔 Notifikasi Telegram — dua jenis pesan
+
+Cron `cvd-update.yml` (tiap jam) mengirim **dua jenis pesan yang berbeda**,
+dan tiap pesan diberi caption di baris pertama supaya langsung kelihatan
+yang mana:
+
+| Caption | Sumber | Dasar | Isi |
+|---|---|---|---|
+| 📊 **CVD MONITOR** | `signals.py` | flow 6 jam + divergensi H1 | akumulasi/distribusi & divergensi |
+| 🛡️ **BREAKOUT GUARD** | `breakout_guard.py` | **level D1**, konfirmasi **close H4** | event level + siapa pelakunya + action plan |
+
+### Breakout Guard — cara kerjanya
+
+- **Support/resistance dari candle HARIAN (D1)**, pivot dengan konfirmasi 2
+  bar kiri-kanan, level yang berjarak <1,5% digabung. Level yang bertahan
+  satu hari penuh jauh lebih berarti daripada pivot H1.
+- **Keputusan hanya diambil saat candle H4 CLOSE.** Candle yang masih
+  berjalan selalu dibuang, jadi wick yang sudah dibeli balik di tengah
+  candle tidak pernah dianggap break.
+- **Lima jenis event:**
+
+  | Event | Arti |
+  |---|---|
+  | `breakout` | close H4 **di atas** resistance D1 |
+  | `failed_breakout` | wick menembus resistance tapi close balik di bawah |
+  | `breakdown` | close H4 **di bawah** support D1 |
+  | `spring` | wick menembus support tapi close balik di atas |
+  | `reclaim` | support yang hilang direbut lagi, maks **5 candle H4** |
+
+- **Tiap notifikasi menyebut siapa di balik candle itu** — whale vs retail,
+  jumlah wallet pembeli/penjual di tiap sisi, pure accumulator vs
+  distributor, dan aktor dominan. Jadi bukan cuma "harga break", tapi
+  "whale jual ke retail yang beli" (hati-hati) atau "whale yang reclaim"
+  (lebih kuat).
+- **Semua event dicatat di `breakouts.json`** (file terpisah dari
+  `signals.json`), lengkap dengan candle + flow-nya. Event lanjutan
+  menyimpan `parent_id` ke break yang diselesaikannya dan mengisi
+  `outcome` (`reclaimed` / `failed` / `held` / `no_reclaim`), sehingga saat
+  terjadi spring atau reclaim riwayatnya bisa dianalisa.
+- **Notifikasi tidak hilang saat Telegram error** — teks pesan disimpan di
+  `breakouts.json` sampai benar-benar terkirim, lalu dicoba lagi di run
+  berikutnya (`flush_pending_alerts`).
+
+Uji tanpa jaringan: `python tests/test_breakout_guard.py`
+
+> ⚠️ **Satu langkah manual.** File `breakouts.json` perlu ikut di-commit oleh
+> cron, tapi workflow tidak bisa diubah dari sini (GitHub App tidak punya izin
+> `workflows`). Edit `.github/workflows/cvd-update.yml` dan tambahkan
+> `breakouts.json` di dua tempat pada step **Commit cvd.json**:
+>
+> ```yaml
+>           for f in cvd.json signals.json conviction.json levels.json breakouts.json; do
+>           ...
+>           git add cvd.json signals.json conviction.json levels.json breakouts.json
+> ```
+>
+> Tanpa ini guard tetap jalan dan notifikasi tetap terkirim, hanya riwayat
+> event-nya tidak tersimpan antar-run cron (jadi `parent_id` / `outcome`
+> dan retry alert tidak berfungsi).
+
 ## ⏰ Daily snapshot cron (GitHub Actions)
 
 Watchlisted CAs are snapshotted **automatically every day at 00:00 WIB**
