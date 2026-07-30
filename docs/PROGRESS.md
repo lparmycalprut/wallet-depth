@@ -7,6 +7,62 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-07-30 — Freshness sweep + Level 3 status + Quick Pick
+
+### Root cause
+
+LP Radar menampilkan conviction % dari `conviction.json` tanpa mengecek
+apakah data itu masih segar. Cron berjalan tiap 4 jam, tapi kalau
+missed run 2-3 kali (host down, GitHub rate limit, dst), conviction
+yang tampil bisa jadi 12+ jam. Pemilik trading pakai angka ini sebagai
+"is the pair still alive" — angka basi = keputusan basi = uang hilang.
+
+### Perubahan
+
+1. **`cvd.flow_freshness()` sekarang 3-level** (sebelumnya 2-level):
+   - `ok` (≤2.5h, fresh) — cocok dengan cron 4h + 1 missed run
+   - `warn` (≤12h, stale) — up to 3 missed runs, masih usable
+   - `danger` (>12h, very stale) — refuse to trust
+   - Konstanta `FRESH_MAX_AGE_S=150*60` dan `STALE_MAX_AGE_S=12*3600`
+     di-ekspos supaya UI bisa tune threshold tanpa edit logika.
+
+2. **`app.py` Freshness sweep** — di atas LP Radar:
+   - Sweep semua watchlist CAs
+   - Tampilkan warning `⏰` (warn) atau error `⏰` (danger) untuk token
+     yang stale
+   - Tombol **🔄 Force refresh now** kalau Helius tersedia —
+     panggil `update_token_cvd` + `record_conviction` per CA,
+     session-state dedup supaya user tidak sengaja refresh 2x
+   - LP Radar card juga hide angka conviction % (ganti jadi `⏰ stale`)
+     kalau very_stale
+
+3. **Quick Pick expander** — dropdown watchlist + tombol "Gunakan"
+   supaya pemilik bisa copy CA ke kolom Analyze tanpa copy-paste manual.
+   Tidak auto-analyze (sesuai permintaan pemilik: review dulu).
+
+4. **Fix bug: import `flow_check_panel` di `app.py`** — sebelumnya
+   di-import di dalam `if _conv_hist:` block, tapi dipanggil di
+   freshness sweep yang jalan SEBELUM block itu. Kalau watchlist ada
+   tapi conviction.json kosong (kasus "baru deploy" atau cron belum
+   jalan), freshness sweep crash dengan `NameError`. Import dipindah
+   ke scope yang lebih atas (sebaris dengan `markup_from_candles`).
+
+5. **LP Radar card restyle** — sparkline pakai flexbox row (label / bar
+   / value), badge KOKOH/GOYAH/MELEMAH pakai padding lebih besar,
+   DexScreener/GMGN shortcut siblings (bukan nested `<a>`).
+
+### Verifikasi
+
+- `tests/test_flow_safety.py` — 7 case baru untuk `flow_freshness`
+  (no-history, 30min, 4h, 16h, edge 149min, edge 3h, edge 11.9h,
+  edge 12.1h). **ALL PASSED**.
+- 4 test suite lain masih PASSED (breakout_guard, scoring_continuity,
+  markup_ai_prompt, helius_rotation).
+- `python -m py_compile app.py cvd.py tests/test_flow_safety.py` —
+  clean.
+
+---
+
 ## 2026-07-30 — Helius multi-key dipakai oleh semua alur
 
 ### Root cause

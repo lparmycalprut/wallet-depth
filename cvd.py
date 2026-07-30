@@ -1527,7 +1527,10 @@ def analysis_windows(requested_hours) -> list:
 # e.g. "🩸 hard distribution" or "⏰ data stale (4.2h)". They are *advisory*
 # — none of them block scoring, they only colour the panel.
 # ---------------------------------------------------------------------------
-FRESH_MAX_AGE_S = 90 * 60       # 90 min — the cron target cadence
+FRESH_MAX_AGE_S = 150 * 60      # 2.5h — covers the 4h cron cadence
+                                  #         with one missed run of margin
+STALE_MAX_AGE_S = 12 * 3600     # 12h — up to 3 missed cron runs is still
+                                  #         "stale", not "do not trust"
 PERSISTENCE_MIN_RUN = 3         # 3 consecutive cron points all the same way
 PERSISTENCE_MIN_NET_SOL = 5.0   # each of those 3 points must move ≥5 SOL net
 DISTRIBUTION_DROP_PCT = 30.0    # 30% drop of net_pure from peak = signal
@@ -1538,30 +1541,49 @@ QUALITY_SWAP_BAND = (5, 50)     # swap count below this = dead window
 def flow_freshness(ca: str) -> dict:
     """Is the conviction history still being updated?
 
-    Returns ``{"ok": bool, "age_min": float, "reason": str, "last_ts": int}``.
-    *ok* is True when the most recent cron point is younger than
-    :data:`FRESH_MAX_AGE_S`. The reason is a short, UI-ready sentence
-    ("fresh", "stale (4.2h)", "never seen"…).
+    Returns ``{"ok": bool, "age_min": float, "level": str, "reason": str,
+    "last_ts": int}``.
+
+    The cron runs every 4h so a healthy point is always ≤4h old; the
+    ``FRESH_MAX_AGE_S`` / ``STALE_MAX_AGE_S`` constants carve three
+    bands:
+
+    * **fresh** (<= ``FRESH_MAX_AGE_S``): ok=True, level="ok".
+    * **stale** (≤``STALE_MAX_AGE_S``): ok=False, level="warn". The
+      point is older than one full cron cycle but is still useful —
+      at most 3 missed runs.
+    * **very stale** (>``STALE_MAX_AGE_S``): ok=False, level="danger".
+      3+ missed runs; the UI should refuse to surface the conviction
+      and offer a manual refresh.
     """
     pts = (load_conviction() or {}).get(ca) or []
     if not pts:
-        return {"ok": False, "age_min": float("inf"),
+        return {"ok": False, "age_min": float("inf"), "level": "danger",
                 "reason": "never seen — cron has not run for this CA yet",
                 "last_ts": 0}
     last_ts = int(pts[-1].get("ts") or 0)
     if last_ts <= 0:
-        return {"ok": False, "age_min": float("inf"),
+        return {"ok": False, "age_min": float("inf"), "level": "danger",
                 "reason": "no timestamp on last point", "last_ts": 0}
     age = max(0.0, time.time() - last_ts)
     age_min = age / 60.0
-    if age_min <= FRESH_MAX_AGE_S / 60:
+    age_h = age / 3600.0
+    if age <= FRESH_MAX_AGE_S:
+        level = "ok"
         msg = f"fresh ({age_min:.0f} min ago)"
-    elif age_min <= 6 * 60:
-        msg = f"stale ({age_min / 60:.1f}h ago — cron may be lagging)"
+    elif age <= STALE_MAX_AGE_S:
+        level = "warn"
+        runs_behind = int(round(age_h / 4))
+        run_word = "run" if runs_behind == 1 else "runs"
+        msg = (f"stale ({age_h:.1f}h ago — cron is "
+               f"{runs_behind} {run_word} behind)")
     else:
-        msg = f"very stale ({age_min / 60:.1f}h ago — do not trust the read)"
-    return {"ok": age_min <= FRESH_MAX_AGE_S / 60,
-            "age_min": age_min, "reason": msg, "last_ts": last_ts}
+        level = "danger"
+        msg = (f"very stale ({age_h:.1f}h ago — do not trust the read, "
+               f"hit 🔄 Force refresh to backfill)")
+    return {"ok": level == "ok",
+            "age_min": age_min, "level": level, "reason": msg,
+            "last_ts": last_ts}
 
 
 def flow_persistence(ca: str, *, last_n: int = 3) -> dict:

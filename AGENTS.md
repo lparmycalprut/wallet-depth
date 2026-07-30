@@ -158,6 +158,13 @@ Jebakan yang sudah pernah menggigit:
   `quality`) adalah *advisory*, bukan blocker. Mereka tidak masuk ke
   scoring; hanya menampilkan badge di panel. Kalau mau dipakai sebagai
   gate, tambahkan test dulu, jangan diubah diam-diam.
+- **Freshness 3-level** — `flow_freshness()` mengembalikan `level`
+  `ok`/`warn`/`danger` dengan ambang `FRESH_MAX_AGE_S=2.5h` dan
+  `STALE_MAX_AGE_S=12h` (lihat konstanta di `cvd.py`). Konstanta ini
+  *digunakan* oleh `app.py` Freshness sweep, dan kalau diubah
+  perilakunya langsung bergeser. Test di
+  `tests/test_flow_safety.py::test_flow_freshness` wajib tetap
+  hijau — kalau naik/turun band, update test bersamaan.
 
 ## 8. Status & langkah berikutnya
 

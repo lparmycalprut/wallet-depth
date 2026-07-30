@@ -538,8 +538,11 @@ if _wl:
 
     # This safety sweep deliberately runs before, and independently of, the
     # LP Radar's `grow1` filter. A +300% token must remain visible even when
-    # its conviction is flat and therefore has no radar card.
-    from cvd import markup_from_candles, markup_label, markup_warning
+    # its conviction is flat and therefore has no radar card. We also import
+    # the freshness helpers here (used by the ⏰ sweep below) so the import
+    # is available BEFORE the LP Radar block decides whether to render.
+    from cvd import (markup_from_candles, markup_label, markup_warning,
+                     flow_check_panel)
     _watchlist_pairs = tuple(
         market.get("pair") for market in _prices.values()
         if market.get("pair"))
@@ -563,12 +566,102 @@ if _wl:
                  "\n\n".join(_markup_dangers))
 
     # ------------------------------------------------------------------
+    # ⏰ Freshness sweep — surface "stale" conviction data BEFORE the
+    # user reads the cards. Conviction is recorded by the 4h cron; if
+    # that cron missed, the LP Radar numbers are misleading. The sweep
+    # groups watchlist tokens by freshness level and offers a single
+    # "Force refresh now" button (Helius required) that backfills the
+    # stale tokens in-place.
+    # ------------------------------------------------------------------
+    _freshness_state_key = "stale_watchlist_cas"
+    if _freshness_state_key not in st.session_state:
+        st.session_state[_freshness_state_key] = set()  # CAs already refreshed
+    _stale_cas = []        # CAs with warn (recoverable) — auto-recoverable
+    _very_stale_cas = []   # CAs with danger — need manual refresh
+    _panel_by_ca = {}
+    if _wl:
+        for _fr_ca in _wl:
+            try:
+                _fr_panel = flow_check_panel(_fr_ca)
+                _fr = _fr_panel["freshness"]
+                _panel_by_ca[_fr_ca] = _fr
+                if _fr["level"] == "warn":
+                    _stale_cas.append(_fr_ca)
+                elif _fr["level"] == "danger":
+                    _very_stale_cas.append(_fr_ca)
+            except Exception:
+                pass
+    if _stale_cas or _very_stale_cas:
+        _very_stale_syms = ", ".join(
+            f"${_wl[_c].get('symbol', '?')}" for _c in _very_stale_cas[:5])
+        _stale_syms = ", ".join(
+            f"${_wl[_c].get('symbol', '?')}" for _c in _stale_cas[:5])
+        if _very_stale_cas:
+            st.error(
+                f"⏰ **{len(_very_stale_cas)} watchlist token(s) are very "
+                f"stale (last conviction update >12h ago).** The "
+                f"conviction %, KOKOH/GOYAH badge, and net_pure below "
+                f"are NOT trustworthy. Refresh to backfill: "
+                f"{_very_stale_syms}"
+                + (f" +{len(_very_stale_cas) - 5} more" if len(_very_stale_cas) > 5 else ""))
+        if _stale_cas and not _very_stale_cas:
+            st.warning(
+                f"⏰ **{len(_stale_cas)} watchlist token(s) are stale "
+                f"(4-12h since last cron).** Cards below still usable, "
+                f"but conviction trend may be missing the latest window. "
+                f"Tokens: {_stale_syms}"
+                + (f" +{len(_stale_cas) - 5} more" if len(_stale_cas) > 5 else ""))
+        # Force-refresh button — only meaningful if Helius is configured
+        if helius_keys:
+            _fr_cols = st.columns([1, 3])
+            if _fr_cols[0].button(
+                    f"🔄 Force refresh now ({len(_very_stale_cas) + len(_stale_cas)} token(s))",
+                    type="primary", key="fr_stale_btn",
+                    use_container_width=True):
+                _to_refresh = [c for c in (_very_stale_cas + _stale_cas)
+                               if c not in st.session_state[_freshness_state_key]]
+                if not _to_refresh:
+                    st.info("✅ All stale tokens already refreshed this session.")
+                else:
+                    _fr_pbar = st.progress(
+                        0.0, text="🔄 Backfilling stale tokens…")
+                    for _fr_i, _fr_ca in enumerate(_to_refresh):
+                        _fr_market = _prices.get(_fr_ca) or {}
+                        _fr_pool = _fr_market.get("pair")
+                        if not _fr_pool:
+                            continue
+                        try:
+                            from cvd import update_token_cvd, record_conviction
+                            update_token_cvd(
+                                helius_keys, _fr_ca, _fr_pool,
+                                max_pages=200)
+                            record_conviction(_fr_ca, window_h=6)
+                            st.session_state[_freshness_state_key].add(_fr_ca)
+                        except Exception as _fr_exc:
+                            st.warning(
+                                f"Backfill ${_wl[_fr_ca].get('symbol', '?')} "
+                                f"gagal: {_fr_exc}")
+                        _fr_pbar.progress(
+                            (_fr_i + 1) / len(_to_refresh),
+                            text=f"🔄 Backfilled "
+                                 f"{_fr_i + 1}/{len(_to_refresh)}…")
+                    _fr_pbar.empty()
+                    st.success(
+                        f"✅ Backfilled {len(_to_refresh)} token(s). "
+                        f"Reload page (F5) untuk lihat angka terbaru."
+                    )
+            _fr_cols[1].caption(
+                "Calls `update_token_cvd` + `record_conviction` for each "
+                "stale token (Helius credits — usually under 50 calls per "
+                "token). Skips CAs already refreshed in this session.")
+
+    # ------------------------------------------------------------------
     # 💧 LP Radar — semua watchlist token.
     # Setiap token punya card: stability badge, multi-window sparkline,
     # volume-quality indicator, market phase, dan shortcut DexS/GMGN.
     # ------------------------------------------------------------------
     try:
-        from cvd import load_conviction, detect_phase, PHASE_COLORS, flow_check_panel, markup_from_candles, markup_warning
+        from cvd import load_conviction, detect_phase, PHASE_COLORS, markup_from_candles, markup_warning
         _conv_hist = load_conviction()
     except Exception:
         _conv_hist = {}
@@ -604,13 +697,13 @@ if _wl:
             drop_from_peak = peak4 - cv
 
             if cv >= 30 and momentum > -10 and drop_from_peak < 15:
-                stab_badge = "<span style='background:#22c55e;color:#0a0f1a;border-radius:4px;padding:0 5px;font-size:0.55rem;font-weight:800;white-space:nowrap;'>🟢 KOKOH</span>"
+                stab_badge = "<span style='background:#22c55e;color:#0a0f1a;border-radius:5px;padding:2px 8px;font-size:0.72rem;font-weight:800;white-space:nowrap;letter-spacing:0.2px;'>🟢 KOKOH</span>"
                 stab_col = "#22c55e"
             elif cv >= 15 and drop_from_peak < 30:
-                stab_badge = "<span style='background:#facc15;color:#0a0f1a;border-radius:4px;padding:0 5px;font-size:0.55rem;font-weight:800;white-space:nowrap;'>🟡 GOYAH</span>"
+                stab_badge = "<span style='background:#facc15;color:#0a0f1a;border-radius:5px;padding:2px 8px;font-size:0.72rem;font-weight:800;white-space:nowrap;letter-spacing:0.2px;'>🟡 GOYAH</span>"
                 stab_col = "#facc15"
             else:
-                stab_badge = "<span style='background:#ef4444;color:white;border-radius:4px;padding:0 5px;font-size:0.55rem;font-weight:800;white-space:nowrap;'>🔴 MELEMAH</span>"
+                stab_badge = "<span style='background:#ef4444;color:white;border-radius:5px;padding:2px 8px;font-size:0.72rem;font-weight:800;white-space:nowrap;letter-spacing:0.2px;'>🔴 MELEMAH</span>"
                 stab_col = "#ef4444"
 
             # ---- Multi-window sparkline (6h / 12h / 24h / 48h) ----
@@ -636,35 +729,42 @@ if _wl:
             spark_max = max(cv_6h, cv_12h, cv_24h, cv_48h, 50) or 1
 
             def _spark_bar(val, label):
-                h = max(4, val / spark_max * 22)
+                # bars sit in a left label / bar / value row, easy to scan
+                h = max(5, val / spark_max * 28)
                 c = "#22c55e" if val > 30 else "#64748b"
                 return (f"<div style='display:flex;align-items:center;"
-                        f"margin:1px 0;'>"
-                        f"<span style='font-size:0.5rem;color:#64748b;"
-                        f"width:16px;'>{label}</span>"
-                        f"<span style='display:inline-block;width:5px;"
-                        f"margin-right:2px;background:{c};"
-                        f"height:{h:.0f}px;"
-                        f"vertical-align:middle;border-radius:1px;'></span>"
-                        f"<span style='font-size:0.5rem;color:{c};"
-                        f"margin-left:2px;'>{val:.0f}%</span></div>")
-            multi_bars = (_spark_bar(cv_6h, "6h")
-                          + _spark_bar(cv_12h, "12h")
-                          + _spark_bar(cv_24h, "24h")
-                          + _spark_bar(cv_48h, "48h"))
+                        f"gap:4px;margin:1px 0;line-height:1.2;'>"
+                        f"<span style='font-size:0.7rem;color:#64748b;"
+                        f"min-width:18px;font-weight:600;'>{label}</span>"
+                        f"<span style='display:inline-block;flex:1;height:7px;"
+                        f"background:rgba(148,163,184,0.18);border-radius:4px;"
+                        f"overflow:hidden;'>"
+                        f"<span style='display:block;width:{(val/spark_max)*100:.0f}%;"
+                        f"height:100%;background:{c};border-radius:4px;'></span></span>"
+                        f"<span style='font-size:0.7rem;color:{c};"
+                        f"min-width:32px;text-align:right;font-weight:700;'>"
+                        f"{val:.0f}%</span></div>")
+            multi_bars = ("<div style='margin:6px 0;padding:6px 8px;"
+                          "background:rgba(148,163,184,0.06);"
+                          "border-radius:6px;'>"
+                          f"{_spark_bar(cv_6h, '6h')}"
+                          f"{_spark_bar(cv_12h, '12h')}"
+                          f"{_spark_bar(cv_24h, '24h')}"
+                          f"{_spark_bar(cv_48h, '48h')}"
+                          "</div>")
 
             # ---- Volume-quality indicator ----
             vol = last.get("vol") or 0
             if vol >= 100 and cv >= 40:
-                vol_badge = "<span style='color:#22c55e;font-weight:800;'>💪 STRONG</span>"
+                vol_badge = "<span style='color:#22c55e;font-weight:800;font-size:0.75rem;'>💪 STRONG</span>"
             elif vol >= 100 and cv < 40:
-                vol_badge = "<span style='color:#facc15;font-weight:800;'>🟡 NOISY</span>"
+                vol_badge = "<span style='color:#facc15;font-weight:800;font-size:0.75rem;'>🟡 NOISY</span>"
             elif vol >= 30 and cv >= 40:
-                vol_badge = "<span style='color:#94a3b8;font-weight:800;'>👍 LIGHT</span>"
+                vol_badge = "<span style='color:#94a3b8;font-weight:800;font-size:0.75rem;'>👍 LIGHT</span>"
             elif vol >= 30:
-                vol_badge = "<span style='color:#64748b;font-weight:800;'>⚪ THIN</span>"
+                vol_badge = "<span style='color:#64748b;font-weight:800;font-size:0.75rem;'>⚪ THIN</span>"
             else:
-                vol_badge = "<span style='color:#64748b;font-weight:800;'>💤 QUIET</span>"
+                vol_badge = "<span style='color:#64748b;font-weight:800;font-size:0.75rem;'>💤 QUIET</span>"
 
             # ---- Card border/glow based on stability + growth ----
             if grow2 and stab_col == "#22c55e":
@@ -685,11 +785,17 @@ if _wl:
 
             # ---- Why is this card flagged? ----
             _reasons = []
+            _very_stale = False   # suppress conviction % when this is True
             try:
                 _panel = flow_check_panel(_ca)
-                if not _panel["freshness"]["ok"]:
+                _fr_lvl = _panel["freshness"].get("level", "ok")
+                if _fr_lvl == "warn":
                     _full = _panel["freshness"]["reason"]
                     _reasons.append(("⏰", _full[:42], _full, "warn"))
+                elif _fr_lvl == "danger":
+                    _full = _panel["freshness"]["reason"]
+                    _reasons.append(("⏰", _full[:42], _full, "danger"))
+                    _very_stale = True   # don't trust the conviction read
                 if _panel["persistence"]["ok"]:
                     _full = _panel["persistence"]["reason"]
                     _dir = _panel["persistence"]["direction"]
@@ -736,20 +842,24 @@ if _wl:
             reasons_html = ""
             if _reasons:
                 rows_html = "".join(
-                    f"<div title='{full}' style='font-size:0.53rem;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px;'>{ic} {short}</div>"
+                    f"<div title='{full}' style='font-size:0.72rem;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px;line-height:1.3;'>"
+                    f"<span style='margin-right:4px;'>{ic}</span>{short}</div>"
                     for ic, short, full, lvl in _reasons[:3]
                 )
                 full_rows_html = "".join(
-                    f"<div style='font-size:0.48rem;color:#94a3b8;margin-top:1px;'>{ic} {full}</div>"
+                    f"<div style='font-size:0.7rem;color:#94a3b8;margin-top:4px;line-height:1.35;'>"
+                    f"<span style='margin-right:6px;'>{ic}</span>{full}</div>"
                     for ic, short, full, lvl in _reasons
                 )
                 reasons_html = (
-                    f"<div style='border-top:1px solid #1e293b;margin-top:4px;padding-top:3px;'>"
-                    f"<div style='font-size:0.5rem;font-weight:700;color:#facc15;margin-bottom:1px;'>⚠️ Why flagged:</div>"
+                    f"<div style='border-top:1px solid #1e293b;margin-top:8px;padding-top:6px;'>"
+                    f"<div style='font-size:0.65rem;font-weight:800;color:#facc15;letter-spacing:0.5px;"
+                    f"text-transform:uppercase;margin-bottom:2px;'>⚠️ Why flagged</div>"
                     f"{rows_html}"
-                    f"<details style='font-size:0.48rem;color:#64748b;margin-top:2px;'><summary style='cursor:pointer;font-size:0.48rem;color:#38bdf8;'>all ({len(_reasons)})</summary>"
-                    f"<div style='margin-top:2px;'>{full_rows_html}</div>"
-                    f"</details>"
+                    f"<details style='font-size:0.65rem;color:#64748b;margin-top:4px;'>"
+                    f"<summary style='cursor:pointer;color:#38bdf8;'>show all ({len(_reasons)})</summary>"
+                    f"<div style='margin-top:4px;padding-top:4px;border-top:1px solid #1e293b;'>"
+                    f"{full_rows_html}</div></details>"
                     f"</div>"
                 )
 
@@ -769,54 +879,89 @@ if _wl:
                 _ph.get("confidence", "low"), "·")
             _ph_reason = (_ph.get("reason", "") or "").replace("'", "&#39;")
             phase_html = (
-                f"<div style='margin-top:2px;'>"
+                f"<div style='margin-top:8px;'>"
                 f"<span title='{_ph_reason} (confidence: "
                 f"{_ph.get('confidence', 'low')}) — heuristic, not a "
                 f"signal' style='background:{_ph_col}22;border:1px solid "
                 f"{_ph_col};color:{_ph_col};border-radius:6px;"
-                f"padding:1px 7px;font-size:0.6rem;font-weight:700;"
-                f"white-space:nowrap;'>{_ph['phase']} {_conf_dots}</span>"
+                f"padding:3px 9px;font-size:0.7rem;font-weight:700;"
+                f"white-space:nowrap;letter-spacing:0.2px;'>"
+                f"{_ph['phase']} {_conf_dots}</span>"
                 f"</div>")
             _cvd_link = f"/CVD?ca={_ca}"
+            # When very stale, hide the conviction number (don't trust it)
+            # and replace with a clear "data stale" placeholder so the user
+            # doesn't read a misleading percentage.
+            if _very_stale:
+                _conv_html = (
+                    f"<span style='color:#94a3b8;font-size:1.15rem;"
+                    f"font-weight:800;'>⏰ stale</span>")
+            else:
+                _conv_html = (
+                    f"<span style='color:{cv_col};font-size:1.35rem;"
+                    f"font-weight:800;line-height:1.1;'>"
+                    f"{cv:.0f}%</span> <span style='font-size:0.85rem;"
+                    f"margin-left:2px;'>{trend_ic}</span>")
             _cards.append(
                 f"<div style='flex:0 0 auto;background:#131a26;"
-                f"border:2px solid {border};{glow}border-radius:12px;"
-                f"padding:8px 12px;margin-right:10px;cursor:pointer;"
-                f"min-width:160px;'>"
-                f"<div style='font-weight:800;color:#e2e8f0;"
-                f"font-size:0.85rem;'>"
+                f"border:2px solid {border};{glow}border-radius:14px;"
+                f"padding:14px 16px;margin-right:14px;cursor:pointer;"
+                f"min-width:230px;max-width:260px;line-height:1.4;'>"
+                # header: symbol + conviction %, plus DexS/GMGN shortcuts
+                f"<div style='display:flex;align-items:baseline;"
+                f"justify-content:space-between;gap:6px;'>"
                 f"<a href='{_cvd_link}' target='_self' "
-                f"style='color:inherit;text-decoration:none;'>{sym} "
-                f"<span style='color:{cv_col};font-size:1.05rem;'>"
-                f"{cv:.0f}%</span> <span style='font-size:0.72rem;'>"
-                f"{trend_ic}</span></a>"
-                f"<span style='float:right;font-size:0.7rem;'>"
+                f"style='color:inherit;text-decoration:none;flex:1;"
+                f"min-width:0;'>"
+                f"<span style='font-weight:800;color:#e2e8f0;"
+                f"font-size:1.05rem;letter-spacing:0.2px;'>{sym}</span> "
+                f"<span style='margin-left:4px;'>"
+                f"{_conv_html}</span></a>"
+                f"<span style='display:inline-flex;gap:6px;"
+                f"font-size:0.85rem;flex-shrink:0;'>"
                 f"<a href='https://dexscreener.com/solana/{_ca}' "
                 f"target='_blank' title='DexScreener' "
-                f"style='color:#64748b;text-decoration:none;'>"
-                f"<span style='margin:0 2px;'>🦆</span></a>"
+                f"style='color:#64748b;text-decoration:none;'>🦆</a>"
                 f"<a href='https://gmgn.ai/sol/token/{_ca}' "
                 f"target='_blank' title='GMGN' "
-                f"style='color:#64748b;text-decoration:none;'>"
-                f"<span style='margin:0 2px;'>⚡</span></a>"
+                f"style='color:#64748b;text-decoration:none;'>⚡</a>"
                 f"</span></div>"
-                f"<div style='margin:2px 0 3px 0;display:flex;"
-                f"gap:4px;flex-wrap:wrap;'>{stab_badge} {vol_badge}</div>"
+                # stability + volume-quality badges on their own line
+                f"<div style='display:flex;gap:5px;flex-wrap:wrap;"
+                f"margin-top:8px;'>{stab_badge} {vol_badge}</div>"
+                # phase badge (own line, easier to scan)
+                f"{phase_html}"
+                # multi-window sparkline in a subtle background
                 f"<a href='{_cvd_link}' target='_self' "
                 f"style='display:block;text-decoration:none;'>"
-                f"{phase_html}"
-                f"<div style='margin:3px 0;'>{multi_bars}</div>"
-                f"<div style='font-size:0.62rem;color:#64748b;'>"
-                f"conv {trend_txt} · <span style='color:{np_col};'>"
-                f"net {last['net_pure']:+,.0f}</span></div>"
-                f"<div style='font-size:0.62rem;color:#64748b;'>"
-                f"{vol_txt}</div></a>"
+                f"{multi_bars}"
+                f"<div style='font-size:0.75rem;color:#94a3b8;"
+                f"margin-top:4px;line-height:1.4;'>"
+                f"<span style='color:#64748b;'>conv </span>"
+                f"<span style='color:#cbd5e1;font-weight:600;'>"
+                f"{trend_txt}</span>"
+                f"<span style='color:#475569;margin:0 4px;'>·</span>"
+                f"<span style='color:#64748b;'>net </span>"
+                f"<span style='color:{np_col};font-weight:700;'>"
+                f"{last['net_pure']:+,.0f}</span>"
+                f"</div>"
+                f"<div style='font-size:0.75rem;color:#94a3b8;"
+                f"line-height:1.4;margin-top:2px;'>"
+                f"<span style='color:#64748b;'>vol </span>"
+                f"<span style='color:#cbd5e1;font-weight:600;'>"
+                f"{vol:,.0f} SOL</span>"
+                f"<span style='color:#475569;margin:0 4px;'>·</span>"
+                f"<span style='color:#64748b;'>swaps </span>"
+                f"<span style='color:#cbd5e1;font-weight:600;'>"
+                f"{last.get('swaps') or 0:,}</span>"
+                f"</div></a>"
                 f"{reasons_html}"
                 f"</div>")
         if _cards:
             st.markdown(
-                "<div style='display:flex;overflow-x:auto;"
-                "padding:2px 2px 10px 2px;scrollbar-width:thin;'>"
+                "<div style='display:flex;overflow-x:auto;gap:0;"
+                "padding:6px 2px 14px 2px;scrollbar-width:thin;"
+                "align-items:stretch;'>"
                 + "".join(_cards) + "</div>",
                 unsafe_allow_html=True)
             st.caption("**🟢 KOKOH** = conviction stabil ≥30%, turun <15% dari puncak · "
@@ -826,9 +971,9 @@ if _wl:
                        "**🟡 NOISY** = volume besar tapi conviction rendah · "
                        "**👍 LIGHT** = volume sedang, conviction ok · "
                        "**⚪ THIN** = volume tipis · **💤 QUIET** = hampir tanpa volume. "
-                       "Multi-window sparkline: 6h → 12h → 24h → 48h (kiri→kanan). "
+                       "Sparkline 6h → 12h → 24h → 48h (bawah → atas). "
                        "48h butuh ≥8 cron point (≥2 hari) untuk diisi; sebelum "
-                       "itu tampil abu-abu mengikuti 24h. Batang hijau = "
+                       "itu tampil mengikuti 24h. Bar hijau = "
                        "conviction >30%. Phase badge = Wyckoff-style heuristic "
                        "— NOT a trading signal. Click card → CVD analysis.")
         else:
@@ -865,8 +1010,59 @@ if scan_trending or "screener_rows" in st.session_state:
 
         render_trending(_rows, key_prefix="home", on_analyze=_pick)
 
+# ---------------------------------------------------------------------------
+# ⚡ Quick Pick — isi otomatis kolom CA di bawah dari watchlist.
+# Sumber: hanya watchlist (token yang sudah kamu ⭐). Tampil dengan nama koin
+# (live symbol dari DexScreener → fallback symbol watchlist.json). Pilih dari
+# dropdown lalu klik "Gunakan" untuk menyalin CA ke kolom di bawah — TIDAK
+# auto-analyze, supaya kamu bisa review dulu sebelum klik 🔍 Analyze.
+# ---------------------------------------------------------------------------
+qp_key = "qp_selected_ca"
+if qp_key not in st.session_state:
+    st.session_state[qp_key] = ""
+
+# Build watchlist picklist (only if there is a watchlist)
+_qp_wl = _wl  # already loaded above
+if _qp_wl:
+    # Try to enrich with live symbols (already cached in _prices from the
+    # ticker bar — reuse, no extra DexScreener call). Fallback to the
+    # symbol stored in watchlist.json.
+    _qp_options = []  # (label, ca)
+    for _qp_ca, _qp_meta in _qp_wl.items():
+        _qp_sym = ((_prices or {}).get(_qp_ca, {}) or {}).get("symbol") \
+            or _qp_meta.get("symbol", "?") or "?"
+        _qp_label = f"${_qp_sym}  ·  {_qp_ca[:8]}…{_qp_ca[-4:]}"
+        _qp_options.append((_qp_label, _qp_ca))
+    # Stable order: by symbol then CA
+    _qp_options.sort(key=lambda x: (x[0].lower(), x[1]))
+
+    with st.expander("⚡ Quick Pick — pilih dari ⭐ watchlist",
+                     expanded=False):
+        st.caption("Pilih token dari watchlist, klik **Gunakan** → kolom CA "
+                   "di bawah otomatis terisi. Tidak auto-analyze.")
+        _qp_cols = st.columns([5, 1])
+        _qp_chosen = _qp_cols[0].selectbox(
+            "Watchlist token",
+            ["— pilih token —"] + [lbl for lbl, _ in _qp_options],
+            key="qp_selectbox",
+            label_visibility="collapsed")
+        if _qp_cols[1].button("Gunakan", use_container_width=True,
+                              type="primary", key="qp_apply"):
+            if _qp_chosen and _qp_chosen != "— pilih token —":
+                _qp_picked = next((ca for lbl, ca in _qp_options
+                                   if lbl == _qp_chosen), "")
+                if _qp_picked:
+                    st.session_state[qp_key] = _qp_picked
+                    st.rerun()
+            else:
+                st.warning("Pilih token dulu dari dropdown.")
+
+# Effective default CA: query-param > Quick Pick > trending pick > last
+_effective_ca = (st.session_state.get(qp_key) or picked_ca or default_ca
+                 or "").strip()
+
 ca = st.text_input("Solana token Contract Address (CA)",
-                   value=picked_ca or default_ca,
+                   value=_effective_ca,
                    placeholder="e.g. AkchGAUdXXRGHt3HXaHbTvw3JLGUwtJRmYnkG66wpump"
                    ).strip()
 analyze = st.button("🔍 Analyze", type="primary", use_container_width=True)
