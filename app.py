@@ -682,7 +682,7 @@ if _wl:
         if _very_stale_cas:
             st.error(
                 f"⏰ **{len(_very_stale_cas)} watchlist token(s) are very "
-                f"stale (last conviction update >12h ago).** The "
+                f"stale (last conviction update >6h ago).** The "
                 f"conviction %, KOKOH/GOYAH badge, and net_pure below "
                 f"are NOT trustworthy. Refresh to backfill: "
                 f"{_very_stale_syms}"
@@ -690,7 +690,7 @@ if _wl:
         if _stale_cas and not _very_stale_cas:
             st.warning(
                 f"⏰ **{len(_stale_cas)} watchlist token(s) are stale "
-                f"(4-12h since last cron).** Cards below still usable, "
+                f"(1.5-6h since last cron).** Cards below still usable, "
                 f"but conviction trend may be missing the latest window. "
                 f"Tokens: {_stale_syms}"
                 + (f" +{len(_stale_cas) - 5} more" if len(_stale_cas) > 5 else ""))
