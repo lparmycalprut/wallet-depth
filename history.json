@@ -83,6 +83,27 @@
    "sells24": 1755,
    "vol24": 161625.99,
    "source": "cron"
+  },
+  "2026-07-30": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 145151.0,
+   "price": 0.0001498,
+   "tiers": {},
+   "ts": "2026-07-30T13:15:07",
+   "score": 68,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 22.61,
+   "symbol": "BUNKEE",
+   "buys24": 1167,
+   "sells24": 1866,
+   "vol24": 164190.51,
+   "source": "cron-daily (DexScreener+GMGN)"
   }
  },
  "AkchGAUdXXRGHt3HXaHbTvw3JLGUwtJRmYnkG66wpump": {
@@ -169,6 +190,27 @@
    "sells24": 2023,
    "vol24": 184486.08,
    "source": "cron"
+  },
+  "2026-07-30": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 95386.0,
+   "price": 9.921e-05,
+   "tiers": {},
+   "ts": "2026-07-30T13:15:10",
+   "score": 68,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 35.21,
+   "symbol": "looong",
+   "buys24": 2212,
+   "sells24": 2588,
+   "vol24": 213282.35,
+   "source": "cron-daily (DexScreener+GMGN)"
   }
  },
  "3VK1F5r5aykheirDsqJYTsYKzgYxmmvcjQEB1Y5opump": {
@@ -257,6 +299,27 @@
    "sells24": 2628,
    "vol24": 313744.85,
    "source": "cron"
+  },
+  "2026-07-30": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 374226.0,
+   "price": 0.0003826,
+   "tiers": {},
+   "ts": "2026-07-30T13:15:06",
+   "score": 68,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 14.54,
+   "symbol": "RAKO",
+   "buys24": 1642,
+   "sells24": 1654,
+   "vol24": 197440.41,
+   "source": "cron-daily (DexScreener+GMGN)"
   }
  },
  "MeDy6nEaqwRs6g8bDuthTrMJfV8WEQDHA7bSHm3pump": {
@@ -317,6 +380,27 @@
    "sells24": 4047,
    "vol24": 702472.41,
    "source": "cron"
+  },
+  "2026-07-30": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 371652.0,
+   "price": 0.0003716,
+   "tiers": {},
+   "ts": "2026-07-30T13:15:08",
+   "score": 68,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 15.07,
+   "symbol": "dog",
+   "buys24": 823,
+   "sells24": 1112,
+   "vol24": 125743.28,
+   "source": "cron-daily (DexScreener+GMGN)"
   }
  },
  "6Z6qeAuA45G8RrxG7hjZVdPHn1rNHtedJy9WAXg9pump": {
@@ -347,6 +431,27 @@
    "sells24": 2136,
    "vol24": 250454.43,
    "source": "cron"
+  },
+  "2026-07-30": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 153870.0,
+   "price": 0.0001539,
+   "tiers": {},
+   "ts": "2026-07-30T13:15:08",
+   "score": 68,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 27.73,
+   "symbol": "Tilly",
+   "buys24": 979,
+   "sells24": 1106,
+   "vol24": 105954.69,
+   "source": "cron-daily (DexScreener+GMGN)"
   }
  },
  "DUYw2p3NC6zDdsSrazV4JdDFKtRk2K4mw764EWs2pump": {
@@ -377,6 +482,27 @@
    "sells24": 1780,
    "vol24": 139866.14,
    "source": "cron"
+  },
+  "2026-07-30": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 108507.0,
+   "price": 0.000111,
+   "tiers": {},
+   "ts": "2026-07-30T13:15:09",
+   "score": 68,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 28.26,
+   "symbol": "Hoppy",
+   "buys24": 843,
+   "sells24": 777,
+   "vol24": 56075.24,
+   "source": "cron-daily (DexScreener+GMGN)"
   }
  },
  "6LLNiWXRZp8hn5oTFTHEo8ERbJS3QJfHSKhnTCqipump": {
@@ -407,6 +533,27 @@
    "sells24": 988,
    "vol24": 99064.47,
    "source": "cron"
+  },
+  "2026-07-30": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 204342.0,
+   "price": 0.0002043,
+   "tiers": {},
+   "ts": "2026-07-30T13:15:09",
+   "score": 68,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 18.96,
+   "symbol": "MEMIPEDE",
+   "buys24": 1323,
+   "sells24": 1197,
+   "vol24": 100308.92,
+   "source": "cron-daily (DexScreener+GMGN)"
   }
  },
  "4FnZDvrkvEJf1MLZrcDKCMeSjuVx5BsHuKWqm3b6pump": {
