@@ -39,7 +39,8 @@ buktikan kalibrasinya tidak bergeser (lihat §5).
 
 **File data yang di-commit cron** (jangan di-`.gitignore`):
 `cvd.json` · `signals.json` · `conviction.json` · `levels.json` ·
-`breakouts.json`
+`breakouts.json` · **`holder_snapshots.json`** (whale/dolphin holdings
+delta baseline; 4h cron commit per CA per ~6h bucket)
 
 ## 3. Dua jenis notifikasi Telegram — JANGAN tertukar
 
@@ -76,6 +77,53 @@ Pemilik trading di **H4**, tapi memakai level **D1**. Itu disengaja.
 Konstanta (`breakout_guard.py`): `RECLAIM_MAX_CANDLES=5` ·
 `ALERT_DEDUPE_H=12` · `ALERT_FRESH_H=8` · `MIN_PENETRATION=0.0015` ·
 `MIN_WICK_RATIO=0.20`. Whale = swap ≥ `WHALE_SOL` (3.0 SOL) di `cvd.py`.
+
+## 4.5 Holder-delta (whale / dolphin holdings baseline)
+
+LP Radar juga menampilkan **delta holdings** (bukan delta swap) untuk
+tier **whale** (top 1% by holdings) dan **dolphin** (1-5%). Dibanding
+`flow_report` yang cuma lihat buy-sell di window, module ini
+membandingkan dua snapshot holder (T0 = baseline, T1 = now) jadi
+wallet yang beli 50 lalu jual 30 muncul sebagai **net +20**, bukan
++80 churn.
+
+- **Snapshot store**: `holder_snapshots.json` (per CA, key = bucket
+  6 jam). Commit tiap cron run via `cvd.record_holder_snapshot()`;
+  `SNAPSHOT_MIN_GAP_S = 6*3600` jadi 4h cron commit setiap run kedua.
+  File ini WAJIB masuk daftar `git add` di `.github/workflows/cvd-update.yml`
+  — kalau tidak, dashboard di Streamlit Cloud cuma lihat snapshot
+  kosong dan badge tidak pernah muncul. **Pemilik sudah setuju update
+  workflow via web**.
+- **Tier classification**: `cvd.classify_holders()` sortir by holdings
+  desc, potong di `WHALE_PCT=0.01` (whale) dan `DOLPHIN_PCT=0.05`
+  (dolphin). Cut by COUNT, bukan by supply — tetap stabil saat
+  holder set tumbuh.
+- **Tier inheritance**: wallet yang turun dari whale ke minnow tetap
+  dihitung sebagai whale story (rank `whale>dolphin>minnow`, pilih
+  yang lebih tinggi). Jadi "5 whale exited" tidak salah jadi "0 whale
+  exited + 5 minnow exited" kalau holders bertambah.
+- **Exit rule**: drop ≥ `EXIT_DROP_PCT=0.90` (90%) dari baseline.
+  Epsilon `+1e-9` di comparator untuk hindarin floating-point
+  `100 * 0.10 = 9.999…` false-negative.
+- **Threshold owner-tunable**: `WHALE_DELTA_MIN_SOL=1.0` dan
+  `DOLPHIN_DELTA_MIN_SOL=2.0` di `cvd.py` (fallback). Owner set di
+  `config.json` (`whale_delta_min_sol`, `dolphin_delta_min_sol`) dan
+  via sidebar `🐋 Holder-delta thresholds` di `app.py`. Live sidebar
+  override prioritas sampai owner klik "Save".
+- **Level**: `ok` (nothing meaningful) · `warn` (any tier ≥ threshold)
+  · `danger` (whale sold ≥ 2× threshold AND ≥1 exit).
+- **UI**: `app.py` LP Radar card — row ke-3 dari header (setelah
+  KOKOH/GOYAH + vol badge) berisi `🐋 +12.5 2↑` dan `🐬 -2.0 1↓`.
+  Row ke-3 tidak ada (atau "⏳ waiting for snapshot baseline") sebelum
+  cron commit baseline. Masuk juga ke "Why flagged?" list dengan
+  emoji `🐋` (danger) / `🐬` (warn) / `ℹ️` (info).
+- **Trade-off**: snapshot butuh 1 fetch Helius holders + 1 supply per
+  CA per commit. LP Radar page load pakai holder list yang sama (cached
+  1 jam lewat `st.cache_data`) jadi tidak fetch 2×.
+- **Constanta tunable** di `cvd.py`: `WHALE_PCT`, `DOLPHIN_PCT`,
+  `EXIT_DROP_PCT`, `SNAPSHOT_KEEP_DAYS=30`, `WHALE_DELTA_MIN_SOL`,
+  `DOLPHIN_DELTA_MIN_SOL`, `SNAPSHOT_MIN_GAP_S`. Kalau diubah, jalankan
+  `tests/test_holder_delta.py` (13 case) untuk verifikasi.
 
 ## 5. Scoring screener — ramp kontinu, bukan tangga
 

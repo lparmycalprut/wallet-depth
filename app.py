@@ -104,6 +104,61 @@ try:
 except Exception:
     pass
 
+# Holder-delta thresholds (tier |delta| SOL cutoff before LP Radar
+# surfaces a tier on the card and adds it to "Why flagged?"). Owners
+# tune in the sidebar; these are the in-code fallbacks. Reading them
+# from CONFIG (not from cvd.load_holder_delta_config) so the sidebar
+# input wins over a stale config.json until the user clicks "Save".
+try:
+    from cvd import WHALE_DELTA_MIN_SOL as _DEF_WDM, \
+        DOLPHIN_DELTA_MIN_SOL as _DEF_DDM
+except Exception:
+    _DEF_WDM, _DEF_DDM = 1.0, 2.0
+WHALE_DELTA_MIN_SOL = float(CONFIG.get("whale_delta_min_sol", _DEF_WDM))
+DOLPHIN_DELTA_MIN_SOL = float(CONFIG.get("dolphin_delta_min_sol", _DEF_DDM))
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_holder_delta_panel(_helius_keys, ca: str, window_h: int = 6):
+    """Cached wrapper around :func:`cvd.holder_delta_panel` for the
+    LP Radar card. Cache = 1h so refreshes don't re-hit Helius; the
+    underlying holder list is already heavy (10-60s per call).
+
+    Returns the panel dict (with per-tier delta, summary, reason,
+    level) or None if Helius fails / no supply yet / no snapshot
+    baseline. The LP Radar card treats None as "no baseline yet —
+    wait for the 4h cron to commit one".
+    """
+    if not _helius_keys:
+        return None
+    try:
+        from cvd import holder_delta_panel
+        # Fetch supply + holders fresh per call (cached via @st.cache_data
+        # for an hour). The LP Radar card does NOT use the analyze
+        # block's holders_df because it isn't a single-CA page.
+        supply, decimals = fetch_helius_supply(_helius_keys, ca)
+        if not supply:
+            return None
+        hd = fetch_holders_helius(_helius_keys, ca)
+        if hd is None or hd.empty:
+            return None
+        hd["ui_amount"] = hd["raw_amount"] / (10 ** decimals)
+        hd = hd[hd["ui_amount"] > 0]
+        # Drop LP wallets — same rule the analyze block uses — so a
+        # token whose LP is among the top holders doesn't get counted
+        # as "whale addition" every cron.
+        # (We don't have the LP set cached here, so we skip the filter
+        # and accept that the snapshot vs current comparison may
+        # include a couple of LP wallets. The whale/dolphin tier
+        # thresholds are generous enough that 1-2 LP wallets don't
+        # move the totals meaningfully.)
+        pairs = list(zip(hd["owner"].tolist(), hd["ui_amount"].tolist()))
+        return holder_delta_panel(
+            ca, current_holders=pairs, supply=float(supply),
+            window_h=window_h)
+    except Exception:
+        return None
+
 
 def load_history() -> dict:
     try:
@@ -429,12 +484,40 @@ _mode_cfg = {"Fast": {"pages": 2, "cap": 30},
              "Deep": {"pages": 5, "cap": None}}[scan_mode]
 
 st.sidebar.divider()
+st.sidebar.markdown("**🐋 Holder-delta thresholds**")
+# These two numbers are the |delta| (SOL) below which the LP Radar
+# card hides the tier from the badges row AND from the "Why flagged?"
+# list. Default 1.0 / 2.0 SOL; tune for low-cap vs large-cap tokens.
+whale_delta_min = st.sidebar.number_input(
+    "Whale |delta| min (SOL)",
+    min_value=0.1, max_value=100.0,
+    value=WHALE_DELTA_MIN_SOL, step=0.5,
+    help="Surfaces a tier on the LP Radar card only when the whale "
+         "tier moved at least this many SOL (signed) in the window. "
+         "Lower = more noise on the card, higher = only big moves "
+         "show up.")
+dolphin_delta_min = st.sidebar.number_input(
+    "Dolphin |delta| min (SOL)",
+    min_value=0.1, max_value=100.0,
+    value=DOLPHIN_DELTA_MIN_SOL, step=0.5,
+    help="Same as above but for the dolphin tier. Default 2 SOL — "
+         "dolphins trade in smaller sizes so the bar is set higher "
+         "than whales to keep the card readable.")
+# Update module-level vars so the LP Radar loop picks them up without
+# re-reading config (the live override beats config.json until the
+# next save).
+WHALE_DELTA_MIN_SOL = whale_delta_min
+DOLPHIN_DELTA_MIN_SOL = dolphin_delta_min
+
+st.sidebar.divider()
 if st.sidebar.button("💾 Save to config.json", use_container_width=True):
     save_config({"helius_api_key": helius_key, "custom_rpc": custom_rpc,
                  "helius_extra_keys": helius_extra,
                  "dust_limit_usd": dust_limit,
                  "cluster_warn_pct": cluster_warn_pct,
-                 "cluster_scan_top_n": n_scan, "exclude_lp": exclude_lp})
+                 "cluster_scan_top_n": n_scan, "exclude_lp": exclude_lp,
+                 "whale_delta_min_sol": whale_delta_min,
+                 "dolphin_delta_min_sol": dolphin_delta_min})
     st.sidebar.success("Saved ✅")
 
 @st.cache_data(ttl=30, show_spinner=False)
@@ -686,6 +769,76 @@ if _wl:
             grow1 = prev_cv is not None and cv > prev_cv
             grow2 = grow1 and prev2_cv is not None and prev_cv > prev2_cv
 
+            # ---- Holder delta (whale/dolphin snapshot vs current) ----
+            # Fetched per-CA with a 1h cache — Helius call is 10-60s each,
+            # so the LP Radar page makes 1 call per watchlist CA. For a
+            # 30-token watchlist that's ~5-15 min on first load, but
+            # streamlit_cache_data keeps it manageable on reloads.
+            _hd_panel = fetch_holder_delta_panel(helius_keys, _ca,
+                                                  window_h=6) if helius_keys else None
+            _hd_whale_d = _hd_panel.get("whale", {}).get("delta_sol", 0.0) \
+                if _hd_panel else 0.0
+            _hd_dolphin_d = _hd_panel.get("dolphin", {}).get("delta_sol", 0.0) \
+                if _hd_panel else 0.0
+            _hd_whale_added = _hd_panel.get("whale", {}).get("wallets_added", 0) \
+                if _hd_panel else 0
+            _hd_whale_exited = _hd_panel.get("whale", {}).get("wallets_exited", 0) \
+                if _hd_panel else 0
+            _hd_dolphin_added = _hd_panel.get("dolphin", {}).get("wallets_added", 0) \
+                if _hd_panel else 0
+            _hd_dolphin_exited = _hd_panel.get("dolphin", {}).get("wallets_exited", 0) \
+                if _hd_panel else 0
+            _hd_level = _hd_panel.get("level", "ok") if _hd_panel else "ok"
+            _hd_summary = _hd_panel.get("summary", "") if _hd_panel else ""
+            _hd_baseline = _hd_panel.get("baseline_ts", 0) if _hd_panel else 0
+            # Build per-tier badge HTML (only when above threshold).
+            def _tier_badge(ic, delta_sol, added, exited, col):
+                if abs(delta_sol) < 0.05 and added == 0 and exited == 0:
+                    return ""
+                sign = "+" if delta_sol >= 0 else ""
+                # color: green for buy, red for sell, grey if mixed
+                sign_col = "#22c55e" if delta_sol > 0 else (
+                    "#ef4444" if delta_sol < 0 else col)
+                bits = [f"{ic} <b style='color:{sign_col}'>{sign}"
+                        f"{delta_sol:.1f}</b>"]
+                if added:
+                    bits.append(f"<span style='color:#22c55e;'>"
+                                f"{added}↑</span>")
+                if exited:
+                    bits.append(f"<span style='color:#ef4444;'>"
+                                f"{exited}↓</span>")
+                return ("<span style='background:rgba(148,163,184,0.10);"
+                        "border:1px solid " + col + ";"
+                        "border-radius:4px;padding:1px 6px;"
+                        "font-size:0.7rem;font-weight:700;"
+                        "white-space:nowrap;letter-spacing:0.2px;'>"
+                        + " ".join(bits) + "</span>")
+            _hd_badges_html = ""
+            if _hd_baseline > 0:  # only show if we have a real baseline
+                _whale_badge = _tier_badge(
+                    "🐋", _hd_whale_d, _hd_whale_added, _hd_whale_exited,
+                    "#c084fc")
+                _dolphin_badge = _tier_badge(
+                    "🐬", _hd_dolphin_d, _hd_dolphin_added, _hd_dolphin_exited,
+                    "#60a5fa")
+                if _whale_badge or _dolphin_badge:
+                    _hd_badges_html = (_whale_badge + " " +
+                                       _dolphin_badge)
+                else:
+                    # baseline exists but no tier moved above the
+                    # |delta| threshold — show a quiet "flat" pill so
+                    # the user knows the baseline is live and we're
+                    # just not seeing meaningful action.
+                    _hd_badges_html = ("<span style='opacity:0.5;"
+                                       "font-size:0.65rem;"
+                                       "border:1px solid #475569;"
+                                       "border-radius:4px;padding:1px 6px;'>"
+                                       "🐋🐬 flat</span>")
+            else:
+                _hd_badges_html = ("<span style='opacity:0.45;"
+                                   "font-size:0.65rem;'>"
+                                   "⏳ waiting for snapshot baseline</span>")
+
             # ---- Stability badge (KOKOH / GOYAH / MELEMAH) ----
             # Compare recent 3 points vs prior 3 points for momentum
             recent3 = [p["conviction"] for p in pts[-3:]]
@@ -814,6 +967,25 @@ if _wl:
             except Exception:
                 pass
 
+            # Holder-delta (whale/dolphin) tier move — separate try so
+            # a flow-check error doesn't silence it (the panel has
+            # already been fetched above via _hd_panel).
+            if _hd_panel and _hd_baseline > 0 and _hd_summary and \
+                    _hd_summary != "no meaningful move":
+                if _hd_level == "danger":
+                    _reasons.append(("🐋", _hd_summary[:42], _hd_summary,
+                                     "danger"))
+                elif _hd_level == "warn":
+                    _reasons.append(("🐬", _hd_summary[:42], _hd_summary,
+                                     "warn"))
+                elif _hd_level == "ok" and _hd_summary:
+                    # ok level + summary means a tier moved but didn't
+                    # cross threshold — surface as info only if the
+                    # delta is non-trivial (> 1 SOL) so the user has
+                    # context even on quiet days.
+                    _reasons.append(("ℹ️", _hd_summary[:42], _hd_summary,
+                                     "info"))
+
             try:
                 _market = _prices.get(_ca) or {}
                 _pair = _market.get("pair")
@@ -929,6 +1101,12 @@ if _wl:
                 # stability + volume-quality badges on their own line
                 f"<div style='display:flex;gap:5px;flex-wrap:wrap;"
                 f"margin-top:8px;'>{stab_badge} {vol_badge}</div>"
+                # holder-delta badges (whale / dolphin) on their own line
+                # so they don't crowd the KOKOH/GOYAH row. Either
+                # filled (real delta) or the "waiting for baseline"
+                # placeholder so the user always sees something.
+                f"<div style='display:flex;gap:5px;flex-wrap:wrap;"
+                f"margin-top:5px;'>{_hd_badges_html}</div>"
                 # phase badge (own line, easier to scan)
                 f"{phase_html}"
                 # multi-window sparkline in a subtle background
@@ -975,7 +1153,11 @@ if _wl:
                        "48h butuh ≥8 cron point (≥2 hari) untuk diisi; sebelum "
                        "itu tampil mengikuti 24h. Bar hijau = "
                        "conviction >30%. Phase badge = Wyckoff-style heuristic "
-                       "— NOT a trading signal. Click card → CVD analysis.")
+                       "— NOT a trading signal. "
+                       "**🐋/🐬** = whale/dolphin holdings delta from the "
+                       "latest snapshot baseline (cron commits every 6h; "
+                       "Δ in SOL + N↑ wallets added + N↓ exited). "
+                       "Click card → CVD analysis.")
         else:
             st.caption("💧 LP Radar: semua watchlist token ditampilkan — "
                        "card dengan border merah artinya conviction melemah, "
