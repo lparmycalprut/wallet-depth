@@ -1527,7 +1527,10 @@ def analysis_windows(requested_hours) -> list:
 # e.g. "🩸 hard distribution" or "⏰ data stale (4.2h)". They are *advisory*
 # — none of them block scoring, they only colour the panel.
 # ---------------------------------------------------------------------------
-FRESH_MAX_AGE_S = 90 * 60       # 90 min — the cron target cadence
+FRESH_MAX_AGE_S = 150 * 60      # 2.5h — covers the 4h cron cadence
+                                  #         with one missed run of margin
+STALE_MAX_AGE_S = 12 * 3600     # 12h — up to 3 missed cron runs is still
+                                  #         "stale", not "do not trust"
 PERSISTENCE_MIN_RUN = 3         # 3 consecutive cron points all the same way
 PERSISTENCE_MIN_NET_SOL = 5.0   # each of those 3 points must move ≥5 SOL net
 DISTRIBUTION_DROP_PCT = 30.0    # 30% drop of net_pure from peak = signal
@@ -1538,30 +1541,49 @@ QUALITY_SWAP_BAND = (5, 50)     # swap count below this = dead window
 def flow_freshness(ca: str) -> dict:
     """Is the conviction history still being updated?
 
-    Returns ``{"ok": bool, "age_min": float, "reason": str, "last_ts": int}``.
-    *ok* is True when the most recent cron point is younger than
-    :data:`FRESH_MAX_AGE_S`. The reason is a short, UI-ready sentence
-    ("fresh", "stale (4.2h)", "never seen"…).
+    Returns ``{"ok": bool, "age_min": float, "level": str, "reason": str,
+    "last_ts": int}``.
+
+    The cron runs every 4h so a healthy point is always ≤4h old; the
+    ``FRESH_MAX_AGE_S`` / ``STALE_MAX_AGE_S`` constants carve three
+    bands:
+
+    * **fresh** (<= ``FRESH_MAX_AGE_S``): ok=True, level="ok".
+    * **stale** (≤``STALE_MAX_AGE_S``): ok=False, level="warn". The
+      point is older than one full cron cycle but is still useful —
+      at most 3 missed runs.
+    * **very stale** (>``STALE_MAX_AGE_S``): ok=False, level="danger".
+      3+ missed runs; the UI should refuse to surface the conviction
+      and offer a manual refresh.
     """
     pts = (load_conviction() or {}).get(ca) or []
     if not pts:
-        return {"ok": False, "age_min": float("inf"),
+        return {"ok": False, "age_min": float("inf"), "level": "danger",
                 "reason": "never seen — cron has not run for this CA yet",
                 "last_ts": 0}
     last_ts = int(pts[-1].get("ts") or 0)
     if last_ts <= 0:
-        return {"ok": False, "age_min": float("inf"),
+        return {"ok": False, "age_min": float("inf"), "level": "danger",
                 "reason": "no timestamp on last point", "last_ts": 0}
     age = max(0.0, time.time() - last_ts)
     age_min = age / 60.0
-    if age_min <= FRESH_MAX_AGE_S / 60:
+    age_h = age / 3600.0
+    if age <= FRESH_MAX_AGE_S:
+        level = "ok"
         msg = f"fresh ({age_min:.0f} min ago)"
-    elif age_min <= 6 * 60:
-        msg = f"stale ({age_min / 60:.1f}h ago — cron may be lagging)"
+    elif age <= STALE_MAX_AGE_S:
+        level = "warn"
+        runs_behind = int(round(age_h / 4))
+        run_word = "run" if runs_behind == 1 else "runs"
+        msg = (f"stale ({age_h:.1f}h ago — cron is "
+               f"{runs_behind} {run_word} behind)")
     else:
-        msg = f"very stale ({age_min / 60:.1f}h ago — do not trust the read)"
-    return {"ok": age_min <= FRESH_MAX_AGE_S / 60,
-            "age_min": age_min, "reason": msg, "last_ts": last_ts}
+        level = "danger"
+        msg = (f"very stale ({age_h:.1f}h ago — do not trust the read, "
+               f"hit 🔄 Force refresh to backfill)")
+    return {"ok": level == "ok",
+            "age_min": age_min, "level": level, "reason": msg,
+            "last_ts": last_ts}
 
 
 def flow_persistence(ca: str, *, last_n: int = 3) -> dict:
@@ -1745,3 +1767,457 @@ def flow_check_panel(ca: str) -> dict:
         "distribution": flow_distribution(ca),
         "quality": flow_quality(ca),
     }
+
+
+# ---------------------------------------------------------------------------
+# Holder delta — TRUE holdings change per tier (whale/dolphin/minnow)
+# ---------------------------------------------------------------------------
+# Unlike the swap-flow proxy (`flow_report`, which sees buys-sells in the
+# window), this module compares the holder list at TWO points in time
+# (T0 = baseline snapshot, T1 = now). A whale who bought 50 SOL and
+# sold 30 SOL between T0 and T1 shows up as **net +20 SOL** here, not
+# 50+30 of churn. That makes it the right signal for the LP Radar card
+# "is the smart money accumulating or exiting" question.
+#
+# Trade-off: needs a snapshot store. The 4h cron (scripts/update_cvd.py)
+# also commits a holder list per CA per snapshot to holder_snapshots.json,
+# so the UI can look back up to the snapshot retention window (~30 days).
+# ---------------------------------------------------------------------------
+HOLDER_SNAPSHOT_PATH = os.path.join(BASE_DIR, "holder_snapshots.json")
+# Per-tier % of holder COUNT (not supply). top 1% by holdings = whale,
+# next 4% = dolphin, rest = minnow. This stays meaningful as the
+# holder set grows: a 100-holder token still has ~1 whale, and a
+# 10,000-holder token still has ~100 whales. Same shape, no re-tuning.
+WHALE_PCT = 0.01
+DOLPHIN_PCT = 0.05
+# A wallet is counted as "exited" when its holdings drop to ≤ this
+# fraction of its baseline (i.e. it sold ≥ 90% of what it held at T0).
+EXIT_DROP_PCT = 0.90
+# How many days of snapshots to keep. After that the file gets too
+# large; 30 days covers any realistic LP watch window.
+SNAPSHOT_KEEP_DAYS = 30
+# Default per-tier |delta| threshold (SOL) before the UI surfaces a
+# "whale moved" line. Owners tune in config.json. These constants are
+# the in-code fallback when no config entry is present.
+WHALE_DELTA_MIN_SOL = 1.0
+DOLPHIN_DELTA_MIN_SOL = 2.0
+# When a fresh snapshot is committed, skip if the previous one is
+# younger than this many seconds. The 4h cron fires every 4h, so
+# 6h gives it 2h of slack for retries / slow networks.
+SNAPSHOT_MIN_GAP_S = 6 * 3600
+
+
+def load_holder_snapshots() -> dict:
+    """{ca: {ts_iso: {"ts": int, "holders": [{"owner", "ui_amount"}]}}}.
+
+    Git-merge tolerant (uses ``_load_json_tolerant``). Returns ``{}`` if
+    the file is missing or malformed — every caller must treat empty as
+    "no baseline yet" and surface a clear message, not crash.
+    """
+    return _load_json_tolerant(HOLDER_SNAPSHOT_PATH) or {}
+
+
+def _save_holder_snapshots(state: dict) -> None:
+    """Write the snapshot store back. Always atomic-ish: dump then
+    rename via temp, so a crashed write doesn't leave a half-file."""
+    import tempfile as _tf
+    tmp = HOLDER_SNAPSHOT_PATH + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, separators=(",", ":"))
+        os.replace(tmp, HOLDER_SNAPSHOT_PATH)
+    except Exception:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
+
+
+def classify_holders(holders, *, n_total: int = None) -> dict:
+    """Tag every wallet as ``whale`` / ``dolphin`` / ``minnow`` based on
+    its rank by holdings. The first ``WHALE_PCT`` of the sorted holders
+    are whales, the next ``DOLPHIN_PCT - WHALE_PCT`` are dolphins, the
+    rest are minnows. Returns ``{owner: tier}``.
+
+    Tier thresholds are based on COUNT not supply, so they stay stable
+    as the token grows: a 100-holder token still has 1 whale tier seat,
+    a 10,000-holder token still has 100. What changes is the SOL held
+    per tier (the analyzer reports both counts and totals).
+
+    ``holders`` may be a list of ``[owner, raw_amount]`` pairs (as
+    Helius returns) or a DataFrame with ``owner``/``ui_amount`` columns
+    or a dict ``{owner: amount}`` — anything iterable of (owner, amount).
+    """
+    pairs = []
+    for h in holders or []:
+        try:
+            if isinstance(h, (list, tuple)) and len(h) >= 2:
+                owner, amt = h[0], h[1]
+            elif isinstance(h, dict):
+                owner = h.get("owner")
+                amt = h.get("ui_amount") or h.get("raw_amount")
+            else:
+                continue
+            if not owner or amt is None:
+                continue
+            pairs.append((str(owner), float(amt)))
+        except Exception:
+            continue
+    if not pairs:
+        return {}
+    pairs.sort(key=lambda x: -x[1])
+    n = n_total or len(pairs)
+    whale_cut = max(1, int(round(n * WHALE_PCT)))
+    dolphin_cut = max(whale_cut + 1, int(round(n * DOLPHIN_PCT)))
+    tiers = {}
+    for i, (owner, _) in enumerate(pairs):
+        if i < whale_cut:
+            tiers[owner] = "whale"
+        elif i < dolphin_cut:
+            tiers[owner] = "dolphin"
+        else:
+            tiers[owner] = "minnow"
+    return tiers
+
+
+def record_holder_snapshot(ca: str, holders, supply: float) -> dict | None:
+    """Commit a fresh holder snapshot for ``ca`` to disk. Returns the
+    new point dict, or ``None`` if the previous snapshot is too recent
+    (i.e. the cron has already covered this window) or holders is empty.
+
+    Each snapshot is keyed by ISO date + window index in the same day, so
+    a 4h cron can safely commit 6 snapshots per day without overwriting.
+    For dedup across CRON_RESTARTS the same-day bucket uses the same
+    ts-bucket derived from ``int(time.time() // SNAPSHOT_MIN_GAP_S)``.
+    """
+    pairs = []
+    for h in holders or []:
+        try:
+            if isinstance(h, (list, tuple)) and len(h) >= 2:
+                owner, amt = h[0], float(h[1])
+            elif isinstance(h, dict):
+                owner = h.get("owner")
+                amt = float(h.get("ui_amount") or h.get("raw_amount") or 0)
+            else:
+                continue
+            if owner and amt > 0:
+                pairs.append([str(owner), float(amt)])
+        except Exception:
+            continue
+    if not pairs:
+        return None
+    # Sort largest first so the tier classifier doesn't have to
+    pairs.sort(key=lambda x: -x[1])
+
+    state = load_holder_snapshots()
+    bucket = int(time.time() // SNAPSHOT_MIN_GAP_S)
+    bucket_key = f"b{bucket}"
+    prior = (state.get(ca) or {})
+    # Skip if the most recent committed snapshot is in the same bucket
+    # (cron retry, or two crons racing on the same window).
+    if prior and bucket_key in prior:
+        return None
+
+    point = {
+        "ts": int(time.time()),
+        "supply": float(supply) if supply else 0.0,
+        "holders": pairs,
+    }
+    prior[bucket_key] = point
+    # Trim: keep only the last SNAPSHOT_KEEP_DAYS days (~30), but always
+    # at least the most recent 4 snapshots so a fresh deploy has
+    # something to work with.
+    cutoff = time.time() - SNAPSHOT_KEEP_DAYS * 86400
+    recent_first = {k: v for k, v in prior.items()
+                    if v.get("ts", 0) >= cutoff}
+    if len(recent_first) >= 4 or not prior:
+        trimmed = recent_first
+    else:
+        # not enough recent — pad with the latest older ones (by ts),
+        # keeping the original keys so the dedup check above still works
+        # (we sort by ts desc and take the 4 freshest).
+        ordered = sorted(prior.items(), key=lambda kv: kv[1].get("ts", 0),
+                         reverse=True)[:4]
+        trimmed = dict(ordered)
+    state[ca] = trimmed
+    try:
+        _save_holder_snapshots(state)
+    except Exception:
+        return None
+    return point
+
+
+def _nearest_snapshot(state: dict, ca: str, ts_window_start: int):
+    """Return the newest committed snapshot with ``ts <= ts_window_start``,
+    or None if no baseline exists in that window.
+
+    We pick the NEWEST snapshot OLDER than the window start so the
+    baseline reflects holdings BEFORE the window, not a snapshot taken
+    mid-window (which would understate the delta).
+    """
+    snaps = state.get(ca) or {}
+    candidates = [s for s in snaps.values()
+                  if s.get("ts", 0) <= ts_window_start]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda s: s.get("ts", 0))
+
+
+def _classify_snapshot(holders):
+    """Shortcut: same as :func:`classify_holders` but on a snapshot dict.
+
+    Snapshots store ``[[owner, amount], ...]`` sorted descending; we
+    re-sort to be safe (the on-disk format may evolve). Returns the
+    tier map and a parallel index map.
+    """
+    pairs = []
+    for h in holders or []:
+        try:
+            owner, amt = h[0], float(h[1])
+            if owner and amt > 0:
+                pairs.append((str(owner), float(amt)))
+        except Exception:
+            continue
+    if not pairs:
+        return {}, {}
+    pairs.sort(key=lambda x: -x[1])
+    tiers = classify_holders(pairs, n_total=len(pairs))
+    return tiers, {owner: amt for owner, amt in pairs}
+
+
+def holder_delta(ca: str, *, window_h: int, current_holders,
+                 current_supply: float,
+                 whale_min_sol: float = None,
+                 dolphin_min_sol: float = None) -> dict:
+    """Compute true holdings delta per tier over ``window_h`` hours.
+
+    Looks up the newest committed snapshot with ``ts <= now - window_h*3600``
+    as the baseline (T0), and compares to ``current_holders`` (T1, usually
+    the live holders_df passed in by the dashboard).
+
+    Returns a dict with per-tier aggregates and a human-readable
+    ``reason`` explaining what changed. **No-data cases return a dict with
+    ``ok=False`` and a clear reason** — callers should surface, not
+    crash.
+
+    Returned keys:
+      ``ok`` (bool — any meaningful delta?),
+      ``baseline_ts`` (int, 0 if none),
+      ``window_h`` (int),
+      ``supply`` (float — current supply, for pct conversions),
+      ``whale`` / ``dolphin`` / ``minnow``: each a dict with
+        ``delta_sol`` (signed), ``wallets_added``, ``wallets_exited``,
+        ``holders_now``, ``holders_before``,
+      ``summary`` (str — short human label like
+        "whale +12.5 (3 new, 0 exit) · dolphin -2.0 (0 new, 1 exit)"),
+      ``reason`` (str — what the data says in plain English),
+      ``level`` ("ok" if no large move, "warn" if one tier moved
+        meaningfully, "danger" if a whale sold heavily or several
+        wallets exited).
+    """
+    whale_min = WHALE_DELTA_MIN_SOL if whale_min_sol is None else whale_min_sol
+    dolphin_min = (DOLPHIN_DELTA_MIN_SOL if dolphin_min_sol is None
+                   else dolphin_min_sol)
+    now = int(time.time())
+    win_start = now - int(window_h) * 3600
+
+    state = load_holder_snapshots()
+    base = _nearest_snapshot(state, ca, win_start)
+    if base is None:
+        return {
+            "ok": False,
+            "baseline_ts": 0,
+            "window_h": int(window_h),
+            "supply": float(current_supply) if current_supply else 0.0,
+            "whale": {"delta_sol": 0.0, "wallets_added": 0,
+                      "wallets_exited": 0, "holders_now": 0,
+                      "holders_before": 0},
+            "dolphin": {"delta_sol": 0.0, "wallets_added": 0,
+                        "wallets_exited": 0, "holders_now": 0,
+                        "holders_before": 0},
+            "minnow": {"delta_sol": 0.0, "wallets_added": 0,
+                       "wallets_exited": 0, "holders_now": 0,
+                       "holders_before": 0},
+            "summary": "no snapshot",
+            "reason": ("no baseline snapshot ≤ window start — the 4h "
+                       "cron has not committed one yet for this CA"),
+            "level": "ok",
+        }
+
+    base_tiers, base_amts = _classify_snapshot(base.get("holders", []))
+    cur_tiers, cur_amts = _classify_snapshot(current_holders)
+
+    # Union of all wallet addresses across the two snapshots (and any
+    # current holders not in baseline) so we account for new entries.
+    all_wallets = set(base_amts) | set(cur_amts)
+
+    tier_fields = {
+        "whale": {"delta_sol": 0.0, "wallets_added": 0,
+                  "wallets_exited": 0, "holders_now": 0,
+                  "holders_before": 0},
+        "dolphin": {"delta_sol": 0.0, "wallets_added": 0,
+                    "wallets_exited": 0, "holders_now": 0,
+                    "holders_before": 0},
+        "minnow": {"delta_sol": 0.0, "wallets_added": 0,
+                   "wallets_exited": 0, "holders_now": 0,
+                   "holders_before": 0},
+    }
+
+    # For tier classification, an address inherits the HIGHER of its two
+    # tiers (whale > dolphin > minnow). Reasoning: a wallet that drops
+    # from whale to minnow is still mostly a whale story, not a minnow
+    # story. This keeps the "5 whale exited" signal stable.
+    tier_rank = {"whale": 2, "dolphin": 1, "minnow": 0}
+
+    def _tier(w):
+        b = base_tiers.get(w)
+        c = cur_tiers.get(w)
+        rb = tier_rank.get(b, -1)
+        rc = tier_rank.get(c, -1)
+        if rb < 0 and rc < 0:
+            return None
+        if rb >= rc:
+            return b
+        return c
+
+    for w in all_wallets:
+        t = _tier(w)
+        if t is None:
+            continue
+        before = base_amts.get(w, 0.0)
+        now_amt = cur_amts.get(w, 0.0)
+        delta = now_amt - before
+        if abs(delta) < 1e-9 and before > 0 and now_amt > 0:
+            # no change for this wallet — counts as "still in tier"
+            tier_fields[t]["holders_before"] += 1 if w in base_amts else 0
+            tier_fields[t]["holders_now"] += 1 if w in cur_amts else 0
+            continue
+        tier_fields[t]["delta_sol"] += delta
+        if w not in base_amts and w in cur_amts:
+            tier_fields[t]["wallets_added"] += 1
+        elif w in base_amts and w not in cur_amts:
+            tier_fields[t]["wallets_exited"] += 1
+        elif w in base_amts and w in cur_amts:
+            # exited if the drop ≥ 90% of baseline (configurable).
+            # Use a small epsilon to avoid floating-point edge cases
+            # (e.g. 100 * 0.10 = 9.99999… where 10 SOL is "exited" but
+            # the strict ≤ fails).
+            if before > 0 and now_amt <= before * (1 - EXIT_DROP_PCT) + 1e-9:
+                tier_fields[t]["wallets_exited"] += 1
+        if w in base_amts:
+            tier_fields[t]["holders_before"] += 1
+        if w in cur_amts:
+            tier_fields[t]["holders_now"] += 1
+
+    # Round deltas for the UI / log
+    for t in tier_fields:
+        tier_fields[t]["delta_sol"] = round(tier_fields[t]["delta_sol"], 2)
+
+    def _tier_label(t, f, min_sol):
+        d = f["delta_sol"]
+        # 'minnow' has min_sol=0.0 — for it, a tier entry is only
+        # meaningful if SOMETHING happened (delta != 0, or wallets
+        # added/exited). Otherwise we would always emit "M +0.0".
+        if min_sol > 0:
+            threshold_ok = abs(d) >= min_sol
+        else:
+            threshold_ok = (abs(d) > 1e-6) or f["wallets_added"] > 0 \
+                or f["wallets_exited"] > 0
+        if not threshold_ok:
+            return None
+        sign = "+" if d >= 0 else ""
+        parts = [f"{t[0].upper()} {sign}{d:.1f}"]
+        if f["wallets_added"]:
+            parts.append(f"{f['wallets_added']} new")
+        if f["wallets_exited"]:
+            parts.append(f"{f['wallets_exited']} exit")
+        return " · ".join(parts)
+
+    parts = []
+    for t, min_sol in (("whale", whale_min),
+                       ("dolphin", dolphin_min),
+                       ("minnow", 0.0)):
+        lab = _tier_label(t, tier_fields[t], min_sol)
+        if lab:
+            parts.append(lab)
+    summary = " · ".join(parts) if parts else "no meaningful move"
+
+    # Plain-English reason + warn/danger level
+    level = "ok"
+    bits = []
+    w = tier_fields["whale"]
+    d = tier_fields["dolphin"]
+    if abs(w["delta_sol"]) >= whale_min:
+        if w["delta_sol"] <= -whale_min * 2 and w["wallets_exited"] >= 1:
+            level = "danger"
+            bits.append(f"🐋 whales dumped {abs(w['delta_sol']):.1f} SOL "
+                       f"({w['wallets_exited']} exited) — heavy distribution")
+        elif w["delta_sol"] <= -whale_min:
+            level = "warn" if level == "ok" else level
+            bits.append(f"🐋 whales sold {abs(w['delta_sol']):.1f} SOL in the window")
+        elif w["delta_sol"] >= whale_min:
+            bits.append(f"🐋 whales added {w['delta_sol']:.1f} SOL "
+                        f"({w['wallets_added']} new)")
+    if abs(d["delta_sol"]) >= dolphin_min:
+        if d["delta_sol"] <= -dolphin_min:
+            level = "warn" if level == "ok" else level
+            bits.append(f"🐬 dolphins sold {abs(d['delta_sol']):.1f} SOL")
+        elif d["delta_sol"] >= dolphin_min:
+            bits.append(f"🐬 dolphins added {d['delta_sol']:.1f} SOL "
+                        f"({d['wallets_added']} new)")
+    if not bits:
+        bits.append(f"no tier moved ≥ whale {whale_min:g} or "
+                    f"dolphin {dolphin_min:g} SOL in the last {window_h}h")
+
+    return {
+        "ok": bool(parts),
+        "baseline_ts": int(base.get("ts", 0)),
+        "window_h": int(window_h),
+        "supply": float(current_supply) if current_supply else 0.0,
+        "whale": tier_fields["whale"],
+        "dolphin": tier_fields["dolphin"],
+        "minnow": tier_fields["minnow"],
+        "summary": summary,
+        "reason": " · ".join(bits),
+        "level": level,
+    }
+
+
+def load_holder_delta_config() -> dict:
+    """Read the owner-tunable thresholds from ``config.json`` if present.
+
+    The dashboard keeps a ``whale_delta_min_sol`` and
+    ``dolphin_delta_min_sol`` field on its CONFIG dict. This helper just
+    picks them up so :func:`holder_delta` can default to them.
+    Returns ``{}`` if no config is reachable — callers should fall back
+    to the module-level constants in that case.
+    """
+    try:
+        with open(os.path.join(BASE_DIR, "config.json"),
+                  "r", encoding="utf-8") as f:
+            cfg = json.load(f) or {}
+        return {
+            "whale_delta_min_sol": float(
+                cfg.get("whale_delta_min_sol", WHALE_DELTA_MIN_SOL)),
+            "dolphin_delta_min_sol": float(
+                cfg.get("dolphin_delta_min_sol", DOLPHIN_DELTA_MIN_SOL)),
+        }
+    except Exception:
+        return {}
+
+
+def holder_delta_panel(ca: str, *, current_holders, supply: float,
+                       window_h: int = 6) -> dict:
+    """Convenience wrapper: read config + call :func:`holder_delta`.
+
+    Returns the same dict but with config applied. Used by the UI so
+    it doesn't have to import the loader separately.
+    """
+    cfg = load_holder_delta_config()
+    return holder_delta(
+        ca, window_h=window_h, current_holders=current_holders,
+        current_supply=supply,
+        whale_min_sol=cfg.get("whale_delta_min_sol"),
+        dolphin_min_sol=cfg.get("dolphin_delta_min_sol"),
+    )

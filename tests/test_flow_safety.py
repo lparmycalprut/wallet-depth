@@ -75,21 +75,59 @@ def test_flow_freshness():
         # no history at all
         fr = cvd.flow_freshness("missing")
         check(fr["ok"] is False, "no history → not ok")
+        check(fr["level"] == "danger",
+              f"no history → level is danger, got {fr['level']!r}")
         check(fr["age_min"] == float("inf"), "no history → age is inf")
         check("never seen" in fr["reason"],
               f"no-history reason is human readable: {fr['reason']!r}")
 
-        # fresh point
+        # fresh point (30 min old — well within 2.5h band)
         write_conviction({"abc": [point(now - 30 * 60, 40, 10)]})
         fr = cvd.flow_freshness("abc")
         check(fr["ok"] is True, "30-min-old point is fresh")
+        check(fr["level"] == "ok",
+              f"fresh level is ok, got {fr['level']!r}")
         check("fresh" in fr["reason"], f"reason: {fr['reason']!r}")
 
-        # stale (4h)
+        # stale (4h — one missed cron, but still useful)
         write_conviction({"abc": [point(now - 4 * 3600, 40, 10)]})
         fr = cvd.flow_freshness("abc")
         check(fr["ok"] is False, "4h-old point is not fresh")
+        check(fr["level"] == "warn",
+              f"4h-old point is warn, got {fr['level']!r}")
         check("stale" in fr["reason"], f"stale reason: {fr['reason']!r}")
+
+        # very stale (16h — 4+ missed runs)
+        write_conviction({"abc": [point(now - 16 * 3600, 40, 10)]})
+        fr = cvd.flow_freshness("abc")
+        check(fr["ok"] is False, "16h-old point is not ok")
+        check(fr["level"] == "danger",
+              f"16h-old point is danger, got {fr['level']!r}")
+        check("very stale" in fr["reason"],
+              f"very-stale reason: {fr['reason']!r}")
+        check("do not trust" in fr["reason"],
+              f"very-stale reason warns not to trust: {fr['reason']!r}")
+
+        # edge: exactly at the 2.5h fresh threshold is still ok
+        write_conviction({"abc": [point(now - 149 * 60, 40, 10)]})
+        fr = cvd.flow_freshness("abc")
+        check(fr["ok"] is True, "149-min-old point is still ok")
+        check(fr["level"] == "ok", "149-min edge → level=ok")
+
+        # edge: 3h is warn (between 2.5h and 12h)
+        write_conviction({"abc": [point(now - 3 * 3600, 40, 10)]})
+        fr = cvd.flow_freshness("abc")
+        check(fr["level"] == "warn", "3h → level=warn")
+
+        # edge: 11.9h is still warn
+        write_conviction({"abc": [point(now - 11.9 * 3600, 40, 10)]})
+        fr = cvd.flow_freshness("abc")
+        check(fr["level"] == "warn", "11.9h → level=warn (just under danger)")
+
+        # edge: 12.1h just crossed into danger
+        write_conviction({"abc": [point(now - 12.1 * 3600, 40, 10)]})
+        fr = cvd.flow_freshness("abc")
+        check(fr["level"] == "danger", "12.1h → level=danger")
 
 
 # ---------------------------------------------------------------------------
