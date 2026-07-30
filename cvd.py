@@ -1761,9 +1761,18 @@ def flow_quality(ca: str) -> dict:
     last = pts[-1]
     vol = float(last.get("vol") or 0)
     n_swaps = int(last.get("swaps") or 0)
-    # count distinct wallets in the same window the conviction point covers
+    # Count distinct wallets in the SAME window the conviction point covers
+    # (the 6h ending at the point's own timestamp) — NOT "last 6h from now".
+    # When the cron is lagging (stale point), "from now" would look at a
+    # window that has no data yet and wrongly report 0 wallets, falsely
+    # flagging a fresh/legit multi-wallet window as "one or two wallets
+    # dominate".
+    last_ts = int(last.get("ts") or 0)
     try:
-        swaps = get_recent_swaps(ca, 6)
+        if last_ts:
+            swaps = swaps_between(ca, last_ts - 6 * 3600, last_ts)
+        else:
+            swaps = get_recent_swaps(ca, 6)
     except Exception:
         swaps = []
     n_wallets = len({s[3] for s in swaps if s and s[3]})
