@@ -7,202 +7,76 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
-## 2026-07-30 — Holder-delta (whale / dolphin) di LP Radar card
-
-### Kenapa
-
-`flow_report` lama cuma melihat buy-sell di window — wallet yang beli
-50 lalu jual 30 muncul sebagai 80 SOL churn, bukan net +20.
-LP Radar perlu angka **holdings delta** (T0 vs T1 snapshot) untuk tahu
-"smart money sedang akumulasi atau keluar". Tier cut tetap by COUNT
-(top 1% whale, 1-5% dolphin) supaya tidak perlu di-tune ulang saat
-holder set tumbuh.
+## 2026-07-29 — LP Radar 48h + CVD flow safety + GMGN new penalties + Watchlist quick-pick
 
 ### Yang berubah
 
-1. **`cvd.py` — module holder-snapshot + analyzer**
-   - `HOLDER_SNAPSHOT_PATH = holder_snapshots.json` (per CA, key bucket
-     6 jam). Atomic write via tmp + os.replace, git-merge tolerant
-     (`_load_json_tolerant`).
-   - `classify_holders(pairs, *, n_total)` — top 1%/5% by holdings;
-     return `{owner: tier}`. Accept list, dict, or DataFrame.
-   - `record_holder_snapshot(ca, holders, supply)` — dedup by 6h
-     bucket, trim to 30 days tapi always keep ≥4 latest (penting
-     setelah deploy pertama).
-   - `_nearest_snapshot(state, ca, ts_window_start)` — newest
-     snapshot dgn `ts <= window_start` (penting: pilih T0 yang LEBIH
-     LAMA dari window, bukan mid-window).
-   - `holder_delta(ca, *, window_h, current_holders, current_supply,
-     whale_min_sol, dolphin_min_sol)` — main analyzer.
-     Tier inheritance: wallet inherits HIGHER of two tiers (whale
-     story stabil walau holder drop ke minnow).
-     Exit = drop ≥ `EXIT_DROP_PCT=0.90` (+1e-9 epsilon untuk FP).
-     Level: `danger` (whale sold ≥ 2× threshold AND ≥1 exit) ·
-     `warn` (any tier ≥ threshold) · `ok`.
-   - `load_holder_delta_config()` / `holder_delta_panel()` —
-     convenience wrapper baca `config.json` thresholds.
-   - Konstanta exposed: `WHALE_PCT=0.01` · `DOLPHIN_PCT=0.05` ·
-     `EXIT_DROP_PCT=0.90` · `SNAPSHOT_KEEP_DAYS=30` ·
-     `WHALE_DELTA_MIN_SOL=1.0` · `DOLPHIN_DELTA_MIN_SOL=2.0` ·
-     `SNAPSHOT_MIN_GAP_S=6*3600` (4h cron commit setiap run kedua).
+1. **LP Radar multi-window sparkline** sekarang punya **4 baris** —
+   `6h → 12h → 24h → 48h` (sebelumnya 3). Baris ke-4 butuh ≥8 cron
+   point (≥2 hari) untuk diisi; sebelum itu mirror 24h supaya tidak
+   misleading ke 0%. Caption diperbarui menjelaskan perilaku ini.
 
-2. **`scripts/update_cvd.py` — commit snapshot per CA per run**
-   - Tambah `record_holder_snapshot(ca, [[owner, ui_amount]],
-     supply)` setelah `record_conviction`. Tiap 6h minimum gap, jadi
-     4h cron = commit tiap run kedua.
-   - Print `📸snap=...h (N h)` atau `snap-err:...`. Tidak crash kalau
-     holders/supply gagal.
+2. **CVD flow safety checks** (4 function baru di `cvd.py`):
+   - `flow_freshness(ca)` — umur conviction point terakhir, OK bila <90m
+   - `flow_persistence(ca)` — 3 cron point beruntun searah, masing-masing
+     ≥5 SOL net
+   - `flow_distribution(ca)` — `net_pure` drop ≥30% dari peak 24h
+   - `flow_quality(ca)` — window cukup aktif, tidak dominated 1 wallet
+   - `flow_check_panel(ca)` — wrapper, kembalikan keempatnya sekaligus
 
-3. **`app.py` — UI integration penuh**
-   - `WHALE_DELTA_MIN_SOL` / `DOLPHIN_DELTA_MIN_SOL` di CONFIG
-     (dari `config.json` + module-level fallback).
-   - Sidebar **🐋 Holder-delta thresholds** (dua `st.number_input`)
-     + tombol Save.
-   - `@st.cache_data(ttl=3600) fetch_holder_delta_panel(_helius_keys,
-     ca, window_h=6)` — cached wrapper `holder_delta_panel`.
-   - Per-CA di loop LP Radar: badge row ke-3 (`{_hd_badges_html}`)
-     berisi `🐋 +12.5 2↑` dan `🐬 -2.0 1↓`. Placeholder `⏳
-     waiting for snapshot baseline` saat belum ada baseline.
-   - "Why flagged?" list tambah entry holder-delta (🐋 danger /
-     🐬 warn / ℹ️ info).
+3. **GMGN screener: 2 penalty curve + 2 hard risk baru** (PR #5 eksplisit
+   sebut tapi belum masuk):
+   - `fresh_wallet` — anchor 0.25/0.40/0.55, hard risk pada 0.50
+   - `holder_conc` — top-50 holder share, anchor 0.65/0.75/0.85,
+     hard risk pada 0.85 (tidak ada public float)
+   - Field `fwr` / `fresh_wallet_rate` dan `t50` /
+     `top_50_holder_rate` di payload; fallback ke `top-10 × 1.1` kalau
+     GMGN tidak kirim `t50` (t10-derived 0-1)
 
-4. **`tests/test_holder_delta.py` — 13 test case (BARU, ALL PASSED)**
-   - Tier classification: top_pct, small_set, dict_input, empty
-   - Snapshot save/load: roundtrip, dedup, trim (keep ≥4)
-   - `holder_delta`: no baseline, baseline picker, per-tier
-     aggregates, exit (90% drop), 50% drop NOT exit, danger level,
-     quiet window, per-call thresholds, tier inheritance
-   - Config loader fallback
+4. **Watchlist quick-pick** — `pages/3_⭐_Watchlist.py` punya expander
+   "⚡ Quick-pick" di atas input manual. Pilih dari CA yang sudah
+   dianalisis (`history.json`) atau yang barusan muncul di trending
+   screener sesi ini. Manual CA input tetap di bawah, jadi quick-pick
+   additive, bukan replacement.
+
+5. **Line endings** — PR #5 di-upstream akhirnya CRLF lagi (squash
+   merge + GitHub CRLF autosave). PR ini tetap CRLF karena itu
+   konvensi repo (`tests/*.py` semua CRLF, `.gitattributes` tidak ada
+   untuk override).
 
 ### Verifikasi
 
-- `tests/test_holder_delta.py` — **13 case, ALL PASSED**.
-- 5 suite lain (breakout_guard, flow_safety, helius_rotation,
-  markup_ai_prompt, scoring_continuity) tetap ALL PASSED.
-- `py_compile app.py cvd.py scripts/update_cvd.py` — clean.
+- `tests/test_flow_safety.py` (baru) — 8 sub-test, 33 assertion,
+  tanpa pytest/jaringan. Coverage:
+  - freshness: no history / fresh / stale 4h
+  - persistence: <2 points / 3-point accum / 3-point dist / small
+    moves / sign-flip / zero trailing
+  - distribution: <4 points / no net-buy peak / mild 25% drop /
+    40% drop flagged
+  - quality: no history / quiet / normal
+  - panel: keempat sub-check muncul
+  - fresh-wallet: penalty kontinu, 25% ≤ 8 pts, 55% → AVOID
+  - holder-conc: penalty kontinu, 65% ≤ 8 pts, 90% → AVOID
+  - contract: `fresh_wallet_rate` & `holder_conc` di row output
+- `python -m py_compile` untuk 4 file Python yang diubah — lulus.
+- `python -m pytest tests/` — 33/33 passed (25 lama + 8 baru).
 
-### Sisa PR ⚠️
+### Tidak dilakukan
 
-- **Pemilik perlu update `.github/workflows/cvd-update.yml`** —
-  tambahkan `holder_snapshots.json` ke list `git add` di step "Commit
-  cvd.json" (agen tidak bisa edit workflow: GitHub App tidak punya
-  izin `workflows`). Sampai ini dilakukan, file di-write lokal tapi
-  tidak pernah sampai ke repo, dan LP Radar akan selalu
-  menampilkan `⏳ waiting for snapshot baseline` di Streamlit Cloud.
-- Commit + push + buka PR baru (PR #12 sudah merged untuk
-  Freshness sweep).
+- **Cron schedule tidak diubah** (4h CVD / 8h watchlist). `AGENTS.md`
+  tegas bilang agen tidak boleh edit `.github/workflows/`. Kalau mau
+  balik ke hourly, pemilik sendiri yang harus commit.
+- Tidak menambah field baru di `trending_rank` parser. Yang dipakai
+  mengikuti apa yang GMGN kirim; kalau payload berubah, `_first()`
+  graceful jatuh ke 0.0 → penalty tidak kena → token akan kelihatan
+  lebih baik dari yang sebenarnya. Pantau di run berikutnya.
 
----
+### Belum terverifikasi ⚠️
 
-## 2026-07-30 — Freshness sweep + Level 3 status + Quick Pick
-
-### Root cause
-
-LP Radar menampilkan conviction % dari `conviction.json` tanpa mengecek
-apakah data itu masih segar. Cron berjalan tiap 4 jam, tapi kalau
-missed run 2-3 kali (host down, GitHub rate limit, dst), conviction
-yang tampil bisa jadi 12+ jam. Pemilik trading pakai angka ini sebagai
-"is the pair still alive" — angka basi = keputusan basi = uang hilang.
-
-### Perubahan
-
-1. **`cvd.flow_freshness()` sekarang 3-level** (sebelumnya 2-level):
-   - `ok` (≤2.5h, fresh) — cocok dengan cron 4h + 1 missed run
-   - `warn` (≤12h, stale) — up to 3 missed runs, masih usable
-   - `danger` (>12h, very stale) — refuse to trust
-   - Konstanta `FRESH_MAX_AGE_S=150*60` dan `STALE_MAX_AGE_S=12*3600`
-     di-ekspos supaya UI bisa tune threshold tanpa edit logika.
-
-2. **`app.py` Freshness sweep** — di atas LP Radar:
-   - Sweep semua watchlist CAs
-   - Tampilkan warning `⏰` (warn) atau error `⏰` (danger) untuk token
-     yang stale
-   - Tombol **🔄 Force refresh now** kalau Helius tersedia —
-     panggil `update_token_cvd` + `record_conviction` per CA,
-     session-state dedup supaya user tidak sengaja refresh 2x
-   - LP Radar card juga hide angka conviction % (ganti jadi `⏰ stale`)
-     kalau very_stale
-
-3. **Quick Pick expander** — dropdown watchlist + tombol "Gunakan"
-   supaya pemilik bisa copy CA ke kolom Analyze tanpa copy-paste manual.
-   Tidak auto-analyze (sesuai permintaan pemilik: review dulu).
-
-4. **Fix bug: import `flow_check_panel` di `app.py`** — sebelumnya
-   di-import di dalam `if _conv_hist:` block, tapi dipanggil di
-   freshness sweep yang jalan SEBELUM block itu. Kalau watchlist ada
-   tapi conviction.json kosong (kasus "baru deploy" atau cron belum
-   jalan), freshness sweep crash dengan `NameError`. Import dipindah
-   ke scope yang lebih atas (sebaris dengan `markup_from_candles`).
-
-5. **LP Radar card restyle** — sparkline pakai flexbox row (label / bar
-   / value), badge KOKOH/GOYAH/MELEMAH pakai padding lebih besar,
-   DexScreener/GMGN shortcut siblings (bukan nested `<a>`).
-
-### Verifikasi
-
-- `tests/test_flow_safety.py` — 7 case baru untuk `flow_freshness`
-  (no-history, 30min, 4h, 16h, edge 149min, edge 3h, edge 11.9h,
-  edge 12.1h). **ALL PASSED**.
-- 4 test suite lain masih PASSED (breakout_guard, scoring_continuity,
-  markup_ai_prompt, helius_rotation).
-- `python -m py_compile app.py cvd.py tests/test_flow_safety.py` —
-  clean.
-
----
-
-## 2026-07-30 — Helius multi-key dipakai oleh semua alur
-
-### Root cause
-
-Field `helius_extra_keys` hanya dibaca oleh pool lokal di `cvd.py`. Fetch
-holder utama di `app.py`, supply/mint/cluster, dan halaman Compare membangun
-URL dari satu `helius_api_key`; HTTP 429 langsung gagal. Cache Streamlit juga
-tidak memasukkan pool key sebagai argumen pada beberapa fetch CVD.
-
-### Perbaikan
-
-1. `core.py` menjadi sumber tunggal pool Helius: main + extra dari sidebar,
-   config.json, `HELIUS_API_KEY`, `HELIUS_API_KEYS`, dan Streamlit Secrets
-   digabung berurutan dan di-de-dup.
-2. JSON-RPC dan Enhanced API memakai round-robin serta fallback ke key
-   berikutnya pada HTTP 429/5xx (juga transient network/JSON-RPC rate errors).
-3. Holder, supply, mint info, funder/cluster scan, Compare, CVD main/deep, CLI,
-   dan dua cron memakai helper yang sama. Cache fetch menerima tuple pool;
-   cache cluster menyertakan fingerprint pool agar perubahan key tidak memakai
-   hasil scan lama.
-4. `tests/test_helius_rotation.py` memverifikasi merge/de-dup semua sumber dan
-   skenario key pertama 429 lalu key kedua berhasil tanpa jaringan.
-
-### Verifikasi
-
-- Semua 5 file `tests/*.py` menghasilkan **ALL PASSED**.
-- Seluruh file Python lulus `py_compile`.
-- Audit URL Helius: endpoint hanya didefinisikan di `core.py`; app/page/cron
-  tidak lagi melakukan request Helius langsung.
-
----
-
-## 2026-07-29 — Toggle GMGN Trades API untuk sumber CVD
-
-### Perubahan
-
-- `cvd.py` sekarang punya jalur GMGN Token Trades API: `fetch_swaps(...,
-  use_gmgn=True)` memanggil `https://gmgn.ai/vas/api/v1/token_trades/sol/{ca}`.
-- Mapping GMGN: `event` → buy/sell, `quote_amount` (atau fallback
-  `amount_usd`/harga SOL) → SOL-equivalent, `timestamp` → ts, dan `maker`
-  → wallet. Ada normalisasi timestamp ms dan heuristik lamports untuk
-  `quote_amount` SOL yang raw.
-- UI utama (`app.py`) dan halaman deep CVD (`pages/4_📊_CVD.py`) punya
-  checkbox `🔄 Use GMGN Trades API`. Default OFF tetap Helius/incremental
-  store seperti sebelumnya; ON bypass Helius untuk fetch swap dan menampilkan
-  pesan jelas jika GMGN kosong/gagal.
-- Error GMGN disimpan lewat `cvd.get_gmgn_last_error()` supaya kegagalan API,
-  response kosong, schema berubah, atau semua trade di bawah threshold tidak
-  membuat aplikasi crash.
-
-### Verifikasi
-
-- `.venv/bin/python -m pytest tests/` — **33 passed**.
+- `fwr` / `t50` belum pernah kena payload GMGN sungguhan (key belum
+  dikonfirmasi). Kalau GMGN kasih nama lain, field baru akan jadi 0
+  dan penalty tidak firing — test hanya pakai path yang sudah
+  diverifikasi kontinuitasnya.
 
 ---
 
