@@ -35,6 +35,13 @@ def write_conviction(history):
         json.dump(history, f)
 
 
+def write_cvd_swaps(ca, swaps, pool="pool"):
+    """Write a minimal cvd.json entry with a raw swap list for `ca`."""
+    with open(cvd.CVD_PATH, "w", encoding="utf-8") as f:
+        json.dump({ca: {"pool": pool, "buckets": {},
+                        "swaps": [list(s) for s in swaps]}}, f)
+
+
 class TempPaths:
     """Keep cvd paths pointed at tmpdir so tests don't touch real data."""
 
@@ -220,6 +227,36 @@ def test_flow_quality():
               f"normal reason: {q['reason']!r}")
 
 
+def test_flow_quality_uses_point_own_window():
+    """Regression: a STALE cron point must still count wallets from ITS
+    OWN 6h window, not "now minus 6h". Before the fix, flow_quality()
+    always called get_recent_swaps(ca, 6) which looks at [now-6h, now] —
+    for a point that is hours old, that window has no data at all, so
+    n_wallets came back 0 and a perfectly healthy, many-wallet window
+    got mislabeled "one or two wallets dominate"."""
+    print("\n[quality] stale point still reads its OWN window's wallets")
+    with TempPaths():
+        now = time.time()
+        point_ts = now - 7 * 3600   # point is already "very stale" (>6h old)
+        write_conviction({"a": [point(point_ts, 64, 11,
+                                      vol=177, swaps=177)]})
+        # 100 distinct wallets, all inside [point_ts-6h, point_ts) —
+        # i.e. the point's own window, not "now"'s window.
+        swaps = [("buy", 1.0, point_ts - 60 - i * 60, f"wallet{i}")
+                for i in range(100)]
+        write_cvd_swaps("a", swaps)
+
+        q = cvd.flow_quality("a")
+        check(q["n_wallets"] == 100,
+              f"stale point still resolves its own window's wallets, "
+              f"got n_wallets={q['n_wallets']}")
+        check(q["ok"] is True,
+              "100 wallets across 177 swaps must NOT be flagged as "
+              "'one or two wallets dominate'")
+        check("wallets" in q["reason"] and "one or two" not in q["reason"],
+              f"reason should read as real flow, got: {q['reason']!r}")
+
+
 # ---------------------------------------------------------------------------
 # flow_check_panel — convenience wrapper
 # ---------------------------------------------------------------------------
@@ -327,6 +364,7 @@ if __name__ == "__main__":
     test_flow_persistence()
     test_flow_distribution()
     test_flow_quality()
+    test_flow_quality_uses_point_own_window()
     test_check_panel()
     test_fresh_wallet_penalty()
     test_holder_concentration_penalty()
