@@ -42,6 +42,8 @@ jobs:
               git checkout --theirs "$f" 2>/dev/null || git checkout HEAD -- "$f" || true
             fi
           done
-          git add cvd.json signals.json conviction.json levels.json breakouts.json
+          git add cvd.json signals.json conviction.json levels.json breakouts.json holder_snapshots.json
+           # holder_snapshots.json: whale/dolphin holdings baseline
+          # (4h cron commits per CA every other run, ~6h bucket)
           git diff --cached --quiet || git commit -m "chore: cvd update $(date -u +%FT%H:%M)"
           git push || (git pull --rebase && git push) || true
