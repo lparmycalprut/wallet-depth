@@ -215,7 +215,30 @@ def _gmgn_side(trade: dict) -> str | None:
 
 
 def _gmgn_sol_equivalent(trade: dict) -> float:
-    """Map GMGN quote_amount/amount_usd into SOL-equivalent volume."""
+    """Map GMGN trade into SOL-equivalent volume.
+
+    Priority:
+      1. ``amount_usd`` → convert to SOL via SOL/USD price  (most reliable)
+      2. ``quote_amount`` when quote is verifiably SOL       (lamports-aware)
+      3. ``quote_amount`` when quote is USDC/USDT            (convert)
+      4. fallback: 0.0
+
+    IMPORTANT: never treat an unverified ``quote_amount`` as SOL.
+    GMGN sometimes returns the *base token amount* in this field
+    (e.g. 2.4M tokens of a micro-cap), which would inflate CVD
+    by 6+ orders of magnitude.
+    """
+    sp = get_sol_price()
+
+    # ── 1. amount_usd (GMGN-computed, most trustworthy) ──────────────
+    usd_amount = _as_float(_first_nested(
+        trade, "amount_usd", "amountUSD", "cost_usd", "costUsd", "usd",
+        "value_usd", "valueUsd", "volume_usd", "volumeUsd",
+        "trade_usd", "tradeUsd", "usd_value", "usdValue"), 0.0)
+    if usd_amount > 0:
+        return usd_amount / sp if sp else 0.0
+
+    # ── 2. quote_amount (only when we can verify the quote token) ────
     quote_amount = _as_float(_first_nested(
         trade, "quote_amount", "quoteAmount", "quote_amount_ui",
         "quoteAmountUi", "quote_amount_decimal"), 0.0)
@@ -226,26 +249,26 @@ def _gmgn_sol_equivalent(trade: dict) -> float:
         trade, "quote_symbol", "quote_token.symbol", "quoteToken.symbol",
         default="") or "").lower()
 
-    if quote_amount > 0:
-        if quote_addr in (USDC_MINT, USDT_MINT) or quote_sym in ("usdc",
-                                                                  "usdt"):
-            sp = get_sol_price()
-            return quote_amount / sp if sp else 0.0
-        # Most GMGN payloads use decimal SOL here. If the value is raw
-        # lamports, normalize it instead of producing absurd whale volume.
-        if (not quote_addr or quote_addr == SOL_MINT or quote_sym in
-                ("sol", "wsol")) and quote_amount > 10_000_000:
+    if quote_amount <= 0:
+        return 0.0
+
+    # USDC/USDT-quoted pool: convert to SOL
+    if quote_addr in (USDC_MINT, USDT_MINT) or quote_sym in ("usdc", "usdt"):
+        return quote_amount / sp if sp else 0.0
+
+    # SOL/WSOL-quoted pool: normalize lamports if needed
+    if quote_addr == SOL_MINT or quote_sym in ("sol", "wsol"):
+        if quote_amount > 10_000_000:          # raw lamports
             quote_amount /= 1_000_000_000
         return quote_amount
 
-    usd_amount = _as_float(_first_nested(
-        trade, "amount_usd", "amountUSD", "cost_usd", "costUsd", "usd",
-        "value_usd", "valueUsd"), 0.0)
-    if usd_amount > 0:
-        sp = get_sol_price()
-        return usd_amount / sp if sp else 0.0
+    # ── 3. Unknown quote token → do NOT guess ───────────────────────
+    # Returning quote_amount when the quote currency is unknown is
+    # dangerous — GMGN trades API sometimes puts the *base* token
+    # amount here, which for a micro-cap looks like millions of "SOL".
+    # Better to return 0.0 (the swap gets filtered by MIN_SOL anyway)
+    # than produce nonsense CVD data.
     return 0.0
-
 
 def gmgn_trade_to_swap(trade: dict):
     """Convert one GMGN trade into (side, sol_equivalent, ts, wallet)."""
@@ -260,8 +283,13 @@ def gmgn_trade_to_swap(trade: dict):
                            "address", "user_address", default="") or ""
     if side not in ("buy", "sell") or sol_eq <= 0 or ts <= 0:
         return None
+    # ── Sanity cap: no single swap is legitimately > 10,000 SOL ─────
+    # Values above this threshold are almost certainly a data-mapping
+    # error (e.g. GMGN returned base-token raw amount in quote_amount).
+    MAX_SWAP_SOL = 10_000.0
+    if sol_eq > MAX_SWAP_SOL:
+        return None
     return (side, float(sol_eq), int(ts), str(wallet))
-
 
 def _find_trade_list(obj):
     """Locate the trade array across several GMGN response shapes."""
