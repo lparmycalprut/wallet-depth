@@ -623,17 +623,20 @@ def bucketize(swaps) -> dict:
 
 
 def update_token_cvd(api_key: str, ca: str, pool: str, *,
-                     max_pages=40) -> dict:
+                     max_pages=40, use_gmgn: bool = False) -> dict:
     """Incremental update: fetch swaps since last stored signature.
     Also keeps raw swaps of the last 24h (with wallets) so the dashboard
-    can show a COMPLETE window without a huge live fetch."""
+    can show a COMPLETE window without a huge live fetch.
+
+    When ``use_gmgn=True``, uses GMGN Token Trades API instead of Helius.
+    No API key is required for GMGN — the ``api_key`` argument is ignored."""
     state = load_cvd()
     entry = state.get(ca) or {"pool": pool, "buckets": {}}
-    stop_sig = entry.get("newest_sig")
+    stop_sig = entry.get("newest_sig") if not use_gmgn else None
     stop_ts = entry.get("newest_ts")
     swaps, new_sig, new_ts, hit = fetch_swaps(
         api_key, pool, ca, stop_sig=stop_sig, stop_ts=stop_ts,
-        max_pages=max_pages)
+        max_pages=max_pages, use_gmgn=use_gmgn)
     fresh = bucketize(swaps)
     for b, c in fresh.items():
         old = entry["buckets"].get(b)
@@ -1527,9 +1530,9 @@ def analysis_windows(requested_hours) -> list:
 # e.g. "🩸 hard distribution" or "⏰ data stale (4.2h)". They are *advisory*
 # — none of them block scoring, they only colour the panel.
 # ---------------------------------------------------------------------------
-FRESH_MAX_AGE_S = 150 * 60      # 2.5h — covers the 4h cron cadence
+FRESH_MAX_AGE_S = 90 * 60       # 1.5h — covers the 1h cron cadence
                                   #         with one missed run of margin
-STALE_MAX_AGE_S = 12 * 3600     # 12h — up to 3 missed cron runs is still
+STALE_MAX_AGE_S = 6 * 3600      # 6h — up to 6 missed hourly runs is still
                                   #         "stale", not "do not trust"
 PERSISTENCE_MIN_RUN = 3         # 3 consecutive cron points all the same way
 PERSISTENCE_MIN_NET_SOL = 5.0   # each of those 3 points must move ≥5 SOL net
@@ -1544,16 +1547,16 @@ def flow_freshness(ca: str) -> dict:
     Returns ``{"ok": bool, "age_min": float, "level": str, "reason": str,
     "last_ts": int}``.
 
-    The cron runs every 4h so a healthy point is always ≤4h old; the
-    ``FRESH_MAX_AGE_S`` / ``STALE_MAX_AGE_S`` constants carve three
+    The cron runs every 1h (GMGN), so a healthy point is always ≤1h old;
+    the ``FRESH_MAX_AGE_S`` / ``STALE_MAX_AGE_S`` constants carve three
     bands:
 
     * **fresh** (<= ``FRESH_MAX_AGE_S``): ok=True, level="ok".
     * **stale** (≤``STALE_MAX_AGE_S``): ok=False, level="warn". The
       point is older than one full cron cycle but is still useful —
-      at most 3 missed runs.
+      at most a few missed runs.
     * **very stale** (>``STALE_MAX_AGE_S``): ok=False, level="danger".
-      3+ missed runs; the UI should refuse to surface the conviction
+      6+ missed runs; the UI should refuse to surface the conviction
       and offer a manual refresh.
     """
     pts = (load_conviction() or {}).get(ca) or []
@@ -1573,7 +1576,7 @@ def flow_freshness(ca: str) -> dict:
         msg = f"fresh ({age_min:.0f} min ago)"
     elif age <= STALE_MAX_AGE_S:
         level = "warn"
-        runs_behind = int(round(age_h / 4))
+        runs_behind = int(round(age_h))
         run_word = "run" if runs_behind == 1 else "runs"
         msg = (f"stale ({age_h:.1f}h ago — cron is "
                f"{runs_behind} {run_word} behind)")
@@ -1802,8 +1805,8 @@ SNAPSHOT_KEEP_DAYS = 30
 WHALE_DELTA_MIN_SOL = 1.0
 DOLPHIN_DELTA_MIN_SOL = 2.0
 # When a fresh snapshot is committed, skip if the previous one is
-# younger than this many seconds. The 4h cron fires every 4h, so
-# 6h gives it 2h of slack for retries / slow networks.
+# younger than this many seconds. The 1h cron fires every hour, so
+# 6h gives it plenty of slack for retries / slow networks.
 SNAPSHOT_MIN_GAP_S = 6 * 3600
 
 
@@ -2040,7 +2043,7 @@ def holder_delta(ca: str, *, window_h: int, current_holders,
                        "wallets_exited": 0, "holders_now": 0,
                        "holders_before": 0},
             "summary": "no snapshot",
-            "reason": ("no baseline snapshot ≤ window start — the 4h "
+            "reason": ("no baseline snapshot ≤ window start — the 1h "
                        "cron has not committed one yet for this CA"),
             "level": "ok",
         }
