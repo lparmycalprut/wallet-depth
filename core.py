@@ -2,6 +2,7 @@
 """Fungsi fetch bersama — dipakai app.py dan pages/ (Perbandingan, Riwayat)."""
 import json
 import os
+import threading
 
 import pandas as pd
 import requests
@@ -9,10 +10,189 @@ import requests
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 HISTORY_PATH = os.path.join(BASE_DIR, "history.json")
+HELIUS_RPC_URL = "https://mainnet.helius-rpc.com/"
+HELIUS_ENHANCED_URL = "https://api.helius.xyz"
+
+_helius_rotation_lock = threading.Lock()
+_helius_rotation_index = 0
+
+
+def merge_helius_keys(*values) -> list[str]:
+    """Normalize comma/newline-separated Helius keys and de-duplicate them.
+
+    Values may be strings or iterables, which keeps this helper usable for
+    config.json, environment variables, Streamlit secrets, and UI fields.
+    The first occurrence wins so the configured primary key stays first.
+    """
+    keys = []
+
+    def _add(value):
+        if isinstance(value, (list, tuple, set)):
+            for item in value:
+                _add(item)
+            return
+        for key in str(value or "").replace("\r", "\n").replace(
+                "\n", ",").split(","):
+            key = key.strip()
+            if key and key not in keys:
+                keys.append(key)
+
+    for value in values:
+        _add(value)
+    return keys
+
+
+def _config_file() -> dict:
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def _streamlit_helius_keys() -> list[str]:
+    try:
+        import streamlit as st
+        return merge_helius_keys(st.secrets.get("helius_api_key", ""),
+                                 st.secrets.get("helius_extra_keys", ""))
+    except Exception:
+        return []
+
+
+def get_helius_keys(*, primary=None, extras=None, config=None) -> list[str]:
+    """Return one de-duplicated Helius key pool from every supported source.
+
+    Explicit values (for example the live sidebar fields) come first, then an
+    optional config mapping, config.json, environment variables, and
+    Streamlit secrets.  Reading every source instead of overriding one source
+    with another ensures extra keys are never silently dropped.
+    """
+    passed = config or {}
+    disk = _config_file()
+    return merge_helius_keys(
+        primary, extras,
+        passed.get("helius_api_key"), passed.get("helius_extra_keys"),
+        disk.get("helius_api_key"), disk.get("helius_extra_keys"),
+        os.environ.get("HELIUS_API_KEY"),
+        os.environ.get("HELIUS_API_KEYS"),
+        _streamlit_helius_keys(),
+    )
+
+
+def _reset_helius_rotation() -> None:
+    """Reset round-robin state (primarily useful for deterministic tests)."""
+    global _helius_rotation_index
+    with _helius_rotation_lock:
+        _helius_rotation_index = 0
+
+
+def _helius_candidates(helius_keys=None, max_attempts=None) -> list[str]:
+    """Build a round-robin request order, including every configured key."""
+    # Resolved tuples/lists are passed through every paginated flow; avoid
+    # re-reading config.json and Streamlit secrets on every page.
+    if isinstance(helius_keys, (list, tuple)):
+        keys = merge_helius_keys(helius_keys)
+    else:
+        keys = get_helius_keys(primary=helius_keys)
+    if not keys:
+        raise RuntimeError("Helius API key missing")
+    global _helius_rotation_index
+    with _helius_rotation_lock:
+        start = _helius_rotation_index % len(keys)
+        _helius_rotation_index = (_helius_rotation_index + 1) % len(keys)
+    attempts = max(len(keys), int(max_attempts or 0))
+    return [keys[(start + offset) % len(keys)] for offset in range(attempts)]
+
+
+def _transient_rpc_error(error) -> bool:
+    if not isinstance(error, dict):
+        return False
+    code = error.get("code")
+    message = str(error.get("message") or error).lower()
+    return (code in (408, 425, 429, -32429) or
+            "rate limit" in message or "too many requests" in message or
+            "temporarily unavailable" in message or
+            "service unavailable" in message or "internal error" in message)
+
+
+def _response_error(response, label: str):
+    # Do not surface response.url: it contains the API key query parameter.
+    return RuntimeError(f"{label} HTTP {response.status_code}")
+
+
+def helius_rpc_request(payload: dict, helius_keys=None, *, timeout: int = 60,
+                       max_attempts=None) -> dict:
+    """POST Helius JSON-RPC, rotating on HTTP 429/5xx and network errors."""
+    last_error = None
+    for key in _helius_candidates(helius_keys, max_attempts):
+        try:
+            response = requests.post(HELIUS_RPC_URL, params={"api-key": key},
+                                     json=payload, timeout=timeout)
+        except requests.RequestException as exc:
+            last_error = exc
+            continue
+        if response.status_code == 429 or response.status_code >= 500:
+            last_error = _response_error(response, "Helius RPC")
+            continue
+        response.raise_for_status()
+        try:
+            data = response.json()
+        except (TypeError, ValueError) as exc:
+            last_error = exc
+            continue
+        error = data.get("error") if isinstance(data, dict) else None
+        if error:
+            err = RuntimeError(f"Helius RPC error: {error}")
+            if _transient_rpc_error(error):
+                last_error = err
+                continue
+            raise err
+        return data
+    if last_error:
+        raise last_error
+    raise RuntimeError("Helius RPC failed without a response")
+
+
+def helius_rpc(method: str, params, helius_keys=None, *, timeout: int = 60,
+               max_attempts=None):
+    """Call a Helius JSON-RPC method through the shared rotating key pool."""
+    data = helius_rpc_request(
+        {"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+        helius_keys, timeout=timeout, max_attempts=max_attempts)
+    if "result" not in data:
+        raise RuntimeError("Helius RPC response has no result")
+    return data["result"]
+
+
+def helius_api_get(url: str, *, params=None, headers=None, helius_keys=None,
+                   timeout: int = 40, max_attempts=None):
+    """GET a Helius Enhanced API endpoint with the same rotating key pool."""
+    last_error = None
+    for key in _helius_candidates(helius_keys, max_attempts):
+        query = dict(params or {})
+        query["api-key"] = key
+        try:
+            response = requests.get(url, params=query, headers=headers,
+                                    timeout=timeout)
+        except requests.RequestException as exc:
+            last_error = exc
+            continue
+        if response.status_code == 429 or response.status_code >= 500:
+            last_error = _response_error(response, "Helius API")
+            continue
+        response.raise_for_status()
+        try:
+            return response.json()
+        except (TypeError, ValueError) as exc:
+            last_error = exc
+    if last_error:
+        raise last_error
+    raise RuntimeError("Helius API failed without a response")
 
 
 def load_config() -> dict:
-    cfg = {"helius_api_key": "", "custom_rpc": "", "dust_limit_usd": 10,
+    cfg = {"helius_api_key": "", "helius_extra_keys": "",
+           "custom_rpc": "", "dust_limit_usd": 10,
            "cluster_warn_pct": 5, "cluster_scan_top_n": 50, "exclude_lp": True}
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -123,33 +303,33 @@ def get_ohlcv_daily(pair_address: str, limit: int = 30) -> pd.DataFrame:
 
 
 def rpc(endpoint: str, method: str, params: list, timeout: int = 60):
+    """Call a non-Helius/custom RPC endpoint (no key rotation available)."""
     r = requests.post(endpoint, json={"jsonrpc": "2.0", "id": 1,
                                       "method": method, "params": params},
                       timeout=timeout)
+    r.raise_for_status()
     d = r.json()
     if "error" in d:
         raise RuntimeError(str(d["error"]))
     return d["result"]
 
 
-def get_holders(helius_key: str, ca: str) -> pd.DataFrame:
-    """Semua holder (agregat per owner) via Helius getTokenAccounts."""
+def get_holders(helius_keys, ca: str) -> pd.DataFrame:
+    """Semua holder (agregat per owner) via rotating Helius keys."""
     import time as _t
-    endpoint = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
     owners, cursor, pages = {}, None, 0
     while True:
         params = {"mint": ca, "limit": 1000}
         if cursor:
             params["cursor"] = cursor
-        d = requests.post(endpoint, json={
-            "jsonrpc": "2.0", "id": 1, "method": "getTokenAccounts",
-            "params": params}, timeout=60).json()
-        if "error" in d:
-            raise RuntimeError(str(d["error"]))
-        res = d.get("result") or {}
+        res = helius_rpc("getTokenAccounts", params, helius_keys, timeout=60)
+        res = res or {}
         accs = res.get("token_accounts") or []
-        for a in accs:
-            owners[a["owner"]] = owners.get(a["owner"], 0.0) + float(a["amount"])
+        for account in accs:
+            owner = account.get("owner")
+            if owner:
+                owners[owner] = owners.get(owner, 0.0) + float(
+                    account.get("amount") or 0)
         pages += 1
         cursor = res.get("cursor")
         if not cursor or not accs or pages > 500:
@@ -159,11 +339,10 @@ def get_holders(helius_key: str, ca: str) -> pd.DataFrame:
                          "raw_amount": list(owners.values())})
 
 
-def get_supply(helius_key: str, ca: str):
-    res = rpc(f"https://mainnet.helius-rpc.com/?api-key={helius_key}",
-              "getTokenSupply", [ca], timeout=30)
-    v = res["value"]
-    return float(v["uiAmount"] or 0), int(v["decimals"])
+def get_supply(helius_keys, ca: str):
+    res = helius_rpc("getTokenSupply", [ca], helius_keys, timeout=30)
+    value = res["value"]
+    return float(value["uiAmount"] or 0), int(value["decimals"])
 
 
 def concentration(df: pd.DataFrame, supply: float) -> dict:

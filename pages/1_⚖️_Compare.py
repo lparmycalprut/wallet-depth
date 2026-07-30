@@ -7,9 +7,9 @@ import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from core import (concentration, get_holders, get_market, get_rugcheck,
-                  get_supply, health_score, load_config, score_color,
-                  score_label)
+from core import (concentration, get_helius_keys, get_holders, get_market,
+                  get_rugcheck, get_supply, health_score, load_config,
+                  score_color, score_label)
 
 st.set_page_config(page_title="Compare Tokens", page_icon="⚖️",
                    layout="wide", initial_sidebar_state="collapsed")
@@ -25,7 +25,7 @@ st.caption("Compare 2-3 tokens side-by-side: score, holders, dust/real, "
            "concentration, liquidity, buy/sell.")
 
 CONFIG = load_config()
-helius_key = CONFIG.get("helius_api_key") or ""
+helius_keys = tuple(get_helius_keys(config=CONFIG))
 dust_limit = float(CONFIG.get("dust_limit_usd", 10))
 
 c1, c2, c3 = st.columns(3)
@@ -39,18 +39,18 @@ if not st.button("⚖️ Compare", type="primary", use_container_width=True):
 if len(cas) < 2:
     st.warning("Enter at least 2 CAs to compare.")
     st.stop()
-if not helius_key:
+if not helius_keys:
     st.error("Helius API key missing (config.json / secrets).")
     st.stop()
 
 
 @st.cache_data(ttl=180, show_spinner=False)
-def analyze(ca: str) -> dict:
+def analyze(ca: str, api_keys: tuple) -> dict:
     m = get_market(ca)
     if not m:
         return {"error": "not found on DexScreener"}
-    supply, dec = get_supply(helius_key, ca)
-    hd = get_holders(helius_key, ca)
+    supply, dec = get_supply(api_keys, ca)
+    hd = get_holders(api_keys, ca)
     hd["ui_amount"] = hd["raw_amount"] / (10 ** dec)
     hd = hd[hd["ui_amount"] > 0]
     lp = set(m.get("pair_addresses") or [])
@@ -95,7 +95,7 @@ prog = st.progress(0.0, text="Analyzing...")
 for i, ca in enumerate(cas):
     prog.progress(i / len(cas), text=f"Analyzing {ca[:10]}… ({i+1}/{len(cas)})")
     try:
-        results[ca] = analyze(ca)
+        results[ca] = analyze(ca, helius_keys)
     except Exception as e:
         results[ca] = {"error": str(e)[:120]}
 prog.empty()

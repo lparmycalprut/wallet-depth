@@ -205,9 +205,14 @@ berikutnya.
 | Solscan | riwayat holder dan link verifikasi wallet |
 | GitHub | penyimpanan durable watchlist/history dan GitHub Actions |
 
-Helius API key diperlukan untuk fitur holder dan CVD penuh. Custom RPC yang
-mengizinkan `getProgramAccounts` dapat dipakai untuk holder, tetapi tidak
-menggantikan seluruh endpoint Enhanced API yang dipakai CVD.
+Helius API key diperlukan untuk fitur holder dan CVD penuh. Isi
+`helius_extra_keys` dengan key tambahan yang dipisahkan koma; holder, supply,
+mint info, cluster/bundler, Compare, dan CVD memakai pool yang sama dan
+otomatis beralih ke key berikutnya ketika Helius mengembalikan HTTP 429/5xx.
+Pool juga menggabungkan `HELIUS_API_KEY`, `HELIUS_API_KEYS`, config, dan
+Streamlit Secrets tanpa duplikat. Custom RPC yang mengizinkan
+`getProgramAccounts` dapat dipakai
+untuk holder, tetapi tidak menggantikan seluruh endpoint Enhanced API CVD.
 
 ## Instalasi lokal
 

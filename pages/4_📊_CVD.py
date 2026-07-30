@@ -20,7 +20,7 @@ import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ai_prompt import build_ai_prompt
-from core import load_config
+from core import get_helius_keys, helius_rpc, load_config
 from cvd import (MIN_SOL, WHALE_SOL, analysis_windows, classify_swap,
                  conviction_split, detect_divergence, wallet_profiles,
                  filter_swaps_by_time, summarize_swap_range,
@@ -44,7 +44,7 @@ st.caption("Pick a time window and analyze swap data for conviction, "
            "whale accumulation, and CVD trends.")
 
 CONFIG = load_config()
-helius_key = CONFIG.get("helius_api_key") or ""
+helius_keys = tuple(get_helius_keys(config=CONFIG))
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # CA can arrive via query param (?ca=...) from the LP Radar cards on the
@@ -160,7 +160,7 @@ if focus_enabled and focus_start_ts and focus_end_ts:
 skey = f"cvd::{source_key}::{hours}h::{ca}{_focus_key}"
 if not run and skey not in st.session_state:
     st.stop()
-if (not helius_key and not use_gmgn_trades and
+if (not helius_keys and not use_gmgn_trades and
         (run or skey not in st.session_state)):
     st.error("Helius API key missing (config.json / secrets).")
     st.stop()
@@ -213,7 +213,7 @@ def full_fetch(ca: str, pool: str, cutoff_ts: int, *,
     oldest = time.time()
     consecutive_fail = 0
     for page in range(1500):
-        data = _fetch_page(helius_key, pool, before)
+        data = _fetch_page(helius_keys, pool, before)
         if data is None:
             consecutive_fail += 1
             if consecutive_fail >= 3:
@@ -267,17 +267,15 @@ def save_funder_cache(c):
 
 
 def lookup_first_tx(wallet, max_pages=2):
-    url = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
     before, last_sig, last_bt = None, None, None
     for _ in range(max_pages):
         params = [wallet, {"limit": 1000}]
         if before:
             params[1]["before"] = before
         try:
-            r = requests.post(url, json={"jsonrpc": "2.0", "id": 1,
-                                         "method": "getSignaturesForAddress",
-                                         "params": params}, timeout=30)
-            res = r.json().get("result") or []
+            res = helius_rpc(
+                "getSignaturesForAddress", params, helius_keys,
+                timeout=30) or []
         except Exception:
             return None, None
         if not res:
@@ -292,12 +290,11 @@ def lookup_first_tx(wallet, max_pages=2):
     if not last_sig:
         return None, None
     try:
-        r = requests.post(url, json={
-            "jsonrpc": "2.0", "id": 1, "method": "getTransaction",
-            "params": [last_sig, {"encoding": "jsonParsed",
-                                  "maxSupportedTransactionVersion": 0}]},
-            timeout=30)
-        tx = r.json().get("result")
+        tx = helius_rpc(
+            "getTransaction",
+            [last_sig, {"encoding": "jsonParsed",
+                        "maxSupportedTransactionVersion": 0}],
+            helius_keys, timeout=30)
         keys = tx["transaction"]["message"]["accountKeys"]
         fp = keys[0]["pubkey"] if isinstance(keys[0], dict) else keys[0]
         return (fp if fp != wallet else None), last_bt
@@ -340,7 +337,7 @@ if run or skey not in st.session_state:
         if ca in load_watchlist():
             with st.spinner("Topping up incremental store (only new swaps)…"):
                 try:
-                    update_token_cvd(helius_key, ca, pool, max_pages=200)
+                    update_token_cvd(helius_keys, ca, pool, max_pages=200)
                 except Exception:
                     pass
                 got = get_recent_swaps(ca, hours)
@@ -567,7 +564,7 @@ dists = sorted([(w, d) for w, d in full_profiles.items()
 
 fcache = load_funder_cache()
 targets = [w for w, _ in accs + dists if w not in fcache]
-if targets and helius_key:
+if targets and helius_keys:
     apb = st.progress(0.0, text="Looking up wallet ages…")
     for i, w in enumerate(targets[:20]):
         fcache[w] = list(lookup_first_tx(w))

@@ -15,8 +15,8 @@ from datetime import date, datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core import concentration, get_holders, get_market, get_rugcheck, \
-    get_supply, health_score  # noqa: E402
+from core import concentration, get_helius_keys, get_holders, get_market, \
+    get_rugcheck, get_supply, health_score  # noqa: E402
 from watchlist import load_watchlist, save_watchlist  # noqa: E402
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -35,12 +35,12 @@ def load_history():
         return {}
 
 
-def snapshot_one(helius_key: str, ca: str) -> dict:
+def snapshot_one(helius_keys, ca: str) -> dict:
     m = get_market(ca)
     if not m:
         raise RuntimeError("not found on DexScreener")
-    supply, dec = get_supply(helius_key, ca)
-    hd = get_holders(helius_key, ca)
+    supply, dec = get_supply(helius_keys, ca)
+    hd = get_holders(helius_keys, ca)
     hd["ui_amount"] = hd["raw_amount"] / (10 ** dec)
     hd = hd[hd["ui_amount"] > 0]
     lp = set(m.get("pair_addresses") or [])
@@ -84,16 +84,9 @@ def snapshot_one(helius_key: str, ca: str) -> dict:
 
 
 def main():
-    helius_key = os.environ.get("HELIUS_API_KEY", "").strip()
-    if not helius_key:
-        # fallback: config.json (local runs)
-        try:
-            with open(os.path.join(BASE_DIR, "config.json")) as f:
-                helius_key = (json.load(f) or {}).get("helius_api_key", "")
-        except Exception:
-            pass
-    if not helius_key:
-        sys.exit("HELIUS_API_KEY missing (env or config.json)")
+    helius_keys = tuple(get_helius_keys())
+    if not helius_keys:
+        sys.exit("HELIUS_API_KEY(S) missing (env, config.json, or secrets)")
 
     wl = load_watchlist()
     if not wl:
@@ -105,7 +98,7 @@ def main():
     ok, failed = 0, 0
     for ca, meta in wl.items():
         try:
-            snap = snapshot_one(helius_key, ca)
+            snap = snapshot_one(helius_keys, ca)
             hist.setdefault(ca, {})[today] = snap
             if snap.get("symbol") and snap["symbol"] != "?":
                 meta["symbol"] = snap["symbol"]
