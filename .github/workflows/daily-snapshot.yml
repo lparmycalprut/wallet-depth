@@ -1,9 +1,9 @@
-name: Watchlist snapshot (8-hourly)
+name: Watchlist snapshot (daily · DexScreener+GMGN)
 
 on:
   schedule:
-    # every 8 hours (00/08/16 UTC = 07/15/23 WIB)
-    - cron: "0 */8 * * *"
+    # every day at 00:30 UTC = 07:30 WIB
+    - cron: "30 0 * * *"
   workflow_dispatch: {}   # manual run button
 
 permissions:
@@ -20,18 +20,24 @@ jobs:
           python-version: "3.12"
 
       - name: Install deps
-        run: pip install requests pandas
+        run: |
+          pip install requests pandas curl_cffi
 
-      - name: Run daily snapshot
-        env:
-          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
-          HELIUS_API_KEYS: ${{ secrets.HELIUS_API_KEYS }}
+      - name: Run daily snapshot (DexScreener + GMGN, no Helius needed)
         run: python scripts/daily_snapshot.py
 
       - name: Commit history
         run: |
           git config user.name "snapshot-bot"
           git config user.email "actions@github.com"
+          git stash -u || true
+          git pull --rebase || true
+          git stash pop || true
+          for f in history.json; do
+            if grep -q "<<<<<<<" "$f" 2>/dev/null; then
+              git checkout --theirs "$f" 2>/dev/null || git checkout HEAD -- "$f" || true
+            fi
+          done
           git add history.json watchlist.json
-          git diff --cached --quiet || git commit -m "chore: daily snapshot $(date -u +%F)"
-          git push
+          git diff --cached --quiet || git commit -m "chore: daily snapshot $(date -u +%F) · DexScreener+GMGN"
+          git push || (git pull --rebase && git push) || true
