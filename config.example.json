@@ -5,7 +5,7 @@
   "cluster_warn_pct": 5,
   "cluster_scan_top_n": 50,
   "exclude_lp": true,
-  "helius_extra_keys": "KEY2,KEY3 (optional \u2014 comma separated)",
+  "helius_extra_keys": "",
   "telegram_bot_token": "BOT_TOKEN from @BotFather (optional)",
   "telegram_chat_id": "your chat id (optional)"
 }

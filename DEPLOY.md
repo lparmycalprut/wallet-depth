@@ -34,6 +34,7 @@ git push -u origin main
 
 ```toml
 helius_api_key = "PASTE-HELIUS-API-KEY-DI-SINI"
+helius_extra_keys = "KEY-KEDUA,KEY-KETIGA"  # optional
 ```
 
 5. Klik **Deploy**. Tunggu ±2 menit → app online! 🎉

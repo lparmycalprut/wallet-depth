@@ -6,6 +6,7 @@ GeckoTerminal.   Run:  streamlit run app.py
 """
 
 import base64
+import hashlib
 import json
 import os
 import struct
@@ -19,8 +20,10 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import (concentration, health_score, score_color, score_label,
-                  get_rugcheck, get_ohlcv_daily)
+from core import (concentration, get_helius_keys,
+                  get_holders as core_get_holders, get_ohlcv_daily,
+                  get_rugcheck, get_supply as core_get_supply, health_score,
+                  helius_rpc, score_color, score_label)
 from trending_ui import render_trending, run_screen
 
 
@@ -49,7 +52,8 @@ def detect_sr_levels(ohlcv: pd.DataFrame, window: int = 30):
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 HISTORY_PATH = os.path.join(BASE_DIR, "history.json")
-DEFAULT_CONFIG = {"helius_api_key": "", "custom_rpc": "", "dust_limit_usd": 10,
+DEFAULT_CONFIG = {"helius_api_key": "", "helius_extra_keys": "",
+                  "custom_rpc": "", "dust_limit_usd": 10,
                   "cluster_warn_pct": 5, "cluster_scan_top_n": 50,
                   "exclude_lp": True}
 DUST_LIMIT_USD = 10.0
@@ -143,6 +147,7 @@ def fetch_ohlcv(pair_address: str) -> pd.DataFrame:
 
 
 def rpc_call(endpoint: str, method: str, params: list, timeout: int = 120):
+    """Call a custom/public RPC. Helius calls use core.helius_rpc instead."""
     r = requests.post(endpoint, json={"jsonrpc": "2.0", "id": 1,
                                       "method": method, "params": params},
                       timeout=timeout)
@@ -153,6 +158,13 @@ def rpc_call(endpoint: str, method: str, params: list, timeout: int = 120):
     return data["result"]
 
 
+def rpc_source_call(source, method: str, params, timeout: int = 120):
+    """Dispatch to rotating Helius keys or to one custom RPC endpoint."""
+    if isinstance(source, (tuple, list)):
+        return helius_rpc(method, params, source, timeout=timeout)
+    return rpc_call(source, method, params, timeout=timeout)
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_supply(endpoint: str, ca: str):
     res = rpc_call(endpoint, "getTokenSupply", [ca], timeout=30)
@@ -160,11 +172,16 @@ def fetch_supply(endpoint: str, ca: str):
     return float(v["uiAmount"] or 0), int(v["decimals"])
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_helius_supply(api_keys: tuple, ca: str):
+    return core_get_supply(api_keys, ca)
+
+
 @st.cache_data(ttl=600, show_spinner=False)
-def fetch_mint_info(endpoint: str, ca: str) -> dict:
+def fetch_mint_info(rpc_source, ca: str) -> dict:
     try:
-        res = rpc_call(endpoint, "getAccountInfo",
-                       [ca, {"encoding": "jsonParsed"}], timeout=30)
+        res = rpc_source_call(rpc_source, "getAccountInfo",
+                              [ca, {"encoding": "jsonParsed"}], timeout=30)
         info = res["value"]["data"]["parsed"]["info"]
         return {"mint_authority": info.get("mintAuthority"),
                 "freeze_authority": info.get("freezeAuthority")}
@@ -173,33 +190,8 @@ def fetch_mint_info(endpoint: str, ca: str) -> dict:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_holders_helius(api_key: str, ca: str) -> pd.DataFrame:
-    endpoint = f"https://mainnet.helius-rpc.com/?api-key={api_key}"
-    owners, cursor, pages = {}, None, 0
-    while True:
-        params = {"mint": ca, "limit": 1000}
-        if cursor:
-            params["cursor"] = cursor
-        r = requests.post(endpoint, json={"jsonrpc": "2.0", "id": 1,
-                                          "method": "getTokenAccounts",
-                                          "params": params}, timeout=60)
-        r.raise_for_status()
-        data = r.json()
-        if "error" in data:
-            raise RuntimeError(f"Helius error: {data['error']}")
-        result = data.get("result") or {}
-        accounts = result.get("token_accounts") or []
-        for acc in accounts:
-            owner = acc.get("owner")
-            if owner:
-                owners[owner] = owners.get(owner, 0.0) + float(acc.get("amount") or 0)
-        pages += 1
-        cursor = result.get("cursor")
-        if not cursor or not accounts or pages > 500:
-            break
-        time.sleep(0.15)
-    return pd.DataFrame({"owner": list(owners.keys()),
-                         "raw_amount": list(owners.values())})
+def fetch_holders_helius(api_keys: tuple, ca: str) -> pd.DataFrame:
+    return core_get_holders(api_keys, ca)
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -288,7 +280,8 @@ def find_funder(endpoint: str, wallet: str, max_pages: int = 5):
         if before:
             params[1]["before"] = before
         try:
-            res = rpc_call(endpoint, "getSignaturesForAddress", params, timeout=30)
+            res = rpc_source_call(
+                endpoint, "getSignaturesForAddress", params, timeout=30)
         except Exception:
             return None, None
         if not res:
@@ -303,10 +296,10 @@ def find_funder(endpoint: str, wallet: str, max_pages: int = 5):
     if not last_sig:
         return None, None
     try:
-        tx = rpc_call(endpoint, "getTransaction",
-                      [last_sig, {"encoding": "jsonParsed",
-                                  "maxSupportedTransactionVersion": 0}],
-                      timeout=30)
+        tx = rpc_source_call(
+            endpoint, "getTransaction",
+            [last_sig, {"encoding": "jsonParsed",
+                        "maxSupportedTransactionVersion": 0}], timeout=30)
     except Exception:
         return None, last_bt
     if not tx:
@@ -392,6 +385,9 @@ helius_extra = st.sidebar.text_input(
     help="Add 2-3 more FREE Helius keys (different accounts). The tool "
          "auto-rotates to the next key whenever one hits its rate limit — "
          "multiplying your free capacity.")
+# Include the current (possibly unsaved) sidebar values in the shared pool.
+helius_keys = tuple(get_helius_keys(primary=helius_key, extras=helius_extra,
+                                    config=CONFIG))
 custom_rpc = st.sidebar.text_input("Custom RPC URL (optional)",
                                    value=str(CONFIG.get("custom_rpc") or ""),
                                    placeholder="https://...")
@@ -936,19 +932,20 @@ if not market:
 
 price = market["price_usd"]
 marketcap = market["marketcap"]
-rpc_for_supply = (f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
-                  if helius_key else
-                  (custom_rpc or "https://solana-rpc.publicnode.com"))
 try:
-    supply, decimals = fetch_supply(rpc_for_supply, ca)
+    if helius_keys:
+        supply, decimals = fetch_helius_supply(helius_keys, ca)
+    else:
+        supply, decimals = fetch_supply(
+            custom_rpc or "https://solana-rpc.publicnode.com", ca)
 except Exception:
     supply, decimals = (marketcap / price if price else 0), 6
 
 holders_df, err_msgs = None, []
-if helius_key:
+if helius_keys:
     with st.spinner("Fetching all holders via Helius (10–60s)..."):
         try:
-            holders_df = fetch_holders_helius(helius_key, ca)
+            holders_df = fetch_holders_helius(helius_keys, ca)
         except Exception as e:
             err_msgs.append(f"Helius failed: {e}")
 if holders_df is None and custom_rpc:
@@ -1014,8 +1011,8 @@ elif prev:
     holder_delta = int(total_holders - prev["total_holders"])
     holder_delta_src = f"local snapshot {prev_key}"
 
-rpc_endpoint = (f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
-                if helius_key else custom_rpc)
+# A tuple means rotating Helius keys; a string means one custom RPC URL.
+rpc_endpoint = helius_keys if helius_keys else custom_rpc
 
 with st.spinner("Fetching security data (RugCheck) & price history..."):
     rug = fetch_rugcheck(ca)
@@ -1041,7 +1038,10 @@ if scan_clusters and rpc_endpoint:
     # speed filter: skip wallets too small to matter for clusters
     if min_holder_pct > 0:
         top_n = top_n[top_n["pct_supply"] >= min_holder_pct]
-    cache_key = f"clusters::{ca}::{eff_n}::{scan_mode}::{min_holder_pct}"
+    rpc_source_id = hashlib.sha256(
+        repr(rpc_endpoint).encode("utf-8")).hexdigest()[:12]
+    cache_key = (f"clusters::{ca}::{eff_n}::{scan_mode}::"
+                 f"{min_holder_pct}::{rpc_source_id}")
     if cache_key not in st.session_state:
         pbar = st.progress(0.0, text="🕸️ Scanning clusters & wallet age...")
 
@@ -1763,7 +1763,7 @@ if run_cvd_now and (rpc_endpoint or use_gmgn_trades):
         WHALE_SOL as _WHSOL, detect_divergence as _detdiv
 
     @st.cache_data(ttl=3600, show_spinner=False)
-    def fetch_live_swaps(ca: str, pool: str, hours: int,
+    def fetch_live_swaps(api_keys: tuple, ca: str, pool: str, hours: int,
                          max_pages: int = 700):
         """Full live Helius swap fetch for complete CVD windows."""
         from cvd import _fetch_page
@@ -1773,7 +1773,7 @@ if run_cvd_now and (rpc_endpoint or use_gmgn_trades):
         _t0 = time.time()
         oldest = time.time()
         for _pg in range(max_pages):
-            page = _fetch_page(helius_key, pool, before)
+            page = _fetch_page(api_keys, pool, before)
             if page is None or not page:
                 break
             done = False
@@ -1828,17 +1828,19 @@ if run_cvd_now and (rpc_endpoint or use_gmgn_trades):
             from cvd import update_token_cvd, get_recent_swaps
 
             @st.cache_data(ttl=600, show_spinner=False)
-            def topup_and_load(ca: str, pool: str, hours: int):
+            def topup_and_load(api_keys: tuple, ca: str, pool: str,
+                               hours: int):
                 try:
-                    update_token_cvd(helius_key, ca, pool, max_pages=200)
+                    update_token_cvd(api_keys, ca, pool, max_pages=200)
                 except Exception:
                     pass
                 return get_recent_swaps(ca, hours)
 
             with st.spinner(f"Topping up CVD store (incremental) & loading "
                             f"last {cvd_window}h…"):
-                live_swaps = topup_and_load(ca, pair0, cvd_window) \
-                    if pair0 else []
+                live_swaps = (
+                    topup_and_load(helius_keys, ca, pair0, cvd_window)
+                    if pair0 else [])
             live_src = "incremental store (Helius)"
             if not live_swaps:  # store still empty -> fall back to live fetch
                 in_watchlist = False
@@ -1846,8 +1848,9 @@ if run_cvd_now and (rpc_endpoint or use_gmgn_trades):
             with st.spinner(f"Fetching complete last {cvd_window}h of swaps "
                             f"(Helius full fetch — active tokens can take "
                             "minutes)…"):
-                live_swaps = fetch_live_swaps(ca, pair0, cvd_window) \
-                    if pair0 else []
+                live_swaps = (
+                    fetch_live_swaps(helius_keys, ca, pair0, cvd_window)
+                    if pair0 else [])
             live_src = "Helius live fetch"
     if live_swaps:
         ldf = pd.DataFrame(live_swaps,

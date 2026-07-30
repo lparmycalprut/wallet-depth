@@ -12,9 +12,10 @@ import argparse
 import json
 import os
 import sys
-import time
 
 import requests
+
+from core import get_helius_keys, get_holders, get_supply
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 
@@ -52,38 +53,16 @@ def dexscreener(ca):
     }
 
 
-def holders_helius(key, ca):
-    url = f"https://mainnet.helius-rpc.com/?api-key={key}"
-    owners, cursor = {}, None
-    while True:
-        params = {"mint": ca, "limit": 1000}
-        if cursor:
-            params["cursor"] = cursor
-        d = requests.post(url, json={"jsonrpc": "2.0", "id": 1,
-                                     "method": "getTokenAccounts",
-                                     "params": params}, timeout=60).json()
-        if "error" in d:
-            sys.exit(f"Helius error: {d['error']}")
-        res = d.get("result") or {}
-        accs = res.get("token_accounts") or []
-        for a in accs:
-            owners[a["owner"]] = owners.get(a["owner"], 0) + float(a["amount"])
-        cursor = res.get("cursor")
-        print(f"  ...{len(owners):,} owners", end="\r")
-        if not cursor or not accs:
-            break
-        time.sleep(0.15)
-    print()
+def holders_helius(keys, ca):
+    holders = get_holders(keys, ca)
+    owners = dict(zip(holders["owner"], holders["raw_amount"]))
+    print(f"  ...{len(owners):,} owners")
     return owners
 
 
-def decimals_of(key, ca):
-    url = f"https://mainnet.helius-rpc.com/?api-key={key}"
-    d = requests.post(url, json={"jsonrpc": "2.0", "id": 1,
-                                 "method": "getTokenSupply", "params": [ca]},
-                      timeout=30).json()
-    v = d["result"]["value"]
-    return int(v["decimals"]), float(v["uiAmount"])
+def decimals_of(keys, ca):
+    supply, decimals = get_supply(keys, ca)
+    return decimals, supply
 
 
 def main():
@@ -96,9 +75,10 @@ def main():
                     default=float(cfg.get("dust_limit_usd", DUST_LIMIT)))
     args = ap.parse_args()
 
-    if not args.helius_key:
-        sys.exit("Missing Helius API key. Set it in config.json "
-                 "(helius_api_key) or pass --helius-key.")
+    helius_keys = tuple(get_helius_keys(primary=args.helius_key, config=cfg))
+    if not helius_keys:
+        sys.exit("Missing Helius API key(s). Set config.json / environment "
+                 "or pass --helius-key.")
 
     ca = args.ca or input("Enter Solana token CA: ").strip()
     if not ca:
@@ -110,9 +90,9 @@ def main():
         sys.exit("Token not found on DexScreener.")
     print(f"  {m['name']} (${m['symbol']}) | price ${m['price']:.10f} | MC ${m['mc']:,.0f}")
 
-    dec, supply = decimals_of(args.helius_key, ca)
+    dec, supply = decimals_of(helius_keys, ca)
     print(f"{BOLD}Fetching all holders via Helius...{END}")
-    owners = holders_helius(args.helius_key, ca)
+    owners = holders_helius(helius_keys, ca)
 
     vals = []
     for o, raw in owners.items():

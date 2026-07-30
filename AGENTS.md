@@ -26,7 +26,7 @@ buktikan kalibrasinya tidak bergeser (lihat §5).
 |---|---|
 | `app.py` | dashboard utama (besar, ~110KB) |
 | `pages/` | halaman Streamlit tambahan |
-| `core.py` | helper Helius/DexScreener/GeckoTerminal |
+| `core.py` | helper Helius (shared multi-key pool)/DexScreener/GeckoTerminal |
 | `cvd.py` | store swap, bucket CVD, profil wallet, **level D1**, **flow attribution**, **flow safety checks** (freshness / persistence / distribution / quality) |
 | `gmgn_screener.py` | screener GMGN + **scoring ramp kontinu** + **fresh-wallet & top-50 concentration penalties** |
 | `ai_prompt.py` | builder prompt CVD siap-salin, jujur soal cakupan data |
@@ -35,7 +35,7 @@ buktikan kalibrasinya tidak bergeser (lihat §5).
 | `signals.py` | log sinyal CVD → `signals.json` + notif Telegram |
 | `watchlist.py` | watchlist helpers (load/save/add/remove + GitHub commit) |
 | `scripts/update_cvd.py` | entry point cron (tiap jam, menit :20) |
-| `tests/` | 4 suite, **jalan tanpa pytest & tanpa jaringan** |
+| `tests/` | 5 suite, **jalan tanpa pytest & tanpa jaringan** |
 
 **File data yang di-commit cron** (jangan di-`.gitignore`):
 `cvd.json` · `signals.json` · `conviction.json` · `levels.json` ·
@@ -117,6 +117,7 @@ python tests/test_breakout_guard.py       # 67 assertion
 python tests/test_scoring_continuity.py
 python tests/test_markup_ai_prompt.py
 python tests/test_flow_safety.py          # LP Radar 4-window + flow checks + GMGN new penalties
+python tests/test_helius_rotation.py       # key merge/de-dup + 429 failover
 ```
 
 Tanpa pytest, tanpa jaringan. **Tes wajib mem-patch semua path file**
@@ -145,6 +146,10 @@ Jebakan yang sudah pernah menggigit:
   `maker` → wallet. Jangan balik ke helper lama `gmgn_screener` yang
   memakai estimasi SOL fixed; error GMGN harus tampil via
   `cvd.get_gmgn_last_error()` dan tidak boleh crash.
+- **Helius key pool hanya di `core.py`.** Semua RPC/Enhanced API wajib lewat
+  `get_helius_keys()` + `helius_rpc()`/`helius_api_get()`. Jangan kembali
+  membuat endpoint `?api-key=...` langsung di app/page/cron; itu akan
+  melewati `helius_extra_keys` dan failover 429/5xx.
 - **Jangan commit `config.json`** (berisi API key, sudah di `.gitignore`).
 - **LP Radar 48h butuh ≥8 cron point (≥2 hari).** Sebelum itu, sparkline
   baris ke-4 mirror 24h supaya tidak misleading ke 0%. Konvensi ini di-

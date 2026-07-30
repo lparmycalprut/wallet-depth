@@ -7,6 +7,38 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-07-30 — Helius multi-key dipakai oleh semua alur
+
+### Root cause
+
+Field `helius_extra_keys` hanya dibaca oleh pool lokal di `cvd.py`. Fetch
+holder utama di `app.py`, supply/mint/cluster, dan halaman Compare membangun
+URL dari satu `helius_api_key`; HTTP 429 langsung gagal. Cache Streamlit juga
+tidak memasukkan pool key sebagai argumen pada beberapa fetch CVD.
+
+### Perbaikan
+
+1. `core.py` menjadi sumber tunggal pool Helius: main + extra dari sidebar,
+   config.json, `HELIUS_API_KEY`, `HELIUS_API_KEYS`, dan Streamlit Secrets
+   digabung berurutan dan di-de-dup.
+2. JSON-RPC dan Enhanced API memakai round-robin serta fallback ke key
+   berikutnya pada HTTP 429/5xx (juga transient network/JSON-RPC rate errors).
+3. Holder, supply, mint info, funder/cluster scan, Compare, CVD main/deep, CLI,
+   dan dua cron memakai helper yang sama. Cache fetch menerima tuple pool;
+   cache cluster menyertakan fingerprint pool agar perubahan key tidak memakai
+   hasil scan lama.
+4. `tests/test_helius_rotation.py` memverifikasi merge/de-dup semua sumber dan
+   skenario key pertama 429 lalu key kedua berhasil tanpa jaringan.
+
+### Verifikasi
+
+- Semua 5 file `tests/*.py` menghasilkan **ALL PASSED**.
+- Seluruh file Python lulus `py_compile`.
+- Audit URL Helius: endpoint hanya didefinisikan di `core.py`; app/page/cron
+  tidak lagi melakukan request Helius langsung.
+
+---
+
 ## 2026-07-29 — Toggle GMGN Trades API untuk sumber CVD
 
 ### Perubahan
