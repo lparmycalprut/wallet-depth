@@ -1,8 +1,8 @@
-name: CVD update (4-hourly)
+name: CVD update (hourly · GMGN)
 
 on:
   schedule:
-    - cron: "20 */4 * * *"   # every 4 hours at :20
+    - cron: "30 * * * *"   # every hour at :30
   workflow_dispatch: {}
 
 permissions:
@@ -19,15 +19,16 @@ jobs:
           python-version: "3.12"
 
       - name: Install deps
-        run: pip install requests pandas
+        run: |
+          pip install requests pandas curl_cffi
 
-      - name: Update CVD buckets
+      - name: Update CVD buckets (GMGN Trades API)
         env:
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
           HELIUS_API_KEYS: ${{ secrets.HELIUS_API_KEYS }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python scripts/update_cvd.py 60
+        run: python scripts/update_cvd.py 80
 
       - name: Commit cvd.json
         run: |
@@ -36,14 +37,11 @@ jobs:
           git stash -u || true
           git pull --rebase || true
           git stash pop || true
-          # never commit conflict markers into JSON data files
           for f in cvd.json signals.json conviction.json levels.json breakouts.json; do
             if grep -q "<<<<<<<" "$f" 2>/dev/null; then
               git checkout --theirs "$f" 2>/dev/null || git checkout HEAD -- "$f" || true
             fi
           done
           git add cvd.json signals.json conviction.json levels.json breakouts.json holder_snapshots.json
-           # holder_snapshots.json: whale/dolphin holdings baseline
-          # (4h cron commits per CA every other run, ~6h bucket)
-          git diff --cached --quiet || git commit -m "chore: cvd update $(date -u +%FT%H:%M)"
+          git diff --cached --quiet || git commit -m "chore: cvd update $(date -u +%FT%H:%M) · GMGN"
           git push || (git pull --rebase && git push) || true
