@@ -714,13 +714,22 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
 
 
 # ---------------------------------------------------------------------------
-# Wallet behaviour profiling — pure accumulators / distributors
+# Wallet behaviour profiling — pure accumulators / light holders / traders
 # ---------------------------------------------------------------------------
-def wallet_profiles(swaps, *, pure_tol=0.05):
+def wallet_profiles(swaps, *, pure_tol=0.05, light_tol=0.10, trader_tol=0.50):
     """Classify wallets by behaviour within the window.
+
     swaps: iterable of (side, sol, ts, wallet).
-    profile: 'pure_accum' (sells <= 5% of buys), 'pure_dist'
-    (buys <= 5% of sells), or 'two_way'."""
+
+    Profile taxonomy (buy-side, sorted by conviction):
+      - 'pure_accum'  : sells <= 5%  of buys  (bought & held, zero doubt)
+      - 'light_holder' : sells > 5% but < 10%  of buys  (still holding 90%+)
+      - 'trader'       : sells >= 10% but <= 50% of buys  (sold some, still long)
+      - 'two_way'      : sells > 50% of buys AND buys > 5% of sells  (MM/bot)
+      - 'pure_dist'    : buys <= 5% of sells  (sold & left)
+
+    The same logic applies symmetrically on the sell side for pure_dist.
+    """
     w = {}
     for side, sol, ts, wallet in swaps:
         if not wallet:
@@ -740,6 +749,10 @@ def wallet_profiles(swaps, *, pure_tol=0.05):
     for wallet, d in w.items():
         if d["buy"] > 0 and d["sell"] <= d["buy"] * pure_tol:
             d["profile"] = "pure_accum"
+        elif d["buy"] > 0 and d["sell"] < d["buy"] * light_tol:
+            d["profile"] = "light_holder"
+        elif d["buy"] > 0 and d["sell"] <= d["buy"] * trader_tol:
+            d["profile"] = "trader"
         elif d["sell"] > 0 and d["buy"] <= d["sell"] * pure_tol:
             d["profile"] = "pure_dist"
         else:
@@ -750,23 +763,55 @@ def wallet_profiles(swaps, *, pure_tol=0.05):
     return w
 
 
+# Weight applied to each profile's buy volume in conviction calculation.
+# pure_accum = 100% (held everything), light_holder = 75%, trader = 30%.
+PROFILE_WEIGHTS = {
+    "pure_accum": 1.00,
+    "light_holder": 0.75,
+    "trader": 0.30,
+    "two_way": 0.0,
+    "pure_dist": 0.0,
+}
+
+
 def conviction_split(profiles, *, whale_min_sol=3.0):
-    """How much whale-sized buy volume is 'pure' (bought & held) vs
-    recycled by two-way traders. Same for the sell side."""
-    pure_buy = tw_buy = pure_sell = tw_sell = 0.0
+    """How much buy volume is 'held' vs recycled by two-way traders.
+
+    Each profile's buy volume is weighted by :data:`PROFILE_WEIGHTS`:
+    pure_accum 100%, light_holder 75%, trader 30%, two_way 0%.
+
+    Also returns per-profile counts and volumes for the UI.
+    """
+    pure_buy = lh_buy = trader_buy = tw_buy = 0.0
+    pure_sell = tw_sell = 0.0
+    n_pure = n_lh = n_trader = 0
     for d in profiles.values():
-        if d["profile"] == "pure_accum" and d["buy"] >= whale_min_sol:
+        p = d["profile"]
+        if p == "pure_accum" and d["buy"] >= whale_min_sol:
             pure_buy += d["buy"]
-        elif d["profile"] == "pure_dist" and d["sell"] >= whale_min_sol:
+            n_pure += 1
+        elif p == "light_holder" and d["buy"] >= whale_min_sol:
+            lh_buy += d["buy"]
+            n_lh += 1
+        elif p == "trader" and d["buy"] >= whale_min_sol:
+            trader_buy += d["buy"]
+            n_trader += 1
+        elif p == "pure_dist" and d["sell"] >= whale_min_sol:
             pure_sell += d["sell"]
-        elif d["profile"] == "two_way":
+        elif p == "two_way":
             tw_buy += d["buy"]
             tw_sell += d["sell"]
-    total_buy = pure_buy + tw_buy
-    conviction = pure_buy / total_buy * 100 if total_buy else 0.0
-    return {"pure_buy": pure_buy, "pure_sell": pure_sell,
+    effective_buy = (pure_buy * PROFILE_WEIGHTS["pure_accum"]
+                     + lh_buy * PROFILE_WEIGHTS["light_holder"]
+                     + trader_buy * PROFILE_WEIGHTS["trader"])
+    total_buy = pure_buy + lh_buy + trader_buy + tw_buy
+    conviction = effective_buy / total_buy * 100 if total_buy else 0.0
+    return {"pure_buy": pure_buy, "lh_buy": lh_buy, "trader_buy": trader_buy,
+            "pure_sell": pure_sell,
             "tw_buy": tw_buy, "tw_sell": tw_sell,
-            "conviction_pct": conviction}
+            "effective_buy": effective_buy,
+            "conviction_pct": conviction,
+            "n_pure": n_pure, "n_lh": n_lh, "n_trader": n_trader}
 
 
 # ---------------------------------------------------------------------------
@@ -832,20 +877,50 @@ def load_conviction() -> dict:
 
 def record_conviction(ca: str, *, window_h: int = 6) -> dict | None:
     """Compute conviction over the last `window_h` from the swap store and
-    append it to conviction.json. Returns the point or None."""
+    append it to conviction.json. Returns the point or None.
+
+    Persistence bonus: if the count of pure_accum + light_holder wallets
+    increased compared to the previous cron point, conviction gets +3%
+    per consecutive increase, capped at +15%.
+    """
     swaps = get_recent_swaps(ca, window_h)
     if not swaps:
         return None
     profiles = wallet_profiles(swaps)
     conv = conviction_split(profiles, whale_min_sol=WHALE_SOL)
     vol = sum(s[1] for s in swaps)
+
+    # Persistence bonus: +3% per consecutive increase in holder count,
+    # capped at +15%.
+    _PERSIST_STEP = 3.0
+    _PERSIST_CAP = 15.0
+    _holder_count = conv["n_pure"] + conv["n_lh"]
+    _prev_holder_count = None
+    _consecutive_ups = 0
+    hist = load_conviction()
+    arr = hist.get(ca, [])
+    if arr:
+        _prev_holder_count = arr[-1].get("holder_count")
+        _consecutive_ups = arr[-1].get("consecutive_ups", 0)
+    if _prev_holder_count is not None and _holder_count > _prev_holder_count:
+        _consecutive_ups += 1
+    else:
+        _consecutive_ups = 0
+    _persist_bonus = min(_consecutive_ups * _PERSIST_STEP, _PERSIST_CAP)
+    _conv_final = min(conv["conviction_pct"] + _persist_bonus, 100.0)
+
     point = {"ts": int(time.time()),
-             "conviction": round(conv["conviction_pct"], 1),
+             "conviction": round(_conv_final, 1),
+             "conviction_base": round(conv["conviction_pct"], 1),
+             "persist_bonus": round(_persist_bonus, 1),
              "pure_buy": round(conv["pure_buy"], 1),
+             "lh_buy": round(conv["lh_buy"], 1),
+             "trader_buy": round(conv["trader_buy"], 1),
              "pure_sell": round(conv["pure_sell"], 1),
              "net_pure": round(conv["pure_buy"] - conv["pure_sell"], 1),
-             "vol": round(vol, 1), "swaps": len(swaps)}
-    hist = load_conviction()
+             "vol": round(vol, 1), "swaps": len(swaps),
+             "holder_count": _holder_count,
+             "consecutive_ups": _consecutive_ups}
     arr = hist.setdefault(ca, [])
     arr.append(point)
     # keep last 7 days of points

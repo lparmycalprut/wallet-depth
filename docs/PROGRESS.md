@@ -7,6 +7,41 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-07-31 (3) — Light Holder & Trader profiles, persistence conviction bonus
+
+### Yang berubah
+
+1. **Light Holder & Trader Profiles** — `wallet_profiles()` sekarang mengklasifikasikan wallet menjadi 5 kategori:
+   - `pure_accum` (sell ≤ 5% of buy) — held 95%+
+   - `light_holder` (5% < sell < 10% of buy) — held 90%+
+   - `trader` (10% ≤ sell ≤ 50% of buy) — held 50%+
+   - `two_way` (sell > 50% of buy, buy > 5% of sell) — bot/MM noise
+   - `pure_dist` (buy ≤ 5% of sell) — sold & left
+
+2. **Conviction Calculation dengan Weighted Volumes** — `conviction_split()` sekarang menghitung conviction dengan weighted buy volumes:
+   - pure_accum: 100% weight
+   - light_holder: 75% weight
+   - trader: 30% weight
+   - two_way: 0% weight
+   - Formula: `effective_buy / total_buy * 100`
+
+3. **Persistence Conviction Bonus** — `record_conviction()` menambahkan bonus +3% per cron point jika jumlah pure_accum + light_holder wallet bertambah berturut-turut. Cap +15%. Contoh: naik 3x berturut-turut = +9% bonus.
+
+4. **UI Update** — Pure flow metrics di dashboard sekarang 5 kolom: Pure Accum, Light Holder, Trader, Pure Distribution, Conviction Ratio. Accumulator table juga menampilkan light_holder dan trader wallets. CVD page juga diupdate.
+
+### Kenapa
+
+- Wallet yang sell 7% masih essentially holder — masuk two_way sebelumnya terlalu agresif.
+- Trader yang masih hold 50%+ masih ada kontribusi ke conviction — tidak boleh 0%.
+- Persistence bonus menghargai token yang holder base-nya tumbuh secara konsisten.
+
+### Verifikasi
+
+- 8/8 test suites lulus (termasuk `test_wallet_profiles.py` baru).
+- Semua file Python lulus `py_compile`.
+
+---
+
 ## 2026-07-31 (2) — H4 candle pattern detection for Degen, phase threshold memecoin tuning
 
 ### Yang berubah

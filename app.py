@@ -2535,21 +2535,28 @@ if run_cvd_now and (rpc_endpoint or use_gmgn_trades):
         conv = conviction_split(profiles, whale_min_sol=_WHSOL)
 
         st.markdown("**💎 Pure flow — who bought & HELD vs sold & LEFT** "
-                    "<span style='opacity:0.6;font-size:0.75rem'>(two-way "
-                    "bots/MMs excluded — sells ≤5% of buys counts as "
-                    "pure)</span>", unsafe_allow_html=True)
-        pc1, pc2, pc3, pc4 = st.columns(4)
-        pc1.metric("💎 Pure accum (whale-size)",
+                    "<span style='opacity:0.6;font-size:0.75rem'>"
+                    "pure_accum ≤5% sold · light_holder <10% sold · "
+                    "trader ≤50% sold · two-way = bot/MM noise</span>",
+                    unsafe_allow_html=True)
+        pc1, pc2, pc3, pc4, pc5 = st.columns(5)
+        pc1.metric("💎 Pure accum (whale)",
                    f"{conv['pure_buy']:+,.1f} SOL",
-                   "bought & held", delta_color="off")
-        pc2.metric("🩸 Pure distribution",
+                   f"{conv['n_pure']} wallets · held 95%+",
+                   delta_color="off")
+        pc2.metric("🛡️ Light holder (whale)",
+                   f"{conv['lh_buy']:+,.1f} SOL",
+                   f"{conv['n_lh']} wallets · held 90%+",
+                   delta_color="off")
+        pc3.metric("📊 Trader (whale)",
+                   f"{conv['trader_buy']:+,.1f} SOL",
+                   f"{conv['n_trader']} wallets · held 50%+",
+                   delta_color="off")
+        pc4.metric("🩸 Pure distribution",
                    f"-{conv['pure_sell']:,.1f} SOL",
                    "sold & left", delta_color="off")
-        pc3.metric("🔄 Two-way churn",
-                   f"{conv['tw_buy']:,.0f}/{conv['tw_sell']:,.0f}",
-                   "bot/MM volume (noise)", delta_color="off")
-        pc4.metric("Conviction ratio", f"{conv['conviction_pct']:.0f}%",
-                   "of whale buys are held",
+        pc5.metric("Conviction ratio", f"{conv['conviction_pct']:.0f}%",
+                   "effective held / total buy",
                    delta_color="normal" if conv["conviction_pct"] >= 50
                    else "inverse")
 
@@ -2580,7 +2587,11 @@ if run_cvd_now and (rpc_endpoint or use_gmgn_trades):
             [(w, d, "🐋 WHALE") for w, d in profiles.items()
              if d["profile"] == "pure_accum" and d["buy"] >= _WHSOL] +
             [(w, d, "🐬 DOLPHIN") for w, d in profiles.items()
-             if d["profile"] == "pure_accum" and 1.0 <= d["buy"] < _WHSOL],
+             if d["profile"] == "pure_accum" and 1.0 <= d["buy"] < _WHSOL] +
+            [(w, d, "🛡️ LIGHT") for w, d in profiles.items()
+             if d["profile"] == "light_holder" and d["buy"] >= _WHSOL] +
+            [(w, d, "📊 TRADER") for w, d in profiles.items()
+             if d["profile"] == "trader" and d["buy"] >= _WHSOL],
             key=lambda x: -x[1]["buy"])[:15]
         dists = sorted(
             [(w, d, "🐋 WHALE") for w, d in profiles.items()
