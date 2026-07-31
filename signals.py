@@ -79,36 +79,54 @@ def detect_and_record(ca: str, symbol: str, *, src: str = "cron",
     """Run flow + divergence detection on the stored swaps/buckets and
     record any signals. Returns list of recorded signal types."""
     from cvd import (WHALE_SOL, get_recent_swaps, get_series,
-                     detect_divergence, fetch_price_series)
+                     detect_divergence, fetch_price_series,
+                     wallet_profiles)
     recorded = []
 
-    # --- flow check on the raw swap store (complete window) -----------------
+    # --- battle-tested CVD flow check: holders (LH/trader/pure) vs dumpers --
     swaps = get_recent_swaps(ca, window_h)
     if swaps:
-        wh = rt = 0.0
-        for side, sol, ts, _w in swaps:
-            signed = sol if side == "buy" else -sol
-            if sol >= WHALE_SOL:
-                wh += signed
-            else:
-                rt += signed
-        if (wh >= 0) != (rt >= 0) and max(abs(wh), abs(rt)) >= 5:
-            if wh >= 0:
+        profiles = wallet_profiles(swaps)
+        lh_net = sum(d["buy"] - d["sell"] for d in profiles.values()
+                     if d.get("profile") == "light_holder")
+        trader_net = sum(d["buy"] - d["sell"] for d in profiles.values()
+                         if d.get("profile") == "trader")
+        pure_net = sum(d["buy"] - d["sell"] for d in profiles.values()
+                       if d.get("profile") == "pure_accum")
+        n_lh = sum(1 for d in profiles.values()
+                   if d.get("profile") == "light_holder")
+        n_trader = sum(1 for d in profiles.values()
+                       if d.get("profile") == "trader")
+        n_pure = sum(1 for d in profiles.values()
+                     if d.get("profile") == "pure_accum")
+        holders_net = lh_net + trader_net + pure_net
+        n_holders = n_lh + n_trader + n_pure
+
+        dist_net = max(0.0, sum(d["sell"] - d["buy"] for d in profiles.values()
+                                if d.get("profile") in ("pure_dist", "two_way")))
+        n_dist = sum(1 for d in profiles.values()
+                     if d.get("profile") in ("pure_dist", "two_way"))
+
+        if n_holders >= 3 or (n_lh + n_trader) >= 2 or abs(holders_net) >= 25.0 or (dist_net >= 15.0 and n_dist >= 2):
+            if holders_net >= 10.0 and (lh_net + trader_net) > 0 and holders_net >= max(dist_net * 1.1, 10.0):
                 ok = record_signal(
                     ca, symbol, "accumulation",
-                    f"whales +{wh:.1f} SOL vs retail {rt:+.1f} SOL "
-                    f"(last {window_h}h, {len(swaps)} swaps)",
-                    src=src, window_h=window_h, whale_net=wh,
-                    retail_net=rt, price=price_now)
-            else:
+                    f"holders +{holders_net:.1f} SOL net "
+                    f"(LH {lh_net:+.1f} / Traders {trader_net:+.1f} / Pure {pure_net:+.1f} across {n_holders} wallets) — "
+                    f"strong absorption (last {window_h}h)",
+                    src=src, window_h=window_h, whale_net=holders_net,
+                    retail_net=-dist_net, price=price_now)
+                if ok:
+                    recorded.append("accumulation")
+            elif holders_net <= -10.0 or (dist_net >= abs(holders_net) * 1.3 and dist_net >= 15.0):
                 ok = record_signal(
                     ca, symbol, "distribution",
-                    f"whales {wh:+.1f} SOL vs retail +{rt:.1f} SOL "
-                    f"(last {window_h}h, {len(swaps)} swaps)",
-                    src=src, window_h=window_h, whale_net=wh,
-                    retail_net=rt, price=price_now)
-            if ok:
-                recorded.append("accumulation" if wh >= 0 else "distribution")
+                    f"distribution pressure: dumpers -{dist_net:.1f} SOL vs holders {holders_net:+.1f} SOL "
+                    f"(LH {lh_net:+.1f} / Traders {trader_net:+.1f}) (last {window_h}h)",
+                    src=src, window_h=window_h, whale_net=holders_net,
+                    retail_net=-dist_net, price=price_now)
+                if ok:
+                    recorded.append("distribution")
 
     # --- divergence check on H1 buckets vs price -----------------------------
     if pool:
