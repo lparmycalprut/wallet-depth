@@ -24,7 +24,8 @@ from core import (concentration, get_helius_keys,
                   get_holders as core_get_holders, get_ohlcv_daily,
                   get_rugcheck, get_supply as core_get_supply, health_score,
                   helius_rpc, score_color, score_label)
-from trending_ui import render_trending, run_screen, run_screen_hrhr
+from trending_ui import (render_trending, run_screen, run_screen_hrhr,
+                         enrich_hrhr_with_patterns)
 
 
 def detect_sr_levels(ohlcv: pd.DataFrame, window: int = 30):
@@ -546,6 +547,7 @@ def fetch_watchlist_prices(cas: tuple) -> dict:
             "symbol": (p.get("baseToken") or {}).get("symbol", "?"),
             "price": float(p.get("priceUsd") or 0),
             "chg24": float((p.get("priceChange") or {}).get("h24") or 0),
+            "chg6": float((p.get("priceChange") or {}).get("h6") or 0),
             "mc": float(p.get("marketCap") or p.get("fdv") or 0),
             "pair": p.get("pairAddress"),
         }
@@ -933,7 +935,8 @@ if _wl:
             np_col = "#22c55e" if last["net_pure"] >= 0 else "#ef4444"
             # market phase badge
             try:
-                _ph = detect_phase(_ca, (_prices.get(_ca) or {}).get("chg24"))
+                _ph = detect_phase(_ca, (_prices.get(_ca) or {}).get("chg24"),
+                                    (_prices.get(_ca) or {}).get("chg6"))
             except Exception:
                 _ph = {"phase": "Neutral/Choppy", "confidence": "low",
                        "reason": "phase detection unavailable"}
@@ -1124,7 +1127,8 @@ if _wl:
 
                 # market phase badge
                 try:
-                    _ph = detect_phase(_ca, (_prices.get(_ca) or {}).get("chg24"))
+                    _ph = detect_phase(_ca, (_prices.get(_ca) or {}).get("chg24"),
+                                        (_prices.get(_ca) or {}).get("chg6"))
                 except Exception:
                     _ph = {"phase": "Neutral/Choppy", "confidence": "low",
                            "reason": "phase detection unavailable"}
@@ -1255,6 +1259,8 @@ if scan_hrhr or "screener_hrhr_rows" in st.session_state:
             global picked_ca
             picked_ca = c
 
+        # Enrich HRHR rows with H4 candle pattern detection (degen use case)
+        _rows_hrhr = enrich_hrhr_with_patterns(_rows_hrhr)
         render_trending(_rows_hrhr, key_prefix="hrhr_home", on_analyze=_pick_hrhr)
 
 # ---------------------------------------------------------------------------
