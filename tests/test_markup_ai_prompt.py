@@ -233,10 +233,10 @@ def test_ui_integration_guards():
     radar_at = app_source.index("if _conv_hist:")
     check(sweep_at < radar_at,
           "watchlist markup sweep runs before the LP Radar block")
-    check("KOKOH" in app_source and "GOYAH" in app_source and "MELEMAH" in app_source,
-          "LP Radar has stability badges (KOKOH/GOYAH/MELEMAH)")
-    check("💪 STRONG" in app_source and "NOISY" in app_source and "QUIET" in app_source,
-          "LP Radar has volume-quality indicators")
+    check("🟢 KOKOH" not in app_source,
+          "LP Radar stability badges (KOKOH/GOYAH/MELEMAH) are disabled")
+    check("💪 STRONG" not in app_source,
+          "LP Radar volume-quality indicators are disabled")
     check("for offset in range(0, len(cas), 30)" in app_source and
           "cas[:30]" not in app_source,
           "DexScreener batching covers the entire watchlist")

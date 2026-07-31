@@ -27,9 +27,9 @@ def load_config():
     except Exception:
         return {}
 
-DUST_LIMIT = 10.0
+DUST_LIMIT = 5.0
 REAL_RATIO_OK = 0.30
-TIERS = [(">$10", 10.0), (">$100", 100.0), (">$1K", 1e3),
+TIERS = [(">$5", 5.0), (">$100", 100.0), (">$1K", 1e3),
          (">$10K", 1e4), (">$100K", 1e5), (">$1M", 1e6)]
 
 RED = "\033[91m"

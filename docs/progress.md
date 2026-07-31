@@ -7,6 +7,29 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-07-31 — GMGN API full, CVD Deep Focus, High Risk Screener & Watchlist Quick Delete
+
+### Yang berubah
+
+1. **GMGN Trades API & Helius Bypass** — Mengubah seluruh fungsi fetch otomatis untuk selalu memprioritaskan GMGN Token Trades API (`use_gmgn_trades = True`) dan menonaktifkan cron holder snapshot harian dari Helius (`_try_snapshot` mengembalikan empty). Menghapus checkbox toggle standard/GMGN dari UI.
+2. **Watchlist Quick Pick & Auto Analyze** — Quick Pick di halaman utama kini langsung memicu proses analisis, mengaktifkan visualisasi CVD, dan mengambil seluruh rentang waktu 48 jam secara otomatis.
+3. **Peningkatan Custom Range & AI Prompt** — Menghapus batasan waktu 48 jam untuk custom range di halaman CVD. AI Prompt di halaman CVD kini otomatis berfokus pada filter data timeframe terpilih jika custom date range aktif.
+4. **Simplifikasi LP Radar Cards** — Menghapus noise flags, border menyala/glow, serta badge status (`KOKOH`, `NOISY`, dll). Menghadirkan *conviction sparkline* yang bersih dengan warna hijau untuk tren naik dan merah untuk turun, disertai catatan ringkas momentum akumulasi dan volume.
+5. **High Risk High Reward Scanner** — Menambahkan scanner baru dengan kriteria 24h, umur koin 2d-60d, marketcap maks 250K USD, volume 24 jam min 10K USD, total gas fee min 30 SOL, holders min 1000, serta holder average cost <= -50%. Ditampilkan persentase penurunan dari ATH (jika >90% catatan berwarna hijau).
+6. **Watchlist Quick Delete** — Menambahkan expander khusus di dashboard utama untuk menghapus token dari watchlist langsung di tempat dengan satu tombol tanpa perlu berpindah halaman.
+7. **Scoring Risk & UI formatting** — Mengubah batas bndl (bundler) menjadi 15%, trap dan bot tetap 30% sebelum ditandai merah. Memperbesar ukuran teks Risk dan Notes menjadi `0.80rem` agar lebih nyaman dibaca.
+8. **Dolphin Cohort di Pure Accumulator/Distributor** — Menambahkan kategori Dolphin (`1.0 <= buy < 3.0 SOL`) di bawah Whale pada tabel akumulator dan distributor halaman utama dan halaman CVD.
+9. **Perbaikan Keamanan Data (Atomic Save & Dedup)** — Penyimpanan file `cvd.json` dan `conviction.json` kini menggunakan mekanisme `tempfile` + `os.replace` secara atomik untuk mencegah korupsi data. Swaps raw juga secara otomatis dideduplikasi dan diurutkan secara kronologis saat pembaruan untuk menghindari inflasi volume tidak masuk akal.
+10. **Scoring Checklist Keamanan & LP locked** — Menghapus metrik LP locked dari penambahan skor karena token pumpfun sudah otomatis terkunci, serta menyematkan tanda bahaya keras jika LP terdeteksi 0% (tidak terkunci sama sekali). Batas dust default diubah menjadi $5.
+11. **CVD Deep Focus** — Menghadirkan tabel analisis kepemilikan dan retensi pembeli yang murni dari timeframe terpilih saja, serta menyaring keluar noise berupa dust (<$5), bots, dan churn.
+
+### Verifikasi
+
+- Menjalankan seluruh test suite (`tests/test_breakout_guard.py`, `tests/test_flow_safety.py`, `tests/test_markup_ai_prompt.py`, `tests/test_scoring_continuity.py`, `tests/test_holder_delta.py`): **ALL PASSED (5/5)**.
+- Seluruh file Python lulus kompilasi `py_compile`.
+
+---
+
 ## 2026-07-29 — LP Radar 48h + CVD flow safety + GMGN new penalties + Watchlist quick-pick
 
 ### Yang berubah
@@ -119,13 +142,13 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 ### Bug dan risiko yang diperbaiki
 
 1. CVD dulu selalu menambahkan row 48h walau user hanya fetch 4–36h. Sekarang
-   `analysis_windows()` menjamin semua row berada di dalam window terpilih.
+   `analysis_windows()` menjamin seluruh row berada di dalam window terpilih.
 2. Rerun Streamlit memakai `time.time()` baru sehingga swap cache tampak
    mencakup makin banyak jam. Semua window/prompt sekarang di-anchor ke
    `fetched_at` snapshot asli.
 3. Periode prompt di luar cakupan dulu tampak sebagai angka nol. Sekarang
    tiap row diberi status `lengkap`, `SEBAGIAN`, atau `TIDAK TERCAKUP`.
-4. Card LP Radar memakai `<a>` bersarang untuk card + shortcut eksternal
+4. Card LP Radar memakai `<a>` bersenang untuk card + shortcut eksternal
    (HTML tidak valid). Link card, DexScreener, dan GMGN sekarang bersaudara.
 5. Fetch candle harian watchlist yang semula serial sekarang concurrent
    (maksimum 8 worker) dan tetap di-cache 15 menit.

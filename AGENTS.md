@@ -216,5 +216,16 @@ Jebakan yang sudah pernah menggigit:
 
 ## 8. Status & langkah berikutnya
 
-Lihat `docs/PROGRESS.md` untuk riwayat keputusan dan daftar yang belum
-terverifikasi.
+Per 2026-07-31, seluruh sistem telah difokuskan murni menggunakan **GMGN Token Trades API** secara default (`use_gmgn_trades = True`) untuk semua penarikan data transaksi on-chain. Cron holder snapshot harian dari Helius (`_try_snapshot`) telah dinonaktifkan sementara.
+
+Beberapa pembaruan penting lainnya meliputi:
+- **Watchlist Quick Pick & Auto Analyze**: Memilih koin di Quick Pick akan langsung melakukan Analyze dan menjalankan CVD analisis untuk window 48h secara otomatis.
+- **Dolphin Cohort**: Menambahkan kategori Dolphin (`1.0 <= buy < 3.0 SOL`) di tabel akumulator dan distributor halaman utama dan halaman CVD.
+- **Simplifikasi LP Radar**: Menghapus seluruh noise flags, borders menyala/glow, serta badge status (`KOKOH`, `NOISY`). Menampilkan momentum conviction dalam visualisasi grafik batang hijau (naik) / merah (turun) yang bersih, beserta catatan momentum akumulasi dan volume.
+- **Screener Baru "High Risk High Reward"**: Menambahkan fungsi pencarian token berisiko tinggi dengan marketcap rendah (<250K USD), gas fee tinggi (>30 SOL), minimal holders (1000), koin berusia 2-60 hari, serta average cost holder <= -50% dan persentase jatuh dari ATH (dengan label hijau jika >90%).
+- **Watchlist Quick Delete**: Tombol "Hapus" langsung disematkan di dashboard halaman utama sehingga pengguna dapat memotong token tanpa harus berpindah ke halaman watchlist.
+- **Data Integrity**: Penyimpanan file data (`cvd.json` & `conviction.json`) diubah murni atomik via `tempfile` + `os.replace` untuk menghindari korupsi file jika crash. Swaps raw juga secara otomatis dideduplikasi dan diurutkan secara kronologis saat pembaruan untuk menghindari inflasi volume yang tidak masuk akal.
+- **Scoring & Checklist**: LP locked dihapus dari bobot skor kesehatan (karena token pumpfun sudah otomatis terkunci), melainkan diganti tanda bahaya keras jika LP terdeteksi 0% (tidak dikunci sama sekali). Batas dust default disesuaikan menjadi $5.
+- **CVD Deep Focus**: Menghadirkan tabel analisis kepemilikan dan retensi pembeli murni dari timeframe terpilih saja, disaring dari dust (<$5), bots, dan churn.
+
+Lihat `docs/PROGRESS.md` untuk riwayat keputusan detail dan daftar perubahan lengkap.
