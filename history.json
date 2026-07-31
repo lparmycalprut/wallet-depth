@@ -211,6 +211,27 @@
    "sells24": 2588,
    "vol24": 213282.35,
    "source": "cron-daily (DexScreener+GMGN)"
+  },
+  "2026-07-31": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 80382.0,
+   "price": 8.36e-05,
+   "tiers": {},
+   "ts": "2026-07-31T04:00:26",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 38.34,
+   "symbol": "looong",
+   "buys24": 1309,
+   "sells24": 1922,
+   "vol24": 122104.25,
+   "source": "cron-daily (DexScreener+GMGN)"
   }
  },
  "3VK1F5r5aykheirDsqJYTsYKzgYxmmvcjQEB1Y5opump": {
@@ -319,6 +340,27 @@
    "buys24": 1642,
    "sells24": 1654,
    "vol24": 197440.41,
+   "source": "cron-daily (DexScreener+GMGN)"
+  },
+  "2026-07-31": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 307886.0,
+   "price": 0.0003148,
+   "tiers": {},
+   "ts": "2026-07-31T04:00:26",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 16.07,
+   "symbol": "RAKO",
+   "buys24": 1669,
+   "sells24": 1915,
+   "vol24": 215073.82,
    "source": "cron-daily (DexScreener+GMGN)"
   }
  },
@@ -584,6 +626,75 @@
    "sells24": 1767,
    "vol24": 98564.3,
    "source": "cron"
+  }
+ },
+ "3taE4SdY29sa3fnwyWqfshudJ95gMb9LoFTy5Uuppump": {
+  "2026-07-31": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 351321.0,
+   "price": 0.0003562,
+   "tiers": {},
+   "ts": "2026-07-31T04:00:26",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 12.82,
+   "symbol": "CATJAK",
+   "buys24": 12703,
+   "sells24": 9779,
+   "vol24": 339202.41,
+   "source": "cron-daily (DexScreener+GMGN)"
+  }
+ },
+ "HB7MPRYpegrJaJtsZvrXAEHx5kxdehiQQUNneVLnpump": {
+  "2026-07-31": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 76518.0,
+   "price": 7.958e-05,
+   "tiers": {},
+   "ts": "2026-07-31T04:00:27",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 31.42,
+   "symbol": "RYDER",
+   "buys24": 2013,
+   "sells24": 2290,
+   "vol24": 182231.14,
+   "source": "cron-daily (DexScreener+GMGN)"
+  }
+ },
+ "HD9imH98GRajpehqc82B72A8qnPgvzWSHAmvJRPepump": {
+  "2026-07-31": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 20957.0,
+   "price": 2.173e-05,
+   "tiers": {},
+   "ts": "2026-07-31T04:00:27",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 57.83,
+   "symbol": "Looks",
+   "buys24": 1911,
+   "sells24": 2103,
+   "vol24": 101085.04,
+   "source": "cron-daily (DexScreener+GMGN)"
   }
  }
 }
