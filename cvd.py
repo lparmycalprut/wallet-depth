@@ -283,10 +283,10 @@ def gmgn_trade_to_swap(trade: dict):
                            "address", "user_address", default="") or ""
     if side not in ("buy", "sell") or sol_eq <= 0 or ts <= 0:
         return None
-    # ── Sanity cap: no single swap is legitimately > 10,000 SOL ─────
+    # ── Sanity cap: no single swap is legitimately > 1,000 SOL ─────
     # Values above this threshold are almost certainly a data-mapping
     # error (e.g. GMGN returned base-token raw amount in quote_amount).
-    MAX_SWAP_SOL = 10_000.0
+    MAX_SWAP_SOL = 1000.0
     if sol_eq > MAX_SWAP_SOL:
         return None
     return (side, float(sol_eq), int(ts), str(wallet))
@@ -541,8 +541,17 @@ def load_cvd() -> dict:
 
 
 def save_cvd(state: dict) -> None:
-    with open(CVD_PATH, "w", encoding="utf-8") as f:
-        json.dump(state, f, separators=(",", ":"))
+    import tempfile
+    dir_name = os.path.dirname(os.path.abspath(CVD_PATH))
+    fd, temp_path = tempfile.mkstemp(dir=dir_name, prefix="cvd_temp_")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(state, f, separators=(",", ":"))
+        os.replace(temp_path, CVD_PATH)
+    except Exception:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise
 
 
 def classify_swap(tx: dict, pool: str, ca: str):
@@ -561,12 +570,16 @@ def classify_swap(tx: dict, pool: str, ca: str):
                 ca_in += amt
         elif mint in rates:
             sol_eq = amt * rates[mint]
+            if mint == SOL_MINT and sol_eq > 10_000_000:
+                sol_eq /= 1_000_000_000
             if x.get("fromUserAccount") == pool:
                 q_out += sol_eq
             elif x.get("toUserAccount") == pool:
                 q_in += sol_eq
     ts = tx.get("timestamp") or 0
     wallet = tx.get("feePayer") or ""
+    if q_in > 1000.0 or q_out > 1000.0:
+        return None
     if ca_out > ca_in and q_in > 0:        # token left pool -> BUY
         return ("buy", q_in, ts, wallet)
     if ca_in > ca_out and q_out > 0:       # token entered pool -> SELL
@@ -673,11 +686,17 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
                 old[k] = old.get(k, 0) + c[k]
         else:
             entry["buckets"][b] = c
-    # --- raw swap store (last 24h, incl. wallet) for complete-window UI ----
+    # --- raw swap store (last 48h, incl. wallet) for complete-window UI ----
     cutoff_raw = time.time() - 48 * 3600
     raw = entry.get("swaps") or []
     raw.extend([list(s) for s in swaps])
-    entry["swaps"] = [s for s in raw if (s[2] or 0) >= cutoff_raw]
+    # deduplicate swaps to prevent inflated/duplicate values
+    seen_swaps = {}
+    for s in raw:
+        if len(s) >= 4:
+            key = (s[0], float(s[1]), int(s[2]), str(s[3]))
+            seen_swaps[key] = s
+    entry["swaps"] = [seen_swaps[k] for k in sorted(seen_swaps.keys(), key=lambda x: x[2]) if x[2] >= cutoff_raw]
     if new_sig:
         entry["newest_sig"] = new_sig
         entry["newest_ts"] = new_ts
@@ -832,11 +851,16 @@ def record_conviction(ca: str, *, window_h: int = 6) -> dict | None:
     # keep last 7 days of points
     cutoff = time.time() - 7 * 86400
     hist[ca] = [p for p in arr if p["ts"] >= cutoff]
+    import tempfile
+    dir_name = os.path.dirname(os.path.abspath(CONV_PATH))
+    fd, temp_path = tempfile.mkstemp(dir=dir_name, prefix="conv_temp_")
     try:
-        with open(CONV_PATH, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(hist, f, separators=(",", ":"))
+        os.replace(temp_path, CONV_PATH)
     except Exception:
-        pass
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
     return point
 
 
@@ -1558,10 +1582,8 @@ def analysis_windows(requested_hours) -> list:
 # e.g. "🩸 hard distribution" or "⏰ data stale (4.2h)". They are *advisory*
 # — none of them block scoring, they only colour the panel.
 # ---------------------------------------------------------------------------
-FRESH_MAX_AGE_S = 90 * 60       # 1.5h — covers the 1h cron cadence
-                                  #         with one missed run of margin
-STALE_MAX_AGE_S = 6 * 3600      # 6h — up to 6 missed hourly runs is still
-                                  #         "stale", not "do not trust"
+FRESH_MAX_AGE_S = 150 * 60       # 2.5h — covers the hourly cron with margin
+STALE_MAX_AGE_S = 12 * 3600      # 12h — up to 12 missed hourly runs is still "stale"
 PERSISTENCE_MIN_RUN = 3         # 3 consecutive cron points all the same way
 PERSISTENCE_MIN_NET_SOL = 5.0   # each of those 3 points must move ≥5 SOL net
 DISTRIBUTION_DROP_PCT = 30.0    # 30% drop of net_pure from peak = signal

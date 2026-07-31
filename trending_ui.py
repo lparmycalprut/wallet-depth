@@ -9,7 +9,7 @@ import re
 import streamlit as st
 
 from gmgn_screener import (FIT_OK, FIT_PRIME, FIT_WEAK, fit_color,
-                           screen as gmgn_screen)
+                           screen as gmgn_screen, screen_hrhr as gmgn_screen_hrhr)
 
 #: layout of the result table (label, relative width)
 COLUMNS = [("Fit", 0.75), ("Token", 1.5), ("MC", 1.1), ("Liq", 0.9),
@@ -48,6 +48,23 @@ def run_screen(force: bool = False, key: str = "screener_rows"):
         with st.spinner("Fetching GMGN trending…"):
             try:
                 st.session_state[key] = gmgn_screen()
+                st.session_state[key + "_err"] = ""
+            except Exception as exc:                     # noqa: BLE001
+                st.session_state[key] = []
+                st.session_state[key + "_err"] = str(exc)
+    return (st.session_state.get(key) or [],
+            st.session_state.get(key + "_err") or "")
+
+
+def run_screen_hrhr(force: bool = False, key: str = "screener_hrhr_rows"):
+    """Fetch + score + filter the HRHR list, caching the result in session state.
+
+    Returns ``(rows, error)`` — *error* is a string when the fetch blew up.
+    """
+    if force or key not in st.session_state:
+        with st.spinner("Fetching GMGN HRHR list…"):
+            try:
+                st.session_state[key] = gmgn_screen_hrhr()
                 st.session_state[key + "_err"] = ""
             except Exception as exc:                     # noqa: BLE001
                 st.session_state[key] = []
@@ -129,7 +146,7 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
         cc[8].write(f"{r['age_d']}d")
         # 🕸️ live risk metrics (real GMGN fields: bdrr / dhr / etpr / bdr)
         bits = []
-        for lab, val, warn in (("bndl", r.get("bundler_rate", 0), 0.10),
+        for lab, val, warn in (("bndl", r.get("bundler_rate", 0), 0.15),
                                ("insd", r.get("insider_ratio", 0), 0.10),
                                ("trap", r.get("entrap_rate", 0), 0.30),
                                ("bot", r.get("botdegen_rate", 0), 0.30)):
@@ -138,7 +155,7 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
                 bits.append(f"<span style='color:{c}'>{lab} "
                             f"{val * 100:.0f}%</span>")
         cc[9].markdown(
-            "<span style='font-size:0.62rem'>" +
+            "<span style='font-size:0.80rem'>" +
             (" · ".join(bits) if bits else "—") + "</span>",
             unsafe_allow_html=True)
         detail = r.get("notes") or r.get("wins") or "—"
@@ -166,7 +183,7 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
             else:
                 highlighted.append(p)
         cc[10].markdown(
-            "<span style='font-size:0.62rem'>" +
+            "<span style='font-size:0.80rem'>" +
             "; ".join(highlighted) + "</span>",
             unsafe_allow_html=True)
         with cc[11]:

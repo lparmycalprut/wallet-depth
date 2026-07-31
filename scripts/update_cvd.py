@@ -58,24 +58,7 @@ def main_pool(ca: str):
 
 def _try_snapshot(api_keys, ca: str, meta: dict) -> str:
     """Holder snapshot via Helius (opsional). Return status string."""
-    if not api_keys or not get_holders or not get_supply:
-        return ""
-    try:
-        _supply, _dec = get_supply(api_keys, ca)
-        _hd = get_holders(api_keys, ca)
-        if _hd is not None and not _hd.empty and _dec:
-            _hd["ui_amount"] = _hd["raw_amount"] / (10 ** _dec)
-            _hd = _hd[_hd["ui_amount"] > 0]
-            _point = record_holder_snapshot(
-                ca, _hd[["owner", "ui_amount"]].values.tolist(),
-                supply=float(_supply))
-            if _point is not None:
-                return (f" 📸snap={_point['ts'] // 3600}h "
-                        f"({len(_point['holders'])} h)")
-            else:
-                return " 📸snap=skipped(recent)"
-    except Exception as se:
-        return f" snap-err:{str(se)[:40]}"
+    # Temporarily disabled
     return ""
 
 
@@ -90,19 +73,19 @@ def main():
     api_keys = tuple(get_helius_keys())
 
     wl_changed = False
-    for ca, meta in wl.items():
-        pool, price_now, live_sym = main_pool(ca)
-        if not pool:
-            print(f"❌ {ca[:8]}… no pool found")
-            continue
-
-        # auto-fix missing symbols
-        if (meta.get("symbol") in (None, "", "?")) and live_sym and \
-                live_sym != "?":
-            meta["symbol"] = live_sym
-            wl_changed = True
-
+    for ca, meta in list(wl.items()):
         try:
+            pool, price_now, live_sym = main_pool(ca)
+            if not pool:
+                print(f"❌ {ca[:8]}… no pool found")
+                continue
+
+            # auto-fix missing symbols
+            if (meta.get("symbol") in (None, "", "?")) and live_sym and \
+                    live_sym != "?":
+                meta["symbol"] = live_sym
+                wl_changed = True
+
             # ── CVD via GMGN ──────────────────────────────────────────
             res = update_token_cvd(
                 api_keys, ca, pool, max_pages=max_pages, use_gmgn=True)
@@ -139,7 +122,7 @@ def main():
                   f"buckets{gap}{conv_txt}{sig_txt}{guard_txt}{snap_txt}")
 
         except Exception as e:
-            print(f"❌ {ca[:8]}… {str(e)[:100]}")
+            print(f"❌ {ca[:8]}… unhandled error: {str(e)[:100]}")
 
     # ── Retry pending Telegram alerts ────────────────────────────────────
     try:

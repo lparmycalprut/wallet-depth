@@ -192,7 +192,7 @@ def helius_api_get(url: str, *, params=None, headers=None, helius_keys=None,
 
 def load_config() -> dict:
     cfg = {"helius_api_key": "", "helius_extra_keys": "",
-           "custom_rpc": "", "dust_limit_usd": 10,
+           "custom_rpc": "", "dust_limit_usd": 5,
            "cluster_warn_pct": 5, "cluster_scan_top_n": 50, "exclude_lp": True}
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
@@ -404,13 +404,15 @@ def health_score(*, ratio_pct, real_mc_pct, top10_pct, liq_pct_mc,
     # 6. Likuiditas vs MC (maks 10)
     p = clamp((liq_pct_mc or 0) / 12, 0, 1) * 10
     br.append(("Liquidity/MC", p, 10, f"{liq_pct_mc:.1f}%"))
-    # 7. LP locked/burned (maks 5)
+    # 7. LP locked/burned (maks 0 - removed from score)
+    p = 0.0
     if lp_locked_pct is None:
-        p, note = 2.5, "n/a"
+        note = "n/a"
+    elif lp_locked_pct == 0:
+        note = "⚠️ NOT LOCKED AT ALL — DANGER!"
     else:
-        p = clamp(lp_locked_pct / 80, 0, 1) * 5
         note = f"{lp_locked_pct:.0f}% locked"
-    br.append(("LP locked", p, 5, note))
+    br.append(("LP locked", p, 0, note))
     # 8. Authority dicabut (maks 10)
     p = (5 if not mint_auth else 0) + (5 if not freeze_auth else 0)
     br.append(("Mint/freeze authority", p, 10,

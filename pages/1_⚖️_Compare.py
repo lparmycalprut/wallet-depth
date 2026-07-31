@@ -26,7 +26,7 @@ st.caption("Compare 2-3 tokens side-by-side: score, holders, dust/real, "
 
 CONFIG = load_config()
 helius_keys = tuple(get_helius_keys(config=CONFIG))
-dust_limit = float(CONFIG.get("dust_limit_usd", 10))
+dust_limit = float(CONFIG.get("dust_limit_usd", 5))
 
 c1, c2, c3 = st.columns(3)
 ca1 = c1.text_input("Token 1 CA", placeholder="Contract address...").strip()

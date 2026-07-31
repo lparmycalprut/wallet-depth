@@ -26,9 +26,9 @@ from watchlist import load_watchlist, save_watchlist  # noqa: E402
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HISTORY_PATH = os.path.join(BASE_DIR, "history.json")
 
-TIERS = [(">$10", 10.0), (">$100", 100.0), (">$1K", 1e3),
+TIERS = [(">$5", 5.0), (">$100", 100.0), (">$1K", 1e3),
          (">$10K", 1e4), (">$100K", 1e5), (">$1M", 1e6)]
-DUST_LIMIT = 10.0
+DUST_LIMIT = 5.0
 
 # ---------------------------------------------------------------------------
 # GMGN token_stat — alternative to Helius for holder count + top10

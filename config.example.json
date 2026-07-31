@@ -1,7 +1,7 @@
 {
   "helius_api_key": "PASTE-API-KEY-KAMU-DISINI",
   "custom_rpc": "",
-  "dust_limit_usd": 10,
+  "dust_limit_usd": 5,
   "cluster_warn_pct": 5,
   "cluster_scan_top_n": 50,
   "exclude_lp": true,

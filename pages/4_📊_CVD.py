@@ -54,16 +54,11 @@ qp_ca = st.query_params.get("ca", "").strip()
 ca = st.text_input("Contract Address", value=qp_ca,
                    placeholder="Solana CA...").strip()
 
-col1, col2, col3 = st.columns([1, 1, 2])
+col1, col3 = st.columns([1, 3])
 with col1:
     hours = st.selectbox("Time window", [4, 6, 8, 12, 24, 36, 48],
                          index=5, help="Fetch swaps for this many hours back")
-with col2:
-    use_gmgn_trades = st.checkbox(
-        "🔄 Use GMGN Trades API", value=False,
-        help=("OFF/default: Helius RPC. ON: use GMGN "
-              "https://gmgn.ai/vas/api/v1/token_trades/sol/{ca}; "
-              "quote_amount/amount_usd is converted to SOL-equivalent."))
+use_gmgn_trades = True
 with col3:
     run = st.button("📊 Analyze", type="primary",
                     use_container_width=True)
@@ -135,11 +130,6 @@ with st.expander("🔎 Focus time range (WIB)", expanded=False):
                     st.warning("End time is in the future — clamping to now.")
                     focus_end_ts = _now_ts
                 _range_h = (focus_end_ts - focus_start_ts) / 3600
-                if _range_h > 48:
-                    st.warning(
-                        f"Range {_range_h:.1f}h exceeds 48h limit — "
-                        "clamping start to 48h before end.")
-                    focus_start_ts = focus_end_ts - 48 * 3600
                 if focus_start_ts and focus_start_ts > _now_ts:
                     st.warning("Start time is in the future — no data.")
                     focus_start_ts = focus_end_ts = None
@@ -316,7 +306,7 @@ if run or skey not in st.session_state:
     # If focus range needs a wider fetch window, extend cutoff
     if focus_enabled and focus_start_ts:
         _needed_h = math.ceil((time.time() - focus_start_ts) / 3600)
-        _extended_h = min(48, max(hours, _needed_h))
+        _extended_h = max(hours, _needed_h)
         cutoff = int(time.time()) - _extended_h * 3600
     got = []
     if use_gmgn_trades:
@@ -364,6 +354,13 @@ if not swaps_all:
     else:
         st.warning(f"No swaps ≥ 0.05 SOL found in the last {hours}h.")
     st.stop()
+
+# Deduplicate defensively to ensure clean calculations
+_seen_all = {}
+for s in swaps_all:
+    if len(s) >= 4:
+        _seen_all[(s[0], float(s[1]), int(s[2]), str(s[3]))] = s
+swaps_all = [list(k) for k in sorted(_seen_all.keys(), key=lambda x: x[2])]
 
 df = pd.DataFrame(swaps_all, columns=["side", "sol", "ts", "wallet"])
 df["dt"] = pd.to_datetime(df["ts"], unit="s")
@@ -555,15 +552,19 @@ if pser and all(p is not None for p in pser) and len(pser) >= 7:
 # Pure accumulators / distributors in the full selected window, with age
 # ---------------------------------------------------------------------------
 full_profiles = win_stats[max(win_stats)]["profiles"]
-accs = sorted([(w, d) for w, d in full_profiles.items()
-               if d["profile"] == "pure_accum" and d["buy"] >= WHALE_SOL],
-              key=lambda x: -x[1]["buy"])[:10]
-dists = sorted([(w, d) for w, d in full_profiles.items()
-                if d["profile"] == "pure_dist" and d["sell"] >= WHALE_SOL],
-               key=lambda x: -x[1]["sell"])[:10]
+accs = sorted([(w, d, "🐋 WHALE") for w, d in full_profiles.items()
+               if d["profile"] == "pure_accum" and d["buy"] >= WHALE_SOL] +
+              [(w, d, "🐬 DOLPHIN") for w, d in full_profiles.items()
+               if d["profile"] == "pure_accum" and 1.0 <= d["buy"] < WHALE_SOL],
+              key=lambda x: -x[1]["buy"])[:15]
+dists = sorted([(w, d, "🐋 WHALE") for w, d in full_profiles.items()
+                if d["profile"] == "pure_dist" and d["sell"] >= WHALE_SOL] +
+               [(w, d, "🐬 DOLPHIN") for w, d in full_profiles.items()
+                if d["profile"] == "pure_dist" and 1.0 <= d["sell"] < WHALE_SOL],
+               key=lambda x: -x[1]["sell"])[:15]
 
 fcache = load_funder_cache()
-targets = [w for w, _ in accs + dists if w not in fcache]
+targets = [w for w, _, _ in accs + dists if w not in fcache]
 if targets and helius_keys:
     apb = st.progress(0.0, text="Looking up wallet ages…")
     for i, w in enumerate(targets[:20]):
@@ -594,7 +595,7 @@ def age_str(w):
 
 
 fmap = {}
-for w, _d in accs:
+for w, _d, _cohort in accs:
     fu = fcache.get(w)
     if fu and fu[0]:
         fmap.setdefault(fu[0], []).append(w)
@@ -608,31 +609,31 @@ with pa1:
             "Wallet": f"https://solscan.io/account/{w}",
             "Bought": f"{d['buy']:,.1f}", "Swaps": d["n_buy"],
             "Age": age_str(w),
-            "Flags": ("🎯DCA " if d.get("dca") else "") +
+            "Flags": f"{cohort} " + ("🎯DCA " if d.get("dca") else "") +
                      ("⚠️same-funder" if w in same_funder else ""),
-        } for w, d in accs]
+        } for w, d, cohort in accs]
         st.dataframe(pd.DataFrame(acc_rows), use_container_width=True,
                      hide_index=True,
                      column_config={"Wallet": st.column_config.LinkColumn(
                          f"💎 Pure accumulator ({hours}h)",
                          display_text=r"account/(.{6}).*")})
     else:
-        st.caption(f"No whale-size pure accumulators in {hours}h.")
+        st.caption(f"No pure accumulators in {hours}h.")
 with pa2:
     if dists:
         dist_rows = [{
             "Wallet": f"https://solscan.io/account/{w}",
             "Sold": f"{d['sell']:,.1f}", "Swaps": d["n_sell"],
             "Age": age_str(w),
-            "Flags": "🎯DCA" if d.get("dca") else "",
-        } for w, d in dists]
+            "Flags": f"{cohort} " + ("🎯DCA" if d.get("dca") else ""),
+        } for w, d, cohort in dists]
         st.dataframe(pd.DataFrame(dist_rows), use_container_width=True,
                      hide_index=True,
                      column_config={"Wallet": st.column_config.LinkColumn(
                          f"🩸 Pure distributor ({hours}h)",
                          display_text=r"account/(.{6}).*")})
     else:
-        st.caption(f"No whale-size pure distributors in {hours}h.")
+        st.caption(f"No pure distributors in {hours}h.")
 
 # ---------------------------------------------------------------------------
 # 🔎 Focus range deep analysis
@@ -643,6 +644,12 @@ if _f_start and _f_end and swaps_all:
     focus_swaps = filter_swaps_by_time(swaps_all, _f_start, _f_end)
     if focus_swaps:
         fs = summarize_swap_range(focus_swaps, whale_min_sol=WHALE_SOL)
+        _f_accs = sorted([(w, d) for w, d in fs["profiles"].items()
+                          if d["profile"] == "pure_accum" and d["buy"] >= WHALE_SOL],
+                         key=lambda x: -x[1]["buy"])[:10]
+        _f_dists = sorted([(w, d) for w, d in fs["profiles"].items()
+                           if d["profile"] == "pure_dist" and d["sell"] >= WHALE_SOL],
+                          key=lambda x: -x[1]["sell"])[:10]
         _f_s_wib = dtm.datetime.fromtimestamp(_f_start, WIB)
         _f_e_wib = dtm.datetime.fromtimestamp(_f_end, WIB)
         _f_dur_min = (_f_end - _f_start) / 60
@@ -778,6 +785,72 @@ if _f_start and _f_end and swaps_all:
                     column_config={"Wallet": st.column_config.LinkColumn(
                         "🔎 Top buyers (focus)", display_text=r"account/(.{6}).*")})
 
+            # 🔍 Focus Buyers Holdings & Retention Status (Only buyers in this timeframe checked)
+            if fs["top_buyers"]:
+                st.markdown("#### 🔎 Focus Buyers Holdings & Retention Status")
+                st.caption("Menunjukkan status kepemilikan pembeli dari timeframe ini setelah difilter (no dust <$5, no bots, no churn).")
+                
+                from cvd import get_sol_price
+                _sol_price = get_sol_price() or 150.0
+                _dust_limit_sol = 5.0 / _sol_price # $5 limit
+                
+                _ret_rows = []
+                for w, sol in fs["top_buyers"]:
+                    # Filter dust < $5
+                    if sol < _dust_limit_sol:
+                        continue
+                        
+                    m = gmgn_meta.get(w) or {}
+                    tags = [t.lower() for t in m.get("maker_tags", [])]
+                    tok_tags = [t.lower() for t in m.get("maker_token_tags", [])]
+                    
+                    # Filter bots and churn
+                    is_bot = m.get("total_trade", 0) > 20 or any("bot" in t for t in tags + tok_tags) or any("churn" in t for t in tags + tok_tags)
+                    if is_bot:
+                        continue
+                        
+                    bal = m.get("balance", -1.0)
+                    hb = m.get("history_bought_amount", 0.0)
+                    hs = m.get("history_sold_amount", 0.0)
+                    
+                    # Compute status
+                    if bal == 0 or (hb > 0 and bal / hb <= 0.15):
+                        status = "🔴 Jual Sebagian Besar / Habis"
+                        status_color = "#ef4444"
+                    elif hb > 0 and bal / hb >= 0.95 and m.get("total_trade", 0) > 1 and hs == 0:
+                        status = "🟢 Tambah Muatan (Accumulating)"
+                        status_color = "#22c55e"
+                    elif hb > 0 and bal / hb >= 0.80:
+                        status = "🟢 Masih Hold"
+                        status_color = "#22c55e"
+                    elif hb > 0 and 0.15 < bal / hb < 0.80:
+                        status = "🟡 Jual Sebagian"
+                        status_color = "#facc15"
+                    else:
+                        status = "🟢 Masih Hold" # standard fallback for hold
+                        status_color = "#22c55e"
+                        
+                    tags_str = ", ".join(m.get("maker_tags", [])) or "—"
+                    
+                    _ret_rows.append({
+                        "Wallet": f"https://solscan.io/account/{w}",
+                        "Beli di Focus (SOL)": f"{sol:,.2f}",
+                        "Current Balance": f"{bal:,.2f}" if isinstance(bal, (int, float)) and bal >= 0 else "—",
+                        "Hist Bought": f"{hb:,.2f}" if hb else "—",
+                        "Hist Sold": f"{hs:,.2f}" if hs else "—",
+                        "Tags": tags_str,
+                        "Status": f"<span style='color:{status_color};font-weight:700;'>{status}</span>"
+                    })
+                    
+                if _ret_rows:
+                    st.dataframe(
+                        pd.DataFrame(_ret_rows), use_container_width=True,
+                        hide_index=True,
+                        column_config={"Wallet": st.column_config.LinkColumn(
+                            "Buyer", display_text=r"account/(.{6}).*")})
+                else:
+                    st.info("Tidak ada pembeli yang memenuhi kriteria filter (semua disaring sebagai dust, bot, atau churn).")
+
             # Enriched top sellers table
             if fs["top_sellers"]:
                 _srows = []
@@ -860,18 +933,18 @@ if _f_start and _f_end and swaps_all:
 # 🤖 Ready-to-copy prompt for a free AI chat
 # ---------------------------------------------------------------------------
 prompt_wallets = []
-for wallet, profile in accs:
+for wallet, profile, cohort in accs:
     flags = (("DCA; " if profile.get("dca") else "") +
              ("same-funder" if wallet in same_funder else "")).strip("; ")
     prompt_wallets.append({
-        "wallet": wallet, "role": "pure accumulator",
+        "wallet": wallet, "role": f"pure accumulator ({cohort})",
         "buy": profile["buy"], "sell": profile["sell"],
         "swaps": profile["n_buy"] + profile["n_sell"],
         "age": age_str(wallet), "flags": flags,
     })
-for wallet, profile in dists:
+for wallet, profile, cohort in dists:
     prompt_wallets.append({
-        "wallet": wallet, "role": "pure distributor",
+        "wallet": wallet, "role": f"pure distributor ({cohort})",
         "buy": profile["buy"], "sell": profile["sell"],
         "swaps": profile["n_buy"] + profile["n_sell"],
         "age": age_str(wallet),
@@ -881,11 +954,55 @@ for wallet, profile in dists:
 prompt_key = f"ai_prompt::{skey}"
 if st.button("🤖 Prompt to AI", use_container_width=True,
              help="Build a copy-ready Indonesian prompt for DeepSeek"):
-    st.session_state[prompt_key] = build_ai_prompt(
-        symbol=symbol, ca=ca, requested_hours=hours,
-        available_hours=covered_h, swaps=swaps_all,
-        window_stats=win_stats, wallet_rows=prompt_wallets,
-        price_now=price_now, market_cap=mc_now, now_ts=now_ts)
+    if focus_enabled and _f_start and _f_end and 'focus_swaps' in locals() and focus_swaps:
+        # Use focus-range specific stats for the AI Prompt
+        _f_dur_h = (_f_end - _f_start) / 3600
+        
+        # Simple stats over focus swaps
+        _focus_win_stats = {
+            _f_dur_h: {
+                "swaps": len(focus_swaps),
+                "net": fs["net_sol"],
+                "whale_net": fs["whale_net"],
+                "retail_net": fs["retail_net"],
+                "pure_buy": fs["conviction"]["pure_buy"],
+                "pure_sell": fs["conviction"]["pure_sell"],
+                "net_pure": fs["conviction"]["pure_buy"] - fs["conviction"]["pure_sell"],
+                "conviction": fs["conviction"]["conviction_pct"],
+                "verdict": _fv,
+            }
+        }
+        
+        # Build focus prompt wallets
+        _focus_prompt_wallets = []
+        for wallet, profile in _f_accs:
+            _focus_prompt_wallets.append({
+                "wallet": wallet, "role": "pure accumulator",
+                "buy": profile["buy"], "sell": profile["sell"],
+                "swaps": profile["n_buy"] + profile["n_sell"],
+                "age": age_str(wallet),
+                "flags": "DCA" if profile.get("dca") else "",
+            })
+        for wallet, profile in _f_dists:
+            _focus_prompt_wallets.append({
+                "wallet": wallet, "role": "pure distributor",
+                "buy": profile["buy"], "sell": profile["sell"],
+                "swaps": profile["n_buy"] + profile["n_sell"],
+                "age": age_str(wallet),
+                "flags": "DCA" if profile.get("dca") else "",
+            })
+            
+        st.session_state[prompt_key] = build_ai_prompt(
+            symbol=symbol, ca=ca, requested_hours=_f_dur_h,
+            available_hours=_f_dur_h, swaps=focus_swaps,
+            window_stats=_focus_win_stats, wallet_rows=_focus_prompt_wallets,
+            price_now=price_now, market_cap=mc_now, now_ts=_f_end)
+    else:
+        st.session_state[prompt_key] = build_ai_prompt(
+            symbol=symbol, ca=ca, requested_hours=hours,
+            available_hours=covered_h, swaps=swaps_all,
+            window_stats=win_stats, wallet_rows=prompt_wallets,
+            price_now=price_now, market_cap=mc_now, now_ts=now_ts)
 if prompt_key in st.session_state:
     st.markdown("### 🤖 Prompt siap salin")
     st.caption("Klik ikon copy pada blok berikut, lalu tempel ke DeepSeek. "

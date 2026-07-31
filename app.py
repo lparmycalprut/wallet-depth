@@ -24,7 +24,7 @@ from core import (concentration, get_helius_keys,
                   get_holders as core_get_holders, get_ohlcv_daily,
                   get_rugcheck, get_supply as core_get_supply, health_score,
                   helius_rpc, score_color, score_label)
-from trending_ui import render_trending, run_screen
+from trending_ui import render_trending, run_screen, run_screen_hrhr
 
 
 def detect_sr_levels(ohlcv: pd.DataFrame, window: int = 30):
@@ -53,13 +53,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 HISTORY_PATH = os.path.join(BASE_DIR, "history.json")
 DEFAULT_CONFIG = {"helius_api_key": "", "helius_extra_keys": "",
-                  "custom_rpc": "", "dust_limit_usd": 10,
+                  "custom_rpc": "", "dust_limit_usd": 5,
                   "cluster_warn_pct": 5, "cluster_scan_top_n": 50,
                   "exclude_lp": True}
-DUST_LIMIT_USD = 10.0
+DUST_LIMIT_USD = 5.0
 REAL_RATIO_OK = 0.50       # healthy: real >= 50% of dust
 REAL_RATIO_MIN = 0.30      # acceptable floor (yellow) if real also controls MC
-TIERS = [(">$10", 10.0), (">$100", 100.0), (">$1K", 1e3),
+TIERS = [(">$5", 5.0), (">$100", 100.0), (">$1K", 1e3),
          (">$10K", 1e4), (">$100K", 1e5), (">$1M", 1e6)]
 TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 TOKEN_2022_PROGRAM = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
@@ -849,42 +849,23 @@ if _wl:
             peak4 = max(p["conviction"] for p in pts[-4:]) if len(pts) >= 4 else cv
             drop_from_peak = peak4 - cv
 
-            if cv >= 30 and momentum > -10 and drop_from_peak < 15:
-                stab_badge = "<span style='background:#22c55e;color:#0a0f1a;border-radius:5px;padding:2px 8px;font-size:0.72rem;font-weight:800;white-space:nowrap;letter-spacing:0.2px;'>🟢 KOKOH</span>"
-                stab_col = "#22c55e"
-            elif cv >= 15 and drop_from_peak < 30:
-                stab_badge = "<span style='background:#facc15;color:#0a0f1a;border-radius:5px;padding:2px 8px;font-size:0.72rem;font-weight:800;white-space:nowrap;letter-spacing:0.2px;'>🟡 GOYAH</span>"
-                stab_col = "#facc15"
-            else:
-                stab_badge = "<span style='background:#ef4444;color:white;border-radius:5px;padding:2px 8px;font-size:0.72rem;font-weight:800;white-space:nowrap;letter-spacing:0.2px;'>🔴 MELEMAH</span>"
-                stab_col = "#ef4444"
+            drop_from_peak = peak4 - cv
 
             # ---- Multi-window sparkline (6h / 12h / 24h / 48h) ----
-            # Each cron point = 6h window. 12h = avg last 2, 24h = avg last 4,
-            # 48h = avg last 8. Conviction that holds across ALL four windows
-            # is the rare signal; conviction that is high in 6h but already
-            # fading in 24h/48h is a short spike, not a real build.
             cv_6h = cv
-            cv_12h = (sum(p["conviction"] for p in pts[-2:]) /
-                      max(len(pts[-2:]), 1) if len(pts) >= 2 else cv)
-            cv_24h = (sum(p["conviction"] for p in pts[-4:]) /
-                      max(len(pts[-4:]), 1) if len(pts) >= 4 else cv)
-            if len(pts) >= 8:
-                cv_48h = (sum(p["conviction"] for p in pts[-8:]) /
-                          max(len(pts[-8:]), 1))
-            elif len(pts) >= 4:
-                # not enough history for a real 48h — mirror 24h so the bar
-                # is at least visible (capped at 24h real value) instead of
-                # a misleading zero
-                cv_48h = cv_24h
-            else:
-                cv_48h = cv
+            cv_12h = pts[-2]["conviction"] if len(pts) >= 2 else cv_6h
+            cv_24h = pts[-4]["conviction"] if len(pts) >= 4 else cv_12h
+            cv_48h = pts[-8]["conviction"] if len(pts) >= 8 else cv_24h
             spark_max = max(cv_6h, cv_12h, cv_24h, cv_48h, 50) or 1
 
-            def _spark_bar(val, label):
-                # bars sit in a left label / bar / value row, easy to scan
-                h = max(5, val / spark_max * 28)
-                c = "#22c55e" if val > 30 else "#64748b"
+            # Conviction naik hijau, turun merah
+            c_6h = "#22c55e" if cv_6h >= cv_12h else "#ef4444"
+            c_12h = "#22c55e" if cv_12h >= cv_24h else "#ef4444"
+            c_24h = "#22c55e" if cv_24h >= cv_48h else "#ef4444"
+            cv_72h = pts[-12]["conviction"] if len(pts) >= 12 else cv_48h
+            c_48h = "#22c55e" if cv_48h >= cv_72h else "#ef4444"
+
+            def _spark_bar(val, label, color):
                 return (f"<div style='display:flex;align-items:center;"
                         f"gap:4px;margin:1px 0;line-height:1.2;'>"
                         f"<span style='font-size:0.7rem;color:#64748b;"
@@ -893,151 +874,54 @@ if _wl:
                         f"background:rgba(148,163,184,0.18);border-radius:4px;"
                         f"overflow:hidden;'>"
                         f"<span style='display:block;width:{(val/spark_max)*100:.0f}%;"
-                        f"height:100%;background:{c};border-radius:4px;'></span></span>"
-                        f"<span style='font-size:0.7rem;color:{c};"
+                        f"height:100%;background:{color};border-radius:4px;'></span></span>"
+                        f"<span style='font-size:0.7rem;color:{color};"
                         f"min-width:32px;text-align:right;font-weight:700;'>"
                         f"{val:.0f}%</span></div>")
             multi_bars = ("<div style='margin:6px 0;padding:6px 8px;"
                           "background:rgba(148,163,184,0.06);"
                           "border-radius:6px;'>"
-                          f"{_spark_bar(cv_6h, '6h')}"
-                          f"{_spark_bar(cv_12h, '12h')}"
-                          f"{_spark_bar(cv_24h, '24h')}"
-                          f"{_spark_bar(cv_48h, '48h')}"
+                          f"{_spark_bar(cv_6h, '6h', c_6h)}"
+                          f"{_spark_bar(cv_12h, '12h', c_12h)}"
+                          f"{_spark_bar(cv_24h, '24h', c_24h)}"
+                          f"{_spark_bar(cv_48h, '48h', c_48h)}"
                           "</div>")
 
-            # ---- Volume-quality indicator ----
+            # ---- Volume ----
             vol = last.get("vol") or 0
-            if vol >= 100 and cv >= 40:
-                vol_badge = "<span style='color:#22c55e;font-weight:800;font-size:0.75rem;'>💪 STRONG</span>"
-            elif vol >= 100 and cv < 40:
-                vol_badge = "<span style='color:#facc15;font-weight:800;font-size:0.75rem;'>🟡 NOISY</span>"
-            elif vol >= 30 and cv >= 40:
-                vol_badge = "<span style='color:#94a3b8;font-weight:800;font-size:0.75rem;'>👍 LIGHT</span>"
-            elif vol >= 30:
-                vol_badge = "<span style='color:#64748b;font-weight:800;font-size:0.75rem;'>⚪ THIN</span>"
-            else:
-                vol_badge = "<span style='color:#64748b;font-weight:800;font-size:0.75rem;'>💤 QUIET</span>"
 
-            # ---- Card border/glow based on stability + growth ----
-            if grow2 and stab_col == "#22c55e":
-                border, cv_col = "#22c55e", "#22c55e"
-                glow = "box-shadow:0 0 12px rgba(34,197,94,0.45);"
-            elif grow1:
-                border, cv_col = "#facc15", "#facc15"
-                glow = "box-shadow:0 0 10px rgba(250,204,21,0.35);"
-            elif stab_col == "#22c55e":
-                border, cv_col = "#22c55e", "#64748b"
-                glow = ""
-            elif stab_col == "#facc15":
-                border, cv_col = "#facc15", "#64748b"
-                glow = ""
-            else:
-                border, cv_col = "#ef4444", "#ef4444"
-                glow = ""
+            # ---- Simple card border & no glow ----
+            border = "#334155"
+            glow = ""
+            cv_col = "#cbd5e1"
 
-            # ---- Why is this card flagged? ----
+            # ---- Why flagged (Disabled for now) ----
             _reasons = []
-            _very_stale = False   # suppress conviction % when this is True
-            try:
-                _panel = flow_check_panel(_ca)
-                _fr_lvl = _panel["freshness"].get("level", "ok")
-                if _fr_lvl == "warn":
-                    _full = _panel["freshness"]["reason"]
-                    _reasons.append(("⏰", _full[:42], _full, "warn"))
-                elif _fr_lvl == "danger":
-                    _full = _panel["freshness"]["reason"]
-                    _reasons.append(("⏰", _full[:42], _full, "danger"))
-                    _very_stale = True   # don't trust the conviction read
-                if _panel["persistence"]["ok"]:
-                    _full = _panel["persistence"]["reason"]
-                    _dir = _panel["persistence"]["direction"]
-                    _ic = "💪" if _dir == "accum" else "🩸"
-                    _lvl = "info" if _dir == "accum" else "warn"
-                    _reasons.append((_ic, _full[:42], _full, _lvl))
-                if _panel["distribution"]["ok"]:
-                    _full = _panel["distribution"]["reason"]
-                    _lvl = _panel["distribution"].get("level", "warn")
-                    _ic = "🩸" if _lvl == "danger" else "⚠️"
-                    _reasons.append((_ic, _full[:42], _full, _lvl))
-                if _panel["quality"]["level"] in ("warn", "danger"):
-                    _full = _panel["quality"]["reason"]
-                    _lvl = _panel["quality"]["level"]
-                    _reasons.append(("⚠️", _full[:42], _full, _lvl))
-            except Exception:
-                pass
-
-            # Holder-delta (whale/dolphin) tier move — separate try so
-            # a flow-check error doesn't silence it (the panel has
-            # already been fetched above via _hd_panel).
-            if _hd_panel and _hd_baseline > 0 and _hd_summary and \
-                    _hd_summary != "no meaningful move":
-                if _hd_level == "danger":
-                    _reasons.append(("🐋", _hd_summary[:42], _hd_summary,
-                                     "danger"))
-                elif _hd_level == "warn":
-                    _reasons.append(("🐬", _hd_summary[:42], _hd_summary,
-                                     "warn"))
-                elif _hd_level == "ok" and _hd_summary:
-                    # ok level + summary means a tier moved but didn't
-                    # cross threshold — surface as info only if the
-                    # delta is non-trivial (> 1 SOL) so the user has
-                    # context even on quiet days.
-                    _reasons.append(("ℹ️", _hd_summary[:42], _hd_summary,
-                                     "info"))
-
-            try:
-                _market = _prices.get(_ca) or {}
-                _pair = _market.get("pair")
-                _price = _market.get("price")
-                if _pair and _price:
-                    _daily = _daily_candles.get(_pair, [])
-                    _markup = markup_from_candles(_daily, price_now=_price)
-                    if _markup and _markup["level"] in ("warn", "danger"):
-                        _full = markup_warning(_markup)
-                        _lvl = _markup["level"]
-                        _ic = "🔴" if _lvl == "danger" else "⚠️"
-                        _reasons.append((_ic, _full[:42], _full, _lvl))
-            except Exception:
-                pass
-
-            has_danger = any(lvl == "danger" or ic in ("🩸", "🔴") for ic, short, full, lvl in _reasons)
-            has_warn = any(lvl in ("warn", "warning") or ic in ("⏰", "⚠️") for ic, short, full, lvl in _reasons)
-
-            if has_danger:
-                border, cv_col = "#ef4444", "#ef4444"
-                glow = "box-shadow:0 0 12px rgba(239,68,68,0.45);"
-            elif has_warn:
-                border, cv_col = "#facc15", "#facc15"
-                glow = "box-shadow:0 0 10px rgba(250,204,21,0.35);"
-
+            _very_stale = False
             reasons_html = ""
-            if _reasons:
-                rows_html = "".join(
-                    f"<div title='{full}' style='font-size:0.72rem;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px;line-height:1.3;'>"
-                    f"<span style='margin-right:4px;'>{ic}</span>{short}</div>"
-                    for ic, short, full, lvl in _reasons[:3]
-                )
-                full_rows_html = "".join(
-                    f"<div style='font-size:0.7rem;color:#94a3b8;margin-top:4px;line-height:1.35;'>"
-                    f"<span style='margin-right:6px;'>{ic}</span>{full}</div>"
-                    for ic, short, full, lvl in _reasons
-                )
-                reasons_html = (
-                    f"<div style='border-top:1px solid #1e293b;margin-top:8px;padding-top:6px;'>"
-                    f"<div style='font-size:0.65rem;font-weight:800;color:#facc15;letter-spacing:0.5px;"
-                    f"text-transform:uppercase;margin-bottom:2px;'>⚠️ Why flagged</div>"
-                    f"{rows_html}"
-                    f"<details style='font-size:0.65rem;color:#64748b;margin-top:4px;'>"
-                    f"<summary style='cursor:pointer;color:#38bdf8;'>show all ({len(_reasons)})</summary>"
-                    f"<div style='margin-top:4px;padding-top:4px;border-top:1px solid #1e293b;'>"
-                    f"{full_rows_html}</div></details>"
-                    f"</div>"
-                )
+
+            # ---- Conviction Trend Note ----
+            consecutive_ups = 0
+            if cv_6h > cv_12h:
+                consecutive_ups += 1
+                if cv_12h > cv_24h:
+                    consecutive_ups += 1
+                    if cv_24h > cv_48h:
+                        consecutive_ups += 1
+            is_spike = (cv_6h - cv_12h) >= 20.0
+            has_good_vol = vol >= 50.0
+
+            conv_note = ""
+            if consecutive_ups >= 3:
+                conv_note = f"<div style='color:#22c55e;font-size:0.75rem;font-weight:700;margin-top:6px;'>🔥 Sangat Bagus (Naik ≥3x{' + Vol' if has_good_vol else ''})</div>"
+            elif consecutive_ups == 2:
+                conv_note = f"<div style='color:#a3e635;font-size:0.75rem;font-weight:700;margin-top:6px;'>📈 Bagus (Naik 2x{' + Vol' if has_good_vol else ''})</div>"
+            elif is_spike:
+                conv_note = f"<div style='color:#22c55e;font-size:0.75rem;font-weight:700;margin-top:6px;'>🚀 Sangat Bagus (Melonjak{' + Vol' if has_good_vol else ''})</div>"
 
             trend_txt = (f"{prev_cv:.0f}→{cv:.0f}%" if prev_cv is not None
                          else f"{cv:.0f}%")
-            trend_ic = "📈📈" if grow2 else ("📈" if grow1 else "📉" if prev_cv is not None and cv < prev_cv else "➡️")
+            trend_ic = "📈📈" if consecutive_ups >= 2 else ("📈" if consecutive_ups == 1 else "📉" if prev_cv is not None and cv < prev_cv else "➡️")
             vol_txt = f"{vol:,.0f} SOL/6h · {last.get('swaps') or 0:,} swaps"
             np_col = "#22c55e" if last["net_pure"] >= 0 else "#ef4444"
             # market phase badge
@@ -1051,13 +935,13 @@ if _wl:
                 _ph.get("confidence", "low"), "·")
             _ph_reason = (_ph.get("reason", "") or "").replace("'", "&#39;")
             phase_html = (
-                f"<div style='margin-top:8px;'>"
+                f"<div style='margin-top:8px;'> "
                 f"<span title='{_ph_reason} (confidence: "
                 f"{_ph.get('confidence', 'low')}) — heuristic, not a "
                 f"signal' style='background:{_ph_col}22;border:1px solid "
                 f"{_ph_col};color:{_ph_col};border-radius:6px;"
                 f"padding:3px 9px;font-size:0.7rem;font-weight:700;"
-                f"white-space:nowrap;letter-spacing:0.2px;'>"
+                f"white-space:nowrap;letter-spacing:0.2px;'> "
                 f"{_ph['phase']} {_conf_dots}</span>"
                 f"</div>")
             _cvd_link = f"/CVD?ca={_ca}"
@@ -1098,13 +982,7 @@ if _wl:
                 f"target='_blank' title='GMGN' "
                 f"style='color:#64748b;text-decoration:none;'>⚡</a>"
                 f"</span></div>"
-                # stability + volume-quality badges on their own line
-                f"<div style='display:flex;gap:5px;flex-wrap:wrap;"
-                f"margin-top:8px;'>{stab_badge} {vol_badge}</div>"
                 # holder-delta badges (whale / dolphin) on their own line
-                # so they don't crowd the KOKOH/GOYAH row. Either
-                # filled (real delta) or the "waiting for baseline"
-                # placeholder so the user always sees something.
                 f"<div style='display:flex;gap:5px;flex-wrap:wrap;"
                 f"margin-top:5px;'>{_hd_badges_html}</div>"
                 # phase badge (own line, easier to scan)
@@ -1132,8 +1010,8 @@ if _wl:
                 f"<span style='color:#64748b;'>swaps </span>"
                 f"<span style='color:#cbd5e1;font-weight:600;'>"
                 f"{last.get('swaps') or 0:,}</span>"
-                f"</div></a>"
-                f"{reasons_html}"
+                f"</div>"
+                f"{conv_note}</a>"
                 f"</div>")
         if _cards:
             st.markdown(
@@ -1142,26 +1020,14 @@ if _wl:
                 "align-items:stretch;'>"
                 + "".join(_cards) + "</div>",
                 unsafe_allow_html=True)
-            st.caption("**🟢 KOKOH** = conviction stabil ≥30%, turun <15% dari puncak · "
-                       "**🟡 GOYAH** = conviction ≥15%, masih di atas zona mati · "
-                       "**🔴 MELEMAH** = conviction rendah atau anjlok >30% dari puncak. "
-                       "**💪 STRONG** = volume ≥100 SOL + conviction ≥40% · "
-                       "**🟡 NOISY** = volume besar tapi conviction rendah · "
-                       "**👍 LIGHT** = volume sedang, conviction ok · "
-                       "**⚪ THIN** = volume tipis · **💤 QUIET** = hampir tanpa volume. "
-                       "Sparkline 6h → 12h → 24h → 48h (bawah → atas). "
-                       "48h butuh ≥8 cron point (≥2 hari) untuk diisi; sebelum "
-                       "itu tampil mengikuti 24h. Bar hijau = "
-                       "conviction >30%. Phase badge = Wyckoff-style heuristic "
-                       "— NOT a trading signal. "
-                       "**🐋/🐬** = whale/dolphin holdings delta from the "
-                       "latest snapshot baseline (cron commits every 6h; "
-                       "Δ in SOL + N↑ wallets added + N↓ exited). "
-                       "Click card → CVD analysis.")
+            st.caption("Sparkline 6h → 12h → 24h → 48h (bawah → atas). "
+                       "Bar hijau = conviction naik dibanding periode sebelumnya, bar merah = conviction turun. "
+                       "Phase badge = Wyckoff-style heuristic — NOT a trading signal. "
+                       "**🐋/🐬** = whale/dolphin holdings delta dari snapshot baseline harian "
+                       "(Δ dalam SOL + N↑ dompet masuk + N↓ keluar). "
+                       "Klik card → CVD analysis.")
         else:
-            st.caption("💧 LP Radar: semua watchlist token ditampilkan — "
-                       "card dengan border merah artinya conviction melemah, "
-                       "kuning = goyah, hijau = kokoh.")
+            st.caption("💧 LP Radar: semua watchlist token ditampilkan.")
 
 # clicking a ticker chip sets ?ca=... -> prefill + auto-analyze
 qp_ca = st.query_params.get("ca", "").strip()
@@ -1178,7 +1044,7 @@ picked_ca = None          # set when "Analyze →" is pressed inside the table
 scan_trending = st.button("🔥 Scan Trending Now", key="trending_scan",
                           type="primary", use_container_width=True)
 if scan_trending or "screener_rows" in st.session_state:
-    with st.expander("🔥 Trending tokens from GMGN — scored", expanded=True):
+    with st.expander("🔥 Trending tokens from GMGN — scored (FOR LP)", expanded=True):
         _rows, _err = run_screen(force=scan_trending)
         if _err:
             st.error(f"Failed to fetch trending: {_err}")
@@ -1191,6 +1057,23 @@ if scan_trending or "screener_rows" in st.session_state:
             picked_ca = c
 
         render_trending(_rows, key_prefix="home", on_analyze=_pick)
+
+scan_hrhr = st.button("⚡ Scan High Risk High Reward Now", key="hrhr_scan",
+                      type="primary", use_container_width=True)
+if scan_hrhr or "screener_hrhr_rows" in st.session_state:
+    with st.expander("⚡ High Risk High Reward from GMGN — scored (FOR LP)", expanded=True):
+        _rows_hrhr, _err_hrhr = run_screen_hrhr(force=scan_hrhr)
+        if _err_hrhr:
+            st.error(f"Failed to fetch HRHR: {_err_hrhr}")
+        if not _rows_hrhr and not _err_hrhr:
+            st.warning("GMGN returned nothing (Cloudflare block or every "
+                       "token was filtered out). Try again in a minute.")
+
+        def _pick_hrhr(c):
+            global picked_ca
+            picked_ca = c
+
+        render_trending(_rows_hrhr, key_prefix="hrhr_home", on_analyze=_pick_hrhr)
 
 # ---------------------------------------------------------------------------
 # ⚡ Quick Pick — isi otomatis kolom CA di bawah dari watchlist.
@@ -1235,9 +1118,26 @@ if _qp_wl:
                                    if lbl == _qp_chosen), "")
                 if _qp_picked:
                     st.session_state[qp_key] = _qp_picked
+                    st.session_state["trigger_analyze"] = True
+                    st.session_state[f"cvd_on::{_qp_picked}"] = True
+                    st.session_state["cvd_win"] = 48
                     st.rerun()
             else:
                 st.warning("Pilih token dulu dari dropdown.")
+
+    with st.expander("🗑️ Quick Delete dari watchlist", expanded=False):
+        st.caption("Hapus token dari watchlist langsung dari sini tanpa perlu ke halaman Watchlist.")
+        for _del_ca, _del_meta in list(_wl.items()):
+            _del_sym = _del_meta.get("symbol") or _del_ca[:8]
+            _del_cols = st.columns([4, 1])
+            _del_cols[0].write(f"**${_del_sym}** (`{_del_ca}`)")
+            if _del_cols[1].button("Hapus 🗑️", key=f"del_wl_{_del_ca}", use_container_width=True):
+                _committed = remove_from_watchlist(_del_ca)
+                if not _committed:
+                    st.warning("Dihapus, tapi tidak bisa commit ke GitHub.")
+                    time.sleep(1.5)
+                st.toast(f"Removed ${_del_sym} from watchlist.")
+                st.rerun()
 
 # Effective default CA: query-param > Quick Pick > trending pick > last
 _effective_ca = (st.session_state.get(qp_key) or picked_ca or default_ca
@@ -1248,8 +1148,9 @@ ca = st.text_input("Solana token Contract Address (CA)",
                    placeholder="e.g. AkchGAUdXXRGHt3HXaHbTvw3JLGUwtJRmYnkG66wpump"
                    ).strip()
 analyze = st.button("🔍 Analyze", type="primary", use_container_width=True)
-if ca and (qp_ca == ca or picked_ca == ca):
+if ca and (qp_ca == ca or picked_ca == ca or st.session_state.get("trigger_analyze", False)):
     analyze = True  # auto-run when opened from the ticker / trending table
+    st.session_state["trigger_analyze"] = False
 
 # Watchlist controls (below Analyze — add only tokens that pass your criteria)
 wcol1, wcol2 = st.columns([1, 3])
@@ -1519,15 +1420,7 @@ FUNDER_COL = st.column_config.LinkColumn(
 hs, h0, h1c, h2c, h3c, h4c, h5c, h6c = st.columns(
     [1.1, 0.5, 1.9, 1.2, 1.3, 1.3, 1.3, 1.4])
 with hs:
-    st.markdown(
-        f"""<div style="text-align:center;border:2px solid {s_color};
-        border-radius:10px;padding:4px 2px;">
-        <div style="font-size:1.5rem;font-weight:800;color:{s_color};
-        line-height:1;">{score}</div>
-        <div style="font-size:0.62rem;color:{s_color};font-weight:700;">
-        {s_label}</div>
-        <div style="font-size:0.55rem;opacity:0.6;">Health Score</div>
-        </div>""", unsafe_allow_html=True)
+    st.empty()
 with h0:
     if market.get("image"):
         st.image(market["image"], width=44)
@@ -1559,7 +1452,7 @@ with h6c:
 pools = market.get("pairs_detail") or []
 total_pool_liq = sum(p["liq"] for p in pools) or 1
 
-col_left, col_liq = st.columns([2.1, 1])
+col_left = st.container()
 
 with col_left:
     # --- Holder verdict (3 tiers: green / yellow / red) ----------------------
@@ -1628,39 +1521,40 @@ with col_left:
         <div style="display:flex;flex-wrap:wrap;">{items_html}</div>
         </div>""", unsafe_allow_html=True)
 
-with col_liq:
-    # --- Liquidity health donut ----------------------------------------------
-    liq_health = ("HEALTHY" if liq_pct_mc >= 10 else
-                  ("MODERATE" if liq_pct_mc >= 5 else "THIN"))
-    liq_col = ("#22c55e" if liq_pct_mc >= 10 else
-               ("#facc15" if liq_pct_mc >= 5 else "#ef4444"))
-    active_pools = [p for p in pools if p["liq"] > total_pool_liq * 0.005]
-    figl = go.Figure(go.Pie(
-        labels=[f"{p['dex'].capitalize()} ({p['quote']})"
-                for p in active_pools],
-        values=[p["liq"] for p in active_pools], hole=0.62,
-        marker=dict(colors=["#38bdf8", "#a78bfa", "#4ade80", "#facc15",
-                            "#fb923c"]),
-        textinfo="label+percent", textfont=dict(size=10),
-        hovertemplate="<b>%{label}</b><br>$%{value:,.0f} "
-                      "(%{percent})<extra></extra>"))
-    figl.add_annotation(
-        text=f"<b style='font-size:17px'>{liq_pct_mc:.1f}%</b><br>"
-             f"<span style='font-size:10px'>of MC</span><br>"
-             f"<span style='font-size:11px;color:{liq_col}'>"
-             f"<b>{liq_health}</b></span>",
-        showarrow=False)
-    figl.update_layout(height=205, showlegend=False,
-                       margin=dict(t=24, b=2, l=8, r=8),
-                       title=dict(text="💧 Liquidity vs MC",
-                                  font=dict(size=13)))
-    st.plotly_chart(figl, use_container_width=True,
-                    config={"displayModeBar": False})
-    lock_txt = (f"LP locked/burned: {lp_locked_pct:.0f}% (main pool)"
-                if lp_locked_pct is not None else "LP lock: n/a")
-    st.caption(f"Total ${market['liquidity_usd']:,.0f} across "
-               f"{len(active_pools)} pool(s) · {lock_txt} · health bar: "
-               f"≥10% MC healthy, 5-10% moderate, <5% thin")
+if False:
+    with col_liq:
+        # --- Liquidity health donut ----------------------------------------------
+        liq_health = ("HEALTHY" if liq_pct_mc >= 10 else
+                      ("MODERATE" if liq_pct_mc >= 5 else "THIN"))
+        liq_col = ("#22c55e" if liq_pct_mc >= 10 else
+                   ("#facc15" if liq_pct_mc >= 5 else "#ef4444"))
+        active_pools = [p for p in pools if p["liq"] > total_pool_liq * 0.005]
+        figl = go.Figure(go.Pie(
+            labels=[f"{p['dex'].capitalize()} ({p['quote']})"
+                    for p in active_pools],
+            values=[p["liq"] for p in active_pools], hole=0.62,
+            marker=dict(colors=["#38bdf8", "#a78bfa", "#4ade80", "#facc15",
+                                "#fb923c"]),
+            textinfo="label+percent", textfont=dict(size=10),
+            hovertemplate="<b>%{label}</b><br>$%{value:,.0f} "
+                          "(%{percent})<extra></extra>"))
+        figl.add_annotation(
+            text=f"<b style='font-size:17px'>{liq_pct_mc:.1f}%</b><br>"
+                 f"<span style='font-size:10px'>of MC</span><br>"
+                 f"<span style='font-size:11px;color:{liq_col}'>"
+                 f"<b>{liq_health}</b></span>",
+            showarrow=False)
+        figl.update_layout(height=205, showlegend=False,
+                           margin=dict(t=24, b=2, l=8, r=8),
+                           title=dict(text="💧 Liquidity vs MC",
+                                      font=dict(size=13)))
+        st.plotly_chart(figl, use_container_width=True,
+                        config={"displayModeBar": False})
+        lock_txt = (f"LP locked/burned: {lp_locked_pct:.0f}% (main pool)"
+                    if lp_locked_pct is not None else "LP lock: n/a")
+        st.caption(f"Total ${market['liquidity_usd']:,.0f} across "
+                   f"{len(active_pools)} pool(s) · {lock_txt} · health bar: "
+                   f"≥10% MC healthy, 5-10% moderate, <5% thin")
 
 # ----------------------------------------------------------------------------
 # ROW 3 — 3 charts side by side
@@ -1668,7 +1562,8 @@ with col_liq:
 CHART_H = 240
 col_a, col_b, col_c = st.columns([1.5, 1, 1.4])
 
-with col_a:
+if False:
+ with col_a:
     st.markdown("**📶 Wallet Depth by Threshold**")
     rows = []
     for label, thr in [("> $0", 0.0)] + TIERS:
@@ -1694,7 +1589,8 @@ with col_a:
     st.plotly_chart(bar, use_container_width=True,
                     config={"displayModeBar": False})
 
-with col_b:
+if False:
+ with col_b:
     st.markdown("**🧮 Dust vs Real**")
     fig = go.Figure(go.Pie(
         labels=["Dust", "Real"], values=[n_dust, n_real], hole=0.55,
@@ -1710,7 +1606,8 @@ with col_b:
                f">{REAL_RATIO_OK*100:.0f}%) | Real: {real_mc_pct:.1f}% MC, "
                f"Dust: {dust_mc_pct:.1f}% MC")
 
-with col_c:
+if False:
+ with col_c:
     st.markdown("**📈 Holders Day-by-Day**")
     hist_rows = []
     if not solscan_hist.empty:
@@ -2093,7 +1990,7 @@ except Exception as _e:
     card_png = None
     st.caption(f"Share card generation failed: {_e}")
 
-if card_png:
+if False:
     sc1, sc2 = st.columns([1.1, 1])
     with sc1:
         st.image(card_png, caption="Share card preview (1200×675 — X ready)")
@@ -2112,23 +2009,18 @@ if card_png:
 # ROW 4.5 — 📊 Live CVD analysis (auto-runs with Analyze)
 # ----------------------------------------------------------------------------
 st.markdown("**📊 On-chain CVD — live swap flow (Helius / GMGN)**")
-cvd_c1, cvd_c2, cvd_c3, cvd_c4 = st.columns([1, 1, 2, 1])
+cvd_c1, cvd_c2, cvd_c3 = st.columns([1, 1, 3])
 cvd_window = cvd_c1.selectbox("Window", [6, 12, 24, 48], index=3,
                               format_func=lambda h: f"last {h}h",
                               key="cvd_win")
 cvd_bucket = cvd_c2.selectbox("Candle", [30, 60, 240], index=2,
                               format_func=lambda m: f"{m}m" if m < 60
                               else f"{m//60}h", key="cvd_bkt")
-use_gmgn_trades = cvd_c4.checkbox(
-    "🔄 Use GMGN Trades API", value=False, key="cvd_use_gmgn_trades",
-    help=("OFF/default: Helius RPC/Enhanced API. ON: use GMGN "
-          "https://gmgn.ai/vas/api/v1/token_trades/sol/{ca} for swap "
-          "flow; quote_amount/amount_usd is converted to SOL-equivalent."))
+use_gmgn_trades = True
 with cvd_c3:
     st.markdown("<div style='height:1.72rem'></div>", unsafe_allow_html=True)
     cvd_clicked = st.button("▶ Run CVD analysis", type="secondary",
-                            use_container_width=True,
-                            disabled=not (rpc_endpoint or use_gmgn_trades))
+                            use_container_width=True)
 
 # manual trigger: once clicked, CVD stays active for this CA (until CA changes)
 _cvd_flag = f"cvd_on::{ca}"
@@ -2231,6 +2123,13 @@ if run_cvd_now and (rpc_endpoint or use_gmgn_trades):
                     if pair0 else [])
             live_src = "Helius live fetch"
     if live_swaps:
+        # Deduplicate defensively to ensure clean calculations
+        _seen_live = {}
+        for s in live_swaps:
+            if len(s) >= 4:
+                _seen_live[(s[0], float(s[1]), int(s[2]), str(s[3]))] = s
+        live_swaps = [list(k) for k in sorted(_seen_live.keys(), key=lambda x: x[2])]
+        
         ldf = pd.DataFrame(live_swaps,
                            columns=["side", "sol", "ts", "wallet"])
         ldf["dt"] = pd.to_datetime(ldf["ts"], unit="s")
@@ -2480,16 +2379,20 @@ if run_cvd_now and (rpc_endpoint or use_gmgn_trades):
                 cluster_members2.update(ms)
 
         accs = sorted(
-            [(w, d) for w, d in profiles.items()
-             if d["profile"] == "pure_accum" and d["buy"] >= _WHSOL],
-            key=lambda x: -x[1]["buy"])[:8]
+            [(w, d, "🐋 WHALE") for w, d in profiles.items()
+             if d["profile"] == "pure_accum" and d["buy"] >= _WHSOL] +
+            [(w, d, "🐬 DOLPHIN") for w, d in profiles.items()
+             if d["profile"] == "pure_accum" and 1.0 <= d["buy"] < _WHSOL],
+            key=lambda x: -x[1]["buy"])[:15]
         dists = sorted(
-            [(w, d) for w, d in profiles.items()
-             if d["profile"] == "pure_dist" and d["sell"] >= _WHSOL],
-            key=lambda x: -x[1]["sell"])[:8]
+            [(w, d, "🐋 WHALE") for w, d in profiles.items()
+             if d["profile"] == "pure_dist" and d["sell"] >= _WHSOL] +
+            [(w, d, "🐬 DOLPHIN") for w, d in profiles.items()
+             if d["profile"] == "pure_dist" and 1.0 <= d["sell"] < _WHSOL],
+            key=lambda x: -x[1]["sell"])[:15]
 
         # --- wallet age lookup for every listed wallet (cached forever) -----
-        _age_targets = [w for w, _ in accs + dists
+        _age_targets = [w for w, _, _ in accs + dists
                         if w not in funder_disk2]
         if _age_targets and rpc_endpoint:
             _apb = st.progress(0.0, text="Looking up wallet ages…")
@@ -2538,7 +2441,7 @@ if run_cvd_now and (rpc_endpoint or use_gmgn_trades):
             if accs:
                 # same-funder detection among accumulators
                 fmap = {}
-                for w, _d in accs:
+                for w, _d, _cohort in accs:
                     fu = funder_disk2.get(w)
                     if fu and fu[0]:
                         fmap.setdefault(fu[0], []).append(w)
@@ -2549,9 +2452,9 @@ if run_cvd_now and (rpc_endpoint or use_gmgn_trades):
                     "Bought": f"{d['buy']:,.1f}",
                     "Swaps": d["n_buy"],
                     "Age": _age_str(w),
-                    "Badges": _mini_badges(w, d) +
+                    "Badges": f"[{cohort}] " + _mini_badges(w, d) +
                               (" ⚠️same-funder" if w in same_funder else ""),
-                } for w, d in accs]), use_container_width=True,
+                } for w, d, cohort in accs]), use_container_width=True,
                     hide_index=True,
                     column_config={"Wallet": st.column_config.LinkColumn(
                         "💎 Pure accumulator",
@@ -2562,7 +2465,7 @@ if run_cvd_now and (rpc_endpoint or use_gmgn_trades):
                                "(smart-money discipline or dev reloading — "
                                "check wallet age).")
             else:
-                st.caption("No whale-size pure accumulators in this window.")
+                st.caption("No pure accumulators in this window.")
         with pa2:
             if dists:
                 st.dataframe(pd.DataFrame([{
@@ -2570,14 +2473,14 @@ if run_cvd_now and (rpc_endpoint or use_gmgn_trades):
                     "Sold": f"{d['sell']:,.1f}",
                     "Swaps": d["n_sell"],
                     "Age": _age_str(w),
-                    "Badges": _mini_badges(w, d),
-                } for w, d in dists]), use_container_width=True,
+                    "Badges": f"[{cohort}] " + _mini_badges(w, d),
+                } for w, d, cohort in dists]), use_container_width=True,
                     hide_index=True,
                     column_config={"Wallet": st.column_config.LinkColumn(
                         "🩸 Pure distributor",
                         display_text=r"account/(.{6}).*")})
             else:
-                st.caption("No whale-size pure distributors in this window.")
+                st.caption("No pure distributors in this window.")
         st.caption("💎 = bought, never sold (≤5% tol) in the window · "
                    "🩸 = sold, never bought back · Age: 🐣 <3d (fresh — "
                    "suspicious), 🌱 3-14d, 🌳 aged, 🌳 aged* = wallet with "
@@ -2729,24 +2632,27 @@ elif not run_cvd_now:
 # ----------------------------------------------------------------------------
 ex1, ex2 = st.columns(2)
 with ex1:
-    with st.expander("📶 Wallet Depth table", expanded=False):
-        show = tier_df.copy()
-        show["% Holders"] = show["% Holders"].map(lambda v: f"{v:.2f}%")
-        show["USD Value"] = show["USD Value"].map(lambda v: f"${v:,.0f}")
-        show["% MC"] = show["% MC"].map(lambda v: f"{v:.2f}%")
-        show["Wallets"] = show["Wallets"].map(lambda v: f"{v:,}")
-        st.dataframe(show, use_container_width=True, hide_index=True)
-    with st.expander("🏆 Top 20 Holders", expanded=False):
-        top = df.sort_values("usd_value", ascending=False).head(20).copy()
-        top["Wallet"] = top["owner"].map(sol_link)
-        top["Tokens"] = top["ui_amount"].map(lambda v: f"{v:,.0f}")
-        top["USD"] = top["usd_value"].map(lambda v: f"${v:,.2f}")
-        top["% Supply"] = top["pct_supply"].map(lambda v: f"{v:.2f}%")
-        st.dataframe(top[["Wallet", "Tokens", "USD", "% Supply"]],
-                     use_container_width=True, hide_index=True,
-                     column_config={"Wallet": WALLET_COL})
-        st.caption("Click a wallet to open it on Solscan.")
-    with st.expander("🎯 Holder Concentration & Dev info", expanded=False):
+    if False:
+        with st.expander("📶 Wallet Depth table", expanded=False):
+            show = tier_df.copy()
+            show["% Holders"] = show["% Holders"].map(lambda v: f"{v:.2f}%")
+            show["USD Value"] = show["USD Value"].map(lambda v: f"${v:,.0f}")
+            show["% MC"] = show["% MC"].map(lambda v: f"{v:.2f}%")
+            show["Wallets"] = show["Wallets"].map(lambda v: f"{v:,}")
+            st.dataframe(show, use_container_width=True, hide_index=True)
+    if False:
+        with st.expander("🏆 Top 20 Holders", expanded=False):
+            top = df.sort_values("usd_value", ascending=False).head(20).copy()
+            top["Wallet"] = top["owner"].map(sol_link)
+            top["Tokens"] = top["ui_amount"].map(lambda v: f"{v:,.0f}")
+            top["USD"] = top["usd_value"].map(lambda v: f"${v:,.2f}")
+            top["% Supply"] = top["pct_supply"].map(lambda v: f"{v:.2f}%")
+            st.dataframe(top[["Wallet", "Tokens", "USD", "% Supply"]],
+                         use_container_width=True, hide_index=True,
+                         column_config={"Wallet": WALLET_COL})
+            st.caption("Click a wallet to open it on Solscan.")
+    with st.container():
+        st.markdown("**🎯 Holder Concentration & Dev info**")
         cc = pd.DataFrame([
             {"Group": "Top 1-5", "% Supply": f"{conc['top5']:.2f}%"},
             {"Group": "Top 6-10", "% Supply": f"{conc['top6_10']:.2f}%"},
@@ -2776,58 +2682,8 @@ with ex1:
                            f"{n7} wallets < 7 days old, {n30} < 30 days. Old "
                            f"wallets (>5k txs) have no age data.")
 with ex2:
-    with st.expander("📈 Holders Day-by-Day table", expanded=False):
-        if len(hist_df) >= 1:
-            tbl = hist_df.copy()
-            if "delta" not in tbl:
-                tbl["delta"] = tbl["holders"].diff()
-            tbl["Holders"] = tbl["holders"].map(lambda v: f"{int(v):,}")
-            tbl["Δ"] = tbl["delta"].map(
-                lambda v: f"{int(v):+,}" if pd.notna(v) else "—")
-            tbl["%"] = (tbl["delta"] / tbl["holders"].shift(1) * 100).map(
-                lambda v: f"{v:+.2f}%" if pd.notna(v) else "—")
-            st.dataframe(tbl[["date", "Holders", "Δ", "%", "source"]].rename(
-                columns={"date": "Date", "source": "Source"}),
-                use_container_width=True, hide_index=True)
-            st.caption("Sources: Solscan (last ~7 days) + local snapshots. "
-                       "Solscan counts every token account, so numbers can "
-                       "differ slightly from ours (per-owner, LP excluded).")
-        else:
-            st.caption("No history yet.")
-    with st.expander("🕸️ Bundler / Cluster table", expanded=False):
-        if bundles is not None and not bundles.empty:
-            show_c = bundles.copy()
-            show_c["Funder"] = show_c["funder"].map(sol_link)
-            show_c["Wallets"] = show_c["wallets"]
-            show_c["Members"] = show_c["members"].map(
-                lambda ms: ", ".join(m[:6] + "…" for m in ms[:8]) +
-                           (f" (+{len(ms)-8})" if len(ms) > 8 else ""))
-            show_c["Tokens"] = show_c["total_tokens"].map(lambda v: f"{v:,.0f}")
-            show_c["% Supply"] = show_c["pct_supply"].map(lambda v: f"{v:.2f}%")
-            show_c["⚠️"] = show_c["pct_supply"].map(
-                lambda v: "🚨" if v > cluster_warn_pct else "")
-            st.dataframe(show_c[["⚠️", "Funder", "Wallets", "Tokens",
-                                 "% Supply", "Members"]],
-                         use_container_width=True, hide_index=True,
-                         column_config={"Funder": FUNDER_COL})
-            if clusters is not None and not clusters.empty:
-                cex_rows = clusters[clusters["cex"] != ""]
-                if not cex_rows.empty:
-                    st.caption("ℹ️ CEX-funded (not a bundle): " + "; ".join(
-                        f"{r['cex']}: {int(r['wallets'])} wallets "
-                        f"({r['pct_supply']:.2f}%)"
-                        for _, r in cex_rows.iterrows()))
-            st.caption("Method: first-funder heuristic. Old wallets (>5k txs) "
-                       "are skipped. Multi-hop bundlers may evade detection.")
-        else:
-            st.caption("No clusters detected / scan disabled.")
-    with st.expander("🧬 Health Score breakdown", expanded=False):
-        sp = pd.DataFrame(
-            [{"Component": n, "Points": f"{p:.1f}", "Max": m, "Value": ket}
-             for n, p, m, ket in score_parts])
-        st.dataframe(sp, use_container_width=True, hide_index=True)
-        st.caption("Score = sum of components. ≥70 HEALTHY · 45-69 CAUTION · "
-                   "<45 DANGER. Heuristic only — not financial advice, DYOR!")
+    st.empty()
+    # Health Score breakdown temporarily disabled
 
 # Footer
 foot = (f"DexScreener (price/MC) · Helius (holders) · Solscan (history) · "
