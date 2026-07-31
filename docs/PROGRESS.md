@@ -7,6 +7,59 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-01 — CVD whale/dolphin activity + separated wallet details
+
+### Yang berubah
+
+1. **Whale activity ikut tampil di row cohort CVD** — halaman CVD sekarang
+   menampilkan `🐋 Whale held buy`, `🐋 Whale pure sell`, `🐋 Whale net`, dan
+   rasio `🐋 vs 🐬 net`; dolphin tetap tampil di row sendiri.
+2. **List wallet dipisah** — tidak lagi mencampur semuanya dalam satu tabel.
+   Ada tabel terpisah untuk whale pure accumulators, whale pure distributors,
+   dolphin pure accumulators, dolphin pure distributors, light holders, dan
+   traders. Semua membawa Buy/Sell/Net/Held %, swaps, age, dan flags.
+3. **No-buy holders** — CVD menampilkan holder-rank whale/dolphin current
+   holders yang tidak punya buy di window terpilih tetapi masih memegang token
+   (scan holder Helius, cached 1 jam, pool address dikecualikan). Selain itu,
+   GMGN sell-only wallets yang masih punya token balance juga muncul terpisah.
+4. **Export report/CSV ikut diperbarui** — markdown report membawa ringkasan
+   whale/dolphin held-flow, section detail per cohort, dan section no-buy
+   holders bila ada.
+5. **Advanced cohort divergence** — section `🧭 Advanced cohort divergence`
+   membandingkan price pivots vs `Whale Held CVD`, `Dolphin Held CVD`,
+   `Trader CVD`, dan `Pure Distributor CVD`. Ini advisory dan difilter oleh
+   minimum SOL movement; divergence lama All CVD + Whale-swap CVD tetap utuh.
+6. **Helper network-free di `cvd.py`** — `split_wallet_profile_cohorts()`,
+   `cohort_activity_summary()`, `cohort_cvd_series()`,
+   `detect_cohort_divergences()`, dan `detect_no_buy_holders()` supaya logic
+   UI bisa dites tanpa Streamlit/jaringan.
+
+### Kenapa
+
+Pemilik melihat row dolphin (`Dolphin pure buy/sell/net`) tetapi aktivitas
+whale hanya tersirat di rasio. Dibutuhkan pemisahan eksplisit agar mudah
+membedakan: whale yang benar-benar hold, dolphin absorber, light holder yang
+hanya sedikit jual, trader yang masih long, dan holder besar yang tidak membeli
+lagi tapi masih memegang supply.
+
+### Verifikasi
+
+- `python -m py_compile cvd.py pages/4_📊_CVD.py tests/test_wallet_profiles.py`
+  — lulus.
+- `python tests/test_wallet_profiles.py` — ALL PASSED, termasuk test baru
+  untuk split cohort, summary whale/dolphin, cohort CVD divergence, dan
+  no-buy GMGN holder.
+- `python tests/test_flow_safety.py` — ALL PASSED.
+
+### Catatan
+
+`light_holder` dan `trader` secara definisi harus punya buy di window. Jika
+wallet tidak membeli sama sekali tetapi masih hold, kasus itu ditampilkan di
+section **Holders with no buy in this window**, bukan dipaksa masuk label
+light/trader.
+
+---
+
 ## 2026-07-31 (7) — Insider/Bundler 15% presentation + links + regression
 
 ### Yang berubah

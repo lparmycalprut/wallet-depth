@@ -20,11 +20,16 @@ import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ai_prompt import build_ai_prompt
-from core import get_helius_keys, helius_rpc, load_config
-from cvd import (MIN_SOL, WHALE_SOL, analysis_windows, classify_swap,
-                 conviction_split, detect_divergence, wallet_profiles,
-                 filter_swaps_by_time, summarize_swap_range,
-                 get_gmgn_wallet_metadata)
+from core import (get_helius_keys, helius_rpc, load_config,
+                  get_holders as core_get_holders,
+                  get_supply as core_get_supply)
+from cvd import (MIN_SOL, WHALE_SOL, analysis_windows, classify_holders,
+                 classify_swap, cohort_activity_summary, cohort_cvd_series,
+                 conviction_split, detect_cohort_divergences,
+                 detect_divergence, detect_no_buy_holders,
+                 filter_swaps_by_time, get_gmgn_wallet_metadata,
+                 split_wallet_profile_cohorts, summarize_swap_range,
+                 wallet_profiles)
 
 st.set_page_config(page_title="CVD Analysis", page_icon="📊",
                    layout="wide", initial_sidebar_state="collapsed")
@@ -292,6 +297,28 @@ def lookup_first_tx(wallet, max_pages=2):
         return None, last_bt
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_current_holder_rows(_helius_keys: tuple, ca: str):
+    """Fetch current holders for no-buy holder detection.
+
+    Returns ``(rows, supply)`` where rows carry owner, token balance, and
+    pct_supply.  The leading underscore keeps Streamlit from hashing the
+    API-key tuple contents.
+    """
+    supply, decimals = core_get_supply(_helius_keys, ca)
+    hdf = core_get_holders(_helius_keys, ca)
+    if hdf is None or hdf.empty:
+        return [], float(supply or 0.0)
+    hdf = hdf.copy()
+    hdf["ui_amount"] = hdf["raw_amount"] / (10 ** int(decimals or 0))
+    hdf = hdf[hdf["ui_amount"] > 0]
+    hdf["pct_supply"] = (
+        hdf["ui_amount"] / float(supply) * 100 if supply else 0.0)
+    hdf = hdf.sort_values("ui_amount", ascending=False)
+    rows = hdf[["owner", "ui_amount", "pct_supply"]].to_dict("records")
+    return rows, float(supply or 0.0)
+
+
 pool, symbol, price_now, mc_now = get_pool(ca)
 if not pool:
     st.error("Token not found on DexScreener.")
@@ -438,25 +465,22 @@ else:
 # ---------------------------------------------------------------------------
 # Multi-window table
 # ---------------------------------------------------------------------------
-# Compute dolphin stats per window
-_dolphin_stats = {}
+# Compute whale/dolphin pure-held stats per window.
+_cohort_stats = {}
 for h in sorted(win_stats):
-    _wp = win_stats[h].get("profiles", {})
-    _db = sum(d["buy"] for d in _wp.values()
-              if d["profile"] in ("pure_accum", "light_holder") and 1.0 <= d["buy"] < WHALE_SOL)
-    _ds = sum(d["sell"] for d in _wp.values()
-              if d["profile"] == "pure_dist" and 1.0 <= d["sell"] < WHALE_SOL)
-    _dolphin_stats[h] = {"buy": _db, "sell": _ds, "net": _db - _ds}
+    _cohort_stats[h] = cohort_activity_summary(
+        win_stats[h].get("profiles", {}), whale_min_sol=WHALE_SOL)
 
 mw_rows = []
 for h in sorted(win_stats):
     s = win_stats[h]
-    _ds = _dolphin_stats.get(h, {})
+    _cs = _cohort_stats.get(h, {})
     mw_rows.append({
         "Window": f"{h}h", "Swaps": f"{s['swaps']:,}",
         "Net CVD": f"{s['net']:+,.0f}",
         "🐋 Whale": f"{s['whale_net']:+,.0f}",
-        "🐬 Dolphin": f"{_ds.get('net', 0):+,.0f}",
+        "🐋 Whale held": f"{_cs.get('whale_net', 0):+,.0f}",
+        "🐬 Dolphin": f"{_cs.get('dolphin_net', 0):+,.0f}",
         "🐟 Retail": f"{s['retail_net']:+,.0f}",
         "💎 Pure buy": f"{s['pure_buy']:,.0f}",
         "🩸 Pure sell": f"{s['pure_sell']:,.0f}",
@@ -488,6 +512,10 @@ figc.update_layout(height=220, margin=dict(t=10, b=0, l=0, r=0),
                               font=dict(size=13)))
 st.plotly_chart(figc, use_container_width=True,
                 config={"displayModeBar": False})
+
+# Full-window wallet profiles are reused by the cohort detail tables and by
+# advanced divergence.  Keep this anchored to the selected fetch window.
+full_profiles = win_stats[max(win_stats)]["profiles"]
 
 # ---------------------------------------------------------------------------
 # CVD chart for the selected window, bucketed hourly
@@ -560,61 +588,123 @@ if pser and all(p is not None for p in pser) and len(pser) >= 7:
             d["kind"].upper() + " " + d["type"].upper() + f" ({src})** — " +
             d["detail"])
 
+# Advanced divergence: price vs wallet-profile cohort CVD.  This keeps the
+# old All/Whale-swap divergence intact, then adds a lower-noise explanation
+# of which wallet cohort is actually confirming or rejecting the price move.
+cohort_div_lines = []
+cohort_cvd = cohort_cvd_series(
+    swaps_all, full_profiles, [int(t.timestamp()) for t in agg.index],
+    whale_min_sol=WHALE_SOL)
+cohort_divs = []
+if pser and all(p is not None for p in pser) and len(pser) >= 7:
+    cohort_divs = detect_cohort_divergences(pser, cohort_cvd)
+
+with st.expander("🧭 Advanced cohort divergence", expanded=bool(cohort_divs)):
+    st.caption("Advisory only: compares price pivots vs profile-based CVD "
+               "(whale held, dolphin held, trader, pure distributor). "
+               "Signals are filtered by minimum SOL movement to avoid dust.")
+    if cohort_divs:
+        seen = set()
+        for d in cohort_divs:
+            k = (d["type"], d["kind"], d.get("src"))
+            if k in seen:
+                continue
+            seen.add(k)
+            line = (f"{d['kind']} {d['type']} divergence "
+                    f"({d['label']}): {d['detail']}")
+            cohort_div_lines.append(line)
+            (st.success if d["type"] == "bullish" else st.error)(
+                ("📈 " if d["type"] == "bullish" else "📉 ") +
+                "**" + d["kind"].upper() + " " +
+                d["type"].upper() + f" ({d['label']})** — " +
+                d["detail"])
+    else:
+        st.caption("No meaningful cohort divergence after volume filtering.")
+
+    colors = {
+        "whale_held": "#c084fc",
+        "dolphin_held": "#38bdf8",
+        "trader": "#facc15",
+        "distributor": "#ef4444",
+    }
+    fig_cohort = go.Figure()
+    for key, vals in cohort_cvd.get("series", {}).items():
+        meta = cohort_cvd.get("meta", {}).get(key, {})
+        if float(meta.get("volume") or 0.0) <= 0:
+            continue
+        fig_cohort.add_trace(go.Scatter(
+            x=agg.index, y=vals, name=meta.get("label", key),
+            line=dict(color=colors.get(key, "#94a3b8"), width=2)))
+    if fig_cohort.data:
+        fig_cohort.update_layout(
+            height=240, margin=dict(t=15, b=0, l=0, r=0),
+            legend=dict(orientation="h", font=dict(size=10)),
+            yaxis=dict(title="cumulative SOL"),
+            title=dict(text="Profile-cohort CVD", font=dict(size=12)))
+        st.plotly_chart(fig_cohort, use_container_width=True,
+                        config={"displayModeBar": False})
+
 # ---------------------------------------------------------------------------
-# Pure accumulators / distributors in the full selected window, with age
+# Pure accumulators/distributors and holder-style cohorts in the full window
 # ---------------------------------------------------------------------------
-full_profiles = win_stats[max(win_stats)]["profiles"]
+cohort_summary = cohort_activity_summary(
+    full_profiles, whale_min_sol=WHALE_SOL)
+profile_groups = split_wallet_profile_cohorts(
+    full_profiles, whale_min_sol=WHALE_SOL)
+whale_accs = profile_groups["whale_accumulators"][:15]
+dolphin_accs = profile_groups["dolphin_accumulators"][:15]
+whale_dists = profile_groups["whale_distributors"][:15]
+dolphin_dists = profile_groups["dolphin_distributors"][:15]
+light_holders = profile_groups["light_holders"][:20]
+traders = profile_groups["traders"][:20]
 
-# Compute dolphin-specific stats for the full window
-_dolphin_buy = sum(d["buy"] for d in full_profiles.values()
-                   if d["profile"] in ("pure_accum", "light_holder") and 1.0 <= d["buy"] < WHALE_SOL)
-_dolphin_sell = sum(d["sell"] for d in full_profiles.values()
-                    if d["profile"] == "pure_dist" and 1.0 <= d["sell"] < WHALE_SOL)
-_dolphin_net = _dolphin_buy - _dolphin_sell
-_whale_buy = sum(d["buy"] for d in full_profiles.values()
-                 if d["profile"] in ("pure_accum", "light_holder") and d["buy"] >= WHALE_SOL)
-_whale_sell = sum(d["sell"] for d in full_profiles.values()
-                  if d["profile"] == "pure_dist" and d["sell"] >= WHALE_SOL)
-_whale_net = _whale_buy - _whale_sell
+st.markdown("#### 🐋 Whale & 🐬 Dolphin held-flow activity")
+wm1, wm2, wm3, wm4 = st.columns(4)
+wm1.metric("🐋 Whale held buy", f"{cohort_summary['whale_buy']:,.1f} SOL",
+           f"{cohort_summary['whale_buyers']} buyers ≥{WHALE_SOL:g} SOL",
+           delta_color="off")
+wm2.metric("🐋 Whale pure sell", f"{cohort_summary['whale_sell']:,.1f} SOL",
+           f"{cohort_summary['whale_sellers']} sellers ≥{WHALE_SOL:g} SOL",
+           delta_color="off")
+wm3.metric("🐋 Whale net", f"{cohort_summary['whale_net']:+,.1f} SOL",
+           "buying" if cohort_summary["whale_net"] >= 0 else "selling",
+           delta_color="normal" if cohort_summary["whale_net"] >= 0
+           else "inverse")
+wm4.metric("🐋 vs 🐬 net",
+           f"{cohort_summary['whale_net']:+,.0f} / "
+           f"{cohort_summary['dolphin_net']:+,.0f}",
+           "held whale / held dolphin", delta_color="off")
 
-# Dolphin metrics row
-if _dolphin_buy > 0 or _dolphin_sell > 0:
-    dm1, dm2, dm3, dm4 = st.columns(4)
-    dm1.metric("🐬 Dolphin pure buy", f"{_dolphin_buy:,.1f} SOL",
-               "1.0–3.0 SOL buyers", delta_color="off")
-    dm2.metric("🐬 Dolphin pure sell", f"{_dolphin_sell:,.1f} SOL",
-               "1.0–3.0 SOL sellers", delta_color="off")
-    dm3.metric("🐬 Dolphin net", f"{_dolphin_net:+,.1f} SOL",
-               "buying" if _dolphin_net >= 0 else "selling",
-               delta_color="normal" if _dolphin_net >= 0 else "inverse")
-    dm4.metric("🐋 vs 🐬 ratio",
-               f"{_whale_net:+,.0f} / {_dolphin_net:+,.0f}",
-               "whale / dolphin net",
-               delta_color="off")
+dm1, dm2, dm3, dm4 = st.columns(4)
+dm1.metric("🐬 Dolphin held buy",
+           f"{cohort_summary['dolphin_buy']:,.1f} SOL",
+           "1.0–3.0 SOL pure/light buyers", delta_color="off")
+dm2.metric("🐬 Dolphin pure sell",
+           f"{cohort_summary['dolphin_sell']:,.1f} SOL",
+           "1.0–3.0 SOL sellers", delta_color="off")
+dm3.metric("🐬 Dolphin net",
+           f"{cohort_summary['dolphin_net']:+,.1f} SOL",
+           "buying" if cohort_summary["dolphin_net"] >= 0 else "selling",
+           delta_color="normal" if cohort_summary["dolphin_net"] >= 0
+           else "inverse")
+dm4.metric("🐬 Dolphin wallets",
+           f"{cohort_summary['dolphin_buyers']} / "
+           f"{cohort_summary['dolphin_sellers']}",
+           "buyers / sellers", delta_color="off")
+st.caption("Held buy = pure accumulator + light holder. Trader buy is "
+           "listed separately because it is lower-conviction flow.")
 
-accs = sorted([(w, d, "🐋 WHALE") for w, d in full_profiles.items()
-               if d["profile"] == "pure_accum" and d["buy"] >= WHALE_SOL] +
-              [(w, d, "🐬 DOLPHIN") for w, d in full_profiles.items()
-               if d["profile"] == "pure_accum" and 1.0 <= d["buy"] < WHALE_SOL] +
-              [(w, d, "🛡️ LIGHT") for w, d in full_profiles.items()
-               if d["profile"] == "light_holder" and d["buy"] >= WHALE_SOL] +
-              [(w, d, "📊 TRADER") for w, d in full_profiles.items()
-               if d["profile"] == "trader" and d["buy"] >= WHALE_SOL],
-              key=lambda x: -x[1]["buy"])[:15]
-dists = sorted([(w, d, "🐋 WHALE") for w, d in full_profiles.items()
-                if d["profile"] == "pure_dist" and d["sell"] >= WHALE_SOL] +
-               [(w, d, "🐬 DOLPHIN") for w, d in full_profiles.items()
-                if d["profile"] == "pure_dist" and 1.0 <= d["sell"] < WHALE_SOL],
-               key=lambda x: -x[1]["sell"])[:15]
-
+# Age lookup covers every wallet displayed in the separated detail lists.
 fcache = load_funder_cache()
-targets = [w for w, _, _ in accs + dists if w not in fcache]
+_detail_items = (whale_accs + dolphin_accs + whale_dists + dolphin_dists +
+                 light_holders + traders)
+targets = [w for w, _, _ in _detail_items if w not in fcache]
 if targets and helius_keys:
     apb = st.progress(0.0, text="Looking up wallet ages…")
-    for i, w in enumerate(targets[:20]):
+    for i, w in enumerate(targets[:24]):
         fcache[w] = list(lookup_first_tx(w))
-        apb.progress((i + 1) / min(len(targets), 20),
-                     text=f"Wallet ages… {i+1}/{min(len(targets), 20)}")
+        apb.progress((i + 1) / min(len(targets), 24),
+                     text=f"Wallet ages… {i+1}/{min(len(targets), 24)}")
         time.sleep(0.1)
     apb.empty()
     save_funder_cache(fcache)
@@ -639,45 +729,178 @@ def age_str(w):
 
 
 fmap = {}
-for w, _d, _cohort in accs:
+for w, _d, _cohort in whale_accs + dolphin_accs + light_holders:
     fu = fcache.get(w)
     if fu and fu[0]:
         fmap.setdefault(fu[0], []).append(w)
 same_funder = {w for ws in fmap.values() if len(ws) > 1 for w in ws}
 
-pa1, pa2 = st.columns(2)
-acc_rows, dist_rows = [], []
-with pa1:
-    if accs:
-        acc_rows = [{
-            "Wallet": f"https://solscan.io/account/{w}",
-            "Bought": f"{d['buy']:,.1f}", "Swaps": d["n_buy"],
-            "Age": age_str(w),
-            "Flags": f"{cohort} " + ("🎯DCA " if d.get("dca") else "") +
-                     ("⚠️same-funder" if w in same_funder else ""),
-        } for w, d, cohort in accs]
-        st.dataframe(pd.DataFrame(acc_rows), use_container_width=True,
-                     hide_index=True,
+
+def _held_pct(d):
+    buy = float(d.get("buy") or 0.0)
+    sell = float(d.get("sell") or 0.0)
+    if buy <= 0:
+        return "—"
+    held = max(0.0, (buy - sell) / buy * 100)
+    return f"{held:.0f}%"
+
+
+def _detail_flags(w, d, cohort):
+    bits = [cohort]
+    if d.get("dca"):
+        bits.append("🎯DCA")
+    if w in same_funder:
+        bits.append("⚠️same-funder")
+    return " ".join(bits)
+
+
+def _profile_rows(items):
+    return [{
+        "Wallet": f"https://solscan.io/account/{w}",
+        "Buy": f"{float(d.get('buy') or 0):,.1f}",
+        "Sell": f"{float(d.get('sell') or 0):,.1f}",
+        "Net": f"{float(d.get('buy') or 0) - float(d.get('sell') or 0):+,.1f}",
+        "Held %": _held_pct(d),
+        "Swaps": int(d.get("n_buy") or 0) + int(d.get("n_sell") or 0),
+        "Age": age_str(w),
+        "Flags": _detail_flags(w, d, cohort),
+    } for w, d, cohort in items]
+
+
+def _show_profile_table(title, items, empty):
+    rows = _profile_rows(items)
+    if not rows:
+        st.caption(empty)
+        return []
+    st.dataframe(pd.DataFrame(rows), use_container_width=True,
+                 hide_index=True,
+                 column_config={"Wallet": st.column_config.LinkColumn(
+                     title, display_text=r"account/(.{6}).*")})
+    return rows
+
+
+st.markdown("#### Separate wallet lists")
+wpa, wpd = st.columns(2)
+with wpa:
+    whale_acc_rows = _show_profile_table(
+        f"🐋 Whale pure accumulators ({hours}h)", whale_accs,
+        f"No whale pure accumulators in {hours}h.")
+with wpd:
+    whale_dist_rows = _show_profile_table(
+        f"🐋 Whale pure distributors ({hours}h)", whale_dists,
+        f"No whale pure distributors in {hours}h.")
+
+dpa, dpd = st.columns(2)
+with dpa:
+    dolphin_acc_rows = _show_profile_table(
+        f"🐬 Dolphin pure accumulators ({hours}h)", dolphin_accs,
+        f"No dolphin pure accumulators in {hours}h.")
+with dpd:
+    dolphin_dist_rows = _show_profile_table(
+        f"🐬 Dolphin pure distributors ({hours}h)", dolphin_dists,
+        f"No dolphin pure distributors in {hours}h.")
+
+lha, tra = st.columns(2)
+with lha:
+    light_rows = _show_profile_table(
+        f"🛡️ Light holder details ({hours}h)", light_holders,
+        f"No light holders ≥1 SOL in {hours}h.")
+with tra:
+    trader_rows = _show_profile_table(
+        f"📊 Trader details ({hours}h)", traders,
+        f"No traders ≥1 SOL in {hours}h.")
+
+accs = sorted(whale_accs + dolphin_accs + light_holders + traders,
+              key=lambda x: -float(x[1].get("buy") or 0.0))[:15]
+dists = sorted(whale_dists + dolphin_dists,
+               key=lambda x: -float(x[1].get("sell") or 0.0))[:15]
+acc_rows = whale_acc_rows + dolphin_acc_rows + light_rows + trader_rows
+dist_rows = whale_dist_rows + dolphin_dist_rows
+
+# ---------------------------------------------------------------------------
+# No-buy current holders: holder-rank whales/dolphins + GMGN sell-only holds
+# ---------------------------------------------------------------------------
+gmgn_meta_full = get_gmgn_wallet_metadata()
+st.markdown("#### 🧊 Holders with no buy in this window")
+st.caption("Holder-rank whale/dolphin = current token balance rank. These "
+           "wallets did not buy inside the selected CVD window but still "
+           "hold tokens. Light holder/trader requires a buy inside the "
+           "window, so true no-buy cases appear here instead.")
+
+silent_holder_rows = []
+_holder_scan_error = ""
+if helius_keys:
+    try:
+        with st.spinner("Checking current holders that did not buy…"):
+            holder_rows, _holder_supply = fetch_current_holder_rows(
+                tuple(helius_keys), ca)
+        if holder_rows:
+            tradable_holder_rows = [r for r in holder_rows
+                                    if r["owner"] != pool]
+            holder_pairs = [(r["owner"], r["ui_amount"])
+                            for r in tradable_holder_rows]
+            holder_tiers = classify_holders(holder_pairs,
+                                            n_total=len(holder_pairs))
+            buyers_in_window = {
+                w for w, d in full_profiles.items()
+                if int(d.get("n_buy") or 0) > 0
+            }
+            for r in tradable_holder_rows:
+                w = r["owner"]
+                tier = holder_tiers.get(w)
+                if tier not in ("whale", "dolphin"):
+                    continue
+                if w in buyers_in_window:
+                    continue
+                p = full_profiles.get(w) or {}
+                label = "🐋 WHALE HOLDER" if tier == "whale" \
+                    else "🐬 DOLPHIN HOLDER"
+                silent_holder_rows.append({
+                    "Wallet": f"https://solscan.io/account/{w}",
+                    "Tier": label,
+                    "Balance": f"{float(r['ui_amount']):,.2f}",
+                    "% Supply": f"{float(r['pct_supply']):.3f}%",
+                    "Window sell": f"{float(p.get('sell') or 0):,.2f}",
+                    "Window profile": p.get("profile", "no swaps"),
+                })
+                if len(silent_holder_rows) >= 30:
+                    break
+    except Exception as exc:  # noqa: BLE001
+        _holder_scan_error = str(exc)
+else:
+    _holder_scan_error = "Helius API key missing."
+
+no_buy_meta_rows = detect_no_buy_holders(
+    full_profiles, gmgn_meta_full, whale_min_sol=WHALE_SOL)[:20]
+nb1, nb2 = st.columns(2)
+with nb1:
+    if silent_holder_rows:
+        st.dataframe(pd.DataFrame(silent_holder_rows),
+                     use_container_width=True, hide_index=True,
                      column_config={"Wallet": st.column_config.LinkColumn(
-                         f"💎 Pure accumulator ({hours}h)",
+                         "No-buy current holders",
                          display_text=r"account/(.{6}).*")})
     else:
-        st.caption(f"No pure accumulators in {hours}h.")
-with pa2:
-    if dists:
-        dist_rows = [{
-            "Wallet": f"https://solscan.io/account/{w}",
-            "Sold": f"{d['sell']:,.1f}", "Swaps": d["n_sell"],
-            "Age": age_str(w),
-            "Flags": f"{cohort} " + ("🎯DCA" if d.get("dca") else ""),
-        } for w, d, cohort in dists]
-        st.dataframe(pd.DataFrame(dist_rows), use_container_width=True,
-                     hide_index=True,
+        st.caption("No current whale/dolphin holders without window buys "
+                   "found, or holder scan unavailable. " + _holder_scan_error)
+with nb2:
+    if no_buy_meta_rows:
+        _nb_meta_df = pd.DataFrame([{
+            "Wallet": f"https://solscan.io/account/{r['wallet']}",
+            "Cohort": r["cohort"],
+            "Window sell": f"{r['sell']:,.2f}",
+            "Token balance": f"{r['balance']:,.2f}",
+            "Swaps": r["n_sell"],
+            "GMGN trades": r["total_trade"],
+            "Tags": ", ".join(r["tags"] + r["token_tags"]) or "—",
+        } for r in no_buy_meta_rows])
+        st.dataframe(_nb_meta_df, use_container_width=True, hide_index=True,
                      column_config={"Wallet": st.column_config.LinkColumn(
-                         f"🩸 Pure distributor ({hours}h)",
+                         "GMGN sell-only but still holds",
                          display_text=r"account/(.{6}).*")})
     else:
-        st.caption(f"No pure distributors in {hours}h.")
+        st.caption("No GMGN sell-only wallet with current balance found. "
+                   "This only checks wallets present in the fetched trades.")
 
 # ---------------------------------------------------------------------------
 # 🔎 Focus range deep analysis
@@ -978,22 +1201,22 @@ if _f_start and _f_end and swaps_all:
 # 🤖 Ready-to-copy prompt for a free AI chat
 # ---------------------------------------------------------------------------
 prompt_wallets = []
-for wallet, profile, cohort in accs:
+_role_name = {
+    "pure_accum": "pure accumulator",
+    "light_holder": "light holder",
+    "trader": "trader",
+    "pure_dist": "pure distributor",
+}
+for wallet, profile, cohort in accs + dists:
     flags = (("DCA; " if profile.get("dca") else "") +
              ("same-funder" if wallet in same_funder else "")).strip("; ")
     prompt_wallets.append({
-        "wallet": wallet, "role": f"pure accumulator ({cohort})",
+        "wallet": wallet,
+        "role": f"{_role_name.get(profile.get('profile'), 'wallet')} "
+                f"({cohort})",
         "buy": profile["buy"], "sell": profile["sell"],
         "swaps": profile["n_buy"] + profile["n_sell"],
         "age": age_str(wallet), "flags": flags,
-    })
-for wallet, profile, cohort in dists:
-    prompt_wallets.append({
-        "wallet": wallet, "role": f"pure distributor ({cohort})",
-        "buy": profile["buy"], "sell": profile["sell"],
-        "swaps": profile["n_buy"] + profile["n_sell"],
-        "age": age_str(wallet),
-        "flags": "DCA" if profile.get("dca") else "",
     })
 
 prompt_key = f"ai_prompt::{skey}"
@@ -1082,40 +1305,87 @@ else:
               f"{best['conviction']:.0f}% ({best_h}h). "
               f"{best['verdict']}\n\n")
 rep.write("## Windows\n\n")
-rep.write("| Window | Swaps | Net CVD | Whale | Retail | Pure buy | "
-          "Pure sell | Net pure | Conviction | Verdict |\n")
-rep.write("|---|---|---|---|---|---|---|---|---|---|\n")
+rep.write("| Window | Swaps | Net CVD | Whale swap | Whale held | "
+          "Dolphin held | Retail | Pure buy | Pure sell | Net pure | "
+          "Conviction | Verdict |\n")
+rep.write("|---|---|---|---|---|---|---|---|---|---|---|---|\n")
 for h in sorted(win_stats):
     s = win_stats[h]
+    _cs = _cohort_stats.get(h, {})
     rep.write(f"| {h}h | {s['swaps']:,} | {s['net']:+,.0f} | "
-              f"{s['whale_net']:+,.0f} | {s['retail_net']:+,.0f} | "
-              f"{s['pure_buy']:,.0f} | {s['pure_sell']:,.0f} | "
-              f"{s['net_pure']:+,.0f} | {s['conviction']:.0f}% | "
-              f"{s['verdict']} |\n")
+              f"{s['whale_net']:+,.0f} | "
+              f"{_cs.get('whale_net', 0):+,.0f} | "
+              f"{_cs.get('dolphin_net', 0):+,.0f} | "
+              f"{s['retail_net']:+,.0f} | {s['pure_buy']:,.0f} | "
+              f"{s['pure_sell']:,.0f} | {s['net_pure']:+,.0f} | "
+              f"{s['conviction']:.0f}% | {s['verdict']} |\n")
 if div_lines:
     rep.write(f"\n## Divergences (H1, {hours}h)\n\n")
     for line in div_lines:
         rep.write(f"- {line}\n")
-rep.write(f"\n## Top pure accumulators ({hours}h)\n\n")
-if acc_rows:
-    rep.write("| Wallet | Bought (SOL) | Swaps | Age | Flags |\n")
-    rep.write("|---|---|---|---|---|\n")
-    for r_ in acc_rows:
+if cohort_div_lines:
+    rep.write(f"\n## Advanced cohort divergences (H1, {hours}h)\n\n")
+    for line in cohort_div_lines:
+        rep.write(f"- {line}\n")
+rep.write(f"\n## Whale & Dolphin held-flow activity ({hours}h)\n\n")
+rep.write(f"- Whale held buy: {cohort_summary['whale_buy']:,.1f} SOL · "
+          f"pure sell: {cohort_summary['whale_sell']:,.1f} SOL · "
+          f"net: {cohort_summary['whale_net']:+,.1f} SOL\n")
+rep.write(f"- Dolphin held buy: {cohort_summary['dolphin_buy']:,.1f} SOL · "
+          f"pure sell: {cohort_summary['dolphin_sell']:,.1f} SOL · "
+          f"net: {cohort_summary['dolphin_net']:+,.1f} SOL\n")
+rep.write(f"- Whale / dolphin net ratio: "
+          f"{cohort_summary['whale_net']:+,.0f} / "
+          f"{cohort_summary['dolphin_net']:+,.0f}\n")
+
+
+def _write_detail_section(title, rows):
+    rep.write(f"\n## {title}\n\n")
+    if not rows:
+        rep.write("None.\n")
+        return
+    rep.write("| Wallet | Buy | Sell | Net | Held % | Swaps | Age | Flags |\n")
+    rep.write("|---|---|---|---|---|---|---|---|\n")
+    for r_ in rows:
         w = r_["Wallet"].split("account/")[-1]
-        rep.write(f"| [{w[:8]}…]({r_['Wallet']}) | {r_['Bought']} | "
+        rep.write(f"| [{w[:8]}…]({r_['Wallet']}) | {r_['Buy']} | "
+                  f"{r_['Sell']} | {r_['Net']} | {r_['Held %']} | "
                   f"{r_['Swaps']} | {r_['Age']} | {r_['Flags']} |\n")
-else:
-    rep.write("None.\n")
-rep.write(f"\n## Top pure distributors ({hours}h)\n\n")
-if dist_rows:
-    rep.write("| Wallet | Sold (SOL) | Swaps | Age | Flags |\n")
-    rep.write("|---|---|---|---|---|\n")
-    for r_ in dist_rows:
-        w = r_["Wallet"].split("account/")[-1]
-        rep.write(f"| [{w[:8]}…]({r_['Wallet']}) | {r_['Sold']} | "
-                  f"{r_['Swaps']} | {r_['Age']} | {r_['Flags']} |\n")
-else:
-    rep.write("None.\n")
+
+
+_write_detail_section(f"Whale pure accumulators ({hours}h)", whale_acc_rows)
+_write_detail_section(f"Whale pure distributors ({hours}h)", whale_dist_rows)
+_write_detail_section(f"Dolphin pure accumulators ({hours}h)",
+                      dolphin_acc_rows)
+_write_detail_section(f"Dolphin pure distributors ({hours}h)",
+                      dolphin_dist_rows)
+_write_detail_section(f"Light holder details ({hours}h)", light_rows)
+_write_detail_section(f"Trader details ({hours}h)", trader_rows)
+
+if silent_holder_rows or no_buy_meta_rows:
+    rep.write(f"\n## Holders with no buy in window ({hours}h)\n\n")
+    if silent_holder_rows:
+        rep.write("### Current whale/dolphin holders\n\n")
+        rep.write("| Wallet | Tier | Balance | % Supply | Window sell | "
+                  "Window profile |\n")
+        rep.write("|---|---|---|---|---|---|\n")
+        for r_ in silent_holder_rows:
+            w = r_["Wallet"].split("account/")[-1]
+            rep.write(f"| [{w[:8]}…]({r_['Wallet']}) | {r_['Tier']} | "
+                      f"{r_['Balance']} | {r_['% Supply']} | "
+                      f"{r_['Window sell']} | {r_['Window profile']} |\n")
+    if no_buy_meta_rows:
+        rep.write("\n### GMGN sell-only wallets still holding\n\n")
+        rep.write("| Wallet | Cohort | Window sell | Token balance | "
+                  "Swaps | Tags |\n")
+        rep.write("|---|---|---|---|---|---|\n")
+        for r_ in no_buy_meta_rows:
+            w = r_["wallet"]
+            tags = ", ".join(r_["tags"] + r_["token_tags"]) or "—"
+            rep.write(f"| [{w[:8]}…](https://solscan.io/account/{w}) | "
+                      f"{r_['cohort']} | {r_['sell']:,.2f} | "
+                      f"{r_['balance']:,.2f} | {r_['n_sell']} | "
+                      f"{tags} |\n")
 # Focus range section (if enabled)
 _f_s = st.session_state[skey].get("focus_start")
 _f_e = st.session_state[skey].get("focus_end")
@@ -1149,9 +1419,10 @@ if _f_s and _f_e:
                 _p = _fs["profiles"].get(_w, {}).get("profile", "?")
                 rep.write(f"| {_w[:8]}… | {_sol:,.2f} | {_p} |\n")
 
-rep.write("\n---\n*Whale = swap ≥3 SOL · pure = one-way (≤5% tol) · "
-          "conviction = % of whale-size buys that were held · generated by "
-          "Wallet Depth by Threshold*\n")
+rep.write("\n---\n*Flow whale = wallet/side ≥3 SOL in-window · "
+          "holder-rank whale = top 1% current holders · "
+          "pure = one-way (≤5% tol) · conviction = % of whale-size buys "
+          "that were held · generated by Wallet Depth by Threshold*\n")
 report_md = rep.getvalue()
 
 csv_buf = io.StringIO()
@@ -1167,10 +1438,20 @@ e1.download_button("⬇️ Report (Markdown)", report_md,
 e2.download_button("⬇️ Windows (CSV)", csv_buf.getvalue(),
                    file_name=f"{symbol}_cvd_windows.csv",
                    mime="text/csv", use_container_width=True)
-wallets_csv = pd.DataFrame(
-    [{"type": "accumulator", **r_} for r_ in acc_rows] +
-    [{"type": "distributor", **r_} for r_ in dist_rows]).to_csv(index=False) \
-    if (acc_rows or dist_rows) else "no wallets"
+_wallet_csv_rows = (
+    [{"type": "whale_accumulator", **r_} for r_ in whale_acc_rows] +
+    [{"type": "whale_distributor", **r_} for r_ in whale_dist_rows] +
+    [{"type": "dolphin_accumulator", **r_} for r_ in dolphin_acc_rows] +
+    [{"type": "dolphin_distributor", **r_} for r_ in dolphin_dist_rows] +
+    [{"type": "light_holder", **r_} for r_ in light_rows] +
+    [{"type": "trader", **r_} for r_ in trader_rows] +
+    [{"type": "no_buy_current_holder", **r_}
+     for r_ in silent_holder_rows] +
+    [{"type": "gmgn_no_buy_holder", **r_}
+     for r_ in no_buy_meta_rows]
+)
+wallets_csv = pd.DataFrame(_wallet_csv_rows).to_csv(index=False) \
+    if _wallet_csv_rows else "no wallets"
 e3.download_button("⬇️ Wallets (CSV)", wallets_csv,
                    file_name=f"{symbol}_cvd_wallets.csv",
                    mime="text/csv", use_container_width=True)

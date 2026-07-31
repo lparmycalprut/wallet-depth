@@ -776,6 +776,172 @@ PROFILE_WEIGHTS = {
 }
 
 
+def wallet_profile_cohort(profile: dict, *, side: str = "buy",
+                          whale_min_sol: float = WHALE_SOL,
+                          dolphin_min_sol: float = 1.0) -> str:
+    """Return a display cohort for one wallet profile.
+
+    The CVD UI uses volume cohorts, not holder-rank cohorts: whale means
+    the relevant side's total SOL flow reached ``whale_min_sol``; dolphin
+    means it reached ``dolphin_min_sol`` but stayed below whale size.
+    ``side`` is usually ``"buy"`` for accumulator/light/trader rows and
+    ``"sell"`` for distributor/no-buy-holder rows.
+    """
+    d = profile or {}
+    key = "sell" if side == "sell" else "buy"
+    try:
+        vol = float(d.get(key) or 0.0)
+    except Exception:
+        vol = 0.0
+    if vol >= whale_min_sol:
+        return "🐋 WHALE"
+    if vol >= dolphin_min_sol:
+        return "🐬 DOLPHIN"
+    return "🐟 MINNOW"
+
+
+def split_wallet_profile_cohorts(profiles, *, whale_min_sol=WHALE_SOL,
+                                 dolphin_min_sol=1.0) -> dict:
+    """Split wallet profiles into the UI's separate cohort lists.
+
+    Returns lists of ``(wallet, profile, cohort_label)`` sorted by the
+    dominant side's SOL volume.  Pure accumulators/distributors are split
+    into whale and dolphin buckets; light holders and traders are kept as
+    their own lists with a whale/dolphin/minnow label attached.
+    """
+    out = {
+        "whale_accumulators": [],
+        "dolphin_accumulators": [],
+        "whale_distributors": [],
+        "dolphin_distributors": [],
+        "light_holders": [],
+        "traders": [],
+    }
+    for w, d in (profiles or {}).items():
+        if not w or not isinstance(d, dict):
+            continue
+        p = d.get("profile")
+        buy = float(d.get("buy") or 0.0)
+        sell = float(d.get("sell") or 0.0)
+        if p == "pure_accum":
+            if buy >= whale_min_sol:
+                out["whale_accumulators"].append((w, d, "🐋 WHALE"))
+            elif buy >= dolphin_min_sol:
+                out["dolphin_accumulators"].append((w, d, "🐬 DOLPHIN"))
+        elif p == "pure_dist":
+            if sell >= whale_min_sol:
+                out["whale_distributors"].append((w, d, "🐋 WHALE"))
+            elif sell >= dolphin_min_sol:
+                out["dolphin_distributors"].append((w, d, "🐬 DOLPHIN"))
+        elif p == "light_holder" and buy >= dolphin_min_sol:
+            out["light_holders"].append(
+                (w, d, wallet_profile_cohort(
+                    d, side="buy", whale_min_sol=whale_min_sol,
+                    dolphin_min_sol=dolphin_min_sol)))
+        elif p == "trader" and buy >= dolphin_min_sol:
+            out["traders"].append(
+                (w, d, wallet_profile_cohort(
+                    d, side="buy", whale_min_sol=whale_min_sol,
+                    dolphin_min_sol=dolphin_min_sol)))
+
+    for key in ("whale_accumulators", "dolphin_accumulators",
+                "light_holders", "traders"):
+        out[key].sort(key=lambda x: -float(x[1].get("buy") or 0.0))
+    for key in ("whale_distributors", "dolphin_distributors"):
+        out[key].sort(key=lambda x: -float(x[1].get("sell") or 0.0))
+    return out
+
+
+def cohort_activity_summary(profiles, *, whale_min_sol=WHALE_SOL,
+                            dolphin_min_sol=1.0) -> dict:
+    """Aggregate whale/dolphin buy/sell/net activity for the CVD UI."""
+    c = split_wallet_profile_cohorts(
+        profiles, whale_min_sol=whale_min_sol,
+        dolphin_min_sol=dolphin_min_sol)
+    whale_buy = sum(float(d.get("buy") or 0.0)
+                    for _w, d, _co in c["whale_accumulators"] +
+                    c["light_holders"]
+                    if float(d.get("buy") or 0.0) >= whale_min_sol)
+    whale_sell = sum(float(d.get("sell") or 0.0)
+                     for _w, d, _co in c["whale_distributors"])
+    dolphin_buy = sum(float(d.get("buy") or 0.0)
+                      for _w, d, _co in c["dolphin_accumulators"] +
+                      c["light_holders"]
+                      if dolphin_min_sol <= float(d.get("buy") or 0.0)
+                      < whale_min_sol)
+    dolphin_sell = sum(float(d.get("sell") or 0.0)
+                       for _w, d, _co in c["dolphin_distributors"])
+    whale_buyers = {
+        w for w, d, _co in c["whale_accumulators"] + c["light_holders"]
+        if float(d.get("buy") or 0.0) >= whale_min_sol
+    }
+    dolphin_buyers = {
+        w for w, d, _co in c["dolphin_accumulators"] + c["light_holders"]
+        if dolphin_min_sol <= float(d.get("buy") or 0.0) < whale_min_sol
+    }
+    return {
+        "whale_buy": whale_buy,
+        "whale_sell": whale_sell,
+        "whale_net": whale_buy - whale_sell,
+        "whale_buyers": len(whale_buyers),
+        "whale_sellers": len(c["whale_distributors"]),
+        "dolphin_buy": dolphin_buy,
+        "dolphin_sell": dolphin_sell,
+        "dolphin_net": dolphin_buy - dolphin_sell,
+        "dolphin_buyers": len(dolphin_buyers),
+        "dolphin_sellers": len(c["dolphin_distributors"]),
+    }
+
+
+def detect_no_buy_holders(profiles, wallet_meta, *,
+                          whale_min_sol=WHALE_SOL,
+                          dolphin_min_sol=1.0,
+                          min_balance: float = 0.0) -> list:
+    """Find traded wallets that bought nothing in-window but still hold.
+
+    ``wallet_meta`` is the GMGN per-wallet metadata collected during the
+    trades fetch.  Because GMGN only annotates wallets seen in fetched
+    trades, this detects *sell-only participants that still have a current
+    token balance*.  Passive holders that made no swap at all require a
+    separate holder-list scan in the UI.
+    """
+    rows = []
+    for w, d in (profiles or {}).items():
+        if not w or not isinstance(d, dict):
+            continue
+        if int(d.get("n_buy") or 0) > 0:
+            continue
+        m = (wallet_meta or {}).get(w) or {}
+        try:
+            bal = float(m.get("balance") or 0.0)
+        except Exception:
+            bal = 0.0
+        if bal <= min_balance:
+            continue
+        cohort = wallet_profile_cohort(
+            d, side="sell", whale_min_sol=whale_min_sol,
+            dolphin_min_sol=dolphin_min_sol)
+        rows.append({
+            "wallet": w,
+            "cohort": cohort,
+            "profile": d.get("profile", "?"),
+            "buy": float(d.get("buy") or 0.0),
+            "sell": float(d.get("sell") or 0.0),
+            "n_buy": int(d.get("n_buy") or 0),
+            "n_sell": int(d.get("n_sell") or 0),
+            "balance": bal,
+            "history_bought_amount": float(
+                m.get("history_bought_amount") or 0.0),
+            "history_sold_amount": float(
+                m.get("history_sold_amount") or 0.0),
+            "total_trade": int(m.get("total_trade") or 0),
+            "tags": list(m.get("maker_tags") or []),
+            "token_tags": list(m.get("maker_token_tags") or []),
+        })
+    rows.sort(key=lambda r: (-r["sell"], -r["balance"]))
+    return rows
+
+
 def conviction_split(profiles, *, whale_min_sol=3.0):
     """How much buy volume is 'held' vs recycled by two-way traders.
 
@@ -1124,6 +1290,164 @@ def detect_divergence(price, cvd, left=2, right=2):
                         "detail": "price higher-low but CVD lower-low — "
                                   "dip was sold hard yet price held "
                                   "(strong bid underneath)"})
+    return out
+
+
+def cohort_cvd_series(swaps, profiles, bucket_ts, *,
+                      whale_min_sol=WHALE_SOL, dolphin_min_sol=1.0,
+                      bucket_s=BUCKET) -> dict:
+    """Build CVD series for wallet-profile cohorts.
+
+    ``bucket_ts`` must be the ordered bucket starts used by the UI chart.
+    Wallets are classified once from the full selected window, then every
+    swap from that wallet contributes signed SOL to exactly one cohort:
+    whale held, dolphin held, trader, or pure distributor.
+    """
+    groups = split_wallet_profile_cohorts(
+        profiles, whale_min_sol=whale_min_sol,
+        dolphin_min_sol=dolphin_min_sol)
+    whale_held = {
+        w for w, d, _co in groups["whale_accumulators"] +
+        groups["light_holders"]
+        if float(d.get("buy") or 0.0) >= whale_min_sol
+    }
+    dolphin_held = {
+        w for w, d, _co in groups["dolphin_accumulators"] +
+        groups["light_holders"]
+        if dolphin_min_sol <= float(d.get("buy") or 0.0) < whale_min_sol
+    }
+    traders = {w for w, _d, _co in groups["traders"]}
+    distributors = {
+        w for w, _d, _co in groups["whale_distributors"] +
+        groups["dolphin_distributors"]
+    }
+    wallet_to_group = {}
+    for key, wallets in (("whale_held", whale_held),
+                         ("dolphin_held", dolphin_held),
+                         ("trader", traders),
+                         ("distributor", distributors)):
+        for w in wallets:
+            wallet_to_group[w] = key
+
+    bucket_ts = [int(t) for t in bucket_ts]
+    bucket_index = {t: i for i, t in enumerate(bucket_ts)}
+    deltas = {k: [0.0] * len(bucket_ts) for k in
+              ("whale_held", "dolphin_held", "trader", "distributor")}
+    active = {k: set() for k in deltas}
+    volume = {k: 0.0 for k in deltas}
+
+    for side, sol, ts, wallet in swaps or []:
+        if not wallet or wallet not in wallet_to_group:
+            continue
+        try:
+            sol = float(sol or 0.0)
+            b = int(int(ts) // bucket_s * bucket_s)
+        except Exception:
+            continue
+        i = bucket_index.get(b)
+        if i is None:
+            continue
+        key = wallet_to_group[wallet]
+        signed = sol if side == "buy" else -sol
+        deltas[key][i] += signed
+        active[key].add(wallet)
+        volume[key] += abs(sol)
+
+    series = {}
+    for key, vals in deltas.items():
+        run = 0.0
+        arr = []
+        for v in vals:
+            run += v
+            arr.append(run)
+        series[key] = arr
+
+    meta = {
+        "whale_held": {
+            "label": "Whale Held CVD",
+            "min_delta": max(float(whale_min_sol), 3.0),
+            "active_wallets": len(active["whale_held"]),
+            "volume": volume["whale_held"],
+            "net": series["whale_held"][-1] if series["whale_held"] else 0.0,
+            "context": "high-conviction whale holder flow",
+            "priority": 0,
+        },
+        "dolphin_held": {
+            "label": "Dolphin Held CVD",
+            "min_delta": 2.0,
+            "active_wallets": len(active["dolphin_held"]),
+            "volume": volume["dolphin_held"],
+            "net": (series["dolphin_held"][-1]
+                    if series["dolphin_held"] else 0.0),
+            "context": "dolphin absorption / exit-liquidity check",
+            "priority": 2,
+        },
+        "trader": {
+            "label": "Trader CVD",
+            "min_delta": 3.0,
+            "active_wallets": len(active["trader"]),
+            "volume": volume["trader"],
+            "net": series["trader"][-1] if series["trader"] else 0.0,
+            "context": "lower-conviction trader flow",
+            "priority": 3,
+        },
+        "distributor": {
+            "label": "Pure Distributor CVD",
+            "min_delta": 3.0,
+            "active_wallets": len(active["distributor"]),
+            "volume": volume["distributor"],
+            "net": (series["distributor"][-1]
+                    if series["distributor"] else 0.0),
+            "context": "sell-only supply pressure",
+            "priority": 1,
+        },
+    }
+    return {"ts": bucket_ts, "series": series, "meta": meta}
+
+
+def detect_cohort_divergences(price, cohort_cvd, *, left=2, right=2) -> list:
+    """Detect meaningful price-vs-cohort CVD divergences.
+
+    ``cohort_cvd`` is the output of :func:`cohort_cvd_series`.  The base
+    pivot logic is unchanged from :func:`detect_divergence`, but each hit is
+    filtered by cohort-specific minimum CVD movement to avoid noisy labels.
+    """
+    out = []
+    if not cohort_cvd:
+        return out
+    series_map = cohort_cvd.get("series") or {}
+    meta_map = cohort_cvd.get("meta") or {}
+    for key, vals in series_map.items():
+        if len(vals) != len(price):
+            continue
+        meta = meta_map.get(key, {})
+        if int(meta.get("active_wallets") or 0) < 1:
+            continue
+        min_delta = float(meta.get("min_delta") or 0.0)
+        if float(meta.get("volume") or 0.0) < min_delta:
+            continue
+        for d in detect_divergence(price, vals, left=left, right=right):
+            a, b = d["i1"], d["i2"]
+            cvd_delta = float(vals[b]) - float(vals[a])
+            if abs(cvd_delta) < min_delta:
+                continue
+            nd = dict(d)
+            label = meta.get("label") or key
+            wallets = int(meta.get("active_wallets") or 0)
+            ctx = meta.get("context") or "cohort flow"
+            nd.update({
+                "src": key,
+                "label": label,
+                "cvd_delta": cvd_delta,
+                "active_wallets": wallets,
+                "volume": float(meta.get("volume") or 0.0),
+                "priority": int(meta.get("priority") or 9),
+            })
+            nd["detail"] = (
+                f"{d['detail']} · {label} Δ {cvd_delta:+.1f} SOL "
+                f"across {wallets} wallet(s) · {ctx}")
+            out.append(nd)
+    out.sort(key=lambda d: (d.get("priority", 9), d["type"] != "bullish"))
     return out
 
 
