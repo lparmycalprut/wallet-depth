@@ -7,6 +7,102 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-07-31 (6) — Fit direbalance menjadi structural-only
+
+### Keputusan pemilik
+
+Price action 24h/1h, smart-money, KOL, holder points, dan age points tidak lagi
+menentukan Fit. Gate untuk pump/dump 24h, smart-money tipis, dan umur terlalu
+muda juga dihapus. Holder count tetap menjadi safety gate karena pemilik tidak
+meminta gate holder dihapus, tetapi tidak lagi memberi raw points.
+
+### Formula baru
+
+Empat pillar raw score berjumlah tepat 100:
+
+- **T10 concentration: 30** — kualitas distribusi supply;
+- **Liquidity/MC: 30** — kemampuan entry/exit LP;
+- **Rug score: 25** — keamanan kontrak/struktur;
+- **Volume/MC sanity: 15** — aktivitas cukup, tetapi bobot paling kecil karena
+  volume paling mudah dimanipulasi.
+
+KOL bonus dan `smt_thin` penalty dihapus. Price dan age sekarang netral
+terhadap Fit tetapi tetap tampil sebagai konteks; smart/KOL dihapus dari row
+scorer dan tabel. Sorting tie juga tidak lagi memakai smart wallet; urutannya
+Fit exact, T10 lebih rendah, lalu liquidity lebih tinggi.
+Penalty wallet-risk, structural gates lain, holder safety gate, dan hard-risk
+cap 40 tetap aktif.
+
+### Kalibrasi dan verifikasi
+
+- 20.000 token sintetis yang menyerupai hasil prefilter: mean Fit lama
+  **58,0**, baru **58,5**. PRIME 10,5% → 13,5%; OK 48,5% → 47,6%; WEAK
+  38,5% → 34,2%; POOR 2,5% → 4,7%. Hard-risk classification tidak berubah.
+- `tests/test_scoring_continuity.py` mengunci empat weight, total 100,
+  netralitas price/smart/KOL/age, gate struktural, kontinuitas, dan ranking.
+- Seluruh test suite lulus; file Python terkait lulus `py_compile` dan
+  `git diff --check` bersih.
+
+---
+
+## 2026-07-31 (5) — Highlight T10 concentration dan retrace ATH
+
+### Yang berubah
+
+1. Note seperti **`T10 29% too concentrated`** sekarang merah terang dengan
+   glow. Kolom T10 juga memakai style yang sama mulai 25%, yaitu titik saat
+   concentration gate mulai benar-benar menahan grade tertinggi.
+2. Note **`Down 90.0% dari ATH`** sekarang hijau terang dengan glow untuk
+   retrace minimal 90%. Batas sebelumnya `>90%` diubah menjadi `>=90%`.
+3. Styling dipusatkan di `_format_note_part()` agar dashboard utama dan
+   halaman Screener selalu memakai aturan visual yang sama.
+
+Perubahan ini **display-only**: retrace dari ATH tidak menambah Fit dan formula
+Fit/T10 tidak diubah. T10 tetap memengaruhi pillar, gate, penalty, dan hard-risk
+cap sesuai logika scoring yang sudah ada.
+
+### Verifikasi
+
+- `tests/test_markup_ai_prompt.py` mengunci red glow T10, green glow ATH pada
+  90%, serta memastikan 89,9% belum glow.
+- `tests/test_scoring_continuity.py` tetap lulus, membuktikan distribusi dan
+  kontinuitas Fit tidak berubah; file terkait lulus `py_compile`.
+
+---
+
+## 2026-07-31 (4) — Perbaikan stale-token backfill dan status UI
+
+### Masalahnya
+
+Manual backfill gagal dengan `NameError: name 'x' is not defined`, tetapi UI
+selalu menutup proses dengan notifikasi hijau `Backfilled N token(s)`.
+Akibatnya kegagalan terlihat seperti sukses dan CA yang belum diperbarui sulit
+dibedakan dari CA yang benar-benar sudah mendapat conviction point baru.
+
+### Yang berubah
+
+1. **Akar `NameError` diperbaiki** — filter deduplikasi raw swap di
+   `update_token_cvd()` memakai `x[2]` di luar scope `lambda x`. Sekarang key
+   comprehension yang benar dipakai untuk filter umur 48 jam dan sorting.
+2. **Status berdasarkan hasil nyata** — dashboard mencatat daftar berhasil
+   dan gagal. Notifikasi hijau hanya muncul jika semua token berhasil;
+   kegagalan total menjadi merah dan partial success menjadi kuning.
+3. **Tidak ada false refresh** — CA hanya dimasukkan ke set refreshed setelah
+   `record_conviction()` benar-benar menghasilkan point. Main pool yang tidak
+   ada dan window tanpa swap sekarang dihitung gagal serta bisa dicoba lagi.
+4. **Error persistence diteruskan** — kegagalan atomic save
+   `conviction.json` tidak lagi ditelan; caller dapat menandainya gagal.
+
+### Verifikasi
+
+- Regression suite baru `tests/test_cvd_update.py` membuktikan dedupe/prune
+  swap selesai tanpa `NameError`, hasil tersimpan, dan error atomic save
+  diteruskan ke caller.
+- Seluruh 9 test suite lulus tanpa jaringan; `app.py` dan `cvd.py` lulus
+  `py_compile`; `git diff --check` bersih.
+
+---
+
 ## 2026-07-31 (3) — Light Holder & Trader profiles, persistence conviction bonus
 
 ### Yang berubah

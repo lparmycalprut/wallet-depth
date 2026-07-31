@@ -28,12 +28,13 @@ else:
         sym = r.get("symbol", "?")
         chg = r.get("chg24", 0)
         t10 = r.get("t10_pct", 0)
-        smt = r.get("smart", 0)
         liq = r.get("liq_pct", 0)
         rug = r.get("rug", 0)
         hd = r.get("holders", 0)
         notes = r.get("notes", "")
-        print(f"  {sym:>12} fit={fit:>3} chg24={chg:>+6.0f} t10={t10:>5.1f} smt={smt:>3} liq={liq:>5.1f} rug={rug:.2f} hd={hd:>5} notes={notes}")
+        print(f"  {sym:>12} fit={fit:>3} chg24={chg:>+6.0f} "
+              f"t10={t10:>5.1f} liq={liq:>5.1f} "
+              f"rug={rug:.2f} hd={hd:>5} notes={notes}")
 
 # Also save full output to file
 with open("debug_rako_output.txt", "w") as f:

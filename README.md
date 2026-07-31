@@ -143,13 +143,18 @@ conviction datar sehingga tidak mempunyai card LP Radar.
 ### 6. GMGN trending screener
 
 Screener mengambil daftar trending GMGN lalu memberi **Fit score 0–100**
-berdasarkan delapan pilar: price action, konsentrasi Top 10, likuiditas,
-smart money, rug score, volume/MC, jumlah holder, dan umur token.
+berdasarkan empat pilar struktural: konsentrasi Top 10 (30 poin),
+likuiditas/MC (30), rug score (25), dan kewajaran volume/MC (15).
+
+Price action 24h/1h, jumlah holder, dan umur token tidak mendapat poin.
+Price/age tetap ditampilkan sebagai konteks. Smart-money/KOL tidak lagi dibaca
+atau ditampilkan. Jumlah holder tetap dipakai sebagai safety gate: basis
+holder terlalu kecil dapat membatasi grade, tetapi tidak menambah raw score.
 
 Penalti mencakup insider, bundler, entrapment, bot-degen, sniper, rug risk,
-konsentrasi, dan likuiditas tipis. Kurva skor menggunakan interpolasi linear,
-bukan tangga `if/elif`, agar perubahan kecil pada input tidak menyebabkan
-lompatan puluhan poin.
+konsentrasi, fresh-wallet/Top-50 concentration, dan likuiditas tipis. Kurva
+skor menggunakan interpolasi linear, bukan tangga `if/elif`, agar perubahan
+kecil pada input tidak menyebabkan lompatan puluhan poin.
 
 Grade: `PRIME ≥75`, `OK 55–74`, `WEAK 35–54`, dan `POOR <35`. Hard risk
 mendapat `AVOID` dan dibatasi maksimal 40.

@@ -696,7 +696,9 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
         if len(s) >= 4:
             key = (s[0], float(s[1]), int(s[2]), str(s[3]))
             seen_swaps[key] = s
-    entry["swaps"] = [seen_swaps[k] for k in sorted(seen_swaps.keys(), key=lambda x: x[2]) if x[2] >= cutoff_raw]
+    ordered_swap_keys = sorted(seen_swaps, key=lambda key: key[2])
+    entry["swaps"] = [seen_swaps[key] for key in ordered_swap_keys
+                      if key[2] >= cutoff_raw]
     if new_sig:
         entry["newest_sig"] = new_sig
         entry["newest_ts"] = new_ts
@@ -936,6 +938,9 @@ def record_conviction(ca: str, *, window_h: int = 6) -> dict | None:
     except Exception:
         if os.path.exists(temp_path):
             os.remove(temp_path)
+        # Callers must not report a successful refresh when the new
+        # conviction point never reached disk.
+        raise
     return point
 
 

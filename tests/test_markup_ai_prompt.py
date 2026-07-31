@@ -13,6 +13,7 @@ sys.path.insert(0, ROOT)
 
 import ai_prompt  # noqa: E402
 import cvd  # noqa: E402
+import trending_ui  # noqa: E402
 
 failures = []
 
@@ -216,6 +217,26 @@ def test_prompt_tables_and_tasks():
           "complete coverage receives the complete-data status")
 
 
+def test_screener_note_styles():
+    print("\n[screener UI] T10 danger and ATH retrace use semantic glow")
+    t10 = trending_ui._format_note_part("T10 29% too concentrated")
+    check("color:#ef4444" in t10 and "text-shadow" in t10,
+          "T10 concentration warning is bright glowing red")
+
+    ath = trending_ui._format_note_part("Down 90.0% dari ATH")
+    check("color:#22c55e" in ath and "text-shadow" in ath,
+          "90% ATH retrace note is bright glowing green")
+
+    shallow = trending_ui._format_note_part("Down 89.9% dari ATH")
+    check("text-shadow" not in shallow,
+          "ATH green glow starts at 90%, not below it")
+    check("tidak menambah Fit" in trending_ui.CAPTION,
+          "caption states that ATH retrace is display-only")
+    labels = [label for label, _ in trending_ui.COLUMNS]
+    check("🧠 Smart" not in labels,
+          "smart-money column is removed from the screener")
+
+
 def test_ui_integration_guards():
     print("\n[integration] safety sweep and Prompt to AI wiring")
     with open(os.path.join(ROOT, "app.py"), encoding="utf-8") as handle:
@@ -273,6 +294,7 @@ if __name__ == "__main__":
     test_markup_copy()
     test_prompt_order_and_honesty()
     test_prompt_tables_and_tasks()
+    test_screener_note_styles()
     test_ui_integration_guards()
     print(f"\n{'FAILED: ' + str(len(failures)) if failures else 'ALL PASSED'}")
     for failure in failures:
