@@ -2390,32 +2390,69 @@ if run_cvd_now and (rpc_endpoint or use_gmgn_trades):
                   "SOL", delta_color="off")
 
         flow_flag = None
-        if (lwh_net >= 0) != (lrt_net >= 0) and \
-                max(abs(lwh_net), abs(lrt_net)) >= 5:
-            flow_flag = "accum" if lwh_net >= 0 else "dist"
+        from cvd import wallet_profiles as _wp
+        _l_profiles = _wp(live_swaps)
+        _lh_net = sum(d["buy"] - d["sell"] for d in _l_profiles.values()
+                      if d.get("profile") == "light_holder")
+        _trader_net = sum(d["buy"] - d["sell"] for d in _l_profiles.values()
+                          if d.get("profile") == "trader")
+        _pure_net = sum(d["buy"] - d["sell"] for d in _l_profiles.values()
+                        if d.get("profile") == "pure_accum")
+        _n_lh = sum(1 for d in _l_profiles.values()
+                    if d.get("profile") == "light_holder")
+        _n_trader = sum(1 for d in _l_profiles.values()
+                        if d.get("profile") == "trader")
+        _n_pure = sum(1 for d in _l_profiles.values()
+                      if d.get("profile") == "pure_accum")
+        _holders_net = _lh_net + _trader_net + _pure_net
+        _n_holders = _n_lh + _n_trader + _n_pure
+
+        _dist_net = max(0.0, sum(d["sell"] - d["buy"] for d in _l_profiles.values()
+                                 if d.get("profile") in ("pure_dist", "two_way")))
+        _n_dist = sum(1 for d in _l_profiles.values()
+                      if d.get("profile") in ("pure_dist", "two_way"))
+
+        _sig_detail = None
+        if _n_holders >= 3 or (_n_lh + _n_trader) >= 2 or abs(_holders_net) >= 25.0 or (_dist_net >= 15.0 and _n_dist >= 2):
+            if _holders_net >= 10.0 and (_lh_net + _trader_net) > 0 and _holders_net >= max(_dist_net * 1.1, 10.0):
+                flow_flag = "accum"
+                _sig_detail = (
+                    f"holders +{_holders_net:.1f} SOL net "
+                    f"(LH {_lh_net:+.1f} / Traders {_trader_net:+.1f} / Pure {_pure_net:+.1f} across {_n_holders} wallets) — "
+                    f"strong absorption (last {int(cvd_window)}h)"
+                )
+            elif _holders_net <= -10.0 or (_dist_net >= abs(_holders_net) * 1.3 and _dist_net >= 15.0):
+                flow_flag = "dist"
+                _sig_detail = (
+                    f"distribution pressure: dumpers -{_dist_net:.1f} SOL vs holders {_holders_net:+.1f} SOL "
+                    f"(LH {_lh_net:+.1f} / Traders {_trader_net:+.1f}) (last {int(cvd_window)}h)"
+                )
+
+        if flow_flag and _sig_detail:
             # record to the signal log (dedupe handled inside)
             try:
                 from signals import record_signal
                 record_signal(
                     ca, market.get("symbol", "?"),
                     "accumulation" if flow_flag == "accum" else "distribution",
-                    f"whales {lwh_net:+,.1f} SOL vs retail {lrt_net:+,.1f} "
-                    f"SOL (last {cvd_window}h, {len(ldf)} swaps)",
+                    _sig_detail,
                     src="analyze", window_h=int(cvd_window),
-                    whale_net=float(lwh_net), retail_net=float(lrt_net),
+                    whale_net=float(_holders_net), retail_net=float(-_dist_net),
                     price=float(price))
             except Exception:
                 pass
             if flow_flag == "accum":
-                green_strip("⚡ <b>Whales buy what retail sells — possible "
-                            "stealth accumulation.</b> Verify with the "
-                            "buyer list below: real accumulators are aged, "
-                            "organic wallets — not fresh/bundled ones.")
+                green_strip(
+                    f"⚡ <b>High-conviction accumulation: holders +{_holders_net:.1f} SOL net "
+                    f"(LH {_lh_net:+.1f} / Traders {_trader_net:+.1f} / Pure {_pure_net:+.1f}).</b> "
+                    f"Real holders and swing traders are absorbing supply."
+                )
             else:
-                red_strip("⚡ <b>Whales sell into retail buying — "
-                          "distribution to retail.</b> Big tickets are "
-                          "using retail liquidity to exit. Check the top "
-                          "sellers below.")
+                red_strip(
+                    f"⚡ <b>Distribution pressure: dumpers -{_dist_net:.1f} SOL vs holders {_holders_net:+.1f} SOL "
+                    f"(LH {_lh_net:+.1f} / Traders {_trader_net:+.1f}).</b> "
+                    f"Supply dumping exceeds holder absorption."
+                )
 
         # --- Who is behind the flow? (top net wallets + badges) --------------
         if flow_flag:

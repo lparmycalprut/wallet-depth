@@ -397,6 +397,51 @@ def test_new_fields_in_output():
           f"(got {r['holder_conc']:.2f})")
 
 
+def test_cvd_flow_signals():
+    print("\n[signals] accumulation/distribution use LH/trader/pure profiles")
+    import signals as sig
+    with TempPaths() as tp:
+        saved_sig = sig.SIGNALS_PATH
+        sig.SIGNALS_PATH = os.path.join(tp.tmp.name, "signals.json")
+        try:
+            now = int(time.time())
+            # 3 wallets buying and holding -> light_holder / pure_accum / trader
+            swaps = [
+                ("buy", 12.0, now - 1000, "w_lh"),
+                ("sell", 1.0, now - 900, "w_lh"),
+                ("buy", 8.0, now - 800, "w_tr"),
+                ("sell", 3.0, now - 700, "w_tr"),
+                ("buy", 10.0, now - 600, "w_pure"),
+            ]
+            write_cvd_swaps("ca_accum", swaps)
+            res = sig.detect_and_record("ca_accum", "TEST", window_h=6)
+            check("accumulation" in res, "accumulation signal recorded")
+            logs = sig.load_signals()
+            last = logs[-1] if logs else {}
+            check("holders +" in last.get("detail", ""),
+                  f"detail names holders: {last.get('detail')}")
+            check("LH" in last.get("detail", "") and "Traders" in last.get("detail", ""),
+                  "detail includes LH and Traders metrics")
+            check("vs retail" not in last.get("detail", ""),
+                  "detail no longer uses 'vs retail'")
+
+            # Dump scenario: dumpers sell 30 SOL while holders are quiet
+            swaps_dump = [
+                ("sell", 20.0, now - 1000, "w_dist1"),
+                ("sell", 15.0, now - 900, "w_dist2"),
+                ("buy", 5.0, now - 800, "w_lh2"),
+                ("sell", 1.0, now - 700, "w_lh2"),
+            ]
+            write_cvd_swaps("ca_dump", swaps_dump)
+            res_dump = sig.detect_and_record("ca_dump", "DUMP", window_h=6)
+            check("distribution" in res_dump, "distribution signal recorded")
+            last_dump = sig.load_signals()[-1]
+            check("distribution pressure: dumpers" in last_dump.get("detail", ""),
+                  f"detail names dumpers vs holders: {last_dump.get('detail')}")
+        finally:
+            sig.SIGNALS_PATH = saved_sig
+
+
 if __name__ == "__main__":
     test_flow_freshness()
     test_flow_persistence()
@@ -407,6 +452,7 @@ if __name__ == "__main__":
     test_fresh_wallet_penalty()
     test_holder_concentration_penalty()
     test_new_fields_in_output()
+    test_cvd_flow_signals()
     print(f"\n{'FAILED: ' + str(len(failures)) if failures else 'ALL PASSED'}")
     for f in failures:
         print("  -", f)
