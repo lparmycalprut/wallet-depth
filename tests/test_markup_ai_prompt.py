@@ -237,6 +237,36 @@ def test_screener_note_styles():
           "smart-money column is removed from the screener")
 
 
+def test_insider_bundler_colors():
+    print("\n[screener] insider/bundler presentation thresholds (15%)")
+    # Bundler 14,9% hijau
+    check(trending_ui._risk_bit_color(0.149) == "#22c55e",
+          "bundler 14.9% green")
+    # Insider 12% hijau
+    check(trending_ui._risk_bit_color(0.12) == "#22c55e",
+          "insider 12% green")
+    # Tepat 15% merah
+    check(trending_ui._risk_bit_color(0.15) == "#ef4444",
+          "exactly 15% red")
+    # Note pressure di bawah 15% green glow
+    note_green = trending_ui._format_note_part(
+        "insider/bundler pressure",
+        {"insider_ratio": 0.12, "bundler_rate": 0.10})
+    check("#22c55e" in note_green and "text-shadow" in note_green,
+          "note pressure <15% green glow")
+    # Note pressure mulai 15% red glow
+    note_red = trending_ui._format_note_part(
+        "insider/bundler pressure",
+        {"insider_ratio": 0.16, "bundler_rate": 0.14})
+    check("#ef4444" in note_red and "text-shadow" in note_red,
+          "note pressure >=15% red glow")
+    note_red_exact = trending_ui._format_note_part(
+        "insider/bundler pressure",
+        {"insider_ratio": 0.15, "bundler_rate": 0.08})
+    check("#ef4444" in note_red_exact and "text-shadow" in note_red_exact,
+          "note pressure exactly 15% red glow")
+
+
 def test_ui_integration_guards():
     print("\n[integration] safety sweep and Prompt to AI wiring")
     with open(os.path.join(ROOT, "app.py"), encoding="utf-8") as handle:
@@ -295,6 +325,7 @@ if __name__ == "__main__":
     test_prompt_order_and_honesty()
     test_prompt_tables_and_tasks()
     test_screener_note_styles()
+    test_insider_bundler_colors()
     test_ui_integration_guards()
     print(f"\n{'FAILED: ' + str(len(failures)) if failures else 'ALL PASSED'}")
     for failure in failures:

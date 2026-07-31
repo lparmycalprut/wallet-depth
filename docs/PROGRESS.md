@@ -7,6 +7,30 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-07-31 (7) — Insider/Bundler 15% presentation + links + regression
+
+### Yang berubah
+
+1. **Kolom Risk `bndl`/`insd`** — threshold merah disamakan 15% untuk keduanya;
+   <15% hijau `#22c55e`, >=15% merah `#ef4444` (sebelumnya insd 10% abu-abu).
+2. **Note `insider/bundler pressure`** — `_format_note_part()` menerima `row`;
+   glow hijau jika `max(insider_ratio, bundler_rate) < 0.15`, merah jika >=0.15.
+3. **Link GMGN & DexScreener** — kecil di samping nama token (`cc[1]`) pada scan
+   trending/degen.
+4. **Caption Screener** — menjelaskan `bndl/insd <15% = hijau · >=15% = merah`.
+5. **Regression test** — `tests/test_markup_ai_prompt.py`: 14,9% / 12% hijau,
+   tepat 15% merah, note green/red glow, semua lulus.
+6. **Tidak mengubah** formula Fit, penalty curve, gate severity, hard-risk cap.
+
+### Verifikasi
+
+- `python tests/test_markup_ai_prompt.py` — ALL PASSED (termasuk 6 assertion baru).
+- `python tests/test_scoring_continuity.py` — ALL PASSED (formula tidak berubah).
+- `python -m py_compile trending_ui.py` — lulus.
+- `git diff --check` — bersih.
+
+---
+
 ## 2026-07-31 (6) — Fit direbalance menjadi structural-only
 
 ### Keputusan pemilik
