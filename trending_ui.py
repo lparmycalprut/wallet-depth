@@ -199,7 +199,11 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
                     st.caption("⭐ watched")
                 elif st.button("⭐ watch", key=f"{key_prefix}_wl_{ca}",
                                use_container_width=True):
-                    add_to_watchlist(ca, symbol=r["symbol"] or "?")
+                    # Determine source from key_prefix so the watchlist
+                    # knows whether this token came from trending or HRHR.
+                    _src = "hrhr" if "hrhr" in key_prefix else "trending"
+                    add_to_watchlist(ca, symbol=r["symbol"] or "?",
+                                     source=_src)
                     st.rerun()
         risk_banner(r)
 

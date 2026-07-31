@@ -591,33 +591,38 @@ from watchlist import load_watchlist, add_to_watchlist, remove_from_watchlist
 _wl = load_watchlist()
 if _wl:
     _prices = fetch_watchlist_prices(tuple(_wl.keys()))
-    chips = []
-    for _ca, _meta in _wl.items():
-        p = _prices.get(_ca)
-        sym = (p or {}).get("symbol") or _meta.get("symbol", "?")
-        if p:
-            chg = p["chg24"]
-            chg_col = "#22c55e" if chg >= 0 else "#ef4444"
-            arrow = "▲" if chg >= 0 else "▼"
-            body = (f"<span style='color:#e2e8f0;font-weight:700;'>{sym}</span>"
-                    f"<span style='color:#94a3b8;margin-left:6px;'>"
-                    f"{_fmt_price(p['price'])}</span>"
-                    f"<span style='color:{chg_col};margin-left:6px;"
-                    f"font-weight:700;'>{arrow}{abs(chg):.1f}%</span>")
-        else:
-            body = (f"<span style='color:#e2e8f0;font-weight:700;'>{sym}</span>"
-                    f"<span style='color:#64748b;margin-left:6px;'>n/a</span>")
-        chips.append(
-            f"<a href='?ca={_ca}' target='_self' style='text-decoration:none;'>"
-            f"<span style='display:inline-flex;align-items:center;"
-            f"background:#161b26;border:1px solid #2d3748;border-radius:9px;"
-            f"padding:5px 12px;margin-right:8px;font-size:0.8rem;"
-            f"white-space:nowrap;cursor:pointer;'>⭐ {body}</span></a>")
-    st.markdown(
-        "<div style='display:flex;overflow-x:auto;padding:4px 2px 8px 2px;"
-        "scrollbar-width:thin;-webkit-overflow-scrolling:touch;'>"
-        + "".join(chips) + "</div>",
-        unsafe_allow_html=True)
+
+    # --- Watchlist ticker bar (disabled per owner request) ---
+    # The scrollable price chips above the LP Radar cards are hidden.
+    # The safety sweep and freshness sweep still run below.
+    if False:
+        chips = []
+        for _ca, _meta in _wl.items():
+            p = _prices.get(_ca)
+            sym = (p or {}).get("symbol") or _meta.get("symbol", "?")
+            if p:
+                chg = p["chg24"]
+                chg_col = "#22c55e" if chg >= 0 else "#ef4444"
+                arrow = "▲" if chg >= 0 else "▼"
+                body = (f"<span style='color:#e2e8f0;font-weight:700;'>{sym}</span>"
+                        f"<span style='color:#94a3b8;margin-left:6px;'>"
+                        f"{_fmt_price(p['price'])}</span>"
+                        f"<span style='color:{chg_col};margin-left:6px;"
+                        f"font-weight:700;'>{arrow}{abs(chg):.1f}%</span>")
+            else:
+                body = (f"<span style='color:#e2e8f0;font-weight:700;'>{sym}</span>"
+                        f"<span style='color:#64748b;margin-left:6px;'>n/a</span>")
+            chips.append(
+                f"<a href='?ca={_ca}' target='_self' style='text-decoration:none;'>"
+                f"<span style='display:inline-flex;align-items:center;"
+                f"background:#161b26;border:1px solid #2d3748;border-radius:9px;"
+                f"padding:5px 12px;margin-right:8px;font-size:0.8rem;"
+                f"white-space:nowrap;cursor:pointer;'>⭐ {body}</span></a>")
+        st.markdown(
+            "<div style='display:flex;overflow-x:auto;padding:4px 2px 8px 2px;"
+            "scrollbar-width:thin;-webkit-overflow-scrolling:touch;'>"
+            + "".join(chips) + "</div>",
+            unsafe_allow_html=True)
 
     # This safety sweep deliberately runs before, and independently of, the
     # LP Radar's `grow1` filter. A +300% token must remain visible even when
@@ -739,7 +744,7 @@ if _wl:
                 "token). Skips CAs already refreshed in this session.")
 
     # ------------------------------------------------------------------
-    # 💧 LP Radar — semua watchlist token.
+    # 💧 LP Radar — watchlist tokens from TRENDING source only.
     # Setiap token punya card: stability badge, multi-window sparkline,
     # volume-quality indicator, market phase, dan shortcut DexS/GMGN.
     # ------------------------------------------------------------------
@@ -749,12 +754,16 @@ if _wl:
     except Exception:
         _conv_hist = {}
     if _conv_hist:
-        st.markdown("**💧 LP Radar — semua watchlist token** "
-                    "<span style='opacity:0.6;font-size:0.72rem'>stabilitas "
-                    "conviction + multi-window + volume quality</span>",
-                    unsafe_allow_html=True)
+        # --- LP Radar: trending-source tokens only ---
+        _lp_tokens = {_ca: _meta for _ca, _meta in _wl.items()
+                      if _meta.get("source", "trending") == "trending"}
+        if _lp_tokens:
+            st.markdown("**💧 LP Radar — trending watchlist tokens** "
+                        "<span style='opacity:0.6;font-size:0.72rem'>stabilitas "
+                        "conviction + multi-window + volume quality</span>",
+                        unsafe_allow_html=True)
         _cards = []
-        for _ca, _meta in _wl.items():
+        for _ca, _meta in _lp_tokens.items():
             pts = _conv_hist.get(_ca) or []
             if not pts:
                 continue
@@ -847,8 +856,6 @@ if _wl:
             cv_avg_prior = sum(prior3) / len(prior3) if prior3 else cv_avg_recent
             momentum = cv_avg_recent - cv_avg_prior
             peak4 = max(p["conviction"] for p in pts[-4:]) if len(pts) >= 4 else cv
-            drop_from_peak = peak4 - cv
-
             drop_from_peak = peak4 - cv
 
             # ---- Multi-window sparkline (6h / 12h / 24h / 48h) ----
@@ -1027,7 +1034,182 @@ if _wl:
                        "(Δ dalam SOL + N↑ dompet masuk + N↓ keluar). "
                        "Klik card → CVD analysis.")
         else:
-            st.caption("💧 LP Radar: semua watchlist token ditampilkan.")
+            st.caption("💧 LP Radar: semua trending watchlist token ditampilkan.")
+
+    # ------------------------------------------------------------------
+    # ⚡ Degen Radar — watchlist tokens from HRHR source only.
+    # High-risk, high-reward tokens that degen traders watch.
+    # ------------------------------------------------------------------
+    if _conv_hist:
+        _degen_tokens = {_ca: _meta for _ca, _meta in _wl.items()
+                         if _meta.get("source", "") == "hrhr"}
+        if _degen_tokens:
+            st.markdown("**⚡ Degen Radar — high risk high reward tokens** "
+                        "<span style='opacity:0.6;font-size:0.72rem'>"
+                        "token berisiko tinggi dari HRHR screener</span>",
+                        unsafe_allow_html=True)
+            _degen_cards = []
+            for _ca, _meta in _degen_tokens.items():
+                pts = _conv_hist.get(_ca) or []
+                if not pts:
+                    continue
+                sym = _meta.get("symbol") or "?"
+                if sym == "?":
+                    sym = ((_prices.get(_ca) or {}).get("symbol")
+                           or _ca[:4] + "…")
+                last = pts[-1]
+                cv = last["conviction"]
+                prev_cv = pts[-2]["conviction"] if len(pts) >= 2 else None
+                prev2_cv = pts[-3]["conviction"] if len(pts) >= 3 else None
+
+                # ---- Multi-window sparkline (6h / 12h / 24h / 48h) ----
+                cv_6h = cv
+                cv_12h = pts[-2]["conviction"] if len(pts) >= 2 else cv_6h
+                cv_24h = pts[-4]["conviction"] if len(pts) >= 4 else cv_12h
+                cv_48h = pts[-8]["conviction"] if len(pts) >= 8 else cv_24h
+                spark_max = max(cv_6h, cv_12h, cv_24h, cv_48h, 50) or 1
+
+                c_6h = "#22c55e" if cv_6h >= cv_12h else "#ef4444"
+                c_12h = "#22c55e" if cv_12h >= cv_24h else "#ef4444"
+                c_24h = "#22c55e" if cv_24h >= cv_48h else "#ef4444"
+                cv_72h = pts[-12]["conviction"] if len(pts) >= 12 else cv_48h
+                c_48h = "#22c55e" if cv_48h >= cv_72h else "#ef4444"
+
+                def _spark_bar_deg(val, label, color):
+                    return (f"<div style='display:flex;align-items:center;"
+                            f"gap:4px;margin:1px 0;line-height:1.2;'>"
+                            f"<span style='font-size:0.7rem;color:#64748b;"
+                            f"min-width:18px;font-weight:600;'>{label}</span>"
+                            f"<span style='display:inline-block;flex:1;height:7px;"
+                            f"background:rgba(148,163,184,0.18);border-radius:4px;"
+                            f"overflow:hidden;'>"
+                            f"<span style='display:block;width:{(val/spark_max)*100:.0f}%;"
+                            f"height:100%;background:{color};border-radius:4px;'></span></span>"
+                            f"<span style='font-size:0.7rem;color:{color};"
+                            f"min-width:32px;text-align:right;font-weight:700;'>"
+                            f"{val:.0f}%</span></div>")
+                multi_bars_deg = ("<div style='margin:6px 0;padding:6px 8px;"
+                                  "background:rgba(148,163,184,0.06);"
+                                  "border-radius:6px;'>"
+                                  f"{_spark_bar_deg(cv_6h, '6h', c_6h)}"
+                                  f"{_spark_bar_deg(cv_12h, '12h', c_12h)}"
+                                  f"{_spark_bar_deg(cv_24h, '24h', c_24h)}"
+                                  f"{_spark_bar_deg(cv_48h, '48h', c_48h)}"
+                                  "</div>")
+
+                # ---- Conviction Trend Note ----
+                consecutive_ups = 0
+                if cv_6h > cv_12h:
+                    consecutive_ups += 1
+                    if cv_12h > cv_24h:
+                        consecutive_ups += 1
+                        if cv_24h > cv_48h:
+                            consecutive_ups += 1
+                is_spike = (cv_6h - cv_12h) >= 20.0
+                vol = last.get("vol") or 0
+                has_good_vol = vol >= 50.0
+
+                conv_note_deg = ""
+                if consecutive_ups >= 3:
+                    conv_note_deg = f"<div style='color:#22c55e;font-size:0.75rem;font-weight:700;margin-top:6px;'>🔥 Sangat Bagus (Naik ≥3x{' + Vol' if has_good_vol else ''})</div>"
+                elif consecutive_ups == 2:
+                    conv_note_deg = f"<div style='color:#a3e635;font-size:0.75rem;font-weight:700;margin-top:6px;'>📈 Bagus (Naik 2x{' + Vol' if has_good_vol else ''})</div>"
+                elif is_spike:
+                    conv_note_deg = f"<div style='color:#22c55e;font-size:0.75rem;font-weight:700;margin-top:6px;'>🚀 Sangat Bagus (Melonjak{' + Vol' if has_good_vol else ''})</div>"
+
+                trend_txt = (f"{prev_cv:.0f}→{cv:.0f}%" if prev_cv is not None
+                             else f"{cv:.0f}%")
+                trend_ic = "📈📈" if consecutive_ups >= 2 else ("📈" if consecutive_ups == 1 else "📉" if prev_cv is not None and cv < prev_cv else "➡️")
+                np_col = "#22c55e" if last["net_pure"] >= 0 else "#ef4444"
+
+                # market phase badge
+                try:
+                    _ph = detect_phase(_ca, (_prices.get(_ca) or {}).get("chg24"))
+                except Exception:
+                    _ph = {"phase": "Neutral/Choppy", "confidence": "low",
+                           "reason": "phase detection unavailable"}
+                _ph_col = PHASE_COLORS.get(_ph["phase"], "#64748b")
+                _conf_dots = {"low": "·", "medium": "··", "high": "···"}.get(
+                    _ph.get("confidence", "low"), "·")
+                _ph_reason = (_ph.get("reason", "") or "").replace("'", "&#39;")
+                phase_html_deg = (
+                    f"<div style='margin-top:8px;'> "
+                    f"<span title='{_ph_reason} (confidence: "
+                    f"{_ph.get('confidence', 'low')}) — heuristic, not a "
+                    f"signal' style='background:{_ph_col}22;border:1px solid "
+                    f"{_ph_col};color:{_ph_col};border-radius:6px;"
+                    f"padding:3px 9px;font-size:0.7rem;font-weight:700;"
+                    f"white-space:nowrap;letter-spacing:0.2px;'> "
+                    f"{_ph['phase']} {_conf_dots}</span>"
+                    f"</div>")
+
+                _cvd_link = f"/CVD?ca={_ca}"
+                # Degen-style border: orange/red tint
+                _deg_border = "#f97316"
+                _deg_bg = "#1a1008"
+                _degen_cards.append(
+                    f"<div style='flex:0 0 auto;background:{_deg_bg};"
+                    f"border:2px solid {_deg_border};border-radius:14px;"
+                    f"padding:14px 16px;margin-right:14px;cursor:pointer;"
+                    f"min-width:230px;max-width:260px;line-height:1.4;'>"
+                    f"<div style='display:flex;align-items:baseline;"
+                    f"justify-content:space-between;gap:6px;'>"
+                    f"<a href='{_cvd_link}' target='_self' "
+                    f"style='color:inherit;text-decoration:none;flex:1;"
+                    f"min-width:0;'>"
+                    f"<span style='font-weight:800;color:#fb923c;"
+                    f"font-size:1.05rem;letter-spacing:0.2px;'>⚡ {sym}</span> "
+                    f"<span style='margin-left:4px;'>"
+                    f"<span style='color:#cbd5e1;font-size:1.35rem;"
+                    f"font-weight:800;line-height:1.1;'>"
+                    f"{cv:.0f}%</span> <span style='font-size:0.85rem;"
+                    f"margin-left:2px;'>{trend_ic}</span></span></a>"
+                    f"<span style='display:inline-flex;gap:6px;"
+                    f"font-size:0.85rem;flex-shrink:0;'>"
+                    f"<a href='https://dexscreener.com/solana/{_ca}' "
+                    f"target='_blank' title='DexScreener' "
+                    f"style='color:#64748b;text-decoration:none;'>🦆</a>"
+                    f"<a href='https://gmgn.ai/sol/token/{_ca}' "
+                    f"target='_blank' title='GMGN' "
+                    f"style='color:#64748b;text-decoration:none;'>⚡</a>"
+                    f"</span></div>"
+                    f"{phase_html_deg}"
+                    f"<a href='{_cvd_link}' target='_self' "
+                    f"style='display:block;text-decoration:none;'>"
+                    f"{multi_bars_deg}"
+                    f"<div style='font-size:0.75rem;color:#94a3b8;"
+                    f"margin-top:4px;line-height:1.4;'>"
+                    f"<span style='color:#64748b;'>conv </span>"
+                    f"<span style='color:#cbd5e1;font-weight:600;'>"
+                    f"{trend_txt}</span>"
+                    f"<span style='color:#475569;margin:0 4px;'>·</span>"
+                    f"<span style='color:#64748b;'>net </span>"
+                    f"<span style='color:{np_col};font-weight:700;'>"
+                    f"{last['net_pure']:+,.0f}</span>"
+                    f"</div>"
+                    f"<div style='font-size:0.75rem;color:#94a3b8;"
+                    f"line-height:1.4;margin-top:2px;'>"
+                    f"<span style='color:#64748b;'>vol </span>"
+                    f"<span style='color:#cbd5e1;font-weight:600;'>"
+                    f"{vol:,.0f} SOL</span>"
+                    f"<span style='color:#475569;margin:0 4px;'>·</span>"
+                    f"<span style='color:#64748b;'>swaps </span>"
+                    f"<span style='color:#cbd5e1;font-weight:600;'>"
+                    f"{last.get('swaps') or 0:,}</span>"
+                    f"</div>"
+                    f"{conv_note_deg}</a>"
+                    f"</div>")
+            if _degen_cards:
+                st.markdown(
+                    "<div style='display:flex;overflow-x:auto;gap:0;"
+                    "padding:6px 2px 14px 2px;scrollbar-width:thin;"
+                    "align-items:stretch;'>"
+                    + "".join(_degen_cards) + "</div>",
+                    unsafe_allow_html=True)
+                st.caption("⚡ Degen Radar: token HRHR dari watchlist. "
+                           "Bar hijau = conviction naik, bar merah = turun. "
+                           "⚠️ Token ini BERISIKO TINGGI — selalu DYOR! "
+                           "Klik card → CVD analysis.")
 
 # clicking a ticker chip sets ?ca=... -> prefill + auto-analyze
 qp_ca = st.query_params.get("ca", "").strip()
@@ -1061,7 +1243,7 @@ if scan_trending or "screener_rows" in st.session_state:
 scan_hrhr = st.button("⚡ Scan High Risk High Reward Now", key="hrhr_scan",
                       type="primary", use_container_width=True)
 if scan_hrhr or "screener_hrhr_rows" in st.session_state:
-    with st.expander("⚡ High Risk High Reward from GMGN — scored (FOR LP)", expanded=True):
+    with st.expander("⚡ High Risk High Reward from GMGN — scored (FOR DEGEN)", expanded=True):
         _rows_hrhr, _err_hrhr = run_screen_hrhr(force=scan_hrhr)
         if _err_hrhr:
             st.error(f"Failed to fetch HRHR: {_err_hrhr}")
@@ -1103,27 +1285,22 @@ if _qp_wl:
 
     with st.expander("⚡ Quick Pick — pilih dari ⭐ watchlist",
                      expanded=False):
-        st.caption("Pilih token dari watchlist, klik **Gunakan** → kolom CA "
-                   "di bawah otomatis terisi. Tidak auto-analyze.")
-        _qp_cols = st.columns([5, 1])
-        _qp_chosen = _qp_cols[0].selectbox(
+        st.caption("Pilih token dari watchlist → langsung Analyze + CVD 48h otomatis.")
+        _qp_chosen = st.selectbox(
             "Watchlist token",
             ["— pilih token —"] + [lbl for lbl, _ in _qp_options],
             key="qp_selectbox",
             label_visibility="collapsed")
-        if _qp_cols[1].button("Gunakan", use_container_width=True,
-                              type="primary", key="qp_apply"):
-            if _qp_chosen and _qp_chosen != "— pilih token —":
-                _qp_picked = next((ca for lbl, ca in _qp_options
-                                   if lbl == _qp_chosen), "")
-                if _qp_picked:
-                    st.session_state[qp_key] = _qp_picked
-                    st.session_state["trigger_analyze"] = True
-                    st.session_state[f"cvd_on::{_qp_picked}"] = True
-                    st.session_state["cvd_win"] = 48
-                    st.rerun()
-            else:
-                st.warning("Pilih token dulu dari dropdown.")
+        # Auto-trigger: when user picks a token, immediately analyze + CVD
+        if _qp_chosen and _qp_chosen != "— pilih token —":
+            _qp_picked = next((ca for lbl, ca in _qp_options
+                               if lbl == _qp_chosen), "")
+            if _qp_picked:
+                st.session_state[qp_key] = _qp_picked
+                st.session_state["trigger_analyze"] = True
+                st.session_state[f"cvd_on::{_qp_picked}"] = True
+                st.session_state["cvd_win"] = 48
+                st.rerun()
 
     with st.expander("🗑️ Quick Delete dari watchlist", expanded=False):
         st.caption("Hapus token dari watchlist langsung dari sini tanpa perlu ke halaman Watchlist.")
@@ -1174,7 +1351,7 @@ elif ca:
             _sym = (_m or {}).get("symbol", "?")
         except Exception:
             pass
-        _committed = add_to_watchlist(ca, symbol=_sym)
+        _committed = add_to_watchlist(ca, symbol=_sym, source="manual")
         if not _committed:
             st.warning(
                 "⭐ Added, but could NOT commit to GitHub — the change may "
@@ -1289,6 +1466,21 @@ if len(solscan_hist) >= 2:
 elif prev:
     holder_delta = int(total_holders - prev["total_holders"])
     holder_delta_src = f"local snapshot {prev_key}"
+
+# Build hist_df for holder history chart + divergence check + session state.
+# This was previously inside an `if False:` block, causing a NameError
+# when the Divergence Check section referenced it.
+_hist_rows = []
+if not solscan_hist.empty:
+    _hist_rows += solscan_hist.to_dict("records")
+_known_dates = {r["date"] for r in _hist_rows}
+for _dkey in sorted(ca_hist.keys()):
+    if _dkey not in _known_dates:
+        _hist_rows.append({"date": _dkey,
+                           "holders": ca_hist[_dkey]["total_holders"],
+                           "source": "Local"})
+hist_df = (pd.DataFrame(_hist_rows).sort_values("date")
+           .reset_index(drop=True) if _hist_rows else pd.DataFrame())
 
 # A tuple means rotating Helius keys; a string means one custom RPC URL.
 rpc_endpoint = helius_keys if helius_keys else custom_rpc
@@ -1471,13 +1663,13 @@ with col_left:
               f"<b>{real_mc_pct:.1f}%</b> of MC — the dust crowd is noisy but "
               f"economically irrelevant. Watch the trend.")
     else:
-        red_strip(
-            f"🚨 <b>WARNING — UNHEALTHY HOLDER BASE</b> — Real holders "
-            f"({n_real:,}) are only <b>{ratio*100:,.1f}%</b> of dust holders "
-            f"({n_dust:,}), below the {REAL_RATIO_OK*100:.0f}% threshold. Most "
-            f"'holders' are dust wallets (&lt;${dust_limit:g}) from airdrops/"
-            f"bundling — the holder count is <b>inflated</b>. Real holders "
-            f"control just <b>{real_mc_pct:.2f}%</b> of MC. Be careful!")
+        # Holder base is unhealthy — show a brief note instead of the
+        # old alarming red banner (removed per owner request).
+        strip("#3f3411", "#facc15", "#fef08a",
+              f"⚠️ <b>Holder base tipis</b> — Real holders "
+              f"({n_real:,}) hanya <b>{ratio*100:,.1f}%</b> dari dust holders "
+              f"({n_dust:,}). Real holders menguasai "
+              f"<b>{real_mc_pct:.2f}%</b> MC.")
 
     # --- Security checklist card ---------------------------------------------
     checks = []   # (ok: True/False/None, label)

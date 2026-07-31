@@ -166,9 +166,18 @@ def _journal(op: dict) -> None:
     _save_pending(pending)
 
 
-def add_to_watchlist(ca: str, symbol: str = "?", note: str = "") -> bool:
+def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
+                     source: str = "") -> bool:
+    """Add *ca* to the watchlist.
+
+    *source* tracks where the token came from (``"trending"``,
+    ``"hrhr"``, ``"manual"``).  LP Radar uses it to decide which
+    card section to show a token in.
+    """
     entry = {"symbol": symbol, "note": note,
              "added": datetime.now().strftime("%Y-%m-%d")}
+    if source:
+        entry["source"] = source
     # journal FIRST -> the change can never visually revert (stale reads,
     # failed commits, redeploys); journal is cleaned once repo reflects it
     _journal({"op": "add", "ca": ca, **entry})
