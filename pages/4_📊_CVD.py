@@ -24,7 +24,8 @@ from core import (get_helius_keys, helius_rpc, load_config,
                   get_holders as core_get_holders,
                   get_supply as core_get_supply)
 from cvd import (MIN_SOL, WHALE_SOL, analysis_windows, classify_holders,
-                 classify_swap, cohort_activity_summary, conviction_split,
+                 classify_swap, cohort_activity_summary, cohort_cvd_series,
+                 conviction_split, detect_cohort_divergences,
                  detect_divergence, detect_no_buy_holders,
                  filter_swaps_by_time, get_gmgn_wallet_metadata,
                  split_wallet_profile_cohorts, summarize_swap_range,
@@ -512,6 +513,10 @@ figc.update_layout(height=220, margin=dict(t=10, b=0, l=0, r=0),
 st.plotly_chart(figc, use_container_width=True,
                 config={"displayModeBar": False})
 
+# Full-window wallet profiles are reused by the cohort detail tables and by
+# advanced divergence.  Keep this anchored to the selected fetch window.
+full_profiles = win_stats[max(win_stats)]["profiles"]
+
 # ---------------------------------------------------------------------------
 # CVD chart for the selected window, bucketed hourly
 # ---------------------------------------------------------------------------
@@ -583,10 +588,65 @@ if pser and all(p is not None for p in pser) and len(pser) >= 7:
             d["kind"].upper() + " " + d["type"].upper() + f" ({src})** — " +
             d["detail"])
 
+# Advanced divergence: price vs wallet-profile cohort CVD.  This keeps the
+# old All/Whale-swap divergence intact, then adds a lower-noise explanation
+# of which wallet cohort is actually confirming or rejecting the price move.
+cohort_div_lines = []
+cohort_cvd = cohort_cvd_series(
+    swaps_all, full_profiles, [int(t.timestamp()) for t in agg.index],
+    whale_min_sol=WHALE_SOL)
+cohort_divs = []
+if pser and all(p is not None for p in pser) and len(pser) >= 7:
+    cohort_divs = detect_cohort_divergences(pser, cohort_cvd)
+
+with st.expander("🧭 Advanced cohort divergence", expanded=bool(cohort_divs)):
+    st.caption("Advisory only: compares price pivots vs profile-based CVD "
+               "(whale held, dolphin held, trader, pure distributor). "
+               "Signals are filtered by minimum SOL movement to avoid dust.")
+    if cohort_divs:
+        seen = set()
+        for d in cohort_divs:
+            k = (d["type"], d["kind"], d.get("src"))
+            if k in seen:
+                continue
+            seen.add(k)
+            line = (f"{d['kind']} {d['type']} divergence "
+                    f"({d['label']}): {d['detail']}")
+            cohort_div_lines.append(line)
+            (st.success if d["type"] == "bullish" else st.error)(
+                ("📈 " if d["type"] == "bullish" else "📉 ") +
+                "**" + d["kind"].upper() + " " +
+                d["type"].upper() + f" ({d['label']})** — " +
+                d["detail"])
+    else:
+        st.caption("No meaningful cohort divergence after volume filtering.")
+
+    colors = {
+        "whale_held": "#c084fc",
+        "dolphin_held": "#38bdf8",
+        "trader": "#facc15",
+        "distributor": "#ef4444",
+    }
+    fig_cohort = go.Figure()
+    for key, vals in cohort_cvd.get("series", {}).items():
+        meta = cohort_cvd.get("meta", {}).get(key, {})
+        if float(meta.get("volume") or 0.0) <= 0:
+            continue
+        fig_cohort.add_trace(go.Scatter(
+            x=agg.index, y=vals, name=meta.get("label", key),
+            line=dict(color=colors.get(key, "#94a3b8"), width=2)))
+    if fig_cohort.data:
+        fig_cohort.update_layout(
+            height=240, margin=dict(t=15, b=0, l=0, r=0),
+            legend=dict(orientation="h", font=dict(size=10)),
+            yaxis=dict(title="cumulative SOL"),
+            title=dict(text="Profile-cohort CVD", font=dict(size=12)))
+        st.plotly_chart(fig_cohort, use_container_width=True,
+                        config={"displayModeBar": False})
+
 # ---------------------------------------------------------------------------
 # Pure accumulators/distributors and holder-style cohorts in the full window
 # ---------------------------------------------------------------------------
-full_profiles = win_stats[max(win_stats)]["profiles"]
 cohort_summary = cohort_activity_summary(
     full_profiles, whale_min_sol=WHALE_SOL)
 profile_groups = split_wallet_profile_cohorts(
@@ -1262,6 +1322,10 @@ for h in sorted(win_stats):
 if div_lines:
     rep.write(f"\n## Divergences (H1, {hours}h)\n\n")
     for line in div_lines:
+        rep.write(f"- {line}\n")
+if cohort_div_lines:
+    rep.write(f"\n## Advanced cohort divergences (H1, {hours}h)\n\n")
+    for line in cohort_div_lines:
         rep.write(f"- {line}\n")
 rep.write(f"\n## Whale & Dolphin held-flow activity ({hours}h)\n\n")
 rep.write(f"- Whale held buy: {cohort_summary['whale_buy']:,.1f} SOL · "

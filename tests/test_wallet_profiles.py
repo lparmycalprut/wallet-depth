@@ -8,6 +8,7 @@ import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cvd import (PROFILE_WEIGHTS, cohort_activity_summary,
+                 cohort_cvd_series, detect_cohort_divergences,
                  detect_no_buy_holders, split_wallet_profile_cohorts,
                  wallet_profiles, conviction_split)
 
@@ -160,6 +161,31 @@ def test_profile_cohort_split_and_summary():
     print("  ok   UI cohort split + whale/dolphin summary")
 
 
+def test_cohort_cvd_series_and_divergence_filter():
+    """Profile-cohort CVD detects meaningful, filtered divergences."""
+    buckets = [i * 3600 for i in range(7)]
+    swaps = [
+        _swap("buy", 3.5, buckets[3], "WHALE_HELD"),
+        _swap("buy", 2.0, buckets[4], "DOLPHIN_HELD"),
+        _swap("buy", 4.0, buckets[1], "TRADER"),
+        _swap("sell", 1.0, buckets[2], "TRADER"),
+        _swap("sell", 3.0, buckets[4], "DIST"),
+    ]
+    profiles = wallet_profiles(swaps)
+    data = cohort_cvd_series(swaps, profiles, buckets, whale_min_sol=3.0)
+    assert data["series"]["whale_held"][-1] == 3.5
+    assert data["series"]["dolphin_held"][-1] == 2.0
+    assert data["series"]["trader"][-1] == 3.0
+    assert data["series"]["distributor"][-1] == -3.0
+
+    price = [10, 9, 8, 9, 10, 7.5, 9]
+    divs = detect_cohort_divergences(price, data, left=1, right=1)
+    labels = [d["label"] for d in divs]
+    assert "Whale Held CVD" in labels
+    assert any(d["type"] == "bullish" for d in divs)
+    print("  ok   cohort CVD series + filtered divergence")
+
+
 def test_detect_no_buy_holders_from_gmgn_meta():
     """Sell-only wallets with GMGN balance are surfaced separately."""
     swaps = [
@@ -195,5 +221,6 @@ if __name__ == "__main__":
     test_profile_weights_complete()
     test_multiple_wallets()
     test_profile_cohort_split_and_summary()
+    test_cohort_cvd_series_and_divergence_filter()
     test_detect_no_buy_holders_from_gmgn_meta()
     print("\nALL PASSED")

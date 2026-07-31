@@ -25,9 +25,14 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 4. **Export report/CSV ikut diperbarui** — markdown report membawa ringkasan
    whale/dolphin held-flow, section detail per cohort, dan section no-buy
    holders bila ada.
-5. **Helper network-free di `cvd.py`** — `split_wallet_profile_cohorts()`,
-   `cohort_activity_summary()`, dan `detect_no_buy_holders()` supaya logic UI
-   bisa dites tanpa Streamlit/jaringan.
+5. **Advanced cohort divergence** — section `🧭 Advanced cohort divergence`
+   membandingkan price pivots vs `Whale Held CVD`, `Dolphin Held CVD`,
+   `Trader CVD`, dan `Pure Distributor CVD`. Ini advisory dan difilter oleh
+   minimum SOL movement; divergence lama All CVD + Whale-swap CVD tetap utuh.
+6. **Helper network-free di `cvd.py`** — `split_wallet_profile_cohorts()`,
+   `cohort_activity_summary()`, `cohort_cvd_series()`,
+   `detect_cohort_divergences()`, dan `detect_no_buy_holders()` supaya logic
+   UI bisa dites tanpa Streamlit/jaringan.
 
 ### Kenapa
 
@@ -42,7 +47,8 @@ lagi tapi masih memegang supply.
 - `python -m py_compile cvd.py pages/4_📊_CVD.py tests/test_wallet_profiles.py`
   — lulus.
 - `python tests/test_wallet_profiles.py` — ALL PASSED, termasuk test baru
-  untuk split cohort, summary whale/dolphin, dan no-buy GMGN holder.
+  untuk split cohort, summary whale/dolphin, cohort CVD divergence, dan
+  no-buy GMGN holder.
 - `python tests/test_flow_safety.py` — ALL PASSED.
 
 ### Catatan

@@ -1293,6 +1293,164 @@ def detect_divergence(price, cvd, left=2, right=2):
     return out
 
 
+def cohort_cvd_series(swaps, profiles, bucket_ts, *,
+                      whale_min_sol=WHALE_SOL, dolphin_min_sol=1.0,
+                      bucket_s=BUCKET) -> dict:
+    """Build CVD series for wallet-profile cohorts.
+
+    ``bucket_ts`` must be the ordered bucket starts used by the UI chart.
+    Wallets are classified once from the full selected window, then every
+    swap from that wallet contributes signed SOL to exactly one cohort:
+    whale held, dolphin held, trader, or pure distributor.
+    """
+    groups = split_wallet_profile_cohorts(
+        profiles, whale_min_sol=whale_min_sol,
+        dolphin_min_sol=dolphin_min_sol)
+    whale_held = {
+        w for w, d, _co in groups["whale_accumulators"] +
+        groups["light_holders"]
+        if float(d.get("buy") or 0.0) >= whale_min_sol
+    }
+    dolphin_held = {
+        w for w, d, _co in groups["dolphin_accumulators"] +
+        groups["light_holders"]
+        if dolphin_min_sol <= float(d.get("buy") or 0.0) < whale_min_sol
+    }
+    traders = {w for w, _d, _co in groups["traders"]}
+    distributors = {
+        w for w, _d, _co in groups["whale_distributors"] +
+        groups["dolphin_distributors"]
+    }
+    wallet_to_group = {}
+    for key, wallets in (("whale_held", whale_held),
+                         ("dolphin_held", dolphin_held),
+                         ("trader", traders),
+                         ("distributor", distributors)):
+        for w in wallets:
+            wallet_to_group[w] = key
+
+    bucket_ts = [int(t) for t in bucket_ts]
+    bucket_index = {t: i for i, t in enumerate(bucket_ts)}
+    deltas = {k: [0.0] * len(bucket_ts) for k in
+              ("whale_held", "dolphin_held", "trader", "distributor")}
+    active = {k: set() for k in deltas}
+    volume = {k: 0.0 for k in deltas}
+
+    for side, sol, ts, wallet in swaps or []:
+        if not wallet or wallet not in wallet_to_group:
+            continue
+        try:
+            sol = float(sol or 0.0)
+            b = int(int(ts) // bucket_s * bucket_s)
+        except Exception:
+            continue
+        i = bucket_index.get(b)
+        if i is None:
+            continue
+        key = wallet_to_group[wallet]
+        signed = sol if side == "buy" else -sol
+        deltas[key][i] += signed
+        active[key].add(wallet)
+        volume[key] += abs(sol)
+
+    series = {}
+    for key, vals in deltas.items():
+        run = 0.0
+        arr = []
+        for v in vals:
+            run += v
+            arr.append(run)
+        series[key] = arr
+
+    meta = {
+        "whale_held": {
+            "label": "Whale Held CVD",
+            "min_delta": max(float(whale_min_sol), 3.0),
+            "active_wallets": len(active["whale_held"]),
+            "volume": volume["whale_held"],
+            "net": series["whale_held"][-1] if series["whale_held"] else 0.0,
+            "context": "high-conviction whale holder flow",
+            "priority": 0,
+        },
+        "dolphin_held": {
+            "label": "Dolphin Held CVD",
+            "min_delta": 2.0,
+            "active_wallets": len(active["dolphin_held"]),
+            "volume": volume["dolphin_held"],
+            "net": (series["dolphin_held"][-1]
+                    if series["dolphin_held"] else 0.0),
+            "context": "dolphin absorption / exit-liquidity check",
+            "priority": 2,
+        },
+        "trader": {
+            "label": "Trader CVD",
+            "min_delta": 3.0,
+            "active_wallets": len(active["trader"]),
+            "volume": volume["trader"],
+            "net": series["trader"][-1] if series["trader"] else 0.0,
+            "context": "lower-conviction trader flow",
+            "priority": 3,
+        },
+        "distributor": {
+            "label": "Pure Distributor CVD",
+            "min_delta": 3.0,
+            "active_wallets": len(active["distributor"]),
+            "volume": volume["distributor"],
+            "net": (series["distributor"][-1]
+                    if series["distributor"] else 0.0),
+            "context": "sell-only supply pressure",
+            "priority": 1,
+        },
+    }
+    return {"ts": bucket_ts, "series": series, "meta": meta}
+
+
+def detect_cohort_divergences(price, cohort_cvd, *, left=2, right=2) -> list:
+    """Detect meaningful price-vs-cohort CVD divergences.
+
+    ``cohort_cvd`` is the output of :func:`cohort_cvd_series`.  The base
+    pivot logic is unchanged from :func:`detect_divergence`, but each hit is
+    filtered by cohort-specific minimum CVD movement to avoid noisy labels.
+    """
+    out = []
+    if not cohort_cvd:
+        return out
+    series_map = cohort_cvd.get("series") or {}
+    meta_map = cohort_cvd.get("meta") or {}
+    for key, vals in series_map.items():
+        if len(vals) != len(price):
+            continue
+        meta = meta_map.get(key, {})
+        if int(meta.get("active_wallets") or 0) < 1:
+            continue
+        min_delta = float(meta.get("min_delta") or 0.0)
+        if float(meta.get("volume") or 0.0) < min_delta:
+            continue
+        for d in detect_divergence(price, vals, left=left, right=right):
+            a, b = d["i1"], d["i2"]
+            cvd_delta = float(vals[b]) - float(vals[a])
+            if abs(cvd_delta) < min_delta:
+                continue
+            nd = dict(d)
+            label = meta.get("label") or key
+            wallets = int(meta.get("active_wallets") or 0)
+            ctx = meta.get("context") or "cohort flow"
+            nd.update({
+                "src": key,
+                "label": label,
+                "cvd_delta": cvd_delta,
+                "active_wallets": wallets,
+                "volume": float(meta.get("volume") or 0.0),
+                "priority": int(meta.get("priority") or 9),
+            })
+            nd["detail"] = (
+                f"{d['detail']} · {label} Δ {cvd_delta:+.1f} SOL "
+                f"across {wallets} wallet(s) · {ctx}")
+            out.append(nd)
+    out.sort(key=lambda d: (d.get("priority", 9), d["type"] != "bullish"))
+    return out
+
+
 def get_h4_series(ca: str, hours_span=None):
     """Resample the hourly buckets into H4: returns (ts_list, cvd, whale_cvd,
     retail_cvd, buy_vol, sell_vol) aligned oldest->newest."""
