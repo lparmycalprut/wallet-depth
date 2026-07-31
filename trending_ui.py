@@ -35,6 +35,7 @@ CAPTION = (
     f"{FIT_OK}-{FIT_PRIME - 1} 🟡 OK = worth a manual check · "
     f"{FIT_WEAK}-{FIT_OK - 1} ⚪ WEAK · <{FIT_WEAK} POOR. "
     "🕸️ Risk column: bndl = bundler-traded supply · insd = dev/team hold · "
+    "bndl/insd <15% = 🟢 hijau · bndl/insd >=15% = 🔴 merah · "
     "trap = entrapment traders · bot = bot-degen flow. "
     "HRHR **Down dari ATH** dan pola candle H4 hanya konteks visual; keduanya "
     "tidak menambah Fit. Source: GMGN internal API (unofficial, may break "
@@ -176,7 +177,12 @@ def _glowing_note(text: str, color: str) -> str:
     )
 
 
-def _format_note_part(part: str) -> str:
+def _risk_bit_color(val: float, thresh: float = 0.15) -> str:
+    """Green below threshold, red at or above."""
+    return "#22c55e" if val < thresh else "#ef4444"
+
+
+def _format_note_part(part: str, row: dict = None) -> str:
     """Apply semantic emphasis to one semicolon-separated screener note."""
     # The scoring gate emits this phrase from T10 >=25%. It is an explicit
     # concentration warning, so make it impossible to miss in the notes.
@@ -191,6 +197,16 @@ def _format_note_part(part: str) -> str:
         part, re.IGNORECASE)
     if ath_match and float(ath_match.group(1)) >= 90.0:
         return _glowing_note(part, "#22c55e")
+
+    # Insider / bundler pressure glow based on max of the two ratios.
+    if row is not None and "insider/bundler pressure" in part.lower():
+        insider = row.get("insider_ratio") or row.get("dhr") or 0
+        bundler = row.get("bundler_rate") or row.get("bdrr") or 0
+        max_val = max(float(insider), float(bundler))
+        if max_val < 0.15:
+            return _glowing_note(part, "#22c55e")
+        else:
+            return _glowing_note(part, "#ef4444")
 
     is_danger = False
     # Check for extreme percentages (>=100%) in generic risk notes.
@@ -267,9 +283,18 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
             f"{fit}</span><br><span style='color:{colr};font-size:0.6rem;"
             f"font-weight:700'>{r.get('grade', '')}</span>",
             unsafe_allow_html=True)
+        ca = r["ca"]
+        gmgn_link = (f"<a href='https://gmgn.ai/sol/token/{ca}' target='_blank' "
+                     f"style='font-size:0.55rem;color:#f59e0b;text-decoration:none;"
+                     f"margin-left:3px;'>↗GMGN</a>")
+        dex_link = (f"<a href='https://dexscreener.com/solana/{ca}' target='_blank' "
+                    f"style='font-size:0.55rem;color:#3b82f6;text-decoration:none;"
+                    f"margin-left:3px;'>↗DEX</a>")
         cc[1].markdown(
             f"**{r['symbol'] or '?'}**  \n<span style='font-size:0.62rem;"
-            f"opacity:0.6'>{(r.get('name') or '')[:18]}</span>",
+            f"opacity:0.6'>{(r.get('name') or '')[:18]}</span>"
+            f"<span style='font-size:0.55rem;opacity:0.8'>{gmgn_link}"
+            f"{dex_link}</span>",
             unsafe_allow_html=True)
         cc[2].write(f"${r['mc']:,.0f}")
         cc[3].write(f"{r['liq_pct']}% MC")
@@ -287,12 +312,12 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
         cc[7].write(f"{r['age_d']}d")
         # 🕸️ live risk metrics (real GMGN fields: bdrr / dhr / etpr / bdr)
         bits = []
-        for lab, val, warn in (("bndl", r.get("bundler_rate", 0), 0.15),
-                               ("insd", r.get("insider_ratio", 0), 0.10),
-                               ("trap", r.get("entrap_rate", 0), 0.30),
-                               ("bot", r.get("botdegen_rate", 0), 0.30)):
-            if val:
-                c = "#ef4444" if val >= warn else "#94a3b8"
+        for lab, val, thresh in (("bndl", r.get("bundler_rate", 0), 0.15),
+                                 ("insd", r.get("insider_ratio", 0), 0.15),
+                                 ("trap", r.get("entrap_rate", 0), 0.30),
+                                 ("bot", r.get("botdegen_rate", 0), 0.30)):
+            if val is not None and val > 0:
+                c = _risk_bit_color(val, thresh)
                 bits.append(f"<span style='color:{c}'>{lab} "
                             f"{val * 100:.0f}%</span>")
         cc[8].markdown(
@@ -301,7 +326,7 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
             unsafe_allow_html=True)
         detail = r.get("notes") or r.get("wins") or "—"
         parts = detail.split("; ")
-        highlighted = [_format_note_part(part) for part in parts]
+        highlighted = [_format_note_part(part, r) for part in parts]
         # Prepend H4 candle pattern info (green glowing) for degen rows
         _cpattern_html = _format_candle_patterns(r.get("candle_patterns", {}))
         _notes_html = "<span style='font-size:0.80rem'>" + "; ".join(highlighted) + "</span>"

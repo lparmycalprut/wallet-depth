@@ -149,6 +149,11 @@ lebih tinggi, bukan smart wallet.
   display-only dan tidak boleh diam-diam menambah Fit. Jaga style lewat
   `tests/test_markup_ai_prompt.py` dan formula lewat
   `tests/test_scoring_continuity.py`.
+- **Screener Insider/Bundler 15%.** `bndl`/`insd` <15% = hijau `#22c55e`,
+  >=15% = merah `#ef4444`; note `insider/bundler pressure` glow hijau
+  (<15%) atau merah (>=15%) via `max(insider_ratio, bundler_rate)`; link
+  GMGN (`gmgn.ai`) dan DexScreener (`dexscreener.com`) kecil di cc[1];
+  caption diperbarui.
 
 ## 6. Markup safety + Prompt to AI
 
