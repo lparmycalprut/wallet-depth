@@ -6,7 +6,9 @@ Both the main dashboard (``app.py``) and the 🔎 Screener page call
 place — one table, one set of columns, one caption, one code path to fix.
 """
 import re
+import requests
 import streamlit as st
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from gmgn_screener import (FIT_OK, FIT_PRIME, FIT_WEAK, fit_color,
                            screen as gmgn_screen, screen_hrhr as gmgn_screen_hrhr)
@@ -71,6 +73,96 @@ def run_screen_hrhr(force: bool = False, key: str = "screener_hrhr_rows"):
                 st.session_state[key + "_err"] = str(exc)
     return (st.session_state.get(key) or [],
             st.session_state.get(key + "_err") or "")
+
+
+def _resolve_pair(ca: str):
+    """Return the best DexScreener pair address for a token CA, or None."""
+    try:
+        r = requests.get(
+            f"https://api.dexscreener.com/latest/dex/tokens/{ca}",
+            timeout=10)
+        pairs = (r.json() or {}).get("pairs") or []
+        if not pairs:
+            return None
+        pairs.sort(key=lambda p: (p.get("liquidity") or {}).get("usd") or 0,
+                   reverse=True)
+        return pairs[0].get("pairAddress")
+    except Exception:
+        return None
+
+
+def _fetch_h4_and_detect(ca: str) -> dict:
+    """Resolve pair -> fetch 12 H4 candles -> detect patterns.
+
+    Returns a dict of pattern name -> count, or empty dict on failure.
+    """
+    from cvd import fetch_candles, detect_candle_patterns
+    pair = _resolve_pair(ca)
+    if not pair:
+        return {}
+    candles = fetch_candles(pair, timeframe="hour", aggregate=4,
+                            limit=12, timeout=8)
+    if not candles:
+        return {}
+    return detect_candle_patterns(candles)
+
+
+def enrich_hrhr_with_patterns(rows: list) -> list:
+    """Enrich HRHR screener rows with H4 candle pattern detection.
+
+    For each token, resolves its DexScreener pair, fetches the last
+    12 H4 candles (48h), and detects small-body reversal / indecision
+    patterns (Doji, Hammer, Inverted Hammer, Spinning Top, etc.).
+
+    Adds a ``candle_patterns`` field (dict[str, int]) to each row.
+    Rows that fail to resolve are left with an empty dict.
+    """
+    if not rows:
+        return rows
+
+    pattern_cache_key = "hrhr_candle_patterns"
+    cached = st.session_state.get(pattern_cache_key, {})
+
+    # Figure out which CAs need fresh data
+    cas_to_fetch = [r["ca"] for r in rows if r.get("ca")
+                    and r["ca"] not in cached]
+
+    if cas_to_fetch:
+        with st.spinner("🕯️ Scanning H4 candle patterns…"):
+            workers = min(6, len(cas_to_fetch))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(_fetch_h4_and_detect, ca): ca
+                           for ca in cas_to_fetch}
+                for fut in as_completed(futures):
+                    ca = futures[fut]
+                    try:
+                        cached[ca] = fut.result()
+                    except Exception:
+                        cached[ca] = {}
+        st.session_state[pattern_cache_key] = cached
+
+    # Attach pattern data to each row
+    for r in rows:
+        r["candle_patterns"] = cached.get(r.get("ca", ""), {})
+
+    return rows
+
+
+def _format_candle_patterns(patterns: dict) -> str:
+    """Format candle pattern counts into a green-glowing HTML string."""
+    from cvd import PATTERN_EMOJI
+    if not patterns:
+        return ""
+    parts = []
+    for name, count in patterns.items():
+        emoji = PATTERN_EMOJI.get(name, "🕯️")
+        parts.append(f"{emoji} {name} {count}x")
+    text = "; ".join(parts)
+    return (
+        f"<span style='color:#22c55e;font-weight:700;"
+        f"text-shadow:0 0 6px #22c55e88,0 0 12px #22c55e44;"
+        f"filter:brightness(1.2);'>{text}</span>"
+    )
 
 
 def risk_banner(row: dict, big: bool = False) -> None:
@@ -182,10 +274,15 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
                     f"{p}</span>")
             else:
                 highlighted.append(p)
-        cc[10].markdown(
-            "<span style='font-size:0.80rem'>" +
-            "; ".join(highlighted) + "</span>",
-            unsafe_allow_html=True)
+        # Prepend H4 candle pattern info (green glowing) for degen rows
+        _cpattern_html = _format_candle_patterns(r.get("candle_patterns", {}))
+        _notes_html = "<span style='font-size:0.80rem'>" + "; ".join(highlighted) + "</span>"
+        if _cpattern_html:
+            _notes_html = (
+                "<span style='font-size:0.80rem;display:block;"
+                "margin-bottom:2px;'>" + _cpattern_html + "</span>"
+                + _notes_html)
+        cc[10].markdown(_notes_html, unsafe_allow_html=True)
         with cc[11]:
             if on_analyze is not None:
                 if st.button("Analyze →", key=f"{key_prefix}_an_{ca}",
@@ -199,7 +296,11 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
                     st.caption("⭐ watched")
                 elif st.button("⭐ watch", key=f"{key_prefix}_wl_{ca}",
                                use_container_width=True):
-                    add_to_watchlist(ca, symbol=r["symbol"] or "?")
+                    # Determine source from key_prefix so the watchlist
+                    # knows whether this token came from trending or HRHR.
+                    _src = "hrhr" if "hrhr" in key_prefix else "trending"
+                    add_to_watchlist(ca, symbol=r["symbol"] or "?",
+                                     source=_src)
                     st.rerun()
         risk_banner(r)
 

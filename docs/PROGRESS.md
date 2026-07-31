@@ -7,6 +7,83 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-07-31 (3) — Light Holder & Trader profiles, persistence conviction bonus
+
+### Yang berubah
+
+1. **Light Holder & Trader Profiles** — `wallet_profiles()` sekarang mengklasifikasikan wallet menjadi 5 kategori:
+   - `pure_accum` (sell ≤ 5% of buy) — held 95%+
+   - `light_holder` (5% < sell < 10% of buy) — held 90%+
+   - `trader` (10% ≤ sell ≤ 50% of buy) — held 50%+
+   - `two_way` (sell > 50% of buy, buy > 5% of sell) — bot/MM noise
+   - `pure_dist` (buy ≤ 5% of sell) — sold & left
+
+2. **Conviction Calculation dengan Weighted Volumes** — `conviction_split()` sekarang menghitung conviction dengan weighted buy volumes:
+   - pure_accum: 100% weight
+   - light_holder: 75% weight
+   - trader: 30% weight
+   - two_way: 0% weight
+   - Formula: `effective_buy / total_buy * 100`
+
+3. **Persistence Conviction Bonus** — `record_conviction()` menambahkan bonus +3% per cron point jika jumlah pure_accum + light_holder wallet bertambah berturut-turut. Cap +15%. Contoh: naik 3x berturut-turut = +9% bonus.
+
+4. **UI Update** — Pure flow metrics di dashboard sekarang 5 kolom: Pure Accum, Light Holder, Trader, Pure Distribution, Conviction Ratio. Accumulator table juga menampilkan light_holder dan trader wallets. CVD page juga diupdate.
+
+### Kenapa
+
+- Wallet yang sell 7% masih essentially holder — masuk two_way sebelumnya terlalu agresif.
+- Trader yang masih hold 50%+ masih ada kontribusi ke conviction — tidak boleh 0%.
+- Persistence bonus menghargai token yang holder base-nya tumbuh secara konsisten.
+
+### Verifikasi
+
+- 8/8 test suites lulus (termasuk `test_wallet_profiles.py` baru).
+- Semua file Python lulus `py_compile`.
+
+---
+
+## 2026-07-31 (2) — H4 candle pattern detection for Degen, phase threshold memecoin tuning
+
+### Yang berubah
+
+1. **H4 Candle Pattern Detection (Degen HRHR)** — Fungsi `detect_candle_patterns()` di `cvd.py` mendeteksi pola candle body kecil (Doji, Dragonfly Doji, Gravestone Doji, Hammer, Inverted Hammer, Spinning Top) di 12 candle H4 terakhir (48 jam). Hasilnya ditampilkan di kolom Notes HRHR screener dengan warna hijau glowing (`text-shadow`). Setiap token di-resolve pair address-nya via DexScreener, lalu fetch H4 candles dari GeckoTerminal. Pattern di-cache di session state supaya tidak re-fetch setiap rerun.
+2. **Phase Threshold Tuning untuk Memecoin** — Threshold `price_flat` di `detect_phase()` diubah dari ±8% jadi ±20% (akumulasi di bawah 20% masih flat). Threshold `Markup`/`Markdown` diubah: 24h > 50% ATAU 6h > 25% untuk dianggap "big move". `Distribution-Early` threshold diubah dari ±8% jadi ±20%. Parameter `price_change_6h` (6H change dari DexScreener) ditambahkan ke `detect_phase()` dan `chg6` ditambahkan ke `_prices` di `app.py`.
+3. **Test suite** — `tests/test_candle_patterns.py` ditambahkan (11 test cases, semua passed).
+
+### Kenapa
+
+- Pola candle body kecil (Doji, Hammer, dsb.) di H4 adalah acuan penting untuk degen entry di fibo bawah. Munculnya pola ini menandakan potensi reversal.
+- Threshold lama (±8% flat, ±15% big) terlalu ketat untuk memecoin yang volatility-nya tinggi. 20% masih normal untuk akumulasi, dan Markup/Markdown perlu 25%+ di 6h.
+
+### Verifikasi
+
+- 7/7 test suites lulus (termasuk `test_candle_patterns.py` baru).
+- Semua file Python lulus `py_compile`.
+
+---
+
+## 2026-07-31 — Degen Radar, LP Radar split, CVD dolphin details, bug fixes
+
+### Yang berubah
+
+1. **LP Radar & Degen Radar Split** — LP Radar sekarang hanya menampilkan token dari watchlist dengan source "trending" (dari GMGN trending screener). Token dari HRHR screener ditampilkan di card baru "⚡ Degen Radar" dengan border oranye dan styling yang berbeda. Source tracking ditambahkan ke `watchlist.py` (`add_to_watchlist(ca, source="trending"|"hrhr"|"manual")`).
+2. **HRHR Label "FOR DEGEN"** — Label expander HRHR diubah dari "FOR LP" menjadi "FOR DEGEN" untuk menegaskan bahwa token ini berisiko tinggi dan untuk degen trader.
+3. **Watchlist Ticker Bar Dinonaktifkan** — Ticker bar (chips harga scrollable) di atas LP Radar dinonaktifkan per permintaan owner. Safety sweep dan freshness sweep tetap berjalan normal.
+4. **Holder Warning Disederhanakan** — Banner merah "UNHEALTHY HOLDER BASE" yang mengkhawatirkan diganti dengan peringatan kuning yang lebih informatif dan tenang ("Holder base tipis").
+5. **Quick Pick Tanpa Tombol** — Tombol "Gunakan" dihapus dari Quick Pick. Memilih token dari dropdown langsung memicu Analyze + CVD 48h secara otomatis.
+6. **CVD Dolphin Details** — Halaman CVD sekarang menampilkan dolphin metrics row (pure buy/sell/net, whale vs dolphin ratio) dan kolom 🐬 Dolphin di multi-window table. Sebelumnya dolphin hanya muncul di tabel accumulator/distributor.
+7. **Bug Fix — hist_df NameError** — `hist_df` yang dulu hanya didefinisikan di dalam `if False:` block (chart section yang dinonaktifkan) sekarang dipindahkan keluar sebelum Divergence Check section. Ini memperbaiki crash `NameError: name 'hist_df' is not defined` yang muncul di Streamlit Cloud.
+8. **Bug Fix — GMGN Screener Random Fallback** — Fallback value di `_get_avg_cost_and_ath()` yang menggunakan `random.uniform()` diubah menjadi deterministik (-65% avg cost, -90% from ATH) supaya token yang sama selalu mendapat skor yang sama antar run.
+9. **Bug Fix — Duplicate drop_from_peak** — Baris `drop_from_peak = peak4 - cv` yang duplikat dihapus.
+10. **Test Update** — Test `LP Radar card avoids invalid nested anchor markup` diupdate dari `== 2` menjadi `>= 2` untuk mengakomodasi Degen Radar card yang juga menggunakan `href='{_cvd_link}'`.
+
+### Verifikasi
+
+- Seluruh suite test lulus: `tests/test_breakout_guard.py`, `tests/test_scoring_continuity.py`, `tests/test_markup_ai_prompt.py`, `tests/test_flow_safety.py`, `tests/test_holder_delta.py` — **ALL PASSED (5/5)**.
+- Seluruh file Python lulus kompilasi `py_compile`.
+
+---
+
 ## 2026-07-31 — GMGN API full, CVD Deep Focus, High Risk Screener & Watchlist Quick Delete
 
 ### Yang berubah

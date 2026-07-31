@@ -741,13 +741,14 @@ def _get_avg_cost_and_ath(t):
     """Parse average cost change % and down % from ATH from GMGN token metadata.
 
     Provides robust fallbacks to guarantee the UI remains functional.
+    Fallbacks are deterministic (not random) so the same token always
+    gets the same score across runs.
     """
     # Average cost change % (minimal -50% means holders are down at least -50% on average, e.g. -65%)
     avg_cost_change = t.get("avg_cost_change") or t.get("holder_avg_cost_change") or t.get("avg_cost_pct")
     if avg_cost_change is None:
-        # Fallback realistic value for HRHR micro-caps
-        import random
-        avg_cost_change = -1.0 * random.uniform(55.0, 78.0)
+        # Deterministic fallback for HRHR micro-caps: assume -65% (typical)
+        avg_cost_change = -65.0
     else:
         avg_cost_change = float(avg_cost_change)
 
@@ -759,8 +760,8 @@ def _get_avg_cost_and_ath(t):
         if ath > 0 and price > 0:
             down_from_ath = ((ath - price) / ath) * 100.0
         else:
-            import random
-            down_from_ath = random.uniform(85.0, 96.0)
+            # Deterministic fallback: assume -90% (typical for HRHR)
+            down_from_ath = 90.0
     else:
         down_from_ath = float(down_from_ath)
 

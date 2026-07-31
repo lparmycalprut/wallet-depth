@@ -219,13 +219,18 @@ Jebakan yang sudah pernah menggigit:
 Per 2026-07-31, seluruh sistem telah difokuskan murni menggunakan **GMGN Token Trades API** secara default (`use_gmgn_trades = True`) untuk semua penarikan data transaksi on-chain. Cron holder snapshot harian dari Helius (`_try_snapshot`) telah dinonaktifkan sementara.
 
 Beberapa pembaruan penting lainnya meliputi:
-- **Watchlist Quick Pick & Auto Analyze**: Memilih koin di Quick Pick akan langsung melakukan Analyze dan menjalankan CVD analisis untuk window 48h secara otomatis.
-- **Dolphin Cohort**: Menambahkan kategori Dolphin (`1.0 <= buy < 3.0 SOL`) di tabel akumulator dan distributor halaman utama dan halaman CVD.
+- **Watchlist Quick Pick & Auto Analyze**: Memilih koin di Quick Pick akan langsung melakukan Analyze dan menjalankan CVD analisis untuk window 48h secara otomatis (tanpa tombol "Gunakan").
+- **Dolphin Cohort**: Menambahkan kategori Dolphin (`1.0 <= buy < 3.0 SOL`) di tabel akumulator dan distributor halaman utama dan halaman CVD, termasuk dolphin metrics row dan kolom dolphin di multi-window table CVD.
+- **LP Radar & Degen Radar Split**: LP Radar hanya menampilkan token dari watchlist dengan source "trending" (dari GMGN trending screener). Token dari HRHR screener ditampilkan di card baru "⚡ Degen Radar" dengan border oranye. Source tracking ditambahkan ke `watchlist.py` (`add_to_watchlist(ca, source="trending"|"hrhr"|"manual")`).
+- **Screener "High Risk High Reward" — FOR DEGEN**: Label diubah dari "FOR LP" menjadi "FOR DEGEN" untuk menegaskan bahwa token ini berisiko tinggi dan untuk degen trader.
 - **Simplifikasi LP Radar**: Menghapus seluruh noise flags, borders menyala/glow, serta badge status (`KOKOH`, `NOISY`). Menampilkan momentum conviction dalam visualisasi grafik batang hijau (naik) / merah (turun) yang bersih, beserta catatan momentum akumulasi dan volume.
-- **Screener Baru "High Risk High Reward"**: Menambahkan fungsi pencarian token berisiko tinggi dengan marketcap rendah (<250K USD), gas fee tinggi (>30 SOL), minimal holders (1000), koin berusia 2-60 hari, serta average cost holder <= -50% dan persentase jatuh dari ATH (dengan label hijau jika >90%).
+- **Watchlist Ticker Bar Dinonaktifkan**: Ticker bar (chips harga scrollable) di atas LP Radar telah dinonaktifkan. Safety sweep dan freshness sweep tetap berjalan.
+- **Holder Warning Disederhanakan**: Banner merah "UNHEALTHY HOLDER BASE" yang mengkhawatirkan diganti dengan peringatan kuning yang lebih informatif dan tenang.
 - **Watchlist Quick Delete**: Tombol "Hapus" langsung disematkan di dashboard halaman utama sehingga pengguna dapat memotong token tanpa harus berpindah ke halaman watchlist.
 - **Data Integrity**: Penyimpanan file data (`cvd.json` & `conviction.json`) diubah murni atomik via `tempfile` + `os.replace` untuk menghindari korupsi file jika crash. Swaps raw juga secara otomatis dideduplikasi dan diurutkan secara kronologis saat pembaruan untuk menghindari inflasi volume yang tidak masuk akal.
 - **Scoring & Checklist**: LP locked dihapus dari bobot skor kesehatan (karena token pumpfun sudah otomatis terkunci), melainkan diganti tanda bahaya keras jika LP terdeteksi 0% (tidak dikunci sama sekali). Batas dust default disesuaikan menjadi $5.
 - **CVD Deep Focus**: Menghadirkan tabel analisis kepemilikan dan retensi pembeli murni dari timeframe terpilih saja, disaring dari dust (<$5), bots, dan churn.
+- **Bug Fix — hist_df NameError**: `hist_df` yang dulu hanya didefinisikan di dalam `if False:` block sekarang dipindahkan keluar sehingga Divergence Check dan session state save tidak crash.
+- **Bug Fix — GMGN Screener Random Fallback**: Fallback value di `_get_avg_cost_and_ath()` yang menggunakan `random` diubah menjadi deterministik supaya token yang sama selalu mendapat skor yang sama.
 
 Lihat `docs/PROGRESS.md` untuk riwayat keputusan detail dan daftar perubahan lengkap.

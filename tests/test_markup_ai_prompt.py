@@ -243,9 +243,9 @@ def test_ui_integration_guards():
     check("ThreadPoolExecutor" in app_source and
           "executor.map(fetch_one, pairs)" in app_source,
           "daily-candle sweep fetches watchlist pools concurrently")
-    check(app_source.count("href='{_cvd_link}'") == 2 and
+    check(app_source.count("href='{_cvd_link}'") >= 2 and
           'f"<a href=\'/CVD?ca={_ca}\'' not in app_source,
-          "LP Radar card avoids invalid nested anchor markup")
+          "LP Radar / Degen Radar cards avoid invalid nested anchor markup")
     check("_markup[\"level\"] == \"danger\"" in app_source,
           "the independent red banner is limited to +300% danger")
     check("dexscreener.com" in app_source and "gmgn.ai" in app_source,

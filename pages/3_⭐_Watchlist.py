@@ -75,7 +75,13 @@ if quick_pick_options:
         if qp_cols[2].button("Add", use_container_width=True,
                              type="primary", key="qp_add"):
             if chosen and chosen != "— pick one —":
-                if not add_to_watchlist(label_to_ca[chosen], note=qp_note):
+                _picked_ca = label_to_ca[chosen]
+                # Determine source from the quick-pick option
+                _picked_src = next(
+                    (src for ca, sym, _date, src in quick_pick_options
+                     if ca == _picked_ca), "manual")
+                if not add_to_watchlist(_picked_ca, note=qp_note,
+                                        source=_picked_src):
                     st.warning("Added, but GitHub commit failed — set "
                                "`github_token` in Streamlit Secrets so "
                                "changes survive restarts.")
@@ -96,7 +102,8 @@ with st.expander("➕ Add a CA manually", expanded=not wl):
                              label_visibility="collapsed").strip()
     if c3.button("Add", use_container_width=True, type="primary"):
         if new_ca:
-            if not add_to_watchlist(new_ca, note=new_note):
+            if not add_to_watchlist(new_ca, note=new_note,
+                                    source="manual"):
                 st.warning("Added, but GitHub commit failed — set "
                            "`github_token` in Streamlit Secrets so changes "
                            "survive restarts.")

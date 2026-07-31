@@ -438,13 +438,25 @@ else:
 # ---------------------------------------------------------------------------
 # Multi-window table
 # ---------------------------------------------------------------------------
+# Compute dolphin stats per window
+_dolphin_stats = {}
+for h in sorted(win_stats):
+    _wp = win_stats[h].get("profiles", {})
+    _db = sum(d["buy"] for d in _wp.values()
+              if d["profile"] in ("pure_accum", "light_holder") and 1.0 <= d["buy"] < WHALE_SOL)
+    _ds = sum(d["sell"] for d in _wp.values()
+              if d["profile"] == "pure_dist" and 1.0 <= d["sell"] < WHALE_SOL)
+    _dolphin_stats[h] = {"buy": _db, "sell": _ds, "net": _db - _ds}
+
 mw_rows = []
 for h in sorted(win_stats):
     s = win_stats[h]
+    _ds = _dolphin_stats.get(h, {})
     mw_rows.append({
         "Window": f"{h}h", "Swaps": f"{s['swaps']:,}",
         "Net CVD": f"{s['net']:+,.0f}",
         "🐋 Whale": f"{s['whale_net']:+,.0f}",
+        "🐬 Dolphin": f"{_ds.get('net', 0):+,.0f}",
         "🐟 Retail": f"{s['retail_net']:+,.0f}",
         "💎 Pure buy": f"{s['pure_buy']:,.0f}",
         "🩸 Pure sell": f"{s['pure_sell']:,.0f}",
@@ -552,10 +564,42 @@ if pser and all(p is not None for p in pser) and len(pser) >= 7:
 # Pure accumulators / distributors in the full selected window, with age
 # ---------------------------------------------------------------------------
 full_profiles = win_stats[max(win_stats)]["profiles"]
+
+# Compute dolphin-specific stats for the full window
+_dolphin_buy = sum(d["buy"] for d in full_profiles.values()
+                   if d["profile"] in ("pure_accum", "light_holder") and 1.0 <= d["buy"] < WHALE_SOL)
+_dolphin_sell = sum(d["sell"] for d in full_profiles.values()
+                    if d["profile"] == "pure_dist" and 1.0 <= d["sell"] < WHALE_SOL)
+_dolphin_net = _dolphin_buy - _dolphin_sell
+_whale_buy = sum(d["buy"] for d in full_profiles.values()
+                 if d["profile"] in ("pure_accum", "light_holder") and d["buy"] >= WHALE_SOL)
+_whale_sell = sum(d["sell"] for d in full_profiles.values()
+                  if d["profile"] == "pure_dist" and d["sell"] >= WHALE_SOL)
+_whale_net = _whale_buy - _whale_sell
+
+# Dolphin metrics row
+if _dolphin_buy > 0 or _dolphin_sell > 0:
+    dm1, dm2, dm3, dm4 = st.columns(4)
+    dm1.metric("🐬 Dolphin pure buy", f"{_dolphin_buy:,.1f} SOL",
+               "1.0–3.0 SOL buyers", delta_color="off")
+    dm2.metric("🐬 Dolphin pure sell", f"{_dolphin_sell:,.1f} SOL",
+               "1.0–3.0 SOL sellers", delta_color="off")
+    dm3.metric("🐬 Dolphin net", f"{_dolphin_net:+,.1f} SOL",
+               "buying" if _dolphin_net >= 0 else "selling",
+               delta_color="normal" if _dolphin_net >= 0 else "inverse")
+    dm4.metric("🐋 vs 🐬 ratio",
+               f"{_whale_net:+,.0f} / {_dolphin_net:+,.0f}",
+               "whale / dolphin net",
+               delta_color="off")
+
 accs = sorted([(w, d, "🐋 WHALE") for w, d in full_profiles.items()
                if d["profile"] == "pure_accum" and d["buy"] >= WHALE_SOL] +
               [(w, d, "🐬 DOLPHIN") for w, d in full_profiles.items()
-               if d["profile"] == "pure_accum" and 1.0 <= d["buy"] < WHALE_SOL],
+               if d["profile"] == "pure_accum" and 1.0 <= d["buy"] < WHALE_SOL] +
+              [(w, d, "🛡️ LIGHT") for w, d in full_profiles.items()
+               if d["profile"] == "light_holder" and d["buy"] >= WHALE_SOL] +
+              [(w, d, "📊 TRADER") for w, d in full_profiles.items()
+               if d["profile"] == "trader" and d["buy"] >= WHALE_SOL],
               key=lambda x: -x[1]["buy"])[:15]
 dists = sorted([(w, d, "🐋 WHALE") for w, d in full_profiles.items()
                 if d["profile"] == "pure_dist" and d["sell"] >= WHALE_SOL] +
@@ -645,7 +689,7 @@ if _f_start and _f_end and swaps_all:
     if focus_swaps:
         fs = summarize_swap_range(focus_swaps, whale_min_sol=WHALE_SOL)
         _f_accs = sorted([(w, d) for w, d in fs["profiles"].items()
-                          if d["profile"] == "pure_accum" and d["buy"] >= WHALE_SOL],
+                          if d["profile"] in ("pure_accum", "light_holder") and d["buy"] >= WHALE_SOL],
                          key=lambda x: -x[1]["buy"])[:10]
         _f_dists = sorted([(w, d) for w, d in fs["profiles"].items()
                            if d["profile"] == "pure_dist" and d["sell"] >= WHALE_SOL],
@@ -687,11 +731,12 @@ if _f_start and _f_end and swaps_all:
         # Conviction + dominance
         _conv = fs["conviction"]
         _net_pure = _conv["pure_buy"] - _conv["pure_sell"]
-        fm5, fm6, fm7, fm8 = st.columns(4)
+        fm5, fm6, fm7, fm8, fm9 = st.columns(5)
         fm5.metric("💎 Pure buy", f"{_conv['pure_buy']:,.1f}")
-        fm6.metric("🩸 Pure sell", f"{_conv['pure_sell']:,.1f}")
-        fm7.metric("Conviction", f"{_conv['conviction_pct']:.0f}%")
-        fm8.metric("Dominance", f"{fs['dominance_pct']:.1f}%",
+        fm6.metric("🛡️ Light holder", f"{_conv['lh_buy']:,.1f}")
+        fm7.metric("🩸 Pure sell", f"{_conv['pure_sell']:,.1f}")
+        fm8.metric("Conviction", f"{_conv['conviction_pct']:.0f}%")
+        fm9.metric("Dominance", f"{fs['dominance_pct']:.1f}%",
                    help="Largest single wallet's share of total volume")
 
         # Verdict for the focus range
