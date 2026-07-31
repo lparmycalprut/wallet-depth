@@ -35,7 +35,7 @@ buktikan kalibrasinya tidak bergeser (lihat §5).
 | `signals.py` | log sinyal CVD → `signals.json` + notif Telegram |
 | `watchlist.py` | watchlist helpers (load/save/add/remove + GitHub commit) |
 | `scripts/update_cvd.py` | entry point cron (tiap jam, menit :20) |
-| `tests/` | 5 suite, **jalan tanpa pytest & tanpa jaringan** |
+| `tests/` | 9 suite, **jalan tanpa pytest & tanpa jaringan** |
 
 **File data yang di-commit cron** (jangan di-`.gitignore`):
 `cvd.json` · `signals.json` · `conviction.json` · `levels.json` ·
@@ -129,6 +129,13 @@ wallet yang beli 50 lalu jual 30 muncul sebagai **net +20**, bukan
 
 Dulu tumpukan `if/elif` sehingga 1 smart wallet membalik skor 54→77.
 Sekarang interpolasi linear lewat `CURVES` / `PENALTY_CURVES` / `CAP_CURVE`.
+**Kontrak Fit terkini:** raw score hanya 4 pillar struktural: T10 30,
+liquidity/MC 30, rug 25, volume/MC 15. Price 24h/1h, holder count, dan age
+tidak mendapat poin; price/age tetap konteks visual. Smart/KOL dihapus dari
+scorer row dan tabel. Gate price, smart, dan age sudah dihapus; jangan
+masukkan kembali diam-diam. Holder count tetap safety gate (tanpa raw points)
+sesuai keputusan pemilik. Sorting tie memakai T10 lebih rendah lalu liquidity
+lebih tinggi, bukan smart wallet.
 
 **Kalau mengubah scoring, wajib:**
 1. Titik tengah tiap ramp = ambang lama (jaga kalibrasi).
@@ -136,6 +143,12 @@ Sekarang interpolasi linear lewat `CURVES` / `PENALTY_CURVES` / `CAP_CURVE`.
    >4 poin antar-langkah input.
 3. Bandingkan distribusi grade lama vs baru di token sintetis. Patokan
    terakhir: PRIME ~1,7%→2,9%, flag high-risk **100% identik**.
+- **Style screener bukan scoring.** `T10 ... too concentrated` dan kolom
+  T10 mulai 25% memakai red glow; `Down >=90% dari ATH` memakai green
+  glow melalui `trending_ui._format_note_part()`. Retrace ATH tetap
+  display-only dan tidak boleh diam-diam menambah Fit. Jaga style lewat
+  `tests/test_markup_ai_prompt.py` dan formula lewat
+  `tests/test_scoring_continuity.py`.
 
 ## 6. Markup safety + Prompt to AI
 
@@ -166,6 +179,7 @@ python tests/test_scoring_continuity.py
 python tests/test_markup_ai_prompt.py
 python tests/test_flow_safety.py          # LP Radar 4-window + flow checks + GMGN new penalties
 python tests/test_helius_rotation.py       # key merge/de-dup + 429 failover
+python tests/test_cvd_update.py            # stale backfill persistence/status
 ```
 
 Tanpa pytest, tanpa jaringan. **Tes wajib mem-patch semua path file**
@@ -198,6 +212,13 @@ Jebakan yang sudah pernah menggigit:
   `get_helius_keys()` + `helius_rpc()`/`helius_api_get()`. Jangan kembali
   membuat endpoint `?api-key=...` langsung di app/page/cron; itu akan
   melewati `helius_extra_keys` dan failover 429/5xx.
+- **Manual stale backfill harus melaporkan hasil nyata.** Di `app.py`, CA
+  baru boleh masuk `stale_watchlist_cas` setelah `record_conviction()`
+  menghasilkan point. Jangan menghitung panjang `_to_refresh` sebagai jumlah
+  sukses: pool kosong, window tanpa swap, fetch/save exception harus tetap
+  gagal dan bisa dicoba lagi. Raw-swap prune di `cvd.update_token_cvd()`
+  memakai key comprehension (`key[2]`), bukan nama argumen lambda yang hanya
+  hidup di dalam lambda. Jaga lewat `tests/test_cvd_update.py`.
 - **Jangan commit `config.json`** (berisi API key, sudah di `.gitignore`).
 - **LP Radar 48h butuh ≥8 cron point (≥2 hari).** Sebelum itu, sparkline
   baris ke-4 mirror 24h supaya tidak misleading ke 0%. Konvensi ini di-

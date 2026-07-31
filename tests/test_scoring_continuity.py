@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Continuity + calibration tests for the GMGN fit score.
+"""Continuity + calibration tests for the structural GMGN Fit score.
 
-The bug these guard against: the score used to be a stack of if/elif
-threshold ladders, so a hair's-breadth move in one input could swing the
-result by 20+ points. RAKO with 9 smart wallets scored 54 (WEAK); the same
-token with 10 scored 77 (PRIME). Nothing about the token had changed.
+Fit deliberately uses only T10 concentration, liquidity/MC, rug score, and
+volume/MC. Price action and token age are display context; smart/KOL are
+removed. Holder count has no points but remains a safety gate.
 
 Run with:  python tests/test_scoring_continuity.py   (no pytest needed)
 """
@@ -107,38 +106,32 @@ def test_no_cliffs():
               f"{name}: max jump {worst_jump:.1f} <= {MAX_JUMP}{detail}")
 
 
-def test_rako_regression():
-    """The exact case from the bug report: 9 vs 10 smart wallets."""
-    print("\n[regression] RAKO 9 vs 10 smart wallets")
-    s9, r9 = score(dict(RAKO, smt=9))
-    s10, r10 = score(dict(RAKO, smt=10))
-    check(abs(s10 - s9) < MAX_JUMP,
-          f"one extra smart wallet moves score {s9:.1f}→{s10:.1f} "
-          f"(was 54→77 before the fix)")
-    # Grades are discrete, so *some* input will always sit on a band edge.
-    # What must not happen is a grade change while the score barely moves
-    # in the middle of a band — i.e. the grade may only flip when the two
-    # scores straddle a band boundary by a narrow margin.
-    if r9["grade"] != r10["grade"]:
-        edges = [g.FIT_WEAK, g.FIT_OK, g.FIT_PRIME]
-        lo, hi = min(s9, s10), max(s9, s10)
-        check(any(lo <= e <= hi for e in edges),
-              f"grade flip {r9['grade']}→{r10['grade']} is a band-edge "
-              f"crossing ({s9:.1f}→{s10:.1f}), not a scoring cliff")
-    else:
-        check(True, f"grade stable ({r9['grade']})")
-    # and the whole neighbourhood must be smooth, not just this one pair
-    seq = [score(dict(RAKO, smt=n))[0] for n in range(5, 16)]
-    steps = [abs(b - a) for a, b in zip(seq, seq[1:])]
-    check(max(steps) < MAX_JUMP,
-          f"smt 5→15 sweep is smooth, biggest step {max(steps):.1f}: "
-          f"{[round(x) for x in seq]}")
+def test_removed_inputs_are_score_neutral():
+    """Retired price/smart/KOL/age inputs must never change Fit."""
+    print("\n[removed inputs] price/age are context; smart/KOL are removed")
+    base_score, _ = score(GOOD)
+    variants = (
+        ("24h pump", {"pcp": 140.0}),
+        ("24h dump", {"pcp": -90.0}),
+        ("1h whipsaw", {"pcp1h": 80.0}),
+        ("zero smart/KOL", {"smt": 0, "kol": 0}),
+        ("many smart/KOL", {"smt": 500, "kol": 100}),
+        ("brand new age", {"ot": NOW - 60}),
+        ("very old age", {"ot": NOW - 365 * 86400}),
+    )
+    for label, changes in variants:
+        actual, _ = score(dict(GOOD, **changes))
+        check(abs(actual - base_score) < 1e-9,
+              f"{label} leaves Fit unchanged at {actual:.1f}")
+    _, row = score(GOOD)
+    check("smart" not in row and "kol" not in row,
+          "smart/KOL fields are removed from the scorer row")
 
 
 def test_monotonic():
     """Better input never scores worse (and vice-versa for risk fields)."""
     print("\n[monotonicity] each pillar moves the score the right way")
-    better = {"smt": [0, 5, 10, 20, 30, 50], "hd": [500, 1000, 2500, 5000],
+    better = {"hd": [500, 1000, 2500, 5000],
               "lq": [10_000, 30_000, 60_000, 100_000, 150_000]}
     worse = {"t10": [0.10, 0.18, 0.25, 0.32, 0.40],
              "rug": [0.05, 0.2, 0.35, 0.5],
@@ -160,22 +153,31 @@ def test_monotonic():
 
 
 def test_calibration_preserved():
-    """The ramps must not turn the screener into a rubber stamp."""
-    print("\n[calibration] grades still mean what the README says")
+    """The rebalanced structural score must stay selective."""
+    print("\n[calibration] structural pillars still enforce clean grades")
     sg, rg = score(GOOD)
     sb, rb = score(BAD)
-    check(rg["grade"] == "PRIME", f"clean token is PRIME ({sg:.0f})")
+    check(rg["grade"] == "PRIME", f"clean structure is PRIME ({sg:.0f})")
     check(rb["high_risk"] and sb <= g.HIGH_RISK_CAP,
           f"junk token is capped at {g.HIGH_RISK_CAP} ({sb:.0f}, "
           f"{rb['grade']})")
-    # a token that clearly breaks one gate must not reach PRIME
-    for field, val, label in ((("pcp"), 60.0, "already pumped +60%"),
-                              ("smt", 3, "3 smart wallets"),
-                              ("t10", 0.32, "T10 32%"),
-                              ("hd", 700, "700 holders")):
-        s, r = score(dict(GOOD, **{field: val}))
-        check(s < g.FIT_PRIME,
-              f"{label} keeps it out of PRIME ({s:.0f} {r['grade']})")
+
+    # Broken structural gates still prevent PRIME. Holder count has no raw
+    # points, but the owner explicitly kept its safety gate.
+    for field, value, label in (("t10", 0.32, "T10 32%"),
+                                ("lq", GOOD["mc"] * 0.03,
+                                 "liquidity 3% MC"),
+                                ("rug", 0.57, "rug score 0.57"),
+                                ("hd", 700, "700 holders")):
+        result, row = score(dict(GOOD, **{field: value}))
+        check(result < g.FIT_PRIME,
+              f"{label} keeps it out of PRIME "
+              f"({result:.0f} {row['grade']})")
+
+    check(sum(g.WEIGHTS.values()) == 100,
+          f"rebalanced pillar weights sum to 100: {g.WEIGHTS}")
+    check(set(g.WEIGHTS) == {"t10", "liq", "rug", "vol"},
+          f"only four structural pillars remain: {sorted(g.WEIGHTS)}")
 
 
 def test_bounds_and_types():
@@ -199,21 +201,22 @@ def test_bounds_and_types():
 
 
 def test_ranking_resolution():
-    """Near-identical tokens must still be rankable, not tied."""
-    print("\n[ranking] ramps give finer separation than the ladders")
-    toks = [dict(RAKO, a=f"t{i}", smt=8 + i) for i in range(5)]
-    rows = sorted((g.score_token(t) for t in toks),
-                  key=lambda r: -r["fit_exact"])
-    exacts = [r["fit_exact"] for r in rows]
+    """Nearby structural readings must remain rankable, not tied."""
+    print("\n[ranking] structural ramps retain fine score resolution")
+    toks = [dict(RAKO, a=f"t{i}", t10=0.14 + i * 0.005)
+            for i in range(5)]
+    rows = sorted((g.score_token(token) for token in toks),
+                  key=lambda row: -row["fit_exact"])
+    exacts = [row["fit_exact"] for row in rows]
     check(len(set(exacts)) == len(exacts),
-          f"5 tokens 1 smart wallet apart get 5 distinct scores: "
-          f"{[round(x, 1) for x in exacts]}")
+          f"5 nearby T10 readings get 5 distinct scores: "
+          f"{[round(value, 1) for value in exacts]}")
     check(exacts == sorted(exacts, reverse=True), "sorted descending")
 
 
 if __name__ == "__main__":
     test_no_cliffs()
-    test_rako_regression()
+    test_removed_inputs_are_score_neutral()
     test_monotonic()
     test_calibration_preserved()
     test_bounds_and_types()

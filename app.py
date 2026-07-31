@@ -715,31 +715,66 @@ if _wl:
                 else:
                     _fr_pbar = st.progress(
                         0.0, text="🔄 Backfilling stale tokens…")
+                    _fr_succeeded = []
+                    _fr_failed = []
                     for _fr_i, _fr_ca in enumerate(_to_refresh):
+                        _fr_symbol = _wl[_fr_ca].get("symbol", "?")
                         _fr_market = _prices.get(_fr_ca) or {}
                         _fr_pool = _fr_market.get("pair")
                         if not _fr_pool:
-                            continue
-                        try:
-                            from cvd import update_token_cvd, record_conviction
-                            update_token_cvd(
-                                helius_keys, _fr_ca, _fr_pool,
-                                max_pages=200)
-                            record_conviction(_fr_ca, window_h=6)
-                            st.session_state[_freshness_state_key].add(_fr_ca)
-                        except Exception as _fr_exc:
+                            _fr_error = "main pool tidak tersedia"
+                            _fr_failed.append((_fr_ca, _fr_symbol, _fr_error))
                             st.warning(
-                                f"Backfill ${_wl[_fr_ca].get('symbol', '?')} "
-                                f"gagal: {_fr_exc}")
+                                f"Backfill ${_fr_symbol} gagal: {_fr_error}")
+                        else:
+                            try:
+                                from cvd import (update_token_cvd,
+                                                 record_conviction)
+                                update_token_cvd(
+                                    helius_keys, _fr_ca, _fr_pool,
+                                    max_pages=200)
+                                _fr_point = record_conviction(
+                                    _fr_ca, window_h=6)
+                                if _fr_point is None:
+                                    raise RuntimeError(
+                                        "tidak ada swap 6 jam untuk merekam "
+                                        "conviction")
+                                st.session_state[_freshness_state_key].add(
+                                    _fr_ca)
+                                _fr_succeeded.append(_fr_ca)
+                            except Exception as _fr_exc:
+                                _fr_failed.append(
+                                    (_fr_ca, _fr_symbol, str(_fr_exc)))
+                                st.warning(
+                                    f"Backfill ${_fr_symbol} gagal: "
+                                    f"{_fr_exc}")
                         _fr_pbar.progress(
                             (_fr_i + 1) / len(_to_refresh),
-                            text=f"🔄 Backfilled "
-                                 f"{_fr_i + 1}/{len(_to_refresh)}…")
+                            text=f"🔄 Diproses {_fr_i + 1}/"
+                                 f"{len(_to_refresh)} · "
+                                 f"{len(_fr_succeeded)} berhasil…")
                     _fr_pbar.empty()
-                    st.success(
-                        f"✅ Backfilled {len(_to_refresh)} token(s). "
-                        f"Reload page (F5) untuk lihat angka terbaru."
-                    )
+                    if _fr_failed:
+                        _fr_failed_syms = ", ".join(
+                            f"${symbol}" for _, symbol, _ in _fr_failed)
+                        if _fr_succeeded:
+                            st.warning(
+                                f"⚠️ Backfill selesai sebagian: "
+                                f"{len(_fr_succeeded)} berhasil, "
+                                f"{len(_fr_failed)} gagal "
+                                f"({_fr_failed_syms}). Reload page (F5) "
+                                f"untuk melihat token yang berhasil.")
+                        else:
+                            st.error(
+                                f"❌ Backfill gagal: 0/{len(_to_refresh)} "
+                                f"token berhasil ({_fr_failed_syms}). "
+                                f"Token gagal belum ditandai sebagai "
+                                f"refreshed dan bisa dicoba lagi.")
+                    else:
+                        st.success(
+                            f"✅ Backfilled {len(_fr_succeeded)} token(s). "
+                            f"Reload page (F5) untuk lihat angka terbaru."
+                        )
             _fr_cols[1].caption(
                 "Calls `update_token_cvd` + `record_conviction` for each "
                 "stale token (Helius credits — usually under 50 calls per "
@@ -1223,8 +1258,8 @@ default_ca = qp_ca or st.session_state.get("last_ca", "")
 
 # ------------------ TRENDING SCREENER (inline, full detail) ------------------
 # One button. Results are rendered by the SAME renderer the 🔎 Screener page
-# uses, so every detail (fit, grade, MC, liq, T10, smart money, holders, 24h,
-# age, notes, risk banners) is visible right here.
+# uses, so every detail (fit, grade, MC, liq, T10, holders, 24h, age, notes,
+# risk banners) is visible right here. Smart/KOL are intentionally omitted.
 picked_ca = None          # set when "Analyze →" is pressed inside the table
 
 scan_trending = st.button("🔥 Scan Trending Now", key="trending_scan",

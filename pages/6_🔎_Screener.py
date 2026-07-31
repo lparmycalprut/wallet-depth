@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Page: GMGN trending screener scored by our accumulation criteria."""
+"""Page: GMGN trending screener scored by structural LP criteria."""
 import os
 import sys
 
@@ -20,8 +20,9 @@ st.title("🔎 Screener — GMGN trending, scored our way")
 st.caption("Pulls GMGN's trending list (pre-filtered: age 2-30d, migrated, "
            "renounced+frozen, no wash trading, liq ≥$30K, MC ≥$100K, "
            "holders ≥1000, vol ≥$100K, insiders/bundlers ≤15%) and scores "
-           "each token for ACCUMULATION fit: flat price + low concentration "
-           "+ healthy liquidity + smart money + low rug risk.")
+           "each token for structural LP fit: low concentration + healthy "
+           "liquidity + low rug risk + sane volume/MC. Price and age are "
+           "context only; smart-money/KOL are no longer used or displayed.")
 
 scan = st.button("🔎 Scan trending now", type="primary",
                  use_container_width=True)

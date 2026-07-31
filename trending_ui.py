@@ -15,28 +15,30 @@ from gmgn_screener import (FIT_OK, FIT_PRIME, FIT_WEAK, fit_color,
 
 #: layout of the result table (label, relative width)
 COLUMNS = [("Fit", 0.75), ("Token", 1.5), ("MC", 1.1), ("Liq", 0.9),
-           ("T10", 0.7), ("🧠 Smart", 0.85), ("Holders", 0.9),
-           ("24h", 0.8), ("Age", 0.6), ("🕸️ Risk", 1.5), ("Notes", 2.2),
-           ("", 1.25)]
+           ("T10", 0.7), ("Holders", 0.9), ("24h", 0.8), ("Age", 0.6),
+           ("🕸️ Risk", 1.5), ("Notes", 2.2), ("", 1.25)]
 
 CAPTION = (
-    f"**Fit score (strict):** price base (22) + T10 concentration (20) + "
-    f"liquidity (15) + smart money (14) + rug score (12) + volume sanity (9) "
-    f"+ holders (4) + age (4), **minus penalties** for bundler/insider "
-    f"pressure, entrapment & bot-degen flow, snipers still holding, rug risk "
-    f"and thin liquidity. A broken pillar (already pumped >25%, T10 >25%, "
-    f"liq <5% MC, <10 smart wallets, <1000 holders, <2d old…) caps the score "
-    f"at {FIT_OK - 1}, and the cap drops further with each extra flaw, while "
-    f"any hard red flag caps it at 40. Every pillar and gate is a "
-    f"**continuous ramp**, so a token just short of a threshold loses a "
-    f"point or two rather than falling off a cliff — a 9th vs 10th smart "
-    f"wallet is a nudge, not a 20-point swing. So **≥{FIT_PRIME} 🟢 "
-    f"PRIME is rare and means every pillar is clean**. "
+    f"**Fit struktural (strict):** T10 concentration (30) + liquidity/MC "
+    f"(30) + rug score (25) + volume/MC sanity (15), **minus penalties** "
+    f"for bundler/insider pressure, entrapment & bot-degen flow, snipers "
+    f"still holding, rug risk, concentration, dan thin liquidity. Harga "
+    f"24h/1h dan umur token hanya konteks tampilan, bukan input Fit. "
+    f"Smart-money dan KOL tidak dipakai atau ditampilkan. Holder count "
+    f"tidak mendapat poin, "
+    f"tetapi holder base <1.000 tetap menjadi safety gate. Broken structural "
+    f"gate (T10 >25%, liq <5% MC, rug >0.45, holder <1.000, atau pressure "
+    f"wallet berbahaya) membatasi grade; hard red flag membatasi Fit ke 40. "
+    f"Setiap pillar dan gate memakai **continuous ramp**, bukan threshold "
+    f"yang melompat. Jadi **≥{FIT_PRIME} 🟢 PRIME hanya untuk struktur yang "
+    f"bersih**. "
     f"{FIT_OK}-{FIT_PRIME - 1} 🟡 OK = worth a manual check · "
     f"{FIT_WEAK}-{FIT_OK - 1} ⚪ WEAK · <{FIT_WEAK} POOR. "
     "🕸️ Risk column: bndl = bundler-traded supply · insd = dev/team hold · "
     "trap = entrapment traders · bot = bot-degen flow. "
-    "Source: GMGN internal API (unofficial, may break anytime). Always run a "
+    "HRHR **Down dari ATH** dan pola candle H4 hanya konteks visual; keduanya "
+    "tidak menambah Fit. Source: GMGN internal API (unofficial, may break "
+    "anytime). Always run a "
     "full **Analyze** before acting — this is a filter, not a signal."
 )
 
@@ -165,6 +167,49 @@ def _format_candle_patterns(patterns: dict) -> str:
     )
 
 
+def _glowing_note(text: str, color: str) -> str:
+    """Render one important screener note with a high-contrast glow."""
+    return (
+        f"<span style='color:{color};font-weight:800;"
+        f"text-shadow:0 0 6px {color},0 0 14px {color}99;"
+        f"filter:brightness(1.35);'>{text}</span>"
+    )
+
+
+def _format_note_part(part: str) -> str:
+    """Apply semantic emphasis to one semicolon-separated screener note."""
+    # The scoring gate emits this phrase from T10 >=25%. It is an explicit
+    # concentration warning, so make it impossible to miss in the notes.
+    if re.search(r"\bT10\s+\d+(?:\.\d+)?%\s+too concentrated\b",
+                 part, re.IGNORECASE):
+        return _glowing_note(part, "#ef4444")
+
+    # HRHR candidates at least 90% below ATH are visually highlighted as a
+    # deep-retrace setup. This is display-only and does not add Fit points.
+    ath_match = re.search(
+        r"\bDown\s+(\d+(?:\.\d+)?)%\s+dari\s+ATH\b",
+        part, re.IGNORECASE)
+    if ath_match and float(ath_match.group(1)) >= 90.0:
+        return _glowing_note(part, "#22c55e")
+
+    is_danger = False
+    # Check for extreme percentages (>=100%) in generic risk notes.
+    for keyword in ("already ran", "downtrend", "entrapment", "trap",
+                    "pump", "dumped", "distribution", "rug", "insider",
+                    "bundler", "bot-degen"):
+        if keyword in part.lower():
+            numbers = re.findall(r"[+-]?\d+", part)
+            extreme = any(int(number) >= 100 for number in numbers)
+            if extreme or keyword in (
+                    "rug", "insider", "bundler", "entrapment", "trap",
+                    "bot-degen", "dumped", "distribution"):
+                is_danger = True
+            break
+    if is_danger:
+        return f"<span style='color:#ef4444;font-weight:700;'>{part}</span>"
+    return part
+
+
 def risk_banner(row: dict, big: bool = False) -> None:
     """Red warning box for a high-risk token."""
     if not row.get("high_risk"):
@@ -202,7 +247,7 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
                   and not r.get("high_risk"))
     n_risk = sum(1 for r in rows if r.get("high_risk"))
     st.markdown(
-        f"**{len(rows)} tokens** · sorted by accumulation-fit · "
+        f"**{len(rows)} tokens** · sorted by structural Fit · "
         f"<span style='color:#22c55e'>{n_prime} PRIME</span> · "
         f"<span style='color:#ef4444'>{n_risk} high-risk</span>",
         unsafe_allow_html=True)
@@ -228,14 +273,18 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
             unsafe_allow_html=True)
         cc[2].write(f"${r['mc']:,.0f}")
         cc[3].write(f"{r['liq_pct']}% MC")
-        cc[4].write(f"{r['t10_pct']}%")
-        cc[5].write(f"{r['smart']}")
-        cc[6].write(f"{r['holders']:,}")
+        if r["t10_pct"] >= 25:
+            cc[4].markdown(
+                _glowing_note(f"{r['t10_pct']}%", "#ef4444"),
+                unsafe_allow_html=True)
+        else:
+            cc[4].write(f"{r['t10_pct']}%")
+        cc[5].write(f"{r['holders']:,}")
         chg = r["chg24"]
-        cc[7].markdown(
+        cc[6].markdown(
             f"<span style='color:{'#22c55e' if chg >= 0 else '#ef4444'}'>"
             f"{chg:+.0f}%</span>", unsafe_allow_html=True)
-        cc[8].write(f"{r['age_d']}d")
+        cc[7].write(f"{r['age_d']}d")
         # 🕸️ live risk metrics (real GMGN fields: bdrr / dhr / etpr / bdr)
         bits = []
         for lab, val, warn in (("bndl", r.get("bundler_rate", 0), 0.15),
@@ -246,34 +295,13 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
                 c = "#ef4444" if val >= warn else "#94a3b8"
                 bits.append(f"<span style='color:{c}'>{lab} "
                             f"{val * 100:.0f}%</span>")
-        cc[9].markdown(
+        cc[8].markdown(
             "<span style='font-size:0.80rem'>" +
             (" · ".join(bits) if bits else "—") + "</span>",
             unsafe_allow_html=True)
         detail = r.get("notes") or r.get("wins") or "—"
-        # Highlight dangerous notes with red styling — only extreme %
         parts = detail.split("; ")
-        highlighted = []
-        for p in parts:
-            is_danger = False
-            # Check for extreme percentages (≥100%) in the note
-            for kw in ["already ran", "downtrend", "entrapment", "trap",
-                       "pump", "dumped", "distribution", "rug",
-                       "insider", "bundler", "bot-degen"]:
-                if kw in p.lower():
-                    nums = re.findall(r'[+-]?\d+', p)
-                    extreme = any(int(n) >= 100 for n in nums)
-                    if extreme or kw in ("rug", "insider", "bundler",
-                                        "entrapment", "trap", "bot-degen",
-                                        "dumped", "distribution"):
-                        is_danger = True
-                    break
-            if is_danger:
-                highlighted.append(
-                    f"<span style='color:#ef4444;font-weight:700;'>"
-                    f"{p}</span>")
-            else:
-                highlighted.append(p)
+        highlighted = [_format_note_part(part) for part in parts]
         # Prepend H4 candle pattern info (green glowing) for degen rows
         _cpattern_html = _format_candle_patterns(r.get("candle_patterns", {}))
         _notes_html = "<span style='font-size:0.80rem'>" + "; ".join(highlighted) + "</span>"
@@ -282,8 +310,8 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
                 "<span style='font-size:0.80rem;display:block;"
                 "margin-bottom:2px;'>" + _cpattern_html + "</span>"
                 + _notes_html)
-        cc[10].markdown(_notes_html, unsafe_allow_html=True)
-        with cc[11]:
+        cc[9].markdown(_notes_html, unsafe_allow_html=True)
+        with cc[10]:
             if on_analyze is not None:
                 if st.button("Analyze →", key=f"{key_prefix}_an_{ca}",
                              use_container_width=True):
