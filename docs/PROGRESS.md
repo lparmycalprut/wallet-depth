@@ -7,6 +7,22 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-01 — Mengembalikan Tombol Force Refresh dengan Estimasi Waktu (ETA)
+
+### Yang berubah
+
+1. **Tombol "🔄 Force refresh now" dikembalikan.** Sesuai permintaan terbaru, fitur auto-refresh yang secara diam-diam membackfill token baru (lewat `watchlist_auto_refresh_cas`) kini diubah menjadi klik manual.
+2. **Proses sinkronisasi dilengkapi estimasi (ETA).** Saat tombol diklik, proses iterasi (loop) akan menghitung sisa waktu (`rem_time`) berdasarkan waktu mulai dan menyajikannya bersama *progress bar*.
+3. Tombol ini tidak hanya menangani token baru, melainkan mencakup **semua token yang stale** (`_stale_cas` + `_very_stale_cas`).
+
+### Kenapa begitu
+Pemilik meminta agar visibilitas proses *refresh* diperjelas dengan menyediakan kontrol manual secara eksplisit beserta estimasi penyelesaian sinkronisasi.
+
+### Verifikasi
+- Terverifikasi pada `app.py`: kompilasi sukses (`python -m py_compile app.py`). Logika baru diintegrasikan di lokasi *freshness sweep* yang sama dengan *graceful error handling* dan tampilan indikator sinkronisasi.
+
+---
+
 ## 2026-08-01 — Stat avg cost GMGN di card LP/Degen + kolom AvgCost di scan trending/degen
 
 ### Yang berubah

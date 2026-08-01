@@ -903,85 +903,94 @@ if _wl:
                 + (f" +{len(_stale_cas) - 5} more" if len(_stale_cas) > 5 else ""))
 
     # ------------------------------------------------------------------
-    # 🔄 Auto-refresh for newly added watchlist tokens. The manual
-    # "Force refresh now" button was removed (owner request): adding a
-    # token to the watchlist now backfills its CVD/conviction data
-    # immediately on the next rerun instead of waiting for the 4h cron.
+    # 🔄 Manual refresh for newly added/stale watchlist tokens.
     # ------------------------------------------------------------------
     _pending_refresh = st.session_state.get(
         "watchlist_auto_refresh_cas") or set()
-    if _pending_refresh and _wl:
-        _to_refresh = [c for c in _pending_refresh
+    
+    _all_to_refresh = set(list(_pending_refresh) + _stale_cas + _very_stale_cas)
+    if _all_to_refresh and _wl:
+        _to_refresh = [c for c in _all_to_refresh
                        if c in _wl and c not in
                        st.session_state[_freshness_state_key]]
-        st.session_state["watchlist_auto_refresh_cas"] = set()  # consume
         if _to_refresh:
-            if not helius_keys:
-                st.caption("⏳ Token baru butuh backfill CVD, tapi Helius "
-                           "API key belum dikonfigurasi — data akan terisi "
-                           "oleh cron berikutnya.")
-            else:
-                _fr_pbar = st.progress(
-                    0.0, text="🔄 Backfilling newly added token(s)…")
-                _fr_succeeded = []
-                _fr_failed = []
-                for _fr_i, _fr_ca in enumerate(_to_refresh):
-                    _fr_symbol = _wl[_fr_ca].get("symbol", "?")
-                    _fr_market = _prices.get(_fr_ca) or {}
-                    _fr_pool = _fr_market.get("pair")
-                    if not _fr_pool:
-                        _fr_failed.append((_fr_ca, _fr_symbol,
-                                           "main pool tidak tersedia"))
-                        st.warning(
-                            f"Backfill ${_fr_symbol} gagal: main pool "
-                            f"tidak tersedia")
-                    else:
-                        try:
-                            from cvd import (update_token_cvd,
-                                             record_conviction)
-                            update_token_cvd(
-                                helius_keys, _fr_ca, _fr_pool,
-                                max_pages=200)
-                            _fr_point = record_conviction(
-                                _fr_ca, window_h=6)
-                            if _fr_point is None:
-                                raise RuntimeError(
-                                    "tidak ada swap 6 jam untuk merekam "
-                                    "conviction")
-                            st.session_state[_freshness_state_key].add(
-                                _fr_ca)
-                            _fr_succeeded.append(_fr_ca)
-                        except Exception as _fr_exc:
-                            _fr_failed.append(
-                                (_fr_ca, _fr_symbol, str(_fr_exc)))
-                            st.warning(
-                                f"Backfill ${_fr_symbol} gagal: {_fr_exc}")
-                    _fr_pbar.progress(
-                        (_fr_i + 1) / len(_to_refresh),
-                        text=f"🔄 Diproses {_fr_i + 1}/"
-                             f"{len(_to_refresh)} · "
-                             f"{len(_fr_succeeded)} berhasil…")
-                _fr_pbar.empty()
-                if _fr_failed:
-                    _fr_failed_syms = ", ".join(
-                        f"${symbol}" for _, symbol, _ in _fr_failed)
-                    if _fr_succeeded:
-                        st.warning(
-                            f"⚠️ Auto-refresh selesai sebagian: "
-                            f"{len(_fr_succeeded)} berhasil, "
-                            f"{len(_fr_failed)} gagal "
-                            f"({_fr_failed_syms}). Reload page (F5) "
-                            f"untuk melihat token yang berhasil.")
-                    else:
-                        st.error(
-                            f"❌ Auto-refresh gagal: 0/{len(_to_refresh)} "
-                            f"token berhasil ({_fr_failed_syms}). "
-                            f"Data akan dicoba lagi oleh cron berikutnya.")
+            if st.button("🔄 Force refresh now"):
+                st.session_state["watchlist_auto_refresh_cas"] = set()  # consume
+                if not helius_keys:
+                    st.warning("⏳ Token baru butuh backfill CVD, tapi Helius "
+                               "API key belum dikonfigurasi — data akan terisi "
+                               "oleh cron berikutnya.")
                 else:
-                    st.success(
-                        f"✅ Ditambahkan + di-refresh {len(_fr_succeeded)} "
-                        f"token(s) — cards di bawah sudah pakai data "
-                        f"terbaru.")
+                    import time
+                    _fr_pbar = st.progress(
+                        0.0, text="🔄 Backfilling token(s)…")
+                    _fr_succeeded = []
+                    _fr_failed = []
+                    _start_time = time.time()
+                    for _fr_i, _fr_ca in enumerate(_to_refresh):
+                        _fr_symbol = _wl[_fr_ca].get("symbol", "?")
+                        _fr_market = _prices.get(_fr_ca) or {}
+                        _fr_pool = _fr_market.get("pair")
+                        if not _fr_pool:
+                            _fr_failed.append((_fr_ca, _fr_symbol,
+                                               "main pool tidak tersedia"))
+                            st.warning(
+                                f"Backfill ${_fr_symbol} gagal: main pool "
+                                f"tidak tersedia")
+                        else:
+                            try:
+                                from cvd import (update_token_cvd,
+                                                 record_conviction)
+                                update_token_cvd(
+                                    helius_keys, _fr_ca, _fr_pool,
+                                    max_pages=200)
+                                _fr_point = record_conviction(
+                                    _fr_ca, window_h=6)
+                                if _fr_point is None:
+                                    raise RuntimeError(
+                                        "tidak ada swap 6 jam untuk merekam "
+                                        "conviction")
+                                st.session_state[_freshness_state_key].add(
+                                    _fr_ca)
+                                _fr_succeeded.append(_fr_ca)
+                            except Exception as _fr_exc:
+                                _fr_failed.append(
+                                    (_fr_ca, _fr_symbol, str(_fr_exc)))
+                                st.warning(
+                                    f"Backfill ${_fr_symbol} gagal: {_fr_exc}")
+                        
+                        _elapsed = time.time() - _start_time
+                        _avg_time = _elapsed / (_fr_i + 1)
+                        _rem_time = _avg_time * (len(_to_refresh) - (_fr_i + 1))
+                        _eta_str = f"{_rem_time:.0f}s" if _rem_time > 0 else "selesai"
+                        
+                        _fr_pbar.progress(
+                            (_fr_i + 1) / len(_to_refresh),
+                            text=f"🔄 Sync progress: {_fr_i + 1}/"
+                                 f"{len(_to_refresh)} · "
+                                 f"Estimasi selesai: {_eta_str} · "
+                                 f"{len(_fr_succeeded)} berhasil…")
+                    _fr_pbar.empty()
+                    if _fr_failed:
+                        _fr_failed_syms = ", ".join(
+                            f"${symbol}" for _, symbol, _ in _fr_failed)
+                        if _fr_succeeded:
+                            st.warning(
+                                f"⚠️ Sync selesai sebagian: "
+                                f"{len(_fr_succeeded)} berhasil, "
+                                f"{len(_fr_failed)} gagal "
+                                f"({_fr_failed_syms}). Reload page (F5) "
+                                f"untuk melihat token yang berhasil.")
+                        else:
+                            st.error(
+                                f"❌ Sync gagal: 0/{len(_to_refresh)} "
+                                f"token berhasil ({_fr_failed_syms}). "
+                                f"Data akan dicoba lagi oleh cron berikutnya.")
+                    else:
+                        st.success(
+                            f"✅ Selesai! Di-refresh {len(_fr_succeeded)} "
+                            f"token(s) — cards di bawah sudah pakai data "
+                            f"terbaru.")
 
     # ------------------------------------------------------------------
     # 💧 LP Radar — watchlist tokens from TRENDING source only.
