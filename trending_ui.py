@@ -16,7 +16,8 @@ from gmgn_screener import (FIT_OK, FIT_PRIME, FIT_WEAK, fit_color,
 #: layout of the result table (label, relative width)
 COLUMNS = [("Fit", 0.75), ("Token", 1.5), ("MC", 1.1), ("Liq", 0.9),
            ("Top 10", 0.7), ("Holders", 0.9), ("24h", 0.8), ("ATH", 0.7),
-           ("Age", 0.6), ("🕸️ Risk", 1.5), ("Notes", 2.2), ("", 1.25)]
+           ("AvgCost", 0.8), ("Age", 0.6), ("🕸️ Risk", 1.5), ("Notes", 2.2),
+           ("", 1.25)]
 
 CAPTION = (
     f"**Fit struktural (strict):** Top-10 concentration (30) + liquidity/MC "
@@ -38,8 +39,11 @@ CAPTION = (
     "bndl/insd <15% = 🟢 hijau · bndl/insd >=15% = 🔴 merah · "
     "trap = entrapment traders · bot = bot-degen flow. "
     "Kolom **ATH** = jarak harga saat ini dari ATH (display-only, "
-    "hijau bila retrace ≥90%). HRHR **Down dari ATH** dan pola candle "
-    "H4 hanya konteks visual; keduanya "
+    "hijau bila retrace ≥90%). Kolom **AvgCost** = % harga saat ini vs "
+    "rata-rata harga beli holder dari GMGN (`avg_cost_change`; negatif = "
+    "holder rata-rata rugi, merah ≤ -50%, oranye <0%, hijau ≥0%; "
+    "display-only, tidak menambah Fit). HRHR **Down dari ATH** dan pola "
+    "candle H4 hanya konteks visual; keduanya "
     "tidak menambah Fit. Source: GMGN internal API (unofficial, may break "
     "anytime). Always run a "
     "full **Analyze** before acting — this is a filter, not a signal."
@@ -324,7 +328,19 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
                 cc[7].write(f"-{_down:.0f}%")
         else:
             cc[7].write("—")
-        cc[8].write(f"{r['age_d']}d")
+        # AvgCost column: current price vs GMGN holder average cost %
+        # (display-only). Red <= -50% (deeply underwater), orange < 0%,
+        # green >= 0% (holders on average in profit).
+        _avg = r.get("avg_cost")
+        if _avg is not None:
+            _avg_col = ("#ef4444" if _avg <= -50.0
+                        else ("#f59e0b" if _avg < 0.0 else "#22c55e"))
+            cc[8].markdown(
+                f"<span style='color:{_avg_col};font-weight:700'>"
+                f"{_avg:+.0f}%</span>", unsafe_allow_html=True)
+        else:
+            cc[8].write("—")
+        cc[9].write(f"{r['age_d']}d")
         # 🕸️ live risk metrics (real GMGN fields: bdrr / dhr / etpr / bdr)
         bits = []
         for lab, val, thresh in (("bndl", r.get("bundler_rate", 0), 0.15),
@@ -335,7 +351,7 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
                 c = _risk_bit_color(val, thresh)
                 bits.append(f"<span style='color:{c}'>{lab} "
                             f"{val * 100:.0f}%</span>")
-        cc[8].markdown(
+        cc[10].markdown(
             "<span style='font-size:0.80rem'>" +
             (" · ".join(bits) if bits else "—") + "</span>",
             unsafe_allow_html=True)
@@ -350,8 +366,8 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
                 "<span style='font-size:0.80rem;display:block;"
                 "margin-bottom:2px;'>" + _cpattern_html + "</span>"
                 + _notes_html)
-        cc[9].markdown(_notes_html, unsafe_allow_html=True)
-        with cc[10]:
+        cc[11].markdown(_notes_html, unsafe_allow_html=True)
+        with cc[12]:
             if on_analyze is not None:
                 if st.button("Analyze →", key=f"{key_prefix}_an_{ca}",
                              use_container_width=True):
@@ -369,7 +385,8 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
                     _src = "hrhr" if "hrhr" in key_prefix else "trending"
                     add_to_watchlist(ca, symbol=r["symbol"] or "?",
                                      source=_src,
-                                     down_ath=r.get("down_ath"))
+                                     down_ath=r.get("down_ath"),
+                                     avg_cost=r.get("avg_cost"))
                     st.rerun()
         risk_banner(r)
 

@@ -580,6 +580,7 @@ def screen():
         seen.add(ca)
 
         _avg_cost, down_ath = _get_avg_cost_and_ath(t)
+        row["avg_cost"] = _avg_cost
         row["down_ath"] = down_ath
         # ATH context in the notes (display-only, does not affect Fit).
         ath_note = f"Down {down_ath:.1f}% dari ATH"

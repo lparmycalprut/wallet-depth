@@ -691,6 +691,42 @@ def _ath_html(ca: str, meta: dict) -> str:
             f"<b style='color:{col};'>-{v:.0f}%</b></div>")
 
 
+def _ca_avg_cost(ca: str, meta: dict):
+    """GMGN holder average-cost change % for a watchlist CA, from the
+    watchlist meta or session screener rows (whichever is fresher).
+    None when unknown."""
+    v = meta.get("avg_cost")
+    if v is not None:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            pass
+    for _rk in ("screener_rows", "screener_hrhr_rows"):
+        for _r in (st.session_state.get(_rk) or []):
+            if _r.get("ca") == ca and _r.get("avg_cost") is not None:
+                try:
+                    return float(_r["avg_cost"])
+                except (TypeError, ValueError):
+                    pass
+    return None
+
+
+def _avg_cost_html(ca: str, meta: dict) -> str:
+    """Small 'avg cost' line for the LP/Degen Radar cards — how far the
+    current price is above/below GMGN's holder average cost. Red <= -50%
+    (deeply underwater), orange < 0%, green >= 0%. Display-only. Empty
+    string when the value is unknown."""
+    v = _ca_avg_cost(ca, meta)
+    if v is None:
+        return ""
+    col = ("#ef4444" if v <= -50.0 else
+           ("#f59e0b" if v < 0.0 else "#22c55e"))
+    return (f"<div style='font-size:0.72rem;color:#94a3b8;"
+            f"margin-top:4px;line-height:1.4;'>"
+            f"💰 <span style='color:#64748b;'>avg cost:</span> "
+            f"<b style='color:{col};'>{v:+.0f}%</b></div>")
+
+
 def _pattern_block_html(title: str, pt: dict, has_candles: bool) -> str:
     """HTML for one small-body candle summary (pattern counts + range).
 
@@ -1221,8 +1257,9 @@ if _wl:
                 f"target='_blank' title='GMGN' "
                 f"style='color:#64748b;text-decoration:none;'>⚡</a>"
                 f"</span></div>"
-                # distance from ATH (display-only context)
+                # distance from ATH + GMGN avg cost (display-only context)
                 f"{_ath_html(_ca, _meta)}"
+                f"{_avg_cost_html(_ca, _meta)}"
                 # holder-delta badges (whale / dolphin) on their own line
                 f"<div style='display:flex;gap:5px;flex-wrap:wrap;"
                 f"margin-top:5px;'>{_hd_badges_html}</div>"
@@ -1272,6 +1309,8 @@ if _wl:
                        "(Δ dalam SOL + N↑ dompet masuk + N↓ keluar). "
                        "**📉 dari ATH** = jarak harga saat ini dari ATH (display-only, "
                        "hijau bila retrace ≥90%). "
+                       "**💰 avg cost** = % harga saat ini vs rata-rata harga beli "
+                       "holder (GMGN, display-only; merah ≤ -50%, oranye <0%, hijau ≥0%). "
                        "**💎 Real ≥$5 vs 🪙 dust** = jumlah + rasio real/dust. "
                        "**🕯️ H4/H1 body kecil** = pola doji/hammer/spinning top 48h "
                        "beserta range harga pola-nya (H4 & H1 terpisah). "
@@ -1461,8 +1500,9 @@ if _wl:
                     f"target='_blank' title='GMGN' "
                     f"style='color:#64748b;text-decoration:none;'>⚡</a>"
                     f"</span></div>"
-                    # distance from ATH (display-only context)
+                    # distance from ATH + GMGN avg cost (display-only context)
                     f"{_ath_html(_ca, _meta)}"
+                    f"{_avg_cost_html(_ca, _meta)}"
                     # real holder vs dust ratio (min $5)
                     f"{_rd_html_deg}"
                     f"{phase_html_deg}"
@@ -1504,6 +1544,8 @@ if _wl:
                            "Bar hijau = conviction naik, bar merah = turun. "
                            "**📉 dari ATH** = jarak harga saat ini dari ATH "
                            "(display-only, hijau bila retrace ≥90%). "
+                           "**💰 avg cost** = % harga saat ini vs rata-rata harga "
+                           "beli holder (GMGN, display-only). "
                            "**💎 Real ≥$5 vs 🪙 dust** = jumlah + rasio real/dust. "
                            "**🕯️ H4/H1 body kecil** = pola doji/hammer/spinning "
                            "top 48h + range harga pola-nya (H4 & H1 terpisah). "

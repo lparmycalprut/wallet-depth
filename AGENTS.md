@@ -309,6 +309,12 @@ Jebakan yang sudah pernah menggigit:
 - **Snapshot harian menyimpan `name`** (nama lengkap token) di
   `history.json`. Pembaca history wajib pakai `.get("name")` dengan
   fallback — snapshot lama tidak punya field ini.
+- **Stat `avg_cost` GMGN (display-only) di screener + card.** `screen()`
+  (trending) menyimpan `row["avg_cost"]` seperti `screen_hrhr`; tabel
+  screener punya kolom **AvgCost** (merah ≤ -50%, oranye <0%, hijau ≥0%);
+  card LP/Degen Radar menampilkan `💰 avg cost` via `app._avg_cost_html()`
+  dengan fallback session screener rows. `add_to_watchlist(..., avg_cost=)`
+  menyimpannya di watchlist meta dan `_apply_ops` wajib ikut menyalinnya.
 
 ## 8. Status & langkah berikutnya
 

@@ -7,6 +7,49 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-01 — Stat avg cost GMGN di card LP/Degen + kolom AvgCost di scan trending/degen
+
+### Yang berubah
+
+1. **`gmgn_screener.screen()` (trending) sekarang menyimpan `row["avg_cost"]`**
+   (dari `_get_avg_cost_and_ath`), sejajar dengan `screen_hrhr` yang sudah
+   menyimpannya. Fallback deterministik -65% tetap berlaku bila GMGN tidak
+   mengirim field `avg_cost_change`.
+2. **Kolom `AvgCost` baru di tabel screener** (`trending_ui.COLUMNS`, dipakai
+   scan trending & degen/HRHR): % harga saat ini vs rata-rata harga beli
+   holder GMGN — merah ≤ -50% (holder rata-rata rugi dalam), oranye <0%,
+   hijau ≥0%. Display-only, tidak menambah Fit (dijelaskan di CAPTION).
+   Indeks kolom render digeser (risk/notes/buttons ke cc[10]/cc[11]/cc[12]).
+3. **Card LP Radar & Degen Radar menampilkan `💰 avg cost`** lewat helper
+   baru `app._ca_avg_cost()` + `app._avg_cost_html()` (mirror pola
+   `_ca_down_ath`/`_ath_html`): baca dari watchlist meta → fallback session
+   screener rows (`screener_rows`/`screener_hrhr_rows`). Warna sama dengan
+   kolom tabel. Caption kedua card di-update.
+4. **`watchlist.add_to_watchlist()` menerima `avg_cost`** (opsional),
+   disimpan di entry + meta (fresh capture menang), dan `_apply_ops`
+   ikut menyalin field `avg_cost` saat replay journal. Tombol ⭐ watch di
+   `trending_ui` meneruskan `avg_cost=r.get("avg_cost")`.
+
+### Verifikasi
+
+- `python -m py_compile` (13 file incl. gmgn_screener/trending_ui) — lulus.
+- `python -m pyflakes *.py pages/*.py scripts/*.py` — bersih (hanya 2
+  f-string lama yang di luar scope).
+- 3 suite test (`test_breakout_guard`, `test_scoring_continuity`,
+  `test_markup_ai_prompt`) — ALL PASSED (test markup memeriksa labels
+  COLUMNS & CAPTION tetap valid).
+- Offline checks: `screen()` membawa `avg_cost` (-62.5 dari field GMGN,
+  fallback -65.0); watchlist menyimpan + replay journal membawa avg_cost;
+  re-add tanpa avg_cost tidak menghapus nilai lama; `_avg_cost_html`
+  render 3 warna + empty saat unknown + fallback session rows.
+- `git diff --check` bersih (cr-at-eol).
+
+### Catatan / sisa PR
+
+- Token watchlist lama (ditambahkan sebelum fitur ini) tidak punya
+  `avg_cost` di meta — card tetap aman (line disembunyikan) dan terisi
+  otomatis saat di-add ulang dari screener atau via fallback session rows.
+
 ## 2026-08-01 — Watchlist HRHR→LP bug + atomic JSON writes + cluster scan paralel + auto-refresh on add
 
 ### Yang berubah

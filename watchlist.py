@@ -42,9 +42,10 @@ def _apply_ops(wl: dict, ops: list) -> dict:
         if op.get("op") == "add":
             entry = wl.setdefault(op["ca"], {})
             # Copy every journaled field (symbol/note/added/source/
-            # down_ath) — dropping e.g. `source` here made HRHR adds
-            # fall back to the LP Radar's default ("trending").
-            for _k in ("symbol", "note", "added", "source", "down_ath"):
+            # down_ath/avg_cost) — dropping e.g. `source` here made
+            # HRHR adds fall back to the LP Radar's default ("trending").
+            for _k in ("symbol", "note", "added", "source", "down_ath",
+                       "avg_cost"):
                 if op.get(_k) is not None and _k not in entry:
                     entry[_k] = op[_k]
         elif op.get("op") == "remove":
@@ -174,7 +175,8 @@ def _journal(op: dict) -> None:
 
 
 def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
-                     source: str = "", down_ath: float = None) -> bool:
+                     source: str = "", down_ath: float = None,
+                     avg_cost: float = None) -> bool:
     """Add *ca* to the watchlist.
 
     *source* tracks where the token came from (``"trending"``,
@@ -184,6 +186,10 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
     *down_ath* (optional) is the % the current price is below the
     all-time high, captured when the token was added from a screener.
     The LP/Degen Radar cards show it as ATH context.
+
+    *avg_cost* (optional) is GMGN's holder average-cost change % —
+    how far the current price is above/below the average holder buy
+    price. Cards show it as an "avg cost" stat.
     """
     entry = {"symbol": symbol, "note": note,
              "added": datetime.now().strftime("%Y-%m-%d")}
@@ -191,6 +197,8 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
         entry["source"] = source
     if down_ath is not None:
         entry["down_ath"] = float(down_ath)
+    if avg_cost is not None:
+        entry["avg_cost"] = float(avg_cost)
     # journal FIRST -> the change can never visually revert (stale reads,
     # failed commits, redeploys); journal is cleaned once repo reflects it
     _journal({"op": "add", "ca": ca, **entry})
@@ -214,6 +222,9 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
         # overrides a stale/missing one so HRHR adds never land in the
         # LP Radar section by accident.
         wl[ca]["source"] = source
+    if avg_cost is not None:
+        # Fresh GMGN avg-cost capture wins over a stale/missing one.
+        wl[ca]["avg_cost"] = float(avg_cost)
     return save_watchlist(wl, f"add {symbol} ({ca[:8]}…)")
 
 
