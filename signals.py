@@ -64,7 +64,8 @@ def record_signal(ca: str, symbol: str, sig_type: str, detail: str, *,
     # push important signals to Telegram too (best effort)
     try:
         from breakout_guard import send_telegram
-        emo = {"accumulation": "🟢", "distribution": "🔴",
+        emo = {"accumulation": "🟢", "stealth_accumulation": "🕵️",
+               "distribution": "🔴",
                "bullish_div": "📈", "bearish_div": "📉"}.get(sig_type)
         if emo and src == "cron":
             send_telegram(
@@ -81,9 +82,17 @@ def detect_and_record(ca: str, symbol: str, *, src: str = "cron",
                       window_h: int = 6, price_now: float = None,
                       pool: str = None) -> list:
     """Run flow + divergence detection on the stored swaps/buckets and
-    record any signals. Returns list of recorded signal types."""
+    record any signals. Returns list of recorded signal types.
+
+    Signal types (dedup 4h per (ca, type)):
+      - "accumulation"        broad: LH+trader+pure_accum all positive
+      - "stealth_accumulation" pure_accum whales dominating while
+                              light_holder/trader net negative
+                              (the most important stealth pattern)
+      - "distribution"        dumpers dominate holders
+    """
     from cvd import (get_recent_swaps, get_series, detect_divergence,
-                     fetch_price_series, wallet_profiles)
+                     fetch_price_series, wallet_profiles, WHALE_SOL)
     recorded = []
 
     # --- battle-tested CVD flow check: holders (LH/trader/pure) vs dumpers --
@@ -105,6 +114,14 @@ def detect_and_record(ca: str, symbol: str, *, src: str = "cron",
         holders_net = lh_net + trader_net + pure_net
         n_holders = n_lh + n_trader + n_pure
 
+        # Whale-tier pure_accum (the smart money, Fix #2.2a)
+        pure_whale_net = sum(d["buy"] - d["sell"] for d in profiles.values()
+                             if d.get("profile") == "pure_accum"
+                             and d.get("buy", 0) >= WHALE_SOL)
+        n_pure_whale = sum(1 for d in profiles.values()
+                           if d.get("profile") == "pure_accum"
+                           and d.get("buy", 0) >= WHALE_SOL)
+
         dist_net = max(0.0, sum(d["sell"] - d["buy"] for d in profiles.values()
                                 if d.get("profile") in ("pure_dist", "two_way")))
         n_dist = sum(1 for d in profiles.values()
@@ -121,6 +138,24 @@ def detect_and_record(ca: str, symbol: str, *, src: str = "cron",
                     retail_net=-dist_net, price=price_now)
                 if ok:
                     recorded.append("accumulation")
+            # Fix #2.2c: Stealth accumulation — whales absorbing while
+            # LH/trader are net sellers. This is the pattern the old
+            # logic missed because it required (lh_net + trader_net) > 0.
+            elif pure_whale_net >= 5.0 and n_pure_whale >= 1 and \
+                    (lh_net + trader_net) < 0 and pure_whale_net >= 5.0:
+                ok = record_signal(
+                    ca, symbol, "stealth_accumulation",
+                    f"🕵️ stealth accumulation: whales absorbed "
+                    f"+{pure_whale_net:.1f} SOL via {n_pure_whale} pure_accum "
+                    f"wallet(s) while LH/trader net "
+                    f"{lh_net + trader_net:+.1f} SOL — quiet "
+                    f"smart-money bid (last {window_h}h)",
+                    src=src, window_h=window_h,
+                    whale_net=pure_whale_net,
+                    retail_net=lh_net + trader_net,
+                    price=price_now)
+                if ok:
+                    recorded.append("stealth_accumulation")
             elif holders_net <= -10.0 or (dist_net >= abs(holders_net) * 1.3 and dist_net >= 15.0):
                 ok = record_signal(
                     ca, symbol, "distribution",
