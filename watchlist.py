@@ -40,6 +40,8 @@ def _apply_ops(wl: dict, ops: list) -> dict:
             wl.setdefault(op["ca"], {"symbol": op.get("symbol", "?"),
                                      "note": op.get("note", ""),
                                      "added": op.get("added", "")})
+            if op.get("down_ath") is not None:
+                wl[op["ca"]]["down_ath"] = op["down_ath"]
         elif op.get("op") == "remove":
             wl.pop(op["ca"], None)
     return wl
@@ -167,17 +169,23 @@ def _journal(op: dict) -> None:
 
 
 def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
-                     source: str = "") -> bool:
+                     source: str = "", down_ath: float = None) -> bool:
     """Add *ca* to the watchlist.
 
     *source* tracks where the token came from (``"trending"``,
     ``"hrhr"``, ``"manual"``).  LP Radar uses it to decide which
     card section to show a token in.
+
+    *down_ath* (optional) is the % the current price is below the
+    all-time high, captured when the token was added from a screener.
+    The LP/Degen Radar cards show it as ATH context.
     """
     entry = {"symbol": symbol, "note": note,
              "added": datetime.now().strftime("%Y-%m-%d")}
     if source:
         entry["source"] = source
+    if down_ath is not None:
+        entry["down_ath"] = float(down_ath)
     # journal FIRST -> the change can never visually revert (stale reads,
     # failed commits, redeploys); journal is cleaned once repo reflects it
     _journal({"op": "add", "ca": ca, **entry})

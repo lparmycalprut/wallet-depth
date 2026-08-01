@@ -394,7 +394,7 @@ def score_token(t):
     t10_pts = _pillar("t10", t10)
     raw += t10_pts
     if t10_pts >= WEIGHTS["t10"] * 0.9:
-        wins.append(f"T10 only {t10:.0f}%")
+        wins.append(f"Top 10 only {t10:.0f}%")
 
     # 2. Liquidity vs MC (max 30) ------------------------------------
     liq_pts = _pillar("liq", liq_pct)
@@ -455,7 +455,7 @@ def score_token(t):
     # one percent or a small input change can never move the
     # result by more than a couple of points.
     gates = []          # (severity 0-1, reason)
-    gates.append((_sev(t10, 19, 31), f"T10 {t10:.0f}% too concentrated"))
+    gates.append((_sev(t10, 19, 31), f"Top 10 {t10:.0f}% too concentrated"))
     gates.append((_sev(liq_pct, 9.0, 1.0), f"liq only {liq_pct:.1f}% MC"))
     gates.append((_sev(rug, 0.33, 0.57), f"rug score {rug:.2f}"))
     gates.append((_sev(hd, 1600, 400), f"only {hd:,} holders"))
@@ -495,7 +495,7 @@ def score_token(t):
     if rug > 0.60:
         risk_reasons.append(f"High rug score ({rug:.2f})")
     if t10 > 35:
-        risk_reasons.append(f"Very concentrated (T10 {t10:.0f}%)")
+        risk_reasons.append(f"Very concentrated (Top 10 {t10:.0f}%)")
     if insider > 0.20:
         risk_reasons.append(f"High insider ratio ({insider * 100:.0f}%)")
     if bundler > 0.20:
@@ -561,6 +561,10 @@ def screen():
 
     Rows without a contract address are dropped and duplicate CAs are
     collapsed, so callers can safely use ``ca`` as a widget key.
+
+    Each row also carries ``down_ath`` — how far the CURRENT price is
+    below the all-time high (%) — so the trending scan shows the same
+    ATH context the HRHR scan has. Display-only, never scores.
     """
     rows, seen = [], set()
     for t in fetch_trending():
@@ -574,6 +578,16 @@ def screen():
         if not ca or ca in seen:
             continue
         seen.add(ca)
+
+        _avg_cost, down_ath = _get_avg_cost_and_ath(t)
+        row["down_ath"] = down_ath
+        # ATH context in the notes (display-only, does not affect Fit).
+        ath_note = f"Down {down_ath:.1f}% dari ATH"
+        if down_ath >= 90.0:
+            row["notes"] = f"🟢 {ath_note}; " + (row.get("notes") or "")
+        else:
+            row["notes"] = f"{ath_note}; " + (row.get("notes") or "")
+
         rows.append(row)
     rows.sort(key=lambda row: (
         -row.get("fit_exact", row["fit"]), row["t10_pct"],
@@ -814,7 +828,7 @@ if __name__ == "__main__":
         print(str(r["fit"]).rjust(3), (r["grade"] or "").ljust(6),
               (r["symbol"] or "?").ljust(10),
               "MC $" + format(r["mc"], ",.0f"),
-              "| T10 " + str(r["t10_pct"]) + "%",
+              "| Top 10 " + str(r["t10_pct"]) + "%",
               "| 24h " + str(r["chg24"]) + "%",
               "| bndl " + format(r["bundler_rate"] * 100, ".0f") + "%",
               "| trap " + format(r["entrap_rate"] * 100, ".0f") + "%",

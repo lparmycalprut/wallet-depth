@@ -15,11 +15,11 @@ from gmgn_screener import (FIT_OK, FIT_PRIME, FIT_WEAK, fit_color,
 
 #: layout of the result table (label, relative width)
 COLUMNS = [("Fit", 0.75), ("Token", 1.5), ("MC", 1.1), ("Liq", 0.9),
-           ("T10", 0.7), ("Holders", 0.9), ("24h", 0.8), ("Age", 0.6),
-           ("🕸️ Risk", 1.5), ("Notes", 2.2), ("", 1.25)]
+           ("Top 10", 0.7), ("Holders", 0.9), ("24h", 0.8), ("ATH", 0.7),
+           ("Age", 0.6), ("🕸️ Risk", 1.5), ("Notes", 2.2), ("", 1.25)]
 
 CAPTION = (
-    f"**Fit struktural (strict):** T10 concentration (30) + liquidity/MC "
+    f"**Fit struktural (strict):** Top-10 concentration (30) + liquidity/MC "
     f"(30) + rug score (25) + volume/MC sanity (15), **minus penalties** "
     f"for bundler/insider pressure, entrapment & bot-degen flow, snipers "
     f"still holding, rug risk, concentration, dan thin liquidity. Harga "
@@ -27,7 +27,7 @@ CAPTION = (
     f"Smart-money dan KOL tidak dipakai atau ditampilkan. Holder count "
     f"tidak mendapat poin, "
     f"tetapi holder base <1.000 tetap menjadi safety gate. Broken structural "
-    f"gate (T10 >25%, liq <5% MC, rug >0.45, holder <1.000, atau pressure "
+    f"gate (Top 10 >25%, liq <5% MC, rug >0.45, holder <1.000, atau pressure "
     f"wallet berbahaya) membatasi grade; hard red flag membatasi Fit ke 40. "
     f"Setiap pillar dan gate memakai **continuous ramp**, bukan threshold "
     f"yang melompat. Jadi **≥{FIT_PRIME} 🟢 PRIME hanya untuk struktur yang "
@@ -37,7 +37,9 @@ CAPTION = (
     "🕸️ Risk column: bndl = bundler-traded supply · insd = dev/team hold · "
     "bndl/insd <15% = 🟢 hijau · bndl/insd >=15% = 🔴 merah · "
     "trap = entrapment traders · bot = bot-degen flow. "
-    "HRHR **Down dari ATH** dan pola candle H4 hanya konteks visual; keduanya "
+    "Kolom **ATH** = jarak harga saat ini dari ATH (display-only, "
+    "hijau bila retrace ≥90%). HRHR **Down dari ATH** dan pola candle "
+    "H4 hanya konteks visual; keduanya "
     "tidak menambah Fit. Source: GMGN internal API (unofficial, may break "
     "anytime). Always run a "
     "full **Analyze** before acting — this is a filter, not a signal."
@@ -184,9 +186,11 @@ def _risk_bit_color(val: float, thresh: float = 0.15) -> str:
 
 def _format_note_part(part: str, row: dict = None) -> str:
     """Apply semantic emphasis to one semicolon-separated screener note."""
-    # The scoring gate emits this phrase from T10 >=25%. It is an explicit
-    # concentration warning, so make it impossible to miss in the notes.
-    if re.search(r"\bT10\s+\d+(?:\.\d+)?%\s+too concentrated\b",
+    # The scoring gate emits this phrase from Top-10 >=25%. It is an
+    # explicit concentration warning, so make it impossible to miss in
+    # the notes. Matches the new "Top 10" phrasing and the legacy "T10".
+    if re.search(r"\b(?:T10|Top\s*10)\s+\d+(?:\.\d+)?%\s+"
+                 r"too\s+concentrated\b",
                  part, re.IGNORECASE):
         return _glowing_note(part, "#ef4444")
 
@@ -309,7 +313,18 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
         cc[6].markdown(
             f"<span style='color:{'#22c55e' if chg >= 0 else '#ef4444'}'>"
             f"{chg:+.0f}%</span>", unsafe_allow_html=True)
-        cc[7].write(f"{r['age_d']}d")
+        # ATH column: how far the CURRENT price is below ATH (display-only).
+        # Deep retrace (>=90%) glows green — same rule as the notes.
+        _down = r.get("down_ath")
+        if _down is not None:
+            if _down >= 90.0:
+                cc[7].markdown(_glowing_note(f"-{_down:.0f}%", "#22c55e"),
+                               unsafe_allow_html=True)
+            else:
+                cc[7].write(f"-{_down:.0f}%")
+        else:
+            cc[7].write("—")
+        cc[8].write(f"{r['age_d']}d")
         # 🕸️ live risk metrics (real GMGN fields: bdrr / dhr / etpr / bdr)
         bits = []
         for lab, val, thresh in (("bndl", r.get("bundler_rate", 0), 0.15),
@@ -353,7 +368,8 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
                     # knows whether this token came from trending or HRHR.
                     _src = "hrhr" if "hrhr" in key_prefix else "trending"
                     add_to_watchlist(ca, symbol=r["symbol"] or "?",
-                                     source=_src)
+                                     source=_src,
+                                     down_ath=r.get("down_ath"))
                     st.rerun()
         risk_banner(r)
 

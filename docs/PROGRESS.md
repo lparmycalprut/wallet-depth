@@ -7,6 +7,84 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-01 — Phase avg conviction 6-48h + pola candle H4/H1 + real vs dust + ATH + Top 10 + Quick Pick fix
+
+### Yang berubah
+
+1. **Phase (semua) memakai rata-rata conviction 6–48 jam.** `cvd.conviction_avg(pts)`
+   menghitung rata-rata conviction dari point cron (window 6h) dalam 48 jam
+   terakhir. `detect_phase()` sekarang memakai angka ini untuk SEMUA ambang
+   phase (Markdown <30, Accumulation-Late ≥50, dll) dan SEMUA pesan `reason`
+   menampilkan `avg conviction X% (6-48h)` — termasuk **Distribution-Early**
+   yang tadinya hanya lihat 6 jam terakhir. Momentum pendek (naik/turun)
+   tetap dari 2 titik terakhir. Owner butuh angka rata-rata supaya bisa
+   dibandingkan dengan analisa CVD 48h.
+2. **Pola candle body kecil (doji/hammer/spinning top) H1 & H4 48 jam.**
+   - `cvd._classify_small_body()` — satu jalur klasifikasi (Doji family
+     body ≤10%, Hammer/Inverted Hammer ≤30%, Spinning Top ≤25%).
+   - `cvd.candle_pattern_summary(candles)` — counts pola + **range harga**
+     (low–high) semua candle pola; `cvd.aggregate_candles(h1, 4)` — H4 dari
+     H1 (buang grup parsial/bar berjalan).
+   - Card **LP Radar** dan **Degen Radar** menampilkan detail H4 dan H1
+     **terpisah** beserta range-nya (mis. `🕯️ H4 body kecil 🕯️ Doji 2x ·
+     range $0.000012 – $0.000015`). H1 diambil dari cache candle watchlist
+     yang sudah ada (`_daily_candles`), H4 di-aggregate dari H1 → **tidak
+     ada fetch GeckoTerminal tambahan per card**.
+3. **Real holder vs dust aktif lagi di card LP & DEGEN.** `app.fetch_holder_data()`
+   (supply + holders dalam satu fetch Helius ter-cache, di-share dengan
+   holder-delta panel) dan `app.fetch_real_dust_ratio()` (threshold dari
+   sidebar `dust_limit_usd`, default $5). Card menampilkan
+   `💎 Real ≥$5: N · 🪙 Dust: M · ratio R%` — hijau jika tidak ada dust
+   atau real ≥ 50% dari dust, merah di bawahnya.
+4. **% dari ATH di scan trending + cards.**
+   - `gmgn_screener.screen()` (trending) mengisi `row["down_ath"]` dan note
+     `Down X% dari ATH` (sama seperti HRHR; ≥90% dapat 🟢).
+   - Kolom **ATH** baru di tabel screener (`trending_ui.COLUMNS`), glow
+     hijau untuk retrace ≥90% (display-only, tidak menambah Fit).
+   - Saat ⭐ watch dari screener, `add_to_watchlist(..., down_ath=...)`
+     menyimpan ke watchlist meta; card LP/DEGEN menampilkan
+     `📉 dari ATH: -X%` via `app._ath_html()` (fallback dari session
+     screener rows untuk token lama).
+5. **Tulisan `T10` → `Top 10`** di notes, kolom tabel, wins, dan risk
+   reasons screener. Regex glow tetap menerima format lama `T10` maupun
+   baru `Top 10`.
+6. **Card LP & DEGEN diperbesar** (min 320px / max 400px, `overflow-wrap:
+   anywhere`, badge phase bisa wrap) untuk menampung detail baru tanpa
+   terpotong.
+7. **Bug fix Quick Pick loop.** Blok Quick Pick di `app.py` dulu memanggil
+   `st.rerun()` setelah set `trigger_analyze`/`cvd_on`/`cvd_win` → selectbox
+   masih terpilih → flag diset lagi → **loop rerun tanpa henti**. Sekarang
+   selectbox di-reset ke placeholder dan analisis diproses di run yang sama
+   (tanpa rerun).
+8. **Defensive init `_daily_candles = {}`** sebelum blok watchlist supaya
+   LP/Degen Radar tidak crash saat watchlist kosong.
+
+### Verifikasi
+
+- `tests/test_candle_patterns.py` — 15 case: klasifikasi lama + summary
+  range, agregasi H1→H4 (grup parsial dibuang), `conviction_avg` (window
+  48h, poin tua diabaikan, fallback sparse), dan `detect_phase` memakai
+  rata-rata 6-48h (level + pesan Distribution-Early).
+- `tests/test_markup_ai_prompt.py` — test baru `test_trending_rows_carry_down_ath`
+  (down_ath dihitung dari price/ath, note + 🟢 ≥90%) + glow `Top 10` dan
+  legacy `T10`.
+- Seluruh 9 suite test PASS tanpa pytest/jaringan; semua file Python lulus
+  `py_compile`; `git diff --check` bersih (dengan `core.whitespace cr-at-eol`
+  karena repo mixed CRLF/LF).
+- `gmgn_screener.py` di-patch mempertahankan line-ending asli per baris
+  (mixed CRLF/LF) supaya diff minimal.
+
+### Catatan / sisa PR
+
+- Card menampilkan `📉 dari ATH` hanya jika datanya ada (watchlist lama
+  tanpa `down_ath` akan kosong sampai di-add ulang dari screener atau
+  tersedia di session screener rows).
+- `down_ath` GMGN bisa berubah nama field kapan saja; `_get_avg_cost_and_ath`
+  sudah punya fallback deterministik (90%) untuk HRHR micro-cap — untuk
+  trending, fallback yang sama berlaku.
+
+---
+
 ## 2026-08-01 — CVD whale/dolphin activity + separated wallet details
 
 ### Yang berubah

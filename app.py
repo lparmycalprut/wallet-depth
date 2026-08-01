@@ -120,6 +120,32 @@ DOLPHIN_DELTA_MIN_SOL = float(CONFIG.get("dolphin_delta_min_sol", _DEF_DDM))
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+def fetch_holder_data(_helius_keys, ca: str):
+    """Supply, decimals + holder list in ONE cached Helius call.
+
+    Shared by the holder-delta panel and the real-vs-dust ratio so the
+    LP Radar page still makes a single Helius fetch per watchlist CA
+    (the holder list is heavy — 10-60s per call). Returns
+    ``(supply, decimals, holders_df)`` or None on any failure.
+    """
+    if not _helius_keys:
+        return None
+    try:
+        supply, decimals = fetch_helius_supply(_helius_keys, ca)
+        if not supply:
+            return None
+        hd = fetch_holders_helius(_helius_keys, ca)
+        if hd is None or hd.empty:
+            return None
+        hd = hd.copy()
+        hd["ui_amount"] = hd["raw_amount"] / (10 ** decimals)
+        hd = hd[hd["ui_amount"] > 0]
+        return float(supply), decimals, hd
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
 def fetch_holder_delta_panel(_helius_keys, ca: str, window_h: int = 6):
     """Cached wrapper around :func:`cvd.holder_delta_panel` for the
     LP Radar card. Cache = 1h so refreshes don't re-hit Helius; the
@@ -129,36 +155,56 @@ def fetch_holder_delta_panel(_helius_keys, ca: str, window_h: int = 6):
     level) or None if Helius fails / no supply yet / no snapshot
     baseline. The LP Radar card treats None as "no baseline yet —
     wait for the 4h cron to commit one".
+
+    (LP-wallet filter: we don't have the LP set cached here, so we
+    skip it and accept that the snapshot vs current comparison may
+    include a couple of LP wallets — the tier thresholds are generous
+    enough that 1-2 LP wallets don't move the totals meaningfully.)
     """
     if not _helius_keys:
         return None
     try:
         from cvd import holder_delta_panel
-        # Fetch supply + holders fresh per call (cached via @st.cache_data
-        # for an hour). The LP Radar card does NOT use the analyze
-        # block's holders_df because it isn't a single-CA page.
-        supply, decimals = fetch_helius_supply(_helius_keys, ca)
-        if not supply:
+        data = fetch_holder_data(_helius_keys, ca)
+        if not data:
             return None
-        hd = fetch_holders_helius(_helius_keys, ca)
-        if hd is None or hd.empty:
-            return None
-        hd["ui_amount"] = hd["raw_amount"] / (10 ** decimals)
-        hd = hd[hd["ui_amount"] > 0]
-        # Drop LP wallets — same rule the analyze block uses — so a
-        # token whose LP is among the top holders doesn't get counted
-        # as "whale addition" every cron.
-        # (We don't have the LP set cached here, so we skip the filter
-        # and accept that the snapshot vs current comparison may
-        # include a couple of LP wallets. The whale/dolphin tier
-        # thresholds are generous enough that 1-2 LP wallets don't
-        # move the totals meaningfully.)
+        supply, _decimals, hd = data
         pairs = list(zip(hd["owner"].tolist(), hd["ui_amount"].tolist()))
         return holder_delta_panel(
             ca, current_holders=pairs, supply=float(supply),
             window_h=window_h)
     except Exception:
         return None
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_real_dust_ratio(_helius_keys, ca: str, price: float,
+                          dust_limit_usd: float = 5.0):
+    """Real (>= $dust_limit) vs dust holders, from the shared cached
+    holder list — no extra Helius call on top of the holder-delta panel.
+
+    Returns ``{n_real, n_dust, ratio, dust_limit, real_mc_pct}`` where
+    ``ratio`` = real/dust (``float("inf")`` when there is no dust) or
+    None when the holder list is unavailable / price unknown.
+    """
+    if not _helius_keys or not price or price <= 0:
+        return None
+    data = fetch_holder_data(_helius_keys, ca)
+    if not data:
+        return None
+    supply, _decimals, hd = data
+    hd = hd.copy()
+    hd["usd_value"] = hd["ui_amount"] * price
+    n_dust = int((hd["usd_value"] < dust_limit_usd).sum())
+    n_real = int((hd["usd_value"] >= dust_limit_usd).sum())
+    ratio = (n_real / n_dust) if n_dust else float("inf")
+    real_usd = float(hd.loc[hd["usd_value"] >= dust_limit_usd,
+                            "usd_value"].sum())
+    mc_usd = price * supply
+    real_mc_pct = real_usd / mc_usd * 100 if mc_usd else 0.0
+    return {"n_dust": n_dust, "n_real": n_real, "ratio": ratio,
+            "dust_limit": float(dust_limit_usd),
+            "real_mc_pct": float(real_mc_pct)}
 
 
 def load_history() -> dict:
@@ -580,6 +626,70 @@ def _fmt_price(v: float) -> str:
     return f"${s}"
 
 
+def _ca_down_ath(ca: str, meta: dict):
+    """% below ATH for a watchlist CA, from watchlist meta or session
+    screener rows (whichever is fresher). None when unknown."""
+    v = meta.get("down_ath")
+    if v is not None:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            pass
+    for _rk in ("screener_rows", "screener_hrhr_rows"):
+        for _r in (st.session_state.get(_rk) or []):
+            if _r.get("ca") == ca and _r.get("down_ath") is not None:
+                try:
+                    return float(_r["down_ath"])
+                except (TypeError, ValueError):
+                    pass
+    return None
+
+
+def _ath_html(ca: str, meta: dict) -> str:
+    """Small 'distance from ATH' line for the LP/Degen Radar cards.
+
+    Deep retrace (>=90%) glows green — same display-only rule as the
+    screener notes. Empty string when the ATH context is unknown.
+    """
+    v = _ca_down_ath(ca, meta)
+    if v is None:
+        return ""
+    col = "#22c55e" if v >= 90.0 else "#94a3b8"
+    return (f"<div style='font-size:0.72rem;color:#94a3b8;"
+            f"margin-top:4px;line-height:1.4;'>"
+            f"📉 <span style='color:#64748b;'>dari ATH:</span> "
+            f"<b style='color:{col};'>-{v:.0f}%</b></div>")
+
+
+def _pattern_block_html(title: str, pt: dict, has_candles: bool) -> str:
+    """HTML for one small-body candle summary (pattern counts + range).
+
+    Used by both the LP Radar and Degen Radar cards. ``pt`` is the dict
+    from :func:`cvd.candle_pattern_summary`. Shows a dim "no pattern"
+    line when candles exist but no small-body bar was found, and an
+    empty string when there is no candle data at all.
+    """
+    if not has_candles:
+        return ""
+    if not pt or pt["n"] == 0:
+        return (f"<div style='font-size:0.72rem;color:#64748b;"
+                f"margin-top:3px;'>{title}: tidak ada pola "
+                f"body kecil (48h)</div>")
+    from cvd import PATTERN_EMOJI
+    counts = " ".join(
+        f"{PATTERN_EMOJI.get(n, '🕯️')} {n} {c}x"
+        for n, c in pt["counts"].items())
+    rng = (f"{_fmt_price(pt['low'])} – {_fmt_price(pt['high'])}"
+           if pt["low"] is not None else "—")
+    return (f"<div style='font-size:0.72rem;color:#94a3b8;"
+            f"margin-top:3px;line-height:1.5;'>"
+            f"<span style='color:#fbbf24;font-weight:700;'>{title}</span> "
+            f"<span style='color:#e2e8f0;font-weight:600;'>{counts}</span>"
+            f"<span style='color:#475569;margin:0 4px;'>·</span>"
+            f"<span style='color:#7dd3fc;'>range {rng}</span>"
+            f"</div>")
+
+
 # ----------------------------------------------------------------------------
 # Main input
 # ----------------------------------------------------------------------------
@@ -591,6 +701,9 @@ st.caption("Solscan-style holder analytics — Dust vs Real holders for any "
 from watchlist import load_watchlist, add_to_watchlist, remove_from_watchlist
 
 _wl = load_watchlist()
+# Defensive init: _daily_candles is only filled when the watchlist is
+# non-empty (see below) but the LP/Degen Radar blocks reference it.
+_daily_candles = {}
 if _wl:
     _prices = fetch_watchlist_prices(tuple(_wl.keys()))
 
@@ -786,7 +899,10 @@ if _wl:
     # volume-quality indicator, market phase, dan shortcut DexS/GMGN.
     # ------------------------------------------------------------------
     try:
-        from cvd import load_conviction, detect_phase, PHASE_COLORS, markup_from_candles, markup_warning
+        from cvd import (load_conviction, detect_phase, PHASE_COLORS,
+                         markup_from_candles, markup_warning,
+                         candle_pattern_summary, aggregate_candles,
+                         PATTERN_EMOJI)
         _conv_hist = load_conviction()
     except Exception:
         _conv_hist = {}
@@ -884,6 +1000,50 @@ if _wl:
                 _hd_badges_html = ("<span style='opacity:0.45;"
                                    "font-size:0.65rem;'>"
                                    "⏳ waiting for snapshot baseline</span>")
+
+            # ---- Real holder vs dust ratio (min $5, per sidebar) ----
+            # Reuses the SAME cached Helius holder fetch as the
+            # holder-delta panel above — no extra RPC call.
+            _rd_html = ""
+            _rd_price = ((_prices.get(_ca) or {}).get("price") or 0)
+            if helius_keys and _rd_price:
+                _rd = fetch_real_dust_ratio(helius_keys, _ca,
+                                            float(_rd_price),
+                                            float(dust_limit))
+                if _rd:
+                    _r_val = _rd["ratio"]
+                    ratio_txt = ("∞" if _r_val == float("inf")
+                                 else f"{_r_val * 100:,.0f}%")
+                    _r_col = ("#22c55e" if (_r_val == float("inf")
+                                            or _r_val >= REAL_RATIO_OK)
+                              else "#ef4444")
+                    _rd_html = (
+                        f"<div style='font-size:0.72rem;color:#94a3b8;"
+                        f"margin-top:4px;line-height:1.5;'>"
+                        f"💎 Real ≥${_rd['dust_limit']:g}: "
+                        f"<b style='color:#e2e8f0;'>{_rd['n_real']:,}</b>"
+                        f" <span style='color:#475569;'>·</span> "
+                        f"🪙 Dust: <b style='color:#e2e8f0;'>"
+                        f"{_rd['n_dust']:,}</b>"
+                        f" <span style='color:#475569;'>·</span> "
+                        f"ratio <b style='color:{_r_col};'>{ratio_txt}</b>"
+                        f"</div>")
+
+            # ---- Small-body candle patterns (H4 + H1, 48h, with range) ----
+            # H1 comes from the already-cached watchlist candle fetch;
+            # H4 is aggregated from H1 so no extra GeckoTerminal call.
+            _pair_addr = ((_prices.get(_ca) or {}).get("pair") or "")
+            _candles_h1 = ((_daily_candles or {}).get(_pair_addr) or []
+                           if _pair_addr else [])
+            _candles_h4 = (aggregate_candles(_candles_h1, 4)
+                           if _candles_h1 else [])
+            _pt_h4 = candle_pattern_summary(_candles_h4)
+            _pt_h1 = candle_pattern_summary(_candles_h1)
+            _patterns_html = (
+                _pattern_block_html("🕯️ H4 body kecil", _pt_h4,
+                                    bool(_candles_h4))
+                + _pattern_block_html("🕯️ H1 body kecil", _pt_h1,
+                                      bool(_candles_h1)))
 
             # ---- Stability badge (KOKOH / GOYAH / MELEMAH) ----
             # Compare recent 3 points vs prior 3 points for momentum
@@ -983,10 +1143,11 @@ if _wl:
                 f"<div style='margin-top:8px;'> "
                 f"<span title='{_ph_reason} (confidence: "
                 f"{_ph.get('confidence', 'low')}) — heuristic, not a "
-                f"signal' style='background:{_ph_col}22;border:1px solid "
+                f"signal' style='display:inline-block;"
+                f"background:{_ph_col}22;border:1px solid "
                 f"{_ph_col};color:{_ph_col};border-radius:6px;"
                 f"padding:3px 9px;font-size:0.7rem;font-weight:700;"
-                f"white-space:nowrap;letter-spacing:0.2px;'> "
+                f"letter-spacing:0.2px;max-width:100%;'> "
                 f"{_ph['phase']} {_conf_dots}</span>"
                 f"</div>")
             _cvd_link = f"/CVD?ca={_ca}"
@@ -1007,7 +1168,8 @@ if _wl:
                 f"<div style='flex:0 0 auto;background:#131a26;"
                 f"border:2px solid {border};{glow}border-radius:14px;"
                 f"padding:14px 16px;margin-right:14px;cursor:pointer;"
-                f"min-width:230px;max-width:260px;line-height:1.4;'>"
+                f"min-width:320px;max-width:400px;line-height:1.4;"
+                f"overflow-wrap:anywhere;'>"
                 # header: symbol + conviction %, plus DexS/GMGN shortcuts
                 f"<div style='display:flex;align-items:baseline;"
                 f"justify-content:space-between;gap:6px;'>"
@@ -1027,9 +1189,13 @@ if _wl:
                 f"target='_blank' title='GMGN' "
                 f"style='color:#64748b;text-decoration:none;'>⚡</a>"
                 f"</span></div>"
+                # distance from ATH (display-only context)
+                f"{_ath_html(_ca, _meta)}"
                 # holder-delta badges (whale / dolphin) on their own line
                 f"<div style='display:flex;gap:5px;flex-wrap:wrap;"
                 f"margin-top:5px;'>{_hd_badges_html}</div>"
+                # real holder vs dust ratio (min $5)
+                f"{_rd_html}"
                 # phase badge (own line, easier to scan)
                 f"{phase_html}"
                 # multi-window sparkline in a subtle background
@@ -1056,6 +1222,8 @@ if _wl:
                 f"<span style='color:#cbd5e1;font-weight:600;'>"
                 f"{last.get('swaps') or 0:,}</span>"
                 f"</div>"
+                # small-body candle details (H4 + H1, separate, with range)
+                f"{_patterns_html}"
                 f"{conv_note}</a>"
                 f"</div>")
         if _cards:
@@ -1070,6 +1238,11 @@ if _wl:
                        "Phase badge = Wyckoff-style heuristic — NOT a trading signal. "
                        "**🐋/🐬** = whale/dolphin holdings delta dari snapshot baseline harian "
                        "(Δ dalam SOL + N↑ dompet masuk + N↓ keluar). "
+                       "**📉 dari ATH** = jarak harga saat ini dari ATH (display-only, "
+                       "hijau bila retrace ≥90%). "
+                       "**💎 Real ≥$5 vs 🪙 dust** = jumlah + rasio real/dust. "
+                       "**🕯️ H4/H1 body kecil** = pola doji/hammer/spinning top 48h "
+                       "beserta range harga pola-nya (H4 & H1 terpisah). "
                        "Klik card → CVD analysis.")
         else:
             st.caption("💧 LP Radar: semua trending watchlist token ditampilkan.")
@@ -1175,14 +1348,57 @@ if _wl:
                     f"<div style='margin-top:8px;'> "
                     f"<span title='{_ph_reason} (confidence: "
                     f"{_ph.get('confidence', 'low')}) — heuristic, not a "
-                    f"signal' style='background:{_ph_col}22;border:1px solid "
+                    f"signal' style='display:inline-block;"
+                    f"background:{_ph_col}22;border:1px solid "
                     f"{_ph_col};color:{_ph_col};border-radius:6px;"
                     f"padding:3px 9px;font-size:0.7rem;font-weight:700;"
-                    f"white-space:nowrap;letter-spacing:0.2px;'> "
+                    f"letter-spacing:0.2px;max-width:100%;'> "
                     f"{_ph['phase']} {_conf_dots}</span>"
                     f"</div>")
 
                 _cvd_link = f"/CVD?ca={_ca}"
+                # ---- Real holder vs dust ratio (min $5) ----
+                _rd_html_deg = ""
+                _rd_price_deg = ((_prices.get(_ca) or {}).get("price") or 0)
+                if helius_keys and _rd_price_deg:
+                    _rd_deg = fetch_real_dust_ratio(helius_keys, _ca,
+                                                    float(_rd_price_deg),
+                                                    float(dust_limit))
+                    if _rd_deg:
+                        _r_val = _rd_deg["ratio"]
+                        ratio_txt = ("∞" if _r_val == float("inf")
+                                     else f"{_r_val * 100:,.0f}%")
+                        _r_col = ("#22c55e" if (_r_val == float("inf")
+                                                or _r_val >= REAL_RATIO_OK)
+                                  else "#ef4444")
+                        _rd_html_deg = (
+                            f"<div style='font-size:0.72rem;color:#94a3b8;"
+                            f"margin-top:4px;line-height:1.5;'>"
+                            f"💎 Real ≥${_rd_deg['dust_limit']:g}: "
+                            f"<b style='color:#e2e8f0;'>{_rd_deg['n_real']:,}"
+                            f"</b> <span style='color:#475569;'>·</span> "
+                            f"🪙 Dust: <b style='color:#e2e8f0;'>"
+                            f"{_rd_deg['n_dust']:,}</b>"
+                            f" <span style='color:#475569;'>·</span> "
+                            f"ratio <b style='color:{_r_col};'>"
+                            f"{ratio_txt}</b></div>")
+
+                # ---- Small-body candle patterns (H4 + H1, 48h, range) ----
+                _pair_addr_deg = ((_prices.get(_ca) or {}).get("pair")
+                                  or "")
+                _candles_h1_deg = (
+                    (_daily_candles or {}).get(_pair_addr_deg) or []
+                    if _pair_addr_deg else [])
+                _candles_h4_deg = (aggregate_candles(_candles_h1_deg, 4)
+                                   if _candles_h1_deg else [])
+                _pt_h4_deg = candle_pattern_summary(_candles_h4_deg)
+                _pt_h1_deg = candle_pattern_summary(_candles_h1_deg)
+                _patterns_html_deg = (
+                    _pattern_block_html("🕯️ H4 body kecil", _pt_h4_deg,
+                                        bool(_candles_h4_deg))
+                    + _pattern_block_html("🕯️ H1 body kecil", _pt_h1_deg,
+                                          bool(_candles_h1_deg)))
+
                 # Degen-style border: orange/red tint
                 _deg_border = "#f97316"
                 _deg_bg = "#1a1008"
@@ -1190,7 +1406,8 @@ if _wl:
                     f"<div style='flex:0 0 auto;background:{_deg_bg};"
                     f"border:2px solid {_deg_border};border-radius:14px;"
                     f"padding:14px 16px;margin-right:14px;cursor:pointer;"
-                    f"min-width:230px;max-width:260px;line-height:1.4;'>"
+                    f"min-width:320px;max-width:400px;line-height:1.4;"
+                    f"overflow-wrap:anywhere;'>"
                     f"<div style='display:flex;align-items:baseline;"
                     f"justify-content:space-between;gap:6px;'>"
                     f"<a href='{_cvd_link}' target='_self' "
@@ -1212,6 +1429,10 @@ if _wl:
                     f"target='_blank' title='GMGN' "
                     f"style='color:#64748b;text-decoration:none;'>⚡</a>"
                     f"</span></div>"
+                    # distance from ATH (display-only context)
+                    f"{_ath_html(_ca, _meta)}"
+                    # real holder vs dust ratio (min $5)
+                    f"{_rd_html_deg}"
                     f"{phase_html_deg}"
                     f"<a href='{_cvd_link}' target='_self' "
                     f"style='display:block;text-decoration:none;'>"
@@ -1236,6 +1457,8 @@ if _wl:
                     f"<span style='color:#cbd5e1;font-weight:600;'>"
                     f"{last.get('swaps') or 0:,}</span>"
                     f"</div>"
+                    # small-body candle details (H4 + H1, separate, range)
+                    f"{_patterns_html_deg}"
                     f"{conv_note_deg}</a>"
                     f"</div>")
             if _degen_cards:
@@ -1247,6 +1470,11 @@ if _wl:
                     unsafe_allow_html=True)
                 st.caption("⚡ Degen Radar: token HRHR dari watchlist. "
                            "Bar hijau = conviction naik, bar merah = turun. "
+                           "**📉 dari ATH** = jarak harga saat ini dari ATH "
+                           "(display-only, hijau bila retrace ≥90%). "
+                           "**💎 Real ≥$5 vs 🪙 dust** = jumlah + rasio real/dust. "
+                           "**🕯️ H4/H1 body kecil** = pola doji/hammer/spinning "
+                           "top 48h + range harga pola-nya (H4 & H1 terpisah). "
                            "⚠️ Token ini BERISIKO TINGGI — selalu DYOR! "
                            "Klik card → CVD analysis.")
 
@@ -1332,7 +1560,12 @@ if _qp_wl:
             ["— pilih token —"] + [lbl for lbl, _ in _qp_options],
             key="qp_selectbox",
             label_visibility="collapsed")
-        # Auto-trigger: when user picks a token, immediately analyze + CVD
+        # Auto-trigger: when user picks a token, immediately analyze + CVD.
+        # One-shot: reset the picker back to the placeholder AND do not
+        # st.rerun() here — the rest of this run already picks up
+        # trigger_analyze + the CA below. The old st.rerun() re-entered
+        # this block with the picker still selected, setting the flags
+        # again forever (infinite rerun loop).
         if _qp_chosen and _qp_chosen != "— pilih token —":
             _qp_picked = next((ca for lbl, ca in _qp_options
                                if lbl == _qp_chosen), "")
@@ -1341,7 +1574,7 @@ if _qp_wl:
                 st.session_state["trigger_analyze"] = True
                 st.session_state[f"cvd_on::{_qp_picked}"] = True
                 st.session_state["cvd_win"] = 48
-                st.rerun()
+                st.session_state["qp_selectbox"] = "— pilih token —"
 
     with st.expander("🗑️ Quick Delete dari watchlist", expanded=False):
         st.caption("Hapus token dari watchlist langsung dari sini tanpa perlu ke halaman Watchlist.")

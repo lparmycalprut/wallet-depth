@@ -1125,6 +1125,27 @@ def get_recent_swaps(ca: str, hours: int = 12):
 # ---------------------------------------------------------------------------
 # Market phase detection (Wyckoff-style heuristic, read-only)
 # ---------------------------------------------------------------------------
+def conviction_avg(pts: list, hours: int = 48) -> float:
+    """Average conviction over the last ``hours`` (default 48) of points.
+
+    Conviction points are 6h windows recorded by the cron, so this is
+    the average conviction of the last 6-48h of on-chain flow — the
+    figure the owner wants to see for CVD analysis instead of a single
+    6h reading. Falls back to the last 8 points when the 48h window
+    has fewer than 2 (young token / sparse cron).
+    """
+    if not pts:
+        return 0.0
+    now = time.time()
+    recent = [p for p in pts if (p.get("ts") or 0) >= now - hours * 3600]
+    if len(recent) < 2:
+        recent = pts[-8:]
+    if not recent:
+        return float(pts[-1].get("conviction") or 0)
+    return (sum(float(p.get("conviction") or 0) for p in recent)
+            / len(recent))
+
+
 def detect_phase(ca: str, price_change_24h: float | None = None,
                  price_change_6h: float | None = None) -> dict:
     """Classify the market phase from data we ALREADY have:
@@ -1141,7 +1162,7 @@ def detect_phase(ca: str, price_change_24h: float | None = None,
                 "reason": "no conviction history yet (cron still filling)"}
 
     last = pts[-1]
-    cv = float(last.get("conviction") or 0)
+    cv_last = float(last.get("conviction") or 0)
     np_now = float(last.get("net_pure") or 0)
     vol_now = float(last.get("vol") or 0)
     chg = price_change_24h  # may be None
@@ -1152,8 +1173,15 @@ def detect_phase(ca: str, price_change_24h: float | None = None,
     np_prev = float(prev.get("net_pure") or 0) if prev else None
     vol_prev = float(prev.get("vol") or 0) if prev else None
 
-    cv_rising = cv_prev is not None and cv > cv_prev
-    cv_falling = cv_prev is not None and cv < cv_prev
+    # Sustained conviction level: average over the last 6-48h (points are
+    # 6h windows). ALL phase thresholds and messages use this average —
+    # a single 6h reading is too noisy for memecoins and can't be compared
+    # against a 48h CVD analysis. Short-term momentum below still uses the
+    # last two points (that is direction, not level).
+    cv = conviction_avg(pts)
+
+    cv_rising = cv_prev is not None and cv_last > cv_prev
+    cv_falling = cv_prev is not None and cv_last < cv_prev
     np_flipped_neg = np_prev is not None and np_prev >= 0 and np_now < 0
     vol_rising = vol_prev is not None and vol_prev > 0 and         vol_now > vol_prev * 1.15
 
@@ -1179,18 +1207,21 @@ def detect_phase(ca: str, price_change_24h: float | None = None,
         if chg6 is not None:
             r_bits.append(f"6h {chg6:+.0f}%")
         r_bits.append(f"net pure {np_now:+.0f} SOL (sellers one-way)")
-        r_bits.append(f"conviction {cv:.0f}%")
+        r_bits.append(f"avg conviction {cv:.0f}% (6-48h)")
         return {"phase": "Markdown", "confidence": confidence,
                 "reason": ", ".join(r_bits) + " — distribution done, supply overhang"}
     # 4. Distribution-Early
-    if (chg is None or chg > -20) and (cv_falling or np_flipped_neg) and             (np_now < 0 or (cv_prev is not None and cv < cv_prev - 5)):
+    if (chg is None or chg > -20) and (cv_falling or np_flipped_neg) and             (np_now < 0 or (cv_prev is not None and cv_last < cv_prev - 5)):
         r_bits = []
         if chg is not None:
             r_bits.append(f"price still holding ({chg:+.0f}% 24h)")
         if chg6 is not None:
             r_bits.append(f"6h {chg6:+.0f}%")
+        # 6-48h average conviction — the sustained level, comparable with
+        # the CVD flow of the same window.
+        r_bits.append(f"avg conviction {cv:.0f}% (6-48h)")
         if cv_falling:
-            r_bits.append(f"conviction dropping {cv_prev:.0f}→{cv:.0f}%")
+            r_bits.append(f"last 6h dropping {cv_prev:.0f}→{cv_last:.0f}%")
         if np_flipped_neg:
             r_bits.append("net pure flipped negative")
         return {"phase": "Distribution-Early", "confidence": confidence,
@@ -1203,6 +1234,7 @@ def detect_phase(ca: str, price_change_24h: float | None = None,
         if chg6 is not None:
             r_bits.append(f"6h {chg6:+.0f}%")
         r_bits.append(f"net pure {np_now:+.0f} SOL")
+        r_bits.append(f"avg conviction {cv:.0f}% (6-48h)")
         return {"phase": "Markup", "confidence": confidence,
                 "reason": ", ".join(r_bits) + " — trend leg in progress"
                           f"{', volume rising' if vol_rising else ''}"}
@@ -1210,19 +1242,20 @@ def detect_phase(ca: str, price_change_24h: float | None = None,
     if cv >= 50 and (cv_rising or (cv_prev is not None and
                                    abs(cv - cv_prev) <= 5)) and             np_now > 0 and (chg is None or price_flat or price_up_small):
         return {"phase": "Accumulation-Late", "confidence": confidence,
-                "reason": f"conviction {cv:.0f}% (high & holding), net pure "
-                          f"{np_now:+.0f} SOL, price quiet — mature "
+                "reason": f"avg conviction {cv:.0f}% (6-48h, high & holding), "
+                          f"net pure {np_now:+.0f} SOL, price quiet — mature "
                           f"accumulation"}
     # 1. Accumulation-Early
     if cv_rising and np_now > 0 and             (chg is None or price_flat or price_down) and cv < 50:
         return {"phase": "Accumulation-Early", "confidence": confidence,
-                "reason": f"conviction climbing {cv_prev:.0f}→{cv:.0f}% "
-                          f"from a low base, net pure {np_now:+.0f} SOL"
+                "reason": f"avg conviction {cv:.0f}% (6-48h) from a low base, "
+                          f"last 6h {cv_prev:.0f}→{cv_last:.0f}%, "
+                          f"net pure {np_now:+.0f} SOL"
                           f"{', volume picking up' if vol_rising else ''}"}
     # 6. fallback
-    bits = [f"conviction {cv:.0f}%"]
+    bits = [f"avg conviction {cv:.0f}% (6-48h)"]
     if cv_prev is not None:
-        bits.append(f"prev {cv_prev:.0f}%")
+        bits.append(f"last {cv_last:.0f}%")
     bits.append(f"net pure {np_now:+.0f}")
     if chg is not None:
         bits.append(f"price {chg:+.0f}%/24h")
@@ -2706,6 +2739,49 @@ PATTERN_EMOJI = {
 }
 
 
+def _classify_small_body(o: float, h: float, l: float, c: float) -> str | None:
+    """Classify one candle as a small-body pattern name, or None.
+
+    Same thresholds as :func:`detect_candle_patterns` — Doji family
+    (body <= 10% of range), Hammer / Inverted Hammer (body <= 30%),
+    Spinning Top (body <= 25%). Extracted so pattern *counts* and
+    pattern *price ranges* share one classification path.
+    """
+    rng = h - l
+    if rng <= 0:
+        return None
+
+    body = abs(c - o)
+    body_ratio = body / rng
+    upper_shadow = h - max(o, c)
+    lower_shadow = min(o, c) - l
+    us_ratio = upper_shadow / rng
+    ls_ratio = lower_shadow / rng
+
+    # Doji family: body ≤ 10% of range
+    if body_ratio <= 0.10:
+        if ls_ratio >= 0.60 and us_ratio <= 0.15:
+            return "Dragonfly Doji"
+        if us_ratio >= 0.60 and ls_ratio <= 0.15:
+            return "Gravestone Doji"
+        return "Doji"
+
+    # Hammer: body ≤ 30%, long lower shadow (≥ 60%), small upper shadow
+    if body_ratio <= 0.30 and ls_ratio >= 0.60 and us_ratio <= 0.15:
+        return "Hammer"
+
+    # Inverted Hammer / Shooting Star: body ≤ 30%, long upper shadow
+    # (≥ 60%), small lower shadow
+    if body_ratio <= 0.30 and us_ratio >= 0.60 and ls_ratio <= 0.15:
+        return "Inverted Hammer"
+
+    # Spinning Top: body ≤ 25%, both shadows ≥ 25%
+    if body_ratio <= 0.25 and us_ratio >= 0.25 and ls_ratio >= 0.25:
+        return "Spinning Top"
+
+    return None
+
+
 def detect_candle_patterns(candles: list[dict]) -> dict[str, int]:
     """Detect small-body candle patterns in H4 candles.
 
@@ -2724,42 +2800,55 @@ def detect_candle_patterns(candles: list[dict]) -> dict[str, int]:
     counts: dict[str, int] = {}
 
     for c in candles:
-        o, h, l, cl = c["o"], c["h"], c["l"], c["c"]
-        rng = h - l
-        if rng <= 0:
-            continue
-
-        body = abs(cl - o)
-        body_ratio = body / rng
-        upper_shadow = h - max(o, cl)
-        lower_shadow = min(o, cl) - l
-        us_ratio = upper_shadow / rng
-        ls_ratio = lower_shadow / rng
-
-        # Doji family: body ≤ 10% of range
-        if body_ratio <= 0.10:
-            if ls_ratio >= 0.60 and us_ratio <= 0.15:
-                name = "Dragonfly Doji"
-            elif us_ratio >= 0.60 and ls_ratio <= 0.15:
-                name = "Gravestone Doji"
-            else:
-                name = "Doji"
-            counts[name] = counts.get(name, 0) + 1
-
-        # Hammer: body ≤ 30%, long lower shadow (≥ 60%), small upper shadow
-        elif body_ratio <= 0.30 and ls_ratio >= 0.60 and us_ratio <= 0.15:
-            name = "Hammer"
-            counts[name] = counts.get(name, 0) + 1
-
-        # Inverted Hammer / Shooting Star: body ≤ 30%, long upper shadow
-        # (≥ 60%), small lower shadow
-        elif body_ratio <= 0.30 and us_ratio >= 0.60 and ls_ratio <= 0.15:
-            name = "Inverted Hammer"
-            counts[name] = counts.get(name, 0) + 1
-
-        # Spinning Top: body ≤ 25%, both shadows ≥ 25%
-        elif body_ratio <= 0.25 and us_ratio >= 0.25 and ls_ratio >= 0.25:
-            name = "Spinning Top"
+        name = _classify_small_body(c["o"], c["h"], c["l"], c["c"])
+        if name is not None:
             counts[name] = counts.get(name, 0) + 1
 
     return counts
+
+
+def candle_pattern_summary(candles: list[dict]) -> dict:
+    """Detect small-body patterns AND the price range they traded in.
+
+    Works on any timeframe (H4 = 12 bars / 48h, H1 = 48 bars / 48h).
+    Returns ``{"counts": {name: n}, "low": float|None, "high": float|None,
+    "n": int}`` where ``low``/``high`` are the lowest low and highest
+    high across all pattern candles — the price range a trader would
+    watch for a reversal. ``n`` is the total number of pattern candles.
+    """
+    counts: dict[str, int] = {}
+    lo = hi = None
+    n = 0
+    for c in candles:
+        name = _classify_small_body(c["o"], c["h"], c["l"], c["c"])
+        if name is None:
+            continue
+        counts[name] = counts.get(name, 0) + 1
+        n += 1
+        if lo is None or c["l"] < lo:
+            lo = c["l"]
+        if hi is None or c["h"] > hi:
+            hi = c["h"]
+    return {"counts": counts, "low": lo, "high": hi, "n": n}
+
+
+def aggregate_candles(candles: list[dict], group: int = 4) -> list[dict]:
+    """Combine ``group`` consecutive candles (e.g. 4x H1 -> H4).
+
+    Input must be oldest -> newest (``fetch_candles`` guarantees it).
+    A trailing partial group (the still-forming candle) is dropped so
+    only closed bars are used. Returns candles with the same keys.
+    """
+    out = []
+    n_full = len(candles) - len(candles) % group
+    for i in range(0, n_full, group):
+        chunk = candles[i:i + group]
+        out.append({
+            "ts": chunk[0]["ts"],
+            "o": chunk[0]["o"],
+            "h": max(c["h"] for c in chunk),
+            "l": min(c["l"] for c in chunk),
+            "c": chunk[-1]["c"],
+            "v": sum(float(c.get("v") or 0) for c in chunk),
+        })
+    return out
