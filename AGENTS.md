@@ -293,12 +293,7 @@ Jebakan yang sudah pernah menggigit:
   menambah file state JSON baru, jangan `open(path,"w")+json.dump`
   langsung. Write yang gagal harus ter-log (`WARN ... file=sys.stderr`),
   kecuali fetch/parsing eksternal yang memang sengaja `except: pass`.
-- **Tombol "🔄 Force refresh now" SUDAH DIHAPUS.** Gantinya
-  `add_to_watchlist()` men-set flag `watchlist_auto_refresh_cas` di
-  session_state dan freshness sweep di `app.py` otomatis backfill token
-  baru (update_token_cvd + record_conviction) di rerun berikutnya.
-  Jangan kembalikan tombol itu; kalau butuh refresh manual, perbaiki
-  auto-refresh-nya.
+- **Tombol "🔄 Force refresh now" DIKEMBALIKAN.** Auto-refresh otomatis yang dulu membackfill token secara paksa saat pertama kali ditambahkan telah dihapus, dan sekarang menggunakan manual button kembali dengan bar progress sync dan estimasi waktu selesai. Tombol muncul saat ada token yang stale atau baru ditambah.
 - **`detect_clusters()` paralel — jangan kembalikan loop sekuensial.**
   Wallet belum ter-cache di-submit ke `ThreadPoolExecutor`
   (`workers = min(8, n)`); dict `disk` hanya diupdate di MAIN thread via
