@@ -556,6 +556,27 @@ def score_token(t):
     }
 
 
+def _apply_token_context(rows, raw_by_ca):
+    """Fill real avg_cost / down_ath on rows and prefix the ATH note.
+
+    Values that cannot be resolved stay ``None`` so the UI shows an em dash
+    instead of a fabricated number.
+    """
+    try:
+        from token_context import enrich_rows
+    except Exception:                                   # noqa: BLE001
+        return rows
+    try:
+        enrich_rows(rows, raw_by_ca)
+    except Exception:                                   # noqa: BLE001
+        return rows
+    for row in rows:
+        prefix = ath_note_prefix(row.get("down_ath"))
+        if prefix:
+            row["notes"] = prefix + (row.get("notes") or "")
+    return rows
+
+
 def screen():
     """Fetch + score + sort by fit desc. Returns list of rows.
 
@@ -566,7 +587,7 @@ def screen():
     below the all-time high (%) — so the trending scan shows the same
     ATH context the HRHR scan has. Display-only, never scores.
     """
-    rows, seen = [], set()
+    rows, seen, raw_by_ca = [], set(), {}
     for t in fetch_trending():
         if not isinstance(t, dict):
             continue
@@ -579,17 +600,11 @@ def screen():
             continue
         seen.add(ca)
 
-        _avg_cost, down_ath = _get_avg_cost_and_ath(t)
-        row["avg_cost"] = _avg_cost
-        row["down_ath"] = down_ath
-        # ATH context in the notes (display-only, does not affect Fit).
-        ath_note = f"Down {down_ath:.1f}% dari ATH"
-        if down_ath >= 90.0:
-            row["notes"] = f"🟢 {ath_note}; " + (row.get("notes") or "")
-        else:
-            row["notes"] = f"{ath_note}; " + (row.get("notes") or "")
-
+        row["avg_cost"] = None
+        row["down_ath"] = None
+        raw_by_ca[ca] = t
         rows.append(row)
+    _apply_token_context(rows, raw_by_ca)
     rows.sort(key=lambda row: (
         -row.get("fit_exact", row["fit"]), row["t10_pct"],
         -row["liq_pct"]))
@@ -701,35 +716,33 @@ HRHR_FILTER_BODY = {
 }
 
 
-def _get_avg_cost_and_ath(t):
-    """Parse average cost change % and down % from ATH from GMGN token metadata.
+def _get_avg_cost_and_ath(t, row=None):
+    """Real (avg_cost_change_%, down_from_ath_%) for a GMGN token dict.
 
-    Provides robust fallbacks to guarantee the UI remains functional.
-    Fallbacks are deterministic (not random) so the same token always
-    gets the same score across runs.
+    Returns ``(None, None)`` when the data genuinely is not available -
+    callers must render that as an em dash. This used to fabricate
+    ``-65% / 90%`` for every token that lacked a field GMGN never sends,
+    which is why every row showed the same "Down 90.0% dari ATH".
     """
-    # Average cost change % (minimal -50% means holders are down at least -50% on average, e.g. -65%)
-    avg_cost_change = t.get("avg_cost_change") or t.get("holder_avg_cost_change") or t.get("avg_cost_pct")
-    if avg_cost_change is None:
-        # Deterministic fallback for HRHR micro-caps: assume -65% (typical)
-        avg_cost_change = -65.0
-    else:
-        avg_cost_change = float(avg_cost_change)
+    price = _first(t, "p", "price", default=0.0) or None
+    ca = t.get("a") or t.get("address") or (row or {}).get("ca") or ""
+    try:
+        from token_context import token_context
+    except Exception:                                   # noqa: BLE001
+        return None, None
+    try:
+        ctx = token_context(ca, t, price=price)
+    except Exception:                                   # noqa: BLE001
+        return None, None
+    return ctx.get("avg_cost"), ctx.get("down_ath")
 
-    # Down % from ATH
-    down_from_ath = t.get("down_from_ath") or t.get("down_pct_from_ath") or t.get("ath_down_pct")
-    if down_from_ath is None:
-        price = _first(t, "p", "price", default=0.0)
-        ath = _first(t, "ath", "highest_price", "highestPrice", default=0.0)
-        if ath > 0 and price > 0:
-            down_from_ath = ((ath - price) / ath) * 100.0
-        else:
-            # Deterministic fallback: assume -90% (typical for HRHR)
-            down_from_ath = 90.0
-    else:
-        down_from_ath = float(down_from_ath)
 
-    return avg_cost_change, down_from_ath
+def ath_note_prefix(down_ath):
+    """Notes prefix for the ATH context (empty string when unknown)."""
+    if down_ath is None:
+        return ""
+    note = "Down %.1f%% dari ATH" % down_ath
+    return ("\U0001f7e2 " + note + "; ") if down_ath >= 90.0 else (note + "; ")
 
 
 def fetch_hrhr(timeout=25, debug=False):
@@ -776,7 +789,7 @@ def fetch_hrhr(timeout=25, debug=False):
 
 def screen_hrhr():
     """Fetch + score + filter for HRHR criteria + sort. Returns list of rows."""
-    rows, seen = [], set()
+    rows, seen, raw_by_ca = [], set(), {}
     tokens = fetch_hrhr()
     if not tokens:
         # fallback using fetch_trending if fetch_hrhr returns empty (Cloudflare blocks etc)
@@ -794,23 +807,17 @@ def screen_hrhr():
             continue
         seen.add(ca)
 
-        avg_cost, down_ath = _get_avg_cost_and_ath(t)
-        if avg_cost is not None and avg_cost > -50.0:
-            # Skip if holder average cost is not down at least 50%
-            continue
-
-        row["avg_cost"] = avg_cost
-        row["down_ath"] = down_ath
-
-        # Add ATH information to the notes
-        ath_note = f"Down {down_ath:.1f}% dari ATH"
-        if down_ath >= 90.0:
-            row["notes"] = f"🟢 {ath_note}; " + (row.get("notes") or "")
-        else:
-            row["notes"] = f"{ath_note}; " + (row.get("notes") or "")
-
+        row["avg_cost"] = None
+        row["down_ath"] = None
+        raw_by_ca[ca] = t
         rows.append(row)
 
+    _apply_token_context(rows, raw_by_ca)
+    # HRHR asks for tokens whose holders are deeply underwater. Only drop a
+    # row when the average cost is actually KNOWN and not down >= 50% —
+    # an unknown value must never silently filter a token out.
+    rows = [r for r in rows
+            if r.get("avg_cost") is None or r["avg_cost"] <= -50.0]
     rows.sort(key=lambda row: (
         -row.get("fit_exact", row["fit"]), row["t10_pct"],
         -row["liq_pct"]))
