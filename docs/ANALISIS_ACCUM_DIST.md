@@ -6,10 +6,12 @@
 **File data:** `signals.json`, `breakouts.json`, `conviction.json`,
 `holder_snapshots.json`.
 
-> **Status (2026-08-01):** Semua 9 rekomendasi dari bagian "Rekomendasi
-> Prioritas" di bawah sudah diimplementasikan dan lulus test
-> `tests/test_stealth_signals.py` (semua skenario lulus). Lihat
-> **CHANGELOG PERBAIKAN** di akhir dokumen untuk ringkasan perubahan.
+> **Status (2026-08-01):**
+> - 9 fix stealth A/D (sebelumnya) sudah diimplementasikan dan lulus test.
+> - **FOCUS_MODE ditambahkan**: collapse semua non-Tier-1 (phase,
+>   divergence, lh/trader split, 4-check panel) ke 1 health badge +
+>   hidden. Tier 1 (breakout_guard + holder_delta) tetap ditampilkan.
+>   Toggle via `config.json` → `focus_mode: true/false` (default: true).
 
 ---
 
@@ -524,6 +526,34 @@ Test existing (`test_wallet_profiles.py`, `test_flow_safety.py`,
 `test_holder_delta.py`, `test_breakout_guard.py`, `test_candle_patterns.py`,
 `test_helius_rotation.py`, `test_token_context.py`): semua masih
 **PASS** — tidak ada regresi.
+
+---
+
+## 8. FOCUS_MODE — Tier 1 Only (2026-08-01)
+
+Per klarifikasi user "biar noise sangat berkurang dan tidak
+membingungkan", ditambahkan **FOCUS_MODE** (default ON) yang
+memfilter tampilan menjadi hanya 2 subsistem Tier 1:
+
+| Aspek | Sebelum (full) | FOCUS_MODE |
+|---|---|---|
+| Conviction % | Tampil dengan breakdown pure_buy + lh_buy + trader_buy | Tampil sebagai 1 angka; breakdown tersembunyi |
+| Phase (Wyckoff) | Tampil badge di LP/Degen Radar card | **Hidden** (tetap di-compute) |
+| Divergence (CVD) | Tampil green/red strip di Live CVD section | **Hidden** (tetap direkam ke signals.json) |
+| Flow check panel | 4 baris: freshness + persistence + distribution + quality | **Collapsed ke 1 health badge**: 🟢 healthy / 🟡 warn / 🔴 danger |
+| Holder delta (T0↔T1) | Tampil (Tier 1) | Tampil (Tier 1) |
+| Breakout guard | Tampil via Telegram (Tier 1) | Tampil via Telegram (Tier 1) |
+
+**Cara kerja**: tambah `focus_mode: true` (default) di `config.json`.
+Set ke `false` untuk melihat semua badge kembali.
+
+**Backward compatibility**: `cvd.py`, `signals.py`, `breakout_guard.py`,
+`scripts/update_cvd.py` **tidak diubah perilakunya**. FOCUS_MODE hanya
+**hide display logic** di `app.py` dan gating Telegram Tier 2 di
+`signals.py`. Data computation tetap jalan (untuk backtest).
+
+**File baru**: `focus.py` (collapses 4 checks → 1 health badge, +
+`is_focus_mode` config reader, + `conviction_summary` helper).
 
 ---
 

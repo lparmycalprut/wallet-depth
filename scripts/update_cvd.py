@@ -220,6 +220,24 @@ def main():
     # Helius keys hanya untuk holder snapshot (opsional)
     api_keys = tuple(get_helius_keys())
 
+    # FOCUS_MODE: log once at start so the cron output is clear about
+    # what gets Telegram-notified (Tier 1 only) vs not.
+    try:
+        import json as _json
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "..", "config.json"),
+                  "r", encoding="utf-8") as _f:
+            _cfg = _json.load(_f) or {}
+    except Exception:
+        _cfg = {}
+    _focus_mode = bool(_cfg.get("focus_mode", True))
+    if _focus_mode:
+        print("🎯 FOCUS_MODE: Telegram Tier 1 only "
+              "(accumulation, stealth_accumulation, distribution). "
+              "Divergence → signals.json only (no Telegram).")
+    else:
+        print("📡 FOCUS_MODE: OFF — all signal types to Telegram.")
+
     wl_changed = False
     for ca, meta in list(wl.items()):
         try:
