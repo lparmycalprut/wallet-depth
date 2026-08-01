@@ -123,15 +123,16 @@ DOLPHIN_DELTA_MIN_SOL = float(CONFIG.get("dolphin_delta_min_sol", _DEF_DDM))
 # runs badge, distribution warn/danger reason. Keeps Tier 1 only:
 # holder_delta + breakout_guard.
 try:
-    from focus import is_focus_mode, health_badge, conviction_summary
+    # ``conviction_summary`` is also exported by ``focus`` but currently
+    # has no in-app consumer; the import list below stays short so a
+    # future regression is easy to spot (only one symbol per purpose).
+    from focus import is_focus_mode, health_badge
     FOCUS_MODE = is_focus_mode(CONFIG)
 except Exception:
     FOCUS_MODE = True
     def health_badge(ca):                # type: ignore
         return {"level": "ok", "label": "🟢 flow healthy",
                 "reason": "focus module unavailable"}
-    def conviction_summary(conv):         # type: ignore
-        return conv or {}
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -1611,7 +1612,7 @@ if _wl:
                     "align-items:stretch;'>"
                     + "".join(_degen_cards) + "</div>",
                     unsafe_allow_html=True)
-                st.caption("⚡ Degen Radar: token HRHR dari watchlist. "
+                _degen_caption = ("⚡ Degen Radar: token HRHR dari watchlist. "
                            "Bar hijau = conviction naik, bar merah = turun. "
                            "**📉 dari ATH** = jarak harga saat ini dari ATH "
                            "(display-only, hijau bila retrace ≥90%). "
@@ -1622,6 +1623,11 @@ if _wl:
                            "top 48h + range harga pola-nya (H4 & H1 terpisah). "
                            "⚠️ Token ini BERISIKO TINGGI — selalu DYOR! "
                            "Klik card → CVD analysis.")
+                if FOCUS_MODE:
+                    _degen_caption += ("  🎯 FOCUS_MODE: phase disembunyikan; "
+                                       "Tier 1 saja (holder delta + "
+                                       "breakout guard).")
+                st.caption(_degen_caption)
 
 # clicking a ticker chip sets ?ca=... -> prefill + auto-analyze
 qp_ca = st.query_params.get("ca", "").strip()
@@ -3151,7 +3157,12 @@ if run_cvd_now and (rpc_endpoint or use_gmgn_trades):
         st.plotly_chart(figv, use_container_width=True,
                         config={"displayModeBar": False})
 
-        # divergence vs price on same buckets
+        # divergence vs price on same buckets. ``ldivs`` is initialised
+        # here so the FOCUS_MODE caption below never raises NameError
+        # when price series is unavailable (e.g. GMGN returned no
+        # candles, or the chosen bucket is 30min and the price fetch
+        # is skipped). The caption is silent when the list is empty.
+        ldivs = []
         try:
             from cvd import fetch_price_series
             pmap = fetch_price_series(pair0, max(1, cvd_bucket // 60)) \
