@@ -148,17 +148,38 @@ never showed a real avg cost.
 
 `token_context.py` now fetches the real values:
 
-* **avg cost** — GMGN holder/trader list, e.g.
-  `GET /vas/api/v1/token_traders/sol/<CA>` (falls back through a few known
-  paths). Each row carries `balance`, `avg_cost` (price per token paid),
-  and for transfer-funded wallets `history_transfer_in_cost` /
-  `history_transfer_in_amount`. The module computes a **balance-weighted**
-  average entry price, skipping AMM/pool rows (`addr_type != 0` or a
-  non-empty `exchange`, e.g. the `pump_amm` `TOP1` account whose `avg_cost`
-  is `null`), then reports `price / avg_cost - 1` as a percentage.
-* **down from ATH** — an explicit ATH field when present, else derived from
-  `max_market_cap`, else the all-time high of GeckoTerminal **daily**
-  candles for the token's deepest DexScreener pair.
+### Holder endpoint (verified from browser capture 2026-07-31)
 
-Both return `None` when genuinely unresolvable; the UI renders `—`. Results
-are cached for 5 minutes per CA and cleared by the force-rescan buttons.
+```
+GET https://gmgn.ai/vas/api/v1/token_holders/sol/<CA>
+    ?limit=100&cost=20&orderby=unrealized_profit&direction=desc
+    + device_id / fp_did / client_id / app_ver / from_app / tz_name /
+      tz_offset / app_lang / os / worker
+Referer: https://gmgn.ai/sol/token/<CA>    ← per-token, not generic
+```
+
+Params `cost`, `orderby`, `direction` are **mandatory** — without them the
+response is empty or rows lack the `cost` field.
+
+### Aggregation
+
+The aggregate is `sum(cost) / sum(balance)` (remaining USD cost basis
+divided by token count across all qualifying rows). This replaces the
+earlier weighted-`avg_cost` approach because many wallets have
+`avg_cost: null` (transfer-funded) while their `cost` field is still
+populated, giving much wider float coverage.
+
+AMM/pool rows (`addr_type != 0` or a non-empty `exchange` field, e.g.
+`pump_amm`) are discarded — they carry no meaningful cost basis.
+
+### Down from ATH
+
+An explicit ATH field when present, else derived from `max_market_cap`,
+else the all-time high of GeckoTerminal **daily** candles for the token's
+deepest DexScreener pair.
+
+### Failure behaviour
+
+Both values return `None` when genuinely unresolvable; the UI renders `—`.
+**Never** guess: a fabricated number is worse than a dash. Results are
+cached for 5 minutes per CA and cleared by the force-rescan buttons.

@@ -9,11 +9,13 @@ why the LP/Degen cards never showed an avg cost.
 
 This module fetches the real thing:
 
-* **avg cost** — from GMGN's per-token holder/trader list
-  (``.../token_traders/sol/<CA>``, the payload with ``avg_cost``,
-  ``balance``, ``wallet_tag_v2: TOP1`` …). Holders' ``avg_cost`` values are
-  aggregated **balance-weighted** and turned into "current price vs holder
-  average cost" in %.
+* **avg cost** — from GMGN's per-token holder list
+  (``GET /vas/api/v1/token_holders/sol/<CA>?limit=100&cost=20
+  &orderby=unrealized_profit&direction=desc`` with a per-token Referer).
+  The aggregate is ``sum(cost) / sum(balance)`` (remaining USD cost basis
+  divided by token count), because most wallets carry ``avg_cost: null``
+  while their ``cost`` field is still populated.  AMM/pool rows
+  (``addr_type != 0`` or a non-empty ``exchange``) are skipped.
 * **down from ATH** — the token's all-time-high close from GeckoTerminal
   daily candles (pair resolved via DexScreener), or from an ATH-ish field
   when GMGN happens to send one.
@@ -31,16 +33,12 @@ __all__ = [
 
 GMGN_ORIGIN = "https://gmgn.ai"
 
-#: candidate paths for the holder/trader list (GMGN moves these around).
-#: The first one that answers with a usable list wins, and the winner is
-#: remembered for the rest of the process.
-HOLDER_PATHS = (
-    "/vas/api/v1/token_traders/sol/{ca}",
-    "/api/v1/token_traders/sol/{ca}",
-    "/defi/quotation/v1/tokens/top_holders/sol/{ca}",
-    "/api/v1/token_holders/sol/{ca}",
-)
-_holder_path_hint = {"path": ""}
+#: verified holder endpoint (captured from browser HAR 2026-07-31).
+#: Path: ``/vas/api/v1/token_holders/sol/<CA>``.
+#: Required query params: ``cost=20&orderby=unrealized_profit&direction=desc``
+#: (without these the response is empty or lacks the ``cost`` field).
+#: Referer must be per-token: ``https://gmgn.ai/sol/token/<CA>``.
+HOLDER_PATH = "/vas/api/v1/token_holders/sol/{ca}"
 
 #: cache: ca -> (ts, dict). GMGN/GeckoTerminal are rate-limited and these
 #: numbers are display-only, so a few minutes of staleness is fine.
@@ -114,7 +112,8 @@ def _gmgn_params():
         return {"device_id": DEVICE_ID, "fp_did": FP_DID,
                 "client_id": f"gmgn_web_{build}", "app_ver": build,
                 "from_app": "gmgn", "tz_name": "Asia/Jakarta",
-                "tz_offset": "25200", "app_lang": "en-US", "os": "web"}
+                "tz_offset": "25200", "app_lang": "en-US", "os": "web",
+                "worker": "0"}
     except Exception:                                     # noqa: BLE001
         return {"from_app": "gmgn", "os": "web", "app_lang": "en-US"}
 
@@ -140,46 +139,50 @@ def _holder_list(payload):
 # holder average cost
 # ---------------------------------------------------------------------------
 def fetch_holders(ca: str, *, limit: int = 100, timeout: int = 15):
-    """GMGN holder/trader rows for one CA (``[]`` on any failure)."""
+    """GMGN holder rows for one CA (``[]`` on any failure).
+
+    Uses the verified ``/vas/api/v1/token_holders/sol/<CA>`` endpoint.
+    The ``cost``, ``orderby``, and ``direction`` query params are mandatory
+    — without them the server returns an empty list or rows without the
+    ``cost`` field.  Referer must be the per-token page URL.
+    """
     if not ca:
         return []
     params = _gmgn_params()
     params["limit"] = limit
-    paths = ([_holder_path_hint["path"]] if _holder_path_hint["path"] else [])
-    paths += [p for p in HOLDER_PATHS if p != _holder_path_hint["path"]]
-    for path in paths:
-        url = GMGN_ORIGIN + path.format(ca=ca)
-        try:
-            r = _http_get(url, params=params, timeout=timeout)
-            if getattr(r, "status_code", None) != 200:
-                continue
-            payload = r.json() or {}
-        except Exception:                                 # noqa: BLE001
-            continue
-        if isinstance(payload, dict) and \
-                payload.get("code") not in (None, 0, "0", "success"):
-            continue
-        rows = _holder_list(payload)
-        if rows:
-            _holder_path_hint["path"] = path
-            return rows
-    return []
+    params["cost"] = 20
+    params["orderby"] = "unrealized_profit"
+    params["direction"] = "desc"
+    url = GMGN_ORIGIN + HOLDER_PATH.format(ca=ca)
+    headers = dict(_HEADERS)
+    headers["referer"] = f"{GMGN_ORIGIN}/sol/token/{ca}"
+    try:
+        r = _http_get(url, params=params, timeout=timeout, headers=headers)
+        if getattr(r, "status_code", None) != 200:
+            return []
+        payload = r.json() or {}
+    except Exception:                                     # noqa: BLE001
+        return []
+    if isinstance(payload, dict) and \
+            payload.get("code") not in (None, 0, "0", "success"):
+        return []
+    return _holder_list(payload)
 
 
 def holder_avg_cost(holders) -> float:
-    """Balance-weighted average entry price across holders, or ``None``.
+    """Aggregate average entry price across holders, or ``None``.
 
-    Uses each row's ``avg_cost`` (price per token the wallet paid) weighted
-    by the tokens it still holds. Rows with no ``avg_cost`` — pure
-    transfer-in wallets, LP/AMM accounts (``avg_cost: null`` in GMGN's
-    payload) — are skipped rather than counted as zero, which would drag the
-    average to nonsense.
+    Uses ``sum(cost) / sum(balance)`` rather than the per-row ``avg_cost``
+    field because many wallets (transfer-funded ones) have
+    ``avg_cost: null`` while their ``cost`` field (remaining cost basis in
+    USD) is still populated.  This gives much wider float coverage.
 
-    Wallets that only ever received tokens still carry a real cost basis in
-    ``history_transfer_in_cost`` / ``history_transfer_in_amount``; that pair
-    is used as a fallback so big transfer-funded holders are not ignored.
+    AMM/pool rows (``addr_type != 0`` or a non-empty ``exchange`` field,
+    e.g. ``pump_amm``) are discarded because they carry no meaningful
+    cost basis.
     """
-    num = den = 0.0
+    total_cost = 0.0
+    total_balance = 0.0
     for h in holders or []:
         if not isinstance(h, dict):
             continue
@@ -191,19 +194,14 @@ def holder_avg_cost(holders) -> float:
             bal = _f(h.get("amount_cur"), 0.0) or 0.0
         if bal <= 0:
             continue
-        ac = _f(h.get("avg_cost"), None)
-        if ac is None or ac <= 0:
-            in_amt = _f(h.get("history_transfer_in_amount"), 0.0) or 0.0
-            in_cost = _f(h.get("history_transfer_in_cost"), 0.0) or 0.0
-            if in_amt > 0 and in_cost > 0:
-                ac = in_cost / in_amt
-        if ac is None or ac <= 0:
+        cost = _f(h.get("cost"), None)
+        if cost is None or cost <= 0:
             continue
-        num += ac * bal
-        den += bal
-    if den <= 0:
+        total_cost += cost
+        total_balance += bal
+    if total_balance <= 0:
         return None
-    return num / den
+    return total_cost / total_balance
 
 
 def avg_cost_change_pct(price: float, holders) -> float:
