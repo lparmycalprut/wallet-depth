@@ -656,6 +656,27 @@ def _fmt_price(v: float) -> str:
     return f"${s}"
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _token_ctx_cached(ca: str) -> dict:
+    """Real ATH distance / holder avg-cost for a CA (cached, best effort)."""
+    try:
+        from token_context import token_context
+        return token_context(ca) or {}
+    except Exception:                                    # noqa: BLE001
+        return {}
+
+
+def _ctx_lookup(ca: str, field: str):
+    """One field of the live token context, or None when unavailable."""
+    if not ca:
+        return None
+    try:
+        v = (_token_ctx_cached(ca) or {}).get(field)
+        return None if v is None else float(v)
+    except Exception:                                    # noqa: BLE001
+        return None
+
+
 def _ca_down_ath(ca: str, meta: dict):
     """% below ATH for a watchlist CA, from watchlist meta or session
     screener rows (whichever is fresher). None when unknown."""
@@ -672,7 +693,7 @@ def _ca_down_ath(ca: str, meta: dict):
                     return float(_r["down_ath"])
                 except (TypeError, ValueError):
                     pass
-    return None
+    return _ctx_lookup(ca, "down_ath")
 
 
 def _ath_html(ca: str, meta: dict) -> str:
@@ -708,7 +729,7 @@ def _ca_avg_cost(ca: str, meta: dict):
                     return float(_r["avg_cost"])
                 except (TypeError, ValueError):
                     pass
-    return None
+    return _ctx_lookup(ca, "avg_cost")
 
 
 def _avg_cost_html(ca: str, meta: dict) -> str:

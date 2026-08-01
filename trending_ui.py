@@ -42,6 +42,7 @@ CAPTION = (
     "hijau bila retrace ≥90%). Kolom **AvgCost** = % harga saat ini vs "
     "rata-rata harga beli holder dari GMGN (`avg_cost_change`; negatif = "
     "holder rata-rata rugi, merah ≤ -50%, oranye <0%, hijau ≥0%; "
+    "— = data belum tersedia, bukan 0; "
     "display-only, tidak menambah Fit). HRHR **Down dari ATH** dan pola "
     "candle H4 hanya konteks visual; keduanya "
     "tidak menambah Fit. Source: GMGN internal API (unofficial, may break "
@@ -50,12 +51,23 @@ CAPTION = (
 )
 
 
+def _clear_ctx_cache():
+    """Drop the cached ATH / avg-cost context so a rescan re-fetches it."""
+    try:
+        from token_context import clear_cache
+        clear_cache()
+    except Exception:                                    # noqa: BLE001
+        pass
+
+
 def run_screen(force: bool = False, key: str = "screener_rows"):
     """Fetch + score the trending list, caching the result in session state.
 
     Returns ``(rows, error)`` — *error* is a string when the fetch blew up.
     """
     if force or key not in st.session_state:
+        if force:
+            _clear_ctx_cache()
         with st.spinner("Fetching GMGN trending…"):
             try:
                 st.session_state[key] = gmgn_screen()
@@ -73,6 +85,8 @@ def run_screen_hrhr(force: bool = False, key: str = "screener_hrhr_rows"):
     Returns ``(rows, error)`` — *error* is a string when the fetch blew up.
     """
     if force or key not in st.session_state:
+        if force:
+            _clear_ctx_cache()
         with st.spinner("Fetching GMGN HRHR list…"):
             try:
                 st.session_state[key] = gmgn_screen_hrhr()

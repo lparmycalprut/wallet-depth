@@ -137,3 +137,28 @@ python gmgn_screener.py          # prints the scored table
 `fetch_trending(debug=True)` prints the exact reason a fetch came back empty
 (HTTP status, API `code`, or "200 OK but 0 tokens" when the filters match
 nothing) instead of failing silently.
+
+## Holder average cost & distance from ATH (`token_context.py`)
+
+Neither number exists in the `trending_rank` payload. They used to be
+**fabricated** in `gmgn_screener._get_avg_cost_and_ath` (`-65%` avg cost,
+`90%` down-from-ATH whenever the field was missing — i.e. always), which is
+why every scanned row read `🟢 Down 90.0% dari ATH` and the LP/Degen cards
+never showed a real avg cost.
+
+`token_context.py` now fetches the real values:
+
+* **avg cost** — GMGN holder/trader list, e.g.
+  `GET /vas/api/v1/token_traders/sol/<CA>` (falls back through a few known
+  paths). Each row carries `balance`, `avg_cost` (price per token paid),
+  and for transfer-funded wallets `history_transfer_in_cost` /
+  `history_transfer_in_amount`. The module computes a **balance-weighted**
+  average entry price, skipping AMM/pool rows (`addr_type != 0` or a
+  non-empty `exchange`, e.g. the `pump_amm` `TOP1` account whose `avg_cost`
+  is `null`), then reports `price / avg_cost - 1` as a percentage.
+* **down from ATH** — an explicit ATH field when present, else derived from
+  `max_market_cap`, else the all-time high of GeckoTerminal **daily**
+  candles for the token's deepest DexScreener pair.
+
+Both return `None` when genuinely unresolvable; the UI renders `—`. Results
+are cached for 5 minutes per CA and cleared by the force-rescan buttons.
