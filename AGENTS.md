@@ -240,6 +240,46 @@ Jebakan yang sudah pernah menggigit:
   `tests/test_flow_safety.py::test_flow_freshness` wajib tetap
   hijau — kalau naik/turun band, update test bersamaan.
 
+## 7.5 Perilaku baru yang wajib dijaga (2026-08-01)
+
+- **Quick Pick one-shot (jangan di-rerun).** Blok Quick Pick di `app.py`
+  TIDAK boleh `st.rerun()` setelah set `trigger_analyze` — dulu itu bikin
+  loop rerun tanpa henti (selectbox masih terpilih → flag diset lagi).
+  Sekarang selectbox di-reset ke placeholder dan run yang sama yang
+  meneruskan analisis. Kalau mengubah blok ini, jangan kembalikan
+  `st.rerun()` di sana.
+- **`detect_phase()` memakai rata-rata conviction 6-48 jam**, bukan titik
+  6 jam terakhir: `cv = cvd.conviction_avg(pts)` dipakai untuk SEMUA
+  ambang phase (Markdown <30, Accumulation-Late ≥50, dll) dan semua pesan
+  `reason` menampilkan `avg conviction X% (6-48h)`. Momentum pendek
+  (naik/turun) tetap dari 2 titik terakhir. Jangan mengembalikan
+  `cv = pts[-1]["conviction"]` tanpa sadar — owner butuh angka yang bisa
+  dibandingkan dengan analisa CVD 48h.
+- **Pola candle body kecil di card LP & DEGEN.** `cvd.candle_pattern_summary(candles)`
+  mengembalikan `{counts, low, high, n}` (pola + RANGE harga pola).
+  Klasifikasi tunggal di `cvd._classify_small_body()`. Di card, H1 48h
+  diambil dari cache candle watchlist yang SUDAH ada
+  (`_daily_candles` = `fetch_watchlist_daily_candles`), H4 dibuat dari
+  H1 lewat `cvd.aggregate_candles(candles, 4)` (buang grup parsial) —
+  jadi TIDAK ada fetch GeckoTerminal tambahan per card. H4 dan H1
+  ditampilkan TERPISAH dengan range-nya masing-masing.
+- **Real holder vs dust di card LP & DEGEN.** `fetch_real_dust_ratio()`
+  di `app.py` memakai `fetch_holder_data()` (satu fetch Helius per CA,
+  di-share dengan holder-delta panel — jangan fetch 2×). Threshold dari
+  sidebar `dust_limit_usd` (default $5). Card menampilkan
+  `💎 Real ≥$5: N · 🪙 Dust: M · ratio R%` (hijau jika tidak ada dust
+  atau real ≥ 50% dari dust, merah di bawahnya).
+- **% dari ATH.** `gmgn_screener.screen()` (trending) sekarang mengisi
+  `row["down_ath"]` dan note `Down X% dari ATH` seperti HRHR. Kolom
+  **ATH** ada di tabel screener (`trending_ui.COLUMNS`); deep retrace
+  ≥90% glow hijau (display-only). Saat ⭐ watch dari screener,
+  `add_to_watchlist(..., down_ath=...)` menyimpannya di watchlist meta;
+  card LP/DEGEN menampilkannya via `app._ath_html()` (fallback: session
+  screener rows). Jangan jadikan `down_ath` bagian scoring.
+- **Tulisan `T10` diganti `Top 10`** di notes screener, kolom tabel,
+  wins, dan risk reasons. Regex glow di `trending_ui._format_note_part`
+  tetap menerima `T10` lama (catatan tersimpan) DAN `Top 10` baru.
+
 ## 8. Status & langkah berikutnya
 
 Per 2026-07-31, seluruh sistem telah difokuskan murni menggunakan **GMGN Token Trades API** secara default (`use_gmgn_trades = True`) untuk semua penarikan data transaksi on-chain. Cron holder snapshot harian dari Helius (`_try_snapshot`) telah dinonaktifkan sementara.

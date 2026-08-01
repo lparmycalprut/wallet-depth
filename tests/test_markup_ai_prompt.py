@@ -217,11 +217,56 @@ def test_prompt_tables_and_tasks():
           "complete coverage receives the complete-data status")
 
 
+def test_trending_rows_carry_down_ath():
+    """Trending scan rows carry down_ath (% below ATH) + a notes entry."""
+    print("\n[screener] trending rows carry % from ATH (display-only)")
+    import gmgn_screener as g
+
+    token = {
+        "address": "Tok1",
+        "symbol": "T1", "name": "Token One",
+        "price": 0.5, "ath": 2.0,          # down 75% from ATH
+        "mc": 1_000_000, "lq": 50_000,
+        "volume": 300_000, "holder_count": 2000,
+        "age": 86400 * 3,
+        "bdrr": 0.05, "dhr": 0.05, "etpr": 0.05, "bdr": 0.05,
+        "snp": 0.02, "t10": 18.0,
+    }
+    orig = g.fetch_trending
+    g.fetch_trending = lambda: [token]
+    try:
+        rows = g.screen()
+    finally:
+        g.fetch_trending = orig
+    check(len(rows) == 1, "screen() returns the synthetic token")
+    row = rows[0]
+    check(close(row["down_ath"], 75.0),
+          f"down_ath computed from price/ath (75%), got {row['down_ath']}")
+    check("Down 75.0% dari ATH" in (row.get("notes") or ""),
+          "notes include the ATH distance")
+    check(row["down_ath"] not in (None, ""),
+          "down_ath is present on the row for the ATH column")
+
+    # Deep retrace token (>=90%) gets the green marker in notes.
+    token2 = dict(token, address="Tok2", symbol="T2", price=0.1, ath=2.0)
+    g.fetch_trending = lambda: [token2]
+    try:
+        rows2 = g.screen()
+    finally:
+        g.fetch_trending = orig
+    check("🟢 Down 95.0% dari ATH" in (rows2[0].get("notes") or ""),
+          "deep retrace (>=90%) is marked green in the notes")
+
+
 def test_screener_note_styles():
-    print("\n[screener UI] T10 danger and ATH retrace use semantic glow")
-    t10 = trending_ui._format_note_part("T10 29% too concentrated")
+    print("\n[screener UI] Top-10 danger and ATH retrace use semantic glow")
+    t10 = trending_ui._format_note_part("Top 10 29% too concentrated")
     check("color:#ef4444" in t10 and "text-shadow" in t10,
-          "T10 concentration warning is bright glowing red")
+          "Top-10 concentration warning is bright glowing red")
+    # Legacy "T10" phrasing must still glow (older stored notes/signals).
+    t10_legacy = trending_ui._format_note_part("T10 31% too concentrated")
+    check("color:#ef4444" in t10_legacy and "text-shadow" in t10_legacy,
+          "legacy T10 concentration warning still glows")
 
     ath = trending_ui._format_note_part("Down 90.0% dari ATH")
     check("color:#22c55e" in ath and "text-shadow" in ath,
@@ -327,6 +372,7 @@ if __name__ == "__main__":
     test_screener_note_styles()
     test_insider_bundler_colors()
     test_ui_integration_guards()
+    test_trending_rows_carry_down_ath()
     print(f"\n{'FAILED: ' + str(len(failures)) if failures else 'ALL PASSED'}")
     for failure in failures:
         print("  -", failure)

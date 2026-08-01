@@ -164,7 +164,7 @@ def test_calibration_preserved():
 
     # Broken structural gates still prevent PRIME. Holder count has no raw
     # points, but the owner explicitly kept its safety gate.
-    for field, value, label in (("t10", 0.32, "T10 32%"),
+    for field, value, label in (("t10", 0.32, "Top 10 32%"),
                                 ("lq", GOOD["mc"] * 0.03,
                                  "liquidity 3% MC"),
                                 ("rug", 0.57, "rug score 0.57"),
