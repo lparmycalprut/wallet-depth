@@ -48,8 +48,9 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 5. **Tulisan `T10` → `Top 10`** di notes, kolom tabel, wins, dan risk
    reasons screener. Regex glow tetap menerima format lama `T10` maupun
    baru `Top 10`.
-6. **Card LP & DEGEN diperbesar** (min 280px / max 340px) untuk menampung
-   detail baru.
+6. **Card LP & DEGEN diperbesar** (min 320px / max 400px, `overflow-wrap:
+   anywhere`, badge phase bisa wrap) untuk menampung detail baru tanpa
+   terpotong.
 7. **Bug fix Quick Pick loop.** Blok Quick Pick di `app.py` dulu memanggil
    `st.rerun()` setelah set `trigger_analyze`/`cvd_on`/`cvd_win` → selectbox
    masih terpilih → flag diset lagi → **loop rerun tanpa henti**. Sekarang
