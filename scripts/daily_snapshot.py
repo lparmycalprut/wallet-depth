@@ -21,6 +21,7 @@ from datetime import date, datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import requests  # noqa: E402
+from core import atomic_write_json  # noqa: E402
 from watchlist import load_watchlist, save_watchlist  # noqa: E402
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -163,6 +164,7 @@ def snapshot_one(ca: str) -> dict:
         "top100_pct": round(min(100, top10_pct * 3), 2),  # estimate
         "liq_pct_mc": round(liq_pct, 2),
         "symbol": symbol,
+        "name": name,
         "buys24": buys, "sells24": sells, "vol24": vol24,
         "source": "cron-daily (DexScreener+GMGN)",
     }
@@ -209,8 +211,7 @@ def main():
             print(f"❌ {ca[:8]}… failed: {str(e)[:100]}")
         time.sleep(0.3)  # gentle rate limit
 
-    with open(HISTORY_PATH, "w", encoding="utf-8") as f:
-        json.dump(hist, f, indent=1)
+    atomic_write_json(HISTORY_PATH, hist, indent=1)
     save_watchlist(wl)
     print(f"\nDone: {ok} ok, {failed} failed, {skipped} skipped, "
           f"{len(wl)} watched.")

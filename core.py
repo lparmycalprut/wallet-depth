@@ -2,6 +2,7 @@
 """Fungsi fetch bersama — dipakai app.py dan pages/ (Perbandingan, Riwayat)."""
 import json
 import os
+import tempfile
 import threading
 
 import pandas as pd
@@ -15,6 +16,26 @@ HELIUS_ENHANCED_URL = "https://api.helius.xyz"
 
 _helius_rotation_lock = threading.Lock()
 _helius_rotation_index = 0
+
+
+def atomic_write_json(path: str, data, **dump_kwargs) -> None:
+    """Write JSON to path atomically: write to a temp file in the same
+    directory, flush+fsync, then os.replace() over the target. Prevents
+    truncated/corrupt files if the process dies mid-write."""
+    d = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp_path = tempfile.mkstemp(prefix=".tmp-", dir=d)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, **dump_kwargs)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def merge_helius_keys(*values) -> list[str]:

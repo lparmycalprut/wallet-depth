@@ -32,9 +32,12 @@ logged as ``reclaim``. Both close out the parent event's ``outcome``.
 """
 import json
 import os
+import sys
 import time
 
 import requests
+
+from core import atomic_write_json
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LEVELS_PATH = os.path.join(BASE_DIR, "levels.json")
@@ -98,10 +101,10 @@ def load_levels() -> dict:
 
 def save_levels(state: dict) -> None:
     try:
-        with open(LEVELS_PATH, "w", encoding="utf-8") as f:
-            json.dump(state, f, separators=(",", ":"))
-    except Exception:
-        pass
+        atomic_write_json(LEVELS_PATH, state, separators=(",", ":"))
+    except Exception as exc:
+        print(f"WARN: failed to save {LEVELS_PATH}: {exc}",
+              file=sys.stderr)
 
 
 def compute_levels(pool: str):

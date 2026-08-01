@@ -16,11 +16,12 @@ Small swaps below MIN_SOL are ignored entirely (bot dust noise).
 import json
 import math
 import os
+import sys
 import time
 
 import requests
 
-from core import (HELIUS_ENHANCED_URL, helius_api_get,
+from core import (HELIUS_ENHANCED_URL, atomic_write_json, helius_api_get,
                   helius_rpc_request as _core_helius_rpc_request)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -541,17 +542,7 @@ def load_cvd() -> dict:
 
 
 def save_cvd(state: dict) -> None:
-    import tempfile
-    dir_name = os.path.dirname(os.path.abspath(CVD_PATH))
-    fd, temp_path = tempfile.mkstemp(dir=dir_name, prefix="cvd_temp_")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(state, f, separators=(",", ":"))
-        os.replace(temp_path, CVD_PATH)
-    except Exception:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-        raise
+    atomic_write_json(CVD_PATH, state, separators=(",", ":"))
 
 
 def classify_swap(tx: dict, pool: str, ca: str):
@@ -1036,10 +1027,9 @@ def load_conviction() -> dict:
         merged[ca].extend([p for p in pts if p["ts"] not in seen])
         merged[ca].sort(key=lambda p: p["ts"])
     try:
-        with open(CONV_PATH, "w", encoding="utf-8") as f:
-            json.dump(merged, f, separators=(",", ":"))
-    except Exception:
-        pass
+        atomic_write_json(CONV_PATH, merged, separators=(",", ":"))
+    except Exception as exc:
+        print(f"WARN: failed to save {CONV_PATH}: {exc}", file=sys.stderr)
     return merged
 
 
@@ -1094,16 +1084,9 @@ def record_conviction(ca: str, *, window_h: int = 6) -> dict | None:
     # keep last 7 days of points
     cutoff = time.time() - 7 * 86400
     hist[ca] = [p for p in arr if p["ts"] >= cutoff]
-    import tempfile
-    dir_name = os.path.dirname(os.path.abspath(CONV_PATH))
-    fd, temp_path = tempfile.mkstemp(dir=dir_name, prefix="conv_temp_")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(hist, f, separators=(",", ":"))
-        os.replace(temp_path, CONV_PATH)
+        atomic_write_json(CONV_PATH, hist, separators=(",", ":"))
     except Exception:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
         # Callers must not report a successful refresh when the new
         # conviction point never reached disk.
         raise
@@ -2321,20 +2304,14 @@ def load_holder_snapshots() -> dict:
 
 
 def _save_holder_snapshots(state: dict) -> None:
-    """Write the snapshot store back. Always atomic-ish: dump then
-    rename via temp, so a crashed write doesn't leave a half-file."""
-    import tempfile as _tf
-    tmp = HOLDER_SNAPSHOT_PATH + ".tmp"
+    """Write the snapshot store back atomically (temp file + rename),
+    so a crashed write doesn't leave a half-file."""
     try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(state, f, separators=(",", ":"))
-        os.replace(tmp, HOLDER_SNAPSHOT_PATH)
-    except Exception:
-        try:
-            if os.path.exists(tmp):
-                os.remove(tmp)
-        except Exception:
-            pass
+        atomic_write_json(HOLDER_SNAPSHOT_PATH, state,
+                          separators=(",", ":"))
+    except Exception as exc:
+        print(f"WARN: failed to save {HOLDER_SNAPSHOT_PATH}: {exc}",
+              file=sys.stderr)
 
 
 def classify_holders(holders, *, n_total: int = None) -> dict:

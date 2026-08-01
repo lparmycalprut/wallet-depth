@@ -10,7 +10,10 @@ type: "accumulation" | "distribution" | "bullish_div" | "bearish_div"
 """
 import json
 import os
+import sys
 import time
+
+from core import atomic_write_json
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SIGNALS_PATH = os.path.join(BASE_DIR, "signals.json")
@@ -34,10 +37,11 @@ def load_signals() -> list:
 
 def save_signals(sigs: list) -> None:
     try:
-        with open(SIGNALS_PATH, "w", encoding="utf-8") as f:
-            json.dump(sigs[-MAX_SIGNALS:], f, separators=(",", ":"))
-    except Exception:
-        pass
+        atomic_write_json(SIGNALS_PATH, sigs[-MAX_SIGNALS:],
+                          separators=(",", ":"))
+    except Exception as exc:
+        print(f"WARN: failed to save {SIGNALS_PATH}: {exc}",
+              file=sys.stderr)
 
 
 def record_signal(ca: str, symbol: str, sig_type: str, detail: str, *,
@@ -78,9 +82,8 @@ def detect_and_record(ca: str, symbol: str, *, src: str = "cron",
                       pool: str = None) -> list:
     """Run flow + divergence detection on the stored swaps/buckets and
     record any signals. Returns list of recorded signal types."""
-    from cvd import (WHALE_SOL, get_recent_swaps, get_series,
-                     detect_divergence, fetch_price_series,
-                     wallet_profiles)
+    from cvd import (get_recent_swaps, get_series, detect_divergence,
+                     fetch_price_series, wallet_profiles)
     recorded = []
 
     # --- battle-tested CVD flow check: holders (LH/trader/pure) vs dumpers --

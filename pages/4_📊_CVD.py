@@ -20,8 +20,8 @@ import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ai_prompt import build_ai_prompt
-from core import (get_helius_keys, helius_rpc, load_config,
-                  get_holders as core_get_holders,
+from core import (atomic_write_json, get_helius_keys, helius_rpc,
+                  load_config, get_holders as core_get_holders,
                   get_supply as core_get_supply)
 from cvd import (MIN_SOL, WHALE_SOL, analysis_windows, classify_holders,
                  classify_swap, cohort_activity_summary, cohort_cvd_series,
@@ -255,10 +255,11 @@ def load_funder_cache():
 
 def save_funder_cache(c):
     try:
-        with open(os.path.join(BASE, "funders_cache.json"), "w") as f:
-            json.dump(c, f, separators=(",", ":"))
-    except Exception:
-        pass
+        atomic_write_json(os.path.join(BASE, "funders_cache.json"), c,
+                          separators=(",", ":"))
+    except Exception as exc:
+        print(f"WARN: failed to save funders_cache.json: {exc}",
+              file=sys.stderr)
 
 
 def lookup_first_tx(wallet, max_pages=2):

@@ -7,6 +7,129 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-01 — Stat avg cost GMGN di card LP/Degen + kolom AvgCost di scan trending/degen
+
+### Yang berubah
+
+1. **`gmgn_screener.screen()` (trending) sekarang menyimpan `row["avg_cost"]`**
+   (dari `_get_avg_cost_and_ath`), sejajar dengan `screen_hrhr` yang sudah
+   menyimpannya. Fallback deterministik -65% tetap berlaku bila GMGN tidak
+   mengirim field `avg_cost_change`.
+2. **Kolom `AvgCost` baru di tabel screener** (`trending_ui.COLUMNS`, dipakai
+   scan trending & degen/HRHR): % harga saat ini vs rata-rata harga beli
+   holder GMGN — merah ≤ -50% (holder rata-rata rugi dalam), oranye <0%,
+   hijau ≥0%. Display-only, tidak menambah Fit (dijelaskan di CAPTION).
+   Indeks kolom render digeser (risk/notes/buttons ke cc[10]/cc[11]/cc[12]).
+3. **Card LP Radar & Degen Radar menampilkan `💰 avg cost`** lewat helper
+   baru `app._ca_avg_cost()` + `app._avg_cost_html()` (mirror pola
+   `_ca_down_ath`/`_ath_html`): baca dari watchlist meta → fallback session
+   screener rows (`screener_rows`/`screener_hrhr_rows`). Warna sama dengan
+   kolom tabel. Caption kedua card di-update.
+4. **`watchlist.add_to_watchlist()` menerima `avg_cost`** (opsional),
+   disimpan di entry + meta (fresh capture menang), dan `_apply_ops`
+   ikut menyalin field `avg_cost` saat replay journal. Tombol ⭐ watch di
+   `trending_ui` meneruskan `avg_cost=r.get("avg_cost")`.
+
+### Verifikasi
+
+- `python -m py_compile` (13 file incl. gmgn_screener/trending_ui) — lulus.
+- `python -m pyflakes *.py pages/*.py scripts/*.py` — bersih (hanya 2
+  f-string lama yang di luar scope).
+- 3 suite test (`test_breakout_guard`, `test_scoring_continuity`,
+  `test_markup_ai_prompt`) — ALL PASSED (test markup memeriksa labels
+  COLUMNS & CAPTION tetap valid).
+- Offline checks: `screen()` membawa `avg_cost` (-62.5 dari field GMGN,
+  fallback -65.0); watchlist menyimpan + replay journal membawa avg_cost;
+  re-add tanpa avg_cost tidak menghapus nilai lama; `_avg_cost_html`
+  render 3 warna + empty saat unknown + fallback session rows.
+- `git diff --check` bersih (cr-at-eol).
+
+### Catatan / sisa PR
+
+- Token watchlist lama (ditambahkan sebelum fitur ini) tidak punya
+  `avg_cost` di meta — card tetap aman (line disembunyikan) dan terisi
+  otomatis saat di-add ulang dari screener atau via fallback session rows.
+
+## 2026-08-01 — Watchlist HRHR→LP bug + atomic JSON writes + cluster scan paralel + auto-refresh on add
+
+### Yang berubah
+
+1. **Bug fix: token HRHR masuk LP Cards.** `watchlist._apply_ops()` dulu hanya
+   menyalin `symbol`/`note`/`added` dari journal op, sehingga field `source`
+   (`"hrhr"`) hilang saat replay journal → LP Radar memakai default
+   `"trending"` → token HRHR tampil di 💧 LP Radar, bukan ⚡ Degen Radar.
+   Sekarang SEMUA field journal (`symbol`, `note`, `added`, `source`,
+   `down_ath`) disalin, dan `add_to_watchlist()` memaksa source dari add
+   terbaru (latest-add-wins) supaya re-add tidak menimpa section card.
+2. **Semua write JSON state jadi atomic.** Helper baru
+   `core.atomic_write_json(path, data, **dump_kwargs)` (mkstemp di dir yang
+   sama → flush+fsync → `os.replace`, cleanup temp saat gagal) menggantikan
+   pola `open(path,"w")+json.dump` di: `cvd.py` (`save_cvd`, merge
+   conviction remote, `record_conviction`, `_save_holder_snapshots`),
+   `watchlist.py` (pending journal + watchlist), `breakout_guard.py`,
+   `signals.py`, `breakout_log.py`, `app.py` (`save_config`,
+   `save_snapshot`, `save_funder_cache`), `pages/4_📊_CVD.py`
+   (`save_funder_cache`), `scripts/daily_snapshot.py`. Format JSON output
+   TIDAK berubah (kwargs `separators`/`indent` dipertahankan).
+3. **Write gagal tidak diam lagi.** `except Exception: pass` yang membungkus
+   PENULISAN file kini `print(f"WARN: failed to save ...: {exc}",
+   file=sys.stderr)`. `except: pass` untuk fetch/parsing data eksternal
+   TIDAK diubah (fallback graceful memang disengaja). `record_conviction`
+   tetap re-raise (jangan laporkan sukses kalau belum sampai disk).
+4. **Dead code dihapus.** Blok `if False: with col_liq:` di `app.py`
+   (mereferensikan `col_liq` yang undefined — akan NameError kalau flag
+   pernah diaktifkan) dihapus beserta isinya. `go.Figure`, `active_pools`,
+   `pools`, `total_pool_liq` dsb. tetap dipakai kode lain → import tidak
+   dihapus.
+5. **Unused imports dibersihkan:** `PATTERN_EMOJI` duplikat (baris ~902
+   `app.py`), `import tempfile as _tf` (`cvd.py`), `score_token`
+   (`debug_rako.py`), `WHALE_SOL` (`signals.py`),
+   `record_holder_snapshot` (`scripts/update_cvd.py`).
+6. **`detect_clusters()` paralel.** Wallet yang BELUM ada di
+   `funders_cache.json` di-submit ke `ThreadPoolExecutor`
+   (`workers = min(8, n)`), wallet ter-cache tetap lookup lokal tanpa
+   network. Hasil future diambil via `as_completed` dan dict `disk`
+   diupdate di MAIN thread (tanpa lock); `progress_cb` tetap terpanggil
+   per-future selesai; `time.sleep(0.1)` dihapus (rotasi key di
+   `core._helius_candidates`/`_helius_rotation_lock` sudah thread-safe);
+   `save_funder_cache(disk)` sekali di akhir; pass terakhir tetap dalam
+   urutan wallet asli → `groups`/`cdf`/`info` deterministik identik dengan
+   loop sekuensial lama.
+7. **Tombol "🔄 Force refresh now" DIHAPUS** (permintaan owner). Gantinya:
+   `add_to_watchlist()` men-set flag `watchlist_auto_refresh_cas` di
+   session_state (best-effort, aman dipakai cron karena wrapped try/except),
+   dan freshness sweep di `app.py` otomatis backfill token baru
+   (`update_token_cvd` + `record_conviction`, progress bar) pada rerun
+   berikutnya — card langsung tampil dengan data segar di run yang sama.
+   Banner peringatan token stale tetap ada.
+8. **`scripts/daily_snapshot.py` menyimpan `name`** (nama lengkap token)
+   di history.json. Konsumen lama aman: semua pembaca pakai
+   `.get("symbol")`/`.get(...)` dengan fallback, field `name` opsional.
+
+### Verifikasi
+
+- `python -m py_compile` 11 file target — lulus.
+- `python -m pyflakes *.py pages/*.py scripts/*.py` — semua warning task
+  hilang; sisa 2 warning `f-string is missing placeholders` lama yang
+  memang sudah ada sebelum perubahan (app.py:1191, pages/4:342).
+- `tests/test_breakout_guard.py`, `tests/test_scoring_continuity.py`,
+  `tests/test_markup_ai_prompt.py` — ALL PASSED (3/3).
+- Offline determinism test `detect_clusters`: hasil identik dengan
+  referensi sekuensial; wallet ter-cache tidak di-fetch ulang;
+  `save_funder_cache` tepat 1×; progress monotonik 0.1→1.0.
+- Offline watchlist test: op journal `source="hrhr"` bertahan melewati
+  replay `_apply_ops` + `load_watchlist`; journal ter-clear setelah push.
+- `git diff --check` bersih (dengan `core.whitespace cr-at-eol`).
+
+### Catatan / sisa PR
+
+- Estimasi paralelisme poin 6: sebelumnya 1 wallet sekuensial (dengan
+  sleep 0.1s/wallet); sekarang sampai 8 wallet bersamaan (Deep/100 holder
+  belum ter-cache → ~13 batch vs 100 iterasi + 10 detik sleep total).
+- Auto-refresh hanya 1× percobaan per add (flag di-consume); kalau gagal,
+  data diisi cron 4h berikutnya (sama seperti perilaku tombol lama yang
+  butuh klik ulang).
+
 ## 2026-08-01 — Phase avg conviction 6-48h + pola candle H4/H1 + real vs dust + ATH + Top 10 + Quick Pick fix
 
 ### Yang berubah

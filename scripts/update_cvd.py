@@ -19,8 +19,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import requests  # noqa: E402
-from cvd import (record_holder_snapshot, record_conviction,  # noqa: E402
-                 update_token_cvd, get_gmgn_last_error)
+from cvd import (record_conviction, update_token_cvd,  # noqa: E402
+                 get_gmgn_last_error)
 from signals import detect_and_record  # noqa: E402
 from watchlist import load_watchlist, save_watchlist  # noqa: E402
 
