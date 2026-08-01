@@ -23,7 +23,10 @@ down (the next cron run retries it).
 """
 import json
 import os
+import sys
 import time
+
+from core import atomic_write_json
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 #: module-level so tests can point it at a temp file
@@ -43,10 +46,10 @@ def load_events() -> list:
 
 def save_events(events: list) -> None:
     try:
-        with open(LOG_PATH, "w", encoding="utf-8") as f:
-            json.dump(events[-MAX_EVENTS:], f, separators=(",", ":"))
-    except Exception:
-        pass
+        atomic_write_json(LOG_PATH, events[-MAX_EVENTS:],
+                          separators=(",", ":"))
+    except Exception as exc:
+        print(f"WARN: failed to save {LOG_PATH}: {exc}", file=sys.stderr)
 
 
 def make_id(ca: str, event: str, candle_ts: int) -> str:

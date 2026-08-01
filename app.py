@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import struct
+import sys
 import time
 import urllib.parse
 from datetime import date, datetime
@@ -20,7 +21,7 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import (concentration, get_helius_keys,
+from core import (atomic_write_json, concentration, get_helius_keys,
                   get_holders as core_get_holders, get_ohlcv_daily,
                   get_rugcheck, get_supply as core_get_supply, health_score,
                   helius_rpc, score_color, score_label)
@@ -91,10 +92,9 @@ def load_config() -> dict:
 
 def save_config(cfg: dict) -> None:
     try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2)
-    except Exception:
-        pass
+        atomic_write_json(CONFIG_PATH, cfg, indent=2)
+    except Exception as exc:
+        print(f"WARN: failed to save {CONFIG_PATH}: {exc}", file=sys.stderr)
 
 
 CONFIG = load_config()
@@ -219,10 +219,9 @@ def save_snapshot(ca: str, snap: dict) -> dict:
     hist = load_history()
     hist.setdefault(ca, {})[date.today().isoformat()] = snap
     try:
-        with open(HISTORY_PATH, "w", encoding="utf-8") as f:
-            json.dump(hist, f, indent=1)
-    except Exception:
-        pass
+        atomic_write_json(HISTORY_PATH, hist, indent=1)
+    except Exception as exc:
+        print(f"WARN: failed to save {HISTORY_PATH}: {exc}", file=sys.stderr)
     return hist
 
 
@@ -367,10 +366,9 @@ def load_funder_cache() -> dict:
 
 def save_funder_cache(cache: dict) -> None:
     try:
-        with open(FUNDERS_PATH, "w", encoding="utf-8") as f:
-            json.dump(cache, f, separators=(",", ":"))
-    except Exception:
-        pass
+        atomic_write_json(FUNDERS_PATH, cache, separators=(",", ":"))
+    except Exception as exc:
+        print(f"WARN: failed to save {FUNDERS_PATH}: {exc}", file=sys.stderr)
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -428,21 +426,53 @@ def find_funder(endpoint: str, wallet: str, max_pages: int = 5):
 
 def detect_clusters(endpoint, top_holders, supply, progress_cb=None,
                     max_pages=5):
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     funders, first_time = {}, {}
     wallets = top_holders["owner"].tolist()
     disk = load_funder_cache()
-    new_entries = 0
+    # Wallets already in the on-disk cache are immutable -> free lookups,
+    # no network. Only the missing ones go to the thread pool; key
+    # rotation in core.py (_helius_candidates / _helius_rotation_lock) is
+    # already thread-safe, so no manual sleep is needed here.
+    wallets_to_fetch = [w for w in wallets if w not in disk]
+    n_cached = len(wallets) - len(wallets_to_fetch)
+    new_entries = len(wallets_to_fetch)
+    last_frac = 0.0
+    if wallets_to_fetch:
+        workers = min(8, len(wallets_to_fetch))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(find_funder, endpoint, w,
+                                       max_pages=max_pages): w
+                       for w in wallets_to_fetch}
+            done = 0
+            for fut in as_completed(futures):
+                w = futures[fut]
+                try:
+                    f, bt = fut.result()
+                except Exception:
+                    f, bt = None, None
+                # Shared dict updated from the MAIN thread only, so no
+                # lock is needed and ordering below stays deterministic.
+                disk[w] = [f, bt]
+                done += 1
+                if progress_cb:
+                    frac = (n_cached + done) / len(wallets)
+                    if frac >= last_frac:
+                        progress_cb(frac, w)
+                        last_frac = frac
+    # Deterministic final pass in the ORIGINAL wallet order (cached
+    # wallets are pure dict lookups — no network), so groups/cdf/info
+    # keep the exact same ordering as the old sequential loop no matter
+    # which thread finished first.
     for i, w in enumerate(wallets):
-        if w in disk:                      # immutable -> free lookup
-            f, bt = disk[w][0], disk[w][1]
-        else:
-            f, bt = find_funder(endpoint, w, max_pages=max_pages)
-            disk[w] = [f, bt]
-            new_entries += 1
-            time.sleep(0.1)                # rate-limit only on real calls
+        f, bt = disk[w][0], disk[w][1]
         funders[w], first_time[w] = f, bt
         if progress_cb:
-            progress_cb((i + 1) / len(wallets), w)
+            frac = (i + 1) / len(wallets)
+            if frac > last_frac:
+                progress_cb(frac, w)
+                last_frac = frac
     if new_entries:
         save_funder_cache(disk)
     groups = {}
@@ -814,84 +844,87 @@ if _wl:
                 f"but conviction trend may be missing the latest window. "
                 f"Tokens: {_stale_syms}"
                 + (f" +{len(_stale_cas) - 5} more" if len(_stale_cas) > 5 else ""))
-        # Force-refresh button — only meaningful if Helius is configured
-        if helius_keys:
-            _fr_cols = st.columns([1, 3])
-            if _fr_cols[0].button(
-                    f"🔄 Force refresh now ({len(_very_stale_cas) + len(_stale_cas)} token(s))",
-                    type="primary", key="fr_stale_btn",
-                    use_container_width=True):
-                _to_refresh = [c for c in (_very_stale_cas + _stale_cas)
-                               if c not in st.session_state[_freshness_state_key]]
-                if not _to_refresh:
-                    st.info("✅ All stale tokens already refreshed this session.")
-                else:
-                    _fr_pbar = st.progress(
-                        0.0, text="🔄 Backfilling stale tokens…")
-                    _fr_succeeded = []
-                    _fr_failed = []
-                    for _fr_i, _fr_ca in enumerate(_to_refresh):
-                        _fr_symbol = _wl[_fr_ca].get("symbol", "?")
-                        _fr_market = _prices.get(_fr_ca) or {}
-                        _fr_pool = _fr_market.get("pair")
-                        if not _fr_pool:
-                            _fr_error = "main pool tidak tersedia"
-                            _fr_failed.append((_fr_ca, _fr_symbol, _fr_error))
-                            st.warning(
-                                f"Backfill ${_fr_symbol} gagal: {_fr_error}")
-                        else:
-                            try:
-                                from cvd import (update_token_cvd,
-                                                 record_conviction)
-                                update_token_cvd(
-                                    helius_keys, _fr_ca, _fr_pool,
-                                    max_pages=200)
-                                _fr_point = record_conviction(
-                                    _fr_ca, window_h=6)
-                                if _fr_point is None:
-                                    raise RuntimeError(
-                                        "tidak ada swap 6 jam untuk merekam "
-                                        "conviction")
-                                st.session_state[_freshness_state_key].add(
-                                    _fr_ca)
-                                _fr_succeeded.append(_fr_ca)
-                            except Exception as _fr_exc:
-                                _fr_failed.append(
-                                    (_fr_ca, _fr_symbol, str(_fr_exc)))
-                                st.warning(
-                                    f"Backfill ${_fr_symbol} gagal: "
-                                    f"{_fr_exc}")
-                        _fr_pbar.progress(
-                            (_fr_i + 1) / len(_to_refresh),
-                            text=f"🔄 Diproses {_fr_i + 1}/"
-                                 f"{len(_to_refresh)} · "
-                                 f"{len(_fr_succeeded)} berhasil…")
-                    _fr_pbar.empty()
-                    if _fr_failed:
-                        _fr_failed_syms = ", ".join(
-                            f"${symbol}" for _, symbol, _ in _fr_failed)
-                        if _fr_succeeded:
-                            st.warning(
-                                f"⚠️ Backfill selesai sebagian: "
-                                f"{len(_fr_succeeded)} berhasil, "
-                                f"{len(_fr_failed)} gagal "
-                                f"({_fr_failed_syms}). Reload page (F5) "
-                                f"untuk melihat token yang berhasil.")
-                        else:
-                            st.error(
-                                f"❌ Backfill gagal: 0/{len(_to_refresh)} "
-                                f"token berhasil ({_fr_failed_syms}). "
-                                f"Token gagal belum ditandai sebagai "
-                                f"refreshed dan bisa dicoba lagi.")
+
+    # ------------------------------------------------------------------
+    # 🔄 Auto-refresh for newly added watchlist tokens. The manual
+    # "Force refresh now" button was removed (owner request): adding a
+    # token to the watchlist now backfills its CVD/conviction data
+    # immediately on the next rerun instead of waiting for the 4h cron.
+    # ------------------------------------------------------------------
+    _pending_refresh = st.session_state.get(
+        "watchlist_auto_refresh_cas") or set()
+    if _pending_refresh and _wl:
+        _to_refresh = [c for c in _pending_refresh
+                       if c in _wl and c not in
+                       st.session_state[_freshness_state_key]]
+        st.session_state["watchlist_auto_refresh_cas"] = set()  # consume
+        if _to_refresh:
+            if not helius_keys:
+                st.caption("⏳ Token baru butuh backfill CVD, tapi Helius "
+                           "API key belum dikonfigurasi — data akan terisi "
+                           "oleh cron berikutnya.")
+            else:
+                _fr_pbar = st.progress(
+                    0.0, text="🔄 Backfilling newly added token(s)…")
+                _fr_succeeded = []
+                _fr_failed = []
+                for _fr_i, _fr_ca in enumerate(_to_refresh):
+                    _fr_symbol = _wl[_fr_ca].get("symbol", "?")
+                    _fr_market = _prices.get(_fr_ca) or {}
+                    _fr_pool = _fr_market.get("pair")
+                    if not _fr_pool:
+                        _fr_failed.append((_fr_ca, _fr_symbol,
+                                           "main pool tidak tersedia"))
+                        st.warning(
+                            f"Backfill ${_fr_symbol} gagal: main pool "
+                            f"tidak tersedia")
                     else:
-                        st.success(
-                            f"✅ Backfilled {len(_fr_succeeded)} token(s). "
-                            f"Reload page (F5) untuk lihat angka terbaru."
-                        )
-            _fr_cols[1].caption(
-                "Calls `update_token_cvd` + `record_conviction` for each "
-                "stale token (Helius credits — usually under 50 calls per "
-                "token). Skips CAs already refreshed in this session.")
+                        try:
+                            from cvd import (update_token_cvd,
+                                             record_conviction)
+                            update_token_cvd(
+                                helius_keys, _fr_ca, _fr_pool,
+                                max_pages=200)
+                            _fr_point = record_conviction(
+                                _fr_ca, window_h=6)
+                            if _fr_point is None:
+                                raise RuntimeError(
+                                    "tidak ada swap 6 jam untuk merekam "
+                                    "conviction")
+                            st.session_state[_freshness_state_key].add(
+                                _fr_ca)
+                            _fr_succeeded.append(_fr_ca)
+                        except Exception as _fr_exc:
+                            _fr_failed.append(
+                                (_fr_ca, _fr_symbol, str(_fr_exc)))
+                            st.warning(
+                                f"Backfill ${_fr_symbol} gagal: {_fr_exc}")
+                    _fr_pbar.progress(
+                        (_fr_i + 1) / len(_to_refresh),
+                        text=f"🔄 Diproses {_fr_i + 1}/"
+                             f"{len(_to_refresh)} · "
+                             f"{len(_fr_succeeded)} berhasil…")
+                _fr_pbar.empty()
+                if _fr_failed:
+                    _fr_failed_syms = ", ".join(
+                        f"${symbol}" for _, symbol, _ in _fr_failed)
+                    if _fr_succeeded:
+                        st.warning(
+                            f"⚠️ Auto-refresh selesai sebagian: "
+                            f"{len(_fr_succeeded)} berhasil, "
+                            f"{len(_fr_failed)} gagal "
+                            f"({_fr_failed_syms}). Reload page (F5) "
+                            f"untuk melihat token yang berhasil.")
+                    else:
+                        st.error(
+                            f"❌ Auto-refresh gagal: 0/{len(_to_refresh)} "
+                            f"token berhasil ({_fr_failed_syms}). "
+                            f"Data akan dicoba lagi oleh cron berikutnya.")
+                else:
+                    st.success(
+                        f"✅ Ditambahkan + di-refresh {len(_fr_succeeded)} "
+                        f"token(s) — cards di bawah sudah pakai data "
+                        f"terbaru.")
 
     # ------------------------------------------------------------------
     # 💧 LP Radar — watchlist tokens from TRENDING source only.
@@ -901,8 +934,7 @@ if _wl:
     try:
         from cvd import (load_conviction, detect_phase, PHASE_COLORS,
                          markup_from_candles, markup_warning,
-                         candle_pattern_summary, aggregate_candles,
-                         PATTERN_EMOJI)
+                         candle_pattern_summary, aggregate_candles)
         _conv_hist = load_conviction()
     except Exception:
         _conv_hist = {}
@@ -1986,41 +2018,6 @@ with col_left:
          else f'{n_fail} issue(s) found'}</div>
         <div style="display:flex;flex-wrap:wrap;">{items_html}</div>
         </div>""", unsafe_allow_html=True)
-
-if False:
-    with col_liq:
-        # --- Liquidity health donut ----------------------------------------------
-        liq_health = ("HEALTHY" if liq_pct_mc >= 10 else
-                      ("MODERATE" if liq_pct_mc >= 5 else "THIN"))
-        liq_col = ("#22c55e" if liq_pct_mc >= 10 else
-                   ("#facc15" if liq_pct_mc >= 5 else "#ef4444"))
-        active_pools = [p for p in pools if p["liq"] > total_pool_liq * 0.005]
-        figl = go.Figure(go.Pie(
-            labels=[f"{p['dex'].capitalize()} ({p['quote']})"
-                    for p in active_pools],
-            values=[p["liq"] for p in active_pools], hole=0.62,
-            marker=dict(colors=["#38bdf8", "#a78bfa", "#4ade80", "#facc15",
-                                "#fb923c"]),
-            textinfo="label+percent", textfont=dict(size=10),
-            hovertemplate="<b>%{label}</b><br>$%{value:,.0f} "
-                          "(%{percent})<extra></extra>"))
-        figl.add_annotation(
-            text=f"<b style='font-size:17px'>{liq_pct_mc:.1f}%</b><br>"
-                 f"<span style='font-size:10px'>of MC</span><br>"
-                 f"<span style='font-size:11px;color:{liq_col}'>"
-                 f"<b>{liq_health}</b></span>",
-            showarrow=False)
-        figl.update_layout(height=205, showlegend=False,
-                           margin=dict(t=24, b=2, l=8, r=8),
-                           title=dict(text="💧 Liquidity vs MC",
-                                      font=dict(size=13)))
-        st.plotly_chart(figl, use_container_width=True,
-                        config={"displayModeBar": False})
-        lock_txt = (f"LP locked/burned: {lp_locked_pct:.0f}% (main pool)"
-                    if lp_locked_pct is not None else "LP lock: n/a")
-        st.caption(f"Total ${market['liquidity_usd']:,.0f} across "
-                   f"{len(active_pools)} pool(s) · {lock_txt} · health bar: "
-                   f"≥10% MC healthy, 5-10% moderate, <5% thin")
 
 # ----------------------------------------------------------------------------
 # ROW 3 — 3 charts side by side

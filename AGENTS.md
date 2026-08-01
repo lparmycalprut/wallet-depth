@@ -280,6 +280,36 @@ Jebakan yang sudah pernah menggigit:
   wins, dan risk reasons. Regex glow di `trending_ui._format_note_part`
   tetap menerima `T10` lama (catatan tersimpan) DAN `Top 10` baru.
 
+## 7.6 Perilaku baru yang wajib dijaga (2026-08-01 — batch 2)
+
+- **Routing card LP vs Degen bergantung field `source` di watchlist meta.**
+  JANGAN buang `source`/`down_ath` saat replay journal:
+  `watchlist._apply_ops()` wajib menyalin SEMUA field op
+  (`symbol`/`note`/`added`/`source`/`down_ath`), dan
+  `add_to_watchlist()` memaksa source dari add terbaru
+  (latest-add-wins). Kalau tidak, token HRHR jatuh ke 💧 LP Radar.
+- **Semua write JSON state wajib atomic via `core.atomic_write_json()`.**
+  Helper baru (mkstemp di dir sama + fsync + `os.replace`). Kalau
+  menambah file state JSON baru, jangan `open(path,"w")+json.dump`
+  langsung. Write yang gagal harus ter-log (`WARN ... file=sys.stderr`),
+  kecuali fetch/parsing eksternal yang memang sengaja `except: pass`.
+- **Tombol "🔄 Force refresh now" SUDAH DIHAPUS.** Gantinya
+  `add_to_watchlist()` men-set flag `watchlist_auto_refresh_cas` di
+  session_state dan freshness sweep di `app.py` otomatis backfill token
+  baru (update_token_cvd + record_conviction) di rerun berikutnya.
+  Jangan kembalikan tombol itu; kalau butuh refresh manual, perbaiki
+  auto-refresh-nya.
+- **`detect_clusters()` paralel — jangan kembalikan loop sekuensial.**
+  Wallet belum ter-cache di-submit ke `ThreadPoolExecutor`
+  (`workers = min(8, n)`); dict `disk` hanya diupdate di MAIN thread via
+  `as_completed`; `save_funder_cache` cukup SEKALI di akhir; pass
+  terakhir tetap urutan wallet asli (hasil `groups`/`cdf`/`info`
+  deterministik). `time.sleep(0.1)` lama dihapus — rotasi key di
+  `core._helius_candidates` sudah thread-safe.
+- **Snapshot harian menyimpan `name`** (nama lengkap token) di
+  `history.json`. Pembaca history wajib pakai `.get("name")` dengan
+  fallback — snapshot lama tidak punya field ini.
+
 ## 8. Status & langkah berikutnya
 
 Per 2026-07-31, seluruh sistem telah difokuskan murni menggunakan **GMGN Token Trades API** secara default (`use_gmgn_trades = True`) untuk semua penarikan data transaksi on-chain. Cron holder snapshot harian dari Helius (`_try_snapshot`) telah dinonaktifkan sementara.

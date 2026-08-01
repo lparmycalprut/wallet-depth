@@ -8,9 +8,12 @@ add/remove is also committed straight to the repo so it truly persists.
 import base64
 import json
 import os
+import sys
 from datetime import datetime
 
 import requests
+
+from core import atomic_write_json
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WATCHLIST_PATH = os.path.join(BASE_DIR, "watchlist.json")
@@ -28,20 +31,22 @@ def _load_pending() -> list:
 
 def _save_pending(ops: list) -> None:
     try:
-        with open(PENDING_PATH, "w", encoding="utf-8") as f:
-            json.dump(ops, f)
-    except Exception:
-        pass
+        atomic_write_json(PENDING_PATH, ops)
+    except Exception as exc:
+        print(f"WARN: failed to save {PENDING_PATH}: {exc}",
+              file=sys.stderr)
 
 
 def _apply_ops(wl: dict, ops: list) -> dict:
     for op in ops:
         if op.get("op") == "add":
-            wl.setdefault(op["ca"], {"symbol": op.get("symbol", "?"),
-                                     "note": op.get("note", ""),
-                                     "added": op.get("added", "")})
-            if op.get("down_ath") is not None:
-                wl[op["ca"]]["down_ath"] = op["down_ath"]
+            entry = wl.setdefault(op["ca"], {})
+            # Copy every journaled field (symbol/note/added/source/
+            # down_ath) — dropping e.g. `source` here made HRHR adds
+            # fall back to the LP Radar's default ("trending").
+            for _k in ("symbol", "note", "added", "source", "down_ath"):
+                if op.get(_k) is not None and _k not in entry:
+                    entry[_k] = op[_k]
         elif op.get("op") == "remove":
             wl.pop(op["ca"], None)
     return wl
@@ -143,20 +148,20 @@ def load_watchlist() -> dict:
             if _github_token() and _github_push(remote, "sync pending ops"):
                 _save_pending([])
     try:
-        with open(WATCHLIST_PATH, "w", encoding="utf-8") as f:
-            json.dump(remote, f, indent=1)
-    except Exception:
-        pass
+        atomic_write_json(WATCHLIST_PATH, remote, indent=1)
+    except Exception as exc:
+        print(f"WARN: failed to save {WATCHLIST_PATH}: {exc}",
+              file=sys.stderr)
     return remote
 
 
 def save_watchlist(wl: dict, action: str = "update") -> bool:
     """Write locally AND commit to GitHub. Returns True if committed."""
     try:
-        with open(WATCHLIST_PATH, "w", encoding="utf-8") as f:
-            json.dump(wl, f, indent=1)
-    except Exception:
-        pass
+        atomic_write_json(WATCHLIST_PATH, wl, indent=1)
+    except Exception as exc:
+        print(f"WARN: failed to save {WATCHLIST_PATH}: {exc}",
+              file=sys.stderr)
     return _github_push(wl, action)
 
 
@@ -189,10 +194,26 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
     # journal FIRST -> the change can never visually revert (stale reads,
     # failed commits, redeploys); journal is cleaned once repo reflects it
     _journal({"op": "add", "ca": ca, **entry})
+    # Flag the CA for the main app's auto-refresh sweep: the next rerun
+    # backfills its CVD/conviction data immediately (the manual "Force
+    # refresh now" button was removed). Best-effort — Streamlit may not
+    # be present (cron).
+    try:
+        import streamlit as st
+        pending = st.session_state.setdefault(
+            "watchlist_auto_refresh_cas", set())
+        pending.add(ca)
+    except Exception:
+        pass
     wl = load_watchlist()
     wl[ca] = {**entry, **(wl.get(ca) or {})}
     if symbol and symbol != "?":
         wl[ca]["symbol"] = symbol
+    if source:
+        # Latest add wins: an explicit source (trending/hrhr/manual)
+        # overrides a stale/missing one so HRHR adds never land in the
+        # LP Radar section by accident.
+        wl[ca]["source"] = source
     return save_watchlist(wl, f"add {symbol} ({ca[:8]}…)")
 
 
