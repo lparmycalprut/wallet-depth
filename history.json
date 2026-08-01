@@ -232,6 +232,28 @@
    "sells24": 1922,
    "vol24": 122104.25,
    "source": "cron-daily (DexScreener+GMGN)"
+  },
+  "2026-08-01": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 74731.0,
+   "price": 7.773e-05,
+   "tiers": {},
+   "ts": "2026-08-01T04:01:47",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 39.63,
+   "symbol": "looong",
+   "name": "looong",
+   "buys24": 924,
+   "sells24": 1256,
+   "vol24": 86311.73,
+   "source": "cron-daily (DexScreener+GMGN)"
   }
  },
  "3VK1F5r5aykheirDsqJYTsYKzgYxmmvcjQEB1Y5opump": {
@@ -361,6 +383,28 @@
    "buys24": 1669,
    "sells24": 1915,
    "vol24": 215073.82,
+   "source": "cron-daily (DexScreener+GMGN)"
+  },
+  "2026-08-01": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 266121.0,
+   "price": 0.000272,
+   "tiers": {},
+   "ts": "2026-08-01T04:01:46",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 17.32,
+   "symbol": "RAKO",
+   "name": "RAKO",
+   "buys24": 2288,
+   "sells24": 2265,
+   "vol24": 256793.39,
    "source": "cron-daily (DexScreener+GMGN)"
   }
  },
@@ -545,6 +589,28 @@
    "sells24": 777,
    "vol24": 56075.24,
    "source": "cron-daily (DexScreener+GMGN)"
+  },
+  "2026-08-01": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 72785.0,
+   "price": 7.451e-05,
+   "tiers": {},
+   "ts": "2026-08-01T04:01:48",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 34.6,
+   "symbol": "Hoppy",
+   "name": "Hoppy ",
+   "buys24": 1813,
+   "sells24": 1409,
+   "vol24": 121300.57,
+   "source": "cron-daily (DexScreener+GMGN)"
   }
  },
  "6LLNiWXRZp8hn5oTFTHEo8ERbJS3QJfHSKhnTCqipump": {
@@ -672,6 +738,28 @@
    "sells24": 2290,
    "vol24": 182231.14,
    "source": "cron-daily (DexScreener+GMGN)"
+  },
+  "2026-08-01": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 75693.0,
+   "price": 7.872e-05,
+   "tiers": {},
+   "ts": "2026-08-01T04:01:47",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 31.73,
+   "symbol": "RYDER",
+   "name": "The American hero",
+   "buys24": 1663,
+   "sells24": 1857,
+   "vol24": 169230.07,
+   "source": "cron-daily (DexScreener+GMGN)"
   }
  },
  "HD9imH98GRajpehqc82B72A8qnPgvzWSHAmvJRPepump": {
@@ -694,6 +782,28 @@
    "buys24": 1911,
    "sells24": 2103,
    "vol24": 101085.04,
+   "source": "cron-daily (DexScreener+GMGN)"
+  },
+  "2026-08-01": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 32828.0,
+   "price": 3.404e-05,
+   "tiers": {},
+   "ts": "2026-08-01T04:01:48",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 47.05,
+   "symbol": "Looks",
+   "name": "Looks at you",
+   "buys24": 1248,
+   "sells24": 1181,
+   "vol24": 69127.58,
    "source": "cron-daily (DexScreener+GMGN)"
   }
  }
