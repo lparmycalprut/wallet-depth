@@ -7,7 +7,8 @@ Run without pytest, without network — all data is synthetic.
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from cvd import detect_candle_patterns, PATTERN_EMOJI
+from cvd import (detect_candle_patterns, detect_candle_patterns_with_range,
+                 PATTERN_EMOJI)
 
 
 def _candle(o, h, l, c):
@@ -100,6 +101,48 @@ def test_zero_range_candle_skipped():
     print("  ok   zero-range candle skipped")
 
 
+def test_with_range_empty():
+    r = detect_candle_patterns_with_range([])
+    assert r == {"patterns": {}, "range": None}
+    print("  ok   with_range empty returns no patterns/range")
+
+
+def test_with_range_counts_and_price_range():
+    candles = [
+        {"ts": 0, "o": 100, "h": 110, "l": 90, "c": 100.5, "v": 1},   # Doji @90-110
+        {"ts": 1, "o": 100, "h": 105, "l": 80, "c": 104, "v": 1},     # Hammer @80-105
+        {"ts": 2, "o": 100, "h": 110, "l": 90, "c": 100.5, "v": 1},   # Doji @90-110
+    ]
+    r = detect_candle_patterns_with_range(candles)
+    assert r["patterns"].get("Doji") == 2
+    assert r["patterns"].get("Hammer") == 1
+    # range should span lowest low (80) to highest high (110)
+    assert r["range"]["low"] == 80.0
+    assert r["range"]["high"] == 110.0
+    print("  ok   with_range counts patterns and computes low/high range")
+
+
+def test_with_range_no_pattern_gives_no_range():
+    candles = [
+        {"ts": 0, "o": 100, "h": 120, "l": 90, "c": 115, "v": 1},  # big body
+    ]
+    r = detect_candle_patterns_with_range(candles)
+    assert r["patterns"] == {}
+    assert r["range"] is None
+    print("  ok   with_range big-body only -> no range")
+
+
+def test_with_range_max_age_filters():
+    # one pattern inside 48h window, one too old (ts > 48h before newest)
+    candles = [
+        {"ts": 1000, "o": 100, "h": 110, "l": 90, "c": 100.5, "v": 1},   # Doji (old)
+        {"ts": 400000, "o": 100, "h": 110, "l": 90, "c": 100.5, "v": 1},  # Doji (new)
+    ]
+    r = detect_candle_patterns_with_range(candles, max_age_s=48 * 3600)
+    assert r["patterns"].get("Doji") == 1, f"expected 1, got {r}"
+    print("  ok   with_range max_age keeps only candles within 48h")
+
+
 def test_pattern_emoji_map_complete():
     """Every pattern name returned by detect_candle_patterns has an emoji."""
     # Test all patterns by constructing candles that trigger each
@@ -129,4 +172,8 @@ if __name__ == "__main__":
     test_multiple_patterns_counted()
     test_zero_range_candle_skipped()
     test_pattern_emoji_map_complete()
+    test_with_range_empty()
+    test_with_range_counts_and_price_range()
+    test_with_range_no_pattern_gives_no_range()
+    test_with_range_max_age_filters()
     print("\nALL PASSED")

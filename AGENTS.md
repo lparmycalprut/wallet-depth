@@ -260,4 +260,9 @@ Beberapa pembaruan penting lainnya meliputi:
 - **Bug Fix — hist_df NameError**: `hist_df` yang dulu hanya didefinisikan di dalam `if False:` block sekarang dipindahkan keluar sehingga Divergence Check dan session state save tidak crash.
 - **Bug Fix — GMGN Screener Random Fallback**: Fallback value di `_get_avg_cost_and_ath()` yang menggunakan `random` diubah menjadi deterministik supaya token yang sama selalu mendapat skor yang sama.
 
+- **Card LP & Degen memuat detail baru** — card diperlebar (320/390px) dan menampilkan: (a) pola candle body kecil **H4 & H1** dalam 48 jam beserta **range harga masing-masing (terpisah)** via `cvd.detect_candle_patterns_with_range()` / `app.fetch_card_candle_patterns()` (cache 15 menit, butuh resolve pair DexScreener + GeckoTerminal per card); (b) **real holder vs dust** (real ≥ $5) dengan ratio via `holder_quality` di `fetch_holder_delta_panel` (tidak menambah fetch Helius — pakai list holder yang sama).
+- **Distribution-Early memakai rata2 conviction 6–48 jam**, bukan cuma 6 jam terakhir: `cvd.conviction_avg_window(pts, min_age_h=6, max_age_h=48)` → conviction sekarang < rata2 − 5 menandai distribusi awal; reason menyebut rata2 tsb.
+- **Quick Pick auto-analyze di-reset dropdown** ke placeholder sebelum `st.rerun()` — dulu terjadi infinite rerun loop.
+- **Notes screener memakai "Top 10"** (bukan "T10"); regex glow di `trending_ui._format_note_part` tetap mencocokkan `T10`/`Top 10`.
+
 Lihat `docs/PROGRESS.md` untuk riwayat keputusan detail dan daftar perubahan lengkap.

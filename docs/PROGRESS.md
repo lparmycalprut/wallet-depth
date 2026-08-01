@@ -7,6 +7,25 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-01 — Card detail (H1/H4 doji + real-vs-dust), Distribution-Early 6-48h, quick-pick loop, "Top 10"
+
+### Yang berubah
+
+1. **Card LP & Degen lebih lebar/tinggi** — `min-width/max-width` 230/260 → 320/390 px untuk menampung detail baru; tinggi otomatis ikut bertambah.
+2. **Doji / candle body kecil H4 & H1 (48 jam) + range harga** — fungsi baru `cvd.detect_candle_patterns_with_range()` (dan refactor `_classify_candle()`) mengembalikan `{patterns, range}` dengan low/high dari semua candle pola. Di card LP & Degen tampil dua baris terpisah (`H4 …` dan `H1 …`) masing-masing dengan range harganya (tidak digabung). Data di-fetch via `app.fetch_card_candle_patterns()` (cache 15 menit, resolve pair DexScreener + GeckoTerminal H4/H1).
+3. **Real holder vs dust diaktifkan lagi di card** — `app.fetch_holder_delta_panel()` kini menerima `price` dan mengembalikan `holder_quality` (`n_real`/`n_dust`/`ratio` di batas $5, tanpa fetch Helius ekstra karena memakai list holder yang sama). Ditampilkan di card LP & Degen.
+4. **Distribution-Early memakai rata2 conviction 6–48 jam** — `cvd.conviction_avg_window()` menghitung rata2 conviction window 6–48h relatif ke point terbaru; `detect_phase()` sekarang menandai Distribution-Early jika conviction sekarang **< rata2 6-48h − 5** (bukan lagi cuma banding 2 point terakhir ~6 jam), dan reason menyebut rata2 tsb.
+5. **Quick Pick infinite loop diperbaiki** — dropdown Quick Pick di-reset ke placeholder ("— pilih token —") sebelum `st.rerun()`, sehingga rerun tidak membacanya ulang dan tidak mengulang auto-analyze tanpa henti.
+6. **T10 → "Top 10" di notes** — string note screener di `gmgn_screener.py` (`Top 10 only X%`, `Top 10 X% too concentrated`, `Very concentrated (Top 10 X%)`, CLI print) diubah; regex glow di `trending_ui._format_note_part` tetap mencocokkan `T10` dan `Top 10`.
+
+### Verifikasi
+
+- `tests/test_phase_conviction.py` (baru) + `tests/test_candle_patterns.py` (tambah 4 case `with_range`) — ALL PASSED.
+- Seluruh 10 suite tes lulus tanpa jaringan; semua file Python yang diubah lulus `py_compile`.
+- `git diff --check` bersih.
+
+---
+
 ## 2026-08-01 — CVD whale/dolphin activity + separated wallet details
 
 ### Yang berubah

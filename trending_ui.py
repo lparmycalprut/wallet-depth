@@ -19,7 +19,7 @@ COLUMNS = [("Fit", 0.75), ("Token", 1.5), ("MC", 1.1), ("Liq", 0.9),
            ("🕸️ Risk", 1.5), ("Notes", 2.2), ("", 1.25)]
 
 CAPTION = (
-    f"**Fit struktural (strict):** T10 concentration (30) + liquidity/MC "
+    f"**Fit struktural (strict):** Top 10 concentration (30) + liquidity/MC "
     f"(30) + rug score (25) + volume/MC sanity (15), **minus penalties** "
     f"for bundler/insider pressure, entrapment & bot-degen flow, snipers "
     f"still holding, rug risk, concentration, dan thin liquidity. Harga "
@@ -186,7 +186,7 @@ def _format_note_part(part: str, row: dict = None) -> str:
     """Apply semantic emphasis to one semicolon-separated screener note."""
     # The scoring gate emits this phrase from T10 >=25%. It is an explicit
     # concentration warning, so make it impossible to miss in the notes.
-    if re.search(r"\bT10\s+\d+(?:\.\d+)?%\s+too concentrated\b",
+    if re.search(r"\b(?:T10|Top 10)\s+\d+(?:\.\d+)?%\s+too concentrated\b",
                  part, re.IGNORECASE):
         return _glowing_note(part, "#ef4444")
 

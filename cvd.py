@@ -1125,6 +1125,29 @@ def get_recent_swaps(ca: str, hours: int = 12):
 # ---------------------------------------------------------------------------
 # Market phase detection (Wyckoff-style heuristic, read-only)
 # ---------------------------------------------------------------------------
+def conviction_avg_window(pts, *, min_age_h: float = 6,
+                          max_age_h: float = 48) -> tuple:
+    """Average conviction of cron points in an age window.
+
+    ``pts`` is the chronological conviction history; ages are measured
+    against the NEWEST point's timestamp. Returns ``(avg, n)`` — ``avg``
+    is None when no point falls in the window (e.g. history too short).
+    ``n`` is how many points contributed (0 when empty).
+    """
+    if not pts:
+        return None, 0
+    ref = float(pts[-1].get("ts") or 0)
+    if ref <= 0:
+        return None, 0
+    win = [p for p in pts
+           if (min_age_h * 3600) <= (ref - float(p.get("ts") or 0))
+           <= (max_age_h * 3600)]
+    if not win:
+        return None, 0
+    return sum(float(p.get("conviction") or 0) for p in win) / len(win), \
+        len(win)
+
+
 def detect_phase(ca: str, price_change_24h: float | None = None,
                  price_change_6h: float | None = None) -> dict:
     """Classify the market phase from data we ALREADY have:
@@ -1157,6 +1180,14 @@ def detect_phase(ca: str, price_change_24h: float | None = None,
     np_flipped_neg = np_prev is not None and np_prev >= 0 and np_now < 0
     vol_rising = vol_prev is not None and vol_prev > 0 and         vol_now > vol_prev * 1.15
 
+    # Baseline conviction over the 6-48h window (not just the last 6h).
+    # The old Distribution-Early logic only compared the newest cron point
+    # to the previous one (~6h apart), so a single noisy point could trip
+    # it. Averaging the older window gives a stable reference: if the
+    # current conviction is now BELOW the 6-48h average, early distribution
+    # is much more believable than a one-point dip.
+    avg48, n48 = conviction_avg_window(pts, min_age_h=6, max_age_h=48)
+
     # confidence: need >=3 cron points to talk about "trend"
     confidence = "low" if len(pts) < 3 else "medium"
     if len(pts) >= 3 and chg is not None:
@@ -1183,14 +1214,18 @@ def detect_phase(ca: str, price_change_24h: float | None = None,
         return {"phase": "Markdown", "confidence": confidence,
                 "reason": ", ".join(r_bits) + " — distribution done, supply overhang"}
     # 4. Distribution-Early
-    if (chg is None or chg > -20) and (cv_falling or np_flipped_neg) and             (np_now < 0 or (cv_prev is not None and cv < cv_prev - 5)):
+    # Based on the average conviction of the 6-48h window, NOT just the
+    # last 6h. Current conviction below that average (or a flipped net_pure)
+    # is a stronger, less noisy early-distribution signal.
+    cv_below_avg = avg48 is not None and cv < avg48 - 5
+    if (chg is None or chg > -20) and (cv_below_avg or np_flipped_neg) and             (np_now < 0 or cv_below_avg):
         r_bits = []
         if chg is not None:
             r_bits.append(f"price still holding ({chg:+.0f}% 24h)")
         if chg6 is not None:
             r_bits.append(f"6h {chg6:+.0f}%")
-        if cv_falling:
-            r_bits.append(f"conviction dropping {cv_prev:.0f}→{cv:.0f}%")
+        if cv_below_avg:
+            r_bits.append(f"conviction {cv:.0f}% < rata2 6-48h {avg48:.0f}%")
         if np_flipped_neg:
             r_bits.append("net pure flipped negative")
         return {"phase": "Distribution-Early", "confidence": confidence,
@@ -2706,6 +2741,46 @@ PATTERN_EMOJI = {
 }
 
 
+def _classify_candle(o: float, h: float, l: float, c: float) -> str | None:
+    """Classify one OHLC candle into a small-body reversal/indecision
+    pattern name, or None if it doesn't match any.
+
+    Heuristic only — not a trading signal.
+    """
+    rng = h - l
+    if rng <= 0:
+        return None
+    body = abs(c - o)
+    body_ratio = body / rng
+    upper_shadow = h - max(o, c)
+    lower_shadow = min(o, c) - l
+    us_ratio = upper_shadow / rng
+    ls_ratio = lower_shadow / rng
+
+    # Doji family: body ≤ 10% of range
+    if body_ratio <= 0.10:
+        if ls_ratio >= 0.60 and us_ratio <= 0.15:
+            return "Dragonfly Doji"
+        if us_ratio >= 0.60 and ls_ratio <= 0.15:
+            return "Gravestone Doji"
+        return "Doji"
+
+    # Hammer: body ≤ 30%, long lower shadow (≥ 60%), small upper shadow
+    if body_ratio <= 0.30 and ls_ratio >= 0.60 and us_ratio <= 0.15:
+        return "Hammer"
+
+    # Inverted Hammer / Shooting Star: body ≤ 30%, long upper shadow
+    # (≥ 60%), small lower shadow
+    if body_ratio <= 0.30 and us_ratio >= 0.60 and ls_ratio <= 0.15:
+        return "Inverted Hammer"
+
+    # Spinning Top: body ≤ 25%, both shadows ≥ 25%
+    if body_ratio <= 0.25 and us_ratio >= 0.25 and ls_ratio >= 0.25:
+        return "Spinning Top"
+
+    return None
+
+
 def detect_candle_patterns(candles: list[dict]) -> dict[str, int]:
     """Detect small-body candle patterns in H4 candles.
 
@@ -2718,48 +2793,51 @@ def detect_candle_patterns(candles: list[dict]) -> dict[str, int]:
     Returns a dict mapping pattern name -> count of occurrences.
     Heuristic only — not a trading signal.
     """
+    counts: dict[str, int] = {}
+    for c in candles or []:
+        try:
+            name = _classify_candle(c["o"], c["h"], c["l"], c["c"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if name:
+            counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+def detect_candle_patterns_with_range(candles: list[dict], *,
+                                      max_age_s: int | None = None) -> dict:
+    """Detect small-body candle patterns AND the price range they occupy.
+
+    ``max_age_s`` optionally restricts to candles no older than that many
+    seconds before the newest candle's timestamp (e.g. 48h). Each input
+    candle must have ``ts, o, h, l, c``.
+
+    Returns ``{"patterns": {name: count}, "range": {"low", "high"} | None}``
+    where ``range`` is the minimum low / maximum high across every
+    small-body pattern candle (None if no pattern was found).
+    Heuristic only — not a trading signal.
+    """
+    candles = [c for c in (candles or [])]
     if not candles:
-        return {}
+        return {"patterns": {}, "range": None}
+    candles.sort(key=lambda c: c.get("ts", 0))
+    if max_age_s is not None:
+        ref = candles[-1].get("ts", 0)
+        candles = [c for c in candles
+                   if ref - (c.get("ts", 0)) <= max_age_s]
 
     counts: dict[str, int] = {}
-
+    lo = hi = None
     for c in candles:
-        o, h, l, cl = c["o"], c["h"], c["l"], c["c"]
-        rng = h - l
-        if rng <= 0:
+        try:
+            name = _classify_candle(c["o"], c["h"], c["l"], c["c"])
+        except (KeyError, TypeError, ValueError):
             continue
-
-        body = abs(cl - o)
-        body_ratio = body / rng
-        upper_shadow = h - max(o, cl)
-        lower_shadow = min(o, cl) - l
-        us_ratio = upper_shadow / rng
-        ls_ratio = lower_shadow / rng
-
-        # Doji family: body ≤ 10% of range
-        if body_ratio <= 0.10:
-            if ls_ratio >= 0.60 and us_ratio <= 0.15:
-                name = "Dragonfly Doji"
-            elif us_ratio >= 0.60 and ls_ratio <= 0.15:
-                name = "Gravestone Doji"
-            else:
-                name = "Doji"
+        if name:
             counts[name] = counts.get(name, 0) + 1
-
-        # Hammer: body ≤ 30%, long lower shadow (≥ 60%), small upper shadow
-        elif body_ratio <= 0.30 and ls_ratio >= 0.60 and us_ratio <= 0.15:
-            name = "Hammer"
-            counts[name] = counts.get(name, 0) + 1
-
-        # Inverted Hammer / Shooting Star: body ≤ 30%, long upper shadow
-        # (≥ 60%), small lower shadow
-        elif body_ratio <= 0.30 and us_ratio >= 0.60 and ls_ratio <= 0.15:
-            name = "Inverted Hammer"
-            counts[name] = counts.get(name, 0) + 1
-
-        # Spinning Top: body ≤ 25%, both shadows ≥ 25%
-        elif body_ratio <= 0.25 and us_ratio >= 0.25 and ls_ratio >= 0.25:
-            name = "Spinning Top"
-            counts[name] = counts.get(name, 0) + 1
-
-    return counts
+            if lo is None or c["l"] < lo:
+                lo = c["l"]
+            if hi is None or c["h"] > hi:
+                hi = c["h"]
+    return {"patterns": counts,
+            "range": {"low": lo, "high": hi} if lo is not None else None}

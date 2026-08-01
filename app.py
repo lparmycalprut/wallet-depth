@@ -120,15 +120,17 @@ DOLPHIN_DELTA_MIN_SOL = float(CONFIG.get("dolphin_delta_min_sol", _DEF_DDM))
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_holder_delta_panel(_helius_keys, ca: str, window_h: int = 6):
+def fetch_holder_delta_panel(_helius_keys, ca: str, window_h: int = 6,
+                             price: float = 0.0):
     """Cached wrapper around :func:`cvd.holder_delta_panel` for the
     LP Radar card. Cache = 1h so refreshes don't re-hit Helius; the
     underlying holder list is already heavy (10-60s per call).
 
     Returns the panel dict (with per-tier delta, summary, reason,
-    level) or None if Helius fails / no supply yet / no snapshot
-    baseline. The LP Radar card treats None as "no baseline yet —
-    wait for the 4h cron to commit one".
+    level) plus a ``holder_quality`` dict (``n_real`` / ``n_dust`` /
+    ``ratio`` at the $5 dust limit) or None if Helius fails / no
+    supply yet / no snapshot baseline. The LP Radar card treats None
+    as "no baseline yet — wait for the 4h cron to commit one".
     """
     if not _helius_keys:
         return None
@@ -145,18 +147,33 @@ def fetch_holder_delta_panel(_helius_keys, ca: str, window_h: int = 6):
             return None
         hd["ui_amount"] = hd["raw_amount"] / (10 ** decimals)
         hd = hd[hd["ui_amount"] > 0]
-        # Drop LP wallets — same rule the analyze block uses — so a
-        # token whose LP is among the top holders doesn't get counted
-        # as "whale addition" every cron.
-        # (We don't have the LP set cached here, so we skip the filter
-        # and accept that the snapshot vs current comparison may
-        # include a couple of LP wallets. The whale/dolphin tier
-        # thresholds are generous enough that 1-2 LP wallets don't
-        # move the totals meaningfully.)
         pairs = list(zip(hd["owner"].tolist(), hd["ui_amount"].tolist()))
-        return holder_delta_panel(
+        panel = holder_delta_panel(
             ca, current_holders=pairs, supply=float(supply),
             window_h=window_h)
+        # Re-enable the real-vs-dust holder quality read. "Real" = a
+        # wallet holding at least $5 (DUST_LIMIT_USD). This reuses the
+        # same holder list, so it adds no extra Helius call.
+        holder_quality = None
+        try:
+            _px = float(price or 0.0)
+            if _px > 0:
+                _usd = [u * _px for u in hd["ui_amount"].tolist()]
+                _n_dust = int(sum(1 for v in _usd if v < DUST_LIMIT_USD))
+                _n_real = int(sum(1 for v in _usd if v >= DUST_LIMIT_USD))
+                _ratio = (_n_real / _n_dust) if _n_dust else float("inf")
+                holder_quality = {
+                    "n_real": _n_real, "n_dust": _n_dust,
+                    "ratio": _ratio,
+                    "real_pct": (_ratio * 100 if _n_dust else 100.0),
+                    "dust_limit": DUST_LIMIT_USD,
+                }
+        except Exception:
+            holder_quality = None
+        if panel is not None and holder_quality is not None:
+            panel = dict(panel)
+            panel["holder_quality"] = holder_quality
+        return panel
     except Exception:
         return None
 
@@ -580,6 +597,74 @@ def _fmt_price(v: float) -> str:
     return f"${s}"
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def fetch_card_candle_patterns(ca: str) -> dict:
+    """Fetch H4 + H1 small-body candle patterns with price ranges for a card.
+
+    Returns ``{"h4": {"patterns", "range"}, "h1": {"patterns", "range"}}``
+    where each ``range`` is ``{"low", "high"}`` (or None when no pattern
+    was found in that timeframe). Cached 15 min so card renders don't
+    re-hit GeckoTerminal.
+    """
+    from cvd import fetch_candles, detect_candle_patterns_with_range
+    from trending_ui import _resolve_pair
+    pair = _resolve_pair(ca)
+    if not pair:
+        return {"h4": {"patterns": {}, "range": None},
+                "h1": {"patterns": {}, "range": None}}
+    h4 = fetch_candles(pair, timeframe="hour", aggregate=4, limit=12,
+                       timeout=8)
+    h1 = fetch_candles(pair, timeframe="hour", aggregate=1, limit=48,
+                       timeout=8)
+    return {
+        "h4": detect_candle_patterns_with_range(h4, max_age_s=48 * 3600),
+        "h1": detect_candle_patterns_with_range(h1, max_age_s=48 * 3600),
+    }
+
+
+def _fmt_card_patterns(tf: str, data: dict) -> str:
+    """HTML line for one timeframe's small-body patterns + price range."""
+    from cvd import PATTERN_EMOJI
+    pats = (data or {}).get("patterns") or {}
+    rng = (data or {}).get("range")
+    if not pats:
+        return (f"<div style='font-size:0.72rem;color:#64748b;'>"
+                f"<b>{tf}</b> — no small-body pattern</div>")
+    parts = []
+    for name in sorted(pats, key=lambda n: -pats[n]):
+        emoji = PATTERN_EMOJI.get(name, "🕯️")
+        parts.append(f"{emoji}{name} {pats[name]}x")
+    text = " · ".join(parts)
+    if rng and rng.get("low") is not None and rng.get("high") is not None:
+        rng_html = (f"<span style='color:#94a3b8;'> @ "
+                    f"<b style='color:#cbd5e1;'>"
+                    f"{_fmt_price(rng['low'])}–{_fmt_price(rng['high'])}"
+                    f"</b></span>")
+    else:
+        rng_html = ""
+    return (f"<div style='font-size:0.72rem;color:#22c55e;"
+            f"font-weight:700;margin-top:3px;line-height:1.4;'>"
+            f"<b>{tf}</b> {text}{rng_html}</div>")
+
+
+def _fmt_holder_quality_html(hq: dict) -> str:
+    """HTML line for the real-vs-dust holder ratio (real ≥ $5)."""
+    if not hq:
+        return ("<div style='font-size:0.72rem;color:#64748b;'>"
+                "💎 real vs dust — n/a (no holder data)</div>")
+    n_real = int(hq.get("n_real") or 0)
+    n_dust = int(hq.get("n_dust") or 0)
+    ratio = hq.get("ratio")
+    ratio_txt = (f"{ratio*100:,.0f}%" if ratio != float("inf")
+                 else "∞")
+    good = (n_dust == 0) or (ratio is not None and ratio >= REAL_RATIO_OK)
+    col = "#22c55e" if good else "#fb923c"
+    return (f"<div style='font-size:0.72rem;color:{col};"
+            f"font-weight:700;margin-top:3px;line-height:1.4;'>"
+            f"💎 real ${DUST_LIMIT_USD:g}+ {n_real:,} vs dust {n_dust:,} "
+            f"· ratio {ratio_txt}</div>")
+
+
 # ----------------------------------------------------------------------------
 # Main input
 # ----------------------------------------------------------------------------
@@ -820,8 +905,16 @@ if _wl:
             # so the LP Radar page makes 1 call per watchlist CA. For a
             # 30-token watchlist that's ~5-15 min on first load, but
             # streamlit_cache_data keeps it manageable on reloads.
-            _hd_panel = fetch_holder_delta_panel(helius_keys, _ca,
-                                                  window_h=6) if helius_keys else None
+            _price_now = float((_prices.get(_ca) or {}).get("price") or 0)
+            _hd_panel = fetch_holder_delta_panel(
+                helius_keys, _ca, window_h=6, price=_price_now) \
+                if helius_keys else None
+            _holder_quality_html = _fmt_holder_quality_html(
+                (_hd_panel or {}).get("holder_quality") or {})
+            # ---- Small-body candle patterns (H4 & H1, 48h) + ranges ----
+            _card_pats = fetch_card_candle_patterns(_ca)
+            _candle_html = (_fmt_card_patterns("H4", _card_pats.get("h4"))
+                            + _fmt_card_patterns("H1", _card_pats.get("h1")))
             _hd_whale_d = _hd_panel.get("whale", {}).get("delta_sol", 0.0) \
                 if _hd_panel else 0.0
             _hd_dolphin_d = _hd_panel.get("dolphin", {}).get("delta_sol", 0.0) \
@@ -1007,7 +1100,7 @@ if _wl:
                 f"<div style='flex:0 0 auto;background:#131a26;"
                 f"border:2px solid {border};{glow}border-radius:14px;"
                 f"padding:14px 16px;margin-right:14px;cursor:pointer;"
-                f"min-width:230px;max-width:260px;line-height:1.4;'>"
+                f"min-width:320px;max-width:390px;line-height:1.4;'>"
                 # header: symbol + conviction %, plus DexS/GMGN shortcuts
                 f"<div style='display:flex;align-items:baseline;"
                 f"justify-content:space-between;gap:6px;'>"
@@ -1056,6 +1149,10 @@ if _wl:
                 f"<span style='color:#cbd5e1;font-weight:600;'>"
                 f"{last.get('swaps') or 0:,}</span>"
                 f"</div>"
+                # small-body candle patterns (H4 & H1) + real-vs-dust ratio
+                f"<div style='border-top:1px solid #1f2937;margin-top:6px;"
+                f"padding-top:5px;'>{_candle_html}"
+                f"{_holder_quality_html}</div>"
                 f"{conv_note}</a>"
                 f"</div>")
         if _cards:
@@ -1070,6 +1167,8 @@ if _wl:
                        "Phase badge = Wyckoff-style heuristic — NOT a trading signal. "
                        "**🐋/🐬** = whale/dolphin holdings delta dari snapshot baseline harian "
                        "(Δ dalam SOL + N↑ dompet masuk + N↓ keluar). "
+                       "Baris 🕯️ = pola candle body kecil H4 & H1 dalam 48h + range harga masing-masing "
+                       "(terpisah H4 dan H1). Baris 💎 = real holder ≥$5 vs dust. "
                        "Klik card → CVD analysis.")
         else:
             st.caption("💧 LP Radar: semua trending watchlist token ditampilkan.")
@@ -1099,6 +1198,19 @@ if _wl:
                 cv = last["conviction"]
                 prev_cv = pts[-2]["conviction"] if len(pts) >= 2 else None
                 prev2_cv = pts[-3]["conviction"] if len(pts) >= 3 else None
+
+                # ---- Holder quality (real vs dust) + candle patterns ----
+                _deg_price_now = float((_prices.get(_ca) or {}).get("price")
+                                       or 0)
+                _deg_panel = fetch_holder_delta_panel(
+                    helius_keys, _ca, window_h=6,
+                    price=_deg_price_now) if helius_keys else None
+                _deg_hq_html = _fmt_holder_quality_html(
+                    (_deg_panel or {}).get("holder_quality") or {})
+                _deg_pats = fetch_card_candle_patterns(_ca)
+                _deg_candle_html = (
+                    _fmt_card_patterns("H4", _deg_pats.get("h4"))
+                    + _fmt_card_patterns("H1", _deg_pats.get("h1")))
 
                 # ---- Multi-window sparkline (6h / 12h / 24h / 48h) ----
                 cv_6h = cv
@@ -1190,7 +1302,7 @@ if _wl:
                     f"<div style='flex:0 0 auto;background:{_deg_bg};"
                     f"border:2px solid {_deg_border};border-radius:14px;"
                     f"padding:14px 16px;margin-right:14px;cursor:pointer;"
-                    f"min-width:230px;max-width:260px;line-height:1.4;'>"
+                    f"min-width:320px;max-width:390px;line-height:1.4;'>"
                     f"<div style='display:flex;align-items:baseline;"
                     f"justify-content:space-between;gap:6px;'>"
                     f"<a href='{_cvd_link}' target='_self' "
@@ -1236,6 +1348,10 @@ if _wl:
                     f"<span style='color:#cbd5e1;font-weight:600;'>"
                     f"{last.get('swaps') or 0:,}</span>"
                     f"</div>"
+                    # small-body candle patterns (H4 & H1) + real-vs-dust ratio
+                    f"<div style='border-top:1px solid #3a2415;margin-top:6px;"
+                    f"padding-top:5px;'>{_deg_candle_html}"
+                    f"{_deg_hq_html}</div>"
                     f"{conv_note_deg}</a>"
                     f"</div>")
             if _degen_cards:
@@ -1247,6 +1363,9 @@ if _wl:
                     unsafe_allow_html=True)
                 st.caption("⚡ Degen Radar: token HRHR dari watchlist. "
                            "Bar hijau = conviction naik, bar merah = turun. "
+                           "Baris 🕯️ = pola candle body kecil H4 & H1 (48h) "
+                           "+ range harga masing-masing (terpisah). "
+                           "Baris 💎 = real holder ≥$5 vs dust. "
                            "⚠️ Token ini BERISIKO TINGGI — selalu DYOR! "
                            "Klik card → CVD analysis.")
 
@@ -1332,7 +1451,10 @@ if _qp_wl:
             ["— pilih token —"] + [lbl for lbl, _ in _qp_options],
             key="qp_selectbox",
             label_visibility="collapsed")
-        # Auto-trigger: when user picks a token, immediately analyze + CVD
+        # Auto-trigger: when user picks a token, immediately analyze + CVD.
+        # Reset the selectbox to the placeholder BEFORE rerun — otherwise
+        # the same selection is re-read on the rerun and re-triggers the
+        # block, producing an infinite rerun loop.
         if _qp_chosen and _qp_chosen != "— pilih token —":
             _qp_picked = next((ca for lbl, ca in _qp_options
                                if lbl == _qp_chosen), "")
@@ -1341,6 +1463,7 @@ if _qp_wl:
                 st.session_state["trigger_analyze"] = True
                 st.session_state[f"cvd_on::{_qp_picked}"] = True
                 st.session_state["cvd_win"] = 48
+                st.session_state["qp_selectbox"] = "— pilih token —"
                 st.rerun()
 
     with st.expander("🗑️ Quick Delete dari watchlist", expanded=False):
