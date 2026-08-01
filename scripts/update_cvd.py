@@ -73,85 +73,14 @@ def main_pool(ca: str):
 def _gmgn_top_holders(ca: str, timeout: int = 15) -> tuple:
     """Return (holders_list, supply) from GMGN token_stat, or (None, None).
 
-    ``holders_list`` is a list of ``[owner, ui_amount]`` pairs (largest
-    first). ``supply`` is the float total supply if GMGN reports it.
+    Thin wrapper around :func:`core.gmgn_token_stat` so the cron has
+    a single source of truth (the new function is also reused by the
+    trending screener for its real/dust approximation). Behaviour is
+    identical to the previous in-file implementation.
     """
-    try:
-        from curl_cffi import requests as cr
-        r = cr.get(
-            f"https://gmgn.ai/api/v1/token_stat/sol/{ca}",
-            headers={
-                "accept": "application/json, text/plain, */*",
-                "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                               "AppleWebKit/537.36 (KHTML, like Gecko) "
-                               "Chrome/150.0.0.0 Safari/537.36"),
-            },
-            impersonate="chrome", timeout=timeout)
-    except ImportError:
-        r = requests.get(
-            f"https://gmgn.ai/api/v1/token_stat/sol/{ca}",
-            headers={
-                "accept": "application/json, text/plain, */*",
-                "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                               "AppleWebKit/537.36 (KHTML, like Gecko) "
-                               "Chrome/150.0.0.0 Safari/537.36"),
-            },
-            timeout=timeout)
-    if r.status_code != 200:
-        return None, None
-    try:
-        data = r.json() or {}
-    except Exception:
-        return None, None
-    if not isinstance(data, dict):
-        return None, None
-
-    # ── holders list (top-10 typically) ─────────────────────────────────
-    holders = []
-    for h in (data.get("holders") or []):
-        if not isinstance(h, dict):
-            continue
-        addr = h.get("address") or h.get("owner")
-        amt = h.get("amount") or h.get("ui_amount") or h.get("balance")
-        try:
-            amt_f = float(amt)
-        except (TypeError, ValueError):
-            continue
-        if addr and amt_f > 0:
-            holders.append([str(addr), float(amt_f)])
-
-    # Some GMGN responses put the holders under nested paths — try
-    # alternate keys before giving up.
-    if not holders:
-        for key in ("top10_holders", "top_holders", "top_holder",
-                    "top_10_holders"):
-            alt = data.get(key)
-            if isinstance(alt, list):
-                for h in alt:
-                    if not isinstance(h, dict):
-                        continue
-                    addr = h.get("address") or h.get("owner")
-                    amt = h.get("amount") or h.get("ui_amount")
-                    try:
-                        amt_f = float(amt)
-                    except (TypeError, ValueError):
-                        continue
-                    if addr and amt_f > 0:
-                        holders.append([str(addr), float(amt_f)])
-                if holders:
-                    break
-
-    # ── supply (try several known fields) ──────────────────────────────
-    supply = None
-    for key in ("total_supply", "supply", "totalSupply", "total"):
-        try:
-            v = float(data.get(key) or 0)
-            if v > 0:
-                supply = v
-                break
-        except (TypeError, ValueError):
-            continue
-    return (holders or None), supply
+    from core import gmgn_token_stat
+    stat = gmgn_token_stat(ca, timeout=timeout)
+    return (stat.get("holders") or None), stat.get("supply")
 
 
 def _try_snapshot(api_keys, ca: str, meta: dict) -> str:

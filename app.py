@@ -793,6 +793,49 @@ def _pattern_block_html(title: str, pt: dict, has_candles: bool) -> str:
             f"</div>")
 
 
+def _real_dust_card_html(_rd: dict) -> str:
+    """Big, scannable real-vs-dust block for the LP/Degen Radar cards.
+
+    Renders ``💎 Real ≥$5: N · 🪙 Dust: N · ratio X%`` at 0.92rem
+    with a colored ratio pill. Thresholds mirror
+    :data:`REAL_RATIO_OK` (0.50 healthy) and
+    :data:`REAL_RATIO_MIN` (0.30 acceptable). Returns the empty string
+    when the dict is missing or empty.
+    """
+    if not _rd:
+        return ""
+    n_real = int(_rd.get("n_real") or 0)
+    n_dust = int(_rd.get("n_dust") or 0)
+    ratio = _rd.get("ratio", 0.0)
+    dust_limit = _rd.get("dust_limit", 5.0)
+    ratio_txt = "∞" if ratio == float("inf") else f"{ratio * 100:,.0f}%"
+    if ratio == float("inf") or ratio >= REAL_RATIO_OK:
+        r_col, r_bg, r_border = "#22c55e", "#14532d", "#22c55e"
+    elif ratio >= REAL_RATIO_MIN:
+        r_col, r_bg, r_border = "#facc15", "#3f3411", "#facc15"
+    else:
+        r_col, r_bg, r_border = "#ef4444", "#7f1d1d", "#ef4444"
+    return (
+        f"<div style='background:rgba(148,163,184,0.06);"
+        f"border:1px solid #334155;border-radius:7px;"
+        f"padding:6px 9px;margin-top:5px;line-height:1.5;'>"
+        f"<span style='font-size:0.95rem;'>"
+        f"<span style='color:#94a3b8;'>💎 Real ≥${dust_limit:g}:</span> "
+        f"<b style='color:#e2e8f0;font-size:1.02rem;'>{n_real:,}</b>"
+        f"<span style='color:#475569;margin:0 5px;'>·</span>"
+        f"<span style='color:#94a3b8;'>🪙 Dust:</span> "
+        f"<b style='color:#e2e8f0;font-size:1.02rem;'>{n_dust:,}</b>"
+        f"<span style='color:#475569;margin:0 5px;'>·</span>"
+        f"<span style='color:#94a3b8;'>ratio</span> "
+        f"</span>"
+        f"<span style='display:inline-block;background:{r_bg};"
+        f"color:{r_col};border:1px solid {r_border};border-radius:5px;"
+        f"padding:1px 8px;font-size:0.92rem;font-weight:800;"
+        f"letter-spacing:0.3px;margin-left:2px;'>"
+        f"{ratio_txt}</span>"
+        f"</div>")
+
+
 # ----------------------------------------------------------------------------
 # Main input
 # ----------------------------------------------------------------------------
@@ -1134,23 +1177,7 @@ if _wl:
                                             float(_rd_price),
                                             float(dust_limit))
                 if _rd:
-                    _r_val = _rd["ratio"]
-                    ratio_txt = ("∞" if _r_val == float("inf")
-                                 else f"{_r_val * 100:,.0f}%")
-                    _r_col = ("#22c55e" if (_r_val == float("inf")
-                                            or _r_val >= REAL_RATIO_OK)
-                              else "#ef4444")
-                    _rd_html = (
-                        f"<div style='font-size:0.72rem;color:#94a3b8;"
-                        f"margin-top:4px;line-height:1.5;'>"
-                        f"💎 Real ≥${_rd['dust_limit']:g}: "
-                        f"<b style='color:#e2e8f0;'>{_rd['n_real']:,}</b>"
-                        f" <span style='color:#475569;'>·</span> "
-                        f"🪙 Dust: <b style='color:#e2e8f0;'>"
-                        f"{_rd['n_dust']:,}</b>"
-                        f" <span style='color:#475569;'>·</span> "
-                        f"ratio <b style='color:{_r_col};'>{ratio_txt}</b>"
-                        f"</div>")
+                    _rd_html = _real_dust_card_html(_rd)
 
             # ---- Small-body candle patterns (H4 + H1, 48h, with range) ----
             # H1 comes from the already-cached watchlist candle fetch;
@@ -1508,23 +1535,7 @@ if _wl:
                                                     float(_rd_price_deg),
                                                     float(dust_limit))
                     if _rd_deg:
-                        _r_val = _rd_deg["ratio"]
-                        ratio_txt = ("∞" if _r_val == float("inf")
-                                     else f"{_r_val * 100:,.0f}%")
-                        _r_col = ("#22c55e" if (_r_val == float("inf")
-                                                or _r_val >= REAL_RATIO_OK)
-                                  else "#ef4444")
-                        _rd_html_deg = (
-                            f"<div style='font-size:0.72rem;color:#94a3b8;"
-                            f"margin-top:4px;line-height:1.5;'>"
-                            f"💎 Real ≥${_rd_deg['dust_limit']:g}: "
-                            f"<b style='color:#e2e8f0;'>{_rd_deg['n_real']:,}"
-                            f"</b> <span style='color:#475569;'>·</span> "
-                            f"🪙 Dust: <b style='color:#e2e8f0;'>"
-                            f"{_rd_deg['n_dust']:,}</b>"
-                            f" <span style='color:#475569;'>·</span> "
-                            f"ratio <b style='color:{_r_col};'>"
-                            f"{ratio_txt}</b></div>")
+                        _rd_html_deg = _real_dust_card_html(_rd_deg)
 
                 # ---- Small-body candle patterns (H4 + H1, 48h, range) ----
                 _pair_addr_deg = ((_prices.get(_ca) or {}).get("pair")

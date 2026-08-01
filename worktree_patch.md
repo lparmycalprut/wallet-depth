@@ -1,92 +1,87 @@
-# worktree_patch.md — FOCUS_MODE bug audit + fix
+# worktree_patch.md — Perbesar real/dust + auto-compare saat scan
 
 ## Context
-User minta: "ok, default focus mode true ya — lalu cek sekali lagi apakah
-ada kemungkinan yang menyebabkan bug dll". FOCUS_MODE sudah ON by default
-(sudah di-commit di `1da409a`). Tugas sekarang: audit bug/risk dari
-implementasi FOCUS_MODE + fix yang ditemukan.
+User: "perbesar tulisan detail real holder vs dust 💎 Real ≥$5: **1,470** ·
+🪙 Dust: **1,634** · ratio **90% di semua cards**" + "tampilkan juga notes
+di scan trending dan degen · jadi, ketika scan dilakukan, otomatis juga
+akan scan perbandingan ini".
 
-## Audit findings (severity-ranked)
+## Decisions (from ask_user)
+- **card_detail_scope = all_cards**: perbesar di LP Radar + Degen Radar cards
+  + Analyze page holder verdict (sudah besar via st.metric)
+- **auto_scan_compare = gmgn_only**: tidak tambah API key requirement,
+  pakai GMGN token_stat (top-10 holders list + total holder count) sebagai
+  proxy untuk real/dust split. Tambah disclaimer bahwa data approximate.
 
-### 🔴 Bug #1 — `NameError: ldivs` (HIGH)
-**File**: `app.py` line 3225
-```python
-if FOCUS_MODE and ldivs:
-    st.caption("🎯 FOCUS_MODE: divergence tetap direkam ke ...")
-```
-- `ldivs` di-set di dalam `if all(p is not None for p in pser) and len(pser) >= 7:`
-  (line 3167) — nested di dalam `if pmap:` (line 3155) → `if cvd_bucket >= 60:`
-  → `if not FOCUS_MODE:` chain.
-- Jika `pmap` kosong (GMGN tidak return price series), atau
-  `cvd_bucket < 60` (cvd_bucket=30), atau `pser` tidak lengkap, atau
-  `len(pser) < 7`, maka `ldivs` **tidak pernah diinisialisasi**.
-- Saat `FOCUS_MODE=True` (default), line 3225 dieksekusi → `NameError: ldivs`.
-- **Severity**: HIGH — crash di CVD section pada common paths.
+## Approach
 
-**Fix**: Initialize `ldivs = []` di awal try block (atau di scope yang
-mencakup line 3225). Aman: `if FOCUS_MODE and ldivs:` — empty list
-adalah falsy, jadi caption tidak muncul jika tidak ada divergence.
+### 1. Perbesar tulisan real/dust di cards (LP + Degen Radar)
+- Current: `font-size:0.72rem` pada `<div>` block
+- Target: `font-size:0.92rem` (lebih besar, weight 700), dengan border
+  halus + background subtle untuk "pop"
+- Tambah emoji per row (💎 Real / 🪙 Dust) lebih prominent
+- Ratio jadi colored badge (🟢 ≥50% / 🟡 30-50% / 🔴 <30%)
 
-### 🟡 Bug #2 — Degen Radar tidak punya FOCUS_MODE caption (MEDIUM)
-**File**: `app.py` line 1602+ (Degen Radar caption)
-- LP Radar punya FOCUS_MODE callout (line 1381-1384) tapi Degen Radar
-  tidak. Konsistensi UX: user FOCUS_MODE=True akan lihat callout di LP
-  tapi tidak di Degen → confusing.
-- **Severity**: MEDIUM (UX inconsistency)
+### 2. Auto-compare saat scan trending/HRHR
+- Tambah `enrich_rows_with_holder_split(rows)` di `trending_ui.py`
+- Fetch GMGN token_stat (top-10 holders + total holder count) per CA
+- Compute:
+  - `n_top10_real` = top-10 wallets dengan USD value ≥ $5 (price × ui_amount)
+  - `n_top10_dust` = top-10 wallets dengan USD value < $5
+  - `n_other_holders` = `total_holders - 10` (mostly dust for memecoins)
+  - `n_real_est` = `n_top10_real` (best case — top-10 covers most real)
+  - `n_dust_est` = `n_top10_dust + n_other_holders` (worst case)
+  - `ratio_est` = `n_real_est / max(1, n_dust_est)`
+- Add new row field `holder_split_est` and `holder_split_src`
+- Display in `render_trending()` table as 2 extra inline notes:
+  `💎 Real: {n_real_est:,} 🪙 Dust: {n_dust_est:,} ratio {ratio_est}% (GMGN approx)`
+- Add disclaimer: "(GMGN top-10 approximation; full Helius snapshot per cron)"
 
-**Fix**: Tambah FOCUS_MODE callout di Degen Radar caption (mirip LP).
-
-### 🟡 Bug #3 — `conviction_summary` dead import (LOW)
-**File**: `app.py` line 126
-- `conviction_summary` di-import tapi tidak pernah dipakai (hanya
-  ada fallback def). Dead code → linter warning, tapi tidak crash.
-- **Severity**: LOW
-
-**Fix**: Hapus import yang tidak terpakai, atau gunakan `conviction_summary`
-di section yang menampilkan conviction_pct di LP/Degen Radar cards.
-Untuk sekarang: hapus import (simpler, less risk).
-
-### 🟢 Bug #4 — `import json as _json` shadow built-in (LOW)
-**File**: `scripts/update_cvd.py` line 224
-- `import json as _json` di dalam `main()`. Best practice: import di
-  top of file. Tapi `json` tidak dipakai lagi setelah block ini, jadi
-  tidak masalah.
-- **Severity**: LOW (style only)
-
-**Decision**: skip — not a real bug.
-
-## Implementation plan
-
-1. **Fix Bug #1**: Add `ldivs = []` initialization di line 3154 (start
-   of try block). Cek semua code path di bawahnya apakah `ldivs` terdefinisi
-   sebelum line 3225. **Cek dengan test case: GMGN return 0 swaps**.
-
-2. **Fix Bug #2**: Tambah FOCUS_MODE callout di Degen Radar caption.
-
-3. **Fix Bug #3**: Hapus `conviction_summary` dari import di app.py line 126
-   dan dari fallback def. (tidak akan di-break karena sudah ada di focus.py
-   dan bisa di-reimport kapan saja.)
-
-4. **Verification**:
-   - Run `python -c "import ast; ast.parse(open('app.py').read())"`
-   - Run all 9 test files
-   - Add new test: `tests/test_focus_mode.py` dengan minimal:
-     - `is_focus_mode({})` → True
-     - `is_focus_mode({"focus_mode": False})` → False
-     - `is_focus_mode({"focus_mode": True})` → True
-     - `health_badge("missing-ca")` → dict with level/label/reason
-     - `conviction_summary({...})` → reduced dict
-   - Manual test: simulate CVD path yang tidak ada price series
-
-5. **Commit**: `fix(focus): init ldivs + FOCUS_MODE callout in Degen + clean dead import`
-
-## Backward compatibility
-- Fix Bug #1: purely defensive init, tidak mengubah behavior
-- Fix Bug #2: additive caption (hanya muncul saat FOCUS_MODE=True)
-- Fix Bug #3: remove unused import — no consumer
-- Test: baru, additive only
+### 3. Failure modes & safety
+- GMGN fetch fails → row gets `holder_split_est = None`, no note added
+- Top-10 holders < 10 → use whatever we have, mark `top_n_used: N`
+- Price = 0 → can't compute USD value → skip
+- Token is LP-only / no holders → gracefully skip
 
 ## Files to edit
-- `app.py`: 3 changes (Bug #1, #2, #3)
-- `tests/test_focus_mode.py`: new test file
-- `worktree_patch.md`: this file
+- `core.py`: add `gmgn_token_stat(ca) -> dict` (extract from
+  `scripts/update_cvd.py:_gmgn_top_holders`, return both `holders_list`
+  and `total_holders` count)
+- `scripts/update_cvd.py`: delegate to `core.gmgn_token_stat` so we have
+  one source of truth
+- `trending_ui.py`:
+  - new function `enrich_rows_with_holder_split(rows, dust_limit_usd=5.0)`
+  - call it in `run_screen` and `run_screen_hrhr` (after `gmgn_screen()`
+    succeeds, before the rows hit session state) — that way the table
+    auto-shows the comparison on every scan
+  - new helper `_format_holder_split_note(row)` for the inline note
+  - update `render_trending` to include the note in the `Notes` column
+    OR as a new column — decision: append to Notes (no layout change)
+- `app.py`:
+  - LP Radar card `_rd_html`: increase font + colors
+  - Degen Radar card `_rd_html_deg`: same
+  - Refactor both to use a shared helper `_format_real_dust_html(_rd)`
+- `tests/test_holder_split.py` (new): 6-8 tests for the new
+  `gmgn_token_stat` / `enrich_rows_with_holder_split` / rendering
+  format. Mock GMGN HTTP so tests run offline.
+
+## Backward compatibility
+- New field on row: `holder_split_est` — additive, ignored by old code
+- New GMGN call only fires during `enrich_rows_with_holder_split`; can be
+  turned off via `gmgn_only=False` in the function call (default ON for
+  our case)
+- `fetch_real_dust_ratio` in app.py unchanged (still Helius-based for
+  Analyze + Radar; the new GMGN-based path is only for the screener)
+- `core.gmgn_token_stat` returns the SAME shape as the old
+  `_gmgn_top_holders` (holder pairs + supply), so `update_cvd.py`
+  refactor is a pure delegation — no behavior change
+
+## Verification
+- `python -c "import ast; ast.parse(...)"` after each file change
+- Run all 10 existing test files (must stay green)
+- New test file: 6+ tests
+- Manual smoke: scan trending → table shows 💎/🪙/ratio notes inline
+- LP/Degen Radar cards: real/dust font visibly bigger
+
+## Commit
+- Single commit: `feat(holder-split): bigger cards + auto-compare on scan`
