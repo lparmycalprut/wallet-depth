@@ -206,8 +206,7 @@ def _gmgn_holder_split(row: dict, dust_limit_usd: float) -> dict | None:
     try:
         from token_context import fetch_holders
         holders = fetch_holders(ca, limit=100, timeout=10,
-                               orderby="amount_percentage",
-                               tag="bluechip_owner")
+                               orderby="amount_percentage")
         if not holders:
             return None
         top_real = top_dust = 0
