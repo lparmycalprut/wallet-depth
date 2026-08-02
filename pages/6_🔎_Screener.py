@@ -6,6 +6,7 @@ import sys
 import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from core import get_helius_keys
 from trending_ui import render_trending, run_screen
 
 st.set_page_config(page_title="Screener", page_icon="🔎",
@@ -32,7 +33,7 @@ if not scan and "screener_rows" not in st.session_state:
             "GMGN trending list.")
     st.stop()
 
-rows, err = run_screen(force=scan)
+rows, err = run_screen(force=scan, helius_keys=tuple(get_helius_keys()))
 if err:
     st.error(f"Failed to fetch trending: {err}")
 if not rows:
