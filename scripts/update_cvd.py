@@ -56,10 +56,87 @@ def main_pool(ca: str):
         return None, None, None
 
 
+# ---------------------------------------------------------------------------
+# Holder snapshot — Fix #2.7 (was: "Temporarily disabled")
+#
+# We try in order:
+#   1. Helius (if a key is configured) — gives the full holder list
+#   2. GMGN token_stat (free, no key) — gives top-10 only, which is
+#      enough to seed `holder_delta()` for top-tier (whale) movement.
+#
+# Either path produces a snapshot that `holder_delta()` can compare
+# against on the next cron run. The Helius path is preferred because
+# GMGN only exposes the top-10 holders (so tier classification for
+# tokens with many holders collapses into "all top-10 are whales",
+# which inflates the whale count but is still useful for delta).
+# ---------------------------------------------------------------------------
+def _gmgn_top_holders(ca: str, timeout: int = 15) -> tuple:
+    """Return (holders_list, supply) from GMGN token_stat, or (None, None).
+
+    Thin wrapper around :func:`core.gmgn_token_stat` so the cron has
+    a single source of truth (the new function is also reused by the
+    trending screener for its real/dust approximation). Behaviour is
+    identical to the previous in-file implementation.
+    """
+    from core import gmgn_token_stat
+    stat = gmgn_token_stat(ca, timeout=timeout)
+    return (stat.get("holders") or None), stat.get("supply")
+
+
 def _try_snapshot(api_keys, ca: str, meta: dict) -> str:
-    """Holder snapshot via Helius (opsional). Return status string."""
-    # Temporarily disabled
-    return ""
+    """Holder snapshot — Helius (preferred) → GMGN (fallback).
+
+    Returns a short status string for the cron log:
+      " snap-helius:1234 holders" — Helius path
+      " snap-gmgn:10 holders"     — GMGN top-10 only
+      " snap-skip:<reason>"       — both failed, snapshot skipped
+
+    The snapshot is committed to holder_snapshots.json so that
+    `holder_delta()` can compute true T0↔T1 holdings change on
+    subsequent runs.
+    """
+    from cvd import record_holder_snapshot
+
+    # ── 1) Helius path (preferred when keys are configured) ───────────
+    if api_keys and get_holders is not None:
+        try:
+            df = get_holders(api_keys, ca)
+            if df is not None and not df.empty:
+                if get_supply is not None:
+                    try:
+                        supply, _ = get_supply(api_keys, ca)
+                    except Exception:
+                        supply = 0.0
+                else:
+                    supply = 0.0
+                # normalize to [owner, ui_amount] pairs
+                pairs = []
+                amt_col = ("ui_amount" if "ui_amount" in df.columns
+                           else "raw_amount")
+                for _, row in df.iterrows():
+                    owner = row.get("owner")
+                    amt = row.get(amt_col)
+                    if owner and amt and float(amt) > 0:
+                        pairs.append([str(owner), float(amt)])
+                if pairs:
+                    rec = record_holder_snapshot(ca, pairs, supply or 0.0)
+                    if rec is not None:
+                        return f" snap-helius:{len(pairs)} holders"
+        except Exception as e:
+            # fall through to GMGN; don't crash the cron
+            pass
+
+    # ── 2) GMGN path (no key needed) ──────────────────────────────────
+    try:
+        holders, supply = _gmgn_top_holders(ca)
+        if holders:
+            rec = record_holder_snapshot(ca, holders, supply or 0.0)
+            if rec is not None:
+                return f" snap-gmgn:{len(holders)} holders"
+    except Exception:
+        pass
+
+    return " snap-skip:no-source"
 
 
 def main():
@@ -71,6 +148,24 @@ def main():
 
     # Helius keys hanya untuk holder snapshot (opsional)
     api_keys = tuple(get_helius_keys())
+
+    # FOCUS_MODE: log once at start so the cron output is clear about
+    # what gets Telegram-notified (Tier 1 only) vs not.
+    try:
+        import json as _json
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "..", "config.json"),
+                  "r", encoding="utf-8") as _f:
+            _cfg = _json.load(_f) or {}
+    except Exception:
+        _cfg = {}
+    _focus_mode = bool(_cfg.get("focus_mode", True))
+    if _focus_mode:
+        print("🎯 FOCUS_MODE: Telegram Tier 1 only "
+              "(accumulation, stealth_accumulation, distribution). "
+              "Divergence → signals.json only (no Telegram).")
+    else:
+        print("📡 FOCUS_MODE: OFF — all signal types to Telegram.")
 
     wl_changed = False
     for ca, meta in list(wl.items()):

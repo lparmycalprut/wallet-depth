@@ -118,6 +118,22 @@ except Exception:
 WHALE_DELTA_MIN_SOL = float(CONFIG.get("whale_delta_min_sol", _DEF_WDM))
 DOLPHIN_DELTA_MIN_SOL = float(CONFIG.get("dolphin_delta_min_sol", _DEF_DDM))
 
+# Focus mode (default ON) — see focus.py. Hides non-Tier-1 signals:
+# phase detector, divergence, lh_buy/trader_buy split, persistence
+# runs badge, distribution warn/danger reason. Keeps Tier 1 only:
+# holder_delta + breakout_guard.
+try:
+    # ``conviction_summary`` is also exported by ``focus`` but currently
+    # has no in-app consumer; the import list below stays short so a
+    # future regression is easy to spot (only one symbol per purpose).
+    from focus import is_focus_mode, health_badge
+    FOCUS_MODE = is_focus_mode(CONFIG)
+except Exception:
+    FOCUS_MODE = True
+    def health_badge(ca):                # type: ignore
+        return {"level": "ok", "label": "🟢 flow healthy",
+                "reason": "focus module unavailable"}
+
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_holder_data(_helius_keys, ca: str):
@@ -777,12 +793,60 @@ def _pattern_block_html(title: str, pt: dict, has_candles: bool) -> str:
             f"</div>")
 
 
+def _real_dust_card_html(_rd: dict) -> str:
+    """Big, scannable real-vs-dust block for the LP/Degen Radar cards.
+
+    Renders ``💎 Real ≥$5: N · 🪙 Dust: N · ratio X%`` at 0.92rem
+    with a colored ratio pill. Thresholds mirror
+    :data:`REAL_RATIO_OK` (0.50 healthy) and
+    :data:`REAL_RATIO_MIN` (0.30 acceptable). Returns the empty string
+    when the dict is missing or empty.
+    """
+    if not _rd:
+        return ""
+    n_real = int(_rd.get("n_real") or 0)
+    n_dust = int(_rd.get("n_dust") or 0)
+    ratio = _rd.get("ratio", 0.0)
+    dust_limit = _rd.get("dust_limit", 5.0)
+    ratio_txt = "∞" if ratio == float("inf") else f"{ratio * 100:,.0f}%"
+    if ratio == float("inf") or ratio >= REAL_RATIO_OK:
+        r_col, r_bg, r_border = "#22c55e", "#14532d", "#22c55e"
+    elif ratio >= REAL_RATIO_MIN:
+        r_col, r_bg, r_border = "#facc15", "#3f3411", "#facc15"
+    else:
+        r_col, r_bg, r_border = "#ef4444", "#7f1d1d", "#ef4444"
+    return (
+        f"<div style='background:rgba(148,163,184,0.06);"
+        f"border:1px solid #334155;border-radius:7px;"
+        f"padding:6px 9px;margin-top:5px;line-height:1.5;'>"
+        f"<span style='font-size:0.95rem;'>"
+        f"<span style='color:#94a3b8;'>💎 Real ≥${dust_limit:g}:</span> "
+        f"<b style='color:#e2e8f0;font-size:1.02rem;'>{n_real:,}</b>"
+        f"<span style='color:#475569;margin:0 5px;'>·</span>"
+        f"<span style='color:#94a3b8;'>🪙 Dust:</span> "
+        f"<b style='color:#e2e8f0;font-size:1.02rem;'>{n_dust:,}</b>"
+        f"<span style='color:#475569;margin:0 5px;'>·</span>"
+        f"<span style='color:#94a3b8;'>ratio</span> "
+        f"</span>"
+        f"<span style='display:inline-block;background:{r_bg};"
+        f"color:{r_col};border:1px solid {r_border};border-radius:5px;"
+        f"padding:1px 8px;font-size:0.92rem;font-weight:800;"
+        f"letter-spacing:0.3px;margin-left:2px;'>"
+        f"{ratio_txt}</span>"
+        f"</div>")
+
+
 # ----------------------------------------------------------------------------
 # Main input
 # ----------------------------------------------------------------------------
 st.title("📊 Wallet Depth by Threshold")
 st.caption("Solscan-style holder analytics — Dust vs Real holders for any "
            "Solana token. ⚙️ Settings live in the **sidebar** (» top-left).")
+if FOCUS_MODE:
+    st.caption("🎯 **FOCUS_MODE**: hanya Tier 1 (breakout_guard + "
+               "holder_delta) yang ditampilkan. Phase/divergence/lh/"
+               "trader split disembunyikan. Set `focus_mode: false` di "
+               "config.json untuk tampilkan semua.")
 
 # Watchlist ticker bar — scrollable, clickable, live prices (30s cache)
 from watchlist import load_watchlist, add_to_watchlist, remove_from_watchlist
@@ -872,8 +936,12 @@ if _wl:
     if _wl:
         for _fr_ca in _wl:
             try:
-                _fr_panel = flow_check_panel(_fr_ca)
-                _fr = _fr_panel["freshness"]
+                # FOCUS_MODE: collapse 4-check panel into 1 health badge.
+                if FOCUS_MODE:
+                    _fr = health_badge(_fr_ca)
+                else:
+                    _fr_panel = flow_check_panel(_fr_ca)
+                    _fr = _fr_panel["freshness"]
                 _panel_by_ca[_fr_ca] = _fr
                 if _fr["level"] == "warn":
                     _stale_cas.append(_fr_ca)
@@ -1109,23 +1177,7 @@ if _wl:
                                             float(_rd_price),
                                             float(dust_limit))
                 if _rd:
-                    _r_val = _rd["ratio"]
-                    ratio_txt = ("∞" if _r_val == float("inf")
-                                 else f"{_r_val * 100:,.0f}%")
-                    _r_col = ("#22c55e" if (_r_val == float("inf")
-                                            or _r_val >= REAL_RATIO_OK)
-                              else "#ef4444")
-                    _rd_html = (
-                        f"<div style='font-size:0.72rem;color:#94a3b8;"
-                        f"margin-top:4px;line-height:1.5;'>"
-                        f"💎 Real ≥${_rd['dust_limit']:g}: "
-                        f"<b style='color:#e2e8f0;'>{_rd['n_real']:,}</b>"
-                        f" <span style='color:#475569;'>·</span> "
-                        f"🪙 Dust: <b style='color:#e2e8f0;'>"
-                        f"{_rd['n_dust']:,}</b>"
-                        f" <span style='color:#475569;'>·</span> "
-                        f"ratio <b style='color:{_r_col};'>{ratio_txt}</b>"
-                        f"</div>")
+                    _rd_html = _real_dust_card_html(_rd)
 
             # ---- Small-body candle patterns (H4 + H1, 48h, with range) ----
             # H1 comes from the already-cached watchlist candle fetch;
@@ -1248,6 +1300,11 @@ if _wl:
                 f"letter-spacing:0.2px;max-width:100%;'> "
                 f"{_ph['phase']} {_conf_dots}</span>"
                 f"</div>")
+            # FOCUS_MODE: hide the Wyckoff phase badge to reduce noise.
+            # Phase is still computed (kept for context / debug) but
+            # not displayed on the LP Radar card.
+            if FOCUS_MODE:
+                phase_html = ""
             _cvd_link = f"/CVD?ca={_ca}"
             # When very stale, hide the conviction number (don't trust it)
             # and replace with a clear "data stale" placeholder so the user
@@ -1295,7 +1352,7 @@ if _wl:
                 f"margin-top:5px;'>{_hd_badges_html}</div>"
                 # real holder vs dust ratio (min $5)
                 f"{_rd_html}"
-                # phase badge (own line, easier to scan)
+                # phase badge (own line, easier to scan) — hidden in FOCUS_MODE
                 f"{phase_html}"
                 # multi-window sparkline in a subtle background
                 f"<a href='{_cvd_link}' target='_self' "
@@ -1332,19 +1389,28 @@ if _wl:
                 "align-items:stretch;'>"
                 + "".join(_cards) + "</div>",
                 unsafe_allow_html=True)
-            st.caption("Sparkline 6h → 12h → 24h → 48h (bawah → atas). "
-                       "Bar hijau = conviction naik dibanding periode sebelumnya, bar merah = conviction turun. "
-                       "Phase badge = Wyckoff-style heuristic — NOT a trading signal. "
-                       "**🐋/🐬** = whale/dolphin holdings delta dari snapshot baseline harian "
-                       "(Δ dalam SOL + N↑ dompet masuk + N↓ keluar). "
-                       "**📉 dari ATH** = jarak harga saat ini dari ATH (display-only, "
-                       "hijau bila retrace ≥90%). "
-                       "**💰 avg cost** = % harga saat ini vs rata-rata harga beli "
-                       "holder (GMGN, display-only; merah ≤ -50%, oranye <0%, hijau ≥0%). "
-                       "**💎 Real ≥$5 vs 🪙 dust** = jumlah + rasio real/dust. "
-                       "**🕯️ H4/H1 body kecil** = pola doji/hammer/spinning top 48h "
-                       "beserta range harga pola-nya (H4 & H1 terpisah). "
-                       "Klik card → CVD analysis.")
+            _lp_caption = (
+                "Sparkline 6h → 12h → 24h → 48h (bawah → atas). "
+                "Bar hijau = conviction naik dibanding periode sebelumnya, bar merah = conviction turun. ")
+            if not FOCUS_MODE:
+                _lp_caption += (
+                    "Phase badge = Wyckoff-style heuristic — NOT a trading signal. ")
+            _lp_caption += (
+                "**🐋/🐬** = whale/dolphin holdings delta dari snapshot baseline harian "
+                "(Δ dalam SOL + N↑ dompet masuk + N↓ keluar). "
+                "**📉 dari ATH** = jarak harga saat ini dari ATH (display-only, "
+                "hijau bila retrace ≥90%). "
+                "**💰 avg cost** = % harga saat ini vs rata-rata harga beli "
+                "holder (GMGN, display-only; merah ≤ -50%, oranye <0%, hijau ≥0%). "
+                "**💎 Real ≥$5 vs 🪙 dust** = jumlah + rasio real/dust. "
+                "**🕯️ H4/H1 body kecil** = pola doji/hammer/spinning top 48h "
+                "beserta range harga pola-nya (H4 & H1 terpisah). "
+                "Klik card → CVD analysis.")
+            if FOCUS_MODE:
+                _lp_caption += ("  🎯 FOCUS_MODE: phase/divergence "
+                                 "disembunyikan; Tier 1 saja "
+                                 "(holder delta + breakout guard).")
+            st.caption(_lp_caption)
         else:
             st.caption("💧 LP Radar: semua trending watchlist token ditampilkan.")
 
@@ -1456,6 +1522,9 @@ if _wl:
                     f"letter-spacing:0.2px;max-width:100%;'> "
                     f"{_ph['phase']} {_conf_dots}</span>"
                     f"</div>")
+                # FOCUS_MODE: hide Wyckoff phase on Degen cards too.
+                if FOCUS_MODE:
+                    phase_html_deg = ""
 
                 _cvd_link = f"/CVD?ca={_ca}"
                 # ---- Real holder vs dust ratio (min $5) ----
@@ -1466,23 +1535,7 @@ if _wl:
                                                     float(_rd_price_deg),
                                                     float(dust_limit))
                     if _rd_deg:
-                        _r_val = _rd_deg["ratio"]
-                        ratio_txt = ("∞" if _r_val == float("inf")
-                                     else f"{_r_val * 100:,.0f}%")
-                        _r_col = ("#22c55e" if (_r_val == float("inf")
-                                                or _r_val >= REAL_RATIO_OK)
-                                  else "#ef4444")
-                        _rd_html_deg = (
-                            f"<div style='font-size:0.72rem;color:#94a3b8;"
-                            f"margin-top:4px;line-height:1.5;'>"
-                            f"💎 Real ≥${_rd_deg['dust_limit']:g}: "
-                            f"<b style='color:#e2e8f0;'>{_rd_deg['n_real']:,}"
-                            f"</b> <span style='color:#475569;'>·</span> "
-                            f"🪙 Dust: <b style='color:#e2e8f0;'>"
-                            f"{_rd_deg['n_dust']:,}</b>"
-                            f" <span style='color:#475569;'>·</span> "
-                            f"ratio <b style='color:{_r_col};'>"
-                            f"{ratio_txt}</b></div>")
+                        _rd_html_deg = _real_dust_card_html(_rd_deg)
 
                 # ---- Small-body candle patterns (H4 + H1, 48h, range) ----
                 _pair_addr_deg = ((_prices.get(_ca) or {}).get("pair")
@@ -1570,7 +1623,7 @@ if _wl:
                     "align-items:stretch;'>"
                     + "".join(_degen_cards) + "</div>",
                     unsafe_allow_html=True)
-                st.caption("⚡ Degen Radar: token HRHR dari watchlist. "
+                _degen_caption = ("⚡ Degen Radar: token HRHR dari watchlist. "
                            "Bar hijau = conviction naik, bar merah = turun. "
                            "**📉 dari ATH** = jarak harga saat ini dari ATH "
                            "(display-only, hijau bila retrace ≥90%). "
@@ -1581,6 +1634,11 @@ if _wl:
                            "top 48h + range harga pola-nya (H4 & H1 terpisah). "
                            "⚠️ Token ini BERISIKO TINGGI — selalu DYOR! "
                            "Klik card → CVD analysis.")
+                if FOCUS_MODE:
+                    _degen_caption += ("  🎯 FOCUS_MODE: phase disembunyikan; "
+                                       "Tier 1 saja (holder delta + "
+                                       "breakout guard).")
+                st.caption(_degen_caption)
 
 # clicking a ticker chip sets ?ca=... -> prefill + auto-analyze
 qp_ca = st.query_params.get("ca", "").strip()
@@ -3110,7 +3168,12 @@ if run_cvd_now and (rpc_endpoint or use_gmgn_trades):
         st.plotly_chart(figv, use_container_width=True,
                         config={"displayModeBar": False})
 
-        # divergence vs price on same buckets
+        # divergence vs price on same buckets. ``ldivs`` is initialised
+        # here so the FOCUS_MODE caption below never raises NameError
+        # when price series is unavailable (e.g. GMGN returned no
+        # candles, or the chosen bucket is 30min and the price fetch
+        # is skipped). The caption is silent when the list is empty.
+        ldivs = []
         try:
             from cvd import fetch_price_series
             pmap = fetch_price_series(pair0, max(1, cvd_bucket // 60)) \
@@ -3137,46 +3200,54 @@ if run_cvd_now and (rpc_endpoint or use_gmgn_trades):
                         if kk in seen_d:
                             continue
                         seen_d.add(kk)
-                        try:
-                            from signals import record_signal
-                            record_signal(
-                                ca, market.get("symbol", "?"),
-                                "bullish_div" if dv["type"] == "bullish"
-                                else "bearish_div",
-                                f"{dv['kind']} {dv['type']} divergence on "
-                                f"{'whale CVD' if dv.get('src') == 'whale' else 'CVD'}"
-                                f" ({cvd_bucket}m buckets): {dv['detail']}",
-                                src="analyze", window_h=int(cvd_window),
-                                price=float(price))
-                        except Exception:
-                            pass
-                        src = ("Whale CVD" if dv.get("src") == "whale"
-                               else "CVD")
-                        # === Deteksi posisi divergence terhadap S/R ===
-                        loc = ""
-                        if sr_high and sr_low and pivots:
-                            last_price = float(price)
-                            if dv["type"] == "bearish":
-                                if last_price >= sr_high * 0.98 or last_price >= pivots["r1"] * 0.97:
-                                    loc = " • <b>di area Resistance</b> (potensi reversal lebih kuat)"
-                                elif last_price <= sr_low * 1.02 or last_price <= pivots["s1"] * 1.03:
-                                    loc = " • di area Support (sinyal lemah)"
-                            else:  # bullish
-                                if last_price <= sr_low * 1.02 or last_price <= pivots["s1"] * 1.03:
-                                    loc = " • <b>di area Support</b> (potensi reversal lebih kuat)"
-                                elif last_price >= sr_high * 0.98 or last_price >= pivots["r1"] * 0.97:
-                                    loc = " • di area Resistance (sinyal lemah)"
+                        # FOCUS_MODE: still record divergence to
+                        # signals.json for backtests, but DON'T display
+                        # the green/red strip on the page.
+                        if not FOCUS_MODE:
+                            try:
+                                from signals import record_signal
+                                record_signal(
+                                    ca, market.get("symbol", "?"),
+                                    "bullish_div" if dv["type"] == "bullish"
+                                    else "bearish_div",
+                                    f"{dv['kind']} {dv['type']} divergence on "
+                                    f"{'whale CVD' if dv.get('src') == 'whale' else 'CVD'}"
+                                    f" ({cvd_bucket}m buckets): {dv['detail']}",
+                                    src="analyze", window_h=int(cvd_window),
+                                    price=float(price))
+                            except Exception:
+                                pass
+                            src = ("Whale CVD" if dv.get("src") == "whale"
+                                   else "CVD")
+                            # === Deteksi posisi divergence terhadap S/R ===
+                            loc = ""
+                            if sr_high and sr_low and pivots:
+                                last_price = float(price)
+                                if dv["type"] == "bearish":
+                                    if last_price >= sr_high * 0.98 or last_price >= pivots["r1"] * 0.97:
+                                        loc = " • <b>di area Resistance</b> (potensi reversal lebih kuat)"
+                                    elif last_price <= sr_low * 1.02 or last_price <= pivots["s1"] * 1.03:
+                                        loc = " • di area Support (sinyal lemah)"
+                                else:  # bullish
+                                    if last_price <= sr_low * 1.02 or last_price <= pivots["s1"] * 1.03:
+                                        loc = " • <b>di area Support</b> (potensi reversal lebih kuat)"
+                                    elif last_price >= sr_high * 0.98 or last_price >= pivots["r1"] * 0.97:
+                                        loc = " • di area Resistance (sinyal lemah)"
 
-                        if dv["type"] == "bullish":
-                            green_strip(f"📈 <b>{dv['kind'].upper()} BULLISH "
-                                        f"divergence ({src})</b> — "
-                                        f"{dv['detail']}{loc}")
-                        else:
-                            red_strip(f"📉 <b>{dv['kind'].upper()} BEARISH "
-                                      f"divergence ({src})</b> — "
-                                      f"{dv['detail']}{loc}")
+                            if dv["type"] == "bullish":
+                                green_strip(f"📈 <b>{dv['kind'].upper()} BULLISH "
+                                            f"divergence ({src})</b> — "
+                                            f"{dv['detail']}{loc}")
+                            else:
+                                red_strip(f"📉 <b>{dv['kind'].upper()} BEARISH "
+                                          f"divergence ({src})</b> — "
+                                          f"{dv['detail']}{loc}")
         except Exception:
             pass
+        if FOCUS_MODE and ldivs:
+            st.caption("🎯 FOCUS_MODE: divergence tetap direkam ke "
+                       "signals.json untuk backtest, tapi tidak "
+                       "ditampilkan di sini.")
 
         if covered_h < cvd_window * 0.9:
             if in_watchlist:

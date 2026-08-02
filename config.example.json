@@ -7,5 +7,8 @@
   "exclude_lp": true,
   "helius_extra_keys": "",
   "telegram_bot_token": "BOT_TOKEN from @BotFather (optional)",
-  "telegram_chat_id": "your chat id (optional)"
+  "telegram_chat_id": "your chat id (optional)",
+  "whale_delta_min_sol": 1.0,
+  "dolphin_delta_min_sol": 2.0,
+  "focus_mode": true
 }

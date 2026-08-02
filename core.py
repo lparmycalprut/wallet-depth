@@ -458,3 +458,125 @@ def score_color(score: int) -> str:
 def score_label(score: int) -> str:
     return ("HEALTHY ✅" if score >= 70 else
             ("CAUTION ⚠️" if score >= 45 else "DANGER 🚨"))
+
+
+# -----------------------------------------------------------------------------
+# GMGN token_stat — public, reusable wrapper for the trending screener
+# and the holder-snapshot cron. Returns the top-N holders list, the
+# reported total holder count, and the (optional) total supply, all
+# from a single GMGN API call.
+#
+# Cloudflare blocks raw `requests` calls, so we prefer `curl_cffi` to
+# impersonate a real Chrome. When that package isn't installed we
+# fall back to plain `requests` and accept the higher failure rate.
+#
+# The shape is intentionally identical to the old private
+# ``scripts/update_cvd.py::_gmgn_top_holders`` so the cron refactor is
+# a pure delegation (no behaviour change).
+# -----------------------------------------------------------------------------
+def gmgn_token_stat(ca: str, timeout: int = 15) -> dict:
+    """Fetch GMGN token_stat for a Solana CA.
+
+    Returns a dict with keys:
+      - ``holders``   : list of ``[owner, ui_amount]`` pairs (largest first,
+                        typically up to 10 — GMGN truncates the rest)
+      - ``total_holders`` : int — GMGN-reported total holder count, or None
+      - ``supply``    : float — total supply if GMGN reports it, or None
+      - ``raw``       : the raw GMGN JSON for any caller-side debugging
+    On any failure the function returns an empty dict (``{}``) so callers
+    can use a single truthy check.
+    """
+    out = {"holders": [], "total_holders": None, "supply": None, "raw": None}
+    try:
+        try:
+            from curl_cffi import requests as cr
+            r = cr.get(
+                f"https://gmgn.ai/api/v1/token_stat/sol/{ca}",
+                headers={
+                    "accept": "application/json, text/plain, */*",
+                    "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                   "Chrome/150.0.0.0 Safari/537.36"),
+                },
+                impersonate="chrome", timeout=timeout)
+        except ImportError:
+            r = requests.get(
+                f"https://gmgn.ai/api/v1/token_stat/sol/{ca}",
+                headers={
+                    "accept": "application/json, text/plain, */*",
+                    "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                   "Chrome/150.0.0.0 Safari/537.36"),
+                },
+                timeout=timeout)
+        if r.status_code != 200:
+            return out
+        try:
+            data = r.json() or {}
+        except Exception:
+            return out
+        if not isinstance(data, dict):
+            return out
+        out["raw"] = data
+
+        # ── holders list (top-10 typically) ─────────────────────────────
+        holders: list = []
+        for h in (data.get("holders") or []):
+            if not isinstance(h, dict):
+                continue
+            addr = h.get("address") or h.get("owner")
+            amt = h.get("amount") or h.get("ui_amount") or h.get("balance")
+            try:
+                amt_f = float(amt)
+            except (TypeError, ValueError):
+                continue
+            if addr and amt_f > 0:
+                holders.append([str(addr), float(amt_f)])
+        if not holders:
+            for key in ("top10_holders", "top_holders", "top_holder",
+                        "top_10_holders"):
+                alt = data.get(key)
+                if isinstance(alt, list):
+                    for h in alt:
+                        if not isinstance(h, dict):
+                            continue
+                        addr = h.get("address") or h.get("owner")
+                        amt = h.get("amount") or h.get("ui_amount")
+                        try:
+                            amt_f = float(amt)
+                        except (TypeError, ValueError):
+                            continue
+                        if addr and amt_f > 0:
+                            holders.append([str(addr), float(amt_f)])
+                    if holders:
+                        break
+        out["holders"] = holders
+
+        # ── total holder count (GMGN sometimes reports this under
+        # several different keys; we try them in priority order) ───────
+        for key in ("holder_count", "holders_count", "total_holders",
+                    "num_holders", "holderCount"):
+            v = data.get(key)
+            try:
+                v_int = int(float(v)) if v is not None else 0
+            except (TypeError, ValueError):
+                continue
+            if v_int > 0:
+                out["total_holders"] = v_int
+                break
+
+        # ── supply (try several known fields) ──────────────────────────
+        for key in ("total_supply", "supply", "totalSupply", "total"):
+            try:
+                v = float(data.get(key) or 0)
+            except (TypeError, ValueError):
+                continue
+            if v > 0:
+                out["supply"] = v
+                break
+
+    except Exception:
+        # Any network/parse error → empty dict; caller handles.
+        return {"holders": [], "total_holders": None, "supply": None, "raw": None}
+    return out
+

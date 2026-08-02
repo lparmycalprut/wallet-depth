@@ -933,39 +933,93 @@ def detect_no_buy_holders(profiles, wallet_meta, *,
     return rows
 
 
-def conviction_split(profiles, *, whale_min_sol=3.0):
+DOLPHIN_MIN_SOL = 1.0   # dolphin tier for conviction_split: < whale, ≥ 1 SOL
+
+
+def conviction_split(profiles, *, whale_min_sol=3.0,
+                     dolphin_min_sol=DOLPHIN_MIN_SOL):
     """How much buy volume is 'held' vs recycled by two-way traders.
 
     Each profile's buy volume is weighted by :data:`PROFILE_WEIGHTS`:
     pure_accum 100%, light_holder 75%, trader 30%, two_way 0%.
 
+    Tier-aware sizing (Fix #2.1): wallets are split by size so that
+    pure_accum dolphin-tier (1.0–3.0 SOL) and light_holder dolphin-tier
+    contribute to conviction just like their whale-tier peers, scaled
+    down by ``dolphin_weight`` so the conviction number stays dominated
+    by whale flow (which is the more meaningful read for memecoins).
+
+    Returns the per-tier breakdown ``pure_buy_whale`` / ``pure_buy_dolphin``
+    / ``lh_buy_whale`` / ``lh_buy_dolphin`` / ``trader_buy_whale`` /
+    ``trader_buy_dolphin`` and the aggregate ``pure_buy`` / ``lh_buy`` /
+    ``trader_buy`` (sum of whale + dolphin tiers) used by the rest of
+    the codebase. Conviction still uses 100/75/30/0 weights — the
+    dolphin scaling is applied via the ``dolphin_weight`` factor (0.6)
+    so a 1-SOL pure_accum dolphin contributes 0.6 SOL of effective
+    buy, not 1.0 SOL (which would over-weight small buyers in
+    aggregate conviction).
+
     Also returns per-profile counts and volumes for the UI.
     """
-    pure_buy = lh_buy = trader_buy = tw_buy = 0.0
-    pure_sell = tw_sell = 0.0
+    # Sub-whale buys are scaled by dolphin_weight so whale flow still
+    # dominates conviction (a 1-SOL pure_accum buy should not be
+    # weighted the same as a 50-SOL whale accumulation).
+    DOLPHIN_WEIGHT = 0.6
+    pure_buy = pure_buy_w = pure_buy_d = 0.0
+    lh_buy = lh_buy_w = lh_buy_d = 0.0
+    trader_buy = trader_buy_w = trader_buy_d = 0.0
+    tw_buy = tw_sell = 0.0
+    pure_sell = 0.0
     n_pure = n_lh = n_trader = 0
     for d in profiles.values():
         p = d["profile"]
-        if p == "pure_accum" and d["buy"] >= whale_min_sol:
-            pure_buy += d["buy"]
-            n_pure += 1
-        elif p == "light_holder" and d["buy"] >= whale_min_sol:
-            lh_buy += d["buy"]
-            n_lh += 1
-        elif p == "trader" and d["buy"] >= whale_min_sol:
-            trader_buy += d["buy"]
-            n_trader += 1
+        if p == "pure_accum":
+            if d["buy"] >= whale_min_sol:
+                pure_buy_w += d["buy"]
+                pure_buy += d["buy"]
+                n_pure += 1
+            elif d["buy"] >= dolphin_min_sol:
+                # Tier-aware: include dolphin in totals, scale weight
+                pure_buy_d += d["buy"] * DOLPHIN_WEIGHT
+                pure_buy += d["buy"]
+                n_pure += 1
+        elif p == "light_holder":
+            if d["buy"] >= whale_min_sol:
+                lh_buy_w += d["buy"]
+                lh_buy += d["buy"]
+                n_lh += 1
+            elif d["buy"] >= dolphin_min_sol:
+                lh_buy_d += d["buy"] * DOLPHIN_WEIGHT
+                lh_buy += d["buy"]
+                n_lh += 1
+        elif p == "trader":
+            if d["buy"] >= whale_min_sol:
+                trader_buy_w += d["buy"]
+                trader_buy += d["buy"]
+                n_trader += 1
+            elif d["buy"] >= dolphin_min_sol:
+                trader_buy_d += d["buy"] * DOLPHIN_WEIGHT
+                trader_buy += d["buy"]
+                n_trader += 1
         elif p == "pure_dist" and d["sell"] >= whale_min_sol:
             pure_sell += d["sell"]
         elif p == "two_way":
             tw_buy += d["buy"]
             tw_sell += d["sell"]
-    effective_buy = (pure_buy * PROFILE_WEIGHTS["pure_accum"]
-                     + lh_buy * PROFILE_WEIGHTS["light_holder"]
-                     + trader_buy * PROFILE_WEIGHTS["trader"])
+    effective_buy = (pure_buy_w * PROFILE_WEIGHTS["pure_accum"]
+                     + pure_buy_d * PROFILE_WEIGHTS["pure_accum"]
+                     + lh_buy_w * PROFILE_WEIGHTS["light_holder"]
+                     + lh_buy_d * PROFILE_WEIGHTS["light_holder"]
+                     + trader_buy_w * PROFILE_WEIGHTS["trader"]
+                     + trader_buy_d * PROFILE_WEIGHTS["trader"])
     total_buy = pure_buy + lh_buy + trader_buy + tw_buy
     conviction = effective_buy / total_buy * 100 if total_buy else 0.0
-    return {"pure_buy": pure_buy, "lh_buy": lh_buy, "trader_buy": trader_buy,
+    return {"pure_buy": pure_buy, "pure_buy_whale": pure_buy_w,
+            "pure_buy_dolphin": pure_buy_d,
+            "lh_buy": lh_buy, "lh_buy_whale": lh_buy_w,
+            "lh_buy_dolphin": lh_buy_d,
+            "trader_buy": trader_buy, "trader_buy_whale": trader_buy_w,
+            "trader_buy_dolphin": trader_buy_d,
             "pure_sell": pure_sell,
             "tw_buy": tw_buy, "tw_sell": tw_sell,
             "effective_buy": effective_buy,
@@ -2080,54 +2134,105 @@ def flow_persistence(ca: str, *, last_n: int = 3) -> dict:
     :data:`PERSISTENCE_MIN_NET_SOL` SOL to ``net_pure``. Distribution
     persistence is the mirror image.
 
+    Fix #2.3: regime change detection. A history like
+    ``[-5, +8, +10]`` (distribution → accumulation) used to be reported
+    as ``runs=2, ok=False`` which is misleading. We now surface
+    ``transition: True`` and a regime-change ``reason`` when the sign
+    of the latest point differs from the OLDEST point in the window
+    AND at least 2 consecutive points in the new direction exist.
+
     Returns ``{"direction": "accum"|"dist"|"choppy",
-                "runs": int, "delta": float, "ok": bool, "reason": str}``.
+                "runs": int, "delta": float, "ok": bool, "reason": str,
+                "transition": bool, "prior_direction": str}``.
     *ok* is True only when the run length meets both the *count* and the
     *size* thresholds; the UI uses it to colour the persistence badge.
     """
     pts = (load_conviction() or {}).get(ca) or []
+    empty = {"direction": "choppy", "runs": 0, "delta": 0.0,
+             "ok": False, "reason": "not enough points yet",
+             "transition": False, "prior_direction": ""}
     if len(pts) < 2:
-        return {"direction": "choppy", "runs": 0, "delta": 0.0,
-                "ok": False, "reason": "not enough points yet"}
+        return empty
     window = pts[-last_n:]
     nets = [float(p.get("net_pure") or 0) for p in window]
-    # A point with net_pure == 0 is noise (no flow at all) and never
-    # contributes to a run. A point that flips sign (positive→negative or
-    # vice-versa) breaks the run.
     signs = [(1 if n > 0 else (-1 if n < 0 else 0)) for n in nets]
     direction = ("accum" if signs[-1] > 0 else
                  "dist" if signs[-1] < 0 else "choppy")
     if direction == "choppy":
         return {"direction": "choppy", "runs": 0,
                 "delta": float(nets[-1]), "ok": False,
-                "reason": "last 3 windows mixed — no clear direction"}
+                "reason": "last 3 windows mixed — no clear direction",
+                "transition": False, "prior_direction": ""}
     target = 1 if direction == "accum" else -1
-    # Count consecutive trailing points matching the current direction.
-    # Example [8, 10, 12] (all +) → runs = 3; [8, -10, 12] (last 1 +) → 1.
     runs = 0
     for s in reversed(signs):
         if s == target:
             runs += 1
         else:
             break
+
+    # ── regime change detection (Fix #2.3) ──────────────────────────
+    # prior direction = sign of the oldest point in the window.
+    prior_sign = 0
+    for s in signs:
+        if s != 0:
+            prior_sign = s
+            break
+    transition = (prior_sign != 0 and prior_sign != target)
+    prior_dir = ("accum" if prior_sign > 0
+                 else "dist" if prior_sign < 0 else "")
+    transition_reason = ""
+    if transition and runs >= 2:
+        transition_reason = (
+            f"regime change: {prior_dir}→{direction} in last "
+            f"{runs} window(s) — a fresh "
+            f"{'accumulation' if direction == 'accum' else 'distribution'} leg")
+    # transition without enough new-direction points: surface but don't
+    # mark ok (the new leg isn't yet persistent).
+    elif transition and runs == 1:
+        transition_reason = (
+            f"regime change signalled: {prior_dir}→{direction}, but only "
+            f"1 new window so far — needs 1-2 more to confirm")
+
     if runs < PERSISTENCE_MIN_RUN:
-        return {"direction": direction, "runs": runs,
-                "delta": float(nets[-1]), "ok": False,
-                "reason": (f"only {runs} consecutive "
-                           f"{'buy' if direction == 'accum' else 'sell'} "
-                           "window(s) — need 3 for persistence")}
-    # All-N in the trailing run AND each ≥ min size = persistent run.
+        out = {"direction": direction, "runs": runs,
+               "delta": float(nets[-1]), "ok": False,
+               "reason": (f"only {runs} consecutive "
+                          f"{'buy' if direction == 'accum' else 'sell'} "
+                          "window(s) — need 3 for persistence"),
+               "transition": transition,
+               "prior_direction": prior_dir}
+        if transition_reason and not out["reason"]:
+            out["reason"] = transition_reason
+        elif transition_reason:
+            out["reason"] = f"{out['reason']} · {transition_reason}"
+        return out
     if all(abs(n) >= PERSISTENCE_MIN_NET_SOL for n in nets[-runs:]):
-        return {"direction": direction, "runs": runs,
-                "delta": float(nets[-1]), "ok": True,
-                "reason": (f"{runs} consecutive "
-                           f"{'accumulation' if direction == 'accum' else 'distribution'} "
-                           f"windows ≥{PERSISTENCE_MIN_NET_SOL:g} SOL — "
-                           "this is a sustained run, not a single spike")}
-    return {"direction": direction, "runs": runs,
-            "delta": float(nets[-1]), "ok": False,
-            "reason": (f"direction is consistent but each move is small "
-                       f"(<{PERSISTENCE_MIN_NET_SOL:g} SOL) — could be noise")}
+        out = {"direction": direction, "runs": runs,
+               "delta": float(nets[-1]), "ok": True,
+               "reason": (f"{runs} consecutive "
+                          f"{'accumulation' if direction == 'accum' else 'distribution'} "
+                          f"windows ≥{PERSISTENCE_MIN_NET_SOL:g} SOL — "
+                          "this is a sustained run, not a single spike"),
+               "transition": transition,
+               "prior_direction": prior_dir}
+        if transition_reason:
+            out["reason"] = f"{out['reason']} · {transition_reason}"
+        return out
+    out = {"direction": direction, "runs": runs,
+           "delta": float(nets[-1]), "ok": False,
+           "reason": (f"direction is consistent but each move is small "
+                      f"(<{PERSISTENCE_MIN_NET_SOL:g} SOL) — could be noise"),
+           "transition": transition,
+           "prior_direction": prior_dir}
+    if transition_reason:
+        out["reason"] = f"{out['reason']} · {transition_reason}"
+    return out
+
+
+# Fast distribution: a single cron point with large negative net_pure
+# that flipped from a positive baseline in the previous point.
+FAST_DIST_MIN_DROP_SOL = 30.0
 
 
 def flow_distribution(ca: str) -> dict:
@@ -2138,32 +2243,84 @@ def flow_distribution(ca: str) -> dict:
       * at least one of: conviction also dropped, OR whale-side flipped
         negative while retail is still positive (classic dump into strength).
 
+    Fix #2.4: added a "fast distribution" branch that flags a 1-window
+    net_pure crash (>= :data:`FAST_DIST_MIN_DROP_SOL` SOL) which the
+    older 24h-peak logic could miss when the previous window was flat.
+
+    Fix #2.8: compare against a 7d peak (last 28 cron points) when
+    24h peak is ≤ 0.5 SOL, so long-tail stealth distribution that
+    never spiked high in any single 24h window is still detected.
+
     Returns ``{"ok": bool, "drop_pct": float, "level": "ok"|"warn"|"danger",
-                "reason": str}``. ``ok=False`` means a distribution event
-    is currently being flagged. ``level`` follows the same warn/danger
-    scale the markup warnings use, so the UI can colour consistently.
+                "reason": str, "fast": bool}``. ``ok=False`` means a
+    distribution event is currently being flagged. ``level`` follows
+    the same warn/danger scale the markup warnings use, so the UI can
+    colour consistently. ``fast=True`` means a 1-window crash was
+    detected, not a 24h+ drip.
     """
     pts = (load_conviction() or {}).get(ca) or []
+    if len(pts) < 2:
+        return {"ok": False, "drop_pct": 0.0, "level": "ok",
+                "reason": "not enough history (need ≥2 points)",
+                "fast": False}
+    np_now = float(pts[-1].get("net_pure") or 0)
+    np_prev = float(pts[-2].get("net_pure") or 0) if len(pts) >= 2 else 0.0
+
+    # ── Fast distribution: 1-window crash ─────────────────────────────
+    if len(pts) >= 2 and np_prev > 0 and \
+            (np_prev - np_now) >= FAST_DIST_MIN_DROP_SOL and np_now < 0:
+        cv_now = float(pts[-1].get("conviction") or 0)
+        cv_prev = float(pts[-2].get("conviction") or 0)
+        cv_drop = (cv_prev - cv_now) / cv_prev * 100 if cv_prev else 0
+        if cv_drop >= 30:
+            return {"ok": True, "drop_pct": round(
+                (np_prev - np_now) / max(np_prev, 1) * 100, 1),
+                    "level": "danger",
+                    "reason": (f"⚡ fast distribution: net_pure crashed "
+                               f"{np_prev - np_now:.1f} SOL in one window "
+                               f"(positive → negative) and conviction "
+                               f"fell {cv_drop:.0f}% — late-stage dump "
+                               "or rug setup"),
+                    "fast": True}
+        return {"ok": True, "drop_pct": round(
+            (np_prev - np_now) / max(np_prev, 1) * 100, 1),
+                "level": "warn",
+                "reason": (f"⚡ fast distribution: net_pure crashed "
+                           f"{np_prev - np_now:.1f} SOL in one window "
+                           f"(positive → negative) — watch for "
+                           "conviction to follow"),
+                "fast": True}
+
     if len(pts) < 4:
         return {"ok": False, "drop_pct": 0.0, "level": "ok",
-                "reason": "not enough history (need ≥4 points)"}
-    np_now = float(pts[-1].get("net_pure") or 0)
+                "reason": "not enough history (need ≥4 points)",
+                "fast": False}
     # use the last 4 points (≈24h on a 6h cron) as the comparison window
     recent = [float(p.get("net_pure") or 0) for p in pts[-4:]]
     peak = max(recent)
+    # Fix #2.8: when 24h peak is very small, look back further (7d) so
+    # long-tail stealth distribution is still detected. We pick the
+    # LARGER of the 24h peak and the 7d peak so the drop_pct
+    # calculation is conservative (it never overstates the drop).
+    if peak < 0.5 and len(pts) >= 4:
+        peak_7d = max(float(p.get("net_pure") or 0) for p in pts[-28:])
+        if peak_7d > peak:
+            peak = peak_7d
     if peak <= 0:
         # never had net positive flow → not a distribution, just no inflow
         return {"ok": False, "drop_pct": 0.0, "level": "ok",
-                "reason": "no net-buy peak in the last 24h — no "
-                          "distribution to flag"}
+                "reason": "no net-buy peak in the last 7d — no "
+                          "distribution to flag",
+                "fast": False}
     drop_pct = (peak - np_now) / peak * 100
     cv_now = float(pts[-1].get("conviction") or 0)
     cv_peak = max(float(p.get("conviction") or 0) for p in pts[-4:])
     cv_drop = (cv_peak - cv_now) / cv_peak * 100 if cv_peak else 0
     if drop_pct < DISTRIBUTION_DROP_PCT:
         return {"ok": False, "drop_pct": round(drop_pct, 1), "level": "ok",
-                "reason": (f"net_pure only {drop_pct:.0f}% below 24h peak "
-                           "— still well within normal volatility")}
+                "reason": (f"net_pure only {drop_pct:.0f}% below peak "
+                           "— still well within normal volatility"),
+                "fast": False}
     if drop_pct >= 60 and cv_drop >= 30:
         level = "danger"
         reason = (f"net_pure crashed {drop_pct:.0f}% from peak AND "
@@ -2171,14 +2328,14 @@ def flow_distribution(ca: str) -> dict:
                   "distribution / supply overhang")
     elif drop_pct >= DISTRIBUTION_DROP_PCT:
         level = "warn"
-        reason = (f"net_pure {drop_pct:.0f}% below 24h peak — early "
+        reason = (f"net_pure {drop_pct:.0f}% below peak — early "
                   "distribution, watch for conviction to follow")
     else:
         level = "ok"
         reason = ""
     return {"ok": drop_pct >= DISTRIBUTION_DROP_PCT,
             "drop_pct": round(drop_pct, 1), "level": level,
-            "reason": reason}
+            "reason": reason, "fast": False}
 
 
 def flow_quality(ca: str) -> dict:
@@ -2186,10 +2343,16 @@ def flow_quality(ca: str) -> dict:
 
     Combines three things:
       * enough swap activity (``vol`` above :data:`QUALITY_MIN_SOL`),
-      * swap count inside :data:`QUALITY_SWAP_BAND` (very low = dead
-        token, very high = a single wash-trade event can look like
-        a real move),
+      * swap count inside a dynamic band (very low = dead token,
+        very high = a single wash-trade event can look like a real
+        move),
       * not all the volume is the same wallet (basic concentration).
+
+    Fix #2.6: the upper bound of the swap-count band is no longer a
+    static ``50``; it's a dynamic ``max(50, n_swaps * 0.4)`` so a
+    freshly-launched memecoin with 200 swaps isn't false-flagged
+    as "one or two wallets dominate" purely because of the absolute
+    cutoff.
 
     Returns ``{"ok": bool, "level": "ok"|"warn"|"danger", "reason": str,
                 "vol": float, "n_swaps": int, "n_wallets": int}``.
@@ -2222,7 +2385,11 @@ def flow_quality(ca: str) -> dict:
                            f"{QUALITY_MIN_SOL:g}) — too quiet to read "
                            "conviction meaningfully"),
                 "vol": vol, "n_swaps": n_swaps, "n_wallets": n_wallets}
-    lo, hi = QUALITY_SWAP_BAND
+    lo, hi_static = QUALITY_SWAP_BAND
+    # Fix #2.6: dynamic upper bound — never false-flag a launch with
+    # 100+ swaps as "two wallets dominate" purely because of the
+    # static 50 cutoff.
+    hi = max(hi_static, int(n_swaps * 0.4)) if n_swaps else hi_static
     if n_swaps and n_swaps < lo:
         return {"ok": False, "level": "warn",
                 "reason": (f"only {n_swaps} swaps in 6h — window too thin "

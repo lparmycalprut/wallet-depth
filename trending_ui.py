@@ -60,8 +60,14 @@ def _clear_ctx_cache():
         pass
 
 
-def run_screen(force: bool = False, key: str = "screener_rows"):
+def run_screen(force: bool = False, key: str = "screener_rows",
+               enrich_holders: bool = True, dust_limit_usd: float = 5.0):
     """Fetch + score the trending list, caching the result in session state.
+
+    ``enrich_holders=True`` (default) auto-attaches a per-row
+    real-vs-dust split (computed from GMGN token_stat top-10 + the
+    reported total holder count) so the screener table can surface it
+    inline. Set to False if you want the raw rows only.
 
     Returns ``(rows, error)`` — *error* is a string when the fetch blew up.
     """
@@ -70,7 +76,11 @@ def run_screen(force: bool = False, key: str = "screener_rows"):
             _clear_ctx_cache()
         with st.spinner("Fetching GMGN trending…"):
             try:
-                st.session_state[key] = gmgn_screen()
+                rows = gmgn_screen()
+                if enrich_holders and rows:
+                    rows = enrich_rows_with_holder_split(
+                        rows, dust_limit_usd=dust_limit_usd)
+                st.session_state[key] = rows
                 st.session_state[key + "_err"] = ""
             except Exception as exc:                     # noqa: BLE001
                 st.session_state[key] = []
@@ -79,23 +89,170 @@ def run_screen(force: bool = False, key: str = "screener_rows"):
             st.session_state.get(key + "_err") or "")
 
 
-def run_screen_hrhr(force: bool = False, key: str = "screener_hrhr_rows"):
+def run_screen_hrhr(force: bool = False, key: str = "screener_hrhr_rows",
+                    enrich_holders: bool = True, dust_limit_usd: float = 5.0):
     """Fetch + score + filter the HRHR list, caching the result in session state.
 
-    Returns ``(rows, error)`` — *error* is a string when the fetch blew up.
+    ``enrich_holders=True`` (default) auto-attaches the per-row real-vs-dust
+    split just like :func:`run_screen`. Returns ``(rows, error)``.
     """
     if force or key not in st.session_state:
         if force:
             _clear_ctx_cache()
         with st.spinner("Fetching GMGN HRHR list…"):
             try:
-                st.session_state[key] = gmgn_screen_hrhr()
+                rows = gmgn_screen_hrhr()
+                if enrich_holders and rows:
+                    rows = enrich_rows_with_holder_split(
+                        rows, dust_limit_usd=dust_limit_usd)
+                st.session_state[key] = rows
                 st.session_state[key + "_err"] = ""
             except Exception as exc:                     # noqa: BLE001
                 st.session_state[key] = []
                 st.session_state[key + "_err"] = str(exc)
     return (st.session_state.get(key) or [],
             st.session_state.get(key + "_err") or "")
+
+
+# -----------------------------------------------------------------------------
+# Real vs Dust approximation for screener rows
+# -----------------------------------------------------------------------------
+# The Analyze page computes real (≥$5) vs dust (<$5) holder counts from the
+# full Helius holder list. The screener doesn't have that — the score uses
+# only the headline ``holders`` count from GMGN. To still let the user spot
+# the obvious red flag (dust >> real) at a glance, we approximate:
+#
+#   1. Fetch GMGN token_stat → top-10 holders (largest) + reported total
+#   2. From top-10, split into n_real_top / n_dust_top by USD value at the
+#      row's current price
+#   3. Treat the remaining ``total_holders - 10`` as dust (typical for
+#      memecoins — the top-10 own the bulk of supply, the long tail is
+#      dust). This is an APPROXIMATION, surfaced as "GMGN approx".
+#
+# Result stored on each row as ``holder_split``:
+#   {"n_real": int, "n_dust": int, "ratio": float, "src": "GMGN approx",
+#    "n_top_used": int, "total_holders": int | None}
+#
+# On any GMGN failure the field is missing and the UI shows nothing.
+# -----------------------------------------------------------------------------
+def _approximate_holder_split(row: dict, dust_limit_usd: float) -> dict | None:
+    """Compute the approximate real/dust split for one screener row.
+
+    Returns ``None`` when any input is missing or GMGN returns nothing
+    (so the caller can silently skip the note rather than display a
+    noisy 'n/a' for every token).
+    """
+    ca = row.get("ca")
+    price = row.get("mc")  # not used; we want price; fall back later
+    price = row.get("price") or row.get("priceUsd") or 0
+    if not ca or not price or price <= 0:
+        return None
+    try:
+        from core import gmgn_token_stat
+        stat = gmgn_token_stat(ca, timeout=8)
+    except Exception:
+        return None
+    pairs = stat.get("holders") or []
+    total_holders = stat.get("total_holders")
+    if not pairs:
+        return None
+    n_top_real = 0
+    n_top_dust = 0
+    for _owner, ui_amt in pairs:
+        if ui_amt * price >= dust_limit_usd:
+            n_top_real += 1
+        else:
+            n_top_dust += 1
+    # Long-tail assumption: every holder not in the top-10 is dust
+    # (typical for memecoins; conservative — gives a worst-case ratio).
+    n_top_used = len(pairs)
+    if total_holders and total_holders > n_top_used:
+        n_other = total_holders - n_top_used
+    else:
+        # GMGN didn't report a total — fall back to "no other holders"
+        n_other = 0
+    n_real_est = n_top_real
+    n_dust_est = n_top_dust + n_other
+    ratio = (n_real_est / n_dust_est) if n_dust_est else float("inf")
+    return {
+        "n_real": int(n_real_est),
+        "n_dust": int(n_dust_est),
+        "ratio": float(ratio),
+        "src": "GMGN approx",
+        "n_top_used": int(n_top_used),
+        "total_holders": int(total_holders) if total_holders else None,
+    }
+
+
+def enrich_rows_with_holder_split(rows: list,
+                                   dust_limit_usd: float = 5.0) -> list:
+    """Attach a per-row real-vs-dust approximation.
+
+    The enrichment is best-effort: a single GMGN token_stat fetch per
+    row, in parallel. Failures are silently skipped (the row just
+    doesn't get the new field). Returns the same list (mutated in
+    place + returned, for chaining convenience).
+    """
+    if not rows:
+        return rows
+    cache_key = "screener_holder_split"
+    cached = st.session_state.get(cache_key, {})
+    cas_to_refresh = [r["ca"] for r in rows
+                      if r.get("ca") and r["ca"] not in cached]
+    if cas_to_refresh:
+        with st.spinner("💎 Approximating real/dust split from GMGN top-10…"):
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            workers = min(6, len(cas_to_refresh))
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(_approximate_holder_split, next(
+                    r for r in rows if r.get("ca") == ca),
+                    dust_limit_usd): ca
+                    for ca in cas_to_refresh}
+                for fut in as_completed(futures):
+                    ca = futures[fut]
+                    try:
+                        cached[ca] = fut.result()
+                    except Exception:
+                        cached[ca] = None
+        st.session_state[cache_key] = cached
+    for r in rows:
+        ca = r.get("ca")
+        if ca and ca in cached and cached[ca] is not None:
+            r["holder_split"] = cached[ca]
+    return rows
+
+
+def _format_holder_split_note(row: dict) -> str:
+    """Return a short HTML note for the holder_split field, or '' if absent.
+
+    Used by the screener table to surface the real/dust comparison
+    inline so the user doesn't need a separate Analyze pass.
+    """
+    hs = row.get("holder_split")
+    if not hs:
+        return ""
+    n_real = int(hs.get("n_real") or 0)
+    n_dust = int(hs.get("n_dust") or 0)
+    ratio = hs.get("ratio", 0.0)
+    ratio_txt = "∞" if ratio == float("inf") else f"{ratio * 100:,.0f}%"
+    # Color: green ≥50%, yellow 30-50%, red <30% (same thresholds as
+    # fetch_real_dust_ratio in app.py).
+    if ratio == float("inf") or ratio >= 0.50:
+        col = "#22c55e"
+    elif ratio >= 0.30:
+        col = "#facc15"
+    else:
+        col = "#ef4444"
+    return (
+        f"<span style='color:#cbd5e1;'>💎 Real ≥$5:</span> "
+        f"<b style='color:#e2e8f0'>{n_real:,}</b>"
+        f"<span style='color:#475569;'> · </span>"
+        f"<span style='color:#cbd5e1;'>🪙 Dust:</span> "
+        f"<b style='color:#e2e8f0'>{n_dust:,}</b>"
+        f"<span style='color:#475569;'> · </span>"
+        f"<span style='color:{col};font-weight:700'>ratio {ratio_txt}</span>"
+        f" <span style='opacity:0.55;font-size:0.7em'>(GMGN approx)</span>"
+    )
 
 
 def _resolve_pair(ca: str):
@@ -374,12 +531,25 @@ def render_trending(rows, *, key_prefix: str = "scr", show_watch: bool = True,
         highlighted = [_format_note_part(part, r) for part in parts]
         # Prepend H4 candle pattern info (green glowing) for degen rows
         _cpattern_html = _format_candle_patterns(r.get("candle_patterns", {}))
+        # Real vs Dust inline note (auto-added by enrich_rows_with_holder_split)
+        _hsplit_html = _format_holder_split_note(r)
         _notes_html = "<span style='font-size:0.80rem'>" + "; ".join(highlighted) + "</span>"
+        # Prepend holder-split note (large, immediately scannable) and
+        # H4 candle patterns (green glowing) when present.
+        _prepends = []
+        if _hsplit_html:
+            _prepends.append(
+                "<span style='font-size:0.92rem;display:block;"
+                "background:rgba(148,163,184,0.08);border:1px solid "
+                "#334155;border-radius:6px;padding:5px 8px;margin-bottom:4px;"
+                "line-height:1.5;'>"
+                + _hsplit_html + "</span>")
         if _cpattern_html:
-            _notes_html = (
+            _prepends.append(
                 "<span style='font-size:0.80rem;display:block;"
-                "margin-bottom:2px;'>" + _cpattern_html + "</span>"
-                + _notes_html)
+                "margin-bottom:2px;'>" + _cpattern_html + "</span>")
+        if _prepends:
+            _notes_html = "".join(_prepends) + _notes_html
         cc[11].markdown(_notes_html, unsafe_allow_html=True)
         with cc[12]:
             if on_analyze is not None:
