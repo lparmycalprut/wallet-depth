@@ -362,7 +362,10 @@ def enrich_rows_with_holder_split(rows: list,
                       if r.get("ca") and r["ca"] not in cached]
     if cas_to_refresh:
         with st.spinner("💎 Approximating real/dust split from GMGN top-10…"):
-            from concurrent.futures import ThreadPoolExecutor, as_completed
+            # ThreadPoolExecutor/as_completed come from the module-level import
+            # (top of file). A local import here would shadow that name for the
+            # WHOLE function scope — making the earlier use above raise
+            # UnboundLocalError. Do NOT re-add a local import.
             workers = min(6, len(cas_to_refresh))
             with ThreadPoolExecutor(max_workers=workers) as pool:
                 futures = {pool.submit(_approximate_holder_split, next(
