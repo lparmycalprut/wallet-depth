@@ -1000,7 +1000,7 @@ if FOCUS_MODE:
                "config.json untuk tampilkan semua.")
 
 # Watchlist ticker bar — scrollable, clickable, live prices (30s cache)
-from watchlist import load_watchlist, add_to_watchlist, remove_from_watchlist
+from watchlist import load_watchlist, add_to_watchlist, remove_from_watchlist, get_last_push_error
 
 _wl = load_watchlist()
 
@@ -1019,8 +1019,13 @@ if _del_param and _del_param in _wl:
     except Exception:
         pass
     if not _committed:
-        st.warning("Dihapus, tapi tidak bisa commit ke GitHub.")
-        time.sleep(1.5)
+        _err = get_last_push_error()
+        _err_msg = _err.get("msg") or "unknown"
+        _err_status = _err.get("status")
+        st.error(f"⚠️ Dihapus lokal, tapi GAGAL commit ke GitHub ({_err_status or ''} {_err_msg}). "
+                 f"Jangan reload/redeploy dulu — pending journal akan auto-retry di load berikutnya. "
+                 f"Cek `github_token` di Secrets; jika 401/403, rotasi token mungkin sedang berlangsung.")
+        time.sleep(2.5)
     st.toast(f"Removed ${_del_sym} from watchlist.")
     st.rerun()
 
@@ -1965,9 +1970,10 @@ if ca and ca in _wl:
     if wcol1.button("💔 Remove from watchlist", use_container_width=True):
         _committed = remove_from_watchlist(ca)
         if not _committed:
-            st.warning("Removed, but could NOT commit to GitHub — add "
-                       "`github_token` to Streamlit Secrets to make it "
-                       "permanent.")
+            _err = get_last_push_error()
+            st.error(f"⚠️ Removed lokal, tapi GAGAL commit ke GitHub ({_err.get('status') or ''} {_err.get('msg')}). "
+                     f"Jangan reload/redeploy dulu — pending akan auto-retry. "
+                     f"Pastikan `github_token` ada di Secrets; 401/403 bisa karena rotasi token.")
             time.sleep(2.5)
         st.rerun()
     wcol2.caption(f"⭐ This CA is on your watchlist (added "
@@ -1983,13 +1989,12 @@ elif ca:
             pass
         _committed = add_to_watchlist(ca, symbol=_sym, source="manual")
         if not _committed:
-            st.warning(
-                "⭐ Added, but could NOT commit to GitHub — the change may "
-                "revert after an app restart. Add `github_token = \"...\"` "
-                "to your Streamlit Cloud **Secrets** (a fine-grained PAT "
-                "with Contents read/write) to make watchlist changes "
-                "permanent.")
-            time.sleep(2.5)
+            _err = get_last_push_error()
+            st.error(
+                f"⭐ Added lokal, tapi GAGAL commit ke GitHub ({_err.get('status') or ''} {_err.get('msg')}). "
+                f"Token tetap terlihat karena pending journal (selalu menang), tapi akan hilang jika container restart sebelum push sukses. "
+                f"Jangan reload/redeploy dulu — biarkan auto-retry. Pastikan `github_token` ada di Secrets; 401/403 bisa karena rotasi token.")
+            time.sleep(3.5)
         st.rerun()
     wcol2.caption("Add only if the token passes your criteria — watchlisted "
                   "CAs get a daily automatic snapshot (00:00 WIB).")

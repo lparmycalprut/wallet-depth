@@ -5,10 +5,12 @@ On Streamlit Cloud the filesystem is ephemeral: local writes are lost on
 every redeploy. If a GitHub token is available (secrets/config/env), every
 add/remove is also committed straight to the repo so it truly persists.
 """
+
 import base64
 import json
 import os
 import sys
+import time
 from datetime import datetime
 
 import requests
@@ -19,6 +21,33 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WATCHLIST_PATH = os.path.join(BASE_DIR, "watchlist.json")
 PENDING_PATH = os.path.join(BASE_DIR, "watchlist_pending.json")
 GITHUB_REPO = "lparmycalprut/wallet-depth"
+
+# ---- short TTL cache for load_watchlist (avoid hammering API each rerun) ---
+_CACHE_TTL = 15  # seconds
+_REMOTE_CACHE = {"data": None, "ts": 0.0}
+
+# ---- last push error (surfaced to UI) ---------------------------------------
+_LAST_PUSH_ERROR = {"msg": "", "ts": 0.0, "status": None}
+
+
+def _set_last_error(msg: str, status=None):
+    _LAST_PUSH_ERROR["msg"] = str(msg or "")
+    _LAST_PUSH_ERROR["ts"] = time.time()
+    _LAST_PUSH_ERROR["status"] = status
+
+
+def get_last_push_error() -> dict:
+    """Return last push error info: {msg, ts, status}."""
+    return dict(_LAST_PUSH_ERROR)
+
+
+def _reset_cache():
+    """Reset in-memory cache (used by tests)."""
+    _REMOTE_CACHE["data"] = None
+    _REMOTE_CACHE["ts"] = 0.0
+    _LAST_PUSH_ERROR["msg"] = ""
+    _LAST_PUSH_ERROR["ts"] = 0.0
+    _LAST_PUSH_ERROR["status"] = None
 
 
 def _load_pending() -> list:
@@ -33,8 +62,7 @@ def _save_pending(ops: list) -> None:
     try:
         atomic_write_json(PENDING_PATH, ops)
     except Exception as exc:
-        print(f"WARN: failed to save {PENDING_PATH}: {exc}",
-              file=sys.stderr)
+        print(f"WARN: failed to save {PENDING_PATH}: {exc}", file=sys.stderr)
 
 
 def _apply_ops(wl: dict, ops: list) -> dict:
@@ -72,10 +100,17 @@ def _github_token() -> str:
 
 def _github_pull() -> dict | None:
     """Read watchlist.json from the repo (source of truth).
-    Uses the API (no CDN cache) when a token exists; raw URL otherwise."""
+
+    Order:
+      1. GitHub API with token (no CDN cache)
+      2. GitHub API without token (avoids raw CDN, but rate-limited 60/h)
+      3. raw.githubusercontent.com with cache-busting + no-cache headers
+    """
     tok = _github_token()
-    try:
-        if tok:
+
+    # 1) API with token
+    if tok:
+        try:
             r = requests.get(
                 f"https://api.github.com/repos/{GITHUB_REPO}/contents/"
                 f"watchlist.json",
@@ -83,77 +118,350 @@ def _github_pull() -> dict | None:
                          "Accept": "application/vnd.github.raw+json"},
                 timeout=10)
             if r.status_code == 200:
-                return r.json() if isinstance(r.json(), dict) else {}
+                try:
+                    data = r.json()  # single parse
+                except Exception as je:
+                    print(f"WARN: _github_pull token api json parse failed: {je} body={r.text[:200]}", file=sys.stderr)
+                    data = None
+                if isinstance(data, dict):
+                    return data
+                if data is not None:
+                    print(f"WARN: _github_pull token api returned non-dict {type(data)}", file=sys.stderr)
+            else:
+                print(f"WARN: _github_pull token API failed {r.status_code}: {r.text[:200]}", file=sys.stderr)
+        except requests.RequestException as exc:
+            print(f"WARN: _github_pull token API network error: {exc}", file=sys.stderr)
+        except Exception as exc:
+            print(f"WARN: _github_pull token API unexpected: {exc}", file=sys.stderr)
+
+    # 2) API without token (avoids CDN stale cache, even when no token configured)
+    try:
         r = requests.get(
-            f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/"
-            f"watchlist.json", params={"t": int(__import__('time').time())},
+            f"https://api.github.com/repos/{GITHUB_REPO}/contents/"
+            f"watchlist.json",
+            headers={"Accept": "application/vnd.github.raw+json"},
             timeout=10)
         if r.status_code == 200:
-            return r.json() or {}
-    except Exception:
-        pass
+            try:
+                data = r.json()
+            except Exception as je:
+                print(f"WARN: _github_pull anon api json parse failed: {je}", file=sys.stderr)
+                data = None
+            if isinstance(data, dict):
+                print("INFO: _github_pull using anon API (no token / fallback)", file=sys.stderr)
+                return data
+        else:
+            # 404 is fine (file not exists yet), not worth warning loudly for other codes just info
+            if r.status_code != 404:
+                print(f"INFO: _github_pull anon API status {r.status_code}: {r.text[:200]}", file=sys.stderr)
+    except requests.RequestException as exc:
+        print(f"WARN: _github_pull anon API network error: {exc}", file=sys.stderr)
+    except Exception as exc:
+        print(f"WARN: _github_pull anon API unexpected: {exc}", file=sys.stderr)
+
+    # 3) raw CDN fallback (can be stale, but better than nothing)
+    try:
+        url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/watchlist.json"
+        params = {"t": int(time.time())}
+        hdrs = {"Cache-Control": "no-cache", "Pragma": "no-cache"}
+        r = requests.get(url, params=params, headers=hdrs, timeout=10)
+        if r.status_code == 200:
+            try:
+                data = r.json()
+                return data or {}
+            except Exception as je:
+                print(f"WARN: _github_pull raw CDN json parse failed: {je}", file=sys.stderr)
+                return {}
+        else:
+            print(f"WARN: _github_pull raw CDN failed {r.status_code}", file=sys.stderr)
+    except requests.RequestException as exc:
+        print(f"WARN: _github_pull raw CDN network error: {exc}", file=sys.stderr)
+    except Exception as exc:
+        print(f"WARN: _github_pull raw CDN unexpected: {exc}", file=sys.stderr)
+
     return None
 
 
-def _github_push(wl: dict, action: str) -> bool:
-    """Commit watchlist.json to the repo. Returns True on success."""
+def _github_push(wl: dict, action: str, max_retries: int = 3) -> bool:
+    """Commit watchlist.json to the repo with retry + re-fetch sha on 409.
+
+    On 409 conflict it re-fetches the latest remote, merges pending ops
+    (and the original wl) to avoid lost-update, then retries.
+    """
     tok = _github_token()
     if not tok:
+        _set_last_error("no github_token configured", status=0)
+        print(f"WARN: _github_push no token, action={action}", file=sys.stderr)
         return False
+
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/watchlist.json"
     hdrs = {"Authorization": f"Bearer {tok}",
             "Accept": "application/vnd.github+json"}
-    try:
-        sha = None
-        g = requests.get(url, headers=hdrs, timeout=15)
-        if g.status_code == 200:
-            sha = g.json().get("sha")
-        body = {
-            "message": f"watchlist: {action}",
-            "content": base64.b64encode(
-                json.dumps(wl, indent=1).encode()).decode(),
-        }
-        if sha:
-            body["sha"] = sha
-        p = requests.put(url, headers=hdrs, json=body, timeout=15)
-        return p.status_code in (200, 201)
-    except Exception:
-        return False
+
+    last_err_msg = ""
+    for attempt in range(1, max_retries + 1):
+        try:
+            # --- GET current file to obtain sha + latest remote content ----------
+            sha = None
+            latest_remote = None
+            try:
+                g = requests.get(url, headers=hdrs, timeout=15)
+            except requests.RequestException as exc:
+                print(f"WARN: _github_push GET attempt {attempt}/{max_retries} network error: {exc} action={action}", file=sys.stderr)
+                _set_last_error(f"GET network error: {exc}", status=None)
+                last_err_msg = f"GET network error: {exc}"
+                if attempt < max_retries:
+                    time.sleep(0.5 * (2 ** (attempt - 1)))
+                    continue
+                return False
+
+            if g.status_code == 200:
+                try:
+                    wrapper = g.json()  # single parse, do not call twice
+                except Exception as je:
+                    print(f"WARN: _github_push GET json parse failed attempt {attempt}: {je} body={g.text[:200]} action={action}", file=sys.stderr)
+                    wrapper = {}
+                    _set_last_error(f"GET json parse failed: {je}", status=g.status_code)
+                if isinstance(wrapper, dict):
+                    sha = wrapper.get("sha")
+                    content_b64 = wrapper.get("content", "")
+                    if content_b64:
+                        try:
+                            decoded = base64.b64decode(content_b64).decode("utf-8")
+                            latest_remote = json.loads(decoded) if decoded.strip() else {}
+                            if not isinstance(latest_remote, dict):
+                                print(f"WARN: _github_push decoded content not dict type={type(latest_remote)} action={action}", file=sys.stderr)
+                                latest_remote = {}
+                        except Exception as de:
+                            print(f"WARN: _github_push content decode failed attempt {attempt}: {de} action={action}", file=sys.stderr)
+                            latest_remote = None
+                    else:
+                        latest_remote = {}
+                else:
+                    print(f"WARN: _github_push GET returned non-dict wrapper type={type(wrapper)} action={action}", file=sys.stderr)
+                    latest_remote = None
+            elif g.status_code == 404:
+                sha = None
+                latest_remote = {}
+                print(f"INFO: _github_push GET 404 (file not exists yet) action={action}", file=sys.stderr)
+            elif g.status_code in (401, 403):
+                msg = f"GET auth failed {g.status_code}: {g.text[:200]}"
+                print(f"ERROR: _github_push {msg} action={action}", file=sys.stderr)
+                _set_last_error(msg, status=g.status_code)
+                return False
+            elif g.status_code == 409:
+                msg = f"GET 409 conflict attempt {attempt}"
+                print(f"WARN: _github_push {msg} action={action}", file=sys.stderr)
+                _set_last_error(msg, status=409)
+                if attempt < max_retries:
+                    time.sleep(0.5 * (2 ** (attempt - 1)))
+                    continue
+                return False
+            elif g.status_code == 429 or g.status_code >= 500:
+                msg = f"GET {g.status_code}: {g.text[:200]}"
+                print(f"WARN: _github_push {msg} attempt {attempt}/{max_retries} action={action}", file=sys.stderr)
+                _set_last_error(msg, status=g.status_code)
+                last_err_msg = msg
+                if attempt < max_retries:
+                    sleep = 1.0 * (2 ** (attempt - 1))
+                    time.sleep(sleep)
+                    continue
+                return False
+            else:
+                msg = f"GET unexpected {g.status_code}: {g.text[:200]}"
+                print(f"WARN: _github_push {msg} attempt {attempt} action={action}", file=sys.stderr)
+                _set_last_error(msg, status=g.status_code)
+                last_err_msg = msg
+                # don't retry on other 4xx
+                return False
+
+            # --- decide wl_to_push: always merge latest_remote + pending to avoid lost-update ---
+            # On first attempt we already have latest_remote from the GET.
+            # Merging it with pending ensures a concurrent writer (e.g. cron) that added
+            # a token between our earlier load and this push does not get overwritten.
+            if latest_remote is not None:
+                try:
+                    pending_now = _load_pending()
+                    merged = dict(latest_remote)
+                    if pending_now:
+                        merged = _apply_ops(merged, pending_now)
+                    # pending adds should win with the newest metadata from wl
+                    pending_add_map = {op["ca"]: op for op in pending_now if op.get("op") == "add"}
+                    pending_remove = {op["ca"] for op in pending_now if op.get("op") == "remove"}
+                    for ca in pending_add_map:
+                        if ca in wl:
+                            merged[ca] = wl[ca]
+                    # safety union: keep keys from original wl that are not pending removals
+                    # (covers direct edits not via pending, though normally pending covers all)
+                    for k, v in wl.items():
+                        if k not in merged and k not in pending_remove:
+                            merged[k] = v
+                    wl_to_push = merged
+                    if attempt > 1:
+                        print(f"INFO: _github_push retry merge: latest {len(latest_remote)} + pending {len(pending_now)} => {len(merged)} action={action}", file=sys.stderr)
+                except Exception as me:
+                    print(f"WARN: _github_push merge failed: {me}, using original wl action={action}", file=sys.stderr)
+                    wl_to_push = wl
+            else:
+                wl_to_push = wl
+
+            body = {
+                "message": f"watchlist: {action} (attempt {attempt})" if attempt > 1 else f"watchlist: {action}",
+                "content": base64.b64encode(json.dumps(wl_to_push, indent=1).encode()).decode(),
+            }
+            if sha:
+                body["sha"] = sha
+
+            try:
+                p = requests.put(url, headers=hdrs, json=body, timeout=15)
+            except requests.RequestException as exc:
+                print(f"WARN: _github_push PUT network error attempt {attempt}/{max_retries}: {exc} action={action}", file=sys.stderr)
+                _set_last_error(f"PUT network error: {exc}", status=None)
+                last_err_msg = f"PUT network error: {exc}"
+                if attempt < max_retries:
+                    time.sleep(0.5 * (2 ** (attempt - 1)))
+                    continue
+                return False
+
+            if p.status_code in (200, 201):
+                _REMOTE_CACHE["data"] = dict(wl_to_push)
+                _REMOTE_CACHE["ts"] = time.time()
+                _set_last_error("", status=p.status_code)
+                print(f"INFO: _github_push success attempt {attempt} status {p.status_code} action={action}", file=sys.stderr)
+                return True
+
+            last_err_msg = f"PUT {p.status_code}: {p.text[:300]}"
+            print(f"WARN: _github_push PUT failed attempt {attempt}/{max_retries} status {p.status_code}: {p.text[:300]} action={action}", file=sys.stderr)
+            _set_last_error(last_err_msg, status=p.status_code)
+
+            if p.status_code == 409:
+                print(f"INFO: _github_push PUT 409 conflict, will re-fetch sha and retry action={action}", file=sys.stderr)
+                if attempt < max_retries:
+                    time.sleep(0.5 * (2 ** (attempt - 1)) + 0.1 * attempt)
+                    continue
+                return False
+            elif p.status_code == 429 or p.status_code >= 500:
+                if attempt < max_retries:
+                    sleep = 1.0 * (2 ** (attempt - 1))
+                    print(f"INFO: _github_push retrying after {sleep}s due to {p.status_code} action={action}", file=sys.stderr)
+                    time.sleep(sleep)
+                    continue
+                return False
+            elif p.status_code in (401, 403):
+                print(f"ERROR: _github_push PUT auth error {p.status_code} action={action} check token rotation", file=sys.stderr)
+                return False
+            else:
+                return False
+
+        except Exception as exc:
+            print(f"ERROR: _github_push unexpected error attempt {attempt}/{max_retries}: {exc} action={action}", file=sys.stderr)
+            _set_last_error(f"unexpected: {exc}", status=None)
+            last_err_msg = f"unexpected: {exc}"
+            if attempt < max_retries:
+                time.sleep(0.5 * (2 ** (attempt - 1)))
+                continue
+            return False
+
+    print(f"ERROR: _github_push failed after {max_retries} attempts action={action} last={last_err_msg}", file=sys.stderr)
+    return False
 
 
-def load_watchlist() -> dict:
-    """Merge: repo copy (durable truth) + pending journal (recent local
-    ops). Pending ops always win; they are dropped only once the repo
-    reflects them. An add/remove therefore never visually reverts."""
+def _fetch_raw_remote(force_refresh: bool = False) -> dict | None:
+    """Fetch raw remote with TTL cache, returning a copy or None."""
+    now = time.time()
+    if not force_refresh and _REMOTE_CACHE["data"] is not None and (now - _REMOTE_CACHE["ts"]) < _CACHE_TTL:
+        try:
+            return dict(_REMOTE_CACHE["data"])
+        except Exception:
+            return _REMOTE_CACHE["data"]
+
     remote = _github_pull()
-    if remote is None:  # offline -> local file
+    if remote is not None:
+        if not isinstance(remote, dict):
+            print(f"WARN: _fetch_raw_remote got non-dict {type(remote)}, coercing to {{}}", file=sys.stderr)
+            remote = {}
+        _REMOTE_CACHE["data"] = dict(remote)
+        _REMOTE_CACHE["ts"] = now
+        try:
+            return dict(remote)
+        except Exception:
+            return remote
+
+    # fallback to stale cache if pull failed
+    if _REMOTE_CACHE["data"] is not None:
+        age = now - _REMOTE_CACHE["ts"]
+        print(f"WARN: _github_pull returned None, using stale cache age {age:.0f}s", file=sys.stderr)
+        try:
+            return dict(_REMOTE_CACHE["data"])
+        except Exception:
+            return _REMOTE_CACHE["data"]
+    return None
+
+
+def _load_and_merge(force_refresh: bool = False) -> dict:
+    """Load raw remote + pending journal merged, without pushing.
+
+    This is the non-pushing core used by add/remove to avoid double-push.
+    """
+    raw = _fetch_raw_remote(force_refresh=force_refresh)
+    if raw is None:
+        # offline fallback to local file
         try:
             with open(WATCHLIST_PATH, "r", encoding="utf-8") as f:
-                remote = json.load(f) or {}
+                loaded = json.load(f) or {}
+                raw = loaded if isinstance(loaded, dict) else {}
         except Exception:
-            remote = {}
+            raw = {}
+
+    if not isinstance(raw, dict):
+        print(f"WARN: raw watchlist not dict type={type(raw)}, resetting", file=sys.stderr)
+        raw = {}
+
     pending = _load_pending()
     if pending:
         still = []
         for op in pending:
-            in_repo = op["ca"] in remote
-            if (op["op"] == "add" and in_repo) or \
-               (op["op"] == "remove" and not in_repo):
-                continue  # repo caught up -> journal entry done
-            still.append(op)
+            try:
+                ca = op.get("ca")
+                if not ca:
+                    continue
+                in_repo = ca in raw
+                if (op.get("op") == "add" and in_repo) or (op.get("op") == "remove" and not in_repo):
+                    continue
+                still.append(op)
+            except Exception as exc:
+                print(f"WARN: _load_and_merge pending check failed: {exc} op={op}", file=sys.stderr)
+                still.append(op)
         if still != pending:
             _save_pending(still)
-        if still:
-            remote = _apply_ops(remote, still)
-            # opportunistic flush: try committing the merged state
-            if _github_token() and _github_push(remote, "sync pending ops"):
+            pending = still
+        if pending:
+            raw = _apply_ops(raw, pending)
+    return raw
+
+
+def load_watchlist(force_refresh: bool = False) -> dict:
+    """Merge: repo copy (durable truth) + pending journal (recent local ops).
+
+    Pending ops always win; they are dropped only once the repo reflects them.
+    An add/remove therefore never visually reverts.
+
+    Uses a short TTL cache to avoid hammering GitHub on every Streamlit rerun.
+    """
+    merged = _load_and_merge(force_refresh=force_refresh)
+    pending = _load_pending()
+    if pending:
+        # opportunistic flush: try committing the merged state once per load
+        if _github_token():
+            if _github_push(merged, "sync pending ops"):
                 _save_pending([])
+            else:
+                print(f"WARN: load_watchlist sync pending ops push failed, keeping {len(pending)} pending ops", file=sys.stderr)
     try:
-        atomic_write_json(WATCHLIST_PATH, remote, indent=1)
+        atomic_write_json(WATCHLIST_PATH, merged, indent=1)
     except Exception as exc:
-        print(f"WARN: failed to save {WATCHLIST_PATH}: {exc}",
-              file=sys.stderr)
-    return remote
+        print(f"WARN: failed to save {WATCHLIST_PATH}: {exc}", file=sys.stderr)
+    return merged
 
 
 def save_watchlist(wl: dict, action: str = "update") -> bool:
@@ -161,9 +469,30 @@ def save_watchlist(wl: dict, action: str = "update") -> bool:
     try:
         atomic_write_json(WATCHLIST_PATH, wl, indent=1)
     except Exception as exc:
-        print(f"WARN: failed to save {WATCHLIST_PATH}: {exc}",
-              file=sys.stderr)
-    return _github_push(wl, action)
+        print(f"WARN: failed to save {WATCHLIST_PATH}: {exc}", file=sys.stderr)
+
+    success = _github_push(wl, action)
+    if success:
+        pending = _load_pending()
+        if pending:
+            still = []
+            for op in pending:
+                try:
+                    ca = op.get("ca")
+                    if not ca:
+                        continue
+                    in_repo = ca in wl
+                    if (op.get("op") == "add" and in_repo) or (op.get("op") == "remove" and not in_repo):
+                        continue
+                    still.append(op)
+                except Exception as exc:
+                    print(f"WARN: save_watchlist pending check failed: {exc}", file=sys.stderr)
+                    still.append(op)
+            if still != pending:
+                _save_pending(still)
+    else:
+        print(f"WARN: save_watchlist push failed action={action}, pending journal kept", file=sys.stderr)
+    return success
 
 
 def _journal(op: dict) -> None:
@@ -202,10 +531,7 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
     # journal FIRST -> the change can never visually revert (stale reads,
     # failed commits, redeploys); journal is cleaned once repo reflects it
     _journal({"op": "add", "ca": ca, **entry})
-    # Flag the CA for the main app's auto-refresh sweep: the next rerun
-    # backfills its CVD/conviction data immediately (the manual "Force
-    # refresh now" button was removed). Best-effort — Streamlit may not
-    # be present (cron).
+    # Flag the CA for the main app's auto-refresh sweep
     try:
         import streamlit as st
         pending = st.session_state.setdefault(
@@ -213,24 +539,21 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
         pending.add(ca)
     except Exception:
         pass
-    wl = load_watchlist()
+    # use non-pushing loader to avoid double push
+    wl = _load_and_merge(force_refresh=False)
     wl[ca] = {**entry, **(wl.get(ca) or {})}
     if symbol and symbol != "?":
         wl[ca]["symbol"] = symbol
     if source:
-        # Latest add wins: an explicit source (trending/hrhr/manual)
-        # overrides a stale/missing one so HRHR adds never land in the
-        # LP Radar section by accident.
         wl[ca]["source"] = source
     if avg_cost is not None:
-        # Fresh GMGN avg-cost capture wins over a stale/missing one.
         wl[ca]["avg_cost"] = float(avg_cost)
     return save_watchlist(wl, f"add {symbol} ({ca[:8]}…)")
 
 
 def remove_from_watchlist(ca: str) -> bool:
     _journal({"op": "remove", "ca": ca})
-    wl = load_watchlist()
+    wl = _load_and_merge(force_refresh=False)
     meta = wl.pop(ca, None) or {}
     return save_watchlist(wl, f"remove {meta.get('symbol', '?')} "
                               f"({ca[:8]}…)")
