@@ -8,7 +8,7 @@ import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core import load_history, score_color
-from watchlist import load_watchlist, remove_from_watchlist, add_to_watchlist
+from watchlist import load_watchlist, remove_from_watchlist, add_to_watchlist, get_last_push_error
 
 st.set_page_config(page_title="Watchlist", page_icon="⭐",
                    layout="wide", initial_sidebar_state="collapsed")
@@ -82,11 +82,11 @@ if quick_pick_options:
                      if ca == _picked_ca), "manual")
                 if not add_to_watchlist(_picked_ca, note=qp_note,
                                         source=_picked_src):
-                    st.warning("Added, but GitHub commit failed — set "
-                               "`github_token` in Streamlit Secrets so "
-                               "changes survive restarts.")
+                    _err = get_last_push_error()
+                    st.error(f"⚠️ Added lokal tapi GAGAL commit GitHub ({_err.get('status') or ''} {_err.get('msg')}). "
+                             f"Jangan reload/redeploy dulu, pending akan auto-retry.")
                     import time as _t
-                    _t.sleep(2.5)
+                    _t.sleep(3.0)
                 st.rerun()
             else:
                 st.warning("Pick a token first.")
@@ -104,11 +104,11 @@ with st.expander("➕ Add a CA manually", expanded=not wl):
         if new_ca:
             if not add_to_watchlist(new_ca, note=new_note,
                                     source="manual"):
-                st.warning("Added, but GitHub commit failed — set "
-                           "`github_token` in Streamlit Secrets so changes "
-                           "survive restarts.")
+                _err = get_last_push_error()
+                st.error(f"⚠️ Added lokal tapi GAGAL commit GitHub ({_err.get('status') or ''} {_err.get('msg')}). "
+                         f"Jangan reload/redeploy dulu, pending akan auto-retry.")
                 import time as _t
-                _t.sleep(2.5)
+                _t.sleep(3.0)
             st.rerun()
         else:
             st.warning("CA is empty.")
@@ -179,11 +179,11 @@ for _, r in df.iterrows():
     c[10].write(str(r["Snapshots"]))
     if c[11].button("🗑️ Hapus", key=f"rm_{r['ca']}", help="Remove from watchlist", use_container_width=True, type="secondary"):
         if not remove_from_watchlist(r["ca"]):
-            st.warning("Removed, but GitHub commit failed — set "
-                       "`github_token` in Streamlit Secrets so changes "
-                       "survive restarts.")
+            _err = get_last_push_error()
+            st.error(f"⚠️ Dihapus lokal tapi GAGAL commit GitHub ({_err.get('status') or ''} {_err.get('msg')}). "
+                     f"Jangan reload/redeploy dulu, pending akan auto-retry.")
             import time as _t
-            _t.sleep(2.5)
+            _t.sleep(3.0)
         st.rerun()
 
 st.caption("🗑️ removes the CA from the watchlist (its history is kept in "
