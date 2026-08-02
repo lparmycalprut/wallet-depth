@@ -836,6 +836,157 @@ def _real_dust_card_html(_rd: dict) -> str:
         f"</div>")
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_real_dust_history() -> dict:
+    """Cron-written real-vs-dust history (``real_dust_history.json``).
+
+    The hourly cron appends one point per watchlist CA; the LP/Degen
+    Radar cards render the growth chart from it. 5-min cache so a row of
+    cards reads the file once per page load, not once per card.
+    """
+    try:
+        from cvd import load_real_dust_history
+        return load_real_dust_history() or {}
+    except Exception:
+        return {}
+
+
+def _real_dust_growth_html(ca: str, rd_state: dict,
+                           attached: bool = True) -> str:
+    """Connected "growth" card rendered directly under the real-vs-dust
+    block of the LP/Degen Radar cards.
+
+    Reads the hourly cron history and shows: a direction headline
+    (NAIK/TURUN/DATAR vs the previous cron point), delta chips for the
+    1-jam / 6-jam / 24-jam windows (💎 real & 🪙 dust counts), an SVG
+    sparkline of both series (last 48 points, per-series min-max scale),
+    and the timestamp of the latest recorded point. Returns "" when the
+    cron has not recorded anything for this CA yet.
+    """
+    try:
+        from cvd import real_dust_series, real_dust_trend
+        pts = real_dust_series(rd_state or {}, ca)
+    except Exception:
+        pts = []
+    if not pts:
+        return ""
+    trend = real_dust_trend(pts)
+    cur = trend.get("cur") or {}
+
+    def _sgn(v: int) -> str:
+        return f"+{v}" if v > 0 else str(v)
+
+    def _delta_chip(label: str, delta) -> str:
+        if delta is None:
+            return ""
+        d_real, d_dust = delta
+        r_arrow = "▲" if d_real > 0 else ("▼" if d_real < 0 else "•")
+        r_col = ("#22c55e" if d_real > 0
+                 else ("#ef4444" if d_real < 0 else "#64748b"))
+        d_arrow = "▲" if d_dust > 0 else ("▼" if d_dust < 0 else "•")
+        d_col = ("#f59e0b" if d_dust > 0
+                 else ("#60a5fa" if d_dust < 0 else "#64748b"))
+        return (f"<span style='display:inline-block;"
+                f"background:rgba(148,163,184,0.08);border:1px solid #334155;"
+                f"border-radius:5px;padding:1px 7px;margin:2px 4px 2px 0;"
+                f"font-size:0.72rem;white-space:nowrap;line-height:1.5;'>"
+                f"<span style='color:#64748b;'>{label}</span> "
+                f"<b style='color:{r_col};'>💎{r_arrow}{_sgn(d_real)}</b> "
+                f"<b style='color:{d_col};'>🪙{d_arrow}{_sgn(d_dust)}</b>"
+                f"</span>")
+
+    chips = (_delta_chip("1 jam", trend.get("d1h"))
+             + _delta_chip("6 jam", trend.get("d6h"))
+             + _delta_chip("24 jam", trend.get("d24h")))
+
+    head_map = {"up": ("📈 NAIK", "#22c55e"),
+                "down": ("📉 TURUN", "#ef4444"),
+                "flat": ("➡️ DATAR", "#94a3b8")}
+    head_txt, head_col = head_map.get(trend.get("dir_1h"),
+                                      head_map["flat"])
+
+    def _pct(r) -> str:
+        return "∞" if r is None else f"{r * 100:,.0f}%"
+
+    ratio_txt = ""
+    # Only meaningful when there are 2+ points to compare (d1h anchor
+    # exists) — a lone point has no honest "prev" ratio.
+    if trend.get("d1h") is not None:
+        ratio_txt = (f"<span style='color:#475569;margin:0 5px;'>·</span>"
+                     f"<span style='color:#94a3b8;'>ratio</span> "
+                     f"<span style='color:#cbd5e1;font-weight:700;'>"
+                     f"{_pct(trend.get('ratio_prev'))}→"
+                     f"{_pct(trend.get('ratio_now'))}</span>")
+
+    # --- sparkline: real (green) + dust (amber), last 48 hourly points ---
+    def _polyline(vals, w=300, h=44, pad=3.0):
+        if len(vals) < 2:
+            return ""
+        lo, hi = min(vals), max(vals)
+        rng = (hi - lo) or 1.0
+        step = (w - 2 * pad) / (len(vals) - 1)
+        return " ".join(
+            f"{pad + i * step:.1f},"
+            f"{pad + (h - 2 * pad) * (1 - (v - lo) / rng):.1f}"
+            for i, v in enumerate(vals))
+
+    tail = pts[-48:]
+    span_h = (max(1, round((tail[-1]["ts"] - tail[0]["ts"]) / 3600))
+              if len(tail) >= 2 else 0)
+    real_line = _polyline([p["real"] for p in tail])
+    dust_line = _polyline([p["dust"] for p in tail])
+    if real_line:
+        svg = (f"<svg viewBox='0 0 300 44' preserveAspectRatio='none' "
+               f"style='display:block;width:100%;height:44px;"
+               f"margin-top:5px;'>"
+               f"<polyline points='{dust_line}' fill='none' "
+               f"stroke='#f59e0b' stroke-width='1.4' opacity='0.6'/>"
+               f"<polyline points='{real_line}' fill='none' "
+               f"stroke='#22c55e' stroke-width='2'/>"
+               f"</svg>"
+               f"<div style='display:flex;justify-content:space-between;"
+               f"font-size:0.66rem;color:#64748b;margin-top:1px;'>"
+               f"<span><span style='color:#22c55e;'>━</span> real · "
+               f"<span style='color:#f59e0b;'>━</span> dust "
+               f"(skala masing-masing)</span>"
+               f"<span>{len(tail)} titik ≈{span_h} jam</span>"
+               f"</div>")
+    else:
+        svg = (f"<div style='font-size:0.68rem;color:#64748b;"
+               f"margin-top:4px;'>1 titik tercatat — grafik muncul "
+               f"setelah cron jam berikutnya.</div>")
+
+    # WIB = UTC+7 (owner reads WIB; cron records unix ts)
+    ts_last = int(cur.get("ts", 0))
+    when = (time.strftime("%H:%M", time.gmtime(ts_last + 7 * 3600))
+            if ts_last else "--:--")
+
+    if attached:
+        wrap = ("background:rgba(148,163,184,0.04);border:1px solid #334155;"
+                "border-top:1px dashed #334155;border-radius:0 0 7px 7px;"
+                "padding:5px 9px 6px 9px;margin-top:-1px;")
+    else:
+        wrap = ("background:rgba(148,163,184,0.04);border:1px solid #334155;"
+                "border-radius:7px;padding:6px 9px;margin-top:5px;")
+
+    return (
+        f"<div style='{wrap}line-height:1.5;'>"
+        f"<div style='display:flex;align-items:baseline;"
+        f"justify-content:space-between;gap:6px;'>"
+        f"<span style='font-size:0.74rem;color:#94a3b8;font-weight:700;'>"
+        f"📈 Pertumbuhan real vs dust "
+        f"<span style='color:#475569;font-weight:400;'>(cron 1 jam)</span>"
+        f"</span>"
+        f"<span style='font-size:0.72rem;font-weight:800;color:{head_col};"
+        f"white-space:nowrap;'>{head_txt}</span>"
+        f"</div>"
+        f"<div style='margin-top:3px;'>{chips}{ratio_txt}</div>"
+        f"{svg}"
+        f"<div style='font-size:0.66rem;color:#475569;margin-top:2px;'>"
+        f"⏱ titik terakhir {when} WIB · dicatat tiap jam oleh cron</div>"
+        f"</div>")
+
+
 # ----------------------------------------------------------------------------
 # Main input
 # ----------------------------------------------------------------------------
@@ -1093,6 +1244,9 @@ if _wl:
         _conv_hist = load_conviction()
     except Exception:
         _conv_hist = {}
+    # Hourly real-vs-dust history written by the cron — one load for
+    # both radar rows (5-min cache, read once per page load).
+    _rd_hist_state = fetch_real_dust_history()
     if _conv_hist:
         # --- LP Radar: trending-source tokens only ---
         _lp_tokens = {_ca: _meta for _ca, _meta in _wl.items()
@@ -1199,6 +1353,12 @@ if _wl:
                                             float(dust_limit))
                 if _rd:
                     _rd_html = _real_dust_card_html(_rd)
+
+            # ---- Real/dust growth history (hourly cron recording) ----
+            # Connected card directly under the real-vs-dust block:
+            # NAIK/TURUN headline, 1/6/24-jam delta chips + sparkline.
+            _rd_growth_html = _real_dust_growth_html(
+                _ca, _rd_hist_state, attached=bool(_rd_html))
 
             # ---- Small-body candle patterns (H4 + H1, 48h, with range) ----
             # H1 comes from the already-cached watchlist candle fetch;
@@ -1345,6 +1505,7 @@ if _wl:
                 f"border:2px solid {border};{glow}border-radius:14px;"
                 f"padding:14px 16px;margin-right:14px;cursor:pointer;"
                 f"min-width:320px;max-width:400px;line-height:1.4;"
+                f"display:flex;flex-direction:column;"
                 f"overflow-wrap:anywhere;'>"
                 # header: symbol + conviction %, plus DexS/GMGN shortcuts
                 f"<div style='display:flex;align-items:baseline;"
@@ -1371,8 +1532,9 @@ if _wl:
                 # holder-delta badges (whale / dolphin) on their own line
                 f"<div style='display:flex;gap:5px;flex-wrap:wrap;"
                 f"margin-top:5px;'>{_hd_badges_html}</div>"
-                # real holder vs dust ratio (min $5)
+                # real holder vs dust ratio (min $5) + growth history card
                 f"{_rd_html}"
+                f"{_rd_growth_html}"
                 # phase badge (own line, easier to scan) — hidden in FOCUS_MODE
                 f"{phase_html}"
                 # multi-window sparkline in a subtle background
@@ -1402,6 +1564,11 @@ if _wl:
                 # small-body candle details (H4 + H1, separate, with range)
                 f"{_patterns_html}"
                 f"{conv_note}</a>"
+                # Delete button pinned to the card bottom: the spacer
+                # (flex:1) pushes the button row to the bottom edge of the
+                # flex-column card, so it sits at the same spot on every
+                # card regardless of content height.
+                f"<div style='flex:1 1 auto;'></div>"
                 f"<div style='margin-top:10px;padding-top:8px;border-top:1px solid #2d3748;display:flex;justify-content:flex-end;'><a href='?del_ca={_ca}' target='_self' title='Hapus dari watchlist' style='display:inline-block;color:#fca5a5;text-decoration:none;background:rgba(239,68,68,0.2);border:1.5px solid rgba(239,68,68,0.6);border-radius:10px;padding:10px 22px;font-size:1.1rem;font-weight:800;line-height:1.3;cursor:pointer;letter-spacing:0.3px;'>🗑️ Hapus</a></div>"
                 f"</div>")
         if _cards:
@@ -1425,6 +1592,9 @@ if _wl:
                 "**💰 avg cost** = % harga saat ini vs rata-rata harga beli "
                 "holder (GMGN, display-only; merah ≤ -50%, oranye <0%, hijau ≥0%). "
                 "**💎 Real ≥$5 vs 🪙 dust** = jumlah + rasio real/dust. "
+                "**📈 Pertumbuhan** = history real vs dust yang dicatat cron "
+                "tiap jam; chip = perubahan 1/6/24 jam (💎 real, 🪙 dust), "
+                "garis hijau = real, oranye = dust (skala masing-masing). "
                 "**🕯️ H4/H1 body kecil** = pola doji/hammer/spinning top 48h "
                 "beserta range harga pola-nya (H4 & H1 terpisah). "
                 "Klik card → CVD analysis.")
@@ -1559,6 +1729,11 @@ if _wl:
                     if _rd_deg:
                         _rd_html_deg = _real_dust_card_html(_rd_deg)
 
+                # ---- Real/dust growth history (hourly cron) ----
+                # Same connected card as LP Radar (delta chips + sparkline).
+                _rd_growth_html_deg = _real_dust_growth_html(
+                    _ca, _rd_hist_state, attached=bool(_rd_html_deg))
+
                 # ---- Small-body candle patterns (H4 + H1, 48h, range) ----
                 _pair_addr_deg = ((_prices.get(_ca) or {}).get("pair")
                                   or "")
@@ -1583,6 +1758,7 @@ if _wl:
                     f"border:2px solid {_deg_border};border-radius:14px;"
                     f"padding:14px 16px;margin-right:14px;cursor:pointer;"
                     f"min-width:320px;max-width:400px;line-height:1.4;"
+                    f"display:flex;flex-direction:column;"
                     f"overflow-wrap:anywhere;'>"
                     f"<div style='display:flex;align-items:baseline;"
                     f"justify-content:space-between;gap:6px;'>"
@@ -1608,8 +1784,9 @@ if _wl:
                     # distance from ATH + GMGN avg cost (display-only context)
                     f"{_ath_html(_ca, _meta)}"
                     f"{_avg_cost_html(_ca, _meta)}"
-                    # real holder vs dust ratio (min $5)
+                    # real holder vs dust ratio (min $5) + growth history
                     f"{_rd_html_deg}"
+                    f"{_rd_growth_html_deg}"
                     f"{phase_html_deg}"
                     f"<a href='{_cvd_link}' target='_self' "
                     f"style='display:block;text-decoration:none;'>"
@@ -1637,6 +1814,9 @@ if _wl:
                     # small-body candle details (H4 + H1, separate, range)
                     f"{_patterns_html_deg}"
                     f"{conv_note_deg}</a>"
+                    # Delete button pinned to the card bottom via spacer
+                    # (same spot on every card — see LP Radar card).
+                    f"<div style='flex:1 1 auto;'></div>"
                     f"<div style='margin-top:10px;padding-top:8px;border-top:1px solid #2d3748;display:flex;justify-content:flex-end;'><a href='?del_ca={_ca}' target='_self' title='Hapus dari watchlist' style='display:inline-block;color:#fca5a5;text-decoration:none;background:rgba(239,68,68,0.2);border:1.5px solid rgba(239,68,68,0.6);border-radius:10px;padding:10px 22px;font-size:1.1rem;font-weight:800;line-height:1.3;cursor:pointer;letter-spacing:0.3px;'>🗑️ Hapus</a></div>"
                     f"</div>")
             if _degen_cards:
@@ -1653,6 +1833,9 @@ if _wl:
                            "**💰 avg cost** = % harga saat ini vs rata-rata harga "
                            "beli holder (GMGN, display-only). "
                            "**💎 Real ≥$5 vs 🪙 dust** = jumlah + rasio real/dust. "
+                           "**📈 Pertumbuhan** = history real vs dust yang dicatat "
+                           "cron tiap jam; chip = perubahan 1/6/24 jam (garis "
+                           "hijau = real, oranye = dust, skala masing-masing). "
                            "**🕯️ H4/H1 body kecil** = pola doji/hammer/spinning "
                            "top 48h + range harga pola-nya (H4 & H1 terpisah). "
                            "⚠️ Token ini BERISIKO TINGGI — selalu DYOR! "

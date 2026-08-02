@@ -7,6 +7,85 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-02 — History real vs dust per jam + grafik pertumbuhan di card + tombol hapus konsisten
+
+### Yang berubah
+
+1. **Pencatatan real holder vs dust holder tiap cron 1 jam.** Store baru
+   `real_dust_history.json` (`{ca: [{ts, real, dust, price, limit}]}`).
+   Recorder `cvd.record_real_dust_point()` + loader
+   `cvd.load_real_dust_history()` + normalizer `cvd.real_dust_series()`
+   + analyzer `cvd.real_dust_trend()`. Dipanggil di
+   `scripts/update_cvd.py::_try_snapshot()` — memakai list holder Helius
+   yang SUDAH di-fetch untuk holder snapshot, jadi nol RPC tambahan.
+   Status log cron dapat suffix `rd:210r/1024d`. Hanya jalur Helius yang
+   mencatat; fallback GMGN (top-10 holder) sengaja diskip karena
+   real/dust dari top-10 tidak bermakna. Dedup 45 menit
+   (`REAL_DUST_MIN_GAP_S`) supaya retry cron tidak dobel-commit; retensi
+   30 hari; hard cap 744 titik/CA. Threshold mengikuti `dust_limit_usd`
+   config (default $5, sama dengan card).
+2. **Card pertumbuhan menyambung di main page.** Helper baru
+   `app._real_dust_growth_html()` dirender tepat di bawah blok
+   `💎 Real ≥$5 vs 🪙 Dust` di card LP Radar DAN Degen Radar (border
+   dashed + radius bawah supaya tampak "menyambung"). Isi: headline
+   arah **📈 NAIK / 📉 TURUN / ➡️ DATAR** (berdasarkan Δ real holder vs
+   titik cron sebelumnya), chip delta **1 jam / 6 jam / 24 jam**
+   (💎+N real, 🪙±N dust), perubahan rasio, dan **sparkline SVG** 48
+   titik terakhir (garis hijau = real, oranye = dust; skala
+   masing-masing dengan label supaya tidak menyesatkan), plus timestamp
+   titik terakhir (WIB). Semua read via `fetch_real_dust_history()`
+   (cache 5 menit, 1× baca file per page load).
+3. **Tombol 🗑️ Hapus konsisten posisinya.** Kedua card sekarang
+   `display:flex;flex-direction:column` + spacer `<div style='flex:1 1
+   auto;'>` tepat sebelum baris tombol → tombol selalu menempel di
+   dasar card dengan posisi vertikal yang sama di semua card (row
+   parent sudah `align-items:stretch`, jadi tinggi card dalam satu baris
+   memang sama). Sebelumnya tombol mengikuti panjang konten
+   (`margin-top:10px`) sehingga pindah-pindah antar card.
+
+### Kenapa begitu
+
+Permintaan owner: (1) catat perbandingan real vs dust holder tiap cron
+1 jam beserta arah naik/turun + detail, (2) tampilkan history-nya real
+time di main page — "di bawah card masing2 token, buatkan card yang
+menyambung, atau grafik pertumbuhan", (3) tombol hapus watchlist di
+card dibuat konsisten tidak pindah-pindah. Sparkline SVG dipilih (bukan
+plotly) karena card dirender sebagai HTML string di `st.markdown`;
+plotly per card akan berat & lambat untuk satu baris card.
+
+### Sisa PR untuk owner
+
+- **Edit workflow** `.github/workflows/cvd-update.yml`: tambah
+  `git add real_dust_history.json 2>/dev/null || true` setelah baris
+  holder_snapshots — panduan lengkap di
+  `docs/WORKFLOW_PATCH_real_dust.md`. Tanpa ini data tidak ter-commit
+  (runner ephemeral) dan grafik kosong di Streamlit Cloud.
+- Headline arah baru muncul setelah ≥2 titik (±2 jam setelah cron
+  pertama dengan kode ini); chip 6 jam/24 jam menyusul saat data cukup.
+
+### Verifikasi
+
+- `python -m py_compile app.py cvd.py scripts/update_cvd.py` — lulus.
+- `tests/test_real_dust_history.py` (baru, 12 grup uji, ~45 assertion;
+  path di-patch ke tmpdir) — ALL PASSED.
+- Integration test offline `_try_snapshot()`: jalur Helius mencatat
+  `rd:3r/2d`, retry ter-dedup, tanpa harga → skip, fallback GMGN →
+  **tidak** mencatat. Lulus.
+- Uji fungsi `_real_dust_growth_html()` via ekstraksi AST: kosong → tidak
+  render; 1 titik → catatan; 30 titik → NAIK + chip + SVG + WIB;
+  downtrend + standalone; dust=0 → ∞. Geometri SVG tervalidasi dalam
+  viewBox.
+- Suite test existing tetap hijau (`test_holder_delta`, `test_flow_safety`,
+  `test_breakout_guard`, dll.). `test_cvd_update` & `test_holder_split`
+  gagal juga di baseline (pre-existing, env sandbox);
+  `test_markup_ai_prompt` butuh streamlit (tidak di sandbox).
+- **Fix hygiene**: `tests/test_stealth_signals.py` sempat bocor menulis
+  sinyal sintetis `T_NEW` ke `signals.json` asli — sekarang
+  `signals.SIGNALS_PATH` di-patch ke tmpdir (aturan AGENTS.md §7).
+  `signals.json` yang terpollusi saat test run sudah di-restore.
+
+---
+
 ## 2026-08-02 — Pindahkan "Quick Delete" ke tombol kecil di card
 
 ### Yang berubah

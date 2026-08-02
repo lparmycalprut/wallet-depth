@@ -2871,6 +2871,162 @@ def holder_delta_panel(ca: str, *, current_holders, supply: float,
 
 
 # ---------------------------------------------------------------------------
+# Real-vs-dust holder history (hourly cron recording)
+#
+# A lightweight per-CA time series of the real (>= dust_limit USD) vs dust
+# holder counts. The 1h cron commits one point per run (dedup via
+# REAL_DUST_MIN_GAP_S so retries don't double-commit). The dashboard card
+# reads this to show growth direction (naik/turun) + a sparkline.
+#
+# Only the Helius path produces trustworthy numbers — the GMGN fallback
+# exposes top-10 holders only, which is useless for dust counting, so the
+# cron must NOT record points from it.
+# ---------------------------------------------------------------------------
+REAL_DUST_PATH = os.path.join(BASE_DIR, "real_dust_history.json")
+# Skip a new point when the last one is younger than this. The cron runs
+# hourly; 45 min of slack absorbs retries / slow networks without losing
+# an hour.
+REAL_DUST_MIN_GAP_S = 45 * 60
+# Retention: 30 days of hourly points ≈ 720 points per CA (a few KB).
+REAL_DUST_KEEP_DAYS = 30
+REAL_DUST_MAX_POINTS = 31 * 24
+
+
+def load_real_dust_history() -> dict:
+    """``{ca: [{"ts", "real", "dust", "price", "limit"}, ...]}``.
+
+    Git-merge tolerant (uses ``_load_json_tolerant``). Returns ``{}`` when
+    the file is missing or malformed — callers must treat empty as
+    "cron has not recorded yet" and surface a clear message, not crash.
+    """
+    return _load_json_tolerant(REAL_DUST_PATH) or {}
+
+
+def _save_real_dust_history(state: dict) -> None:
+    """Atomic write (temp file + rename) like every other state file."""
+    try:
+        atomic_write_json(REAL_DUST_PATH, state, separators=(",", ":"))
+    except Exception as exc:
+        print(f"WARN: failed to save {REAL_DUST_PATH}: {exc}",
+              file=sys.stderr)
+
+
+def record_real_dust_point(ca: str, n_real: int, n_dust: int,
+                           price: float = 0.0, dust_limit: float = 5.0,
+                           ts: int = None) -> dict | None:
+    """Commit one real-vs-dust point for ``ca``. Returns the new point,
+    or ``None`` when the previous point is still fresh (cron retry inside
+    the same window) or the counts are nonsense.
+
+    ``n_real`` = holders with USD value >= ``dust_limit``; ``n_dust`` =
+    holders below it. ``price`` is the token USD price used for the split
+    (kept so future readers can re-derive per-holder values if needed).
+    """
+    n_real = int(n_real or 0)
+    n_dust = int(n_dust or 0)
+    if n_real < 0 or n_dust < 0 or (n_real + n_dust) <= 0:
+        return None
+    ts = int(ts if ts is not None else time.time())
+    point = {"ts": ts, "real": n_real, "dust": n_dust,
+             "price": float(price or 0.0), "limit": float(dust_limit)}
+
+    state = load_real_dust_history()
+    series = list(state.get(ca) or [])
+    series.sort(key=lambda p: p.get("ts", 0))
+    # Dedup: a point younger than REAL_DUST_MIN_GAP_S means this run is a
+    # retry of a window we already committed — skip, don't double-commit.
+    if series and ts - int(series[-1].get("ts", 0)) < REAL_DUST_MIN_GAP_S:
+        return None
+    series.append(point)
+    # Trim: drop points older than the retention window, then hard-cap
+    # the length so a forgotten clock skew can't grow the file forever.
+    cutoff = ts - REAL_DUST_KEEP_DAYS * 86400
+    series = [p for p in series if int(p.get("ts", 0)) >= cutoff]
+    if len(series) > REAL_DUST_MAX_POINTS:
+        series = series[-REAL_DUST_MAX_POINTS:]
+    state[ca] = series
+    try:
+        _save_real_dust_history(state)
+    except Exception:
+        return None
+    return point
+
+
+def real_dust_series(state: dict, ca: str) -> list:
+    """Normalized, chronological point list for ``ca`` from a loaded
+    state dict. Tolerates points missing optional fields (older format)."""
+    pts = []
+    for p in (state.get(ca) or []):
+        try:
+            pts.append({
+                "ts": int(p.get("ts", 0)),
+                "real": int(p.get("real") or 0),
+                "dust": int(p.get("dust") or 0),
+                "price": float(p.get("price") or 0.0),
+                "limit": float(p.get("limit") or 5.0),
+            })
+        except Exception:
+            continue
+    pts.sort(key=lambda p: p["ts"])
+    return pts
+
+
+def _nearest_older_point(points: list, ref_ts: int, window_h: float,
+                         tol_s: int = 1800):
+    """Newest point with ``ts <= ref_ts - window_h*3600 + tol_s`` — the
+    comparison anchor for a lookback window. None when no point is old
+    enough (series too young to say anything about that window)."""
+    target = ref_ts - int(window_h * 3600) + tol_s
+    older = [p for p in points if p["ts"] <= target]
+    return older[-1] if older else None
+
+
+def real_dust_trend(points: list, now_ts: int = None) -> dict:
+    """Direction + deltas of the real/dust counts over 1h / 6h / 24h.
+
+    ``points`` is the chronological list from :func:`real_dust_series`.
+    Returns ``{"n", "cur", "prev", "d1h", "d6h", "d24h", "dir_1h",
+    "ratio_now", "ratio_prev"}`` where ``d<h>`` = ``(d_real, d_dust)`` or
+    None when the window isn't covered yet. ``dir_1h`` is ``"up"`` /
+    ``"down"`` / ``"flat"`` based on the real-holder count between the
+    last two cron points.
+    """
+    pts = list(points or [])
+    out = {"n": len(pts), "cur": None, "prev": None,
+           "d1h": None, "d6h": None, "d24h": None,
+           "dir_1h": "flat", "ratio_now": None, "ratio_prev": None}
+    if not pts:
+        return out
+    cur = pts[-1]
+    out["cur"] = cur
+    out["ratio_now"] = (cur["real"] / cur["dust"]) if cur["dust"] else None
+
+    def _delta(anchor):
+        return (cur["real"] - anchor["real"], cur["dust"] - anchor["dust"])
+
+    # prev = the point the cron committed right before `cur` (≈1h back).
+    if len(pts) >= 2:
+        prev = pts[-2]
+        # If the last two points are far apart (cron gap), compare against
+        # the 1h anchor instead so "per jam" stays honest.
+        anchor1 = _nearest_older_point(pts[:-1], cur["ts"], 1) or prev
+        out["prev"] = anchor1
+        out["d1h"] = _delta(anchor1)
+        out["ratio_prev"] = (
+            (anchor1["real"] / anchor1["dust"]) if anchor1["dust"] else None)
+        d_real = cur["real"] - anchor1["real"]
+        out["dir_1h"] = "up" if d_real > 0 else ("down" if d_real < 0
+                                                 else "flat")
+    a6 = _nearest_older_point(pts, cur["ts"], 6)
+    if a6 is not None:
+        out["d6h"] = _delta(a6)
+    a24 = _nearest_older_point(pts, cur["ts"], 24)
+    if a24 is not None:
+        out["d24h"] = _delta(a24)
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Candle pattern detection (small-body patterns on H4 for degen screener)
 # ---------------------------------------------------------------------------
 PATTERN_EMOJI = {

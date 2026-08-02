@@ -40,7 +40,9 @@ buktikan kalibrasinya tidak bergeser (lihat §5).
 **File data yang di-commit cron** (jangan di-`.gitignore`):
 `cvd.json` · `signals.json` · `conviction.json` · `levels.json` ·
 `breakouts.json` · **`holder_snapshots.json`** (whale/dolphin holdings
-delta baseline; 4h cron commit per CA per ~6h bucket)
+delta baseline; 4h cron commit per CA per ~6h bucket) ·
+**`real_dust_history.json`** (history real vs dust holder per jam —
+lihat §7.7)
 
 ## 3. Dua jenis notifikasi Telegram — JANGAN tertukar
 
@@ -185,6 +187,7 @@ python tests/test_markup_ai_prompt.py
 python tests/test_flow_safety.py          # LP Radar 4-window + flow checks + GMGN new penalties
 python tests/test_helius_rotation.py       # key merge/de-dup + 429 failover
 python tests/test_cvd_update.py            # stale backfill persistence/status
+python tests/test_real_dust_history.py     # hourly real/dust history record/trend
 ```
 
 Tanpa pytest, tanpa jaringan. **Tes wajib mem-patch semua path file**
@@ -279,6 +282,36 @@ Jebakan yang sudah pernah menggigit:
 - **Tulisan `T10` diganti `Top 10`** di notes screener, kolom tabel,
   wins, dan risk reasons. Regex glow di `trending_ui._format_note_part`
   tetap menerima `T10` lama (catatan tersimpan) DAN `Top 10` baru.
+
+## 7.55 Perilaku baru yang wajib dijaga (2026-08-02)
+
+- **History real vs dust holder dicatat cron 1 jam** →
+  `real_dust_history.json`, recorder `cvd.record_real_dust_point()`
+  dipanggil di `scripts/update_cvd.py::_try_snapshot()` **hanya di
+  jalur Helius** (list holder lengkap, sudah di-fetch untuk snapshot —
+  nol RPC tambahan). JANGAN pernah mencatat dari fallback GMGN
+  (top-10 holder): real/dust dari top-10 selalu klaim "0 dust" — bohong.
+  Dedup `REAL_DUST_MIN_GAP_S=45m` (retry cron tidak dobel), retensi
+  `REAL_DUST_KEEP_DAYS=30`, hard cap `REAL_DUST_MAX_POINTS=744`.
+  Threshold dari `dust_limit_usd` config (sama dengan card live).
+  Workflow patch untuk owner: `docs/WORKFLOW_PATCH_real_dust.md`
+  (tanpa itu file tidak ter-commit dan grafik kosong di Cloud).
+- **Card pertumbuhan menyambung di bawah blok real/dust**:
+  `app._real_dust_growth_html()` — headline 📈 NAIK / 📉 TURUN /
+  ➡️ DATAR (arah = Δ real holder vs titik cron sebelumnya), chip
+  Δ 1/6/24 jam (💎 real + 🪙 dust), sparkline SVG 48 titik terakhir
+  (hijau = real, oranye = dust, **skala masing-masing** — diberi label
+  jelas supaya tidak menyesatkan). Anchor window memakai
+  `cvd._nearest_older_point()` = konvensi yang sama dengan
+  `holder_delta` (titik terbaru ≤ tepi window); lewat gap cron, anchor
+  jatuh ke titik terlama yang tersedia — jangan dikembalikan None.
+  Dijaga `tests/test_real_dust_history.py`.
+- **Tombol 🗑️ Hapus dipin ke dasar card.** Card LP & Degen sekarang
+  `display:flex;flex-direction:column` dengan spacer
+  `<div style='flex:1 1 auto;'>` sebelum baris tombol → tombol selalu
+  di posisi vertikal yang sama di semua card (parent row sudah
+  `align-items:stretch`). Jangan kembalikan `margin-top:10px` murni
+  tanpa spacer — itu yang bikin tombol dulu pindah-pindah.
 
 ## 7.6 Perilaku baru yang wajib dijaga (2026-08-01 — batch 2)
 
