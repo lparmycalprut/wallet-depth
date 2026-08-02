@@ -7,6 +7,52 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-02 — Pindahkan "Quick Delete" ke tombol kecil di card
+
+### Yang berubah
+
+1. **Expander "🗑️ Quick Delete dari watchlist" dihapus** dari dashboard
+   halaman utama. Dulu ada daftar terpisah (semua token watchlist, masing-
+   masing satu tombol "Hapus") yang duplikatif dengan halaman ⭐ Watchlist.
+2. **Tombol 🗑️ kecil disematkan di header setiap card** LP Radar & Degen
+   Radar — berdampingan dengan shortcut 🦆 DexScreener dan ⚡ GMGN.
+   Didesain sebagai pill merah kecil (latar `rgba(239,68,68,0.12)`, border
+   merah 0.35) supaya kontras dengan dua shortcut abu-abu di sebelahnya.
+3. **Mekanisme hapus via query param.** Karena card di-render lewat
+   `st.markdown(..., unsafe_allow_html=True)`, tombol Streamlit tidak bisa
+   ditanam di HTML. Tombol jadi anchor `<a href='?del_ca=<ca>'>`; lalu di
+   atas (tepat setelah `_wl = load_watchlist()`) ada handler yang membaca
+   `st.query_params.get("del_ca")`, memanggil `remove_from_watchlist()`,
+   membersihkan param via `st.query_params.pop(...)`, menampilkan toast,
+   lalu `st.rerun()`. Pola ini sama dengan link navigasi card yang sudah
+   ada (`?ca=<ca>`).
+
+### Kenapa begitu
+
+Permintaan owner: hapus tempat hapus terpisah dan sematkan langsung di
+card supaya hapus token sekali klik persis di tempat token itu ditampilkan.
+Tidak ada lagi dua lokasi untuk fungsi yang sama.
+
+### Catatan
+
+- Token yang **belum punya card** (belum ada conviction point, misal baru
+  di-add tapi belum di-backfill cron) tidak terlihat tombol hapusnya.
+  Tetap bisa dihapus lewat tombol "💔 Remove from watchlist" saat token
+  itu dianalisa, atau di halaman ⭐ Watchlist.
+- Tombol hapus **satu klik tanpa konfirmasi** — konsisten dengan perilaku
+  "Quick Delete" lama. `onclick`/JS konfirmasi sengaja tidak dipakai karena
+  Streamlit men-strip event handler dari `unsafe_allow_html`.
+
+### Verifikasi
+
+- `python -m py_compile app.py` — lulus.
+- `grep` konfirmasi: expander "Quick Delete" beserta key `del_wl_*` sudah
+  hilang; handler `del_ca` + dua tombol 🗑️ (LP & Degen) sudah ada.
+- `remove_from_watchlist` masih dipakai di: handler `del_ca` baru + tombol
+  "💔 Remove from watchlist" (analyse section) — import tetap relevan.
+
+---
+
 ## 2026-08-01 — Mengembalikan Tombol Force Refresh dengan Estimasi Waktu (ETA)
 
 ### Yang berubah

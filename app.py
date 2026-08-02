@@ -852,6 +852,27 @@ if FOCUS_MODE:
 from watchlist import load_watchlist, add_to_watchlist, remove_from_watchlist
 
 _wl = load_watchlist()
+
+# Handle "delete from watchlist" triggered by the small 🗑️ button on a
+# LP/Degen Radar card. Clicking it navigates to ?del_ca=<ca>; we remove
+# the token here, clear the param, and rerun so the cards refresh. This
+# replaces the old "Quick Delete" expander — deletion now lives on the
+# cards themselves, not in a separate list.
+_del_param = st.query_params.get("del_ca", "").strip()
+if _del_param:
+    _del_meta = _wl.get(_del_param, {})
+    _del_sym = _del_meta.get("symbol") or _del_param[:8]
+    _committed = remove_from_watchlist(_del_param)
+    try:
+        st.query_params.pop("del_ca", None)
+    except Exception:
+        pass
+    if not _committed:
+        st.warning("Dihapus, tapi tidak bisa commit ke GitHub.")
+        time.sleep(1.5)
+    st.toast(f"Removed ${_del_sym} from watchlist.")
+    st.rerun()
+
 # Defensive init: _daily_candles is only filled when the watchlist is
 # non-empty (see below) but the LP/Degen Radar blocks reference it.
 _daily_candles = {}
@@ -1336,13 +1357,20 @@ if _wl:
                 f"<span style='margin-left:4px;'>"
                 f"{_conv_html}</span></a>"
                 f"<span style='display:inline-flex;gap:6px;"
-                f"font-size:0.85rem;flex-shrink:0;'>"
+                f"font-size:0.85rem;flex-shrink:0;align-items:center;'>"
                 f"<a href='https://dexscreener.com/solana/{_ca}' "
                 f"target='_blank' title='DexScreener' "
                 f"style='color:#64748b;text-decoration:none;'>🦆</a>"
                 f"<a href='https://gmgn.ai/sol/token/{_ca}' "
                 f"target='_blank' title='GMGN' "
                 f"style='color:#64748b;text-decoration:none;'>⚡</a>"
+                f"<a href='?del_ca={_ca}' target='_self' "
+                f"title='Hapus dari watchlist' "
+                f"style='color:#fca5a5;text-decoration:none;"
+                f"background:rgba(239,68,68,0.12);border:1px solid "
+                f"rgba(239,68,68,0.35);border-radius:5px;"
+                f"padding:1px 7px;font-size:0.78rem;font-weight:700;"
+                f"line-height:1.2;cursor:pointer;'>🗑️</a>"
                 f"</span></div>"
                 # distance from ATH + GMGN avg cost (display-only context)
                 f"{_ath_html(_ca, _meta)}"
@@ -1575,13 +1603,20 @@ if _wl:
                     f"{cv:.0f}%</span> <span style='font-size:0.85rem;"
                     f"margin-left:2px;'>{trend_ic}</span></span></a>"
                     f"<span style='display:inline-flex;gap:6px;"
-                    f"font-size:0.85rem;flex-shrink:0;'>"
+                    f"font-size:0.85rem;flex-shrink:0;align-items:center;'>"
                     f"<a href='https://dexscreener.com/solana/{_ca}' "
                     f"target='_blank' title='DexScreener' "
                     f"style='color:#64748b;text-decoration:none;'>🦆</a>"
                     f"<a href='https://gmgn.ai/sol/token/{_ca}' "
                     f"target='_blank' title='GMGN' "
                     f"style='color:#64748b;text-decoration:none;'>⚡</a>"
+                    f"<a href='?del_ca={_ca}' target='_self' "
+                    f"title='Hapus dari watchlist' "
+                    f"style='color:#fca5a5;text-decoration:none;"
+                    f"background:rgba(239,68,68,0.12);border:1px solid "
+                    f"rgba(239,68,68,0.35);border-radius:5px;"
+                    f"padding:1px 7px;font-size:0.78rem;font-weight:700;"
+                    f"line-height:1.2;cursor:pointer;'>🗑️</a>"
                     f"</span></div>"
                     # distance from ATH + GMGN avg cost (display-only context)
                     f"{_ath_html(_ca, _meta)}"
@@ -1737,20 +1772,6 @@ if _qp_wl:
                 st.session_state[f"cvd_on::{_qp_picked}"] = True
                 st.session_state["cvd_win"] = 48
                 st.session_state["qp_selectbox"] = "— pilih token —"
-
-    with st.expander("🗑️ Quick Delete dari watchlist", expanded=False):
-        st.caption("Hapus token dari watchlist langsung dari sini tanpa perlu ke halaman Watchlist.")
-        for _del_ca, _del_meta in list(_wl.items()):
-            _del_sym = _del_meta.get("symbol") or _del_ca[:8]
-            _del_cols = st.columns([4, 1])
-            _del_cols[0].write(f"**${_del_sym}** (`{_del_ca}`)")
-            if _del_cols[1].button("Hapus 🗑️", key=f"del_wl_{_del_ca}", use_container_width=True):
-                _committed = remove_from_watchlist(_del_ca)
-                if not _committed:
-                    st.warning("Dihapus, tapi tidak bisa commit ke GitHub.")
-                    time.sleep(1.5)
-                st.toast(f"Removed ${_del_sym} from watchlist.")
-                st.rerun()
 
 # Effective default CA: query-param > Quick Pick > trending pick > last
 _effective_ca = (st.session_state.get(qp_key) or picked_ca or default_ca
