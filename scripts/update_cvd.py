@@ -83,7 +83,24 @@ def _gmgn_top_holders(ca: str, timeout: int = 15) -> tuple:
     return (stat.get("holders") or None), stat.get("supply")
 
 
-def _try_snapshot(api_keys, ca: str, meta: dict) -> str:
+def _cron_dust_limit() -> float:
+    """Dust threshold (USD) for the hourly real-vs-dust recording.
+
+    Mirrors the dashboard's ``dust_limit_usd`` config value so the cron
+    history and the live card use the same split. Defaults to $5.
+    """
+    try:
+        import json as _json
+        cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "..", "config.json")
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            return float((_json.load(f) or {}).get("dust_limit_usd", 5.0))
+    except Exception:
+        return 5.0
+
+
+def _try_snapshot(api_keys, ca: str, meta: dict,
+                  price_now: float = 0.0) -> str:
     """Holder snapshot — Helius (preferred) → GMGN (fallback).
 
     Returns a short status string for the cron log:
@@ -94,8 +111,12 @@ def _try_snapshot(api_keys, ca: str, meta: dict) -> str:
     The snapshot is committed to holder_snapshots.json so that
     `holder_delta()` can compute true T0↔T1 holdings change on
     subsequent runs.
+
+    On the Helius path we ALSO commit one real-vs-dust history point
+    (``real_dust_history.json``) — the holder list is already fetched,
+    so the growth chart rides along at zero extra RPC cost.
     """
-    from cvd import record_holder_snapshot
+    from cvd import record_holder_snapshot, record_real_dust_point
 
     # ── 1) Helius path (preferred when keys are configured) ───────────
     if api_keys and get_holders is not None:
@@ -120,8 +141,24 @@ def _try_snapshot(api_keys, ca: str, meta: dict) -> str:
                         pairs.append([str(owner), float(amt)])
                 if pairs:
                     rec = record_holder_snapshot(ca, pairs, supply or 0.0)
-                    if rec is not None:
-                        return f" snap-helius:{len(pairs)} holders"
+                    # Real-vs-dust history point — full list only (never
+                    # the GMGN top-10 fallback). Dedup'd hourly by the
+                    # recorder, so cron retries don't double-commit.
+                    rd_txt = ""
+                    try:
+                        limit = _cron_dust_limit()
+                        if price_now and price_now > 0:
+                            n_real = sum(1 for _, amt in pairs
+                                         if amt * price_now >= limit)
+                            n_dust = len(pairs) - n_real
+                            pt = record_real_dust_point(
+                                ca, n_real, n_dust, price=price_now,
+                                dust_limit=limit)
+                            if pt is not None:
+                                rd_txt = f" rd:{n_real}r/{n_dust}d"
+                    except Exception:
+                        pass  # history is best-effort, never crash cron
+                    return f" snap-helius:{len(pairs)} holders{rd_txt}"
         except Exception as e:
             # fall through to GMGN; don't crash the cron
             pass
@@ -209,8 +246,9 @@ def main():
             except Exception as ge:
                 guard_txt = f" guard-err:{str(ge)[:40]}"
 
-            # ── Holder snapshot (Helius opsional) ─────────────────────
-            snap_txt = _try_snapshot(api_keys, ca, meta)
+            # ── Holder snapshot + real/dust history (Helius opsional) ──
+            snap_txt = _try_snapshot(api_keys, ca, meta,
+                                     price_now=price_now or 0.0)
 
             print(f"✅ {meta.get('symbol', '?'):>10} {ca[:8]}… "
                   f"+{res['new_swaps']} swaps, {res['buckets']} hourly "

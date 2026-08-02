@@ -264,6 +264,11 @@ def test_stealth_accumulation_wired():
     # The function is callable with the new signal name without KeyError.
     # record_signal returns False when the same (ca,type) was sent
     # within DEDUPE_SEC, so we just verify it doesn't raise.
+    # signals.SIGNALS_PATH is patched to a tmpdir — AGENTS.md §7: tests
+    # must NEVER write to the real signals.json (this bit us before).
+    _tmp = tempfile.TemporaryDirectory()
+    _saved_path = signals.SIGNALS_PATH
+    signals.SIGNALS_PATH = os.path.join(_tmp.name, "signals.json")
     try:
         signals.record_signal("T_NEW", "TEST", "stealth_accumulation",
                               "synthetic test", src="test", window_h=6)
@@ -274,6 +279,9 @@ def test_stealth_accumulation_wired():
         # Other exceptions (file write, etc.) are OK — we only care
         # that the new signal type is recognised.
         pass
+    finally:
+        signals.SIGNALS_PATH = _saved_path
+        _tmp.cleanup()
     check(True, "record_signal accepts 'stealth_accumulation' type")
 
 
