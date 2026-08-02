@@ -177,7 +177,7 @@ for _, r in df.iterrows():
                r["MC"] is not None else "—")
     c[9].write(r["Note"] or "")
     c[10].write(str(r["Snapshots"]))
-    if c[11].button("🗑️", key=f"rm_{r['ca']}", help="Remove from watchlist"):
+    if c[11].button("🗑️ Hapus", key=f"rm_{r['ca']}", help="Remove from watchlist", use_container_width=True, type="secondary"):
         if not remove_from_watchlist(r["ca"]):
             st.warning("Removed, but GitHub commit failed — set "
                        "`github_token` in Streamlit Secrets so changes "

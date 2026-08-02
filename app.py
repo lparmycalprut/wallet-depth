@@ -859,7 +859,7 @@ _wl = load_watchlist()
 # replaces the old "Quick Delete" expander — deletion now lives on the
 # cards themselves, not in a separate list.
 _del_param = st.query_params.get("del_ca", "").strip()
-if _del_param:
+if _del_param and _del_param in _wl:
     _del_meta = _wl.get(_del_param, {})
     _del_sym = _del_meta.get("symbol") or _del_param[:8]
     _committed = remove_from_watchlist(_del_param)
@@ -1364,13 +1364,6 @@ if _wl:
                 f"<a href='https://gmgn.ai/sol/token/{_ca}' "
                 f"target='_blank' title='GMGN' "
                 f"style='color:#64748b;text-decoration:none;'>⚡</a>"
-                f"<a href='?del_ca={_ca}' target='_self' "
-                f"title='Hapus dari watchlist' "
-                f"style='color:#fca5a5;text-decoration:none;"
-                f"background:rgba(239,68,68,0.12);border:1px solid "
-                f"rgba(239,68,68,0.35);border-radius:5px;"
-                f"padding:1px 7px;font-size:0.78rem;font-weight:700;"
-                f"line-height:1.2;cursor:pointer;'>🗑️</a>"
                 f"</span></div>"
                 # distance from ATH + GMGN avg cost (display-only context)
                 f"{_ath_html(_ca, _meta)}"
@@ -1409,6 +1402,7 @@ if _wl:
                 # small-body candle details (H4 + H1, separate, with range)
                 f"{_patterns_html}"
                 f"{conv_note}</a>"
+                f"<div style='margin-top:10px;padding-top:8px;border-top:1px solid #2d3748;display:flex;justify-content:flex-end;'><a href='?del_ca={_ca}' target='_self' title='Hapus dari watchlist' style='display:inline-block;color:#fca5a5;text-decoration:none;background:rgba(239,68,68,0.2);border:1.5px solid rgba(239,68,68,0.6);border-radius:10px;padding:10px 22px;font-size:1.1rem;font-weight:800;line-height:1.3;cursor:pointer;letter-spacing:0.3px;'>🗑️ Hapus</a></div>"
                 f"</div>")
         if _cards:
             st.markdown(
@@ -1610,14 +1604,7 @@ if _wl:
                     f"<a href='https://gmgn.ai/sol/token/{_ca}' "
                     f"target='_blank' title='GMGN' "
                     f"style='color:#64748b;text-decoration:none;'>⚡</a>"
-                    f"<a href='?del_ca={_ca}' target='_self' "
-                    f"title='Hapus dari watchlist' "
-                    f"style='color:#fca5a5;text-decoration:none;"
-                    f"background:rgba(239,68,68,0.12);border:1px solid "
-                    f"rgba(239,68,68,0.35);border-radius:5px;"
-                    f"padding:1px 7px;font-size:0.78rem;font-weight:700;"
-                    f"line-height:1.2;cursor:pointer;'>🗑️</a>"
-                    f"</span></div>"
+                f"</span></div>"
                     # distance from ATH + GMGN avg cost (display-only context)
                     f"{_ath_html(_ca, _meta)}"
                     f"{_avg_cost_html(_ca, _meta)}"
@@ -1650,6 +1637,7 @@ if _wl:
                     # small-body candle details (H4 + H1, separate, range)
                     f"{_patterns_html_deg}"
                     f"{conv_note_deg}</a>"
+                    f"<div style='margin-top:10px;padding-top:8px;border-top:1px solid #2d3748;display:flex;justify-content:flex-end;'><a href='?del_ca={_ca}' target='_self' title='Hapus dari watchlist' style='display:inline-block;color:#fca5a5;text-decoration:none;background:rgba(239,68,68,0.2);border:1.5px solid rgba(239,68,68,0.6);border-radius:10px;padding:10px 22px;font-size:1.1rem;font-weight:800;line-height:1.3;cursor:pointer;letter-spacing:0.3px;'>🗑️ Hapus</a></div>"
                     f"</div>")
             if _degen_cards:
                 st.markdown(
