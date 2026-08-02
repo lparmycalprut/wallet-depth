@@ -1863,7 +1863,7 @@ scan_trending = st.button("🔥 Scan Trending Now", key="trending_scan",
 if scan_trending or "screener_rows" in st.session_state:
     with st.expander("🔥 Trending tokens from GMGN — scored (FOR LP)", expanded=True):
         _rows, _err = run_screen(force=scan_trending, dust_limit_usd=float(dust_limit),
-                              helius_keys=helius_keys)
+                              helius_keys=helius_keys, gmgn_fast=True)
         if _err:
             st.error(f"Failed to fetch trending: {_err}")
         if not _rows and not _err:
@@ -1881,7 +1881,7 @@ scan_hrhr = st.button("⚡ Scan High Risk High Reward Now", key="hrhr_scan",
 if scan_hrhr or "screener_hrhr_rows" in st.session_state:
     with st.expander("⚡ High Risk High Reward from GMGN — scored (FOR DEGEN)", expanded=True):
         _rows_hrhr, _err_hrhr = run_screen_hrhr(force=scan_hrhr, dust_limit_usd=float(dust_limit),
-                                      helius_keys=helius_keys)
+                                      helius_keys=helius_keys, gmgn_fast=True)
         if _err_hrhr:
             st.error(f"Failed to fetch HRHR: {_err_hrhr}")
         if not _rows_hrhr and not _err_hrhr:

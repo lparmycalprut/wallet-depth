@@ -33,7 +33,7 @@ if not scan and "screener_rows" not in st.session_state:
             "GMGN trending list.")
     st.stop()
 
-rows, err = run_screen(force=scan, helius_keys=tuple(get_helius_keys()))
+rows, err = run_screen(force=scan, helius_keys=tuple(get_helius_keys()), gmgn_fast=True)
 if err:
     st.error(f"Failed to fetch trending: {err}")
 if not rows:

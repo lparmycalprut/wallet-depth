@@ -62,7 +62,7 @@ def _clear_ctx_cache():
 
 def run_screen(force: bool = False, key: str = "screener_rows",
                enrich_holders: bool = True, dust_limit_usd: float = 5.0,
-               helius_keys=None):
+               helius_keys=None, gmgn_fast: bool = True):
     """Fetch + score the trending list, caching the result in session state.
 
     ``enrich_holders=True`` (default) auto-attaches a per-row
@@ -82,7 +82,7 @@ def run_screen(force: bool = False, key: str = "screener_rows",
                 if enrich_holders and rows:
                     rows = enrich_rows_with_holder_split(
                         rows, dust_limit_usd=dust_limit_usd,
-                        helius_keys=helius_keys)
+                        helius_keys=helius_keys, gmgn_fast=gmgn_fast)
                 st.session_state[key] = rows
                 st.session_state[key + "_err"] = ""
             except Exception as exc:                     # noqa: BLE001
@@ -94,7 +94,7 @@ def run_screen(force: bool = False, key: str = "screener_rows",
 
 def run_screen_hrhr(force: bool = False, key: str = "screener_hrhr_rows",
                     enrich_holders: bool = True, dust_limit_usd: float = 5.0,
-                    helius_keys=None):
+                    helius_keys=None, gmgn_fast: bool = True):
     """Fetch + score + filter the HRHR list, caching the result in session state.
 
     ``enrich_holders=True`` (default) auto-attaches the per-row real-vs-dust
@@ -109,7 +109,7 @@ def run_screen_hrhr(force: bool = False, key: str = "screener_hrhr_rows",
                 if enrich_holders and rows:
                     rows = enrich_rows_with_holder_split(
                         rows, dust_limit_usd=dust_limit_usd,
-                        helius_keys=helius_keys)
+                        helius_keys=helius_keys, gmgn_fast=gmgn_fast)
                 st.session_state[key] = rows
                 st.session_state[key + "_err"] = ""
             except Exception as exc:                     # noqa: BLE001
@@ -190,6 +190,56 @@ def _approximate_holder_split(row: dict, dust_limit_usd: float) -> dict | None:
 
 
 
+
+def _gmgn_holder_split(row: dict, dust_limit_usd: float) -> dict | None:
+    """Classify GMGN's fast top-holder response (up to 100 wallets).
+
+    GMGN is much faster than enumerating all Solana token accounts. The
+    unreturned tail is conservatively counted as dust using the headline
+    holder count from the trending response. This is still an estimate, but
+    it is based on the top-100 rather than only top-10.
+    """
+    ca = row.get("ca")
+    price = row.get("price") or row.get("priceUsd") or 0
+    if not ca or not price or float(price) <= 0:
+        return None
+    try:
+        from token_context import fetch_holders
+        holders = fetch_holders(ca, limit=100, timeout=10,
+                               orderby="amount_percentage",
+                               tag="bluechip_owner")
+        if not holders:
+            return None
+        top_real = top_dust = 0
+        for holder in holders:
+            balance = holder.get("balance")
+            if balance is None:
+                balance = holder.get("amount_cur")
+            try:
+                usd_value = float(balance or 0) * float(price)
+            except (TypeError, ValueError):
+                continue
+            if usd_value >= float(dust_limit_usd):
+                top_real += 1
+            else:
+                top_dust += 1
+        total = row.get("holders")
+        try:
+            total = int(float(total)) if total is not None else None
+        except (TypeError, ValueError):
+            total = None
+        n_other = max(0, total - len(holders)) if total else 0
+        n_real = top_real
+        n_dust = top_dust + n_other
+        ratio = n_real / n_dust if n_dust else float("inf")
+        return {"n_real": n_real, "n_dust": n_dust,
+                "ratio": float(ratio), "src": "GMGN top-100 approx",
+                "n_top_used": len(holders), "total_holders": total,
+                "dust_limit": float(dust_limit_usd),
+                "top_real": top_real, "top_dust": top_dust}
+    except Exception:
+        return None
+
 def _real_holder_split(row: dict, helius_keys, dust_limit_usd: float) -> dict | None:
     """Fetch and classify the complete holder list for one token via Helius."""
     ca = row.get("ca")
@@ -256,7 +306,7 @@ def enrich_rows_with_real_holder_split(rows: list, helius_keys,
 
 def enrich_rows_with_holder_split(rows: list,
                                    dust_limit_usd: float = 5.0,
-                                   helius_keys=None) -> list:
+                                   helius_keys=None, gmgn_fast: bool = False) -> list:
     """Attach a per-row real-vs-dust approximation.
 
     The enrichment is best-effort and runs in parallel. With Helius keys it
@@ -271,9 +321,37 @@ def enrich_rows_with_holder_split(rows: list,
     # A configured Helius pool means this is a real full-holder scan, not the
     # old top-10 approximation.  Keep the approximation as a deliberate
     # fallback for the public Screener page when no key is configured.
-    if helius_keys:
-        return enrich_rows_with_real_holder_split(
-            rows, helius_keys, dust_limit_usd=dust_limit_usd)
+    if gmgn_fast or helius_keys:
+        # GMGN's browser endpoint is considerably faster than Helius. Try it
+        # first even when Helius is configured; Helius remains the fallback.
+        cache_key = "screener_holder_split_gmgn_v1"
+        cached = st.session_state.get(cache_key, {})
+        missing = [r for r in rows if r.get("ca") and
+                   (r["ca"] not in cached or not cached[r["ca"]] or
+                    cached[r["ca"]].get("dust_limit") != float(dust_limit_usd))]
+        if missing:
+            with st.spinner(f"💎 Fetching GMGN holders ({len(missing)} tokens)…"):
+                workers = min(6, len(missing))
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futures = {pool.submit(_gmgn_holder_split, r, dust_limit_usd): r["ca"]
+                               for r in missing}
+                    for fut in as_completed(futures):
+                        ca = futures[fut]
+                        try:
+                            cached[ca] = fut.result()
+                        except Exception:
+                            cached[ca] = None
+            st.session_state[cache_key] = cached
+        for row in rows:
+            if cached.get(row.get("ca")):
+                row["holder_split"] = cached[row["ca"]]
+        # Only use the slower full RPC scan for rows where GMGN gave no data.
+        unresolved = [r for r in rows if r.get("ca") and
+                      not r.get("holder_split")]
+        if unresolved and helius_keys:
+            enrich_rows_with_real_holder_split(
+                unresolved, helius_keys, dust_limit_usd=dust_limit_usd)
+        return rows
 
     cache_key = "screener_holder_split"
     cached = st.session_state.get(cache_key, {})

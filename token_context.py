@@ -138,7 +138,8 @@ def _holder_list(payload):
 # ---------------------------------------------------------------------------
 # holder average cost
 # ---------------------------------------------------------------------------
-def fetch_holders(ca: str, *, limit: int = 100, timeout: int = 15):
+def fetch_holders(ca: str, *, limit: int = 100, timeout: int = 15,
+                  orderby: str = "unrealized_profit", tag: str = ""):
     """GMGN holder rows for one CA (``[]`` on any failure).
 
     Uses the verified ``/vas/api/v1/token_holders/sol/<CA>`` endpoint.
@@ -151,8 +152,10 @@ def fetch_holders(ca: str, *, limit: int = 100, timeout: int = 15):
     params = _gmgn_params()
     params["limit"] = limit
     params["cost"] = 20
-    params["orderby"] = "unrealized_profit"
+    params["orderby"] = orderby
     params["direction"] = "desc"
+    if tag:
+        params["tag"] = tag
     url = GMGN_ORIGIN + HOLDER_PATH.format(ca=ca)
     headers = dict(_HEADERS)
     headers["referer"] = f"{GMGN_ORIGIN}/sol/token/{ca}"
