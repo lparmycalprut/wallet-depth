@@ -139,7 +139,8 @@ def _holder_list(payload):
 # holder average cost
 # ---------------------------------------------------------------------------
 def fetch_holders(ca: str, *, limit: int = 100, timeout: int = 15,
-                  orderby: str = "unrealized_profit", tag: str = ""):
+                  orderby: str = "unrealized_profit", tag: str = "",
+                  all_pages: bool = False, max_pages: int = 100):
     """GMGN holder rows for one CA (``[]`` on any failure).
 
     Uses the verified ``/vas/api/v1/token_holders/sol/<CA>`` endpoint.
@@ -159,17 +160,39 @@ def fetch_holders(ca: str, *, limit: int = 100, timeout: int = 15,
     url = GMGN_ORIGIN + HOLDER_PATH.format(ca=ca)
     headers = dict(_HEADERS)
     headers["referer"] = f"{GMGN_ORIGIN}/sol/token/{ca}"
-    try:
-        r = _http_get(url, params=params, timeout=timeout, headers=headers)
-        if getattr(r, "status_code", None) != 200:
-            return []
-        payload = r.json() or {}
-    except Exception:                                     # noqa: BLE001
-        return []
-    if isinstance(payload, dict) and \
-            payload.get("code") not in (None, 0, "0", "success"):
-        return []
-    return _holder_list(payload)
+    out = []
+    cursor = None
+    seen = set()
+    for _page in range(max(1, int(max_pages)) if all_pages else 1):
+        query = dict(params)
+        if cursor:
+            query["cursor"] = cursor
+        try:
+            r = _http_get(url, params=query, timeout=timeout, headers=headers)
+            if getattr(r, "status_code", None) != 200:
+                break
+            payload = r.json() or {}
+        except Exception:                                     # noqa: BLE001
+            break
+        if isinstance(payload, dict) and \
+                payload.get("code") not in (None, 0, "0", "success"):
+            break
+        page = _holder_list(payload)
+        out.extend(page)
+        if not all_pages or not page:
+            break
+        # GMGN puts the opaque continuation token under data.next; tolerate
+        # top-level next/cursor too because this is an undocumented endpoint.
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, dict):
+            data = {}
+        next_cursor = (data.get("next") or payload.get("next") or
+                       data.get("cursor") or payload.get("cursor"))
+        if not next_cursor or str(next_cursor) in seen:
+            break
+        seen.add(str(next_cursor))
+        cursor = str(next_cursor)
+    return out
 
 
 def holder_avg_cost(holders) -> float:

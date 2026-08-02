@@ -195,9 +195,11 @@ def _gmgn_holder_split(row: dict, dust_limit_usd: float) -> dict | None:
     """Classify GMGN's fast top-holder response (up to 100 wallets).
 
     GMGN is much faster than enumerating all Solana token accounts. The
+    endpoint is paginated; we follow its opaque ``next`` cursor until the
+    list is exhausted (with a safety cap), so this uses the All Holder tab
+    rather than the old top-10 approximation. If the API stops early, the
     unreturned tail is conservatively counted as dust using the headline
-    holder count from the trending response. This is still an estimate, but
-    it is based on the top-100 rather than only top-10.
+    holder count from the trending response.
     """
     ca = row.get("ca")
     price = row.get("price") or row.get("priceUsd") or 0
@@ -206,7 +208,8 @@ def _gmgn_holder_split(row: dict, dust_limit_usd: float) -> dict | None:
     try:
         from token_context import fetch_holders
         holders = fetch_holders(ca, limit=100, timeout=10,
-                               orderby="amount_percentage")
+                               orderby="amount_percentage", all_pages=True,
+                               max_pages=100)
         if not holders:
             return None
         top_real = top_dust = 0
@@ -232,7 +235,8 @@ def _gmgn_holder_split(row: dict, dust_limit_usd: float) -> dict | None:
         n_dust = top_dust + n_other
         ratio = n_real / n_dust if n_dust else float("inf")
         return {"n_real": n_real, "n_dust": n_dust,
-                "ratio": float(ratio), "src": "GMGN top-100 approx",
+                "ratio": float(ratio), "src": ("GMGN all-holder scan" if not total or n_other == 0
+                        else "GMGN all-holder scan (partial)"),
                 "n_top_used": len(holders), "total_holders": total,
                 "dust_limit": float(dust_limit_usd),
                 "top_real": top_real, "top_dust": top_dust}
