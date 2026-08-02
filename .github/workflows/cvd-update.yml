@@ -46,5 +46,8 @@ jobs:
           # holder_snapshots.json may not exist yet (first run) — tolerate
           git add cvd.json signals.json conviction.json levels.json breakouts.json
           git add holder_snapshots.json 2>/dev/null || true
+          # real_dust_history.json: hourly real-vs-dust holder history —
+          # powers the "📈 Pertumbuhan real vs dust" card on the main page
+          git add real_dust_history.json 2>/dev/null || true
           git diff --cached --quiet || git commit -m "chore: cvd update $(date -u +%FT%H:%M) · GMGN"
           git push || (git pull --rebase && git push) || true
