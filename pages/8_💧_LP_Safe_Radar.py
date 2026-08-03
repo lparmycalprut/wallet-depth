@@ -33,8 +33,8 @@ st.markdown("""
 - `socials website+twitter+telegram, boost 1164, avg_cost +17%`
 
 **LP Safe gates (stricter than trending):**
-- Age 3-15d, Liq $15k-$130k, MC $80k-$1.2M, Holders >=800
-- Vol24 $20k-$500k, Liq/MC 8-32%, Vol/MC 0.12-3.0x
+- Age 3-15d, Liq $15k-$130k, MC $120k-$1.2M, Holders >=800
+- Vol24 $60k-$500k, Liq/MC 8-32%, Vol/MC 0.12-3.0x
 - Top10 <=22%, Insider <=8%, Bundler <=5%, Entrap <=32%, BotDegen <=22%, Fresh <=18%, HolderConc <=72%, Sniper <=6%, Rug <=0.35
 - Buys/Sells ratio 0.70-1.40 balanced
 
