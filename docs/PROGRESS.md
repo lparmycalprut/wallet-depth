@@ -7,6 +7,49 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-03 — Rangkuman TX real di cards LP & Degen (6/12/24/48 jam)
+
+### Yang berubah
+
+1. **Blok "🧾 Rangkuman TX real ≥$5" di card LP Radar & Degen Radar**,
+   tepat di bawah blok `💎 Real ≥$5 vs 🪙 Dust` (sebelum card
+   pertumbuhan). Tiap card menampilkan 4 chip — window 6/12/24/48 jam —
+   berisi jumlah swap senilai ≥ ambang real/dust (SOL × harga SOL) dan
+   net SOL-nya (beli − jual; ▲ hijau / ▼ merah).
+2. **Nol RPC tambahan.** Sumbernya raw-swap store 48 jam yang SUDAH ada
+   (`cvd.get_recent_swaps`), sama seperti panel CVD. Harga SOL diambil
+   `cvd.get_sol_price()` (cache 10 menit) sekali per page load dan
+   dipakai kedua radar; per CA di-cache 5 menit via `st.cache_data`.
+3. **Komputasi murni di `cvd.real_tx_summary()`** — pure function,
+   deterministik dengan `now_ts`, toleran swap rusak/NaN, batas inklusif
+   (swap tepat di ambang = real). Store kosong → blok disembunyikan,
+   tidak pernah render nol palsu; `covered_h` membedakan token sepi vs
+   store kosong.
+4. **Caption kedua radar diperbarui**, termasuk catatan jujur: di ambang
+   default $5 hampir semua swap store (≥0.05 SOL) masuk kategori real —
+   naikkan ambang di sidebar untuk pisahan yang lebih tajam.
+
+### Kenapa begitu
+
+Permintaan owner (lanjutan PR #35): "tambahkan detail ke semua cards LP
+dan degen jumlah real TX ... dalam timeframe 6/12/24/48 jam terakhir,
+tempatkan di bawah holder ratio di cards." Definisi "real TX" dikonfirmasi
+owner = **swap bernilai ≥ ambang real/dust** (bukan profil wallet, bukan
+join list holder), isi = **jumlah + net SOL** per window.
+
+### Verifikasi
+
+- `tests/test_real_tx_summary.py` (baru, 7 grup uji, ~30 assertion,
+  tanpa pytest/jaringan) — ALL PASSED.
+- Seluruh suite `tests/` (17 file) — ALL PASSED.
+- `python -m py_compile app.py cvd.py tests/test_real_tx_summary.py` dan
+  `git diff --check` — lulus.
+- Smoke test blok HTML dengan data store nyata (AkchGAUd…): chip
+  6j 104 tx · −7.4 SOL / 12j 345 tx · +3.4 SOL / 24j 1.084 tx · −18.7 SOL /
+  48j 2.454 tx · −50.2 SOL; CA tanpa store → blok kosong (tidak nol palsu).
+
+---
+
 ## 2026-08-03 — Perbaikan stale RAKO + backfill GMGN yang aman
 
 ### Yang berubah

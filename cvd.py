@@ -1964,6 +1964,64 @@ def summarize_swap_range(swaps, *, whale_min_sol=WHALE_SOL) -> dict:
     }
 
 
+def real_tx_summary(swaps, *, dust_limit_usd: float = 5.0,
+                    sol_price: float = 0.0, windows=(6, 12, 24, 48),
+                    now_ts: int = None) -> dict:
+    """Count "real" swaps and their net SOL per lookback window.
+
+    A swap is *real* when its USD value (SOL amount × ``sol_price``)
+    reaches ``dust_limit_usd`` — the same real/dust threshold the
+    LP/Degen Radar cards use for holders. This is the "rangkuman TX
+    real" block on the cards: how many meaningful-size swaps happened
+    in the last 6/12/24/48h and whether real-size flow was net buy
+    or net sell.
+
+    Returns ``{window_h: {"tx": int, "net_sol": float, "total_tx": int},
+    "covered_h": float}`` for every requested window, plus the swap-list
+    span in hours (oldest→newest) so the UI can tell a quiet token
+    (no swaps in the store) from an active one whose swaps were all
+    below the threshold.
+
+    Pure function of its inputs — no files, no network, deterministic
+    under an explicit ``now_ts`` (offline tests pass a fixed ts).
+    """
+    now = int(time.time()) if now_ts is None else int(now_ts)
+    out = {}
+    for h in windows:
+        h = int(h)
+        cutoff = now - h * 3600
+        tx = total = 0
+        net = 0.0
+        for s in swaps or []:
+            try:
+                side = str(s[0]).lower()
+                sol = float(s[1])
+                ts = int(s[2])
+            except (IndexError, TypeError, ValueError):
+                continue
+            if not math.isfinite(sol):
+                continue
+            if ts < cutoff:
+                continue
+            total += 1
+            if sol * sol_price >= dust_limit_usd:
+                tx += 1
+                net += sol if side == "buy" else -sol
+        out[h] = {"tx": tx, "net_sol": round(net, 2), "total_tx": total}
+
+    ts_list = []
+    for s in swaps or []:
+        try:
+            ts_list.append(int(s[2]))
+        except (IndexError, TypeError, ValueError):
+            continue
+    if len(ts_list) >= 2:
+        out["covered_h"] = (max(ts_list) - min(ts_list)) / 3600.0
+    else:
+        out["covered_h"] = 0.0
+    return out
+
+
 def flow_report(swaps) -> dict:
     """Who was actually behind these swaps?
 

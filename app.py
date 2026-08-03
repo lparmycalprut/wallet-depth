@@ -984,6 +984,74 @@ def _real_dust_growth_html(ca: str, rd_state: dict,
         f"</div>")
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_real_tx_summary(ca: str, dust_limit_usd: float,
+                          sol_price: float) -> dict:
+    """Cached real-TX summary from the existing 48h raw-swap store.
+
+    One cvd.json read per CA per page load (5-min cache). Returns the
+    dict from :func:`cvd.real_tx_summary` or {} when the store has no
+    swaps for this CA — the card hides the block in that case.
+    """
+    from cvd import get_recent_swaps, real_tx_summary
+    swaps = get_recent_swaps(ca, 48)
+    if not swaps:
+        return {}
+    return real_tx_summary(swaps, dust_limit_usd=float(dust_limit_usd),
+                           sol_price=float(sol_price or 0.0),
+                           windows=(6, 12, 24, 48))
+
+
+def _real_tx_summary_html(ca: str, dust_limit_usd: float,
+                          sol_price: float) -> str:
+    """Compact "rangkuman TX real" block for the LP/Degen Radar cards.
+
+    Renders below the real-vs-dust ratio block: per 6/12/24/48-jam
+    window, the count of swaps worth ≥ $dust_limit (SOL × SOL/USD
+    price) plus their net SOL (beli − jual). Read from the existing
+    48h raw-swap store — no extra RPC. Returns "" when the store has
+    no swaps for this CA.
+    """
+    try:
+        summary = fetch_real_tx_summary(ca, float(dust_limit_usd),
+                                        float(sol_price or 0.0))
+    except Exception:
+        return ""
+    if not summary:
+        return ""
+
+    def _chip(h: int) -> str:
+        d = summary.get(h) or {}
+        tx = int(d.get("tx") or 0)
+        net = float(d.get("net_sol") or 0.0)
+        col = ("#22c55e" if net > 0 else
+               ("#ef4444" if net < 0 else "#94a3b8"))
+        arrow = "▲" if net > 0 else ("▼" if net < 0 else "•")
+        return (f"<span style='display:inline-block;"
+                f"background:rgba(148,163,184,0.08);"
+                f"border:1px solid #334155;border-radius:5px;"
+                f"padding:1px 7px;margin:2px 4px 2px 0;"
+                f"font-size:0.72rem;white-space:nowrap;line-height:1.5;'>"
+                f"<span style='color:#64748b;'>{h} jam</span> "
+                f"<b style='color:#e2e8f0;'>{tx:,} tx</b> "
+                f"<b style='color:{col};'>{arrow}{net:+.1f} SOL</b></span>")
+
+    chips = "".join(_chip(h) for h in (6, 12, 24, 48))
+    return (
+        f"<div style='background:rgba(148,163,184,0.04);"
+        f"border:1px solid #334155;border-radius:7px;"
+        f"padding:5px 9px;margin-top:5px;line-height:1.5;'>"
+        f"<div style='font-size:0.74rem;color:#94a3b8;font-weight:700;'>"
+        f"🧾 Rangkuman TX real ≥${dust_limit_usd:g} "
+        f"<span style='color:#475569;font-weight:400;'>(store 48 jam)"
+        f"</span></div>"
+        f"<div style='margin-top:3px;'>{chips}</div>"
+        f"<div style='font-size:0.64rem;color:#475569;margin-top:2px;'>"
+        f"swap ≥${dust_limit_usd:g} (SOL × harga) · net = beli − jual"
+        f"</div>"
+        f"</div>")
+
+
 # ----------------------------------------------------------------------------
 # Main input
 # ----------------------------------------------------------------------------
@@ -1247,6 +1315,14 @@ if _wl:
     # Hourly real-vs-dust history written by the cron — one load for
     # both radar rows (5-min cache, read once per page load).
     _rd_hist_state = fetch_real_dust_history()
+    # SOL/USD for the "rangkuman TX real" block (cached 10 min inside
+    # cvd; fetched once here and shared by both radar rows so the
+    # DexScreener lookup happens at most once per page load).
+    try:
+        from cvd import get_sol_price as _get_sol_price
+        _sol_price = _get_sol_price()
+    except Exception:
+        _sol_price = 0.0
     if _conv_hist:
         # --- LP Radar: trending-source tokens only ---
         _lp_tokens = {_ca: _meta for _ca, _meta in _wl.items()
@@ -1359,6 +1435,12 @@ if _wl:
             # NAIK/TURUN headline, 1/6/24-jam delta chips + sparkline.
             _rd_growth_html = _real_dust_growth_html(
                 _ca, _rd_hist_state, attached=bool(_rd_html))
+
+            # ---- Rangkuman TX real (count + net SOL per 6/12/24/48 jam) ----
+            # Sits directly below the holder-ratio block; reads the
+            # existing 48h raw-swap store, no extra RPC.
+            _real_tx_html = _real_tx_summary_html(
+                _ca, float(dust_limit), _sol_price)
 
             # ---- Small-body candle patterns (H4 + H1, 48h, with range) ----
             # H1 comes from the already-cached watchlist candle fetch;
@@ -1550,6 +1632,8 @@ if _wl:
                 f"margin-top:5px;'>{_hd_badges_html}</div>"
                 # real holder vs dust ratio (min $5) + growth history card
                 f"{_rd_html}"
+                # rangkuman TX real (count + net SOL, 6/12/24/48 jam)
+                f"{_real_tx_html}"
                 f"{_rd_growth_html}"
                 # phase badge (own line, easier to scan) — hidden in FOCUS_MODE
                 f"{phase_html}"
@@ -1608,6 +1692,11 @@ if _wl:
                 "**💰 avg cost** = % harga saat ini vs rata-rata harga beli "
                 "holder (GMGN, display-only; merah ≤ -50%, oranye <0%, hijau ≥0%). "
                 "**💎 Real ≥$5 vs 🪙 dust** = jumlah + rasio real/dust. "
+                "**🧾 Rangkuman TX real** = jumlah swap senilai ≥ ambang "
+                "real/dust (SOL × harga SOL) + net SOL (beli − jual) per "
+                "6/12/24/48 jam, dari store swap 48 jam (catatan: di ambang "
+                "default $5 hampir semua swap ≥0.05 SOL masuk real — "
+                "naikkan ambang di sidebar untuk pisahan lebih tajam). "
                 "**📈 Pertumbuhan** = history real vs dust yang dicatat cron "
                 "tiap jam; chip = perubahan 1/6/24 jam (💎 real, 🪙 dust), "
                 "garis hijau = real, oranye = dust (skala masing-masing). "
@@ -1767,6 +1856,11 @@ if _wl:
                 _rd_growth_html_deg = _real_dust_growth_html(
                     _ca, _rd_hist_state, attached=bool(_rd_html_deg))
 
+                # ---- Rangkuman TX real (count + net SOL, 6/12/24/48 jam) ----
+                # Same block as LP Radar, below the holder-ratio block.
+                _real_tx_html_deg = _real_tx_summary_html(
+                    _ca, float(dust_limit), _sol_price)
+
                 # ---- Small-body candle patterns (H4 + H1, 48h, range) ----
                 _pair_addr_deg = ((_prices.get(_ca) or {}).get("pair")
                                   or "")
@@ -1826,6 +1920,8 @@ if _wl:
                     f"{_avg_cost_html(_ca, _meta)}"
                     # real holder vs dust ratio (min $5) + growth history
                     f"{_rd_html_deg}"
+                    # rangkuman TX real (count + net SOL, 6/12/24/48 jam)
+                    f"{_real_tx_html_deg}"
                     f"{_rd_growth_html_deg}"
                     f"{phase_html_deg}"
                     f"<a href='{_cvd_link}' target='_self' "
@@ -1873,6 +1969,12 @@ if _wl:
                            "**💰 avg cost** = % harga saat ini vs rata-rata harga "
                            "beli holder (GMGN, display-only). "
                            "**💎 Real ≥$5 vs 🪙 dust** = jumlah + rasio real/dust. "
+                           "**🧾 Rangkuman TX real** = jumlah swap senilai ≥ "
+                           "ambang real/dust (SOL × harga SOL) + net SOL "
+                           "(beli − jual) per 6/12/24/48 jam, dari store swap "
+                           "48 jam (catatan: di ambang default $5 hampir "
+                           "semua swap ≥0.05 SOL masuk real — naikkan ambang "
+                           "di sidebar untuk pisahan lebih tajam). "
                            "**📈 Pertumbuhan** = history real vs dust yang dicatat "
                            "cron tiap jam; chip = perubahan 1/6/24 jam (garis "
                            "hijau = real, oranye = dust, skala masing-masing). "

@@ -320,6 +320,30 @@ Jebakan yang sudah pernah menggigit:
   `align-items:stretch`). Jangan kembalikan `margin-top:10px` murni
   tanpa spacer — itu yang bikin tombol dulu pindah-pindah.
 
+## 7.56 Perilaku baru yang wajib dijaga (2026-08-03)
+
+- **Rangkuman TX real di card LP & Degen** — `app._real_tx_summary_html()`
+  dirender TEPAT di bawah blok `💎 Real ≥$5 vs 🪙 Dust` (sebelum card
+  pertumbuhan). Isi: 4 chip window **6/12/24/48 jam**, masing-masing
+  jumlah swap senilai ≥ `dust_limit_usd` (SOL × harga SOL) dan net
+  SOL-nya (beli − jual; ▲ hijau / ▼ merah). **Definisi "real TX" =
+  swap bernilai ≥ ambang real/dust** (keputusan owner, bukan profil
+  wallet dan bukan join list holder).
+- **Nol RPC tambahan.** Sumber = raw-swap store 48 jam yang SUDAH ada
+  (`cvd.get_recent_swaps`) — jangan ganti ke fetch live Helius/GMGN.
+  Harga SOL dari `cvd.get_sol_price()` (cache 10 menit) dihitung
+  SEKALI per page load (`_sol_price`) dan dipakai kedua radar. Per CA
+  di-cache 5 menit via `st.cache_data` (`fetch_real_tx_summary`).
+- **Komputasi murni di `cvd.real_tx_summary()`** — pure function,
+  deterministik dengan `now_ts`, batas inklusif (swap tepat di ambang =
+  real), sol NaN/rusak di-skip, `covered_h` membedakan token sepi vs
+  store kosong. Store kosong → blok disembunyikan, JANGAN render nol
+  palsu. Dijaga `tests/test_real_tx_summary.py`.
+- **Catatan untuk owner:** di ambang default $5, hampir semua swap store
+  (≥ `MIN_SOL` 0.05 SOL) masuk real → naikkan `dust_limit_usd` di
+  sidebar untuk pisahan yang lebih tajam (sudah dijelaskan di caption
+  kedua radar).
+
 ## 7.6 Perilaku baru yang wajib dijaga (2026-08-01 — batch 2)
 
 - **Routing card LP vs Degen bergantung field `source` di watchlist meta.**
