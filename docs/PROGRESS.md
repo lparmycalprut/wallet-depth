@@ -7,6 +7,57 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-03 — Perbaikan stale RAKO + backfill GMGN yang aman
+
+### Yang berubah
+
+1. **False stale di LP Radar diperbaiki.** Freshness sweep sekarang selalu
+   memakai `cvd.flow_freshness()` saja. Sebelumnya saat `FOCUS_MODE` aktif,
+   sweep memakai `health_badge()`, yang menggabungkan freshness dengan
+   advisory quality/persistence/distribution; akibatnya flow RAKO yang masih
+   fresh bisa salah diumumkan sebagai `very stale` hanya karena distribution
+   warn/danger. Pesan ambang juga diselaraskan dengan konstanta aktual:
+   fresh ≤2,5 jam, warn sampai 12 jam, lalu very stale.
+2. **Remote conviction dicek per watchlist CA.** `load_conviction(required_cas)`
+   sekarang merge `conviction.json` cron dari GitHub bila CA yang diminta
+   hilang/stale, meskipun token lain di checkout Streamlit masih fresh.
+   Cache 10 menit dipakai sekali per render; helper flow internal tetap
+   network-free. Ini menutup kasus Cloud checkout lama yang punya token A
+   fresh tetapi RAKO sudah ada point baru di GitHub.
+3. **Force refresh benar-benar GMGN-only.** Tombol tidak lagi ditolak jika
+   Helius key atau main pool DexScreener tidak ada. GMGN fetch memakai CA,
+   mempertahankan pool lama bila tersedia, membatasi batch ke 10 token, dan
+   menyisakan token gagal di antrean agar bisa dicoba lagi.
+4. **Partial GMGN fetch tidak boleh menyegarkan conviction palsu.** Fetch
+   sekarang membawa status `ok`/`complete`; cursor, raw swap, dan bucket tidak
+   dimajukan bila TLS/API/cursor/page-cap gagal sebelum cutoff. Cron dan manual
+   backfill memeriksa `fetch_ok` sebelum `record_conviction()`/signal, sehingga
+   timestamp baru tidak bisa menyamarkan data lama. First backfill diberi
+   cutoff raw-store 48 jam supaya token aktif tidak menelusuri seluruh umur
+   token lalu mentok page cap.
+5. **Request GMGN lebih tahan gagal.** `tz_name` tidak lagi double-encoded
+   (`Asia/Jakarta` → client mengirim `Asia%2FJakarta`), dan kegagalan runtime
+   `curl_cffi` mencoba `requests` sebelum melaporkan error.
+6. **Card benar-benar mematuhi very-stale state.** LP dan Degen Radar menyembunyikan
+   conviction trend/sparkline, net_pure, volume, swaps, dan phase yang stale;
+   hanya placeholder refresh yang ditampilkan. Advisory flag tidak memicu
+   masking ini.
+
+### Verifikasi
+
+- `tests/test_fetch_reliability.py` (baru, tanpa jaringan): query encoding,
+  fallback curl→requests, terminal/capped pagination, state preservation,
+  pool-less GMGN recovery, cron guard, per-CA remote merge/cache — ALL PASSED.
+- `tests/test_cvd_update.py`: UI GMGN backfill, actual-success counter,
+  freshness-only sweep, stale-card masking, atomic conviction failure — ALL
+  PASSED.
+- `tests/test_flow_safety.py`, `tests/test_focus_mode.py`,
+  `tests/test_watchlist.py`, dan `tests/test_helius_rotation.py` — ALL PASSED.
+- `python -m py_compile app.py cvd.py scripts/update_cvd.py` dan
+  `git diff --check` — lulus.
+
+---
+
 ## 2026-08-02 — History real vs dust per jam + grafik pertumbuhan di card + tombol hapus konsisten
 
 ### Yang berubah
