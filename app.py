@@ -59,8 +59,8 @@ DEFAULT_CONFIG = {"helius_api_key": "", "helius_extra_keys": "",
                   "cluster_warn_pct": 5, "cluster_scan_top_n": 50,
                   "exclude_lp": True}
 DUST_LIMIT_USD = 5.0
-REAL_RATIO_OK = 0.50       # healthy: real >= 50% of dust
-REAL_RATIO_MIN = 0.30      # acceptable floor (yellow) if real also controls MC
+REAL_RATIO_OK = 0.75       # healthy: real >= 75% of dust (updated per request)
+REAL_RATIO_MIN = 0.50      # acceptable floor (yellow) if real also controls MC
 TIERS = [(">$5", 5.0), (">$100", 100.0), (">$1K", 1e3),
          (">$10K", 1e4), (">$100K", 1e5), (">$1M", 1e6)]
 TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
@@ -1428,7 +1428,8 @@ if _wl:
             # ---- Simple card border & no glow ----
             border = "#334155"
             glow = ""
-            cv_col = "#cbd5e1"
+            # conviction color by absolute level (>=50% green glowing, 30-49% yellow, <30% red)
+            cv_col = ("#22c55e" if cv >= 50 else "#facc15" if cv >= 30 else "#ef4444")
 
             # ---- Why flagged (Disabled for now) ----
             _reasons = []
