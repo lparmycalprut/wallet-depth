@@ -1,0 +1,48 @@
+name: LP Safe Radar (CATJAK-like)
+
+on:
+  schedule:
+    - cron: "25 * * * *"   # every hour at :25
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  lp-safe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: |
+          pip install requests pandas curl_cffi base58 plotly
+      - name: Run LP Safe Radar - scan + LP score + auto watchlist + telegram khusus LP
+        env:
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+          HELIUS_API_KEYS: ${{ secrets.HELIUS_API_KEYS }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python lp_safe_radar.py --limit 30 || true
+          python -c "
+from lp_safe_radar import screen_lp_safe, auto_lp_watchlist_and_telegram, calculate_lp_score
+cands, _, _ = screen_lp_safe(debug=False)
+for r in cands:
+    s,b = calculate_lp_score(r)
+    r['lp_score']=s; r['lp_breakdown']=b
+auto_lp_watchlist_and_telegram([r for r in cands if r.get('lp_score',0)>=70], do_telegram=True, min_lp_score=70)
+"
+      - name: Commit watchlist
+        run: |
+          git config user.name "lp-safe-radar-bot"
+          git config user.email "actions@github.com"
+          git stash -u || true
+          git pull --rebase || true
+          git stash pop || true
+          git add watchlist.json signals.json 2>/dev/null || true
+          git diff --cached --quiet || git commit -m "chore: lp safe radar $(date -u +%FT%H:%M) - CATJAK-like safe for LP"
+          git push || (git pull --rebase && git push) || true
