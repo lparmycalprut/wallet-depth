@@ -1,33 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 LP Safe Radar — CATJAK-like but safe from negative flags
+CATJAK benchmark: 5d, liq $48k (12.8% MC), mcap $373k, vol $154k (0.41x), holders 1631,
+t10 14.12%, bundler 3.96%, entrap 26.43%, bot 15.14%, fresh 8.9% low, dev 2.02%, sniper 2.02%,
+buys 1279 sells 1315 ratio 0.97 balanced, socials website+twitter+telegram, boost 1164, avg +17%
 
-CATJAK reference (from GMGN token_stat + DexScreener):
-- age 5d 20h, liq $48k, mcap $373k, holders 1631
-- vol24 $154k (h24 buys 1279 sells 1315 ratio 0.97 balanced)
-- top10 14.12% (excellent), bundler 3.96%, entrap 26.43%, bot_degen 15.14%, fresh 8.9% low
-- dev hold 2.02%, sniper 2.02%
-- liq/mc 12.86%, vol/mc 0.41x healthy
-- socials: website + twitter + telegram, boost 1164
-- avg_cost +17% (holders in profit but not extreme)
-
-Goal: find tokens with CATJAK structure but safe = no red flags, ideal for LP
-
-Filters:
-- Age 3-15 days (CATJAK 5d) — not too new (rug) not too old (dead)
-- Liq $20k-$120k (CATJAK $48k) — enough for LP, not too thin
-- MC $120k-$1M (CATJAK $373k)
-- Holders >=1000 (CATJAK 1631)
-- Vol24 $30k-$400k (CATJAK $154k) balanced
-- Liq/MC 8%-30% (CATJAK 12%)
-- Vol/MC 0.15x - 2.5x (CATJAK 0.41x) — not wash, not dead
-- Top10 <=20% (CATJAK 14%) — stricter than usual 30%
-- Bundler <=5% (CATJAK 3.96%), Insider <=8%, Entrap <=30%, BotDegen <=20%, Fresh <=15%, Sniper <=5%
-- Rug <=0.30, has renounced + frozen
-- Buys/Sells 24h ratio 0.75-1.35 (CATJAK 0.97)
-- Socials: website + twitter (at least 2)
-- Boost >=200 (optional marketing)
-- Avg_cost -30% to +60% (not deep underwater, not extreme profit)
+Filters + LP Score + Auto Watchlist + Telegram khusus LP
 """
 
 import json
@@ -86,10 +64,9 @@ def _trending_url():
         f"os=web&worker=0"
     )
 
-# LP Safe windows: CATJAK-like age 3-15d split into 2 buckets for more results
 WINDOWS = [
-    ("3-7d", "4320m", "10080m"),   # 3-7 days
-    ("7-15d", "10080m", "21600m"), # 7-15 days
+    ("3-7d", "4320m", "10080m"),
+    ("7-15d", "10080m", "21600m"),
 ]
 
 def _make_body_lp(min_c, max_c):
@@ -164,15 +141,76 @@ def fetch_lp_safe(timeout=25, debug=False):
         time.sleep(0.8)
     return all_tokens
 
-# Reuse scoring
 from gmgn_screener import score_token
 
+def _curve(x, anchors):
+    x = float(x)
+    if x <= anchors[0][0]:
+        return float(anchors[0][1])
+    for (x0, y0), (x1, y1) in zip(anchors, anchors[1:]):
+        if x <= x1:
+            span = x1 - x0
+            if span <= 0:
+                return float(y1)
+            return float(y0) + (float(y1) - float(y0)) * (x - x0) / span
+    return float(anchors[-1][1])
+
+def calculate_lp_score(row, dex_data=None):
+    """LP Score 0-100 tuned for CATJAK"""
+    fit = row.get("fit", 0)
+    liq_pct = row.get("liq_pct", 0)
+    vol_mc = row.get("vol_mc", 0)
+    t10 = row.get("t10_pct", 100)
+    bundler = row.get("bundler_rate", 0) * 100
+    fresh = row.get("fresh_wallet_rate", 0) * 100
+    holders = row.get("holders", 0)
+
+    liq_curve = [(0,0.0),(6,0.3),(8,0.6),(12,1.0),(18,1.0),(22,0.9),(28,0.65),(32,0.3),(40,0.0)]
+    liq_score = _curve(liq_pct, liq_curve) * 25
+
+    vol_curve = [(0,0.0),(0.12,0.3),(0.25,0.7),(0.35,1.0),(0.6,1.0),(1.0,0.9),(1.6,0.6),(2.2,0.3),(3.0,0.0)]
+    vol_score = _curve(vol_mc, vol_curve) * 15
+
+    t10_curve = [(0,1.0),(10,1.0),(14,0.93),(18,0.7),(22,0.1),(30,0.0)]
+    t10_score = _curve(t10, t10_curve) * 15
+
+    bund_curve = [(0,1.0),(2,0.9),(4,0.6),(5,0.4),(8,0.0)]
+    bund_score = _curve(bundler, bund_curve) * 5
+
+    fresh_curve = [(0,1.0),(5,0.95),(8.9,0.9),(12,0.7),(15,0.5),(20,0.0)]
+    fresh_score = _curve(fresh, fresh_curve) * 5
+
+    balance_score = 5
+    if dex_data:
+        try:
+            h24 = (dex_data.get("txns",{}).get("h24") or {}) if isinstance(dex_data.get("txns"), dict) else {}
+            buys = h24.get("buys") or 0
+            sells = h24.get("sells") or 0
+            if buys and sells:
+                ratio = buys / sells if sells else 0
+                bal_curve = [(0,0.0),(0.5,0.2),(0.7,0.5),(0.85,0.8),(0.97,0.98),(1.0,1.0),(1.1,0.9),(1.25,0.6),(1.4,0.3)]
+                balance_score = _curve(ratio, bal_curve) * 5
+        except Exception:
+            balance_score = 3
+
+    holder_score = 5 if holders >= 1000 else (holders/1000*5)
+    fit_component = (fit / 100.0) * 30
+    total = fit_component + liq_score + vol_score + t10_score + bund_score + fresh_score + balance_score + holder_score
+    total = max(0, min(100, total))
+    breakdown = {
+        "fit": round(fit_component,1),
+        "liq_mc": round(liq_score,1),
+        "vol_mc": round(vol_score,1),
+        "top10": round(t10_score,1),
+        "bundler": round(bund_score,1),
+        "fresh": round(fresh_score,1),
+        "balance": round(balance_score,1),
+        "holders": round(holder_score,1),
+        "total": round(total,1)
+    }
+    return round(total,1), breakdown
+
 def is_lp_safe_candidate(row, dex_data=None):
-    """
-    row: scored row from score_token (has mc, liq, holders, t10, rug, insider, bundler, etc)
-    dex_data: optional dict from DexScreener (txns, socials) for extra checks
-    Returns (ok, reason)
-    """
     age = row.get("age_d", 0)
     liq = row.get("liq", 0)
     mc = row.get("mc", 0)
@@ -189,9 +227,7 @@ def is_lp_safe_candidate(row, dex_data=None):
     fresh = row.get("fresh_wallet_rate", 0)
     holder_conc = row.get("holder_conc", 0)
     sniper = row.get("sniper_hold", 0)
-    chg24 = row.get("chg24", 0)
 
-    # Hard gates - CATJAK safe
     if not (3 <= age <= 16):
         return False, f"age {age:.1f}d not 3-16d"
     if not (15000 <= liq <= 130000):
@@ -225,7 +261,6 @@ def is_lp_safe_candidate(row, dex_data=None):
     if rug > 0.35:
         return False, f"rug {rug:.2f} >0.35"
 
-    # DexScreener extra checks if available
     if dex_data:
         tx = dex_data.get("txns") or {}
         h24 = tx.get("h24") or {}
@@ -235,10 +270,8 @@ def is_lp_safe_candidate(row, dex_data=None):
             ratio = buys / sells if sells else 10
             if not (0.70 <= ratio <= 1.40):
                 return False, f"buys/sells ratio {ratio:.2f} not 0.70-1.40 balanced (CATJAK 0.97)"
-        # socials
-        # we expect dex_data has info with websites/socials - checked via separate fetch
 
-    reason = f"age {age:.1f}d liq ${liq:.0f} ({liq_pct:.1f}% MC) mc ${mc:.0f} vol ${vol:.0f} ({vol_mc:.2f}x) t10 {t10:.1f}% holders {holders} bundler {bundler*100:.1f}% fresh {fresh*100:.1f}% chg24 {chg24:.1f}%"
+    reason = f"age {age:.1f}d liq ${liq:.0f} ({liq_pct:.1f}% MC) mc ${mc:.0f} vol ${vol:.0f} ({vol_mc:.2f}x) t10 {t10:.1f}% holders {holders} bundler {bundler*100:.1f}% fresh {fresh*100:.1f}%"
     return True, reason
 
 def screen_lp_safe(debug=False, enrich_dex=False):
@@ -255,7 +288,6 @@ def screen_lp_safe(debug=False, enrich_dex=False):
             continue
         seen.add(ca)
         row["_window"] = t.get("_window")
-        # optional DexScreener enrichment for buys/sells ratio
         dex_data = None
         if enrich_dex:
             try:
@@ -267,19 +299,72 @@ def screen_lp_safe(debug=False, enrich_dex=False):
         row["_lp_ok"] = ok
         row["_lp_reason"] = reason
         row["_dex"] = dex_data
+        # calc LP score
+        lp_s, lp_b = calculate_lp_score(row, dex_data=dex_data)
+        row["lp_score"] = lp_s
+        row["lp_breakdown"] = lp_b
         rows.append(row)
 
     candidates = [r for r in rows if r["_lp_ok"]]
     rejects = [r for r in rows if not r["_lp_ok"]]
-    candidates.sort(key=lambda r: (-r.get("fit_exact", r["fit"]), r["t10_pct"], -r["liq_pct"]))
+    candidates.sort(key=lambda r: (-r.get("lp_score", 0), -r.get("fit_exact", r["fit"]), r["t10_pct"]))
     rejects.sort(key=lambda r: (-r.get("fit_exact", r["fit"])))
     return candidates, rejects, rows
+
+def auto_lp_watchlist_and_telegram(candidates, do_telegram=True, min_lp_score=65):
+    """Auto add LP safe candidates to watchlist + telegram khusus LP"""
+    try:
+        from watchlist import add_to_watchlist, load_watchlist
+    except Exception:
+        add_to_watchlist = lambda ca, symbol="?", source="", **kw: False
+        load_watchlist = lambda: {}
+    try:
+        from breakout_guard import send_telegram
+    except Exception:
+        def send_telegram(text):
+            print(f"[TELEGRAM MOCK LP] {text}")
+            return False
+
+    wl = load_watchlist()
+    added = []
+    for r in candidates:
+        ca = r.get("ca")
+        if not ca or ca in wl:
+            continue
+        lp_score_val = r.get("lp_score") or calculate_lp_score(r, dex_data=r.get("_dex"))[0]
+        if lp_score_val < min_lp_score:
+            continue
+        symbol = r.get("symbol") or "?"
+        ok = add_to_watchlist(ca, symbol=symbol, source="lp_safe", note=f"LP Safe {lp_score_val} Fit {r.get('fit')} Liq {r.get('liq_pct')}% T10 {r.get('t10_pct')}% CATJAK-like")
+        if ok:
+            r["lp_score"] = lp_score_val
+            added.append(r)
+            breakdown = r.get("lp_breakdown", {})
+            msg = (
+                f"💧 LP Safe Radar Hit: ${symbol} LP Score {lp_score_val}/100 (CATJAK-like safe)\n"
+                f"MC ${r.get('mc',0):,.0f} Liq ${r.get('liq',0):,.0f} ({r.get('liq_pct')}%) Vol ${r.get('vol24',0):,.0f} ({r.get('vol_mc')}x)\n"
+                f"T10 {r.get('t10_pct')}% Bund {r.get('bundler_rate',0)*100:.1f}% Fresh {r.get('fresh_wallet_rate',0)*100:.1f}% Holders {r.get('holders')} Entrap {r.get('entrap_rate',0)*100:.1f}%\n"
+                f"Fit {r.get('fit')} {r.get('grade')} | Liq/MC {breakdown.get('liq_mc')} Vol/MC {breakdown.get('vol_mc')} Top10 {breakdown.get('top10')} Balance {breakdown.get('balance')}\n"
+                f"Age {r.get('age_d',0):.1f}d Chg24 {r.get('chg24',0)}% | Ideal for LP: liq/mc 8-32%, vol/mc 0.12-3x, t10 <=22%, bund<=5%, fresh<=18%\n"
+                f"https://dexscreener.com/solana/{ca}\n"
+                f"https://gmgn.ai/sol/token/{ca}"
+            )
+            if do_telegram:
+                try:
+                    send_telegram(msg)
+                except Exception as e:
+                    print(f"telegram LP failed: {e}")
+            print(f"Added LP Safe {symbol} {ca} LP score {lp_score_val}")
+
+    return added
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--limit", type=int, default=30)
+    parser.add_argument("--auto", action="store_true", help="auto watchlist + telegram")
+    parser.add_argument("--telegram", action="store_true")
     args = parser.parse_args()
 
     cands, rejects, all_rows = screen_lp_safe(debug=args.debug, enrich_dex=False)
@@ -288,11 +373,16 @@ if __name__ == "__main__":
 
     if cands:
         for r in cands[:args.limit]:
-            print(f"{r['fit']:3d} {r['grade']:5s} {r['symbol'] or '?':10s} age {r['age_d']:.1f}d MC ${r['mc']:,.0f} Liq ${r['liq']:,.0f} ({r['liq_pct']}%) Vol ${r['vol24']:,.0f} ({r['vol_mc']}x) T10 {r['t10_pct']}% Hold {r['holders']} bund {r['bundler_rate']*100:.1f}% fresh {r['fresh_wallet_rate']*100:.1f}% entrap {r['entrap_rate']*100:.1f}% -> {r['_lp_reason']}")
+            lp_s = r.get("lp_score", 0)
+            print(f"LP {lp_s:5.1f} Fit {r['fit']:3d} {r['grade']:5s} {r['symbol'] or '?':10s} age {r['age_d']:.1f}d MC ${r['mc']:,.0f} Liq ${r['liq']:,.0f} ({r['liq_pct']}%) Vol ${r['vol24']:,.0f} ({r['vol_mc']}x) T10 {r['t10_pct']}% Hold {r['holders']} bund {r['bundler_rate']*100:.1f}% fresh {r['fresh_wallet_rate']*100:.1f}% entrap {r['entrap_rate']*100:.1f}% -> {r['_lp_reason']}")
             print(f"  https://gmgn.ai/sol/token/{r['ca']} https://dexscreener.com/solana/{r['ca']}")
             if r.get("risk_reasons"):
                 print(f"  Risk: {r['risk_reasons']}")
             print()
+        if args.auto:
+            print("\nAuto adding to watchlist + telegram...")
+            added = auto_lp_watchlist_and_telegram(cands, do_telegram=args.telegram)
+            print(f"Added {len(added)} LP Safe tokens")
     else:
         print("No LP safe candidates, top rejects:")
         for r in rejects[:20]:
