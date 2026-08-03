@@ -126,13 +126,10 @@ try:
     # ``conviction_summary`` is also exported by ``focus`` but currently
     # has no in-app consumer; the import list below stays short so a
     # future regression is easy to spot (only one symbol per purpose).
-    from focus import is_focus_mode, health_badge
+    from focus import is_focus_mode
     FOCUS_MODE = is_focus_mode(CONFIG)
 except Exception:
     FOCUS_MODE = True
-    def health_badge(ca):                # type: ignore
-        return {"level": "ok", "label": "🟢 flow healthy",
-                "reason": "focus module unavailable"}
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -1072,8 +1069,14 @@ if _wl:
     # its conviction is flat and therefore has no radar card. We also import
     # the freshness helpers here (used by the ⏰ sweep below) so the import
     # is available BEFORE the LP Radar block decides whether to render.
-    from cvd import (markup_from_candles, markup_label, markup_warning,
-                     flow_check_panel)
+    from cvd import (FRESH_MAX_AGE_S, STALE_MAX_AGE_S, flow_freshness,
+                     load_conviction, markup_from_candles, markup_label,
+                     markup_warning)
+    # Ask for freshness per watchlist CA.  A Cloud checkout can have one
+    # recently updated token while another token's cron point already exists
+    # only on GitHub; load_conviction(required_cas=...) merges that remote
+    # point before the stale sweep labels it as broken.
+    _conv_hist = load_conviction(required_cas=tuple(_wl))
     _watchlist_pairs = tuple(
         market.get("pair") for market in _prices.values()
         if market.get("pair"))
@@ -1097,35 +1100,31 @@ if _wl:
                  "\n\n".join(_markup_dangers))
 
     # ------------------------------------------------------------------
-    # ⏰ Freshness sweep — surface "stale" conviction data BEFORE the
-    # user reads the cards. Conviction is recorded by the 4h cron; if
-    # that cron missed, the LP Radar numbers are misleading. The sweep
-    # groups watchlist tokens by freshness level and offers a single
-    # "Force refresh now" button (Helius required) that backfills the
-    # stale tokens in-place.
+    # ⏰ Freshness sweep — surface stale conviction data BEFORE the user reads
+    # the cards.  This must use *only* flow_freshness(): health_badge() also
+    # folds in quality/distribution and used to mislabel a fresh RAKO point as
+    # "very stale" whenever another advisory check was red.
     # ------------------------------------------------------------------
     _freshness_state_key = "stale_watchlist_cas"
     if _freshness_state_key not in st.session_state:
-        st.session_state[_freshness_state_key] = set()  # CAs already refreshed
-    _stale_cas = []        # CAs with warn (recoverable) — auto-recoverable
-    _very_stale_cas = []   # CAs with danger — need manual refresh
-    _panel_by_ca = {}
+        st.session_state[_freshness_state_key] = set()  # CAs refreshed this cycle
+    _stale_cas = []        # warn: recoverable, data still visible
+    _very_stale_cas = []   # danger: hide flow-derived card values
     if _wl:
         for _fr_ca in _wl:
             try:
-                # FOCUS_MODE: collapse 4-check panel into 1 health badge.
-                if FOCUS_MODE:
-                    _fr = health_badge(_fr_ca)
-                else:
-                    _fr_panel = flow_check_panel(_fr_ca)
-                    _fr = _fr_panel["freshness"]
-                _panel_by_ca[_fr_ca] = _fr
+                _fr = flow_freshness(_fr_ca)
                 if _fr["level"] == "warn":
                     _stale_cas.append(_fr_ca)
+                    # A prior manual refresh must not suppress a retry after
+                    # this CA becomes stale again in the same browser session.
+                    st.session_state[_freshness_state_key].discard(_fr_ca)
                 elif _fr["level"] == "danger":
                     _very_stale_cas.append(_fr_ca)
-            except Exception:
-                pass
+                    st.session_state[_freshness_state_key].discard(_fr_ca)
+            except Exception as _fresh_exc:
+                print(f"WARN: freshness check failed for {_fr_ca[:8]}: "
+                      f"{_fresh_exc}", file=sys.stderr)
     if _stale_cas or _very_stale_cas:
         _very_stale_syms = ", ".join(
             f"${_wl[_c].get('symbol', '?')}" for _c in _very_stale_cas[:5])
@@ -1134,108 +1133,102 @@ if _wl:
         if _very_stale_cas:
             st.error(
                 f"⏰ **{len(_very_stale_cas)} watchlist token(s) are very "
-                f"stale (last conviction update >6h ago).** The "
-                f"conviction %, KOKOH/GOYAH badge, and net_pure below "
-                f"are NOT trustworthy. Refresh to backfill: "
+                f"stale (last conviction update >{STALE_MAX_AGE_S / 3600:g}h "
+                f"ago).** The conviction %, KOKOH/GOYAH badge, and net_pure "
+                f"below are NOT trustworthy. Refresh to backfill: "
                 f"{_very_stale_syms}"
                 + (f" +{len(_very_stale_cas) - 5} more" if len(_very_stale_cas) > 5 else ""))
         if _stale_cas and not _very_stale_cas:
             st.warning(
                 f"⏰ **{len(_stale_cas)} watchlist token(s) are stale "
-                f"(1.5-6h since last cron).** Cards below still usable, "
-                f"but conviction trend may be missing the latest window. "
+                f"({FRESH_MAX_AGE_S / 3600:g}-{STALE_MAX_AGE_S / 3600:g}h "
+                f"since last update).** Cards below still usable, but conviction "
+                f"trend may be missing the latest window. "
                 f"Tokens: {_stale_syms}"
                 + (f" +{len(_stale_cas) - 5} more" if len(_stale_cas) > 5 else ""))
 
     # ------------------------------------------------------------------
     # 🔄 Manual refresh for newly added/stale watchlist tokens.
+    # Force-refresh button: CVD uses GMGN, so this intentionally does not
+    # require a Helius key. Helius remains optional for holder panels only.
     # ------------------------------------------------------------------
-    _pending_refresh = st.session_state.get(
-        "watchlist_auto_refresh_cas") or set()
-    
-    _all_to_refresh = set(list(_pending_refresh) + _stale_cas + _very_stale_cas)
-    if _all_to_refresh and _wl:
-        _to_refresh = [c for c in _all_to_refresh
-                       if c in _wl and c not in
-                       st.session_state[_freshness_state_key]]
-        if _to_refresh:
-            if st.button("🔄 Force refresh now"):
-                st.session_state["watchlist_auto_refresh_cas"] = set()  # consume
-                if not helius_keys:
-                    st.warning("⏳ Token baru butuh backfill CVD, tapi Helius "
-                               "API key belum dikonfigurasi — data akan terisi "
-                               "oleh cron berikutnya.")
+    _pending_refresh = set(st.session_state.get(
+        "watchlist_auto_refresh_cas") or set())
+    _all_to_refresh = (_pending_refresh | set(_stale_cas) |
+                       set(_very_stale_cas))
+    _to_refresh = [ca for ca in _wl
+                   if ca in _all_to_refresh and ca not in
+                   st.session_state[_freshness_state_key]]
+    _max_manual_backfill = 10
+    _remaining_refresh = max(0, len(_to_refresh) - _max_manual_backfill)
+    _to_refresh = _to_refresh[:_max_manual_backfill]
+    if _to_refresh:
+        if _remaining_refresh:
+            st.caption(f"🔄 Refresh memproses {len(_to_refresh)} token dulu; "
+                       f"{_remaining_refresh} sisanya tetap di antrean.")
+        if st.button("🔄 Force refresh now"):
+            import time
+            from cvd import record_conviction, update_token_cvd
+
+            _fr_pbar = st.progress(0.0, text="🔄 Backfilling token(s)…")
+            _fr_succeeded = []
+            _fr_failed = []
+            _start_time = time.time()
+            for _fr_i, _fr_ca in enumerate(_to_refresh):
+                _fr_symbol = _wl[_fr_ca].get("symbol", "?")
+                # GMGN identifies the token by CA; a DexScreener pool is
+                # useful to retain in state but must not block recovery.
+                _fr_pool = ((_prices.get(_fr_ca) or {}).get("pair") or "")
+                try:
+                    _fr_result = update_token_cvd(
+                        (), _fr_ca, _fr_pool, max_pages=80, use_gmgn=True)
+                    if not _fr_result.get("fetch_ok", True):
+                        raise RuntimeError(
+                            _fr_result.get("error") or
+                            "GMGN fetch tidak lengkap; data lama dipertahankan")
+                    _fr_point = record_conviction(_fr_ca, window_h=6)
+                    if _fr_point is None:
+                        raise RuntimeError(
+                            "tidak ada swap 6 jam untuk merekam conviction")
+                    st.session_state[_freshness_state_key].add(_fr_ca)
+                    st.session_state["watchlist_auto_refresh_cas"] = (
+                        set(st.session_state.get(
+                            "watchlist_auto_refresh_cas") or set()) -
+                        {_fr_ca})
+                    _fr_succeeded.append(_fr_ca)
+                except Exception as _fr_exc:
+                    _fr_failed.append((_fr_ca, _fr_symbol, str(_fr_exc)))
+                    st.warning(f"Backfill ${_fr_symbol} gagal: {_fr_exc}")
+
+                _elapsed = time.time() - _start_time
+                _avg_time = _elapsed / (_fr_i + 1)
+                _rem_time = _avg_time * (len(_to_refresh) - (_fr_i + 1))
+                _eta_str = (f"{_rem_time:.0f}s" if _rem_time > 0
+                            else "selesai")
+                _fr_pbar.progress(
+                    (_fr_i + 1) / len(_to_refresh),
+                    text=f"🔄 Sync progress: {_fr_i + 1}/{len(_to_refresh)} · "
+                         f"Estimasi selesai: {_eta_str} · "
+                         f"{len(_fr_succeeded)} berhasil…")
+            _fr_pbar.empty()
+            if _fr_failed:
+                _fr_failed_syms = ", ".join(
+                    f"${symbol}" for _, symbol, _ in _fr_failed)
+                if _fr_succeeded:
+                    st.warning(
+                        f"⚠️ Sync selesai sebagian: {len(_fr_succeeded)} "
+                        f"berhasil, {len(_fr_failed)} gagal "
+                        f"({_fr_failed_syms}). Token gagal tetap bisa dicoba "
+                        "lagi lewat tombol ini atau cron berikutnya.")
                 else:
-                    import time
-                    _fr_pbar = st.progress(
-                        0.0, text="🔄 Backfilling token(s)…")
-                    _fr_succeeded = []
-                    _fr_failed = []
-                    _start_time = time.time()
-                    for _fr_i, _fr_ca in enumerate(_to_refresh):
-                        _fr_symbol = _wl[_fr_ca].get("symbol", "?")
-                        _fr_market = _prices.get(_fr_ca) or {}
-                        _fr_pool = _fr_market.get("pair")
-                        if not _fr_pool:
-                            _fr_failed.append((_fr_ca, _fr_symbol,
-                                               "main pool tidak tersedia"))
-                            st.warning(
-                                f"Backfill ${_fr_symbol} gagal: main pool "
-                                f"tidak tersedia")
-                        else:
-                            try:
-                                from cvd import (update_token_cvd,
-                                                 record_conviction)
-                                update_token_cvd(
-                                    helius_keys, _fr_ca, _fr_pool,
-                                    max_pages=200)
-                                _fr_point = record_conviction(
-                                    _fr_ca, window_h=6)
-                                if _fr_point is None:
-                                    raise RuntimeError(
-                                        "tidak ada swap 6 jam untuk merekam "
-                                        "conviction")
-                                st.session_state[_freshness_state_key].add(
-                                    _fr_ca)
-                                _fr_succeeded.append(_fr_ca)
-                            except Exception as _fr_exc:
-                                _fr_failed.append(
-                                    (_fr_ca, _fr_symbol, str(_fr_exc)))
-                                st.warning(
-                                    f"Backfill ${_fr_symbol} gagal: {_fr_exc}")
-                        
-                        _elapsed = time.time() - _start_time
-                        _avg_time = _elapsed / (_fr_i + 1)
-                        _rem_time = _avg_time * (len(_to_refresh) - (_fr_i + 1))
-                        _eta_str = f"{_rem_time:.0f}s" if _rem_time > 0 else "selesai"
-                        
-                        _fr_pbar.progress(
-                            (_fr_i + 1) / len(_to_refresh),
-                            text=f"🔄 Sync progress: {_fr_i + 1}/"
-                                 f"{len(_to_refresh)} · "
-                                 f"Estimasi selesai: {_eta_str} · "
-                                 f"{len(_fr_succeeded)} berhasil…")
-                    _fr_pbar.empty()
-                    if _fr_failed:
-                        _fr_failed_syms = ", ".join(
-                            f"${symbol}" for _, symbol, _ in _fr_failed)
-                        if _fr_succeeded:
-                            st.warning(
-                                f"⚠️ Sync selesai sebagian: "
-                                f"{len(_fr_succeeded)} berhasil, "
-                                f"{len(_fr_failed)} gagal "
-                                f"({_fr_failed_syms}). Reload page (F5) "
-                                f"untuk melihat token yang berhasil.")
-                        else:
-                            st.error(
-                                f"❌ Sync gagal: 0/{len(_to_refresh)} "
-                                f"token berhasil ({_fr_failed_syms}). "
-                                f"Data akan dicoba lagi oleh cron berikutnya.")
-                    else:
-                        st.success(
-                            f"✅ Selesai! Di-refresh {len(_fr_succeeded)} "
-                            f"token(s) — cards di bawah sudah pakai data "
-                            f"terbaru.")
+                    st.error(
+                        f"❌ Sync gagal: 0/{len(_to_refresh)} token berhasil "
+                        f"({_fr_failed_syms}). Data lama dipertahankan dan "
+                        "akan dicoba lagi oleh cron berikutnya.")
+            else:
+                st.success(
+                    f"✅ Selesai! Di-refresh {len(_fr_succeeded)} token(s) — "
+                    "cards di bawah sudah pakai data terbaru.")
 
     # ------------------------------------------------------------------
     # 💧 LP Radar — watchlist tokens from TRENDING source only.
@@ -1243,10 +1236,12 @@ if _wl:
     # volume-quality indicator, market phase, dan shortcut DexS/GMGN.
     # ------------------------------------------------------------------
     try:
-        from cvd import (load_conviction, detect_phase, PHASE_COLORS,
-                         markup_from_candles, markup_warning,
-                         candle_pattern_summary, aggregate_candles)
-        _conv_hist = load_conviction()
+        from cvd import (detect_phase, PHASE_COLORS, markup_from_candles,
+                         markup_warning, candle_pattern_summary,
+                         aggregate_candles)
+        # Re-read after a manual backfill so the cards update in this run;
+        # retain per-watchlist remote merging for Cloud deployments.
+        _conv_hist = load_conviction(required_cas=tuple(_wl))
     except Exception:
         _conv_hist = {}
     # Hourly real-vs-dust history written by the cron — one load for
@@ -1437,7 +1432,17 @@ if _wl:
 
             # ---- Why flagged (Disabled for now) ----
             _reasons = []
-            _very_stale = False
+            # Only actual conviction freshness controls this safety state.
+            # Advisory quality/distribution flags must never hide a fresh
+            # token or trigger the stale-recovery path.
+            _very_stale = _ca in _very_stale_cas
+            if _very_stale:
+                multi_bars = (
+                    "<div style='margin:6px 0;padding:8px;color:#fbbf24;"
+                    "background:rgba(245,158,11,0.08);border-radius:6px;"
+                    "font-size:0.75rem;font-weight:700;'>"
+                    "⏰ CVD flow > very-stale threshold — refresh required"
+                    "</div>")
             reasons_html = ""
 
             # ---- Conviction Trend Note ----
@@ -1452,18 +1457,23 @@ if _wl:
             has_good_vol = vol >= 50.0
 
             conv_note = ""
-            if consecutive_ups >= 3:
+            if not _very_stale and consecutive_ups >= 3:
                 conv_note = f"<div style='color:#22c55e;font-size:0.75rem;font-weight:700;margin-top:6px;'>🔥 Sangat Bagus (Naik ≥3x{' + Vol' if has_good_vol else ''})</div>"
-            elif consecutive_ups == 2:
+            elif not _very_stale and consecutive_ups == 2:
                 conv_note = f"<div style='color:#a3e635;font-size:0.75rem;font-weight:700;margin-top:6px;'>📈 Bagus (Naik 2x{' + Vol' if has_good_vol else ''})</div>"
-            elif is_spike:
+            elif not _very_stale and is_spike:
                 conv_note = f"<div style='color:#22c55e;font-size:0.75rem;font-weight:700;margin-top:6px;'>🚀 Sangat Bagus (Melonjak{' + Vol' if has_good_vol else ''})</div>"
 
             trend_txt = (f"{prev_cv:.0f}→{cv:.0f}%" if prev_cv is not None
                          else f"{cv:.0f}%")
             trend_ic = "📈📈" if consecutive_ups >= 2 else ("📈" if consecutive_ups == 1 else "📉" if prev_cv is not None and cv < prev_cv else "➡️")
-            vol_txt = f"{vol:,.0f} SOL/6h · {last.get('swaps') or 0:,} swaps"
-            np_col = "#22c55e" if last["net_pure"] >= 0 else "#ef4444"
+            np_col = "#94a3b8" if _very_stale else (
+                "#22c55e" if last["net_pure"] >= 0 else "#ef4444")
+            net_txt = "—" if _very_stale else f"{last['net_pure']:+,.0f}"
+            flow_trend_txt = "⏰ stale" if _very_stale else trend_txt
+            flow_vol_txt = "—" if _very_stale else f"{vol:,.0f} SOL"
+            flow_swaps_txt = ("—" if _very_stale else
+                              f"{last.get('swaps') or 0:,}")
             # market phase badge
             try:
                 _ph = detect_phase(_ca, (_prices.get(_ca) or {}).get("chg24"),
@@ -1489,7 +1499,7 @@ if _wl:
             # FOCUS_MODE: hide the Wyckoff phase badge to reduce noise.
             # Phase is still computed (kept for context / debug) but
             # not displayed on the LP Radar card.
-            if FOCUS_MODE:
+            if FOCUS_MODE or _very_stale:
                 phase_html = ""
             _cvd_link = f"/CVD?ca={_ca}"
             # When very stale, hide the conviction number (don't trust it)
@@ -1550,21 +1560,21 @@ if _wl:
                 f"margin-top:4px;line-height:1.4;'>"
                 f"<span style='color:#64748b;'>conv </span>"
                 f"<span style='color:#cbd5e1;font-weight:600;'>"
-                f"{trend_txt}</span>"
+                f"{flow_trend_txt}</span>"
                 f"<span style='color:#475569;margin:0 4px;'>·</span>"
                 f"<span style='color:#64748b;'>net </span>"
                 f"<span style='color:{np_col};font-weight:700;'>"
-                f"{last['net_pure']:+,.0f}</span>"
+                f"{net_txt}</span>"
                 f"</div>"
                 f"<div style='font-size:0.75rem;color:#94a3b8;"
                 f"line-height:1.4;margin-top:2px;'>"
                 f"<span style='color:#64748b;'>vol </span>"
                 f"<span style='color:#cbd5e1;font-weight:600;'>"
-                f"{vol:,.0f} SOL</span>"
+                f"{flow_vol_txt}</span>"
                 f"<span style='color:#475569;margin:0 4px;'>·</span>"
                 f"<span style='color:#64748b;'>swaps </span>"
                 f"<span style='color:#cbd5e1;font-weight:600;'>"
-                f"{last.get('swaps') or 0:,}</span>"
+                f"{flow_swaps_txt}</span>"
                 f"</div>"
                 # small-body candle details (H4 + H1, separate, with range)
                 f"{_patterns_html}"
@@ -1636,6 +1646,7 @@ if _wl:
                 cv = last["conviction"]
                 prev_cv = pts[-2]["conviction"] if len(pts) >= 2 else None
                 prev2_cv = pts[-3]["conviction"] if len(pts) >= 3 else None
+                _very_stale_deg = _ca in _very_stale_cas
 
                 # ---- Multi-window sparkline (6h / 12h / 24h / 48h) ----
                 cv_6h = cv
@@ -1671,6 +1682,13 @@ if _wl:
                                   f"{_spark_bar_deg(cv_24h, '24h', c_24h)}"
                                   f"{_spark_bar_deg(cv_48h, '48h', c_48h)}"
                                   "</div>")
+                if _very_stale_deg:
+                    multi_bars_deg = (
+                        "<div style='margin:6px 0;padding:8px;color:#fbbf24;"
+                        "background:rgba(245,158,11,0.08);border-radius:6px;"
+                        "font-size:0.75rem;font-weight:700;'>"
+                        "⏰ CVD flow > very-stale threshold — refresh required"
+                        "</div>")
 
                 # ---- Conviction Trend Note ----
                 consecutive_ups = 0
@@ -1685,17 +1703,26 @@ if _wl:
                 has_good_vol = vol >= 50.0
 
                 conv_note_deg = ""
-                if consecutive_ups >= 3:
+                if not _very_stale_deg and consecutive_ups >= 3:
                     conv_note_deg = f"<div style='color:#22c55e;font-size:0.75rem;font-weight:700;margin-top:6px;'>🔥 Sangat Bagus (Naik ≥3x{' + Vol' if has_good_vol else ''})</div>"
-                elif consecutive_ups == 2:
+                elif not _very_stale_deg and consecutive_ups == 2:
                     conv_note_deg = f"<div style='color:#a3e635;font-size:0.75rem;font-weight:700;margin-top:6px;'>📈 Bagus (Naik 2x{' + Vol' if has_good_vol else ''})</div>"
-                elif is_spike:
+                elif not _very_stale_deg and is_spike:
                     conv_note_deg = f"<div style='color:#22c55e;font-size:0.75rem;font-weight:700;margin-top:6px;'>🚀 Sangat Bagus (Melonjak{' + Vol' if has_good_vol else ''})</div>"
 
                 trend_txt = (f"{prev_cv:.0f}→{cv:.0f}%" if prev_cv is not None
                              else f"{cv:.0f}%")
                 trend_ic = "📈📈" if consecutive_ups >= 2 else ("📈" if consecutive_ups == 1 else "📉" if prev_cv is not None and cv < prev_cv else "➡️")
-                np_col = "#22c55e" if last["net_pure"] >= 0 else "#ef4444"
+                np_col = "#94a3b8" if _very_stale_deg else (
+                    "#22c55e" if last["net_pure"] >= 0 else "#ef4444")
+                net_txt_deg = ("—" if _very_stale_deg else
+                               f"{last['net_pure']:+,.0f}")
+                flow_trend_txt_deg = ("⏰ stale" if _very_stale_deg
+                                      else trend_txt)
+                flow_vol_txt_deg = ("—" if _very_stale_deg
+                                    else f"{vol:,.0f} SOL")
+                flow_swaps_txt_deg = ("—" if _very_stale_deg else
+                                      f"{last.get('swaps') or 0:,}")
 
                 # market phase badge
                 try:
@@ -1719,8 +1746,8 @@ if _wl:
                     f"letter-spacing:0.2px;max-width:100%;'> "
                     f"{_ph['phase']} {_conf_dots}</span>"
                     f"</div>")
-                # FOCUS_MODE: hide Wyckoff phase on Degen cards too.
-                if FOCUS_MODE:
+                # FOCUS_MODE and stale CVD both hide phase-derived flow.
+                if FOCUS_MODE or _very_stale_deg:
                     phase_html_deg = ""
 
                 _cvd_link = f"/CVD?ca={_ca}"
@@ -1758,6 +1785,16 @@ if _wl:
                 # Degen-style border: orange/red tint
                 _deg_border = "#f97316"
                 _deg_bg = "#1a1008"
+                if _very_stale_deg:
+                    _conv_html_deg = (
+                        "<span style='color:#94a3b8;font-size:1.15rem;"
+                        "font-weight:800;'>⏰ stale</span>")
+                else:
+                    _conv_html_deg = (
+                        "<span style='color:#cbd5e1;font-size:1.35rem;"
+                        "font-weight:800;line-height:1.1;'>"
+                        f"{cv:.0f}%</span> <span style='font-size:0.85rem;"
+                        f"margin-left:2px;'>{trend_ic}</span>")
                 _degen_cards.append(
                     f"<div style='flex:0 0 auto;background:{_deg_bg};"
                     f"border:2px solid {_deg_border};border-radius:14px;"
@@ -1773,10 +1810,7 @@ if _wl:
                     f"<span style='font-weight:800;color:#fb923c;"
                     f"font-size:1.05rem;letter-spacing:0.2px;'>⚡ {sym}</span> "
                     f"<span style='margin-left:4px;'>"
-                    f"<span style='color:#cbd5e1;font-size:1.35rem;"
-                    f"font-weight:800;line-height:1.1;'>"
-                    f"{cv:.0f}%</span> <span style='font-size:0.85rem;"
-                    f"margin-left:2px;'>{trend_ic}</span></span></a>"
+                    f"{_conv_html_deg}</span></a>"
                     f"<span style='display:inline-flex;gap:6px;"
                     f"font-size:0.85rem;flex-shrink:0;align-items:center;'>"
                     f"<a href='https://dexscreener.com/solana/{_ca}' "
@@ -1800,21 +1834,21 @@ if _wl:
                     f"margin-top:4px;line-height:1.4;'>"
                     f"<span style='color:#64748b;'>conv </span>"
                     f"<span style='color:#cbd5e1;font-weight:600;'>"
-                    f"{trend_txt}</span>"
+                    f"{flow_trend_txt_deg}</span>"
                     f"<span style='color:#475569;margin:0 4px;'>·</span>"
                     f"<span style='color:#64748b;'>net </span>"
                     f"<span style='color:{np_col};font-weight:700;'>"
-                    f"{last['net_pure']:+,.0f}</span>"
+                    f"{net_txt_deg}</span>"
                     f"</div>"
                     f"<div style='font-size:0.75rem;color:#94a3b8;"
                     f"line-height:1.4;margin-top:2px;'>"
                     f"<span style='color:#64748b;'>vol </span>"
                     f"<span style='color:#cbd5e1;font-weight:600;'>"
-                    f"{vol:,.0f} SOL</span>"
+                    f"{flow_vol_txt_deg}</span>"
                     f"<span style='color:#475569;margin:0 4px;'>·</span>"
                     f"<span style='color:#64748b;'>swaps </span>"
                     f"<span style='color:#cbd5e1;font-weight:600;'>"
-                    f"{last.get('swaps') or 0:,}</span>"
+                    f"{flow_swaps_txt_deg}</span>"
                     f"</div>"
                     # small-body candle details (H4 + H1, separate, range)
                     f"{_patterns_html_deg}"

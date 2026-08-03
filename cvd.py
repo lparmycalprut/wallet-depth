@@ -96,7 +96,20 @@ GMGN_HEADERS = {
     "sec-fetch-mode": "cors",
     "sec-fetch-site": "same-origin",
 }
-_gmgn_last = {"error": ""}
+# ``error`` is reserved for an actual transport/API/mapping failure.
+# A successful empty page (quiet token) is not an error: callers may still
+# safely calculate a window from already-stored swaps.  Keeping the outcome
+# separately prevents the cron from minting a "fresh" conviction point after
+# a failed fetch while still allowing a genuinely quiet token to be handled
+# normally.
+_gmgn_last = {
+    "error": "",
+    "note": "",
+    "ok": None,
+    "complete": False,
+    "outcome": "idle",
+    "raw_seen": 0,
+}
 _gmgn_wallet_meta = {"data": {}}
 
 
@@ -112,11 +125,17 @@ def get_gmgn_wallet_metadata() -> dict:
 
 
 def _gmgn_build_params() -> dict:
-    """Query params matching the live GMGN web client (build tag, device id)."""
+    """Query params matching the live GMGN web client (build tag, device id).
+
+    ``requests``/``curl_cffi`` URL-encode ``params`` themselves, so timezone
+    must be passed as plain ``Asia/Jakarta``.  Passing ``Asia%2FJakarta``
+    here produces ``Asia%252FJakarta`` on the wire and can make GMGN reject
+    an otherwise valid browser-shaped request.
+    """
     import uuid as _uuid
     params = {
         "from_app": "gmgn",
-        "tz_name": "Asia%2FJakarta",
+        "tz_name": "Asia/Jakarta",
         "tz_offset": "25200",
         "app_lang": "en-US",
         "os": "web",
@@ -137,17 +156,37 @@ def _gmgn_build_params() -> dict:
     return params
 
 
+def _reset_gmgn_fetch_status() -> None:
+    """Clear outcome metadata before a new GMGN trades request."""
+    _gmgn_last.update(error="", note="", ok=None, complete=False,
+                      outcome="fetching", raw_seen=0)
+
+
 def _set_gmgn_error(message: str) -> None:
     _gmgn_last["error"] = str(message or "").strip()
 
 
 def get_gmgn_last_error() -> str:
-    """Last human-readable GMGN fetch problem, if any.
+    """Last human-readable GMGN fetch result/problem, if any.
 
-    The UI reads this after an empty GMGN result so users see whether the
-    endpoint was empty, Cloudflare-blocked, rate-limited, or shape-changed.
+    Kept for compatibility with existing UI callers: a valid empty response
+    still returns its explanatory note here. New persistence code must use
+    :func:`get_gmgn_fetch_status` and inspect ``status['error']``/``ok`` so
+    a quiet token is not mistaken for a failed fetch.
     """
-    return _gmgn_last.get("error") or ""
+    return _gmgn_last.get("error") or _gmgn_last.get("note") or ""
+
+
+def get_gmgn_fetch_status() -> dict:
+    """Return metadata for the most recent GMGN trades fetch.
+
+    ``ok`` means the endpoint and trade mapping were usable. ``complete``
+    additionally guarantees that pagination reached the requested cutoff/end
+    instead of stopping at a transport error, duplicate cursor, or page cap.
+    Consumers that persist CVD must require both values before advancing the
+    cursor or recording a conviction point.
+    """
+    return dict(_gmgn_last)
 
 
 def _as_float(value, default=0.0) -> float:
@@ -321,21 +360,36 @@ def _gmgn_cursor(payload, trades) -> str | None:
 
 
 def _gmgn_http_get(url: str, *, params: dict, timeout: int):
-    """GET GMGN with curl_cffi browser TLS when installed; fallback safe."""
+    """GET GMGN with browser TLS, then a normal-requests fallback.
+
+    ``curl_cffi`` can be installed but fail at runtime (unsupported browser
+    profile, OpenSSL issue, or a transient TLS reset).  The old fallback ran
+    only when the package was absent, so a runtime curl failure made every
+    GMGN fetch fail without even trying the ordinary HTTP client.
+    """
+    curl_error = None
     try:
         from curl_cffi import requests as cr
-        last_exc = None
+    except Exception as exc:  # broken optional install must not block fallback
+        cr = None
+        curl_error = exc
+    if cr is not None:
         for imp in ("chrome", "chrome131", "safari17_0"):
             try:
                 return cr.get(url, params=params, headers=GMGN_HEADERS,
                               impersonate=imp, timeout=timeout)
             except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-        if last_exc:
-            raise last_exc
-    except ImportError:
+                curl_error = exc
+    try:
         return requests.get(url, params=params, headers=GMGN_HEADERS,
                             timeout=timeout)
+    except Exception as exc:
+        if curl_error is not None:
+            raise RuntimeError(
+                f"browser TLS failed ({type(curl_error).__name__}: "
+                f"{curl_error}); requests fallback failed "
+                f"({type(exc).__name__}: {exc})") from exc
+        raise
 
 
 def _fetch_gmgn_page(ca: str, *, cursor=None, limit=GMGN_PAGE_LIMIT,
@@ -426,17 +480,19 @@ def fetch_gmgn_swaps(ca: str, *, stop_sig=None, stop_ts=None, max_pages=40,
     ``timestamp`` -> ts, and ``maker`` -> wallet.
 
     Returns the same tuple shape as :func:`fetch_swaps`:
-    ``(swaps, newest_sig, newest_ts, hit_stop)``. On API failure or an empty
-    response it returns an empty list and records a readable reason in
-    :func:`get_gmgn_last_error` instead of raising.
+    ``(swaps, newest_sig, newest_ts, hit_stop)``.  Detailed completion
+    metadata is exposed separately via :func:`get_gmgn_fetch_status` so
+    legacy callers keep their tuple contract while persistence callers can
+    reject partial data safely.
     """
-    _set_gmgn_error("")
+    _reset_gmgn_fetch_status()
     _gmgn_wallet_meta["data"] = {}
     swaps, cursor = [], None
     newest_sig, newest_ts, hit_stop = None, None, False
     seen_trades, seen_cursors = set(), set()
     raw_seen = mapped_seen = 0
     stopped_by_cutoff = False
+    complete = False
     wallet_meta = {}
 
     for _ in range(max_pages):
@@ -444,8 +500,11 @@ def fetch_gmgn_swaps(ca: str, *, stop_sig=None, stop_ts=None, max_pages=40,
             ca, cursor=cursor, limit=page_limit,
             from_ts=from_ts, to_ts=to_ts)
         if raw_trades is None:
+            # _fetch_gmgn_page already recorded a transport/API error.
             break
         if not raw_trades:
+            # A successful empty page means pagination reached its end.
+            complete = True
             break
         raw_seen += len(raw_trades)
         raw_trades = sorted(
@@ -476,7 +535,7 @@ def fetch_gmgn_swaps(ca: str, *, stop_sig=None, stop_ts=None, max_pages=40,
                 mapped_seen += 1
                 if s[1] >= MIN_SOL:
                     swaps.append(s)
-                # collect per-wallet metadata (last trade wins)
+                # Collect per-wallet metadata (last trade wins).
                 w = s[3]
                 if w:
                     try:
@@ -484,30 +543,58 @@ def fetch_gmgn_swaps(ca: str, *, stop_sig=None, stop_ts=None, max_pages=40,
                     except Exception:
                         pass
         if hit_stop:
+            # Sorted newest→oldest, so crossing the stored cursor/cutoff
+            # proves that all requested newer trades were visited.
+            complete = True
             break
         if new_on_page == 0:
             _set_gmgn_error("GMGN pagination returned duplicate trades only.")
             break
         cursor = next_cursor
         if not cursor and len(raw_trades) >= page_limit:
+            # Some responses omit ``next``.  Their cursor is the oldest
+            # trade id, matching the live web client convention.
             cursor = _gmgn_trade_key(raw_trades[-1])
-        if not cursor or cursor in seen_cursors:
+        if not cursor:
+            complete = True
+            break
+        if cursor in seen_cursors:
+            _set_gmgn_error("GMGN pagination repeated its cursor.")
             break
         seen_cursors.add(cursor)
         time.sleep(sleep)
+    else:
+        _set_gmgn_error(
+            f"GMGN pagination reached its {max_pages}-page safety cap "
+            "before the requested cutoff.")
 
-    if not raw_seen and not get_gmgn_last_error():
-        _set_gmgn_error("GMGN Trades API returned no trades for this token.")
-    elif stopped_by_cutoff and not swaps and not get_gmgn_last_error():
-        _set_gmgn_error("GMGN returned no trades newer than the selected "
-                        "window.")
-    elif raw_seen and not mapped_seen and not get_gmgn_last_error():
+    # Do not use get_gmgn_last_error() here: that compatibility helper also
+    # returns a benign "no eligible trades" note for legacy UI callers.
+    error = _gmgn_last.get("error") or ""
+    note = ""
+    outcome = "ok"
+    if error:
+        outcome = "error"
+    elif not raw_seen:
+        outcome = "empty"
+        note = "GMGN returned no trades for this token."
+    elif stopped_by_cutoff and not swaps:
+        outcome = "empty"
+        note = "GMGN returned no eligible trades newer than the cutoff."
+    elif raw_seen and not mapped_seen:
         _set_gmgn_error(
             "GMGN returned trades, but none had event/timestamp/volume "
             "fields that could be mapped to CVD swaps.")
-    elif mapped_seen and not swaps and not get_gmgn_last_error():
-        _set_gmgn_error(
-            f"GMGN returned trades, but all were below {MIN_SOL:g} SOL.")
+        error = _gmgn_last.get("error") or ""
+        outcome = "error"
+    elif mapped_seen and not swaps:
+        outcome = "below_min"
+        note = (f"GMGN returned trades, but all were below "
+                f"{MIN_SOL:g} SOL.")
+
+    _gmgn_last.update(error=error, note=note, ok=not bool(error),
+                      complete=bool(complete and not error),
+                      outcome=outcome, raw_seen=raw_seen)
     _gmgn_wallet_meta["data"] = wallet_meta
     return swaps, newest_sig, newest_ts, hit_stop
 
@@ -656,19 +743,66 @@ def bucketize(swaps) -> dict:
 
 def update_token_cvd(api_key: str, ca: str, pool: str, *,
                      max_pages=40, use_gmgn: bool = False) -> dict:
-    """Incremental update: fetch swaps since last stored signature.
-    Also keeps raw swaps of the last 24h (with wallets) so the dashboard
-    can show a COMPLETE window without a huge live fetch.
+    """Incrementally refresh one token's CVD store.
 
-    When ``use_gmgn=True``, uses GMGN Token Trades API instead of Helius.
-    No API key is required for GMGN — the ``api_key`` argument is ignored."""
+    Raw swaps are retained for 48 hours so the dashboard can calculate a
+    complete recent window without a large live fetch.  A GMGN refresh only
+    advances the cursor after pagination is complete: persisting a partial
+    page set would permanently skip the missing interval on the next run and
+    make a conviction point look trustworthy when it is not.
+
+    When ``use_gmgn=True``, no Helius key or pool is required; GMGN queries by
+    contract address.  A known existing pool is retained when the caller has
+    no current DexScreener pair.
+    """
     state = load_cvd()
-    entry = state.get(ca) or {"pool": pool, "buckets": {}}
+    entry = state.get(ca) or {"pool": pool or "", "buckets": {}}
+    effective_pool = pool or entry.get("pool") or ""
+    if not use_gmgn and not effective_pool:
+        raise ValueError("pool is required for the Helius CVD fetch")
+
     stop_sig = entry.get("newest_sig") if not use_gmgn else None
     stop_ts = entry.get("newest_ts")
+    if not stop_ts:
+        # A first backfill only needs enough history for the 48h raw store.
+        # Without a cutoff an active token can hit the page cap while walking
+        # its whole lifetime, leaving a recoverable token falsely stale.
+        stop_ts = int(time.time() - 48 * 3600)
     swaps, new_sig, new_ts, hit = fetch_swaps(
-        api_key, pool, ca, stop_sig=stop_sig, stop_ts=stop_ts,
+        api_key, effective_pool, ca, stop_sig=stop_sig, stop_ts=stop_ts,
         max_pages=max_pages, use_gmgn=use_gmgn)
+
+    # GMGN exposes completion details without changing fetch_swaps' public
+    # tuple shape.  ``ok is None`` is retained for compatibility with callers
+    # that monkeypatch fetch_swaps in offline tests or integrations.
+    fetch_ok = True
+    fetch_error = ""
+    complete = True
+    if use_gmgn:
+        status = get_gmgn_fetch_status()
+        if status.get("ok") is not None:
+            complete = bool(status.get("complete"))
+            fetch_error = str(status.get("error") or "")
+            fetch_ok = bool(status.get("ok")) and complete
+            if not fetch_ok and not fetch_error:
+                fetch_error = ("GMGN pagination ended before the requested "
+                               "cutoff.")
+
+    if not fetch_ok:
+        # Keep every data cursor/bucket untouched.  The next cron/manual
+        # retry starts from the same known-good point instead of creating a
+        # permanent hole in CVD history.
+        entry["pool"] = effective_pool
+        entry["gap"] = True
+        entry["updated"] = int(time.time())
+        entry["last_fetch_error"] = fetch_error
+        entry["last_fetch_source"] = "gmgn"
+        state[ca] = entry
+        save_cvd(state)
+        return {"new_swaps": 0, "buckets": len(entry.get("buckets") or {}),
+                "gap": True, "fetch_ok": False, "complete": False,
+                "error": fetch_error}
+
     fresh = bucketize(swaps)
     for b, c in fresh.items():
         old = entry["buckets"].get(b)
@@ -677,11 +811,12 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
                 old[k] = old.get(k, 0) + c[k]
         else:
             entry["buckets"][b] = c
+
     # --- raw swap store (last 48h, incl. wallet) for complete-window UI ----
     cutoff_raw = time.time() - 48 * 3600
     raw = entry.get("swaps") or []
     raw.extend([list(s) for s in swaps])
-    # deduplicate swaps to prevent inflated/duplicate values
+    # Deduplicate swaps to prevent inflated/duplicate values.
     seen_swaps = {}
     for s in raw:
         if len(s) >= 4:
@@ -693,17 +828,21 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
     if new_sig:
         entry["newest_sig"] = new_sig
         entry["newest_ts"] = new_ts
-    entry["pool"] = pool
-    entry["gap"] = bool(stop_sig) and not hit and bool(swaps)
+    entry["pool"] = effective_pool
+    entry["gap"] = (bool(stop_sig) and not hit and bool(swaps)
+                    if not use_gmgn else False)
     entry["updated"] = int(time.time())
-    # keep last 14 days only
+    entry.pop("last_fetch_error", None)
+    entry["last_fetch_source"] = "gmgn" if use_gmgn else "helius"
+    # Keep last 14 days only.
     cutoff = time.time() - 14 * 86400
     entry["buckets"] = {b: c for b, c in entry["buckets"].items()
                         if int(b) >= cutoff}
     state[ca] = entry
     save_cvd(state)
     return {"new_swaps": len(swaps), "buckets": len(entry["buckets"]),
-            "gap": entry["gap"]}
+            "gap": entry["gap"], "fetch_ok": True,
+            "complete": complete, "error": ""}
 
 
 # ---------------------------------------------------------------------------
@@ -1037,29 +1176,69 @@ CONV_PATH = os.path.join(BASE_DIR, "conviction.json")
 _conv_remote_cache = {"data": None, "ts": 0.0}
 
 
-def load_conviction() -> dict:
-    """{ca: [{ts, conviction, pure_buy, pure_sell, net_pure, vol}]}
+def _merge_conviction_histories(local: dict, remote: dict) -> dict:
+    """Union local and remote conviction points without losing either side."""
+    merged = {ca: list(pts or []) for ca, pts in (local or {}).items()}
+    for ca, pts in (remote or {}).items():
+        existing = merged.setdefault(ca, [])
+        seen = {p.get("ts") for p in existing if isinstance(p, dict)}
+        existing.extend(
+            p for p in (pts or [])
+            if isinstance(p, dict) and p.get("ts") not in seen)
+        existing.sort(key=lambda p: p.get("ts") or 0)
+    return merged
 
-    On Streamlit Cloud the local file is frozen at deploy time while the
-    hourly cron keeps committing fresh points to the repo — so if the
-    local copy looks stale (newest point older than ~90 min), pull the
-    fresh copy from GitHub raw (cached 10 min) and merge."""
-    local = _load_json_tolerant(CONV_PATH) or {}
 
+def _conviction_history_fresh(history: dict, required_cas=(), *, now=None) -> bool:
+    """Whether all required CAs (or the newest point) are recent enough."""
+    now = time.time() if now is None else now
+    required = tuple(required_cas or ())
+    if required:
+        for ca in required:
+            pts = (history or {}).get(ca) or []
+            last_ts = (pts[-1].get("ts") or 0) if pts else 0
+            if not last_ts or now - last_ts >= 90 * 60:
+                return False
+        return True
     newest = 0
-    for pts in local.values():
+    for pts in (history or {}).values():
         if pts:
             newest = max(newest, pts[-1].get("ts") or 0)
-    fresh_enough = newest and (time.time() - newest) < 90 * 60
-    if fresh_enough:
-        return local
+    return bool(newest and now - newest < 90 * 60)
 
+
+def load_conviction(required_cas=None) -> dict:
+    """Load local conviction history and merge fresh cron data when needed.
+
+    Streamlit Cloud's checkout is immutable after deploy while the cron writes
+    new points to ``main``.  The previous implementation looked only at the
+    *single newest* local token.  That made a newly added or individually
+    stale watchlist CA look stale even though GitHub already had a fresh
+    point for it.  ``required_cas`` lets the dashboard ask for freshness per
+    watchlist CA without forcing an HTTP request for every card.
+    """
+    local = _load_json_tolerant(CONV_PATH) or {}
     now = time.time()
-    if _conv_remote_cache["data"] is not None and \
-            now - _conv_remote_cache["ts"] < 600:
-        remote = _conv_remote_cache["data"]
-    else:
-        remote = None
+    # Supplying required_cas explicitly opts into a remote refresh. Internal
+    # helpers (flow_freshness, phase, guard) call this without it and must stay
+    # network-free; the dashboard preloads the watchlist once per render.
+    refresh_remote = required_cas is not None
+    required = tuple(required_cas or ())
+
+    # A recently fetched remote copy is still useful even when the on-disk
+    # checkout is fresh for a different token.  Merge it first so subsequent
+    # flow_freshness() calls see the same in-memory truth if disk is read-only.
+    cache_active = now - _conv_remote_cache["ts"] < 600
+    cached = _conv_remote_cache["data"] if cache_active else None
+    candidate = (_merge_conviction_histories(local, cached)
+                 if cached else local)
+    if _conviction_history_fresh(candidate, required, now=now):
+        return candidate
+    if not refresh_remote:
+        return candidate
+
+    remote = cached
+    if remote is None and not cache_active:
         try:
             r = requests.get(
                 "https://raw.githubusercontent.com/lparmycalprut/"
@@ -1068,21 +1247,24 @@ def load_conviction() -> dict:
             if r.status_code == 200:
                 remote = r.json() or {}
                 _conv_remote_cache.update(data=remote, ts=now)
-        except Exception:
-            pass
-    if not remote:
-        return local
+            else:
+                _conv_remote_cache.update(data=None, ts=now)
+                print(f"WARN: conviction remote returned HTTP {r.status_code}",
+                      file=sys.stderr)
+        except Exception as exc:
+            _conv_remote_cache.update(data=None, ts=now)
+            print(f"WARN: failed to refresh remote conviction: {exc}",
+                  file=sys.stderr)
 
-    # merge: union of points per CA, dedup by ts
-    merged = dict(local)
-    for ca, pts in remote.items():
-        seen = {p["ts"] for p in merged.get(ca, [])}
-        merged.setdefault(ca, [])
-        merged[ca].extend([p for p in pts if p["ts"] not in seen])
-        merged[ca].sort(key=lambda p: p["ts"])
+    if not remote:
+        return candidate
+    merged = _merge_conviction_histories(local, remote)
     try:
         atomic_write_json(CONV_PATH, merged, separators=(",", ":"))
     except Exception as exc:
+        # Return the merged in-memory view even on Streamlit Cloud, where the
+        # checkout may be read-only.  This is what prevents per-token stale
+        # false positives during the current session.
         print(f"WARN: failed to save {CONV_PATH}: {exc}", file=sys.stderr)
     return merged
 

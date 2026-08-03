@@ -224,9 +224,16 @@ Jebakan yang sudah pernah menggigit:
   baru boleh masuk `stale_watchlist_cas` setelah `record_conviction()`
   menghasilkan point. Jangan menghitung panjang `_to_refresh` sebagai jumlah
   sukses: pool kosong, window tanpa swap, fetch/save exception harus tetap
-  gagal dan bisa dicoba lagi. Raw-swap prune di `cvd.update_token_cvd()`
-  memakai key comprehension (`key[2]`), bukan nama argumen lambda yang hanya
-  hidup di dalam lambda. Jaga lewat `tests/test_cvd_update.py`.
+  gagal dan bisa dicoba lagi. Backfill CVD default memakai **GMGN**, jadi
+  tidak boleh diblokir karena Helius key/pool DexScreener kosong; wajib cek
+  `update_token_cvd(..., use_gmgn=True)` mengembalikan `fetch_ok` sebelum
+  merekam conviction. Jika pagination GMGN partial/error, cursor/bucket lama
+  harus dipertahankan dan cron/manual **tidak boleh** membuat timestamp
+  conviction baru. Status stale juga wajib memakai `flow_freshness()` saja,
+  bukan `health_badge()` (quality/distribution advisory bukan data stale).
+  Raw-swap prune di `cvd.update_token_cvd()` memakai key comprehension
+  (`key[2]`), bukan nama argumen lambda yang hanya hidup di dalam lambda.
+  Jaga lewat `tests/test_cvd_update.py` + `tests/test_fetch_reliability.py`.
 - **Jangan commit `config.json`** (berisi API key, sudah di `.gitignore`).
 - **LP Radar 48h butuh ≥8 cron point (≥2 hari).** Sebelum itu, sparkline
   baris ke-4 mirror 24h supaya tidak misleading ke 0%. Konvensi ini di-

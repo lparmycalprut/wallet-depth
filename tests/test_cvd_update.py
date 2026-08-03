@@ -81,7 +81,7 @@ def test_dashboard_reports_actual_backfill_results():
 
     check("Backfilled {len(_to_refresh)}" not in block,
           "requested-token count is never shown as the success count")
-    check("Backfilled {len(_fr_succeeded)}" in block,
+    check("Di-refresh {len(_fr_succeeded)}" in block,
           "green notification counts only completed tokens")
     check("if _fr_failed:" in block and "st.error(" in block,
           "failed tokens produce non-success summary UI")
@@ -90,6 +90,19 @@ def test_dashboard_reports_actual_backfill_results():
         "st.session_state[_freshness_state_key].add", point_check)
     check(session_mark > point_check,
           "CA is marked refreshed only after a conviction point exists")
+    check("use_gmgn=True" in block and "if not helius_keys:" not in block,
+          "manual backfill uses GMGN without requiring a Helius key")
+    check("fetch_ok" in block,
+          "partial GMGN fetch is reported as a failed backfill")
+
+    freshness_start = source.index("# ⏰ Freshness sweep")
+    freshness_end = source.index("# Force-refresh button", freshness_start)
+    freshness = source[freshness_start:freshness_end]
+    check("flow_freshness(_fr_ca)" in freshness and
+          "health_badge(_fr_ca)" not in freshness,
+          "stale alert is based only on timestamp freshness, not health")
+    check("_very_stale = _ca in _very_stale_cas" in source,
+          "very-stale LP cards actually mask flow-derived values")
 
 
 def test_conviction_write_failure_is_reported():
