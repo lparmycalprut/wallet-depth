@@ -77,7 +77,12 @@ WINDOWS = [
 ]
 
 def _make_body(min_created, max_created):
-    """Body for one window — loose filters for dead tokens"""
+    """Body for one window — deliberately broad; client gates decide the mode.
+
+    GMGN's server-side filter is only a pre-filter.  Keep it no stricter than
+    the radar's local gates so a token with 50-79 holders, for example, is not
+    silently lost before :func:`is_incubation_candidate` can classify it.
+    """
     return {
         "meta": {},
         "params": [{
@@ -91,17 +96,22 @@ def _make_body(min_created, max_created):
                 "max_created": max_created,
                 "min_liquidity": 3000,
                 "min_marketcap": 3000,
-                "min_holder_count": 80,
+                "min_holder_count": 50,
                 "min_gas_fee": 2,
-                "max_insider_ratio": 0.30,
-                "max_bundler_rate": 0.35,
+                "max_insider_ratio": 0.35,
+                "max_bundler_rate": 0.45,
                 "min_volume_24h": 0,
             },
         }],
     }
 
 def _make_body_strict(min_created, max_created):
-    """Fallback strict body if loose returns 0 (GMGN sometimes needs renounced)"""
+    """Fallback body if the loose request returns 0.
+
+    This fallback is still only a server-side pre-filter.  The exact strict or
+    relaxed thresholds are applied locally below, rather than accidentally
+    using the old 5k/100-holder/15k-volume tuning here.
+    """
     return {
         "meta": {},
         "params": [{
@@ -111,12 +121,12 @@ def _make_body_strict(min_created, max_created):
                 "filters": ["migrated", "not_wash_trading", "renounced"],
                 "min_created": min_created,
                 "max_created": max_created,
-                "min_liquidity": 5000,
-                "min_marketcap": 5000,
-                "min_holder_count": 100,
-                "min_gas_fee": 5,
-                "max_insider_ratio": 0.25,
-                "max_bundler_rate": 0.30,
+                "min_liquidity": 3000,
+                "min_marketcap": 3000,
+                "min_holder_count": 50,
+                "min_gas_fee": 2,
+                "max_insider_ratio": 0.35,
+                "max_bundler_rate": 0.45,
                 "min_volume_24h": 0,
             },
         }],
@@ -185,52 +195,86 @@ def fetch_incubation(timeout=25, debug=False) -> List[Dict]:
 # Reuse scoring from gmgn_screener
 from gmgn_screener import score_token
 
-def is_incubation_candidate(row: Dict) -> tuple[bool, str]:
-    """Apply client-side Death Valley + CTO incubation filters.
-    Returns (ok, reason)
+def _number(row: Dict, *keys, default=0.0) -> float:
+    """Read a numeric radar field without letting a bad API value crash scan."""
+    for key in keys:
+        value = row.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            continue
+        if value == value and value not in (float("inf"), float("-inf")):
+            return value
+    return float(default)
+
+
+def is_incubation_candidate(row: Dict, relaxed: bool = False) -> tuple[bool, str]:
+    """Apply the CTO Death Valley gates to one scored row.
+
+    ``relaxed`` is the pre-CTO accumulation mode.  It widens the low-liq
+    boundary and Top-10 band, while keeping an absolute-volume ceiling.  The
+    strict 0.8x volume/MC gate gets a small 1.2x pre-CTO tolerance because the
+    two intended death-valley examples (RYDER and looong) currently read about
+    0.90x and 1.17x; the $45k liquidity cap still keeps RAKO/CATJAK out.  It
+    does *not* bring the old $80k-liquidity trending tokens back into the
+    accumulation radar.  All values below use the same units as
+    :func:`gmgn_screener.score_token`: dollars, percent for ``t10_pct``, and
+    fractions for wallet rates.
+
+    Returns ``(ok, reason)`` so the UI can show the first failed gate.
     """
-    # From score_token row
-    age = row.get("age_d", 0)
-    liq = row.get("liq", 0)
-    mc = row.get("mc", 0)
-    vol = row.get("vol24", 0)
-    holders = row.get("holders", 0)
-    t10 = row.get("t10_pct", 100)
-    liq_pct = row.get("liq_pct", 0)
-    insider = row.get("insider_ratio", 0)
-    bundler = row.get("bundler_rate", 0)
-    vol_mc = row.get("vol_mc", 0)
-    chg24 = row.get("chg24", 0)
+    age = _number(row, "age_d", "age", default=0)
+    liq = _number(row, "liq", "liquidity", default=0)
+    mc = _number(row, "mc", "marketcap", "market_cap", default=0)
+    vol = _number(row, "vol24", "volume", "volume_24h", default=0)
+    holders = _number(row, "holders", "holder_count", default=0)
+    t10 = _number(row, "t10_pct", "t10", "top10_pct", default=100)
+    insider = _number(row, "insider_ratio", "insider", default=0)
+    bundler = _number(row, "bundler_rate", "bundler", default=0)
+    fresh = _number(row, "fresh_wallet_rate", "fresh", "fresh_pct", default=0)
+    vol_mc = _number(row, "vol_mc", "volume_mc", default=0)
+    chg24 = _number(row, "chg24", default=0)
 
-    # Hard gates — based on 7 examples
-    if age < 2.0:
-        return False, f"age {age}d <2d"
-    if age > 70:
-        return False, f"age {age}d >70d"
-    if not (3000 <= liq <= 40000):
-        return False, f"liq ${liq:.0f} not in 3k-40k"
+    liq_max = 45000 if relaxed else 40000
+    vol_mc_max = 1.20 if relaxed else 0.80
+    t10_max = 55 if relaxed else 50
+    mode = "relaxed" if relaxed else "strict"
+
+    # Exact requested incubation window: 2-60 days.
+    if not (2.0 <= age <= 60.0):
+        return False, f"{mode}: age {age:g}d not in 2-60d"
+    if not (3000 <= liq <= liq_max):
+        return False, f"{mode}: liq ${liq:.0f} not in 3k-{liq_max // 1000}k"
     if not (3000 <= mc <= 600000):
-        return False, f"mc ${mc:.0f} not in 3k-600k"
-    if holders < 80 or holders > 6000:
-        return False, f"holders {holders} not 80-6000"
-    if t10 > 45:
-        return False, f"t10 {t10}% >45%"
-    if insider > 0.30 or bundler > 0.40:
-        return False, f"insider {insider*100:.0f}% bundler {bundler*100:.0f}% too high"
-    # Death valley: vol low
-    if vol > 15000:
-        return False, f"vol24 ${vol:.0f} >15k too active"
-    if vol_mc > 0.30:
-        return False, f"vol/mc {vol_mc} >0.3 too active"
-    # But not completely dead 0 vol (still need some tx history)
-    # Allow 0-15k
+        return False, f"{mode}: mc ${mc:.0f} not in 3k-600k"
+    if vol > 90000:
+        return False, f"{mode}: vol24 ${vol:.0f} >90k too active"
+    if vol_mc > vol_mc_max:
+        return False, f"{mode}: vol/mc {vol_mc:.2f}x >{vol_mc_max:.2f} too active"
+    if not (50 <= holders <= 6000):
+        return False, f"{mode}: holders {holders:g} not 50-6000"
+    if t10 > t10_max:
+        return False, f"{mode}: t10 {t10:.1f}% >{t10_max}%"
+    if insider > 0.35:
+        return False, f"{mode}: insider {insider * 100:.1f}% >35%"
+    if bundler > 0.45:
+        return False, f"{mode}: bundler {bundler * 100:.1f}% >45%"
+    if fresh > 0.50:
+        return False, f"{mode}: fresh {fresh * 100:.1f}% >50%"
 
-    # Extra signal: deep retrace or flat is good for bottom
-    # We don't gate on chg, just note
-    reason = f"age {age:.1f}d liq ${liq:.0f} mc ${mc:.0f} vol ${vol:.0f} ({vol_mc:.2f}x) t10 {t10}% holders {holders} chg24 {chg24}%"
+    reason = (
+        f"{mode}: age {age:.1f}d liq ${liq:.0f} mc ${mc:.0f} "
+        f"vol ${vol:.0f} ({vol_mc:.2f}x) t10 {t10:.1f}% "
+        f"holders {holders:.0f} insider {insider * 100:.1f}% "
+        f"bundler {bundler * 100:.1f}% fresh {fresh * 100:.1f}% chg24 {chg24:.1f}%"
+    )
     return True, reason
 
-def screen_incubation(debug=False):
+
+def screen_incubation(relaxed: bool = False, debug: bool = False):
+    """Fetch and classify incubation rows in strict or pre-CTO mode."""
     raw = fetch_incubation(debug=debug)
     print(f"Raw GMGN tokens from all windows: {len(raw)}") if debug else None
     rows = []
@@ -245,18 +289,16 @@ def screen_incubation(debug=False):
             continue
         seen.add(ca)
         row["_window"] = t.get("_window")
-        ok, reason = is_incubation_candidate(row)
+        ok, reason = is_incubation_candidate(row, relaxed=relaxed)
         row["_incubation_ok"] = ok
         row["_incubation_reason"] = reason
         rows.append(row)
-    # Split
     candidates = [r for r in rows if r["_incubation_ok"]]
     rejects = [r for r in rows if not r["_incubation_ok"]]
 
-    # Sort candidates by fit desc, then by low vol, then by holders
+    # Sort candidates by fit desc, then by low volume, then by holders.
     candidates.sort(key=lambda r: (-r.get("fit_exact", r["fit"]), r["vol24"], -r["holders"]))
     rejects.sort(key=lambda r: (-r.get("fit_exact", r["fit"])))
-
     return candidates, rejects, rows
 
 if __name__ == "__main__":
@@ -264,10 +306,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--limit", type=int, default=50)
+    parser.add_argument("--relaxed", action="store_true",
+                        help="pre-CTO mode: liq up to $45k and Top10 up to 55%")
     args = parser.parse_args()
 
-    candidates, rejects, all_rows = screen_incubation(debug=args.debug)
-    print(f"\n=== CTO INCUBATION RADAR ===")
+    candidates, rejects, all_rows = screen_incubation(relaxed=args.relaxed, debug=args.debug)
+    mode = "RELAXED / PRE-CTO" if args.relaxed else "STRICT / DEATH VALLEY"
+    print(f"\n=== CTO INCUBATION RADAR ({mode}) ===")
     print(f"Total scanned: {len(all_rows)} | Candidates: {len(candidates)} | Rejected: {len(rejects)}\n")
 
     if not candidates:

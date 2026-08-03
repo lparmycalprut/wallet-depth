@@ -12,6 +12,7 @@ Stage 2 of CTO Incubation Radar
 
 Usage:
   python cto_deep_scan.py --limit 20 --auto-watchlist --telegram
+  python cto_deep_scan.py --limit 4 --deep --relaxed
   python cto_deep_scan.py --ca <CA> --deep
 """
 
@@ -47,11 +48,25 @@ except Exception:
     load_conviction = lambda required_cas=None: {}
     get_recent_swaps = lambda ca, h: []
 
+def _load_local_watchlist():
+    """Small dependency-free fallback for cron/CLI environments.
+
+    The normal path uses ``watchlist.py`` (and GitHub persistence), but a
+    minimal local checkout may not have optional pandas/requests dependencies
+    installed.  A deep scan should still be able to inspect the four local
+    watchlist entries instead of silently scanning zero tokens.
+    """
+    try:
+        with open(os.path.join(BASE_DIR, "watchlist.json"), "r", encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
 try:
     from watchlist import add_to_watchlist, load_watchlist
 except Exception:
     add_to_watchlist = lambda ca, symbol="?", source="", **kw: False
-    load_watchlist = lambda: {}
+    load_watchlist = _load_local_watchlist
 
 try:
     from breakout_guard import send_telegram
@@ -161,8 +176,15 @@ def get_conviction_flip(ca: str):
     except Exception as e:
         return {"rising": False, "reason": f"error {e}", "last": None}
 
-def deep_scan_token(ca: str, do_cluster=False, helius_keys=None):
-    """Full deep scan for one CA"""
+def deep_scan_token(ca: str, relaxed: bool = False, do_cluster: bool = False,
+                    helius_keys=None):
+    """Full deep scan for one CA with an explicit accumulation mode.
+
+    Market gates are intentionally independent from the CTO/conviction checks:
+    a trending token must not become an accumulation candidate merely because
+    its conviction history is positive.  Strict mode uses $45k liquidity,
+    $90k volume and 50% Top-10; pre-CTO relaxed mode uses $50k, $100k and 55%.
+    """
     if helius_keys is None:
         helius_keys = tuple(get_helius_keys())
 
@@ -209,8 +231,12 @@ def deep_scan_token(ca: str, do_cluster=False, helius_keys=None):
                     "marketcap": latest.get("marketcap") or 0,
                     "liquidity_usd": 0,
                     "price_usd": latest.get("price") or 0,
-                    "volume": {"h24": latest.get("vol24",0)},
-                    "txns": {"h24": {"buys": latest.get("buys24",0), "sells": latest.get("sells24",0)}},
+                    "volume": {"h24": latest.get("vol24", 0)},
+                    "txns": {"h24": {"buys": latest.get("buys24", 0), "sells": latest.get("sells24", 0)}},
+                    # Cached snapshots are useful when Dex/GMGN is blocked.
+                    "t10_pct": latest.get("top10_pct"),
+                    "holders": latest.get("total_holders"),
+                    "fresh_wallet_rate": latest.get("fresh_wallet_rate"),
                 }
                 # estimate liq from liq_pct_mc
                 liq_pct = latest.get("liq_pct_mc") or 0
@@ -329,88 +355,123 @@ def deep_scan_token(ca: str, do_cluster=False, helius_keys=None):
     except Exception as e:
         result["reasons"].append(f"conviction check failed: {e}")
 
-    # 6. Pass criteria for CTO incubation
-    conc_top10 = result["concentration"].get("top10", None)
+    # 6. Pass criteria for CTO incubation.  These are deliberately explicit
+    # here instead of reusing the LP or GMGN trending thresholds: deep scan is
+    # the final guard against a trending token being treated as accumulation.
+    liq_max = 50000 if relaxed else 45000
+    vol_max = 100000 if relaxed else 90000
+    t10_max = 55 if relaxed else 50
+    mode = "relaxed/pre-CTO" if relaxed else "strict/death-valley"
+
+    # Volume is DexScreener's h24 value in the normal path and the cached
+    # history value in the offline path.
+    volume = m.get("volume") or {}
+    if isinstance(volume, dict):
+        vol = volume.get("h24", volume.get("24h", 0)) or 0
+    else:
+        vol = volume or 0
+    try:
+        vol = float(vol)
+    except (TypeError, ValueError):
+        vol = 0.0
+
+    # Prefer on-chain concentration, then cached/GMGN values.  A missing
+    # holder snapshot is neutral in no-Helius mode, as it was before; it must
+    # not turn a market-quality check into a false failure.
+    conc_top10 = result["concentration"].get("top10")
     if conc_top10 is None:
-        # no holder data - use GMGN fallback if available
-        try:
-            gmgn_raw = result.get("gmgn_stat",{}).get("raw",{}) or {}
-            # gmgn token_stat has top_10_holder_rate as 0-1
-            t10_rate = gmgn_raw.get("top_10_holder_rate")
-            if t10_rate is None:
-                t10_rate = (result.get("gmgn_stat",{}).get("raw",{}) or {}).get("top_10_holder_rate")
-            if t10_rate is not None:
-                conc_top10 = float(t10_rate)*100
-            else:
-                # try from gmgn token_stat earlier fetch
-                # if still none, set to 30 as neutral for no-helius mode
-                conc_top10 = 30.0
-        except:
-            conc_top10 = 30.0
+        for candidate in (m.get("t10_pct"), m.get("top10_pct"), m.get("t10")):
+            if candidate is not None:
+                try:
+                    conc_top10 = float(candidate)
+                    if 0 <= conc_top10 <= 1:
+                        conc_top10 *= 100
+                    break
+                except (TypeError, ValueError):
+                    pass
+    if conc_top10 is None:
+        gmgn_raw = result.get("gmgn_stat", {}).get("raw") or {}
+        t10_rate = gmgn_raw.get("top_10_holder_rate")
+        if t10_rate is not None:
+            try:
+                conc_top10 = float(t10_rate)
+                if 0 <= conc_top10 <= 1:
+                    conc_top10 *= 100
+            except (TypeError, ValueError):
+                conc_top10 = None
+    # No holder provider is a soft/neutral signal, not a reason to admit a
+    # token outside the market gates.
+    t10_known = conc_top10 is not None
+    if conc_top10 is None:
+        conc_top10 = 30.0
 
     health_score_val = result["health"].get("score", 0)
     has_helius = len(helius_keys) > 0
     conv_rising = result["conviction"].get("rising", False)
-    conv_reason = result["conviction"].get("reason","")
+    conv_reason = result["conviction"].get("reason", "")
     conv_data = result["conviction"].get("last") or {}
-    net_pure = conv_data.get("net_pure", 0) if conv_data else 0
-    persist = conv_data.get("persist_bonus",0) or result["conviction"].get("persist",0) or 0
-    ups = conv_data.get("consecutive_ups",0) or result["conviction"].get("ups",0) or 0
+    try:
+        net_pure = float(conv_data.get("net_pure", 0) or 0)
+    except (TypeError, ValueError):
+        net_pure = 0.0
 
     passes = []
     fails = []
 
-    if 3000 <= liq <= 40000:
-        passes.append(f"liq ${liq:.0f} in 3k-40k")
-    else:
-        fails.append(f"liq ${liq:.0f} NOT in 3k-40k")
+    liq_ok = 3000 <= liq <= liq_max
+    mc_ok = 3000 <= mc <= 1000000
+    vol_ok = vol <= vol_max
+    t10_ok = conc_top10 <= t10_max
 
-    if 3000 <= mc <= 600000:
-        passes.append(f"mc ${mc:.0f} in 3k-600k")
+    if liq_ok:
+        passes.append(f"liq ${liq:.0f} in 3k-{liq_max // 1000}k ({mode})")
     else:
-        fails.append(f"mc ${mc:.0f} NOT in 3k-600k")
-
-    if conc_top10 is not None and conc_top10 <= 45:
-        passes.append(f"top10 {conc_top10:.1f}% <=45%")
-    elif conc_top10 is None:
-        passes.append(f"top10 unknown (no helius)")
+        fails.append(f"liq ${liq:.0f} NOT in 3k-{liq_max // 1000}k ({mode})")
+    if mc_ok:
+        passes.append(f"mc ${mc:.0f} in 3k-1M")
     else:
-        # if no helius, don't hard fail on top10
-        if not has_helius:
-            passes.append(f"top10 {conc_top10:.1f}% >45% but no helius -> soft pass")
-        else:
-            fails.append(f"top10 {conc_top10:.1f}% >45%")
+        fails.append(f"mc ${mc:.0f} NOT in 3k-1M")
+    if vol_ok:
+        passes.append(f"vol24 ${vol:.0f} <=${vol_max // 1000}k")
+    else:
+        fails.append(f"vol24 ${vol:.0f} >${vol_max // 1000}k")
+    if t10_ok:
+        suffix = " (neutral/no holder snapshot)" if not t10_known else ""
+        passes.append(f"top10 {conc_top10:.1f}% <={t10_max}%{suffix}")
+    else:
+        fails.append(f"top10 {conc_top10:.1f}% >{t10_max}%")
 
+    health_ok = health_score_val >= 50 or not has_helius
     if health_score_val >= 50:
         passes.append(f"health {health_score_val} >=50")
+    elif not has_helius:
+        passes.append(f"health {health_score_val} soft (no helius)")
     else:
-        if not has_helius:
-            passes.append(f"health {health_score_val} <50 but no helius -> soft pass")
-        else:
-            fails.append(f"health {health_score_val} <50")
+        fails.append(f"health {health_score_val} <50")
 
     if result["cto"]:
         passes.append(f"CTO TRUE ({result['cto_detail']})")
     else:
-        passes.append(f"CTO false (early accum ok)")
+        passes.append("CTO false (early accumulation allowed)")
 
-    # conviction: need rising OR net_pure positive + persist
-    if conv_rising or (net_pure > 5 and (persist >=3 or ups>=1)):
-        passes.append(f"conviction rising/positive: {conv_reason} net {net_pure}")
+    # A positive latest pure-flow reading is enough for an early accumulation
+    # candidate; the old ``consecutive_ups`` shortcut admitted RAKO even while
+    # its latest net_pure had already turned negative.
+    conviction_ok = bool(result["cto"] or conv_rising or net_pure > 0)
+    if conviction_ok:
+        passes.append(f"conviction positive/rising: {conv_reason} net {net_pure:g}")
     else:
-        fails.append(f"conviction NOT rising: {conv_reason}")
+        fails.append(f"conviction NOT positive/rising: {conv_reason} net {net_pure:g}")
 
-    # Final verdict for no-helius mode: liq+mc pass AND (conviction positive OR CTO)
-    # For helius mode: also need top10 and health
-    if has_helius:
-        result["pass"] = (len([f for f in fails if "liq" in f or "mc" in f or "top10" in f or "health" in f]) == 0) and (result["cto"] or conv_rising or net_pure>10)
-    else:
-        # lenient for sandbox demo
-        liq_ok = 3000 <= liq <= 40000
-        mc_ok = 3000 <= mc <= 600000
-        conv_ok = conv_rising or net_pure > 0 or ups >=1
-        result["pass"] = liq_ok and mc_ok and conv_ok
-
+    result["deep_thresholds"] = {
+        "relaxed": relaxed,
+        "liq_max": liq_max,
+        "mc_min": 3000,
+        "mc_max": 1000000,
+        "vol_max": vol_max,
+        "t10_max": t10_max,
+    }
+    result["pass"] = all((liq_ok, mc_ok, vol_ok, t10_ok, health_ok, conviction_ok))
     result["reasons"] = passes + fails
 
     return result
@@ -464,10 +525,15 @@ def main():
     parser.add_argument("--auto-watchlist", action="store_true", help="auto add passing tokens to watchlist")
     parser.add_argument("--telegram", action="store_true", help="send telegram for hits")
     parser.add_argument("--from-radar", action="store_true", help="run incubation_radar first to get candidates")
+    parser.add_argument("--relaxed", action="store_true",
+                        help="pre-CTO mode: liq <=$50k, vol <=$100k, Top10 <=55%")
     args = parser.parse_args()
 
     helius_keys = tuple(get_helius_keys())
     print(f"Helius keys: {len(helius_keys)} configured")
+    print("Mode: " + ("RELAXED / PRE-CTO (liq <=$50k, vol <=$100k, T10 <=55%)"
+                       if args.relaxed else
+                       "STRICT / DEATH VALLEY (liq <=$45k, vol <=$90k, T10 <=50%)"))
 
     cas_to_scan = []
 
@@ -477,7 +543,7 @@ def main():
         print("Running incubation_radar to get candidates (2d min)...")
         try:
             from incubation_radar import screen_incubation
-            candidates, _, _ = screen_incubation(debug=False)
+            candidates, _, _ = screen_incubation(relaxed=args.relaxed, debug=False)
             cas_to_scan = [r["ca"] for r in candidates[:args.limit]]
             print(f"Radar found {len(cas_to_scan)} candidates")
         except Exception as e:
@@ -494,7 +560,7 @@ def main():
     results = []
     for i, ca in enumerate(cas_to_scan, 1):
         print(f"\n[{i}/{len(cas_to_scan)}] Deep scanning {ca}...")
-        res = deep_scan_token(ca, helius_keys=helius_keys)
+        res = deep_scan_token(ca, relaxed=args.relaxed, helius_keys=helius_keys)
         results.append(res)
         print(f"  Symbol: {res.get('symbol')} MC ${res.get('market',{}).get('marketcap',0):,.0f} Liq ${res.get('market',{}).get('liquidity_usd',0):,.0f}")
         print(f"  Top10 {res.get('concentration',{}).get('top10',0):.1f}% Health {res.get('health',{}).get('score',0)} CTO {res.get('cto')} {res.get('cto_detail')}")

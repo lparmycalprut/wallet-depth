@@ -27,10 +27,27 @@ with col1:
 with col2:
     st.metric("Max Age", "60 days", "incubation")
 with col3:
-    st.metric("Liq Target", "$3k-40k", "death valley")
+    st.metric("Liq Target", "$3k-40k strict", "$3k-45k relaxed")
 with col4:
     helius_keys = tuple(get_helius_keys())
     st.metric("Helius Keys", f"{len(helius_keys)}", "for deep scan" if helius_keys else "no key = soft")
+
+# Relaxed is the useful default for pre-CTO accumulation, but it remains a
+# low-liquidity mode — never the old $80k trending fallback.
+if "cto_relaxed" not in st.session_state:
+    st.session_state["cto_relaxed"] = True
+relaxed = st.checkbox(
+    "Relaxed / pre-CTO accumulation (default)",
+    key="cto_relaxed",
+    help="Strict: liq $3k-$40k, vol <=$90k, T10 <=50%. "
+         "Relaxed: liq $3k-$45k, vol <=$90k, T10 <=55%.",
+)
+st.info(
+    "Strict = death valley $3k-$40k, volume <=$90k.  "
+    "Relaxed = pre-CTO $3k-$45k, volume <=$90k, T10 <=55%.  "
+    "Both modes keep the low-liquidity accumulation boundary; trending "
+    "tokens belong in LP Safe Radar."
+)
 
 st.markdown("""
 **Pola 7 CTO:**
@@ -53,7 +70,7 @@ with tab1:
     if st.button("🔍 Scan Now (GMGN 2d-60d)", type="primary", key="scan_inc"):
         with st.spinner("Fetching 5 windows..."):
             try:
-                candidates, rejects, all_rows = screen_incubation(debug=False)
+                candidates, rejects, all_rows = screen_incubation(relaxed=relaxed, debug=False)
             except Exception as exc:
                 st.error(f"GMGN failed: {exc}")
                 candidates, rejects, all_rows = [], [], []
@@ -71,8 +88,10 @@ with tab1:
                 for ca, meta in wl.items():
                     if ca in hist:
                         last = hist[ca][sorted(hist[ca].keys())[-1]]
-                        if 3000 <= (last.get("marketcap",0)*last.get("liq_pct_mc",0)/100 if last.get("liq_pct_mc") else 0) <= 50000:
-                            fallback.append({"ca": ca, "symbol": meta.get("symbol","?"), "mc": last.get("marketcap",0), "liq": last.get("marketcap",0)*last.get("liq_pct_mc",0)/100, "age_d": 6, "fit": 60, "grade":"OK", "_incubation_reason":"fallback watchlist", "vol24": last.get("vol24",0)})
+                        fallback_liq = (last.get("marketcap", 0) * last.get("liq_pct_mc", 0) / 100
+                                       if last.get("liq_pct_mc") else 0)
+                        if 3000 <= fallback_liq <= 45000:
+                            fallback.append({"ca": ca, "symbol": meta.get("symbol","?"), "mc": last.get("marketcap",0), "liq": fallback_liq, "age_d": 6, "fit": 60, "grade":"OK", "_incubation_reason":"fallback watchlist (liq <=45k)", "vol24": last.get("vol24",0)})
             except Exception as e:
                 st.error(f"fallback error {e}")
             if fallback:
@@ -134,7 +153,7 @@ with tab2:
         for i, ca in enumerate(cas_to_scan[:limit]):
             prog.progress((i+1)/len(cas_to_scan[:limit]), text=f"Scanning {i+1}/{len(cas_to_scan[:limit])} {ca[:8]}...")
             try:
-                res = deep_scan_token(ca, do_cluster=do_cluster, helius_keys=helius_keys)
+                res = deep_scan_token(ca, relaxed=relaxed, do_cluster=do_cluster, helius_keys=helius_keys)
                 results.append(res)
             except Exception as e:
                 st.error(f"{ca} failed: {e}")
