@@ -10,6 +10,23 @@ Stage 2 of CTO Incubation Radar
 4. Check conviction flip via conviction.json (rising, persist bonus, net_pure)
 5. Auto-add to watchlist + Telegram if passes
 
+MARKET DATA AUTHORITY
+---------------------
+GMGN is the ONLY authoritative market source for the CTO Incubation Radar.
+GMGN counts transactions across ALL pools of a token, while DexScreener
+reads a single pair (e.g. MEMIPEDE vol24: GMGN ~$70k vs Dex ~$45k on the
+deepest pair only) — mixing them makes Stage 1 and Stage 2 disagree.
+
+- Stage 1 passes its scored GMGN row into ``deep_scan_token(..., gmgn_row=row)``
+  so Stage 2 gates (MC / liquidity / volume / vol-MC / holders / T10) run on
+  the exact numbers the radar admitted.
+- ``--ca`` / watchlist scans fetch a live per-CA GMGN snapshot
+  (:func:`fetch_gmgn_market_row`) instead of calling DexScreener.
+- If no GMGN snapshot is available the scan FAILS CLOSED with the reason
+  "GMGN market snapshot unavailable"; history.json is no longer a market
+  fallback.  DexScreener is still used for metadata only: CTO claim
+  detection, pair links, and GMGN-vs-Dex divergence logging.
+
 Usage:
   python cto_deep_scan.py --limit 20 --auto-watchlist --telegram
   python cto_deep_scan.py --limit 4 --deep --relaxed
@@ -176,14 +193,262 @@ def get_conviction_flip(ca: str):
     except Exception as e:
         return {"rising": False, "reason": f"error {e}", "last": None}
 
+# ---------------------------------------------------------------------------
+# GMGN market authority helpers
+# ---------------------------------------------------------------------------
+def _num(*values, default=0.0) -> float:
+    """First finite numeric among *values* (GMGN sends strings/None)."""
+    for v in values:
+        if v is None or isinstance(v, bool) or v == "":
+            continue
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            continue
+        if f != f or f in (float("inf"), float("-inf")):   # NaN / ±inf
+            continue
+        return f
+    return float(default)
+
+
+def market_from_gmgn_row(gmgn_row, ca: str = None) -> dict:
+    """Build the deep-scan market snapshot from a GMGN row.
+
+    Accepts a scored row from ``gmgn_screener.score_token`` / the incubation
+    radar (``mc`` / ``liq`` / ``vol24`` / …) or a raw-ish dict with the long
+    GMGN aliases, and returns the ``get_market``-shaped dict the gate logic
+    consumes — but tagged ``market_source = "gmgn"`` so no caller can
+    silently mix it with DexScreener numbers.  Every metric the gates use
+    (MC, liquidity, vol24, vol/MC, holders, T10, risk fields) comes from the
+    same row, which is exactly what keeps Stage 1 and Stage 2 consistent.
+
+    Returns ``{}`` when the row carries no usable market cap — that is the
+    "snapshot unavailable" case and the caller must fail closed instead of
+    back-filling from DexScreener/history.
+    """
+    if not isinstance(gmgn_row, dict) or not gmgn_row:
+        return {}
+    # Never mislabel a history/Dex fallback as GMGN-authoritative.
+    explicit_src = gmgn_row.get("market_source") or gmgn_row.get("_source")
+    if explicit_src not in (None, "", "gmgn"):
+        return {}
+    mc = _num(gmgn_row.get("mc"), gmgn_row.get("marketcap"),
+              gmgn_row.get("market_cap"), gmgn_row.get("usd_market_cap"))
+    if mc <= 0:
+        return {}
+    liq = _num(gmgn_row.get("liq"), gmgn_row.get("liquidity_usd"),
+               gmgn_row.get("liquidity"), gmgn_row.get("lq"))
+    vol_raw = gmgn_row.get("vol24")
+    if vol_raw is None:
+        vol_field = gmgn_row.get("volume")
+        if isinstance(vol_field, dict):
+            vol_raw = vol_field.get("h24", vol_field.get("24h"))
+        elif vol_field is not None:
+            vol_raw = vol_field
+    vol = _num(vol_raw, gmgn_row.get("volume_24h"), gmgn_row.get("v"))
+
+    t10 = gmgn_row.get("t10_pct")
+    if t10 is None:
+        t10 = gmgn_row.get("top_10_holder_rate")
+    if t10 is not None:
+        try:
+            t10 = float(t10)
+            if t10 != t10 or t10 in (float("inf"), float("-inf")):
+                t10 = None
+            elif 0 < t10 <= 1:
+                t10 *= 100     # raw rate (0-1) -> percent
+        except (TypeError, ValueError):
+            t10 = None
+
+    vol_mc = _num(gmgn_row.get("vol_mc"))
+    if not vol_mc and mc and vol:
+        vol_mc = vol / mc
+
+    addr = gmgn_row.get("ca") or gmgn_row.get("a") or ca
+    return {
+        "symbol": gmgn_row.get("symbol") or gmgn_row.get("s") or "?",
+        "name": gmgn_row.get("name") or gmgn_row.get("nm") or "",
+        "price_usd": _num(gmgn_row.get("price_usd"), gmgn_row.get("price"),
+                          gmgn_row.get("p")),
+        "marketcap": mc,
+        "liquidity_usd": liq,
+        "liq_pct_mc": (liq / mc * 100) if mc else 0,
+        "volume": {"h24": vol},
+        "vol_mc": round(vol_mc, 4),
+        "holders": _num(gmgn_row.get("holders"), gmgn_row.get("holder_count"),
+                        gmgn_row.get("hd")),
+        "t10_pct": t10,
+        "age_d": _num(gmgn_row.get("age_d")),
+        "chg24": _num(gmgn_row.get("chg24"), gmgn_row.get("pcp")),
+        # risk fields for the safety gates & health display
+        "insider_ratio": _num(gmgn_row.get("insider_ratio"),
+                              gmgn_row.get("dev_team_hold_rate")),
+        "bundler_rate": _num(gmgn_row.get("bundler_rate"),
+                             gmgn_row.get("top_bundler_trader_percentage")),
+        "fresh_wallet_rate": _num(gmgn_row.get("fresh_wallet_rate"),
+                                  gmgn_row.get("fwr")),
+        "entrap_rate": _num(gmgn_row.get("entrap_rate"),
+                            gmgn_row.get("top_entrapment_trader_percentage")),
+        "botdegen_rate": _num(gmgn_row.get("botdegen_rate"),
+                              gmgn_row.get("bot_degen_rate")),
+        "rug": _num(gmgn_row.get("rug"), gmgn_row.get("rug_ratio")),
+        "market_source": "gmgn",
+        "url": f"https://gmgn.ai/sol/token/{addr}" if addr else "",
+    }
+
+
+def _fetch_gmgn_token_prices(ca: str, timeout: int = 15):
+    """POST /api/v1/token_prices — best-effort mc/liq/vol/price for one CA.
+
+    Response shape is undocumented (the HAR capture only recorded the call),
+    so the parser accepts dict/list payloads and the usual GMGN field
+    aliases.  Returns a small dict of positive numbers or ``None``.
+    """
+    try:
+        from curl_cffi import requests as cr
+    except ImportError:
+        return None
+    try:
+        r = cr.post(
+            "https://gmgn.ai/api/v1/token_prices",
+            json={"chain": "sol", "interval": "24h", "addresses": [ca]},
+            headers={
+                "content-type": "application/json",
+                "accept": "application/json, text/plain, */*",
+                "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                               "AppleWebKit/537.36 (KHTML, like Gecko) "
+                               "Chrome/150.0.0.0 Safari/537.36"),
+            },
+            impersonate="chrome", timeout=timeout)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+    except Exception:
+        return None
+    item = None
+    payload = data.get("data") if isinstance(data, dict) else None
+    if isinstance(payload, dict):
+        item = payload.get(ca)
+        if item is None:
+            item = next(iter(payload.values()), None)
+    elif isinstance(payload, list) and payload:
+        item = payload[0]
+    elif isinstance(data, list) and data:
+        item = data[0]
+    if not isinstance(item, dict):
+        return None
+    out = {
+        "p": _num(item.get("price"), item.get("usd_price"), item.get("p")),
+        "mc": _num(item.get("usd_market_cap"), item.get("market_cap"),
+                   item.get("mc")),
+        "lq": _num(item.get("liquidity"), item.get("lq")),
+        "v": _num(item.get("volume"), item.get("volume_24h"), item.get("v")),
+    }
+    return {k: v for k, v in out.items() if v > 0} or None
+
+
+def fetch_gmgn_market_row(ca: str, timeout: int = 15):
+    """Best-effort live GMGN market snapshot for a single CA.
+
+    Used only when no Stage-1 radar row was handed in (``--ca`` / watchlist
+    scans).  Combines ``gmgn_token_stat`` (rich holder/risk fields, long-form
+    market aliases) and, when no market cap was found there, the batch
+    ``token_prices`` endpoint, then normalises through
+    ``gmgn_screener.score_token`` so the row has the exact same shape as a
+    Stage-1 radar row.
+
+    Returns ``(row, stat)`` on success, ``None`` when GMGN has no usable
+    snapshot for this CA.
+    """
+    try:
+        stat = gmgn_token_stat(ca, timeout=timeout) or {}
+    except Exception:
+        stat = {}
+    if not isinstance(stat, dict):
+        stat = {}
+    raw = stat.get("raw")
+    merged = dict(raw) if isinstance(raw, dict) else {}
+    if _num(merged.get("mc"), merged.get("market_cap"),
+            merged.get("usd_market_cap")) <= 0:
+        prices = _fetch_gmgn_token_prices(ca, timeout=timeout)
+        if prices:
+            for k, v in prices.items():
+                if v not in (None, ""):
+                    merged[k] = v
+    if not merged:
+        return None
+    merged.setdefault("a", ca)
+    merged.setdefault("address", ca)
+    try:
+        from gmgn_screener import score_token
+        row = score_token(merged) or {}
+    except Exception:
+        return None
+    if not row.get("ca"):
+        row["ca"] = ca
+    if not row.get("holders") and stat.get("total_holders"):
+        row["holders"] = stat["total_holders"]
+    if _num(row.get("mc")) <= 0:
+        return None
+    return row, stat
+
+
+def _divergence_notes(gmgn_market: dict, dex_market: dict,
+                      rel_tol: float = 0.10, abs_tol: float = 1500.0) -> list:
+    """Human-readable GMGN-vs-DexScreener divergence warnings.
+
+    GMGN aggregates transactions across all pools of a token while
+    DexScreener reports the single deepest pair, so mismatches (e.g.
+    MEMIPEDE vol24 $70k GMGN vs $45k Dex) are expected.  Each note states
+    explicitly that the GMGN figure is the authoritative one.  Returns an
+    empty list when either side is missing or all metrics agree within
+    ``max(abs_tol, rel_tol * value)``.
+    """
+    notes = []
+    if not gmgn_market or not dex_market:
+        return notes
+    dex_vol = dex_market.get("volume")
+    dex_vol24 = dex_vol.get("h24") if isinstance(dex_vol, dict) else None
+    metrics = [
+        ("mc", gmgn_market.get("marketcap"), dex_market.get("marketcap")),
+        ("liq", gmgn_market.get("liquidity_usd"),
+         dex_market.get("liquidity_usd")),
+        ("vol24", (gmgn_market.get("volume") or {}).get("h24"), dex_vol24),
+    ]
+    for label, g_val, d_val in metrics:
+        try:
+            g_val = float(g_val or 0)
+            d_val = float(d_val or 0)
+        except (TypeError, ValueError):
+            continue
+        if g_val <= 0 or d_val <= 0:
+            continue
+        diff = abs(g_val - d_val)
+        if diff > max(abs_tol, rel_tol * max(g_val, d_val)):
+            notes.append(
+                f"GMGN {label} ${g_val:,.0f} vs DexScreener ${d_val:,.0f} "
+                f"(divergence {diff / max(g_val, d_val) * 100:.0f}%) — "
+                "GMGN authoritative")
+    return notes
+
+
 def deep_scan_token(ca: str, relaxed: bool = False, do_cluster: bool = False,
-                    helius_keys=None):
+                    helius_keys=None, gmgn_row=None):
     """Full deep scan for one CA with an explicit accumulation mode.
 
     Market gates are intentionally independent from the CTO/conviction checks:
     a trending token must not become an accumulation candidate merely because
     its conviction history is positive.  Strict mode uses $45k liquidity,
     $90k volume and 50% Top-10; pre-CTO relaxed mode uses $50k, $100k and 55%.
+
+    ``gmgn_row`` is the Stage-1 incubation-radar row for this CA.  When it is
+    provided, every market metric the gates read (MC / liquidity / vol24 /
+    vol-MC / holders / T10 / risk fields) comes from that row, so Stage 2 can
+    never disagree with the numbers the radar admitted.  Without a row the
+    scan tries a live GMGN snapshot (:func:`fetch_gmgn_market_row`).  If no
+    GMGN snapshot exists the scan FAILS CLOSED — DexScreener and history.json
+    are never used for MC/liquidity/volume/pass criteria, only for CTO claim
+    detection, links, symbol metadata, and divergence logging.
     """
     if helius_keys is None:
         helius_keys = tuple(get_helius_keys())
@@ -192,6 +457,10 @@ def deep_scan_token(ca: str, relaxed: bool = False, do_cluster: bool = False,
         "ca": ca,
         "symbol": "?",
         "market": {},
+        "market_source": None,
+        "market_divergence": [],
+        "market_notes": [],
+        "dex_market": {},
         "holders": None,
         "supply": 0,
         "decimals": 6,
@@ -206,55 +475,71 @@ def deep_scan_token(ca: str, relaxed: bool = False, do_cluster: bool = False,
         "reasons": [],
     }
 
-    # 1. Market - try DexScreener, fallback to history.json
+    # 1. Market — GMGN ONLY (see module docstring).  Priority: the Stage-1
+    # radar row handed in by the caller, then a live per-CA GMGN snapshot.
+    # DexScreener/history fallbacks were removed on purpose (PR follow-up):
+    # Dex reads one pool, GMGN counts all of them, and silently mixing the
+    # two sources is exactly what made Stage 1 and Stage 2 numbers differ.
     m = {}
-    try:
-        m = get_market(ca)
-        result["market"] = m
-        result["symbol"] = m.get("symbol", "?")
-    except Exception as e:
-        result["reasons"].append(f"market fetch failed: {e}")
-    
-    # Fallback to history.json if market empty (sandbox SSL block)
-    if not m or not m.get("marketcap"):
+    prefetched_stat = {}
+    gmgn_origin = None
+    if isinstance(gmgn_row, dict) and gmgn_row:
+        m = market_from_gmgn_row(gmgn_row, ca=ca)
+        if m:
+            gmgn_origin = "radar row"
+        else:
+            result["market_notes"].append(
+                "gmgn_row supplied but unusable (no GMGN mc field)")
+    if not m:
         try:
-            hist_path = os.path.join(BASE_DIR, "history.json")
-            with open(hist_path, "r") as f:
-                hist = json.load(f) or {}
-            if ca in hist:
-                # get latest entry
-                entries = hist[ca]
-                latest_key = sorted(entries.keys())[-1]
-                latest = entries[latest_key]
-                m = {
-                    "symbol": latest.get("symbol") or entries[latest_key].get("name") or "?",
-                    "marketcap": latest.get("marketcap") or 0,
-                    "liquidity_usd": 0,
-                    "price_usd": latest.get("price") or 0,
-                    "volume": {"h24": latest.get("vol24", 0)},
-                    "txns": {"h24": {"buys": latest.get("buys24", 0), "sells": latest.get("sells24", 0)}},
-                    # Cached snapshots are useful when Dex/GMGN is blocked.
-                    "t10_pct": latest.get("top10_pct"),
-                    "holders": latest.get("total_holders"),
-                    "fresh_wallet_rate": latest.get("fresh_wallet_rate"),
-                }
-                # estimate liq from liq_pct_mc
-                liq_pct = latest.get("liq_pct_mc") or 0
-                mc_val = latest.get("marketcap") or 0
-                if liq_pct and mc_val:
-                    m["liquidity_usd"] = mc_val * liq_pct / 100
-                result["market"] = m
-                result["symbol"] = m.get("symbol","?")
-                result["reasons"].append(f"fallback history {latest_key} MC ${mc_val:.0f}")
+            fetched = fetch_gmgn_market_row(ca)
         except Exception as e:
-            result["reasons"].append(f"history fallback failed: {e}")
+            fetched = None
+            result["market_notes"].append(f"live GMGN snapshot error: {e}")
+        if fetched:
+            live_row, prefetched_stat = fetched
+            m = market_from_gmgn_row(live_row, ca=ca)
+            if m:
+                gmgn_origin = "live snapshot"
+    if m:
+        result["market"] = m
+        result["market_source"] = "gmgn"
+        if m.get("symbol") and m.get("symbol") != "?":
+            result["symbol"] = m.get("symbol")
+    else:
+        result["market"] = {"market_source": None}
+
+    # DexScreener — metadata ONLY: symbol/url hints for display and the
+    # divergence log below.  Its MC/liquidity/volume are never written into
+    # ``result["market"]`` and never feed a gate.
+    dex_m = {}
+    try:
+        dex_m = get_market(ca) or {}
+    except Exception as e:
+        result["market_notes"].append(f"dex metadata fetch failed: {e}")
+    if dex_m:
+        try:
+            result["dex_market"] = {
+                "symbol": dex_m.get("symbol"),
+                "url": dex_m.get("url"),
+                "marketcap": dex_m.get("marketcap"),
+                "liquidity_usd": dex_m.get("liquidity_usd"),
+                "volume_h24": ((dex_m.get("volume") or {}).get("h24")
+                               if isinstance(dex_m.get("volume"), dict) else None),
+            }
+        except Exception:
+            result["dex_market"] = {}
+        if (not result["symbol"] or result["symbol"] == "?") and dex_m.get("symbol"):
+            # Display metadata only — allowed.
+            result["symbol"] = dex_m["symbol"]
+    result["market_divergence"] = _divergence_notes(m, dex_m) if m else []
+    result["market_notes"].extend(result["market_divergence"])
+    for _note in result["market_divergence"]:
+        print(f"  [market-source] {_note}")
 
     price = m.get("price_usd") or m.get("price") or 0
     mc = m.get("marketcap") or m.get("mc") or 0
     liq = m.get("liquidity_usd") or m.get("liq") or 0
-    # also try liq from liq_pct if still 0
-    if liq == 0 and mc and m.get("liq_pct_mc"):
-        liq = mc * float(m.get("liq_pct_mc",0)) / 100
 
     # 2. Holders via Helius or GMGN fallback
     holders_df = None
@@ -272,9 +557,10 @@ def deep_scan_token(ca: str, relaxed: bool = False, do_cluster: bool = False,
             result["reasons"].append(f"helius holders failed: {e}")
     
     if holders_df is None or (hasattr(holders_df, 'empty') and holders_df.empty):
-        # fallback GMGN top10
+        # fallback GMGN top10 (reuse the stat already fetched for the live
+        # market snapshot when we have it — saves one GMGN round-trip)
         try:
-            gmgn_stat = gmgn_token_stat(ca)
+            gmgn_stat = prefetched_stat or gmgn_token_stat(ca)
             holders = gmgn_stat.get("holders") or []
             # construct pseudo df
             import pandas as pd
@@ -363,8 +649,8 @@ def deep_scan_token(ca: str, relaxed: bool = False, do_cluster: bool = False,
     t10_max = 55 if relaxed else 50
     mode = "relaxed/pre-CTO" if relaxed else "strict/death-valley"
 
-    # Volume is DexScreener's h24 value in the normal path and the cached
-    # history value in the offline path.
+    # Volume is GMGN's 24h value (cross-pool ``v``), marked h24 in the
+    # snapshot dict.  Never substitute DexScreener's single-pair h24 here.
     volume = m.get("volume") or {}
     if isinstance(volume, dict):
         vol = volume.get("h24", volume.get("24h", 0)) or 0
@@ -375,20 +661,23 @@ def deep_scan_token(ca: str, relaxed: bool = False, do_cluster: bool = False,
     except (TypeError, ValueError):
         vol = 0.0
 
-    # Prefer on-chain concentration, then cached/GMGN values.  A missing
-    # holder snapshot is neutral in no-Helius mode, as it was before; it must
-    # not turn a market-quality check into a false failure.
-    conc_top10 = result["concentration"].get("top10")
+    # T10 priority: the GMGN row first (authoritative — the same value the
+    # radar admitted), then on-chain Helius concentration, then the raw
+    # token_stat rate.  A missing holder snapshot is neutral in no-Helius
+    # mode, as it was before; it must not turn a market-quality check into a
+    # false failure.
+    conc_top10 = None
+    for candidate in (m.get("t10_pct"), m.get("top10_pct"), m.get("t10")):
+        if candidate is not None:
+            try:
+                conc_top10 = float(candidate)
+                if 0 < conc_top10 <= 1:
+                    conc_top10 *= 100
+                break
+            except (TypeError, ValueError):
+                pass
     if conc_top10 is None:
-        for candidate in (m.get("t10_pct"), m.get("top10_pct"), m.get("t10")):
-            if candidate is not None:
-                try:
-                    conc_top10 = float(candidate)
-                    if 0 <= conc_top10 <= 1:
-                        conc_top10 *= 100
-                    break
-                except (TypeError, ValueError):
-                    pass
+        conc_top10 = result["concentration"].get("top10")
     if conc_top10 is None:
         gmgn_raw = result.get("gmgn_stat", {}).get("raw") or {}
         t10_rate = gmgn_raw.get("top_10_holder_rate")
@@ -418,22 +707,37 @@ def deep_scan_token(ca: str, relaxed: bool = False, do_cluster: bool = False,
     passes = []
     fails = []
 
-    liq_ok = 3000 <= liq <= liq_max
-    mc_ok = 3000 <= mc <= 1000000
-    vol_ok = vol <= vol_max
+    # Fail closed: without an authoritative GMGN snapshot the market gates
+    # cannot pass.  DexScreener/history numbers are intentionally NOT read
+    # here — gate on what we actually know and say so loudly.
+    market_known = bool(m)
+    if market_known:
+        liq_ok = 3000 <= liq <= liq_max
+        mc_ok = 3000 <= mc <= 1000000
+        vol_ok = vol <= vol_max
+    else:
+        liq_ok = mc_ok = vol_ok = False
     t10_ok = conc_top10 <= t10_max
 
-    if liq_ok:
+    if market_known:
+        passes.append(f"market source: GMGN ({gmgn_origin or 'snapshot'})")
+    else:
+        fails.append("GMGN market snapshot unavailable — fail closed "
+                     "(DexScreener/history not allowed for market gates)")
+
+    if not market_known:
+        pass  # the market gate lines below would be pure noise without data
+    elif liq_ok:
         passes.append(f"liq ${liq:.0f} in 3k-{liq_max // 1000}k ({mode})")
     else:
         fails.append(f"liq ${liq:.0f} NOT in 3k-{liq_max // 1000}k ({mode})")
-    if mc_ok:
+    if market_known and mc_ok:
         passes.append(f"mc ${mc:.0f} in 3k-1M")
-    else:
+    elif market_known:
         fails.append(f"mc ${mc:.0f} NOT in 3k-1M")
-    if vol_ok:
+    if market_known and vol_ok:
         passes.append(f"vol24 ${vol:.0f} <=${vol_max // 1000}k")
-    else:
+    elif market_known:
         fails.append(f"vol24 ${vol:.0f} >${vol_max // 1000}k")
     if t10_ok:
         suffix = " (neutral/no holder snapshot)" if not t10_known else ""
@@ -470,8 +774,12 @@ def deep_scan_token(ca: str, relaxed: bool = False, do_cluster: bool = False,
         "mc_max": 1000000,
         "vol_max": vol_max,
         "t10_max": t10_max,
+        "market_source": result.get("market_source"),
     }
-    result["pass"] = all((liq_ok, mc_ok, vol_ok, t10_ok, health_ok, conviction_ok))
+    # ``market_known`` is redundant (liq/mc/vol already fail closed) but kept
+    # explicit so a future refactor cannot re-open the gate accidentally.
+    result["pass"] = market_known and all(
+        (liq_ok, mc_ok, vol_ok, t10_ok, health_ok, conviction_ok))
     result["reasons"] = passes + fails
 
     return result
@@ -499,9 +807,11 @@ def auto_watchlist_and_telegram(candidates, do_telegram=True):
         ok = add_to_watchlist(ca_str, symbol=symbol, source="cto_radar", note=f"CTO radar {datetime.now().isoformat()} {res.get('cto_detail','')} {res.get('conviction',{}).get('reason','')[:80]}")
         if ok:
             added.append(res)
+            src = (res.get("market", {}) or {}).get("market_source") or "?"
             msg = (
                 f"💀 CTO Radar Hit: ${symbol} ({ca_str[:8]}...)\n"
-                f"MC ${res.get('market',{}).get('marketcap',0):,.0f} Liq ${res.get('market',{}).get('liquidity_usd',0):,.0f}\n"
+                f"Market source: {src.upper()}\n"
+                f"MC ${res.get('market',{}).get('marketcap',0):,.0f} Liq ${res.get('market',{}).get('liquidity_usd',0):,.0f} Vol24 ${(res.get('market',{}).get('volume') or {}).get('h24',0):,.0f}\n"
                 f"Top10 {res.get('concentration',{}).get('top10',0):.1f}% Health {res.get('health',{}).get('score',0)}\n"
                 f"CTO: {res.get('cto')} {res.get('cto_detail')}\n"
                 f"Conv: {res.get('conviction',{}).get('reason','')}\n"
@@ -536,6 +846,7 @@ def main():
                        "STRICT / DEATH VALLEY (liq <=$45k, vol <=$90k, T10 <=50%)"))
 
     cas_to_scan = []
+    gmgn_rows = {}
 
     if args.ca:
         cas_to_scan = [args.ca]
@@ -545,7 +856,11 @@ def main():
             from incubation_radar import screen_incubation
             candidates, _, _ = screen_incubation(relaxed=args.relaxed, debug=False)
             cas_to_scan = [r["ca"] for r in candidates[:args.limit]]
-            print(f"Radar found {len(cas_to_scan)} candidates")
+            # Keep the CA -> GMGN row mapping so Stage 2 gates run on the
+            # exact market numbers Stage 1 admitted (GMGN is authoritative —
+            # DexScreener single-pair metrics must never overwrite them).
+            gmgn_rows = {r["ca"]: r for r in candidates[:args.limit] if r.get("ca")}
+            print(f"Radar found {len(cas_to_scan)} candidates (GMGN rows attached: {len(gmgn_rows)})")
         except Exception as e:
             print(f"radar failed: {e}")
             # fallback to watchlist
@@ -556,16 +871,27 @@ def main():
         wl = load_watchlist()
         cas_to_scan = list(wl.keys())[:args.limit]
         print(f"Scanning watchlist {len(cas_to_scan)} tokens")
+        print("No radar rows — each token gets a live GMGN snapshot; "
+              "without one the scan fails closed (Dex/history not used for gates)")
 
     results = []
     for i, ca in enumerate(cas_to_scan, 1):
         print(f"\n[{i}/{len(cas_to_scan)}] Deep scanning {ca}...")
-        res = deep_scan_token(ca, relaxed=args.relaxed, helius_keys=helius_keys)
+        res = deep_scan_token(ca, relaxed=args.relaxed, helius_keys=helius_keys,
+                              gmgn_row=gmgn_rows.get(ca))
         results.append(res)
-        print(f"  Symbol: {res.get('symbol')} MC ${res.get('market',{}).get('marketcap',0):,.0f} Liq ${res.get('market',{}).get('liquidity_usd',0):,.0f}")
-        print(f"  Top10 {res.get('concentration',{}).get('top10',0):.1f}% Health {res.get('health',{}).get('score',0)} CTO {res.get('cto')} {res.get('cto_detail')}")
+        mkt = res.get("market") or {}
+        src = mkt.get("market_source") or "UNAVAILABLE"
+        vol24 = (mkt.get("volume") or {}).get("h24", 0) or 0
+        print(f"  Market source: {src.upper() if src != 'UNAVAILABLE' else src} | "
+              f"Symbol: {res.get('symbol')} MC ${mkt.get('marketcap',0):,.0f} "
+              f"Liq ${mkt.get('liquidity_usd',0):,.0f} Vol24 ${vol24:,.0f} "
+              f"(vol/mc {mkt.get('vol_mc',0)})")
+        for note in res.get("market_divergence") or []:
+            print(f"  ⚠ {note}")
+        print(f"  Top10 {res.get('concentration',{}).get('top10',0):.1f}% (on-chain) GMGN T10 {mkt.get('t10_pct','?')}% Health {res.get('health',{}).get('score',0)} CTO {res.get('cto')} {res.get('cto_detail')}")
         print(f"  Conviction: {res.get('conviction',{}).get('reason','')}")
-        print(f"  Pass: {res.get('pass')} Reasons: {' | '.join(res.get('reasons',[])[:5])}")
+        print(f"  Pass: {res.get('pass')} Reasons: {' | '.join(res.get('reasons',[])[:6])}")
 
     passing = [r for r in results if r.get("pass")]
     print(f"\n=== SUMMARY ===")

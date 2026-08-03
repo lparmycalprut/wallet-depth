@@ -7,6 +7,88 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-03 — CTO Incubation Radar: GMGN jadi satu-satunya market source (lanjutan PR #38)
+
+### Yang berubah
+
+1. **`cto_deep_scan.deep_scan_token()` berhenti memakai DexScreener +
+   `history.json` untuk market gates.** Signature baru
+   `deep_scan_token(ca, relaxed=False, do_cluster=False, helius_keys=None,
+   gmgn_row=None)`. Bila `gmgn_row` (row hasil `screen_incubation`)
+   diserahkan, snapshot market dibangun murni dari row itu
+   (`market_from_gmgn_row`): `marketcap`←`mc`, `liquidity_usd`←`liq`,
+   `volume.h24`←`vol24`, plus symbol/holders/T10/vol-MC/risk fields, dan
+   di-tag `market_source = "gmgn"`. Kalau tidak ada row, scan mengambil
+   snapshot GMGN live (`fetch_gmgn_market_row`: `token_stat` + best-effort
+   `token_prices`, dinormalisasi lewat `score_token`). Kalau keduanya tidak
+   tersedia → **fail closed** dengan reason `GMGN market snapshot
+   unavailable`; Dex/history tidak pernah dipakai untuk MC/liquidity/
+   volume/pass criteria.
+2. **DexScreener tetap dipakai sebagai metadata saja**: CTO claim detection
+   (page DexScreener, tidak berubah), symbol/url display, dan divergence
+   logging `_divergence_notes()` (mis. `GMGN vol24 $70,000 vs DexScreener
+   $45,000 (divergence 36%) — GMGN authoritative` → `market_divergence` +
+   print CLI + warning di page 7).
+3. **T10 gate memprioritaskan row GMGN** → baru konsentrasi on-chain Helius
+   → baru token_stat mentah. Helius tetap jalan untuk holders/real-dust/
+   health display.
+4. **CLI `cto_deep_scan.py --from-radar`** menyimpan mapping CA→GMGN row
+   dari `screen_incubation` dan meneruskannya ke setiap deep scan;
+   output per token kini menampilkan `Market source:` + divergence lines.
+   Pesan Telegram auto-watchlist juga menyebut market source.
+5. **Page 7 (`pages/7_💀_CTO_Radar.py`)**: tombol Deep Scan per kandidat
+   **langsung menjalankan Stage 2** dengan row GMGN utuh (disimpan di
+   `cto_deep_single_row`) — sebelumnya tombol hanya `set state + st.rerun()`
+   sehingga tampak tidak melakukan apa-apa karena UI kembali ke tab
+   pertama. Tab Stage 2 membangun mapping CA→row yang sama, menampilkan
+   `Market source: GMGN` + semua metrics yang dipakai + divergence
+   warnings, dan kolom `MktSrc`/`Vol24` di tabel hasil. Row demo watchlist
+   (dari history saat sandbox GMGN-block) ditandai `_source=history_fallback`
+   dan TIDAK diteruskan sebagai `gmgn_row` — deep scan-nya live fetch GMGN
+   atau fail closed.
+
+### Kenapa begitu
+
+- GMGN menghitung volume lintas **semua** pool sebuah token; DexScreener
+  membaca pair terdalam saja. MEMIPEDE: MC sama ~$189k di dua sumber,
+  tetapi volume 24h GMGN ~$70k vs Dex ~$45k → Stage 1 (GMGN) dan Stage 2
+  (Dex) pernah memberi angka berbeda dan verdict berbeda.
+- Fail closed mencegah token "masuk radar" lewat angka cache/history yang
+  tidak dapat diverifikasi lagi di GMGN.
+- Threshold PR #38 tidak disentuh: incubation strict/relaxed, deep
+  strict/relaxed, dan LP Safe (MC ≥$120k, vol ≥$60k) persis sama.
+
+### Verifikasi
+
+- `tests/test_gmgn_market_authority.py` (baru, 7 grup uji, 62 assertion,
+  tanpa pytest & tanpa jaringan) — ALL PASSED. Termasuk: mock MEMIPEDE
+  (MC 189000, vol24 70000, vol/MC 0.37, liq <$45k, holders/T10/risk lolos)
+  → candidate strict+relaxed; row sama dengan `vol24=99064` → FAIL
+  `vol24 > 90000` di Stage 1 (dua mode) + deep strict; `get_market()`
+  dimonkeypatch ke Dex vol 45000 → hasil tetap vol 70000,
+  `market_source == "gmgn"`, angka Dex hanya muncul di divergence note;
+  tanpa snapshot GMGN → FAIL dengan reason jelas meski Dex "bagus".
+- Seluruh suite `tests/` (18 file) — ALL PASSED.
+- Runtime: `python cto_deep_scan.py --limit 4 --deep`, `--relaxed`, dan
+  `--from-radar` jalan; di sandbox tanpa jaringan setiap token fail closed
+  dengan reason `GMGN market snapshot unavailable` (sebelumnya diam-diam
+  memakai `history.json`). `python lp_safe_radar.py --limit 20` tidak
+  berubah.
+- Simulasi E2E raw GMGN trending → Stage 1 → Stage 2: MEMIPEDE PASS dengan
+  angka GMGN identik di dua stage.
+- Signature runtime: `screen_incubation(relaxed=False, debug=False)` —
+  dicek lewat `inspect` di test.
+
+### Sisa PR / catatan
+
+- `.github/workflows/cto-radar.yml` sudah memakai
+  `python cto_deep_scan.py --from-radar --auto-watchlist --telegram`, jadi
+  pipeline cron otomatis ikut alur GMGN-authoritative **tanpa perlu ubah
+  workflow** (GitHub App memang tidak bisa mengubah `workflows/` — kalau
+  nanti ada penyesuaian, lakukan lewat GitHub Web UI).
+
+---
+
 ## 2026-08-03 — Rangkuman TX real di cards LP & Degen (6/12/24/48 jam)
 
 ### Yang berubah
