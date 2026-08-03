@@ -320,6 +320,46 @@ Jebakan yang sudah pernah menggigit:
   `align-items:stretch`). Jangan kembalikan `margin-top:10px` murni
   tanpa spacer — itu yang bikin tombol dulu pindah-pindah.
 
+## 7.57 Perilaku baru yang wajib dijaga (2026-08-03 — CTO radar GMGN authority)
+
+- **GMGN = satu-satunya sumber market data untuk CTO Incubation Radar.**
+  GMGN menghitung transaksi lintas semua pool; DexScreener membaca satu
+  pair saja (kasus MEMIPEDE: vol24 GMGN ~$70k vs Dex ~$45k → Stage 1 vs
+  Stage 2 sempat beda angka). `cto_deep_scan.deep_scan_token()` sekarang
+  berhenti memakai `core.get_market()` / `history.json` untuk gate
+  MC/liquidity/volume/vol-MC/holders/T10 — Dex hanya untuk metadata
+  (symbol/url), CTO claim detection (halaman DexScreener), dan
+  divergence logging.
+- **Row GMGN diteruskan utuh dari Stage 1 ke Stage 2** via
+  `deep_scan_token(ca, relaxed=False, do_cluster=False, helius_keys=None,
+  gmgn_row=row)`; `cto_deep_scan.market_from_gmgn_row()` membangun snapshot
+  ber-tag `market_source = "gmgn"` (marketcap←`mc`, liquidity_usd←`liq`,
+  volume.h24←`vol24`, t10/holders/risk fields ikut). Row bertanda
+  `_source != gmgn` (mis. demo watchlist dari history di page 7) DITOLAK
+  supaya tidak pernah salah label authoritative.
+- **Fail closed.** Tanpa snapshot GMGN (row tidak ada & live fetch
+  `fetch_gmgn_market_row()` gagal), `pass=False` dengan reason
+  `GMGN market snapshot unavailable — fail closed`. Jangan
+  mengembalikan fallback Dex/history untuk market gates; checks lain
+  (Helius holders, CTO, conviction) tetap jalan untuk display.
+- **T10 gate memakai row GMGN dulu**, baru konsentrasi on-chain Helius,
+  baru token_stat mentah — supaya angka Stage 1 dan Stage 2 selalu sama.
+- **Divergence logging.** `_divergence_notes()` membandingkan GMGN vs Dex
+  (toleransi max($1500, 10%)); setiap selisih dicatat di
+  `result["market_divergence"]`/`market_notes`, di-print CLI, dan
+  ditampilkan di page 7 ("GMGN authoritative").
+- **Tombol Deep Scan di page 7 langsung menjalankan scan** (bukan set
+  state + `st.rerun()` yang bikin tampak tidak terjadi apa-apa karena tab
+  kembali ke Stage 1); row GMGN utuh disimpan di session state
+  (`cto_deep_single_row`) dan dipakai ulang di tab Stage 2.
+- **Untuk `--ca` / watchlist langsung**, snapshot GMGN di-fetch live
+  (`token_stat` → normalisasi via `score_token`, + best-effort
+  `token_prices` bila tidak ada MC). Gagal → fail closed seperti di atas.
+- Dijaga `tests/test_gmgn_market_authority.py` (7 grup, termasuk mock
+  MEMIPEDE $189k/$70k → candidate, vol24 $99.064 → FAIL `vol24 > 90000`,
+  Dex $45k monkeypatched tidak menimpa GMGN $70k, dan cek signature
+  `screen_incubation(relaxed=False, debug=False)`).
+
 ## 7.56 Perilaku baru yang wajib dijaga (2026-08-03)
 
 - **Rangkuman TX real di card LP & Degen** — `app._real_tx_summary_html()`
