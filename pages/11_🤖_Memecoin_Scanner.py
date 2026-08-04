@@ -104,7 +104,7 @@ with st.expander("📊 Cara Kerja Scanner (5 Fase Scoring)", expanded=False):
       "whale_lookback_hours": 3
     }
     ```
-    """)
+    """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Config & status
@@ -248,18 +248,16 @@ for r in scan_results:
         else:
             fill_color = "#ef4444"
         
-        phase_bars_html += f"""
-        <div class="phase-bar">
-            <span class="phase-label">{phase_name}</span>
-            <div class="phase-bar-bg">
-                <div class="phase-bar-fill" style="width:{pct*100:.0f}%;background:{fill_color};"></div>
-            </div>
-            <span class="phase-score" style="color:{fill_color};">{phase_score}/{max_pts}</span>
-        </div>
-        <div style="font-size:0.72rem;color:#64748b;margin-left:148px;margin-bottom:4px;">
-            {phase_detail}
-        </div>
-        """
+        phase_bars_html += f"""<div class="phase-bar">
+<span class="phase-label">{phase_name}</span>
+<div class="phase-bar-bg">
+<div class="phase-bar-fill" style="width:{pct*100:.0f}%;background:{fill_color};"></div>
+</div>
+<span class="phase-score" style="color:{fill_color};">{phase_score}/{max_pts}</span>
+</div>
+<div style="font-size:0.72rem;color:#64748b;margin-left:148px;margin-bottom:4px;">
+{phase_detail}
+</div>"""
 
     # Token info
     price = data.get("price_usd", 0)
@@ -287,48 +285,33 @@ for r in scan_results:
         return f"${v:.0f}"
 
     # Render card
-    html = f"""
-    <div class="{card_class}">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-            <div>
-                <span style="font-size:1.2rem;font-weight:800;color:#e2e8f0;">
-                    {score_emoji} ${symbol}
-                </span>
-                <span style="font-size:0.75rem;color:#64748b;margin-left:8px;">
-                    {ca[:8]}…{ca[-4:]}
-                </span>
-            </div>
-            <div style="text-align:right;">
-                <span style="font-size:1.5rem;font-weight:800;color:{score_color};">
-                    {score}
-                </span>
-                <span style="font-size:0.85rem;color:#94a3b8;">/100</span>
-            </div>
-        </div>
-
-        <div style="display:flex;gap:16px;margin-top:8px;font-size:0.8rem;color:#94a3b8;">
-            <span>💰 {fmt_price(price)}</span>
-            <span>💧 Liq {fmt_usd(liq)}</span>
-            <span>📊 FDV {fmt_usd(fdv)}</span>
-            <span>📈 Vol 1h {fmt_usd(vol_h1)}</span>
-            <span>🔄 Tx {buys}B / {sells}S</span>
-        </div>
-
-        <div style="margin-top:12px;padding-top:12px;border-top:1px solid #334155;">
-            <div style="font-size:0.85rem;font-weight:700;color:#94a3b8;margin-bottom:8px;">
-                📊 Phase Breakdown
-            </div>
-            {phase_bars_html}
-        </div>
-
-        <div style="display:flex;gap:10px;margin-top:12px;font-size:0.75rem;">
-            <a href="https://dexscreener.com/solana/{ca}" target="_blank" 
-               style="color:#64748b;text-decoration:none;">🦆 DexScreener</a>
-            <a href="https://gmgn.ai/sol/token/{ca}" target="_blank" 
-               style="color:#64748b;text-decoration:none;">⚡ GMGN</a>
-        </div>
-    </div>
-    """
+    html = f"""<div class="{card_class}">
+<div style="display:flex;justify-content:space-between;align-items:center;">
+<div>
+<span style="font-size:1.2rem;font-weight:800;color:#e2e8f0;">{score_emoji} ${symbol}</span>
+<span style="font-size:0.75rem;color:#64748b;margin-left:8px;">{ca[:8]}…{ca[-4:]}</span>
+</div>
+<div style="text-align:right;">
+<span style="font-size:1.5rem;font-weight:800;color:{score_color};">{score}</span>
+<span style="font-size:0.85rem;color:#94a3b8;">/100</span>
+</div>
+</div>
+<div style="display:flex;gap:16px;margin-top:8px;font-size:0.8rem;color:#94a3b8;">
+<span>💰 {fmt_price(price)}</span>
+<span>💧 Liq {fmt_usd(liq)}</span>
+<span>📊 FDV {fmt_usd(fdv)}</span>
+<span>📈 Vol 1h {fmt_usd(vol_h1)}</span>
+<span>🔄 Tx {buys}B / {sells}S</span>
+</div>
+<div style="margin-top:12px;padding-top:12px;border-top:1px solid #334155;">
+<div style="font-size:0.85rem;font-weight:700;color:#94a3b8;margin-bottom:8px;">📊 Phase Breakdown</div>
+{phase_bars_html}
+</div>
+<div style="display:flex;gap:10px;margin-top:12px;font-size:0.75rem;">
+<a href="https://dexscreener.com/solana/{ca}" target="_blank" style="color:#64748b;text-decoration:none;">🦆 DexScreener</a>
+<a href="https://gmgn.ai/sol/token/{ca}" target="_blank" style="color:#64748b;text-decoration:none;">⚡ GMGN</a>
+</div>
+</div>"""
     st.markdown(html, unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
