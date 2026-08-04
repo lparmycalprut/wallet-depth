@@ -690,9 +690,25 @@ def fetch_swaps(api_key: str, pool: str, ca: str, *, stop_sig=None,
     the same tuple shape.
     """
     if use_gmgn:
-        return fetch_gmgn_swaps(ca, stop_sig=stop_sig, stop_ts=stop_ts,
-                                max_pages=max_pages, sleep=sleep,
-                                from_ts=from_ts, to_ts=to_ts)
+        gmgn_result = fetch_gmgn_swaps(
+            ca, stop_sig=stop_sig, stop_ts=stop_ts, max_pages=max_pages,
+            sleep=sleep, from_ts=from_ts, to_ts=to_ts)
+        status = get_gmgn_fetch_status()
+        # Auto-fallback to Helius if GMGN fails (incomplete / error / cap)
+        if (not status.get("ok") or not status.get("complete") or
+                (status.get("error") and status.get("error"))):
+            # Try Helius with same parameters; pool/api_key already available.
+            # Note: Helius requires pool; if empty we skip fallback gracefully.
+            if pool and api_key:
+                try:
+                    return fetch_swaps(
+                        api_key, pool, ca, stop_sig=stop_sig,
+                        stop_ts=stop_ts, max_pages=max_pages,
+                        sleep=sleep, use_gmgn=False,
+                        from_ts=from_ts, to_ts=to_ts)
+                except Exception:
+                    pass  # keep original GMGN failure result
+        return gmgn_result
     swaps, before = [], None
     newest_sig, newest_ts, hit_stop = None, None, False
     for _ in range(max_pages):
