@@ -282,7 +282,7 @@ def run_accumulation_analysis(ca: str, helius_keys: tuple) -> dict:
     if candles_h1:
         candle_df = pd.DataFrame(candles_h1)
         if not candle_df.empty:
-            for col in ["open", "high", "low", "close", "volume"]:
+            for col in ["o", "h", "l", "c", "v"]:
                 if col in candle_df.columns:
                     candle_df[col] = pd.to_numeric(candle_df[col], errors="coerce")
 
@@ -331,9 +331,9 @@ def run_accumulation_analysis(ca: str, helius_keys: tuple) -> dict:
         # Also check if first candles show buy+sell within minutes
         if not candle_df.empty and len(candle_df) >= 2:
             first_candles = candle_df.tail(6).head(3)  # earliest 3 hours
-            body_sizes = abs(first_candles["close"] - first_candles["open"])
+            body_sizes = abs(first_candles["c"] - first_candles["o"])
             avg_body = body_sizes.mean() if len(body_sizes) else 0
-            price_range = candle_df["high"].max() - candle_df["low"].min()
+            price_range = candle_df["h"].max() - candle_df["l"].min()
             if price_range > 0 and avg_body / price_range < 0.1:
                 p1_score = max(p1_score, 10)
                 p1_detail += " Early candles show minimal price movement (test-like)."
@@ -921,7 +921,7 @@ if pair_addr:
         )
         if chart_candles:
             cdf = pd.DataFrame(chart_candles)
-            for col in ["open", "high", "low", "close", "volume"]:
+            for col in ["o", "h", "l", "c", "v"]:
                 if col in cdf.columns:
                     cdf[col] = pd.to_numeric(cdf[col], errors="coerce")
             if "ts" in cdf.columns:
@@ -931,13 +931,13 @@ if pair_addr:
 
             fig = go.Figure()
             fig.add_trace(go.Bar(
-                x=cdf["dt"], y=cdf["volume"],
+                x=cdf["dt"], y=cdf["v"],
                 name="Volume",
                 marker=dict(color="#38bdf8", opacity=0.5),
                 yaxis="y2",
             ))
             fig.add_trace(go.Scatter(
-                x=cdf["dt"], y=cdf["close"],
+                x=cdf["dt"], y=cdf["c"],
                 name="Price",
                 line=dict(color="#facc15", width=2),
                 yaxis="y1",
