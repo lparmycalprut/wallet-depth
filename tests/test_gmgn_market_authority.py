@@ -27,6 +27,7 @@ import inspect
 import os
 import sys
 import time
+import types
 from unittest import mock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -178,6 +179,52 @@ def test_gmgn_row_overrides_dexscreener_in_deep_scan():
     div = res["market_divergence"]
     assert any("vol24" in n and "45,000" in n and "GMGN authoritative" in n
                for n in div), div
+
+
+def test_deep_scan_market_caps_match_stage1():
+    """Stage 2 must never admit market values rejected by Stage 1."""
+    cases = [
+        ({"liq": 41000.0}, False, "liq $41000 NOT in 3k-40k"),
+        ({"liq": 46000.0}, True, "liq $46000 NOT in 3k-45k"),
+        ({"mc": 700000.0}, False, "mc $700000 NOT in 3k-600k"),
+        ({"vol24": 95000.0}, True, "vol24 $95000 >$90k"),
+    ]
+    for changes, relaxed, expected_reason in cases:
+        row = memipede_row()
+        row.update(changes)
+        if "vol24" in changes:
+            row["vol_mc"] = row["vol24"] / row["mc"]
+        with _patches(_patched_network()):
+            res = cds.deep_scan_token(MEMIPEDE_CA, relaxed=relaxed,
+                                      do_cluster=False, helius_keys=(),
+                                      gmgn_row=row)
+        assert res["pass"] is False, (changes, relaxed, res["reasons"])
+        assert any(expected_reason in reason for reason in res["reasons"]), \
+            res["reasons"]
+        assert res["deep_thresholds"]["mc_max"] == 600000
+        assert res["deep_thresholds"]["vol_max"] == 90000
+
+
+def test_cto_keyword_requires_word_boundary():
+    """Ordinary words containing cto must not produce a misleading detail."""
+    class FakeRequests:
+        content = ""
+
+        @classmethod
+        def get(cls, url, **kwargs):
+            return types.SimpleNamespace(status_code=200, text=cls.content)
+
+    fake_curl = types.SimpleNamespace(requests=FakeRequests)
+    with mock.patch.dict(sys.modules, {"curl_cffi": fake_curl}):
+        FakeRequests.content = "factory victory actor doctor"
+        is_cto, detail = cds.is_cto_via_dexscreener("CA")
+        assert is_cto is False
+        assert detail == ""
+
+        FakeRequests.content = "Follow the community at #CTO today"
+        is_cto, detail = cds.is_cto_via_dexscreener("CA")
+        assert is_cto is False  # detail hint does not alter the CTO decision
+        assert detail == "found keywords: cto"
 
 
 def test_fail_closed_without_gmgn_snapshot():
