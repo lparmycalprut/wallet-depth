@@ -161,7 +161,7 @@ def _try_snapshot(api_keys, ca: str, meta: dict,
                     return f" snap-helius:{len(pairs)} holders{rd_txt}"
         except Exception as e:
             # fall through to GMGN; don't crash the cron
-            pass
+            print(f"WARN: helius holder snapshot failed for {ca}: {e}")
 
     # ── 2) GMGN path (no key needed) ──────────────────────────────────
     try:

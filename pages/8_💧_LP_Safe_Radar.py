@@ -105,7 +105,7 @@ with tab1:
                     r["lp_score"] = s
                     r["lp_breakdown"] = b
                     r["_lp_ok"] = True
-                except:
+                except Exception:
                     r["lp_score"] = 85
             st.session_state["lp_safe_candidates"] = demo
             cands = demo
@@ -139,7 +139,8 @@ with tab1:
             b = r.get("lp_breakdown", {})
             colA, colB = st.columns([4,1])
             with colA:
-                st.markdown(f"**{r.get('symbol')}** LP Score **{lp_s}/100** — `{ca[:12]}...` — {r.get('_lp_reason','')}")
+                _err_note = " ⚠️ calc error" if r.get("_lp_score_error") else ""
+                st.markdown(f"**{r.get('symbol')}** LP Score **{lp_s}/100**{_err_note} — `{ca[:12]}...` — {r.get('_lp_reason','')}")
                 st.caption(f"Fit {r.get('fit')} {r.get('grade')} | Liq/MC {b.get('liq_mc')} Vol/MC {b.get('vol_mc')} Top10 {b.get('top10')} Bund {b.get('bundler')} Fresh {b.get('fresh')} | GMGN: https://gmgn.ai/sol/token/{ca} | Dex: https://dexscreener.com/solana/{ca}")
             with colB:
                 if st.button("Analyze →", key=f"lp_an_{ca}"):
@@ -151,7 +152,7 @@ with tab1:
                     st.toast(f"Added {r.get('symbol')} to watchlist as LP safe")
             st.divider()
     elif rejects:
-        st.info(f"No LP Safe passed, showing top 20 closest rejects for tuning:")
+        st.info("No LP Safe passed, showing top 20 closest rejects for tuning:")
         import pandas as pd
         df = pd.DataFrame([{
             "Symbol": r.get("symbol"),
@@ -190,6 +191,7 @@ with tab2:
                     r["lp_breakdown"] = b
                 except Exception as e:
                     r["lp_score"] = 0
+                    r["_lp_score_error"] = str(e)
 
         import pandas as pd
         df = pd.DataFrame([{
@@ -200,6 +202,7 @@ with tab2:
             "Vol/MC": r.get("lp_breakdown",{}).get("vol_mc"),
             "Top10": r.get("lp_breakdown",{}).get("top10"),
             "Balance": r.get("lp_breakdown",{}).get("balance"),
+            "Reason": ("⚠️ calc error" if r.get("_lp_score_error") else ""),
             "CA": r.get("ca")[:12]+"...",
         } for r in cands])
         df = df.sort_values(by="LP Score", ascending=False)

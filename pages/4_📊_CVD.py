@@ -339,7 +339,7 @@ if run or skey not in st.session_state:
     got = []
     if use_gmgn_trades:
         if focus_enabled and focus_start_ts and focus_end_ts:
-            st.info(f"Fetching focus range from GMGN Trades API…")
+            st.info("Fetching focus range from GMGN Trades API…")
             got = full_fetch(ca, pool, cutoff, use_gmgn=True,
                              from_ts=focus_start_ts, to_ts=focus_end_ts)
         else:

@@ -124,7 +124,7 @@ def is_cto_via_dexscreener(ca: str, timeout=15) -> tuple[bool, str]:
             import requests as rq
             # token-profiles latest may contain this CA
             # fallback: search all profiles via API? We'll just try the pair page again with requests
-            r = rq.get(f"https://api.dexscreener.com/token-profiles/latest/v1", timeout=10)
+            r = rq.get("https://api.dexscreener.com/token-profiles/latest/v1", timeout=10)
             if r.status_code == 200:
                 data = r.json() or []
                 for item in data:
@@ -598,7 +598,7 @@ def deep_scan_token(ca: str, relaxed: bool = False, do_cluster: bool = False,
                 import json as _j
                 with open(os.path.join(BASE_DIR,"config.json")) as f:
                     dust_limit = float((_j.load(f) or {}).get("dust_limit_usd",5.0))
-            except:
+            except Exception:
                 pass
             n_dust = int((df["usd_value"] < dust_limit).sum())
             n_real = int((df["usd_value"] >= dust_limit).sum())
@@ -837,6 +837,8 @@ def main():
     parser.add_argument("--from-radar", action="store_true", help="run incubation_radar first to get candidates")
     parser.add_argument("--relaxed", action="store_true",
                         help="pre-CTO mode: liq <=$50k, vol <=$100k, Top10 <=55%")
+    parser.add_argument("--delay", type=float, default=0.8,
+                        help="seconds to sleep between API call windows per token (default 0.8)")
     args = parser.parse_args()
 
     helius_keys = tuple(get_helius_keys())
@@ -892,9 +894,11 @@ def main():
         print(f"  Top10 {res.get('concentration',{}).get('top10',0):.1f}% (on-chain) GMGN T10 {mkt.get('t10_pct','?')}% Health {res.get('health',{}).get('score',0)} CTO {res.get('cto')} {res.get('cto_detail')}")
         print(f"  Conviction: {res.get('conviction',{}).get('reason','')}")
         print(f"  Pass: {res.get('pass')} Reasons: {' | '.join(res.get('reasons',[])[:6])}")
+        if i < len(cas_to_scan):
+            time.sleep(args.delay)
 
     passing = [r for r in results if r.get("pass")]
-    print(f"\n=== SUMMARY ===")
+    print("\n=== SUMMARY ===")
     print(f"Scanned: {len(results)} | Passing: {len(passing)}")
     for r in passing:
         print(f"  ✅ {r.get('symbol')} {r['ca']} - {r.get('cto_detail')} - {r.get('conviction',{}).get('reason','')}")
