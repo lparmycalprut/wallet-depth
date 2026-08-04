@@ -26,6 +26,7 @@ buktikan kalibrasinya tidak bergeser (lihat §5).
 |---|---|
 | `app.py` | dashboard utama (besar, ~110KB) |
 | `pages/` | halaman Streamlit tambahan |
+| `accum_history.py` | **Accumulation History (page 10)**: pure scoring/rolling-scan/merge 5-fase + paginasi candle GeckoTerminal `before_timestamp` |
 | `core.py` | helper Helius (shared multi-key pool)/DexScreener/GeckoTerminal |
 | `cvd.py` | store swap, bucket CVD, profil wallet, **level D1**, **flow attribution**, **flow safety checks** (freshness / persistence / distribution / quality) |
 | `gmgn_screener.py` | screener GMGN + **scoring ramp kontinu** + **fresh-wallet & top-50 concentration penalties** |
@@ -35,7 +36,7 @@ buktikan kalibrasinya tidak bergeser (lihat §5).
 | `signals.py` | log sinyal CVD → `signals.json` + notif Telegram |
 | `watchlist.py` | watchlist helpers (load/save/add/remove + GitHub commit) |
 | `scripts/update_cvd.py` | entry point cron (tiap jam, menit :20) |
-| `tests/` | 9 suite, **jalan tanpa pytest & tanpa jaringan** |
+| `tests/` | 19 suite, **jalan tanpa pytest & tanpa jaringan** |
 
 **File data yang di-commit cron** (jangan di-`.gitignore`):
 `cvd.json` · `signals.json` · `conviction.json` · `levels.json` ·
@@ -414,6 +415,49 @@ Jebakan yang sudah pernah menggigit:
   card LP/Degen Radar menampilkan `💰 avg cost` via `app._avg_cost_html()`
   dengan fallback session screener rows. `add_to_watchlist(..., avg_cost=)`
   menyimpannya di watchlist meta dan `_apply_ops` wajib ikut menyalinnya.
+
+## 7.58 Perilaku baru yang wajib dijaga (2026-08-04 — page 10 Accumulation History)
+
+- **Page 10 (`pages/10_📈_Accumulation_History.py`) memindai SELURUH umur
+  token**, bukan 48 jam terakhir seperti page 9. Alasan: verdict page 9
+  flip-flop untuk token tua karena window 48 jam bergeser tiap jam dan
+  fase 1–3 dirancang untuk periode launch. Kasus nyata test case: MEMIPEDE
+  `6LLNiWXRZp8hn5oTFTHEo8ERbJS3QJfHSKhnTCqipump` — spike hourly ~$16.6K
+  30 Jul 2026 16:00 UTC (31 Jul 00:00 WIB); akumulasi terdeteksi page 10
+  pada rentang ~29 Jul – 31 Jul 2026 WIB, di luar jangkauan page 9.
+- **Semua logika skoring/scanning/merging ada di modul murni
+  `accum_history.py`** (tanpa Streamlit, tanpa network di jalur scoring) —
+  definisi & threshold 5 fase SAMA PERSIS dengan page 9
+  (`score_phase1..5`, `score_window`, `recommendation`). Jangan melonggarkan
+  threshold; kalau page 9 berubah, samakan di sini (dijaga
+  `tests/test_accum_history.py`).
+- **Candle-first, verifikasi wallet hanya untuk kandidat.** Rolling scan
+  window 48 jam (step 3–12 jam, default 6) murni dari candle
+  (`rolling_scan`); kandidat = pre-score ≥ 40 DAN ada sinyal nyata
+  (p2-proxy ≥ 5 ATAU p4-est ≥ 10) supaya poin thin-liquidity saja tidak
+  membentuk kandidat. Hanya kandidat (maks 8) yang di-fetch swap GMGN
+  (`cvd.fetch_swaps(..., use_gmgn=True, from_ts=..., to_ts=...)`,
+  `max_pages` dibatasi) lalu diskor penuh ala page 9.
+- **Paginasi candle penuh via `before_timestamp`** (GeckoTerminal, limit
+  max 1000/request) ada di `accum_history.fetch_candles_full` — jangan
+  ganti ke `cvd.fetch_candles` untuk full history (tidak punya
+  `before_timestamp`). `page_fetcher` injectable supaya bisa di-test
+  offline.
+- **Liq/FDV historis = ESTIMASI** (`estimate_liq_fdv`): nilai kini × rasio
+  median close window vs harga sekarang; selalu ditandai `~`/`estimasi` di
+  UI, dan confidence turun ke LOW kalau GMGN parsial/gagal — jangan pernah
+  tampil sebagai angka pasti.
+- **Merge window berdekatan** (gap ≤ 12 jam) jadi rentang `[mulai, selesai]`:
+  skor = maksimum, fase hit = gabungan, `n_windows` dicatat. Diuji
+  `test_merge_adjacent_and_far`.
+- **UI bahasa Indonesia, timestamp WIB (Asia/Jakarta)** lewat `fmt_wib` di
+  page (bukan `strftime` lokal). Wajib ada: tabel rentang (urut skor),
+  chart full-periode dengan highlight vrect, panel perbandingan verdict 48
+  jam terakhir ala page 9, empty state jelas (pair terlalu baru / tidak ada
+  kandidat / GMGN gagal — jangan crash).
+- **`fetch_swaps` GMGN**: gunakan `get_gmgn_fetch_status()` untuk
+  `ok`/`complete`/`error` per window; kalau `complete=False` karena cap
+  halaman, confidence LOW + note "data GMGN parsial".
 
 ## 8. Status & langkah berikutnya
 
