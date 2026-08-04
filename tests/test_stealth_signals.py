@@ -285,6 +285,60 @@ def test_stealth_accumulation_wired():
     check(True, "record_signal accepts 'stealth_accumulation' type")
 
 
+def _detect_with_synthetic_swaps(ca, swaps):
+    """Run the real detector without touching the production signal store."""
+    tmp = tempfile.TemporaryDirectory()
+    saved_path = signals.SIGNALS_PATH
+    saved_get_recent_swaps = cvd.get_recent_swaps
+    signals.SIGNALS_PATH = os.path.join(tmp.name, "signals.json")
+    cvd.get_recent_swaps = lambda requested_ca, window_h: (
+        swaps if requested_ca == ca else [])
+    try:
+        return signals.detect_and_record(ca, "TEST", src="test", window_h=6)
+    finally:
+        cvd.get_recent_swaps = saved_get_recent_swaps
+        signals.SIGNALS_PATH = saved_path
+        tmp.cleanup()
+
+
+def test_detects_stealth_accumulation_with_negative_retail_net():
+    """A pure-accum whale buying while distributors exit must be stealth.
+
+    The two pure_dist wallets make dist_net=16 SOL, so retail_net=-16 SOL.
+    This exercises detect_and_record itself and proves the branch is reachable.
+    """
+    now = int(time.time())
+    swaps = [
+        _swap("buy", 10.0, now - 300, "whale"),
+        _swap("sell", 8.0, now - 200, "dist-1"),
+        _swap("sell", 8.0, now - 100, "dist-2"),
+    ]
+    recorded = _detect_with_synthetic_swaps("STEALTH_CA", swaps)
+    check("stealth_accumulation" in recorded,
+          f"negative retail net reaches stealth detector: {recorded}")
+
+
+def test_detects_distribution_via_negative_retail_net():
+    """The first distribution condition uses a reachable negative net.
+
+    Two small traders net-buy 1 SOL total while pure distributors sell 12;
+    retail_net is -11 SOL. dist_net remains below the existing 15-SOL OR
+    threshold, proving the new retail_net <= -10 path triggers the signal.
+    """
+    now = int(time.time())
+    swaps = [
+        _swap("buy", 1.0, now - 500, "trader-1"),
+        _swap("sell", 0.5, now - 450, "trader-1"),
+        _swap("buy", 1.0, now - 400, "trader-2"),
+        _swap("sell", 0.5, now - 350, "trader-2"),
+        _swap("sell", 6.0, now - 200, "dist-1"),
+        _swap("sell", 6.0, now - 100, "dist-2"),
+    ]
+    recorded = _detect_with_synthetic_swaps("DISTRIBUTION_CA", swaps)
+    check("distribution" in recorded,
+          f"negative retail net reaches distribution detector: {recorded}")
+
+
 # ---------------------------------------------------------------------------
 # detect_phase smoke test (no crash with new field)
 # ---------------------------------------------------------------------------
@@ -320,6 +374,8 @@ def main():
         test_distribution_7d_peak_fallback,
         test_quality_dynamic_band_allows_launch,
         test_stealth_accumulation_wired,
+        test_detects_stealth_accumulation_with_negative_retail_net,
+        test_detects_distribution_via_negative_retail_net,
         test_detect_phase_returns_dict,
     ]
     for t in tests:

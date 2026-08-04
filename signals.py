@@ -126,8 +126,9 @@ def detect_and_record(ca: str, symbol: str, *, src: str = "cron",
 
     Signal types (dedup 4h per (ca, type)):
       - "accumulation"        broad: LH+trader+pure_accum all positive
-      - "stealth_accumulation" pure_accum whales dominating while
-                              light_holder/trader net negative
+      - "stealth_accumulation" pure_accum whales dominating while retail
+                              net is negative: pure_dist/two_way sell flow
+                              exceeds light_holder/trader net buying
                               (the most important stealth pattern)
       - "distribution"        dumpers dominate holders
     """
@@ -166,8 +167,12 @@ def detect_and_record(ca: str, symbol: str, *, src: str = "cron",
                                 if d.get("profile") in ("pure_dist", "two_way")))
         n_dist = sum(1 for d in profiles.values()
                      if d.get("profile") in ("pure_dist", "two_way"))
+        # Unlike holders_net (whose component profiles are always net buyers),
+        # retail_net includes net-selling pure_dist/two_way wallets and can
+        # therefore represent either retail accumulation or distribution.
+        retail_net = (lh_net + trader_net) - dist_net
 
-        if n_holders >= 3 or (n_lh + n_trader) >= 2 or abs(holders_net) >= 25.0 or (dist_net >= 15.0 and n_dist >= 2):
+        if n_holders >= 3 or (n_lh + n_trader) >= 2 or holders_net >= 25.0 or (dist_net >= 15.0 and n_dist >= 2):
             if holders_net >= 10.0 and (lh_net + trader_net) > 0 and holders_net >= max(dist_net * 1.1, 10.0):
                 ok = record_signal(
                     ca, symbol, "accumulation",
@@ -178,25 +183,24 @@ def detect_and_record(ca: str, symbol: str, *, src: str = "cron",
                     retail_net=-dist_net, price=price_now)
                 if ok:
                     recorded.append("accumulation")
-            # Fix #2.2c: Stealth accumulation — whales absorbing while
-            # LH/trader are net sellers. This is the pattern the old
-            # logic missed because it required (lh_net + trader_net) > 0.
+            # Fix #2.2c: Stealth accumulation — whales absorb while
+            # pure_dist/two_way selling exceeds LH/trader net buying.
             elif pure_whale_net >= 5.0 and n_pure_whale >= 1 and \
-                    (lh_net + trader_net) < 0 and pure_whale_net >= 5.0:
+                    retail_net < 0:
                 ok = record_signal(
                     ca, symbol, "stealth_accumulation",
                     f"🕵️ stealth accumulation: whales absorbed "
                     f"+{pure_whale_net:.1f} SOL via {n_pure_whale} pure_accum "
-                    f"wallet(s) while LH/trader net "
-                    f"{lh_net + trader_net:+.1f} SOL — quiet "
+                    f"wallet(s) while retail net "
+                    f"{retail_net:+.1f} SOL — quiet "
                     f"smart-money bid (last {window_h}h)",
                     src=src, window_h=window_h,
                     whale_net=pure_whale_net,
-                    retail_net=lh_net + trader_net,
+                    retail_net=retail_net,
                     price=price_now)
                 if ok:
                     recorded.append("stealth_accumulation")
-            elif holders_net <= -10.0 or (dist_net >= abs(holders_net) * 1.3 and dist_net >= 15.0):
+            elif retail_net <= -10.0 or (dist_net >= abs(holders_net) * 1.3 and dist_net >= 15.0):
                 ok = record_signal(
                     ca, symbol, "distribution",
                     f"distribution pressure: dumpers -{dist_net:.1f} SOL vs holders {holders_net:+.1f} SOL "

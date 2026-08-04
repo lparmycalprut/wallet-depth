@@ -142,12 +142,15 @@ def is_cto_via_dexscreener(ca: str, timeout=15) -> tuple[bool, str]:
         "community takeover",
         "community claim",
         "a community claimed",
-        "cto",
     ]
     found = []
     for p in patterns:
         if p in low:
             found.append(p)
+    # A bare substring check for "cto" also matched ordinary words such as
+    # "factory" and "victory". Keep it only as a standalone word/tag hint.
+    if re.search(r"\bcto\b", low):
+        found.append("cto")
     # More specific: look for date
     m = re.search(r"community claimed ownership.*?on\s*([a-z]{3}\s+\d{1,2}\s+\d{4})", low, re.I)
     detail = ""
@@ -438,8 +441,9 @@ def deep_scan_token(ca: str, relaxed: bool = False, do_cluster: bool = False,
 
     Market gates are intentionally independent from the CTO/conviction checks:
     a trending token must not become an accumulation candidate merely because
-    its conviction history is positive.  Strict mode uses $45k liquidity,
-    $90k volume and 50% Top-10; pre-CTO relaxed mode uses $50k, $100k and 55%.
+    its conviction history is positive. Strict mode uses $40k liquidity,
+    $90k volume and 50% Top-10; pre-CTO relaxed mode uses $45k liquidity,
+    $90k volume and 55% Top-10. Both modes cap market cap at $600k.
 
     ``gmgn_row`` is the Stage-1 incubation-radar row for this CA.  When it is
     provided, every market metric the gates read (MC / liquidity / vol24 /
@@ -644,8 +648,9 @@ def deep_scan_token(ca: str, relaxed: bool = False, do_cluster: bool = False,
     # 6. Pass criteria for CTO incubation.  These are deliberately explicit
     # here instead of reusing the LP or GMGN trending thresholds: deep scan is
     # the final guard against a trending token being treated as accumulation.
-    liq_max = 50000 if relaxed else 45000
-    vol_max = 100000 if relaxed else 90000
+    liq_max = 45000 if relaxed else 40000
+    vol_max = 90000
+    mc_max = 600000
     t10_max = 55 if relaxed else 50
     mode = "relaxed/pre-CTO" if relaxed else "strict/death-valley"
 
@@ -713,7 +718,7 @@ def deep_scan_token(ca: str, relaxed: bool = False, do_cluster: bool = False,
     market_known = bool(m)
     if market_known:
         liq_ok = 3000 <= liq <= liq_max
-        mc_ok = 3000 <= mc <= 1000000
+        mc_ok = 3000 <= mc <= mc_max
         vol_ok = vol <= vol_max
     else:
         liq_ok = mc_ok = vol_ok = False
@@ -732,9 +737,9 @@ def deep_scan_token(ca: str, relaxed: bool = False, do_cluster: bool = False,
     else:
         fails.append(f"liq ${liq:.0f} NOT in 3k-{liq_max // 1000}k ({mode})")
     if market_known and mc_ok:
-        passes.append(f"mc ${mc:.0f} in 3k-1M")
+        passes.append(f"mc ${mc:.0f} in 3k-{mc_max // 1000}k")
     elif market_known:
-        fails.append(f"mc ${mc:.0f} NOT in 3k-1M")
+        fails.append(f"mc ${mc:.0f} NOT in 3k-{mc_max // 1000}k")
     if market_known and vol_ok:
         passes.append(f"vol24 ${vol:.0f} <=${vol_max // 1000}k")
     elif market_known:
@@ -771,7 +776,7 @@ def deep_scan_token(ca: str, relaxed: bool = False, do_cluster: bool = False,
         "relaxed": relaxed,
         "liq_max": liq_max,
         "mc_min": 3000,
-        "mc_max": 1000000,
+        "mc_max": mc_max,
         "vol_max": vol_max,
         "t10_max": t10_max,
         "market_source": result.get("market_source"),
@@ -836,16 +841,19 @@ def main():
     parser.add_argument("--telegram", action="store_true", help="send telegram for hits")
     parser.add_argument("--from-radar", action="store_true", help="run incubation_radar first to get candidates")
     parser.add_argument("--relaxed", action="store_true",
-                        help="pre-CTO mode: liq <=$50k, vol <=$100k, Top10 <=55%")
+                        help="pre-CTO mode: liq <=$45k, MC <=$600k, "
+                             "vol <=$90k, Top10 <=55%")
     parser.add_argument("--delay", type=float, default=0.8,
                         help="seconds to sleep between API call windows per token (default 0.8)")
     args = parser.parse_args()
 
     helius_keys = tuple(get_helius_keys())
     print(f"Helius keys: {len(helius_keys)} configured")
-    print("Mode: " + ("RELAXED / PRE-CTO (liq <=$50k, vol <=$100k, T10 <=55%)"
+    print("Mode: " + ("RELAXED / PRE-CTO (liq <=$45k, MC <=$600k, "
+                       "vol <=$90k, T10 <=55%)"
                        if args.relaxed else
-                       "STRICT / DEATH VALLEY (liq <=$45k, vol <=$90k, T10 <=50%)"))
+                       "STRICT / DEATH VALLEY (liq <=$40k, MC <=$600k, "
+                       "vol <=$90k, T10 <=50%)"))
 
     cas_to_scan = []
     gmgn_rows = {}
