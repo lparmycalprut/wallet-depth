@@ -489,7 +489,7 @@ if __name__ == "__main__":
             cands = [r for r in demo_rows if r["_lp_ok"]]
             rejects = [r for r in demo_rows if not r["_lp_ok"]]
             print("GMGN unavailable: using local history snapshot for routing demo")
-    print(f"\n=== CATJAK LP SAFE RADAR ===")
+    print("\n=== CATJAK LP SAFE RADAR ===")
     print(f"Total: {len(all_rows)} | Safe LP candidates: {len(cands)} | Rejected: {len(rejects)}\n")
 
     if cands:

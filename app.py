@@ -949,9 +949,9 @@ def _real_dust_growth_html(ca: str, rd_state: dict,
                f"<span>{len(tail)} titik ≈{span_h} jam</span>"
                f"</div>")
     else:
-        svg = (f"<div style='font-size:0.68rem;color:#64748b;"
-               f"margin-top:4px;'>1 titik tercatat — grafik muncul "
-               f"setelah cron jam berikutnya.</div>")
+        svg = ("<div style='font-size:0.68rem;color:#64748b;"
+               "margin-top:4px;'>1 titik tercatat — grafik muncul "
+               "setelah cron jam berikutnya.</div>")
 
     # WIB = UTC+7 (owner reads WIB; cron records unix ts)
     ts_last = int(cur.get("ts", 0))
@@ -1590,8 +1590,8 @@ if _wl:
             # doesn't read a misleading percentage.
             if _very_stale:
                 _conv_html = (
-                    f"<span style='color:#94a3b8;font-size:1.15rem;"
-                    f"font-weight:800;'>⏰ stale</span>")
+                    "<span style='color:#94a3b8;font-size:1.15rem;"
+                    "font-weight:800;'>⏰ stale</span>")
             else:
                 _conv_html = (
                     f"<span style='color:{cv_col};font-size:1.35rem;"
