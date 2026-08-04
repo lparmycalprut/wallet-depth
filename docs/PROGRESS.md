@@ -7,6 +7,89 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-04 — Page 10 Accumulation History: scan akumulasi SELURUH umur token
+
+### Yang berubah
+
+1. **`pages/10_📈_Accumulation_History.py` (baru)** — memindai seluruh
+   riwayat chart sebuah token (sejak pair dibuat) dengan rolling window
+   48 jam, lalu menampilkan **rentang tanggal (WIB)** di mana pola
+   akumulasi 5-fase terdeteksi di masa lalu. Page 9 tidak diubah sama
+   sekali; page 10 menyediakan panel perbandingan verdict 48 jam terakhir
+   ala page 9 (definisi fase identik) supaya bisa dibandingkan
+   berdampingan.
+2. **`accum_history.py` (baru, modul murni)** — semua skoring/scanning/
+   merging tanpa Streamlit & tanpa network di jalur scoring:
+   - `score_phase1..5` + `score_window` + `recommendation`: threshold
+     sama persis dengan page 9 (Liquidity Test 15, Slow Accumulation 20,
+     Whale Entry 20, Volume Spike 25, Thin Liquidity 20; BUY WATCH /
+     ACCUMULATING / TOO LATE / AVOID ladder identik termasuk precedence
+     BUY WATCH > TOO LATE).
+   - `rolling_scan`: window 48 jam, step 3–12 jam, kandidat = pre-score
+     ≥ 40 (sidebar) DAN sinyal nyata (p2-proxy ≥5 ATAU p4-est ≥10) —
+     poin thin-liquidity saja tidak boleh membentuk kandidat; kandidat
+     tumpang-tindih >75% dibuang (hemat fetch GMGN).
+   - `merge_windows`: window berdekatan (gap ≤ 12 jam) digabung jadi
+     rentang — skor = maksimum, fase hit = gabungan, `n_windows` dicatat.
+   - `fetch_candles_full`: paginasi mundur GeckoTerminal via
+     `before_timestamp` (limit 1000/request, `page_fetcher` injectable
+     untuk test offline) — `cvd.fetch_candles` tidak diubah.
+   - `estimate_liq_fdv`: liq/FDV historis = nilai kini × rasio median
+     close window vs harga sekarang — selalu ESTIMASI, confidence turun
+     kalau GMGN parsial/gagal.
+3. **Alur page**: candle-first (day + hour, full history) → rolling scan →
+   verifikasi GMGN hanya untuk kandidat (`from_ts`/`to_ts`, `max_pages`
+   dibatasi, progress bar, `get_gmgn_fetch_status()` untuk
+   ok/complete/error) → filter ambang hasil → merge → tabel rentang +
+   chart full-periode dengan highlight vrect + breakdown fase per rentang
+   + panel perbandingan page 9. Empty state: pair terlalu baru, tidak ada
+   kandidat, GMGN gagal — tidak crash.
+
+### Kenapa begitu
+
+- Page 9 hanya melihat window geser 48 jam terakhir → untuk token tua
+  verdict flip-flop tiap jam (jam penting masuk/keluar window) dan fase
+  1–3 (dirancang untuk periode launch) diterapkan ke riwayat acak. Kasus
+  nyata: MEMIPEDE
+  `6LLNiWXRZp8hn5oTFTHEo8ERbJS3QJfHSKhnTCqipump` — spike hourly ~$16.6K
+  30 Jul 2026 16:00 UTC sudah di luar 48 jam page 9.
+- Verifikasi wallet (GMGN) mahal (100 trade/halaman) → hanya window
+  kandidat ber-pre-score tinggi yang di-fetch.
+- Skoring ditaruh di modul murni supaya bisa di-unit-test offline
+  (sandbox Arena memblokir egress ke API crypto).
+
+### Verifikasi
+
+- `tests/test_accum_history.py` (baru, 17 fungsi test / 94 check, tanpa
+  pytest & tanpa jaringan): ladder tiap fase, window MEMIPEDE-like
+  (skor ≥ 70, whale_entry + volume_spike hit, estimasi liq <$50K),
+  quiet window → AVOID tanpa volume-spike hit, rolling scan menemukan
+  event 28 Jul–1 Agu & TIDAK ada kandidat di hari sepi, merge adjacent
+  (skor max, fase union), paginasi 2500 candle (cap halaman →
+  complete=False, dedupe boundary), GMGN gagal → confidence LOW,
+  recommendation precedence page 9.
+- Suite penuh: `python -m pytest tests/ -q` → **206 passed** (189 lama +
+  17 baru). `py_compile` semua file baru OK.
+- Smoke test E2E page via `streamlit.testing.v1.AppTest` dengan fixture
+  sintetis (market/candles/swaps GMGN di-mock): 8 kandidat → 1 rentang
+  **29 Jul 2026 01:00 → 31 Jul 2026 19:00 WIB, skor 90, BUY WATCH, HIGH**
+  (4 window digabung); kasus GMGN 429 → warning + confidence LOW tanpa
+  crash; mode candle-only → "BELUM DIVERIFIKASI"; pair baru → warning
+  parsial; candle fetch gagal → error state.
+- Uji manual live dengan MEMIPEDE tidak bisa dijalankan di sandbox
+  (egress ke dexscreener/geckoterminal diblokir, HTTP 000) — sudah
+  disimulasikan dengan fixture sintetis yang meniru profil volume/price
+  token tersebut.
+
+### Sisa PR
+
+- Verifikasi live pertama di lingkungan dengan akses jaringan
+  (Streamlit Cloud / lokal) memakai CA MEMIPEDE di atas; ekspektasi:
+  minimal satu rentang kandidat di sekitar 28–31 Jul 2026 dan tidak ada
+  sinyal palsu besar di hari sepi.
+
+---
+
 ## 2026-08-03 — CTO Incubation Radar: GMGN jadi satu-satunya market source (lanjutan PR #38)
 
 ### Yang berubah
