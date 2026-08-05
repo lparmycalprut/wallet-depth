@@ -799,7 +799,7 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
                      max_pages=40, use_gmgn: bool = False) -> dict:
     """Incrementally refresh one token's CVD store.
 
-    Raw swaps are retained for 48 hours so the dashboard can calculate a
+    Raw swaps are retained for 72 hours so the dashboard can calculate a
     complete recent window without a large live fetch.  A GMGN refresh only
     advances the cursor after pagination is complete: persisting a partial
     page set would permanently skip the missing interval on the next run and
@@ -828,10 +828,10 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
     stop_ts = entry.get("newest_ts")
     is_first_backfill = not stop_ts
     if not stop_ts:
-        # A first backfill only needs enough history for the 48h raw store.
+        # A first backfill only needs enough history for the 72h raw store.
         # Without a cutoff an active token can hit the page cap while walking
         # its whole lifetime, leaving a recoverable token falsely stale.
-        stop_ts = int(time.time() - 48 * 3600)
+        stop_ts = int(time.time() - 72 * 3600)
     swaps, new_sig, new_ts, hit = fetch_swaps(
         api_key, effective_pool, ca, stop_sig=stop_sig, stop_ts=stop_ts,
         max_pages=max_pages, use_gmgn=use_gmgn)
@@ -887,8 +887,8 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
         else:
             entry["buckets"][b] = c
 
-    # --- raw swap store (last 48h, incl. wallet) for complete-window UI ----
-    cutoff_raw = time.time() - 48 * 3600
+    # --- raw swap store (last 72h, incl. wallet) for complete-window UI ----
+    cutoff_raw = time.time() - 72 * 3600
     raw = entry.get("swaps") or []
     raw.extend([list(s) for s in swaps])
     # Deduplicate swaps to prevent inflated/duplicate values.
@@ -1097,6 +1097,63 @@ def cohort_activity_summary(profiles, *, whale_min_sol=WHALE_SOL,
         "dolphin_sellers": len(c["dolphin_distributors"]),
     }
 
+
+
+def pure_accumulator_growth(swaps, profiles=None, *, min_buy_sol=0.1,
+                            sell_tol=0.10, start_ts=None, end_ts=None,
+                            bucket_s=6 * 3600) -> dict:
+    """Return six-hour growth for every wallet that accumulated and held.
+
+    This deliberately does not use wallet age or a profile label: every
+    wallet qualifies when it bought at least ``min_buy_sol`` and sold no more
+    than 10% of its buy inside the requested window.  It is therefore the
+    broad "pure accumulator" measure used by the monitoring charts.
+    """
+    swaps = list(swaps or [])
+    if not swaps:
+        return {"count": 0, "total_buy": 0.0, "total_sell": 0.0,
+                "wallets": [], "series": []}
+    profiles = profiles or wallet_profiles(swaps)
+    if start_ts is None:
+        start_ts = min(int(s[2]) for s in swaps)
+    if end_ts is None:
+        end_ts = max(int(s[2]) for s in swaps)
+    qualified = {
+        w for w, d in profiles.items()
+        if float(d.get("buy") or 0) >= min_buy_sol
+        and float(d.get("sell") or 0) <= float(d.get("buy") or 0) * sell_tol
+    }
+    first_buy, buy_by_bucket, new_by_bucket = {}, {}, {}
+    for side, sol, ts, wallet in swaps:
+        if side != "buy" or wallet not in qualified:
+            continue
+        ts, sol = int(ts), float(sol)
+        bucket = (ts // bucket_s) * bucket_s
+        buy_by_bucket[bucket] = buy_by_bucket.get(bucket, 0.0) + sol
+        first_buy[wallet] = min(first_buy.get(wallet, ts), ts)
+    for ts in first_buy.values():
+        bucket = (ts // bucket_s) * bucket_s
+        new_by_bucket[bucket] = new_by_bucket.get(bucket, 0) + 1
+    series, cum_wallets, cum_buy = [], 0, 0.0
+    bucket, last = ((int(start_ts) // bucket_s) * bucket_s,
+                    (int(end_ts) // bucket_s) * bucket_s)
+    while bucket <= last:
+        cum_wallets += new_by_bucket.get(bucket, 0)
+        cum_buy += buy_by_bucket.get(bucket, 0.0)
+        series.append({"bucket_ts": bucket,
+                       "new_wallets": new_by_bucket.get(bucket, 0),
+                       "buy_sol": round(buy_by_bucket.get(bucket, 0.0), 4),
+                       "cum_wallets": cum_wallets,
+                       "cum_buy_sol": round(cum_buy, 4)})
+        bucket += bucket_s
+    rows = [(w, profiles[w], first_buy.get(w)) for w in qualified]
+    return {"count": len(qualified),
+            "total_buy": round(sum(float(profiles[w].get("buy") or 0)
+                                   for w in qualified), 4),
+            "total_sell": round(sum(float(profiles[w].get("sell") or 0)
+                                    for w in qualified), 4),
+            "wallets": sorted(rows, key=lambda r: -float(r[1].get("buy") or 0)),
+            "series": series}
 
 def fresh_wallet_growth(swaps, profiles, wallet_ages, *,
                         max_age_days=7.0, sell_tol=0.10,
@@ -1537,6 +1594,9 @@ def record_conviction(ca: str, *, window_h: int = 6) -> dict | None:
              "vol": round(vol, 1), "swaps": len(swaps),
              "holder_count": _holder_count,
              "consecutive_ups": _consecutive_ups}
+    accum = pure_accumulator_growth(swaps, profiles, min_buy_sol=0.1)
+    point["accum_wallets"] = accum["count"]
+    point["accum_buy"] = accum["total_buy"]
     arr = hist.setdefault(ca, [])
     arr.append(point)
     # keep last 7 days of points
@@ -1552,7 +1612,7 @@ def record_conviction(ca: str, *, window_h: int = 6) -> dict | None:
 
 
 def get_recent_swaps(ca: str, hours: int = 12):
-    """Raw swaps [(side, sol, ts, wallet)] from the store, last N hours (store keeps 48h)."""
+    """Raw swaps [(side, sol, ts, wallet)] from the store, last N hours (store keeps 72h)."""
     state = load_cvd()
     entry = state.get(ca)
     if not entry or not entry.get("swaps"):

@@ -7,6 +7,22 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-05 — CVD 72H & monitor growth per 6 jam
+
+### Yang berubah
+
+1. Retensi raw swap CVD dan selector Deep Analysis diperluas ke **72 jam**.
+2. Page CVD menampilkan pure accumulator growth (semua wallet buy ≥0.1 SOL, sell ≤10%), conviction history, TX/volume, serta satu grafik gabungan yang di-index 100; semua memakai bucket 6 jam.
+3. Cron menyimpan jumlah/volume pure accumulator pada conviction snapshot dan mengirim Telegram `CVD MONITOR` bila empat indikator serentak naik/turun, atau TX/volume melonjak ≥5× snapshot sebelumnya.
+4. Detail Real Transaction Summary pada cards dan pemeriksaan "Holders with no buy" dinonaktifkan sementara. Advanced cohort divergence dan Separate wallet lists sekarang closed dropdown secara default.
+
+### Verifikasi
+
+- `python -m py_compile cvd.py signals.py scripts/update_cvd.py pages/4_📊_CVD.py app.py` lulus.
+- `python -m unittest discover tests` tidak dapat berjalan di sandbox karena dependency repo belum terpasang (`requests` dan `pandas` tidak ada); kegagalan terjadi pada import sebelum test dieksekusi.
+
+---
+
 ## 2026-08-05 — Fix identitas token DexScreener untuk CVD (MEMIPEDE ≠ Cyclospora)
 
 ### Masalah

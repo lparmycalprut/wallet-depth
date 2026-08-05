@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Deep CVD analysis for a user-selected 4-48h swap window.
+"""Deep CVD analysis for a user-selected 4-72h swap window.
 
 Flags high-conviction whale accumulation, exports reports, and builds an
 honest, ready-to-copy prompt for an external AI chat.
@@ -29,6 +29,7 @@ from cvd import (MIN_SOL, WHALE_SOL, analysis_windows, classify_holders,
                  conviction_split, detect_cohort_divergences,
                  detect_divergence, detect_no_buy_holders,
                  filter_swaps_by_time, fresh_wallet_growth,
+                 pure_accumulator_growth,
                  get_gmgn_wallet_metadata,
                  split_wallet_profile_cohorts, summarize_swap_range,
                  wallet_profiles)
@@ -63,7 +64,7 @@ ca = st.text_input("Contract Address", value=qp_ca,
 
 col1, col3 = st.columns([1, 3])
 with col1:
-    hours = st.selectbox("Time window", [4, 6, 8, 12, 24, 36, 48],
+    hours = st.selectbox("Time window", [4, 6, 8, 12, 24, 36, 48, 72],
                          index=5, help="Fetch swaps for this many hours back")
 use_gmgn_trades = True
 with col3:
@@ -599,7 +600,7 @@ cohort_divs = []
 if pser and all(p is not None for p in pser) and len(pser) >= 7:
     cohort_divs = detect_cohort_divergences(pser, cohort_cvd)
 
-with st.expander("🧭 Advanced cohort divergence", expanded=bool(cohort_divs)):
+with st.expander("🧭 Advanced cohort divergence", expanded=False):
     st.caption("Advisory only: compares price pivots vs profile-based CVD "
                "(whale held, dolphin held, trader, pure distributor). "
                "Signals are filtered by minimum SOL movement to avoid dust.")
@@ -779,37 +780,36 @@ def _show_profile_table(title, items, empty):
     return rows
 
 
-st.markdown("#### Separate wallet lists")
-wpa, wpd = st.columns(2)
-with wpa:
-    whale_acc_rows = _show_profile_table(
-        f"🐋 Whale pure accumulators ({hours}h)", whale_accs,
-        f"No whale pure accumulators in {hours}h.")
-with wpd:
-    whale_dist_rows = _show_profile_table(
-        f"🐋 Whale pure distributors ({hours}h)", whale_dists,
-        f"No whale pure distributors in {hours}h.")
+with st.expander("#### Separate wallet lists", expanded=False):
+    wpa, wpd = st.columns(2)
+    with wpa:
+        whale_acc_rows = _show_profile_table(
+            f"🐋 Whale pure accumulators ({hours}h)", whale_accs,
+            f"No whale pure accumulators in {hours}h.")
+    with wpd:
+        whale_dist_rows = _show_profile_table(
+            f"🐋 Whale pure distributors ({hours}h)", whale_dists,
+            f"No whale pure distributors in {hours}h.")
 
-dpa, dpd = st.columns(2)
-with dpa:
-    dolphin_acc_rows = _show_profile_table(
-        f"🐬 Dolphin pure accumulators ({hours}h)", dolphin_accs,
-        f"No dolphin pure accumulators in {hours}h.")
-with dpd:
-    dolphin_dist_rows = _show_profile_table(
-        f"🐬 Dolphin pure distributors ({hours}h)", dolphin_dists,
-        f"No dolphin pure distributors in {hours}h.")
+    dpa, dpd = st.columns(2)
+    with dpa:
+        dolphin_acc_rows = _show_profile_table(
+            f"🐬 Dolphin pure accumulators ({hours}h)", dolphin_accs,
+            f"No dolphin pure accumulators in {hours}h.")
+    with dpd:
+        dolphin_dist_rows = _show_profile_table(
+            f"🐬 Dolphin pure distributors ({hours}h)", dolphin_dists,
+            f"No dolphin pure distributors in {hours}h.")
 
-lha, tra = st.columns(2)
-with lha:
-    light_rows = _show_profile_table(
-        f"🛡️ Light holder details ({hours}h)", light_holders,
-        f"No light holders ≥1 SOL in {hours}h.")
-with tra:
-    trader_rows = _show_profile_table(
-        f"📊 Trader details ({hours}h)", traders,
-        f"No traders ≥1 SOL in {hours}h.")
-
+    lha, tra = st.columns(2)
+    with lha:
+        light_rows = _show_profile_table(
+            f"🛡️ Light holder details ({hours}h)", light_holders,
+            f"No light holders ≥1 SOL in {hours}h.")
+    with tra:
+        trader_rows = _show_profile_table(
+            f"📊 Trader details ({hours}h)", traders,
+            f"No traders ≥1 SOL in {hours}h.")
 accs = sorted(whale_accs + dolphin_accs + light_holders + traders,
               key=lambda x: -float(x[1].get("buy") or 0.0))[:15]
 dists = sorted(whale_dists + dolphin_dists,
@@ -962,90 +962,74 @@ else:
     st.caption(f"No fresh wallets in {fw_max_h}h.")
 
 # ---------------------------------------------------------------------------
-# No-buy current holders: holder-rank whales/dolphins + GMGN sell-only holds
+# Six-hour monitoring dashboard — all series use the same requested window.
 # ---------------------------------------------------------------------------
-gmgn_meta_full = get_gmgn_wallet_metadata()
-st.markdown("#### 🧊 Holders with no buy in this window")
-st.caption("Holder-rank whale/dolphin = current token balance rank. These "
-           "wallets did not buy inside the selected CVD window but still "
-           "hold tokens. Light holder/trader requires a buy inside the "
-           "window, so true no-buy cases appear here instead.")
+monitor = pure_accumulator_growth(
+    swaps_all, full_profiles, min_buy_sol=0.1, sell_tol=0.10,
+    start_ts=min((int(x[2]) for x in swaps_all), default=now_ts),
+    end_ts=now_ts, bucket_s=6 * 3600)
+conv_hist_path = os.path.join(BASE, "conviction.json")
+try:
+    with open(conv_hist_path, "r", encoding="utf-8") as _f:
+        conv_points = [p for p in (json.load(_f).get(ca, []))
+                       if int(p.get("ts") or 0) >= now_ts - hours * 3600]
+except (OSError, ValueError, AttributeError):
+    conv_points = []
 
-silent_holder_rows = []
-_holder_scan_error = ""
-if helius_keys:
-    try:
-        with st.spinner("Checking current holders that did not buy…"):
-            holder_rows, _holder_supply = fetch_current_holder_rows(
-                tuple(helius_keys), ca)
-        if holder_rows:
-            tradable_holder_rows = [r for r in holder_rows
-                                    if r["owner"] != pool]
-            holder_pairs = [(r["owner"], r["ui_amount"])
-                            for r in tradable_holder_rows]
-            holder_tiers = classify_holders(holder_pairs,
-                                            n_total=len(holder_pairs))
-            buyers_in_window = {
-                w for w, d in full_profiles.items()
-                if int(d.get("n_buy") or 0) > 0
-            }
-            for r in tradable_holder_rows:
-                w = r["owner"]
-                tier = holder_tiers.get(w)
-                if tier not in ("whale", "dolphin"):
-                    continue
-                if w in buyers_in_window:
-                    continue
-                p = full_profiles.get(w) or {}
-                label = "🐋 WHALE HOLDER" if tier == "whale" \
-                    else "🐬 DOLPHIN HOLDER"
-                silent_holder_rows.append({
-                    "Wallet": f"https://solscan.io/account/{w}",
-                    "Tier": label,
-                    "Balance": f"{float(r['ui_amount']):,.2f}",
-                    "% Supply": f"{float(r['pct_supply']):.3f}%",
-                    "Window sell": f"{float(p.get('sell') or 0):,.2f}",
-                    "Window profile": p.get("profile", "no swaps"),
-                })
-                if len(silent_holder_rows) >= 30:
-                    break
-    except Exception as exc:  # noqa: BLE001
-        _holder_scan_error = str(exc)
-else:
-    _holder_scan_error = "Helius API key missing."
+bucket_start = (min((int(x[2]) for x in swaps_all), default=now_ts) // (6 * 3600)) * (6 * 3600)
+bucket_end = (now_ts // (6 * 3600)) * (6 * 3600)
+tx_buckets = {}
+for _side, _sol, _ts, _wallet in swaps_all:
+    _bucket = (int(_ts) // (6 * 3600)) * (6 * 3600)
+    _row = tx_buckets.setdefault(_bucket, {"tx": 0, "volume": 0.0})
+    _row["tx"] += 1
+    _row["volume"] += float(_sol)
+monitor_rows = []
+_acc_by_bucket = {r["bucket_ts"]: r for r in monitor["series"]}
+for _bucket in range(bucket_start, bucket_end + 1, 6 * 3600):
+    _acc = _acc_by_bucket.get(_bucket, {})
+    _nearest = [p for p in conv_points if int(p.get("ts") or 0) <= _bucket + 6 * 3600]
+    monitor_rows.append({"ts": _bucket,
+                         "accum": _acc.get("cum_wallets", 0),
+                         "conviction": float(_nearest[-1].get("conviction") or 0) if _nearest else None,
+                         "tx": tx_buckets.get(_bucket, {}).get("tx", 0),
+                         "volume": tx_buckets.get(_bucket, {}).get("volume", 0.0)})
 
-no_buy_meta_rows = detect_no_buy_holders(
-    full_profiles, gmgn_meta_full, whale_min_sol=WHALE_SOL)[:20]
-nb1, nb2 = st.columns(2)
-with nb1:
-    if silent_holder_rows:
-        st.dataframe(pd.DataFrame(silent_holder_rows),
-                     use_container_width=True, hide_index=True,
-                     column_config={"Wallet": st.column_config.LinkColumn(
-                         "No-buy current holders",
-                         display_text=r"account/(.{6}).*")})
-    else:
-        st.caption("No current whale/dolphin holders without window buys "
-                   "found, or holder scan unavailable. " + _holder_scan_error)
-with nb2:
-    if no_buy_meta_rows:
-        _nb_meta_df = pd.DataFrame([{
-            "Wallet": f"https://solscan.io/account/{r['wallet']}",
-            "Cohort": r["cohort"],
-            "Window sell": f"{r['sell']:,.2f}",
-            "Token balance": f"{r['balance']:,.2f}",
-            "Swaps": r["n_sell"],
-            "GMGN trades": r["total_trade"],
-            "Tags": ", ".join(r["tags"] + r["token_tags"]) or "—",
-        } for r in no_buy_meta_rows])
-        st.dataframe(_nb_meta_df, use_container_width=True, hide_index=True,
-                     column_config={"Wallet": st.column_config.LinkColumn(
-                         "GMGN sell-only but still holds",
-                         display_text=r"account/(.{6}).*")})
-    else:
-        st.caption("No GMGN sell-only wallet with current balance found. "
-                   "This only checks wallets present in the fetched trades.")
+st.markdown("### 📡 Monitor pertumbuhan 6 jam")
+st.caption("Pure accumulator = semua wallet beli ≥0.1 SOL dan jual ≤10% dari beli pada window ini. Semua grafik dibagi bucket 6 jam.")
+if monitor_rows:
+    _mx = [dtm.datetime.fromtimestamp(r["ts"], WIB) for r in monitor_rows]
+    _m1, _m2 = st.columns(2)
+    with _m1:
+        _fig = go.Figure()
+        _fig.add_bar(x=_mx, y=[r["accum"] for r in monitor_rows], name="Akumulator kumulatif", marker_color="#22c55e")
+        _fig.add_scatter(x=_mx, y=[r["volume"] for r in monitor_rows], name="Buy SOL kumulatif", yaxis="y2", line=dict(color="#a78bfa"))
+        _fig.update_layout(title="Pure accumulator growth", height=280, margin=dict(t=35,b=0,l=0,r=0), yaxis2=dict(overlaying="y", side="right", title="SOL"), legend=dict(orientation="h"))
+        st.plotly_chart(_fig, use_container_width=True, config={"displayModeBar": False})
+    with _m2:
+        _fig = go.Figure()
+        _fig.add_scatter(x=_mx, y=[r["conviction"] for r in monitor_rows], name="Conviction", connectgaps=True, line=dict(color="#f59e0b", width=3))
+        _fig.update_layout(title="Conviction dari waktu ke waktu", height=280, margin=dict(t=35,b=0,l=0,r=0), yaxis=dict(range=[0, 100], title="%"))
+        st.plotly_chart(_fig, use_container_width=True, config={"displayModeBar": False})
+    _fig = go.Figure()
+    _fig.add_bar(x=_mx, y=[r["tx"] for r in monitor_rows], name="TX", marker_color="#38bdf8")
+    _fig.add_scatter(x=_mx, y=[r["volume"] for r in monitor_rows], name="Volume SOL", yaxis="y2", line=dict(color="#f97316", width=2))
+    _fig.update_layout(title="TX & volume growth / 6 jam", height=280, margin=dict(t=35,b=0,l=0,r=0), yaxis2=dict(overlaying="y", side="right", title="SOL"), legend=dict(orientation="h"))
+    st.plotly_chart(_fig, use_container_width=True, config={"displayModeBar": False})
+    # Indexed chart makes direction directly comparable despite different units.
+    _fig = go.Figure()
+    for _key, _label, _color in (("accum", "Pure accumulator", "#22c55e"), ("conviction", "Conviction", "#f59e0b"), ("tx", "TX", "#38bdf8"), ("volume", "Volume", "#f97316")):
+        _values = [r[_key] for r in monitor_rows]
+        _base = next((v for v in _values if v not in (None, 0)), None)
+        if _base is not None:
+            _fig.add_scatter(x=_mx, y=[None if v is None else v / _base * 100 for v in _values], name=_label, line=dict(color=_color, width=2))
+    _fig.update_layout(title="Gabungan indikator — index basis 100", height=330, margin=dict(t=35,b=0,l=0,r=0), yaxis=dict(title="Index (awal = 100)"), legend=dict(orientation="h"))
+    st.plotly_chart(_fig, use_container_width=True, config={"displayModeBar": False})
 
+# No-buy holder inspection is intentionally disabled for now.  It adds an
+# expensive holder RPC call and is not part of the active CVD decision flow.
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # 🔎 Focus range deep analysis
 # ---------------------------------------------------------------------------

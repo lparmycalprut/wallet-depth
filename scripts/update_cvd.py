@@ -244,6 +244,10 @@ def main():
                                      src="cron", window_h=6,
                                      price_now=price_now, pool=pool)
             cp = record_conviction(ca, window_h=6)
+            # Independent monitor alerts: all four indicators move together,
+            # or TX/volume jumps at least 5x between six-hour snapshots.
+            from signals import detect_growth_alerts
+            sigs.extend(detect_growth_alerts(ca, meta.get("symbol", "?"), cp))
             conv_txt = (f" conv={cp['conviction']:.0f}%" if cp else "")
             sig_txt = (" 🔔 " + ",".join(sigs)) if sigs else ""
 
