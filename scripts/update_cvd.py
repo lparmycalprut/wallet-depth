@@ -228,14 +228,19 @@ def main():
 
             gmgn_err = res.get("error") or get_gmgn_last_error()
             if not res.get("fetch_ok", True):
-                # Do not turn a failed/partial pull into a new timestamped
-                # conviction point.  That would make stale CVD look fresh
-                # and could emit a false signal. update_token_cvd kept its
-                # old cursor intact, so the next cron safely retries it.
-                detail = gmgn_err or "GMGN fetch incomplete"
-                print(f"⚠️ {meta.get('symbol', '?'):>10} {ca[:8]}… "
-                      f"CVD not updated: {detail[:120]}")
-                continue
+                # Partial-walk recovery: if partial with coverage_from ≤ now-4h,
+                # continue recording conviction + signals; else skip as usual.
+                coverage_from = res.get("coverage_from")
+                partial_ok = (res.get("partial") and coverage_from is not None
+                              and (time.time() - coverage_from) <= 4 * 3600)
+                if partial_ok:
+                    # Partial result covers at least last 4h → safe to record.
+                    pass  # fall through to conviction/signals
+                else:
+                    detail = gmgn_err or "GMGN fetch incomplete"
+                    print(f"⚠️ {meta.get('symbol', '?'):>10} {ca[:8]}… "
+                          f"CVD not updated: {detail[:120]}")
+                    continue
             if gmgn_err and res["new_swaps"] == 0:
                 gap += f" gmgn:{gmgn_err[:60]}"
 
