@@ -26,6 +26,7 @@ from core import (atomic_write_json, concentration, get_helius_keys,
                   get_rugcheck, get_supply as core_get_supply, health_score,
                   helius_rpc, score_color, score_label)
 from trending_ui import (render_trending, run_screen, run_screen_hrhr,
+                         run_screen_h1, run_screen_hrhr_h1,
                          enrich_hrhr_with_patterns)
 
 
@@ -1451,12 +1452,9 @@ if _wl:
             _candles_h4 = (aggregate_candles(_candles_h1, 4)
                            if _candles_h1 else [])
             _pt_h4 = candle_pattern_summary(_candles_h4)
-            _pt_h1 = candle_pattern_summary(_candles_h1)
             _patterns_html = (
                 _pattern_block_html("🕯️ H4 body kecil", _pt_h4,
-                                    bool(_candles_h4))
-                + _pattern_block_html("🕯️ H1 body kecil", _pt_h1,
-                                      bool(_candles_h1)))
+                                    bool(_candles_h4)))
 
             # ---- Stability badge (KOKOH / GOYAH / MELEMAH) ----
             # Compare recent 3 points vs prior 3 points for momentum
@@ -1700,8 +1698,8 @@ if _wl:
                 "**📈 Pertumbuhan** = history real vs dust yang dicatat cron "
                 "tiap jam; chip = perubahan 1/6/24 jam (💎 real, 🪙 dust), "
                 "garis hijau = real, oranye = dust (skala masing-masing). "
-                "**🕯️ H4/H1 body kecil** = pola doji/hammer/spinning top 48h "
-                "beserta range harga pola-nya (H4 & H1 terpisah). "
+                "**🕯️ H4 body kecil** = pola doji/hammer/spinning top 48h "
+                "dengan volume <$10K, beserta range harga pola-nya. "
                 "Klik card → CVD analysis.")
             if FOCUS_MODE:
                 _lp_caption += ("  🎯 FOCUS_MODE: phase/divergence "
@@ -1870,12 +1868,9 @@ if _wl:
                 _candles_h4_deg = (aggregate_candles(_candles_h1_deg, 4)
                                    if _candles_h1_deg else [])
                 _pt_h4_deg = candle_pattern_summary(_candles_h4_deg)
-                _pt_h1_deg = candle_pattern_summary(_candles_h1_deg)
                 _patterns_html_deg = (
                     _pattern_block_html("🕯️ H4 body kecil", _pt_h4_deg,
-                                        bool(_candles_h4_deg))
-                    + _pattern_block_html("🕯️ H1 body kecil", _pt_h1_deg,
-                                          bool(_candles_h1_deg)))
+                                        bool(_candles_h4_deg)))
 
                 # Degen-style border: orange/red tint
                 _deg_border = "#f97316"
@@ -1978,8 +1973,8 @@ if _wl:
                            "**📈 Pertumbuhan** = history real vs dust yang dicatat "
                            "cron tiap jam; chip = perubahan 1/6/24 jam (garis "
                            "hijau = real, oranye = dust, skala masing-masing). "
-                           "**🕯️ H4/H1 body kecil** = pola doji/hammer/spinning "
-                           "top 48h + range harga pola-nya (H4 & H1 terpisah). "
+                           "**🕯️ H4 body kecil** = pola doji/hammer/spinning "
+                           "top 48h dengan volume <$10K + range harga pola-nya. "
                            "⚠️ Token ini BERISIKO TINGGI — selalu DYOR! "
                            "Klik card → CVD analysis.")
                 if FOCUS_MODE:
@@ -2018,6 +2013,23 @@ if scan_trending or "screener_rows" in st.session_state:
 
         render_trending(_rows, key_prefix="home", on_analyze=_pick)
 
+        # ---- 2nd scan in the same expander: Trending H1 ----
+        # Same criteria as the 24h scan above, but interval=1h and the
+        # minimum volume cut to one-tenth — catches micro-caps that are
+        # starting to heat up before they reach the 24h trending window.
+        _rows_h1, _err_h1 = run_screen_h1(
+            force=scan_trending, dust_limit_usd=float(dust_limit),
+            helius_keys=helius_keys)
+        if _err_h1:
+            st.error(f"Failed to fetch Trending H1: {_err_h1}")
+        if _rows_h1:
+            st.markdown(
+                "**🔥 Trending H1** <span style='opacity:0.6;font-size:"
+                "0.72rem'>window 1 jam · min volume 1/10 dari scan 24h</span>",
+                unsafe_allow_html=True)
+            render_trending(_rows_h1, key_prefix="home_h1",
+                            on_analyze=_pick)
+
 scan_hrhr = st.button("⚡ Scan High Risk High Reward Now", key="hrhr_scan",
                       type="primary", use_container_width=True)
 if scan_hrhr or "screener_hrhr_rows" in st.session_state:
@@ -2037,6 +2049,25 @@ if scan_hrhr or "screener_hrhr_rows" in st.session_state:
         # Enrich HRHR rows with H4 candle pattern detection (degen use case)
         _rows_hrhr = enrich_hrhr_with_patterns(_rows_hrhr)
         render_trending(_rows_hrhr, key_prefix="hrhr_home", on_analyze=_pick_hrhr)
+
+        # ---- 2nd scan in the same expander: HRHR H1 ----
+        # Same criteria as the 24h HRHR scan, but interval=1h and the
+        # minimum volume cut to one-tenth — catches high-risk micro-caps
+        # before they climb into the 24h HRHR window.
+        _rows_hrhr_h1, _err_hrhr_h1 = run_screen_hrhr_h1(
+            force=scan_hrhr, dust_limit_usd=float(dust_limit),
+            helius_keys=helius_keys)
+        if _err_hrhr_h1:
+            st.error(f"Failed to fetch HRHR H1: {_err_hrhr_h1}")
+        if _rows_hrhr_h1:
+            st.markdown(
+                "**⚡ High Risk High Reward H1** <span style='opacity:0.6;"
+                "font-size:0.72rem'>window 1 jam · min volume 1/10 dari "
+                "scan 24h</span>",
+                unsafe_allow_html=True)
+            _rows_hrhr_h1 = enrich_hrhr_with_patterns(_rows_hrhr_h1)
+            render_trending(_rows_hrhr_h1, key_prefix="hrhr_home_h1",
+                            on_analyze=_pick_hrhr)
 
 # ---------------------------------------------------------------------------
 # ⚡ Quick Pick — isi otomatis kolom CA di bawah dari watchlist.

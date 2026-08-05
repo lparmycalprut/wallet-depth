@@ -3294,6 +3294,34 @@ PATTERN_EMOJI = {
     "Gravestone Doji": "⚰️",
 }
 
+#: Only LOW-volume candles (< $10K USD) qualify as reversal/indecision
+#: patterns. A doji/hammer on a heavy-volume bar is not a quiet "nobody
+#: agrees" bar — real money moved, which is a different (and for the degen
+#: screener, less interesting) read. The HRHR scan wants quiet,
+#: low-conviction candles, so candles with volume >= this threshold are
+#: ignored entirely.
+PATTERN_MAX_VOLUME_USD = 10_000.0
+
+
+def _pattern_volume_ok(c: dict) -> bool:
+    """True only when a candle's USD volume is KNOWN and < $10K.
+
+    A candle must carry a ``v`` (USD volume from GeckoTerminal OHLCV) value
+    strictly below :data:`PATTERN_MAX_VOLUME_USD` to count as a pattern. An
+    unknown/missing volume never qualifies — we can't confirm it's a quiet
+    candle, so we don't show it.
+    """
+    v = c.get("v")
+    if v is None:
+        return False
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return False
+    if v != v or v in (float("inf"), float("-inf")):   # NaN / ±inf
+        return False
+    return v < PATTERN_MAX_VOLUME_USD
+
 
 def _classify_small_body(o: float, h: float, l: float, c: float) -> str | None:
     """Classify one candle as a small-body pattern name, or None.
@@ -3345,7 +3373,10 @@ def detect_candle_patterns(candles: list[dict]) -> dict[str, int]:
     indecision patterns: Doji, Hammer, Inverted Hammer, Spinning Top,
     Dragonfly Doji, Gravestone Doji.
 
-    Each candle dict must have keys ``o, h, l, c`` (floats).
+    Each candle dict must have keys ``o, h, l, c`` (floats). Only candles
+    whose USD volume is **below $10K** (:data:`PATTERN_MAX_VOLUME_USD`)
+    count — a doji/hammer on a heavy-volume bar is not a quiet indecision
+    read and is ignored.
 
     Returns a dict mapping pattern name -> count of occurrences.
     Heuristic only — not a trading signal.
@@ -3356,6 +3387,8 @@ def detect_candle_patterns(candles: list[dict]) -> dict[str, int]:
     counts: dict[str, int] = {}
 
     for c in candles:
+        if not _pattern_volume_ok(c):
+            continue
         name = _classify_small_body(c["o"], c["h"], c["l"], c["c"])
         if name is not None:
             counts[name] = counts.get(name, 0) + 1
@@ -3366,7 +3399,11 @@ def detect_candle_patterns(candles: list[dict]) -> dict[str, int]:
 def candle_pattern_summary(candles: list[dict]) -> dict:
     """Detect small-body patterns AND the price range they traded in.
 
-    Works on any timeframe (H4 = 12 bars / 48h, H1 = 48 bars / 48h).
+    Works on any timeframe (H4 = 12 bars / 48h).
+    Only candles with USD volume **below $10K**
+    (:data:`PATTERN_MAX_VOLUME_USD`) are considered, matching
+    :func:`detect_candle_patterns`.
+
     Returns ``{"counts": {name: n}, "low": float|None, "high": float|None,
     "n": int}`` where ``low``/``high`` are the lowest low and highest
     high across all pattern candles — the price range a trader would
@@ -3376,6 +3413,8 @@ def candle_pattern_summary(candles: list[dict]) -> dict:
     lo = hi = None
     n = 0
     for c in candles:
+        if not _pattern_volume_ok(c):
+            continue
         name = _classify_small_body(c["o"], c["h"], c["l"], c["c"])
         if name is None:
             continue

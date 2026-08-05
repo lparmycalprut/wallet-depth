@@ -99,11 +99,13 @@ HEADERS = {
 }
 
 
-def fetch_trending(timeout=25, debug=False):
+def fetch_trending(timeout=25, debug=False, filter_body=FILTER_BODY):
     """Return raw token dicts from GMGN trending (may be empty).
 
     Set ``debug=True`` to print why a fetch came back empty instead of
-    silently swallowing it.
+    silently swallowing it. ``filter_body`` selects which filter payload
+    to POST — defaulting to :data:`FILTER_BODY` (24h, 100k min volume);
+    pass :data:`TRENDING_FILTER_BODY_H1` for the H1 variant.
     """
     try:
         from curl_cffi import requests as cr
@@ -117,7 +119,7 @@ def fetch_trending(timeout=25, debug=False):
     for imp in ("chrome", "chrome131", "safari17_0"):
         try:
             r = cr.post(_trending_url(), impersonate=imp, timeout=timeout,
-                        headers=HEADERS, data=json.dumps(FILTER_BODY))
+                        headers=HEADERS, data=json.dumps(filter_body))
         except Exception as exc:                        # noqa: BLE001
             last = f"{imp}: {type(exc).__name__}: {exc}"
             continue
@@ -577,7 +579,13 @@ def _apply_token_context(rows, raw_by_ca):
     return rows
 
 
-def screen():
+#: sentinel so :func:`screen` / :func:`screen_hrhr` resolve their default
+#: fetcher at CALL time — tests monkeypatch the module-level ``fetch_trending``
+#: / ``fetch_hrhr`` globals, which a default-argument binding would ignore.
+_DEFAULT_FETCHER = object()
+
+
+def screen(fetcher=_DEFAULT_FETCHER):
     """Fetch + score + sort by fit desc. Returns list of rows.
 
     Rows without a contract address are dropped and duplicate CAs are
@@ -586,9 +594,14 @@ def screen():
     Each row also carries ``down_ath`` — how far the CURRENT price is
     below the all-time high (%) — so the trending scan shows the same
     ATH context the HRHR scan has. Display-only, never scores.
+
+    ``fetcher`` defaults to :func:`fetch_trending`; pass
+    :func:`fetch_trending_h1` for the H1 (1h) variant.
     """
+    if fetcher is _DEFAULT_FETCHER:
+        fetcher = fetch_trending
     rows, seen, raw_by_ca = [], set(), {}
-    for t in fetch_trending():
+    for t in fetcher():
         if not isinstance(t, dict):
             continue
         try:
@@ -715,6 +728,71 @@ HRHR_FILTER_BODY = {
     }],
 }
 
+# ---------------------------------------------------------------------------
+# "Trending H1" — the second scan run inside the same trending/degen scan.
+# Identical criteria to the base scan EXCEPT:
+#   * interval is "1h" (catch tokens heating up before they climb into the
+#     24h trending window), and
+#   * min_volume_24h is lowered to ONE-TENTH of the base scan.
+# ---------------------------------------------------------------------------
+TRENDING_FILTER_BODY_H1 = {
+    "meta": {},
+    "params": [{
+        "chain": "sol",
+        "interval": "1h",
+        "filter": {
+            "filters": ["migrated", "not_wash_trading", "renounced",
+                        "frozen"],
+            "min_created": "2880m",
+            "max_created": "43200m",
+            "min_liquidity": 30000,
+            "min_marketcap": 100000,
+            "min_holder_count": 1000,
+            "min_gas_fee": 20,
+            "max_insider_ratio": 0.15,
+            "max_bundler_rate": 0.15,
+            # 1/10 of FILTER_BODY's 100k min_volume_24h
+            "min_volume_24h": 10000,
+        },
+    }],
+}
+
+HRHR_FILTER_BODY_H1 = {
+    "meta": {},
+    "params": [{
+        "chain": "sol",
+        "interval": "1h",
+        "filter": {
+            "filters": ["migrated", "not_wash_trading", "renounced",
+                        "frozen"],
+            "min_created": "2880m",
+            "max_created": "86400m",
+            "max_marketcap": 250000,
+            "min_holder_count": 1000,
+            "min_gas_fee": 30,
+            # 1/10 of HRHR_FILTER_BODY's 10k min_volume_24h
+            "min_volume_24h": 1000,
+        },
+    }],
+}
+
+
+def fetch_trending_h1(timeout=25, debug=False):
+    """``trending_rank`` with interval=1h and 1/10th min volume.
+
+    Catches micro-caps that are starting to heat up before they reach the
+    24h trending window (the same reason the HRHR list can miss a cooling
+    token that still qualifies).
+    """
+    return fetch_trending(timeout=timeout, debug=debug,
+                          filter_body=TRENDING_FILTER_BODY_H1)
+
+
+def fetch_hrhr_h1(timeout=25, debug=False):
+    """HRHR ``trending_rank`` with interval=1h and 1/10th min volume."""
+    return fetch_hrhr(timeout=timeout, debug=debug,
+                      filter_body=HRHR_FILTER_BODY_H1)
+
 
 def _get_avg_cost_and_ath(t, row=None):
     """Real (avg_cost_change_%, down_from_ath_%) for a GMGN token dict.
@@ -745,8 +823,13 @@ def ath_note_prefix(down_ath):
     return ("\U0001f7e2 " + note + "; ") if down_ath >= 90.0 else (note + "; ")
 
 
-def fetch_hrhr(timeout=25, debug=False):
-    """Fetch raw token dicts from GMGN HRHR list."""
+def fetch_hrhr(timeout=25, debug=False, filter_body=HRHR_FILTER_BODY):
+    """Fetch raw token dicts from GMGN HRHR list.
+
+    ``filter_body`` selects which filter payload to POST — defaulting to
+    :data:`HRHR_FILTER_BODY` (24h, 10k min volume); pass
+    :data:`HRHR_FILTER_BODY_H1` for the H1 variant.
+    """
     try:
         from curl_cffi import requests as cr
     except ImportError:
@@ -758,7 +841,7 @@ def fetch_hrhr(timeout=25, debug=False):
     for imp in ("chrome", "chrome131", "safari17_0"):
         try:
             r = cr.post(_trending_url(), impersonate=imp, timeout=timeout,
-                        headers=HEADERS, data=json.dumps(HRHR_FILTER_BODY))
+                        headers=HEADERS, data=json.dumps(filter_body))
         except Exception as exc:                        # noqa: BLE001
             last = f"{imp}: {type(exc).__name__}: {exc}"
             continue
@@ -787,14 +870,23 @@ def fetch_hrhr(timeout=25, debug=False):
     return []
 
 
-def screen_hrhr():
-    """Fetch + score + filter for HRHR criteria + sort. Returns list of rows."""
+def screen_hrhr(fetcher=_DEFAULT_FETCHER,
+                fallback_fetcher=_DEFAULT_FETCHER):
+    """Fetch + score + filter for HRHR criteria + sort. Returns list of rows.
+
+    ``fetcher`` defaults to :func:`fetch_hrhr` (24h); pass
+    :func:`fetch_hrhr_h1` for the H1 variant. ``fallback_fetcher`` is used
+    when the primary fetch returns empty (Cloudflare block etc).
+    """
+    if fetcher is _DEFAULT_FETCHER:
+        fetcher = fetch_hrhr
+    if fallback_fetcher is _DEFAULT_FETCHER:
+        fallback_fetcher = fetch_trending
     rows, seen, raw_by_ca = [], set(), {}
-    tokens = fetch_hrhr()
+    tokens = fetcher()
     if not tokens:
-        # fallback using fetch_trending if fetch_hrhr returns empty (Cloudflare blocks etc)
-        tokens = fetch_trending()
-        
+        # fallback (e.g. Cloudflare blocks) to the matching trending fetch
+        tokens = fallback_fetcher()
     for t in tokens:
         if not isinstance(t, dict):
             continue
@@ -822,6 +914,21 @@ def screen_hrhr():
         -row.get("fit_exact", row["fit"]), row["t10_pct"],
         -row["liq_pct"]))
     return rows
+
+
+def screen_trending_h1():
+    """Trending scan on the H1 window: same criteria except min_volume is
+    one-tenth of the base scan (and interval=1h). Used as the SECOND scan
+    shown inside the same trending expander (2 scans in 1)."""
+    return screen(fetcher=fetch_trending_h1)
+
+
+def screen_hrhr_h1():
+    """HRHR scan on the H1 window: same criteria except min_volume is
+    one-tenth of the base HRHR scan (and interval=1h). Used as the SECOND
+    scan shown inside the same degen/HRHR expander."""
+    return screen_hrhr(fetcher=fetch_hrhr_h1,
+                       fallback_fetcher=fetch_trending_h1)
 
 
 if __name__ == "__main__":
