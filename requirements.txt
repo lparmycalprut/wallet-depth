@@ -1,4 +1,11 @@
-streamlit
+# Pinned because Starlette >= 0.41 added a keyword-only `thread_minimum_size`
+# arg to GZipResponder; older Streamlit (<1.39) calls it without that arg and
+# every request crashes with:
+#   TypeError: GZipResponder.__init__() missing 1 required
+#              keyword-only argument: 'thread_minimum_size'
+# Streamlit 1.39 (2024-10-31) updated the bundled gzip middleware wrapper to
+# pass the new arg. Keep the floor at 1.39; bump to latest as needed.
+streamlit>=1.39
 requests
 pandas
 plotly

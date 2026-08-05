@@ -255,6 +255,19 @@ Jebakan yang sudah pernah menggigit:
   perilakunya langsung bergeser. Test di
   `tests/test_flow_safety.py::test_flow_freshness` wajib tetap
   hijau — kalau naik/turun band, update test bersamaan.
+- **`streamlit` WAJIB dipin di `requirements.txt`.** Starlette 0.41+
+  menambahkan argumen **keyword-only** `thread_minimum_size` ke
+  `GZipResponder.__init__()`. Streamlit lawas memanggilnya TANPA
+  argumen itu dan crash dengan
+  `TypeError: GZipResponder.__init__() missing 1 required
+  keyword-only argument: 'thread_minimum_size'` di
+  `streamlit/web/server/starlette/starlette_gzip_middleware.py:125`
+  untuk **setiap** request. Floor `streamlit>=1.39` (rilis
+  2024-10-31 sudah pass arg baru). JANGAN kembalikan ke `streamlit`
+  tanpa pin — pip bisa menarik versi lama dan server crash lagi.
+  Berlaku untuk Python 3.11/3.12/3.14 dan untuk Streamlit Cloud
+  (rilis image lebih baru = starlette lebih baru = lebih rentan
+  terhadap drift). Detail di `BUGFIX_SUMMARY.md` § Bug 0.
 
 ## 7.5 Perilaku baru yang wajib dijaga (2026-08-01)
 

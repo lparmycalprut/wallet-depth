@@ -3,6 +3,54 @@
 Tanggal: 2026-08-04
 Status: ✅ Semua 185 tests PASS
 
+## Bug 0: GZipResponder missing `thread_minimum_size` (server crash on every request)
+
+**File:** `requirements.txt`
+
+**Masalah:**
+Setiap request ke Streamlit crash dengan traceback:
+
+```
+TypeError: GZipResponder.__init__() missing 1 required
+           keyword-only argument: 'thread_minimum_size'
+File "streamlit/web/server/starlette/starlette_gzip_middleware.py", line 125
+```
+
+**Root cause:**
+- Starlette 0.41+ menambahkan argumen **keyword-only** `thread_minimum_size`
+  ke `GZipResponder.__init__()` (commit
+  `encode/starlette@cb824a1c7d67924fc762bfc12359139892385b18`).
+- Streamlit versi lama punya wrapper `starlette_gzip_middleware.py` yang
+  masih memanggil `GZipResponder(self.app, self.minimum_size,
+  compresslevel=self.compresslevel)` **tanpa** `thread_minimum_size`.
+- Setiap request yang menerima header `Accept-Encoding: gzip` (browser
+  default) langsung raise `TypeError` di dalam middleware stack.
+- Di manifest ini tidak ada `streamlit` di-pin, jadi `pip install -r
+  requirements.txt` menarik versi apapun yang ter-resolve — dan di venv
+  Python 3.14 (Aug 2026) default resolution mengarah ke Streamlit lama
+  + Starlette baru → **pasti crash**.
+
+**Fix:**
+Pin `streamlit>=1.39` (rilis 2024-10-31, membawa pembaruan gzip middleware
+yang sudah pass `thread_minimum_size` ke `GZipResponder`). Berlaku untuk
+semua Python yang dipakai (3.11/3.12/3.14), dan untuk semua platform
+deploy (lokal, Streamlit Cloud, GitHub Actions).
+
+```diff
+-streamlit
++# Pinned because Starlette >= 0.41 added a keyword-only `thread_minimum_size`
++# arg to GZipResponder; older Streamlit (<1.39) calls it without that arg and
++# every request crashes with:
++#   TypeError: GZipResponder.__init__() missing 1 required
++#              keyword-only argument: 'thread_minimum_size'
++# Streamlit 1.39 (2024-10-31) updated the bundled gzip middleware wrapper to
++# pass the new arg. Keep the floor at 1.39; bump to latest as needed.
++streamlit>=1.39
+ requests
+```
+
+---
+
 ## Bug 1: Rate-limit delay di cto_deep_scan.py
 
 **File:** `cto_deep_scan.py`  
