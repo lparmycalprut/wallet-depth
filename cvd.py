@@ -864,9 +864,57 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
                 break
 
     if not fetch_ok:
-        # Keep every data cursor/bucket untouched.  The next cron/manual
-        # retry starts from the same known-good point instead of creating a
-        # permanent hole in CVD history.
+        # Partial-walk recovery for super-active tokens (GMGN page-cap 80).
+        # When the fetch fails with "safety cap" and we have non-empty swaps,
+        # persist the partial swaps/buckets, advance cursor to oldest visible,
+        # mark gap + history_gap, and return partial result.
+        partial_recovery = ("safety cap" in fetch_error and swaps)
+        if partial_recovery:
+            entry["pool"] = effective_pool
+            entry["gap"] = True
+            entry["history_gap"] = True
+            entry["updated"] = int(time.time())
+            entry["last_fetch_error"] = fetch_error + " (recovered partial)"
+            entry["last_fetch_source"] = "gmgn"
+            # Persist partial swaps (deduplicated) and buckets
+            fresh_partial = bucketize(swaps)
+            for b, c in fresh_partial.items():
+                old = entry["buckets"].get(b)
+                if old:
+                    for k in c:
+                        old[k] = old.get(k, 0) + c[k]
+                else:
+                    entry["buckets"][b] = c
+            raw = entry.get("swaps") or []
+            raw.extend([list(s) for s in swaps])
+            seen_swaps = {}
+            for s in raw:
+                if len(s) >= 4:
+                    key = (s[0], float(s[1]), int(s[2]), str(s[3]))
+                    seen_swaps[key] = s
+            ordered_swap_keys = sorted(seen_swaps, key=lambda key: key[2])
+            cutoff_raw = time.time() - 72 * 3600
+            entry["swaps"] = [seen_swaps[key] for key in ordered_swap_keys
+                              if key[2] >= cutoff_raw]
+            # Advance cursor to oldest visible trade
+            if swaps:
+                oldest_swap = sorted(swaps, key=lambda s: s[2])[0]
+                entry["newest_sig"] = _gmgn_trade_key({
+                    "event": oldest_swap[0],
+                    "timestamp": oldest_swap[2],
+                    "maker": oldest_swap[3],
+                })
+                entry["newest_ts"] = oldest_swap[2]
+            state[ca] = entry
+            save_cvd(state)
+            min_ts = min(s[2] for s in swaps) if swaps else int(time.time())
+            return {"partial": True, "new_swaps": len(swaps),
+                    "buckets": len(entry.get("buckets") or {}),
+                    "gap": True, "fetch_ok": False,
+                    "complete": False, "error": fetch_error,
+                    "coverage_from": min_ts, "history_gap": True}
+
+        # Normal failure path (no recoverable partial)
         entry["pool"] = effective_pool
         entry["gap"] = True
         entry["updated"] = int(time.time())
@@ -878,7 +926,16 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
                 "gap": True, "fetch_ok": False, "complete": False,
                 "error": fetch_error}
 
-    fresh = bucketize(swaps)
+    # Idempotency guard: filter swaps that already exist in raw store
+    # before bucketizing, preventing double-count when the same range is
+    # fetched again (e.g. after partial recovery completes next run).
+    existing_raw = entry.get("swaps") or []
+    existing_keys = {(s[0], float(s[1] if len(s) > 1 else 0),
+                      int(s[2] if len(s) > 2 else 0),
+                      str(s[3] if len(s) > 3 else ""))
+                     for s in existing_raw if len(s) >= 4}
+    filtered_swaps = [s for s in swaps if (s[0], float(s[1]), int(s[2]), str(s[3])) not in existing_keys]
+    fresh = bucketize(filtered_swaps)
     for b, c in fresh.items():
         old = entry["buckets"].get(b)
         if old:
@@ -890,7 +947,7 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
     # --- raw swap store (last 72h, incl. wallet) for complete-window UI ----
     cutoff_raw = time.time() - 72 * 3600
     raw = entry.get("swaps") or []
-    raw.extend([list(s) for s in swaps])
+    raw.extend([list(s) for s in filtered_swaps])
     # Deduplicate swaps to prevent inflated/duplicate values.
     seen_swaps = {}
     for s in raw:
@@ -915,7 +972,7 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
                         if int(b) >= cutoff}
     state[ca] = entry
     save_cvd(state)
-    return {"new_swaps": len(swaps), "buckets": len(entry["buckets"]),
+    return {"new_swaps": len(filtered_swaps), "buckets": len(entry["buckets"]),
             "gap": entry["gap"], "fetch_ok": True,
             "complete": complete, "error": ""}
 
