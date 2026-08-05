@@ -2244,6 +2244,150 @@ def real_tx_summary(swaps, *, dust_limit_usd: float = 5.0,
     return out
 
 
+def h4_activity_series(swaps, *, bins: int = 12, now_ts: int = None,
+                       spike_mult: float = 5.0,
+                       dust_limit_usd: float = 0.0,
+                       sol_price: float = 0.0) -> dict:
+    """Per-4-hour transaction-count and volume series (+ spike warnings).
+
+    Buckets ``swaps`` ([(side, sol, ts, wallet)]) into fixed 4-hour bins
+    aligned to the unix epoch (``ts // 14400``), newest bin last. This is
+    what the LP/Degen Radar "grafik per 4 jam" block renders: is activity
+    growing or dying, and did it jump/collapse abnormally?
+
+    Each bin is ``{"ts": bin_start, "tx": int, "vol": float,
+    "buy": float, "sell": float}`` where ``vol`` is total SOL traded
+    (buy + sell). When ``dust_limit_usd`` > 0 and ``sol_price`` > 0, only
+    swaps worth at least that many USD are counted (same real/dust
+    threshold the cards use elsewhere).
+
+    ``bins`` bins are always returned (empty ones zero-filled) so the
+    chart keeps a stable x-axis even for quiet tokens.
+
+    Growth is measured on the last *closed* bin vs the one before it
+    (the current bin is still filling, so comparing it would fake a
+    crash every time). Returns::
+
+        {"bins": [...], "cur": bin|None, "prev": bin|None,
+         "d_tx_pct": float|None, "d_vol_pct": float|None,
+         "tx_mult": float|None, "vol_mult": float|None,
+         "dir": "up"|"down"|"flat",
+         "warnings": [{"kind": "tx"|"vol", "dir": "up"|"down",
+                       "mult": float, "text": str}, ...]}
+
+    A warning fires when a metric changed by ``spike_mult``× or more
+    (>= 5× up, or <= 1/5 down) between those two closed bins. Going
+    from zero to something is treated as a spike when the new value is
+    meaningful (>= 5 tx / >= 5x nothing is undefined, so we flag it as
+    "∞" via ``mult=None`` in the text but keep a finite mult of
+    ``spike_mult``).
+
+    Pure function — no files, no network, deterministic under an
+    explicit ``now_ts``.
+    """
+    step = 14400  # 4h
+    bins = max(1, int(bins))
+    now = int(time.time()) if now_ts is None else int(now_ts)
+    cur_bin = (now // step) * step
+    start = cur_bin - (bins - 1) * step
+
+    agg = {cur_bin - i * step: {"ts": cur_bin - i * step, "tx": 0,
+                                "vol": 0.0, "buy": 0.0, "sell": 0.0}
+           for i in range(bins)}
+
+    min_usd = float(dust_limit_usd or 0.0)
+    price = float(sol_price or 0.0)
+    for s in swaps or []:
+        try:
+            side = str(s[0]).lower()
+            sol = float(s[1])
+            ts = int(s[2])
+        except (IndexError, TypeError, ValueError):
+            continue
+        if not math.isfinite(sol) or sol < 0:
+            continue
+        if min_usd > 0 and price > 0 and sol * price < min_usd:
+            continue
+        b = (ts // step) * step
+        if b < start or b > cur_bin:
+            continue
+        slot = agg[b]
+        slot["tx"] += 1
+        slot["vol"] += sol
+        if side == "buy":
+            slot["buy"] += sol
+        else:
+            slot["sell"] += sol
+
+    series = [agg[start + i * step] for i in range(bins)]
+    for b in series:
+        b["vol"] = round(b["vol"], 3)
+        b["buy"] = round(b["buy"], 3)
+        b["sell"] = round(b["sell"], 3)
+
+    out = {"bins": series, "cur": None, "prev": None,
+           "d_tx_pct": None, "d_vol_pct": None,
+           "tx_mult": None, "vol_mult": None,
+           "dir": "flat", "warnings": []}
+    if len(series) < 3:
+        return out
+
+    cur, prev = series[-2], series[-3]   # last two *closed* bins
+    out["cur"], out["prev"] = cur, prev
+
+    def _pct(new, old):
+        if old:
+            return (new - old) / float(old) * 100.0
+        return None if not new else float("inf")
+
+    def _mult(new, old):
+        if old:
+            return new / float(old)
+        return None if not new else float("inf")
+
+    out["d_tx_pct"] = _pct(cur["tx"], prev["tx"])
+    out["d_vol_pct"] = _pct(cur["vol"], prev["vol"])
+    out["tx_mult"] = _mult(cur["tx"], prev["tx"])
+    out["vol_mult"] = _mult(cur["vol"], prev["vol"])
+
+    if cur["tx"] > prev["tx"]:
+        out["dir"] = "up"
+    elif cur["tx"] < prev["tx"]:
+        out["dir"] = "down"
+
+    thr = float(spike_mult or 5.0)
+    # Ignore micro-noise: 1 tx -> 5 tx is technically 5x but not news.
+    MIN_TX = 5
+    MIN_VOL = 1.0
+
+    def _check(kind, label, new, old, mult, floor):
+        if mult is None:
+            return
+        if mult == float("inf"):
+            if new >= floor:
+                out["warnings"].append(
+                    {"kind": kind, "dir": "up", "mult": float("inf"),
+                     "text": f"{label} melonjak dari 0 → {new:,.0f}"})
+            return
+        if mult >= thr and max(new, old) >= floor:
+            out["warnings"].append(
+                {"kind": kind, "dir": "up", "mult": mult,
+                 "text": f"{label} naik {mult:.1f}× "
+                         f"({old:,.0f} → {new:,.0f}) dalam 4 jam"})
+        elif mult <= 1.0 / thr and max(new, old) >= floor:
+            drop = (1.0 / mult) if mult else float("inf")
+            drop_txt = "∞" if drop == float("inf") else f"{drop:.1f}"
+            out["warnings"].append(
+                {"kind": kind, "dir": "down", "mult": drop,
+                 "text": f"{label} turun {drop_txt}× "
+                         f"({old:,.0f} → {new:,.0f}) dalam 4 jam"})
+
+    _check("tx", "Jumlah TX", cur["tx"], prev["tx"], out["tx_mult"], MIN_TX)
+    _check("vol", "Volume SOL", cur["vol"], prev["vol"], out["vol_mult"],
+           MIN_VOL)
+    return out
+
+
 def flow_report(swaps) -> dict:
     """Who was actually behind these swaps?
 

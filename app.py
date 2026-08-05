@@ -1053,6 +1053,155 @@ def _real_tx_summary_html(ca: str, dust_limit_usd: float,
         f"</div>")
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_h4_activity(ca: str, dust_limit_usd: float,
+                      sol_price: float) -> dict:
+    """Cached per-4-hour activity series from the 48h raw-swap store.
+
+    One cvd.json read per CA per page load (5-min cache), same pattern
+    as :func:`fetch_real_tx_summary`. Returns {} when the store has no
+    swaps for this CA.
+    """
+    from cvd import get_recent_swaps, h4_activity_series
+    swaps = get_recent_swaps(ca, 48)
+    if not swaps:
+        return {}
+    return h4_activity_series(swaps, bins=12,
+                              dust_limit_usd=float(dust_limit_usd or 0.0),
+                              sol_price=float(sol_price or 0.0))
+
+
+def _h4_activity_html(ca: str, dust_limit_usd: float,
+                      sol_price: float) -> str:
+    """Per-4-jam growth chart (tx count + volume) for the Radar cards.
+
+    Bars = jumlah TX per 4 jam, garis = volume SOL per 4 jam (skala
+    masing-masing). Header shows the change of the last closed 4h bin
+    vs the previous one; a red warning row appears when either metric
+    moved ≥5× (up or down). Returns "" when there is no swap data.
+    """
+    try:
+        act = fetch_h4_activity(ca, float(dust_limit_usd),
+                                float(sol_price or 0.0))
+    except Exception:
+        return ""
+    if not act or not act.get("bins"):
+        return ""
+
+    bars = act["bins"]
+    tx_vals = [int(b["tx"]) for b in bars]
+    vol_vals = [float(b["vol"]) for b in bars]
+    if not any(tx_vals) and not any(vol_vals):
+        return ""
+
+    W, H, PAD = 300.0, 46.0, 3.0
+    n = len(bars)
+    slot = (W - 2 * PAD) / n
+    bw = max(2.0, slot * 0.66)
+    tx_max = max(tx_vals) or 1
+    vol_max = max(vol_vals) or 1.0
+
+    rects = []
+    for i, b in enumerate(bars):
+        h = (H - 2 * PAD) * (b["tx"] / tx_max)
+        x = PAD + i * slot + (slot - bw) / 2
+        y = H - PAD - h
+        # last two bins: current (still filling) is dimmer
+        if i == n - 1:
+            col, op = "#64748b", "0.45"
+        elif i == n - 2:
+            col, op = "#38bdf8", "0.95"
+        else:
+            col, op = "#38bdf8", "0.5"
+        rects.append(f"<rect x='{x:.1f}' y='{y:.1f}' width='{bw:.1f}' "
+                     f"height='{max(h, 0.6):.1f}' rx='1' fill='{col}' "
+                     f"opacity='{op}'/>")
+
+    vol_pts = " ".join(
+        f"{PAD + i * slot + slot / 2:.1f},"
+        f"{PAD + (H - 2 * PAD) * (1 - v / vol_max):.1f}"
+        for i, v in enumerate(vol_vals))
+    svg = (f"<svg viewBox='0 0 300 46' preserveAspectRatio='none' "
+           f"style='display:block;width:100%;height:46px;margin-top:5px;'>"
+           f"{''.join(rects)}"
+           f"<polyline points='{vol_pts}' fill='none' stroke='#a78bfa' "
+           f"stroke-width='1.6' opacity='0.9'/></svg>")
+
+    def _fmt_pct(p):
+        if p is None:
+            return "—"
+        if p == float("inf"):
+            return "∞"
+        return f"{p:+,.0f}%"
+
+    cur, prev = act.get("cur") or {}, act.get("prev") or {}
+    head_map = {"up": ("📈 NAIK", "#22c55e"),
+                "down": ("📉 TURUN", "#ef4444"),
+                "flat": ("➡️ DATAR", "#94a3b8")}
+    head_txt, head_col = head_map.get(act.get("dir"), head_map["flat"])
+
+    def _chip(label, now_v, pct, unit=""):
+        col = ("#22c55e" if (pct or 0) > 0 else
+               ("#ef4444" if (pct or 0) < 0 else "#94a3b8"))
+        arrow = "▲" if (pct or 0) > 0 else ("▼" if (pct or 0) < 0 else "•")
+        return (f"<span style='display:inline-block;"
+                f"background:rgba(148,163,184,0.08);border:1px solid #334155;"
+                f"border-radius:5px;padding:1px 7px;margin:2px 4px 2px 0;"
+                f"font-size:0.72rem;white-space:nowrap;line-height:1.5;'>"
+                f"<span style='color:#64748b;'>{label}</span> "
+                f"<b style='color:#e2e8f0;'>{now_v}{unit}</b> "
+                f"<b style='color:{col};'>{arrow}{_fmt_pct(pct)}</b></span>")
+
+    chips = (_chip("tx/4j", f"{int(cur.get('tx') or 0):,}",
+                   act.get("d_tx_pct"))
+             + _chip("vol/4j", f"{float(cur.get('vol') or 0):,.1f}",
+                     act.get("d_vol_pct"), " SOL"))
+
+    warn_html = ""
+    if act.get("warnings"):
+        rows = "".join(
+            f"<div style='margin-top:2px;'>"
+            f"{'🚨' if w['dir'] == 'up' else '⚠️'} {w['text']}</div>"
+            for w in act["warnings"])
+        warn_html = (
+            f"<div style='margin-top:5px;padding:4px 7px;border-radius:6px;"
+            f"background:rgba(239,68,68,0.12);border:1px solid "
+            f"rgba(239,68,68,0.55);color:#fca5a5;font-size:0.7rem;"
+            f"font-weight:700;line-height:1.4;'>"
+            f"<span style='color:#fecaca;'>PERUBAHAN EKSTREM ≥5×</span>"
+            f"{rows}</div>")
+
+    prev_tx = int(prev.get("tx") or 0)
+    span_txt = f"{len(bars)} bar × 4 jam ≈ {len(bars) * 4} jam"
+    filter_txt = (f" ≥${dust_limit_usd:g}"
+                  if (dust_limit_usd and sol_price) else "")
+    return (
+        f"<div style='background:rgba(148,163,184,0.04);"
+        f"border:1px solid #334155;border-radius:7px;"
+        f"padding:5px 9px 6px 9px;margin-top:5px;line-height:1.5;'>"
+        f"<div style='display:flex;align-items:baseline;"
+        f"justify-content:space-between;gap:6px;'>"
+        f"<span style='font-size:0.74rem;color:#94a3b8;font-weight:700;'>"
+        f"📊 TX & volume per 4 jam"
+        f"<span style='color:#475569;font-weight:400;'>{filter_txt}</span>"
+        f"</span>"
+        f"<span style='font-size:0.72rem;font-weight:800;color:{head_col};"
+        f"white-space:nowrap;'>{head_txt}</span></div>"
+        f"<div style='margin-top:3px;'>{chips}</div>"
+        f"{svg}"
+        f"<div style='display:flex;justify-content:space-between;"
+        f"font-size:0.66rem;color:#64748b;margin-top:1px;'>"
+        f"<span><span style='color:#38bdf8;'>▮</span> tx · "
+        f"<span style='color:#a78bfa;'>━</span> volume SOL "
+        f"(skala masing-masing)</span>"
+        f"<span>{span_txt}</span></div>"
+        f"{warn_html}"
+        f"<div style='font-size:0.64rem;color:#475569;margin-top:2px;'>"
+        f"dibanding 4 jam sebelumnya ({prev_tx:,} tx) · bar terakhir "
+        f"(abu-abu) masih berjalan</div>"
+        f"</div>")
+
+
 # ----------------------------------------------------------------------------
 # Main input
 # ----------------------------------------------------------------------------
@@ -1468,6 +1617,10 @@ if _wl:
             _real_tx_html = _real_tx_summary_html(
                 _ca, float(dust_limit), _sol_price)
 
+            # ---- Grafik TX & volume per 4 jam (+ warning >5x) ----
+            _h4_act_html = _h4_activity_html(
+                _ca, float(dust_limit), _sol_price)
+
             # ---- Small-body candle patterns (H4 + H1, 48h, with range) ----
             # H1 comes from the already-cached watchlist candle fetch;
             # H4 is aggregated from H1 so no extra GeckoTerminal call.
@@ -1656,6 +1809,9 @@ if _wl:
                 # real holder vs dust ratio (min $5) + growth history card
                 f"{_rd_html}"
                 f"{_rd_growth_html}"
+                # rangkuman TX real + grafik TX/volume per 4 jam
+                f"{_real_tx_html}"
+                f"{_h4_act_html}"
                 # phase badge (own line, easier to scan) — hidden in FOCUS_MODE
                 f"{phase_html}"
                 # multi-window sparkline in a subtle background
@@ -1880,6 +2036,10 @@ if _wl:
                 _real_tx_html_deg = _real_tx_summary_html(
                     _ca, float(dust_limit), _sol_price)
 
+                # ---- Grafik TX & volume per 4 jam (+ warning >5x) ----
+                _h4_act_html_deg = _h4_activity_html(
+                    _ca, float(dust_limit), _sol_price)
+
                 # ---- Small-body candle patterns (H4 + H1, 48h, range) ----
                 _pair_addr_deg = ((_prices.get(_ca) or {}).get("pair")
                                   or "")
@@ -1937,6 +2097,9 @@ if _wl:
                     # real holder vs dust ratio (min $5) + growth history
                     f"{_rd_html_deg}"
                     f"{_rd_growth_html_deg}"
+                    # rangkuman TX real + grafik TX/volume per 4 jam
+                    f"{_real_tx_html_deg}"
+                    f"{_h4_act_html_deg}"
                     f"{phase_html_deg}"
                     f"<a href='{_cvd_link}' target='_self' "
                     f"style='display:block;text-decoration:none;'>"
