@@ -50,6 +50,13 @@ delta baseline; 4h cron commit per CA per ~6h bucket) ·
 **`real_dust_history.json`** (history real vs dust holder per jam —
 lihat §7.7)
 
+## 2.5 Monitor growth CVD (6 jam / 72 jam)
+
+- Raw swap CVD disimpan selama **72 jam** (`cvd.update_token_cvd`); page CVD menyediakan pilihan 72H.
+- Dashboard monitor menggabungkan pure accumulator (buy ≥0.1 SOL, sell ≤10%), conviction, TX, dan volume dalam bucket 6 jam. Grafik gabungan dinormalisasi ke index 100 agar arah lintas-unit terbaca.
+- Cron mencatat metrik accumulator pada setiap snapshot conviction 6 jam dan mengirim `📊 CVD MONITOR` Telegram untuk semua empat metrik naik, semua turun, atau TX/volume ≥5× snapshot sebelumnya. Dedupe mengikuti `signals.py` (4 jam/token/tipe).
+- "Holders with no buy in this window" sengaja nonaktif; jangan mengaktifkannya tanpa persetujuan karena menambah RPC holder mahal dan bukan flow aktif.
+
 ## 3. Dua jenis notifikasi Telegram — JANGAN tertukar
 
 Keduanya lewat `send_telegram()` di `breakout_guard.py`, tapi beda sumber

@@ -1004,53 +1004,11 @@ def fetch_real_tx_summary(ca: str, dust_limit_usd: float,
 
 
 def _real_tx_summary_html(ca: str, dust_limit_usd: float,
-                          sol_price: float) -> str:
-    """Compact "rangkuman TX real" block for the LP/Degen Radar cards.
-
-    Renders below the real-vs-dust ratio block: per 6/12/24/48-jam
-    window, the count of swaps worth ≥ $dust_limit (SOL × SOL/USD
-    price) plus their net SOL (beli − jual). Read from the existing
-    48h raw-swap store — no extra RPC. Returns "" when the store has
-    no swaps for this CA.
-    """
-    try:
-        summary = fetch_real_tx_summary(ca, float(dust_limit_usd),
-                                        float(sol_price or 0.0))
-    except Exception:
-        return ""
-    if not summary:
-        return ""
-
-    def _chip(h: int) -> str:
-        d = summary.get(h) or {}
-        tx = int(d.get("tx") or 0)
-        net = float(d.get("net_sol") or 0.0)
-        col = ("#22c55e" if net > 0 else
-               ("#ef4444" if net < 0 else "#94a3b8"))
-        arrow = "▲" if net > 0 else ("▼" if net < 0 else "•")
-        return (f"<span style='display:inline-block;"
-                f"background:rgba(148,163,184,0.08);"
-                f"border:1px solid #334155;border-radius:5px;"
-                f"padding:1px 7px;margin:2px 4px 2px 0;"
-                f"font-size:0.72rem;white-space:nowrap;line-height:1.5;'>"
-                f"<span style='color:#64748b;'>{h} jam</span> "
-                f"<b style='color:#e2e8f0;'>{tx:,} tx</b> "
-                f"<b style='color:{col};'>{arrow}{net:+.1f} SOL</b></span>")
-
-    chips = "".join(_chip(h) for h in (6, 12, 24, 48))
-    return (
-        f"<div style='background:rgba(148,163,184,0.04);"
-        f"border:1px solid #334155;border-radius:7px;"
-        f"padding:5px 9px;margin-top:5px;line-height:1.5;'>"
-        f"<div style='font-size:0.74rem;color:#94a3b8;font-weight:700;'>"
-        f"🧾 Rangkuman TX real ≥${dust_limit_usd:g} "
-        f"<span style='color:#475569;font-weight:400;'>(store 48 jam)"
-        f"</span></div>"
-        f"<div style='margin-top:3px;'>{chips}</div>"
-        f"<div style='font-size:0.64rem;color:#475569;margin-top:2px;'>"
-        f"swap ≥${dust_limit_usd:g} (SOL × harga) · net = beli − jual"
-        f"</div>"
-        f"</div>")
+                          sol_price: float = 0.0, *,
+                          degraded: bool = False) -> str:
+    """Real transaction summary is temporarily disabled on all cards."""
+    del ca, dust_limit_usd, sol_price, degraded
+    return ""
 
 
 @st.cache_data(ttl=300, show_spinner=False)

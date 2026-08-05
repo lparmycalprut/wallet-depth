@@ -102,7 +102,9 @@ def record_signal(ca: str, symbol: str, sig_type: str, detail: str, *,
         from breakout_guard import send_telegram
         emo = {"accumulation": "🟢", "stealth_accumulation": "🕵️",
                "distribution": "🔴",
-               "bullish_div": "📈", "bearish_div": "📉"}.get(sig_type)
+               "bullish_div": "📈", "bearish_div": "📉",
+               "monitor_all_up": "🟢", "monitor_all_down": "🔴",
+               "monitor_activity_spike": "⚡"}.get(sig_type)
         if not emo or src != "cron":
             return True
         # FOCUS_MODE: Tier 2 signals do NOT go to Telegram.
@@ -238,4 +240,49 @@ def detect_and_record(ca: str, symbol: str, *, src: str = "cron",
                         src=src, window_h=window_h, price=price_now)
                     if ok:
                         recorded.append(stype)
+    return recorded
+
+
+def detect_growth_alerts(ca: str, symbol: str, point: dict | None) -> list:
+    """Alert on synchronized six-hour monitor moves and fivefold activity.
+
+    ``point`` is produced by ``record_conviction`` and represents the rolling
+    six-hour snapshot.  Comparing it to the previous committed snapshot keeps
+    Telegram alerts independent of a dashboard visit.
+    """
+    if not point:
+        return []
+    try:
+        from cvd import load_conviction
+        points = load_conviction().get(ca, [])
+    except Exception:
+        return []
+    if len(points) < 2:
+        return []
+    previous = points[-2]
+    keys = ("accum_wallets", "conviction", "swaps", "vol")
+    if any(k not in previous or k not in point for k in keys):
+        return []
+    current = [float(point[k] or 0) for k in keys]
+    before = [float(previous[k] or 0) for k in keys]
+    recorded = []
+    if all(a > b for a, b in zip(current, before)):
+        if record_signal(ca, symbol, "monitor_all_up",
+                         "Semua monitor 6h naik: accumulator, conviction, TX, volume.",
+                         src="cron", window_h=6):
+            recorded.append("monitor_all_up")
+    elif all(a < b for a, b in zip(current, before)):
+        if record_signal(ca, symbol, "monitor_all_down",
+                         "Semua monitor 6h turun: accumulator, conviction, TX, volume.",
+                         src="cron", window_h=6):
+            recorded.append("monitor_all_down")
+    spikes = []
+    for label, key in (("TX", "swaps"), ("volume", "vol")):
+        old, new = float(previous.get(key) or 0), float(point.get(key) or 0)
+        if old > 0 and new >= old * 5:
+            spikes.append(f"{label} {new / old:.1f}×")
+    if spikes and record_signal(ca, symbol, "monitor_activity_spike",
+                                "Lonjakan 6h vs snapshot sebelumnya: " + ", ".join(spikes),
+                                src="cron", window_h=6):
+        recorded.append("monitor_activity_spike")
     return recorded
