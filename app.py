@@ -21,10 +21,12 @@ import requests
 import streamlit as st
 import streamlit.components.v1 as components
 
-from core import (atomic_write_json, concentration, get_helius_keys,
+from core import (atomic_write_json, concentration,
+                  dexscreener_pair_token, get_helius_keys,
                   get_holders as core_get_holders, get_ohlcv_daily,
                   get_rugcheck, get_supply as core_get_supply, health_score,
-                  helius_rpc, score_color, score_label)
+                  helius_rpc, score_color, score_label,
+                  select_dexscreener_pair)
 from trending_ui import (render_trending, run_screen, run_screen_hrhr,
                          run_screen_h1, run_screen_hrhr_h1,
                          enrich_hrhr_with_patterns)
@@ -626,20 +628,18 @@ def fetch_watchlist_prices(cas: tuple) -> dict:
             pairs.extend((r.json() or {}).get("pairs") or [])
         except Exception:
             continue
-    best = {}
-    for p in pairs:
-        addr = (p.get("baseToken") or {}).get("address")
-        liq = (p.get("liquidity") or {}).get("usd") or 0
-        if addr and (addr not in best or liq > best[addr][0]):
-            best[addr] = (liq, p)
-    for addr, (_, p) in best.items():
-        out[addr] = {
-            "symbol": (p.get("baseToken") or {}).get("symbol", "?"),
-            "price": float(p.get("priceUsd") or 0),
-            "chg24": float((p.get("priceChange") or {}).get("h24") or 0),
-            "chg6": float((p.get("priceChange") or {}).get("h6") or 0),
-            "mc": float(p.get("marketCap") or p.get("fdv") or 0),
-            "pair": p.get("pairAddress"),
+    for ca in cas:
+        pair = select_dexscreener_pair(pairs, ca)
+        if not pair:
+            continue
+        token = dexscreener_pair_token(pair, ca)
+        out[ca] = {
+            "symbol": token.get("symbol", "?"),
+            "price": float(pair.get("priceUsd") or 0),
+            "chg24": float((pair.get("priceChange") or {}).get("h24") or 0),
+            "chg6": float((pair.get("priceChange") or {}).get("h6") or 0),
+            "mc": float(pair.get("marketCap") or pair.get("fdv") or 0),
+            "pair": pair.get("pairAddress"),
         }
     return out
 

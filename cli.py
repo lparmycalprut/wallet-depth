@@ -15,7 +15,8 @@ import sys
 
 import requests
 
-from core import get_helius_keys, get_holders, get_supply
+from core import (dexscreener_pair_token, get_helius_keys, get_holders,
+                  get_supply, matching_dexscreener_pairs)
 
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 
@@ -39,16 +40,18 @@ END = "\033[0m"
 
 
 def dexscreener(ca):
-    r = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{ca}", timeout=20)
-    pairs = (r.json() or {}).get("pairs") or []
+    r = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{ca}",
+                     timeout=20)
+    pairs = matching_dexscreener_pairs((r.json() or {}).get("pairs") or [],
+                                       ca)
     if not pairs:
         return None
-    pairs.sort(key=lambda p: (p.get("liquidity") or {}).get("usd") or 0, reverse=True)
-    b = pairs[0]
+    pair = pairs[0]
+    token = dexscreener_pair_token(pair, ca)
     return {
-        "name": b["baseToken"].get("name"), "symbol": b["baseToken"].get("symbol"),
-        "price": float(b.get("priceUsd") or 0),
-        "mc": float(b.get("marketCap") or b.get("fdv") or 0),
+        "name": token.get("name"), "symbol": token.get("symbol"),
+        "price": float(pair.get("priceUsd") or 0),
+        "mc": float(pair.get("marketCap") or pair.get("fdv") or 0),
         "lp": {p.get("pairAddress") for p in pairs},
     }
 

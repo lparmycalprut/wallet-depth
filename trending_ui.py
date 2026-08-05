@@ -10,6 +10,7 @@ import requests
 import streamlit as st
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+from core import select_dexscreener_pair
 from gmgn_screener import (FIT_OK, FIT_PRIME, FIT_WEAK, fit_color,
                            screen as gmgn_screen, screen_hrhr as gmgn_screen_hrhr,
                            screen_trending_h1 as gmgn_screen_h1,
@@ -296,19 +297,16 @@ def _format_holder_split_note(row: dict) -> str:
 
 
 def _resolve_pair(ca: str):
-    """Return the best DexScreener pair address for a token CA, or None."""
+    """Return the canonical DexScreener pair address for a token CA."""
     try:
         r = requests.get(
             f"https://api.dexscreener.com/latest/dex/tokens/{ca}",
             timeout=10)
         pairs = (r.json() or {}).get("pairs") or []
-        if not pairs:
-            return None
-        pairs.sort(key=lambda p: (p.get("liquidity") or {}).get("usd") or 0,
-                   reverse=True)
-        return pairs[0].get("pairAddress")
     except Exception:
         return None
+    pair = select_dexscreener_pair(pairs, ca)
+    return pair.get("pairAddress") if pair else None
 
 
 def _fetch_h4_and_detect(ca: str) -> dict:

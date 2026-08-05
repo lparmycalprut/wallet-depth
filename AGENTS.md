@@ -477,6 +477,30 @@ Jebakan yang sudah pernah menggigit:
   `ok`/`complete`/`error` per window; kalau `complete=False` karena cap
   halaman, confidence LOW + note "data GMGN parsial".
 
+## 7.59 Token identity DexScreener — CVD tidak boleh salah nama (2026-08-05)
+
+- Endpoint `GET /latest/dex/tokens/<CA>` dapat mengembalikan cross-pair
+  berlikuiditas tinggi ketika CA yang diminta berada di `quoteToken`.
+  **Jangan pernah** mengambil `pairs[0]` lalu membaca `baseToken` tanpa
+  memeriksa address — kasus nyata CA MEMIPEDE
+  `6LLNiWXRZp8hn5oTFTHEo8ERbJS3QJfHSKhnTCqipump` sempat tampil sebagai
+  `Cyclospora`.
+- Satu-satunya selector kanonik adalah
+  `core.matching_dexscreener_pairs()` / `select_dexscreener_pair()`:
+  match address harus persis (case-sensitive), pair target sebagai base
+  diprioritaskan dan diurutkan berdasarkan likuiditas, lalu quote-side
+  fallback. Ambil nama/simbol lewat `core.dexscreener_pair_token()`, bukan
+  selalu `baseToken`.
+- `core.get_market()` adalah jalur yang dipakai page CVD; `get_pool()` di
+  `pages/4_📊_CVD.py` wajib tetap mendelegasikan ke sana. Cron CVD,
+  snapshot harian, quick-pick/watchlist pricing, konteks ATH, pola candle,
+  CLI, dan memecoin scanner juga memakai selector ini agar identitas tidak
+  bergeser di layar atau data terjadwal.
+- Regression: `tests/test_dexscreener_identity.py` memakai fixture
+  cross-pair `Cyclospora / MEMIPEDE` yang likuiditasnya lebih besar dari
+  pair MEMIPEDE/SOL. Ekspektasi: CVD memilih pair MEMIPEDE/SOL serta nama,
+  simbol, dan harga MEMIPEDE; pair yang tidak mengandung CA ditolak.
+
 ## 8. Status & langkah berikutnya
 
 Per 2026-07-31, seluruh sistem telah difokuskan murni menggunakan **GMGN Token Trades API** secara default (`use_gmgn_trades = True`) untuk semua penarikan data transaksi on-chain. Cron holder snapshot harian dari Helius (`_try_snapshot`) telah dinonaktifkan sementara.

@@ -238,35 +238,125 @@ def load_history() -> dict:
         return {}
 
 
+def _dex_liquidity_usd(pair: dict) -> float:
+    """Return a finite, non-negative DexScreener liquidity value."""
+    try:
+        value = float((pair.get("liquidity") or {}).get("usd") or 0)
+    except (AttributeError, TypeError, ValueError):
+        return 0.0
+    if value != value or value < 0 or value == float("inf"):
+        return 0.0
+    return value
+
+
+def _dex_token_address(pair: dict, side: str) -> str:
+    """Return a token address from a DexScreener pair without coercing case.
+
+    Solana base58 addresses are case-sensitive, so this intentionally only
+    strips surrounding whitespace rather than lower-casing the address.
+    """
+    token = pair.get(side) if isinstance(pair, dict) else None
+    if not isinstance(token, dict):
+        return ""
+    return str(token.get("address") or "").strip()
+
+
+def matching_dexscreener_pairs(pairs, ca: str) -> list:
+    """Return DexScreener pairs for exactly ``ca``, in safe display order.
+
+    ``/latest/dex/tokens/<CA>`` can include a cross-pair where the requested
+    CA is the *quote* token. Picking the raw highest-liquidity response and
+    reading ``baseToken`` then labels the requested token as the other side
+    of that pair (for example MEMIPEDE was shown as Cyclospora).
+
+    Exact address matches are mandatory. Pairs where the queried token is
+    ``baseToken`` come first, then quote-side fallbacks; each group is sorted
+    by liquidity. This keeps DexScreener's normal price/FDV semantics while
+    still allowing a quote-side-only token to be identified honestly.
+    """
+    target = str(ca or "").strip()
+    if not target:
+        return []
+
+    base_matches, quote_matches = [], []
+    for pair in pairs or []:
+        if not isinstance(pair, dict):
+            continue
+        if _dex_token_address(pair, "baseToken") == target:
+            base_matches.append(pair)
+        elif _dex_token_address(pair, "quoteToken") == target:
+            quote_matches.append(pair)
+
+    def _sort_key(pair):
+        return (-_dex_liquidity_usd(pair),
+                str(pair.get("pairAddress") or ""))
+
+    base_matches.sort(key=_sort_key)
+    quote_matches.sort(key=_sort_key)
+    return base_matches + quote_matches
+
+
+def select_dexscreener_pair(pairs, ca: str) -> dict | None:
+    """Choose the canonical DexScreener pair for ``ca``, or ``None``.
+
+    See :func:`matching_dexscreener_pairs` for why this must not use raw
+    ``pairs[0]``.
+    """
+    matches = matching_dexscreener_pairs(pairs, ca)
+    return matches[0] if matches else None
+
+
+def dexscreener_pair_token(pair: dict, ca: str) -> dict:
+    """Return metadata for ``ca`` from either side of a matched pair.
+
+    Returning the queried side rather than unconditionally ``baseToken``
+    prevents a quote-side fallback from ever borrowing another token's name
+    or symbol.
+    """
+    target = str(ca or "").strip()
+    if not target or not isinstance(pair, dict):
+        return {}
+    for side in ("baseToken", "quoteToken"):
+        if _dex_token_address(pair, side) == target:
+            token = pair.get(side)
+            return dict(token) if isinstance(token, dict) else {}
+    return {}
+
+
 def get_market(ca: str) -> dict:
-    """DexScreener: harga, MC, likuiditas, txns buy/sell, dll."""
+    """DexScreener market data for exactly one token contract address.
+
+    The endpoint can return cross-pairs where ``ca`` is the quote token.
+    Filter and order those responses before reading metadata so a liquid
+    unrelated base token cannot replace the requested token in the UI.
+    """
     r = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{ca}",
                      timeout=20)
-    pairs = (r.json() or {}).get("pairs") or []
+    raw_pairs = (r.json() or {}).get("pairs") or []
+    pairs = matching_dexscreener_pairs(raw_pairs, ca)
     if not pairs:
         return {}
-    pairs.sort(key=lambda p: (p.get("liquidity") or {}).get("usd") or 0,
-               reverse=True)
-    b = pairs[0]
+    pair = pairs[0]
+    token = dexscreener_pair_token(pair, ca)
     return {
-        "name": (b.get("baseToken") or {}).get("name", "?"),
-        "symbol": (b.get("baseToken") or {}).get("symbol", "?"),
-        "price_usd": float(b.get("priceUsd") or 0),
-        "marketcap": float(b.get("marketCap") or b.get("fdv") or 0),
-        "liquidity_usd": float((b.get("liquidity") or {}).get("usd") or 0),
-        "dex": b.get("dexId", "?"),
+        "name": token.get("name", "?"),
+        "symbol": token.get("symbol", "?"),
+        "price_usd": float(pair.get("priceUsd") or 0),
+        "marketcap": float(pair.get("marketCap") or pair.get("fdv") or 0),
+        "liquidity_usd": _dex_liquidity_usd(pair),
+        "dex": pair.get("dexId", "?"),
         "pair_addresses": [p.get("pairAddress") for p in pairs
                            if p.get("pairAddress")],
-        "url": b.get("url", ""),
-        "image": ((b.get("info") or {}).get("imageUrl") or ""),
-        "txns": b.get("txns") or {},
-        "volume": b.get("volume") or {},
-        "price_change": b.get("priceChange") or {},
-        "pair_created_at": b.get("pairCreatedAt"),
+        "url": pair.get("url", ""),
+        "image": ((pair.get("info") or {}).get("imageUrl") or ""),
+        "txns": pair.get("txns") or {},
+        "volume": pair.get("volume") or {},
+        "price_change": pair.get("priceChange") or {},
+        "pair_created_at": pair.get("pairCreatedAt"),
         "pairs_detail": [{
             "dex": p.get("dexId", "?"),
             "pair": p.get("pairAddress"),
-            "liq": float((p.get("liquidity") or {}).get("usd") or 0),
+            "liq": _dex_liquidity_usd(p),
             "url": p.get("url", ""),
             "quote": (p.get("quoteToken") or {}).get("symbol", "?"),
         } for p in pairs],

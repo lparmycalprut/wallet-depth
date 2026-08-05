@@ -21,7 +21,8 @@ from datetime import date, datetime
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import requests  # noqa: E402
-from core import atomic_write_json  # noqa: E402
+from core import (atomic_write_json, dexscreener_pair_token,
+                  select_dexscreener_pair)  # noqa: E402
 from watchlist import load_watchlist, save_watchlist  # noqa: E402
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -65,17 +66,13 @@ def _gmgn_token_stat(ca: str, timeout: int = 15) -> dict:
 
 
 def _dex_market(ca: str, timeout: int = 20) -> dict | None:
-    """DexScreener pair info for a single CA."""
+    """DexScreener pair info for exactly the requested token CA."""
     try:
         r = requests.get(
             f"https://api.dexscreener.com/latest/dex/tokens/{ca}",
             timeout=timeout)
         pairs = (r.json() or {}).get("pairs") or []
-        pairs.sort(key=lambda p: (p.get("liquidity") or {}).get("usd") or 0,
-                   reverse=True)
-        if not pairs:
-            return None
-        return pairs[0]
+        return select_dexscreener_pair(pairs, ca)
     except Exception:
         return None
 
@@ -101,8 +98,9 @@ def snapshot_one(ca: str) -> dict:
     buys = int(tx.get("buys") or 0)
     sells = int(tx.get("sells") or 0)
     vol24 = _as_float((pair.get("volume") or {}).get("h24"))
-    symbol = (pair.get("baseToken") or {}).get("symbol") or "?"
-    name = (pair.get("baseToken") or {}).get("name") or "?"
+    token = dexscreener_pair_token(pair, ca)
+    symbol = token.get("symbol") or "?"
+    name = token.get("name") or "?"
 
     # ── GMGN fallback for holder count + top10 ──────────────────────────
     gmgn = _gmgn_token_stat(ca)
