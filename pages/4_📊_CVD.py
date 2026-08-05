@@ -976,8 +976,8 @@ try:
 except (OSError, ValueError, AttributeError):
     conv_points = []
 
-bucket_start = (min((int(x[2]) for x in swaps_all), default=now_ts) // (6 * 3600)) * (6 * 3600)
-bucket_end = (now_ts // (6 * 3600)) * (6 * 3600)
+bucket_start = (int(min((int(x[2]) for x in swaps_all), default=now_ts)) // (6 * 3600)) * (6 * 3600)
+bucket_end = (int(now_ts) // (6 * 3600)) * (6 * 3600)
 tx_buckets = {}
 for _side, _sol, _ts, _wallet in swaps_all:
     _bucket = (int(_ts) // (6 * 3600)) * (6 * 3600)
