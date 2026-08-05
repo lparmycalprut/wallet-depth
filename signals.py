@@ -22,10 +22,11 @@ config.json to revert.
 """
 import json
 import os
+import statistics
 import sys
 import time
 
-from core import atomic_write_json
+from core import atomic_write_json, load_config
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SIGNALS_PATH = os.path.join(BASE_DIR, "signals.json")
@@ -121,7 +122,7 @@ def record_signal(ca: str, symbol: str, sig_type: str, detail: str, *,
 
 
 def detect_and_record(ca: str, symbol: str, *, src: str = "cron",
-                      window_h: int = 6, price_now: float = None,
+                      window_h: int = 4, price_now: float = None,
                       pool: str = None) -> list:
     """Run flow + divergence detection on the stored swaps/buckets and
     record any signals. Returns list of recorded signal types.
@@ -243,46 +244,106 @@ def detect_and_record(ca: str, symbol: str, *, src: str = "cron",
     return recorded
 
 
-def detect_growth_alerts(ca: str, symbol: str, point: dict | None) -> list:
-    """Alert on synchronized six-hour monitor moves and fivefold activity.
+def _monitor_cfg():
+    """(bin_h, spike_mult) from config.json — default 4 jam / 5×.
 
-    ``point`` is produced by ``record_conviction`` and represents the rolling
-    six-hour snapshot.  Comparing it to the previous committed snapshot keeps
-    Telegram alerts independent of a dashboard visit.
+    Keys: ``monitor_bin_h`` (hours per activity bin) and
+    ``monitor_spike_mult`` (the × jump that counts as a spike).
     """
+    try:
+        cfg = load_config() or {}
+        bin_h = max(1, min(int(cfg.get("monitor_bin_h", 4) or 4), 24))
+        mult = max(2.0, float(cfg.get("monitor_spike_mult", 5.0) or 5.0))
+    except Exception:
+        bin_h, mult = 4, 5.0
+    return bin_h, mult
+
+
+def detect_growth_alerts(ca: str, symbol: str, point: dict | None = None) -> list:
+    """Alert on synchronized monitor moves and fivefold activity (4h bins).
+
+    Spike detection now uses **fixed, non-overlapping 4h bins** from the
+    raw swap store (same clock as the Breakout Guard H4 candles), not the
+    old rolling 6h snapshots — a rolling window overlaps 5/6 of its own
+    history, so it needed ~25-30× average hourly activity to move 5× and
+    almost never fired. Two comparisons, one deduped alert:
+
+      * last closed bin vs the bin before it (≥5×), and
+      * last closed bin vs the **median of the 4 previous bins** (catches
+        a gradual ramp that a single previous bin can't see).
+
+    Floors match ``h4_activity_series``: ≥5 tx / ≥1 SOL in the current
+    bin before any 5× call counts as news. ``bin_h`` / ``spike_mult`` are
+    configurable via config.json (``monitor_bin_h`` / ``monitor_spike_mult``).
+
+    ``point`` (optional) is the latest conviction snapshot; it still
+    drives the ``monitor_all_up`` / ``monitor_all_down`` checks against
+    the previous snapshot.
+    """
+    bin_h, mult = _monitor_cfg()
+    recorded = []
+    try:
+        from cvd import get_recent_swaps, h4_activity_series
+        swaps = get_recent_swaps(ca, 48)
+        act = h4_activity_series(swaps, bins=max(3, int(48 // bin_h)),
+                                 now_ts=time.time(), spike_mult=mult,
+                                 bin_h=bin_h)
+    except Exception:
+        act = None
+
+    if act and act.get("cur") is not None:
+        cur = act["cur"]
+        closed = [b for b in act["bins"] if b["ts"] < int(cur["ts"])]
+        prev = act.get("prev")
+        baseline = closed[-5:-1]  # up to 4 closed bins before cur (median)
+        floors = {"tx": 5, "vol": 1.0}
+        spikes = []
+        for label, key in (("TX", "tx"), ("volume", "vol")):
+            new = float(cur.get(key) or 0)
+            old = float(prev.get(key) or 0) if prev else 0.0
+            if max(new, old) < floors[key]:
+                continue
+            if old > 0 and new >= old * mult:
+                spikes.append(f"{label} {new / old:.1f}× vs {bin_h} jam "
+                              f"sebelumnya ({old:,.0f} → {new:,.0f})")
+            elif baseline:
+                med = statistics.median(
+                    float(b.get(key) or 0) for b in baseline)
+                if med > 0 and new >= med * mult and new >= floors[key]:
+                    spikes.append(f"{label} {new / med:.1f}× vs median "
+                                  f"{len(baseline)} bin ({med:,.0f} → "
+                                  f"{new:,.0f})")
+        if spikes and record_signal(ca, symbol, "monitor_activity_spike",
+                                    f"Lonjakan {bin_h} jam: " + "; ".join(spikes),
+                                    src="cron", window_h=bin_h):
+            recorded.append("monitor_activity_spike")
+
+    # Synchronized all-up / all-down from consecutive conviction snapshots.
     if not point:
-        return []
+        return recorded
     try:
         from cvd import load_conviction
         points = load_conviction().get(ca, [])
     except Exception:
-        return []
+        return recorded
     if len(points) < 2:
-        return []
+        return recorded
     previous = points[-2]
     keys = ("accum_wallets", "conviction", "swaps", "vol")
     if any(k not in previous or k not in point for k in keys):
-        return []
+        return recorded
     current = [float(point[k] or 0) for k in keys]
     before = [float(previous[k] or 0) for k in keys]
-    recorded = []
     if all(a > b for a, b in zip(current, before)):
         if record_signal(ca, symbol, "monitor_all_up",
-                         "Semua monitor 6h naik: accumulator, conviction, TX, volume.",
-                         src="cron", window_h=6):
+                         "Semua monitor 4h naik: accumulator, conviction, "
+                         "TX, volume.",
+                         src="cron", window_h=bin_h):
             recorded.append("monitor_all_up")
     elif all(a < b for a, b in zip(current, before)):
         if record_signal(ca, symbol, "monitor_all_down",
-                         "Semua monitor 6h turun: accumulator, conviction, TX, volume.",
-                         src="cron", window_h=6):
+                         "Semua monitor 4h turun: accumulator, conviction, "
+                         "TX, volume.",
+                         src="cron", window_h=bin_h):
             recorded.append("monitor_all_down")
-    spikes = []
-    for label, key in (("TX", "swaps"), ("volume", "vol")):
-        old, new = float(previous.get(key) or 0), float(point.get(key) or 0)
-        if old > 0 and new >= old * 5:
-            spikes.append(f"{label} {new / old:.1f}×")
-    if spikes and record_signal(ca, symbol, "monitor_activity_spike",
-                                "Lonjakan 6h vs snapshot sebelumnya: " + ", ".join(spikes),
-                                src="cron", window_h=6):
-        recorded.append("monitor_activity_spike")
     return recorded

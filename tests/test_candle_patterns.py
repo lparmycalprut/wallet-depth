@@ -202,7 +202,7 @@ def test_aggregate_candles_h1_to_h4():
 # conviction_avg — 6-48h average used by detect_phase
 # ---------------------------------------------------------------------------
 def test_conviction_avg():
-    """conviction_avg averages the last 48h of points (6h cron windows)."""
+    """conviction_avg averages the last 48h of points (4h cron windows)."""
     import time
     from cvd import conviction_avg
     now = int(time.time())
@@ -230,12 +230,12 @@ def test_conviction_avg():
 
 
 def test_detect_phase_uses_48h_average():
-    """All phase messages/logic use avg conviction 6-48h, not last 6h."""
+    """All phase messages/logic use avg conviction 4-48h, not last 4h."""
     import time
     from cvd import detect_phase
     now = int(time.time())
 
-    # CASE 1: last-6h conviction is HIGH (55%) but the 6-48h average is
+    # CASE 1: last-4h conviction is HIGH (55%) but the 4-48h average is
     # still LOW (34%). Using only the last point would read as mature
     # accumulation (>=50%); the average says early accumulation.
     pts = [{"ts": now - h * 3600 + 120, "conviction": cv,
@@ -249,8 +249,8 @@ def test_detect_phase_uses_48h_average():
     finally:
         cvd.load_conviction = orig_load
     assert ph["phase"] == "Accumulation-Early", f"got {ph}"
-    assert "avg conviction 34% (6-48h)" in ph["reason"], ph["reason"]
-    print("  ok   level uses the 6-48h average (34%), not the 55% point")
+    assert "avg conviction 34% (4-48h)" in ph["reason"], ph["reason"]
+    print("  ok   level uses the 4-48h average (34%), not the 55% point")
 
     # CASE 2: Distribution-Early message must also show the average.
     pts_dist = [{"ts": now - h * 3600 + 120, "conviction": cv,
@@ -264,9 +264,9 @@ def test_detect_phase_uses_48h_average():
     finally:
         cvd.load_conviction = orig_load
     assert ph2["phase"] == "Distribution-Early", f"got {ph2}"
-    assert "avg conviction" in ph2["reason"] and "(6-48h)" in ph2["reason"], \
+    assert "avg conviction" in ph2["reason"] and "(4-48h)" in ph2["reason"], \
         ph2["reason"]
-    print("  ok   Distribution-Early shows the 6-48h average")
+    print("  ok   Distribution-Early shows the 4-48h average")
 
 
 if __name__ == "__main__":

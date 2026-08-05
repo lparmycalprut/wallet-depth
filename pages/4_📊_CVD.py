@@ -963,12 +963,13 @@ else:
     st.caption(f"No fresh wallets in {fw_max_h}h.")
 
 # ---------------------------------------------------------------------------
-# Six-hour monitoring dashboard — all series use the same requested window.
+# Four-hour monitoring dashboard — all series use the same requested window.
 # ---------------------------------------------------------------------------
+_mon_bin_h = int((CONFIG or {}).get("monitor_bin_h", 4) or 4)
 monitor = pure_accumulator_growth(
     swaps_all, full_profiles, min_buy_sol=0.1, sell_tol=0.10,
     start_ts=min((int(x[2]) for x in swaps_all), default=now_ts),
-    end_ts=now_ts, bucket_s=6 * 3600)
+    end_ts=now_ts, bucket_s=_mon_bin_h * 3600)
 conv_hist_path = os.path.join(BASE, "conviction.json")
 try:
     with open(conv_hist_path, "r", encoding="utf-8") as _f:
@@ -977,27 +978,27 @@ try:
 except (OSError, ValueError, AttributeError):
     conv_points = []
 
-bucket_start = (int(min((int(x[2]) for x in swaps_all), default=now_ts)) // (6 * 3600)) * (6 * 3600)
-bucket_end = (int(now_ts) // (6 * 3600)) * (6 * 3600)
+bucket_start = (int(min((int(x[2]) for x in swaps_all), default=now_ts)) // (_mon_bin_h * 3600)) * (_mon_bin_h * 3600)
+bucket_end = (int(now_ts) // (_mon_bin_h * 3600)) * (_mon_bin_h * 3600)
 tx_buckets = {}
 for _side, _sol, _ts, _wallet in swaps_all:
-    _bucket = (int(_ts) // (6 * 3600)) * (6 * 3600)
+    _bucket = (int(_ts) // (_mon_bin_h * 3600)) * (_mon_bin_h * 3600)
     _row = tx_buckets.setdefault(_bucket, {"tx": 0, "volume": 0.0})
     _row["tx"] += 1
     _row["volume"] += float(_sol)
 monitor_rows = []
 _acc_by_bucket = {r["bucket_ts"]: r for r in monitor["series"]}
-for _bucket in range(bucket_start, bucket_end + 1, 6 * 3600):
+for _bucket in range(bucket_start, bucket_end + 1, _mon_bin_h * 3600):
     _acc = _acc_by_bucket.get(_bucket, {})
-    _nearest = [p for p in conv_points if int(p.get("ts") or 0) <= _bucket + 6 * 3600]
+    _nearest = [p for p in conv_points if int(p.get("ts") or 0) <= _bucket + _mon_bin_h * 3600]
     monitor_rows.append({"ts": _bucket,
                          "accum": _acc.get("cum_wallets", 0),
                          "conviction": float(_nearest[-1].get("conviction") or 0) if _nearest else None,
                          "tx": tx_buckets.get(_bucket, {}).get("tx", 0),
                          "volume": tx_buckets.get(_bucket, {}).get("volume", 0.0)})
 
-st.markdown("### 📡 Monitor pertumbuhan 6 jam")
-st.caption("Pure accumulator = semua wallet beli ≥0.1 SOL dan jual ≤10% dari beli pada window ini. Semua grafik dibagi bucket 6 jam.")
+st.markdown(f"### 📡 Monitor pertumbuhan {_mon_bin_h} jam")
+st.caption(f"Pure accumulator = semua wallet beli ≥0.1 SOL dan jual ≤10% dari beli pada window ini. Semua grafik dibagi bucket {_mon_bin_h} jam.")
 if monitor_rows:
     _mx = [dtm.datetime.fromtimestamp(r["ts"], WIB) for r in monitor_rows]
     _m1, _m2 = st.columns(2)
@@ -1015,7 +1016,7 @@ if monitor_rows:
     _fig = go.Figure()
     _fig.add_bar(x=_mx, y=[r["tx"] for r in monitor_rows], name="TX", marker_color="#38bdf8")
     _fig.add_scatter(x=_mx, y=[r["volume"] for r in monitor_rows], name="Volume SOL", yaxis="y2", line=dict(color="#f97316", width=2))
-    _fig.update_layout(title="TX & volume growth / 6 jam", height=280, margin=dict(t=35,b=0,l=0,r=0), yaxis2=dict(overlaying="y", side="right", title="SOL"), legend=dict(orientation="h"))
+    _fig.update_layout(title=f"TX & volume growth / {_mon_bin_h} jam", height=280, margin=dict(t=35,b=0,l=0,r=0), yaxis2=dict(overlaying="y", side="right", title="SOL"), legend=dict(orientation="h"))
     st.plotly_chart(_fig, use_container_width=True, config={"displayModeBar": False})
     # Indexed chart makes direction directly comparable despite different units.
     _fig = go.Figure()

@@ -4,7 +4,7 @@
 Covers:
   * record / dedup (REAL_DUST_MIN_GAP_S) / trim (retention + hard cap)
   * chronological series normalization (tolerates missing fields)
-  * real_dust_trend: direction (up/down/flat), 1h/6h/24h deltas,
+  * real_dust_trend: direction (up/down/flat), 1h/4h/24h deltas,
     ratio now vs previous, anchor picking past cron gaps
   * edge cases: empty series, single point, nonsense counts rejected,
     dust=0 ratio (None = "∞")
@@ -193,11 +193,11 @@ def test_trend_up_down_flat():
 
 
 def test_trend_window_deltas():
-    print("\n[trend] 1h / 6h / 24h deltas anchor to nearest older point")
+    print("\n[trend] 1h / 4h / 24h deltas anchor to nearest older point")
     pts = _hourly(-25, 0)                      # 26 hourly points
     tr = cvd.real_dust_trend(pts)
     check(tr["d1h"] == (1, -2), f"d1h vs previous hour (got {tr['d1h']})")
-    check(tr["d6h"] == (6, -12), f"d6h vs 6h back (got {tr['d6h']})")
+    check(tr["d4h"] == (4, -8), f"d4h vs 4h back (got {tr['d4h']})")
     check(tr["d24h"] == (24, -48), f"d24h vs 24h back (got {tr['d24h']})")
     check(tr["n"] == 26, "n = point count")
 
@@ -207,7 +207,7 @@ def test_trend_young_series_windows_none():
     pts = _hourly(-2, 0)                       # only 3 hourly points
     tr = cvd.real_dust_trend(pts)
     check(tr["d1h"] is not None, "1h delta available with 2+ points")
-    check(tr["d6h"] is None, "6h delta honestly None (series too young)")
+    check(tr["d4h"] is None, "4h delta honestly None (series too young)")
     check(tr["d24h"] is None, "24h delta honestly None (series too young)")
 
 
@@ -222,8 +222,8 @@ def test_trend_gap_in_cron():
     check(tr["d1h"] == (122 - (100 - 10), 350 - (400 + 20)),
           "1h delta falls back to nearest available older point "
           f"(got {tr['d1h']})")
-    check(tr["d6h"] == tr["d1h"],
-          "6h delta uses the same nearest-older anchor past the gap "
+    check(tr["d4h"] == tr["d1h"],
+          "4h delta uses the same nearest-older anchor past the gap "
           "(documented convention — never a fabricated anchor)")
 
 

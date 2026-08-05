@@ -168,7 +168,7 @@ Cron menghasilkan dua jenis pesan yang sengaja dipisahkan:
 
 | Sistem | Dasar | Dedupe |
 |---|---|---|
-| 📊 **CVD MONITOR** | flow 6 jam + divergence H1 | 4 jam per token/tipe |
+| 📊 **CVD MONITOR** | flow 4 jam + divergence H1 | 4 jam per token/tipe |
 | 🛡️ **BREAKOUT GUARD** | level D1 + close H4 | 12 jam per level |
 
 Breakout Guard hanya menilai candle H4 yang sudah close. Level berasal dari

@@ -35,7 +35,7 @@ import requests  # only used by the optional network helpers at the bottom
 
 # ── Tunables (mirror page 9 / task spec) ─────────────────────────────────
 WINDOW_H = 48               # rolling window length (hours), same as page 9
-SCAN_STEP_H = 6             # rolling scan step (3–6h recommended)
+SCAN_STEP_H = 4             # rolling scan step (3–6h recommended; 4h default)
 PHASE_HIT_RATIO = 0.5       # a phase "hits" when score >= max * ratio
 CANDIDATE_MIN_SCORE = 40    # candle pre-score needed to become a candidate
 RESULT_MIN_SCORE = 40       # verified windows below this are not listed

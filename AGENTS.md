@@ -46,15 +46,15 @@ buktikan kalibrasinya tidak bergeser (lihat §5).
 **File data yang di-commit cron** (jangan di-`.gitignore`):
 `cvd.json` · `signals.json` · `conviction.json` · `levels.json` ·
 `breakouts.json` · **`holder_snapshots.json`** (whale/dolphin holdings
-delta baseline; 4h cron commit per CA per ~6h bucket) ·
+delta baseline; 4h cron commit per CA per ~4h bucket) ·
 **`real_dust_history.json`** (history real vs dust holder per jam —
 lihat §7.7)
 
-## 2.5 Monitor growth CVD (6 jam / 72 jam)
+## 2.5 Monitor growth CVD (4 jam / 72 jam)
 
 - Raw swap CVD disimpan selama **72 jam** (`cvd.update_token_cvd`); page CVD menyediakan pilihan 72H.
-- Dashboard monitor menggabungkan pure accumulator (buy ≥0.1 SOL, sell ≤10%), conviction, TX, dan volume dalam bucket 6 jam. Grafik gabungan dinormalisasi ke index 100 agar arah lintas-unit terbaca.
-- Cron mencatat metrik accumulator pada setiap snapshot conviction 6 jam dan mengirim `📊 CVD MONITOR` Telegram untuk semua empat metrik naik, semua turun, atau TX/volume ≥5× snapshot sebelumnya. Dedupe mengikuti `signals.py` (4 jam/token/tipe).
+- Dashboard monitor menggabungkan pure accumulator (buy ≥0.1 SOL, sell ≤10%), conviction, TX, dan volume dalam bucket 4 jam. Grafik gabungan dinormalisasi ke index 100 agar arah lintas-unit terbaca.
+- Cron mencatat metrik accumulator pada setiap snapshot conviction 4 jam dan mengirim `📊 CVD MONITOR` Telegram untuk semua empat metrik naik, semua turun, atau TX/volume ≥5× antar bin 4 jam (vs bin sebelumnya atau median 4 bin). Dedupe mengikuti `signals.py` (4 jam/token/tipe).
 - "Holders with no buy in this window" sengaja nonaktif; jangan mengaktifkannya tanpa persetujuan karena menambah RPC holder mahal dan bukan flow aktif.
 
 ## 3. Dua jenis notifikasi Telegram — JANGAN tertukar
@@ -64,7 +64,7 @@ dan beda caption. Caption itu wajib ada supaya pembaca tahu yang mana.
 
 | Caption | Modul | Dasar | Dedupe |
 |---|---|---|---|
-| 📊 **CVD MONITOR** | `signals.py` | flow 6 jam + divergensi H1 | 4 jam per `(ca, tipe)` |
+| 📊 **CVD MONITOR** | `signals.py` | flow 4 jam + divergensi H1 | 4 jam per `(ca, tipe)` |
 | 🛡️ **BREAKOUT GUARD** | `breakout_guard.py` | level **D1**, konfirmasi **close H4** | 12 jam per level |
 
 Guard juga menulis ke `signals.json` (`src="guard"`, tipe `guard_*`) untuk
@@ -103,8 +103,8 @@ wallet yang beli 50 lalu jual 30 muncul sebagai **net +20**, bukan
 +80 churn.
 
 - **Snapshot store**: `holder_snapshots.json` (per CA, key = bucket
-  6 jam). Commit tiap cron run via `cvd.record_holder_snapshot()`;
-  `SNAPSHOT_MIN_GAP_S = 6*3600` jadi 4h cron commit setiap run kedua.
+  4 jam). Commit tiap cron run via `cvd.record_holder_snapshot()`;
+  `SNAPSHOT_MIN_GAP_S = 4*3600` jadi 4h cron commit tiap 4 jam.
   File ini WAJIB masuk daftar `git add` di `.github/workflows/cvd-update.yml`
   — kalau tidak, dashboard di Streamlit Cloud cuma lihat snapshot
   kosong dan badge tidak pernah muncul. **Pemilik sudah setuju update
@@ -284,10 +284,10 @@ Jebakan yang sudah pernah menggigit:
   Sekarang selectbox di-reset ke placeholder dan run yang sama yang
   meneruskan analisis. Kalau mengubah blok ini, jangan kembalikan
   `st.rerun()` di sana.
-- **`detect_phase()` memakai rata-rata conviction 6-48 jam**, bukan titik
-  6 jam terakhir: `cv = cvd.conviction_avg(pts)` dipakai untuk SEMUA
+- **`detect_phase()` memakai rata-rata conviction 4-48 jam**, bukan titik
+  4 jam terakhir: `cv = cvd.conviction_avg(pts)` dipakai untuk SEMUA
   ambang phase (Markdown <30, Accumulation-Late ≥50, dll) dan semua pesan
-  `reason` menampilkan `avg conviction X% (6-48h)`. Momentum pendek
+  `reason` menampilkan `avg conviction X% (4-48h)`. Momentum pendek
   (naik/turun) tetap dari 2 titik terakhir. Jangan mengembalikan
   `cv = pts[-1]["conviction"]` tanpa sadar — owner butuh angka yang bisa
   dibandingkan dengan analisa CVD 48h.
