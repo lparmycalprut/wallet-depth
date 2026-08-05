@@ -1,51 +1,21 @@
-# =============================================================================  
-# IMPORTANT — see BUGFIX_SUMMARY.md § Bug 0 for the full story  
-# =============================================================================  
-# On 2026-08-05, Starlette 1.4.0 was released with a new keyword-only  
-# `thread_minimum_size` arg on GZipResponder.__init__ (default 128 KiB, see  
-# https://github.com/encode/starlette/releases/tag/1.4.0). The change  
-# makes the argument MANDATORY (no default), so any caller that does  
-# NOT pass it — including Streamlit's own  
-# lib/streamlit/web/server/starlette/starlette_gzip_middleware.py:125  
-# in streamlit==1.61.0 (latest stable as of writing) — crashes with:  
-#  
-#   TypeError: GZipResponder.__init__() missing 1 required  
-#              keyword-only argument: 'thread_minimum_size'  
-#  
-# Every request to the app returns 500, no matter what `streamlit` version  
-# we pin (1.40, 1.50, 1.61, ... — the bug is in Streamlit itself, and as  
-# of 2026-08-05 it has not been fixed in streamlit/streamlit@develop  
-# either).  
-#  
-# Workaround: pin `starlette<1.4` so Streamlit's wrapper still matches  
-# the API it was written for. Streamlit 1.61.0's lib/pyproject.toml  
-# declares `starlette>=0.46.0,<2`, so 0.46.0–1.3.x is the safe range.  
-# Streamlit Cloud's uv resolver grabs the latest 1.x by default, so we  
-# have to pin explicitly.  
-#  
-# When Streamlit ships a fixed release (a `streamlit>=X.Y` where its  
-# starlette_gzip_middleware.py passes `thread_minimum_size`), drop the  
-# starlette cap and rely on the streamlit floor.  
-# =============================================================================  
-  
-# ---- streamlit ----  
-# Latest known-working line: 1.40+ (1.61.0 confirmed broken via streamlit  
-# GitHub main). 1.40 is the floor; if a fixed release appears, raise the  
-# cap and remove the starlette pin below.  
-streamlit>=1.40,<2  
-  
-# ---- starlette (OVERRIDE streamlit's loose constraint) ----  
-# See block comment at top of file. Floor = the version streamlit 1.61  
-# was actually tested against; ceiling = 1.4 (the breaking release).  
-starlette>=0.46.0,<1.4  
-  
-# ---- other runtime deps ----  
-requests  
-pandas  
-plotly  
-base58  
-curl_cffi  
-# ---- Pillow: required by share_card.py (PNG share card) ----  
-# Without this, importing app.py that touches share_card.build_share_card  
-# raises ModuleNotFoundError at runtime (Streamlit shows "Oh no.").  
+# Runtime dependencies for Streamlit Community Cloud.
+#
+# Streamlit 1.61.0 is incompatible with Starlette 1.4.0: the latter made
+# GZipResponder.thread_minimum_size mandatory, while Streamlit's gzip wrapper
+# does not pass it. Every browser request then returns HTTP 500, which appears
+# as a page that spins forever.
+#
+# Keep this pair exact rather than a range. It makes Cloud redeploys
+# reproducible and prevents its resolver from selecting the broken 1.61.0 /
+# 1.4.0 combination. Streamlit 1.61.1 explicitly supports this Starlette
+# version, and Starlette 1.3.1 retains the compatible GZipResponder signature.
+streamlit==1.61.1
+starlette==1.3.1
+
+requests
+pandas
+plotly
+base58
+curl_cffi
+# Required by share_card.py for PNG share-card generation.
 Pillow>=10.0
