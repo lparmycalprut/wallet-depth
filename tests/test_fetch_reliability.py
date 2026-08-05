@@ -173,6 +173,154 @@ def test_complete_gmgn_fetch_can_recover_without_pool():
           "pool-less GMGN result still persists its CVD cursor")
 
 
+def _cap_status():
+    return {"ok": False, "complete": False,
+            "error": ("GMGN pagination reached its 80-page safety cap "
+                      "before the requested cutoff."),
+            "raw_seen": 8000}
+
+
+def _fake_gmgn_fetch_recorder(fetch_calls, result):
+    """Build a fetch_swaps stand-in that records its cutoff arguments."""
+
+    def fake_fetch(api_key, pool, ca_arg, *, stop_sig=None, stop_ts=None,
+                   max_pages=40, sleep=0.15, use_gmgn=False, from_ts=None,
+                   to_ts=None):
+        fetch_calls.append({"stop_sig": stop_sig, "stop_ts": stop_ts,
+                            "max_pages": max_pages})
+        return result
+
+    return fake_fetch
+
+
+def _reset_cvd_cache():
+    """Drop load_cvd()'s mtime cache so a swapped CVD_PATH is always
+    re-read from disk (two temp files written back-to-back can share the
+    same coarse mtime, which would otherwise serve a stale state)."""
+    cvd._cvd_cache = {"data": None, "mtime": 0}
+
+
+def test_first_backfill_shrinks_window_on_safety_cap():
+    print("\n[CVD backfill] capped first backfill retries with shrinking windows")
+    now = int(time.time())
+    ca = "busy-ca"
+    fetched = [("buy", 4.0, now - 120, "whale-wallet")]
+    ok_status = {"ok": True, "complete": True, "error": "", "raw_seen": 400}
+    fetch_calls = []
+
+    _reset_cvd_cache()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "cvd.json")
+        with patch.object(cvd, "CVD_PATH", path), \
+                patch.object(
+                    cvd, "fetch_swaps",
+                    side_effect=_fake_gmgn_fetch_recorder(
+                        fetch_calls, (fetched, "cursor-3h", now - 60, True))), \
+                patch.object(cvd, "get_gmgn_fetch_status",
+                             side_effect=[_cap_status(), _cap_status(),
+                                          ok_status]):
+            result = cvd.update_token_cvd(
+                (), ca, "", max_pages=80, use_gmgn=True)
+        with open(path, "r", encoding="utf-8") as handle:
+            saved = json.load(handle)[ca]
+
+    check(result["fetch_ok"] is True and result["gap"] is False,
+          "a successful shrunk window recovers the stuck first backfill")
+    check(len(fetch_calls) == 3,
+          "retry stops at the first successful window (no 1h attempt)")
+    windows = [now - call["stop_ts"] for call in fetch_calls]
+    check(all(call["stop_sig"] is None for call in fetch_calls),
+          "backfill retries never use a signature cursor")
+    check(abs(windows[0] - 48 * 3600) <= 60,
+          "first attempt keeps the regular 48h cutoff")
+    check(abs(windows[1] - 12 * 3600) <= 60,
+          "second attempt shrinks the cutoff to 12h")
+    check(abs(windows[2] - 3 * 3600) <= 60,
+          "third attempt shrinks the cutoff to 3h")
+    check(saved["newest_sig"] == "cursor-3h" and
+          saved["newest_ts"] == now - 60,
+          "the successful shrunk window persists its cursor so future runs "
+          "are cheap incremental fetches")
+    check(result["new_swaps"] == 1,
+          "swaps from the successful retry reach the normal persist path")
+
+
+def test_incremental_update_never_shrinks_window():
+    print("\n[CVD backfill] stored-cursor update never retries shrinking windows")
+    now = int(time.time())
+    ca = "known-ca"
+    initial = {ca: _entry(now)}
+    fetched = [("sell", 2.0, now - 60, "new-wallet")]
+    fetch_calls = []
+
+    _reset_cvd_cache()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "cvd.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(initial, handle)
+        with patch.object(cvd, "CVD_PATH", path), \
+                patch.object(
+                    cvd, "fetch_swaps",
+                    side_effect=_fake_gmgn_fetch_recorder(
+                        fetch_calls, (fetched, "new-cursor", now, False))), \
+                patch.object(cvd, "get_gmgn_fetch_status",
+                             side_effect=[_cap_status(), _cap_status()]):
+            result = cvd.update_token_cvd(
+                (), ca, "", max_pages=80, use_gmgn=True)
+        with open(path, "r", encoding="utf-8") as handle:
+            saved = json.load(handle)[ca]
+
+    check(len(fetch_calls) == 1,
+          "incremental update makes exactly one fetch (no shrunk retry)")
+    check(fetch_calls[0]["stop_ts"] == initial[ca]["newest_ts"],
+          "incremental update keeps the stored cursor time as its cutoff")
+    check(result["fetch_ok"] is False and result["gap"] is True,
+          "capped incremental update is still reported as a failed fetch")
+    check(saved["newest_sig"] == "known-cursor" and
+          saved["swaps"] == initial[ca]["swaps"] and
+          saved["buckets"] == initial[ca]["buckets"],
+          "capped incremental update keeps cursor, swaps and buckets intact")
+
+
+def test_first_backfill_all_windows_failed_keeps_gap_state():
+    print("\n[CVD backfill] when every shrunk window fails, gap state is kept")
+    now = int(time.time())
+    ca = "hopeless-ca"
+    fetched = [("buy", 4.0, now - 120, "whale-wallet")]
+    fetch_calls = []
+
+    _reset_cvd_cache()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "cvd.json")
+        with patch.object(cvd, "CVD_PATH", path), \
+                patch.object(
+                    cvd, "fetch_swaps",
+                    side_effect=_fake_gmgn_fetch_recorder(
+                        fetch_calls,
+                        (fetched, "partial-cursor", now - 60, False))), \
+                patch.object(cvd, "get_gmgn_fetch_status",
+                             side_effect=[_cap_status() for _ in range(4)]):
+            result = cvd.update_token_cvd(
+                (), ca, "", max_pages=80, use_gmgn=True)
+        with open(path, "r", encoding="utf-8") as handle:
+            saved = json.load(handle)[ca]
+
+    check(len(fetch_calls) == 4,
+          "48h, 12h, 3h and 1h windows are each attempted exactly once")
+    expected = sorted((48 * 3600, 12 * 3600, 3 * 3600, 1 * 3600))
+    windows = sorted(now - call["stop_ts"] for call in fetch_calls)
+    check(all(abs(w - e) <= 60 for w, e in zip(windows, expected)),
+          "retry walks the fixed 48h -> 12h -> 3h -> 1h ladder")
+    check(result["fetch_ok"] is False and result["gap"] is True,
+          "an all-attempts failure is still reported as a failed fetch")
+    check(saved.get("gap") is True,
+          "gap=True is persisted when no window can be backfilled")
+    check(saved.get("last_fetch_error") == _cap_status()["error"],
+          "last_fetch_error keeps the final actionable GMGN error")
+    check("newest_sig" not in saved and "newest_ts" not in saved,
+          "no partial cursor is persisted when every window fails")
+
+
 def test_cron_skips_conviction_after_failed_fetch():
     print("\n[cron] failed GMGN fetch cannot create a fresh conviction timestamp")
     script = Path(ROOT, "scripts", "update_cvd.py").read_text()
@@ -227,6 +375,9 @@ if __name__ == "__main__":
     test_complete_and_capped_gmgn_status()
     test_incomplete_fetch_does_not_advance_cvd_cursor()
     test_complete_gmgn_fetch_can_recover_without_pool()
+    test_first_backfill_shrinks_window_on_safety_cap()
+    test_incremental_update_never_shrinks_window()
+    test_first_backfill_all_windows_failed_keeps_gap_state()
     test_cron_skips_conviction_after_failed_fetch()
     test_remote_history_refresh_is_per_required_ca_and_cached()
     print(f"\n{'FAILED: ' + str(len(failures)) if failures else 'ALL PASSED'}")

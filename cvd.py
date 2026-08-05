@@ -775,6 +775,25 @@ def bucketize(swaps) -> dict:
     return out
 
 
+def _gmgn_fetch_outcome() -> tuple:
+    """Translate the latest GMGN fetch status into
+    ``(fetch_ok, complete, fetch_error)``.
+
+    ``ok is None`` is retained for compatibility with callers that
+    monkeypatch fetch_swaps in offline tests or integrations: an unknown
+    status is treated as a successful, complete fetch.
+    """
+    status = get_gmgn_fetch_status()
+    if status.get("ok") is None:
+        return True, True, ""
+    complete = bool(status.get("complete"))
+    fetch_error = str(status.get("error") or "")
+    fetch_ok = bool(status.get("ok")) and complete
+    if not fetch_ok and not fetch_error:
+        fetch_error = "GMGN pagination ended before the requested cutoff."
+    return fetch_ok, complete, fetch_error
+
+
 def update_token_cvd(api_key: str, ca: str, pool: str, *,
                      max_pages=40, use_gmgn: bool = False) -> dict:
     """Incrementally refresh one token's CVD store.
@@ -788,6 +807,15 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
     When ``use_gmgn=True``, no Helius key or pool is required; GMGN queries by
     contract address.  A known existing pool is retained when the caller has
     no current DexScreener pair.
+
+    First-backfill retry: when a token has no stored ``newest_ts`` yet and
+    the 48h backfill dies on GMGN's page safety cap (a very busy token can
+    produce more trades than the page budget can walk back), the cutoff
+    window is retried smaller — 12h, then 3h, then 1h — until one fetch
+    completes.  Once any window succeeds the cursor is stored, so every
+    later run becomes a cheap incremental fetch instead of re-failing the
+    same 48h walk forever.  Incremental updates (cursor already stored)
+    never shrink their window.
     """
     state = load_cvd()
     entry = state.get(ca) or {"pool": pool or "", "buckets": {}}
@@ -797,6 +825,7 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
 
     stop_sig = entry.get("newest_sig") if not use_gmgn else None
     stop_ts = entry.get("newest_ts")
+    is_first_backfill = not stop_ts
     if not stop_ts:
         # A first backfill only needs enough history for the 48h raw store.
         # Without a cutoff an active token can hit the page cap while walking
@@ -807,20 +836,31 @@ def update_token_cvd(api_key: str, ca: str, pool: str, *,
         max_pages=max_pages, use_gmgn=use_gmgn)
 
     # GMGN exposes completion details without changing fetch_swaps' public
-    # tuple shape.  ``ok is None`` is retained for compatibility with callers
-    # that monkeypatch fetch_swaps in offline tests or integrations.
-    fetch_ok = True
-    fetch_error = ""
-    complete = True
+    # tuple shape.
+    fetch_ok, complete, fetch_error = True, True, ""
     if use_gmgn:
-        status = get_gmgn_fetch_status()
-        if status.get("ok") is not None:
-            complete = bool(status.get("complete"))
-            fetch_error = str(status.get("error") or "")
-            fetch_ok = bool(status.get("ok")) and complete
-            if not fetch_ok and not fetch_error:
-                fetch_error = ("GMGN pagination ended before the requested "
-                               "cutoff.")
+        fetch_ok, complete, fetch_error = _gmgn_fetch_outcome()
+
+    # Shrinking-window retry for a FIRST backfill that died on GMGN's page
+    # safety cap.  The page budget (max_pages x GMGN_PAGE_LIMIT) cannot walk
+    # back 48h for a token with thousands of trades per hour, and because a
+    # failed fetch never stores newest_sig, the next run would recompute the
+    # exact same 48h cutoff and fail identically forever.  Retrying with a
+    # smaller cutoff (12h -> 3h -> 1h) fits the same page budget; once any
+    # window succeeds the cursor is stored and every later run becomes a
+    # cheap incremental fetch.  Never applied to incremental updates:
+    # shrinking a stored-cursor window would silently skip the trades in
+    # between, creating a quiet hole in CVD history.
+    if is_first_backfill and not fetch_ok and "safety cap" in fetch_error:
+        for window_h in (12, 3, 1):
+            stop_ts = int(time.time() - window_h * 3600)
+            swaps, new_sig, new_ts, hit = fetch_swaps(
+                api_key, effective_pool, ca, stop_sig=None,
+                stop_ts=stop_ts, max_pages=max_pages,
+                use_gmgn=use_gmgn)
+            fetch_ok, complete, fetch_error = _gmgn_fetch_outcome()
+            if fetch_ok:
+                break
 
     if not fetch_ok:
         # Keep every data cursor/bucket untouched.  The next cron/manual

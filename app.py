@@ -1240,8 +1240,10 @@ if _wl:
 
     # ------------------------------------------------------------------
     # 🔄 Manual refresh for newly added/stale watchlist tokens.
-    # Force-refresh button: CVD uses GMGN, so this intentionally does not
-    # require a Helius key. Helius remains optional for holder panels only.
+    # Force-refresh button: CVD uses GMGN as the primary source, but the
+    # Helius key pool is passed along so fetch_swaps() can fall back to
+    # Helius when a GMGN fetch fails.  (Passing an empty tuple here used
+    # to disable that fallback entirely, even when Helius keys existed.)
     # ------------------------------------------------------------------
     _pending_refresh = set(st.session_state.get(
         "watchlist_auto_refresh_cas") or set())
@@ -1272,7 +1274,8 @@ if _wl:
                 _fr_pool = ((_prices.get(_fr_ca) or {}).get("pair") or "")
                 try:
                     _fr_result = update_token_cvd(
-                        (), _fr_ca, _fr_pool, max_pages=80, use_gmgn=True)
+                        helius_keys, _fr_ca, _fr_pool, max_pages=80,
+                        use_gmgn=True)
                     if not _fr_result.get("fetch_ok", True):
                         raise RuntimeError(
                             _fr_result.get("error") or
