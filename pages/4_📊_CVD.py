@@ -20,8 +20,9 @@ import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ai_prompt import build_ai_prompt
-from core import (atomic_write_json, get_helius_keys, helius_rpc,
-                  load_config, get_holders as core_get_holders,
+from core import (atomic_write_json, get_helius_keys, get_market,
+                  helius_rpc, load_config,
+                  get_holders as core_get_holders,
                   get_supply as core_get_supply)
 from cvd import (MIN_SOL, WHALE_SOL, analysis_windows, classify_holders,
                  classify_swap, cohort_activity_summary, cohort_cvd_series,
@@ -164,17 +165,14 @@ if (not helius_keys and not use_gmgn_trades and
 
 @st.cache_data(ttl=120, show_spinner=False)
 def get_pool(ca: str):
-    r = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{ca}",
-                     timeout=20)
-    pairs = (r.json() or {}).get("pairs") or []
-    if not pairs:
+    """Resolve a CA through the shared identity-safe market helper."""
+    market = get_market(ca)
+    pools = market.get("pair_addresses") or []
+    if not market or not pools:
         return None, None, None, None
-    pairs.sort(key=lambda p: (p.get("liquidity") or {}).get("usd") or 0,
-               reverse=True)
-    b = pairs[0]
-    return (b["pairAddress"], b["baseToken"].get("symbol", "?"),
-            float(b.get("priceUsd") or 0),
-            float(b.get("marketCap") or b.get("fdv") or 0))
+    return (pools[0], market.get("symbol", "?"),
+            float(market.get("price_usd") or 0),
+            float(market.get("marketcap") or 0))
 
 
 def full_fetch(ca: str, pool: str, cutoff_ts: int, *,

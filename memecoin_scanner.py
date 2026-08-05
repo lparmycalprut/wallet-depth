@@ -24,7 +24,8 @@ from typing import Dict, Any, List, Optional
 
 import requests
 
-from core import atomic_write_json, get_helius_keys
+from core import (atomic_write_json, dexscreener_pair_token,
+                  get_helius_keys, select_dexscreener_pair)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_PATH = os.path.join(BASE_DIR, "scanner_state.json")
@@ -129,11 +130,14 @@ def fetch_token_data(address: str) -> Optional[Dict[str, Any]]:
         if not data.get("pairs"):
             return None
 
-        pair = data["pairs"][0]
+        pair = select_dexscreener_pair(data["pairs"], address)
+        if not pair:
+            return None
+        token = dexscreener_pair_token(pair, address)
 
         result = {
             "address": address,
-            "symbol": pair.get("baseToken", {}).get("symbol", "UNKNOWN"),
+            "symbol": token.get("symbol", "UNKNOWN"),
             "price_usd": float(pair.get("priceUsd", 0)),
             "liquidity_usd": float(pair.get("liquidity", {}).get("usd", 0)),
             "fdv": float(pair.get("fdv", 0)),

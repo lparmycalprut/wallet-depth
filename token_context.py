@@ -26,6 +26,8 @@ is honest, whereas a fabricated ``-90%`` on every row is not.
 """
 import time
 
+from core import select_dexscreener_pair
+
 __all__ = [
     "holder_avg_cost", "avg_cost_change_pct", "down_from_ath_pct",
     "token_context", "enrich_rows", "clear_cache",
@@ -247,19 +249,15 @@ def avg_cost_change_pct(price: float, holders) -> float:
 # distance from ATH
 # ---------------------------------------------------------------------------
 def _resolve_pair(ca: str, timeout: int = 10):
-    """Highest-liquidity DexScreener pair address for a CA, or ``None``."""
+    """Canonical DexScreener pair address for a CA, or ``None``."""
     try:
         r = _http_get(f"https://api.dexscreener.com/latest/dex/tokens/{ca}",
                       timeout=timeout, headers={"accept": "application/json"})
         pairs = (r.json() or {}).get("pairs") or []
     except Exception:                                     # noqa: BLE001
         return None
-    pairs = [p for p in pairs if isinstance(p, dict)]
-    if not pairs:
-        return None
-    pairs.sort(key=lambda p: _f((p.get("liquidity") or {}).get("usd"), 0.0)
-               or 0.0, reverse=True)
-    return pairs[0].get("pairAddress")
+    pair = select_dexscreener_pair(pairs, ca)
+    return pair.get("pairAddress") if pair else None
 
 
 def _ath_from_candles(pair: str, timeout: int = 12):

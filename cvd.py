@@ -23,7 +23,8 @@ import time
 import requests
 
 from core import (HELIUS_ENHANCED_URL, atomic_write_json, helius_api_get,
-                  helius_rpc_request as _core_helius_rpc_request)
+                  helius_rpc_request as _core_helius_rpc_request,
+                  select_dexscreener_pair)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CVD_PATH = os.path.join(BASE_DIR, "cvd.json")
@@ -62,9 +63,8 @@ def get_sol_price() -> float:
             "https://api.dexscreener.com/latest/dex/tokens/" + SOL_MINT,
             timeout=15)
         pairs = (r.json() or {}).get("pairs") or []
-        pairs.sort(key=lambda p: (p.get("liquidity") or {}).get("usd") or 0,
-                   reverse=True)
-        px = float(pairs[0].get("priceUsd") or 0) if pairs else 0.0
+        pair = select_dexscreener_pair(pairs, SOL_MINT)
+        px = float(pair.get("priceUsd") or 0) if pair else 0.0
         if px > 0:
             _sol_price_cache.update(price=px, ts=now)
             return px

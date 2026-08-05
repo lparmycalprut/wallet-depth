@@ -15,10 +15,10 @@ Usage: python scripts/update_cvd.py [max_pages]
 
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import requests  # noqa: E402
 from cvd import (record_conviction, update_token_cvd,  # noqa: E402
                  get_gmgn_last_error)
 from signals import detect_and_record  # noqa: E402
@@ -31,27 +31,30 @@ from watchlist import load_watchlist, save_watchlist  # noqa: E402
 # diskip — CVD tetap jalan penuh via GMGN.
 # ---------------------------------------------------------------------------
 try:
-    from core import get_helius_keys, get_holders, get_supply  # noqa: E402
+    from core import (get_helius_keys, get_holders, get_market,
+                      get_supply)  # noqa: E402
 except Exception:
-    get_helius_keys = lambda: ()
     get_holders = None
     get_supply = None
 
+    def get_helius_keys():
+        """Return no Helius keys if the optional core import is unavailable."""
+        return ()
+
+    def get_market(_ca):
+        """Fallback when the optional core import is unavailable."""
+        return {}
+
 
 def main_pool(ca: str):
-    """Cari main pool address + price + symbol dari DexScreener."""
+    """Resolve the queried token's canonical DexScreener pool and metadata."""
     try:
-        r = requests.get(
-            f"https://api.dexscreener.com/latest/dex/tokens/{ca}",
-            timeout=20)
-        pairs = (r.json() or {}).get("pairs") or []
-        pairs.sort(key=lambda p: (p.get("liquidity") or {}).get("usd") or 0,
-                   reverse=True)
-        if not pairs:
+        market = get_market(ca)
+        pools = market.get("pair_addresses") or []
+        if not market or not pools:
             return None, None, None
-        b = pairs[0]
-        return (b["pairAddress"], float(b.get("priceUsd") or 0),
-                (b.get("baseToken") or {}).get("symbol") or "?")
+        return (pools[0], float(market.get("price_usd") or 0),
+                market.get("symbol") or "?")
     except Exception:
         return None, None, None
 

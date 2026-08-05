@@ -7,6 +7,48 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-05 — Fix identitas token DexScreener untuk CVD (MEMIPEDE ≠ Cyclospora)
+
+### Masalah
+
+Saat CVD dibuka untuk CA MEMIPEDE
+`6LLNiWXRZp8hn5oTFTHEo8ERbJS3QJfHSKhnTCqipump`, halaman dapat memakai
+pair DexScreener paling likuid mentah. Endpoint `/latest/dex/tokens/<CA>`
+juga mengandung cross-pair ketika CA tersebut menjadi `quoteToken`; kode lama
+lalu selalu membaca `baseToken`, sehingga nama token di header berubah menjadi
+**Cyclospora** meskipun CA yang dianalisis tetap MEMIPEDE.
+
+### Yang berubah
+
+1. **`core.py`** sekarang memiliki resolver identitas tunggal:
+   `matching_dexscreener_pairs()` mewajibkan kecocokan address exact,
+   memprioritaskan target di `baseToken`, lalu mengurutkan likuiditas. Bila
+   hanya ada quote-side pair, `dexscreener_pair_token()` mengambil metadata
+   dari sisi CA yang benar, bukan meminjam nama base token.
+2. **`core.get_market()` + page `4_📊_CVD.py`** memakai resolver tersebut;
+   `get_pool()` page CVD sekarang hanya membaca market terverifikasi. Header,
+   pair GeckoTerminal, harga, dan MC CVD mengikuti pair MEMIPEDE/SOL yang
+   benar, bukan cross-pair lebih likuid.
+3. **Jalur pendukung** juga memakai selector yang sama: cron CVD,
+   snapshot harian, harga watchlist/Quick Pick, ATH context, pola candle,
+   CLI, memecoin scanner, serta harga SOL untuk normalisasi CVD. Ini mencegah
+   salah nama yang sama muncul kembali lewat UI atau proses terjadwal.
+
+### Verifikasi
+
+- `tests/test_dexscreener_identity.py` (baru, 6 test / 20 assertion, tanpa
+  jaringan) memakai fixture cross-pair Cyclospora/MEMIPEDE dengan likuiditas
+  jauh lebih besar daripada pair MEMIPEDE/SOL. Hasil: selector tetap memilih
+  MEMIPEDE/SOL, metadata = `MEMIPEDE`, dan pair yang tidak memuat CA ditolak.
+- Test juga mengunci bahwa `pages/4_📊_CVD.py::get_pool()` tetap
+  mendelegasikan ke `core.get_market()`, sehingga tidak boleh kembali ke
+  `pairs[0]`/`baseToken` mentah.
+- `python -m py_compile` untuk modul yang diubah — lulus.
+- Uji live API tidak dapat dilakukan di sandbox karena egress crypto API
+  diblokir; fixture mereplikasi struktur respons yang menyebabkan bug.
+
+---
+
 ## 2026-08-04 — Page 10 Accumulation History: scan akumulasi SELURUH umur token
 
 ### Yang berubah
