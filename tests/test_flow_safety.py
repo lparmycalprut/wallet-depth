@@ -36,10 +36,14 @@ def write_conviction(history):
 
 
 def write_cvd_swaps(ca, swaps, pool="pool"):
-    """Write a minimal cvd.json entry with a raw swap list for `ca`."""
-    with open(cvd.CVD_PATH, "w", encoding="utf-8") as f:
-        json.dump({ca: {"pool": pool, "buckets": {},
-                        "swaps": [list(s) for s in swaps]}}, f)
+    """Write a minimal cvd.json entry with a raw swap list for `ca`.
+
+    Uses cvd.save_cvd() (not a raw open()) so the in-process mtime cache
+    is refreshed — otherwise two writes within the same clock second can
+    make load_cvd() return the previous file's state and tests flake.
+    """
+    cvd.save_cvd({ca: {"pool": pool, "buckets": {},
+                       "swaps": [list(s) for s in swaps]}})
 
 
 class TempPaths:
