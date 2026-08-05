@@ -20,6 +20,11 @@ Pemilik memakai ini untuk keputusan uang sungguhan. Jadi: **jangan pernah
 melonggarkan kriteria risiko diam-diam**, dan kalau mengubah scoring,
 buktikan kalibrasinya tidak bergeser (lihat §5).
 
+**Kerapian Kode (Code Neatness & Formatting):**
+- Seluruh agen AI yang berkolaborasi pada repository ini **WAJIB** merapikan semua kode sebelum mengakhiri sesi.
+- Gunakan format PEP 8 yang konsisten, hilangkan unused imports/variables, dan berikan komentar/docstring bahasa Inggris yang jelas untuk setiap perubahan.
+- Lakukan pengecekan linter dan selalu jalankan suite pengujian (`python -m unittest discover tests`) untuk memastikan kerapian kode tidak memicu bug baru.
+
 ## 2. Peta file
 
 | File | Isi |

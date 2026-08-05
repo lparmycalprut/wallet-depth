@@ -9,6 +9,8 @@ import streamlit as st
 import os, json, time
 
 st.set_page_config(page_title="CTO Incubation Radar", layout="wide")
+st.warning("⚠️ Aplikasi ini dinonaktifkan sementara.")
+st.stop()
 st.title("💀 CTO Incubation Radar — 2d min | Deep + Auto")
 st.caption("Scan 2-60 hari dead token kayak assface day 3, punch, bountywork, ansem, grail, chance + deep scan Helius + auto-watchlist + Telegram")
 

@@ -11,6 +11,8 @@ from trending_ui import render_trending, run_screen
 
 st.set_page_config(page_title="Screener", page_icon="🔎",
                    layout="wide", initial_sidebar_state="collapsed")
+st.warning("⚠️ Aplikasi ini dinonaktifkan sementara.")
+st.stop()
 st.markdown("""<style>
 .block-container {padding-top: 1.2rem; max-width: 1400px;}
 h1 {font-size: 1.3rem !important;}

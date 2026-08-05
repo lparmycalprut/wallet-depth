@@ -27,6 +27,22 @@ st.caption("Tokens on this list are snapshotted automatically every day at "
 wl = load_watchlist()
 hist = load_history()
 
+# --- auto fix missing or "?" symbols ---
+wl_changed = False
+for ca_key, meta in wl.items():
+    if meta.get("symbol") in (None, "", "?"):
+        try:
+            from core import get_market
+            m = get_market(ca_key)
+            if m and m.get("symbol") and m.get("symbol") != "?":
+                meta["symbol"] = m["symbol"]
+                wl_changed = True
+        except Exception:
+            pass
+
+if wl_changed:
+    save_watchlist(wl, "auto-fix missing symbols")
+
 # --- quick pick -------------------------------------------------------------
 # Re-use tokens the user has already analyzed (or snapshotted) so adding to
 # the watchlist is one click. Pulls from history.json (any CA with at least

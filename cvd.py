@@ -624,12 +624,30 @@ def _load_json_tolerant(path):
     return None
 
 
+_cvd_cache = {"data": None, "mtime": 0}
+
 def load_cvd() -> dict:
-    return _load_json_tolerant(CVD_PATH) or {}
+    global _cvd_cache
+    try:
+        mtime = os.path.getmtime(CVD_PATH)
+    except OSError:
+        mtime = 0
+    if _cvd_cache["data"] is not None and _cvd_cache["mtime"] == mtime:
+        return _cvd_cache["data"]
+    
+    data = _load_json_tolerant(CVD_PATH) or {}
+    _cvd_cache = {"data": data, "mtime": mtime}
+    return data
 
 
 def save_cvd(state: dict) -> None:
     atomic_write_json(CVD_PATH, state, separators=(",", ":"))
+    try:
+        mtime = os.path.getmtime(CVD_PATH)
+    except OSError:
+        mtime = 0
+    global _cvd_cache
+    _cvd_cache = {"data": state, "mtime": mtime}
 
 
 def classify_swap(tx: dict, pool: str, ca: str):

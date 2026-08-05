@@ -255,13 +255,91 @@ def main():
             except Exception as ge:
                 guard_txt = f" guard-err:{str(ge)[:40]}"
 
+            # ── Liquidity Test TX ─────────────────────────────────────
+            liq_test_txt = ""
+            try:
+                from cvd import get_recent_swaps, get_sol_price
+                from breakout_guard import send_telegram
+                from signals import load_signals, save_signals
+                
+                swaps_4h = get_recent_swaps(ca, hours=4)
+                sol_price = get_sol_price()
+                vol_sol_4h = sum(float(s[1]) for s in swaps_4h)
+                vol_usd_4h = vol_sol_4h * sol_price
+                
+                if vol_usd_4h <= 10000.0:
+                    wallet_swaps = {}
+                    for s in swaps_4h:
+                        if len(s) < 4:
+                            continue
+                        side, sol, ts, wallet = s[0], float(s[1]), int(s[2]), str(s[3])
+                        wallet_swaps.setdefault(wallet, []).append((side, sol, ts))
+                        
+                    test_wallets = []
+                    for wallet, txs in wallet_swaps.items():
+                        txs.sort(key=lambda x: x[2])
+                        has_test = False
+                        for i in range(len(txs)):
+                            for j in range(i + 1, len(txs)):
+                                side_i, sol_i, ts_i = txs[i]
+                                side_j, sol_j, ts_j = txs[j]
+                                
+                                if side_i != side_j:
+                                    if abs(ts_i - ts_j) <= 900:  # within 15 minutes
+                                        if sol_i <= 1.0 and sol_j <= 1.0:  # both <= 1.0 SOL
+                                            has_test = True
+                                            break
+                            if has_test:
+                                break
+                        if has_test:
+                            test_wallets.append(wallet)
+                    
+                    if len(test_wallets) > 5:
+                        sigs = load_signals()
+                        now = int(time.time())
+                        already_sent = False
+                        for s in reversed(sigs[-200:]):
+                            if s.get("ca") == ca and s.get("type") == "liquidity_test_tx" and now - (s.get("ts") or 0) < 4 * 3600:
+                                already_sent = True
+                                break
+                        if not already_sent:
+                            sym = meta.get("symbol", "?")
+                            msg = (
+                                f"🚨 <b>LIQUIDITY TEST TX ALERT</b> 🚨\n\n"
+                                f"Token: <b>{sym}</b>\n"
+                                f"CA: <code>{ca}</code>\n"
+                                f"Volume 4H Terakhir: <b>${vol_usd_4h:,.2f}</b> (&lt;= $10K)\n"
+                                f"Unique Wallets melakukan test: <b>{len(test_wallets)}</b> (&gt; 5)\n\n"
+                                f"<b>Rekap Wallet (Hyperlink Solscan):</b>\n"
+                            )
+                            for idx, w in enumerate(test_wallets[:10], 1):
+                                msg += f"{idx}. <a href='https://solscan.io/account/{w}'>{w[:8]}...{w[-4:]}</a>\n"
+                            if len(test_wallets) > 10:
+                                msg += f"...dan {len(test_wallets) - 10} wallet lainnya\n"
+                                
+                            msg += f"\nLink: <a href='https://dexscreener.com/solana/{ca}'>DexScreener</a> | <a href='https://gmgn.ai/sol/token/{ca}'>GMGN</a>"
+                            
+                            send_telegram(msg)
+                            sigs.append({
+                                "ts": now,
+                                "ca": ca,
+                                "symbol": sym,
+                                "type": "liquidity_test_tx",
+                                "src": "cron",
+                                "detail": f"Volume 4H: ${vol_usd_4h:,.2f}, {len(test_wallets)} test wallets"
+                            })
+                            save_signals(sigs)
+                            liq_test_txt = f" 🧪test_tx:{len(test_wallets)}w"
+            except Exception as e_lt:
+                liq_test_txt = f" 🧪test_err:{str(e_lt)[:20]}"
+
             # ── Holder snapshot + real/dust history (Helius opsional) ──
             snap_txt = _try_snapshot(api_keys, ca, meta,
                                      price_now=price_now or 0.0)
 
             print(f"✅ {meta.get('symbol', '?'):>10} {ca[:8]}… "
                   f"+{res['new_swaps']} swaps, {res['buckets']} hourly "
-                  f"buckets{gap}{conv_txt}{sig_txt}{guard_txt}{snap_txt}")
+                  f"buckets{gap}{conv_txt}{sig_txt}{guard_txt}{snap_txt}{liq_test_txt}")
 
         except Exception as e:
             print(f"❌ {ca[:8]}… unhandled error: {str(e)[:100]}")

@@ -22,6 +22,8 @@ from memecoin_scanner import (
 
 st.set_page_config(page_title="Memecoin Scanner", page_icon="🤖",
                    layout="wide", initial_sidebar_state="collapsed")
+st.warning("⚠️ Aplikasi ini dinonaktifkan sementara.")
+st.stop()
 
 st.markdown("""<style>
 .block-container {padding-top: 1.2rem; max-width: 1400px;}

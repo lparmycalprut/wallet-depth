@@ -48,3 +48,6 @@
 - `trending_ui.py` — screener renderer
 - `.github/workflows/cvd-update.yml` — 4-hourly cron untuk CVD + data files
 - `.github/workflows/daily-snapshot.yml` — 8-hourly snapshot
+
+## Code Neatness & Formatting Rules
+Setiap AI yang berkolaborasi pada repository ini **selalu diwajibkan merapikan dan memformat kode** (code formatting, PEP 8) agar tetap bersih, lancar, dan berkinerja tinggi. Jangan tinggalkan dead code, unused imports, atau variable yang berantakan. Jalankan selalu pengujian sebelum menyerahkan tugas.
