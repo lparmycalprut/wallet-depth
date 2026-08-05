@@ -33,6 +33,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+st.warning("⚠️ Aplikasi ini dinonaktifkan sementara.")
+st.stop()
 
 WIB = ZoneInfo("Asia/Jakarta")
 _BLN = ["", "Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep",

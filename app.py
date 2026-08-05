@@ -1070,6 +1070,28 @@ from watchlist import load_watchlist, add_to_watchlist, remove_from_watchlist, g
 
 _wl = load_watchlist()
 
+# --- Manual Add to Watchlist on Main Page ---
+with st.expander("⭐ Tambah Token ke Watchlist Secara Manual", expanded=False):
+    with st.form("manual_add_watchlist_form", clear_on_submit=True):
+        m_ca = st.text_input("Solana Token Contract Address (CA)", placeholder="e.g. AkchGAUdXXRGHt3HXaHbTvw3JLGUwtJRmYnkG66wpump").strip()
+        m_source = st.selectbox("Kategori / Source", ["trending", "hrhr", "manual"], index=0)
+        m_submit = st.form_submit_button("⭐ Tambahkan ke Watchlist", use_container_width=True)
+        if m_submit and m_ca:
+            m_sym = "?"
+            try:
+                m_info = fetch_dexscreener(m_ca)
+                m_sym = (m_info or {}).get("symbol", "?")
+            except Exception:
+                pass
+            _committed = add_to_watchlist(m_ca, symbol=m_sym, source=m_source)
+            if _committed:
+                st.success(f"Berhasil menambahkan {m_sym} ({m_ca[:8]}...) ke watchlist!")
+                time.sleep(1.0)
+                st.rerun()
+            else:
+                _err = get_last_push_error()
+                st.error(f"Gagal commit ke GitHub: {_err.get('msg') or 'unknown'}")
+
 # Handle "delete from watchlist" triggered by the small 🗑️ button on a
 # LP/Degen Radar card. Clicking it navigates to ?del_ca=<ca>; we remove
 # the token here, clear the param, and rerun so the cards refresh. This
@@ -1325,9 +1347,9 @@ if _wl:
     except Exception:
         _sol_price = 0.0
     if _conv_hist:
-        # --- LP Radar: trending-source tokens only ---
+        # --- LP Radar: non-hrhr source tokens (trending, manual, lp_safe, etc.) ---
         _lp_tokens = {_ca: _meta for _ca, _meta in _wl.items()
-                      if _meta.get("source", "trending") == "trending"}
+                      if _meta.get("source", "trending") != "hrhr"}
         if _lp_tokens:
             st.markdown("**💧 LP Radar — trending watchlist tokens** "
                         "<span style='opacity:0.6;font-size:0.72rem'>stabilitas "
@@ -1630,8 +1652,6 @@ if _wl:
                 f"margin-top:5px;'>{_hd_badges_html}</div>"
                 # real holder vs dust ratio (min $5) + growth history card
                 f"{_rd_html}"
-                # rangkuman TX real (count + net SOL, 6/12/24/48 jam)
-                f"{_real_tx_html}"
                 f"{_rd_growth_html}"
                 # phase badge (own line, easier to scan) — hidden in FOCUS_MODE
                 f"{phase_html}"
@@ -1659,8 +1679,6 @@ if _wl:
                 f"<span style='color:#cbd5e1;font-weight:600;'>"
                 f"{flow_swaps_txt}</span>"
                 f"</div>"
-                # small-body candle details (H4 + H1, separate, with range)
-                f"{_patterns_html}"
                 f"{conv_note}</a>"
                 # Delete button pinned to the card bottom: the spacer
                 # (flex:1) pushes the button row to the bottom edge of the
@@ -1915,8 +1933,6 @@ if _wl:
                     f"{_avg_cost_html(_ca, _meta)}"
                     # real holder vs dust ratio (min $5) + growth history
                     f"{_rd_html_deg}"
-                    # rangkuman TX real (count + net SOL, 6/12/24/48 jam)
-                    f"{_real_tx_html_deg}"
                     f"{_rd_growth_html_deg}"
                     f"{phase_html_deg}"
                     f"<a href='{_cvd_link}' target='_self' "
@@ -1942,8 +1958,6 @@ if _wl:
                     f"<span style='color:#cbd5e1;font-weight:600;'>"
                     f"{flow_swaps_txt_deg}</span>"
                     f"</div>"
-                    # small-body candle details (H4 + H1, separate, range)
-                    f"{_patterns_html_deg}"
                     f"{conv_note_deg}</a>"
                     # Delete button pinned to the card bottom via spacer
                     # (same spot on every card — see LP Radar card).

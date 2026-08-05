@@ -14,6 +14,9 @@ from core import (concentration, get_helius_keys, get_holders, get_market,
 st.set_page_config(page_title="Compare Tokens", page_icon="⚖️",
                    layout="wide", initial_sidebar_state="collapsed")
 
+st.warning("⚠️ Aplikasi ini dinonaktifkan sementara.")
+st.stop()
+
 st.markdown("""<style>
 .block-container {padding-top: 1.2rem; max-width: 1400px;}
 h1 {font-size: 1.3rem !important;}

@@ -5,6 +5,8 @@ import streamlit as st
 import os, json
 
 st.set_page_config(page_title="LP Safe Radar - CATJAK", layout="wide")
+st.warning("⚠️ Aplikasi ini dinonaktifkan sementara.")
+st.stop()
 st.title("💧 LP Safe Radar — CATJAK-like Safe + Auto LP Score + Telegram")
 st.caption("CATJAK benchmark: 5d, liq $48k (12.8% MC), mcap $373k, vol $154k (0.41x), holders 1631, t10 14.12%, bundler 3.96%, fresh 8.9% low — ideal for LP, aman dari flag negatif")
 

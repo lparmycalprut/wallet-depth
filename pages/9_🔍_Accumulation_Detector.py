@@ -27,6 +27,8 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+st.warning("⚠️ Aplikasi ini dinonaktifkan sementara.")
+st.stop()
 
 # ── CSS ─────────────────────────────────────────────────────────────────
 st.markdown("""<style>
