@@ -16,6 +16,7 @@ Small swaps below MIN_SOL are ignored entirely (bot dust noise).
 import json
 import math
 import os
+import statistics
 import sys
 import time
 
@@ -1094,6 +1095,153 @@ def cohort_activity_summary(profiles, *, whale_min_sol=WHALE_SOL,
         "dolphin_net": dolphin_buy - dolphin_sell,
         "dolphin_buyers": len(dolphin_buyers),
         "dolphin_sellers": len(c["dolphin_distributors"]),
+    }
+
+
+def fresh_wallet_growth(swaps, profiles, wallet_ages, *,
+                        max_age_days=7.0, sell_tol=0.10,
+                        min_buy_sol=0.0, start_ts=None, end_ts=None,
+                        bucket_s=3600, whale_min_sol=WHALE_SOL,
+                        dolphin_min_sol=1.0) -> dict:
+    """Analyse the growth of FRESH wallets that buy and keep their bag.
+
+    A wallet counts when it *buys* inside the window and never *sells*
+    more than ``sell_tol`` (default 10%) of what it bought — i.e. it
+    retained >= 90% of its in-window purchase.  ``wallet_ages`` maps
+    wallet -> first-ever transaction ts; values may be a bare int/float
+    or a ``[funder, first_ts]`` pair as produced by the CVD page's age
+    lookup.  Wallets whose first tx is younger than ``max_age_days`` are
+    FRESH.  Wallets that satisfy the buy/hold rule but have no known age
+    are counted in ``unknown_age`` (they cannot be classified as fresh).
+
+    Returns a dict:
+      wallets         [(wallet, profile, age_days, first_buy_ts)]
+                      sorted by total buy, descending
+      count           fresh wallets that qualified
+      unknown_age     buy-and-hold wallets with a missing age lookup
+      total_buy       SOL bought by fresh wallets
+      total_sell      SOL sold by fresh wallets
+      net_hold        total_buy - total_sell
+      n_pure_accum / n_light_holder / n_zero_sell
+      whale_count / dolphin_count / minnow_count  (by total buy size)
+      avg_buy / median_buy / min_buy / max_buy
+      series          hourly growth buckets: bucket_ts, new_wallets,
+                      buy_sol, cum_wallets, cum_buy_sol
+    """
+    swaps = list(swaps or [])
+    if not swaps:
+        return {"wallets": [], "count": 0, "unknown_age": 0,
+                "total_buy": 0.0, "total_sell": 0.0, "net_hold": 0.0,
+                "n_zero_sell": 0, "n_pure_accum": 0, "n_light_holder": 0,
+                "whale_count": 0, "dolphin_count": 0, "minnow_count": 0,
+                "avg_buy": 0.0, "median_buy": 0.0, "min_buy": 0.0,
+                "max_buy": 0.0, "series": []}
+
+    ages = wallet_ages or {}
+
+    def _first_ts(w):
+        v = ages.get(w)
+        if isinstance(v, (list, tuple)) and v:
+            return v[1] if len(v) > 1 else v[0]
+        return v
+
+    if end_ts is None:
+        end_ts = max((ts for _side, _sol, ts, _w in swaps),
+                     default=time.time())
+    if start_ts is None:
+        start_ts = min((ts for _side, _sol, ts, _w in swaps),
+                       default=end_ts)
+
+    # Step 1: wallets that bought and sold <= sell_tol of their buy,
+    # then keep only the FRESH ones (first tx younger than max_age_days).
+    matches, unknown_age = [], 0
+    for w, d in (profiles or {}).items():
+        if not w or not isinstance(d, dict):
+            continue
+        try:
+            buy = float(d.get("buy") or 0.0)
+            sell = float(d.get("sell") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if buy <= 0.0 or buy < min_buy_sol or sell > buy * sell_tol:
+            continue
+        ft = _first_ts(w)
+        if not ft or float(ft) <= 0:
+            unknown_age += 1
+            continue
+        if (end_ts - float(ft)) > max_age_days * 86400:
+            continue
+        matches.append((w, d, float(ft)))
+    matches.sort(key=lambda x: -float(x[1].get("buy") or 0.0))
+
+    # Step 2: per-wallet first buy + hourly buy buckets (fresh only).
+    fresh_set = {w for w, _d, _ft in matches}
+    first_buy = {}
+    buy_by_bucket = {}
+    for side, sol, ts, w in swaps:
+        if side != "buy" or w not in fresh_set:
+            continue
+        try:
+            sol = float(sol or 0.0)
+            ts = int(ts or 0)
+        except (TypeError, ValueError):
+            continue
+        b = (ts // bucket_s) * bucket_s
+        buy_by_bucket[b] = buy_by_bucket.get(b, 0.0) + sol
+        if w not in first_buy or ts < first_buy[w]:
+            first_buy[w] = ts
+
+    new_by_bucket = {}
+    for w, ts in first_buy.items():
+        b = (ts // bucket_s) * bucket_s
+        new_by_bucket[b] = new_by_bucket.get(b, 0) + 1
+
+    series = []
+    cum_wallets = cum_buy = 0
+    b = (int(start_ts) // bucket_s) * bucket_s
+    end_b = (int(end_ts) // bucket_s) * bucket_s
+    while b <= end_b:
+        cum_wallets += new_by_bucket.get(b, 0)
+        cum_buy += buy_by_bucket.get(b, 0.0)
+        series.append({
+            "bucket_ts": b,
+            "new_wallets": new_by_bucket.get(b, 0),
+            "buy_sol": round(buy_by_bucket.get(b, 0.0), 4),
+            "cum_wallets": cum_wallets,
+            "cum_buy_sol": round(cum_buy, 4),
+        })
+        b += bucket_s
+
+    buys = [float(d.get("buy") or 0.0) for _w, d, _ft in matches]
+    sells = [float(d.get("sell") or 0.0) for _w, d, _ft in matches]
+    total_buy = sum(buys)
+    total_sell = sum(sells)
+    n = len(matches)
+
+    return {
+        "wallets": [(w, d,
+                     round(max(0.0, (end_ts - ft) / 86400.0), 2),
+                     first_buy.get(w))
+                    for w, d, ft in matches],
+        "count": n,
+        "unknown_age": unknown_age,
+        "total_buy": round(total_buy, 4),
+        "total_sell": round(total_sell, 4),
+        "net_hold": round(total_buy - total_sell, 4),
+        "n_zero_sell": sum(1 for s in sells if s <= 0.0),
+        "n_pure_accum": sum(1 for _w, d, _ft in matches
+                            if d.get("profile") == "pure_accum"),
+        "n_light_holder": sum(1 for _w, d, _ft in matches
+                              if d.get("profile") == "light_holder"),
+        "whale_count": sum(1 for b in buys if b >= whale_min_sol),
+        "dolphin_count": sum(1 for b in buys
+                             if dolphin_min_sol <= b < whale_min_sol),
+        "minnow_count": sum(1 for b in buys if b < dolphin_min_sol),
+        "avg_buy": round(total_buy / n, 4) if n else 0.0,
+        "median_buy": round(statistics.median(buys), 4) if n else 0.0,
+        "min_buy": round(min(buys), 4) if n else 0.0,
+        "max_buy": round(max(buys), 4) if n else 0.0,
+        "series": series,
     }
 
 

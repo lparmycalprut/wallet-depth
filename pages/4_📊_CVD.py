@@ -27,7 +27,8 @@ from cvd import (MIN_SOL, WHALE_SOL, analysis_windows, classify_holders,
                  classify_swap, cohort_activity_summary, cohort_cvd_series,
                  conviction_split, detect_cohort_divergences,
                  detect_divergence, detect_no_buy_holders,
-                 filter_swaps_by_time, get_gmgn_wallet_metadata,
+                 filter_swaps_by_time, fresh_wallet_growth,
+                 get_gmgn_wallet_metadata,
                  split_wallet_profile_cohorts, summarize_swap_range,
                  wallet_profiles)
 
@@ -819,6 +820,150 @@ acc_rows = whale_acc_rows + dolphin_acc_rows + light_rows + trader_rows
 dist_rows = whale_dist_rows + dolphin_dist_rows
 
 # ---------------------------------------------------------------------------
+# 🌱 Fresh-wallet growth: wallets that buy and never sell >10% of holdings
+# ---------------------------------------------------------------------------
+st.markdown("#### 🌱 Fresh wallet growth — beli tanpa jual >10%")
+st.caption("Fresh wallet = umur akun (tx pertama) di bawah ambang yang "
+           "dipilih. Analisa menghitung wallet yang **hanya beli** dan "
+           "tidak menjual >10% dari total belinya dalam timeframe ini "
+           "(≈ pure accumulator + light holder, ≥90% kepemilikan "
+           "dipertahankan). Detail wallet ada di tabel bawah.")
+
+fw_c1, fw_c2 = st.columns([1, 1])
+with fw_c1:
+    fw_max_age_days = st.selectbox(
+        "🌱 Max umur fresh wallet", [1, 3, 7, 14, 30], index=2,
+        help="Wallet dengan umur (sejak tx pertama) di bawah batas ini "
+             "dianggap FRESH.")
+with fw_c2:
+    fw_min_buy = st.number_input(
+        "Min total beli (SOL)", min_value=0.05, max_value=500.0,
+        value=0.1, step=0.05,
+        help="Abaikan fresh wallet dengan total beli di bawah ini "
+             "(anti dust).")
+
+fw_max_h = max(win_stats)
+fw_t0 = now_ts - fw_max_h * 3600
+fw_window_swaps = [s for s in swaps_all if int(s[2]) >= fw_t0]
+
+# Age lookups for fresh candidates not already cached by the lists above.
+fw_candidates = [w for w, d in full_profiles.items()
+                 if float(d.get("buy") or 0.0) > 0 and
+                 float(d.get("sell") or 0.0) <=
+                 0.10 * float(d.get("buy") or 0.0)]
+fw_targets = [w for w in fw_candidates if w not in fcache]
+if fw_targets and helius_keys:
+    fw_pb = st.progress(0.0, text="Looking up fresh-wallet ages…")
+    for i, w in enumerate(fw_targets[:30]):
+        fcache[w] = list(lookup_first_tx(w))
+        fw_pb.progress((i + 1) / min(len(fw_targets), 30),
+                       text=f"Fresh-wallet ages… {i+1}/"
+                            f"{min(len(fw_targets), 30)}")
+        time.sleep(0.05)
+    fw_pb.empty()
+    save_funder_cache(fcache)
+elif fw_targets:
+    st.caption("Fresh-wallet age lookup skipped: Helius API key missing.")
+
+fw = fresh_wallet_growth(fw_window_swaps, full_profiles, fcache,
+                         max_age_days=float(fw_max_age_days),
+                         sell_tol=0.10, min_buy_sol=float(fw_min_buy),
+                         start_ts=fw_t0, end_ts=now_ts, bucket_s=3600)
+
+if fw["count"]:
+    _fw_pb_vol = float(win_stats[fw_max_h].get("pure_buy") or 0.0)
+    _fw_share = (f"{fw['total_buy'] / _fw_pb_vol * 100:.0f}% dari "
+                 f"pure buy window" if _fw_pb_vol > 0 else "—")
+    fwm1, fwm2, fwm3, fwm4 = st.columns(4)
+    fwm1.metric("🌱 Fresh wallets", f"{fw['count']:,}",
+                f"{fw['n_pure_accum']} pure accum · "
+                f"{fw['n_light_holder']} light holder")
+    fwm2.metric("💰 Total beli", f"{fw['total_buy']:,.1f} SOL",
+                f"avg {fw['avg_buy']:.2f} SOL/wallet", delta_color="off")
+    fwm3.metric("🧊 Net hold", f"{fw['net_hold']:,.1f} SOL",
+                f"{fw['n_zero_sell']} tanpa jual sama sekali",
+                delta_color="off")
+    fwm4.metric("🐋 / 🐬 / 🐟",
+                f"{fw['whale_count']} / {fw['dolphin_count']} / "
+                f"{fw['minnow_count']}",
+                _fw_share, delta_color="off")
+else:
+    st.caption(f"Belum ada fresh wallet (umur ≤{fw_max_age_days}d, "
+               f"beli ≥{fw_min_buy:g} SOL, jual ≤10% dari beli) dalam "
+               f"{fw_max_h}h terakhir.")
+
+if fw["series"]:
+    fw_x = [dtm.datetime.fromtimestamp(r["bucket_ts"], WIB)
+            for r in fw["series"]]
+    fig_fw = go.Figure()
+    fig_fw.add_bar(x=fw_x, y=[r["new_wallets"] for r in fw["series"]],
+                   name="Fresh wallet baru / jam", yaxis="y2", opacity=0.35,
+                   marker=dict(color="#38bdf8"))
+    fig_fw.add_scatter(x=fw_x, y=[r["cum_wallets"] for r in fw["series"]],
+                       name="Kumulatif wallet", mode="lines+markers",
+                       line=dict(color="#22c55e", width=2.5))
+    fig_fw.add_scatter(x=fw_x, y=[r["cum_buy_sol"] for r in fw["series"]],
+                       name="Kumulatif beli (SOL)", mode="lines",
+                       line=dict(color="#c084fc", width=2), yaxis="y2")
+    fig_fw.update_layout(
+        height=300, margin=dict(t=20, b=0, l=0, r=0),
+        legend=dict(orientation="h", font=dict(size=10)),
+        yaxis=dict(title="jumlah wallet", rangemode="tozero"),
+        yaxis2=dict(overlaying="y", side="right", title="SOL",
+                    rangemode="tozero"),
+        title=dict(text=f"Pertumbuhan fresh wallet ({fw_max_h}h, "
+                        f"jual ≤10% dari beli)", font=dict(size=13)))
+    st.plotly_chart(fig_fw, use_container_width=True,
+                    config={"displayModeBar": False})
+
+if fw["unknown_age"] > 0:
+    st.caption(f"ℹ️ {fw['unknown_age']} wallet beli-tanpa-jual-berlebih "
+               "tidak punya data umur (age lookup gagal / tanpa Helius "
+               "key) sehingga tidak ikut dihitung.")
+
+# Same-funder flags for fresh wallets (reuses the freshly looked-up ages).
+fw_fmap = dict(fmap)
+for w, _d, _a, _fb in fw["wallets"]:
+    fu = fcache.get(w)
+    if fu and fu[0]:
+        fw_fmap.setdefault(fu[0], []).append(w)
+fw_same_funder = {w for ws in fw_fmap.values()
+                  if len(ws) > 1 for w in ws}
+
+fw_rows = []
+for w, d, _age_days, fbt in fw["wallets"][:15]:
+    buy = float(d.get("buy") or 0.0)
+    sell = float(d.get("sell") or 0.0)
+    held = max(0.0, (buy - sell) / buy * 100) if buy > 0 else 0.0
+    bits = [d.get("profile", "")]
+    if d.get("dca"):
+        bits.append("🎯DCA")
+    if w in same_funder or w in fw_same_funder:
+        bits.append("⚠️same-funder")
+    fw_rows.append({
+        "Wallet": f"https://solscan.io/account/{w}",
+        "Buy": f"{buy:,.2f}",
+        "Sell": f"{sell:,.2f}",
+        "Net": f"{buy - sell:+,.2f}",
+        "Held %": f"{held:.0f}%",
+        "Swaps": int(d.get("n_buy") or 0) + int(d.get("n_sell") or 0),
+        "Age": age_str(w),
+        "Beli pertama": (dtm.datetime.fromtimestamp(fbt, WIB)
+                         .strftime("%m-%d %H:%M") if fbt else "—"),
+        "Flags": " ".join(bits),
+    })
+if fw_rows:
+    st.markdown("**Detail fresh wallet** (top 15 by total beli, "
+                "di bawah tabel dolphin pure accumulator)")
+    st.dataframe(pd.DataFrame(fw_rows), use_container_width=True,
+                 hide_index=True,
+                 column_config={"Wallet": st.column_config.LinkColumn(
+                     "🌱 Fresh wallet detail",
+                     display_text=r"account/(.{6}).*")})
+else:
+    st.caption(f"No fresh wallets in {fw_max_h}h.")
+
+# ---------------------------------------------------------------------------
 # No-buy current holders: holder-rank whales/dolphins + GMGN sell-only holds
 # ---------------------------------------------------------------------------
 gmgn_meta_full = get_gmgn_wallet_metadata()
@@ -1363,6 +1508,24 @@ _write_detail_section(f"Dolphin pure distributors ({hours}h)",
 _write_detail_section(f"Light holder details ({hours}h)", light_rows)
 _write_detail_section(f"Trader details ({hours}h)", trader_rows)
 
+if fw["count"]:
+    rep.write(f"\\n## Fresh wallet growth — beli tanpa jual >10% "
+              f"({hours}h)\\n\\n")
+    rep.write(f"- Fresh wallets (umur ≤{fw_max_age_days}d, "
+              f"beli ≥{fw_min_buy:g} SOL, jual ≤10% dari beli): "
+              f"**{fw['count']}**\\n")
+    rep.write(f"- Total beli: {fw['total_buy']:,.1f} SOL · "
+              f"Net hold: {fw['net_hold']:,.1f} SOL · "
+              f"avg {fw['avg_buy']:.2f} SOL/wallet\\n")
+    rep.write(f"- Komposisi: {fw['n_pure_accum']} pure accum · "
+              f"{fw['n_light_holder']} light holder · "
+              f"{fw['n_zero_sell']} tanpa jual sama sekali · "
+              f"🐋{fw['whale_count']} / 🐬{fw['dolphin_count']} / "
+              f"🐟{fw['minnow_count']}\\n")
+_write_detail_section(f"Fresh wallet growth — beli tanpa jual >10% "
+                      f"({hours}h, umur ≤{fw_max_age_days}d)",
+                      fw_rows)
+
 if silent_holder_rows or no_buy_meta_rows:
     rep.write(f"\n## Holders with no buy in window ({hours}h)\n\n")
     if silent_holder_rows:
@@ -1446,6 +1609,7 @@ _wallet_csv_rows = (
     [{"type": "dolphin_distributor", **r_} for r_ in dolphin_dist_rows] +
     [{"type": "light_holder", **r_} for r_ in light_rows] +
     [{"type": "trader", **r_} for r_ in trader_rows] +
+    [{"type": "fresh_wallet", **r_} for r_ in fw_rows] +
     [{"type": "no_buy_current_holder", **r_}
      for r_ in silent_holder_rows] +
     [{"type": "gmgn_no_buy_holder", **r_}
