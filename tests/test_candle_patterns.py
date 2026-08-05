@@ -121,6 +121,40 @@ def test_pattern_emoji_map_complete():
 # ---------------------------------------------------------------------------
 # candle_pattern_summary — counts + price range of small-body candles
 # ---------------------------------------------------------------------------
+def test_low_volume_only():
+    """Only candles with USD volume < $10K count as patterns.
+
+    The degen/HRHR screener wants QUIET indecision candles. A doji/hammer
+    on a heavy-volume bar (>= $10K) is not a quiet read and must be
+    ignored, and a candle with no volume field at all never qualifies.
+    """
+    doji = {"ts": 0, "o": 100, "h": 110, "l": 90, "c": 100.5}
+    doji_quiet = dict(doji, v=9_999)      # just under $10K -> counts
+    doji_loud = dict(doji, v=10_000)      # exactly $10K -> excluded
+    doji_louder = dict(doji, v=50_000)    # well above -> excluded
+    doji_unknown = dict(doji)             # no 'v' key -> excluded
+
+    r = detect_candle_patterns([doji_quiet])
+    assert r.get("Doji") == 1, f"quiet doji should count: {r}"
+
+    for loud in (doji_loud, doji_louder, doji_unknown):
+        r = detect_candle_patterns([loud])
+        assert r == {}, f"candle {loud} should be excluded: {r}"
+
+    # Mixed list: only the quiet ones survive.
+    r = detect_candle_patterns(
+        [doji_quiet, doji_loud, doji_quiet, doji_unknown])
+    assert r.get("Doji") == 2, f"expected 2 quiet doji, got {r}"
+    print("  ok   only <$10K volume candles count as patterns")
+
+    # candle_pattern_summary applies the same volume gate.
+    from cvd import candle_pattern_summary, PATTERN_MAX_VOLUME_USD
+    s = candle_pattern_summary([doji_quiet, doji_loud, doji_unknown])
+    assert s["n"] == 1 and s["counts"].get("Doji") == 1, f"got {s}"
+    assert PATTERN_MAX_VOLUME_USD == 10_000.0, PATTERN_MAX_VOLUME_USD
+    print("  ok   candle_pattern_summary enforces the <$10K volume gate")
+
+
 def test_pattern_summary_ranges():
     """candle_pattern_summary returns counts AND the low/high price range."""
     from cvd import candle_pattern_summary
@@ -247,6 +281,7 @@ if __name__ == "__main__":
     test_multiple_patterns_counted()
     test_zero_range_candle_skipped()
     test_pattern_emoji_map_complete()
+    test_low_volume_only()
     test_pattern_summary_ranges()
     test_aggregate_candles_h1_to_h4()
     test_conviction_avg()

@@ -11,7 +11,9 @@ import streamlit as st
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from gmgn_screener import (FIT_OK, FIT_PRIME, FIT_WEAK, fit_color,
-                           screen as gmgn_screen, screen_hrhr as gmgn_screen_hrhr)
+                           screen as gmgn_screen, screen_hrhr as gmgn_screen_hrhr,
+                           screen_trending_h1 as gmgn_screen_h1,
+                           screen_hrhr_h1 as gmgn_screen_hrhr_h1)
 
 #: layout of the result table (label, relative width)
 COLUMNS = [("Fit", 0.75), ("Token", 1.5), ("MC", 1.1), ("Liq", 0.9),
@@ -107,6 +109,56 @@ def run_screen_hrhr(force: bool = False, key: str = "screener_hrhr_rows",
         with st.spinner("Fetching GMGN HRHR list…"):
             try:
                 rows = gmgn_screen_hrhr()
+                if enrich_holders and rows:
+                    rows = enrich_rows_with_holder_split(
+                        rows, dust_limit_usd=dust_limit_usd,
+                        helius_keys=helius_keys)
+                st.session_state[key] = rows
+                st.session_state[key + "_err"] = ""
+            except Exception as exc:                     # noqa: BLE001
+                st.session_state[key] = []
+                st.session_state[key + "_err"] = str(exc)
+    return (st.session_state.get(key) or [],
+            st.session_state.get(key + "_err") or "")
+
+
+def run_screen_h1(force: bool = False, key: str = "screener_h1_rows",
+                  enrich_holders: bool = True, dust_limit_usd: float = 5.0,
+                  helius_keys=None):
+    """Fetch + score the **Trending H1** list (1h window, 1/10th min volume),
+    caching the result in session state. Same enrichment as :func:`run_screen`
+    so the H1 table matches the 24h table in detail."""
+    if force or key not in st.session_state:
+        if force:
+            _clear_ctx_cache()
+        with st.spinner("Fetching GMGN Trending H1…"):
+            try:
+                rows = gmgn_screen_h1()
+                if enrich_holders and rows:
+                    rows = enrich_rows_with_holder_split(
+                        rows, dust_limit_usd=dust_limit_usd,
+                        helius_keys=helius_keys)
+                st.session_state[key] = rows
+                st.session_state[key + "_err"] = ""
+            except Exception as exc:                     # noqa: BLE001
+                st.session_state[key] = []
+                st.session_state[key + "_err"] = str(exc)
+    return (st.session_state.get(key) or [],
+            st.session_state.get(key + "_err") or "")
+
+
+def run_screen_hrhr_h1(force: bool = False, key: str = "screener_hrhr_h1_rows",
+                       enrich_holders: bool = True, dust_limit_usd: float = 5.0,
+                       helius_keys=None):
+    """Fetch + score + filter the **HRHR H1** list (1h window, 1/10th min
+    volume), caching the result in session state. Same as
+    :func:`run_screen_hrhr` but for the H1 variant."""
+    if force or key not in st.session_state:
+        if force:
+            _clear_ctx_cache()
+        with st.spinner("Fetching GMGN HRHR H1 list…"):
+            try:
+                rows = gmgn_screen_hrhr_h1()
                 if enrich_holders and rows:
                     rows = enrich_rows_with_holder_split(
                         rows, dust_limit_usd=dust_limit_usd,
