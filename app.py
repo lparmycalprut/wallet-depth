@@ -162,7 +162,7 @@ def fetch_holder_data(_helius_keys, ca: str):
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def fetch_holder_delta_panel(_helius_keys, ca: str, window_h: int = 6):
+def fetch_holder_delta_panel(_helius_keys, ca: str, window_h: int = 4):
     """Cached wrapper around :func:`cvd.holder_delta_panel` for the
     LP Radar card. Cache = 1h so refreshes don't re-hit Helius; the
     underlying holder list is already heavy (10-60s per call).
@@ -663,6 +663,27 @@ def fetch_watchlist_daily_candles(pair_addresses: tuple) -> dict:
         return dict(executor.map(fetch_one, pairs))
 
 
+def _candle_chg_4h(candles: list, price_now: float = None) -> float | None:
+    """4-hour % price change from hourly candles (oldest→newest dicts).
+
+    Uses the close 4 candles (~4h) before the last one vs the latest
+    close / current price. None when there aren't enough candles —
+    callers must treat None as "unknown 4h change" (DexScreener only
+    reports h1/h6/h24, so the 4h number has to come from candle data).
+    """
+    try:
+        closes = [float(c["c"]) for c in (candles or []) if c.get("c")]
+        if len(closes) < 5:
+            return None
+        ref = closes[-5]
+        cur = float(price_now) if price_now else closes[-1]
+        if not ref:
+            return None
+        return (cur - ref) / ref * 100.0
+    except Exception:                                    # noqa: BLE001
+        return None
+
+
 def _fmt_price(v: float) -> str:
     if v >= 1:
         return f"${v:,.2f}"
@@ -894,7 +915,7 @@ def _real_dust_growth_html(ca: str, rd_state: dict,
                 f"</span>")
 
     chips = (_delta_chip("1 jam", trend.get("d1h"))
-             + _delta_chip("6 jam", trend.get("d6h"))
+             + _delta_chip("4 jam", trend.get("d4h"))
              + _delta_chip("24 jam", trend.get("d24h")))
 
     head_map = {"up": ("📈 NAIK", "#22c55e"),
@@ -1387,10 +1408,10 @@ if _wl:
                         raise RuntimeError(
                             _fr_result.get("error") or
                             "GMGN fetch tidak lengkap; data lama dipertahankan")
-                    _fr_point = record_conviction(_fr_ca, window_h=6)
+                    _fr_point = record_conviction(_fr_ca, window_h=4)
                     if _fr_point is None:
                         raise RuntimeError(
-                            "tidak ada swap 6 jam untuk merekam conviction")
+                            "tidak ada swap 4 jam untuk merekam conviction")
                     st.session_state[_freshness_state_key].add(_fr_ca)
                     st.session_state["watchlist_auto_refresh_cas"] = (
                         set(st.session_state.get(
@@ -1487,7 +1508,7 @@ if _wl:
             # 30-token watchlist that's ~5-15 min on first load, but
             # streamlit_cache_data keeps it manageable on reloads.
             _hd_panel = fetch_holder_delta_panel(helius_keys, _ca,
-                                                  window_h=6) if helius_keys else None
+                                                  window_h=4) if helius_keys else None
             _hd_whale_d = _hd_panel.get("whale", {}).get("delta_sol", 0.0) \
                 if _hd_panel else 0.0
             _hd_dolphin_d = _hd_panel.get("dolphin", {}).get("delta_sol", 0.0) \
@@ -1602,15 +1623,15 @@ if _wl:
             peak4 = max(p["conviction"] for p in pts[-4:]) if len(pts) >= 4 else cv
             drop_from_peak = peak4 - cv
 
-            # ---- Multi-window sparkline (6h / 12h / 24h / 48h) ----
-            cv_6h = cv
-            cv_12h = pts[-2]["conviction"] if len(pts) >= 2 else cv_6h
+            # ---- Multi-window sparkline (4h / 12h / 24h / 48h) ----
+            cv_4h = cv
+            cv_12h = pts[-2]["conviction"] if len(pts) >= 2 else cv_4h
             cv_24h = pts[-4]["conviction"] if len(pts) >= 4 else cv_12h
             cv_48h = pts[-8]["conviction"] if len(pts) >= 8 else cv_24h
-            spark_max = max(cv_6h, cv_12h, cv_24h, cv_48h, 50) or 1
+            spark_max = max(cv_4h, cv_12h, cv_24h, cv_48h, 50) or 1
 
             # Conviction naik hijau, turun merah
-            c_6h = "#22c55e" if cv_6h >= cv_12h else "#ef4444"
+            c_4h = "#22c55e" if cv_4h >= cv_12h else "#ef4444"
             c_12h = "#22c55e" if cv_12h >= cv_24h else "#ef4444"
             c_24h = "#22c55e" if cv_24h >= cv_48h else "#ef4444"
             cv_72h = pts[-12]["conviction"] if len(pts) >= 12 else cv_48h
@@ -1632,7 +1653,7 @@ if _wl:
             multi_bars = ("<div style='margin:6px 0;padding:6px 8px;"
                           "background:rgba(148,163,184,0.06);"
                           "border-radius:6px;'>"
-                          f"{_spark_bar(cv_6h, '6h', c_6h)}"
+                          f"{_spark_bar(cv_4h, '4h', c_4h)}"
                           f"{_spark_bar(cv_12h, '12h', c_12h)}"
                           f"{_spark_bar(cv_24h, '24h', c_24h)}"
                           f"{_spark_bar(cv_48h, '48h', c_48h)}"
@@ -1664,13 +1685,13 @@ if _wl:
 
             # ---- Conviction Trend Note ----
             consecutive_ups = 0
-            if cv_6h > cv_12h:
+            if cv_4h > cv_12h:
                 consecutive_ups += 1
                 if cv_12h > cv_24h:
                     consecutive_ups += 1
                     if cv_24h > cv_48h:
                         consecutive_ups += 1
-            is_spike = (cv_6h - cv_12h) >= 20.0
+            is_spike = (cv_4h - cv_12h) >= 20.0
             has_good_vol = vol >= 50.0
 
             conv_note = ""
@@ -1694,7 +1715,10 @@ if _wl:
             # market phase badge
             try:
                 _ph = detect_phase(_ca, (_prices.get(_ca) or {}).get("chg24"),
-                                    (_prices.get(_ca) or {}).get("chg6"))
+                                    _candle_chg_4h(
+                                        _daily_candles.get(
+                                            (_prices.get(_ca) or {}).get("pair") or "", []),
+                                        (_prices.get(_ca) or {}).get("price")))
             except Exception:
                 _ph = {"phase": "Neutral/Choppy", "confidence": "low",
                        "reason": "phase detection unavailable"}
@@ -1812,7 +1836,7 @@ if _wl:
                 + "".join(_cards) + "</div>",
                 unsafe_allow_html=True)
             _lp_caption = (
-                "Sparkline 6h → 12h → 24h → 48h (bawah → atas). "
+                "Sparkline 4h → 12h → 24h → 48h (bawah → atas). "
                 "Bar hijau = conviction naik dibanding periode sebelumnya, bar merah = conviction turun. ")
             if not FOCUS_MODE:
                 _lp_caption += (
@@ -1871,14 +1895,14 @@ if _wl:
                 prev2_cv = pts[-3]["conviction"] if len(pts) >= 3 else None
                 _very_stale_deg = _ca in _very_stale_cas
 
-                # ---- Multi-window sparkline (6h / 12h / 24h / 48h) ----
-                cv_6h = cv
-                cv_12h = pts[-2]["conviction"] if len(pts) >= 2 else cv_6h
+                # ---- Multi-window sparkline (4h / 12h / 24h / 48h) ----
+                cv_4h = cv
+                cv_12h = pts[-2]["conviction"] if len(pts) >= 2 else cv_4h
                 cv_24h = pts[-4]["conviction"] if len(pts) >= 4 else cv_12h
                 cv_48h = pts[-8]["conviction"] if len(pts) >= 8 else cv_24h
-                spark_max = max(cv_6h, cv_12h, cv_24h, cv_48h, 50) or 1
+                spark_max = max(cv_4h, cv_12h, cv_24h, cv_48h, 50) or 1
 
-                c_6h = "#22c55e" if cv_6h >= cv_12h else "#ef4444"
+                c_4h = "#22c55e" if cv_4h >= cv_12h else "#ef4444"
                 c_12h = "#22c55e" if cv_12h >= cv_24h else "#ef4444"
                 c_24h = "#22c55e" if cv_24h >= cv_48h else "#ef4444"
                 cv_72h = pts[-12]["conviction"] if len(pts) >= 12 else cv_48h
@@ -1900,7 +1924,7 @@ if _wl:
                 multi_bars_deg = ("<div style='margin:6px 0;padding:6px 8px;"
                                   "background:rgba(148,163,184,0.06);"
                                   "border-radius:6px;'>"
-                                  f"{_spark_bar_deg(cv_6h, '6h', c_6h)}"
+                                  f"{_spark_bar_deg(cv_4h, '4h', c_4h)}"
                                   f"{_spark_bar_deg(cv_12h, '12h', c_12h)}"
                                   f"{_spark_bar_deg(cv_24h, '24h', c_24h)}"
                                   f"{_spark_bar_deg(cv_48h, '48h', c_48h)}"
@@ -1915,13 +1939,13 @@ if _wl:
 
                 # ---- Conviction Trend Note ----
                 consecutive_ups = 0
-                if cv_6h > cv_12h:
+                if cv_4h > cv_12h:
                     consecutive_ups += 1
                     if cv_12h > cv_24h:
                         consecutive_ups += 1
                         if cv_24h > cv_48h:
                             consecutive_ups += 1
-                is_spike = (cv_6h - cv_12h) >= 20.0
+                is_spike = (cv_4h - cv_12h) >= 20.0
                 vol = last.get("vol") or 0
                 has_good_vol = vol >= 50.0
 
@@ -1950,7 +1974,10 @@ if _wl:
                 # market phase badge
                 try:
                     _ph = detect_phase(_ca, (_prices.get(_ca) or {}).get("chg24"),
-                                        (_prices.get(_ca) or {}).get("chg6"))
+                                        _candle_chg_4h(
+                                            _daily_candles.get(
+                                                (_prices.get(_ca) or {}).get("pair") or "", []),
+                                            (_prices.get(_ca) or {}).get("price")))
                 except Exception:
                     _ph = {"phase": "Neutral/Choppy", "confidence": "low",
                            "reason": "phase detection unavailable"}

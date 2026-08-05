@@ -241,11 +241,12 @@ def main():
 
             # ── Signals + conviction ───────────────────────────────────
             sigs = detect_and_record(ca, meta.get("symbol", "?"),
-                                     src="cron", window_h=6,
+                                     src="cron", window_h=4,
                                      price_now=price_now, pool=pool)
-            cp = record_conviction(ca, window_h=6)
+            cp = record_conviction(ca, window_h=4)
             # Independent monitor alerts: all four indicators move together,
-            # or TX/volume jumps at least 5x between six-hour snapshots.
+            # or TX/volume jumps at least 5x between four-hour bins
+            # (vs the previous bin or the median of the 4 bins before).
             from signals import detect_growth_alerts
             sigs.extend(detect_growth_alerts(ca, meta.get("symbol", "?"), cp))
             conv_txt = (f" conv={cp['conviction']:.0f}%" if cp else "")

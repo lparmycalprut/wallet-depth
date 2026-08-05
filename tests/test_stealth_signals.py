@@ -350,7 +350,7 @@ def test_detect_phase_returns_dict():
     cvd.CONV_PATH = path
     try:
         result = cvd.detect_phase("TDP", price_change_24h=5.0,
-                                 price_change_6h=1.0)
+                                 price_change_4h=1.0)
     finally:
         cvd.CONV_PATH = orig
     check(isinstance(result, dict),

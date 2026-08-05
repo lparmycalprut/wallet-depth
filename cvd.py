@@ -1101,8 +1101,8 @@ def cohort_activity_summary(profiles, *, whale_min_sol=WHALE_SOL,
 
 def pure_accumulator_growth(swaps, profiles=None, *, min_buy_sol=0.1,
                             sell_tol=0.10, start_ts=None, end_ts=None,
-                            bucket_s=6 * 3600) -> dict:
-    """Return six-hour growth for every wallet that accumulated and held.
+                            bucket_s=4 * 3600) -> dict:
+    """Return four-hour growth for every wallet that accumulated and held.
 
     This deliberately does not use wallet age or a profile label: every
     wallet qualifies when it bought at least ``min_buy_sol`` and sold no more
@@ -1548,7 +1548,7 @@ def load_conviction(required_cas=None) -> dict:
     return merged
 
 
-def record_conviction(ca: str, *, window_h: int = 6) -> dict | None:
+def record_conviction(ca: str, *, window_h: int = 4) -> dict | None:
     """Compute conviction over the last `window_h` from the swap store and
     append it to conviction.json. Returns the point or None.
 
@@ -1629,10 +1629,10 @@ def get_recent_swaps(ca: str, hours: int = 12):
 def conviction_avg(pts: list, hours: int = 48) -> float:
     """Average conviction over the last ``hours`` (default 48) of points.
 
-    Conviction points are 6h windows recorded by the cron, so this is
-    the average conviction of the last 6-48h of on-chain flow — the
+    Conviction points are 4h windows recorded by the cron, so this is
+    the average conviction of the last 4-48h of on-chain flow — the
     figure the owner wants to see for CVD analysis instead of a single
-    6h reading. Falls back to the last 8 points when the 48h window
+    4h reading. Falls back to the last 8 points when the 48h window
     has fewer than 2 (young token / sparse cron).
     """
     if not pts:
@@ -1648,9 +1648,9 @@ def conviction_avg(pts: list, hours: int = 48) -> float:
 
 
 def detect_phase(ca: str, price_change_24h: float | None = None,
-                 price_change_6h: float | None = None) -> dict:
+                 price_change_4h: float | None = None) -> dict:
     """Classify the market phase from data we ALREADY have:
-    conviction history (conviction.json) + 24h/6h price change (DexScreener,
+    conviction history (conviction.json) + 24h/4h price change (DexScreener,
     passed in by the caller — no new fetches here).
 
     Returns {"phase": str, "confidence": "low"|"medium"|"high",
@@ -1667,16 +1667,16 @@ def detect_phase(ca: str, price_change_24h: float | None = None,
     np_now = float(last.get("net_pure") or 0)
     vol_now = float(last.get("vol") or 0)
     chg = price_change_24h  # may be None
-    chg6 = price_change_6h  # may be None
+    chg4 = price_change_4h  # may be None
 
     prev = pts[-2] if len(pts) >= 2 else None
     cv_prev = float(prev["conviction"]) if prev else None
     np_prev = float(prev.get("net_pure") or 0) if prev else None
     vol_prev = float(prev.get("vol") or 0) if prev else None
 
-    # Sustained conviction level: average over the last 6-48h (points are
-    # 6h windows). ALL phase thresholds and messages use this average —
-    # a single 6h reading is too noisy for memecoins and can't be compared
+    # Sustained conviction level: average over the last 4-48h (points are
+    # 4h windows). ALL phase thresholds and messages use this average —
+    # a single 4h reading is too noisy for memecoins and can't be compared
     # against a 48h CVD analysis. Short-term momentum below still uses the
     # last two points (that is direction, not level).
     cv = conviction_avg(pts)
@@ -1692,11 +1692,11 @@ def detect_phase(ca: str, price_change_24h: float | None = None,
         confidence = "high"
 
     # Price thresholds tuned for memecoins: 20% in 24h is still "flat",
-    # a real Markup/Markdown needs 25%+ in 6h or 50%+ in 24h.
+    # a real Markup/Markdown needs 25%+ in 4h or 50%+ in 24h.
     price_flat = chg is not None and -20 <= chg <= 20
-    price_up_big = (chg is not None and chg > 50) or         (chg6 is not None and chg6 > 25)
+    price_up_big = (chg is not None and chg > 50) or         (chg4 is not None and chg4 > 25)
     price_up_small = chg is not None and 0 < chg <= 50 and not price_up_big
-    price_down_big = (chg is not None and chg < -50) or         (chg6 is not None and chg6 < -25)
+    price_down_big = (chg is not None and chg < -50) or         (chg4 is not None and chg4 < -25)
     price_down = chg is not None and chg < 0
 
     # --- ordered rules (most specific first) --------------------------------
@@ -1705,10 +1705,10 @@ def detect_phase(ca: str, price_change_24h: float | None = None,
         r_bits = []
         if chg is not None:
             r_bits.append(f"price {chg:+.0f}% 24h")
-        if chg6 is not None:
-            r_bits.append(f"6h {chg6:+.0f}%")
+        if chg4 is not None:
+            r_bits.append(f"4h {chg4:+.0f}%")
         r_bits.append(f"net pure {np_now:+.0f} SOL (sellers one-way)")
-        r_bits.append(f"avg conviction {cv:.0f}% (6-48h)")
+        r_bits.append(f"avg conviction {cv:.0f}% (4-48h)")
         return {"phase": "Markdown", "confidence": confidence,
                 "reason": ", ".join(r_bits) + " — distribution done, supply overhang"}
     # 4. Distribution-Early
@@ -1716,13 +1716,13 @@ def detect_phase(ca: str, price_change_24h: float | None = None,
         r_bits = []
         if chg is not None:
             r_bits.append(f"price still holding ({chg:+.0f}% 24h)")
-        if chg6 is not None:
-            r_bits.append(f"6h {chg6:+.0f}%")
-        # 6-48h average conviction — the sustained level, comparable with
+        if chg4 is not None:
+            r_bits.append(f"4h {chg4:+.0f}%")
+        # 4-48h average conviction — the sustained level, comparable with
         # the CVD flow of the same window.
-        r_bits.append(f"avg conviction {cv:.0f}% (6-48h)")
+        r_bits.append(f"avg conviction {cv:.0f}% (4-48h)")
         if cv_falling:
-            r_bits.append(f"last 6h dropping {cv_prev:.0f}→{cv_last:.0f}%")
+            r_bits.append(f"last 4h dropping {cv_prev:.0f}→{cv_last:.0f}%")
         if np_flipped_neg:
             r_bits.append("net pure flipped negative")
         return {"phase": "Distribution-Early", "confidence": confidence,
@@ -1732,10 +1732,10 @@ def detect_phase(ca: str, price_change_24h: float | None = None,
         r_bits = []
         if chg is not None:
             r_bits.append(f"price {chg:+.0f}% 24h")
-        if chg6 is not None:
-            r_bits.append(f"6h {chg6:+.0f}%")
+        if chg4 is not None:
+            r_bits.append(f"4h {chg4:+.0f}%")
         r_bits.append(f"net pure {np_now:+.0f} SOL")
-        r_bits.append(f"avg conviction {cv:.0f}% (6-48h)")
+        r_bits.append(f"avg conviction {cv:.0f}% (4-48h)")
         return {"phase": "Markup", "confidence": confidence,
                 "reason": ", ".join(r_bits) + " — trend leg in progress"
                           f"{', volume rising' if vol_rising else ''}"}
@@ -1743,25 +1743,25 @@ def detect_phase(ca: str, price_change_24h: float | None = None,
     if cv >= 50 and (cv_rising or (cv_prev is not None and
                                    abs(cv - cv_prev) <= 5)) and             np_now > 0 and (chg is None or price_flat or price_up_small):
         return {"phase": "Accumulation-Late", "confidence": confidence,
-                "reason": f"avg conviction {cv:.0f}% (6-48h, high & holding), "
+                "reason": f"avg conviction {cv:.0f}% (4-48h, high & holding), "
                           f"net pure {np_now:+.0f} SOL, price quiet — mature "
                           f"accumulation"}
     # 1. Accumulation-Early
     if cv_rising and np_now > 0 and             (chg is None or price_flat or price_down) and cv < 50:
         return {"phase": "Accumulation-Early", "confidence": confidence,
-                "reason": f"avg conviction {cv:.0f}% (6-48h) from a low base, "
-                          f"last 6h {cv_prev:.0f}→{cv_last:.0f}%, "
+                "reason": f"avg conviction {cv:.0f}% (4-48h) from a low base, "
+                          f"last 4h {cv_prev:.0f}→{cv_last:.0f}%, "
                           f"net pure {np_now:+.0f} SOL"
                           f"{', volume picking up' if vol_rising else ''}"}
     # 6. fallback
-    bits = [f"avg conviction {cv:.0f}% (6-48h)"]
+    bits = [f"avg conviction {cv:.0f}% (4-48h)"]
     if cv_prev is not None:
         bits.append(f"last {cv_last:.0f}%")
     bits.append(f"net pure {np_now:+.0f}")
     if chg is not None:
         bits.append(f"price {chg:+.0f}%/24h")
-    if chg6 is not None:
-        bits.append(f"6h {chg6:+.0f}%")
+    if chg4 is not None:
+        bits.append(f"4h {chg4:+.0f}%")
     return {"phase": "Neutral/Choppy", "confidence": confidence,
             "reason": "mixed signals: " + ", ".join(bits)}
 
@@ -2307,13 +2307,15 @@ def real_tx_summary(swaps, *, dust_limit_usd: float = 5.0,
 def h4_activity_series(swaps, *, bins: int = 12, now_ts: int = None,
                        spike_mult: float = 5.0,
                        dust_limit_usd: float = 0.0,
-                       sol_price: float = 0.0) -> dict:
-    """Per-4-hour transaction-count and volume series (+ spike warnings).
+                       sol_price: float = 0.0,
+                       bin_h: int = 4) -> dict:
+    """Per-``bin_h``-hour transaction-count and volume series (+ spikes).
 
-    Buckets ``swaps`` ([(side, sol, ts, wallet)]) into fixed 4-hour bins
-    aligned to the unix epoch (``ts // 14400``), newest bin last. This is
-    what the LP/Degen Radar "grafik per 4 jam" block renders: is activity
-    growing or dying, and did it jump/collapse abnormally?
+    Buckets ``swaps`` ([(side, sol, ts, wallet)]) into fixed ``bin_h``-hour
+    bins aligned to the unix epoch (``ts // (bin_h*3600)``), newest bin
+    last. Default ``bin_h=4`` matches the Breakout Guard H4 candle clock;
+    this is what the LP/Degen Radar "grafik per 4 jam" block renders: is
+    activity growing or dying, and did it jump/collapse abnormally?
 
     Each bin is ``{"ts": bin_start, "tx": int, "vol": float,
     "buy": float, "sell": float}`` where ``vol`` is total SOL traded
@@ -2345,7 +2347,7 @@ def h4_activity_series(swaps, *, bins: int = 12, now_ts: int = None,
     Pure function — no files, no network, deterministic under an
     explicit ``now_ts``.
     """
-    step = 14400  # 4h
+    step = max(1, int(bin_h or 4)) * 3600  # bin width in seconds
     bins = max(1, int(bins))
     now = int(time.time()) if now_ts is None else int(now_ts)
     cur_bin = (now // step) * step
@@ -2433,14 +2435,14 @@ def h4_activity_series(swaps, *, bins: int = 12, now_ts: int = None,
             out["warnings"].append(
                 {"kind": kind, "dir": "up", "mult": mult,
                  "text": f"{label} naik {mult:.1f}× "
-                         f"({old:,.0f} → {new:,.0f}) dalam 4 jam"})
+                         f"({old:,.0f} → {new:,.0f}) dalam {bin_h} jam"})
         elif mult <= 1.0 / thr and max(new, old) >= floor:
             drop = (1.0 / mult) if mult else float("inf")
             drop_txt = "∞" if drop == float("inf") else f"{drop:.1f}"
             out["warnings"].append(
                 {"kind": kind, "dir": "down", "mult": drop,
                  "text": f"{label} turun {drop_txt}× "
-                         f"({old:,.0f} → {new:,.0f}) dalam 4 jam"})
+                         f"({old:,.0f} → {new:,.0f}) dalam {bin_h} jam"})
 
     _check("tx", "Jumlah TX", cur["tx"], prev["tx"], out["tx_mult"], MIN_TX)
     _check("vol", "Volume SOL", cur["vol"], prev["vol"], out["vol_mult"],
@@ -2795,7 +2797,7 @@ def flow_freshness(ca: str) -> dict:
 def flow_persistence(ca: str, *, last_n: int = 3) -> dict:
     """Are the last *last_n* points all pushing the same direction?
 
-    A genuine accumulation rarely appears in a single 6h window — it shows
+    A genuine accumulation rarely appears in a single 4h window — it shows
     up as several cron points in a row, each adding ≥
     :data:`PERSISTENCE_MIN_NET_SOL` SOL to ``net_pure``. Distribution
     persistence is the mirror image.
@@ -2961,7 +2963,7 @@ def flow_distribution(ca: str) -> dict:
         return {"ok": False, "drop_pct": 0.0, "level": "ok",
                 "reason": "not enough history (need ≥4 points)",
                 "fast": False}
-    # use the last 4 points (≈24h on a 6h cron) as the comparison window
+    # use the last 4 points (≈16h on a 4h cron) as the comparison window
     recent = [float(p.get("net_pure") or 0) for p in pts[-4:]]
     peak = max(recent)
     # Fix #2.8: when 24h peak is very small, look back further (7d) so
@@ -3031,7 +3033,7 @@ def flow_quality(ca: str) -> dict:
     vol = float(last.get("vol") or 0)
     n_swaps = int(last.get("swaps") or 0)
     # Count distinct wallets in the SAME window the conviction point covers
-    # (the 6h ending at the point's own timestamp) — NOT "last 6h from now".
+    # (the 4h ending at the point's own timestamp) — NOT "last 4h from now".
     # When the cron is lagging (stale point), "from now" would look at a
     # window that has no data yet and wrongly report 0 wallets, falsely
     # flagging a fresh/legit multi-wallet window as "one or two wallets
@@ -3039,15 +3041,15 @@ def flow_quality(ca: str) -> dict:
     last_ts = int(last.get("ts") or 0)
     try:
         if last_ts:
-            swaps = swaps_between(ca, last_ts - 6 * 3600, last_ts)
+            swaps = swaps_between(ca, last_ts - 4 * 3600, last_ts)
         else:
-            swaps = get_recent_swaps(ca, 6)
+            swaps = get_recent_swaps(ca, 4)
     except Exception:
         swaps = []
     n_wallets = len({s[3] for s in swaps if s and s[3]})
     if vol < QUALITY_MIN_SOL:
         return {"ok": False, "level": "warn",
-                "reason": (f"only {vol:.1f} SOL in 6h (below "
+                "reason": (f"only {vol:.1f} SOL in 4h (below "
                            f"{QUALITY_MIN_SOL:g}) — too quiet to read "
                            "conviction meaningfully"),
                 "vol": vol, "n_swaps": n_swaps, "n_wallets": n_wallets}
@@ -3058,7 +3060,7 @@ def flow_quality(ca: str) -> dict:
     hi = max(hi_static, int(n_swaps * 0.4)) if n_swaps else hi_static
     if n_swaps and n_swaps < lo:
         return {"ok": False, "level": "warn",
-                "reason": (f"only {n_swaps} swaps in 6h — window too thin "
+                "reason": (f"only {n_swaps} swaps in 4h — window too thin "
                            "to draw a conclusion"),
                 "vol": vol, "n_swaps": n_swaps, "n_wallets": n_wallets}
     if n_swaps and n_swaps > hi and n_wallets <= max(2, n_swaps // 20):
@@ -3122,8 +3124,8 @@ WHALE_DELTA_MIN_SOL = 1.0
 DOLPHIN_DELTA_MIN_SOL = 2.0
 # When a fresh snapshot is committed, skip if the previous one is
 # younger than this many seconds. The 1h cron fires every hour, so
-# 6h gives it plenty of slack for retries / slow networks.
-SNAPSHOT_MIN_GAP_S = 6 * 3600
+# 4h gives it plenty of slack for retries / slow networks.
+SNAPSHOT_MIN_GAP_S = 4 * 3600
 
 
 def load_holder_snapshots() -> dict:
@@ -3521,7 +3523,7 @@ def load_holder_delta_config() -> dict:
 
 
 def holder_delta_panel(ca: str, *, current_holders, supply: float,
-                       window_h: int = 6) -> dict:
+                       window_h: int = 4) -> dict:
     """Convenience wrapper: read config + call :func:`holder_delta`.
 
     Returns the same dict but with config applied. Used by the UI so
@@ -3648,10 +3650,10 @@ def _nearest_older_point(points: list, ref_ts: int, window_h: float,
 
 
 def real_dust_trend(points: list, now_ts: int = None) -> dict:
-    """Direction + deltas of the real/dust counts over 1h / 6h / 24h.
+    """Direction + deltas of the real/dust counts over 1h / 4h / 24h.
 
     ``points`` is the chronological list from :func:`real_dust_series`.
-    Returns ``{"n", "cur", "prev", "d1h", "d6h", "d24h", "dir_1h",
+    Returns ``{"n", "cur", "prev", "d1h", "d4h", "d24h", "dir_1h",
     "ratio_now", "ratio_prev"}`` where ``d<h>`` = ``(d_real, d_dust)`` or
     None when the window isn't covered yet. ``dir_1h`` is ``"up"`` /
     ``"down"`` / ``"flat"`` based on the real-holder count between the
@@ -3659,7 +3661,7 @@ def real_dust_trend(points: list, now_ts: int = None) -> dict:
     """
     pts = list(points or [])
     out = {"n": len(pts), "cur": None, "prev": None,
-           "d1h": None, "d6h": None, "d24h": None,
+           "d1h": None, "d4h": None, "d24h": None,
            "dir_1h": "flat", "ratio_now": None, "ratio_prev": None}
     if not pts:
         return out
@@ -3683,9 +3685,9 @@ def real_dust_trend(points: list, now_ts: int = None) -> dict:
         d_real = cur["real"] - anchor1["real"]
         out["dir_1h"] = "up" if d_real > 0 else ("down" if d_real < 0
                                                  else "flat")
-    a6 = _nearest_older_point(pts, cur["ts"], 6)
-    if a6 is not None:
-        out["d6h"] = _delta(a6)
+    a4 = _nearest_older_point(pts, cur["ts"], 4)
+    if a4 is not None:
+        out["d4h"] = _delta(a4)
     a24 = _nearest_older_point(pts, cur["ts"], 24)
     if a24 is not None:
         out["d24h"] = _delta(a24)

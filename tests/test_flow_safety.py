@@ -271,7 +271,7 @@ def test_flow_quality():
 
 def test_flow_quality_uses_point_own_window():
     """Regression: a STALE cron point must still count wallets from ITS
-    OWN 6h window, not "now minus 6h". Before the fix, flow_quality()
+    OWN 4h window, not "now minus 4h". Before the fix, flow_quality()
     always called get_recent_swaps(ca, 6) which looks at [now-6h, now] —
     for a point that is hours old, that window has no data at all, so
     n_wallets came back 0 and a perfectly healthy, many-wallet window
@@ -279,10 +279,10 @@ def test_flow_quality_uses_point_own_window():
     print("\n[quality] stale point still reads its OWN window's wallets")
     with TempPaths():
         now = time.time()
-        point_ts = now - 7 * 3600   # point is already "very stale" (>6h old)
+        point_ts = now - 7 * 3600   # point is already "very stale" (>4h old)
         write_conviction({"a": [point(point_ts, 64, 11,
                                       vol=177, swaps=177)]})
-        # 100 distinct wallets, all inside [point_ts-6h, point_ts) —
+        # 100 distinct wallets, all inside [point_ts-4h, point_ts) —
         # i.e. the point's own window, not "now"'s window.
         swaps = [("buy", 1.0, point_ts - 60 - i * 60, f"wallet{i}")
                 for i in range(100)]
