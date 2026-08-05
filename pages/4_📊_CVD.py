@@ -951,13 +951,14 @@ for w, d, _age_days, fbt in fw["wallets"][:15]:
         "Flags": " ".join(bits),
     })
 if fw_rows:
-    st.markdown("**Detail fresh wallet** (top 15 by total beli, "
-                "di bawah tabel dolphin pure accumulator)")
-    st.dataframe(pd.DataFrame(fw_rows), use_container_width=True,
-                 hide_index=True,
-                 column_config={"Wallet": st.column_config.LinkColumn(
-                     "🌱 Fresh wallet detail",
-                     display_text=r"account/(.{6}).*")})
+    with st.expander("🌱 Detail fresh wallet — top 15 by total beli "
+                     "(di bawah tabel dolphin pure accumulator)",
+                     expanded=False):
+        st.dataframe(pd.DataFrame(fw_rows), use_container_width=True,
+                     hide_index=True,
+                     column_config={"Wallet": st.column_config.LinkColumn(
+                         "🌱 Fresh wallet detail",
+                         display_text=r"account/(.{6}).*")})
 else:
     st.caption(f"No fresh wallets in {fw_max_h}h.")
 
@@ -1028,6 +1029,10 @@ if monitor_rows:
 
 # No-buy holder inspection is intentionally disabled for now.  It adds an
 # expensive holder RPC call and is not part of the active CVD decision flow.
+# The export report + wallets CSV still reference these lists; keep them
+# empty so those sections render as "skipped" instead of raising a NameError.
+silent_holder_rows = []
+no_buy_meta_rows = []
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
