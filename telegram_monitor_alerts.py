@@ -133,19 +133,41 @@ def run_once(args):
         return
 
     state = load_state()
+    # Collect outbound messages; with --digest (default ON for --watchlist)
+    # they are flushed as one combined Telegram message at the end.
+    use_digest = bool(args.digest) or (
+        args.watchlist and not args.no_digest)
+    pending_msgs = []
     for ca in cas:
         res, err = analyze_ca(ca, args.hours, args.bin_h)
         if err:
             print('[skip]', ca + ':', err)
             continue
         for kind in ('stealth', 'dist'):
+            key = ca + '|' + kind
             trig = res[kind]['triggered']
+            prev = state.get(key) or {}
+            was_trig = bool(prev.get('triggered'))
             send, why, entry = evaluate(state, ca, kind, trig,
                                         args.cooldown)
             if not trig:
+                # TRUE→FALSE: emit a CLEARED notice (once per transition).
+                if was_trig:
+                    cleared = ma.format_cleared(
+                        res['symbol'], ca, kind, res['rows'])
+                    if args.dry:
+                        print('=' * 60)
+                        print('[cleared] WOULD SEND %s %s'
+                              % (res['symbol'], kind))
+                        print(cleared)
+                        print('=' * 60)
+                    else:
+                        pending_msgs.append(cleared)
+                        print('[cleared] %s %s' % (res['symbol'], kind))
+                else:
+                    print('[clear] %s %s' % (res['symbol'], kind))
                 if not args.dry:
-                    state[ca + '|' + kind] = entry
-                print('[clear] %s %s' % (res['symbol'], kind))
+                    state[key] = entry
                 continue
             text = ma.format_alert(res['symbol'], ca, res['rows'], kind,
                                    res[kind])
@@ -155,13 +177,28 @@ def run_once(args):
                 print(text)
                 print('=' * 60)
             elif send:
-                ok = send_telegram(text)
-                print('[%s] telegram %s (%s) %s' % (
-                    kind, res['symbol'], ca[:8], 'OK' if ok else 'FAIL'))
-                state[ca + '|' + kind] = entry
+                pending_msgs.append(text)
+                print('[%s] queued (%s) %s' % (kind, why, res['symbol']))
+                state[key] = entry
             else:
                 print('[%s] suppressed (%s) %s' % (kind, why, res['symbol']))
+                if not args.dry:
+                    state[key] = entry
     if not args.dry:
+        if pending_msgs:
+            if use_digest and len(pending_msgs) > 1:
+                chunks = ma.format_combined_digest(
+                    pending_msgs,
+                    title='📬 <b>MONITOR DIGEST</b> (%d alert)'
+                          % len(pending_msgs))
+                for chunk in chunks:
+                    ok = send_telegram(chunk)
+                    print('[digest] telegram %s (%d chars)'
+                          % ('OK' if ok else 'FAIL', len(chunk)))
+            else:
+                for text in pending_msgs:
+                    ok = send_telegram(text)
+                    print('[send] telegram %s' % ('OK' if ok else 'FAIL'))
         save_state(state)
 
 
@@ -179,6 +216,11 @@ def main():
                    help='run forever, sleeping --interval minutes between scans')
     ap.add_argument('--interval', type=int, default=15,
                    help='minutes between scans when --loop')
+    ap.add_argument('--digest', action='store_true',
+                   help='combine all alerts from this run into one Telegram '
+                        'message (default ON when --watchlist)')
+    ap.add_argument('--no-digest', action='store_true',
+                   help='force one Telegram message per alert')
     args = ap.parse_args()
 
     if args.loop:

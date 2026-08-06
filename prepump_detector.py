@@ -422,3 +422,70 @@ def prepump_already_sent(sigs, ca, sig_type, now_ts,
                 and now_ts - (s.get('ts') or 0) < dedupe_sec):
             return True
     return False
+
+
+def last_prepump_signal(sigs, ca):
+    '''Most recent pre-pump signal for *ca* (imminent/forming/cleared).
+
+    Returns the signal dict, or None when the CA has no pre-pump history.
+    Used to decide whether a score drop should emit a CLEARED notice.
+    '''
+    for s in reversed(sigs or []):
+        if s.get('ca') == ca and s.get('type') in (
+                'prepump_imminent', 'prepump_forming', 'prepump_cleared'):
+            return s
+    return None
+
+
+def format_prepump_cleared_telegram(prev_sig, ca, token_info=None,
+                                    score=0.0):
+    '''Render an HTML Telegram message when a pre-pump setup has cooled.'''
+    NL = chr(10)
+    ti = token_info or {}
+    sym = ti.get('symbol') or (prev_sig or {}).get('symbol') or '?'
+    prev_type = (prev_sig or {}).get('type') or 'prepump_forming'
+    prev_label = ('IMMINENT' if prev_type == 'prepump_imminent'
+                  else 'FORMING')
+    prev_score = (prev_sig or {}).get('score')
+    prev_sc = ('%s/100' % prev_score) if prev_score is not None else prev_label
+    lines = [
+        '✅ <b>PRE-PUMP CLEARED: $%s</b>' % sym,
+        '<i>setup cooled · score dropped below forming threshold</i>',
+        '',
+        '📉 <b>Was:</b> %s (%s) → <b>Now:</b> %s/100 (neutral)'
+        % (prev_label, prev_sc, score),
+        '💰 <b>Price:</b> $%s | <b>MC:</b> $%s'
+        % (_fmt(ti.get('price_usd')), _fmt(ti.get('mc'))),
+        '',
+        '⏱ <b>Status:</b> No longer a pre-pump setup (score &lt; 55).',
+        ('🔗 <a href=\'https://dexscreener.com/solana/%s\'>DexScreener</a> | '
+         '<a href=\'https://gmgn.ai/sol/token/%s\'>GMGN</a>' % (ca, ca)),
+    ]
+    return NL.join(lines)
+
+
+def format_prepump_sidebar_badge(result, symbol='?'):
+    '''Compact one-line HTML badge for the Streamlit sidebar radar.
+
+    Returns (html, tier) so the caller can sort/filter. Neutral tiers still
+    render (muted) so the sidebar always shows watchlist coverage.
+    '''
+    score = float((result or {}).get('score') or 0.0)
+    tier = (result or {}).get('tier') or 'neutral'
+    if tier == 'imminent' or score >= 75:
+        col, emo, label = '#f59e0b', '🎯', 'IMMINENT'
+    elif tier == 'forming' or score >= 55:
+        col, emo, label = '#38bdf8', '👀', 'FORMING'
+    elif tier == 'blocked':
+        col, emo, label = '#64748b', '🚫', 'BLOCKED'
+    else:
+        col, emo, label = '#475569', '·', 'neutral'
+    html = (
+        "<div style='border-left:3px solid %s;padding:2px 0 2px 8px;"
+        "margin:2px 0;font-size:0.78rem;line-height:1.25;'>"
+        "<b style='color:%s;'>%s %s</b> "
+        "<span style='color:%s;font-weight:700;'>%s</span>"
+        "<span style='color:#94a3b8;'>/100 · %s</span></div>"
+        % (col, col, emo, symbol, col, score, label)
+    )
+    return html, tier

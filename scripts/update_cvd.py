@@ -22,7 +22,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cvd import (record_conviction, update_token_cvd,  # noqa: E402
                  get_gmgn_last_error, get_recent_swaps,
                  get_gmgn_wallet_metadata, WHALE_SOL)
-from signals import detect_and_record, detect_prepump_and_record  # noqa: E402
+from signals import (detect_and_record, detect_prepump_and_record,  # noqa: E402
+                     begin_digest, flush_telegram_digest)
 from prepump_detector import compute_bullish_div  # noqa: E402
 from watchlist import load_watchlist, save_watchlist  # noqa: E402
 
@@ -210,6 +211,9 @@ def main():
         print("📡 FOCUS_MODE: OFF — all signal types to Telegram.")
 
     wl_changed = False
+    # Buffer every Telegram ping this cron cycle into one combined digest
+    # so a watchlist of N tokens doesn't fire N separate messages.
+    begin_digest()
     for ca, meta in list(wl.items()):
         try:
             pool, price_now, live_sym = main_pool(ca)
@@ -367,7 +371,11 @@ def main():
                     window_min=30, whale_min_sol=WHALE_SOL,
                     wallet_tags=_wmeta, bullish_div=_bull)
                 if _pp:
-                    pp_txt = " 🎯prepump:%s/%d" % (_pp["tier"], int(_pp["score"]))
+                    if _pp.get("cleared"):
+                        pp_txt = " 🎯prepump:cleared/%d" % int(_pp["score"])
+                    else:
+                        pp_txt = " 🎯prepump:%s/%d" % (
+                            _pp["tier"], int(_pp["score"]))
             except Exception as e_pp:
                 pp_txt = " 🎯prepump_err:%s" % str(e_pp)[:20]
 
@@ -378,6 +386,17 @@ def main():
 
         except Exception as e:
             print(f"❌ {ca[:8]}… unhandled error: {str(e)[:100]}")
+
+    # ── Flush combined Telegram digest (CVD + pre-pump + cleared) ─────
+    try:
+        n_digest = flush_telegram_digest(
+            title="📬 <b>CVD / PRE-PUMP DIGEST</b>")
+        if n_digest:
+            print(f"📬 digest: sent {n_digest} combined Telegram message(s)")
+        else:
+            print("📬 digest: nothing to send")
+    except Exception as e:
+        print(f"digest-err: {str(e)[:80]}")
 
     # ── Retry pending Telegram alerts ────────────────────────────────────
     try:

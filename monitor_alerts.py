@@ -225,3 +225,56 @@ def format_alert(symbol, ca, rows, kind, result):
             f"<code>{ca}</code>\n"
             f"{body}\n"
             f"checks: {result['msg']}")
+
+
+def format_cleared(symbol, ca, kind, rows=None):
+    """Render a CLEARED notice when a previously-true alert cools off.
+
+    Fired on TRUE→FALSE transitions so the operator knows the setup is
+    no longer active (avoids acting on a stale green/red banner).
+    """
+    if kind == "stealth":
+        title = "✅ STEALTH ACCUMULATION CLEARED"
+        why = "Kondisi stealth accumulation sudah tidak terpenuhi."
+    else:
+        title = "✅ DISTRIBUSI CLEARED"
+        why = "Kondisi distribusi sudah tidak terpenuhi."
+    tail = ""
+    if rows and len(rows) >= 1:
+        last = rows[-1]
+        tail = (f"\nlast: accum={last.get('accum')} dist={last.get('dist')} "
+                f"conv={last.get('conviction')} "
+                f"bsr={_fmt_bsr(last.get('buy_sell_ratio'))} "
+                f"tx={last.get('tx')} vol={float(last.get('volume') or 0):.1f}")
+    return (f"<b>{title}</b> ${symbol}\n"
+            f"<code>{ca}</code>\n"
+            f"{why}{tail}")
+
+
+def format_combined_digest(items, *, title=None, max_chars=3800):
+    """Join several alert snippets into one Telegram digest message.
+
+    ``items`` is a list of HTML strings (each a full single-alert body).
+    Telegram caps messages at 4096 chars — we stay under ``max_chars`` and
+    return a *list* of chunk strings if the batch is larger (caller sends
+    each chunk). Empty input → empty list.
+    """
+    clean = [str(x).strip() for x in (items or []) if str(x).strip()]
+    if not clean:
+        return []
+    hdr = title or "📬 <b>ALERT DIGEST</b>"
+    sep = "\n\n— — —\n\n"
+    chunks, buf, n = [], [], 0
+    # header + first item always fit if individual items are sane
+    overhead = len(hdr) + 2
+    for it in clean:
+        add = len(it) + (len(sep) if buf else 0)
+        if buf and overhead + n + add > max_chars:
+            chunks.append(hdr + "\n\n" + sep.join(buf))
+            buf, n = [it], len(it)
+        else:
+            buf.append(it)
+            n += add
+    if buf:
+        chunks.append(hdr + "\n\n" + sep.join(buf))
+    return chunks

@@ -603,6 +603,49 @@ WHALE_DELTA_MIN_SOL = whale_delta_min
 DOLPHIN_DELTA_MIN_SOL = dolphin_delta_min
 
 st.sidebar.divider()
+st.sidebar.markdown("**🎯 Pre-Pump Radar**")
+try:
+    from cvd import get_recent_swaps as _pp_get_swaps
+    from prepump_detector import (evaluate_prepump as _pp_eval,
+                                  format_prepump_sidebar_badge as _pp_badge)
+    from watchlist import load_watchlist as _pp_load_wl
+    _pp_wl = _pp_load_wl() or {}
+except Exception:
+    _pp_wl = {}
+if not _pp_wl:
+    st.sidebar.caption("Watchlist kosong.")
+else:
+    _pp_rows = []  # (score, html) — sort hot first
+    _pp_now = int(time.time())
+    for _pp_ca, _pp_meta in list(_pp_wl.items())[:20]:
+        try:
+            _pp_sw = _pp_get_swaps(_pp_ca, hours=1)
+            _pp_r = _pp_eval(
+                _pp_sw, {"symbol": (_pp_meta or {}).get("symbol", "?")},
+                ca=_pp_ca, now_ts=_pp_now, window_min=30)
+            _pp_html, _pp_tier = _pp_badge(
+                _pp_r, (_pp_meta or {}).get("symbol", "?"))
+            _pp_rows.append((float(_pp_r.get("score") or 0), _pp_html,
+                             _pp_tier))
+        except Exception:
+            continue
+    _pp_rows.sort(key=lambda x: -x[0])
+    _pp_hot = [h for s, h, t in _pp_rows if t in ("imminent", "forming")]
+    _pp_rest = [h for s, h, t in _pp_rows if t not in ("imminent", "forming")]
+    if _pp_hot:
+        st.sidebar.markdown("".join(_pp_hot), unsafe_allow_html=True)
+    else:
+        st.sidebar.caption("Tidak ada setup forming/imminent.")
+    # Collapse neutrals so the sidebar stays short.
+    if _pp_rest:
+        with st.sidebar.expander("Lainnya (%d)" % len(_pp_rest),
+                                expanded=False):
+            st.markdown("".join(_pp_rest), unsafe_allow_html=True)
+    st.sidebar.caption(
+        "Live dari swap tersimpan (30m). 🎯 ≥75 · 👀 55-74. "
+        "Refresh page untuk evaluasi ulang.")
+
+st.sidebar.divider()
 if st.sidebar.button("💾 Save to config.json", use_container_width=True):
     save_config({"helius_api_key": helius_key, "custom_rpc": custom_rpc,
                  "helius_extra_keys": helius_extra,

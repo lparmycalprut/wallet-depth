@@ -38,7 +38,7 @@ buktikan kalibrasinya tidak bergeser (lihat §5).
 | `ai_prompt.py` | builder prompt CVD siap-salin, jujur soal cakupan data |
 | `breakout_guard.py` | **Breakout Guard**: level D1 + konfirmasi close H4 |
 | `breakout_log.py` | log event level → `breakouts.json` |
-| `signals.py` | log sinyal CVD → `signals.json` + notif Telegram |
+| `signals.py` | log sinyal CVD/pre-pump → `signals.json` + Telegram (digest mode di cron) |
 | `watchlist.py` | watchlist helpers (load/save/add/remove + GitHub commit) |
 | `scripts/update_cvd.py` | entry point cron (tiap jam, menit :20) |
 | `tests/` | 19 suite, **jalan tanpa pytest & tanpa jaringan** |
