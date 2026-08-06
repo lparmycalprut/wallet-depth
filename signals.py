@@ -330,7 +330,8 @@ def flush_telegram_digest(*, title=None, send_fn=None) -> int:
 def detect_prepump_and_record(ca, symbol, swaps, token_info=None, *, now_ts=None,
                               src="cron", window_min=30, whale_min_sol=3.0,
                               wallet_tags=None, bullish_div=False, pool=None,
-                              pool_sol=None):
+                              pool_sol=None, bullish_div_h4=False,
+                              full_swaps=None, multi_tf=True):
     """Run the Pre-Pump Detector on recent swaps and record/alert if scored.
 
     Returns the evaluate_prepump result dict (including neutral / blocked),
@@ -343,9 +344,18 @@ def detect_prepump_and_record(ca, symbol, swaps, token_info=None, *, now_ts=None
       - score < 55 after a prior imminent/forming -> "prepump_cleared"
         (Telegram notice so the operator knows the setup cooled)
       - each type is deduped per (ca, type) within PREPUMP_DEDUPE_SEC (3h)
+
+    When ``multi_tf`` is on (default), a best-effort multi-timeframe
+    evaluation (30m/1h/4h/12h) is attached to the result under
+    ``result['multi_tf']`` and enriches the signals.json entry
+    (``tf_scores`` + ``confluence``) and the Telegram message. The alert
+    gating itself is unchanged — it still keys off the primary (30m)
+    evaluation. ``full_swaps`` lets callers pass a longer swap history
+    (the swap store keeps 72h); when omitted, the local store is read.
     """
     from prepump_detector import (
-        evaluate_prepump, format_prepump_telegram,
+        evaluate_prepump, evaluate_prepump_multi_tf,
+        format_prepump_telegram,
         format_prepump_cleared_telegram,
         prepump_already_sent, PREPUMP_DEDUPE_SEC,
     )
@@ -353,7 +363,22 @@ def detect_prepump_and_record(ca, symbol, swaps, token_info=None, *, now_ts=None
     result = evaluate_prepump(
         swaps, token_info, ca=ca, now_ts=now_ts, window_min=window_min,
         whale_min_sol=whale_min_sol, wallet_tags=wallet_tags,
-        bullish_div=bullish_div, pool_sol=pool_sol)
+        bullish_div=bullish_div, pool_sol=pool_sol,
+        bullish_div_h4=bullish_div_h4)
+    if multi_tf:
+        try:
+            long_swaps = full_swaps
+            if long_swaps is None:
+                # Local store read only (keeps 72h) — no extra network.
+                from cvd import get_recent_swaps
+                long_swaps = get_recent_swaps(ca, 72) or swaps
+            result["multi_tf"] = evaluate_prepump_multi_tf(
+                long_swaps, token_info, ca=ca, now_ts=now_ts,
+                wallet_tags=wallet_tags, whale_min_sol=whale_min_sol,
+                bullish_div_h1=bullish_div, bullish_div_h4=bullish_div_h4,
+                pool_sol=pool_sol)
+        except Exception:
+            pass  # multi-TF is advisory; never block the primary alert
 
     def _last_prepump(sigs, ca_):
         """Most recent imminent/forming/cleared signal for this CA."""
@@ -407,11 +432,20 @@ def detect_prepump_and_record(ca, symbol, swaps, token_info=None, *, now_ts=None
               % (result["score"], result["tier"],
                  result["pillars"]["compression"], result["pillars"]["asymmetry"],
                  result["pillars"]["delta"], result["pillars"]["accum"]))
+    entry = {"ts": now_ts, "ca": ca, "symbol": symbol, "type": sig_type,
+             "src": src, "detail": detail, "score": result["score"],
+             "window_min": window_min,
+             "price": (token_info or {}).get("price_usd")}
+    multi = result.get("multi_tf")
+    if multi:
+        conf = multi.get("confluence") or {}
+        detail += (" | multi-TF %s | confluence: %s"
+                   % (multi.get("scores"), conf.get("label", "?")))
+        entry["detail"] = detail
+        entry["tf_scores"] = multi.get("scores")
+        entry["confluence"] = conf.get("status")
     sigs = load_signals()
-    sigs.append({"ts": now_ts, "ca": ca, "symbol": symbol, "type": sig_type,
-                 "src": src, "detail": detail, "score": result["score"],
-                 "window_min": window_min,
-                 "price": (token_info or {}).get("price_usd")})
+    sigs.append(entry)
     save_signals(sigs)
     # Telegram gating by tier / focus mode
     if result["tier"] == "imminent":
@@ -420,7 +454,7 @@ def detect_prepump_and_record(ca, symbol, swaps, token_info=None, *, now_ts=None
         send = not _focus_mode()
     if send:
         try:
-            msg = format_prepump_telegram(result, ca, token_info)
+            msg = format_prepump_telegram(result, ca, token_info, multi=multi)
             _queue_or_send(msg)
         except Exception:
             pass

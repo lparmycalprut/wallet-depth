@@ -277,7 +277,7 @@ def main():
             # ── Liquidity Test TX ─────────────────────────────────────
             liq_test_txt = ""
             try:
-                from cvd import get_recent_swaps, get_sol_price
+                from cvd import get_sol_price
                 from breakout_guard import send_telegram
                 from signals import load_signals, save_signals
                 
@@ -356,12 +356,23 @@ def main():
             snap_txt = _try_snapshot(api_keys, ca, meta,
                                      price_now=price_now or 0.0)
 
-            # ── Pre-Pump Radar ──────────────────────────────────────────
+            # ── Pre-Pump Radar (multi-timeframe 30m/1h/4h/12h) ──────────
             pp_txt = ""
             try:
-                _swaps_pp = get_recent_swaps(ca, hours=1)
+                # One 72h local read feeds both the 30m primary evaluation
+                # and the multi-TF matrix (12h window + 48h baseline = 60h).
+                _swaps_long = get_recent_swaps(ca, hours=72)
+                _swaps_pp = [s for s in _swaps_long
+                             if (s[2] or 0) >= time.time() - 3600]
                 _wmeta = get_gmgn_wallet_metadata()
                 _bull = compute_bullish_div(ca, pool) if pool else False
+                _bull_h4 = False
+                if pool:
+                    try:
+                        _bull_h4 = compute_bullish_div(
+                            ca, pool, bucket_hours=4, hours_span=96)
+                    except Exception:
+                        _bull_h4 = False
                 _mc = (get_market(ca) or {}).get("marketcap")
                 _tinfo = {"symbol": meta.get("symbol", "?"),
                           "price_usd": price_now, "mc": _mc}
@@ -369,13 +380,20 @@ def main():
                     ca, meta.get("symbol", "?"), _swaps_pp,
                     token_info=_tinfo, now_ts=int(time.time()),
                     window_min=30, whale_min_sol=WHALE_SOL,
-                    wallet_tags=_wmeta, bullish_div=_bull)
+                    wallet_tags=_wmeta, bullish_div=_bull,
+                    bullish_div_h4=_bull_h4, full_swaps=_swaps_long)
                 if _pp:
+                    # Confluence emoji from the multi-TF evaluation, when notable.
+                    _conf_emo = ""
+                    _mtf = _pp.get("multi_tf") or {}
+                    _conf = _mtf.get("confluence") or {}
+                    if _conf.get("status") and _conf["status"] != "normal":
+                        _conf_emo = _conf.get("emoji", "")
                     if _pp.get("cleared"):
                         pp_txt = " 🎯prepump:cleared/%d" % int(_pp["score"])
                     else:
-                        pp_txt = " 🎯prepump:%s/%d" % (
-                            _pp["tier"], int(_pp["score"]))
+                        pp_txt = " 🎯prepump:%s/%d%s" % (
+                            _pp["tier"], int(_pp["score"]), _conf_emo)
             except Exception as e_pp:
                 pp_txt = " 🎯prepump_err:%s" % str(e_pp)[:20]
 

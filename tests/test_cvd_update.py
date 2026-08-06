@@ -30,7 +30,10 @@ def test_update_persists_deduplicated_recent_swaps():
     ca = "test-ca"
     pool = "test-pool"
     duplicate = ["buy", 1.25, now - 3600, "wallet-a"]
-    expired = ["sell", 2.0, now - 49 * 3600, "wallet-old"]
+    # The swap store retains 72h (see AGENTS.md §2.5 / update_token_cvd
+    # docstring), so the "expired" fixture must be older than 72h — the
+    # previous 49h value belonged to the old 48h retention window.
+    expired = ["sell", 2.0, now - 73 * 3600, "wallet-old"]
     new_swap = ("sell", 3.5, now - 60, "wallet-b")
 
     initial = {
@@ -58,10 +61,12 @@ def test_update_persists_deduplicated_recent_swaps():
         with open(path, "r", encoding="utf-8") as handle:
             saved = json.load(handle)[ca]
 
-    check(result["new_swaps"] == 2,
+    # Only the genuinely new swap counts: the duplicate fetched again is
+    # already stored, so new_swaps is 1, not the fetched-batch size of 2.
+    check(result["new_swaps"] == 1,
           "update completes instead of raising NameError")
     check(len(saved["swaps"]) == 2,
-          "duplicate and >48h swap are removed")
+          "duplicate and >72h swap are removed")
     check(saved["swaps"][0] == duplicate and
           saved["swaps"][1] == list(new_swap),
           "remaining swaps are stored oldest to newest")

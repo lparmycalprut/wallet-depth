@@ -3,23 +3,34 @@ import sys
 import os
 import types
 
+import importlib.util
+
+# Stub heavy deps only when they are not installed (offline sandbox).
+# Overwriting sys.modules unconditionally would leak bare stubs into other
+# test modules under `python -m unittest discover tests`.
+_stubbed = []
 for _m in ('requests', 'pandas', 'numpy'):
-    sys.modules[_m] = types.ModuleType(_m)
-pd = sys.modules['pandas']
-pd.DataFrame = object
-pd.Series = object
-pd.Timestamp = object
-pd.to_datetime = lambda *a, **k: None
-pd.read_json = lambda *a, **k: None
-pd.concat = lambda *a, **k: None
-np = sys.modules['numpy']
-np.ndarray = object
-np.array = lambda *a, **k: None
-np.float64 = float
-_req = sys.modules['requests']
-_req.get = lambda *a, **k: None
-_req.post = lambda *a, **k: None
-_req.exceptions = types.SimpleNamespace(RequestException=Exception)
+    if _m not in sys.modules and importlib.util.find_spec(_m) is None:
+        sys.modules[_m] = types.ModuleType(_m)
+        _stubbed.append(_m)
+if 'pandas' in _stubbed:
+    pd = sys.modules['pandas']
+    pd.DataFrame = object
+    pd.Series = object
+    pd.Timestamp = object
+    pd.to_datetime = lambda *a, **k: None
+    pd.read_json = lambda *a, **k: None
+    pd.concat = lambda *a, **k: None
+if 'numpy' in _stubbed:
+    np = sys.modules['numpy']
+    np.ndarray = object
+    np.array = lambda *a, **k: None
+    np.float64 = float
+if 'requests' in _stubbed:
+    _req = sys.modules['requests']
+    _req.get = lambda *a, **k: None
+    _req.post = lambda *a, **k: None
+    _req.exceptions = types.SimpleNamespace(RequestException=Exception)
 
 sys.path.insert(0, os.path.abspath('.'))
 
@@ -130,19 +141,21 @@ def test_volume_scaling_low_vs_high():
 def test_telegram_format():
     sw = _build_prepump_swaps(now)
     tags = _tags([('W1', ['bluechip_owner']), ('W2', ['axiom'])])
-    r = pp.evaluate_prepump(sw, {'symbol': 'TEST', 'price_usd': 0.0012,
-                                 'mc': 12345, 'vol_24h': 98765},
-                           ca='TESTCA', now_ts=now, window_min=30,
-                           wallet_tags=tags, bullish_div=False)
-    msg = pp.format_prepump_telegram(
-        r, 'TESTCA', {'symbol': 'TEST', 'price_usd': 0.0012,
-                      'mc': 12345, 'vol_24h': 98765})
-    assert 'PRE-PUMP DETECTED' in msg
-    assert 'TEST' in msg
-    assert 'Score' in msg
+    ti = {'symbol': 'TEST', 'price_usd': 0.0012, 'mc': 12345,
+          'vol_24h': 98765}
+    r = pp.evaluate_prepump(sw, ti, ca='TESTCA', now_ts=now, window_min=30,
+                            wallet_tags=tags, bullish_div=False)
+    msg = pp.format_prepump_telegram(r, 'TESTCA', ti)
+    # New tier-badge title + on-chain signature breakdown.
+    assert 'PRE-PUMP IMMINENT' in msg or 'PRE-PUMP FORMING' in msg
+    assert '$TEST' in msg
+    assert 'Pre-Pump Score' in msg
     assert 'dexscreener.com/solana/TESTCA' in msg
     assert 'Liq' in msg
-    assert 'Ignition / Terminals' in msg
+    assert 'Active Terminals' in msg
+    assert 'Order Asymmetry' in msg
+    assert 'Order Flow' in msg
+    assert 'Pure Accumulators' in msg
     print('telegram format ok, len=%d' % len(msg))
 
 
@@ -165,6 +178,172 @@ if __name__ == '__main__':
     test_telegram_format()
     test_dedup_cooldown()
     print('ALL TESTS PASSED')
+
+
+# ---------------------------------------------------------------------------
+# Multi-timeframe radar (30m / 1h / 4h / 12h) + confluence
+# ---------------------------------------------------------------------------
+def test_multi_tf_structure():
+    sw = _build_prepump_swaps(now)
+    tags = _tags([('W1', ['bluechip_owner']), ('W2', ['axiom']),
+                  ('W3', ['top_holder'])])
+    multi = pp.evaluate_prepump_multi_tf(sw, {'symbol': 'TEST'}, ca='TEST',
+                                         now_ts=now, wallet_tags=tags,
+                                         bullish_div_h1=True)
+    assert set(multi['timeframes']) == {'30m', '1h', '4h', '12h'}
+    assert multi['primary_tf'] == '30m'
+    for tf, cfg in pp.PREPUMP_TF_CONFIGS.items():
+        r = multi['timeframes'][tf]
+        assert r['tf'] == tf
+        assert r['window_min'] == cfg['window_min'], (tf, r['window_min'])
+        assert r['metrics']['sub_window_min'] == cfg['sub_window_min']
+        assert r['metrics']['terminal_min'] == cfg['terminal_min']
+        assert r['metrics']['min_buy'] == cfg['min_buy']
+        assert r['metrics']['large_dump_sol'] == cfg['large_dump_sol']
+        assert r['tf_role'] == cfg['role']
+    assert multi['scores']['30m'] == multi['overall_score']
+    conf = multi['confluence']
+    assert conf['status'] in ('golden', 'dead_cat', 'sleeper', 'normal')
+    assert 'label' in conf and 'emoji' in conf
+    # legacy calibration retained on the primary timeframe
+    assert multi['timeframes']['30m']['score'] == 100.0
+    print('multi-tf structure ok scores=%s conf=%s'
+          % (multi['scores'], conf['status']))
+
+
+def test_confluence_statuses():
+    # 🌟 golden: macro (best 4h/12h) >= 60 AND micro (best 30m/1h) >= 75
+    c = pp.compute_confluence({'30m': 90, '1h': 40, '4h': 65, '12h': 20})
+    assert c['status'] == 'golden' and c['emoji'] == '🌟', c
+    assert c['label'] == 'GOLDEN CONFLUENCE'
+    # macro can come from 12h alone; micro from 1h alone
+    c = pp.compute_confluence({'30m': 10, '1h': 78, '4h': 20, '12h': 61})
+    assert c['status'] == 'golden', c
+    # 🪤 dead cat: 30m high but macro < 35
+    c = pp.compute_confluence({'30m': 85, '1h': 50, '4h': 30, '12h': 10})
+    assert c['status'] == 'dead_cat' and c['emoji'] == '🪤', c
+    assert c['label'] == 'DEAD CAT / FAKE BOUNCE'
+    # ⏳ sleeper: macro >= 65 but 30m < 40 (and micro best < 75, no golden)
+    c = pp.compute_confluence({'30m': 20, '1h': 55, '4h': 70, '12h': 66})
+    assert c['status'] == 'sleeper' and c['emoji'] == '⏳', c
+    assert c['label'] == 'ACCUMULATION SLEEPER'
+    # ➖ normal otherwise
+    c = pp.compute_confluence({'30m': 50, '1h': 45, '4h': 50, '12h': 40})
+    assert c['status'] == 'normal' and c['emoji'] == '➖', c
+    # golden precedence over sleeper/dead_cat
+    c = pp.compute_confluence({'30m': 80, '1h': 80, '4h': 70, '12h': 70})
+    assert c['status'] == 'golden', c
+    print('confluence statuses ok')
+
+
+def test_multi_tf_min_buy_gate():
+    '''4 organic buys pass the 30m gate (min 3) but not the 1h gate (min 5).'''
+    sw = []
+    # mild prior baseline (8h) so both 30m and 1h have reference data
+    for i in range(8):
+        sw.append(mk('buy', 2.0, now - 8 * 3600 + i * 3000, 'BL%d' % i))
+    # recent: 4 pure buys inside the last 30m (and 1h), one dust sell
+    for w, sol, ago in [('b1', 1.5, 25 * 60), ('b2', 1.5, 20 * 60),
+                        ('b3', 1.5, 10 * 60), ('b4', 1.5, 5 * 60)]:
+        sw.append(mk('buy', sol, now - ago, w))
+    sw.append(mk('sell', 0.05, now - 60, 'rs'))
+    multi = pp.evaluate_prepump_multi_tf(sw, {'symbol': 'G'}, ca='G',
+                                         now_ts=now)
+    r30 = multi['timeframes']['30m']
+    r1h = multi['timeframes']['1h']
+    print('min-buy gate 30m=%s 1h=%s' % (r30['score'], r1h['score']))
+    assert r30['metrics']['buy_count'] == 4
+    assert r30['score'] > 0, '30m (min 3 buys) should score, got %s' % r30
+    assert r1h['score'] == 0.0, '1h (min 5 buys) must gate at 0, got %s' % r1h
+    assert r1h['metrics']['min_buy'] == 5
+
+
+def test_large_dump_threshold_per_tf():
+    '''A 2 SOL sell trips the 30m/1h dump filter (1/2 SOL) but not 4h (5 SOL).'''
+    sw = list(_build_prepump_swaps(now))
+    sw.append(mk('sell', 2.0, now - 5 * 60, 'whale_dump'))
+    multi = pp.evaluate_prepump_multi_tf(sw, {'symbol': 'D'}, ca='D',
+                                         now_ts=now)
+    assert multi['timeframes']['30m']['metrics']['whale_dumper'] is True
+    assert multi['timeframes']['1h']['metrics']['whale_dumper'] is True
+    assert multi['timeframes']['4h']['metrics']['whale_dumper'] is False
+    assert multi['timeframes']['12h']['metrics']['whale_dumper'] is False
+    # 30m P1 lost the 10-pt no-large-dump bonus vs the undumped baseline
+    base = pp.evaluate_prepump(_build_prepump_swaps(now), {'symbol': 'D'},
+                               ca='D', now_ts=now)
+    dumped = multi['timeframes']['30m']
+    assert base['pillars']['compression'] - dumped['pillars']['compression'] \
+        >= 10.0, (base['pillars'], dumped['pillars'])
+    print('large-dump thresholds ok')
+
+
+def test_absorp_target_scales_with_tf():
+    sw = _build_prepump_swaps(now)
+    multi = pp.evaluate_prepump_multi_tf(sw, {'symbol': 'A', 'mc': 40000.0},
+                                         ca='A', now_ts=now)
+    t30 = multi['timeframes']['30m']['metrics']['absorp_target_sol']
+    t4h = multi['timeframes']['4h']['metrics']['absorp_target_sol']
+    t12 = multi['timeframes']['12h']['metrics']['absorp_target_sol']
+    # low-cap tier base = 3 SOL, scaled x1 / x6 / x12
+    assert t30 == 3.0 and t4h == 18.0 and t12 == 36.0, (t30, t4h, t12)
+    print('absorp scaling ok %s/%s/%s' % (t30, t4h, t12))
+
+
+def test_telegram_multi_tf_format():
+    sw = _build_prepump_swaps(now)
+    tags = _tags([('W1', ['bluechip_owner']), ('W2', ['axiom'])])
+    ti = {'symbol': 'TEST', 'price_usd': 0.0012, 'mc': 12345,
+          'vol_24h': 98765}
+    multi = pp.evaluate_prepump_multi_tf(sw, ti, ca='TESTCA', now_ts=now,
+                                         wallet_tags=tags, bullish_div_h1=True)
+    primary = multi['timeframes']['30m']
+    msg = pp.format_prepump_telegram(primary, 'TESTCA', ti, multi=multi)
+    assert '🚨 <b>PRE-PUMP IMMINENT: $TEST</b>' in msg
+    assert 'Multi-TF:' in msg
+    for tf in ('30m:', '1h:', '4h:', '12h:'):
+        assert tf in msg, tf
+    assert 'Confluence:' in msg
+    assert '🌟' in msg or '➖' in msg or '🪤' in msg or '⏳' in msg
+    assert 'dexscreener.com/solana/TESTCA' in msg
+    # convenience: result-embedded multi also renders
+    r2 = dict(primary)
+    r2['multi_tf'] = multi
+    msg2 = pp.format_prepump_telegram(r2, 'TESTCA', ti)
+    assert 'Multi-TF:' in msg2
+    # line helpers standalone
+    assert pp.format_multi_tf_line(None) == ''
+    assert pp.format_confluence_line(None) == ''
+    pill = pp.format_prepump_digest_pill(multi)
+    for tf in ('30m:', '1h:', '4h:', '12h:'):
+        assert tf in pill, tf
+    print('telegram multi-tf format ok, len=%d' % len(msg))
+
+
+def test_combined_digest_pill():
+    sw = _build_prepump_swaps(now)
+    multi = pp.evaluate_prepump_multi_tf(sw, {'symbol': 'TEST'}, ca='TESTCA',
+                                         now_ts=now)
+    entries = [{'symbol': 'TEST', 'ca': 'TESTCA',
+                'result': multi['timeframes']['30m'], 'multi': multi},
+               {'symbol': 'PLAIN', 'ca': 'PLAINCA',
+                'result': {'score': 61, 'tier': 'forming'}}]
+    txt = pp.format_prepump_combined_digest(entries)
+    assert txt is not None
+    assert '[30m:' in txt and '12h:' in txt  # multi-TF pill present
+    assert 'PLAIN' in txt  # entries without multi still render
+    assert pp.format_prepump_combined_digest([]) is None
+    print('combined digest pill ok')
+
+
+if __name__ == '__main__':
+    test_multi_tf_structure()
+    test_confluence_statuses()
+    test_multi_tf_min_buy_gate()
+    test_large_dump_threshold_per_tf()
+    test_absorp_target_scales_with_tf()
+    test_telegram_multi_tf_format()
+    test_combined_digest_pill()
+    print('ALL MULTI-TF TESTS PASSED')
 
 
 def test_safety_gate_blocks():

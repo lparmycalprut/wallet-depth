@@ -24,18 +24,19 @@ from core import (atomic_write_json, get_helius_keys, get_market,
                   helius_rpc, load_config,
                   get_holders as core_get_holders,
                   get_supply as core_get_supply)
-from cvd import (MIN_SOL, WHALE_SOL, analysis_windows, classify_holders,
+from cvd import (MIN_SOL, WHALE_SOL, analysis_windows,
                  classify_swap, cohort_activity_summary, cohort_cvd_series,
                  conviction_split, detect_cohort_divergences,
-                 detect_divergence, detect_no_buy_holders,
+                 detect_divergence,
                  filter_swaps_by_time, fresh_wallet_growth,
-                 pure_accumulator_growth, pure_distributor_growth,
                  get_gmgn_wallet_metadata,
                  split_wallet_profile_cohorts, summarize_swap_range,
                  wallet_profiles)
 from monitor_alerts import (build_monitor_rows,
                            detect_stealth_accumulation, detect_distribution)
-from prepump_detector import evaluate_prepump, compute_bullish_div
+from prepump_detector import (evaluate_prepump, compute_bullish_div,
+                              evaluate_prepump_multi_tf, PREPUMP_TF_ORDER,
+                              PREPUMP_TIER_BADGES)
 from signals import detect_prepump_and_record
 
 st.set_page_config(page_title="CVD Analysis", page_icon="📊",
@@ -727,6 +728,131 @@ if prepump_res:
             "smart_tags_found": prepump_res.get("smart_tags_found", []),
             "token_info": prepump_res.get("token_info", {}),
         })
+
+# ---------------------------------------------------------------------------
+# 🧭 Multi-Timeframe Pre-Pump Radar (30m / 1h / 4h / 12h)
+# ---------------------------------------------------------------------------
+# Uses the local 72h swap store (no extra RPC) merged with the freshly
+# fetched swaps, so even the 12h macro window + 48h baseline has data.
+pp_multi_res = None
+try:
+    from cvd import get_recent_swaps as _grs_mtf
+    _sw_long = [tuple(s) for s in (_grs_mtf(ca, 72) or []) if len(s) >= 4]
+    _seen_long = {(s[0], float(s[1]), int(s[2]), str(s[3]))
+                  for s in _sw_long}
+    _sw_merged = list(_sw_long)
+    for s in swaps_all:
+        if len(s) >= 4:
+            k = (s[0], float(s[1]), int(s[2]), str(s[3]))
+            if k not in _seen_long:
+                _sw_merged.append(tuple(s))
+    _sw_merged.sort(key=lambda x: x[2])
+    _h4_div_mtf = False
+    if pool:
+        try:
+            _h4_div_mtf = compute_bullish_div(ca, pool, bucket_hours=4,
+                                              hours_span=96)
+        except Exception:
+            _h4_div_mtf = False
+    pp_multi_res = evaluate_prepump_multi_tf(
+        _sw_merged, token_info=_pp_token_info, ca=ca, now_ts=int(now_ts),
+        wallet_tags=_wmeta, bullish_div_h1=_has_bullish_div,
+        bullish_div_h4=_h4_div_mtf)
+except Exception:
+    pp_multi_res = None
+
+if pp_multi_res:
+    _conf = pp_multi_res.get("confluence", {})
+    _tfr = pp_multi_res.get("timeframes", {})
+    st.markdown("#### 🧭 Multi-Timeframe Pre-Pump Radar (30m / 1h / 4h / 12h)")
+    st.caption("Setiap timeframe dievaluasi dengan 4 pilar yang sama "
+               "(compression · asymmetry · accumulation · delta/ignition) "
+               "tapi window, baseline, dan gate disesuaikan: "
+               "30m = Micro Ignition/Timing · 1h = Hourly Setup · "
+               "4h = Swing/Wyckoff Accumulation · 12h = Macro Cycle Base.")
+
+    # Confluence banner
+    _conf_color = {"golden": "#eab308", "dead_cat": "#ef4444",
+                   "sleeper": "#38bdf8", "normal": "#64748b"}.get(
+        _conf.get("status"), "#64748b")
+    st.markdown(
+        f"""
+        <div style="padding:10px 14px;border-radius:10px;background:{_conf_color}18;border-left:5px solid {_conf_color};margin-bottom:8px;">
+            <b style="color:{_conf_color};font-size:1.05rem;">🎯 Confluence: {_conf.get('emoji','➖')} {_conf.get('label','-')}</b>
+            <span style="color:#475569;"> — {_conf.get('desc','')}</span><br>
+            <span style="font-size:0.82rem;color:#64748b;">Macro (4h/12h): <b>{_conf.get('macro_score',0):g}/100</b> · Micro (30m/1h): <b>{_conf.get('micro_score',0):g}/100</b></span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # --- Multi-timeframe summary matrix ---
+    _mtf_rows = []
+    for _tf in PREPUMP_TF_ORDER:
+        _r_tf = _tfr.get(_tf)
+        if not _r_tf:
+            continue
+        _m_tf = _r_tf.get("metrics", {})
+        _tier_tf = _r_tf.get("tier", "neutral")
+        _mtf_rows.append({
+            "Timeframe": _tf,
+            "Role": _r_tf.get("tf_role", "-"),
+            "Score (0-100)": _r_tf.get("score", 0),
+            "Tier": f"{PREPUMP_TIER_BADGES.get(_tier_tf, '❓')} {_tier_tf.upper()}",
+            "Confluence": f"{_conf.get('emoji','➖')} {_conf.get('label','-')}",
+            "Compression %": f"{_r_tf.get('compression_pct', 0):.1f}%",
+            "Buy/Sell Ratio": f"{_m_tf.get('ratio', 0):.2f}×",
+            "Net Flow SOL": f"{_m_tf.get('net_sol', 0):+.2f}",
+            "Pure Accum %": f"{_m_tf.get('pct_pure', 0)*100:.0f}%",
+            "Smart Wallets": _m_tf.get("smart_count", 0),
+        })
+    st.dataframe(pd.DataFrame(_mtf_rows), use_container_width=True,
+                 hide_index=True)
+
+    # --- Per-timeframe detail tabs ---
+    _tab_objs = st.tabs([
+        f"{_tf} · {_tfr[_tf].get('score', 0):g}/100 {PREPUMP_TIER_BADGES.get(_tfr[_tf].get('tier'), '❓')}"
+        if _tf in _tfr else _tf for _tf in PREPUMP_TF_ORDER])
+    for _tab, _tf in zip(_tab_objs, PREPUMP_TF_ORDER):
+        _r_tf = _tfr.get(_tf)
+        if not _r_tf:
+            continue
+        with _tab:
+            _m_tf = _r_tf.get("metrics", {})
+            _p_tf = _r_tf.get("pillars", {})
+            _rs_tf = _r_tf.get("reasons", {})
+            _tier_tf = _r_tf.get("tier", "neutral")
+            _c_tf = {"imminent": "#ef4444", "forming": "#fb923c",
+                     "neutral": "#64748b", "blocked": "#9ca3af"}.get(
+                _tier_tf, "#94a3b8")
+            st.markdown(
+                f"<b style='color:{_c_tf}'>{PREPUMP_TIER_BADGES.get(_tier_tf, '❓')} "
+                f"{_tier_tf.upper()}</b> — {_r_tf.get('tf_role', '')}",
+                unsafe_allow_html=True)
+            st.caption(f"Status: {_r_tf.get('stage', '-')}")
+            if _r_tf.get("blocked"):
+                st.error(f"🚫 Blocked: {_r_tf.get('block_reason', '')}")
+            _pcols = st.columns(4)
+            for _idx, (_lbl, _key, _ico) in enumerate([
+                ("Compression", "compression", "📉"),
+                ("Asymmetry", "asymmetry", "⚖️"),
+                ("Accumulation", "accum", "🐋"),
+                ("Delta/Ignition", "delta", "🔥"),
+            ]):
+                with _pcols[_idx]:
+                    st.metric(label=f"{_ico} {_lbl}",
+                              value=f"{_p_tf.get(_key, 0):.0f}/25",
+                              help=_rs_tf.get(_key, ""))
+            _sub_m = _m_tf.get("sub_window_min", 0)
+            _term_m = _m_tf.get("terminal_min", 0)
+            _mc1, _mc2 = st.columns(2)
+            _mc1.write(f"📉 **Compression:** `{_r_tf.get('compression_pct', 0):.1f}%` (vol {_sub_m}m `{_m_tf.get('vol_sub_window', 0):.2f}` vs baseline/jam `{_m_tf.get('baseline_vol_1h', 0):.2f}` SOL)")
+            _mc1.write(f"⚖️ **Avg Buy/Sell:** `{_m_tf.get('avg_buy', 0):.2f}` / `{_m_tf.get('avg_sell', 0):.2f}` SOL (`{_m_tf.get('ratio', 0):.2f}×`) dari `{_m_tf.get('buy_count', 0)}` buys (min `{_m_tf.get('min_buy', 0)}`)")
+            _mc1.write(f"💥 **Large Dump ≥{_m_tf.get('large_dump_sol', 0):g} SOL:** `{'Ya ⚠️' if _m_tf.get('whale_dumper') else 'Tidak ✅'}`")
+            _mc2.write(f"💰 **Net Flow:** sub-{_sub_m}m `{_m_tf.get('net_sub_sol', 0):+.2f}` / window-{_r_tf.get('window_min', 0)}m `{_m_tf.get('net_sol', 0):+.2f}` SOL")
+            _mc2.write(f"💎 **Pure Accum:** `{_m_tf.get('pct_pure', 0)*100:.0f}%` ({_m_tf.get('n_pure', 0)} wallet) · target serapan `{_m_tf.get('absorp_target_sol', 0):g}` SOL (cap-tier ×{_m_tf.get('absorp_mult', 1):g})")
+            _mc2.write(f"🔥 **Smart 0-sell:** `{_m_tf.get('smart_count', 0)}` · **Terminals ({_term_m}m):** `{', '.join(_m_tf.get('active_terminals', [])) or '—'}`")
+            _mc2.write(f"📈 **Bullish Div:** H1 `{'Ya' if _r_tf.get('bullish_div') else 'Tidak'}` · H4 `{'Ya' if _r_tf.get('bullish_div_h4') else 'Tidak'}`")
 
 # Advanced divergence: price vs wallet-profile cohort CVD.  This keeps the
 # old All/Whale-swap divergence intact, then adds a lower-noise explanation
@@ -1634,7 +1760,7 @@ if cohort_div_lines:
     for line in cohort_div_lines:
         rep.write(f"- {line}\n")
 if prepump_res:
-    rep.write(f"\n## 🎯 Pre-Pump Evaluation (30m window)\n\n")
+    rep.write("\n## 🎯 Pre-Pump Evaluation (30m window)\n\n")
     rep.write(f"- Score: **{pp_score:.0f}/100** ({pp_tier.upper()})\n")
     rep.write(f"- Status / Stage: {pp_stage}\n")
     rep.write(f"- Safety Check: {'BLOCKED: ' + prepump_res.get('block_reason', '') if pp_blocked else 'Passed'}\n")
@@ -1642,6 +1768,42 @@ if prepump_res:
     rep.write(f"- Order Asymmetry: Avg Buy {pp_metrics.get('avg_buy', 0):.2f} SOL vs Sell {pp_metrics.get('avg_sell', 0):.2f} SOL ({pp_metrics.get('ratio', 0):.2f}×)\n")
     rep.write(f"- Pure Accumulators: {pp_metrics.get('pct_pure', 0)*100:.0f}% volume hold ({pp_metrics.get('n_pure', 0)} wallets, {pp_metrics.get('smart_count', 0)} smart wallets)\n")
     rep.write(f"- Pillars: P1 Compression={pp_pillars.get('compression', 0):.0f}/25 · P2 Asymmetry={pp_pillars.get('asymmetry', 0):.0f}/25 · P3 Accum={pp_pillars.get('accum', 0):.0f}/25 · P4 Delta={pp_pillars.get('delta', 0):.0f}/25\n")
+if pp_multi_res:
+    _conf = pp_multi_res.get("confluence", {})
+    _tfr = pp_multi_res.get("timeframes", {})
+    rep.write("\n## 🧭 Multi-Timeframe Pre-Pump Radar (30m / 1h / 4h / 12h)\n\n")
+    rep.write(f"**Confluence: {_conf.get('emoji', '➖')} {_conf.get('label', '-')}** — "
+              f"{_conf.get('desc', '')} (macro 4h/12h {_conf.get('macro_score', 0):g}/100 · "
+              f"micro 30m/1h {_conf.get('micro_score', 0):g}/100)\n\n")
+    rep.write("| Timeframe | Role | Score (0-100) | Tier | Confluence | "
+              "Compression % | Buy/Sell Ratio | Net Flow SOL | Pure Accum % | "
+              "Smart Wallets |\n")
+    rep.write("|---|---|---|---|---|---|---|---|---|---|\n")
+    for _tf in PREPUMP_TF_ORDER:
+        _r_tf = _tfr.get(_tf)
+        if not _r_tf:
+            continue
+        _m_tf = _r_tf.get("metrics", {})
+        _tier_tf = _r_tf.get("tier", "neutral")
+        _badge_tf = PREPUMP_TIER_BADGES.get(_tier_tf, "❓")
+        rep.write(f"| {_tf} | {_r_tf.get('tf_role', '-')} | "
+                  f"{_r_tf.get('score', 0):g} | {_badge_tf} {_tier_tf.upper()} | "
+                  f"{_conf.get('emoji', '➖')} {_conf.get('label', '-')} | "
+                  f"{_r_tf.get('compression_pct', 0):.1f}% | "
+                  f"{_m_tf.get('ratio', 0):.2f}× | "
+                  f"{_m_tf.get('net_sol', 0):+.2f} | "
+                  f"{_m_tf.get('pct_pure', 0)*100:.0f}% | "
+                  f"{_m_tf.get('smart_count', 0)} |\n")
+    rep.write("\n")
+    for _tf in PREPUMP_TF_ORDER:
+        _r_tf = _tfr.get(_tf)
+        if not _r_tf:
+            continue
+        _p_tf = _r_tf.get("pillars", {})
+        rep.write(f"- **{_tf}** pillars: P1 {_p_tf.get('compression', 0):.0f}/25 · "
+                  f"P2 {_p_tf.get('asymmetry', 0):.0f}/25 · "
+                  f"P3 {_p_tf.get('accum', 0):.0f}/25 · "
+                  f"P4 {_p_tf.get('delta', 0):.0f}/25 — {_r_tf.get('stage', '')}\n")
 rep.write(f"\n## Whale & Dolphin held-flow activity ({hours}h)\n\n")
 rep.write(f"- Whale held buy: {cohort_summary['whale_buy']:,.1f} SOL · "
           f"pure sell: {cohort_summary['whale_sell']:,.1f} SOL · "

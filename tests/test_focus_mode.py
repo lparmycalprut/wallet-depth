@@ -7,15 +7,27 @@ These tests pin down the behaviour so a future refactor can't silently
 re-introduce the ``NameError: ldivs`` crash or the FOCUS_MODE/Telegram
 contract (Tier 1 → Telegram, Tier 2 → signals.json only).
 """
+import importlib.util
 import json
 import os
 import sys
 import tempfile
+import types
 import unittest
 
 # Make sure the repo root is on the path when this test runs in
 # isolation (pytest -q tests/test_focus_mode.py from the repo root).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Stub heavy runtime deps when they are not installed (offline sandbox);
+# real environments keep the genuine modules untouched.
+for _m in ('requests', 'pandas', 'numpy'):
+    if _m not in sys.modules and importlib.util.find_spec(_m) is None:
+        sys.modules[_m] = types.ModuleType(_m)
+_pd = sys.modules.get('pandas')
+if _pd is not None:
+    _pd.DataFrame = getattr(_pd, 'DataFrame', object)
+    _pd.Series = getattr(_pd, 'Series', object)
 
 
 class FocusModeConfig(unittest.TestCase):

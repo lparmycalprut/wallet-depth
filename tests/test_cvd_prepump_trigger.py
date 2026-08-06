@@ -1,18 +1,45 @@
 # -*- coding: utf-8 -*-
-"""Unit tests for automatic Pre-Pump Checker trigger on the CVD page.
+"""Unit tests for automatic Pre-Pump Checker trigger on the CVD page,
+plus the multi-timeframe (30m/1h/4h/12h) radar + Telegram formatting.
 
 Run with: python3 tests/test_cvd_prepump_trigger.py
 """
+import importlib.util
 import os
 import sys
 import time
+import types
+
+# --- stub heavy runtime deps only when they are not installed -------------
+# (overwriting sys.modules unconditionally would leak bare stubs into other
+# test modules under `python -m unittest discover tests`)
+_stubbed = []
+for _m in ('requests', 'pandas', 'numpy'):
+    if _m not in sys.modules and importlib.util.find_spec(_m) is None:
+        sys.modules[_m] = types.ModuleType(_m)
+        _stubbed.append(_m)
+if 'pandas' in _stubbed:
+    pd = sys.modules['pandas']
+    pd.DataFrame = object
+    pd.Series = object
+if 'numpy' in _stubbed:
+    np = sys.modules['numpy']
+    np.ndarray = object
+    np.float64 = float
+if 'requests' in _stubbed:
+    _req = sys.modules['requests']
+    _req.get = lambda *a, **k: None
+    _req.post = lambda *a, **k: None
+    _req.exceptions = types.SimpleNamespace(RequestException=Exception)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from prepump_detector import evaluate_prepump, PREPUMP_SMART_TAGS, PREPUMP_TERMINAL_TAGS
-from signals import detect_prepump_and_record, load_signals
-from unittest.mock import patch
+from prepump_detector import (evaluate_prepump, evaluate_prepump_multi_tf,
+                              compute_confluence, format_prepump_telegram,
+                              format_prepump_digest_pill)  # noqa: E402
+from signals import detect_prepump_and_record  # noqa: E402
+from unittest.mock import patch  # noqa: E402
 
 failures = []
 
@@ -43,7 +70,8 @@ def test_cvd_page_source_wiring():
     with open(os.path.join(ROOT, "pages", "4_📊_CVD.py"), encoding="utf-8") as f:
         src = f.read()
 
-    check("from prepump_detector import evaluate_prepump" in src,
+    check("from prepump_detector import evaluate_prepump" in src or
+          "evaluate_prepump," in src,
           "imports evaluate_prepump")
     check("from signals import detect_prepump_and_record" in src,
           "imports detect_prepump_and_record")
@@ -62,9 +90,26 @@ def test_cvd_page_source_wiring():
     check("Pre-Pump Evaluation (30m window)" in src,
           "includes Pre-Pump section in export markdown report")
 
+    # --- multi-timeframe wiring ---
+    check("evaluate_prepump_multi_tf" in src,
+          "imports/calls evaluate_prepump_multi_tf")
+    check("Multi-Timeframe Pre-Pump Radar" in src,
+          "renders multi-timeframe section header")
+    check("PREPUMP_TF_ORDER" in src,
+          "references the shared timeframe order")
+    check("st.tabs(" in src,
+          "renders per-timeframe detail tabs")
+    check("Confluence" in src,
+          "renders confluence status")
+    for col in ("Score (0-100)", "Compression %", "Buy/Sell Ratio",
+                "Net Flow SOL", "Pure Accum %", "Smart Wallets"):
+        check(col in src, f"summary matrix has '{col}' column")
+    check("## 🧭 Multi-Timeframe Pre-Pump Radar (30m / 1h / 4h / 12h)" in src,
+          "export markdown includes multi-timeframe table")
+
 
 def test_prepump_checker_page_wiring():
-    print("\n[Prepump page] query param support in pages/12_🎯_Prepump_Checker.py")
+    print("\n[Prepump page] query param + multi-TF support in pages/12_🎯_Prepump_Checker.py")
     with open(os.path.join(ROOT, "pages", "12_🎯_Prepump_Checker.py"), encoding="utf-8") as f:
         src = f.read()
 
@@ -72,6 +117,16 @@ def test_prepump_checker_page_wiring():
           "reads ca query parameter")
     check("default_ca = qp_ca or" in src,
           "prefills ca_input with qp_ca if provided")
+    check("evaluate_prepump_multi_tf" in src,
+          "evaluates all four timeframes")
+    check("Matriks Multi-Timeframe" in src,
+          "renders multi-timeframe summary matrix")
+    check("st.tabs(" in src,
+          "renders per-timeframe tabs")
+    check("st.download_button" in src,
+          "offers markdown report download")
+    check("Confluence" in src,
+          "renders confluence banner")
 
 
 def test_prepump_evaluation_on_swaps():
@@ -100,6 +155,7 @@ def test_prepump_evaluation_on_swaps():
             whale_min_sol=3.0,
             wallet_tags=wtags,
             bullish_div=True,
+            full_swaps=sw,
         )
 
     check(res is not None, "evaluation returns result dict")
@@ -113,6 +169,61 @@ def test_prepump_evaluation_on_swaps():
     check("metrics" in res, "metrics dictionary present")
     check(res["metrics"]["buy_count"] == 4, f"buy count is 4 (got {res['metrics']['buy_count']})")
     check(res["metrics"]["smart_count"] >= 2, f"smart 0-sell count >= 2 (got {res['metrics']['smart_count']})")
+
+    # --- multi-timeframe attachment on the recorded result ---
+    multi = res.get("multi_tf")
+    check(multi is not None, "result carries multi_tf evaluation")
+    if multi:
+        check(set(multi.get("timeframes", {})) == {"30m", "1h", "4h", "12h"},
+              "multi_tf covers 30m/1h/4h/12h")
+        check(multi.get("primary_tf") == "30m", "primary TF is 30m")
+        check(multi.get("confluence", {}).get("status") in
+              ("golden", "dead_cat", "sleeper", "normal"),
+              f"confluence status valid ({multi.get('confluence', {}).get('status')})")
+    if dummy_sigs:
+        sig = dummy_sigs[-1]
+        check("tf_scores" in sig, "signals.json entry stores per-TF scores")
+        check("confluence" in sig, "signals.json entry stores confluence")
+
+
+def test_multi_tf_telegram_formatting():
+    print("\n[telegram] multi-TF message, confluence & digest pill")
+    now = int(time.time())
+    sw = _build_test_swaps(now)
+    wtags = {
+        "smart_w1": {"maker_tags": ["bluechip_owner"]},
+        "smart_w2": {"maker_tags": ["axiom"]},
+        "bot_w3": {"maker_tags": ["photon"]},
+    }
+    tinfo = {"symbol": "TEST", "price_usd": 0.05, "mc": 150000.0,
+             "liquidity": 42000.0}
+    multi = evaluate_prepump_multi_tf(sw, tinfo, ca="tg_ca", now_ts=now,
+                                      wallet_tags=wtags, bullish_div_h1=True)
+    primary = multi["timeframes"]["30m"]
+    msg = format_prepump_telegram(primary, "tg_ca", tinfo, multi=multi)
+
+    check("PRE-PUMP IMMINENT" in msg or "PRE-PUMP FORMING" in msg,
+          "title carries the tier badge")
+    check("Multi-TF:" in msg, "message shows the multi-TF score row")
+    check(all(tf + ":" in msg for tf in ("30m", "1h", "4h", "12h")),
+          "all four timeframes appear in the row")
+    check("Confluence:" in msg, "message shows the confluence verdict")
+    check("Order Asymmetry" in msg and "Order Flow" in msg and
+          "Pure Accumulator" in msg and "Active Terminals" in msg,
+          "on-chain signature breakdown present")
+
+    pill = format_prepump_digest_pill(multi)
+    check(pill.startswith("[") and all(tf + ":" in pill for tf in
+                                       ("30m", "1h", "4h", "12h")),
+          f"digest pill compact with all TFs ({pill})")
+
+    # digest pill inside the combined monitor digest (telegram_monitor_alerts)
+    import monitor_alerts as ma
+    digest = ma.format_combined_digest(
+        prepump=[{"symbol": "TEST", "ca": "tg_ca", "result": primary,
+                  "multi": multi}])
+    check(digest is not None and "[" in digest and pill in digest,
+          "combined monitor digest embeds the multi-TF pill")
 
 
 def test_prepump_safety_block_handling():
@@ -133,12 +244,36 @@ def test_prepump_safety_block_handling():
     check("price already +" in res.get("block_reason", ""),
           f"block reason specifies markup (got {res.get('block_reason')})")
 
+    # multi-TF respects the same safety gate on every timeframe
+    multi = evaluate_prepump_multi_tf(sw, tinfo_blocked, ca="risky_ca",
+                                      now_ts=now)
+    check(all(r.get("blocked") for r in multi["timeframes"].values()),
+          "all timeframes blocked for a risky token")
+    check(multi["confluence"]["status"] == "normal" or
+          multi["confluence"]["macro_score"] == 0.0,
+          "blocked scores do not fake a confluence")
+
+
+def test_confluence_logic():
+    print("\n[confluence] golden / dead-cat / sleeper / normal detection")
+    cases = [
+        ({"30m": 90, "1h": 40, "4h": 65, "12h": 20}, "golden"),
+        ({"30m": 85, "1h": 50, "4h": 30, "12h": 10}, "dead_cat"),
+        ({"30m": 20, "1h": 55, "4h": 70, "12h": 66}, "sleeper"),
+        ({"30m": 50, "1h": 45, "4h": 50, "12h": 40}, "normal"),
+    ]
+    for scores, want in cases:
+        got = compute_confluence(scores)["status"]
+        check(got == want, f"scores {scores} -> {want} (got {got})")
+
 
 if __name__ == "__main__":
     test_cvd_page_source_wiring()
     test_prepump_checker_page_wiring()
     test_prepump_evaluation_on_swaps()
+    test_multi_tf_telegram_formatting()
     test_prepump_safety_block_handling()
+    test_confluence_logic()
     print(f"\n{'FAILED: ' + str(len(failures)) if failures else 'ALL PASSED'}")
     for failure in failures:
         print("  -", failure)

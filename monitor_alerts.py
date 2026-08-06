@@ -20,8 +20,7 @@ Alert B — DISTRIBUTION (trigger when basis-100 shows):
 import os
 import json
 
-from cvd import (pure_accumulator_growth, pure_distributor_growth,
-                 wallet_profiles)
+from cvd import pure_accumulator_growth, pure_distributor_growth
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONV_PATH = os.path.join(BASE_DIR, "conviction.json")
@@ -325,8 +324,22 @@ def format_combined_digest(triggered=None, cleared=None, prepump=None,
             tier = r.get("tier", "?")
             score = r.get("score", "?")
             badge = "🚨" if tier == "imminent" else "👀"
+            pill = ""
+            conf_emo = ""
+            multi = e.get("multi") or r.get("multi_tf")
+            if multi:
+                # Compact per-token multi-timeframe pill + confluence emoji.
+                try:
+                    from prepump_detector import format_prepump_digest_pill
+                    pill = " " + format_prepump_digest_pill(multi)
+                except Exception:
+                    pill = ""
+                _conf = (multi.get("confluence") or {})
+                if _conf.get("status") and _conf.get("status") != "normal":
+                    conf_emo = " " + _conf.get("emoji", "")
             lines.append(
-                f"{badge} <b>${e.get('symbol','?')}</b> {score}/100 {tier} "
+                f"{badge} <b>${e.get('symbol','?')}</b> {score}/100 {tier}"
+                f"{pill}{conf_emo} "
                 f"<a href='https://dexscreener.com/solana/{e.get('ca','')}'>chart</a>"
                 f" | <a href='https://gmgn.ai/sol/token/{e.get('ca','')}'>GMGN</a>")
         lines.append("")
