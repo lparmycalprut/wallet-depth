@@ -7,6 +7,65 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-06 — Multi-Timeframe Pre-Pump Radar (30m/1h/4h/12h) + Telegram multi-TF
+
+### Yang berubah
+
+1. **`prepump_detector.py`** — `evaluate_prepump()` diperluas dengan
+   parameter per-timeframe (`sub_window_min`, `terminal_min`, `min_buy`,
+   `large_dump_sol`, `absorp_mult`, `bullish_div_h4`, `tf`); default-nya
+   mereproduksi kalibrasi 30m lama 1:1. Baru: `PREPUMP_TF_CONFIGS` (30m
+   Micro Ignition · 1h Hourly Setup · 4h Swing/Wyckoff · 12h Macro Cycle),
+   `evaluate_prepump_multi_tf()`, `compute_confluence()`
+   (🌟 GOLDEN / 🪤 DEAD CAT / ⏳ SLEEPER / ➖ NORMAL), helper format
+   `format_multi_tf_line()`, `format_confluence_line()`,
+   `format_prepump_digest_pill()`. Metrics baru: `vol_sub_window`,
+   `net_sub_sol`, `min_buy`, `large_dump_sol`, `absorp_target_sol`
+   (key lama `vol_15m`/`vol_30m` dipertahankan untuk kompatibilitas).
+2. **Telegram** — `format_prepump_telegram()` kini berjudul badge tier
+   (🚨 PRE-PUMP IMMINENT / 👀 PRE-PUMP FORMING) dan menyertakan baris
+   `📊 Multi-TF: [30m: 90/100 🚨 | 1h: 78/100 🚨 | 4h: 65/100 👀 | 12h: 58/100 👀]`
+   + `🎯 Confluence: 🌟 GOLDEN CONFLUENCE (...)` bila hasil multi-TF
+   tersedia; breakdown on-chain signature diperjelas (asymmetry ratio,
+   order flow, pure accum %, smart 0-sell, active terminals). Digest
+   (`monitor_alerts.format_combined_digest` +
+   `format_prepump_combined_digest`) menampilkan pill multi-TF ringkas
+   per token + emoji confluence.
+3. **`signals.detect_prepump_and_record()`** — menempelkan hasil multi-TF
+   (`result['multi_tf']`, sumber swap store lokal 72h tanpa RPC) ke entry
+   `signals.json` (`tf_scores`, `confluence`) dan pesan Telegram. Gating
+   alert TIDAK berubah (tetap primary 30m).
+4. **`telegram_monitor_alerts.py`** — blok pre-pump memakai
+   `evaluate_prepump_multi_tf()` atas swap 72h; state anti-spam tetap pakai
+   skor/tier 30m; `--dry` mencetak preview pesan penuh format baru; log
+   mencantumkan skor semua TF + confluence.
+5. **UI** — `pages/4_📊_CVD.py`: section "🧭 Multi-Timeframe Pre-Pump
+   Radar" (banner confluence, matriks ringkasan 4 TF, tab detail per TF
+   dengan breakdown 4 pilar + metrik spesifik TF, tabel multi-TF di export
+   Markdown). `pages/12_🎯_Prepump_Checker.py`: full multi-TF (matriks,
+   tabs, download report Markdown).
+6. **`scripts/update_cvd.py`** — cron membaca swap 72h sekali untuk multi-TF
+   + divergence H4 opsional; log prepump menyertakan emoji confluence.
+7. **Perbaikan test pre-existing** (drift vs kode, semua gagal juga di base
+   commit): `test_cvd_update.py` (retensi 48h→72h + dedup store),
+   `test_fetch_reliability.py` (first backfill 72h + ladder 72h→12h→3h→1h +
+   jalur partial recovery kini diuji eksplisit), stub `requests/pandas/numpy`
+   di semua test dibuat *guarded* (hanya saat paket benar-benar tidak
+   terinstal) supaya tidak mencemari modul lain saat
+   `python -m unittest discover tests`.
+
+### Verifikasi
+
+- 26/26 test suite PASS sebagai script; `python -m unittest discover tests`
+  → **OK (52 tests)**.
+- Regresi kalibrasi 30m: fixture lama tetap score 100/100 tier imminent.
+- Smoke test UI: `pages/12` dirender via `streamlit.testing.v1.AppTest`
+  dengan query `?ca=` → matriks 4 TF + 4 tabs + download button, tanpa
+  exception; `run_once` `telegram_monitor_alerts.py --dry` disimulasikan
+  offline → digest berisi pill multi-TF + preview pesan penuh.
+
+---
+
 ## 2026-08-06 — Pre-Pump follow-ups: sidebar radar, cleared notice, combined digest
 
 ### Yang berubah

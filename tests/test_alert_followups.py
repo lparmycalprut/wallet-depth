@@ -13,24 +13,34 @@ import types
 import tempfile
 import json
 
-# Stub heavy deps before any project import.
+import importlib.util
+
+# Stub heavy deps before any project import — only when they are truly
+# missing, so the bare stubs never leak into other test modules under
+# `python -m unittest discover tests`.
+_stubbed = []
 for _m in ('requests', 'pandas', 'numpy'):
-    sys.modules[_m] = types.ModuleType(_m)
-pd = sys.modules['pandas']
-pd.DataFrame = object
-pd.Series = object
-pd.Timestamp = object
-pd.to_datetime = lambda *a, **k: None
-pd.read_json = lambda *a, **k: None
-pd.concat = lambda *a, **k: None
-np = sys.modules['numpy']
-np.ndarray = object
-np.array = lambda *a, **k: None
-np.float64 = float
-_req = sys.modules['requests']
-_req.get = lambda *a, **k: None
-_req.post = lambda *a, **k: None
-_req.exceptions = types.SimpleNamespace(RequestException=Exception)
+    if _m not in sys.modules and importlib.util.find_spec(_m) is None:
+        sys.modules[_m] = types.ModuleType(_m)
+        _stubbed.append(_m)
+if 'pandas' in _stubbed:
+    pd = sys.modules['pandas']
+    pd.DataFrame = object
+    pd.Series = object
+    pd.Timestamp = object
+    pd.to_datetime = lambda *a, **k: None
+    pd.read_json = lambda *a, **k: None
+    pd.concat = lambda *a, **k: None
+if 'numpy' in _stubbed:
+    np = sys.modules['numpy']
+    np.ndarray = object
+    np.array = lambda *a, **k: None
+    np.float64 = float
+if 'requests' in _stubbed:
+    _req = sys.modules['requests']
+    _req.get = lambda *a, **k: None
+    _req.post = lambda *a, **k: None
+    _req.exceptions = types.SimpleNamespace(RequestException=Exception)
 
 sys.path.insert(0, os.path.abspath('.'))
 

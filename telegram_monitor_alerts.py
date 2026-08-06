@@ -177,12 +177,19 @@ def run_once(args):
             if not args.dry:
                 state[ca + '|' + kind] = entry
 
-        # ---- Pre-Pump radar (same digest cycle) ----
+        # ---- Pre-Pump radar, multi-timeframe (same digest cycle) ----
         try:
-            from prepump_detector import evaluate_prepump as _epp
-            _sw = get_recent_swaps(ca, hours=1)
-            _pp = _epp(_sw, {'symbol': res['symbol']}, ca=ca,
-                       now_ts=int(time.time()), window_min=30)
+            from prepump_detector import evaluate_prepump_multi_tf as _epmtf
+            # Swap store keeps 72h, so one local read covers all 4 TFs
+            # (12h window + 48h prior baseline = 60h) with no extra RPC.
+            _sw = get_recent_swaps(ca, hours=72)
+            _multi = _epmtf(_sw, {'symbol': res['symbol']}, ca=ca,
+                            now_ts=int(time.time()))
+            # Primary row keeps the legacy 30m timing meaning for the
+            # anti-spam state + cleared detection below.
+            _pp = (_multi.get('timeframes') or {}).get(
+                _multi.get('primary_tf', '30m')) or {}
+            _pp['multi_tf'] = _multi
             _is_trig = bool(_pp and _pp.get('score', 0) >= 55 and
                             _pp.get('tier') in ('imminent', 'forming'))
             _key = ca + '|prepump'
@@ -208,9 +215,14 @@ def run_once(args):
                     digest_prepump.append({
                         'symbol': res['symbol'], 'ca': ca,
                         'result': _pp, 'token_info': {'symbol': res['symbol']},
+                        'multi': _multi,
                     })
-                    print('[prepump] queued %s %s/100 %s (%s)' % (
-                        res['symbol'], _pp.get('score'), _pp.get('tier'), _why))
+                    _conf = (_multi.get('confluence') or {})
+                    print('[prepump] queued %s %s/100 %s (%s) scores=%s '
+                          'confluence=%s' % (
+                              res['symbol'], _pp.get('score'), _pp.get('tier'),
+                              _why, _multi.get('scores'),
+                              _conf.get('label', '-')))
                 else:
                     print('[prepump] suppressed %s (%s)' % (res['symbol'], _why))
                 if not args.dry:
@@ -247,6 +259,17 @@ def run_once(args):
                     txt = ma.format_cleared_alert(
                         c['symbol'], c['ca'], c['rows'], c['kind'], c.get('prev_result'))
                     print('--- cleared preview ---')
+                    print(txt)
+                except Exception:
+                    pass
+            # preview the full multi-timeframe pre-pump message per token
+            for e in digest_prepump:
+                try:
+                    from prepump_detector import format_prepump_telegram
+                    txt = format_prepump_telegram(
+                        e['result'], e['ca'], e.get('token_info'),
+                        multi=e.get('multi'))
+                    print('--- prepump preview (%s) ---' % e['symbol'])
                     print(txt)
                 except Exception:
                     pass

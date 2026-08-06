@@ -39,9 +39,10 @@ buktikan kalibrasinya tidak bergeser (lihat §5).
 | `breakout_guard.py` | **Breakout Guard**: level D1 + konfirmasi close H4 |
 | `breakout_log.py` | log event level → `breakouts.json` |
 | `signals.py` | log sinyal CVD/pre-pump → `signals.json` + Telegram (digest mode di cron) |
+| `prepump_detector.py` | **Pre-Pump Radar**: 4 pilar 25-poin + **multi-timeframe 30m/1h/4h/12h** + confluence (lihat §7.60) |
 | `watchlist.py` | watchlist helpers (load/save/add/remove + GitHub commit) |
 | `scripts/update_cvd.py` | entry point cron (tiap jam, menit :20) |
-| `tests/` | 19 suite, **jalan tanpa pytest & tanpa jaringan** |
+| `tests/` | 26 suite, **jalan tanpa pytest & tanpa jaringan** |
 
 **File data yang di-commit cron** (jangan di-`.gitignore`):
 `cvd.json` · `signals.json` · `conviction.json` · `levels.json` ·
@@ -507,6 +508,44 @@ Jebakan yang sudah pernah menggigit:
   cross-pair `Cyclospora / MEMIPEDE` yang likuiditasnya lebih besar dari
   pair MEMIPEDE/SOL. Ekspektasi: CVD memilih pair MEMIPEDE/SOL serta nama,
   simbol, dan harga MEMIPEDE; pair yang tidak mengandung CA ditolak.
+
+## 7.60 Multi-Timeframe Pre-Pump Radar — 30m/1h/4h/12h + confluence (2026-08-06)
+
+- `prepump_detector.evaluate_prepump()` tetap menyimpan **kalibrasi 30m
+  lama 1:1** lewat default parameternya (sub-window 15m, terminal 10m,
+  min_buy 3, large-dump 1 SOL, absorpsi ×1). Jangan mengubah default itu
+  tanpa membuktikan `tests/test_prepump_detector.py` masih 100/100.
+- `prepump_detector.evaluate_prepump_multi_tf()` mengevaluasi 4 timeframe
+  dari `PREPUMP_TF_CONFIGS`:
+  - `30m` Micro Ignition/Timing — window 30m, baseline 4h, sub 15m, terminal
+    10m, min 3 buys, dump ≥1 SOL.
+  - `1h` Hourly Setup — window 60m, baseline 8h, sub 30m, terminal 20m, min
+    5 buys, dump ≥2 SOL.
+  - `4h` Swing/Wyckoff — window 240m, baseline 24h, sub 120m, terminal 60m,
+    min 12 buys, dump ≥5 SOL.
+  - `12h` Macro Cycle — window 720m, baseline 48h, sub 360m, terminal 180m,
+    min 25 buys, dump ≥10 SOL.
+  Target serapan P3 = tier low/mid/high cap (3/10/25 SOL) × multiplier TF
+  (×1/×2/×6/×12).
+- **Confluence** (`compute_confluence`, preseden dari atas):
+  🌟 GOLDEN (macro 4h/12h ≥60 & micro 30m/1h ≥75) →
+  🪤 DEAD CAT (30m ≥70 tapi macro <35) →
+  ⏳ SLEEPER (macro ≥65 tapi 30m <40) → ➖ NORMAL/FORMING.
+- **Alert gating Telegram TIDAK berubah**: tetap skor primary 30m (≥75
+  imminent / 55-74 forming). Multi-TF hanya memperkaya pesan
+  (`format_prepump_telegram(..., multi=...)`: baris
+  `📊 Multi-TF: [30m: x/100 🚨 | ...]` + `🎯 Confluence: ...`), entry
+  `signals.json` (`tf_scores` + `confluence`), dan digest
+  (`format_prepump_digest_pill` → `[30m:90🚨 1h:78🚨 4h:65👀 12h:58👀]` di
+  `monitor_alerts.format_combined_digest` + `format_prepump_combined_digest`).
+- Sumber data multi-TF = swap store lokal 72h (`get_recent_swaps(ca, 72)`),
+  tanpa RPC tambahan; 12h window + 48h baseline = 60h pas dalam retensi.
+- UI: `pages/4_📊_CVD.py` (matriks ringkasan + tab per TF + tabel di
+  export Markdown) dan `pages/12_🎯_Prepump_Checker.py` (matriks + tabs +
+  `st.download_button` report MD).
+- Regression: `tests/test_prepump_detector.py` (struktur multi-TF, gate
+  min-buy/large-dump per TF, skala absorpsi, confluence, format Telegram),
+  `tests/test_cvd_prepump_trigger.py` (wiring UI + signals + digest pill).
 
 ## 8. Status & langkah berikutnya
 

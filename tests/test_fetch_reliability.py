@@ -231,8 +231,10 @@ def test_first_backfill_shrinks_window_on_safety_cap():
     windows = [now - call["stop_ts"] for call in fetch_calls]
     check(all(call["stop_sig"] is None for call in fetch_calls),
           "backfill retries never use a signature cursor")
-    check(abs(windows[0] - 48 * 3600) <= 60,
-          "first attempt keeps the regular 48h cutoff")
+    # First backfill walks the full 72h raw-store retention window (raised
+    # from 48h when the swap store grew to 72h — see AGENTS.md §2.5).
+    check(abs(windows[0] - 72 * 3600) <= 60,
+          "first attempt keeps the regular 72h cutoff")
     check(abs(windows[1] - 12 * 3600) <= 60,
           "second attempt shrinks the cutoff to 12h")
     check(abs(windows[2] - 3 * 3600) <= 60,
@@ -276,6 +278,51 @@ def test_incremental_update_never_shrinks_window():
           "incremental update keeps the stored cursor time as its cutoff")
     check(result["fetch_ok"] is False and result["gap"] is True,
           "capped incremental update is still reported as a failed fetch")
+    # Safety-cap with non-empty partial swaps now triggers partial-walk
+    # recovery (documented in update_token_cvd): partial swaps/buckets are
+    # persisted with gap + history_gap markers and the cursor moves to the
+    # OLDEST visible trade, so the next run refetches the in-between window
+    # instead of leaving a silent hole.
+    check(result.get("partial") is True and result.get("history_gap") is True,
+          "capped incremental update marks the partial recovery explicitly")
+    check(saved.get("history_gap") is True and saved.get("gap") is True,
+          "partial recovery is flagged on the stored entry")
+    check(fetched[0] in [tuple(s) for s in saved["swaps"]],
+          "partial swaps are persisted (deduplicated) for the next run")
+    check(saved["newest_ts"] == fetched[0][2],
+          "cursor points at the oldest visible trade, not blindly forward")
+
+
+def test_incremental_cap_without_swaps_keeps_state_intact():
+    print("\n[CVD backfill] capped incremental with zero usable swaps keeps state")
+    now = int(time.time())
+    ca = "known-ca"
+    initial = {ca: _entry(now)}
+    fetch_calls = []
+
+    _reset_cvd_cache()
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "cvd.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(initial, handle)
+        with patch.object(cvd, "CVD_PATH", path), \
+                patch.object(
+                    cvd, "fetch_swaps",
+                    side_effect=_fake_gmgn_fetch_recorder(
+                        fetch_calls, ([], None, now, False))), \
+                patch.object(cvd, "get_gmgn_fetch_status",
+                             side_effect=[_cap_status(), _cap_status()]):
+            result = cvd.update_token_cvd(
+                (), ca, "", max_pages=80, use_gmgn=True)
+        with open(path, "r", encoding="utf-8") as handle:
+            saved = json.load(handle)[ca]
+
+    check(len(fetch_calls) == 1,
+          "no shrunk retry for an incremental update without partial swaps")
+    check(result["fetch_ok"] is False and result["gap"] is True,
+          "still reported as a failed fetch")
+    check(result.get("partial") is not True,
+          "no partial recovery when there is nothing usable to persist")
     check(saved["newest_sig"] == "known-cursor" and
           saved["swaps"] == initial[ca]["swaps"] and
           saved["buckets"] == initial[ca]["buckets"],
@@ -286,7 +333,9 @@ def test_first_backfill_all_windows_failed_keeps_gap_state():
     print("\n[CVD backfill] when every shrunk window fails, gap state is kept")
     now = int(time.time())
     ca = "hopeless-ca"
-    fetched = [("buy", 4.0, now - 120, "whale-wallet")]
+    # Every window comes back EMPTY so the partial-walk recovery path has
+    # nothing to persist — the token must stay in a clean gap state.
+    fetched = []
     fetch_calls = []
 
     _reset_cvd_cache()
@@ -306,11 +355,11 @@ def test_first_backfill_all_windows_failed_keeps_gap_state():
             saved = json.load(handle)[ca]
 
     check(len(fetch_calls) == 4,
-          "48h, 12h, 3h and 1h windows are each attempted exactly once")
-    expected = sorted((48 * 3600, 12 * 3600, 3 * 3600, 1 * 3600))
+          "72h, 12h, 3h and 1h windows are each attempted exactly once")
+    expected = sorted((72 * 3600, 12 * 3600, 3 * 3600, 1 * 3600))
     windows = sorted(now - call["stop_ts"] for call in fetch_calls)
     check(all(abs(w - e) <= 60 for w, e in zip(windows, expected)),
-          "retry walks the fixed 48h -> 12h -> 3h -> 1h ladder")
+          "retry walks the fixed 72h -> 12h -> 3h -> 1h ladder")
     check(result["fetch_ok"] is False and result["gap"] is True,
           "an all-attempts failure is still reported as a failed fetch")
     check(saved.get("gap") is True,
