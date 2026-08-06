@@ -342,6 +342,28 @@
    "sells24": 885,
    "vol24": 65032.21,
    "source": "cron-daily (DexScreener+GMGN)"
+  },
+  "2026-08-06": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 39348.0,
+   "price": 4.092e-05,
+   "tiers": {},
+   "ts": "2026-08-06T03:49:34",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 55.19,
+   "symbol": "looong",
+   "name": "looong",
+   "buys24": 824,
+   "sells24": 867,
+   "vol24": 69061.96,
+   "source": "cron-daily (DexScreener+GMGN)"
   }
  },
  "3VK1F5r5aykheirDsqJYTsYKzgYxmmvcjQEB1Y5opump": {
@@ -816,6 +838,28 @@
    "sells24": 673,
    "vol24": 88525.07,
    "source": "cron-daily (DexScreener+GMGN)"
+  },
+  "2026-08-06": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 160656.0,
+   "price": 0.0001606,
+   "tiers": {},
+   "ts": "2026-08-06T03:49:35",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 21.75,
+   "symbol": "MEMIPEDE",
+   "name": "MEMIPEDE",
+   "buys24": 588,
+   "sells24": 462,
+   "vol24": 46012.91,
+   "source": "cron-daily (DexScreener+GMGN)"
   }
  },
  "4FnZDvrkvEJf1MLZrcDKCMeSjuVx5BsHuKWqm3b6pump": {
@@ -1023,6 +1067,28 @@
    "buys24": 724,
    "sells24": 818,
    "vol24": 61481.59,
+   "source": "cron-daily (DexScreener+GMGN)"
+  },
+  "2026-08-06": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 89022.0,
+   "price": 9.259e-05,
+   "tiers": {},
+   "ts": "2026-08-06T03:49:34",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 30.14,
+   "symbol": "RYDER",
+   "name": "The American hero",
+   "buys24": 584,
+   "sells24": 723,
+   "vol24": 57728.72,
    "source": "cron-daily (DexScreener+GMGN)"
   }
  },
