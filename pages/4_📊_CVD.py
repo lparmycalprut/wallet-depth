@@ -35,6 +35,8 @@ from cvd import (MIN_SOL, WHALE_SOL, analysis_windows, classify_holders,
                  wallet_profiles)
 from monitor_alerts import (build_monitor_rows,
                            detect_stealth_accumulation, detect_distribution)
+from prepump_detector import evaluate_prepump, compute_bullish_div
+from signals import detect_prepump_and_record
 
 st.set_page_config(page_title="CVD Analysis", page_icon="📊",
                    layout="wide", initial_sidebar_state="collapsed")
@@ -590,6 +592,141 @@ if pser and all(p is not None for p in pser) and len(pser) >= 7:
             ("📈 " if d["type"] == "bullish" else "📉 ") + "**" +
             d["kind"].upper() + " " + d["type"].upper() + f" ({src})** — " +
             d["detail"])
+
+# ---------------------------------------------------------------------------
+# 🎯 Automatic Pre-Pump Trigger & Evaluation (30m window)
+# ---------------------------------------------------------------------------
+_wmeta = get_gmgn_wallet_metadata()
+_has_bullish_div = any(d.get("type") == "bullish" for d in divs) if ("divs" in locals() and divs) else False
+if not _has_bullish_div and pool:
+    try:
+        _has_bullish_div = compute_bullish_div(ca, pool)
+    except Exception:
+        pass
+
+_pp_token_info = {
+    "symbol": symbol,
+    "price_usd": price_now,
+    "mc": mc_now,
+}
+
+try:
+    prepump_res = detect_prepump_and_record(
+        ca, symbol, swaps_all,
+        token_info=_pp_token_info,
+        now_ts=int(now_ts),
+        src="analyze",
+        window_min=30,
+        whale_min_sol=WHALE_SOL,
+        wallet_tags=_wmeta,
+        bullish_div=_has_bullish_div,
+        pool=pool,
+    )
+except Exception:
+    try:
+        prepump_res = evaluate_prepump(
+            swaps_all,
+            token_info=_pp_token_info,
+            ca=ca,
+            now_ts=int(now_ts),
+            window_min=30,
+            whale_min_sol=WHALE_SOL,
+            wallet_tags=_wmeta,
+            bullish_div=_has_bullish_div,
+        )
+    except Exception:
+        prepump_res = None
+
+if prepump_res:
+    st.markdown("#### 🎯 Pre-Pump Radar & Checker (30m window)")
+    st.caption("Otomatis dievaluasi saat check CVD selesai: Volume Compression & Seller Exhaustion, "
+               "Order-Flow Size Asymmetry, Pure Accumulator Conviction, dan Order-Flow Delta / Ignition. "
+               "🎯 Imminent ≥75 · 👀 Forming 55–74 · ➖ Neutral <55.")
+
+    pp_score = float(prepump_res.get("score", 0))
+    pp_tier = prepump_res.get("tier", "neutral")
+    pp_blocked = prepump_res.get("blocked", False)
+    pp_stage = prepump_res.get("stage", "")
+    pp_comp = float(prepump_res.get("compression_pct", 0))
+    pp_pillars = prepump_res.get("pillars", {})
+    pp_metrics = prepump_res.get("metrics", {})
+    pp_reasons = prepump_res.get("reasons", {})
+
+    badge_color = {
+        "imminent": "#ef4444",
+        "forming": "#fb923c",
+        "neutral": "#64748b",
+        "blocked": "#9ca3af",
+    }.get(pp_tier, "#94a3b8")
+    tier_emoji = {
+        "imminent": "🚨",
+        "forming": "👀",
+        "neutral": "➖",
+        "blocked": "🚫",
+    }.get(pp_tier, "❓")
+
+    pp_col1, pp_col2 = st.columns([1, 1])
+    with pp_col1:
+        st.markdown(
+            f"""
+            <div style="padding:12px 16px;border-radius:10px;background:{badge_color}18;border-left:5px solid {badge_color};margin-bottom:8px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <h3 style="margin:0;color:{badge_color};font-size:1.15rem;">{tier_emoji} {pp_tier.upper()}</h3>
+                    <span style="font-size:1.25rem;font-weight:700;color:{badge_color};">{pp_score:.0f}/100</span>
+                </div>
+                <p style="margin:4px 0 0;font-size:0.88rem;color:#334155;"><b>Status:</b> {pp_stage}</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if pp_blocked:
+            st.error(f"🚫 **Safety Blocked**: {prepump_res.get('block_reason', '')}")
+        else:
+            st.success("✅ **Safety Check**: Lolos (rug, markup, & likuiditas)")
+
+    with pp_col2:
+        pm1, pm2 = st.columns(2)
+        pm1.write(f"📉 **Compression:** `{pp_comp:.1f}%`")
+        pm1.write(f"⚖️ **Avg Buy/Sell:** `{pp_metrics.get('avg_buy', 0):.2f}` / `{pp_metrics.get('avg_sell', 0):.2f}` SOL (`{pp_metrics.get('ratio', 0):.1f}×`)")
+        pm1.write(f"🐋 **Whale Dumper:** `{'Ya ⚠️' if pp_metrics.get('whale_dumper') else 'Tidak ✅'}`")
+
+        pm2.write(f"💰 **Flow 30m:** Net `{pp_metrics.get('net_sol', 0):+.2f}` SOL (B `{pp_metrics.get('buy_vol', 0):.1f}` / S `{pp_metrics.get('sell_vol', 0):.1f}`)")
+        pm2.write(f"💎 **Pure Accum:** `{pp_metrics.get('pct_pure', 0)*100:.0f}%` ({pp_metrics.get('n_pure', 0)} wallet)")
+        _active_terms = ", ".join(pp_metrics.get('active_terminals', [])) or "—"
+        pm2.write(f"🔥 **Smart / Terminals:** `{pp_metrics.get('smart_count', 0)}` smart | `{_active_terms}`")
+
+    # 4 Pilar Breakdown
+    st.markdown("##### 📊 Breakdown 4 Pilar Pre-Pump")
+    pcols = st.columns(4)
+    for idx, (label, key, icon, desc) in enumerate([
+        ("Compression", "compression", "📉", "Vol drop vs 4h baseline & no large dump"),
+        ("Asymmetry", "asymmetry", "⚖️", "Avg buy vs avg sell ratio (MEV clean)"),
+        ("Accumulation", "accum", "🐋", "Pure accumulator share & smart holders"),
+        ("Ignition / Delta", "delta", "🔥", "Positive flow delta & terminal bots"),
+    ]):
+        val = float(pp_pillars.get(key, 0))
+        with pcols[idx]:
+            st.metric(
+                label=f"{icon} {label}",
+                value=f"{val:.0f}/25",
+                help=f"{desc} | {pp_reasons.get(key, '')}",
+            )
+
+    with st.expander("🔍 Detail Metrics Pre-Pump (JSON)", expanded=False):
+        st.json({
+            "score": pp_score,
+            "tier": pp_tier,
+            "stage": pp_stage,
+            "blocked": pp_blocked,
+            "block_reason": prepump_res.get("block_reason", ""),
+            "compression_pct": pp_comp,
+            "bullish_div": prepump_res.get("bullish_div", False),
+            "pillars": pp_pillars,
+            "metrics": pp_metrics,
+            "reasons": pp_reasons,
+            "smart_tags_found": prepump_res.get("smart_tags_found", []),
+            "token_info": prepump_res.get("token_info", {}),
+        })
 
 # Advanced divergence: price vs wallet-profile cohort CVD.  This keeps the
 # old All/Whale-swap divergence intact, then adds a lower-noise explanation
@@ -1496,6 +1633,15 @@ if cohort_div_lines:
     rep.write(f"\n## Advanced cohort divergences (H1, {hours}h)\n\n")
     for line in cohort_div_lines:
         rep.write(f"- {line}\n")
+if prepump_res:
+    rep.write(f"\n## 🎯 Pre-Pump Evaluation (30m window)\n\n")
+    rep.write(f"- Score: **{pp_score:.0f}/100** ({pp_tier.upper()})\n")
+    rep.write(f"- Status / Stage: {pp_stage}\n")
+    rep.write(f"- Safety Check: {'BLOCKED: ' + prepump_res.get('block_reason', '') if pp_blocked else 'Passed'}\n")
+    rep.write(f"- Compression: {pp_comp:.1f}% · Net Flow (30m): {pp_metrics.get('net_sol', 0):+.2f} SOL (Buy: {pp_metrics.get('buy_vol', 0):.2f}, Sell: {pp_metrics.get('sell_vol', 0):.2f})\n")
+    rep.write(f"- Order Asymmetry: Avg Buy {pp_metrics.get('avg_buy', 0):.2f} SOL vs Sell {pp_metrics.get('avg_sell', 0):.2f} SOL ({pp_metrics.get('ratio', 0):.2f}×)\n")
+    rep.write(f"- Pure Accumulators: {pp_metrics.get('pct_pure', 0)*100:.0f}% volume hold ({pp_metrics.get('n_pure', 0)} wallets, {pp_metrics.get('smart_count', 0)} smart wallets)\n")
+    rep.write(f"- Pillars: P1 Compression={pp_pillars.get('compression', 0):.0f}/25 · P2 Asymmetry={pp_pillars.get('asymmetry', 0):.0f}/25 · P3 Accum={pp_pillars.get('accum', 0):.0f}/25 · P4 Delta={pp_pillars.get('delta', 0):.0f}/25\n")
 rep.write(f"\n## Whale & Dolphin held-flow activity ({hours}h)\n\n")
 rep.write(f"- Whale held buy: {cohort_summary['whale_buy']:,.1f} SOL · "
           f"pure sell: {cohort_summary['whale_sell']:,.1f} SOL · "

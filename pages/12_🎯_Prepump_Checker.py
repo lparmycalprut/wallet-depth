@@ -25,9 +25,11 @@ st.markdown("# 🎯 Prepump Checker")
 st.caption("Manual cek fase pre-pump (30m window) dari data CVD lokal. Lihat DISABLED.md jika mencari halaman yang dimatikan.")
 
 # --- Input ---
+qp_ca = st.query_params.get("ca", "").strip()
+default_ca = qp_ca or "AkchGAUdXXRGHt3HXaHbTvw3JLGUwtJRmYnkG66wpump"
 col_c, col_btn = st.columns([3, 1])
-ca_input = col_c.text_input("Contract Address (CA)", placeholder="AkchGAUd... atau CA lain", value="AkchGAUdXXRGHt3HXaHbTvw3JLGUwtJRmYnkG66wpump")
-check_now = col_btn.button("Cek Prepump", type="primary")
+ca_input = col_c.text_input("Contract Address (CA)", placeholder="AkchGAUd... atau CA lain", value=default_ca)
+check_now = col_btn.button("Cek Prepump", type="primary") or bool(qp_ca)
 
 # --- Helper ---
 @st.cache_data(ttl=60, show_spinner=False)
