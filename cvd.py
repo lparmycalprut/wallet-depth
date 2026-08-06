@@ -1212,6 +1212,66 @@ def pure_accumulator_growth(swaps, profiles=None, *, min_buy_sol=0.1,
             "wallets": sorted(rows, key=lambda r: -float(r[1].get("buy") or 0)),
             "series": series}
 
+def pure_distributor_growth(swaps, profiles=None, *, min_sell_sol=0.1,
+                            buy_tol=0.10, start_ts=None, end_ts=None,
+                            bucket_s=4 * 3600) -> dict:
+    """Return four-hour growth for every wallet that sold and left.
+
+    Mirror of :func:`pure_accumulator_growth` for the sell side: a wallet
+    qualifies when it sold at least ``min_sell_sol`` and bought no more than
+    ``buy_tol`` (default 10%) of its sell inside the window. Buckets are
+    anchored on each qualified wallet's FIRST SELL time, so the series
+    measures how many fresh distributors appeared per bucket — the
+    companion signal to pure accumulator growth used by the monitoring
+    charts and the distribution alert.
+    """
+    swaps = list(swaps or [])
+    if not swaps:
+        return {"count": 0, "total_sell": 0.0, "total_buy": 0.0,
+                "wallets": [], "series": []}
+    profiles = profiles or wallet_profiles(swaps)
+    if start_ts is None:
+        start_ts = min(int(s[2]) for s in swaps)
+    if end_ts is None:
+        end_ts = max(int(s[2]) for s in swaps)
+    qualified = {
+        w for w, d in profiles.items()
+        if float(d.get("sell") or 0) >= min_sell_sol
+        and float(d.get("buy") or 0) <= float(d.get("sell") or 0) * buy_tol
+    }
+    first_sell, sell_by_bucket, new_by_bucket = {}, {}, {}
+    for side, sol, ts, wallet in swaps:
+        if side != "sell" or wallet not in qualified:
+            continue
+        ts, sol = int(ts), float(sol)
+        bucket = (ts // bucket_s) * bucket_s
+        sell_by_bucket[bucket] = sell_by_bucket.get(bucket, 0.0) + sol
+        first_sell[wallet] = min(first_sell.get(wallet, ts), ts)
+    for ts in first_sell.values():
+        bucket = (ts // bucket_s) * bucket_s
+        new_by_bucket[bucket] = new_by_bucket.get(bucket, 0) + 1
+    series, cum_wallets, cum_sell = [], 0, 0.0
+    bucket, last = ((int(start_ts) // bucket_s) * bucket_s,
+                    (int(end_ts) // bucket_s) * bucket_s)
+    while bucket <= last:
+        cum_wallets += new_by_bucket.get(bucket, 0)
+        cum_sell += sell_by_bucket.get(bucket, 0.0)
+        series.append({"bucket_ts": bucket,
+                       "new_wallets": new_by_bucket.get(bucket, 0),
+                       "sell_sol": round(sell_by_bucket.get(bucket, 0.0), 4),
+                       "cum_wallets": cum_wallets,
+                       "cum_sell_sol": round(cum_sell, 4)})
+        bucket += bucket_s
+    rows = [(w, profiles[w], first_sell.get(w)) for w in qualified]
+    return {"count": len(qualified),
+            "total_sell": round(sum(float(profiles[w].get("sell") or 0)
+                                    for w in qualified), 4),
+            "total_buy": round(sum(float(profiles[w].get("buy") or 0)
+                                   for w in qualified), 4),
+            "wallets": sorted(rows, key=lambda r: -float(r[1].get("sell") or 0)),
+            "series": series}
+
+
 def fresh_wallet_growth(swaps, profiles, wallet_ages, *,
                         max_age_days=7.0, sell_tol=0.10,
                         min_buy_sol=0.0, start_ts=None, end_ts=None,

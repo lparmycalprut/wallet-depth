@@ -29,10 +29,12 @@ from cvd import (MIN_SOL, WHALE_SOL, analysis_windows, classify_holders,
                  conviction_split, detect_cohort_divergences,
                  detect_divergence, detect_no_buy_holders,
                  filter_swaps_by_time, fresh_wallet_growth,
-                 pure_accumulator_growth,
+                 pure_accumulator_growth, pure_distributor_growth,
                  get_gmgn_wallet_metadata,
                  split_wallet_profile_cohorts, summarize_swap_range,
                  wallet_profiles)
+from monitor_alerts import (build_monitor_rows,
+                           detect_stealth_accumulation, detect_distribution)
 
 st.set_page_config(page_title="CVD Analysis", page_icon="📊",
                    layout="wide", initial_sidebar_state="collapsed")
@@ -966,39 +968,11 @@ else:
 # Four-hour monitoring dashboard — all series use the same requested window.
 # ---------------------------------------------------------------------------
 _mon_bin_h = int((CONFIG or {}).get("monitor_bin_h", 4) or 4)
-monitor = pure_accumulator_growth(
-    swaps_all, full_profiles, min_buy_sol=0.1, sell_tol=0.10,
-    start_ts=min((int(x[2]) for x in swaps_all), default=now_ts),
-    end_ts=now_ts, bucket_s=_mon_bin_h * 3600)
-conv_hist_path = os.path.join(BASE, "conviction.json")
-try:
-    with open(conv_hist_path, "r", encoding="utf-8") as _f:
-        conv_points = [p for p in (json.load(_f).get(ca, []))
-                       if int(p.get("ts") or 0) >= now_ts - hours * 3600]
-except (OSError, ValueError, AttributeError):
-    conv_points = []
-
-bucket_start = (int(min((int(x[2]) for x in swaps_all), default=now_ts)) // (_mon_bin_h * 3600)) * (_mon_bin_h * 3600)
-bucket_end = (int(now_ts) // (_mon_bin_h * 3600)) * (_mon_bin_h * 3600)
-tx_buckets = {}
-for _side, _sol, _ts, _wallet in swaps_all:
-    _bucket = (int(_ts) // (_mon_bin_h * 3600)) * (_mon_bin_h * 3600)
-    _row = tx_buckets.setdefault(_bucket, {"tx": 0, "volume": 0.0})
-    _row["tx"] += 1
-    _row["volume"] += float(_sol)
-monitor_rows = []
-_acc_by_bucket = {r["bucket_ts"]: r for r in monitor["series"]}
-for _bucket in range(bucket_start, bucket_end + 1, _mon_bin_h * 3600):
-    _acc = _acc_by_bucket.get(_bucket, {})
-    _nearest = [p for p in conv_points if int(p.get("ts") or 0) <= _bucket + _mon_bin_h * 3600]
-    monitor_rows.append({"ts": _bucket,
-                         "accum": _acc.get("cum_wallets", 0),
-                         "conviction": float(_nearest[-1].get("conviction") or 0) if _nearest else None,
-                         "tx": tx_buckets.get(_bucket, {}).get("tx", 0),
-                         "volume": tx_buckets.get(_bucket, {}).get("volume", 0.0)})
+monitor_rows = build_monitor_rows(
+    swaps_all, full_profiles, ca, hours, _mon_bin_h, now_ts)
 
 st.markdown(f"### 📡 Monitor pertumbuhan {_mon_bin_h} jam")
-st.caption(f"Pure accumulator = semua wallet beli ≥0.1 SOL dan jual ≤10% dari beli pada window ini. Semua grafik dibagi bucket {_mon_bin_h} jam.")
+st.caption(f"Pure accumulator = wallet beli ≥0.1 SOL & jual ≤10% beli. Pure distributor = wallet jual ≥0.1 SOL & beli ≤10% jual. Semua grafik dibagi bucket {_mon_bin_h} jam. Alert: 🟢 STEALTH ACCUM (accumulator↑ · conviction↑ · buy-dominan · distributor↓ · TX↓ · volume↓) dan 🔴 DISTRIBUSI (distributor↑ · accumulator↓ · conviction↓ · sell-dominan · TX↑ · volume↑).")
 if monitor_rows:
     _mx = [dtm.datetime.fromtimestamp(r["ts"], WIB) for r in monitor_rows]
     _m1, _m2 = st.columns(2)
@@ -1018,15 +992,76 @@ if monitor_rows:
     _fig.add_scatter(x=_mx, y=[r["volume"] for r in monitor_rows], name="Volume SOL", yaxis="y2", line=dict(color="#f97316", width=2))
     _fig.update_layout(title=f"TX & volume growth / {_mon_bin_h} jam", height=280, margin=dict(t=35,b=0,l=0,r=0), yaxis2=dict(overlaying="y", side="right", title="SOL"), legend=dict(orientation="h"))
     st.plotly_chart(_fig, use_container_width=True, config={"displayModeBar": False})
+    # Buy/Sell ratio per bucket — dominan BUY vs SELL (ditambahkan ke gabungan indikator)
+    _fig = go.Figure()
+    _bsr_y = []
+    for r in monitor_rows:
+        _b = r.get("buy_sell_ratio")
+        if isinstance(_b, float) and _b == float("inf"):
+            _bsr_y.append(9.0)
+        elif isinstance(_b, (int, float)):
+            _bsr_y.append(min(_b, 9.0))
+        else:
+            _bsr_y.append(None)
+    _fig.add_scatter(x=_mx, y=_bsr_y, name="Buy/Sell ratio", mode="lines+markers",
+                     line=dict(color="#34d399", width=3), marker=dict(size=7))
+    _fig.add_hline(y=1.0, line_dash="dot", line_color="#94a3b8",
+                   annotation_text="seimbang (1.0)")
+    _fig.update_layout(title=f"Buy/Sell ratio / {_mon_bin_h} jam (≥1 = dominan BUY, capped 9)", height=280, margin=dict(t=35,b=0,l=0,r=0), yaxis=dict(title="buy ÷ sell (SOL)", rangemode="tozero"))
+    st.plotly_chart(_fig, use_container_width=True, config={"displayModeBar": False})
+    # Pure accumulator vs Pure distributor (cumulative wallets) — dinamika
+    # akumulasi vs distribusi. Distributor naik = supply pressure / dump.
+    _fig = go.Figure()
+    _fig.add_scatter(x=_mx, y=[r["accum"] for r in monitor_rows],
+                     name="Pure accumulator", mode="lines+markers",
+                     line=dict(color="#22c55e", width=3))
+    _fig.add_scatter(x=_mx, y=[r["dist"] for r in monitor_rows],
+                     name="Pure distributor", mode="lines+markers",
+                     line=dict(color="#f87171", width=3))
+    _fig.update_layout(title=f"Pure accumulator vs distributor (cum wallets) / {_mon_bin_h} jam", height=280, margin=dict(t=35,b=0,l=0,r=0), yaxis=dict(title="wallet (cum)", rangemode="tozero"), legend=dict(orientation="h"))
+    st.plotly_chart(_fig, use_container_width=True, config={"displayModeBar": False})
     # Indexed chart makes direction directly comparable despite different units.
     _fig = go.Figure()
-    for _key, _label, _color in (("accum", "Pure accumulator", "#22c55e"), ("conviction", "Conviction", "#f59e0b"), ("tx", "TX", "#38bdf8"), ("volume", "Volume", "#f97316")):
-        _values = [r[_key] for r in monitor_rows]
+    for _key, _label, _color in (("accum", "Pure accumulator", "#22c55e"),
+                                  ("conviction", "Conviction", "#f59e0b"),
+                                  ("tx", "TX", "#38bdf8"),
+                                  ("volume", "Volume", "#f97316"),
+                                  ("dist", "Pure distributor", "#f87171"),
+                                  ("buy_sell_ratio", "Buy/Sell ratio", "#34d399")):
+        _values = []
+        for r in monitor_rows:
+            v = r.get(_key)
+            if _key == "buy_sell_ratio" and v == float("inf"):
+                _values.append(None)
+            else:
+                _values.append(v)
         _base = next((v for v in _values if v not in (None, 0)), None)
         if _base is not None:
-            _fig.add_scatter(x=_mx, y=[None if v is None else v / _base * 100 for v in _values], name=_label, line=dict(color=_color, width=2))
+            _fig.add_scatter(x=_mx, y=[None if v is None else v / _base * 100 for v in _values],
+                             name=_label, line=dict(color=_color, width=2),
+                             connectgaps=True)
     _fig.update_layout(title="Gabungan indikator — index basis 100", height=330, margin=dict(t=35,b=0,l=0,r=0), yaxis=dict(title="Index (awal = 100)"), legend=dict(orientation="h"))
     st.plotly_chart(_fig, use_container_width=True, config={"displayModeBar": False})
+    # --- Deteksi & alert (gabungan indikator basis 100) ---
+    _stealth = detect_stealth_accumulation(monitor_rows)
+    _dist = detect_distribution(monitor_rows)
+    if _stealth["triggered"]:
+        st.success(
+            "🟢 **STEALTH ACCUMULATION** — basis 100: pure accumulator ↑, "
+            "conviction ↑, Buy/Sell dominan BUY, pure distributor ↓, "
+            "tapi TX & volume TURUN. Akumulasi diam tanpa hype "
+            "(whale/insider menumpuk saat volume mengecil).")
+    else:
+        st.info("🔎 Akumulasi diam: " + _stealth["msg"] +
+                ". (Belum semua syarat terpenuhi.)")
+    if _dist["triggered"]:
+        st.error(
+            "🔴 **DISTRIBUSI** — basis 100: pure distributor ↑, "
+            "pure accumulator ↓, conviction ↓, Buy/Sell dominan SELL, "
+            "TX & volume NAIK. Supply pressure / dump sedang berlangsung.")
+    else:
+        st.info("🔎 Distribusi: " + _dist["msg"] +
+                ". (Belum semua syarat terpenuhi.)")
 
 # No-buy holder inspection is intentionally disabled for now.  It adds an
 # expensive holder RPC call and is not part of the active CVD decision flow.

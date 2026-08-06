@@ -20,8 +20,10 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cvd import (record_conviction, update_token_cvd,  # noqa: E402
-                 get_gmgn_last_error)
-from signals import detect_and_record  # noqa: E402
+                 get_gmgn_last_error, get_recent_swaps,
+                 get_gmgn_wallet_metadata, WHALE_SOL)
+from signals import detect_and_record, detect_prepump_and_record  # noqa: E402
+from prepump_detector import compute_bullish_div  # noqa: E402
 from watchlist import load_watchlist, save_watchlist  # noqa: E402
 
 
@@ -350,9 +352,29 @@ def main():
             snap_txt = _try_snapshot(api_keys, ca, meta,
                                      price_now=price_now or 0.0)
 
+            # ── Pre-Pump Radar ──────────────────────────────────────────
+            pp_txt = ""
+            try:
+                _swaps_pp = get_recent_swaps(ca, hours=1)
+                _wmeta = get_gmgn_wallet_metadata()
+                _bull = compute_bullish_div(ca, pool) if pool else False
+                _mc = (get_market(ca) or {}).get("marketcap")
+                _tinfo = {"symbol": meta.get("symbol", "?"),
+                          "price_usd": price_now, "mc": _mc}
+                _pp = detect_prepump_and_record(
+                    ca, meta.get("symbol", "?"), _swaps_pp,
+                    token_info=_tinfo, now_ts=int(time.time()),
+                    window_min=30, whale_min_sol=WHALE_SOL,
+                    wallet_tags=_wmeta, bullish_div=_bull)
+                if _pp:
+                    pp_txt = " 🎯prepump:%s/%d" % (_pp["tier"], int(_pp["score"]))
+            except Exception as e_pp:
+                pp_txt = " 🎯prepump_err:%s" % str(e_pp)[:20]
+
             print(f"✅ {meta.get('symbol', '?'):>10} {ca[:8]}… "
                   f"+{res['new_swaps']} swaps, {res['buckets']} hourly "
-                  f"buckets{gap}{conv_txt}{sig_txt}{guard_txt}{snap_txt}{liq_test_txt}")
+                  f"buckets{gap}{conv_txt}{sig_txt}{guard_txt}{snap_txt}"
+                  f"{liq_test_txt}{pp_txt}")
 
         except Exception as e:
             print(f"❌ {ca[:8]}… unhandled error: {str(e)[:100]}")
