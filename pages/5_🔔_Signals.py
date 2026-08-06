@@ -11,6 +11,10 @@ import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from signals import load_signals
+from cvd import get_recent_swaps
+from watchlist import load_watchlist
+from prepump_detector import evaluate_prepump
+import time
 
 st.set_page_config(page_title="Signals", page_icon="🔔",
                    layout="wide", initial_sidebar_state="collapsed")
@@ -28,6 +32,32 @@ st.caption("Every CVD event the tool detects — stealth accumulation, "
            "signals too. "
            "Use the timestamps to line events up with your chart.")
 
+# --- live Pre-Pump Radar (uses already-stored swaps, no new network call) ---
+with st.expander("🎯 Pre-Pump Radar (live, from stored swaps)", expanded=False):
+    _wl = load_watchlist()
+    if not _wl:
+        st.caption("Watchlist empty.")
+    else:
+        _cols = st.columns(min(len(_wl), 4))
+        for _i, (_ca, _meta) in enumerate(list(_wl.items())[:16]):
+            _sw = get_recent_swaps(_ca, hours=1)
+            _r = evaluate_prepump(_sw, {"symbol": _meta.get("symbol", "?")},
+                                 ca=_ca, now_ts=int(time.time()), window_min=30)
+            _sc = _r["score"]
+            _col = "#22c55e" if _r["tier"] == "imminent" else (
+                "#38bdf8" if _r["tier"] == "forming" else "#64748b")
+            _cols[_i % 4].markdown(
+                "<div style='border:1px solid %s;border-radius:8px;"
+                "padding:6px;margin-bottom:6px;'>"
+                "<b>%s</b><br><span style='color:%s;font-weight:700;'>"
+                "%s/100</span> %s</div>"
+                % (_col, _meta.get("symbol", "?"), _col, _sc, _r["tier"]),
+                unsafe_allow_html=True)
+        st.caption("Score 0-100 from the last 30m of stored swaps: "
+                   "compression + size asymmetry + net inflow + pure-accum "
+                   "dominance. 🎯 imminent ≥75, 👀 forming 55-74. Refresh "
+                   "the page to re-evaluate.")
+
 TYPE_META = {
     "accumulation": ("🟢", "Stealth accumulation", "#22c55e"),
     "distribution": ("🔴", "Distribution to retail", "#ef4444"),
@@ -42,6 +72,8 @@ TYPE_META = {
     "guard_breakdown": ("⬇️", "Guard: breakdown", "#f87171"),
     "guard_spring": ("🌱", "Guard: spring", "#4ade80"),
     "guard_reclaim": ("↩️", "Guard: reclaim", "#38bdf8"),
+    "prepump_imminent": ("🎯", "Pre-pump imminent", "#f59e0b"),
+    "prepump_forming": ("👀", "Pre-pump forming", "#38bdf8"),
 }
 WIB = dtm.timezone(dtm.timedelta(hours=7))
 

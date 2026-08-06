@@ -34,10 +34,11 @@ DEDUPE_SEC = 4 * 3600     # same signal type per token max once per 4h
 MAX_SIGNALS = 2000
 
 #: Tier 1 signal types (focus mode keeps these on Telegram + dashboard).
-TIER1_SIGNAL_TYPES = {"accumulation", "stealth_accumulation", "distribution"}
+TIER1_SIGNAL_TYPES = {"accumulation", "stealth_accumulation",
+                      "distribution", "prepump_imminent"}
 #: Tier 2 signal types (focus mode hides these from Telegram; still
 #: stored in signals.json for analysis).
-TIER2_SIGNAL_TYPES = {"bullish_div", "bearish_div"}
+TIER2_SIGNAL_TYPES = {"bullish_div", "bearish_div", "prepump_forming"}
 
 #: Caption prefix so a Telegram reader can tell at a glance which subsystem
 #: is talking. The Breakout Guard uses its own tag (see breakout_guard.py):
@@ -242,6 +243,58 @@ def detect_and_record(ca: str, symbol: str, *, src: str = "cron",
                     if ok:
                         recorded.append(stype)
     return recorded
+
+
+def detect_prepump_and_record(ca, symbol, swaps, token_info=None, *, now_ts=None,
+                              src="cron", window_min=30, whale_min_sol=3.0,
+                              wallet_tags=None, bullish_div=False, pool=None):
+    """Run the Pre-Pump Detector on recent swaps and record/alert if scored.
+
+    Returns the evaluate_prepump result dict, or None when score < 55 (noise).
+
+    Behaviour (per spec):
+      - score >= 75 -> "prepump_imminent" (Tier 1, always Telegram)
+      - score 55-74 -> "prepump_forming" (Tier 2, Telegram only when
+        focus_mode is OFF)
+      - each type is deduped per (ca, type) within PREPUMP_DEDUPE_SEC (3h)
+    """
+    from prepump_detector import (evaluate_prepump, format_prepump_telegram,
+                                 prepump_already_sent, PREPUMP_DEDUPE_SEC)
+    now_ts = int(now_ts if now_ts is not None else time.time())
+    result = evaluate_prepump(
+        swaps, token_info, ca=ca, now_ts=now_ts, window_min=window_min,
+        whale_min_sol=whale_min_sol, wallet_tags=wallet_tags,
+        bullish_div=bullish_div)
+    if result["score"] < 55:
+        return None
+    sig_type = ("prepump_imminent" if result["tier"] == "imminent"
+                else "prepump_forming")
+    if prepump_already_sent(load_signals(), ca, sig_type, now_ts,
+                            PREPUMP_DEDUPE_SEC):
+        return result  # evaluated, but already alerted within cooldown
+    detail = ("Pre-pump score %s/100 (%s) | compression %s, asymmetry %s, "
+              "delta %s, accum %s"
+              % (result["score"], result["tier"],
+                 result["pillars"]["compression"], result["pillars"]["asymmetry"],
+                 result["pillars"]["delta"], result["pillars"]["accum"]))
+    sigs = load_signals()
+    sigs.append({"ts": now_ts, "ca": ca, "symbol": symbol, "type": sig_type,
+                 "src": src, "detail": detail, "score": result["score"],
+                 "window_min": window_min,
+                 "price": (token_info or {}).get("price_usd")})
+    save_signals(sigs)
+    # Telegram gating by tier / focus mode
+    if result["tier"] == "imminent":
+        send = True
+    else:
+        send = not _focus_mode()
+    if send:
+        try:
+            from breakout_guard import send_telegram
+            send_telegram(format_prepump_telegram(result, ca, token_info))
+        except Exception:
+            pass
+    return result
 
 
 def _monitor_cfg():
