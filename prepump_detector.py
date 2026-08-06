@@ -422,3 +422,42 @@ def prepump_already_sent(sigs, ca, sig_type, now_ts,
                 and now_ts - (s.get('ts') or 0) < dedupe_sec):
             return True
     return False
+
+
+def format_prepump_cleared_telegram(ca, token_info=None, last_score=None):
+    """Render a Telegram message when a pre-pump condition clears."""
+    NL = chr(10)
+    ti = token_info or {}
+    sym = ti.get('symbol') or '?'
+    score_txt = f" last score {last_score}/100" if last_score is not None else ""
+    lines = [
+        f"✅ <b>PRE-PUMP CLEARED: ${sym}</b>",
+        f"<code>{ca}</code>",
+        "",
+        f"Pre-pump conditions no longer met{score_txt} — compression / asymmetry / "
+        "pure-accum signals have faded on the 30m window.",
+        "No imminent ignition; watch for fresh compression before re-entry.",
+        "",
+        f"<a href='https://dexscreener.com/solana/{ca}'>chart</a> | "
+        f"<a href='https://gmgn.ai/sol/token/{ca}'>GMGN</a>",
+    ]
+    return NL.join(lines)
+
+
+def format_prepump_combined_digest(entries):
+    """One combined digest for multiple pre-pump results (for cron digest mode)."""
+    if not entries:
+        return None
+    NL = chr(10)
+    lines = [f"<b>🎯 PRE-PUMP DIGEST</b> — {len(entries)} token(s)", ""]
+    for e in entries:
+        r = e.get("result") or {}
+        ca = e.get("ca", "")
+        ti = e.get("token_info") or r.get("token_info") or {}
+        sym = ti.get("symbol") or e.get("symbol") or "?"
+        lines.append(
+            f"{'🚨' if r.get('tier')=='imminent' else '👀'} <b>${sym}</b> "
+            f"{r.get('score','?')}/100 {r.get('tier','?')} "
+            f"<a href='https://dexscreener.com/solana/{ca}'>chart</a>"
+        )
+    return NL.join(lines)

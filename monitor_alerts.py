@@ -225,3 +225,126 @@ def format_alert(symbol, ca, rows, kind, result):
             f"<code>{ca}</code>\n"
             f"{body}\n"
             f"checks: {result['msg']}")
+
+
+def format_cleared_alert(symbol, ca, rows, kind, prev_result=None):
+    """Render a Telegram message when a previously-triggered alert clears.
+
+    Cleared = conditions that were TRUE in the previous scan are now FALSE.
+    The message explicitly names the token, the kind that cleared, and the
+    current bucket snapshot so the reader can verify the de-alert at a glance.
+    """
+    last = rows[-1] if rows else {}
+    if kind == "stealth":
+        title = "✅ STEALTH CLEARED"
+        body = ("Stealth accumulation tidak lagi terpenuhi. "
+                "Kondisi terbaru tidak lagi menunjukkan absorb senyap.\n"
+                f"accum={last.get('accum', '?')} dist={last.get('dist', '?')} "
+                f"conv={last.get('conviction', '?')} "
+                f"bsr={_fmt_bsr(last.get('buy_sell_ratio', '?'))} "
+                f"tx={last.get('tx', '?')} vol={last.get('volume', '?')}")
+    else:
+        title = "✅ DISTRIBUSI CLEARED"
+        body = ("Tekanan distribusi mereda — kondisi distribusi tidak lagi "
+                "terpenuhi pada bucket terbaru.\n"
+                f"dist={last.get('dist', '?')} accum={last.get('accum', '?')} "
+                f"conv={last.get('conviction', '?')} "
+                f"bsr={_fmt_bsr(last.get('buy_sell_ratio', '?'))} "
+                f"tx={last.get('tx', '?')} vol={last.get('volume', '?')}")
+    footer = f"checks: {prev_result.get('msg', '')}" if prev_result else ""
+    msg = (f"<b>{title}</b> ${symbol}\n"
+           f"<code>{ca}</code>\n"
+           f"{body}")
+    if footer:
+        msg += f"\n{footer}"
+    msg += f"\n<a href='https://dexscreener.com/solana/{ca}'>chart</a>"
+    return msg
+
+
+def _digest_line(symbol, ca, rows, kind):
+    """One compact line for the combined digest (triggered entry)."""
+    last = rows[-1] if rows else {}
+    if kind == "stealth":
+        emo = "🟢"
+        label = "STEALTH"
+    else:
+        emo = "🔴"
+        label = "DISTRIBUSI"
+    return (f"{emo} <b>${symbol}</b> {label} "
+            f"acc{last.get('accum', '?')}/dist{last.get('dist', '?')} "
+            f"conv{last.get('conviction', '?')} "
+            f"bsr{_fmt_bsr(last.get('buy_sell_ratio', '?'))} "
+            f"tx{last.get('tx', '?')} vol{last.get('volume', 0):.0f} "
+            f"<a href='https://dexscreener.com/solana/{ca}'>chart</a>")
+
+
+def _cleared_digest_line(symbol, ca, rows, kind):
+    last = rows[-1] if rows else {}
+    emo = "✅"
+    label = "cleared"
+    return (f"{emo} <b>${symbol}</b> {kind} {label} "
+            f"acc{last.get('accum', '?')}/dist{last.get('dist', '?')} "
+            f"conv{last.get('conviction', '?')} "
+            f"<a href='https://dexscreener.com/solana/{ca}'>chart</a>")
+
+
+def format_combined_digest(triggered=None, cleared=None, prepump=None,
+                           prepump_cleared=None):
+    """Render ONE combined Telegram digest for a full watchlist scan.
+
+    Args:
+        triggered: list of dicts {symbol, ca, rows, kind, result}
+        cleared:   list of dicts {symbol, ca, rows, kind, prev_result}
+        prepump:   list of dicts {symbol, ca, result}
+        prepump_cleared: list of dicts {symbol, ca, rows}
+    Returns HTML string or None when nothing to send.
+    """
+    triggered = triggered or []
+    cleared = cleared or []
+    prepump = prepump or []
+    prepump_cleared = prepump_cleared or []
+    if not triggered and not cleared and not prepump and not prepump_cleared:
+        return None
+    total = len(triggered) + len(cleared) + len(prepump) + len(prepump_cleared)
+    lines = [f"<b>📊 CVD MONITOR DIGEST</b> — {total} update(s)",
+             f"<i>{len(triggered)} triggered · {len(cleared)} cleared"
+             f" · {len(prepump)} prepump · {len(prepump_cleared)} prepump cleared</i>",
+             ""]
+    if triggered:
+        lines.append(f"<b>🚨 Triggered ({len(triggered)})</b>")
+        for e in triggered:
+            try:
+                lines.append(_digest_line(e["symbol"], e["ca"], e["rows"], e["kind"]))
+            except Exception:
+                lines.append(f"• {e.get('symbol','?')} {e.get('kind','?')}")
+        lines.append("")
+    if prepump:
+        lines.append(f"<b>🎯 Pre-Pump ({len(prepump)})</b>")
+        for e in prepump:
+            r = e.get("result") or {}
+            tier = r.get("tier", "?")
+            score = r.get("score", "?")
+            badge = "🚨" if tier == "imminent" else "👀"
+            lines.append(
+                f"{badge} <b>${e.get('symbol','?')}</b> {score}/100 {tier} "
+                f"<a href='https://dexscreener.com/solana/{e.get('ca','')}'>chart</a>"
+                f" | <a href='https://gmgn.ai/sol/token/{e.get('ca','')}'>GMGN</a>")
+        lines.append("")
+    if cleared:
+        lines.append(f"<b>✅ Cleared ({len(cleared)})</b>")
+        for e in cleared:
+            try:
+                lines.append(_cleared_digest_line(e["symbol"], e["ca"], e["rows"], e["kind"]))
+            except Exception:
+                lines.append(f"• {e.get('symbol','?')} {e.get('kind','?')} cleared")
+        lines.append("")
+    if prepump_cleared:
+        lines.append(f"<b>✅ Pre-Pump Cleared ({len(prepump_cleared)})</b>")
+        for e in prepump_cleared:
+            lines.append(
+                f"✅ <b>${e.get('symbol','?')}</b> pre-pump cleared "
+                f"<a href='https://dexscreener.com/solana/{e.get('ca','')}'>chart</a>")
+        lines.append("")
+    lines.append(f"<i>watchlist scan · {len(triggered)+len(prepump)} active · "
+                 f"{len(cleared)+len(prepump_cleared)} cleared</i>")
+    return "\n".join(lines).strip()
