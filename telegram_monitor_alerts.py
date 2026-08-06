@@ -133,72 +133,144 @@ def run_once(args):
         return
 
     state = load_state()
-    # Collect outbound messages; with --digest (default ON for --watchlist)
-    # they are flushed as one combined Telegram message at the end.
-    use_digest = bool(args.digest) or (
-        args.watchlist and not args.no_digest)
-    pending_msgs = []
+    # --- buffers for the combined Telegram digest + cleared notifications ---
+    digest_triggered = []
+    digest_cleared = []
+    digest_prepump = []
+    digest_prepump_cleared = []
+
     for ca in cas:
         res, err = analyze_ca(ca, args.hours, args.bin_h)
         if err:
             print('[skip]', ca + ':', err)
             continue
         for kind in ('stealth', 'dist'):
-            key = ca + '|' + kind
             trig = res[kind]['triggered']
-            prev = state.get(key) or {}
-            was_trig = bool(prev.get('triggered'))
             send, why, entry = evaluate(state, ca, kind, trig,
                                         args.cooldown)
+            prev_trig = bool((state.get(ca + '|' + kind) or {}).get('triggered'))
             if not trig:
-                # TRUE→FALSE: emit a CLEARED notice (once per transition).
-                if was_trig:
-                    cleared = ma.format_cleared(
-                        res['symbol'], ca, kind, res['rows'])
-                    if args.dry:
-                        print('=' * 60)
-                        print('[cleared] WOULD SEND %s %s'
-                              % (res['symbol'], kind))
-                        print(cleared)
-                        print('=' * 60)
-                    else:
-                        pending_msgs.append(cleared)
-                        print('[cleared] %s %s' % (res['symbol'], kind))
+                if prev_trig:
+                    # cleared notification — previously triggered, now false
+                    digest_cleared.append({
+                        'symbol': res['symbol'], 'ca': ca,
+                        'rows': res['rows'], 'kind': kind,
+                        'prev_result': res[kind],
+                    })
+                    print('[clear] %s %s -> queued cleared notification' % (
+                        res['symbol'], kind))
                 else:
                     print('[clear] %s %s' % (res['symbol'], kind))
                 if not args.dry:
-                    state[key] = entry
+                    state[ca + '|' + kind] = entry
                 continue
-            text = ma.format_alert(res['symbol'], ca, res['rows'], kind,
-                                   res[kind])
-            if args.dry:
-                print('=' * 60)
-                print('[%s] WOULD SEND (%s) %s' % (kind, why, res['symbol']))
-                print(text)
-                print('=' * 60)
-            elif send:
-                pending_msgs.append(text)
-                print('[%s] queued (%s) %s' % (kind, why, res['symbol']))
-                state[key] = entry
+            # triggered == True
+            if send:
+                digest_triggered.append({
+                    'symbol': res['symbol'], 'ca': ca,
+                    'rows': res['rows'], 'kind': kind,
+                    'result': res[kind],
+                })
+                print('[%s] queued %s (%s)' % (kind, res['symbol'], why))
             else:
                 print('[%s] suppressed (%s) %s' % (kind, why, res['symbol']))
+            if not args.dry:
+                state[ca + '|' + kind] = entry
+
+        # ---- Pre-Pump radar (same digest cycle) ----
+        try:
+            from prepump_detector import evaluate_prepump as _epp
+            _sw = get_recent_swaps(ca, hours=1)
+            _pp = _epp(_sw, {'symbol': res['symbol']}, ca=ca,
+                       now_ts=int(time.time()), window_min=30)
+            _is_trig = bool(_pp and _pp.get('score', 0) >= 55 and
+                            _pp.get('tier') in ('imminent', 'forming'))
+            _key = ca + '|prepump'
+            prev_pp_trig = bool((state.get(_key) or {}).get('triggered'))
+            _send, _why, _entry = evaluate(state, ca, 'prepump', _is_trig,
+                                           args.cooldown)
+            # persist score for the cleared message context
+            if _pp:
+                _entry['score'] = _pp.get('score')
+                _entry['tier'] = _pp.get('tier')
+            if not _is_trig:
+                if prev_pp_trig:
+                    digest_prepump_cleared.append({
+                        'symbol': res['symbol'], 'ca': ca,
+                        'result': _pp,
+                        'prev_score': (state.get(_key) or {}).get('score'),
+                    })
+                    print('[prepump clear] %s -> queued cleared' % res['symbol'])
                 if not args.dry:
-                    state[key] = entry
-    if not args.dry:
-        if pending_msgs:
-            if use_digest and len(pending_msgs) > 1:
-                chunks = ma.format_combined_digest(
-                    pending_msgs,
-                    title='📬 <b>MONITOR DIGEST</b> (%d alert)'
-                          % len(pending_msgs))
-                for chunk in chunks:
-                    ok = send_telegram(chunk)
-                    print('[digest] telegram %s (%d chars)'
-                          % ('OK' if ok else 'FAIL', len(chunk)))
+                    state[_key] = _entry
             else:
-                for text in pending_msgs:
-                    ok = send_telegram(text)
-                    print('[send] telegram %s' % ('OK' if ok else 'FAIL'))
+                if _send:
+                    digest_prepump.append({
+                        'symbol': res['symbol'], 'ca': ca,
+                        'result': _pp, 'token_info': {'symbol': res['symbol']},
+                    })
+                    print('[prepump] queued %s %s/100 %s (%s)' % (
+                        res['symbol'], _pp.get('score'), _pp.get('tier'), _why))
+                else:
+                    print('[prepump] suppressed %s (%s)' % (res['symbol'], _why))
+                if not args.dry:
+                    state[_key] = _entry
+        except Exception as e_pp:
+            print('[prepump err] %s %s' % (ca[:8], e_pp))
+
+    # ---- send one combined Telegram digest (triggered + cleared + prepump) ----
+    combined = None
+    try:
+        combined = ma.format_combined_digest(
+            triggered=digest_triggered,
+            cleared=digest_cleared,
+            prepump=digest_prepump,
+            prepump_cleared=digest_prepump_cleared,
+        )
+    except Exception as e_fmt:
+        print('[digest fmt err]', e_fmt)
+
+    if combined:
+        # --dry prints preview without sending or mutating persisted state
+        if args.dry:
+            print('=' * 60)
+            print('[DIGEST] WOULD SEND (%d triggered, %d cleared, %d prepump, '
+                  '%d prepump cleared)' % (len(digest_triggered),
+                                           len(digest_cleared),
+                                           len(digest_prepump),
+                                           len(digest_prepump_cleared)))
+            print(combined)
+            print('=' * 60)
+            # also preview individual cleared messages when requested
+            for c in digest_cleared:
+                try:
+                    txt = ma.format_cleared_alert(
+                        c['symbol'], c['ca'], c['rows'], c['kind'], c.get('prev_result'))
+                    print('--- cleared preview ---')
+                    print(txt)
+                except Exception:
+                    pass
+        else:
+            # legacy fallback: if only one token and one alert, the digest is still
+            # a single message — combined path is always preferred for watchlist
+            # to avoid Telegram spam. If the user explicitly wants per-alert
+            # messages they can call with --individual (not implemented here).
+            ok = send_telegram(combined)
+            print('[digest] telegram combined %s (%d/%d/%d/%d) %s' % (
+                'OK' if ok else 'FAIL',
+                len(digest_triggered), len(digest_cleared),
+                len(digest_prepump), len(digest_prepump_cleared),
+                'sent' if ok else 'not sent'))
+            # cleared individual messages are already bundled in the digest;
+            # we do NOT send them separately to keep the digest truly combined.
+        # if dry, state was not mutated above (guarded by `if not args.dry`)
+    else:
+        if digest_triggered or digest_cleared or digest_prepump or digest_prepump_cleared:
+            print('[digest] nothing to format (unexpected)')
+        else:
+            print('[digest] no updates — nothing to send')
+
+    if not args.dry:
         save_state(state)
 
 
@@ -216,11 +288,6 @@ def main():
                    help='run forever, sleeping --interval minutes between scans')
     ap.add_argument('--interval', type=int, default=15,
                    help='minutes between scans when --loop')
-    ap.add_argument('--digest', action='store_true',
-                   help='combine all alerts from this run into one Telegram '
-                        'message (default ON when --watchlist)')
-    ap.add_argument('--no-digest', action='store_true',
-                   help='force one Telegram message per alert')
     args = ap.parse_args()
 
     if args.loop:

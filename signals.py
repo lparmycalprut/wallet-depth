@@ -288,8 +288,27 @@ def flush_telegram_digest(*, title=None, send_fn=None) -> int:
     if not items:
         return 0
     try:
-        from monitor_alerts import format_combined_digest
-        chunks = format_combined_digest(items, title=title)
+        # Prefer a simple multi-item join (list of HTML snippets). Main's
+        # format_combined_digest uses structured kwargs (triggered/cleared/
+        # prepump) — different call shape — so we format the buffer here.
+        hdr = title or "📬 <b>ALERT DIGEST</b>"
+        sep = "\n\n— — —\n\n"
+        body = sep.join(items)
+        chunks = [hdr + "\n\n" + body]
+        # Soft-split if over Telegram's 4096 limit.
+        if len(chunks[0]) > 3800:
+            chunks, buf, n = [], [], 0
+            overhead = len(hdr) + 2
+            for it in items:
+                add = len(it) + (len(sep) if buf else 0)
+                if buf and overhead + n + add > 3800:
+                    chunks.append(hdr + "\n\n" + sep.join(buf))
+                    buf, n = [it], len(it)
+                else:
+                    buf.append(it)
+                    n += add
+            if buf:
+                chunks.append(hdr + "\n\n" + sep.join(buf))
     except Exception:
         chunks = items  # fall back to one-by-one
     sender = send_fn
@@ -327,7 +346,7 @@ def detect_prepump_and_record(ca, symbol, swaps, token_info=None, *, now_ts=None
     """
     from prepump_detector import (
         evaluate_prepump, format_prepump_telegram,
-        format_prepump_cleared_telegram, last_prepump_signal,
+        format_prepump_cleared_telegram,
         prepump_already_sent, PREPUMP_DEDUPE_SEC,
     )
     now_ts = int(now_ts if now_ts is not None else time.time())
@@ -336,9 +355,17 @@ def detect_prepump_and_record(ca, symbol, swaps, token_info=None, *, now_ts=None
         whale_min_sol=whale_min_sol, wallet_tags=wallet_tags,
         bullish_div=bullish_div, pool_sol=pool_sol)
 
+    def _last_prepump(sigs, ca_):
+        """Most recent imminent/forming/cleared signal for this CA."""
+        for s in reversed(sigs or []):
+            if s.get("ca") == ca_ and s.get("type") in (
+                    "prepump_imminent", "prepump_forming", "prepump_cleared"):
+                return s
+        return None
+
     # ── CLEARED path: was active, now below forming threshold ──────────
     if result["score"] < 55 or result.get("tier") in ("neutral", "blocked"):
-        prev = last_prepump_signal(load_signals(), ca)
+        prev = _last_prepump(load_signals(), ca)
         if prev and prev.get("type") in ("prepump_imminent", "prepump_forming"):
             # Dedupe cleared the same way as other pre-pump types.
             if not prepump_already_sent(load_signals(), ca, "prepump_cleared",
@@ -359,8 +386,10 @@ def detect_prepump_and_record(ca, symbol, swaps, token_info=None, *, now_ts=None
                 save_signals(sigs)
                 # Cleared is actionable (stop watching a setup) → always TG.
                 try:
+                    # Main API: format_prepump_cleared_telegram(ca, token_info, last_score)
                     msg = format_prepump_cleared_telegram(
-                        prev, ca, token_info, score=result["score"])
+                        ca, token_info or {"symbol": symbol},
+                        last_score=prev.get("score"))
                     _queue_or_send(msg)
                 except Exception:
                     pass

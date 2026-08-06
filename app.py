@@ -603,49 +603,6 @@ WHALE_DELTA_MIN_SOL = whale_delta_min
 DOLPHIN_DELTA_MIN_SOL = dolphin_delta_min
 
 st.sidebar.divider()
-st.sidebar.markdown("**🎯 Pre-Pump Radar**")
-try:
-    from cvd import get_recent_swaps as _pp_get_swaps
-    from prepump_detector import (evaluate_prepump as _pp_eval,
-                                  format_prepump_sidebar_badge as _pp_badge)
-    from watchlist import load_watchlist as _pp_load_wl
-    _pp_wl = _pp_load_wl() or {}
-except Exception:
-    _pp_wl = {}
-if not _pp_wl:
-    st.sidebar.caption("Watchlist kosong.")
-else:
-    _pp_rows = []  # (score, html) — sort hot first
-    _pp_now = int(time.time())
-    for _pp_ca, _pp_meta in list(_pp_wl.items())[:20]:
-        try:
-            _pp_sw = _pp_get_swaps(_pp_ca, hours=1)
-            _pp_r = _pp_eval(
-                _pp_sw, {"symbol": (_pp_meta or {}).get("symbol", "?")},
-                ca=_pp_ca, now_ts=_pp_now, window_min=30)
-            _pp_html, _pp_tier = _pp_badge(
-                _pp_r, (_pp_meta or {}).get("symbol", "?"))
-            _pp_rows.append((float(_pp_r.get("score") or 0), _pp_html,
-                             _pp_tier))
-        except Exception:
-            continue
-    _pp_rows.sort(key=lambda x: -x[0])
-    _pp_hot = [h for s, h, t in _pp_rows if t in ("imminent", "forming")]
-    _pp_rest = [h for s, h, t in _pp_rows if t not in ("imminent", "forming")]
-    if _pp_hot:
-        st.sidebar.markdown("".join(_pp_hot), unsafe_allow_html=True)
-    else:
-        st.sidebar.caption("Tidak ada setup forming/imminent.")
-    # Collapse neutrals so the sidebar stays short.
-    if _pp_rest:
-        with st.sidebar.expander("Lainnya (%d)" % len(_pp_rest),
-                                expanded=False):
-            st.markdown("".join(_pp_rest), unsafe_allow_html=True)
-    st.sidebar.caption(
-        "Live dari swap tersimpan (30m). 🎯 ≥75 · 👀 55-74. "
-        "Refresh page untuk evaluasi ulang.")
-
-st.sidebar.divider()
 if st.sidebar.button("💾 Save to config.json", use_container_width=True):
     save_config({"helius_api_key": helius_key, "custom_rpc": custom_rpc,
                  "helius_extra_keys": helius_extra,
@@ -655,6 +612,84 @@ if st.sidebar.button("💾 Save to config.json", use_container_width=True):
                  "whale_delta_min_sol": whale_delta_min,
                  "dolphin_delta_min_sol": dolphin_delta_min})
     st.sidebar.success("Saved ✅")
+
+# ----------------------------------------------------------------------------
+# 🎯 Sidebar Pre-Pump Radar — watchlist 30m live (no extra network beyond
+# the already-stored 1h raw swaps). Shows imminent/forming/neutral per
+# token with color-coded score pills. Part of feat(alerts): sidebar
+# Pre-Pump radar, cleared notification, combined Telegram digest.
+# ----------------------------------------------------------------------------
+st.sidebar.divider()
+st.sidebar.markdown("**🎯 Pre-Pump Radar — 30m live**")
+try:
+    from watchlist import load_watchlist as _wl_load_pp
+    from cvd import get_recent_swaps as _grs_pp
+    from prepump_detector import evaluate_prepump as _epp_pp
+    import time as _time_pp
+    _wl_pp = _wl_load_pp()
+    if not _wl_pp:
+        st.sidebar.caption("Watchlist empty — add tokens to see radar.")
+    else:
+        _radar_items = []
+        for _ca_pp, _meta_pp in list(_wl_pp.items())[:12]:
+            try:
+                _sw_pp = _grs_pp(_ca_pp, hours=1)
+                _res_pp = _epp_pp(
+                    _sw_pp, {"symbol": _meta_pp.get("symbol", "?")},
+                    ca=_ca_pp, now_ts=int(_time_pp.time()), window_min=30)
+                _radar_items.append((_ca_pp, _meta_pp.get("symbol", "?"), _res_pp))
+            except Exception:
+                continue
+        # imminent first, then forming, then by score desc
+        _tier_rank = {"imminent": 0, "forming": 1, "neutral": 2, "blocked": 3}
+        _radar_items.sort(
+            key=lambda x: (_tier_rank.get(x[2].get("tier", "neutral"), 9),
+                           -x[2].get("score", 0)))
+        for _ca_pp, _sym_pp, _res_pp in _radar_items:
+            _score_pp = _res_pp.get("score", 0)
+            _tier_pp = _res_pp.get("tier", "neutral")
+            if _tier_pp == "imminent":
+                _col_pp, _emoji_pp = "#f59e0b", "🎯"
+            elif _tier_pp == "forming":
+                _col_pp, _emoji_pp = "#38bdf8", "👀"
+            elif _tier_pp == "blocked":
+                _col_pp, _emoji_pp = "#ef4444", "⛔"
+            else:
+                _col_pp, _emoji_pp = "#64748b", "·"
+            _score_txt = f"{_score_pp:.0f}"
+            st.sidebar.markdown(
+                f"<div style='border:1px solid {_col_pp}22;"
+                f"border-left:3px solid {_col_pp};border-radius:6px;"
+                f"padding:5px 7px;margin-bottom:5px;background:{_col_pp}0d;'>"
+                f"<b style='color:#e2e8f0;font-size:0.84rem;'>"
+                f"{_emoji_pp} {_sym_pp}</b> "
+                f"<span style='color:{_col_pp};font-weight:800;"
+                f"font-size:0.84rem;'>{_score_txt}/100</span> "
+                f"<span style='color:{_col_pp};font-size:0.68rem;"
+                f"text-transform:uppercase;'>{_tier_pp}</span><br>"
+                f"<a href='https://dexscreener.com/solana/{_ca_pp}' "
+                f"target='_blank' style='font-size:0.68rem;color:#94a3b8;"
+                f"text-decoration:none;'>chart ↗</a>"
+                f"<span style='color:#475569;font-size:0.68rem;'> · </span>"
+                f"<a href='https://gmgn.ai/sol/token/{_ca_pp}' "
+                f"target='_blank' style='font-size:0.68rem;color:#94a3b8;"
+                f"text-decoration:none;'>GMGN ↗</a>"
+                f"</div>",
+                unsafe_allow_html=True)
+        st.sidebar.caption(
+            "🎯 ≥75 imminent · 👀 55–74 forming · neutral <55 · "
+            "score dari 30m swaps tersimpan (tanpa fetch baru)")
+        if st.sidebar.button("🔄 Refresh radar", key="sidebar_pp_refresh",
+                             use_container_width=True):
+            st.cache_data.clear()
+            # clear only the radar-related caches would be ideal; clear all
+            # is safe and forces a fresh evaluate-pump on next run.
+            try:
+                st.rerun()
+            except Exception:
+                pass
+except Exception as _e_sidebar_pp:
+    st.sidebar.caption(f"Radar unavailable: {_e_sidebar_pp}")
 
 @st.cache_data(ttl=30, show_spinner=False)
 def fetch_watchlist_prices(cas: tuple) -> dict:
