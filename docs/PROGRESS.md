@@ -7,6 +7,31 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-06 — Pre-Pump follow-ups: sidebar radar, cleared notice, combined digest
+
+### Yang berubah
+
+1. **Sidebar Pre-Pump Radar** (`app.py`) — badge live di sidebar Settings
+   untuk tiap token watchlist (max 20). Hot setup (forming/imminent) di
+   atas; sisanya di expander "Lainnya". Sumber = swap tersimpan 1 jam
+   (tanpa RPC baru). Helper `format_prepump_sidebar_badge()`.
+2. **Cleared notification** — bila skor pre-pump turun <55 setelah
+   previously imminent/forming, catat `prepump_cleared` di `signals.json`
+   + kirim Telegram `✅ PRE-PUMP CLEARED`. Mirror di monitor stealth/
+   distribution: TRUE→FALSE transition kirim `format_cleared()`.
+3. **Combined Telegram digest** — cron `update_cvd.py` memanggil
+   `begin_digest()` di awal + `flush_telegram_digest()` di akhir, sehingga
+   CVD monitor + pre-pump + cleared digabung jadi 1 pesan
+   `📬 CVD / PRE-PUMP DIGEST`. `telegram_monitor_alerts.py --watchlist`
+   default ON digest (override `--no-digest`).
+
+### Verifikasi
+
+- `tests/test_alert_followups.py` (baru, 10 case) — ALL PASSED.
+- `tests/test_prepump_detector.py` — ALL PASSED (regresi).
+- `py_compile` signals/prepump/monitor/telegram/update_cvd + app.py parse OK.
+
+---
 ## 2026-08-05 — CVD 72H & monitor growth per 6 jam
 
 ### Yang berubah

@@ -74,6 +74,7 @@ TYPE_META = {
     "guard_reclaim": ("↩️", "Guard: reclaim", "#38bdf8"),
     "prepump_imminent": ("🎯", "Pre-pump imminent", "#f59e0b"),
     "prepump_forming": ("👀", "Pre-pump forming", "#38bdf8"),
+    "prepump_cleared": ("✅", "Pre-pump cleared", "#94a3b8"),
 }
 WIB = dtm.timezone(dtm.timedelta(hours=7))
 

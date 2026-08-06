@@ -101,7 +101,6 @@ def record_signal(ca: str, symbol: str, sig_type: str, detail: str, *,
     save_signals(sigs)
     # push important signals to Telegram too (best effort)
     try:
-        from breakout_guard import send_telegram
         emo = {"accumulation": "🟢", "stealth_accumulation": "🕵️",
                "distribution": "🔴",
                "bullish_div": "📈", "bearish_div": "📉",
@@ -112,7 +111,7 @@ def record_signal(ca: str, symbol: str, sig_type: str, detail: str, *,
         # FOCUS_MODE: Tier 2 signals do NOT go to Telegram.
         if _focus_mode() and sig_type in TIER2_SIGNAL_TYPES:
             return True
-        send_telegram(
+        _queue_or_send(
             f"{CVD_TAG}\n{CVD_SUB}\n\n"
             f"{emo} <b>${symbol}</b> — {sig_type.replace('_', ' ')}\n"
             f"{detail}\n"
@@ -245,28 +244,159 @@ def detect_and_record(ca: str, symbol: str, *, src: str = "cron",
     return recorded
 
 
+# Pending Telegram snippets collected when DIGEST_MODE is on. Cron (or
+# any multi-CA scan) flushes them once at the end via flush_telegram_digest()
+# so the operator gets one combined message instead of N separate pings.
+_DIGEST_BUF: list = []
+_DIGEST_MODE: bool = False
+
+
+def begin_digest() -> None:
+    """Start buffering Telegram alerts into a combined digest."""
+    global _DIGEST_MODE, _DIGEST_BUF
+    _DIGEST_MODE = True
+    _DIGEST_BUF = []
+
+
+def _queue_or_send(text: str) -> bool:
+    """Send *text* immediately, or queue it when digest mode is active.
+
+    Returns True when the text was accepted (queued or delivered).
+    """
+    if not text:
+        return False
+    if _DIGEST_MODE:
+        _DIGEST_BUF.append(text)
+        return True
+    try:
+        from breakout_guard import send_telegram
+        return bool(send_telegram(text))
+    except Exception:
+        return False
+
+
+def flush_telegram_digest(*, title=None, send_fn=None) -> int:
+    """Flush the digest buffer as one (or few) combined Telegram message(s).
+
+    Returns the number of Telegram messages actually dispatched. Safe to
+    call when the buffer is empty (returns 0). Always ends digest mode.
+    """
+    global _DIGEST_MODE, _DIGEST_BUF
+    items = list(_DIGEST_BUF)
+    _DIGEST_BUF = []
+    _DIGEST_MODE = False
+    if not items:
+        return 0
+    try:
+        # Prefer a simple multi-item join (list of HTML snippets). Main's
+        # format_combined_digest uses structured kwargs (triggered/cleared/
+        # prepump) — different call shape — so we format the buffer here.
+        hdr = title or "📬 <b>ALERT DIGEST</b>"
+        sep = "\n\n— — —\n\n"
+        body = sep.join(items)
+        chunks = [hdr + "\n\n" + body]
+        # Soft-split if over Telegram's 4096 limit.
+        if len(chunks[0]) > 3800:
+            chunks, buf, n = [], [], 0
+            overhead = len(hdr) + 2
+            for it in items:
+                add = len(it) + (len(sep) if buf else 0)
+                if buf and overhead + n + add > 3800:
+                    chunks.append(hdr + "\n\n" + sep.join(buf))
+                    buf, n = [it], len(it)
+                else:
+                    buf.append(it)
+                    n += add
+            if buf:
+                chunks.append(hdr + "\n\n" + sep.join(buf))
+    except Exception:
+        chunks = items  # fall back to one-by-one
+    sender = send_fn
+    if sender is None:
+        try:
+            from breakout_guard import send_telegram as sender
+        except Exception:
+            return 0
+    n = 0
+    for chunk in chunks:
+        try:
+            if sender(chunk):
+                n += 1
+        except Exception:
+            pass
+    return n
+
+
 def detect_prepump_and_record(ca, symbol, swaps, token_info=None, *, now_ts=None,
                               src="cron", window_min=30, whale_min_sol=3.0,
-                              wallet_tags=None, bullish_div=False, pool=None):
+                              wallet_tags=None, bullish_div=False, pool=None,
+                              pool_sol=None):
     """Run the Pre-Pump Detector on recent swaps and record/alert if scored.
 
-    Returns the evaluate_prepump result dict, or None when score < 55 (noise).
+    Returns the evaluate_prepump result dict (including neutral / blocked),
+    or None only when evaluation itself could not run.
 
     Behaviour (per spec):
       - score >= 75 -> "prepump_imminent" (Tier 1, always Telegram)
       - score 55-74 -> "prepump_forming" (Tier 2, Telegram only when
         focus_mode is OFF)
+      - score < 55 after a prior imminent/forming -> "prepump_cleared"
+        (Telegram notice so the operator knows the setup cooled)
       - each type is deduped per (ca, type) within PREPUMP_DEDUPE_SEC (3h)
     """
-    from prepump_detector import (evaluate_prepump, format_prepump_telegram,
-                                 prepump_already_sent, PREPUMP_DEDUPE_SEC)
+    from prepump_detector import (
+        evaluate_prepump, format_prepump_telegram,
+        format_prepump_cleared_telegram,
+        prepump_already_sent, PREPUMP_DEDUPE_SEC,
+    )
     now_ts = int(now_ts if now_ts is not None else time.time())
     result = evaluate_prepump(
         swaps, token_info, ca=ca, now_ts=now_ts, window_min=window_min,
         whale_min_sol=whale_min_sol, wallet_tags=wallet_tags,
-        bullish_div=bullish_div)
-    if result["score"] < 55:
+        bullish_div=bullish_div, pool_sol=pool_sol)
+
+    def _last_prepump(sigs, ca_):
+        """Most recent imminent/forming/cleared signal for this CA."""
+        for s in reversed(sigs or []):
+            if s.get("ca") == ca_ and s.get("type") in (
+                    "prepump_imminent", "prepump_forming", "prepump_cleared"):
+                return s
         return None
+
+    # ── CLEARED path: was active, now below forming threshold ──────────
+    if result["score"] < 55 or result.get("tier") in ("neutral", "blocked"):
+        prev = _last_prepump(load_signals(), ca)
+        if prev and prev.get("type") in ("prepump_imminent", "prepump_forming"):
+            # Dedupe cleared the same way as other pre-pump types.
+            if not prepump_already_sent(load_signals(), ca, "prepump_cleared",
+                                        now_ts, PREPUMP_DEDUPE_SEC):
+                detail = ("Pre-pump CLEARED (was %s @ %s/100 → now %s/100)"
+                          % (prev.get("type"), prev.get("score"),
+                             result["score"]))
+                sigs = load_signals()
+                sigs.append({
+                    "ts": now_ts, "ca": ca, "symbol": symbol,
+                    "type": "prepump_cleared", "src": src,
+                    "detail": detail, "score": result["score"],
+                    "prev_type": prev.get("type"),
+                    "prev_score": prev.get("score"),
+                    "window_min": window_min,
+                    "price": (token_info or {}).get("price_usd"),
+                })
+                save_signals(sigs)
+                # Cleared is actionable (stop watching a setup) → always TG.
+                try:
+                    # Main API: format_prepump_cleared_telegram(ca, token_info, last_score)
+                    msg = format_prepump_cleared_telegram(
+                        ca, token_info or {"symbol": symbol},
+                        last_score=prev.get("score"))
+                    _queue_or_send(msg)
+                except Exception:
+                    pass
+                result = dict(result)
+                result["cleared"] = True
+        return result
+
     sig_type = ("prepump_imminent" if result["tier"] == "imminent"
                 else "prepump_forming")
     if prepump_already_sent(load_signals(), ca, sig_type, now_ts,
@@ -290,8 +420,8 @@ def detect_prepump_and_record(ca, symbol, swaps, token_info=None, *, now_ts=None
         send = not _focus_mode()
     if send:
         try:
-            from breakout_guard import send_telegram
-            send_telegram(format_prepump_telegram(result, ca, token_info))
+            msg = format_prepump_telegram(result, ca, token_info)
+            _queue_or_send(msg)
         except Exception:
             pass
     return result
