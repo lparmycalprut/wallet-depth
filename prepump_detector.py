@@ -70,19 +70,62 @@ def _is_sandwich(wallet_swaps, wallet_tags):
     return False
 
 
-def _clean_swaps(swaps, wallet_tags):
-    '''Drop sandwich-bot / MEV-arbitrage swaps so they don't fake flow.'''
+def _clean_swaps(swaps, wallet_tags, pool_sol=None):
+    '''Drop sandwich-bot / MEV-arbitrage swaps and cap absurd swap sizes
+    (GMGN quote bugs / MEV skew) at min(500 SOL, 0.10 * pool_sol).'''
+    sol_cap = min(500.0, 0.10 * float(pool_sol)) if pool_sol else 500.0
     by_wallet = {}
     for s in (swaps or []):
         if len(s) < 4:
             continue
-        by_wallet.setdefault(s[3], []).append(s)
+        s = list(s)
+        if abs(float(s[1])) > sol_cap:
+            s[1] = sol_cap if float(s[1]) > 0 else -sol_cap
+        by_wallet.setdefault(s[3], []).append(tuple(s))
     out = []
     for w, ws in by_wallet.items():
         if _is_sandwich(ws, wallet_tags):
             continue
         out.extend(ws)
     return out
+
+
+def _min_absorp(mc):
+    '''Adaptive liquidity tier: minimum pure-accumulation SOL to count.
+
+    Low-cap (<$50k): 3 SOL · Mid-cap ($50k-$500k): 10 SOL ·
+    High-cap (>$500k): 25 SOL. None -> 0 (no tier gate; used in tests).
+    '''
+    if mc is None:
+        return 0.0
+    if mc < 50000:
+        return 3.0
+    if mc <= 500000:
+        return 10.0
+    return 25.0
+
+
+def _safety_check(ti):
+    '''Fast-fail gates (Rug / Markup distance / Liquidity sanity).
+
+    Only blocks when the relevant data is present; missing data => pass,
+    so offline tests and the backtest (no safety fields) are unaffected.
+    Returns (blocked: bool, reason: str).
+    '''
+    if not ti:
+        return False, ''
+    if ti.get('rug_risky'):
+        return True, 'rug/safety risk flagged'
+    mu = ti.get('markup_24h_pct')
+    if mu is not None and mu >= 80.0:
+        return True, 'price already +%s%% (24h)' % round(mu)
+    tx24 = ti.get('tx24')
+    if tx24 is not None and tx24 < 1000:
+        return True, '24h tx %s < 1000' % tx24
+    v24 = ti.get('vol24_usd')
+    if v24 is not None and v24 < 20000.0:
+        return True, '24h vol $%s < $20k' % _r(v24)
+    return False, ''
 
 
 def evaluate_prepump(swaps, token_info=None, *, ca=None, now_ts=None,
@@ -103,11 +146,33 @@ def evaluate_prepump(swaps, token_info=None, *, ca=None, now_ts=None,
     Returns a dict with score, tier, per-pillar points, and metric details.
     '''
     now_ts = int(now_ts if now_ts is not None else time.time())
+    ti = token_info or {}
+    blocked, block_reason = _safety_check(ti)
+    if blocked:
+        return {
+            'ca': ca, 'score': 0.0, 'tier': 'blocked',
+            'window_min': int(window_min), 'bullish_div': bool(bullish_div),
+            'compression_pct': 0.0, 'blocked': True,
+            'block_reason': block_reason,
+            'metrics': {'buy_vol': 0.0, 'sell_vol': 0.0, 'net_sol': 0.0,
+                        'avg_buy': 0.0, 'avg_sell': 0.0, 'ratio': 0.0,
+                        'buy_count': 0, 'sell_count': 0, 'n_pure': 0,
+                        'pct_pure': 0.0, 'smart_count': 0, 'smart_zero': 0,
+                        'vol_15m': 0.0, 'vol_30m': 0.0,
+                        'baseline_vol_1h': 0.0, 'active_terminals': [],
+                        'whale_dumper': False},
+            'smart_tags_found': [], 'stage': 'BLOCKED: ' + block_reason,
+            'pillars': {'compression': 0.0, 'asymmetry': 0.0,
+                        'accum': 0.0, 'delta': 0.0},
+            'reasons': {'compression': block_reason, 'asymmetry': '',
+                        'accum': '', 'delta': ''},
+            'token_info': ti,
+        }
     win_start = now_ts - int(window_min) * 60
     prior_start = now_ts - int(prior_hours) * 3600
     w15_start = now_ts - 15 * 60
 
-    cleaned = _clean_swaps(swaps, wallet_tags)
+    cleaned = _clean_swaps(swaps, wallet_tags, pool_sol)
     recent = [s for s in cleaned
               if win_start <= int(s[2]) <= now_ts]
     prior = [s for s in cleaned
@@ -186,9 +251,11 @@ def evaluate_prepump(swaps, token_info=None, *, ca=None, now_ts=None,
             for t in tags & PREPUMP_SMART_TAGS:
                 if t not in smart_tags_found:
                     smart_tags_found.append(t)
+    _min_abs = _min_absorp(ti.get('mc'))
     p3 = 0.0
     if pct_pure >= 0.6:
-        p3 += 15.0
+        p3 += 15.0 * (min(1.0, pure_buy_vol / _min_abs) if _min_abs > 0
+                      else 1.0)
     if smart_zero >= 2:
         p3 += 10.0
     p3 = min(25.0, p3)
@@ -292,9 +359,9 @@ def format_prepump_telegram(result, ca, token_info=None):
         '<i>smart-money absorption · seller exhaustion · ignition trigger</i>',
         '',
         '📊 <b>Pre-Pump Score:</b> <b>%s/100</b> %s' % (result['score'], badge),
-        '💰 <b>Price:</b> $%s | <b>MC:</b> $%s | <b>Vol 24h:</b> $%s'
+        '💰 <b>Price:</b> $%s | <b>MC:</b> $%s | <b>Liq:</b> $%s'
         % (_fmt(ti.get('price_usd')), _fmt(ti.get('mc')),
-           _fmt(ti.get('vol_24h'))),
+           _fmt(ti.get('liquidity'))),
         '',
         '🔍 <b>On-Chain Signatures:</b>',
         '• <b>Seller State:</b> 🟢 Exhausted (Vol compression -%s%% vs 4h avg)'

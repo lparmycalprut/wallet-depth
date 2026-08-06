@@ -141,7 +141,7 @@ def test_telegram_format():
     assert 'TEST' in msg
     assert 'Score' in msg
     assert 'dexscreener.com/solana/TESTCA' in msg
-    assert 'Vol 24h' in msg
+    assert 'Liq' in msg
     assert 'Ignition / Terminals' in msg
     print('telegram format ok, len=%d' % len(msg))
 
@@ -165,3 +165,47 @@ if __name__ == '__main__':
     test_telegram_format()
     test_dedup_cooldown()
     print('ALL TESTS PASSED')
+
+
+def test_safety_gate_blocks():
+    sw = _build_prepump_swaps(now)
+    tags = _tags([('W1', ['bluechip_owner']), ('W2', ['axiom']),
+                  ('W3', ['top_holder'])])
+    # markup distance gate: already +120% in 24h -> blocked
+    r = pp.evaluate_prepump(sw, {'symbol': 'X', 'markup_24h_pct': 120.0},
+                            ca='X', now_ts=now, window_min=30,
+                            wallet_tags=tags, bullish_div=True)
+    assert r['tier'] == 'blocked', r
+    assert r['score'] == 0.0
+    # 24h vol < $20k -> blocked
+    r2 = pp.evaluate_prepump(sw, {'symbol': 'X', 'vol24_usd': 15000.0},
+                             ca='X', now_ts=now, window_min=30,
+                             wallet_tags=tags, bullish_div=True)
+    assert r2['tier'] == 'blocked'
+    # without safety fields, same data scores high (not blocked)
+    r3 = pp.evaluate_prepump(sw, {'symbol': 'X'}, ca='X', now_ts=now,
+                             window_min=30, wallet_tags=tags, bullish_div=True)
+    assert r3['tier'] != 'blocked'
+    print('safety gate ok')
+
+
+def test_liquidity_tier_scaling():
+    sw = _build_prepump_swaps(now)
+    tags = _tags([('W1', ['bluechip_owner']), ('W2', ['axiom']),
+                  ('W3', ['top_holder'])])
+    r_low = pp.evaluate_prepump(sw, {'symbol': 'L', 'mc': 40000.0}, ca='L',
+                                now_ts=now, window_min=30, wallet_tags=tags,
+                                bullish_div=True)
+    r_high = pp.evaluate_prepump(sw, {'symbol': 'H', 'mc': 1000000.0}, ca='H',
+                                 now_ts=now, window_min=30, wallet_tags=tags,
+                                 bullish_div=True)
+    p3_low = r_low['pillars']['accum']
+    p3_high = r_high['pillars']['accum']
+    assert p3_low >= p3_high, (p3_low, p3_high)
+    assert p3_low == 25.0, p3_low  # low-cap tier: 22 SOL >= 3 SOL -> full
+    print('tier scaling ok low=%s high=%s' % (p3_low, p3_high))
+
+
+if __name__ == '__main__':
+    test_safety_gate_blocks()
+    test_liquidity_tier_scaling()
