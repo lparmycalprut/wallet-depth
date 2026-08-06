@@ -1,3 +1,6 @@
+# ⚠️ DISABLED PER DISABLED.md — JANGAN DICEK KECUALI DIMINTA AKTIFKAN
+# Status: dinonaktifkan sementara oleh owner (2026-08-06). Lihat DISABLED.md.
+# Alasan: halaman ini dimatikan; scanner tetap bisa via CLI (`python memecoin_scanner.py`).
 # -*- coding: utf-8 -*-
 """Page: Memecoin Scanner — 5 Fase Scoring System untuk deteksi pola akumulasi.
 

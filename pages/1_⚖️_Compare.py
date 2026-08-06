@@ -1,3 +1,5 @@
+# ⚠️ DISABLED PER DISABLED.md — JANGAN DICEK KECUALI DIMINTA AKTIFKAN
+# Status: dinonaktifkan sementara oleh owner (2026-08-06). Lihat DISABLED.md.
 # -*- coding: utf-8 -*-
 """Page: Compare multiple tokens side-by-side."""
 import os
