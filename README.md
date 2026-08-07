@@ -99,11 +99,11 @@ Halaman **📊 CVD Deep Analysis** menyediakan:
 
 - satu fetch swap GMGN untuk 72 jam;
 - grafik conviction tetap pada window `4/6/12/24/48/72 jam`;
-- analisis full Helius untuk 100 top holder;
-- persentase diamond hand (sell/buy ≤10% pada sample swap) dan persentase
-  real holder (nilai saldo ≥ dust limit);
+- analisis diamond hand dari 100 top holder (sell/buy ≤10% pada sample swap);
+- proporsi Real holder (saldo ≥ dust limit) vs Dust holder (< dust limit)
+  dihitung dari seluruh holder token Helius;
 - expander detail rank, saldo, supply %, nilai USD, buy/sell, sold/buy,
-  diamond hand, real/dust, dan status aktivitas.
+  diamond hand, real/dust per wallet, dan status aktivitas untuk 100 top holder.
 
 Panel Pre-Pump Radar, Multi-Timeframe, conviction table, CVD hourly, dan
 whale/dolphin held-flow sengaja tidak dirender di page CVD. Backend prepump

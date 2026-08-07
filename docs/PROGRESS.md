@@ -7,6 +7,51 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-07 — CVD page fix: Real/Dust dihitung dari seluruh holder Helius
+
+### Yang berubah
+
+1. Scope analisis dipisahkan secara tegas antara Top 100 dan Semua Holder:
+   - **Top 100 holder**: ranking berdasarkan saldo token terbesar, analisis
+     diamond hand (sell/buy ≤10% pada window swap 72h; wallet tanpa sell teramati
+     ikut dihitung dengan batasan observasi yang jelas di UI), dan tabel detail
+     100 wallet.
+   - **Semua holder**: total holder valid (`all_holders`), jumlah Real holder
+     (`all_real_holders`), jumlah Dust holder (`all_dust_holders`), serta
+     persentase Real (`all_real_pct`) dan Dust (`all_dust_pct`) dihitung dari
+     seluruh holder token yang dikembalikan daftar lengkap Helius (dinormalisasi
+     ke UI token amount memakai decimals dari `get_supply()`).
+2. Helper `cvd.top_holder_analysis()` diperbarui untuk menyediakan field
+   keseluruhan (`all_holders`, `all_real_holders`, `all_dust_holders`,
+   `all_real_pct`, `all_dust_pct`) tanpa mengubah arti field Top 100 (`real_holders`,
+   `real_pct`, `diamond_hands`, `diamond_pct`).
+3. UI page `pages/4_📊_CVD.py` menampilkan metrik:
+   - Diamond hand: denominator Top 100 (`diamond_count/n_top`);
+   - Real holder: denominator seluruh holder (`all_real_holders/all_holders`);
+   - Dust holder: denominator seluruh holder (`all_dust_holders/all_holders`);
+   - Caption yang jelas bahwa Real/Dust dihitung dari seluruh holder token Helius.
+4. Test offline di `tests/test_top_holder_analysis.py` diperbarui untuk memvalidasi:
+   - pembatasan Top 100 tetap pada 100 wallet;
+   - metrik Real/Dust overall menggunakan seluruh holder;
+   - holder Real di luar Top 100 tetap dihitung;
+   - holder Dust di luar Top 100 tetap dihitung;
+   - threshold tepat sama dengan `dust_limit_usd` dianggap Real (`>=`).
+
+### Kenapa
+
+Sebelumnya terdapat bug di mana metrik Real vs Dust holder pada summary card
+hanya dihitung dari 100 top holder saja. Seharusnya rasio Real vs Dust
+menggambarkan distribusi seluruh populasi holder token dari Helius.
+
+### Verifikasi
+
+- `python tests/test_top_holder_analysis.py` — semua 6 test case lulus.
+- `python -m unittest tests/test_*.py` / `python tests/test_*.py` — semua suite lulus.
+- `python -m py_compile cvd.py pages/4_📊_CVD.py` — kompilasi lulus tanpa error.
+- `git diff --check` — bersih tanpa whitespace / merge marker issues.
+
+---
+
 ## 2026-08-07 — CVD page: conviction 4–72h + Top 100 holder analysis
 
 ### Yang berubah

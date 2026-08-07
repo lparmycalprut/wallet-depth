@@ -255,32 +255,44 @@ else:
     )
     n_top = holder_analysis["n_top"]
     diamond_count = holder_analysis["diamond_hands"]
-    real_count = holder_analysis["real_holders"]
     observed = holder_analysis["observed_wallets"]
     diamond_pct = holder_analysis["diamond_pct"]
-    real_pct = holder_analysis["real_pct"]
+    all_holders = holder_analysis["all_holders"]
+    all_real_holders = holder_analysis["all_real_holders"]
+    all_dust_holders = holder_analysis["all_dust_holders"]
+    all_real_pct = holder_analysis["all_real_pct"]
+    all_dust_pct = holder_analysis["all_dust_pct"]
 
-    hm1, hm2, hm3, hm4 = st.columns(4)
+    hm1, hm2, hm3, hm4, hm5 = st.columns(5)
     hm1.metric("Top holder dianalisis", f"{n_top}/100",
-               f"{holder_data.get('total_holders', 0):,} total holder")
+               f"{all_holders:,} total holder")
     hm2.metric(
         "💎 Diamond hand",
         f"{diamond_count}/{n_top} ({diamond_pct:.1f}%)" if n_top else "—",
-        "sell ≤10% dari buy · window 72h",
+        "sell ≤10% dari buy · Top 100",
     )
     hm3.metric(
-        "💰 Real holder ≥ dust",
-        f"{real_count}/{n_top} ({real_pct:.1f}%)" if n_top else "—",
-        f"threshold ${dust_limit_usd:,.2f}",
+        "💰 Real holder",
+        f"{all_real_holders:,}/{all_holders:,} ({all_real_pct:.1f}%)"
+        if all_holders else "—",
+        f"≥ ${dust_limit_usd:,.2f} · full list",
     )
-    hm4.metric("Top 100 supply", f"{holder_analysis['top_supply_pct']:.2f}%",
+    hm4.metric(
+        "🪙 Dust holder",
+        f"{all_dust_holders:,}/{all_holders:,} ({all_dust_pct:.1f}%)"
+        if all_holders else "—",
+        f"< ${dust_limit_usd:,.2f} · full list",
+    )
+    hm5.metric("Top 100 supply", f"{holder_analysis['top_supply_pct']:.2f}%",
                f"${price_now:.8g} token price")
 
     st.caption(
-        f"Diamond hand memakai sell/buy wallet yang terdeteksi selama 72 jam; "
-        f"wallet tanpa sell terdeteksi ikut dihitung sebagai diamond hand "
-        f"({observed}/{n_top} top holder punya aktivitas swap teramati). "
-        f"Real holder berarti nilai saldo saat ini ≥ ${dust_limit_usd:,.2f}."
+        f"Diamond hand dianalisis dari {n_top} top holder berdasarkan aktivitas swap 72 jam "
+        f"({observed}/{n_top} top holder punya aktivitas swap teramati; wallet tanpa sell "
+        f"terdeteksi ikut dihitung sebagai diamond hand). Real dan Dust holder dihitung "
+        f"dari seluruh ({all_holders:,}) holder token dari daftar lengkap Helius, "
+        f"di mana Real holder memiliki nilai saldo token saat ini ≥ ${dust_limit_usd:,.2f} "
+        f"dan Dust holder < ${dust_limit_usd:,.2f}."
     )
 
     detail_rows = []

@@ -137,11 +137,16 @@ Lihat docs/PROGRESS.md untuk riwayat detail.
 `pages/4_📊_CVD.py` sekarang mengambil satu dataset GMGN 72 jam dan hanya
 merender grafik conviction untuk window `4/6/12/24/48/72h`. Table conviction,
 CVD hourly, whale/dolphin held-flow, Pre-Pump Radar 30m, dan Multi-Timeframe
-UI dihapus. `cvd.top_holder_analysis()` adalah helper network-free baru untuk
-menggabungkan top 100 holder Helius dengan wallet swap profile: diamond hand
-berarti sell/buy ≤10% selama sample, sedangkan real holder berarti nilai saldo
-≥ `dust_limit_usd`. Backend prepump tetap dipertahankan karena masih dipakai
-oleh sinyal harian dan test suite.
+UI dihapus. `cvd.top_holder_analysis()` adalah helper network-free yang
+memisahkan dua scope:
+1. **Top 100 holder**: ranking saldo terbesar, analisis diamond hand (sell/buy ≤10%
+   selama sample 72h; wallet tanpa sell terdeteksi ikut dihitung), dan tabel detail.
+2. **Full holder list (semua holder Helius)**: metrik keseluruhan Real holder
+   (`token_balance * price_usd >= dust_limit_usd`, default $5) dan Dust holder
+   (`< dust_limit_usd`), termasuk total holder valid, jumlah, dan persentase Real/Dust.
+
+Backend prepump tetap dipertahankan karena masih dipakai oleh sinyal harian dan
+test suite.
 
 Verifikasi minimum setelah perubahan: `python -m py_compile cvd.py
 pages/4_📊_CVD.py` dan `python tests/test_top_holder_analysis.py`.
