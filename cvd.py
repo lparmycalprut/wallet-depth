@@ -1042,9 +1042,10 @@ def top_holder_analysis(holders, swaps=None, *, price_usd=0.0,
     wallet with no observed sell also qualifies; the returned ``activity``
     and ``observed`` fields make that limitation explicit instead of
     pretending that a 72-hour swap sample proves lifetime behaviour.
-    Real holders are current top holders whose token value is at least the
-    configured dust threshold. The calculation is pure and network-free so
-    the UI and tests can share exactly the same rules.
+    Real holders are holders whose token value is at least the configured
+    dust threshold (computed across all holders for overall metrics, and
+    per wallet in the top holder table). The calculation is pure and
+    network-free so the UI and tests can share exactly the same rules.
     """
     pairs = []
     if hasattr(holders, "to_dict") and hasattr(holders, "columns"):
@@ -1078,9 +1079,7 @@ def top_holder_analysis(holders, swaps=None, *, price_usd=0.0,
     by_owner = {}
     for owner, amount in pairs:
         by_owner[owner] = by_owner.get(owner, 0.0) + amount
-    pairs = sorted(by_owner.items(), key=lambda pair: -pair[1])[:max(1, int(limit or 100))]
 
-    profiles = wallet_profiles(swaps or [])
     try:
         price = max(0.0, float(price_usd or 0.0))
     except (TypeError, ValueError):
@@ -1095,8 +1094,29 @@ def top_holder_analysis(holders, swaps=None, *, price_usd=0.0,
         total_supply = 0.0
     tolerance = max(0.0, float(sell_tolerance or 0.0))
 
+    # Scope: ALL holders from full list
+    all_holders = len(by_owner)
+    all_real_holders = sum(
+        1 for amount in by_owner.values() if (amount * price) >= dust
+    )
+    all_dust_holders = sum(
+        1 for amount in by_owner.values() if (amount * price) < dust
+    )
+    all_real_pct = (
+        all_real_holders / all_holders * 100.0 if all_holders else 0.0
+    )
+    all_dust_pct = (
+        all_dust_holders / all_holders * 100.0 if all_holders else 0.0
+    )
+
+    # Scope: Top N holders by token balance
+    top_limit = max(1, int(limit or 100)) if limit is not None else 100
+    sorted_pairs = sorted(by_owner.items(), key=lambda pair: -pair[1])
+    top_pairs = sorted_pairs[:top_limit]
+
+    profiles = wallet_profiles(swaps or [])
     rows = []
-    for rank, (owner, amount) in enumerate(pairs, start=1):
+    for rank, (owner, amount) in enumerate(top_pairs, start=1):
         profile = profiles.get(owner) or {}
         buy = float(profile.get("buy") or 0.0)
         sell = float(profile.get("sell") or 0.0)
@@ -1137,7 +1157,7 @@ def top_holder_analysis(holders, swaps=None, *, price_usd=0.0,
     top_amount = sum(row["amount"] for row in rows)
     return {
         "rows": rows,
-        "limit": int(limit or 100),
+        "limit": top_limit,
         "n_top": n_top,
         "diamond_hands": diamond_count,
         "diamond_pct": diamond_count / n_top * 100.0 if n_top else 0.0,
@@ -1148,6 +1168,11 @@ def top_holder_analysis(holders, swaps=None, *, price_usd=0.0,
             if observed_rows else 0.0),
         "real_holders": real_count,
         "real_pct": real_count / n_top * 100.0 if n_top else 0.0,
+        "all_holders": all_holders,
+        "all_real_holders": all_real_holders,
+        "all_dust_holders": all_dust_holders,
+        "all_real_pct": all_real_pct,
+        "all_dust_pct": all_dust_pct,
         "top_amount": top_amount,
         "top_supply_pct": top_amount / total_supply * 100.0
         if total_supply else 0.0,
