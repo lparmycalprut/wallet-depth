@@ -7,6 +7,50 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-07 — CVD page: conviction 4–72h + Top 100 holder analysis
+
+### Yang berubah
+
+1. `pages/4_📊_CVD.py` sekarang mengambil satu range swap GMGN 72 jam dan
+   menggambar conviction pada window tetap **4h, 6h, 12h, 24h, 48h, 72h**.
+   Table conviction dihapus, begitu juga grafik CVD hourly 72h.
+2. UI CVD tidak lagi merender **Pre-Pump Radar 30m**, **Multi-Timeframe
+   30m/1h/4h/12h**, atau **Whale & Dolphin held-flow**. Backend prepump tetap
+   ada karena masih dipakai sinyal watchlist/Telegram dan test suite.
+3. Ditambahkan blok **Top 100 Holder Analysis**. Full holder list Helius
+   diagregasi per owner, diurutkan berdasarkan saldo, lalu 100 teratas
+   dibandingkan dengan wallet profile dari sample swap 72 jam:
+   - diamond hand = sell/buy ≤10%; wallet tanpa sell terdeteksi juga masuk
+     hitungan, tetapi UI menyatakan bahwa ini hanya observasi 72 jam;
+   - real holder = nilai saldo saat ini ≥ `dust_limit_usd` (default config $5);
+   - detail rank, saldo, supply %, nilai USD, buy/sell, sold/buy, diamond,
+     real/dust, dan aktivitas tersedia di expander.
+4. Aturan analisis diletakkan di helper murni `cvd.top_holder_analysis()` agar
+   tidak bergantung pada Streamlit atau jaringan dan dapat diuji offline.
+
+### Kenapa
+
+Owner meminta page CVD diringkas menjadi graph conviction dan holder quality,
+serta menghapus panel prepump/multi-TF/cohort yang tidak lagi dibutuhkan di
+halaman tersebut. Holder dihitung dari Helius penuh, bukan top-10 GMGN, agar
+persentase real-vs-dust tidak menyesatkan.
+
+### Verifikasi
+
+- `python -m py_compile cvd.py pages/4_📊_CVD.py` — lulus.
+- `python tests/test_top_holder_analysis.py` — helper diamond hand, top-100
+  sorting/limit, empty activity, supply share, dan real/dust threshold.
+- `git diff --check` — lulus.
+
+### Catatan
+
+Diamond hand bukan bukti lifetime holding: data sell/buy berasal dari swap
+sample yang sedang dianalisis (72 jam). Jika Helius key tidak tersedia, page
+masih menampilkan conviction GMGN tetapi memberi warning bahwa holder analysis
+belum tersedia.
+
+---
+
 ## 2026-08-07 — RESET TOTAL: minimalist prepump focus (owner request)
 
 ### Ringkasan

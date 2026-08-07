@@ -24,7 +24,7 @@ Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Per
 |---|---|
 | `app.py` | **Main page reset** — 371 baris. Urutan: watchlist vertical (kolom sinyal) → tambah manual → scan trending now → scan degen now. Tidak ada cards, tidak ada analyze di main page. Hanya tombol ⭐ Watchlist di tabel trending/degen. |
 | `pages/3_⭐_Watchlist.py` | Watchlist table (history/score/holders). Tetap, tapi main page juga menampilkan watchlist. |
-| `pages/4_📊_CVD.py` | **CVD Deep Analysis** — minimalist 358 baris. Input CA + window 4-72h → fetch GMGN → conviction, whale/dolphin, CVD chart, divergence, prepump 30m + multi-TF (30m/1h/4h/12h) + confluence. Tanpa ai_prompt, monitor_alerts, fresh_wallet detail. |
+| `pages/4_📊_CVD.py` | **CVD Deep Analysis** — conviction graph fixed `4/6/12/24/48/72h` + full Helius top-100 holder analysis. Page tidak lagi merender Pre-Pump Radar, Multi-Timeframe, conviction table, CVD hourly, atau whale/dolphin held-flow. |
 | `core.py` | Helius pool + DexScreener + GeckoTerminal helpers (shared). |
 | `cvd.py` | Store swap 72 jam, bucket CVD, wallet profiles, conviction, candle patterns. **Tidak lagi** punya holder_snapshots / real_dust_history (dihapus karena fokus prepump). |
 | `gmgn_screener.py` | Screener GMGN trending + HRHR, scoring ramp kontinu (4 pilar: t10 30, liq 30, rug 25, vol 15). Tetap semua filter. |
@@ -82,6 +82,16 @@ Sumber: `https://github.com/lparmycalprut/prepump_baru` — HANDOFF_WALLET_DEPTH
 
 **Multi-TF:** 30m Micro Ignition, 1h Hourly Setup, 4h Swing/Wyckoff, 12h Macro Cycle. Confluence: golden (macro≥60 & micro≥75), dead_cat (30m≥70 & macro<35), sleeper (macro≥65 & 30m<40), normal.
 
+**Catatan UI CVD (owner request 2026-08-07):** backend `prepump_detector.py`
+dan `signals.py` tetap dipakai oleh sinyal watchlist/Telegram, tetapi page
+`4_📊_CVD.py` tidak lagi memanggil atau merender Pre-Pump Radar 30m maupun
+Multi-Timeframe. Page hanya mengambil swap 72h untuk grafik conviction
+`4/6/12/24/48/72h`, lalu mengambil full holder list Helius untuk Top 100:
+proporsi diamond hand (sell/buy ≤10% pada window swap) dan proporsi saldo
+real (nilai saldo ≥ dust limit). Wallet tanpa sell terdeteksi ditandai sebagai
+no-sell-observed dan masuk hitungan diamond hand dengan batasan window yang
+jelas di UI.
+
 ---
 
 ## 7. Cara kerja & jebakan (minimalist)
@@ -121,4 +131,18 @@ python -m unittest discover tests   # hanya holder_split yang unittest, sisanya 
 **Tes:** 12 suite tersisa semua PASS (custom python + unittest holder_split 18 tests). Dihapus 9 suite yang menguji fitur yang sengaja dihapus.
 
 Lihat docs/PROGRESS.md untuk riwayat detail.
+
+## 9. Status 2026-08-07 — CVD holder-focused UI revision
+
+`pages/4_📊_CVD.py` sekarang mengambil satu dataset GMGN 72 jam dan hanya
+merender grafik conviction untuk window `4/6/12/24/48/72h`. Table conviction,
+CVD hourly, whale/dolphin held-flow, Pre-Pump Radar 30m, dan Multi-Timeframe
+UI dihapus. `cvd.top_holder_analysis()` adalah helper network-free baru untuk
+menggabungkan top 100 holder Helius dengan wallet swap profile: diamond hand
+berarti sell/buy ≤10% selama sample, sedangkan real holder berarti nilai saldo
+≥ `dust_limit_usd`. Backend prepump tetap dipertahankan karena masih dipakai
+oleh sinyal harian dan test suite.
+
+Verifikasi minimum setelah perubahan: `python -m py_compile cvd.py
+pages/4_📊_CVD.py` dan `python tests/test_top_holder_analysis.py`.
 
