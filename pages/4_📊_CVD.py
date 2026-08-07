@@ -253,15 +253,15 @@ else:
         limit=100,
         sell_tolerance=0.10,
     )
-    n_top = holder_analysis["n_top"]
-    diamond_count = holder_analysis["diamond_hands"]
-    observed = holder_analysis["observed_wallets"]
-    diamond_pct = holder_analysis["diamond_pct"]
-    all_holders = holder_analysis["all_holders"]
-    all_real_holders = holder_analysis["all_real_holders"]
-    all_dust_holders = holder_analysis["all_dust_holders"]
-    all_real_pct = holder_analysis["all_real_pct"]
-    all_dust_pct = holder_analysis["all_dust_pct"]
+    n_top = int(holder_analysis.get("n_top") or 0)
+    diamond_count = int(holder_analysis.get("diamond_hands") or 0)
+    observed = int(holder_analysis.get("observed_wallets") or 0)
+    diamond_pct = float(holder_analysis.get("diamond_pct") or 0.0)
+    all_holders = int(holder_analysis.get("all_holders") or holder_data.get("total_holders") or n_top)
+    all_real_holders = int(holder_analysis.get("all_real_holders") if holder_analysis.get("all_real_holders") is not None else (holder_analysis.get("real_holders") or 0))
+    all_dust_holders = int(holder_analysis.get("all_dust_holders") if holder_analysis.get("all_dust_holders") is not None else max(0, all_holders - all_real_holders))
+    all_real_pct = float(holder_analysis.get("all_real_pct") if holder_analysis.get("all_real_pct") is not None else (all_real_holders / all_holders * 100.0 if all_holders else 0.0))
+    all_dust_pct = float(holder_analysis.get("all_dust_pct") if holder_analysis.get("all_dust_pct") is not None else (all_dust_holders / all_holders * 100.0 if all_holders else 0.0))
 
     hm1, hm2, hm3, hm4, hm5 = st.columns(5)
     hm1.metric("Top holder dianalisis", f"{n_top}/100",
@@ -283,7 +283,8 @@ else:
         if all_holders else "—",
         f"< ${dust_limit_usd:,.2f} · full list",
     )
-    hm5.metric("Top 100 supply", f"{holder_analysis['top_supply_pct']:.2f}%",
+    top_supply_pct = float(holder_analysis.get("top_supply_pct") or 0.0)
+    hm5.metric("Top 100 supply", f"{top_supply_pct:.2f}%",
                f"${price_now:.8g} token price")
 
     st.caption(
@@ -296,7 +297,7 @@ else:
     )
 
     detail_rows = []
-    for row in holder_analysis["rows"]:
+    for row in (holder_analysis.get("rows") or []):
         detail_rows.append({
             "Rank": row["rank"],
             "Wallet": row["wallet"],
