@@ -16,7 +16,6 @@ Sinyal watchlist now uses prepump_baru_detector (validated 10 pump + LUNA),
 not the old 4-pillar score.
 """
 import time
-import os
 from datetime import datetime, timezone, timedelta
 
 import streamlit as st

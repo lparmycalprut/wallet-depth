@@ -20,7 +20,7 @@ For offline / parcial data, price-dependent checks degrade gracefully to
 """
 
 import time
-from collections import Counter, defaultdict
+from collections import defaultdict
 
 # Core validated signals (HANDOFF §2.1)
 # Each is a function (ctx) -> (passed: bool, detail: str, weight)
