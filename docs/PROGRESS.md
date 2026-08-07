@@ -10,23 +10,23 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 ## 2026-08-07 — RESET TOTAL: minimalist prepump focus (owner request)
 
 ### Ringkasan
-Owner minta perombakan total: backup dulu, lalu hapus cards, hapus analyze di main page, hapus 8 halaman (compare/history/screener/cto/lp/accum/memecoin/prepump-checker), hanya sisakan app, watchlist, CVD. Urutan main app: watchlist (vertical + sinyal harian) → tambah manual → scan trending now → scan degen now. Tombol di trending/degen hanya ⭐ Watchlist. Sumber utama = prepump_baru HANDOFF_WALLET_DEPTH.md — implementasi deteksi watchlist + Telegram sehari sekali tepat ganti hari (00:00 WIB).
+Owner minta perombakan total: backup dulu, lalu hapus cards, hapus analyze di main page, hapus 8 halaman (compare/history/screener/cto/lp/accum/memecoin/prepump-checker), hanya sisakan app, watchlist, CVD. Urutan main app: watchlist (vertical + sinyal harian) → tambah manual → scan trending now → scan degen now. Tombol di trending/degen hanya ⭐ Watchlist. Sumber utama = prepump_baru HANDOFF_WALLET_DEPTH.md — implementasi deteksi watchlist + Telegram sehari sekali tepat ganti hari (07:00 WIB).
 
 ### Backup
 - Full copy 17M di /home/user/wallet-depth_backup_20260807_0706 + tar 3.7M /tmp sebelum perubahan (commit cdcd34b). History git tetap. Untuk restore: `git checkout cdcd34b -- <file>` atau ekstrak tar.
 
-### Yang dipertahankan (6 fungsi)
+### Yang dipertahankan (6 fungsi) — revisi 07:00 WIB + prepump_baru
 - watchlist (vertical list + kolom sinyal imminent/forming/cleared/neutral, update harian) — `watchlist.py` + `app.py` watchlist section
 - scan trending & degen + seluruh filter (gmgn_screener scoring ramp, 4 pilar, penalties) — `gmgn_screener.py` + `trending_ui.py` (hanya Watchlist button)
 - CVD — `cvd.py` (72h store) + `pages/4_📊_CVD.py` minimalist 358 baris
 - history — `history.json` via daily snapshot (DexScreener+GMGN)
 - signals — `signals.py` minimalist (hanya prepump, send_telegram via requests, digest harian)
-- telegram — `daily-prepump.yml` 00:00 WIB (17:00 UTC) sekali sehari, bukan hourly
+- telegram — `daily-prepump.yml` 07:00 WIB (00:00 UTC, GMGN candle flip) sekali sehari, bukan hourly
 
 ### Yang dihapus total (bukan disable)
 - Halaman: 1_Compare, 2_History, 5_Signals, 6_Screener, 7_CTO_Radar, 8_LP_Safe_Radar, 9_Accumulation_Detector, 10_Accumulation_History, 11_Memecoin_Scanner, 12_Prepump_Checker (10 file)
 - Modul: accum_history, ai_prompt, breakout_guard, breakout_log, focus, cto_deep_scan, incubation_radar, lp_safe_radar, memecoin_scanner, monitor_alerts, share_card, telegram_monitor_alerts, token_context, cli, debug_rako (13 file + share_card deps)
-- Workflow: cto-radar.yml (15 *), cvd-update.yml (30 * hourly), lp-safe-radar.yml (25 *), memecoin-scanner.yml (*/15), daily-snapshot.yml (30 0 *) — diganti single `daily-prepump.yml` 0 17 * * * (00:00 WIB)
+- Workflow: cto-radar.yml (15 *), cvd-update.yml (30 * hourly), lp-safe-radar.yml (25 *), memecoin-scanner.yml (*/15), daily-snapshot.yml (30 0 *) — diganti single `daily-prepump.yml` 0 17 * * * (07:00 WIB)
 - Data: levels.json, breakouts.json, holder_snapshots.json, real_dust_history.json, scanner_*.json, GMGN_Trades_*.csv (2.3M)
 - Test: 9 suite yang menguji fitur yang dihapus (accum_history, breakout_guard, flow_safety, stealth_signals, dll) — tersisa 12 suite inti
 
@@ -34,7 +34,7 @@ Owner minta perombakan total: backup dulu, lalu hapus cards, hapus analyze di ma
 1. **app.py 4020 → 371 baris**: hapus 3000+ baris (cards, holder depth, health score, breakout_guard, focus, share_card, divergence, cluster, real_dust, etc). Ganti dengan watchlist vertical (badge 🚨/👀/✅/➖ + skor + update WIB + hapus), form manual, scan trending, scan degen (render minimal, hanya Watchlist). Sinyal diambil dari `signals.json` last prepump_*; fallback live_evaluate via `cvd.get_recent_swaps` + `evaluate_prepump` 30m.
 2. **pages/4_📊_CVD.py 1961 → 358 baris**: hapus ai_prompt, monitor_alerts, focus, fresh_wallet, cohort detail. Pertahankan: fetch GMGN/Helius, win_stats, conviction, CVD chart, divergence H1, prepump 30m + multi-TF + confluence, whale/dolphin held-flow.
 3. **signals.py 566 → ~200 baris**: hapus breakout_guard import, implement `send_telegram` via requests + creds dari env/secrets/config, hanya tier prepump, digest harian. `detect_prepump_and_record` tetap multi-TF.
-4. **scripts/update_cvd.py 434 → ~180 baris**: daily only 00:00 WIB, `begin_digest` → loop watchlist → update CVD + conviction + daily snapshot + prepump → `flush_telegram_digest("DAILY PRE-PUMP DIGEST — 00:00 WIB")`. Hapus holder snapshot, breakout_guard, liquidity test, growth alerts.
+4. **scripts/update_cvd.py 434 → ~180 baris**: daily only 07:00 WIB, `begin_digest` → loop watchlist → update CVD + conviction + daily snapshot + prepump → `flush_telegram_digest("DAILY PRE-PUMP DIGEST — 07:00 WIB")`. Hapus holder snapshot, breakout_guard, liquidity test, growth alerts.
 5. **.github/workflows**: hapus 5, tambah 1 (`daily-prepump.yml`).
 
 ### Verifikasi & bugfix
@@ -42,7 +42,7 @@ Owner minta perombakan total: backup dulu, lalu hapus cards, hapus analyze di ma
 - `pip install --break-system-packages streamlit` + `python -m unittest discover tests` → holder_split 18 tests OK (sebelumnya 5 error AppRealDustCardHtml diperbaiki dengan hapus class)
 - `python tests/test_*.py` individual: test_prepump_detector ALL PASSED, test_candle_patterns ALL PASSED, test_scoring_continuity ALL PASSED, test_wallet_profiles ALL PASSED, test_watchlist ALL PASSED, test_holder_delta ALL PASSED, test_h4_activity ALL PASSED, dll. 5 suite yang gagal karena fitur dihapus sengaja dihapus (cvd_prepump_trigger, cvd_update, flow_safety, stealth_signals, fetch_reliability).
 - Watchlist sinyal fallback live_evaluate tested: jika signals.json kosong, evaluate via local store → neutral jika no swaps.
-- Cron instruction: hapus workflow lama di GitHub Actions (akan hilang setelah push karena file terhapus). Jika masih ada di UI, disable manual. Workflow baru jalan 00:00 WIB (17:00 UTC) — cek logs di Actions → Daily Prepump.
+- Cron instruction: hapus workflow lama di GitHub Actions (akan hilang setelah push karena file terhapus). Jika masih ada di UI, disable manual. Workflow baru jalan 07:00 WIB (00:00 UTC, GMGN candle flip) — cek logs di Actions → Daily Prepump.
 
 ### Sisa PR & catatan
 - Token context (down_ath/avg_cost) tetap di gmgn_screener/trending_ui sebagai display-only (tidak scoring), tapi tidak lagi dipakai di app cards (sudah dihapus).

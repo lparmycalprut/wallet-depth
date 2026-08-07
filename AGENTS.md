@@ -10,7 +10,7 @@ File ini adalah **memori antar-sesi**. Agen AI membaca `AGENTS.md` otomatis saat
 
 Dashboard Streamlit + cron untuk deteksi **pre-pump** Solana. Bahasa pengguna: **Indonesia**. Komentar & docstring: **Inggris**.
 
-Fokus sempit per 2026-08-07 (reset total): **watchlist → scan trending/degen → CVD → sinyal harian 00:00 WIB + Telegram sekali sehari**. Semua fungsi lain (cards, breakout guard, CTO/LP radar, accumulation, memecoin scanner) **dihapus total** — bukan di-disable.
+Fokus sempit per 2026-08-07 (reset total, revisi 07:00 WIB): **watchlist → scan trending/degen → CVD → sinyal harian 07:00 WIB (00:00 UTC, GMGN candle flip) + Telegram sekali sehari dari prepump_baru**. Semua fungsi lain **dihapus total**.
 
 Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Perubahan scoring harus dibuktikan kalibrasi tidak bergeser.
 
@@ -28,24 +28,25 @@ Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Per
 | `core.py` | Helius pool + DexScreener + GeckoTerminal helpers (shared). |
 | `cvd.py` | Store swap 72 jam, bucket CVD, wallet profiles, conviction, candle patterns. **Tidak lagi** punya holder_snapshots / real_dust_history (dihapus karena fokus prepump). |
 | `gmgn_screener.py` | Screener GMGN trending + HRHR, scoring ramp kontinu (4 pilar: t10 30, liq 30, rug 25, vol 15). Tetap semua filter. |
-| `prepump_detector.py` | **Inti deteksi** — 4 pilar 25 poin + multi-TF 30m/1h/4h/12h + confluence (golden/dead_cat/sleeper/normal). Satu-satunya scoring yang dipertahankan. Lihat HANDOFF_WALLET_DEPTH.md prepump_baru. |
-| `signals.py` | **Minimalist** — hanya prepump_imminent / prepump_forming / prepump_cleared. Telegram via `requests` langsung (tanpa breakout_guard). Digest harian. |
+| `prepump_detector.py` | **Deep CVD** — 4 pilar 25 poin + multi-TF (untuk halaman CVD deep dive). |
+| `prepump_baru_detector.py` | **BARU — Sinyal watchlist harian** — 7 checks validated 10 pump + LUNA (sell>buy, whale negatif, pantul>5%, CVD<10%, buyTX≥52%, 3h after low net BUY, spring≥55%). Sinyal MUNCUL jika lolos ≥6/7 (core 3 wajib). |
+| `signals.py` | **Minimalist** — hanya prepump_baru_muncul (baru) + legacy imminent/forming (compat). Telegram via `requests` langsung (tanpa breakout_guard). Digest harian. |
 | `trending_ui.py` | Renderer trending — dipakai app.py, tapi app sekarang render minimal (hanya Watchlist button). Enrich holder split tetap Helius-only. |
 | `watchlist.py` | Watchlist helpers (load/save/add/remove + GitHub push + pending journal + cache 15s). |
-| `scripts/update_cvd.py` | **Daily cron 00:00 WIB (17:00 UTC)** — update CVD GMGN + conviction + daily snapshot history.json + evaluasi prepump + Telegram digest sekali sehari. Tidak lagi hourly. |
+| `scripts/update_cvd.py` | **Daily cron 07:00 WIB (00:00 UTC, GMGN candle flip)** — update CVD GMGN + conviction + daily snapshot history.json + evaluasi prepump + Telegram digest sekali sehari. Tidak lagi hourly. |
 | `scripts/daily_snapshot.py` | Helper snapshot harian DexScreener+GMGN (dipakai update_cvd sebagai fallback). |
 | `scripts/backtest_prepump.py` | Backtest prepump via CSV GMGN (offline). |
-| `.github/workflows/daily-prepump.yml` | **Satu-satunya workflow** — `0 17 * * *` 00:00 WIB. Hapus: cto-radar, lp-safe, memecoin-scanner, cvd-update (hourly), daily-snapshot (07:30 WIB). |
-| `tests/` | 12 suite tersisa (tanpa pytest & tanpa jaringan): test_candle_patterns, test_dexscreener_identity, test_fresh_wallet_growth, test_h4_activity, test_helius_rotation, test_holder_delta, test_holder_split (tanpa AppRealDust), test_prepump_detector, test_real_tx_summary, test_scoring_continuity, test_wallet_profiles, test_watchlist. Dihapus: test_accum_history, test_breakout_guard, test_flow_safety, test_stealth_signals, dll. |
+| `.github/workflows/daily-prepump.yml` | **Satu-satunya workflow** — `0 0 * * *` 07:00 WIB. Hapus: cto-radar, lp-safe, memecoin-scanner, cvd-update (hourly), daily-snapshot (07:30 WIB). |
+| `tests/` | 13 suite (tambah prepump_baru_detector): test_candle_patterns, test_dexscreener_identity, test_fresh_wallet_growth, test_h4_activity, test_helius_rotation, test_holder_delta, test_holder_split (tanpa AppRealDust), test_prepump_detector, test_real_tx_summary, test_scoring_continuity, test_wallet_profiles, test_watchlist. Dihapus: test_accum_history, test_breakout_guard, test_flow_safety, test_stealth_signals, dll. |
 | Data | `cvd.json` · `signals.json` · `conviction.json` · `history.json` · `watchlist.json` (di-commit daily). Dihapus: `levels.json`, `breakouts.json`, `holder_snapshots.json`, `real_dust_history.json`, `scanner_*.json`. |
 
 ---
 
 ## 3. Cron & Telegram — daily only
 
-- **Data collection + sinyal + Telegram = sekali sehari 00:00 WIB (17:00 UTC)** via `daily-prepump.yml` → `scripts/update_cvd.py 60`.
+- **Data collection + sinyal + Telegram = sekali sehari 07:00 WIB (00:00 UTC, GMGN candle flip)** via `daily-prepump.yml` → `scripts/update_cvd.py 60`.
 - Workflow lama yang **dihapus**: `cto-radar.yml` (15 *), `cvd-update.yml` (30 * hourly), `lp-safe-radar.yml` (25 *), `memecoin-scanner.yml` (*/15), `daily-snapshot.yml` (30 0 *). Jika masih ada di Settings → Actions, nonaktifkan manual atau akan auto-hilang setelah push (file terhapus).
-- `update_cvd.py` sekarang: `begin_digest()` di awal, loop watchlist → `update_token_cvd(use_gmgn=True)` + `record_conviction(4h)` + `daily_snapshot` + `detect_prepump_and_record` (30m + multi-TF) → `flush_telegram_digest("DAILY PRE-PUMP DIGEST — 00:00 WIB")`. Tidak ada breakout_guard, holder snapshot, liquidity test, growth alerts.
+- `update_cvd.py` sekarang: `begin_digest()` di awal, loop watchlist → `update_token_cvd(use_gmgn=True)` + `record_conviction(4h)` + `daily_snapshot` + `detect_baru_and_record` (7 checks) → `flush_telegram_digest("DAILY PRE-PUMP BARU — 07:00 WIB")`. Tidak ada breakout_guard, holder snapshot, liquidity test, growth alerts.
 - **Backup sebelum reset:** history ada di git `cdcd34b` dan di `BACKUP_INFO.md` yang sempat dibuat (sekarang dihapus dari repo, tapi commit sebelum reset tetap ada). Jika perlu restore: `git checkout cdcd34b -- <file>`.
 
 ---
@@ -105,9 +106,9 @@ python -m unittest discover tests   # hanya holder_split yang unittest, sisanya 
 
 **Yang dihapus total:** 8 halaman + 13 modul + 5 workflow + 2 CSV besar + 9 test suite + 5 json (levels, breakouts, etc). Lihat git stat: 52 files changed, -30k deletions.
 
-**Yang dipertahankan:** watchlist (list vertical + sinyal harian), scan trending/degen (semua filter) + CVD. Sinyal = prepump_detector multi-TF, Telegram sehari sekali 00:00 WIB via daily-prepump.yml.
+**Yang dipertahankan:** watchlist (vertical + sinyal BARU harian 07:00 WIB), scan trending/degen (semua filter) + CVD. Sinyal = prepump_baru_detector 7 checks (sell>buy, whale negatif, pantul>5%, CVD<10%, buyTX≥52%, 3h after low BUY, spring≥55%), Telegram sehari sekali 07:00 WIB via daily-prepump.yml.
 
-**Cron baru:** `daily-prepump.yml` 0 17 * * * (00:00 WIB). Hapus: cto-radar, lp-safe, memecoin-scanner, cvd-update hourly, daily-snapshot 07:30 WIB. Jika workflow lama masih muncul di GitHub Actions, disable manual atau push sudah menghapus file.
+**Cron baru:** `daily-prepump.yml` 0 0 * * * (07:00 WIB). Hapus: cto-radar, lp-safe, memecoin-scanner, cvd-update hourly, daily-snapshot 07:30 WIB. Jika workflow lama masih muncul di GitHub Actions, disable manual atau push sudah menghapus file.
 
 **Perubahan app.py:** 4020 → 371 baris. Urutan: watchlist (sinyal) → manual add → scan trending → scan degen. Tidak ada cards, tidak ada analyze. Tombol di trending/degen hanya ⭐ Watchlist.
 

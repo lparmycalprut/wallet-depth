@@ -1,16 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-Wallet Depth — Prepump Radar (minimalist reset 2026-08-07)
+Wallet Depth — Prepump Radar (minimalist reset 2026-08-07, update 2026-08-07 07:00 WIB)
 
 Kept functions only:
-  - watchlist (vertical list + sinyal harian)
+  - watchlist (vertical list + sinyal harian dari prepump_baru_detector)
   - scan trending / scan degen (with all filters, only Watchlist button)
-  - CVD deep analysis (separate page)
+  - CVD deep analysis (separate page, old prepump_detector tetap untuk deep dive)
   - history/signals as data backend (json)
-  - telegram via daily cron at 00:00 WIB
+  - telegram via daily cron at 07:00 WIB (00:00 UTC, GMGN candle flip)
 
 Removed: cards, analyze on main page, compare/history/screener/cto/lp/accum/memecoin/prepump-checker pages,
   breakout_guard, focus, share_card, etc.
+
+Sinyal watchlist now uses prepump_baru_detector (validated 10 pump + LUNA),
+not the old 4-pillar score.
 """
 import time
 import os
@@ -38,39 +41,39 @@ def _fmt_ts(ts):
         return "—"
 
 def get_signal_for_ca(ca: str, sigs: list):
-    """Return last prepump signal for CA, or None. Checks imminent/forming/cleared/neutral."""
-    # Find most recent prepump_* for this CA
+    """Return last prepump_baru signal for CA, or None.
+
+    NEW: uses prepump_baru_detector (validated 10 pump + LUNA), not old 4-pillar.
+    Looks for type prepump_baru_muncul.
+    """
     best = None
     for s in reversed(sigs or []):
-        if s.get("ca") == ca and s.get("type", "").startswith("prepump_"):
+        if s.get("ca") == ca and s.get("type") == "prepump_baru_muncul":
             best = s
             break
     if best:
-        # Map to tier
-        t = best.get("type")
-        if t == "prepump_imminent":
-            tier = "imminent"
-        elif t == "prepump_forming":
-            tier = "forming"
-        elif t == "prepump_cleared":
-            tier = "cleared"
-        else:
-            tier = "neutral"
-        return tier, best.get("score", 0), best.get("ts"), best.get("detail", "")
+        return "sinyal_muncul", best.get("score", 0), best.get("ts"), best.get("detail", "")
+    # fallback: also check old prepump_imminent for backward compat (transisi)
+    for s in reversed(sigs or []):
+        if s.get("ca") == ca and s.get("type") in ("prepump_imminent", "prepump_forming"):
+            # map old to baru
+            return "sinyal_muncul", s.get("score", 0), s.get("ts"), s.get("detail", "")
     return None
 
+
 def live_evaluate(ca: str, symbol: str):
-    """Fallback live evaluate using local swap store (no network). Returns tier/score or neutral."""
+    """Fallback live evaluate using prepump_baru_detector (no network)."""
     try:
         from cvd import get_recent_swaps
-        from prepump_detector import evaluate_prepump
-        swaps = get_recent_swaps(ca, hours=4)
+        from prepump_baru_detector import evaluate_baru_daily
+        swaps = get_recent_swaps(ca, hours=24)
         if not swaps:
             return "unknown", 0, None
-        # Use 30m window as primary
-        res = evaluate_prepump(swaps, {"symbol": symbol}, ca=ca, window_min=30)
-        tier = res.get("tier", "neutral")
-        score = res.get("score", 0)
+        res = evaluate_baru_daily(swaps, token_info={"symbol": symbol}, now_ts=int(time.time()))
+        tier = res.get("tier", "belum")
+        score = res.get("lolos", 0)
+        total = res.get("total", 7)
+        # keep total in score for badge: use lolos
         return tier, score, int(time.time())
     except Exception:
         return "unknown", 0, None
@@ -106,15 +109,15 @@ if _q_del:
 # Header
 # ---------------------------------------------------------------------------
 st.title("🎯 Wallet Depth — Prepump Radar")
-st.caption("Fokus: watchlist → scan trending/degen → CVD → sinyal harian 00:00 WIB + notifikasi Telegram sehari sekali. Cards & analyze dihapus.")
+st.caption("Fokus: watchlist → scan trending/degen → CVD → sinyal harian 07:00 WIB (00:00 UTC, GMGN candle flip) + notifikasi Telegram sehari sekali. Kolom Sinyal dari prepump_baru (bukan 4-pillar lama).")
 
 # ---------------------------------------------------------------------------
 # 1. WATCHLIST (vertical list, sinyal column)
 # ---------------------------------------------------------------------------
 wl = load_watchlist()
 
-st.markdown("### ⭐ Watchlist — Sinyal Prepump (update harian 00:00 WIB)")
-st.caption("List menurun. Kolom **Sinyal** menunjukkan apakah ada setup prepump yang terdeteksi (imminent/forming). Update cuma sekali sehari oleh cron — bukan tiap jam — supaya tidak spam.")
+st.markdown("### ⭐ Watchlist — Sinyal Prepump BARU (update harian 07:00 WIB)")
+st.caption("List menurun. Kolom **Sinyal** dari **prepump_baru** (10 pump + LUNA validated): avg SELL>BUY, whale net negatif, pantul >5%, CVD flat <10%, buy TX≥52%, 3h after low net BUY, spring 15m ≥55%. **Sinyal MUNCUL** jika lolos ≥6/7 (core 3 wajib). Update 07:00 WIB (00:00 UTC, GMGN candle flip).")
 
 if not wl:
     st.info("Watchlist kosong. Tambahkan manual di bawah atau dari hasil Scan Trending / Scan Degen.")
@@ -146,30 +149,27 @@ else:
                 score = 0
                 ts = None
 
-        # Badge config
-        if tier == "imminent":
-            badge = f"<span style='background:#7f1d1d;color:#fecaca;border:1px solid #ef4444;border-radius:6px;padding:3px 8px;font-weight:800;font-size:0.82rem;'>🚨 IMMINENT {score:.0f}/100</span>"
-            row_bg = "background:rgba(239,68,68,0.06);border:1px solid #7f1d1d;border-radius:10px;padding:8px 6px;margin-bottom:6px;"
-        elif tier == "forming":
-            badge = f"<span style='background:#78350f;color:#fde68a;border:1px solid #f59e0b;border-radius:6px;padding:3px 8px;font-weight:800;font-size:0.82rem;'>👀 FORMING {score:.0f}/100</span>"
-            row_bg = "background:rgba(245,158,11,0.06);border:1px solid #78350f;border-radius:10px;padding:8px 6px;margin-bottom:6px;"
-        elif tier == "cleared":
-            badge = f"<span style='background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:6px;padding:3px 8px;font-weight:700;font-size:0.82rem;'>✅ CLEARED {score:.0f}/100</span>"
-            row_bg = "background:rgba(148,163,184,0.05);border:1px solid #334155;border-radius:10px;padding:8px 6px;margin-bottom:6px;"
+        # Badge config — BARU (prepump_baru)
+        if tier == "sinyal_muncul":
+            badge = f"<span style='background:#14532d;color:#bbf7d0;border:1px solid #22c55e;border-radius:6px;padding:3px 8px;font-weight:800;font-size:0.82rem;'>🚨 SINYAL MUNCUL {score:.0f}/7</span>"
+            row_bg = "background:rgba(34,197,94,0.08);border:1px solid #14532d;border-radius:10px;padding:8px 6px;margin-bottom:6px;"
+        elif tier == "unknown":
+            badge = f"<span style='background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:6px;padding:3px 8px;font-weight:700;font-size:0.82rem;'>❓ UNKNOWN</span>"
+            row_bg = "background:rgba(148,163,184,0.04);border:1px solid #334155;border-radius:10px;padding:8px 6px;margin-bottom:6px;"
         else:
-            badge = f"<span style='background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:6px;padding:3px 8px;font-weight:700;font-size:0.82rem;'>➖ NETRAL</span>"
+            badge = f"<span style='background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:6px;padding:3px 8px;font-weight:700;font-size:0.82rem;'>➖ BELUM {score:.0f}/7</span>"
             row_bg = "background:rgba(148,163,184,0.04);border:1px solid #334155;border-radius:10px;padding:8px 6px;margin-bottom:6px;"
 
         cols = st.columns([1.3, 1.6, 1.1, 0.9, 1.1, 0.7])
         cols[0].markdown(f"<div style='{row_bg}'><b style='color:#e2e8f0'>{sym}</b><br><span style='font-size:0.68rem;color:#94a3b8'>{src}</span></div>", unsafe_allow_html=True)
         cols[1].markdown(f"<div style='{row_bg}'><a href='https://solscan.io/token/{ca}' target='_blank' style='font-size:0.78rem;color:#38bdf8;text-decoration:none;'>{ca[:8]}…{ca[-4:]}</a><br><a href='https://dexscreener.com/solana/{ca}' target='_blank' style='font-size:0.68rem;color:#64748b;text-decoration:none;'>chart ↗</a> · <a href='/CVD?ca={ca}' target='_self' style='font-size:0.68rem;color:#64748b;text-decoration:none;'>CVD ↗</a></div>", unsafe_allow_html=True)
         cols[2].markdown(f"<div style='{row_bg}'>{badge}</div>", unsafe_allow_html=True)
-        cols[3].markdown(f"<div style='{row_bg}'><span style='font-weight:700;color:#e2e8f0'>{score:.0f}</span><span style='color:#64748b;font-size:0.72rem;'>/100</span></div>", unsafe_allow_html=True)
+        cols[3].markdown(f"<div style='{row_bg}'><span style='font-weight:700;color:#e2e8f0'>{score:.0f}/7</span><span style='color:#64748b;font-size:0.72rem;'> checks</span></div>", unsafe_allow_html=True)
         cols[4].markdown(f"<div style='{row_bg}'><span style='font-size:0.72rem;color:#94a3b8'>{_fmt_ts(ts)}</span></div>", unsafe_allow_html=True)
         # Delete button -> uses link with query param (no form needed)
         cols[5].markdown(f"<div style='{row_bg}'><a href='?del_ca={ca}' style='display:inline-block;background:rgba(239,68,68,0.15);border:1px solid #ef4444;color:#fecaca;border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:700;font-size:0.78rem;'>🗑️ Hapus</a></div>", unsafe_allow_html=True)
 
-    st.caption(f"Total {len(wl)} token dipantau. Cron harian 00:00 WIB akan update CVD + evaluasi prepump + kirim Telegram (hanya jika ada sinyal).")
+    st.caption(f"Total {len(wl)} token dipantau. Cron harian 07:00 WIB (00:00 UTC) akan update CVD + evaluasi prepump_baru + kirim Telegram jika sinyal muncul.")
 
 # ---------------------------------------------------------------------------
 # 2. TAMBAH KOLEKSI MANUAL KE WATCHLIST
@@ -367,5 +367,5 @@ if run_screen_hrhr:
 # Footer
 # ---------------------------------------------------------------------------
 st.divider()
-st.caption("Cron harian 00:00 WIB (17:00 UTC): update CVD → evaluasi prepump → Telegram (hanya jika sinyal imminient/forming). Data CVD tetap tersedia 72 jam. Hapus cron lama: cto-radar, lp-safe, memecoin-scanner.")
+st.caption("Cron harian 07:00 WIB (00:00 UTC, GMGN candle flip): update CVD → evaluasi prepump_baru (7 checks) → Telegram jika sinyal muncul. Data CVD 72 jam. Sinyal BARU dari prepump_baru (bukan 4-pillar lama).")
 

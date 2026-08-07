@@ -1,12 +1,12 @@
-# Workflow Patch — Daily Prepump 00:00 WIB (manual via GitHub web)
+# Workflow Patch — Daily Prepump 07:00 WIB (manual via GitHub web)
 
-> **Arena GitHub App tidak punya izin `workflows`**, jadi perubahan `.github/workflows/` tidak bisa di-push via git. Owner harus lakukan manual via web GitHub (Settings → Actions atau langsung edit file di repo).
+> **Arena GitHub App tidak punya izin `workflows`**, jadi perubahan `.github/workflows/` tidak bisa di-push via git. Owner harus lakukan manual via web GitHub.
 
 ## Yang harus dilakukan di GitHub web
 
 ### 1. Hapus 5 workflow lama
 
-Di repo → tab **Actions** → atau via file browser `.github/workflows/` → hapus:
+Di repo → `.github/workflows/` → hapus:
 
 - `cto-radar.yml` (15 * * * *)
 - `cvd-update.yml` (30 * * * * hourly)
@@ -14,20 +14,18 @@ Di repo → tab **Actions** → atau via file browser `.github/workflows/` → h
 - `memecoin-scanner.yml` (*/15 * * * *)
 - `daily-snapshot.yml` (30 0 * * * 07:30 WIB)
 
-Cara: buka file → klik **Delete file** (ikon tong sampah) → Commit.
-
-Atau nonaktifkan dulu: Actions → pilih workflow → **Disable workflow**.
+Cara: buka file → **Delete file** → Commit. Atau Disable via Actions.
 
 ### 2. Buat workflow baru `daily-prepump.yml`
 
 Buat file baru `.github/workflows/daily-prepump.yml` dengan isi di bawah (copy-paste tepat):
 
 ```yaml
-name: Daily Prepump (00:00 WIB)
+name: Daily Prepump BARU (07:00 WIB)
 
 on:
   schedule:
-    - cron: "0 17 * * *"   # 00:00 WIB = 17:00 UTC
+    - cron: "0 0 * * *"   # 07:00 WIB = 00:00 UTC (GMGN candle flip)
   workflow_dispatch: {}
 
 permissions:
@@ -43,7 +41,7 @@ jobs:
           python-version: "3.12"
       - name: Install deps
         run: pip install requests pandas curl_cffi base58
-      - name: Daily CVD + Prepump + Telegram (00:00 WIB)
+      - name: Daily CVD + Prepump BARU (07:00 WIB)
         env:
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
           HELIUS_API_KEYS: ${{ secrets.HELIUS_API_KEYS }}
@@ -65,36 +63,28 @@ jobs:
           done
           git add cvd.json signals.json conviction.json history.json watchlist.json 2>&1 || true
           git add watchlist_pending.json 2>&1 || true
-          git diff --cached --quiet || git commit -m "chore: daily prepump $(date -u +%FT%H:%M) 00:00 WIB"
+          git diff --cached --quiet || git commit -m "chore: daily prepump BARU $(date -u +%FT%H:%M) 07:00 WIB"
           git push || (git pull --rebase && git push) || true
 ```
 
-Commit via web: **Create new file** → paste → **Commit new file**.
-
 ### 3. Verifikasi
 
-- Actions → **Daily Prepump (00:00 WIB)** → **Run workflow** (manual dispatch) untuk test.
-- Cek `cvd.json`, `signals.json`, `conviction.json`, `history.json` ter-update.
-- Cek Telegram: hanya jika ada sinyal `prepump_imminent` (≥75) atau `forming` (jika focus_mode OFF), akan ada **satu** digest per hari.
+- Actions → **Daily Prepump BARU (07:00 WIB)** → **Run workflow** untuk test.
+- Cek `cvd.json`, `signals.json` (tipe `prepump_baru_muncul`), `history.json` ter-update.
+- Telegram: digest **sehari sekali 07:00 WIB** jika ada sinyal BARU (bukan per jam).
 
-## Cron lama yang harus dihapus (detail)
+## Cron lama yang harus dihapus
 
 | File lama | Schedule | Fungsi |
 |---|---|---|
-| `cto-radar.yml` | `15 * * * *` | CTO incubation radar hourly |
-| `cvd-update.yml` | `30 * * * *` | CVD hourly GMGN |
-| `lp-safe-radar.yml` | `25 * * * *` | LP safe radar hourly |
-| `memecoin-scanner.yml` | `*/15 * * * *` | Memecoin scanner 15 menit |
+| `cto-radar.yml` | `15 * * * *` | CTO radar hourly |
+| `cvd-update.yml` | `30 * * * *` | CVD hourly |
+| `lp-safe-radar.yml` | `25 * * * *` | LP radar hourly |
+| `memecoin-scanner.yml` | `*/15 * * * *` | Memecoin 15m |
 | `daily-snapshot.yml` | `30 0 * * *` | Snapshot 07:30 WIB |
 
-Semua diganti single daily 00:00 WIB.
+Semua diganti single daily 07:00 WIB (00:00 UTC).
 
 ## File lokal yang sudah siap
 
-`scripts/update_cvd.py` sudah di-update ke daily only (00:00 WIB) di commit ini. Workflow baru akan memanggilnya.
-
-```
-
-cat /home/user/wallet-depth/docs/WORKFLOW_PATCH_daily_prepump.md
-git -C /home/user/wallet-depth add docs/WORKFLOW_PATCH_daily_prepump.md 2>&1 | head -n 20
-git -C /home/user/wallet-depth status --short 2>&1 | head -n 100
+`scripts/update_cvd.py` sudah di-update ke daily 07:00 WIB + `prepump_baru_detector.py` (7 checks validated). `app.py` kolom Sinyal sekarang dari `prepump_baru_detector` (bukan 4-pillar lama).

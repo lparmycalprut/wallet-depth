@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Daily CVD + Prepump updater (cron at 00:00 WIB = 17:00 UTC).
+"""Daily CVD + Prepump BARU updater (cron at 07:00 WIB = 00:00 UTC).
 
-Daily-only per owner request 2026-08-07:
+Daily-only per owner request 2026-08-07 (revised 07:00 WIB):
   - Fetch GMGN Token Trades for each watchlist CA (no Helius needed for swaps)
   - Update cvd.json + conviction.json (72h window)
   - Daily snapshot to history.json (DexScreener+GMGN lightweight)
-  - Evaluate prepump (30m primary + multi-TF 30m/1h/4h/12h) via prepump_detector
-  - Telegram digest ONCE per day (combined, not per-hour)
+  - Evaluate prepump BARU (7 checks validated 10 pump + LUNA) via prepump_baru_detector
+  - Telegram digest ONCE per day at 07:00 WIB (00:00 UTC, GMGN candle flip)
 
 Usage: python scripts/update_cvd.py [max_pages]
   max_pages default 60 (GMGN pages)
@@ -23,11 +23,8 @@ from cvd import (
     update_token_cvd,
     get_gmgn_last_error,
     get_recent_swaps,
-    get_gmgn_wallet_metadata,
-    WHALE_SOL,
 )
-from signals import begin_digest, flush_telegram_digest, detect_prepump_and_record
-from prepump_detector import compute_bullish_div
+from signals import begin_digest, flush_telegram_digest
 from watchlist import load_watchlist, save_watchlist
 
 try:
@@ -75,7 +72,7 @@ def main():
 
     wl_changed = False
     begin_digest()
-    print(f"Starting daily prepump update for {len(wl)} token(s) at {time.strftime('%Y-%m-%d %H:%M WIB', time.gmtime(time.time()+7*3600))} (00:00 WIB)")
+    print(f"Starting daily prepump BARU update for {len(wl)} token(s) at {time.strftime('%Y-%m-%d %H:%M WIB', time.gmtime(time.time()+7*3600))} (07:00 WIB = 00:00 UTC)")
 
     for ca, meta in list(wl.items()):
         try:
@@ -127,48 +124,48 @@ def main():
             except Exception as e:
                 hist_txt = f" hist-err:{str(e)[:20]}"
 
-            # --- Prepump Radar ---
+            # --- Prepump BARU (prepump_baru_detector) ---
             pp_txt = ""
             try:
-                swaps_long = get_recent_swaps(ca, hours=72)
-                swaps_pp = [s for s in swaps_long if (s[2] or 0) >= time.time() - 3600]
-                wmeta = get_gmgn_wallet_metadata()
-                bull = compute_bullish_div(ca, pool) if pool else False
-                bull_h4 = False
-                if pool:
-                    try:
-                        bull_h4 = compute_bullish_div(ca, pool, bucket_hours=4, hours_span=96)
-                    except Exception:
-                        pass
-                mc = (get_market(ca) or {}).get("marketcap")
-                tinfo = {"symbol": meta.get("symbol", "?"), "price_usd": price_now, "mc": mc}
-                pp = detect_prepump_and_record(
-                    ca, meta.get("symbol", "?"), swaps_pp,
-                    token_info=tinfo, now_ts=int(time.time()),
-                    window_min=30, whale_min_sol=WHALE_SOL,
-                    wallet_tags=wmeta, bullish_div=bull, bullish_div_h4=bull_h4, full_swaps=swaps_long)
-                if pp:
-                    conf = (pp.get("multi_tf") or {}).get("confluence") or {}
-                    emo = conf.get("emoji", "") if conf.get("status") and conf["status"] != "normal" else ""
-                    if pp.get("cleared"):
-                        pp_txt = f" 🎯prepump:cleared/{int(pp['score'])}"
-                    else:
-                        pp_txt = f" 🎯prepump:{pp['tier']}/{int(pp['score'])}{emo}"
+                from prepump_baru_detector import evaluate_baru_daily, detect_baru_and_record
+                # Daily window: last 24h (previous UTC day)
+                swaps_24h = get_recent_swaps(ca, hours=24)
+                # Try to get price info for pantul check (best effort)
+                tinfo = {"symbol": meta.get("symbol", "?"), "price_usd": price_now}
+                # Optionally fetch candles for low/close — skip if fails
+                candles = None
+                try:
+                    from cvd import fetch_candles
+                    # Fetch 24h of hourly candles for low detection
+                    if pool:
+                        candles = fetch_candles(pool, timeframe="hour", aggregate=1, limit=24, timeout=6)
+                except Exception:
+                    candles = None
+                res_baru = evaluate_baru_daily(swaps_24h, token_info=tinfo, candles=candles, now_ts=int(time.time()))
+                # Record + queue Telegram if sinyal_muncul
+                rec = detect_baru_and_record(ca, meta.get("symbol", "?"), swaps_24h, token_info=tinfo, candles=candles, now_ts=int(time.time()))
+                tier = res_baru.get("tier", "belum")
+                lolos = res_baru.get("lolos", 0)
+                total = res_baru.get("total", 7)
+                if tier == "sinyal_muncul":
+                    pp_txt = f" 🎯baru:SINYAL {lolos}/{total}"
+                else:
+                    pp_txt = f" 🎯baru:belum {lolos}/{total}"
             except Exception as e:
-                pp_txt = f" prepump_err:{str(e)[:30]}"
+                pp_txt = f" baru_err:{str(e)[:30]}"
 
             print(f"✅ {meta.get('symbol','?'):>10} {ca[:8]}… +{res.get('new_swaps',0)} swaps{gap}{conv_txt}{hist_txt}{pp_txt}")
 
         except Exception as e:
             print(f"❌ {ca[:8]}… error: {str(e)[:120]}")
 
-    # Flush telegram digest (once per day)
+    # Flush telegram digest (once per day at 07:00 WIB)
     try:
-        n = flush_telegram_digest(title="📬 <b>DAILY PRE-PUMP DIGEST — 00:00 WIB</b>")
+        n = flush_telegram_digest(title="📬 <b>DAILY PRE-PUMP BARU — 07:00 WIB (00:00 UTC)</b>")
         if n:
             print(f"📬 Telegram digest sent: {n} message(s)")
         else:
-            print("📬 Telegram digest: no prepump signal to send")
+            print("📬 Telegram digest: no baru sinyal to send")
     except Exception as e:
         print(f"digest-err: {e}")
 
