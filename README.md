@@ -97,13 +97,17 @@ Definisi penting:
 
 Halaman **📊 CVD Deep Analysis** menyediakan:
 
-- satu dropdown window `4/6/8/12/24/36/48 jam`;
-- nested window yang selalu berada di dalam data yang benar-benar dipilih;
-- net CVD total, whale, retail, pure buy/sell, dan conviction;
-- chart CVD per jam dan divergence harga/CVD;
-- daftar pure accumulator/distributor beserta umur dan same-funder flag;
-- ekspor Markdown/CSV;
-- tombol **Prompt to AI**.
+- satu fetch swap GMGN untuk 72 jam;
+- grafik conviction tetap pada window `4/6/12/24/48/72 jam`;
+- analisis full Helius untuk 100 top holder;
+- persentase diamond hand (sell/buy ≤10% pada sample swap) dan persentase
+  real holder (nilai saldo ≥ dust limit);
+- expander detail rank, saldo, supply %, nilai USD, buy/sell, sold/buy,
+  diamond hand, real/dust, dan status aktivitas.
+
+Panel Pre-Pump Radar, Multi-Timeframe, conviction table, CVD hourly, dan
+whale/dolphin held-flow sengaja tidak dirender di page CVD. Backend prepump
+masih dipakai oleh sinyal watchlist harian.
 
 ### 4. Prompt to AI
 

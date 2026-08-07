@@ -1027,6 +1027,136 @@ def wallet_profiles(swaps, *, pure_tol=0.05, light_tol=0.10, trader_tol=0.50):
     return w
 
 
+def top_holder_analysis(holders, swaps=None, *, price_usd=0.0,
+                        dust_limit_usd=5.0, supply=0.0, limit=100,
+                        sell_tolerance=0.10) -> dict:
+    """Analyse the current top holders against observed swap behaviour.
+
+    ``holders`` accepts ``(owner, amount)`` pairs, dictionaries with
+    ``owner``/``amount`` (or ``ui_amount``), or a DataFrame with equivalent
+    columns. Amounts must already be UI token amounts; the Helius page
+    converts raw token-account amounts before calling this helper.
+
+    A diamond hand is a top holder whose observed sells are no more than
+    ``sell_tolerance`` of observed buys in the supplied swap window. A
+    wallet with no observed sell also qualifies; the returned ``activity``
+    and ``observed`` fields make that limitation explicit instead of
+    pretending that a 72-hour swap sample proves lifetime behaviour.
+    Real holders are current top holders whose token value is at least the
+    configured dust threshold. The calculation is pure and network-free so
+    the UI and tests can share exactly the same rules.
+    """
+    pairs = []
+    if hasattr(holders, "to_dict") and hasattr(holders, "columns"):
+        records = holders.to_dict("records")
+    else:
+        records = holders or []
+
+    for item in records:
+        owner = amount = None
+        if isinstance(item, dict):
+            owner = (item.get("owner") or item.get("address") or
+                     item.get("wallet"))
+            for key in ("amount", "ui_amount", "token_amount", "balance"):
+                if item.get(key) is not None:
+                    amount = item.get(key)
+                    break
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            owner, amount = item[0], item[1]
+        if not owner or amount is None:
+            continue
+        try:
+            amount = float(amount)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(amount) or amount <= 0:
+            continue
+        pairs.append((str(owner), amount))
+
+    # Helius already aggregates by owner, but de-duplicate here so the
+    # helper remains correct for callers passing raw account rows.
+    by_owner = {}
+    for owner, amount in pairs:
+        by_owner[owner] = by_owner.get(owner, 0.0) + amount
+    pairs = sorted(by_owner.items(), key=lambda pair: -pair[1])[:max(1, int(limit or 100))]
+
+    profiles = wallet_profiles(swaps or [])
+    try:
+        price = max(0.0, float(price_usd or 0.0))
+    except (TypeError, ValueError):
+        price = 0.0
+    try:
+        dust = max(0.0, float(dust_limit_usd or 0.0))
+    except (TypeError, ValueError):
+        dust = 0.0
+    try:
+        total_supply = max(0.0, float(supply or 0.0))
+    except (TypeError, ValueError):
+        total_supply = 0.0
+    tolerance = max(0.0, float(sell_tolerance or 0.0))
+
+    rows = []
+    for rank, (owner, amount) in enumerate(pairs, start=1):
+        profile = profiles.get(owner) or {}
+        buy = float(profile.get("buy") or 0.0)
+        sell = float(profile.get("sell") or 0.0)
+        n_buy = int(profile.get("n_buy") or 0)
+        n_sell = int(profile.get("n_sell") or 0)
+        observed = (n_buy + n_sell) > 0
+        if buy > 0:
+            sell_pct = sell / buy * 100.0
+            diamond = sell <= buy * tolerance + 1e-12
+        else:
+            sell_pct = 0.0 if sell <= 0 else 100.0
+            diamond = sell <= 0
+        value_usd = amount * price
+        rows.append({
+            "rank": rank,
+            "wallet": owner,
+            "amount": amount,
+            "supply_pct": amount / total_supply * 100.0
+            if total_supply else 0.0,
+            "value_usd": value_usd,
+            "buy_sol": buy,
+            "sell_sol": sell,
+            "sell_pct": sell_pct,
+            "n_buy": n_buy,
+            "n_sell": n_sell,
+            "observed": observed,
+            "diamond_hand": bool(diamond),
+            "real_holder": value_usd >= dust,
+            "activity": "observed" if observed else "no swap observed",
+        })
+
+    n_top = len(rows)
+    diamond_count = sum(1 for row in rows if row["diamond_hand"])
+    real_count = sum(1 for row in rows if row["real_holder"])
+    observed_rows = [row for row in rows if row["observed"]]
+    observed_diamond_count = sum(
+        1 for row in observed_rows if row["diamond_hand"])
+    top_amount = sum(row["amount"] for row in rows)
+    return {
+        "rows": rows,
+        "limit": int(limit or 100),
+        "n_top": n_top,
+        "diamond_hands": diamond_count,
+        "diamond_pct": diamond_count / n_top * 100.0 if n_top else 0.0,
+        "observed_wallets": len(observed_rows),
+        "observed_diamond_hands": observed_diamond_count,
+        "observed_diamond_pct": (
+            observed_diamond_count / len(observed_rows) * 100.0
+            if observed_rows else 0.0),
+        "real_holders": real_count,
+        "real_pct": real_count / n_top * 100.0 if n_top else 0.0,
+        "top_amount": top_amount,
+        "top_supply_pct": top_amount / total_supply * 100.0
+        if total_supply else 0.0,
+        "price_usd": price,
+        "dust_limit_usd": dust,
+        "sell_tolerance_pct": tolerance * 100.0,
+    }
+
+
 # Weight applied to each profile's buy volume in conviction calculation.
 # pure_accum = 100% (held everything), light_holder = 75%, trader = 30%.
 PROFILE_WEIGHTS = {
