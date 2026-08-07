@@ -1,30 +1,42 @@
-# ⚠️ FUNGSI / PAGE DINONAKTIFKAN — JANGAN DI-CEK OLEH AI BERIKUTNYA
+# ⚠️ FUNGSI / PAGE YANG DIHAPUS TOTAL — 2026-08-07 RESET
 
-Per 2026-08-06, bagian-bagian ini sengaja dimatikan (*disabled / temporarily disabled*) oleh owner / cron. **Penjelasan singkat: tidak ada bug — hanya dinonaktifkan sementara.** Jangan buang waktu memeriksa logika/internal mereka kecuali user secara eksplisit meminta untuk mengaktifkannya kembali.
+Per 2026-08-07, proyek di-reset total ke fokus **pre-pump** (owner request). Bagian-bagian di bawah **bukan di-disable via st.stop()** lagi, tapi **dihapus total dari repo** (file + fungsi + workflow). Jangan periksa atau revert tanpa persetujuan owner.
 
-## ❌ Disabled Streamlit Pages (3 item)
+## ❌ Dihapus Total — Streamlit Pages (10 file)
 
-| File | Nama Page | Status | Catatan / Alasan |
-|---|---|---|---|
-| `pages/1_⚖️_Compare.py` | Compare | **Disabled** | Baris 17: `st.warning("⚠️ Aplikasi ini dinonaktifkan sementara.")` lalu `st.stop()`. Tidak perlu dicek. |
-| `pages/10_📈_Accumulation_History.py` | Accumulation History | **Disabled** | Baris 36-37: `st.warning(...)` + `st.stop()`. Beberapa `st.stop()` tambahan di dalam blok chart (68, 185, 189, 203, 216, 256, 285). Tidak perlu dicek. |
-| `pages/11_🤖_Memecoin_Scanner.py` | Memecoin Scanner | **Disabled** | Baris 25-26: `st.warning(...)` + `st.stop()`. Scanner tetap bisa dijalankan via CLI (`python memecoin_scanner.py`) — hanya UI Streamlit yang dimatikan. Tidak perlu dicek fungsi `run_scan()` / `analyze_token()` kecuali user minta. |
+| File | Nama Page | Status |
+|---|---|---|
+| `pages/1_⚖️_Compare.py` | Compare | **Deleted** |
+| `pages/2_📒_History.py` | History | **Deleted** |
+| `pages/5_🔔_Signals.py` | Signals | **Deleted** (signals.json tetap sebagai data) |
+| `pages/6_🔎_Screener.py` | Screener | **Deleted** (scan ada di app.py) |
+| `pages/7_💀_CTO_Radar.py` | CTO Radar | **Deleted** |
+| `pages/8_💧_LP_Safe_Radar.py` | LP Safe Radar | **Deleted** |
+| `pages/9_🔍_Accumulation_Detector.py` | Accumulation Detector | **Deleted** |
+| `pages/10_📈_Accumulation_History.py` | Accumulation History | **Deleted** |
+| `pages/11_🤖_Memecoin_Scanner.py` | Memecoin Scanner | **Deleted** |
+| `pages/12_🎯_Prepump_Checker.py` | Prepump Checker | **Deleted** (logic prepump pindah ke app sinyal + CVD) |
 
-## ❌ Disabled Functions in `app.py` (referensi — tidak diminta diperbaiki sekarang)
+**Disisakan:** `app.py` (watchlist + scan trending/degen), `pages/3_⭐_Watchlist.py`, `pages/4_📊_CVD.py`.
 
-- `real_tx_summary` (baris ~1108): "Real transaction summary is temporarily disabled on all cards."
-- Watchlist Ticker Bar (baris ~1332): dinonaktifkan per permintaan owner.
-- Health Score breakdown (baris ~3950): sementara dimatikan.
-- Beberapa bagian `st.stop()` di `app.py` (baris 2415, 2417, 2429, 2433, 2465) — bagian-bagian ini ditutup karena fitur belum siap / diminta owner.
+## ❌ Dihapus Total — Modul
 
-## ✅ Tidak di-disable (tetap aktif — boleh dicek)
+`accum_history.py`, `ai_prompt.py`, `breakout_guard.py`, `breakout_log.py`, `focus.py`, `cto_deep_scan.py`, `incubation_radar.py`, `lp_safe_radar.py`, `memecoin_scanner.py`, `monitor_alerts.py`, `share_card.py`, `telegram_monitor_alerts.py`, `token_context.py`, `cli.py`, `debug_rako.py`
 
-- `prepump_detector.py`, `telegram_monitor_alerts.py`, `breakout_guard.py`, `monitor_alerts.py`, `cvd.py`, `core.py`
-- Cron: `.github/workflows/cvd-update.yml` (jam :30), `memecoin-scanner.yml` (15 menit), `cto-radar.yml`, `lp-safe-radar.yml`
-- Data: `cvd.json`, `signals.json`, `conviction.json`, `scanner_results.json`, `watchlist.json`
+## ❌ Dihapus Total — Workflow
+
+`cto-radar.yml` (15 *), `cvd-update.yml` (30 * hourly), `lp-safe-radar.yml` (25 *), `memecoin-scanner.yml` (*/15), `daily-snapshot.yml` (30 0 *) — diganti `daily-prepump.yml` 0 17 * * * (00:00 WIB).
+
+## ❌ Dihapus Total — Data & Test
+
+`levels.json`, `breakouts.json`, `holder_snapshots.json`, `real_dust_history.json`, `scanner_*.json`, `GMGN_Trades_*.csv` + 9 test suite terkait.
+
+## ✅ Tetap Aktif (jangan dihapus)
+
+- `prepump_detector.py` (inti), `cvd.py`, `core.py`, `gmgn_screener.py`, `trending_ui.py`, `watchlist.py`, `signals.py` (minimalist)
+- Data: `cvd.json`, `signals.json`, `conviction.json`, `history.json`, `watchlist.json`
+- Cron: `daily-prepump.yml` 00:00 WIB
 
 ## 📝 Instruksi untuk AI berikutnya
 
-> Jika user menyebut salah satu dari 3 halaman di atas atau meminta memeriksa "fungsi yang dinonaktifkan" — **jawab singkat bahwa bagian itu sengaja dimatikan** (lihat tabel di atas), lalu **tanya apakah mau diaktifkan kembali** sebelum melakukan inspeksi mendalam.
->
-> Untuk halaman prepump / manual check — gunakan file baru `pages/12_🎯_Prepump_Checker.py` (dibuat 2026-08-06).
+> Jangan aktifkan kembali halaman/fungsi yang dihapus tanpa persetujuan owner. Fokus sempit: watchlist → scan trending/degen → CVD → sinyal harian 00:00 WIB + Telegram sekali sehari.
