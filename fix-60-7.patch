@@ -1,0 +1,26 @@
+diff --git a/app.py b/app.py
+index 5ac8ed8..0a3e463 100644
+--- a/app.py
++++ b/app.py
+@@ -43,19 +43,11 @@ def get_signal_for_ca(ca: str, sigs: list):
+     """Return last prepump_baru signal for CA, or None.
+ 
+     NEW: uses prepump_baru_detector (validated 10 pump + LUNA), not old 4-pillar.
+-    Looks for type prepump_baru_muncul.
++    Looks for type prepump_baru_muncul only. Old imminent/forming ignored to
++    avoid 60/100 showing as 60/7.
+     """
+-    best = None
+     for s in reversed(sigs or []):
+         if s.get("ca") == ca and s.get("type") == "prepump_baru_muncul":
+-            best = s
+-            break
+-    if best:
+-        return "sinyal_muncul", best.get("score", 0), best.get("ts"), best.get("detail", "")
+-    # fallback: also check old prepump_imminent for backward compat (transisi)
+-    for s in reversed(sigs or []):
+-        if s.get("ca") == ca and s.get("type") in ("prepump_imminent", "prepump_forming"):
+-            # map old to baru
+             return "sinyal_muncul", s.get("score", 0), s.get("ts"), s.get("detail", "")
+     return None
+ 
