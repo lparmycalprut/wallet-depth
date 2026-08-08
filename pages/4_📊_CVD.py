@@ -101,33 +101,80 @@ def full_fetch(contract: str, pool: str, cutoff_ts: int):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_holder_snapshot(contract: str, key_pool: tuple) -> dict:
-    """Fetch and normalize the full Helius holder list for this CA."""
-    if not key_pool:
-        return {"ok": False, "error": "Helius API key belum dikonfigurasi."}
+    """Fetch and normalize the holder list for this CA (Helius → Cron Snapshot → GMGN)."""
+    if key_pool:
+        try:
+            supply, decimals = core_get_supply(key_pool, contract)
+            holders = core_get_holders(key_pool, contract)
+            if holders is not None and not holders.empty and "owner" in holders.columns and "raw_amount" in holders.columns:
+                normalized = holders[["owner", "raw_amount"]].copy()
+                normalized["owner"] = normalized["owner"].astype(str)
+                normalized["amount"] = (
+                    pd.to_numeric(normalized["raw_amount"], errors="coerce")
+                    .fillna(0.0) / (10 ** int(decimals))
+                )
+                normalized = normalized[normalized["amount"] > 0]
+                normalized = normalized.sort_values("amount", ascending=False)
+                return {
+                    "ok": True,
+                    "holders": normalized[["owner", "amount"]].to_dict("records"),
+                    "supply": float(supply or 0.0),
+                    "decimals": int(decimals),
+                    "total_holders": int(len(normalized)),
+                    "source": "Helius",
+                }
+        except Exception:
+            pass
+
+    # Fallback 1: Cron Snapshot dari holder_snapshots.json (4-Hourly Cron)
     try:
-        supply, decimals = core_get_supply(key_pool, contract)
-        holders = core_get_holders(key_pool, contract)
-        if holders is None or holders.empty:
-            return {"ok": False, "error": "Helius tidak mengembalikan holder."}
-        if "owner" not in holders.columns or "raw_amount" not in holders.columns:
-            return {"ok": False, "error": "Format holder Helius tidak valid."}
-        normalized = holders[["owner", "raw_amount"]].copy()
-        normalized["owner"] = normalized["owner"].astype(str)
-        normalized["amount"] = (
-            pd.to_numeric(normalized["raw_amount"], errors="coerce")
-            .fillna(0.0) / (10 ** int(decimals))
-        )
-        normalized = normalized[normalized["amount"] > 0]
-        normalized = normalized.sort_values("amount", ascending=False)
-        return {
-            "ok": True,
-            "holders": normalized[["owner", "amount"]].to_dict("records"),
-            "supply": float(supply or 0.0),
-            "decimals": int(decimals),
-            "total_holders": int(len(normalized)),
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "error": f"Helius holder fetch gagal: {exc}"}
+        from cvd import load_holder_snapshots
+        snaps = (load_holder_snapshots() or {}).get(contract) or {}
+        if snaps:
+            latest_snap = max(snaps.values(), key=lambda s: s.get("ts", 0))
+            raw_holders = latest_snap.get("holders") or []
+            holders_records = [
+                {"owner": str(item[0]), "amount": float(item[1])}
+                for item in raw_holders
+                if len(item) >= 2 and float(item[1]) > 0
+            ]
+            if holders_records:
+                holders_records.sort(key=lambda x: x["amount"], reverse=True)
+                return {
+                    "ok": True,
+                    "holders": holders_records,
+                    "supply": float(latest_snap.get("supply") or 0.0),
+                    "decimals": 0,
+                    "total_holders": len(holders_records),
+                    "source": "Cron Snapshot (4-hourly)",
+                }
+    except Exception:
+        pass
+
+    # Fallback 2: GMGN token_stat
+    try:
+        from core import gmgn_token_stat
+        stat = gmgn_token_stat(contract)
+        raw_holders = stat.get("holders") or []
+        holders_records = [
+            {"owner": str(item[0]), "amount": float(item[1])}
+            for item in raw_holders
+            if len(item) >= 2 and float(item[1]) > 0
+        ]
+        if holders_records:
+            holders_records.sort(key=lambda x: x["amount"], reverse=True)
+            return {
+                "ok": True,
+                "holders": holders_records,
+                "supply": float(stat.get("supply") or 0.0),
+                "decimals": 0,
+                "total_holders": int(stat.get("total_holders") or len(holders_records)),
+                "source": "GMGN (Top Holders)",
+            }
+    except Exception:
+        pass
+
+    return {"ok": False, "error": "Data holder tidak tersedia dari Helius, Cron Snapshot, maupun GMGN."}
 
 
 pool, symbol, price_now, mc_now = get_pool(ca)
@@ -273,17 +320,20 @@ st.caption(
 # ---------------------------------------------------------------------------
 # Top 100 holders: diamond hand + real-vs-dust.
 # ---------------------------------------------------------------------------
-with st.spinner("Mengambil holder lengkap dari Helius…"):
+with st.spinner("Mengambil holder lengkap dari Helius / Snapshot…"):
     holder_data = fetch_holder_snapshot(ca, helius_keys)
 
 st.markdown("#### 👥 Top 100 Holder Analysis")
 if not holder_data.get("ok"):
     st.warning(holder_data.get("error", "Data holder tidak tersedia."))
     st.caption(
-        "Analisis top holder membutuhkan Helius API key. Swap conviction "
-        "di atas tetap dapat dibaca dari GMGN."
+        "Analisis top holder membutuhkan Helius API key, snapshot cron 4 jam, atau data GMGN. "
+        "Swap conviction di atas tetap dapat dibaca dari GMGN."
     )
 else:
+    src = holder_data.get("source", "Helius")
+    if src != "Helius":
+        st.caption(f"ℹ️ Data top holder dimuat dari **{src}** (Helius live tidak dikonfigurasi).")
     holder_analysis = top_holder_analysis(
         holder_data.get("holders", []),
         swaps_all,

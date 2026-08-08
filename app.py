@@ -123,15 +123,81 @@ def fetch_gmgn_avg_cost(ca: str, timeout: int = 18) -> float | None:
         return None
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_gmgn_top_holder_summary(ca: str) -> dict:
+    """Fetch live GMGN token_stat as fallback for diamond hand and real/dust."""
+    try:
+        from core import gmgn_token_stat
+        from cvd import top_holder_analysis, get_recent_swaps
+        stat = gmgn_token_stat(ca, timeout=12)
+        holders = stat.get("holders") or []
+        if not holders:
+            return {}
+        swaps_72h = get_recent_swaps(ca, hours=72)
+        tha = top_holder_analysis(holders, swaps=swaps_72h,
+                                  dust_limit_usd=5.0,
+                                  supply=stat.get("supply") or 0.0)
+        return {
+            "diamond_pct": round(float(tha.get("diamond_pct") or 0.0), 1),
+            "real_holders": int(tha.get("all_real_holders") if tha.get("all_real_holders") is not None else (tha.get("real_holders") or 0)),
+            "dust_holders": int(tha.get("all_dust_holders") if tha.get("all_dust_holders") is not None else max(0, tha.get("all_holders", 0) - (tha.get("real_holders") or 0))),
+        }
+    except Exception:
+        return {}
+
+
 def get_watchlist_details(ca: str, meta: dict) -> dict:
     """Ambil detail tambahan untuk watchlist (diamond, real/dust, avg_cost)."""
     details = {
-        "diamond_pct": None,
-        "real_holders": None,
-        "dust_holders": None,
+        "diamond_pct": meta.get("diamond_pct"),
+        "real_holders": meta.get("real_holders"),
+        "dust_holders": meta.get("dust_holders"),
         "avg_cost": meta.get("avg_cost"),
         "down_ath": meta.get("down_ath"),
     }
+
+    # Cek histori real/dust lokal (dari cron) jika belum ada di meta
+    if details["real_holders"] is None or details["dust_holders"] is None:
+        try:
+            from cvd import load_real_dust_history
+            rd = load_real_dust_history()
+            if ca in rd and rd[ca]:
+                last_rd = rd[ca][-1]
+                details["real_holders"] = int(last_rd.get("real") or 0)
+                details["dust_holders"] = int(last_rd.get("dust") or 0)
+        except Exception:
+            pass
+
+    # Cek holder snapshots lokal (dari cron) jika belum ada di meta
+    if details["diamond_pct"] is None or details["real_holders"] is None:
+        try:
+            from cvd import load_holder_snapshots, top_holder_analysis, get_recent_swaps
+            snaps = (load_holder_snapshots() or {}).get(ca) or {}
+            if snaps:
+                latest_snap = max(snaps.values(), key=lambda s: s.get("ts", 0))
+                holders_list = latest_snap.get("holders", [])
+                if holders_list:
+                    swaps_72h = get_recent_swaps(ca, hours=72)
+                    tha = top_holder_analysis(holders_list, swaps=swaps_72h)
+                    if details["diamond_pct"] is None:
+                        details["diamond_pct"] = round(float(tha.get("diamond_pct") or 0.0), 1)
+                    if details["real_holders"] is None:
+                        details["real_holders"] = int(tha.get("all_real_holders") if tha.get("all_real_holders") is not None else (tha.get("real_holders") or 0))
+                    if details["dust_holders"] is None:
+                        details["dust_holders"] = int(tha.get("all_dust_holders") if tha.get("all_dust_holders") is not None else max(0, tha.get("all_holders", 0) - details["real_holders"]))
+        except Exception:
+            pass
+
+    # Fallback live via GMGN token_stat jika data cron belum tersedia
+    if details["diamond_pct"] is None or details["real_holders"] is None:
+        live_tha = fetch_gmgn_top_holder_summary(ca)
+        if live_tha:
+            if details["diamond_pct"] is None:
+                details["diamond_pct"] = live_tha.get("diamond_pct")
+            if details["real_holders"] is None:
+                details["real_holders"] = live_tha.get("real_holders")
+            if details["dust_holders"] is None:
+                details["dust_holders"] = live_tha.get("dust_holders")
 
     # Jika avg_cost belum ada di watchlist.json → fetch live dari GMGN
     if details["avg_cost"] is None:
@@ -140,6 +206,12 @@ def get_watchlist_details(ca: str, meta: dict) -> dict:
             details["avg_cost"] = live_avg
 
     # Normalisasi angka
+    if details["diamond_pct"] is not None:
+        try:
+            details["diamond_pct"] = round(float(details["diamond_pct"]), 1)
+        except Exception:
+            details["diamond_pct"] = None
+
     if details["avg_cost"] is not None:
         try:
             details["avg_cost"] = round(float(details["avg_cost"]), 1)

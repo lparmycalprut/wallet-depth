@@ -33,10 +33,11 @@ Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Per
 | `signals.py` | **Minimalist** — hanya prepump_baru_muncul (baru) + legacy imminent/forming (compat). Telegram via `requests` langsung (tanpa breakout_guard). Digest harian. |
 | `trending_ui.py` | Renderer trending — dipakai app.py, tapi app sekarang render minimal (hanya Watchlist button). Enrich holder split tetap Helius-only. |
 | `watchlist.py` | Watchlist helpers (load/save/add/remove + GitHub push + pending journal + cache 15s). |
-| `scripts/update_cvd.py` | **Daily cron 07:00 WIB (00:00 UTC, GMGN candle flip)** — update CVD GMGN + conviction + daily snapshot history.json + evaluasi prepump + Telegram digest sekali sehari. Tidak lagi hourly. |
+| `scripts/update_cvd.py` | **Cron updater** — update CVD GMGN + conviction (4h) + holder snapshot/real-dust (`holder_snapshots.json`, `real_dust_history.json`) + daily snapshot `history.json` + evaluasi prepump + Telegram digest. |
 | `scripts/daily_snapshot.py` | Helper snapshot harian DexScreener+GMGN (dipakai update_cvd sebagai fallback). |
 | `scripts/backtest_prepump.py` | Backtest prepump via CSV GMGN (offline). |
-| `.github/workflows/daily-prepump.yml` | **Satu-satunya workflow** — `0 0 * * *` 07:00 WIB. Hapus: cto-radar, lp-safe, memecoin-scanner, cvd-update (hourly), daily-snapshot (07:30 WIB). |
+| `.github/workflows/daily-prepump.yml` | **Cron Harian** — `0 0 * * *` 07:00 WIB (GMGN candle flip). |
+| `.github/workflows/cvd-detail.yml` | **Cron per 4 Jam** — `0 */4 * * *` untuk update detail CVD & holder top (`holder_snapshots.json` & `real_dust_history.json`). |
 | `tests/` | 13 suite (tambah prepump_baru_detector): test_candle_patterns, test_dexscreener_identity, test_fresh_wallet_growth, test_h4_activity, test_helius_rotation, test_holder_delta, test_holder_split (tanpa AppRealDust), test_prepump_detector, test_real_tx_summary, test_scoring_continuity, test_wallet_profiles, test_watchlist. Dihapus: test_accum_history, test_breakout_guard, test_flow_safety, test_stealth_signals, dll. |
 | Data | `cvd.json` · `signals.json` · `conviction.json` · `history.json` · `watchlist.json` (di-commit daily). Dihapus: `levels.json`, `breakouts.json`, `holder_snapshots.json`, `real_dust_history.json`, `scanner_*.json`. |
 
@@ -150,4 +151,13 @@ test suite.
 
 Verifikasi minimum setelah perubahan: `python -m py_compile cvd.py
 pages/4_📊_CVD.py` dan `python tests/test_top_holder_analysis.py`.
+
+---
+
+## 10. Status 2026-08-08 — Penambahan cron detail CVD & Top Holders per 4 jam
+
+- Ditambahkan workflow `.github/workflows/cvd-detail.yml` (`0 */4 * * *`, per 4 jam) agar data `holder_snapshots.json` dan `real_dust_history.json` di-commit secara berkala.
+- `scripts/update_cvd.py` kembali menghitung holder snapshot (Helius / GMGN top holders fallback) dan memperbarui metadata `watchlist.json` (`diamond_pct`, `real_holders`, `dust_holders`) sehingga UI Watchlist tidak lagi kosong (`—`).
+- `app.py` pada fungsi `get_watchlist_details` membaca metadata dan memiliki fallback ke `holder_snapshots.json`, `real_dust_history.json`, serta live GMGN `token_stat`.
+- `pages/4_📊_CVD.py` pada fungsi `fetch_holder_snapshot` memiliki fallback ke data cron `holder_snapshots.json` dan GMGN ketika Helius API key tidak dikonfigurasi di rahasia Streamlit.
 

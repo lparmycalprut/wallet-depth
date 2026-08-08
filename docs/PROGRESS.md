@@ -1429,3 +1429,18 @@ padahal titik tengah itu justru ambang lama. Dikembalikan ke linear.
 - Tes: tanpa pytest, tanpa jaringan, semua path file di-patch ke tmpdir.
 - Baris kode maks 79 karakter (gaya lama repo).
 - Agen **tidak bisa** menyentuh `.github/workflows/` — minta pemilik.
+
+---
+
+## 2026-08-08 — Cron detail CVD & Top Holders per 4 jam (`cvd-detail.yml`)
+
+### Masalah
+Setelah reset ke alur harian saja (`07:00 WIB`), tidak ada cron rutin yang berjalan per 4 jam untuk memperbarui data detail CVD (`cvd.json`), poin conviction (`conviction.json`), dan histori holder top (`holder_snapshots.json` & `real_dust_history.json`). Akibatnya, kolom **Diamond** dan **Real/Dust** pada tabel Watchlist di `app.py` tampil kosong (`—`) dan analisis Top 100 Holder pada halaman CVD memerlukan Helius API key yang mungkin tidak terkonfigurasi.
+
+### Solusinya
+1. **Cron per 4 jam:** Menambahkan workflow `.github/workflows/cvd-detail.yml` (`0 */4 * * *`) yang mengeksekusi `python scripts/update_cvd.py 60` dan meng-commit file `cvd.json`, `conviction.json`, `holder_snapshots.json`, `real_dust_history.json`, serta `watchlist.json`.
+2. **Kalkulasi Top Holder & Watchlist Metadata:** Mengaktifkan kembali `_try_snapshot()` di `scripts/update_cvd.py` agar mengambil data top holder dari Helius atau GMGN (`gmgn_token_stat`), mencatat snapshot di `holder_snapshots.json` dan `real_dust_history.json`, serta menyimpan hasil kalkulasi (`diamond_pct`, `real_holders`, `dust_holders`) langsung ke metadata di `watchlist.json`.
+3. **Fallback UI Interaktif:**
+   - Pada `app.py`, fungsi `get_watchlist_details()` kini membaca metadata `watchlist.json` dan mendukung fallback ke file `holder_snapshots.json` dan `real_dust_history.json`, serta fallback live GMGN `token_stat`.
+   - Pada `pages/4_📊_CVD.py`, fungsi `fetch_holder_snapshot()` mendukung fallback ke snapshot cron di `holder_snapshots.json` atau data GMGN top holders jika Helius API key tidak dikonfigurasi.
+4. **Verifikasi Tes:** Seluruh tes eksisting (`tests/test_*.py` dan `unittest`) tetap hijau + ditambahkan `tests/test_cron_top_holders.py` untuk menguji integrasi kalkulasi snapshot dan fallback UI.
