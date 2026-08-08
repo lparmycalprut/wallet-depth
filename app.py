@@ -23,7 +23,66 @@ import streamlit as st
 from core import load_config, get_helius_keys
 from watchlist import load_watchlist, add_to_watchlist, remove_from_watchlist, get_last_push_error
 
-st.set_page_config(page_title="Wallet Depth — Prepump", page_icon="🎯", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(
+    page_title="Wallet Depth — Prepump",
+    page_icon="🎯",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# ====================== GLOBAL USER-FRIENDLY STYLING (Light + Dark aware) ======================
+st.markdown("""
+<style>
+    .main .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 2rem;
+        max-width: 1280px;
+    }
+    .stButton button {
+        font-size: 0.95rem;
+        padding: 0.55rem 1.1rem;
+        border-radius: 10px;
+        font-weight: 600;
+    }
+    .stTextInput input, .stSelectbox select {
+        border-radius: 10px;
+        font-size: 1rem;
+    }
+    .watch-row {
+        padding: 4px 0;
+        line-height: 1.35;
+    }
+    .section-header {
+        font-size: 1.35rem;
+        font-weight: 700;
+        margin: 1.25rem 0 0.4rem 0;
+    }
+
+    /* ========== LIGHT MODE ========== */
+    @media (prefers-color-scheme: light) {
+        .section-header { color: #0f172a; }
+        .stMarkdown, .stCaption { color: #334155; }
+        .watch-row { color: #1e2937; }
+    }
+
+    /* ========== DARK MODE ========== */
+    @media (prefers-color-scheme: dark) {
+        .section-header { color: #e0e7ff; }
+        .stMarkdown, .stCaption { color: #cbd5e1; }
+        .watch-row { color: #e2e8f0; }
+        .stButton button {
+            background-color: #1e2937;
+            color: #e0e7ff;
+            border: 1px solid #475569;
+        }
+    }
+
+    .stMarkdown, .stCaption {
+        font-size: 0.95rem;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
