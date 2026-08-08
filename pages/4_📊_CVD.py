@@ -229,92 +229,133 @@ st.markdown(
 # ---------------------------------------------------------------------------
 win_stats = {}
 for window_h in CONVICTION_WINDOWS:
+    # 1. Window saat ini [now - window_h*3600, now]
     if df.empty:
-        segment = df
+        segment_now = df
     else:
-        segment = df[df["ts"] >= fetched_at - window_h * 3600]
-    if segment.empty:
-        profiles = {}
+        segment_now = df[df["ts"] >= fetched_at - window_h * 3600]
+    if segment_now.empty:
+        profiles_now = {}
     else:
-        profiles = wallet_profiles(
-            list(segment[["side", "sol", "ts", "wallet"]]
+        profiles_now = wallet_profiles(
+            list(segment_now[["side", "sol", "ts", "wallet"]]
                  .itertuples(index=False, name=None))
         )
-    conviction = conviction_split(profiles, whale_min_sol=WHALE_SOL)
-    win_stats[window_h] = conviction
+    conv_now = conviction_split(profiles_now, whale_min_sol=WHALE_SOL)
+
+    # 2. Window sebelumnya (periode lampau dengan durasi yang sama)
+    # [now - 2*window_h*3600, now - window_h*3600]
+    if df.empty:
+        segment_prev = df
+    else:
+        segment_prev = df[(df["ts"] >= fetched_at - 2 * window_h * 3600) &
+                          (df["ts"] < fetched_at - window_h * 3600)]
+    if segment_prev.empty:
+        conv_prev_pct = None
+    else:
+        profiles_prev = wallet_profiles(
+            list(segment_prev[["side", "sol", "ts", "wallet"]]
+                 .itertuples(index=False, name=None))
+        )
+        conv_prev_pct = conviction_split(profiles_prev, whale_min_sol=WHALE_SOL)["conviction_pct"]
+
+    now_pct = conv_now["conviction_pct"]
+    delta_pct = (now_pct - conv_prev_pct) if conv_prev_pct is not None else None
+    net_pure = conv_now.get("pure_buy", 0.0) - conv_now.get("pure_sell", 0.0)
+
+    win_stats[window_h] = {
+        "conviction_pct": now_pct,
+        "prev_pct": conv_prev_pct,
+        "delta_pct": delta_pct,
+        "net_pure": net_pure,
+    }
 
 fig_conviction = go.Figure()
 
-# Thin connecting line (tipis) untuk menunjukkan tren antar window
-x_vals = [f"{h}h" for h in CONVICTION_WINDOWS]
+x_vals = [f"{h}H" for h in CONVICTION_WINDOWS]
 y_vals = [win_stats[h]["conviction_pct"] for h in CONVICTION_WINDOWS]
+bar_colors = []
+labels = []
+hovers = []
 
-fig_conviction.add_trace(go.Scatter(
+for h in CONVICTION_WINDOWS:
+    stats = win_stats[h]
+    pct = stats["conviction_pct"]
+    dpct = stats["delta_pct"]
+    netp = stats["net_pure"]
+    if dpct is None:
+        bar_colors.append("#3b82f6")  # Biru netral jika belum ada data periode sebelumnya
+        labels.append(f"{pct:.0f}%")
+        delta_str = "Data awal"
+    elif dpct >= 0:
+        bar_colors.append("#22c55e")  # Hijau jika tumbuh/naik
+        labels.append(f"{pct:.0f}%<br>(▲+{dpct:.1f}%)")
+        delta_str = f"▲ +{dpct:.1f}% (Naik)"
+    else:
+        bar_colors.append("#ef4444")  # Merah jika turun
+        labels.append(f"{pct:.0f}%<br>(▼{dpct:.1f}%)")
+        delta_str = f"▼ {dpct:.1f}% (Turun)"
+
+    prev_str = f"{stats['prev_pct']:.1f}%" if stats['prev_pct'] is not None else "—"
+    hovers.append(
+        f"<b>{h}H Timeframe</b><br>"
+        f"Conviction Saat Ini: <b>{pct:.1f}%</b><br>"
+        f"Periode Sebelumnya: <b>{prev_str}</b><br>"
+        f"Pertumbuhan / Penurunan: <b>{delta_str}</b><br>"
+        f"Net Pure Flow: <b>{netp:+.1f} SOL</b>"
+    )
+
+fig_conviction.add_trace(go.Bar(
     x=x_vals,
     y=y_vals,
-    mode="lines",
-    line=dict(color="#64748b", width=1.2, dash="dot"),
-    name="Trend",
-    hoverinfo="skip",
+    text=labels,
+    textposition="outside",
+    marker=dict(color=bar_colors, line=dict(color="white", width=1.5)),
+    hoverinfo="text",
+    hovertext=hovers,
     showlegend=False,
 ))
 
-# Warna terpisah untuk setiap window (agar garis conviction terlihat jelas)
-window_colors = {
-    4: "#22c55e",    # hijau
-    6: "#eab308",    # kuning
-    12: "#f59e0b",   # orange
-    24: "#ef4444",   # merah
-    48: "#a855f7",   # ungu
-    72: "#3b82f6",   # biru
-}
-
-for window_h in CONVICTION_WINDOWS:
-    pct = win_stats[window_h]["conviction_pct"]
-    fig_conviction.add_trace(go.Scatter(
-        x=[f"{window_h}h"],
-        y=[pct],
-        mode="markers+text",
-        text=[f"{pct:.0f}%"],
-        textposition="top center",
-        marker=dict(
-            size=14,
-            color=window_colors.get(window_h, "#38bdf8"),
-            line=dict(width=2, color="white")
-        ),
-        name=f"{window_h}h",
-        hovertemplate=f"<b>{window_h}h</b><br>Conviction: {pct:.1f}%<extra></extra>",
-    ))
-
 # Garis referensi
 fig_conviction.add_hline(
-    y=50, line_dash="dot", line_color="#22c55e", annotation_text="50%"
+    y=50, line_dash="dot", line_color="#22c55e", annotation_text="50% (Solid)"
 )
 fig_conviction.add_hline(
-    y=30, line_dash="dot", line_color="#ef4444", annotation_text="30%"
+    y=30, line_dash="dot", line_color="#ef4444", annotation_text="30% (Weak)"
 )
 
 fig_conviction.update_layout(
-    height=300,
-    margin=dict(t=30, b=10, l=10, r=10),
-    yaxis=dict(title="conviction %", range=[0, 100]),
-    xaxis=dict(title="lookback window"),
-    title=dict(text="Conviction window (4H / 12H / 24H / 48H / 72H) — garis terpisah", font=dict(size=13)),
-    showlegend=True,
-    legend=dict(
-        orientation="h",
-        yanchor="bottom",
-        y=1.02,
-        xanchor="right",
-        x=1,
-        font=dict(size=10)
+    height=330,
+    margin=dict(t=45, b=10, l=10, r=10),
+    yaxis=dict(title="Conviction %", range=[0, 118]),
+    xaxis=dict(title="Timeframe"),
+    title=dict(
+        text="Pertumbuhan & Penurunan Conviction per Timeframe (Tanpa Garis Gabungan)",
+        font=dict(size=13)
     ),
 )
 st.plotly_chart(fig_conviction, use_container_width=True,
                 config={"displayModeBar": False})
+
+# Tampilkan metrik pertumbuhan/penurunan dalam bentuk kolom ringkas
+st.markdown("##### 📈 Pertumbuhan / Penurunan Conviction vs Periode Sebelumnya")
+cols_conv = st.columns(len(CONVICTION_WINDOWS))
+for i, window_h in enumerate(CONVICTION_WINDOWS):
+    stats = win_stats[window_h]
+    now_pct = stats["conviction_pct"]
+    d_pct = stats["delta_pct"]
+    net_p = stats["net_pure"]
+    cols_conv[i].metric(
+        label=f"⏱️ {window_h}H",
+        value=f"{now_pct:.1f}%",
+        delta=f"{d_pct:+.1f}%" if d_pct is not None else "data awal",
+        help=f"Net Pure Flow: {net_p:+.1f} SOL"
+    )
+
 st.caption(
-    "Conviction = effective buy flow dari wallet yang tidak menjual lebih "
-    "dari ambang profilnya. Setiap window (4H/12H/24H/48H/72H) ditampilkan sebagai titik terpisah dengan warna berbeda."
+    "Setiap batang mencatat tingkat conviction pada timeframe tersebut, dengan indikator warna "
+    "(🟢 Naik / 🔴 Turun) serta nilai perubahan (Δ%) dibandingkan periode sebelumnya dengan durasi yang sama — "
+    "bukan digabungkan menjadi garis tren."
 )
 
 # ---------------------------------------------------------------------------

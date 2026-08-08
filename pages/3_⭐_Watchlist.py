@@ -13,9 +13,10 @@ from watchlist import load_watchlist, remove_from_watchlist, add_to_watchlist, g
 st.set_page_config(page_title="Watchlist", page_icon="⭐",
                    layout="wide", initial_sidebar_state="collapsed")
 st.markdown("""<style>
-.block-container {padding-top: 1.2rem; max-width: 1400px;}
-h1 {font-size: 1.3rem !important;}
-[data-testid="stCaptionContainer"] {font-size: 0.72rem !important;}
+.block-container {padding-top: 1.2rem; max-width: 1400px; color: #000000;}
+h1 {font-size: 1.3rem !important; color: #000000 !important;}
+[data-testid="stCaptionContainer"] {font-size: 0.72rem !important; color: #000000 !important;}
+table, td, th, div, span, p, label {color: #000000;}
 </style>""", unsafe_allow_html=True)
 
 st.title("⭐ Watchlist")
@@ -164,35 +165,35 @@ hdr = st.columns([1.0, 1.6, 1.1, 0.7, 0.9, 0.8, 0.9, 0.9, 0.8, 1.0, 0.9, 0.6])
 for col, label in zip(hdr, ["Token", "CA", "Last snapshot", "Score",
                             "Holders", "Δ prev", "Real %MC", "Top10 %",
                             "MC", "Note", "Snapshots", ""]):
-    col.markdown(f"**{label}**")
+    col.markdown(f"<b style='color:#000000'>{label}</b>", unsafe_allow_html=True)
 
 for _, r in df.iterrows():
     c = st.columns([1.0, 1.6, 1.1, 0.7, 0.9, 0.8, 0.9, 0.9, 0.8, 1.0, 0.9, 0.6])
-    c[0].markdown(f"**{r['Token']}**")
+    c[0].markdown(f"<b style='color:#000000'>{r['Token']}</b>", unsafe_allow_html=True)
     c[1].markdown(f"[`{r['ca'][:14]}…`](https://solscan.io/token/{r['ca']})")
-    c[2].write(r["Last snapshot"])
+    c[2].markdown(f"<span style='color:#000000'>{r['Last snapshot']}</span>", unsafe_allow_html=True)
     if pd.notna(r["Score"]) and r["Score"] is not None:
         sc = int(r["Score"])
         c[3].markdown(f"<span style='color:{score_color(sc)};font-weight:700'>"
                       f"{sc}</span>", unsafe_allow_html=True)
     else:
-        c[3].write("—")
-    c[4].write(f"{int(r['Holders']):,}" if pd.notna(r["Holders"]) and
-               r["Holders"] is not None else "—")
+        c[3].markdown("<span style='color:#000000'>—</span>", unsafe_allow_html=True)
+    holders_str = f"{int(r['Holders']):,}" if pd.notna(r["Holders"]) and r["Holders"] is not None else "—"
+    c[4].markdown(f"<span style='color:#000000'>{holders_str}</span>", unsafe_allow_html=True)
     if r["Δ vs prev"] is not None and pd.notna(r["Δ vs prev"]):
         dv = int(r["Δ vs prev"])
         c[5].markdown(f"<span style='color:{'#22c55e' if dv >= 0 else '#ef4444'}'>"
                       f"{dv:+,}</span>", unsafe_allow_html=True)
     else:
-        c[5].write("—")
-    c[6].write(f"{r['Real %MC']:.1f}%" if pd.notna(r["Real %MC"]) and
-               r["Real %MC"] is not None else "—")
-    c[7].write(f"{r['Top10 %']:.1f}%" if pd.notna(r["Top10 %"]) and
-               r["Top10 %"] is not None else "—")
-    c[8].write(f"${r['MC']:,.0f}" if pd.notna(r["MC"]) and
-               r["MC"] is not None else "—")
-    c[9].write(r["Note"] or "")
-    c[10].write(str(r["Snapshots"]))
+        c[5].markdown("<span style='color:#000000'>—</span>", unsafe_allow_html=True)
+    real_mc_str = f"{r['Real %MC']:.1f}%" if pd.notna(r["Real %MC"]) and r["Real %MC"] is not None else "—"
+    c[6].markdown(f"<span style='color:#000000'>{real_mc_str}</span>", unsafe_allow_html=True)
+    top10_str = f"{r['Top10 %']:.1f}%" if pd.notna(r["Top10 %"]) and r["Top10 %"] is not None else "—"
+    c[7].markdown(f"<span style='color:#000000'>{top10_str}</span>", unsafe_allow_html=True)
+    mc_str = f"${r['MC']:,.0f}" if pd.notna(r["MC"]) and r["MC"] is not None else "—"
+    c[8].markdown(f"<span style='color:#000000'>{mc_str}</span>", unsafe_allow_html=True)
+    c[9].markdown(f"<span style='color:#000000'>{r['Note'] or ''}</span>", unsafe_allow_html=True)
+    c[10].markdown(f"<span style='color:#000000'>{r['Snapshots']}</span>", unsafe_allow_html=True)
     if c[11].button("🗑️ Hapus", key=f"rm_{r['ca']}", help="Remove from watchlist", use_container_width=True, type="secondary"):
         if not remove_from_watchlist(r["ca"]):
             _err = get_last_push_error()
