@@ -23,15 +23,120 @@ from cvd import (
     update_token_cvd,
     get_gmgn_last_error,
     get_recent_swaps,
+    record_holder_snapshot,
+    record_real_dust_point,
+    top_holder_analysis,
 )
 from signals import begin_digest, flush_telegram_digest
 from watchlist import load_watchlist, save_watchlist
 
 try:
-    from core import get_market
+    from core import (get_helius_keys, get_holders, get_market,
+                      get_supply, gmgn_token_stat)
 except Exception:
+    get_holders = None
+    get_supply = None
+
+    def get_helius_keys():
+        return ()
+
     def get_market(_ca):
         return {}
+
+    def gmgn_token_stat(_ca, timeout=15):
+        return {}
+
+
+def _cron_dust_limit() -> float:
+    try:
+        import json as _json
+        cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "..", "config.json")
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            return float((_json.load(f) or {}).get("dust_limit_usd", 5.0))
+    except Exception:
+        return 5.0
+
+
+def _gmgn_top_holders(ca: str, timeout: int = 15) -> tuple:
+    stat = gmgn_token_stat(ca, timeout=timeout)
+    return (stat.get("holders") or None), stat.get("supply")
+
+
+def _try_snapshot(api_keys, ca: str, meta: dict,
+                  price_now: float = 0.0) -> str:
+    """Holder snapshot — Helius (preferred) → GMGN (fallback).
+    Records to holder_snapshots.json & real_dust_history.json, and
+    computes top holder metrics (diamond_pct, real_holders, dust_holders)
+    to update watchlist metadata so the UI cards display them.
+    """
+    limit = _cron_dust_limit()
+    holders_used = None
+    supply_used = 0.0
+    status_str = " snap-skip:no-source"
+
+    if api_keys and get_holders is not None:
+        try:
+            df = get_holders(api_keys, ca)
+            if df is not None and not df.empty:
+                if get_supply is not None:
+                    try:
+                        supply_used, _ = get_supply(api_keys, ca)
+                    except Exception:
+                        supply_used = 0.0
+                pairs = []
+                amt_col = ("ui_amount" if "ui_amount" in df.columns
+                           else "raw_amount")
+                for _, row in df.iterrows():
+                    owner = row.get("owner")
+                    amt = row.get(amt_col)
+                    if owner and amt and float(amt) > 0:
+                        pairs.append([str(owner), float(amt)])
+                if pairs:
+                    holders_used = pairs
+                    record_holder_snapshot(ca, pairs, supply_used or 0.0)
+                    rd_txt = ""
+                    try:
+                        if price_now and price_now > 0:
+                            n_real = sum(1 for _, amt in pairs
+                                         if amt * price_now >= limit)
+                            n_dust = len(pairs) - n_real
+                            pt = record_real_dust_point(
+                                ca, n_real, n_dust, price=price_now,
+                                dust_limit=limit)
+                            if pt is not None:
+                                rd_txt = f" rd:{n_real}r/{n_dust}d"
+                    except Exception:
+                        pass
+                    status_str = f" snap-helius:{len(pairs)} holders{rd_txt}"
+        except Exception as e:
+            print(f"WARN: helius holder snapshot failed for {ca}: {e}")
+
+    if holders_used is None:
+        try:
+            holders, supply = _gmgn_top_holders(ca)
+            if holders:
+                holders_used = holders
+                supply_used = supply or 0.0
+                record_holder_snapshot(ca, holders, supply_used)
+                status_str = f" snap-gmgn:{len(holders)} holders"
+        except Exception:
+            pass
+
+    if holders_used:
+        try:
+            swaps_72h = get_recent_swaps(ca, hours=72)
+            tha = top_holder_analysis(holders_used, swaps=swaps_72h,
+                                      price_usd=price_now,
+                                      dust_limit_usd=limit,
+                                      supply=supply_used)
+            meta["diamond_pct"] = round(float(tha.get("diamond_pct") or 0.0), 1)
+            meta["real_holders"] = int(tha.get("all_real_holders") if tha.get("all_real_holders") is not None else (tha.get("real_holders") or 0))
+            meta["dust_holders"] = int(tha.get("all_dust_holders") if tha.get("all_dust_holders") is not None else max(0, tha.get("all_holders", 0) - meta["real_holders"]))
+        except Exception as e:
+            print(f"WARN: top_holder_analysis failed for {ca}: {e}")
+
+    return status_str
 
 
 def main_pool(ca: str):
@@ -70,9 +175,10 @@ def main():
         print("Watchlist empty — nothing to do.")
         return
 
+    api_keys = tuple(get_helius_keys())
     wl_changed = False
     begin_digest()
-    print(f"Starting daily prepump BARU update for {len(wl)} token(s) at {time.strftime('%Y-%m-%d %H:%M WIB', time.gmtime(time.time()+7*3600))} (07:00 WIB = 00:00 UTC)")
+    print(f"Starting CVD & prepump BARU update for {len(wl)} token(s) at {time.strftime('%Y-%m-%d %H:%M WIB', time.gmtime(time.time()+7*3600))}")
 
     for ca, meta in list(wl.items()):
         try:
@@ -100,6 +206,12 @@ def main():
             # --- Conviction ---
             cp = record_conviction(ca, window_h=4)
             conv_txt = f" conv={cp['conviction']:.0f}%" if cp else ""
+
+            # --- Holder snapshot + real/dust history (Helius / GMGN) ---
+            snap_txt = _try_snapshot(api_keys, ca, meta,
+                                     price_now=price_now or 0.0)
+            if snap_txt and "snap-skip" not in snap_txt:
+                wl_changed = True
 
             # --- Daily snapshot to history.json (best effort, idempotent) ---
             hist_txt = ""
@@ -154,14 +266,15 @@ def main():
             except Exception as e:
                 pp_txt = f" baru_err:{str(e)[:30]}"
 
-            print(f"✅ {meta.get('symbol','?'):>10} {ca[:8]}… +{res.get('new_swaps',0)} swaps{gap}{conv_txt}{hist_txt}{pp_txt}")
+            print(f"✅ {meta.get('symbol','?'):>10} {ca[:8]}… +{res.get('new_swaps',0)} swaps{gap}{conv_txt}{hist_txt}{snap_txt}{pp_txt}")
 
         except Exception as e:
             print(f"❌ {ca[:8]}… error: {str(e)[:120]}")
 
-    # Flush telegram digest (once per day at 07:00 WIB)
+    # Flush telegram digest
     try:
-        n = flush_telegram_digest(title="📬 <b>DAILY PRE-PUMP BARU — 07:00 WIB (00:00 UTC)</b>")
+        now_wib = time.strftime('%H:%M WIB', time.gmtime(time.time()+7*3600))
+        n = flush_telegram_digest(title=f"📬 <b>PRE-PUMP BARU — {now_wib}</b>")
         if n:
             print(f"📬 Telegram digest sent: {n} message(s)")
         else:
@@ -170,8 +283,8 @@ def main():
         print(f"digest-err: {e}")
 
     if wl_changed:
-        save_watchlist(wl, "auto-fix symbols daily")
-        print("watchlist symbols updated")
+        save_watchlist(wl, "auto-fix symbols / top holders update")
+        print("watchlist symbols and holder stats updated")
 
 if __name__ == "__main__":
     main()

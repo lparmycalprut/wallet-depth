@@ -123,15 +123,81 @@ def fetch_gmgn_avg_cost(ca: str, timeout: int = 18) -> float | None:
         return None
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_gmgn_top_holder_summary(ca: str) -> dict:
+    """Fetch live GMGN token_stat as fallback for diamond hand and real/dust."""
+    try:
+        from core import gmgn_token_stat
+        from cvd import top_holder_analysis, get_recent_swaps
+        stat = gmgn_token_stat(ca, timeout=12)
+        holders = stat.get("holders") or []
+        if not holders:
+            return {}
+        swaps_72h = get_recent_swaps(ca, hours=72)
+        tha = top_holder_analysis(holders, swaps=swaps_72h,
+                                  dust_limit_usd=5.0,
+                                  supply=stat.get("supply") or 0.0)
+        return {
+            "diamond_pct": round(float(tha.get("diamond_pct") or 0.0), 1),
+            "real_holders": int(tha.get("all_real_holders") if tha.get("all_real_holders") is not None else (tha.get("real_holders") or 0)),
+            "dust_holders": int(tha.get("all_dust_holders") if tha.get("all_dust_holders") is not None else max(0, tha.get("all_holders", 0) - (tha.get("real_holders") or 0))),
+        }
+    except Exception:
+        return {}
+
+
 def get_watchlist_details(ca: str, meta: dict) -> dict:
     """Ambil detail tambahan untuk watchlist (diamond, real/dust, avg_cost)."""
     details = {
-        "diamond_pct": None,
-        "real_holders": None,
-        "dust_holders": None,
+        "diamond_pct": meta.get("diamond_pct"),
+        "real_holders": meta.get("real_holders"),
+        "dust_holders": meta.get("dust_holders"),
         "avg_cost": meta.get("avg_cost"),
         "down_ath": meta.get("down_ath"),
     }
+
+    # Cek histori real/dust lokal (dari cron) jika belum ada di meta
+    if details["real_holders"] is None or details["dust_holders"] is None:
+        try:
+            from cvd import load_real_dust_history
+            rd = load_real_dust_history()
+            if ca in rd and rd[ca]:
+                last_rd = rd[ca][-1]
+                details["real_holders"] = int(last_rd.get("real") or 0)
+                details["dust_holders"] = int(last_rd.get("dust") or 0)
+        except Exception:
+            pass
+
+    # Cek holder snapshots lokal (dari cron) jika belum ada di meta
+    if details["diamond_pct"] is None or details["real_holders"] is None:
+        try:
+            from cvd import load_holder_snapshots, top_holder_analysis, get_recent_swaps
+            snaps = (load_holder_snapshots() or {}).get(ca) or {}
+            if snaps:
+                latest_snap = max(snaps.values(), key=lambda s: s.get("ts", 0))
+                holders_list = latest_snap.get("holders", [])
+                if holders_list:
+                    swaps_72h = get_recent_swaps(ca, hours=72)
+                    tha = top_holder_analysis(holders_list, swaps=swaps_72h)
+                    if details["diamond_pct"] is None:
+                        details["diamond_pct"] = round(float(tha.get("diamond_pct") or 0.0), 1)
+                    if details["real_holders"] is None:
+                        details["real_holders"] = int(tha.get("all_real_holders") if tha.get("all_real_holders") is not None else (tha.get("real_holders") or 0))
+                    if details["dust_holders"] is None:
+                        details["dust_holders"] = int(tha.get("all_dust_holders") if tha.get("all_dust_holders") is not None else max(0, tha.get("all_holders", 0) - details["real_holders"]))
+        except Exception:
+            pass
+
+    # Fallback live via GMGN token_stat jika data cron belum tersedia
+    if details["diamond_pct"] is None or details["real_holders"] is None:
+        live_tha = fetch_gmgn_top_holder_summary(ca)
+        if live_tha:
+            if details["diamond_pct"] is None:
+                details["diamond_pct"] = live_tha.get("diamond_pct")
+            if details["real_holders"] is None:
+                details["real_holders"] = live_tha.get("real_holders")
+            if details["dust_holders"] is None:
+                details["dust_holders"] = live_tha.get("dust_holders")
 
     # Jika avg_cost belum ada di watchlist.json → fetch live dari GMGN
     if details["avg_cost"] is None:
@@ -140,6 +206,12 @@ def get_watchlist_details(ca: str, meta: dict) -> dict:
             details["avg_cost"] = live_avg
 
     # Normalisasi angka
+    if details["diamond_pct"] is not None:
+        try:
+            details["diamond_pct"] = round(float(details["diamond_pct"]), 1)
+        except Exception:
+            details["diamond_pct"] = None
+
     if details["avg_cost"] is not None:
         try:
             details["avg_cost"] = round(float(details["avg_cost"]), 1)
@@ -207,7 +279,7 @@ else:
     # Header row — now with extra detail columns (compact + eye friendly) — ATR removed
     hdr = st.columns([1.2, 1.6, 0.9, 1.05, 0.9, 1.05, 0.75, 0.95, 0.6])
     for c, lab in zip(hdr, ["Token", "CA + Links", "Diamond", "Real/Dust", "AvgCost", "Sinyal", "Skor", "Update", ""]):
-        c.markdown(f"**{lab}**")
+        c.markdown(f"<b style='color:#000000'>{lab}</b>", unsafe_allow_html=True)
     st.divider()
     for ca, meta in wl.items():
         sym = meta.get("symbol", "?") or "?"
@@ -244,46 +316,46 @@ else:
         cols = st.columns([1.2, 1.6, 0.9, 1.05, 0.9, 1.05, 0.75, 0.95, 0.6])
 
         # Token
-        cols[0].markdown(f"<div class='watch-row'><b style='color:#e2e8f0'>{sym}</b><br><span style='font-size:0.65rem;color:#94a3b8'>{src}</span></div>", unsafe_allow_html=True)
+        cols[0].markdown(f"<div class='watch-row'><b style='color:#000000'>{sym}</b><br><span style='font-size:0.65rem;color:#000000'>{src}</span></div>", unsafe_allow_html=True)
 
         # CA + Links
         cols[1].markdown(
             f"<div class='watch-row'>"
-            f"<a href='https://solscan.io/token/{ca}' target='_blank' style='font-size:0.74rem;color:#38bdf8;text-decoration:none;'>{ca[:8]}…{ca[-4:]}</a><br>"
-            f"<a href='https://gmgn.ai/sol/token/{ca}' target='_blank' style='font-size:0.65rem;color:#f59e0b;text-decoration:none;'>gmgn ↗</a> · "
-            f"<a href='https://dexscreener.com/solana/{ca}' target='_blank' style='font-size:0.65rem;color:#64748b;text-decoration:none;'>chart ↗</a> · "
-            f"<a href='/CVD?ca={ca}' target='_self' style='font-size:0.65rem;color:#64748b;text-decoration:none;'>CVD ↗</a>"
+            f"<a href='https://solscan.io/token/{ca}' target='_blank' style='font-size:0.74rem;color:#0284c7;text-decoration:none;font-weight:600;'>{ca[:8]}…{ca[-4:]}</a><br>"
+            f"<a href='https://gmgn.ai/sol/token/{ca}' target='_blank' style='font-size:0.65rem;color:#d97706;text-decoration:none;'>gmgn ↗</a> · "
+            f"<a href='https://dexscreener.com/solana/{ca}' target='_blank' style='font-size:0.65rem;color:#000000;text-decoration:none;'>chart ↗</a> · "
+            f"<a href='/CVD?ca={ca}' target='_self' style='font-size:0.65rem;color:#000000;text-decoration:none;'>CVD ↗</a>"
             f"</div>",
             unsafe_allow_html=True
         )
 
         # Diamond Hand (top 100 tidak jual >10%)
         diamond = det.get("diamond_pct")
-        diamond_txt = f"<span style='color:#22c55e'>{diamond:.0f}%</span>" if diamond is not None else "<span style='color:#64748b'>—</span>"
-        cols[2].markdown(f"<div class='watch-row' style='text-align:center'>{diamond_txt}<br><span style='font-size:0.60rem;color:#64748b'>diamond</span></div>", unsafe_allow_html=True)
+        diamond_txt = f"<span style='color:#16a34a;font-weight:700;'>{diamond:.0f}%</span>" if diamond is not None else "<span style='color:#000000'>—</span>"
+        cols[2].markdown(f"<div class='watch-row' style='text-align:center'>{diamond_txt}<br><span style='font-size:0.60rem;color:#000000'>diamond</span></div>", unsafe_allow_html=True)
 
         # Real vs Dust holders
         real = det.get("real_holders")
         dust = det.get("dust_holders")
         if real is not None and dust is not None:
-            real_dust = f"<span style='color:#22c55e'>{real}</span>/<span style='color:#f87171'>{dust}</span>"
+            real_dust = f"<span style='color:#16a34a;font-weight:700;'>{real}</span>/<span style='color:#dc2626;font-weight:700;'>{dust}</span>"
         else:
-            real_dust = "<span style='color:#64748b'>—</span>"
-        cols[3].markdown(f"<div class='watch-row' style='text-align:center'>{real_dust}<br><span style='font-size:0.60rem;color:#64748b'>real/dust</span></div>", unsafe_allow_html=True)
+            real_dust = "<span style='color:#000000'>—</span>"
+        cols[3].markdown(f"<div class='watch-row' style='text-align:center'>{real_dust}<br><span style='font-size:0.60rem;color:#000000'>real/dust</span></div>", unsafe_allow_html=True)
 
         # Avg Cost (dari GMGN — live fetch jika perlu)
         avgc = det.get("avg_cost")
-        avgc_txt = f"<span style='color:#eab308'>{avgc:+.1f}%</span>" if avgc is not None else "<span style='color:#64748b'>—</span>"
-        cols[4].markdown(f"<div class='watch-row' style='text-align:center'>{avgc_txt}<br><span style='font-size:0.60rem;color:#64748b'>avg cost</span></div>", unsafe_allow_html=True)
+        avgc_txt = f"<span style='color:#ca8a04;font-weight:700;'>{avgc:+.1f}%</span>" if avgc is not None else "<span style='color:#000000'>—</span>"
+        cols[4].markdown(f"<div class='watch-row' style='text-align:center'>{avgc_txt}<br><span style='font-size:0.60rem;color:#000000'>avg cost</span></div>", unsafe_allow_html=True)
 
         # Sinyal
         cols[5].markdown(f"<div class='watch-row'>{badge}</div>", unsafe_allow_html=True)
 
         # Skor
-        cols[6].markdown(f"<div class='watch-row'><span style='font-weight:700;color:#e2e8f0'>{score:.0f}/7</span><span style='color:#64748b;font-size:0.69rem;'> checks</span></div>", unsafe_allow_html=True)
+        cols[6].markdown(f"<div class='watch-row'><span style='font-weight:700;color:#000000'>{score:.0f}/7</span><span style='color:#000000;font-size:0.69rem;'> checks</span></div>", unsafe_allow_html=True)
 
         # Update
-        cols[7].markdown(f"<div class='watch-row'><span style='font-size:0.69rem;color:#94a3b8'>{_fmt_ts(ts)}</span></div>", unsafe_allow_html=True)
+        cols[7].markdown(f"<div class='watch-row'><span style='font-size:0.69rem;color:#000000'>{_fmt_ts(ts)}</span></div>", unsafe_allow_html=True)
 
         # Hapus
         with cols[8]:
