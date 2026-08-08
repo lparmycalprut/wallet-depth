@@ -1848,5 +1848,29 @@
    "vol24": 44727.76,
    "source": "cron-daily (DexScreener+GMGN)"
   }
+ },
+ "73DRYB2YpoHiZUdq37hQmHTR7Yvg5qJKsxxaYrsJSBCJ": {
+  "2026-08-08": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 145408.0,
+   "price": 0.0001496,
+   "tiers": {},
+   "ts": "2026-08-08T03:14:16",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 24.86,
+   "symbol": "CHEEMS",
+   "name": "CHEEMS",
+   "buys24": 1193,
+   "sells24": 1296,
+   "vol24": 118455.35,
+   "source": "cron-daily (DexScreener+GMGN)"
+  }
  }
 }
