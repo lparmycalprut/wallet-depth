@@ -69,6 +69,91 @@ def live_evaluate(ca: str, symbol: str):
     except Exception:
         return "unknown", 0, None
 
+
+def fetch_gmgn_avg_cost(ca: str, timeout: int = 18) -> float | None:
+    """Fetch average holder cost (%) from GMGN token_holders endpoint (cost=20)."""
+    try:
+        from curl_cffi import requests as cr
+    except ImportError:
+        return None
+
+    import uuid
+    device_id = str(uuid.uuid4())
+    fp_did = uuid.uuid4().hex
+    build_tag = "20260807-3117-f1d79dd"
+
+    url = (
+        f"https://gmgn.ai/vas/api/v1/token_holders/sol/{ca}"
+        f"?device_id={device_id}&fp_did={fp_did}"
+        f"&client_id=gmgn_web_{build_tag}&from_app=gmgn&app_ver={build_tag}"
+        f"&tz_name=Asia%2FJakarta&tz_offset=25200&app_lang=en-US&os=web&worker=0"
+        f"&limit=100&cost=20&orderby=amount_percentage&direction=desc"
+    )
+
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "accept-language": "en-US,en;q=0.9,id;q=0.8",
+        "referer": f"https://gmgn.ai/sol/token/{ca}",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+    }
+
+    try:
+        r = cr.get(url, impersonate="chrome", headers=headers, timeout=timeout)
+        if r.status_code != 200:
+            return None
+        data = r.json() or {}
+        holders = (data.get("data") or {}).get("holders") or []
+
+        costs = []
+        for h in holders:
+            cost_val = h.get("cost") or h.get("avg_cost") or h.get("cost_usd")
+            if cost_val is not None:
+                try:
+                    c = float(cost_val)
+                    if -200 < c < 200:
+                        costs.append(c)
+                except (TypeError, ValueError):
+                    continue
+
+        if costs:
+            avg = sum(costs) / len(costs)
+            return round(avg, 1)
+        return None
+    except Exception:
+        return None
+
+
+def get_watchlist_details(ca: str, meta: dict) -> dict:
+    """Ambil detail tambahan untuk watchlist (diamond, real/dust, avg_cost)."""
+    details = {
+        "diamond_pct": None,
+        "real_holders": None,
+        "dust_holders": None,
+        "avg_cost": meta.get("avg_cost"),
+        "down_ath": meta.get("down_ath"),
+    }
+
+    # Jika avg_cost belum ada di watchlist.json → fetch live dari GMGN
+    if details["avg_cost"] is None:
+        live_avg = fetch_gmgn_avg_cost(ca)
+        if live_avg is not None:
+            details["avg_cost"] = live_avg
+
+    # Normalisasi angka
+    if details["avg_cost"] is not None:
+        try:
+            details["avg_cost"] = round(float(details["avg_cost"]), 1)
+        except Exception:
+            details["avg_cost"] = None
+
+    if details["down_ath"] is not None:
+        try:
+            details["down_ath"] = round(float(details["down_ath"]), 1)
+        except Exception:
+            details["down_ath"] = None
+
+    return details
+
 CONFIG = load_config()
 helius_keys = tuple(get_helius_keys(config=CONFIG))
 try:
@@ -108,7 +193,8 @@ st.caption("Fokus: watchlist → scan trending/degen → CVD → sinyal harian 0
 wl = load_watchlist()
 
 st.markdown("### ⭐ Watchlist — Sinyal Prepump BARU (update harian 07:00 WIB)")
-st.caption("List menurun. Kolom **Sinyal** dari **prepump_baru** (10 pump + LUNA validated): avg SELL>BUY, whale net negatif, pantul >5%, CVD flat <10%, buy TX≥52%, 3h after low net BUY, spring 15m ≥55%. **Sinyal MUNCUL** jika lolos ≥6/7 (core 3 wajib). Update 07:00 WIB (00:00 UTC, GMGN candle flip).")
+st.caption("""List menurun. Kolom baru: **Diamond** (% top-100 holder yang tidak jual >10%), **Real/Dust** (holder >$5 vs ≤$5), **AvgCost** (perubahan harga vs avg holder cost dari GMGN — di-fetch live via token_holders API jika belum tersimpan).
+Kolom **Sinyal** dari **prepump_baru** (10 pump + LUNA validated). **Sinyal MUNCUL** jika lolos ≥6/7. Update 07:00 WIB.""")
 
 if not wl:
     st.info("Watchlist kosong. Tambahkan manual di bawah atau dari hasil Scan Trending / Scan Degen.")
@@ -118,9 +204,9 @@ else:
         all_sigs = load_signals()
     except Exception:
         all_sigs = []
-    # Header row
-    hdr = st.columns([1.3, 1.6, 1.1, 0.9, 1.1, 0.7])
-    for c, lab in zip(hdr, ["Token", "CA", "Sinyal", "Skor", "Update", ""]):
+    # Header row — now with extra detail columns (compact + eye friendly) — ATR removed
+    hdr = st.columns([1.2, 1.6, 0.9, 1.05, 0.9, 1.05, 0.75, 0.95, 0.6])
+    for c, lab in zip(hdr, ["Token", "CA + Links", "Diamond", "Real/Dust", "AvgCost", "Sinyal", "Skor", "Update", ""]):
         c.markdown(f"**{lab}**")
     st.divider()
     for ca, meta in wl.items():
@@ -151,14 +237,65 @@ else:
             badge = f"<span style='background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:6px;padding:3px 8px;font-weight:700;font-size:0.82rem;'>➖ BELUM {score:.0f}/7</span>"
             row_bg = "background:rgba(148,163,184,0.04);border:1px solid #334155;border-radius:10px;padding:8px 6px;margin-bottom:6px;"
 
-        cols = st.columns([1.3, 1.6, 1.1, 0.9, 1.1, 0.7])
-        cols[0].markdown(f"<div style='{row_bg}'><b style='color:#e2e8f0'>{sym}</b><br><span style='font-size:0.68rem;color:#94a3b8'>{src}</span></div>", unsafe_allow_html=True)
-        cols[1].markdown(f"<div style='{row_bg}'><a href='https://solscan.io/token/{ca}' target='_blank' style='font-size:0.78rem;color:#38bdf8;text-decoration:none;'>{ca[:8]}…{ca[-4:]}</a><br><a href='https://dexscreener.com/solana/{ca}' target='_blank' style='font-size:0.68rem;color:#64748b;text-decoration:none;'>chart ↗</a> · <a href='/CVD?ca={ca}' target='_self' style='font-size:0.68rem;color:#64748b;text-decoration:none;'>CVD ↗</a></div>", unsafe_allow_html=True)
-        cols[2].markdown(f"<div style='{row_bg}'>{badge}</div>", unsafe_allow_html=True)
-        cols[3].markdown(f"<div style='{row_bg}'><span style='font-weight:700;color:#e2e8f0'>{score:.0f}/7</span><span style='color:#64748b;font-size:0.72rem;'> checks</span></div>", unsafe_allow_html=True)
-        cols[4].markdown(f"<div style='{row_bg}'><span style='font-size:0.72rem;color:#94a3b8'>{_fmt_ts(ts)}</span></div>", unsafe_allow_html=True)
-        # Delete button -> uses link with query param (no form needed)
-        cols[5].markdown(f"<div style='{row_bg}'><a href='?del_ca={ca}' style='display:inline-block;background:rgba(239,68,68,0.15);border:1px solid #ef4444;color:#fecaca;border-radius:6px;padding:4px 10px;text-decoration:none;font-weight:700;font-size:0.78rem;'>🗑️ Hapus</a></div>", unsafe_allow_html=True)
+        # Fetch detail tambahan
+        det = get_watchlist_details(ca, meta)
+
+        # 9 kolom compact (ATR dihapus)
+        cols = st.columns([1.2, 1.6, 0.9, 1.05, 0.9, 1.05, 0.75, 0.95, 0.6])
+
+        # Token
+        cols[0].markdown(f"<div class='watch-row'><b style='color:#e2e8f0'>{sym}</b><br><span style='font-size:0.65rem;color:#94a3b8'>{src}</span></div>", unsafe_allow_html=True)
+
+        # CA + Links
+        cols[1].markdown(
+            f"<div class='watch-row'>"
+            f"<a href='https://solscan.io/token/{ca}' target='_blank' style='font-size:0.74rem;color:#38bdf8;text-decoration:none;'>{ca[:8]}…{ca[-4:]}</a><br>"
+            f"<a href='https://gmgn.ai/sol/token/{ca}' target='_blank' style='font-size:0.65rem;color:#f59e0b;text-decoration:none;'>gmgn ↗</a> · "
+            f"<a href='https://dexscreener.com/solana/{ca}' target='_blank' style='font-size:0.65rem;color:#64748b;text-decoration:none;'>chart ↗</a> · "
+            f"<a href='/CVD?ca={ca}' target='_self' style='font-size:0.65rem;color:#64748b;text-decoration:none;'>CVD ↗</a>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+
+        # Diamond Hand (top 100 tidak jual >10%)
+        diamond = det.get("diamond_pct")
+        diamond_txt = f"<span style='color:#22c55e'>{diamond:.0f}%</span>" if diamond is not None else "<span style='color:#64748b'>—</span>"
+        cols[2].markdown(f"<div class='watch-row' style='text-align:center'>{diamond_txt}<br><span style='font-size:0.60rem;color:#64748b'>diamond</span></div>", unsafe_allow_html=True)
+
+        # Real vs Dust holders
+        real = det.get("real_holders")
+        dust = det.get("dust_holders")
+        if real is not None and dust is not None:
+            real_dust = f"<span style='color:#22c55e'>{real}</span>/<span style='color:#f87171'>{dust}</span>"
+        else:
+            real_dust = "<span style='color:#64748b'>—</span>"
+        cols[3].markdown(f"<div class='watch-row' style='text-align:center'>{real_dust}<br><span style='font-size:0.60rem;color:#64748b'>real/dust</span></div>", unsafe_allow_html=True)
+
+        # Avg Cost (dari GMGN — live fetch jika perlu)
+        avgc = det.get("avg_cost")
+        avgc_txt = f"<span style='color:#eab308'>{avgc:+.1f}%</span>" if avgc is not None else "<span style='color:#64748b'>—</span>"
+        cols[4].markdown(f"<div class='watch-row' style='text-align:center'>{avgc_txt}<br><span style='font-size:0.60rem;color:#64748b'>avg cost</span></div>", unsafe_allow_html=True)
+
+        # Sinyal
+        cols[5].markdown(f"<div class='watch-row'>{badge}</div>", unsafe_allow_html=True)
+
+        # Skor
+        cols[6].markdown(f"<div class='watch-row'><span style='font-weight:700;color:#e2e8f0'>{score:.0f}/7</span><span style='color:#64748b;font-size:0.69rem;'> checks</span></div>", unsafe_allow_html=True)
+
+        # Update
+        cols[7].markdown(f"<div class='watch-row'><span style='font-size:0.69rem;color:#94a3b8'>{_fmt_ts(ts)}</span></div>", unsafe_allow_html=True)
+
+        # Hapus
+        with cols[8]:
+            if st.button("🗑️", key=f"del_{ca}", help="Hapus dari watchlist", use_container_width=True):
+                ok = remove_from_watchlist(ca)
+                if ok:
+                    st.toast(f"Hapus {sym} dari watchlist")
+                else:
+                    err = get_last_push_error()
+                    st.error(f"⚠️ Gagal hapus {sym}: {err.get('msg')} ({err.get('status')})")
+                time.sleep(0.35)
+                st.rerun()
 
     st.caption(f"Total {len(wl)} token dipantau. Cron harian 07:00 WIB (00:00 UTC) akan update CVD + evaluasi prepump_baru + kirim Telegram jika sinyal muncul.")
 

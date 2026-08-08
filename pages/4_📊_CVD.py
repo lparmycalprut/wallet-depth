@@ -197,37 +197,77 @@ for window_h in CONVICTION_WINDOWS:
     win_stats[window_h] = conviction
 
 fig_conviction = go.Figure()
+
+# Thin connecting line (tipis) untuk menunjukkan tren antar window
+x_vals = [f"{h}h" for h in CONVICTION_WINDOWS]
+y_vals = [win_stats[h]["conviction_pct"] for h in CONVICTION_WINDOWS]
+
 fig_conviction.add_trace(go.Scatter(
-    x=[f"{window_h}h" for window_h in CONVICTION_WINDOWS],
-    y=[win_stats[window_h]["conviction_pct"]
-       for window_h in CONVICTION_WINDOWS],
-    mode="lines+markers+text",
-    text=[f"{win_stats[window_h]['conviction_pct']:.0f}%"
-          for window_h in CONVICTION_WINDOWS],
-    textposition="top center",
-    line=dict(color="#38bdf8", width=3),
-    marker=dict(size=8),
-    name="Conviction",
+    x=x_vals,
+    y=y_vals,
+    mode="lines",
+    line=dict(color="#64748b", width=1.2, dash="dot"),
+    name="Trend",
+    hoverinfo="skip",
+    showlegend=False,
 ))
+
+# Warna terpisah untuk setiap window (agar garis conviction terlihat jelas)
+window_colors = {
+    4: "#22c55e",    # hijau
+    6: "#eab308",    # kuning
+    12: "#f59e0b",   # orange
+    24: "#ef4444",   # merah
+    48: "#a855f7",   # ungu
+    72: "#3b82f6",   # biru
+}
+
+for window_h in CONVICTION_WINDOWS:
+    pct = win_stats[window_h]["conviction_pct"]
+    fig_conviction.add_trace(go.Scatter(
+        x=[f"{window_h}h"],
+        y=[pct],
+        mode="markers+text",
+        text=[f"{pct:.0f}%"],
+        textposition="top center",
+        marker=dict(
+            size=14,
+            color=window_colors.get(window_h, "#38bdf8"),
+            line=dict(width=2, color="white")
+        ),
+        name=f"{window_h}h",
+        hovertemplate=f"<b>{window_h}h</b><br>Conviction: {pct:.1f}%<extra></extra>",
+    ))
+
+# Garis referensi
 fig_conviction.add_hline(
     y=50, line_dash="dot", line_color="#22c55e", annotation_text="50%"
 )
 fig_conviction.add_hline(
     y=30, line_dash="dot", line_color="#ef4444", annotation_text="30%"
 )
+
 fig_conviction.update_layout(
-    height=280,
-    margin=dict(t=25, b=0, l=0, r=0),
+    height=300,
+    margin=dict(t=30, b=10, l=10, r=10),
     yaxis=dict(title="conviction %", range=[0, 100]),
     xaxis=dict(title="lookback window"),
-    title=dict(text="Conviction window 4h → 72h", font=dict(size=13)),
-    showlegend=False,
+    title=dict(text="Conviction window (4H / 12H / 24H / 48H / 72H) — garis terpisah", font=dict(size=13)),
+    showlegend=True,
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        y=1.02,
+        xanchor="right",
+        x=1,
+        font=dict(size=10)
+    ),
 )
 st.plotly_chart(fig_conviction, use_container_width=True,
                 config={"displayModeBar": False})
 st.caption(
     "Conviction = effective buy flow dari wallet yang tidak menjual lebih "
-    "dari ambang profilnya. Ini bukan probabilitas harga naik."
+    "dari ambang profilnya. Setiap window (4H/12H/24H/48H/72H) ditampilkan sebagai titik terpisah dengan warna berbeda."
 )
 
 # ---------------------------------------------------------------------------
