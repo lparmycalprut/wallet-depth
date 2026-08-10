@@ -1,8 +1,8 @@
-name: Daily Prepump BARU (07:00 WIB)
+name: Daily GMGN CVD (07:00 WIB)
 
 on:
   schedule:
-    - cron: "0 0 * * *"   # 07:00 WIB = 00:00 UTC (GMGN candle flip)
+    - cron: "0 0 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -11,14 +11,18 @@ permissions:
 jobs:
   daily:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - name: Install deps
         run: pip install requests pandas curl_cffi base58
-      - name: Daily CVD + Prepump BARU (07:00 WIB)
+
+      - name: Daily GMGN CVD (07:00 WIB)
         env:
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
           HELIUS_API_KEYS: ${{ secrets.HELIUS_API_KEYS }}
@@ -26,19 +30,25 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python scripts/update_cvd.py 60
+
       - name: Commit data
         run: |
           git config user.name "prepump-bot"
           git config user.email "actions@github.com"
+
           git stash -u || true
           git pull --rebase || true
           git stash pop || true
-          for f in cvd.json signals.json conviction.json history.json watchlist.json; do
+
+          for f in cvd.json cvd_daily.json signals.json history.json watchlist.json; do
             if grep -q "<<<<<<<" "$f" 2>/dev/null; then
               git checkout --theirs "$f" 2>/dev/null || git checkout HEAD -- "$f" || true
             fi
           done
-          git add cvd.json signals.json conviction.json history.json watchlist.json 2>&1 || true
+
+          git add cvd.json cvd_daily.json signals.json history.json watchlist.json 2>&1 || true
           git add watchlist_pending.json 2>&1 || true
-          git diff --cached --quiet || git commit -m "chore: daily prepump BARU $(date -u +%FT%H:%M) 07:00 WIB"
+
+          git diff --cached --quiet || git commit -m "chore: daily GMGN CVD $(date -u +%FT%H:%M) UTC"
+
           git push || (git pull --rebase && git push) || true
