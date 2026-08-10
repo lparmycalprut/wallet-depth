@@ -184,16 +184,40 @@ def fetch_gmgn_avg_cost(ca: str, timeout: int = 18) -> float | None:
 
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_gmgn_top_holder_summary(ca: str) -> dict:
-    """Fetch live GMGN token_stat as fallback for diamond hand and real/dust."""
+    """Fetch live GMGN token_stat as fallback for diamond hand and real/dust.
+
+    Price is required for the real/dust split (holder USD value vs dust
+    limit) — without it every holder would be valued at $0 and counted as
+    dust. Price is taken from the GMGN raw payload first, then DexScreener.
+    """
     try:
-        from core import gmgn_token_stat
+        from core import gmgn_token_stat, get_market
         from cvd import top_holder_analysis, get_recent_swaps
         stat = gmgn_token_stat(ca, timeout=12)
         holders = stat.get("holders") or []
         if not holders:
             return {}
+        # Price for real/dust valuation: GMGN raw -> DexScreener fallback.
+        price = 0.0
+        raw = stat.get("raw") or {}
+        if isinstance(raw, dict):
+            for key in ("price", "price_usd", "last_trade_price", "priceUsd"):
+                try:
+                    v = float(raw.get(key) or 0)
+                except (TypeError, ValueError):
+                    continue
+                if v > 0:
+                    price = v
+                    break
+        if price <= 0:
+            try:
+                market = get_market(ca)
+                price = float(market.get("price_usd") or 0)
+            except Exception:
+                price = 0.0
         swaps_72h = get_recent_swaps(ca, hours=72)
         tha = top_holder_analysis(holders, swaps=swaps_72h,
+                                  price_usd=price,
                                   dust_limit_usd=5.0,
                                   supply=stat.get("supply") or 0.0)
         return {
@@ -201,6 +225,71 @@ def fetch_gmgn_top_holder_summary(ca: str) -> dict:
             "real_holders": int(tha.get("all_real_holders") if tha.get("all_real_holders") is not None else (tha.get("real_holders") or 0)),
             "dust_holders": int(tha.get("all_dust_holders") if tha.get("all_dust_holders") is not None else max(0, tha.get("all_holders", 0) - (tha.get("real_holders") or 0))),
         }
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def fetch_helius_top_holder_summary(ca: str, key_pool: tuple) -> dict:
+    """Live Helius top-holder summary (diamond + real/dust) for the watchlist.
+
+    Uses the same source as the CVD page (full holder list from Helius,
+    DexScreener price) so the main-app columns stop showing "—" when the
+    cron metadata / snapshots are missing. Returns {} on any failure.
+    """
+    try:
+        from core import get_holders as core_get_holders
+        from core import get_supply as core_get_supply
+        from core import get_market
+        from cvd import top_holder_analysis, get_recent_swaps
+        import pandas as pd
+        supply, _dec = core_get_supply(key_pool, ca)
+        df = core_get_holders(key_pool, ca)
+        if df is None or df.empty or "owner" not in df.columns:
+            return {}
+        price = 0.0
+        try:
+            market = get_market(ca)
+            price = float(market.get("price_usd") or 0)
+        except Exception:
+            price = 0.0
+        holders = [[str(o), float(a)] for o, a in
+                   zip(df["owner"], df["raw_amount"]) if float(a) > 0]
+        if not holders:
+            return {}
+        swaps_72h = get_recent_swaps(ca, hours=72)
+        tha = top_holder_analysis(holders, swaps=swaps_72h,
+                                  price_usd=price,
+                                  dust_limit_usd=5.0,
+                                  supply=float(supply or 0.0))
+        return {
+            "diamond_pct": round(float(tha.get("diamond_pct") or 0.0), 1),
+            "real_holders": int(tha.get("all_real_holders") if tha.get("all_real_holders") is not None else (tha.get("real_holders") or 0)),
+            "dust_holders": int(tha.get("all_dust_holders") if tha.get("all_dust_holders") is not None else max(0, tha.get("all_holders", 0) - (tha.get("real_holders") or 0))),
+        }
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def watchlist_m15_flag(ca: str) -> dict:
+    """M15 activity flag: sudah ada candle 15 menit dengan tx >500 DAN
+    volume >500 SOL dalam satu candle? Data dari store 72h; kalau store
+    kosong, coba fetch GMGN cepat (best effort)."""
+    try:
+        from cvd import m15_activity_flag, get_recent_swaps
+        swaps = get_recent_swaps(ca, hours=72)
+        if not swaps:
+            # best-effort live fetch (bounded) when the store is empty
+            try:
+                from cvd import fetch_swaps
+                cutoff = int(time.time()) - 72 * 3600
+                swaps, _sig, _ts, _hit = fetch_swaps(
+                    "", "", ca, stop_ts=cutoff, max_pages=10, sleep=0.05,
+                    use_gmgn=True)
+            except Exception:
+                swaps = []
+        return m15_activity_flag(swaps)
     except Exception:
         return {}
 
@@ -246,6 +335,18 @@ def get_watchlist_details(ca: str, meta: dict) -> dict:
                         details["dust_holders"] = int(tha.get("all_dust_holders") if tha.get("all_dust_holders") is not None else max(0, tha.get("all_holders", 0) - details["real_holders"]))
         except Exception:
             pass
+
+    # Fallback live via Helius full holder list (sama seperti halaman CVD)
+    if details["diamond_pct"] is None or details["real_holders"] is None:
+        if helius_keys:
+            live_helius = fetch_helius_top_holder_summary(ca, helius_keys)
+            if live_helius:
+                if details["diamond_pct"] is None:
+                    details["diamond_pct"] = live_helius.get("diamond_pct")
+                if details["real_holders"] is None:
+                    details["real_holders"] = live_helius.get("real_holders")
+                if details["dust_holders"] is None:
+                    details["dust_holders"] = live_helius.get("dust_holders")
 
     # Fallback live via GMGN token_stat jika data cron belum tersedia
     if details["diamond_pct"] is None or details["real_holders"] is None:
@@ -324,7 +425,7 @@ st.caption("Fokus: watchlist → scan trending/degen → CVD → sinyal harian 0
 wl = load_watchlist()
 
 st.markdown("### ⭐ Watchlist — Sinyal Prepump BARU (update harian 07:00 WIB)")
-st.caption("""List menurun. Kolom baru: **Diamond** (% top-100 holder yang tidak jual >10%), **Real/Dust** (holder >$5 vs ≤$5), **AvgCost** (perubahan harga vs avg holder cost dari GMGN — di-fetch live via token_holders API jika belum tersimpan).
+st.caption("""List menurun. Kolom: **Diamond** (% top-100 holder yang tidak jual >10%), **Real/Dust** (holder >$5 vs ≤$5), **M15** (sudah ada candle 15 menit dengan **tx >500 DAN volume >500 SOL** dalam satu candle — dari store swap 72 jam), **AvgCost** (perubahan harga vs avg holder cost dari GMGN — di-fetch live via token_holders API jika belum tersimpan).
 Kolom **Sinyal** dari **prepump_baru** (10 pump + LUNA validated). **Sinyal MUNCUL** jika lolos ≥6/7. Update 07:00 WIB.""")
 
 if not wl:
@@ -336,8 +437,8 @@ else:
     except Exception:
         all_sigs = []
     # Header row — now with extra detail columns (compact + eye friendly) — ATR removed
-    hdr = st.columns([1.2, 1.6, 0.9, 1.05, 0.9, 1.05, 0.75, 0.95, 0.6])
-    for c, lab in zip(hdr, ["Token", "CA + Links", "Diamond", "Real/Dust", "AvgCost", "Sinyal", "Skor", "Update", ""]):
+    hdr = st.columns([1.2, 1.6, 0.9, 1.05, 0.8, 0.9, 1.05, 0.75, 0.95, 0.6])
+    for c, lab in zip(hdr, ["Token", "CA + Links", "Diamond", "Real/Dust", "M15", "AvgCost", "Sinyal", "Skor", "Update", ""]):
         c.markdown(f"<b style='color:#000000'>{lab}</b>", unsafe_allow_html=True)
     st.divider()
     for ca, meta in wl.items():
@@ -371,8 +472,22 @@ else:
         # Fetch detail tambahan
         det = get_watchlist_details(ca, meta)
 
-        # 9 kolom compact (ATR dihapus)
-        cols = st.columns([1.2, 1.6, 0.9, 1.05, 0.9, 1.05, 0.75, 0.95, 0.6])
+        # M15 flag: sudah ada candle 15m dengan tx>500 DAN vol>500 SOL?
+        m15 = watchlist_m15_flag(ca)
+        if m15:
+            m15_hit = bool(m15.get("hit"))
+            m15_txt = ("⚡ YA" if m15_hit else "Belum")
+            m15_color = "#16a34a" if m15_hit else "#dc2626"
+            m15_tip = (f"tx {m15.get('best_tx')} · vol {m15.get('best_vol_sol')} SOL "
+                       f"· {m15.get('total_tx')} tx/72h")
+        else:
+            m15_hit = False
+            m15_txt = "—"
+            m15_color = "#000000"
+            m15_tip = "data swap belum tersedia"
+
+        # 10 kolom compact (ATR dihapus)
+        cols = st.columns([1.2, 1.6, 0.9, 1.05, 0.8, 0.9, 1.05, 0.75, 0.95, 0.6])
 
         # Token
         cols[0].markdown(f"<div class='watch-row'><b style='color:#000000'>{sym}</b><br><span style='font-size:0.65rem;color:#000000'>{src}</span></div>", unsafe_allow_html=True)
@@ -402,22 +517,30 @@ else:
             real_dust = "<span style='color:#000000'>—</span>"
         cols[3].markdown(f"<div class='watch-row' style='text-align:center'>{real_dust}<br><span style='font-size:0.60rem;color:#000000'>real/dust</span></div>", unsafe_allow_html=True)
 
+        # M15 flag — candle 15m dgn tx>500 & vol>500 SOL
+        cols[4].markdown(
+            f"<div class='watch-row' style='text-align:center'>"
+            f"<span style='color:{m15_color};font-weight:700;' title='{m15_tip}'>{m15_txt}</span>"
+            f"<br><span style='font-size:0.60rem;color:#000000'>tx&gt;500 &amp; vol&gt;500 SOL</span></div>",
+            unsafe_allow_html=True
+        )
+
         # Avg Cost (dari GMGN — live fetch jika perlu)
         avgc = det.get("avg_cost")
         avgc_txt = f"<span style='color:#ca8a04;font-weight:700;'>{avgc:+.1f}%</span>" if avgc is not None else "<span style='color:#000000'>—</span>"
-        cols[4].markdown(f"<div class='watch-row' style='text-align:center'>{avgc_txt}<br><span style='font-size:0.60rem;color:#000000'>avg cost</span></div>", unsafe_allow_html=True)
+        cols[5].markdown(f"<div class='watch-row' style='text-align:center'>{avgc_txt}<br><span style='font-size:0.60rem;color:#000000'>avg cost</span></div>", unsafe_allow_html=True)
 
         # Sinyal
-        cols[5].markdown(f"<div class='watch-row'>{badge}</div>", unsafe_allow_html=True)
+        cols[6].markdown(f"<div class='watch-row'>{badge}</div>", unsafe_allow_html=True)
 
         # Skor
-        cols[6].markdown(f"<div class='watch-row'><span style='font-weight:700;color:#000000'>{score:.0f}/7</span><span style='color:#000000;font-size:0.69rem;'> checks</span></div>", unsafe_allow_html=True)
+        cols[7].markdown(f"<div class='watch-row'><span style='font-weight:700;color:#000000'>{score:.0f}/7</span><span style='color:#000000;font-size:0.69rem;'> checks</span></div>", unsafe_allow_html=True)
 
         # Update
-        cols[7].markdown(f"<div class='watch-row'><span style='font-size:0.69rem;color:#000000'>{_fmt_ts(ts)}</span></div>", unsafe_allow_html=True)
+        cols[8].markdown(f"<div class='watch-row'><span style='font-size:0.69rem;color:#000000'>{_fmt_ts(ts)}</span></div>", unsafe_allow_html=True)
 
         # Hapus
-        with cols[8]:
+        with cols[9]:
             if st.button("🗑️", key=f"del_{ca}", help="Hapus dari watchlist", use_container_width=True):
                 ok = remove_from_watchlist(ca)
                 if ok:

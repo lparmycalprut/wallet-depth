@@ -30,12 +30,13 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-CONVICTION_WINDOWS = (4, 6, 12, 24, 48, 72)
+CONVICTION_WINDOWS = (24, 48, 72)
 FETCH_HOURS = 72
 
 st.title("📊 CVD Deep Analysis")
 st.caption(
-    "Analisis conviction flow pada window 4h–72h dan pemeriksaan 100 top holder. "
+    "Analisis conviction flow pada window 24h–72h (perbandingan periode "
+    "sebelumnya dengan durasi yang sama) dan pemeriksaan 100 top holder. "
     "Data swap diambil untuk 72 jam agar semua window tetap comparable."
 )
 
@@ -445,3 +446,108 @@ else:
     with st.expander("Lihat detail 100 top holder", expanded=False):
         st.dataframe(pd.DataFrame(detail_rows), use_container_width=True,
                      hide_index=True)
+
+# ---------------------------------------------------------------------------
+# Fund source wallet (funder) analysis — who funded the top 100 holders?
+# ---------------------------------------------------------------------------
+st.markdown("#### 💰 Fund Source Wallet (Funder) — Top 100 Holder")
+st.caption(
+    "Scan transfer SOL MASUK ke wallet top-100 holder (Helius Enhanced API, "
+    "max 20 tx per holder) untuk menemukan wallet **funder** — wallet sumber "
+    "dana para holder. Diurutkan dari **balance SOL terbesar** (makin besar "
+    "makin menarik). **Wallet exchange otomatis di-exclude** dari ranking. "
+    "Catatan: transfer hasil jual dari pool ke holder tidak dihitung karena "
+    "alamat pool di-exclude; metode ini heuristik, bukan pelacakan dana penuh."
+)
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def run_funder_analysis(contract: str, holder_key: tuple, key_pool: tuple,
+                        extra_exclude: tuple) -> dict:
+    """Cached funder analysis (Helius network calls, cached 15 min)."""
+    from cvd import funder_wallet_analysis
+    try:
+        return funder_wallet_analysis(
+            list(holder_key),
+            helius_keys=key_pool,
+            top_n=100,
+            max_tx_per_holder=20,
+            min_fund_sol=0.1,
+            exclude_exchanges=True,
+            max_funders=40,
+            sol_price=None,
+            exclude_addresses=extra_exclude,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc), "rows": []}
+
+
+if holder_data.get("ok"):
+    holder_rows = (holder_analysis.get("rows") or [])
+    top_holder_wallets = tuple(
+        (r["wallet"], float(r["amount"])) for r in holder_rows)
+    funder_exclude = tuple(a for a in (pool,) if a)
+    funder_res = run_funder_analysis(ca, top_holder_wallets, helius_keys,
+                                     funder_exclude)
+    if not funder_res.get("ok"):
+        st.warning(funder_res.get("error") or "Analisis funder gagal.")
+        st.caption("Butuh Helius API key (di config/secret) untuk fitur ini.")
+    else:
+        frows = funder_res.get("rows") or []
+        fprice = float(funder_res.get("sol_price") or 0.0)
+        if not frows:
+            st.info("Belum ada wallet funder terdeteksi pada top 100 holder.")
+        else:
+            fm1, fm2, fm3, fm4 = st.columns(4)
+            fm1.metric(
+                "Funder ditemukan",
+                f"{len(frows)}",
+                f"dari {funder_res.get('holders_scanned', 0)}/100 holder",
+            )
+            fm2.metric(
+                "💰 Balance terbesar",
+                f"{frows[0]['sol_balance']:,.1f} SOL",
+                f"≈ ${frows[0]['usd_balance']:,.0f}"
+                if fprice else "usd n/a",
+            )
+            fm3.metric(
+                "Funder terbesar (funded)",
+                f"{frows[0]['funded_sol']:,.1f} SOL",
+                f"{frows[0]['n_holders']} holder didanai",
+            )
+            fm4.metric(
+                "Exchange di-exclude",
+                f"{len(funder_res.get('excluded_exchanges') or [])}",
+                "wallet CEX tidak ikut ranking",
+            )
+
+            fdetail_rows = []
+            for fr in frows:
+                label = fr.get("label") or ""
+                holders_short = ", ".join(
+                    f"{h[:6]}…" for h in (fr.get("holders") or [])[:4])
+                fdetail_rows.append({
+                    "Rank": len(fdetail_rows) + 1,
+                    "Funder Wallet": fr["address"],
+                    "Label": label,
+                    "Balance SOL": f"{fr['sol_balance']:,.1f}",
+                    "≈ USD": f"${fr['usd_balance']:,.0f}",
+                    "Funded 72h SOL": f"{fr['funded_sol']:,.1f}",
+                    "Holder didanai": fr["n_holders"],
+                    "Holders (sample)": holders_short,
+                })
+            with st.expander(
+                    "Lihat daftar funder — urut balance SOL terbesar",
+                    expanded=True):
+                st.dataframe(pd.DataFrame(fdetail_rows),
+                             use_container_width=True, hide_index=True)
+            st.caption(
+                "Balance SOL = saldo saat ini wallet funder (getBalance "
+                "Helius). Funder yang sama bisa mendanai beberapa holder; "
+                "kolom 'Holder didanai' menunjukkan sebarannya. Wallet "
+                "exchange (Binance/Coinbase/Kraken/dll) sudah dibuang dari "
+                "ranking ini."
+            )
+else:
+    st.caption("Analisis fund source wallet butuh data holder — "
+               "periksa bagian Top 100 Holder di atas.")

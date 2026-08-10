@@ -1182,6 +1182,328 @@ def top_holder_analysis(holders, swaps=None, *, price_usd=0.0,
     }
 
 
+# ---------------------------------------------------------------------------
+# M15 activity flag — has a single 15-minute candle already been extreme?
+# ---------------------------------------------------------------------------
+M15_BUCKET_S = 15 * 60          # one 15-minute candle
+M15_MIN_TX = 500                # default: > 500 transactions in one candle
+M15_MIN_VOL_SOL = 500.0         # default: > 500 SOL volume in one candle
+
+
+def m15_activity_flag(swaps, *, min_tx=M15_MIN_TX,
+                      min_vol_sol=M15_MIN_VOL_SOL):
+    """Check whether ANY single 15-minute candle had > ``min_tx``
+    transactions AND > ``min_vol_sol`` SOL volume at the same time.
+
+    Pure & network-free: buckets ``(side, sol, ts, wallet)`` swaps into
+    15-minute candles (``ts // 900``) and reports the strongest candle.
+    This answers the watchlist question "sudah ada candle M15 dengan
+    jumlah transaksi >500 dan volume >500 SOL dalam satu candle?".
+
+    Thresholds are STRICTLY greater than (``>``), matching the owner's
+    wording. Returns a dict:
+
+      hit          True when one candle passed BOTH thresholds
+      min_tx       int threshold used
+      min_vol_sol  float threshold used
+      best_tx      tx count of the busiest candle
+      best_vol_sol SOL volume of the busiest candle (same candle as best_tx)
+      best_start_ts  unix ts of that candle's open, or None
+      candles      number of distinct 15-minute candles seen
+      total_tx     total swap count in the sample
+      total_vol_sol  total SOL volume in the sample
+    """
+    min_tx = int(min_tx)
+    min_vol_sol = float(min_vol_sol)
+    candles = {}
+    total_tx = 0
+    total_vol = 0.0
+    for s in (swaps or []):
+        try:
+            sol = float(s[1])
+            ts = int(s[2])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if not math.isfinite(sol) or ts <= 0:
+            continue
+        bucket = ts - ts % M15_BUCKET_S
+        c = candles.setdefault(bucket, [0, 0.0])
+        c[0] += 1
+        c[1] += sol
+        total_tx += 1
+        total_vol += sol
+    if candles:
+        best_bucket = max(candles, key=lambda b: (candles[b][0],
+                                                  candles[b][1]))
+        best_tx, best_vol = candles[best_bucket]
+    else:
+        best_bucket = None
+        best_tx, best_vol = 0, 0.0
+    return {
+        "hit": best_tx > min_tx and best_vol > min_vol_sol,
+        "min_tx": min_tx,
+        "min_vol_sol": min_vol_sol,
+        "best_tx": best_tx,
+        "best_vol_sol": round(best_vol, 2),
+        "best_start_ts": best_bucket,
+        "candles": len(candles),
+        "total_tx": total_tx,
+        "total_vol_sol": round(total_vol, 2),
+    }
+
+
+def m15_flag_from_store(ca: str, hours: int = 72) -> dict:
+    """M15 activity flag computed from the local swap store (fast path)."""
+    return m15_activity_flag(get_recent_swaps(ca, hours=hours))
+
+
+# ---------------------------------------------------------------------------
+# Fund source wallet (funder) analysis for the top holders
+#
+# A "funder" is the wallet that SENT SOL to a top-holder wallet (its source
+# of funds). We scan each top holder's recent Helius transactions for
+# native SOL transfers INTO the holder, aggregate the senders, fetch the
+# current SOL balance of each funder, and rank them by balance — bigger
+# balance = more interesting. Known exchange wallets are excluded so the
+# list shows real (usually fresh) funding wallets, not CEX hot wallets.
+# ---------------------------------------------------------------------------
+#: Curated list of well-documented CEX hot/cold wallets on Solana. The
+#: list is intentionally conservative (only widely-documented addresses,
+#: verified against explorer/CEX sources 2026-08). Extend it anytime via
+#: config.json ``exchange_wallets`` (list of addresses to exclude).
+EXCHANGE_WALLETS = {
+    "Binance Hot Wallet 1": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+    "Binance Hot Wallet": "5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9",
+    "Binance 8": "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy",
+    "Binance 2": "jiUMdZynCvUUHuUCGKCpnpbyHZuJcvJ2SrUPi6hVkFq",
+    "Coinbase Commerce": "2AQdpHJ2JpcEgPiATUXjQxA8QmafFegfQwSLWSprPicm",
+    "Kraken Hot Wallet": "H8sMJSCQxfKiFTCfDR3DUMLPwcRbM61LGFJ8N4dK3WjS",
+    "FTX": "6ZRCB7AAqGre6c72PRz3MHLC73VMYvJ8bi9KHf1HFpNk",
+    "CEX.IO": "2QwUbEACJ3ppwfyH19QCSVvNrRzfuK5mNVNDsDMsZKMh",
+    "CEX.IO 2": "DUru5ZfCdCnjPFuY7NPniV3hhZqNJLgn2sBZJGaMc2Sj",
+    "CEX.IO 3": "CGRNicgpirZd3unSzn1Y34k7w31rQftTbaJwEuQu31XP",
+}
+
+
+def exchange_wallet_labels(extra=()) -> dict:
+    """address -> label mapping for known exchange wallets.
+
+    Built-in curated list + any extra addresses (e.g. from config.json
+    ``exchange_wallets``). Lower-case keys so address casing never
+    defeats the exclusion.
+    """
+    labels = {str(address).lower(): label
+              for label, address in EXCHANGE_WALLETS.items()}
+    for addr in (extra or ()):
+        addr = str(addr or "").strip()
+        if addr:
+            labels.setdefault(addr.lower(), "Exchange (config)")
+    return labels
+
+
+def is_exchange_wallet(addr, extra=()) -> bool:
+    """True when ``addr`` is a known exchange wallet (built-in or extra)."""
+    return str(addr or "").lower() in exchange_wallet_labels(extra)
+
+
+def _parse_funder_transfers(transactions, holder: str) -> list:
+    """Extract ``(funder, sol)`` native SOL transfers INTO ``holder``.
+
+    ``transactions`` is a list of Helius Enhanced-API transaction dicts
+    (``nativeTransfers`` = [{fromUserAccount, toUserAccount, amount}] with
+    ``amount`` in lamports). Pure function — offline-testable.
+
+    Only transfers whose recipient is exactly ``holder`` and whose amount
+    is positive are returned; self-funding (funder == holder) is dropped.
+    """
+    out = []
+    for tx in (transactions or []):
+        if not isinstance(tx, dict):
+            continue
+        for tr in (tx.get("nativeTransfers") or []):
+            if not isinstance(tr, dict):
+                continue
+            to = tr.get("toUserAccount")
+            fr = tr.get("fromUserAccount")
+            if not to or not fr or to != holder or fr == holder:
+                continue
+            try:
+                lamports = float(tr.get("amount") or 0)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(lamports) or lamports <= 0:
+                continue
+            out.append((str(fr), lamports / 1e9))
+    return out
+
+
+def funder_wallet_analysis(holders, *, helius_keys=(), top_n=100,
+                           max_tx_per_holder=20, min_fund_sol=0.1,
+                           exclude_exchanges=True, max_funders=40,
+                           sol_price=None, extra_exchange_wallets=(),
+                           exclude_addresses=(), timeout=25) -> dict:
+    """Find which wallets funded (sent SOL to) the top holder wallets.
+
+    For each of the top ``top_n`` holder wallets (by token balance), fetch
+    the last ``max_tx_per_holder`` transactions from the Helius Enhanced
+    API, collect every native SOL transfer whose recipient is the holder,
+    and treat the sender as a funder. Funders are then ranked by their
+    CURRENT SOL balance — bigger balance is better — with known exchange
+    wallets excluded by default.
+
+    Args:
+        holders: same shapes as :func:`top_holder_analysis`
+            (``[owner, amount]`` pairs, dicts, or a DataFrame).
+        helius_keys: Helius API key pool (required; network function).
+        top_n: how many top holders to scan (default 100).
+        max_tx_per_holder: recent transactions to inspect per holder.
+        min_fund_sol: ignore funding transfers below this size (dust).
+        exclude_exchanges: drop known exchange wallets from the ranking.
+        max_funders: balance lookups are bounded to the top funders by
+            funded SOL to keep request count sane.
+        sol_price: SOL/USD for USD display; None = auto-fetch (cached).
+        extra_exchange_wallets: additional exchange addresses (config).
+        exclude_addresses: extra addresses never counted as funders
+            (e.g. the token's own pool address).
+        timeout: per-request timeout.
+
+    Returns ``{"ok": bool, "error": str, "rows": [...], "n_funders": int,
+    "holders_scanned": int, "excluded_exchanges": [...], "sol_price": float}``
+    with rows sorted by ``sol_balance`` descending. Every row has
+    ``address``, ``label``, ``sol_balance``, ``usd_balance``,
+    ``funded_sol``, ``n_holders``, ``holders``, ``is_exchange``. Never
+    raises: any failure returns ``{"ok": False, "error": ...}``.
+    """
+    empty = {"ok": False, "error": "", "rows": [], "n_funders": 0,
+             "holders_scanned": 0, "excluded_exchanges": [], "sol_price": 0.0}
+    if not helius_keys:
+        empty["error"] = "Helius API key diperlukan untuk analisis fund source wallet."
+        return empty
+
+    # ---- normalize holders, take top N ----------------------------------
+    pairs = []
+    if hasattr(holders, "to_dict") and hasattr(holders, "columns"):
+        records = holders.to_dict("records")
+    else:
+        records = holders or []
+    for item in records:
+        owner = amount = None
+        if isinstance(item, dict):
+            owner = (item.get("owner") or item.get("address") or
+                     item.get("wallet"))
+            for key in ("amount", "ui_amount", "token_amount", "balance"):
+                if item.get(key) is not None:
+                    amount = item.get(key)
+                    break
+        elif isinstance(item, (list, tuple)) and len(item) >= 2:
+            owner, amount = item[0], item[1]
+        if not owner or amount is None:
+            continue
+        try:
+            amount = float(amount)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(amount) and amount > 0:
+            pairs.append((str(owner), amount))
+    by_owner = {}
+    for owner, amount in pairs:
+        by_owner[owner] = by_owner.get(owner, 0.0) + amount
+    top_wallets = [w for w, _a in sorted(by_owner.items(),
+                                         key=lambda kv: -kv[1])[:top_n]]
+    if not top_wallets:
+        empty["error"] = "Tidak ada holder valid untuk dianalisis."
+        return empty
+
+    exclude = set(str(a) for a in (exclude_addresses or ()) if a)
+    exchange_labels = exchange_wallet_labels(extra_exchange_wallets)
+    exclude |= set(exchange_labels.keys())
+
+    # ---- scan each holder's recent txs for incoming SOL transfers -------
+    from core import helius_api_get  # local import keeps tests stub-able
+
+    funders = {}
+    holders_scanned = 0
+    excluded_seen = {}
+    for holder in top_wallets:
+        try:
+            txs = helius_api_get(
+                f"{HELIUS_ENHANCED_URL}/v0/addresses/{holder}/transactions",
+                params={"limit": max(1, int(max_tx_per_holder))},
+                helius_keys=helius_keys, timeout=timeout)
+        except Exception:
+            continue
+        if not txs:
+            continue
+        holders_scanned += 1
+        for funder, sol in _parse_funder_transfers(txs, holder):
+            fkey = funder.lower()
+            if fkey in exclude:
+                if fkey in exchange_labels:
+                    excluded_seen.setdefault(fkey, funder)
+                continue
+            if sol < min_fund_sol:
+                continue
+            d = funders.setdefault(funder, {"funded_sol": 0.0,
+                                            "holders": {}})
+            d["funded_sol"] += sol
+            d["holders"][holder] = d["holders"].get(holder, 0.0) + sol
+    if not funders:
+        empty["error"] = ("Tidak ada transfer SOL masuk terdeteksi di "
+                          f"{holders_scanned} top holder (window "
+                          f"{max_tx_per_holder} tx/holder).")
+        empty["holders_scanned"] = holders_scanned
+        return empty
+
+    # ---- fetch current SOL balance for the top funders ------------------
+    from core import helius_rpc  # local import keeps tests stub-able
+
+    top_funders = sorted(funders, key=lambda f: -funders[f]["funded_sol"])[
+        :max_funders]
+    labels = exchange_labels
+    price = float(sol_price) if sol_price else 0.0
+    if price <= 0:
+        try:
+            price = get_sol_price()
+        except Exception:
+            price = 0.0
+
+    rows = []
+    for funder in top_funders:
+        d = funders[funder]
+        balance = 0.0
+        try:
+            res = helius_rpc("getBalance", [funder], helius_keys,
+                             timeout=timeout)
+            balance = float((res or {}).get("value") or 0) / 1e9
+        except Exception:
+            balance = 0.0
+        rows.append({
+            "address": funder,
+            "label": labels.get(funder.lower(), ""),
+            "sol_balance": round(balance, 2),
+            "usd_balance": round(balance * price, 2),
+            "funded_sol": round(d["funded_sol"], 2),
+            "n_holders": len(d["holders"]),
+            "holders": sorted(d["holders"], key=lambda h: -d["holders"][h]),
+            "is_exchange": funder.lower() in labels,
+        })
+    rows.sort(key=lambda r: -r["sol_balance"])
+
+    excluded_exchanges = [
+        {"address": excluded_seen[key], "label": labels.get(key, "")}
+        for key in sorted(excluded_seen)
+    ]
+    return {
+        "ok": True,
+        "error": "",
+        "rows": rows,
+        "n_funders": len(rows),
+        "holders_scanned": holders_scanned,
+        "excluded_exchanges": excluded_exchanges,
+        "sol_price": round(price, 2),
+    }
+
+
 # Weight applied to each profile's buy volume in conviction calculation.
 # pure_accum = 100% (held everything), light_holder = 75%, trader = 30%.
 PROFILE_WEIGHTS = {
