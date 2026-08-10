@@ -2448,5 +2448,101 @@
    "vol24": 44856.89,
    "source": "cron-daily (DexScreener+GMGN)"
   }
+ },
+ "AA3VLt3muGJiXedDaMnkcst3pfjrg1JBxgHVSdSbpump": {
+  "2026-08-10": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 96314.0,
+   "price": 9.879e-05,
+   "tiers": {},
+   "ts": "2026-08-10T13:22:07",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 33.87,
+   "symbol": "TINYTANK",
+   "name": "The Pygmy Hippo",
+   "buys24": 2321,
+   "sells24": 2222,
+   "vol24": 224004.65,
+   "source": "cron-daily (DexScreener+GMGN)"
+  }
+ },
+ "46amR3aeQE7MJ9QDrgNRqBP3FcsJ9QNYV71L2vVSpump": {
+  "2026-08-10": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 209359.0,
+   "price": 0.0002201,
+   "tiers": {},
+   "ts": "2026-08-10T13:22:47",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 20.38,
+   "symbol": "claudius",
+   "name": "claudius",
+   "buys24": 4756,
+   "sells24": 4690,
+   "vol24": 552164.64,
+   "source": "cron-daily (DexScreener+GMGN)"
+  }
+ },
+ "14doqPq3fLzx6kB4JRRnCMDPPLeGmGXd6QY5ZGXqpump": {
+  "2026-08-10": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 248444.0,
+   "price": 0.0002537,
+   "tiers": {},
+   "ts": "2026-08-10T13:23:12",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 18.03,
+   "symbol": "WW",
+   "name": "Wildlife Wonderland",
+   "buys24": 1795,
+   "sells24": 2011,
+   "vol24": 332689.03,
+   "source": "cron-daily (DexScreener+GMGN)"
+  }
+ },
+ "EnA53NmMzfsAs7p44dATdvT55HHUACxpEbC9AKY3pump": {
+  "2026-08-10": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 88594.0,
+   "price": 9.106e-05,
+   "tiers": {},
+   "ts": "2026-08-10T13:23:36",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 28.69,
+   "symbol": "HTZ",
+   "name": "Hertz Global Holdings Inc",
+   "buys24": 1247,
+   "sells24": 1474,
+   "vol24": 140877.62,
+   "source": "cron-daily (DexScreener+GMGN)"
+  }
  }
 }

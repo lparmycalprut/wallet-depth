@@ -9,7 +9,7 @@
   "priority_since": "2026-08-10",
   "priority_reason": "daily_volume_dry",
   "diamond_pct": 82.0,
-  "real_holders": 2275,
+  "real_holders": 2273,
   "dust_holders": 99
  },
  "A6mrpBeeNKm743fiNg8Mrz7pj7uGML5rgDjWo4nrpump": {
@@ -32,8 +32,8 @@
   "priority_since": "2026-08-10",
   "priority_reason": "daily_volume_dry",
   "diamond_pct": 82.0,
-  "real_holders": 978,
-  "dust_holders": 88
+  "real_holders": 975,
+  "dust_holders": 90
  },
  "73DRYB2YpoHiZUdq37hQmHTR7Yvg5qJKsxxaYrsJSBCJ": {
   "symbol": "CHEEMS",
@@ -43,9 +43,9 @@
   "priority": true,
   "priority_since": "2026-08-10",
   "priority_reason": "daily_volume_dry",
-  "diamond_pct": 77.0,
-  "real_holders": 1262,
-  "dust_holders": 165
+  "diamond_pct": 76.0,
+  "real_holders": 1257,
+  "dust_holders": 164
  },
  "8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump": {
   "symbol": "SISYPUSS",
@@ -53,7 +53,7 @@
   "added": "2026-08-10",
   "source": "manual",
   "diamond_pct": 100.0,
-  "real_holders": 1358,
+  "real_holders": 1357,
   "dust_holders": 142
  },
  "DTiLUGhzmtP3wZC6tXRXtxYPUxztvnQMxAW54ZtKpump": {
@@ -61,32 +61,44 @@
   "note": "",
   "added": "2026-08-10",
   "source": "manual",
-  "diamond_pct": 91.0,
-  "real_holders": 1676,
+  "diamond_pct": 92.0,
+  "real_holders": 1674,
   "dust_holders": 157
  },
  "AA3VLt3muGJiXedDaMnkcst3pfjrg1JBxgHVSdSbpump": {
   "symbol": "TINYTANK",
   "note": "",
   "added": "2026-08-10",
-  "source": "hrhr"
+  "source": "hrhr",
+  "diamond_pct": 91.0,
+  "real_holders": 2859,
+  "dust_holders": 200
  },
  "46amR3aeQE7MJ9QDrgNRqBP3FcsJ9QNYV71L2vVSpump": {
   "symbol": "claudius",
   "note": "",
   "added": "2026-08-10",
-  "source": "hrhr"
+  "source": "hrhr",
+  "diamond_pct": 95.0,
+  "real_holders": 2529,
+  "dust_holders": 169
  },
  "14doqPq3fLzx6kB4JRRnCMDPPLeGmGXd6QY5ZGXqpump": {
   "symbol": "WW",
   "note": "",
   "added": "2026-08-10",
-  "source": "trending"
+  "source": "trending",
+  "diamond_pct": 91.0,
+  "real_holders": 1185,
+  "dust_holders": 85
  },
  "EnA53NmMzfsAs7p44dATdvT55HHUACxpEbC9AKY3pump": {
   "symbol": "HTZ",
   "note": "",
   "added": "2026-08-10",
-  "source": "manual"
+  "source": "manual",
+  "diamond_pct": 89.0,
+  "real_holders": 1769,
+  "dust_holders": 83
  }
 }
