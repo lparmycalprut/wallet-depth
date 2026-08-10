@@ -2400,5 +2400,53 @@
    "vol24": 190040.03,
    "source": "cron-daily (DexScreener+GMGN)"
   }
+ },
+ "8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump": {
+  "2026-08-10": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 39306.0,
+   "price": 4.058e-05,
+   "tiers": {},
+   "ts": "2026-08-10T05:20:05",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 48.12,
+   "symbol": "SISYPUSS",
+   "name": "The Sisypuss",
+   "buys24": 917,
+   "sells24": 1025,
+   "vol24": 95122.82,
+   "source": "cron-daily (DexScreener+GMGN)"
+  }
+ },
+ "DTiLUGhzmtP3wZC6tXRXtxYPUxztvnQMxAW54ZtKpump": {
+  "2026-08-10": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 33896.0,
+   "price": 3.48e-05,
+   "tiers": {},
+   "ts": "2026-08-10T05:20:29",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 55.64,
+   "symbol": "CALLCAT",
+   "name": "CallCat",
+   "buys24": 640,
+   "sells24": 602,
+   "vol24": 44856.89,
+   "source": "cron-daily (DexScreener+GMGN)"
+  }
  }
 }
