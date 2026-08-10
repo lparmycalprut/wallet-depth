@@ -1357,6 +1357,28 @@
    "sells24": 3557,
    "vol24": 442584.02,
    "source": "cron-daily (DexScreener+GMGN)"
+  },
+  "2026-08-10": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 53433.0,
+   "price": 5.436e-05,
+   "tiers": {},
+   "ts": "2026-08-10T01:11:57",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 42.56,
+   "symbol": "LUNA",
+   "name": "Mooncoin",
+   "buys24": 523,
+   "sells24": 476,
+   "vol24": 41731.73,
+   "source": "cron-daily (DexScreener+GMGN)"
   }
  },
  "3VFnDoACa991DYe987w354sbvmhqjjzC4Z31SoZepump": {
@@ -1922,6 +1944,28 @@
    "buys24": 489,
    "sells24": 494,
    "vol24": 55382.97,
+   "source": "cron-daily (DexScreener+GMGN)"
+  },
+  "2026-08-10": {
+   "total_holders": 0,
+   "dust": 0,
+   "real": 0,
+   "real_mc_pct": 80.0,
+   "dust_mc_pct": 20.0,
+   "marketcap": 33736.0,
+   "price": 3.508e-05,
+   "tiers": {},
+   "ts": "2026-08-10T01:12:42",
+   "score": 65,
+   "top10_pct": 0.0,
+   "top5_pct": 0.0,
+   "top100_pct": 0.0,
+   "liq_pct_mc": 56.93,
+   "symbol": "FRANK",
+   "name": "Frank Ocean",
+   "buys24": 387,
+   "sells24": 353,
+   "vol24": 32672.94,
    "source": "cron-daily (DexScreener+GMGN)"
   }
  },
