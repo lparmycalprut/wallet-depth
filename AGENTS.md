@@ -188,3 +188,9 @@ Verifikasi: `python tests/test_m15_and_funder.py`,
 `python tests/test_prepump_detector.py`, semua suite lama hijau, AppTest
 render watchlist 12 token tanpa exception.
 
+
+## 12. Status 2026-08-10 — GMGN extension CVD + priority scan
+
+Owner meminta perhitungan sinyal harian mengikuti ekstensi `ekstensi_extract_gmgn`, bukan detector CVD/prepump lama. `cvd_daily.py` sekarang memakai matriks harian extension: buy−sell = CVD, buy+sell = volume, status KERING bila volume turun ≥40% dan rasio CVD ≤10%. Hasil harian direkam ke `cvd_daily.json` dan `signals.json` satu kali per tanggal.
+
+Fund Source Wallet — Top 100 Holder dihapus total dari halaman CVD. Workflow detail 4-jam dihapus agar tidak membuat sinyal lama; workflow harian menjadi satu-satunya penghasil sinyal CVD. Token yang mendapat status KERING ditandai `priority` pada watchlist. Workflow `priority-volume.yml` memeriksa token prioritas setiap 15 menit; burst default >500 transaksi dan ≥500 SOL mengirim notifikasi Telegram dengan dedupe 14 menit.
