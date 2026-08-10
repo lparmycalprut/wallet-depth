@@ -1514,3 +1514,13 @@ Setelah reset ke alur harian saja (`07:00 WIB`), tidak ada cron rutin yang berja
    - Pada `app.py`, fungsi `get_watchlist_details()` kini membaca metadata `watchlist.json` dan mendukung fallback ke file `holder_snapshots.json` dan `real_dust_history.json`, serta fallback live GMGN `token_stat`.
    - Pada `pages/4_📊_CVD.py`, fungsi `fetch_holder_snapshot()` mendukung fallback ke snapshot cron di `holder_snapshots.json` atau data GMGN top holders jika Helius API key tidak dikonfigurasi.
 4. **Verifikasi Tes:** Seluruh tes eksisting (`tests/test_*.py` dan `unittest`) tetap hijau + ditambahkan `tests/test_cron_top_holders.py` untuk menguji integrasi kalkulasi snapshot dan fallback UI.
+
+## 2026-08-10 — Owner request: CVD mengikuti ekstensi + priority 15 menit
+
+- Menghapus seluruh panel **Fund Source Wallet (Funder) — Top 100 Holder** dari halaman CVD.
+- Menambahkan `cvd_daily.py`, perhitungan yang mengikuti ekstensi GMGN: rekap per hari UTC, TX buy/sell, volume, delta CVD, rasio, status KERING/ABSORPTION/MARK-UP/DUMP, dan running CVD.
+- `scripts/update_cvd.py` hanya merekam CVD harian sekali per tanggal dan mengirim Telegram digest harian; pemanggilan detector sinyal lama/conviction lama dihapus dari cron.
+- Status KERING memindahkan token ke prioritas (`priority=true`). `priority-volume.yml` menjalankan scan GMGN setiap 15 menit dan mengirim alert Telegram menarik saat burst >500 TX dan ≥500 SOL.
+- Format Telegram baru memakai blok HTML, metrik volume/CVD, tautan GMGN + DexScreener, dan dedupe 14 menit untuk burst.
+
+Verifikasi: `python -m py_compile cvd_daily.py signals.py scripts/update_cvd.py scripts/priority_scan.py pages/4_📊_CVD.py` dan `python tests/test_cvd_daily.py`.

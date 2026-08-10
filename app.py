@@ -3,7 +3,7 @@
 Wallet Depth — Prepump Radar (minimalist reset 2026-08-07, update 2026-08-07 07:00 WIB)
 
 Kept functions only:
-  - watchlist (vertical list + sinyal harian dari prepump_baru_detector)
+  - watchlist (vertical list + sinyal CVD GMGN harian)
   - scan trending / scan degen (with all filters, only Watchlist button)
   - CVD deep analysis (separate page, old prepump_detector tetap untuk deep dive)
   - history/signals as data backend (json)
@@ -12,7 +12,7 @@ Kept functions only:
 Removed: cards, analyze on main page, compare/history/screener/cto/lp/accum/memecoin/prepump-checker pages,
   breakout_guard, focus, share_card, etc.
 
-Sinyal watchlist now uses prepump_baru_detector (validated 10 pump + LUNA),
+Sinyal watchlist now uses the daily GMGN extension-compatible CVD model,
 not the old 4-pillar score.
 """
 import time
@@ -99,35 +99,20 @@ def _fmt_ts(ts):
         return "—"
 
 def get_signal_for_ca(ca: str, sigs: list):
-    """Return last prepump_baru signal for CA, or None.
-
-    NEW: uses prepump_baru_detector (validated 10 pump + LUNA), not old 4-pillar.
-    Looks for type prepump_baru_muncul only. Old imminent/forming ignored to
-    avoid 60/100 showing as 60/7.
-    """
-    for s in reversed(sigs or []):
-        if s.get("ca") == ca and s.get("type") == "prepump_baru_muncul":
-            return "sinyal_muncul", s.get("score", 0), s.get("ts"), s.get("detail", "")
+    """Return the latest daily GMGN CVD status for a CA."""
+    for item in reversed(sigs or []):
+        if item.get("ca") == ca and item.get("type") == "cvd_daily":
+            detail = item.get("detail") or {}
+            status = item.get("status") or detail.get("status") or "NORMAL"
+            dry = status.startswith("KERING")
+            return ("priority" if dry else "daily", detail.get("cvd_ratio_pct", 0),
+                    item.get("ts"), status)
     return None
 
 
 def live_evaluate(ca: str, symbol: str):
-    """Fallback live evaluate using prepump_baru_detector (no network)."""
-    try:
-        from cvd import get_recent_swaps
-        from prepump_baru_detector import evaluate_baru_daily
-        swaps = get_recent_swaps(ca, hours=24)
-        if not swaps:
-            return "unknown", 0, None
-        res = evaluate_baru_daily(swaps, token_info={"symbol": symbol}, now_ts=int(time.time()))
-        tier = res.get("tier", "belum")
-        score = res.get("lolos", 0)
-        total = res.get("total", 7)
-        # keep total in score for badge: use lolos
-        return tier, score, int(time.time())
-    except Exception:
-        return "unknown", 0, None
-
+    """No intra-day fallback: signals are produced by the daily cron only."""
+    return "unknown", 0, None
 
 def fetch_gmgn_avg_cost(ca: str, timeout: int = 18) -> float | None:
     """Fetch average holder cost (%) from GMGN token_holders endpoint (cost=20)."""
@@ -417,16 +402,16 @@ if _q_del:
 # Header
 # ---------------------------------------------------------------------------
 st.title("🎯 Wallet Depth — Prepump Radar")
-st.caption("Fokus: watchlist → scan trending/degen → CVD → sinyal harian 07:00 WIB (00:00 UTC, GMGN candle flip) + notifikasi Telegram sehari sekali. Kolom Sinyal dari prepump_baru (bukan 4-pillar lama).")
+st.caption("Fokus: watchlist → scan trending/degen → CVD → sinyal CVD harian 07:00 WIB (00:00 UTC, perhitungan mengikuti ekstensi GMGN) + notifikasi Telegram sehari sekali. Token KERING otomatis masuk prioritas scan 15 menit.")
 
 # ---------------------------------------------------------------------------
 # 1. WATCHLIST (vertical list, sinyal column)
 # ---------------------------------------------------------------------------
 wl = load_watchlist()
 
-st.markdown("### ⭐ Watchlist — Sinyal Prepump BARU (update harian 07:00 WIB)")
+st.markdown("### ⭐ Watchlist — CVD GMGN Harian (update 07:00 WIB)")
 st.caption("""List menurun. Kolom: **Diamond** (% top-100 holder yang tidak jual >10%), **Real/Dust** (holder >$5 vs ≤$5), **M15** (sudah ada candle 15 menit dengan **tx >500 DAN volume >500 SOL** dalam satu candle — dari store swap 72 jam), **AvgCost** (perubahan harga vs avg holder cost dari GMGN — di-fetch live via token_holders API jika belum tersimpan).
-Kolom **Sinyal** dari **prepump_baru** (10 pump + LUNA validated). **Sinyal MUNCUL** jika lolos ≥6/7. Update 07:00 WIB.""")
+Kolom **Sinyal** mengikuti rekap ekstensi GMGN. **KERING** berarti volume turun ≥40% dengan CVD relatif datar dan token masuk prioritas scan transaksi 15 menit.""")
 
 if not wl:
     st.info("Watchlist kosong. Tambahkan manual di bawah atau dari hasil Scan Trending / Scan Degen.")
@@ -452,21 +437,21 @@ else:
             # fallback live
             tier, score, ts = live_evaluate(ca, sym)
             detail = ""
-            # map unknown to neutral
             if tier == "unknown":
                 tier = "neutral"
                 score = 0
                 ts = None
 
-        # Badge config — BARU (prepump_baru)
-        if tier == "sinyal_muncul":
-            badge = f"<span style='background:#14532d;color:#bbf7d0;border:1px solid #22c55e;border-radius:6px;padding:3px 8px;font-weight:800;font-size:0.82rem;'>🚨 SINYAL MUNCUL {score:.0f}/7</span>"
+        # Badge config — daily GMGN CVD
+        if tier == "priority":
+            badge = f"<span style='background:#7c2d12;color:#fed7aa;border:1px solid #f97316;border-radius:6px;padding:3px 8px;font-weight:800;font-size:0.82rem;'>🔥 PRIORITAS · KERING</span>"
             row_bg = "background:rgba(34,197,94,0.08);border:1px solid #14532d;border-radius:10px;padding:8px 6px;margin-bottom:6px;"
         elif tier == "unknown":
             badge = f"<span style='background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:6px;padding:3px 8px;font-weight:700;font-size:0.82rem;'>❓ UNKNOWN</span>"
             row_bg = "background:rgba(148,163,184,0.04);border:1px solid #334155;border-radius:10px;padding:8px 6px;margin-bottom:6px;"
         else:
-            badge = f"<span style='background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:6px;padding:3px 8px;font-weight:700;font-size:0.82rem;'>➖ BELUM {score:.0f}/7</span>"
+            label = detail[:28] if detail else "➖ NORMAL"
+            badge = f"<span style='background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:6px;padding:3px 8px;font-weight:700;font-size:0.82rem;'>{label}</span>"
             row_bg = "background:rgba(148,163,184,0.04);border:1px solid #334155;border-radius:10px;padding:8px 6px;margin-bottom:6px;"
 
         # Fetch detail tambahan
@@ -551,7 +536,7 @@ else:
                 time.sleep(0.35)
                 st.rerun()
 
-    st.caption(f"Total {len(wl)} token dipantau. Cron harian 07:00 WIB (00:00 UTC) akan update CVD + evaluasi prepump_baru + kirim Telegram jika sinyal muncul.")
+    st.caption(f"Total {len(wl)} token dipantau. Cron harian 07:00 WIB (00:00 UTC) menghitung CVD GMGN; token KERING dipindai transaksi setiap 15 menit.")
 
 # ---------------------------------------------------------------------------
 # 2. TAMBAH KOLEKSI MANUAL KE WATCHLIST
