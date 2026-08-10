@@ -17,12 +17,18 @@ Pipeline:
 
 Multi-timeframe (evaluate_prepump_multi_tf):
   30m (Micro Ignition / Timing) · 1h (Hourly Setup / Base) ·
-  4h (Swing Channel / Wyckoff Accumulation) · 12h (Macro Cycle Base)
+  4h (Swing Channel) · 12h (Macro Cycle / Wyckoff Accumulation) ·
+  24h (Wyckoff Accumulation)
   plus a CONFLUENCE verdict:
-    🌟 GOLDEN CONFLUENCE   (macro 4h/12h >= 60 AND micro 30m/1h >= 75)
-    🪤 DEAD CAT / FAKE BOUNCE (micro 30m >= 70 BUT macro 4h/12h < 35)
-    ⏳ ACCUMULATION SLEEPER (macro 4h/12h >= 65 BUT micro 30m < 40)
+    🌟 GOLDEN CONFLUENCE   (macro 12h/24h >= 60 AND micro 30m/1h >= 75)
+    🪤 DEAD CAT / FAKE BOUNCE (micro 30m >= 70 BUT macro 12h/24h < 35)
+    ⏳ ACCUMULATION SLEEPER (macro 12h/24h >= 65 BUT micro 30m < 40)
     ➖ NORMAL / FORMING    (everything else)
+
+  Wyckoff-style accumulation detection is deliberately restricted to the
+  12h and 24h macro timeframes only — small timeframes (30m/1h/4h) do NOT
+  run Wyckoff pattern detection because they are too noisy for the
+  accumulation/distribution cycle (owner request 2026-08-10).
 '''
 import time
 
@@ -49,6 +55,10 @@ PREPUMP_TIER_BADGES = {'imminent': '🚨', 'forming': '👀',
 # evaluation; only the windowing / gates scale. The 30m entry reproduces the
 # legacy defaults 1:1 (sub-window 15m, terminal 10m, min_buy 3, large dump
 # 1 SOL, absorption multiplier x1) so existing calibration does NOT drift.
+#
+# Wyckoff pattern detection runs ONLY on the 12h and 24h macro timeframes
+# (owner request 2026-08-10). The 4h timeframe is a plain swing-channel
+# read — no Wyckoff labelling on small timeframes.
 # ---------------------------------------------------------------------------
 PREPUMP_TF_CONFIGS = {
     '30m': {
@@ -64,16 +74,22 @@ PREPUMP_TF_CONFIGS = {
     '4h': {
         'window_min': 240, 'prior_hours': 24, 'sub_window_min': 120,
         'terminal_min': 60, 'min_buy': 12, 'large_dump_sol': 5.0,
-        'absorp_mult': 6.0, 'role': 'Swing Channel / Wyckoff Accumulation',
+        'absorp_mult': 6.0, 'role': 'Swing Channel',
     },
     '12h': {
         'window_min': 720, 'prior_hours': 48, 'sub_window_min': 360,
         'terminal_min': 180, 'min_buy': 25, 'large_dump_sol': 10.0,
-        'absorp_mult': 12.0, 'role': 'Macro Cycle Base',
+        'absorp_mult': 12.0, 'role': 'Macro Cycle / Wyckoff Accumulation',
+    },
+    '24h': {
+        'window_min': 1440, 'prior_hours': 48, 'sub_window_min': 720,
+        'terminal_min': 360, 'min_buy': 40, 'large_dump_sol': 20.0,
+        'absorp_mult': 24.0, 'role': 'Wyckoff Accumulation (24h)',
     },
 }
-PREPUMP_TF_ORDER = ('30m', '1h', '4h', '12h')
-PREPUMP_TF_MACRO = ('4h', '12h')
+PREPUMP_TF_ORDER = ('30m', '1h', '4h', '12h', '24h')
+# Macro = Wyckoff timeframes (12h/24h). Micro = timing timeframes.
+PREPUMP_TF_MACRO = ('12h', '24h')
 PREPUMP_TF_MICRO = ('30m', '1h')
 
 # Confluence thresholds (scores out of 100).

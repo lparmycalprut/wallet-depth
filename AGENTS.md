@@ -22,9 +22,9 @@ Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Per
 
 | File | Isi |
 |---|---|
-| `app.py` | **Main page reset** — 371 baris. Urutan: watchlist vertical (kolom sinyal) → tambah manual → scan trending now → scan degen now. Tidak ada cards, tidak ada analyze di main page. Hanya tombol ⭐ Watchlist di tabel trending/degen. |
+| `app.py` | **Main page reset** — watchlist vertical (kolom sinyal + Diamond + Real/Dust + **M15** + AvgCost) → tambah manual → scan trending now → scan degen now. Diamond/Real-Dust punya rantai fallback: meta watchlist.json → real_dust_history/holder_snapshots → Helius live → GMGN live (dgn price fix). Kolom M15 = sudah ada candle 15m dgn tx>500 & vol>500 SOL. |
 | `pages/3_⭐_Watchlist.py` | Watchlist table (history/score/holders). Tetap, tapi main page juga menampilkan watchlist. |
-| `pages/4_📊_CVD.py` | **CVD Deep Analysis** — conviction graph fixed `4/6/12/24/48/72h` + full Helius top-100 holder analysis. Page tidak lagi merender Pre-Pump Radar, Multi-Timeframe, conviction table, CVD hourly, atau whale/dolphin held-flow. |
+| `pages/4_📊_CVD.py` | **CVD Deep Analysis** — conviction graph fixed `24/48/72h` (growth/decline vs periode sebelumnya) + full Helius top-100 holder analysis + **fund source wallet (funder)** top-100 (rank by SOL balance, exclude exchange). Page tidak lagi merender Pre-Pump Radar, Multi-Timeframe, conviction table, CVD hourly, atau whale/dolphin held-flow. |
 | `core.py` | Helius pool + DexScreener + GeckoTerminal helpers (shared). |
 | `cvd.py` | Store swap 72 jam, bucket CVD, wallet profiles, conviction, candle patterns. **Tidak lagi** punya holder_snapshots / real_dust_history (dihapus karena fokus prepump). |
 | `gmgn_screener.py` | Screener GMGN trending + HRHR, scoring ramp kontinu (4 pilar: t10 30, liq 30, rug 25, vol 15). Tetap semua filter. |
@@ -81,13 +81,13 @@ Sumber: `https://github.com/lparmycalprut/prepump_baru` — HANDOFF_WALLET_DEPTH
 - P4 Terminal Ignition — lonjakan TX/CVD awal hari + spring 15m.
 - Confluence SLEEPER (macro ≥65, micro <40) = LUNA H-1 — jangan turunkan bobot.
 
-**Multi-TF:** 30m Micro Ignition, 1h Hourly Setup, 4h Swing/Wyckoff, 12h Macro Cycle. Confluence: golden (macro≥60 & micro≥75), dead_cat (30m≥70 & macro<35), sleeper (macro≥65 & 30m<40), normal.
+**Multi-TF:** 30m Micro Ignition, 1h Hourly Setup, 4h Swing Channel, 12h Macro Cycle / Wyckoff Accumulation, 24h Wyckoff Accumulation. Wyckoff hanya di 12h & 24h. Confluence: golden (macro 12h/24h ≥60 & micro≥75), dead_cat (30m≥70 & macro<35), sleeper (macro≥65 & 30m<40), normal.
 
 **Catatan UI CVD (owner request 2026-08-07):** backend `prepump_detector.py`
 dan `signals.py` tetap dipakai oleh sinyal watchlist/Telegram, tetapi page
 `4_📊_CVD.py` tidak lagi memanggil atau merender Pre-Pump Radar 30m maupun
 Multi-Timeframe. Page hanya mengambil swap 72h untuk grafik conviction
-`4/6/12/24/48/72h`, lalu mengambil full holder list Helius untuk Top 100:
+`24/48/72h`, lalu mengambil full holder list Helius untuk Top 100:
 proporsi diamond hand (sell/buy ≤10% pada window swap) dan proporsi saldo
 real (nilai saldo ≥ dust limit). Wallet tanpa sell terdeteksi ditandai sebagai
 no-sell-observed dan masuk hitungan diamond hand dengan batasan window yang
@@ -136,7 +136,7 @@ Lihat docs/PROGRESS.md untuk riwayat detail.
 ## 9. Status 2026-08-07 — CVD holder-focused UI revision
 
 `pages/4_📊_CVD.py` sekarang mengambil satu dataset GMGN 72 jam dan hanya
-merender grafik conviction untuk window `4/6/12/24/48/72h`. Table conviction,
+merender grafik conviction untuk window `24/48/72h`. Table conviction,
 CVD hourly, whale/dolphin held-flow, Pre-Pump Radar 30m, dan Multi-Timeframe
 UI dihapus. `cvd.top_holder_analysis()` adalah helper network-free yang
 memisahkan dua scope:
@@ -160,4 +160,31 @@ pages/4_📊_CVD.py` dan `python tests/test_top_holder_analysis.py`.
 - `scripts/update_cvd.py` kembali menghitung holder snapshot (Helius / GMGN top holders fallback) dan memperbarui metadata `watchlist.json` (`diamond_pct`, `real_holders`, `dust_holders`) sehingga UI Watchlist tidak lagi kosong (`—`).
 - `app.py` pada fungsi `get_watchlist_details` membaca metadata dan memiliki fallback ke `holder_snapshots.json`, `real_dust_history.json`, serta live GMGN `token_stat`.
 - `pages/4_📊_CVD.py` pada fungsi `fetch_holder_snapshot` memiliki fallback ke data cron `holder_snapshots.json` dan GMGN ketika Helius API key tidak dikonfigurasi di rahasia Streamlit.
+
+---
+
+## 11. Status 2026-08-10 — owner request batch
+
+1. **CVD fund source wallet (funder) top-100** — `cvd.funder_wallet_analysis()`
+   scan transfer SOL masuk ke top-100 holder (Helius Enhanced API, 20 tx/holder),
+   ranking funder by **balance SOL terbesar**, **exclude exchange** via
+   `cvd.EXCHANGE_WALLETS` (kurasi, + `config.json` `exchange_wallets`).
+   UI di `pages/4_📊_CVD.py` (cached 15 menit). Heuristik, bukan pelacakan penuh.
+2. **Conviction window CVD = 24/48/72 saja** (grafik pertumbuhan/penurunan
+   vs periode sebelumnya tetap ada).
+3. **Wyckoff hanya 12H & 24H** — `prepump_detector.PREPUMP_TF_CONFIGS`:
+   4h → "Swing Channel" (tanpa Wyckoff), 12h → "Macro Cycle / Wyckoff
+   Accumulation", tambah **24h** → "Wyckoff Accumulation (24h)".
+   `PREPUMP_TF_MACRO = ('12h', '24h')`; micro tetap 30m/1h. Data 72h cukup
+   untuk 24h window (prior_hours 48).
+4. **Fix Diamond/Real-Dust di main app** — fallback GMGN sekarang pakai
+   `price_usd` (raw GMGN → DexScreener); tambah fallback Helius live
+   (`fetch_helius_top_holder_summary`) sebelum GMGN.
+5. **Kolom M15 di watchlist** (app.py + pages/3) — `cvd.m15_activity_flag()`:
+   flag YA jika ada candle 15 menit dengan tx **>500** DAN volume **>500 SOL**
+   (strict >), dari store swap 72 jam.
+
+Verifikasi: `python tests/test_m15_and_funder.py`,
+`python tests/test_prepump_detector.py`, semua suite lama hijau, AppTest
+render watchlist 12 token tanpa exception.
 

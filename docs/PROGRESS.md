@@ -7,6 +7,76 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-10 — Owner request batch: CVD funder, window 24/48/72, Wyckoff 12h/24h, fix Diamond/Real-Dust, M15 flag
+
+### Yang berubah
+
+1. **CVD — Fund Source Wallet (Funder) dari Top 100** (`cvd.funder_wallet_analysis`
+   + section baru di `pages/4_📊_CVD.py`):
+   - Scan transfer SOL MASUK ke wallet top-100 holder (Helius Enhanced API,
+     `max_tx_per_holder=20`), kumpulkan sender = wallet **funder**.
+   - Funder diurutkan dari **balance SOL terbesar** (getBalance Helius) —
+     makin besar makin menarik.
+   - **Exchange di-exclude** otomatis: daftar kurasi `cvd.EXCHANGE_WALLETS`
+     (Binance/Coinbase/Kraken/FTX/CEX.IO — terverifikasi 2026-08) + bisa
+     diperluas via `config.json` → `exchange_wallets` (list address).
+   - Alamat pool token di-exclude juga (arg `exclude_addresses`) supaya hasil
+     jual pool→holder tidak terhitung sebagai funder.
+   - Helper murni `_parse_funder_transfers()` (offline-testable), UI cached
+     15 menit (`st.cache_data`), semua kegagalan network → pesan ramah.
+2. **CVD — window conviction jadi 24/48/72 saja** (`pages/4_📊_CVD.py`):
+   - `CONVICTION_WINDOWS = (24, 48, 72)`; grafik pertumbuhan/penurunan
+     conviction vs periode sebelumnya tetap (▲/▼ + Δ%).
+3. **Wyckoff hanya di 12H & 24H** (`prepump_detector.py`):
+   - TF 4h tidak lagi berlabel Wyckoff (`role` → "Swing Channel").
+   - TF 12h → "Macro Cycle / Wyckoff Accumulation"; tambah TF baru **24h**
+     ("Wyckoff Accumulation (24h)") — `window_min 1440, prior 48h,
+     sub 720m, terminal 360m, min_buy 40, large_dump 20 SOL, absorp x24`.
+   - `PREPUMP_TF_MACRO = ('12h', '24h')` (macro = Wyckoff), micro tetap
+     `('30m', '1h')`; confluence golden/dead_cat/sleeper mengikuti macro baru.
+4. **Fix Diamond/Real-Dust "—" di main app** (`app.py`):
+   - Bug: `fetch_gmgn_top_holder_summary` tidak mengirim `price_usd` ke
+     `top_holder_analysis` → semua holder dinilai $0 → semua "dust".
+     Sekarang price diambil dari raw GMGN lalu fallback DexScreener.
+   - Tambah fallback live Helius (`fetch_helius_top_holder_summary`) sebelum
+     fallback GMGN — pakai full holder list Helius + price DexScreener,
+     persis seperti halaman CVD. Rantai: meta watchlist.json →
+     real_dust_history/holder_snapshots → Helius live → GMGN live.
+5. **Detail M15 di watchlist** (`app.py` + `pages/3_⭐_Watchlist.py`):
+   - Helper murni `cvd.m15_activity_flag()`: bucket swap ke candle 15 menit;
+     flag **YA** kalau ada SATU candle dengan tx **>500** DAN volume
+     **>500 SOL** (strict >). Data dari store 72 jam (fast, cached 10 menit);
+     fallback fetch GMGN cepat bila store kosong.
+   - Kolom **M15** baru di tabel watchlist main app (tooltip: tx & vol candle
+     terkuat) dan di halaman Watchlist.
+
+### Kenapa
+
+Semua dari permintaan pemilik 2026-08-10: mau lihat funder ber-SOL besar
+(exclude CEX), conviction cukup 24/48/72, Wyckoff tidak boleh di TF kecil,
+kolom Diamond/Real-Dust harus muncul di main app, dan watchlist harus tahu
+apakah token sudah pernah punya candle M15 ekstrem (tx>500 & vol>500 SOL).
+
+### Verifikasi
+
+- `python tests/test_m15_and_funder.py` — 8 test baru (M15 bucket/threshold,
+  parsing funder, exchange exclusion, ranking balance, path kosong) semua lulus.
+- `python tests/test_prepump_detector.py` — diperbarui untuk TF 24h +
+  macro 12h/24h, semua lulus (termasuk absorp scaling 3/18/36/72).
+- Seluruh suite lama (`python tests/test_*.py` + `unittest discover`) hijau.
+- `python -m py_compile cvd.py prepump_detector.py app.py pages/*.py` — OK.
+- AppTest smoke: app.py & pages/3 render 12 token watchlist, kolom M15
+  tampil (LUNA ⚡ YA tx 2321/3020.8 SOL; Tilly ⚡ YA; sisanya Belum), 0 exception.
+
+### Sisa PR / catatan
+
+- Daftar exchange di `cvd.EXCHANGE_WALLETS` sengaja konservatif (hanya
+  address terverifikasi). Perluas via `config.json` `exchange_wallets`.
+- Analisis funder = heuristik window 20 tx terakhir per holder; funding
+  yang sangat lama bisa terlewat. UI sudah menuliskan keterbatasan ini.
+
+---
+
 ## 2026-08-07 — CVD page fix: Real/Dust dihitung dari seluruh holder Helius
 
 ### Yang berubah

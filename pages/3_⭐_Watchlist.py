@@ -25,6 +25,17 @@ st.caption("Tokens on this list are snapshotted automatically every day at "
            "even when you don't open the dashboard. Remove a CA when you're "
            "done with it.")
 
+
+@st.cache_data(ttl=600, show_spinner=False)
+def watchlist_m15_flag(ca: str) -> dict:
+    """M15 flag: sudah ada candle 15 menit dengan tx >500 DAN volume >500
+    SOL dalam satu candle (dari store swap 72 jam)."""
+    try:
+        from cvd import m15_activity_flag, get_recent_swaps
+        return m15_activity_flag(get_recent_swaps(ca, hours=72))
+    except Exception:
+        return {}
+
 wl = load_watchlist()
 hist = load_history()
 
@@ -144,6 +155,7 @@ for ca, meta in wl.items():
     prev = days[dates[-2]] if len(dates) > 1 else {}
     d_hold = (last.get("total_holders", 0) - prev.get("total_holders", 0)
               if prev else None)
+    m15 = watchlist_m15_flag(ca)
     rows.append({
         "ca": ca,
         "Token": meta.get("symbol", "?"),
@@ -155,20 +167,21 @@ for ca, meta in wl.items():
         "Δ vs prev": d_hold,
         "Real %MC": last.get("real_mc_pct"),
         "Top10 %": last.get("top10_pct"),
+        "M15": m15,
         "MC": last.get("marketcap"),
         "Snapshots": len(dates),
     })
 
 df = pd.DataFrame(rows)
 
-hdr = st.columns([1.0, 1.6, 1.1, 0.7, 0.9, 0.8, 0.9, 0.9, 0.8, 1.0, 0.9, 0.6])
+hdr = st.columns([1.0, 1.6, 1.1, 0.7, 0.9, 0.8, 0.9, 0.9, 0.7, 0.8, 1.0, 0.9, 0.6])
 for col, label in zip(hdr, ["Token", "CA", "Last snapshot", "Score",
                             "Holders", "Δ prev", "Real %MC", "Top10 %",
-                            "MC", "Note", "Snapshots", ""]):
+                            "M15", "MC", "Note", "Snapshots", ""]):
     col.markdown(f"<b style='color:#000000'>{label}</b>", unsafe_allow_html=True)
 
 for _, r in df.iterrows():
-    c = st.columns([1.0, 1.6, 1.1, 0.7, 0.9, 0.8, 0.9, 0.9, 0.8, 1.0, 0.9, 0.6])
+    c = st.columns([1.0, 1.6, 1.1, 0.7, 0.9, 0.8, 0.9, 0.9, 0.7, 0.8, 1.0, 0.9, 0.6])
     c[0].markdown(f"<b style='color:#000000'>{r['Token']}</b>", unsafe_allow_html=True)
     c[1].markdown(f"[`{r['ca'][:14]}…`](https://solscan.io/token/{r['ca']})")
     c[2].markdown(f"<span style='color:#000000'>{r['Last snapshot']}</span>", unsafe_allow_html=True)
@@ -190,11 +203,24 @@ for _, r in df.iterrows():
     c[6].markdown(f"<span style='color:#000000'>{real_mc_str}</span>", unsafe_allow_html=True)
     top10_str = f"{r['Top10 %']:.1f}%" if pd.notna(r["Top10 %"]) and r["Top10 %"] is not None else "—"
     c[7].markdown(f"<span style='color:#000000'>{top10_str}</span>", unsafe_allow_html=True)
+    # M15: sudah ada candle 15m dgn tx>500 & vol>500 SOL?
+    m15 = r["M15"] if isinstance(r["M15"], dict) else {}
+    if m15:
+        m15_hit = bool(m15.get("hit"))
+        m15_txt = "⚡ YA" if m15_hit else "Belum"
+        m15_color = "#16a34a" if m15_hit else "#dc2626"
+        m15_tip = (f"tx {m15.get('best_tx')} · vol {m15.get('best_vol_sol')} SOL"
+                   f" · {m15.get('total_tx')} tx/72h")
+    else:
+        m15_txt, m15_color, m15_tip = "—", "#000000", "data swap belum tersedia"
+    c[8].markdown(
+        f"<span style='color:{m15_color};font-weight:700;' title='{m15_tip}'>"
+        f"{m15_txt}</span>", unsafe_allow_html=True)
     mc_str = f"${r['MC']:,.0f}" if pd.notna(r["MC"]) and r["MC"] is not None else "—"
-    c[8].markdown(f"<span style='color:#000000'>{mc_str}</span>", unsafe_allow_html=True)
-    c[9].markdown(f"<span style='color:#000000'>{r['Note'] or ''}</span>", unsafe_allow_html=True)
-    c[10].markdown(f"<span style='color:#000000'>{r['Snapshots']}</span>", unsafe_allow_html=True)
-    if c[11].button("🗑️ Hapus", key=f"rm_{r['ca']}", help="Remove from watchlist", use_container_width=True, type="secondary"):
+    c[9].markdown(f"<span style='color:#000000'>{mc_str}</span>", unsafe_allow_html=True)
+    c[10].markdown(f"<span style='color:#000000'>{r['Note'] or ''}</span>", unsafe_allow_html=True)
+    c[11].markdown(f"<span style='color:#000000'>{r['Snapshots']}</span>", unsafe_allow_html=True)
+    if c[12].button("🗑️ Hapus", key=f"rm_{r['ca']}", help="Remove from watchlist", use_container_width=True, type="secondary"):
         if not remove_from_watchlist(r["ca"]):
             _err = get_last_push_error()
             st.error(f"⚠️ Dihapus lokal tapi GAGAL commit GitHub ({_err.get('status') or ''} {_err.get('msg')}). "

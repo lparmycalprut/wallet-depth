@@ -190,7 +190,7 @@ def test_multi_tf_structure():
     multi = pp.evaluate_prepump_multi_tf(sw, {'symbol': 'TEST'}, ca='TEST',
                                          now_ts=now, wallet_tags=tags,
                                          bullish_div_h1=True)
-    assert set(multi['timeframes']) == {'30m', '1h', '4h', '12h'}
+    assert set(multi['timeframes']) == {'30m', '1h', '4h', '12h', '24h'}
     assert multi['primary_tf'] == '30m'
     for tf, cfg in pp.PREPUMP_TF_CONFIGS.items():
         r = multi['timeframes'][tf]
@@ -212,26 +212,37 @@ def test_multi_tf_structure():
 
 
 def test_confluence_statuses():
-    # 🌟 golden: macro (best 4h/12h) >= 60 AND micro (best 30m/1h) >= 75
-    c = pp.compute_confluence({'30m': 90, '1h': 40, '4h': 65, '12h': 20})
+    # 🌟 golden: macro (best 12h/24h — Wyckoff timeframes) >= 60 AND
+    #            micro (best 30m/1h) >= 75
+    c = pp.compute_confluence({'30m': 90, '1h': 40, '4h': 65, '12h': 20,
+                               '24h': 70})
     assert c['status'] == 'golden' and c['emoji'] == '🌟', c
     assert c['label'] == 'GOLDEN CONFLUENCE'
-    # macro can come from 12h alone; micro from 1h alone
-    c = pp.compute_confluence({'30m': 10, '1h': 78, '4h': 20, '12h': 61})
+    # macro can come from 24h alone; micro from 1h alone
+    c = pp.compute_confluence({'30m': 10, '1h': 78, '4h': 20, '12h': 0,
+                               '24h': 61})
     assert c['status'] == 'golden', c
+    # 4h is NOT macro anymore — 4h high alone cannot trigger golden
+    c = pp.compute_confluence({'30m': 90, '1h': 40, '4h': 90, '12h': 10,
+                               '24h': 5})
+    assert c['status'] != 'golden', c
     # 🪤 dead cat: 30m high but macro < 35
-    c = pp.compute_confluence({'30m': 85, '1h': 50, '4h': 30, '12h': 10})
+    c = pp.compute_confluence({'30m': 85, '1h': 50, '4h': 30, '12h': 10,
+                               '24h': 0})
     assert c['status'] == 'dead_cat' and c['emoji'] == '🪤', c
     assert c['label'] == 'DEAD CAT / FAKE BOUNCE'
     # ⏳ sleeper: macro >= 65 but 30m < 40 (and micro best < 75, no golden)
-    c = pp.compute_confluence({'30m': 20, '1h': 55, '4h': 70, '12h': 66})
+    c = pp.compute_confluence({'30m': 20, '1h': 55, '4h': 70, '12h': 66,
+                               '24h': 0})
     assert c['status'] == 'sleeper' and c['emoji'] == '⏳', c
     assert c['label'] == 'ACCUMULATION SLEEPER'
     # ➖ normal otherwise
-    c = pp.compute_confluence({'30m': 50, '1h': 45, '4h': 50, '12h': 40})
+    c = pp.compute_confluence({'30m': 50, '1h': 45, '4h': 50, '12h': 40,
+                               '24h': 30})
     assert c['status'] == 'normal' and c['emoji'] == '➖', c
     # golden precedence over sleeper/dead_cat
-    c = pp.compute_confluence({'30m': 80, '1h': 80, '4h': 70, '12h': 70})
+    c = pp.compute_confluence({'30m': 80, '1h': 80, '4h': 70, '12h': 70,
+                               '24h': 70})
     assert c['status'] == 'golden', c
     print('confluence statuses ok')
 
@@ -268,6 +279,7 @@ def test_large_dump_threshold_per_tf():
     assert multi['timeframes']['1h']['metrics']['whale_dumper'] is True
     assert multi['timeframes']['4h']['metrics']['whale_dumper'] is False
     assert multi['timeframes']['12h']['metrics']['whale_dumper'] is False
+    assert multi['timeframes']['24h']['metrics']['whale_dumper'] is False
     # 30m P1 lost the 10-pt no-large-dump bonus vs the undumped baseline
     base = pp.evaluate_prepump(_build_prepump_swaps(now), {'symbol': 'D'},
                                ca='D', now_ts=now)
@@ -284,9 +296,11 @@ def test_absorp_target_scales_with_tf():
     t30 = multi['timeframes']['30m']['metrics']['absorp_target_sol']
     t4h = multi['timeframes']['4h']['metrics']['absorp_target_sol']
     t12 = multi['timeframes']['12h']['metrics']['absorp_target_sol']
-    # low-cap tier base = 3 SOL, scaled x1 / x6 / x12
-    assert t30 == 3.0 and t4h == 18.0 and t12 == 36.0, (t30, t4h, t12)
-    print('absorp scaling ok %s/%s/%s' % (t30, t4h, t12))
+    t24 = multi['timeframes']['24h']['metrics']['absorp_target_sol']
+    # low-cap tier base = 3 SOL, scaled x1 / x6 / x12 / x24
+    assert t30 == 3.0 and t4h == 18.0 and t12 == 36.0 and t24 == 72.0, \
+        (t30, t4h, t12, t24)
+    print('absorp scaling ok %s/%s/%s/%s' % (t30, t4h, t12, t24))
 
 
 def test_telegram_multi_tf_format():
@@ -300,7 +314,7 @@ def test_telegram_multi_tf_format():
     msg = pp.format_prepump_telegram(primary, 'TESTCA', ti, multi=multi)
     assert '🚨 <b>PRE-PUMP IMMINENT: $TEST</b>' in msg
     assert 'Multi-TF:' in msg
-    for tf in ('30m:', '1h:', '4h:', '12h:'):
+    for tf in ('30m:', '1h:', '4h:', '12h:', '24h:'):
         assert tf in msg, tf
     assert 'Confluence:' in msg
     assert '🌟' in msg or '➖' in msg or '🪤' in msg or '⏳' in msg
@@ -314,7 +328,7 @@ def test_telegram_multi_tf_format():
     assert pp.format_multi_tf_line(None) == ''
     assert pp.format_confluence_line(None) == ''
     pill = pp.format_prepump_digest_pill(multi)
-    for tf in ('30m:', '1h:', '4h:', '12h:'):
+    for tf in ('30m:', '1h:', '4h:', '12h:', '24h:'):
         assert tf in pill, tf
     print('telegram multi-tf format ok, len=%d' % len(msg))
 
