@@ -25,7 +25,8 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cvd import fetch_swaps, get_recent_swaps
-from cvd_daily import FIRST_BUY_SURGE_DEFAULTS, first_buy_surge, latest_dry_signal
+from cvd_daily import (FIRST_BUY_SURGE_DEFAULTS, complete_daily_rows,
+                       first_buy_surge, latest_dry_signal)
 from signals import record_first_buy_surge
 from watchlist import load_watchlist
 
@@ -61,7 +62,10 @@ def _baseline_from_daily_file(ca):
     dates = data.get(ca) or {}
     for date in sorted(dates, reverse=True):
         rows = (dates.get(date) or {}).get("rows") or []
-        dry = latest_dry_signal(rows)
+        # Entri lama bisa memuat baris hari UTC yang saat itu masih berjalan;
+        # baseline dari potongan ~1 jam jauh terlalu kecil dan membuat volume
+        # normal terbaca sebagai lonjakan ratusan persen.
+        dry = latest_dry_signal(complete_daily_rows(rows))
         if dry is not None:
             return float(dry.get("volume_sol") or 0.0) / 24.0
     return None

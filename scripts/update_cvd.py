@@ -27,7 +27,7 @@ from signals import (begin_digest, flush_telegram_digest, record_daily_cvd,
                      queue_daily_cvd_message)
 from watchlist import load_watchlist, save_watchlist
 from cvd_daily import (calculate_daily_cvd, complete_daily_rows,
-                       latest_dry_signal)
+                       dry_baseline_stale, latest_dry_signal)
 
 try:
     from core import (get_helius_keys, get_holders, get_market,
@@ -214,6 +214,21 @@ def main():
             queue_daily_cvd_message(ca, meta.get("symbol", "?"), complete_rows,
                                     price=price_now)
             dry = latest_dry_signal(complete_rows)
+            prio_txt = ""
+            # Self-heal baselines captured from a partial day by the bug
+            # above (a 67-minute slice yields an hourly baseline dozens of
+            # times too low, which makes the 15-minute scanner read ordinary
+            # trading as a +1000% "surge"). Also drop priority once the token
+            # is demonstrably not dry anymore — nothing else ever cleared it.
+            if complete_rows and dry_baseline_stale(
+                    meta.get("priority_dry_vol_date"), complete_rows):
+                stale_date = meta.get("priority_dry_vol_date")
+                for key in ("priority", "priority_since", "priority_reason",
+                            "priority_dry_vol_date", "priority_dry_volume_sol",
+                            "priority_dry_hourly_sol"):
+                    meta.pop(key, None)
+                prio_txt = f" prio-clear({stale_date})"
+                wl_changed = True
             if dry and meta.get("priority_dry_vol_date") != dry.get("date"):
                 # Simpan baseline volume kering (per jam) — scanner 15 menit
                 # memakainya sebagai pembanding lonjakan volume pada deteksi
@@ -229,9 +244,11 @@ def main():
                 meta["priority"] = True
                 meta["priority_since"] = dry.get("date")
                 meta["priority_reason"] = "daily_volume_dry"
+                prio_txt = f" prio-set({dry.get('date')})"
                 wl_changed = True
             conv_txt = (f" daily:{complete_rows[-1].get('status', '?')}"
                         if complete_rows else " daily:skip(no full UTC day)")
+            conv_txt += prio_txt
 
             # --- Holder snapshot + real/dust history (Helius / GMGN) ---
             snap_txt = _try_snapshot(api_keys, ca, meta,
