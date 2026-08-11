@@ -457,6 +457,20 @@ def run_pipeline_for_ca(ca, symbol, now_ts, mock_mode=False):
         signal_type = "🔴 EXIT LIQUIDITY TRAP (BULL TRAP)"
         reasons.append("Bull Trap: Dev/Cabal dump ke market, JANGAN BELI")
 
+    # 4.5 Bearish Divergence (kebalikan absorption: CVD plus tp candle merah)
+    # Candle merah (harga turun) tapi CVD positif -> buyer diserap seller,
+    # potensi distribusi. Notifikasi warning HATI-HATI.
+    is_bearish_divergence = (
+        price_change_pct < 0 and cvd_sol >= 1.0
+    )
+    if is_bearish_divergence:
+        score -= 30
+        signal_type = "🔴 BEARISH DIVERGENCE (HARGA TURUN / DISTRIBUSI)"
+        reasons.append(
+            f"Divergensi Distribusi: CVD {cvd_sol:+.2f} SOL tp Candle Turun"
+            f" {price_change_pct:+.1f}% — HATI-HATI"
+        )
+
     # Clamp score
     score = max(0.0, min(100.0, score))
     print(f"Pre-Pump Score: {score:.1f} / 100")
@@ -496,6 +510,11 @@ def run_pipeline_for_ca(ca, symbol, now_ts, mock_mode=False):
         indicators_bullet.append(f"   • SOS Ignition Breakout: Lonjakan Vol {vol_ratio_vs_baseline:.1f}x, Buy TX Ratio {buy_tx_ratio*100:.1f}%, CVD {cvd_sol:+.2f} SOL")
     if is_bull_trap:
         indicators_bullet.append(f"   • Exit Liquidity Trap: Harga Naik {price_change_pct:+.1f}% tp CVD Negatif {cvd_sol:+.2f} SOL dan Lock < 50%")
+    if is_bearish_divergence:
+        indicators_bullet.append(
+            f"   • ⚠️ Divergensi Distribusi: CVD {cvd_sol:+.2f} SOL tp Candle"
+            f" Turun {price_change_pct:+.1f}% — buyer diserap seller"
+        )
         
     for b in top_holder_buys:
         indicators_bullet.append(f"   • {b}")
@@ -508,25 +527,34 @@ def run_pipeline_for_ca(ca, symbol, now_ts, mock_mode=False):
         badge_title = "👀 PRE-PUMP POTENTIAL"
 
     price_sign = "+" if price_change_pct >= 0 else ""
-    
+    cvd_note = "Net Sells Terserap!" if cvd_sol <= 0 else "Net Buys Dominan!"
+    warn_line = ""
+    if is_bearish_divergence:
+        warn_line = ("\n⚠️ HATI-HATI: harga turun tapi CVD plus — buyer "
+                     "diserap seller (potensi distribusi). Jangan entry dulu.\n")
+
     msg = (
         f"{badge_title}\n"
         f"🎯 Skor Pre-Pump : {score:.0f} / 100\n"
         f"🪙 Mint          : {ca}\n"
         f"💵 Harga         : ${current_price:.8f} ({price_sign}{price_change_pct:.2f}%)\n"
-        f"📊 15m Vol / CVD : {vol_15m_sol:.2f} SOL | {cvd_sol:+.2f} SOL (Net Sells Terserap!)\n"
+        f"📊 15m Vol / CVD : {vol_15m_sol:.2f} SOL | {cvd_sol:+.2f} SOL ({cvd_note})\n"
         f"🔒 Top 100 Lock  : {holder_lock_pct:.1f}% {lock_desc}\n"
         f"📝 Indikator     :\n"
         f"{indicator_section}\n\n"
+        f"{warn_line}"
         f"🔗 Buka GMGN: https://gmgn.ai/sol/token/{ca}"
     )
 
     # 6. Check if we should trigger notification
-    # Trigger criteria: Skor >= 70 or signal_type in ["🟢", "🟡", "🚀"] (or if signal_type is not None and not is_bull_trap)
+    # Trigger criteria: Skor >= 70 or signal_type in ["🟢", "🟡", "🚀"]
+    # (atau sinyal warning bearish divergence — harus dikirim, bukan filter)
     is_triggered = False
     if score >= 70:
         is_triggered = True
     elif signal_type and any(badge in signal_type for badge in ["🟢", "🟡", "🚀"]):
+        is_triggered = True
+    elif is_bearish_divergence:
         is_triggered = True
 
     if is_triggered:

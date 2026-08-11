@@ -1,20 +1,22 @@
 # -*- coding: utf-8 -*-
 """
-Wallet Depth — Prepump Radar (minimalist reset 2026-08-07, update 2026-08-07 07:00 WIB)
+Wallet Depth — Prepump Radar (minimalist reset 2026-08-07,
+update 2026-08-11: Wyckoff 15M cron detector)
 
 Kept functions only:
-  - watchlist (vertical list + sinyal CVD GMGN harian)
+  - watchlist (vertical list + sinyal Wyckoff 15M pre-pump)
   - scan trending / scan degen (with all filters, only Watchlist button)
-  - CVD deep analysis (separate page, old prepump_detector tetap untuk deep dive)
-  - history/signals as data backend (json)
-  - telegram via daily cron at 07:00 WIB (00:00 UTC, GMGN candle flip)
+  - CVD deep analysis (separate page)
+  - signals.json as backend (written by the 15-minute GitHub Actions cron)
 
-Removed: cards, analyze on main page, compare/history/screener/cto/lp/accum/memecoin/prepump-checker pages,
-  breakout_guard, focus, share_card, etc.
+Removed: cards, analyze on main page, compare/history/screener/cto/lp/accum/
+  memecoin/prepump-checker pages, breakout_guard, focus, share_card, daily
+  07:00 WIB cron, M15 swap-store flag, 7-checks scoring, AvgCost column.
 
-Sinyal watchlist now uses the daily GMGN extension-compatible CVD model,
-not the old 4-pillar score.
+Sinyal watchlist reads the latest Wyckoff 15M entry per CA from signals.json
+(scripts/prepump_wyckoff_cron.py format), not the old daily CVD model.
 """
+import html
 import time
 from datetime import datetime, timezone, timedelta
 
@@ -99,73 +101,22 @@ def _fmt_ts(ts):
         return "—"
 
 def get_signal_for_ca(ca: str, sigs: list):
-    """Return the latest daily GMGN CVD status for a CA."""
+    """Return the latest Wyckoff 15M signal entry for a CA (or None).
+
+    New detector format (scripts/prepump_wyckoff_cron.py)::
+
+        {"ts": ..., "ca": ..., "symbol": ..., "type": "🟢 ABSORPTION ...",
+         "score": 95.0, "price_usd": ..., "volume_sol": 12.3,
+         "cvd_sol": -1.96, "holder_lock_pct": 100.0, "detail": {...}}
+
+    Legacy rows (cvd_daily, cron 6h distribution/accumulation, ...) are
+    ignored — only entries carrying the new Wyckoff keys are considered.
+    """
     for item in reversed(sigs or []):
-        if item.get("ca") == ca and item.get("type") == "cvd_daily":
-            detail = item.get("detail") or {}
-            status = item.get("status") or detail.get("status") or "NORMAL"
-            dry = status.startswith("KERING")
-            return ("priority" if dry else "daily", detail.get("cvd_ratio_pct", 0),
-                    item.get("ts"), status)
+        if (item.get("ca") == ca
+                and "score" in item and "holder_lock_pct" in item):
+            return item
     return None
-
-
-def live_evaluate(ca: str, symbol: str):
-    """No intra-day fallback: signals are produced by the daily cron only."""
-    return "unknown", 0, None
-
-def fetch_gmgn_avg_cost(ca: str, timeout: int = 18) -> float | None:
-    """Fetch average holder cost (%) from GMGN token_holders endpoint (cost=20)."""
-    try:
-        from curl_cffi import requests as cr
-    except ImportError:
-        return None
-
-    import uuid
-    device_id = str(uuid.uuid4())
-    fp_did = uuid.uuid4().hex
-    build_tag = "20260807-3117-f1d79dd"
-
-    url = (
-        f"https://gmgn.ai/vas/api/v1/token_holders/sol/{ca}"
-        f"?device_id={device_id}&fp_did={fp_did}"
-        f"&client_id=gmgn_web_{build_tag}&from_app=gmgn&app_ver={build_tag}"
-        f"&tz_name=Asia%2FJakarta&tz_offset=25200&app_lang=en-US&os=web&worker=0"
-        f"&limit=100&cost=20&orderby=amount_percentage&direction=desc"
-    )
-
-    headers = {
-        "accept": "application/json, text/plain, */*",
-        "accept-language": "en-US,en;q=0.9,id;q=0.8",
-        "referer": f"https://gmgn.ai/sol/token/{ca}",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
-    }
-
-    try:
-        r = cr.get(url, impersonate="chrome", headers=headers, timeout=timeout)
-        if r.status_code != 200:
-            return None
-        data = r.json() or {}
-        holders = (data.get("data") or {}).get("holders") or []
-
-        costs = []
-        for h in holders:
-            cost_val = h.get("cost") or h.get("avg_cost") or h.get("cost_usd")
-            if cost_val is not None:
-                try:
-                    c = float(cost_val)
-                    if -200 < c < 200:
-                        costs.append(c)
-                except (TypeError, ValueError):
-                    continue
-
-        if costs:
-            avg = sum(costs) / len(costs)
-            return round(avg, 1)
-        return None
-    except Exception:
-        return None
-
 
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_gmgn_top_holder_summary(ca: str) -> dict:
@@ -256,36 +207,12 @@ def fetch_helius_top_holder_summary(ca: str, key_pool: tuple) -> dict:
         return {}
 
 
-@st.cache_data(ttl=600, show_spinner=False)
-def watchlist_m15_flag(ca: str) -> dict:
-    """M15 activity flag: sudah ada candle 15 menit dengan tx >500 DAN
-    volume >500 SOL dalam satu candle? Data dari store 72h; kalau store
-    kosong, coba fetch GMGN cepat (best effort)."""
-    try:
-        from cvd import m15_activity_flag, get_recent_swaps
-        swaps = get_recent_swaps(ca, hours=72)
-        if not swaps:
-            # best-effort live fetch (bounded) when the store is empty
-            try:
-                from cvd import fetch_swaps
-                cutoff = int(time.time()) - 72 * 3600
-                swaps, _sig, _ts, _hit = fetch_swaps(
-                    "", "", ca, stop_ts=cutoff, max_pages=10, sleep=0.05,
-                    use_gmgn=True)
-            except Exception:
-                swaps = []
-        return m15_activity_flag(swaps)
-    except Exception:
-        return {}
-
-
 def get_watchlist_details(ca: str, meta: dict) -> dict:
-    """Ambil detail tambahan untuk watchlist (diamond, real/dust, avg_cost)."""
+    """Ambil detail tambahan untuk watchlist (diamond, real/dust)."""
     details = {
         "diamond_pct": meta.get("diamond_pct"),
         "real_holders": meta.get("real_holders"),
         "dust_holders": meta.get("dust_holders"),
-        "avg_cost": meta.get("avg_cost"),
         "down_ath": meta.get("down_ath"),
     }
 
@@ -344,24 +271,12 @@ def get_watchlist_details(ca: str, meta: dict) -> dict:
             if details["dust_holders"] is None:
                 details["dust_holders"] = live_tha.get("dust_holders")
 
-    # Jika avg_cost belum ada di watchlist.json → fetch live dari GMGN
-    if details["avg_cost"] is None:
-        live_avg = fetch_gmgn_avg_cost(ca)
-        if live_avg is not None:
-            details["avg_cost"] = live_avg
-
     # Normalisasi angka
     if details["diamond_pct"] is not None:
         try:
             details["diamond_pct"] = round(float(details["diamond_pct"]), 1)
         except Exception:
             details["diamond_pct"] = None
-
-    if details["avg_cost"] is not None:
-        try:
-            details["avg_cost"] = round(float(details["avg_cost"]), 1)
-        except Exception:
-            details["avg_cost"] = None
 
     if details["down_ath"] is not None:
         try:
@@ -370,6 +285,69 @@ def get_watchlist_details(ca: str, meta: dict) -> dict:
             details["down_ath"] = None
 
     return details
+
+
+# ---------------------------------------------------------------------------
+# Wyckoff 15M signal rendering helpers
+# ---------------------------------------------------------------------------
+# Short UI label per raw signal type written by scripts/prepump_wyckoff_cron.py
+SIGNAL_LABELS = {
+    "🟢 ABSORPTION DIVERGENCE (WYCKOFF SPRING)": "🟢 ABSORPTION DIVERGENCE",
+    "🟡 TEST SUPLAI (VOLUME KERING / LPS)": "🟡 TEST SUPLAI",
+    "🚀 SOS IGNITION BREAKOUT": "🚀 SOS IGNITION",
+    "🔴 EXIT LIQUIDITY TRAP (BULL TRAP)": "🔴 BULL TRAP",
+    "🔴 BEARISH DIVERGENCE (HARGA TURUN / DISTRIBUSI)": "🔴 BEARISH DIVERGENCE",
+    "PRE_PUMP_DETECTION": "👀 PRE-PUMP POTENTIAL",
+}
+
+# emoji -> (badge bg, badge fg, badge border)
+SIGNAL_STYLES = {
+    "🟢": ("#052e16", "#86efac", "#16a34a"),  # absorption divergence
+    "🟡": ("#422006", "#fde68a", "#ca8a04"),  # supply test / vol dry-up
+    "🚀": ("#431407", "#fed7aa", "#f97316"),  # SOS ignition
+    "🔴": ("#450a0a", "#fecaca", "#dc2626"),  # bull trap
+    "👀": ("#172554", "#bfdbfe", "#3b82f6"),  # pre-pump potential
+    "➖": ("#1e293b", "#94a3b8", "#334155"),  # normal / no signal
+}
+
+# emoji -> row background css
+SIGNAL_ROW_BG = {
+    "🟢": "background:rgba(34,197,94,0.08);border:1px solid #14532d;",
+    "🟡": "background:rgba(234,179,8,0.08);border:1px solid #713f12;",
+    "🚀": "background:rgba(34,197,94,0.08);border:1px solid #14532d;",
+    "🔴": "background:rgba(220,38,38,0.08);border:1px solid #7f1d1d;",
+    "👀": "background:rgba(59,130,246,0.08);border:1px solid #1e3a8a;",
+    "➖": "background:rgba(148,163,184,0.04);border:1px solid #334155;",
+}
+
+
+def signal_label(raw_type):
+    """Short UI label for a raw signal type from signals.json."""
+    if not raw_type:
+        return "➖ NORMAL"
+    return SIGNAL_LABELS.get(raw_type) or raw_type.split(" (")[0]
+
+
+def signal_emoji(label):
+    """Emoji key used for badge styling; falls back to neutral."""
+    emoji = label.split(" ", 1)[0] if " " in label else label
+    return emoji if emoji in SIGNAL_STYLES else "➖"
+
+
+def signal_badge(raw_type):
+    """HTML badge for a signal; returns (badge_html, row_bg_css)."""
+    label = signal_label(raw_type)
+    emoji = signal_emoji(label)
+    bg, fg, bd = SIGNAL_STYLES[emoji]
+    tip = html.escape(raw_type or label)
+    badge = (
+        f"<span style='background:{bg};color:{fg};border:1px solid {bd};"
+        f"border-radius:6px;padding:3px 8px;font-weight:800;"
+        f"font-size:0.80rem;' title='{tip}'>{label}</span>"
+    )
+    row_bg = SIGNAL_ROW_BG[emoji] + "border-radius:10px;padding:8px 6px;margin-bottom:6px;"
+    return badge, row_bg
+
 
 CONFIG = load_config()
 helius_keys = tuple(get_helius_keys(config=CONFIG))
@@ -402,16 +380,16 @@ if _q_del:
 # Header
 # ---------------------------------------------------------------------------
 st.title("🎯 Wallet Depth — Prepump Radar")
-st.caption("Fokus: watchlist → scan trending/degen → CVD → sinyal CVD harian 07:00 WIB (00:00 UTC, perhitungan mengikuti ekstensi GMGN) + notifikasi Telegram sehari sekali. Token KERING otomatis masuk prioritas scan 15 menit.")
+st.caption("Fokus: watchlist → scan trending/degen → CVD → sinyal **Wyckoff 15M** (detektor berjalan otomatis tiap 15 menit via GitHub Actions, sinyal terbaru di `signals.json`) + notifikasi Telegram/Discord saat trigger.")
 
 # ---------------------------------------------------------------------------
 # 1. WATCHLIST (vertical list, sinyal column)
 # ---------------------------------------------------------------------------
 wl = load_watchlist()
 
-st.markdown("### ⭐ Watchlist — CVD GMGN Harian (update 07:00 WIB)")
-st.caption("""List menurun. Kolom: **Diamond** (% top-100 holder yang tidak jual >10%), **Real/Dust** (holder >$5 vs ≤$5), **M15** (sudah ada candle 15 menit dengan **tx >500 DAN volume >500 SOL** dalam satu candle — dari store swap 72 jam), **AvgCost** (perubahan harga vs avg holder cost dari GMGN — di-fetch live via token_holders API jika belum tersimpan).
-Kolom **Sinyal** mengikuti rekap ekstensi GMGN. **KERING** berarti volume turun ≥40% dengan CVD relatif datar dan token masuk prioritas scan transaksi 15 menit.""")
+st.markdown("### ⭐ Watchlist — Wyckoff 15M Pre-Pump Detector")
+st.caption("""List menurun. Kolom: **Diamond** (% top-100 holder yang tidak jual >10%), **Real/Dust** (holder >$5 vs ≤$5), **Top 100 Lock** (% **Pure Accumulator** di Top 100 Holders — supply terkunci, dari sinyal Wyckoff terbaru di `signals.json`), **15m Vol / CVD** (volume & CVD SOL 15 menit terakhir dari detektor 15 menit).
+Kolom **Sinyal** = label Wyckoff 15m terbaru: 🟢 **ABSORPTION DIVERGENCE** (candle naik tapi CVD negatif — sell terserap / spring), 🟡 **TEST SUPLAI** (volume kering / LPS — suplai sedang diuji), 🚀 **SOS IGNITION** (lonjakan volume + CVD positif = awal mark-up), 🔴 **BEARISH DIVERGENCE** (harga turun tapi CVD plus — buyer diserap seller, ⚠️ HATI-HATI / potensi distribusi), 🔴 **BULL TRAP** (harga naik tapi CVD negatif & lock lemah), atau ➖ **NORMAL**. Kolom **Skor** = skor pre-pump dinamis **0–100** (lock 65% + kondisi sinyal).""")
 
 if not wl:
     st.info("Watchlist kosong. Tambahkan manual di bawah atau dari hasil Scan Trending / Scan Degen.")
@@ -421,65 +399,93 @@ else:
         all_sigs = load_signals()
     except Exception:
         all_sigs = []
-    # Header row — now with extra detail columns (compact + eye friendly) — ATR removed
-    hdr = st.columns([1.2, 1.6, 0.9, 1.05, 0.8, 0.9, 1.05, 0.75, 0.95, 0.6])
-    for c, lab in zip(hdr, ["Token", "CA + Links", "Diamond", "Real/Dust", "M15", "AvgCost", "Sinyal", "Skor", "Update", ""]):
+    # Header row — Wyckoff 15M columns (compact + eye friendly)
+    WL_WIDTHS = [1.0, 1.5, 0.7, 0.85, 1.0, 1.05, 1.35, 0.65, 0.85, 0.55]
+    hdr = st.columns(WL_WIDTHS)
+    for c, lab in zip(hdr, ["Token", "CA + Links", "Diamond", "Real/Dust",
+                            "Top 100 Lock", "15m Vol / CVD", "Sinyal", "Skor",
+                            "Update", ""]):
         c.markdown(f"<b style='color:#000000'>{lab}</b>", unsafe_allow_html=True)
     st.divider()
     for ca, meta in wl.items():
         sym = meta.get("symbol", "?") or "?"
         src = meta.get("source", "manual")
-        # Determine sinyal
+
+        # Sinyal Wyckoff 15m terbaru dari signals.json
         sig = get_signal_for_ca(ca, all_sigs)
         if sig:
-            tier, score, ts, detail = sig
+            raw_type = str(sig.get("type") or "")
+            score = sig.get("score")
+            ts = sig.get("ts")
+            vol_sol = sig.get("volume_sol")
+            cvd_sol = sig.get("cvd_sol")
+            lock_pct = sig.get("holder_lock_pct")
         else:
-            # fallback live
-            tier, score, ts = live_evaluate(ca, sym)
-            detail = ""
-            if tier == "unknown":
-                tier = "neutral"
-                score = 0
-                ts = None
+            raw_type, score, ts = "", None, None
+            vol_sol = cvd_sol = lock_pct = None
 
-        # Badge config — daily GMGN CVD
-        if tier == "priority":
-            badge = f"<span style='background:#7c2d12;color:#fed7aa;border:1px solid #f97316;border-radius:6px;padding:3px 8px;font-weight:800;font-size:0.82rem;'>🔥 PRIORITAS · KERING</span>"
-            row_bg = "background:rgba(34,197,94,0.08);border:1px solid #14532d;border-radius:10px;padding:8px 6px;margin-bottom:6px;"
-        elif tier == "unknown":
-            badge = f"<span style='background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:6px;padding:3px 8px;font-weight:700;font-size:0.82rem;'>❓ UNKNOWN</span>"
-            row_bg = "background:rgba(148,163,184,0.04);border:1px solid #334155;border-radius:10px;padding:8px 6px;margin-bottom:6px;"
-        else:
-            label = detail[:28] if detail else "➖ NORMAL"
-            badge = f"<span style='background:#1e293b;color:#94a3b8;border:1px solid #334155;border-radius:6px;padding:3px 8px;font-weight:700;font-size:0.82rem;'>{label}</span>"
-            row_bg = "background:rgba(148,163,184,0.04);border:1px solid #334155;border-radius:10px;padding:8px 6px;margin-bottom:6px;"
+        # Badge config — Wyckoff 15M
+        badge, row_bg = signal_badge(raw_type)
 
         # Fetch detail tambahan
         det = get_watchlist_details(ca, meta)
 
-        # M15 flag: sudah ada candle 15m dengan tx>500 DAN vol>500 SOL?
-        m15 = watchlist_m15_flag(ca)
-        if m15:
-            m15_hit = bool(m15.get("hit"))
-            m15_txt = ("⚡ YA" if m15_hit else "Belum")
-            m15_color = "#16a34a" if m15_hit else "#dc2626"
-            m15_tip = (f"tx {m15.get('best_tx')} · vol {m15.get('best_vol_sol')} SOL "
-                       f"· {m15.get('total_tx')} tx/72h")
+        # Top 100 Lock — % Pure Accumulator di Top 100 Holders (dari sinyal,
+        # fallback ke metadata watchlist.json)
+        if lock_pct is None:
+            lock_pct = meta.get("holder_lock_pct")
+        if lock_pct is not None:
+            try:
+                lock_v = float(lock_pct)
+                lock_color = ("#16a34a" if lock_v >= 70
+                              else ("#ca8a04" if lock_v >= 50 else "#dc2626"))
+                lock_txt = (f"<span style='color:{lock_color};font-weight:700;'>"
+                            f"{lock_v:.1f}% Pure Acc</span>")
+            except (TypeError, ValueError):
+                lock_txt = "<span style='color:#000000'>—</span>"
         else:
-            m15_hit = False
-            m15_txt = "—"
-            m15_color = "#000000"
-            m15_tip = "data swap belum tersedia"
+            lock_txt = "<span style='color:#000000'>—</span>"
 
-        # 10 kolom compact (ATR dihapus)
-        cols = st.columns([1.2, 1.6, 0.9, 1.05, 0.8, 0.9, 1.05, 0.75, 0.95, 0.6])
+        # 15m Vol / CVD — volume & CVD SOL 15 menit terakhir
+        if vol_sol is not None and cvd_sol is not None:
+            try:
+                vol_v = float(vol_sol)
+                cvd_v = float(cvd_sol)
+                cvd_color = "#16a34a" if cvd_v >= 0 else "#dc2626"
+                vc_txt = (f"<span style='color:#000000;font-weight:700;'>"
+                          f"{vol_v:.2f} SOL</span> | "
+                          f"<span style='color:{cvd_color};font-weight:700;'>"
+                          f"{cvd_v:+.2f} SOL</span>")
+            except (TypeError, ValueError):
+                vc_txt = "<span style='color:#000000'>—</span>"
+        else:
+            vc_txt = "<span style='color:#000000'>—</span>"
+
+        # Skor pre-pump dinamis 0-100
+        if score is not None:
+            try:
+                sc_v = float(score)
+                sc_color = ("#16a34a" if sc_v >= 70
+                            else ("#ca8a04" if sc_v >= 50 else "#94a3b8"))
+                skor_txt = (f"<span style='font-weight:800;color:{sc_color};'>"
+                            f"{sc_v:.0f}</span>"
+                            f"<span style='color:#000000;font-size:0.69rem;'>"
+                            f" / 100</span>")
+            except (TypeError, ValueError):
+                skor_txt = "<span style='color:#000000'>—</span>"
+        else:
+            skor_txt = "<span style='color:#000000'>—</span>"
+
+        # 10 kolom compact — Wyckoff 15M
+        cols = st.columns(WL_WIDTHS)
+        cell_bg = row_bg + "text-align:center;"
 
         # Token
-        cols[0].markdown(f"<div class='watch-row'><b style='color:#000000'>{sym}</b><br><span style='font-size:0.65rem;color:#000000'>{src}</span></div>", unsafe_allow_html=True)
+        cols[0].markdown(f"<div class='watch-row' style='{row_bg}'><b style='color:#000000'>{sym}</b><br><span style='font-size:0.65rem;color:#000000'>{src}</span></div>", unsafe_allow_html=True)
 
         # CA + Links
         cols[1].markdown(
-            f"<div class='watch-row'>"
+            f"<div class='watch-row' style='{row_bg}'>"
             f"<a href='https://solscan.io/token/{ca}' target='_blank' style='font-size:0.74rem;color:#0284c7;text-decoration:none;font-weight:600;'>{ca[:8]}…{ca[-4:]}</a><br>"
             f"<a href='https://gmgn.ai/sol/token/{ca}' target='_blank' style='font-size:0.65rem;color:#d97706;text-decoration:none;'>gmgn ↗</a> · "
             f"<a href='https://dexscreener.com/solana/{ca}' target='_blank' style='font-size:0.65rem;color:#000000;text-decoration:none;'>chart ↗</a> · "
@@ -491,7 +497,7 @@ else:
         # Diamond Hand (top 100 tidak jual >10%)
         diamond = det.get("diamond_pct")
         diamond_txt = f"<span style='color:#16a34a;font-weight:700;'>{diamond:.0f}%</span>" if diamond is not None else "<span style='color:#000000'>—</span>"
-        cols[2].markdown(f"<div class='watch-row' style='text-align:center'>{diamond_txt}<br><span style='font-size:0.60rem;color:#000000'>diamond</span></div>", unsafe_allow_html=True)
+        cols[2].markdown(f"<div class='watch-row' style='{cell_bg}'>{diamond_txt}<br><span style='font-size:0.60rem;color:#000000'>diamond</span></div>", unsafe_allow_html=True)
 
         # Real vs Dust holders
         real = det.get("real_holders")
@@ -500,29 +506,34 @@ else:
             real_dust = f"<span style='color:#16a34a;font-weight:700;'>{real}</span>/<span style='color:#dc2626;font-weight:700;'>{dust}</span>"
         else:
             real_dust = "<span style='color:#000000'>—</span>"
-        cols[3].markdown(f"<div class='watch-row' style='text-align:center'>{real_dust}<br><span style='font-size:0.60rem;color:#000000'>real/dust</span></div>", unsafe_allow_html=True)
+        cols[3].markdown(f"<div class='watch-row' style='{cell_bg}'>{real_dust}<br><span style='font-size:0.60rem;color:#000000'>real/dust</span></div>", unsafe_allow_html=True)
 
-        # M15 flag — candle 15m dgn tx>500 & vol>500 SOL
+        # Top 100 Lock — Pure Accumulator supply lock
         cols[4].markdown(
-            f"<div class='watch-row' style='text-align:center'>"
-            f"<span style='color:{m15_color};font-weight:700;' title='{m15_tip}'>{m15_txt}</span>"
-            f"<br><span style='font-size:0.60rem;color:#000000'>tx&gt;500 &amp; vol&gt;500 SOL</span></div>",
+            f"<div class='watch-row' style='{cell_bg}'>{lock_txt}"
+            f"<br><span style='font-size:0.60rem;color:#000000'>top 100 lock</span></div>",
             unsafe_allow_html=True
         )
 
-        # Avg Cost (dari GMGN — live fetch jika perlu)
-        avgc = det.get("avg_cost")
-        avgc_txt = f"<span style='color:#ca8a04;font-weight:700;'>{avgc:+.1f}%</span>" if avgc is not None else "<span style='color:#000000'>—</span>"
-        cols[5].markdown(f"<div class='watch-row' style='text-align:center'>{avgc_txt}<br><span style='font-size:0.60rem;color:#000000'>avg cost</span></div>", unsafe_allow_html=True)
+        # 15m Vol / CVD
+        cols[5].markdown(
+            f"<div class='watch-row' style='{cell_bg}'>{vc_txt}"
+            f"<br><span style='font-size:0.60rem;color:#000000'>15m vol / CVD</span></div>",
+            unsafe_allow_html=True
+        )
 
-        # Sinyal
-        cols[6].markdown(f"<div class='watch-row'>{badge}</div>", unsafe_allow_html=True)
+        # Sinyal Wyckoff 15m
+        cols[6].markdown(f"<div class='watch-row' style='{row_bg}'>{badge}</div>", unsafe_allow_html=True)
 
-        # Skor
-        cols[7].markdown(f"<div class='watch-row'><span style='font-weight:700;color:#000000'>{score:.0f}/7</span><span style='color:#000000;font-size:0.69rem;'> checks</span></div>", unsafe_allow_html=True)
+        # Skor pre-pump
+        cols[7].markdown(
+            f"<div class='watch-row' style='{cell_bg}'>{skor_txt}"
+            f"<br><span style='font-size:0.60rem;color:#000000'>skor / 100</span></div>",
+            unsafe_allow_html=True
+        )
 
         # Update
-        cols[8].markdown(f"<div class='watch-row'><span style='font-size:0.69rem;color:#000000'>{_fmt_ts(ts)}</span></div>", unsafe_allow_html=True)
+        cols[8].markdown(f"<div class='watch-row' style='{cell_bg}'><span style='font-size:0.69rem;color:#000000'>{_fmt_ts(ts)}</span></div>", unsafe_allow_html=True)
 
         # Hapus
         with cols[9]:
@@ -536,7 +547,7 @@ else:
                 time.sleep(0.35)
                 st.rerun()
 
-    st.caption(f"Total {len(wl)} token dipantau. Cron harian 07:00 WIB (00:00 UTC) menghitung CVD GMGN; token KERING dipindai transaksi setiap 15 menit.")
+    st.caption(f"Total {len(wl)} token dipantau. Sinyal & skor Wyckoff 15M di-refresh otomatis tiap 15 menit dari `signals.json`.")
 
 # ---------------------------------------------------------------------------
 # 2. TAMBAH KOLEKSI MANUAL KE WATCHLIST
@@ -734,5 +745,5 @@ if run_screen_hrhr:
 # Footer
 # ---------------------------------------------------------------------------
 st.divider()
-st.caption("Cron harian 07:00 WIB (00:00 UTC, GMGN candle flip): update CVD → evaluasi prepump_baru (7 checks) → Telegram jika sinyal muncul. Data CVD 72 jam. Sinyal BARU dari prepump_baru (bukan 4-pillar lama).")
+st.caption("Detektor otomatis berjalan tiap 15 menit via GitHub Actions (`prepump-wyckoff-cron.yml` → `scripts/prepump_wyckoff_cron.py`): evaluasi Wyckoff 15m (Top 100 Pure Accumulator Lock, Absorption Divergence, Vol Dry-Up / Test Suplai, SOS Ignition, Bull Trap) → skor pre-pump 0-100 → sinyal terbaru di `signals.json` → notifikasi Telegram/Discord saat trigger. Data CVD 72 jam tetap tersedia di halaman 📊 CVD.")
 

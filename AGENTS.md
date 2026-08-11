@@ -10,7 +10,7 @@ File ini adalah **memori antar-sesi**. Agen AI membaca `AGENTS.md` otomatis saat
 
 Dashboard Streamlit + cron untuk deteksi **pre-pump** Solana. Bahasa pengguna: **Indonesia**. Komentar & docstring: **Inggris**.
 
-Fokus sempit per 2026-08-07 (reset total, revisi 07:00 WIB): **watchlist → scan trending/degen → CVD → sinyal harian 07:00 WIB (00:00 UTC, GMGN candle flip) + Telegram sekali sehari dari prepump_baru**. Semua fungsi lain **dihapus total**.
+Fokus sempit per 2026-08-07 (reset total), **diperbarui 2026-08-11 ke Pre-Pump & Wyckoff 15M Cron Detector**: **watchlist → scan trending/degen → CVD → sinyal Wyckoff 15M** (detektor `scripts/prepump_wyckoff_cron.py` jalan tiap 15 menit via `.github/workflows/prepump-wyckoff-cron.yml`, menulis format baru ke `signals.json`: `type/score/volume_sol/cvd_sol/holder_lock_pct`). Cron harian 07:00 WIB, M15 swap store, dan 7 checks sudah **ditiadakan**.
 
 Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Perubahan scoring harus dibuktikan kalibrasi tidak bergeser.
 
@@ -22,7 +22,7 @@ Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Per
 
 | File | Isi |
 |---|---|
-| `app.py` | **Main page reset** — watchlist vertical (kolom sinyal + Diamond + Real/Dust + **M15** + AvgCost) → tambah manual → scan trending now → scan degen now. Diamond/Real-Dust punya rantai fallback: meta watchlist.json → real_dust_history/holder_snapshots → Helius live → GMGN live (dgn price fix). Kolom M15 = sudah ada candle 15m dgn tx>500 & vol>500 SOL. |
+| `app.py` | **Main page** — watchlist vertical 10 kolom (Token, CA + Links, Diamond, Real/Dust, **Top 100 Lock** (% Pure Acc dari `holder_lock_pct`), **15m Vol / CVD** (`volume_sol`/`cvd_sol`), **Sinyal Wyckoff** (🟢 ABSORPTION DIVERGENCE / 🟡 TEST SUPLAI / 🚀 SOS IGNITION / 🔴 BULL TRAP / ➖ NORMAL), **Skor** 0–100, Update, Hapus) → tambah manual → scan trending now → scan degen now. Sinyal dibaca dari entri terbaru format Wyckoff di `signals.json` (`get_signal_for_ca`). |
 | `pages/3_⭐_Watchlist.py` | Watchlist table (history/score/holders). Tetap, tapi main page juga menampilkan watchlist. |
 | `pages/4_📊_CVD.py` | **CVD Deep Analysis** — conviction graph fixed `24/48/72h` (growth/decline vs periode sebelumnya) + full Helius top-100 holder analysis + **fund source wallet (funder)** top-100 (rank by SOL balance, exclude exchange). Page tidak lagi merender Pre-Pump Radar, Multi-Timeframe, conviction table, CVD hourly, atau whale/dolphin held-flow. |
 | `core.py` | Helius pool + DexScreener + GeckoTerminal helpers (shared). |
@@ -194,3 +194,34 @@ render watchlist 12 token tanpa exception.
 Owner meminta perhitungan sinyal harian mengikuti ekstensi `ekstensi_extract_gmgn`, bukan detector CVD/prepump lama. `cvd_daily.py` sekarang memakai matriks harian extension: buy−sell = CVD, buy+sell = volume, status KERING bila volume turun ≥40% dan rasio CVD ≤10%. Hasil harian direkam ke `cvd_daily.json` dan `signals.json` satu kali per tanggal.
 
 Fund Source Wallet — Top 100 Holder dihapus total dari halaman CVD. Workflow detail 4-jam dihapus agar tidak membuat sinyal lama; workflow harian menjadi satu-satunya penghasil sinyal CVD. Token yang mendapat status KERING ditandai `priority` pada watchlist (sekaligus menyimpan baseline `priority_dry_hourly_sol` = volume hari kering / 24). Workflow `priority-volume.yml` memeriksa token prioritas setiap 15 menit dengan deteksi **First Buy Surge** (`cvd_daily.first_buy_surge`) — pengganti burst lama (>500 tx / ≥500 SOL). Empat kaki wajib lolos dalam jendela 15 menit: (1) volume surge ≥ +100% vs volume per jam fase kering H-1, (2) buy tx ≥ 60% dari ≥10 tx oleh ≥5 wallet unik, (3) CVD velocity Delta/Volume ≥ +20%, (4) cluster ≥3 big-buy ≥1 SOL tanpa sell besar pembalas. Alert Telegram `first_buy_surge` terkirim dengan dedupe 4 jam (config `first_buy_surge_cooldown_min`; threshold bisa dituning lewat blok `first_buy_surge` di config.json).
+
+## 13. Status 2026-08-11 — Pre-Pump & Wyckoff 15M Cron Detector (app.py selaras)
+
+Repo dirombak menjadi **SOLANA MEMECOIN PRE-PUMP & WYCKOFF 15M CRON DETECTOR**:
+`.github/workflows/prepump-wyckoff-cron.yml` menjalankan
+`scripts/prepump_wyckoff_cron.py` tiap 15 menit dan menulis sinyal format baru
+ke `signals.json` (`ts/ca/symbol/type/score/price_usd/volume_sol/cvd_sol/
+holder_lock_pct/detail`). Cron harian 07:00 WIB, M15 swap store, dan evaluasi
+7 checks sudah ditiadakan.
+
+`app.py` mengikuti: tabel Watchlist kini 10 kolom — Token, CA + Links,
+Diamond, Real/Dust, **Top 100 Lock** (`holder_lock_pct`, "X% Pure Acc"),
+**15m Vol / CVD** (`volume_sol` | `cvd_sol`), **Sinyal** (label Wyckoff:
+🟢 ABSORPTION DIVERGENCE, 🟡 TEST SUPLAI, 🚀 SOS IGNITION, 🔴 BULL TRAP,
+👀 PRE-PUMP POTENTIAL, ➖ NORMAL), **Skor** 0–100 (`score`), Update, Hapus.
+`get_signal_for_ca()` membaca entri terbaru format Wyckoff per CA; entri lama
+(`cvd_daily`, cron 6h) diabaikan. `watchlist_m15_flag`, kolom M15, kolom
+AvgCost (`fetch_gmgn_avg_cost`), `live_evaluate`, dan skor "/7 checks" dihapus.
+CVD Deep Analysis (`pages/4_📊_CVD.py`) tidak berubah.
+
+### 2026-08-11 (lanjutan) — Bearish Divergence di detector
+
+`scripts/prepump_wyckoff_cron.py` mendapat sinyal baru section 4.5:
+**🔴 BEARISH DIVERGENCE (HARGA TURUN / DISTRIBUSI)** — kebalikan absorption
+divergence: candle 15m MERAH (`price_change_pct < 0`) tapi CVD PLUS
+(`cvd_sol >= 1.0`) → skor -30, notifikasi **selalu terkirim** dengan warning
+**⚠️ HATI-HATI** (buyer diserap seller, potensi distribusi). Label CVD di
+pesan dinamis: `(Net Sells Terserap!)` / `(Net Buys Dominan!)`. `app.py`
+sudah mengenali tipe ini (badge merah). Test: `test_bearish_divergence` di
+`tests/test_cron_top_holders.py` (save sinyal di-patch no-op supaya
+`signals.json` tidak terpolusi).

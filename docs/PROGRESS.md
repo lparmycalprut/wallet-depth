@@ -7,6 +7,80 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-11 — Bearish Divergence (kebalikan Absorption) di Wyckoff 15M Detector
+
+### Yang berubah
+
+1. **Cek fungsi lama** (`scripts/prepump_wyckoff_cron.py` section 4.1):
+   CVD minus + candle hijau (harga naik) → `🟢 ABSORPTION DIVERGENCE
+   (WYCKOFF SPRING)` (+30 skor, trigger notifikasi). Terverifikasi via mock
+   (score 95, pesan "CVD -1.96 SOL tp Candle Naik +22.5%").
+2. **Fungsi kebalikan baru** (section 4.5):
+   - Kondisi: `price_change_pct < 0` (candle merah) **dan** `cvd_sol >= +1.0`
+     (CVD jelas plus) → `🔴 BEARISH DIVERGENCE (HARGA TURUN / DISTRIBUSI)`.
+   - Skor **-30**, selalu **trigger notifikasi** (bukan filter seperti bull
+     trap), pesan berisi **⚠️ HATI-HATI** + bullet indikator "buyer diserap
+     seller".
+   - Label CVD di pesan jadi dinamis: `(Net Sells Terserap!)` saat CVD ≤ 0,
+     `(Net Buys Dominan!)` saat CVD > 0.
+3. **Dashboard**: `app.py` SIGNAL_LABELS + caption menampilkan
+   `🔴 BEARISH DIVERGENCE` (badge merah sama seperti bull trap).
+4. **Tests**: `tests/test_cron_top_holders.py` + `test_bearish_divergence`
+   (monkeypatch mock: candle -20% + CVD +5 SOL; save sinyal di-patch no-op
+   agar tidak mencemari `signals.json`). Data test `test_sos_ignition_breakout`
+   diperbaiki (buy ratio 50% → 66.7%) — gagal karena data test tidak
+   memenuhi ambang kode (>= 60%), bukan karena logika detector.
+
+### Verifikasi
+
+`python tests/test_cron_top_holders.py` → **ALL PASSED** (termasuk SOS yang
+sebelumnya pre-existing FAIL); seluruh suite lain tetap hijau; `signals.json`
+tidak berubah (tetap 358 entri); AppTest app.py 0 exception/error.
+
+### Sisa PR
+
+- Ambang `cvd_sol >= 1.0` dan penalti -30 bisa dituning jika terlalu
+  sensitif/noise (config belum dipisah, masih hardcode di script).
+
+---
+
+## 2026-08-11 — app.py diselaraskan ke Pre-Pump & Wyckoff 15M Cron Detector
+
+### Yang berubah (`app.py`)
+
+1. **Kolom tabel Watchlist diganti ke data Wyckoff 15M** (10 kolom):
+   Token · CA + Links · Diamond · Real/Dust · **Top 100 Lock** (%
+   Pure Accumulator di Top 100, dari `holder_lock_pct`, fallback metadata)
+   · **15m Vol / CVD** (dari `volume_sol` & `cvd_sol`) · **Sinyal** (label
+   Wyckoff: 🟢 ABSORPTION DIVERGENCE, 🟡 TEST SUPLAI, 🚀 SOS IGNITION,
+   🔴 BULL TRAP, 👀 PRE-PUMP POTENTIAL, ➖ NORMAL) · **Skor** (0–100 dari
+   `score`) · Update · Hapus.
+2. **`get_signal_for_ca()` dibaca ulang**: sekarang mengambil entri terbaru
+   format baru di `signals.json` (punya kunci `score` + `holder_lock_pct`,
+   ditulis `scripts/prepump_wyckoff_cron.py` tiap 15 menit). Entri lama
+   (`cvd_daily`, cron 6h) diabaikan.
+3. **Dihapus**: `watchlist_m15_flag()` + kolom M15 (store swap lokal sudah
+   tidak ada), kolom AvgCost + `fetch_gmgn_avg_cost()`, `live_evaluate()`,
+   skor "/7 checks", semua caption "cron harian 07:00 WIB".
+4. **Teks UI**: subheader `### ⭐ Watchlist — Wyckoff 15M Pre-Pump
+   Detector`, caption kolom menjelaskan indikator Wyckoff 15m (Pure
+   Accumulator supply lock, Absorption Divergence, Vol Dry-Up/Test Suplai,
+   SOS Ignition, Bull Trap), footer merujuk `prepump-wyckoff-cron.yml`.
+
+### Verifikasi
+
+`python -m py_compile app.py` OK; Streamlit `AppTest` jalan tanpa exception
+maupun error; baris SISYPUSS merender `100.0% Pure Acc`, `12.30 SOL |
+-1.96 SOL`, badge `🟢 ABSORPTION DIVERGENCE`, skor `95 / 100`.
+
+### Sisa PR
+
+- Badge/row background hanya untuk sinyal terbaru per CA; skor tidak
+  bertahan jika sinyal lama kadaluarsa (detektor hanya menulis saat
+  trigger). Kalau mau histori skor per CA, perlu file state terpisah.
+
+---
+
 ## 2026-08-10 — Owner request batch: CVD funder, window 24/48/72, Wyckoff 12h/24h, fix Diamond/Real-Dust, M15 flag
 
 ### Yang berubah
