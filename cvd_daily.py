@@ -4,6 +4,7 @@ The browser extension is the reference for day-by-day accounting: buy volume
 minus sell volume is CVD, total volume is buy plus sell, and a dry day is a
 40%+ volume contraction with a nearly flat CVD ratio.
 """
+import time
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -62,6 +63,24 @@ def calculate_daily_cvd(swaps):
                        "unique_wallets": len(d["wallets"])})
         previous_volume = volume
     return result
+
+
+def complete_daily_rows(rows, *, now_ts=None):
+    """Return only rows for UTC days that have already finished.
+
+    The daily digest runs shortly after 00:00 UTC, so the newest row produced
+    by :func:`calculate_daily_cvd` is normally a still-running day holding
+    barely an hour of swaps. Reporting that partial row as the daily status
+    yields nonsense (a handful of TX, a fake -96..-100% volume change vs the
+    full previous day, and bogus KERING/MARK-UP verdicts). Daily status is
+    only valid for a day that is already complete, so drop any row dated
+    today (or later) in UTC.
+    """
+    today = datetime.fromtimestamp(
+        int(now_ts if now_ts is not None else time.time()),
+        timezone.utc).date().isoformat()
+    return [row for row in (rows or [])
+            if str((row or {}).get("date") or "") < today]
 
 
 def latest_dry_signal(rows):
