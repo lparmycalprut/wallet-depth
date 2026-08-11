@@ -83,6 +83,34 @@ def complete_daily_rows(rows, *, now_ts=None):
             if str((row or {}).get("date") or "") < today]
 
 
+def dry_baseline_stale(stored_date, rows, *, now_ts=None):
+    """True when a stored dry-day baseline is no longer backed by real data.
+
+    ``stored_date`` is the ``priority_dry_vol_date`` remembered on a watchlist
+    entry and ``rows`` are complete daily rows (see
+    :func:`complete_daily_rows`). A baseline is stale when either:
+
+    * it was captured from a UTC day that had not finished yet — exactly what
+      the partial-day bug produced, e.g. a 67-minute slice reported as
+      "KERING" with a hourly baseline dozens of times too low; or
+    * that day is now complete and turned out not to be dry at all.
+
+    A date that simply fell out of the lookback window is left alone: absence
+    of data is not evidence the baseline was wrong.
+    """
+    if not stored_date:
+        return False
+    today = datetime.fromtimestamp(
+        int(now_ts if now_ts is not None else time.time()),
+        timezone.utc).date().isoformat()
+    if str(stored_date) >= today:
+        return True
+    for row in rows or []:
+        if (row or {}).get("date") == stored_date:
+            return not str(row.get("status") or "").startswith("KERING")
+    return False
+
+
 def latest_dry_signal(rows):
     """Return the latest dry-day row, or None."""
     for row in reversed(rows or []):

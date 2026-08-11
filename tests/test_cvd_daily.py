@@ -3,7 +3,8 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cvd_daily import (calculate_daily_cvd, complete_daily_rows,
-                       first_buy_surge, latest_dry_signal)
+                       dry_baseline_stale, first_buy_surge,
+                       latest_dry_signal)
 
 
 def test_daily_accounting_and_dry_status():
@@ -60,7 +61,35 @@ def test_complete_daily_rows_only_today_is_empty_until_day_ends():
     assert [r["date"] for r in out] == ["2026-08-11"]
 
 
+def test_dry_baseline_stale_detects_partial_day_capture():
+    """Baseline dari hari yang belum selesai harus dianggap basi."""
+    now_ts = 1_786_406_400 + 4020  # 2026-08-11 01:07 UTC
+    rows = [{"date": "2026-08-10", "status": "DATAR / PENYERAPAN (ABSORPTION)"}]
+    # Kasus riil: HTZ menyimpan baseline dari potongan 67 menit 2026-08-11.
+    assert dry_baseline_stale("2026-08-11", rows, now_ts=now_ts)
+    # Hari sudah penuh tapi ternyata tidak kering -> baseline tak berlaku.
+    assert dry_baseline_stale("2026-08-10", rows, now_ts=now_ts)
+    # Hari penuh yang memang KERING -> baseline dipertahankan.
+    dry_rows = [{"date": "2026-08-10", "status": "KERING / TEST SUPLAI (LPS)"}]
+    assert not dry_baseline_stale("2026-08-10", dry_rows, now_ts=now_ts)
+    # Tanpa baseline / di luar jendela data -> jangan hapus apa pun.
+    assert not dry_baseline_stale(None, dry_rows, now_ts=now_ts)
+    assert not dry_baseline_stale("2026-08-01", dry_rows, now_ts=now_ts)
+
+
 T0 = 1_700_000_000
+
+
+def test_partial_baseline_would_fake_a_surge():
+    """Baseline rusak membuat volume normal terbaca sebagai lonjakan."""
+    rows = [("buy", 1.2, T0 - 800 + i * 40, f"b{i}") for i in range(12)]
+    rows += [("sell", 0.9, T0 - 800 + i * 40, f"s{i}") for i in range(8)]
+    # 1.374 SOL/jam = baseline HTZ yang tercemar potongan 67 menit.
+    bad = first_buy_surge(rows, baseline_hourly_sol=1.374, now_ts=T0)
+    assert bad["checks"]["volume"] and bad["surge_pct"] > 1000
+    # 89.1 SOL/jam = baseline sebenarnya dari hari UTC penuh.
+    good = first_buy_surge(rows, baseline_hourly_sol=89.137, now_ts=T0)
+    assert not good["checks"]["volume"] and not good["triggered"]
 
 
 def _valid_surge_rows():
@@ -152,6 +181,8 @@ if __name__ == "__main__":
     test_daily_accounting_and_dry_status()
     test_complete_daily_rows_drops_running_utc_day()
     test_complete_daily_rows_only_today_is_empty_until_day_ends()
+    test_dry_baseline_stale_detects_partial_day_capture()
+    test_partial_baseline_would_fake_a_surge()
     test_first_buy_surge_triggers_on_valid_markup_start()
     test_first_buy_surge_rejects_small_volume_surge()
     test_first_buy_surge_rejects_low_buy_ratio()
