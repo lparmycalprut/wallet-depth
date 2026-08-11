@@ -7,6 +7,43 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-11 — Bearish Divergence (kebalikan Absorption) di Wyckoff 15M Detector
+
+### Yang berubah
+
+1. **Cek fungsi lama** (`scripts/prepump_wyckoff_cron.py` section 4.1):
+   CVD minus + candle hijau (harga naik) → `🟢 ABSORPTION DIVERGENCE
+   (WYCKOFF SPRING)` (+30 skor, trigger notifikasi). Terverifikasi via mock
+   (score 95, pesan "CVD -1.96 SOL tp Candle Naik +22.5%").
+2. **Fungsi kebalikan baru** (section 4.5):
+   - Kondisi: `price_change_pct < 0` (candle merah) **dan** `cvd_sol >= +1.0`
+     (CVD jelas plus) → `🔴 BEARISH DIVERGENCE (HARGA TURUN / DISTRIBUSI)`.
+   - Skor **-30**, selalu **trigger notifikasi** (bukan filter seperti bull
+     trap), pesan berisi **⚠️ HATI-HATI** + bullet indikator "buyer diserap
+     seller".
+   - Label CVD di pesan jadi dinamis: `(Net Sells Terserap!)` saat CVD ≤ 0,
+     `(Net Buys Dominan!)` saat CVD > 0.
+3. **Dashboard**: `app.py` SIGNAL_LABELS + caption menampilkan
+   `🔴 BEARISH DIVERGENCE` (badge merah sama seperti bull trap).
+4. **Tests**: `tests/test_cron_top_holders.py` + `test_bearish_divergence`
+   (monkeypatch mock: candle -20% + CVD +5 SOL; save sinyal di-patch no-op
+   agar tidak mencemari `signals.json`). Data test `test_sos_ignition_breakout`
+   diperbaiki (buy ratio 50% → 66.7%) — gagal karena data test tidak
+   memenuhi ambang kode (>= 60%), bukan karena logika detector.
+
+### Verifikasi
+
+`python tests/test_cron_top_holders.py` → **ALL PASSED** (termasuk SOS yang
+sebelumnya pre-existing FAIL); seluruh suite lain tetap hijau; `signals.json`
+tidak berubah (tetap 358 entri); AppTest app.py 0 exception/error.
+
+### Sisa PR
+
+- Ambang `cvd_sol >= 1.0` dan penalti -30 bisa dituning jika terlalu
+  sensitif/noise (config belum dipisah, masih hardcode di script).
+
+---
+
 ## 2026-08-11 — app.py diselaraskan ke Pre-Pump & Wyckoff 15M Cron Detector
 
 ### Yang berubah (`app.py`)

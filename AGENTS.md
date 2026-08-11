@@ -213,3 +213,15 @@ Diamond, Real/Dust, **Top 100 Lock** (`holder_lock_pct`, "X% Pure Acc"),
 (`cvd_daily`, cron 6h) diabaikan. `watchlist_m15_flag`, kolom M15, kolom
 AvgCost (`fetch_gmgn_avg_cost`), `live_evaluate`, dan skor "/7 checks" dihapus.
 CVD Deep Analysis (`pages/4_📊_CVD.py`) tidak berubah.
+
+### 2026-08-11 (lanjutan) — Bearish Divergence di detector
+
+`scripts/prepump_wyckoff_cron.py` mendapat sinyal baru section 4.5:
+**🔴 BEARISH DIVERGENCE (HARGA TURUN / DISTRIBUSI)** — kebalikan absorption
+divergence: candle 15m MERAH (`price_change_pct < 0`) tapi CVD PLUS
+(`cvd_sol >= 1.0`) → skor -30, notifikasi **selalu terkirim** dengan warning
+**⚠️ HATI-HATI** (buyer diserap seller, potensi distribusi). Label CVD di
+pesan dinamis: `(Net Sells Terserap!)` / `(Net Buys Dominan!)`. `app.py`
+sudah mengenali tipe ini (badge merah). Test: `test_bearish_divergence` di
+`tests/test_cron_top_holders.py` (save sinyal di-patch no-op supaya
+`signals.json` tidak terpolusi).

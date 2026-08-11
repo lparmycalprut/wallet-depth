@@ -296,6 +296,7 @@ SIGNAL_LABELS = {
     "🟡 TEST SUPLAI (VOLUME KERING / LPS)": "🟡 TEST SUPLAI",
     "🚀 SOS IGNITION BREAKOUT": "🚀 SOS IGNITION",
     "🔴 EXIT LIQUIDITY TRAP (BULL TRAP)": "🔴 BULL TRAP",
+    "🔴 BEARISH DIVERGENCE (HARGA TURUN / DISTRIBUSI)": "🔴 BEARISH DIVERGENCE",
     "PRE_PUMP_DETECTION": "👀 PRE-PUMP POTENTIAL",
 }
 
@@ -388,7 +389,7 @@ wl = load_watchlist()
 
 st.markdown("### ⭐ Watchlist — Wyckoff 15M Pre-Pump Detector")
 st.caption("""List menurun. Kolom: **Diamond** (% top-100 holder yang tidak jual >10%), **Real/Dust** (holder >$5 vs ≤$5), **Top 100 Lock** (% **Pure Accumulator** di Top 100 Holders — supply terkunci, dari sinyal Wyckoff terbaru di `signals.json`), **15m Vol / CVD** (volume & CVD SOL 15 menit terakhir dari detektor 15 menit).
-Kolom **Sinyal** = label Wyckoff 15m terbaru: 🟢 **ABSORPTION DIVERGENCE** (candle naik tapi CVD negatif — sell terserap / spring), 🟡 **TEST SUPLAI** (volume kering / LPS — suplai sedang diuji), 🚀 **SOS IGNITION** (lonjakan volume + CVD positif = awal mark-up), 🔴 **BULL TRAP** (harga naik tapi CVD negatif & lock lemah), atau ➖ **NORMAL**. Kolom **Skor** = skor pre-pump dinamis **0–100** (lock 65% + kondisi sinyal).""")
+Kolom **Sinyal** = label Wyckoff 15m terbaru: 🟢 **ABSORPTION DIVERGENCE** (candle naik tapi CVD negatif — sell terserap / spring), 🟡 **TEST SUPLAI** (volume kering / LPS — suplai sedang diuji), 🚀 **SOS IGNITION** (lonjakan volume + CVD positif = awal mark-up), 🔴 **BEARISH DIVERGENCE** (harga turun tapi CVD plus — buyer diserap seller, ⚠️ HATI-HATI / potensi distribusi), 🔴 **BULL TRAP** (harga naik tapi CVD negatif & lock lemah), atau ➖ **NORMAL**. Kolom **Skor** = skor pre-pump dinamis **0–100** (lock 65% + kondisi sinyal).""")
 
 if not wl:
     st.info("Watchlist kosong. Tambahkan manual di bawah atau dari hasil Scan Trending / Scan Degen.")
