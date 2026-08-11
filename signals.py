@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Daily CVD and priority-volume signal persistence and Telegram delivery."""
+"""Daily CVD and first-buy-surge signal persistence and Telegram delivery."""
 import json
 import os
 import sys
@@ -134,18 +134,43 @@ def queue_daily_cvd_message(ca, symbol, rows, *, price=None):
     _queue_or_send(text)
 
 
-def record_priority_spike(ca, symbol, stats, *, now_ts=None, price=None):
+def record_first_buy_surge(ca, symbol, stats, *, now_ts=None, price=None,
+                           cooldown_sec=4 * 3600):
+    """Record & broadcast a First Buy Surge (awal fase MARK-UP) alert.
+
+    ``stats`` adalah hasil ``cvd_daily.first_buy_surge``. Dedupe per CA selama
+    ``cooldown_sec`` (default 4 jam — lonjakan pertama adalah momen sekali,
+    bukan alarm berulang tiap 15 menit).
+    """
     now_ts = int(now_ts or time.time())
     items = load_signals()
-    if any(x.get("ca") == ca and x.get("type") == "priority_volume_spike" and now_ts - int(x.get("ts", 0)) < 14 * 60 for x in items[-300:]):
+    if any(x.get("ca") == ca and x.get("type") == "first_buy_surge"
+           and now_ts - int(x.get("ts", 0)) < cooldown_sec
+           for x in items[-300:]):
         return False
-    items.append({"ts": now_ts, "ca": ca, "symbol": symbol, "type": "priority_volume_spike",
-                  "src": "priority_15m", "daily": False, "detail": stats, "price": price})
+    items.append({"ts": now_ts, "ca": ca, "symbol": symbol,
+                  "type": "first_buy_surge", "src": "priority_15m",
+                  "daily": False, "detail": stats, "price": price})
     save_signals(items)
-    text = (f"🚨 <b>PRIORITY VOLUME SPIKE · {symbol}</b> 🚨\n"
-            f"<code>{ca}</code>\n\n🔥 <b>{stats['tx']:,} transaksi</b> dalam 15 menit\n"
-            f"💰 Volume <b>{stats['volume_sol']:,.2f} SOL</b>\n"
-            f"🟢 Buy {stats['buy_tx']:,}  ·  🔴 Sell {stats['sell_tx']:,}\n"
-            f"⚖️ CVD <b>{stats['cvd_sol']:+,.2f} SOL</b>\n\n"
-            f"<a href='https://dexscreener.com/solana/{ca}'>Open chart</a>  ·  <a href='https://gmgn.ai/sol/token/{ca}'>GMGN</a>")
+    surge = stats.get("surge_pct")
+    base = stats.get("baseline_hourly_sol")
+    surge_txt = (f"{surge:+,.0f}% vs baseline kering {base:,.2f} SOL/jam"
+                 if surge is not None and base is not None
+                 else "baseline kering n/a")
+    text = (f"🚀 <b>FIRST BUY SURGE · {symbol}</b> 🚀\n"
+            f"<code>{ca}</code>\n\n"
+            f"<b>Awal fase MARK-UP terdeteksi</b> (token sebelumnya kering)\n\n"
+            f"📊 Volume {stats.get('window_sec', 900) // 60}m "
+            f"<b>{stats.get('volume_sol', 0):,.2f} SOL</b> ({surge_txt})\n"
+            f"🟢 Buy ratio <b>{stats.get('buy_ratio_pct', 0):.0f}%</b> "
+            f"({stats.get('buy_tx', 0)}/{stats.get('tx', 0)} TX · "
+            f"{stats.get('unique_buy_wallets', 0)} wallet unik)\n"
+            f"⚖️ CVD velocity <b>{stats.get('cvd_ratio_pct', 0):+.1f}%</b> "
+            f"(Δ {stats.get('cvd_sol', 0):+,.2f} SOL)\n"
+            f"🐋 Big-buy cluster: <b>{stats.get('big_buys', 0)}x</b> "
+            f"≥{stats.get('big_buy_sol', 1):g} SOL "
+            f"({stats.get('big_buy_sol_total', 0):,.2f} SOL) · "
+            f"big-sell {stats.get('big_sells', 0)}x\n\n"
+            f"<a href='https://dexscreener.com/solana/{ca}'>DexScreener</a>  ·  "
+            f"<a href='https://gmgn.ai/sol/token/{ca}'>GMGN</a>")
     return bool(_queue_or_send(text))

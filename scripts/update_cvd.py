@@ -209,6 +209,15 @@ def main():
             queue_daily_cvd_message(ca, meta.get("symbol", "?"), daily_rows,
                                     price=price_now)
             dry = latest_dry_signal(daily_rows)
+            if dry and meta.get("priority_dry_vol_date") != dry.get("date"):
+                # Simpan baseline volume kering (per jam) — scanner 15 menit
+                # memakainya sebagai pembanding lonjakan volume pada deteksi
+                # First Buy Surge (awal mark-up).
+                dry_vol = float(dry.get("volume_sol") or 0.0)
+                meta["priority_dry_vol_date"] = dry.get("date")
+                meta["priority_dry_volume_sol"] = round(dry_vol, 8)
+                meta["priority_dry_hourly_sol"] = round(dry_vol / 24.0, 8)
+                wl_changed = True
             if dry and not meta.get("priority"):
                 # Priority is intentionally a watchlist state, not another
                 # signal type: it is consumed by the 15-minute workflow.
