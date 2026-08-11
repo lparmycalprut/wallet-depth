@@ -8,9 +8,12 @@
   "priority": true,
   "priority_since": "2026-08-10",
   "priority_reason": "daily_volume_dry",
-  "diamond_pct": 82.0,
-  "real_holders": 2273,
-  "dust_holders": 99
+  "diamond_pct": 84.0,
+  "real_holders": 2246,
+  "dust_holders": 102,
+  "priority_dry_vol_date": "2026-08-10",
+  "priority_dry_volume_sol": 499.03737209,
+  "priority_dry_hourly_sol": 20.79322384
  },
  "A6mrpBeeNKm743fiNg8Mrz7pj7uGML5rgDjWo4nrpump": {
   "symbol": "hwg",
@@ -18,9 +21,9 @@
   "added": "2026-08-06",
   "source": "hrhr",
   "avg_cost": -57.70048554769072,
-  "diamond_pct": 92.0,
-  "real_holders": 1770,
-  "dust_holders": 98
+  "diamond_pct": 86.0,
+  "real_holders": 1752,
+  "dust_holders": 102
  },
  "FVZhiS1uXdxpVMyGZTS22fz3caHUxxxXPkHPG21Zpump": {
   "symbol": "FROGE",
@@ -31,9 +34,12 @@
   "priority": true,
   "priority_since": "2026-08-10",
   "priority_reason": "daily_volume_dry",
-  "diamond_pct": 82.0,
-  "real_holders": 975,
-  "dust_holders": 90
+  "diamond_pct": 84.0,
+  "real_holders": 938,
+  "dust_holders": 93,
+  "priority_dry_vol_date": "2026-08-10",
+  "priority_dry_volume_sol": 564.07476052,
+  "priority_dry_hourly_sol": 23.50311502
  },
  "73DRYB2YpoHiZUdq37hQmHTR7Yvg5qJKsxxaYrsJSBCJ": {
   "symbol": "CHEEMS",
@@ -43,36 +49,51 @@
   "priority": true,
   "priority_since": "2026-08-10",
   "priority_reason": "daily_volume_dry",
-  "diamond_pct": 76.0,
-  "real_holders": 1257,
-  "dust_holders": 164
+  "diamond_pct": 72.0,
+  "real_holders": 1258,
+  "dust_holders": 169,
+  "priority_dry_vol_date": "2026-08-10",
+  "priority_dry_volume_sol": 1042.45200381,
+  "priority_dry_hourly_sol": 43.43550016
  },
  "8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump": {
   "symbol": "SISYPUSS",
   "note": "",
   "added": "2026-08-10",
   "source": "manual",
-  "diamond_pct": 100.0,
-  "real_holders": 1357,
-  "dust_holders": 142
+  "diamond_pct": 85.0,
+  "real_holders": 1336,
+  "dust_holders": 143,
+  "priority_dry_vol_date": "2026-08-11",
+  "priority_dry_volume_sol": 20.03668879,
+  "priority_dry_hourly_sol": 0.83486203,
+  "priority": true,
+  "priority_since": "2026-08-11",
+  "priority_reason": "daily_volume_dry"
  },
  "DTiLUGhzmtP3wZC6tXRXtxYPUxztvnQMxAW54ZtKpump": {
   "symbol": "CALLCAT",
   "note": "",
   "added": "2026-08-10",
   "source": "manual",
-  "diamond_pct": 92.0,
-  "real_holders": 1674,
-  "dust_holders": 157
+  "diamond_pct": 93.0,
+  "real_holders": 1671,
+  "dust_holders": 158
  },
  "AA3VLt3muGJiXedDaMnkcst3pfjrg1JBxgHVSdSbpump": {
   "symbol": "TINYTANK",
   "note": "",
   "added": "2026-08-10",
   "source": "hrhr",
-  "diamond_pct": 91.0,
-  "real_holders": 2859,
-  "dust_holders": 200
+  "diamond_pct": 80.0,
+  "real_holders": 2839,
+  "dust_holders": 200,
+  "priority_dry_vol_date": "2026-08-11",
+  "priority_dry_volume_sol": 77.44392457,
+  "priority_dry_hourly_sol": 3.22683019,
+  "priority": true,
+  "priority_since": "2026-08-11",
+  "priority_reason": "daily_volume_dry"
  },
  "46amR3aeQE7MJ9QDrgNRqBP3FcsJ9QNYV71L2vVSpump": {
   "symbol": "claudius",
@@ -88,17 +109,23 @@
   "note": "",
   "added": "2026-08-10",
   "source": "trending",
-  "diamond_pct": 91.0,
-  "real_holders": 1185,
-  "dust_holders": 85
+  "diamond_pct": 82.0,
+  "real_holders": 1120,
+  "dust_holders": 89
  },
  "EnA53NmMzfsAs7p44dATdvT55HHUACxpEbC9AKY3pump": {
   "symbol": "HTZ",
   "note": "",
   "added": "2026-08-10",
   "source": "manual",
-  "diamond_pct": 89.0,
-  "real_holders": 1769,
-  "dust_holders": 83
+  "diamond_pct": 81.0,
+  "real_holders": 1685,
+  "dust_holders": 102,
+  "priority_dry_vol_date": "2026-08-11",
+  "priority_dry_volume_sol": 32.97761014,
+  "priority_dry_hourly_sol": 1.37406709,
+  "priority": true,
+  "priority_since": "2026-08-11",
+  "priority_reason": "daily_volume_dry"
  }
 }
