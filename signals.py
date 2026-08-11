@@ -101,9 +101,17 @@ def record_daily_cvd(ca, symbol, rows, *, now_ts=None, price=None):
     sig = {"ts": now_ts, "ca": ca, "symbol": symbol, "type": "cvd_daily",
            "src": "gmgn_extension_model", "daily": True,
            "date": latest.get("date"), "status": latest.get("status"),
-           "detail": latest, "price": price}
+           "detail": latest, "price": price, "complete_day": True}
+    if not latest.get("date"):
+        # No complete UTC day yet — nothing trustworthy to record.
+        return latest
     items = load_signals()
-    if latest.get("date") and not any(x.get("ca") == ca and x.get("type") == "cvd_daily" and x.get("date") == latest["date"] for x in items[-500:]):
+    # Only a previously recorded *complete* day blocks re-recording. Legacy
+    # partial records (written before this flag existed) must not stop the
+    # same date from being recorded again with full-day data.
+    if not any(x.get("ca") == ca and x.get("type") == "cvd_daily"
+               and x.get("date") == latest["date"] and x.get("complete_day")
+               for x in items[-500:]):
         items.append(sig)
         save_signals(items)
     try:
@@ -126,7 +134,8 @@ def queue_daily_cvd_message(ca, symbol, rows, *, price=None):
     text = (f"{icon} <b>DAILY CVD · {symbol}</b>\n"
             f"<code>{ca}</code>\n\n"
             f"<b>{latest.get('status', 'NORMAL')}</b>\n"
-            f"📅 {latest.get('date', '-')}  ·  🔁 {latest.get('total_tx', 0):,} TX\n"
+            f"📅 {latest.get('date', '-')} (hari UTC penuh)  ·  "
+            f"🔁 {latest.get('total_tx', 0):,} TX\n"
             f"💧 Volume <b>{latest.get('volume_sol', 0):,.2f} SOL</b> ({change_text} vs H-1)\n"
             f"⚖️ CVD <b>{latest.get('delta_sol', 0):+,.2f} SOL</b> · ratio {latest.get('cvd_ratio_pct', 0):+.1f}%\n"
             f"🟢 Buy {latest.get('buy_tx', 0):,} · 🔴 Sell {latest.get('sell_tx', 0):,}\n\n"

@@ -26,7 +26,8 @@ from cvd import (
 from signals import (begin_digest, flush_telegram_digest, record_daily_cvd,
                      queue_daily_cvd_message)
 from watchlist import load_watchlist, save_watchlist
-from cvd_daily import calculate_daily_cvd, latest_dry_signal
+from cvd_daily import (calculate_daily_cvd, complete_daily_rows,
+                       latest_dry_signal)
 
 try:
     from core import (get_helius_keys, get_holders, get_market,
@@ -204,11 +205,15 @@ def main():
             # --- Daily CVD (the extension's day-by-day calculation) ---
             daily_swaps = get_recent_swaps(ca, hours=72)
             daily_rows = calculate_daily_cvd(daily_swaps)
-            record_daily_cvd(ca, meta.get("symbol", "?"), daily_rows,
+            # This job runs at 00:00 UTC (07:00 WIB) and often slips to
+            # 01:xx UTC, so the newest row is a still-running day with ~1
+            # hour of swaps. Report only days that are already complete.
+            complete_rows = complete_daily_rows(daily_rows)
+            record_daily_cvd(ca, meta.get("symbol", "?"), complete_rows,
                              price=price_now)
-            queue_daily_cvd_message(ca, meta.get("symbol", "?"), daily_rows,
+            queue_daily_cvd_message(ca, meta.get("symbol", "?"), complete_rows,
                                     price=price_now)
-            dry = latest_dry_signal(daily_rows)
+            dry = latest_dry_signal(complete_rows)
             if dry and meta.get("priority_dry_vol_date") != dry.get("date"):
                 # Simpan baseline volume kering (per jam) — scanner 15 menit
                 # memakainya sebagai pembanding lonjakan volume pada deteksi
@@ -225,7 +230,8 @@ def main():
                 meta["priority_since"] = dry.get("date")
                 meta["priority_reason"] = "daily_volume_dry"
                 wl_changed = True
-            conv_txt = f" daily:{daily_rows[-1].get('status', '?')}" if daily_rows else ""
+            conv_txt = (f" daily:{complete_rows[-1].get('status', '?')}"
+                        if complete_rows else " daily:skip(no full UTC day)")
 
             # --- Holder snapshot + real/dust history (Helius / GMGN) ---
             snap_txt = _try_snapshot(api_keys, ca, meta,

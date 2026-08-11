@@ -2,8 +2,8 @@
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from cvd_daily import (calculate_daily_cvd, first_buy_surge,
-                       latest_dry_signal)
+from cvd_daily import (calculate_daily_cvd, complete_daily_rows,
+                       first_buy_surge, latest_dry_signal)
 
 
 def test_daily_accounting_and_dry_status():
@@ -21,6 +21,43 @@ def test_daily_accounting_and_dry_status():
     assert out[1]["volume_change_pct"] == -86.25
     assert out[1]["status"].startswith("KERING")
     assert latest_dry_signal(out) is out[1]
+
+
+def test_complete_daily_rows_drops_running_utc_day():
+    """Digest 07:00 WIB = 00:00 UTC — hari ini baru berjalan ~1 jam."""
+    # 2026-08-10 penuh, lalu 2026-08-11 baru 1 jam (digest jalan 01:07 UTC).
+    day_full = 1_786_320_000          # 2026-08-10 00:00 UTC
+    now_ts = day_full + 86400 + 4020  # 2026-08-11 01:07 UTC
+    rows = [("buy", 10, day_full + i * 600, f"a{i}") for i in range(10)]
+    rows += [("sell", 9, day_full + i * 600 + 60, f"b{i}") for i in range(10)]
+    rows += [("buy", 0.13, now_ts - 600 - i * 60, f"c{i}") for i in range(3)]
+    daily = calculate_daily_cvd(rows)
+    assert [r["date"] for r in daily] == ["2026-08-10", "2026-08-11"]
+    # Baris parsial (3 TX / 0.39 SOL) memalsukan status & volume_change.
+    assert daily[-1]["total_tx"] == 3
+
+    out = complete_daily_rows(daily, now_ts=now_ts)
+    assert [r["date"] for r in out] == ["2026-08-10"]
+    assert out[-1] is daily[0]
+    # Status harian kini dari hari penuh, bukan potongan 1 jam.
+    assert out[-1]["total_tx"] == 20
+
+
+def test_complete_daily_rows_only_today_is_empty_until_day_ends():
+    day_today = 1_786_406_400  # 2026-08-11 00:00 UTC
+    now_ts = day_today + 4020  # 01:07 UTC, hari masih berjalan
+    rows = [("buy", 0.13, now_ts - 600 - i * 60, f"c{i}") for i in range(3)]
+    daily = calculate_daily_cvd(rows)
+    assert [r["date"] for r in daily] == ["2026-08-11"]
+
+    # Hanya ada hari ini -> tidak ada status harian yang valid.
+    assert complete_daily_rows(daily, now_ts=now_ts) == []
+    assert latest_dry_signal(complete_daily_rows(daily, now_ts=now_ts)) is None
+
+    # Setelah pergantian hari UTC, baris yang sama menjadi valid.
+    next_day = day_today + 86400 + 4020  # 2026-08-12 01:07 UTC
+    out = complete_daily_rows(daily, now_ts=next_day)
+    assert [r["date"] for r in out] == ["2026-08-11"]
 
 
 T0 = 1_700_000_000
@@ -113,6 +150,8 @@ def test_first_buy_surge_unknown_baseline_uses_floor():
 
 if __name__ == "__main__":
     test_daily_accounting_and_dry_status()
+    test_complete_daily_rows_drops_running_utc_day()
+    test_complete_daily_rows_only_today_is_empty_until_day_ends()
     test_first_buy_surge_triggers_on_valid_markup_start()
     test_first_buy_surge_rejects_small_volume_surge()
     test_first_buy_surge_rejects_low_buy_ratio()
