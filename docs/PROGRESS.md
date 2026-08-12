@@ -7,6 +7,50 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-12 — Watchlist main app: angka 15m tidak sinkron
+
+### Masalah
+Tabel watchlist di `app.py` hanya membaca sinyal **trigger** di
+`signals.json`. Cron tidak menulis apa-apa saat NORMAL / Grade C →
+LUNA / FROGE / CHEEMS / CALLCAT tampil `—`. SISYPUSS masih badge
+absorption 4 jam (data mock 12.3 / −1.96). Diamond/Real-Dust membeku
+di meta add-day karena live fetch hanya jalan jika nilainya `None`.
+
+### Yang berubah
+- Cron menulis snapshot `wyckoff_ts/type/score/volume_sol/cvd_sol/lock`
+  ke `watchlist.json` setiap siklus (tanpa GitHub push; workflow commit).
+- `resolve_wyckoff_row` + `meta_details_stale` di `watchlist.py`.
+- UI: snapshot > sinyal; trigger >3 jam → NORMAL; kolom Update `stale`
+  bila >45 menit; Diamond/Real-Dust live-refresh jika meta >12 jam.
+- `signals.load_signals` pakai salinan `main` jika lebih baru.
+
+### Verifikasi
+`python tests/test_watchlist.py` (case 6) + `test_cron_top_holders.py`.
+
+---
+
+## 2026-08-12 — Alert Telegram: $TICKER + urutan candle 3-baris
+
+### Masalah
+SOS IGNITION `$HWG` tidak menampilkan simbol token. Baris
+`C1: 0.00S ➔ C2: 1.80S (0.0%)` sulit dibaca: `S` = SOL, `0.00` = candle
+15m tanpa trade, dan `(0.0%)` palsu karena C1 kosong (bukan dry-up).
+
+### Yang berubah
+`format_signal_message` / `format_grade_a_message` di
+`scripts/prepump_wyckoff_cron.py`:
+- `$TICKER` di bawah judul (`ticker_label`, uppercase ASCII)
+- Mint di `<code>` (tap-to-copy Telegram)
+- C1/C2/C3 masing-masing satu baris + jendela waktu
+- Volume 0 → `0.00 SOL — sepi (tidak ada trade)`; drop% hanya jika C1 > 0
+- Smart buyers satu wallet per baris
+
+### Verifikasi
+`python tests/test_cron_top_holders.py` — termasuk
+`test_ticker_and_empty_c1_label` dan `test_sos_message_includes_symbol`.
+
+---
+
 ## 2026-08-12 — Continuous Open (prev close) + anti false-green
 
 ### Masalah

@@ -291,12 +291,78 @@ def test_cache_ttl():
         restore()
 
 
+def test_update_local_meta_and_resolve_row():
+    print("\n[6] 15m snapshot + stale/expired signal resolution")
+    state, restore = make_harness()
+    try:
+        ca = "CA_SNAP"
+        wlmod.atomic_write_json(wlmod.WATCHLIST_PATH, {
+            ca: {"symbol": "hwg", "diamond_pct": 87.0,
+                 "real_holders": 1749, "dust_holders": 103},
+        }, indent=1)
+        now = 1_700_000_000
+        saved = wlmod.update_local_meta(ca, {
+            "wyckoff_ts": now,
+            "wyckoff_type": "🚀 SOS IGNITION BREAKOUT",
+            "wyckoff_score": 93.0,
+            "wyckoff_volume_sol": 8.62,
+            "wyckoff_cvd_sol": 8.08,
+            "wyckoff_lock_pct": 100.0,
+            "holder_lock_pct": 100.0,
+        })
+        check(saved is not None and saved["symbol"] == "hwg",
+              "snapshot keeps existing symbol")
+        check(saved["wyckoff_score"] == 93.0, "snapshot stores score")
+        on_disk = json.load(open(wlmod.WATCHLIST_PATH, encoding="utf-8"))
+        check(on_disk[ca]["wyckoff_type"].startswith("🚀"),
+              "local watchlist.json received the snapshot")
+        check(state["put_calls"] == 0,
+              "update_local_meta does not GitHub-push")
+
+        row = wlmod.resolve_wyckoff_row(on_disk[ca], None, now_ts=now)
+        check(row["source"] == "snapshot", "fresh snapshot is preferred")
+        check(row["raw_type"].startswith("🚀"), "SOS badge stays while fresh")
+        check(row["stale"] is False, "snapshot age 0 is not stale")
+
+        old_sig = {
+            "ts": now - 4 * 3600,
+            "type": "🟢 ABSORPTION DIVERGENCE (WYCKOFF SPRING)",
+            "score": 95.0,
+            "volume_sol": 12.3,
+            "cvd_sol": -1.96,
+            "holder_lock_pct": 100.0,
+        }
+        expired = wlmod.resolve_wyckoff_row({}, old_sig, now_ts=now)
+        check(expired["source"] == "signal", "falls back to signals.json")
+        check(expired["raw_type"] == "",
+              "trigger older than 3h expires to NORMAL")
+        check(expired["stale"] is True, "4h-old signal is marked stale")
+        check(expired["vol_sol"] == 12.3, "last vol is still shown")
+
+        grade_c = dict(on_disk[ca])
+        grade_c["wyckoff_type"] = "⚪ GRADE C: ROUTINE NOISE"
+        quiet = wlmod.resolve_wyckoff_row(grade_c, None, now_ts=now)
+        check(quiet["raw_type"] == "", "Grade C is shown as NORMAL")
+        check(quiet["score"] == 93.0, "Grade C still exposes the score")
+
+        check(wlmod.meta_details_stale({"diamond_pct": 87}, now_ts=now) is True,
+              "missing details_ts is stale")
+        check(wlmod.meta_details_stale({"details_ts": now}, now_ts=now) is False,
+              "fresh details_ts is not stale")
+        check(wlmod.meta_details_stale(
+            {"details_ts": now - 13 * 3600}, now_ts=now) is True,
+              "details older than 12h are stale")
+    finally:
+        restore()
+
+
 if __name__ == "__main__":
     test_push_retry_success()
     test_concurrent_no_overwrite()
     test_pending_not_cleared_on_fail()
     test_double_push_eliminated()
     test_cache_ttl()
+    test_update_local_meta_and_resolve_row()
     print(f"\n{'FAILED: ' + str(len(failures)) if failures else 'ALL PASSED'}")
     for f in failures:
         print("  -", f)

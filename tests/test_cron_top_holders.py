@@ -35,8 +35,12 @@ from scripts.prepump_wyckoff_cron import (
     extract_holder_rows,
     extract_trade_rows,
     find_smart_buyers,
+    format_candle_block,
     format_grade_a_message,
+    format_signal_message,
+    format_vol_sol,
     is_c2_volume_dry,
+    ticker_label,
     is_c3_spring_divergence,
     parse_gmgn_trade,
     process_trades_to_15m_bins,
@@ -360,7 +364,9 @@ def test_grade_a_golden_spring_pipeline():
     check(len(res["smart_buyers"]) >= 1, "mock has a smart buyer")
     msg = res["msg"]
     check(SIGNAL_GRADE_A in msg, "message title is Grade A golden spring")
+    check("$SISYPUSS" in msg, "message shows the token ticker")
     check("Urutan Candle" in msg, "message includes the 3-candle sequence")
+    check("30-45m lalu" in msg, "C1 is labeled with its time window")
     check("Smart Buyers" in msg, "message lists smart buyers")
     check("https://gmgn.ai/sol/token/8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump"
           in msg, "message includes the GMGN link")
@@ -601,13 +607,70 @@ def test_grade_a_message_format():
         98, 0.00004398, 22.51, 12.30, -1.96, 100.0,
         10.0, 2.1, 12.30, 79.0,
         [{"short": "Rank...xxxx", "tags": ["top_holder"], "sol": 5.0}],
+        symbol="SISYPUSS",
     )
-    check(msg.splitlines()[0] == SIGNAL_GRADE_A, "first line is the Grade A title")
+    check(msg.splitlines()[0] == SIGNAL_GRADE_A,
+          "first line is the Grade A title")
+    check("🪙 $SISYPUSS" in msg, "ticker sits under the title")
     check("🎯 Skor Pre-Pump : 98 / 100" in msg, "score line matches the spec")
-    check("📝 Urutan Candle : C1: 10.00S ➔ C2 (Kering): 2.10S (79.0%) ➔ "
-          "C3 (Spring): 12.30S" in msg, "candle sequence line matches the spec")
-    check("👤 Smart Buyers  : Rank...xxxx (top_holder, 5.00 SOL)" in msg,
-          "smart-buyer line matches the spec")
+    check("<code>8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump</code>" in msg,
+          "mint is wrapped in copyable <code>")
+    check("C1 · 30-45m lalu : 10.00 SOL" in msg, "C1 shows SOL not S")
+    check("C2 (Kering) · 15-30m lalu : 2.10 SOL  · turun 79.0% vs C1"
+          in msg, "C2 dry drop is labeled vs C1")
+    check("C3 (Spring) · sekarang    : 12.30 SOL" in msg,
+          "C3 spring volume is on its own line")
+    check("• Rank...xxxx — top_holder · 5.00 SOL" in msg,
+          "smart-buyer is one wallet per line")
+    check("0.00S" not in msg, "legacy 0.00S shorthand is gone")
+
+
+def test_ticker_and_empty_c1_label():
+    check(ticker_label("hwg") == "$HWG", "ascii ticker is uppercased")
+    check(ticker_label("$hwg") == "$HWG", "leading $ is not doubled")
+    check(ticker_label("?") == "", "unknown ticker is omitted")
+    check(ticker_label("") == "", "empty ticker is omitted")
+    check(format_vol_sol(0) == "0.00 SOL — sepi (tidak ada trade)",
+          "zero volume is labeled sepi, not 0.00S")
+    check(format_vol_sol(8.62) == "8.62 SOL", "positive volume stays numeric")
+    block = format_candle_block(0.0, 1.80, 8.62, 0.0)
+    check("C1 · 30-45m lalu : 0.00 SOL — sepi (tidak ada trade)" in block,
+          "empty C1 explains there were no trades")
+    check("turun" not in block,
+          "drop % is hidden when C1 has no baseline volume")
+    check("0.00S" not in block, "S-suffix volume is not used")
+
+
+def test_sos_message_includes_symbol():
+    msg = format_signal_message(
+        wd.SIGNAL_SOS,
+        "A6mrpBeeNKm743fiNg8Mrz7pj7uGML5rgDjWo4nrpump",
+        93, 0.00003403, 14.29, 8.62, 8.08, 100.0,
+        0.0, 1.80, 8.62, 0.0,
+        [
+            {"short": "GrgB...PjDy", "tags": ["bluechip_owner"],
+             "sol": 4.46},
+            {"short": "FtZ9...yGDC",
+             "tags": ["fresh_wallet", "top_holder"], "sol": 3.20},
+        ],
+        extra_lines=[
+            "📝 Indikator : SOS 3.2x · Buy TX 66.7% · CVD +8.08 SOL"
+        ],
+        symbol="hwg",
+    )
+    check(msg.splitlines()[0] == wd.SIGNAL_SOS, "SOS title is first")
+    check("🪙 $HWG" in msg, "SOS alert shows $HWG")
+    check("sepi (tidak ada trade)" in msg,
+          "C1 0.00 SOL is explained as empty")
+    check("(0.0%)" not in msg, "meaningless 0.0% drop is not shown")
+    check("• GrgB...PjDy — bluechip_owner · 4.46 SOL" in msg,
+          "first smart buyer is on its own line")
+    check("• FtZ9...yGDC — fresh_wallet, top_holder · 3.20 SOL" in msg,
+          "tags are comma-spaced")
+    check("📝 Indikator : SOS 3.2x" in msg, "SOS indikator line is kept")
+    gmgn = ("https://gmgn.ai/sol/token/"
+            "A6mrpBeeNKm743fiNg8Mrz7pj7uGML5rgDjWo4nrpump")
+    check(gmgn in msg, "GMGN link is present")
 
 
 if __name__ == "__main__":
@@ -645,6 +708,10 @@ if __name__ == "__main__":
     test_quote_amount_sanitizer()
     print("=== test_grade_a_message_format ===")
     test_grade_a_message_format()
+    print("=== test_ticker_and_empty_c1_label ===")
+    test_ticker_and_empty_c1_label()
+    print("=== test_sos_message_includes_symbol ===")
+    test_sos_message_includes_symbol()
 
     if failures:
         print(f"\nFAILED ({len(failures)} failures)")

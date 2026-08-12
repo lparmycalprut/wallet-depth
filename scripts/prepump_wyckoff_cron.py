@@ -18,7 +18,7 @@ import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from watchlist import load_watchlist
+from watchlist import load_watchlist, update_local_meta
 from core import atomic_write_json
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -769,12 +769,47 @@ def compute_holder_lock_pct(holders):
 # ---------------------------------------------------------------------------
 # Notifications
 # ---------------------------------------------------------------------------
+def _html_esc(text):
+    return (str(text or "")
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;"))
+
+
+def ticker_label(symbol):
+    """Return $TICKER, or empty string when the symbol is unknown."""
+    raw = str(symbol or "").strip()
+    if raw.startswith("$"):
+        raw = raw[1:].strip()
+    if not raw or raw in ("?", "-", "—", "unknown", "None"):
+        return ""
+    if raw.isascii() and raw.replace("_", "").isalnum():
+        raw = raw.upper()
+    return f"${raw}"
+
+
+def format_usd_price(price):
+    px = _as_float(price, 0.0)
+    if px <= 0:
+        return "$0"
+    return f"${px:.8f}".rstrip("0").rstrip(".")
+
+
+def format_vol_sol(vol):
+    """Human volume: ``12.30 SOL`` or an explicit empty-candle label."""
+    vol = _as_float(vol, 0.0)
+    if vol <= 0:
+        return "0.00 SOL — sepi (tidak ada trade)"
+    return f"{vol:.2f} SOL"
+
+
 def format_smart_buyers_line(smart_buyers):
+    """One-line fallback (kept for callers / older tests)."""
     if not smart_buyers:
         return "—"
     parts = []
     for buyer in smart_buyers[:4]:
-        tags = ",".join(buyer.get("tags") or []) or "top_holder"
+        tags = ", ".join(buyer.get("tags") or []) or "top_holder"
         parts.append(
             f"{buyer.get('short') or short_wallet(buyer.get('address'))} "
             f"({tags}, {float(buyer.get('sol') or 0):.2f} SOL)"
@@ -786,48 +821,86 @@ def format_smart_buyers_line(smart_buyers):
     return line
 
 
+def format_smart_buyers_block(smart_buyers):
+    """One wallet per line so the alert is scannable on mobile."""
+    if not smart_buyers:
+        return "👤 Smart Buyers : —"
+    lines = ["👤 Smart Buyers :"]
+    for buyer in smart_buyers[:4]:
+        tags = ", ".join(buyer.get("tags") or []) or "top_holder"
+        short = buyer.get("short") or short_wallet(buyer.get("address"))
+        sol = float(buyer.get("sol") or 0)
+        lines.append(f"   • {short} — {tags} · {sol:.2f} SOL")
+    extra = len(smart_buyers) - 4
+    if extra > 0:
+        lines.append(f"   • +{extra} more")
+    return "\n".join(lines)
+
+
+def format_candle_block(vol_c1, vol_c2, vol_c3, drop_pct,
+                        c2_tag="", c3_tag=""):
+    """3-line C1/C2/C3 volume. Empty C1 is labeled, not ``0.00S``."""
+    c2_head = f"C2 ({c2_tag})" if c2_tag else "C2"
+    c3_head = f"C3 ({c3_tag})" if c3_tag else "C3"
+    drop_bit = ""
+    if _as_float(vol_c1, 0.0) > 0:
+        drop_bit = f"  · turun {drop_pct:.1f}% vs C1"
+    return (
+        "📝 Urutan Candle (volume 15m):\n"
+        f"   C1 · 30-45m lalu : {format_vol_sol(vol_c1)}\n"
+        f"   {c2_head} · 15-30m lalu : {format_vol_sol(vol_c2)}"
+        f"{drop_bit}\n"
+        f"   {c3_head} · sekarang    : {format_vol_sol(vol_c3)}"
+    )
+
+
 def format_grade_a_message(ca, score, price, change_pct, vol_sol, cvd_sol,
                            lock_pct, vol_c1, vol_c2, vol_c3, drop_pct,
-                           smart_buyers):
-    price_sign = "+" if change_pct >= 0 else ""
-    cvd_note = "Net Sells Terserap!" if cvd_sol <= 0 else "Net Buys Dominan!"
-    return (
-        f"{SIGNAL_GRADE_A}\n"
-        f"🎯 Skor Pre-Pump : {score:.0f} / 100\n"
-        f"🪙 Mint          : {ca}\n"
-        f"💵 Harga         : ${price:.8f} ({price_sign}{change_pct:.2f}%)\n"
-        f"📊 15m Vol / CVD : {vol_sol:.2f} SOL | {cvd_sol:+.2f} SOL ({cvd_note})\n"
-        f"🔒 Top 100 Lock  : {lock_pct:.1f}% Pure Accumulators\n"
-        f"📝 Urutan Candle : C1: {vol_c1:.2f}S ➔ C2 (Kering): {vol_c2:.2f}S "
-        f"({drop_pct:.1f}%) ➔ C3 (Spring): {vol_c3:.2f}S\n"
-        f"👤 Smart Buyers  : {format_smart_buyers_line(smart_buyers)}\n"
-        f"🔗 Buka GMGN: https://gmgn.ai/sol/token/{ca}"
-    )
+                           smart_buyers, symbol="?"):
+    return format_signal_message(
+        SIGNAL_GRADE_A, ca, score, price, change_pct, vol_sol, cvd_sol,
+        lock_pct, vol_c1, vol_c2, vol_c3, drop_pct, smart_buyers,
+        extra_lines=None, warn_line="", symbol=symbol,
+        c2_tag="Kering", c3_tag="Spring")
 
 
 def format_signal_message(badge_title, ca, score, price, change_pct,
                           vol_sol, cvd_sol, lock_pct, vol_c1, vol_c2, vol_c3,
                           drop_pct, smart_buyers, extra_lines=None,
-                          warn_line=""):
+                          warn_line="", symbol="?", c2_tag="", c3_tag=""):
     price_sign = "+" if change_pct >= 0 else ""
-    cvd_note = "Net Sells Terserap!" if cvd_sol <= 0 else "Net Buys Dominan!"
+    cvd_note = ("Net Sells Terserap!" if cvd_sol <= 0
+                else "Net Buys Dominan!")
+    ticker = ticker_label(symbol)
+    title = badge_title
+    if ticker:
+        title = f"{badge_title}\n🪙 {ticker}"
     extras = ""
     if extra_lines:
-        extras = "\n".join(extra_lines) + "\n"
-    warn = f"\n{warn_line}\n" if warn_line else ""
+        extras = "\n\n" + "\n".join(extra_lines)
+    warn = f"\n\n{warn_line}" if warn_line else ""
+    candle = format_candle_block(
+        vol_c1, vol_c2, vol_c3, drop_pct, c2_tag=c2_tag, c3_tag=c3_tag)
+    buyers = format_smart_buyers_block(smart_buyers)
+    ca_esc = _html_esc(ca)
     return (
-        f"{badge_title}\n"
+        f"{title}\n"
+        f"\n"
         f"🎯 Skor Pre-Pump : {score:.0f} / 100\n"
-        f"🪙 Mint          : {ca}\n"
-        f"💵 Harga         : ${price:.8f} ({price_sign}{change_pct:.2f}%)\n"
-        f"📊 15m Vol / CVD : {vol_sol:.2f} SOL | {cvd_sol:+.2f} SOL ({cvd_note})\n"
+        f"🧾 Mint          : <code>{ca_esc}</code>\n"
+        f"💵 Harga         : {format_usd_price(price)} "
+        f"({price_sign}{change_pct:.2f}%)\n"
+        f"📊 15m Vol / CVD : {vol_sol:.2f} SOL | {cvd_sol:+.2f} SOL\n"
+        f"   {cvd_note}\n"
         f"🔒 Top 100 Lock  : {lock_pct:.1f}% Pure Accumulators\n"
-        f"📝 Urutan Candle : C1: {vol_c1:.2f}S ➔ C2: {vol_c2:.2f}S "
-        f"({drop_pct:.1f}%) ➔ C3: {vol_c3:.2f}S\n"
-        f"👤 Smart Buyers  : {format_smart_buyers_line(smart_buyers)}\n"
+        f"\n"
+        f"{candle}\n"
+        f"\n"
+        f"{buyers}"
         f"{extras}"
-        f"{warn}"
-        f"🔗 Buka GMGN: https://gmgn.ai/sol/token/{ca}"
+        f"{warn}\n"
+        f"\n"
+        f"🔗 GMGN : https://gmgn.ai/sol/token/{ca}"
     )
 
 
@@ -1056,7 +1129,7 @@ def run_pipeline_for_ca(ca, symbol, now_ts, mock_mode=False):
             f"dan lock {lock_pct:.1f}% < 50%"
         )
         extra_lines.append(
-            f"📝 Indikator     : Exit Liquidity — jangan beli "
+            f"📝 Indikator : Exit Liquidity — jangan beli "
             f"(CVD {cvd_sol:+.2f} SOL, lock {lock_pct:.1f}%)"
         )
         warn_line = (
@@ -1080,7 +1153,7 @@ def run_pipeline_for_ca(ca, symbol, now_ts, mock_mode=False):
             f"Kenaikan {change_pct:+.1f}%"
         )
         extra_lines.append(
-            f"📝 Indikator     : SOS {vol_ratio:.1f}x · "
+            f"📝 Indikator : SOS {vol_ratio:.1f}x · "
             f"Buy TX {buy_tx_ratio * 100:.1f}% · CVD {cvd_sol:+.2f} SOL"
         )
     elif grade == "A":
@@ -1099,7 +1172,7 @@ def run_pipeline_for_ca(ca, symbol, now_ts, mock_mode=False):
             f"{change_pct:+.1f}% — HATI-HATI"
         )
         extra_lines.append(
-            f"📝 Indikator     : ⚠️ CVD plus tp candle merah — "
+            f"📝 Indikator : ⚠️ CVD plus tp candle merah — "
             f"buyer diserap seller"
         )
         warn_line = (
@@ -1136,16 +1209,19 @@ def run_pipeline_for_ca(ca, symbol, now_ts, mock_mode=False):
         print(f"Signal Detected: {signal_type} (grade={grade}, muted={muted})")
 
     current_price = c3["close_price"] if c3["close_price"] > 0 else 0.0
+    c2_tag = "Kering" if grade_info.get("c2_dry") else ""
+    c3_tag = "Spring" if grade_info.get("c3_spring") else ""
     if grade == "A":
         msg = format_grade_a_message(
             ca, score, current_price, change_pct, vol_c3, cvd_sol, lock_pct,
-            vol_c1, vol_c2, vol_c3, drop_pct, smart_buyers)
+            vol_c1, vol_c2, vol_c3, drop_pct, smart_buyers, symbol=symbol)
     else:
         badge = signal_type if signal_type else "➖ NEUTRAL"
         msg = format_signal_message(
             badge, ca, score, current_price, change_pct, vol_c3, cvd_sol,
             lock_pct, vol_c1, vol_c2, vol_c3, drop_pct, smart_buyers,
-            extra_lines=extra_lines, warn_line=warn_line)
+            extra_lines=extra_lines, warn_line=warn_line, symbol=symbol,
+            c2_tag=c2_tag, c3_tag=c3_tag)
 
     # Grade A always notifies. Grade B score is 80 so it notifies.
     # SOS / trap / bearish notify. Grade C is muted.
@@ -1197,6 +1273,24 @@ def run_pipeline_for_ca(ca, symbol, now_ts, mock_mode=False):
             },
         }
         save_signal_to_history(sig_data)
+
+    if not mock_mode:
+        try:
+            update_local_meta(ca, {
+                "symbol": symbol,
+                "holder_lock_pct": lock_pct,
+                "wyckoff_ts": now_ts,
+                "wyckoff_type": signal_type or "➖ NORMAL",
+                "wyckoff_grade": grade if grade is not None else "",
+                "wyckoff_score": score,
+                "wyckoff_volume_sol": vol_c3,
+                "wyckoff_cvd_sol": cvd_sol,
+                "wyckoff_lock_pct": lock_pct,
+                "wyckoff_price_usd": current_price,
+                "wyckoff_muted": muted,
+            })
+        except Exception as exc:
+            print(f"Warning: failed to persist watchlist snapshot: {exc}")
 
     return {
         "ca": ca,
