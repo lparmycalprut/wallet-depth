@@ -225,3 +225,13 @@ pesan dinamis: `(Net Sells Terserap!)` / `(Net Buys Dominan!)`. `app.py`
 sudah mengenali tipe ini (badge merah). Test: `test_bearish_divergence` di
 `tests/test_cron_top_holders.py` (save sinyal di-patch no-op supaya
 `signals.json` tidak terpolusi).
+
+### 2026-08-12 — Alert Telegram: ticker + candle 3-baris
+
+Pesan Grade A / SOS / trap / bearish menampilkan `$TICKER` di bawah judul
+(dari `watchlist.symbol`, contoh `$HWG`). Urutan candle dipecah 3 baris
+(`C1 30-45m lalu` / `C2 15-30m lalu` / `C3 sekarang`) dengan satuan
+**SOL** — bukan `0.00S`. Volume 0 dilabeli `sepi (tidak ada trade)` dan
+persen drop vs C1 disembunyikan jika C1 kosong (bukan dry-up). Smart
+buyers satu wallet per baris. Mint di-wrap `<code>` supaya mudah di-copy
+di Telegram.
