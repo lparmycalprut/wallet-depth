@@ -28,8 +28,8 @@ from cvd_daily import (CHUNK_SEC, aggregate_chunks_to_daily,
                        upsert_4h_chunk)
 from prepump_detector import evaluate_prepump
 from signals import (begin_digest, flush_telegram_digest,
-                     queue_prepump_4pilar_message, record_daily_cvd,
-                     record_prepump_4pilar)
+                     maybe_queue_complete_prepump, queue_no_setup_message,
+                     record_daily_cvd, record_prepump_4pilar)
 from watchlist import load_watchlist, update_local_meta
 
 UTC = timezone.utc
@@ -139,9 +139,10 @@ def run_daily(watchlist, *, now=None, api_key=""):
     now = now or _now()
     now_ts = int(now.timestamp())
     yesterday = _yesterday(now)
-    print(f"Daily 4-pillar eval for UTC {yesterday}")
+    print(f"Daily Setup Emas eval for UTC {yesterday}")
     begin_digest()
     results = []
+    n_emas = 0
     for ca, meta in (watchlist or {}).items():
         symbol = _symbol(ca, meta)
         pool = _pool_for(ca, meta)
@@ -171,8 +172,9 @@ def run_daily(watchlist, *, now=None, api_key=""):
             history, daily_rows=complete, holder_lock_pct=lock,
             now_ts=now_ts, include_today=False)
         record_prepump_4pilar(ca, symbol, ev, now_ts=now_ts)
-        if ev.get("verdict") in ("PASS", "WATCH", "STEALTH DUMP"):
-            queue_prepump_4pilar_message(ca, symbol, ev)
+        # Telegram only when Setup Emas (7/7 daily checks) fired.
+        if maybe_queue_complete_prepump(ca, symbol, ev):
+            n_emas += 1
         metrics = ev.get("metrics") or {}
         try:
             update_local_meta(ca, {
@@ -182,7 +184,9 @@ def run_daily(watchlist, *, now=None, api_key=""):
                 "prepump_verdict": ev.get("verdict"),
                 "prepump_phase": ev.get("phase"),
                 "prepump_passed": ev.get("passed"),
-                "prepump_total": ev.get("total", 4),
+                "prepump_total": ev.get("total", 7),
+                "prepump_score": ev.get("score"),
+                "prepump_setup_emas": bool(ev.get("setup_emas")),
                 "prepump_stealth_dump": bool(ev.get("stealth_dump")),
                 "prepump_absorption_pct": metrics.get("absorption_pct"),
                 "prepump_buy_tx_pct": metrics.get("buy_tx_pct"),
@@ -199,8 +203,10 @@ def run_daily(watchlist, *, now=None, api_key=""):
               f"abs={metrics.get('absorption_pct')}% src={src}")
         results.append({"ca": ca, "symbol": symbol, "evaluation": ev,
                         "src": src})
+    if n_emas == 0:
+        queue_no_setup_message(yesterday, n_tokens=len(watchlist or {}))
     flush_telegram_digest(
-        title="🟢 <b>DAILY 4-PILAR PRE-PUMP — 07:00 WIB</b>")
+        title="🥇 <b>SETUP EMAS — 07:00 WIB</b>")
     return results
 
 

@@ -1,27 +1,19 @@
 # -*- coding: utf-8 -*-
-"""4-pillar Pre-Pump Wyckoff detector (multi-day, calibrated).
+"""Setup Emas detector — 7 daily-transaction checks across 3 pillars.
 
-Golden rules (calibrated 2026-08-12):
+Calibrated 2026-08-12 against Ansem / Punch / Assface (pass) and
+Callcat / Froge (stealth dump). Score points only at the golden
+accumulation setup; ignition (P4) is informational, not required.
 
-  P1  Flow & Compression
-      |daily net CVD / total volume| < 3.0%  → absorption at the floor
-  P2  Participation & Anti-Stealth-Distribution
-      Buy TX >= 52% AND avg SELL > avg BUY
-      STEALTH DUMP if avg BUY >= avg SELL AND buy TX < 52%
-      Whale (>1 SOL) net-seller absorbed at support is a plus
-  P3  Supply Test / LPS
-      Daily volume drop 40–85% vs H-1 (no new lower-low)
-      Top-100 supply lock (pure accumulators) >= 40%
-  P4  Ignition Trigger
-      First 15m/1h candle after the dry phase: buy >= 55%
-      and net delta SOL > 0, with volume expansion +100%…+14000%
+  P1  CVD Absorption          |CVD/Vol| < 3.0%
+  P1  Bullish Divergence      running CVD flat/up at the support test
+  P2  Buy TX Dominance        Buy TX >= 52%
+  P2  Order Size Discrepancy  Avg SELL > Avg BUY
+  P2  Whale Pressure Absorbed whale net < 0
+  P3  Volume Kering LPS       daily vol −40% … −75% vs H-1
+  P3  Retensi Akumulator      Top-100 lock >= 40%
 
-There is no 0–100 score. Each pillar is PASS / FAIL. Overall verdict:
-
-  STEALTH DUMP  — trap filter fired (Callcat / Froge pattern)
-  PASS          — all four pillars green (Ansem / Punch / Assface)
-  WATCH         — P1+P2 (+ optional P3 LPS) waiting for ignition
-  FAIL          — absorption or participation broken
+Verdict: STEALTH DUMP / SETUP EMAS (7/7) / WATCH (>=5/7) / FAIL.
 """
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -35,25 +27,40 @@ CVD_ABSORPTION_PCT = 3.0
 BUY_TX_MIN_PCT = 52.0
 WHALE_SOL = 1.0
 LPS_DROP_MIN_PCT = -40.0
-LPS_DROP_MAX_PCT = -85.0
+# Upper dry bound: user asked −40…−70; −75 keeps LUNA (−73) / Punch (−72).
+LPS_DROP_MAX_PCT = -75.0
 SUPPLY_LOCK_MIN_PCT = 40.0
+CVD_FLAT_TOL_SOL = 1.0
 IGNITION_BUY_PCT = 55.0
 IGNITION_VOL_MIN_PCT = 100.0
 IGNITION_VOL_MAX_PCT = 14000.0
 M15_SEC = 900
 H1_SEC = 3600
 
-VERDICT_PASS = "PASS"
+VERDICT_EMAS = "SETUP EMAS"
+VERDICT_PASS = VERDICT_EMAS  # compat alias
 VERDICT_WATCH = "WATCH"
 VERDICT_FAIL = "FAIL"
 VERDICT_STEALTH = "STEALTH DUMP"
 
 PHASE_ABSORPTION = "ABSORPTION"
 PHASE_LPS = "KERING / LPS"
+PHASE_EMAS = "SETUP EMAS"
 PHASE_IGNITION = "IGNITION"
 PHASE_STEALTH = "STEALTH DUMP"
 PHASE_DUMP = "DISTRIBUSI / DUMP"
 PHASE_NORMAL = "NORMAL"
+
+GOLDEN_TOTAL = 7
+GOLDEN_WEIGHTS = {
+    "p1_absorption": 18,
+    "p1_cvd_flat": 12,
+    "p2_buy_tx": 18,
+    "p2_order_size": 16,
+    "p2_whale": 10,
+    "p3_lps": 16,
+    "p3_lock": 10,
+}
 
 
 def _as_float(value, default=0.0):
@@ -73,6 +80,7 @@ def _empty_metrics():
         "sell_tx": 0,
         "total_tx": 0,
         "buy_tx_pct": 0.0,
+        "sell_tx_pct": 0.0,
         "buy_sol": 0.0,
         "sell_sol": 0.0,
         "volume_sol": 0.0,
@@ -120,6 +128,7 @@ def compute_window_metrics(swaps, *, whale_sol=WHALE_SOL):
     out["delta_sol"] = out["buy_sol"] - out["sell_sol"]
     if out["total_tx"]:
         out["buy_tx_pct"] = out["buy_tx"] / out["total_tx"] * 100.0
+        out["sell_tx_pct"] = out["sell_tx"] / out["total_tx"] * 100.0
     if out["buy_tx"]:
         out["avg_buy_sol"] = out["buy_sol"] / out["buy_tx"]
     if out["sell_tx"]:
@@ -164,27 +173,30 @@ def _pillar(name, passed, detail, **extra):
     return row
 
 
+def _cvd_is_flat(daily_rows, *, tol_sol=CVD_FLAT_TOL_SOL):
+    """True when running CVD is flat or rising (1 SOL noise = flat)."""
+    if not daily_rows or len(daily_rows) < 2:
+        return True
+    prev = _as_float(daily_rows[-2].get("running_cvd_sol"), 0.0)
+    last = _as_float(daily_rows[-1].get("running_cvd_sol"), prev)
+    return last >= prev - abs(_as_float(tol_sol, CVD_FLAT_TOL_SOL))
+
+
 def evaluate_pillar1_flow(metrics, daily_rows=None):
-    """P1 — |CVD / volume| < 3.0% plus a flat/rising CVD tape."""
+    """P1 — absorption < 3.0% AND CVD flat/up at the support test."""
     m = metrics or _empty_metrics()
     absorption = _as_float(m.get("absorption_pct"), 0.0)
     volume = _as_float(m.get("volume_sol"), 0.0)
     delta = _as_float(m.get("delta_sol"), 0.0)
     tight = volume > 0 and absorption < CVD_ABSORPTION_PCT
-    rising = True
-    if daily_rows and len(daily_rows) >= 2:
-        prev = _as_float(daily_rows[-2].get("running_cvd_sol"), 0.0)
-        last = _as_float(daily_rows[-1].get("running_cvd_sol"), prev)
-        # Flat or rising running CVD is bullish divergence vs a dry tape.
-        rising = last >= prev - 1e-9
-    passed = tight
+    rising = _cvd_is_flat(daily_rows)
+    passed = tight and rising
     label = (
         f"|CVD/Vol| {absorption:.2f}% "
         f"({'< 3.0% ABSORPTION KUAT' if tight else '>= 3.0% TEKANAN JUAL'})"
         f" · Δ {delta:+.2f} SOL"
+        f" · CVD {'datar/naik' if rising else 'turun'}"
     )
-    if daily_rows and len(daily_rows) >= 2:
-        label += " · CVD " + ("datar/naik" if rising else "turun")
     return _pillar(
         "p1_flow",
         passed,
@@ -207,7 +219,7 @@ def evaluate_pillar2_participation(metrics):
     order_ok = avg_sell > avg_buy and avg_sell > 0
     stealth = is_stealth_dump(m)
     whale_absorbed = whale_net < 0
-    passed = buy_ok and order_ok and not stealth
+    passed = buy_ok and order_ok and whale_absorbed and not stealth
     bits = [
         f"Buy TX {buy_pct:.1f}% "
         f"({'≥ 52% AKUMULASI CICIL' if buy_ok else '< 52% DISTRIBUSI'})",
@@ -232,11 +244,11 @@ def evaluate_pillar2_participation(metrics):
 
 
 def _is_lps_drop(change_pct):
+    """True when daily volume contracted into the LPS band (−40%…−75%)."""
     if change_pct is None:
         return False
     change = _as_float(change_pct, 0.0)
-    # Typical LPS is -40% to -85%; extreme dry (steeper) still counts.
-    return change <= LPS_DROP_MIN_PCT
+    return LPS_DROP_MAX_PCT <= change <= LPS_DROP_MIN_PCT
 
 
 def evaluate_pillar3_supply(daily_rows, holder_lock_pct=None,
@@ -247,7 +259,7 @@ def evaluate_pillar3_supply(daily_rows, holder_lock_pct=None,
     change = latest.get("volume_change_pct")
     lps = _is_lps_drop(change)
     lock = None if holder_lock_pct is None else _as_float(holder_lock_pct)
-    lock_ok = lock is None or lock >= SUPPLY_LOCK_MIN_PCT
+    lock_ok = lock is not None and lock >= SUPPLY_LOCK_MIN_PCT
     no_ll = True
     if price_series and len(price_series) >= 2:
         lows = [_as_float(p, 0.0) for p in price_series if _as_float(p, 0) > 0]
@@ -414,16 +426,127 @@ def classify_phase(pillars, *, stealth=False, vol_change_pct=None):
     return PHASE_NORMAL
 
 
-def _overall_verdict(p1, p2, p3, p4, stealth):
+def evaluate_golden_checks(metrics, daily_rows=None, holder_lock_pct=None):
+    """Return the 7 Setup Emas checks (pure, network-free)."""
+    m = metrics or _empty_metrics()
+    absorption = _as_float(m.get("absorption_pct"), 0.0)
+    volume = _as_float(m.get("volume_sol"), 0.0)
+    buy_pct = _as_float(m.get("buy_tx_pct"), 0.0)
+    avg_buy = _as_float(m.get("avg_buy_sol"), 0.0)
+    avg_sell = _as_float(m.get("avg_sell_sol"), 0.0)
+    whale_net = _as_float(m.get("whale_net_sol"), 0.0)
+    change = m.get("volume_change_pct")
+    if change is None and daily_rows:
+        change = (daily_rows[-1] or {}).get("volume_change_pct")
+    lock = None if holder_lock_pct is None else _as_float(holder_lock_pct)
+    cvd_flat = _cvd_is_flat(daily_rows)
+    return [
+        {
+            "id": "p1_absorption",
+            "pillar": "p1",
+            "title": "CVD Absorption",
+            "passed": volume > 0 and absorption < CVD_ABSORPTION_PCT,
+            "detail": f"|CVD/Vol| {absorption:.2f}% (ambang < 3.0%)",
+        },
+        {
+            "id": "p1_cvd_flat",
+            "pillar": "p1",
+            "title": "Bullish Divergence",
+            "passed": cvd_flat,
+            "detail": (
+                "CVD running datar/naik di support test"
+                if cvd_flat else "CVD running turun"
+            ),
+        },
+        {
+            "id": "p2_buy_tx",
+            "pillar": "p2",
+            "title": "Buy TX Dominance",
+            "passed": buy_pct >= BUY_TX_MIN_PCT,
+            "detail": f"Buy TX {buy_pct:.1f}% (ambang >= 52%)",
+        },
+        {
+            "id": "p2_order_size",
+            "pillar": "p2",
+            "title": "Order Size Discrepancy",
+            "passed": avg_sell > avg_buy and avg_sell > 0,
+            "detail": (
+                f"Avg Sell {avg_sell:.3f} vs Avg Buy {avg_buy:.3f} SOL"
+            ),
+        },
+        {
+            "id": "p2_whale",
+            "pillar": "p2",
+            "title": "Whale Pressure Absorbed",
+            "passed": whale_net < 0,
+            "detail": f"Whale net {whale_net:+.2f} SOL",
+        },
+        {
+            "id": "p3_lps",
+            "pillar": "p3",
+            "title": "Volume Kering LPS",
+            "passed": _is_lps_drop(change),
+            "detail": (
+                "n/a" if change is None
+                else f"Vol vs H-1 {_as_float(change):+.1f}% "
+                     f"(band -40%...-75%)"
+            ),
+        },
+        {
+            "id": "p3_lock",
+            "pillar": "p3",
+            "title": "Retensi Akumulator Bottom",
+            "passed": lock is not None and lock >= SUPPLY_LOCK_MIN_PCT,
+            "detail": (
+                "lock n/a" if lock is None
+                else f"Top-100 lock {lock:.1f}% (ambang >= 40%)"
+            ),
+        },
+    ]
+
+
+def golden_score(checks):
+    """0-100: full weight if the check passed, else 0."""
+    total = 0
+    for item in checks or []:
+        if item.get("passed"):
+            total += int(GOLDEN_WEIGHTS.get(item.get("id"), 0))
+    return int(total)
+
+
+def is_setup_emas(evaluation) -> bool:
+    """True when every golden check passed on a finished UTC day."""
+    ev = evaluation or {}
+    if ev.get("stealth_dump"):
+        return False
+    if not ev.get("date"):
+        return False
+    checks = ev.get("checks") or []
+    if len(checks) == GOLDEN_TOTAL:
+        return all(bool(c.get("passed")) for c in checks)
+    try:
+        passed = int(ev.get("passed") or 0)
+        total = int(ev.get("total") or 0)
+    except (TypeError, ValueError):
+        return False
+    verdict = ev.get("verdict")
+    return (verdict in (VERDICT_EMAS, "SETUP EMAS", "PASS")
+            and passed >= GOLDEN_TOTAL and total >= GOLDEN_TOTAL)
+
+
+def _overall_verdict(checks, stealth):
     if stealth:
         return VERDICT_STEALTH, PHASE_STEALTH
-    if p1 and p2 and p3 and p4:
-        return VERDICT_PASS, PHASE_IGNITION
-    if p1 and p2 and p3:
+    n = sum(1 for c in (checks or []) if c.get("passed"))
+    if n >= GOLDEN_TOTAL:
+        return VERDICT_EMAS, PHASE_EMAS
+    if n >= 5:
         return VERDICT_WATCH, PHASE_LPS
-    if p1 and p2:
-        return VERDICT_WATCH, PHASE_ABSORPTION
-    return VERDICT_FAIL, PHASE_DUMP if not p2 else PHASE_NORMAL
+    p2_ids = {"p2_buy_tx", "p2_order_size"}
+    p2_ok = all(
+        c.get("passed") for c in (checks or []) if c.get("id") in p2_ids
+    )
+    return VERDICT_FAIL, PHASE_DUMP if not p2_ok else PHASE_NORMAL
 
 
 def _is_ignition_row(row):
@@ -499,9 +622,11 @@ def evaluate_prepump(swaps, *, daily_rows=None, holder_lock_pct=None,
     p4 = evaluate_pillar4_ignition(swaps, usable, now_ts=now_ts)
     pillars = [p1, p2, p3, p4]
     stealth = bool(p2.get("stealth_dump"))
-    passed_n = sum(1 for p in pillars if p["passed"])
-    verdict, phase = _overall_verdict(
-        p1["passed"], p2["passed"], p3["passed"], p4["passed"], stealth)
+    checks = evaluate_golden_checks(
+        metrics, usable, holder_lock_pct=holder_lock_pct)
+    score = golden_score(checks)
+    passed_n = sum(1 for c in checks if c.get("passed"))
+    verdict, phase = _overall_verdict(checks, stealth)
     if stealth:
         phase = PHASE_STEALTH
     return {
@@ -509,9 +634,14 @@ def evaluate_prepump(swaps, *, daily_rows=None, holder_lock_pct=None,
         "verdict": verdict,
         "phase": phase,
         "passed": passed_n,
-        "total": 4,
+        "total": GOLDEN_TOTAL,
+        "score": score,
         "stealth_dump": stealth,
+        "setup_emas": (
+            not stealth and passed_n >= GOLDEN_TOTAL and bool(date)
+        ),
         "metrics": metrics,
+        "checks": checks,
         "pillars": pillars,
         "daily_rows": daily,
         "usable_rows": usable,
@@ -535,12 +665,8 @@ def kpi_cards_from_eval(metrics, p1, p2, p3, p4, *, stealth=False):
     if change is None:
         change = p3.get("volume_change_pct")
     lps = _is_lps_drop(change)
-    ignited = bool(p4.get("passed"))
-    card4_pass = lps or ignited
     if lps:
         card4_label = "👀 SUPLAI KERING / LPS"
-    elif ignited:
-        card4_label = "🚀 IGNITION"
     else:
         card4_label = "➖ NORMAL / BELUM KERING"
     change_txt = "n/a" if change is None else f"{_as_float(change):+.1f}%"
@@ -561,7 +687,11 @@ def kpi_cards_from_eval(metrics, p1, p2, p3, p4, *, stealth=False):
             "passed": buy_pct >= BUY_TX_MIN_PCT,
             "label": ("✅ AKUMULASI CICIL" if buy_pct >= BUY_TX_MIN_PCT
                       else "❌ DISTRIBUSI"),
-            "hint": f"Beli {m.get('buy_tx', 0)} vs Jual {m.get('sell_tx', 0)}",
+            "hint": (
+                f"Buy {m.get('buy_tx', 0)} ({buy_pct:.1f}%) vs "
+                f"Sell {m.get('sell_tx', 0)} "
+                f"({_as_float(m.get('sell_tx_pct'), 100.0 - buy_pct):.1f}%)"
+            ),
         },
         {
             "id": "order_size",
@@ -576,7 +706,7 @@ def kpi_cards_from_eval(metrics, p1, p2, p3, p4, *, stealth=False):
             "id": "lps",
             "title": "Volume & Suplai Kering",
             "value": change_txt,
-            "passed": card4_pass,
+            "passed": lps,
             "label": card4_label,
             "hint": "% perubahan vol vs H-1",
         },
@@ -591,9 +721,11 @@ def format_watchlist_badge(evaluation):
         return "🔴 STEALTH DUMP"
     verdict = evaluation.get("verdict")
     passed = int(evaluation.get("passed") or 0)
-    if verdict == VERDICT_PASS:
-        return f"🟢 4 PILAR PASS ({passed}/4)"
+    total = int(evaluation.get("total") or GOLDEN_TOTAL)
+    score = evaluation.get("score")
+    score_txt = f" · skor {int(score)}" if score is not None else ""
+    if verdict == VERDICT_EMAS or evaluation.get("setup_emas"):
+        return f"🥇 SETUP EMAS ({passed}/{total}{score_txt})"
     if verdict == VERDICT_WATCH:
-        phase = evaluation.get("phase") or PHASE_ABSORPTION
-        return f"🟡 {phase} ({passed}/4)"
-    return f"🔴 FAIL ({passed}/4)"
+        return f"🟡 WATCH ({passed}/{total}{score_txt})"
+    return f"🔴 FAIL ({passed}/{total})"

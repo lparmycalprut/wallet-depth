@@ -15,49 +15,80 @@ from core import (get_helius_keys, get_market,
                   get_supply as core_get_supply, load_config)
 from cvd import (MIN_SOL, top_holder_analysis)
 from cvd_daily import (calculate_daily_cvd, persist_daily_snapshot,
-                       save_4h_chunks_from_swaps)
+                       save_4h_chunks_from_swaps, tx_dominance_from_daily)
 from prepump_detector import evaluate_prepump
-from signals import record_prepump_4pilar
+from signals import maybe_queue_complete_prepump, record_prepump_4pilar
 
 
-st.set_page_config(page_title="CVD 4 Pilar", page_icon="📊", layout="wide",
-                   initial_sidebar_state="collapsed")
+# Deep (tua) greens / reds — no neon, no glow.
+GREEN_DEEP = "#14532d"
+GREEN_MID = "#166534"
+GREEN_SOFT = "#dcfce7"
+RED_DEEP = "#7f1d1d"
+RED_MID = "#991b1b"
+RED_SOFT = "#fee2e2"
+SLATE = "#334155"
+SLATE_SOFT = "#64748b"
+AMBER = "#92400e"
+INK = "#1e293b"
+PAPER = "#f8fafc"
+
+st.set_page_config(page_title="CVD Setup Emas", page_icon="📊",
+                   layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown(
-    """<style>
-    .block-container {padding-top: 1.2rem; max-width: 1400px;}
-    h1 {font-size: 1.3rem !important;}
-    [data-testid="stMetric"] {padding: 0.2rem 0.5rem;
-      background: rgba(128,128,128,0.07); border-radius: 8px;}
-    [data-testid="stMetricLabel"] {font-size: 0.72rem !important;}
-    [data-testid="stMetricValue"] {font-size: 1.1rem !important;}
+    f"""<style>
+    .block-container {{padding-top: 1.4rem; max-width: 1180px;}}
+    h1 {{font-size: 1.4rem !important; letter-spacing: -0.02em;
+        color: {INK};}}
+    .stMarkdown, .stCaption {{line-height: 1.55;}}
+    [data-testid="stMetric"] {{padding: 0.35rem 0.6rem;
+      background: {PAPER}; border-radius: 10px; border: 1px solid #e2e8f0;}}
+    [data-testid="stMetricLabel"] {{font-size: 0.78rem !important;}}
+    [data-testid="stMetricValue"] {{font-size: 1.15rem !important;}}
 
-    .glowing-pass {
-        background-color: rgba(0, 255, 136, 0.08);
-        border: 1.5px solid #00ff88 !important;
-        box-shadow: 0 0 15px rgba(0, 255, 136, 0.4),
-                    inset 0 0 8px rgba(0, 255, 136, 0.2);
-        color: #00ff88 !important;
-        border-radius: 8px;
-        padding: 12px;
-        font-weight: bold;
-    }
-    .glowing-fail {
-        background-color: rgba(255, 77, 77, 0.08);
-        border: 1.5px solid #ff4d4d !important;
-        box-shadow: 0 0 15px rgba(255, 77, 77, 0.4),
-                    inset 0 0 8px rgba(255, 77, 77, 0.2);
-        color: #ff4d4d !important;
-        border-radius: 8px;
-        padding: 12px;
-        font-weight: bold;
-    }
-    .kpi-title {font-size: 0.72rem; letter-spacing: 0.04em;
-                text-transform: uppercase; opacity: 0.85; margin: 0;}
-    .kpi-value {font-size: 1.55rem; margin: 4px 0 2px 0; line-height: 1.2;}
-    .kpi-label {font-size: 0.82rem; margin: 0;}
-    .kpi-hint {font-size: 0.68rem; opacity: 0.7; margin: 4px 0 0 0;
-               font-weight: 500;}
+    .kpi-pass {{
+        background: {GREEN_DEEP};
+        border: 1px solid {GREEN_MID};
+        color: {GREEN_SOFT};
+        border-radius: 10px;
+        padding: 14px 16px;
+    }}
+    .kpi-fail {{
+        background: {RED_DEEP};
+        border: 1px solid {RED_MID};
+        color: {RED_SOFT};
+        border-radius: 10px;
+        padding: 14px 16px;
+    }}
+    .kpi-watch {{
+        background: #422006;
+        border: 1px solid {AMBER};
+        color: #fef3c7;
+        border-radius: 10px;
+        padding: 14px 16px;
+    }}
+    .kpi-title {{font-size: 0.72rem; letter-spacing: 0.05em;
+                text-transform: uppercase; opacity: 0.82; margin: 0;}}
+    .kpi-value {{font-size: 1.45rem; margin: 6px 0 4px 0; line-height: 1.25;
+                 font-weight: 700;}}
+    .kpi-label {{font-size: 0.86rem; margin: 0; line-height: 1.4;}}
+    .kpi-hint {{font-size: 0.74rem; opacity: 0.78; margin: 6px 0 0 0;
+               font-weight: 500; line-height: 1.4;}}
+    .idle-card {{
+        background: {PAPER};
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 18px 20px;
+        color: {INK};
+        line-height: 1.55;
+    }}
+    .idle-card code {{
+        background: #e2e8f0;
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-size: 0.86rem;
+    }}
     </style>""",
     unsafe_allow_html=True,
 )
@@ -72,11 +103,11 @@ DAY_OPTIONS = {
     "7 Hari (168 Jam - Full Week Cycle)": 7,
 }
 
-st.title("📊 CVD — 4 Pilar Pre-Pump")
+st.title("📊 CVD — Setup Emas")
 st.caption(
-    "Evaluasi Wyckoff multi-hari: Absorption |CVD/Vol| < 3.0%, "
-    "Buy TX ≥ 52%, Avg Sell > Avg Buy, LPS volume kering, ignition 15m/1h. "
-    "Fetch inkremental 1–7 hari disimpan ke cache 4 jam + `cvd_daily.json`."
+    "7 cek harian: |CVD/Vol| < 3.0% · CVD datar/naik · Buy TX ≥ 52% · "
+    "Avg Sell > Buy · Whale diserap · LPS −40%…−75% · Lock ≥ 40%. "
+    "Telegram hanya jika 7/7 Setup Emas. Fetch hanya setelah tombol diklik."
 )
 
 CONFIG = load_config()
@@ -86,9 +117,17 @@ try:
 except (TypeError, ValueError):
     dust_limit_usd = 5.0
 
-qp_ca = st.query_params.get("ca", "").strip()
-ca = st.text_input("Contract Address", value=qp_ca,
-                   placeholder="Solana CA...").strip()
+# Prefill from watchlist link (?ca=) without fetching.
+qp_ca = (st.query_params.get("ca") or "").strip()
+if qp_ca and st.session_state.get("cvd_last_qp") != qp_ca:
+    st.session_state["cvd_ca_input"] = qp_ca
+    st.session_state["cvd_last_qp"] = qp_ca
+
+ca = st.text_input(
+    "Contract Address",
+    key="cvd_ca_input",
+    placeholder="Tempel Solana CA, lalu klik Fetch…",
+).strip()
 
 col_days, col_btn = st.columns([2, 1])
 day_label = col_days.selectbox(
@@ -105,8 +144,9 @@ run = col_btn.button(
 
 if not ca:
     st.info(
-        "Paste CA lalu pilih 1–7 hari. Tombol fetch mengambil swap GMGN "
-        "(fallback Helius), mengevaluasi 4 pilar, dan menyimpan hasil."
+        "Tempel CA atau buka tautan CVD dari watchlist, pilih 1–7 hari, "
+        "lalu klik **Fetch**. Tidak ada request ke GMGN/Helius sampai "
+        "tombol diklik."
     )
     st.stop()
 
@@ -209,8 +249,16 @@ def _dedupe_swaps(swaps):
     return [seen[k] for k in sorted(seen, key=lambda item: item[2])]
 
 
+def _banner_cls(verdict):
+    if verdict in ("SETUP EMAS", "PASS"):
+        return "kpi-pass"
+    if verdict == "WATCH":
+        return "kpi-watch"
+    return "kpi-fail"
+
+
 def render_kpi_card(card):
-    css = "glowing-pass" if card.get("passed") else "glowing-fail"
+    css = "kpi-pass" if card.get("passed") else "kpi-fail"
     st.markdown(
         f"<div class='{css}'>"
         f"<p class='kpi-title'>{card.get('title', '')}</p>"
@@ -235,19 +283,19 @@ def render_daily_chart(rows):
         status = str(row.get("status") or "")
         change = row.get("volume_change_pct")
         if status.startswith("KERING"):
-            colors.append("#38bdf8")
+            colors.append("#1e3a5f")
         elif change is not None and float(change) >= 100:
-            colors.append("#f97316")
+            colors.append(AMBER)
         elif abs(float(row.get("cvd_ratio_pct") or 99)) < 3.0:
-            colors.append("#00ff88")
+            colors.append(GREEN_MID)
         else:
-            colors.append("#64748b")
+            colors.append(SLATE_SOFT)
     fig = make_subplots(specs=[[{"secondary_y": True}]])
     fig.add_trace(
         go.Bar(
             x=dates, y=volumes, name="Volume SOL",
-            marker=dict(color=colors, line=dict(color="#0f172a", width=0.4)),
-            opacity=0.85,
+            marker=dict(color=colors, line=dict(color=INK, width=0.3)),
+            opacity=0.88,
             hovertemplate="%{x}<br>Vol %{y:.2f} SOL<extra></extra>",
         ),
         secondary_y=False,
@@ -256,8 +304,8 @@ def render_daily_chart(rows):
         go.Scatter(
             x=dates, y=running, name="Running CVD SOL",
             mode="lines+markers",
-            line=dict(color="#e2e8f0", width=2.4),
-            marker=dict(size=7),
+            line=dict(color=SLATE, width=2.2),
+            marker=dict(size=7, color=SLATE),
             hovertemplate="%{x}<br>CVD %{y:+.2f} SOL<extra></extra>",
         ),
         secondary_y=False,
@@ -266,32 +314,109 @@ def render_daily_chart(rows):
         go.Scatter(
             x=dates, y=ratios, name="|CVD/Vol| %",
             mode="lines+markers",
-            line=dict(color="#fbbf24", width=2, dash="dot"),
-            marker=dict(size=6),
+            line=dict(color=AMBER, width=2, dash="dot"),
+            marker=dict(size=6, color=AMBER),
             hovertemplate="%{x}<br>|CVD/Vol| %{y:.2f}%<extra></extra>",
         ),
         secondary_y=True,
     )
     fig.add_hline(
-        y=3.0, line_dash="dash", line_color="#00ff88",
+        y=3.0, line_dash="dash", line_color=GREEN_MID,
         annotation_text="3.0% absorption", secondary_y=True,
     )
     fig.update_layout(
-        height=420,
-        margin=dict(t=40, b=20, l=10, r=10),
-        legend=dict(orientation="h", y=1.12),
+        height=400,
+        margin=dict(t=48, b=24, l=12, r=12),
+        legend=dict(orientation="h", y=1.14, font=dict(size=12, color=INK)),
         title=dict(
             text="Volume harian · Running CVD · |CVD/Vol| %",
-            font=dict(size=13),
+            font=dict(size=14, color=INK),
         ),
-        plot_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor=PAPER,
         paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color=INK, size=12),
+        hoverlabel=dict(font_size=12),
     )
-    fig.update_yaxes(title_text="SOL", secondary_y=False)
+    fig.update_yaxes(title_text="SOL", secondary_y=False, gridcolor="#e2e8f0")
     fig.update_yaxes(title_text="|CVD/Vol| %", secondary_y=True,
-                     range=[0, max(8, max(ratios or [0]) * 1.2)])
+                     range=[0, max(8, max(ratios or [0]) * 1.2)],
+                     gridcolor="#e2e8f0")
+    fig.update_xaxes(gridcolor="#e2e8f0")
     st.plotly_chart(fig, use_container_width=True,
                     config={"displayModeBar": False})
+
+
+def render_tx_dominance(rows):
+    """Buy TX vs Sell TX dominance % per UTC day."""
+    dom = tx_dominance_from_daily(rows)
+    if not dom:
+        st.info("Belum ada transaksi harian untuk dominasi Buy/Sell TX.")
+        return
+    dates = [r["date"] for r in dom]
+    buy_pcts = [r["buy_tx_pct"] for r in dom]
+    sell_pcts = [r["sell_tx_pct"] for r in dom]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        name="Buy TX %", x=dates, y=buy_pcts,
+        marker=dict(color=GREEN_MID),
+        text=[f"{v:.0f}%" for v in buy_pcts],
+        textposition="inside",
+        textfont=dict(color=GREEN_SOFT, size=12),
+        hovertemplate=("%{x}<br>Buy %{y:.1f}% · "
+                       "%{customdata} TX<extra></extra>"),
+        customdata=[r["buy_tx"] for r in dom],
+    ))
+    fig.add_trace(go.Bar(
+        name="Sell TX %", x=dates, y=sell_pcts,
+        marker=dict(color=RED_MID),
+        text=[f"{v:.0f}%" for v in sell_pcts],
+        textposition="inside",
+        textfont=dict(color=RED_SOFT, size=12),
+        hovertemplate=("%{x}<br>Sell %{y:.1f}% · "
+                       "%{customdata} TX<extra></extra>"),
+        customdata=[r["sell_tx"] for r in dom],
+    ))
+    fig.add_hline(
+        y=52, line_dash="dash", line_color=GREEN_DEEP,
+        annotation_text="Buy 52%",
+        annotation_font=dict(size=11, color=GREEN_DEEP),
+    )
+    fig.update_layout(
+        barmode="stack",
+        height=340,
+        margin=dict(t=48, b=24, l=12, r=12),
+        legend=dict(orientation="h", y=1.14, font=dict(size=12, color=INK)),
+        title=dict(
+            text="Dominasi Buy TX vs Sell TX per hari (%)",
+            font=dict(size=14, color=INK),
+        ),
+        yaxis=dict(title="Dominasi %", range=[0, 100],
+                   gridcolor="#e2e8f0"),
+        xaxis=dict(gridcolor="#e2e8f0"),
+        plot_bgcolor=PAPER,
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color=INK, size=12),
+        bargap=0.28,
+    )
+    st.plotly_chart(fig, use_container_width=True,
+                    config={"displayModeBar": False})
+
+    table = []
+    for row in dom:
+        side = {"buy": "Buy mendominasi",
+                "sell": "Sell mendominasi",
+                "even": "Seimbang"}.get(row["dominant"], "—")
+        table.append({
+            "Tanggal": row["date"],
+            "Buy TX": row["buy_tx"],
+            "Sell TX": row["sell_tx"],
+            "Total": row["total_tx"],
+            "Buy %": f"{row['buy_tx_pct']:.1f}%",
+            "Sell %": f"{row['sell_tx_pct']:.1f}%",
+            "Dominasi": side,
+        })
+    st.dataframe(pd.DataFrame(table), use_container_width=True,
+                 hide_index=True)
 
 
 def render_daily_table(rows, evaluation):
@@ -304,10 +429,16 @@ def render_daily_table(rows, evaluation):
     for row in rows or []:
         change = row.get("volume_change_pct")
         phase = phase_by_date.get(row["date"]) or row.get("status") or "—"
+        buy_pct = float(row.get("buy_tx_pct") or 0)
+        sell_pct = row.get("sell_tx_pct")
+        if sell_pct is None:
+            sell_pct = 100.0 - buy_pct
         table.append({
             "Tanggal": row.get("date"),
-            "TX B/S": f"{row.get('buy_tx', 0)}/{row.get('sell_tx', 0)}",
-            "Buy TX %": f"{float(row.get('buy_tx_pct') or 0):.1f}%",
+            "Buy TX": int(row.get("buy_tx") or 0),
+            "Sell TX": int(row.get("sell_tx") or 0),
+            "Buy %": f"{buy_pct:.1f}%",
+            "Sell %": f"{float(sell_pct):.1f}%",
             "Volume SOL": round(float(row.get("volume_sol") or 0), 2),
             "% Vol vs H-1": (
                 "—" if change is None else f"{float(change):+.1f}%"
@@ -324,13 +455,29 @@ def render_daily_table(rows, evaluation):
                  hide_index=True)
 
 
-pool, symbol, price_now, mc_now = get_pool(ca)
-if not pool:
-    st.error("Token tidak ditemukan di DexScreener.")
+skey = f"cvd4p::{days}d::{ca}"
+cached = st.session_state.get(skey)
+
+if not run and not cached:
+    short = f"{ca[:8]}…{ca[-4:]}" if len(ca) > 14 else ca
+    st.markdown(
+        f"<div class='idle-card'>"
+        f"<b>Siap dianalisis</b> — <code>{short}</code><br>"
+        f"Rentang: <b>{day_label}</b>. "
+        f"Klik <b>Fetch &amp; Analisis Multi-Hari</b> untuk mengambil "
+        f"swap GMGN (fallback Helius), mengevaluasi Setup Emas 7 cek, "
+        f"dan menghitung dominasi Buy TX vs Sell TX per hari. "
+        f"Tidak ada fetch otomatis."
+        f"</div>",
+        unsafe_allow_html=True,
+    )
     st.stop()
 
-skey = f"cvd4p::{days}d::{ca}"
-if run or skey not in st.session_state:
+if run:
+    pool, symbol, price_now, mc_now = get_pool(ca)
+    if not pool:
+        st.error("Token tidak ditemukan di DexScreener.")
+        st.stop()
     from cvd import fetch_and_analyze_multiday
     api_key = helius_keys[0] if helius_keys else ""
     progress = st.progress(0.15, text=f"Fetching GMGN {days} hari…")
@@ -343,24 +490,40 @@ if run or skey not in st.session_state:
         progress.empty()
         st.error(f"Fetch gagal: {exc}")
         st.stop()
-    progress.progress(0.85, text="Menyimpan chunk 4 jam + evaluasi 4 pilar…")
+    progress.progress(0.75, text="Menyimpan chunk 4 jam + Setup Emas…")
     swaps = _dedupe_swaps(bundle.get("swaps") or [])
     save_4h_chunks_from_swaps(ca, swaps, symbol=symbol)
     daily = bundle.get("daily") or calculate_daily_cvd(swaps)
     persist_daily_snapshot(ca, symbol, daily)
     ev = bundle.get("evaluation") or evaluate_prepump(
         swaps, daily_rows=daily, include_today=True)
+    ev_daily = evaluate_prepump(
+        swaps, daily_rows=daily, include_today=False)
     try:
-        record_prepump_4pilar(ca, symbol, ev, price=price_now)
+        record_prepump_4pilar(ca, symbol, ev_daily, price=price_now)
     except Exception:
         pass
+    tg_sent = False
+    try:
+        tg_sent = bool(maybe_queue_complete_prepump(
+            ca, symbol, ev_daily, price=price_now))
+    except Exception:
+        tg_sent = False
+    holder_data = fetch_holder_snapshot(ca, helius_keys)
     st.session_state[skey] = {
         "swaps": swaps,
         "daily": daily,
         "evaluation": ev,
+        "evaluation_daily": ev_daily,
         "ts": time.time(),
-        "src": "GMGN / Helius · 4-pilar",
+        "src": "GMGN / Helius · Setup Emas",
         "days": days,
+        "pool": pool,
+        "symbol": symbol,
+        "price_now": price_now,
+        "mc_now": mc_now,
+        "holders": holder_data,
+        "telegram_queued": tg_sent,
     }
     progress.empty()
 
@@ -369,7 +532,12 @@ swaps_all = _dedupe_swaps(state.get("swaps") or [])
 daily_rows = state.get("daily") or calculate_daily_cvd(swaps_all)
 evaluation = state.get("evaluation") or evaluate_prepump(
     swaps_all, daily_rows=daily_rows, include_today=True)
+ev_daily = state.get("evaluation_daily") or evaluate_prepump(
+    swaps_all, daily_rows=daily_rows, include_today=False)
 fetched_at = float(state.get("ts") or time.time())
+symbol = state.get("symbol") or "?"
+mc_now = float(state.get("mc_now") or 0)
+price_now = float(state.get("price_now") or 0)
 st.caption(
     f"Source: {state.get('src', '?')} · {len(swaps_all):,} swaps · "
     f"{state.get('days', days)} hari · MC ${mc_now:,.0f}"
@@ -382,22 +550,31 @@ if not swaps_all:
 verdict = evaluation.get("verdict") or "FAIL"
 phase = evaluation.get("phase") or "NORMAL"
 passed = int(evaluation.get("passed") or 0)
-banner_cls = (
-    "glowing-pass" if verdict == "PASS"
-    else ("glowing-fail" if verdict in ("FAIL", "STEALTH DUMP")
-          else "glowing-pass")
-)
-if verdict == "WATCH":
-    banner_cls = "glowing-pass"
+total = int(evaluation.get("total") or 7)
+score = evaluation.get("score")
+score_txt = f" · skor {int(score)}" if score is not None else ""
 st.markdown(
-    f"<div class='{banner_cls}' style='margin-bottom:12px'>"
-    f"<p class='kpi-title'>${symbol} · 4 Pilar Pre-Pump</p>"
-    f"<p class='kpi-value'>{verdict} · {passed}/4 · {phase}</p>"
-    f"<p class='kpi-hint'>Ambang ketat: |CVD/Vol| &lt; 3.0% · "
-    f"Buy TX ≥ 52% · Avg Sell &gt; Avg Buy · LPS −40% s/d −85%</p>"
+    f"<div class='{_banner_cls(verdict)}' style='margin-bottom:14px'>"
+    f"<p class='kpi-title'>${symbol} · Setup Emas</p>"
+    f"<p class='kpi-value'>{verdict} · {passed}/{total}"
+    f"{score_txt} · {phase}</p>"
+    f"<p class='kpi-hint'>7 cek: |CVD/Vol| &lt; 3.0% · CVD datar/naik · "
+    f"Buy TX ≥ 52% · Avg Sell &gt; Buy · Whale diserap · "
+    f"LPS −40%…−75% · Lock ≥ 40%. Telegram hanya 7/7 hari UTC penuh.</p>"
     f"</div>",
     unsafe_allow_html=True,
 )
+if state.get("telegram_queued"):
+    st.success(
+        "Sinyal Telegram diantrikan — Setup Emas 7/7 "
+        f"({ev_daily.get('date') or '—'})."
+    )
+elif ev_daily.get("setup_emas") or ev_daily.get("verdict") in (
+        "SETUP EMAS", "PASS"):
+    st.caption(
+        "Setup Emas hari UTC penuh sudah 7/7 — Telegram sudah "
+        "pernah dikirim untuk tanggal ini, atau sedang di-dedupe."
+    )
 
 # ---- 4 KPI cards ----------------------------------------------------------
 kpi = evaluation.get("kpi") or []
@@ -414,6 +591,14 @@ with st.expander("Rincian 4 pilar", expanded=False):
         st.markdown(f"**{mark} · {pillar.get('id')}** — "
                     f"{pillar.get('detail')}")
 
+# ---- TX dominance ---------------------------------------------------------
+st.markdown("#### ⚖️ Buy TX vs Sell TX — dominasi per hari")
+st.caption(
+    "Persentase jumlah transaksi (bukan volume SOL). "
+    "Buy ≥ 52% = akumulasi cicil (Pilar 2)."
+)
+render_tx_dominance(daily_rows)
+
 # ---- Chart + table --------------------------------------------------------
 st.markdown("#### 📈 Day-by-day progression")
 render_daily_chart(daily_rows)
@@ -421,10 +606,10 @@ render_daily_table(daily_rows, evaluation)
 
 # ---- Holder lock (feeds Pilar 3 when available) --------------------------
 st.markdown("#### 👥 Top 100 Holder / Supply Lock")
-with st.spinner("Mengambil holder…"):
-    holder_data = fetch_holder_snapshot(ca, helius_keys)
+holder_data = state.get("holders") or {}
 if not holder_data.get("ok"):
-    st.caption(holder_data.get("error", "Holder tidak tersedia."))
+    st.caption(holder_data.get("error")
+               or "Holder tidak dimuat. Klik Fetch untuk mengambil.")
 else:
     holder_analysis = top_holder_analysis(
         holder_data.get("holders", []),
@@ -449,14 +634,21 @@ else:
                 f"sumber {holder_data.get('source', '?')}",
     }
     render_kpi_card(lock_card)
-    # Re-evaluate P3 with the live lock if the user just fetched.
     if run:
         ev_locked = evaluate_prepump(
             swaps_all, daily_rows=daily_rows,
             holder_lock_pct=diamond_pct, include_today=True)
         st.session_state[skey]["evaluation"] = ev_locked
+        ev_locked_daily = evaluate_prepump(
+            swaps_all, daily_rows=daily_rows,
+            holder_lock_pct=diamond_pct, include_today=False)
+        st.session_state[skey]["evaluation_daily"] = ev_locked_daily
         try:
-            record_prepump_4pilar(ca, symbol, ev_locked, price=price_now)
+            record_prepump_4pilar(
+                ca, symbol, ev_locked_daily, price=price_now)
+            if maybe_queue_complete_prepump(
+                    ca, symbol, ev_locked_daily, price=price_now):
+                st.session_state[skey]["telegram_queued"] = True
         except Exception:
             pass
 
@@ -480,5 +672,6 @@ else:
 st.caption(
     f"Diambil {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(fetched_at))}. "
     "Data transaksi di-append ke `cvd_daily.json` dan "
-    "`data/cvd_4h_chunks/<mint>.json`."
+    "`data/cvd_4h_chunks/<mint>.json`. Ubah CA atau rentang hari lalu "
+    "klik Fetch lagi — tidak ada fetch otomatis."
 )

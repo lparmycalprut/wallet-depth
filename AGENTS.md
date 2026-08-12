@@ -269,3 +269,29 @@ deteksi pre-pump multi-hari dengan **4 pilar terkalibrasi** dan
    (bukan skor /100).
 
 Verifikasi: `python tests/test_prepump_detector.py` + suite lama.
+
+## 16. Status 2026-08-12 — Setup Emas 7 cek + Telegram pagi
+
+Setiap pagi (cron daily 00:00 UTC / 07:00 WIB) membandingkan transaksi
+harian watchlist. Telegram **hanya** jika **Setup Emas 7/7**:
+
+- 🛡️ P1 |CVD/Vol| < 3.0% + CVD datar/naik (tol 1 SOL)
+- 👥 P2 Buy TX ≥ 52% + Avg Sell > Buy + whale net < 0
+- ⏳ P3 LPS vol −40%…−75% + Top-100 lock ≥ 40%
+
+Skor 100 = jumlah bobot 18+12+18+16+10+16+10. Ignition P4 info saja.
+Kalau tidak ada token 7/7: **TIDAK ADA SETUP HARI INI** (sekali per tanggal).
+
+## 15. Status 2026-08-12 — CVD/watchlist: no auto-fetch, warna tua, TX dominasi, Telegram 4/4
+
+Owner: klik CVD dari watchlist / paste CA **jangan** langsung fetch.
+Warna hijau/merah neon diganti hijau-tua `#14532d` / merah-tua `#7f1d1d`
+(tanpa glow). Halaman CVD menambah **Buy TX vs Sell TX dominasi % per
+hari**. Telegram 4 pilar **hanya** jika keempat pilar transaksi harian
+UTC yang sudah selesai lolos (PASS 4/4), sekali per CA+tanggal.
+
+- `pages/4_📊_CVD.py` — CA dari `?ca=` hanya prefill; fetch hanya tombol.
+- `app.py` — watchlist lebih nyaman dibaca; kolom Buy / Sell TX.
+- `cvd_daily.tx_dominance_from_daily` + field `sell_tx_pct`.
+- `signals.is_complete_daily_pass` / `maybe_queue_complete_prepump`.
+- `scripts/update_cvd.py` daily memakai gerbang itu (bukan WATCH/STEALTH).

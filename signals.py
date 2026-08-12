@@ -196,6 +196,70 @@ def queue_daily_cvd_message(ca, symbol, rows, *, price=None):
     _queue_or_send(text)
 
 
+def is_complete_daily_pass(evaluation) -> bool:
+    """True when Setup Emas (7/7 daily checks) fired on a finished UTC day.
+
+    Telegram is reserved for this case. WATCH / FAIL / STEALTH DUMP and
+    intra-day partial prints never notify.
+    """
+    try:
+        from prepump_detector import is_setup_emas
+        return bool(is_setup_emas(evaluation))
+    except Exception:
+        ev = evaluation or {}
+        if ev.get("stealth_dump") or not ev.get("date"):
+            return False
+        if ev.get("verdict") not in ("SETUP EMAS", "PASS"):
+            return False
+        try:
+            passed = int(ev.get("passed") or 0)
+            total = int(ev.get("total") or 7)
+        except (TypeError, ValueError):
+            return False
+        return passed >= 7 and total >= 7 and passed >= total
+
+
+def _telegram_already_sent(ca, date, *, kind="prepump_4pilar") -> bool:
+    items = _read_local_signals()
+    return any(
+        x.get("ca") == ca and x.get("type") == kind
+        and x.get("date") == date and x.get("telegram_sent")
+        for x in items[-500:]
+    )
+
+
+def _mark_telegram_sent(ca, date, *, kind="prepump_4pilar") -> None:
+    items = _read_local_signals()
+    changed = False
+    for item in reversed(items[-500:]):
+        if (item.get("ca") == ca and item.get("type") == kind
+                and item.get("date") == date):
+            if not item.get("telegram_sent"):
+                item["telegram_sent"] = True
+                changed = True
+            break
+    if changed:
+        save_signals(items)
+
+
+def maybe_queue_complete_prepump(ca, symbol, evaluation, *, price=None):
+    """Queue Telegram only when every daily pillar is complete.
+
+    Deduped once per CA + UTC date so a manual CVD re-fetch and the
+    07:00 WIB digest cannot spam the same PASS.
+    """
+    if not is_complete_daily_pass(evaluation):
+        return False
+    date = evaluation.get("date")
+    if _telegram_already_sent(ca, date):
+        return False
+    sent = queue_prepump_4pilar_message(
+        ca, symbol, evaluation, price=price)
+    if sent:
+        _mark_telegram_sent(ca, date)
+    return bool(sent)
+
+
 def record_prepump_4pilar(ca, symbol, evaluation, *, now_ts=None, price=None):
     """Persist one 4-pillar daily evaluation (no 0–100 score)."""
     now_ts = int(now_ts or time.time())
@@ -214,11 +278,14 @@ def record_prepump_4pilar(ca, symbol, evaluation, *, now_ts=None, price=None):
         "verdict": ev.get("verdict"),
         "phase": ev.get("phase"),
         "passed": ev.get("passed"),
-        "total": ev.get("total", 4),
+        "total": ev.get("total", 7),
+        "score": ev.get("score"),
+        "setup_emas": bool(ev.get("setup_emas")),
         "stealth_dump": bool(ev.get("stealth_dump")),
         "detail": {
             "metrics": ev.get("metrics") or {},
             "pillars": ev.get("pillars") or [],
+            "checks": ev.get("checks") or [],
             "holder_lock_pct": ev.get("holder_lock_pct"),
         },
         "price": price,
@@ -239,6 +306,34 @@ def record_prepump_4pilar(ca, symbol, evaluation, *, now_ts=None, price=None):
     return ev
 
 
+def queue_no_setup_message(date, *, n_tokens=0):
+    """Queue the empty-morning notice. Deduped once per UTC date."""
+    if not date:
+        return False
+    if _telegram_already_sent("_digest_", date, kind="setup_emas_empty"):
+        return False
+    text = (
+        f"⚪ <b>TIDAK ADA SETUP HARI INI</b>\n"
+        f"📅 {date} (hari UTC penuh)\n"
+        f"Watchlist dipindai: {int(n_tokens)} token.\n"
+        f"Tidak ada yang lolos 7/7 Setup Emas."
+    )
+    sent = _queue_or_send(text)
+    if sent:
+        items = _read_local_signals()
+        items.append({
+            "ts": int(time.time()),
+            "ca": "_digest_",
+            "symbol": "-",
+            "type": "setup_emas_empty",
+            "date": date,
+            "telegram_sent": True,
+            "daily": True,
+        })
+        save_signals(items)
+    return bool(sent)
+
+
 def queue_prepump_4pilar_message(ca, symbol, evaluation, *, price=None):
     ev = evaluation or {}
     if not ev:
@@ -247,8 +342,8 @@ def queue_prepump_4pilar_message(ca, symbol, evaluation, *, price=None):
     stealth = bool(ev.get("stealth_dump"))
     if stealth or verdict == "STEALTH DUMP":
         icon = "🔴"
-    elif verdict == "PASS":
-        icon = "🟢"
+    elif verdict in ("SETUP EMAS", "PASS"):
+        icon = "🥇"
     elif verdict == "WATCH":
         icon = "🟡"
     else:
@@ -256,30 +351,40 @@ def queue_prepump_4pilar_message(ca, symbol, evaluation, *, price=None):
     metrics = ev.get("metrics") or {}
     absorption = metrics.get("absorption_pct", 0.0)
     buy_pct = metrics.get("buy_tx_pct", 0.0)
+    sell_pct = metrics.get("sell_tx_pct")
+    if sell_pct is None:
+        sell_pct = 100.0 - float(buy_pct or 0)
     avg_buy = metrics.get("avg_buy_sol", 0.0)
     avg_sell = metrics.get("avg_sell_sol", 0.0)
     change = metrics.get("volume_change_pct")
     change_txt = "n/a" if change is None else f"{change:+.1f}%"
-    pillar_bits = []
-    for pillar in ev.get("pillars") or []:
-        mark = "✅" if pillar.get("passed") else "❌"
-        pillar_bits.append(f"{mark} {pillar.get('id', '?')}")
+    check_bits = []
+    for item in ev.get("checks") or ev.get("pillars") or []:
+        mark = "✅" if item.get("passed") else "❌"
+        check_bits.append(
+            f"{mark} {item.get('title') or item.get('id', '?')}"
+        )
+    score = ev.get("score")
+    score_txt = f" · skor {int(score)}" if score is not None else ""
     text = (
-        f"{icon} <b>4 PILAR PRE-PUMP · {symbol}</b>\n"
+        f"{icon} <b>SETUP EMAS · {symbol}</b>\n"
         f"<code>{ca}</code>\n\n"
-        f"<b>{verdict}</b> · {ev.get('phase', '-')}\n"
+        f"<b>{verdict}</b> · {ev.get('phase', '-')}{score_txt}\n"
         f"📅 {ev.get('date', '-')}  ·  "
-        f"{int(ev.get('passed') or 0)}/{int(ev.get('total') or 4)} pilar\n"
+        f"{int(ev.get('passed') or 0)}/{int(ev.get('total') or 7)} cek\n"
         f"💧 |CVD/Vol| <b>{absorption:.2f}%</b> "
         f"(ambang &lt; 3.0%)\n"
-        f"🟢 Buy TX <b>{buy_pct:.1f}%</b> · "
+        f"Buy TX <b>{buy_pct:.1f}%</b> vs "
+        f"Sell TX <b>{float(sell_pct):.1f}%</b> "
+        f"({int(metrics.get('buy_tx') or 0)}/"
+        f"{int(metrics.get('sell_tx') or 0)})\n"
         f"Avg S {avg_sell:.3f} / B {avg_buy:.3f} SOL\n"
         f"📉 Vol vs H-1 {change_txt}\n"
-        f"{' · '.join(pillar_bits)}\n\n"
+        f"{' · '.join(check_bits)}\n\n"
         f"<a href='https://dexscreener.com/solana/{ca}'>DexScreener</a>  ·  "
         f"<a href='https://gmgn.ai/sol/token/{ca}'>GMGN</a>"
     )
-    _queue_or_send(text)
+    return _queue_or_send(text)
 
 
 def record_first_buy_surge(ca, symbol, stats, *, now_ts=None, price=None,

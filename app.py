@@ -9,7 +9,7 @@ Kept functions only:
   - signals.json + cvd_daily.json written by the 4h/daily cron
 
 Scoring 0–100 / Grade A-B-C is no longer the watchlist verdict.
-Each token is PASS / WATCH / FAIL / STEALTH DUMP from the 4 pillars.
+Each token is SETUP EMAS / WATCH / FAIL / STEALTH DUMP from 7 daily checks.
 """
 import html
 import time
@@ -31,7 +31,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ====================== GLOBAL USER-FRIENDLY STYLING (Light + Dark aware) ======================
+# Deep (tua) greens / reds — no neon glow. Easier on the eyes.
 st.markdown("""
 <style>
     .main .block-container {
@@ -50,54 +50,61 @@ st.markdown("""
         font-size: 1rem;
     }
     .watch-row {
-        padding: 4px 0;
-        line-height: 1.35;
+        padding: 8px 6px;
+        line-height: 1.5;
+        font-size: 0.88rem;
+        color: #1e293b;
+    }
+    .watch-muted {
+        font-size: 0.72rem;
+        color: #475569;
+        font-weight: 500;
+    }
+    .wl-head {
+        color: #334155;
+        font-size: 0.78rem;
+        letter-spacing: 0.02em;
+        font-weight: 700;
     }
     .section-header {
         font-size: 1.35rem;
         font-weight: 700;
         margin: 1.25rem 0 0.4rem 0;
+        color: #0f172a;
     }
 
-    /* ========== LIGHT MODE ========== */
-    @media (prefers-color-scheme: light) {
-        .section-header { color: #0f172a; }
-        .stMarkdown, .stCaption { color: #334155; }
-        .watch-row { color: #1e2937; }
-    }
-
-    /* ========== DARK MODE ========== */
     @media (prefers-color-scheme: dark) {
-        .section-header { color: #e0e7ff; }
+        .section-header { color: #e2e8f0; }
         .stMarkdown, .stCaption { color: #cbd5e1; }
         .watch-row { color: #e2e8f0; }
+        .watch-muted { color: #94a3b8; }
+        .wl-head { color: #cbd5e1; }
         .stButton button {
             background-color: #1e2937;
-            color: #e0e7ff;
+            color: #e2e8f0;
             border: 1px solid #475569;
         }
     }
 
     .stMarkdown, .stCaption {
         font-size: 0.95rem;
+        line-height: 1.55;
     }
     .glowing-pass {
-        background-color: rgba(0, 255, 136, 0.08);
-        border: 1.5px solid #00ff88 !important;
-        box-shadow: 0 0 12px rgba(0, 255, 136, 0.35);
-        color: #00ff88 !important;
+        background-color: #14532d;
+        border: 1px solid #166534 !important;
+        color: #dcfce7 !important;
         border-radius: 8px;
         padding: 6px 8px;
-        font-weight: bold;
+        font-weight: 700;
     }
     .glowing-fail {
-        background-color: rgba(255, 77, 77, 0.08);
-        border: 1.5px solid #ff4d4d !important;
-        box-shadow: 0 0 12px rgba(255, 77, 77, 0.35);
-        color: #ff4d4d !important;
+        background-color: #7f1d1d;
+        border: 1px solid #991b1b !important;
+        color: #fee2e2 !important;
         border-radius: 8px;
         padding: 6px 8px;
-        font-weight: bold;
+        font-weight: 700;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -338,11 +345,11 @@ SIGNAL_LABELS = {
 # emoji -> (badge bg, badge fg, badge border)
 SIGNAL_STYLES = {
     "⭐": ("#422006", "#fde68a", "#eab308"),  # Grade A golden spring
-    "🟢": ("#052e16", "#86efac", "#16a34a"),  # Grade B / absorption
+    "🟢": ("#052e16", "#bbf7d0", "#166534"),  # Grade B / absorption
     "⚪": ("#1e293b", "#cbd5e1", "#64748b"),  # Grade C muted noise
     "🟡": ("#422006", "#fde68a", "#ca8a04"),  # supply test / vol dry-up
     "🚀": ("#431407", "#fed7aa", "#f97316"),  # SOS ignition
-    "🔴": ("#450a0a", "#fecaca", "#dc2626"),  # bull trap / bearish
+    "🔴": ("#450a0a", "#fecaca", "#991b1b"),  # bull trap / bearish
     "👀": ("#172554", "#bfdbfe", "#3b82f6"),  # pre-pump potential
     "➖": ("#1e293b", "#94a3b8", "#334155"),  # normal / no signal
 }
@@ -433,9 +440,10 @@ wl = load_watchlist()
 st.markdown("### ⭐ Watchlist — 4 Pilar Pre-Pump")
 st.caption(
     "Kolom: **Diamond** (top-100 sell/buy ≤10%), **Real/Dust**, "
-    "**Top 100 Lock**, **|CVD/Vol|** (hijau glowing bila < 3.0%), "
-    "**Buy TX %** (≥ 52% = akumulasi cicil), **4 Pilar** "
-    "(PASS / WATCH / FAIL / STEALTH DUMP). "
+    "**Top 100 Lock**, **|CVD/Vol|** (hijau tua bila < 3.0%), "
+    "**Buy / Sell TX %** (≥ 52% buy = akumulasi cicil), **4 Pilar** "
+    "(SETUP EMAS 7/7 / WATCH / FAIL / STEALTH DUMP). "
+    "Tautan CVD hanya mengisi CA — fetch harus diklik di halaman CVD. "
     "Data di-refresh cron 4 jam + evaluasi harian 00:00 UTC."
 )
 
@@ -451,9 +459,9 @@ else:
     WL_WIDTHS = [1.0, 1.5, 0.7, 0.85, 0.95, 0.9, 0.85, 1.45, 0.85, 0.55]
     hdr = st.columns(WL_WIDTHS)
     for c, lab in zip(hdr, ["Token", "CA + Links", "Diamond", "Real/Dust",
-                            "Top 100 Lock", "|CVD/Vol|", "Buy TX",
+                            "Top 100 Lock", "|CVD/Vol|", "Buy / Sell TX",
                             "4 Pilar", "Update", ""]):
-        c.markdown(f"<b style='color:#000000'>{lab}</b>",
+        c.markdown(f"<span class='wl-head'>{lab}</span>",
                    unsafe_allow_html=True)
     st.divider()
     for ca, meta in wl.items():
@@ -475,7 +483,7 @@ else:
 
         if stealth or verdict in ("FAIL", "STEALTH DUMP"):
             raw_type = "🔴 BEARISH DIVERGENCE (HARGA TURUN / DISTRIBUSI)"
-        elif verdict == "PASS":
+        elif verdict in ("SETUP EMAS", "PASS"):
             raw_type = "🟢 ABSORPTION DIVERGENCE (WYCKOFF SPRING)"
         elif verdict == "WATCH":
             raw_type = "🟡 TEST SUPLAI (VOLUME KERING / LPS)"
@@ -493,14 +501,14 @@ else:
         if lock_pct is not None:
             try:
                 lock_v = float(lock_pct)
-                lock_color = ("#16a34a" if lock_v >= 70
-                              else ("#ca8a04" if lock_v >= 50 else "#dc2626"))
+                lock_color = ("#14532d" if lock_v >= 70
+                              else ("#92400e" if lock_v >= 50 else "#7f1d1d"))
                 lock_txt = (f"<span style='color:{lock_color};font-weight:700;'>"
                             f"{lock_v:.1f}% Pure Acc</span>")
             except (TypeError, ValueError):
-                lock_txt = "<span style='color:#000000'>—</span>"
+                lock_txt = "<span class='watch-muted'>—</span>"
         else:
-            lock_txt = "<span style='color:#000000'>—</span>"
+            lock_txt = "<span class='watch-muted'>—</span>"
 
         # |CVD / Volume| — Pilar 1
         if absorption is not None:
@@ -511,22 +519,23 @@ else:
                 vc_txt = (f"<div class='{abs_cls}' style='text-align:center'>"
                           f"{abs_v:.2f}%</div>")
             except (TypeError, ValueError):
-                vc_txt = "<span style='color:#000000'>—</span>"
+                vc_txt = "<span class='watch-muted'>—</span>"
         else:
-            vc_txt = "<span style='color:#000000'>—</span>"
+            vc_txt = "<span class='watch-muted'>—</span>"
 
         # Buy TX % — Pilar 2
         if buy_tx_pct is not None:
             try:
                 bt_v = float(buy_tx_pct)
+                sell_v = 100.0 - bt_v
                 bt_ok = bt_v >= 52.0
                 bt_cls = "glowing-pass" if bt_ok else "glowing-fail"
                 buy_txt = (f"<div class='{bt_cls}' style='text-align:center'>"
-                           f"{bt_v:.1f}%</div>")
+                           f"{bt_v:.0f}% / {sell_v:.0f}%</div>")
             except (TypeError, ValueError):
-                buy_txt = "<span style='color:#000000'>—</span>"
+                buy_txt = "<span class='watch-muted'>—</span>"
         else:
-            buy_txt = "<span style='color:#000000'>—</span>"
+            buy_txt = "<span class='watch-muted'>—</span>"
 
         if passed_n is not None:
             try:
@@ -537,11 +546,11 @@ else:
                 skor_txt = (
                     f"<span style='font-weight:800'>{html.escape(str(label))}"
                     f"</span>"
-                    f"<br><span style='font-size:0.69rem;color:#000000'>"
-                    f"{pn}/4 pilar</span>"
+                    f"<br><span class='watch-muted'>"
+                    f"{pn}/7 emas</span>"
                 )
             except (TypeError, ValueError):
-                skor_txt = "<span style='color:#000000'>—</span>"
+                skor_txt = "<span class='watch-muted'>—</span>"
         else:
             skor_txt = badge
 
@@ -552,53 +561,77 @@ else:
         # Token
         sym_show = html.escape(sym.upper() if str(sym).isascii() else str(sym))
         src_show = html.escape(str(src))
-        cols[0].markdown(f"<div class='watch-row' style='{row_bg}'><b style='color:#000000'>{sym_show}</b><br><span style='font-size:0.65rem;color:#000000'>{src_show}</span></div>", unsafe_allow_html=True)
+        cols[0].markdown(
+            f"<div class='watch-row' style='{row_bg}'><b>{sym_show}</b>"
+            f"<br><span class='watch-muted'>{src_show}</span></div>",
+            unsafe_allow_html=True)
 
         # CA + Links
         cols[1].markdown(
             f"<div class='watch-row' style='{row_bg}'>"
-            f"<a href='https://solscan.io/token/{ca}' target='_blank' style='font-size:0.74rem;color:#0284c7;text-decoration:none;font-weight:600;'>{ca[:8]}…{ca[-4:]}</a><br>"
-            f"<a href='https://gmgn.ai/sol/token/{ca}' target='_blank' style='font-size:0.65rem;color:#d97706;text-decoration:none;'>gmgn ↗</a> · "
-            f"<a href='https://dexscreener.com/solana/{ca}' target='_blank' style='font-size:0.65rem;color:#000000;text-decoration:none;'>chart ↗</a> · "
-            f"<a href='/CVD?ca={ca}' target='_self' style='font-size:0.65rem;color:#000000;text-decoration:none;'>CVD ↗</a>"
+            f"<a href='https://solscan.io/token/{ca}' target='_blank' "
+            f"style='font-size:0.80rem;color:#1d4ed8;text-decoration:none;"
+            f"font-weight:600;'>{ca[:8]}…{ca[-4:]}</a><br>"
+            f"<a href='https://gmgn.ai/sol/token/{ca}' target='_blank' "
+            f"style='font-size:0.72rem;color:#b45309;text-decoration:none;'>"
+            f"gmgn ↗</a> · "
+            f"<a href='https://dexscreener.com/solana/{ca}' target='_blank' "
+            f"style='font-size:0.72rem;color:#334155;text-decoration:none;'>"
+            f"chart ↗</a> · "
+            f"<a href='/CVD?ca={ca}' target='_self' "
+            f"style='font-size:0.72rem;color:#14532d;text-decoration:none;"
+            f"font-weight:600;'>CVD ↗</a>"
             f"</div>",
             unsafe_allow_html=True
         )
 
         # Diamond Hand (top 100 tidak jual >10%)
         diamond = det.get("diamond_pct")
-        diamond_txt = f"<span style='color:#16a34a;font-weight:700;'>{diamond:.0f}%</span>" if diamond is not None else "<span style='color:#000000'>—</span>"
-        cols[2].markdown(f"<div class='watch-row' style='{cell_bg}'>{diamond_txt}<br><span style='font-size:0.60rem;color:#000000'>diamond</span></div>", unsafe_allow_html=True)
+        diamond_txt = (
+            f"<span style='color:#14532d;font-weight:700;'>{diamond:.0f}%</span>"
+            if diamond is not None
+            else "<span class='watch-muted'>—</span>"
+        )
+        cols[2].markdown(
+            f"<div class='watch-row' style='{cell_bg}'>{diamond_txt}"
+            f"<br><span class='watch-muted'>diamond</span></div>",
+            unsafe_allow_html=True)
 
         # Real vs Dust holders
         real = det.get("real_holders")
         dust = det.get("dust_holders")
         if real is not None and dust is not None:
-            real_dust = f"<span style='color:#16a34a;font-weight:700;'>{real}</span>/<span style='color:#dc2626;font-weight:700;'>{dust}</span>"
+            real_dust = (
+                f"<span style='color:#14532d;font-weight:700;'>{real}</span>"
+                f"/<span style='color:#7f1d1d;font-weight:700;'>{dust}</span>"
+            )
         else:
-            real_dust = "<span style='color:#000000'>—</span>"
-        cols[3].markdown(f"<div class='watch-row' style='{cell_bg}'>{real_dust}<br><span style='font-size:0.60rem;color:#000000'>real/dust</span></div>", unsafe_allow_html=True)
+            real_dust = "<span class='watch-muted'>—</span>"
+        cols[3].markdown(
+            f"<div class='watch-row' style='{cell_bg}'>{real_dust}"
+            f"<br><span class='watch-muted'>real/dust</span></div>",
+            unsafe_allow_html=True)
 
         # Top 100 Lock — Pure Accumulator supply lock
         cols[4].markdown(
             f"<div class='watch-row' style='{cell_bg}'>{lock_txt}"
-            f"<br><span style='font-size:0.60rem;color:#000000'>top 100 lock</span></div>",
+            f"<br><span class='watch-muted'>top 100 lock</span></div>",
             unsafe_allow_html=True
         )
 
         # |CVD / Volume| Pilar 1
         cols[5].markdown(
             f"<div class='watch-row' style='{cell_bg}'>{vc_txt}"
-            f"<br><span style='font-size:0.60rem;color:#000000'>"
+            f"<br><span class='watch-muted'>"
             f"|CVD/Vol|</span></div>",
             unsafe_allow_html=True
         )
 
-        # Buy TX % Pilar 2
+        # Buy / Sell TX % Pilar 2
         cols[6].markdown(
             f"<div class='watch-row' style='{cell_bg}'>{buy_txt}"
-            f"<br><span style='font-size:0.60rem;color:#000000'>"
-            f"buy tx</span></div>",
+            f"<br><span class='watch-muted'>"
+            f"buy / sell</span></div>",
             unsafe_allow_html=True
         )
 
@@ -615,7 +648,7 @@ else:
                           "font-weight:700;'>stale</span>")
         cols[8].markdown(
             f"<div class='watch-row' style='{cell_bg}'>"
-            f"<span style='font-size:0.69rem;color:#000000'>"
+            f"<span class='watch-muted'>"
             f"{_fmt_ts(ts)}</span>{stale_html}</div>",
             unsafe_allow_html=True)
 
@@ -631,7 +664,12 @@ else:
                 time.sleep(0.35)
                 st.rerun()
 
-    st.caption(f"Total {len(wl)} token dipantau. Lock / Vol / CVD / skor di-refresh tiap 15 menit dari snapshot cron di `watchlist.json`. Alert Telegram tetap hanya saat trigger.")
+    st.caption(
+        f"Total {len(wl)} token dipantau. Lock / Vol / CVD / Setup Emas "
+        "dari snapshot cron. Tautan CVD hanya mengisi CA — fetch "
+        "manual di halaman CVD. Telegram hanya jika 7/7 Setup Emas; "
+        "kalau tidak ada: TIDAK ADA SETUP HARI INI."
+    )
 
 # ---------------------------------------------------------------------------
 # 2. TAMBAH KOLEKSI MANUAL KE WATCHLIST
@@ -720,12 +758,12 @@ if run_screen:
                 cc[4].write(f"{r.get('t10_pct',0)}%")
                 cc[5].write(f"{r.get('holders',0):,}")
                 chg = r.get("chg24",0)
-                cc[6].markdown(f"<span style='color:{'#22c55e' if chg>=0 else '#ef4444'}'>{chg:+.0f}%</span>", unsafe_allow_html=True)
+                cc[6].markdown(f"<span style='color:{'#14532d' if chg>=0 else '#7f1d1d'}'>{chg:+.0f}%</span>", unsafe_allow_html=True)
                 # Risk bits
                 bits = []
                 for lab, val in (("bndl", r.get("bundler_rate",0)), ("insd", r.get("insider_ratio",0))):
                     if val and val>0:
-                        c2 = "#22c55e" if val<0.15 else "#ef4444"
+                        c2 = "#14532d" if val<0.15 else "#7f1d1d"
                         bits.append(f"<span style='color:{c2}'>{lab} {val*100:.0f}%</span>")
                 cc[7].markdown(" · ".join(bits) if bits else "—", unsafe_allow_html=True)
                 with cc[8]:
@@ -797,18 +835,18 @@ if run_screen_hrhr:
                 if cp:
                     from cvd import PATTERN_EMOJI
                     cp_txt = " ".join(f"{PATTERN_EMOJI.get(k,'🕯️')} {k} {v}x" for k,v in cp.items())
-                    cp_txt = f"<br><span style='font-size:0.6rem;color:#22c55e'>{cp_txt}</span>"
+                    cp_txt = f"<br><span style='font-size:0.6rem;color:#14532d'>{cp_txt}</span>"
                 cc[1].markdown(f"**{r.get('symbol','?')}**<br><span style='font-size:0.62rem;opacity:0.6'>{r.get('name','')[:16]}</span><br><span style='font-size:0.55rem'>{gmgn_link} {dex_link}</span>{cp_txt}", unsafe_allow_html=True)
                 cc[2].write(f"${r.get('mc',0):,.0f}")
                 cc[3].write(f"{r.get('liq_pct',0)}%")
                 cc[4].write(f"{r.get('t10_pct',0)}%")
                 cc[5].write(f"{r.get('holders',0):,}")
                 chg = r.get("chg24",0)
-                cc[6].markdown(f"<span style='color:{'#22c55e' if chg>=0 else '#ef4444'}'>{chg:+.0f}%</span>", unsafe_allow_html=True)
+                cc[6].markdown(f"<span style='color:{'#14532d' if chg>=0 else '#7f1d1d'}'>{chg:+.0f}%</span>", unsafe_allow_html=True)
                 bits = []
                 for lab, val in (("bndl", r.get("bundler_rate",0)), ("insd", r.get("insider_ratio",0))):
                     if val and val>0:
-                        c2 = "#22c55e" if val<0.15 else "#ef4444"
+                        c2 = "#14532d" if val<0.15 else "#7f1d1d"
                         bits.append(f"<span style='color:{c2}'>{lab} {val*100:.0f}%</span>")
                 cc[7].markdown(" · ".join(bits) if bits else "—", unsafe_allow_html=True)
                 with cc[8]:
@@ -834,6 +872,7 @@ st.caption(
     "chunk transaksi ke `data/cvd_4h_chunks/`. Evaluasi harian 00:00 UTC "
     "mengagregasi 6 potongan tanpa full-fetch 24 jam. Ambang: "
     "|CVD/Vol| < 3.0% · Buy TX ≥ 52% · Avg Sell > Avg Buy · LPS −40%. "
-    "Halaman CVD punya fetch manual 1–7 hari."
+    "Halaman CVD fetch hanya setelah tombol diklik. Telegram 4 pilar "
+    "hanya jika keempat pilar hari UTC penuh sudah lolos."
 )
 

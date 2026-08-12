@@ -15,11 +15,13 @@ from cvd_daily import (aggregate_chunks_to_daily, calculate_daily_cvd,
                        chunk_key, save_4h_chunks_from_swaps,
                        swaps_from_4h_chunks, upsert_4h_chunk)
 from prepump_detector import (BUY_TX_MIN_PCT, CVD_ABSORPTION_PCT,
-                              VERDICT_FAIL, VERDICT_PASS, VERDICT_STEALTH,
-                              compute_window_metrics, evaluate_pillar1_flow,
+                              GOLDEN_TOTAL, VERDICT_EMAS, VERDICT_FAIL,
+                              VERDICT_PASS, VERDICT_STEALTH,
+                              compute_window_metrics, evaluate_golden_checks,
+                              evaluate_pillar1_flow,
                               evaluate_pillar2_participation,
                               evaluate_prepump, find_ignition,
-                              is_stealth_dump, metrics_for_day)
+                              is_setup_emas, is_stealth_dump, metrics_for_day)
 
 failures = []
 
@@ -179,14 +181,20 @@ def test_success_tokens_pass():
             swaps, holder_lock_pct=lock, now_ts=DAY2 + 3600,
             include_today=True)
         m = ev["metrics"]
-        check(ev["verdict"] == VERDICT_PASS,
-              f"{name} verdict PASS (got {ev['verdict']} "
-              f"{ev['passed']}/4 stealth={ev['stealth_dump']})")
-        check(ev["passed"] == 4, f"{name} all 4 pillars green")
+        check(ev["verdict"] == VERDICT_EMAS,
+              f"{name} verdict SETUP EMAS (got {ev['verdict']} "
+              f"{ev['passed']}/{ev.get('total')} "
+              f"stealth={ev['stealth_dump']})")
+        check(ev["passed"] == GOLDEN_TOTAL,
+              f"{name} all {GOLDEN_TOTAL} golden checks green")
+        check(ev.get("setup_emas") is True, f"{name} setup_emas flag")
+        check(is_setup_emas(ev) is True, f"{name} is_setup_emas")
         check(m["absorption_pct"] < 3.0,
               f"{name} absorption {m['absorption_pct']:.2f}% < 3")
         check(m["buy_tx_pct"] >= 52.0,
               f"{name} buy TX {m['buy_tx_pct']:.1f}% ≥ 52")
+        check(abs(m["buy_tx_pct"] + m["sell_tx_pct"] - 100.0) < 0.01,
+              f"{name} buy+sell TX % = 100")
         check(m["avg_sell_sol"] > m["avg_buy_sol"],
               f"{name} avg sell {m['avg_sell_sol']:.3f} > "
               f"buy {m['avg_buy_sol']:.3f}")
@@ -209,7 +217,8 @@ def test_trap_tokens_fail():
         check(ev["pillars"][0]["passed"] is False
               or ev["pillars"][1]["passed"] is False,
               f"{name} fails P1 or P2")
-        check(ev["verdict"] != VERDICT_PASS, f"{name} must not PASS")
+        check(ev["verdict"] != VERDICT_EMAS, f"{name} must not be SETUP EMAS")
+        check(is_setup_emas(ev) is False, f"{name} is_setup_emas False")
         check(ev["verdict"] != VERDICT_FAIL or ev["stealth_dump"],
               f"{name} labelled as trap, not a generic fail-only")
 
@@ -311,6 +320,30 @@ def test_kpi_cards_shape():
           "Callcat order-size card is FAIL / stealth")
 
 
+def test_golden_checks_lps_band_and_score():
+    print("\n[10] Setup Emas 7 checks + LPS band + score")
+    swaps, lock = fixture_ansem()
+    ev = evaluate_prepump(
+        swaps, holder_lock_pct=lock, now_ts=DAY2 + 3600)
+    checks = {c["id"]: c for c in ev["checks"]}
+    check(len(ev["checks"]) == 7, "exactly 7 golden checks")
+    check(all(c["passed"] for c in ev["checks"]), "Ansem 7/7 pass")
+    check(ev["score"] == 100, f"Ansem score 100 (got {ev['score']})")
+    # Extreme dry (−90%) is dead tape, not LPS.
+    m = ev["metrics"].copy()
+    m["volume_change_pct"] = -90.0
+    dry = evaluate_golden_checks(m, ev["usable_rows"], lock)
+    lps = next(c for c in dry if c["id"] == "p3_lps")
+    check(lps["passed"] is False, "−90% vol is outside LPS band")
+    # Missing lock cannot confirm retention.
+    no_lock = evaluate_golden_checks(ev["metrics"], ev["usable_rows"], None)
+    lock_chk = next(c for c in no_lock if c["id"] == "p3_lock")
+    check(lock_chk["passed"] is False, "missing lock fails P3 retention")
+    check(is_setup_emas({"verdict": "WATCH", "passed": 6, "total": 7,
+                         "date": "2024-01-02"}) is False,
+          "WATCH 6/7 is not Setup Emas")
+
+
 if __name__ == "__main__":
     test_absorption_formula()
     test_stealth_dump_filter()
@@ -321,6 +354,7 @@ if __name__ == "__main__":
     test_4h_chunk_roundtrip()
     test_include_today_flag()
     test_kpi_cards_shape()
+    test_golden_checks_lps_band_and_score()
     print(f"\n{'FAILED: ' + str(len(failures)) if failures else 'ALL PASSED'}")
     for item in failures:
         print("  -", item)
