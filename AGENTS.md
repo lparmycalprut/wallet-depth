@@ -10,7 +10,7 @@ File ini adalah **memori antar-sesi**. Agen AI membaca `AGENTS.md` otomatis saat
 
 Dashboard Streamlit + cron untuk deteksi **pre-pump** Solana. Bahasa pengguna: **Indonesia**. Komentar & docstring: **Inggris**.
 
-Fokus sempit per 2026-08-07 (reset total), **diperbarui 2026-08-11 ke Pre-Pump & Wyckoff 15M Cron Detector**: **watchlist → scan trending/degen → CVD → sinyal Wyckoff 15M** (detektor `scripts/prepump_wyckoff_cron.py` jalan tiap 15 menit via `.github/workflows/prepump-wyckoff-cron.yml`, menulis format baru ke `signals.json`: `type/score/volume_sol/cvd_sol/holder_lock_pct`). Cron harian 07:00 WIB, M15 swap store, dan 7 checks sudah **ditiadakan**.
+Fokus sempit per 2026-08-07 (reset total), **diperbarui 2026-08-12 ke 3-Candle Wyckoff + Grade A/B/C**: **watchlist → scan trending/degen → CVD → sinyal Wyckoff 15M** (detektor `scripts/prepump_wyckoff_cron.py` jalan tiap 15 menit via `.github/workflows/prepump-wyckoff-cron.yml` di menit 14/29/44/59 UTC). Bin candle **clock-aligned** (`ts // 900 * 900`); **Open = close candle sebelumnya** (TradingView / GMGN — gap-down yang tidak reclaim prev close = merah, bukan hijau palsu); evaluasi urutan **C1 baseline → C2 kering/LPS → C3 spring**. Hanya **Grade A** (3-candle + smart buyer, skor 95–100, wajib Telegram/Discord) dan **Grade B / SOS / trap / bearish** yang notify — **Grade C** (noise akumulasi rutin, 50–55) di-mute. `signals.json` format: `type/grade/score/volume_sol/cvd_sol/holder_lock_pct`. Cron harian 07:00 WIB, M15 swap store, dan 7 checks sudah **ditiadakan**.
 
 Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Perubahan scoring harus dibuktikan kalibrasi tidak bergeser.
 

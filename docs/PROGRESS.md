@@ -7,6 +7,79 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-12 — Continuous Open (prev close) + anti false-green
+
+### Masalah
+Open M15 memakai trade pertama di bin. Dump di awal candle lalu bounce
+kecil terlihat hijau padahal Close masih di bawah close candle sebelumnya
+(chart TradingView / GMGN = merah). Itu false-positive absorption.
+
+### Yang berubah
+`process_trades_to_15m_bins` + `apply_continuous_opens`: Open[n] = Close[n-1].
+Bin kosong meneruskan last close (datar 0%). `is_c3_spring_divergence`
+memakai warna chart itu (Close ≥ Open vs prev close, CVD < −0.05, vol ≥ 0.50).
+Gap-down yang tidak reclaim prev close **bukan** Grade A / absorption.
+
+### Verifikasi
+`test_continuous_open_vs_false_green`, `test_apply_continuous_opens_empty_carry`,
+`test_false_green_gap_down_not_grade_a` + suite cron sebelumnya.
+
+---
+
+## 2026-08-12 — 3-Candle Wyckoff Spring + Smart Buyer + Grade A/B/C
+
+### Masalah
+Detektor single-candle 15m memicu 15+ notifikasi false alarm per hari
+(noise akumulasi rutin: candle hijau + CVD minus di tengah sideways).
+
+### Yang berubah
+
+1. **Clock-aligned 15m binning** (`scripts/prepump_wyckoff_cron.py`):
+   `bucket_ts = (int(trade_timestamp) // 900) * 900`. Cron di menit
+   14/29/44/59 UTC → C3 adalah candle resmi yang sedang akan ditutup.
+   Bin lama (now-relative) memotong dua candle resmi — itu sumber noise.
+2. **3-candle sequence engine** (fungsi murni, offline-testable):
+   - C1 baseline = 30–45 menit lalu (bins[2])
+   - C2 kering/LPS = drop volume ≥40% vs C1 **atau** vol < 3.0 SOL, dan
+     `|Change| ≤ 2.5%`
+   - C3 spring = Close ≥ Open, Change ≥ 0, CVD < −0.05 SOL, vol ≥ 0.50 SOL
+3. **Smart-buyer filter di C3**: BUY dari wallet bertag `top_holder`,
+   `smart_degen`, `bundler`, `axiom`, `bluechip_owner`, atau masuk Top 100
+   holders (utamanya Top 1–10). Disimpan: alamat ringkas, tags, nominal SOL.
+4. **Grading**:
+   - ⭐ Grade A 95–100: C2 kering AND C3 spring AND smart buyer → **wajib
+     Telegram + Discord**. Format pesan sesuai spec (Urutan Candle +
+     Smart Buyers + tautan GMGN).
+   - 🟢 Grade B 80: C3 spring + satu konfirmasi (hanya C2 kering ATAU
+     hanya smart buyer) → catat `signals.json`, notify karena score ≥ 80.
+   - ⚪ Grade C 50–55: C3 spring tanpa konfirmasi → **mute**, tidak ditulis
+     ke `signals.json` (dashboard tidak tertimpa noise).
+5. **Sinyal lain**: SOS Ignition (vol ≥3.0×, Buy TX ≥60%, CVD > +3 SOL,
+   kenaikan ≥ +8%). Anti-trap: kenaikan ≥ +10% **tp** CVD < **−2.0 SOL**
+   (dulu −1.0) dan lock < 50%. Bearish divergence tetap notify.
+   Prioritas: trap > SOS > Grade A > bearish > Grade B > Grade C mute.
+6. **GMGN robustness**: `extract_holder_rows` menerima `data.holders` dan
+   `data.list`. Trades pindah ke
+   `/vas/api/v1/token_trades/sol/{ca}?event=buy&event=sell&limit=100&min_amount_usd=1`.
+   `sanitize_sol_quote_amount` membuang quote jika implied SOL price
+   < $10 atau > $500 (plus normalisasi lamports).
+7. **UI** (`app.py`): badge ⭐ Grade A / 🟢 Grade B / ⚪ Grade C; caption
+   menjelaskan filter 3-candle + mute Grade C.
+
+### Verifikasi
+`python tests/test_cron_top_holders.py` — clock-align, C2/C3 rules, smart
+buyer tag+top100, Grade A pipeline (notify+format), Grade B notify, Grade C
+mute (0 save / 0 send), SOS, anti-trap threshold −2.0, bearish, dual-shape
+holders, VAS trades URL, sanitizer quote_amount, format pesan Grade A.
+
+### Sisa PR
+- Ambang C2 40% / C3 CVD −0.05 bisa dituning lewat config jika masih
+  kebocoran noise (saat ini hardcode, sengaja ketat).
+- Live GMGN `maker_tags` belum di-HAR ulang hari ini; parser sudah
+  menerima list/csv/dict + boolean flag.
+
+---
+
 ## 2026-08-11 — Bearish Divergence (kebalikan Absorption) di Wyckoff 15M Detector
 
 ### Yang berubah
