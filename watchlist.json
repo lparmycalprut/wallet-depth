@@ -73,14 +73,5 @@
   "diamond_pct": 92.0,
   "real_holders": 1672,
   "dust_holders": 158
- },
- "EnA53NmMzfsAs7p44dATdvT55HHUACxpEbC9AKY3pump": {
-  "symbol": "HTZ",
-  "note": "",
-  "added": "2026-08-10",
-  "source": "manual",
-  "diamond_pct": 80.0,
-  "real_holders": 1672,
-  "dust_holders": 102
  }
 }
