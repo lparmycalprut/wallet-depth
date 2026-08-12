@@ -439,8 +439,8 @@ wl = load_watchlist()
 
 st.markdown("### ⭐ Watchlist — 4 Pilar Pre-Pump")
 st.caption(
-    "Kolom: **Diamond** (top-100 sell/buy ≤10%), **Real/Dust**, "
-    "**Top 100 Lock**, **|CVD/Vol|** (hijau tua bila < 3.0%), "
+    "Kolom: **Diamond** (top-100 sell/buy ≤10%), "
+    "**|CVD/Vol|** (hijau tua bila < 3.0%), "
     "**Buy / Sell TX %** (≥ 52% buy = akumulasi cicil), **4 Pilar** "
     "(SETUP EMAS 7/7 / WATCH / FAIL / STEALTH DUMP). "
     "Tautan CVD hanya mengisi CA — fetch harus diklik di halaman CVD. "
@@ -455,11 +455,11 @@ else:
         all_sigs = load_signals()
     except Exception:
         all_sigs = []
-    # Header row — 4-pillar columns
-    WL_WIDTHS = [1.0, 1.5, 0.7, 0.85, 0.95, 0.9, 0.85, 1.45, 0.85, 0.55]
+    # Header row — 4-pillar columns (Real/Dust + Top 100 Lock hidden)
+    WL_WIDTHS = [1.0, 1.5, 0.7, 0.9, 0.85, 1.45, 0.85, 0.55]
     hdr = st.columns(WL_WIDTHS)
-    for c, lab in zip(hdr, ["Token", "CA + Links", "Diamond", "Real/Dust",
-                            "Top 100 Lock", "|CVD/Vol|", "Buy / Sell TX",
+    for c, lab in zip(hdr, ["Token", "CA + Links", "Diamond",
+                            "|CVD/Vol|", "Buy / Sell TX",
                             "4 Pilar", "Update", ""]):
         c.markdown(f"<span class='wl-head'>{lab}</span>",
                    unsafe_allow_html=True)
@@ -472,7 +472,6 @@ else:
         four = resolve_prepump_row(meta, packed.get("four"))
         wyck = resolve_wyckoff_row(meta, packed.get("wyckoff"))
         ts = four.get("ts") or wyck.get("ts")
-        lock_pct = wyck.get("lock_pct")
         row_stale = bool(four.get("stale"))
         verdict = four.get("verdict") or ""
         phase = four.get("phase") or ""
@@ -491,24 +490,8 @@ else:
             raw_type = wyck.get("raw_type") or ""
         badge, row_bg = signal_badge(raw_type)
 
-        # Fetch detail tambahan
+        # Fetch detail tambahan (diamond; real/dust kept off-display)
         det = get_watchlist_details(ca, meta)
-
-        # Top 100 Lock — % Pure Accumulator di Top 100 Holders (dari sinyal,
-        # fallback ke metadata watchlist.json)
-        if lock_pct is None:
-            lock_pct = meta.get("holder_lock_pct")
-        if lock_pct is not None:
-            try:
-                lock_v = float(lock_pct)
-                lock_color = ("#14532d" if lock_v >= 70
-                              else ("#92400e" if lock_v >= 50 else "#7f1d1d"))
-                lock_txt = (f"<span style='color:{lock_color};font-weight:700;'>"
-                            f"{lock_v:.1f}% Pure Acc</span>")
-            except (TypeError, ValueError):
-                lock_txt = "<span class='watch-muted'>—</span>"
-        else:
-            lock_txt = "<span class='watch-muted'>—</span>"
 
         # |CVD / Volume| — Pilar 1
         if absorption is not None:
@@ -554,7 +537,7 @@ else:
         else:
             skor_txt = badge
 
-        # 10 kolom compact — Wyckoff 15M
+        # 8 kolom compact — Real/Dust + Top 100 Lock dihapus dari tampilan
         cols = st.columns(WL_WIDTHS)
         cell_bg = row_bg + "text-align:center;"
 
@@ -597,30 +580,8 @@ else:
             f"<br><span class='watch-muted'>diamond</span></div>",
             unsafe_allow_html=True)
 
-        # Real vs Dust holders
-        real = det.get("real_holders")
-        dust = det.get("dust_holders")
-        if real is not None and dust is not None:
-            real_dust = (
-                f"<span style='color:#14532d;font-weight:700;'>{real}</span>"
-                f"/<span style='color:#7f1d1d;font-weight:700;'>{dust}</span>"
-            )
-        else:
-            real_dust = "<span class='watch-muted'>—</span>"
-        cols[3].markdown(
-            f"<div class='watch-row' style='{cell_bg}'>{real_dust}"
-            f"<br><span class='watch-muted'>real/dust</span></div>",
-            unsafe_allow_html=True)
-
-        # Top 100 Lock — Pure Accumulator supply lock
-        cols[4].markdown(
-            f"<div class='watch-row' style='{cell_bg}'>{lock_txt}"
-            f"<br><span class='watch-muted'>top 100 lock</span></div>",
-            unsafe_allow_html=True
-        )
-
         # |CVD / Volume| Pilar 1
-        cols[5].markdown(
+        cols[3].markdown(
             f"<div class='watch-row' style='{cell_bg}'>{vc_txt}"
             f"<br><span class='watch-muted'>"
             f"|CVD/Vol|</span></div>",
@@ -628,7 +589,7 @@ else:
         )
 
         # Buy / Sell TX % Pilar 2
-        cols[6].markdown(
+        cols[4].markdown(
             f"<div class='watch-row' style='{cell_bg}'>{buy_txt}"
             f"<br><span class='watch-muted'>"
             f"buy / sell</span></div>",
@@ -636,7 +597,7 @@ else:
         )
 
         # 4-pilar verdict
-        cols[7].markdown(
+        cols[5].markdown(
             f"<div class='watch-row' style='{row_bg}'>{skor_txt}</div>",
             unsafe_allow_html=True
         )
@@ -646,14 +607,14 @@ else:
         if row_stale and ts:
             stale_html = ("<br><span style='font-size:0.60rem;color:#b45309;"
                           "font-weight:700;'>stale</span>")
-        cols[8].markdown(
+        cols[6].markdown(
             f"<div class='watch-row' style='{cell_bg}'>"
             f"<span class='watch-muted'>"
             f"{_fmt_ts(ts)}</span>{stale_html}</div>",
             unsafe_allow_html=True)
 
         # Hapus
-        with cols[9]:
+        with cols[7]:
             if st.button("🗑️", key=f"del_{ca}", help="Hapus dari watchlist", use_container_width=True):
                 ok = remove_from_watchlist(ca)
                 if ok:
@@ -665,7 +626,7 @@ else:
                 st.rerun()
 
     st.caption(
-        f"Total {len(wl)} token dipantau. Lock / Vol / CVD / Setup Emas "
+        f"Total {len(wl)} token dipantau. Diamond / Vol / CVD / Setup Emas "
         "dari snapshot cron. Tautan CVD hanya mengisi CA — fetch "
         "manual di halaman CVD. Telegram hanya jika 7/7 Setup Emas; "
         "kalau tidak ada: TIDAK ADA SETUP HARI INI."

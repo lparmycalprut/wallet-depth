@@ -22,7 +22,7 @@ Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Per
 
 | File | Isi |
 |---|---|
-| `app.py` | **Main page** — watchlist vertical 10 kolom (Token, CA + Links, Diamond, Real/Dust, **Top 100 Lock** (% Pure Acc dari `holder_lock_pct`), **15m Vol / CVD** (`volume_sol`/`cvd_sol`), **Sinyal Wyckoff** (🟢 ABSORPTION DIVERGENCE / 🟡 TEST SUPLAI / 🚀 SOS IGNITION / 🔴 BULL TRAP / ➖ NORMAL), **Skor** 0–100, Update, Hapus) → tambah manual → scan trending now → scan degen now. Sinyal dibaca dari entri terbaru format Wyckoff di `signals.json` (`get_signal_for_ca`). |
+| `app.py` | **Main page** — watchlist vertical 8 kolom (Token, CA + Links, Diamond, **|CVD/Vol|**, **Buy / Sell TX**, **4 Pilar**, Update, Hapus). **Real/Dust** dan **Top 100 Lock** dihapus dari tampilan (data tetap di meta/cron). Lalu tambah manual → scan trending now → scan degen now. |
 | `pages/3_⭐_Watchlist.py` | Watchlist table (history/score/holders). Tetap, tapi main page juga menampilkan watchlist. |
 | `pages/4_📊_CVD.py` | **CVD Deep Analysis** — conviction graph fixed `24/48/72h` (growth/decline vs periode sebelumnya) + full Helius top-100 holder analysis + **fund source wallet (funder)** top-100 (rank by SOL balance, exclude exchange). Page tidak lagi merender Pre-Pump Radar, Multi-Timeframe, conviction table, CVD hourly, atau whale/dolphin held-flow. |
 | `core.py` | Helius pool + DexScreener + GeckoTerminal helpers (shared). |
@@ -204,11 +204,9 @@ ke `signals.json` (`ts/ca/symbol/type/score/price_usd/volume_sol/cvd_sol/
 holder_lock_pct/detail`). Cron harian 07:00 WIB, M15 swap store, dan evaluasi
 7 checks sudah ditiadakan.
 
-`app.py` mengikuti: tabel Watchlist kini 10 kolom — Token, CA + Links,
-Diamond, Real/Dust, **Top 100 Lock** (`holder_lock_pct`, "X% Pure Acc"),
-**15m Vol / CVD** (`volume_sol` | `cvd_sol`), **Sinyal** (label Wyckoff:
-🟢 ABSORPTION DIVERGENCE, 🟡 TEST SUPLAI, 🚀 SOS IGNITION, 🔴 BULL TRAP,
-👀 PRE-PUMP POTENTIAL, ➖ NORMAL), **Skor** 0–100 (`score`), Update, Hapus.
+`app.py` mengikuti: tabel Watchlist kini 8 kolom — Token, CA + Links,
+Diamond, **|CVD/Vol|**, **Buy / Sell TX**, **4 Pilar**, Update, Hapus.
+Kolom **Real/Dust** dan **Top 100 Lock** tidak ditampilkan (owner request).
 `get_signal_for_ca()` membaca entri terbaru format Wyckoff per CA; entri lama
 (`cvd_daily`, cron 6h) diabaikan. `watchlist_m15_flag`, kolom M15, kolom
 AvgCost (`fetch_gmgn_avg_cost`), `live_evaluate`, dan skor "/7 checks" dihapus.

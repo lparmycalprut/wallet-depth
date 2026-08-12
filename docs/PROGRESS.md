@@ -7,6 +7,24 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-12 — Watchlist: hapus kolom Real/Dust + Top 100 Lock
+
+### Masalah
+Owner minta **Real/Dust** dan **Top 100 Lock** tidak tampil di tabel
+watchlist (main app).
+
+### Yang berubah
+`app.py` — tabel watchlist jadi 8 kolom: Token, CA + Links, Diamond,
+`|CVD/Vol|`, Buy / Sell TX, 4 Pilar, Update, Hapus. Caption + indeks
+kolom disesuaikan. Fetch diamond (`get_watchlist_details`) tetap jalan;
+angka real/dust & lock tidak dirender.
+
+### Verifikasi
+`python -m py_compile app.py` + cek header tidak lagi memuat
+`Real/Dust` / `Top 100 Lock`.
+
+---
+
 ## 2026-08-12 — Setup Emas 7 cek harian + Telegram pagi
 
 ### Masalah
