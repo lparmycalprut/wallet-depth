@@ -27,7 +27,8 @@ rate-limit GMGN-Helius.
 3. **`cvd.py`** — `fetch_swaps_multiday` + `fetch_and_analyze_multiday`
    (1–7 hari), persist ke store 168 jam + chunk + `cvd_daily.json`.
 4. **`scripts/update_cvd.py`** dihidupkan kembali: `4h` / `daily` /
-   `auto`. Workflow `.github/workflows/cvd-4h-daily.yml` (`0 */4 * * *`).
+   `auto`. YAML cron: `docs/WORKFLOW_PATCH_cvd_4h.md` (owner paste
+   manual — App tidak punya izin `workflows`).
 5. **`pages/4_📊_CVD.py`** — selector 1–7 hari, tombol fetch, CSS
    `.glowing-pass` / `.glowing-fail`, 4 KPI card, Plotly dual-axis,
    tabel day-by-day. Data auto-persist.
