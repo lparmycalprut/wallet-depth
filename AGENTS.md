@@ -10,7 +10,7 @@ File ini adalah **memori antar-sesi**. Agen AI membaca `AGENTS.md` otomatis saat
 
 Dashboard Streamlit + cron untuk deteksi **pre-pump** Solana. Bahasa pengguna: **Indonesia**. Komentar & docstring: **Inggris**.
 
-Fokus sempit per 2026-08-12: **watchlist → scan trending/degen → CVD 4 Pilar Pre-Pump**. Verdict **PASS / WATCH / FAIL / STEALTH DUMP** — **bukan** skor 0–100. Empat pilar terkalibrasi: (1) `|CVD/Vol| < 3.0%`, (2) Buy TX ≥ 52% + Avg Sell > Avg Buy (trap Callcat/Froge jika kebalikan), (3) LPS volume drop ≥ 40% + Top-100 lock ≥ 40%, (4) ignition 15m/1h buy ≥ 55% + volume +100%…+14000%. Cron **4 jam** (`0 */4 * * *` UTC = 03/07/11/15/19/23 WIB) menulis chunk ke `data/cvd_4h_chunks/<mint>.json`; agregasi harian 00:00 UTC / 07:00 WIB **tidak** full-fetch 24 jam. Fetch manual 1–7 hari di halaman CVD. Detektor 15m Grade A/B/C tetap di repo sebagai ignition helper, tetapi watchlist tidak lagi memakai skor 60/100.
+Fokus sempit per 2026-08-12: **watchlist → scan trending/degen → CVD 4 Pilar Pre-Pump**. Verdict **PASS / WATCH / FAIL / STEALTH DUMP** — **bukan** skor 0–100. Empat pilar terkalibrasi: (1) `|CVD/Vol| < 3.0%`, (2) Buy TX ≥ 49% (tape hampir seimbang OK) + Avg Sell > Avg Buy (trap Callcat/Froge jika kebalikan), (3) LPS volume drop −40%…−75% **atau** ekspansi terserap (vol ≥ +40% + CVD turun + |CVD/Vol| < 3%) + Top-100 lock ≥ 40%, (4) ignition 15m/1h buy ≥ 55% + volume +100%…+14000% **hanya jika Δ > 0** (vol naik + CVD turun = setup, bukan ignition). Cron **4 jam** (`0 */4 * * *` UTC = 03/07/11/15/19/23 WIB) menulis chunk ke `data/cvd_4h_chunks/<mint>.json`; agregasi harian 00:00 UTC / 07:00 WIB **tidak** full-fetch 24 jam. Fetch manual 1–7 hari di halaman CVD. Detektor 15m Grade A/B/C tetap di repo sebagai ignition helper, tetapi watchlist tidak lagi memakai skor 60/100.
 
 Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Perubahan scoring harus dibuktikan kalibrasi tidak bergeser.
 
@@ -22,13 +22,13 @@ Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Per
 
 | File | Isi |
 |---|---|
-| `app.py` | **Main page** — watchlist vertical 10 kolom (Token, CA + Links, Diamond, Real/Dust, **Top 100 Lock** (% Pure Acc dari `holder_lock_pct`), **15m Vol / CVD** (`volume_sol`/`cvd_sol`), **Sinyal Wyckoff** (🟢 ABSORPTION DIVERGENCE / 🟡 TEST SUPLAI / 🚀 SOS IGNITION / 🔴 BULL TRAP / ➖ NORMAL), **Skor** 0–100, Update, Hapus) → tambah manual → scan trending now → scan degen now. Sinyal dibaca dari entri terbaru format Wyckoff di `signals.json` (`get_signal_for_ca`). |
+| `app.py` | **Main page** — watchlist vertical 8 kolom (Token, CA + Links, Diamond, **|CVD/Vol|**, **Buy / Sell TX**, **4 Pilar**, Update, Hapus). **Real/Dust** dan **Top 100 Lock** dihapus dari tampilan (data tetap di meta/cron). Lalu tambah manual → scan trending now → scan degen now. |
 | `pages/3_⭐_Watchlist.py` | Watchlist table (history/score/holders). Tetap, tapi main page juga menampilkan watchlist. |
 | `pages/4_📊_CVD.py` | **CVD Deep Analysis** — conviction graph fixed `24/48/72h` (growth/decline vs periode sebelumnya) + full Helius top-100 holder analysis + **fund source wallet (funder)** top-100 (rank by SOL balance, exclude exchange). Page tidak lagi merender Pre-Pump Radar, Multi-Timeframe, conviction table, CVD hourly, atau whale/dolphin held-flow. |
 | `core.py` | Helius pool + DexScreener + GeckoTerminal helpers (shared). |
 | `cvd.py` | Store swap 72 jam, bucket CVD, wallet profiles, conviction, candle patterns. **Tidak lagi** punya holder_snapshots / real_dust_history (dihapus karena fokus prepump). |
 | `gmgn_screener.py` | Screener GMGN trending + HRHR, scoring ramp kontinu (4 pilar: t10 30, liq 30, rug 25, vol 15). Tetap semua filter. |
-| `prepump_detector.py` | **4 Pilar Pre-Pump** — PASS/FAIL per pilar (CVD < 3%, Buy TX ≥ 52%, Avg Sell > Buy, LPS + ignition). Tanpa skor 0–100. |
+| `prepump_detector.py` | **4 Pilar Pre-Pump** — PASS/FAIL per pilar (CVD < 3%, Buy TX ≥ 49%, Avg Sell > Buy, LPS **atau** ekspansi terserap + ignition). Tanpa skor 0–100. |
 | `prepump_baru_detector.py` | **BARU — Sinyal watchlist harian** — 7 checks validated 10 pump + LUNA (sell>buy, whale negatif, pantul>5%, CVD<10%, buyTX≥52%, 3h after low net BUY, spring≥55%). Sinyal MUNCUL jika lolos ≥6/7 (core 3 wajib). |
 | `signals.py` | **Minimalist** — hanya prepump_baru_muncul (baru) + legacy imminent/forming (compat). Telegram via `requests` langsung (tanpa breakout_guard). Digest harian. |
 | `trending_ui.py` | Renderer trending — dipakai app.py, tapi app sekarang render minimal (hanya Watchlist button). Enrich holder split tetap Helius-only. |
@@ -204,11 +204,9 @@ ke `signals.json` (`ts/ca/symbol/type/score/price_usd/volume_sol/cvd_sol/
 holder_lock_pct/detail`). Cron harian 07:00 WIB, M15 swap store, dan evaluasi
 7 checks sudah ditiadakan.
 
-`app.py` mengikuti: tabel Watchlist kini 10 kolom — Token, CA + Links,
-Diamond, Real/Dust, **Top 100 Lock** (`holder_lock_pct`, "X% Pure Acc"),
-**15m Vol / CVD** (`volume_sol` | `cvd_sol`), **Sinyal** (label Wyckoff:
-🟢 ABSORPTION DIVERGENCE, 🟡 TEST SUPLAI, 🚀 SOS IGNITION, 🔴 BULL TRAP,
-👀 PRE-PUMP POTENTIAL, ➖ NORMAL), **Skor** 0–100 (`score`), Update, Hapus.
+`app.py` mengikuti: tabel Watchlist kini 8 kolom — Token, CA + Links,
+Diamond, **|CVD/Vol|**, **Buy / Sell TX**, **4 Pilar**, Update, Hapus.
+Kolom **Real/Dust** dan **Top 100 Lock** tidak ditampilkan (owner request).
 `get_signal_for_ca()` membaca entri terbaru format Wyckoff per CA; entri lama
 (`cvd_daily`, cron 6h) diabaikan. `watchlist_m15_flag`, kolom M15, kolom
 AvgCost (`fetch_gmgn_avg_cost`), `live_evaluate`, dan skor "/7 checks" dihapus.
@@ -276,8 +274,8 @@ Setiap pagi (cron daily 00:00 UTC / 07:00 WIB) membandingkan transaksi
 harian watchlist. Telegram **hanya** jika **Setup Emas 7/7**:
 
 - 🛡️ P1 |CVD/Vol| < 3.0% + CVD datar/naik (tol 1 SOL)
-- 👥 P2 Buy TX ≥ 52% + Avg Sell > Buy + whale net < 0
-- ⏳ P3 LPS vol −40%…−75% + Top-100 lock ≥ 40%
+- 👥 P2 Buy TX ≥ 49% (tape hampir seimbang) + Avg Sell > Buy + whale net < 0
+- ⏳ P3 LPS vol −40%…−75% **atau** ekspansi terserap (vol naik + CVD turun) + Top-100 lock ≥ 40%
 
 Skor 100 = jumlah bobot 18+12+18+16+10+16+10. Ignition P4 info saja.
 Kalau tidak ada token 7/7: **TIDAK ADA SETUP HARI INI** (sekali per tanggal).

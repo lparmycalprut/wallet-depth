@@ -6,11 +6,12 @@ Callcat / Froge (stealth dump). Score points only at the golden
 accumulation setup; ignition (P4) is informational, not required.
 
   P1  CVD Absorption          |CVD/Vol| < 3.0%
-  P1  Bullish Divergence      running CVD flat/up at the support test
-  P2  Buy TX Dominance        Buy TX >= 52%
+  P1  Bullish Divergence      CVD flat/up, or vol-up + CVD-down absorption
+  P2  Buy TX Dominance        Buy TX >= 49% (near-even tape is OK)
   P2  Order Size Discrepancy  Avg SELL > Avg BUY
   P2  Whale Pressure Absorbed whale net < 0
-  P3  Volume Kering LPS       daily vol −40% … −75% vs H-1
+  P3  Volume                  LPS −40%…−75% OR absorbed expansion
+                              (vol ≥ +40% and CVD down and |CVD/Vol| < 3%)
   P3  Retensi Akumulator      Top-100 lock >= 40%
 
 Verdict: STEALTH DUMP / SETUP EMAS (7/7) / WATCH (>=5/7) / FAIL.
@@ -24,11 +25,16 @@ from cvd_daily import calculate_daily_cvd, complete_daily_rows
 # Calibrated thresholds (do not loosen without a new fixture suite)
 # ---------------------------------------------------------------------------
 CVD_ABSORPTION_PCT = 3.0
-BUY_TX_MIN_PCT = 52.0
+# 49% = tape hampir seimbang (541/547 SISYPUSS). Stealth dump tetap
+# memakai 52% + avg buy ≥ avg sell (Callcat/Froge).
+BUY_TX_MIN_PCT = 49.0
+STEALTH_BUY_TX_MAX = 52.0
 WHALE_SOL = 1.0
 LPS_DROP_MIN_PCT = -40.0
 # Upper dry bound: user asked −40…−70; −75 keeps LUNA (−73) / Punch (−72).
 LPS_DROP_MAX_PCT = -75.0
+# Symmetric with LPS: volume +40%+ with CVD down = large absorption.
+VOL_EXPANSION_MIN_PCT = 40.0
 SUPPLY_LOCK_MIN_PCT = 40.0
 CVD_FLAT_TOL_SOL = 1.0
 IGNITION_BUY_PCT = 55.0
@@ -159,7 +165,7 @@ def is_stealth_dump(metrics):
     buy_pct = _as_float(m.get("buy_tx_pct"), 0.0)
     if avg_buy <= 0 and avg_sell <= 0:
         return False
-    return avg_buy >= avg_sell and buy_pct < BUY_TX_MIN_PCT
+    return avg_buy >= avg_sell and buy_pct < STEALTH_BUY_TX_MAX
 
 
 def _pillar(name, passed, detail, **extra):
@@ -182,6 +188,59 @@ def _cvd_is_flat(daily_rows, *, tol_sol=CVD_FLAT_TOL_SOL):
     return last >= prev - abs(_as_float(tol_sol, CVD_FLAT_TOL_SOL))
 
 
+def _row_absorption(src):
+    """|CVD/Vol| from a metrics dict or daily row."""
+    src = src or {}
+    if src.get("absorption_pct") is not None:
+        return abs(_as_float(src.get("absorption_pct"), 99.0))
+    return abs(_as_float(src.get("cvd_ratio_pct"), 99.0))
+
+
+def _is_lps_drop(change_pct):
+    """True when daily volume contracted into the LPS band (−40%…−75%)."""
+    if change_pct is None:
+        return False
+    change = _as_float(change_pct, 0.0)
+    return LPS_DROP_MAX_PCT <= change <= LPS_DROP_MIN_PCT
+
+
+def _is_absorbed_expansion(change_pct, metrics=None, row=None):
+    """Volume up + CVD down + tight tape = large absorption (bullish).
+
+    SISYPUSS 2026-08-10: vol +146%, Δ −9.7 SOL, |CVD/Vol| 1.07% →
+    pump the next day. That print is the setup, not ignition.
+    """
+    if change_pct is None:
+        return False
+    change = _as_float(change_pct, 0.0)
+    if change < VOL_EXPANSION_MIN_PCT:
+        return False
+    src = metrics or row or {}
+    delta = _as_float(src.get("delta_sol"), 0.0)
+    absorption = _row_absorption(src)
+    volume = _as_float(src.get("volume_sol"), 0.0)
+    return (delta < 0 and volume > 0
+            and absorption < CVD_ABSORPTION_PCT)
+
+
+def _p3_volume_ok(change_pct, metrics=None, row=None):
+    """P3 volume: classic LPS dry-up or absorbed expansion."""
+    return (_is_lps_drop(change_pct)
+            or _is_absorbed_expansion(
+                change_pct, metrics=metrics, row=row))
+
+
+def _p1_divergence_ok(daily_rows, metrics=None):
+    """Flat/up CVD, or vol-up + CVD-down absorption (not bearish)."""
+    if _cvd_is_flat(daily_rows):
+        return True
+    m = metrics or {}
+    change = m.get("volume_change_pct")
+    if change is None and daily_rows:
+        change = (daily_rows[-1] or {}).get("volume_change_pct")
+    return _is_absorbed_expansion(change, metrics=m)
+
+
 def evaluate_pillar1_flow(metrics, daily_rows=None):
     """P1 — absorption < 3.0% AND CVD flat/up at the support test."""
     m = metrics or _empty_metrics()
@@ -189,13 +248,19 @@ def evaluate_pillar1_flow(metrics, daily_rows=None):
     volume = _as_float(m.get("volume_sol"), 0.0)
     delta = _as_float(m.get("delta_sol"), 0.0)
     tight = volume > 0 and absorption < CVD_ABSORPTION_PCT
-    rising = _cvd_is_flat(daily_rows)
+    rising = _p1_divergence_ok(daily_rows, m)
     passed = tight and rising
+    if _is_absorbed_expansion(m.get("volume_change_pct"), metrics=m):
+        cvd_txt = "turun terserap (vol naik)"
+    elif rising:
+        cvd_txt = "datar/naik"
+    else:
+        cvd_txt = "turun"
     label = (
         f"|CVD/Vol| {absorption:.2f}% "
         f"({'< 3.0% ABSORPTION KUAT' if tight else '>= 3.0% TEKANAN JUAL'})"
         f" · Δ {delta:+.2f} SOL"
-        f" · CVD {'datar/naik' if rising else 'turun'}"
+        f" · CVD {cvd_txt}"
     )
     return _pillar(
         "p1_flow",
@@ -220,16 +285,18 @@ def evaluate_pillar2_participation(metrics):
     stealth = is_stealth_dump(m)
     whale_absorbed = whale_net < 0
     passed = buy_ok and order_ok and whale_absorbed and not stealth
+    thr = f"{BUY_TX_MIN_PCT:g}"
     bits = [
         f"Buy TX {buy_pct:.1f}% "
-        f"({'≥ 52% AKUMULASI CICIL' if buy_ok else '< 52% DISTRIBUSI'})",
+        f"({'≥ '+thr+'% AKUMULASI CICIL' if buy_ok else '< '+thr+'% DISTRIBUSI'})",
         f"Avg Sell {avg_sell:.3f} vs Avg Buy {avg_buy:.3f} SOL "
         f"({'RITEL PANIK DISERAP' if order_ok else 'STEALTH DUMP RISK'})",
         f"Whale net {whale_net:+.2f} SOL "
         f"({'diserap' if whale_absorbed else 'net buyer'})",
     ]
     if stealth:
-        bits.append("TRAP: avg BUY ≥ avg SELL + buy TX < 52%")
+        bits.append(
+            f"TRAP: avg BUY ≥ avg SELL + buy TX < {thr}%")
     return _pillar(
         "p2_participation",
         passed,
@@ -243,21 +310,18 @@ def evaluate_pillar2_participation(metrics):
     )
 
 
-def _is_lps_drop(change_pct):
-    """True when daily volume contracted into the LPS band (−40%…−75%)."""
-    if change_pct is None:
-        return False
-    change = _as_float(change_pct, 0.0)
-    return LPS_DROP_MAX_PCT <= change <= LPS_DROP_MIN_PCT
-
-
 def evaluate_pillar3_supply(daily_rows, holder_lock_pct=None,
-                            price_series=None):
-    """P3 — dry LPS volume + Top-100 lock. Price LL is optional."""
+                            price_series=None, metrics=None):
+    """P3 — LPS dry-up or absorbed expansion + Top-100 lock."""
     rows = list(daily_rows or [])
     latest = rows[-1] if rows else {}
-    change = latest.get("volume_change_pct")
+    src = metrics or latest
+    change = src.get("volume_change_pct")
+    if change is None:
+        change = latest.get("volume_change_pct")
     lps = _is_lps_drop(change)
+    absorbed = _is_absorbed_expansion(change, metrics=src, row=latest)
+    vol_ok = lps or absorbed
     lock = None if holder_lock_pct is None else _as_float(holder_lock_pct)
     lock_ok = lock is not None and lock >= SUPPLY_LOCK_MIN_PCT
     no_ll = True
@@ -265,12 +329,17 @@ def evaluate_pillar3_supply(daily_rows, holder_lock_pct=None,
         lows = [_as_float(p, 0.0) for p in price_series if _as_float(p, 0) > 0]
         if len(lows) >= 2:
             no_ll = lows[-1] >= min(lows[:-1]) - 1e-18
-    passed = lps and lock_ok and no_ll
+    passed = vol_ok and lock_ok and no_ll
     change_txt = "n/a" if change is None else f"{_as_float(change):+.1f}%"
     lock_txt = "n/a" if lock is None else f"{lock:.1f}%"
+    if lps:
+        vol_label = "SUPLAI KERING / LPS"
+    elif absorbed:
+        vol_label = "EKSPANSI TERSERAP (vol naik, CVD turun)"
+    else:
+        vol_label = "belum kering / belum terserap"
     detail = (
-        f"Vol vs H-1 {change_txt} "
-        f"({'SUPLAI KERING / LPS' if lps else 'belum kering'})"
+        f"Vol vs H-1 {change_txt} ({vol_label})"
         f" · Top-100 lock {lock_txt}"
         f"{'' if no_ll else ' · NEW LOWER-LOW'}"
     )
@@ -283,6 +352,7 @@ def evaluate_pillar3_supply(daily_rows, holder_lock_pct=None,
         ),
         holder_lock_pct=lock,
         lps=lps,
+        absorbed_expansion=absorbed,
         no_lower_low=no_ll,
     )
 
@@ -439,7 +509,26 @@ def evaluate_golden_checks(metrics, daily_rows=None, holder_lock_pct=None):
     if change is None and daily_rows:
         change = (daily_rows[-1] or {}).get("volume_change_pct")
     lock = None if holder_lock_pct is None else _as_float(holder_lock_pct)
-    cvd_flat = _cvd_is_flat(daily_rows)
+    cvd_ok = _p1_divergence_ok(daily_rows, m)
+    absorbed = _is_absorbed_expansion(change, metrics=m)
+    vol_ok = _p3_volume_ok(change, metrics=m)
+    if absorbed:
+        cvd_detail = "vol naik + CVD turun (penyerapan besar)"
+        vol_detail = (
+            "n/a" if change is None
+            else f"Vol vs H-1 {_as_float(change):+.1f}% "
+                 f"(ekspansi terserap)"
+        )
+    else:
+        cvd_detail = (
+            "CVD running datar/naik di support test"
+            if cvd_ok else "CVD running turun"
+        )
+        vol_detail = (
+            "n/a" if change is None
+            else f"Vol vs H-1 {_as_float(change):+.1f}% "
+                 f"(band -40%...-75%)"
+        )
     return [
         {
             "id": "p1_absorption",
@@ -452,18 +541,18 @@ def evaluate_golden_checks(metrics, daily_rows=None, holder_lock_pct=None):
             "id": "p1_cvd_flat",
             "pillar": "p1",
             "title": "Bullish Divergence",
-            "passed": cvd_flat,
-            "detail": (
-                "CVD running datar/naik di support test"
-                if cvd_flat else "CVD running turun"
-            ),
+            "passed": cvd_ok,
+            "detail": cvd_detail,
         },
         {
             "id": "p2_buy_tx",
             "pillar": "p2",
             "title": "Buy TX Dominance",
             "passed": buy_pct >= BUY_TX_MIN_PCT,
-            "detail": f"Buy TX {buy_pct:.1f}% (ambang >= 52%)",
+            "detail": (
+                f"Buy TX {buy_pct:.1f}% "
+                f"(ambang >= {BUY_TX_MIN_PCT:g}%)"
+            ),
         },
         {
             "id": "p2_order_size",
@@ -484,13 +573,9 @@ def evaluate_golden_checks(metrics, daily_rows=None, holder_lock_pct=None):
         {
             "id": "p3_lps",
             "pillar": "p3",
-            "title": "Volume Kering LPS",
-            "passed": _is_lps_drop(change),
-            "detail": (
-                "n/a" if change is None
-                else f"Vol vs H-1 {_as_float(change):+.1f}% "
-                     f"(band -40%...-75%)"
-            ),
+            "title": "Volume Kering LPS / Ekspansi Terserap",
+            "passed": vol_ok,
+            "detail": vol_detail,
         },
         {
             "id": "p3_lock",
@@ -550,20 +635,25 @@ def _overall_verdict(checks, stealth):
 
 
 def _is_ignition_row(row):
-    """True when a daily row is the markup/ignition print, not the setup."""
+    """True when a daily row is the markup/ignition print, not the setup.
+
+    Volume expansion + CVD down + tight absorption is the setup
+    (sellers hit into bids), not ignition. Ignition needs buyers winning
+    the tape (Δ > 0).
+    """
     if not row:
         return False
     change = row.get("volume_change_pct")
+    if _is_absorbed_expansion(change, row=row):
+        return False
+    delta = _as_float(row.get("delta_sol"), 0.0)
     if change is not None and _as_float(change) >= IGNITION_VOL_MIN_PCT:
-        return True
+        return delta > 0
     status = str(row.get("status") or "")
     if "MARK-UP" in status or "IGNITION" in status:
         return True
-    absorption = abs(_as_float(
-        row.get("absorption_pct") if row.get("absorption_pct") is not None
-        else row.get("cvd_ratio_pct"), 0.0))
+    absorption = _row_absorption(row)
     buy_pct = _as_float(row.get("buy_tx_pct"), 0.0)
-    delta = _as_float(row.get("delta_sol"), 0.0)
     return (absorption >= CVD_ABSORPTION_PCT
             and buy_pct >= IGNITION_BUY_PCT and delta > 0)
 
@@ -586,7 +676,9 @@ def _select_setup_row(rows):
         absorption = abs(_as_float(
             row.get("absorption_pct") if row.get("absorption_pct") is not None
             else row.get("cvd_ratio_pct"), 99.0))
-        if _is_lps_drop(change) or absorption < CVD_ABSORPTION_PCT:
+        if (_is_lps_drop(change)
+                or absorption < CVD_ABSORPTION_PCT
+                or _is_absorbed_expansion(change, row=row)):
             return row
     return rows[-2] if len(rows) >= 2 else latest
 
@@ -618,7 +710,7 @@ def evaluate_prepump(swaps, *, daily_rows=None, holder_lock_pct=None,
     p2 = evaluate_pillar2_participation(metrics)
     p3 = evaluate_pillar3_supply(
         usable, holder_lock_pct=holder_lock_pct,
-        price_series=price_series)
+        price_series=price_series, metrics=metrics)
     p4 = evaluate_pillar4_ignition(swaps, usable, now_ts=now_ts)
     pillars = [p1, p2, p3, p4]
     stealth = bool(p2.get("stealth_dump"))
@@ -665,8 +757,11 @@ def kpi_cards_from_eval(metrics, p1, p2, p3, p4, *, stealth=False):
     if change is None:
         change = p3.get("volume_change_pct")
     lps = _is_lps_drop(change)
+    absorbed = _is_absorbed_expansion(change, metrics=m)
     if lps:
         card4_label = "👀 SUPLAI KERING / LPS"
+    elif absorbed:
+        card4_label = "✅ PENYERAPAN BESAR"
     else:
         card4_label = "➖ NORMAL / BELUM KERING"
     change_txt = "n/a" if change is None else f"{_as_float(change):+.1f}%"
@@ -706,7 +801,7 @@ def kpi_cards_from_eval(metrics, p1, p2, p3, p4, *, stealth=False):
             "id": "lps",
             "title": "Volume & Suplai Kering",
             "value": change_txt,
-            "passed": lps,
+            "passed": lps or absorbed,
             "label": card4_label,
             "hint": "% perubahan vol vs H-1",
         },

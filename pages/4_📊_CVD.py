@@ -16,7 +16,7 @@ from core import (get_helius_keys, get_market,
 from cvd import (MIN_SOL, top_holder_analysis)
 from cvd_daily import (calculate_daily_cvd, persist_daily_snapshot,
                        save_4h_chunks_from_swaps, tx_dominance_from_daily)
-from prepump_detector import evaluate_prepump
+from prepump_detector import BUY_TX_MIN_PCT, evaluate_prepump
 from signals import maybe_queue_complete_prepump, record_prepump_4pilar
 
 
@@ -105,8 +105,10 @@ DAY_OPTIONS = {
 
 st.title("📊 CVD — Setup Emas")
 st.caption(
-    "7 cek harian: |CVD/Vol| < 3.0% · CVD datar/naik · Buy TX ≥ 52% · "
-    "Avg Sell > Buy · Whale diserap · LPS −40%…−75% · Lock ≥ 40%. "
+    f"7 cek harian: |CVD/Vol| < 3.0% · CVD datar/naik atau "
+    f"vol naik+CVD turun · Buy TX ≥ {BUY_TX_MIN_PCT:g}% · "
+    "Avg Sell > Buy · Whale diserap · LPS −40%…−75% atau "
+    "ekspansi terserap · Lock ≥ 40%. "
     "Telegram hanya jika 7/7 Setup Emas. Fetch hanya setelah tombol diklik."
 )
 
@@ -377,8 +379,8 @@ def render_tx_dominance(rows):
         customdata=[r["sell_tx"] for r in dom],
     ))
     fig.add_hline(
-        y=52, line_dash="dash", line_color=GREEN_DEEP,
-        annotation_text="Buy 52%",
+        y=BUY_TX_MIN_PCT, line_dash="dash", line_color=GREEN_DEEP,
+        annotation_text=f"Buy {BUY_TX_MIN_PCT:g}%",
         annotation_font=dict(size=11, color=GREEN_DEEP),
     )
     fig.update_layout(
@@ -559,8 +561,9 @@ st.markdown(
     f"<p class='kpi-value'>{verdict} · {passed}/{total}"
     f"{score_txt} · {phase}</p>"
     f"<p class='kpi-hint'>7 cek: |CVD/Vol| &lt; 3.0% · CVD datar/naik · "
-    f"Buy TX ≥ 52% · Avg Sell &gt; Buy · Whale diserap · "
-    f"LPS −40%…−75% · Lock ≥ 40%. Telegram hanya 7/7 hari UTC penuh.</p>"
+    f"Buy TX ≥ {BUY_TX_MIN_PCT:g}% · Avg Sell &gt; Buy · "
+    f"Whale diserap · LPS −40%…−75% / ekspansi terserap · "
+    f"Lock ≥ 40%. Telegram hanya 7/7 hari UTC penuh.</p>"
     f"</div>",
     unsafe_allow_html=True,
 )
