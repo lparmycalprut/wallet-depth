@@ -140,10 +140,11 @@ def test_cvd_page_delegates_pool_resolution_to_shared_market_helper():
     page_path = os.path.join(ROOT, "pages", "4_📊_CVD.py")
     with open(page_path, "r", encoding="utf-8") as handle:
         source = handle.read()
-    get_pool_source = inspect.cleandoc(source[source.index("def get_pool"):
-                                               source.index("def full_fetch")])
+    start = source.index("def get_pool")
+    end = source.index("def ", start + 1)
+    get_pool_source = inspect.cleandoc(source[start:end])
 
-    assert "market = get_market(ca)" in get_pool_source
+    assert "market = get_market(" in get_pool_source
     assert "baseToken" not in get_pool_source
     assert "pools[0]" in get_pool_source
 

@@ -7,6 +7,49 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-12 — 4 Pilar Pre-Pump (CVD Absorption < 3%) + chunk 4 jam
+
+### Masalah
+Scoring 0–100 / Grade A-B-C dan alert 15m single-candle tidak membedakan
+akumulasi murni (Ansem/Punch/Assface) dari distribusi terselubung
+(Callcat/Froge). Cron 00:00 UTC yang full-fetch 24 jam rentan timeout /
+rate-limit GMGN-Helius.
+
+### Yang berubah
+1. **`prepump_detector.py`** — 4 pilar PASS/FAIL, tanpa skor 60/100:
+   P1 `|CVD/Vol| < 3.0%`; P2 Buy TX ≥ 52% + Avg Sell > Avg Buy
+   (STEALTH DUMP jika kebalikan); P3 LPS vol −40%…−85% + lock ≥ 40%;
+   P4 ignition 15m/1h buy ≥ 55% + ekspansi +100%…+14000%. Setup day
+   (absorption/LPS) dinilai terpisah dari candle ignition.
+2. **`cvd_daily.py`** — penyimpanan inkremental
+   `data/cvd_4h_chunks/<mint>.json`, agregasi 6 chunk → baris harian,
+   field `absorption_pct` / `avg_*` / whale net.
+3. **`cvd.py`** — `fetch_swaps_multiday` + `fetch_and_analyze_multiday`
+   (1–7 hari), persist ke store 168 jam + chunk + `cvd_daily.json`.
+4. **`scripts/update_cvd.py`** dihidupkan kembali: `4h` / `daily` /
+   `auto`. YAML cron: `docs/WORKFLOW_PATCH_cvd_4h.md` (owner paste
+   manual — App tidak punya izin `workflows`).
+5. **`pages/4_📊_CVD.py`** — selector 1–7 hari, tombol fetch, CSS
+   `.glowing-pass` / `.glowing-fail`, 4 KPI card, Plotly dual-axis,
+   tabel day-by-day. Data auto-persist.
+6. **`app.py`** — watchlist menampilkan `|CVD/Vol|`, Buy TX %, verdict
+   4 pilar (PASS / WATCH / FAIL / STEALTH DUMP).
+7. **`signals.record_prepump_4pilar`** + digest Telegram harian.
+
+### Verifikasi
+- `python tests/test_prepump_detector.py` — Ansem/Punch/Assface PASS,
+  Callcat/Froge STEALTH DUMP, chunk roundtrip, include_today.
+- `python tests/test_cvd_daily.py` — status KERING lama tetap valid.
+- `python tests/test_watchlist.py` — `resolve_prepump_row`.
+- Suite lama (cron 15m, wallet profiles, top holders, scoring, …) hijau.
+- `python -m py_compile` modul baru/diubah — OK.
+
+### Sisa PR
+- Cron 15m Wyckoff tetap ada sebagai helper ignition; jangan hidupkan
+  kembali alert spam (volume spike / breakout guard / CTO / LP radar).
+
+---
+
 ## 2026-08-12 — Watchlist main app: angka 15m tidak sinkron
 
 ### Masalah

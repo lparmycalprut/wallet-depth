@@ -613,6 +613,86 @@ def meta_details_stale(meta, now_ts=None):
         return True
 
 
+PREPUMP_FRESH_SEC = 36 * 3600
+
+
+def resolve_prepump_row(meta, sig=None, now_ts=None):
+    """Pick the freshest 4-pillar snapshot for one watchlist row.
+
+    Preference: ``prepump_*`` fields written by the daily/4h cron, then
+    a ``prepump_4pilar`` row in ``signals.json``.
+    """
+    now_ts = int(now_ts or time.time())
+    meta = meta or {}
+    sig = sig or {}
+    snap_ts = 0
+    try:
+        snap_ts = int(meta.get("prepump_ts") or 0)
+    except (TypeError, ValueError):
+        snap_ts = 0
+    sig_ts = 0
+    try:
+        sig_ts = int(sig.get("ts") or 0)
+    except (TypeError, ValueError):
+        sig_ts = 0
+    use_snap = snap_ts > 0 and snap_ts >= sig_ts
+    if use_snap:
+        src_ts = snap_ts
+        verdict = meta.get("prepump_verdict") or ""
+        phase = meta.get("prepump_phase") or ""
+        passed = meta.get("prepump_passed")
+        stealth = bool(meta.get("prepump_stealth_dump"))
+        absorption = meta.get("prepump_absorption_pct")
+        buy_tx = meta.get("prepump_buy_tx_pct")
+        avg_buy = meta.get("prepump_avg_buy_sol")
+        avg_sell = meta.get("prepump_avg_sell_sol")
+        vol_change = meta.get("prepump_vol_change_pct")
+        source = "snapshot"
+    elif sig_ts > 0 and sig.get("type") == "prepump_4pilar":
+        src_ts = sig_ts
+        verdict = sig.get("verdict") or ""
+        phase = sig.get("phase") or ""
+        passed = sig.get("passed")
+        stealth = bool(sig.get("stealth_dump"))
+        detail = sig.get("detail") or {}
+        metrics = detail.get("metrics") or {}
+        absorption = metrics.get("absorption_pct")
+        buy_tx = metrics.get("buy_tx_pct")
+        avg_buy = metrics.get("avg_buy_sol")
+        avg_sell = metrics.get("avg_sell_sol")
+        vol_change = metrics.get("volume_change_pct")
+        source = "signal"
+    else:
+        return {
+            "verdict": "",
+            "phase": "",
+            "passed": None,
+            "stealth_dump": False,
+            "absorption_pct": None,
+            "buy_tx_pct": None,
+            "avg_buy_sol": None,
+            "avg_sell_sol": None,
+            "vol_change_pct": None,
+            "ts": None,
+            "stale": False,
+            "source": "none",
+        }
+    return {
+        "verdict": verdict,
+        "phase": phase,
+        "passed": passed,
+        "stealth_dump": stealth,
+        "absorption_pct": absorption,
+        "buy_tx_pct": buy_tx,
+        "avg_buy_sol": avg_buy,
+        "avg_sell_sol": avg_sell,
+        "vol_change_pct": vol_change,
+        "ts": src_ts,
+        "stale": (now_ts - src_ts) > PREPUMP_FRESH_SEC,
+        "source": source,
+    }
+
+
 def resolve_wyckoff_row(meta, sig, now_ts=None):
     """Pick the freshest 15m numbers for one watchlist row.
 

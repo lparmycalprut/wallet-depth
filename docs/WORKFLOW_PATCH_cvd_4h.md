@@ -1,0 +1,82 @@
+# Workflow Patch — CVD 4-Hour Chunks + Daily 4-Pilar
+
+> **Arena GitHub App tidak punya izin `workflows`**, jadi file
+> `.github/workflows/cvd-4h-daily.yml` tidak bisa di-push. Owner harus
+> membuatnya manual via GitHub web.
+
+## Buat file baru `.github/workflows/cvd-4h-daily.yml`
+
+Copy-paste tepat:
+
+```yaml
+name: CVD 4-Hour Chunks + Daily 4-Pilar
+
+on:
+  schedule:
+    - cron: "0 */4 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "auto (4h + daily at 00:00 UTC), 4h, or daily"
+        required: false
+        default: auto
+
+permissions:
+  contents: write
+
+jobs:
+  update-cvd:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install requests pandas curl_cffi base58
+
+      - name: Run 4h / daily updater
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+          HELIUS_API_KEYS: ${{ secrets.HELIUS_API_KEYS }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          MODE="${{ github.event.inputs.mode }}"
+          MODE="${MODE:-auto}"
+          python scripts/update_cvd.py "$MODE"
+
+      - name: Commit incremental CVD state
+        run: |
+          git config user.name "prepump-bot"
+          git config user.email "actions@github.com"
+
+          git stash -u || true
+          git pull --rebase || true
+          git stash pop || true
+
+          git add data/cvd_4h_chunks cvd_daily.json cvd.json \
+                  signals.json watchlist.json 2>&1 || true
+          git diff --cached --quiet || git commit -m \
+            "chore: 4h CVD chunks + 4-pilar $(date -u +%FT%H:%M) UTC"
+          git push || (git pull --rebase && git push) || true
+```
+
+## Jadwal
+
+`0 */4 * * *` UTC = 03:00 / 07:00 / 11:00 / 15:00 / 19:00 / 23:00 WIB.
+
+- Setiap run: `python scripts/update_cvd.py auto` menulis chunk 4 jam.
+- Jam 00:00 UTC (07:00 WIB): juga agregasi 6 chunk + evaluasi 4 pilar
+  + digest Telegram.
+
+## Verifikasi
+
+Actions → **CVD 4-Hour Chunks + Daily 4-Pilar** → **Run workflow**
+(mode `4h` dulu, lalu `daily`). Cek `data/cvd_4h_chunks/`,
+`cvd_daily.json`, `signals.json` (tipe `prepump_4pilar`).

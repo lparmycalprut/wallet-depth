@@ -352,6 +352,31 @@ def test_update_local_meta_and_resolve_row():
         check(wlmod.meta_details_stale(
             {"details_ts": now - 13 * 3600}, now_ts=now) is True,
               "details older than 12h are stale")
+
+        four = wlmod.resolve_prepump_row({
+            "prepump_ts": now,
+            "prepump_verdict": "PASS",
+            "prepump_phase": "IGNITION",
+            "prepump_passed": 4,
+            "prepump_absorption_pct": 0.82,
+            "prepump_buy_tx_pct": 58.0,
+            "prepump_stealth_dump": False,
+        }, None, now_ts=now)
+        check(four["source"] == "snapshot", "4-pilar snapshot preferred")
+        check(four["verdict"] == "PASS", "4-pilar verdict PASS")
+        check(four["absorption_pct"] == 0.82, "absorption pct stored")
+        check(four["stale"] is False, "fresh 4-pilar snapshot is not stale")
+        old_four = wlmod.resolve_prepump_row({}, {
+            "ts": now - 40 * 3600,
+            "type": "prepump_4pilar",
+            "verdict": "STEALTH DUMP",
+            "stealth_dump": True,
+            "detail": {"metrics": {"absorption_pct": 9.6,
+                                   "buy_tx_pct": 42.0}},
+        }, now_ts=now)
+        check(old_four["source"] == "signal", "falls back to 4-pilar signal")
+        check(old_four["stealth_dump"] is True, "stealth flag survives")
+        check(old_four["stale"] is True, "40h-old 4-pilar row is stale")
     finally:
         restore()
 

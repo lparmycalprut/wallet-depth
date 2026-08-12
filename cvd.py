@@ -2218,6 +2218,118 @@ def get_recent_swaps(ca: str, hours: int = 12):
 
 
 # ---------------------------------------------------------------------------
+# Multi-day fetch (1–7 days) + local persist for the 4-pillar detector
+# ---------------------------------------------------------------------------
+MULTIDAY_MAX_DAYS = 7
+MULTIDAY_MIN_DAYS = 1
+
+
+def fetch_swaps_multiday(ca: str, days: int = 1, *, pool: str = "",
+                         api_key: str = "", use_gmgn: bool = True,
+                         max_pages: int = None):
+    """Fetch the last ``days`` (1–7) of swaps from GMGN, Helius fallback.
+
+    Page budget scales with the lookback so a 7-day walk does not reuse
+    the 72h incremental cap. Returns the same tuple as :func:`fetch_swaps`.
+    """
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        days = 1
+    days = max(MULTIDAY_MIN_DAYS, min(int(days), MULTIDAY_MAX_DAYS))
+    stop_ts = int(time.time()) - days * 86400
+    pages = max_pages if max_pages is not None else min(250, 40 + days * 30)
+    return fetch_swaps(
+        api_key or "", pool or "", ca, stop_ts=stop_ts,
+        max_pages=pages, use_gmgn=use_gmgn,
+    )
+
+
+def persist_swaps(ca: str, swaps, *, retain_hours: int = 168, pool: str = ""):
+    """Merge ``swaps`` into ``cvd.json`` and keep the last ``retain_hours``."""
+    state = load_cvd()
+    entry = state.get(ca) or {"pool": pool or "", "buckets": {}}
+    if pool:
+        entry["pool"] = pool
+    existing = entry.get("swaps") or []
+    existing_keys = set()
+    seen = {}
+    for row in existing:
+        if len(row) < 4:
+            continue
+        try:
+            key = (str(row[0]), float(row[1]), int(row[2]), str(row[3]))
+        except (TypeError, ValueError):
+            continue
+        existing_keys.add(key)
+        seen[key] = [key[0], key[1], key[2], key[3]]
+    fresh_swaps = []
+    for row in swaps or []:
+        if len(row) < 4:
+            continue
+        try:
+            key = (str(row[0]), float(row[1]), int(row[2]), str(row[3]))
+        except (TypeError, ValueError):
+            continue
+        if key not in seen:
+            fresh_swaps.append(key)
+        seen[key] = [key[0], key[1], key[2], key[3]]
+    cutoff = time.time() - max(1, int(retain_hours)) * 3600
+    ordered = sorted(seen.values(), key=lambda item: item[2])
+    entry["swaps"] = [row for row in ordered if row[2] >= cutoff]
+    fresh = bucketize(fresh_swaps)
+    buckets = entry.setdefault("buckets", {})
+    for bucket, counts in fresh.items():
+        old = buckets.get(bucket)
+        if old:
+            for key, value in counts.items():
+                old[key] = old.get(key, 0) + value
+        else:
+            buckets[bucket] = counts
+    bucket_cut = time.time() - 14 * 86400
+    entry["buckets"] = {b: c for b, c in buckets.items()
+                        if int(b) >= bucket_cut}
+    entry["updated"] = int(time.time())
+    state[ca] = entry
+    save_cvd(state)
+    return entry
+
+
+def fetch_and_analyze_multiday(ca: str, days: int = 3, *, pool: str = "",
+                               api_key: str = "", symbol: str = "?",
+                               holder_lock_pct=None, now_ts=None,
+                               include_today: bool = True):
+    """Fetch 1–7 days, persist chunks + daily rows, evaluate 4 pillars.
+
+    Network-bound. Callers that already have swaps should use
+    :func:`prepump_detector.evaluate_prepump` directly.
+    """
+    from cvd_daily import (calculate_daily_cvd, persist_daily_snapshot,
+                           save_4h_chunks_from_swaps)
+    from prepump_detector import evaluate_prepump
+
+    days = max(MULTIDAY_MIN_DAYS, min(int(days or 1), MULTIDAY_MAX_DAYS))
+    swaps, newest_sig, newest_ts, hit = fetch_swaps_multiday(
+        ca, days, pool=pool, api_key=api_key, use_gmgn=True)
+    persist_swaps(ca, swaps, retain_hours=days * 24, pool=pool)
+    save_4h_chunks_from_swaps(ca, swaps, symbol=symbol)
+    daily = calculate_daily_cvd(swaps)
+    persist_daily_snapshot(ca, symbol, daily, now_ts=now_ts)
+    evaluation = evaluate_prepump(
+        swaps, daily_rows=daily, holder_lock_pct=holder_lock_pct,
+        now_ts=now_ts, include_today=include_today)
+    return {
+        "swaps": swaps,
+        "daily": daily,
+        "evaluation": evaluation,
+        "newest_sig": newest_sig,
+        "newest_ts": newest_ts,
+        "hit_stop": hit,
+        "days": days,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Market phase detection (Wyckoff-style heuristic, read-only)
 # ---------------------------------------------------------------------------
 def conviction_avg(pts: list, hours: int = 48) -> float:

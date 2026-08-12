@@ -1,15 +1,49 @@
-"""Daily CVD calculations matching the GMGN extractor extension.
+"""Daily CVD calculations + incremental 4-hour chunk storage.
 
 The browser extension is the reference for day-by-day accounting: buy volume
 minus sell volume is CVD, total volume is buy plus sell, and a dry day is a
 40%+ volume contraction with a nearly flat CVD ratio.
+
+4-hour chunks live in ``data/cvd_4h_chunks/<mint>.json`` so the 00:00 UTC
+daily job can aggregate six already-fetched windows instead of walking
+24 hours of GMGN/Helius pages under a rate-limit budget.
 """
+import json
+import os
+import tempfile
 import time
 from collections import defaultdict
 from datetime import datetime, timezone
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _atomic_write_json(path, data, **dump_kwargs):
+    """Local atomic JSON write — avoids importing core (pandas)."""
+    directory = os.path.dirname(os.path.abspath(path)) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".tmp-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, **dump_kwargs)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+CHUNK_DIR = os.path.join(BASE_DIR, "data", "cvd_4h_chunks")
+DAILY_CVD_PATH = os.path.join(BASE_DIR, "cvd_daily.json")
+
 DRY_VOLUME_DROP_PCT = -40.0
 DRY_CVD_RATIO_PCT = 10.0
+CHUNK_SEC = 4 * 3600
+WHALE_SOL_DAILY = 1.0
 
 
 def _day_key(ts):
@@ -17,14 +51,24 @@ def _day_key(ts):
 
 
 def calculate_daily_cvd(swaps):
-    """Return extension-compatible daily rows, oldest first."""
-    days = defaultdict(lambda: {"buy_tx": 0, "sell_tx": 0,
-                                "buy_sol": 0.0, "sell_sol": 0.0,
-                                "wallets": set()})
+    """Return extension-compatible daily rows, oldest first.
+
+    Extra fields (avg order size, whale net, absorption %) are additive so
+    existing consumers of ``status`` / ``cvd_ratio_pct`` stay valid.
+    """
+    days = defaultdict(lambda: {
+        "buy_tx": 0, "sell_tx": 0,
+        "buy_sol": 0.0, "sell_sol": 0.0,
+        "whale_buy_sol": 0.0, "whale_sell_sol": 0.0,
+        "wallets": set(),
+    })
     for row in swaps or []:
         if len(row) < 4:
             continue
-        side, amount, ts, wallet = str(row[0]).lower(), float(row[1]), int(row[2]), str(row[3])
+        side = str(row[0]).lower()
+        amount = float(row[1])
+        ts = int(row[2])
+        wallet = str(row[3])
         if side not in {"buy", "sell"} or amount <= 0:
             continue
         day = days[_day_key(ts)]
@@ -32,6 +76,8 @@ def calculate_daily_cvd(swaps):
         key = "buy" if side == "buy" else "sell"
         day[f"{key}_tx"] += 1
         day[f"{key}_sol"] += amount
+        if amount >= WHALE_SOL_DAILY:
+            day[f"whale_{key}_sol"] += amount
     result, running = [], 0.0
     previous_volume = None
     for date in sorted(days):
@@ -42,10 +88,17 @@ def calculate_daily_cvd(swaps):
         change = ((volume - previous_volume) / previous_volume * 100.0
                   if previous_volume else None)
         ratio = delta / volume * 100.0 if volume else 0.0
+        absorption = abs(ratio)
         tx = d["buy_tx"] + d["sell_tx"]
         buy_pct = d["buy_tx"] / tx * 100.0 if tx else 0.0
-        if change is not None and change <= DRY_VOLUME_DROP_PCT and abs(ratio) <= DRY_CVD_RATIO_PCT:
+        avg_buy = d["buy_sol"] / d["buy_tx"] if d["buy_tx"] else 0.0
+        avg_sell = d["sell_sol"] / d["sell_tx"] if d["sell_tx"] else 0.0
+        whale_net = d["whale_buy_sol"] - d["whale_sell_sol"]
+        if (change is not None and change <= DRY_VOLUME_DROP_PCT
+                and abs(ratio) <= DRY_CVD_RATIO_PCT):
             status = "KERING / TEST SUPLAI (LPS)"
+        elif abs(ratio) < 3.0:
+            status = "DATAR / PENYERAPAN (ABSORPTION)"
         elif abs(ratio) <= 7.5:
             status = "DATAR / PENYERAPAN (ABSORPTION)"
         elif ratio > 7.5 and buy_pct >= 52:
@@ -54,13 +107,28 @@ def calculate_daily_cvd(swaps):
             status = "TURUN / DISTRIBUSI / DUMP"
         else:
             status = "NORMAL"
-        result.append({"date": date, "total_tx": tx, "buy_tx": d["buy_tx"],
-                       "sell_tx": d["sell_tx"], "buy_tx_pct": round(buy_pct, 2),
-                       "volume_sol": round(volume, 8), "volume_change_pct":
-                       round(change, 2) if change is not None else None,
-                       "delta_sol": round(delta, 8), "cvd_ratio_pct": round(ratio, 2),
-                       "running_cvd_sol": round(running, 8), "status": status,
-                       "unique_wallets": len(d["wallets"])})
+        result.append({
+            "date": date,
+            "total_tx": tx,
+            "buy_tx": d["buy_tx"],
+            "sell_tx": d["sell_tx"],
+            "buy_tx_pct": round(buy_pct, 2),
+            "volume_sol": round(volume, 8),
+            "volume_change_pct": (
+                round(change, 2) if change is not None else None
+            ),
+            "delta_sol": round(delta, 8),
+            "cvd_ratio_pct": round(ratio, 2),
+            "absorption_pct": round(absorption, 2),
+            "running_cvd_sol": round(running, 8),
+            "status": status,
+            "unique_wallets": len(d["wallets"]),
+            "avg_buy_sol": round(avg_buy, 6),
+            "avg_sell_sol": round(avg_sell, 6),
+            "whale_buy_sol": round(d["whale_buy_sol"], 8),
+            "whale_sell_sol": round(d["whale_sell_sol"], 8),
+            "whale_net_sol": round(whale_net, 8),
+        })
         previous_volume = volume
     return result
 
@@ -117,6 +185,220 @@ def latest_dry_signal(rows):
         if row.get("status", "").startswith("KERING"):
             return row
     return None
+
+
+# ---------------------------------------------------------------------------
+# Incremental 4-hour chunks
+# ---------------------------------------------------------------------------
+def chunk_floor_ts(ts):
+    """UTC 4-hour window open: 00 / 04 / 08 / 12 / 16 / 20."""
+    return int(ts) // CHUNK_SEC * CHUNK_SEC
+
+
+def chunk_key(ts):
+    """Filename-safe key, e.g. ``2026-08-12T16``."""
+    start = chunk_floor_ts(ts)
+    return datetime.fromtimestamp(start, timezone.utc).strftime("%Y-%m-%dT%H")
+
+
+def chunk_path(ca):
+    safe = "".join(ch for ch in str(ca or "") if ch.isalnum())
+    return os.path.join(CHUNK_DIR, f"{safe}.json")
+
+
+def load_4h_chunks(ca):
+    """Return the on-disk chunk document for ``ca`` (or an empty shell)."""
+    path = chunk_path(ca)
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f) or {}
+        if isinstance(data, dict):
+            data.setdefault("ca", ca)
+            data.setdefault("chunks", {})
+            return data
+    except Exception:
+        pass
+    return {"ca": ca, "symbol": "?", "updated": 0, "chunks": {}}
+
+
+def save_4h_chunks(doc):
+    os.makedirs(CHUNK_DIR, exist_ok=True)
+    ca = (doc or {}).get("ca") or "unknown"
+    _atomic_write_json(chunk_path(ca), doc, separators=(",", ":"))
+
+
+def _chunk_metrics(swaps):
+    buy_tx = sell_tx = 0
+    buy_sol = sell_sol = 0.0
+    for row in swaps or []:
+        if len(row) < 2:
+            continue
+        side = str(row[0]).lower()
+        amount = float(row[1])
+        if side == "buy":
+            buy_tx += 1
+            buy_sol += amount
+        elif side == "sell":
+            sell_tx += 1
+            sell_sol += amount
+    return {
+        "buy_tx": buy_tx,
+        "sell_tx": sell_tx,
+        "buy_sol": round(buy_sol, 8),
+        "sell_sol": round(sell_sol, 8),
+        "delta_sol": round(buy_sol - sell_sol, 8),
+        "volume_sol": round(buy_sol + sell_sol, 8),
+        "n": buy_tx + sell_tx,
+    }
+
+
+def _normalize_swap(row):
+    if len(row) < 4:
+        return None
+    side = str(row[0]).lower()
+    try:
+        amount = float(row[1])
+        ts = int(row[2])
+    except (TypeError, ValueError):
+        return None
+    if side not in {"buy", "sell"} or amount <= 0 or ts <= 0:
+        return None
+    return [side, amount, ts, str(row[3])]
+
+
+def upsert_4h_chunk(ca, swaps, *, symbol="?", start_ts=None, end_ts=None):
+    """Merge ``swaps`` into the 4-hour chunk covering ``start_ts``.
+
+    When ``start_ts`` is omitted the chunk is inferred from the swaps
+    themselves (one call may touch several windows).
+    """
+    doc = load_4h_chunks(ca)
+    doc["ca"] = ca
+    if symbol and symbol != "?":
+        doc["symbol"] = symbol
+    grouped = defaultdict(list)
+    for row in swaps or []:
+        norm = _normalize_swap(row)
+        if not norm:
+            continue
+        ts = norm[2]
+        if start_ts is not None and ts < int(start_ts):
+            continue
+        if end_ts is not None and ts >= int(end_ts):
+            continue
+        grouped[chunk_key(ts)].append(norm)
+    if start_ts is not None and not grouped:
+        key = chunk_key(start_ts)
+        grouped[key] = []
+    for key, rows in grouped.items():
+        existing = (doc["chunks"].get(key) or {}).get("swaps") or []
+        seen = {}
+        for item in list(existing) + rows:
+            norm = _normalize_swap(item)
+            if not norm:
+                continue
+            seen[(norm[0], norm[1], norm[2], norm[3])] = norm
+        merged = [seen[k] for k in sorted(seen, key=lambda x: x[2])]
+        if merged:
+            win_start = chunk_floor_ts(merged[0][2])
+        elif start_ts is not None:
+            win_start = chunk_floor_ts(start_ts)
+        else:
+            continue
+        doc["chunks"][key] = {
+            "start_ts": win_start,
+            "end_ts": win_start + CHUNK_SEC,
+            "swaps": merged,
+            "metrics": _chunk_metrics(merged),
+        }
+    doc["updated"] = int(time.time())
+    save_4h_chunks(doc)
+    return doc
+
+
+def save_4h_chunks_from_swaps(ca, swaps, *, symbol="?"):
+    """Split an arbitrary swap list into 4-hour chunks and persist them."""
+    return upsert_4h_chunk(ca, swaps, symbol=symbol)
+
+
+def swaps_from_4h_chunks(ca, *, days=None, date=None, now_ts=None):
+    """Flatten stored chunks into a chronological swap list.
+
+    ``date`` (YYYY-MM-DD UTC) returns that calendar day only. ``days``
+    keeps the last N * 24 hours from ``now_ts``.
+    """
+    doc = load_4h_chunks(ca)
+    rows = []
+    now_ts = int(now_ts if now_ts is not None else time.time())
+    cutoff = None if days is None else now_ts - int(days) * 86400
+    for chunk in (doc.get("chunks") or {}).values():
+        for row in chunk.get("swaps") or []:
+            norm = _normalize_swap(row)
+            if not norm:
+                continue
+            if date and _day_key(norm[2]) != date:
+                continue
+            if cutoff is not None and norm[2] < cutoff:
+                continue
+            rows.append(tuple(norm))
+    rows.sort(key=lambda r: r[2])
+    return rows
+
+
+def aggregate_chunks_to_daily(ca, *, days=7, now_ts=None):
+    """Build daily CVD rows from stored 4-hour chunks (no network)."""
+    return calculate_daily_cvd(
+        swaps_from_4h_chunks(ca, days=days, now_ts=now_ts)
+    )
+
+
+def chunk_coverage_hours(ca, date):
+    """How many hours of the UTC ``date`` are covered by stored chunks."""
+    rows = swaps_from_4h_chunks(ca, date=date)
+    if not rows:
+        return 0.0
+    span = max(r[2] for r in rows) - min(r[2] for r in rows)
+    # Six complete 4h windows = 24h even if first/last swap sit inside.
+    keys = {chunk_key(r[2]) for r in rows}
+    if len(keys) >= 6:
+        return 24.0
+    return max(span / 3600.0, len(keys) * 4.0)
+
+
+def persist_daily_snapshot(ca, symbol, rows, *, now_ts=None):
+    """Append / overwrite ``cvd_daily.json`` for one token."""
+    now_ts = int(now_ts or time.time())
+    try:
+        with open(DAILY_CVD_PATH, encoding="utf-8") as f:
+            daily = json.load(f) or {}
+    except Exception:
+        daily = {}
+    if not isinstance(daily, dict):
+        daily = {}
+    latest = (rows or [])[-1] if rows else {}
+    slot = latest.get("date") or "unknown"
+    entry = daily.setdefault(ca, {})
+    entry[slot] = {
+        "symbol": symbol,
+        "rows": rows,
+        "ts": now_ts,
+    }
+    _atomic_write_json(DAILY_CVD_PATH, daily, separators=(",", ":"))
+    return latest
+
+
+def load_latest_daily(ca):
+    """Most recently persisted daily snapshot for ``ca``, or None."""
+    try:
+        with open(DAILY_CVD_PATH, encoding="utf-8") as f:
+            daily = json.load(f) or {}
+    except Exception:
+        return None
+    entry = (daily or {}).get(ca) or {}
+    if not entry:
+        return None
+    newest = max(entry.values(), key=lambda item: item.get("ts") or 0)
+    return newest
 
 
 # --- First Buy Surge (awal fase MARK-UP) ------------------------------------
