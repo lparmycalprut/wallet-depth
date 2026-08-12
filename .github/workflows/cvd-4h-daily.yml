@@ -1,4 +1,3 @@
-```yaml
 name: CVD 4-Hour Chunks + Daily 4-Pilar
 
 on:
@@ -55,12 +54,3 @@ jobs:
           git diff --cached --quiet || git commit -m \
             "chore: 4h CVD chunks + 4-pilar $(date -u +%FT%H:%M) UTC"
           git push || (git pull --rebase && git push) || true
-```
-
-## Jadwal
-
-`0 */4 * * *` UTC = 03:00 / 07:00 / 11:00 / 15:00 / 19:00 / 23:00 WIB.
-
-- Setiap run: `python scripts/update_cvd.py auto` menulis chunk 4 jam.
-- Jam 00:00 UTC (07:00 WIB): juga agregasi 6 chunk + evaluasi 4 pilar
-  + digest Telegram.
