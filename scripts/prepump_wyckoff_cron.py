@@ -977,4 +977,359 @@ def save_signal_to_history(sig):
     for prev in reversed(items[-100:]):
         if (prev.get("ca") == sig["ca"]
                 and prev.get("type") == sig["type"]
-     
+                and (now - int(prev.get("ts") or 0)) < 3 * 3600):
+            print(f"Signal for {sig['ca']} is a duplicate within 3 hours, "
+                  "skipped recording.")
+            return False
+    items.append(sig)
+    atomic_write_json(SIGNALS_PATH, items[-2000:], separators=(",", ":"))
+    print(f"Recorded signal for {sig['ca']} in signals.json")
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Mock fixture (Grade A golden spring)
+# ---------------------------------------------------------------------------
+def get_mock_data(now_ts):
+    """Clock-aligned Grade A fixture (SISYPUSS-style spring + rank-3 buy)."""
+    c3 = c3_bucket_start(now_ts)
+    c2 = c3 - CANDLE_SEC
+    c1 = c3 - 2 * CANDLE_SEC
+    holders = []
+    for i in range(1, 101):
+        wallet = (
+            f"MockHolderAddress{i}xxxxxxxxxxxxxxxxxx"
+            if i != 3 else "Rank3TopHolderWalletAddressxxxxxxxxxxxxxx"
+        )
+        holders.append({
+            "address": wallet,
+            "rank": i,
+            "balance": 10000.0 / i,
+            "history_bought_amount": 10000.0 / i,
+            "history_sold_amount": 0.0,
+            "cost": 0.000035,
+            "avg_cost": 0.000035,
+            "tags": ["top_holder"] if i <= 10 else [],
+        })
+
+    def _t(wallet, side, sol, price, ts, tags=None):
+        return {
+            "wallet": wallet,
+            "side": side,
+            "usd": sol * SOL_PRICE_USD,
+            "token_amount": (sol * SOL_PRICE_USD) / price if price else 0.0,
+            "price": price,
+            "ts": ts,
+            "sol": sol,
+            "quote_amount": sol,
+            "tags": list(tags or []),
+        }
+
+    trades = [
+        _t("DummyWalletxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "buy",
+           10.0, 0.000040, c1 + 5 * 60),
+        _t("DummyWalletxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "sell",
+           0.10, 0.0000398, c2 + 2 * 60),
+        _t("DummyWalletxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "buy",
+           2.00, 0.0000402, c2 + 8 * 60),
+        _t("SellerWalletAddressxxxxxxxxxxxxxxxxxxxxxxx", "sell",
+           7.13, 0.0000359, c3 + 2 * 60),
+        _t("Rank3TopHolderWalletAddressxxxxxxxxxxxxxx", "buy",
+           5.00, 0.00004398, c3 + 10 * 60, tags=["top_holder"]),
+        _t("AnotherBuyerWalletAddressxxxxxxxxxxxxxxxxx", "buy",
+           0.17, 0.00004398, c3 + 11 * 60),
+    ]
+    for idx in range(4, 16):
+        b_start = c3 - idx * CANDLE_SEC
+        trades.append(_t(
+            "DummyWalletxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "buy",
+            20.0, 0.000035, b_start + 5 * 60))
+    return holders, trades
+
+
+# ---------------------------------------------------------------------------
+# Pipeline
+# ---------------------------------------------------------------------------
+def run_pipeline_for_ca(ca, symbol, now_ts, mock_mode=False):
+    print(f"\nEvaluating CA: {ca} ({symbol})")
+
+    holders = []
+    trades = []
+    if mock_mode:
+        print("Using MOCK/SIMULATION data for evaluation.")
+        holders, trades = get_mock_data(now_ts)
+    else:
+        try:
+            print("Fetching real holders from GMGN...")
+            holders = fetch_top_holders(ca)
+            print(f"Successfully fetched {len(holders)} holders.")
+        except Exception as exc:
+            print(f"Warning: failed to fetch holders: {exc}")
+        try:
+            print("Fetching real trades from GMGN...")
+            trades = fetch_gmgn_trades(ca, limit=500)
+            print(f"Successfully fetched {len(trades)} trades.")
+        except Exception as exc:
+            print(f"Warning: failed to fetch trades: {exc}")
+
+    if not holders or not trades:
+        print(f"Skipping {ca} due to missing data.")
+        return None
+
+    lock_pct, pure_n, total_n = compute_holder_lock_pct(holders)
+    print(f"Top Holders Supply Lock: {lock_pct:.2f}% "
+          f"({pure_n}/{total_n} Pure Accumulators)")
+
+    bins = process_trades_to_15m_bins(trades, now_ts)
+    c3 = bins[0]
+    c2 = bins[1] if len(bins) > 1 else _empty_bin(1, c3["start"] - CANDLE_SEC,
+                                                 c3["start"])
+    c1 = bins[2] if len(bins) > 2 else _empty_bin(2, c3["start"] - 2 * CANDLE_SEC,
+                                                 c3["start"] - CANDLE_SEC)
+
+    vol_c1 = _as_float(c1.get("volume_sol"), 0.0)
+    vol_c2 = _as_float(c2.get("volume_sol"), 0.0)
+    vol_c3 = _as_float(c3.get("volume_sol"), 0.0)
+    cvd_sol = _as_float(c3.get("cvd_sol"), 0.0)
+    change_pct = _as_float(c3.get("price_change_pct"), 0.0)
+    buy_tx_ratio = _as_float(c3.get("buy_tx_ratio"), 0.0)
+
+    baseline_sol = baseline_avg_volume_sol(bins)
+    sos_hit, vol_ratio = evaluate_sos_ignition(c3, baseline_sol)
+    trap_hit = evaluate_anti_trap(c3, lock_pct)
+    bearish_hit = evaluate_bearish_divergence(c3)
+    smart_buyers = find_smart_buyers(c3.get("trades") or [], holders)
+    grade_info = classify_wyckoff_grade(
+        c1, c2, c3, smart_buyers, holder_lock_pct=lock_pct)
+    drop_pct = _as_float(grade_info.get("drop_pct"), 0.0)
+
+    print(f"C1 vol {vol_c1:.2f}S | C2 vol {vol_c2:.2f}S "
+          f"(drop {drop_pct:.1f}%, dry={grade_info['c2_dry']}) | "
+          f"C3 vol {vol_c3:.2f}S CVD {cvd_sol:+.2f}S chg {change_pct:+.2f}% "
+          f"spring={grade_info['c3_spring']}")
+    print(f"Baseline 15m Vol Avg: {baseline_sol:.2f} SOL | "
+          f"Ratio vs Baseline: {vol_ratio:.2f}x")
+    print(f"Smart buyers on C3: {len(smart_buyers)}")
+
+    reasons = []
+    extra_lines = []
+    warn_line = ""
+    signal_type = None
+    score = 0.0
+    grade = grade_info.get("grade")
+    muted = False
+
+    # Priority: trap > SOS > Grade A > bearish > Grade B > Grade C (mute)
+    if trap_hit:
+        score = 25.0
+        signal_type = SIGNAL_TRAP
+        grade = None
+        reasons.append(
+            f"Bull Trap: Harga {change_pct:+.1f}% tp CVD {cvd_sol:+.2f} SOL "
+            f"dan lock {lock_pct:.1f}% < 50%"
+        )
+        extra_lines.append(
+            f"📝 Indikator : Exit Liquidity — jangan beli "
+            f"(CVD {cvd_sol:+.2f} SOL, lock {lock_pct:.1f}%)"
+        )
+        warn_line = (
+            "⚠️ HATI-HATI: kenaikan tanpa demand on-chain — "
+            "dev/cabal dump ke market."
+        )
+    elif sos_hit:
+        score = 90.0
+        if vol_ratio >= 5.0:
+            score += 4.0
+        if change_pct >= 15.0:
+            score += 3.0
+        if cvd_sol > 5.0:
+            score += 3.0
+        score = min(100.0, score)
+        signal_type = SIGNAL_SOS
+        grade = None
+        reasons.append(
+            f"SOS Ignition: Vol {vol_ratio:.1f}x baseline, "
+            f"Buy TX {buy_tx_ratio * 100:.1f}%, CVD {cvd_sol:+.2f} SOL, "
+            f"Kenaikan {change_pct:+.1f}%"
+        )
+        extra_lines.append(
+            f"📝 Indikator : SOS {vol_ratio:.1f}x · "
+            f"Buy TX {buy_tx_ratio * 100:.1f}% · CVD {cvd_sol:+.2f} SOL"
+        )
+    elif grade == "A":
+        score = float(grade_info["score"])
+        signal_type = SIGNAL_GRADE_A
+        reasons.append(
+            f"Golden Spring: C2 kering {drop_pct:.1f}% + C3 divergensi "
+            f"CVD {cvd_sol:+.2f} SOL tp hijau {change_pct:+.1f}% + smart buyer"
+        )
+    elif bearish_hit:
+        score = max(0.0, lock_pct * 0.65 - 30.0)
+        signal_type = SIGNAL_BEARISH
+        grade = None
+        reasons.append(
+            f"Divergensi Distribusi: CVD {cvd_sol:+.2f} SOL tp Candle Turun "
+            f"{change_pct:+.1f}% — HATI-HATI"
+        )
+        extra_lines.append(
+            f"📝 Indikator : ⚠️ CVD plus tp candle merah — "
+            f"buyer diserap seller"
+        )
+        warn_line = (
+            "⚠️ HATI-HATI: harga turun tapi CVD plus — buyer "
+            "diserap seller (potensi distribusi). Jangan entry dulu."
+        )
+    elif grade == "B":
+        score = 80.0
+        signal_type = SIGNAL_GRADE_B
+        if grade_info["c2_dry"] and not grade_info["has_smart"]:
+            reasons.append(
+                f"Absorption parsial: C2 kering {drop_pct:.1f}% + C3 spring "
+                f"(tanpa smart buyer)"
+            )
+        else:
+            reasons.append(
+                "Absorption parsial: C3 spring + smart buyer (C2 belum kering)"
+            )
+    elif grade == "C":
+        score = float(grade_info["score"])
+        signal_type = SIGNAL_GRADE_C
+        muted = True
+        reasons.append(
+            "Routine noise: C3 hijau + CVD minus tanpa C2 kering / smart buyer"
+        )
+        print(f"Grade C muted (score {score:.0f}) — no notification.")
+    else:
+        score = min(100.0, lock_pct * 0.65)
+        signal_type = None
+
+    score = max(0.0, min(100.0, score))
+    print(f"Pre-Pump Score: {score:.1f} / 100")
+    if signal_type:
+        print(f"Signal Detected: {signal_type} (grade={grade}, muted={muted})")
+
+    current_price = c3["close_price"] if c3["close_price"] > 0 else 0.0
+    c2_tag = "Kering" if grade_info.get("c2_dry") else ""
+    c3_tag = "Spring" if grade_info.get("c3_spring") else ""
+    if grade == "A":
+        msg = format_grade_a_message(
+            ca, score, current_price, change_pct, vol_c3, cvd_sol, lock_pct,
+            vol_c1, vol_c2, vol_c3, drop_pct, smart_buyers, symbol=symbol)
+    else:
+        badge = signal_type if signal_type else "➖ NEUTRAL"
+        msg = format_signal_message(
+            badge, ca, score, current_price, change_pct, vol_c3, cvd_sol,
+            lock_pct, vol_c1, vol_c2, vol_c3, drop_pct, smart_buyers,
+            extra_lines=extra_lines, warn_line=warn_line, symbol=symbol,
+            c2_tag=c2_tag, c3_tag=c3_tag)
+
+    # Grade A always notifies. Grade B score is 80 so it notifies.
+    # SOS / trap / bearish notify. Grade C is muted.
+    is_triggered = False
+    if muted:
+        is_triggered = False
+    elif grade == "A":
+        is_triggered = True
+    elif grade == "B" and score >= 80:
+        is_triggered = True
+    elif signal_type in (SIGNAL_SOS, SIGNAL_TRAP, SIGNAL_BEARISH):
+        is_triggered = True
+
+    if is_triggered:
+        print("Sending notification...")
+        send_telegram_notif(msg)
+        send_discord_notif(msg)
+        sig_data = {
+            "ts": now_ts,
+            "ca": ca,
+            "symbol": symbol,
+            "type": signal_type or "PRE_PUMP_DETECTION",
+            "grade": grade,
+            "score": score,
+            "price_usd": current_price,
+            "volume_sol": vol_c3,
+            "cvd_sol": cvd_sol,
+            "holder_lock_pct": lock_pct,
+            "detail": {
+                "price_change_pct": change_pct,
+                "vol_ratio_vs_baseline": vol_ratio,
+                "c1_vol_sol": vol_c1,
+                "c2_vol_sol": vol_c2,
+                "c3_vol_sol": vol_c3,
+                "c2_drop_pct": drop_pct,
+                "c2_dry": grade_info["c2_dry"],
+                "c3_spring": grade_info["c3_spring"],
+                "smart_buyers": [
+                    {
+                        "address": b.get("address"),
+                        "short": b.get("short"),
+                        "tags": b.get("tags"),
+                        "sol": b.get("sol"),
+                        "rank": b.get("rank"),
+                    }
+                    for b in smart_buyers
+                ],
+                "reasons": reasons,
+            },
+        }
+        save_signal_to_history(sig_data)
+
+    return {
+        "ca": ca,
+        "symbol": symbol,
+        "score": score,
+        "signal_type": signal_type,
+        "grade": grade,
+        "is_triggered": is_triggered,
+        "muted": muted,
+        "msg": msg,
+        "smart_buyers": smart_buyers,
+        "c1": c1,
+        "c2": c2,
+        "c3": c3,
+        "drop_pct": drop_pct,
+        "holder_lock_pct": lock_pct,
+    }
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mock", action="store_true", help="Run with mock data")
+    parser.add_argument("--test-ca", type=str, default=None,
+                        help="Evaluate a specific CA")
+    args = parser.parse_args()
+
+    print("=== SOLANA MEMECOIN PRE-PUMP & WYCKOFF 15M CRON DETECTOR ===")
+    now_ts = int(time.time())
+    print(f"now={now_ts} C3_bucket={c3_bucket_start(now_ts)}")
+
+    watchlist = load_watchlist()
+    if not watchlist:
+        print("Watchlist is empty. Add tokens to watchlist.json first.")
+
+    cas_to_evaluate = []
+    if args.test_ca:
+        symbol = watchlist.get(args.test_ca, {}).get("symbol", "?")
+        cas_to_evaluate.append((args.test_ca, symbol))
+    else:
+        for ca, meta in (watchlist or {}).items():
+            cas_to_evaluate.append((ca, meta.get("symbol", "?")))
+
+    results = []
+    for ca, symbol in cas_to_evaluate:
+        res = run_pipeline_for_ca(ca, symbol, now_ts, mock_mode=args.mock)
+        if res:
+            results.append(res)
+
+    print("\nEvaluation Summary:")
+    for row in results:
+        print(
+            f"- CA: {row['ca']} | Score: {row['score']} | "
+            f"Signal: {row['signal_type']} | Grade: {row.get('grade')} | "
+            f"Triggered: {row['is_triggered']}"
+        )
+
+
+if __name__ == "__main__":
+    main()
