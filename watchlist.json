@@ -37,24 +37,5 @@
   "wyckoff_lock_pct": 100.0,
   "wyckoff_price_usd": 5.790206343012793e-05,
   "wyckoff_muted": false
- },
- "DTiLUGhzmtP3wZC6tXRXtxYPUxztvnQMxAW54ZtKpump": {
-  "symbol": "CALLCAT",
-  "note": "",
-  "added": "2026-08-10",
-  "source": "manual",
-  "diamond_pct": 92.0,
-  "real_holders": 1672,
-  "dust_holders": 158,
-  "holder_lock_pct": 100.0,
-  "wyckoff_ts": 1786543622,
-  "wyckoff_type": "\u2796 NORMAL",
-  "wyckoff_grade": "",
-  "wyckoff_score": 65.0,
-  "wyckoff_volume_sol": 0.036949165000000006,
-  "wyckoff_cvd_sol": -0.036949165000000006,
-  "wyckoff_lock_pct": 100.0,
-  "wyckoff_price_usd": 2.3975154569458297e-05,
-  "wyckoff_muted": false
  }
 }
