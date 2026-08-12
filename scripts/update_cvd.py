@@ -28,7 +28,7 @@ from cvd_daily import (CHUNK_SEC, aggregate_chunks_to_daily,
                        upsert_4h_chunk)
 from prepump_detector import evaluate_prepump
 from signals import (begin_digest, flush_telegram_digest,
-                     queue_prepump_4pilar_message, record_daily_cvd,
+                     maybe_queue_complete_prepump, record_daily_cvd,
                      record_prepump_4pilar)
 from watchlist import load_watchlist, update_local_meta
 
@@ -171,8 +171,8 @@ def run_daily(watchlist, *, now=None, api_key=""):
             history, daily_rows=complete, holder_lock_pct=lock,
             now_ts=now_ts, include_today=False)
         record_prepump_4pilar(ca, symbol, ev, now_ts=now_ts)
-        if ev.get("verdict") in ("PASS", "WATCH", "STEALTH DUMP"):
-            queue_prepump_4pilar_message(ca, symbol, ev)
+        # Telegram only when every daily-transaction pillar is complete.
+        maybe_queue_complete_prepump(ca, symbol, ev)
         metrics = ev.get("metrics") or {}
         try:
             update_local_meta(ca, {

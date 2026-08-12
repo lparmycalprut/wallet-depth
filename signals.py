@@ -196,6 +196,69 @@ def queue_daily_cvd_message(ca, symbol, rows, *, price=None):
     _queue_or_send(text)
 
 
+def is_complete_daily_pass(evaluation) -> bool:
+    """True when all 4 pillars passed on a finished UTC day.
+
+    Telegram is reserved for this case: a complete daily-transaction
+    verdict, not a WATCH / FAIL / STEALTH DUMP, and not an intra-day
+    partial print.
+    """
+    ev = evaluation or {}
+    if ev.get("stealth_dump"):
+        return False
+    if ev.get("verdict") != "PASS":
+        return False
+    if not ev.get("date"):
+        return False
+    try:
+        passed = int(ev.get("passed") or 0)
+        total = int(ev.get("total") or 4)
+    except (TypeError, ValueError):
+        return False
+    return passed >= 4 and total >= 4 and passed >= total
+
+
+def _telegram_already_sent(ca, date, *, kind="prepump_4pilar") -> bool:
+    items = _read_local_signals()
+    return any(
+        x.get("ca") == ca and x.get("type") == kind
+        and x.get("date") == date and x.get("telegram_sent")
+        for x in items[-500:]
+    )
+
+
+def _mark_telegram_sent(ca, date, *, kind="prepump_4pilar") -> None:
+    items = _read_local_signals()
+    changed = False
+    for item in reversed(items[-500:]):
+        if (item.get("ca") == ca and item.get("type") == kind
+                and item.get("date") == date):
+            if not item.get("telegram_sent"):
+                item["telegram_sent"] = True
+                changed = True
+            break
+    if changed:
+        save_signals(items)
+
+
+def maybe_queue_complete_prepump(ca, symbol, evaluation, *, price=None):
+    """Queue Telegram only when every daily pillar is complete.
+
+    Deduped once per CA + UTC date so a manual CVD re-fetch and the
+    07:00 WIB digest cannot spam the same PASS.
+    """
+    if not is_complete_daily_pass(evaluation):
+        return False
+    date = evaluation.get("date")
+    if _telegram_already_sent(ca, date):
+        return False
+    sent = queue_prepump_4pilar_message(
+        ca, symbol, evaluation, price=price)
+    if sent:
+        _mark_telegram_sent(ca, date)
+    return bool(sent)
+
+
 def record_prepump_4pilar(ca, symbol, evaluation, *, now_ts=None, price=None):
     """Persist one 4-pillar daily evaluation (no 0–100 score)."""
     now_ts = int(now_ts or time.time())
@@ -256,6 +319,9 @@ def queue_prepump_4pilar_message(ca, symbol, evaluation, *, price=None):
     metrics = ev.get("metrics") or {}
     absorption = metrics.get("absorption_pct", 0.0)
     buy_pct = metrics.get("buy_tx_pct", 0.0)
+    sell_pct = metrics.get("sell_tx_pct")
+    if sell_pct is None:
+        sell_pct = 100.0 - float(buy_pct or 0)
     avg_buy = metrics.get("avg_buy_sol", 0.0)
     avg_sell = metrics.get("avg_sell_sol", 0.0)
     change = metrics.get("volume_change_pct")
@@ -272,14 +338,17 @@ def queue_prepump_4pilar_message(ca, symbol, evaluation, *, price=None):
         f"{int(ev.get('passed') or 0)}/{int(ev.get('total') or 4)} pilar\n"
         f"💧 |CVD/Vol| <b>{absorption:.2f}%</b> "
         f"(ambang &lt; 3.0%)\n"
-        f"🟢 Buy TX <b>{buy_pct:.1f}%</b> · "
+        f"Buy TX <b>{buy_pct:.1f}%</b> vs "
+        f"Sell TX <b>{float(sell_pct):.1f}%</b> "
+        f"({int(metrics.get('buy_tx') or 0)}/"
+        f"{int(metrics.get('sell_tx') or 0)})\n"
         f"Avg S {avg_sell:.3f} / B {avg_buy:.3f} SOL\n"
         f"📉 Vol vs H-1 {change_txt}\n"
         f"{' · '.join(pillar_bits)}\n\n"
         f"<a href='https://dexscreener.com/solana/{ca}'>DexScreener</a>  ·  "
         f"<a href='https://gmgn.ai/sol/token/{ca}'>GMGN</a>"
     )
-    _queue_or_send(text)
+    return _queue_or_send(text)
 
 
 def record_first_buy_surge(ca, symbol, stats, *, now_ts=None, price=None,

@@ -7,6 +7,44 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-12 — CVD/watchlist: no auto-fetch, warna tua, TX dominasi, Telegram 4/4
+
+### Masalah
+Klik CVD dari watchlist (`/CVD?ca=`) atau paste CA langsung memicu fetch
+GMGN/Helius. Hijau/merah neon + glow melelahkan mata. CVD belum menampilkan
+dominasi Buy TX vs Sell TX per hari. Telegram cron ikut mengirim WATCH /
+STEALTH DUMP.
+
+### Yang berubah
+1. **`pages/4_📊_CVD.py`** — `?ca=` hanya prefill input. Fetch, DexScreener
+   `get_pool`, dan holder Helius hanya setelah tombol **Fetch & Analisis**.
+   Hasil di-cache di `session_state` per CA+hari. Palet hijau-tua/merah-tua
+   tanpa glow. Section baru **Buy TX vs Sell TX dominasi %** (stacked 100%
+   bar + tabel). Telegram diantrikan hanya jika evaluasi
+   `include_today=False` = PASS 4/4.
+2. **`app.py`** — CSS nyaman dibaca (slate text, padding lebih longgar,
+   tanpa `#000000` paksa). Kolom **Buy / Sell TX** menampilkan `62% / 38%`.
+   Tautan CVD tetap `?ca=` (tidak auto-fetch).
+3. **`cvd_daily.py`** — field `sell_tx_pct` + helper murni
+   `tx_dominance_from_daily`.
+4. **`prepump_detector.py`** — `sell_tx_pct` di metrics + hint KPI.
+5. **`signals.py`** — `is_complete_daily_pass` +
+   `maybe_queue_complete_prepump` (dedupe `telegram_sent` per CA+tanggal).
+   Pesan memuat Buy TX vs Sell TX %.
+6. **`scripts/update_cvd.py`** — digest harian hanya mengantrikan PASS 4/4.
+
+### Verifikasi
+- `python tests/test_cvd_daily.py`
+- `python tests/test_signals_telegram.py`
+- `python tests/test_prepump_detector.py`
+- `python tests/test_watchlist.py`
+- `python -m py_compile` file yang diubah
+
+### Sisa PR
+- Cron 15m Wyckoff tetap helper ignition; jangan hidupkan alert spam.
+
+---
+
 ## 2026-08-12 — 4 Pilar Pre-Pump (CVD Absorption < 3%) + chunk 4 jam
 
 ### Masalah

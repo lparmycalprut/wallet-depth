@@ -269,3 +269,17 @@ deteksi pre-pump multi-hari dengan **4 pilar terkalibrasi** dan
    (bukan skor /100).
 
 Verifikasi: `python tests/test_prepump_detector.py` + suite lama.
+
+## 15. Status 2026-08-12 — CVD/watchlist: no auto-fetch, warna tua, TX dominasi, Telegram 4/4
+
+Owner: klik CVD dari watchlist / paste CA **jangan** langsung fetch.
+Warna hijau/merah neon diganti hijau-tua `#14532d` / merah-tua `#7f1d1d`
+(tanpa glow). Halaman CVD menambah **Buy TX vs Sell TX dominasi % per
+hari**. Telegram 4 pilar **hanya** jika keempat pilar transaksi harian
+UTC yang sudah selesai lolos (PASS 4/4), sekali per CA+tanggal.
+
+- `pages/4_📊_CVD.py` — CA dari `?ca=` hanya prefill; fetch hanya tombol.
+- `app.py` — watchlist lebih nyaman dibaca; kolom Buy / Sell TX.
+- `cvd_daily.tx_dominance_from_daily` + field `sell_tx_pct`.
+- `signals.is_complete_daily_pass` / `maybe_queue_complete_prepump`.
+- `scripts/update_cvd.py` daily memakai gerbang itu (bukan WATCH/STEALTH).

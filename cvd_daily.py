@@ -91,6 +91,7 @@ def calculate_daily_cvd(swaps):
         absorption = abs(ratio)
         tx = d["buy_tx"] + d["sell_tx"]
         buy_pct = d["buy_tx"] / tx * 100.0 if tx else 0.0
+        sell_pct = d["sell_tx"] / tx * 100.0 if tx else 0.0
         avg_buy = d["buy_sol"] / d["buy_tx"] if d["buy_tx"] else 0.0
         avg_sell = d["sell_sol"] / d["sell_tx"] if d["sell_tx"] else 0.0
         whale_net = d["whale_buy_sol"] - d["whale_sell_sol"]
@@ -113,6 +114,7 @@ def calculate_daily_cvd(swaps):
             "buy_tx": d["buy_tx"],
             "sell_tx": d["sell_tx"],
             "buy_tx_pct": round(buy_pct, 2),
+            "sell_tx_pct": round(sell_pct, 2),
             "volume_sol": round(volume, 8),
             "volume_change_pct": (
                 round(change, 2) if change is not None else None
@@ -131,6 +133,44 @@ def calculate_daily_cvd(swaps):
         })
         previous_volume = volume
     return result
+
+
+def tx_dominance_from_daily(rows):
+    """Per-day buy vs sell TX counts and dominance percentages.
+
+    ``dominant`` is ``buy`` / ``sell`` / ``even``. Percentages are
+    recomputed from counts so a missing ``sell_tx_pct`` field on older
+    snapshots still yields a complete row.
+    """
+    out = []
+    for row in rows or []:
+        try:
+            buy_tx = int(row.get("buy_tx") or 0)
+        except (TypeError, ValueError):
+            buy_tx = 0
+        try:
+            sell_tx = int(row.get("sell_tx") or 0)
+        except (TypeError, ValueError):
+            sell_tx = 0
+        total = buy_tx + sell_tx
+        buy_pct = buy_tx / total * 100.0 if total else 0.0
+        sell_pct = sell_tx / total * 100.0 if total else 0.0
+        if buy_pct > sell_pct:
+            dominant = "buy"
+        elif sell_pct > buy_pct:
+            dominant = "sell"
+        else:
+            dominant = "even"
+        out.append({
+            "date": row.get("date"),
+            "buy_tx": buy_tx,
+            "sell_tx": sell_tx,
+            "total_tx": total,
+            "buy_tx_pct": round(buy_pct, 2),
+            "sell_tx_pct": round(sell_pct, 2),
+            "dominant": dominant,
+        })
+    return out
 
 
 def complete_daily_rows(rows, *, now_ts=None):

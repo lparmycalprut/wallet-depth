@@ -4,7 +4,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cvd_daily import (calculate_daily_cvd, complete_daily_rows,
                        dry_baseline_stale, first_buy_surge,
-                       latest_dry_signal)
+                       latest_dry_signal, tx_dominance_from_daily)
 
 
 def test_daily_accounting_and_dry_status():
@@ -22,6 +22,10 @@ def test_daily_accounting_and_dry_status():
     assert out[1]["volume_change_pct"] == -86.25
     assert out[1]["status"].startswith("KERING")
     assert latest_dry_signal(out) is out[1]
+    assert out[0]["buy_tx_pct"] == 50.0
+    assert out[0]["sell_tx_pct"] == 50.0
+    assert out[1]["buy_tx_pct"] == 50.0
+    assert out[1]["sell_tx_pct"] == 50.0
 
 
 def test_complete_daily_rows_drops_running_utc_day():
@@ -177,6 +181,30 @@ def test_first_buy_surge_unknown_baseline_uses_floor():
     assert stats["surge_pct"] is None
 
 
+def test_tx_dominance_buy_vs_sell():
+    """Buy-heavy day reports buy dominance; sell-heavy the reverse."""
+    day1 = 1704067200
+    rows = [("buy", 1.0, day1 + i * 60, f"b{i}") for i in range(6)]
+    rows += [("sell", 1.0, day1 + i * 60 + 30, f"s{i}") for i in range(4)]
+    day2 = day1 + 86400
+    rows += [("buy", 1.0, day2 + i * 60, f"b2{i}") for i in range(3)]
+    rows += [("sell", 1.0, day2 + i * 60 + 30, f"s2{i}") for i in range(7)]
+    daily = calculate_daily_cvd(rows)
+    assert daily[0]["buy_tx_pct"] == 60.0
+    assert daily[0]["sell_tx_pct"] == 40.0
+    assert daily[1]["buy_tx_pct"] == 30.0
+    assert daily[1]["sell_tx_pct"] == 70.0
+    dom = tx_dominance_from_daily(daily)
+    assert dom[0]["dominant"] == "buy"
+    assert dom[1]["dominant"] == "sell"
+    # Older snapshot without sell_tx_pct still recomputes.
+    legacy = [{"date": "x", "buy_tx": 52, "sell_tx": 48}]
+    legacy_dom = tx_dominance_from_daily(legacy)
+    assert legacy_dom[0]["buy_tx_pct"] == 52.0
+    assert legacy_dom[0]["sell_tx_pct"] == 48.0
+    assert legacy_dom[0]["dominant"] == "buy"
+
+
 if __name__ == "__main__":
     test_daily_accounting_and_dry_status()
     test_complete_daily_rows_drops_running_utc_day()
@@ -191,4 +219,5 @@ if __name__ == "__main__":
     test_first_buy_surge_rejects_big_sell_reply()
     test_first_buy_surge_rejects_old_swaps_outside_window()
     test_first_buy_surge_unknown_baseline_uses_floor()
+    test_tx_dominance_buy_vs_sell()
     print("ok")

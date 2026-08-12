@@ -187,6 +187,8 @@ def test_success_tokens_pass():
               f"{name} absorption {m['absorption_pct']:.2f}% < 3")
         check(m["buy_tx_pct"] >= 52.0,
               f"{name} buy TX {m['buy_tx_pct']:.1f}% ≥ 52")
+        check(abs(m["buy_tx_pct"] + m["sell_tx_pct"] - 100.0) < 0.01,
+              f"{name} buy+sell TX % = 100")
         check(m["avg_sell_sol"] > m["avg_buy_sol"],
               f"{name} avg sell {m['avg_sell_sol']:.3f} > "
               f"buy {m['avg_buy_sol']:.3f}")

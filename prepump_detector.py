@@ -73,6 +73,7 @@ def _empty_metrics():
         "sell_tx": 0,
         "total_tx": 0,
         "buy_tx_pct": 0.0,
+        "sell_tx_pct": 0.0,
         "buy_sol": 0.0,
         "sell_sol": 0.0,
         "volume_sol": 0.0,
@@ -120,6 +121,7 @@ def compute_window_metrics(swaps, *, whale_sol=WHALE_SOL):
     out["delta_sol"] = out["buy_sol"] - out["sell_sol"]
     if out["total_tx"]:
         out["buy_tx_pct"] = out["buy_tx"] / out["total_tx"] * 100.0
+        out["sell_tx_pct"] = out["sell_tx"] / out["total_tx"] * 100.0
     if out["buy_tx"]:
         out["avg_buy_sol"] = out["buy_sol"] / out["buy_tx"]
     if out["sell_tx"]:
@@ -561,7 +563,11 @@ def kpi_cards_from_eval(metrics, p1, p2, p3, p4, *, stealth=False):
             "passed": buy_pct >= BUY_TX_MIN_PCT,
             "label": ("✅ AKUMULASI CICIL" if buy_pct >= BUY_TX_MIN_PCT
                       else "❌ DISTRIBUSI"),
-            "hint": f"Beli {m.get('buy_tx', 0)} vs Jual {m.get('sell_tx', 0)}",
+            "hint": (
+                f"Buy {m.get('buy_tx', 0)} ({buy_pct:.1f}%) vs "
+                f"Sell {m.get('sell_tx', 0)} "
+                f"({_as_float(m.get('sell_tx_pct'), 100.0 - buy_pct):.1f}%)"
+            ),
         },
         {
             "id": "order_size",
