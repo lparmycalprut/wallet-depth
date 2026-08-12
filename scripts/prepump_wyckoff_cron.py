@@ -2,9 +2,12 @@
 """
 SOLANA MEMECOIN PRE-PUMP & WYCKOFF 15M CRON DETECTOR
 
-This script runs every 15 minutes (at minute 14, 29, 44, 59 UTC).
-It reads tokens from `watchlist.json`, fetches trades and top 100 holders from GMGN,
-computes Pre-Pump & Wyckoff Accumulation signals, and sends notifications.
+Runs every 15 minutes (minute 14, 29, 44, 59 UTC) so C3 is the
+clock-aligned 15m candle that is about to close.
+
+Only Grade A (golden 3-candle spring + smart buyer) and other
+high-conviction setups (Grade B, SOS, anti-trap, bearish) notify.
+Routine single-candle noise is Grade C and is muted.
 """
 
 import os
@@ -12,241 +15,836 @@ import sys
 import time
 import json
 import uuid
-import math
-from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from watchlist import load_watchlist
 from core import atomic_write_json
 
-# Default SOL price for estimation
-SOL_PRICE_USD = 150.0
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SIGNALS_PATH = os.path.join(ROOT_DIR, "signals.json")
+CONFIG_PATH = os.path.join(ROOT_DIR, "config.json")
 
-def fetch_top_holders(ca, timeout=20):
-    """Fetch top 100 holders from GMGN API."""
-    device_id = str(uuid.uuid4())
-    fp_did = uuid.uuid4().hex
-    build_tag = "20260807-3117-f1d79dd"
+# Fallback SOL/USD used when a trade has no trustworthy quote.
+SOL_PRICE_USD = 150.0
+CANDLE_SEC = 900
+N_BINS = 16
+
+# Implied SOL price outside this band means quote_amount is glitched.
+SOL_PRICE_MIN_USD = 10.0
+SOL_PRICE_MAX_USD = 500.0
+
+SMART_TAGS = frozenset({
+    "top_holder",
+    "smart_degen",
+    "bundler",
+    "axiom",
+    "bluechip_owner",
+})
+
+SIGNAL_GRADE_A = "⭐ GRADE A: GOLDEN SPRING (3-Candle + Smart Buyer)"
+SIGNAL_GRADE_B = "🟢 GRADE B: HIGH QUALITY ABSORPTION"
+SIGNAL_GRADE_C = "⚪ GRADE C: ROUTINE NOISE"
+SIGNAL_SOS = "🚀 SOS IGNITION BREAKOUT"
+SIGNAL_TRAP = "🔴 EXIT LIQUIDITY TRAP (BULL TRAP)"
+SIGNAL_BEARISH = "🔴 BEARISH DIVERGENCE (HARGA TURUN / DISTRIBUSI)"
+
+
+# ---------------------------------------------------------------------------
+# Numeric / tag helpers
+# ---------------------------------------------------------------------------
+def _as_float(value, default=0.0):
+    if value is None or isinstance(value, bool):
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_int(value, default=0):
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _first(obj, *keys, default=None):
+    if not isinstance(obj, dict):
+        return default
+    for key in keys:
+        if key in obj and obj[key] not in (None, ""):
+            return obj[key]
+    return default
+
+
+def normalize_tags(raw):
+    """Flatten GMGN tag fields (list / csv / dict) to lower-case names."""
+    if raw is None or raw == "":
+        return []
+    if isinstance(raw, str):
+        parts = raw.replace(";", ",").split(",")
+        return [p.strip().lower() for p in parts if p.strip()]
+    if isinstance(raw, dict):
+        name = raw.get("name") or raw.get("tag") or raw.get("type") or ""
+        return [str(name).strip().lower()] if name else []
+    if isinstance(raw, (list, tuple, set)):
+        out = []
+        for item in raw:
+            out.extend(normalize_tags(item))
+        return out
+    return [str(raw).strip().lower()]
+
+
+def short_wallet(addr):
+    addr = str(addr or "")
+    if len(addr) <= 10:
+        return addr
+    return f"{addr[:4]}...{addr[-4:]}"
+
+
+def sanitize_sol_quote_amount(usd, quote_amount, sol_price=SOL_PRICE_USD):
+    """Convert a GMGN quote to SOL and fix glitched SOL-price ratios.
+
+    If ``usd / quote_amount`` implies a SOL price below $10 or above $500
+    the quote is treated as garbage (base-token amount, bad decimals, …)
+    and we fall back to ``usd / sane_sol_price``.
+    """
+    usd = _as_float(usd, 0.0)
+    quote = _as_float(quote_amount, 0.0)
+    if quote > 10_000_000:
+        quote /= 1_000_000_000.0
+    px = _as_float(sol_price, SOL_PRICE_USD)
+    if px < SOL_PRICE_MIN_USD or px > SOL_PRICE_MAX_USD:
+        px = SOL_PRICE_USD
+    if quote > 0.0 and usd > 0.0:
+        implied = usd / quote
+        if implied < SOL_PRICE_MIN_USD or implied > SOL_PRICE_MAX_USD:
+            return usd / px if px > 0 else 0.0
+        return quote
+    if usd > 0.0 and px > 0.0:
+        return usd / px
+    return max(quote, 0.0)
+
+
+def trade_sol(trade, sol_price=SOL_PRICE_USD):
+    if trade.get("sol") not in (None, ""):
+        sol = _as_float(trade.get("sol"), 0.0)
+        if sol > 0:
+            return sol
+    return sanitize_sol_quote_amount(
+        trade.get("usd"), trade.get("quote_amount"), sol_price)
+
+
+def holder_address(holder):
+    return str(_first(
+        holder, "address", "account_address", "owner", "wallet",
+        "maker", default="") or "").strip()
+
+
+def holder_rank(holder, fallback=0):
+    rank = _first(holder, "rank", "holder_rank", default=None)
+    if rank is None:
+        return int(fallback)
+    return _as_int(rank, fallback)
+
+
+def collect_actor_tags(obj):
+    tags = []
+    if not isinstance(obj, dict):
+        return []
+    for key in (
+        "tags", "maker_tags", "makerTags", "maker_token_tags",
+        "makerTokenTags", "wallet_tags", "token_tags", "addr_tag",
+    ):
+        tags.extend(normalize_tags(obj.get(key)))
+    for flag, tag in (
+        ("is_smart_degen", "smart_degen"),
+        ("smart_degen", "smart_degen"),
+        ("is_bundler", "bundler"),
+        ("is_axiom", "axiom"),
+        ("axiom", "axiom"),
+        ("is_bluechip_owner", "bluechip_owner"),
+        ("bluechip_owner", "bluechip_owner"),
+        ("is_top_holder", "top_holder"),
+        ("top_holder", "top_holder"),
+    ):
+        val = obj.get(flag)
+        if val is True:
+            tags.append(tag)
+        elif isinstance(val, str) and val.strip().lower() in (
+                "1", "true", "yes", tag):
+            tags.append(tag)
+    return sorted({t for t in tags if t})
+
+
+# ---------------------------------------------------------------------------
+# GMGN payload parsers (network-free, dual response shapes)
+# ---------------------------------------------------------------------------
+def extract_holder_rows(payload):
+    """Accept both GMGN holder shapes: ``data.holders`` and ``data.list``."""
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data")
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)]
+    if isinstance(data, dict):
+        for key in ("holders", "list", "rows", "items"):
+            rows = data.get(key)
+            if isinstance(rows, list):
+                return [row for row in rows if isinstance(row, dict)]
+    for key in ("holders", "list"):
+        rows = payload.get(key)
+        if isinstance(rows, list):
+            return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
+def extract_trade_rows(payload):
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data")
+    if isinstance(data, list):
+        return [row for row in data if isinstance(row, dict)]
+    if isinstance(data, dict):
+        for key in ("trades", "list", "history", "activities", "items"):
+            rows = data.get(key)
+            if isinstance(rows, list):
+                return [row for row in rows if isinstance(row, dict)]
+    for key in ("trades", "list"):
+        rows = payload.get(key)
+        if isinstance(rows, list):
+            return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
+def extract_next_cursor(payload):
+    if not isinstance(payload, dict):
+        return None
+    data = payload.get("data")
+    if isinstance(data, dict):
+        cur = data.get("next") or data.get("next_cursor") or data.get("cursor")
+        if cur:
+            return str(cur)
+    cur = payload.get("next") or payload.get("next_cursor") or payload.get("cursor")
+    return str(cur) if cur else None
+
+
+def build_gmgn_trades_url(ca, cursor=None, limit=100):
+    """VAS trades endpoint: buy+sell, $1 min, 100/page."""
     url = (
-        f"https://gmgn.ai/vas/api/v1/token_holders/sol/{ca}"
-        f"?device_id={device_id}&fp_did={fp_did}"
-        f"&client_id=gmgn_web_{build_tag}&from_app=gmgn&app_ver={build_tag}"
-        f"&tz_name=Asia%2FJakarta&tz_offset=25200&app_lang=en-US&os=web&worker=0"
-        f"&limit=100&cost=20&orderby=amount_percentage&direction=desc"
+        f"https://gmgn.ai/vas/api/v1/token_trades/sol/{ca}"
+        f"?event=buy&event=sell&limit={int(limit)}"
+        f"&min_amount_usd=1"
     )
-    headers = {
+    if cursor:
+        url += f"&cursor={cursor}"
+    return url
+
+
+def parse_gmgn_trade(raw, sol_price=SOL_PRICE_USD):
+    """Map one GMGN trade dict into the detector's trade shape."""
+    if not isinstance(raw, dict):
+        return None
+    event = str(_first(raw, "event", "side", "action", default="") or "").lower()
+    if "buy" in event:
+        side = "buy"
+    elif "sell" in event:
+        side = "sell"
+    else:
+        return None
+    usd = _as_float(_first(raw, "amount_usd", "amountUSD", "usd",
+                           "cost_usd", default=0), 0.0)
+    token_amount = _as_float(_first(
+        raw, "amount_token", "token_amount", "base_amount",
+        "amount", default=0), 0.0)
+    quote_amount = _as_float(_first(
+        raw, "quote_amount", "quoteAmount", "quote_amount_ui",
+        default=0), 0.0)
+    price = _as_float(_first(raw, "price", "price_usd", "priceUsd", default=0), 0.0)
+    if price <= 0 and token_amount > 0 and usd > 0:
+        price = usd / token_amount
+    ts = _as_int(_first(raw, "timestamp", "time", "block_time",
+                        "created_at", default=0), 0)
+    if ts > 10_000_000_000:
+        ts = int(ts / 1000)
+    if ts <= 0:
+        return None
+    sol = sanitize_sol_quote_amount(usd, quote_amount, sol_price)
+    tags = collect_actor_tags(raw)
+    wallet = str(_first(
+        raw, "maker", "address", "wallet", "user_address",
+        default="") or "").strip()
+    return {
+        "wallet": wallet,
+        "side": side,
+        "usd": usd,
+        "token_amount": token_amount,
+        "price": price,
+        "ts": ts,
+        "sol": sol,
+        "quote_amount": quote_amount,
+        "tags": tags,
+    }
+
+
+# ---------------------------------------------------------------------------
+# HTTP
+# ---------------------------------------------------------------------------
+def _browser_headers(ca):
+    return {
         "accept": "application/json, text/plain, */*",
         "accept-language": "en-US,en;q=0.9,id;q=0.8",
         "referer": f"https://gmgn.ai/sol/token/{ca}",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+        "user-agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/151.0.0.0 Safari/537.36"
+        ),
     }
+
+
+def _http_get(url, headers, timeout=20):
     try:
         from curl_cffi import requests as cr
-        r = cr.get(url, impersonate="chrome", headers=headers, timeout=timeout)
+        return cr.get(url, impersonate="chrome", headers=headers, timeout=timeout)
     except Exception:
         import requests
-        r = requests.get(url, headers=headers, timeout=timeout)
-    
+        return requests.get(url, headers=headers, timeout=timeout)
+
+
+def _client_query():
+    device_id = str(uuid.uuid4())
+    fp_did = uuid.uuid4().hex
+    build_tag = "20260807-3117-f1d79dd"
+    return (
+        f"&device_id={device_id}&fp_did={fp_did}"
+        f"&client_id=gmgn_web_{build_tag}&from_app=gmgn&app_ver={build_tag}"
+        f"&tz_name=Asia%2FJakarta&tz_offset=25200&app_lang=en-US"
+        f"&os=web&worker=0"
+    )
+
+
+def fetch_top_holders(ca, timeout=20):
+    """Fetch top 100 holders from GMGN (handles data.list and data.holders)."""
+    url = (
+        f"https://gmgn.ai/vas/api/v1/token_holders/sol/{ca}"
+        f"?limit=100&cost=20&orderby=amount_percentage&direction=desc"
+        f"{_client_query()}"
+    )
+    r = _http_get(url, _browser_headers(ca), timeout=timeout)
     if r.status_code == 200:
-        data = r.json() or {}
-        return (data.get("data") or {}).get("holders") or []
+        return extract_holder_rows(r.json() or {})
     raise Exception(f"HTTP {r.status_code} fetching holders")
 
 
-def fetch_gmgn_trades(ca, limit=500, timeout=20):
-    """Fetch recent trades from GMGN API."""
-    url_template = "https://gmgn.ai/api/v1/token_trades/sol/{}?limit=50"
-    headers = {
-        "accept": "application/json, text/plain, */*",
-        "referer": f"https://gmgn.ai/sol/token/{ca}",
-        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
-    }
-    try:
-        from curl_cffi import requests as cr
-        fetcher = cr
-    except Exception:
-        import requests
-        fetcher = requests
-
+def fetch_gmgn_trades(ca, limit=500, timeout=20, sol_price=SOL_PRICE_USD):
+    """Fetch recent buy/sell trades from the VAS token_trades endpoint."""
+    page_limit = 100
+    max_pages = max(1, (int(limit) + page_limit - 1) // page_limit)
     all_trades = []
     cursor = None
-    pages = 0
-    max_pages = (limit // 50) + 1
-
-    while pages < max_pages:
-        url = url_template.format(ca)
-        if cursor:
-            url += f"&cursor={cursor}"
-
-        r = fetcher.get(url, headers=headers, timeout=timeout)
+    for _ in range(max_pages):
+        url = build_gmgn_trades_url(ca, cursor=cursor, limit=page_limit)
+        url += _client_query()
+        r = _http_get(url, _browser_headers(ca), timeout=timeout)
         if r.status_code != 200:
             break
-        data = r.json() or {}
-        trades_raw = (data.get("data") or {}).get("trades") or []
-        if not trades_raw:
+        payload = r.json() or {}
+        raw_rows = extract_trade_rows(payload)
+        if not raw_rows:
             break
-
-        for t in trades_raw:
-            usd_val = float(t.get("amount_usd") or t.get("usd") or 0)
-            token_val = float(t.get("amount_token") or t.get("token_amount") or 0)
-            price_val = float(t.get("price") or t.get("price_usd") or 0)
-            if price_val <= 0 and token_val > 0:
-                price_val = usd_val / token_val
-            
-            all_trades.append({
-                "wallet": t.get("maker") or t.get("address"),
-                "side": "buy" if (t.get("event") or "").lower() == "buy" else "sell",
-                "usd": usd_val,
-                "token_amount": token_val,
-                "price": price_val,
-                "ts": int(t.get("timestamp") or t.get("time") or 0),
-            })
-
-        cursor = (data.get("data") or {}).get("next")
-        pages += 1
-        if not cursor or len(trades_raw) < 50:
+        for raw in raw_rows:
+            parsed = parse_gmgn_trade(raw, sol_price=sol_price)
+            if parsed:
+                all_trades.append(parsed)
+        cursor = extract_next_cursor(payload)
+        if not cursor or len(raw_rows) < page_limit:
+            break
+        if len(all_trades) >= limit:
             break
         time.sleep(0.15)
-        
-    return all_trades
+    return all_trades[:limit]
 
 
-def get_mock_data(now_ts):
-    """Generate mock data for token 8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump right before the pump."""
-    # 1. 100% Pure Accumulators (100 holders)
-    holders = []
-    for i in range(1, 101):
-        # We specify Rank 3 to have a specific address
-        wallet_address = f"MockHolderAddress{i}xxxxxxxxxxxxxxxxxx" if i != 3 else "Rank3TopHolderWalletAddressxxxxxxxxxxxxxx"
-        holders.append({
-            "address": wallet_address,
-            "rank": i,
-            "balance": 10000.0 / i,
-            "history_bought_amount": 10000.0 / i,
-            "history_sold_amount": 0.0,
-            "cost": 0.000035,
-            "avg_cost": 0.000035
-        })
-
-    # 2. Trades in Bin 0 (0 - 15m ago)
-    # Total Vol: 12.30 SOL, CVD: -1.96 SOL, Price: +22.51% (open: 0.0000359, close: 0.00004398)
-    # To get CVD = -1.96 SOL out of 12.30 SOL total:
-    # Buy: 5.17 SOL, Sell: 7.13 SOL. Net: 5.17 - 7.13 = -1.96 SOL.
-    bin0_start = now_ts - 15 * 60
-    
-    trades = [
-        # Rank 3 buy trade
-        {
-            "wallet": "Rank3TopHolderWalletAddressxxxxxxxxxxxxxx",
-            "side": "buy",
-            "usd": 5.0 * SOL_PRICE_USD, # 5.0 SOL
-            "token_amount": (5.0 * SOL_PRICE_USD) / 0.00004398,
-            "price": 0.00004398,
-            "ts": bin0_start + 10 * 60, # 10 min into the bin
-        },
-        # Small buy trade
-        {
-            "wallet": "AnotherBuyerWalletAddressxxxxxxxxxxxxxxxxx",
-            "side": "buy",
-            "usd": 0.17 * SOL_PRICE_USD, # 0.17 SOL
-            "token_amount": (0.17 * SOL_PRICE_USD) / 0.00004398,
-            "price": 0.00004398,
-            "ts": bin0_start + 11 * 60,
-        },
-        # Sell trade representing open/low price
-        {
-            "wallet": "SellerWalletAddressxxxxxxxxxxxxxxxxxxxxxxx",
-            "side": "sell",
-            "usd": 7.13 * SOL_PRICE_USD, # 7.13 SOL
-            "token_amount": (7.13 * SOL_PRICE_USD) / 0.0000359,
-            "price": 0.0000359,
-            "ts": bin0_start + 2 * 60, # 2 min into the bin
-        }
-    ]
-
-    # 3. Trades in previous bins to establish baseline volume
-    # Average of 20.0 SOL per bin in Bins 4 to 11 (60 to 180 min ago)
-    for bin_idx in range(1, 16):
-        b_start = now_ts - (bin_idx + 1) * 15 * 60
-        # Add a dummy trade per bin
-        trades.append({
-            "wallet": "DummyWalletxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-            "side": "buy",
-            "usd": 20.0 * SOL_PRICE_USD,
-            "token_amount": (20.0 * SOL_PRICE_USD) / 0.000035,
-            "price": 0.000035,
-            "ts": b_start + 5 * 60
-        })
-
-    return holders, trades
+# ---------------------------------------------------------------------------
+# Clock-aligned 15m candles
+# ---------------------------------------------------------------------------
+def clock_aligned_bucket(ts):
+    """Official 15m open: ``(int(ts) // 900) * 900``."""
+    return (int(ts) // CANDLE_SEC) * CANDLE_SEC
 
 
-def process_trades_to_15m_bins(trades, now_ts):
-    bins = []
-    for i in range(16):
-        bin_start = now_ts - (i + 1) * 15 * 60
-        bin_end = now_ts - i * 15 * 60
-        
-        bin_trades = [t for t in trades if bin_start <= t['ts'] < bin_end]
-        bin_trades_asc = sorted(bin_trades, key=lambda x: x['ts'])
-        
-        volume_usd = sum(t['usd'] for t in bin_trades)
-        
-        open_price = 0.0
-        close_price = 0.0
-        
-        valid_price_trades = [t for t in bin_trades_asc if t['token_amount'] > 0 and t['usd'] > 0]
-        if valid_price_trades:
-            open_price = valid_price_trades[0]['price']
-            close_price = valid_price_trades[-1]['price']
-        
-        price_change_pct = 0.0
-        if open_price > 0:
-            price_change_pct = (close_price - open_price) / open_price * 100.0
-            
-        buys = [t for t in bin_trades if t['side'] == 'buy']
-        sells = [t for t in bin_trades if t['side'] == 'sell']
-        
-        buy_vol_usd = sum(t['usd'] for t in buys)
-        sell_vol_usd = sum(t['usd'] for t in sells)
-        
-        buy_count = len(buys)
-        sell_count = len(sells)
-        total_tx = len(bin_trades)
-        
-        buy_tx_ratio = buy_count / total_tx if total_tx > 0 else 0.0
-        
-        bins.append({
-            'bin_index': i,
-            'start': bin_start,
-            'end': bin_end,
-            'trades': bin_trades,
-            'volume_usd': volume_usd,
-            'open_price': open_price,
-            'close_price': close_price,
-            'price_change_pct': price_change_pct,
-            'buy_vol_usd': buy_vol_usd,
-            'sell_vol_usd': sell_vol_usd,
-            'buy_count': buy_count,
-            'sell_count': sell_count,
-            'total_tx': total_tx,
-            'buy_tx_ratio': buy_tx_ratio
-        })
+def c3_bucket_start(now_ts):
+    """C3 is the clock-aligned candle that is about to close.
+
+    Cron fires at :14/:29/:44/:59 UTC, so ``now`` is still inside C3.
+    """
+    return clock_aligned_bucket(now_ts)
+
+
+def trade_price(trade):
+    """USD price of one trade (explicit price, else usd / token_amount)."""
+    price = _as_float((trade or {}).get("price"), 0.0)
+    if price > 0:
+        return price
+    token_amount = _as_float((trade or {}).get("token_amount"), 0.0)
+    usd = _as_float((trade or {}).get("usd"), 0.0)
+    return usd / token_amount if token_amount > 0 and usd > 0 else 0.0
+
+
+def _empty_bin(bin_index, start, end):
+    return {
+        "bin_index": bin_index,
+        "bucket_ts": start,
+        "start": start,
+        "end": end,
+        "trades": [],
+        "volume_usd": 0.0,
+        "volume_sol": 0.0,
+        "open_price": 0.0,
+        "close_price": 0.0,
+        "first_trade_price": 0.0,
+        "prev_close": 0.0,
+        "open_source": "none",
+        "price_change_pct": 0.0,
+        "is_green": False,
+        "buy_vol_usd": 0.0,
+        "sell_vol_usd": 0.0,
+        "buy_vol_sol": 0.0,
+        "sell_vol_sol": 0.0,
+        "cvd_sol": 0.0,
+        "buy_count": 0,
+        "sell_count": 0,
+        "total_tx": 0,
+        "buy_tx_ratio": 0.0,
+    }
+
+
+def seed_close_before(grouped, oldest_start):
+    """Last trade price in buckets strictly older than ``oldest_start``."""
+    older = []
+    for bucket_ts, rows in (grouped or {}).items():
+        if bucket_ts < oldest_start:
+            older.extend(rows)
+    older.sort(key=lambda t: _as_int(t.get("ts"), 0))
+    for trade in reversed(older):
+        price = trade_price(trade)
+        if price > 0:
+            return price
+    return 0.0
+
+
+def apply_continuous_opens(bins, seed_close=0.0):
+    """Set each candle's open to the previous candle's close (TradingView).
+
+    A gap-down first print no longer paints a fake green candle: colour is
+    Close vs previous Close. Empty bins carry the last close forward
+    (flat 0% bar) so the chain does not break.
+    """
+    last_close = _as_float(seed_close, 0.0)
+    for slot in reversed(list(bins or [])):
+        intra_close = _as_float(slot.get("close_price"), 0.0)
+        first_px = _as_float(slot.get("first_trade_price"), 0.0)
+        slot["prev_close"] = last_close
+        if last_close > 0:
+            slot["open_price"] = last_close
+            slot["open_source"] = "prev_close"
+        elif first_px > 0:
+            slot["open_price"] = first_px
+            slot["open_source"] = "first_trade"
+        else:
+            slot["open_price"] = 0.0
+            slot["open_source"] = "none"
+        if intra_close > 0:
+            slot["close_price"] = intra_close
+        elif slot["open_price"] > 0:
+            slot["close_price"] = slot["open_price"]
+        else:
+            slot["close_price"] = 0.0
+        open_p = _as_float(slot.get("open_price"), 0.0)
+        close_p = _as_float(slot.get("close_price"), 0.0)
+        if open_p > 0 and close_p > 0:
+            change = (close_p - open_p) / open_p * 100.0
+        else:
+            change = 0.0
+        slot["price_change_pct"] = change
+        slot["is_green"] = open_p > 0 and close_p >= open_p and change >= 0.0
+        if close_p > 0:
+            last_close = close_p
     return bins
+
+
+def process_trades_to_15m_bins(trades, now_ts, sol_price=SOL_PRICE_USD,
+                               n_bins=N_BINS):
+    """Bucket trades into clock-aligned 15m candles.
+
+    ``bins[0]`` = C3 (current / about to close),
+    ``bins[1]`` = C2 (previous),
+    ``bins[2]`` = C1 (baseline, 30-45m ago).
+
+    Open is the previous candle's close (TradingView / GMGN continuous
+    series). Colour is Close vs that open — a gap-down first print that
+    never reclaims the prior close is a red / bear candle.
+    """
+    c3_start = c3_bucket_start(now_ts)
+    grouped = {}
+    for trade in trades or []:
+        ts = _as_int(trade.get("ts"), 0)
+        if ts <= 0:
+            continue
+        grouped.setdefault(clock_aligned_bucket(ts), []).append(trade)
+
+    bins = []
+    for i in range(int(n_bins)):
+        start = c3_start - i * CANDLE_SEC
+        end = start + CANDLE_SEC
+        bin_trades = list(grouped.get(start, []))
+        bin_trades_asc = sorted(bin_trades, key=lambda t: _as_int(t.get("ts"), 0))
+        slot = _empty_bin(i, start, end)
+        slot["trades"] = bin_trades
+
+        volume_usd = 0.0
+        volume_sol = 0.0
+        buy_usd = sell_usd = 0.0
+        buy_sol = sell_sol = 0.0
+        buy_count = sell_count = 0
+        for trade in bin_trades:
+            usd = _as_float(trade.get("usd"), 0.0)
+            sol = trade_sol(trade, sol_price)
+            volume_usd += usd
+            volume_sol += sol
+            if trade.get("side") == "buy":
+                buy_usd += usd
+                buy_sol += sol
+                buy_count += 1
+            else:
+                sell_usd += usd
+                sell_sol += sol
+                sell_count += 1
+
+        priced = [t for t in bin_trades_asc if trade_price(t) > 0]
+        first_px = trade_price(priced[0]) if priced else 0.0
+        last_px = trade_price(priced[-1]) if priced else 0.0
+        total_tx = len(bin_trades)
+        slot.update({
+            "volume_usd": volume_usd,
+            "volume_sol": volume_sol,
+            # Intra-bin prints only — open is overwritten below to prev close.
+            "open_price": first_px,
+            "close_price": last_px,
+            "first_trade_price": first_px,
+            "buy_vol_usd": buy_usd,
+            "sell_vol_usd": sell_usd,
+            "buy_vol_sol": buy_sol,
+            "sell_vol_sol": sell_sol,
+            "cvd_sol": buy_sol - sell_sol,
+            "buy_count": buy_count,
+            "sell_count": sell_count,
+            "total_tx": total_tx,
+            "buy_tx_ratio": (buy_count / total_tx) if total_tx else 0.0,
+        })
+        bins.append(slot)
+
+    seed = 0.0
+    if bins:
+        seed = seed_close_before(grouped, bins[-1]["start"])
+    apply_continuous_opens(bins, seed_close=seed)
+    return bins
+
+
+# ---------------------------------------------------------------------------
+# 3-candle Wyckoff engine + smart-buyer filter
+# ---------------------------------------------------------------------------
+def is_c2_volume_dry(c1, c2):
+    """C2 LPS: volume down >= 40% vs C1 (or C2 < 3 SOL) and |chg| <= 2.5%."""
+    vol_c1 = _as_float((c1 or {}).get("volume_sol"), 0.0)
+    vol_c2 = _as_float((c2 or {}).get("volume_sol"), 0.0)
+    change = _as_float((c2 or {}).get("price_change_pct"), 0.0)
+    drop_pct = ((vol_c1 - vol_c2) / vol_c1 * 100.0) if vol_c1 > 0 else 0.0
+    consolidating = abs(change) <= 2.5
+    # C1 must have been a real baseline so empty history is not "dry".
+    relative_dry = vol_c1 >= 0.50 and drop_pct >= 40.0
+    absolute_dry = vol_c1 >= 0.50 and vol_c2 < 3.0
+    return consolidating and (relative_dry or absolute_dry), drop_pct
+
+
+def is_c3_spring_divergence(c3):
+    """C3 spring: green/flat candle, CVD < -0.05 SOL, volume >= 0.50 SOL."""
+    c3 = c3 or {}
+    open_p = _as_float(c3.get("open_price"), 0.0)
+    close_p = _as_float(c3.get("close_price"), 0.0)
+    change = _as_float(c3.get("price_change_pct"), 0.0)
+    cvd = _as_float(c3.get("cvd_sol"), 0.0)
+    vol = _as_float(c3.get("volume_sol"), 0.0)
+    if open_p <= 0 or close_p <= 0:
+        return False
+    green_or_flat = close_p >= open_p and change >= 0.0
+    return green_or_flat and cvd < -0.05 and vol >= 0.50
+
+
+def find_smart_buyers(c3_trades, holders):
+    """C3 BUY flow from tagged wallets or Top 100 (esp. Top 1-10)."""
+    holder_by_addr = {}
+    top100 = set()
+    top10 = set()
+    for i, holder in enumerate(holders or []):
+        addr = holder_address(holder)
+        if not addr:
+            continue
+        key = addr.lower()
+        rank = holder_rank(holder, i + 1)
+        holder_by_addr[key] = {
+            "address": addr,
+            "rank": rank,
+            "tags": collect_actor_tags(holder),
+        }
+        if i < 100:
+            top100.add(key)
+        if rank <= 10 or i < 10:
+            top10.add(key)
+
+    buyers = {}
+    for trade in c3_trades or []:
+        if trade.get("side") != "buy":
+            continue
+        addr = str(trade.get("wallet") or "").strip()
+        if not addr:
+            continue
+        key = addr.lower()
+        info = holder_by_addr.get(key) or {}
+        tags = set(normalize_tags(trade.get("tags"))) | set(info.get("tags") or [])
+        in_top100 = key in top100
+        in_top10 = key in top10 or _as_int(info.get("rank"), 999) <= 10
+        if in_top100:
+            tags.add("top_holder")
+        if not (tags & SMART_TAGS) and not in_top100:
+            continue
+        rec = buyers.setdefault(key, {
+            "address": addr,
+            "short": short_wallet(addr),
+            "tags": set(),
+            "sol": 0.0,
+            "rank": info.get("rank"),
+            "in_top10": in_top10,
+            "in_top100": in_top100,
+        })
+        rec["tags"].update(tags)
+        rec["sol"] += trade_sol(trade)
+        if in_top10:
+            rec["in_top10"] = True
+        if info.get("rank") is not None:
+            rec["rank"] = info.get("rank")
+
+    out = []
+    for rec in buyers.values():
+        rec["tags"] = sorted(rec["tags"])
+        out.append(rec)
+    out.sort(key=lambda r: (
+        0 if r.get("in_top10") else 1,
+        -float(r.get("sol") or 0.0),
+        r.get("rank") or 999,
+    ))
+    return out
+
+
+def classify_wyckoff_grade(c1, c2, c3, smart_buyers, holder_lock_pct=0.0):
+    """Grade A / B / C from the 3-candle sequence + smart-buyer flag."""
+    dry, drop_pct = is_c2_volume_dry(c1, c2)
+    spring = is_c3_spring_divergence(c3)
+    has_smart = bool(smart_buyers)
+    lock = _as_float(holder_lock_pct, 0.0)
+    base = {
+        "c2_dry": dry,
+        "c3_spring": spring,
+        "has_smart": has_smart,
+        "drop_pct": drop_pct,
+        "muted": False,
+    }
+    if not spring:
+        base.update(grade=None, score=0.0, signal_type=None)
+        return base
+    if dry and has_smart:
+        score = 95.0
+        if drop_pct >= 50.0:
+            score += 1.0
+        if any(b.get("in_top10") for b in smart_buyers):
+            score += 1.0
+        if _as_float((c3 or {}).get("cvd_sol"), 0.0) < -1.0:
+            score += 1.0
+        if len(smart_buyers) >= 2:
+            score += 1.0
+        if lock >= 80.0:
+            score += 1.0
+        base.update(
+            grade="A",
+            score=min(100.0, score),
+            signal_type=SIGNAL_GRADE_A,
+        )
+        return base
+    if dry or has_smart:
+        base.update(grade="B", score=80.0, signal_type=SIGNAL_GRADE_B)
+        return base
+    score = 50.0
+    if lock >= 70.0:
+        score = 55.0
+    base.update(
+        grade="C",
+        score=score,
+        signal_type=SIGNAL_GRADE_C,
+        muted=True,
+    )
+    return base
+
+
+def evaluate_sos_ignition(c3, baseline_vol_sol):
+    c3 = c3 or {}
+    vol = _as_float(c3.get("volume_sol"), 0.0)
+    baseline = _as_float(baseline_vol_sol, 0.0)
+    ratio = (vol / baseline) if baseline > 0 else 1.0
+    hit = (
+        ratio >= 3.0
+        and _as_float(c3.get("buy_tx_ratio"), 0.0) >= 0.60
+        and _as_float(c3.get("cvd_sol"), 0.0) > 3.0
+        and _as_float(c3.get("price_change_pct"), 0.0) >= 8.0
+    )
+    return hit, ratio
+
+
+def evaluate_anti_trap(c3, holder_lock_pct):
+    c3 = c3 or {}
+    return (
+        _as_float(c3.get("price_change_pct"), 0.0) >= 10.0
+        and _as_float(c3.get("cvd_sol"), 0.0) < -2.0
+        and _as_float(holder_lock_pct, 0.0) < 50.0
+    )
+
+
+def evaluate_bearish_divergence(c3):
+    c3 = c3 or {}
+    return (
+        _as_float(c3.get("price_change_pct"), 0.0) < 0.0
+        and _as_float(c3.get("cvd_sol"), 0.0) >= 1.0
+    )
+
+
+def baseline_avg_volume_sol(bins):
+    """Average 15m volume from prior 1-3 hours (bins 4..11)."""
+    window = list(bins[4:12]) if bins and len(bins) > 4 else []
+    if not window or sum(_as_float(b.get("volume_sol"), 0.0) for b in window) <= 0:
+        window = list(bins[3:]) if bins and len(bins) > 3 else list(bins[1:] or [])
+    if not window:
+        return 0.0
+    return sum(_as_float(b.get("volume_sol"), 0.0) for b in window) / len(window)
+
+
+# ---------------------------------------------------------------------------
+# Pure-accumulator lock
+# ---------------------------------------------------------------------------
+def compute_holder_lock_pct(holders):
+    total = len(holders or [])
+    if total <= 0:
+        return 0.0, 0, 0
+    pure = 0
+    for holder in holders:
+        bought = _as_float(_first(
+            holder, "history_bought_amount", "historyBoughtAmount",
+            default=0), 0.0)
+        sold = _as_float(_first(
+            holder, "history_sold_amount", "historySoldAmount",
+            default=0), 0.0)
+        if bought > 0:
+            is_pure = (sold / bought) <= 0.10
+        else:
+            is_pure = sold == 0
+        if is_pure:
+            pure += 1
+    return pure / total * 100.0, pure, total
+
+
+# ---------------------------------------------------------------------------
+# Notifications
+# ---------------------------------------------------------------------------
+def format_smart_buyers_line(smart_buyers):
+    if not smart_buyers:
+        return "—"
+    parts = []
+    for buyer in smart_buyers[:4]:
+        tags = ",".join(buyer.get("tags") or []) or "top_holder"
+        parts.append(
+            f"{buyer.get('short') or short_wallet(buyer.get('address'))} "
+            f"({tags}, {float(buyer.get('sol') or 0):.2f} SOL)"
+        )
+    extra = len(smart_buyers) - 4
+    line = " · ".join(parts)
+    if extra > 0:
+        line += f" · +{extra} more"
+    return line
+
+
+def format_grade_a_message(ca, score, price, change_pct, vol_sol, cvd_sol,
+                           lock_pct, vol_c1, vol_c2, vol_c3, drop_pct,
+                           smart_buyers):
+    price_sign = "+" if change_pct >= 0 else ""
+    cvd_note = "Net Sells Terserap!" if cvd_sol <= 0 else "Net Buys Dominan!"
+    return (
+        f"{SIGNAL_GRADE_A}\n"
+        f"🎯 Skor Pre-Pump : {score:.0f} / 100\n"
+        f"🪙 Mint          : {ca}\n"
+        f"💵 Harga         : ${price:.8f} ({price_sign}{change_pct:.2f}%)\n"
+        f"📊 15m Vol / CVD : {vol_sol:.2f} SOL | {cvd_sol:+.2f} SOL ({cvd_note})\n"
+        f"🔒 Top 100 Lock  : {lock_pct:.1f}% Pure Accumulators\n"
+        f"📝 Urutan Candle : C1: {vol_c1:.2f}S ➔ C2 (Kering): {vol_c2:.2f}S "
+        f"({drop_pct:.1f}%) ➔ C3 (Spring): {vol_c3:.2f}S\n"
+        f"👤 Smart Buyers  : {format_smart_buyers_line(smart_buyers)}\n"
+        f"🔗 Buka GMGN: https://gmgn.ai/sol/token/{ca}"
+    )
+
+
+def format_signal_message(badge_title, ca, score, price, change_pct,
+                          vol_sol, cvd_sol, lock_pct, vol_c1, vol_c2, vol_c3,
+                          drop_pct, smart_buyers, extra_lines=None,
+                          warn_line=""):
+    price_sign = "+" if change_pct >= 0 else ""
+    cvd_note = "Net Sells Terserap!" if cvd_sol <= 0 else "Net Buys Dominan!"
+    extras = ""
+    if extra_lines:
+        extras = "\n".join(extra_lines) + "\n"
+    warn = f"\n{warn_line}\n" if warn_line else ""
+    return (
+        f"{badge_title}\n"
+        f"🎯 Skor Pre-Pump : {score:.0f} / 100\n"
+        f"🪙 Mint          : {ca}\n"
+        f"💵 Harga         : ${price:.8f} ({price_sign}{change_pct:.2f}%)\n"
+        f"📊 15m Vol / CVD : {vol_sol:.2f} SOL | {cvd_sol:+.2f} SOL ({cvd_note})\n"
+        f"🔒 Top 100 Lock  : {lock_pct:.1f}% Pure Accumulators\n"
+        f"📝 Urutan Candle : C1: {vol_c1:.2f}S ➔ C2: {vol_c2:.2f}S "
+        f"({drop_pct:.1f}%) ➔ C3: {vol_c3:.2f}S\n"
+        f"👤 Smart Buyers  : {format_smart_buyers_line(smart_buyers)}\n"
+        f"{extras}"
+        f"{warn}"
+        f"🔗 Buka GMGN: https://gmgn.ai/sol/token/{ca}"
+    )
+
+
+def _read_config():
+    try:
+        with open(CONFIG_PATH, encoding="utf-8") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
 
 
 def send_telegram_notif(text):
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat = os.getenv("TELEGRAM_CHAT_ID", "").strip()
-    if not token or not chat:
-        try:
-            with open("config.json") as f:
-                cfg = json.load(f)
-                token = token or cfg.get("telegram_bot_token")
-                chat = chat or cfg.get("telegram_chat_id")
-        except Exception:
-            pass
+    cfg = _read_config()
+    token = token or str(cfg.get("telegram_bot_token") or "")
+    chat = chat or str(cfg.get("telegram_chat_id") or "")
     if not token or not chat:
         print("Telegram credentials not configured.")
         return False
@@ -257,30 +855,24 @@ def send_telegram_notif(text):
             "chat_id": chat,
             "text": text,
             "parse_mode": "HTML",
-            "disable_web_page_preview": True
+            "disable_web_page_preview": True,
         }
         res = requests.post(url, json=payload, timeout=15)
         return res.status_code == 200
-    except Exception as e:
-        print("Error sending Telegram:", e)
+    except Exception as exc:
+        print("Error sending Telegram:", exc)
         return False
 
 
 def send_discord_notif(text):
     url = os.getenv("DISCORD_WEBHOOK_URL", "").strip()
-    if not url:
-        try:
-            with open("config.json") as f:
-                cfg = json.load(f)
-                url = url or cfg.get("discord_webhook_url")
-        except Exception:
-            pass
+    cfg = _read_config()
+    url = url or str(cfg.get("discord_webhook_url") or "")
     if not url:
         print("Discord Webhook URL not configured.")
         return False
     try:
         import requests
-        # Convert HTML tags to Markdown for Discord
         md_text = (
             text.replace("<b>", "**")
             .replace("</b>", "**")
@@ -289,19 +881,17 @@ def send_discord_notif(text):
             .replace("<code>", "`")
             .replace("</code>", "`")
         )
-        payload = {"content": md_text}
-        res = requests.post(url, json=payload, timeout=15)
+        res = requests.post(url, json={"content": md_text}, timeout=15)
         return res.status_code in (200, 204)
-    except Exception as e:
-        print("Error sending Discord:", e)
+    except Exception as exc:
+        print("Error sending Discord:", exc)
         return False
 
 
 def load_signals():
-    path = "signals.json"
     try:
-        if os.path.exists(path):
-            with open(path, encoding="utf-8") as f:
+        if os.path.exists(SIGNALS_PATH):
+            with open(SIGNALS_PATH, encoding="utf-8") as f:
                 return json.load(f) or []
     except Exception:
         pass
@@ -309,32 +899,89 @@ def load_signals():
 
 
 def save_signal_to_history(sig):
-    path = "signals.json"
     items = load_signals()
-    # Check deduplication (same ca and signal_type within last 3 hours)
     now = int(time.time())
-    is_duplicate = False
-    for s in reversed(items[-100:]):
-        if (s.get("ca") == sig["ca"] and 
-            s.get("type") == sig["type"] and 
-            (now - s.get("ts", 0)) < 3 * 3600):
-            is_duplicate = True
-            break
-    if not is_duplicate:
-        items.append(sig)
-        atomic_write_json(path, items[-2000:], separators=(",", ":"))
-        print(f"Recorded signal for {sig['ca']} in signals.json")
-    else:
-        print(f"Signal for {sig['ca']} is a duplicate within 3 hours, skipped recording.")
+    for prev in reversed(items[-100:]):
+        if (prev.get("ca") == sig["ca"]
+                and prev.get("type") == sig["type"]
+                and (now - int(prev.get("ts") or 0)) < 3 * 3600):
+            print(f"Signal for {sig['ca']} is a duplicate within 3 hours, "
+                  "skipped recording.")
+            return False
+    items.append(sig)
+    atomic_write_json(SIGNALS_PATH, items[-2000:], separators=(",", ":"))
+    print(f"Recorded signal for {sig['ca']} in signals.json")
+    return True
 
 
+# ---------------------------------------------------------------------------
+# Mock fixture (Grade A golden spring)
+# ---------------------------------------------------------------------------
+def get_mock_data(now_ts):
+    """Clock-aligned Grade A fixture (SISYPUSS-style spring + rank-3 buy)."""
+    c3 = c3_bucket_start(now_ts)
+    c2 = c3 - CANDLE_SEC
+    c1 = c3 - 2 * CANDLE_SEC
+    holders = []
+    for i in range(1, 101):
+        wallet = (
+            f"MockHolderAddress{i}xxxxxxxxxxxxxxxxxx"
+            if i != 3 else "Rank3TopHolderWalletAddressxxxxxxxxxxxxxx"
+        )
+        holders.append({
+            "address": wallet,
+            "rank": i,
+            "balance": 10000.0 / i,
+            "history_bought_amount": 10000.0 / i,
+            "history_sold_amount": 0.0,
+            "cost": 0.000035,
+            "avg_cost": 0.000035,
+            "tags": ["top_holder"] if i <= 10 else [],
+        })
+
+    def _t(wallet, side, sol, price, ts, tags=None):
+        return {
+            "wallet": wallet,
+            "side": side,
+            "usd": sol * SOL_PRICE_USD,
+            "token_amount": (sol * SOL_PRICE_USD) / price if price else 0.0,
+            "price": price,
+            "ts": ts,
+            "sol": sol,
+            "quote_amount": sol,
+            "tags": list(tags or []),
+        }
+
+    trades = [
+        _t("DummyWalletxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "buy",
+           10.0, 0.000040, c1 + 5 * 60),
+        _t("DummyWalletxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "sell",
+           0.10, 0.0000398, c2 + 2 * 60),
+        _t("DummyWalletxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "buy",
+           2.00, 0.0000402, c2 + 8 * 60),
+        _t("SellerWalletAddressxxxxxxxxxxxxxxxxxxxxxxx", "sell",
+           7.13, 0.0000359, c3 + 2 * 60),
+        _t("Rank3TopHolderWalletAddressxxxxxxxxxxxxxx", "buy",
+           5.00, 0.00004398, c3 + 10 * 60, tags=["top_holder"]),
+        _t("AnotherBuyerWalletAddressxxxxxxxxxxxxxxxxx", "buy",
+           0.17, 0.00004398, c3 + 11 * 60),
+    ]
+    for idx in range(4, 16):
+        b_start = c3 - idx * CANDLE_SEC
+        trades.append(_t(
+            "DummyWalletxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "buy",
+            20.0, 0.000035, b_start + 5 * 60))
+    return holders, trades
+
+
+# ---------------------------------------------------------------------------
+# Pipeline
+# ---------------------------------------------------------------------------
 def run_pipeline_for_ca(ca, symbol, now_ts, mock_mode=False):
     print(f"\nEvaluating CA: {ca} ({symbol})")
-    
-    # 1. Fetch Holders & Trades
+
     holders = []
     trades = []
-    
     if mock_mode:
         print("Using MOCK/SIMULATION data for evaluation.")
         holders, trades = get_mock_data(now_ts)
@@ -343,246 +990,229 @@ def run_pipeline_for_ca(ca, symbol, now_ts, mock_mode=False):
             print("Fetching real holders from GMGN...")
             holders = fetch_top_holders(ca)
             print(f"Successfully fetched {len(holders)} holders.")
-        except Exception as e:
-            print(f"Warning: failed to fetch holders: {e}")
-            
+        except Exception as exc:
+            print(f"Warning: failed to fetch holders: {exc}")
         try:
             print("Fetching real trades from GMGN...")
             trades = fetch_gmgn_trades(ca, limit=500)
             print(f"Successfully fetched {len(trades)} trades.")
-        except Exception as e:
-            print(f"Warning: failed to fetch trades: {e}")
+        except Exception as exc:
+            print(f"Warning: failed to fetch trades: {exc}")
 
     if not holders or not trades:
         print(f"Skipping {ca} due to missing data.")
         return None
 
-    # 2. Process holders: Calculate PURE ACCUMULATOR SUPPLY LOCK
-    # Pure Accumulator = wallet with total_sold / total_bought <= 0.10
-    total_top_holders = len(holders)
-    pure_accum_count = 0
-    for h in holders:
-        tb = float(h.get("history_bought_amount") or h.get("historyBoughtAmount") or 0.0)
-        ts_amount = float(h.get("history_sold_amount") or h.get("historySoldAmount") or 0.0)
-        
-        is_pure = False
-        if tb > 0:
-            is_pure = (ts_amount / tb) <= 0.10
-        else:
-            # If bought is 0 but sold is 0, they haven't sold, we consider them locking
-            is_pure = (ts_amount == 0)
-            
-        if is_pure:
-            pure_accum_count += 1
-            
-    holder_lock_pct = (pure_accum_count / total_top_holders * 100.0) if total_top_holders > 0 else 0.0
-    print(f"Top Holders Supply Lock: {holder_lock_pct:.2f}% ({pure_accum_count}/{total_top_holders} Pure Accumulators)")
+    lock_pct, pure_n, total_n = compute_holder_lock_pct(holders)
+    print(f"Top Holders Supply Lock: {lock_pct:.2f}% "
+          f"({pure_n}/{total_n} Pure Accumulators)")
 
-    # 3. Process trades to 15m bins
     bins = process_trades_to_15m_bins(trades, now_ts)
-    bin0 = bins[0]
-    
-    # Extract current 15m candle variables
-    vol_15m_usd = bin0['volume_usd']
-    vol_15m_sol = vol_15m_usd / SOL_PRICE_USD
-    cvd_usd = bin0['buy_vol_usd'] - bin0['sell_vol_usd']
-    cvd_sol = cvd_usd / SOL_PRICE_USD
-    price_change_pct = bin0['price_change_pct']
-    buy_tx_ratio = bin0['buy_tx_ratio']
-    
-    # Calculate baseline 15m average volume from prior 1-3 hours (bins 4 to 11)
-    baseline_bins = bins[4:12]
-    # Fallback to any past bins if baseline bins are empty or zero
-    if not baseline_bins or sum(b['volume_usd'] for b in baseline_bins) == 0:
-        baseline_bins = bins[1:]
-        
-    avg_15m_vol_baseline_usd = sum(b['volume_usd'] for b in baseline_bins) / len(baseline_bins) if baseline_bins else 0.0
-    avg_15m_vol_baseline_sol = avg_15m_vol_baseline_usd / SOL_PRICE_USD
-    
-    vol_ratio_vs_baseline = vol_15m_usd / avg_15m_vol_baseline_usd if avg_15m_vol_baseline_usd > 0 else 1.0
-    
-    print(f"Current 15m Vol: {vol_15m_sol:.2f} SOL | CVD: {cvd_sol:+.2f} SOL | Price Change: {price_change_pct:+.2f}%")
-    print(f"Baseline 15m Vol Avg: {avg_15m_vol_baseline_sol:.2f} SOL | Ratio vs Baseline: {vol_ratio_vs_baseline:.2f}x")
+    c3 = bins[0]
+    c2 = bins[1] if len(bins) > 1 else _empty_bin(1, c3["start"] - CANDLE_SEC,
+                                                 c3["start"])
+    c1 = bins[2] if len(bins) > 2 else _empty_bin(2, c3["start"] - 2 * CANDLE_SEC,
+                                                 c3["start"] - CANDLE_SEC)
 
-    # 4. Evaluate signals & scoring
-    score = float(holder_lock_pct) * 0.65
-    signal_type = None
+    vol_c1 = _as_float(c1.get("volume_sol"), 0.0)
+    vol_c2 = _as_float(c2.get("volume_sol"), 0.0)
+    vol_c3 = _as_float(c3.get("volume_sol"), 0.0)
+    cvd_sol = _as_float(c3.get("cvd_sol"), 0.0)
+    change_pct = _as_float(c3.get("price_change_pct"), 0.0)
+    buy_tx_ratio = _as_float(c3.get("buy_tx_ratio"), 0.0)
+
+    baseline_sol = baseline_avg_volume_sol(bins)
+    sos_hit, vol_ratio = evaluate_sos_ignition(c3, baseline_sol)
+    trap_hit = evaluate_anti_trap(c3, lock_pct)
+    bearish_hit = evaluate_bearish_divergence(c3)
+    smart_buyers = find_smart_buyers(c3.get("trades") or [], holders)
+    grade_info = classify_wyckoff_grade(
+        c1, c2, c3, smart_buyers, holder_lock_pct=lock_pct)
+    drop_pct = _as_float(grade_info.get("drop_pct"), 0.0)
+
+    print(f"C1 vol {vol_c1:.2f}S | C2 vol {vol_c2:.2f}S "
+          f"(drop {drop_pct:.1f}%, dry={grade_info['c2_dry']}) | "
+          f"C3 vol {vol_c3:.2f}S CVD {cvd_sol:+.2f}S chg {change_pct:+.2f}% "
+          f"spring={grade_info['c3_spring']}")
+    print(f"Baseline 15m Vol Avg: {baseline_sol:.2f} SOL | "
+          f"Ratio vs Baseline: {vol_ratio:.2f}x")
+    print(f"Smart buyers on C3: {len(smart_buyers)}")
+
     reasons = []
+    extra_lines = []
+    warn_line = ""
+    signal_type = None
+    score = 0.0
+    grade = grade_info.get("grade")
+    muted = False
 
-    # 4.1 Bullish Absorption Divergence (Wyckoff Spring Anomaly)
-    is_absorption_divergence = (
-        price_change_pct >= 0 and cvd_sol <= 0 and holder_lock_pct >= 70.0
-    )
-    if is_absorption_divergence:
-        score += 30
-        signal_type = "🟢 ABSORPTION DIVERGENCE (WYCKOFF SPRING)"
+    # Priority: trap > SOS > Grade A > bearish > Grade B > Grade C (mute)
+    if trap_hit:
+        score = 25.0
+        signal_type = SIGNAL_TRAP
+        grade = None
         reasons.append(
-            f"Divergensi Penyerapan: CVD {cvd_sol:+.2f} SOL tp Candle Naik"
-            f" {price_change_pct:+.1f}%"
+            f"Bull Trap: Harga {change_pct:+.1f}% tp CVD {cvd_sol:+.2f} SOL "
+            f"dan lock {lock_pct:.1f}% < 50%"
         )
-
-    # 4.2 Volume Dry-Up (Test Suplai LPS)
-    is_volume_dry_up = vol_ratio_vs_baseline <= 0.40 and abs(price_change_pct) <= 3.5
-    if is_volume_dry_up:
-        score += 20
-        signal_type = "🟡 TEST SUPLAI (VOLUME KERING / LPS)"
-        reasons.append("Test Suplai: Volume kering / LPS")
-
-    # 4.3 SOS Ignition Breakout (Mark-Up Phase)
-    is_sos_ignition = (
-        vol_ratio_vs_baseline >= 3.0 and
-        buy_tx_ratio >= 0.60 and
-        cvd_sol > 3.0 and
-        price_change_pct >= 8.0
-    )
-    if is_sos_ignition:
-        score += 40
-        signal_type = "🚀 SOS IGNITION BREAKOUT"
+        extra_lines.append(
+            f"📝 Indikator     : Exit Liquidity — jangan beli "
+            f"(CVD {cvd_sol:+.2f} SOL, lock {lock_pct:.1f}%)"
+        )
+        warn_line = (
+            "⚠️ HATI-HATI: kenaikan tanpa demand on-chain — "
+            "dev/cabal dump ke market."
+        )
+    elif sos_hit:
+        score = 90.0
+        if vol_ratio >= 5.0:
+            score += 4.0
+        if change_pct >= 15.0:
+            score += 3.0
+        if cvd_sol > 5.0:
+            score += 3.0
+        score = min(100.0, score)
+        signal_type = SIGNAL_SOS
+        grade = None
         reasons.append(
-            f"SOS Ignition Breakout: Lonjakan Vol {vol_ratio_vs_baseline:.1f}x baseline, "
-            f"Buy TX Ratio {buy_tx_ratio*100:.1f}%, CVD {cvd_sol:+.2f} SOL, Kenaikan {price_change_pct:+.1f}%"
+            f"SOS Ignition: Vol {vol_ratio:.1f}x baseline, "
+            f"Buy TX {buy_tx_ratio * 100:.1f}%, CVD {cvd_sol:+.2f} SOL, "
+            f"Kenaikan {change_pct:+.1f}%"
         )
-
-    # 4.4 Anti-Trap / Exit Liquidity Filter
-    is_bull_trap = (
-        price_change_pct >= 10.0 and cvd_sol < -1.0 and holder_lock_pct < 50.0
-    )
-    if is_bull_trap:
-        score -= 50
-        signal_type = "🔴 EXIT LIQUIDITY TRAP (BULL TRAP)"
-        reasons.append("Bull Trap: Dev/Cabal dump ke market, JANGAN BELI")
-
-    # 4.5 Bearish Divergence (kebalikan absorption: CVD plus tp candle merah)
-    # Candle merah (harga turun) tapi CVD positif -> buyer diserap seller,
-    # potensi distribusi. Notifikasi warning HATI-HATI.
-    is_bearish_divergence = (
-        price_change_pct < 0 and cvd_sol >= 1.0
-    )
-    if is_bearish_divergence:
-        score -= 30
-        signal_type = "🔴 BEARISH DIVERGENCE (HARGA TURUN / DISTRIBUSI)"
+        extra_lines.append(
+            f"📝 Indikator     : SOS {vol_ratio:.1f}x · "
+            f"Buy TX {buy_tx_ratio * 100:.1f}% · CVD {cvd_sol:+.2f} SOL"
+        )
+    elif grade == "A":
+        score = float(grade_info["score"])
+        signal_type = SIGNAL_GRADE_A
         reasons.append(
-            f"Divergensi Distribusi: CVD {cvd_sol:+.2f} SOL tp Candle Turun"
-            f" {price_change_pct:+.1f}% — HATI-HATI"
+            f"Golden Spring: C2 kering {drop_pct:.1f}% + C3 divergensi "
+            f"CVD {cvd_sol:+.2f} SOL tp hijau {change_pct:+.1f}% + smart buyer"
         )
+    elif bearish_hit:
+        score = max(0.0, lock_pct * 0.65 - 30.0)
+        signal_type = SIGNAL_BEARISH
+        grade = None
+        reasons.append(
+            f"Divergensi Distribusi: CVD {cvd_sol:+.2f} SOL tp Candle Turun "
+            f"{change_pct:+.1f}% — HATI-HATI"
+        )
+        extra_lines.append(
+            f"📝 Indikator     : ⚠️ CVD plus tp candle merah — "
+            f"buyer diserap seller"
+        )
+        warn_line = (
+            "⚠️ HATI-HATI: harga turun tapi CVD plus — buyer "
+            "diserap seller (potensi distribusi). Jangan entry dulu."
+        )
+    elif grade == "B":
+        score = 80.0
+        signal_type = SIGNAL_GRADE_B
+        if grade_info["c2_dry"] and not grade_info["has_smart"]:
+            reasons.append(
+                f"Absorption parsial: C2 kering {drop_pct:.1f}% + C3 spring "
+                f"(tanpa smart buyer)"
+            )
+        else:
+            reasons.append(
+                "Absorption parsial: C3 spring + smart buyer (C2 belum kering)"
+            )
+    elif grade == "C":
+        score = float(grade_info["score"])
+        signal_type = SIGNAL_GRADE_C
+        muted = True
+        reasons.append(
+            "Routine noise: C3 hijau + CVD minus tanpa C2 kering / smart buyer"
+        )
+        print(f"Grade C muted (score {score:.0f}) — no notification.")
+    else:
+        score = min(100.0, lock_pct * 0.65)
+        signal_type = None
 
-    # Clamp score
     score = max(0.0, min(100.0, score))
     print(f"Pre-Pump Score: {score:.1f} / 100")
     if signal_type:
-        print(f"Signal Detected: {signal_type}")
+        print(f"Signal Detected: {signal_type} (grade={grade}, muted={muted})")
 
-    # Check top holder buys in current bin
-    top_holder_buys = []
-    for h in holders[:10]: # Check top 10 holders for explicit buys
-        addr = h.get("address") or h.get("owner") or h.get("wallet")
-        rank = h.get("rank")
-        # Find if this wallet bought in bin 0
-        buys_in_bin0 = [t for t in bin0['trades'] if t['wallet'] == addr and t['side'] == 'buy']
-        if buys_in_bin0:
-            top_holder_buys.append(f"Pembelian terdeteksi dari Top Holder Rank #{rank}")
-
-    # 5. Format notification
-    # Find current price
-    current_price = bin0['close_price'] if bin0['close_price'] > 0 else 0.00004398
-    
-    # If we are doing the exact test CA, let's force format to exactly match the request example if needed, or format dynamically to be 100% accurate
-    lock_desc = "Pure Accumulators (Supply Terkunci Total)" if holder_lock_pct >= 100.0 else "Pure Accumulators"
-    
-    indicators_bullet = []
-    if holder_lock_pct >= 80.0:
-        indicators_bullet.append(f"   • Top 100 Lock Sangat Kuat ({holder_lock_pct:.0f}% Pure Acc)")
-    elif holder_lock_pct >= 70.0:
-        indicators_bullet.append(f"   • Top 100 Lock Kuat ({holder_lock_pct:.0f}% Pure Acc)")
+    current_price = c3["close_price"] if c3["close_price"] > 0 else 0.0
+    if grade == "A":
+        msg = format_grade_a_message(
+            ca, score, current_price, change_pct, vol_c3, cvd_sol, lock_pct,
+            vol_c1, vol_c2, vol_c3, drop_pct, smart_buyers)
     else:
-        indicators_bullet.append(f"   • Top 100 Lock Lemah ({holder_lock_pct:.0f}% Pure Acc)")
+        badge = signal_type if signal_type else "➖ NEUTRAL"
+        msg = format_signal_message(
+            badge, ca, score, current_price, change_pct, vol_c3, cvd_sol,
+            lock_pct, vol_c1, vol_c2, vol_c3, drop_pct, smart_buyers,
+            extra_lines=extra_lines, warn_line=warn_line)
 
-    if is_absorption_divergence:
-        indicators_bullet.append(f"   • Divergensi Penyerapan: CVD {cvd_sol:+.2f} SOL tp Candle Naik {price_change_pct:+.1f}%")
-    if is_volume_dry_up:
-        indicators_bullet.append(f"   • Test Suplai (Volume Kering): 15m Vol {vol_15m_sol:.2f} SOL ({vol_ratio_vs_baseline:.2f}x baseline)")
-    if is_sos_ignition:
-        indicators_bullet.append(f"   • SOS Ignition Breakout: Lonjakan Vol {vol_ratio_vs_baseline:.1f}x, Buy TX Ratio {buy_tx_ratio*100:.1f}%, CVD {cvd_sol:+.2f} SOL")
-    if is_bull_trap:
-        indicators_bullet.append(f"   • Exit Liquidity Trap: Harga Naik {price_change_pct:+.1f}% tp CVD Negatif {cvd_sol:+.2f} SOL dan Lock < 50%")
-    if is_bearish_divergence:
-        indicators_bullet.append(
-            f"   • ⚠️ Divergensi Distribusi: CVD {cvd_sol:+.2f} SOL tp Candle"
-            f" Turun {price_change_pct:+.1f}% — buyer diserap seller"
-        )
-        
-    for b in top_holder_buys:
-        indicators_bullet.append(f"   • {b}")
-
-    indicator_section = "\n".join(indicators_bullet)
-
-    # Signal title representation
-    badge_title = signal_type if signal_type else "➖ NEUTRAL"
-    if signal_type is None and score >= 70:
-        badge_title = "👀 PRE-PUMP POTENTIAL"
-
-    price_sign = "+" if price_change_pct >= 0 else ""
-    cvd_note = "Net Sells Terserap!" if cvd_sol <= 0 else "Net Buys Dominan!"
-    warn_line = ""
-    if is_bearish_divergence:
-        warn_line = ("\n⚠️ HATI-HATI: harga turun tapi CVD plus — buyer "
-                     "diserap seller (potensi distribusi). Jangan entry dulu.\n")
-
-    msg = (
-        f"{badge_title}\n"
-        f"🎯 Skor Pre-Pump : {score:.0f} / 100\n"
-        f"🪙 Mint          : {ca}\n"
-        f"💵 Harga         : ${current_price:.8f} ({price_sign}{price_change_pct:.2f}%)\n"
-        f"📊 15m Vol / CVD : {vol_15m_sol:.2f} SOL | {cvd_sol:+.2f} SOL ({cvd_note})\n"
-        f"🔒 Top 100 Lock  : {holder_lock_pct:.1f}% {lock_desc}\n"
-        f"📝 Indikator     :\n"
-        f"{indicator_section}\n\n"
-        f"{warn_line}"
-        f"🔗 Buka GMGN: https://gmgn.ai/sol/token/{ca}"
-    )
-
-    # 6. Check if we should trigger notification
-    # Trigger criteria: Skor >= 70 or signal_type in ["🟢", "🟡", "🚀"]
-    # (atau sinyal warning bearish divergence — harus dikirim, bukan filter)
+    # Grade A always notifies. Grade B score is 80 so it notifies.
+    # SOS / trap / bearish notify. Grade C is muted.
     is_triggered = False
-    if score >= 70:
+    if muted:
+        is_triggered = False
+    elif grade == "A":
         is_triggered = True
-    elif signal_type and any(badge in signal_type for badge in ["🟢", "🟡", "🚀"]):
+    elif grade == "B" and score >= 80:
         is_triggered = True
-    elif is_bearish_divergence:
+    elif signal_type in (SIGNAL_SOS, SIGNAL_TRAP, SIGNAL_BEARISH):
         is_triggered = True
 
     if is_triggered:
         print("Sending notification...")
         send_telegram_notif(msg)
         send_discord_notif(msg)
-        
-        # Save to signals.json
         sig_data = {
             "ts": now_ts,
             "ca": ca,
             "symbol": symbol,
             "type": signal_type or "PRE_PUMP_DETECTION",
+            "grade": grade,
             "score": score,
             "price_usd": current_price,
-            "volume_sol": vol_15m_sol,
+            "volume_sol": vol_c3,
             "cvd_sol": cvd_sol,
-            "holder_lock_pct": holder_lock_pct,
+            "holder_lock_pct": lock_pct,
             "detail": {
-                "price_change_pct": price_change_pct,
-                "vol_ratio_vs_baseline": vol_ratio_vs_baseline,
-                "reasons": reasons
-            }
+                "price_change_pct": change_pct,
+                "vol_ratio_vs_baseline": vol_ratio,
+                "c1_vol_sol": vol_c1,
+                "c2_vol_sol": vol_c2,
+                "c3_vol_sol": vol_c3,
+                "c2_drop_pct": drop_pct,
+                "c2_dry": grade_info["c2_dry"],
+                "c3_spring": grade_info["c3_spring"],
+                "smart_buyers": [
+                    {
+                        "address": b.get("address"),
+                        "short": b.get("short"),
+                        "tags": b.get("tags"),
+                        "sol": b.get("sol"),
+                        "rank": b.get("rank"),
+                    }
+                    for b in smart_buyers
+                ],
+                "reasons": reasons,
+            },
         }
         save_signal_to_history(sig_data)
-        
+
     return {
         "ca": ca,
         "symbol": symbol,
         "score": score,
         "signal_type": signal_type,
+        "grade": grade,
         "is_triggered": is_triggered,
-        "msg": msg
+        "muted": muted,
+        "msg": msg,
+        "smart_buyers": smart_buyers,
+        "c1": c1,
+        "c2": c2,
+        "c3": c3,
+        "drop_pct": drop_pct,
+        "holder_lock_pct": lock_pct,
     }
 
 
@@ -590,13 +1220,14 @@ def main():
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument("--mock", action="store_true", help="Run with mock data")
-    parser.add_argument("--test-ca", type=str, default=None, help="Evaluate a specific CA")
+    parser.add_argument("--test-ca", type=str, default=None,
+                        help="Evaluate a specific CA")
     args = parser.parse_args()
 
     print("=== SOLANA MEMECOIN PRE-PUMP & WYCKOFF 15M CRON DETECTOR ===")
     now_ts = int(time.time())
-    
-    # We load watchlist
+    print(f"now={now_ts} C3_bucket={c3_bucket_start(now_ts)}")
+
     watchlist = load_watchlist()
     if not watchlist:
         print("Watchlist is empty. Add tokens to watchlist.json first.")
@@ -606,7 +1237,7 @@ def main():
         symbol = watchlist.get(args.test_ca, {}).get("symbol", "?")
         cas_to_evaluate.append((args.test_ca, symbol))
     else:
-        for ca, meta in watchlist.items():
+        for ca, meta in (watchlist or {}).items():
             cas_to_evaluate.append((ca, meta.get("symbol", "?")))
 
     results = []
@@ -614,10 +1245,14 @@ def main():
         res = run_pipeline_for_ca(ca, symbol, now_ts, mock_mode=args.mock)
         if res:
             results.append(res)
-            
+
     print("\nEvaluation Summary:")
-    for r in results:
-        print(f"- CA: {r['ca']} | Score: {r['score']} | Signal: {r['signal_type']} | Triggered: {r['is_triggered']}")
+    for row in results:
+        print(
+            f"- CA: {row['ca']} | Score: {row['score']} | "
+            f"Signal: {row['signal_type']} | Grade: {row.get('grade')} | "
+            f"Triggered: {row['is_triggered']}"
+        )
 
 
 if __name__ == "__main__":

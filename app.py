@@ -292,6 +292,9 @@ def get_watchlist_details(ca: str, meta: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Short UI label per raw signal type written by scripts/prepump_wyckoff_cron.py
 SIGNAL_LABELS = {
+    "⭐ GRADE A: GOLDEN SPRING (3-Candle + Smart Buyer)": "⭐ GRADE A GOLDEN SPRING",
+    "🟢 GRADE B: HIGH QUALITY ABSORPTION": "🟢 GRADE B ABSORPTION",
+    "⚪ GRADE C: ROUTINE NOISE": "⚪ GRADE C NOISE",
     "🟢 ABSORPTION DIVERGENCE (WYCKOFF SPRING)": "🟢 ABSORPTION DIVERGENCE",
     "🟡 TEST SUPLAI (VOLUME KERING / LPS)": "🟡 TEST SUPLAI",
     "🚀 SOS IGNITION BREAKOUT": "🚀 SOS IGNITION",
@@ -302,17 +305,21 @@ SIGNAL_LABELS = {
 
 # emoji -> (badge bg, badge fg, badge border)
 SIGNAL_STYLES = {
-    "🟢": ("#052e16", "#86efac", "#16a34a"),  # absorption divergence
+    "⭐": ("#422006", "#fde68a", "#eab308"),  # Grade A golden spring
+    "🟢": ("#052e16", "#86efac", "#16a34a"),  # Grade B / absorption
+    "⚪": ("#1e293b", "#cbd5e1", "#64748b"),  # Grade C muted noise
     "🟡": ("#422006", "#fde68a", "#ca8a04"),  # supply test / vol dry-up
     "🚀": ("#431407", "#fed7aa", "#f97316"),  # SOS ignition
-    "🔴": ("#450a0a", "#fecaca", "#dc2626"),  # bull trap
+    "🔴": ("#450a0a", "#fecaca", "#dc2626"),  # bull trap / bearish
     "👀": ("#172554", "#bfdbfe", "#3b82f6"),  # pre-pump potential
     "➖": ("#1e293b", "#94a3b8", "#334155"),  # normal / no signal
 }
 
 # emoji -> row background css
 SIGNAL_ROW_BG = {
+    "⭐": "background:rgba(234,179,8,0.12);border:1px solid #854d0e;",
     "🟢": "background:rgba(34,197,94,0.08);border:1px solid #14532d;",
+    "⚪": "background:rgba(148,163,184,0.06);border:1px solid #475569;",
     "🟡": "background:rgba(234,179,8,0.08);border:1px solid #713f12;",
     "🚀": "background:rgba(34,197,94,0.08);border:1px solid #14532d;",
     "🔴": "background:rgba(220,38,38,0.08);border:1px solid #7f1d1d;",
@@ -745,5 +752,5 @@ if run_screen_hrhr:
 # Footer
 # ---------------------------------------------------------------------------
 st.divider()
-st.caption("Detektor otomatis berjalan tiap 15 menit via GitHub Actions (`prepump-wyckoff-cron.yml` → `scripts/prepump_wyckoff_cron.py`): evaluasi Wyckoff 15m (Top 100 Pure Accumulator Lock, Absorption Divergence, Vol Dry-Up / Test Suplai, SOS Ignition, Bull Trap) → skor pre-pump 0-100 → sinyal terbaru di `signals.json` → notifikasi Telegram/Discord saat trigger. Data CVD 72 jam tetap tersedia di halaman 📊 CVD.")
+st.caption("Detektor otomatis berjalan tiap 15 menit via GitHub Actions (`prepump-wyckoff-cron.yml` → `scripts/prepump_wyckoff_cron.py`): bin 15m **clock-aligned**, Open = close candle sebelumnya (anti hijau palsu), evaluasi **3-candle Wyckoff** (C1/C2/C3) + filter smart buyer. Hanya Grade A (wajib) dan Grade B / SOS / trap / bearish yang kirim Telegram/Discord — Grade C di-mute. Sinyal terbaru di `signals.json`. Data CVD 72 jam tetap di halaman CVD.")
 
