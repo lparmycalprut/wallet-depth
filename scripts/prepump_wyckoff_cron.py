@@ -335,7 +335,7 @@ def run_pipeline_for_ca(ca, symbol, now_ts, mock_mode=False):
     holders = []
     trades = []
     
-    if mock_mode or ca == "8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump":
+    if mock_mode:
         print("Using MOCK/SIMULATION data for evaluation.")
         holders, trades = get_mock_data(now_ts)
     else:
@@ -352,11 +352,6 @@ def run_pipeline_for_ca(ca, symbol, now_ts, mock_mode=False):
             print(f"Successfully fetched {len(trades)} trades.")
         except Exception as e:
             print(f"Warning: failed to fetch trades: {e}")
-
-    # Fallback to mock if fetch failed entirely and it's our target token
-    if not holders and ca == "8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump":
-        print("Fetch failed. Falling back to mock data for test CA.")
-        holders, trades = get_mock_data(now_ts)
 
     if not holders or not trades:
         print(f"Skipping {ca} due to missing data.")
@@ -605,12 +600,6 @@ def main():
     watchlist = load_watchlist()
     if not watchlist:
         print("Watchlist is empty. Add tokens to watchlist.json first.")
-        # If we are debugging, let's auto-include the test CA
-        watchlist = {
-            "8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump": {
-                "symbol": "SISYPUSS"
-            }
-        }
 
     cas_to_evaluate = []
     if args.test_ca:
