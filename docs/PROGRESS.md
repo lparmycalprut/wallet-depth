@@ -7,6 +7,30 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-12 — Setup Emas 7 cek harian + Telegram pagi
+
+### Masalah
+Owner minta scoring mengarah ke **setup emas** saja. Telegram pagi hanya
+jika setup itu muncul di watchlist; kalau tidak, kirim
+`TIDAK ADA SETUP HARI INI`.
+
+### Yang berubah
+1. **`prepump_detector.py`** — 7 cek: absorption, CVD flat/up, buy TX ≥52%,
+   avg sell > buy, whale absorbed, LPS −40%…−75%, lock ≥40%. Verdict
+   `SETUP EMAS` / WATCH (≥5/7) / FAIL / STEALTH DUMP. Skor 0–100 dari
+   bobot cek. P4 ignition tetap dihitung, tidak wajib.
+2. **`signals.py`** — Telegram hanya `is_setup_emas`. Pesan 🥇 SETUP EMAS.
+   `queue_no_setup_message` untuk hari kosong (dedupe per tanggal).
+3. **`scripts/update_cvd.py`** — digest pagi: antrikan emas, atau
+   TIDAK ADA SETUP HARI INI.
+4. **UI** — CVD + watchlist menampilkan 7/7 + skor.
+
+### Verifikasi
+`python tests/test_prepump_detector.py` (Ansem/Punch/Assface = 7/7),
+`python tests/test_signals_telegram.py`.
+
+---
+
 ## 2026-08-12 — CVD/watchlist: no auto-fetch, warna tua, TX dominasi, Telegram 4/4
 
 ### Masalah

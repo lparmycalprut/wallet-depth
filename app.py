@@ -9,7 +9,7 @@ Kept functions only:
   - signals.json + cvd_daily.json written by the 4h/daily cron
 
 Scoring 0–100 / Grade A-B-C is no longer the watchlist verdict.
-Each token is PASS / WATCH / FAIL / STEALTH DUMP from the 4 pillars.
+Each token is SETUP EMAS / WATCH / FAIL / STEALTH DUMP from 7 daily checks.
 """
 import html
 import time
@@ -442,7 +442,7 @@ st.caption(
     "Kolom: **Diamond** (top-100 sell/buy ≤10%), **Real/Dust**, "
     "**Top 100 Lock**, **|CVD/Vol|** (hijau tua bila < 3.0%), "
     "**Buy / Sell TX %** (≥ 52% buy = akumulasi cicil), **4 Pilar** "
-    "(PASS / WATCH / FAIL / STEALTH DUMP). "
+    "(SETUP EMAS 7/7 / WATCH / FAIL / STEALTH DUMP). "
     "Tautan CVD hanya mengisi CA — fetch harus diklik di halaman CVD. "
     "Data di-refresh cron 4 jam + evaluasi harian 00:00 UTC."
 )
@@ -483,7 +483,7 @@ else:
 
         if stealth or verdict in ("FAIL", "STEALTH DUMP"):
             raw_type = "🔴 BEARISH DIVERGENCE (HARGA TURUN / DISTRIBUSI)"
-        elif verdict == "PASS":
+        elif verdict in ("SETUP EMAS", "PASS"):
             raw_type = "🟢 ABSORPTION DIVERGENCE (WYCKOFF SPRING)"
         elif verdict == "WATCH":
             raw_type = "🟡 TEST SUPLAI (VOLUME KERING / LPS)"
@@ -547,7 +547,7 @@ else:
                     f"<span style='font-weight:800'>{html.escape(str(label))}"
                     f"</span>"
                     f"<br><span class='watch-muted'>"
-                    f"{pn}/4 pilar</span>"
+                    f"{pn}/7 emas</span>"
                 )
             except (TypeError, ValueError):
                 skor_txt = "<span class='watch-muted'>—</span>"
@@ -665,10 +665,10 @@ else:
                 st.rerun()
 
     st.caption(
-        f"Total {len(wl)} token dipantau. Lock / Vol / CVD / 4 pilar "
+        f"Total {len(wl)} token dipantau. Lock / Vol / CVD / Setup Emas "
         "dari snapshot cron. Tautan CVD hanya mengisi CA — fetch "
-        "manual di halaman CVD. Telegram 4 pilar hanya jika keempat "
-        "pilar transaksi harian komplit."
+        "manual di halaman CVD. Telegram hanya jika 7/7 Setup Emas; "
+        "kalau tidak ada: TIDAK ADA SETUP HARI INI."
     )
 
 # ---------------------------------------------------------------------------

@@ -35,30 +35,37 @@ def check(cond, msg):
 
 def test_is_complete_daily_pass():
     print("\n[1] is_complete_daily_pass gates Telegram")
+    seven = [
+        {"id": f"c{i}", "passed": True} for i in range(7)
+    ]
     check(sigmod.is_complete_daily_pass({
-        "verdict": "PASS", "passed": 4, "total": 4,
+        "verdict": "SETUP EMAS", "passed": 7, "total": 7,
         "date": "2026-08-11", "stealth_dump": False,
-    }) is True, "PASS 4/4 with date is complete")
+        "checks": seven,
+    }) is True, "SETUP EMAS 7/7 with date is complete")
     check(sigmod.is_complete_daily_pass({
-        "verdict": "WATCH", "passed": 3, "total": 4,
+        "verdict": "WATCH", "passed": 5, "total": 7,
         "date": "2026-08-11",
-    }) is False, "WATCH 3/4 is not complete")
+        "checks": seven[:5] + [{"id": "x", "passed": False},
+                               {"id": "y", "passed": False}],
+    }) is False, "WATCH 5/7 is not complete")
     check(sigmod.is_complete_daily_pass({
-        "verdict": "FAIL", "passed": 1, "total": 4,
+        "verdict": "FAIL", "passed": 1, "total": 7,
         "date": "2026-08-11",
     }) is False, "FAIL is not complete")
     check(sigmod.is_complete_daily_pass({
-        "verdict": "STEALTH DUMP", "passed": 0, "total": 4,
+        "verdict": "STEALTH DUMP", "passed": 0, "total": 7,
         "date": "2026-08-11", "stealth_dump": True,
     }) is False, "STEALTH DUMP is not complete")
     check(sigmod.is_complete_daily_pass({
-        "verdict": "PASS", "passed": 4, "total": 4,
-        "stealth_dump": False,
-    }) is False, "PASS without a finished UTC date is rejected")
+        "verdict": "SETUP EMAS", "passed": 7, "total": 7,
+        "stealth_dump": False, "checks": seven,
+    }) is False, "SETUP EMAS without a finished UTC date is rejected")
     check(sigmod.is_complete_daily_pass({
-        "verdict": "PASS", "passed": 4, "total": 4,
+        "verdict": "SETUP EMAS", "passed": 7, "total": 7,
         "date": "2026-08-11", "stealth_dump": True,
-    }) is False, "stealth flag blocks PASS")
+        "checks": seven,
+    }) is False, "stealth flag blocks SETUP EMAS")
     check(sigmod.is_complete_daily_pass({}) is False, "empty eval is False")
     check(sigmod.is_complete_daily_pass(None) is False, "None eval is False")
 
@@ -74,18 +81,35 @@ def test_maybe_queue_only_complete_and_dedupes():
     sigmod._DIGEST_MODE = True
     try:
         ev_pass = {
-            "verdict": "PASS", "passed": 4, "total": 4,
+            "verdict": "SETUP EMAS", "passed": 7, "total": 7,
             "date": "2026-08-11", "stealth_dump": False,
-            "phase": "IGNITION",
+            "setup_emas": True, "score": 100,
+            "phase": "SETUP EMAS",
             "metrics": {"absorption_pct": 0.8, "buy_tx_pct": 58.0,
                         "sell_tx_pct": 42.0, "buy_tx": 58, "sell_tx": 42,
                         "avg_buy_sol": 0.2, "avg_sell_sol": 0.3},
-            "pillars": [{"id": "p1_flow", "passed": True},
-                        {"id": "p2_participation", "passed": True},
-                        {"id": "p3_supply", "passed": True},
-                        {"id": "p4_ignition", "passed": True}],
+            "checks": [
+                {"id": "p1_absorption", "title": "CVD Absorption",
+                 "passed": True},
+                {"id": "p1_cvd_flat", "title": "Bullish Divergence",
+                 "passed": True},
+                {"id": "p2_buy_tx", "title": "Buy TX Dominance",
+                 "passed": True},
+                {"id": "p2_order_size", "title": "Order Size Discrepancy",
+                 "passed": True},
+                {"id": "p2_whale", "title": "Whale Pressure Absorbed",
+                 "passed": True},
+                {"id": "p3_lps", "title": "Volume Kering LPS",
+                 "passed": True},
+                {"id": "p3_lock", "title": "Retensi Akumulator Bottom",
+                 "passed": True},
+            ],
         }
-        ev_watch = dict(ev_pass, verdict="WATCH", passed=3)
+        failed = [dict(c) for c in ev_pass["checks"]]
+        failed[-1]["passed"] = False
+        failed[-2]["passed"] = False
+        ev_watch = dict(ev_pass, verdict="WATCH", passed=5,
+                        setup_emas=False, score=72, checks=failed)
         check(sigmod.maybe_queue_complete_prepump(
             "CA1", "TOK", ev_watch) is False,
               "WATCH does not queue Telegram")
@@ -107,6 +131,12 @@ def test_maybe_queue_only_complete_and_dedupes():
             "CA1", "TOK", ev_pass) is False,
               "second PASS same CA+date is deduped")
         check(len(sigmod._DIGEST_BUF) == 1, "dedupe does not re-queue")
+        check(sigmod.queue_no_setup_message("2026-08-11", n_tokens=3)
+              is True, "empty-day notice queues")
+        check("TIDAK ADA SETUP HARI INI" in sigmod._DIGEST_BUF[-1],
+              "empty-day text is explicit")
+        check(sigmod.queue_no_setup_message("2026-08-11", n_tokens=3)
+              is False, "empty-day notice is deduped")
     finally:
         sigmod.SIGNALS_PATH = orig_path
         sigmod._DIGEST_BUF = orig_buf

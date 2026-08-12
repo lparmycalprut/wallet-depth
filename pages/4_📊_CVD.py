@@ -33,8 +33,8 @@ AMBER = "#92400e"
 INK = "#1e293b"
 PAPER = "#f8fafc"
 
-st.set_page_config(page_title="CVD 4 Pilar", page_icon="📊", layout="wide",
-                   initial_sidebar_state="collapsed")
+st.set_page_config(page_title="CVD Setup Emas", page_icon="📊",
+                   layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown(
     f"""<style>
@@ -103,12 +103,11 @@ DAY_OPTIONS = {
     "7 Hari (168 Jam - Full Week Cycle)": 7,
 }
 
-st.title("📊 CVD — 4 Pilar Pre-Pump")
+st.title("📊 CVD — Setup Emas")
 st.caption(
-    "Evaluasi Wyckoff multi-hari: Absorption |CVD/Vol| < 3.0%, "
-    "Buy TX ≥ 52%, Avg Sell > Avg Buy, LPS volume kering, ignition 15m/1h. "
-    "Fetch hanya jalan setelah tombol diklik — paste CA atau buka dari "
-    "watchlist tidak memicu request."
+    "7 cek harian: |CVD/Vol| < 3.0% · CVD datar/naik · Buy TX ≥ 52% · "
+    "Avg Sell > Buy · Whale diserap · LPS −40%…−75% · Lock ≥ 40%. "
+    "Telegram hanya jika 7/7 Setup Emas. Fetch hanya setelah tombol diklik."
 )
 
 CONFIG = load_config()
@@ -251,7 +250,7 @@ def _dedupe_swaps(swaps):
 
 
 def _banner_cls(verdict):
-    if verdict == "PASS":
+    if verdict in ("SETUP EMAS", "PASS"):
         return "kpi-pass"
     if verdict == "WATCH":
         return "kpi-watch"
@@ -466,8 +465,8 @@ if not run and not cached:
         f"<b>Siap dianalisis</b> — <code>{short}</code><br>"
         f"Rentang: <b>{day_label}</b>. "
         f"Klik <b>Fetch &amp; Analisis Multi-Hari</b> untuk mengambil "
-        f"swap GMGN (fallback Helius), mengevaluasi 4 pilar, dan "
-        f"menghitung dominasi Buy TX vs Sell TX per hari. "
+        f"swap GMGN (fallback Helius), mengevaluasi Setup Emas 7 cek, "
+        f"dan menghitung dominasi Buy TX vs Sell TX per hari. "
         f"Tidak ada fetch otomatis."
         f"</div>",
         unsafe_allow_html=True,
@@ -491,7 +490,7 @@ if run:
         progress.empty()
         st.error(f"Fetch gagal: {exc}")
         st.stop()
-    progress.progress(0.75, text="Menyimpan chunk 4 jam + evaluasi 4 pilar…")
+    progress.progress(0.75, text="Menyimpan chunk 4 jam + Setup Emas…")
     swaps = _dedupe_swaps(bundle.get("swaps") or [])
     save_4h_chunks_from_swaps(ca, swaps, symbol=symbol)
     daily = bundle.get("daily") or calculate_daily_cvd(swaps)
@@ -517,7 +516,7 @@ if run:
         "evaluation": ev,
         "evaluation_daily": ev_daily,
         "ts": time.time(),
-        "src": "GMGN / Helius · 4-pilar",
+        "src": "GMGN / Helius · Setup Emas",
         "days": days,
         "pool": pool,
         "symbol": symbol,
@@ -551,25 +550,29 @@ if not swaps_all:
 verdict = evaluation.get("verdict") or "FAIL"
 phase = evaluation.get("phase") or "NORMAL"
 passed = int(evaluation.get("passed") or 0)
+total = int(evaluation.get("total") or 7)
+score = evaluation.get("score")
+score_txt = f" · skor {int(score)}" if score is not None else ""
 st.markdown(
     f"<div class='{_banner_cls(verdict)}' style='margin-bottom:14px'>"
-    f"<p class='kpi-title'>${symbol} · 4 Pilar Pre-Pump</p>"
-    f"<p class='kpi-value'>{verdict} · {passed}/4 · {phase}</p>"
-    f"<p class='kpi-hint'>Ambang ketat: |CVD/Vol| &lt; 3.0% · "
-    f"Buy TX ≥ 52% · Avg Sell &gt; Avg Buy · LPS −40% s/d −85%. "
-    f"Telegram hanya jika keempat pilar hari UTC yang sudah selesai "
-    f"semua lolos.</p>"
+    f"<p class='kpi-title'>${symbol} · Setup Emas</p>"
+    f"<p class='kpi-value'>{verdict} · {passed}/{total}"
+    f"{score_txt} · {phase}</p>"
+    f"<p class='kpi-hint'>7 cek: |CVD/Vol| &lt; 3.0% · CVD datar/naik · "
+    f"Buy TX ≥ 52% · Avg Sell &gt; Buy · Whale diserap · "
+    f"LPS −40%…−75% · Lock ≥ 40%. Telegram hanya 7/7 hari UTC penuh.</p>"
     f"</div>",
     unsafe_allow_html=True,
 )
 if state.get("telegram_queued"):
     st.success(
-        "Sinyal Telegram diantrikan — keempat pilar transaksi harian "
-        f"komplit ({ev_daily.get('date') or '—'})."
+        "Sinyal Telegram diantrikan — Setup Emas 7/7 "
+        f"({ev_daily.get('date') or '—'})."
     )
-elif ev_daily.get("verdict") == "PASS":
+elif ev_daily.get("setup_emas") or ev_daily.get("verdict") in (
+        "SETUP EMAS", "PASS"):
     st.caption(
-        "4 pilar hari UTC penuh sudah PASS — sinyal Telegram sudah "
+        "Setup Emas hari UTC penuh sudah 7/7 — Telegram sudah "
         "pernah dikirim untuk tanggal ini, atau sedang di-dedupe."
     )
 

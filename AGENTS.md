@@ -270,6 +270,18 @@ deteksi pre-pump multi-hari dengan **4 pilar terkalibrasi** dan
 
 Verifikasi: `python tests/test_prepump_detector.py` + suite lama.
 
+## 16. Status 2026-08-12 — Setup Emas 7 cek + Telegram pagi
+
+Setiap pagi (cron daily 00:00 UTC / 07:00 WIB) membandingkan transaksi
+harian watchlist. Telegram **hanya** jika **Setup Emas 7/7**:
+
+- 🛡️ P1 |CVD/Vol| < 3.0% + CVD datar/naik (tol 1 SOL)
+- 👥 P2 Buy TX ≥ 52% + Avg Sell > Buy + whale net < 0
+- ⏳ P3 LPS vol −40%…−75% + Top-100 lock ≥ 40%
+
+Skor 100 = jumlah bobot 18+12+18+16+10+16+10. Ignition P4 info saja.
+Kalau tidak ada token 7/7: **TIDAK ADA SETUP HARI INI** (sekali per tanggal).
+
 ## 15. Status 2026-08-12 — CVD/watchlist: no auto-fetch, warna tua, TX dominasi, Telegram 4/4
 
 Owner: klik CVD dari watchlist / paste CA **jangan** langsung fetch.
