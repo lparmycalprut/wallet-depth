@@ -10,7 +10,7 @@ File ini adalah **memori antar-sesi**. Agen AI membaca `AGENTS.md` otomatis saat
 
 Dashboard Streamlit + cron untuk deteksi **pre-pump** Solana. Bahasa pengguna: **Indonesia**. Komentar & docstring: **Inggris**.
 
-Fokus sempit per 2026-08-12: **watchlist → scan trending/degen → CVD 4 Pilar Pre-Pump**. Verdict **PASS / WATCH / FAIL / STEALTH DUMP** — **bukan** skor 0–100. Empat pilar terkalibrasi: (1) `|CVD/Vol| < 3.0%`, (2) Buy TX ≥ 52% + Avg Sell > Avg Buy (trap Callcat/Froge jika kebalikan), (3) LPS volume drop ≥ 40% + Top-100 lock ≥ 40%, (4) ignition 15m/1h buy ≥ 55% + volume +100%…+14000%. Cron **4 jam** (`0 */4 * * *` UTC = 03/07/11/15/19/23 WIB) menulis chunk ke `data/cvd_4h_chunks/<mint>.json`; agregasi harian 00:00 UTC / 07:00 WIB **tidak** full-fetch 24 jam. Fetch manual 1–7 hari di halaman CVD. Detektor 15m Grade A/B/C tetap di repo sebagai ignition helper, tetapi watchlist tidak lagi memakai skor 60/100.
+Fokus sempit per 2026-08-12: **watchlist → scan trending/degen → CVD 4 Pilar Pre-Pump**. Verdict **PASS / WATCH / FAIL / STEALTH DUMP** — **bukan** skor 0–100. Empat pilar terkalibrasi: (1) `|CVD/Vol| < 3.0%`, (2) Buy TX ≥ 49% (tape hampir seimbang OK) + Avg Sell > Avg Buy (trap Callcat/Froge jika kebalikan), (3) LPS volume drop −40%…−75% **atau** ekspansi terserap (vol ≥ +40% + CVD turun + |CVD/Vol| < 3%) + Top-100 lock ≥ 40%, (4) ignition 15m/1h buy ≥ 55% + volume +100%…+14000% **hanya jika Δ > 0** (vol naik + CVD turun = setup, bukan ignition). Cron **4 jam** (`0 */4 * * *` UTC = 03/07/11/15/19/23 WIB) menulis chunk ke `data/cvd_4h_chunks/<mint>.json`; agregasi harian 00:00 UTC / 07:00 WIB **tidak** full-fetch 24 jam. Fetch manual 1–7 hari di halaman CVD. Detektor 15m Grade A/B/C tetap di repo sebagai ignition helper, tetapi watchlist tidak lagi memakai skor 60/100.
 
 Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Perubahan scoring harus dibuktikan kalibrasi tidak bergeser.
 
@@ -28,7 +28,7 @@ Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Per
 | `core.py` | Helius pool + DexScreener + GeckoTerminal helpers (shared). |
 | `cvd.py` | Store swap 72 jam, bucket CVD, wallet profiles, conviction, candle patterns. **Tidak lagi** punya holder_snapshots / real_dust_history (dihapus karena fokus prepump). |
 | `gmgn_screener.py` | Screener GMGN trending + HRHR, scoring ramp kontinu (4 pilar: t10 30, liq 30, rug 25, vol 15). Tetap semua filter. |
-| `prepump_detector.py` | **4 Pilar Pre-Pump** — PASS/FAIL per pilar (CVD < 3%, Buy TX ≥ 52%, Avg Sell > Buy, LPS + ignition). Tanpa skor 0–100. |
+| `prepump_detector.py` | **4 Pilar Pre-Pump** — PASS/FAIL per pilar (CVD < 3%, Buy TX ≥ 49%, Avg Sell > Buy, LPS **atau** ekspansi terserap + ignition). Tanpa skor 0–100. |
 | `prepump_baru_detector.py` | **BARU — Sinyal watchlist harian** — 7 checks validated 10 pump + LUNA (sell>buy, whale negatif, pantul>5%, CVD<10%, buyTX≥52%, 3h after low net BUY, spring≥55%). Sinyal MUNCUL jika lolos ≥6/7 (core 3 wajib). |
 | `signals.py` | **Minimalist** — hanya prepump_baru_muncul (baru) + legacy imminent/forming (compat). Telegram via `requests` langsung (tanpa breakout_guard). Digest harian. |
 | `trending_ui.py` | Renderer trending — dipakai app.py, tapi app sekarang render minimal (hanya Watchlist button). Enrich holder split tetap Helius-only. |
@@ -274,8 +274,8 @@ Setiap pagi (cron daily 00:00 UTC / 07:00 WIB) membandingkan transaksi
 harian watchlist. Telegram **hanya** jika **Setup Emas 7/7**:
 
 - 🛡️ P1 |CVD/Vol| < 3.0% + CVD datar/naik (tol 1 SOL)
-- 👥 P2 Buy TX ≥ 52% + Avg Sell > Buy + whale net < 0
-- ⏳ P3 LPS vol −40%…−75% + Top-100 lock ≥ 40%
+- 👥 P2 Buy TX ≥ 49% (tape hampir seimbang) + Avg Sell > Buy + whale net < 0
+- ⏳ P3 LPS vol −40%…−75% **atau** ekspansi terserap (vol naik + CVD turun) + Top-100 lock ≥ 40%
 
 Skor 100 = jumlah bobot 18+12+18+16+10+16+10. Ignition P4 info saja.
 Kalau tidak ada token 7/7: **TIDAK ADA SETUP HARI INI** (sekali per tanggal).

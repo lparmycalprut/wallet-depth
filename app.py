@@ -23,6 +23,7 @@ from watchlist import (
     get_last_push_error, resolve_wyckoff_row, resolve_prepump_row,
     meta_details_stale,
 )
+from prepump_detector import BUY_TX_MIN_PCT
 
 st.set_page_config(
     page_title="Wallet Depth — Prepump",
@@ -428,7 +429,8 @@ if _q_del:
 st.title("🎯 Wallet Depth — Prepump Radar")
 st.caption(
     "Fokus: watchlist → scan trending/degen → CVD → **4 Pilar Pre-Pump** "
-    "(|CVD/Vol| < 3.0%, Buy TX ≥ 52%, Avg Sell > Buy, LPS kering). "
+    f"(|CVD/Vol| < 3.0%, Buy TX ≥ {BUY_TX_MIN_PCT:g}%, "
+    "Avg Sell > Buy, LPS kering / ekspansi terserap). "
     "Cron 4 jam menyimpan chunk transaksi; evaluasi harian 07:00 WIB."
 )
 
@@ -441,7 +443,8 @@ st.markdown("### ⭐ Watchlist — 4 Pilar Pre-Pump")
 st.caption(
     "Kolom: **Diamond** (top-100 sell/buy ≤10%), "
     "**|CVD/Vol|** (hijau tua bila < 3.0%), "
-    "**Buy / Sell TX %** (≥ 52% buy = akumulasi cicil), **4 Pilar** "
+    f"**Buy / Sell TX %** (≥ {BUY_TX_MIN_PCT:g}% buy ≈ seimbang), "
+    "**4 Pilar** "
     "(SETUP EMAS 7/7 / WATCH / FAIL / STEALTH DUMP). "
     "Tautan CVD hanya mengisi CA — fetch harus diklik di halaman CVD. "
     "Data di-refresh cron 4 jam + evaluasi harian 00:00 UTC."
@@ -511,7 +514,7 @@ else:
             try:
                 bt_v = float(buy_tx_pct)
                 sell_v = 100.0 - bt_v
-                bt_ok = bt_v >= 52.0
+                bt_ok = bt_v >= BUY_TX_MIN_PCT
                 bt_cls = "glowing-pass" if bt_ok else "glowing-fail"
                 buy_txt = (f"<div class='{bt_cls}' style='text-align:center'>"
                            f"{bt_v:.0f}% / {sell_v:.0f}%</div>")
@@ -832,7 +835,8 @@ st.caption(
     "Cron 4 jam (`cvd-4h-daily.yml` → `scripts/update_cvd.py`) menyimpan "
     "chunk transaksi ke `data/cvd_4h_chunks/`. Evaluasi harian 00:00 UTC "
     "mengagregasi 6 potongan tanpa full-fetch 24 jam. Ambang: "
-    "|CVD/Vol| < 3.0% · Buy TX ≥ 52% · Avg Sell > Avg Buy · LPS −40%. "
+    f"|CVD/Vol| < 3.0% · Buy TX ≥ {BUY_TX_MIN_PCT:g}% · "
+    "Avg Sell > Avg Buy · LPS −40% / ekspansi terserap. "
     "Halaman CVD fetch hanya setelah tombol diklik. Telegram 4 pilar "
     "hanya jika keempat pilar hari UTC penuh sudah lolos."
 )

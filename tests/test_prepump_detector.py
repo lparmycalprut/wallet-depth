@@ -17,6 +17,7 @@ from cvd_daily import (aggregate_chunks_to_daily, calculate_daily_cvd,
 from prepump_detector import (BUY_TX_MIN_PCT, CVD_ABSORPTION_PCT,
                               GOLDEN_TOTAL, VERDICT_EMAS, VERDICT_FAIL,
                               VERDICT_PASS, VERDICT_STEALTH,
+                              _is_absorbed_expansion, _is_ignition_row,
                               compute_window_metrics, evaluate_golden_checks,
                               evaluate_pillar1_flow,
                               evaluate_pillar2_participation,
@@ -191,8 +192,9 @@ def test_success_tokens_pass():
         check(is_setup_emas(ev) is True, f"{name} is_setup_emas")
         check(m["absorption_pct"] < 3.0,
               f"{name} absorption {m['absorption_pct']:.2f}% < 3")
-        check(m["buy_tx_pct"] >= 52.0,
-              f"{name} buy TX {m['buy_tx_pct']:.1f}% ≥ 52")
+        check(m["buy_tx_pct"] >= BUY_TX_MIN_PCT,
+              f"{name} buy TX {m['buy_tx_pct']:.1f}% "
+              f"≥ {BUY_TX_MIN_PCT:g}")
         check(abs(m["buy_tx_pct"] + m["sell_tx_pct"] - 100.0) < 0.01,
               f"{name} buy+sell TX % = 100")
         check(m["avg_sell_sol"] > m["avg_buy_sol"],
@@ -344,6 +346,86 @@ def test_golden_checks_lps_band_and_score():
           "WATCH 6/7 is not Setup Emas")
 
 
+def test_absorbed_expansion_and_sisypuss():
+    print("\n[11] Absorbed expansion + SISYPUSS 10 Agu is Setup Emas")
+    # Vol +146%, CVD down, tight tape → setup, not ignition.
+    row = {
+        "date": "2026-08-10",
+        "volume_change_pct": 146.63,
+        "delta_sol": -9.66,
+        "volume_sol": 902.77,
+        "absorption_pct": 1.07,
+        "cvd_ratio_pct": -1.07,
+        "buy_tx_pct": 49.72,
+    }
+    check(_is_absorbed_expansion(146.63, row=row) is True,
+          "SISYPUSS +146% / CVD down is absorbed expansion")
+    check(_is_ignition_row(row) is False,
+          "absorbed expansion is not scored as ignition")
+    markup = dict(row, delta_sol=20.0, absorption_pct=8.0,
+                  cvd_ratio_pct=8.0, buy_tx_pct=62.0)
+    check(_is_ignition_row(markup) is True,
+          "vol +100% with CVD up stays ignition")
+
+    # Near-even tape (49.7%) must pass the new 49% floor.
+    m = {
+        "buy_tx": 541, "sell_tx": 547, "total_tx": 1088,
+        "buy_tx_pct": 49.72, "sell_tx_pct": 50.28,
+        "buy_sol": 446.56, "sell_sol": 456.22,
+        "volume_sol": 902.77, "delta_sol": -9.66,
+        "absorption_pct": 1.07,
+        "avg_buy_sol": 0.825, "avg_sell_sol": 0.834,
+        "whale_net_sol": -12.27,
+        "volume_change_pct": 146.63,
+    }
+    daily = [
+        {"date": "2026-08-09", "running_cvd_sol": -3.86,
+         "volume_change_pct": None, "delta_sol": -3.86,
+         "volume_sol": 366.0, "cvd_ratio_pct": -1.05},
+        {"date": "2026-08-10", "running_cvd_sol": -13.51,
+         "volume_change_pct": 146.63, "delta_sol": -9.66,
+         "volume_sol": 902.77, "cvd_ratio_pct": -1.07},
+    ]
+    checks = {c["id"]: c for c in evaluate_golden_checks(m, daily, 100.0)}
+    check(checks["p2_buy_tx"]["passed"] is True,
+          f"49.7% buy TX passes {BUY_TX_MIN_PCT:g}% floor")
+    check(checks["p3_lps"]["passed"] is True,
+          "P3 passes on absorbed expansion")
+    check(checks["p1_cvd_flat"]["passed"] is True,
+          "P1 divergence passes when vol up + CVD down")
+    check(all(c["passed"] for c in checks.values()),
+          "synthetic SISYPUSS 10 Agu is 7/7")
+
+    ca = "8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump"
+    cvd_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "cvd.json")
+    if os.path.exists(cvd_path):
+        import json
+        from datetime import datetime, timezone
+        with open(cvd_path, encoding="utf-8") as f:
+            rec = (json.load(f) or {}).get(ca) or {}
+        swaps = rec.get("swaps") or []
+        if swaps:
+            now_ts = int(datetime(
+                2026, 8, 11, 0, 5, tzinfo=timezone.utc).timestamp())
+            ev = evaluate_prepump(
+                swaps, holder_lock_pct=100.0, now_ts=now_ts,
+                include_today=False)
+            check(ev["date"] == "2026-08-10",
+                  f"digest 11 Agu scores 10 Agu (got {ev['date']})")
+            check(ev["verdict"] == VERDICT_EMAS,
+                  f"SISYPUSS 10 Agu SETUP EMAS "
+                  f"(got {ev['verdict']} {ev['passed']}/7 "
+                  f"stealth={ev['stealth_dump']})")
+            check(is_setup_emas(ev) is True,
+                  "SISYPUSS 10 Agu would notify")
+        else:
+            check(True, "cvd.json has no SISYPUSS swaps — skip live replay")
+    else:
+        check(True, "cvd.json missing — skip live replay")
+
+
 if __name__ == "__main__":
     test_absorption_formula()
     test_stealth_dump_filter()
@@ -355,6 +437,7 @@ if __name__ == "__main__":
     test_include_today_flag()
     test_kpi_cards_shape()
     test_golden_checks_lps_band_and_score()
+    test_absorbed_expansion_and_sisypuss()
     print(f"\n{'FAILED: ' + str(len(failures)) if failures else 'ALL PASSED'}")
     for item in failures:
         print("  -", item)

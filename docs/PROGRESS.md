@@ -7,6 +7,26 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-12 — Setup Emas: tape seimbang + ekspansi terserap (SISYPUSS)
+
+### Masalah
+SISYPUSS 10 Agu 2026 (lalu pump 11 Agu) gagal notifikasi: Buy TX 49.7%
+< 52%, dan vol +146% + CVD turun dianggap ignition / gagal LPS.
+
+### Yang berubah
+1. `BUY_TX_MIN_PCT` 52 → **49** (buy≈sell = absorption, bukan dump).
+   Callcat/Froge tetap ~42% + avg buy > sell = STEALTH DUMP.
+2. P3 lolos jika LPS −40%…−75% **atau** ekspansi terserap
+   (vol ≥ +40%, Δ CVD < 0, |CVD/Vol| < 3%).
+3. Bugfix: vol naik + CVD turun **bukan** ignition — itu setup.
+   Ignition hanya jika Δ > 0.
+
+### Verifikasi
+`python tests/test_prepump_detector.py` (Ansem/Punch/Assface 7/7,
+Callcat/Froge stealth, SISYPUSS 10 Agu 7/7 + would notify).
+
+---
+
 ## 2026-08-12 — Watchlist: hapus kolom Real/Dust + Top 100 Lock
 
 ### Masalah
