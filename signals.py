@@ -196,6 +196,92 @@ def queue_daily_cvd_message(ca, symbol, rows, *, price=None):
     _queue_or_send(text)
 
 
+def record_prepump_4pilar(ca, symbol, evaluation, *, now_ts=None, price=None):
+    """Persist one 4-pillar daily evaluation (no 0–100 score)."""
+    now_ts = int(now_ts or time.time())
+    ev = evaluation or {}
+    date = ev.get("date")
+    if not date:
+        return ev
+    sig = {
+        "ts": now_ts,
+        "ca": ca,
+        "symbol": symbol,
+        "type": "prepump_4pilar",
+        "src": "four_pillar",
+        "daily": True,
+        "date": date,
+        "verdict": ev.get("verdict"),
+        "phase": ev.get("phase"),
+        "passed": ev.get("passed"),
+        "total": ev.get("total", 4),
+        "stealth_dump": bool(ev.get("stealth_dump")),
+        "detail": {
+            "metrics": ev.get("metrics") or {},
+            "pillars": ev.get("pillars") or [],
+            "holder_lock_pct": ev.get("holder_lock_pct"),
+        },
+        "price": price,
+        "complete_day": True,
+    }
+    items = load_signals()
+    if not any(x.get("ca") == ca and x.get("type") == "prepump_4pilar"
+               and x.get("date") == date
+               for x in items[-500:]):
+        items.append(sig)
+        save_signals(items)
+    try:
+        from cvd_daily import persist_daily_snapshot
+        persist_daily_snapshot(ca, symbol, ev.get("daily_rows") or [],
+                               now_ts=now_ts)
+    except Exception:
+        pass
+    return ev
+
+
+def queue_prepump_4pilar_message(ca, symbol, evaluation, *, price=None):
+    ev = evaluation or {}
+    if not ev:
+        return
+    verdict = ev.get("verdict") or "FAIL"
+    stealth = bool(ev.get("stealth_dump"))
+    if stealth or verdict == "STEALTH DUMP":
+        icon = "🔴"
+    elif verdict == "PASS":
+        icon = "🟢"
+    elif verdict == "WATCH":
+        icon = "🟡"
+    else:
+        icon = "⚪"
+    metrics = ev.get("metrics") or {}
+    absorption = metrics.get("absorption_pct", 0.0)
+    buy_pct = metrics.get("buy_tx_pct", 0.0)
+    avg_buy = metrics.get("avg_buy_sol", 0.0)
+    avg_sell = metrics.get("avg_sell_sol", 0.0)
+    change = metrics.get("volume_change_pct")
+    change_txt = "n/a" if change is None else f"{change:+.1f}%"
+    pillar_bits = []
+    for pillar in ev.get("pillars") or []:
+        mark = "✅" if pillar.get("passed") else "❌"
+        pillar_bits.append(f"{mark} {pillar.get('id', '?')}")
+    text = (
+        f"{icon} <b>4 PILAR PRE-PUMP · {symbol}</b>\n"
+        f"<code>{ca}</code>\n\n"
+        f"<b>{verdict}</b> · {ev.get('phase', '-')}\n"
+        f"📅 {ev.get('date', '-')}  ·  "
+        f"{int(ev.get('passed') or 0)}/{int(ev.get('total') or 4)} pilar\n"
+        f"💧 |CVD/Vol| <b>{absorption:.2f}%</b> "
+        f"(ambang &lt; 3.0%)\n"
+        f"🟢 Buy TX <b>{buy_pct:.1f}%</b> · "
+        f"Avg S {avg_sell:.3f} / B {avg_buy:.3f} SOL\n"
+        f"📉 Vol vs H-1 {change_txt}\n"
+        f"{' · '.join(pillar_bits)}\n\n"
+        f"<a href='https://dexscreener.com/solana/{ca}'>DexScreener</a>  ·  "
+        f"<a href='https://gmgn.ai/sol/token/{ca}'>GMGN</a>"
+    )
+    _queue_or_send(text)
+
+
 def record_first_buy_surge(ca, symbol, stats, *, now_ts=None, price=None,
                            cooldown_sec=4 * 3600):
     """Record & broadcast a First Buy Surge (awal fase MARK-UP) alert.

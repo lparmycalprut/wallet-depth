@@ -10,7 +10,7 @@ File ini adalah **memori antar-sesi**. Agen AI membaca `AGENTS.md` otomatis saat
 
 Dashboard Streamlit + cron untuk deteksi **pre-pump** Solana. Bahasa pengguna: **Indonesia**. Komentar & docstring: **Inggris**.
 
-Fokus sempit per 2026-08-07 (reset total), **diperbarui 2026-08-12 ke 3-Candle Wyckoff + Grade A/B/C**: **watchlist → scan trending/degen → CVD → sinyal Wyckoff 15M** (detektor `scripts/prepump_wyckoff_cron.py` jalan tiap 15 menit via `.github/workflows/prepump-wyckoff-cron.yml` di menit 14/29/44/59 UTC). Bin candle **clock-aligned** (`ts // 900 * 900`); **Open = close candle sebelumnya** (TradingView / GMGN — gap-down yang tidak reclaim prev close = merah, bukan hijau palsu); evaluasi urutan **C1 baseline → C2 kering/LPS → C3 spring**. Hanya **Grade A** (3-candle + smart buyer, skor 95–100, wajib Telegram/Discord) dan **Grade B / SOS / trap / bearish** yang notify — **Grade C** (noise akumulasi rutin, 50–55) di-mute. `signals.json` format: `type/grade/score/volume_sol/cvd_sol/holder_lock_pct`. Cron harian 07:00 WIB, M15 swap store, dan 7 checks sudah **ditiadakan**.
+Fokus sempit per 2026-08-12: **watchlist → scan trending/degen → CVD 4 Pilar Pre-Pump**. Verdict **PASS / WATCH / FAIL / STEALTH DUMP** — **bukan** skor 0–100. Empat pilar terkalibrasi: (1) `|CVD/Vol| < 3.0%`, (2) Buy TX ≥ 52% + Avg Sell > Avg Buy (trap Callcat/Froge jika kebalikan), (3) LPS volume drop ≥ 40% + Top-100 lock ≥ 40%, (4) ignition 15m/1h buy ≥ 55% + volume +100%…+14000%. Cron **4 jam** (`0 */4 * * *` UTC = 03/07/11/15/19/23 WIB) menulis chunk ke `data/cvd_4h_chunks/<mint>.json`; agregasi harian 00:00 UTC / 07:00 WIB **tidak** full-fetch 24 jam. Fetch manual 1–7 hari di halaman CVD. Detektor 15m Grade A/B/C tetap di repo sebagai ignition helper, tetapi watchlist tidak lagi memakai skor 60/100.
 
 Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Perubahan scoring harus dibuktikan kalibrasi tidak bergeser.
 
@@ -28,12 +28,12 @@ Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Per
 | `core.py` | Helius pool + DexScreener + GeckoTerminal helpers (shared). |
 | `cvd.py` | Store swap 72 jam, bucket CVD, wallet profiles, conviction, candle patterns. **Tidak lagi** punya holder_snapshots / real_dust_history (dihapus karena fokus prepump). |
 | `gmgn_screener.py` | Screener GMGN trending + HRHR, scoring ramp kontinu (4 pilar: t10 30, liq 30, rug 25, vol 15). Tetap semua filter. |
-| `prepump_detector.py` | **Deep CVD** — 4 pilar 25 poin + multi-TF (untuk halaman CVD deep dive). |
+| `prepump_detector.py` | **4 Pilar Pre-Pump** — PASS/FAIL per pilar (CVD < 3%, Buy TX ≥ 52%, Avg Sell > Buy, LPS + ignition). Tanpa skor 0–100. |
 | `prepump_baru_detector.py` | **BARU — Sinyal watchlist harian** — 7 checks validated 10 pump + LUNA (sell>buy, whale negatif, pantul>5%, CVD<10%, buyTX≥52%, 3h after low net BUY, spring≥55%). Sinyal MUNCUL jika lolos ≥6/7 (core 3 wajib). |
 | `signals.py` | **Minimalist** — hanya prepump_baru_muncul (baru) + legacy imminent/forming (compat). Telegram via `requests` langsung (tanpa breakout_guard). Digest harian. |
 | `trending_ui.py` | Renderer trending — dipakai app.py, tapi app sekarang render minimal (hanya Watchlist button). Enrich holder split tetap Helius-only. |
 | `watchlist.py` | Watchlist helpers (load/save/add/remove + GitHub push + pending journal + cache 15s). |
-| `scripts/update_cvd.py` | **Cron updater** — update CVD GMGN + conviction (4h) + holder snapshot/real-dust (`holder_snapshots.json`, `real_dust_history.json`) + daily snapshot `history.json` + evaluasi prepump + Telegram digest. |
+| `scripts/update_cvd.py` | **Cron 4 jam + harian** — `4h` menulis chunk 4 jam; `daily` (00:00 UTC) mengagregasi 6 chunk, evaluasi 4 pilar, Telegram digest. |
 | `scripts/daily_snapshot.py` | Helper snapshot harian DexScreener+GMGN (dipakai update_cvd sebagai fallback). |
 | `scripts/backtest_prepump.py` | Backtest prepump via CSV GMGN (offline). |
 | `.github/workflows/daily-prepump.yml` | **Cron Harian** — `0 0 * * *` 07:00 WIB (GMGN candle flip). |
@@ -245,3 +245,27 @@ snapshot `wyckoff_*` ke `watchlist.json` (workflow sudah `git add`).
 turun ke NORMAL; Grade C tampil NORMAL tapi vol/CVD/lock/skor tetap.
 Diamond/Real-Dust di-refresh live jika `details_ts` kosong/>12 jam.
 `signals.load_signals` menarik salinan `main` jika lebih baru (Cloud).
+
+## 14. Status 2026-08-12 — 4 Pilar Pre-Pump + chunk 4 jam + CVD glowing
+
+Owner request: buang scoring 60/100 / alert spam lama, bangun ulang
+deteksi pre-pump multi-hari dengan **4 pilar terkalibrasi** dan
+**|CVD/Vol| < 3.0%**.
+
+1. `prepump_detector.py` — engine PASS/FAIL (bukan 0–100). Fixture
+   Ansem / Punch / Assface = PASS; Callcat / Froge = STEALTH DUMP.
+2. `cvd_daily.py` — chunk 4 jam di `data/cvd_4h_chunks/<mint>.json`,
+   agregasi 6 potongan jadi baris harian, field ekstra
+   (`absorption_pct`, `avg_buy_sol`, `avg_sell_sol`, whale net).
+3. `cvd.fetch_swaps_multiday` / `fetch_and_analyze_multiday` — fetch
+   manual 1–7 hari, persist ke store + chunk + `cvd_daily.json`.
+4. `scripts/update_cvd.py` — `4h` / `daily` / `auto`. YAML cron ada di
+   `docs/WORKFLOW_PATCH_cvd_4h.md` (App tidak punya izin `workflows`;
+   owner paste ke `.github/workflows/cvd-4h-daily.yml`).
+5. `pages/4_📊_CVD.py` — selector 1–7 hari, tombol
+   `⚡ Fetch & Analisis Multi-Hari`, CSS glowing hijau/merah, 4 KPI
+   card, grafik dual-axis, tabel day-by-day.
+6. `app.py` — kolom watchlist: `|CVD/Vol|`, Buy TX, verdict 4 pilar
+   (bukan skor /100).
+
+Verifikasi: `python tests/test_prepump_detector.py` + suite lama.

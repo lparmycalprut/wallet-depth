@@ -1,20 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-Wallet Depth — Prepump Radar (minimalist reset 2026-08-07,
-update 2026-08-11: Wyckoff 15M cron detector)
+Wallet Depth — Prepump Radar (4-pillar multi-day, 2026-08-12)
 
 Kept functions only:
-  - watchlist (vertical list + sinyal Wyckoff 15M pre-pump)
+  - watchlist (vertical list + 4-pilar pre-pump status)
   - scan trending / scan degen (with all filters, only Watchlist button)
-  - CVD deep analysis (separate page)
-  - signals.json as backend (written by the 15-minute GitHub Actions cron)
+  - CVD deep analysis (pages/4_📊_CVD.py) with 1–7 day fetch
+  - signals.json + cvd_daily.json written by the 4h/daily cron
 
-Removed: cards, analyze on main page, compare/history/screener/cto/lp/accum/
-  memecoin/prepump-checker pages, breakout_guard, focus, share_card, daily
-  07:00 WIB cron, M15 swap-store flag, 7-checks scoring, AvgCost column.
-
-Sinyal watchlist reads the latest Wyckoff 15M entry per CA from signals.json
-(scripts/prepump_wyckoff_cron.py format), not the old daily CVD model.
+Scoring 0–100 / Grade A-B-C is no longer the watchlist verdict.
+Each token is PASS / WATCH / FAIL / STEALTH DUMP from the 4 pillars.
 """
 import html
 import time
@@ -25,7 +20,8 @@ import streamlit as st
 from core import load_config, get_helius_keys
 from watchlist import (
     load_watchlist, add_to_watchlist, remove_from_watchlist,
-    get_last_push_error, resolve_wyckoff_row, meta_details_stale,
+    get_last_push_error, resolve_wyckoff_row, resolve_prepump_row,
+    meta_details_stale,
 )
 
 st.set_page_config(
@@ -85,6 +81,24 @@ st.markdown("""
     .stMarkdown, .stCaption {
         font-size: 0.95rem;
     }
+    .glowing-pass {
+        background-color: rgba(0, 255, 136, 0.08);
+        border: 1.5px solid #00ff88 !important;
+        box-shadow: 0 0 12px rgba(0, 255, 136, 0.35);
+        color: #00ff88 !important;
+        border-radius: 8px;
+        padding: 6px 8px;
+        font-weight: bold;
+    }
+    .glowing-fail {
+        background-color: rgba(255, 77, 77, 0.08);
+        border: 1.5px solid #ff4d4d !important;
+        box-shadow: 0 0 12px rgba(255, 77, 77, 0.35);
+        color: #ff4d4d !important;
+        border-radius: 8px;
+        padding: 6px 8px;
+        font-weight: bold;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -104,22 +118,21 @@ def _fmt_ts(ts):
         return "—"
 
 def get_signal_for_ca(ca: str, sigs: list):
-    """Return the latest Wyckoff 15M signal entry for a CA (or None).
-
-    New detector format (scripts/prepump_wyckoff_cron.py)::
-
-        {"ts": ..., "ca": ..., "symbol": ..., "type": "🟢 ABSORPTION ...",
-         "score": 95.0, "price_usd": ..., "volume_sol": 12.3,
-         "cvd_sol": -1.96, "holder_lock_pct": 100.0, "detail": {...}}
-
-    Legacy rows (cvd_daily, cron 6h distribution/accumulation, ...) are
-    ignored — only entries carrying the new Wyckoff keys are considered.
-    """
+    """Return the latest 4-pillar (preferred) or Wyckoff 15M signal."""
+    four = None
+    wyck = None
     for item in reversed(sigs or []):
-        if (item.get("ca") == ca
-                and "score" in item and "holder_lock_pct" in item):
-            return item
-    return None
+        if item.get("ca") != ca:
+            continue
+        if four is None and item.get("type") == "prepump_4pilar":
+            four = item
+        if (wyck is None and "score" in item
+                and "holder_lock_pct" in item
+                and item.get("type") != "prepump_4pilar"):
+            wyck = item
+        if four and wyck:
+            break
+    return {"four": four, "wyckoff": wyck}
 
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_gmgn_top_holder_summary(ca: str) -> dict:
@@ -406,17 +419,25 @@ if _q_del:
 # Header
 # ---------------------------------------------------------------------------
 st.title("🎯 Wallet Depth — Prepump Radar")
-st.caption("Fokus: watchlist → scan trending/degen → CVD → sinyal **Wyckoff 15M** (detektor berjalan otomatis tiap 15 menit via GitHub Actions, sinyal terbaru di `signals.json`) + notifikasi Telegram/Discord saat trigger.")
+st.caption(
+    "Fokus: watchlist → scan trending/degen → CVD → **4 Pilar Pre-Pump** "
+    "(|CVD/Vol| < 3.0%, Buy TX ≥ 52%, Avg Sell > Buy, LPS kering). "
+    "Cron 4 jam menyimpan chunk transaksi; evaluasi harian 07:00 WIB."
+)
 
 # ---------------------------------------------------------------------------
 # 1. WATCHLIST (vertical list, sinyal column)
 # ---------------------------------------------------------------------------
 wl = load_watchlist()
 
-st.markdown("### ⭐ Watchlist — Wyckoff 15M Pre-Pump Detector")
-st.caption("""List menurun. Kolom: **Diamond** (% top-100 holder yang tidak jual >10%), **Real/Dust** (holder >$5 vs ≤$5), **Top 100 Lock** (% **Pure Accumulator** di Top 100 Holders), **15m Vol / CVD** (volume & CVD SOL candle 15m berjalan).
-Angka Lock / Vol / CVD / Skor / Sinyal di-refresh **setiap 15 menit** dari snapshot cron di `watchlist.json` — bukan hanya saat ada alert Telegram. Sinyal trigger yang lebih tua dari 3 jam turun ke ➖ NORMAL supaya absorption/SOS lama tidak terlihat seperti kondisi sekarang. Diamond/Real-Dust di-refresh live jika data meta sudah >12 jam.
-Kolom **Sinyal**: ⭐ **GRADE A** · 🟢 **GRADE B / ABSORPTION** · 🚀 **SOS IGNITION** · 🔴 **BEARISH / BULL TRAP** · ➖ **NORMAL**. Kolom **Skor** = 0–100.""")
+st.markdown("### ⭐ Watchlist — 4 Pilar Pre-Pump")
+st.caption(
+    "Kolom: **Diamond** (top-100 sell/buy ≤10%), **Real/Dust**, "
+    "**Top 100 Lock**, **|CVD/Vol|** (hijau glowing bila < 3.0%), "
+    "**Buy TX %** (≥ 52% = akumulasi cicil), **4 Pilar** "
+    "(PASS / WATCH / FAIL / STEALTH DUMP). "
+    "Data di-refresh cron 4 jam + evaluasi harian 00:00 UTC."
+)
 
 if not wl:
     st.info("Watchlist kosong. Tambahkan manual di bawah atau dari hasil Scan Trending / Scan Degen.")
@@ -426,31 +447,40 @@ else:
         all_sigs = load_signals()
     except Exception:
         all_sigs = []
-    # Header row — Wyckoff 15M columns (compact + eye friendly)
-    WL_WIDTHS = [1.0, 1.5, 0.7, 0.85, 1.0, 1.05, 1.35, 0.65, 0.85, 0.55]
+    # Header row — 4-pillar columns
+    WL_WIDTHS = [1.0, 1.5, 0.7, 0.85, 0.95, 0.9, 0.85, 1.45, 0.85, 0.55]
     hdr = st.columns(WL_WIDTHS)
     for c, lab in zip(hdr, ["Token", "CA + Links", "Diamond", "Real/Dust",
-                            "Top 100 Lock", "15m Vol / CVD", "Sinyal", "Skor",
-                            "Update", ""]):
-        c.markdown(f"<b style='color:#000000'>{lab}</b>", unsafe_allow_html=True)
+                            "Top 100 Lock", "|CVD/Vol|", "Buy TX",
+                            "4 Pilar", "Update", ""]):
+        c.markdown(f"<b style='color:#000000'>{lab}</b>",
+                   unsafe_allow_html=True)
     st.divider()
     for ca, meta in wl.items():
         sym = meta.get("symbol", "?") or "?"
         src = meta.get("source", "manual")
 
-        # Prefer 15m snapshot on watchlist (updated every cron cycle).
-        # Fall back to the latest triggered row in signals.json.
-        sig = get_signal_for_ca(ca, all_sigs)
-        row = resolve_wyckoff_row(meta, sig)
-        raw_type = row.get("raw_type") or ""
-        score = row.get("score")
-        ts = row.get("ts")
-        vol_sol = row.get("vol_sol")
-        cvd_sol = row.get("cvd_sol")
-        lock_pct = row.get("lock_pct")
-        row_stale = bool(row.get("stale"))
+        packed = get_signal_for_ca(ca, all_sigs)
+        four = resolve_prepump_row(meta, packed.get("four"))
+        wyck = resolve_wyckoff_row(meta, packed.get("wyckoff"))
+        ts = four.get("ts") or wyck.get("ts")
+        lock_pct = wyck.get("lock_pct")
+        row_stale = bool(four.get("stale"))
+        verdict = four.get("verdict") or ""
+        phase = four.get("phase") or ""
+        passed_n = four.get("passed")
+        stealth = bool(four.get("stealth_dump"))
+        absorption = four.get("absorption_pct")
+        buy_tx_pct = four.get("buy_tx_pct")
 
-        # Badge config — Wyckoff 15M
+        if stealth or verdict in ("FAIL", "STEALTH DUMP"):
+            raw_type = "🔴 BEARISH DIVERGENCE (HARGA TURUN / DISTRIBUSI)"
+        elif verdict == "PASS":
+            raw_type = "🟢 ABSORPTION DIVERGENCE (WYCKOFF SPRING)"
+        elif verdict == "WATCH":
+            raw_type = "🟡 TEST SUPLAI (VOLUME KERING / LPS)"
+        else:
+            raw_type = wyck.get("raw_type") or ""
         badge, row_bg = signal_badge(raw_type)
 
         # Fetch detail tambahan
@@ -472,35 +502,48 @@ else:
         else:
             lock_txt = "<span style='color:#000000'>—</span>"
 
-        # 15m Vol / CVD — volume & CVD SOL 15 menit terakhir
-        if vol_sol is not None and cvd_sol is not None:
+        # |CVD / Volume| — Pilar 1
+        if absorption is not None:
             try:
-                vol_v = float(vol_sol)
-                cvd_v = float(cvd_sol)
-                cvd_color = "#16a34a" if cvd_v >= 0 else "#dc2626"
-                vc_txt = (f"<span style='color:#000000;font-weight:700;'>"
-                          f"{vol_v:.2f} SOL</span> | "
-                          f"<span style='color:{cvd_color};font-weight:700;'>"
-                          f"{cvd_v:+.2f} SOL</span>")
+                abs_v = float(absorption)
+                abs_ok = abs_v < 3.0
+                abs_cls = "glowing-pass" if abs_ok else "glowing-fail"
+                vc_txt = (f"<div class='{abs_cls}' style='text-align:center'>"
+                          f"{abs_v:.2f}%</div>")
             except (TypeError, ValueError):
                 vc_txt = "<span style='color:#000000'>—</span>"
         else:
             vc_txt = "<span style='color:#000000'>—</span>"
 
-        # Skor pre-pump dinamis 0-100
-        if score is not None:
+        # Buy TX % — Pilar 2
+        if buy_tx_pct is not None:
             try:
-                sc_v = float(score)
-                sc_color = ("#16a34a" if sc_v >= 70
-                            else ("#ca8a04" if sc_v >= 50 else "#94a3b8"))
-                skor_txt = (f"<span style='font-weight:800;color:{sc_color};'>"
-                            f"{sc_v:.0f}</span>"
-                            f"<span style='color:#000000;font-size:0.69rem;'>"
-                            f" / 100</span>")
+                bt_v = float(buy_tx_pct)
+                bt_ok = bt_v >= 52.0
+                bt_cls = "glowing-pass" if bt_ok else "glowing-fail"
+                buy_txt = (f"<div class='{bt_cls}' style='text-align:center'>"
+                           f"{bt_v:.1f}%</div>")
+            except (TypeError, ValueError):
+                buy_txt = "<span style='color:#000000'>—</span>"
+        else:
+            buy_txt = "<span style='color:#000000'>—</span>"
+
+        if passed_n is not None:
+            try:
+                pn = int(passed_n)
+                label = verdict or phase or "—"
+                if stealth:
+                    label = "STEALTH DUMP"
+                skor_txt = (
+                    f"<span style='font-weight:800'>{html.escape(str(label))}"
+                    f"</span>"
+                    f"<br><span style='font-size:0.69rem;color:#000000'>"
+                    f"{pn}/4 pilar</span>"
+                )
             except (TypeError, ValueError):
                 skor_txt = "<span style='color:#000000'>—</span>"
         else:
-            skor_txt = "<span style='color:#000000'>—</span>"
+            skor_txt = badge
 
         # 10 kolom compact — Wyckoff 15M
         cols = st.columns(WL_WIDTHS)
@@ -543,20 +586,25 @@ else:
             unsafe_allow_html=True
         )
 
-        # 15m Vol / CVD
+        # |CVD / Volume| Pilar 1
         cols[5].markdown(
             f"<div class='watch-row' style='{cell_bg}'>{vc_txt}"
-            f"<br><span style='font-size:0.60rem;color:#000000'>15m vol / CVD</span></div>",
+            f"<br><span style='font-size:0.60rem;color:#000000'>"
+            f"|CVD/Vol|</span></div>",
             unsafe_allow_html=True
         )
 
-        # Sinyal Wyckoff 15m
-        cols[6].markdown(f"<div class='watch-row' style='{row_bg}'>{badge}</div>", unsafe_allow_html=True)
+        # Buy TX % Pilar 2
+        cols[6].markdown(
+            f"<div class='watch-row' style='{cell_bg}'>{buy_txt}"
+            f"<br><span style='font-size:0.60rem;color:#000000'>"
+            f"buy tx</span></div>",
+            unsafe_allow_html=True
+        )
 
-        # Skor pre-pump
+        # 4-pilar verdict
         cols[7].markdown(
-            f"<div class='watch-row' style='{cell_bg}'>{skor_txt}"
-            f"<br><span style='font-size:0.60rem;color:#000000'>skor / 100</span></div>",
+            f"<div class='watch-row' style='{row_bg}'>{skor_txt}</div>",
             unsafe_allow_html=True
         )
 
@@ -781,5 +829,11 @@ if run_screen_hrhr:
 # Footer
 # ---------------------------------------------------------------------------
 st.divider()
-st.caption("Detektor otomatis berjalan tiap 15 menit via GitHub Actions (`prepump-wyckoff-cron.yml` → `scripts/prepump_wyckoff_cron.py`): bin 15m **clock-aligned**, Open = close candle sebelumnya (anti hijau palsu), evaluasi **3-candle Wyckoff** (C1/C2/C3) + filter smart buyer. Hanya Grade A (wajib) dan Grade B / SOS / trap / bearish yang kirim Telegram/Discord — Grade C di-mute. Sinyal terbaru di `signals.json`. Data CVD 72 jam tetap di halaman CVD.")
+st.caption(
+    "Cron 4 jam (`cvd-4h-daily.yml` → `scripts/update_cvd.py`) menyimpan "
+    "chunk transaksi ke `data/cvd_4h_chunks/`. Evaluasi harian 00:00 UTC "
+    "mengagregasi 6 potongan tanpa full-fetch 24 jam. Ambang: "
+    "|CVD/Vol| < 3.0% · Buy TX ≥ 52% · Avg Sell > Avg Buy · LPS −40%. "
+    "Halaman CVD punya fetch manual 1–7 hari."
+)
 

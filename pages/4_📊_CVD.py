@@ -1,23 +1,28 @@
 # -*- coding: utf-8 -*-
-"""CVD Deep Analysis — conviction windows and top-holder retention."""
+"""CVD Deep Analysis — 4-pillar pre-pump + multi-day manual fetch."""
 import os
 import sys
 import time
 
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core import (get_helius_keys, get_market,
                   get_holders as core_get_holders,
                   get_supply as core_get_supply, load_config)
-from cvd import (MIN_SOL, WHALE_SOL, conviction_split, top_holder_analysis,
-                 wallet_profiles)
+from cvd import (MIN_SOL, top_holder_analysis)
+from cvd_daily import (calculate_daily_cvd, persist_daily_snapshot,
+                       save_4h_chunks_from_swaps)
+from prepump_detector import evaluate_prepump
+from signals import record_prepump_4pilar
 
 
-st.set_page_config(page_title="CVD Analysis", page_icon="📊", layout="wide",
+st.set_page_config(page_title="CVD 4 Pilar", page_icon="📊", layout="wide",
                    initial_sidebar_state="collapsed")
+
 st.markdown(
     """<style>
     .block-container {padding-top: 1.2rem; max-width: 1400px;}
@@ -26,18 +31,52 @@ st.markdown(
       background: rgba(128,128,128,0.07); border-radius: 8px;}
     [data-testid="stMetricLabel"] {font-size: 0.72rem !important;}
     [data-testid="stMetricValue"] {font-size: 1.1rem !important;}
+
+    .glowing-pass {
+        background-color: rgba(0, 255, 136, 0.08);
+        border: 1.5px solid #00ff88 !important;
+        box-shadow: 0 0 15px rgba(0, 255, 136, 0.4),
+                    inset 0 0 8px rgba(0, 255, 136, 0.2);
+        color: #00ff88 !important;
+        border-radius: 8px;
+        padding: 12px;
+        font-weight: bold;
+    }
+    .glowing-fail {
+        background-color: rgba(255, 77, 77, 0.08);
+        border: 1.5px solid #ff4d4d !important;
+        box-shadow: 0 0 15px rgba(255, 77, 77, 0.4),
+                    inset 0 0 8px rgba(255, 77, 77, 0.2);
+        color: #ff4d4d !important;
+        border-radius: 8px;
+        padding: 12px;
+        font-weight: bold;
+    }
+    .kpi-title {font-size: 0.72rem; letter-spacing: 0.04em;
+                text-transform: uppercase; opacity: 0.85; margin: 0;}
+    .kpi-value {font-size: 1.55rem; margin: 4px 0 2px 0; line-height: 1.2;}
+    .kpi-label {font-size: 0.82rem; margin: 0;}
+    .kpi-hint {font-size: 0.68rem; opacity: 0.7; margin: 4px 0 0 0;
+               font-weight: 500;}
     </style>""",
     unsafe_allow_html=True,
 )
 
-CONVICTION_WINDOWS = (24, 48, 72)
-FETCH_HOURS = 72
+DAY_OPTIONS = {
+    "1 Hari (24 Jam)": 1,
+    "2 Hari (48 Jam)": 2,
+    "3 Hari (72 Jam)": 3,
+    "4 Hari (96 Jam)": 4,
+    "5 Hari (120 Jam)": 5,
+    "6 Hari (144 Jam)": 6,
+    "7 Hari (168 Jam - Full Week Cycle)": 7,
+}
 
-st.title("📊 CVD Deep Analysis")
+st.title("📊 CVD — 4 Pilar Pre-Pump")
 st.caption(
-    "Analisis conviction flow pada window 24h–72h (perbandingan periode "
-    "sebelumnya dengan durasi yang sama) dan pemeriksaan 100 top holder. "
-    "Data swap diambil untuk 72 jam agar semua window tetap comparable."
+    "Evaluasi Wyckoff multi-hari: Absorption |CVD/Vol| < 3.0%, "
+    "Buy TX ≥ 52%, Avg Sell > Avg Buy, LPS volume kering, ignition 15m/1h. "
+    "Fetch inkremental 1–7 hari disimpan ke cache 4 jam + `cvd_daily.json`."
 )
 
 CONFIG = load_config()
@@ -50,24 +89,31 @@ except (TypeError, ValueError):
 qp_ca = st.query_params.get("ca", "").strip()
 ca = st.text_input("Contract Address", value=qp_ca,
                    placeholder="Solana CA...").strip()
-run = st.button("📊 Analyze", type="primary", use_container_width=True)
+
+col_days, col_btn = st.columns([2, 1])
+day_label = col_days.selectbox(
+    "Rentang fetch multi-hari",
+    list(DAY_OPTIONS.keys()),
+    index=2,
+)
+days = DAY_OPTIONS[day_label]
+run = col_btn.button(
+    "⚡ Fetch & Analisis Multi-Hari",
+    type="primary",
+    use_container_width=True,
+)
 
 if not ca:
     st.info(
-        "Paste CA. Analyze akan mengambil history swap 72 jam dari GMGN "
-        "dan data holder lengkap dari Helius."
+        "Paste CA lalu pilih 1–7 hari. Tombol fetch mengambil swap GMGN "
+        "(fallback Helius), mengevaluasi 4 pilar, dan menyimpan hasil."
     )
-    st.stop()
-
-source_key = "gmgn"
-skey = f"cvd::{source_key}::{FETCH_HOURS}h::{ca}"
-if not run and skey not in st.session_state:
     st.stop()
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def get_pool(ca: str):
-    market = get_market(ca)
+def get_pool(contract: str):
+    market = get_market(contract)
     pools = market.get("pair_addresses") or []
     if not market or not pools:
         return None, None, None, None
@@ -79,35 +125,15 @@ def get_pool(ca: str):
     )
 
 
-def full_fetch(contract: str, pool: str, cutoff_ts: int):
-    """Fetch the complete 72-hour GMGN trade range for this page."""
-    from cvd import fetch_swaps, get_gmgn_last_error
-
-    progress = st.progress(0.0, text=f"Fetching GMGN {FETCH_HOURS}h…")
-    try:
-        swaps, _sig, _ts, _hit = fetch_swaps(
-            "", pool or "", contract, stop_ts=cutoff_ts,
-            max_pages=120, sleep=0.05, use_gmgn=True,
-        )
-    except Exception as exc:  # noqa: BLE001
-        st.warning(f"GMGN fetch failed: {exc}")
-        swaps = []
-    finally:
-        progress.empty()
-    error = get_gmgn_last_error()
-    if error and not swaps:
-        st.warning("GMGN kosong: " + error)
-    return swaps
-
-
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_holder_snapshot(contract: str, key_pool: tuple) -> dict:
-    """Fetch and normalize the holder list for this CA (Helius → Cron Snapshot → GMGN)."""
     if key_pool:
         try:
             supply, decimals = core_get_supply(key_pool, contract)
             holders = core_get_holders(key_pool, contract)
-            if holders is not None and not holders.empty and "owner" in holders.columns and "raw_amount" in holders.columns:
+            if (holders is not None and not holders.empty
+                    and "owner" in holders.columns
+                    and "raw_amount" in holders.columns):
                 normalized = holders[["owner", "raw_amount"]].copy()
                 normalized["owner"] = normalized["owner"].astype(str)
                 normalized["amount"] = (
@@ -115,19 +141,18 @@ def fetch_holder_snapshot(contract: str, key_pool: tuple) -> dict:
                     .fillna(0.0) / (10 ** int(decimals))
                 )
                 normalized = normalized[normalized["amount"] > 0]
-                normalized = normalized.sort_values("amount", ascending=False)
+                normalized = normalized.sort_values(
+                    "amount", ascending=False)
                 return {
                     "ok": True,
-                    "holders": normalized[["owner", "amount"]].to_dict("records"),
+                    "holders": normalized[["owner", "amount"]].to_dict(
+                        "records"),
                     "supply": float(supply or 0.0),
-                    "decimals": int(decimals),
                     "total_holders": int(len(normalized)),
                     "source": "Helius",
                 }
         except Exception:
             pass
-
-    # Fallback 1: Cron Snapshot dari holder_snapshots.json (4-Hourly Cron)
     try:
         from cvd import load_holder_snapshots
         snaps = (load_holder_snapshots() or {}).get(contract) or {}
@@ -145,14 +170,11 @@ def fetch_holder_snapshot(contract: str, key_pool: tuple) -> dict:
                     "ok": True,
                     "holders": holders_records,
                     "supply": float(latest_snap.get("supply") or 0.0),
-                    "decimals": 0,
                     "total_holders": len(holders_records),
-                    "source": "Cron Snapshot (4-hourly)",
+                    "source": "Cron Snapshot",
                 }
     except Exception:
         pass
-
-    # Fallback 2: GMGN token_stat
     try:
         from core import gmgn_token_stat
         stat = gmgn_token_stat(contract)
@@ -168,14 +190,138 @@ def fetch_holder_snapshot(contract: str, key_pool: tuple) -> dict:
                 "ok": True,
                 "holders": holders_records,
                 "supply": float(stat.get("supply") or 0.0),
-                "decimals": 0,
-                "total_holders": int(stat.get("total_holders") or len(holders_records)),
+                "total_holders": int(
+                    stat.get("total_holders") or len(holders_records)),
                 "source": "GMGN (Top Holders)",
             }
     except Exception:
         pass
+    return {"ok": False, "error": "Data holder tidak tersedia."}
 
-    return {"ok": False, "error": "Data holder tidak tersedia dari Helius, Cron Snapshot, maupun GMGN."}
+
+def _dedupe_swaps(swaps):
+    seen = {}
+    for swap in swaps or []:
+        if len(swap) < 4:
+            continue
+        key = (swap[0], float(swap[1]), int(swap[2]), str(swap[3]))
+        seen[key] = list(key)
+    return [seen[k] for k in sorted(seen, key=lambda item: item[2])]
+
+
+def render_kpi_card(card):
+    css = "glowing-pass" if card.get("passed") else "glowing-fail"
+    st.markdown(
+        f"<div class='{css}'>"
+        f"<p class='kpi-title'>{card.get('title', '')}</p>"
+        f"<p class='kpi-value'>{card.get('value', '—')}</p>"
+        f"<p class='kpi-label'>{card.get('label', '')}</p>"
+        f"<p class='kpi-hint'>{card.get('hint', '')}</p>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_daily_chart(rows):
+    if not rows:
+        st.info("Belum ada baris harian untuk digambar.")
+        return
+    dates = [r["date"] for r in rows]
+    volumes = [float(r.get("volume_sol") or 0) for r in rows]
+    running = [float(r.get("running_cvd_sol") or 0) for r in rows]
+    ratios = [abs(float(r.get("cvd_ratio_pct") or 0)) for r in rows]
+    colors = []
+    for row in rows:
+        status = str(row.get("status") or "")
+        change = row.get("volume_change_pct")
+        if status.startswith("KERING"):
+            colors.append("#38bdf8")
+        elif change is not None and float(change) >= 100:
+            colors.append("#f97316")
+        elif abs(float(row.get("cvd_ratio_pct") or 99)) < 3.0:
+            colors.append("#00ff88")
+        else:
+            colors.append("#64748b")
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(
+        go.Bar(
+            x=dates, y=volumes, name="Volume SOL",
+            marker=dict(color=colors, line=dict(color="#0f172a", width=0.4)),
+            opacity=0.85,
+            hovertemplate="%{x}<br>Vol %{y:.2f} SOL<extra></extra>",
+        ),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=dates, y=running, name="Running CVD SOL",
+            mode="lines+markers",
+            line=dict(color="#e2e8f0", width=2.4),
+            marker=dict(size=7),
+            hovertemplate="%{x}<br>CVD %{y:+.2f} SOL<extra></extra>",
+        ),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=dates, y=ratios, name="|CVD/Vol| %",
+            mode="lines+markers",
+            line=dict(color="#fbbf24", width=2, dash="dot"),
+            marker=dict(size=6),
+            hovertemplate="%{x}<br>|CVD/Vol| %{y:.2f}%<extra></extra>",
+        ),
+        secondary_y=True,
+    )
+    fig.add_hline(
+        y=3.0, line_dash="dash", line_color="#00ff88",
+        annotation_text="3.0% absorption", secondary_y=True,
+    )
+    fig.update_layout(
+        height=420,
+        margin=dict(t=40, b=20, l=10, r=10),
+        legend=dict(orientation="h", y=1.12),
+        title=dict(
+            text="Volume harian · Running CVD · |CVD/Vol| %",
+            font=dict(size=13),
+        ),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    fig.update_yaxes(title_text="SOL", secondary_y=False)
+    fig.update_yaxes(title_text="|CVD/Vol| %", secondary_y=True,
+                     range=[0, max(8, max(ratios or [0]) * 1.2)])
+    st.plotly_chart(fig, use_container_width=True,
+                    config={"displayModeBar": False})
+
+
+def render_daily_table(rows, evaluation):
+    phase_by_date = {}
+    ev_date = (evaluation or {}).get("date")
+    ev_phase = (evaluation or {}).get("phase")
+    if ev_date:
+        phase_by_date[ev_date] = ev_phase
+    table = []
+    for row in rows or []:
+        change = row.get("volume_change_pct")
+        phase = phase_by_date.get(row["date"]) or row.get("status") or "—"
+        table.append({
+            "Tanggal": row.get("date"),
+            "TX B/S": f"{row.get('buy_tx', 0)}/{row.get('sell_tx', 0)}",
+            "Buy TX %": f"{float(row.get('buy_tx_pct') or 0):.1f}%",
+            "Volume SOL": round(float(row.get("volume_sol") or 0), 2),
+            "% Vol vs H-1": (
+                "—" if change is None else f"{float(change):+.1f}%"
+            ),
+            "Net Δ SOL": round(float(row.get("delta_sol") or 0), 2),
+            "|CVD/Vol|": f"{abs(float(row.get('cvd_ratio_pct') or 0)):.2f}%",
+            "Avg S/B": (
+                f"{float(row.get('avg_sell_sol') or 0):.3f} / "
+                f"{float(row.get('avg_buy_sol') or 0):.3f}"
+            ),
+            "Fase": phase,
+        })
+    st.dataframe(pd.DataFrame(table), use_container_width=True,
+                 hide_index=True)
 
 
 pool, symbol, price_now, mc_now = get_pool(ca)
@@ -183,199 +329,103 @@ if not pool:
     st.error("Token tidak ditemukan di DexScreener.")
     st.stop()
 
+skey = f"cvd4p::{days}d::{ca}"
 if run or skey not in st.session_state:
-    cutoff = int(time.time()) - FETCH_HOURS * 3600
-    st.info(f"Fetching last {FETCH_HOURS}h from GMGN Trades API…")
+    from cvd import fetch_and_analyze_multiday
+    api_key = helius_keys[0] if helius_keys else ""
+    progress = st.progress(0.15, text=f"Fetching GMGN {days} hari…")
+    try:
+        bundle = fetch_and_analyze_multiday(
+            ca, days, pool=pool, api_key=api_key, symbol=symbol,
+            include_today=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        progress.empty()
+        st.error(f"Fetch gagal: {exc}")
+        st.stop()
+    progress.progress(0.85, text="Menyimpan chunk 4 jam + evaluasi 4 pilar…")
+    swaps = _dedupe_swaps(bundle.get("swaps") or [])
+    save_4h_chunks_from_swaps(ca, swaps, symbol=symbol)
+    daily = bundle.get("daily") or calculate_daily_cvd(swaps)
+    persist_daily_snapshot(ca, symbol, daily)
+    ev = bundle.get("evaluation") or evaluate_prepump(
+        swaps, daily_rows=daily, include_today=True)
+    try:
+        record_prepump_4pilar(ca, symbol, ev, price=price_now)
+    except Exception:
+        pass
     st.session_state[skey] = {
-        "swaps": full_fetch(ca, pool, cutoff),
+        "swaps": swaps,
+        "daily": daily,
+        "evaluation": ev,
         "ts": time.time(),
-        "src": "GMGN Trades API",
+        "src": "GMGN / Helius · 4-pilar",
+        "days": days,
     }
+    progress.empty()
 
-swaps_all = st.session_state[skey].get("swaps") or []
-fetched_at = float(st.session_state[skey].get("ts") or time.time())
-st.caption(f"Source: {st.session_state[skey].get('src', '?')}")
-if not swaps_all:
-    st.warning(f"No swaps ≥ {MIN_SOL:g} SOL in last {FETCH_HOURS}h.")
-
-# Keep one canonical swap row per side/volume/timestamp/wallet. GMGN can
-# return the same trade on a retry or on two adjacent pages.
-_seen_all = {}
-for swap in swaps_all:
-    if len(swap) >= 4:
-        key = (swap[0], float(swap[1]), int(swap[2]), str(swap[3]))
-        _seen_all[key] = key
-swaps_all = [list(key) for key in sorted(_seen_all, key=lambda item: item[2])]
-
-if swaps_all:
-    df = pd.DataFrame(swaps_all,
-                      columns=["side", "sol", "ts", "wallet"])
-    df["dt"] = pd.to_datetime(df["ts"], unit="s")
-    df["signed"] = df.apply(
-        lambda row: row["sol"] if row["side"] == "buy" else -row["sol"],
-        axis=1,
-    )
-    covered_h = max(0.0, (fetched_at - df["ts"].min()) / 3600)
-else:
-    df = pd.DataFrame(columns=["side", "sol", "ts", "wallet", "dt", "signed"])
-    covered_h = 0.0
-
-st.markdown(
-    f"### ${symbol} · {len(df):,} swaps · {covered_h:.1f}h covered · "
-    f"MC ${mc_now:,.0f}"
-)
-
-# ---------------------------------------------------------------------------
-# Conviction graph — deliberately no conviction table.
-# ---------------------------------------------------------------------------
-win_stats = {}
-for window_h in CONVICTION_WINDOWS:
-    # 1. Window saat ini [now - window_h*3600, now]
-    if df.empty:
-        segment_now = df
-    else:
-        segment_now = df[df["ts"] >= fetched_at - window_h * 3600]
-    if segment_now.empty:
-        profiles_now = {}
-    else:
-        profiles_now = wallet_profiles(
-            list(segment_now[["side", "sol", "ts", "wallet"]]
-                 .itertuples(index=False, name=None))
-        )
-    conv_now = conviction_split(profiles_now, whale_min_sol=WHALE_SOL)
-
-    # 2. Window sebelumnya (periode lampau dengan durasi yang sama)
-    # [now - 2*window_h*3600, now - window_h*3600]
-    if df.empty:
-        segment_prev = df
-    else:
-        segment_prev = df[(df["ts"] >= fetched_at - 2 * window_h * 3600) &
-                          (df["ts"] < fetched_at - window_h * 3600)]
-    if segment_prev.empty:
-        conv_prev_pct = None
-    else:
-        profiles_prev = wallet_profiles(
-            list(segment_prev[["side", "sol", "ts", "wallet"]]
-                 .itertuples(index=False, name=None))
-        )
-        conv_prev_pct = conviction_split(profiles_prev, whale_min_sol=WHALE_SOL)["conviction_pct"]
-
-    now_pct = conv_now["conviction_pct"]
-    delta_pct = (now_pct - conv_prev_pct) if conv_prev_pct is not None else None
-    net_pure = conv_now.get("pure_buy", 0.0) - conv_now.get("pure_sell", 0.0)
-
-    win_stats[window_h] = {
-        "conviction_pct": now_pct,
-        "prev_pct": conv_prev_pct,
-        "delta_pct": delta_pct,
-        "net_pure": net_pure,
-    }
-
-fig_conviction = go.Figure()
-
-x_vals = [f"{h}H" for h in CONVICTION_WINDOWS]
-y_vals = [win_stats[h]["conviction_pct"] for h in CONVICTION_WINDOWS]
-bar_colors = []
-labels = []
-hovers = []
-
-for h in CONVICTION_WINDOWS:
-    stats = win_stats[h]
-    pct = stats["conviction_pct"]
-    dpct = stats["delta_pct"]
-    netp = stats["net_pure"]
-    if dpct is None:
-        bar_colors.append("#3b82f6")  # Biru netral jika belum ada data periode sebelumnya
-        labels.append(f"{pct:.0f}%")
-        delta_str = "Data awal"
-    elif dpct >= 0:
-        bar_colors.append("#22c55e")  # Hijau jika tumbuh/naik
-        labels.append(f"{pct:.0f}%<br>(▲+{dpct:.1f}%)")
-        delta_str = f"▲ +{dpct:.1f}% (Naik)"
-    else:
-        bar_colors.append("#ef4444")  # Merah jika turun
-        labels.append(f"{pct:.0f}%<br>(▼{dpct:.1f}%)")
-        delta_str = f"▼ {dpct:.1f}% (Turun)"
-
-    prev_str = f"{stats['prev_pct']:.1f}%" if stats['prev_pct'] is not None else "—"
-    hovers.append(
-        f"<b>{h}H Timeframe</b><br>"
-        f"Conviction Saat Ini: <b>{pct:.1f}%</b><br>"
-        f"Periode Sebelumnya: <b>{prev_str}</b><br>"
-        f"Pertumbuhan / Penurunan: <b>{delta_str}</b><br>"
-        f"Net Pure Flow: <b>{netp:+.1f} SOL</b>"
-    )
-
-fig_conviction.add_trace(go.Bar(
-    x=x_vals,
-    y=y_vals,
-    text=labels,
-    textposition="outside",
-    marker=dict(color=bar_colors, line=dict(color="white", width=1.5)),
-    hoverinfo="text",
-    hovertext=hovers,
-    showlegend=False,
-))
-
-# Garis referensi
-fig_conviction.add_hline(
-    y=50, line_dash="dot", line_color="#22c55e", annotation_text="50% (Solid)"
-)
-fig_conviction.add_hline(
-    y=30, line_dash="dot", line_color="#ef4444", annotation_text="30% (Weak)"
-)
-
-fig_conviction.update_layout(
-    height=330,
-    margin=dict(t=45, b=10, l=10, r=10),
-    yaxis=dict(title="Conviction %", range=[0, 118]),
-    xaxis=dict(title="Timeframe"),
-    title=dict(
-        text="Pertumbuhan & Penurunan Conviction per Timeframe (Tanpa Garis Gabungan)",
-        font=dict(size=13)
-    ),
-)
-st.plotly_chart(fig_conviction, use_container_width=True,
-                config={"displayModeBar": False})
-
-# Tampilkan metrik pertumbuhan/penurunan dalam bentuk kolom ringkas
-st.markdown("##### 📈 Pertumbuhan / Penurunan Conviction vs Periode Sebelumnya")
-cols_conv = st.columns(len(CONVICTION_WINDOWS))
-for i, window_h in enumerate(CONVICTION_WINDOWS):
-    stats = win_stats[window_h]
-    now_pct = stats["conviction_pct"]
-    d_pct = stats["delta_pct"]
-    net_p = stats["net_pure"]
-    cols_conv[i].metric(
-        label=f"⏱️ {window_h}H",
-        value=f"{now_pct:.1f}%",
-        delta=f"{d_pct:+.1f}%" if d_pct is not None else "data awal",
-        help=f"Net Pure Flow: {net_p:+.1f} SOL"
-    )
-
+state = st.session_state[skey]
+swaps_all = _dedupe_swaps(state.get("swaps") or [])
+daily_rows = state.get("daily") or calculate_daily_cvd(swaps_all)
+evaluation = state.get("evaluation") or evaluate_prepump(
+    swaps_all, daily_rows=daily_rows, include_today=True)
+fetched_at = float(state.get("ts") or time.time())
 st.caption(
-    "Setiap batang mencatat tingkat conviction pada timeframe tersebut, dengan indikator warna "
-    "(🟢 Naik / 🔴 Turun) serta nilai perubahan (Δ%) dibandingkan periode sebelumnya dengan durasi yang sama — "
-    "bukan digabungkan menjadi garis tren."
+    f"Source: {state.get('src', '?')} · {len(swaps_all):,} swaps · "
+    f"{state.get('days', days)} hari · MC ${mc_now:,.0f}"
 )
 
-# ---------------------------------------------------------------------------
-# Top 100 holders: diamond hand + real-vs-dust.
-# ---------------------------------------------------------------------------
-with st.spinner("Mengambil holder lengkap dari Helius / Snapshot…"):
-    holder_data = fetch_holder_snapshot(ca, helius_keys)
+if not swaps_all:
+    st.warning(f"No swaps ≥ {MIN_SOL:g} SOL in the selected window.")
 
-st.markdown("#### 👥 Top 100 Holder Analysis")
+# ---- Verdict banner -------------------------------------------------------
+verdict = evaluation.get("verdict") or "FAIL"
+phase = evaluation.get("phase") or "NORMAL"
+passed = int(evaluation.get("passed") or 0)
+banner_cls = (
+    "glowing-pass" if verdict == "PASS"
+    else ("glowing-fail" if verdict in ("FAIL", "STEALTH DUMP")
+          else "glowing-pass")
+)
+if verdict == "WATCH":
+    banner_cls = "glowing-pass"
+st.markdown(
+    f"<div class='{banner_cls}' style='margin-bottom:12px'>"
+    f"<p class='kpi-title'>${symbol} · 4 Pilar Pre-Pump</p>"
+    f"<p class='kpi-value'>{verdict} · {passed}/4 · {phase}</p>"
+    f"<p class='kpi-hint'>Ambang ketat: |CVD/Vol| &lt; 3.0% · "
+    f"Buy TX ≥ 52% · Avg Sell &gt; Avg Buy · LPS −40% s/d −85%</p>"
+    f"</div>",
+    unsafe_allow_html=True,
+)
+
+# ---- 4 KPI cards ----------------------------------------------------------
+kpi = evaluation.get("kpi") or []
+if kpi:
+    cols = st.columns(4)
+    for col, card in zip(cols, kpi):
+        with col:
+            render_kpi_card(card)
+
+# ---- Pillar details -------------------------------------------------------
+with st.expander("Rincian 4 pilar", expanded=False):
+    for pillar in evaluation.get("pillars") or []:
+        mark = "✅ PASS" if pillar.get("passed") else "❌ FAIL"
+        st.markdown(f"**{mark} · {pillar.get('id')}** — "
+                    f"{pillar.get('detail')}")
+
+# ---- Chart + table --------------------------------------------------------
+st.markdown("#### 📈 Day-by-day progression")
+render_daily_chart(daily_rows)
+render_daily_table(daily_rows, evaluation)
+
+# ---- Holder lock (feeds Pilar 3 when available) --------------------------
+st.markdown("#### 👥 Top 100 Holder / Supply Lock")
+with st.spinner("Mengambil holder…"):
+    holder_data = fetch_holder_snapshot(ca, helius_keys)
 if not holder_data.get("ok"):
-    st.warning(holder_data.get("error", "Data holder tidak tersedia."))
-    st.caption(
-        "Analisis top holder membutuhkan Helius API key, snapshot cron 4 jam, atau data GMGN. "
-        "Swap conviction di atas tetap dapat dibaca dari GMGN."
-    )
+    st.caption(holder_data.get("error", "Holder tidak tersedia."))
 else:
-    src = holder_data.get("source", "Helius")
-    if src != "Helius":
-        st.caption(f"ℹ️ Data top holder dimuat dari **{src}** (Helius live tidak dikonfigurasi).")
     holder_analysis = top_holder_analysis(
         holder_data.get("holders", []),
         swaps_all,
@@ -387,46 +437,28 @@ else:
     )
     n_top = int(holder_analysis.get("n_top") or 0)
     diamond_count = int(holder_analysis.get("diamond_hands") or 0)
-    observed = int(holder_analysis.get("observed_wallets") or 0)
     diamond_pct = float(holder_analysis.get("diamond_pct") or 0.0)
-    all_holders = int(holder_analysis.get("all_holders") or holder_data.get("total_holders") or n_top)
-    all_real_holders = int(holder_analysis.get("all_real_holders") if holder_analysis.get("all_real_holders") is not None else (holder_analysis.get("real_holders") or 0))
-    all_dust_holders = int(holder_analysis.get("all_dust_holders") if holder_analysis.get("all_dust_holders") is not None else max(0, all_holders - all_real_holders))
-    all_real_pct = float(holder_analysis.get("all_real_pct") if holder_analysis.get("all_real_pct") is not None else (all_real_holders / all_holders * 100.0 if all_holders else 0.0))
-    all_dust_pct = float(holder_analysis.get("all_dust_pct") if holder_analysis.get("all_dust_pct") is not None else (all_dust_holders / all_holders * 100.0 if all_holders else 0.0))
-
-    hm1, hm2, hm3, hm4, hm5 = st.columns(5)
-    hm1.metric("Top holder dianalisis", f"{n_top}/100",
-               f"{all_holders:,} total holder")
-    hm2.metric(
-        "💎 Diamond hand",
-        f"{diamond_count}/{n_top} ({diamond_pct:.1f}%)" if n_top else "—",
-        "sell ≤10% dari buy · Top 100",
-    )
-    hm3.metric(
-        "💰 Real holder",
-        f"{all_real_holders:,}/{all_holders:,} ({all_real_pct:.1f}%)"
-        if all_holders else "—",
-        f"≥ ${dust_limit_usd:,.2f} · full list",
-    )
-    hm4.metric(
-        "🪙 Dust holder",
-        f"{all_dust_holders:,}/{all_holders:,} ({all_dust_pct:.1f}%)"
-        if all_holders else "—",
-        f"< ${dust_limit_usd:,.2f} · full list",
-    )
-    top_supply_pct = float(holder_analysis.get("top_supply_pct") or 0.0)
-    hm5.metric("Top 100 supply", f"{top_supply_pct:.2f}%",
-               f"${price_now:.8g} token price")
-
-    st.caption(
-        f"Diamond hand dianalisis dari {n_top} top holder berdasarkan aktivitas swap 72 jam "
-        f"({observed}/{n_top} top holder punya aktivitas swap teramati; wallet tanpa sell "
-        f"terdeteksi ikut dihitung sebagai diamond hand). Real dan Dust holder dihitung "
-        f"dari seluruh ({all_holders:,}) holder token dari daftar lengkap Helius, "
-        f"di mana Real holder memiliki nilai saldo token saat ini ≥ ${dust_limit_usd:,.2f} "
-        f"dan Dust holder < ${dust_limit_usd:,.2f}."
-    )
+    lock_ok = diamond_pct >= 40.0
+    lock_card = {
+        "title": "Top 100 Supply Lock",
+        "value": f"{diamond_pct:.1f}%",
+        "passed": lock_ok,
+        "label": ("✅ PURE ACC ≥ 40%" if lock_ok
+                  else "❌ LOCK < 40%"),
+        "hint": f"{diamond_count}/{n_top} diamond · "
+                f"sumber {holder_data.get('source', '?')}",
+    }
+    render_kpi_card(lock_card)
+    # Re-evaluate P3 with the live lock if the user just fetched.
+    if run:
+        ev_locked = evaluate_prepump(
+            swaps_all, daily_rows=daily_rows,
+            holder_lock_pct=diamond_pct, include_today=True)
+        st.session_state[skey]["evaluation"] = ev_locked
+        try:
+            record_prepump_4pilar(ca, symbol, ev_locked, price=price_now)
+        except Exception:
+            pass
 
     detail_rows = []
     for row in (holder_analysis.get("rows") or []):
@@ -436,13 +468,17 @@ else:
             "Holding": f"{row['amount']:,.6g}",
             "Supply %": f"{row['supply_pct']:.3f}%",
             "Value USD": f"${row['value_usd']:,.2f}",
-            "Buy 72h SOL": f"{row['buy_sol']:,.2f}",
-            "Sell 72h SOL": f"{row['sell_sol']:,.2f}",
+            "Buy SOL": f"{row['buy_sol']:,.2f}",
+            "Sell SOL": f"{row['sell_sol']:,.2f}",
             "Sold/Buy": f"{row['sell_pct']:.1f}%",
-            "Diamond hand": "✅ Yes" if row["diamond_hand"] else "❌ >10%",
-            "Real ≥ dust": "✅ Real" if row["real_holder"] else "🪙 Dust",
-            "Activity": row["activity"],
+            "Diamond": "✅" if row["diamond_hand"] else "❌",
         })
-    with st.expander("Lihat detail 100 top holder", expanded=False):
+    with st.expander("Detail 100 top holder", expanded=False):
         st.dataframe(pd.DataFrame(detail_rows), use_container_width=True,
                      hide_index=True)
+
+st.caption(
+    f"Diambil {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(fetched_at))}. "
+    "Data transaksi di-append ke `cvd_daily.json` dan "
+    "`data/cvd_4h_chunks/<mint>.json`."
+)
