@@ -1,13 +1,3 @@
-# Workflow Patch — CVD 4-Hour Chunks + Daily 4-Pilar
-
-> **Arena GitHub App tidak punya izin `workflows`**, jadi file
-> `.github/workflows/cvd-4h-daily.yml` tidak bisa di-push. Owner harus
-> membuatnya manual via GitHub web.
-
-## Buat file baru `.github/workflows/cvd-4h-daily.yml`
-
-Copy-paste tepat:
-
 ```yaml
 name: CVD 4-Hour Chunks + Daily 4-Pilar
 
@@ -74,9 +64,3 @@ jobs:
 - Setiap run: `python scripts/update_cvd.py auto` menulis chunk 4 jam.
 - Jam 00:00 UTC (07:00 WIB): juga agregasi 6 chunk + evaluasi 4 pilar
   + digest Telegram.
-
-## Verifikasi
-
-Actions → **CVD 4-Hour Chunks + Daily 4-Pilar** → **Run workflow**
-(mode `4h` dulu, lalu `daily`). Cek `data/cvd_4h_chunks/`,
-`cvd_daily.json`, `signals.json` (tipe `prepump_4pilar`).
