@@ -18,7 +18,7 @@ import uuid
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from watchlist import load_watchlist
+from watchlist import load_watchlist, update_local_meta
 from core import atomic_write_json
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1273,6 +1273,24 @@ def run_pipeline_for_ca(ca, symbol, now_ts, mock_mode=False):
             },
         }
         save_signal_to_history(sig_data)
+
+    if not mock_mode:
+        try:
+            update_local_meta(ca, {
+                "symbol": symbol,
+                "holder_lock_pct": lock_pct,
+                "wyckoff_ts": now_ts,
+                "wyckoff_type": signal_type or "➖ NORMAL",
+                "wyckoff_grade": grade if grade is not None else "",
+                "wyckoff_score": score,
+                "wyckoff_volume_sol": vol_c3,
+                "wyckoff_cvd_sol": cvd_sol,
+                "wyckoff_lock_pct": lock_pct,
+                "wyckoff_price_usd": current_price,
+                "wyckoff_muted": muted,
+            })
+        except Exception as exc:
+            print(f"Warning: failed to persist watchlist snapshot: {exc}")
 
     return {
         "ca": ca,

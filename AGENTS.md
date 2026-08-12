@@ -235,3 +235,13 @@ Pesan Grade A / SOS / trap / bearish menampilkan `$TICKER` di bawah judul
 persen drop vs C1 disembunyikan jika C1 kosong (bukan dry-up). Smart
 buyers satu wallet per baris. Mint di-wrap `<code>` supaya mudah di-copy
 di Telegram.
+
+### 2026-08-12 — Watchlist UI sync (snapshot 15m)
+
+Cron hanya menulis `signals.json` saat trigger, jadi 4/6 token di main
+app tampil `—` / sinyal lama. Sekarang setiap evaluasi 15m menulis
+snapshot `wyckoff_*` ke `watchlist.json` (workflow sudah `git add`).
+`app.py` memakai `resolve_wyckoff_row`: snapshot > sinyal; trigger >3 jam
+turun ke NORMAL; Grade C tampil NORMAL tapi vol/CVD/lock/skor tetap.
+Diamond/Real-Dust di-refresh live jika `details_ts` kosong/>12 jam.
+`signals.load_signals` menarik salinan `main` jika lebih baru (Cloud).

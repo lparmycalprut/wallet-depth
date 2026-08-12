@@ -23,7 +23,10 @@ from datetime import datetime, timezone, timedelta
 import streamlit as st
 
 from core import load_config, get_helius_keys
-from watchlist import load_watchlist, add_to_watchlist, remove_from_watchlist, get_last_push_error
+from watchlist import (
+    load_watchlist, add_to_watchlist, remove_from_watchlist,
+    get_last_push_error, resolve_wyckoff_row, meta_details_stale,
+)
 
 st.set_page_config(
     page_title="Wallet Depth — Prepump",
@@ -215,6 +218,22 @@ def get_watchlist_details(ca: str, meta: dict) -> dict:
         "dust_holders": meta.get("dust_holders"),
         "down_ath": meta.get("down_ath"),
     }
+    stale_details = meta_details_stale(meta)
+
+    # Frozen meta from add-day / deleted cron must not block a live refresh.
+    if stale_details:
+        live = {}
+        if helius_keys:
+            live = fetch_helius_top_holder_summary(ca, helius_keys) or {}
+        if not live:
+            live = fetch_gmgn_top_holder_summary(ca) or {}
+        if live:
+            if live.get("diamond_pct") is not None:
+                details["diamond_pct"] = live.get("diamond_pct")
+            if live.get("real_holders") is not None:
+                details["real_holders"] = live.get("real_holders")
+            if live.get("dust_holders") is not None:
+                details["dust_holders"] = live.get("dust_holders")
 
     # Cek histori real/dust lokal (dari cron) jika belum ada di meta
     if details["real_holders"] is None or details["dust_holders"] is None:
@@ -395,8 +414,9 @@ st.caption("Fokus: watchlist → scan trending/degen → CVD → sinyal **Wyckof
 wl = load_watchlist()
 
 st.markdown("### ⭐ Watchlist — Wyckoff 15M Pre-Pump Detector")
-st.caption("""List menurun. Kolom: **Diamond** (% top-100 holder yang tidak jual >10%), **Real/Dust** (holder >$5 vs ≤$5), **Top 100 Lock** (% **Pure Accumulator** di Top 100 Holders — supply terkunci, dari sinyal Wyckoff terbaru di `signals.json`), **15m Vol / CVD** (volume & CVD SOL 15 menit terakhir dari detektor 15 menit).
-Kolom **Sinyal** = label Wyckoff 15m terbaru: 🟢 **ABSORPTION DIVERGENCE** (candle naik tapi CVD negatif — sell terserap / spring), 🟡 **TEST SUPLAI** (volume kering / LPS — suplai sedang diuji), 🚀 **SOS IGNITION** (lonjakan volume + CVD positif = awal mark-up), 🔴 **BEARISH DIVERGENCE** (harga turun tapi CVD plus — buyer diserap seller, ⚠️ HATI-HATI / potensi distribusi), 🔴 **BULL TRAP** (harga naik tapi CVD negatif & lock lemah), atau ➖ **NORMAL**. Kolom **Skor** = skor pre-pump dinamis **0–100** (lock 65% + kondisi sinyal).""")
+st.caption("""List menurun. Kolom: **Diamond** (% top-100 holder yang tidak jual >10%), **Real/Dust** (holder >$5 vs ≤$5), **Top 100 Lock** (% **Pure Accumulator** di Top 100 Holders), **15m Vol / CVD** (volume & CVD SOL candle 15m berjalan).
+Angka Lock / Vol / CVD / Skor / Sinyal di-refresh **setiap 15 menit** dari snapshot cron di `watchlist.json` — bukan hanya saat ada alert Telegram. Sinyal trigger yang lebih tua dari 3 jam turun ke ➖ NORMAL supaya absorption/SOS lama tidak terlihat seperti kondisi sekarang. Diamond/Real-Dust di-refresh live jika data meta sudah >12 jam.
+Kolom **Sinyal**: ⭐ **GRADE A** · 🟢 **GRADE B / ABSORPTION** · 🚀 **SOS IGNITION** · 🔴 **BEARISH / BULL TRAP** · ➖ **NORMAL**. Kolom **Skor** = 0–100.""")
 
 if not wl:
     st.info("Watchlist kosong. Tambahkan manual di bawah atau dari hasil Scan Trending / Scan Degen.")
@@ -418,18 +438,17 @@ else:
         sym = meta.get("symbol", "?") or "?"
         src = meta.get("source", "manual")
 
-        # Sinyal Wyckoff 15m terbaru dari signals.json
+        # Prefer 15m snapshot on watchlist (updated every cron cycle).
+        # Fall back to the latest triggered row in signals.json.
         sig = get_signal_for_ca(ca, all_sigs)
-        if sig:
-            raw_type = str(sig.get("type") or "")
-            score = sig.get("score")
-            ts = sig.get("ts")
-            vol_sol = sig.get("volume_sol")
-            cvd_sol = sig.get("cvd_sol")
-            lock_pct = sig.get("holder_lock_pct")
-        else:
-            raw_type, score, ts = "", None, None
-            vol_sol = cvd_sol = lock_pct = None
+        row = resolve_wyckoff_row(meta, sig)
+        raw_type = row.get("raw_type") or ""
+        score = row.get("score")
+        ts = row.get("ts")
+        vol_sol = row.get("vol_sol")
+        cvd_sol = row.get("cvd_sol")
+        lock_pct = row.get("lock_pct")
+        row_stale = bool(row.get("stale"))
 
         # Badge config — Wyckoff 15M
         badge, row_bg = signal_badge(raw_type)
@@ -488,7 +507,9 @@ else:
         cell_bg = row_bg + "text-align:center;"
 
         # Token
-        cols[0].markdown(f"<div class='watch-row' style='{row_bg}'><b style='color:#000000'>{sym}</b><br><span style='font-size:0.65rem;color:#000000'>{src}</span></div>", unsafe_allow_html=True)
+        sym_show = html.escape(sym.upper() if str(sym).isascii() else str(sym))
+        src_show = html.escape(str(src))
+        cols[0].markdown(f"<div class='watch-row' style='{row_bg}'><b style='color:#000000'>{sym_show}</b><br><span style='font-size:0.65rem;color:#000000'>{src_show}</span></div>", unsafe_allow_html=True)
 
         # CA + Links
         cols[1].markdown(
@@ -539,8 +560,16 @@ else:
             unsafe_allow_html=True
         )
 
-        # Update
-        cols[8].markdown(f"<div class='watch-row' style='{cell_bg}'><span style='font-size:0.69rem;color:#000000'>{_fmt_ts(ts)}</span></div>", unsafe_allow_html=True)
+        # Update — flag rows whose last 15m eval is older than 45 minutes
+        stale_html = ""
+        if row_stale and ts:
+            stale_html = ("<br><span style='font-size:0.60rem;color:#b45309;"
+                          "font-weight:700;'>stale</span>")
+        cols[8].markdown(
+            f"<div class='watch-row' style='{cell_bg}'>"
+            f"<span style='font-size:0.69rem;color:#000000'>"
+            f"{_fmt_ts(ts)}</span>{stale_html}</div>",
+            unsafe_allow_html=True)
 
         # Hapus
         with cols[9]:
@@ -554,7 +583,7 @@ else:
                 time.sleep(0.35)
                 st.rerun()
 
-    st.caption(f"Total {len(wl)} token dipantau. Sinyal & skor Wyckoff 15M di-refresh otomatis tiap 15 menit dari `signals.json`.")
+    st.caption(f"Total {len(wl)} token dipantau. Lock / Vol / CVD / skor di-refresh tiap 15 menit dari snapshot cron di `watchlist.json`. Alert Telegram tetap hanya saat trigger.")
 
 # ---------------------------------------------------------------------------
 # 2. TAMBAH KOLEKSI MANUAL KE WATCHLIST

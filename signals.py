@@ -18,12 +18,65 @@ _DIGEST_BUF = []
 _DIGEST_MODE = False
 
 
-def load_signals():
+_SIGNALS_CACHE = {"data": None, "ts": 0.0}
+_SIGNALS_TTL = 30
+_SIGNALS_REMOTE = (
+    "https://raw.githubusercontent.com/lparmycalprut/wallet-depth"
+    "/main/signals.json"
+)
+
+
+def _read_local_signals():
     try:
         with open(SIGNALS_PATH, encoding="utf-8") as f:
-            return json.load(f) or []
+            data = json.load(f) or []
+        return data if isinstance(data, list) else []
     except Exception:
         return []
+
+
+def _newest_ts(items):
+    newest = 0
+    for item in items or []:
+        try:
+            ts = int((item or {}).get("ts") or 0)
+        except (TypeError, ValueError):
+            continue
+        if ts > newest:
+            newest = ts
+    return newest
+
+
+def _pull_remote_signals():
+    """Best-effort live copy from main so Cloud is not stuck on a stale checkout."""
+    now = time.time()
+    cached = _SIGNALS_CACHE.get("data")
+    if cached is not None and (now - _SIGNALS_CACHE.get("ts", 0)) < _SIGNALS_TTL:
+        return cached
+    try:
+        r = requests.get(
+            _SIGNALS_REMOTE,
+            params={"t": int(now)},
+            headers={"Cache-Control": "no-cache", "Pragma": "no-cache"},
+            timeout=10,
+        )
+        if r.status_code == 200:
+            data = r.json()
+            if isinstance(data, list):
+                _SIGNALS_CACHE["data"] = data
+                _SIGNALS_CACHE["ts"] = now
+                return data
+    except Exception:
+        pass
+    return cached
+
+
+def load_signals():
+    local = _read_local_signals()
+    remote = _pull_remote_signals()
+    if remote and _newest_ts(remote) > _newest_ts(local):
+        return remote
+    return local
 
 
 def save_signals(items):

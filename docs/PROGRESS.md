@@ -7,6 +7,28 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-12 — Watchlist main app: angka 15m tidak sinkron
+
+### Masalah
+Tabel watchlist di `app.py` hanya membaca sinyal **trigger** di
+`signals.json`. Cron tidak menulis apa-apa saat NORMAL / Grade C →
+LUNA / FROGE / CHEEMS / CALLCAT tampil `—`. SISYPUSS masih badge
+absorption 4 jam (data mock 12.3 / −1.96). Diamond/Real-Dust membeku
+di meta add-day karena live fetch hanya jalan jika nilainya `None`.
+
+### Yang berubah
+- Cron menulis snapshot `wyckoff_ts/type/score/volume_sol/cvd_sol/lock`
+  ke `watchlist.json` setiap siklus (tanpa GitHub push; workflow commit).
+- `resolve_wyckoff_row` + `meta_details_stale` di `watchlist.py`.
+- UI: snapshot > sinyal; trigger >3 jam → NORMAL; kolom Update `stale`
+  bila >45 menit; Diamond/Real-Dust live-refresh jika meta >12 jam.
+- `signals.load_signals` pakai salinan `main` jika lebih baru.
+
+### Verifikasi
+`python tests/test_watchlist.py` (case 6) + `test_cron_top_holders.py`.
+
+---
+
 ## 2026-08-12 — Alert Telegram: $TICKER + urutan candle 3-baris
 
 ### Masalah
