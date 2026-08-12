@@ -37,5 +37,11 @@
   "wyckoff_lock_pct": 100.0,
   "wyckoff_price_usd": 5.790206343012793e-05,
   "wyckoff_muted": false
+ },
+ "DTiLUGhzmtP3wZC6tXRXtxYPUxztvnQMxAW54ZtKpump": {
+  "symbol": "CALLCAT",
+  "note": "",
+  "added": "2026-08-12",
+  "source": "manual"
  }
 }
