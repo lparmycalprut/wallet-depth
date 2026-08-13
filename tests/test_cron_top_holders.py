@@ -334,11 +334,19 @@ def test_grade_classification():
     c_noise = classify_wyckoff_grade(c1b, c2_wet, c3b, [], 80.0)
     check(c_noise["grade"] == "C", "spring alone is Grade C noise")
     check(c_noise["muted"] is True, "Grade C is muted")
-    check(50.0 <= c_noise["score"] <= 55.0,
-          f"Grade C score 50-55 (got {c_noise['score']})")
+    check(c_noise["score"] == 50.0,
+          f"Grade C score is 50 (lock no longer bumps it, got {c_noise['score']})")
 
     no = classify_wyckoff_grade(c1, c2, _candles(spring=False)[2], smart, 80.0)
     check(no["grade"] is None, "no C3 spring → no grade")
+
+    a0 = classify_wyckoff_grade(c1, c2, c3, smart, holder_lock_pct=0.0)
+    a100 = classify_wyckoff_grade(c1, c2, c3, smart, holder_lock_pct=100.0)
+    check(a0["score"] == a100["score"],
+          "Grade A score ignores tautological holder lock")
+    c0 = classify_wyckoff_grade(c1b, c2_wet, c3b, [], 0.0)
+    check(c0["score"] == c_noise["score"] == 50.0,
+          "Grade C score ignores lock >= 70 bump")
 
 
 # ---------------------------------------------------------------------------
@@ -486,9 +494,11 @@ def test_anti_trap_exit_liquidity():
         "buy_tx_ratio": 0.4,
     }
     check(evaluate_anti_trap(c3, 40.0) is True,
-          " +12% / CVD -2.5 / lock 40% is an exit-liquidity trap")
-    check(evaluate_anti_trap(c3, 70.0) is False,
-          "strong lock is not a trap")
+          " +12% / CVD -2.5 is an exit-liquidity trap")
+    check(evaluate_anti_trap(c3, 70.0) is True,
+          "lock no longer gates the trap (tautological Top-N metric)")
+    check(evaluate_anti_trap(c3) is True,
+          "holder_lock_pct argument is optional")
     weak = dict(c3, cvd_sol=-1.5)
     check(evaluate_anti_trap(weak, 40.0) is False,
           "CVD > -2.0 SOL is not a trap (new threshold)")

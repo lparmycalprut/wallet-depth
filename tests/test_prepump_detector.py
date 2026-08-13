@@ -14,14 +14,16 @@ import cvd_daily as daily
 from cvd_daily import (aggregate_chunks_to_daily, calculate_daily_cvd,
                        chunk_key, save_4h_chunks_from_swaps,
                        swaps_from_4h_chunks, upsert_4h_chunk)
-from prepump_detector import (BUY_TX_MIN_PCT, CVD_ABSORPTION_PCT,
-                              GOLDEN_TOTAL, VERDICT_EMAS, VERDICT_FAIL,
-                              VERDICT_PASS, VERDICT_STEALTH,
-                              _is_absorbed_expansion, _is_ignition_row,
-                              compute_window_metrics, evaluate_golden_checks,
-                              evaluate_pillar1_flow,
+from prepump_detector import (BUY_TX_MIN_PCT, BUY_TX_RED_FLAG_PENALTY,
+                              BUY_TX_RED_FLAG_PCT, BUY_TX_SCORE_FULL_PCT,
+                              CVD_ABSORPTION_PCT, GOLDEN_TOTAL,
+                              GOLDEN_WEIGHTS, STEALTH_BUY_TX_MAX,
+                              VERDICT_EMAS, VERDICT_FAIL, VERDICT_PASS,
+                              VERDICT_STEALTH, _is_absorbed_expansion,
+                              _is_ignition_row, compute_window_metrics,
+                              evaluate_golden_checks, evaluate_pillar1_flow,
                               evaluate_pillar2_participation,
-                              evaluate_prepump, find_ignition,
+                              evaluate_prepump, find_ignition, golden_score,
                               is_setup_emas, is_stealth_dump, metrics_for_day)
 
 failures = []
@@ -160,8 +162,9 @@ def test_stealth_dump_filter():
     ] + [
         ("sell", 0.9, DAY1 + 100 + i, f"s{i}") for i in range(55)
     ])
-    check(trap["buy_tx_pct"] < BUY_TX_MIN_PCT,
-          f"buy TX {trap['buy_tx_pct']:.1f}% < 52")
+    check(trap["buy_tx_pct"] < STEALTH_BUY_TX_MAX,
+          f"buy TX {trap['buy_tx_pct']:.1f}% < stealth gate "
+          f"{STEALTH_BUY_TX_MAX:g}")
     check(trap["avg_buy_sol"] >= trap["avg_sell_sol"],
           "avg buy >= avg sell")
     check(is_stealth_dump(trap) is True, "trap filter fires")
@@ -330,17 +333,24 @@ def test_golden_checks_lps_band_and_score():
     checks = {c["id"]: c for c in ev["checks"]}
     check(len(ev["checks"]) == 7, "exactly 7 golden checks")
     check(all(c["passed"] for c in ev["checks"]), "Ansem 7/7 pass")
-    check(ev["score"] == 100, f"Ansem score 100 (got {ev['score']})")
+    # Perfect tape = sum of positive weights (95), not 100.
+    check(ev["score"] == 95, f"Ansem score 95 (got {ev['score']})")
+    check(GOLDEN_WEIGHTS["p3_lock"] == 0, "p3_lock is display-only")
+    check(GOLDEN_WEIGHTS["p1_absorption"] + GOLDEN_WEIGHTS["p1_cvd_flat"]
+          == 35, "P1 family stays inside the 35-point budget")
     # Extreme dry (−90%) is dead tape, not LPS.
     m = ev["metrics"].copy()
     m["volume_change_pct"] = -90.0
     dry = evaluate_golden_checks(m, ev["usable_rows"], lock)
     lps = next(c for c in dry if c["id"] == "p3_lps")
     check(lps["passed"] is False, "−90% vol is outside LPS band")
-    # Missing lock cannot confirm retention.
+    # Missing lock still fails the display check, but weight 0 so score
+    # is unchanged (tautological Top-N lock is not a scored pillar).
     no_lock = evaluate_golden_checks(ev["metrics"], ev["usable_rows"], None)
     lock_chk = next(c for c in no_lock if c["id"] == "p3_lock")
     check(lock_chk["passed"] is False, "missing lock fails P3 retention")
+    check(golden_score(no_lock) == golden_score(ev["checks"]),
+          "p3_lock does not change the numeric score")
     check(is_setup_emas({"verdict": "WATCH", "passed": 6, "total": 7,
                          "date": "2024-01-02"}) is False,
           "WATCH 6/7 is not Setup Emas")
@@ -386,15 +396,20 @@ def test_absorbed_expansion_and_sisypuss():
          "volume_change_pct": 146.63, "delta_sol": -9.66,
          "volume_sol": 902.77, "cvd_ratio_pct": -1.07},
     ]
-    checks = {c["id"]: c for c in evaluate_golden_checks(m, daily, 100.0)}
+    raw = evaluate_golden_checks(m, daily, 100.0)
+    checks = {c["id"]: c for c in raw}
     check(checks["p2_buy_tx"]["passed"] is True,
           f"49.7% buy TX passes {BUY_TX_MIN_PCT:g}% floor")
+    check(checks["p2_buy_tx"].get("score_override") == 0,
+          "49.7% buy TX is the neutral 48–52 band (score 0)")
     check(checks["p3_lps"]["passed"] is True,
           "P3 passes on absorbed expansion")
     check(checks["p1_cvd_flat"]["passed"] is True,
           "P1 divergence passes when vol up + CVD down")
     check(all(c["passed"] for c in checks.values()),
           "synthetic SISYPUSS 10 Agu is 7/7")
+    check(golden_score(raw) == 80,
+          f"SISYPUSS 49.7% buy TX scores 80 (95-15, got {golden_score(raw)})")
 
     ca = "8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump"
     cvd_path = os.path.join(
@@ -426,6 +441,60 @@ def test_absorbed_expansion_and_sisypuss():
         check(True, "cvd.json missing — skip live replay")
 
 
+def _tape_metrics(buy_pct, **extra):
+    """Near-even absorbed LPS tape with an overrideable buy-TX share."""
+    m = {
+        "buy_tx": 50, "sell_tx": 50, "total_tx": 100,
+        "buy_tx_pct": buy_pct, "sell_tx_pct": 100.0 - buy_pct,
+        "buy_sol": 10.0, "sell_sol": 12.0,
+        "volume_sol": 22.0, "delta_sol": -2.0,
+        "absorption_pct": 1.0,
+        "avg_buy_sol": 0.20, "avg_sell_sol": 0.24,
+        "whale_net_sol": -1.0,
+        "volume_change_pct": -50.0,
+    }
+    m.update(extra)
+    return m
+
+
+def test_asymmetric_buy_tx_scoring():
+    print("\n[12] Asymmetric p2_buy_tx scoring + p3_lock weight 0")
+    daily = [
+        {"date": "2024-01-01", "running_cvd_sol": -2.0,
+         "volume_sol": 40.0, "delta_sol": 0.0},
+        {"date": "2024-01-02", "running_cvd_sol": -1.5,
+         "volume_change_pct": -50.0, "volume_sol": 22.0,
+         "delta_sol": -2.0, "cvd_ratio_pct": -9.0},
+    ]
+    full = evaluate_golden_checks(_tape_metrics(55.0), daily, 80.0)
+    mid = evaluate_golden_checks(_tape_metrics(50.0), daily, 80.0)
+    flag = evaluate_golden_checks(_tape_metrics(45.0), daily, 80.0)
+    by_full = {c["id"]: c for c in full}
+    by_mid = {c["id"]: c for c in mid}
+    by_flag = {c["id"]: c for c in flag}
+    check(by_full["p2_buy_tx"]["passed"] is True
+          and by_full["p2_buy_tx"]["score_override"]
+          == GOLDEN_WEIGHTS["p2_buy_tx"],
+          f">= {BUY_TX_SCORE_FULL_PCT:g}% earns full +15")
+    check(by_mid["p2_buy_tx"]["passed"] is True
+          and by_mid["p2_buy_tx"]["score_override"] == 0,
+          "48–52% buy TX is netral (cek lulus, skor 0)")
+    check(by_flag["p2_buy_tx"]["passed"] is False
+          and by_flag["p2_buy_tx"]["score_override"]
+          == BUY_TX_RED_FLAG_PENALTY,
+          f"< {BUY_TX_RED_FLAG_PCT:g}% is the −20 red flag")
+    check(golden_score(full) == 95, f"full tape scores 95 (got {golden_score(full)})")
+    check(golden_score(mid) == 80, f"neutral buy TX scores 80 (got {golden_score(mid)})")
+    check(golden_score(flag) == 60,
+          f"red-flag buy TX scores 60 (80-20, got {golden_score(flag)})")
+    locked = evaluate_golden_checks(_tape_metrics(55.0), daily, 90.0)
+    unlocked = evaluate_golden_checks(_tape_metrics(55.0), daily, 10.0)
+    check(golden_score(locked) == golden_score(unlocked) == 95,
+          "holder lock cannot move the numeric score")
+    check(STEALTH_BUY_TX_MAX == 52.0,
+          "stealth verdict gate stays at 52% (wider than the 48% red flag)")
+
+
 if __name__ == "__main__":
     test_absorption_formula()
     test_stealth_dump_filter()
@@ -438,6 +507,7 @@ if __name__ == "__main__":
     test_kpi_cards_shape()
     test_golden_checks_lps_band_and_score()
     test_absorbed_expansion_and_sisypuss()
+    test_asymmetric_buy_tx_scoring()
     print(f"\n{'FAILED: ' + str(len(failures)) if failures else 'ALL PASSED'}")
     for item in failures:
         print("  -", item)

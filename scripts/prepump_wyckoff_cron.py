@@ -653,11 +653,18 @@ def find_smart_buyers(c3_trades, holders):
 
 
 def classify_wyckoff_grade(c1, c2, c3, smart_buyers, holder_lock_pct=0.0):
-    """Grade A / B / C from the 3-candle sequence + smart-buyer flag."""
+    """Grade A / B / C from the 3-candle sequence + smart-buyer flag.
+
+    ``holder_lock_pct`` is accepted for call-site / display compatibility
+    but does **not** change the grade or score. Top-N lock is tautological
+    (holders are ranked by current balance, so "pure accumulator" rate
+    is survivorship bias, not a predictive signal).
+    """
     dry, drop_pct = is_c2_volume_dry(c1, c2)
     spring = is_c3_spring_divergence(c3)
     has_smart = bool(smart_buyers)
-    lock = _as_float(holder_lock_pct, 0.0)
+    # holder_lock_pct intentionally unused for scoring (survivorship bias).
+    _ = holder_lock_pct
     base = {
         "c2_dry": dry,
         "c3_spring": spring,
@@ -678,8 +685,6 @@ def classify_wyckoff_grade(c1, c2, c3, smart_buyers, holder_lock_pct=0.0):
             score += 1.0
         if len(smart_buyers) >= 2:
             score += 1.0
-        if lock >= 80.0:
-            score += 1.0
         base.update(
             grade="A",
             score=min(100.0, score),
@@ -689,12 +694,9 @@ def classify_wyckoff_grade(c1, c2, c3, smart_buyers, holder_lock_pct=0.0):
     if dry or has_smart:
         base.update(grade="B", score=80.0, signal_type=SIGNAL_GRADE_B)
         return base
-    score = 50.0
-    if lock >= 70.0:
-        score = 55.0
     base.update(
         grade="C",
-        score=score,
+        score=50.0,
         signal_type=SIGNAL_GRADE_C,
         muted=True,
     )
@@ -715,12 +717,19 @@ def evaluate_sos_ignition(c3, baseline_vol_sol):
     return hit, ratio
 
 
-def evaluate_anti_trap(c3, holder_lock_pct):
+def evaluate_anti_trap(c3, holder_lock_pct=None):
+    """Exit-liquidity trap: green pump printed on deeply negative CVD.
+
+    ``holder_lock_pct`` is accepted for call-site / display compatibility
+    but is no longer a decision gate. Top-N lock is tautological
+    (survivorship bias from ranking holders by current balance) and
+    must not suppress or trigger this warning.
+    """
     c3 = c3 or {}
+    _ = holder_lock_pct
     return (
         _as_float(c3.get("price_change_pct"), 0.0) >= 10.0
         and _as_float(c3.get("cvd_sol"), 0.0) < -2.0
-        and _as_float(holder_lock_pct, 0.0) < 50.0
     )
 
 
@@ -743,9 +752,16 @@ def baseline_avg_volume_sol(bins):
 
 
 # ---------------------------------------------------------------------------
-# Pure-accumulator lock
+# Pure-accumulator lock (display / log only — do not score)
 # ---------------------------------------------------------------------------
 def compute_holder_lock_pct(holders):
+    """% of Top-N holders with sold/bought <= 10% (pure accumulators).
+
+    Kept for display / log only (e.g. ``Top Holders Supply Lock: …``).
+    Do not feed this into ``classify_wyckoff_grade`` scoring or the
+    ``evaluate_anti_trap`` gate — the sample is ranked by current
+    balance, so the metric is survivorship bias.
+    """
     total = len(holders or [])
     if total <= 0:
         return 0.0, 0, 0
@@ -1125,12 +1141,11 @@ def run_pipeline_for_ca(ca, symbol, now_ts, mock_mode=False):
         signal_type = SIGNAL_TRAP
         grade = None
         reasons.append(
-            f"Bull Trap: Harga {change_pct:+.1f}% tp CVD {cvd_sol:+.2f} SOL "
-            f"dan lock {lock_pct:.1f}% < 50%"
+            f"Bull Trap: Harga {change_pct:+.1f}% tp CVD {cvd_sol:+.2f} SOL"
         )
         extra_lines.append(
             f"📝 Indikator : Exit Liquidity — jangan beli "
-            f"(CVD {cvd_sol:+.2f} SOL, lock {lock_pct:.1f}%)"
+            f"(CVD {cvd_sol:+.2f} SOL)"
         )
         warn_line = (
             "⚠️ HATI-HATI: kenaikan tanpa demand on-chain — "

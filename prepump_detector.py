@@ -1,20 +1,41 @@
 # -*- coding: utf-8 -*-
 """Setup Emas detector — 7 daily-transaction checks across 3 pillars.
 
-Calibrated 2026-08-12 against Ansem / Punch / Assface (pass) and
-Callcat / Froge (stealth dump). Score points only at the golden
-accumulation setup; ignition (P4) is informational, not required.
+Recalibrated 2026-08-13 after a 10-token historical audit (8 confirmed
+high-score vs 2 weak). Score points only at the golden accumulation
+setup; ignition (P4) is informational, not required. Weights are
+intentionally capped at ~95 — no remaining signal is "always true".
 
-  P1  CVD Absorption          |CVD/Vol| < 3.0%
+  P1  CVD Absorption          |CVD/Vol| < 3.0%          weight 22
+      (strongest discriminator in the audit)
   P1  Bullish Divergence      CVD flat/up, or vol-up + CVD-down absorption
-  P2  Buy TX Dominance        Buy TX >= 49% (near-even tape is OK)
-  P2  Order Size Discrepancy  Avg SELL > Avg BUY
-  P2  Whale Pressure Absorbed whale net < 0
+                              weight 13 (kept separate: named fixtures
+                              match p1_absorption on 5/6 ≈ 83% and live
+                              cvd.json on ~69%, below the 85% redundancy
+                              cutoff, because _cvd_is_flat uses day-over-
+                              day running CVD, not window-level |CVD/Vol|)
+  P2  Buy TX Dominance        check pass >= 49%; scored asymmetrically
+                              >=52 → +15, 48–52 → 0, <48 → −20 red flag
+  P2  Order Size Discrepancy  Avg SELL > Avg BUY        weight 25
+  P2  Whale Pressure Absorbed whale net < 0             weight 10
   P3  Volume                  LPS −40%…−75% OR absorbed expansion
                               (vol ≥ +40% and CVD down and |CVD/Vol| < 3%)
-  P3  Retensi Akumulator      Top-100 lock >= 40%
+                              weight 10 (thin bonus — not discriminative)
+  P3  Retensi Akumulator      Top-100 lock >= 40%       weight 0
+      Display / checklist only. Removed from the score: the holder list
+      is Top-N ranked by *current* balance, so "sold/bought <= 10%"
+      (pure accumulator) is survivorship bias, not a predictive signal.
+      Audit: 100% Pure Accumulators on all 10 tokens including the
+      weakest, and lock >= 40% actually passed *more* often on weak
+      tokens than on confirmed ones.
 
 Verdict: STEALTH DUMP / SETUP EMAS (7/7) / WATCH (>=5/7) / FAIL.
+
+``is_stealth_dump`` (verdict STEALTH DUMP) still uses STEALTH_BUY_TX_MAX
+(52%) + avg buy >= avg sell. That gate is allowed to differ from the
+numeric <48% red-flag in ``golden_score``: a confirmed setup can sit in
+the 48–52% band and score 0 on p2_buy_tx without flipping the stealth
+verdict unless average buy size also dominates.
 """
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -25,10 +46,15 @@ from cvd_daily import calculate_daily_cvd, complete_daily_rows
 # Calibrated thresholds (do not loosen without a new fixture suite)
 # ---------------------------------------------------------------------------
 CVD_ABSORPTION_PCT = 3.0
-# 49% = tape hampir seimbang (541/547 SISYPUSS). Stealth dump tetap
-# memakai 52% + avg buy ≥ avg sell (Callcat/Froge).
+# 49% = tape hampir seimbang (541/547 SISYPUSS) — checklist pass/fail.
+# Stealth-dump VERDICT tetap memakai 52% + avg buy ≥ avg sell
+# (Callcat/Froge). Skor numerik p2_buy_tx memakai pita 48/52 yang
+# boleh berbeda dari gerbang verdict: >=52 → +15, 48–52 → 0, <48 → −20.
 BUY_TX_MIN_PCT = 49.0
 STEALTH_BUY_TX_MAX = 52.0
+BUY_TX_SCORE_FULL_PCT = 52.0
+BUY_TX_RED_FLAG_PCT = 48.0
+BUY_TX_RED_FLAG_PENALTY = -20
 WHALE_SOL = 1.0
 LPS_DROP_MIN_PCT = -40.0
 # Upper dry bound: user asked −40…−70; −75 keeps LUNA (−73) / Punch (−72).
@@ -58,14 +84,16 @@ PHASE_DUMP = "DISTRIBUSI / DUMP"
 PHASE_NORMAL = "NORMAL"
 
 GOLDEN_TOTAL = 7
+# Do not auto-rescale to 100. Max of the positive weights is 95 so a
+# perfect tape still leaves room — no remaining signal is guaranteed.
 GOLDEN_WEIGHTS = {
-    "p1_absorption": 18,
-    "p1_cvd_flat": 12,
-    "p2_buy_tx": 18,
-    "p2_order_size": 16,
-    "p2_whale": 10,
-    "p3_lps": 16,
-    "p3_lock": 10,
+    "p1_absorption": 22,  # + p1_cvd_flat = 35 (audit: strongest family)
+    "p1_cvd_flat": 13,    # independent of window |CVD/Vol| (match < 85%)
+    "p2_buy_tx": 15,      # asymmetric; see golden_score / score_override
+    "p2_order_size": 25,  # second-strongest discriminator in the audit
+    "p2_whale": 10,       # constant on the 10-token sample; small weight
+    "p3_lps": 10,         # not discriminative; thin bonus only
+    "p3_lock": 0,         # tautological Top-N lock — display only
 }
 
 
@@ -158,7 +186,15 @@ def metrics_for_day(swaps, date_iso, *, whale_sol=WHALE_SOL):
 
 
 def is_stealth_dump(metrics):
-    """Retail FOMO buying big while insiders dribble-sell (Callcat/Froge)."""
+    """Retail FOMO buying big while insiders dribble-sell (Callcat/Froge).
+
+    Verdict gate (STEALTH DUMP) uses ``STEALTH_BUY_TX_MAX`` (52%) plus
+    avg BUY >= avg SELL. That is intentionally wider than the numeric
+    red-flag in ``golden_score`` (Buy TX < ``BUY_TX_RED_FLAG_PCT`` 48%
+    → −20). A confirmed setup can sit in the 48–52% band and score 0
+    on p2_buy_tx without this function firing, unless buy size also
+    dominates the tape.
+    """
     m = metrics or {}
     avg_buy = _as_float(m.get("avg_buy_sol"), 0.0)
     avg_sell = _as_float(m.get("avg_sell_sol"), 0.0)
@@ -296,7 +332,7 @@ def evaluate_pillar2_participation(metrics):
     ]
     if stealth:
         bits.append(
-            f"TRAP: avg BUY ≥ avg SELL + buy TX < {thr}%")
+            f"TRAP: avg BUY ≥ avg SELL + buy TX < {STEALTH_BUY_TX_MAX:g}%")
     return _pillar(
         "p2_participation",
         passed,
@@ -512,6 +548,15 @@ def evaluate_golden_checks(metrics, daily_rows=None, holder_lock_pct=None):
     cvd_ok = _p1_divergence_ok(daily_rows, m)
     absorbed = _is_absorbed_expansion(change, metrics=m)
     vol_ok = _p3_volume_ok(change, metrics=m)
+    if buy_pct >= BUY_TX_SCORE_FULL_PCT:
+        buy_override = int(GOLDEN_WEIGHTS["p2_buy_tx"])
+        buy_band = f">= {BUY_TX_SCORE_FULL_PCT:g}% skor penuh"
+    elif buy_pct < BUY_TX_RED_FLAG_PCT:
+        buy_override = int(BUY_TX_RED_FLAG_PENALTY)
+        buy_band = f"RED FLAG < {BUY_TX_RED_FLAG_PCT:g}%"
+    else:
+        buy_override = 0
+        buy_band = "netral 48–52%"
     if absorbed:
         cvd_detail = "vol naik + CVD turun (penyerapan besar)"
         vol_detail = (
@@ -549,9 +594,10 @@ def evaluate_golden_checks(metrics, daily_rows=None, holder_lock_pct=None):
             "pillar": "p2",
             "title": "Buy TX Dominance",
             "passed": buy_pct >= BUY_TX_MIN_PCT,
+            "score_override": buy_override,
             "detail": (
                 f"Buy TX {buy_pct:.1f}% "
-                f"(ambang >= {BUY_TX_MIN_PCT:g}%)"
+                f"(cek >= {BUY_TX_MIN_PCT:g}%; {buy_band})"
             ),
         },
         {
@@ -583,17 +629,30 @@ def evaluate_golden_checks(metrics, daily_rows=None, holder_lock_pct=None):
             "title": "Retensi Akumulator Bottom",
             "passed": lock is not None and lock >= SUPPLY_LOCK_MIN_PCT,
             "detail": (
-                "lock n/a" if lock is None
-                else f"Top-100 lock {lock:.1f}% (ambang >= 40%)"
+                "lock n/a (display only; tautological Top-N lock)"
+                if lock is None
+                else (
+                    f"Top-100 lock {lock:.1f}% "
+                    f"(display only; tautological Top-N lock)"
+                )
             ),
         },
     ]
 
 
 def golden_score(checks):
-    """0-100: full weight if the check passed, else 0."""
+    """Weighted Setup Emas score. Positive weights sum to 95, not 100.
+
+    Most checks add ``GOLDEN_WEIGHTS[id]`` when passed (else 0).
+    ``p2_buy_tx`` is scored asymmetrically via ``score_override``:
+    >=52% → +15, 48–52% → 0, <48% → −20 (failed-token red flag).
+    ``p3_lock`` is display-only (weight 0; tautological Top-N lock).
+    """
     total = 0
     for item in checks or []:
+        if item.get("score_override") is not None:
+            total += int(item["score_override"])
+            continue
         if item.get("passed"):
             total += int(GOLDEN_WEIGHTS.get(item.get("id"), 0))
     return int(total)
