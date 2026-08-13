@@ -10,7 +10,7 @@ File ini adalah **memori antar-sesi**. Agen AI membaca `AGENTS.md` otomatis saat
 
 Dashboard Streamlit + cron untuk deteksi **pre-pump** Solana. Bahasa pengguna: **Indonesia**. Komentar & docstring: **Inggris**.
 
-Fokus sempit per 2026-08-12: **watchlist → scan trending/degen → CVD 4 Pilar Pre-Pump**. Verdict **PASS / WATCH / FAIL / STEALTH DUMP** — **bukan** skor 0–100. Empat pilar terkalibrasi: (1) `|CVD/Vol| < 3.0%`, (2) Buy TX ≥ 49% (tape hampir seimbang OK) + Avg Sell > Avg Buy (trap Callcat/Froge jika kebalikan), (3) LPS volume drop −40%…−75% **atau** ekspansi terserap (vol ≥ +40% + CVD turun + |CVD/Vol| < 3%) + Top-100 lock ≥ 40%, (4) ignition 15m/1h buy ≥ 55% + volume +100%…+14000% **hanya jika Δ > 0** (vol naik + CVD turun = setup, bukan ignition). Cron **4 jam** (`0 */4 * * *` UTC = 03/07/11/15/19/23 WIB) menulis chunk ke `data/cvd_4h_chunks/<mint>.json`; agregasi harian 00:00 UTC / 07:00 WIB **tidak** full-fetch 24 jam. Fetch manual 1–7 hari di halaman CVD. Detektor 15m Grade A/B/C tetap di repo sebagai ignition helper, tetapi watchlist tidak lagi memakai skor 60/100.
+Fokus sempit per 2026-08-13: **watchlist → scan trending/degen → CVD Setup Emas harian**. Verdict **SETUP EMAS / WATCH / FAIL / STEALTH DUMP**. Tujuh cek harian: |CVD/Vol| < 3.0%, CVD datar/naik, Buy TX (cek ≥49%, skor asimetrik 48/52), Avg Sell > Buy, whale net < 0, LPS −40%…−75% atau ekspansi terserap, lock display-only. Cron **4 jam** (`0 */4 * * *` UTC) menulis chunk; evaluasi **harian** 00:00 UTC / 07:00 WIB. Cron Wyckoff 15m (Grade A/B/C) **sudah dihapus**.
 
 Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Perubahan scoring harus dibuktikan kalibrasi tidak bergeser.
 
@@ -33,7 +33,7 @@ Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Per
 | `signals.py` | **Minimalist** — hanya prepump_baru_muncul (baru) + legacy imminent/forming (compat). Telegram via `requests` langsung (tanpa breakout_guard). Digest harian. |
 | `trending_ui.py` | Renderer trending — dipakai app.py, tapi app sekarang render minimal (hanya Watchlist button). Enrich holder split tetap Helius-only. |
 | `watchlist.py` | Watchlist helpers (load/save/add/remove + GitHub push + pending journal + cache 15s). |
-| `scripts/update_cvd.py` | **Cron 4 jam + harian** — `4h` menulis chunk 4 jam; `daily` (00:00 UTC) mengagregasi 6 chunk, evaluasi 4 pilar, Telegram digest. |
+| `scripts/update_cvd.py` | **Cron 4 jam + harian** — `4h` menulis chunk 4 jam; `daily` (00:00 UTC) mengagregasi 6 chunk, evaluasi Setup Emas, Telegram digest. Cron 15m Wyckoff sudah dihapus. |
 | `scripts/daily_snapshot.py` | Helper snapshot harian DexScreener+GMGN (dipakai update_cvd sebagai fallback). |
 | `scripts/backtest_prepump.py` | Backtest prepump via CSV GMGN (offline). |
 | `.github/workflows/daily-prepump.yml` | **Cron Harian** — `0 0 * * *` 07:00 WIB (GMGN candle flip). |
@@ -267,6 +267,19 @@ deteksi pre-pump multi-hari dengan **4 pilar terkalibrasi** dan
    (bukan skor /100).
 
 Verifikasi: `python tests/test_prepump_detector.py` + suite lama.
+
+## 17. Status 2026-08-13 — Cron Wyckoff 15m dihapus (daily only)
+
+Owner: fokus hanya filter harian. Dihapus total:
+
+- `scripts/prepump_wyckoff_cron.py` (Grade A/B/C, SOS, anti-trap, 3-candle)
+- `tests/test_cron_top_holders.py`
+- `watchlist.resolve_wyckoff_row` + snapshot `wyckoff_*` sebagai sumber UI
+- fallback sinyal 15m di `app.get_signal_for_ca`
+
+Yang tersisa: `scripts/update_cvd.py` (4h chunk + daily Setup Emas) +
+`prepump_detector.py`. Field `wyckoff_*` lama di `watchlist.json` /
+`signals.json` diabaikan, tidak dihapus massal.
 
 ## 16. Status 2026-08-12 — Setup Emas 7 cek + Telegram pagi
 

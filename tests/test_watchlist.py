@@ -292,7 +292,7 @@ def test_cache_ttl():
 
 
 def test_update_local_meta_and_resolve_row():
-    print("\n[6] 15m snapshot + stale/expired signal resolution")
+    print("\n[6] daily snapshot + 4-pilar resolution")
     state, restore = make_harness()
     try:
         ca = "CA_SNAP"
@@ -302,48 +302,22 @@ def test_update_local_meta_and_resolve_row():
         }, indent=1)
         now = 1_700_000_000
         saved = wlmod.update_local_meta(ca, {
-            "wyckoff_ts": now,
-            "wyckoff_type": "🚀 SOS IGNITION BREAKOUT",
-            "wyckoff_score": 93.0,
-            "wyckoff_volume_sol": 8.62,
-            "wyckoff_cvd_sol": 8.08,
-            "wyckoff_lock_pct": 100.0,
-            "holder_lock_pct": 100.0,
+            "prepump_ts": now,
+            "prepump_verdict": "SETUP EMAS",
+            "prepump_passed": 7,
+            "prepump_score": 95,
+            "prepump_absorption_pct": 0.82,
+            "prepump_buy_tx_pct": 58.0,
+            "prepump_stealth_dump": False,
         })
         check(saved is not None and saved["symbol"] == "hwg",
               "snapshot keeps existing symbol")
-        check(saved["wyckoff_score"] == 93.0, "snapshot stores score")
+        check(saved["prepump_score"] == 95, "snapshot stores daily score")
         on_disk = json.load(open(wlmod.WATCHLIST_PATH, encoding="utf-8"))
-        check(on_disk[ca]["wyckoff_type"].startswith("🚀"),
-              "local watchlist.json received the snapshot")
+        check(on_disk[ca]["prepump_verdict"] == "SETUP EMAS",
+              "local watchlist.json received the daily snapshot")
         check(state["put_calls"] == 0,
               "update_local_meta does not GitHub-push")
-
-        row = wlmod.resolve_wyckoff_row(on_disk[ca], None, now_ts=now)
-        check(row["source"] == "snapshot", "fresh snapshot is preferred")
-        check(row["raw_type"].startswith("🚀"), "SOS badge stays while fresh")
-        check(row["stale"] is False, "snapshot age 0 is not stale")
-
-        old_sig = {
-            "ts": now - 4 * 3600,
-            "type": "🟢 ABSORPTION DIVERGENCE (WYCKOFF SPRING)",
-            "score": 95.0,
-            "volume_sol": 12.3,
-            "cvd_sol": -1.96,
-            "holder_lock_pct": 100.0,
-        }
-        expired = wlmod.resolve_wyckoff_row({}, old_sig, now_ts=now)
-        check(expired["source"] == "signal", "falls back to signals.json")
-        check(expired["raw_type"] == "",
-              "trigger older than 3h expires to NORMAL")
-        check(expired["stale"] is True, "4h-old signal is marked stale")
-        check(expired["vol_sol"] == 12.3, "last vol is still shown")
-
-        grade_c = dict(on_disk[ca])
-        grade_c["wyckoff_type"] = "⚪ GRADE C: ROUTINE NOISE"
-        quiet = wlmod.resolve_wyckoff_row(grade_c, None, now_ts=now)
-        check(quiet["raw_type"] == "", "Grade C is shown as NORMAL")
-        check(quiet["score"] == 93.0, "Grade C still exposes the score")
 
         check(wlmod.meta_details_stale({"diamond_pct": 87}, now_ts=now) is True,
               "missing details_ts is stale")
@@ -353,17 +327,9 @@ def test_update_local_meta_and_resolve_row():
             {"details_ts": now - 13 * 3600}, now_ts=now) is True,
               "details older than 12h are stale")
 
-        four = wlmod.resolve_prepump_row({
-            "prepump_ts": now,
-            "prepump_verdict": "PASS",
-            "prepump_phase": "IGNITION",
-            "prepump_passed": 4,
-            "prepump_absorption_pct": 0.82,
-            "prepump_buy_tx_pct": 58.0,
-            "prepump_stealth_dump": False,
-        }, None, now_ts=now)
+        four = wlmod.resolve_prepump_row(on_disk[ca], None, now_ts=now)
         check(four["source"] == "snapshot", "4-pilar snapshot preferred")
-        check(four["verdict"] == "PASS", "4-pilar verdict PASS")
+        check(four["verdict"] == "SETUP EMAS", "4-pilar verdict SETUP EMAS")
         check(four["absorption_pct"] == 0.82, "absorption pct stored")
         check(four["stale"] is False, "fresh 4-pilar snapshot is not stale")
         old_four = wlmod.resolve_prepump_row({}, {

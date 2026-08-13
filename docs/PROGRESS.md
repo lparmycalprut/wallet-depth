@@ -7,6 +7,26 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-13 — Hapus total cron Wyckoff 15m
+
+### Masalah
+Owner minta fokus **daily Setup Emas** saja. Filter 15m (Grade A/B/C,
+SOS, trap, 3-candle) menambah noise dan lock tautologis.
+
+### Yang berubah
+- Hapus `scripts/prepump_wyckoff_cron.py` + `tests/test_cron_top_holders.py`
+- `watchlist.resolve_wyckoff_row` dihapus; `update_local_meta` tetap
+  untuk snapshot `prepump_*` harian
+- `app.py` hanya baca sinyal `prepump_4pilar`
+- `scripts/update_cvd.py` tidak lagi fallback `wyckoff_lock_pct`
+- `scripts/priority_scan.py` menunjuk ke daily updater
+
+### Verifikasi
+`python tests/test_prepump_detector.py`, `python tests/test_watchlist.py`,
+`python -m py_compile app.py watchlist.py scripts/update_cvd.py`.
+
+---
+
 ## 2026-08-12 — Setup Emas: tape seimbang + ekspansi terserap (SISYPUSS)
 
 ### Masalah

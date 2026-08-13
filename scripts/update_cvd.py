@@ -147,8 +147,6 @@ def run_daily(watchlist, *, now=None, api_key=""):
         symbol = _symbol(ca, meta)
         pool = _pool_for(ca, meta)
         lock = meta.get("holder_lock_pct")
-        if lock is None:
-            lock = meta.get("wyckoff_lock_pct")
         day_swaps, src = _ensure_day_swaps(
             ca, symbol, pool, api_key, yesterday, now_ts=now_ts)
         history = swaps_from_4h_chunks(ca, days=7, now_ts=now_ts)

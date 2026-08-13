@@ -8,8 +8,8 @@ Kept functions only:
   - CVD deep analysis (pages/4_📊_CVD.py) with 1–7 day fetch
   - signals.json + cvd_daily.json written by the 4h/daily cron
 
-Scoring 0–100 / Grade A-B-C is no longer the watchlist verdict.
-Each token is SETUP EMAS / WATCH / FAIL / STEALTH DUMP from 7 daily checks.
+Watchlist verdict comes only from the daily 7-check Setup Emas filter.
+Each token is SETUP EMAS / WATCH / FAIL / STEALTH DUMP.
 """
 import html
 import time
@@ -20,7 +20,7 @@ import streamlit as st
 from core import load_config, get_helius_keys
 from watchlist import (
     load_watchlist, add_to_watchlist, remove_from_watchlist,
-    get_last_push_error, resolve_wyckoff_row, resolve_prepump_row,
+    get_last_push_error, resolve_prepump_row,
     meta_details_stale,
 )
 from prepump_detector import BUY_TX_MIN_PCT
@@ -126,21 +126,11 @@ def _fmt_ts(ts):
         return "—"
 
 def get_signal_for_ca(ca: str, sigs: list):
-    """Return the latest 4-pillar (preferred) or Wyckoff 15M signal."""
-    four = None
-    wyck = None
+    """Return the latest daily 4-pillar signal for ``ca``, or None."""
     for item in reversed(sigs or []):
-        if item.get("ca") != ca:
-            continue
-        if four is None and item.get("type") == "prepump_4pilar":
-            four = item
-        if (wyck is None and "score" in item
-                and "holder_lock_pct" in item
-                and item.get("type") != "prepump_4pilar"):
-            wyck = item
-        if four and wyck:
-            break
-    return {"four": four, "wyckoff": wyck}
+        if item.get("ca") == ca and item.get("type") == "prepump_4pilar":
+            return item
+    return None
 
 @st.cache_data(ttl=600, show_spinner=False)
 def fetch_gmgn_top_holder_summary(ca: str) -> dict:
@@ -328,19 +318,12 @@ def get_watchlist_details(ca: str, meta: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Wyckoff 15M signal rendering helpers
+# Daily 4-pillar badge helpers
 # ---------------------------------------------------------------------------
-# Short UI label per raw signal type written by scripts/prepump_wyckoff_cron.py
 SIGNAL_LABELS = {
-    "⭐ GRADE A: GOLDEN SPRING (3-Candle + Smart Buyer)": "⭐ GRADE A GOLDEN SPRING",
-    "🟢 GRADE B: HIGH QUALITY ABSORPTION": "🟢 GRADE B ABSORPTION",
-    "⚪ GRADE C: ROUTINE NOISE": "⚪ GRADE C NOISE",
     "🟢 ABSORPTION DIVERGENCE (WYCKOFF SPRING)": "🟢 ABSORPTION DIVERGENCE",
     "🟡 TEST SUPLAI (VOLUME KERING / LPS)": "🟡 TEST SUPLAI",
-    "🚀 SOS IGNITION BREAKOUT": "🚀 SOS IGNITION",
-    "🔴 EXIT LIQUIDITY TRAP (BULL TRAP)": "🔴 BULL TRAP",
     "🔴 BEARISH DIVERGENCE (HARGA TURUN / DISTRIBUSI)": "🔴 BEARISH DIVERGENCE",
-    "PRE_PUMP_DETECTION": "👀 PRE-PUMP POTENTIAL",
 }
 
 # emoji -> (badge bg, badge fg, badge border)
@@ -471,10 +454,8 @@ else:
         sym = meta.get("symbol", "?") or "?"
         src = meta.get("source", "manual")
 
-        packed = get_signal_for_ca(ca, all_sigs)
-        four = resolve_prepump_row(meta, packed.get("four"))
-        wyck = resolve_wyckoff_row(meta, packed.get("wyckoff"))
-        ts = four.get("ts") or wyck.get("ts")
+        four = resolve_prepump_row(meta, get_signal_for_ca(ca, all_sigs))
+        ts = four.get("ts")
         row_stale = bool(four.get("stale"))
         verdict = four.get("verdict") or ""
         phase = four.get("phase") or ""
@@ -490,7 +471,7 @@ else:
         elif verdict == "WATCH":
             raw_type = "🟡 TEST SUPLAI (VOLUME KERING / LPS)"
         else:
-            raw_type = wyck.get("raw_type") or ""
+            raw_type = ""
         badge, row_bg = signal_badge(raw_type)
 
         # Fetch detail tambahan (diamond; real/dust kept off-display)
@@ -605,7 +586,7 @@ else:
             unsafe_allow_html=True
         )
 
-        # Update — flag rows whose last 15m eval is older than 45 minutes
+        # Update — flag rows whose last daily eval is older than 36h
         stale_html = ""
         if row_stale and ts:
             stale_html = ("<br><span style='font-size:0.60rem;color:#b45309;"
