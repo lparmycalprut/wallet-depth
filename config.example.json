@@ -23,5 +23,11 @@
     "big_buy_sol": 1.0,
     "min_big_buys": 3,
     "max_big_sells": 0
+  },
+  "tag_points": {
+    "smart_money": {"accum": 30, "dist": 15},
+    "top_holder":  {"accum": 25, "dist": 25},
+    "fresh_wallet": {"accum": 20, "dist": 5},
+    "bundler":     {"accum": -25, "dist": 35}
   }
 }

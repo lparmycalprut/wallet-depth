@@ -1027,6 +1027,269 @@ def wallet_profiles(swaps, *, pure_tol=0.05, light_tol=0.10, trader_tol=0.50):
     return w
 
 
+# ---------------------------------------------------------------------------
+# Tag-aware flow weighting — smart money / bundler / top holder / fresh wallet
+#
+# GMGN attaches per-wallet labels to every trade (``maker_tags``), collected
+# during a trades fetch into :func:`get_gmgn_wallet_metadata`. Combined with
+# the on-chain top-holder rank (holder snapshot) and an optional wallet-age
+# map, these tags let the CVD page separate *trusted* accumulation (smart
+# money, top holders, fresh retail) from *suspicious* accumulation (bundlers
+# wash-trading), and give the prepump filter a separate "tag point" count per
+# accumulator/distributor.
+#
+# Battle-tested idea behind this: a pure accumulator that is ALSO labelled
+# smart money / top holder / fresh is a stronger accumulation signal than the
+# same SOL volume from an anonymous wallet, while a bundler "accumulating" is
+# often wash-trading (so its buy volume is discounted) and a bundler dumping
+# is a strong distribution / rug signal (so its sell volume is boosted).
+# ---------------------------------------------------------------------------
+#: ``maker_tags`` fragments that map a wallet to each tag name.
+SMART_TAGS = ("smart", "killer", "insider", "top trader", "kol", "vip",
+              "whale", "diamond")
+BUNDLER_TAGS = ("bundler", "bundle", "bot", "sniper", "script", "dev")
+FRESH_TAGS = ("fresh", "new")
+
+#: Extra per-tag buy/sell volume multiplier used to compute effective flow.
+#: ``accum`` applies to a pure accumulator's buy, ``dist`` to a pure
+#: distributor's sell. A bundler accumulating is discounted (wash) while a
+#: bundler distributing is boosted (risk).
+TAG_FLOW_WEIGHTS = {
+    "smart_money": {"accum": 0.6, "dist": 0.3},
+    "top_holder": {"accum": 0.4, "dist": 0.4},
+    "fresh_wallet": {"accum": 0.3, "dist": 0.2},
+    "bundler": {"accum": -0.6, "dist": 0.7},
+}
+
+#: Per-tag point table driving the 0–100 ``tag_score``. Positive = the
+#: accumulator/distributor's side is more meaningful; negative = suspect.
+DEFAULT_TAG_POINTS = {
+    "smart_money": {"accum": 30, "dist": 15},
+    "top_holder": {"accum": 25, "dist": 25},
+    "fresh_wallet": {"accum": 20, "dist": 5},
+    "bundler": {"accum": -25, "dist": 35},
+}
+
+#: Floor of the effective multiplier (never let a tag zero a wallet's flow).
+TAG_FLOW_FLOOR = 0.3
+#: Upper bound of a single wallet's tag points per side, so a wallet with
+#: many tags cannot dominate the aggregate.
+TAG_POINTS_PER_WALLET_CAP = 60
+
+
+def load_tag_points(config=None) -> dict:
+    """Return the per-tag ``accum``/``dist`` point table, from ``config``'s
+    ``tag_points`` block or the built-in defaults. Tolerant of a missing or
+    malformed config — the built-in table is always a valid fallback."""
+    base = {tag: dict(v) for tag, v in DEFAULT_TAG_POINTS.items()}
+    try:
+        cfg = config if config is not None else load_config()
+        overrides = (cfg or {}).get("tag_points") or {}
+        for tag, side_map in overrides.items():
+            if tag not in base:
+                continue
+            for side, value in (side_map or {}).items():
+                if side in base[tag]:
+                    base[tag][side] = float(value)
+    except Exception:  # noqa: BLE001 — config is optional
+        pass
+    return base
+
+
+def tag_wallet_meta_tags(meta: dict | None) -> list[str]:
+    """Normalize one wallet's GMGN ``maker_tags`` into our tag names."""
+    out = []
+    raw = (meta or {}).get("maker_tags") or []
+    lowered = {str(t).strip().lower() for t in raw if str(t).strip()}
+    if any(any(k in t for k in SMART_TAGS) for t in lowered):
+        out.append("smart_money")
+    if any(any(k in t for k in BUNDLER_TAGS) for t in lowered):
+        out.append("bundler")
+    if any(any(k in t for k in FRESH_TAGS) for t in lowered):
+        out.append("fresh_wallet")
+    return out
+
+
+def tag_wallets(profiles, *, wallet_meta=None, top_holder_ranks=None,
+                wallet_ages=None, fresh_days=7.0) -> dict:
+    """Classify every profiled wallet into tags.
+
+    ``profiles`` is the :func:`wallet_profiles` output. ``wallet_meta`` is
+    the GMGN per-wallet metadata (``maker_tags``). ``top_holder_ranks`` maps
+    wallet -> 1-based rank in the top-holder list. ``wallet_ages`` maps
+    wallet -> first-ever tx timestamp (or ``[funder, first_ts]``); a wallet
+    younger than ``fresh_days`` is tagged ``fresh_wallet``.
+
+    Returns ``{wallet: {"tags": [...], "top_rank": int|None,
+    "age_days": float|None}}`` with tags in a deterministic order.
+    """
+    wallet_meta = wallet_meta or {}
+    ranks = top_holder_ranks or {}
+    out = {}
+    for wallet in (profiles or {}):
+        tags = tag_wallet_meta_tags(wallet_meta.get(wallet))
+        rank = ranks.get(wallet)
+        if rank:
+            tags.append("top_holder")
+        age = (wallet_ages or {}).get(wallet)
+        age_days = None
+        if isinstance(age, (list, tuple)) and age:
+            age = age[1] if len(age) > 1 else age[0]
+        if age:
+            try:
+                age_days = max(0.0, (time.time() - float(age)) / 86400.0)
+                if age_days <= float(fresh_days or 7.0):
+                    tags.append("fresh_wallet")
+            except (TypeError, ValueError):
+                age_days = None
+        out[wallet] = {"tags": sorted(set(tags)), "top_rank": rank,
+                       "age_days": age_days}
+    return out
+
+
+def wallet_tag_points(tags, *, side, tag_points=None) -> float:
+    """Sum per-tag points for one wallet on one side (``accum``/``dist``),
+    capped at ``TAG_POINTS_PER_WALLET_CAP``."""
+    points = tag_points if tag_points is not None else load_tag_points()
+    total = sum(float(points.get(tag, {}).get(side, 0.0)) for tag in tags)
+    return max(-TAG_POINTS_PER_WALLET_CAP,
+               min(TAG_POINTS_PER_WALLET_CAP, total))
+
+
+def _tag_eff_multiplier(tags, *, side, weights=None) -> float:
+    """Effective multiplier for one wallet's side volume given its tags."""
+    table = weights or TAG_FLOW_WEIGHTS
+    extra = sum(float(table.get(tag, {}).get(side, 0.0)) for tag in tags)
+    return max(TAG_FLOW_FLOOR, 1.0 + extra)
+
+
+def tagged_flow_report(swaps, *, profiles=None, wallet_meta=None,
+                       top_holder_ranks=None, wallet_ages=None,
+                       fresh_days=7.0, min_buy_sol=0.1, sell_tol=0.10,
+                       min_sell_sol=0.1, buy_tol=0.10,
+                       tag_points=None, tag_weights=None) -> dict:
+    """Split the window's pure accumulators and pure distributors by tag.
+
+    A pure accumulator is a wallet that bought >= ``min_buy_sol`` and sold
+    no more than ``sell_tol`` of its buy (default 10% — the "beli tanpa jual
+    >10%" rule). A pure distributor mirrors it on the sell side.
+
+    Every qualifying wallet gets:
+      - ``tags``            matched tag names
+      - ``tag_points``      per-tag point sum for that side
+      - ``eff_buy/eff_sell`` side volume x :func:`_tag_eff_multiplier`
+
+    Aggregates (the "poin" for the prepump filter):
+      - ``tagged_accum_points`` / ``tagged_dist_points`` point totals
+      - ``tagged_net_points``   accum - dist (positive = trusted accumulation)
+      - ``smart_accum_buy_sol`` trusted (smart/top/fresh) effective buy
+      - ``bundler_accum_buy_sol`` discounted bundler buy (wash)
+      - ``smart_dist_sell_sol`` trusted effective sell
+      - ``bundler_dist_sell_sol`` boosted bundler sell (distribution risk)
+      - ``trusted_accum_share`` smart_accum_buy / total pure-accum buy
+      - ``tag_score`` 0–100 = ``50 + tagged_net_points`` clamped — a
+        standalone "trusted accumulation" score the filter can add as an
+        extra point source.
+
+    Pure & network-free — deterministic given its inputs.
+    """
+    empty = {
+        "ok": False, "accum_rows": [], "dist_rows": [], "n_accum": 0,
+        "n_dist": 0, "total_accum_buy": 0.0, "total_dist_sell": 0.0,
+        "tagged_accum_points": 0.0, "tagged_dist_points": 0.0,
+        "tagged_net_points": 0.0, "smart_accum_buy_sol": 0.0,
+        "bundler_accum_buy_sol": 0.0, "smart_dist_sell_sol": 0.0,
+        "bundler_dist_sell_sol": 0.0, "trusted_accum_share": 0.0,
+        "trusted_accum_wallets": 0, "suspicious_accum_wallets": 0,
+        "tag_score": 50.0,
+    }
+    swaps = list(swaps or [])
+    if not swaps:
+        return empty
+    profiles = profiles if profiles is not None else wallet_profiles(swaps)
+    tag_points = (tag_points if tag_points is not None
+                  else load_tag_points())
+    tag_weights = tag_weights or TAG_FLOW_WEIGHTS
+    tags_map = tag_wallets(profiles, wallet_meta=wallet_meta,
+                           top_holder_ranks=top_holder_ranks,
+                           wallet_ages=wallet_ages, fresh_days=fresh_days)
+
+    accum_rows, dist_rows = [], []
+    total_accum_buy = total_dist_sell = 0.0
+    tagged_accum_points = tagged_dist_points = 0.0
+    smart_accum_buy = bundler_accum_buy = 0.0
+    smart_dist_sell = bundler_dist_sell = 0.0
+    trusted_accum_wallets = suspicious_accum_wallets = 0
+
+    for wallet, d in (profiles or {}).items():
+        if not wallet or not isinstance(d, dict):
+            continue
+        buy = float(d.get("buy") or 0.0)
+        sell = float(d.get("sell") or 0.0)
+        tags = tags_map.get(wallet, {}).get("tags", [])
+
+        if buy >= min_buy_sol and sell <= buy * sell_tol:
+            pts = wallet_tag_points(tags, side="accum",
+                                    tag_points=tag_points)
+            eff = buy * _tag_eff_multiplier(
+                tags, side="accum", weights=tag_weights)
+            total_accum_buy += buy
+            tagged_accum_points += pts
+            accum_rows.append({"wallet": wallet, "buy": round(buy, 4),
+                               "sell": round(sell, 4), "tags": tags,
+                               "tag_points": round(pts, 1),
+                               "eff_buy": round(eff, 4)})
+            if any(t in tags for t in ("smart_money", "top_holder",
+                                       "fresh_wallet")):
+                smart_accum_buy += eff
+                trusted_accum_wallets += 1
+            if "bundler" in tags:
+                bundler_accum_buy += eff
+                suspicious_accum_wallets += 1
+
+        if sell >= min_sell_sol and buy <= sell * buy_tol:
+            pts = wallet_tag_points(tags, side="dist", tag_points=tag_points)
+            eff = sell * _tag_eff_multiplier(
+                tags, side="dist", weights=tag_weights)
+            total_dist_sell += sell
+            tagged_dist_points += pts
+            dist_rows.append({"wallet": wallet, "buy": round(buy, 4),
+                              "sell": round(sell, 4), "tags": tags,
+                              "tag_points": round(pts, 1),
+                              "eff_sell": round(eff, 4)})
+            if any(t in tags for t in ("smart_money", "top_holder",
+                                       "fresh_wallet")):
+                smart_dist_sell += eff
+            if "bundler" in tags:
+                bundler_dist_sell += eff
+
+    accum_rows.sort(key=lambda r: -r["buy"])
+    dist_rows.sort(key=lambda r: -r["sell"])
+    trusted_accum_share = (smart_accum_buy / total_accum_buy
+                           if total_accum_buy else 0.0)
+    net_points = tagged_accum_points - tagged_dist_points
+    tag_score = max(0.0, min(100.0, 50.0 + net_points))
+    out = dict(empty)
+    out.update({
+        "ok": True, "accum_rows": accum_rows, "dist_rows": dist_rows,
+        "n_accum": len(accum_rows), "n_dist": len(dist_rows),
+        "total_accum_buy": round(total_accum_buy, 4),
+        "total_dist_sell": round(total_dist_sell, 4),
+        "tagged_accum_points": round(tagged_accum_points, 1),
+        "tagged_dist_points": round(tagged_dist_points, 1),
+        "tagged_net_points": round(net_points, 1),
+        "smart_accum_buy_sol": round(smart_accum_buy, 4),
+        "bundler_accum_buy_sol": round(bundler_accum_buy, 4),
+        "smart_dist_sell_sol": round(smart_dist_sell, 4),
+        "bundler_dist_sell_sol": round(bundler_dist_sell, 4),
+        "trusted_accum_share": round(trusted_accum_share, 4),
+        "trusted_accum_wallets": trusted_accum_wallets,
+        "suspicious_accum_wallets": suspicious_accum_wallets,
+        "tag_score": round(tag_score, 1),
+    })
+    return out
+
+
 def top_holder_analysis(holders, swaps=None, *, price_usd=0.0,
                         dust_limit_usd=5.0, supply=0.0, limit=100,
                         sell_tolerance=0.10) -> dict:

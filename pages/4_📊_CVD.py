@@ -13,7 +13,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core import (get_helius_keys, get_market,
                   get_holders as core_get_holders,
                   get_supply as core_get_supply, load_config)
-from cvd import (MIN_SOL, top_holder_analysis)
+from cvd import (MIN_SOL, get_gmgn_wallet_metadata,
+                 pure_accumulator_growth, tagged_flow_report,
+                 wallet_profiles)
 from cvd_daily import (calculate_daily_cvd, persist_daily_snapshot,
                        save_4h_chunks_from_swaps, tx_dominance_from_daily)
 from prepump_detector import BUY_TX_MIN_PCT, evaluate_prepump
@@ -114,10 +116,6 @@ st.caption(
 
 CONFIG = load_config()
 helius_keys = tuple(get_helius_keys(config=CONFIG))
-try:
-    dust_limit_usd = float(CONFIG.get("dust_limit_usd", 5.0))
-except (TypeError, ValueError):
-    dust_limit_usd = 5.0
 
 # Prefill from watchlist link (?ca=) without fetching.
 qp_ca = (st.query_params.get("ca") or "").strip()
@@ -328,8 +326,9 @@ def render_daily_chart(rows):
     )
     fig.update_layout(
         height=400,
-        margin=dict(t=48, b=24, l=12, r=12),
-        legend=dict(orientation="h", y=1.14, font=dict(size=12, color=INK)),
+        margin=dict(t=84, b=24, l=12, r=12),
+        legend=dict(orientation="h", y=1.16, x=0, xanchor="left",
+                    font=dict(size=12, color=INK)),
         title=dict(
             text="Volume harian · Running CVD · |CVD/Vol| %",
             font=dict(size=14, color=INK),
@@ -386,8 +385,9 @@ def render_tx_dominance(rows):
     fig.update_layout(
         barmode="stack",
         height=340,
-        margin=dict(t=48, b=24, l=12, r=12),
-        legend=dict(orientation="h", y=1.14, font=dict(size=12, color=INK)),
+        margin=dict(t=84, b=24, l=12, r=12),
+        legend=dict(orientation="h", y=1.16, x=0, xanchor="left",
+                    font=dict(size=12, color=INK)),
         title=dict(
             text="Dominasi Buy TX vs Sell TX per hari (%)",
             font=dict(size=14, color=INK),
@@ -457,6 +457,136 @@ def render_daily_table(rows, evaluation):
                  hide_index=True)
 
 
+def render_pure_accumulator_chart(swaps):
+    """Pure accumulator growth per UTC day: wallets that bought >= 0.1 SOL
+    and sold no more than 10% of their in-window buy (retained >= 90%)."""
+    profiles = wallet_profiles(swaps)
+    growth = pure_accumulator_growth(
+        swaps, profiles, min_buy_sol=0.1, sell_tol=0.10, bucket_s=86400)
+    series = growth.get("series") or []
+    if not series:
+        st.info("Belum ada data cukup untuk grafik pure accumulator.")
+        return
+    dates = [time.strftime("%Y-%m-%d", time.gmtime(r["bucket_ts"]))
+             for r in series]
+    new_w = [int(r["new_wallets"]) for r in series]
+    cum_w = [int(r["cum_wallets"]) for r in series]
+    buy_sol = [float(r["buy_sol"]) for r in series]
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig.add_trace(
+        go.Bar(
+            x=dates, y=new_w, name="Pure Accum baru/hari",
+            marker=dict(color=GREEN_MID, line=dict(color=INK, width=0.3)),
+            opacity=0.9,
+            hovertemplate="%{x}<br>baru %{y} wallet<extra></extra>",
+        ),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=dates, y=cum_w, name="Kumulatif",
+            mode="lines+markers", line=dict(color=SLATE, width=2.4),
+            marker=dict(size=7, color=SLATE),
+            hovertemplate="%{x}<br>total %{y} wallet<extra></extra>",
+        ),
+        secondary_y=False,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=dates, y=buy_sol, name="Buy SOL",
+            mode="lines+markers", line=dict(color=AMBER, width=2, dash="dot"),
+            marker=dict(size=6, color=AMBER),
+            hovertemplate="%{x}<br>buy %{y:.2f} SOL<extra></extra>",
+        ),
+        secondary_y=True,
+    )
+    # No plotly title — the markdown heading above owns the title, so the
+    # legend (top, above the plot) can never collide with a title string.
+    fig.update_layout(
+        height=400,
+        margin=dict(t=48, b=24, l=12, r=12),
+        legend=dict(orientation="h", y=1.12, x=0, xanchor="left",
+                    font=dict(size=12, color=INK)),
+        plot_bgcolor=PAPER, paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color=INK, size=12), hoverlabel=dict(font_size=12),
+    )
+    fig.update_yaxes(title_text="Jumlah wallet", secondary_y=False,
+                     gridcolor="#e2e8f0")
+    fig.update_yaxes(title_text="Buy SOL", secondary_y=True,
+                     gridcolor="#e2e8f0")
+    fig.update_xaxes(gridcolor="#e2e8f0")
+    st.plotly_chart(fig, use_container_width=True,
+                    config={"displayModeBar": False})
+    st.caption(
+        f"Total {growth.get('count', 0):,} pure accumulator · "
+        f"{growth.get('total_buy', 0):,.2f} SOL dibeli · "
+        f"{growth.get('total_sell', 0):,.2f} SOL dijual "
+        f"(retensi ≥ 90%)."
+    )
+
+
+def _top_holder_ranks(holder_data):
+    """wallet -> 1-based top-holder rank from a fetched holder snapshot."""
+    if not holder_data or not holder_data.get("ok"):
+        return {}
+    holders = holder_data.get("holders") or []
+    try:
+        holders = sorted(holders, key=lambda h: -float(h.get("amount") or 0))
+    except (TypeError, ValueError):
+        return {}
+    return {str(h.get("owner")): rank
+            for rank, h in enumerate(holders[:100], start=1)}
+
+
+def render_tag_flow_panel(swaps, *, wallet_meta=None, holder_data=None):
+    """Tag-aware accumulator/distributor flow + the filter's tag_score.
+
+    A pure accumulator/distributor that carries a smart-money / top-holder /
+    fresh-wallet tag earns separate "poin" for the Setup Emas filter; a
+    bundler is treated as suspicious accumulation / risky distribution.
+    """
+    if not swaps:
+        st.caption("Belum ada data swap untuk analisis tag.")
+        return
+    report = tagged_flow_report(
+        swaps, wallet_meta=wallet_meta,
+        top_holder_ranks=_top_holder_ranks(holder_data),
+        min_buy_sol=0.1, sell_tol=0.10, min_sell_sol=0.1, buy_tol=0.10)
+    if not report.get("ok"):
+        st.caption("Belum ada data swap untuk analisis tag.")
+        return
+    score = float(report["tag_score"])
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Tag Score (poin filter)", f"{score:.0f}", "50 = netral")
+    c2.metric("Pure Accumulator", f"{report['n_accum']} wallet",
+              f"{report['smart_accum_buy_sol']:.1f} SOL smart")
+    c3.metric("Pure Distributor", f"{report['n_dist']} wallet",
+              f"{report['bundler_dist_sell_sol']:.1f} SOL bundler")
+    c4.metric("Trusted Accum Share",
+              f"{report['trusted_accum_share'] * 100:.0f}%",
+              f"{report['tagged_net_points']:+.0f} poin net")
+
+    rows = []
+    for r in report["accum_rows"]:
+        rows.append({
+            "Jenis": "🟢 Accum", "Wallet": r["wallet"],
+            "Buy SOL": r["buy"], "Sell SOL": r["sell"],
+            "Tag": ", ".join(r["tags"]) or "—", "Poin": r["tag_points"],
+        })
+    for r in report["dist_rows"]:
+        rows.append({
+            "Jenis": "🔴 Distribusi", "Wallet": r["wallet"],
+            "Buy SOL": r["buy"], "Sell SOL": r["sell"],
+            "Tag": ", ".join(r["tags"]) or "—", "Poin": r["tag_points"],
+        })
+    if rows:
+        st.dataframe(pd.DataFrame(rows), use_container_width=True,
+                     hide_index=True)
+    else:
+        st.caption("Tidak ada pure accumulator/distributor bertag dalam "
+                   "jendela ini.")
+
+
 skey = f"cvd4p::{days}d::{ca}"
 cached = st.session_state.get(skey)
 
@@ -512,6 +642,7 @@ if run:
     except Exception:
         tg_sent = False
     holder_data = fetch_holder_snapshot(ca, helius_keys)
+    wallet_meta = get_gmgn_wallet_metadata()
     st.session_state[skey] = {
         "swaps": swaps,
         "daily": daily,
@@ -525,6 +656,7 @@ if run:
         "price_now": price_now,
         "mc_now": mc_now,
         "holders": holder_data,
+        "wallet_meta": wallet_meta,
         "telegram_queued": tg_sent,
     }
     progress.empty()
@@ -607,70 +739,24 @@ st.markdown("#### 📈 Day-by-day progression")
 render_daily_chart(daily_rows)
 render_daily_table(daily_rows, evaluation)
 
-# ---- Holder lock (feeds Pilar 3 when available) --------------------------
-st.markdown("#### 👥 Top 100 Holder / Supply Lock")
-holder_data = state.get("holders") or {}
-if not holder_data.get("ok"):
-    st.caption(holder_data.get("error")
-               or "Holder tidak dimuat. Klik Fetch untuk mengambil.")
-else:
-    holder_analysis = top_holder_analysis(
-        holder_data.get("holders", []),
-        swaps_all,
-        price_usd=price_now,
-        dust_limit_usd=dust_limit_usd,
-        supply=holder_data.get("supply", 0.0),
-        limit=100,
-        sell_tolerance=0.10,
-    )
-    n_top = int(holder_analysis.get("n_top") or 0)
-    diamond_count = int(holder_analysis.get("diamond_hands") or 0)
-    diamond_pct = float(holder_analysis.get("diamond_pct") or 0.0)
-    lock_ok = diamond_pct >= 40.0
-    lock_card = {
-        "title": "Top 100 Supply Lock",
-        "value": f"{diamond_pct:.1f}%",
-        "passed": lock_ok,
-        "label": ("✅ PURE ACC ≥ 40%" if lock_ok
-                  else "❌ LOCK < 40%"),
-        "hint": f"{diamond_count}/{n_top} diamond · "
-                f"sumber {holder_data.get('source', '?')}",
-    }
-    render_kpi_card(lock_card)
-    if run:
-        ev_locked = evaluate_prepump(
-            swaps_all, daily_rows=daily_rows,
-            holder_lock_pct=diamond_pct, include_today=True)
-        st.session_state[skey]["evaluation"] = ev_locked
-        ev_locked_daily = evaluate_prepump(
-            swaps_all, daily_rows=daily_rows,
-            holder_lock_pct=diamond_pct, include_today=False)
-        st.session_state[skey]["evaluation_daily"] = ev_locked_daily
-        try:
-            record_prepump_4pilar(
-                ca, symbol, ev_locked_daily, price=price_now)
-            if maybe_queue_complete_prepump(
-                    ca, symbol, ev_locked_daily, price=price_now):
-                st.session_state[skey]["telegram_queued"] = True
-        except Exception:
-            pass
+# ---- Pure accumulator growth + tag-aware flow (feeds Pilar 2/3) -----------
+st.markdown("#### 🐳 Pure Accumulator Growth (per hari)")
+st.caption(
+    "Wallet yang beli ≥ 0.1 SOL dan jual ≤ 10% dari pembeliannya dalam "
+    "jendela (retensi ≥ 90%). Bucket per hari UTC — wallet baru per hari "
+    "vs kumulatif vs SOL dibeli."
+)
+render_pure_accumulator_chart(swaps_all)
 
-    detail_rows = []
-    for row in (holder_analysis.get("rows") or []):
-        detail_rows.append({
-            "Rank": row["rank"],
-            "Wallet": row["wallet"],
-            "Holding": f"{row['amount']:,.6g}",
-            "Supply %": f"{row['supply_pct']:.3f}%",
-            "Value USD": f"${row['value_usd']:,.2f}",
-            "Buy SOL": f"{row['buy_sol']:,.2f}",
-            "Sell SOL": f"{row['sell_sol']:,.2f}",
-            "Sold/Buy": f"{row['sell_pct']:.1f}%",
-            "Diamond": "✅" if row["diamond_hand"] else "❌",
-        })
-    with st.expander("Detail 100 top holder", expanded=False):
-        st.dataframe(pd.DataFrame(detail_rows), use_container_width=True,
-                     hide_index=True)
+st.markdown("#### 🏷️ Tag-Aware Flow — poin filter")
+st.caption(
+    "Akumulator/distributor yang bertag smart money, top holder, atau "
+    "fresh wallet diberi poin akumulasi tepercaya; bundler diberi poin "
+    "akumulasi mencurigakan dan distribusi berbahaya. `tag_score` "
+    "0–100 siap dipakai sebagai poin tambahan filter Setup Emas."
+)
+render_tag_flow_panel(swaps_all, wallet_meta=state.get("wallet_meta"),
+                      holder_data=state.get("holders"))
 
 st.caption(
     f"Diambil {time.strftime('%Y-%m-%d %H:%M UTC', time.gmtime(fetched_at))}. "

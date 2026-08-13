@@ -280,6 +280,41 @@ harian watchlist. Telegram **hanya** jika **Setup Emas 7/7**:
 Skor 100 = jumlah bobot 18+12+18+16+10+16+10. Ignition P4 info saja.
 Kalau tidak ada token 7/7: **TIDAK ADA SETUP HARI INI** (sekali per tanggal).
 
+## 17. Status 2026-08-13 — Pure accumulator graph + Tag-Aware Flow (poin filter)
+
+`pages/4_📊_CVD.py`: section **`👥 Top 100 Holder / Supply Lock`** (KPI
+card + tabel 100 top holder + re-evaluasi Pilar 3) **dihapus**. Diganti:
+
+1. **`🐳 Pure Accumulator Growth (per hari)`** — grafik `pure_accumulator_growth`
+   dengan `bucket_s=86400` (bucket per hari UTC): wallet baru/hari + kumulatif
+   + SOL dibeli. Definisi pure accumulator = beli ≥ 0.1 SOL dan jual ≤ 10% dari
+   pembelian (`sell_tol=0.10`). Grafik baru **tanpa plotly-title** (judul pakai
+   `st.markdown` di atas), jadi judul tidak bisa tumpang tindih dengan caption.
+2. **`🏷️ Tag-Aware Flow — poin filter`** — poin tersendiri untuk akumulator /
+   distributor yang bertag **smart money**, **top holder**, **fresh wallet**
+   (akumulasi tepercaya) atau **bundler** (akumulasi mencurigakan / distribusi
+   berbahaya).
+
+Backend baru di `cvd.py` (netral-jaringan, deterministic):
+- `tag_wallet_meta_tags()` — `maker_tags` GMGN → `smart_money`/`bundler`/
+  `fresh_wallet` (`SMART_TAGS`/`BUNDLER_TAGS`/`FRESH_TAGS`).
+- `tag_wallets()` — tambah tag `top_holder` (dari rank holder snapshot) dan
+  `fresh_wallet` (dari `wallet_ages`, default < 7 hari).
+- `TAG_FLOW_WEIGHTS` + `TAG_FLOW_FLOOR` — pengali volume efektif per tag.
+- `DEFAULT_TAG_POINTS` + `load_tag_points()` (config `tag_points`) — tabel
+  poin per tag per sisi; `wallet_tag_points()` cap ±60/wallet.
+- `tagged_flow_report()` — ringkas akumulator/distributor bertag + agregat:
+  `tagged_accum_points` / `tagged_dist_points` / `tagged_net_points`,
+  `smart_accum_buy_sol`, `bundler_accum_buy_sol`, `smart_dist_sell_sol`,
+  `bundler_dist_sell_sol`, `trusted_accum_share`, dan **`tag_score` 0–100**
+  (`50 + tagged_net_points`, clamp) — siap dipakai sebagai poin tambahan
+  filter Setup Emas.
+
+`wallet_meta` (dari `get_gmgn_wallet_metadata()`) + holder snapshot disimpan
+ke session state saat fetch. Verifikasi:
+`python tests/test_tag_aware_flow.py` + semua suite lama hijau +
+AppTest render idle halaman CVD tanpa exception.
+
 ## 15. Status 2026-08-12 — CVD/watchlist: no auto-fetch, warna tua, TX dominasi, Telegram 4/4
 
 Owner: klik CVD dari watchlist / paste CA **jangan** langsung fetch.
