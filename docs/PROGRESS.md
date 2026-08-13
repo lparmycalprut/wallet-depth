@@ -7,6 +7,49 @@ Format tiap entri: apa yang berubah · kenapa · bukti verifikasi · sisa PR.
 
 ---
 
+## 2026-08-13 — CVD: Pure Accumulator Growth graph + Tag-Aware Flow (poin filter)
+
+### Masalah
+- Grafik "👥 Top 100 Holder / Supply Lock" di halaman CVD punya teks
+  tumpang tindih (judul vs caption) dari sesi sebelumnya.
+- Owner ingin grafik itu diganti dengan **pertumbuhan pure accumulator per
+  hari** (yang beli tanpa jual >10%).
+- Ingin poin tambahan untuk filter: akumulator/distributor bertag
+  smart money / bundler / top holder # / fresh wallet diberi poin tersendiri.
+
+### Yang berubah
+1. `pages/4_📊_CVD.py` — section `👥 Top 100 Holder / Supply Lock` (KPI +
+   tabel 100 top holder + re-evaluasi Pilar 3) **dihapus**.
+2. Ganti dengan **`🐳 Pure Accumulator Growth (per hari)`** — grafik
+   `pure_accumulator_growth(..., bucket_s=86400)`: wallet baru/hari +
+   kumulatif + SOL dibeli. Tanpa plotly-title (judul via `st.markdown`),
+   jadi judul tidak mungkin tumpang tindih caption.
+3. Tambah **`🏷️ Tag-Aware Flow — poin filter`** — `tagged_flow_report()`:
+   akumulator (beli ≥ 0.1 SOL, jual ≤ 10%) & distributor (jual ≥ 0.1 SOL,
+   beli ≤ 10%) diberi tag dari `maker_tags` GMGN + top-holder rank + umur
+   wallet. Agregat: `smart_accum_buy_sol`, `bundler_dist_sell_sol`,
+   `trusted_accum_share`, `tagged_*_points`, dan **`tag_score` 0–100** untuk
+   dipakai sebagai poin tambahan filter Setup Emas.
+4. `cvd.py` — `tag_wallet_meta_tags`, `tag_wallets`, `load_tag_points`,
+   `wallet_tag_points`, `tagged_flow_report`, konstanta `SMART_TAGS` /
+   `BUNDLER_TAGS` / `FRESH_TAGS` / `TAG_FLOW_WEIGHTS` / `TAG_FLOW_FLOOR` /
+   `DEFAULT_TAG_POINTS`. Poin per tag dapat dituning via `config.json`
+   `tag_points`.
+5. Perbaiki overlap legend/title di `render_daily_chart` &
+   `render_tx_dominance` (margin atas 84, legend y 1.16).
+
+### Verifikasi
+`python tests/test_tag_aware_flow.py` (7 tes) + semua suite lama hijau
+(16 file + unittest holder_split 18 tes) + AppTest render idle halaman CVD
+tanpa exception.
+
+### Sisa PR
+- `tag_score` belum di-`AND`/ditambahkan ke gerbang Telegram Setup Emas
+  7/7 (masih ditampilkan sebagai poin di halaman). Owner menentukan bobot
+  / ambang sebelum dipakai di cron.
+
+---
+
 ## 2026-08-12 — Setup Emas: tape seimbang + ekspansi terserap (SISYPUSS)
 
 ### Masalah
