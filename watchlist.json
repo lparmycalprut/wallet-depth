@@ -256,5 +256,11 @@
   "prepump_avg_sell_sol": 0.9589602070064314,
   "prepump_delta_sol": 16.319385324999303,
   "prepump_src": "fetch"
+ },
+ "6fEaYuzirTMXFnFo7dGKHJs8wWVFPdh1bfZL9oRPpump": {
+  "symbol": "JLY",
+  "note": "",
+  "added": "2026-08-13",
+  "source": "manual"
  }
 }
