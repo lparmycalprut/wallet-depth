@@ -641,6 +641,7 @@ def resolve_prepump_row(meta, sig=None, now_ts=None):
         verdict = meta.get("prepump_verdict") or ""
         phase = meta.get("prepump_phase") or ""
         passed = meta.get("prepump_passed")
+        total = meta.get("prepump_total")
         stealth = bool(meta.get("prepump_stealth_dump"))
         absorption = meta.get("prepump_absorption_pct")
         buy_tx = meta.get("prepump_buy_tx_pct")
@@ -653,6 +654,7 @@ def resolve_prepump_row(meta, sig=None, now_ts=None):
         verdict = sig.get("verdict") or ""
         phase = sig.get("phase") or ""
         passed = sig.get("passed")
+        total = sig.get("total")
         stealth = bool(sig.get("stealth_dump"))
         detail = sig.get("detail") or {}
         metrics = detail.get("metrics") or {}
@@ -667,6 +669,7 @@ def resolve_prepump_row(meta, sig=None, now_ts=None):
             "verdict": "",
             "phase": "",
             "passed": None,
+            "total": None,
             "stealth_dump": False,
             "absorption_pct": None,
             "buy_tx_pct": None,
@@ -681,6 +684,7 @@ def resolve_prepump_row(meta, sig=None, now_ts=None):
         "verdict": verdict,
         "phase": phase,
         "passed": passed,
+        "total": total,
         "stealth_dump": stealth,
         "absorption_pct": absorption,
         "buy_tx_pct": buy_tx,

@@ -27,7 +27,7 @@ from cvd_daily import (CHUNK_SEC, aggregate_chunks_to_daily,
                        persist_daily_snapshot, swaps_from_4h_chunks,
                        upsert_4h_chunk)
 from prepump_detector import evaluate_prepump
-from signals import (begin_digest, flush_telegram_digest,
+from signals import (begin_digest, drain_digest, flush_telegram_digest,
                      maybe_queue_complete_prepump, queue_no_setup_message,
                      record_daily_cvd, record_prepump_4pilar)
 from watchlist import load_watchlist, update_local_meta
@@ -134,8 +134,13 @@ def _ensure_day_swaps(ca, symbol, pool, api_key, date, *, now_ts):
     return window, "fetch"
 
 
-def run_daily(watchlist, *, now=None, api_key=""):
-    """Aggregate yesterday's six 4h chunks and evaluate the 4 pillars."""
+def run_daily(watchlist, *, now=None, api_key="", send_telegram=True):
+    """Aggregate yesterday's six 4h chunks and evaluate the 4 pillars.
+
+    ``send_telegram=False`` still records signals / updates metadata but
+    skips the Telegram digest — used by the manual "Get Signal" test button
+    so a manual run never spams the chat.
+    """
     now = now or _now()
     now_ts = int(now.timestamp())
     yesterday = _yesterday(now)
@@ -205,8 +210,11 @@ def run_daily(watchlist, *, now=None, api_key=""):
                         "src": src})
     if n_emas == 0:
         queue_no_setup_message(yesterday, n_tokens=len(watchlist or {}))
-    flush_telegram_digest(
-        title="🥇 <b>SETUP EMAS — 07:00 WIB</b>")
+    if send_telegram:
+        flush_telegram_digest(
+            title="🥇 <b>SETUP EMAS — 07:00 WIB</b>")
+    else:
+        drain_digest()
     return results
 
 
