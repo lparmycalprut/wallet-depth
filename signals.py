@@ -17,6 +17,43 @@ PREPUMP_DEDUPE_SEC = 20 * 3600
 _DIGEST_BUF = []
 _DIGEST_MODE = False
 
+# ============================================================
+# 🚨 RISK WARNING TEMPLATE - BESAR BOLD MERAH + ANIMASI 🚨
+# Ini muncul di SEMUA notifikasi Telegram biar tidak lupa!
+# ============================================================
+RISK_EMOJI_LINE = "🚨" * 20
+RISK_STOP_LINE = "⛔" * 12
+RISK_ANIM_LINE = "⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴"
+RISK_DANGER_LINE = "🟥" * 14
+
+# Template utama - dipakai di semua notif Telegram
+# Telegram HTML tidak support warna/size, jadi pakai:
+# <b> = bold besar, 🟥🔴 = simulasi warna merah, emoji = animasi visual
+RISK_WARNING_BLOCK = (
+    f"{RISK_EMOJI_LINE}\n"
+    f"⛔⛔⛔ <b>⚠️⚠️⚠️ BACA INI!!!! ⚠️⚠️⚠️</b> ⛔⛔⛔\n"
+    f"{RISK_EMOJI_LINE}\n"
+    f"{RISK_ANIM_LINE}\n\n"
+    f"{RISK_DANGER_LINE}\n"
+    f"🟥 <b>🔴🔴🔴 PERINGATAN KERAS 🔴🔴🔴</b> 🟥\n"
+    f"{RISK_DANGER_LINE}\n\n"
+    f"🔴 <b>❗❗ SELALU HITUNG RISK JANGAN TERLALU BESAR, JANGAN TERJEBAK LAGI ❗❗</b> 🔴\n\n"
+    f"🔴 <b>❗❗ SELALU PASANG BAGIAN BAWAH LEBIH BESAR KARENA HARGA TURUN ITU PASTI, HARGA NAIK HANYA KEMUNGKINAN ❗❗</b> 🔴\n\n"
+    f"🔴 <b>❗❗ BACA INI!!!! ❗❗</b> 🔴\n\n"
+    f"⚠️⚠️⚠️ <b>👉 RISK MANAGEMENT NO.1 - JANGAN SERAKAH 👈</b> ⚠️⚠️⚠️\n"
+    f"{RISK_ANIM_LINE}\n"
+    f"{RISK_EMOJI_LINE}\n"
+)
+
+# Versi compact untuk daily / no-setup (lebih pendek biar tidak spam)
+RISK_WARNING_COMPACT = (
+    f"🚨🚨🚨 <b>⚠️ BACA INI!!!! ⚠️</b> 🚨🚨🚨\n"
+    f"🟥 <b>🔴 SELALU HITUNG RISK JANGAN TERLALU BESAR, JANGAN TERJEBAK LAGI 🔴</b> 🟥\n"
+    f"🟥 <b>🔴 SELALU PASANG BAGIAN BAWAH LEBIH BESAR KARENA HARGA TURUN ITU PASTI, HARGA NAIK HANYA KEMUNGKINAN 🔴</b> 🟥\n"
+    f"🟥 <b>🔴 BACA INI!!!! 🔴</b> 🟥\n"
+    f"⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️\n"
+)
+
 
 _SIGNALS_CACHE = {"data": None, "ts": 0.0}
 _SIGNALS_TTL = 30
@@ -184,7 +221,9 @@ def queue_daily_cvd_message(ca, symbol, rows, *, price=None):
     icon = "🟠" if latest.get("status", "").startswith("KERING") else "📈"
     change = latest.get("volume_change_pct")
     change_text = "n/a" if change is None else f"{change:+.1f}%"
-    text = (f"{icon} <b>DAILY CVD · {symbol}</b>\n"
+    text = (
+            f"{RISK_WARNING_BLOCK}\n\n"
+            f"{icon} <b>DAILY CVD · {symbol}</b>\n"
             f"<code>{ca}</code>\n\n"
             f"<b>{latest.get('status', 'NORMAL')}</b>\n"
             f"📅 {latest.get('date', '-')} (hari UTC penuh)  ·  "
@@ -192,7 +231,8 @@ def queue_daily_cvd_message(ca, symbol, rows, *, price=None):
             f"💧 Volume <b>{latest.get('volume_sol', 0):,.2f} SOL</b> ({change_text} vs H-1)\n"
             f"⚖️ CVD <b>{latest.get('delta_sol', 0):+,.2f} SOL</b> · ratio {latest.get('cvd_ratio_pct', 0):+.1f}%\n"
             f"🟢 Buy {latest.get('buy_tx', 0):,} · 🔴 Sell {latest.get('sell_tx', 0):,}\n\n"
-            f"<a href='https://dexscreener.com/solana/{ca}'>DexScreener</a>  ·  <a href='https://gmgn.ai/sol/token/{ca}'>GMGN</a>")
+            f"<a href='https://dexscreener.com/solana/{ca}'>DexScreener</a>  ·  <a href='https://gmgn.ai/sol/token/{ca}'>GMGN</a>\n\n"
+            f"{RISK_WARNING_COMPACT}")
     _queue_or_send(text)
 
 
@@ -313,10 +353,12 @@ def queue_no_setup_message(date, *, n_tokens=0):
     if _telegram_already_sent("_digest_", date, kind="setup_emas_empty"):
         return False
     text = (
+        f"{RISK_WARNING_BLOCK}\n\n"
         f"⚪ <b>TIDAK ADA SETUP HARI INI</b>\n"
         f"📅 {date} (hari UTC penuh)\n"
         f"Watchlist dipindai: {int(n_tokens)} token.\n"
-        f"Tidak ada yang lolos 6/6 Setup Emas."
+        f"Tidak ada yang lolos 6/6 Setup Emas.\n\n"
+        f"{RISK_WARNING_COMPACT}"
     )
     sent = _queue_or_send(text)
     if sent:
@@ -370,6 +412,7 @@ def queue_prepump_4pilar_message(ca, symbol, evaluation, *, price=None):
     lock_txt = (f"🔒 Retensi Top-100 <b>{float(lock):.1f}%</b> (info)\n"
                 if lock is not None else "")
     text = (
+        f"{RISK_WARNING_BLOCK}\n\n"
         f"{icon} <b>SETUP EMAS · {symbol}</b>\n"
         f"<code>{ca}</code>\n\n"
         f"<b>{verdict}</b> · {ev.get('phase', '-')}{score_txt}\n"
@@ -386,7 +429,8 @@ def queue_prepump_4pilar_message(ca, symbol, evaluation, *, price=None):
         f"{lock_txt}"
         f"{' · '.join(check_bits)}\n\n"
         f"<a href='https://dexscreener.com/solana/{ca}'>DexScreener</a>  ·  "
-        f"<a href='https://gmgn.ai/sol/token/{ca}'>GMGN</a>"
+        f"<a href='https://gmgn.ai/sol/token/{ca}'>GMGN</a>\n\n"
+        f"{RISK_WARNING_BLOCK}"
     )
     return _queue_or_send(text)
 
@@ -414,7 +458,9 @@ def record_first_buy_surge(ca, symbol, stats, *, now_ts=None, price=None,
     surge_txt = (f"{surge:+,.0f}% vs baseline kering {base:,.2f} SOL/jam"
                  if surge is not None and base is not None
                  else "baseline kering n/a")
-    text = (f"🚀 <b>FIRST BUY SURGE · {symbol}</b> 🚀\n"
+    text = (
+            f"{RISK_WARNING_BLOCK}\n\n"
+            f"🚀 <b>FIRST BUY SURGE · {symbol}</b> 🚀\n"
             f"<code>{ca}</code>\n\n"
             f"<b>Awal fase MARK-UP terdeteksi</b> (token sebelumnya kering)\n\n"
             f"📊 Volume {stats.get('window_sec', 900) // 60}m "
@@ -429,5 +475,6 @@ def record_first_buy_surge(ca, symbol, stats, *, now_ts=None, price=None,
             f"({stats.get('big_buy_sol_total', 0):,.2f} SOL) · "
             f"big-sell {stats.get('big_sells', 0)}x\n\n"
             f"<a href='https://dexscreener.com/solana/{ca}'>DexScreener</a>  ·  "
-            f"<a href='https://gmgn.ai/sol/token/{ca}'>GMGN</a>")
+            f"<a href='https://gmgn.ai/sol/token/{ca}'>GMGN</a>\n\n"
+            f"{RISK_WARNING_BLOCK}")
     return bool(_queue_or_send(text))

@@ -107,6 +107,59 @@ st.markdown("""
         padding: 6px 8px;
         font-weight: 700;
     }
+
+    /* 🚨 RISK WARNING - BESAR BOLD MERAH ANIMASI 🚨 */
+    @keyframes blink-red {
+        0% { background-color: #7f1d1d; color: #fee2e2; border-color: #ef4444; box-shadow: 0 0 10px #ef4444; }
+        25% { background-color: #fee2e2; color: #7f1d1d; border-color: #dc2626; box-shadow: 0 0 20px #ef4444; }
+        50% { background-color: #dc2626; color: #ffffff; border-color: #991b1b; box-shadow: 0 0 30px #ff0000; }
+        75% { background-color: #fee2e2; color: #7f1d1d; border-color: #dc2626; box-shadow: 0 0 20px #ef4444; }
+        100% { background-color: #7f1d1d; color: #fee2e2; border-color: #ef4444; box-shadow: 0 0 10px #ef4444; }
+    }
+    @keyframes shake {
+        0%, 100% { transform: translateX(0); }
+        10%, 30%, 50%, 70%, 90% { transform: translateX(-2px); }
+        20%, 40%, 60%, 80% { transform: translateX(2px); }
+    }
+    @keyframes pulse-scale {
+        0% { transform: scale(1); }
+        50% { transform: scale(1.02); }
+        100% { transform: scale(1); }
+    }
+    .risk-warning-banner {
+        animation: blink-red 1.2s infinite, shake 0.5s infinite, pulse-scale 1s infinite;
+        border: 4px solid #ef4444;
+        border-radius: 16px;
+        padding: 20px 18px;
+        margin: 16px 0 22px 0;
+        font-weight: 900;
+        font-size: 1.15rem;
+        line-height: 1.45;
+        text-align: center;
+        letter-spacing: 0.02em;
+    }
+    .risk-warning-banner b {
+        font-size: 1.35rem;
+        text-transform: uppercase;
+    }
+    .risk-warning-big {
+        font-size: 1.55rem !important;
+        font-weight: 900 !important;
+        display: block;
+        margin: 6px 0;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+    }
+    .risk-warning-emoji {
+        font-size: 1.8rem;
+        animation: shake 0.3s infinite;
+        display: inline-block;
+    }
+    @media (max-width: 640px) {
+        .risk-warning-banner { font-size: 0.98rem; padding: 14px 12px; }
+        .risk-warning-banner b { font-size: 1.12rem; }
+        .risk-warning-big { font-size: 1.25rem !important; }
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -427,6 +480,24 @@ if _q_del:
 # Header
 # ---------------------------------------------------------------------------
 st.title("🎯 Wallet Depth — Prepump Radar")
+
+# 🚨 RISK WARNING BANNER - BESAR BOLD MERAH ANIMASI 🚨
+st.markdown("""
+<div class="risk-warning-banner">
+    <span class="risk-warning-emoji">🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨</span><br>
+    <span style="font-size:2.0rem;">⛔⛔⛔ BACA INI!!!! ⛔⛔⛔</span><br>
+    <span class="risk-warning-emoji">🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨</span><br>
+    <span class="risk-warning-emoji">⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴</span><br><br>
+    <span class="risk-warning-big">🟥🔴 PERINGATAN KERAS 🔴🟥</span><br>
+    <span class="risk-warning-big">🔴 SELALU HITUNG RISK JANGAN TERLALU BESAR, JANGAN TERJEBAK LAGI 🔴</span><br>
+    <span class="risk-warning-big">🔴 SELALU PASANG BAGIAN BAWAH LEBIH BESAR KARENA HARGA TURUN ITU PASTI, HARGA NAIK HANYA KEMUNGKINAN 🔴</span><br>
+    <span class="risk-warning-big">🔴 BACA INI!!!! 🔴</span><br><br>
+    <span style="font-size:1.2rem;">⚠️⚠️⚠️ 👉 RISK MANAGEMENT NO.1 - JANGAN SERAKAH 👈 ⚠️⚠️⚠️</span><br>
+    <span class="risk-warning-emoji">⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴</span><br>
+    <span class="risk-warning-emoji">🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨</span>
+</div>
+""", unsafe_allow_html=True)
+
 st.caption(
     "Fokus: watchlist → scan trending/degen → CVD → **4 Pilar Pre-Pump** "
     f"(|CVD/Vol| < 3.0%, Buy TX ≥ {BUY_TX_MIN_PCT:g}%, "
