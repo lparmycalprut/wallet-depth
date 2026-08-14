@@ -1919,10 +1919,11 @@ Verifikasi: `python -m py_compile cvd_daily.py signals.py scripts/update_cvd.py 
    chip per-cek (✓ hijau = lolos, ✗ merah = gagal) lewat `pillar_checks_html()`.
    `resolve_prepump_row()` menambah field `total` agar angka "X/6" dinamis.
 2. **Tombol "▶️ Get Signal (Manual Daily)"** di main page — menjalankan
-   `scripts.update_cvd.run_daily(..., send_telegram=False)` untuk mengetes
-   evaluasi harian manual; hasil ditulis ke `signals.json` + ditampilkan lewat
-   `_show_manual_signal_results()`. Tidak mengirim Telegram (mode test).
-3. `signals.drain_digest()` + param `send_telegram` di `run_daily` untuk membuang
-   buffer digest tanpa kirim Telegram pada run manual.
+   `scripts.update_cvd.run_daily(..., send_telegram=True)` untuk evaluasi harian
+   manual; hasil ditulis ke `signals.json` + ditampilkan lewat
+   `_show_manual_signal_results()`, **dan mengirim notif Telegram** untuk yang
+   lolos Setup Emas (dedupe per CA+hari).
+3. `signals.drain_digest()` + param `send_telegram` di `run_daily` (default
+   `True`) agar run manual bisa memilih kirim atau buang buffer digest.
 
 Verifikasi: seluruh `tests/test_*.py` hijau (17 suite) dengan venv terpisah.

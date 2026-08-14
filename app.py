@@ -777,7 +777,8 @@ else:
         "Jalankan evaluasi harian **manual** (sama seperti cron 07:00 WIB, "
         "menilai hari UTC kemarin) untuk mengetes apakah detektor berfungsi "
         "setelah perubahan. Hasil disimpan ke signals.json & ditampilkan di "
-        "sini. **Tidak mengirim Telegram** (mode test)."
+        "sini, **dan mengirim notif Telegram** (dedupe per CA+hari agar "
+        "tidak spam jika ditekan berulang)."
     )
     if st.button("▶️ Get Signal Sekarang", type="secondary",
                  use_container_width=True, key="manual_daily_signal"):
@@ -790,10 +791,11 @@ else:
                 else:
                     api_key = helius_keys[0] if helius_keys else ""
                     res = run_daily(
-                        wl_now, api_key=api_key, send_telegram=False)
+                        wl_now, api_key=api_key, send_telegram=True)
                     st.success(
                         f"Selesai mengevaluasi {len(res)} token — "
-                        "hasil tertulis ke signals.json.")
+                        "hasil tertulis ke signals.json & notif Telegram "
+                        "dikirim (untuk yang lolos Setup Emas).")
                     if res:
                         _show_manual_signal_results(res)
             except Exception as exc:  # pragma: no cover - UI guard
