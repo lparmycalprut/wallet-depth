@@ -91,6 +91,31 @@ st.markdown(
         border-radius: 4px;
         font-size: 0.86rem;
     }}
+    
+    @keyframes blink-red {{
+        0% {{ background-color: #7f1d1d; color: #fee2e2; border-color: #ef4444; box-shadow: 0 0 10px #ef4444; }}
+        25% {{ background-color: #fee2e2; color: #7f1d1d; border-color: #dc2626; }}
+        50% {{ background-color: #dc2626; color: #fff; }}
+        75% {{ background-color: #fee2e2; color: #7f1d1d; }}
+        100% {{ background-color: #7f1d1d; color: #fee2e2; }}
+    }}
+    @keyframes shake {{
+        0%,100% {{ transform: translateX(0); }}
+        25% {{ transform: translateX(-2px); }}
+        75% {{ transform: translateX(2px); }}
+    }}
+    .risk-warning-banner {{
+        animation: blink-red 1.2s infinite, shake 0.5s infinite;
+        border: 4px solid #ef4444;
+        border-radius: 16px;
+        padding: 18px 14px;
+        margin: 14px 0 20px 0;
+        font-weight: 900;
+        text-align: center;
+        font-size: 1.1rem;
+    }}
+    .risk-warning-big {{ font-size: 1.4rem !important; font-weight: 900 !important; display:block; margin:5px 0; }}
+
     </style>""",
     unsafe_allow_html=True,
 )
@@ -105,7 +130,22 @@ DAY_OPTIONS = {
     "7 Hari (168 Jam - Full Week Cycle)": 7,
 }
 
+
 st.title("📊 CVD — Setup Emas")
+st.markdown("""
+<div class="risk-warning-banner">
+    🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨<br>
+    <span style="font-size:1.8rem;">⛔⛔⛔ BACA INI!!!! ⛔⛔⛔</span><br>
+    🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨<br>
+    ⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴<br><br>
+    <span class="risk-warning-big">🟥🔴 PERINGATAN KERAS 🔴🟥</span><br>
+    <span class="risk-warning-big">🔴 SELALU HITUNG RISK JANGAN TERLALU BESAR, JANGAN TERJEBAK LAGI 🔴</span><br>
+    <span class="risk-warning-big">🔴 SELALU PASANG BAGIAN BAWAH LEBIH BESAR KARENA HARGA TURUN ITU PASTI, HARGA NAIK HANYA KEMUNGKINAN 🔴</span><br>
+    <span class="risk-warning-big">🔴 BACA INI!!!! 🔴</span><br><br>
+    ⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴⚠️🔴<br>
+    🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨
+</div>
+""", unsafe_allow_html=True)
 st.caption(
     f"6 cek harian: |CVD/Vol| < 3.0% · CVD datar/naik atau "
     f"vol naik+CVD turun · Buy TX ≥ {BUY_TX_MIN_PCT:g}% · "
