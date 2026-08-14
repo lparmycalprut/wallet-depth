@@ -107,11 +107,11 @@ DAY_OPTIONS = {
 
 st.title("📊 CVD — Setup Emas")
 st.caption(
-    f"7 cek harian: |CVD/Vol| < 3.0% · CVD datar/naik atau "
+    f"6 cek harian: |CVD/Vol| < 3.0% · CVD datar/naik atau "
     f"vol naik+CVD turun · Buy TX ≥ {BUY_TX_MIN_PCT:g}% · "
     "Avg Sell > Buy · Whale diserap · LPS −40%…−75% atau "
-    "ekspansi terserap · Lock ≥ 40%. "
-    "Telegram hanya jika 7/7 Setup Emas. Fetch hanya setelah tombol diklik."
+    "ekspansi terserap. Retensi holder hanya info jika tersedia. "
+    "Telegram hanya jika 6/6 Setup Emas. Fetch hanya setelah tombol diklik."
 )
 
 CONFIG = load_config()
@@ -597,7 +597,7 @@ if not run and not cached:
         f"<b>Siap dianalisis</b> — <code>{short}</code><br>"
         f"Rentang: <b>{day_label}</b>. "
         f"Klik <b>Fetch &amp; Analisis Multi-Hari</b> untuk mengambil "
-        f"swap GMGN (fallback Helius), mengevaluasi Setup Emas 7 cek, "
+        f"swap GMGN (fallback Helius), mengevaluasi Setup Emas 6 cek, "
         f"dan menghitung dominasi Buy TX vs Sell TX per hari. "
         f"Tidak ada fetch otomatis."
         f"</div>",
@@ -684,7 +684,7 @@ if not swaps_all:
 verdict = evaluation.get("verdict") or "FAIL"
 phase = evaluation.get("phase") or "NORMAL"
 passed = int(evaluation.get("passed") or 0)
-total = int(evaluation.get("total") or 7)
+total = int(evaluation.get("total") or 6)
 score = evaluation.get("score")
 score_txt = f" · skor {int(score)}" if score is not None else ""
 st.markdown(
@@ -692,22 +692,22 @@ st.markdown(
     f"<p class='kpi-title'>${symbol} · Setup Emas</p>"
     f"<p class='kpi-value'>{verdict} · {passed}/{total}"
     f"{score_txt} · {phase}</p>"
-    f"<p class='kpi-hint'>7 cek: |CVD/Vol| &lt; 3.0% · CVD datar/naik · "
+    f"<p class='kpi-hint'>6 cek: |CVD/Vol| &lt; 3.0% · CVD datar/naik · "
     f"Buy TX ≥ {BUY_TX_MIN_PCT:g}% · Avg Sell &gt; Buy · "
-    f"Whale diserap · LPS −40%…−75% / ekspansi terserap · "
-    f"Lock ≥ 40%. Telegram hanya 7/7 hari UTC penuh.</p>"
+    f"Whale diserap · LPS −40%…−75% / ekspansi terserap. "
+    f"Retensi holder hanya info. Telegram hanya 6/6 hari UTC penuh.</p>"
     f"</div>",
     unsafe_allow_html=True,
 )
 if state.get("telegram_queued"):
     st.success(
-        "Sinyal Telegram diantrikan — Setup Emas 7/7 "
+        "Sinyal Telegram diantrikan — Setup Emas 6/6 "
         f"({ev_daily.get('date') or '—'})."
     )
 elif ev_daily.get("setup_emas") or ev_daily.get("verdict") in (
         "SETUP EMAS", "PASS"):
     st.caption(
-        "Setup Emas hari UTC penuh sudah 7/7 — Telegram sudah "
+        "Setup Emas hari UTC penuh sudah 6/6 — Telegram sudah "
         "pernah dikirim untuk tanggal ini, atau sedang di-dedupe."
     )
 

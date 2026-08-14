@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Setup Emas detector — 7 daily-transaction checks across 3 pillars.
+"""Setup Emas detector — 6 daily-transaction checks across 3 pillars.
 
 Calibrated 2026-08-12 against Ansem / Punch / Assface (pass) and
 Callcat / Froge (stealth dump). Score points only at the golden
-accumulation setup; ignition (P4) is informational, not required.
+accumulation setup; ignition (P4) and holder retention are informational,
+not required.
 
   P1  CVD Absorption          |CVD/Vol| < 3.0%
   P1  Bullish Divergence      CVD flat/up, or vol-up + CVD-down absorption
@@ -12,9 +13,9 @@ accumulation setup; ignition (P4) is informational, not required.
   P2  Whale Pressure Absorbed whale net < 0
   P3  Volume                  LPS −40%…−75% OR absorbed expansion
                               (vol ≥ +40% and CVD down and |CVD/Vol| < 3%)
-  P3  Retensi Akumulator      Top-100 lock >= 40%
+  INFO Retensi Akumulator     Top-100 lock >= 40% (jika tersedia)
 
-Verdict: STEALTH DUMP / SETUP EMAS (7/7) / WATCH (>=5/7) / FAIL.
+Verdict: STEALTH DUMP / SETUP EMAS (6/6) / WATCH (>=5/6) / FAIL.
 """
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -35,7 +36,6 @@ LPS_DROP_MIN_PCT = -40.0
 LPS_DROP_MAX_PCT = -75.0
 # Symmetric with LPS: volume +40%+ with CVD down = large absorption.
 VOL_EXPANSION_MIN_PCT = 40.0
-SUPPLY_LOCK_MIN_PCT = 40.0
 CVD_FLAT_TOL_SOL = 1.0
 IGNITION_BUY_PCT = 55.0
 IGNITION_VOL_MIN_PCT = 100.0
@@ -57,7 +57,9 @@ PHASE_STEALTH = "STEALTH DUMP"
 PHASE_DUMP = "DISTRIBUSI / DUMP"
 PHASE_NORMAL = "NORMAL"
 
-GOLDEN_TOTAL = 7
+GOLDEN_TOTAL = 6
+# Relative weights; golden_score normalizes the six scored checks to 100.
+# Holder retention is deliberately absent: it is informational only.
 GOLDEN_WEIGHTS = {
     "p1_absorption": 18,
     "p1_cvd_flat": 12,
@@ -65,7 +67,6 @@ GOLDEN_WEIGHTS = {
     "p2_order_size": 16,
     "p2_whale": 10,
     "p3_lps": 16,
-    "p3_lock": 10,
 }
 
 
@@ -312,7 +313,7 @@ def evaluate_pillar2_participation(metrics):
 
 def evaluate_pillar3_supply(daily_rows, holder_lock_pct=None,
                             price_series=None, metrics=None):
-    """P3 — LPS dry-up or absorbed expansion + Top-100 lock."""
+    """P3 — LPS dry-up or absorbed expansion; holder lock is info only."""
     rows = list(daily_rows or [])
     latest = rows[-1] if rows else {}
     src = metrics or latest
@@ -323,15 +324,13 @@ def evaluate_pillar3_supply(daily_rows, holder_lock_pct=None,
     absorbed = _is_absorbed_expansion(change, metrics=src, row=latest)
     vol_ok = lps or absorbed
     lock = None if holder_lock_pct is None else _as_float(holder_lock_pct)
-    lock_ok = lock is not None and lock >= SUPPLY_LOCK_MIN_PCT
     no_ll = True
     if price_series and len(price_series) >= 2:
         lows = [_as_float(p, 0.0) for p in price_series if _as_float(p, 0) > 0]
         if len(lows) >= 2:
             no_ll = lows[-1] >= min(lows[:-1]) - 1e-18
-    passed = vol_ok and lock_ok and no_ll
+    passed = vol_ok and no_ll
     change_txt = "n/a" if change is None else f"{_as_float(change):+.1f}%"
-    lock_txt = "n/a" if lock is None else f"{lock:.1f}%"
     if lps:
         vol_label = "SUPLAI KERING / LPS"
     elif absorbed:
@@ -340,7 +339,7 @@ def evaluate_pillar3_supply(daily_rows, holder_lock_pct=None,
         vol_label = "belum kering / belum terserap"
     detail = (
         f"Vol vs H-1 {change_txt} ({vol_label})"
-        f" · Top-100 lock {lock_txt}"
+        f"{f' · Top-100 lock {lock:.1f}% (info)' if lock is not None else ''}"
         f"{'' if no_ll else ' · NEW LOWER-LOW'}"
     )
     return _pillar(
@@ -508,7 +507,6 @@ def evaluate_golden_checks(metrics, daily_rows=None, holder_lock_pct=None):
     change = m.get("volume_change_pct")
     if change is None and daily_rows:
         change = (daily_rows[-1] or {}).get("volume_change_pct")
-    lock = None if holder_lock_pct is None else _as_float(holder_lock_pct)
     cvd_ok = _p1_divergence_ok(daily_rows, m)
     absorbed = _is_absorbed_expansion(change, metrics=m)
     vol_ok = _p3_volume_ok(change, metrics=m)
@@ -577,26 +575,19 @@ def evaluate_golden_checks(metrics, daily_rows=None, holder_lock_pct=None):
             "passed": vol_ok,
             "detail": vol_detail,
         },
-        {
-            "id": "p3_lock",
-            "pillar": "p3",
-            "title": "Retensi Akumulator Bottom",
-            "passed": lock is not None and lock >= SUPPLY_LOCK_MIN_PCT,
-            "detail": (
-                "lock n/a" if lock is None
-                else f"Top-100 lock {lock:.1f}% (ambang >= 40%)"
-            ),
-        },
     ]
 
 
 def golden_score(checks):
-    """0-100: full weight if the check passed, else 0."""
-    total = 0
-    for item in checks or []:
-        if item.get("passed"):
-            total += int(GOLDEN_WEIGHTS.get(item.get("id"), 0))
-    return int(total)
+    """Normalized 0–100 score across the six scored checks."""
+    available = sum(
+        int(GOLDEN_WEIGHTS.get(item.get("id"), 0)) for item in (checks or [])
+    )
+    earned = sum(
+        int(GOLDEN_WEIGHTS.get(item.get("id"), 0))
+        for item in (checks or []) if item.get("passed")
+    )
+    return int(round(100.0 * earned / available)) if available else 0
 
 
 def is_setup_emas(evaluation) -> bool:

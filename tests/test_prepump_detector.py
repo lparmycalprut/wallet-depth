@@ -323,13 +323,13 @@ def test_kpi_cards_shape():
 
 
 def test_golden_checks_lps_band_and_score():
-    print("\n[10] Setup Emas 7 checks + LPS band + score")
+    print("\n[10] Setup Emas 6 checks + LPS band + score")
     swaps, lock = fixture_ansem()
     ev = evaluate_prepump(
         swaps, holder_lock_pct=lock, now_ts=DAY2 + 3600)
     checks = {c["id"]: c for c in ev["checks"]}
-    check(len(ev["checks"]) == 7, "exactly 7 golden checks")
-    check(all(c["passed"] for c in ev["checks"]), "Ansem 7/7 pass")
+    check(len(ev["checks"]) == 6, "exactly 6 scored checks")
+    check(all(c["passed"] for c in ev["checks"]), "Ansem 6/6 pass")
     check(ev["score"] == 100, f"Ansem score 100 (got {ev['score']})")
     # Extreme dry (−90%) is dead tape, not LPS.
     m = ev["metrics"].copy()
@@ -337,13 +337,17 @@ def test_golden_checks_lps_band_and_score():
     dry = evaluate_golden_checks(m, ev["usable_rows"], lock)
     lps = next(c for c in dry if c["id"] == "p3_lps")
     check(lps["passed"] is False, "−90% vol is outside LPS band")
-    # Missing lock cannot confirm retention.
+    # Holder retention is informational and never changes the scored checks.
     no_lock = evaluate_golden_checks(ev["metrics"], ev["usable_rows"], None)
-    lock_chk = next(c for c in no_lock if c["id"] == "p3_lock")
-    check(lock_chk["passed"] is False, "missing lock fails P3 retention")
-    check(is_setup_emas({"verdict": "WATCH", "passed": 6, "total": 7,
+    check(len(no_lock) == 6 and not any(c["id"] == "p3_lock" for c in no_lock),
+          "missing holder lock is excluded from scoring")
+    no_lock_ev = evaluate_prepump(
+        swaps, holder_lock_pct=None, now_ts=DAY2 + 3600)
+    check(no_lock_ev["setup_emas"] is True and no_lock_ev["score"] == 100,
+          "6/6 Setup Emas does not require holder lock")
+    check(is_setup_emas({"verdict": "WATCH", "passed": 5, "total": 6,
                          "date": "2024-01-02"}) is False,
-          "WATCH 6/7 is not Setup Emas")
+          "WATCH 5/6 is not Setup Emas")
 
 
 def test_absorbed_expansion_and_sisypuss():
@@ -394,7 +398,7 @@ def test_absorbed_expansion_and_sisypuss():
     check(checks["p1_cvd_flat"]["passed"] is True,
           "P1 divergence passes when vol up + CVD down")
     check(all(c["passed"] for c in checks.values()),
-          "synthetic SISYPUSS 10 Agu is 7/7")
+          "synthetic SISYPUSS 10 Agu is 6/6")
 
     ca = "8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump"
     cvd_path = os.path.join(
@@ -416,7 +420,7 @@ def test_absorbed_expansion_and_sisypuss():
                   f"digest 11 Agu scores 10 Agu (got {ev['date']})")
             check(ev["verdict"] == VERDICT_EMAS,
                   f"SISYPUSS 10 Agu SETUP EMAS "
-                  f"(got {ev['verdict']} {ev['passed']}/7 "
+                  f"(got {ev['verdict']} {ev['passed']}/6 "
                   f"stealth={ev['stealth_dump']})")
             check(is_setup_emas(ev) is True,
                   "SISYPUSS 10 Agu would notify")
