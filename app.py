@@ -445,7 +445,7 @@ st.caption(
     "**|CVD/Vol|** (hijau tua bila < 3.0%), "
     f"**Buy / Sell TX %** (≥ {BUY_TX_MIN_PCT:g}% buy ≈ seimbang), "
     "**4 Pilar** "
-    "(SETUP EMAS 7/7 / WATCH / FAIL / STEALTH DUMP). "
+    "(SETUP EMAS 6/6 / WATCH / FAIL / STEALTH DUMP). "
     "Tautan CVD hanya mengisi CA — fetch harus diklik di halaman CVD. "
     "Data di-refresh cron 4 jam + evaluasi harian 00:00 UTC."
 )
@@ -631,7 +631,7 @@ else:
     st.caption(
         f"Total {len(wl)} token dipantau. Diamond / Vol / CVD / Setup Emas "
         "dari snapshot cron. Tautan CVD hanya mengisi CA — fetch "
-        "manual di halaman CVD. Telegram hanya jika 7/7 Setup Emas; "
+        "manual di halaman CVD. Telegram hanya jika 6/6 Setup Emas; "
         "kalau tidak ada: TIDAK ADA SETUP HARI INI."
     )
 

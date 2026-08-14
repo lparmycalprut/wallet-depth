@@ -197,7 +197,7 @@ def queue_daily_cvd_message(ca, symbol, rows, *, price=None):
 
 
 def is_complete_daily_pass(evaluation) -> bool:
-    """True when Setup Emas (7/7 daily checks) fired on a finished UTC day.
+    """True when Setup Emas (6/6 scored checks) fired on a finished UTC day.
 
     Telegram is reserved for this case. WATCH / FAIL / STEALTH DUMP and
     intra-day partial prints never notify.
@@ -213,10 +213,10 @@ def is_complete_daily_pass(evaluation) -> bool:
             return False
         try:
             passed = int(ev.get("passed") or 0)
-            total = int(ev.get("total") or 7)
+            total = int(ev.get("total") or 6)
         except (TypeError, ValueError):
             return False
-        return passed >= 7 and total >= 7 and passed >= total
+        return passed >= 6 and total >= 6 and passed >= total
 
 
 def _telegram_already_sent(ca, date, *, kind="prepump_4pilar") -> bool:
@@ -278,7 +278,7 @@ def record_prepump_4pilar(ca, symbol, evaluation, *, now_ts=None, price=None):
         "verdict": ev.get("verdict"),
         "phase": ev.get("phase"),
         "passed": ev.get("passed"),
-        "total": ev.get("total", 7),
+        "total": ev.get("total", 6),
         "score": ev.get("score"),
         "setup_emas": bool(ev.get("setup_emas")),
         "stealth_dump": bool(ev.get("stealth_dump")),
@@ -316,7 +316,7 @@ def queue_no_setup_message(date, *, n_tokens=0):
         f"⚪ <b>TIDAK ADA SETUP HARI INI</b>\n"
         f"📅 {date} (hari UTC penuh)\n"
         f"Watchlist dipindai: {int(n_tokens)} token.\n"
-        f"Tidak ada yang lolos 7/7 Setup Emas."
+        f"Tidak ada yang lolos 6/6 Setup Emas."
     )
     sent = _queue_or_send(text)
     if sent:
@@ -366,12 +366,15 @@ def queue_prepump_4pilar_message(ca, symbol, evaluation, *, price=None):
         )
     score = ev.get("score")
     score_txt = f" · skor {int(score)}" if score is not None else ""
+    lock = ev.get("holder_lock_pct")
+    lock_txt = (f"🔒 Retensi Top-100 <b>{float(lock):.1f}%</b> (info)\n"
+                if lock is not None else "")
     text = (
         f"{icon} <b>SETUP EMAS · {symbol}</b>\n"
         f"<code>{ca}</code>\n\n"
         f"<b>{verdict}</b> · {ev.get('phase', '-')}{score_txt}\n"
         f"📅 {ev.get('date', '-')}  ·  "
-        f"{int(ev.get('passed') or 0)}/{int(ev.get('total') or 7)} cek\n"
+        f"{int(ev.get('passed') or 0)}/{int(ev.get('total') or 6)} cek\n"
         f"💧 |CVD/Vol| <b>{absorption:.2f}%</b> "
         f"(ambang &lt; 3.0%)\n"
         f"Buy TX <b>{buy_pct:.1f}%</b> vs "
@@ -380,6 +383,7 @@ def queue_prepump_4pilar_message(ca, symbol, evaluation, *, price=None):
         f"{int(metrics.get('sell_tx') or 0)})\n"
         f"Avg S {avg_sell:.3f} / B {avg_buy:.3f} SOL\n"
         f"📉 Vol vs H-1 {change_txt}\n"
+        f"{lock_txt}"
         f"{' · '.join(check_bits)}\n\n"
         f"<a href='https://dexscreener.com/solana/{ca}'>DexScreener</a>  ·  "
         f"<a href='https://gmgn.ai/sol/token/{ca}'>GMGN</a>"

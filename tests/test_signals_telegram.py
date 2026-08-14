@@ -35,36 +35,35 @@ def check(cond, msg):
 
 def test_is_complete_daily_pass():
     print("\n[1] is_complete_daily_pass gates Telegram")
-    seven = [
-        {"id": f"c{i}", "passed": True} for i in range(7)
+    six = [
+        {"id": f"c{i}", "passed": True} for i in range(6)
     ]
     check(sigmod.is_complete_daily_pass({
-        "verdict": "SETUP EMAS", "passed": 7, "total": 7,
+        "verdict": "SETUP EMAS", "passed": 6, "total": 6,
         "date": "2026-08-11", "stealth_dump": False,
-        "checks": seven,
-    }) is True, "SETUP EMAS 7/7 with date is complete")
+        "checks": six,
+    }) is True, "SETUP EMAS 6/6 with date is complete")
     check(sigmod.is_complete_daily_pass({
-        "verdict": "WATCH", "passed": 5, "total": 7,
+        "verdict": "WATCH", "passed": 5, "total": 6,
         "date": "2026-08-11",
-        "checks": seven[:5] + [{"id": "x", "passed": False},
-                               {"id": "y", "passed": False}],
-    }) is False, "WATCH 5/7 is not complete")
+        "checks": six[:5] + [{"id": "x", "passed": False}],
+    }) is False, "WATCH 5/6 is not complete")
     check(sigmod.is_complete_daily_pass({
-        "verdict": "FAIL", "passed": 1, "total": 7,
+        "verdict": "FAIL", "passed": 1, "total": 6,
         "date": "2026-08-11",
     }) is False, "FAIL is not complete")
     check(sigmod.is_complete_daily_pass({
-        "verdict": "STEALTH DUMP", "passed": 0, "total": 7,
+        "verdict": "STEALTH DUMP", "passed": 0, "total": 6,
         "date": "2026-08-11", "stealth_dump": True,
     }) is False, "STEALTH DUMP is not complete")
     check(sigmod.is_complete_daily_pass({
-        "verdict": "SETUP EMAS", "passed": 7, "total": 7,
-        "stealth_dump": False, "checks": seven,
+        "verdict": "SETUP EMAS", "passed": 6, "total": 6,
+        "stealth_dump": False, "checks": six,
     }) is False, "SETUP EMAS without a finished UTC date is rejected")
     check(sigmod.is_complete_daily_pass({
-        "verdict": "SETUP EMAS", "passed": 7, "total": 7,
+        "verdict": "SETUP EMAS", "passed": 6, "total": 6,
         "date": "2026-08-11", "stealth_dump": True,
-        "checks": seven,
+        "checks": six,
     }) is False, "stealth flag blocks SETUP EMAS")
     check(sigmod.is_complete_daily_pass({}) is False, "empty eval is False")
     check(sigmod.is_complete_daily_pass(None) is False, "None eval is False")
@@ -81,7 +80,7 @@ def test_maybe_queue_only_complete_and_dedupes():
     sigmod._DIGEST_MODE = True
     try:
         ev_pass = {
-            "verdict": "SETUP EMAS", "passed": 7, "total": 7,
+            "verdict": "SETUP EMAS", "passed": 6, "total": 6,
             "date": "2026-08-11", "stealth_dump": False,
             "setup_emas": True, "score": 100,
             "phase": "SETUP EMAS",
@@ -100,8 +99,6 @@ def test_maybe_queue_only_complete_and_dedupes():
                 {"id": "p2_whale", "title": "Whale Pressure Absorbed",
                  "passed": True},
                 {"id": "p3_lps", "title": "Volume Kering LPS",
-                 "passed": True},
-                {"id": "p3_lock", "title": "Retensi Akumulator Bottom",
                  "passed": True},
             ],
         }

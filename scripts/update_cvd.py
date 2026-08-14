@@ -172,7 +172,7 @@ def run_daily(watchlist, *, now=None, api_key=""):
             history, daily_rows=complete, holder_lock_pct=lock,
             now_ts=now_ts, include_today=False)
         record_prepump_4pilar(ca, symbol, ev, now_ts=now_ts)
-        # Telegram only when Setup Emas (7/7 daily checks) fired.
+        # Telegram only when Setup Emas (6/6 scored checks) fired.
         if maybe_queue_complete_prepump(ca, symbol, ev):
             n_emas += 1
         metrics = ev.get("metrics") or {}
@@ -184,7 +184,7 @@ def run_daily(watchlist, *, now=None, api_key=""):
                 "prepump_verdict": ev.get("verdict"),
                 "prepump_phase": ev.get("phase"),
                 "prepump_passed": ev.get("passed"),
-                "prepump_total": ev.get("total", 7),
+                "prepump_total": ev.get("total", 6),
                 "prepump_score": ev.get("score"),
                 "prepump_setup_emas": bool(ev.get("setup_emas")),
                 "prepump_stealth_dump": bool(ev.get("stealth_dump")),
