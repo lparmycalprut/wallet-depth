@@ -1910,9 +1910,10 @@ Verifikasi: `python -m py_compile cvd_daily.py signals.py scripts/update_cvd.py 
   bersifat informasional dan **tidak** menghitung kegagalan verdict saat datanya
   `n/a` (diverifikasi `tests/test_prepump_detector.py`: "missing holder lock is
   excluded from scoring", "6/6 Setup Emas does not require holder lock").
-- **Catatan data**: `signals.json` yang di-commit masih berisi format lama 7 cek
-  (dengan `p3_lock`) dari cron cloud yang berjalan versi lama. Setelah cron jalan
-  dengan kode baru, record baru berformat 6 cek / `total=6`.
+- **Catatan data saat implementasi awal**: `signals.json` yang di-commit masih
+  berisi format lama 7 cek (dengan `p3_lock`) dari cron cloud versi lama. Fix
+  lanjutan di bawah membuat cron/manual otomatis mengganti record itu dengan
+  format 6 cek / `total=6`.
 
 ### Fitur baru
 1. **Detail 4 Pilar di watchlist (`app.py`)** — kolom "4 Pilar" kini menampilkan
@@ -1927,3 +1928,36 @@ Verifikasi: `python -m py_compile cvd_daily.py signals.py scripts/update_cvd.py 
    `True`) agar run manual bisa memilih kirim atau buang buffer digest.
 
 Verifikasi: seluruh `tests/test_*.py` hijau (17 suite) dengan venv terpisah.
+
+## 2026-08-14 — Fix Get Signal: kompatibilitas import + force data baru
+
+### Akar masalah
+1. `scripts/update_cvd.py` melakukan hard-import `drain_digest`. Saat Streamlit
+   masih memegang modul `signals` versi sebelum fungsi itu tersedia, import
+   seluruh runner gagal dengan `cannot import name 'drain_digest'`.
+2. Tombol manual memakai chunk yang sudah dianggap lengkap dan persistence
+   menolak CA+tanggal yang sudah ada. Akibatnya record 7 cek tetap tersimpan
+   walaupun detector runtime sudah menghasilkan 6 cek.
+
+### Perbaikan
+- Hapus hard-import `drain_digest`; modul schema lama di-reload dari source
+  sebelum fungsi di-bind agar signature persistence juga sinkron.
+  `_discard_telegram_digest()` memakai fungsi tersebut bila ada dan reset state
+  yang aman untuk modul lama bila tidak ada.
+- Tambah `run_daily(..., force_refresh=True)`. Mode manual sekarang selalu
+  mencoba fetch ulang data penuh hari UTC kemarin, mempersist hasilnya, lalu
+  mengevaluasi enam cek saat ini. Fetch gagal/kosong memakai chunk cache secara
+  eksplisit dan UI menampilkan status fallback.
+- `record_daily_cvd(..., replace_existing=True)` dan
+  `record_prepump_4pilar(..., replace_existing=True)` mengganti row CA+tanggal
+  yang sama. Bahkan tanpa force, record prepump 7 cek terdeteksi sebagai legacy
+  dan otomatis dimigrasikan ke `schema_version=2`, `total=6`, tanpa `p3_lock`.
+  Status `telegram_sent` dipertahankan agar migrasi tidak mengirim ulang notif.
+- UI menjelaskan fetch 24 jam, menampilkan kolom sumber data, dan memberi
+  warning per jumlah token yang terpaksa memakai cache.
+- Jumlah Setup Emas kini dihitung dari evaluasi, bukan return queue Telegram;
+  rerun yang ter-dedupe tidak salah mengirim pesan "tidak ada setup".
+
+Verifikasi: `python tests/test_manual_signal_refresh.py`,
+`python tests/test_signals_telegram.py`, `python tests/test_prepump_detector.py`,
+serta seluruh suite `tests/test_*.py`.
