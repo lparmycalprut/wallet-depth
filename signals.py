@@ -166,6 +166,13 @@ def _queue_or_send(text):
     return send_telegram(text)
 
 
+def drain_digest():
+    """Drop any queued digest messages without sending (manual test runs)."""
+    global _DIGEST_MODE, _DIGEST_BUF
+    _DIGEST_BUF = []
+    _DIGEST_MODE = False
+
+
 def flush_telegram_digest(*, title=None, send_fn=None):
     global _DIGEST_MODE, _DIGEST_BUF
     items, _DIGEST_BUF, _DIGEST_MODE = list(_DIGEST_BUF), [], False

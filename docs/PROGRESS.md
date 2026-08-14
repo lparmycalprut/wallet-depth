@@ -1901,3 +1901,29 @@ Setelah reset ke alur harian saja (`07:00 WIB`), tidak ada cron rutin yang berja
 - Format Telegram baru memakai blok HTML, metrik volume/CVD, tautan GMGN + DexScreener, dan dedupe 14 menit untuk burst.
 
 Verifikasi: `python -m py_compile cvd_daily.py signals.py scripts/update_cvd.py scripts/priority_scan.py pages/4_📊_CVD.py` dan `python tests/test_cvd_daily.py`.
+
+## 2026-08-14 — P3-Lock verifikasi + 4-Pilar detail + tombol Get Signal manual
+
+### Status perubahan P3-Lock
+- **Sudah terimplementasi di kode** (`prepump_detector.py`): `evaluate_golden_checks`
+  mengembalikan tepat 6 cek inti tanpa `p3_lock`; `GOLDEN_TOTAL=6`. Retensi Top-100
+  bersifat informasional dan **tidak** menghitung kegagalan verdict saat datanya
+  `n/a` (diverifikasi `tests/test_prepump_detector.py`: "missing holder lock is
+  excluded from scoring", "6/6 Setup Emas does not require holder lock").
+- **Catatan data**: `signals.json` yang di-commit masih berisi format lama 7 cek
+  (dengan `p3_lock`) dari cron cloud yang berjalan versi lama. Setelah cron jalan
+  dengan kode baru, record baru berformat 6 cek / `total=6`.
+
+### Fitur baru
+1. **Detail 4 Pilar di watchlist (`app.py`)** — kolom "4 Pilar" kini menampilkan
+   chip per-cek (✓ hijau = lolos, ✗ merah = gagal) lewat `pillar_checks_html()`.
+   `resolve_prepump_row()` menambah field `total` agar angka "X/6" dinamis.
+2. **Tombol "▶️ Get Signal (Manual Daily)"** di main page — menjalankan
+   `scripts.update_cvd.run_daily(..., send_telegram=True)` untuk evaluasi harian
+   manual; hasil ditulis ke `signals.json` + ditampilkan lewat
+   `_show_manual_signal_results()`, **dan mengirim notif Telegram** untuk yang
+   lolos Setup Emas (dedupe per CA+hari).
+3. `signals.drain_digest()` + param `send_telegram` di `run_daily` (default
+   `True`) agar run manual bisa memilih kirim atau buang buffer digest.
+
+Verifikasi: seluruh `tests/test_*.py` hijau (17 suite) dengan venv terpisah.

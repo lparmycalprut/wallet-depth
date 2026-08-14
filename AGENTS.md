@@ -54,9 +54,17 @@ Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Per
 
 ## 4. Halaman yang disisakan
 
-- `app.py` — watchlist vertical + sinyal column (imminent/forming/cleared/neutral), skor, update WIB, hapus. Lalu form manual + scan trending + scan degen.
+- `app.py` — watchlist vertical + kolom "4 Pilar" kini menampilkan chip per-cek
+  (✓ hijau lolos / ✗ merah gagal via `pillar_checks_html`), + tombol
+  **"▶️ Get Signal (Manual Daily)"** yang menjalankan
+  `scripts.update_cvd.run_daily(..., send_telegram=False)` untuk tes manual
+  (tidak kirim Telegram). Lalu form manual + scan trending + scan degen.
 - `pages/3_⭐_Watchlist.py` — kelola watchlist (add/remove, history).
 - `pages/4_📊_CVD.py` — deep CVD.
+
+> **P3-Lock = informasional, bukan cek inti.** `evaluate_golden_checks`
+> mengembalikan tepat 6 cek (`GOLDEN_TOTAL=6`); retensi Top-100 tidak boleh
+> menjadi cek yang menggagalkan verdict saat datanya `n/a`.
 
 **Dihapus dari sidebar:** Compare, History, Screener, CTO Radar, LP Safe Radar, Accumulation Detector, Accumulation History, Memecoin Scanner, Prepump Checker. File + fungsi terkait dihapus total (breakout_guard, accum_history, ai_prompt, share_card, focus, cto_deep_scan, incubation_radar, lp_safe_radar, memecoin_scanner, monitor_alerts, telegram_monitor_alerts, token_context, cli, debug_rako).
 

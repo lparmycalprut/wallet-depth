@@ -284,6 +284,66 @@ def fetch_helius_top_holder_summary(ca: str, key_pool: tuple) -> dict:
         return {}
 
 
+# Short Indonesian labels for the 4-pillar per-check chips.
+PILLAR_CHECK_LABELS = {
+    "p1_absorption": "Absorption",
+    "p1_cvd_flat": "CVD datar",
+    "p2_buy_tx": "BuyTX",
+    "p2_order_size": "Order",
+    "p2_whale": "Whale",
+    "p3_lps": "LPS",
+    "p3_lock": "Lock",
+}
+
+
+def pillar_checks_html(four_sig):
+    """Compact per-check PASS/FAIL chips for the 4 Pilar column.
+
+    Green chip when a check passed, red when it failed. Lock (informational)
+    still shows green/red so the user sees the gap, but it never changes the
+    verdict. Returns ``None`` when no per-check data is available.
+    """
+    checks = (((four_sig or {}).get("detail") or {}).get("checks")
+              or ((four_sig or {}).get("detail") or {}).get("pillars") or [])
+    if not checks:
+        return None
+    parts = []
+    for c in checks:
+        cid = c.get("id") or ""
+        label = PILLAR_CHECK_LABELS.get(cid) or c.get("title") or cid
+        ok = bool(c.get("passed"))
+        cls = "glowing-pass" if ok else "glowing-fail"
+        parts.append(
+            f"<span class='{cls}' style='font-size:0.60rem;padding:1px 5px;"
+            f"border-radius:6px;display:inline-block;margin:1px 1px;'>"
+            f"{'✓' if ok else '✗'} {html.escape(str(label))}</span>")
+    return ("<div style='text-align:center;line-height:1.5;'>"
+            + "".join(parts) + "</div>")
+
+
+def _show_manual_signal_results(results):
+    """Render the results of a manual daily-signal run as a compact table."""
+    st.markdown("**Hasil Get Signal (manual):**")
+    rows = []
+    for r in results:
+        ev = r.get("evaluation") or {}
+        verdict = ev.get("verdict") or "—"
+        passed = ev.get("passed")
+        total = ev.get("total")
+        date = ev.get("date") or "—"
+        stmt = f"{passed}/{total}" if passed is not None else "—"
+        rows.append({
+            "Token": html.escape(str(r.get("symbol") or "?")),
+            "Verdict": verdict,
+            "Cek": stmt,
+            "Hari (UTC)": date,
+        })
+    if rows:
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+    else:
+        st.info("Tidak ada hasil evaluasi.")
+
+
 def get_watchlist_details(ca: str, meta: dict) -> dict:
     """Ambil detail tambahan untuk watchlist (diamond, real/dust)."""
     details = {
@@ -600,11 +660,13 @@ else:
                 label = verdict or phase or "—"
                 if stealth:
                     label = "STEALTH DUMP"
+                tot = four.get("total")
+                tot_txt = f"/{int(tot)}" if tot else ""
                 skor_txt = (
                     f"<span style='font-weight:800'>{html.escape(str(label))}"
                     f"</span>"
                     f"<br><span class='watch-muted'>"
-                    f"{pn}/7 emas</span>"
+                    f"{pn}{tot_txt} emas</span>"
                 )
             except (TypeError, ValueError):
                 skor_txt = "<span class='watch-muted'>—</span>"
@@ -670,9 +732,12 @@ else:
             unsafe_allow_html=True
         )
 
-        # 4-pilar verdict
+        # 4-pilar verdict + per-check PASS/FAIL chips
+        chips = pillar_checks_html(packed.get("four"))
+        chips_html = ("<br>" + chips) if chips else ""
         cols[5].markdown(
-            f"<div class='watch-row' style='{row_bg}'>{skor_txt}</div>",
+            f"<div class='watch-row' style='{row_bg}'>{skor_txt}"
+            f"{chips_html}</div>",
             unsafe_allow_html=True
         )
 
@@ -705,6 +770,36 @@ else:
         "manual di halaman CVD. Telegram hanya jika 6/6 Setup Emas; "
         "kalau tidak ada: TIDAK ADA SETUP HARI INI."
     )
+
+    # --- Manual trigger untuk daily signal (testing) ---------------------
+    st.markdown("#### ▶️ Get Signal (Manual Daily)")
+    st.caption(
+        "Jalankan evaluasi harian **manual** (sama seperti cron 07:00 WIB, "
+        "menilai hari UTC kemarin) untuk mengetes apakah detektor berfungsi "
+        "setelah perubahan. Hasil disimpan ke signals.json & ditampilkan di "
+        "sini, **dan mengirim notif Telegram** (dedupe per CA+hari agar "
+        "tidak spam jika ditekan berulang)."
+    )
+    if st.button("▶️ Get Signal Sekarang", type="secondary",
+                 use_container_width=True, key="manual_daily_signal"):
+        with st.spinner("Mengevaluasi sinyal harian semua token watchlist..."):
+            try:
+                from scripts.update_cvd import run_daily
+                wl_now = load_watchlist()
+                if not wl_now:
+                    st.warning("Watchlist kosong — tambahkan token dulu.")
+                else:
+                    api_key = helius_keys[0] if helius_keys else ""
+                    res = run_daily(
+                        wl_now, api_key=api_key, send_telegram=True)
+                    st.success(
+                        f"Selesai mengevaluasi {len(res)} token — "
+                        "hasil tertulis ke signals.json & notif Telegram "
+                        "dikirim (untuk yang lolos Setup Emas).")
+                    if res:
+                        _show_manual_signal_results(res)
+            except Exception as exc:  # pragma: no cover - UI guard
+                st.error(f"Gagal Get Signal: {exc}")
 
 # ---------------------------------------------------------------------------
 # 2. TAMBAH KOLEKSI MANUAL KE WATCHLIST
