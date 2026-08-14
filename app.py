@@ -9,7 +9,7 @@ Kept functions only:
   - signals.json + cvd_daily.json written by the 4h/daily cron
 
 Scoring 0–100 / Grade A-B-C is no longer the watchlist verdict.
-Each token is SETUP EMAS / WATCH / FAIL / STEALTH DUMP from 7 daily checks.
+Each token is SETUP EMAS / WATCH / FAIL / STEALTH DUMP from 6 daily checks.
 """
 import html
 import time
@@ -332,11 +332,15 @@ def _show_manual_signal_results(results):
         total = ev.get("total")
         date = ev.get("date") or "—"
         stmt = f"{passed}/{total}" if passed is not None else "—"
+        source = r.get("src") or "—"
         rows.append({
             "Token": html.escape(str(r.get("symbol") or "?")),
             "Verdict": verdict,
             "Cek": stmt,
             "Hari (UTC)": date,
+            "Data": ("fetch baru" if source == "fetch-forced"
+                     else "cache (fetch gagal)" if source == "chunks-fallback"
+                     else source),
         })
     if rows:
         st.dataframe(rows, use_container_width=True, hide_index=True)
@@ -775,14 +779,15 @@ else:
     st.markdown("#### ▶️ Get Signal (Manual Daily)")
     st.caption(
         "Jalankan evaluasi harian **manual** (sama seperti cron 07:00 WIB, "
-        "menilai hari UTC kemarin) untuk mengetes apakah detektor berfungsi "
-        "setelah perubahan. Hasil disimpan ke signals.json & ditampilkan di "
-        "sini, **dan mengirim notif Telegram** (dedupe per CA+hari agar "
-        "tidak spam jika ditekan berulang)."
+        "menilai hari UTC kemarin). Tombol ini **fetch ulang data 24 jam** "
+        "untuk setiap token, lalu mengganti record lama 7 cek dengan format "
+        "baru **6 cek** di signals.json. Setup Emas tetap dikirim ke Telegram "
+        "dengan dedupe per CA+hari agar tidak spam."
     )
     if st.button("▶️ Get Signal Sekarang", type="secondary",
                  use_container_width=True, key="manual_daily_signal"):
-        with st.spinner("Mengevaluasi sinyal harian semua token watchlist..."):
+        with st.spinner(
+                "Fetch ulang data 24 jam & evaluasi 6 cek semua token..."):
             try:
                 from scripts.update_cvd import run_daily
                 wl_now = load_watchlist()
@@ -791,11 +796,20 @@ else:
                 else:
                     api_key = helius_keys[0] if helius_keys else ""
                     res = run_daily(
-                        wl_now, api_key=api_key, send_telegram=True)
+                        wl_now, api_key=api_key, send_telegram=True,
+                        force_refresh=True)
+                    fresh = sum(r.get("src") == "fetch-forced" for r in res)
+                    fallback = sum(
+                        r.get("src") == "chunks-fallback" for r in res)
                     st.success(
-                        f"Selesai mengevaluasi {len(res)} token — "
-                        "hasil tertulis ke signals.json & notif Telegram "
-                        "dikirim (untuk yang lolos Setup Emas).")
+                        f"Selesai mengevaluasi {len(res)} token dalam format "
+                        f"6 cek — {fresh} token memakai fetch baru. Hasil "
+                        "mengganti record tanggal yang sama di signals.json; "
+                        "Telegram hanya untuk Setup Emas yang belum dikirim.")
+                    if fallback:
+                        st.warning(
+                            f"{fallback} token gagal mendapat fetch baru dan "
+                            "dievaluasi dari chunk cache. Lihat kolom Data.")
                     if res:
                         _show_manual_signal_results(res)
             except Exception as exc:  # pragma: no cover - UI guard

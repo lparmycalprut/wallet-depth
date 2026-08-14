@@ -11,6 +11,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SIGNALS_PATH = os.path.join(BASE_DIR, "signals.json")
 DAILY_CVD_PATH = os.path.join(BASE_DIR, "cvd_daily.json")
 MAX_SIGNALS = 2000
+PREPUMP_SCHEMA_VERSION = 2
+PREPUMP_CHECK_TOTAL = 6
 # Kept only as a compatibility constant for archived detector imports; the
 # daily CVD path below does not use the old detector.
 PREPUMP_DEDUPE_SEC = 20 * 3600
@@ -191,8 +193,9 @@ def flush_telegram_digest(*, title=None, send_fn=None):
     return sum(bool(sender(chunk)) for chunk in chunks)
 
 
-def record_daily_cvd(ca, symbol, rows, *, now_ts=None, price=None):
-    """Record one daily CVD result; never emits intra-day/legacy signals."""
+def record_daily_cvd(ca, symbol, rows, *, now_ts=None, price=None,
+                     replace_existing=False):
+    """Record one daily CVD result; optionally refresh the same UTC date."""
     now_ts = int(now_ts or time.time())
     latest = (rows or [])[-1] if rows else {}
     sig = {"ts": now_ts, "ca": ca, "symbol": symbol, "type": "cvd_daily",
@@ -203,12 +206,22 @@ def record_daily_cvd(ca, symbol, rows, *, now_ts=None, price=None):
         # No complete UTC day yet — nothing trustworthy to record.
         return latest
     items = load_signals()
-    # Only a previously recorded *complete* day blocks re-recording. Legacy
-    # partial records (written before this flag existed) must not stop the
-    # same date from being recorded again with full-day data.
-    if not any(x.get("ca") == ca and x.get("type") == "cvd_daily"
-               and x.get("date") == latest["date"] and x.get("complete_day")
-               for x in items[-500:]):
+    matches = [
+        idx for idx, item in enumerate(items)
+        if item.get("ca") == ca and item.get("type") == "cvd_daily"
+        and item.get("date") == latest["date"] and item.get("complete_day")
+    ]
+    # A manual force refresh must persist the newly fetched daily metrics,
+    # rather than silently retaining the first record written for that date.
+    if replace_existing and matches:
+        items = [
+            item for item in items
+            if not (item.get("ca") == ca and item.get("type") == "cvd_daily"
+                    and item.get("date") == latest["date"])
+        ]
+        items.append(sig)
+        save_signals(items)
+    elif not matches:
         items.append(sig)
         save_signals(items)
     try:
@@ -307,8 +320,30 @@ def maybe_queue_complete_prepump(ca, symbol, evaluation, *, price=None):
     return bool(sent)
 
 
-def record_prepump_4pilar(ca, symbol, evaluation, *, now_ts=None, price=None):
-    """Persist one 4-pillar daily evaluation (no 0–100 score)."""
+def _is_current_prepump_schema(item):
+    """Return whether a stored signal uses the six scored-check format."""
+    detail = (item or {}).get("detail") or {}
+    checks = detail.get("checks") or []
+    ids = {check.get("id") for check in checks}
+    try:
+        total = int((item or {}).get("total") or 0)
+        version = int((item or {}).get("schema_version") or 0)
+    except (TypeError, ValueError):
+        return False
+    return (version >= PREPUMP_SCHEMA_VERSION
+            and total == PREPUMP_CHECK_TOTAL
+            and len(checks) == PREPUMP_CHECK_TOTAL
+            and "p3_lock" not in ids)
+
+
+def record_prepump_4pilar(ca, symbol, evaluation, *, now_ts=None, price=None,
+                           replace_existing=False):
+    """Persist a daily evaluation and migrate legacy seven-check records.
+
+    The normal cron remains idempotent for records already using the current
+    six-check schema. A legacy same-day row is always replaced, while a manual
+    force refresh can replace any same-day row with newly fetched metrics.
+    """
     now_ts = int(now_ts or time.time())
     ev = evaluation or {}
     date = ev.get("date")
@@ -320,12 +355,13 @@ def record_prepump_4pilar(ca, symbol, evaluation, *, now_ts=None, price=None):
         "symbol": symbol,
         "type": "prepump_4pilar",
         "src": "four_pillar",
+        "schema_version": PREPUMP_SCHEMA_VERSION,
         "daily": True,
         "date": date,
         "verdict": ev.get("verdict"),
         "phase": ev.get("phase"),
         "passed": ev.get("passed"),
-        "total": ev.get("total", 6),
+        "total": ev.get("total", PREPUMP_CHECK_TOTAL),
         "score": ev.get("score"),
         "setup_emas": bool(ev.get("setup_emas")),
         "stealth_dump": bool(ev.get("stealth_dump")),
@@ -339,9 +375,25 @@ def record_prepump_4pilar(ca, symbol, evaluation, *, now_ts=None, price=None):
         "complete_day": True,
     }
     items = load_signals()
-    if not any(x.get("ca") == ca and x.get("type") == "prepump_4pilar"
-               and x.get("date") == date
-               for x in items[-500:]):
+    matches = [
+        item for item in items
+        if item.get("ca") == ca and item.get("type") == "prepump_4pilar"
+        and item.get("date") == date
+    ]
+    migrate_legacy = any(not _is_current_prepump_schema(item)
+                         for item in matches)
+    if not matches or replace_existing or migrate_legacy:
+        # Keep Telegram dedupe state when replacing a row. Without this, a
+        # format-only migration could resend an already delivered Setup Emas.
+        telegram_sent = any(item.get("telegram_sent") for item in matches)
+        if telegram_sent:
+            sig["telegram_sent"] = True
+        items = [
+            item for item in items
+            if not (item.get("ca") == ca
+                    and item.get("type") == "prepump_4pilar"
+                    and item.get("date") == date)
+        ]
         items.append(sig)
         save_signals(items)
     try:

@@ -56,9 +56,10 @@ Pemilik pakai untuk keputusan uang real: jangan longgarkan risiko diam-diam. Per
 
 - `app.py` — watchlist vertical + kolom "4 Pilar" kini menampilkan chip per-cek
   (✓ hijau lolos / ✗ merah gagal via `pillar_checks_html`), + tombol
-  **"▶️ Get Signal (Manual Daily)"** yang menjalankan
-  `scripts.update_cvd.run_daily(..., send_telegram=False)` untuk tes manual
-  (tidak kirim Telegram). Lalu form manual + scan trending + scan degen.
+  **"▶️ Get Signal (Manual Daily)"** yang menjalankan `run_daily` dengan
+  `force_refresh=True`: fetch ulang hari UTC kemarin, replace record tanggal
+  yang sama ke format 6 cek, dan Telegram hanya untuk Setup Emas yang belum
+  pernah dikirim. Lalu form manual + scan trending + scan degen.
 - `pages/3_⭐_Watchlist.py` — kelola watchlist (add/remove, history).
 - `pages/4_📊_CVD.py` — deep CVD.
 
@@ -336,3 +337,19 @@ UTC yang sudah selesai lolos (PASS 4/4), sekali per CA+tanggal.
 - `cvd_daily.tx_dominance_from_daily` + field `sell_tx_pct`.
 - `signals.is_complete_daily_pass` / `maybe_queue_complete_prepump`.
 - `scripts/update_cvd.py` daily memakai gerbang itu (bukan WATCH/STEALTH).
+
+## 18. Status 2026-08-14 — manual Get Signal fetch baru + migrasi 6 cek
+
+- `scripts/update_cvd.py` tidak lagi hard-import `drain_digest`; hot deploy
+  Streamlit dengan modul `signals` lama di-reload sebelum binding fungsi, jadi
+  tidak gagal import/signature. Fallback `_discard_telegram_digest()` tetap
+  bisa membersihkan state digest versi lama.
+- `run_daily(..., force_refresh=True)` memaksa fetch ulang seluruh hari UTC
+  kemarin walau enam chunk sudah lengkap. Jika API gagal/kosong, hasil cache
+  dipakai dan UI menandainya sebagai fallback.
+- Tombol Get Signal memakai force refresh tersebut. `record_daily_cvd` dan
+  `record_prepump_4pilar` mengganti record CA+tanggal yang sama, bukan tertahan
+  dedupe lama. Record 7 cek otomatis dimigrasikan ke schema v2: tepat 6 cek,
+  tanpa `p3_lock`; flag dedupe Telegram tetap dipertahankan.
+- Regresi offline: `tests/test_manual_signal_refresh.py` menguji import
+  kompatibel, bypass cache/fallback, dan replace format 7 → 6.

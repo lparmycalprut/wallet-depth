@@ -12,6 +12,7 @@ Schedule (WIB = UTC+7):
     already on disk so the midnight job never walks a full 24h of pages.
 """
 import argparse
+import importlib
 import os
 import sys
 import time
@@ -27,12 +28,44 @@ from cvd_daily import (CHUNK_SEC, aggregate_chunks_to_daily,
                        persist_daily_snapshot, swaps_from_4h_chunks,
                        upsert_4h_chunk)
 from prepump_detector import evaluate_prepump
-from signals import (begin_digest, drain_digest, flush_telegram_digest,
-                     maybe_queue_complete_prepump, queue_no_setup_message,
-                     record_daily_cvd, record_prepump_4pilar)
+import signals as signals_store
 from watchlist import load_watchlist, update_local_meta
 
+# A Streamlit hot deploy may retain the old module object even though the new
+# source is already on disk. Reload only that stale schema before binding the
+# functions used below; this prevents mixed old/new function signatures too.
+if getattr(signals_store, "PREPUMP_SCHEMA_VERSION", 0) < 2:
+    try:
+        signals_store = importlib.reload(signals_store)
+    except Exception as exc:
+        print(f"WARN: could not reload stale signals module: {exc}",
+              file=sys.stderr)
+
+begin_digest = signals_store.begin_digest
+flush_telegram_digest = signals_store.flush_telegram_digest
+is_complete_daily_pass = signals_store.is_complete_daily_pass
+maybe_queue_complete_prepump = signals_store.maybe_queue_complete_prepump
+queue_no_setup_message = signals_store.queue_no_setup_message
+record_daily_cvd = signals_store.record_daily_cvd
+record_prepump_4pilar = signals_store.record_prepump_4pilar
+
 UTC = timezone.utc
+
+
+def _discard_telegram_digest():
+    """Clear a digest without requiring the newest ``signals.py`` API.
+
+    Streamlit can briefly keep an older ``signals`` module in memory during a
+    hot deploy. Importing ``drain_digest`` directly made the entire manual
+    signal runner fail in that mixed-version window. Use it when available,
+    with a safe state-reset fallback for the older module.
+    """
+    drain = getattr(signals_store, "drain_digest", None)
+    if callable(drain):
+        drain()
+        return
+    signals_store._DIGEST_BUF = []
+    signals_store._DIGEST_MODE = False
 
 
 def _now():
@@ -105,15 +138,21 @@ def _yesterday(now=None):
     return (now.date() - timedelta(days=1)).isoformat()
 
 
-def _ensure_day_swaps(ca, symbol, pool, api_key, date, *, now_ts):
-    """Return yesterday's swaps from chunks, or fall back to a 24h fetch."""
+def _ensure_day_swaps(ca, symbol, pool, api_key, date, *, now_ts,
+                      force_fetch=False):
+    """Return one UTC day's swaps, optionally forcing a fresh API fetch."""
     covered = chunk_coverage_hours(ca, date)
     swaps = swaps_from_4h_chunks(ca, date=date)
-    if covered >= 20.0 and swaps:
+    if not force_fetch and covered >= 20.0 and swaps:
         print(f"  {symbol}: aggregating {covered:.1f}h of chunks "
               f"({len(swaps)} swaps)")
         return swaps, "chunks"
-    print(f"  {symbol}: chunk coverage {covered:.1f}h — fallback 24h fetch")
+    if force_fetch:
+        print(f"  {symbol}: manual refresh — fetching UTC {date} again "
+              f"(cached coverage {covered:.1f}h)")
+    else:
+        print(f"  {symbol}: chunk coverage {covered:.1f}h — "
+              "fallback 24h fetch")
     day = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=UTC)
     start = int(day.timestamp())
     end = start + 86400
@@ -125,21 +164,27 @@ def _ensure_day_swaps(ca, symbol, pool, api_key, date, *, now_ts):
             use_gmgn=True,
         )
     except Exception as exc:
-        print(f"  {symbol}: fallback fetch failed: {exc}")
-        return swaps, "chunks-partial"
+        print(f"  {symbol}: fresh fetch failed, using cached chunks: {exc}")
+        return swaps, "chunks-fallback"
     window = [s for s in (fetched or [])
               if len(s) >= 3 and start <= int(s[2]) < end]
+    if not window and swaps:
+        print(f"  {symbol}: fresh fetch returned no swaps; keeping "
+              f"{len(swaps)} cached swaps")
+        return swaps, "chunks-fallback"
     upsert_4h_chunk(ca, window, symbol=symbol, start_ts=start, end_ts=end)
     persist_swaps(ca, window, retain_hours=168, pool=pool)
-    return window, "fetch"
+    return window, "fetch-forced" if force_fetch else "fetch"
 
 
-def run_daily(watchlist, *, now=None, api_key="", send_telegram=True):
-    """Aggregate yesterday's six 4h chunks and evaluate the 4 pillars.
+def run_daily(watchlist, *, now=None, api_key="", send_telegram=True,
+              force_refresh=False):
+    """Aggregate yesterday and evaluate the current six Setup Emas checks.
 
-    ``send_telegram=False`` still records signals / updates metadata but
-    skips the Telegram digest — used by the manual "Get Signal" test button
-    so a manual run never spams the chat.
+    ``force_refresh=True`` performs a new full-day API fetch and replaces
+    same-date signal rows. It is used by the manual Get Signal button so old
+    seven-check records cannot block persistence of the current format.
+    ``send_telegram=False`` records results while discarding the digest.
     """
     now = now or _now()
     now_ts = int(now.timestamp())
@@ -155,7 +200,8 @@ def run_daily(watchlist, *, now=None, api_key="", send_telegram=True):
         if lock is None:
             lock = meta.get("wyckoff_lock_pct")
         day_swaps, src = _ensure_day_swaps(
-            ca, symbol, pool, api_key, yesterday, now_ts=now_ts)
+            ca, symbol, pool, api_key, yesterday, now_ts=now_ts,
+            force_fetch=force_refresh)
         history = swaps_from_4h_chunks(ca, days=7, now_ts=now_ts)
         if day_swaps:
             seen = {(s[0], float(s[1]), int(s[2]), str(s[3]))
@@ -172,14 +218,20 @@ def run_daily(watchlist, *, now=None, api_key="", send_telegram=True):
         complete = complete_daily_rows(daily, now_ts=now_ts)
         persist_daily_snapshot(ca, symbol, complete, now_ts=now_ts)
         if complete:
-            record_daily_cvd(ca, symbol, complete, now_ts=now_ts)
+            record_daily_cvd(
+                ca, symbol, complete, now_ts=now_ts,
+                replace_existing=force_refresh)
         ev = evaluate_prepump(
             history, daily_rows=complete, holder_lock_pct=lock,
             now_ts=now_ts, include_today=False)
-        record_prepump_4pilar(ca, symbol, ev, now_ts=now_ts)
-        # Telegram only when Setup Emas (6/6 scored checks) fired.
-        if maybe_queue_complete_prepump(ca, symbol, ev):
+        record_prepump_4pilar(
+            ca, symbol, ev, now_ts=now_ts,
+            replace_existing=force_refresh)
+        # Count every Setup Emas, including one already Telegram-deduped. The
+        # queue return value means "newly queued", not "a setup exists".
+        if is_complete_daily_pass(ev):
             n_emas += 1
+        maybe_queue_complete_prepump(ca, symbol, ev)
         metrics = ev.get("metrics") or {}
         try:
             update_local_meta(ca, {
@@ -214,7 +266,7 @@ def run_daily(watchlist, *, now=None, api_key="", send_telegram=True):
         flush_telegram_digest(
             title="🥇 <b>SETUP EMAS — 07:00 WIB</b>")
     else:
-        drain_digest()
+        _discard_telegram_digest()
     return results
 
 

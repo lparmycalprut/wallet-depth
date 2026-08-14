@@ -496,7 +496,7 @@ def classify_phase(pillars, *, stealth=False, vol_change_pct=None):
 
 
 def evaluate_golden_checks(metrics, daily_rows=None, holder_lock_pct=None):
-    """Return the 7 Setup Emas checks (pure, network-free)."""
+    """Return the six scored Setup Emas checks (pure, network-free)."""
     m = metrics or _empty_metrics()
     absorption = _as_float(m.get("absorption_pct"), 0.0)
     volume = _as_float(m.get("volume_sol"), 0.0)
