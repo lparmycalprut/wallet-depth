@@ -78,13 +78,39 @@ else:
             f"**${html.escape(symbol)}**  \n`{html.escape(mint[:8])}…`")
         date = result.get("date") or "Butuh ≥2 hari"
         columns[1].markdown(str(date))
+        # Signal badge
         columns[2].markdown(_signal_badge(result), unsafe_allow_html=True)
+        # Baseline status badge
+        baseline_status = result.get("baseline_status") or "missing"
+        reason = result.get("baseline_reason") or ""
+        if baseline_status == "unstable":
+            columns[2].markdown(
+                '<span style="display:inline-block;padding:.15rem .35rem;'
+                'border-radius:6px;background:#7f1d1d;color:#fee2e2;'
+                'font-size:.7rem;font-weight:700;">⚠️ BASELINE TIDAK STABIL</span>',
+                unsafe_allow_html=True)
+        elif baseline_status == "incompatible_direction":
+            columns[2].markdown(
+                '<span style="display:inline-block;padding:.15rem .35rem;'
+                'border-radius:6px;background:#7f4d1d;color:#fef3c7;'
+                'font-size:.7rem;font-weight:700;">⚠️ BASELINE BEDA ARAH</span>',
+                unsafe_allow_html=True)
+        # Baseline reason tooltip / caption
+        if reason:
+            columns[3].caption(str(reason).replace("; ", "\n"))
         columns[3].markdown(
             f"**{_number(result.get('ratio_N'))}**  \nSOL/1%")
         columns[4].markdown(
             f"**{_number(result.get('ratio_N_minus_1'))}**  \nSOL/1%")
-        columns[5].markdown(
-            f"**×{_number(result.get('multiplier'), '.2f')}**")
+        # Multiplier display: show raw value with rejection note when rejected
+        baseline_status = result.get("baseline_status") or "missing"
+        if baseline_status != "stable" and result.get("raw_multiplier") is not None:
+            columns[5].markdown(
+                f"**Raw ×{_number(result.get('raw_multiplier'), '.2f')}**<br>"
+                f"<span style='font-size:.65rem;color:#ef4444;'>— ditolak</span>")
+        else:
+            columns[5].markdown(
+                f"**×{_number(result.get('multiplier'), '.2f')}**")
         if columns[6].button("📈", key=f"chart-{mint}",
                              help="Buka chart 7 hari"):
             st.session_state["effort_mint"] = mint

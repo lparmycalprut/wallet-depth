@@ -18,7 +18,7 @@ from cvd_daily import (WIB, build_effort_rows,
                        fallback_candles_from_swaps)
 from effort_detector import (classify_effort, load_daily_effort,
                              merge_daily_effort, rows_for_mint)
-from signals import format_effort_alert, send_telegram
+from signals import format_effort_alert, send_telegram, should_send_telegram
 from watchlist import load_watchlist, update_local_meta
 
 ALERT_SIGNALS = {
@@ -90,7 +90,7 @@ def run_daily(watchlist: dict, *, now=None, api_key: str = "",
         history = rows_for_mint(merged, mint)
         result = classify_effort(history, mint)
         newest_key = (mint, result.get("date"))
-        should_alert = (result.get("signal") in ALERT_SIGNALS
+        should_alert = (should_send_telegram(result)
                         and newest_key not in existing_keys)
         sent = bool(send_alerts and should_alert
                     and send_telegram(format_effort_alert(symbol, result)))

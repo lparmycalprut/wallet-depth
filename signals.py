@@ -36,6 +36,14 @@ def send_telegram(text: str) -> bool:
         return False
 
 
+def should_send_telegram(result: dict) -> bool:
+    """Defensive gate: only S1-S4 with a stable baseline may trigger Telegram."""
+    signal = result.get("signal") or ""
+    stable = result.get("baseline_status") == "stable"
+    return signal in {"S1_PENYERAPAN", "S2_DUMP_DISTRIBUSI",
+                      "S3_DISTRIBUSI_KE_KUAT", "S4_PUMP_ASLI"} and stable
+
+
 def format_effort_alert(symbol: str, result: dict) -> str:
     """Render the only supported alert format."""
     signal = result.get("signal") or ""
