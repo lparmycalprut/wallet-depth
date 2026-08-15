@@ -559,214 +559,23 @@ def remove_from_watchlist(ca: str) -> bool:
                               f"({ca[:8]}…)")
 
 
-# ---------------------------------------------------------------------------
-# 15m Wyckoff snapshot (cron writes local; workflow commits watchlist.json)
-# ---------------------------------------------------------------------------
-WYCKOFF_FRESH_SEC = 45 * 60
-TRIGGER_HOLD_SEC = 3 * 3600
-DETAILS_STALE_SEC = 12 * 3600
-_GRADE_C_TYPE = "⚪ GRADE C: ROUTINE NOISE"
-_NORMAL_TYPES = frozenset({
-    "", "➖ NORMAL", "PRE_PUMP_DETECTION", _GRADE_C_TYPE,
-})
-
-
 def update_local_meta(ca, fields):
-    """Merge ``fields`` into local watchlist.json without a GitHub push.
-
-    The 15m cron uses this so the workflow commit picks up the latest
-    lock / vol / CVD / score even when no Telegram trigger fired.
-    """
+    """Merge detector fields into the local watchlist without a remote push."""
     ca = str(ca or "").strip()
     if not ca or not isinstance(fields, dict):
         return None
     try:
-        with open(WATCHLIST_PATH, encoding="utf-8") as f:
-            wl = json.load(f) or {}
-    except Exception:
-        wl = {}
-    if not isinstance(wl, dict):
-        wl = {}
-    entry = dict(wl.get(ca) or {})
-    for key, value in fields.items():
-        if value is not None:
-            entry[key] = value
-    wl[ca] = entry
+        with open(WATCHLIST_PATH, encoding="utf-8") as handle:
+            watchlist = json.load(handle) or {}
+    except (OSError, ValueError, TypeError):
+        watchlist = {}
+    entry = dict(watchlist.get(ca) or {})
+    entry.update({key: value for key, value in fields.items()
+                  if value is not None})
+    watchlist[ca] = entry
     try:
-        atomic_write_json(WATCHLIST_PATH, wl, indent=1)
+        atomic_write_json(WATCHLIST_PATH, watchlist, indent=1)
     except Exception as exc:
-        print(f"WARN: failed to save {WATCHLIST_PATH}: {exc}",
-              file=sys.stderr)
+        print(f"WARN: failed to save {WATCHLIST_PATH}: {exc}", file=sys.stderr)
         return None
     return entry
-
-
-def meta_details_stale(meta, now_ts=None):
-    """True when diamond / real-dust should be refreshed from live APIs."""
-    now_ts = int(now_ts or time.time())
-    ts = (meta or {}).get("details_ts")
-    if ts in (None, "", 0, "0"):
-        return True
-    try:
-        return (now_ts - int(ts)) > DETAILS_STALE_SEC
-    except (TypeError, ValueError):
-        return True
-
-
-PREPUMP_FRESH_SEC = 36 * 3600
-
-
-def resolve_prepump_row(meta, sig=None, now_ts=None):
-    """Pick the freshest 4-pillar snapshot for one watchlist row.
-
-    Preference: ``prepump_*`` fields written by the daily/4h cron, then
-    a ``prepump_4pilar`` row in ``signals.json``.
-    """
-    now_ts = int(now_ts or time.time())
-    meta = meta or {}
-    sig = sig or {}
-    snap_ts = 0
-    try:
-        snap_ts = int(meta.get("prepump_ts") or 0)
-    except (TypeError, ValueError):
-        snap_ts = 0
-    sig_ts = 0
-    try:
-        sig_ts = int(sig.get("ts") or 0)
-    except (TypeError, ValueError):
-        sig_ts = 0
-    use_snap = snap_ts > 0 and snap_ts >= sig_ts
-    if use_snap:
-        src_ts = snap_ts
-        verdict = meta.get("prepump_verdict") or ""
-        phase = meta.get("prepump_phase") or ""
-        passed = meta.get("prepump_passed")
-        total = meta.get("prepump_total")
-        stealth = bool(meta.get("prepump_stealth_dump"))
-        absorption = meta.get("prepump_absorption_pct")
-        buy_tx = meta.get("prepump_buy_tx_pct")
-        avg_buy = meta.get("prepump_avg_buy_sol")
-        avg_sell = meta.get("prepump_avg_sell_sol")
-        vol_change = meta.get("prepump_vol_change_pct")
-        source = "snapshot"
-    elif sig_ts > 0 and sig.get("type") == "prepump_4pilar":
-        src_ts = sig_ts
-        verdict = sig.get("verdict") or ""
-        phase = sig.get("phase") or ""
-        passed = sig.get("passed")
-        total = sig.get("total")
-        stealth = bool(sig.get("stealth_dump"))
-        detail = sig.get("detail") or {}
-        metrics = detail.get("metrics") or {}
-        absorption = metrics.get("absorption_pct")
-        buy_tx = metrics.get("buy_tx_pct")
-        avg_buy = metrics.get("avg_buy_sol")
-        avg_sell = metrics.get("avg_sell_sol")
-        vol_change = metrics.get("volume_change_pct")
-        source = "signal"
-    else:
-        return {
-            "verdict": "",
-            "phase": "",
-            "passed": None,
-            "total": None,
-            "stealth_dump": False,
-            "absorption_pct": None,
-            "buy_tx_pct": None,
-            "avg_buy_sol": None,
-            "avg_sell_sol": None,
-            "vol_change_pct": None,
-            "ts": None,
-            "stale": False,
-            "source": "none",
-        }
-    return {
-        "verdict": verdict,
-        "phase": phase,
-        "passed": passed,
-        "total": total,
-        "stealth_dump": stealth,
-        "absorption_pct": absorption,
-        "buy_tx_pct": buy_tx,
-        "avg_buy_sol": avg_buy,
-        "avg_sell_sol": avg_sell,
-        "vol_change_pct": vol_change,
-        "ts": src_ts,
-        "stale": (now_ts - src_ts) > PREPUMP_FRESH_SEC,
-        "source": source,
-    }
-
-
-def resolve_wyckoff_row(meta, sig, now_ts=None):
-    """Pick the freshest 15m numbers for one watchlist row.
-
-    Preference:
-      1. ``wyckoff_*`` snapshot on the watchlist entry (written every
-         cron cycle, pulled live from GitHub on Streamlit Cloud)
-      2. latest triggered Wyckoff row in signals.json
-    Trigger badges older than ``TRIGGER_HOLD_SEC`` expire to NORMAL so
-    a 4-hour-old absorption does not look current. Grade C is shown as
-    NORMAL (muted noise) but vol / CVD / lock / score stay visible.
-    """
-    now_ts = int(now_ts or time.time())
-    meta = meta or {}
-    sig = sig or {}
-    snap_ts = 0
-    try:
-        snap_ts = int(meta.get("wyckoff_ts") or 0)
-    except (TypeError, ValueError):
-        snap_ts = 0
-    sig_ts = 0
-    try:
-        sig_ts = int(sig.get("ts") or 0)
-    except (TypeError, ValueError):
-        sig_ts = 0
-
-    use_snap = snap_ts > 0 and snap_ts >= sig_ts
-    if use_snap:
-        raw_type = str(meta.get("wyckoff_type") or "")
-        score = meta.get("wyckoff_score")
-        vol_sol = meta.get("wyckoff_volume_sol")
-        cvd_sol = meta.get("wyckoff_cvd_sol")
-        lock_pct = meta.get("wyckoff_lock_pct")
-        if lock_pct is None:
-            lock_pct = meta.get("holder_lock_pct")
-        src_ts = snap_ts
-        source = "snapshot"
-    elif sig_ts > 0 and "score" in sig:
-        raw_type = str(sig.get("type") or "")
-        score = sig.get("score")
-        vol_sol = sig.get("volume_sol")
-        cvd_sol = sig.get("cvd_sol")
-        lock_pct = sig.get("holder_lock_pct")
-        if lock_pct is None:
-            lock_pct = meta.get("holder_lock_pct")
-        src_ts = sig_ts
-        source = "signal"
-    else:
-        return {
-            "raw_type": "",
-            "score": None,
-            "ts": None,
-            "vol_sol": None,
-            "cvd_sol": None,
-            "lock_pct": meta.get("holder_lock_pct"),
-            "stale": False,
-            "source": "none",
-        }
-
-    age = now_ts - src_ts
-    if raw_type in _NORMAL_TYPES:
-        raw_type = ""
-    elif source == "signal" and age > TRIGGER_HOLD_SEC:
-        raw_type = ""
-    return {
-        "raw_type": raw_type,
-        "score": score,
-        "ts": src_ts,
-        "vol_sol": vol_sol,
-        "cvd_sol": cvd_sol,
-        "lock_pct": lock_pct,
-        "stale": age > WYCKOFF_FRESH_SEC,
-        "source": source,
-    }
