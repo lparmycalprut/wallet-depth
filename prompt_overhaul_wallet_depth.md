@@ -200,7 +200,7 @@ https://gmgn.ai/sol/token/${CA}
 ## 6. CHART "HARGA vs CVD HARIAN" (WAJIB, di dashboard)
 
 Tambahkan chart di halaman CVD (atau halaman baru "Efisiensi"):
-- **Panel utama (dual axis):** sumbu X = tanggal (30 hari terakhir), sumbu Y kiri
+- **Panel utama (dual axis):** sumbu X = tanggal (**7 hari terakhir**), sumbu Y kiri
   = harga (USD), sumbu Y kanan = CVD kumulatif harian (SOL). Dua garis berbeda
   warna. Buat dengan matplotlib (bukan CDN).
 - **Panel kedua (opsional tapi disarankan):** bar/line `ratio` per hari,
