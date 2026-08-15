@@ -1,7 +1,7 @@
 """Streamlit renderer for unscored GMGN token listings."""
 from __future__ import annotations
 
-import html
+import html as _html
 
 import streamlit as st
 
@@ -9,6 +9,59 @@ from gmgn_screener import (screen, screen_hrhr, screen_hrhr_h1,
                            screen_trending_h1)
 from links import (CVD_PAGE_PATH, cvd_shortcut_query, external_links_html)
 from watchlist import add_to_watchlist
+
+# Inject consistent styling
+st.markdown("""
+<style>
+.trending-row {
+    padding: 0.6rem 0;
+    border-bottom: 1px solid #1e293b;
+}
+.trending-token {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+.trending-symbol {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #f8fafc;
+}
+.trending-mint {
+    font-size: 0.7rem;
+    color: #64748b;
+    font-family: monospace;
+}
+.trending-links {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.2rem;
+}
+.trending-links a {
+    font-size: 0.7rem;
+    color: #60a5fa;
+    text-decoration: none;
+}
+.trending-links a:hover {
+    color: #93c5fd;
+}
+.trending-metric {
+    text-align: center;
+    padding-top: 0.3rem;
+}
+.trending-metric-label {
+    font-size: 0.6rem;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.trending-metric-value {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #f8fafc;
+}
+</style>
+""", unsafe_allow_html=True)
 
 
 def _navigate_to_cvd(ca: str):
@@ -24,6 +77,19 @@ def _compact(value):
     if value >= 1_000:
         return f"${value / 1_000:.1f}K"
     return f"${value:,.0f}"
+
+
+def _color_change(value):
+    """Return color based on positive/negative change."""
+    try:
+        v = float(value)
+        if v > 0:
+            return f'<span style="color:#4ade80;">{v:+.1f}%</span>'
+        elif v < 0:
+            return f'<span style="color:#f87171;">{v:+.1f}%</span>'
+        return f'{v:+.1f}%'
+    except:
+        return '—'
 
 
 def run_screen(force=False, key="trending_rows", **_kwargs):
@@ -75,29 +141,75 @@ def render_trending(rows, *, key_prefix="listing", source="trending"):
     if not rows:
         st.info("Tidak ada token dari respons GMGN saat ini.")
         return
-    st.caption(
-        "Listing GMGN ditampilkan sebagai konteks pasar saja. Tidak ada skor "
-        "atau verdict; sinyal hanya berasal dari rasio effort harian.")
+    
+    # Header row
+    header_cols = st.columns([1.6, 1.0, 1.0, 1.0, 0.9, 0.9, 1.1])
+    header_titles = ["Token", "MC", "Liq", "Volume", "24h", "", ""]
+    header_style = "font-size:0.75rem;color:#64748b;text-align:center;"
+    
+    for col, title in zip(header_cols, header_titles):
+        col.markdown(f'<div style="{header_style}">{title}</div>', unsafe_allow_html=True)
+    
+    st.markdown('<hr style="margin:0.4rem 0;border-color:#1e293b;">', unsafe_allow_html=True)
+    
     for index, row in enumerate(rows):
-        columns = st.columns([1.5, 1.0, 1.0, 1.0, 0.9, 0.9, 1.15])
         ca = str(row.get("ca") or "")
-        symbol = html.escape(str(row.get("symbol") or "?").upper())
+        symbol = _html.escape(str(row.get("symbol") or "?").upper())
+        mc = _compact(row.get('mc'))
+        liq = _compact(row.get('liq'))
+        vol = _compact(row.get('volume'))
+        change = row.get('change_24h')
+        change_html = _color_change(change)
+        
+        columns = st.columns([1.6, 1.0, 1.0, 1.0, 0.9, 0.9, 1.1])
+        
+        # Token column with styled layout
         columns[0].markdown(
-            f"**${symbol}**  \\n`{html.escape(ca[:8])}…`  \\n"
-            f"{external_links_html(ca)}",
+            f'<div class="trending-token">'
+            f'<span class="trending-symbol">${symbol}</span>'
+            f'<span class="trending-mint">{_html.escape(ca[:8])}…</span>'
+            f'<div class="trending-links">{external_links_html(ca)}</div>'
+            f'</div>',
             unsafe_allow_html=True)
-        columns[1].markdown(f"MC  \\n**{_compact(row.get('mc'))}**")
-        columns[2].markdown(f"Liq  \\n**{_compact(row.get('liq'))}**")
+        
+        # MC column
+        columns[1].markdown(
+            f'<div class="trending-metric">'
+            f'<div class="trending-metric-value">{mc}</div>'
+            f'</div>',
+            unsafe_allow_html=True)
+        
+        # Liq column
+        columns[2].markdown(
+            f'<div class="trending-metric">'
+            f'<div class="trending-metric-value">{liq}</div>'
+            f'</div>',
+            unsafe_allow_html=True)
+        
+        # Volume column
         columns[3].markdown(
-            f"Volume  \\n**{_compact(row.get('volume'))}**")
+            f'<div class="trending-metric">'
+            f'<div class="trending-metric-value">{vol}</div>'
+            f'</div>',
+            unsafe_allow_html=True)
+        
+        # 24h change column
         columns[4].markdown(
-            f"24h  \\n**{float(row.get('change_24h') or 0):+.1f}%**")
-        if columns[5].button("📊 CVD", key=f"cvd-{key_prefix}-{index}",
-                             help="Buka halaman CVD dengan token ini "
-                                  "terpilih", use_container_width=True):
+            f'<div class="trending-metric">'
+            f'<div class="trending-metric-value">{change_html}</div>'
+            f'</div>',
+            unsafe_allow_html=True)
+        
+        # CVD button
+        if columns[5].button("📊", key=f"cvd-{key_prefix}-{index}",
+                             help="Buka CVD", use_container_width=True):
             _navigate_to_cvd(ca)
-        if columns[6].button("⭐ Watchlist", key=f"{key_prefix}-{index}",
-                             use_container_width=True):
+        
+        # Watchlist button
+        if columns[6].button("⭐", key=f"{key_prefix}-{index}",
+                             help="Tambah ke Watchlist", use_container_width=True):
             add_to_watchlist(row["ca"], row.get("symbol") or "?",
                              source=source)
             st.success(f"${symbol} ditambahkan")
+        
+        st.markdown('<hr style="margin:0.25rem 0;border-color:#1e293b;">', unsafe_allow_html=True)

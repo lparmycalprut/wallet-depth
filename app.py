@@ -31,6 +31,72 @@ st.markdown("""
 .metric-label{font-size:.72rem;color:#64748b;text-transform:uppercase;
  letter-spacing:.04em}.metric-value{font-size:1rem;font-weight:750}
 div[data-testid="stHorizontalBlock"]{align-items:center}
+
+/* Watchlist row styling */
+.watchlist-row {
+    display: flex;
+    align-items: center;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid #1e293b;
+}
+.watchlist-token {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+.watchlist-symbol {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #f8fafc;
+}
+.watchlist-mint {
+    font-size: 0.75rem;
+    color: #64748b;
+    font-family: monospace;
+}
+.watchlist-links {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.25rem;
+}
+.watchlist-links a {
+    font-size: 0.75rem;
+    color: #60a5fa;
+    text-decoration: none;
+}
+.watchlist-links a:hover {
+    color: #93c5fd;
+}
+.watchlist-metric {
+    text-align: center;
+}
+.watchlist-metric-label {
+    font-size: 0.65rem;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.watchlist-metric-value {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #f8fafc;
+}
+.watchlist-metric-sub {
+    font-size: 0.65rem;
+    color: #94a3b8;
+}
+.status-badge {
+    display: inline-block;
+    padding: 0.2rem 0.5rem;
+    border-radius: 8px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    margin-top: 0.25rem;
+}
+.badge-warning {background:#7f1d1d;color:#fee2e2}
+.badge-info {background:#334155;color:#e2e8f0}
+.badge-direct {background:#14532d;color:#dcfce7}
+.badge-neutral {background:#1e293b;color:#94a3b8}
 </style>
 <div class="hero"><h1>⚡ Wallet Depth</h1>
 <p>Deteksi tunggal berbasis efisiensi anomali: berapa SOL ΔCVD yang dibutuhkan
@@ -59,95 +125,119 @@ def _number(value, pattern=".3f"):
 
 watchlist = load_watchlist()
 effort_rows = load_daily_effort()
-st.subheader("Watchlist")
-st.caption("Candle harian memakai batas hari market 00:00–23:59 UTC "
-           "(sesuai GMGN/Helius/Solscan, 07:00 WIB). Baseline = walk-back hari sehat "
-           "terdekat (|CVD|≥1, |ΔHarga|≥3%, ratio≥0.05). Multiplier 2× / 0,5× tetap. "
-           "2 sinyal baru (ABSORBSI & EXHAUSTION) dicek sebelum gate lain.")
+st.subheader("📋 Watchlist")
+st.caption("Candle harian: 00:00–23:59 UTC | Baseline = walk-back hari sehat "
+           "(|CVD|≥1, |ΔHarga|≥3%, ratio≥0.05)")
 
 if not watchlist:
     st.info("Watchlist masih kosong. Tambahkan contract address di bawah.")
 else:
-    headers = st.columns([1.45, 1.35, 1.75, 1, 1, 1, .65, .55])
-    for column, title in zip(headers, ["Token", "Tanggal", "Sinyal",
-                                       "Ratio", "Baseline", "Multiplier",
-                                       "Chart", "Hapus"]):
-        column.markdown(f"**{title}**")
+    # Header row with styled columns
+    header_cols = st.columns([1.6, 1.2, 1.8, 1.1, 1.1, 1.0, .6, .6])
+    header_styles = [
+        "font-size:0.8rem;color:#94a3b8;",
+        "font-size:0.8rem;color:#94a3b8;",
+        "font-size:0.8rem;color:#94a3b8;",
+        "text-align:center;font-size:0.8rem;color:#94a3b8;",
+        "text-align:center;font-size:0.8rem;color:#94a3b8;",
+        "text-align:center;font-size:0.8rem;color:#94a3b8;",
+        "text-align:center;font-size:0.8rem;color:#94a3b8;",
+        "text-align:center;font-size:0.8rem;color:#94a3b8;"
+    ]
+    header_titles = ["Token", "Tanggal", "Sinyal", "Ratio", "Baseline", "Multi", "Chart", ""]
+    for col, style, title in zip(header_cols, header_styles, header_titles):
+        col.markdown(f'<div style="{style}">{title}</div>', unsafe_allow_html=True)
+    
+    st.markdown('<hr style="margin:0.5rem 0;border-color:#1e293b;">', unsafe_allow_html=True)
+    
     for mint, meta in watchlist.items():
         history = rows_for_mint(effort_rows, mint)
         result = classify_effort(history, mint)
-        columns = st.columns([1.45, 1.35, 1.75, 1, 1, 1, .65, .55])
+        
         symbol = str((meta or {}).get("symbol") or "?").upper()
-        columns[0].markdown(
-            f"**${html.escape(symbol)}**  \\n`{html.escape(mint[:8])}…`  \\n"
-            f"{external_links_html(mint)}",
-            unsafe_allow_html=True)
-        date = result.get("date") or "Butuh baseline sehat"
-        columns[1].markdown(str(date))
-        # Signal badge
-        columns[2].markdown(_signal_badge(result), unsafe_allow_html=True)
-        # Baseline status badge
+        date = result.get("date") or "—"
+        ratio_N = _number(result.get('ratio_N'))
+        ratio_prev = _number(result.get('ratio_N_minus_1'))
+        multiplier = _number(result.get('multiplier'), '.2f')
+        
+        # Build status badges HTML
         baseline_status = result.get("baseline_status") or "missing"
         reason = result.get("baseline_reason") or ""
+        
+        badges_html = _signal_badge(result)
+        
         if baseline_status == "unstable":
-            columns[2].markdown(
-                '<span style="display:inline-block;padding:.15rem .35rem;'
-                'border-radius:6px;background:#7f1d1d;color:#fee2e2;'
-                'font-size:.7rem;font-weight:700;">⚠️ BASELINE TIDAK STABIL</span>',
-                unsafe_allow_html=True)
+            badges_html += '<br><span class="status-badge badge-warning">⚠️ BASELINE TIDAK STABIL</span>'
         elif baseline_status == "insufficient_baseline":
-            columns[2].markdown(
-                '<span style="display:inline-block;padding:.15rem .35rem;'
-                'border-radius:6px;background:#334155;color:#e2e8f0;'
-                'font-size:.7rem;font-weight:700;">⚠️ BUTUH BASELINE</span>',
-                unsafe_allow_html=True)
+            badges_html += '<br><span class="status-badge badge-info">⚠️ BUTUH BASELINE</span>'
         elif baseline_status == "noise":
-            columns[2].markdown(
-                '<span style="display:inline-block;padding:.15rem .35rem;'
-                'border-radius:6px;background:#334155;color:#e2e8f0;'
-                'font-size:.7rem;font-weight:700;">⚪ NOISE &lt;5 SOL</span>',
-                unsafe_allow_html=True)
+            badges_html += '<br><span class="status-badge badge-neutral">⚪ NOISE &lt;5 SOL</span>'
         elif baseline_status == "incompatible_direction":
-            # legacy — should no longer appear after v3 but keep for backward compat
-            columns[2].markdown(
-                '<span style="display:inline-block;padding:.15rem .35rem;'
-                'border-radius:6px;background:#7f4d1d;color:#fef3c7;'
-                'font-size:.7rem;font-weight:700;">⚠️ BASELINE BEDA ARAH</span>',
-                unsafe_allow_html=True)
-        elif baseline_status == "direct":
-            # direct signals are valid — show small badge if wanted
-            if result.get("signal") in ("ABSORBSI_LANGSUNG", "SELLING_EXHAUSTION"):
-                columns[2].markdown(
-                    '<span style="display:inline-block;padding:.15rem .35rem;'
-                    'border-radius:6px;background:#14532d;color:#dcfce7;'
-                    'font-size:.7rem;font-weight:700;">⚡ DIRECT</span>',
-                    unsafe_allow_html=True)
-        # Baseline reason tooltip / caption
-        if reason:
-            # avoid overlong caption, replace ; with newline
-            columns[3].caption(str(reason).replace("; ", "\n"))
-        columns[3].markdown(
-            f"**{_number(result.get('ratio_N'))}**  \\nSOL/1%")
-        columns[4].markdown(
-            f"**{_number(result.get('ratio_N_minus_1'))}**  \\nSOL/1%")
-        # Multiplier display: show raw value with rejection note when rejected
-        if baseline_status not in ("stable", "direct") and result.get("raw_multiplier") is not None:
-            columns[5].markdown(
-                f"**Raw ×{_number(result.get('raw_multiplier'), '.2f')}**<br>"
-                f"<span style='font-size:.65rem;color:#ef4444;'>— ditolak</span>",
-                unsafe_allow_html=True)
+            badges_html += '<br><span class="status-badge badge-warning">⚠️ BASELINE BEDA ARAH</span>'
+        elif baseline_status == "direct" and result.get("signal") in ("ABSORBSI_LANGSUNG", "SELLING_EXHAUSTION"):
+            badges_html += '<br><span class="status-badge badge-direct">⚡ DIRECT</span>'
+        
+        # Multiplier with rejection indicator
+        raw_multiplier = result.get('raw_multiplier')
+        if baseline_status not in ("stable", "direct") and raw_multiplier is not None:
+            multiplier_html = f'<span style="font-size:0.95rem;font-weight:700;">×{multiplier}</span><br><span style="font-size:0.65rem;color:#ef4444;">Raw: ×{_number(raw_multiplier, ".2f")}</span>'
         else:
-            columns[5].markdown(
-                f"**×{_number(result.get('multiplier'), '.2f')}**",
-                unsafe_allow_html=True)
-        if columns[6].button("📈", key=f"chart-{mint}",
-                             help="Buka chart 7 hari"):
+            multiplier_html = f'<span style="font-size:0.95rem;font-weight:700;">×{multiplier}</span>'
+        
+        # Reason tooltip
+        reason_html = f'<div style="font-size:0.6rem;color:#64748b;line-height:1.3;">{str(reason).replace("; ", "<br>") if reason else ""}</div>'
+        
+        # Render row with clean layout
+        cols = st.columns([1.6, 1.2, 1.8, 1.1, 1.1, 1.0, .6, .6])
+        
+        # Token column
+        cols[0].markdown(
+            f'<div class="watchlist-token">'
+            f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
+            f'<span class="watchlist-mint">{html.escape(mint[:8])}…</span>'
+            f'<div class="watchlist-links">{external_links_html(mint)}</div>'
+            f'</div>',
+            unsafe_allow_html=True)
+        
+        # Date column
+        cols[1].markdown(f'<div style="font-size:0.85rem;color:#cbd5e1;">{date}</div>', unsafe_allow_html=True)
+        
+        # Signal + badges column
+        cols[2].markdown(badges_html, unsafe_allow_html=True)
+        
+        # Ratio N column (current)
+        cols[3].markdown(
+            f'<div class="watchlist-metric">'
+            f'<div class="watchlist-metric-value">{ratio_N}</div>'
+            f'<div class="watchlist-metric-sub">SOL/1%</div>'
+            f'</div>',
+            unsafe_allow_html=True)
+        
+        # Ratio N-1 column (baseline)
+        cols[4].markdown(
+            f'<div class="watchlist-metric">'
+            f'<div class="watchlist-metric-value">{ratio_prev}</div>'
+            f'<div class="watchlist-metric-sub">SOL/1%</div>'
+            f'{reason_html}'
+            f'</div>',
+            unsafe_allow_html=True)
+        
+        # Multiplier column
+        cols[5].markdown(
+            f'<div class="watchlist-metric">{multiplier_html}</div>',
+            unsafe_allow_html=True)
+        
+        # Chart button
+        if cols[6].button("📈", key=f"chart-{mint}", help="Buka chart 7 hari", use_container_width=True):
             st.session_state["effort_mint"] = mint
             st.switch_page("pages/4_📊_CVD.py")
-        if columns[7].button("✕", key=f"remove-{mint}"):
+        
+        # Remove button
+        if cols[7].button("✕", key=f"remove-{mint}", help="Hapus dari watchlist", use_container_width=True):
             remove_from_watchlist(mint)
             st.rerun()
-        st.divider()
+        
+        st.markdown('<hr style="margin:0.3rem 0;border-color:#1e293b;">', unsafe_allow_html=True)
 
 with st.expander("➕ Tambah token", expanded=not bool(watchlist)):
     with st.form("add-token", clear_on_submit=True):
@@ -168,10 +258,20 @@ with st.expander("➕ Tambah token", expanded=not bool(watchlist)):
             st.rerun()
 
 st.divider()
-st.subheader("Temukan token")
-st.caption("Scanner hanya listing dan konteks pasar. Ia tidak menghasilkan "
-           "verdict. Setelah token masuk watchlist, cron harian mengukurnya.")
-trend_tab, degen_tab = st.tabs(["Trending", "Degen"])
+st.subheader("🔍 Temukan Token")
+st.caption("Listing GMGN sebagai konteks pasar. Sinyal hanya dari rasio effort harian.")
+
+# Add tab styling
+st.markdown("""
+<style>
+[data-testid="stTabBar"] button {
+    font-size: 0.9rem !important;
+    padding: 0.5rem 1rem !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+trend_tab, degen_tab = st.tabs(["📈 Trending", "🔥 Degen"])
 with trend_tab:
     if st.button("🔎 Scan Trending", use_container_width=True):
         rows_24, error_24 = run_screen(force=True)
