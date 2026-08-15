@@ -4,84 +4,196 @@
   "note": "",
   "added": "2026-08-06",
   "source": "hrhr",
-  "avg_cost": -57.70048554769072
+  "avg_cost": -57.70048554769072,
+  "effort_ts": 1786760625,
+  "effort_date": "2026-08-14",
+  "effort_signal": "S5_NETRAL",
+  "effort_bias": "neutral",
+  "effort_ratio": 0.45842566,
+  "effort_previous_ratio": 0.5078801,
+  "effort_multiplier": 0.90262576,
+  "effort_divergence": false
  },
  "8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump": {
   "symbol": "SISYPUSS",
   "note": "",
   "added": "2026-08-10",
-  "source": "manual"
+  "source": "manual",
+  "effort_ts": 1786760625,
+  "effort_date": "2026-08-14",
+  "effort_signal": "S5_NETRAL",
+  "effort_bias": "neutral",
+  "effort_ratio": 0.77459164,
+  "effort_previous_ratio": 0.68839528,
+  "effort_multiplier": 1.12521347,
+  "effort_divergence": false
  },
  "DTiLUGhzmtP3wZC6tXRXtxYPUxztvnQMxAW54ZtKpump": {
   "symbol": "CALLCAT",
   "note": "",
   "added": "2026-08-12",
-  "source": "manual"
+  "source": "manual",
+  "effort_ts": 1786760625,
+  "effort_date": "2026-08-14",
+  "effort_signal": "S5_NETRAL",
+  "effort_bias": "neutral",
+  "effort_ratio": 0.56841456,
+  "effort_previous_ratio": 0.59610608,
+  "effort_multiplier": 0.95354599,
+  "effort_divergence": false
  },
  "H78WENHosTWPFuQvtm8swi83ipTqANJi921iG51Apump": {
   "symbol": "LUNA",
   "note": "",
   "added": "2026-08-12",
-  "source": "manual"
+  "source": "manual",
+  "effort_ts": 1786760625,
+  "effort_date": "2026-08-14",
+  "effort_signal": "S5_NETRAL",
+  "effort_bias": "neutral",
+  "effort_ratio": 0.80998833,
+  "effort_previous_ratio": 0.65701751,
+  "effort_multiplier": 1.23282609,
+  "effort_divergence": false
  },
  "68GYUJW31GSJwLz44HGGQYaGXpG5iiWwYGiWxZ6apump": {
   "symbol": "chrome",
   "note": "",
   "added": "2026-08-12",
-  "source": "manual"
+  "source": "manual",
+  "effort_ts": 1786760625,
+  "effort_date": "2026-08-14",
+  "effort_signal": "S2_DUMP_DISTRIBUSI",
+  "effort_bias": "bearish",
+  "effort_ratio": 0.75212424,
+  "effort_previous_ratio": 1.55479754,
+  "effort_multiplier": 0.48374417,
+  "effort_divergence": false
  },
  "9tWD7CuW2g59fgMUnggo4cZqB6XHEZrHtBaa8q7dpump": {
   "symbol": "lmeow",
   "note": "",
   "added": "2026-08-12",
-  "source": "manual"
+  "source": "manual",
+  "effort_ts": 1786760625,
+  "effort_date": "2026-08-14",
+  "effort_signal": "S5_NETRAL",
+  "effort_bias": "neutral",
+  "effort_ratio": 1.07868985,
+  "effort_previous_ratio": 0.94825383,
+  "effort_multiplier": 1.13755391,
+  "effort_divergence": false
  },
  "LbvA6YcxnPcKXyc35TsZ5rH1Tz6P3E3SoFPSPTGpump": {
   "symbol": "Mover",
   "note": "",
   "added": "2026-08-12",
-  "source": "manual"
+  "source": "manual",
+  "effort_ts": 1786760625,
+  "effort_date": "2026-08-14",
+  "effort_signal": "S5_NETRAL",
+  "effort_bias": "neutral",
+  "effort_ratio": 0.57467272,
+  "effort_previous_ratio": 0.61792923,
+  "effort_multiplier": 0.92999763,
+  "effort_divergence": false
  },
  "Dz2iVSLXFp7dXowD1nybWyCXuUcpV7cBZu68YPV5pump": {
   "symbol": "Sheep",
   "note": "",
   "added": "2026-08-12",
-  "source": "manual"
+  "source": "manual",
+  "effort_ts": 1786760625,
+  "effort_date": "2026-08-14",
+  "effort_signal": "S1_PENYERAPAN",
+  "effort_bias": "bullish",
+  "effort_ratio": 1.15192348,
+  "effort_previous_ratio": 0.22421486,
+  "effort_multiplier": 5.13758758,
+  "effort_divergence": false
  },
  "AENK1YJ9978xp19xQLKat6eNmndf7Jg2FxFfKiwvpump": {
   "symbol": "LOUIE",
   "note": "",
   "added": "2026-08-12",
-  "source": "manual"
+  "source": "manual",
+  "effort_ts": 1786760625,
+  "effort_date": "2026-08-14",
+  "effort_signal": "S5_NETRAL",
+  "effort_bias": "neutral",
+  "effort_ratio": 0.39782843,
+  "effort_previous_ratio": 0.75952336,
+  "effort_multiplier": 0.52378696,
+  "effort_divergence": false
  },
  "5xhJC2F2q8Mgk1DYaMBTxNY8t8xDE7cdgTcv5cevpump": {
   "symbol": "TIT",
   "note": "",
   "added": "2026-08-12",
-  "source": "manual"
+  "source": "manual",
+  "effort_ts": 1786760625,
+  "effort_date": "2026-08-14",
+  "effort_signal": "S5_NETRAL",
+  "effort_bias": "neutral",
+  "effort_ratio": 0.83189278,
+  "effort_previous_ratio": 0.93778754,
+  "effort_multiplier": 0.88708022,
+  "effort_divergence": false
  },
  "86KR6eG2VuNntLBi23SAYFW1cXkiYcwxGJd746rqcUAG": {
   "symbol": "MIM",
   "note": "",
   "added": "2026-08-12",
-  "source": "manual"
+  "source": "manual",
+  "effort_ts": 1786760625,
+  "effort_date": "2026-08-14",
+  "effort_signal": "S1_PENYERAPAN",
+  "effort_bias": "bullish",
+  "effort_ratio": 1.46298813,
+  "effort_previous_ratio": 0.00763541,
+  "effort_multiplier": 191.60570683,
+  "effort_divergence": false
  },
  "6fEaYuzirTMXFnFo7dGKHJs8wWVFPdh1bfZL9oRPpump": {
   "symbol": "JLY",
   "note": "",
   "added": "2026-08-13",
-  "source": "manual"
+  "source": "manual",
+  "effort_ts": 1786760625,
+  "effort_date": "2026-08-14",
+  "effort_signal": "S5_NETRAL",
+  "effort_bias": "neutral",
+  "effort_ratio": 0.73527942,
+  "effort_previous_ratio": 0.95702511,
+  "effort_multiplier": 0.76829689,
+  "effort_divergence": false
  },
  "B4ptaVsUe6YbtBwAS38WFeweSrVNfQLCcj9JRrtjU8vn": {
   "symbol": "SOLdiers",
   "note": "",
   "added": "2026-08-13",
-  "source": "manual"
+  "source": "manual",
+  "effort_ts": 1786760625,
+  "effort_date": "2026-08-14",
+  "effort_signal": "S5_NETRAL",
+  "effort_bias": "neutral",
+  "effort_ratio": 1.60509323,
+  "effort_previous_ratio": 1.5504681,
+  "effort_multiplier": 1.03523138,
+  "effort_divergence": false
  },
  "5sd8bKraewJNHFg72scxxYXNeLCASVct1gxqi3Xipump": {
   "symbol": "RAKO",
   "note": "",
   "added": "2026-08-13",
-  "source": "manual"
+  "source": "manual",
+  "effort_ts": 1786760625,
+  "effort_date": "2026-08-14",
+  "effort_signal": "S5_NETRAL",
+  "effort_bias": "neutral",
+  "effort_ratio": 0.6537586,
+  "effort_previous_ratio": 0.98102311,
+  "effort_multiplier": 0.66640489,
+  "effort_divergence": false
  }
 }

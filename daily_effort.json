@@ -1,1 +1,452 @@
-[]
+[
+  {
+    "mint": "5sd8bKraewJNHFg72scxxYXNeLCASVct1gxqi3Xipump",
+    "date": "2026-08-12",
+    "open": 0.00012793334646416882,
+    "close": 6.805618934543788e-05,
+    "price_chg_pct": -46.80340097,
+    "cvd_delta": -20.49805812,
+    "direction": "down",
+    "ratio": 0.43796087
+  },
+  {
+    "mint": "5sd8bKraewJNHFg72scxxYXNeLCASVct1gxqi3Xipump",
+    "date": "2026-08-13",
+    "open": 6.805618934543788e-05,
+    "close": 3.469936933280445e-05,
+    "price_chg_pct": -49.01364642,
+    "cvd_delta": -48.08351972,
+    "direction": "down",
+    "ratio": 0.98102311
+  },
+  {
+    "mint": "5sd8bKraewJNHFg72scxxYXNeLCASVct1gxqi3Xipump",
+    "date": "2026-08-14",
+    "open": 3.469936933280445e-05,
+    "close": 2.9474322596608124e-05,
+    "price_chg_pct": -15.05804525,
+    "cvd_delta": -9.84432659,
+    "direction": "down",
+    "ratio": 0.6537586
+  },
+  {
+    "mint": "5xhJC2F2q8Mgk1DYaMBTxNY8t8xDE7cdgTcv5cevpump",
+    "date": "2026-08-12",
+    "open": 1.8207416643553534e-05,
+    "close": 6.433642208564258e-05,
+    "price_chg_pct": 253.35283058,
+    "cvd_delta": -20.39888369,
+    "direction": "up",
+    "ratio": 0.08051571
+  },
+  {
+    "mint": "5xhJC2F2q8Mgk1DYaMBTxNY8t8xDE7cdgTcv5cevpump",
+    "date": "2026-08-13",
+    "open": 6.433642208564258e-05,
+    "close": 7.362222758348843e-05,
+    "price_chg_pct": 14.43320159,
+    "cvd_delta": 13.53527664,
+    "direction": "up",
+    "ratio": 0.93778754
+  },
+  {
+    "mint": "5xhJC2F2q8Mgk1DYaMBTxNY8t8xDE7cdgTcv5cevpump",
+    "date": "2026-08-14",
+    "open": 7.362222758348843e-05,
+    "close": 5.561575313899851e-05,
+    "price_chg_pct": -24.45793212,
+    "cvd_delta": -20.34637714,
+    "direction": "down",
+    "ratio": 0.83189278
+  },
+  {
+    "mint": "68GYUJW31GSJwLz44HGGQYaGXpG5iiWwYGiWxZ6apump",
+    "date": "2026-08-12",
+    "open": 0.00015547527174450746,
+    "close": 0.00012221201043911652,
+    "price_chg_pct": -21.39456708,
+    "cvd_delta": 1.95056649,
+    "direction": "down",
+    "ratio": 0.09117111
+  },
+  {
+    "mint": "68GYUJW31GSJwLz44HGGQYaGXpG5iiWwYGiWxZ6apump",
+    "date": "2026-08-13",
+    "open": 0.00012221201043911652,
+    "close": 1.8729505822282907e-05,
+    "price_chg_pct": -84.67457842,
+    "cvd_delta": -131.65182625,
+    "direction": "down",
+    "ratio": 1.55479754
+  },
+  {
+    "mint": "68GYUJW31GSJwLz44HGGQYaGXpG5iiWwYGiWxZ6apump",
+    "date": "2026-08-14",
+    "open": 1.8729505822282907e-05,
+    "close": 1.799969984786131e-05,
+    "price_chg_pct": -3.89655756,
+    "cvd_delta": -2.93069539,
+    "direction": "down",
+    "ratio": 0.75212424
+  },
+  {
+    "mint": "6fEaYuzirTMXFnFo7dGKHJs8wWVFPdh1bfZL9oRPpump",
+    "date": "2026-08-11",
+    "open": 0.00016573798769786382,
+    "close": 0.0001589560004305064,
+    "price_chg_pct": -4.09199325,
+    "cvd_delta": -12.70145018,
+    "direction": "down",
+    "ratio": 3.10397633
+  },
+  {
+    "mint": "6fEaYuzirTMXFnFo7dGKHJs8wWVFPdh1bfZL9oRPpump",
+    "date": "2026-08-12",
+    "open": 0.0001589560004305064,
+    "close": 9.48365401998755e-05,
+    "price_chg_pct": -40.33786712,
+    "cvd_delta": -57.30382254,
+    "direction": "down",
+    "ratio": 1.42059624
+  },
+  {
+    "mint": "6fEaYuzirTMXFnFo7dGKHJs8wWVFPdh1bfZL9oRPpump",
+    "date": "2026-08-13",
+    "open": 9.48365401998755e-05,
+    "close": 6.301650118111067e-05,
+    "price_chg_pct": -33.55250935,
+    "cvd_delta": -32.11059387,
+    "direction": "down",
+    "ratio": 0.95702511
+  },
+  {
+    "mint": "6fEaYuzirTMXFnFo7dGKHJs8wWVFPdh1bfZL9oRPpump",
+    "date": "2026-08-14",
+    "open": 6.301650118111067e-05,
+    "close": 3.978263717575647e-05,
+    "price_chg_pct": -36.86949223,
+    "cvd_delta": -27.10937901,
+    "direction": "down",
+    "ratio": 0.73527942
+  },
+  {
+    "mint": "86KR6eG2VuNntLBi23SAYFW1cXkiYcwxGJd746rqcUAG",
+    "date": "2026-08-13",
+    "open": 0.00010941607846619674,
+    "close": 0.00014534449095559605,
+    "price_chg_pct": 32.83650172,
+    "cvd_delta": 0.2507202,
+    "direction": "up",
+    "ratio": 0.00763541
+  },
+  {
+    "mint": "86KR6eG2VuNntLBi23SAYFW1cXkiYcwxGJd746rqcUAG",
+    "date": "2026-08-14",
+    "open": 0.00014534449095559605,
+    "close": 4.806208013198784e-05,
+    "price_chg_pct": -66.93230007,
+    "cvd_delta": -97.9211605,
+    "direction": "down",
+    "ratio": 1.46298813
+  },
+  {
+    "mint": "8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump",
+    "date": "2026-08-11",
+    "open": 2.6221134565704115e-05,
+    "close": 0.00011184422395236437,
+    "price_chg_pct": 326.54227517,
+    "cvd_delta": -10.15128522,
+    "direction": "up",
+    "ratio": 0.0310872
+  },
+  {
+    "mint": "8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump",
+    "date": "2026-08-12",
+    "open": 0.00011184422395236437,
+    "close": 4.9857809979917164e-05,
+    "price_chg_pct": -55.42209672,
+    "cvd_delta": -75.97283918,
+    "direction": "down",
+    "ratio": 1.37080413
+  },
+  {
+    "mint": "8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump",
+    "date": "2026-08-13",
+    "open": 4.9857809979917164e-05,
+    "close": 3.4261865043367744e-05,
+    "price_chg_pct": -31.28084636,
+    "cvd_delta": -21.53358714,
+    "direction": "down",
+    "ratio": 0.68839528
+  },
+  {
+    "mint": "8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump",
+    "date": "2026-08-14",
+    "open": 3.4261865043367744e-05,
+    "close": 2.647717389261409e-05,
+    "price_chg_pct": -22.72115409,
+    "cvd_delta": -17.59961608,
+    "direction": "down",
+    "ratio": 0.77459164
+  },
+  {
+    "mint": "9tWD7CuW2g59fgMUnggo4cZqB6XHEZrHtBaa8q7dpump",
+    "date": "2026-08-12",
+    "open": 0.00014235094191847192,
+    "close": 7.498405647024748e-05,
+    "price_chg_pct": -47.32450979,
+    "cvd_delta": -10.08325009,
+    "direction": "down",
+    "ratio": 0.21306613
+  },
+  {
+    "mint": "9tWD7CuW2g59fgMUnggo4cZqB6XHEZrHtBaa8q7dpump",
+    "date": "2026-08-13",
+    "open": 7.498405647024748e-05,
+    "close": 0.00011016316797924675,
+    "price_chg_pct": 46.91545532,
+    "cvd_delta": 44.48776037,
+    "direction": "up",
+    "ratio": 0.94825383
+  },
+  {
+    "mint": "9tWD7CuW2g59fgMUnggo4cZqB6XHEZrHtBaa8q7dpump",
+    "date": "2026-08-14",
+    "open": 0.00011016316797924675,
+    "close": 9.61799476127567e-05,
+    "price_chg_pct": -12.69319013,
+    "cvd_delta": -13.69201541,
+    "direction": "down",
+    "ratio": 1.07868985
+  },
+  {
+    "mint": "A6mrpBeeNKm743fiNg8Mrz7pj7uGML5rgDjWo4nrpump",
+    "date": "2026-08-11",
+    "open": 3.354871935629676e-05,
+    "close": 2.505801261147805e-05,
+    "price_chg_pct": -25.30858676,
+    "cvd_delta": -15.27161797,
+    "direction": "down",
+    "ratio": 0.60341647
+  },
+  {
+    "mint": "A6mrpBeeNKm743fiNg8Mrz7pj7uGML5rgDjWo4nrpump",
+    "date": "2026-08-12",
+    "open": 2.505801261147805e-05,
+    "close": 3.241781113856251e-05,
+    "price_chg_pct": 29.37103848,
+    "cvd_delta": 14.54219534,
+    "direction": "up",
+    "ratio": 0.49512023
+  },
+  {
+    "mint": "A6mrpBeeNKm743fiNg8Mrz7pj7uGML5rgDjWo4nrpump",
+    "date": "2026-08-13",
+    "open": 3.241781113856251e-05,
+    "close": 2.827183428779437e-05,
+    "price_chg_pct": -12.78919429,
+    "cvd_delta": -6.49537731,
+    "direction": "down",
+    "ratio": 0.5078801
+  },
+  {
+    "mint": "A6mrpBeeNKm743fiNg8Mrz7pj7uGML5rgDjWo4nrpump",
+    "date": "2026-08-14",
+    "open": 2.827183428779437e-05,
+    "close": 2.606894459316756e-05,
+    "price_chg_pct": -7.79181737,
+    "cvd_delta": -3.57196899,
+    "direction": "down",
+    "ratio": 0.45842566
+  },
+  {
+    "mint": "AENK1YJ9978xp19xQLKat6eNmndf7Jg2FxFfKiwvpump",
+    "date": "2026-08-13",
+    "open": 6.608742225935135e-05,
+    "close": 3.669603060962053e-05,
+    "price_chg_pct": -44.47350289,
+    "cvd_delta": -33.77866449,
+    "direction": "down",
+    "ratio": 0.75952336
+  },
+  {
+    "mint": "AENK1YJ9978xp19xQLKat6eNmndf7Jg2FxFfKiwvpump",
+    "date": "2026-08-14",
+    "open": 3.669603060962053e-05,
+    "close": 3.191888299093003e-05,
+    "price_chg_pct": -13.01815902,
+    "cvd_delta": -5.17899378,
+    "direction": "down",
+    "ratio": 0.39782843
+  },
+  {
+    "mint": "B4ptaVsUe6YbtBwAS38WFeweSrVNfQLCcj9JRrtjU8vn",
+    "date": "2026-08-11",
+    "open": 9.584197172458409e-05,
+    "close": 8.040941122959102e-05,
+    "price_chg_pct": -16.10208995,
+    "cvd_delta": -21.54169637,
+    "direction": "down",
+    "ratio": 1.3378199
+  },
+  {
+    "mint": "B4ptaVsUe6YbtBwAS38WFeweSrVNfQLCcj9JRrtjU8vn",
+    "date": "2026-08-12",
+    "open": 8.040941122959102e-05,
+    "close": 6.943381334094959e-05,
+    "price_chg_pct": -13.64964339,
+    "cvd_delta": -22.70771843,
+    "direction": "down",
+    "ratio": 1.66361258
+  },
+  {
+    "mint": "B4ptaVsUe6YbtBwAS38WFeweSrVNfQLCcj9JRrtjU8vn",
+    "date": "2026-08-13",
+    "open": 6.943381334094959e-05,
+    "close": 7.021039604964652e-05,
+    "price_chg_pct": 1.11845032,
+    "cvd_delta": 1.73412154,
+    "direction": "up",
+    "ratio": 1.5504681
+  },
+  {
+    "mint": "B4ptaVsUe6YbtBwAS38WFeweSrVNfQLCcj9JRrtjU8vn",
+    "date": "2026-08-14",
+    "open": 7.021039604964652e-05,
+    "close": 7.126867197313711e-05,
+    "price_chg_pct": 1.50729234,
+    "cvd_delta": 2.41934473,
+    "direction": "up",
+    "ratio": 1.60509323
+  },
+  {
+    "mint": "DTiLUGhzmtP3wZC6tXRXtxYPUxztvnQMxAW54ZtKpump",
+    "date": "2026-08-12",
+    "open": 2.9556070378492635e-05,
+    "close": 2.5985911866293058e-05,
+    "price_chg_pct": -12.07927328,
+    "cvd_delta": -12.34658738,
+    "direction": "down",
+    "ratio": 1.02212998
+  },
+  {
+    "mint": "DTiLUGhzmtP3wZC6tXRXtxYPUxztvnQMxAW54ZtKpump",
+    "date": "2026-08-13",
+    "open": 2.5985911866293058e-05,
+    "close": 4.223420483521544e-05,
+    "price_chg_pct": 62.527315,
+    "cvd_delta": 37.27291259,
+    "direction": "up",
+    "ratio": 0.59610608
+  },
+  {
+    "mint": "DTiLUGhzmtP3wZC6tXRXtxYPUxztvnQMxAW54ZtKpump",
+    "date": "2026-08-14",
+    "open": 4.223420483521544e-05,
+    "close": 3.431945305330229e-05,
+    "price_chg_pct": -18.74014632,
+    "cvd_delta": -10.65217198,
+    "direction": "down",
+    "ratio": 0.56841456
+  },
+  {
+    "mint": "Dz2iVSLXFp7dXowD1nybWyCXuUcpV7cBZu68YPV5pump",
+    "date": "2026-08-13",
+    "open": 0.00015532422585830234,
+    "close": 7.497460575440625e-05,
+    "price_chg_pct": -51.73025628,
+    "cvd_delta": 11.59869208,
+    "direction": "down",
+    "ratio": 0.22421486
+  },
+  {
+    "mint": "Dz2iVSLXFp7dXowD1nybWyCXuUcpV7cBZu68YPV5pump",
+    "date": "2026-08-14",
+    "open": 7.497460575440625e-05,
+    "close": 2.9058997697269898e-05,
+    "price_chg_pct": -61.24154651,
+    "cvd_delta": -70.54557518,
+    "direction": "down",
+    "ratio": 1.15192348
+  },
+  {
+    "mint": "H78WENHosTWPFuQvtm8swi83ipTqANJi921iG51Apump",
+    "date": "2026-08-11",
+    "open": 4.3332497737556064e-05,
+    "close": 4.0543848544650026e-05,
+    "price_chg_pct": -6.43546839,
+    "cvd_delta": -2.51381718,
+    "direction": "down",
+    "ratio": 0.39061915
+  },
+  {
+    "mint": "H78WENHosTWPFuQvtm8swi83ipTqANJi921iG51Apump",
+    "date": "2026-08-12",
+    "open": 4.0543848544650026e-05,
+    "close": 4.08123585152222e-05,
+    "price_chg_pct": 0.66227055,
+    "cvd_delta": 1.88898677,
+    "direction": "up",
+    "ratio": 2.85228863
+  },
+  {
+    "mint": "H78WENHosTWPFuQvtm8swi83ipTqANJi921iG51Apump",
+    "date": "2026-08-13",
+    "open": 4.08123585152222e-05,
+    "close": 3.0359219230078127e-05,
+    "price_chg_pct": -25.61268122,
+    "cvd_delta": -16.82798003,
+    "direction": "down",
+    "ratio": 0.65701751
+  },
+  {
+    "mint": "H78WENHosTWPFuQvtm8swi83ipTqANJi921iG51Apump",
+    "date": "2026-08-14",
+    "open": 3.0359219230078127e-05,
+    "close": 3.1926703832128605e-05,
+    "price_chg_pct": 5.16312554,
+    "cvd_delta": 4.18207143,
+    "direction": "up",
+    "ratio": 0.80998833
+  },
+  {
+    "mint": "LbvA6YcxnPcKXyc35TsZ5rH1Tz6P3E3SoFPSPTGpump",
+    "date": "2026-08-11",
+    "open": 0.0001479760819712726,
+    "close": 5.569418279441943e-05,
+    "price_chg_pct": -62.36271291,
+    "cvd_delta": -0.50623211,
+    "direction": "down",
+    "ratio": 0.00811754
+  },
+  {
+    "mint": "LbvA6YcxnPcKXyc35TsZ5rH1Tz6P3E3SoFPSPTGpump",
+    "date": "2026-08-12",
+    "open": 5.569418279441943e-05,
+    "close": 4.184329996950119e-05,
+    "price_chg_pct": -24.86953238,
+    "cvd_delta": -18.03246884,
+    "direction": "down",
+    "ratio": 0.72508275
+  },
+  {
+    "mint": "LbvA6YcxnPcKXyc35TsZ5rH1Tz6P3E3SoFPSPTGpump",
+    "date": "2026-08-13",
+    "open": 4.184329996950119e-05,
+    "close": 2.6371345340824864e-05,
+    "price_chg_pct": -36.97594272,
+    "cvd_delta": -22.84851573,
+    "direction": "down",
+    "ratio": 0.61792923
+  },
+  {
+    "mint": "LbvA6YcxnPcKXyc35TsZ5rH1Tz6P3E3SoFPSPTGpump",
+    "date": "2026-08-14",
+    "open": 2.6371345340824864e-05,
+    "close": 1.1887866904127529e-05,
+    "price_chg_pct": -54.9212725,
+    "cvd_delta": -31.56175681,
+    "direction": "down",
+    "ratio": 0.57467272
+  }
+]
