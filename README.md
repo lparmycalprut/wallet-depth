@@ -10,7 +10,7 @@ R       = |ΔCVD| / |ΔHarga%|        # SOL per 1% gerak
 M       = R hari N / R hari N-1
 ```
 
-Hari menggunakan kalender Asia/Jakarta (WIB). Dua hari berturut-turut wajib
+Hari menggunakan kalender market (00:00–23:59 UTC, sesuai Helius/Solscan). Dua hari berturut-turut wajib
 tersedia. Pergerakan di bawah 3% selalu netral.
 
 **Baseline Quality Gate (baru):**
@@ -41,9 +41,9 @@ keuangan.
 
 ## Alur data
 
-1. Cron berjalan pukul 00:00 WIB (`17:00 UTC`).
+1. Cron berjalan pukul 00:00 UTC.
 2. Trade GMGN dinormalisasi ke SOL; Helius menjadi fallback.
-3. Candle hourly GeckoTerminal digabung ke candle harian WIB.
+3. Candle hourly GeckoTerminal digabung ke candle harian market (UTC).
 4. `daily_effort.json` di-upsert per mint/tanggal dan menyimpan 30 hari.
 5. Telegram hanya dikirim untuk S1–S4.
 6. Dashboard menampilkan status watchlist dan chart tujuh hari.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Daily effort anomaly updater (00:00 WIB / 17:00 UTC).
+"""Daily effort anomaly updater (market-day / 00:00 UTC).
 
 Exposes ``refresh_single_token`` — the reusable per-token pipeline — so the
 manual CVD fetch on ``pages/4_📊_CVD.py`` reuses exactly the same code path as
@@ -18,10 +18,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from core import (get_daily_candles_wib, get_helius_keys, get_market,
+from core import (get_daily_candles, get_helius_keys, get_market,
                   load_config)
 from cvd import fetch_swaps, get_gmgn_fetch_status
-from cvd_daily import (WIB, build_effort_rows,
+from cvd_daily import (MARKET_TZ, build_effort_rows,
                        fallback_candles_from_swaps)
 from effort_detector import (DAILY_EFFORT_PATH, RETENTION_DAYS,
                              classify_effort, load_daily_effort,
@@ -35,8 +35,8 @@ ALERT_SIGNALS = {
 }
 
 
-def _now_wib() -> datetime:
-    return datetime.now(WIB)
+def _now_market() -> datetime:
+    return datetime.now(MARKET_TZ)
 
 
 def _redact(message, secret: str) -> str:
@@ -52,27 +52,27 @@ def _redact(message, secret: str) -> str:
     return message
 
 
-def _as_wib_midnight(value) -> datetime:
-    """Return a timezone-aware WIB midnight datetime for a date or ISO string."""
+def _as_market_midnight(value) -> datetime:
+    """Return a timezone-aware market-day (UTC) midnight datetime."""
     if isinstance(value, datetime):
-        value = value.astimezone(WIB).date()
+        value = value.astimezone(MARKET_TZ).date()
     elif isinstance(value, _date):
         value = value
     else:
         value = datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
-    return datetime(value.year, value.month, value.day, tzinfo=WIB)
+    return datetime(value.year, value.month, value.day, tzinfo=MARKET_TZ)
 
 
 def compute_lookback_window(now: datetime,
                             lookback_days: int) -> tuple[datetime, datetime]:
-    """Return ``(start, end)`` WIB-midnight boundaries for ``lookback_days``.
+    """Return ``(start, end)`` market-day (UTC) boundaries.
 
-    ``end`` is today's 00:00 WIB (never includes the still-open current day)
+    ``end`` is today's 00:00 UTC (never includes the still-open current day)
     and ``start`` is ``lookback_days`` calendar days before it. The returned
     window is [start, end), i.e. ``end`` is exclusive. Both are timezone-aware
-    in Asia/Jakarta so the fetch always honours WIB boundaries.
+    in UTC so the fetch always honours the crypto-market day boundary.
     """
-    now = (now or _now_wib()).astimezone(WIB)
+    now = (now or _now_market()).astimezone(MARKET_TZ)
     end = now.replace(hour=0, minute=0, second=0, microsecond=0)
     start = end - timedelta(days=int(lookback_days))
     return start, end
@@ -80,14 +80,14 @@ def compute_lookback_window(now: datetime,
 
 def compute_date_window(start_date, end_date, now: datetime | None = None,
                         max_span_days: int = 30) -> tuple[datetime, datetime]:
-    """Return ``(start, end)`` WIB boundaries for an inclusive date range.
+    """Return ``(start, end)`` market-day (UTC) boundaries.
 
     ``start_date``/``end_date`` are inclusive calendar dates (ISO strings or
-    ``datetime.date``). ``end`` is capped at yesterday so the still-open WIB
-    day is never fetched, and the span is clamped to ``max_span_days``. The
-    returned window is [start, end) with ``end`` exclusive.
+    ``datetime.date``). ``end`` is capped at yesterday so the still-open
+    market day is never fetched, and the span is clamped to ``max_span_days``.
+    The returned window is [start, end) with ``end`` exclusive.
     """
-    now = (now or _now_wib()).astimezone(WIB)
+    now = (now or _now_market()).astimezone(MARKET_TZ)
     today = now.date()
     latest = today - timedelta(days=1)  # never include the open day
     start_d = min(_as_date(start_date), latest)
@@ -97,12 +97,12 @@ def compute_date_window(start_date, end_date, now: datetime | None = None,
     max_span = max(2, int(max_span_days))
     if (end_d - start_d).days + 1 > max_span:
         start_d = end_d - timedelta(days=max_span - 1)
-    return _as_wib_midnight(start_d), _as_wib_midnight(end_d) + timedelta(days=1)
+    return _as_market_midnight(start_d), _as_market_midnight(end_d) + timedelta(days=1)
 
 
 def _as_date(value) -> _date:
     if isinstance(value, datetime):
-        return value.astimezone(WIB).date()
+        return value.astimezone(MARKET_TZ).date()
     if isinstance(value, _date):
         return value
     return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
@@ -122,7 +122,7 @@ def _fetch_history_with_source(mint: str, pool: str, api_key: str,
                                end: datetime) -> tuple:
     """Fetch trades (GMGN first, Helius fallback) for ``[start, end)``.
 
-    ``start``/``end`` are timezone-aware WIB datetimes (``end`` exclusive).
+    ``start``/``end`` are timezone-aware market-day (UTC) datetimes (``end`` exclusive).
     Returns ``(swaps, source, fallback)`` where ``source`` is ``"gmgn"`` or
     ``"helius_fallback"`` and ``fallback`` is a boolean describing whether the
     Helius path was used because GMGN was incomplete/failed.
@@ -150,7 +150,7 @@ def _resolve_window(now: datetime, lookback_days: int = 4,
                     end_date=None) -> tuple[datetime, datetime, int]:
     """Return ``(start, end, span_days)`` for the requested fetch.
 
-    When ``start_date``/``end_date`` are given they define an inclusive WIB
+    When ``start_date``/``end_date`` are given they define an inclusive market-day
     calendar window; otherwise ``lookback_days`` defines the window relative to
     ``now``. The returned window is ``[start, end)`` (``end`` exclusive) and
     ``span_days`` is the number of completed calendar days it covers.
@@ -181,7 +181,7 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
     ``on_progress`` is an optional callback invoked with each log entry so a
     UI can stream progress while the pipeline runs.
     """
-    now = (now or _now_wib()).astimezone(WIB)
+    now = (now or _now_market()).astimezone(MARKET_TZ)
     meta = meta or {}
     path = path or DAILY_EFFORT_PATH
     start, end, span_days = _resolve_window(
@@ -201,7 +201,7 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
     }
 
     def _stage(stage: str, message: str, *, ok: bool = True):
-        entry = {"ts_wib": _now_wib().strftime("%Y-%m-%d %H:%M:%S"),
+        entry = {"ts_market": _now_market().strftime("%Y-%m-%d %H:%M:%S"),
                  "stage": stage, "message": str(message), "ok": bool(ok)}
         log_entries.append(entry)
         if on_progress is not None:
@@ -233,7 +233,7 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
                f"{', fallback Helius' if fallback else ''})")
 
         # 3. daily candles (market candles merged over trade-price fallback)
-        market_candles = get_daily_candles_wib(
+        market_candles = get_daily_candles(
             pool, limit_days=max(7, span_days + 1))
         trade_candles = fallback_candles_from_swaps(swaps)
         by_date = {row["date"]: row for row in trade_candles}
@@ -243,7 +243,7 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
                f"{len(candles)} candle harian disiapkan "
                f"(market={len(market_candles)}, trades={len(trade_candles)})")
 
-        # 4. aggregate daily CVD -> effort rows (excludes open WIB day)
+        # 4. aggregate daily CVD -> effort rows (excludes open market day)
         fresh = build_effort_rows(mint, swaps, candles, now=now)
         _stage("aggregate",
                f"{len(fresh)} daily row dibangun dari {len(swaps)} trades")
@@ -280,7 +280,7 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
 def run_daily(watchlist: dict, *, now=None, api_key: str = "",
               send_alerts: bool = True) -> list[dict]:
     """Refresh every token, persist idempotently, and alert only S1-S4."""
-    now = (now or _now_wib()).astimezone(WIB)
+    now = (now or _now_market()).astimezone(MARKET_TZ)
     existing = load_daily_effort()
     existing_keys = {(row.get("mint"), row.get("date")) for row in existing}
     results = []
@@ -324,7 +324,7 @@ def main(argv=None) -> int:
     keys = get_helius_keys(config=config)
     watchlist = load_watchlist()
     print(f"Effort updater mode={args.mode}; tokens={len(watchlist)}; "
-          f"time={_now_wib().isoformat()}")
+          f"time={_now_market().isoformat()}")
     if watchlist:
         run_daily(watchlist, api_key=keys[0] if keys else "")
     return 0

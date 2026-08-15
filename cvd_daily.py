@@ -1,19 +1,32 @@
-"""Minimal daily CVD aggregation for the effort anomaly detector."""
+"""Minimal daily CVD aggregation for the effort anomaly detector.
+
+The daily boundary follows the crypto-market day, which matches what Helius
+and Solscan use: the day starts at 00:00 UTC. This keeps a token's "day" in
+sync with on-chain market data sources.
+"""
 from __future__ import annotations
 
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-WIB = timezone(timedelta(hours=7))
+# Crypto market day boundary (Helius/Solscan use UTC).
+MARKET_TZ = timezone.utc
+
+# Backward-compatible alias for code that still referenced the old WIB name.
+WIB = MARKET_TZ
 
 
-def day_key_wib(timestamp) -> str:
-    """Return the Asia/Jakarta calendar date for a Unix timestamp."""
-    return datetime.fromtimestamp(int(timestamp), WIB).date().isoformat()
+def day_key(timestamp) -> str:
+    """Return the market-day (UTC) calendar date for a Unix timestamp."""
+    return datetime.fromtimestamp(int(timestamp), MARKET_TZ).date().isoformat()
+
+
+# Backward-compatible alias.
+day_key_wib = day_key
 
 
 def calculate_daily_cvd(swaps) -> list[dict]:
-    """Aggregate normalized swap tuples into daily CVD rows in WIB.
+    """Aggregate normalized swap tuples into daily CVD rows in market (UTC).
 
     Input tuples use ``(side, amount_sol, timestamp, wallet, ...)``. Only the
     signed SOL delta and basic volume counts are retained because the anomaly
@@ -33,7 +46,7 @@ def calculate_daily_cvd(swaps) -> list[dict]:
             continue
         if side not in {"buy", "sell"} or amount <= 0 or timestamp <= 0:
             continue
-        item = days[day_key_wib(timestamp)]
+        item = days[day_key(timestamp)]
         item[f"{side}_sol"] += amount
         item[f"{side}_tx"] += 1
     result = []
@@ -54,12 +67,16 @@ def calculate_daily_cvd(swaps) -> list[dict]:
     return result
 
 
-def completed_wib_dates(rows, now=None) -> list[dict]:
-    """Exclude the currently open WIB candle."""
-    now = now or datetime.now(WIB)
-    today = now.astimezone(WIB).date().isoformat()
+def completed_dates(rows, now=None) -> list[dict]:
+    """Exclude the currently open market-day (UTC) candle."""
+    now = now or datetime.now(MARKET_TZ)
+    today = now.astimezone(MARKET_TZ).date().isoformat()
     return [dict(row) for row in (rows or [])
             if str(row.get("date") or "") < today]
+
+
+# Backward-compatible alias.
+completed_wib_dates = completed_dates
 
 
 def fallback_candles_from_swaps(swaps) -> list[dict]:
@@ -77,20 +94,20 @@ def fallback_candles_from_swaps(swaps) -> list[dict]:
             priced.append((timestamp, price))
     grouped = defaultdict(list)
     for timestamp, price in sorted(priced):
-        grouped[day_key_wib(timestamp)].append((timestamp, price))
+        grouped[day_key(timestamp)].append((timestamp, price))
     return [{"date": date, "open": points[0][1], "close": points[-1][1],
              "source": "trades"}
             for date, points in sorted(grouped.items())]
 
 
 def build_effort_rows(mint: str, swaps, candles, *, now=None) -> list[dict]:
-    """Join complete WIB CVD rows with same-date open/close candles."""
+    """Join complete market-day (UTC) CVD rows with same-date open/close candles."""
     from effort_detector import daily_effort_record
 
-    now = now or datetime.now(WIB)
-    cvd_rows = completed_wib_dates(calculate_daily_cvd(swaps), now=now)
+    now = now or datetime.now(MARKET_TZ)
+    cvd_rows = completed_dates(calculate_daily_cvd(swaps), now=now)
     by_date = {row["date"]: row for row in cvd_rows}
-    today = now.astimezone(WIB).date().isoformat()
+    today = now.astimezone(MARKET_TZ).date().isoformat()
     result = []
     for candle in candles or []:
         date = str(candle.get("date") or "")

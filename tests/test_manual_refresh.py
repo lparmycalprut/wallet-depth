@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 import scripts.update_cvd as uc
-from cvd_daily import WIB
+from cvd_daily import MARKET_TZ
 from effort_detector import daily_effort_record
 
 
@@ -15,18 +15,18 @@ def _swap(timestamp):
 
 
 class LookbackWindowTest(unittest.TestCase):
-    def test_window_uses_wib_midnight_and_excludes_today(self):
-        now = datetime.fromisoformat("2026-08-15T12:00:00+07:00")
+    def test_window_uses_market_midnight_and_excludes_today(self):
+        now = datetime.fromisoformat("2026-08-15T12:00:00+00:00")
         start, end = uc.compute_lookback_window(now, 7)
-        self.assertEqual(start.astimezone(WIB).isoformat(),
-                         "2026-08-08T00:00:00+07:00")
-        self.assertEqual(end.astimezone(WIB).isoformat(),
-                         "2026-08-15T00:00:00+07:00")
-        # end is today's 00:00 WIB -> the open day is never included
-        self.assertEqual(end.astimezone(WIB).hour, 0)
+        self.assertEqual(start.astimezone(MARKET_TZ).isoformat(),
+                         "2026-08-08T00:00:00+00:00")
+        self.assertEqual(end.astimezone(MARKET_TZ).isoformat(),
+                         "2026-08-15T00:00:00+00:00")
+        # end is today's 00:00 UTC -> the open day is never included
+        self.assertEqual(end.astimezone(MARKET_TZ).hour, 0)
 
     def test_window_respects_requested_days(self):
-        now = datetime.fromisoformat("2026-08-15T12:00:00+07:00")
+        now = datetime.fromisoformat("2026-08-15T12:00:00+00:00")
         start2, end2 = uc.compute_lookback_window(now, 2)
         start7, end7 = uc.compute_lookback_window(now, 7)
         self.assertEqual((end2 - start2).days, 2)
@@ -38,47 +38,47 @@ class LookbackWindowTest(unittest.TestCase):
 
 class DateWindowTest(unittest.TestCase):
     def test_date_window_inclusive_and_excludes_today(self):
-        now = datetime.fromisoformat("2026-08-15T12:00:00+07:00")
+        now = datetime.fromisoformat("2026-08-15T12:00:00+00:00")
         start, end = uc.compute_date_window("2026-08-10", "2026-08-14", now=now)
-        self.assertEqual(start.astimezone(WIB).isoformat(),
-                         "2026-08-10T00:00:00+07:00")
+        self.assertEqual(start.astimezone(MARKET_TZ).isoformat(),
+                         "2026-08-10T00:00:00+00:00")
         # end exclusive = day after the inclusive end date
-        self.assertEqual(end.astimezone(WIB).isoformat(),
-                         "2026-08-15T00:00:00+07:00")
+        self.assertEqual(end.astimezone(MARKET_TZ).isoformat(),
+                         "2026-08-15T00:00:00+00:00")
 
     def test_date_window_caps_at_yesterday(self):
         # Requesting today as the end date must clamp to yesterday.
-        now = datetime.fromisoformat("2026-08-15T12:00:00+07:00")
+        now = datetime.fromisoformat("2026-08-15T12:00:00+00:00")
         start, end = uc.compute_date_window("2026-08-10", "2026-08-15", now=now)
-        self.assertEqual(end.astimezone(WIB).isoformat(),
-                         "2026-08-15T00:00:00+07:00")
+        self.assertEqual(end.astimezone(MARKET_TZ).isoformat(),
+                         "2026-08-15T00:00:00+00:00")
 
     def test_date_window_clamps_span(self):
-        now = datetime.fromisoformat("2026-08-15T12:00:00+07:00")
+        now = datetime.fromisoformat("2026-08-15T12:00:00+00:00")
         start, end = uc.compute_date_window("2026-07-01", "2026-08-14",
                                             now=now, max_span_days=10)
         span = (end - start).days
         self.assertEqual(span, 10)
 
     def test_date_window_swaps_reversed_order(self):
-        now = datetime.fromisoformat("2026-08-15T12:00:00+07:00")
+        now = datetime.fromisoformat("2026-08-15T12:00:00+00:00")
         start, end = uc.compute_date_window("2026-08-14", "2026-08-10", now=now)
-        self.assertEqual(start.astimezone(WIB).isoformat(),
-                         "2026-08-10T00:00:00+07:00")
-        self.assertEqual(end.astimezone(WIB).isoformat(),
-                         "2026-08-15T00:00:00+07:00")
+        self.assertEqual(start.astimezone(MARKET_TZ).isoformat(),
+                         "2026-08-10T00:00:00+00:00")
+        self.assertEqual(end.astimezone(MARKET_TZ).isoformat(),
+                         "2026-08-15T00:00:00+00:00")
 
     def test_resolve_window_prefers_date_range(self):
-        now = datetime.fromisoformat("2026-08-15T12:00:00+07:00")
+        now = datetime.fromisoformat("2026-08-15T12:00:00+00:00")
         start, end, span = uc._resolve_window(
             now, lookback_days=4, start_date="2026-08-10",
             end_date="2026-08-14")
         self.assertEqual(span, 5)
-        self.assertEqual(start.astimezone(WIB).isoformat(),
-                         "2026-08-10T00:00:00+07:00")
+        self.assertEqual(start.astimezone(MARKET_TZ).isoformat(),
+                         "2026-08-10T00:00:00+00:00")
 
     def test_refresh_with_date_range_reports_window(self):
-        now = datetime.fromisoformat("2026-08-15T10:00:00+07:00")
+        now = datetime.fromisoformat("2026-08-15T10:00:00+00:00")
         tmp = tempfile.TemporaryDirectory()
         path = str(Path(tmp.name) / "daily.json")
         patches = [
@@ -86,7 +86,7 @@ class DateWindowTest(unittest.TestCase):
                               return_value=("pool", "TST")),
             mock.patch.object(uc, "_fetch_history_with_source",
                               return_value=([_swap(1)], "gmgn", False)),
-            mock.patch.object(uc, "get_daily_candles_wib", return_value=[]),
+            mock.patch.object(uc, "get_daily_candles", return_value=[]),
             mock.patch.object(uc, "fallback_candles_from_swaps",
                               return_value=[]),
             mock.patch.object(uc, "build_effort_rows", return_value=[
@@ -111,10 +111,10 @@ class DateWindowTest(unittest.TestCase):
         call = fetch_mock.call_args
         # (mint, pool, api_key, start, end) — start/end are positional 4th/5th.
         start_arg, end_arg = call.args[3], call.args[4]
-        self.assertEqual(start_arg.astimezone(WIB).isoformat(),
-                         "2026-08-10T00:00:00+07:00")
-        self.assertEqual(end_arg.astimezone(WIB).isoformat(),
-                         "2026-08-15T00:00:00+07:00")
+        self.assertEqual(start_arg.astimezone(MARKET_TZ).isoformat(),
+                         "2026-08-10T00:00:00+00:00")
+        self.assertEqual(end_arg.astimezone(MARKET_TZ).isoformat(),
+                         "2026-08-15T00:00:00+00:00")
 
 
 class ManualRefreshTest(unittest.TestCase):
@@ -135,7 +135,7 @@ class ManualRefreshTest(unittest.TestCase):
                               return_value=(pool, self.META["symbol"])),
             mock.patch.object(uc, "_fetch_history_with_source",
                               return_value=(swaps, source, fallback)),
-            mock.patch.object(uc, "get_daily_candles_wib", return_value=[]),
+            mock.patch.object(uc, "get_daily_candles", return_value=[]),
             mock.patch.object(uc, "fallback_candles_from_swaps",
                               return_value=[]),
             mock.patch.object(uc, "build_effort_rows",
@@ -143,7 +143,7 @@ class ManualRefreshTest(unittest.TestCase):
         ]
 
     def _run(self, swaps, source="gmgn", fallback=False, days=7, pool="pool123"):
-        now = datetime.fromisoformat("2026-08-15T10:00:00+07:00")
+        now = datetime.fromisoformat("2026-08-15T10:00:00+00:00")
         patches = self._patches(swaps, source=source, fallback=fallback,
                                 pool=pool)
         for p in patches:
@@ -201,7 +201,7 @@ class ManualRefreshTest(unittest.TestCase):
         self.assertTrue(any(e["stage"] == "error" for e in res["log"]))
 
     def test_error_message_redacts_api_key(self):
-        now = datetime.fromisoformat("2026-08-15T10:00:00+07:00")
+        now = datetime.fromisoformat("2026-08-15T10:00:00+00:00")
         with mock.patch.object(uc, "_pool_and_symbol",
                                return_value=("pool", "TST")):
             def boom(*a, **k):

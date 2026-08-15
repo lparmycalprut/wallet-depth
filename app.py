@@ -59,8 +59,9 @@ def _number(value, pattern=".3f"):
 watchlist = load_watchlist()
 effort_rows = load_daily_effort()
 st.subheader("Watchlist")
-st.caption("Candle harian memakai batas 00:00–23:59 WIB. Sinyal memerlukan "
-           "dua hari berturut-turut; multiplier 2× / 0,5× bersifat tetap.")
+st.caption("Candle harian memakai batas hari market 00:00–23:59 UTC "
+           "(sesuai Helius/Solscan). Sinyal memerlukan dua hari berturut-turut; "
+           "multiplier 2× / 0,5× bersifat tetap.")
 
 if not watchlist:
     st.info("Watchlist masih kosong. Tambahkan contract address di bawah.")

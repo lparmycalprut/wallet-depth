@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import streamlit as st
 
 from core import get_helius_keys
-from cvd_daily import WIB
+from cvd_daily import MARKET_TZ
 from effort_detector import (classify_effort, load_daily_effort,
                              rows_for_mint)
 from links import external_links_html
@@ -18,9 +18,10 @@ from watchlist import add_to_watchlist, load_watchlist
 st.set_page_config(page_title="Efisiensi Anomali", page_icon="⚡",
                    layout="wide")
 st.title("⚡ Efisiensi Anomali")
-st.caption("Harga dan ΔCVD harian menggunakan batas kalender WIB. Chart tidak "
-           "melakukan fetch otomatis; data diperbarui cron setiap 00:00 WIB "
-           "atau lewat panel “Fetch data manual” di bawah.")
+st.caption("Harga dan ΔCVD harian menggunakan batas hari market (00:00 UTC, "
+           "sesuai Helius/Solscan). Chart tidak melakukan fetch otomatis; "
+           "data diperbarui cron setiap 00:00 UTC atau lewat panel fetch "
+           "manual.")
 
 
 def _render_metrics(rows, mint):
@@ -180,8 +181,8 @@ else:
 # --- Manual fetch panel (last-N-days, preserved behavior) --------------------
 with st.expander("🔁 Fetch data manual", expanded=False):
     st.caption("Hanya token yang sedang dipilih yang diproses. Hari berjalan "
-               "(yang belum selesai di WIB) tidak dimasukkan. Fetch manual "
-               "tidak mengirim alert Telegram.")
+               "(yang belum selesai di market/UTC) tidak dimasukkan. Fetch "
+               "manual tidak mengirim alert Telegram.")
     col_l, col_b = st.columns([2, 1])
     days = col_l.number_input("Jumlah hari terakhir yang diambil (2–30)",
                               min_value=2, max_value=30, value=7, step=1)
@@ -196,41 +197,48 @@ with st.expander("🔁 Fetch data manual", expanded=False):
                 mint, watchlist.get(mint) or {},
                 api_key=api_key, lookback_days=int(days), log=log_entries,
                 on_progress=lambda entry: status.write(
-                    f"`{entry['ts_wib']}` **{entry['stage']}** — "
+                    f"`{entry['ts_market']}` **{entry['stage']}** — "
                     f"{entry['message']}"))
         st.session_state["manual_result"] = result
         st.rerun()
 
 
-# --- Date-range / backtest control ------------------------------------------
-today = datetime.now(WIB).date()
+# --- Backtest control -------------------------------------------------------
+today = datetime.now(MARKET_TZ).date()
 yesterday = today - timedelta(days=1)
 min_start = today - timedelta(days=30)
 
-with st.expander("📅 Rentang tanggal & backtest", expanded=True):
-    st.caption("Pilih rentang dari–sampai untuk melihat history. Jika ada "
-               "tanggal yang belum punya data, klik “Lihat & fetch” untuk "
-               "mengambilnya (idempoten, tidak mengirim alert).")
-    c1, c2, c3 = st.columns([1, 1, 2])
-    default_start = st.session_state.get("bt_start") or (yesterday -
-                                                         timedelta(days=6))
-    default_end = st.session_state.get("bt_end") or yesterday
-    start_date = c1.date_input("Dari (WIB)", value=default_start,
+with st.expander("📅 Backtest history", expanded=True):
+    st.caption("Pilih tanggal awal dan berapa hari ke depan. Data diambil "
+               "otomatis saat input berubah (idempoten, tidak mengirim "
+               "alert). Rentang dibatasi maksimal 30 hari.")
+    c1, c2 = st.columns([1, 1])
+    default_start = st.session_state.get("bt_start") or (
+        yesterday - timedelta(days=6))
+    default_days = int(st.session_state.get("bt_days") or 7)
+    start_date = c1.date_input("Dari (market/UTC)", value=default_start,
                                min_value=min_start, max_value=yesterday)
-    end_date = c2.date_input("Sampai (WIB)", value=default_end,
-                             min_value=min_start, max_value=yesterday)
+    days_forward = c2.number_input("Berapa hari ke depan (2–30)",
+                                   min_value=2, max_value=30,
+                                   value=default_days, step=1)
     st.session_state["bt_start"] = start_date
-    st.session_state["bt_end"] = end_date
-    if start_date > end_date:
-        start_date, end_date = end_date, start_date
+    st.session_state["bt_days"] = int(days_forward)
+    end_date = start_date + timedelta(days=int(days_forward) - 1)
+    if end_date > yesterday:
+        end_date = yesterday
     span = (end_date - start_date).days + 1
-    if span > 30:
-        st.warning("Rentang dibatasi maksimal 30 hari.")
-        start_date = end_date - timedelta(days=29)
-    st.caption(f"Rentang: **{start_date} s/d {end_date}** "
-               f"({span} hari kalender WIB).")
-    run_backtest = c3.button("🔍 Lihat & fetch", type="primary",
-                             use_container_width=True)
+    st.caption(f"Rentang: **{start_date} s/d {end_date}** ({span} hari).")
+
+# Auto-fetch only when the start date or days-forward changes (never on the
+# very first page load).
+bt_key = (str(start_date), int(days_forward))
+if "bt_initialized" not in st.session_state:
+    st.session_state["bt_initialized"] = True
+    st.session_state["bt_fetched"] = bt_key
+    need_fetch = False
+else:
+    need_fetch = st.session_state.get("bt_fetched") != bt_key
+    st.session_state["bt_fetched"] = bt_key
 
 # --- Manual fetch log renderer -----------------------------------------------
 def _render_manual_log():
@@ -256,8 +264,8 @@ def _render_manual_log():
                      use_container_width=True, hide_index=True)
 
 
-# --- Fetch-on-demand for the selected range -----------------------------------
-if run_backtest:
+# --- Auto-fetch when the backtest range changes ------------------------------
+if need_fetch:
     keys = get_helius_keys()
     api_key = keys[0] if keys else ""
     log_entries = []
@@ -268,7 +276,7 @@ if run_backtest:
             api_key=api_key, start_date=start_date, end_date=end_date,
             log=log_entries,
             on_progress=lambda entry: status.write(
-                f"`{entry['ts_wib']}` **{entry['stage']}** — "
+                f"`{entry['ts_market']}` **{entry['stage']}** — "
                 f"{entry['message']}"))
     st.session_state["manual_result"] = result
     st.rerun()
@@ -281,8 +289,8 @@ range_rows = _rows_in_range(all_rows, start_date, end_date)
 
 st.subheader(f"History {start_date} s/d {end_date}")
 if not range_rows:
-    st.info("Belum ada data harian untuk rentang ini. Klik “🔍 Lihat & fetch” "
-            "di atas untuk mengambilnya.")
+    st.info("Belum ada data harian untuk rentang ini. Ubah tanggal awal "
+            "atau jumlah hari untuk memicu fetch otomatis.")
 else:
     _render_metrics(range_rows, mint)
     _render_charts(range_rows, mint)

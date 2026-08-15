@@ -353,11 +353,11 @@ def get_market(ca: str) -> dict:
     }
 
 
-def get_daily_candles_wib(pair_address: str, limit_days: int = 7) -> list[dict]:
-    """Fetch hourly GeckoTerminal candles and aggregate calendar days in WIB.
+def get_daily_candles(pair_address: str, limit_days: int = 7) -> list[dict]:
+    """Fetch hourly GeckoTerminal candles and aggregate calendar days in UTC.
 
-    Hourly candles are used because GeckoTerminal's native daily boundary is
-    UTC, while the detector's required boundary is Asia/Jakarta (UTC+7).
+    Hourly candles are aggregated into calendar days using the UTC boundary,
+    which matches the crypto-market day used by Helius and Solscan.
     """
     try:
         limit = max(48, min(1000, int(limit_days) * 24 + 24))
@@ -371,14 +371,13 @@ def get_daily_candles_wib(pair_address: str, limit_days: int = 7) -> list[dict]:
                   .get("attributes") or {}).get("ohlcv_list") or []
     except Exception:
         return []
-    from datetime import datetime as _datetime, timedelta as _timedelta
-    from datetime import timezone as _timezone
-    wib = _timezone(_timedelta(hours=7))
+    from datetime import datetime as _datetime, timezone as _timezone
+    utc = _timezone.utc
     grouped = {}
     for value in sorted(values, key=lambda item: item[0]):
         if not isinstance(value, (list, tuple)) or len(value) < 6:
             continue
-        date = _datetime.fromtimestamp(int(value[0]), wib).date().isoformat()
+        date = _datetime.fromtimestamp(int(value[0]), utc).date().isoformat()
         candle = grouped.setdefault(date, {
             "date": date, "open": float(value[1]), "high": float(value[2]),
             "low": float(value[3]), "close": float(value[4]),
@@ -390,3 +389,7 @@ def get_daily_candles_wib(pair_address: str, limit_days: int = 7) -> list[dict]:
         candle["volume_usd"] += float(value[5] or 0)
         candle["hours"] += 1
     return sorted(grouped.values(), key=lambda item: item["date"])[-limit_days:]
+
+
+# Backward-compatible alias for code that still referenced the old WIB name.
+get_daily_candles_wib = get_daily_candles

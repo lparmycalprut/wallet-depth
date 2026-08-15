@@ -75,3 +75,23 @@
 - Panel "🔁 Fetch data manual" (last-N-days, default 7) tetap dipertahankan.
 - Menambahkan test `DateWindowTest` (rentang inklusif, clamp ke kemarin, clamp span,
   urutan terbalik, dan pass-through window ke pipeline fetch).
+
+## 2026-08-15 — Batas hari market (UTC) & backtest start+N hari (arena/01a0039e-wallet-depth)
+
+- Mengubah batas hari dari Asia/Jakarta (WIB) menjadi hari market 00:00–23:59 UTC
+  (sesuai Helius/Solscan) di seluruh pipeline:
+  - `cvd_daily.py`: `MARKET_TZ = timezone.utc`; `day_key`, `completed_dates`,
+    `build_effort_rows`, `fallback_candles_from_swaps` memakai batas UTC.
+    Alias lama (`WIB`, `day_key_wib`, `completed_wib_dates`) dipertahankan.
+  - `core.py`: `get_daily_candles` menggabungkan candle GeckoTerminal per hari UTC
+    (alias `get_daily_candles_wib` dipertahankan).
+  - `scripts/update_cvd.py`: `MARKET_TZ`, `_now_market`, `_as_market_midnight`,
+    `compute_lookback_window`, `compute_date_window`, log `ts_market`.
+- Halaman `pages/4_📊_CVD.py`: panel "📅 Backtest history" kini input tanggal awal
+  (Dari, market/UTC) + "Berapa hari ke depan" (2–30), lalu fetch otomatis saat
+  input berubah (idempoten, tidak mengirim alert, tidak fetch saat load pertama).
+  History menampilkan metrik, chart harga/CVD, chart ratio, dan tabel data untuk
+  rentang start → start+N-1 (dibatasi maksimal 30 hari dan tidak melewati kemarin).
+- Memperbarui caption UI, `app.py`, `AGENTS.md`, `README.md`, `PROMPT_EFFORT_ANOMALI.md`
+  ke terminologi hari market UTC.
+- Menyesuaikan test ke batas UTC (`test_daily_pipeline.py`, `test_manual_refresh.py`).
