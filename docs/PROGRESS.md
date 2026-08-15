@@ -57,3 +57,21 @@
 - Fetch manual tidak mengirim alert Telegram dan tidak menyentuh watchlist.
 - Menambahkan test `test_links.py` dan `test_manual_refresh.py` (URL, shortcut,
   lookback, refresh sukses/fallback/error, idempotent, tanpa alert, redaksi key).
+
+## 2026-08-15 — Backtest history rentang tanggal di halaman CVD (arena/01a0039e-wallet-depth)
+
+- Menambahkan `compute_date_window` dan `_resolve_window` di `scripts/update_cvd.py`
+  untuk mendukung fetch dengan rentang tanggal inklusif dari–sampai (WIB), dengan
+  clamp batas atas ke kemarin (hari berjalan tidak pernah diambil) dan clamp span
+  maksimal 30 hari.
+- `refresh_single_token` kini menerima `start_date`/`end_date`; `run_daily` (cron)
+  tetap memakai `lookback_days=4` via `_resolve_window` sehingga perilaku cron
+  tidak berubah.
+- Halaman `pages/4_📊_CVD.py`: panel "📅 Rentang tanggal & backtest" untuk memilih
+  dari–sampai, tombol "🔍 Lihat & fetch" yang mengambil data untuk rentang tersebut
+  secara idempoten, lalu menampilkan history (metrik, chart harga/CVD, chart ratio,
+  dan tabel data) untuk rentang terpilih. Fetch hanya terjadi saat tombol diklik
+  (tidak otomatis saat page load).
+- Panel "🔁 Fetch data manual" (last-N-days, default 7) tetap dipertahankan.
+- Menambahkan test `DateWindowTest` (rentang inklusif, clamp ke kemarin, clamp span,
+  urutan terbalik, dan pass-through window ke pipeline fetch).

@@ -11,6 +11,7 @@ import argparse
 import os
 import sys
 import time
+from datetime import date as _date
 from datetime import datetime, timedelta, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -22,9 +23,9 @@ from core import (get_daily_candles_wib, get_helius_keys, get_market,
 from cvd import fetch_swaps, get_gmgn_fetch_status
 from cvd_daily import (WIB, build_effort_rows,
                        fallback_candles_from_swaps)
-from effort_detector import (RETENTION_DAYS, classify_effort,
-                             load_daily_effort, merge_daily_effort,
-                             rows_for_mint)
+from effort_detector import (DAILY_EFFORT_PATH, RETENTION_DAYS,
+                             classify_effort, load_daily_effort,
+                             merge_daily_effort, rows_for_mint)
 from signals import format_effort_alert, send_telegram, should_send_telegram
 from watchlist import load_watchlist, update_local_meta
 
@@ -51,18 +52,60 @@ def _redact(message, secret: str) -> str:
     return message
 
 
+def _as_wib_midnight(value) -> datetime:
+    """Return a timezone-aware WIB midnight datetime for a date or ISO string."""
+    if isinstance(value, datetime):
+        value = value.astimezone(WIB).date()
+    elif isinstance(value, _date):
+        value = value
+    else:
+        value = datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
+    return datetime(value.year, value.month, value.day, tzinfo=WIB)
+
+
 def compute_lookback_window(now: datetime,
                             lookback_days: int) -> tuple[datetime, datetime]:
-    """Return inclusive ``(start, end)`` WIB-midnight boundaries.
+    """Return ``(start, end)`` WIB-midnight boundaries for ``lookback_days``.
 
     ``end`` is today's 00:00 WIB (never includes the still-open current day)
-    and ``start`` is ``lookback_days`` calendar days before it. Both are
-    timezone-aware in Asia/Jakarta so the fetch always honours WIB boundaries.
+    and ``start`` is ``lookback_days`` calendar days before it. The returned
+    window is [start, end), i.e. ``end`` is exclusive. Both are timezone-aware
+    in Asia/Jakarta so the fetch always honours WIB boundaries.
     """
     now = (now or _now_wib()).astimezone(WIB)
     end = now.replace(hour=0, minute=0, second=0, microsecond=0)
     start = end - timedelta(days=int(lookback_days))
     return start, end
+
+
+def compute_date_window(start_date, end_date, now: datetime | None = None,
+                        max_span_days: int = 30) -> tuple[datetime, datetime]:
+    """Return ``(start, end)`` WIB boundaries for an inclusive date range.
+
+    ``start_date``/``end_date`` are inclusive calendar dates (ISO strings or
+    ``datetime.date``). ``end`` is capped at yesterday so the still-open WIB
+    day is never fetched, and the span is clamped to ``max_span_days``. The
+    returned window is [start, end) with ``end`` exclusive.
+    """
+    now = (now or _now_wib()).astimezone(WIB)
+    today = now.date()
+    latest = today - timedelta(days=1)  # never include the open day
+    start_d = min(_as_date(start_date), latest)
+    end_d = min(_as_date(end_date), latest)
+    if start_d > end_d:
+        start_d, end_d = end_d, start_d
+    max_span = max(2, int(max_span_days))
+    if (end_d - start_d).days + 1 > max_span:
+        start_d = end_d - timedelta(days=max_span - 1)
+    return _as_wib_midnight(start_d), _as_wib_midnight(end_d) + timedelta(days=1)
+
+
+def _as_date(value) -> _date:
+    if isinstance(value, datetime):
+        return value.astimezone(WIB).date()
+    if isinstance(value, _date):
+        return value
+    return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
 
 
 def _pool_and_symbol(mint: str, meta: dict) -> tuple[str, str]:
@@ -75,15 +118,15 @@ def _pool_and_symbol(mint: str, meta: dict) -> tuple[str, str]:
 
 
 def _fetch_history_with_source(mint: str, pool: str, api_key: str,
-                               now: datetime,
-                               lookback_days: int = 4) -> tuple:
-    """Fetch trades (GMGN first, Helius fallback) plus source metadata.
+                               start: datetime,
+                               end: datetime) -> tuple:
+    """Fetch trades (GMGN first, Helius fallback) for ``[start, end)``.
 
+    ``start``/``end`` are timezone-aware WIB datetimes (``end`` exclusive).
     Returns ``(swaps, source, fallback)`` where ``source`` is ``"gmgn"`` or
     ``"helius_fallback"`` and ``fallback`` is a boolean describing whether the
     Helius path was used because GMGN was incomplete/failed.
     """
-    start, end = compute_lookback_window(now, lookback_days)
     swaps = fetch_swaps(
         api_key, pool, mint, stop_ts=int(start.timestamp()) - 1,
         from_ts=int(start.timestamp()), to_ts=int(end.timestamp()),
@@ -98,13 +141,32 @@ def _fetch_history_with_source(mint: str, pool: str, api_key: str,
 def _fetch_history(mint: str, pool: str, api_key: str,
                    now: datetime, lookback_days: int = 4):
     """Backward-compatible trades-only fetch (kept for external callers)."""
-    return _fetch_history_with_source(mint, pool, api_key, now,
-                                      lookback_days)[0]
+    start, end = compute_lookback_window(now, lookback_days)
+    return _fetch_history_with_source(mint, pool, api_key, start, end)[0]
+
+
+def _resolve_window(now: datetime, lookback_days: int = 4,
+                    start_date=None,
+                    end_date=None) -> tuple[datetime, datetime, int]:
+    """Return ``(start, end, span_days)`` for the requested fetch.
+
+    When ``start_date``/``end_date`` are given they define an inclusive WIB
+    calendar window; otherwise ``lookback_days`` defines the window relative to
+    ``now``. The returned window is ``[start, end)`` (``end`` exclusive) and
+    ``span_days`` is the number of completed calendar days it covers.
+    """
+    if start_date is not None and end_date is not None:
+        start, end = compute_date_window(start_date, end_date, now=now)
+    else:
+        start, end = compute_lookback_window(now, lookback_days)
+    span = int((end - start).total_seconds() // 86400)
+    return start, end, span
 
 
 def refresh_single_token(mint: str, meta: dict | None = None, *,
                          now: datetime | None = None, api_key: str = "",
-                         lookback_days: int = 4, log: list | None = None,
+                         lookback_days: int = 4, start_date=None,
+                         end_date=None, log: list | None = None,
                          path: str | None = None,
                          on_progress=None) -> dict:
     """Run the complete effort pipeline for one token and return a structured
@@ -121,12 +183,18 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
     """
     now = (now or _now_wib()).astimezone(WIB)
     meta = meta or {}
-    requested = max(2, int(lookback_days))
+    path = path or DAILY_EFFORT_PATH
+    start, end, span_days = _resolve_window(
+        now, lookback_days=lookback_days, start_date=start_date,
+        end_date=end_date)
+    requested = max(2, span_days)
     log_entries = log if log is not None else []
     started = time.monotonic()
     result = {
         "mint": str(mint), "symbol": str(meta.get("symbol") or "?"),
         "ok": False, "error": None, "requested_days": requested,
+        "start_date": start.strftime("%Y-%m-%d"),
+        "end_date": (end - timedelta(days=1)).strftime("%Y-%m-%d"),
         "source": None, "fallback": False, "trades_count": 0,
         "rows_created": 0, "rows_updated": 0, "duration_ms": 0,
         "log": log_entries, "result": None,
@@ -143,7 +211,8 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
                 pass
         return entry
 
-    _stage("start", f"mulai fetch manual {requested} hari "
+    _stage("start", f"mulai fetch manual {result['start_date']} s/d "
+                    f"{result['end_date']} ({requested} hari) "
                     f"untuk ${result['symbol']}")
     try:
         # 1. market / pool lookup
@@ -155,7 +224,7 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
 
         # 2. fetch trades (GMGN -> Helius fallback handled internally)
         swaps, source, fallback = _fetch_history_with_source(
-            mint, pool, api_key, now, lookback_days=requested)
+            mint, pool, api_key, start, end)
         result["source"] = source
         result["fallback"] = bool(fallback)
         result["trades_count"] = len(swaps or [])
@@ -165,7 +234,7 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
 
         # 3. daily candles (market candles merged over trade-price fallback)
         market_candles = get_daily_candles_wib(
-            pool, limit_days=max(7, requested + 1))
+            pool, limit_days=max(7, span_days + 1))
         trade_candles = fallback_candles_from_swaps(swaps)
         by_date = {row["date"]: row for row in trade_candles}
         by_date.update({row["date"]: row for row in market_candles})

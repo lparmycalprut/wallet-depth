@@ -36,6 +36,87 @@ class LookbackWindowTest(unittest.TestCase):
         self.assertEqual(start2, end2 - timedelta(days=2))
 
 
+class DateWindowTest(unittest.TestCase):
+    def test_date_window_inclusive_and_excludes_today(self):
+        now = datetime.fromisoformat("2026-08-15T12:00:00+07:00")
+        start, end = uc.compute_date_window("2026-08-10", "2026-08-14", now=now)
+        self.assertEqual(start.astimezone(WIB).isoformat(),
+                         "2026-08-10T00:00:00+07:00")
+        # end exclusive = day after the inclusive end date
+        self.assertEqual(end.astimezone(WIB).isoformat(),
+                         "2026-08-15T00:00:00+07:00")
+
+    def test_date_window_caps_at_yesterday(self):
+        # Requesting today as the end date must clamp to yesterday.
+        now = datetime.fromisoformat("2026-08-15T12:00:00+07:00")
+        start, end = uc.compute_date_window("2026-08-10", "2026-08-15", now=now)
+        self.assertEqual(end.astimezone(WIB).isoformat(),
+                         "2026-08-15T00:00:00+07:00")
+
+    def test_date_window_clamps_span(self):
+        now = datetime.fromisoformat("2026-08-15T12:00:00+07:00")
+        start, end = uc.compute_date_window("2026-07-01", "2026-08-14",
+                                            now=now, max_span_days=10)
+        span = (end - start).days
+        self.assertEqual(span, 10)
+
+    def test_date_window_swaps_reversed_order(self):
+        now = datetime.fromisoformat("2026-08-15T12:00:00+07:00")
+        start, end = uc.compute_date_window("2026-08-14", "2026-08-10", now=now)
+        self.assertEqual(start.astimezone(WIB).isoformat(),
+                         "2026-08-10T00:00:00+07:00")
+        self.assertEqual(end.astimezone(WIB).isoformat(),
+                         "2026-08-15T00:00:00+07:00")
+
+    def test_resolve_window_prefers_date_range(self):
+        now = datetime.fromisoformat("2026-08-15T12:00:00+07:00")
+        start, end, span = uc._resolve_window(
+            now, lookback_days=4, start_date="2026-08-10",
+            end_date="2026-08-14")
+        self.assertEqual(span, 5)
+        self.assertEqual(start.astimezone(WIB).isoformat(),
+                         "2026-08-10T00:00:00+07:00")
+
+    def test_refresh_with_date_range_reports_window(self):
+        now = datetime.fromisoformat("2026-08-15T10:00:00+07:00")
+        tmp = tempfile.TemporaryDirectory()
+        path = str(Path(tmp.name) / "daily.json")
+        patches = [
+            mock.patch.object(uc, "_pool_and_symbol",
+                              return_value=("pool", "TST")),
+            mock.patch.object(uc, "_fetch_history_with_source",
+                              return_value=([_swap(1)], "gmgn", False)),
+            mock.patch.object(uc, "get_daily_candles_wib", return_value=[]),
+            mock.patch.object(uc, "fallback_candles_from_swaps",
+                              return_value=[]),
+            mock.patch.object(uc, "build_effort_rows", return_value=[
+                daily_effort_record("TokenMint123", "2026-08-14", 100, 110, 5)]),
+        ]
+        for p in patches:
+            p.start()
+        fetch_mock = uc._fetch_history_with_source
+        try:
+            res = uc.refresh_single_token(
+                "TokenMint123", {"symbol": "TST"}, now=now, api_key="secret",
+                start_date="2026-08-10", end_date="2026-08-14", path=path)
+        finally:
+            for p in patches:
+                p.stop()
+            tmp.cleanup()
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["start_date"], "2026-08-10")
+        self.assertEqual(res["end_date"], "2026-08-14")
+        self.assertEqual(res["requested_days"], 5)
+        # Fetch window passed to the pipeline must match the range.
+        call = fetch_mock.call_args
+        # (mint, pool, api_key, start, end) — start/end are positional 4th/5th.
+        start_arg, end_arg = call.args[3], call.args[4]
+        self.assertEqual(start_arg.astimezone(WIB).isoformat(),
+                         "2026-08-10T00:00:00+07:00")
+        self.assertEqual(end_arg.astimezone(WIB).isoformat(),
+                         "2026-08-15T00:00:00+07:00")
+
+
 class ManualRefreshTest(unittest.TestCase):
     MINT = "TokenMint123"
     META = {"symbol": "TST"}
