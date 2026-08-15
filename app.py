@@ -8,6 +8,7 @@ import streamlit as st
 
 from effort_detector import (classify_effort, load_daily_effort,
                              rows_for_mint)
+from links import external_links_html
 from trending_ui import (render_trending, run_screen, run_screen_h1,
                          run_screen_hrhr, run_screen_hrhr_h1)
 from watchlist import (add_to_watchlist, get_last_push_error, load_watchlist,
@@ -75,7 +76,9 @@ else:
         columns = st.columns([1.45, 1.35, 1.75, 1, 1, 1, .65, .55])
         symbol = str((meta or {}).get("symbol") or "?").upper()
         columns[0].markdown(
-            f"**${html.escape(symbol)}**  \n`{html.escape(mint[:8])}…`")
+            f"**${html.escape(symbol)}**  \n`{html.escape(mint[:8])}…`  \n"
+            f"{external_links_html(mint)}",
+            unsafe_allow_html=True)
         date = result.get("date") or "Butuh ≥2 hari"
         columns[1].markdown(str(date))
         # Signal badge

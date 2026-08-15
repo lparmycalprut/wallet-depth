@@ -29,3 +29,31 @@
 - Menambahkan test wajib: fixture MIM, ratio kecil, direction berbeda,
   stable S1, boundary, current ranging, dan defensive Telegram.
 - Memperbarui dokumentasi (`AGENTS.md`, `README.md`, `PROMPT_EFFORT_ANOMALI.md`).
+
+## 2026-08-15 — Link eksternal, shortcut CVD & fetch manual (arena/01a0039e-wallet-depth)
+
+- Menambahkan `links.py`: helper bersama `gmgn_token_url`, `dexscreener_token_url`,
+  `safe_url_part` (URL-encoding), `cvd_shortcut_query`, dan `external_links_html`
+  (anchor `target="_blank"`) sehingga URL CA aman dan tidak duplikasi.
+- Watchlist (`app.py`): menampilkan link ringkas GMGN dan DexScreener di setiap
+  baris tanpa mengganggu tombol Chart/Hapus.
+- Trending & Degen (`trending_ui.py`): menambahkan link GMGN, DexScreener, dan
+  tombol shortcut `📊 CVD` yang membuka `pages/4_📊_CVD.py` dengan token
+  terpilih (`?mint=...` + `effort_mint`). Shortcut bekerja meski token belum ada
+  di watchlist dan tidak mengubah watchlist secara diam-diam.
+- Halaman CVD (`pages/4_📊_CVD.py`):
+  - Seleksi token dari query param/session, termasuk token di luar watchlist
+    (dengan warning + tombol tambah eksplisit).
+  - Panel "Fetch data manual": input hari 2–30 (default 7), tombol "Fetch
+    sekarang", spinner/status, tanpa fetch otomatis saat page load.
+  - Menampilkan log manual per fetch (timestamp WIB, tahapan, jumlah trades,
+    rows dibuat/di-update, durasi, status, error) yang persisten dalam session.
+- Refactor `scripts/update_cvd.py`: menambahkan `refresh_single_token` (pipeline
+  reusable satu token: lookup market/pool → GMGN trades + fallback Helius →
+  candle harian → agregasi CVD → `build_effort_rows` → merge idempotent) yang
+  dipakai halaman CVD tanpa subprocess. Menambahkan `compute_lookback_window`
+  (batas WIB, menghormati jumlah hari, tanpa hari berjalan) dan `_redact` agar
+  API key/credential tidak bocor ke log.
+- Fetch manual tidak mengirim alert Telegram dan tidak menyentuh watchlist.
+- Menambahkan test `test_links.py` dan `test_manual_refresh.py` (URL, shortcut,
+  lookback, refresh sukses/fallback/error, idempotent, tanpa alert, redaksi key).

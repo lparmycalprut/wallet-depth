@@ -1,39 +1,124 @@
 # -*- coding: utf-8 -*-
-"""Seven-day price, daily CVD, and effort-ratio charts."""
+"""Seven-day price, daily CVD, and effort-ratio charts + manual fetch."""
 from __future__ import annotations
 
 import matplotlib.pyplot as plt
 import streamlit as st
 
+from core import get_helius_keys
 from effort_detector import (classify_effort, load_daily_effort,
                              rows_for_mint)
-from watchlist import load_watchlist
+from links import external_links_html
+from scripts.update_cvd import refresh_single_token
+from watchlist import add_to_watchlist, load_watchlist
 
 st.set_page_config(page_title="Efisiensi Anomali", page_icon="⚡",
                    layout="wide")
 st.title("⚡ Efisiensi Anomali")
 st.caption("Harga dan ΔCVD harian menggunakan batas kalender WIB. Chart tidak "
-           "melakukan fetch otomatis; data diperbarui cron setiap 00:00 WIB.")
+           "melakukan fetch otomatis; data diperbarui cron setiap 00:00 WIB "
+           "atau lewat panel “Fetch data manual” di bawah.")
 
 watchlist = load_watchlist()
-if not watchlist:
-    st.info("Tambahkan token ke watchlist terlebih dahulu.")
+mints = list(watchlist)
+
+# --- Resolve the selected token --------------------------------------------
+# Query param (from the 📊 CVD shortcut) wins, then the session value, then the
+# first watchlist entry. A token may be selected even if it is NOT in the
+# watchlist so the manual fetch works for listing-shortcut tokens too.
+query_mint = str(st.query_params.get("mint") or "") \
+    if "mint" in st.query_params else ""
+session_mint = st.session_state.get("effort_mint") or ""
+candidate = query_mint or session_mint
+if candidate in mints:
+    selected = candidate
+elif candidate:
+    selected = candidate
+else:
+    selected = mints[0] if mints else ""
+
+if not selected:
+    st.info("Belum ada token dipilih. Tambahkan token ke watchlist atau gunakan "
+            "shortcut 📊 CVD dari halaman utama.")
     st.stop()
 
-mints = list(watchlist)
-selected = st.session_state.get("effort_mint")
-if selected not in watchlist:
-    selected = mints[0]
+st.session_state["effort_mint"] = selected
+in_watchlist = selected in watchlist
 labels = {mint: f"${str(watchlist[mint].get('symbol') or '?').upper()} — "
-                 f"{mint[:8]}…" for mint in mints}
-mint = st.selectbox("Token", mints, index=mints.index(selected),
-                    format_func=lambda value: labels[value])
-st.session_state["effort_mint"] = mint
+                f"{mint[:8]}…" for mint in mints}
 
+if in_watchlist:
+    mint = st.selectbox("Token", mints, index=mints.index(selected),
+                        format_func=lambda value: labels[value])
+    st.session_state["effort_mint"] = mint
+else:
+    mint = selected
+    symbol = str((watchlist.get(mint) or {}).get("symbol") or "?")
+    st.warning(
+        "Token ini dipilih lewat shortcut tetapi belum ada di watchlist. "
+        "Shortcut tidak mengubah watchlist. Fetch manual tetap bisa dijalankan "
+        "dan hanya menulis data harian; token ini tidak dilacak oleh cron.")
+    st.markdown(f"**${symbol.upper()}** — `{mint}`")
+    st.markdown(f"{external_links_html(mint)}", unsafe_allow_html=True)
+    if st.button("➕ Tambahkan ke watchlist"):
+        add_to_watchlist(mint, symbol, source="manual")
+        st.rerun()
+
+# --- Manual fetch panel ------------------------------------------------------
+with st.expander("🔁 Fetch data manual", expanded=not in_watchlist):
+    st.caption("Hanya token yang sedang dipilih yang diproses. Hari berjalan "
+               "(yang belum selesai di WIB) tidak dimasukkan. Fetch manual "
+               "tidak mengirim alert Telegram.")
+    col_l, col_b = st.columns([2, 1])
+    days = col_l.number_input("Jumlah hari terakhir yang diambil (2–30)",
+                              min_value=2, max_value=30, value=7, step=1)
+    fetched = col_b.button("Fetch sekarang", type="primary",
+                           use_container_width=True)
+    if fetched:
+        keys = get_helius_keys()
+        api_key = keys[0] if keys else ""
+        log_entries = []
+        with st.status("Mengambil data manual…", expanded=True) as status:
+            result = refresh_single_token(
+                mint, watchlist.get(mint) or {},
+                api_key=api_key, lookback_days=int(days), log=log_entries,
+                on_progress=lambda entry: status.write(
+                    f"`{entry['ts_wib']}` **{entry['stage']}** — "
+                    f"{entry['message']}"))
+        st.session_state["manual_result"] = result
+        st.rerun()
+
+# --- Render manual-fetch log (persists in session state) ----------------------
+def _render_manual_log():
+    res = st.session_state.get("manual_result")
+    if not res or res.get("mint") != mint:
+        return
+    with st.expander("📄 Log fetch manual", expanded=True):
+        st.caption("Log ini tersimpan dalam sesi Streamlit saat ini dan tidak "
+                   "ditulis ke Git. Tidak ada credential/API key yang dicatat.")
+        cols = st.columns(6)
+        cols[0].metric("Status", "✅ Sukses" if res.get("ok")
+                       else "❌ Gagal")
+        cols[1].metric("Sumber", str(res.get("source") or "—"))
+        cols[2].metric("Trades", f"{res.get('trades_count') or 0}")
+        cols[3].metric("Dibuat", f"{res.get('rows_created') or 0}")
+        cols[4].metric("Diupdate", f"{res.get('rows_updated') or 0}")
+        cols[5].metric("Durasi", f"{res.get('duration_ms') or 0} ms")
+        if res.get("fallback"):
+            st.info("Sumber GMGN tidak lengkap → fallback otomatis ke Helius.")
+        if not res.get("ok") and res.get("error"):
+            st.error(res["error"])
+        st.dataframe(res.get("log") or [],
+                     use_container_width=True, hide_index=True)
+
+
+_render_manual_log()
+
+# --- Effort data + charts ------------------------------------------------------
 rows = rows_for_mint(load_daily_effort(), mint)[-7:]
 if not rows:
-    st.warning("Belum ada data harian. Tunggu cron berikutnya atau jalankan "
-               "workflow Daily Effort Anomaly secara manual.")
+    st.info("Belum ada data harian untuk token ini. Gunakan panel “Fetch data "
+            "manual” di atas atau tunggu cron harian (00:00 WIB).")
     st.stop()
 
 latest = classify_effort(rows, mint)
