@@ -21,15 +21,36 @@ Untuk hari terbaru N:
 baseline = ratio hari N-1
 multiplier = ratio hari N / baseline
 
-Klasifikasi tetap:
-- Jika abs(price_chg_pct) < 3%: S5_NETRAL, apa pun multiplier-nya.
+Klasifikasi tetap (hanya jika `baseline_status == "stable"`):
+- Jika abs(price_chg_pct N) < 3%: S5_NETRAL, apa pun multiplier-nya.
 - Arah down + multiplier >= 2.0: S1_PENYERAPAN, bullish.
 - Arah down + multiplier <= 0.5: S2_DUMP_DISTRIBUSI, bearish.
 - Arah up + multiplier >= 2.0: S3_DISTRIBUSI_KE_KUAT, bearish.
 - Arah up + multiplier <= 0.5: S4_PUMP_ASLI, bullish.
 - Selain itu: S5_NETRAL, neutral.
-- Bila kurang dari 2 hari berurutan atau baseline tidak valid:
-  insufficient_data.
+
+Validasi baseline (syarat 2–6 wajib semua lolos untuk `stable`):
+- Tersedia dua tanggal berturut-turut.
+- Ratio N-1 tersedia, finite, dan positif (`> 0`).
+- abs(price_chg_pct N-1) >= 3.0.
+- abs(cvd_delta N-1) >= 1.0 SOL.
+- ratio N-1 >= 0.05 SOL/1%.
+- Direction hari N sama dengan direction hari N-1 (untuk S1–S4).
+
+Jika salah satu syarat 2–5 gagal: `signal = "insufficient_data"`,
+`bias = None`, `baseline_status = "unstable"`, `baseline_reason` menjelaskan
+alasan spesifik (misal "Baseline ratio 0,0076 < minimum 0,05 SOL/1%").
+
+Jika direction N berbeda dari N-1 (syarat 6 gagal) meskipun 2–5 lolos:
+`signal = "insufficient_data"`, `bias = None`, `baseline_status = "incompatible_direction"`,
+`baseline_reason = "direction hari N berbeda dari baseline"`.
+
+Jika data kurang dari dua hari atau tanggal tidak berurutan:
+`signal = "insufficient_data"`, `baseline_status = "missing"`.
+
+`raw_multiplier` tetap boleh berisi hasil matematika untuk audit,
+meskipun `multiplier` dan `raw_multiplier` sama-sama ditampilkan.
+`flag_divergence` tetap dihitung tetapi tidak mengubah klasifikasi.
 
 flag_divergence = true jika arah cvd_delta berlawanan dengan price_chg_pct.
 Flag ini tidak mengubah sinyal.
@@ -42,7 +63,10 @@ Keluarkan JSON saja:
   "ratio_N": 0.0,
   "ratio_N_minus_1": 0.0,
   "multiplier": 0.0,
+  "raw_multiplier": 0.0,
   "flag_divergence": false,
+  "baseline_status": "stable|unstable|incompatible_direction|missing",
+  "baseline_reason": "...",
   "detail": "ringkasan perhitungan"
 }
 

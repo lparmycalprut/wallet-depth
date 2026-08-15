@@ -42,10 +42,28 @@ left.metric("Sinyal", str(latest.get("signal") or "insufficient_data"))
 middle.metric("Ratio hari ini",
               f"{latest['ratio_N']:.3f} SOL/1%"
               if latest.get("ratio_N") is not None else "—")
-right.metric("Multiplier",
-             f"×{latest['multiplier']:.2f}"
-             if latest.get("multiplier") is not None else "—")
+# Show raw multiplier clearly; indicate rejection when baseline is not stable
+baseline_status = latest.get("baseline_status") or "missing"
+if baseline_status != "stable" and latest.get("raw_multiplier") is not None:
+    right.metric("Multiplier",
+                 f"Raw ×{latest['raw_multiplier']:.2f} — DITOLAK")
+else:
+    right.metric("Multiplier",
+                 f"×{latest['multiplier']:.2f}"
+                 if latest.get("multiplier") is not None else "—")
 last.metric("Bias", str(latest.get("bias") or "—").upper())
+
+# Baseline status and reason
+if baseline_status == "unstable":
+    st.warning("⚠️ BASELINE TIDAK STABIL")
+    reason = latest.get("baseline_reason", "")
+    if reason:
+        st.caption(str(reason).replace("; ", "\n"))
+elif baseline_status == "incompatible_direction":
+    st.warning("⚠️ BASELINE BEDA ARAH")
+    reason = latest.get("baseline_reason", "")
+    if reason:
+        st.caption(str(reason).replace("; ", "\n"))
 
 # Build point-by-point classifications so historical markers are honest.
 signals = {}
@@ -72,11 +90,14 @@ axis_cvd.set_ylabel("CVD kumulatif (SOL)", color="#b45309")
 axis_price.tick_params(axis="x", rotation=35)
 axis_price.grid(alpha=.2)
 for date, result in signals.items():
-    if result.get("signal") in {
+    # Only show S1-S4 markers when baseline is stable (not rejected)
+    if (result.get("baseline_status") == "stable" and
+            result.get("signal") in {
             "S1_PENYERAPAN", "S2_DUMP_DISTRIBUSI",
-            "S3_DISTRIBUSI_KE_KUAT", "S4_PUMP_ASLI"}:
+            "S3_DISTRIBUSI_KE_KUAT", "S4_PUMP_ASLI"}):
         index = dates.index(date)
-        color = "#16a34a" if result.get("bias") == "bullish" else "#dc2626"
+        color = ("#16a34a" if result.get("bias") == "bullish"
+                 else "#dc2626")
         axis_price.scatter(date, closes[index], s=90, color=color,
                            edgecolor="white", zorder=5)
         axis_price.annotate(result["signal"].split("_")[0],
@@ -94,9 +115,10 @@ fig_ratio, axis = plt.subplots(figsize=(11, 3.4))
 colors = []
 for date in dates:
     result = signals.get(date) or {}
-    if result.get("bias") == "bullish" and result.get("signal") != "S5_NETRAL":
+    # Only color as bullish/bearish when baseline is stable
+    if result.get("baseline_status") == "stable" and result.get("bias") == "bullish" and result.get("signal") != "S5_NETRAL":
         colors.append("#16a34a")
-    elif result.get("bias") == "bearish" and result.get("signal") != "S5_NETRAL":
+    elif result.get("baseline_status") == "stable" and result.get("bias") == "bearish" and result.get("signal") != "S5_NETRAL":
         colors.append("#dc2626")
     else:
         colors.append("#64748b")

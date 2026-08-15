@@ -18,13 +18,29 @@ Dashboard Streamlit berbahasa Indonesia untuk mengukur **Efisiensi Anomali
 
 `ΔPrice% = (close-open)/open*100`, `R = |ΔCVD|/|ΔPrice%|`, dan
 `M = R_N/R_N-1`. Sinyal membutuhkan dua tanggal berturut-turut. Candle dengan
-`|ΔPrice%| < 3%` selalu S5. Ambang M tetap 2,0 dan 0,5.
+`|ΔPrice%| < 3%` selalu S5.
 
-- Down, M ≥ 2: S1_PENYERAPAN (bullish)
-- Down, M ≤ 0,5: S2_DUMP_DISTRIBUSI (bearish)
-- Up, M ≥ 2: S3_DISTRIBUSI_KE_KUAT (bearish)
-- Up, M ≤ 0,5: S4_PUMP_ASLI (bullish)
-- Lainnya: S5_NETRAL
+Ambang M tetap 2,0 dan 0,5. Konstanta baseline tambahan:
+- `MIN_BASELINE_RATIO = 0.05` (SOL/1%)
+- `MIN_BASELINE_CVD_SOL = 1.0` (SOL)
+
+Baseline dianggap stabil hanya jika:
+1. Dua hari berturut-turut tersedia.
+2. Ratio hari N-1 tersedia, finite, dan positif.
+3. `abs(price_chg_pct hari N-1) >= 3.0`.
+4. `abs(cvd_delta hari N-1) >= 1.0` SOL.
+5. `ratio hari N-1 >= 0.05` SOL/1%.
+6. Direction hari N sama dengan direction hari N-1 (untuk S1–S4).
+
+Jika syarat 2–5 gagal: `baseline_status = "unstable"`, `signal = "insufficient_data"`.
+Jika syarat 6 gagal: `baseline_status = "incompatible_direction"`, `signal = "insufficient_data"`.
+S1–S4 hanya valid jika `baseline_status == "stable"`.
+
+- Down, M ≥ 2 (baseline stabil): S1_PENYERAPAN (bullish)
+- Down, M ≤ 0,5 (baseline stabil): S2_DUMP_DISTRIBUSI (bearish)
+- Up, M ≥ 2 (baseline stabil): S3_DISTRIBUSI_KE_KUAT (bearish)
+- Up, M ≤ 0,5 (baseline stabil): S4_PUMP_ASLI (bullish)
+- Lainnya (atau baseline ditolak): S5_NETRAL / insufficient_data
 
 Flag divergensi hanya informasi dan tidak mengubah sinyal. Alert hanya S1–S4.
 

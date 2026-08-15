@@ -13,13 +13,27 @@ M       = R hari N / R hari N-1
 Hari menggunakan kalender Asia/Jakarta (WIB). Dua hari berturut-turut wajib
 tersedia. Pergerakan di bawah 3% selalu netral.
 
-| Kondisi hari N | Sinyal | Bias |
+**Baseline Quality Gate (baru):**
+- `MIN_BASELINE_RATIO = 0.05` SOL/1%
+- `MIN_BASELINE_CVD_SOL = 1.0` SOL
+
+Baseline stabil hanya jika ratio N-1 ≥ 0,05, `|ΔHarga N-1| ≥ 3%`,
+`|ΔCVD N-1| ≥ 1` SOL, dan arah hari N sama dengan N-1. Jika gagal,
+sinyal menjadi `insufficient_data` dengan status `unstable` atau
+`incompatible_direction`. Multiplier ekstrem akibat denominator kecil
+ditolak.
+
+| Kondisi hari N (baseline stabil) | Sinyal | Bias |
 |---|---|---|
 | Harga turun, M ≥ 2 | S1_PENYERAPAN | Bullish |
 | Harga turun, M ≤ 0,5 | S2_DUMP_DISTRIBUSI | Bearish |
 | Harga naik, M ≥ 2 | S3_DISTRIBUSI_KE_KUAT | Bearish |
 | Harga naik, M ≤ 0,5 | S4_PUMP_ASLI | Bullish |
 | 0,5 < M < 2 atau gerak <3% | S5_NETRAL | Netral |
+
+Jika baseline tidak stabil: `signal = insufficient_data`, `bias = None`,
+`baseline_status = unstable` / `incompatible_direction`. Telegram hanya
+dikirim jika `baseline_status == "stable"` dan sinyal S1–S4.
 
 Flag divergensi muncul bila ΔCVD dan harga berlawanan arah, tetapi tidak
 mengubah klasifikasi. Semua hasil adalah heuristik, bukan jaminan atau saran
