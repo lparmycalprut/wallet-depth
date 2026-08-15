@@ -32,6 +32,7 @@ from watchlist import load_watchlist, update_local_meta
 ALERT_SIGNALS = {
     "S1_PENYERAPAN", "S2_DUMP_DISTRIBUSI",
     "S3_DISTRIBUSI_KE_KUAT", "S4_PUMP_ASLI",
+    "ABSORBSI_LANGSUNG", "SELLING_EXHAUSTION",
 }
 
 
@@ -279,7 +280,7 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
 
 def run_daily(watchlist: dict, *, now=None, api_key: str = "",
               send_alerts: bool = True) -> list[dict]:
-    """Refresh every token, persist idempotently, and alert only S1-S4."""
+    """Refresh every token, persist idempotently, and alert S1-S4 + 2 new signals."""
     now = (now or _now_market()).astimezone(MARKET_TZ)
     existing = load_daily_effort()
     existing_keys = {(row.get("mint"), row.get("date")) for row in existing}

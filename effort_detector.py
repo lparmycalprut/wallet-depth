@@ -1,8 +1,12 @@
 """Effort-to-result anomaly calculation and durable daily storage.
 
-The detector compares the absolute daily CVD delta (SOL) required for each
-one percent of price movement. It deliberately has no secondary scoring or
-wallet-based criteria.
+v3 final logic "Efisiensi Anomali":
+- Day boundary = 00:00 UTC (GMGN convention)
+- 7 signals: 2 new pra-pump (ABSORBSI_LANGSUNG, SELLING_EXHAUSTION) checked BEFORE all gates
+- 5 old signals with divergence requirement for high multiplier
+- Baseline = walk-back nearest healthy day before idx (|CVD|>=1, |price|>=3%, ratio>=0.05)
+- Current floor |CVD|>=5 SOL
+- Scan whole window via classify_all
 """
 from __future__ import annotations
 
@@ -10,7 +14,6 @@ import json
 import math
 import os
 import tempfile
-from datetime import datetime
 from typing import Iterable
 
 
@@ -32,15 +35,30 @@ def _atomic_write_json(path, data, **kwargs):
             pass
         raise
 
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DAILY_EFFORT_PATH = os.path.join(BASE_DIR, "daily_effort.json")
+
+# --- Floor / Gate FINAL (spec section 3) ---
+MIN_CURRENT_CVD_SOL = 5.0
 MIN_PRICE_MOVE_PCT = 3.0
+MIN_BASELINE_CVD_SOL = 1.0
+MIN_BASELINE_RATIO = 0.05
 HIGH_MULTIPLIER = 2.0
 LOW_MULTIPLIER = 0.5
+ANOMALY_UP = 2.0
+ANOMALY_DOWN = 0.5
+WHALE_PCT_THRESHOLD = 40.0
+
+# Backward compat aliases still used elsewhere
 RETENTION_DAYS = 30
 
-MIN_BASELINE_RATIO = 0.05
-MIN_BASELINE_CVD_SOL = 1.0
+# New signal thresholds
+ABSORBSI_MIN_CVD_SOL = 5.0
+ABSORBSI_MAX_PRICE_PCT = 0.5
+EXHAUSTION_FLUSH_CVD_SOL = -30.0
+EXHAUSTION_PCT = 0.40
+EXHAUSTION_LOOKBACK_DAYS = 5
 
 SIGNAL_META = {
     "S1_PENYERAPAN": ("bullish", "Buyer menyerap supply"),
@@ -48,6 +66,8 @@ SIGNAL_META = {
     "S3_DISTRIBUSI_KE_KUAT": ("bearish", "Seller menyerap demand"),
     "S4_PUMP_ASLI": ("bullish", "Seller absen; kenaikan efisien"),
     "S5_NETRAL": ("neutral", "Tidak ada anomali efisiensi"),
+    "ABSORBSI_LANGSUNG": ("bullish", "Pembelian besar diam-diam, harga tidak naik = stealth accumulation"),
+    "SELLING_EXHAUSTION": ("bullish", "Tekanan jual runtuh setelah flush besar, siap reversal"),
 }
 
 
@@ -65,6 +85,10 @@ def daily_effort_record(mint: str, date: str, open_price: float,
 
     ``ratio`` is always non-negative. A zero open or flat candle cannot have
     a meaningful SOL-per-percent ratio, so its ratio is stored as ``None``.
+
+    ΔPrice% = (Close-Open)/Open*100  (day boundary 00:00 UTC = 07:00 WIB)
+    ΔCVD = Σ(delta_sol) hari itu
+    R = |ΔCVD|/|ΔPrice%|
     """
     opening = _finite(open_price)
     closing = _finite(close_price)
@@ -90,191 +114,12 @@ def daily_effort_record(mint: str, date: str, open_price: float,
     }
 
 
-def classify_effort(rows: Iterable[dict], mint: str | None = None) -> dict:
-    """Classify the newest pair of consecutive daily rows.
-
-    Detection requires two calendar-consecutive rows and a positive baseline
-    ratio. Missing or invalid input returns ``insufficient_data`` rather than
-    manufacturing a signal.
-
-    Added baseline quality gates (MIN_BASELINE_RATIO, MIN_BASELINE_CVD_SOL)
-    prevent extreme multipliers caused by very small denominator ratios.
-    """
-    selected = [dict(row) for row in (rows or [])
-                if not mint or row.get("mint") == mint]
-    selected.sort(key=lambda row: str(row.get("date") or ""))
-
-    # --- Step 1: data availability ---
-    if len(selected) < 2:
-        return _build_result(
-            mint_or_empty=mint or (selected[-1].get("mint", "") if selected else ""),
-            current=selected[-1] if selected else None,
-            previous=selected[-2] if len(selected) >= 2 else None,
-            baseline_status="missing",
-            baseline_reason="kurang dari dua hari data atau tanggal tidak berurutan",
-            raw_multiplier=None,
-            signal="insufficient_data",
-            bias=None,
-            flag_divergence=False,
-        )
-
-    previous, current = selected[-2], selected[-1]
-    try:
-        prev_date = datetime.strptime(previous.get("date", ""), "%Y-%m-%d").date()
-        curr_date = datetime.strptime(current.get("date", ""), "%Y-%m-%d").date()
-    except (KeyError, TypeError, ValueError):
-        return _build_result(
-            mint_or_empty=mint or current.get("mint", ""),
-            current=current,
-            previous=previous,
-            baseline_status="missing",
-            baseline_reason="tanggal tidak dapat diurai",
-            raw_multiplier=None,
-            signal="insufficient_data",
-            bias=None,
-            flag_divergence=False,
-        )
-    if (curr_date - prev_date).days != 1:
-        return _build_result(
-            mint_or_empty=mint or current.get("mint", ""),
-            current=current,
-            previous=previous,
-            baseline_status="missing",
-            baseline_reason="tanggal tidak berurutan (gap bukan 1 hari)",
-            raw_multiplier=None,
-            signal="insufficient_data",
-            bias=None,
-            flag_divergence=False,
-        )
-
-    # --- Extract current and previous values ---
-    price_pct_n = _finite(current.get("price_chg_pct"))
-    direction_n = current.get("direction") or "flat"
-    cvd_delta_n = _finite(current.get("cvd_delta"))
-    ratio_n_raw = current.get("ratio")
-    ratio_n = max(0.0, _finite(ratio_n_raw)) if ratio_n_raw is not None else None
-
-    price_pct_prev = _finite(previous.get("price_chg_pct"))
-    direction_prev = previous.get("direction") or "flat"
-    cvd_delta_prev = _finite(previous.get("cvd_delta"))
-    ratio_prev_raw = previous.get("ratio")
-    ratio_prev = _finite(ratio_prev_raw) if ratio_prev_raw is not None else None
-
-    # --- Step 3: calculate raw multiplier if possible ---
-    raw_multiplier = None
-    if (ratio_n is not None and ratio_prev is not None
-            and math.isfinite(ratio_prev) and ratio_prev > 0
-            and math.isfinite(ratio_n)):
-        raw_multiplier = ratio_n / ratio_prev
-
-    # --- Step 4: baseline stability validation (rules 2-5) ---
-    baseline_errors = []
-    if ratio_prev is None or not math.isfinite(ratio_prev) or ratio_prev <= 0:
-        baseline_errors.append(
-            "ratio hari N-1 tidak tersedia, tidak finite, atau tidak positif")
-    else:
-        if ratio_prev < MIN_BASELINE_RATIO:
-            baseline_errors.append(
-                f"Baseline ratio {ratio_prev:.5f} < minimum {MIN_BASELINE_RATIO} SOL/1%")
-
-    if not math.isfinite(price_pct_prev) or abs(price_pct_prev) < 3.0:
-        baseline_errors.append(
-            f"Baseline |ΔHarga| {abs(price_pct_prev):.2f} < minimum 3,00%")
-
-    if not math.isfinite(cvd_delta_prev) or abs(cvd_delta_prev) < MIN_BASELINE_CVD_SOL:
-        baseline_errors.append(
-            f"Baseline |ΔCVD| {abs(cvd_delta_prev):.2f} < minimum {MIN_BASELINE_CVD_SOL:.2f} SOL")
-
-    # If ratio_prev is None/non-positive, ratio comparison with MIN_BASELINE_RATIO
-    # is already covered by the first check. We also need to ensure ratio_prev
-    # meets the minimum when it's positive.
-    if (ratio_prev is not None and math.isfinite(ratio_prev)
-            and ratio_prev > 0 and ratio_prev < MIN_BASELINE_RATIO):
-        # Already added above; keep for consistency
-        pass
-
-    # --- Step 5: direction compatibility (rule 6) ---
-    direction_compatible = (direction_n == direction_prev)
-
-    # --- Determine baseline status ---
-    if baseline_errors:
-        baseline_status = "unstable"
-        baseline_reason = "; ".join(baseline_errors)
-    elif not direction_compatible:
-        baseline_status = "incompatible_direction"
-        baseline_reason = "direction hari N berbeda dari baseline"
-    else:
-        baseline_status = "stable"
-        baseline_reason = ""
-
-    # --- Compute divergence flag (always possible) ---
-    flag_divergence = ((price_pct_n < 0 < cvd_delta_n)
-                       or (price_pct_n > 0 > cvd_delta_n))
-
-    # --- Signal determination ---
-    # Rules 2-5 fail -> insufficient_data
-    if baseline_errors:
-        signal = "insufficient_data"
-        bias = None
-    # Direction different -> insufficient_data
-    elif not direction_compatible:
-        signal = "insufficient_data"
-        bias = None
-    # Stable baseline and compatible direction
-    else:
-        # Small price move or flat -> neutral
-        if abs(price_pct_n) < MIN_PRICE_MOVE_PCT or direction_n == "flat":
-            signal = "S5_NETRAL"
-        elif direction_n == "down" and raw_multiplier is not None and raw_multiplier >= HIGH_MULTIPLIER:
-            signal = "S1_PENYERAPAN"
-        elif direction_n == "down" and raw_multiplier is not None and raw_multiplier <= LOW_MULTIPLIER:
-            signal = "S2_DUMP_DISTRIBUSI"
-        elif direction_n == "up" and raw_multiplier is not None and raw_multiplier >= HIGH_MULTIPLIER:
-            signal = "S3_DISTRIBUSI_KE_KUAT"
-        elif direction_n == "up" and raw_multiplier is not None and raw_multiplier <= LOW_MULTIPLIER:
-            signal = "S4_PUMP_ASLI"
-        else:
-            signal = "S5_NETRAL"
-        bias = SIGNAL_META[signal][0]
-
-    # For baseline errors or direction mismatch, bias stays None (already set)
-    # and signal stays insufficient_data (already set)
-
-    # --- Build final output ---
-    multiplier_for_output = None
-    if raw_multiplier is not None and math.isfinite(raw_multiplier):
-        multiplier_for_output = round(raw_multiplier, 8)
-
-    # Backward-compatible fields
-    ratio_n_for_output = round(ratio_n, 8) if ratio_n is not None else None
-    ratio_prev_for_output = round(ratio_prev, 8) if ratio_prev is not None else None
-
-    result = {
-        "mint": mint or current.get("mint", ""),
-        "date": current.get("date"),
-        "previous_date": previous.get("date"),
-        "direction": direction_n,
-        "ratio_N": ratio_n_for_output,
-        "ratio_N_minus_1": ratio_prev_for_output,
-        "multiplier": multiplier_for_output,
-        "raw_multiplier": multiplier_for_output,
-        "signal": signal,
-        "bias": bias,
-        "flag_divergence": flag_divergence,
-        "price_chg_pct": price_pct_n,
-        "cvd_delta": cvd_delta_n,
-        "baseline_status": baseline_status,
-        "baseline_reason": baseline_reason,
-    }
-    return result
-
-
 def _build_result(*, mint_or_empty: str, current: dict | None,
                    previous: dict | None, baseline_status: str,
                    baseline_reason: str, raw_multiplier: float | None,
                    signal: str, bias: str | None,
                    flag_divergence: bool) -> dict:
-    """Construct a standardized result dict, including new baseline fields."""
+    """Construct a standardized result dict, including baseline fields."""
     direction_n = (current.get("direction") if current else None) or "flat"
     price_pct_n = _finite(current.get("price_chg_pct")) if current else 0.0
     cvd_delta_n = _finite(current.get("cvd_delta")) if current else 0.0
@@ -306,13 +151,289 @@ def _build_result(*, mint_or_empty: str, current: dict | None,
     }
 
 
+def _find_healthy_baseline(sorted_rows: list[dict], idx: int):
+    """Walk-back nearest healthy baseline before idx.
+
+    Healthy = |CVD|>=1, |ΔHarga|>=3%, ratio>=0.05, ratio finite>0.
+    Does NOT require consecutive dates or same direction (final v3).
+    Returns (baseline_idx, baseline_row) or (None, None).
+    """
+    for j in range(idx - 1, -1, -1):
+        row = sorted_rows[j]
+        cvd = _finite(row.get("cvd_delta"))
+        price = _finite(row.get("price_chg_pct"))
+        ratio_raw = row.get("ratio")
+        if ratio_raw is None:
+            continue
+        ratio = _finite(ratio_raw)
+        if not math.isfinite(ratio) or ratio <= 0:
+            continue
+        if abs(cvd) < MIN_BASELINE_CVD_SOL:
+            continue
+        if abs(price) < MIN_PRICE_MOVE_PCT:
+            continue
+        if ratio < MIN_BASELINE_RATIO:
+            continue
+        return j, row
+    return None, None
+
+
+def classify_at(rows: Iterable[dict], idx: int) -> dict:
+    """Classify ONE day at index idx (as N) vs healthy baseline before idx.
+
+    New v3 logic:
+    - Check ABSORBSI_LANGSUNG and SELLING_EXHAUSTION BEFORE all other gates
+    - ABSORBSI valid even for first window day
+    - Current floor |CVD|>=5 else noise -> S5_NETRAL
+    - Baseline walk-back (no direction / consecutiveness requirement)
+    - S1/S3 require divergence, else fall to S5 with explanatory reason
+    """
+    selected = [dict(r) for r in (rows or [])]
+    selected.sort(key=lambda r: str(r.get("date") or ""))
+
+    if not selected or idx < 0 or idx >= len(selected):
+        return _build_result(
+            mint_or_empty="",
+            current=None,
+            previous=None,
+            baseline_status="missing",
+            baseline_reason="index di luar rentang atau tidak ada data",
+            raw_multiplier=None,
+            signal="insufficient_data",
+            bias=None,
+            flag_divergence=False,
+        )
+
+    current = selected[idx]
+    mint_val = str(current.get("mint") or "")
+    price_pct_n = _finite(current.get("price_chg_pct"))
+    cvd_n = _finite(current.get("cvd_delta"))
+    ratio_n_raw = current.get("ratio")
+    ratio_n = max(0.0, _finite(ratio_n_raw)) if ratio_n_raw is not None else None
+    direction_n = current.get("direction") or ("up" if price_pct_n > 0 else "down" if price_pct_n < 0 else "flat")
+    flag_div = ((price_pct_n < 0 < cvd_n) or (price_pct_n > 0 > cvd_n))
+
+    # --- 2a. ABSORBSI_LANGSUNG (priority highest, no baseline) ---
+    # ΔCVD >= +5 SOL AND ΔPrice% <= +0.5%
+    if cvd_n >= ABSORBSI_MIN_CVD_SOL and price_pct_n <= ABSORBSI_MAX_PRICE_PCT:
+        prev_for_display = selected[idx - 1] if idx >= 1 else None
+        res = _build_result(
+            mint_or_empty=mint_val,
+            current=current,
+            previous=prev_for_display,
+            baseline_status="direct",
+            baseline_reason="ABSORBSI_LANGSUNG: CVD>=5 dan harga<=+0.5% — akumulasi stealth",
+            raw_multiplier=None,
+            signal="ABSORBSI_LANGSUNG",
+            bias="bullish",
+            flag_divergence=True,
+        )
+        # enrich
+        res["flush_date"] = None
+        res["flush_cvd"] = None
+        res["exhaustion_pct"] = None
+        return res
+
+    # --- 2a. SELLING_EXHAUSTION (needs idx>=1, check flush in lookback 5) ---
+    if idx >= 1 and cvd_n < 0 and price_pct_n <= ABSORBSI_MAX_PRICE_PCT:
+        look_start = max(0, idx - EXHAUSTION_LOOKBACK_DAYS)
+        flush_row = None
+        flush_cvd_val = None
+        for j in range(look_start, idx):
+            r = selected[j]
+            c = _finite(r.get("cvd_delta"))
+            if c <= EXHAUSTION_FLUSH_CVD_SOL:
+                if flush_row is None or c < flush_cvd_val:
+                    flush_row = r
+                    flush_cvd_val = c
+        if flush_row is not None:
+            # |CVD today| <= 40% * |CVD flush|
+            if abs(cvd_n) <= EXHAUSTION_PCT * abs(flush_cvd_val) if flush_cvd_val != 0 else False:
+                exhaustion_pct = (abs(cvd_n) / abs(flush_cvd_val) * 100.0) if flush_cvd_val != 0 else 0.0
+                res = _build_result(
+                    mint_or_empty=mint_val,
+                    current=current,
+                    previous=flush_row,
+                    baseline_status="direct",
+                    baseline_reason=(
+                        f"SELLING_EXHAUSTION: flush {flush_row.get('date')} "
+                        f"CVD {flush_cvd_val:.2f} → {cvd_n:.2f}, "
+                        f"runtuh {exhaustion_pct:.1f}%"
+                    ),
+                    raw_multiplier=None,
+                    signal="SELLING_EXHAUSTION",
+                    bias="bullish",
+                    flag_divergence=False,
+                )
+                res["flush_date"] = flush_row.get("date")
+                res["flush_cvd"] = round(flush_cvd_val, 8)
+                res["exhaustion_pct"] = round(exhaustion_pct, 8)
+                # keep previous_date as flush date (for alert vs flush)
+                return res
+
+    # --- 3. Floor gate: current |CVD| >=5 else noise -> S5_NETRAL ---
+    if abs(cvd_n) < MIN_CURRENT_CVD_SOL:
+        baseline_idx, baseline_row = _find_healthy_baseline(selected, idx)
+        if baseline_row is not None:
+            ratio_prev = _finite(baseline_row.get("ratio")) if baseline_row.get("ratio") is not None else None
+            mult = None
+            if ratio_n is not None and ratio_prev is not None and ratio_prev > 0:
+                mult = ratio_n / ratio_prev
+            res = _build_result(
+                mint_or_empty=mint_val,
+                current=current,
+                previous=baseline_row,
+                baseline_status="noise",
+                baseline_reason=f"|ΔCVD| {abs(cvd_n):.2f} < minimum {MIN_CURRENT_CVD_SOL:.2f} SOL — noise",
+                raw_multiplier=mult,
+                signal="S5_NETRAL",
+                bias="neutral",
+                flag_divergence=flag_div,
+            )
+            return res
+        else:
+            res = _build_result(
+                mint_or_empty=mint_val,
+                current=current,
+                previous=selected[idx - 1] if idx >= 1 else None,
+                baseline_status="noise",
+                baseline_reason=f"|ΔCVD| {abs(cvd_n):.2f} < minimum {MIN_CURRENT_CVD_SOL:.2f} SOL — noise",
+                raw_multiplier=None,
+                signal="S5_NETRAL",
+                bias="neutral",
+                flag_divergence=flag_div,
+            )
+            return res
+
+    # --- 4b. Baseline healthy walk-back ---
+    baseline_idx, baseline_row = _find_healthy_baseline(selected, idx)
+    if baseline_row is None:
+        return _build_result(
+            mint_or_empty=mint_val,
+            current=current,
+            previous=selected[idx - 1] if idx >= 1 else None,
+            baseline_status="insufficient_baseline",
+            baseline_reason="tidak ada baseline sehat dalam lookback (butuh |CVD|≥1, |ΔHarga|≥3%, ratio≥0.05)",
+            raw_multiplier=None,
+            signal="insufficient_data",
+            bias=None,
+            flag_divergence=flag_div,
+        )
+
+    # Extract baseline values
+    ratio_prev = _finite(baseline_row.get("ratio")) if baseline_row.get("ratio") is not None else None
+    raw_multiplier = None
+    if ratio_n is not None and ratio_prev is not None and math.isfinite(ratio_prev) and ratio_prev > 0 and math.isfinite(ratio_n):
+        raw_multiplier = ratio_n / ratio_prev
+
+    # Small price move or flat -> always S5_NETRAL (even with stable baseline)
+    if abs(price_pct_n) < MIN_PRICE_MOVE_PCT or direction_n == "flat":
+        return _build_result(
+            mint_or_empty=mint_val,
+            current=current,
+            previous=baseline_row,
+            baseline_status="stable",
+            baseline_reason="",
+            raw_multiplier=raw_multiplier,
+            signal="S5_NETRAL",
+            bias="neutral",
+            flag_divergence=flag_div,
+        )
+
+    # --- 2b. Old signals with divergence requirement for M>=2 ---
+    signal = "S5_NETRAL"
+    bias = "neutral"
+    reason = ""
+
+    if direction_n == "down":
+        if raw_multiplier is not None and raw_multiplier >= HIGH_MULTIPLIER:
+            if flag_div:
+                signal = "S1_PENYERAPAN"
+                bias = "bullish"
+            else:
+                signal = "S5_NETRAL"
+                bias = "neutral"
+                reason = "M besar tapi CVD searah harga — bukan penyerapan/distribusi murni"
+        elif raw_multiplier is not None and raw_multiplier <= LOW_MULTIPLIER:
+            signal = "S2_DUMP_DISTRIBUSI"
+            bias = "bearish"
+        else:
+            signal = "S5_NETRAL"
+            bias = "neutral"
+    elif direction_n == "up":
+        if raw_multiplier is not None and raw_multiplier >= HIGH_MULTIPLIER:
+            if flag_div:
+                signal = "S3_DISTRIBUSI_KE_KUAT"
+                bias = "bearish"
+            else:
+                signal = "S5_NETRAL"
+                bias = "neutral"
+                reason = "M besar tapi CVD searah harga — bukan penyerapan/distribusi murni"
+        elif raw_multiplier is not None and raw_multiplier <= LOW_MULTIPLIER:
+            signal = "S4_PUMP_ASLI"
+            bias = "bullish"
+        else:
+            signal = "S5_NETRAL"
+            bias = "neutral"
+    else:
+        signal = "S5_NETRAL"
+        bias = "neutral"
+
+    res = _build_result(
+        mint_or_empty=mint_val,
+        current=current,
+        previous=baseline_row,
+        baseline_status="stable",
+        baseline_reason=reason,
+        raw_multiplier=raw_multiplier,
+        signal=signal,
+        bias=bias,
+        flag_divergence=flag_div,
+    )
+    return res
+
+
+def classify_effort(rows: Iterable[dict], mint: str | None = None) -> dict:
+    """Classify newest day (compatibility: = classify_at last index)."""
+    selected = [dict(row) for row in (rows or [])
+                if not mint or row.get("mint") == mint]
+    selected.sort(key=lambda row: str(row.get("date") or ""))
+    if not selected:
+        return _build_result(
+            mint_or_empty=mint or "",
+            current=None,
+            previous=None,
+            baseline_status="missing",
+            baseline_reason="tidak ada data",
+            raw_multiplier=None,
+            signal="insufficient_data",
+            bias=None,
+            flag_divergence=False,
+        )
+    return classify_at(selected, len(selected) - 1)
+
+
+def classify_all(rows: Iterable[dict]) -> list[dict]:
+    """Scan whole window, return array results aligned to sorted rows.
+
+    Day 0 = "—" (insufficient) or ABSORBSI_LANGSUNG if passes direct check.
+    """
+    selected = [dict(row) for row in (rows or [])]
+    selected.sort(key=lambda row: str(row.get("date") or ""))
+    results: list[dict] = []
+    for idx in range(len(selected)):
+        res = classify_at(selected, idx)
+        results.append(res)
+    return results
+
+
 def _insufficient(mint: str) -> dict:
     return _build_result(
         mint_or_empty=mint,
         current=None,
         previous=None,
         baseline_status="missing",
-        baseline_reason="kurang dari dua hari data atau tanggal tidak berurutan",
+        baseline_reason="kurang dari dua hari data",
         raw_multiplier=None,
         signal="insufficient_data",
         bias=None,
@@ -327,14 +448,13 @@ def load_daily_effort(path: str = DAILY_EFFORT_PATH) -> list[dict]:
             data = json.load(handle)
     except (OSError, ValueError, TypeError):
         return []
-    return [row for row in data if isinstance(row, dict)] \
-        if isinstance(data, list) else []
+    return [row for row in data if isinstance(row, dict)] if isinstance(data, list) else []
 
 
 def merge_daily_effort(new_rows: Iterable[dict], *,
                        path: str = DAILY_EFFORT_PATH,
                        retention_days: int = RETENTION_DAYS) -> list[dict]:
-    """Idempotently upsert mint/date rows and retain the newest N per mint."""
+    """Idempotently upsert mint/date rows and retain newest N per mint."""
     merged = {}
     for row in [*load_daily_effort(path), *(new_rows or [])]:
         if not isinstance(row, dict):
@@ -359,3 +479,33 @@ def merge_daily_effort(new_rows: Iterable[dict], *,
 def rows_for_mint(rows: Iterable[dict], mint: str) -> list[dict]:
     result = [dict(row) for row in (rows or []) if row.get("mint") == mint]
     return sorted(result, key=lambda row: row.get("date", ""))
+
+
+# Optional helper for CSV/recap output (spec 7a)
+def format_recap(mint: str, rows: Iterable[dict]) -> str:
+    """Build text recap block per spec 7a."""
+    sorted_rows = sorted([dict(r) for r in (rows or []) if r.get("mint") == mint or not mint],
+                         key=lambda r: str(r.get("date") or ""))
+    if not sorted_rows:
+        sorted_rows = sorted([dict(r) for r in (rows or [])], key=lambda r: str(r.get("date") or ""))
+    results = classify_all(sorted_rows)
+    lines = []
+    lines.append("# === REKAPAN EFISIENSI ANOMALI ===")
+    if mint:
+        lines.append(f"# Mint: {mint}")
+    if results:
+        first = results[0].get("date") or "?"
+        last = results[-1].get("date") or "?"
+        lines.append(f"# Hari: N ({first} s/d {last})")
+    for res in results:
+        date = res.get("date") or "?"
+        sig = res.get("signal") or "—"
+        if sig in ("insufficient_data", "—"):
+            continue
+        bias = res.get("bias") or "neutral"
+        price = res.get("price_chg_pct") or 0
+        cvd = res.get("cvd_delta") or 0
+        ratio = res.get("ratio_N")
+        ratio_str = f"{ratio:.3f}" if ratio is not None else "—"
+        lines.append(f"# {date}  {sig} ({bias})  | Δ{price:+.1f}% | CVD {cvd:+.2f} | R {ratio_str}")
+    return "\n".join(lines)

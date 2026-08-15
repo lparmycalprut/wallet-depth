@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Price, daily CVD, and effort-ratio charts with backtest history + manual fetch."""
+"""Price, daily CVD, and effort-ratio charts with backtest history + manual fetch.
+
+v3: uses classify_all to scan whole window, supports 2 new pra-pump signals.
+"""
 from __future__ import annotations
 
 from datetime import datetime, timedelta
@@ -9,7 +12,7 @@ import streamlit as st
 
 from core import get_helius_keys
 from cvd_daily import MARKET_TZ
-from effort_detector import (classify_effort, load_daily_effort,
+from effort_detector import (classify_all, classify_effort, load_daily_effort,
                              rows_for_mint)
 from links import external_links_html
 from scripts.update_cvd import refresh_single_token
@@ -19,7 +22,7 @@ st.set_page_config(page_title="Efisiensi Anomali", page_icon="⚡",
                    layout="wide")
 st.title("⚡ Efisiensi Anomali")
 st.caption("Harga dan ΔCVD harian menggunakan batas hari market (00:00 UTC, "
-           "sesuai Helius/Solscan). Chart tidak melakukan fetch otomatis; "
+           "sesuai GMGN/Helius/Solscan). Chart tidak melakukan fetch otomatis; "
            "data diperbarui cron setiap 00:00 UTC atau lewat panel fetch "
            "manual.")
 
@@ -33,7 +36,7 @@ def _render_metrics(rows, mint):
                   f"{latest['ratio_N']:.3f} SOL/1%"
                   if latest.get("ratio_N") is not None else "—")
     baseline_status = latest.get("baseline_status") or "missing"
-    if baseline_status != "stable" and latest.get("raw_multiplier") is not None:
+    if baseline_status not in ("stable", "direct") and latest.get("raw_multiplier") is not None:
         right.metric("Multiplier",
                      f"Raw ×{latest['raw_multiplier']:.2f} — DITOLAK")
     else:
@@ -42,24 +45,47 @@ def _render_metrics(rows, mint):
                      if latest.get("multiplier") is not None else "—")
     last.metric("Bias", str(latest.get("bias") or "—").upper())
 
-    if baseline_status == "unstable":
-        st.warning("⚠️ BASELINE TIDAK STABIL")
+    # Show baseline warnings for old logic + new explanation
+    if baseline_status in ("unstable", "insufficient_baseline", "noise", "missing"):
+        # For v3 we show reason if any, except direct signals which are valid
         reason = latest.get("baseline_reason", "")
-        if reason:
-            st.caption(str(reason).replace("; ", "\n"))
+        if baseline_status == "insufficient_baseline":
+            st.warning("⚠️ BASELINE TIDAK CUKUP")
+            if reason:
+                st.caption(str(reason))
+        elif baseline_status == "noise":
+            st.warning("⚠️ NOISE — |CVD| < 5 SOL")
+            if reason:
+                st.caption(str(reason))
+        elif baseline_status == "unstable":
+            st.warning("⚠️ BASELINE TIDAK STABIL")
+            if reason:
+                st.caption(str(reason).replace("; ", "\n"))
+        elif baseline_status == "missing" and latest.get("signal") == "insufficient_data":
+            st.info("Butuh minimal 1 hari baseline sehat atau sinyal langsung.")
+            if reason:
+                st.caption(str(reason))
     elif baseline_status == "incompatible_direction":
-        st.warning("⚠️ BASELINE BEDA ARAH")
+        # Legacy compatibility: should no longer appear in v3 (direction no longer required)
+        st.warning("⚠️ BASELINE BEDA ARAH (legacy)")
         reason = latest.get("baseline_reason", "")
         if reason:
-            st.caption(str(reason).replace("; ", "\n"))
+            st.caption(str(reason))
+    else:
+        # For direct signals show their explanatory reason
+        if latest.get("signal") in ("ABSORBSI_LANGSUNG", "SELLING_EXHAUSTION"):
+            st.success(f"✅ {latest.get('baseline_reason') or latest.get('signal')}")
+        elif latest.get("baseline_reason"):
+            # Show divergence-murni reason when S5 due to non-divergent high M
+            if "bukan penyerapan/distribusi murni" in str(latest.get("baseline_reason")):
+                st.caption(str(latest.get("baseline_reason")))
 
 
 def _render_charts(rows, mint):
-    """Render price/CVD and ratio charts for the given rows."""
-    signals = {}
-    for index in range(1, len(rows)):
-        result = classify_effort(rows[:index + 1], mint)
-        signals[result.get("date")] = result
+    """Render price/CVD and ratio charts for the given rows using classify_all."""
+    # v3: scan whole window
+    classified = classify_all(rows)
+    signals_by_date = {res.get("date"): res for res in classified}
 
     dates = [row["date"] for row in rows]
     closes = [float(row.get("close") or 0) for row in rows]
@@ -79,38 +105,50 @@ def _render_charts(rows, mint):
     axis_cvd.set_ylabel("CVD kumulatif (SOL)", color="#b45309")
     axis_price.tick_params(axis="x", rotation=35)
     axis_price.grid(alpha=.2)
-    for date, result in signals.items():
-        if (result.get("baseline_status") == "stable" and
-                result.get("signal") in {
-                "S1_PENYERAPAN", "S2_DUMP_DISTRIBUSI",
-                "S3_DISTRIBUSI_KE_KUAT", "S4_PUMP_ASLI"}):
-            index = dates.index(date)
-            color = ("#16a34a" if result.get("bias") == "bullish"
-                     else "#dc2626")
-            axis_price.scatter(date, closes[index], s=90, color=color,
+    for date in dates:
+        result = signals_by_date.get(date) or {}
+        sig = result.get("signal") or ""
+        if sig in {
+            "S1_PENYERAPAN", "S2_DUMP_DISTRIBUSI",
+            "S3_DISTRIBUSI_KE_KUAT", "S4_PUMP_ASLI",
+            "ABSORBSI_LANGSUNG", "SELLING_EXHAUSTION"}:
+            try:
+                idx = dates.index(date)
+            except ValueError:
+                continue
+            # bullish green, bearish red
+            bias = result.get("bias") or ""
+            color = "#16a34a" if bias == "bullish" else "#dc2626" if bias == "bearish" else "#64748b"
+            axis_price.scatter(date, closes[idx], s=90, color=color,
                                edgecolor="white", zorder=5)
-            axis_price.annotate(result["signal"].split("_")[0],
-                                (date, closes[index]), xytext=(0, 10),
+            # short label
+            label = sig.split("_")[0]
+            if sig == "ABSORBSI_LANGSUNG":
+                label = "ABS"
+            elif sig == "SELLING_EXHAUSTION":
+                label = "EXH"
+            axis_price.annotate(label,
+                                (date, closes[idx]), xytext=(0, 10),
                                 textcoords="offset points", ha="center",
-                                color=color, fontweight="bold")
+                                color=color, fontweight="bold", fontsize=8)
     fig.legend(loc="upper left", bbox_to_anchor=(.09, .9), frameon=False)
     fig.tight_layout()
     st.pyplot(fig, use_container_width=True)
     plt.close(fig)
 
     ratios = [row.get("ratio") for row in rows]
+    # baseline for chart = ratio of previous healthy? For simplicity keep previous day's ratio as line (old behavior)
     baselines = [None] + ratios[:-1]
     fig_ratio, axis = plt.subplots(figsize=(11, 3.4))
     colors = []
     for date in dates:
-        result = signals.get(date) or {}
-        if (result.get("baseline_status") == "stable"
-                and result.get("bias") == "bullish"
-                and result.get("signal") != "S5_NETRAL"):
+        result = signals_by_date.get(date) or {}
+        sig = result.get("signal") or ""
+        if sig in ("S5_NETRAL", "insufficient_data", None, ""):
+            colors.append("#64748b")
+        elif (result.get("bias") == "bullish"):
             colors.append("#16a34a")
-        elif (result.get("baseline_status") == "stable"
-              and result.get("bias") == "bearish"
-              and result.get("signal") != "S5_NETRAL"):
+        elif (result.get("bias") == "bearish"):
             colors.append("#dc2626")
         else:
             colors.append("#64748b")
@@ -306,11 +344,37 @@ st.subheader(f"History {start_date} s/d {end_date}")
 if range_rows:
     _render_metrics(range_rows, mint)
     _render_charts(range_rows, mint)
-    st.subheader("Data harian")
-    st.dataframe(range_rows, use_container_width=True, hide_index=True)
+    st.subheader("Data harian + sinyal per hari (v3)")
+    classified = classify_all(range_rows)
+    # build enriched table
+    enriched = []
+    for row, res in zip(range_rows, classified):
+        enriched.append({
+            "date": row.get("date"),
+            "open": row.get("open"),
+            "close": row.get("close"),
+            "price_chg_pct": row.get("price_chg_pct"),
+            "cvd_delta": row.get("cvd_delta"),
+            "direction": row.get("direction"),
+            "ratio": row.get("ratio"),
+            "signal": res.get("signal"),
+            "bias": res.get("bias"),
+            "multiplier": res.get("multiplier"),
+            "baseline_status": res.get("baseline_status"),
+            "baseline_reason": res.get("baseline_reason"),
+        })
+    st.dataframe(enriched, use_container_width=True, hide_index=True)
     st.caption("R = |ΔCVD| / |ΔHarga%|. Multiplier membandingkan R hari "
-               "terbaru dengan R hari sebelumnya. Pergerakan di bawah 3% "
-               "selalu netral.")
+               "terbaru dengan baseline sehat sebelumnya. Sinyal ABSORBSI_LANGSUNG "
+               "dan SELLING_EXHAUSTION dicek sebelum gate lain dan tidak butuh baseline.")
+    # Optional recap block as comment-like text area for copy
+    try:
+        from effort_detector import format_recap
+        recap_text = format_recap(mint, range_rows)
+        with st.expander("📋 Rekapan teks (untuk CSV/export)", expanded=False):
+            st.code(recap_text, language="text")
+    except Exception:
+        pass
 elif bt_result is not None and not bt_result.get("ok"):
     st.error(f"Fetch gagal: {bt_result.get('error') or 'kesalahan tak dikenal'}")
     st.caption("Periksa koneksi atau API key Helius, lalu klik "

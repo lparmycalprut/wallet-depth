@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Wallet Depth — daily effort anomaly dashboard."""
+"""Wallet Depth — daily effort anomaly dashboard (v3)."""
 from __future__ import annotations
 
 import html
@@ -34,7 +34,8 @@ div[data-testid="stHorizontalBlock"]{align-items:center}
 </style>
 <div class="hero"><h1>⚡ Wallet Depth</h1>
 <p>Deteksi tunggal berbasis efisiensi anomali: berapa SOL ΔCVD yang dibutuhkan
-untuk menggerakkan harga 1% dibandingkan hari sebelumnya.</p></div>
+untuk menggerakkan harga 1% dibandingkan baseline sehat sebelumnya. Termasuk
+2 sinyal pra-pump baru: ABSORBSI LANGSUNG & SELLING EXHAUSTION.</p></div>
 """, unsafe_allow_html=True)
 
 
@@ -60,8 +61,9 @@ watchlist = load_watchlist()
 effort_rows = load_daily_effort()
 st.subheader("Watchlist")
 st.caption("Candle harian memakai batas hari market 00:00–23:59 UTC "
-           "(sesuai Helius/Solscan). Sinyal memerlukan dua hari berturut-turut; "
-           "multiplier 2× / 0,5× bersifat tetap.")
+           "(sesuai GMGN/Helius/Solscan, 07:00 WIB). Baseline = walk-back hari sehat "
+           "terdekat (|CVD|≥1, |ΔHarga|≥3%, ratio≥0.05). Multiplier 2× / 0,5× tetap. "
+           "2 sinyal baru (ABSORBSI & EXHAUSTION) dicek sebelum gate lain.")
 
 if not watchlist:
     st.info("Watchlist masih kosong. Tambahkan contract address di bawah.")
@@ -77,10 +79,10 @@ else:
         columns = st.columns([1.45, 1.35, 1.75, 1, 1, 1, .65, .55])
         symbol = str((meta or {}).get("symbol") or "?").upper()
         columns[0].markdown(
-            f"**${html.escape(symbol)}**  \n`{html.escape(mint[:8])}…`  \n"
+            f"**${html.escape(symbol)}**  \\n`{html.escape(mint[:8])}…`  \\n"
             f"{external_links_html(mint)}",
             unsafe_allow_html=True)
-        date = result.get("date") or "Butuh ≥2 hari"
+        date = result.get("date") or "Butuh baseline sehat"
         columns[1].markdown(str(date))
         # Signal badge
         columns[2].markdown(_signal_badge(result), unsafe_allow_html=True)
@@ -93,28 +95,51 @@ else:
                 'border-radius:6px;background:#7f1d1d;color:#fee2e2;'
                 'font-size:.7rem;font-weight:700;">⚠️ BASELINE TIDAK STABIL</span>',
                 unsafe_allow_html=True)
+        elif baseline_status == "insufficient_baseline":
+            columns[2].markdown(
+                '<span style="display:inline-block;padding:.15rem .35rem;'
+                'border-radius:6px;background:#334155;color:#e2e8f0;'
+                'font-size:.7rem;font-weight:700;">⚠️ BUTUH BASELINE</span>',
+                unsafe_allow_html=True)
+        elif baseline_status == "noise":
+            columns[2].markdown(
+                '<span style="display:inline-block;padding:.15rem .35rem;'
+                'border-radius:6px;background:#334155;color:#e2e8f0;'
+                'font-size:.7rem;font-weight:700;">⚪ NOISE &lt;5 SOL</span>',
+                unsafe_allow_html=True)
         elif baseline_status == "incompatible_direction":
+            # legacy — should no longer appear after v3 but keep for backward compat
             columns[2].markdown(
                 '<span style="display:inline-block;padding:.15rem .35rem;'
                 'border-radius:6px;background:#7f4d1d;color:#fef3c7;'
                 'font-size:.7rem;font-weight:700;">⚠️ BASELINE BEDA ARAH</span>',
                 unsafe_allow_html=True)
+        elif baseline_status == "direct":
+            # direct signals are valid — show small badge if wanted
+            if result.get("signal") in ("ABSORBSI_LANGSUNG", "SELLING_EXHAUSTION"):
+                columns[2].markdown(
+                    '<span style="display:inline-block;padding:.15rem .35rem;'
+                    'border-radius:6px;background:#14532d;color:#dcfce7;'
+                    'font-size:.7rem;font-weight:700;">⚡ DIRECT</span>',
+                    unsafe_allow_html=True)
         # Baseline reason tooltip / caption
         if reason:
+            # avoid overlong caption, replace ; with newline
             columns[3].caption(str(reason).replace("; ", "\n"))
         columns[3].markdown(
-            f"**{_number(result.get('ratio_N'))}**  \nSOL/1%")
+            f"**{_number(result.get('ratio_N'))}**  \\nSOL/1%")
         columns[4].markdown(
-            f"**{_number(result.get('ratio_N_minus_1'))}**  \nSOL/1%")
+            f"**{_number(result.get('ratio_N_minus_1'))}**  \\nSOL/1%")
         # Multiplier display: show raw value with rejection note when rejected
-        baseline_status = result.get("baseline_status") or "missing"
-        if baseline_status != "stable" and result.get("raw_multiplier") is not None:
+        if baseline_status not in ("stable", "direct") and result.get("raw_multiplier") is not None:
             columns[5].markdown(
                 f"**Raw ×{_number(result.get('raw_multiplier'), '.2f')}**<br>"
-                f"<span style='font-size:.65rem;color:#ef4444;'>— ditolak</span>")
+                f"<span style='font-size:.65rem;color:#ef4444;'>— ditolak</span>",
+                unsafe_allow_html=True)
         else:
             columns[5].markdown(
-                f"**×{_number(result.get('multiplier'), '.2f')}**")
+                f"**×{_number(result.get('multiplier'), '.2f')}**",
+                unsafe_allow_html=True)
         if columns[6].button("📈", key=f"chart-{mint}",
                              help="Buka chart 7 hari"):
             st.session_state["effort_mint"] = mint
