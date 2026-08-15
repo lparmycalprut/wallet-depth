@@ -1,16 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Fungsi fetch bersama — dipakai app.py dan pages/ (Perbandingan, Riwayat)."""
+"""Shared configuration and market/trade fetch infrastructure."""
 import json
 import os
 import tempfile
 import threading
 
-import pandas as pd
 import requests
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
-HISTORY_PATH = os.path.join(BASE_DIR, "history.json")
 HELIUS_RPC_URL = "https://mainnet.helius-rpc.com/"
 HELIUS_ENHANCED_URL = "https://api.helius.xyz"
 
@@ -230,14 +228,6 @@ def load_config() -> dict:
     return cfg
 
 
-def load_history() -> dict:
-    try:
-        with open(HISTORY_PATH, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
-
-
 def _dex_liquidity_usd(pair: dict) -> float:
     """Return a finite, non-negative DexScreener liquidity value."""
     try:
@@ -363,310 +353,40 @@ def get_market(ca: str) -> dict:
     }
 
 
-def get_rugcheck(ca: str) -> dict:
-    """RugCheck (gratis): creator, authority, LP locked, risks, rugged."""
-    out = {}
-    try:
-        r = requests.get(f"https://api.rugcheck.xyz/v1/tokens/{ca}/report",
-                         headers={"User-Agent": "Mozilla/5.0"}, timeout=25)
-        d = r.json() or {}
-        out = {
-            "creator": d.get("creator"),
-            "creator_balance": float(d.get("creatorBalance") or 0),
-            "mint_authority": d.get("mintAuthority"),
-            "freeze_authority": d.get("freezeAuthority"),
-            "risks": [{"name": x.get("name"), "level": x.get("level"),
-                       "desc": x.get("description")}
-                      for x in (d.get("risks") or [])],
-            "rugged": bool(d.get("rugged")),
-            "total_lp_providers": d.get("totalLPProviders"),
-            "total_market_liquidity": d.get("totalMarketLiquidity"),
-        }
-    except Exception:
-        pass
-    try:
-        r = requests.get(
-            f"https://api.rugcheck.xyz/v1/tokens/{ca}/report/summary",
-            headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
-        s = r.json() or {}
-        out["lp_locked_pct"] = float(s.get("lpLockedPct") or 0)
-    except Exception:
-        out.setdefault("lp_locked_pct", None)
-    return out
+def get_daily_candles_wib(pair_address: str, limit_days: int = 7) -> list[dict]:
+    """Fetch hourly GeckoTerminal candles and aggregate calendar days in WIB.
 
-
-def get_ohlcv_daily(pair_address: str, limit: int = 30) -> pd.DataFrame:
-    """GeckoTerminal (gratis): candle harian pair -> date, close, volume."""
-    try:
-        r = requests.get(
-            f"https://api.geckoterminal.com/api/v2/networks/solana/pools/"
-            f"{pair_address}/ohlcv/day", params={"limit": limit},
-            headers={"accept": "application/json"}, timeout=20)
-        lst = (((r.json() or {}).get("data") or {}).get("attributes") or {}) \
-            .get("ohlcv_list") or []
-    except Exception:
-        return pd.DataFrame()
-    import datetime as _dt
-    rows = [{"date": _dt.datetime.utcfromtimestamp(x[0]).strftime("%Y-%m-%d"),
-             "close": float(x[4]), "volume": float(x[5])} for x in lst]
-    df = pd.DataFrame(rows)
-    return df.sort_values("date").reset_index(drop=True) if not df.empty else df
-
-
-def rpc(endpoint: str, method: str, params: list, timeout: int = 60):
-    """Call a non-Helius/custom RPC endpoint (no key rotation available)."""
-    r = requests.post(endpoint, json={"jsonrpc": "2.0", "id": 1,
-                                      "method": method, "params": params},
-                      timeout=timeout)
-    r.raise_for_status()
-    d = r.json()
-    if "error" in d:
-        raise RuntimeError(str(d["error"]))
-    return d["result"]
-
-
-def get_holders(helius_keys, ca: str) -> pd.DataFrame:
-    """Semua holder (agregat per owner) via rotating Helius keys."""
-    import time as _t
-    owners, cursor, pages = {}, None, 0
-    while True:
-        params = {"mint": ca, "limit": 1000}
-        if cursor:
-            params["cursor"] = cursor
-        res = helius_rpc("getTokenAccounts", params, helius_keys, timeout=60)
-        res = res or {}
-        accs = res.get("token_accounts") or []
-        for account in accs:
-            owner = account.get("owner")
-            if owner:
-                owners[owner] = owners.get(owner, 0.0) + float(
-                    account.get("amount") or 0)
-        pages += 1
-        cursor = res.get("cursor")
-        if not cursor or not accs or pages > 500:
-            break
-        _t.sleep(0.12)
-    return pd.DataFrame({"owner": list(owners.keys()),
-                         "raw_amount": list(owners.values())})
-
-
-def get_supply(helius_keys, ca: str):
-    res = helius_rpc("getTokenSupply", [ca], helius_keys, timeout=30)
-    value = res["value"]
-    return float(value["uiAmount"] or 0), int(value["decimals"])
-
-
-def concentration(df: pd.DataFrame, supply: float) -> dict:
-    """% of supply held by Top 1-5 / 6-10 / 11-25 / 26-50 / 51-100."""
-    s = df.sort_values("ui_amount", ascending=False)["ui_amount"].values
-    def seg(a, b):
-        return float(s[a:b].sum()) / supply * 100 if supply and len(s) > a else 0.0
-    return {"top5": seg(0, 5), "top6_10": seg(5, 10), "top11_25": seg(10, 25),
-            "top26_50": seg(25, 50), "top51_100": seg(50, 100),
-            "top10": seg(0, 10), "top100": seg(0, 100)}
-
-
-def health_score(*, ratio_pct, real_mc_pct, top10_pct, liq_pct_mc,
-                 lp_locked_pct, mint_auth, freeze_auth, holder_delta,
-                 max_cluster_pct, fresh_pct) -> tuple:
-    """Skor kesehatan 0-100 + rincian. Semua argumen boleh None (=netral)."""
-    br = []  # (nama, poin, maks, keterangan)
-
-    def clamp(v, lo, hi):
-        return max(lo, min(hi, v))
-
-    # 1. Rasio real/dust (maks 20)
-    if ratio_pct is None:
-        p = 10.0
-    else:
-        p = clamp((ratio_pct - 10) / (60 - 10), 0, 1) * 20
-    br.append(("Real/dust ratio", p, 20,
-               f"{ratio_pct:.0f}%" if ratio_pct is not None else "n/a"))
-    # 2. Real % MC (maks 10)
-    p = clamp((real_mc_pct or 0) / 60, 0, 1) * 10
-    br.append(("Real holders % MC", p, 10, f"{real_mc_pct:.1f}% MC"))
-    # 3. Konsentrasi top10 (maks 15) — makin kecil makin bagus
-    p = clamp((45 - (top10_pct or 45)) / (45 - 10), 0, 1) * 15
-    br.append(("Top-10 concentration", p, 15, f"{top10_pct:.1f}% supply"))
-    # 4. Cluster terbesar (maks 15)
-    cluster_warn_pct = 5.0
-    try:
-        cfg = load_config()
-        cluster_warn_pct = float(cfg.get("cluster_warn_pct", 5.0))
-    except Exception:
-        pass
-
-    if max_cluster_pct is None:
-        p, note = 7.5, "not scanned"
-    elif max_cluster_pct > cluster_warn_pct:
-        p = 0.0
-        note = f"{max_cluster_pct:.1f}% supply (⚠️ BUNDLER >{cluster_warn_pct:g}%)"
-    else:
-        p = clamp((cluster_warn_pct - max_cluster_pct) / cluster_warn_pct, 0, 1) * 7.5 + 7.5
-        note = f"{max_cluster_pct:.1f}% supply"
-    br.append(("Bundler/cluster", p, 15, note))
-    # 5. Fresh wallet di top holder (maks 10)
-    if fresh_pct is None:
-        p, note = 5.0, "not scanned"
-    else:
-        p = clamp((60 - fresh_pct) / 60, 0, 1) * 10
-        note = f"{fresh_pct:.0f}% fresh"
-    br.append(("Fresh wallets", p, 10, note))
-    # 6. Likuiditas vs MC (maks 10)
-    p = clamp((liq_pct_mc or 0) / 12, 0, 1) * 10
-    br.append(("Liquidity/MC", p, 10, f"{liq_pct_mc:.1f}%"))
-    # 7. LP locked/burned (maks 0 - removed from score)
-    p = 0.0
-    if lp_locked_pct is None:
-        note = "n/a"
-    elif lp_locked_pct == 0:
-        note = "⚠️ NOT LOCKED AT ALL — DANGER!"
-    else:
-        note = f"{lp_locked_pct:.0f}% locked"
-    br.append(("LP locked", p, 0, note))
-    # 8. Authority dicabut (maks 10)
-    p = (5 if not mint_auth else 0) + (5 if not freeze_auth else 0)
-    br.append(("Mint/freeze authority", p, 10,
-               ("mint ✅" if not mint_auth else "mint ⚠️") + " · " +
-               ("freeze ✅" if not freeze_auth else "freeze ⚠️")))
-    # 9. Tren holder (maks 5)
-    if holder_delta is None:
-        p, note = 2.5, "n/a"
-    else:
-        p = 5.0 if holder_delta > 0 else (2.0 if holder_delta == 0 else 0.0)
-        note = f"{holder_delta:+,}"
-    br.append(("Holder trend", p, 5, note))
-
-    total = round(sum(x[1] for x in br))
-    return total, br
-
-
-def score_color(score: int) -> str:
-    return "#22c55e" if score >= 70 else ("#facc15" if score >= 45 else "#ef4444")
-
-
-def score_label(score: int) -> str:
-    return ("HEALTHY ✅" if score >= 70 else
-            ("CAUTION ⚠️" if score >= 45 else "DANGER 🚨"))
-
-
-# -----------------------------------------------------------------------------
-# GMGN token_stat — public, reusable wrapper for the trending screener
-# and the holder-snapshot cron. Returns the top-N holders list, the
-# reported total holder count, and the (optional) total supply, all
-# from a single GMGN API call.
-#
-# Cloudflare blocks raw `requests` calls, so we prefer `curl_cffi` to
-# impersonate a real Chrome. When that package isn't installed we
-# fall back to plain `requests` and accept the higher failure rate.
-#
-# The shape is intentionally identical to the old private
-# ``scripts/update_cvd.py::_gmgn_top_holders`` so the cron refactor is
-# a pure delegation (no behaviour change).
-# -----------------------------------------------------------------------------
-def gmgn_token_stat(ca: str, timeout: int = 15) -> dict:
-    """Fetch GMGN token_stat for a Solana CA.
-
-    Returns a dict with keys:
-      - ``holders``   : list of ``[owner, ui_amount]`` pairs (largest first,
-                        typically up to 10 — GMGN truncates the rest)
-      - ``total_holders`` : int — GMGN-reported total holder count, or None
-      - ``supply``    : float — total supply if GMGN reports it, or None
-      - ``raw``       : the raw GMGN JSON for any caller-side debugging
-    On any failure the function returns an empty dict (``{}``) so callers
-    can use a single truthy check.
+    Hourly candles are used because GeckoTerminal's native daily boundary is
+    UTC, while the detector's required boundary is Asia/Jakarta (UTC+7).
     """
-    out = {"holders": [], "total_holders": None, "supply": None, "raw": None}
     try:
-        try:
-            from curl_cffi import requests as cr
-            r = cr.get(
-                f"https://gmgn.ai/api/v1/token_stat/sol/{ca}",
-                headers={
-                    "accept": "application/json, text/plain, */*",
-                    "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                   "AppleWebKit/537.36 (KHTML, like Gecko) "
-                                   "Chrome/150.0.0.0 Safari/537.36"),
-                },
-                impersonate="chrome", timeout=timeout)
-        except ImportError:
-            r = requests.get(
-                f"https://gmgn.ai/api/v1/token_stat/sol/{ca}",
-                headers={
-                    "accept": "application/json, text/plain, */*",
-                    "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                   "AppleWebKit/537.36 (KHTML, like Gecko) "
-                                   "Chrome/150.0.0.0 Safari/537.36"),
-                },
-                timeout=timeout)
-        if r.status_code != 200:
-            return out
-        try:
-            data = r.json() or {}
-        except Exception:
-            return out
-        if not isinstance(data, dict):
-            return out
-        out["raw"] = data
-
-        # ── holders list (top-10 typically) ─────────────────────────────
-        holders: list = []
-        for h in (data.get("holders") or []):
-            if not isinstance(h, dict):
-                continue
-            addr = h.get("address") or h.get("owner")
-            amt = h.get("amount") or h.get("ui_amount") or h.get("balance")
-            try:
-                amt_f = float(amt)
-            except (TypeError, ValueError):
-                continue
-            if addr and amt_f > 0:
-                holders.append([str(addr), float(amt_f)])
-        if not holders:
-            for key in ("top10_holders", "top_holders", "top_holder",
-                        "top_10_holders"):
-                alt = data.get(key)
-                if isinstance(alt, list):
-                    for h in alt:
-                        if not isinstance(h, dict):
-                            continue
-                        addr = h.get("address") or h.get("owner")
-                        amt = h.get("amount") or h.get("ui_amount")
-                        try:
-                            amt_f = float(amt)
-                        except (TypeError, ValueError):
-                            continue
-                        if addr and amt_f > 0:
-                            holders.append([str(addr), float(amt_f)])
-                    if holders:
-                        break
-        out["holders"] = holders
-
-        # ── total holder count (GMGN sometimes reports this under
-        # several different keys; we try them in priority order) ───────
-        for key in ("holder_count", "holders_count", "total_holders",
-                    "num_holders", "holderCount"):
-            v = data.get(key)
-            try:
-                v_int = int(float(v)) if v is not None else 0
-            except (TypeError, ValueError):
-                continue
-            if v_int > 0:
-                out["total_holders"] = v_int
-                break
-
-        # ── supply (try several known fields) ──────────────────────────
-        for key in ("total_supply", "supply", "totalSupply", "total"):
-            try:
-                v = float(data.get(key) or 0)
-            except (TypeError, ValueError):
-                continue
-            if v > 0:
-                out["supply"] = v
-                break
-
+        limit = max(48, min(1000, int(limit_days) * 24 + 24))
+        response = requests.get(
+            f"https://api.geckoterminal.com/api/v2/networks/solana/pools/"
+            f"{pair_address}/ohlcv/hour",
+            params={"aggregate": 1, "limit": limit},
+            headers={"accept": "application/json"}, timeout=25)
+        response.raise_for_status()
+        values = (((response.json() or {}).get("data") or {})
+                  .get("attributes") or {}).get("ohlcv_list") or []
     except Exception:
-        # Any network/parse error → empty dict; caller handles.
-        return {"holders": [], "total_holders": None, "supply": None, "raw": None}
-    return out
-
+        return []
+    from datetime import datetime as _datetime, timedelta as _timedelta
+    from datetime import timezone as _timezone
+    wib = _timezone(_timedelta(hours=7))
+    grouped = {}
+    for value in sorted(values, key=lambda item: item[0]):
+        if not isinstance(value, (list, tuple)) or len(value) < 6:
+            continue
+        date = _datetime.fromtimestamp(int(value[0]), wib).date().isoformat()
+        candle = grouped.setdefault(date, {
+            "date": date, "open": float(value[1]), "high": float(value[2]),
+            "low": float(value[3]), "close": float(value[4]),
+            "volume_usd": 0.0, "hours": 0,
+        })
+        candle["high"] = max(candle["high"], float(value[2]))
+        candle["low"] = min(candle["low"], float(value[3]))
+        candle["close"] = float(value[4])
+        candle["volume_usd"] += float(value[5] or 0)
+        candle["hours"] += 1
+    return sorted(grouped.values(), key=lambda item: item["date"])[-limit_days:]

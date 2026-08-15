@@ -1,33 +1,7 @@
 {
   "helius_api_key": "PASTE-API-KEY-KAMU-DISINI",
-  "custom_rpc": "",
-  "dust_limit_usd": 5,
-  "cluster_warn_pct": 5,
-  "cluster_scan_top_n": 50,
-  "exclude_lp": true,
   "helius_extra_keys": "",
+  "custom_rpc": "",
   "telegram_bot_token": "BOT_TOKEN from @BotFather (optional)",
-  "telegram_chat_id": "your chat id (optional)",
-  "whale_delta_min_sol": 1.0,
-  "dolphin_delta_min_sol": 2.0,
-  "focus_mode": true,
-  "first_buy_surge_cooldown_min": 240,
-  "first_buy_surge": {
-    "window_sec": 900,
-    "min_surge_pct": 100.0,
-    "min_window_volume_sol": 5.0,
-    "min_tx": 10,
-    "min_buy_ratio_pct": 60.0,
-    "min_unique_buy_wallets": 5,
-    "min_cvd_ratio_pct": 20.0,
-    "big_buy_sol": 1.0,
-    "min_big_buys": 3,
-    "max_big_sells": 0
-  },
-  "tag_points": {
-    "smart_money": {"accum": 30, "dist": 15},
-    "top_holder":  {"accum": 25, "dist": 25},
-    "fresh_wallet": {"accum": 20, "dist": 5},
-    "bundler":     {"accum": -25, "dist": 35}
-  }
+  "telegram_chat_id": "your chat id (optional)"
 }
