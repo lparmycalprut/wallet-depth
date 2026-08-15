@@ -8,8 +8,8 @@ Dashboard Streamlit berbahasa Indonesia untuk mengukur **Efisiensi Anomali
 - `effort_detector.py`: formula R, multiplier, klasifikasi S1–S5, persistence.
 - `daily_effort.json`: maksimal 30 baris harian per mint.
 - `cvd.py`: fetch dan normalisasi trade; jangan tambahkan verdict ke layer ini.
-- `cvd_daily.py`: agregasi ΔCVD berdasarkan hari WIB.
-- `scripts/update_cvd.py`: cron harian 00:00 WIB.
+- `cvd_daily.py`: agregasi ΔCVD berdasarkan hari market (00:00 UTC).
+- `scripts/update_cvd.py`: cron harian 00:00 UTC.
 - `signals.py`: transport Telegram saja.
 - `app.py`: watchlist dan listing GMGN tanpa ranking.
 - `pages/4_📊_CVD.py`: chart harga vs CVD dan ratio tujuh hari.
@@ -46,7 +46,7 @@ Flag divergensi hanya informasi dan tidak mengubah sinyal. Alert hanya S1–S4.
 
 ## Aturan perubahan
 
-- Batas hari selalu Asia/Jakarta 00:00–23:59.
+- Batas hari selalu hari market 00:00–23:59 UTC (sesuai Helius/Solscan).
 - Jangan menambah scoring, indikator wallet, atau threshold lain.
 - Pertahankan fetch layer dan manajemen watchlist jika tidak diperlukan.
 - Kode/docstring Inggris; UI dan komunikasi pemilik Indonesia.

@@ -1,7 +1,7 @@
 # Template Evaluasi AI — Efisiensi Anomali
 
 Gunakan template ini dengan minimal dua candle harian berturut-turut. Batas
-hari wajib **00:00–23:59 Asia/Jakarta (WIB)**.
+hari wajib **00:00–23:59 UTC (hari market, sesuai Helius/Solscan)**.
 
 ```text
 Kamu mengevaluasi satu token hanya dengan metode Effort-to-Result harian.

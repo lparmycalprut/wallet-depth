@@ -8,6 +8,7 @@ import streamlit as st
 
 from effort_detector import (classify_effort, load_daily_effort,
                              rows_for_mint)
+from links import external_links_html
 from trending_ui import (render_trending, run_screen, run_screen_h1,
                          run_screen_hrhr, run_screen_hrhr_h1)
 from watchlist import (add_to_watchlist, get_last_push_error, load_watchlist,
@@ -58,8 +59,9 @@ def _number(value, pattern=".3f"):
 watchlist = load_watchlist()
 effort_rows = load_daily_effort()
 st.subheader("Watchlist")
-st.caption("Candle harian memakai batas 00:00–23:59 WIB. Sinyal memerlukan "
-           "dua hari berturut-turut; multiplier 2× / 0,5× bersifat tetap.")
+st.caption("Candle harian memakai batas hari market 00:00–23:59 UTC "
+           "(sesuai Helius/Solscan). Sinyal memerlukan dua hari berturut-turut; "
+           "multiplier 2× / 0,5× bersifat tetap.")
 
 if not watchlist:
     st.info("Watchlist masih kosong. Tambahkan contract address di bawah.")
@@ -75,7 +77,9 @@ else:
         columns = st.columns([1.45, 1.35, 1.75, 1, 1, 1, .65, .55])
         symbol = str((meta or {}).get("symbol") or "?").upper()
         columns[0].markdown(
-            f"**${html.escape(symbol)}**  \n`{html.escape(mint[:8])}…`")
+            f"**${html.escape(symbol)}**  \n`{html.escape(mint[:8])}…`  \n"
+            f"{external_links_html(mint)}",
+            unsafe_allow_html=True)
         date = result.get("date") or "Butuh ≥2 hari"
         columns[1].markdown(str(date))
         # Signal badge

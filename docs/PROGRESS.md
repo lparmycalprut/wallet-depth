@@ -29,3 +29,69 @@
 - Menambahkan test wajib: fixture MIM, ratio kecil, direction berbeda,
   stable S1, boundary, current ranging, dan defensive Telegram.
 - Memperbarui dokumentasi (`AGENTS.md`, `README.md`, `PROMPT_EFFORT_ANOMALI.md`).
+
+## 2026-08-15 — Link eksternal, shortcut CVD & fetch manual (arena/01a0039e-wallet-depth)
+
+- Menambahkan `links.py`: helper bersama `gmgn_token_url`, `dexscreener_token_url`,
+  `safe_url_part` (URL-encoding), `cvd_shortcut_query`, dan `external_links_html`
+  (anchor `target="_blank"`) sehingga URL CA aman dan tidak duplikasi.
+- Watchlist (`app.py`): menampilkan link ringkas GMGN dan DexScreener di setiap
+  baris tanpa mengganggu tombol Chart/Hapus.
+- Trending & Degen (`trending_ui.py`): menambahkan link GMGN, DexScreener, dan
+  tombol shortcut `📊 CVD` yang membuka `pages/4_📊_CVD.py` dengan token
+  terpilih (`?mint=...` + `effort_mint`). Shortcut bekerja meski token belum ada
+  di watchlist dan tidak mengubah watchlist secara diam-diam.
+- Halaman CVD (`pages/4_📊_CVD.py`):
+  - Seleksi token dari query param/session, termasuk token di luar watchlist
+    (dengan warning + tombol tambah eksplisit).
+  - Panel "Fetch data manual": input hari 2–30 (default 7), tombol "Fetch
+    sekarang", spinner/status, tanpa fetch otomatis saat page load.
+  - Menampilkan log manual per fetch (timestamp WIB, tahapan, jumlah trades,
+    rows dibuat/di-update, durasi, status, error) yang persisten dalam session.
+- Refactor `scripts/update_cvd.py`: menambahkan `refresh_single_token` (pipeline
+  reusable satu token: lookup market/pool → GMGN trades + fallback Helius →
+  candle harian → agregasi CVD → `build_effort_rows` → merge idempotent) yang
+  dipakai halaman CVD tanpa subprocess. Menambahkan `compute_lookback_window`
+  (batas WIB, menghormati jumlah hari, tanpa hari berjalan) dan `_redact` agar
+  API key/credential tidak bocor ke log.
+- Fetch manual tidak mengirim alert Telegram dan tidak menyentuh watchlist.
+- Menambahkan test `test_links.py` dan `test_manual_refresh.py` (URL, shortcut,
+  lookback, refresh sukses/fallback/error, idempotent, tanpa alert, redaksi key).
+
+## 2026-08-15 — Backtest history rentang tanggal di halaman CVD (arena/01a0039e-wallet-depth)
+
+- Menambahkan `compute_date_window` dan `_resolve_window` di `scripts/update_cvd.py`
+  untuk mendukung fetch dengan rentang tanggal inklusif dari–sampai (WIB), dengan
+  clamp batas atas ke kemarin (hari berjalan tidak pernah diambil) dan clamp span
+  maksimal 30 hari.
+- `refresh_single_token` kini menerima `start_date`/`end_date`; `run_daily` (cron)
+  tetap memakai `lookback_days=4` via `_resolve_window` sehingga perilaku cron
+  tidak berubah.
+- Halaman `pages/4_📊_CVD.py`: panel "📅 Rentang tanggal & backtest" untuk memilih
+  dari–sampai, tombol "🔍 Lihat & fetch" yang mengambil data untuk rentang tersebut
+  secara idempoten, lalu menampilkan history (metrik, chart harga/CVD, chart ratio,
+  dan tabel data) untuk rentang terpilih. Fetch hanya terjadi saat tombol diklik
+  (tidak otomatis saat page load).
+- Panel "🔁 Fetch data manual" (last-N-days, default 7) tetap dipertahankan.
+- Menambahkan test `DateWindowTest` (rentang inklusif, clamp ke kemarin, clamp span,
+  urutan terbalik, dan pass-through window ke pipeline fetch).
+
+## 2026-08-15 — Batas hari market (UTC) & backtest start+N hari (arena/01a0039e-wallet-depth)
+
+- Mengubah batas hari dari Asia/Jakarta (WIB) menjadi hari market 00:00–23:59 UTC
+  (sesuai Helius/Solscan) di seluruh pipeline:
+  - `cvd_daily.py`: `MARKET_TZ = timezone.utc`; `day_key`, `completed_dates`,
+    `build_effort_rows`, `fallback_candles_from_swaps` memakai batas UTC.
+    Alias lama (`WIB`, `day_key_wib`, `completed_wib_dates`) dipertahankan.
+  - `core.py`: `get_daily_candles` menggabungkan candle GeckoTerminal per hari UTC
+    (alias `get_daily_candles_wib` dipertahankan).
+  - `scripts/update_cvd.py`: `MARKET_TZ`, `_now_market`, `_as_market_midnight`,
+    `compute_lookback_window`, `compute_date_window`, log `ts_market`.
+- Halaman `pages/4_📊_CVD.py`: panel "📅 Backtest history" kini input tanggal awal
+  (Dari, market/UTC) + "Berapa hari ke depan" (2–30), lalu fetch otomatis saat
+  input berubah (idempoten, tidak mengirim alert, tidak fetch saat load pertama).
+  History menampilkan metrik, chart harga/CVD, chart ratio, dan tabel data untuk
+  rentang start → start+N-1 (dibatasi maksimal 30 hari dan tidak melewati kemarin).
+- Memperbarui caption UI, `app.py`, `AGENTS.md`, `README.md`, `PROMPT_EFFORT_ANOMALI.md`
+  ke terminologi hari market UTC.
+- Menyesuaikan test ke batas UTC (`test_daily_pipeline.py`, `test_manual_refresh.py`).
