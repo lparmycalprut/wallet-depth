@@ -226,6 +226,102 @@ class ManualRefreshTest(unittest.TestCase):
         self.assertEqual(len(stored), 1)
         self.assertEqual(stored[0]["mint"], self.MINT)
 
+    def test_log_uses_ts_market_and_never_leaks_credentials(self):
+        res = self._run([_swap(1)])
+        for entry in res["log"]:
+            self.assertIn("ts_market", entry)
+            self.assertNotIn("ts_wib", entry)
+            self.assertNotIn("secret", str(entry.get("message") or ""))
+        self.assertNotIn("secret", str(res.get("error") or ""))
+
+
+class DateRangeRefreshTest(unittest.TestCase):
+    MINT = "TokenMint123"
+    META = {"symbol": "TST"}
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = str(Path(self.tmp.name) / "daily.json")
+        self.now = datetime.fromisoformat("2026-08-15T10:00:00+00:00")
+
+    def _patches(self, swaps, source="gmgn", fallback=False, build_rows=None,
+                 pool="pool123"):
+        build_rows = build_rows if build_rows is not None else [
+            daily_effort_record(self.MINT, "2026-08-14", 100, 110, 5)]
+        return [
+            mock.patch.object(uc, "_pool_and_symbol",
+                              return_value=(pool, self.META["symbol"])),
+            mock.patch.object(uc, "_fetch_history_with_source",
+                              return_value=(swaps, source, fallback)),
+            mock.patch.object(uc, "get_daily_candles", return_value=[]),
+            mock.patch.object(uc, "fallback_candles_from_swaps",
+                              return_value=[]),
+            mock.patch.object(uc, "build_effort_rows",
+                              return_value=build_rows),
+        ]
+
+    def _run_range(self, swaps, start_date, end_date, source="gmgn",
+                   fallback=False, pool="pool123"):
+        patches = self._patches(swaps, source=source, fallback=fallback,
+                                pool=pool)
+        for patch in patches:
+            patch.start()
+        self.addCleanup(lambda: [patch.stop() for patch in patches])
+        return uc.refresh_single_token(
+            self.MINT, self.META, now=self.now, api_key="secret",
+            start_date=start_date, end_date=end_date, path=self.path)
+
+    def test_date_range_success_and_no_telegram(self):
+        with mock.patch.object(uc, "send_telegram",
+                               wraps=uc.send_telegram) as send:
+            res = self._run_range([_swap(1)], "2026-08-10", "2026-08-14")
+            self.assertTrue(res["ok"])
+            self.assertEqual(res["source"], "gmgn")
+            self.assertEqual(res["start_date"], "2026-08-10")
+            self.assertEqual(res["end_date"], "2026-08-14")
+            send.assert_not_called()
+
+    def test_date_range_is_idempotent(self):
+        first = self._run_range([_swap(1)], "2026-08-10", "2026-08-14")
+        self.assertEqual(first["rows_created"], 1)
+        second = self._run_range([_swap(1)], "2026-08-10", "2026-08-14")
+        self.assertEqual(second["rows_created"], 0)
+        self.assertEqual(second["rows_updated"], 1)
+
+    def test_date_range_clamps_to_30_days(self):
+        res = self._run_range([_swap(1)], "2026-07-01", "2026-08-14")
+        self.assertEqual(res["requested_days"], 30)
+        self.assertEqual(res["start_date"], "2026-07-16")
+        self.assertEqual(res["end_date"], "2026-08-14")
+        call = uc._fetch_history_with_source.call_args
+        start_arg, end_arg = call.args[3], call.args[4]
+        self.assertEqual((end_arg - start_arg).days, 30)
+        self.assertEqual(start_arg.astimezone(MARKET_TZ).isoformat(),
+                         "2026-07-16T00:00:00+00:00")
+        self.assertEqual(end_arg.astimezone(MARKET_TZ).isoformat(),
+                         "2026-08-15T00:00:00+00:00")
+
+    def test_date_range_excludes_open_day(self):
+        # Requesting today as the end date clamps to yesterday.
+        res = self._run_range([_swap(1)], "2026-08-10", "2026-08-15")
+        self.assertEqual(res["end_date"], "2026-08-14")
+        self.assertEqual(res["requested_days"], 5)
+
+    def test_date_range_error_is_clean_and_redacted(self):
+        with mock.patch.object(uc, "_pool_and_symbol",
+                               return_value=("pool", "TST")):
+            def boom(*a, **k):
+                raise RuntimeError("connection failed with key secret")
+            with mock.patch.object(uc, "_fetch_history_with_source", boom):
+                res = uc.refresh_single_token(
+                    self.MINT, self.META, now=self.now, api_key="secret",
+                    start_date="2026-08-10", end_date="2026-08-14",
+                    path=self.path)
+        self.assertFalse(res["ok"])
+        self.assertNotIn("secret", res["error"])
+        self.assertIn("REDACTED", res["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

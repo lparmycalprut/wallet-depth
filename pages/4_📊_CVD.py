@@ -210,8 +210,9 @@ min_start = today - timedelta(days=30)
 
 with st.expander("📅 Backtest history", expanded=True):
     st.caption("Pilih tanggal awal dan berapa hari ke depan. Data diambil "
-               "otomatis saat input berubah (idempoten, tidak mengirim "
-               "alert). Rentang dibatasi maksimal 30 hari.")
+               "otomatis saat input berubah, atau manual lewat tombol di "
+               "bawah (idempoten, tidak mengirim alert). Rentang dibatasi "
+               "maksimal 30 hari dan tidak melewati kemarin.")
     c1, c2 = st.columns([1, 1])
     default_start = st.session_state.get("bt_start") or (
         yesterday - timedelta(days=6))
@@ -228,6 +229,9 @@ with st.expander("📅 Backtest history", expanded=True):
         end_date = yesterday
     span = (end_date - start_date).days + 1
     st.caption(f"Rentang: **{start_date} s/d {end_date}** ({span} hari).")
+    fetch_range_clicked = st.button("🔍 Fetch rentang ini",
+                                    key="bt_fetch_range",
+                                    use_container_width=True)
 
 # Auto-fetch only when the start date or days-forward changes (never on the
 # very first page load).
@@ -264,21 +268,30 @@ def _render_manual_log():
                      use_container_width=True, hide_index=True)
 
 
-# --- Auto-fetch when the backtest range changes ------------------------------
-if need_fetch:
+# --- Range fetch: explicit button first, then auto-fetch on change -----------
+def _fetch_range(mint, meta, start_date, end_date):
+    """Fetch the selected range and return a session-safe structured result."""
     keys = get_helius_keys()
     api_key = keys[0] if keys else ""
     log_entries = []
     with st.status("Mengambil data untuk rentang terpilih…",
                    expanded=True) as status:
-        result = refresh_single_token(
-            mint, watchlist.get(mint) or {},
-            api_key=api_key, start_date=start_date, end_date=end_date,
-            log=log_entries,
+        return refresh_single_token(
+            mint, meta, api_key=api_key, start_date=start_date,
+            end_date=end_date, log=log_entries,
             on_progress=lambda entry: status.write(
                 f"`{entry['ts_market']}` **{entry['stage']}** — "
                 f"{entry['message']}"))
-    st.session_state["manual_result"] = result
+
+
+if fetch_range_clicked:
+    st.session_state["bt_result"] = _fetch_range(
+        mint, watchlist.get(mint) or {}, start_date, end_date)
+    st.session_state["bt_result_key"] = bt_key
+elif need_fetch:
+    st.session_state["bt_result"] = _fetch_range(
+        mint, watchlist.get(mint) or {}, start_date, end_date)
+    st.session_state["bt_result_key"] = bt_key
     st.rerun()
 
 _render_manual_log()
@@ -286,12 +299,11 @@ _render_manual_log()
 # --- History view -------------------------------------------------------------
 all_rows = rows_for_mint(load_daily_effort(), mint)
 range_rows = _rows_in_range(all_rows, start_date, end_date)
+bt_result = (st.session_state.get("bt_result")
+             if st.session_state.get("bt_result_key") == bt_key else None)
 
 st.subheader(f"History {start_date} s/d {end_date}")
-if not range_rows:
-    st.info("Belum ada data harian untuk rentang ini. Ubah tanggal awal "
-            "atau jumlah hari untuk memicu fetch otomatis.")
-else:
+if range_rows:
     _render_metrics(range_rows, mint)
     _render_charts(range_rows, mint)
     st.subheader("Data harian")
@@ -299,3 +311,14 @@ else:
     st.caption("R = |ΔCVD| / |ΔHarga%|. Multiplier membandingkan R hari "
                "terbaru dengan R hari sebelumnya. Pergerakan di bawah 3% "
                "selalu netral.")
+elif bt_result is not None and not bt_result.get("ok"):
+    st.error(f"Fetch gagal: {bt_result.get('error') or 'kesalahan tak dikenal'}")
+    st.caption("Periksa koneksi atau API key Helius, lalu klik "
+               "“🔍 Fetch rentang ini” untuk mencoba lagi.")
+elif bt_result is not None and bt_result.get("ok"):
+    st.info("Fetch berhasil, tetapi tidak ada data harian untuk rentang ini. "
+            "Token mungkin belum punya aktivitas pasar pada rentang tersebut.")
+else:
+    st.info("Belum ada data harian untuk rentang ini. Klik "
+            "“🔍 Fetch rentang ini” untuk mengambil datanya, atau ubah tanggal "
+            "awal / jumlah hari untuk memicu fetch otomatis.")

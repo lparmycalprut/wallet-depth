@@ -95,3 +95,27 @@
 - Memperbarui caption UI, `app.py`, `AGENTS.md`, `README.md`, `PROMPT_EFFORT_ANOMALI.md`
   ke terminologi hari market UTC.
 - Menyesuaikan test ke batas UTC (`test_daily_pipeline.py`, `test_manual_refresh.py`).
+
+## 2026-08-15 — Cron ke 00:00 UTC & tombol fetch rentang eksplisit (arena/01a003cb-wallet-depth)
+
+- Menyelaraskan cron harian dengan batas hari market: `.github/workflows/daily-effort.yml`
+  kini `0 0 * * *` (00:00 UTC / 07:00 WIB) — berjalan tepat setelah hari market
+  berganti, bukan lagi `0 17 * * *` (jadwal lama untuk batas WIB).
+  `DEPLOY.md` dan `prompt_overhaul_wallet_depth.md` ikut diperbarui ke
+  terminologi 00:00 UTC (07:00 WIB).
+- `pages/4_📊_CVD.py`: menambahkan tombol "🔍 Fetch rentang ini" di panel
+  backtest yang memanggil `refresh_single_token(..., start_date=..., end_date=...)`
+  untuk rentang yang sedang dipilih (sebelumnya hanya auto-fetch saat input
+  berubah dan panel fetch manual yang memakai last-N-days).
+- History backtest kini membedakan tiga status: fetch gagal → `st.error` dengan
+  pesan error (sudah di-redact), fetch sukses tapi 0 baris → info "tidak ada data",
+  dan belum pernah fetch → ajakan klik tombol / ubah rentang. Auto-fetch saat
+  input berubah tetap dipertahankan; tombol dan auto-fetch berbagi jalur yang sama
+  dan menyimpan hasilnya di `session_state["bt_result"]` (terpisah dari
+  `manual_result` untuk panel fetch manual last-N).
+- Log fetch manual (`manual_result` / `_render_manual_log`) tetap memakai
+  `ts_market` dan tidak mencatat credential (error di-redact `_redact`).
+- Menambahkan test: `DateRangeRefreshTest` (sukses/error/redaksi, idempoten,
+  clamp 30 hari, tidak termasuk hari berjalan, tanpa alert Telegram) dan
+  `test_cvd_page.py` (AppTest: tombol rentang memakai start/end, auto-fetch saat
+  input berubah, jalur error/data/tidak-fetch, dan panel manual tetap lookback).
