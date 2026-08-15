@@ -3,7 +3,7 @@ name: Daily Effort Anomaly
 on:
   schedule:
     # 17:00 UTC = 00:00 WIB
-    - cron: "0 17 * * *"
+    - cron: "0 0 * * *"
 
   workflow_dispatch:
 
