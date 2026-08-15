@@ -1,0 +1,63 @@
+name: Daily Effort Anomaly
+
+on:
+  schedule:
+    # 17:00 UTC = 00:00 WIB
+    - cron: "0 17 * * *"
+
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-effort-anomaly
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests curl_cffi
+
+      - name: Calculate daily effort anomalies
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+          HELIUS_API_KEYS: ${{ secrets.HELIUS_API_KEYS }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/update_cvd.py daily
+
+      - name: Commit daily state
+        run: |
+          git config user.name "effort-bot"
+          git config user.email "actions@github.com"
+
+          git add daily_effort.json watchlist.json
+
+          if git diff --cached --quiet; then
+            echo "Tidak ada perubahan data."
+            exit 0
+          fi
+
+          git commit -m "chore: daily effort anomaly $(date -u +%FT%H:%M) UTC"
+
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
