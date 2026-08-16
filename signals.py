@@ -1,17 +1,22 @@
-"""Telegram transport for daily effort anomaly alerts — v3 final."""
+"""Telegram transport untuk alert 3 sinyal bottom.
+
+Hanya SELLER_EXHAUSTION / REVERSAL / AKUMULASI yang dikirim (bukan "—").
+Format konsisten (§6):
+
+    ⚡ BOTTOM TERDETEKSI — $SYMBOL
+    Sinyal: 🟢 SELLER EXHAUSTION / 🟣 REVERSAL / 🔵 AKUMULASI
+    Hari: <date> (flush <date>)
+    CVD: X SOL | Volume: Y% dari kemarin
+    https://gmgn.ai/sol/token/<CA>
+"""
 from __future__ import annotations
 
 import html
 import os
 
-ALLOWED_SIGNALS = {
-    "S1_PENYERAPAN",
-    "S2_DUMP_DISTRIBUSI",
-    "S3_DISTRIBUSI_KE_KUAT",
-    "S4_PUMP_ASLI",
-    "ABSORBSI_LANGSUNG",
-    "SELLING_EXHAUSTION",
-}
+from effort_detector import SIGNAL_META, SIGNALS
+
+ALLOWED_SIGNALS = set(SIGNALS)
 
 
 def _telegram_credentials() -> tuple[str, str]:
@@ -47,73 +52,43 @@ def send_telegram(text: str) -> bool:
 
 
 def should_send_telegram(result: dict) -> bool:
-    """Gate for Telegram alerts: S1-S4 (stable) + 2 new pra-pump signals."""
+    """Gate: HANYA 3 sinyal bottom dengan tanggal valid yang dikirim."""
     signal = result.get("signal") or ""
-    if signal in {"ABSORBSI_LANGSUNG", "SELLING_EXHAUSTION"}:
-        # Direct signals have no baseline requirement; just need valid date & not noise
-        return signal in ALLOWED_SIGNALS and result.get("date") not in (None, "")
-    stable = result.get("baseline_status") == "stable"
-    return signal in {"S1_PENYERAPAN", "S2_DUMP_DISTRIBUSI",
-                      "S3_DISTRIBUSI_KE_KUAT", "S4_PUMP_ASLI"} and stable
+    return (signal in ALLOWED_SIGNALS
+            and result.get("date") not in (None, ""))
+
+
+def _fmt_signed(value, pattern="+.1f", suffix=""):
+    if value is None:
+        return "—"
+    try:
+        return format(float(value), pattern) + suffix
+    except (TypeError, ValueError):
+        return "—"
 
 
 def format_effort_alert(symbol: str, result: dict) -> str:
-    """Render alert format v3 with 2 new signals."""
+    """Render alert bottom terdeteksi sesuai format §6."""
     signal = result.get("signal") or ""
-    short_map = {
-        "S1_PENYERAPAN": "S1_PENYERAPAN",
-        "S2_DUMP_DISTRIBUSI": "S2_DUMP",
-        "S3_DISTRIBUSI_KE_KUAT": "S3_DISTRIBUSI",
-        "S4_PUMP_ASLI": "S4_PUMP",
-        "ABSORBSI_LANGSUNG": "ABSORBSI LANGSUNG",
-        "SELLING_EXHAUSTION": "SELLING EXHAUSTION",
-    }
-    short = short_map.get(signal, signal)
-    bias = result.get("bias") or "neutral"
-    emoji = "🟢" if bias == "bullish" else "🔴" if bias == "bearish" else "⚪"
-    divergence = "\n⚠️ divergensi arah CVD" if result.get("flag_divergence") else ""
-    mint = str(result.get("mint") or "")
+    meta = SIGNAL_META.get(signal) or {}
+    emoji = meta.get("emoji", "⚡")
+    label = meta.get("label", signal.replace("_", " "))
 
-    date = result.get("date") or "?"
-    prev = result.get("previous_date") or "?"
-    # Ratio line handling
-    if signal == "SELLING_EXHAUSTION":
-        flush_cvd = result.get("flush_cvd")
-        cvd = result.get("cvd_delta")
-        pct = result.get("exhaustion_pct")
-        if flush_cvd is not None and cvd is not None:
-            try:
-                runtuh = float(pct) if pct is not None else 0.0
-            except Exception:
-                runtuh = 0.0
-            ratio_line = f"flush {float(flush_cvd):+.2f} → {float(cvd):+.2f}, runtuh {runtuh:.1f}%"
-        else:
-            ratio_line = (
-                f"{float(result.get('ratio_N') or 0):.3f} SOL/1% "
-                f"(flush vs hari ini)"
-            )
-    elif signal == "ABSORBSI_LANGSUNG":
-        ratio_n = result.get("ratio_N")
-        cvd = result.get("cvd_delta")
-        if ratio_n is not None:
-            ratio_line = f"{float(ratio_n):.3f} SOL/1% (direct, CVD {float(cvd or 0):+.2f})"
-        else:
-            ratio_line = f"direct, CVD {float(cvd or 0):+.2f} SOL"
-    else:
-        ratio_line = (
-            f"{float(result.get('ratio_N') or 0):.3f} SOL/1% vs "
-            f"{float(result.get('ratio_N_minus_1') or 0):.3f} SOL/1%  "
-            f"(×{float(result.get('multiplier') or 0):.2f})"
-        )
+    symbol_txt = html.escape(str(symbol or "?").upper())
+    mint = html.escape(str(result.get("mint") or ""))
+    date = html.escape(str(result.get("date") or "?"))
+    flush_date = result.get("flush_date")
+    flush_txt = f" (flush {html.escape(str(flush_date))})" if flush_date else ""
+
+    cvd = _fmt_signed(result.get("cvd_delta"), "+.1f")
+    volume = result.get("volume_pct")
+    volume_txt = (f"{float(volume):.0f}%"
+                  if isinstance(volume, (int, float)) else "—")
 
     return (
-        f"⚡ <b>ANOMALI EFISIENSI — "
-        f"${html.escape(str(symbol).upper())}</b>\n"
-        f"Sinyal: {emoji} {html.escape(short)} ({bias})\n"
-        f"Hari: {date} (vs {prev})\n"
-        f"Ratio: {ratio_line}\n"
-        f"ΔHarga: {float(result.get('price_chg_pct') or 0):+.2f}% | "
-        f"ΔCVD: {float(result.get('cvd_delta') or 0):+.2f} SOL"
-        f"{divergence}\n"
-        f"https://gmgn.ai/sol/token/{html.escape(mint)}"
+        f"⚡ <b>BOTTOM TERDETEKSI — ${symbol_txt}</b>\n"
+        f"Sinyal: {emoji} {html.escape(label)}\n"
+        f"Hari: {date}{flush_txt}\n"
+        f"CVD: {cvd} SOL | Volume: {volume_txt} dari kemarin\n"
+        f"https://gmgn.ai/sol/token/{mint}"
     )

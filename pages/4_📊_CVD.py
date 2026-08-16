@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Price, daily CVD, and effort-ratio charts with backtest history + manual fetch.
+"""Price, daily CVD, and volume-USD charts with backtest history + manual fetch.
 
-v3: uses classify_all to scan whole window, supports 2 new pra-pump signals.
+3 sinyal bottom: classify_all memindai seluruh window — setiap hari (idx>=1)
+dievaluasi terhadap flush CVD 5 hari sebelumnya dan volume USD hari
+sebelumnya. Batas hari 00:00 UTC.
 """
 from __future__ import annotations
 
@@ -14,78 +16,82 @@ import streamlit as st
 
 from core import get_helius_keys
 from cvd_daily import MARKET_TZ
-from effort_detector import (classify_all, classify_effort, load_daily_effort,
+from effort_detector import (EXPORT_COLUMNS, SIGNAL_META, classify_all,
+                             classify_effort, load_daily_effort,
                              rows_for_mint, rows_with_signals)
 from links import external_links_html
 from scripts.update_cvd import refresh_single_token
 from watchlist import add_to_watchlist, load_watchlist
 
-st.set_page_config(page_title="Efisiensi Anomali", page_icon="⚡",
+st.set_page_config(page_title="3 Sinyal Bottom", page_icon="⚡",
                    layout="wide")
-st.title("⚡ Efisiensi Anomali")
-st.caption("Harga dan ΔCVD harian menggunakan batas hari market (00:00 UTC, "
-           "sesuai GMGN/Helius/Solscan). Chart tidak melakukan fetch otomatis; "
-           "data diperbarui cron setiap 00:00 UTC atau lewat panel fetch "
-           "manual.")
+st.title("⚡ 3 Sinyal Bottom")
+st.caption("Harga, ΔCVD (SOL), dan volume USD harian memakai batas hari "
+           "market (00:00 UTC, sesuai GMGN/Helius/Solscan). Sinyal: 🟢 SELLER "
+           "EXHAUSTION (CVD runtuh + volume kering ≤40%), 🟣 REVERSAL (CVD "
+           "runtuh + volume naik ≥130%), 🔵 AKUMULASI (CVD ≥ +5 SOL + volume "
+           "naik ≥130%). Chart tidak melakukan fetch otomatis; data "
+           "diperbarui cron setiap 00:00 UTC atau lewat panel fetch manual.")
+
+# Warna & label marker per sinyal
+SIGNAL_COLORS = {"SELLER_EXHAUSTION": "#16a34a", "REVERSAL": "#7c3aed",
+                 "AKUMULASI": "#2563eb"}
+SIGNAL_MARK = {"SELLER_EXHAUSTION": "EXH", "REVERSAL": "REV",
+               "AKUMULASI": "AKU"}
 
 
 def _render_metrics(rows, mint):
     """Render signal metrics for the newest row in ``rows``."""
     latest = classify_effort(rows, mint)
+    signal = str(latest.get("signal") or "—")
+    meta = SIGNAL_META.get(signal) or {}
     left, middle, right, last = st.columns(4)
-    left.metric("Sinyal", str(latest.get("signal") or "insufficient_data"))
-    middle.metric("Ratio hari ini",
-                  f"{latest['ratio_N']:.3f} SOL/1%"
-                  if latest.get("ratio_N") is not None else "—")
-    baseline_status = latest.get("baseline_status") or "missing"
-    if baseline_status not in ("stable", "direct") and latest.get("raw_multiplier") is not None:
-        right.metric("Multiplier",
-                     f"Raw ×{latest['raw_multiplier']:.2f} — DITOLAK")
-    else:
-        right.metric("Multiplier",
-                     f"×{latest['multiplier']:.2f}"
-                     if latest.get("multiplier") is not None else "—")
+    left.metric("Sinyal", f"{meta.get('emoji', '')} {signal}"
+                .strip() if meta else signal)
+    cvd = latest.get("cvd_delta")
+    middle.metric("CVD hari ini",
+                  f"{cvd:+.2f} SOL" if cvd is not None else "—")
+    volume_pct = latest.get("volume_pct")
+    right.metric("Volume vs kemarin",
+                 f"{volume_pct:.0f}%" if volume_pct is not None else "—")
     last.metric("Bias", str(latest.get("bias") or "—").upper())
 
-    # Show baseline warnings for old logic + new explanation
-    if baseline_status in ("unstable", "insufficient_baseline", "noise", "missing"):
-        # For v3 we show reason if any, except direct signals which are valid
-        reason = latest.get("baseline_reason", "")
-        if baseline_status == "insufficient_baseline":
-            st.warning("⚠️ BASELINE TIDAK CUKUP")
-            if reason:
-                st.caption(str(reason))
-        elif baseline_status == "noise":
-            st.warning("⚠️ NOISE — |CVD| < 5 SOL")
-            if reason:
-                st.caption(str(reason))
-        elif baseline_status == "unstable":
-            st.warning("⚠️ BASELINE TIDAK STABIL")
-            if reason:
-                st.caption(str(reason).replace("; ", "\n"))
-        elif baseline_status == "missing" and latest.get("signal") == "insufficient_data":
-            st.info("Butuh minimal 1 hari baseline sehat atau sinyal langsung.")
-            if reason:
-                st.caption(str(reason))
-    elif baseline_status == "incompatible_direction":
-        # Legacy compatibility: should no longer appear in v3 (direction no longer required)
-        st.warning("⚠️ BASELINE BEDA ARAH (legacy)")
-        reason = latest.get("baseline_reason", "")
-        if reason:
-            st.caption(str(reason))
+    if signal in SIGNAL_META:
+        flush_date = latest.get("flush_date")
+        if flush_date:
+            st.success(
+                f"✅ {signal} — flush {flush_date} "
+                f"(CVD {latest.get('flush_cvd'):+.2f} SOL), runtuh jadi "
+                f"{(latest.get('collapse_pct') or 0):.1f}%, volume "
+                f"{(latest.get('volume_pct') or 0):.0f}% dari kemarin")
+        else:
+            st.success(f"✅ {signal} — {latest.get('reason') or ''}")
+        # Penanda on-chain (info, bukan syarat)
+        tags = [f"smart money buy {latest.get('smart_money_buy') or 0}",
+                f"fresh buy {latest.get('fresh_buy') or 0}",
+                f"bot sell {latest.get('bot_sell') or 0}",
+                f"mev noise {latest.get('mev_noise') or 0}"]
+        caption = " · ".join(tags)
+        if latest.get("whale_driven"):
+            caption += (f" · ⚠️ dominasi whale (top-1 "
+                        f"{(latest.get('top_wallet_pct') or 0):.0f}%)")
+        st.caption(caption)
     else:
-        # For direct signals show their explanatory reason
-        if latest.get("signal") in ("ABSORBSI_LANGSUNG", "SELLING_EXHAUSTION"):
-            st.success(f"✅ {latest.get('baseline_reason') or latest.get('signal')}")
-        elif latest.get("baseline_reason"):
-            # Show divergence-murni reason when S5 due to non-divergent high M
-            if "bukan penyerapan/distribusi murni" in str(latest.get("baseline_reason")):
-                st.caption(str(latest.get("baseline_reason")))
+        status = latest.get("status")
+        if status == "missing":
+            st.info("Belum ada data harian — lakukan fetch terlebih dahulu.")
+        elif status == "first_day":
+            st.info("Baru hari pertama window — sinyal butuh hari pembanding.")
+        elif latest.get("wash_blocked"):
+            st.warning("⚠️ Volume melebihi 3× marketcap close — kemungkinan "
+                       "wash-trade, sinyal dibatalkan.")
+        reason = str(latest.get("reason") or "").strip()
+        if reason:
+            st.caption(reason)
 
 
 def _render_charts(rows, mint):
-    """Render price/CVD and ratio charts for the given rows using classify_all."""
-    # v3: scan whole window
+    """Render price/CVD and volume-USD charts with per-day signal markers."""
     classified = classify_all(rows)
     signals_by_date = {res.get("date"): res for res in classified}
 
@@ -110,26 +116,15 @@ def _render_charts(rows, mint):
     for date in dates:
         result = signals_by_date.get(date) or {}
         sig = result.get("signal") or ""
-        if sig in {
-            "S1_PENYERAPAN", "S2_DUMP_DISTRIBUSI",
-            "S3_DISTRIBUSI_KE_KUAT", "S4_PUMP_ASLI",
-            "ABSORBSI_LANGSUNG", "SELLING_EXHAUSTION"}:
+        if sig in SIGNAL_COLORS:
             try:
                 idx = dates.index(date)
             except ValueError:
                 continue
-            # bullish green, bearish red
-            bias = result.get("bias") or ""
-            color = "#16a34a" if bias == "bullish" else "#dc2626" if bias == "bearish" else "#64748b"
+            color = SIGNAL_COLORS[sig]
             axis_price.scatter(date, closes[idx], s=90, color=color,
                                edgecolor="white", zorder=5)
-            # short label
-            label = sig.split("_")[0]
-            if sig == "ABSORBSI_LANGSUNG":
-                label = "ABS"
-            elif sig == "SELLING_EXHAUSTION":
-                label = "EXH"
-            axis_price.annotate(label,
+            axis_price.annotate(SIGNAL_MARK[sig],
                                 (date, closes[idx]), xytext=(0, 10),
                                 textcoords="offset points", ha="center",
                                 color=color, fontweight="bold", fontsize=8)
@@ -138,34 +133,22 @@ def _render_charts(rows, mint):
     st.pyplot(fig, use_container_width=True)
     plt.close(fig)
 
-    ratios = [row.get("ratio") for row in rows]
-    # baseline for chart = ratio of previous healthy? For simplicity keep previous day's ratio as line (old behavior)
-    baselines = [None] + ratios[:-1]
-    fig_ratio, axis = plt.subplots(figsize=(11, 3.4))
+    # Chart 2: volume USD harian, diwarnai mengikuti sinyal
+    volumes = [row.get("volume_usd") for row in rows]
+    fig_vol, axis = plt.subplots(figsize=(11, 3.4))
     colors = []
     for date in dates:
-        result = signals_by_date.get(date) or {}
-        sig = result.get("signal") or ""
-        if sig in ("S5_NETRAL", "insufficient_data", None, ""):
-            colors.append("#64748b")
-        elif (result.get("bias") == "bullish"):
-            colors.append("#16a34a")
-        elif (result.get("bias") == "bearish"):
-            colors.append("#dc2626")
-        else:
-            colors.append("#64748b")
-    axis.bar(dates, [value or 0 for value in ratios], color=colors, alpha=.85,
-             label="Ratio SOL/1%")
-    axis.plot(dates, [value if value is not None else float("nan")
-                      for value in baselines], color="#0f172a",
-              linestyle="--", marker=".", label="Baseline hari sebelumnya")
-    axis.set_ylabel("SOL per 1%")
+        sig = (signals_by_date.get(date) or {}).get("signal") or ""
+        colors.append(SIGNAL_COLORS.get(sig, "#64748b"))
+    axis.bar(dates, [float(value or 0) for value in volumes], color=colors,
+             alpha=.85, label="Volume USD harian")
+    axis.set_ylabel("Volume USD")
     axis.tick_params(axis="x", rotation=35)
     axis.grid(axis="y", alpha=.2)
     axis.legend(frameon=False)
-    fig_ratio.tight_layout()
-    st.pyplot(fig_ratio, use_container_width=True)
-    plt.close(fig_ratio)
+    fig_vol.tight_layout()
+    st.pyplot(fig_vol, use_container_width=True)
+    plt.close(fig_vol)
 
 
 def _rows_in_range(all_rows, start_date, end_date):
@@ -346,26 +329,22 @@ st.subheader(f"History {start_date} s/d {end_date}")
 if range_rows:
     _render_metrics(range_rows, mint)
     _render_charts(range_rows, mint)
-    st.subheader("Data harian + sinyal per hari (v3)")
+    st.subheader("Data harian + sinyal per hari")
     classified = classify_all(range_rows)
     csv_rows = rows_with_signals(range_rows)
-    # build enriched UI table from the exact daily CSV/export columns plus UI-only details
+    # build enriched UI table from the daily CSV/export columns plus UI-only details
     enriched = []
     for csv_row, res in zip(csv_rows, classified):
         item = dict(csv_row)
         item.update({
             "bias": res.get("bias"),
-            "multiplier": res.get("multiplier"),
-            "baseline_status": res.get("baseline_status"),
-            "baseline_reason": res.get("baseline_reason"),
+            "volume_pct": res.get("volume_pct"),
+            "reason": res.get("reason"),
         })
         enriched.append(item)
     st.dataframe(enriched, use_container_width=True, hide_index=True)
     csv_buffer = io.StringIO()
-    fieldnames = ["mint", "date", "open", "close", "price_chg_pct",
-                  "cvd_delta", "direction", "ratio", "signal",
-                  "coverage_hours", "top_wallet_pct", "unique_makers"]
-    writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames)
+    writer = csv.DictWriter(csv_buffer, fieldnames=EXPORT_COLUMNS)
     writer.writeheader()
     writer.writerows(csv_rows)
     try:
@@ -379,9 +358,11 @@ if range_rows:
         file_name=f"wallet_depth_{mint}_{start_date}_{end_date}.csv",
         mime="text/csv",
     )
-    st.caption("R = |ΔCVD| / |ΔHarga%|. Multiplier membandingkan R hari "
-               "terbaru dengan baseline sehat sebelumnya. Sinyal ABSORBSI_LANGSUNG "
-               "dan SELLING_EXHAUSTION dicek sebelum gate lain dan tidak butuh baseline.")
+    st.caption("SELLER_EXHAUSTION: CVD runtuh ≤40% dari flush (≤ -30 SOL, "
+               "5 hari) + volume ≤40% kemarin. REVERSAL: sama tapi volume "
+               "≥130% kemarin. AKUMULASI: CVD ≥ +5 SOL, harga ≤ +0.5%, volume "
+               "≥130%. Semua volume dibandingkan dalam USD. Tag on-chain "
+               "(smart money/fresh/bot/mev) hanya info, bukan syarat.")
     # Optional recap block as comment-like text area for copy
     try:
         from effort_detector import format_recap
