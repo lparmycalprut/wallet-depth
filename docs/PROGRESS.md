@@ -119,3 +119,37 @@
   clamp 30 hari, tidak termasuk hari berjalan, tanpa alert Telegram) dan
   `test_cvd_page.py` (AppTest: tombol rentang memakai start/end, auto-fetch saat
   input berubah, jalur error/data/tidak-fetch, dan panel manual tetap lookback).
+
+## UI kontras (teks hitam)
+
+- `app.py` & `trending_ui.py`: nama token (`$SYMBOL`) sebelumnya memakai warna
+  `#f8fafc` (hampir putih) sehingga tidak terlihat di background terang. Semua
+  teks tabel watchlist dan listing GMGN kini `#000000` (hitam), termasuk mint
+  pendek, header kolom, tanggal, nilai metrik, sub-label, dan alasan baseline.
+- Link eksternal memakai biru gelap `#1d4ed8` (hover hitam + underline), badge
+  netral memakai background terang `#e2e8f0` dengan teks hitam, garis pemisah
+  `#cbd5e1`, dan persentase 24h memakai hijau/merah gelap agar tetap terbaca.
+- Ditambahkan `.streamlit/config.toml` (`base = "light"`, `textColor #000000`)
+  supaya tema selalu terang dan teks default hitam. Hero banner tetap gradasi
+  gelap dengan teks putih.
+
+## Kolom baseline: detail kejadian
+
+- `effort_detector._build_result` kini menyertakan konteks hari baseline:
+  `baseline_date`, `baseline_ratio`, `baseline_price_chg_pct`,
+  `baseline_cvd_delta`, `baseline_direction`, dan `baseline_gap_days`
+  (jarak hari ke hari N). Field murni informatif — formula R, multiplier,
+  ambang 2,0/0,5, dan klasifikasi S1–S5 tidak berubah.
+- `app.py`: kolom watchlist "Baseline" menjadi "Baseline & detail". Setiap baris
+  menampilkan fakta hari baseline (`Base <tanggal> (<n>h lalu) · Δ<harga>% ·
+  CVD <sol> SOL`). Untuk sinyal **selain netral** ditambahkan narasi kejadian:
+  - S1/S3: "butuh SOL M× lebih banyak per 1% …" (supply/demand diserap),
+  - S2/S4: "hanya perlu M× effort per 1% …" (buyer/seller absen),
+  - ABSORBSI_LANGSUNG: CVD vs pergerakan harga (tanpa baseline),
+  - SELLING_EXHAUSTION: tanggal flush, CVD flush → CVD hari ini, sisa %.
+  Baris netral/insufficient tetap hanya fakta baseline plus alasan penolakan
+  (noise, baseline tidak cukup) seperti sebelumnya.
+- Lebar kolom watchlist disesuaikan agar teks detail tidak terlalu terpotong.
+- Test baru `tests/test_baseline_detail.py`: field baseline (stabil, kosong,
+  flush exhaustion) dan AppTest render kolom (narasi muncul untuk non-netral,
+  tidak muncul untuk netral).

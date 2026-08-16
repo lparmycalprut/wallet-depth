@@ -15,7 +15,7 @@ st.markdown("""
 <style>
 .trending-row {
     padding: 0.6rem 0;
-    border-bottom: 1px solid #1e293b;
+    border-bottom: 1px solid #cbd5e1;
 }
 .trending-token {
     display: flex;
@@ -24,12 +24,12 @@ st.markdown("""
 }
 .trending-symbol {
     font-size: 1rem;
-    font-weight: 700;
-    color: #f8fafc;
+    font-weight: 800;
+    color: #000000;
 }
 .trending-mint {
     font-size: 0.7rem;
-    color: #64748b;
+    color: #000000;
     font-family: monospace;
 }
 .trending-links {
@@ -39,11 +39,13 @@ st.markdown("""
 }
 .trending-links a {
     font-size: 0.7rem;
-    color: #60a5fa;
+    color: #1d4ed8;
+    font-weight: 600;
     text-decoration: none;
 }
 .trending-links a:hover {
-    color: #93c5fd;
+    color: #000000;
+    text-decoration: underline;
 }
 .trending-metric {
     text-align: center;
@@ -51,14 +53,14 @@ st.markdown("""
 }
 .trending-metric-label {
     font-size: 0.6rem;
-    color: #64748b;
+    color: #000000;
     text-transform: uppercase;
     letter-spacing: 0.03em;
 }
 .trending-metric-value {
     font-size: 0.85rem;
-    font-weight: 600;
-    color: #f8fafc;
+    font-weight: 700;
+    color: #000000;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -84,9 +86,9 @@ def _color_change(value):
     try:
         v = float(value)
         if v > 0:
-            return f'<span style="color:#4ade80;">{v:+.1f}%</span>'
+            return f'<span style="color:#15803d;font-weight:700;">{v:+.1f}%</span>'
         elif v < 0:
-            return f'<span style="color:#f87171;">{v:+.1f}%</span>'
+            return f'<span style="color:#b91c1c;font-weight:700;">{v:+.1f}%</span>'
         return f'{v:+.1f}%'
     except:
         return '—'
@@ -145,12 +147,12 @@ def render_trending(rows, *, key_prefix="listing", source="trending"):
     # Header row
     header_cols = st.columns([1.6, 1.0, 1.0, 1.0, 0.9, 0.9, 1.1])
     header_titles = ["Token", "MC", "Liq", "Volume", "24h", "", ""]
-    header_style = "font-size:0.75rem;color:#64748b;text-align:center;"
+    header_style = "font-size:0.75rem;color:#000000;font-weight:700;text-align:center;"
     
     for col, title in zip(header_cols, header_titles):
         col.markdown(f'<div style="{header_style}">{title}</div>', unsafe_allow_html=True)
     
-    st.markdown('<hr style="margin:0.4rem 0;border-color:#1e293b;">', unsafe_allow_html=True)
+    st.markdown('<hr style="margin:0.4rem 0;border-color:#cbd5e1;">', unsafe_allow_html=True)
     
     for index, row in enumerate(rows):
         ca = str(row.get("ca") or "")
@@ -212,4 +214,4 @@ def render_trending(rows, *, key_prefix="listing", source="trending"):
                              source=source)
             st.success(f"${symbol} ditambahkan")
         
-        st.markdown('<hr style="margin:0.25rem 0;border-color:#1e293b;">', unsafe_allow_html=True)
+        st.markdown('<hr style="margin:0.25rem 0;border-color:#cbd5e1;">', unsafe_allow_html=True)
