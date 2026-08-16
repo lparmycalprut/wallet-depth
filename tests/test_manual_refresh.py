@@ -14,6 +14,11 @@ def _swap(timestamp):
     return ("buy", 2.0, timestamp, "wallet")
 
 
+# DexScreener market fiktif: supply = 2.000.000 / 2.0 = 1.000.000 token.
+_MARKET = {"pair_addresses": ["pool123"], "symbol": "TST",
+           "marketcap": 2_000_000.0, "price_usd": 2.0}
+
+
 class LookbackWindowTest(unittest.TestCase):
     def test_window_uses_market_midnight_and_excludes_today(self):
         now = datetime.fromisoformat("2026-08-15T12:00:00+00:00")
@@ -82,6 +87,7 @@ class DateWindowTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         path = str(Path(tmp.name) / "daily.json")
         patches = [
+            mock.patch.object(uc, "get_market", return_value=dict(_MARKET)),
             mock.patch.object(uc, "_pool_and_symbol",
                               return_value=("pool", "TST")),
             mock.patch.object(uc, "_fetch_history_with_source",
@@ -131,6 +137,7 @@ class ManualRefreshTest(unittest.TestCase):
         build_rows = build_rows if build_rows is not None else [
             daily_effort_record(self.MINT, "2026-08-14", 100, 110, 5)]
         return [
+            mock.patch.object(uc, "get_market", return_value=dict(_MARKET)),
             mock.patch.object(uc, "_pool_and_symbol",
                               return_value=(pool, self.META["symbol"])),
             mock.patch.object(uc, "_fetch_history_with_source",
@@ -180,6 +187,27 @@ class ManualRefreshTest(unittest.TestCase):
             self.assertTrue(res["ok"])
             send.assert_not_called()
 
+    def test_supply_from_market_passed_to_build_effort_rows(self):
+        # supply = marketcap/price = 2.000.000/2.0 — untuk marketcap_close
+        # harian di gerbang anti wash-trade.
+        res = self._run([_swap(1)])
+        self.assertTrue(res["ok"])
+        call = uc.build_effort_rows.call_args
+        self.assertEqual(call.kwargs.get("supply"), 1_000_000.0)
+
+    def test_no_market_data_leaves_supply_none(self):
+        patches = self._patches([_swap(1)])
+        for patch in patches:
+            patch.start()
+        self.addCleanup(lambda: [patch.stop() for patch in patches])
+        uc.get_market.return_value = {}  # token tanpa data market
+        now = datetime.fromisoformat("2026-08-15T10:00:00+00:00")
+        res = uc.refresh_single_token(
+            self.MINT, self.META, now=now, api_key="secret",
+            lookback_days=7, path=self.path)
+        self.assertTrue(res["ok"])
+        self.assertIsNone(uc.build_effort_rows.call_args.kwargs.get("supply"))
+
     def test_manual_refresh_never_touches_watchlist(self):
         # No call to update_local_meta / add_to_watchlist during manual fetch.
         with mock.patch.object(uc, "update_local_meta") as meta:
@@ -202,8 +230,9 @@ class ManualRefreshTest(unittest.TestCase):
 
     def test_error_message_redacts_api_key(self):
         now = datetime.fromisoformat("2026-08-15T10:00:00+00:00")
-        with mock.patch.object(uc, "_pool_and_symbol",
-                               return_value=("pool", "TST")):
+        with mock.patch.object(uc, "get_market", return_value=dict(_MARKET)), \
+                mock.patch.object(uc, "_pool_and_symbol",
+                                  return_value=("pool", "TST")):
             def boom(*a, **k):
                 raise RuntimeError("connection failed with key secret")
             with mock.patch.object(uc, "_fetch_history_with_source", boom):
@@ -250,6 +279,7 @@ class DateRangeRefreshTest(unittest.TestCase):
         build_rows = build_rows if build_rows is not None else [
             daily_effort_record(self.MINT, "2026-08-14", 100, 110, 5)]
         return [
+            mock.patch.object(uc, "get_market", return_value=dict(_MARKET)),
             mock.patch.object(uc, "_pool_and_symbol",
                               return_value=(pool, self.META["symbol"])),
             mock.patch.object(uc, "_fetch_history_with_source",
@@ -309,8 +339,9 @@ class DateRangeRefreshTest(unittest.TestCase):
         self.assertEqual(res["requested_days"], 5)
 
     def test_date_range_error_is_clean_and_redacted(self):
-        with mock.patch.object(uc, "_pool_and_symbol",
-                               return_value=("pool", "TST")):
+        with mock.patch.object(uc, "get_market", return_value=dict(_MARKET)), \
+                mock.patch.object(uc, "_pool_and_symbol",
+                                  return_value=("pool", "TST")):
             def boom(*a, **k):
                 raise RuntimeError("connection failed with key secret")
             with mock.patch.object(uc, "_fetch_history_with_source", boom):

@@ -100,8 +100,9 @@ def get_gmgn_wallet_metadata() -> dict:
 
     Only populated when ``use_gmgn=True`` is used.  Keys are wallet
     addresses; values are dicts with ``maker_tags``, ``maker_token_tags``,
-    ``total_trade``, ``balance``, ``history_bought_amount``,
-    ``history_sold_amount``, ``realized_profit``, ``unrealized_profit``.
+    ``maker_event_tags``, ``total_trade``, ``balance``,
+    ``history_bought_amount``, ``history_sold_amount``, ``realized_profit``,
+    ``unrealized_profit``.
     """
     return _gmgn_wallet_meta.get("data") or {}
 
@@ -292,8 +293,83 @@ def _gmgn_sol_equivalent(trade: dict) -> float:
     # than produce nonsense CVD data.
     return 0.0
 
+
+def _gmgn_amount_usd(trade: dict) -> float:
+    """USD value of one GMGN trade — the canonical daily-volume unit.
+
+    Semua perbandingan volume antar-hari memakai USD (bukan SOL). Prioritas:
+      1. ``amount_usd`` langsung dari GMGN                    (paling akurat)
+      2. ``quote_amount`` USDC/USDT yang terverifikasi        (1:1 dengan USD)
+      3. ``quote_amount`` SOL/WSOL × harga SOL/USD            (estimasi)
+      4. 0.0 bila tidak bisa diverifikasi (pemanggil bisa fallback ke
+         ``sol_eq × harga SOL`` agar baris tetap punya volume USD).
+    """
+    # ── 1. amount_usd ───────────────────────────────────────────────
+    usd_amount = _as_float(_first_nested(
+        trade, "amount_usd", "amountUSD", "cost_usd", "costUsd", "usd",
+        "value_usd", "valueUsd", "volume_usd", "volumeUsd",
+        "trade_usd", "tradeUsd", "usd_value", "usdValue"), 0.0)
+    if usd_amount > 0:
+        return usd_amount
+
+    # ── 2/3. quote_amount dengan quote token yang terverifikasi ─────
+    quote_amount = _as_float(_first_nested(
+        trade, "quote_amount", "quoteAmount", "quote_amount_ui",
+        "quoteAmountUi", "quote_amount_decimal"), 0.0)
+    if quote_amount <= 0:
+        return 0.0
+    quote_addr = str(_first_nested(
+        trade, "quote_address", "quote_token_address", "quote_mint",
+        "quote_token.address", "quoteToken.address", default="") or "")
+    quote_sym = str(_first_nested(
+        trade, "quote_symbol", "quote_token.symbol", "quoteToken.symbol",
+        default="") or "").lower()
+    if quote_addr in (USDC_MINT, USDT_MINT) or quote_sym in ("usdc", "usdt"):
+        return quote_amount
+    if quote_addr == SOL_MINT or quote_sym in ("sol", "wsol"):
+        if quote_amount > 10_000_000:          # raw lamports
+            quote_amount /= 1_000_000_000
+        sp = get_sol_price()
+        return quote_amount * sp if sp else 0.0
+    return 0.0
+
+
+def _gmgn_trade_tags(trade: dict) -> list:
+    """Normalized union of maker_tags / maker_token_tags / maker_event_tags.
+
+    Tags dinormalisasi (lowercase snake_case) supaya pencocokan 4 penanda
+    on-chain di cvd_daily konsisten. Urutan dipertahankan, duplikat dibuang.
+    """
+    tags = []
+    for raw in (
+        _first_nested(trade, "maker_tags", "makerTags", default=[]),
+        _first_nested(trade, "maker_token_tags", "makerTokenTags",
+                      default=[]),
+        _first_nested(trade, "maker_event_tags", "makerEventTags",
+                      "event_tags", "eventTags", default=[]),
+    ):
+        if isinstance(raw, str):
+            raw = [t.strip() for t in raw.split(",") if t.strip()]
+        if isinstance(raw, (list, tuple)):
+            tags.extend(raw)
+    normalized = []
+    seen = set()
+    for tag in tags:
+        clean = str(tag or "").strip().lower().replace(" ", "_") \
+            .replace("-", "_")
+        if clean and clean not in seen:
+            seen.add(clean)
+            normalized.append(clean)
+    return normalized
+
+
 def gmgn_trade_to_swap(trade: dict):
-    """Convert a GMGN trade into side, SOL, time, wallet, and optional price."""
+    """Convert a GMGN trade into an enriched swap tuple.
+
+    ``(side, sol_eq, ts, wallet, price_usd, amount_usd, tags)`` — legacy
+    4/5-element consumers keep working; the USD volume and maker tags feed
+    the bottom detector's daily aggregation.
+    """
     if not isinstance(trade, dict):
         return None
     side = _gmgn_side(trade)
@@ -314,8 +390,15 @@ def gmgn_trade_to_swap(trade: dict):
     MAX_SWAP_SOL = 1000.0
     if sol_eq > MAX_SWAP_SOL:
         return None
+    amount_usd = _gmgn_amount_usd(trade)
+    if amount_usd <= 0:
+        # Fallback terakhir: estimasi dari SOL-equivalent × harga SOL saat
+        # ini agar baris harian tetap punya volume USD yang sebanding.
+        sp = get_sol_price()
+        amount_usd = sol_eq * sp if sp else 0.0
     return (side, float(sol_eq), int(ts), str(wallet),
-            float(price) if price > 0 else None)
+            float(price) if price > 0 else None, float(amount_usd),
+            _gmgn_trade_tags(trade))
 
 def _find_trade_list(obj):
     """Locate the trade array across several GMGN response shapes."""
@@ -436,10 +519,17 @@ def _extract_gmgn_trade_meta(trade: dict) -> dict:
     if isinstance(tok_tags_raw, str):
         tok_tags_raw = [t.strip() for t in tok_tags_raw.split(",")
                         if t.strip()]
+    evt_tags_raw = _first_nested(trade, "maker_event_tags", "makerEventTags",
+                                 "event_tags", "eventTags", default=[])
+    if isinstance(evt_tags_raw, str):
+        evt_tags_raw = [t.strip() for t in evt_tags_raw.split(",")
+                        if t.strip()]
     return {
         "maker_tags": list(tags_raw) if isinstance(tags_raw, list) else [],
         "maker_token_tags": (list(tok_tags_raw)
                              if isinstance(tok_tags_raw, list) else []),
+        "maker_event_tags": (list(evt_tags_raw)
+                             if isinstance(evt_tags_raw, list) else []),
         "total_trade": int(_as_float(
             _first_nested(trade, "total_trade", "totalTrade", default=0))),
         "balance": _as_float(
@@ -465,8 +555,10 @@ def fetch_gmgn_swaps(ca: str, *, stop_sig=None, stop_ts=None, max_pages=40,
     ``event`` -> buy/sell, ``quote_amount``/``amount_usd`` -> SOL-equivalent,
     ``timestamp`` -> ts, and ``maker`` -> wallet.
 
-    Returns ``(swaps, newest_sig, newest_ts, hit_stop)``. GMGN swap rows add
-    an optional fifth value (trade price USD) for candle fallback. Completion
+    Returns ``(swaps, newest_sig, newest_ts, hit_stop)``. GMGN swap rows are
+    enriched: element 4 = trade price USD (candle fallback), element 5 =
+    ``amount_usd`` (unit kanonik volume harian USD), element 6 = normalized
+    maker tag list (maker_tags/maker_token_tags/maker_event_tags). Completion
     metadata is exposed separately via :func:`get_gmgn_fetch_status` so
     legacy callers keep their tuple contract while persistence callers can
     reject partial data safely.
@@ -587,8 +679,14 @@ def fetch_gmgn_swaps(ca: str, *, stop_sig=None, stop_ts=None, max_pages=40,
 
 
 def classify_swap(tx: dict, pool: str, ca: str):
-    """Return (side, sol_equivalent, ts, wallet) or None.
-    Works for SOL-quoted AND USDC/USDT-quoted pools (converted to SOL)."""
+    """Return enriched swap tuple or None.
+
+    ``(side, sol_eq, ts, wallet, None, amount_usd, tags)`` — works for
+    SOL-quoted AND USDC/USDT-quoted pools (converted to SOL). Helius tidak
+    memberi tag maker, jadi ``tags`` kosong; ``amount_usd`` diestimasi dari
+    SOL-equivalent × harga SOL/USD saat fetch (path fallback saja — GMGN
+    tetap menjadi sumber utama ``amount_usd`` yang akurat).
+    """
     rates = _quote_rates()
     ca_in = ca_out = 0.0
     q_in = q_out = 0.0   # quote value in SOL-equivalent
@@ -612,10 +710,13 @@ def classify_swap(tx: dict, pool: str, ca: str):
     wallet = tx.get("feePayer") or ""
     if q_in > 1000.0 or q_out > 1000.0:
         return None
+    sp = get_sol_price()
     if ca_out > ca_in and q_in > 0:        # token left pool -> BUY
-        return ("buy", q_in, ts, wallet)
+        return ("buy", q_in, ts, wallet, None,
+                q_in * sp if sp else 0.0, [])
     if ca_in > ca_out and q_out > 0:       # token entered pool -> SELL
-        return ("sell", q_out, ts, wallet)
+        return ("sell", q_out, ts, wallet, None,
+                q_out * sp if sp else 0.0, [])
     return None
 
 

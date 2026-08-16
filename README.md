@@ -1,56 +1,68 @@
-# Wallet Depth — Efisiensi Anomali
+# Wallet Depth — 3 Sinyal Bottom
 
-Wallet Depth adalah dashboard Streamlit dan cron harian untuk membandingkan
-**effort** order flow (ΔCVD dalam SOL) dengan **result** pergerakan harga.
-Sistem hanya memakai satu metrik:
+Wallet Depth adalah dashboard Streamlit dan cron harian untuk mendeteksi
+**bottom** token Solana (titik terendah sebelum pump) dengan membaca hubungan
+**ΔCVD (order flow)** dan **volume antar-hari**, divalidasi empiris pada 8
+token pump historis (hoppy, assface, grail, bountywork, ansem, chance,
+testicle, punch).
 
 ```text
-ΔHarga% = (close - open) / open × 100
-R       = |ΔCVD| / |ΔHarga%|        # SOL per 1% gerak
-M       = R hari N / R hari N-1
+ΔCVD (SOL) = Σ(buy_quote_sol) − Σ(sell_quote_sol) dalam 1 hari
+Volume     = buy + sell dalam USD (amount_usd) — SELALU USD, bukan SOL
+Batas hari = 00:00 UTC (= 07:00 WIB, konvensi GMGN)
 ```
 
-Hari menggunakan kalender market (00:00–23:59 UTC, sesuai Helius/Solscan). Dua hari berturut-turut wajib
-tersedia. Pergerakan di bawah 3% selalu netral.
+## Tiga sinyal (bias selalu bullish)
 
-**Baseline Quality Gate (baru):**
-- `MIN_BASELINE_RATIO = 0.05` SOL/1%
-- `MIN_BASELINE_CVD_SOL = 1.0` SOL
+| Sinyal | CVD (vs flush) | Volume (vs H-1) | Arti |
+|---|---|---|---|
+| 🟢 SELLER_EXHAUSTION | runtuh (negatif kecil) | turun ≤ 40% | panic seller habis |
+| 🟣 REVERSAL | runtuh (negatif kecil) | naik ≥ 130% | penjual habis + buyer mulai masuk |
+| 🔵 AKUMULASI | positif ≥ +5 SOL | naik ≥ 130% | buyer masuk diam-diam |
 
-Baseline stabil hanya jika ratio N-1 ≥ 0,05, `|ΔHarga N-1| ≥ 3%`,
-`|ΔCVD N-1| ≥ 1` SOL, dan arah hari N sama dengan N-1. Jika gagal,
-sinyal menjadi `insufficient_data` dengan status `unstable` atau
-`incompatible_direction`. Multiplier ekstrem akibat denominator kecil
-ditolak.
+Detail syarat persis:
 
-| Kondisi hari N (baseline stabil) | Sinyal | Bias |
-|---|---|---|
-| Harga turun, M ≥ 2 | S1_PENYERAPAN | Bullish |
-| Harga turun, M ≤ 0,5 | S2_DUMP_DISTRIBUSI | Bearish |
-| Harga naik, M ≥ 2 | S3_DISTRIBUSI_KE_KUAT | Bearish |
-| Harga naik, M ≤ 0,5 | S4_PUMP_ASLI | Bullish |
-| 0,5 < M < 2 atau gerak <3% | S5_NETRAL | Netral |
+- **SELLER_EXHAUSTION**: CVD(N) < 0, harga ≤ +0.5%, ada flush (min CVD 5 hari
+  sebelumnya ≤ -30 SOL), |CVD(N)| ≤ 40% |flush|, volume ≤ 40% kemarin, dan
+  volume ≤ 3× marketcap close (anti wash-trade, bila MC tersedia).
+- **REVERSAL**: sama dengan SELLER_EXHAUSTION, kecuali volume **naik**
+  ≥ 130% dari kemarin.
+- **AKUMULASI**: CVD(N) ≥ +5 SOL, harga ≤ +0.5%, volume ≥ 130% kemarin.
 
-Jika baseline tidak stabil: `signal = insufficient_data`, `bias = None`,
-`baseline_status = unstable` / `incompatible_direction`. Telegram hanya
-dikirim jika `baseline_status == "stable"` dan sinyal S1–S4.
+Urutan cek: SELLER_EXHAUSTION → REVERSAL → AKUMULASI → "—". Seluruh window
+dipindai per hari (bukan hanya hari terakhir); hari pertama selalu "—".
 
-Flag divergensi muncul bila ΔCVD dan harga berlawanan arah, tetapi tidak
-mengubah klasifikasi. Semua hasil adalah heuristik, bukan jaminan atau saran
-keuangan.
+Threshold final ada di `effort_detector.py` dan tidak boleh diubah.
+
+## On-chain tag (info saja, bukan syarat)
+
+Per hari diagregasi 4 penanda dari tag maker GMGN
+(`maker_tags`/`maker_token_tags`/`maker_event_tags`):
+
+- `smart_money_buy` — buy bertag axiom/padre/bluechip_owner/trojan/top_holder/smart_degen/smart_money
+- `fresh_buy` — buy bertag fresh_wallet
+- `bot_sell` — sell bertag bundler/paper_hands
+- `mev_noise` — tx bertag sandwich_bot
+
+Flag tambahan: `whale_driven` (top-1 wallet ≥ 40% volume) dan
+`flag_divergence` (arah CVD berlawanan harga) — keduanya informatif.
 
 ## Alur data
 
-1. Cron berjalan pukul 00:00 UTC.
-2. Trade GMGN dinormalisasi ke SOL; Helius menjadi fallback.
+1. Cron berjalan setiap 00:00 UTC (fetch 4 hari terakhir per token watchlist).
+2. Trade GMGN dinormalisasi (SOL untuk CVD, USD untuk volume); Helius menjadi
+   fallback otomatis.
 3. Candle hourly GeckoTerminal digabung ke candle harian market (UTC).
-4. `daily_effort.json` di-upsert per mint/tanggal dan menyimpan 30 hari.
-5. Telegram hanya dikirim untuk S1–S4.
-6. Dashboard menampilkan status watchlist dan chart tujuh hari.
+4. `daily_effort.json` di-upsert idempoten per mint/tanggal (window 30 hari).
+5. Telegram hanya dikirim untuk 3 sinyal (bukan "—"), satu kali per baris:
+   `⚡ BOTTOM TERDETEKSI — $SYMBOL` + sinyal + hari/flush + CVD/volume +
+   link GMGN.
+6. Dashboard menampilkan sinyal watchlist, chart harga/CVD + volume USD,
+   tabel sinyal per hari, dan CSV + rekapan teks (`# <date>  <SIGNAL> | …`).
 
-Screener Trending/Degen tetap tersedia sebagai **listing**. Ia tidak memberi
-skor atau verdict. Sinyal baru muncul setelah token masuk watchlist dan data
-harian tersedia.
+Screener Trending/Degen tetap tersedia sebagai **listing** tanpa skor atau
+verdict. Sinyal baru muncul setelah token masuk watchlist dan data harian
+tersedia.
 
 ## Menjalankan lokal
 
@@ -73,4 +85,5 @@ python -m py_compile effort_detector.py cvd_daily.py signals.py \
   scripts/update_cvd.py app.py pages/4_📊_CVD.py
 ```
 
-Template evaluasi manual tersedia di `PROMPT_EFFORT_ANOMALI.md`.
+Semua hasil adalah heuristik validasi historis, bukan jaminan atau saran
+keuangan.

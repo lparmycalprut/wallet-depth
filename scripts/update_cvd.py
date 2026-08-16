@@ -23,17 +23,14 @@ from core import (get_daily_candles, get_helius_keys, get_market,
 from cvd import fetch_swaps, get_gmgn_fetch_status
 from cvd_daily import (MARKET_TZ, build_effort_rows,
                        fallback_candles_from_swaps)
-from effort_detector import (DAILY_EFFORT_PATH, RETENTION_DAYS,
+from effort_detector import (DAILY_EFFORT_PATH, SIGNALS, STORAGE_WINDOW_DAYS,
                              classify_effort, load_daily_effort,
                              merge_daily_effort, rows_for_mint)
 from signals import format_effort_alert, send_telegram, should_send_telegram
 from watchlist import load_watchlist, update_local_meta
 
-ALERT_SIGNALS = {
-    "S1_PENYERAPAN", "S2_DUMP_DISTRIBUSI",
-    "S3_DISTRIBUSI_KE_KUAT", "S4_PUMP_ASLI",
-    "ABSORBSI_LANGSUNG", "SELLING_EXHAUSTION",
-}
+# Hanya 3 sinyal bottom yang boleh memicu alert Telegram.
+ALERT_SIGNALS = set(SIGNALS)  # SELLER_EXHAUSTION, REVERSAL, AKUMULASI
 
 
 def _now_market() -> datetime:
@@ -109,13 +106,30 @@ def _as_date(value) -> _date:
     return datetime.strptime(str(value)[:10], "%Y-%m-%d").date()
 
 
-def _pool_and_symbol(mint: str, meta: dict) -> tuple[str, str]:
-    market = get_market(mint) or {}
+def _pool_and_symbol(mint: str, meta: dict, market: dict | None = None) -> tuple[str, str]:
+    market = market if market is not None else (get_market(mint) or {})
     pools = market.get("pair_addresses") or []
     pool = str((meta or {}).get("pool") or (pools[0] if pools else ""))
     symbol = str((meta or {}).get("symbol")
                  or market.get("symbol") or "?")
     return pool, symbol
+
+
+def _token_supply(market: dict):
+    """Perkiraan total supply = marketcap / harga sekarang.
+
+    Dipakai untuk ``marketcap_close`` historis (close × supply) pada gerbang
+    anti wash-trade. Return ``None`` bila data market tidak cukup — detektor
+    lalu melewatkan gerbang MC ("bila MC tersedia").
+    """
+    try:
+        marketcap = float((market or {}).get("marketcap") or 0)
+        price = float((market or {}).get("price_usd") or 0)
+    except (TypeError, ValueError):
+        return None
+    if marketcap <= 0 or price <= 0:
+        return None
+    return marketcap / price
 
 
 def _fetch_history_with_source(mint: str, pool: str, api_key: str,
@@ -216,8 +230,10 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
                     f"{result['end_date']} ({requested} hari) "
                     f"untuk ${result['symbol']}")
     try:
-        # 1. market / pool lookup
-        pool, symbol = _pool_and_symbol(mint, meta)
+        # 1. market / pool lookup (+ supply untuk marketcap_close historis)
+        market = get_market(mint) or {}
+        pool, symbol = _pool_and_symbol(mint, meta, market=market)
+        supply = _token_supply(market)
         result["symbol"] = symbol
         if not pool:
             raise RuntimeError("pair market tidak ditemukan")
@@ -245,16 +261,17 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
                f"(market={len(market_candles)}, trades={len(trade_candles)})")
 
         # 4. aggregate daily CVD -> effort rows (excludes open market day)
-        fresh = build_effort_rows(mint, swaps, candles, now=now)
+        fresh = build_effort_rows(mint, swaps, candles, now=now,
+                                  supply=supply)
         _stage("aggregate",
                f"{len(fresh)} daily row dibangun dari {len(swaps)} trades")
 
-        # 5. persist idempotently (respects retention per mint)
+        # 5. persist idempotently (respects storage window per mint)
         existing = load_daily_effort(path)
         before_keys = {(row.get("mint"), row.get("date"))
                        for row in existing if row.get("mint") == mint}
         merged = merge_daily_effort(fresh, path=path,
-                                    retention_days=RETENTION_DAYS)
+                                    window_days=STORAGE_WINDOW_DAYS)
         fresh_keys = {(row.get("mint"), row.get("date")) for row in fresh}
         created = len(fresh_keys - before_keys)
         result["rows_created"] = created
@@ -267,7 +284,7 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
         effort = classify_effort(history, mint)
         result["result"] = effort
         _stage("classify", f"sinyal={effort.get('signal')} "
-                           f"baseline={effort.get('baseline_status')}")
+                           f"status={effort.get('status')}")
         result["ok"] = True
         _stage("success", "fetch manual berhasil")
     except Exception as exc:  # noqa: BLE001 - surface a clean structured error
@@ -280,7 +297,7 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
 
 def run_daily(watchlist: dict, *, now=None, api_key: str = "",
               send_alerts: bool = True) -> list[dict]:
-    """Refresh every token, persist idempotently, and alert S1-S4 + 2 new signals."""
+    """Refresh setiap token, simpan idempoten, alert HANYA 3 sinyal bottom."""
     now = (now or _now_market()).astimezone(MARKET_TZ)
     existing = load_daily_effort()
     existing_keys = {(row.get("mint"), row.get("date")) for row in existing}
@@ -308,10 +325,11 @@ def run_daily(watchlist: dict, *, now=None, api_key: str = "",
             "effort_date": result.get("date"),
             "effort_signal": result.get("signal"),
             "effort_bias": result.get("bias"),
-            "effort_ratio": result.get("ratio_N"),
-            "effort_previous_ratio": result.get("ratio_N_minus_1"),
-            "effort_multiplier": result.get("multiplier"),
+            "effort_cvd": result.get("cvd_delta"),
+            "effort_volume_pct": result.get("volume_pct"),
+            "effort_flush_date": result.get("flush_date"),
             "effort_divergence": result.get("flag_divergence"),
+            "effort_whale": result.get("whale_driven"),
         })
     return results
 

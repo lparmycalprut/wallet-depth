@@ -389,7 +389,3 @@ def get_daily_candles(pair_address: str, limit_days: int = 7) -> list[dict]:
         candle["volume_usd"] += float(value[5] or 0)
         candle["hours"] += 1
     return sorted(grouped.values(), key=lambda item: item["date"])[-limit_days:]
-
-
-# Backward-compatible alias for code that still referenced the old WIB name.
-get_daily_candles_wib = get_daily_candles

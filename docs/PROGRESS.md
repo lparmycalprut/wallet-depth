@@ -153,3 +153,44 @@
 - Test baru `tests/test_baseline_detail.py`: field baseline (stabil, kosong,
   flush exhaustion) dan AppTest render kolom (narasi muncul untuk non-netral,
   tidak muncul untuk netral).
+
+## 2026-08-16 — Detektor 3 sinyal bottom (arena/01a00a8e-wallet-depth)
+
+- Mengganti total framework Efisiensi Anomali (R/M/baseline/S1–S5/ABSORBSI
+  LANGSUNG/PENYERAPAN) dengan **3 sinyal bottom tervalidasi empiris**:
+  🟢 SELLER_EXHAUSTION (CVD runtuh vs flush ≤ -30 SOL/5 hari + volume kering
+  ≤40%), 🟣 REVERSAL (runtuh sama + volume naik ≥130%), 🔵 AKUMULASI
+  (CVD ≥ +5 SOL, harga ≤ +0.5%, volume naik ≥130%). Urutan cek persis
+  exhaustion → reversal → akumulasi → "—".
+- Threshold final di `effort_detector.py` sesuai spesifikasi (30/0.40/5/0.5,
+  0.40/1.30, 5.0/0.5/1.30, whale 40%, anti-wash 3× MC close bila MC tersedia).
+- Perbandingan volume antar-hari kini **selalu USD** (`amount_usd`), bukan
+  SOL: `cvd.py` membawa `amount_usd` pada tiap swap (GMGN: langsung dari API /
+  quote terverifikasi; Helius fallback: estimasi SOL×harga SOL),
+  `cvd_daily.py` mengagregasi `volume_usd`/`buy_usd`/`sell_usd` per hari.
+- Batas hari tetap 00:00 UTC; alias peninggalan WIB (`day_key_wib`,
+  `completed_wib_dates`, `get_daily_candles_wib`, `WIB`) dihapus.
+- 4 penanda on-chain ditangkap per trade (`maker_tags`, `maker_token_tags`,
+  `maker_event_tags`) lalu diagregasi harian: `smart_money_buy`, `fresh_buy`,
+  `bot_sell`, `mev_noise` — info output saja, bukan syarat sinyal.
+- `marketcap_close` harian = close × supply (supply ≈ MC/harga DexScreener)
+  untuk gerbang anti wash-trade; tanpa MC, gerbang dilewati sesuai spesifikasi.
+- Scan seluruh window: `classify_all` memberi sinyal per hari (hari pertama
+  "—"); `classify_effort` = verdict hari terakhir.
+- Telegram (`signals.py`) hanya untuk 3 sinyal, format konsisten "⚡ BOTTOM
+  TERDETEKSI — $SYMBOL" + emoji 🟢/🟣/🔵 + hari/flush + `CVD: X SOL |
+  Volume: Y% dari kemarin` + link GMGN; gate menolak "—" dan semua sinyal lama.
+- UI: watchlist `app.py` menampilkan sinyal (badge warna per sinyal), CVD,
+  volume vs kemarin, narasi flush + penanda whale/on-chain; halaman CVD
+  menampilkan chart harga/CVD + chart volume USD, tabel harian dengan kolom
+  `volume_usd`/`marketcap_close`/4 penanda, CSV + rekapan teks format baru
+  (`# <date>  <SIGNAL> | Δ<+%>% | CVD <+x> | vol <y>% dari kemarin`).
+- Storage `daily_effort.json` tetap upsert idempoten (window 30 hari; kini
+  bernama `STORAGE_WINDOW_DAYS`, bukan sinyal retensi).
+- Test: `tests/test_effort_detector.py` ditulis ulang (exhaustion/reversal/
+  akumulasi + boundary 40%/130%/+5 SOL, flush lookback 5, price cap, wash
+  gate, whale, tag passthrough, UTC, export, rekapan, storage);
+  `test_daily_pipeline.py` menambah uji volume USD, penanda on-chain,
+  marketcap_close; `test_effort_alert.py` untuk format/gate Telegram baru;
+  `test_baseline_detail.py` digantikan `test_signal_detail.py` (AppTest badge
+  & detail); `test_manual_refresh.py` diperbarui untuk wiring supply.
