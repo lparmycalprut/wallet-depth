@@ -86,6 +86,16 @@ class BaselineColumnRenderTest(unittest.TestCase):
         self.assertIn("Base 2026-08-13", body)
         self.assertIn("CVD +12.40 SOL", body)
         self.assertIn("buyer absen", body)
+        self.assertIn('class="baseline-detail bear"', body)
+
+    def test_bullish_detail_uses_same_green_tone_as_signal(self):
+        rows = [daily_effort_record(MINT, "2026-08-14", 1.0, 1.004, 6.0)]
+        result = classify_effort(rows, MINT)
+        self.assertEqual(result["signal"], "ABSORBSI_LANGSUNG")
+        body = self._run(rows)
+        self.assertIn('class="signal bull"', body)
+        self.assertIn('class="baseline-detail bull"', body)
+        self.assertIn(".baseline-detail.bull {color:#14532d}", body)
 
     def test_neutral_row_shows_facts_without_narrative(self):
         rows = _rows() + [
@@ -95,6 +105,7 @@ class BaselineColumnRenderTest(unittest.TestCase):
         self.assertEqual(result["bias"], "neutral")
         body = self._run(rows)
         self.assertIn("Base 2026-08-14", body)
+        self.assertIn('class="baseline-detail neutral"', body)
         self.assertNotIn("buyer absen", body)
         self.assertNotIn("seller absen", body)
 

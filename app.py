@@ -107,6 +107,10 @@ div[data-testid="stHorizontalBlock"]{align-items:center}
 .badge-info {background:#334155;color:#e2e8f0}
 .badge-direct {background:#14532d;color:#dcfce7}
 .badge-neutral {background:#e2e8f0;color:#000000}
+/* Detail baseline mengikuti warna bias pada badge sinyal. */
+.baseline-detail.bull {color:#14532d}
+.baseline-detail.bear {color:#7f1d1d}
+.baseline-detail.neutral {color:#334155}
 </style>
 <div class="hero"><h1>⚡ Wallet Depth</h1>
 <p>Deteksi tunggal berbasis efisiensi anomali: berapa SOL ΔCVD yang dibutuhkan
@@ -115,11 +119,16 @@ untuk menggerakkan harga 1% dibandingkan baseline sehat sebelumnya. Termasuk
 """, unsafe_allow_html=True)
 
 
+def _signal_tone(result):
+    """Return the shared visual tone for a signal and its baseline detail."""
+    bias = result.get("bias") or "neutral"
+    return "bull" if bias == "bullish" else "bear" if bias == "bearish" \
+        else "neutral"
+
+
 def _signal_badge(result):
     signal = result.get("signal") or "insufficient_data"
-    bias = result.get("bias") or "neutral"
-    css = "bull" if bias == "bullish" else "bear" if bias == "bearish" \
-        else "neutral"
+    css = _signal_tone(result)
     label = signal.replace("_", " ")
     return f'<span class="signal {css}">{html.escape(label)}</span>'
 
@@ -198,8 +207,10 @@ def _baseline_detail_html(result):
     if not lines:
         return ""
     weight = "600" if is_neutral else "700"
+    tone = _signal_tone(result)
     body = "<br>".join(html.escape(line) for line in lines)
-    return (f'<div style="font-size:0.62rem;color:#000000;line-height:1.35;'
+    return (f'<div class="baseline-detail {tone}" '
+            f'style="font-size:0.62rem;line-height:1.35;'
             f'font-weight:{weight};text-align:center;margin-top:0.15rem;">'
             f'{body}</div>')
 
