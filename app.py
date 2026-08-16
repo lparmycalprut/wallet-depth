@@ -107,10 +107,11 @@ div[data-testid="stHorizontalBlock"]{align-items:center}
 .badge-info {background:#334155;color:#e2e8f0}
 .badge-direct {background:#14532d;color:#dcfce7}
 .badge-neutral {background:#e2e8f0;color:#000000}
-/* Detail baseline mengikuti warna bias pada badge sinyal. */
-.baseline-detail.bull {color:#14532d}
-.baseline-detail.bear {color:#7f1d1d}
-.baseline-detail.neutral {color:#334155}
+/* Detail baseline selalu putih agar terbaca di background baru. */
+.baseline-detail,
+.baseline-detail.bull,
+.baseline-detail.bear,
+.baseline-detail.neutral {color:#ffffff !important}
 </style>
 <div class="hero"><h1>⚡ Wallet Depth</h1>
 <p>Deteksi tunggal berbasis efisiensi anomali: berapa SOL ΔCVD yang dibutuhkan
