@@ -9,6 +9,7 @@ from effort_detector import (
     classify_effort,
     daily_effort_record,
     merge_daily_effort,
+    rows_with_signals,
     MIN_BASELINE_RATIO,
     MIN_BASELINE_CVD_SOL,
     MIN_CURRENT_CVD_SOL,
@@ -57,8 +58,8 @@ class EffortDetectorV3Test(unittest.TestCase):
         self.assertIsInstance(res, dict)
         all_res = classify_all(rows)
         self.assertEqual(len(all_res), 2)
-        # first day should be insufficient or ABSORBSI
-        self.assertIn(all_res[0]["signal"], ("insufficient_data", "ABSORBSI_LANGSUNG", "S5_NETRAL"))
+        # first day in classify_all is ABSORBSI if direct, otherwise the GMGN window placeholder "—"
+        self.assertIn(all_res[0]["signal"], ("—", "ABSORBSI_LANGSUNG"))
 
     # --- (a) ABSORBSI LANGSUNG ---
     def test_absorbsi_langsung_direct(self):
@@ -381,6 +382,25 @@ class EffortDetectorV3Test(unittest.TestCase):
         self.assertEqual(results[1]["signal"], "ABSORBSI_LANGSUNG")
         # day4 should be exhaustion (flush -40 -> -10, 25%)
         self.assertEqual(results[3]["signal"], "SELLING_EXHAUSTION")
+
+    def test_rows_with_signals_export_columns_and_first_day_dash(self):
+        rows = [
+            daily_effort_record("M", "2026-08-01", 100, 90, -10),
+            daily_effort_record("M", "2026-08-02", 90, 89, 6),
+        ]
+        rows[0]["coverage_hours"] = 24
+        rows[0]["top_wallet_pct"] = 41.0
+        rows[0]["unique_makers"] = 2
+        exported = rows_with_signals(rows)
+        self.assertEqual(list(exported[0].keys()), [
+            "mint", "date", "open", "close", "price_chg_pct",
+            "cvd_delta", "direction", "ratio", "signal",
+            "coverage_hours", "top_wallet_pct", "unique_makers",
+        ])
+        self.assertEqual(exported[0]["signal"], "—")
+        self.assertEqual(exported[0]["coverage_hours"], 24)
+        self.assertEqual(exported[0]["top_wallet_pct"], 41.0)
+        self.assertEqual(exported[0]["unique_makers"], 2)
 
 
 if __name__ == "__main__":

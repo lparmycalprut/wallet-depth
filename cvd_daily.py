@@ -34,6 +34,7 @@ def calculate_daily_cvd(swaps) -> list[dict]:
     """
     days = defaultdict(lambda: {
         "buy_sol": 0.0, "sell_sol": 0.0, "buy_tx": 0, "sell_tx": 0,
+        "wallet_volume": defaultdict(float), "makers": set(),
     })
     for swap in swaps or []:
         if not isinstance(swap, (list, tuple)) or len(swap) < 3:
@@ -49,12 +50,19 @@ def calculate_daily_cvd(swaps) -> list[dict]:
         item = days[day_key(timestamp)]
         item[f"{side}_sol"] += amount
         item[f"{side}_tx"] += 1
+        wallet = str(swap[3]).strip() if len(swap) >= 4 and swap[3] is not None else ""
+        if wallet:
+            item["wallet_volume"][wallet] += amount
+            item["makers"].add(wallet)
     result = []
     running = 0.0
     for date in sorted(days):
         item = days[date]
         delta = item["buy_sol"] - item["sell_sol"]
         running += delta
+        total_volume = item["buy_sol"] + item["sell_sol"]
+        top_volume = max(item["wallet_volume"].values(), default=0.0)
+        top_wallet_pct = (top_volume / total_volume * 100.0) if total_volume > 0 else 0.0
         result.append({
             "date": date,
             "buy_sol": round(item["buy_sol"], 8),
@@ -63,6 +71,8 @@ def calculate_daily_cvd(swaps) -> list[dict]:
             "running_cvd_sol": round(running, 8),
             "buy_tx": item["buy_tx"],
             "sell_tx": item["sell_tx"],
+            "top_wallet_pct": round(top_wallet_pct, 8),
+            "unique_makers": len(item["makers"]),
         })
     return result
 
@@ -118,6 +128,12 @@ def build_effort_rows(mint: str, swaps, candles, *, now=None) -> list[dict]:
         closing = candle.get("close")
         if opening is None or closing is None:
             continue
-        result.append(daily_effort_record(
-            mint, date, opening, closing, daily["cvd_delta"]))
+        row = daily_effort_record(
+            mint, date, opening, closing, daily["cvd_delta"])
+        row["coverage_hours"] = candle.get("coverage_hours", candle.get("hours", ""))
+        row["top_wallet_pct"] = daily.get("top_wallet_pct", 0.0)
+        row["unique_makers"] = daily.get("unique_makers", 0)
+        if candle.get("pair") or candle.get("pair_address"):
+            row["pair"] = candle.get("pair") or candle.get("pair_address")
+        result.append(row)
     return result

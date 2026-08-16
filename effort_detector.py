@@ -40,26 +40,32 @@ def _atomic_write_json(path, data, **kwargs):
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DAILY_EFFORT_PATH = os.path.join(BASE_DIR, "daily_effort.json")
 
-# --- Floor / Gate FINAL (spec section 3) ---
-MIN_CURRENT_CVD_SOL = 5.0
-MIN_PRICE_MOVE_PCT = 3.0
-MIN_BASELINE_CVD_SOL = 1.0
-MIN_BASELINE_RATIO = 0.05
-HIGH_MULTIPLIER = 2.0
-LOW_MULTIPLIER = 0.5
-ANOMALY_UP = 2.0
-ANOMALY_DOWN = 0.5
-WHALE_PCT_THRESHOLD = 40.0
+# --- Floor / Gate FINAL (GMGN v4 final; do not change) ---
+MIN_CURRENT_CVD_SOL = 5.0    # hari N wajib |CVD| >= 5 SOL, selain itu noise
+MIN_PRICE_MOVE_PCT = 3.0     # hari N & baseline wajib bergerak >= 3%
+MIN_BASELINE_CVD_SOL = 1.0   # baseline wajib |CVD| >= 1 SOL
+MIN_BASELINE_RATIO = 0.05    # baseline ratio wajib >= 0.05
+ANOMALY_UP = 2.0             # M >= 2.0
+ANOMALY_DOWN = 0.5           # M <= 0.5
+WHALE_PCT_THRESHOLD = 40.0   # flag whale (top-1 wallet >= 40% volume)
 
-# Backward compat aliases still used elsewhere
-RETENTION_DAYS = 30
+# Backward-compat names used by older tests/imports.
+HIGH_MULTIPLIER = ANOMALY_UP
+LOW_MULTIPLIER = ANOMALY_DOWN
+RETENTION_DAYS = 30  # storage window only; not a holder/diamond-hands signal
 
-# New signal thresholds
-ABSORBSI_MIN_CVD_SOL = 5.0
+# Selling exhaustion + direct absorption thresholds.
+ABSORBSI_MIN_CVD_SOL = MIN_CURRENT_CVD_SOL
 ABSORBSI_MAX_PRICE_PCT = 0.5
-EXHAUSTION_FLUSH_CVD_SOL = -30.0
-EXHAUSTION_PCT = 0.40
-EXHAUSTION_LOOKBACK_DAYS = 5
+SELLING_FLUSH_CVD = 30.0
+SELLING_COLLAPSE_RATIO = 0.40
+SELLING_LOOKBACK_DAYS = 5
+SELLING_PRICE_CAP_PCT = 0.5
+
+# Backward-compat names for the same final constants.
+EXHAUSTION_FLUSH_CVD_SOL = -SELLING_FLUSH_CVD
+EXHAUSTION_PCT = SELLING_COLLAPSE_RATIO
+EXHAUSTION_LOOKBACK_DAYS = SELLING_LOOKBACK_DAYS
 
 SIGNAL_META = {
     "S1_PENYERAPAN": ("bullish", "Buyer menyerap supply"),
@@ -154,6 +160,8 @@ def _build_result(*, mint_or_empty: str, current: dict | None,
     baseline_gap_days = _days_between(baseline_date,
                                       current.get("date") if current else None)
 
+    top_wallet_pct = _finite(current.get("top_wallet_pct")) if current else 0.0
+
     return {
         "mint": mint_or_empty or (current.get("mint", "") if current else ""),
         "date": current.get("date") if current else None,
@@ -176,6 +184,11 @@ def _build_result(*, mint_or_empty: str, current: dict | None,
         "baseline_cvd_delta": baseline_cvd,
         "baseline_direction": baseline_direction,
         "baseline_gap_days": baseline_gap_days,
+        "whale_driven": bool(top_wallet_pct >= WHALE_PCT_THRESHOLD),
+        "top_wallet_pct": round(top_wallet_pct, 8) if current else None,
+        "pair": ((current.get("pair") or current.get("pair_address"))
+                 if current else None),
+        "reason": baseline_reason,
     }
 
 
@@ -263,20 +276,20 @@ def classify_at(rows: Iterable[dict], idx: int) -> dict:
         return res
 
     # --- 2a. SELLING_EXHAUSTION (needs idx>=1, check flush in lookback 5) ---
-    if idx >= 1 and cvd_n < 0 and price_pct_n <= ABSORBSI_MAX_PRICE_PCT:
-        look_start = max(0, idx - EXHAUSTION_LOOKBACK_DAYS)
+    if idx >= 1 and cvd_n < 0 and price_pct_n <= SELLING_PRICE_CAP_PCT:
+        look_start = max(0, idx - SELLING_LOOKBACK_DAYS)
         flush_row = None
         flush_cvd_val = None
         for j in range(look_start, idx):
             r = selected[j]
             c = _finite(r.get("cvd_delta"))
-            if c <= EXHAUSTION_FLUSH_CVD_SOL:
+            if c <= -SELLING_FLUSH_CVD:
                 if flush_row is None or c < flush_cvd_val:
                     flush_row = r
                     flush_cvd_val = c
         if flush_row is not None:
             # |CVD today| <= 40% * |CVD flush|
-            if abs(cvd_n) <= EXHAUSTION_PCT * abs(flush_cvd_val) if flush_cvd_val != 0 else False:
+            if (flush_cvd_val != 0 and abs(cvd_n) <= SELLING_COLLAPSE_RATIO * abs(flush_cvd_val)):
                 exhaustion_pct = (abs(cvd_n) / abs(flush_cvd_val) * 100.0) if flush_cvd_val != 0 else 0.0
                 res = _build_result(
                     mint_or_empty=mint_val,
@@ -299,41 +312,37 @@ def classify_at(rows: Iterable[dict], idx: int) -> dict:
                 # keep previous_date as flush date (for alert vs flush)
                 return res
 
-    # --- 3. Floor gate: current |CVD| >=5 else noise -> S5_NETRAL ---
-    if abs(cvd_n) < MIN_CURRENT_CVD_SOL:
-        baseline_idx, baseline_row = _find_healthy_baseline(selected, idx)
-        if baseline_row is not None:
-            ratio_prev = _finite(baseline_row.get("ratio")) if baseline_row.get("ratio") is not None else None
-            mult = None
-            if ratio_n is not None and ratio_prev is not None and ratio_prev > 0:
-                mult = ratio_n / ratio_prev
-            res = _build_result(
-                mint_or_empty=mint_val,
-                current=current,
-                previous=baseline_row,
-                baseline_status="noise",
-                baseline_reason=f"|ΔCVD| {abs(cvd_n):.2f} < minimum {MIN_CURRENT_CVD_SOL:.2f} SOL — noise",
-                raw_multiplier=mult,
-                signal="S5_NETRAL",
-                bias="neutral",
-                flag_divergence=flag_div,
-            )
-            return res
-        else:
-            res = _build_result(
-                mint_or_empty=mint_val,
-                current=current,
-                previous=selected[idx - 1] if idx >= 1 else None,
-                baseline_status="noise",
-                baseline_reason=f"|ΔCVD| {abs(cvd_n):.2f} < minimum {MIN_CURRENT_CVD_SOL:.2f} SOL — noise",
-                raw_multiplier=None,
-                signal="S5_NETRAL",
-                bias="neutral",
-                flag_divergence=flag_div,
-            )
-            return res
+    # --- 3. Ranging gate: |ΔPrice% hari N| < 3% -> S5_NETRAL ---
+    # This is intentionally checked before the current CVD noise floor to match
+    # GMGN content.js ordering. Direct pra-pump signals above can still fire.
+    if abs(price_pct_n) < MIN_PRICE_MOVE_PCT or direction_n == "flat":
+        return _build_result(
+            mint_or_empty=mint_val,
+            current=current,
+            previous=selected[idx - 1] if idx >= 1 else None,
+            baseline_status="ranging",
+            baseline_reason=f"|ΔHarga| {abs(price_pct_n):.2f}% < minimum {MIN_PRICE_MOVE_PCT:.2f}% — ranging",
+            raw_multiplier=None,
+            signal="S5_NETRAL",
+            bias="neutral",
+            flag_divergence=flag_div,
+        )
 
-    # --- 4b. Baseline healthy walk-back ---
+    # --- 4. Noise gate: current |CVD| >=5 else S5_NETRAL ---
+    if abs(cvd_n) < MIN_CURRENT_CVD_SOL:
+        return _build_result(
+            mint_or_empty=mint_val,
+            current=current,
+            previous=selected[idx - 1] if idx >= 1 else None,
+            baseline_status="noise",
+            baseline_reason=f"|ΔCVD| {abs(cvd_n):.2f} < minimum {MIN_CURRENT_CVD_SOL:.2f} SOL — noise",
+            raw_multiplier=None,
+            signal="S5_NETRAL",
+            bias="neutral",
+            flag_divergence=flag_div,
+        )
+
+    # --- 5. Baseline healthy walk-back ---
     baseline_idx, baseline_row = _find_healthy_baseline(selected, idx)
     if baseline_row is None:
         return _build_result(
@@ -348,25 +357,11 @@ def classify_at(rows: Iterable[dict], idx: int) -> dict:
             flag_divergence=flag_div,
         )
 
-    # Extract baseline values
+    # --- 6. Hitung M = R(N)/R(baseline) ---
     ratio_prev = _finite(baseline_row.get("ratio")) if baseline_row.get("ratio") is not None else None
     raw_multiplier = None
     if ratio_n is not None and ratio_prev is not None and math.isfinite(ratio_prev) and ratio_prev > 0 and math.isfinite(ratio_n):
         raw_multiplier = ratio_n / ratio_prev
-
-    # Small price move or flat -> always S5_NETRAL (even with stable baseline)
-    if abs(price_pct_n) < MIN_PRICE_MOVE_PCT or direction_n == "flat":
-        return _build_result(
-            mint_or_empty=mint_val,
-            current=current,
-            previous=baseline_row,
-            baseline_status="stable",
-            baseline_reason="",
-            raw_multiplier=raw_multiplier,
-            signal="S5_NETRAL",
-            bias="neutral",
-            flag_divergence=flag_div,
-        )
 
     # --- 2b. Old signals with divergence requirement for M>=2 ---
     signal = "S5_NETRAL"
@@ -450,8 +445,24 @@ def classify_all(rows: Iterable[dict]) -> list[dict]:
     selected.sort(key=lambda row: str(row.get("date") or ""))
     results: list[dict] = []
     for idx in range(len(selected)):
-        res = classify_at(selected, idx)
-        results.append(res)
+        if idx == 0:
+            first = classify_at(selected, 0)
+            if first.get("signal") == "ABSORBSI_LANGSUNG":
+                results.append(first)
+            else:
+                results.append(_build_result(
+                    mint_or_empty=str(selected[0].get("mint") or ""),
+                    current=selected[0],
+                    previous=None,
+                    baseline_status="first_day",
+                    baseline_reason="hari pertama window: hanya ABSORBSI_LANGSUNG yang dievaluasi; selain itu —",
+                    raw_multiplier=None,
+                    signal="—",
+                    bias=None,
+                    flag_divergence=False,
+                ))
+        else:
+            results.append(classify_at(selected, idx))
     return results
 
 
@@ -507,6 +518,34 @@ def merge_daily_effort(new_rows: Iterable[dict], *,
 def rows_for_mint(rows: Iterable[dict], mint: str) -> list[dict]:
     result = [dict(row) for row in (rows or []) if row.get("mint") == mint]
     return sorted(result, key=lambda row: row.get("date", ""))
+
+
+def rows_with_signals(rows: Iterable[dict]) -> list[dict]:
+    """Return daily CSV/export rows with one signal per day.
+
+    Columns follow the GMGN v4 daily export contract. Missing operational
+    fields default to blank/zero rather than inventing values.
+    """
+    sorted_rows = sorted([dict(r) for r in (rows or [])],
+                         key=lambda r: str(r.get("date") or ""))
+    classified = classify_all(sorted_rows)
+    out = []
+    for row, res in zip(sorted_rows, classified):
+        out.append({
+            "mint": row.get("mint"),
+            "date": row.get("date"),
+            "open": row.get("open"),
+            "close": row.get("close"),
+            "price_chg_pct": row.get("price_chg_pct"),
+            "cvd_delta": row.get("cvd_delta"),
+            "direction": row.get("direction"),
+            "ratio": row.get("ratio"),
+            "signal": res.get("signal"),
+            "coverage_hours": row.get("coverage_hours", row.get("hours", "")),
+            "top_wallet_pct": row.get("top_wallet_pct", ""),
+            "unique_makers": row.get("unique_makers", ""),
+        })
+    return out
 
 
 # Optional helper for CSV/recap output (spec 7a)
