@@ -18,17 +18,20 @@ st.markdown("""
     border-bottom: 1px solid #cbd5e1;
 }
 .trending-token {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
+    display: block;
 }
 .trending-symbol {
+    display: block;
+    margin-bottom: 0.4rem;
     font-size: 1rem;
     font-weight: 800;
+    line-height: 1.25;
     color: #000000;
 }
 .trending-mint {
+    display: block;
     font-size: 0.7rem;
+    line-height: 1.2;
     color: #000000;
     font-family: monospace;
 }
@@ -94,6 +97,19 @@ def _color_change(value):
         return '—'
 
 
+def _token_identity_html(symbol, ca):
+    """Render token name and CA prefix on clearly separated lines."""
+    safe_symbol = _html.escape(str(symbol or "?").upper())
+    safe_ca = _html.escape(str(ca or "")[:8])
+    return (
+        '<div class="trending-token">'
+        f'<div class="trending-symbol">${safe_symbol}</div>'
+        f'<div class="trending-mint">{safe_ca}…</div>'
+        f'<div class="trending-links">{external_links_html(str(ca or ""))}</div>'
+        '</div>'
+    )
+
+
 def run_screen(force=False, key="trending_rows", **_kwargs):
     if force or key not in st.session_state:
         try:
@@ -156,7 +172,7 @@ def render_trending(rows, *, key_prefix="listing", source="trending"):
     
     for index, row in enumerate(rows):
         ca = str(row.get("ca") or "")
-        symbol = _html.escape(str(row.get("symbol") or "?").upper())
+        symbol = str(row.get("symbol") or "?").upper()
         mc = _compact(row.get('mc'))
         liq = _compact(row.get('liq'))
         vol = _compact(row.get('volume'))
@@ -165,14 +181,9 @@ def render_trending(rows, *, key_prefix="listing", source="trending"):
         
         columns = st.columns([1.6, 1.0, 1.0, 1.0, 0.9, 0.9, 1.1])
         
-        # Token column with styled layout
-        columns[0].markdown(
-            f'<div class="trending-token">'
-            f'<span class="trending-symbol">${symbol}</span>'
-            f'<span class="trending-mint">{_html.escape(ca[:8])}…</span>'
-            f'<div class="trending-links">{external_links_html(ca)}</div>'
-            f'</div>',
-            unsafe_allow_html=True)
+        # Token name and CA use separate block lines with visible spacing.
+        columns[0].markdown(_token_identity_html(symbol, ca),
+                            unsafe_allow_html=True)
         
         # MC column
         columns[1].markdown(
