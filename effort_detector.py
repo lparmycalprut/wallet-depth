@@ -10,6 +10,7 @@ v3 final logic "Efisiensi Anomali":
 """
 from __future__ import annotations
 
+import datetime
 import json
 import math
 import os
@@ -69,6 +70,18 @@ SIGNAL_META = {
     "ABSORBSI_LANGSUNG": ("bullish", "Pembelian besar diam-diam, harga tidak naik = stealth accumulation"),
     "SELLING_EXHAUSTION": ("bullish", "Tekanan jual runtuh setelah flush besar, siap reversal"),
 }
+
+
+def _days_between(earlier: str | None, later: str | None):
+    """Whole days between two ``YYYY-MM-DD`` strings, or ``None`` if unknown."""
+    if not earlier or not later:
+        return None
+    try:
+        start = datetime.date.fromisoformat(str(earlier))
+        end = datetime.date.fromisoformat(str(later))
+    except (TypeError, ValueError):
+        return None
+    return (end - start).days
 
 
 def _finite(value, default=0.0):
@@ -132,6 +145,15 @@ def _build_result(*, mint_or_empty: str, current: dict | None,
     if raw_multiplier is not None and math.isfinite(raw_multiplier):
         raw_mult_rounded = round(raw_multiplier, 8)
 
+    baseline_date = previous.get("date") if previous else None
+    baseline_price_pct = (round(_finite(previous.get("price_chg_pct")), 8)
+                          if previous else None)
+    baseline_cvd = (round(_finite(previous.get("cvd_delta")), 8)
+                    if previous else None)
+    baseline_direction = (previous.get("direction") if previous else None)
+    baseline_gap_days = _days_between(baseline_date,
+                                      current.get("date") if current else None)
+
     return {
         "mint": mint_or_empty or (current.get("mint", "") if current else ""),
         "date": current.get("date") if current else None,
@@ -148,6 +170,12 @@ def _build_result(*, mint_or_empty: str, current: dict | None,
         "cvd_delta": cvd_delta_n,
         "baseline_status": baseline_status,
         "baseline_reason": baseline_reason,
+        "baseline_date": baseline_date,
+        "baseline_ratio": round(ratio_prev, 8) if ratio_prev is not None else None,
+        "baseline_price_chg_pct": baseline_price_pct,
+        "baseline_cvd_delta": baseline_cvd,
+        "baseline_direction": baseline_direction,
+        "baseline_gap_days": baseline_gap_days,
     }
 
 

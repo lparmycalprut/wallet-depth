@@ -133,6 +133,77 @@ def _number(value, pattern=".3f"):
         return "—"
 
 
+def _signed(value, pattern="+.1f", suffix=""):
+    """Format a signed number, or ``—`` when it is unavailable."""
+    if value is None:
+        return "—"
+    try:
+        return format(float(value), pattern) + suffix
+    except (TypeError, ValueError):
+        return "—"
+
+
+SIGNAL_STORY = {
+    "S1_PENYERAPAN": ("butuh SOL {mult}× lebih banyak per 1% penurunan "
+                      "→ supply diserap buyer"),
+    "S2_DUMP_DISTRIBUSI": ("hanya perlu {mult}× effort per 1% penurunan "
+                           "→ buyer absen, harga jatuh bebas"),
+    "S3_DISTRIBUSI_KE_KUAT": ("butuh SOL {mult}× lebih banyak per 1% kenaikan "
+                              "→ demand diserap seller"),
+    "S4_PUMP_ASLI": ("cukup {mult}× effort per 1% kenaikan "
+                     "→ seller absen, kenaikan efisien"),
+}
+
+
+def _baseline_detail_html(result):
+    """Explain what happened on the baseline day for non-neutral signals."""
+    signal = result.get("signal") or "insufficient_data"
+    bias = result.get("bias") or "neutral"
+    is_neutral = signal in ("S5_NETRAL", "insufficient_data") or bias == "neutral"
+    lines = []
+
+    if signal == "ABSORBSI_LANGSUNG":
+        lines.append(
+            "Tanpa baseline · CVD "
+            f"{_signed(result.get('cvd_delta'), '+.2f')} SOL vs harga "
+            f"{_signed(result.get('price_chg_pct'))}% → akumulasi senyap")
+    elif signal == "SELLING_EXHAUSTION":
+        flush_date = result.get("flush_date") or result.get("baseline_date")
+        lines.append(
+            f"Flush {flush_date or '—'} · CVD "
+            f"{_signed(result.get('flush_cvd'), '+.2f')} SOL → hari ini "
+            f"{_signed(result.get('cvd_delta'), '+.2f')} SOL "
+            f"(sisa {_number(result.get('exhaustion_pct'), '.1f')}%)")
+    else:
+        baseline_date = result.get("baseline_date")
+        if baseline_date:
+            gap = result.get("baseline_gap_days")
+            gap_text = f" ({gap}h lalu)" if isinstance(gap, int) and gap > 0 else ""
+            lines.append(
+                f"Base {baseline_date}{gap_text} · Δ"
+                f"{_signed(result.get('baseline_price_chg_pct'))}% · CVD "
+                f"{_signed(result.get('baseline_cvd_delta'), '+.2f')} SOL")
+        story = SIGNAL_STORY.get(signal)
+        if story and not is_neutral:
+            multiplier = _number(result.get("multiplier"), ".2f")
+            lines.append(
+                f"Hari ini {_signed(result.get('price_chg_pct'))}% · CVD "
+                f"{_signed(result.get('cvd_delta'), '+.2f')} SOL — "
+                + story.format(mult=multiplier))
+
+    reason = str(result.get("baseline_reason") or "").strip()
+    if reason and result.get("baseline_status") != "direct":
+        lines.append(reason.replace("; ", " · "))
+
+    if not lines:
+        return ""
+    weight = "600" if is_neutral else "700"
+    body = "<br>".join(html.escape(line) for line in lines)
+    return (f'<div style="font-size:0.62rem;color:#000000;line-height:1.35;'
+            f'font-weight:{weight};text-align:center;margin-top:0.15rem;">'
+            f'{body}</div>')
+
+
 watchlist = load_watchlist()
 effort_rows = load_daily_effort()
 st.subheader("📋 Watchlist")
@@ -143,7 +214,7 @@ if not watchlist:
     st.info("Watchlist masih kosong. Tambahkan contract address di bawah.")
 else:
     # Header row with styled columns
-    header_cols = st.columns([1.6, 1.2, 1.8, 1.1, 1.1, 1.0, .6, .6])
+    header_cols = st.columns([1.5, 0.95, 1.6, 0.9, 2.3, 0.85, .5, .5])
     header_styles = [
         "font-size:0.8rem;color:#000000;font-weight:700;",
         "font-size:0.8rem;color:#000000;font-weight:700;",
@@ -154,7 +225,7 @@ else:
         "text-align:center;font-size:0.8rem;color:#000000;font-weight:700;",
         "text-align:center;font-size:0.8rem;color:#000000;font-weight:700;"
     ]
-    header_titles = ["Token", "Tanggal", "Sinyal", "Ratio", "Baseline", "Multi", "Chart", ""]
+    header_titles = ["Token", "Tanggal", "Sinyal", "Ratio", "Baseline & detail", "Multi", "Chart", ""]
     for col, style, title in zip(header_cols, header_styles, header_titles):
         col.markdown(f'<div style="{style}">{title}</div>', unsafe_allow_html=True)
     
@@ -172,7 +243,6 @@ else:
         
         # Build status badges HTML
         baseline_status = result.get("baseline_status") or "missing"
-        reason = result.get("baseline_reason") or ""
         
         badges_html = _signal_badge(result)
         
@@ -194,11 +264,11 @@ else:
         else:
             multiplier_html = f'<span style="font-size:0.95rem;font-weight:700;">×{multiplier}</span>'
         
-        # Reason tooltip
-        reason_html = f'<div style="font-size:0.62rem;color:#000000;line-height:1.3;">{str(reason).replace("; ", "<br>") if reason else ""}</div>'
+        # Baseline detail: apa yang terjadi di hari baseline + narasi sinyal
+        reason_html = _baseline_detail_html(result)
         
         # Render row with clean layout
-        cols = st.columns([1.6, 1.2, 1.8, 1.1, 1.1, 1.0, .6, .6])
+        cols = st.columns([1.5, 0.95, 1.6, 0.9, 2.3, 0.85, .5, .5])
         
         # Token column
         cols[0].markdown(

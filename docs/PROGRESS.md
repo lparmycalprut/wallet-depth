@@ -132,3 +132,24 @@
 - Ditambahkan `.streamlit/config.toml` (`base = "light"`, `textColor #000000`)
   supaya tema selalu terang dan teks default hitam. Hero banner tetap gradasi
   gelap dengan teks putih.
+
+## Kolom baseline: detail kejadian
+
+- `effort_detector._build_result` kini menyertakan konteks hari baseline:
+  `baseline_date`, `baseline_ratio`, `baseline_price_chg_pct`,
+  `baseline_cvd_delta`, `baseline_direction`, dan `baseline_gap_days`
+  (jarak hari ke hari N). Field murni informatif — formula R, multiplier,
+  ambang 2,0/0,5, dan klasifikasi S1–S5 tidak berubah.
+- `app.py`: kolom watchlist "Baseline" menjadi "Baseline & detail". Setiap baris
+  menampilkan fakta hari baseline (`Base <tanggal> (<n>h lalu) · Δ<harga>% ·
+  CVD <sol> SOL`). Untuk sinyal **selain netral** ditambahkan narasi kejadian:
+  - S1/S3: "butuh SOL M× lebih banyak per 1% …" (supply/demand diserap),
+  - S2/S4: "hanya perlu M× effort per 1% …" (buyer/seller absen),
+  - ABSORBSI_LANGSUNG: CVD vs pergerakan harga (tanpa baseline),
+  - SELLING_EXHAUSTION: tanggal flush, CVD flush → CVD hari ini, sisa %.
+  Baris netral/insufficient tetap hanya fakta baseline plus alasan penolakan
+  (noise, baseline tidak cukup) seperti sebelumnya.
+- Lebar kolom watchlist disesuaikan agar teks detail tidak terlalu terpotong.
+- Test baru `tests/test_baseline_detail.py`: field baseline (stabil, kosong,
+  flush exhaustion) dan AppTest render kolom (narasi muncul untuk non-netral,
+  tidak muncul untuk netral).
