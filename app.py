@@ -353,30 +353,34 @@ st.divider()
 st.subheader("🔍 Temukan Token")
 st.caption("Listing GMGN sebagai konteks pasar. Sinyal hanya dari rasio effort harian.")
 
-# Add tab styling
+# Tab styling: segmented control dipakai agar pilihan tab bertahan saat scan
+# memicu rerun (st.tabs selalu balik ke tab pertama).
 st.markdown("""
 <style>
-[data-testid="stTabBar"] button {
+div[data-testid="stButtonGroup"] button {
     font-size: 0.9rem !important;
-    padding: 0.5rem 1rem !important;
+    padding: 0.5rem 1.1rem !important;
+    font-weight: 700 !important;
 }
 </style>
 """, unsafe_allow_html=True)
 
-trend_tab, degen_tab = st.tabs(["📈 Trending", "🔥 Degen"])
-with trend_tab:
-    if st.button("🔎 Scan Trending", use_container_width=True):
-        rows_24, error_24 = run_screen(force=True)
-        rows_1, error_1 = run_screen_h1(force=True)
-        st.session_state["trend_combined"] = rows_24 + [
-            row for row in rows_1
-            if row.get("ca") not in {item.get("ca") for item in rows_24}]
-        st.session_state["trend_error"] = error_24 or error_1
-    if st.session_state.get("trend_error"):
-        st.error(st.session_state["trend_error"])
-    render_trending(st.session_state.get("trend_combined", []),
-                    key_prefix="trend", source="trending")
-with degen_tab:
+TREND_TAB = "📈 Trending"
+DEGEN_TAB = "🔥 Degen"
+DISCOVER_TABS = [TREND_TAB, DEGEN_TAB]
+
+# Pilihan tab disimpan di session_state supaya rerun setelah "Scan Degen"
+# tidak melempar tampilan kembali ke Trending.
+active_tab = st.session_state.get("discover_tab_active", TREND_TAB)
+selected_tab = st.segmented_control(
+    "Mode listing", DISCOVER_TABS, default=active_tab,
+    key="discover_tab", label_visibility="collapsed")
+if selected_tab not in DISCOVER_TABS:
+    # Klik ulang pada tab aktif tidak boleh mengosongkan pilihan.
+    selected_tab = active_tab
+st.session_state["discover_tab_active"] = selected_tab
+
+if selected_tab == DEGEN_TAB:
     if st.button("🔥 Scan Degen", use_container_width=True):
         rows_24, error_24 = run_screen_hrhr(force=True)
         rows_1, error_1 = run_screen_hrhr_h1(force=True)
@@ -388,3 +392,15 @@ with degen_tab:
         st.error(st.session_state["degen_error"])
     render_trending(st.session_state.get("degen_combined", []),
                     key_prefix="degen", source="degen")
+else:
+    if st.button("🔎 Scan Trending", use_container_width=True):
+        rows_24, error_24 = run_screen(force=True)
+        rows_1, error_1 = run_screen_h1(force=True)
+        st.session_state["trend_combined"] = rows_24 + [
+            row for row in rows_1
+            if row.get("ca") not in {item.get("ca") for item in rows_24}]
+        st.session_state["trend_error"] = error_24 or error_1
+    if st.session_state.get("trend_error"):
+        st.error(st.session_state["trend_error"])
+    render_trending(st.session_state.get("trend_combined", []),
+                    key_prefix="trend", source="trending")
