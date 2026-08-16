@@ -6,6 +6,8 @@ v3: uses classify_all to scan whole window, supports 2 new pra-pump signals.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+import csv
+import io
 
 import matplotlib.pyplot as plt
 import streamlit as st
@@ -13,7 +15,7 @@ import streamlit as st
 from core import get_helius_keys
 from cvd_daily import MARKET_TZ
 from effort_detector import (classify_all, classify_effort, load_daily_effort,
-                             rows_for_mint)
+                             rows_for_mint, rows_with_signals)
 from links import external_links_html
 from scripts.update_cvd import refresh_single_token
 from watchlist import add_to_watchlist, load_watchlist
@@ -346,24 +348,37 @@ if range_rows:
     _render_charts(range_rows, mint)
     st.subheader("Data harian + sinyal per hari (v3)")
     classified = classify_all(range_rows)
-    # build enriched table
+    csv_rows = rows_with_signals(range_rows)
+    # build enriched UI table from the exact daily CSV/export columns plus UI-only details
     enriched = []
-    for row, res in zip(range_rows, classified):
-        enriched.append({
-            "date": row.get("date"),
-            "open": row.get("open"),
-            "close": row.get("close"),
-            "price_chg_pct": row.get("price_chg_pct"),
-            "cvd_delta": row.get("cvd_delta"),
-            "direction": row.get("direction"),
-            "ratio": row.get("ratio"),
-            "signal": res.get("signal"),
+    for csv_row, res in zip(csv_rows, classified):
+        item = dict(csv_row)
+        item.update({
             "bias": res.get("bias"),
             "multiplier": res.get("multiplier"),
             "baseline_status": res.get("baseline_status"),
             "baseline_reason": res.get("baseline_reason"),
         })
+        enriched.append(item)
     st.dataframe(enriched, use_container_width=True, hide_index=True)
+    csv_buffer = io.StringIO()
+    fieldnames = ["mint", "date", "open", "close", "price_chg_pct",
+                  "cvd_delta", "direction", "ratio", "signal",
+                  "coverage_hours", "top_wallet_pct", "unique_makers"]
+    writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(csv_rows)
+    try:
+        from effort_detector import format_recap
+        export_text = f"{format_recap(mint, range_rows)}\n{csv_buffer.getvalue()}"
+    except Exception:
+        export_text = csv_buffer.getvalue()
+    st.download_button(
+        "⬇️ Download CSV harian + sinyal",
+        data=export_text,
+        file_name=f"wallet_depth_{mint}_{start_date}_{end_date}.csv",
+        mime="text/csv",
+    )
     st.caption("R = |ΔCVD| / |ΔHarga%|. Multiplier membandingkan R hari "
                "terbaru dengan baseline sehat sebelumnya. Sinyal ABSORBSI_LANGSUNG "
                "dan SELLING_EXHAUSTION dicek sebelum gate lain dan tidak butuh baseline.")
