@@ -119,3 +119,16 @@
   clamp 30 hari, tidak termasuk hari berjalan, tanpa alert Telegram) dan
   `test_cvd_page.py` (AppTest: tombol rentang memakai start/end, auto-fetch saat
   input berubah, jalur error/data/tidak-fetch, dan panel manual tetap lookback).
+
+## UI kontras (teks hitam)
+
+- `app.py` & `trending_ui.py`: nama token (`$SYMBOL`) sebelumnya memakai warna
+  `#f8fafc` (hampir putih) sehingga tidak terlihat di background terang. Semua
+  teks tabel watchlist dan listing GMGN kini `#000000` (hitam), termasuk mint
+  pendek, header kolom, tanggal, nilai metrik, sub-label, dan alasan baseline.
+- Link eksternal memakai biru gelap `#1d4ed8` (hover hitam + underline), badge
+  netral memakai background terang `#e2e8f0` dengan teks hitam, garis pemisah
+  `#cbd5e1`, dan persentase 24h memakai hijau/merah gelap agar tetap terbaca.
+- Ditambahkan `.streamlit/config.toml` (`base = "light"`, `textColor #000000`)
+  supaya tema selalu terang dan teks default hitam. Hero banner tetap gradasi
+  gelap dengan teks putih.

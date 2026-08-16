@@ -21,14 +21,22 @@ st.set_page_config(page_title="Wallet Depth — Efisiensi Anomali",
 st.markdown("""
 <style>
 .main .block-container {max-width: 1240px; padding-top: 1.5rem;}
+/* Base: semua teks hitam agar terbaca di background terang */
+html, body, p, span, div, label, li, td, th,
+h1, h2, h3, h4, h5, h6 {color:#000000;}
+[data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] p,
+[data-testid="stMetricLabel"], [data-testid="stMetricValue"],
+[data-testid="stWidgetLabel"] p {color:#000000 !important;}
 .hero {padding:1.4rem 1.6rem;border:1px solid #334155;border-radius:18px;
- background:linear-gradient(135deg,#0f172a,#172554);color:#f8fafc;
+ background:linear-gradient(135deg,#0f172a,#172554);
  margin-bottom:1.2rem}
-.hero h1 {font-size:2rem;margin:0 0 .4rem}.hero p{color:#cbd5e1;margin:0}
+.hero h1, .hero p, .hero {color:#ffffff;}
+.hero h1 {font-size:2rem;margin:0 0 .4rem}.hero p{color:#ffffff;margin:0}
 .signal {display:inline-block;padding:.28rem .58rem;border-radius:8px;
  font-size:.8rem;font-weight:800}.bull{background:#14532d;color:#dcfce7}
 .bear{background:#7f1d1d;color:#fee2e2}.neutral{background:#334155;color:#e2e8f0}
-.metric-label{font-size:.72rem;color:#64748b;text-transform:uppercase;
+.metric-label{font-size:.72rem;color:#000000;text-transform:uppercase;
  letter-spacing:.04em}.metric-value{font-size:1rem;font-weight:750}
 div[data-testid="stHorizontalBlock"]{align-items:center}
 
@@ -37,7 +45,7 @@ div[data-testid="stHorizontalBlock"]{align-items:center}
     display: flex;
     align-items: center;
     padding: 0.75rem 0;
-    border-bottom: 1px solid #1e293b;
+    border-bottom: 1px solid #cbd5e1;
 }
 .watchlist-token {
     display: flex;
@@ -46,12 +54,12 @@ div[data-testid="stHorizontalBlock"]{align-items:center}
 }
 .watchlist-symbol {
     font-size: 1.1rem;
-    font-weight: 700;
-    color: #f8fafc;
+    font-weight: 800;
+    color: #000000;
 }
 .watchlist-mint {
     font-size: 0.75rem;
-    color: #64748b;
+    color: #000000;
     font-family: monospace;
 }
 .watchlist-links {
@@ -61,29 +69,31 @@ div[data-testid="stHorizontalBlock"]{align-items:center}
 }
 .watchlist-links a {
     font-size: 0.75rem;
-    color: #60a5fa;
+    color: #1d4ed8;
+    font-weight: 600;
     text-decoration: none;
 }
 .watchlist-links a:hover {
-    color: #93c5fd;
+    color: #000000;
+    text-decoration: underline;
 }
 .watchlist-metric {
     text-align: center;
 }
 .watchlist-metric-label {
     font-size: 0.65rem;
-    color: #64748b;
+    color: #000000;
     text-transform: uppercase;
     letter-spacing: 0.04em;
 }
 .watchlist-metric-value {
     font-size: 0.95rem;
     font-weight: 700;
-    color: #f8fafc;
+    color: #000000;
 }
 .watchlist-metric-sub {
     font-size: 0.65rem;
-    color: #94a3b8;
+    color: #000000;
 }
 .status-badge {
     display: inline-block;
@@ -96,7 +106,7 @@ div[data-testid="stHorizontalBlock"]{align-items:center}
 .badge-warning {background:#7f1d1d;color:#fee2e2}
 .badge-info {background:#334155;color:#e2e8f0}
 .badge-direct {background:#14532d;color:#dcfce7}
-.badge-neutral {background:#1e293b;color:#94a3b8}
+.badge-neutral {background:#e2e8f0;color:#000000}
 </style>
 <div class="hero"><h1>⚡ Wallet Depth</h1>
 <p>Deteksi tunggal berbasis efisiensi anomali: berapa SOL ΔCVD yang dibutuhkan
@@ -135,20 +145,20 @@ else:
     # Header row with styled columns
     header_cols = st.columns([1.6, 1.2, 1.8, 1.1, 1.1, 1.0, .6, .6])
     header_styles = [
-        "font-size:0.8rem;color:#94a3b8;",
-        "font-size:0.8rem;color:#94a3b8;",
-        "font-size:0.8rem;color:#94a3b8;",
-        "text-align:center;font-size:0.8rem;color:#94a3b8;",
-        "text-align:center;font-size:0.8rem;color:#94a3b8;",
-        "text-align:center;font-size:0.8rem;color:#94a3b8;",
-        "text-align:center;font-size:0.8rem;color:#94a3b8;",
-        "text-align:center;font-size:0.8rem;color:#94a3b8;"
+        "font-size:0.8rem;color:#000000;font-weight:700;",
+        "font-size:0.8rem;color:#000000;font-weight:700;",
+        "font-size:0.8rem;color:#000000;font-weight:700;",
+        "text-align:center;font-size:0.8rem;color:#000000;font-weight:700;",
+        "text-align:center;font-size:0.8rem;color:#000000;font-weight:700;",
+        "text-align:center;font-size:0.8rem;color:#000000;font-weight:700;",
+        "text-align:center;font-size:0.8rem;color:#000000;font-weight:700;",
+        "text-align:center;font-size:0.8rem;color:#000000;font-weight:700;"
     ]
     header_titles = ["Token", "Tanggal", "Sinyal", "Ratio", "Baseline", "Multi", "Chart", ""]
     for col, style, title in zip(header_cols, header_styles, header_titles):
         col.markdown(f'<div style="{style}">{title}</div>', unsafe_allow_html=True)
     
-    st.markdown('<hr style="margin:0.5rem 0;border-color:#1e293b;">', unsafe_allow_html=True)
+    st.markdown('<hr style="margin:0.5rem 0;border-color:#cbd5e1;">', unsafe_allow_html=True)
     
     for mint, meta in watchlist.items():
         history = rows_for_mint(effort_rows, mint)
@@ -180,12 +190,12 @@ else:
         # Multiplier with rejection indicator
         raw_multiplier = result.get('raw_multiplier')
         if baseline_status not in ("stable", "direct") and raw_multiplier is not None:
-            multiplier_html = f'<span style="font-size:0.95rem;font-weight:700;">×{multiplier}</span><br><span style="font-size:0.65rem;color:#ef4444;">Raw: ×{_number(raw_multiplier, ".2f")}</span>'
+            multiplier_html = f'<span style="font-size:0.95rem;font-weight:700;">×{multiplier}</span><br><span style="font-size:0.65rem;color:#b91c1c;font-weight:600;">Raw: ×{_number(raw_multiplier, ".2f")}</span>'
         else:
             multiplier_html = f'<span style="font-size:0.95rem;font-weight:700;">×{multiplier}</span>'
         
         # Reason tooltip
-        reason_html = f'<div style="font-size:0.6rem;color:#64748b;line-height:1.3;">{str(reason).replace("; ", "<br>") if reason else ""}</div>'
+        reason_html = f'<div style="font-size:0.62rem;color:#000000;line-height:1.3;">{str(reason).replace("; ", "<br>") if reason else ""}</div>'
         
         # Render row with clean layout
         cols = st.columns([1.6, 1.2, 1.8, 1.1, 1.1, 1.0, .6, .6])
@@ -200,7 +210,7 @@ else:
             unsafe_allow_html=True)
         
         # Date column
-        cols[1].markdown(f'<div style="font-size:0.85rem;color:#cbd5e1;">{date}</div>', unsafe_allow_html=True)
+        cols[1].markdown(f'<div style="font-size:0.85rem;color:#000000;">{date}</div>', unsafe_allow_html=True)
         
         # Signal + badges column
         cols[2].markdown(badges_html, unsafe_allow_html=True)
@@ -237,7 +247,7 @@ else:
             remove_from_watchlist(mint)
             st.rerun()
         
-        st.markdown('<hr style="margin:0.3rem 0;border-color:#1e293b;">', unsafe_allow_html=True)
+        st.markdown('<hr style="margin:0.3rem 0;border-color:#cbd5e1;">', unsafe_allow_html=True)
 
 with st.expander("➕ Tambah token", expanded=not bool(watchlist)):
     with st.form("add-token", clear_on_submit=True):
