@@ -1,28 +1,28 @@
-name: Daily Effort Anomaly
+name: Realtime Bidirectional Reversal
 
 on:
   schedule:
-    # 17:00 UTC = 00:00 WIB
-    - cron: "0 0 * * *"
+    # GitHub Actions dapat terlambat beberapa menit.
+    # Engine tetap memakai rolling window sehingga tidak bergantung
+    # pada waktu mulai yang persis.
+    - cron: "*/10 * * * *"
 
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: daily-effort-anomaly
+  group: realtime-reversal
   cancel-in-progress: false
 
 jobs:
-  update:
+  scan:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -35,29 +35,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests curl_cffi
 
-      - name: Calculate daily effort anomalies
+      - name: Restore scanner state and rolling trade cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/reversal_trades.json.gz
+            last_scan_result.json
+          key: reversal-state-${{ github.run_id }}
+          restore-keys: |
+            reversal-state-
+
+      - name: Scan rolling reversal windows
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
-          HELIUS_API_KEYS: ${{ secrets.HELIUS_API_KEYS }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MIN_LIQUIDITY_USD: "5000"
         run: |
-          python scripts/update_cvd.py daily
-
-      - name: Commit daily state
-        run: |
-          git config user.name "effort-bot"
-          git config user.email "actions@github.com"
-
-          git add daily_effort.json watchlist.json
-
-          if git diff --cached --quiet; then
-            echo "Tidak ada perubahan data."
-            exit 0
-          fi
-
-          git commit -m "chore: daily effort anomaly $(date -u +%FT%H:%M) UTC"
-
-          git pull --rebase origin "${GITHUB_REF_NAME}"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
+          python scripts/realtime_reversal.py
