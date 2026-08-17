@@ -194,7 +194,9 @@ def aggregate_window(trades: Iterable[dict], *, start_ts: int | None = None,
     cvd = clean = wash = buy_sol = sell_sol = vol_usd = 0.0
     buy_count = sell_count = 0
     maker_volume: dict[str, float] = defaultdict(float)
+    maker_net: dict[str, float] = defaultdict(float)
     smart_buy = fresh_buy = bot_sell = mev_noise = 0
+    smart_buy_sol = smart_sell_sol = fresh_buy_sol = 0.0
     for row in rows:
         sign = 1 if row["event"] == "buy" else -1
         is_noise = bool(NOISE_TAGS.intersection(row.get("tags") or ()))
@@ -204,15 +206,20 @@ def aggregate_window(trades: Iterable[dict], *, start_ts: int | None = None,
         wash += removed
         vol_usd += row.get("usd", 0.0)
         maker_volume[row["maker"]] += row["sol"]
+        maker_net[row["maker"]] += sign * row["sol"]
         tags = set(row.get("tags") or ())
+        is_smart = bool(SMART_TAGS.intersection(tags))
         if row["event"] == "buy":
             buy_sol += row["sol"]
             buy_count += 1
-            smart_buy += int(bool(SMART_TAGS.intersection(tags)))
+            smart_buy += int(is_smart)
+            smart_buy_sol += row["sol"] if is_smart else 0.0
             fresh_buy += int("fresh_wallet" in tags)
+            fresh_buy_sol += row["sol"] if "fresh_wallet" in tags else 0.0
         else:
             sell_sol += row["sol"]
             sell_count += 1
+            smart_sell_sol += row["sol"] if is_smart else 0.0
             bot_sell += int(bool({"bundler", "paper_hands"}.intersection(tags)))
         mev_noise += int("sandwich_bot" in tags)
     vol_sol = buy_sol + sell_sol
@@ -220,8 +227,15 @@ def aggregate_window(trades: Iterable[dict], *, start_ts: int | None = None,
     if open_price and close_price and open_price > 0:
         price_pct = (close_price / open_price - 1.0) * 100.0
     coverage = ((rows[-1]["ts"] - rows[0]["ts"]) / 3600.0) if rows else 0.0
-    top_wallet_pct = (max(maker_volume.values(), default=0.0) / vol_sol * 100.0
-                      if vol_sol > 0 else 0.0)
+    ranked = sorted(maker_volume.items(), key=lambda kv: kv[1], reverse=True)
+    top_maker, top_vol = ranked[0] if ranked else ("", 0.0)
+    top_wallet_pct = top_vol / vol_sol * 100.0 if vol_sol > 0 else 0.0
+    top3_wallet_pct = (sum(vol for _, vol in ranked[:3]) / vol_sol * 100.0
+                       if vol_sol > 0 else 0.0)
+    top_wallet_net = maker_net.get(top_maker, 0.0)
+    # Round-trip share of the top wallet: 0% = one-way, 100% = pure churn.
+    top_wallet_churn_pct = (100.0 * (1.0 - abs(top_wallet_net) / top_vol)
+                            if top_vol > 0 else 0.0)
     return {
         "label": label, "start_ts": start_ts, "end_ts": end_ts,
         "open": open_price, "close": close_price, "price_chg_pct": price_pct,
@@ -231,8 +245,13 @@ def aggregate_window(trades: Iterable[dict], *, start_ts: int | None = None,
         "vol_sol": vol_sol, "vol_usd": vol_usd, "tx_count": len(rows),
         "buy_count": buy_count, "sell_count": sell_count,
         "coverage_hours": coverage, "top_wallet_pct": top_wallet_pct,
+        "top3_wallet_pct": top3_wallet_pct, "top_wallet_net_sol": top_wallet_net,
+        "top_wallet_churn_pct": top_wallet_churn_pct,
         "unique_makers": len(maker_volume), "smart_money_buy": smart_buy,
         "fresh_buy": fresh_buy, "bot_sell": bot_sell, "mev_noise": mev_noise,
+        "smart_buy_sol": smart_buy_sol, "smart_sell_sol": smart_sell_sol,
+        "smart_net_sol": smart_buy_sol - smart_sell_sol,
+        "fresh_buy_sol": fresh_buy_sol,
     }
 
 

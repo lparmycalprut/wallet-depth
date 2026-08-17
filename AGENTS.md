@@ -51,6 +51,13 @@ SMART SEROK terjaga.
 - Cooldown default 18 jam; pengamatan berulang tidak mengirim spam.
 - Token mati ditolak dengan minimum 20 tx dan 1 SOL pada current window.
 - Guard umur 24 jam dan minimum liquidity diterapkan bila metadata tersedia.
+- Confidence `strong` (🟢 KUAT) butuh clean CVD >= +5 SOL (UP) atau <= -5 SOL
+  (DOWN) **dan** wash sekarang <= 3%; selain itu `watch` (🟡). Alert WATCH
+  mencantumkan syarat yang masih kurang.
+- Baris wallet alert memakai `format_wallet_lines()`: jumlah maker, smart money
+  (count + net SOL), fresh wallet (count + SOL), bot-sell, lalu konsentrasi
+  whale top-1/top-3, net SOL, dan churn round-trip top-1.
+  `top_wallet_pct` adalah share volume buy+sell wallet terbesar, bukan holding.
 
 ## Validasi
 

@@ -46,6 +46,41 @@ class ReversalEngineTests(unittest.TestCase):
         self.assertEqual(thin["signal"], NEUTRAL)
         self.assertEqual(no_context["signal"], NEUTRAL)
 
+    def test_wallet_depth_metrics(self):
+        from reversal_engine import aggregate_window, normalize_trades
+        trades = normalize_trades([
+            {"maker": "whale", "event": "buy", "quote_amount": 10,
+             "amount_usd": 1600, "price_usd": 1, "timestamp": 100},
+            {"maker": "whale", "event": "sell", "quote_amount": 4,
+             "amount_usd": 640, "price_usd": 1, "timestamp": 500},
+            {"maker": "sm", "event": "buy", "quote_amount": 3, "amount_usd": 480,
+             "price_usd": 1, "timestamp": 200, "maker_tags": ["smart_money"]},
+            {"maker": "fr", "event": "buy", "quote_amount": 3, "amount_usd": 480,
+             "price_usd": 1, "timestamp": 300, "maker_tags": ["fresh_wallet"]},
+        ])
+        annotate_matched_amounts(trades)
+        win = aggregate_window(trades)
+        self.assertAlmostEqual(win["top_wallet_pct"], 70.0)
+        self.assertAlmostEqual(win["top3_wallet_pct"], 100.0)
+        self.assertAlmostEqual(win["top_wallet_net_sol"], 6.0)
+        # 14 SOL churned by the whale for 6 SOL of net exposure.
+        self.assertAlmostEqual(win["top_wallet_churn_pct"], 100 * (1 - 6 / 14))
+        self.assertAlmostEqual(win["smart_net_sol"], 3.0)
+        self.assertAlmostEqual(win["fresh_buy_sol"], 3.0)
+
+    def test_whale_verdict_and_confidence_gap(self):
+        from scripts.realtime_reversal import _confidence_gap, _whale_verdict
+        self.assertEqual(_whale_verdict(10, 90, -5), "terdistribusi")
+        self.assertEqual(_whale_verdict(59, 95, 0.2), "muter sendiri")
+        self.assertEqual(_whale_verdict(59, 10, 8), "akumulasi")
+        self.assertEqual(_whale_verdict(59, 10, -8), "distribusi")
+        gap = _confidence_gap({"signal": REVERSAL_UP, "confidence": "watch",
+                               "current": {"cvd_delta_clean": 0.7, "wash_pct": 0.0}})
+        self.assertIn("belum +5.0 SOL", gap)
+        self.assertNotIn("wash", gap)
+        self.assertEqual(_confidence_gap({"signal": REVERSAL_UP,
+                                          "confidence": "strong"}), "")
+
     def test_state_requires_two_scans_and_cooldown(self):
         first, alert = transition({}, REVERSAL_UP, 1_000)
         self.assertFalse(alert)
