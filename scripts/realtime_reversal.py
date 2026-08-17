@@ -183,6 +183,54 @@ def process_telegram_callbacks(state: dict, now_ts: int) -> None:
         print(f"Telegram callback poll failed: {exc}")
 
 
+def _whale_verdict(top_pct: float, churn_pct: float, net_sol: float) -> str:
+    """Short Indonesian read of what the dominant wallet is actually doing."""
+    if top_pct < 25:
+        return "terdistribusi"
+    if churn_pct >= 60:
+        return "muter sendiri"
+    return "akumulasi" if net_sol > 0 else "distribusi"
+
+
+def _confidence_gap(result: dict) -> str:
+    """Explain what is still missing for a watch signal to become strong."""
+    if result.get("confidence") == "strong":
+        return ""
+    current = result.get("current") or {}
+    cvd = float(current.get("cvd_delta_clean") or 0)
+    wash = float(current.get("wash_pct") or 0)
+    need_cvd = 5.0 if result["signal"] == REVERSAL_UP else -5.0
+    gaps = []
+    if (cvd < need_cvd) if result["signal"] == REVERSAL_UP else (cvd > need_cvd):
+        gaps.append(f"CVD bersih {_fmt(cvd, True)} belum {_fmt(need_cvd, True)} SOL")
+    if wash > 3:
+        gaps.append(f"wash {_fmt(wash)}% belum ≤3%")
+    return f" (kurang: {', '.join(gaps)})" if gaps else ""
+
+
+def format_wallet_lines(current: dict) -> str:
+    """Two-line wallet breakdown: quality of buyers, then whale concentration."""
+    smart_n = int(current.get("smart_money_buy") or 0)
+    fresh_n = int(current.get("fresh_buy") or 0)
+    makers = int(current.get("unique_makers") or 0)
+    top_pct = float(current.get("top_wallet_pct") or 0)
+    top3_pct = float(current.get("top3_wallet_pct") or 0)
+    churn = float(current.get("top_wallet_churn_pct") or 0)
+    net = float(current.get("top_wallet_net_sol") or 0)
+    smart_net = float(current.get("smart_net_sol") or 0)
+    fresh_sol = float(current.get("fresh_buy_sol") or 0)
+    bot_sell = int(current.get("bot_sell") or 0)
+    smart_bias = "net beli" if smart_net > 0 else ("net jual" if smart_net < 0 else "flat")
+    return (
+        f"Wallet: {makers} maker · smart {smart_n} ({smart_bias} "
+        f"{_fmt(smart_net, True)} SOL) · fresh {fresh_n} "
+        f"({_fmt(fresh_sol)} SOL) · bot-sell {bot_sell}\n"
+        f"Whale: top-1 {_fmt(top_pct)}% · top-3 {_fmt(top3_pct)}% · "
+        f"net {_fmt(net, True)} SOL · churn {churn:.0f}% "
+        f"→ {_whale_verdict(top_pct, churn, net)}"
+    )
+
+
 def format_alert(symbol: str, mint: str, result: dict, now_ts: int) -> str:
     current, context = result["current"], result["context"]
     up = result["signal"] == REVERSAL_UP
@@ -203,10 +251,8 @@ def format_alert(symbol: str, mint: str, result: dict, now_ts: int) -> str:
         f"Sekarang: CVD bersih {_fmt(current.get('cvd_delta_clean'), True)} · "
         f"wash {_fmt(current.get('wash_pct'))}% (runtuh {collapse:.0f}%) · "
         f"harga {_fmt(current.get('price_chg_pct'), True)}%\n"
-        f"Wallet: fresh {current.get('fresh_buy', 0)} · smart "
-        f"{current.get('smart_money_buy', 0)} · whale "
-        f"{_fmt(current.get('top_wallet_pct'))}%\n"
-        f"Confidence: {confidence}\n"
+        f"{format_wallet_lines(current)}\n"
+        f"Confidence: {confidence}{_confidence_gap(result)}\n"
         f"🕐 {wib:%d %b %H:%M} WIB\n"
         f"https://gmgn.ai/sol/token/{html.escape(mint)}\n"
         f"https://dexscreener.com/solana/{html.escape(mint)}"
