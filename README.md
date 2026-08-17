@@ -1,89 +1,90 @@
-# Wallet Depth — 3 Sinyal Bottom
+# Wallet Depth — Realtime Reversal Solana
 
-Wallet Depth adalah dashboard Streamlit dan cron harian untuk mendeteksi
-**bottom** token Solana (titik terendah sebelum pump) dengan membaca hubungan
-**ΔCVD (order flow)** dan **volume antar-hari**, divalidasi empiris pada 8
-token pump historis (hoppy, assface, grail, bountywork, ansem, chance,
-testicle, punch).
+Wallet Depth memantau token Solana dari GMGN dan mendeteksi reversal dua arah
+melalui kombinasi **wash-collapse**, **clean CVD**, dan konteks sebelumnya.
+
+## Sinyal realtime
+
+- 🟢 **REVERSAL_UP**: churn bot runtuh, clean CVD berubah positif, dan window
+  sebelumnya menunjukkan flush.
+- 🔴 **REVERSAL_DOWN**: churn bot runtuh, clean CVD berubah negatif, dan window
+  sebelumnya menunjukkan pump.
+- 🔵 **ACCUMULATION** / 🟠 **DISTRIBUTION**: setup untuk dipantau; tidak memicu
+  alert reversal.
+- ⚪ **NEUTRAL**: bukti belum lengkap atau aktivitas terlalu tipis.
+
+Scanner memakai rolling window 6 jam terkini dibanding 24 jam sebelumnya dan
+dijalankan tiap 10 menit lewat GitHub Actions. Kandidat wajib terkonfirmasi dua
+scan berturut-turut. Telegram hanya dikirim saat transisi ke reversal, lalu
+cooldown 18 jam mencegah spam.
+
+## Engine
+
+`reversal_engine.py` merupakan port Python dari engine ekstensi SMART SEROK:
+
+1. Normalisasi field GMGN dan re-derive SOL sebagai `amount_usd / 160` bila
+   implied SOL/USD tidak masuk akal.
+2. Pasangkan buy/sell wallet yang sama secara FIFO dalam 60 detik.
+3. Buang round-trip serta MEV dari CVD untuk memperoleh clean CVD.
+4. Hitung wash volume dan wash percentage.
+5. Klasifikasikan reversal bullish maupun bearish secara simetris.
+
+Threshold realtime awal:
 
 ```text
-ΔCVD (SOL) = Σ(buy_quote_sol) − Σ(sell_quote_sol) dalam 1 hari
-Volume     = buy + sell dalam USD (amount_usd) — SELALU USD, bukan SOL
-Batas hari = 00:00 UTC (= 07:00 WIB, konvensi GMGN)
+wash floor       <= 6%
+collapse ratio   <= 50% baseline
+prior context    |clean CVD| >= 10 SOL atau |harga| >= 15%
+current activity >= 20 tx dan >= 1 SOL
+minimum liquidity >= $5.000 (bila metadata tersedia)
 ```
 
-## Tiga sinyal (bias selalu bullish)
-
-| Sinyal | CVD (vs flush) | Volume (vs H-1) | Arti |
-|---|---|---|---|
-| 🟢 SELLER_EXHAUSTION | runtuh (negatif kecil) | turun ≤ 40% | panic seller habis |
-| 🟣 REVERSAL | runtuh (negatif kecil) | naik ≥ 130% | penjual habis + buyer mulai masuk |
-| 🔵 AKUMULASI | positif ≥ +5 SOL | naik ≥ 130% | buyer masuk diam-diam |
-
-Detail syarat persis:
-
-- **SELLER_EXHAUSTION**: CVD(N) < 0, harga ≤ +0.5%, ada flush (min CVD 5 hari
-  sebelumnya ≤ -30 SOL), |CVD(N)| ≤ 40% |flush|, volume ≤ 40% kemarin, dan
-  volume ≤ 3× marketcap close (anti wash-trade, bila MC tersedia).
-- **REVERSAL**: sama dengan SELLER_EXHAUSTION, kecuali volume **naik**
-  ≥ 130% dari kemarin.
-- **AKUMULASI**: CVD(N) ≥ +5 SOL, harga ≤ +0.5%, volume ≥ 130% kemarin.
-
-Urutan cek: SELLER_EXHAUSTION → REVERSAL → AKUMULASI → "—". Seluruh window
-dipindai per hari (bukan hanya hari terakhir); hari pertama selalu "—".
-
-Threshold final ada di `effort_detector.py` dan tidak boleh diubah.
-
-## On-chain tag (info saja, bukan syarat)
-
-Per hari diagregasi 4 penanda dari tag maker GMGN
-(`maker_tags`/`maker_token_tags`/`maker_event_tags`):
-
-- `smart_money_buy` — buy bertag axiom/padre/bluechip_owner/trojan/top_holder/smart_degen/smart_money
-- `fresh_buy` — buy bertag fresh_wallet
-- `bot_sell` — sell bertag bundler/paper_hands
-- `mev_noise` — tx bertag sandwich_bot
-
-Flag tambahan: `whale_driven` (top-1 wallet ≥ 40% volume) dan
-`flag_divergence` (arah CVD berlawanan harga) — keduanya informatif.
-
-## Alur data
-
-1. Cron berjalan setiap 00:00 UTC (fetch 4 hari terakhir per token watchlist).
-2. Trade GMGN dinormalisasi (SOL untuk CVD, USD untuk volume); Helius menjadi
-   fallback otomatis.
-3. Candle hourly GeckoTerminal digabung ke candle harian market (UTC).
-4. `daily_effort.json` di-upsert idempoten per mint/tanggal (window 30 hari).
-5. Telegram hanya dikirim untuk 3 sinyal (bukan "—"), satu kali per baris:
-   `⚡ BOTTOM TERDETEKSI — $SYMBOL` + sinyal + hari/flush + CVD/volume +
-   link GMGN.
-6. Dashboard menampilkan sinyal watchlist, chart harga/CVD + volume USD,
-   tabel sinyal per hari, dan CSV + rekapan teks (`# <date>  <SIGNAL> | …`).
-
-Screener Trending/Degen tetap tersedia sebagai **listing** tanpa skor atau
-verdict. Sinyal baru muncul setelah token masuk watchlist dan data harian
-tersedia.
-
-## Menjalankan lokal
+## Menjalankan scanner
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
 pip install -r requirements.txt
-cp config.example.json config.json
-streamlit run app.py
+python scripts/realtime_reversal.py --no-alert
 ```
 
-Konfigurasi opsional: `helius_api_key`, `helius_extra_keys`,
-`telegram_bot_token`, dan `telegram_chat_id`. Jangan commit `config.json`.
+Secrets Telegram:
+
+```text
+TELEGRAM_BOT_TOKEN
+TELEGRAM_CHAT_ID
+```
+
+Cache trade incremental 31 jam disimpan terkompresi di
+`.cache/reversal_trades.json.gz` dan tidak masuk Git. State transisi disimpan di
+`last_scan_result.json`; GitHub Actions memulihkan keduanya melalui cache.
+
+### Validasi ground truth SISYPUSS
+
+```bash
+python scripts/realtime_reversal.py \
+  --fixture /path/to/sisypuss_raw.json \
+  --mint 8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump \
+  --no-alert
+```
+
+Hasil yang diharapkan: `REVERSAL_UP`; data daily parity menghasilkan flush
+08-16 sekitar −22 SOL / wash 15.2% dan reversal 08-17 clean CVD sekitar +11.8
+SOL / wash 3.0%.
+
+## Dashboard historis
+
+Dashboard Streamlit dan data `daily_effort.json` tetap tersedia untuk inspeksi
+historis. Jalankan:
+
+```bash
+streamlit run app.py
+```
 
 ## Pengujian
 
 ```bash
 python -m unittest discover tests
-python -m py_compile effort_detector.py cvd_daily.py signals.py \
-  scripts/update_cvd.py app.py pages/4_📊_CVD.py
+python -m py_compile reversal_engine.py reversal_state.py \
+  scripts/realtime_reversal.py
 ```
 
-Semua hasil adalah heuristik validasi historis, bukan jaminan atau saran
-keuangan.
+Deteksi bersifat heuristik dan bukan saran keuangan.

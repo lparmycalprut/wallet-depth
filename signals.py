@@ -32,17 +32,20 @@ def _telegram_credentials() -> tuple[str, str]:
     return str(token).strip(), str(chat_id).strip()
 
 
-def send_telegram(text: str) -> bool:
+def send_telegram(text: str, reply_markup: dict | None = None) -> bool:
     """Send one HTML Telegram message; return False when not configured."""
     token, chat_id = _telegram_credentials()
     if not token or not chat_id:
         return False
     try:
         import requests
+        payload = {"chat_id": chat_id, "text": text,
+                   "parse_mode": "HTML", "disable_web_page_preview": True}
+        if reply_markup:
+            payload["reply_markup"] = reply_markup
         response = requests.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": chat_id, "text": text,
-                  "parse_mode": "HTML", "disable_web_page_preview": True},
+            json=payload,
             timeout=20)
         response.raise_for_status()
         return bool((response.json() or {}).get("ok"))
