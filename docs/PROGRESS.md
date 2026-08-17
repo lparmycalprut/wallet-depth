@@ -1,5 +1,20 @@
 # Progress
 
+## 2026-08-17 — Realtime bidirectional reversal
+
+- Port engine SMART SEROK ke `reversal_engine.py`: normalisasi GMGN, re-derive
+  SOL rusak, FIFO wash matcher 60 detik, clean CVD, daily parity, dan rolling
+  6h vs prior 24h.
+- Tambah sinyal simetris `REVERSAL_UP` dan `REVERSAL_DOWN`, setup
+  accumulation/distribution, serta guard minimum tx/volume.
+- Tambah scanner incremental terkompresi, payload Telegram dua arah, dan state
+  machine 2-scan/transition-only/cooldown 18 jam.
+- Workflow lama harian diganti rolling scan setiap 10 menit dengan Actions
+  cache untuk state dan trade window.
+- Validasi offline SISYPUSS cocok dengan reference: 08-16 CVD sekitar -22 SOL,
+  wash 15.2%; 08-17 clean CVD sekitar +11.8 SOL, wash 3.0%, `REVERSAL_UP`.
+
+
 ## 2026-08-15 — Overhaul Efisiensi Anomali
 
 - Mengganti seluruh logika deteksi dengan R = |ΔCVD| / |ΔHarga%| per hari WIB.
