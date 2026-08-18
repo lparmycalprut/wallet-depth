@@ -19,6 +19,8 @@ from core import get_market
 from cvd import (_fetch_gmgn_page, _first_nested, _gmgn_trade_key,
                  _normalize_ts)
 from links import dexscreener_token_url, gmgn_token_url
+from price_structure import (CONFIRMED, HIGHER_LOW, StructureConfig,
+                             bars_from_trades, detect_structure)
 from reversal_engine import (NEUTRAL, REVERSAL_DOWN, REVERSAL_UP,
                              WASH_WINDOW_SEC, ReversalConfig, build_rolling,
                              detect_reversal, normalize_trade_item)
@@ -233,7 +235,45 @@ def format_wallet_lines(current: dict) -> str:
     )
 
 
-def format_alert(symbol: str, mint: str, result: dict, now_ts: int) -> str:
+def _fmt_price(value) -> str:
+    """Adaptive significant-digit price for SBR zones (microcap-friendly)."""
+    try:
+        return f"{float(value):.4g}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _wib_hhmm(ts) -> str:
+    try:
+        stamp = int(ts)
+    except (TypeError, ValueError):
+        return "--:--"
+    from datetime import timedelta
+    when = datetime.fromtimestamp(stamp, timezone.utc).astimezone(
+        timezone.utc).replace(tzinfo=None) + timedelta(hours=7)
+    return f"{when:%H:%M}"
+
+
+def format_structure_line(structure: dict | None) -> str:
+    """Baris konfirmasi SBR untuk alert (hanya saat struktur CONFIRMED)."""
+    struct = structure if isinstance(structure, dict) else {}
+    zone = struct.get("zone") or {}
+    if struct.get("state") != CONFIRMED or not zone:
+        return ""
+    up = struct.get("side") != "down"
+    if struct.get("low_state") == HIGHER_LOW:
+        tag = "higher-low ✓" if up else "lower-high ✓"
+    else:
+        tag = ""
+    action = (f"ter-reclaim {_wib_hhmm(struct.get('reclaim_ts'))}"
+              if up else f"tertembus {_wib_hhmm(struct.get('reclaim_ts'))}")
+    tail = f" · {tag}" if tag else ""
+    return (f"🧱 SBR {_fmt_price(zone.get('low'))}–"
+            f"{_fmt_price(zone.get('high'))} {action} WIB{tail}")
+
+
+def format_alert(symbol: str, mint: str, result: dict, now_ts: int,
+                 structure: dict | None = None) -> str:
     current, context = result["current"], result["context"]
     up = result["signal"] == REVERSAL_UP
     title = "🟢 REVERSAL UP" if up else "🔴 REVERSAL DOWN"
@@ -251,6 +291,9 @@ def format_alert(symbol: str, mint: str, result: dict, now_ts: int) -> str:
     wib += timedelta(hours=7)
     gmgn = html.escape(gmgn_token_url(mint), quote=True)
     dexscreener = html.escape(dexscreener_token_url(mint), quote=True)
+    structure_line = format_structure_line(structure)
+    if structure_line:
+        structure_line += "\n"
     return (
         f"<b>{title} — ${html.escape(symbol.upper())}</b>\n"
         f"\n"
@@ -264,6 +307,7 @@ def format_alert(symbol: str, mint: str, result: dict, now_ts: int) -> str:
         f"\n"
         f"{format_wallet_lines(current)}\n"
         f"\n"
+        f"{structure_line}"
         f"⭐ Confidence: {confidence}{_confidence_gap(result)}\n"
         f"🕐 {wib:%d %b %H:%M} WIB\n"
         f"🔗 <a href=\"{gmgn}\">GMGN</a> · "
@@ -275,6 +319,7 @@ def scan_token(mint: str, meta: dict, *, now_ts: int, cache: dict,
                state: dict, fixture: list[dict] | None = None,
                send_alerts: bool = True) -> dict:
     token_state = state.get(mint) if isinstance(state.get(mint), dict) else {}
+    verdict = None
     guard_ok, guard_reason, _market = _market_guards(mint, meta, now_ts) if fixture is None else (True, "", {})
     if not guard_ok:
         result = {"signal": NEUTRAL, "reason": guard_reason, "current": {}, "context": {}}
@@ -287,10 +332,21 @@ def scan_token(mint: str, meta: dict, *, now_ts: int, cache: dict,
         cache[mint] = merge_cache(old, fresh, cutoff_ts=now_ts - FETCH_HOURS * 3600)
         rolling = build_rolling(cache[mint], now_ts=now_ts)
         result = detect_reversal(rolling["current"], rolling["baseline"], ReversalConfig())
+        if result["signal"] in (REVERSAL_UP, REVERSAL_DOWN):
+            # Gate struktur: candle 5m dibangun dari cache trade yang sama —
+            # tanpa API tambahan. Alert Telegram hanya boleh jika CONFIRMED.
+            cfg = StructureConfig()
+            side = "up" if result["signal"] == REVERSAL_UP else "down"
+            verdict = detect_structure(
+                bars_from_trades(cache[mint], cfg.interval_sec, now_ts=now_ts),
+                side, cfg)
 
-    new_state, should_alert = transition(token_state, result["signal"], now_ts)
+    new_state, should_alert = transition(
+        token_state, result["signal"], now_ts,
+        structure_state=(verdict or {}).get("state", CONFIRMED))
     current = result.get("current") or {}
     context = result.get("context") or {}
+    new_state["structure"] = verdict
     new_state["result"] = {
         "signal": result["signal"], "bias": result.get("bias"),
         "confidence": result.get("confidence"), "reason": result.get("reason"),
@@ -307,7 +363,8 @@ def scan_token(mint: str, meta: dict, *, now_ts: int, cache: dict,
             {"text": "📊 Buka chart", "url": f"https://gmgn.ai/sol/token/{mint}"},
         ]]}
         new_state["alert_sent"] = bool(send_telegram(
-            format_alert(symbol, mint, result, now_ts), reply_markup=buttons))
+            format_alert(symbol, mint, result, now_ts, structure=verdict),
+            reply_markup=buttons))
     else:
         new_state["alert_sent"] = False
     return {"mint": mint, "symbol": symbol, "signal": result["signal"],

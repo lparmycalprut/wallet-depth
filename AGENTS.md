@@ -10,7 +10,11 @@ Dashboard dan scanner token Solana dari GMGN. Sistem notifikasi utama adalah
   dua arah.
 - `scripts/realtime_reversal.py`: fetch raw GMGN, cache incremental 31 jam,
   rolling window 6 jam vs 24 jam sebelumnya, guard, state, dan Telegram.
-- `reversal_state.py`: konfirmasi 2 scan, transition-only alert, cooldown 18 jam.
+- `reversal_state.py`: konfirmasi 2 scan, transition-only alert, cooldown 18 jam,
+  plus gate struktur (alert hanya saat `structure_state == confirmed`).
+- `price_structure.py`: candle 5m dari stream trade, deteksi zona SBR dominan,
+  klasifikasi higher-low/spring/breakdown, dan reclaim-by-close. Sumber gate
+  struktur untuk alert Telegram; dikalibrasi pada kasus DREGG (18 Agu 2026).
 - `last_scan_result.json`: state scanner (dipersist lewat Actions cache).
 - `reversal_status.json`: snapshot publik untuk dashboard; scanner
   mem-publish ke ref `reversal-live` setiap scan supaya halaman utama
@@ -49,9 +53,14 @@ SMART SEROK terjaga.
 
 ## Alert dan state
 
-- Hanya `REVERSAL_UP` dan `REVERSAL_DOWN` yang dapat memicu Telegram.
+- Hanya `REVERSAL_UP` dan `REVERSAL_DOWN` yang dapat memicu Telegram; alert
+  harian "BOTTOM TERDETEKSI" (SELLER_EXHAUSTION/REVERSAL/AKUMULASI) sudah
+  dipensiunkan — pipeline harian hanya untuk dashboard.
 - Kandidat harus muncul pada 2 scan beruntun.
-- Alert hanya pada transisi ke state `*_FIRED`.
+- Alert hanya pada transisi ke state `*_FIRED`, dan hanya bila verdict
+  struktur `confirmed` (zona SBR ter-reclaim by close dan bertahan). Sinyal
+  flow yang belum terkonfirmasi struktur parkir di state `WATCH` — tampil di
+  dashboard, tidak pernah alert.
 - Cooldown default 18 jam; pengamatan berulang tidak mengirim spam.
 - Token mati ditolak dengan minimum 20 tx dan 1 SOL pada current window.
 - Guard umur 24 jam dan minimum liquidity diterapkan bila metadata tersedia.

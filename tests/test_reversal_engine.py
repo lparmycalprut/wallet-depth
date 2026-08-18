@@ -90,6 +90,38 @@ class ReversalEngineTests(unittest.TestCase):
         self.assertFalse(alert)
         self.assertEqual(repeated["state"], "REVERSAL_UP_FIRED")
 
+    def test_unconfirmed_structure_arms_watch_without_alert(self):
+        # Flow lolos 2 scan tapi struktur belum reclaim → WATCH, tanpa alert.
+        first, _ = transition({}, REVERSAL_UP, 1_000, structure_state="forming")
+        second, alert = transition(first, REVERSAL_UP, 1_300,
+                                   structure_state="forming")
+        self.assertFalse(alert)
+        self.assertEqual(second["state"], "WATCH")
+        # Struktur mengonfirmasi pada scan ketiga → alert menyala dari WATCH.
+        third, alert = transition(second, REVERSAL_UP, 1_600,
+                                  structure_state="confirmed")
+        self.assertTrue(alert)
+        self.assertEqual(third["state"], "REVERSAL_UP_FIRED")
+
+    def test_watch_clears_back_to_none_when_flow_fades(self):
+        first, _ = transition({}, REVERSAL_DOWN, 1_000, structure_state="forming")
+        second, alert = transition(first, REVERSAL_DOWN, 1_300,
+                                   structure_state="forming")
+        self.assertFalse(alert)
+        self.assertEqual(second["state"], "WATCH")
+        faded, alert = transition(second, NEUTRAL, 1_600)
+        self.assertFalse(alert)
+        cleared, _ = transition(faded, NEUTRAL, 1_900)
+        self.assertEqual(cleared["state"], "NONE")
+
+    def test_no_zone_never_alerts(self):
+        state = {}
+        for i in range(4):
+            state, alert = transition(state, REVERSAL_UP, 1_000 + i * 300,
+                                      structure_state="no_zone")
+            self.assertFalse(alert)
+        self.assertEqual(state["state"], "WATCH")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -23,14 +23,16 @@ from core import (get_daily_candles, get_helius_keys, get_market,
 from cvd import fetch_swaps, get_gmgn_fetch_status
 from cvd_daily import (MARKET_TZ, build_effort_rows,
                        fallback_candles_from_swaps)
-from effort_detector import (DAILY_EFFORT_PATH, SIGNALS, STORAGE_WINDOW_DAYS,
+from effort_detector import (DAILY_EFFORT_PATH, STORAGE_WINDOW_DAYS,
                              classify_effort, load_daily_effort,
                              merge_daily_effort, rows_for_mint)
-from signals import format_effort_alert, send_telegram, should_send_telegram
 from watchlist import load_watchlist, update_local_meta
 
-# Hanya 3 sinyal bottom yang boleh memicu alert Telegram.
-ALERT_SIGNALS = set(SIGNALS)  # SELLER_EXHAUSTION, REVERSAL, AKUMULASI
+# Alert harian "BOTTOM TERDETEKSI" dipensiunkan: Telegram hanya untuk
+# REVERSAL UP/DOWN realtime (scripts/realtime_reversal.py) yang lolos gate
+# struktur harga. Pipeline harian tetap menghitung sinyal untuk dashboard,
+# tetapi ALERT_SIGNALS sengaja kosong — jangan tambahkan tanpa keputusan.
+ALERT_SIGNALS: set = set()
 
 
 def _now_market() -> datetime:
@@ -295,12 +297,9 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
     return result
 
 
-def run_daily(watchlist: dict, *, now=None, api_key: str = "",
-              send_alerts: bool = True) -> list[dict]:
-    """Refresh setiap token, simpan idempoten, alert HANYA 3 sinyal bottom."""
+def run_daily(watchlist: dict, *, now=None, api_key: str = "") -> list[dict]:
+    """Refresh setiap token dan simpan idempoten. Tanpa alert Telegram."""
     now = (now or _now_market()).astimezone(MARKET_TZ)
-    existing = load_daily_effort()
-    existing_keys = {(row.get("mint"), row.get("date")) for row in existing}
     results = []
 
     for mint, meta in (watchlist or {}).items():
@@ -312,13 +311,8 @@ def run_daily(watchlist: dict, *, now=None, api_key: str = "",
             print(f"{symbol}: update failed: {res['error']}")
             continue
         result = res["result"]
-        history = rows_for_mint(load_daily_effort(), mint)
-        newest_key = (mint, result.get("date"))
-        should_alert = (should_send_telegram(result)
-                        and newest_key not in existing_keys)
-        sent = bool(send_alerts and should_alert
-                    and send_telegram(format_effort_alert(symbol, result)))
-        res["alert_sent"] = sent
+        # Telegram dimatikan untuk pipeline harian (lihat ALERT_SIGNALS).
+        res["alert_sent"] = False
         update_local_meta(mint, {
             "symbol": symbol,
             "effort_ts": int(now.timestamp()),

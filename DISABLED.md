@@ -16,7 +16,10 @@ Yang tetap aktif:
 - listing Trending/Degen tanpa ranking;
 - penyimpanan `daily_effort.json` (window penyimpanan 30 hari per mint);
 - chart harga/CVD + volume USD, scan seluruh window per hari;
-- alert Telegram untuk 3 sinyal bottom saja.
+- alert Telegram HANYA untuk 🟢 REVERSAL UP / 🔴 REVERSAL DOWN dari scanner
+  realtime, dan hanya setelah struktur harga (SBR) mengonfirmasi. Alert
+  harian "BOTTOM TERDETEKSI" untuk 3 sinyal bottom sudah dihentikan —
+  detektor hariannya tetap dipakai dashboard saja.
 
 Jangan menghidupkan kembali modul lama. Perubahan klasifikasi hanya boleh
 mengikuti rumus dan threshold di `AGENTS.md`.
