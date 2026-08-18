@@ -33,7 +33,8 @@ class DiscoverTabPersistenceTest(unittest.TestCase):
     def setUp(self):
         patches = (
             mock.patch("watchlist.load_watchlist", return_value={}),
-            mock.patch("effort_detector.load_daily_effort", return_value=[]),
+            mock.patch("reversal_status.load_reversal_status",
+                       return_value={"updated_at": None, "tokens": {}}),
             # trending_ui binds the screeners at import time.
             mock.patch("trending_ui.screen", return_value=[TREND_ROW]),
             mock.patch("trending_ui.screen_trending_h1", return_value=[]),

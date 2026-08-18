@@ -22,6 +22,7 @@ from reversal_engine import (NEUTRAL, REVERSAL_DOWN, REVERSAL_UP,
                              WASH_WINDOW_SEC, ReversalConfig, build_rolling,
                              detect_reversal, normalize_trade_item)
 from reversal_state import load_state, save_state, transition
+from reversal_status import publish_reversal_status
 from signals import _telegram_credentials, send_telegram
 from watchlist import load_watchlist
 
@@ -347,6 +348,9 @@ def main(argv=None) -> int:
         state.setdefault("_meta", {}).update(
             updated_at=now_ts, scanner="rolling-6h-v1")
         save_state(STATE_PATH, state)
+        # Streamlit reads this snapshot via GitHub — Actions cache alone
+        # never reached the main watchlist page.
+        publish_reversal_status(state, watchlist)
     return 1 if failed and succeeded == 0 else 0
 
 

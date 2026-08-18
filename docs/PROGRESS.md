@@ -1,5 +1,16 @@
 # Progress
 
+## 2026-08-18 — Watchlist utama mengikuti scanner realtime
+
+- Akar masalah: cron harian diganti scanner 10 menit, tetapi `app.py` masih
+  mengklasifikasi `daily_effort.json` (terakhir 2026-08-16) sementara
+  `last_scan_result.json` hanya ada di Actions cache.
+- Scanner kini mem-publish snapshot `reversal_status.json` ke ref
+  `reversal-live` setelah setiap scan.
+- Watchlist halaman utama menampilkan REVERSAL UP/DOWN, setup, confidence,
+  CVD bersih, wash-collapse, dan breakdown wallet — sama dengan payload
+  Telegram — plus tombol muat ulang.
+
 ## 2026-08-17 — Realtime bidirectional reversal
 
 - Port engine SMART SEROK ke `reversal_engine.py`: normalisasi GMGN, re-derive
