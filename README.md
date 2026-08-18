@@ -70,10 +70,14 @@ Hasil yang diharapkan: `REVERSAL_UP`; data daily parity menghasilkan flush
 08-16 sekitar −22 SOL / wash 15.2% dan reversal 08-17 clean CVD sekitar +11.8
 SOL / wash 3.0%.
 
-## Dashboard historis
+## Dashboard
 
-Dashboard Streamlit dan data `daily_effort.json` tetap tersedia untuk inspeksi
-historis. Jalankan:
+Halaman utama (`app.py`) menampilkan status scanner realtime per token
+watchlist (sinyal, CVD bersih, wash, wallet, waktu scan). Snapshot dibaca
+dari `reversal_status.json` (dipublish setiap scan ke ref `reversal-live`).
+
+Halaman CVD dan `daily_effort.json` tetap tersedia untuk inspeksi historis
+3 sinyal bottom. Jalankan:
 
 ```bash
 streamlit run app.py

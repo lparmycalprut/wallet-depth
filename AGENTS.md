@@ -12,12 +12,16 @@ Dashboard dan scanner token Solana dari GMGN. Sistem notifikasi utama adalah
   rolling window 6 jam vs 24 jam sebelumnya, guard, state, dan Telegram.
 - `reversal_state.py`: konfirmasi 2 scan, transition-only alert, cooldown 18 jam.
 - `last_scan_result.json`: state scanner (dipersist lewat Actions cache).
+- `reversal_status.json`: snapshot publik untuk dashboard; scanner
+  mem-publish ke ref `reversal-live` setiap scan supaya halaman utama
+  Streamlit bisa menarik status tanpa menunggu redeploy `main`.
 - `.github/workflows/daily-effort.yml`: scan setiap 10 menit.
 - `content.js` di handoff SMART SEROK adalah referensi parity awal.
 
 Dashboard historis masih memakai `effort_detector.py`, `daily_effort.json`, dan
 `pages/4_📊_CVD.py`; jangan gunakan sinyal dashboard lama sebagai gate bagi
-scanner realtime.
+scanner realtime. Watchlist di `app.py` membaca `load_reversal_status()`,
+bukan `classify_effort()`.
 
 ## Konsep realtime
 

@@ -1,11 +1,7 @@
-"""Coverage for the 3 bottom signals in the watchlist UI.
+"""Coverage for realtime reversal badges on the main watchlist.
 
-The watchlist row renders the newest day's bottom signal (badge tone per
-sinyal) plus a detail column with flush/volume narrative and the 4 on-chain
-markers (info only).
-
-Streamlit is an optional dev dependency, so the AppTest part is skipped when
-it is unavailable.
+The watchlist now renders the latest scanner snapshot (REVERSAL UP/DOWN,
+setup, or NEUTRAL) rather than the historical daily-effort verdict.
 """
 from __future__ import annotations
 
@@ -13,7 +9,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from effort_detector import classify_effort, daily_effort_record
+from reversal_engine import REVERSAL_DOWN, REVERSAL_UP
+from reversal_status import snapshot_status
 
 try:  # optional dev dependency
     from streamlit.testing.v1 import AppTest
@@ -24,65 +21,33 @@ APP = str(Path(__file__).resolve().parent.parent / "app.py")
 MINT = "MintBottom"
 
 
-def _row(date, open_, close, cvd, volume_usd=None, **tags):
-    row = daily_effort_record(MINT, date, open_, close, cvd)
-    if volume_usd is not None:
-        row["volume_usd"] = volume_usd
-    for key in ("smart_money_buy", "fresh_buy", "bot_sell", "mev_noise"):
-        if key in tags:
-            row[key] = tags[key]
-    return row
-
-
-def exhaustion_rows():
-    """Flush -106.6 SOL, lalu hari kering: CVD -15.4, volume 3% dari kemarin."""
-    return [
-        _row("2026-08-13", 1.0, 0.55, -106.6, volume_usd=9000.0),
-        _row("2026-08-14", 0.55, 0.55, -15.4, volume_usd=300.0),
-    ]
-
-
-def reversal_rows():
-    # CVD -20 vs flush -120 (16.7% ≤ 40%) dan volume 12000/9000 = 133% ≥ 130%
-    return [
-        _row("2026-08-13", 1.0, 0.5, -120.0, volume_usd=9000.0),
-        _row("2026-08-14", 0.5, 0.45, -20.0, volume_usd=12000.0),
-    ]
-
-
-def akumulasi_rows():
-    return [
-        _row("2026-08-13", 1.0, 0.99, 2.0, volume_usd=500.0),
-        _row("2026-08-14", 0.99, 0.988, 8.0, volume_usd=800.0,
-             smart_money_buy=3, fresh_buy=1),
-    ]
-
-
-class SignalFieldTest(unittest.TestCase):
-    def test_exhaustion_result_fields(self):
-        result = classify_effort(exhaustion_rows(), MINT)
-        self.assertEqual(result["signal"], "SELLER_EXHAUSTION")
-        self.assertEqual(result["bias"], "bullish")
-        self.assertEqual(result["flush_date"], "2026-08-13")
-        self.assertAlmostEqual(result["volume_pct"], 300 / 9000 * 100,
-                               places=3)
-        self.assertIn("reason", result)
-
-    def test_neutral_row_has_dash(self):
-        rows = [_row("2026-08-13", 1.0, 1.01, 0.2, volume_usd=100.0)]
-        result = classify_effort(rows, MINT)
-        self.assertEqual(result["signal"], "—")
-        self.assertIsNone(result["bias"])
+def _row(signal, *, confidence="watch", current=None, context=None,
+         reason=""):
+    return snapshot_status({
+        "_meta": {"updated_at": 1_700_000_000, "scanner": "rolling-6h-v1"},
+        MINT: {
+            "state": f"{signal}_FIRED" if signal.startswith("REVERSAL")
+            else signal,
+            "observed_signal": signal,
+            "last_scan_ts": 1_700_000_000,
+            "result": {
+                "signal": signal, "confidence": confidence,
+                "reason": reason,
+                "current": current or {},
+                "context": context or {},
+            },
+        },
+    }, {MINT: {"symbol": "TST"}})
 
 
 @unittest.skipIf(AppTest is None, "streamlit not installed")
 class SignalColumnRenderTest(unittest.TestCase):
-    def _run(self, rows):
+    def _run(self, status, watchlist=None):
         patches = (
             mock.patch("watchlist.load_watchlist",
-                       return_value={MINT: {"symbol": "TST"}}),
-            mock.patch("effort_detector.load_daily_effort",
-                       return_value=rows),
+                       return_value=watchlist or {MINT: {"symbol": "TST"}}),
+            mock.patch("reversal_status.load_reversal_status",
+                       return_value=status),
         )
         for patch in patches:
             patch.start()
@@ -92,30 +57,45 @@ class SignalColumnRenderTest(unittest.TestCase):
         self.assertFalse(app.exception)
         return "\n".join(block.value for block in app.markdown)
 
-    def test_exhaustion_badge_and_flush_detail(self):
-        body = self._run(exhaustion_rows())
-        self.assertIn('class="signal bull">SELLER EXHAUSTION', body)
-        self.assertIn("Flush 2026-08-13", body)
-        self.assertIn("CVD -106.60 SOL", body)
-        self.assertIn("Volume 3% dari kemarin", body)
-        self.assertIn('class="signal-detail bull"', body)
+    def test_reversal_down_badge_and_wash_collapse(self):
+        status = _row(
+            REVERSAL_DOWN, confidence="strong",
+            current={"cvd_delta_clean": -18.7, "wash_pct": 1.4,
+                     "price_chg_pct": -27.5, "unique_makers": 152,
+                     "smart_money_buy": 33, "smart_net_sol": -3.5,
+                     "fresh_buy": 8, "fresh_buy_sol": 2.9, "bot_sell": 42,
+                     "top_wallet_pct": 5.9, "top3_wallet_pct": 17.0,
+                     "top_wallet_net_sol": 10.2, "top_wallet_churn_pct": 0},
+            context={"cvd_delta_clean": 32.4, "wash_pct": 10.7},
+            reason="wash runtuh + CVD bersih negatif setelah pump")
+        body = self._run(status)
+        self.assertIn('class="signal bear">REVERSAL DOWN', body)
+        self.assertIn("Pump +32.4 SOL", body)
+        self.assertIn("wash 1.4%", body)
+        self.assertIn("runtuh 87%", body)
+        self.assertIn('class="signal-detail bear"', body)
 
-    def test_reversal_badge_is_purple(self):
-        body = self._run(reversal_rows())
-        self.assertIn('class="signal rev">REVERSAL', body)
-        self.assertIn("Volume 133% dari kemarin", body)
+    def test_reversal_up_badge_is_green(self):
+        status = _row(
+            REVERSAL_UP, confidence="watch",
+            current={"cvd_delta_clean": 4.0, "wash_pct": 2.0,
+                     "price_chg_pct": 3.0},
+            context={"cvd_delta_clean": -22.0, "wash_pct": 15.2})
+        body = self._run(status)
+        self.assertIn('class="signal bull">REVERSAL UP', body)
+        self.assertIn("Flush -22.0 SOL", body)
+        self.assertIn("🟡 WATCH", body)
 
-    def test_akumulasi_badge_is_blue_with_tags(self):
-        body = self._run(akumulasi_rows())
-        self.assertIn('class="signal aku">AKUMULASI', body)
-        # 4 penanda on-chain tampil sebagai info
-        self.assertIn("smart 3", body)
-        self.assertIn("fresh 1", body)
+    def test_missing_scan_shows_placeholder(self):
+        body = self._run({"updated_at": None, "tokens": {}})
+        self.assertIn("BELUM ADA SCAN", body)
 
     def test_detail_text_is_always_white(self):
-        body = self._run(exhaustion_rows())
+        status = _row(REVERSAL_UP, current={"cvd_delta_clean": 8,
+                                            "wash_pct": 1.0})
+        body = self._run(status)
         self.assertIn(".signal-detail.bull,", body)
-        self.assertIn(".signal-detail.aku,", body)
+        self.assertIn(".signal-detail.dist,", body)
         self.assertIn(".signal-detail.neutral {color:#ffffff !important}",
                       body)
 
