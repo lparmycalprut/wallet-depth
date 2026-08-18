@@ -21,8 +21,16 @@ Langkah setelah scan:
 
 1. Simpan state transisi di `last_scan_result.json` + cache trade (Actions cache).
 2. Publish snapshot `reversal_status.json` ke branch `reversal-live`
-   (`contents: write` + `GITHUB_TOKEN`) agar dashboard Streamlit melihat
-   sinyal yang sama dengan Telegram tanpa commit ke `main`.
+   agar dashboard Streamlit melihat sinyal yang sama dengan Telegram
+   tanpa commit ke `main`.
+
+   **Wajib di workflow** (satu baris; belum bisa diubah lewat PR ini
+   karena token App tidak punya izin `workflows`):
+
+   ```yaml
+   permissions:
+     contents: write   # sekarang masih `read` — tanpa ini snapshot gagal
+   ```
 3. Kirim Telegram hanya pada transisi `REVERSAL_UP` / `REVERSAL_DOWN`.
 
 Jalankan manual lewat **Actions → Realtime Bidirectional Reversal → Run
