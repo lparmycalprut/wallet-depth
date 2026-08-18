@@ -181,8 +181,9 @@ class ManualRefreshTest(unittest.TestCase):
         self.assertNotIn("error", stages)
 
     def test_manual_refresh_does_not_send_telegram(self):
-        with mock.patch.object(uc, "send_telegram",
-                               wraps=uc.send_telegram) as send:
+        # update_cvd tidak lagi mengimpor send_telegram; patch transportnya
+        # langsung supaya kebocoran alert harian tetap ketangkap di sini.
+        with mock.patch("signals.send_telegram") as send:
             res = self._run([_swap(1)])
             self.assertTrue(res["ok"])
             send.assert_not_called()
@@ -303,8 +304,9 @@ class DateRangeRefreshTest(unittest.TestCase):
             start_date=start_date, end_date=end_date, path=self.path)
 
     def test_date_range_success_and_no_telegram(self):
-        with mock.patch.object(uc, "send_telegram",
-                               wraps=uc.send_telegram) as send:
+        # update_cvd tidak lagi mengimpor send_telegram; patch transportnya
+        # langsung supaya kebocoran alert harian tetap ketangkap di sini.
+        with mock.patch("signals.send_telegram") as send:
             res = self._run_range([_swap(1)], "2026-08-10", "2026-08-14")
             self.assertTrue(res["ok"])
             self.assertEqual(res["source"], "gmgn")

@@ -10,7 +10,7 @@ from unittest import mock
 from reversal_engine import REVERSAL_DOWN, REVERSAL_UP
 from reversal_status import (publish_reversal_status, reset_cache,
                              snapshot_status, status_sort_key)
-from scripts.realtime_reversal import format_wallet_lines
+from scripts.realtime_reversal import format_alert, format_wallet_lines
 
 
 JLY = "6fEaYuzirTMXFnFo7dGKHJs8wWVFPdh1bfZL9oRPpump"
@@ -77,6 +77,45 @@ class SnapshotTest(unittest.TestCase):
         self.assertIn("top-1 5.9%", text)
         self.assertIn("churn 0%", text)
         self.assertIn("terdistribusi", text)
+
+    def test_alert_uses_hyperlinks_instead_of_raw_urls(self):
+        result = _jly_state()[JLY]["result"]  # REVERSAL_DOWN fixture
+        text = format_alert("JLY", JLY, result, now_ts=1755482160)
+        self.assertIn("<b>🔴 REVERSAL DOWN — $JLY</b>", text)
+        self.assertIn("📈 Konteks: pump +32.4 SOL · wash 10.7%", text)
+        self.assertIn("📉 Sekarang: CVD bersih -18.7 SOL", text)
+        self.assertIn("⭐ Confidence: 🟢 KUAT", text)
+        self.assertIn(
+            f'<a href="https://gmgn.ai/sol/token/{JLY}">GMGN</a>', text)
+        self.assertIn(
+            f'<a href="https://dexscreener.com/solana/{JLY}">DEXSCREENER</a>',
+            text)
+        # No bare URL lines left — links only appear inside anchors.
+        for line in text.splitlines():
+            self.assertFalse(line.startswith("https://"), line)
+        self.assertNotIn("🧱", text)  # tanpa verdict struktur, tanpa baris SBR
+
+    def test_alert_includes_structure_line_when_confirmed(self):
+        result = _jly_state()[JLY]["result"]  # REVERSAL_DOWN fixture
+        struct = {"side": "down", "state": "confirmed",
+                  "zone": {"low": 1.0, "high": 1.0521, "touches": 7},
+                  "low_state": "higher_low", "extreme": 1.3,
+                  "extreme_ts": 1755480000, "reclaim_ts": 1755481200,
+                  "last_close": 0.99, "reason": ""}
+        text = format_alert("JLY", JLY, result, now_ts=1755482160,
+                            structure=struct)
+        self.assertIn("🧱 SBR 1–1.052 tertembus 08:40 WIB · lower-high ✓", text)
+        # Alert ditembakkan hanya setelah gate struktur — lihat
+        # tests/test_reversal_engine.py::test_unconfirmed_structure_*.
+
+    def test_snapshot_passes_structure_through(self):
+        snap = snapshot_status(_jly_state(), {JLY: {"symbol": "JLY"}})
+        self.assertIsNone(snap["tokens"][JLY]["structure"])
+        state = _jly_state()
+        state[JLY]["structure"] = {"state": "forming",
+                                   "zone": {"low": 1, "high": 2, "touches": 5}}
+        snap = snapshot_status(state, {JLY: {"symbol": "JLY"}})
+        self.assertEqual(snap["tokens"][JLY]["structure"]["state"], "forming")
 
 
 class PublishTest(unittest.TestCase):

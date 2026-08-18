@@ -91,6 +91,7 @@ def snapshot_status(scan_state: dict | None,
         signal = (result.get("signal")
                   or token_state.get("observed_signal")
                   or NEUTRAL)
+        structure = token_state.get("structure")
         tokens[mint] = {
             "symbol": str(meta.get("symbol") or mint[:8]),
             "signal": signal,
@@ -101,6 +102,7 @@ def snapshot_status(scan_state: dict | None,
             "last_scan_ts": token_state.get("last_scan_ts"),
             "current": _pick(result.get("current") or {}),
             "context": _pick(result.get("context") or {}),
+            "structure": structure if isinstance(structure, dict) else None,
         }
     meta = (scan_state or {}).get("_meta") if isinstance(
         (scan_state or {}).get("_meta"), dict) else {}

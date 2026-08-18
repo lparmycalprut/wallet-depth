@@ -177,9 +177,29 @@ def _wib(ts):
     return when.strftime("%d %b %H:%M") + " WIB"
 
 
+def _price(value):
+    try:
+        return f"{float(value):.4g}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _hhmm_wib(ts):
+    try:
+        when = datetime.fromtimestamp(int(ts), timezone.utc) + timedelta(hours=7)
+    except (TypeError, ValueError, OSError, OverflowError):
+        return "--:--"
+    return when.strftime("%H:%M")
+
+
 def _confidence_badge(row):
     if not row:
         return ""
+    # WATCH (armed): sinyal flow lolos tapi struktur belum konfirmasi →
+    # tidak ada alert Telegram, jadi badge KUAT tidak boleh tampil.
+    if row.get("state") == "WATCH" and (row.get("signal") or "").startswith("REVERSAL"):
+        return ('<br><span class="status-badge badge-watch">'
+                '🟡 WATCH · menunggu struktur</span>')
     confidence = row.get("confidence") or ""
     if confidence == "strong":
         return '<br><span class="status-badge badge-strong">🟢 KUAT</span>'
@@ -244,6 +264,33 @@ def _signal_detail_html(row):
                 f"top-3 {_number(current.get('top3_wallet_pct'))}% · "
                 f"net {_signed(current.get('top_wallet_net_sol'))} SOL · "
                 f"churn {_number(current.get('top_wallet_churn_pct'), '.0f')}%")
+    # Baris struktur SBR — penjelasan kenapa alert sudah/belum terkirim.
+    struct = row.get("structure") or {}
+    if isinstance(struct, dict) and signal in ("REVERSAL_UP", "REVERSAL_DOWN"):
+        up = signal == "REVERSAL_UP"
+        zone = struct.get("zone") or {}
+        zone_txt = (f"SBR {_price(zone.get('low'))}–{_price(zone.get('high'))}"
+                    if zone else "")
+        low_tag = ("higher-low ✓" if struct.get("low_state") == "higher_low"
+                   and up else
+                   "lower-high ✓" if struct.get("low_state") == "higher_low"
+                   else "")
+        state = struct.get("state")
+        if state == "confirmed" and zone:
+            action = ("ter-reclaim" if up else "tertembus")
+            line = (f"🧱 {zone_txt} {action} "
+                    f"{_hhmm_wib(struct.get('reclaim_ts'))} WIB")
+            if low_tag:
+                line += f" · {low_tag}"
+            lines.append(line)
+        elif state == "forming" and zone:
+            arah = "di atas" if up else "di bawah"
+            line = f"🧱 {zone_txt} · menunggu close {arah} zona"
+            if low_tag:
+                line += f" ({low_tag})"
+            lines.append(line)
+        elif state == "no_zone":
+            lines.append("🧱 zona SBR tidak terdefinisi di window 31 jam")
     reason = str(row.get("reason") or "").strip()
     if reason:
         lines.append(reason)

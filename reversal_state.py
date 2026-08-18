@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 
+from price_structure import CONFIRMED
 from reversal_engine import REVERSAL_DOWN, REVERSAL_UP
 
 FIRED_STATE = {
@@ -12,6 +13,9 @@ FIRED_STATE = {
     REVERSAL_DOWN: "REVERSAL_DOWN_FIRED",
 }
 SETUP_SIGNALS = {"ACCUMULATION", "DISTRIBUTION"}
+# Sinyal flow sudah lolos ambang, tetapi struktur harga (SBR) belum
+# mengonfirmasi — tampil di dashboard, TIDAK pernah alert Telegram.
+WATCH = "WATCH"
 
 
 def load_state(path: str) -> dict:
@@ -40,11 +44,17 @@ def save_state(path: str, state: dict) -> None:
 
 def transition(token_state: dict | None, signal: str, now_ts: int, *,
                confirmations: int = 2, cooldown_hours: int = 18,
-               reset_scans: int = 2) -> tuple[dict, bool]:
+               reset_scans: int = 2,
+               structure_state: str = CONFIRMED) -> tuple[dict, bool]:
     """Advance one token state and return ``(new_state, should_alert)``.
 
-    A reversal must appear in consecutive scans and only fires outside the
-    cooldown. Repeated scans of an already-fired reversal never alert.
+    A reversal must appear in consecutive scans, only fires outside the
+    cooldown, and (gate utama) hanya boleh alert setelah struktur harga
+    terkonfirmasi (``structure_state == CONFIRMED``). Sinyal yang lolos ambang
+    scan tetapi belum terkonfirmasi struktur diparkir di state ``WATCH`` —
+    muncul di dashboard tanpa pernah menyentuh Telegram. Begitu struktur
+    mengonfirmasi pada scan berikutnya (selama sinyal flow bertahan), alert
+    langsung menyala dari posisi WATCH.
     """
     state = dict(token_state or {})
     state.setdefault("state", "NONE")
@@ -64,13 +74,16 @@ def transition(token_state: dict | None, signal: str, now_ts: int, *,
         state["clear_count"] = 0
         cooldown_until = int(state.get("cooldown_until") or 0)
         already_fired = state.get("state") == FIRED_STATE[signal]
-        if (state["candidate_count"] >= confirmations and now_ts >= cooldown_until
-                and not already_fired):
-            state["state"] = FIRED_STATE[signal]
-            state["last_signal"] = signal
-            state["last_fired_ts"] = int(now_ts)
-            state["cooldown_until"] = int(now_ts + cooldown_hours * 3600)
-            alert = True
+        if (state["candidate_count"] >= confirmations and not already_fired
+                and now_ts >= cooldown_until):
+            if structure_state == CONFIRMED:
+                state["state"] = FIRED_STATE[signal]
+                state["last_signal"] = signal
+                state["last_fired_ts"] = int(now_ts)
+                state["cooldown_until"] = int(now_ts + cooldown_hours * 3600)
+                alert = True
+            else:
+                state["state"] = WATCH
         return state, alert
 
     state["candidate_signal"] = None
