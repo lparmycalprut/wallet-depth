@@ -26,7 +26,9 @@ class BottomAlertFormatTest(unittest.TestCase):
         self.assertIn("🟢 SELLER EXHAUSTION", text)
         self.assertIn("Hari: 2026-07-16 (flush 2026-07-10)", text)
         self.assertIn("CVD: -15.4 SOL | Volume: 28% dari kemarin", text)
-        self.assertIn("https://gmgn.ai/sol/token/Mint123", text)
+        self.assertIn(
+            '<a href="https://gmgn.ai/sol/token/Mint123">GMGN</a>', text)
+        self.assertNotIn("https://dexscreener.com", text)
 
     def test_reversal_format(self):
         text = format_effort_alert("GRAIL", _result(

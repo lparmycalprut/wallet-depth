@@ -18,6 +18,7 @@ if ROOT not in sys.path:
 from core import get_market
 from cvd import (_fetch_gmgn_page, _first_nested, _gmgn_trade_key,
                  _normalize_ts)
+from links import dexscreener_token_url, gmgn_token_url
 from reversal_engine import (NEUTRAL, REVERSAL_DOWN, REVERSAL_UP,
                              WASH_WINDOW_SEC, ReversalConfig, build_rolling,
                              detect_reversal, normalize_trade_item)
@@ -223,10 +224,10 @@ def format_wallet_lines(current: dict) -> str:
     bot_sell = int(current.get("bot_sell") or 0)
     smart_bias = "net beli" if smart_net > 0 else ("net jual" if smart_net < 0 else "flat")
     return (
-        f"Wallet: {makers} maker · smart {smart_n} ({smart_bias} "
+        f"👛 Wallet: {makers} maker · smart {smart_n} ({smart_bias} "
         f"{_fmt(smart_net, True)} SOL) · fresh {fresh_n} "
         f"({_fmt(fresh_sol)} SOL) · bot-sell {bot_sell}\n"
-        f"Whale: top-1 {_fmt(top_pct)}% · top-3 {_fmt(top3_pct)}% · "
+        f"🐋 Whale: top-1 {_fmt(top_pct)}% · top-3 {_fmt(top3_pct)}% · "
         f"net {_fmt(net, True)} SOL · churn {churn:.0f}% "
         f"→ {_whale_verdict(top_pct, churn, net)}"
     )
@@ -237,6 +238,9 @@ def format_alert(symbol: str, mint: str, result: dict, now_ts: int) -> str:
     up = result["signal"] == REVERSAL_UP
     title = "🟢 REVERSAL UP" if up else "🔴 REVERSAL DOWN"
     context_name = "flush" if up else "pump"
+    # Icons follow the direction of each phase: flush down, recovery up.
+    context_icon = "📉" if up else "📈"
+    now_icon = "📈" if up else "📉"
     collapse = (100 * (1 - current["wash_pct"] / context["wash_pct"])
                 if context.get("wash_pct", 0) > 0 else 0)
     confidence = "🟢 KUAT" if result.get("confidence") == "strong" else "🟡 WATCH"
@@ -245,18 +249,25 @@ def format_alert(symbol: str, mint: str, result: dict, now_ts: int) -> str:
     # Explicit +7 avoids depending on the runner's zoneinfo database.
     from datetime import timedelta
     wib += timedelta(hours=7)
+    gmgn = html.escape(gmgn_token_url(mint), quote=True)
+    dexscreener = html.escape(dexscreener_token_url(mint), quote=True)
     return (
         f"<b>{title} — ${html.escape(symbol.upper())}</b>\n"
-        f"Konteks: {context_name} {_fmt(context.get('cvd_delta_clean'), True)} SOL, "
+        f"\n"
+        f"{context_icon} Konteks: {context_name} "
+        f"{_fmt(context.get('cvd_delta_clean'), True)} SOL · "
         f"wash {_fmt(context.get('wash_pct'))}%\n"
-        f"Sekarang: CVD bersih {_fmt(current.get('cvd_delta_clean'), True)} · "
+        f"{now_icon} Sekarang: CVD bersih "
+        f"{_fmt(current.get('cvd_delta_clean'), True)} SOL · "
         f"wash {_fmt(current.get('wash_pct'))}% (runtuh {collapse:.0f}%) · "
         f"harga {_fmt(current.get('price_chg_pct'), True)}%\n"
+        f"\n"
         f"{format_wallet_lines(current)}\n"
-        f"Confidence: {confidence}{_confidence_gap(result)}\n"
+        f"\n"
+        f"⭐ Confidence: {confidence}{_confidence_gap(result)}\n"
         f"🕐 {wib:%d %b %H:%M} WIB\n"
-        f"https://gmgn.ai/sol/token/{html.escape(mint)}\n"
-        f"https://dexscreener.com/solana/{html.escape(mint)}"
+        f"🔗 <a href=\"{gmgn}\">GMGN</a> · "
+        f"<a href=\"{dexscreener}\">DEXSCREENER</a>"
     )
 
 

@@ -7,7 +7,7 @@ Format konsisten (§6):
     Sinyal: 🟢 SELLER EXHAUSTION / 🟣 REVERSAL / 🔵 AKUMULASI
     Hari: <date> (flush <date>)
     CVD: X SOL | Volume: Y% dari kemarin
-    https://gmgn.ai/sol/token/<CA>
+    🔗 GMGN   ← hyperlink ke halaman token
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ import html
 import os
 
 from effort_detector import SIGNAL_META, SIGNALS
+from links import gmgn_token_url
 
 ALLOWED_SIGNALS = set(SIGNALS)
 
@@ -78,7 +79,7 @@ def format_effort_alert(symbol: str, result: dict) -> str:
     label = meta.get("label", signal.replace("_", " "))
 
     symbol_txt = html.escape(str(symbol or "?").upper())
-    mint = html.escape(str(result.get("mint") or ""))
+    gmgn = html.escape(gmgn_token_url(result.get("mint")), quote=True)
     date = html.escape(str(result.get("date") or "?"))
     flush_date = result.get("flush_date")
     flush_txt = f" (flush {html.escape(str(flush_date))})" if flush_date else ""
@@ -93,5 +94,5 @@ def format_effort_alert(symbol: str, result: dict) -> str:
         f"Sinyal: {emoji} {html.escape(label)}\n"
         f"Hari: {date}{flush_txt}\n"
         f"CVD: {cvd} SOL | Volume: {volume_txt} dari kemarin\n"
-        f"https://gmgn.ai/sol/token/{mint}"
+        f"🔗 <a href=\"{gmgn}\">GMGN</a>"
     )

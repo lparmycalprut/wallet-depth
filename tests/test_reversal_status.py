@@ -10,7 +10,7 @@ from unittest import mock
 from reversal_engine import REVERSAL_DOWN, REVERSAL_UP
 from reversal_status import (publish_reversal_status, reset_cache,
                              snapshot_status, status_sort_key)
-from scripts.realtime_reversal import format_wallet_lines
+from scripts.realtime_reversal import format_alert, format_wallet_lines
 
 
 JLY = "6fEaYuzirTMXFnFo7dGKHJs8wWVFPdh1bfZL9oRPpump"
@@ -77,6 +77,22 @@ class SnapshotTest(unittest.TestCase):
         self.assertIn("top-1 5.9%", text)
         self.assertIn("churn 0%", text)
         self.assertIn("terdistribusi", text)
+
+    def test_alert_uses_hyperlinks_instead_of_raw_urls(self):
+        result = _jly_state()[JLY]["result"]  # REVERSAL_DOWN fixture
+        text = format_alert("JLY", JLY, result, now_ts=1755482160)
+        self.assertIn("<b>🔴 REVERSAL DOWN — $JLY</b>", text)
+        self.assertIn("📈 Konteks: pump +32.4 SOL · wash 10.7%", text)
+        self.assertIn("📉 Sekarang: CVD bersih -18.7 SOL", text)
+        self.assertIn("⭐ Confidence: 🟢 KUAT", text)
+        self.assertIn(
+            f'<a href="https://gmgn.ai/sol/token/{JLY}">GMGN</a>', text)
+        self.assertIn(
+            f'<a href="https://dexscreener.com/solana/{JLY}">DEXSCREENER</a>',
+            text)
+        # No bare URL lines left — links only appear inside anchors.
+        for line in text.splitlines():
+            self.assertFalse(line.startswith("https://"), line)
 
 
 class PublishTest(unittest.TestCase):
