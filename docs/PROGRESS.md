@@ -1,5 +1,18 @@
 # Progress
 
+## 2026-08-19 — Port sinyal SMART SEROK + watchlist bersih
+
+- Mengosongkan `watchlist.json` (semua token lama dihapus).
+- Tambah CA manual: field ticker dihapus; `fetch_token_symbol()` memakai
+  DexScreener (`get_market`) sehingga symbol terisi otomatis.
+- Scanner realtime tidak lagi memakai wash-collapse / SBR. Engine baru
+  `serok_engine.py` meniru ekstensi SMART SEROK v9.1.3 (bar 1H, R-spike,
+  battle P65).
+- Telegram: 🔴 WASPADA DUMP, 🟢 SIAP2 PUMP, ⚔️ BATTLE TERJADI — satu
+  alert per `event_id`, format rapi + link GMGN/DexScreener + detail bar/MC.
+- Cron GitHub Actions `*/15 * * * *`. Window fetch 48 jam.
+- Tes: `tests/test_serok_engine.py`; payload Telegram dan UI disesuaikan.
+
 ## 2026-08-18 — Watchlist utama mengikuti scanner realtime
 
 - Akar masalah: cron harian diganti scanner 10 menit, tetapi `app.py` masih

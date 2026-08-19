@@ -15,7 +15,7 @@ from trending_ui import (render_trending, run_screen, run_screen_h1,
 from watchlist import (add_to_watchlist, get_last_push_error, load_watchlist,
                        remove_from_watchlist)
 
-st.set_page_config(page_title="Wallet Depth — Reversal Realtime",
+st.set_page_config(page_title="Wallet Depth — SMART SEROK",
                    page_icon="⚡", layout="wide",
                    initial_sidebar_state="collapsed")
 
@@ -38,6 +38,7 @@ h1, h2, h3, h4, h5, h6 {color:#000000;}
  font-size:.8rem;font-weight:800}.bull{background:#14532d;color:#dcfce7}
 .rev{background:#4c1d95;color:#ede9fe}.aku{background:#1e3a8a;color:#dbeafe}
 .bear{background:#7f1d1d;color:#fee2e2}.neutral{background:#334155;color:#e2e8f0}
+.watch{background:#854d0e;color:#fef9c3}
 .metric-label{font-size:.72rem;color:#000000;text-transform:uppercase;
  letter-spacing:.04em}.metric-value{font-size:1rem;font-weight:750}
 div[data-testid="stHorizontalBlock"]{align-items:center}
@@ -118,13 +119,12 @@ div[data-testid="stHorizontalBlock"]{align-items:center}
 .signal-detail.aku,
 .signal-detail.dist,
 .signal-detail.bear,
+.signal-detail.watch,
 .signal-detail.neutral {color:#ffffff !important}
 </style>
 <div class="hero"><h1>⚡ Wallet Depth</h1>
-<p>Scanner realtime bidirectional: 🟢 REVERSAL UP, 🔴 REVERSAL DOWN,
-🔵 ACCUMULATION, 🟠 DISTRIBUTION — wash-collapse 6 jam vs 24 jam sebelumnya.
-Status watchlist mengikuti scan GitHub Actions (tiap ~10 menit), bukan candle
-harian.</p></div>
+<p>Scanner 1H SMART SEROK: 🔴 WASPADA DUMP, 🟢 SIAP2 PUMP, ⚔️ BATTLE TERJADI.
+Status watchlist mengikuti scan GitHub Actions (tiap ~15 menit).</p></div>
 """, unsafe_allow_html=True)
 
 
@@ -394,13 +394,11 @@ else:
 
 with st.expander("➕ Tambah token", expanded=not bool(watchlist)):
     with st.form("add-token", clear_on_submit=True):
-        left, right = st.columns([3, 1])
-        mint_input = left.text_input("Contract address")
-        symbol_input = right.text_input("Ticker", value="?")
+        mint_input = st.text_input("Contract address",
+                                   help="Symbol di-fetch otomatis dari DexScreener")
         submitted = st.form_submit_button("Tambah ke watchlist")
         if submitted and mint_input.strip():
-            added = add_to_watchlist(mint_input.strip(),
-                                     symbol_input.strip() or "?",
+            added = add_to_watchlist(mint_input.strip(), "?",
                                      source="manual")
             if added:
                 st.success("Token ditambahkan.")
@@ -413,7 +411,7 @@ with st.expander("➕ Tambah token", expanded=not bool(watchlist)):
 st.divider()
 st.subheader("🔍 Temukan Token")
 st.caption("Listing GMGN sebagai konteks pasar. Status watchlist di atas "
-           "mengikuti scanner reversal realtime, bukan candle harian.")
+           "mengikuti scanner SMART SEROK 1H.")
 
 # Tab styling: segmented control dipakai agar pilihan tab bertahan saat scan
 # memicu rerun (st.tabs selalu balik ke tab pertama).

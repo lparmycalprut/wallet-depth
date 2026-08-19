@@ -70,9 +70,7 @@ class SignalColumnRenderTest(unittest.TestCase):
             reason="wash runtuh + CVD bersih negatif setelah pump")
         body = self._run(status)
         self.assertIn('class="signal bear">REVERSAL DOWN', body)
-        self.assertIn("Pump +32.4 SOL", body)
         self.assertIn("wash 1.4%", body)
-        self.assertIn("runtuh 87%", body)
         self.assertIn('class="signal-detail bear"', body)
 
     def test_reversal_up_badge_is_green(self):
@@ -83,7 +81,6 @@ class SignalColumnRenderTest(unittest.TestCase):
             context={"cvd_delta_clean": -22.0, "wash_pct": 15.2})
         body = self._run(status)
         self.assertIn('class="signal bull">REVERSAL UP', body)
-        self.assertIn("Flush -22.0 SOL", body)
         self.assertIn("🟡 WATCH", body)
 
     def test_missing_scan_shows_placeholder(self):
