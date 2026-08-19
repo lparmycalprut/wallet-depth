@@ -5,7 +5,7 @@ on:
     # GitHub Actions dapat terlambat beberapa menit.
     # Engine tetap memakai rolling window sehingga tidak bergantung
     # pada waktu mulai yang persis.
-    - - cron: "*/15 * * * *"
+    - cron: "*/15 * * * *"
 
   workflow_dispatch:
 
