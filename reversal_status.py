@@ -19,6 +19,8 @@ import requests
 
 from reversal_engine import (ACCUMULATION, DISTRIBUTION, NEUTRAL,
                              REVERSAL_DOWN, REVERSAL_UP)
+from serok_engine import BATTLE, SIAP2_PUMP, WASPADA_DUMP
+from serok_engine import NEUTRAL as SEROK_NEUTRAL
 from reversal_state import load_state
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -41,6 +43,22 @@ WINDOW_KEYS = (
 )
 
 SIGNAL_META = {
+    WASPADA_DUMP: {
+        "emoji": "🔴", "label": "WASPADA DUMP", "tone": "bear",
+        "bias": "bearish", "rank": 0,
+    },
+    SIAP2_PUMP: {
+        "emoji": "🟢", "label": "SIAP2 PUMP", "tone": "bull",
+        "bias": "bullish", "rank": 0,
+    },
+    BATTLE: {
+        "emoji": "⚔️", "label": "BATTLE TERJADI", "tone": "watch",
+        "bias": "neutral", "rank": 0,
+    },
+    SEROK_NEUTRAL: {
+        "emoji": "⚪", "label": "NETRAL", "tone": "neutral",
+        "bias": "neutral", "rank": 2,
+    },
     REVERSAL_UP: {
         "emoji": "🟢", "label": "REVERSAL UP", "tone": "bull",
         "bias": "bullish", "rank": 0,
@@ -92,6 +110,7 @@ def snapshot_status(scan_state: dict | None,
                   or token_state.get("observed_signal")
                   or NEUTRAL)
         structure = token_state.get("structure")
+        event = result.get("event") if isinstance(result.get("event"), dict) else None
         tokens[mint] = {
             "symbol": str(meta.get("symbol") or mint[:8]),
             "signal": signal,
@@ -103,6 +122,7 @@ def snapshot_status(scan_state: dict | None,
             "current": _pick(result.get("current") or {}),
             "context": _pick(result.get("context") or {}),
             "structure": structure if isinstance(structure, dict) else None,
+            "event": event,
         }
     meta = (scan_state or {}).get("_meta") if isinstance(
         (scan_state or {}).get("_meta"), dict) else {}

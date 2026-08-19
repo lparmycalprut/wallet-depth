@@ -7,11 +7,16 @@ import tempfile
 
 from price_structure import CONFIRMED
 from reversal_engine import REVERSAL_DOWN, REVERSAL_UP
+from serok_engine import BATTLE, SIAP2_PUMP, WASPADA_DUMP
 
 FIRED_STATE = {
     REVERSAL_UP: "REVERSAL_UP_FIRED",
     REVERSAL_DOWN: "REVERSAL_DOWN_FIRED",
+    WASPADA_DUMP: "WASPADA_DUMP_FIRED",
+    SIAP2_PUMP: "SIAP2_PUMP_FIRED",
+    BATTLE: "BATTLE_FIRED",
 }
+SEROK_SIGNALS = {WASPADA_DUMP, SIAP2_PUMP, BATTLE}
 SETUP_SIGNALS = {"ACCUMULATION", "DISTRIBUTION"}
 # Sinyal flow sudah lolos ambang, tetapi struktur harga (SBR) belum
 # mengonfirmasi — tampil di dashboard, TIDAK pernah alert Telegram.
@@ -45,7 +50,8 @@ def save_state(path: str, state: dict) -> None:
 def transition(token_state: dict | None, signal: str, now_ts: int, *,
                confirmations: int = 2, cooldown_hours: int = 18,
                reset_scans: int = 2,
-               structure_state: str = CONFIRMED) -> tuple[dict, bool]:
+               structure_state: str = CONFIRMED,
+               event_id: str | None = None) -> tuple[dict, bool]:
     """Advance one token state and return ``(new_state, should_alert)``.
 
     A reversal must appear in consecutive scans, only fires outside the
@@ -64,6 +70,25 @@ def transition(token_state: dict | None, signal: str, now_ts: int, *,
     state["last_scan_ts"] = int(now_ts)
     state["observed_signal"] = signal
     alert = False
+
+    if signal in SEROK_SIGNALS:
+        # Extension signals are bar-identity unique: one Telegram per event_id.
+        confirmations = 1
+        cooldown_hours = 0
+        structure_state = CONFIRMED
+        already = state.get("last_event_id") == event_id and event_id
+        if event_id and not already:
+            state["state"] = FIRED_STATE[signal]
+            state["last_signal"] = signal
+            state["last_event_id"] = event_id
+            state["last_fired_ts"] = int(now_ts)
+            state["candidate_signal"] = signal
+            state["candidate_count"] = 1
+            state["clear_count"] = 0
+            return state, True
+        state["state"] = FIRED_STATE[signal]
+        state["clear_count"] = 0
+        return state, False
 
     if signal in FIRED_STATE:
         if state.get("candidate_signal") == signal:

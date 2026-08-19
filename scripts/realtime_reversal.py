@@ -19,11 +19,10 @@ from core import get_market
 from cvd import (_fetch_gmgn_page, _first_nested, _gmgn_trade_key,
                  _normalize_ts)
 from links import dexscreener_token_url, gmgn_token_url
-from price_structure import (CONFIRMED, HIGHER_LOW, StructureConfig,
-                             bars_from_trades, detect_structure)
-from reversal_engine import (NEUTRAL, REVERSAL_DOWN, REVERSAL_UP,
-                             WASH_WINDOW_SEC, ReversalConfig, build_rolling,
-                             detect_reversal, normalize_trade_item)
+from price_structure import CONFIRMED, HIGHER_LOW
+from reversal_engine import REVERSAL_UP, WASH_WINDOW_SEC, normalize_trade_item
+from serok_engine import (BATTLE, NEUTRAL, SIAP2_PUMP, WASPADA_DUMP,
+                          build_bars, classify)
 from reversal_state import load_state, save_state, transition
 from reversal_status import publish_reversal_status
 from signals import _telegram_credentials, send_telegram
@@ -31,7 +30,7 @@ from watchlist import load_watchlist
 
 STATE_PATH = os.path.join(ROOT, "last_scan_result.json")
 CACHE_PATH = os.path.join(ROOT, ".cache", "reversal_trades.json.gz")
-FETCH_HOURS = 31
+FETCH_HOURS = 48
 MAX_PAGES = 80
 
 
@@ -272,57 +271,104 @@ def format_structure_line(structure: dict | None) -> str:
             f"{_fmt_price(zone.get('high'))} {action} WIB{tail}")
 
 
+def _fmt_mc(value) -> str:
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return "MC belum tersedia"
+    if n <= 0:
+        return "MC belum tersedia"
+    if n >= 1e9:
+        return f"${n / 1e9:.2f}B".replace(".00B", "B")
+    if n >= 1e6:
+        return f"${n / 1e6:.2f}M".replace(".00M", "M")
+    if n >= 1e3:
+        return f"${n / 1e3:.1f}K"
+    return f"${n:.0f}"
+
+
+def _wib_bar(ts) -> str:
+    from datetime import timedelta
+    try:
+        when = datetime.fromtimestamp(int(ts), timezone.utc).replace(
+            tzinfo=None) + timedelta(hours=7)
+    except (TypeError, ValueError, OSError):
+        return "—"
+    return f"{when:%m-%d %H}:00"
+
+
 def format_alert(symbol: str, mint: str, result: dict, now_ts: int,
                  structure: dict | None = None) -> str:
-    current, context = result["current"], result["context"]
-    up = result["signal"] == REVERSAL_UP
-    title = "🟢 REVERSAL UP" if up else "🔴 REVERSAL DOWN"
-    context_name = "flush" if up else "pump"
-    # Icons follow the direction of each phase: flush down, recovery up.
-    context_icon = "📉" if up else "📈"
-    now_icon = "📈" if up else "📉"
-    collapse = (100 * (1 - current["wash_pct"] / context["wash_pct"])
-                if context.get("wash_pct", 0) > 0 else 0)
-    confidence = "🟢 KUAT" if result.get("confidence") == "strong" else "🟡 WATCH"
-    wib = datetime.fromtimestamp(now_ts, timezone.utc).astimezone(
-        timezone.utc).replace(tzinfo=None)
-    # Explicit +7 avoids depending on the runner's zoneinfo database.
+    signal = result.get("signal") or NEUTRAL
+    event = result.get("event") or {}
+    ev = event.get("ev") or {}
+    bar = event.get("setup") or result.get("current") or {}
+    titles = {
+        WASPADA_DUMP: "🔴 WASPADA DUMP",
+        SIAP2_PUMP: "🟢 SIAP2 PUMP",
+        BATTLE: "⚔️ BATTLE TERJADI",
+    }
+    title = titles.get(signal, signal)
     from datetime import timedelta
-    wib += timedelta(hours=7)
+    wib = datetime.fromtimestamp(now_ts, timezone.utc).replace(
+        tzinfo=None) + timedelta(hours=7)
     gmgn = html.escape(gmgn_token_url(mint), quote=True)
     dexscreener = html.escape(dexscreener_token_url(mint), quote=True)
-    structure_line = format_structure_line(structure)
-    if structure_line:
-        structure_line += "\n"
-    return (
-        f"<b>{title} — ${html.escape(symbol.upper())}</b>\n"
-        f"\n"
-        f"{context_icon} Konteks: {context_name} "
-        f"{_fmt(context.get('cvd_delta_clean'), True)} SOL · "
-        f"wash {_fmt(context.get('wash_pct'))}%\n"
-        f"{now_icon} Sekarang: CVD bersih "
-        f"{_fmt(current.get('cvd_delta_clean'), True)} SOL · "
-        f"wash {_fmt(current.get('wash_pct'))}% (runtuh {collapse:.0f}%) · "
-        f"harga {_fmt(current.get('price_chg_pct'), True)}%\n"
-        f"\n"
-        f"{format_wallet_lines(current)}\n"
-        f"\n"
-        f"{structure_line}"
-        f"⭐ Confidence: {confidence}{_confidence_gap(result)}\n"
-        f"🕐 {wib:%d %b %H:%M} WIB\n"
-        f"🔗 <a href=\"{gmgn}\">GMGN</a> · "
-        f"<a href=\"{dexscreener}\">DEXSCREENER</a>"
-    )
+    ticker = html.escape(str(symbol or "?").upper())
+    lines = [f"<b>{title} — ${ticker}</b>", ""]
+    if signal == BATTLE:
+        lines += [
+            "⚔️ BUY/SELL hampir seimbang · TX, wallet unik, dan fresh_wallet ≥ P65.",
+            f"🎯 Pemicu: {html.escape(str(ev.get('triggerSignal') or '—'))} "
+            f"{_wib_bar(ev.get('triggerStart'))} WIB · jarak {ev.get('gap', '—')} bar",
+            f"📊 {_wib_bar(bar.get('start'))} WIB · BUY {_fmt(bar.get('buySol'))} vs "
+            f"SELL {_fmt(bar.get('sellSol'))} SOL · gap {_fmt(ev.get('balanceGapPct'), digits=2)}%",
+            f"💰 RANGE BATTLE MC: {_fmt_mc(ev.get('rangeLowMc'))} — {_fmt_mc(ev.get('rangeHighMc'))}",
+            f"👥 {int(bar.get('txCount') or 0)} TX (≥{int(ev.get('txFloor') or 0)}) · "
+            f"{int(bar.get('uniqueMakers') or 0)} wallet unik "
+            f"(≥{int(ev.get('makersFloor') or 0)})",
+            f"🌱 fresh {int(bar.get('freshWallets') or 0)} unik / "
+            f"{_fmt(bar.get('freshWalletPct'))}% "
+            f"(≥{int(ev.get('freshFloor') or 0)})",
+            f"📈 harga candle {_fmt(ev.get('setupChg') or bar.get('price_chg_pct'), True)}% · "
+            f"wash {_fmt(bar.get('washPct'))}%",
+        ]
+    else:
+        if signal == WASPADA_DUMP:
+            lines.append("🔴 Harga naik + cumCVD naik + R ≥10× bar sebelumnya + |R|≥10")
+        else:
+            lines.append("🟢 Harga turun + cumCVD turun + R ≥10× bar sebelumnya + |R|≥10")
+        if ev.get("rMult") is not None:
+            lines.append(
+                f"📐 R {_fmt(ev.get('prevR'), digits=2)} → "
+                f"{_fmt(abs(float(ev.get('setupR') or 0)), digits=2)} "
+                f"({_fmt(ev.get('rMult'), digits=1)}×)")
+        lines.append(
+            f"📊 SETUP {_wib_bar(bar.get('start'))} WIB · harga "
+            f"{_fmt(ev.get('setupChg') or bar.get('price_chg_pct'), True)}% · "
+            f"R {_fmt(ev.get('setupR'), True, 2)} · CVD "
+            f"{_fmt(ev.get('setupCvd') or bar.get('cvdClean'), True)} SOL")
+        lines.append(
+            f"🧼 wash {_fmt(bar.get('washPct') or result.get('current', {}).get('wash_pct'))}% · "
+            f"{int(bar.get('txCount') or result.get('current', {}).get('tx_count') or 0)} TX · "
+            f"{int(bar.get('uniqueMakers') or result.get('current', {}).get('unique_makers') or 0)} wallet")
+    lines += [
+        "",
+        f"🕐 {wib:%d %b %H:%M} WIB",
+        f'🔗 <a href="{gmgn}">GMGN</a> · '
+        f'<a href="{dexscreener}">DEXSCREENER</a>',
+    ]
+    return "\n".join(lines)
 
 
 def scan_token(mint: str, meta: dict, *, now_ts: int, cache: dict,
                state: dict, fixture: list[dict] | None = None,
                send_alerts: bool = True) -> dict:
     token_state = state.get(mint) if isinstance(state.get(mint), dict) else {}
-    verdict = None
-    guard_ok, guard_reason, _market = _market_guards(mint, meta, now_ts) if fixture is None else (True, "", {})
+    guard_ok, guard_reason, market = _market_guards(mint, meta, now_ts) if fixture is None else (True, "", {})
     if not guard_ok:
-        result = {"signal": NEUTRAL, "reason": guard_reason, "current": {}, "context": {}}
+        result = {"signal": NEUTRAL, "reason": guard_reason, "current": {},
+                  "context": {}, "event": None}
     else:
         old = cache.get(mint, [])
         last_ts = max((int(row.get("timestamp") or 0) for row in old), default=0)
@@ -330,28 +376,32 @@ def scan_token(mint: str, meta: dict, *, now_ts: int, cache: dict,
         fresh = fixture if fixture is not None else fetch_raw_trades(
             mint, from_ts=from_ts, to_ts=now_ts)
         cache[mint] = merge_cache(old, fresh, cutoff_ts=now_ts - FETCH_HOURS * 3600)
-        rolling = build_rolling(cache[mint], now_ts=now_ts)
-        result = detect_reversal(rolling["current"], rolling["baseline"], ReversalConfig())
-        if result["signal"] in (REVERSAL_UP, REVERSAL_DOWN):
-            # Gate struktur: candle 5m dibangun dari cache trade yang sama —
-            # tanpa API tambahan. Alert Telegram hanya boleh jika CONFIRMED.
-            cfg = StructureConfig()
-            side = "up" if result["signal"] == REVERSAL_UP else "down"
-            verdict = detect_structure(
-                bars_from_trades(cache[mint], cfg.interval_sec, now_ts=now_ts),
-                side, cfg)
+        mc = float((market or {}).get("marketcap") or 0)
+        price = float((market or {}).get("price_usd") or 0)
+        supply = (mc / price) if mc > 0 and price > 0 else 0.0
+        classified = classify(
+            build_bars(cache[mint], now_ts=now_ts, mc_usd=mc, supply=supply))
+        result = {
+            "signal": classified["signal"],
+            "reason": classified.get("reason") or "",
+            "current": classified.get("current") or {},
+            "context": {},
+            "event": classified.get("event"),
+            "event_id": classified.get("event_id"),
+            "confidence": "info",
+        }
 
     new_state, should_alert = transition(
         token_state, result["signal"], now_ts,
-        structure_state=(verdict or {}).get("state", CONFIRMED))
+        event_id=result.get("event_id"))
     current = result.get("current") or {}
     context = result.get("context") or {}
-    new_state["structure"] = verdict
+    new_state["structure"] = None
     new_state["result"] = {
         "signal": result["signal"], "bias": result.get("bias"),
         "confidence": result.get("confidence"), "reason": result.get("reason"),
-        "wash_collapse": result.get("wash_collapse", False),
         "current": current, "context": context,
+        "event": result.get("event"), "event_id": result.get("event_id"),
     }
     state[mint] = new_state
     symbol = str((meta or {}).get("symbol") or mint[:8])
@@ -414,7 +464,7 @@ def main(argv=None) -> int:
     if fixture is None:
         save_cache(cache)
         state.setdefault("_meta", {}).update(
-            updated_at=now_ts, scanner="rolling-6h-v1")
+            updated_at=now_ts, scanner="serok-1h-v1")
         save_state(STATE_PATH, state)
         # Streamlit reads this snapshot via GitHub — Actions cache alone
         # never reached the main watchlist page.
