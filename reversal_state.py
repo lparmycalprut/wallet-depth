@@ -122,3 +122,27 @@ def transition(token_state: dict | None, signal: str, now_ts: int, *,
                 now_ts >= int(state.get("cooldown_until") or 0)):
             state["state"] = "NONE"
     return state, False
+
+
+def take_new_events(token_state: dict | None, events: list[dict]) -> tuple[dict, list[dict]]:
+    """Return events whose event_id has not been alerted yet."""
+    state = dict(token_state or {})
+    seen = {str(item) for item in (state.get("seen_event_ids") or []) if item}
+    fresh = []
+    for event in events or ():
+        event_id = str(event.get("event_id") or "")
+        if not event_id or event_id in seen:
+            continue
+        seen.add(event_id)
+        fresh.append(event)
+    # Keep a bounded log so state files stay small.
+    state["seen_event_ids"] = sorted(seen)[-400:]
+    if fresh:
+        last = fresh[-1]
+        signal = last.get("signal")
+        if signal in FIRED_STATE:
+            state["state"] = FIRED_STATE[signal]
+            state["last_signal"] = signal
+            state["last_event_id"] = last.get("event_id")
+            state["last_fired_ts"] = int(state.get("last_scan_ts") or 0)
+    return state, fresh

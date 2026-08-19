@@ -1,3 +1,13 @@
+# Kegiatan — 19 Agustus 2026 (lanjutan)
+
+- Token baru: fetch penuh **48 jam** (bukan incremental), lalu kirim Telegram
+  untuk **semua** sinyal di window itu (historis tetap dikirim, sekali per
+  `event_id`).
+- Payload Telegram: hari (WIB), jam bar, range harga, range MC, R/CVD/TX,
+  link GMGN + DexScreener. Tag “Historis” vs “Sinyal baru”.
+- `add_to_watchlist` memanggil `request_immediate_scan()` (workflow_dispatch)
+  agar 48 jam ditarik segera, lalu cron 15 menit menyambung incremental.
+
 # Kegiatan — 19 Agustus 2026
 
 Port sinyal ekstensi [SMART_SEROK v9.1.3](https://github.com/lparmycalprut/SMART_SEROK) ke wallet-depth.

@@ -94,6 +94,9 @@ class SnapshotTest(unittest.TestCase):
         text = format_alert("JLY", JLY, result, now_ts=1755482160)
         self.assertIn("<b>🔴 WASPADA DUMP — $JLY</b>", text)
         self.assertIn("R 1.10 → 13.80 (12.5×)", text)
+        self.assertIn("Bar ", text)
+        self.assertIn("Range harga", text)
+        self.assertIn("Range MC", text)
         self.assertIn(
             f'<a href="https://gmgn.ai/sol/token/{JLY}">GMGN</a>', text)
         self.assertIn(

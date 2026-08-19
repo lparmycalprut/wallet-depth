@@ -292,6 +292,27 @@ def scan_signals(bars: list[dict]) -> list[dict]:
     return events
 
 
+def cluster_slices(bars: list[dict]) -> list[list[dict]]:
+    """Split bars on CLUSTER_GAP so battle never crosses a dead period."""
+    if not bars:
+        return []
+    groups = [[bars[0]]]
+    for bar in bars[1:]:
+        if bar["start"] - groups[-1][-1]["start"] > CLUSTER_GAP:
+            groups.append([bar])
+        else:
+            groups[-1].append(bar)
+    return groups
+
+
+def all_events(bars: list[dict]) -> list[dict]:
+    """Every setup/battle in the 48h window, cluster by cluster."""
+    events = []
+    for group in cluster_slices(bars):
+        events.extend(scan_signals(group))
+    return events
+
+
 def classify(bars: list[dict]) -> dict:
     cluster = latest_cluster(bars)
     if not cluster:

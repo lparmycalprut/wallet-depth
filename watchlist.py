@@ -564,7 +564,32 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
         wl[ca]["source"] = source
     if avg_cost is not None:
         wl[ca]["avg_cost"] = float(avg_cost)
-    return save_watchlist(wl, f"add {symbol} ({ca[:8]}…)")
+    saved = save_watchlist(wl, f"add {symbol} ({ca[:8]}…)")
+    # Ask Actions to pull the last 48h immediately (best-effort).
+    request_immediate_scan()
+    return saved
+
+
+def request_immediate_scan() -> bool:
+    """Dispatch the scanner workflow so a new CA is fetched within seconds."""
+    tok = _github_token()
+    if not tok:
+        return False
+    try:
+        response = requests.post(
+            f"https://api.github.com/repos/{GITHUB_REPO}/actions/workflows/"
+            f"daily-effort.yml/dispatches",
+            headers={"Authorization": f"Bearer {tok}",
+                     "Accept": "application/vnd.github+json"},
+            json={"ref": "main"},
+            timeout=15)
+        if response.status_code in (201, 204):
+            return True
+        print(f"WARN: request_immediate_scan {response.status_code}: "
+              f"{response.text[:200]}", file=sys.stderr)
+    except Exception as exc:
+        print(f"WARN: request_immediate_scan failed: {exc}", file=sys.stderr)
+    return False
 
 
 def remove_from_watchlist(ca: str) -> bool:

@@ -67,6 +67,41 @@ class SerokEngineTests(unittest.TestCase):
     def test_neutral_when_empty(self):
         self.assertEqual(classify([])["signal"], NEUTRAL)
 
+    def test_all_events_covers_prior_cluster_signals(self):
+        from serok_engine import all_events
+        t0 = 1_700_000_000
+        trades = [
+            _trade("a", "buy", t0 + 10, 1, 1.0),
+            _trade("b", "sell", t0 + 20, 0.5, 1.01),
+        ]
+        t1 = t0 + 3600
+        for i in range(20):
+            trades.append(_trade(f"w{i}", "buy", t1 + i, 5, 1.02 + i * 0.0001))
+        # gap > 6h then another spike
+        t2 = t1 + 8 * 3600
+        trades += [
+            _trade("c", "sell", t2 + 10, 1, 1.0),
+            _trade("d", "buy", t2 + 20, 0.4, 0.99),
+        ]
+        t3 = t2 + 3600
+        for i in range(20):
+            trades.append(_trade(f"s{i}", "sell", t3 + i, 5, 0.98 - i * 0.0001))
+        bars = build_bars(trades, now_ts=t3 + 3500)
+        kinds = [e["signal"] for e in all_events(bars)]
+        self.assertIn(WASPADA_DUMP, kinds)
+        self.assertIn(SIAP2_PUMP, kinds)
+
+    def test_take_new_events_alerts_historical_once(self):
+        from reversal_state import take_new_events
+        events = [
+            {"event_id": "WASPADA DUMP:1", "signal": WASPADA_DUMP},
+            {"event_id": "SIAP2 PUMP:2", "signal": SIAP2_PUMP},
+        ]
+        state, fresh = take_new_events({}, events)
+        self.assertEqual(len(fresh), 2)
+        state, again = take_new_events(state, events)
+        self.assertEqual(again, [])
+
     def test_symbol_fetch_helper_exists(self):
         from watchlist import fetch_token_symbol
         from unittest.mock import patch

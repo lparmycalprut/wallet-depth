@@ -22,8 +22,8 @@ from links import dexscreener_token_url, gmgn_token_url
 from price_structure import CONFIRMED, HIGHER_LOW
 from reversal_engine import REVERSAL_UP, WASH_WINDOW_SEC, normalize_trade_item
 from serok_engine import (BATTLE, NEUTRAL, SIAP2_PUMP, WASPADA_DUMP,
-                          build_bars, classify)
-from reversal_state import load_state, save_state, transition
+                          all_events, build_bars, classify)
+from reversal_state import load_state, save_state, take_new_events, transition
 from reversal_status import publish_reversal_status
 from signals import _telegram_credentials, send_telegram
 from watchlist import load_watchlist
@@ -31,7 +31,7 @@ from watchlist import load_watchlist
 STATE_PATH = os.path.join(ROOT, "last_scan_result.json")
 CACHE_PATH = os.path.join(ROOT, ".cache", "reversal_trades.json.gz")
 FETCH_HOURS = 48
-MAX_PAGES = 80
+MAX_PAGES = 200
 
 
 def _raw_key(raw: dict) -> tuple:
@@ -287,14 +287,43 @@ def _fmt_mc(value) -> str:
     return f"${n:.0f}"
 
 
-def _wib_bar(ts) -> str:
+_HARI = ("Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu", "Minggu")
+
+
+def _wib_dt(ts):
     from datetime import timedelta
+    return datetime.fromtimestamp(int(ts), timezone.utc).replace(
+        tzinfo=None) + timedelta(hours=7)
+
+
+def _wib_bar(ts) -> str:
     try:
-        when = datetime.fromtimestamp(int(ts), timezone.utc).replace(
-            tzinfo=None) + timedelta(hours=7)
+        when = _wib_dt(ts)
     except (TypeError, ValueError, OSError):
         return "—"
     return f"{when:%m-%d %H}:00"
+
+
+def _wib_range(start, end=None) -> tuple[str, str]:
+    try:
+        begin = _wib_dt(start)
+        finish = _wib_dt(end if end else int(start) + 3600)
+    except (TypeError, ValueError, OSError):
+        return "—", "—"
+    hari = _HARI[begin.weekday()]
+    return f"{hari}, {begin:%d %b %Y}", f"{begin:%H:%M}–{finish:%H:%M} WIB"
+
+
+def _px(value) -> str:
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    if n == 0:
+        return "0"
+    if abs(n) < 0.01:
+        return f"{n:.8f}".rstrip("0").rstrip(".")
+    return f"{n:.6g}"
 
 
 def format_alert(symbol: str, mint: str, result: dict, now_ts: int,
@@ -315,7 +344,23 @@ def format_alert(symbol: str, mint: str, result: dict, now_ts: int,
     gmgn = html.escape(gmgn_token_url(mint), quote=True)
     dexscreener = html.escape(dexscreener_token_url(mint), quote=True)
     ticker = html.escape(str(symbol or "?").upper())
-    lines = [f"<b>{title} — ${ticker}</b>", ""]
+    bar_start = bar.get("start")
+    bar_end = bar.get("end") or ((int(bar_start) + 3600) if bar_start else None)
+    day, hours = _wib_range(bar_start, bar_end)
+    historical = bool(result.get("historical"))
+    age = ("📌 Historis (sudah terjadi di window 48 jam)"
+           if historical else "📌 Sinyal baru")
+    lines = [
+        f"<b>{title} — ${ticker}</b>",
+        age,
+        "",
+        f"🗓 {day}",
+        f"⏰ Bar {hours}",
+        f"📏 Range harga {_px(bar.get('low'))} — {_px(bar.get('high'))}",
+        f"💰 Range MC {_fmt_mc(bar.get('lowMc') or ev.get('rangeLowMc'))} — "
+        f"{_fmt_mc(bar.get('highMc') or ev.get('rangeHighMc'))}",
+        "",
+    ]
     if signal == BATTLE:
         lines += [
             "⚔️ BUY/SELL hampir seimbang · TX, wallet unik, dan fresh_wallet ≥ P65.",
@@ -354,7 +399,7 @@ def format_alert(symbol: str, mint: str, result: dict, now_ts: int,
             f"{int(bar.get('uniqueMakers') or result.get('current', {}).get('unique_makers') or 0)} wallet")
     lines += [
         "",
-        f"🕐 {wib:%d %b %H:%M} WIB",
+        f"🕐 Scan {wib:%d %b %H:%M} WIB",
         f'🔗 <a href="{gmgn}">GMGN</a> · '
         f'<a href="{dexscreener}">DEXSCREENER</a>',
     ]
@@ -366,21 +411,26 @@ def scan_token(mint: str, meta: dict, *, now_ts: int, cache: dict,
                send_alerts: bool = True) -> dict:
     token_state = state.get(mint) if isinstance(state.get(mint), dict) else {}
     guard_ok, guard_reason, market = _market_guards(mint, meta, now_ts) if fixture is None else (True, "", {})
+    events = []
     if not guard_ok:
         result = {"signal": NEUTRAL, "reason": guard_reason, "current": {},
                   "context": {}, "event": None}
     else:
         old = cache.get(mint, [])
+        first_fetch = not old
         last_ts = max((int(row.get("timestamp") or 0) for row in old), default=0)
-        from_ts = max(now_ts - FETCH_HOURS * 3600, last_ts - WASH_WINDOW_SEC * 2)
+        window_start = now_ts - FETCH_HOURS * 3600
+        from_ts = window_start if first_fetch else max(
+            window_start, last_ts - WASH_WINDOW_SEC * 2)
         fresh = fixture if fixture is not None else fetch_raw_trades(
             mint, from_ts=from_ts, to_ts=now_ts)
-        cache[mint] = merge_cache(old, fresh, cutoff_ts=now_ts - FETCH_HOURS * 3600)
+        cache[mint] = merge_cache(old, fresh, cutoff_ts=window_start)
         mc = float((market or {}).get("marketcap") or 0)
         price = float((market or {}).get("price_usd") or 0)
         supply = (mc / price) if mc > 0 and price > 0 else 0.0
-        classified = classify(
-            build_bars(cache[mint], now_ts=now_ts, mc_usd=mc, supply=supply))
+        bars = build_bars(cache[mint], now_ts=now_ts, mc_usd=mc, supply=supply)
+        classified = classify(bars)
+        events = all_events(bars)
         result = {
             "signal": classified["signal"],
             "reason": classified.get("reason") or "",
@@ -389,11 +439,13 @@ def scan_token(mint: str, meta: dict, *, now_ts: int, cache: dict,
             "event": classified.get("event"),
             "event_id": classified.get("event_id"),
             "confidence": "info",
+            "events": events,
         }
 
-    new_state, should_alert = transition(
+    new_state, _legacy_alert = transition(
         token_state, result["signal"], now_ts,
         event_id=result.get("event_id"))
+    new_state, pending = take_new_events(new_state, events)
     current = result.get("current") or {}
     context = result.get("context") or {}
     new_state["structure"] = None
@@ -406,20 +458,34 @@ def scan_token(mint: str, meta: dict, *, now_ts: int, cache: dict,
     state[mint] = new_state
     symbol = str((meta or {}).get("symbol") or mint[:8])
     muted = now_ts < int(new_state.get("muted_until") or 0)
-    if should_alert and send_alerts and not muted:
+    sent = 0
+    if send_alerts and not muted:
         buttons = {"inline_keyboard": [[
             {"text": "🔕 Mute 1h", "callback_data": f"mute1h:{mint}"},
             {"text": "🔇 Mute token", "callback_data": f"mute_token:{mint}"},
             {"text": "📊 Buka chart", "url": f"https://gmgn.ai/sol/token/{mint}"},
         ]]}
-        new_state["alert_sent"] = bool(send_telegram(
-            format_alert(symbol, mint, result, now_ts, structure=verdict),
-            reply_markup=buttons))
-    else:
-        new_state["alert_sent"] = False
+        latest_start = (result.get("event") or {}).get("setup", {}).get("start")
+        for event in pending:
+            bar_start = (event.get("setup") or {}).get("start")
+            historical = bool(bar_start and latest_start
+                              and bar_start != latest_start)
+            payload = {
+                **result,
+                "signal": event.get("signal"),
+                "event": event,
+                "event_id": event.get("event_id"),
+                "historical": historical,
+            }
+            if send_telegram(format_alert(symbol, mint, payload, now_ts),
+                             reply_markup=buttons):
+                sent += 1
+    new_state["alert_sent"] = sent > 0
+    new_state["alerts_sent"] = sent
     return {"mint": mint, "symbol": symbol, "signal": result["signal"],
-            "should_alert": should_alert, "state": new_state["state"],
-            "reason": result.get("reason", "")}
+            "should_alert": bool(pending), "state": new_state["state"],
+            "reason": result.get("reason", ""), "alerts": sent,
+            "pending": len(pending)}
 
 
 def main(argv=None) -> int:
