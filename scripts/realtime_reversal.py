@@ -17,7 +17,7 @@ if ROOT not in sys.path:
 
 from core import get_market
 from cvd import (_fetch_gmgn_page, _first_nested, _gmgn_trade_key,
-                 _normalize_ts)
+                 _normalize_ts, get_gmgn_last_error)
 from links import dexscreener_token_url, gmgn_token_url
 from price_structure import CONFIRMED, HIGHER_LOW
 from reversal_engine import REVERSAL_UP, WASH_WINDOW_SEC, normalize_trade_item
@@ -59,7 +59,8 @@ def fetch_raw_trades(mint: str, *, from_ts: int, to_ts: int,
         page, next_cursor = _fetch_gmgn_page(
             mint, cursor=cursor, limit=100, from_ts=from_ts, to_ts=to_ts)
         if page is None:
-            raise RuntimeError("GMGN fetch gagal sebelum window lengkap")
+            detail = get_gmgn_last_error() or "respons kosong sebelum window lengkap"
+            raise RuntimeError(detail)
         if not page:
             break
         oldest = to_ts
@@ -416,31 +417,45 @@ def scan_token(mint: str, meta: dict, *, now_ts: int, cache: dict,
         result = {"signal": NEUTRAL, "reason": guard_reason, "current": {},
                   "context": {}, "event": None}
     else:
-        old = cache.get(mint, [])
-        first_fetch = not old
-        last_ts = max((int(row.get("timestamp") or 0) for row in old), default=0)
-        window_start = now_ts - FETCH_HOURS * 3600
-        from_ts = window_start if first_fetch else max(
-            window_start, last_ts - WASH_WINDOW_SEC * 2)
-        fresh = fixture if fixture is not None else fetch_raw_trades(
-            mint, from_ts=from_ts, to_ts=now_ts)
-        cache[mint] = merge_cache(old, fresh, cutoff_ts=window_start)
-        mc = float((market or {}).get("marketcap") or 0)
-        price = float((market or {}).get("price_usd") or 0)
-        supply = (mc / price) if mc > 0 and price > 0 else 0.0
-        bars = build_bars(cache[mint], now_ts=now_ts, mc_usd=mc, supply=supply)
-        classified = classify(bars)
-        events = all_events(bars)
-        result = {
-            "signal": classified["signal"],
-            "reason": classified.get("reason") or "",
-            "current": classified.get("current") or {},
-            "context": {},
-            "event": classified.get("event"),
-            "event_id": classified.get("event_id"),
-            "confidence": "info",
-            "events": events,
-        }
+        try:
+            old = cache.get(mint, [])
+            first_fetch = not old
+            last_ts = max((int(row.get("timestamp") or 0) for row in old), default=0)
+            window_start = now_ts - FETCH_HOURS * 3600
+            from_ts = window_start if first_fetch else max(
+                window_start, last_ts - WASH_WINDOW_SEC * 2)
+            fresh = fixture if fixture is not None else fetch_raw_trades(
+                mint, from_ts=from_ts, to_ts=now_ts)
+            cache[mint] = merge_cache(old, fresh, cutoff_ts=window_start)
+            mc = float((market or {}).get("marketcap") or 0)
+            price = float((market or {}).get("price_usd") or 0)
+            supply = (mc / price) if mc > 0 and price > 0 else 0.0
+            bars = build_bars(cache[mint], now_ts=now_ts, mc_usd=mc, supply=supply)
+            classified = classify(bars)
+            events = all_events(bars)
+            result = {
+                "signal": classified["signal"],
+                "reason": classified.get("reason") or "",
+                "current": classified.get("current") or {},
+                "context": {},
+                "event": classified.get("event"),
+                "event_id": classified.get("event_id"),
+                "confidence": "info",
+                "events": events,
+            }
+        except Exception as exc:  # noqa: BLE001 — token stays on the dashboard
+            detail = (get_gmgn_last_error() or "").strip()
+            text = " ".join(str(exc).split())
+            if detail and detail not in text:
+                text = f"{text} ({detail})" if text else detail
+            if len(text) > 280:
+                text = text[:277] + "..."
+            result = {
+                "signal": NEUTRAL,
+                "reason": f"GMGN fetch gagal: {text or type(exc).__name__}",
+                "current": {}, "context": {}, "event": None,
+            }
+            events = []
 
     new_state, _legacy_alert = transition(
         token_state, result["signal"], now_ts,
@@ -535,7 +550,13 @@ def main(argv=None) -> int:
         # Streamlit reads this snapshot via GitHub — Actions cache alone
         # never reached the main watchlist page.
         publish_reversal_status(state, watchlist)
-    return 1 if failed and succeeded == 0 else 0
+    if failed:
+        print(f"scan: {succeeded} token ok; errors logged above "
+              "(job stays green so the dashboard still gets a snapshot)")
+    # Fetch/classify failures are recorded as NETRAL + reason. Never fail
+    # the Actions job: an empty watchlist used to no-op to 0, and a red
+    # scan after adding MOMO hid the token from last_scan_result.
+    return 0
 
 
 if __name__ == "__main__":
