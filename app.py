@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Wallet Depth — dashboard reversal realtime (wash-collapse)."""
+"""Wallet Depth — dashboard SMART SEROK 1H realtime."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -310,8 +310,9 @@ status_tokens = reversal.get("tokens") or {}
 
 st.subheader("📋 Watchlist")
 updated_label = _wib(reversal.get("updated_at"))
-st.caption("Status dari scanner realtime (rolling 6 jam vs 24 jam sebelumnya), "
-           f"bukan candle harian. Terakhir di-scan: {updated_label}. "
+st.caption("Scanner 1H SMART SEROK (🔴 WASPADA DUMP / 🟢 SIAP2 PUMP / ⚔️ BATTLE TERJADI) "
+           "— window 48 jam, bar 1 jam. "
+           f"Terakhir scan: {updated_label}. "
            "Klik muat ulang jika Telegram sudah kirim sinyal baru.")
 refresh_col, _ = st.columns([1, 4])
 if refresh_col.button("🔄 Muat ulang status", use_container_width=True):
