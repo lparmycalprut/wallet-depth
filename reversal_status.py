@@ -40,6 +40,8 @@ WINDOW_KEYS = (
     "unique_makers", "smart_money_buy", "smart_net_sol", "fresh_buy",
     "fresh_buy_sol", "bot_sell", "top_wallet_pct", "top3_wallet_pct",
     "top_wallet_net_sol", "top_wallet_churn_pct",
+    "R", "signedR", "buy_sol", "sell_sol", "fresh_wallets",
+    "fresh_wallet_pct", "bar_start",
 )
 
 SIGNAL_META = {

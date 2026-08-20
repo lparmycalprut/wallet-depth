@@ -60,6 +60,32 @@ class SnapshotTest(unittest.TestCase):
         self.assertEqual(row["context"]["wash_pct"], 10.7)
         self.assertEqual(row["current"]["unique_makers"], 152)
 
+    def test_snapshot_keeps_serok_bar_fields(self):
+        from serok_engine import WASPADA_DUMP
+        now_ts = 1_700_000_000
+        snap = snapshot_status({
+            "_meta": {"updated_at": now_ts, "scanner": "serok-1h-v1"},
+            JLY: {
+                "state": "WASPADA_DUMP_FIRED",
+                "observed_signal": WASPADA_DUMP,
+                "last_scan_ts": now_ts,
+                "result": {
+                    "signal": WASPADA_DUMP, "confidence": "info",
+                    "current": {
+                        "cvd_delta_clean": 22.0, "R": 13.8, "signedR": 13.8,
+                        "buy_sol": 30.0, "sell_sol": 8.0, "bar_start": now_ts,
+                        "fresh_wallets": 4, "fresh_wallet_pct": 12.5,
+                    },
+                    "event": {"signal": WASPADA_DUMP, "ev": {"rMult": 12.5}},
+                },
+            },
+        }, {JLY: {"symbol": "JLY"}})
+        current = snap["tokens"][JLY]["current"]
+        self.assertEqual(current["R"], 13.8)
+        self.assertEqual(current["buy_sol"], 30.0)
+        self.assertEqual(current["bar_start"], now_ts)
+        self.assertEqual(snap["tokens"][JLY]["event"]["ev"]["rMult"], 12.5)
+
     def test_reversals_sort_ahead_of_neutral(self):
         snap = snapshot_status(_jly_state(), {JLY: {"symbol": "JLY"}})
         ordered = sorted(snap["tokens"],
@@ -198,7 +224,7 @@ class WatchlistStatusRenderTest(unittest.TestCase):
         body = "\n".join(block.value for block in app.markdown)
         self.assertIn('class="signal bear">REVERSAL DOWN', body)
         self.assertIn("🟢 KUAT", body)
-        self.assertIn("CVD -18.7 SOL", body)
+        self.assertIn("CVD bersih -18.7", body)
         self.assertIn("wash 1.4%", body)
         self.assertNotIn("SELLER EXHAUSTION", body)
         self.assertNotIn("vs kemarin", body)
