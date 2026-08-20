@@ -11,6 +11,8 @@ from unittest import mock
 
 from reversal_engine import REVERSAL_DOWN, REVERSAL_UP
 from reversal_status import snapshot_status
+from serok_engine import BATTLE, SIAP2_PUMP, WASPADA_DUMP
+from serok_engine import NEUTRAL as SEROK_NEUTRAL
 
 try:  # optional dev dependency
     from streamlit.testing.v1 import AppTest
@@ -22,12 +24,14 @@ MINT = "MintBottom"
 
 
 def _row(signal, *, confidence="watch", current=None, context=None,
-         reason=""):
+         reason="", event=None):
     return snapshot_status({
         "_meta": {"updated_at": 1_700_000_000, "scanner": "rolling-6h-v1"},
         MINT: {
-            "state": f"{signal}_FIRED" if signal.startswith("REVERSAL")
-            else signal,
+            "state": f"{signal}_FIRED" if (
+                signal.startswith("REVERSAL")
+                or signal in (WASPADA_DUMP, SIAP2_PUMP, BATTLE)
+            ) else signal,
             "observed_signal": signal,
             "last_scan_ts": 1_700_000_000,
             "result": {
@@ -35,6 +39,7 @@ def _row(signal, *, confidence="watch", current=None, context=None,
                 "reason": reason,
                 "current": current or {},
                 "context": context or {},
+                "event": event,
             },
         },
     }, {MINT: {"symbol": "TST"}})
@@ -95,6 +100,83 @@ class SignalColumnRenderTest(unittest.TestCase):
         self.assertIn(".signal-detail.dist,", body)
         self.assertIn(".signal-detail.neutral {color:#ffffff !important}",
                       body)
+
+    def test_waspada_dump_shows_r_spike_not_wash_collapse(self):
+        status = _row(
+            WASPADA_DUMP, confidence="info",
+            current={"cvd_delta_clean": 22.0, "wash_pct": 4.0,
+                     "price_chg_pct": 2.1, "tx_count": 40,
+                     "unique_makers": 12, "R": 13.8, "signedR": 13.8,
+                     "bar_start": 1_700_000_000},
+            event={
+                "signal": WASPADA_DUMP,
+                "setup": {"start": 1_700_000_000, "washPct": 4.0,
+                          "txCount": 40, "uniqueMakers": 12,
+                          "cvdClean": 22.0, "price_chg_pct": 2.1},
+                "ev": {"rMult": 12.5, "prevR": 1.1, "setupR": 13.8,
+                       "setupChg": 2.1, "setupCvd": 22.0},
+            })
+        body = self._run(status)
+        self.assertIn('class="signal bear">WASPADA DUMP', body)
+        self.assertIn("R 1.10 → 13.80 (12.5×)", body)
+        self.assertIn("Harga naik + cumCVD naik", body)
+        self.assertIn("CVD +22.0 SOL", body)
+        self.assertIn("40 TX · 12 wallet", body)
+        self.assertNotIn("wash runtuh", body)
+        self.assertNotIn("SBR ", body)
+        self.assertNotIn("smart ", body)
+
+    def test_siap2_pump_shows_down_r_spike(self):
+        status = _row(
+            SIAP2_PUMP, confidence="info",
+            event={
+                "signal": SIAP2_PUMP,
+                "setup": {"start": 1_700_003_600, "txCount": 55,
+                          "uniqueMakers": 18, "cvdClean": -31.2},
+                "ev": {"rMult": 11.0, "prevR": 1.2, "setupR": -13.2,
+                       "setupChg": -8.4, "setupCvd": -31.2},
+            })
+        body = self._run(status)
+        self.assertIn('class="signal bull">SIAP2 PUMP', body)
+        self.assertIn("Harga turun + cumCVD turun", body)
+        self.assertIn("R 1.20 → 13.20 (11.0×)", body)
+        self.assertIn("harga -8.4%", body)
+
+    def test_battle_shows_balance_trigger_and_mc_range(self):
+        status = _row(
+            BATTLE, confidence="info",
+            event={
+                "signal": BATTLE,
+                "setup": {"start": 1_700_007_200, "buySol": 45.2,
+                          "sellSol": 44.8, "txCount": 142,
+                          "uniqueMakers": 61, "freshWallets": 12,
+                          "lowMc": 120_000, "highMc": 145_000,
+                          "price_chg_pct": 0.4},
+                "ev": {"balanceGapPct": 0.89, "txFloor": 80,
+                       "makersFloor": 40, "freshFloor": 5,
+                       "triggerSignal": SIAP2_PUMP,
+                       "triggerStart": 1_700_000_000, "gap": 2,
+                       "rangeLowMc": 120_000, "rangeHighMc": 145_000,
+                       "setupChg": 0.4},
+            })
+        body = self._run(status)
+        self.assertIn('class="signal watch">BATTLE TERJADI', body)
+        self.assertIn("BUY 45.2 vs SELL 44.8 SOL · gap 0.89%", body)
+        self.assertIn("Pemicu SIAP2 PUMP", body)
+        self.assertIn("+2 bar", body)
+        self.assertIn("142 TX (≥80)", body)
+        self.assertIn("61 wallet (≥40)", body)
+        self.assertIn("fresh 12 (≥5)", body)
+        self.assertIn("MC $120.0K — $145.0K", body)
+        self.assertNotIn("wash runtuh", body)
+
+    def test_netral_shows_scanner_reason(self):
+        status = _row(
+            SEROK_NEUTRAL, confidence="info",
+            reason="NETRAL — belum ada WASPADA DUMP / SIAP2 PUMP / BATTLE TERJADI.")
+        body = self._run(status)
+        self.assertIn("NETRAL", body)
+        self.assertIn("belum ada WASPADA DUMP", body)
 
 
 if __name__ == "__main__":  # pragma: no cover

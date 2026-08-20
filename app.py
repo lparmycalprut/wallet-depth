@@ -10,6 +10,8 @@ import streamlit as st
 from links import external_links_html
 from reversal_status import (SIGNAL_META, load_reversal_status,
                              status_sort_key)
+from serok_engine import BATTLE, SIAP2_PUMP, WASPADA_DUMP
+from serok_engine import NEUTRAL as SEROK_NEUTRAL
 from trending_ui import (render_trending, run_screen, run_screen_h1,
                          run_screen_hrhr, run_screen_hrhr_h1)
 from watchlist import (add_to_watchlist, get_last_push_error, load_watchlist,
@@ -208,17 +210,114 @@ def _confidence_badge(row):
     return ""
 
 
-def _signal_detail_html(row):
-    """Narasi sama dengan alert Telegram: konteks, window sekarang, wallet."""
-    if not row:
-        return ('<div class="signal-detail neutral" style="font-size:0.62rem;'
-                'line-height:1.35;font-weight:600;text-align:center;'
-                'margin-top:0.15rem;">Menunggu hasil scanner realtime'
-                '</div>')
-    current = row.get("current") or {}
-    context = row.get("context") or {}
-    signal = row.get("signal") or ""
-    tone = _signal_tone(row)
+def _fmt_mc(value):
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    if n <= 0:
+        return "—"
+    if n >= 1e9:
+        return f"${n / 1e9:.2f}B".replace(".00B", "B")
+    if n >= 1e6:
+        return f"${n / 1e6:.2f}M".replace(".00M", "M")
+    if n >= 1e3:
+        return f"${n / 1e3:.1f}K"
+    return f"${n:.0f}"
+
+
+def _int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _serok_detail_lines(row):
+    """Metrik yang dipakai syarat sinyal 1H (sama ringkasnya dengan Telegram)."""
+    signal = (row or {}).get("signal") or ""
+    event = (row or {}).get("event") or {}
+    ev = event.get("ev") if isinstance(event.get("ev"), dict) else {}
+    bar = event.get("setup") if isinstance(event.get("setup"), dict) else {}
+    current = (row or {}).get("current") or {}
+    lines = []
+
+    if signal == BATTLE:
+        buy = bar.get("buySol", current.get("buy_sol"))
+        sell = bar.get("sellSol", current.get("sell_sol"))
+        lines.append(
+            f"BUY {_number(buy)} vs SELL {_number(sell)} SOL · "
+            f"gap {_number(ev.get('balanceGapPct'), '.2f')}%")
+        trigger = ev.get("triggerSignal") or "—"
+        gap = ev.get("gap")
+        gap_txt = "—" if gap is None else f"+{gap}"
+        lines.append(
+            f"Pemicu {trigger} {_hhmm_wib(ev.get('triggerStart'))} WIB · "
+            f"{gap_txt} bar")
+        tx = _int(bar.get("txCount", current.get("tx_count")))
+        wallets = _int(bar.get("uniqueMakers", current.get("unique_makers")))
+        fresh = _int(bar.get("freshWallets",
+                             current.get("fresh_wallets",
+                                         current.get("fresh_buy"))))
+        lines.append(
+            f"{tx} TX (≥{_int(ev.get('txFloor'))}) · "
+            f"{wallets} wallet (≥{_int(ev.get('makersFloor'))}) · "
+            f"fresh {fresh} (≥{_int(ev.get('freshFloor'))})")
+        low_mc = ev.get("rangeLowMc", bar.get("lowMc"))
+        high_mc = ev.get("rangeHighMc", bar.get("highMc"))
+        if low_mc or high_mc:
+            lines.append(f"MC {_fmt_mc(low_mc)} — {_fmt_mc(high_mc)}")
+        chg = ev.get("setupChg", bar.get("price_chg_pct",
+                                         current.get("price_chg_pct")))
+        if chg is not None:
+            lines.append(f"harga candle {_signed(chg)}%")
+        return lines
+
+    if signal in (WASPADA_DUMP, SIAP2_PUMP):
+        if signal == WASPADA_DUMP:
+            lines.append("Harga naik + cumCVD naik · R ≥10× prev + |R|≥10")
+        else:
+            lines.append("Harga turun + cumCVD turun · R ≥10× prev + |R|≥10")
+        if ev.get("rMult") is not None:
+            try:
+                setup_r = abs(float(ev.get("setupR") or 0))
+            except (TypeError, ValueError):
+                setup_r = 0.0
+            lines.append(
+                f"R {_number(ev.get('prevR'), '.2f')} → "
+                f"{_number(setup_r, '.2f')} "
+                f"({_number(ev.get('rMult'), '.1f')}×)")
+        bar_ts = bar.get("start", current.get("bar_start"))
+        chg = ev.get("setupChg", bar.get("price_chg_pct",
+                                         current.get("price_chg_pct")))
+        cvd = ev.get("setupCvd", bar.get("cvdClean",
+                                         current.get("cvd_delta_clean")))
+        r_now = ev.get("setupR")
+        if r_now is None:
+            r_now = current.get("signedR")
+            if r_now is None:
+                r_now = current.get("R")
+        parts = []
+        if bar_ts:
+            parts.append(f"Bar {_hhmm_wib(bar_ts)} WIB")
+        parts.append(f"harga {_signed(chg)}%")
+        parts.append(f"R {_signed(r_now, '+.2f')}")
+        parts.append(f"CVD {_signed(cvd)} SOL")
+        lines.append(" · ".join(parts))
+        tx = _int(bar.get("txCount", current.get("tx_count")))
+        wallets = _int(bar.get("uniqueMakers", current.get("unique_makers")))
+        if tx or wallets:
+            lines.append(f"{tx} TX · {wallets} wallet")
+        return lines
+
+    return lines
+
+
+def _legacy_reversal_detail_lines(row):
+    """Fallback snapshot lama (REVERSAL UP/DOWN + SBR)."""
+    current = (row or {}).get("current") or {}
+    context = (row or {}).get("context") or {}
+    signal = (row or {}).get("signal") or ""
     lines = []
     context_name = "flush" if signal == "REVERSAL_UP" else (
         "pump" if signal == "REVERSAL_DOWN" else "konteks")
@@ -264,8 +363,7 @@ def _signal_detail_html(row):
                 f"top-3 {_number(current.get('top3_wallet_pct'))}% · "
                 f"net {_signed(current.get('top_wallet_net_sol'))} SOL · "
                 f"churn {_number(current.get('top_wallet_churn_pct'), '.0f')}%")
-    # Baris struktur SBR — penjelasan kenapa alert sudah/belum terkirim.
-    struct = row.get("structure") or {}
+    struct = (row or {}).get("structure") or {}
     if isinstance(struct, dict) and signal in ("REVERSAL_UP", "REVERSAL_DOWN"):
         up = signal == "REVERSAL_UP"
         zone = struct.get("zone") or {}
@@ -291,6 +389,22 @@ def _signal_detail_html(row):
             lines.append(line)
         elif state == "no_zone":
             lines.append("🧱 zona SBR tidak terdefinisi di window 31 jam")
+    return lines
+
+
+def _signal_detail_html(row):
+    """Narasi kolom Detail: syarat + metrik sinyal 1H yang sedang aktif."""
+    if not row:
+        return ('<div class="signal-detail neutral" style="font-size:0.62rem;'
+                'line-height:1.35;font-weight:600;text-align:center;'
+                'margin-top:0.15rem;">Menunggu hasil scanner realtime'
+                '</div>')
+    signal = row.get("signal") or ""
+    tone = _signal_tone(row)
+    if signal in (WASPADA_DUMP, SIAP2_PUMP, BATTLE, SEROK_NEUTRAL):
+        lines = _serok_detail_lines(row)
+    else:
+        lines = _legacy_reversal_detail_lines(row)
     reason = str(row.get("reason") or "").strip()
     if reason:
         lines.append(reason)
