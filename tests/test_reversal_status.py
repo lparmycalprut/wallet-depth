@@ -10,7 +10,7 @@ from unittest import mock
 from reversal_engine import REVERSAL_DOWN, REVERSAL_UP
 from reversal_status import (publish_reversal_status, reset_cache,
                              snapshot_status, status_sort_key)
-from scripts.realtime_reversal import format_alert, format_wallet_lines
+from scripts.realtime_reversal import format_alert
 
 
 JLY = "6fEaYuzirTMXFnFo7dGKHJs8wWVFPdh1bfZL9oRPpump"
@@ -68,15 +68,15 @@ class SnapshotTest(unittest.TestCase):
         self.assertEqual(ordered[0], JLY)
 
     def test_wallet_lines_match_telegram_payload(self):
+        # Legacy format_wallet_lines removed in SEROK migration — verify
+        # that snapshot still keeps wallet depth metrics for dashboard.
         current = _jly_state()[JLY]["result"]["current"]
-        text = format_wallet_lines(current)
-        self.assertIn("152 maker", text)
-        self.assertIn("smart 33 (net jual -3.5 SOL)", text)
-        self.assertIn("fresh 8 (2.9 SOL)", text)
-        self.assertIn("bot-sell 42", text)
-        self.assertIn("top-1 5.9%", text)
-        self.assertIn("churn 0%", text)
-        self.assertIn("terdistribusi", text)
+        self.assertEqual(current["unique_makers"], 152)
+        self.assertEqual(current["smart_money_buy"], 33)
+        self.assertEqual(current["fresh_buy"], 8)
+        self.assertEqual(current["bot_sell"], 42)
+        self.assertAlmostEqual(current["top_wallet_pct"], 5.9)
+        self.assertAlmostEqual(current["top_wallet_churn_pct"], 0.0)
 
     def test_alert_uses_hyperlinks_instead_of_raw_urls(self):
         from serok_engine import WASPADA_DUMP

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Rolling GMGN wash-collapse scanner with transition-only Telegram alerts."""
+"""Rolling SEROK 1H scanner with one-Telegram-per-event_id."""
+
 from __future__ import annotations
 
 import argparse
@@ -16,11 +17,10 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from core import get_market
-from cvd import (_fetch_gmgn_page, _first_nested, _gmgn_trade_key,
+from cvd import (_fetch_gmgn_page, _first_nested,
                  _normalize_ts, get_gmgn_last_error)
 from links import dexscreener_token_url, gmgn_token_url
-from price_structure import CONFIRMED, HIGHER_LOW
-from reversal_engine import REVERSAL_UP, WASH_WINDOW_SEC, normalize_trade_item
+from reversal_engine import WASH_WINDOW_SEC, normalize_trade_item
 from serok_engine import (BATTLE, NEUTRAL, SIAP2_PUMP, WASPADA_DUMP,
                           all_events, build_bars, classify)
 from reversal_state import load_state, save_state, take_new_events, transition
@@ -40,9 +40,6 @@ def _raw_key(raw: dict) -> tuple:
         return ("", "", 0, "")
     explicit = (raw.get("tx_hash") or raw.get("tx_id") or
                 raw.get("signature") or raw.get("hash") or raw.get("id"))
-    # Cached overlap must de-duplicate deterministically even when GMGN omits a
-    # transaction hash (the browser extension can safely use Math.random only
-    # because it processes each API record once).
     identity = str(explicit or (
         f"{trade['maker']}:{trade['event']}:{trade['ts']}:"
         f"{trade['sol']:.12g}:{trade['token']:.12g}"))
@@ -125,8 +122,6 @@ def _market_guards(mint: str, meta: dict, now_ts: int) -> tuple[bool, str, dict]
     try:
         market = get_market(mint) or {}
     except Exception as exc:
-        # Liquidity/age guards are conditional on metadata availability. A
-        # transient DexScreener outage must not suppress GMGN order-flow scans.
         print(f"{mint[:8]}: market metadata unavailable ({type(exc).__name__})")
         market = {}
     minimum = float((meta or {}).get("min_liquidity_usd") or
@@ -185,91 +180,6 @@ def process_telegram_callbacks(state: dict, now_ts: int) -> None:
         state.setdefault("_meta", {})["telegram_update_offset"] = offset
     except Exception as exc:
         print(f"Telegram callback poll failed: {exc}")
-
-
-def _whale_verdict(top_pct: float, churn_pct: float, net_sol: float) -> str:
-    """Short Indonesian read of what the dominant wallet is actually doing."""
-    if top_pct < 25:
-        return "terdistribusi"
-    if churn_pct >= 60:
-        return "muter sendiri"
-    return "akumulasi" if net_sol > 0 else "distribusi"
-
-
-def _confidence_gap(result: dict) -> str:
-    """Explain what is still missing for a watch signal to become strong."""
-    if result.get("confidence") == "strong":
-        return ""
-    current = result.get("current") or {}
-    cvd = float(current.get("cvd_delta_clean") or 0)
-    wash = float(current.get("wash_pct") or 0)
-    need_cvd = 5.0 if result["signal"] == REVERSAL_UP else -5.0
-    gaps = []
-    if (cvd < need_cvd) if result["signal"] == REVERSAL_UP else (cvd > need_cvd):
-        gaps.append(f"CVD bersih {_fmt(cvd, True)} belum {_fmt(need_cvd, True)} SOL")
-    if wash > 3:
-        gaps.append(f"wash {_fmt(wash)}% belum ≤3%")
-    return f" (kurang: {', '.join(gaps)})" if gaps else ""
-
-
-def format_wallet_lines(current: dict) -> str:
-    """Two-line wallet breakdown: quality of buyers, then whale concentration."""
-    smart_n = int(current.get("smart_money_buy") or 0)
-    fresh_n = int(current.get("fresh_buy") or 0)
-    makers = int(current.get("unique_makers") or 0)
-    top_pct = float(current.get("top_wallet_pct") or 0)
-    top3_pct = float(current.get("top3_wallet_pct") or 0)
-    churn = float(current.get("top_wallet_churn_pct") or 0)
-    net = float(current.get("top_wallet_net_sol") or 0)
-    smart_net = float(current.get("smart_net_sol") or 0)
-    fresh_sol = float(current.get("fresh_buy_sol") or 0)
-    bot_sell = int(current.get("bot_sell") or 0)
-    smart_bias = "net beli" if smart_net > 0 else ("net jual" if smart_net < 0 else "flat")
-    return (
-        f"👛 Wallet: {makers} maker · smart {smart_n} ({smart_bias} "
-        f"{_fmt(smart_net, True)} SOL) · fresh {fresh_n} "
-        f"({_fmt(fresh_sol)} SOL) · bot-sell {bot_sell}\n"
-        f"🐋 Whale: top-1 {_fmt(top_pct)}% · top-3 {_fmt(top3_pct)}% · "
-        f"net {_fmt(net, True)} SOL · churn {churn:.0f}% "
-        f"→ {_whale_verdict(top_pct, churn, net)}"
-    )
-
-
-def _fmt_price(value) -> str:
-    """Adaptive significant-digit price for SBR zones (microcap-friendly)."""
-    try:
-        return f"{float(value):.4g}"
-    except (TypeError, ValueError):
-        return "—"
-
-
-def _wib_hhmm(ts) -> str:
-    try:
-        stamp = int(ts)
-    except (TypeError, ValueError):
-        return "--:--"
-    from datetime import timedelta
-    when = datetime.fromtimestamp(stamp, timezone.utc).astimezone(
-        timezone.utc).replace(tzinfo=None) + timedelta(hours=7)
-    return f"{when:%H:%M}"
-
-
-def format_structure_line(structure: dict | None) -> str:
-    """Baris konfirmasi SBR untuk alert (hanya saat struktur CONFIRMED)."""
-    struct = structure if isinstance(structure, dict) else {}
-    zone = struct.get("zone") or {}
-    if struct.get("state") != CONFIRMED or not zone:
-        return ""
-    up = struct.get("side") != "down"
-    if struct.get("low_state") == HIGHER_LOW:
-        tag = "higher-low ✓" if up else "lower-high ✓"
-    else:
-        tag = ""
-    action = (f"ter-reclaim {_wib_hhmm(struct.get('reclaim_ts'))}"
-              if up else f"tertembus {_wib_hhmm(struct.get('reclaim_ts'))}")
-    tail = f" · {tag}" if tag else ""
-    return (f"🧱 SBR {_fmt_price(zone.get('low'))}–"
-            f"{_fmt_price(zone.get('high'))} {action} WIB{tail}")
 
 
 def _fmt_mc(value) -> str:
@@ -503,6 +413,26 @@ def scan_token(mint: str, meta: dict, *, now_ts: int, cache: dict,
             "pending": len(pending)}
 
 
+def _prune_stale_state(state: dict, watchlist: dict) -> None:
+    """Hapus token yang sudah tidak ada di watchlist agar cache tidak bawa masa lalu.
+
+    Ini yang bikin $3PLACE (7K4jGRV7PY1EymiY3jx75JSfi1jjzG7Gh5XHqF2Upump) tetap ke-scan
+    di run 2026-08-19 17:58Z padahal watchlist sudah dibersihkan di PR #110.
+    Kalau token tidak ada di watchlist, kita drop dari state dan cache file.
+    """
+    keep = set(watchlist.keys())
+    for key in list(state.keys()):
+        if key.startswith("_"):
+            continue
+        if key not in keep:
+            state.pop(key, None)
+
+
+def _prune_stale_cache(cache: dict, watchlist: dict) -> dict:
+    keep = set(watchlist.keys())
+    return {k: v for k, v in cache.items() if k in keep}
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--fixture", help="offline GMGN JSON fixture")
@@ -527,9 +457,15 @@ def main(argv=None) -> int:
                                  if fixture is not None else time.time()))
     state = load_state(STATE_PATH) if fixture is None else {}
     cache = load_cache() if fixture is None else {}
+
     if fixture is None:
+        # Bersihkan token lama yang sudah dihapus dari watchlist
+        _prune_stale_state(state, watchlist)
+        cache = _prune_stale_cache(cache, watchlist)
         process_telegram_callbacks(state, now_ts)
-    print(f"Realtime reversal scan @ {datetime.fromtimestamp(now_ts, timezone.utc).isoformat()}")
+
+    print(f"Realtime SEROK 1H scan @ {datetime.fromtimestamp(now_ts, timezone.utc).isoformat()} — "
+          f"{len(watchlist)} token")
     failed = False
     succeeded = 0
     for mint, meta in watchlist.items():
@@ -539,7 +475,7 @@ def main(argv=None) -> int:
                              send_alerts=not args.no_alert)
             succeeded += 1
             print(f"{row['symbol']}: {row['signal']} -> {row['state']} | {row['reason']}")
-        except Exception as exc:  # one token must not abort the watchlist
+        except Exception as exc:
             failed = True
             print(f"{mint[:8]}: ERROR {type(exc).__name__}: {exc}")
     if fixture is None:
@@ -547,15 +483,10 @@ def main(argv=None) -> int:
         state.setdefault("_meta", {}).update(
             updated_at=now_ts, scanner="serok-1h-v1")
         save_state(STATE_PATH, state)
-        # Streamlit reads this snapshot via GitHub — Actions cache alone
-        # never reached the main watchlist page.
         publish_reversal_status(state, watchlist)
     if failed:
         print(f"scan: {succeeded} token ok; errors logged above "
               "(job stays green so the dashboard still gets a snapshot)")
-    # Fetch/classify failures are recorded as NETRAL + reason. Never fail
-    # the Actions job: an empty watchlist used to no-op to 0, and a red
-    # scan after adding MOMO hid the token from last_scan_result.
     return 0
 
 
