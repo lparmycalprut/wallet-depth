@@ -2,7 +2,9 @@
 import json
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from reversal_status import snapshot_status
 from scripts.realtime_reversal import scan_token
 from serok_engine import NEUTRAL, SIAP2_PUMP, WASPADA_DUMP, BATTLE
 
@@ -37,6 +39,54 @@ class SerokScanIntegrationTest(unittest.TestCase):
         self.assertIn(row["signal"],
                       {NEUTRAL, WASPADA_DUMP, SIAP2_PUMP, BATTLE})
         self.assertIn("state", row)
+
+    def test_gmgn_fetch_failure_is_neutral_not_crash(self):
+        mint = "488SaFq6wHF2z2k6NLSD3PtoSkXDNZaPkJwxze11pump"
+        state, cache = {}, {}
+        with mock.patch("scripts.realtime_reversal.fetch_raw_trades",
+                        side_effect=RuntimeError(
+                            "HTTP 403 Cloudflare cf-mitigated=challenge")), \
+                mock.patch("scripts.realtime_reversal._market_guards",
+                           return_value=(True, "", {})), \
+                mock.patch("scripts.realtime_reversal.get_gmgn_last_error",
+                           return_value="HTTP 403 Cloudflare"):
+            row = scan_token(mint, {"symbol": "MOMO"}, now_ts=1_700_000_000,
+                             cache=cache, state=state, send_alerts=False)
+        self.assertEqual(row["signal"], NEUTRAL)
+        self.assertIn("GMGN fetch gagal", row["reason"])
+        self.assertIn("403", row["reason"])
+        self.assertIn(mint, state)
+        self.assertEqual(state[mint]["result"]["signal"], NEUTRAL)
+        snap = snapshot_status(state, {mint: {"symbol": "MOMO"}})
+        self.assertEqual(snap["tokens"][mint]["symbol"], "MOMO")
+        self.assertIn("GMGN fetch gagal", snap["tokens"][mint]["reason"])
+
+    def test_main_exits_0_and_publishes_momo_on_fetch_failure(self):
+        import scripts.realtime_reversal as rr
+
+        mint = "488SaFq6wHF2z2k6NLSD3PtoSkXDNZaPkJwxze11pump"
+        with mock.patch.object(rr, "load_watchlist",
+                               return_value={mint: {"symbol": "MOMO"}}), \
+                mock.patch.object(rr, "load_state", return_value={}), \
+                mock.patch.object(rr, "load_cache", return_value={}), \
+                mock.patch.object(rr, "save_cache"), \
+                mock.patch.object(rr, "save_state"), \
+                mock.patch.object(rr, "process_telegram_callbacks"), \
+                mock.patch.object(rr, "publish_reversal_status") as publish, \
+                mock.patch.object(rr, "fetch_raw_trades",
+                                  side_effect=RuntimeError(
+                                      "HTTP 403 Cloudflare")), \
+                mock.patch.object(rr, "_market_guards",
+                                  return_value=(True, "", {})), \
+                mock.patch.object(rr, "get_gmgn_last_error",
+                                  return_value="HTTP 403 Cloudflare"):
+            rc = rr.main(["--no-alert"])
+        self.assertEqual(rc, 0)
+        publish.assert_called_once()
+        published = publish.call_args.args[0]
+        self.assertIn(mint, published)
+        self.assertEqual(published[mint]["result"]["signal"], NEUTRAL)
+        self.assertIn("GMGN fetch gagal", published[mint]["result"]["reason"])
 
 
 if __name__ == "__main__":

@@ -62,6 +62,8 @@ def _quote_rates() -> dict:
 
 GMGN_TRADES_URL = "https://gmgn.ai/vas/api/v1/token_trades/sol/{ca}"
 GMGN_PAGE_LIMIT = 100
+# Match a current Chrome so the requests fallback is not obviously
+# a Python client. curl_cffi impersonate overwrites UA / sec-ch-ua.
 GMGN_HEADERS = {
     "accept": "application/json, text/plain, */*",
     "accept-language": "en-US,en;q=0.9,id;q=0.8",
@@ -69,15 +71,31 @@ GMGN_HEADERS = {
     "referer": "https://gmgn.ai/",
     "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                   "Chrome/150.0.0.0 Safari/537.36"),
-    "sec-ch-ua": ('"Not;A=Brand";v="8", "Chromium";v="150", '
-                  '"Google Chrome";v="150"'),
+                   "Chrome/146.0.0.0 Safari/537.36"),
+    "sec-ch-ua": ('"Chromium";v="146", "Not-A.Brand";v="24", '
+                  '"Google Chrome";v="146"'),
     "sec-ch-ua-mobile": "?0",
     "sec-ch-ua-platform": '"Windows"',
     "sec-fetch-dest": "empty",
     "sec-fetch-mode": "cors",
     "sec-fetch-site": "same-origin",
 }
+# Latest alias first, then pinned profiles. Unknown names are skipped
+# at runtime so an older curl_cffi on the runner still works.
+GMGN_IMPERSONATE = (
+    "chrome",
+    "chrome136",
+    "chrome131",
+    "safari184",
+    "safari17_0",
+    "firefox133",
+)
+_IMPERSONATE_OWNED_HEADERS = {
+    "user-agent", "sec-ch-ua", "sec-ch-ua-mobile", "sec-ch-ua-platform",
+}
+# HTTP statuses that often mean "try another JA3 / wait and retry"
+# rather than a permanent application error.
+_GMGN_RETRY_STATUSES = {403, 408, 425, 429, 500, 502, 503, 504}
 # ``error`` is reserved for an actual transport/API/mapping failure.
 # A successful empty page (quiet token) is not an error: callers may still
 # safely calculate a window from already-stored swaps.  Keeping the outcome
@@ -428,42 +446,112 @@ def _gmgn_cursor(payload, trades) -> str | None:
     return str(cur) if cur else None
 
 
-def _gmgn_http_get(url: str, *, params: dict, timeout: int):
+def _gmgn_request_headers(ca: str | None = None) -> dict:
+    """Browser-shaped headers; per-token Referer matches the live web client."""
+    headers = dict(GMGN_HEADERS)
+    token = str(ca or "").strip()
+    if token:
+        headers["referer"] = f"https://gmgn.ai/sol/token/{token}"
+    return headers
+
+
+def _headers_for_impersonate(headers: dict) -> dict:
+    """Drop UA / Client-Hints so curl_cffi can set ones that match JA3."""
+    return {key: value for key, value in (headers or {}).items()
+            if str(key).lower() not in _IMPERSONATE_OWNED_HEADERS}
+
+
+def _compact_exc(exc: BaseException) -> str:
+    text = " ".join(f"{type(exc).__name__}: {exc}".split())
+    return text if len(text) <= 240 else text[:237] + "..."
+
+
+def _describe_gmgn_http(response) -> str:
+    """Human-readable HTTP failure: status, Cloudflare markers, short body."""
+    status = getattr(response, "status_code", None)
+    parts = [f"HTTP {status}"]
+    try:
+        raw_headers = dict(getattr(response, "headers", {}) or {})
+    except Exception:
+        raw_headers = {}
+    lowered = {str(key).lower(): str(value) for key, value in raw_headers.items()}
+    mitigated = lowered.get("cf-mitigated")
+    if mitigated:
+        parts.append(f"cf-mitigated={mitigated}")
+    server = lowered.get("server") or ""
+    if "cloudflare" in server.lower():
+        parts.append("Cloudflare")
+    try:
+        compact = " ".join((getattr(response, "text", None) or "")[:160].split())
+        if compact and "<html" not in compact.lower() and "<!doctype" not in compact.lower():
+            parts.append(compact)
+    except Exception:
+        pass
+    return " ".join(parts)
+
+
+def _gmgn_http_get(url: str, *, params: dict, timeout: int, headers=None):
     """GET GMGN with browser TLS, then a normal-requests fallback.
 
     ``curl_cffi`` can be installed but fail at runtime (unsupported browser
     profile, OpenSSL issue, or a transient TLS reset).  The old fallback ran
     only when the package was absent, so a runtime curl failure made every
     GMGN fetch fail without even trying the ordinary HTTP client.
+
+    A 403/429 from one impersonate profile is not final: Cloudflare often
+    rejects one JA3 and allows the next. Only after every profile (and the
+    plain ``requests`` client) fail do we surface the error.
     """
+    headers = headers or GMGN_HEADERS
     curl_error = None
+    blocked = None
     try:
         from curl_cffi import requests as cr
     except Exception as exc:  # broken optional install must not block fallback
         cr = None
         curl_error = exc
     if cr is not None:
-        for imp in ("chrome", "chrome131", "safari17_0"):
+        impersonate_headers = _headers_for_impersonate(headers)
+        for imp in GMGN_IMPERSONATE:
             try:
-                return cr.get(url, params=params, headers=GMGN_HEADERS,
-                              impersonate=imp, timeout=timeout)
+                response = cr.get(
+                    url, params=params, headers=impersonate_headers,
+                    impersonate=imp, timeout=timeout)
             except Exception as exc:  # noqa: BLE001
                 curl_error = exc
+                continue
+            status = getattr(response, "status_code", None)
+            if status == 200:
+                return response
+            if status in _GMGN_RETRY_STATUSES:
+                blocked = response
+                continue
+            return response
+        if blocked is not None:
+            try:
+                fallback = requests.get(
+                    url, params=params, headers=headers, timeout=timeout)
+            except Exception as exc:
+                curl_error = curl_error or exc
+                return blocked
+            if getattr(fallback, "status_code", None) == 200:
+                return fallback
+            return fallback if getattr(fallback, "status_code", None) else blocked
     try:
-        return requests.get(url, params=params, headers=GMGN_HEADERS,
+        return requests.get(url, params=params, headers=headers,
                             timeout=timeout)
     except Exception as exc:
         if curl_error is not None:
             raise RuntimeError(
-                f"browser TLS failed ({type(curl_error).__name__}: "
-                f"{curl_error}); requests fallback failed "
-                f"({type(exc).__name__}: {exc})") from exc
+                f"browser TLS failed ({_compact_exc(curl_error)}); "
+                f"requests fallback failed ({_compact_exc(exc)})") from exc
         raise
 
 
 def _fetch_gmgn_page(ca: str, *, cursor=None, limit=GMGN_PAGE_LIMIT,
                      timeout=25, retries=3, from_ts=None, to_ts=None):
     url = GMGN_TRADES_URL.format(ca=ca)
+    headers = _gmgn_request_headers(ca)
     params = _gmgn_build_params()
     params["limit"] = max(1, min(int(limit or GMGN_PAGE_LIMIT), 100))
     if cursor:
@@ -474,13 +562,25 @@ def _fetch_gmgn_page(ca: str, *, cursor=None, limit=GMGN_PAGE_LIMIT,
         params["to"] = int(to_ts)
     delay = 0.5
     last = ""
+    dropped_range = False
     for _ in range(retries):
         try:
-            r = _gmgn_http_get(url, params=params, timeout=timeout)
+            r = _gmgn_http_get(url, params=params, timeout=timeout,
+                               headers=headers)
             status = getattr(r, "status_code", None)
             if status != 200:
-                last = f"HTTP {status}"
-                if status in (408, 425, 429) or (status and status >= 500):
+                last = _describe_gmgn_http(r)
+                retryable = status in _GMGN_RETRY_STATUSES or (
+                    status and status >= 500)
+                drop_range = (
+                    status in (400, 422) and not dropped_range
+                    and ("from" in params or "to" in params))
+                if drop_range:
+                    params.pop("from", None)
+                    params.pop("to", None)
+                    dropped_range = True
+                    continue
+                if retryable:
                     time.sleep(delay)
                     delay *= 2
                     continue
@@ -492,12 +592,19 @@ def _fetch_gmgn_page(ca: str, *, cursor=None, limit=GMGN_PAGE_LIMIT,
                 if code not in (None, 0, "0", "success"):
                     msg = payload.get("message") or payload.get("msg") or code
                     last = f"api code={code} {msg}"
+                    if not dropped_range and ("from" in params or "to" in params):
+                        # ``from``/``to`` are not always accepted; the scanner
+                        # already filters the window client-side.
+                        params.pop("from", None)
+                        params.pop("to", None)
+                        dropped_range = True
+                        continue
                     _set_gmgn_error(f"GMGN Trades API returned {last}.")
                     return None, None
             trades = _find_trade_list(payload)
             return trades, _gmgn_cursor(payload, trades)
         except Exception as exc:  # noqa: BLE001
-            last = f"{type(exc).__name__}: {exc}"
+            last = _compact_exc(exc)
             time.sleep(delay)
             delay *= 2
     _set_gmgn_error(f"GMGN Trades API fetch failed: {last or 'no response'}.")
