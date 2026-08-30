@@ -14,7 +14,7 @@ import streamlit as st
 
 from gmgn_screener import (screen, screen_hrhr, screen_hrhr_h1,
                            screen_trending_h1)
-from links import (CVD_PAGE_PATH, cvd_shortcut_query, external_links_html)
+from links import CVD_PAGE_PATH, external_links_html
 from silent_accumulation import (FILTER_LP, FILTER_OPTIONS, FILTER_PUMPDUMP,
                                  FILTER_SILENT, apply_filters, enrich_rows,
                                  filter_counts, holder_filter_match)
@@ -55,8 +55,9 @@ st.markdown("""
 
 def _navigate_to_cvd(ca: str):
     """Preselect *ca* on the CVD page via session + query params."""
-    st.session_state["effort_mint"] = str(ca or "")
-    st.switch_page(f"{CVD_PAGE_PATH}{cvd_shortcut_query(ca)}")
+    ca = str(ca or "")
+    st.session_state["effort_mint"] = ca
+    st.switch_page(CVD_PAGE_PATH, query_params={"mint": ca})
 
 
 def _compact(value):

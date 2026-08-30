@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 import csv
 import io
+import re
 
 import matplotlib.pyplot as plt
 import streamlit as st
@@ -34,6 +35,17 @@ EXPORT_COLUMNS = [
     "top_wallet_pct", "unique_makers", "smart_money_buy", "fresh_buy",
     "bot_sell", "mev_noise",
 ]
+
+# Solana addresses are base58 (no 0/O/I/l) and 32-44 chars.
+SOLANA_CA_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+
+
+def _normalize_ca(value) -> str:
+    return str(value or "").strip()
+
+
+def _valid_solana_ca(value) -> bool:
+    return bool(SOLANA_CA_RE.match(_normalize_ca(value)))
 
 
 def _status_summary(mint, token):
@@ -101,12 +113,37 @@ mints = list(watchlist)
 
 query_mint = str(st.query_params.get("mint") or "") if "mint" in st.query_params else ""
 session_mint = st.session_state.get("effort_mint") or ""
-candidate = query_mint or session_mint
+# Session state wins over the URL: switching from the selectbox keeps the
+# user's most recent choice even if the old mint remains in the URL.
+candidate = session_mint or query_mint
 selected = candidate if candidate in mints else (candidate or (mints[0] if mints else ""))
 
+# --- Cek CVD manual: input CA apa pun, tanpa harus ada di watchlist. ---------
+with st.expander("🔍 Cek CVD manual — input CA", expanded=not bool(selected)):
+    st.caption("Tempel contract address (CA) Solana untuk cek CVD/flow token "
+               "apa pun. Token tidak harus ada di watchlist; fetch manual "
+               "hanya menulis data harian.")
+    with st.form("manual-ca-form"):
+        ca_input = st.text_input(
+            "Contract address (CA)",
+            placeholder="So11111111111111111111111111111111111111112",
+        )
+        submitted = st.form_submit_button("🔍 Cek CVD", type="primary")
+    if submitted:
+        manual_ca = _normalize_ca(ca_input)
+        if not manual_ca:
+            st.warning("Masukkan contract address terlebih dahulu.")
+        elif not _valid_solana_ca(manual_ca):
+            st.warning("Format CA Solana tidak valid. Gunakan address "
+                       "base58 sepanjang 32–44 karakter.")
+        else:
+            st.session_state["effort_mint"] = manual_ca
+            st.query_params["mint"] = manual_ca
+            st.rerun()
+
 if not selected:
-    st.info("Belum ada token dipilih. Tambahkan token ke watchlist atau "
-            "gunakan shortcut 📊 dari halaman utama.")
+    st.info("Belum ada token dipilih. Tambahkan token ke watchlist, "
+            "gunakan shortcut 📊 dari halaman utama, atau ketik CA di atas.")
     st.stop()
 
 st.session_state["effort_mint"] = selected
