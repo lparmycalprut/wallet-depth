@@ -7,7 +7,7 @@ from unittest import mock
 
 import scripts.update_cvd as uc
 from cvd_daily import MARKET_TZ
-from effort_detector import daily_effort_record
+from daily_store import daily_effort_record
 
 
 def _swap(timestamp):
@@ -180,13 +180,14 @@ class ManualRefreshTest(unittest.TestCase):
         self.assertIn("success", stages)
         self.assertNotIn("error", stages)
 
-    def test_manual_refresh_does_not_send_telegram(self):
-        # update_cvd tidak lagi mengimpor send_telegram; patch transportnya
-        # langsung supaya kebocoran alert harian tetap ketangkap di sini.
-        with mock.patch("signals.send_telegram") as send:
-            res = self._run([_swap(1)])
-            self.assertTrue(res["ok"])
-            send.assert_not_called()
+    def test_manual_refresh_has_no_telegram_or_signal(self):
+        # Pipelines harian tidak boleh menyentuh transport/alert sinyal.
+        self.assertFalse(hasattr(uc, "send_telegram"))
+        self.assertFalse(hasattr(uc, "ALERT_SIGNALS"))
+        res = self._run([_swap(1)])
+        self.assertTrue(res["ok"])
+        self.assertNotIn("alert_sent", res)
+        self.assertNotIn("signal", str(res.get("result") or {}))
 
     def test_supply_from_market_passed_to_build_effort_rows(self):
         # supply = marketcap/price = 2.000.000/2.0 — untuk marketcap_close
@@ -304,15 +305,12 @@ class DateRangeRefreshTest(unittest.TestCase):
             start_date=start_date, end_date=end_date, path=self.path)
 
     def test_date_range_success_and_no_telegram(self):
-        # update_cvd tidak lagi mengimpor send_telegram; patch transportnya
-        # langsung supaya kebocoran alert harian tetap ketangkap di sini.
-        with mock.patch("signals.send_telegram") as send:
-            res = self._run_range([_swap(1)], "2026-08-10", "2026-08-14")
-            self.assertTrue(res["ok"])
-            self.assertEqual(res["source"], "gmgn")
-            self.assertEqual(res["start_date"], "2026-08-10")
-            self.assertEqual(res["end_date"], "2026-08-14")
-            send.assert_not_called()
+        self.assertFalse(hasattr(uc, "send_telegram"))
+        res = self._run_range([_swap(1)], "2026-08-10", "2026-08-14")
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["source"], "gmgn")
+        self.assertEqual(res["start_date"], "2026-08-10")
+        self.assertEqual(res["end_date"], "2026-08-14")
 
     def test_date_range_is_idempotent(self):
         first = self._run_range([_swap(1)], "2026-08-10", "2026-08-14")

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Wallet Depth — dashboard SMART SEROK 1H realtime."""
+"""Wallet Depth — Silent Accumulation 12 jam + holder real vs dust."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -8,23 +8,21 @@ import html
 import streamlit as st
 
 from links import external_links_html
-from reversal_status import (SIGNAL_META, load_reversal_status,
-                             status_sort_key)
-from serok_engine import BATTLE, SIAP2_PUMP, WASPADA_DUMP
-from serok_engine import NEUTRAL as SEROK_NEUTRAL
+from silent_accumulation import (DUST_LIMIT_USD, analyze_token)
+from silent_status import (load_silent_status, publish_silent_status)
 from trending_ui import (render_trending, run_screen, run_screen_h1,
-                         run_screen_hrhr, run_screen_hrhr_h1)
+                         run_screen_hrhr, run_screen_hrhr_h1,
+                         scan_with_analysis)
 from watchlist import (add_to_watchlist, get_last_push_error, load_watchlist,
                        remove_from_watchlist)
 
-st.set_page_config(page_title="Wallet Depth — SMART SEROK",
-                   page_icon="⚡", layout="wide",
+st.set_page_config(page_title="Wallet Depth — Silent Accumulation 12H",
+                   page_icon="🔇", layout="wide",
                    initial_sidebar_state="collapsed")
 
 st.markdown("""
 <style>
-.main .block-container {max-width: 1240px; padding-top: 1.5rem;}
-/* Base: semua teks hitam agar terbaca di background terang */
+.main .block-container {max-width: 1280px; padding-top: 1.5rem;}
 html, body, p, span, div, label, li, td, th,
 h1, h2, h3, h4, h5, h6 {color:#000000;}
 [data-testid="stCaptionContainer"],
@@ -36,120 +34,36 @@ h1, h2, h3, h4, h5, h6 {color:#000000;}
  margin-bottom:1.2rem}
 .hero h1, .hero p, .hero {color:#ffffff;}
 .hero h1 {font-size:2rem;margin:0 0 .4rem}.hero p{color:#ffffff;margin:0}
-.signal {display:inline-block;padding:.28rem .58rem;border-radius:8px;
- font-size:.8rem;font-weight:800}.bull{background:#14532d;color:#dcfce7}
-.rev{background:#4c1d95;color:#ede9fe}.aku{background:#1e3a8a;color:#dbeafe}
-.bear{background:#7f1d1d;color:#fee2e2}.neutral{background:#334155;color:#e2e8f0}
-.watch{background:#854d0e;color:#fef9c3}
-.metric-label{font-size:.72rem;color:#000000;text-transform:uppercase;
- letter-spacing:.04em}.metric-value{font-size:1rem;font-weight:750}
-div[data-testid="stHorizontalBlock"]{align-items:center}
-
-/* Watchlist row styling */
-.watchlist-row {
-    display: flex;
-    align-items: center;
-    padding: 0.75rem 0;
-    border-bottom: 1px solid #cbd5e1;
-}
-.watchlist-token {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-}
-.watchlist-symbol {
-    font-size: 1.1rem;
-    font-weight: 800;
-    color: #000000;
-}
-.watchlist-mint {
-    font-size: 0.75rem;
-    color: #000000;
-    font-family: monospace;
-}
-.watchlist-links {
-    display: flex;
-    gap: 0.5rem;
-    margin-top: 0.25rem;
-}
-.watchlist-links a {
-    font-size: 0.75rem;
-    color: #1d4ed8;
-    font-weight: 600;
-    text-decoration: none;
-}
-.watchlist-links a:hover {
-    color: #000000;
-    text-decoration: underline;
-}
-.watchlist-metric {
-    text-align: center;
-}
-.watchlist-metric-label {
-    font-size: 0.65rem;
-    color: #000000;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-}
-.watchlist-metric-value {
-    font-size: 0.95rem;
-    font-weight: 700;
-    color: #000000;
-}
-.watchlist-metric-sub {
-    font-size: 0.65rem;
-    color: #000000;
-}
-.status-badge {
-    display: inline-block;
-    padding: 0.2rem 0.5rem;
-    border-radius: 8px;
-    font-size: 0.7rem;
-    font-weight: 700;
-    margin-top: 0.25rem;
-}
-.badge-warning {background:#7f1d1d;color:#fee2e2}
-.badge-info {background:#334155;color:#e2e8f0}
-.badge-neutral {background:#e2e8f0;color:#000000}
-.badge-watch {background:#854d0e;color:#fef9c3}
-.badge-strong {background:#14532d;color:#dcfce7}
-.dist{background:#9a3412;color:#ffedd5}
-/* Detail sinyal selalu putih agar terbaca di background badge. */
-.signal-detail,
-.signal-detail.bull,
-.signal-detail.rev,
-.signal-detail.aku,
-.signal-detail.dist,
-.signal-detail.bear,
-.signal-detail.watch,
-.signal-detail.neutral {color:#ffffff !important}
+.silent-badge {display:inline-block;padding:.28rem .58rem;border-radius:8px;
+ font-size:.78rem;font-weight:800}
+.silent-yes {background:#14532d;color:#dcfce7}
+.silent-buy {background:#1e3a8a;color:#dbeafe}
+.silent-sell {background:#7f1d1d;color:#fee2e2}
+.silent-none {background:#e2e8f0;color:#000000}
+.watchlist-row {display:flex;align-items:center;padding:.75rem 0;
+ border-bottom:1px solid #cbd5e1;}
+.watchlist-token {display:flex;flex-direction:column;gap:.25rem;}
+.watchlist-symbol {font-size:1.1rem;font-weight:800;color:#000000;}
+.watchlist-mint {font-size:.75rem;color:#000000;font-family:monospace;}
+.watchlist-links {display:flex;gap:.5rem;margin-top:.25rem;}
+.watchlist-links a {font-size:.75rem;color:#1d4ed8;font-weight:600;
+ text-decoration:none;}
+.watchlist-links a:hover {color:#000000;text-decoration:underline;}
+.watchlist-metric {text-align:center;}
+.watchlist-metric-label {font-size:.65rem;color:#000000;text-transform:uppercase;
+ letter-spacing:.04em;}
+.watchlist-metric-value {font-size:.95rem;font-weight:700;color:#000000;}
+.watchlist-metric-sub {font-size:.65rem;color:#000000;}
 </style>
-<div class="hero"><h1>⚡ Wallet Depth</h1>
-<p>Scanner 1H SMART SEROK: 🔴 WASPADA DUMP, 🟢 SIAP2 PUMP, ⚔️ BATTLE TERJADI.
-Status watchlist mengikuti scan GitHub Actions (tiap ~15 menit).</p></div>
+<div class="hero"><h1>🔇 Wallet Depth</h1>
+<p>Fokus: silent accumulation 12 jam terakhir + perbandingan real holder
+(&gt;$10 value) vs dust holder, serta berapa % marketcap yang dipegang dust.</p></div>
 """, unsafe_allow_html=True)
 
 
-def _signal_tone(row):
-    signal = (row or {}).get("signal") or ""
-    meta = SIGNAL_META.get(signal)
-    if meta:
-        return meta.get("tone") or "neutral"
-    return "neutral"
-
-
-def _signal_badge(row):
-    if not row:
-        return ('<span class="signal neutral">—</span>'
-                '<br><span class="status-badge badge-info">'
-                '⚠️ BELUM ADA SCAN</span>')
-    signal = row.get("signal") or "NEUTRAL"
-    meta = SIGNAL_META.get(signal) or {}
-    css = meta.get("tone") or "neutral"
-    label = meta.get("label") or signal
-    return f'<span class="signal {css}">{html.escape(label)}</span>'
-
-
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 def _number(value, pattern=".1f"):
     if value is None:
         return "—"
@@ -159,13 +73,26 @@ def _number(value, pattern=".1f"):
         return "—"
 
 
-def _signed(value, pattern="+.1f", suffix=""):
+def _signed(value, pattern="+.1f"):
     if value is None:
         return "—"
     try:
-        return format(float(value), pattern) + suffix
+        return format(float(value), pattern)
     except (TypeError, ValueError):
         return "—"
+
+
+def _compact(value, signed=False):
+    try:
+        n = float(value or 0)
+    except (TypeError, ValueError):
+        return "—"
+    sign = "+" if signed and n > 0 else ""
+    if abs(n) >= 1e6:
+        return f"{sign}${n / 1e6:.2f}M"
+    if abs(n) >= 1e3:
+        return f"{sign}${n / 1e3:.1f}K"
+    return f"{sign}${n:,.0f}"
 
 
 def _wib(ts):
@@ -179,269 +106,79 @@ def _wib(ts):
     return when.strftime("%d %b %H:%M") + " WIB"
 
 
-def _price(value):
-    try:
-        return f"{float(value):.4g}"
-    except (TypeError, ValueError):
+def _silent_badge(token):
+    """Badge status 12 jam dari snapshot status token."""
+    token = token or {}
+    silent = token.get("silent") or {}
+    flow = token.get("flow") or {}
+    if silent.get("silent"):
+        return '<span class="silent-badge silent-yes">🔇 SILENT ACCUMULATION</span>'
+    net = flow.get("net_usd")
+    if net is not None and float(net) < 0:
+        return '<span class="silent-badge silent-sell">➖ DISTRIBUSI 12J</span>'
+    if net is not None and float(net) > 0:
+        return '<span class="silent-badge silent-buy">➕ NET BELI 12J</span>'
+    return '<span class="silent-badge silent-none">BELUM ADA DATA</span>'
+
+
+def _dust_pct(token):
+    holders = (token or {}).get("holders") or {}
+    pct = holders.get("dust_pct_mc")
+    if pct is None:
         return "—"
+    return f"{float(pct):.2f}%"
 
 
-def _hhmm_wib(ts):
-    try:
-        when = datetime.fromtimestamp(int(ts), timezone.utc) + timedelta(hours=7)
-    except (TypeError, ValueError, OSError, OverflowError):
-        return "--:--"
-    return when.strftime("%H:%M")
-
-
-def _confidence_badge(row):
-    if not row:
-        return ""
-    # WATCH (armed): sinyal flow lolos tapi struktur belum konfirmasi →
-    # tidak ada alert Telegram, jadi badge KUAT tidak boleh tampil.
-    if row.get("state") == "WATCH" and (row.get("signal") or "").startswith("REVERSAL"):
-        return ('<br><span class="status-badge badge-watch">'
-                '🟡 WATCH · menunggu struktur</span>')
-    confidence = row.get("confidence") or ""
-    if confidence == "strong":
-        return '<br><span class="status-badge badge-strong">🟢 KUAT</span>'
-    if confidence == "watch":
-        return '<br><span class="status-badge badge-watch">🟡 WATCH</span>'
-    return ""
-
-
-def _fmt_mc(value):
-    try:
-        n = float(value)
-    except (TypeError, ValueError):
-        return "—"
-    if n <= 0:
-        return "—"
-    if n >= 1e9:
-        return f"${n / 1e9:.2f}B".replace(".00B", "B")
-    if n >= 1e6:
-        return f"${n / 1e6:.2f}M".replace(".00M", "M")
-    if n >= 1e3:
-        return f"${n / 1e3:.1f}K"
-    return f"${n:.0f}"
-
-
-def _int(value, default=0):
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _serok_detail_lines(row):
-    """Metrik yang dipakai syarat sinyal 1H (sama ringkasnya dengan Telegram)."""
-    signal = (row or {}).get("signal") or ""
-    event = (row or {}).get("event") or {}
-    ev = event.get("ev") if isinstance(event.get("ev"), dict) else {}
-    bar = event.get("setup") if isinstance(event.get("setup"), dict) else {}
-    current = (row or {}).get("current") or {}
-    lines = []
-
-    if signal == BATTLE:
-        buy = bar.get("buySol", current.get("buy_sol"))
-        sell = bar.get("sellSol", current.get("sell_sol"))
-        lines.append(
-            f"BUY {_number(buy)} vs SELL {_number(sell)} SOL · "
-            f"gap {_number(ev.get('balanceGapPct'), '.2f')}%")
-        trigger = ev.get("triggerSignal") or "—"
-        gap = ev.get("gap")
-        gap_txt = "—" if gap is None else f"+{gap}"
-        lines.append(
-            f"Pemicu {trigger} {_hhmm_wib(ev.get('triggerStart'))} WIB · "
-            f"{gap_txt} bar")
-        tx = _int(bar.get("txCount", current.get("tx_count")))
-        wallets = _int(bar.get("uniqueMakers", current.get("unique_makers")))
-        fresh = _int(bar.get("freshWallets",
-                             current.get("fresh_wallets",
-                                         current.get("fresh_buy"))))
-        lines.append(
-            f"{tx} TX (≥{_int(ev.get('txFloor'))}) · "
-            f"{wallets} wallet (≥{_int(ev.get('makersFloor'))}) · "
-            f"fresh {fresh} (≥{_int(ev.get('freshFloor'))})")
-        low_mc = ev.get("rangeLowMc", bar.get("lowMc"))
-        high_mc = ev.get("rangeHighMc", bar.get("highMc"))
-        if low_mc or high_mc:
-            lines.append(f"MC {_fmt_mc(low_mc)} — {_fmt_mc(high_mc)}")
-        chg = ev.get("setupChg", bar.get("price_chg_pct",
-                                         current.get("price_chg_pct")))
-        if chg is not None:
-            lines.append(f"harga candle {_signed(chg)}%")
-        return lines
-
-    if signal in (WASPADA_DUMP, SIAP2_PUMP):
-        if signal == WASPADA_DUMP:
-            lines.append("Harga naik + cumCVD naik · R ≥10× prev + |R|≥10")
-        else:
-            lines.append("Harga turun + cumCVD turun · R ≥10× prev + |R|≥10")
-        if ev.get("rMult") is not None:
-            try:
-                setup_r = abs(float(ev.get("setupR") or 0))
-            except (TypeError, ValueError):
-                setup_r = 0.0
-            lines.append(
-                f"R {_number(ev.get('prevR'), '.2f')} → "
-                f"{_number(setup_r, '.2f')} "
-                f"({_number(ev.get('rMult'), '.1f')}×)")
-        bar_ts = bar.get("start", current.get("bar_start"))
-        chg = ev.get("setupChg", bar.get("price_chg_pct",
-                                         current.get("price_chg_pct")))
-        cvd = ev.get("setupCvd", bar.get("cvdClean",
-                                         current.get("cvd_delta_clean")))
-        r_now = ev.get("setupR")
-        if r_now is None:
-            r_now = current.get("signedR")
-            if r_now is None:
-                r_now = current.get("R")
-        parts = []
-        if bar_ts:
-            parts.append(f"Bar {_hhmm_wib(bar_ts)} WIB")
-        parts.append(f"harga {_signed(chg)}%")
-        parts.append(f"R {_signed(r_now, '+.2f')}")
-        parts.append(f"CVD {_signed(cvd)} SOL")
-        lines.append(" · ".join(parts))
-        tx = _int(bar.get("txCount", current.get("tx_count")))
-        wallets = _int(bar.get("uniqueMakers", current.get("unique_makers")))
-        if tx or wallets:
-            lines.append(f"{tx} TX · {wallets} wallet")
-        return lines
-
-    return lines
-
-
-def _legacy_reversal_detail_lines(row):
-    """Fallback snapshot lama (REVERSAL UP/DOWN + SBR)."""
-    current = (row or {}).get("current") or {}
-    context = (row or {}).get("context") or {}
-    signal = (row or {}).get("signal") or ""
-    lines = []
-    context_name = "flush" if signal == "REVERSAL_UP" else (
-        "pump" if signal == "REVERSAL_DOWN" else "konteks")
-    if context:
-        lines.append(
-            f"{context_name.capitalize()} "
-            f"{_signed(context.get('cvd_delta_clean'))} SOL · wash "
-            f"{_number(context.get('wash_pct'))}%")
-    if current:
-        prior_wash = context.get("wash_pct")
-        now_wash = current.get("wash_pct")
-        collapse = ""
-        try:
-            if prior_wash and float(prior_wash) > 0 and now_wash is not None:
-                pct = 100 * (1 - float(now_wash) / float(prior_wash))
-                collapse = f" (runtuh {pct:.0f}%)"
-        except (TypeError, ValueError, ZeroDivisionError):
-            collapse = ""
-        lines.append(
-            f"CVD bersih {_signed(current.get('cvd_delta_clean'))} · "
-            f"wash {_number(now_wash)}%{collapse} · harga "
-            f"{_signed(current.get('price_chg_pct'))}%")
-        makers = current.get("unique_makers")
-        if makers:
-            smart_net = current.get("smart_net_sol")
-            if smart_net is None:
-                smart_bias = "flat"
-            elif float(smart_net) > 0:
-                smart_bias = "net beli"
-            elif float(smart_net) < 0:
-                smart_bias = "net jual"
-            else:
-                smart_bias = "flat"
-            lines.append(
-                f"Wallet {makers} maker · smart "
-                f"{int(current.get('smart_money_buy') or 0)} "
-                f"({smart_bias} {_signed(smart_net)} SOL) · fresh "
-                f"{int(current.get('fresh_buy') or 0)} "
-                f"({_number(current.get('fresh_buy_sol'))} SOL) · "
-                f"bot-sell {int(current.get('bot_sell') or 0)}")
-            lines.append(
-                f"Whale top-1 {_number(current.get('top_wallet_pct'))}% · "
-                f"top-3 {_number(current.get('top3_wallet_pct'))}% · "
-                f"net {_signed(current.get('top_wallet_net_sol'))} SOL · "
-                f"churn {_number(current.get('top_wallet_churn_pct'), '.0f')}%")
-    struct = (row or {}).get("structure") or {}
-    if isinstance(struct, dict) and signal in ("REVERSAL_UP", "REVERSAL_DOWN"):
-        up = signal == "REVERSAL_UP"
-        zone = struct.get("zone") or {}
-        zone_txt = (f"SBR {_price(zone.get('low'))}–{_price(zone.get('high'))}"
-                    if zone else "")
-        low_tag = ("higher-low ✓" if struct.get("low_state") == "higher_low"
-                   and up else
-                   "lower-high ✓" if struct.get("low_state") == "higher_low"
-                   else "")
-        state = struct.get("state")
-        if state == "confirmed" and zone:
-            action = ("ter-reclaim" if up else "tertembus")
-            line = (f"🧱 {zone_txt} {action} "
-                    f"{_hhmm_wib(struct.get('reclaim_ts'))} WIB")
-            if low_tag:
-                line += f" · {low_tag}"
-            lines.append(line)
-        elif state == "forming" and zone:
-            arah = "di atas" if up else "di bawah"
-            line = f"🧱 {zone_txt} · menunggu close {arah} zona"
-            if low_tag:
-                line += f" ({low_tag})"
-            lines.append(line)
-        elif state == "no_zone":
-            lines.append("🧱 zona SBR tidak terdefinisi di window 31 jam")
-    return lines
-
-
-def _signal_detail_html(row):
-    """Narasi kolom Detail: syarat + metrik sinyal 1H yang sedang aktif."""
-    if not row:
-        return ('<div class="signal-detail neutral" style="font-size:0.62rem;'
-                'line-height:1.35;font-weight:600;text-align:center;'
-                'margin-top:0.15rem;">Menunggu hasil scanner realtime'
-                '</div>')
-    signal = row.get("signal") or ""
-    tone = _signal_tone(row)
-    if signal in (WASPADA_DUMP, SIAP2_PUMP, BATTLE, SEROK_NEUTRAL):
-        lines = _serok_detail_lines(row)
-    else:
-        lines = _legacy_reversal_detail_lines(row)
-    reason = str(row.get("reason") or "").strip()
-    if reason:
-        lines.append(reason)
-    if not lines:
-        return ""
-    body = "<br>".join(html.escape(line) for line in lines)
-    return (f'<div class="signal-detail {tone}" '
-            f'style="font-size:0.62rem;line-height:1.35;'
-            f'font-weight:700;text-align:center;margin-top:0.15rem;">'
-            f'{body}</div>')
-
-
+# ---------------------------------------------------------------------------
+# Data
+# ---------------------------------------------------------------------------
 watchlist = load_watchlist()
 force_status = bool(st.session_state.pop("status_force_refresh", False))
-reversal = load_reversal_status(force_refresh=force_status)
-status_tokens = reversal.get("tokens") or {}
+silent_status = load_silent_status(force_refresh=force_status)
+status_tokens = silent_status.get("tokens") or {}
 
-st.subheader("📋 Watchlist")
-updated_label = _wib(reversal.get("updated_at"))
-st.caption("Scanner 1H SMART SEROK (🔴 WASPADA DUMP / 🟢 SIAP2 PUMP / ⚔️ BATTLE TERJADI) "
-           "— window 48 jam, bar 1 jam. "
-           f"Terakhir scan: {updated_label}. "
-           "Klik muat ulang jika Telegram sudah kirim sinyal baru.")
-refresh_col, _ = st.columns([1, 4])
-if refresh_col.button("🔄 Muat ulang status", use_container_width=True):
+st.subheader("📋 Watchlist — Silent Accumulation 12J")
+st.caption(
+    "Setiap token dicek 12 jam terakhir: net flow, wallet akumulator, "
+    "real holder (>$10 value) vs dust, dan **dust % dari marketcap**. "
+    f"Ambang dust: ${DUST_LIMIT_USD:.0f}. "
+    f"Terakhir scan: {_wib(silent_status.get('updated_at'))}. "
+    "GitHub Actions memindai tiap ~15 menit; tombol di bawah untuk "
+    "pemindaian lokal langsung."
+)
+
+if st.button("🔄 Scan watchlist sekarang (12 jam)", type="primary",
+             use_container_width=True):
+    analyses = {}
+    total = len(watchlist)
+    bar = st.progress(0.0, text=f"Scan 0/{total} token…")
+    done = 0
+    for mint, meta in watchlist.items():
+        try:
+            analyses[mint] = analyze_token(
+                mint, (meta or {}).get("symbol") or "?",
+                max_wallets=2000, max_trade_pages=6, fetch_market=True)
+        except Exception:  # noqa: BLE001 - lanjut ke token berikutnya
+            analyses[mint] = None
+        done += 1
+        bar.progress(done / total,
+                     text=f"Scan {done}/{total} · "
+                          f"{str((meta or {}).get('symbol') or '?')}")
+    if analyses:
+        publish_silent_status(analyses, watchlist, push=False)
     st.session_state["status_force_refresh"] = True
     st.rerun()
 
 if not watchlist:
     st.info("Watchlist masih kosong. Tambahkan contract address di bawah.")
 else:
-    header_cols = st.columns([1.5, 1.7, 0.95, 0.85, 2.4, 1.0, .5, .5])
-    header_style = "font-size:0.8rem;color:#000000;font-weight:700;"
+    header_cols = st.columns(
+        [1.5, 1.3, 0.9, 0.9, 0.8, 0.7, 0.9, 1.0, 0.5, 0.5])
+    header_style = "font-size:0.78rem;color:#000000;font-weight:700;"
     center = "text-align:center;" + header_style
-    header_titles = ["Token", "Sinyal", "CVD bersih", "Wash",
-                     "Detail", "Scan", "Chart", ""]
-    header_css = [header_style, header_style, center, center,
+    header_titles = ["Token", "Status 12 Jam", "Net 12j", "Harga 12j",
+                     "Real >$10", "Dust", "Dust %MC", "Scan", "", ""]
+    header_css = [header_style, center, center, center, center, center,
                   center, center, center, center]
     for col, style, title in zip(header_cols, header_css, header_titles):
         col.markdown(f'<div style="{style}">{title}</div>',
@@ -451,56 +188,63 @@ else:
                 unsafe_allow_html=True)
 
     ordered = sorted(watchlist.items(),
-                     key=lambda item: status_sort_key(
-                         item[0], status_tokens.get(item[0])))
+                     key=lambda item: str(
+                         (status_tokens.get(item[0]) or {}).get("symbol")
+                         or item[1].get("symbol") or item[0]).upper())
     for mint, meta in ordered:
-        row = status_tokens.get(mint)
-        symbol = str((meta or {}).get("symbol")
-                     or (row or {}).get("symbol") or "?").upper()
-        current = (row or {}).get("current") or {}
-        cvd_n = _signed(current.get("cvd_delta_clean"), "+.1f")
-        wash_txt = (_number(current.get("wash_pct")) + "%"
-                    if current.get("wash_pct") is not None else "—")
-        badges_html = _signal_badge(row) + _confidence_badge(row)
-        detail_html = _signal_detail_html(row)
-        scanned = _wib((row or {}).get("last_scan_ts")
-                       or reversal.get("updated_at"))
+        token = status_tokens.get(mint) or {}
+        symbol = str(meta.get("symbol") or token.get("symbol") or "?").upper()
+        holders = token.get("holders") or {}
+        flow = token.get("flow") or {}
+        net_txt = _compact(flow.get("net_usd"), signed=True)
+        price_txt = (f"{_signed(flow.get('price_chg_pct'), '+.1f')}%"
+                     if flow.get("price_chg_pct") is not None else "—")
+        scanned = _wib(token.get("analyzed_at"))
 
-        cols = st.columns([1.5, 1.7, 0.95, 0.85, 2.4, 1.0, .5, .5])
+        cols = st.columns(
+            [1.5, 1.3, 0.9, 0.9, 0.8, 0.7, 0.9, 1.0, 0.5, 0.5])
         cols[0].markdown(
             f'<div class="watchlist-token">'
             f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
             f'<span class="watchlist-mint">{html.escape(mint[:8])}…</span>'
             f'<div class="watchlist-links">{external_links_html(mint)}</div>'
-            f'</div>',
-            unsafe_allow_html=True)
-        cols[1].markdown(badges_html, unsafe_allow_html=True)
+            f'</div>', unsafe_allow_html=True)
+        cols[1].markdown(_silent_badge(token), unsafe_allow_html=True)
         cols[2].markdown(
             f'<div class="watchlist-metric">'
-            f'<div class="watchlist-metric-value">{cvd_n}</div>'
-            f'<div class="watchlist-metric-sub">SOL</div>'
-            f'</div>',
+            f'<div class="watchlist-metric-value">{net_txt}</div>'
+            f'<div class="watchlist-metric-sub">USD</div></div>',
             unsafe_allow_html=True)
         cols[3].markdown(
             f'<div class="watchlist-metric">'
-            f'<div class="watchlist-metric-value">{wash_txt}</div>'
-            f'<div class="watchlist-metric-sub">6 jam</div>'
-            f'</div>',
+            f'<div class="watchlist-metric-value">{price_txt}</div>'
+            f'<div class="watchlist-metric-sub">12 jam</div></div>',
             unsafe_allow_html=True)
         cols[4].markdown(
-            f'<div class="watchlist-metric">{detail_html}</div>',
+            f'<div class="watchlist-metric">'
+            f'<div class="watchlist-metric-value">'
+            f'{_number(holders.get("real_count"), ".0f")}</div>'
+            f'<div class="watchlist-metric-sub">wallet</div></div>',
             unsafe_allow_html=True)
         cols[5].markdown(
-            f'<div style="font-size:0.75rem;color:#000000;text-align:center;">'
-            f'{html.escape(scanned)}</div>',
+            f'<div class="watchlist-metric">'
+            f'<div class="watchlist-metric-value">'
+            f'{_number(holders.get("dust_count"), ".0f")}</div>'
+            f'<div class="watchlist-metric-sub">wallet</div></div>',
             unsafe_allow_html=True)
-        if cols[6].button("📈", key=f"chart-{mint}",
-                          help="Buka chart historis",
+        cols[6].markdown(
+            f'<div class="watchlist-metric">'
+            f'<div class="watchlist-metric-value">{_dust_pct(token)}</div>'
+            f'<div class="watchlist-metric-sub">dari MC</div></div>',
+            unsafe_allow_html=True)
+        cols[7].markdown(
+            f'<div style="font-size:0.75rem;color:#000000;text-align:center;">'
+            f'{html.escape(scanned)}</div>', unsafe_allow_html=True)
+        if cols[8].button("📈", key=f"chart-{mint}", help="Buka flow chart",
                           use_container_width=True):
             st.session_state["effort_mint"] = mint
             st.switch_page("pages/4_📊_CVD.py")
-        if cols[7].button("✕", key=f"remove-{mint}",
-                          help="Hapus dari watchlist",
+        if cols[9].button("✕", key=f"remove-{mint}", help="Hapus watchlist",
                           use_container_width=True):
             remove_from_watchlist(mint)
             st.rerun()
@@ -509,27 +253,27 @@ else:
 
 with st.expander("➕ Tambah token", expanded=not bool(watchlist)):
     with st.form("add-token", clear_on_submit=True):
-        mint_input = st.text_input("Contract address",
-                                   help="Symbol di-fetch otomatis dari DexScreener")
+        mint_input = st.text_input(
+            "Contract address",
+            help="Symbol di-fetch otomatis dari DexScreener")
         submitted = st.form_submit_button("Tambah ke watchlist")
         if submitted and mint_input.strip():
-            added = add_to_watchlist(mint_input.strip(), "?",
-                                     source="manual")
+            added = add_to_watchlist(mint_input.strip(), "?", source="manual")
             if added:
                 st.success("Token ditambahkan.")
             else:
                 error = get_last_push_error()
-                st.warning(error.get("message") or
-                           "Tersimpan lokal; sinkronisasi GitHub belum berhasil.")
+                st.warning(error.get("message")
+                           or "Tersimpan lokal; sinkronisasi GitHub belum berhasil.")
             st.rerun()
 
 st.divider()
-st.subheader("🔍 Temukan Token")
-st.caption("Listing GMGN sebagai konteks pasar. Status watchlist di atas "
-           "mengikuti scanner SMART SEROK 1H.")
+st.subheader("🔍 Temukan Token — Holder Depth")
+st.caption(
+    "Scan Trending/Degen akan **langsung** menganalisis tiap token: "
+    "perbandingan real holder (>$10 value) vs dust, dust % dari marketcap, "
+    "dan silent accumulation 12 jam terakhir.")
 
-# Tab styling: segmented control dipakai agar pilihan tab bertahan saat scan
-# memicu rerun (st.tabs selalu balik ke tab pertama).
 st.markdown("""
 <style>
 div[data-testid="stButtonGroup"] button {
@@ -544,36 +288,39 @@ TREND_TAB = "📈 Trending"
 DEGEN_TAB = "🔥 Degen"
 DISCOVER_TABS = [TREND_TAB, DEGEN_TAB]
 
-# Pilihan tab disimpan di session_state supaya rerun setelah "Scan Degen"
-# tidak melempar tampilan kembali ke Trending.
 active_tab = st.session_state.get("discover_tab_active", TREND_TAB)
 selected_tab = st.segmented_control(
     "Mode listing", DISCOVER_TABS, default=active_tab,
     key="discover_tab", label_visibility="collapsed")
 if selected_tab not in DISCOVER_TABS:
-    # Klik ulang pada tab aktif tidak boleh mengosongkan pilihan.
     selected_tab = active_tab
 st.session_state["discover_tab_active"] = selected_tab
 
 if selected_tab == DEGEN_TAB:
-    if st.button("🔥 Scan Degen", use_container_width=True):
+    if st.button("🔥 Scan Degen + Holder Depth", use_container_width=True):
         rows_24, error_24 = run_screen_hrhr(force=True)
         rows_1, error_1 = run_screen_hrhr_h1(force=True)
-        st.session_state["degen_combined"] = rows_24 + [
-            row for row in rows_1
-            if row.get("ca") not in {item.get("ca") for item in rows_24}]
+        combined = rows_24 + [row for row in rows_1
+                              if row.get("ca") not in
+                              {item.get("ca") for item in rows_24}]
+        with st.container():
+            combined = scan_with_analysis(combined, key_prefix="degen")
+        st.session_state["degen_combined"] = combined
         st.session_state["degen_error"] = error_24 or error_1
     if st.session_state.get("degen_error"):
         st.error(st.session_state["degen_error"])
     render_trending(st.session_state.get("degen_combined", []),
                     key_prefix="degen", source="degen")
 else:
-    if st.button("🔎 Scan Trending", use_container_width=True):
+    if st.button("🔎 Scan Trending + Holder Depth", use_container_width=True):
         rows_24, error_24 = run_screen(force=True)
         rows_1, error_1 = run_screen_h1(force=True)
-        st.session_state["trend_combined"] = rows_24 + [
-            row for row in rows_1
-            if row.get("ca") not in {item.get("ca") for item in rows_24}]
+        combined = rows_24 + [row for row in rows_1
+                              if row.get("ca") not in
+                              {item.get("ca") for item in rows_24}]
+        with st.container():
+            combined = scan_with_analysis(combined, key_prefix="trend")
+        st.session_state["trend_combined"] = combined
         st.session_state["trend_error"] = error_24 or error_1
     if st.session_state.get("trend_error"):
         st.error(st.session_state["trend_error"])

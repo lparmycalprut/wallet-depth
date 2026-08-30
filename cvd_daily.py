@@ -173,7 +173,7 @@ def build_effort_rows(mint: str, swaps, candles, *, now=None,
     bila ``supply`` diketahui — ``marketcap_close`` = close × supply untuk
     gerbang anti wash-trade (volume ≤ 3× MC close).
     """
-    from effort_detector import daily_effort_record
+    from daily_store import daily_effort_record
 
     now = now or datetime.now(MARKET_TZ)
     cvd_rows = completed_dates(calculate_daily_cvd(swaps), now=now)

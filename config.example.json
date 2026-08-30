@@ -2,6 +2,5 @@
   "helius_api_key": "PASTE-API-KEY-KAMU-DISINI",
   "helius_extra_keys": "",
   "custom_rpc": "",
-  "telegram_bot_token": "BOT_TOKEN from @BotFather (optional)",
-  "telegram_chat_id": "your chat id (optional)"
+  "dust_limit_usd": 10
 }

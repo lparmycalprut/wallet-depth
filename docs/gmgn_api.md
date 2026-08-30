@@ -138,48 +138,34 @@ python gmgn_screener.py          # prints the scored table
 (HTTP status, API `code`, or "200 OK but 0 tokens" when the filters match
 nothing) instead of failing silently.
 
-## Holder average cost & distance from ATH (`token_context.py`)
-
-Neither number exists in the `trending_rank` payload. They used to be
-**fabricated** in `gmgn_screener._get_avg_cost_and_ath` (`-65%` avg cost,
-`90%` down-from-ATH whenever the field was missing — i.e. always), which is
-why every scanned row read `🟢 Down 90.0% dari ATH` and the LP/Degen cards
-never showed a real avg cost.
-
-`token_context.py` now fetches the real values:
-
-### Holder endpoint (verified from browser capture 2026-07-31)
+## Holder list (dipakai silent_accumulation.py)
 
 ```
 GET https://gmgn.ai/vas/api/v1/token_holders/sol/<CA>
-    ?limit=100&cost=20&orderby=unrealized_profit&direction=desc
+    ?limit=1000&cost=20&orderby=amount_percentage&direction=desc
     + device_id / fp_did / client_id / app_ver / from_app / tz_name /
       tz_offset / app_lang / os / worker
-Referer: https://gmgn.ai/sol/token/<CA>    ← per-token, not generic
+Referer: https://gmgn.ai/sol/token/<CA>
 ```
 
-Params `cost`, `orderby`, `direction` are **mandatory** — without them the
-response is empty or rows lack the `cost` field.
+### Verified notes (capture 2026-08-30)
 
-### Aggregation
+- `limit` accepts up to **1000 rows per page**; pagination uses the
+  `next` cursor (base64) — pass it back as the `next` query param.
+- `direction` only supports `DESC` (ascending is rejected with code
+  `40000301`); `period`/`duration` params are ignored.
+- Pool/AMM rows appear at the top when ordered by `amount_percentage`
+  (`addr_type != 0`, e.g. `pump_amm`); they are excluded from holder
+  depth counts (wallet-only).
+- Key per-row fields: `usd_value`, `balance`, `amount_percentage`
+  (fraction 0-1 of supply), `is_new`, `is_suspicious`,
+  `last_active_timestamp`, `current_buy_amount` / `current_sell_amount`,
+  `netflow_usd`, `addr_type`, `exchange`.
 
-The aggregate is `sum(cost) / sum(balance)` (remaining USD cost basis
-divided by token count across all qualifying rows). This replaces the
-earlier weighted-`avg_cost` approach because many wallets have
-`avg_cost: null` (transfer-funded) while their `cost` field is still
-populated, giving much wider float coverage.
+### Real vs dust
 
-AMM/pool rows (`addr_type != 0` or a non-empty `exchange` field, e.g.
-`pump_amm`) are discarded — they carry no meaningful cost basis.
-
-### Down from ATH
-
-An explicit ATH field when present, else derived from `max_market_cap`,
-else the all-time high of GeckoTerminal **daily** candles for the token's
-deepest DexScreener pair.
-
-### Failure behaviour
-
-Both values return `None` when genuinely unresolvable; the UI renders `—`.
-**Never** guess: a fabricated number is worse than a dash. Results are
-cached for 5 minutes per CA and cleared by the force-rescan buttons.
+`silent_accumulation.classify_holders` splits wallet rows by
+`usd_value`: real holder > $10; dust 0 < value <= $10. Dust % of
+marketcap = Σ(dust usd_value) / marketcap × 100. When the page cap
+(`max_wallets`) truncates the list, `truncated: true` means the number
+is a lower bound over the analyzed top wallets.

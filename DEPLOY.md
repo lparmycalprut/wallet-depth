@@ -5,33 +5,41 @@
 - Entry point: `app.py`
 - Python: lihat `runtime.txt`
 - Dependencies: `requirements.txt`
-- Opsional secrets: `HELIUS_API_KEY`, `HELIUS_API_KEYS`,
-  `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, dan `GITHUB_TOKEN`.
+- Opsional secrets: `HELIUS_API_KEY`, `HELIUS_API_KEYS`, `GITHUB_TOKEN`.
+- **Tidak ada** `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` — Telegram sudah
+  dihapus.
 
-Watchlist di halaman utama menarik `reversal_status.json` dari ref
-`reversal-live` (bukan candle harian). Tombol **Muat ulang status**
-memaksa pull baru. Chart 📈 masih membuka halaman CVD historis.
+Watchlist di halaman utama menarik `silent_status.json` dari ref
+`silent-live` (bukan commit `main`). Tombol **Scan watchlist sekarang**
+menjalankan analisis lokal 12 jam + holder depth. Chart 📈 membuka halaman
+CVD historic (tanpa sinyal).
 
 ## GitHub Actions
 
-Workflow `.github/workflows/daily-effort.yml` berjalan setiap 10 menit
-(`*/10 * * * *`) dan memindai reversal rolling 6 jam vs 24 jam sebelumnya.
+Workflow `.github/workflows/daily-effort.yml` berjalan setiap 15 menit
+(`*/15 * * * *`). Karena GitHub App tidak bisa mengubah file workflow
+(butuh permission `workflows`), workflow lama tetap memanggil
+`python scripts/realtime_reversal.py` yang kini adalah adapter ke
+`scripts/scan_silent.py` (silent-accumulation 12 jam + holder dust).
+Ubah manual workflow menjadi `python scripts/scan_silent.py` bila
+dibutuhkan; env `TELEGRAM_*` boleh dihapus dari secrets.
 
 Langkah setelah scan:
 
-1. Simpan state transisi di `last_scan_result.json` + cache trade (Actions cache).
-2. Publish snapshot `reversal_status.json` ke branch `reversal-live`
-   agar dashboard Streamlit melihat sinyal yang sama dengan Telegram
-   tanpa commit ke `main`.
+1. Analisis per token: holder GMGN (paginasi, max 3000 wallet), net flow
+   12 jam (max 8 halaman trade), klasifikasi real (>$10) vs dust.
+2. Publish snapshot `silent_status.json` ke branch `silent-live`
+   (dibuat otomatis pada publish pertama) agar dashboard Streamlit
+   membaca data yang sama dengan cron tanpa commit ke `main`.
 
-   **Wajib di workflow** (satu baris; belum bisa diubah lewat PR ini
-   karena token App tidak punya izin `workflows`):
+   **Wajib di workflow**:
 
    ```yaml
    permissions:
-     contents: write   # sekarang masih `read` — tanpa ini snapshot gagal
+     contents: write
    ```
-3. Kirim Telegram hanya pada transisi `REVERSAL_UP` / `REVERSAL_DOWN`.
 
-Jalankan manual lewat **Actions → Realtime Bidirectional Reversal → Run
-workflow**. Branch `reversal-live` dibuat otomatis pada publish pertama.
+3. Tidak ada kirim Telegram.
+
+Jalankan manual lewat **Actions → Silent Accumulation 12H Scanner → Run
+workflow**.

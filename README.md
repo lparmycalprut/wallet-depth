@@ -1,94 +1,72 @@
-# Wallet Depth — Realtime Reversal Solana
+# Wallet Depth — Silent Accumulation 12H
 
-Wallet Depth memantau token Solana dari GMGN dan mendeteksi reversal dua arah
-melalui kombinasi **wash-collapse**, **clean CVD**, dan konteks sebelumnya.
+Wallet Depth memantau token Solana dari GMGN dan berfokus pada
+**silent accumulation dalam 12 jam terakhir** serta **kedalaman holder**
+(real holder > $10 value vs dust). Semua sinyal lama (reversal, SMART
+SEROK, seller exhaustion, battle) dan notifikasi Telegram sudah dihapus.
 
-## Sinyal realtime
+## Konsep
 
-- 🟢 **REVERSAL_UP**: churn bot runtuh, clean CVD berubah positif, dan window
-  sebelumnya menunjukkan flush.
-- 🔴 **REVERSAL_DOWN**: churn bot runtuh, clean CVD berubah negatif, dan window
-  sebelumnya menunjukkan pump.
-- 🔵 **ACCUMULATION** / 🟠 **DISTRIBUTION**: setup untuk dipantau; tidak memicu
-  alert reversal.
-- ⚪ **NEUTRAL**: bukti belum lengkap atau aktivitas terlalu tipis.
+1. **Silent accumulation 12 jam** — dari trade 12 jam terakhir:
+   - `net_usd` positif (beli > jual),
+   - minimal 3 wallet net-beli (akumulator),
+   - harga hampir tidak bergerak (≤ ±5%),
+   - share mev/bot rendah (≤ 35%).
+2. **Real holder vs dust** — dari daftar holder GMGN (paginasi penuh):
+   - **real holder**: nilai posisi > $10,
+   - **dust holder**: 0 < nilai ≤ $10,
+   - **dust % dari marketcap** = total nilai dust / marketcap × 100,
+   - dust % supply juga dihitung dari `amount_percentage`.
+3. **Dust** dihitung hanya dari wallet murni (LP/pool/exchange dikeluarkan).
 
-Scanner memakai rolling window 6 jam terkini dibanding 24 jam sebelumnya dan
-dijalankan tiap 10 menit lewat GitHub Actions. Kandidat wajib terkonfirmasi dua
-scan berturut-turut. Telegram hanya dikirim saat transisi ke reversal, lalu
-cooldown 18 jam mencegah spam.
+## Filter tabel scan (Trending & Degen)
 
-## Engine
+Pilih lewat menu **Filter holder depth** di atas tabel (bisa dikombinasi):
 
-`reversal_engine.py` merupakan port Python dari engine ekstensi SMART SEROK:
+| Filter | Syarat |
+|---|---|
+| 🔇 SILENT | silent accumulation 12 jam terdeteksi |
+| 🏦 LP | dust > 50% dari real (jumlah wallet) **dan** real+dust hanya < 0.5% marketcap (supply hampir semua di LP/pool) |
+| 🎢 PUMPDUMP | real hanya < 20% dari dust (dominan dust) |
 
-1. Normalisasi field GMGN dan re-derive SOL sebagai `amount_usd / 160` bila
-   implied SOL/USD tidak masuk akal.
-2. Pasangkan buy/sell wallet yang sama secara FIFO dalam 60 detik.
-3. Buang round-trip serta MEV dari CVD untuk memperoleh clean CVD.
-4. Hitung wash volume dan wash percentage.
-5. Klasifikasikan reversal bullish maupun bearish secara simetris.
+Setiap baris juga diberi tag 🔇/🏦/🎢 bila memenuhi filter tersebut.
 
-Threshold realtime awal:
+## Modul
 
-```text
-wash floor       <= 6%
-collapse ratio   <= 50% baseline
-prior context    |clean CVD| >= 10 SOL atau |harga| >= 15%
-current activity >= 20 tx dan >= 1 SOL
-minimum liquidity >= $5.000 (bila metadata tersedia)
-```
+| File | Peran |
+|---|---|
+| `silent_accumulation.py` | fetch holder (paginasi `next`), klasifikasi real/dust, net flow 12 jam, deteksi silent, `enrich_rows` |
+| `silent_status.py` | snapshot status untuk dashboard (GitHub ref `silent-live`) |
+| `scripts/scan_silent.py` | cron: scan watchlist 12 jam + holder, publish status |
+| `cvd_daily.py` / `daily_store.py` | agregasi harian CVD/volume (tanpa sinyal) + storage idempoten |
+| `gmgn_screener.py` | listing Trending/Degen (tanpa skoring) |
+| `trending_ui.py` | tabel listing + kolom holder depth & silent 12h |
+| `pages/4_📊_CVD.py` | chart flow & CVD harian (tanpa sinyal) |
 
-## Menjalankan scanner
+## Menjalankan
 
 ```bash
 pip install -r requirements.txt
-python scripts/realtime_reversal.py --no-alert
-```
-
-Secrets Telegram:
-
-```text
-TELEGRAM_BOT_TOKEN
-TELEGRAM_CHAT_ID
-```
-
-Cache trade incremental 31 jam disimpan terkompresi di
-`.cache/reversal_trades.json.gz` dan tidak masuk Git. State transisi disimpan di
-`last_scan_result.json`; GitHub Actions memulihkan keduanya melalui cache.
-
-### Validasi ground truth SISYPUSS
-
-```bash
-python scripts/realtime_reversal.py \
-  --fixture /path/to/sisypuss_raw.json \
-  --mint 8HykgZKXNpMhfxQtDPb7AayRKJonZaQ8Mw1Xo3xmpump \
-  --no-alert
-```
-
-Hasil yang diharapkan: `REVERSAL_UP`; data daily parity menghasilkan flush
-08-16 sekitar −22 SOL / wash 15.2% dan reversal 08-17 clean CVD sekitar +11.8
-SOL / wash 3.0%.
-
-## Dashboard
-
-Halaman utama (`app.py`) menampilkan status scanner realtime per token
-watchlist (sinyal, CVD bersih, wash, wallet, waktu scan). Snapshot dibaca
-dari `reversal_status.json` (dipublish setiap scan ke ref `reversal-live`).
-
-Halaman CVD dan `daily_effort.json` tetap tersedia untuk inspeksi historis
-3 sinyal bottom. Jalankan:
-
-```bash
 streamlit run app.py
 ```
+
+Scan watchlist otomatis tiap ~15 menit via GitHub Actions
+(`.github/workflows/daily-effort.yml`). Workflow belum bisa diubah oleh
+GitHub App (butuh permission `workflows`), jadi file
+`scripts/realtime_reversal.py` kini menjadi adapter yang meneruskan
+pemanggilan ke `scripts/scan_silent.py` — tetap scan silent-accumulation
+tanpa sinyal/Telegram. Setelah workflow diubah manual menjadi
+`python scripts/scan_silent.py`, adapter boleh dihapus. Snapshot dashboard
+dibaca dari `silent_status.json` (ref `silent-live`). `GITHUB_TOKEN`
+streamlit secret / env hanya untuk publish snapshot dan sinkronisasi
+watchlist.
 
 ## Pengujian
 
 ```bash
 python -m unittest discover tests
-python -m py_compile reversal_engine.py reversal_state.py \
-  scripts/realtime_reversal.py
+python -m py_compile silent_accumulation.py silent_status.py \
+  scripts/scan_silent.py
 ```
 
-Deteksi bersifat heuristik dan bukan saran keuangan.
+Analisis bersifat heuristik dan bukan saran keuangan.

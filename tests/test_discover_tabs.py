@@ -33,22 +33,25 @@ class DiscoverTabPersistenceTest(unittest.TestCase):
     def setUp(self):
         patches = (
             mock.patch("watchlist.load_watchlist", return_value={}),
-            mock.patch("reversal_status.load_reversal_status",
+            mock.patch("silent_status.load_silent_status",
                        return_value={"updated_at": None, "tokens": {}}),
             # trending_ui binds the screeners at import time.
             mock.patch("trending_ui.screen", return_value=[TREND_ROW]),
             mock.patch("trending_ui.screen_trending_h1", return_value=[]),
             mock.patch("trending_ui.screen_hrhr", return_value=[DEGEN_ROW]),
             mock.patch("trending_ui.screen_hrhr_h1", return_value=[]),
+            # analisis holder/12 jam dimatikan supaya tes tetap cepat & offline.
+            mock.patch("trending_ui.enrich_rows",
+                       side_effect=lambda rows, **kwargs: rows),
         )
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
 
     @staticmethod
-    def _scan_button(app):
+    def _scan_button(app, expected="Scan Trending"):
         return [button for button in app.button
-                if "Scan" in (button.label or "")][0]
+                if expected in (button.label or "")][0]
 
     def _body(self, app):
         return "\n".join(block.value for block in app.markdown)
@@ -62,14 +65,14 @@ class DiscoverTabPersistenceTest(unittest.TestCase):
     def test_scan_degen_keeps_the_degen_tab_active(self):
         app = AppTest.from_file(APP, default_timeout=30).run()
         app.segmented_control[0].set_value(DEGEN_TAB).run()
-        self.assertIn("Scan Degen", self._scan_button(app).label)
+        self.assertIn("Scan Degen", self._scan_button(app, "Scan Degen").label)
 
-        self._scan_button(app).click().run()
+        self._scan_button(app, "Scan Degen").click().run()
 
         self.assertFalse(app.exception)
         self.assertEqual(app.segmented_control[0].value, DEGEN_TAB)
         self.assertEqual(app.session_state["discover_tab_active"], DEGEN_TAB)
-        self.assertIn("Scan Degen", self._scan_button(app).label)
+        self.assertIn("Scan Degen", self._scan_button(app, "Scan Degen").label)
         self.assertIn("$DGN", self._body(app))
         self.assertNotIn("$TRD", self._body(app))
 
@@ -81,11 +84,11 @@ class DiscoverTabPersistenceTest(unittest.TestCase):
 
         self.assertFalse(app.exception)
         self.assertEqual(app.session_state["discover_tab_active"], DEGEN_TAB)
-        self.assertIn("Scan Degen", self._scan_button(app).label)
+        self.assertIn("Scan Degen", self._scan_button(app, "Scan Degen").label)
 
     def test_scan_trending_stays_on_trending(self):
         app = AppTest.from_file(APP, default_timeout=30).run()
-        self._scan_button(app).click().run()
+        self._scan_button(app, "Scan Trending").click().run()
 
         self.assertFalse(app.exception)
         self.assertEqual(app.segmented_control[0].value, TREND_TAB)
