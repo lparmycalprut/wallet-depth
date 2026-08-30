@@ -39,9 +39,15 @@ streamlit run app.py
 ```
 
 Scan watchlist otomatis tiap ~15 menit via GitHub Actions
-(`.github/workflows/daily-effort.yml`). Snapshot dashboard dibaca dari
-`silent_status.json` (ref `silent-live`). `GITHUB_TOKEN` streamlit secret /
-env hanya untuk publish snapshot dan sinkronisasi watchlist.
+(`.github/workflows/daily-effort.yml`). Workflow belum bisa diubah oleh
+GitHub App (butuh permission `workflows`), jadi file
+`scripts/realtime_reversal.py` kini menjadi adapter yang meneruskan
+pemanggilan ke `scripts/scan_silent.py` — tetap scan silent-accumulation
+tanpa sinyal/Telegram. Setelah workflow diubah manual menjadi
+`python scripts/scan_silent.py`, adapter boleh dihapus. Snapshot dashboard
+dibaca dari `silent_status.json` (ref `silent-live`). `GITHUB_TOKEN`
+streamlit secret / env hanya untuk publish snapshot dan sinkronisasi
+watchlist.
 
 ## Pengujian
 

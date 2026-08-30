@@ -53,8 +53,12 @@ accumulation 12 jam** dan **holder depth**.
    Trending/Degen (real count, dust count, dust %MC, status 12 jam).
 5. Halaman CVD: chart flow harian tanpa sinyal; `daily_effort.json`
    dipertahankan sebagai agregasi murni (`daily_store.py`).
-6. Workflow `daily-effort.yml` diganti menjadi Silent Accumulation 12H
-   Scanner (tanpa `TELEGRAM_*`).
+6. Workflow `daily-effort.yml` target: Silent Accumulation 12H Scanner tanpa
+   `TELEGRAM_*`. Catatan: file workflow tidak bisa di-push oleh GitHub App
+   (butuh permission `workflows`), jadi `scripts/realtime_reversal.py`
+   dipertahankan sebagai adapter ke `scan_silent.py` agar cron tetap
+   berjalan; ubah workflow manual bila ingin langsung memanggil
+   `scripts/scan_silent.py`.
 
 Tidak diubah tanpa perlu: watchlist GitHub, fetch GMGN/Helius, listing
 screener.

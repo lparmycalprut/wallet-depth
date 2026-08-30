@@ -12,6 +12,8 @@ Tidak ada sinyal dan tidak ada notifikasi Telegram.
 - `silent_status.py`: snapshot `silent_status.json` → GitHub ref
   `silent-live` (pinggir `main`, mencegah redeploy Streamlit).
 - `scripts/scan_silent.py`: cron GitHub Actions (~15 menit) untuk watchlist.
+- `scripts/realtime_reversal.py`: adapter saja — workflow lama memanggil file
+  ini, isinya meneruskan ke `scan_silent.py` (tanpa sinyal/Telegram).
 - `gmgn_screener.py`: listing Trending/Degen tanpa skoring.
 - `cvd_daily.py` + `daily_store.py`: agregasi harian CVD/volume + storage
   (tanpa klasifikasi sinyal).

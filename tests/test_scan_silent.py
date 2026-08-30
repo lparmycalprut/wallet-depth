@@ -7,6 +7,14 @@ from unittest import mock
 from scripts.scan_silent import scan_watchlist
 
 
+class LegacyBridgeTest(unittest.TestCase):
+    def test_realtime_reversal_bridge_forwards_to_silent_scanner(self):
+        import scripts.realtime_reversal as bridge
+        with mock.patch("scripts.scan_silent.main", return_value=7) as main:
+            self.assertEqual(bridge.main(["--no-alert", "--mint", "X"]), 7)
+        main.assert_called_once_with([])
+
+
 class ScanWatchlistTest(unittest.TestCase):
     def test_collects_success_and_skips_failures(self):
         def fake(ca, *args, **kwargs):

@@ -17,8 +17,12 @@ CVD historic (tanpa sinyal).
 ## GitHub Actions
 
 Workflow `.github/workflows/daily-effort.yml` berjalan setiap 15 menit
-(`*/15 * * * *`) dan menjalankan `python scripts/scan_silent.py` — scan
-silent-accumulation 12 jam + holder dust untuk seluruh watchlist.
+(`*/15 * * * *`). Karena GitHub App tidak bisa mengubah file workflow
+(butuh permission `workflows`), workflow lama tetap memanggil
+`python scripts/realtime_reversal.py` yang kini adalah adapter ke
+`scripts/scan_silent.py` (silent-accumulation 12 jam + holder dust).
+Ubah manual workflow menjadi `python scripts/scan_silent.py` bila
+dibutuhkan; env `TELEGRAM_*` boleh dihapus dari secrets.
 
 Langkah setelah scan:
 
