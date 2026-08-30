@@ -246,6 +246,24 @@ def scan_with_analysis(rows, *, key_prefix="scan", dust_limit=None,
     return enriched
 
 
+def _source_icon(source: str) -> str:
+    """Ikon sumber data: 🕸 (GMGN) / 🛰 (Helius)."""
+    source = str(source or "gmgn").lower()
+    if source == "helius":
+        return '<span title="Helius" style="font-size:0.75rem;">🛰</span>'
+    return '<span title="GMGN" style="font-size:0.75rem;">🕸</span>'
+
+
+def _count_with_truncated(count, truncated: bool) -> str:
+    """Format count dengan tanda ≥ bila pencarian holder terpotong."""
+    if count is None:
+        return "—"
+    count_txt = str(int(count))
+    if truncated:
+        return f"≥{count_txt}"
+    return count_txt
+
+
 def render_trending(rows, *, key_prefix="listing", source="trending"):
     """Tabel listing + analisis holder real/dust & silent accumulation 12h."""
     if not rows:
@@ -268,6 +286,12 @@ def render_trending(rows, *, key_prefix="listing", source="trending"):
         col.markdown(f'<div style="{header_style}">{title}</div>',
                      unsafe_allow_html=True)
 
+    st.markdown(
+        '<div style="font-size:0.65rem;color:#64748b;margin:0.3rem 0;">'
+        '🕸 GMGN · 🛰 Helius · ≥ batas pencarian holder tercapai'
+        '</div>',
+        unsafe_allow_html=True)
+
     st.markdown('<hr style="margin:0.4rem 0;border-color:#cbd5e1;">',
                 unsafe_allow_html=True)
 
@@ -280,6 +304,8 @@ def render_trending(rows, *, key_prefix="listing", source="trending"):
         flow = (analysis or {}).get("flow") or {}
         real_count = holders.get("real_count")
         dust_count = holders.get("dust_count")
+        truncated = holders.get("truncated", False)
+        holder_source = holders.get("source", "gmgn")
         dust_pct = holders.get("dust_pct_mc")
         dust_txt = ("—" if dust_pct is None
                     else f"{float(dust_pct):.2f}%")
@@ -297,12 +323,13 @@ def render_trending(rows, *, key_prefix="listing", source="trending"):
         columns[2].markdown(
             f'<div class="trending-metric">'
             f'<div class="trending-metric-value">'
-            f'{real_count if real_count is not None else "—"}</div></div>',
+            f'{_source_icon(holder_source)} '
+            f'{_count_with_truncated(real_count, truncated)}</div></div>',
             unsafe_allow_html=True)
         columns[3].markdown(
             f'<div class="trending-metric">'
             f'<div class="trending-metric-value">'
-            f'{dust_count if dust_count is not None else "—"}</div></div>',
+            f'{_count_with_truncated(dust_count, truncated)}</div></div>',
             unsafe_allow_html=True)
         columns[4].markdown(
             f'<div class="trending-metric">'

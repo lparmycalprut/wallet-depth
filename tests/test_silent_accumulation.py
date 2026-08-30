@@ -82,6 +82,10 @@ class DetectSilentTest(unittest.TestCase):
 
 
 class Fetch12hFlowTest(unittest.TestCase):
+    def setUp(self):
+        sa._FLOW_CACHE.clear()
+        sa._HOLDER_CACHE.clear()
+
     def test_aggregates_net_and_accumulators(self):
         now = 1_800_000_000
         swaps = [
@@ -92,7 +96,9 @@ class Fetch12hFlowTest(unittest.TestCase):
             ("buy", 1.0, now - 60, "D", 0.013, 130.0, []),
         ]
         with mock.patch("cvd.fetch_gmgn_swaps", return_value=(swaps, "s", 0, True)):
-            flow = sa.fetch_12h_flow("CA", now_ts=now, max_pages=2)
+            with mock.patch("cvd.get_gmgn_fetch_status",
+                            return_value={"complete": True, "error": ""}):
+                flow = sa.fetch_12h_flow("CA", now_ts=now, max_pages=2)
         self.assertEqual(flow["buy_tx"], 3)
         self.assertEqual(flow["sell_tx"], 2)
         self.assertAlmostEqual(flow["net_usd"], 90.0, places=2)
@@ -101,13 +107,16 @@ class Fetch12hFlowTest(unittest.TestCase):
         self.assertAlmostEqual(flow["bot_share"], 200 / 590, places=3)
         self.assertAlmostEqual(flow["price_chg_pct"],
                                (0.013 / 0.01 - 1) * 100, places=2)
+        self.assertEqual(flow["source"], "gmgn")
 
     def test_out_of_window_trades_are_filtered(self):
         now = 1_800_000_000
         swaps = [("buy", 1.0, now - 13 * 3600, "OLD", 0.01, 100.0, []),
                  ("buy", 1.0, now - 60, "NEW", 0.011, 110.0, [])]
         with mock.patch("cvd.fetch_gmgn_swaps", return_value=(swaps, "s", 0, False)):
-            flow = sa.fetch_12h_flow("CA", now_ts=now, max_pages=1)
+            with mock.patch("cvd.get_gmgn_fetch_status",
+                            return_value={"complete": True, "error": ""}):
+                flow = sa.fetch_12h_flow("CA", now_ts=now, max_pages=1)
         self.assertEqual(flow["buy_tx"], 1)
         self.assertEqual(flow["wallets"], 1)
 
@@ -180,6 +189,10 @@ class HolderFilterTest(unittest.TestCase):
 
 
 class EnrichRowsTest(unittest.TestCase):
+    def setUp(self):
+        sa._FLOW_CACHE.clear()
+        sa._HOLDER_CACHE.clear()
+
     def test_enrich_marks_analysis_and_keeps_failures_null(self):
         def fake_analyze(ca, *args, **kwargs):
             if ca == "BAD":
@@ -192,6 +205,97 @@ class EnrichRowsTest(unittest.TestCase):
             out = sa.enrich_rows(rows, max_wallets=10, max_trade_pages=1)
         self.assertIsNotNone(out[0]["analysis"])
         self.assertIsNone(out[1]["analysis"])
+
+
+class HeliusFallbackTest(unittest.TestCase):
+    def setUp(self):
+        sa._FLOW_CACHE.clear()
+        sa._HOLDER_CACHE.clear()
+
+    def test_helius_holder_pagination_and_usd_math(self):
+        """Helius DAS paginasi cursor, USD = balance × price_usd."""
+        page1 = {
+            "token_accounts": [
+                {"owner": "A", "amount": 1000.0, "address": "acc1"},
+                {"owner": "B", "amount": 500.0, "address": "acc2"},
+            ],
+            "cursor": "cursor1",
+        }
+        page2 = {
+            "token_accounts": [
+                {"owner": "C", "amount": 200.0, "address": "acc3"},
+            ],
+            "cursor": "",
+        }
+        with mock.patch("core.helius_rpc", side_effect=[page1, page2]):
+            with mock.patch("core.get_helius_keys", return_value=["key1"]):
+                result = sa.fetch_holders_helius(
+                    "MINT", max_wallets=10, price_usd=0.05)
+        self.assertEqual(len(result["holders"]), 3)
+        self.assertEqual(result["source"], "helius")
+        # USD = balance × price
+        holders_dict = {h["address"]: h for h in result["holders"]}
+        self.assertAlmostEqual(holders_dict["A"]["usd_value"], 50.0)
+        self.assertAlmostEqual(holders_dict["B"]["usd_value"], 25.0)
+        self.assertAlmostEqual(holders_dict["C"]["usd_value"], 10.0)
+
+    def test_holder_fallback_gmgn_to_helius(self):
+        """GMGN error → otomatis fallback ke Helius."""
+        with mock.patch("silent_accumulation._http_get",
+                        side_effect=RuntimeError("GMGN down")):
+            with mock.patch("core.helius_rpc") as mock_helius:
+                mock_helius.return_value = {
+                    "token_accounts": [
+                        {"owner": "X", "amount": 100.0, "address": "acc_x"},
+                    ],
+                    "cursor": "",
+                }
+                with mock.patch("core.get_helius_keys",
+                                return_value=["key1"]):
+                    result = sa.fetch_holders(
+                        "MINT", max_wallets=10, price_usd=0.1)
+        self.assertEqual(result["source"], "helius")
+        self.assertEqual(len(result["holders"]), 1)
+        self.assertEqual(result["holders"][0]["address"], "X")
+
+    def test_holder_no_fallback_without_price(self):
+        """Tanpa price_usd, fallback Helius tidak jalan."""
+        with mock.patch("silent_accumulation._http_get",
+                        side_effect=RuntimeError("GMGN down")):
+            result = sa.fetch_holders("MINT", max_wallets=10, price_usd=0.0)
+        self.assertEqual(result["source"], "gmgn")
+        self.assertEqual(len(result["holders"]), 0)
+
+    def test_flow_fallback_gmgn_to_helius(self):
+        """GMGN incomplete → fallback ke Helius swaps."""
+        now = 1_800_000_000
+        with mock.patch("cvd.fetch_gmgn_swaps", return_value=([], "s", 0, False)):
+            with mock.patch("cvd.get_gmgn_fetch_status",
+                            return_value={"complete": False, "error": "test"}):
+                with mock.patch("cvd.fetch_swaps") as mock_helius_swaps:
+                    mock_helius_swaps.return_value = (
+                        [("buy", 1.0, now - 3600, "W", 0.01, 100.0, [])],
+                        "sig", now - 3600, True)
+                    with mock.patch("core.get_helius_keys",
+                                    return_value=["key1"]):
+                        with mock.patch("requests.get") as mock_get:
+                            mock_get.return_value.json.return_value = {
+                                "pairs": [{"pairAddress": "POOL",
+                                           "baseToken": {"address": "MINT"}}]
+                            }
+                            flow = sa.fetch_12h_flow("MINT", now_ts=now)
+        self.assertEqual(flow["source"], "helius")
+        self.assertEqual(flow["buy_tx"], 1)
+
+    def test_price_passthrough_to_holders(self):
+        """price_usd diteruskan dari enrich_rows ke fetch_holders."""
+        rows = [{"ca": "MINT", "symbol": "TST", "mc": 1000, "price": 0.05}]
+        with mock.patch.object(sa, "analyze_token") as mock_analyze:
+            mock_analyze.return_value = {"ca": "MINT", "symbol": "TST"}
+            sa.enrich_rows(rows, max_wallets=10, max_trade_pages=1)
+        # Cek price_usd diteruskan
+        call_kwargs = mock_analyze.call_args[1]
+        self.assertAlmostEqual(call_kwargs.get("price_usd"), 0.05)
 
 
 if __name__ == "__main__":  # pragma: no cover
