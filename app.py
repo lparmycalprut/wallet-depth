@@ -7,7 +7,7 @@ import html
 
 import streamlit as st
 
-from links import external_links_html
+from links import CVD_PAGE_PATH, external_links_html
 from silent_accumulation import (DUST_LIMIT_USD, analyze_token)
 from silent_status import (load_silent_status, publish_silent_status)
 from trending_ui import (render_trending, run_screen, run_screen_h1,
@@ -256,7 +256,7 @@ else:
         if cols[8].button("📈", key=f"chart-{mint}", help="Buka flow chart",
                           use_container_width=True):
             st.session_state["effort_mint"] = mint
-            st.switch_page("pages/4_📊_CVD.py")
+            st.switch_page(CVD_PAGE_PATH, query_params={"mint": mint})
         if cols[9].button("✕", key=f"remove-{mint}", help="Hapus watchlist",
                           use_container_width=True):
             remove_from_watchlist(mint)
