@@ -176,18 +176,115 @@ def _normalize_holder(raw: dict) -> dict | None:
     }
 
 
+def fetch_holders_helius(ca: str, *, max_wallets: int | None = None,
+                         price_usd: float = 0.0,
+                         helius_keys=None) -> dict:
+    """Ambil holder via Helius DAS getTokenAccounts (fallback GMGN).
+
+    Paginasi cursor, USD = balance × harga token. Hanya jalan bila
+    ``price_usd > 0`` dan Helius key tersedia.
+    """
+    from core import helius_rpc, get_helius_keys
+
+    ca = str(ca or "").strip()
+    if not ca or price_usd <= 0:
+        return {"holders": [], "pages": 0, "truncated": False,
+                "fetched": 0, "analyzed_at": int(time.time()),
+                "source": "helius"}
+
+    keys = helius_keys or get_helius_keys()
+    if not keys:
+        return {"holders": [], "pages": 0, "truncated": False,
+                "fetched": 0, "analyzed_at": int(time.time()),
+                "source": "helius"}
+
+    max_wallets = int(max_wallets or DEFAULT_MAX_WALLETS)
+    holders: dict[str, dict] = {}
+    cursor = None
+    pages = 0
+    truncated = False
+    page_limit = 1000
+
+    while True:
+        params = {"mint": ca, "limit": page_limit}
+        if cursor:
+            params["cursor"] = cursor
+        try:
+            result = helius_rpc("getTokenAccounts", params, helius_keys=keys)
+        except Exception:  # noqa: BLE001
+            break
+
+        if not isinstance(result, dict):
+            break
+        accounts = result.get("token_accounts") or []
+        pages += 1
+        for acc in accounts:
+            if not isinstance(acc, dict):
+                continue
+            addr = str(acc.get("owner") or "").strip()
+            if not addr:
+                continue
+            balance = _float(acc.get("amount"))
+            usd_value = balance * price_usd
+            if addr not in holders:
+                holders[addr] = {
+                    "address": addr,
+                    "account_address": str(acc.get("address") or ""),
+                    "balance": balance,
+                    "usd_value": usd_value,
+                    "amount_pct": 0.0,  # DAS tidak beri %
+                    "is_wallet": True,
+                    "is_new": False,
+                    "is_suspicious": False,
+                    "start_holding_at": 0,
+                    "last_active_at": 0,
+                    "netflow_usd": 0.0,
+                    "current_buy_amount": 0.0,
+                    "current_sell_amount": 0.0,
+                    "current_transfer_in": 0.0,
+                    "current_transfer_out": 0.0,
+                    "wallet_tag": "",
+                    "tags": [],
+                    "maker_token_tags": [],
+                }
+        next_cursor = str(result.get("cursor") or "").strip()
+        if len(holders) >= max_wallets:
+            truncated = True
+            break
+        if not next_cursor:
+            break
+        cursor = next_cursor
+        if pages >= 60:
+            truncated = True
+            break
+
+    return {
+        "holders": list(holders.values()),
+        "pages": pages,
+        "truncated": truncated,
+        "fetched": len(holders),
+        "analyzed_at": int(time.time()),
+        "source": "helius",
+    }
+
+
 def fetch_holders(ca: str, *, max_wallets: int | None = None,
                   page_limit: int = HOLDER_PAGE_LIMIT,
-                  timeout: int = 20) -> dict:
+                  timeout: int = 20,
+                  price_usd: float = 0.0) -> dict:
     """Ambil daftar holder (paginasi ``next``) sampai batas ``max_wallets``.
 
+    Fallback ke Helius DAS bila GMGN error/kosong (asalkan price_usd > 0
+    dan Helius key ada).
+
     Return ``{"holders": [...], "pages": n, "truncated": bool,
-    "fetched": n, "analyzed_at": ts}``.
+    "fetched": n, "analyzed_at": ts, "source": "gmgn"|"helius"}``.
     """
     ca = str(ca or "").strip()
     if not ca:
         return {"holders": [], "pages": 0, "truncated": False,
-                "fetched": 0, "analyzed_at": int(time.time())}
+                "fetched": 0, "analyzed_at": int(time.time()),
+                "source": "gmgn"}
     max_wallets = int(max_wallets or DEFAULT_MAX_WALLETS)
     cache_key = f"{ca}:{max_wallets}"
     cached = _HOLDER_CACHE.get(cache_key)
@@ -200,14 +297,17 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
     seen_cursors = set()
     truncated = False
     last_error = ""
+    source = "gmgn"
     while True:
-        payload = _http_get(
-            HOLDER_URL.format(ca=ca),
-            params=_holder_params(cursor, page_limit), timeout=timeout)
+        try:
+            payload = _http_get(
+                HOLDER_URL.format(ca=ca),
+                params=_holder_params(cursor, page_limit), timeout=timeout)
+        except Exception:  # noqa: BLE001
+            break
         code = payload.get("code")
         if code not in (None, 0, "0", "success"):
-            raise RuntimeError(f"GMGN holders code={code}"
-                               f" {payload.get('message') or ''}".strip())
+            break
         data = payload.get("data") or {}
         rows = data.get("list") or []
         pages += 1
@@ -226,12 +326,22 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
         if pages >= 60:  # pengaman keras
             truncated = True
             break
+
+    # Fallback ke Helius bila GMGN kosong/error
+    if not holders and price_usd > 0:
+        helius_result = fetch_holders_helius(
+            ca, max_wallets=max_wallets, price_usd=price_usd)
+        if helius_result.get("holders"):
+            _HOLDER_CACHE[cache_key] = helius_result
+            return helius_result
+
     result = {
         "holders": list(holders.values()),
         "pages": pages,
         "truncated": truncated,
         "fetched": len(holders),
         "analyzed_at": int(time.time()),
+        "source": source,
     }
     _HOLDER_CACHE[cache_key] = result
     return result
@@ -244,9 +354,11 @@ def classify_holders(snapshot: dict | None, market_cap: float = 0.0,
     Return metrik: jumlah wallet, nilai USD kedua kelompok, dan
     **dust % dari marketcap** (dust_value / marketcap * 100) plus
     dust % supply (dari amount_percentage) bila tersedia.
+    Field ``source`` diteruskan dari snapshot (gmgn/helius).
     """
     dust_limit = float(DUST_LIMIT_USD if dust_limit is None else dust_limit)
     holders = (snapshot or {}).get("holders") or []
+    source = str((snapshot or {}).get("source") or "gmgn")
     real = [h for h in holders
             if h.get("is_wallet") and h.get("usd_value", 0) > dust_limit]
     dust = [h for h in holders
@@ -276,18 +388,66 @@ def classify_holders(snapshot: dict | None, market_cap: float = 0.0,
         "new_real": sum(1 for h in real if h.get("is_new")),
         "new_dust": sum(1 for h in dust if h.get("is_new")),
         "suspicious_dust": sum(1 for h in dust if h.get("is_suspicious")),
+        "source": source,
     }
+
+
+def _fetch_swaps_12h(ca: str, from_ts: int, now_ts: int,
+                     max_pages: int) -> tuple[list, str]:
+    """Ambil swap 12 jam: GMGN dulu, fallback Helius bila tidak lengkap.
+
+    Return ``(swaps, source)`` di mana source = "gmgn" atau "helius".
+    """
+    from cvd import fetch_gmgn_swaps, fetch_swaps, get_gmgn_fetch_status
+    from core import get_helius_keys, select_dexscreener_pair
+
+    source = "gmgn"
+    try:
+        swaps, _sig, _ts, _hit = fetch_gmgn_swaps(
+            ca, from_ts=from_ts, to_ts=now_ts, max_pages=max_pages,
+            page_limit=100, sleep=0.0)
+    except Exception:  # noqa: BLE001
+        swaps = []
+
+    status = get_gmgn_fetch_status()
+    if not status.get("complete") or status.get("error"):
+        # Coba fallback Helius
+        try:
+            keys = get_helius_keys()
+            if keys:
+                import requests as _requests
+                r = _requests.get(
+                    f"https://api.dexscreener.com/latest/dex/tokens/{ca}",
+                    timeout=15)
+                pairs = (r.json() or {}).get("pairs") or []
+                pair = select_dexscreener_pair(pairs, ca)
+                pool = ""
+                if pair:
+                    pool = str(pair.get("pairAddress") or "")
+                if pool:
+                    helius_swaps, _, _, _ = fetch_swaps(
+                        keys[0], pool, ca,
+                        stop_ts=from_ts, max_pages=max_pages,
+                        sleep=0.0, use_gmgn=False,
+                        from_ts=from_ts, to_ts=now_ts)
+                    if helius_swaps:
+                        swaps = helius_swaps
+                        source = "helius"
+        except Exception:  # noqa: BLE001
+            pass  # Tetap pakai GMGN swaps
+    return swaps, source
 
 
 def fetch_12h_flow(ca: str, *, now_ts: int | None = None,
                    hours: float = SILENT_WINDOW_HOURS,
                    max_pages: int = DEFAULT_MAX_TRADE_PAGES) -> dict:
-    """Net flow 12 jam terakhir dari GMGN token_trades.
+    """Net flow 12 jam terakhir dari GMGN token_trades (fallback Helius).
 
     Mengembalikan buy/sell USD, net, jumlah wallet akumulator vs
     distributor, bot share, dan price change dari trade pertama/terakhir.
     Trade di luar window disaring ulang secara lokal (GMGN kadang
-    mengabaikan param from/to).
+    mengabaikan param from/to). Field ``source`` menunjukkan sumber data
+    (gmgn/helius).
     """
     ca = str(ca or "").strip()
     now_ts = int(now_ts or time.time())
@@ -297,13 +457,7 @@ def fetch_12h_flow(ca: str, *, now_ts: int | None = None,
     if cached and time.time() - cached.get("analyzed_at", 0) < _CACHE_TTL:
         return dict(cached)
 
-    from cvd import fetch_gmgn_swaps
-    try:
-        swaps, _sig, _ts, _hit = fetch_gmgn_swaps(
-            ca, from_ts=from_ts, to_ts=now_ts, max_pages=max_pages,
-            page_limit=100, sleep=0.0)
-    except Exception as exc:  # noqa: BLE001
-        swaps = []
+    swaps, source = _fetch_swaps_12h(ca, from_ts, now_ts, max_pages)
 
     buy_usd = sell_usd = buy_sol = sell_sol = 0.0
     buy_tx = sell_tx = 0
@@ -380,6 +534,7 @@ def fetch_12h_flow(ca: str, *, now_ts: int | None = None,
         "price_end": price_end,
         "price_chg_pct": round(price_chg, 4) if price_chg is not None else None,
         "trades": len(swaps or []),
+        "source": source,
     }
     _FLOW_CACHE[cache_key] = result
     return result
@@ -493,10 +648,12 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
                   max_wallets: int | None = None,
                   max_trade_pages: int | None = None,
                   fetch_market: bool = True,
-                  timeout: int = 20) -> dict:
+                  timeout: int = 20,
+                  price_usd: float = 0.0) -> dict:
     """Analisis lengkap satu token: holder (real vs dust) + flow 12 jam.
 
     Dipakai langsung oleh scan Trending/Degen dan cron watchlist.
+    ``price_usd`` diteruskan ke fetch_holders untuk fallback Helius.
     """
     ca = str(ca or "").strip()
     dust_limit = float(DUST_LIMIT_USD if dust_limit is None else dust_limit)
@@ -509,9 +666,10 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
         except Exception:
             market = {}
     mc = float(market_cap or market.get("marketcap") or 0)
-    price = float(market.get("price_usd") or 0)
+    price = float(price_usd or market.get("price_usd") or 0)
 
-    snapshot = fetch_holders(ca, max_wallets=max_wallets, timeout=timeout)
+    snapshot = fetch_holders(ca, max_wallets=max_wallets, timeout=timeout,
+                             price_usd=price)
     flow = fetch_12h_flow(ca, max_pages=max_trade_pages)
     holder_stats = classify_holders(snapshot, mc, dust_limit=dust_limit)
     silent = detect_silent(flow, holder_stats)
@@ -550,7 +708,8 @@ def enrich_rows(rows: list[dict], *, dust_limit: float | None = None,
                 row.get("ca") or "", row.get("symbol") or "?",
                 float(row.get("mc") or 0),
                 dust_limit=dust_limit, max_wallets=max_wallets,
-                max_trade_pages=max_trade_pages, fetch_market=False)
+                max_trade_pages=max_trade_pages, fetch_market=False,
+                price_usd=float(row.get("price") or 0))
         except Exception:  # noqa: BLE001 - satu token gagal jangan batalkan
             analysis = None
         return idx, analysis

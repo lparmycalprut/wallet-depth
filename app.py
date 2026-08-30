@@ -184,6 +184,12 @@ else:
         col.markdown(f'<div style="{style}">{title}</div>',
                      unsafe_allow_html=True)
 
+    st.markdown(
+        '<div style="font-size:0.65rem;color:#64748b;margin:0.3rem 0;">'
+        '🕸 GMGN · 🛰 Helius · ≥ batas pencarian holder tercapai'
+        '</div>',
+        unsafe_allow_html=True)
+
     st.markdown('<hr style="margin:0.5rem 0;border-color:#cbd5e1;">',
                 unsafe_allow_html=True)
 
@@ -200,6 +206,13 @@ else:
         price_txt = (f"{_signed(flow.get('price_chg_pct'), '+.1f')}%"
                      if flow.get("price_chg_pct") is not None else "—")
         scanned = _wib(token.get("analyzed_at"))
+        holder_source = str(holders.get("source") or "gmgn").lower()
+        source_icon = "🛰" if holder_source == "helius" else "🕸"
+        truncated = holders.get("truncated", False)
+        real_count = holders.get("real_count")
+        dust_count = holders.get("dust_count")
+        real_txt = f"≥{int(real_count)}" if truncated and real_count is not None else _number(real_count, ".0f")
+        dust_txt = f"≥{int(dust_count)}" if truncated and dust_count is not None else _number(dust_count, ".0f")
 
         cols = st.columns(
             [1.5, 1.3, 0.9, 0.9, 0.8, 0.7, 0.9, 1.0, 0.5, 0.5])
@@ -223,13 +236,13 @@ else:
         cols[4].markdown(
             f'<div class="watchlist-metric">'
             f'<div class="watchlist-metric-value">'
-            f'{_number(holders.get("real_count"), ".0f")}</div>'
+            f'{source_icon} {real_txt}</div>'
             f'<div class="watchlist-metric-sub">wallet</div></div>',
             unsafe_allow_html=True)
         cols[5].markdown(
             f'<div class="watchlist-metric">'
             f'<div class="watchlist-metric-value">'
-            f'{_number(holders.get("dust_count"), ".0f")}</div>'
+            f'{dust_txt}</div>'
             f'<div class="watchlist-metric-sub">wallet</div></div>',
             unsafe_allow_html=True)
         cols[6].markdown(
