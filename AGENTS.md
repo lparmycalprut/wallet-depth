@@ -35,6 +35,11 @@ silent harga          : |change| <= 5%
 silent bot share      : <= 35%
 max holders/token     : 3000 (cron) / 2000 (scan UI), paginasi 1000/halaman
 max trade pages       : 8 (cron) / 6 (scan UI), 100 trade/halaman
+
+Filter tabel scan (silent_accumulation.holder_filter_match):
+SILENT    : silent accumulation 12 jam terdeteksi
+LP        : dust_count > 0.5 * real_count DAN (real_pct_mc + dust_pct_mc) < 0.5
+PUMPDUMP  : real_count < 0.2 * dust_count
 ```
 
 Jalankan:

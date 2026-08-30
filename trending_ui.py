@@ -15,13 +15,20 @@ import streamlit as st
 from gmgn_screener import (screen, screen_hrhr, screen_hrhr_h1,
                            screen_trending_h1)
 from links import (CVD_PAGE_PATH, cvd_shortcut_query, external_links_html)
-from silent_accumulation import enrich_rows
+from silent_accumulation import (FILTER_LP, FILTER_OPTIONS, FILTER_PUMPDUMP,
+                                 FILTER_SILENT, apply_filters, enrich_rows,
+                                 filter_counts, holder_filter_match)
 from watchlist import add_to_watchlist
 
 # Inject consistent styling
 st.markdown("""
 <style>
 .trending-row {padding: 0.6rem 0; border-bottom: 1px solid #cbd5e1;}
+.depth-tag {display:inline-block;margin-top:.15rem;margin-right:.25rem;
+ padding:.12rem .4rem;border-radius:6px;font-size:.58rem;font-weight:800;}
+.tag-silent {background:#14532d;color:#dcfce7}
+.tag-lp {background:#854d0e;color:#fef9c3}
+.tag-pumpdump {background:#7f1d1d;color:#fee2e2}
 .trending-token {display: block;}
 .trending-symbol {display: block; margin-bottom: 0.4rem; font-size: 1rem;
     font-weight: 800; line-height: 1.25; color: #000000;}
@@ -87,6 +94,45 @@ def _analysis(row):
     return (row or {}).get("analysis") if isinstance(row, dict) else None
 
 
+FILTER_LABELS = {
+    FILTER_SILENT: "🔇 SILENT",
+    FILTER_LP: "🏦 LP",
+    FILTER_PUMPDUMP: "🎢 PUMPDUMP",
+}
+
+FILTER_HELP = {
+    FILTER_SILENT: ("Silent accumulation 12 jam: net ≥ $50, ≥3 wallet "
+                    "akumulator, harga ≤ ±5%, bot ≤ 35%."),
+    FILTER_LP: ("Dust > 50% dari real (jumlah wallet) DAN real+dust hanya "
+                "< 0.5% marketcap — supply hampir semua di LP/pool."),
+    FILTER_PUMPDUMP: ("Real hanya < 20% dari dust — dominan dust, "
+                      "real sangat sedikit."),
+}
+
+
+def _filter_bar(rows, *, key_prefix):
+    """Filter SILENT / LP / PUMPDUMP untuk hasil scan. Return (rows, n_total)."""
+    counts = filter_counts(rows)
+    total = len(rows)
+    selected = st.multiselect(
+        "Filter holder depth",
+        options=list(FILTER_OPTIONS),
+        format_func=lambda name: (
+            f"{FILTER_LABELS.get(name, name)} ({counts.get(name, 0)})"),
+        key=f"{key_prefix}_holder_filters",
+        help="\n".join(f"{FILTER_LABELS.get(n, n)}: {FILTER_HELP.get(n, '')}"
+                       for n in FILTER_OPTIONS))
+    matched = apply_filters(rows, selected)
+    if selected:
+        st.caption(f"Menampilkan **{len(matched)}** dari **{total}** token "
+                   f"(filter: {' + '.join(FILTER_LABELS.get(n, n) for n in selected)}).")
+    else:
+        st.caption(f"{total} token · filter: SILENT {counts.get('SILENT', 0)} · "
+                   f"LP {counts.get('LP', 0)} · "
+                   f"PUMPDUMP {counts.get('PUMPDUMP', 0)}")
+    return matched
+
+
 def _silent_badge_html(row):
     """Badge 12 jam: silent accumulation / net beli / distribusi / tanpa data."""
     analysis = _analysis(row)
@@ -102,14 +148,26 @@ def _silent_badge_html(row):
     return ('<span class="silent-badge silent-buy">➕ NET BELI</span>')
 
 
-def _token_identity_html(symbol, ca):
+def _token_identity_html(symbol, ca, row=None):
     """Render token name and CA prefix on clearly separated lines."""
     safe_symbol = _html.escape(str(symbol or "?").upper())
     safe_ca = _html.escape(str(ca or "")[:8])
+    tags = ""
+    analysis = _analysis(row)
+    if analysis:
+        tag_html = []
+        if holder_filter_match(analysis, FILTER_SILENT):
+            tag_html.append('<span class="depth-tag tag-silent">🔇 SILENT</span>')
+        if holder_filter_match(analysis, FILTER_LP):
+            tag_html.append('<span class="depth-tag tag-lp">🏦 LP</span>')
+        if holder_filter_match(analysis, FILTER_PUMPDUMP):
+            tag_html.append('<span class="depth-tag tag-pumpdump">🎢 PUMPDUMP</span>')
+        tags = f'<div>{"".join(tag_html)}</div>'
     return (
         '<div class="trending-token">'
         f'<div class="trending-symbol">${safe_symbol}</div>'
         f'<div class="trending-mint">{safe_ca}…</div>'
+        f'{tags}'
         f'<div class="trending-links">{external_links_html(str(ca or ""))}</div>'
         '</div>'
     )
@@ -194,6 +252,12 @@ def render_trending(rows, *, key_prefix="listing", source="trending"):
         st.info("Tidak ada token dari respons GMGN saat ini.")
         return
 
+    rows = _filter_bar(rows, key_prefix=key_prefix)
+    if not rows:
+        st.info("Tidak ada token yang cocok dengan filter terpilih. "
+                "Hapus filter atau lakukan scan ulang.")
+        return
+
     header_cols = st.columns(
         [1.6, 0.85, 0.8, 0.7, 0.95, 1.1, 0.9, 0.9, 0.55, 0.55])
     header_titles = ["Token", "MC", "Real >$10", "Dust", "Dust %MC",
@@ -224,7 +288,7 @@ def render_trending(rows, *, key_prefix="listing", source="trending"):
 
         columns = st.columns(
             [1.6, 0.85, 0.8, 0.7, 0.95, 1.1, 0.9, 0.9, 0.55, 0.55])
-        columns[0].markdown(_token_identity_html(symbol, ca),
+        columns[0].markdown(_token_identity_html(symbol, ca, row),
                             unsafe_allow_html=True)
         columns[1].markdown(
             f'<div class="trending-metric">'

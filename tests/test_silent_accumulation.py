@@ -112,6 +112,73 @@ class Fetch12hFlowTest(unittest.TestCase):
         self.assertEqual(flow["wallets"], 1)
 
 
+class HolderFilterTest(unittest.TestCase):
+    def _analysis(self, *, real=100, dust=100, silent=False,
+                  real_mc=5.0, dust_mc=1.0):
+        """Analysis fiksi untuk tes filter holder depth."""
+        return {
+            "holders": {"real_count": real, "dust_count": dust,
+                        "real_pct_mc": real_mc, "dust_pct_mc": dust_mc},
+            "silent": {"silent": silent},
+        }
+
+    def test_silent_filter(self):
+        self.assertTrue(sa.holder_filter_match(
+            self._analysis(silent=True), "SILENT"))
+        self.assertFalse(sa.holder_filter_match(
+            self._analysis(silent=False), "SILENT"))
+        self.assertFalse(sa.holder_filter_match(None, "SILENT"))
+
+    def test_lp_filter_dust_more_than_half_real_and_below_half_pct_mc(self):
+        # dust 120 > 0.5*100 dan total holder 0.4% MC → LP ✔
+        self.assertTrue(sa.holder_filter_match(
+            self._analysis(real=100, dust=120, real_mc=0.25, dust_mc=0.15),
+            "LP"))
+        # dust tidak > 50% real → bukan LP
+        self.assertFalse(sa.holder_filter_match(
+            self._analysis(real=100, dust=40, real_mc=0.25, dust_mc=0.15),
+            "LP"))
+        # holder total >= 0.5% MC → bukan LP
+        self.assertFalse(sa.holder_filter_match(
+            self._analysis(real=100, dust=120, real_mc=0.4, dust_mc=0.3),
+            "LP"))
+        # real_pct_mc tidak diketahui → bukan LP (jangan menebak)
+        self.assertFalse(sa.holder_filter_match(
+            {"holders": {"real_count": 100, "dust_count": 120,
+                         "real_pct_mc": None, "dust_pct_mc": 0.1}}, "LP"))
+
+    def test_pumpdump_filter_real_less_than_20_pct_of_dust(self):
+        # real 15 < 0.2*100 → PUMPDUMP ✔
+        self.assertTrue(sa.holder_filter_match(
+            self._analysis(real=15, dust=100), "PUMPDUMP"))
+        # real 25 >= 0.2*100 → bukan PUMPDUMP
+        self.assertFalse(sa.holder_filter_match(
+            self._analysis(real=25, dust=100), "PUMPDUMP"))
+        self.assertFalse(sa.holder_filter_match(
+            self._analysis(real=0, dust=0), "PUMPDUMP"))
+
+    def test_apply_filters_and_count(self):
+        rows = [
+            {"ca": "S", "analysis": self._analysis(real=300, dust=400,
+                                                   real_mc=0.2,
+                                                   dust_mc=0.2, silent=True)},
+            {"ca": "L", "analysis": self._analysis(real=100, dust=120,
+                                                   real_mc=0.2,
+                                                   dust_mc=0.2)},
+            {"ca": "P", "analysis": self._analysis(real=10, dust=100)},
+            {"ca": "X", "analysis": None},
+        ]
+        counts = sa.filter_counts(rows)
+        self.assertEqual(counts["SILENT"], 1)
+        # S (dust 400 > 150 & 0.4% < 0.5) dan L → 2
+        self.assertEqual(counts["LP"], 2)
+        self.assertEqual(counts["PUMPDUMP"], 1)
+        self.assertEqual(len(sa.apply_filters(rows, ["SILENT"])), 1)
+        self.assertEqual(len(sa.apply_filters(rows, ["LP", "SILENT"])), 1)
+        self.assertEqual(len(sa.apply_filters(rows, [])), 4)
+        self.assertEqual(len(sa.apply_filters(rows, ["TIDAK_ADA"])), 4)
+
+
 class EnrichRowsTest(unittest.TestCase):
     def test_enrich_marks_analysis_and_keeps_failures_null(self):
         def fake_analyze(ca, *args, **kwargs):

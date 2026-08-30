@@ -35,6 +35,19 @@ DEFAULT_MAX_WALLETS = 3000     # batas holder yang dianalisis per token
 DEFAULT_MAX_TRADE_PAGES = 8    # maks 800 trade / 12 jam per token
 HOLDER_PAGE_LIMIT = 1000
 
+# --- Filter holder depth ------------------------------------------------------
+FILTER_SILENT = "SILENT"
+FILTER_LP = "LP"
+FILTER_PUMPDUMP = "PUMPDUMP"
+FILTER_OPTIONS = (FILTER_SILENT, FILTER_LP, FILTER_PUMPDUMP)
+
+# LP: dust > 50% dari real (jumlah wallet) DAN real+dust hanya < 0.5% marketcap
+# (sisa supply dipegang LP/pool — hampir tidak ada holder organik).
+LP_DUST_TO_REAL_MIN = 0.5
+LP_HOLDERS_MC_MAX_PCT = 0.5
+# PUMPDUMP: real hanya < 20% dari dust (dominan dust, real sangat sedikit).
+PUMPDUMP_REAL_MAX = 0.2
+
 HOLDER_URL = "https://gmgn.ai/vas/api/v1/token_holders/sol/{ca}"
 
 # Pencilan non-wallet (LP/AMM/pool) dikeluarkan dari hitungan holder.
@@ -369,6 +382,58 @@ def fetch_12h_flow(ca: str, *, now_ts: int | None = None,
         "trades": len(swaps or []),
     }
     _FLOW_CACHE[cache_key] = result
+    return result
+
+
+def holder_filter_match(analysis: dict | None, name: str) -> bool:
+    """Satu filter holder depth terhadap hasil ``analyze_token``.
+
+    - ``SILENT``  : silent accumulation 12 jam terdeteksi.
+    - ``LP``      : dust > 50% dari real (count) DAN real+dust hanya
+      < 0.5% marketcap (supply hampir semua di LP/pool).
+    - ``PUMPDUMP``: real hanya < 20% dari dust (dominan dust).
+    """
+    if not isinstance(analysis, dict):
+        return False
+    name = str(name or "").strip().upper()
+    if name == FILTER_SILENT:
+        return bool((analysis.get("silent") or {}).get("silent"))
+    holders = analysis.get("holders") or {}
+    real = _float(holders.get("real_count"))
+    dust = _float(holders.get("dust_count"))
+    if name == FILTER_LP:
+        real_mc = holders.get("real_pct_mc")
+        dust_mc = holders.get("dust_pct_mc")
+        if (real <= 0 or dust <= 0 or real_mc is None or dust_mc is None):
+            return False
+        total_mc = _float(real_mc) + _float(dust_mc)
+        return (dust > LP_DUST_TO_REAL_MIN * real
+                and total_mc < LP_HOLDERS_MC_MAX_PCT)
+    if name == FILTER_PUMPDUMP:
+        if dust <= 0:
+            return False
+        return real < PUMPDUMP_REAL_MAX * dust
+    return False
+
+
+def filter_counts(rows: list[dict]) -> dict:
+    """Jumlah token per filter (untuk menu filter)."""
+    return {name: sum(1 for row in (rows or [])
+                      if holder_filter_match((row or {}).get("analysis"), name))
+            for name in FILTER_OPTIONS}
+
+
+def apply_filters(rows: list[dict], filters=None) -> list[dict]:
+    """Terapkan daftar filter (AND); kosong = semua baris."""
+    selected = [str(item).strip().upper() for item in (filters or [])
+                if item and str(item).strip().upper() in FILTER_OPTIONS]
+    if not selected:
+        return list(rows or [])
+    result = []
+    for row in rows or []:
+        if all(holder_filter_match((row or {}).get("analysis"), name)
+               for name in selected):
+            result.append(row)
     return result
 
 

@@ -19,6 +19,18 @@ SEROK, seller exhaustion, battle) dan notifikasi Telegram sudah dihapus.
    - dust % supply juga dihitung dari `amount_percentage`.
 3. **Dust** dihitung hanya dari wallet murni (LP/pool/exchange dikeluarkan).
 
+## Filter tabel scan (Trending & Degen)
+
+Pilih lewat menu **Filter holder depth** di atas tabel (bisa dikombinasi):
+
+| Filter | Syarat |
+|---|---|
+| 🔇 SILENT | silent accumulation 12 jam terdeteksi |
+| 🏦 LP | dust > 50% dari real (jumlah wallet) **dan** real+dust hanya < 0.5% marketcap (supply hampir semua di LP/pool) |
+| 🎢 PUMPDUMP | real hanya < 20% dari dust (dominan dust) |
+
+Setiap baris juga diberi tag 🔇/🏦/🎢 bila memenuhi filter tersebut.
+
 ## Modul
 
 | File | Peran |
