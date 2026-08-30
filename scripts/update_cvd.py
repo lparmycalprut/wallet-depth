@@ -23,16 +23,10 @@ from core import (get_daily_candles, get_helius_keys, get_market,
 from cvd import fetch_swaps, get_gmgn_fetch_status
 from cvd_daily import (MARKET_TZ, build_effort_rows,
                        fallback_candles_from_swaps)
-from effort_detector import (DAILY_EFFORT_PATH, STORAGE_WINDOW_DAYS,
-                             classify_effort, load_daily_effort,
-                             merge_daily_effort, rows_for_mint)
+from daily_store import (DAILY_EFFORT_PATH, STORAGE_WINDOW_DAYS,
+                           load_daily_effort, merge_daily_effort,
+                           rows_for_mint)
 from watchlist import load_watchlist, update_local_meta
-
-# Alert harian "BOTTOM TERDETEKSI" dipensiunkan: Telegram hanya untuk
-# REVERSAL UP/DOWN realtime (scripts/realtime_reversal.py) yang lolos gate
-# struktur harga. Pipeline harian tetap menghitung sinyal untuk dashboard,
-# tetapi ALERT_SIGNALS sengaja kosong — jangan tambahkan tanpa keputusan.
-ALERT_SIGNALS: set = set()
 
 
 def _now_market() -> datetime:
@@ -190,10 +184,10 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
     result.
 
     This is the single reusable refresh path shared by the daily cron and the
-    manual CVD fetch. It never sends Telegram alerts and never modifies the
-    watchlist; it only writes ``daily_effort.json`` idempotently. The returned
-    dict (including ``log``) is safe to store in Streamlit session state — it
-    contains no credentials or API keys.
+    manual CVD fetch. It never modifies the watchlist; it only writes
+    ``daily_effort.json`` idempotently. The returned dict (including ``log``)
+    is safe to store in Streamlit session state — it contains no credentials
+    or API keys.
 
     ``on_progress`` is an optional callback invoked with each log entry so a
     UI can stream progress while the pipeline runs.
@@ -281,12 +275,10 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
         _stage("persist", f"{created} dibuat, "
                           f"{result['rows_updated']} di-update (idempoten)")
 
-        # 6. classify and finish
+        # 6. finish (tanpa klasifikasi sinyal)
         history = rows_for_mint(merged, mint)
-        effort = classify_effort(history, mint)
-        result["result"] = effort
-        _stage("classify", f"sinyal={effort.get('signal')} "
-                           f"status={effort.get('status')}")
+        result["result"] = history[-1] if history else None
+        _stage("finish", f"{len(history)} baris harian tersimpan")
         result["ok"] = True
         _stage("success", "fetch manual berhasil")
     except Exception as exc:  # noqa: BLE001 - surface a clean structured error
@@ -298,7 +290,7 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
 
 
 def run_daily(watchlist: dict, *, now=None, api_key: str = "") -> list[dict]:
-    """Refresh setiap token dan simpan idempoten. Tanpa alert Telegram."""
+    """Refresh setiap token dan simpan idempoten (tanpa sinyal)."""
     now = (now or _now_market()).astimezone(MARKET_TZ)
     results = []
 
@@ -310,20 +302,13 @@ def run_daily(watchlist: dict, *, now=None, api_key: str = "") -> list[dict]:
         if not res["ok"]:
             print(f"{symbol}: update failed: {res['error']}")
             continue
-        result = res["result"]
-        # Telegram dimatikan untuk pipeline harian (lihat ALERT_SIGNALS).
-        res["alert_sent"] = False
+        result = res["result"] or {}
         update_local_meta(mint, {
             "symbol": symbol,
             "effort_ts": int(now.timestamp()),
             "effort_date": result.get("date"),
-            "effort_signal": result.get("signal"),
-            "effort_bias": result.get("bias"),
             "effort_cvd": result.get("cvd_delta"),
-            "effort_volume_pct": result.get("volume_pct"),
-            "effort_flush_date": result.get("flush_date"),
-            "effort_divergence": result.get("flag_divergence"),
-            "effort_whale": result.get("whale_driven"),
+            "effort_volume_usd": result.get("volume_usd"),
         })
     return results
 

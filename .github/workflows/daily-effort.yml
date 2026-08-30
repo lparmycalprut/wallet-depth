@@ -1,10 +1,9 @@
-name: Realtime Bidirectional Reversal
+name: Silent Accumulation 12H Scanner
 
 on:
   schedule:
-    # GitHub Actions dapat terlambat beberapa menit.
-    # Engine tetap memakai rolling window sehingga tidak bergantung
-    # pada waktu mulai yang persis.
+    # GitHub Actions dapat terlambat beberapa menit; engine memakai window
+    # rolling 12 jam sehingga tidak bergantung pada waktu mulai yang persis.
     - cron: "*/15 * * * *"
 
   workflow_dispatch:
@@ -13,7 +12,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: realtime-reversal
+  group: silent-scanner
   cancel-in-progress: false
 
 jobs:
@@ -35,20 +34,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests curl_cffi
 
-      - name: Restore scanner state and rolling trade cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            .cache/reversal_trades.json.gz
-            last_scan_result.json
-          key: reversal-state-${{ github.run_id }}
-          restore-keys: |
-            reversal-state-
-
-      - name: Scan rolling reversal windows
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          MIN_LIQUIDITY_USD: "5000"
+      - name: Scan silent accumulation (12h) + holder dust
         run: |
-          python scripts/realtime_reversal.py
+          python scripts/scan_silent.py --max-wallets 3000 --max-trade-pages 8

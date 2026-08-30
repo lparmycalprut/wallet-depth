@@ -32,3 +32,29 @@ Port sinyal ekstensi [SMART_SEROK v9.1.3](https://github.com/lparmycalprut/SMART
 
 Tidak diubah tanpa perlu: halaman CVD, listing Trending/Degen, fetch GMGN,
 persist watchlist GitHub.
+
+# Kegiatan — 30 Agustus 2026
+
+Refactor besar: **buang semua sinyal + Telegram**, fokus **silent
+accumulation 12 jam** dan **holder depth**.
+
+## Yang dikerjakan
+
+1. Hapus modul sinyal (serok, reversal, effort, price_structure), scanner
+   realtime, dan transport `signals.py` (Telegram) beserta secrets.
+2. `silent_accumulation.py`: fetch holder GMGN paginasi `next`
+   (verified limit 1000/page, `limit=1000`), klasifikasi real holder
+   (>$10 value) vs dust (0 < value <= $10), dust % dari marketcap,
+   net flow 12 jam (`token_trades`), deteksi silent (net >= $50,
+   >= 3 akumulator, |harga| <= 5%, bot <= 35%).
+3. `silent_status.py` + `scripts/scan_silent.py`: cron tiap ~15 menit
+   publish snapshot ke ref `silent-live`.
+4. `app.py` & `trending_ui.py`: kolom/holder-depth langsung saat scan
+   Trending/Degen (real count, dust count, dust %MC, status 12 jam).
+5. Halaman CVD: chart flow harian tanpa sinyal; `daily_effort.json`
+   dipertahankan sebagai agregasi murni (`daily_store.py`).
+6. Workflow `daily-effort.yml` diganti menjadi Silent Accumulation 12H
+   Scanner (tanpa `TELEGRAM_*`).
+
+Tidak diubah tanpa perlu: watchlist GitHub, fetch GMGN/Helius, listing
+screener.

@@ -233,3 +233,17 @@
   marketcap_close; `test_effort_alert.py` untuk format/gate Telegram baru;
   `test_baseline_detail.py` digantikan `test_signal_detail.py` (AppTest badge
   & detail); `test_manual_refresh.py` diperbarui untuk wiring supply.
+
+# 2026-08-30 — Silent accumulation 12 jam (buang semua sinyal)
+
+- Menghapus seluruh sinyal (SMART SEROK / reversal / effort bottom) dan
+  notifikasi Telegram: `signals.py`, `serok_engine.py`, `reversal_engine.py`,
+  `reversal_state.py`, `reversal_status.py`, `price_structure.py`,
+  `effort_detector.py`, `scripts/realtime_reversal.py`,
+  `scripts/backtest_confidence.py`.
+- Baru: `silent_accumulation.py` (holder real vs dust + flow 12 jam),
+  `silent_status.py` (snapshot `silent-live`), `scripts/scan_silent.py`
+  (cron 15 menit), `daily_store.py` (storage harian tanpa sinyal).
+- Dashboard `app.py` & `trending_ui.py`: kolom Real >$10 / Dust / Dust %MC /
+  Status 12 jam saat scan Trending & Degen.
+- Endpoint `token_holders` diverifikasi paginasi `next` (limit 1000/page).
