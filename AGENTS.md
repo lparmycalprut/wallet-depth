@@ -6,9 +6,13 @@ Tidak ada sinyal dan tidak ada notifikasi Telegram.
 
 ## Sumber kebenaran
 
-- `silent_accumulation.py`: fetch holder GMGN (paginasi `next`), klasifikasi
+- `silent_accumulation.py`: fetch holder (paginasi `next`), klasifikasi
   real/dust, net flow 12 jam (`cvd.fetch_gmgn_swaps`), deteksi silent,
-  `analyze_token`, `enrich_rows`.
+  `analyze_token`, `enrich_rows`, `resolve_holder_source`.
+- `solscan_holders.py`: holder Solscan (Pro API `v2.0/token/holders` →
+  Public API `token/holders`) + `wallet_depth` (bucket & tier ala halaman
+  analytics Solscan). Watchlist memakai `auto` = Solscan dulu, fallback
+  GMGN/Helius; listing Trending/Degen tetap `gmgn`.
 - `silent_status.py`: snapshot `silent_status.json` → GitHub ref
   `silent-live` (pinggir `main`, mencegah redeploy Streamlit).
 - `scripts/scan_silent.py`: cron GitHub Actions (~15 menit) untuk watchlist.
@@ -35,6 +39,16 @@ silent harga          : |change| <= 5%
 silent bot share      : <= 35%
 max holders/token     : 3000 (cron) / 2000 (scan UI), paginasi 1000/halaman
 max trade pages       : 8 (cron) / 6 (scan UI), 100 trade/halaman
+
+Wallet depth Solscan (buckets, semua akun): >$0-$10, $10-$100, $100-$1k,
+$1k-$10k, $10k-$100k, $100k-$500k, >$500k
+Tier (wallet murni saja): 🦐 Shrimp <=$100, 🦀 Crab $100-$1k,
+🐟 Fish $1k-$10k, 🐬 Dolphin $10k-$100k, 🦈 Shark >$100k
+LP/pool dikecualikan dari tier via pair_addresses DexScreener + config.
+
+holder_source (config.json / env HOLDER_SOURCE): auto (default, watchlist
+pakai Solscan dulu) | solscan | gmgn. `SOLSCAN_API_KEY` (config/env/
+secrets) mengaktifkan Pro API; tanpanya Public API + fallback GMGN/Helius.
 
 Filter tabel scan (silent_accumulation.holder_filter_match):
 SILENT    : silent accumulation 12 jam terdeteksi

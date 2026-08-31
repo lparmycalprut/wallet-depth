@@ -4,7 +4,8 @@
 Menggantikan ``realtime_reversal``: TANPA sinyal dan TANPA Telegram.
 Untuk setiap token watchlist:
 
-1. ambil daftar holder GMGN (paginasi, batas ``--max-wallets``),
+1. ambil daftar holder (Solscan dulu — ``auto`` — fallback GMGN/Helius,
+   paginasi penuh, batas ``--max-wallets``),
 2. pisahkan real holder (>$10 value) vs dust, hitung dust % marketcap,
 3. hitung net flow + akumulator 12 jam terakhir,
 4. tulis ``silent_status.json`` lokal & publish ke branch ``silent-live``.
@@ -31,8 +32,13 @@ from watchlist import load_watchlist
 
 def scan_watchlist(watchlist: dict, *, dust_limit: float | None = None,
                    max_wallets: int = 3000, max_trade_pages: int = 8,
-                   workers: int = 4, progress=None) -> dict:
-    """Analisis semua token watchlist; return {mint: analysis}."""
+                   workers: int = 4, progress=None,
+                   holder_source: str | None = None) -> dict:
+    """Analisis semua token watchlist; return {mint: analysis}.
+
+    ``holder_source``: ``gmgn`` / ``solscan`` / ``auto`` — default
+    ``None`` = ikuti config/env (default ``auto`` = Solscan dulu).
+    """
     analyses: dict[str, dict] = {}
     total = len(watchlist or {})
     if not total:
@@ -45,7 +51,8 @@ def scan_watchlist(watchlist: dict, *, dust_limit: float | None = None,
             analysis = analyze_token(
                 mint, (meta or {}).get("symbol") or "?",
                 dust_limit=dust_limit, max_wallets=max_wallets,
-                max_trade_pages=max_trade_pages, fetch_market=True)
+                max_trade_pages=max_trade_pages, fetch_market=True,
+                holder_source=holder_source)
             return mint, analysis, None
         except Exception as exc:  # noqa: BLE001
             return mint, None, str(exc)
@@ -77,6 +84,10 @@ def main(argv=None) -> int:
     parser.add_argument("--max-trade-pages", type=int, default=8,
                         help="maks halaman trade (100/halaman) per token")
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--holder-source", choices=("gmgn", "solscan",
+                                                    "auto"), default=None,
+                        help="sumber holder; default ikut config/env "
+                             "(auto = Solscan dulu, fallback GMGN/Helius)")
     parser.add_argument("--no-push", action="store_true",
                         help="hanya tulis status lokal")
     args = parser.parse_args(argv)
@@ -84,14 +95,16 @@ def main(argv=None) -> int:
     watchlist = load_watchlist()
     print(f"Silent scanner: tokens={len(watchlist)} "
           f"time={datetime.now(timezone.utc).isoformat()} "
-          f"max_wallets={args.max_wallets}")
+          f"max_wallets={args.max_wallets} "
+          f"holder_source={args.holder_source or 'config(auto)'}")
 
     started = time.monotonic()
     analyses = scan_watchlist(
         watchlist, dust_limit=args.dust_limit,
         max_wallets=args.max_wallets,
         max_trade_pages=args.max_trade_pages,
-        workers=args.workers)
+        workers=args.workers,
+        holder_source=args.holder_source)
 
     if analyses:
         silent = sum(1 for item in analyses.values()

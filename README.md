@@ -12,12 +12,32 @@ SEROK, seller exhaustion, battle) dan notifikasi Telegram sudah dihapus.
    - minimal 3 wallet net-beli (akumulator),
    - harga hampir tidak bergerak (≤ ±5%),
    - share mev/bot rendah (≤ 35%).
-2. **Real holder vs dust** — dari daftar holder GMGN (paginasi penuh):
+2. **Real holder vs dust** — dari daftar holder (paginasi penuh):
    - **real holder**: nilai posisi > $10,
    - **dust holder**: 0 < nilai ≤ $10,
    - **dust % dari marketcap** = total nilai dust / marketcap × 100,
    - dust % supply juga dihitung dari `amount_percentage`.
 3. **Dust** dihitung hanya dari wallet murni (LP/pool/exchange dikeluarkan).
+4. **Wallet Depth by Threshold (Solscan)** — khusus token watchlist,
+   daftar holder diambil **dari Solscan** (Pro API bila `solscan_api_key`
+   diisi, fallback Public API, lalu GMGN/Helius):
+   - **bucket nilai** `>$0-$10` … `>$500k` atas semua akun (termasuk
+     LP/pool, seperti halaman analytics Solscan),
+   - **tier** 🦐 Shrimp / 🦀 Crab / 🐟 Fish / 🐬 Dolphin / 🦈 Shark atas
+     wallet murni (LP/pool dari DexScreener dikecualikan).
+
+## Sumber holder
+
+| Nilai | Perilaku |
+|---|---|
+| `auto` (default) | Watchlist: Solscan dulu → GMGN → Helius. |
+| `solscan` | Paksa Solscan (Pro/Public), fallback GMGN/Helius. |
+| `gmgn` | GMGN saja (perilaku lama), fallback Helius. |
+
+Diatur via `holder_source` di `config.json` / env `HOLDER_SOURCE`.
+Listing Trending/Degen selalu `gmgn` (`enrich_rows`) agar tidak membebani
+public API Solscan. Tanpa key Solscan, Public API dipakai (rate limit
+ketat — ada sleep antar halaman + fallback otomatis).
 
 ## Filter tabel scan (Trending & Degen)
 
@@ -36,6 +56,7 @@ Setiap baris juga diberi tag 🔇/🏦/🎢 bila memenuhi filter tersebut.
 | File | Peran |
 |---|---|
 | `silent_accumulation.py` | fetch holder (paginasi `next`), klasifikasi real/dust, net flow 12 jam, deteksi silent, `enrich_rows` |
+| `solscan_holders.py` | holder Solscan (Pro/Public) + Wallet Depth by Threshold & tier ala analytics Solscan |
 | `silent_status.py` | snapshot status untuk dashboard (GitHub ref `silent-live`) |
 | `scripts/scan_silent.py` | cron: scan watchlist 12 jam + holder, publish status |
 | `cvd_daily.py` / `daily_store.py` | agregasi harian CVD/volume (tanpa sinyal) + storage idempoten |

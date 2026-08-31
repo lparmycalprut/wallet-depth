@@ -129,6 +129,70 @@ def _dust_pct(token):
     return f"{float(pct):.2f}%"
 
 
+def _depth_tables_html(depth: dict) -> str:
+    """Tabel Wallet Depth by Threshold + tier ala Solscan (HTML)."""
+    def _pct(item):
+        pct = item.get("pct_mc")
+        return "—" if pct is None else f"{float(pct):.2f}%"
+
+    def _count(item):
+        return "—" if item.get("count") is None else f"{int(item['count']):,}"
+
+    bucket_rows = "".join(
+        f"<tr><td>{html.escape(str(b.get('label') or ''))}</td>"
+        f"<td style='text-align:center'>{_count(b)}</td>"
+        f"<td style='text-align:right'>{_compact(b.get('value_usd'))}</td>"
+        f"<td style='text-align:right'>{_pct(b)}</td></tr>"
+        for b in (depth.get("buckets") or []))
+    tier_rows = "".join(
+        f"<tr><td>{html.escape(str(t.get('emoji') or ''))} "
+        f"{html.escape(str(t.get('tier') or ''))}</td>"
+        f"<td style='text-align:center'>{_count(t)}</td>"
+        f"<td style='text-align:right'>{_compact(t.get('value_usd'))}</td>"
+        f"<td style='text-align:right'>{_pct(t)}</td></tr>"
+        for t in (depth.get("tiers") or []))
+    style = ("border-collapse:collapse;font-size:.8rem;color:#000000;"
+             "margin:0 .6rem .4rem 0;")
+    th = "border:1px solid #cbd5e1;padding:.3rem .6rem;background:#f1f5f9;"
+    td = "border:1px solid #cbd5e1;padding:.25rem .6rem;"
+    return f"""
+<div style="display:flex;flex-wrap:wrap;gap:1rem;">
+<table style="{style}">
+<thead><tr><th style="{th}">Range</th><th style="{th}">Holder</th>
+<th style="{th}">Total Value</th><th style="{th}">% Market Cap</th>
+</tr></thead><tbody>{bucket_rows}</tbody></table>
+<table style="{style}">
+<thead><tr><th style="{th}">Tier</th><th style="{th}">Holder</th>
+<th style="{th}">Total Value</th><th style="{th}">% Market Cap</th>
+</tr></thead><tbody>{tier_rows}</tbody></table>
+</div>"""
+
+
+def _render_depth(holders: dict, symbol: str) -> None:
+    """Render Wallet Depth by Threshold dari data holder Solscan."""
+    depth = holders.get("depth") if isinstance(holders.get("depth"), dict) \
+        else None
+    if not depth:
+        return
+    with st.expander(f"📊 Wallet Depth by Threshold — ${symbol} "
+                     "(Solscan)", expanded=False):
+        st.markdown(_depth_tables_html(depth), unsafe_allow_html=True)
+        total_all = depth.get("holders_all")
+        total_wallet = depth.get("holders_wallet")
+        pool_note = ""
+        if depth.get("pool_excluded"):
+            pool_note = (f"· {int(depth['pool_excluded'])} akun "
+                         f"LP/pool dikecualikan dari tier")
+        api = str(holders.get("api") or "")
+        value_note = ("nilai USD dari Solscan" if api == "pro"
+                      else "nilai USD = balance × harga app")
+        st.caption(
+            f"Bucket dihitung atas semua akun bernilai >$0 "
+            f"({total_all:,} akun); tier atas wallet murni "
+            f"({total_wallet:,} wallet{pool_note}). {value_note}."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Data
 # ---------------------------------------------------------------------------
@@ -186,7 +250,8 @@ else:
 
     st.markdown(
         '<div style="font-size:0.65rem;color:#64748b;margin:0.3rem 0;">'
-        '🕸 GMGN · 🛰 Helius · ≥ batas pencarian holder tercapai'
+        '🕸 GMGN · 📡 Solscan · 🛰 Helius · ≥ batas pencarian holder '
+        'tercapai'
         '</div>',
         unsafe_allow_html=True)
 
@@ -207,7 +272,12 @@ else:
                      if flow.get("price_chg_pct") is not None else "—")
         scanned = _wib(token.get("analyzed_at"))
         holder_source = str(holders.get("source") or "gmgn").lower()
-        source_icon = "🛰" if holder_source == "helius" else "🕸"
+        if holder_source == "helius":
+            source_icon = "🛰"
+        elif holder_source == "solscan":
+            source_icon = "📡"
+        else:
+            source_icon = "🕸"
         truncated = holders.get("truncated", False)
         real_count = holders.get("real_count")
         dust_count = holders.get("dust_count")
@@ -261,6 +331,8 @@ else:
                           use_container_width=True):
             remove_from_watchlist(mint)
             st.rerun()
+        if isinstance(holders.get("depth"), dict):
+            _render_depth(holders, symbol)
         st.markdown('<hr style="margin:0.3rem 0;border-color:#cbd5e1;">',
                     unsafe_allow_html=True)
 

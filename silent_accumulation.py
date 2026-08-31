@@ -50,6 +50,17 @@ PUMPDUMP_REAL_MAX = 0.2
 
 HOLDER_URL = "https://gmgn.ai/vas/api/v1/token_holders/sol/{ca}"
 
+# --- Sumber data holder -------------------------------------------------------
+HOLDER_SOURCE_GMGN = "gmgn"
+HOLDER_SOURCE_SOLSCAN = "solscan"
+HOLDER_SOURCE_AUTO = "auto"
+HOLDER_SOURCE_OPTIONS = (HOLDER_SOURCE_GMGN, HOLDER_SOURCE_SOLSCAN,
+                         HOLDER_SOURCE_AUTO)
+# Watchlist (cron & tombol scan lokal) memakai "auto" → Solscan dulu,
+# fallback GMGN/Helius. Listing Trending/Degen tetap GMGN (default
+# ``enrich_rows``) supaya tidak kena rate limit public API Solscan.
+HOLDER_SOURCE_DEFAULT = HOLDER_SOURCE_AUTO
+
 # Pencilan non-wallet (LP/AMM/pool) dikeluarkan dari hitungan holder.
 NOISE_TAGS = frozenset(("sandwich_bot", "mev_bot", "mev"))
 
@@ -438,6 +449,57 @@ def _fetch_swaps_12h(ca: str, from_ts: int, now_ts: int,
     return swaps, source
 
 
+def resolve_holder_source(requested: str | None = None) -> str:
+    """Prioritas sumber holder: param → config/env ``holder_source`` → auto.
+
+    - ``gmgn``    : GMGN (perilaku lama), fallback Helius.
+    - ``solscan`` : Solscan (Pro/Public), fallback GMGN → Helius.
+    - ``auto``    : Solscan dulu untuk token watchlist.
+    """
+    value = str(requested or "").strip().lower()
+    if value in HOLDER_SOURCE_OPTIONS:
+        return value
+    try:
+        from core import get_holder_source
+        configured = get_holder_source(default=HOLDER_SOURCE_DEFAULT)
+        if configured in HOLDER_SOURCE_OPTIONS:
+            return configured
+    except Exception:
+        pass
+    return HOLDER_SOURCE_DEFAULT
+
+
+def _fetch_holders_snapshot(ca: str, source: str, *, max_wallets: int,
+                            timeout: int, price_usd: float,
+                            market_cap: float, market: dict,
+                            ) -> tuple[dict, dict | None]:
+    """Snapshot holder + depth Solscan (bila sumbernya Solscan).
+
+    ``source`` sudah di-resolve. Return ``(snapshot, depth)``; ``depth``
+    hanya terisi saat snapshot berasal dari Solscan.
+    """
+    if source != HOLDER_SOURCE_GMGN:
+        try:
+            from solscan_holders import (fetch_solscan_holders,
+                                         wallet_depth)
+            from core import get_solscan_key
+            api_key = get_solscan_key()
+            pools = set(str(p or "").strip() for p in
+                        (market.get("pair_addresses") or []) if p)
+            snapshot = fetch_solscan_holders(
+                ca, price_usd=price_usd, market_cap=market_cap,
+                max_wallets=max_wallets, api_key=api_key,
+                pool_addresses=pools, timeout=timeout)
+            if snapshot.get("holders"):
+                depth = wallet_depth(snapshot.get("holders") or [],
+                                     market_cap, pool_addresses=pools)
+                return snapshot, depth
+        except Exception:  # noqa: BLE001 - fallback GMGN
+            pass
+    return fetch_holders(ca, max_wallets=max_wallets, timeout=timeout,
+                         price_usd=price_usd), None
+
+
 def fetch_12h_flow(ca: str, *, now_ts: int | None = None,
                    hours: float = SILENT_WINDOW_HOURS,
                    max_pages: int = DEFAULT_MAX_TRADE_PAGES) -> dict:
@@ -649,16 +711,23 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
                   max_trade_pages: int | None = None,
                   fetch_market: bool = True,
                   timeout: int = 20,
-                  price_usd: float = 0.0) -> dict:
+                  price_usd: float = 0.0,
+                  holder_source: str | None = None) -> dict:
     """Analisis lengkap satu token: holder (real vs dust) + flow 12 jam.
 
     Dipakai langsung oleh scan Trending/Degen dan cron watchlist.
     ``price_usd`` diteruskan ke fetch_holders untuk fallback Helius.
+
+    ``holder_source``: ``gmgn`` / ``solscan`` / ``auto`` (default
+    mengikuti config/env, lihat :func:`resolve_holder_source`). Saat
+    holder berasal dari Solscan, metrik ``holders["depth"]`` berisi
+    Wallet Depth by Threshold + tier ala halaman analytics Solscan.
     """
     ca = str(ca or "").strip()
     dust_limit = float(DUST_LIMIT_USD if dust_limit is None else dust_limit)
     max_wallets = int(max_wallets or DEFAULT_MAX_WALLETS)
     max_trade_pages = int(max_trade_pages or DEFAULT_MAX_TRADE_PAGES)
+    source = resolve_holder_source(holder_source)
     market = {}
     if fetch_market:
         try:
@@ -668,10 +737,14 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
     mc = float(market_cap or market.get("marketcap") or 0)
     price = float(price_usd or market.get("price_usd") or 0)
 
-    snapshot = fetch_holders(ca, max_wallets=max_wallets, timeout=timeout,
-                             price_usd=price)
+    snapshot, depth = _fetch_holders_snapshot(
+        ca, source, max_wallets=max_wallets, timeout=timeout,
+        price_usd=price, market_cap=mc, market=market)
     flow = fetch_12h_flow(ca, max_pages=max_trade_pages)
     holder_stats = classify_holders(snapshot, mc, dust_limit=dust_limit)
+    if depth is not None:
+        holder_stats["depth"] = depth
+        holder_stats["api"] = str(snapshot.get("api") or "")
     silent = detect_silent(flow, holder_stats)
     return {
         "ca": ca,
@@ -689,11 +762,14 @@ def enrich_rows(rows: list[dict], *, dust_limit: float | None = None,
                 max_wallets: int | None = None,
                 max_trade_pages: int | None = None,
                 workers: int = 6,
-                progress=None) -> list[dict]:
+                progress=None,
+                holder_source: str | None = HOLDER_SOURCE_GMGN) -> list[dict]:
     """Perkaya daftar listing (trending/degen) dengan analisis holder+12j.
 
     ``progress`` opsional: callable ``(index, total, label)``.
     Setiap baris gagal analisis tetap tampil dengan ``analysis=None``.
+    Default ``holder_source="gmgn"`` — listing massal tetap pakai GMGN
+    supaya tidak membebani public API Solscan.
     """
     out = list(rows or ())
     if not out:
@@ -709,7 +785,8 @@ def enrich_rows(rows: list[dict], *, dust_limit: float | None = None,
                 float(row.get("mc") or 0),
                 dust_limit=dust_limit, max_wallets=max_wallets,
                 max_trade_pages=max_trade_pages, fetch_market=False,
-                price_usd=float(row.get("price") or 0))
+                price_usd=float(row.get("price") or 0),
+                holder_source=holder_source)
         except Exception:  # noqa: BLE001 - satu token gagal jangan batalkan
             analysis = None
         return idx, analysis
