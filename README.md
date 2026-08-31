@@ -50,8 +50,17 @@ seluruh holder diambil langsung dari **Helius DAS `getTokenAccounts`**
 ditampilkan sebagai **bar chart distribusi holder** per range nilai
 (Wallet Depth by Threshold) plus tabel bucket/tier. Butuh
 `helius_api_key` (config.json / env `HELIUS_API_KEY` / Streamlit secrets).
-Cron GitHub Actions membaca secret repo `HELIUS_API_KEY` /
-`HELIUS_API_KEYS`.
+Untuk cron GitHub Actions, tambahkan manual env secret repo di step scan
+`.github/workflows/daily-effort.yml` (perubahan workflow tidak bisa
+di-push oleh GitHub App):
+
+```yaml
+        env:
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+          HELIUS_API_KEYS: ${{ secrets.HELIUS_API_KEYS }}
+```
+
+Tanpa secret tersebut cron tetap jalan lewat fallback GMGN.
 
 ## Filter tabel scan (Trending & Degen)
 

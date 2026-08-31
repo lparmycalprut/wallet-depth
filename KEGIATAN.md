@@ -17,9 +17,10 @@ yang memang hanya ada di GMGN):
    jatuh ke `auto` (= Helius). Opsi sumber kini `auto`/`helius`/`gmgn`.
 4. Tier Helius sekarang mengecualikan LP/pool via `pair_addresses`
    DexScreener; legend/ikon UI menghilangkan 📡 Solscan.
-5. Workflow `daily-effort.yml` menerima env `HELIUS_API_KEY` /
-   `HELIUS_API_KEYS` dari repo secret (tanpa secret → otomatis fallback
-   GMGN).
+5. Workflow `daily-effort.yml` **belum** bisa diubah via push (GitHub App
+   tanpa permission `workflows`) — tambahkan manual env `HELIUS_API_KEY` /
+   `HELIUS_API_KEYS` di step scan (lihat snippet di README); tanpa secret
+   → otomatis fallback GMGN.
 
 # Kegiatan — 31 Agustus 2026
 
