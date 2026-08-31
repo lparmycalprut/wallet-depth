@@ -39,6 +39,13 @@ Listing Trending/Degen selalu `gmgn` (`enrich_rows`) agar tidak membebani
 public API Solscan. Tanpa key Solscan, Public API dipakai (rate limit
 ketat — ada sleep antar halaman + fallback otomatis).
 
+**Scan Holder Khusus (Helius)** di halaman utama: tempel CA satu token,
+seluruh holder diambil langsung dari **Helius DAS `getTokenAccounts`**
+(paginasi cursor, nilai USD = balance × harga DexScreener) lalu
+ditampilkan sebagai **bar chart distribusi holder** per range nilai
+(Wallet Depth by Threshold) plus tabel bucket/tier. Butuh
+`helius_api_key` (config.json / env `HELIUS_API_KEY` / Streamlit secrets).
+
 ## Filter tabel scan (Trending & Degen)
 
 Pilih lewat menu **Filter holder depth** di atas tabel (bisa dikombinasi):
@@ -57,6 +64,7 @@ Setiap baris juga diberi tag 🔇/🏦/🎢 bila memenuhi filter tersebut.
 |---|---|
 | `silent_accumulation.py` | fetch holder (paginasi `next`), klasifikasi real/dust, net flow 12 jam, deteksi silent, `enrich_rows` |
 | `solscan_holders.py` | holder Solscan (Pro/Public) + Wallet Depth by Threshold & tier ala analytics Solscan |
+| `helius_holders.py` | **Scan Holder Khusus** satu token — holder dipaksa dari Helius DAS `getTokenAccounts` + bar chart distribusi holder |
 | `silent_status.py` | snapshot status untuk dashboard (GitHub ref `silent-live`) |
 | `scripts/scan_silent.py` | cron: scan watchlist 12 jam + holder, publish status |
 | `cvd_daily.py` / `daily_store.py` | agregasi harian CVD/volume (tanpa sinyal) + storage idempoten |

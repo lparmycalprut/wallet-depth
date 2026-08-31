@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 import html
+import re
 
+import matplotlib.pyplot as plt
 import streamlit as st
 
+from helius_holders import depth_bar_chart, scan_token_holders
 from links import CVD_PAGE_PATH, external_links_html
 from silent_accumulation import (DUST_LIMIT_USD, analyze_token)
 from silent_status import (load_silent_status, publish_silent_status)
@@ -191,6 +194,115 @@ def _render_depth(holders: dict, symbol: str) -> None:
             f"({total_all:,} akun); tier atas wallet murni "
             f"({total_wallet:,} wallet{pool_note}). {value_note}."
         )
+
+
+# ---------------------------------------------------------------------------
+# Scan Holder Khusus — Helius (satu token)
+# ---------------------------------------------------------------------------
+# Solana addresses are base58 (no 0/O/I/l) and 32-44 chars.
+SOLANA_CA_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+
+
+def _render_helius_holder_scan() -> None:
+    """Section: input CA satu token → scan holder via Helius + bar chart."""
+    st.divider()
+    st.subheader("🛰 Scan Holder Khusus — Helius")
+    st.caption(
+        "Tempel **contract address (CA)** satu token untuk mengambil seluruh "
+        "daftar holder langsung dari **Helius DAS** (getTokenAccounts) dan "
+        "menampilkan **bar chart distribusi holder** per range nilai USD "
+        "(Wallet Depth by Threshold). Data holder dipaksa dari Helius — "
+        "tidak bergantung GMGN / public API Solscan."
+    )
+
+    with st.form("helius-holder-form"):
+        col_ca, col_max, col_btn = st.columns([3, 1, 1])
+        ca_input = col_ca.text_input(
+            "Contract address (CA)",
+            placeholder="So11111111111111111111111111111111111111112")
+        max_wallets = col_max.number_input(
+            "Maks holder", min_value=1000, max_value=100_000,
+            value=20_000, step=1_000)
+        run = col_btn.form_submit_button("🛰 Scan Holder", type="primary")
+
+    if run:
+        ca = str(ca_input or "").strip()
+        if not ca:
+            st.warning("Masukkan contract address terlebih dahulu.")
+        elif not SOLANA_CA_RE.match(ca):
+            st.warning("Format CA Solana tidak valid. Gunakan address base58 "
+                       "sepanjang 32–44 karakter.")
+        else:
+            with st.status("Mengambil holder dari Helius…",
+                           expanded=False) as box:
+                try:
+                    result = scan_token_holders(
+                        ca, max_wallets=int(max_wallets))
+                except Exception as exc:  # noqa: BLE001
+                    result = None
+                    box.write(f"Gagal: {exc}")
+            if result is None:
+                st.error("Terjadi kesalahan saat scan holder.")
+            else:
+                result["mint"] = ca
+                st.session_state["helius_holder_result"] = result
+
+    result = st.session_state.get("helius_holder_result")
+    if result and result.get("mint"):
+        _render_helius_holder_result(result)
+
+
+def _render_helius_holder_result(result: dict) -> None:
+    """Tampilkan metrik + bar chart + tabel depth hasil scan holder Helius."""
+    mint = result.get("mint") or ""
+    market = result.get("market") or {}
+    snapshot = result.get("snapshot") or {}
+    depth = result.get("depth") or {}
+    symbol = str(result.get("symbol") or market.get("symbol") or "?").upper()
+    fetched = int(snapshot.get("fetched") or 0)
+    truncated = bool(snapshot.get("truncated"))
+    holders_all = int(depth.get("holders_all") or 0)
+    holders_wallet = int(depth.get("holders_wallet") or 0)
+    mc = float(market.get("marketcap") or depth.get("market_cap") or 0)
+
+    st.markdown(f"**${html.escape(symbol)}** — `{html.escape(mint)}`")
+    st.markdown(external_links_html(mint), unsafe_allow_html=True)
+
+    if result.get("no_helius_keys"):
+        st.error("Belum ada Helius API key. Isi `helius_api_key` di "
+                 "config.json / env `HELIUS_API_KEY` / Streamlit secrets.")
+        return
+    if result.get("scan_failed"):
+        st.error("Scan tidak menghasilkan holder. Pastikan CA valid, harga "
+                 "token tersedia (DexScreener), dan Helius API key aktif.")
+        return
+
+    prefix = "≥" if truncated else ""
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Akun holder (Helius)", f"{prefix}{fetched:,}",
+              help="Akun token yang diambil dari Helius DAS getTokenAccounts.")
+    c2.metric("Bucket > $0", f"{holders_all:,}",
+              help="Semua akun bernilai > $0 (termasuk LP/pool).")
+    c3.metric("Wallet murni (tier)", f"{holders_wallet:,}",
+              help="Akun non-LP/pool yang dipakai hitungan tier.")
+    c4.metric("Marketcap", _compact(mc) if mc else "—",
+              help="Marketcap dari DexScreener.")
+
+    fig = depth_bar_chart(
+        depth, title=f"Distribusi holder ${symbol} per range nilai (USD)")
+    if fig is not None:
+        st.pyplot(fig, use_container_width=True)
+        plt.close(fig)
+    else:
+        st.info("Belum ada bucket holder untuk ditampilkan.")
+
+    st.markdown(_depth_tables_html(depth), unsafe_allow_html=True)
+    pages = int(snapshot.get("pages") or 0)
+    st.caption(
+        f"Sumber holder: 🛰 Helius DAS getTokenAccounts · "
+        f"{prefix}{fetched:,} akun dianalisis · {pages} halaman · "
+        "nilai USD = balance × harga token (DexScreener)."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -411,3 +523,5 @@ else:
         st.error(st.session_state["trend_error"])
     render_trending(st.session_state.get("trend_combined", []),
                     key_prefix="trend", source="trending")
+
+_render_helius_holder_scan()
