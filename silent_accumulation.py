@@ -566,8 +566,12 @@ def _fetch_holders_snapshot(ca: str, source: str, *, max_wallets: int,
                     ca, max_wallets=max_wallets, price_usd=price_usd,
                     helius_keys=keys)
                 if snapshot.get("holders"):
+                    # Bucket default tanpa LP/pool — pool AMM yang menyerap
+                    # dump (bisa 25-40% supply) bukan "holder" dan bikin
+                    # distribusi menyesatkan. Tier memang selalu wallet-only.
                     depth = wallet_depth(snapshot.get("holders") or [],
-                                         market_cap, pool_addresses=pools)
+                                         market_cap, pool_addresses=pools,
+                                         include_pools=False)
                     return snapshot, depth
             except Exception:  # noqa: BLE001 - fallback GMGN
                 pass

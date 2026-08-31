@@ -50,6 +50,49 @@ class WalletDepthTest(unittest.TestCase):
         self.assertEqual(depth["holders_wallet"], 5)
         self.assertEqual(depth["pool_excluded"], 1)
 
+    def test_buckets_exclude_pools_when_requested(self):
+        """include_pools=False → LP/pool hilang dari bucket (list holder)."""
+        holders = [
+            {"address": "POOL", "usd_value": 90000.0, "is_wallet": True},
+            # GMGN path: pool dikenali dari is_wallet=False walau address
+            # tidak ada di pool_addresses.
+            {"address": "RAYDIUM-VAULT", "usd_value": 2500.0,
+             "is_wallet": False},
+            {"address": "W1", "usd_value": 1800.0, "is_wallet": True},
+            {"address": "W2", "usd_value": 9.0, "is_wallet": True},
+        ]
+        depth = sh.wallet_depth(holders, market_cap=200_000,
+                                pool_addresses=["POOL"],
+                                include_pools=False)
+
+        by_label = {b["label"]: b for b in depth["buckets"]}
+        self.assertEqual(by_label[">$0-$10"]["count"], 1)      # W2
+        self.assertEqual(by_label["$1k-$10k"]["count"], 1)    # W1
+        self.assertEqual(by_label["$10k-$100k"]["count"], 0)  # POOL hilang
+        # total nilai bucket = wallet murni saja (tanpa 90k + 2.5k pool)
+        total_bucket_value = sum(b["value_usd"] for b in depth["buckets"])
+        self.assertAlmostEqual(total_bucket_value, 1809.0)
+
+        # metrik tetap: semua akun bernilai > $0 vs wallet murni
+        self.assertEqual(depth["holders_all"], 4)
+        self.assertEqual(depth["holders_wallet"], 2)
+        self.assertEqual(depth["pool_excluded"], 2)
+        self.assertFalse(depth["buckets_include_pools"])
+        # tier tidak terpengaruh (memang selalu wallet murni)
+        by_tier = {t["tier"]: t for t in depth["tiers"]}
+        self.assertEqual(by_tier["Fish"]["count"], 1)   # W1
+        self.assertEqual(by_tier["Shrimp"]["count"], 1)  # W2
+        self.assertEqual(by_tier["Dolphin"]["count"], 0)
+
+    def test_buckets_include_pools_flag_default_true(self):
+        """Tanpa argumen: perilaku lama — bucket memuat LP/pool."""
+        depth = sh.wallet_depth(
+            [{"address": "POOL2", "usd_value": 5000.0, "is_wallet": False}],
+            market_cap=10_000, pool_addresses=["POOL2"])
+        by_label = {b["label"]: b for b in depth["buckets"]}
+        self.assertEqual(by_label["$1k-$10k"]["count"], 1)
+        self.assertTrue(depth["buckets_include_pools"])
+
     def test_missing_marketcap_gives_none_pct(self):
         depth = sh.wallet_depth(
             [{"address": "A", "usd_value": 5.0, "is_wallet": True}],

@@ -74,12 +74,20 @@ def _compact(value) -> str:
 
 def scan_token_holders(ca: str, *, max_wallets: int | None = None,
                        price_usd: float = 0.0,
-                       market_cap: float = 0.0) -> dict:
+                       market_cap: float = 0.0,
+                       include_pools: bool = False) -> dict:
     """Scan holder satu token memakai Helius DAS sebagai sumber.
 
     Mengambil market (harga & marketcap) dari DexScreener, daftar holder
     dari Helius ``getTokenAccounts``, lalu menghitung Wallet Depth by
     Threshold (bucket) + tier (hanya wallet murni).
+
+    ``include_pools``: bila ``False`` (default) akun LP/pool yang dikenal
+    (``pair_addresses`` DexScreener) **disingkirkan dari list/bucket
+    holder** — pool AMM yang menyerap dump bisa memegang puluhan persen
+    supply dan menyesatkan bucket. Tier dan metrik ``pool_excluded``
+    tetap dihitung normal; ``True`` mengembalikan perilaku lama (bucket
+    memuat semua akun seperti chart analytics Solscan).
 
     Return dict::
 
@@ -115,7 +123,7 @@ def scan_token_holders(ca: str, *, max_wallets: int | None = None,
     pools = set(str(p or "").strip() for p in
                 (market.get("pair_addresses") or []) if p)
     depth = wallet_depth(snapshot.get("holders") or [], mc,
-                         pool_addresses=pools)
+                         pool_addresses=pools, include_pools=include_pools)
     scan_failed = not snapshot.get("holders") or price <= 0
     return {
         "mint": ca,

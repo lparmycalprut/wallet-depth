@@ -10,11 +10,19 @@ Yang tersisa di sini adalah definisi ambang & kalkulasi ``wallet_depth``:
 
 1. **Wallet Depth by Threshold** — jumlah holder per bucket nilai USD:
    ``>$0-$10``, ``$10-$100``, ``$100-$1k``, ``$1k-$10k``, ``$10k-$100k``,
-   ``$100k-$500k``, ``>$500k`` (semua akun, termasuk LP/pool, sama seperti
-   chart analytics Solscan).
+   ``$100k-$500k``, ``>$500k``. Default sekarang **wallet murni saja**
+   (LP/pool disingkirkan) karena pool AMM yang menyerap jualan bisa
+   mendominasi bucket dan menyesatkan pembacaan; mode lama (semua akun,
+   termasuk LP/pool, seperti chart analytics Solscan) tetap tersedia
+   via ``include_pools=True``.
 2. **Holder Distribution by Tier** — 🦐 Shrimp / 🦀 Crab / 🐟 Fish /
    🐬 Dolphin / 🦈 Shark, dihitung hanya untuk **wallet murni** (akun
    LP/pool yang dikenal dikecualikan via ``pool_addresses``).
+
+Akun dianggap LP/pool bila: GMGN menandainya bukan wallet
+(``is_wallet=False`` — ``addr_type`` non-zero / ada field ``exchange``)
+**atau** address-nya ada di ``pool_addresses`` (pair DexScreener —
+menutup jalur Helius yang menandai semua akun ``is_wallet=True``).
 """
 from __future__ import annotations
 
@@ -52,23 +60,33 @@ def _float(value, default=0.0) -> float:
 
 
 def wallet_depth(holders, market_cap: float = 0.0, *,
-                 pool_addresses=None) -> dict:
+                 pool_addresses=None, include_pools: bool = True) -> dict:
     """Wallet Depth by Threshold + Holder Distribution by Tier.
 
-    - ``buckets``: semua akun dengan nilai > $0 (termasuk LP/pool, sama
-      seperti chart Solscan), per bucket nilai USD.
-    - ``tiers``: hanya wallet murni (LP/pool dikecualikan), per tier.
+    - ``buckets``: per bucket nilai USD atas akun bernilai > $0 —
+      **dengan** ``include_pools=True`` (default historis) semua akun
+      termasuk LP/pool (seperti chart Solscan); dengan
+      ``include_pools=False`` hanya wallet murni (LP/pool disingkirkan
+      dari list holder).
+    - ``tiers``: selalu hanya wallet murni (LP/pool dikecualikan), per
+      tier.
 
     Setiap entri: ``{"label"/"tier"/"emoji", "min", "max", "count",
     "value_usd", "pct_mc"}`` — ``pct_mc`` = None bila marketcap 0.
+    Field hasil tambahan: ``buckets_include_pools`` (mode bucket yang
+    dipakai) — UI memakainya untuk caption/metrik yang tepat.
     """
     pool_set = {str(p or "").strip().lower() for p in (pool_addresses or [])
                 if p}
     all_rows = [h for h in (holders or [])
                 if isinstance(h, dict) and _float(h.get("usd_value")) > 0]
-    wallet_rows = [h for h in all_rows
-                   if h.get("is_wallet")
-                   and str(h.get("address") or "").lower() not in pool_set]
+
+    def _is_pool(row) -> bool:
+        return (not row.get("is_wallet")
+                or str(row.get("address") or "").lower() in pool_set)
+
+    wallet_rows = [h for h in all_rows if not _is_pool(h)]
+    bucket_rows = all_rows if include_pools else wallet_rows
     mc = float(market_cap or 0)
 
     # Tiers: wallet murni saja, ambang mengikuti konvensi Solscan.
@@ -90,7 +108,7 @@ def wallet_depth(holders, market_cap: float = 0.0, *,
 
     buckets = []
     for label, lo, hi in DEPTH_BUCKETS:
-        items = [h for h in all_rows
+        items = [h for h in bucket_rows
                  if _float(h.get("usd_value")) > lo
                  and (hi is None or _float(h.get("usd_value")) <= hi)]
         value = sum(_float(h.get("usd_value")) for h in items)
@@ -105,6 +123,7 @@ def wallet_depth(holders, market_cap: float = 0.0, *,
 
     return {
         "buckets": buckets,
+        "buckets_include_pools": bool(include_pools),
         "tiers": tier_rows,
         "holders_all": len(all_rows),
         "holders_wallet": len(wallet_rows),

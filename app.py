@@ -182,14 +182,17 @@ def _render_depth(holders: dict, symbol: str) -> None:
         st.markdown(_depth_tables_html(depth), unsafe_allow_html=True)
         total_all = depth.get("holders_all")
         total_wallet = depth.get("holders_wallet")
-        pool_note = ""
-        if depth.get("pool_excluded"):
-            pool_note = (f"· {int(depth['pool_excluded'])} akun "
-                         f"LP/pool dikecualikan dari tier")
+        pool_n = int(depth.get("pool_excluded") or 0)
+        if depth.get("buckets_include_pools"):
+            bucket_line = (f"Bucket dihitung atas semua akun bernilai >$0 "
+                           f"({total_all:,} akun, termasuk LP/pool)")
+        else:
+            bucket_line = (f"Bucket dihitung atas wallet murni saja "
+                           f"({total_wallet:,} akun — {pool_n:,} akun "
+                           f"LP/pool disingkirkan dari list holder)")
         st.caption(
-            f"Bucket dihitung atas semua akun bernilai >$0 "
-            f"({total_all:,} akun); tier atas wallet murni "
-            f"({total_wallet:,} wallet{pool_note}). Nilai USD = "
+            f"{bucket_line}; tier atas wallet murni "
+            f"({total_wallet:,} wallet). Nilai USD = "
             f"balance × harga token saat scan (DexScreener)."
         )
 
@@ -209,18 +212,29 @@ def _render_helius_holder_scan() -> None:
         "Tempel **contract address (CA)** satu token untuk mengambil seluruh "
         "daftar holder langsung dari **Helius DAS** (getTokenAccounts) dan "
         "menampilkan **bar chart distribusi holder** per range nilai USD "
-        "(Wallet Depth by Threshold). Helius DAS adalah sumber data utama "
-        "aplikasi ini; GMGN hanya dipakai untuk listing Trending/Degen."
+        "(Wallet Depth by Threshold). **Default: LP/pool AMM (PumpSwap, "
+        "Meteora, dst) disingkirkan dari bucket** supaya cadangan "
+        "likuiditas tidak terbaca sebagai holder — pool bisa memegang "
+        "puluhan persen supply setelah dump besar. Helius DAS adalah sumber "
+        "data utama aplikasi ini; GMGN hanya dipakai untuk listing "
+        "Trending/Degen."
     )
 
     with st.form("helius-holder-form"):
-        col_ca, col_max, col_btn = st.columns([3, 1, 1])
+        col_ca, col_max, col_pool, col_btn = st.columns([3, 1, 2, 1])
         ca_input = col_ca.text_input(
             "Contract address (CA)",
             placeholder="So11111111111111111111111111111111111111112")
         max_wallets = col_max.number_input(
             "Maks holder", min_value=1000, max_value=100_000,
             value=20_000, step=1_000)
+        include_pools = col_pool.checkbox(
+            "Sertakan LP/pool di bucket", value=False,
+            help="Default OFF: pool/AMM (mis. PumpSwap, Meteora) "
+                 "disingkirkan dari list/bucket holder — pool yang menyerap "
+                 "dump bisa memegang puluhan persen supply padahal itu "
+                 "likuiditas, bukan holder. ON = tampilkan semua akun "
+                 "seperti chart analytics Solscan.")
         run = col_btn.form_submit_button("🛰 Scan Holder", type="primary")
 
     if run:
@@ -235,7 +249,8 @@ def _render_helius_holder_scan() -> None:
                            expanded=False) as box:
                 try:
                     result = scan_token_holders(
-                        ca, max_wallets=int(max_wallets))
+                        ca, max_wallets=int(max_wallets),
+                        include_pools=bool(include_pools))
                 except Exception as exc:  # noqa: BLE001
                     result = None
                     box.write(f"Gagal: {exc}")
@@ -281,11 +296,19 @@ def _render_helius_holder_result(result: dict) -> None:
         return
 
     prefix = "≥" if truncated else ""
+    buckets_with_pools = bool(depth.get("buckets_include_pools", True))
+    pool_n = int(depth.get("pool_excluded") or 0)
+    bucket_n = holders_all if buckets_with_pools else holders_wallet
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Akun holder (Helius)", f"{prefix}{fetched:,}",
               help="Akun token yang diambil dari Helius DAS getTokenAccounts.")
-    c2.metric("Bucket > $0", f"{holders_all:,}",
-              help="Semua akun bernilai > $0 (termasuk LP/pool).")
+    c2.metric(
+        f"Bucket > $0 ({'semua akun' if buckets_with_pools else 'tanpa pool'})",
+        f"{bucket_n:,}",
+        help=("Semua akun bernilai > $0 termasuk LP/pool."
+              if buckets_with_pools else
+              f"Hanya wallet murni — {pool_n:,} akun LP/pool "
+              "(pair DexScreener) disingkirkan dari bucket."))
     c3.metric("Wallet murni (tier)", f"{holders_wallet:,}",
               help="Akun non-LP/pool yang dipakai hitungan tier.")
     c4.metric("Marketcap", _compact(mc) if mc else "—",
@@ -301,9 +324,11 @@ def _render_helius_holder_result(result: dict) -> None:
 
     st.markdown(_depth_tables_html(depth), unsafe_allow_html=True)
     pages = int(snapshot.get("pages") or 0)
+    pool_note = ("" if buckets_with_pools or not pool_n
+                 else f" · 🚫 {pool_n:,} akun LP/pool disingkirkan dari bucket")
     st.caption(
         f"Sumber holder: 🛰 Helius DAS getTokenAccounts · "
-        f"{prefix}{fetched:,} akun dianalisis · {pages} halaman · "
+        f"{prefix}{fetched:,} akun dianalisis · {pages} halaman{pool_note} · "
         "nilai USD = balance × harga token (DexScreener)."
     )
 
