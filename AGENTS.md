@@ -48,11 +48,14 @@ silent bot share      : <= 35%
 max holders/token     : 3000 (cron) / 2000 (scan UI), paginasi 1000/halaman
 max trade pages       : 8 (cron) / 6 (scan UI), 100 trade/halaman
 
-Wallet depth Solscan (buckets, semua akun): >$0-$10, $10-$100, $100-$1k,
-$1k-$10k, $10k-$100k, $100k-$500k, >$500k
-Tier (wallet murni saja): 🦐 Shrimp <=$100, 🦀 Crab $100-$1k,
-🐟 Fish $1k-$10k, 🐬 Dolphin $10k-$100k, 🦈 Shark >$100k
-LP/pool dikecualikan dari tier via pair_addresses DexScreener + config.
+Wallet depth (buckets): >$0-$10, $10-$100, $100-$1k, $1k-$10k,
+$10k-$100k, $100k-$500k, >$500k — default **wallet murni saja**
+(LP/pool disingkirkan dari list/bucket holder via pair_addresses
+DexScreener + flag is_wallet GMGN; mode semua-akun ala Solscan masih
+tersedia lewat `wallet_depth(..., include_pools=True)` / checkbox
+"Sertakan LP/pool di bucket" di Scan Holder Khusus).
+Tier (selalu wallet murni): 🦐 Shrimp <=$100, 🦀 Crab $100-$1k,
+🐟 Fish $1k-$10k, 🐬 Dolphin $10k-$100k, 🦈 Shark >$100k.
 
 holder_source (config.json / env HOLDER_SOURCE): auto (default, watchlist
 pakai Helius dulu) | helius | gmgn. Wajib `HELIUS_API_KEY` (config/env/

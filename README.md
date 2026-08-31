@@ -22,8 +22,13 @@ SEROK, seller exhaustion, battle) dan notifikasi Telegram sudah dihapus.
    diambil **dari Helius DAS `getTokenAccounts`** (paginasi cursor; nilai
    USD = balance × harga DexScreener; fallback GMGN bila Helius tak
    tersedia):
-   - **bucket nilai** `>$0-$10` … `>$500k` atas semua akun (termasuk
-     LP/pool, seperti halaman analytics Solscan),
+   - **bucket nilai** `>$0-$10` … `>$500k` — **default atas wallet murni
+     saja**: akun LP/pool yang dikenal (pair DexScreener, mis. PumpSwap /
+     Meteora) **disingkirkan dari list holder** karena pool AMM yang
+     menyerap dump bisa memegang puluhan persen supply dan menyesatkan
+     pembacaan. Mode lama (semua akun termasuk LP/pool, seperti halaman
+     analytics Solscan) tersedia via checkbox "Sertakan LP/pool di
+     bucket" pada Scan Holder Khusus atau `include_pools=True`.
    - **tier** 🦐 Shrimp / 🦀 Crab / 🐟 Fish / 🐬 Dolphin / 🦈 Shark atas
      wallet murni (LP/pool dari DexScreener dikecualikan).
 

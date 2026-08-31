@@ -35,7 +35,9 @@ class ScanTokenHoldersTest(unittest.TestCase):
                         return_value=snapshot) as mock_fetch:
                     with mock.patch("helius_holders.wallet_depth",
                                     wraps=hh.wallet_depth) as mock_depth:
-                        result = hh.scan_token_holders("MINT")
+                        # include_pools=True → bucket ala Solscan (semua akun)
+                        result = hh.scan_token_holders("MINT",
+                                                       include_pools=True)
 
         self.assertEqual(result["mint"], "MINT")
         self.assertEqual(result["symbol"], "TST")
@@ -49,8 +51,10 @@ class ScanTokenHoldersTest(unittest.TestCase):
         # pair_addresses market diteruskan sebagai pool_addresses
         self.assertEqual(mock_depth.call_args.kwargs["pool_addresses"],
                          {"POOL"})
+        # opsi bucket diteruskan eksplisit saat diminta
+        self.assertTrue(mock_depth.call_args.kwargs["include_pools"])
         self.assertIn("depth", result)
-        # bucket nilai USD dari wallet_depth
+        # bucket nilai USD dari wallet_depth (mode semua akun)
         by_label = {b["label"]: b for b in result["depth"]["buckets"]}
         self.assertEqual(by_label[">$0-$10"]["count"], 1)   # B
         self.assertEqual(by_label["$100-$1k"]["count"], 1)  # A
@@ -58,10 +62,46 @@ class ScanTokenHoldersTest(unittest.TestCase):
         self.assertEqual(result["depth"]["holders_all"], 3)
         self.assertEqual(result["depth"]["holders_wallet"], 2)
         self.assertEqual(result["depth"]["pool_excluded"], 1)
+        self.assertTrue(result["depth"]["buckets_include_pools"])
         # tier Shark kosong — POOL $90k tidak ikut tier meski is_wallet=True
         by_tier = {t["tier"]: t for t in result["depth"]["tiers"]}
         self.assertEqual(by_tier["Shark"]["count"], 0)
         self.assertEqual(by_tier["Dolphin"]["count"], 0)
+
+    def test_scan_default_excludes_pools_from_buckets(self):
+        """Default: LP/pool disingkirkan dari list/bucket holder."""
+        market = {"symbol": "TST", "price_usd": 0.01, "marketcap": 100_000,
+                  "pair_addresses": ["POOL"]}
+        snapshot = {
+            "holders": [
+                {"address": "A", "usd_value": 500.0, "is_wallet": True},
+                {"address": "B", "usd_value": 5.0, "is_wallet": True},
+                {"address": "POOL", "usd_value": 90_000.0,
+                 "is_wallet": True},
+            ],
+            "pages": 1, "fetched": 3, "truncated": False,
+            "source": "helius",
+        }
+        with mock.patch("helius_holders.get_market", return_value=market):
+            with mock.patch("helius_holders.get_helius_keys",
+                            return_value=["KEY"]):
+                with mock.patch("helius_holders.fetch_holders_helius",
+                                return_value=snapshot):
+                    with mock.patch("helius_holders.wallet_depth",
+                                    wraps=hh.wallet_depth) as mock_depth:
+                        result = hh.scan_token_holders("MINT")
+
+        self.assertFalse(result["scan_failed"])
+        self.assertFalse(mock_depth.call_args.kwargs["include_pools"])
+        by_label = {b["label"]: b for b in result["depth"]["buckets"]}
+        self.assertEqual(by_label[">$0-$10"]["count"], 1)   # B
+        self.assertEqual(by_label["$100-$1k"]["count"], 1)  # A
+        self.assertEqual(by_label["$10k-$100k"]["count"], 0)  # POOL keluar
+        self.assertFalse(result["depth"]["buckets_include_pools"])
+        # metrik tetap mencatat pool yang disingkirkan
+        self.assertEqual(result["depth"]["holders_all"], 3)
+        self.assertEqual(result["depth"]["holders_wallet"], 2)
+        self.assertEqual(result["depth"]["pool_excluded"], 1)
 
     def test_no_helius_keys_flags_and_no_fetch(self):
         """Tanpa key Helius → scan_failed & no_helius_keys=True."""
