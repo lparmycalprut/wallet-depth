@@ -95,9 +95,10 @@ class Fetch12hFlowTest(unittest.TestCase):
             ("sell", 2.0, now - 600, "C", 0.012, 200.0, ["mev"]),
             ("buy", 1.0, now - 60, "D", 0.013, 130.0, []),
         ]
-        with mock.patch("cvd.fetch_gmgn_swaps", return_value=(swaps, "s", 0, True)):
-            with mock.patch("cvd.get_gmgn_fetch_status",
-                            return_value={"complete": True, "error": ""}):
+        # Tanpa Helius key → langsung jalur GMGN.
+        with mock.patch("core.get_helius_keys", return_value=[]):
+            with mock.patch("cvd.fetch_gmgn_swaps",
+                            return_value=(swaps, "s", 0, True)):
                 flow = sa.fetch_12h_flow("CA", now_ts=now, max_pages=2)
         self.assertEqual(flow["buy_tx"], 3)
         self.assertEqual(flow["sell_tx"], 2)
@@ -113,9 +114,9 @@ class Fetch12hFlowTest(unittest.TestCase):
         now = 1_800_000_000
         swaps = [("buy", 1.0, now - 13 * 3600, "OLD", 0.01, 100.0, []),
                  ("buy", 1.0, now - 60, "NEW", 0.011, 110.0, [])]
-        with mock.patch("cvd.fetch_gmgn_swaps", return_value=(swaps, "s", 0, False)):
-            with mock.patch("cvd.get_gmgn_fetch_status",
-                            return_value={"complete": True, "error": ""}):
+        with mock.patch("core.get_helius_keys", return_value=[]):
+            with mock.patch("cvd.fetch_gmgn_swaps",
+                            return_value=(swaps, "s", 0, False)):
                 flow = sa.fetch_12h_flow("CA", now_ts=now, max_pages=1)
         self.assertEqual(flow["buy_tx"], 1)
         self.assertEqual(flow["wallets"], 1)
@@ -213,31 +214,107 @@ class HeliusFallbackTest(unittest.TestCase):
         sa._HOLDER_CACHE.clear()
 
     def test_helius_holder_pagination_and_usd_math(self):
-        """Helius DAS paginasi cursor, USD = balance × price_usd."""
+        """Helius DAS paginasi cursor, USD = (amount raw ÷ 10^dec) × price."""
         page1 = {
             "token_accounts": [
-                {"owner": "A", "amount": 1000.0, "address": "acc1"},
-                {"owner": "B", "amount": 500.0, "address": "acc2"},
+                {"owner": "A", "amount": 1_000_000.0, "address": "acc1"},
+                {"owner": "B", "amount": 500_000.0, "address": "acc2"},
             ],
             "cursor": "cursor1",
         }
         page2 = {
             "token_accounts": [
-                {"owner": "C", "amount": 200.0, "address": "acc3"},
+                {"owner": "C", "amount": 200_000.0, "address": "acc3"},
             ],
             "cursor": "",
         }
-        with mock.patch("core.helius_rpc", side_effect=[page1, page2]):
+
+        def fake_rpc(method, params, helius_keys=None, **_kwargs):
+            if method == "getAsset":
+                return {"token_info": {"decimals": 6}}
+            if method == "getTokenAccounts":
+                return page2 if params.get("cursor") else page1
+            raise AssertionError(f"method tak terduga: {method}")
+
+        with mock.patch("core.helius_rpc", side_effect=fake_rpc):
             with mock.patch("core.get_helius_keys", return_value=["key1"]):
                 result = sa.fetch_holders_helius(
                     "MINT", max_wallets=10, price_usd=0.05)
         self.assertEqual(len(result["holders"]), 3)
         self.assertEqual(result["source"], "helius")
-        # USD = balance × price
+        self.assertEqual(result["decimals"], 6)
+        # 1.000.000 raw (6 desimal) = 1 token UI → USD = 1 × price
         holders_dict = {h["address"]: h for h in result["holders"]}
-        self.assertAlmostEqual(holders_dict["A"]["usd_value"], 50.0)
-        self.assertAlmostEqual(holders_dict["B"]["usd_value"], 25.0)
-        self.assertAlmostEqual(holders_dict["C"]["usd_value"], 10.0)
+        self.assertAlmostEqual(holders_dict["A"]["balance"], 1.0)
+        self.assertAlmostEqual(holders_dict["A"]["usd_value"], 0.05)
+        self.assertAlmostEqual(holders_dict["B"]["usd_value"], 0.025)
+        self.assertAlmostEqual(holders_dict["C"]["usd_value"], 0.01)
+
+    def test_helius_decimals_fallback_gettokensupply(self):
+        """getAsset gagal → decimals dari RPC standar getTokenSupply."""
+        page = {
+            "token_accounts": [
+                {"owner": "A", "amount": 250_000_000.0, "address": "acc1"},
+            ],
+            "cursor": "",
+        }
+
+        def fake_rpc(method, params, helius_keys=None, **_kwargs):
+            if method == "getAsset":
+                raise RuntimeError("DAS down")
+            if method == "getTokenSupply":
+                return {"value": {"decimals": 8}}
+            if method == "getTokenAccounts":
+                return page
+            raise AssertionError(f"method tak terduga: {method}")
+
+        with mock.patch("core.helius_rpc", side_effect=fake_rpc):
+            with mock.patch("core.get_helius_keys", return_value=["key1"]):
+                result = sa.fetch_holders_helius(
+                    "MINT", max_wallets=10, price_usd=2.0)
+        self.assertEqual(result["decimals"], 8)
+        self.assertAlmostEqual(result["holders"][0]["balance"], 2.5)
+        self.assertAlmostEqual(result["holders"][0]["usd_value"], 5.0)
+
+    def test_helius_row_decimals_dipakai_tanpa_lookup(self):
+        """Item token_accounts yang membawa decimals → tanpa panggil mint."""
+        page = {
+            "token_accounts": [
+                {"owner": "A", "amount": 3_000.0, "decimals": 3,
+                 "address": "acc1"},
+            ],
+            "cursor": "",
+        }
+        with mock.patch("core.helius_rpc", return_value=page) as rpc:
+            with mock.patch("core.get_helius_keys", return_value=["key1"]):
+                result = sa.fetch_holders_helius(
+                    "MINT", max_wallets=10, price_usd=1.0)
+        for call in rpc.call_args_list:
+            self.assertEqual(call.args[0], "getTokenAccounts")
+        self.assertAlmostEqual(result["holders"][0]["balance"], 3.0)
+        self.assertAlmostEqual(result["holders"][0]["usd_value"], 3.0)
+
+    def test_helius_tanpa_decimals_berhenti_bersih(self):
+        """Decimals tak ketemu → kosong + error, bukan nilai ÷10^dec meleset."""
+        page = {
+            "token_accounts": [
+                {"owner": "A", "amount": 1_000_000.0, "address": "acc1"},
+            ],
+            "cursor": "",
+        }
+
+        def fake_rpc(method, params, helius_keys=None, **_kwargs):
+            if method == "getTokenAccounts":
+                return page
+            raise RuntimeError("decimals tidak tersedia")
+
+        with mock.patch("core.helius_rpc", side_effect=fake_rpc):
+            with mock.patch("core.get_helius_keys", return_value=["key1"]):
+                result = sa.fetch_holders_helius(
+                    "MINT", max_wallets=10, price_usd=0.05)
+        self.assertEqual(result["holders"], [])
+        self.assertEqual(result["fetched"], 0)
+        self.assertIn("decimals", result["error"])
 
     def test_holder_fallback_gmgn_to_helius(self):
         """GMGN error → otomatis fallback ke Helius."""
@@ -246,7 +323,8 @@ class HeliusFallbackTest(unittest.TestCase):
             with mock.patch("core.helius_rpc") as mock_helius:
                 mock_helius.return_value = {
                     "token_accounts": [
-                        {"owner": "X", "amount": 100.0, "address": "acc_x"},
+                        {"owner": "X", "amount": 100.0, "decimals": 2,
+                         "address": "acc_x"},
                     ],
                     "cursor": "",
                 }
@@ -257,6 +335,8 @@ class HeliusFallbackTest(unittest.TestCase):
         self.assertEqual(result["source"], "helius")
         self.assertEqual(len(result["holders"]), 1)
         self.assertEqual(result["holders"][0]["address"], "X")
+        # 100 raw (2 desimal) = 1 token UI → USD = 1 × $0.10
+        self.assertAlmostEqual(result["holders"][0]["usd_value"], 0.1)
 
     def test_holder_no_fallback_without_price(self):
         """Tanpa price_usd, fallback Helius tidak jalan."""
@@ -266,26 +346,43 @@ class HeliusFallbackTest(unittest.TestCase):
         self.assertEqual(result["source"], "gmgn")
         self.assertEqual(len(result["holders"]), 0)
 
-    def test_flow_fallback_gmgn_to_helius(self):
-        """GMGN incomplete → fallback ke Helius swaps."""
+    def test_flow_helius_prioritas_gmgn_tidak_dipanggil(self):
+        """Helius mengembalikan swap 12 jam → GMGN tidak dipanggil sama sekali."""
         now = 1_800_000_000
-        with mock.patch("cvd.fetch_gmgn_swaps", return_value=([], "s", 0, False)):
-            with mock.patch("cvd.get_gmgn_fetch_status",
-                            return_value={"complete": False, "error": "test"}):
-                with mock.patch("cvd.fetch_swaps") as mock_helius_swaps:
-                    mock_helius_swaps.return_value = (
-                        [("buy", 1.0, now - 3600, "W", 0.01, 100.0, [])],
-                        "sig", now - 3600, True)
-                    with mock.patch("core.get_helius_keys",
-                                    return_value=["key1"]):
-                        with mock.patch("requests.get") as mock_get:
-                            mock_get.return_value.json.return_value = {
-                                "pairs": [{"pairAddress": "POOL",
-                                           "baseToken": {"address": "MINT"}}]
-                            }
-                            flow = sa.fetch_12h_flow("MINT", now_ts=now)
+        with mock.patch("cvd.fetch_gmgn_swaps") as mock_gmgn:
+            with mock.patch("cvd.fetch_swaps") as mock_helius_swaps:
+                mock_helius_swaps.return_value = (
+                    [("buy", 1.0, now - 3600, "W", 0.01, 100.0, [])],
+                    "sig", now - 3600, True)
+                with mock.patch("core.get_helius_keys",
+                                return_value=["key1"]):
+                    with mock.patch("requests.get") as mock_get:
+                        mock_get.return_value.json.return_value = {
+                            "pairs": [{"pairAddress": "POOL",
+                                       "baseToken": {"address": "MINT"}}]
+                        }
+                        flow = sa.fetch_12h_flow("MINT", now_ts=now)
         self.assertEqual(flow["source"], "helius")
         self.assertEqual(flow["buy_tx"], 1)
+        mock_gmgn.assert_not_called()
+
+    def test_flow_fallback_helius_kosong_ke_gmgn(self):
+        """Helius kosong/gagal → fallback ke GMGN swaps."""
+        now = 1_800_000_000
+        gmgn_swaps = [("sell", 2.0, now - 7200, "W", 0.02, 50.0, [])]
+        with mock.patch("cvd.fetch_swaps", return_value=([], "s", 0, False)):
+            with mock.patch("cvd.fetch_gmgn_swaps",
+                            return_value=(gmgn_swaps, "s", 0, True)):
+                with mock.patch("core.get_helius_keys",
+                                return_value=["key1"]):
+                    with mock.patch("requests.get") as mock_get:
+                        mock_get.return_value.json.return_value = {
+                            "pairs": [{"pairAddress": "POOL",
+                                       "baseToken": {"address": "MINT"}}]
+                        }
+                        flow = sa.fetch_12h_flow("MINT", now_ts=now)
+        self.assertEqual(flow["source"], "gmgn")
+        self.assertEqual(flow["sell_tx"], 1)
 
     def test_price_passthrough_to_holders(self):
         """price_usd diteruskan dari enrich_rows ke fetch_holders."""

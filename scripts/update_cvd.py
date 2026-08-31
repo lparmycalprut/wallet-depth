@@ -20,7 +20,7 @@ if ROOT not in sys.path:
 
 from core import (get_daily_candles, get_helius_keys, get_market,
                   load_config)
-from cvd import fetch_swaps, get_gmgn_fetch_status
+from cvd import fetch_swaps
 from cvd_daily import (MARKET_TZ, build_effort_rows,
                        fallback_candles_from_swaps)
 from daily_store import (DAILY_EFFORT_PATH, STORAGE_WINDOW_DAYS,
@@ -131,22 +131,35 @@ def _token_supply(market: dict):
 def _fetch_history_with_source(mint: str, pool: str, api_key: str,
                                start: datetime,
                                end: datetime) -> tuple:
-    """Fetch trades (GMGN first, Helius fallback) for ``[start, end)``.
+    """Fetch trades (Helius first, GMGN fallback) for ``[start, end)``.
 
     ``start``/``end`` are timezone-aware market-day (UTC) datetimes (``end`` exclusive).
-    Returns ``(swaps, source, fallback)`` where ``source`` is ``"gmgn"`` or
-    ``"helius_fallback"`` and ``fallback`` is a boolean describing whether the
-    Helius path was used because GMGN was incomplete/failed.
+    Returns ``(swaps, source, fallback)`` where ``source`` is ``"helius"``,
+    ``"gmgn_fallback"``, or ``"gmgn"`` (bila Helius key/pool tidak tersedia)
+    and ``fallback`` is True bila jalur GMGN dipakai karena Helius kosong/
+    gagal.
     """
+    start_ts, end_ts = int(start.timestamp()), int(end.timestamp())
+    if pool and api_key:
+        try:
+            swaps = fetch_swaps(
+                api_key, pool, mint, stop_ts=start_ts - 1,
+                from_ts=start_ts, to_ts=end_ts,
+                max_pages=80)[0] or []
+        except Exception:  # noqa: BLE001 - lanjut ke fallback GMGN
+            swaps = []
+        if swaps:
+            return swaps, "helius", False
+        swaps = fetch_swaps(
+            api_key, pool, mint, stop_ts=start_ts - 1,
+            from_ts=start_ts, to_ts=end_ts,
+            max_pages=80, use_gmgn=True)[0]
+        return swaps, "gmgn_fallback", True
     swaps = fetch_swaps(
-        api_key, pool, mint, stop_ts=int(start.timestamp()) - 1,
-        from_ts=int(start.timestamp()), to_ts=int(end.timestamp()),
+        api_key, pool, mint, stop_ts=start_ts - 1,
+        from_ts=start_ts, to_ts=end_ts,
         max_pages=80, use_gmgn=True)[0]
-    status = get_gmgn_fetch_status()
-    gmgn_ok = bool(status.get("ok")) and bool(status.get("complete"))
-    fallback = not gmgn_ok
-    source = "gmgn" if not fallback else "helius_fallback"
-    return swaps, source, fallback
+    return swaps, "gmgn", False
 
 
 def _fetch_history(mint: str, pool: str, api_key: str,
@@ -235,7 +248,7 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
             raise RuntimeError("pair market tidak ditemukan")
         _stage("market_lookup", f"pool ditemukan ({pool[:8]}…)")
 
-        # 2. fetch trades (GMGN -> Helius fallback handled internally)
+        # 2. fetch trades (Helius -> GMGN fallback handled internally)
         swaps, source, fallback = _fetch_history_with_source(
             mint, pool, api_key, start, end)
         result["source"] = source
@@ -243,7 +256,7 @@ def refresh_single_token(mint: str, meta: dict | None = None, *,
         result["trades_count"] = len(swaps or [])
         _stage("fetch_trades",
                f"{len(swaps)} trades diterima (sumber: {source}"
-               f"{', fallback Helius' if fallback else ''})")
+               f"{', fallback GMGN' if fallback else ''})")
 
         # 3. daily candles (market candles merged over trade-price fallback)
         market_candles = get_daily_candles(

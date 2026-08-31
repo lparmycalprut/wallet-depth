@@ -1,3 +1,26 @@
+# Kegiatan — 31 Agustus 2026 (lanjutan)
+
+**Migrasi total sumber data ke Helius** (kecuali listing Trending/Degen
+yang memang hanya ada di GMGN):
+
+1. Fix bug konversi holder Helius: `amount` DAS adalah unit RAW → dibagi
+   `10^decimals` mint (decimals dari DAS `getAsset`, fallback RPC
+   `getTokenSupply`; per-item bila tersedia; abort bersih bila tidak
+   ketemu). Sebelumnya nilai USD holder 10^decimals× lebih besar (tier
+   Shark bernilai triliunan $).
+2. `_fetch_holders_snapshot` & `_fetch_swaps_12h`: **Helius dulu, GMGN
+   fallback**. `fetch_swaps` Enhanced API diprioritaskan juga di
+   `scripts/update_cvd.py` (fetch harian CVD) dengan fallback GMGN.
+3. **Solscan API dilepas total**: `solscan_holders.py` hanya tersisa
+   kalkulasi `wallet_depth` (bucket/tier); `get_solscan_key` +
+   `solscan_api_key` dihapus; nilai `holder_source=solscan` lama otomatis
+   jatuh ke `auto` (= Helius). Opsi sumber kini `auto`/`helius`/`gmgn`.
+4. Tier Helius sekarang mengecualikan LP/pool via `pair_addresses`
+   DexScreener; legend/ikon UI menghilangkan 📡 Solscan.
+5. Workflow `daily-effort.yml` menerima env `HELIUS_API_KEY` /
+   `HELIUS_API_KEYS` dari repo secret (tanpa secret → otomatis fallback
+   GMGN).
+
 # Kegiatan — 31 Agustus 2026
 
 Holder token watchlist diambil dari **Solscan**, plus **Wallet Depth by

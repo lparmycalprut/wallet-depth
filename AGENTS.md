@@ -6,18 +6,21 @@ Tidak ada sinyal dan tidak ada notifikasi Telegram.
 
 ## Sumber kebenaran
 
-- `silent_accumulation.py`: fetch holder (paginasi `next`), klasifikasi
-  real/dust, net flow 12 jam (`cvd.fetch_gmgn_swaps`), deteksi silent,
-  `analyze_token`, `enrich_rows`, `resolve_holder_source`.
-- `solscan_holders.py`: holder Solscan (Pro API `v2.0/token/holders` →
-  Public API `token/holders`) + `wallet_depth` (bucket & tier ala halaman
-  analytics Solscan). Watchlist memakai `auto` = Solscan dulu, fallback
-  GMGN/Helius; listing Trending/Degen tetap `gmgn`.
+- `silent_accumulation.py`: **Helius adalah sumber data utama semua
+  fetch** — holder via `fetch_holders_helius` (DAS `getTokenAccounts`,
+  `amount` RAW dikonversi pakai decimals mint), flow 12 jam via
+  `cvd.fetch_swaps` (Enhanced API, pool DexScreener). GMGN hanya dipakai
+  untuk **listing Trending/Degen** dan fallback darurat; Solscan sudah
+  dilepas total. `classify_holders`, deteksi silent, `analyze_token`,
+  `enrich_rows`, `resolve_holder_source` (`gmgn`/`helius`/`auto`,
+  default `auto` = Helius dulu).
+- `solscan_holders.py`: hanya kalkulasi `wallet_depth` (bucket & tier ala
+  halaman analytics Solscan) — tanpa API Solscan lagi.
 - `helius_holders.py`: **Scan Holder Khusus** satu token di halaman utama —
   `scan_token_holders(ca)` memaksa holder dari Helius DAS
   `getTokenAccounts` (paginasi cursor via `fetch_holders_helius`) lalu
   `depth_bar_chart` menampilkan bar chart distribusi holder per range nilai
-  (Wallet Depth by Threshold). Butuh Helius API key.
+  (Wallet Depth by Threshold). Wajib Helius API key.
 - `silent_status.py`: snapshot `silent_status.json` → GitHub ref
   `silent-live` (pinggir `main`, mencegah redeploy Streamlit).
 - `scripts/scan_silent.py`: cron GitHub Actions (~15 menit) untuk watchlist.
@@ -52,8 +55,9 @@ Tier (wallet murni saja): 🦐 Shrimp <=$100, 🦀 Crab $100-$1k,
 LP/pool dikecualikan dari tier via pair_addresses DexScreener + config.
 
 holder_source (config.json / env HOLDER_SOURCE): auto (default, watchlist
-pakai Solscan dulu) | solscan | gmgn. `SOLSCAN_API_KEY` (config/env/
-secrets) mengaktifkan Pro API; tanpanya Public API + fallback GMGN/Helius.
+pakai Helius dulu) | helius | gmgn. Wajib `HELIUS_API_KEY` (config/env/
+secrets) untuk jalur utama; tanpa key, pipeline jatuh otomatis ke GMGN.
+Cron GitHub Actions membaca secret repo `HELIUS_API_KEY`/`HELIUS_API_KEYS`.
 
 Filter tabel scan (silent_accumulation.holder_filter_match):
 SILENT    : silent accumulation 12 jam terdeteksi

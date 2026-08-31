@@ -340,7 +340,7 @@ if result and result.get("mint") == mint:
         cols[3].metric("Dibuat", f"{result.get('rows_created') or 0}")
         cols[4].metric("Diupdate", f"{result.get('rows_updated') or 0}")
         if result.get("fallback"):
-            st.info("Sumber GMGN tidak lengkap → fallback otomatis ke Helius.")
+            st.info("Sumber Helius tidak lengkap → fallback otomatis ke GMGN.")
         if not result.get("ok") and result.get("error"):
             st.error(result["error"])
         st.dataframe(result.get("log") or [], use_container_width=True,

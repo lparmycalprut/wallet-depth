@@ -172,13 +172,13 @@ def _depth_tables_html(depth: dict) -> str:
 
 
 def _render_depth(holders: dict, symbol: str) -> None:
-    """Render Wallet Depth by Threshold dari data holder Solscan."""
+    """Render Wallet Depth by Threshold dari data holder Helius."""
     depth = holders.get("depth") if isinstance(holders.get("depth"), dict) \
         else None
     if not depth:
         return
     with st.expander(f"📊 Wallet Depth by Threshold — ${symbol} "
-                     "(Solscan)", expanded=False):
+                     "(Helius)", expanded=False):
         st.markdown(_depth_tables_html(depth), unsafe_allow_html=True)
         total_all = depth.get("holders_all")
         total_wallet = depth.get("holders_wallet")
@@ -186,13 +186,11 @@ def _render_depth(holders: dict, symbol: str) -> None:
         if depth.get("pool_excluded"):
             pool_note = (f"· {int(depth['pool_excluded'])} akun "
                          f"LP/pool dikecualikan dari tier")
-        api = str(holders.get("api") or "")
-        value_note = ("nilai USD dari Solscan" if api == "pro"
-                      else "nilai USD = balance × harga app")
         st.caption(
             f"Bucket dihitung atas semua akun bernilai >$0 "
             f"({total_all:,} akun); tier atas wallet murni "
-            f"({total_wallet:,} wallet{pool_note}). {value_note}."
+            f"({total_wallet:,} wallet{pool_note}). Nilai USD = "
+            f"balance × harga token saat scan (DexScreener)."
         )
 
 
@@ -211,8 +209,8 @@ def _render_helius_holder_scan() -> None:
         "Tempel **contract address (CA)** satu token untuk mengambil seluruh "
         "daftar holder langsung dari **Helius DAS** (getTokenAccounts) dan "
         "menampilkan **bar chart distribusi holder** per range nilai USD "
-        "(Wallet Depth by Threshold). Data holder dipaksa dari Helius — "
-        "tidak bergantung GMGN / public API Solscan."
+        "(Wallet Depth by Threshold). Helius DAS adalah sumber data utama "
+        "aplikasi ini; GMGN hanya dipakai untuk listing Trending/Degen."
     )
 
     with st.form("helius-holder-form"):
@@ -273,8 +271,13 @@ def _render_helius_holder_result(result: dict) -> None:
                  "config.json / env `HELIUS_API_KEY` / Streamlit secrets.")
         return
     if result.get("scan_failed"):
-        st.error("Scan tidak menghasilkan holder. Pastikan CA valid, harga "
-                 "token tersedia (DexScreener), dan Helius API key aktif.")
+        detail = str((result.get("snapshot") or {}).get("error") or "")
+        detail = detail.strip()
+        message = ("Scan tidak menghasilkan holder. Pastikan CA valid, harga "
+                   "token tersedia (DexScreener), dan Helius API key aktif.")
+        if detail:
+            message += f" Detail: {detail}"
+        st.error(message)
         return
 
     prefix = "≥" if truncated else ""
@@ -362,8 +365,8 @@ else:
 
     st.markdown(
         '<div style="font-size:0.65rem;color:#64748b;margin:0.3rem 0;">'
-        '🕸 GMGN · 📡 Solscan · 🛰 Helius · ≥ batas pencarian holder '
-        'tercapai'
+        '🛰 Helius (utama) · 🕸 GMGN (Trending/Degen) · ≥ batas pencarian '
+        'holder tercapai'
         '</div>',
         unsafe_allow_html=True)
 
@@ -386,8 +389,6 @@ else:
         holder_source = str(holders.get("source") or "gmgn").lower()
         if holder_source == "helius":
             source_icon = "🛰"
-        elif holder_source == "solscan":
-            source_icon = "📡"
         else:
             source_icon = "🕸"
         truncated = holders.get("truncated", False)

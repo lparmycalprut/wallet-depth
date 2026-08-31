@@ -248,12 +248,10 @@ def scan_with_analysis(rows, *, key_prefix="scan", dust_limit=None,
 
 
 def _source_icon(source: str) -> str:
-    """Ikon sumber data: 🕸 (GMGN) / 📡 (Solscan) / 🛰 (Helius)."""
+    """Ikon sumber data: 🛰 (Helius, utama) / 🕸 (GMGN, listing+ fallback)."""
     source = str(source or "gmgn").lower()
     if source == "helius":
         return '<span title="Helius" style="font-size:0.75rem;">🛰</span>'
-    if source == "solscan":
-        return '<span title="Solscan" style="font-size:0.75rem;">📡</span>'
     return '<span title="GMGN" style="font-size:0.75rem;">🕸</span>'
 
 
@@ -291,8 +289,8 @@ def render_trending(rows, *, key_prefix="listing", source="trending"):
 
     st.markdown(
         '<div style="font-size:0.65rem;color:#64748b;margin:0.3rem 0;">'
-        '🕸 GMGN · 📡 Solscan · 🛰 Helius · ≥ batas pencarian holder '
-        'tercapai'
+        '🕸 GMGN (listing) · 🛰 Helius (fallback holder) · ≥ batas '
+        'pencarian holder tercapai'
         '</div>',
         unsafe_allow_html=True)
 

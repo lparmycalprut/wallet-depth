@@ -217,12 +217,12 @@ class ManualRefreshTest(unittest.TestCase):
             self.assertTrue(res["ok"])
             meta.assert_not_called()
 
-    def test_helius_fallback_source_reported(self):
-        res = self._run([_swap(1)], source="helius_fallback", fallback=True)
+    def test_gmgn_fallback_source_reported(self):
+        res = self._run([_swap(1)], source="gmgn_fallback", fallback=True)
         self.assertTrue(res["ok"])
-        self.assertEqual(res["source"], "helius_fallback")
+        self.assertEqual(res["source"], "gmgn_fallback")
         self.assertTrue(res["fallback"])
-        self.assertIn("fallback Helius", res["log"][2]["message"])
+        self.assertIn("fallback GMGN", res["log"][2]["message"])
 
     def test_error_path_returns_clean_result(self):
         res = self._run([], pool="")

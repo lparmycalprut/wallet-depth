@@ -18,26 +18,31 @@ SEROK, seller exhaustion, battle) dan notifikasi Telegram sudah dihapus.
    - **dust % dari marketcap** = total nilai dust / marketcap × 100,
    - dust % supply juga dihitung dari `amount_percentage`.
 3. **Dust** dihitung hanya dari wallet murni (LP/pool/exchange dikeluarkan).
-4. **Wallet Depth by Threshold (Solscan)** — khusus token watchlist,
-   daftar holder diambil **dari Solscan** (Pro API bila `solscan_api_key`
-   diisi, fallback Public API, lalu GMGN/Helius):
+4. **Wallet Depth by Threshold** — khusus token watchlist, daftar holder
+   diambil **dari Helius DAS `getTokenAccounts`** (paginasi cursor; nilai
+   USD = balance × harga DexScreener; fallback GMGN bila Helius tak
+   tersedia):
    - **bucket nilai** `>$0-$10` … `>$500k` atas semua akun (termasuk
      LP/pool, seperti halaman analytics Solscan),
    - **tier** 🦐 Shrimp / 🦀 Crab / 🐟 Fish / 🐬 Dolphin / 🦈 Shark atas
      wallet murni (LP/pool dari DexScreener dikecualikan).
 
-## Sumber holder
+## Sumber data
+
+**Helius adalah sumber utama semua data** (holder DAS + trade Enhanced
+API) — data on-chain lengkap dan tidak dibatasi rate-limit ketat.
+**GMGN hanya dipakai untuk listing Trending/Degen** dan sebagai fallback
+darurat (bila Helius key kosong/gagal). Solscan sudah dilepas total.
+Harga/marketcap tetap dari DexScreener.
+
+Sumber holder per token (watchlist/cron) diatur via `holder_source`
+di `config.json` / env `HOLDER_SOURCE`:
 
 | Nilai | Perilaku |
 |---|---|
-| `auto` (default) | Watchlist: Solscan dulu → GMGN → Helius. |
-| `solscan` | Paksa Solscan (Pro/Public), fallback GMGN/Helius. |
-| `gmgn` | GMGN saja (perilaku lama), fallback Helius. |
-
-Diatur via `holder_source` di `config.json` / env `HOLDER_SOURCE`.
-Listing Trending/Degen selalu `gmgn` (`enrich_rows`) agar tidak membebani
-public API Solscan. Tanpa key Solscan, Public API dipakai (rate limit
-ketat — ada sleep antar halaman + fallback otomatis).
+| `auto` (default) | Helius dulu → fallback GMGN. |
+| `helius` | Paksa Helius → fallback GMGN. |
+| `gmgn` | GMGN saja (listing Trending/Degen selalu jalur ini), fallback Helius. |
 
 **Scan Holder Khusus (Helius)** di halaman utama: tempel CA satu token,
 seluruh holder diambil langsung dari **Helius DAS `getTokenAccounts`**
@@ -45,6 +50,8 @@ seluruh holder diambil langsung dari **Helius DAS `getTokenAccounts`**
 ditampilkan sebagai **bar chart distribusi holder** per range nilai
 (Wallet Depth by Threshold) plus tabel bucket/tier. Butuh
 `helius_api_key` (config.json / env `HELIUS_API_KEY` / Streamlit secrets).
+Cron GitHub Actions membaca secret repo `HELIUS_API_KEY` /
+`HELIUS_API_KEYS`.
 
 ## Filter tabel scan (Trending & Degen)
 
@@ -63,7 +70,7 @@ Setiap baris juga diberi tag 🔇/🏦/🎢 bila memenuhi filter tersebut.
 | File | Peran |
 |---|---|
 | `silent_accumulation.py` | fetch holder (paginasi `next`), klasifikasi real/dust, net flow 12 jam, deteksi silent, `enrich_rows` |
-| `solscan_holders.py` | holder Solscan (Pro/Public) + Wallet Depth by Threshold & tier ala analytics Solscan |
+| `solscan_holders.py` | kalkulasi Wallet Depth by Threshold & tier ala analytics Solscan (tanpa API Solscan) |
 | `helius_holders.py` | **Scan Holder Khusus** satu token — holder dipaksa dari Helius DAS `getTokenAccounts` + bar chart distribusi holder |
 | `silent_status.py` | snapshot status untuk dashboard (GitHub ref `silent-live`) |
 | `scripts/scan_silent.py` | cron: scan watchlist 12 jam + holder, publish status |

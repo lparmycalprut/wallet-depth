@@ -35,5 +35,11 @@ jobs:
           pip install requests curl_cffi
 
       - name: Scan silent accumulation (12h) + holder dust
+        env:
+          # Sumber data utama = Helius (holder + flow). Isi secret repo
+          # HELIUS_API_KEY / HELIUS_API_KEYS; tanpa secret, pipeline jatuh
+          # otomatis ke GMGN.
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+          HELIUS_API_KEYS: ${{ secrets.HELIUS_API_KEYS }}
         run: |
           python scripts/scan_silent.py --max-wallets 3000 --max-trade-pages 8
