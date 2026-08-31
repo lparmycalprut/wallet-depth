@@ -13,6 +13,11 @@ Tidak ada sinyal dan tidak ada notifikasi Telegram.
   Public API `token/holders`) + `wallet_depth` (bucket & tier ala halaman
   analytics Solscan). Watchlist memakai `auto` = Solscan dulu, fallback
   GMGN/Helius; listing Trending/Degen tetap `gmgn`.
+- `helius_holders.py`: **Scan Holder Khusus** satu token di halaman utama —
+  `scan_token_holders(ca)` memaksa holder dari Helius DAS
+  `getTokenAccounts` (paginasi cursor via `fetch_holders_helius`) lalu
+  `depth_bar_chart` menampilkan bar chart distribusi holder per range nilai
+  (Wallet Depth by Threshold). Butuh Helius API key.
 - `silent_status.py`: snapshot `silent_status.json` → GitHub ref
   `silent-live` (pinggir `main`, mencegah redeploy Streamlit).
 - `scripts/scan_silent.py`: cron GitHub Actions (~15 menit) untuk watchlist.
