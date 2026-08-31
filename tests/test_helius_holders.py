@@ -13,12 +13,15 @@ import helius_holders as hh
 class ScanTokenHoldersTest(unittest.TestCase):
     def test_scan_uses_helius_and_builds_depth(self):
         """Scan mengambil market, fetch Helius, lalu menghitung depth."""
-        market = {"symbol": "TST", "price_usd": 0.01, "marketcap": 100_000}
+        market = {"symbol": "TST", "price_usd": 0.01, "marketcap": 100_000,
+                  "pair_addresses": ["POOL"]}
         snapshot = {
             "holders": [
                 {"address": "A", "usd_value": 500.0, "is_wallet": True},
                 {"address": "B", "usd_value": 5.0, "is_wallet": True},
-                {"address": "POOL", "usd_value": 90_000.0, "is_wallet": False},
+                # Helius menandai semua akun is_wallet=True; LP/pool tetap
+                # harus ke-exclude dari tier via pair_addresses market.
+                {"address": "POOL", "usd_value": 90_000.0, "is_wallet": True},
             ],
             "pages": 1, "fetched": 3, "truncated": False,
             "source": "helius",
@@ -43,6 +46,9 @@ class ScanTokenHoldersTest(unittest.TestCase):
         self.assertIs(mock_fetch.call_args.args[0], "MINT")
         self.assertIn("price_usd", mock_fetch.call_args.kwargs)
         self.assertEqual(mock_fetch.call_args.kwargs["helius_keys"], ["KEY"])
+        # pair_addresses market diteruskan sebagai pool_addresses
+        self.assertEqual(mock_depth.call_args.kwargs["pool_addresses"],
+                         {"POOL"})
         self.assertIn("depth", result)
         # bucket nilai USD dari wallet_depth
         by_label = {b["label"]: b for b in result["depth"]["buckets"]}
@@ -52,6 +58,10 @@ class ScanTokenHoldersTest(unittest.TestCase):
         self.assertEqual(result["depth"]["holders_all"], 3)
         self.assertEqual(result["depth"]["holders_wallet"], 2)
         self.assertEqual(result["depth"]["pool_excluded"], 1)
+        # tier Shark kosong — POOL $90k tidak ikut tier meski is_wallet=True
+        by_tier = {t["tier"]: t for t in result["depth"]["tiers"]}
+        self.assertEqual(by_tier["Shark"]["count"], 0)
+        self.assertEqual(by_tier["Dolphin"]["count"], 0)
 
     def test_no_helius_keys_flags_and_no_fetch(self):
         """Tanpa key Helius → scan_failed & no_helius_keys=True."""

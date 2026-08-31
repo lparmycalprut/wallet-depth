@@ -4,7 +4,7 @@
 Menggantikan ``realtime_reversal``: TANPA sinyal dan TANPA Telegram.
 Untuk setiap token watchlist:
 
-1. ambil daftar holder (Solscan dulu — ``auto`` — fallback GMGN/Helius,
+1. ambil daftar holder (Helius DAS dulu — ``auto`` — fallback GMGN,
    paginasi penuh, batas ``--max-wallets``),
 2. pisahkan real holder (>$10 value) vs dust, hitung dust % marketcap,
 3. hitung net flow + akumulator 12 jam terakhir,
@@ -36,8 +36,8 @@ def scan_watchlist(watchlist: dict, *, dust_limit: float | None = None,
                    holder_source: str | None = None) -> dict:
     """Analisis semua token watchlist; return {mint: analysis}.
 
-    ``holder_source``: ``gmgn`` / ``solscan`` / ``auto`` — default
-    ``None`` = ikuti config/env (default ``auto`` = Solscan dulu).
+    ``holder_source``: ``gmgn`` / ``helius`` / ``auto`` — default
+    ``None`` = ikuti config/env (default ``auto`` = Helius dulu).
     """
     analyses: dict[str, dict] = {}
     total = len(watchlist or {})
@@ -84,10 +84,10 @@ def main(argv=None) -> int:
     parser.add_argument("--max-trade-pages", type=int, default=8,
                         help="maks halaman trade (100/halaman) per token")
     parser.add_argument("--workers", type=int, default=4)
-    parser.add_argument("--holder-source", choices=("gmgn", "solscan",
+    parser.add_argument("--holder-source", choices=("gmgn", "helius",
                                                     "auto"), default=None,
                         help="sumber holder; default ikut config/env "
-                             "(auto = Solscan dulu, fallback GMGN/Helius)")
+                             "(auto = Helius dulu, fallback GMGN)")
     parser.add_argument("--no-push", action="store_true",
                         help="hanya tulis status lokal")
     args = parser.parse_args(argv)

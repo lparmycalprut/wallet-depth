@@ -4,14 +4,17 @@
 Modul pengganti seluruh engine sinyal lama (reversal / serok / telegram):
 
 1. ``fetch_holders`` / ``classify_holders``
-   Membaca daftar holder dari GMGN (paginasi penuh via cursor ``next``),
-   memisahkan **real holder > $10 value** dengan **dust holder (0 < value
+   Membaca daftar holder token. Sumber utama = **Helius DAS**
+   (``fetch_holders_helius``, paginasi cursor `getTokenAccounts`);
+   GMGN dipakai untuk listing Trending/Degen dan sebagai fallback darurat.
+   Memisahkan **real holder > $10 value** dengan **dust holder (0 < value
    <= $10)**, dan menghitung berapa % total marketcap yang dipegang dust.
 
 2. ``fetch_12h_flow``
-   Mengambil trade 12 jam terakhir dari GMGN ``token_trades`` lalu
-   menghitung net flow USD, jumlah wallet yang mengakumulasi, dan
-   perubahan harga — dasar deteksi **silent accumulation**.
+   Mengambil trade 12 jam terakhir dari **Helius Enhanced API** (pool
+   DexScreener) dengan fallback GMGN ``token_trades``, lalu menghitung
+   net flow USD, jumlah wallet yang mengakumulasi, dan perubahan harga —
+   dasar deteksi **silent accumulation**.
 
 3. ``analyze_token``
    Gabungan dua data di atas untuk satu token (dipakai scanning Trending,
@@ -51,14 +54,18 @@ PUMPDUMP_REAL_MAX = 0.2
 HOLDER_URL = "https://gmgn.ai/vas/api/v1/token_holders/sol/{ca}"
 
 # --- Sumber data holder -------------------------------------------------------
+# Helius adalah sumber utama SEMUA data (holder + flow) — data on-chain
+# lengkap dan lancar. GMGN hanya dipakai untuk listing Trending/Degen dan
+# sebagai fallback darurat bila Helius tidak tersedia. Solscan sudah
+# dilepas total dari pipeline.
 HOLDER_SOURCE_GMGN = "gmgn"
-HOLDER_SOURCE_SOLSCAN = "solscan"
+HOLDER_SOURCE_HELIUS = "helius"
 HOLDER_SOURCE_AUTO = "auto"
-HOLDER_SOURCE_OPTIONS = (HOLDER_SOURCE_GMGN, HOLDER_SOURCE_SOLSCAN,
+HOLDER_SOURCE_OPTIONS = (HOLDER_SOURCE_GMGN, HOLDER_SOURCE_HELIUS,
                          HOLDER_SOURCE_AUTO)
-# Watchlist (cron & tombol scan lokal) memakai "auto" → Solscan dulu,
-# fallback GMGN/Helius. Listing Trending/Degen tetap GMGN (default
-# ``enrich_rows``) supaya tidak kena rate limit public API Solscan.
+# Watchlist (cron & tombol scan lokal) memakai "auto" → Helius dulu,
+# fallback GMGN. Listing Trending/Degen tetap GMGN (default
+# ``enrich_rows``) karena listing memang hanya tersedia dari GMGN.
 HOLDER_SOURCE_DEFAULT = HOLDER_SOURCE_AUTO
 
 # Pencilan non-wallet (LP/AMM/pool) dikeluarkan dari hitungan holder.
@@ -187,13 +194,50 @@ def _normalize_holder(raw: dict) -> dict | None:
     }
 
 
+def _mint_decimals_helius(ca: str, keys) -> int | None:
+    """Decimals mint untuk konversi ``amount`` RAW → unit UI.
+
+    DAS ``getTokenAccounts`` mengembalikan ``amount`` dalam unit raw
+    (bilangan bulat terkecil token, belum dibagi 10**decimals) dan itemnya
+    tidak selalu membawa ``decimals``, jadi decimals mint di-lookup sekali:
+    DAS ``getAsset`` (``token_info.decimals``) dulu, fallback RPC standar
+    ``getTokenSupply``. Return ``None`` bila dua-duanya gagal.
+    """
+    from core import helius_rpc
+
+    try:
+        asset = helius_rpc("getAsset", {"id": ca}, helius_keys=keys)
+        info = (asset or {}).get("token_info") if isinstance(asset, dict) \
+            else None
+        dec = _int((info or {}).get("decimals"), -1)
+        if 0 <= dec <= 18:
+            return dec
+    except Exception:  # noqa: BLE001 - lanjut ke fallback RPC standar
+        pass
+    try:
+        supply = helius_rpc("getTokenSupply", [ca], helius_keys=keys)
+        info = (supply or {}).get("value") if isinstance(supply, dict) \
+            else None
+        dec = _int((info or {}).get("decimals"), -1)
+        if 0 <= dec <= 18:
+            return dec
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
 def fetch_holders_helius(ca: str, *, max_wallets: int | None = None,
                          price_usd: float = 0.0,
                          helius_keys=None) -> dict:
     """Ambil holder via Helius DAS getTokenAccounts (fallback GMGN).
 
-    Paginasi cursor, USD = balance × harga token. Hanya jalan bila
-    ``price_usd > 0`` dan Helius key tersedia.
+    Paginasi cursor, USD = balance UI × harga token. **Penting:** field
+    ``amount`` dari DAS adalah unit RAW, jadi harus dibagi
+    ``10 ** decimals`` mint dulu — kalau tidak, nilai USD tiap holder
+    bengkak 10^decimals× (tier/bucket jadi tidak masuk akal). Bila
+    decimals tidak ditemukan, return kosong + error (lebih aman daripada
+    angka salah). Hanya jalan bila ``price_usd > 0`` dan Helius key
+    tersedia.
     """
     from core import helius_rpc, get_helius_keys
 
@@ -215,6 +259,9 @@ def fetch_holders_helius(ca: str, *, max_wallets: int | None = None,
     pages = 0
     truncated = False
     page_limit = 1000
+    mint_decimals: int | None = None
+    decimals_checked = False
+    error = ""
 
     while True:
         params = {"mint": ca, "limit": page_limit}
@@ -223,9 +270,11 @@ def fetch_holders_helius(ca: str, *, max_wallets: int | None = None,
         try:
             result = helius_rpc("getTokenAccounts", params, helius_keys=keys)
         except Exception:  # noqa: BLE001
+            error = "getTokenAccounts gagal"
             break
 
         if not isinstance(result, dict):
+            error = "respons getTokenAccounts tidak valid"
             break
         accounts = result.get("token_accounts") or []
         pages += 1
@@ -235,7 +284,22 @@ def fetch_holders_helius(ca: str, *, max_wallets: int | None = None,
             addr = str(acc.get("owner") or "").strip()
             if not addr:
                 continue
-            balance = _float(acc.get("amount"))
+            dec = _int(acc.get("decimals"), -1)  # bila item membawa decimals
+            if dec < 0:
+                if not decimals_checked:
+                    decimals_checked = True
+                    mint_decimals = _mint_decimals_helius(ca, keys)
+                dec = mint_decimals if mint_decimals is not None else -1
+            if dec < 0:
+                # Tanpa decimals nilai USD pasti salah (10^dec× lebih
+                # besar) — hentikan bersih, jangan kirim angka sampah.
+                error = ("decimals mint tidak ditemukan "
+                         "(getAsset & getTokenSupply gagal)")
+                return {"holders": [], "pages": pages, "truncated": False,
+                        "fetched": 0, "analyzed_at": int(time.time()),
+                        "source": "helius", "decimals": None,
+                        "error": error}
+            balance = _float(acc.get("amount")) / (10.0 ** dec)
             usd_value = balance * price_usd
             if addr not in holders:
                 holders[addr] = {
@@ -276,6 +340,8 @@ def fetch_holders_helius(ca: str, *, max_wallets: int | None = None,
         "fetched": len(holders),
         "analyzed_at": int(time.time()),
         "source": "helius",
+        "decimals": mint_decimals,
+        "error": error,
     }
 
 
@@ -283,8 +349,10 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
                   page_limit: int = HOLDER_PAGE_LIMIT,
                   timeout: int = 20,
                   price_usd: float = 0.0) -> dict:
-    """Ambil daftar holder (paginasi ``next``) sampai batas ``max_wallets``.
+    """Ambil daftar holder GMGN (paginasi ``next``) sampai ``max_wallets``.
 
+    Ini jalur GMGN — dipakai oleh listing Trending/Degen dan sebagai
+    fallback darurat dari jalur Helius-first (``_fetch_holders_snapshot``).
     Fallback ke Helius DAS bila GMGN error/kosong (asalkan price_usd > 0
     dan Helius key ada).
 
@@ -405,56 +473,59 @@ def classify_holders(snapshot: dict | None, market_cap: float = 0.0,
 
 def _fetch_swaps_12h(ca: str, from_ts: int, now_ts: int,
                      max_pages: int) -> tuple[list, str]:
-    """Ambil swap 12 jam: GMGN dulu, fallback Helius bila tidak lengkap.
+    """Ambil swap 12 jam: Helius dulu, fallback GMGN bila tidak tersedia.
 
-    Return ``(swaps, source)`` di mana source = "gmgn" atau "helius".
+    Return ``(swaps, source)`` di mana source = "helius" atau "gmgn".
     """
-    from cvd import fetch_gmgn_swaps, fetch_swaps, get_gmgn_fetch_status
+    from cvd import fetch_gmgn_swaps, fetch_swaps
     from core import get_helius_keys, select_dexscreener_pair
 
-    source = "gmgn"
+    # 1) Helius Enhanced API (pool DexScreener) — sumber utama.
+    try:
+        keys = get_helius_keys()
+    except Exception:  # noqa: BLE001
+        keys = []
+    if keys:
+        pool = ""
+        try:
+            import requests as _requests
+            r = _requests.get(
+                f"https://api.dexscreener.com/latest/dex/tokens/{ca}",
+                timeout=15)
+            pairs = (r.json() or {}).get("pairs") or []
+            pair = select_dexscreener_pair(pairs, ca)
+            if pair:
+                pool = str(pair.get("pairAddress") or "")
+        except Exception:  # noqa: BLE001
+            pool = ""
+        if pool:
+            try:
+                swaps, _sig, _ts, _hit = fetch_swaps(
+                    keys[0], pool, ca,
+                    stop_ts=from_ts, max_pages=max_pages,
+                    sleep=0.0, use_gmgn=False,
+                    from_ts=from_ts, to_ts=now_ts)
+            except Exception:  # noqa: BLE001
+                swaps = []
+            if swaps:
+                return swaps, "helius"
+
+    # 2) Fallback darurat: GMGN token_trades.
     try:
         swaps, _sig, _ts, _hit = fetch_gmgn_swaps(
             ca, from_ts=from_ts, to_ts=now_ts, max_pages=max_pages,
             page_limit=100, sleep=0.0)
     except Exception:  # noqa: BLE001
         swaps = []
-
-    status = get_gmgn_fetch_status()
-    if not status.get("complete") or status.get("error"):
-        # Coba fallback Helius
-        try:
-            keys = get_helius_keys()
-            if keys:
-                import requests as _requests
-                r = _requests.get(
-                    f"https://api.dexscreener.com/latest/dex/tokens/{ca}",
-                    timeout=15)
-                pairs = (r.json() or {}).get("pairs") or []
-                pair = select_dexscreener_pair(pairs, ca)
-                pool = ""
-                if pair:
-                    pool = str(pair.get("pairAddress") or "")
-                if pool:
-                    helius_swaps, _, _, _ = fetch_swaps(
-                        keys[0], pool, ca,
-                        stop_ts=from_ts, max_pages=max_pages,
-                        sleep=0.0, use_gmgn=False,
-                        from_ts=from_ts, to_ts=now_ts)
-                    if helius_swaps:
-                        swaps = helius_swaps
-                        source = "helius"
-        except Exception:  # noqa: BLE001
-            pass  # Tetap pakai GMGN swaps
-    return swaps, source
+    return swaps, "gmgn"
 
 
 def resolve_holder_source(requested: str | None = None) -> str:
     """Prioritas sumber holder: param → config/env ``holder_source`` → auto.
 
-    - ``gmgn``    : GMGN (perilaku lama), fallback Helius.
-    - ``solscan`` : Solscan (Pro/Public), fallback GMGN → Helius.
-    - ``auto``    : Solscan dulu untuk token watchlist.
+    - ``gmgn``    : GMGN (listing Trending/Degen), fallback Helius.
+    - ``helius``  : Paksa Helius DAS, fallback GMGN.
+    - ``auto``    : Helius dulu untuk token watchlist, fallback GMGN.
     """
     value = str(requested or "").strip().lower()
     if value in HOLDER_SOURCE_OPTIONS:
@@ -473,29 +544,33 @@ def _fetch_holders_snapshot(ca: str, source: str, *, max_wallets: int,
                             timeout: int, price_usd: float,
                             market_cap: float, market: dict,
                             ) -> tuple[dict, dict | None]:
-    """Snapshot holder + depth Solscan (bila sumbernya Solscan).
+    """Snapshot holder: Helius prioritas, + depth bila holder dari Helius.
 
     ``source`` sudah di-resolve. Return ``(snapshot, depth)``; ``depth``
-    hanya terisi saat snapshot berasal dari Solscan.
+    (Wallet Depth by Threshold + tier) dihitung saat snapshot berasal dari
+    Helius. Bila Helius tidak tersedia/gagal → fallback GMGN
+    (:func:`fetch_holders`, yang sendirinya masih fallback ke Helius).
     """
-    if source != HOLDER_SOURCE_GMGN:
+    if source != HOLDER_SOURCE_GMGN and price_usd > 0:
         try:
-            from solscan_holders import (fetch_solscan_holders,
-                                         wallet_depth)
-            from core import get_solscan_key
-            api_key = get_solscan_key()
-            pools = set(str(p or "").strip() for p in
-                        (market.get("pair_addresses") or []) if p)
-            snapshot = fetch_solscan_holders(
-                ca, price_usd=price_usd, market_cap=market_cap,
-                max_wallets=max_wallets, api_key=api_key,
-                pool_addresses=pools, timeout=timeout)
-            if snapshot.get("holders"):
-                depth = wallet_depth(snapshot.get("holders") or [],
-                                     market_cap, pool_addresses=pools)
-                return snapshot, depth
-        except Exception:  # noqa: BLE001 - fallback GMGN
-            pass
+            from core import get_helius_keys
+            keys = get_helius_keys()
+        except Exception:  # noqa: BLE001 - tanpa key → fallback GMGN
+            keys = []
+        if keys:
+            try:
+                from solscan_holders import wallet_depth
+                pools = set(str(p or "").strip() for p in
+                            (market.get("pair_addresses") or []) if p)
+                snapshot = fetch_holders_helius(
+                    ca, max_wallets=max_wallets, price_usd=price_usd,
+                    helius_keys=keys)
+                if snapshot.get("holders"):
+                    depth = wallet_depth(snapshot.get("holders") or [],
+                                         market_cap, pool_addresses=pools)
+                    return snapshot, depth
+            except Exception:  # noqa: BLE001 - fallback GMGN
+                pass
     return fetch_holders(ca, max_wallets=max_wallets, timeout=timeout,
                          price_usd=price_usd), None
 
@@ -503,13 +578,14 @@ def _fetch_holders_snapshot(ca: str, source: str, *, max_wallets: int,
 def fetch_12h_flow(ca: str, *, now_ts: int | None = None,
                    hours: float = SILENT_WINDOW_HOURS,
                    max_pages: int = DEFAULT_MAX_TRADE_PAGES) -> dict:
-    """Net flow 12 jam terakhir dari GMGN token_trades (fallback Helius).
+    """Net flow 12 jam terakhir: Helius Enhanced API dulu (fallback GMGN).
 
     Mengembalikan buy/sell USD, net, jumlah wallet akumulator vs
-    distributor, bot share, dan price change dari trade pertama/terakhir.
+    distributor, bot share (hanya terisi dari tag GMGN; Helius tidak
+    memberi tag), dan price change dari trade pertama/terakhir.
     Trade di luar window disaring ulang secara lokal (GMGN kadang
     mengabaikan param from/to). Field ``source`` menunjukkan sumber data
-    (gmgn/helius).
+    (helius/gmgn).
     """
     ca = str(ca or "").strip()
     now_ts = int(now_ts or time.time())
@@ -716,11 +792,12 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
     """Analisis lengkap satu token: holder (real vs dust) + flow 12 jam.
 
     Dipakai langsung oleh scan Trending/Degen dan cron watchlist.
-    ``price_usd`` diteruskan ke fetch_holders untuk fallback Helius.
+    ``price_usd`` diteruskan ke jalur holder (Helius prioritaskan; GMGN
+    untuk listing/fallback).
 
-    ``holder_source``: ``gmgn`` / ``solscan`` / ``auto`` (default
+    ``holder_source``: ``gmgn`` / ``helius`` / ``auto`` (default
     mengikuti config/env, lihat :func:`resolve_holder_source`). Saat
-    holder berasal dari Solscan, metrik ``holders["depth"]`` berisi
+    holder berasal dari Helius, metrik ``holders["depth"]`` berisi
     Wallet Depth by Threshold + tier ala halaman analytics Solscan.
     """
     ca = str(ca or "").strip()
@@ -744,7 +821,6 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
     holder_stats = classify_holders(snapshot, mc, dust_limit=dust_limit)
     if depth is not None:
         holder_stats["depth"] = depth
-        holder_stats["api"] = str(snapshot.get("api") or "")
     silent = detect_silent(flow, holder_stats)
     return {
         "ca": ca,
@@ -768,8 +844,8 @@ def enrich_rows(rows: list[dict], *, dust_limit: float | None = None,
 
     ``progress`` opsional: callable ``(index, total, label)``.
     Setiap baris gagal analisis tetap tampil dengan ``analysis=None``.
-    Default ``holder_source="gmgn"`` — listing massal tetap pakai GMGN
-    supaya tidak membebani public API Solscan.
+    Default ``holder_source="gmgn"`` — listing massal memang hanya tersedia
+    dari GMGN; per-baris tetap fallback Helius otomatis bila GMGN kosong.
     """
     out = list(rows or ())
     if not out:

@@ -1,122 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Coverage untuk holder Solscan + Wallet Depth by Threshold."""
+"""Coverage untuk wallet_depth (bucket & tier) + prioritas sumber holder.
+
+Fetch Solscan API sudah dilepas total; sumber holder sekarang Helius
+(fallback GMGN). Modul ``solscan_holders`` hanya tersisa sebagai kalkulasi
+Wallet Depth by Threshold & tier.
+"""
 from __future__ import annotations
 
-import json
-import os
 import unittest
 from unittest import mock
 
 import solscan_holders as sh
-
-FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        "fixtures")
-
-
-def _fixture(name: str) -> dict:
-    with open(os.path.join(FIXTURES, name), encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def _snapshot(*, api="pro", values=()):
-    """Snapshot holder sintetis: values = [(address, usd_value, is_wallet)]."""
-    holders = []
-    for index, (addr, value, is_wallet) in enumerate(values):
-        holders.append({
-            "address": addr, "usd_value": float(value), "balance": 0.0,
-            "amount_pct": 0.0, "is_wallet": is_wallet, "tags": [],
-            "maker_token_tags": [],
-        })
-    return {"holders": holders, "source": "solscan", "api": api}
-
-
-class NormalizeProTest(unittest.TestCase):
-    def setUp(self):
-        sh._CACHE.clear()
-
-    def test_pro_rows_normalized_and_pool_marked(self):
-        """Pro API: value & percentage dari Solscan; pool dikecualikan."""
-        payload = _fixture("solscan_pro_holders.json")
-
-        def fake_get(url, params, headers=None, timeout=20):
-            self.assertIn("pro-api.solscan.io", url)
-            self.assertEqual(params["address"], "MINT")
-            self.assertEqual(headers.get("token"), "KEY123")
-            return payload
-
-        with mock.patch("solscan_holders._http_get", side_effect=fake_get):
-            snapshot = sh.fetch_solscan_holders(
-                "MINT", api_key="KEY123", max_wallets=3000,
-                pool_addresses=["POOLRAY"], market_cap=200_000)
-
-        self.assertEqual(snapshot["source"], "solscan")
-        self.assertEqual(snapshot["api"], "pro")
-        self.assertEqual(snapshot["total_known"], 6)
-        self.assertEqual(len(snapshot["holders"]), 6)
-        by_addr = {h["address"]: h for h in snapshot["holders"]}
-
-        # balance = amount / 10^decimals; value USD dari Solscan
-        self.assertAlmostEqual(by_addr["WAL1"]["balance"], 10_000.0)
-        self.assertAlmostEqual(by_addr["WAL1"]["usd_value"], 1800.0)
-        # percentage skala persen (45.0 → 0.45 fraksi)
-        self.assertAlmostEqual(by_addr["POOLRAY"]["amount_pct"], 0.45)
-        self.assertAlmostEqual(by_addr["WAL1"]["amount_pct"], 0.009)
-        # LP/pool ditandai bukan wallet
-        self.assertFalse(by_addr["POOLRAY"]["is_wallet"])
-        self.assertTrue(by_addr["WAL1"]["is_wallet"])
-
-    def test_no_key_uses_public_api(self):
-        """Tanpa api_key → public API dipanggil, bukan pro."""
-        payload = _fixture("solscan_public_holders.json")
-
-        def fake_get(url, params, headers=None, timeout=20):
-            self.assertIn("public-api.solscan.io", url)
-            self.assertEqual(params.get("tokenAddress"), "MINT")
-            return payload
-
-        with mock.patch("solscan_holders._http_get", side_effect=fake_get):
-            snapshot = sh.fetch_solscan_holders(
-                "MINT", price_usd=0.0001, market_cap=100_000,
-                max_wallets=3000)
-
-        self.assertEqual(snapshot["api"], "public")
-        self.assertEqual(len(snapshot["holders"]), 3)
-        by_addr = {h["address"]: h for h in snapshot["holders"]}
-        # USD = balance × price (20_000 × 0.0001 = 2.0)
-        self.assertAlmostEqual(by_addr["WALA"]["usd_value"], 2.0)
-        self.assertAlmostEqual(by_addr["WALB"]["usd_value"], 0.005)
-        # amount_pct = value / marketcap
-        self.assertAlmostEqual(by_addr["WALA"]["amount_pct"], 2e-5)
-
-    def test_pro_fails_then_public_fallback(self):
-        """Pro error → otomatis lanjut public API."""
-        calls = []
-
-        def fake_get(url, params, headers=None, timeout=20):
-            calls.append(url)
-            if "pro-api" in url:
-                raise RuntimeError("pro down")
-            return _fixture("solscan_public_holders.json")
-
-        with mock.patch("solscan_holders._http_get", side_effect=fake_get):
-            snapshot = sh.fetch_solscan_holders(
-                "MINT", api_key="KEY123", price_usd=0.0001,
-                max_wallets=3000)
-
-        self.assertEqual(snapshot["api"], "public")
-        self.assertEqual(len(snapshot["holders"]), 3)
-        self.assertTrue(any("pro-api" in c for c in calls))
-
-    def test_all_fail_returns_empty_snapshot(self):
-        """Semua endpoint gagal → snapshot kosong + error tercatat."""
-        with mock.patch("solscan_holders._http_get",
-                        side_effect=RuntimeError("network")):
-            snapshot = sh.fetch_solscan_holders(
-                "MINT", api_key="KEY123", max_wallets=3000)
-        self.assertEqual(snapshot["holders"], [])
-        self.assertEqual(snapshot["source"], "solscan")
-        self.assertIn("pro", snapshot["error"])
-        self.assertIn("public", snapshot["error"])
 
 
 class WalletDepthTest(unittest.TestCase):
@@ -173,61 +67,96 @@ class WalletDepthTest(unittest.TestCase):
 class HolderSourceResolveTest(unittest.TestCase):
     def test_resolve_priority(self):
         import silent_accumulation as sa
-        with mock.patch("core.get_holder_source", return_value="solscan"):
-            self.assertEqual(sa.resolve_holder_source(None), "solscan")
+        with mock.patch("core.get_holder_source", return_value="helius"):
+            self.assertEqual(sa.resolve_holder_source(None), "helius")
         with mock.patch("core.get_holder_source", return_value="gmgn"):
             self.assertEqual(sa.resolve_holder_source("auto"), "auto")
         self.assertEqual(sa.resolve_holder_source("gmgn"), "gmgn")
         self.assertEqual(sa.resolve_holder_source("bogus"), "auto")
+        # nilai legacy "solscan" tidak dikenali lagi → auto (Helius dulu)
+        self.assertEqual(sa.resolve_holder_source("solscan"), "auto")
 
-    def test_fetch_snapshot_solscan_first_then_gmgn_fallback(self):
+    def test_fetch_snapshot_helius_first_then_gmgn_fallback(self):
+        """auto/helius → Helius dulu (dengan depth); kosong → GMGN."""
         import silent_accumulation as sa
 
-        with mock.patch("solscan_holders.fetch_solscan_holders") as mock_sh:
-            with mock.patch("solscan_holders.wallet_depth",
-                            return_value={"buckets": []}) as mock_depth:
-                mock_sh.return_value = {"holders": [{"address": "X",
-                                                     "usd_value": 1.0}],
-                                        "source": "solscan", "api": "public"}
-                with mock.patch("silent_accumulation.fetch_holders") as mock_fh:
+        # 1) Helius berisi data → snapshot helius + depth, GMGN tak dipanggil
+        with mock.patch("core.get_helius_keys", return_value=["KEY"]):
+            with mock.patch("silent_accumulation.fetch_holders_helius"
+                            ) as helius_mock:
+                helius_mock.return_value = {"holders": [
+                    {"address": "X", "usd_value": 1.0, "is_wallet": True}],
+                    "source": "helius"}
+                with mock.patch("solscan_holders.wallet_depth",
+                                return_value={"buckets": []}) as depth_mock:
+                    with mock.patch("silent_accumulation.fetch_holders"
+                                    ) as gmgn_mock:
+                        snap, depth = sa._fetch_holders_snapshot(
+                            "MINT", "auto", max_wallets=10, timeout=20,
+                            price_usd=0.1, market_cap=100,
+                            market={"pair_addresses": ["POOL"]})
+                        self.assertEqual(snap["source"], "helius")
+                        self.assertIsNotNone(depth)
+                        gmgn_mock.assert_not_called()
+                        helius_mock.assert_called_once()
+                        self.assertEqual(
+                            helius_mock.call_args.kwargs["helius_keys"],
+                            ["KEY"])
+                        # pool_addresses diteruskan ke wallet_depth
+                        self.assertIn(
+                            "POOL",
+                            depth_mock.call_args.kwargs["pool_addresses"])
+
+        # 2) Helius kosong → fallback fetch_holders (GMGN)
+        with mock.patch("core.get_helius_keys", return_value=["KEY"]):
+            with mock.patch("silent_accumulation.fetch_holders_helius",
+                            return_value={"holders": [], "source": "helius",
+                                          "error": "kosong"}):
+                with mock.patch("silent_accumulation.fetch_holders"
+                                ) as gmgn_mock:
+                    gmgn_mock.return_value = {"holders": [{"address": "G"}],
+                                              "source": "gmgn"}
                     snap, depth = sa._fetch_holders_snapshot(
                         "MINT", "auto", max_wallets=10, timeout=20,
-                        price_usd=0.1, market_cap=100,
-                        market={"pair_addresses": ["POOL"]})
-                    self.assertEqual(snap["source"], "solscan")
-                    self.assertIsNotNone(depth)
-                    mock_fh.assert_not_called()
-                    mock_sh.assert_called_once()
-                    # pool_addresses diteruskan
-                    self.assertIn("POOL", mock_sh.call_args.kwargs[
-                        "pool_addresses"])
-                    mock_depth.assert_called_once()
+                        price_usd=0.1, market_cap=100, market={})
+                    self.assertEqual(snap["source"], "gmgn")
+                    self.assertIsNone(depth)
 
-        with mock.patch("solscan_holders.fetch_solscan_holders") as mock_sh:
-            mock_sh.return_value = {"holders": [], "source": "solscan",
-                                    "api": "public", "error": "kosong"}
-            with mock.patch("silent_accumulation.fetch_holders") as mock_fh:
-                mock_fh.return_value = {"holders": [{"address": "G"}],
-                                        "source": "gmgn"}
+        # 3) source=gmgn paksa → Helius tidak disentuh sama sekali
+        with mock.patch("silent_accumulation.fetch_holders_helius"
+                        ) as helius_mock:
+            with mock.patch("silent_accumulation.fetch_holders") as gmgn_mock:
+                gmgn_mock.return_value = {"holders": [], "source": "gmgn"}
                 snap, depth = sa._fetch_holders_snapshot(
-                    "MINT", "auto", max_wallets=10, timeout=20,
-                    price_usd=0.1, market_cap=100, market={})
+                    "MINT", "gmgn", max_wallets=10, timeout=20,
+                    price_usd=0.1, market_cap=0, market={})
                 self.assertEqual(snap["source"], "gmgn")
                 self.assertIsNone(depth)
+                helius_mock.assert_not_called()
 
-        with mock.patch("silent_accumulation.fetch_holders") as mock_fh:
-            mock_fh.return_value = {"holders": [], "source": "gmgn"}
-            snap, depth = sa._fetch_holders_snapshot(
-                "MINT", "gmgn", max_wallets=10, timeout=20,
-                price_usd=0.0, market_cap=0, market={})
-            self.assertEqual(snap["source"], "gmgn")
-            self.assertIsNone(depth)
+        # 4) tanpa Helius key → langsung GMGN
+        with mock.patch("core.get_helius_keys", return_value=[]):
+            with mock.patch("silent_accumulation.fetch_holders_helius"
+                            ) as helius_mock:
+                with mock.patch("silent_accumulation.fetch_holders"
+                                ) as gmgn_mock:
+                    gmgn_mock.return_value = {"holders": [{"address": "G"}],
+                                              "source": "gmgn"}
+                    snap, depth = sa._fetch_holders_snapshot(
+                        "MINT", "auto", max_wallets=10, timeout=20,
+                        price_usd=0.1, market_cap=100, market={})
+                    self.assertEqual(snap["source"], "gmgn")
+                    self.assertIsNone(depth)
+                    helius_mock.assert_not_called()
 
-    def test_analyze_token_attaches_depth_for_solscan(self):
+    def test_analyze_token_attaches_depth_for_helius(self):
         import silent_accumulation as sa
-        snapshot = _snapshot(api="pro",
-                             values=[("W1", 500.0, True),
-                                     ("W2", 5.0, True)])
+        snapshot = {"holders": [
+                        {"address": "W1", "usd_value": 500.0,
+                         "is_wallet": True, "amount_pct": 0.0},
+                        {"address": "W2", "usd_value": 5.0,
+                         "is_wallet": True, "amount_pct": 0.0}],
+                    "source": "helius"}
         with mock.patch("silent_accumulation.get_market",
                         return_value={"symbol": "TST",
                                       "price_usd": 0.01,
@@ -236,12 +165,12 @@ class HolderSourceResolveTest(unittest.TestCase):
                             return_value=(snapshot, {
                                 "buckets": [], "tiers": []})):
                 with mock.patch("silent_accumulation.fetch_12h_flow",
-                                return_value={"source": "gmgn"}):
+                                return_value={"source": "helius"}):
                     analysis = sa.analyze_token(
-                        "MINT", "TST", holder_source="solscan")
-        self.assertEqual(analysis["holders"]["source"], "solscan")
-        self.assertEqual(analysis["holders"]["api"], "pro")
+                        "MINT", "TST", holder_source="helius")
+        self.assertEqual(analysis["holders"]["source"], "helius")
         self.assertIn("depth", analysis["holders"])
+        self.assertNotIn("api", analysis["holders"])
         self.assertAlmostEqual(analysis["holders"]["real_count"], 1)
 
     def test_analyze_token_gmgn_source_has_no_depth(self):

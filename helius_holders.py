@@ -7,10 +7,11 @@ Modul ringan untuk *holder scan* on-demand: user menempel contract address
 **bar chart Wallet Depth by Threshold** (jumlah holder per range nilai USD,
 mirip chart ``#analytics_holder`` Solscan).
 
-Berbeda dari ``silent_accumulation.fetch_holders`` yang lebih dulu mencoba
-GMGN, modul ini **memaksa Helius** sebagai sumber holder sehingga tidak
-bergantung pada rate-limit public API Solscan/GMGN. Nilai USD holder =
-``balance × harga token`` dari DexScreener (``core.get_market``).
+Modul ini **memaksa Helius** sebagai sumber holder — Helius DAS memang
+sumber data utama aplikasi (Solscan sudah dilepas; GMGN hanya untuk
+listing Trending/Degen). Nilai USD holder = ``balance UI × harga token``
+dari DexScreener (``core.get_market``); ``amount`` RAW dari DAS dikonversi
+lewat decimals mint di ``fetch_holders_helius``.
 
 Alur:
 ``scan_token_holders(ca)``
@@ -111,7 +112,10 @@ def scan_token_holders(ca: str, *, max_wallets: int | None = None,
                     "fetched": 0, "source": "helius",
                     "error": "Helius key tidak ada atau harga belum tersedia"}
 
-    depth = wallet_depth(snapshot.get("holders") or [], mc)
+    pools = set(str(p or "").strip() for p in
+                (market.get("pair_addresses") or []) if p)
+    depth = wallet_depth(snapshot.get("holders") or [], mc,
+                         pool_addresses=pools)
     scan_failed = not snapshot.get("holders") or price <= 0
     return {
         "mint": ca,

@@ -98,33 +98,12 @@ def get_helius_keys(*, primary=None, extras=None, config=None) -> list[str]:
     )
 
 
-def get_solscan_key() -> str:
-    """Solscan (Pro) API key dari config.json / env / Streamlit secrets.
-
-    Dipakai oleh ``solscan_holders``; bila kosong, holder Solscan diambil
-    lewat Public API (tanpa key).
-    """
-    try:
-        key = str(_config_file().get("solscan_api_key") or "").strip()
-        if key:
-            return key
-    except Exception:
-        pass
-    env_key = str(os.environ.get("SOLSCAN_API_KEY") or "").strip()
-    if env_key:
-        return env_key
-    try:
-        import streamlit as st
-        return str(st.secrets.get("solscan_api_key", "")).strip()
-    except Exception:
-        return ""
-
-
 def get_holder_source(default: str = "auto") -> str:
-    """Preferensi sumber holder: ``gmgn`` / ``solscan`` / ``auto``.
+    """Preferensi sumber holder: ``gmgn`` / ``helius`` / ``auto``.
 
     Dibaca dari config.json ``holder_source`` lalu env ``HOLDER_SOURCE``.
-    ``auto`` = Solscan dulu untuk watchlist, fallback GMGN/Helius.
+    ``auto`` = Helius dulu untuk watchlist, fallback GMGN. Nilai lama
+    ``solscan`` (sudah dilepas) dianggap tidak valid → jatuh ke ``auto``.
     """
     value = str(default or "auto").strip().lower()
     try:
@@ -136,7 +115,7 @@ def get_holder_source(default: str = "auto") -> str:
     env_value = str(os.environ.get("HOLDER_SOURCE") or "").strip().lower()
     if env_value:
         value = env_value
-    if value not in ("gmgn", "solscan", "auto"):
+    if value not in ("gmgn", "helius", "auto"):
         value = "auto"
     return value
 
