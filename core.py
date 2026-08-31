@@ -98,6 +98,49 @@ def get_helius_keys(*, primary=None, extras=None, config=None) -> list[str]:
     )
 
 
+def get_solscan_key() -> str:
+    """Solscan (Pro) API key dari config.json / env / Streamlit secrets.
+
+    Dipakai oleh ``solscan_holders``; bila kosong, holder Solscan diambil
+    lewat Public API (tanpa key).
+    """
+    try:
+        key = str(_config_file().get("solscan_api_key") or "").strip()
+        if key:
+            return key
+    except Exception:
+        pass
+    env_key = str(os.environ.get("SOLSCAN_API_KEY") or "").strip()
+    if env_key:
+        return env_key
+    try:
+        import streamlit as st
+        return str(st.secrets.get("solscan_api_key", "")).strip()
+    except Exception:
+        return ""
+
+
+def get_holder_source(default: str = "auto") -> str:
+    """Preferensi sumber holder: ``gmgn`` / ``solscan`` / ``auto``.
+
+    Dibaca dari config.json ``holder_source`` lalu env ``HOLDER_SOURCE``.
+    ``auto`` = Solscan dulu untuk watchlist, fallback GMGN/Helius.
+    """
+    value = str(default or "auto").strip().lower()
+    try:
+        cfg = str(_config_file().get("holder_source") or "").strip().lower()
+        if cfg:
+            value = cfg
+    except Exception:
+        pass
+    env_value = str(os.environ.get("HOLDER_SOURCE") or "").strip().lower()
+    if env_value:
+        value = env_value
+    if value not in ("gmgn", "solscan", "auto"):
+        value = "auto"
+    return value
+
+
 def _reset_helius_rotation() -> None:
     """Reset round-robin state (primarily useful for deterministic tests)."""
     global _helius_rotation_index

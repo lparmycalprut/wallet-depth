@@ -1,3 +1,34 @@
+# Kegiatan — 31 Agustus 2026
+
+Holder token watchlist diambil dari **Solscan**, plus **Wallet Depth by
+Threshold** ala halaman analytics Solscan.
+
+## Yang dikerjakan
+
+1. `solscan_holders.py`: fetch holder Solscan — Pro API `v2.0/token/holders`
+   bila `SOLSCAN_API_KEY` ada (tiap baris membawa `value` USD + `percentage`
+   dari Solscan), fallback Public API `token/holders` (nilai USD =
+   balance × harga app), lalu fallback GMGN/Helius. Normalisasi ke bentuk
+   holder GMGN; LP/pool (dari `pair_addresses` DexScreener) ditandai bukan
+   wallet.
+2. `wallet_depth()`: **bucket** `>$0-$10` … `>$500k` atas semua akun
+   (seperti chart Solscan) dan **tier** 🦐/🦀/🐟/🐬/🦈 atas wallet murni —
+   count, total value, % marketcap per bucket/tier.
+3. `silent_accumulation.analyze_token` punya `holder_source`
+   (`gmgn`/`solscan`/`auto`, default config `holder_source` = `auto`):
+   watchlist (cron & tombol scan lokal) Solscan dulu; listing
+   Trending/Degen tetap GMGN. Saat sumber Solscan, `holders["depth"]` +
+   `holders["api"]` ikut tersimpan di snapshot `silent_status`.
+4. UI watchlist: ikon 📡 Solscan di kolom Real, expander per token
+   "📊 Wallet Depth by Threshold" berisi dua tabel (bucket & tier).
+5. Workflow cron menerima env `SOLSCAN_API_KEY` (repo secret, opsional);
+   `config.example.json` + docs diperbarui. Catatan: bila GitHub App
+   menolak push perubahan `.github/workflows`, tambahkan env tersebut
+   manual di settings repo.
+
+Tidak diubah: logika silent 12 jam, filter holder depth (SILENT/LP/
+PUMPDUMP), listing Trending/Degen.
+
 # Kegiatan — 19 Agustus 2026 (lanjutan)
 
 - Token baru: fetch penuh **48 jam** (bukan incremental), lalu kirim Telegram

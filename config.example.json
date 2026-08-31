@@ -2,5 +2,7 @@
   "helius_api_key": "PASTE-API-KEY-KAMU-DISINI",
   "helius_extra_keys": "",
   "custom_rpc": "",
-  "dust_limit_usd": 10
+  "dust_limit_usd": 10,
+  "solscan_api_key": "",
+  "holder_source": "auto"
 }

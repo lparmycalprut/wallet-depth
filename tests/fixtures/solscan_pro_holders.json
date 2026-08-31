@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "total": 6,
+  "data": [
+    {"address": "ATA_POOL", "amount": "500000000000", "amount_str": "500000000000", "decimals": 6, "owner": "POOLRAY", "rank": 1, "value": 90000.0, "percentage": 45.0},
+    {"address": "ATA_1", "amount": "10000000000", "amount_str": "10000000000", "decimals": 6, "owner": "WAL1", "rank": 2, "value": 1800.0, "percentage": 0.9},
+    {"address": "ATA_2", "amount": "5000000000", "amount_str": "5000000000", "decimals": 6, "owner": "WAL2", "rank": 3, "value": 900.0, "percentage": 0.45},
+    {"address": "ATA_3", "amount": "1000000000", "amount_str": "1000000000", "decimals": 6, "owner": "WAL3", "rank": 4, "value": 180.0, "percentage": 0.09},
+    {"address": "ATA_4", "amount": "50000000", "amount_str": "50000000", "decimals": 6, "owner": "WAL4", "rank": 5, "value": 9.0, "percentage": 0.0045},
+    {"address": "ATA_5", "amount": "1000000", "amount_str": "1000000", "decimals": 6, "owner": "WAL5", "rank": 6, "value": 0.18, "percentage": 0.00009}
+  ]
+}
