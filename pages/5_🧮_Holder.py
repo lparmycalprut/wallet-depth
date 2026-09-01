@@ -227,6 +227,4 @@ if st.button("🔄 Scan holder token ini", type="primary",
             st.error(f"Gagal: {exc}")
     if analysis:
         ingest_many({mint: analysis})
-        if in_watchlist:
-            publish_silent_status({mint: analysis}, watchlist, push=False)
         st.rerun()
