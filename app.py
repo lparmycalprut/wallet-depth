@@ -61,8 +61,10 @@ h1, h2, h3, h4, h5, h6 {color:#000000;}
  letter-spacing:.04em;}
 .watchlist-metric-value {font-size:.95rem;font-weight:700;color:#000000;}
 .watchlist-metric-sub {font-size:.65rem;color:#000000;}
+.pool-links {display:flex;gap:.5rem;flex-wrap:wrap;justify-content:center;}
 .pool-links a {font-size:.75rem;color:#1d4ed8;font-weight:700;
  text-decoration:none;}
+.pool-links a:hover {color:#000000;text-decoration:underline;}
 </style>
 <div class="hero"><h1>🧮 Wallet Depth</h1>
 <p>Fokus analisa holder: dust wallet (≤ $10) sebagai jejak dump.
@@ -401,8 +403,9 @@ def _render_meteora_scan() -> None:
         cols[4].markdown(
             f'<div class="watchlist-metric"><div class="watchlist-metric-value">'
             f"{html.escape(tf_txt)}</div></div>", unsafe_allow_html=True)
+        pool_html = pool_links_html(pool) or '<span>—</span>'
         cols[5].markdown(
-            f'<div class="pool-links">{pool_links_html(pool)}</div>',
+            f'<div class="pool-links">{pool_html}</div>',
             unsafe_allow_html=True)
         if cols[6].button("⭐", key=f"meteora-star-{index}",
                           help="Tambah ke Watchlist",
