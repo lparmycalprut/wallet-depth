@@ -148,20 +148,12 @@ class CvdPageNoSignalTest(unittest.TestCase):
             self.assertNotIn("Sinyal", body)
             self.assertNotIn("Telegram", body)
 
-    def test_holder_analytics_section_metrics(self):
+    def test_page_has_no_holder_analytic_or_silent_banner(self):
         token = {"symbol": "TST",
                  "holders": {"real_count": 30, "dust_count": 270,
-                             "wallets_analyzed": 300,
-                             "real_value_usd": 50000.0,
-                             "dust_value_usd": 1500.0,
-                             "real_pct_mc": 12.5, "dust_pct_mc": 0.5,
-                             "source": "gmgn", "truncated": False},
-                 "flow": {}, "silent": {}}
+                             "dust_pct_mc": 0.5}}
         with mock.patch("watchlist.load_watchlist",
                         return_value={MINT: META}), \
-             mock.patch("silent_status.load_silent_status",
-                        return_value={"updated_at": 1000, "tokens": {
-                            MINT: token}}), \
              mock.patch("daily_store.load_daily_effort", return_value=[]), \
              mock.patch("scripts.update_cvd.refresh_single_token"), \
              mock.patch("core.get_helius_keys", return_value=["test-key"]):
@@ -169,49 +161,10 @@ class CvdPageNoSignalTest(unittest.TestCase):
             at.run()
             self.assertEqual(len(at.exception), 0)
             body = "\n".join(s.value for s in at.subheader)
-            self.assertIn("Holder Analytic", body)
+            self.assertNotIn("Holder Analytic", body)
             joined = "\n".join(m.value for m in at.metric)
-            self.assertIn("10.0%", joined)   # % real by jumlah holder
-            self.assertIn("90.0%", joined)   # % dust by jumlah holder
-            self.assertIn("12.50%", joined)  # real holder % marketcap
-            self.assertIn("0.50%", joined)   # dust holder % marketcap
-
-    def test_holder_analytics_empty_snapshot_shows_info(self):
-        with mock.patch("watchlist.load_watchlist",
-                        return_value={MINT: META}), \
-             mock.patch("silent_status.load_silent_status",
-                        return_value={"updated_at": None, "tokens": {
-                            MINT: {"symbol": "TST", "holders": {}}}}), \
-             mock.patch("daily_store.load_daily_effort", return_value=[]), \
-             mock.patch("scripts.update_cvd.refresh_single_token"), \
-             mock.patch("core.get_helius_keys", return_value=["test-key"]):
-            at = AppTest.from_file(PAGE)
-            at.run()
-            self.assertEqual(len(at.exception), 0)
-            body = "\n".join(s.value for s in at.subheader)
-            self.assertIn("Holder Analytic", body)
-            infos = "\n".join(m.value for m in at.info)
-            self.assertIn("Belum ada data holder", infos)
-
-    def test_status_summary_shows_silent_without_alerts(self):
-        token = {"symbol": "TST",
-                 "holders": {"real_count": 42, "dust_count": 300,
-                             "dust_pct_mc": 1.23},
-                 "flow": {"net_usd": 120.0, "price_chg_pct": 1.0},
-                 "silent": {"silent": True, "reason": "net +$120 / 12j"}}
-        with mock.patch("watchlist.load_watchlist",
-                        return_value={MINT: META}), \
-             mock.patch("silent_status.load_silent_status",
-                        return_value={"updated_at": 1000, "tokens": {
-                            MINT: token}}), \
-             mock.patch("daily_store.load_daily_effort", return_value=[]), \
-             mock.patch("scripts.update_cvd.refresh_single_token"), \
-             mock.patch("core.get_helius_keys", return_value=["test-key"]):
-            at = AppTest.from_file(PAGE)
-            at.run()
-            self.assertEqual(len(at.exception), 0)
-            joined = "\n".join(m.value for m in at.metric)
-            self.assertIn("SILENT ACCUMULATION", joined)
+            self.assertNotIn("SILENT ACCUMULATION", joined)
+            _ = token  # snapshot holder tidak lagi dirender di halaman CVD
 
 
 if __name__ == "__main__":  # pragma: no cover

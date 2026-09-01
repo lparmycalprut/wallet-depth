@@ -1,7 +1,8 @@
 import unittest
 
 from links import (cvd_shortcut_query, dexscreener_token_url,
-                   external_links_html, gmgn_token_url, safe_url_part)
+                   external_links_html, gmgn_token_url, hawkfi_meteora_url,
+                   meteora_dlmm_url, pool_links_html, safe_url_part)
 
 
 class LinksTest(unittest.TestCase):
@@ -45,6 +46,18 @@ class LinksTest(unittest.TestCase):
 
     def test_external_links_html_empty_ca(self):
         self.assertEqual(external_links_html(""), "")
+
+    def test_meteora_and_hawkfi_pool_urls(self):
+        pool = "D49w4CQmXvbNpBikcpha3XKFbP5HtQjnMTKTqY1tXFLh"
+        self.assertEqual(
+            meteora_dlmm_url(pool), f"https://app.meteora.ag/dlmm/{pool}")
+        self.assertEqual(
+            hawkfi_meteora_url(pool),
+            f"https://www.hawkfi.ag/meteora/{pool}")
+        html_out = pool_links_html(pool)
+        self.assertIn("app.meteora.ag/dlmm/", html_out)
+        self.assertIn("hawkfi.ag/meteora/", html_out)
+        self.assertIn("target=\\\"_blank\\\"", html_out)
 
 
 if __name__ == "__main__":

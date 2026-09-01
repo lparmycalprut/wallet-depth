@@ -16,8 +16,6 @@ ANALYSIS = {
         "analyzed_at": 1_800_000_000,
         "holders": {"real_count": 20, "dust_count": 150,
                     "dust_pct_mc": 0.5},
-        "flow": {"net_usd": 250.0, "price_chg_pct": 1.0},
-        "silent": {"silent": True, "strength": "sedang", "reason": "ok"},
     },
     "MintBad": {"symbol": "BAD", "marketcap": 0, "price": 0,
                 "analyzed_at": None, "holders": {}, "flow": {},
@@ -28,13 +26,15 @@ ANALYSIS = {
 class SnapshotStatusTest(unittest.TestCase):
     def test_snapshot_is_compact(self):
         status = ss.snapshot_status(ANALYSIS, {"Mint123": {"symbol": "TST"}})
-        self.assertEqual(status["scanner"], "silent-12h-v1")
+        self.assertEqual(status["scanner"], "holder-dust-v1")
         self.assertEqual(status["updated_at"], 1_800_000_000)
         self.assertIn("Mint123", status["tokens"])
         self.assertIn("MintBad", status["tokens"])
         token = status["tokens"]["Mint123"]
         self.assertEqual(token["holders"]["dust_count"], 150)
-        self.assertEqual(token["silent"]["silent"], True)
+        self.assertIn("history", token)
+        self.assertNotIn("silent", token)
+        self.assertNotIn("flow", token)
 
 
 class ParseStatusTest(unittest.TestCase):

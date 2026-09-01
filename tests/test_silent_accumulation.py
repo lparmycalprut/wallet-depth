@@ -394,6 +394,27 @@ class HeliusFallbackTest(unittest.TestCase):
         call_kwargs = mock_analyze.call_args[1]
         self.assertAlmostEqual(call_kwargs.get("price_usd"), 0.05)
 
+    def test_include_flow_false_skips_swap_fetch(self):
+        snapshot = {
+            "holders": [_holder("crab", 250.0, amount_pct=0.01)],
+            "source": "helius", "truncated": False, "pages": 1,
+        }
+        with mock.patch.object(sa, "get_market",
+                               return_value={"marketcap": 10_000,
+                                             "price_usd": 1.0,
+                                             "pair_addresses": ["POOL"]}):
+            with mock.patch.object(sa, "_fetch_holders_snapshot",
+                                   return_value=(snapshot, None)):
+                with mock.patch.object(sa, "fetch_12h_flow") as flow:
+                    out = sa.analyze_token(
+                        "MINT", include_flow=False, extra_pools=["XPOOL"],
+                        cohort_addrs=["crab"])
+        flow.assert_not_called()
+        self.assertEqual(out["silent"]["reason"], "holder-only")
+        self.assertEqual(out["flow"], {})
+        self.assertIn("mid", out["holders"])
+        self.assertEqual(out["holders"]["cohort_now"]["crab"], 250.0)
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
