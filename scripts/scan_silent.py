@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Scanner silent-accumulation 12 jam untuk watchlist.
+"""Scanner analisa holder (dust + kohort) untuk watchlist.
 
-Menggantikan ``realtime_reversal``: TANPA sinyal dan TANPA Telegram.
+Menggantikan ``realtime_reversal`` / silent-accumulation 12 jam:
+TANPA sinyal, TANPA Telegram, TANPA flow 12 jam.
 Untuk setiap token watchlist:
 
-1. ambil daftar holder (Helius DAS dulu — ``auto`` — fallback GMGN,
-   paginasi penuh, batas ``--max-wallets``),
-2. pisahkan real holder (>$10 value) vs dust, hitung dust % marketcap,
-3. hitung net flow + akumulator 12 jam terakhir,
+1. ambil daftar holder (Helius DAS dulu — ``auto`` — fallback GMGN),
+2. pisahkan real vs dust, hitung dust % marketcap + mid-tier Crab/Fish,
+3. catat titik ke ``holder_history.json`` (grafik 4 jam),
 4. tulis ``silent_status.json`` lokal & publish ke branch ``silent-live``.
 
 Dijalankan GitHub Actions tiap ~15 menit.
@@ -25,15 +25,17 @@ ROOT = __import__("os").path.dirname(__import__("os").path.dirname(
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+from holder_history import ingest_many, load_holder_history, seed_from_status
 from silent_accumulation import analyze_token
-from silent_status import publish_silent_status
+from silent_status import load_silent_status, publish_silent_status
 from watchlist import load_watchlist
 
 
 def scan_watchlist(watchlist: dict, *, dust_limit: float | None = None,
                    max_wallets: int = 3000, max_trade_pages: int = 8,
                    workers: int = 4, progress=None,
-                   holder_source: str | None = None) -> dict:
+                   holder_source: str | None = None,
+                   history_store: dict | None = None) -> dict:
     """Analisis semua token watchlist; return {mint: analysis}.
 
     ``holder_source``: ``gmgn`` / ``helius`` / ``auto`` — default
@@ -45,14 +47,20 @@ def scan_watchlist(watchlist: dict, *, dust_limit: float | None = None,
         return analyses
     workers = max(1, min(int(workers), 8))
 
+    store = load_holder_history()
+
     def _job(item):
         mint, meta = item
         try:
+            cohort = ((store.get("tokens") or {}).get(mint) or {}).get(
+                "cohort") or {}
+            addrs = list((cohort.get("balances") or {}).keys())
             analysis = analyze_token(
                 mint, (meta or {}).get("symbol") or "?",
                 dust_limit=dust_limit, max_wallets=max_wallets,
                 max_trade_pages=max_trade_pages, fetch_market=True,
-                holder_source=holder_source)
+                holder_source=holder_source, include_flow=False,
+                cohort_addrs=addrs)
             return mint, analysis, None
         except Exception as exc:  # noqa: BLE001
             return mint, None, str(exc)
@@ -93,39 +101,40 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     watchlist = load_watchlist()
-    print(f"Silent scanner: tokens={len(watchlist)} "
+    print(f"Holder scanner: tokens={len(watchlist)} "
           f"time={datetime.now(timezone.utc).isoformat()} "
           f"max_wallets={args.max_wallets} "
           f"holder_source={args.holder_source or 'config(auto)'}")
 
     started = time.monotonic()
+    store = seed_from_status(load_holder_history(),
+                            load_silent_status(force_refresh=True))
     analyses = scan_watchlist(
         watchlist, dust_limit=args.dust_limit,
         max_wallets=args.max_wallets,
         max_trade_pages=args.max_trade_pages,
         workers=args.workers,
-        holder_source=args.holder_source)
+        holder_source=args.holder_source,
+        history_store=store)
 
     if analyses:
-        silent = sum(1 for item in analyses.values()
-                     if (item.get("silent") or {}).get("silent"))
+        history = ingest_many(analyses, store=store)
         status = publish_silent_status(
             analyses, watchlist, push=not args.no_push)
-        print(f"Silent scan selesai: analyzed={len(analyses)} "
-              f"silent={silent} updated={status.get('updated_at')} "
+        print(f"Holder scan selesai: analyzed={len(analyses)} "
+              f"history={len((history or {}).get('tokens') or {})} "
+              f"updated={status.get('updated_at')} "
               f"durasi={time.monotonic() - started:.1f}s")
         for mint, item in sorted(analyses.items()):
             holders = item.get("holders") or {}
-            flow = item.get("flow") or {}
             print(f"  {item.get('symbol') or '?'} "
-                  f"net12h={flow.get('net_usd')} "
                   f"real={holders.get('real_count')} "
                   f"dust={holders.get('dust_count')} "
                   f"dust%mc={holders.get('dust_pct_mc')} "
-                  f"silent={bool((item.get('silent') or {}).get('silent'))}")
+                  f"mid={((holders.get('mid') or {}).get('count'))}")
     else:
         publish_silent_status({}, watchlist, push=not args.no_push)
-        print("Silent scan selesai: tidak ada token yang berhasil dianalisis")
+        print("Holder scan selesai: tidak ada token yang berhasil dianalisis")
     return 0
 
 

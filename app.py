@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Wallet Depth — Silent Accumulation 12 jam + holder real vs dust."""
+"""Wallet Depth — analisa holder (dust % MC) + Scan Meteora."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -10,17 +10,21 @@ import matplotlib.pyplot as plt
 import streamlit as st
 
 from helius_holders import depth_bar_chart, scan_token_holders
-from links import CVD_PAGE_PATH, external_links_html
-from silent_accumulation import (DUST_LIMIT_USD, analyze_token)
-from silent_status import (load_silent_status, publish_silent_status)
+from holder_history import (DUST_CAUTION_PCT, DUST_LIMIT_PCT, dust_flag,
+                            history_for_mint, ingest_many,
+                            load_holder_history, merge_points, resample_4h,
+                            seed_from_status, sparkline_svg)
+from links import HOLDER_PAGE_PATH, external_links_html, pool_links_html
+from meteora_screener import scan_meteora
+from silent_accumulation import DUST_LIMIT_USD, analyze_token
+from silent_status import load_silent_status, publish_silent_status
 from trending_ui import (render_trending, run_screen, run_screen_h1,
-                         run_screen_hrhr, run_screen_hrhr_h1,
-                         scan_with_analysis)
+                         run_screen_hrhr, run_screen_hrhr_h1)
 from watchlist import (add_to_watchlist, get_last_push_error, load_watchlist,
                        remove_from_watchlist)
 
-st.set_page_config(page_title="Wallet Depth — Silent Accumulation 12H",
-                   page_icon="🔇", layout="wide",
+st.set_page_config(page_title="Wallet Depth — Holder Analytic",
+                   page_icon="🧮", layout="wide",
                    initial_sidebar_state="collapsed")
 
 st.markdown("""
@@ -37,12 +41,12 @@ h1, h2, h3, h4, h5, h6 {color:#000000;}
  margin-bottom:1.2rem}
 .hero h1, .hero p, .hero {color:#ffffff;}
 .hero h1 {font-size:2rem;margin:0 0 .4rem}.hero p{color:#ffffff;margin:0}
-.silent-badge {display:inline-block;padding:.28rem .58rem;border-radius:8px;
+.dust-badge {display:inline-block;padding:.28rem .58rem;border-radius:8px;
  font-size:.78rem;font-weight:800}
-.silent-yes {background:#14532d;color:#dcfce7}
-.silent-buy {background:#1e3a8a;color:#dbeafe}
-.silent-sell {background:#7f1d1d;color:#fee2e2}
-.silent-none {background:#e2e8f0;color:#000000}
+.dust-ok {background:#14532d;color:#dcfce7}
+.dust-caution {background:#854d0e;color:#fef9c3}
+.dust-limit {background:#7f1d1d;color:#fee2e2}
+.dust-none {background:#e2e8f0;color:#000000}
 .watchlist-row {display:flex;align-items:center;padding:.75rem 0;
  border-bottom:1px solid #cbd5e1;}
 .watchlist-token {display:flex;flex-direction:column;gap:.25rem;}
@@ -57,10 +61,12 @@ h1, h2, h3, h4, h5, h6 {color:#000000;}
  letter-spacing:.04em;}
 .watchlist-metric-value {font-size:.95rem;font-weight:700;color:#000000;}
 .watchlist-metric-sub {font-size:.65rem;color:#000000;}
+.pool-links a {font-size:.75rem;color:#1d4ed8;font-weight:700;
+ text-decoration:none;}
 </style>
-<div class="hero"><h1>🔇 Wallet Depth</h1>
-<p>Fokus: silent accumulation 12 jam terakhir + perbandingan real holder
-(&gt;$10 value) vs dust holder, serta berapa % marketcap yang dipegang dust.</p></div>
+<div class="hero"><h1>🧮 Wallet Depth</h1>
+<p>Fokus analisa holder: dust wallet (≤ $10) sebagai jejak dump.
+≥ 1% MC hati-hati · &gt; 2% MC limit. Grafik 4 jam + Scan Meteora DLMM.</p></div>
 """, unsafe_allow_html=True)
 
 
@@ -68,15 +74,6 @@ h1, h2, h3, h4, h5, h6 {color:#000000;}
 # Helpers
 # ---------------------------------------------------------------------------
 def _number(value, pattern=".1f"):
-    if value is None:
-        return "—"
-    try:
-        return format(float(value), pattern)
-    except (TypeError, ValueError):
-        return "—"
-
-
-def _signed(value, pattern="+.1f"):
     if value is None:
         return "—"
     try:
@@ -109,27 +106,19 @@ def _wib(ts):
     return when.strftime("%d %b %H:%M") + " WIB"
 
 
-def _silent_badge(token):
-    """Badge status 12 jam dari snapshot status token."""
-    token = token or {}
-    silent = token.get("silent") or {}
-    flow = token.get("flow") or {}
-    if silent.get("silent"):
-        return '<span class="silent-badge silent-yes">🔇 SILENT ACCUMULATION</span>'
-    net = flow.get("net_usd")
-    if net is not None and float(net) < 0:
-        return '<span class="silent-badge silent-sell">➖ DISTRIBUSI 12J</span>'
-    if net is not None and float(net) > 0:
-        return '<span class="silent-badge silent-buy">➕ NET BELI 12J</span>'
-    return '<span class="silent-badge silent-none">BELUM ADA DATA</span>'
+def _dust_badge_html(flag: dict) -> str:
+    level = flag.get("level") or "unknown"
+    label = str(flag.get("label") or "—")
+    if flag.get("rising") and level in ("caution", "limit"):
+        label = f"{label} ↑"
+    cls = {"ok": "dust-ok", "caution": "dust-caution",
+           "limit": "dust-limit"}.get(level, "dust-none")
+    return f'<span class="dust-badge {cls}">{html.escape(label)}</span>'
 
 
-def _dust_pct(token):
-    holders = (token or {}).get("holders") or {}
-    pct = holders.get("dust_pct_mc")
-    if pct is None:
-        return "—"
-    return f"{float(pct):.2f}%"
+def _points_for(mint, token, store):
+    return merge_points(history_for_mint(store, mint),
+                        (token or {}).get("history") or [])
 
 
 def _depth_tables_html(depth: dict) -> str:
@@ -200,7 +189,6 @@ def _render_depth(holders: dict, symbol: str) -> None:
 # ---------------------------------------------------------------------------
 # Scan Holder Khusus — Helius (satu token)
 # ---------------------------------------------------------------------------
-# Solana addresses are base58 (no 0/O/I/l) and 32-44 chars.
 SOLANA_CA_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 
 
@@ -212,12 +200,8 @@ def _render_helius_holder_scan() -> None:
         "Tempel **contract address (CA)** satu token untuk mengambil seluruh "
         "daftar holder langsung dari **Helius DAS** (getTokenAccounts) dan "
         "menampilkan **bar chart distribusi holder** per range nilai USD "
-        "(Wallet Depth by Threshold). **Default: LP/pool AMM (PumpSwap, "
-        "Meteora, dst) disingkirkan dari bucket** supaya cadangan "
-        "likuiditas tidak terbaca sebagai holder — pool bisa memegang "
-        "puluhan persen supply setelah dump besar. Helius DAS adalah sumber "
-        "data utama aplikasi ini; GMGN hanya dipakai untuk listing "
-        "Trending/Degen."
+        "(Wallet Depth by Threshold). **Default: LP/pool AMM disingkirkan "
+        "dari bucket.**"
     )
 
     with st.form("helius-holder-form"):
@@ -230,11 +214,7 @@ def _render_helius_holder_scan() -> None:
             value=20_000, step=1_000)
         include_pools = col_pool.checkbox(
             "Sertakan LP/pool di bucket", value=False,
-            help="Default OFF: pool/AMM (mis. PumpSwap, Meteora) "
-                 "disingkirkan dari list/bucket holder — pool yang menyerap "
-                 "dump bisa memegang puluhan persen supply padahal itu "
-                 "likuiditas, bukan holder. ON = tampilkan semua akun "
-                 "seperti chart analytics Solscan.")
+            help="Default OFF: pool/AMM disingkirkan dari list/bucket holder.")
         run = col_btn.form_submit_button("🛰 Scan Holder", type="primary")
 
     if run:
@@ -308,7 +288,7 @@ def _render_helius_holder_result(result: dict) -> None:
         help=("Semua akun bernilai > $0 termasuk LP/pool."
               if buckets_with_pools else
               f"Hanya wallet murni — {pool_n:,} akun LP/pool "
-              "(pair DexScreener) disingkirkan dari bucket."))
+              "disingkirkan dari bucket."))
     c3.metric("Wallet murni (tier)", f"{holders_wallet:,}",
               help="Akun non-LP/pool yang dipakai hitungan tier.")
     c4.metric("Marketcap", _compact(mc) if mc else "—",
@@ -333,6 +313,107 @@ def _render_helius_holder_result(result: dict) -> None:
     )
 
 
+def _render_meteora_scan() -> None:
+    """Scan pool Meteora DLMM 24h ∩ 1h + holder dust."""
+    st.divider()
+    st.subheader("🌊 Scan Meteora Pool")
+    st.caption(
+        "Top DLMM 24 jam (`active_tvl ≥ 1000`, `fee_active_tvl_ratio ≥ 250`) "
+        "dibandingkan 1 jam (`fee_active_tvl_ratio ≥ 1`). Pool 24 jam yang "
+        "masih muncul di 1 jam **tetap ditampilkan**. Dust holder **> 2% MC** "
+        "disembunyikan. Tombol kanan: Meteora + HawkFi."
+    )
+    if st.button("🌊 Scan Meteora + Holder", type="primary",
+                 use_container_width=True):
+        bar = st.progress(0.0, text="Listing pool Meteora…")
+
+        def _progress(index, total, label):
+            bar.progress(index / max(total, 1),
+                         text=f"Holder {index}/{total} · {label}")
+
+        try:
+            result = scan_meteora(max_wallets=2000, workers=6,
+                                  progress=_progress)
+        except Exception as exc:  # noqa: BLE001
+            result = {"rows": [], "error": str(exc), "hidden_dust": 0,
+                      "fetched": 0}
+        finally:
+            bar.empty()
+        st.session_state["meteora_scan"] = result
+
+    result = st.session_state.get("meteora_scan") or {}
+    error = result.get("error") or ""
+    if error:
+        st.warning(f"Meteora API: {error}")
+    rows = result.get("rows") or []
+    hidden = int(result.get("hidden_dust") or 0)
+    fetched = int(result.get("fetched") or 0)
+    if fetched:
+        st.caption(f"{len(rows)} pool ditampilkan · {hidden} disembunyikan "
+                   f"(dust > {DUST_LIMIT_USD_NOTE}) · listing {fetched}.")
+    if not rows:
+        if result:
+            st.info("Tidak ada pool yang lolos filter dust (atau listing kosong).")
+        return
+
+    header_cols = st.columns([1.6, 0.8, 0.7, 0.9, 0.7, 1.2, 0.45])
+    titles = ["Token", "MC", "Dust", "Dust %MC", "TF", "Pool", ""]
+    style = "font-size:0.72rem;color:#000000;font-weight:700;text-align:center;"
+    for col, title in zip(header_cols, titles):
+        col.markdown(f'<div style="{style}">{title}</div>',
+                     unsafe_allow_html=True)
+    st.markdown('<hr style="margin:0.4rem 0;border-color:#cbd5e1;">',
+                unsafe_allow_html=True)
+
+    for index, row in enumerate(rows):
+        ca = str(row.get("ca") or "")
+        symbol = str(row.get("symbol") or "?").upper()
+        pool = str(row.get("pool_address") or "")
+        dust_count = row.get("dust_count")
+        dust_pct = row.get("dust_pct_mc")
+        flag = dust_flag(dust_pct)
+        tf = []
+        if row.get("in_24h"):
+            tf.append("24H")
+        if row.get("in_1h"):
+            tf.append("1H")
+        tf_txt = "+".join(tf) or "—"
+        cols = st.columns([1.6, 0.8, 0.7, 0.9, 0.7, 1.2, 0.45])
+        cols[0].markdown(
+            f'<div class="watchlist-token">'
+            f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
+            f'<span class="watchlist-mint">{html.escape(ca[:8])}…</span>'
+            f'<div class="watchlist-links">{external_links_html(ca)}</div>'
+            f"</div>", unsafe_allow_html=True)
+        cols[1].markdown(
+            f'<div class="watchlist-metric"><div class="watchlist-metric-value">'
+            f'{_compact(row.get("mc"))}</div></div>', unsafe_allow_html=True)
+        cols[2].markdown(
+            f'<div class="watchlist-metric"><div class="watchlist-metric-value">'
+            f'{_number(dust_count, ".0f")}</div>'
+            f'<div class="watchlist-metric-sub">wallet</div></div>',
+            unsafe_allow_html=True)
+        pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.2f}%"
+        cols[3].markdown(
+            f'<div class="watchlist-metric"><div class="watchlist-metric-value">'
+            f"{pct_txt}</div>{_dust_badge_html(flag)}</div>",
+            unsafe_allow_html=True)
+        cols[4].markdown(
+            f'<div class="watchlist-metric"><div class="watchlist-metric-value">'
+            f"{html.escape(tf_txt)}</div></div>", unsafe_allow_html=True)
+        cols[5].markdown(
+            f'<div class="pool-links">{pool_links_html(pool)}</div>',
+            unsafe_allow_html=True)
+        if cols[6].button("⭐", key=f"meteora-star-{index}",
+                          help="Tambah ke Watchlist",
+                          use_container_width=True):
+            if ca:
+                add_to_watchlist(ca, symbol, source="meteora")
+                st.success(f"${symbol} ditambahkan")
+        st.markdown('<hr style="margin:0.25rem 0;border-color:#cbd5e1;">',
+                    unsafe_allow_html=True)
+
+
 # ---------------------------------------------------------------------------
 # Data
 # ---------------------------------------------------------------------------
@@ -340,18 +421,19 @@ watchlist = load_watchlist()
 force_status = bool(st.session_state.pop("status_force_refresh", False))
 silent_status = load_silent_status(force_refresh=force_status)
 status_tokens = silent_status.get("tokens") or {}
+history_store = seed_from_status(load_holder_history(), silent_status)
 
-st.subheader("📋 Watchlist — Silent Accumulation 12J")
+st.subheader("📋 Watchlist — Analisa Holder (Dust)")
 st.caption(
-    "Setiap token dicek 12 jam terakhir: net flow, wallet akumulator, "
-    "real holder (>$10 value) vs dust, dan **dust % dari marketcap**. "
+    "Ringkasan dust: jumlah wallet dan **berapa % marketcap** yang mereka "
+    f"pegang. ≥ {DUST_CAUTION_PCT:.0f}% MC = hati-hati · "
+    "> 2% MC = limit/DUMP (dust nambah pesat = jejak distribusi). "
     f"Ambang dust: ${DUST_LIMIT_USD:.0f}. "
     f"Terakhir scan: {_wib(silent_status.get('updated_at'))}. "
-    "GitHub Actions memindai tiap ~15 menit; tombol di bawah untuk "
-    "pemindaian lokal langsung."
+    "Grafik kecil = dust % MC tiap 4 jam."
 )
 
-if st.button("🔄 Scan watchlist sekarang (12 jam)", type="primary",
+if st.button("🔄 Scan holder watchlist", type="primary",
              use_container_width=True):
     analyses = {}
     total = len(watchlist)
@@ -359,40 +441,44 @@ if st.button("🔄 Scan watchlist sekarang (12 jam)", type="primary",
     done = 0
     for mint, meta in watchlist.items():
         try:
+            cohort = ((history_store.get("tokens") or {}).get(mint) or {}).get(
+                "cohort") or {}
+            addrs = list((cohort.get("balances") or {}).keys())
             analyses[mint] = analyze_token(
                 mint, (meta or {}).get("symbol") or "?",
-                max_wallets=2000, max_trade_pages=6, fetch_market=True)
-        except Exception:  # noqa: BLE001 - lanjut ke token berikutnya
+                max_wallets=2000, max_trade_pages=1, fetch_market=True,
+                include_flow=False, cohort_addrs=addrs)
+        except Exception:  # noqa: BLE001
             analyses[mint] = None
         done += 1
-        bar.progress(done / total,
+        bar.progress(done / max(total, 1),
                      text=f"Scan {done}/{total} · "
                           f"{str((meta or {}).get('symbol') or '?')}")
-    if analyses:
-        publish_silent_status(analyses, watchlist, push=False)
+    ok = {mint: item for mint, item in analyses.items()
+          if isinstance(item, dict)}
+    if ok:
+        ingest_many(ok, store=history_store)
+        publish_silent_status(ok, watchlist, push=False)
     st.session_state["status_force_refresh"] = True
     st.rerun()
 
 if not watchlist:
     st.info("Watchlist masih kosong. Tambahkan contract address di bawah.")
 else:
-    header_cols = st.columns(
-        [1.5, 1.3, 0.9, 0.9, 0.8, 0.7, 0.9, 1.0, 0.5, 0.5])
+    header_cols = st.columns([1.6, 1.1, 1.0, 1.3, 0.5, 0.5])
     header_style = "font-size:0.78rem;color:#000000;font-weight:700;"
     center = "text-align:center;" + header_style
-    header_titles = ["Token", "Status 12 Jam", "Net 12j", "Harga 12j",
-                     "Real >$10", "Dust", "Dust %MC", "Scan", "", ""]
-    header_css = [header_style, center, center, center, center, center,
-                  center, center, center, center]
+    header_titles = ["Token", "Dust", "Hold %MC", "4 jam", "", ""]
+    header_css = [header_style, center, center, center, center, center]
     for col, style, title in zip(header_cols, header_css, header_titles):
         col.markdown(f'<div style="{style}">{title}</div>',
                      unsafe_allow_html=True)
 
     st.markdown(
         '<div style="font-size:0.65rem;color:#64748b;margin:0.3rem 0;">'
-        '🛰 Helius (utama) · 🕸 GMGN (Trending/Degen) · ≥ batas pencarian '
-        'holder tercapai'
-        '</div>',
+        "Dust = wallet 0 &lt; value ≤ $10 (bukan LP). Grafik 4 jam = "
+        "perubahan dust % MC. 🧮 buka Holder Analytic."
+        "</div>",
         unsafe_allow_html=True)
 
     st.markdown('<hr style="margin:0.5rem 0;border-color:#cbd5e1;">',
@@ -406,66 +492,47 @@ else:
         token = status_tokens.get(mint) or {}
         symbol = str(meta.get("symbol") or token.get("symbol") or "?").upper()
         holders = token.get("holders") or {}
-        flow = token.get("flow") or {}
-        net_txt = _compact(flow.get("net_usd"), signed=True)
-        price_txt = (f"{_signed(flow.get('price_chg_pct'), '+.1f')}%"
-                     if flow.get("price_chg_pct") is not None else "—")
-        scanned = _wib(token.get("analyzed_at"))
-        holder_source = str(holders.get("source") or "gmgn").lower()
-        if holder_source == "helius":
-            source_icon = "🛰"
-        else:
-            source_icon = "🕸"
-        truncated = holders.get("truncated", False)
-        real_count = holders.get("real_count")
+        points = _points_for(mint, token, history_store)
+        sampled = resample_4h(points)
         dust_count = holders.get("dust_count")
-        real_txt = f"≥{int(real_count)}" if truncated and real_count is not None else _number(real_count, ".0f")
-        dust_txt = f"≥{int(dust_count)}" if truncated and dust_count is not None else _number(dust_count, ".0f")
+        dust_pct = holders.get("dust_pct_mc")
+        prev_pct = sampled[-2].get("dust_pct_mc") if len(sampled) >= 2 else None
+        flag = dust_flag(dust_pct, prev_pct)
+        truncated = holders.get("truncated", False)
+        dust_txt = ("—" if dust_count is None
+                    else (f"≥{int(dust_count)}" if truncated
+                          else f"{int(dust_count):,}"))
+        pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.2f}%"
+        spark = sparkline_svg(points, key="dust_pct_mc")
+        if not spark:
+            spark = '<span style="font-size:.7rem;color:#64748b;">belum ada grafik</span>'
 
-        cols = st.columns(
-            [1.5, 1.3, 0.9, 0.9, 0.8, 0.7, 0.9, 1.0, 0.5, 0.5])
+        cols = st.columns([1.6, 1.1, 1.0, 1.3, 0.5, 0.5])
         cols[0].markdown(
             f'<div class="watchlist-token">'
             f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
             f'<span class="watchlist-mint">{html.escape(mint[:8])}…</span>'
             f'<div class="watchlist-links">{external_links_html(mint)}</div>'
-            f'</div>', unsafe_allow_html=True)
-        cols[1].markdown(_silent_badge(token), unsafe_allow_html=True)
+            f"</div>", unsafe_allow_html=True)
+        cols[1].markdown(
+            f'<div class="watchlist-metric">'
+            f'<div class="watchlist-metric-value">{dust_txt}</div>'
+            f'<div class="watchlist-metric-sub">wallet dust</div></div>',
+            unsafe_allow_html=True)
         cols[2].markdown(
             f'<div class="watchlist-metric">'
-            f'<div class="watchlist-metric-value">{net_txt}</div>'
-            f'<div class="watchlist-metric-sub">USD</div></div>',
+            f'<div class="watchlist-metric-value">{pct_txt}</div>'
+            f'{_dust_badge_html(flag)}</div>',
             unsafe_allow_html=True)
         cols[3].markdown(
-            f'<div class="watchlist-metric">'
-            f'<div class="watchlist-metric-value">{price_txt}</div>'
-            f'<div class="watchlist-metric-sub">12 jam</div></div>',
+            f'<div style="text-align:center;">{spark}</div>',
             unsafe_allow_html=True)
-        cols[4].markdown(
-            f'<div class="watchlist-metric">'
-            f'<div class="watchlist-metric-value">'
-            f'{source_icon} {real_txt}</div>'
-            f'<div class="watchlist-metric-sub">wallet</div></div>',
-            unsafe_allow_html=True)
-        cols[5].markdown(
-            f'<div class="watchlist-metric">'
-            f'<div class="watchlist-metric-value">'
-            f'{dust_txt}</div>'
-            f'<div class="watchlist-metric-sub">wallet</div></div>',
-            unsafe_allow_html=True)
-        cols[6].markdown(
-            f'<div class="watchlist-metric">'
-            f'<div class="watchlist-metric-value">{_dust_pct(token)}</div>'
-            f'<div class="watchlist-metric-sub">dari MC</div></div>',
-            unsafe_allow_html=True)
-        cols[7].markdown(
-            f'<div style="font-size:0.75rem;color:#000000;text-align:center;">'
-            f'{html.escape(scanned)}</div>', unsafe_allow_html=True)
-        if cols[8].button("📈", key=f"chart-{mint}", help="Buka flow chart",
+        if cols[4].button("🧮", key=f"holder-{mint}",
+                          help="Buka Holder Analytic",
                           use_container_width=True):
-            st.session_state["effort_mint"] = mint
-            st.switch_page(CVD_PAGE_PATH, query_params={"mint": mint})
-        if cols[9].button("✕", key=f"remove-{mint}", help="Hapus watchlist",
+            st.session_state["holder_mint"] = mint
+            st.switch_page(HOLDER_PAGE_PATH, query_params={"mint": mint})
+        if cols[5].button("✕", key=f"remove-{mint}", help="Hapus watchlist",
                           use_container_width=True):
             remove_from_watchlist(mint)
             st.rerun()
@@ -491,11 +558,9 @@ with st.expander("➕ Tambah token", expanded=not bool(watchlist)):
             st.rerun()
 
 st.divider()
-st.subheader("🔍 Temukan Token — Holder Depth")
-st.caption(
-    "Scan Trending/Degen akan **langsung** menganalisis tiap token: "
-    "perbandingan real holder (>$10 value) vs dust, dust % dari marketcap, "
-    "dan silent accumulation 12 jam terakhir.")
+st.subheader("🔍 Temukan Token")
+st.caption("Scan Trending/Degen menampilkan listing GMGN (tanpa kolom "
+           "holder 12 jam). Analisa dust ada di Scan Meteora dan watchlist.")
 
 st.markdown("""
 <style>
@@ -520,14 +585,12 @@ if selected_tab not in DISCOVER_TABS:
 st.session_state["discover_tab_active"] = selected_tab
 
 if selected_tab == DEGEN_TAB:
-    if st.button("🔥 Scan Degen + Holder Depth", use_container_width=True):
+    if st.button("🔥 Scan Degen", use_container_width=True):
         rows_24, error_24 = run_screen_hrhr(force=True)
         rows_1, error_1 = run_screen_hrhr_h1(force=True)
         combined = rows_24 + [row for row in rows_1
                               if row.get("ca") not in
                               {item.get("ca") for item in rows_24}]
-        with st.container():
-            combined = scan_with_analysis(combined, key_prefix="degen")
         st.session_state["degen_combined"] = combined
         st.session_state["degen_error"] = error_24 or error_1
     if st.session_state.get("degen_error"):
@@ -535,14 +598,12 @@ if selected_tab == DEGEN_TAB:
     render_trending(st.session_state.get("degen_combined", []),
                     key_prefix="degen", source="degen")
 else:
-    if st.button("🔎 Scan Trending + Holder Depth", use_container_width=True):
+    if st.button("🔎 Scan Trending", use_container_width=True):
         rows_24, error_24 = run_screen(force=True)
         rows_1, error_1 = run_screen_h1(force=True)
         combined = rows_24 + [row for row in rows_1
                               if row.get("ca") not in
                               {item.get("ca") for item in rows_24}]
-        with st.container():
-            combined = scan_with_analysis(combined, key_prefix="trend")
         st.session_state["trend_combined"] = combined
         st.session_state["trend_error"] = error_24 or error_1
     if st.session_state.get("trend_error"):
@@ -550,4 +611,5 @@ else:
     render_trending(st.session_state.get("trend_combined", []),
                     key_prefix="trend", source="trending")
 
+_render_meteora_scan()
 _render_helius_holder_scan()

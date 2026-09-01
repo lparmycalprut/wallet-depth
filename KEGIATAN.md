@@ -1,3 +1,22 @@
+# Kegiatan — 1 September 2026
+
+Fokus UI ke **analisa holder dust** (bukan silent 12 jam) + Scan Meteora.
+
+1. Watchlist: buang Status/Net/Harga 12j, Real, Dust kolom lama, Scan,
+   shortcut CVD. Ganti ringkasan dust (jumlah wallet + % MC), badge
+   AMAN / HATI-HATI (≥1%) / DUMP (>2%), sparkline 4 jam, tombol 🧮 ke
+   halaman Holder Analytic.
+2. Trending/Degen: buang kolom Real/Dust/Dust%MC/12 Jam/Net 12j dan
+   scan holder. Listing GMGN saja (Token, MC, 24h).
+3. Halaman baru `pages/5_🧮_Holder.py` (di bawah CVD): dust, grafik 4
+   jam, sisa token kohort Crab+Fish.
+4. CVD: buang 🧮 Holder Analytic + kartu silent 12 jam.
+5. `holder_history.py` + `holder_history.json`: catat dust/kohort tiap
+   scan, resample 4 jam. Cron watchlist `include_flow=False`.
+6. Scan Meteora di halaman utama: API 24h (fee_ratio≥250) + 1h (≥1),
+   DLMM active_tvl≥1000. Pool 24h yang masih di 1h tetap tampil. Dust
+   >2% MC disembunyikan. Shortcut Meteora DLMM + HawkFi.
+
 # Kegiatan — 31 Agustus 2026 (lanjutan)
 
 **Migrasi total sumber data ke Helius** (kecuali listing Trending/Degen

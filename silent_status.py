@@ -28,34 +28,58 @@ _CACHE = {"data": None, "ts": 0.0}
 
 
 def _empty_status() -> dict:
-    return {"updated_at": None, "scanner": "silent-12h-v1", "tokens": {}}
+    return {"updated_at": None, "scanner": "holder-dust-v1", "tokens": {}}
+
+
+def _holders_for_status(holders: dict | None) -> dict:
+    """Buang peta address (berat) dari snapshot dashboard."""
+    holders = dict(holders or {})
+    holders.pop("cohort_now", None)
+    mid = holders.get("mid")
+    if isinstance(mid, dict):
+        holders["mid"] = {
+            "count": mid.get("count"),
+            "value_usd": mid.get("value_usd"),
+            "pct_mc": mid.get("pct_mc"),
+        }
+    return holders
 
 
 def snapshot_status(analyses: dict | None,
-                    watchlist: dict | None = None) -> dict:
+                    watchlist: dict | None = None,
+                    history_store: dict | None = None) -> dict:
     """Bangun payload dashboard dari hasil analisis per token."""
+    try:
+        from holder_history import (compact_history_for_status,
+                                    load_holder_history)
+        store = history_store if history_store is not None \
+            else load_holder_history()
+    except Exception:
+        store = {"tokens": {}}
+        compact_history_for_status = lambda *_a, **_k: []  # noqa: E731
     tokens = {}
     stamps = []
     for mint, result in (analyses or {}).items():
         if not mint or not isinstance(result, dict):
             continue
         meta = (watchlist or {}).get(mint) or {}
+        hist_slot = ((store.get("tokens") or {}).get(mint) or {})
         token = {
             "symbol": str(meta.get("symbol")
                           or result.get("symbol") or mint[:8]),
             "marketcap": result.get("marketcap"),
             "price": result.get("price"),
             "analyzed_at": result.get("analyzed_at"),
-            "holders": result.get("holders") or {},
-            "flow": result.get("flow") or {},
-            "silent": result.get("silent") or {},
+            "holders": _holders_for_status(result.get("holders") or {}),
+            "history": compact_history_for_status(store, mint),
+            "cohort": hist_slot.get("cohort") or {},
         }
         tokens[mint] = token
         if token["analyzed_at"]:
             stamps.append(int(token["analyzed_at"]))
     return {
         "updated_at": max(stamps) if stamps else None,
-        "scanner": "silent-12h-v1",
+        "scanner": "holder-dust-v1",
         "tokens": tokens,
     }
 
@@ -81,7 +105,7 @@ def _parse_status_payload(data) -> dict | None:
     if isinstance(data, dict) and isinstance(data.get("tokens"), dict):
         return {
             "updated_at": data.get("updated_at"),
-            "scanner": data.get("scanner") or "silent-12h-v1",
+            "scanner": data.get("scanner") or "holder-dust-v1",
             "tokens": data["tokens"],
         }
     return None

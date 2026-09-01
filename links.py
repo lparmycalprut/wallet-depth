@@ -11,8 +11,11 @@ import html as _html
 from urllib.parse import quote
 
 CVD_PAGE_PATH = "pages/4_📊_CVD.py"
+HOLDER_PAGE_PATH = "pages/5_🧮_Holder.py"
 GMGN_TOKEN_BASE = "https://gmgn.ai/sol/token/"
 DEXSCREENER_TOKEN_BASE = "https://dexscreener.com/solana/"
+METEORA_DLMM_BASE = "https://app.meteora.ag/dlmm/"
+HAWKFI_METEORA_BASE = "https://www.hawkfi.ag/meteora/"
 
 
 def safe_url_part(value) -> str:
@@ -41,10 +44,20 @@ def cvd_shortcut_query(ca) -> str:
     return f"?mint={safe_url_part(ca)}"
 
 
+def meteora_dlmm_url(pool) -> str:
+    """Return the Meteora DLMM pool page URL."""
+    return f"{METEORA_DLMM_BASE}{safe_url_part(pool)}"
+
+
+def hawkfi_meteora_url(pool) -> str:
+    """Return the HawkFi Meteora pool URL."""
+    return f"{HAWKFI_METEORA_BASE}{safe_url_part(pool)}"
+
+
 def external_links_html(ca) -> str:
     """Render new-tab GMGN + DexScreener anchor links for a token.
 
-    ``target=\"_blank\"`` keeps the links from disturbing the surrounding
+    ``target=\\\"_blank\\\"`` keeps the links from disturbing the surrounding
     Chart/Hapus/CVD buttons. The URL is HTML-escaped after URL-encoding so the
     contract address stays safe inside the attribute.
     """
@@ -54,7 +67,21 @@ def external_links_html(ca) -> str:
     gmgn = _html.escape(gmgn_token_url(ca), quote=True)
     dexscreener = _html.escape(dexscreener_token_url(ca), quote=True)
     return (
-        f"<a href=\"{gmgn}\" target=\"_blank\" rel=\"noopener noreferrer\">"
-        f"🔗GMGN</a> &nbsp; "
-        f"<a href=\"{dexscreener}\" target=\"_blank\" "
-        f"rel=\"noopener noreferrer\">🦆Dex</a>")
+        f'<a href="{gmgn}" target="_blank" rel="noopener noreferrer">'
+        f'🔗GMGN</a> &nbsp; '
+        f'<a href="{dexscreener}" target="_blank" '
+        f'rel="noopener noreferrer">🦆Dex</a>')
+
+
+def pool_links_html(pool) -> str:
+    """New-tab shortcuts: Meteora DLMM + HawkFi for a pool address."""
+    pool = str(pool or "")
+    if not pool:
+        return ""
+    meteora = _html.escape(meteora_dlmm_url(pool), quote=True)
+    hawkfi = _html.escape(hawkfi_meteora_url(pool), quote=True)
+    return (
+        f"<a href=\\\"{meteora}\\\" target=\\\"_blank\\\" "
+        f"rel=\\\"noopener noreferrer\\\">🌊Meteora</a> &nbsp; "
+        f"<a href=\\\"{hawkfi}\\\" target=\\\"_blank\\\" "
+        f"rel=\\\"noopener noreferrer\\\">🦅HawkFi</a>")

@@ -792,17 +792,16 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
                   fetch_market: bool = True,
                   timeout: int = 20,
                   price_usd: float = 0.0,
-                  holder_source: str | None = None) -> dict:
-    """Analisis lengkap satu token: holder (real vs dust) + flow 12 jam.
+                  holder_source: str | None = None,
+                  include_flow: bool = True,
+                  extra_pools=None,
+                  cohort_addrs=None) -> dict:
+    """Analisis holder (real vs dust + mid-tier) ± flow 12 jam.
 
-    Dipakai langsung oleh scan Trending/Degen dan cron watchlist.
-    ``price_usd`` diteruskan ke jalur holder (Helius prioritaskan; GMGN
-    untuk listing/fallback).
-
-    ``holder_source``: ``gmgn`` / ``helius`` / ``auto`` (default
-    mengikuti config/env, lihat :func:`resolve_holder_source`). Saat
-    holder berasal dari Helius, metrik ``holders["depth"]`` berisi
-    Wallet Depth by Threshold + tier ala halaman analytics Solscan.
+    ``include_flow=False`` melewati fetch swap 12 jam (fokus dust/kohort).
+    ``extra_pools``: address LP tambahan (mis. pool Meteora) yang dibuang
+    dari hitungan wallet. ``cohort_addrs``: address Crab+Fish yang di-freeze
+    pada scan sebelumnya — saldonya dikembalikan di ``holders.cohort_now``.
     """
     ca = str(ca or "").strip()
     dust_limit = float(DUST_LIMIT_USD if dust_limit is None else dust_limit)
@@ -818,14 +817,39 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
     mc = float(market_cap or market.get("marketcap") or 0)
     price = float(price_usd or market.get("price_usd") or 0)
 
+    extra = set(str(p or "").strip() for p in (extra_pools or []) if p)
+    if extra:
+        market = dict(market)
+        existing = [str(p or "").strip() for p in
+                    (market.get("pair_addresses") or []) if p]
+        market["pair_addresses"] = list(dict.fromkeys([*existing, *extra]))
+
     snapshot, depth = _fetch_holders_snapshot(
         ca, source, max_wallets=max_wallets, timeout=timeout,
         price_usd=price, market_cap=mc, market=market)
-    flow = fetch_12h_flow(ca, max_pages=max_trade_pages)
     holder_stats = classify_holders(snapshot, mc, dust_limit=dust_limit)
     if depth is not None:
         holder_stats["depth"] = depth
-    silent = detect_silent(flow, holder_stats)
+    pools = set(str(p or "").strip() for p in
+                (market.get("pair_addresses") or []) if p)
+    try:
+        from holder_history import lookup_balances, mid_tier_stats
+        holder_stats["mid"] = mid_tier_stats(
+            snapshot.get("holders") or [], mc, pool_addresses=pools)
+        holder_stats["cohort_now"] = lookup_balances(
+            snapshot.get("holders") or [], cohort_addrs or [])
+    except Exception:  # noqa: BLE001 - analisa holder jangan gagal total
+        holder_stats.setdefault("mid", {"count": 0, "balances": {}})
+        holder_stats.setdefault("cohort_now", {})
+    if include_flow:
+        flow = fetch_12h_flow(ca, max_pages=max_trade_pages)
+        silent = detect_silent(flow, holder_stats)
+    else:
+        flow = {}
+        silent = {"silent": False, "strength": "tidak",
+                  "reason": "holder-only", "checks": {},
+                  "net_usd": 0.0, "accumulators": 0,
+                  "price_chg_pct": None, "bot_share": 0.0}
     return {
         "ca": ca,
         "symbol": str(symbol or market.get("symbol") or "?"),

@@ -1,97 +1,63 @@
-# Wallet Depth — Silent Accumulation 12H
+# Wallet Depth — Holder Analytic (Dust)
 
-Wallet Depth memantau token Solana dari GMGN dan berfokus pada
-**silent accumulation dalam 12 jam terakhir** serta **kedalaman holder**
-(real holder > $10 value vs dust). Semua sinyal lama (reversal, SMART
-SEROK, seller exhaustion, battle) dan notifikasi Telegram sudah dihapus.
+Wallet Depth memantau token Solana dan berfokus pada **analisa holder
+dust** sebagai jejak dump, plus **Scan Meteora DLMM**. Semua sinyal
+(silent accumulation 12 jam, reversal, Telegram) sudah dihapus dari UI.
 
 ## Konsep
 
-1. **Silent accumulation 12 jam** — dari trade 12 jam terakhir:
-   - `net_usd` positif (beli > jual),
-   - minimal 3 wallet net-beli (akumulator),
-   - harga hampir tidak bergerak (≤ ±5%),
-   - share mev/bot rendah (≤ 35%).
-2. **Real holder vs dust** — dari daftar holder (paginasi penuh):
-   - **real holder**: nilai posisi > $10,
-   - **dust holder**: 0 < nilai ≤ $10,
-   - **dust % dari marketcap** = total nilai dust / marketcap × 100,
-   - dust % supply juga dihitung dari `amount_percentage`.
-3. **Dust** dihitung hanya dari wallet murni (LP/pool/exchange dikeluarkan).
-4. **Wallet Depth by Threshold** — khusus token watchlist, daftar holder
-   diambil **dari Helius DAS `getTokenAccounts`** (paginasi cursor; nilai
-   USD = balance × harga DexScreener; fallback GMGN bila Helius tak
-   tersedia):
-   - **bucket nilai** `>$0-$10` … `>$500k` — **default atas wallet murni
-     saja**: akun LP/pool yang dikenal (pair DexScreener, mis. PumpSwap /
-     Meteora) **disingkirkan dari list holder** karena pool AMM yang
-     menyerap dump bisa memegang puluhan persen supply dan menyesatkan
-     pembacaan. Mode lama (semua akun termasuk LP/pool, seperti halaman
-     analytics Solscan) tersedia via checkbox "Sertakan LP/pool di
-     bucket" pada Scan Holder Khusus atau `include_pools=True`.
-   - **tier** 🦐 Shrimp / 🦀 Crab / 🐟 Fish / 🐬 Dolphin / 🦈 Shark atas
-     wallet murni (LP/pool dari DexScreener dikecualikan).
+1. **Dust holder** — wallet murni dengan `0 < nilai ≤ $10`:
+   - **dust % MC** = total nilai dust / marketcap × 100,
+   - ≥ **1% MC** → hati-hati,
+   - **> 2% MC** → limit / DUMP (disembunyikan dari Scan Meteora).
+   Dust yang nambah pesat = holder sebelumnya sudah distribusi / bag
+   merosot jadi sisa.
+2. **Kohort mid-tier (Crab+Fish, $100–$10k)** — daftar address di-freeze
+   4 jam, lalu diukur **sisa token** (bukan dollar) supaya dump harga
+   tidak ketiru sebagai exit.
+3. **Grafik 4 jam** — setiap scan mencatat titik ke `holder_history.json`,
+   ditampilkan per bucket 4 jam (watchlist sparkline + halaman Holder).
+4. **Wallet Depth by Threshold** — Helius DAS `getTokenAccounts`, bucket
+   `>$0-$10` … `>$500k` atas wallet murni (LP/pool DexScreener disingkirkan).
+   Tier 🦐/🦀/🐟/🐬/🦈 selalu wallet murni.
 
 ## Sumber data
 
-**Helius adalah sumber utama semua data** (holder DAS + trade Enhanced
-API) — data on-chain lengkap dan tidak dibatasi rate-limit ketat.
-**GMGN hanya dipakai untuk listing Trending/Degen** dan sebagai fallback
-darurat (bila Helius key kosong/gagal). Solscan sudah dilepas total.
-Harga/marketcap tetap dari DexScreener.
+**Helius** = sumber utama holder (DAS `getTokenAccounts`). **GMGN** hanya
+listing Trending/Degen + fallback. **Meteora** pool-discovery API untuk
+Scan Meteora. Harga/MC dari DexScreener. Solscan dilepas.
 
-Sumber holder per token (watchlist/cron) diatur via `holder_source`
-di `config.json` / env `HOLDER_SOURCE`:
-
-| Nilai | Perilaku |
+| `holder_source` | Perilaku |
 |---|---|
 | `auto` (default) | Helius dulu → fallback GMGN. |
 | `helius` | Paksa Helius → fallback GMGN. |
-| `gmgn` | GMGN saja (listing Trending/Degen selalu jalur ini), fallback Helius. |
+| `gmgn` | GMGN saja (listing Trending/Degen), fallback Helius. |
 
-**Scan Holder Khusus (Helius)** di halaman utama: tempel CA satu token,
-seluruh holder diambil langsung dari **Helius DAS `getTokenAccounts`**
-(paginasi cursor, nilai USD = balance × harga DexScreener) lalu
-ditampilkan sebagai **bar chart distribusi holder** per range nilai
-(Wallet Depth by Threshold) plus tabel bucket/tier. Butuh
-`helius_api_key` (config.json / env `HELIUS_API_KEY` / Streamlit secrets).
-Untuk cron GitHub Actions, tambahkan manual env secret repo di step scan
-`.github/workflows/daily-effort.yml` (perubahan workflow tidak bisa
-di-push oleh GitHub App):
+Scan Holder Khusus (halaman utama) dan cron butuh `HELIUS_API_KEY`
+(config / env / Streamlit secrets). Tanpa key, fallback GMGN.
 
-```yaml
-        env:
-          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
-          HELIUS_API_KEYS: ${{ secrets.HELIUS_API_KEYS }}
-```
+## Scan Meteora Pool
 
-Tanpa secret tersebut cron tetap jalan lewat fallback GMGN.
-
-## Filter tabel scan (Trending & Degen)
-
-Pilih lewat menu **Filter holder depth** di atas tabel (bisa dikombinasi):
-
-| Filter | Syarat |
-|---|---|
-| 🔇 SILENT | silent accumulation 12 jam terdeteksi |
-| 🏦 LP | dust > 50% dari real (jumlah wallet) **dan** real+dust hanya < 0.5% marketcap (supply hampir semua di LP/pool) |
-| 🎢 PUMPDUMP | real hanya < 20% dari dust (dominan dust) |
-
-Setiap baris juga diberi tag 🔇/🏦/🎢 bila memenuhi filter tersebut.
+- 24 jam: `pool_type=dlmm && active_tvl≥1000 && fee_active_tvl_ratio≥250`
+- 1 jam: `pool_type=dlmm && active_tvl≥1000 && fee_active_tvl_ratio≥1`
+- Pool 24 jam yang masih muncul di 1 jam **tetap ditampilkan**
+- Dust holder **> 2% MC** disembunyikan
+- Shortcut: [Meteora DLMM](https://app.meteora.ag/dlmm/) + [HawkFi](https://www.hawkfi.ag/meteora/)
 
 ## Modul
 
 | File | Peran |
 |---|---|
-| `silent_accumulation.py` | fetch holder (paginasi `next`), klasifikasi real/dust, net flow 12 jam, deteksi silent, `enrich_rows` |
-| `solscan_holders.py` | kalkulasi Wallet Depth by Threshold & tier ala analytics Solscan (tanpa API Solscan) |
-| `helius_holders.py` | **Scan Holder Khusus** satu token — holder dipaksa dari Helius DAS `getTokenAccounts` + bar chart distribusi holder |
-| `silent_status.py` | snapshot status untuk dashboard (GitHub ref `silent-live`) |
-| `scripts/scan_silent.py` | cron: scan watchlist 12 jam + holder, publish status |
-| `cvd_daily.py` / `daily_store.py` | agregasi harian CVD/volume (tanpa sinyal) + storage idempoten |
-| `gmgn_screener.py` | listing Trending/Degen (tanpa skoring) |
-| `trending_ui.py` | tabel listing + kolom holder depth & silent 12h |
-| `pages/4_📊_CVD.py` | chart flow & CVD harian (tanpa sinyal) |
+| `holder_history.py` | Pencatatan dust/kohort, resample 4 jam, sparkline |
+| `meteora_screener.py` | Listing DLMM 24h+1h, enrich holder, filter dust >2% |
+| `silent_accumulation.py` | Fetch holder Helius/GMGN, klasifikasi real/dust/mid |
+| `solscan_holders.py` | Kalkulasi wallet_depth (bucket & tier) |
+| `helius_holders.py` | Scan Holder Khusus satu token + bar chart |
+| `silent_status.py` | Snapshot dashboard (ref `silent-live`) + history ringkas |
+| `scripts/scan_silent.py` | Cron watchlist: holder only, catat history |
+| `trending_ui.py` | Listing Trending/Degen (tanpa kolom 12 jam) |
+| `pages/4_📊_CVD.py` | Chart flow & CVD harian |
+| `pages/5_🧮_Holder.py` | Holder Analytic: dust, grafik 4 jam, kohort |
 
 ## Menjalankan
 
@@ -100,23 +66,17 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Scan watchlist otomatis tiap ~15 menit via GitHub Actions
-(`.github/workflows/daily-effort.yml`). Workflow belum bisa diubah oleh
-GitHub App (butuh permission `workflows`), jadi file
-`scripts/realtime_reversal.py` kini menjadi adapter yang meneruskan
-pemanggilan ke `scripts/scan_silent.py` — tetap scan silent-accumulation
-tanpa sinyal/Telegram. Setelah workflow diubah manual menjadi
-`python scripts/scan_silent.py`, adapter boleh dihapus. Snapshot dashboard
-dibaca dari `silent_status.json` (ref `silent-live`). `GITHUB_TOKEN`
-streamlit secret / env hanya untuk publish snapshot dan sinkronisasi
-watchlist.
+Cron GitHub Actions ~15 menit (`.github/workflows/daily-effort.yml`)
+masih memanggil `scripts/realtime_reversal.py` (adapter → `scan_silent.py`)
+karena GitHub App tidak bisa mengubah workflow. Snapshot dari
+`silent_status.json` (ref `silent-live`).
 
 ## Pengujian
 
 ```bash
 python -m unittest discover tests
-python -m py_compile silent_accumulation.py silent_status.py \
-  scripts/scan_silent.py
+python -m py_compile holder_history.py meteora_screener.py \
+  silent_accumulation.py silent_status.py scripts/scan_silent.py
 ```
 
 Analisis bersifat heuristik dan bukan saran keuangan.

@@ -40,9 +40,6 @@ class DiscoverTabPersistenceTest(unittest.TestCase):
             mock.patch("trending_ui.screen_trending_h1", return_value=[]),
             mock.patch("trending_ui.screen_hrhr", return_value=[DEGEN_ROW]),
             mock.patch("trending_ui.screen_hrhr_h1", return_value=[]),
-            # analisis holder/12 jam dimatikan supaya tes tetap cepat & offline.
-            mock.patch("trending_ui.enrich_rows",
-                       side_effect=lambda rows, **kwargs: rows),
         )
         for patch in patches:
             patch.start()
