@@ -55,9 +55,19 @@ class LinksTest(unittest.TestCase):
             hawkfi_meteora_url(pool),
             f"https://www.hawkfi.ag/meteora/{pool}")
         html_out = pool_links_html(pool)
-        self.assertIn("app.meteora.ag/dlmm/", html_out)
-        self.assertIn("hawkfi.ag/meteora/", html_out)
-        self.assertIn("target=\\\"_blank\\\"", html_out)
+        self.assertIn(f"https://app.meteora.ag/dlmm/{pool}", html_out)
+        self.assertIn(f"https://www.hawkfi.ag/meteora/{pool}", html_out)
+        self.assertIn("target=\"_blank\"", html_out)
+        self.assertIn("rel=\"noopener", html_out)
+        self.assertNotIn("\\", html_out)
+
+    def test_pool_links_html_empty_pool(self):
+        self.assertEqual(pool_links_html(""), "")
+
+    def test_pool_links_html_encodes_unsafe_pool(self):
+        html_out = pool_links_html("abc&def")
+        self.assertIn("https://app.meteora.ag/dlmm/abc%26def", html_out)
+        self.assertIn("https://www.hawkfi.ag/meteora/abc%26def", html_out)
 
 
 if __name__ == "__main__":

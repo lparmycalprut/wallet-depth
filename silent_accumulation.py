@@ -259,6 +259,10 @@ def fetch_holders_helius(ca: str, *, max_wallets: int | None = None,
     pages = 0
     truncated = False
     page_limit = 1000
+    # Pengaman paginasi: default 60 halaman (60k akun), tapi naik mengikuti
+    # ``max_wallets`` supaya scan FULL manual benar-benar mengambil semua
+    # holder (batas keras 200 halaman = 200k akun).
+    page_cap = max(60, min(200, -(-max_wallets // page_limit) + 5))
     mint_decimals: int | None = None
     decimals_checked = False
     error = ""
@@ -329,7 +333,7 @@ def fetch_holders_helius(ca: str, *, max_wallets: int | None = None,
         if not next_cursor:
             break
         cursor = next_cursor
-        if pages >= 60:
+        if pages >= page_cap:
             truncated = True
             break
 

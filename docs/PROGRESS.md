@@ -255,3 +255,24 @@
 - Dashboard `app.py` & `trending_ui.py`: kolom Real >$10 / Dust / Dust %MC /
   Status 12 jam saat scan Trending & Degen.
 - Endpoint `token_holders` diverifikasi paginasi `next` (limit 1000/page).
+
+# 2026-09-01 — Grafik holder + scan FULL dengan baseline permanen
+
+- `holder_history.py`: titik history kini membawa `holder_count` dan
+  `buckets` (jumlah holder per range USD) sehingga komposisi holder bisa
+  digambar sepanjang waktu. Baru: `bucket_counts`, `detail_snapshot`,
+  `baseline_for_mint`, `latest_detail_for_mint`, `bucket_delta`,
+  `bucket_series`, konstanta `FULL_SCAN_MAX_WALLETS = 100_000`.
+- Scan manual halaman Holder = **FULL** (paginasi Helius sampai habis) dan
+  memanggil `ingest_many(..., detail=True)`. Detail scan pertama disimpan
+  sebagai `baseline` per token dan **tidak pernah ditimpa**; scan FULL
+  berikutnya hanya memperbarui `latest_detail`.
+- `scripts/scan_silent.py` (cron 15 menit) memakai `detail=False`: hanya
+  menambah titik perubahan, baseline milik user tetap utuh.
+- `pages/5_🧮_Holder.py`: seksi **📊 Grafik holder** (total/dust/real/pilar +
+  area komposisi bucket) dan **🧱 Distribusi holder (scan FULL)** (bar chart
+  Wallet Depth, metrik tier, tabel Δ bucket vs baseline).
+- `silent_accumulation.fetch_holders_helius`: pengaman paginasi tidak lagi
+  dipatok 60 halaman — ikut `max_wallets` (batas keras 200 halaman).
+- Tes: `tests/test_holder_page.py` (AppTest) + kasus baru di
+  `tests/test_holder_history.py`.

@@ -14,10 +14,13 @@ import re
 import matplotlib.pyplot as plt
 import streamlit as st
 
-from holder_history import (DUST_CAUTION_PCT, DUST_LIMIT_PCT, dust_flag,
+from helius_holders import depth_bar_chart
+from holder_history import (DUST_CAUTION_PCT, DUST_LIMIT_PCT,
+                            FULL_SCAN_MAX_WALLETS, baseline_for_mint,
+                            bucket_delta, bucket_series, dust_flag,
                             history_for_mint, ingest_many,
-                            load_holder_history, merge_points, resample_4h,
-                            seed_from_status)
+                            latest_detail_for_mint, load_holder_history,
+                            merge_points, resample_4h, seed_from_status)
 from links import external_links_html
 from silent_accumulation import analyze_token
 from silent_status import load_silent_status
@@ -121,6 +124,117 @@ def _history_charts(points: list[dict]) -> None:
     plt.close(fig2)
 
 
+def _fmt_int(value) -> str:
+    try:
+        return f"{int(value or 0):,}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _holder_count_chart(points: list[dict]) -> None:
+    """Grafik jumlah holder 4 jam: total + pecahan dust / real / pilar."""
+    sampled = resample_4h(points)
+    rows = [p for p in sampled if p.get("holder_count")
+            or p.get("dust_count") or p.get("real_count")]
+    if len(rows) < 2:
+        st.info("Grafik jumlah holder butuh minimal 2 titik. Tekan "
+                "**Scan holder FULL** lagi setelah beberapa jam, atau tunggu "
+                "cron (~15 menit) mencatat perubahan.")
+        return
+    labels = [_wib(p.get("ts")) for p in rows]
+    dust_n = [int(p.get("dust_count") or 0) for p in rows]
+    real_n = [int(p.get("real_count") or 0) for p in rows]
+    total_n = [int(p.get("holder_count") or 0) or (d + r)
+               for p, d, r in zip(rows, dust_n, real_n)]
+    mid_n = [int(p.get("mid_count") or 0) for p in rows]
+
+    fig, axis = plt.subplots(figsize=(11, 4.0))
+    axis.stackplot(labels, dust_n, real_n, colors=("#f59e0b", "#0ea5e9"),
+                   alpha=.55, labels=("Dust ≤ $10", "Real > $10"))
+    axis.plot(labels, total_n, color="#0f172a", marker="o", linewidth=2,
+              label="Total holder")
+    axis.plot(labels, mid_n, color="#7c3aed", marker="^", linewidth=1.6,
+              linestyle="--", label="Pilar Crab+Fish")
+    axis.set_ylabel("Jumlah holder")
+    axis.tick_params(axis="x", rotation=30)
+    axis.grid(alpha=.2)
+    axis.legend(frameon=False, loc="upper left", ncols=2, fontsize=8)
+    fig.tight_layout()
+    st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
+
+    first, last = rows[0], rows[-1]
+    delta_total = (int(last.get("holder_count") or 0)
+                   - int(first.get("holder_count") or 0))
+    delta_dust = int(last.get("dust_count") or 0) - int(first.get("dust_count") or 0)
+    st.caption(
+        f"Sejak {_wib(first.get('ts'))}: total holder "
+        f"{delta_total:+,} · dust {delta_dust:+,} wallet.")
+
+
+def _bucket_trend_chart(points: list[dict]) -> None:
+    """Komposisi holder per range nilai USD sepanjang waktu (area bertumpuk)."""
+    stamps, labels, series = bucket_series(points)
+    if len(stamps) < 2:
+        return
+    x_labels = [_wib(ts) for ts in stamps]
+    colors = ("#94a3b8", "#64748b", "#3b82f6", "#10b981", "#f59e0b",
+              "#ef4444", "#8b5cf6")
+    fig, axis = plt.subplots(figsize=(11, 3.8))
+    axis.stackplot(x_labels, *[series[label] for label in labels],
+                   labels=labels, colors=colors[:len(labels)], alpha=.85)
+    axis.set_ylabel("Holder per range USD")
+    axis.tick_params(axis="x", rotation=30)
+    axis.grid(alpha=.15)
+    axis.legend(frameon=False, loc="upper left", ncols=4, fontsize=7)
+    fig.tight_layout()
+    st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
+
+
+def _distribution_section(mint: str, symbol: str, store: dict) -> None:
+    """Bar chart Wallet Depth + tabel perubahan vs baseline scan pertama."""
+    baseline = baseline_for_mint(store, mint)
+    latest = latest_detail_for_mint(store, mint)
+    if not latest:
+        st.info("Belum ada scan FULL untuk token ini. Tekan tombol "
+                "**Scan holder FULL** di bawah — hasil detailnya disimpan "
+                "sebagai baseline dan tidak akan ditimpa cron.")
+        return
+
+    depth = latest.get("depth") or {}
+    fig = depth_bar_chart(
+        depth, title=f"Distribusi holder ${symbol.upper()} per range nilai (USD)")
+    if fig is not None:
+        st.pyplot(fig, use_container_width=True)
+        plt.close(fig)
+
+    st.caption(
+        f"Scan FULL terakhir: {_wib(latest.get('ts'))} · "
+        f"{_fmt_int(latest.get('fetched'))} akun diambil "
+        f"({_fmt_int(latest.get('pages'))} halaman)"
+        + (" · masih terpotong limit" if latest.get("truncated") else "")
+        + f" · baseline pertama: {_wib(baseline.get('ts'))}.")
+
+    tiers = depth.get("tiers") or []
+    if tiers:
+        cols = st.columns(len(tiers))
+        for col, tier in zip(cols, tiers):
+            col.metric(
+                f"{tier.get('emoji') or ''} {tier.get('tier') or '?'}",
+                _fmt_int(tier.get("count")),
+                _fmt_pct(tier.get("pct_mc")))
+
+    rows = bucket_delta(baseline, latest)
+    if rows and baseline.get("ts") and baseline.get("ts") != latest.get("ts"):
+        st.markdown("**Perubahan vs scan pertama (baseline)**")
+        st.dataframe(
+            [{"Range": r["label"], "Baseline": r["base_count"],
+              "Sekarang": r["now_count"], "Δ": f"{r['delta']:+,}"}
+             for r in rows],
+            use_container_width=True, hide_index=True)
+
+
 watchlist = load_watchlist()
 mints = list(watchlist)
 status = load_silent_status()
@@ -208,23 +322,42 @@ if sampled:
             f"{_fmt_pct(last.get('cohort_cut50_pct'), 1)} sudah potong ≥50%."
         )
 
-st.subheader("Grafik 4 jam")
+st.subheader("Grafik dust & pilar (4 jam)")
 _history_charts(points)
 
-if st.button("🔄 Scan holder token ini", type="primary",
+st.subheader("📊 Grafik holder")
+st.caption(
+    "Jumlah holder sepanjang waktu (total, dust ≤ $10, real > $10, pilar "
+    "Crab+Fish) dan komposisi holder per range nilai USD. Titik diambil dari "
+    "scan FULL manual + pencatatan perubahan oleh cron.")
+_holder_count_chart(points)
+_bucket_trend_chart(points)
+
+st.subheader("🧱 Distribusi holder (scan FULL)")
+_distribution_section(
+    mint, str((watchlist.get(mint) or {}).get("symbol")
+              or token.get("symbol") or "?"), store)
+
+st.divider()
+st.caption(
+    f"Scan manual = **FULL holder** (hingga {FULL_SCAN_MAX_WALLETS:,} akun, "
+    "paginasi Helius sampai habis). Detail scan pertama disimpan permanen "
+    "sebagai **baseline** di `holder_history.json`; cron 15 menit hanya "
+    "menambah titik perubahan dan tidak pernah menimpa baseline.")
+if st.button("🔄 Scan holder FULL token ini", type="primary",
              use_container_width=True):
     cohort = ((store.get("tokens") or {}).get(mint) or {}).get("cohort") or {}
     addrs = list((cohort.get("balances") or {}).keys())
-    with st.status("Mengambil holder…", expanded=False):
+    with st.status("Mengambil SELURUH holder dari Helius…", expanded=False):
         try:
             analysis = analyze_token(
                 mint, str((watchlist.get(mint) or {}).get("symbol")
                           or token.get("symbol") or "?"),
-                max_wallets=2000, max_trade_pages=1, fetch_market=True,
-                include_flow=False, cohort_addrs=addrs)
+                max_wallets=FULL_SCAN_MAX_WALLETS, max_trade_pages=1,
+                fetch_market=True, include_flow=False, cohort_addrs=addrs)
         except Exception as exc:  # noqa: BLE001
             analysis = None
             st.error(f"Gagal: {exc}")
     if analysis:
-        ingest_many({mint: analysis})
+        ingest_many({mint: analysis}, detail=True)
         st.rerun()

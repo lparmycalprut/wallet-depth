@@ -50,6 +50,11 @@ MID_USD_MAX = 10_000.0           # Fish atas (<= $10k)
 MAX_POINTS = 84                  # 14 hari × 6 bucket 4 jam
 MIN_POINT_GAP_SEC = 8 * 60       # jangan dobel-titik < 8 menit
 
+# Scan manual (halaman Holder) = FULL: ambil seluruh holder, bukan sampel.
+# Cron hanya mencatat perubahan (titik ringkas), jadi detail hasil scan
+# pertama (``baseline``) tetap tersimpan apa adanya.
+FULL_SCAN_MAX_WALLETS = 100_000
+
 # Crab $100–$1k + Fish $1k–$10k = pilar harga (bukan Shark, bukan dust).
 
 
@@ -187,6 +192,137 @@ def score_cohort(frozen: dict | None, current: dict | None) -> dict:
     }
 
 
+def bucket_counts(depth: dict | None) -> dict:
+    """Peta ``{label bucket: jumlah holder}`` dari hasil ``wallet_depth``.
+
+    Dipakai sebagai isi titik history supaya grafik komposisi holder
+    (Wallet Depth by Threshold) bisa digambar sepanjang waktu tanpa harus
+    menyimpan seluruh daftar address tiap scan.
+    """
+    out: dict[str, int] = {}
+    for row in ((depth or {}).get("buckets") or []):
+        if not isinstance(row, dict):
+            continue
+        label = str(row.get("label") or "").strip()
+        if label:
+            out[label] = _int(row.get("count"))
+    return out
+
+
+def detail_snapshot(analysis: dict | None, now: int | None = None) -> dict:
+    """Rekaman **detail** satu scan penuh (baseline / scan full terakhir).
+
+    Berisi ringkasan holder + seluruh bucket & tier hasil ``wallet_depth``
+    (jumlah, nilai USD, % MC) — cukup untuk menggambar ulang distribusi
+    holder tanpa scan lagi, tapi tanpa daftar address (file tetap kecil).
+    """
+    analysis = analysis or {}
+    holders = analysis.get("holders") or {}
+    depth = holders.get("depth") if isinstance(holders.get("depth"), dict) else {}
+    mid = holders.get("mid") if isinstance(holders.get("mid"), dict) else {}
+    stamp = _int(now or analysis.get("analyzed_at") or time.time())
+    return {
+        "ts": stamp,
+        "symbol": str(analysis.get("symbol") or "?"),
+        "price": _float(analysis.get("price"), None),
+        "mc": _float(analysis.get("marketcap"), None),
+        "source": str(holders.get("source") or analysis.get("source") or ""),
+        "fetched": _int(holders.get("total_fetched")),
+        "pages": _int(holders.get("pages")),
+        "truncated": bool(holders.get("truncated")),
+        "holder_count": _int(holders.get("wallets_analyzed")),
+        "dust_count": _int(holders.get("dust_count")),
+        "dust_pct_mc": _float(holders.get("dust_pct_mc"), None),
+        "real_count": _int(holders.get("real_count")),
+        "real_pct_mc": _float(holders.get("real_pct_mc"), None),
+        "mid_count": _int(mid.get("count")),
+        "mid_pct_mc": _float(mid.get("pct_mc"), None),
+        "depth": {
+            "buckets": [dict(b) for b in (depth.get("buckets") or [])
+                        if isinstance(b, dict)],
+            "tiers": [dict(t) for t in (depth.get("tiers") or [])
+                      if isinstance(t, dict)],
+            "buckets_include_pools": bool(depth.get("buckets_include_pools")),
+            "holders_all": _int(depth.get("holders_all")),
+            "holders_wallet": _int(depth.get("holders_wallet")),
+            "pool_excluded": _int(depth.get("pool_excluded")),
+            "market_cap": _float(depth.get("market_cap"), 0.0) or 0.0,
+        },
+    }
+
+
+def baseline_for_mint(store: dict | None, mint: str) -> dict:
+    """Detail scan **pertama** (baseline) token — {} bila belum ada."""
+    slot = ((store or {}).get("tokens") or {}).get(str(mint) or "") or {}
+    base = slot.get("baseline") if isinstance(slot, dict) else None
+    return base if isinstance(base, dict) else {}
+
+
+def latest_detail_for_mint(store: dict | None, mint: str) -> dict:
+    """Detail scan full **terakhir** — fallback ke baseline."""
+    slot = ((store or {}).get("tokens") or {}).get(str(mint) or "") or {}
+    latest = slot.get("latest_detail") if isinstance(slot, dict) else None
+    if isinstance(latest, dict) and latest:
+        return latest
+    return baseline_for_mint(store, mint)
+
+
+def bucket_delta(baseline: dict | None, latest: dict | None) -> list[dict]:
+    """Perubahan tiap bucket antara baseline dan detail terbaru.
+
+    Return list ``{"label", "base_count", "now_count", "delta",
+    "base_value_usd", "now_value_usd"}`` mengikuti urutan bucket baseline
+    (bucket baru yang belum ada di baseline ikut ditambahkan di belakang).
+    """
+    def _index(detail):
+        rows = ((detail or {}).get("depth") or {}).get("buckets") or []
+        return {str(r.get("label") or ""): r for r in rows
+                if isinstance(r, dict)}
+
+    base_rows = _index(baseline)
+    now_rows = _index(latest)
+    labels = list(base_rows) + [l for l in now_rows if l not in base_rows]
+    out = []
+    for label in labels:
+        if not label:
+            continue
+        base = base_rows.get(label) or {}
+        now = now_rows.get(label) or {}
+        base_count = _int(base.get("count"))
+        now_count = _int(now.get("count"))
+        out.append({
+            "label": label,
+            "base_count": base_count,
+            "now_count": now_count,
+            "delta": now_count - base_count,
+            "base_value_usd": _float(base.get("value_usd"), 0.0) or 0.0,
+            "now_value_usd": _float(now.get("value_usd"), 0.0) or 0.0,
+        })
+    return out
+
+
+def bucket_series(points: Iterable[dict] | None) -> tuple[list[int], list[str],
+                                                          dict]:
+    """Deret komposisi holder per bucket dari titik history 4 jam.
+
+    Return ``(timestamps, labels, {label: [count per titik]})``. Titik
+    tanpa data bucket (mis. scan lama) diisi 0 supaya panjang deret sama.
+    """
+    sampled = resample_4h(points)
+    rows = [(p, p.get("buckets") or {}) for p in sampled]
+    rows = [(p, b) for p, b in rows if isinstance(b, dict) and b]
+    if not rows:
+        return [], [], {}
+    labels: list[str] = []
+    for _point, buckets in rows:
+        for label in buckets:
+            if label not in labels:
+                labels.append(label)
+    stamps = [_int(p.get("ts")) for p, _b in rows]
+    series = {label: [_int(b.get(label)) for _p, b in rows] for label in labels}
+    return stamps, labels, series
+
+
 def _parse_store(data) -> dict | None:
     if isinstance(data, dict) and isinstance(data.get("tokens"), dict):
         return {
@@ -224,11 +360,14 @@ def compact_point(point: dict | None) -> dict:
     point = point or {}
     keys = ("ts", "price", "mc", "dust_count", "dust_pct_mc", "dust_value_usd",
             "real_count", "real_pct_mc", "mid_count", "mid_pct_mc",
-            "cohort_token_pct", "cohort_cut50_pct", "cohort_n")
+            "cohort_token_pct", "cohort_cut50_pct", "cohort_n",
+            "holder_count", "buckets", "full")
     out = {}
     for key in keys:
         if key in point:
-            out[key] = point[key]
+            value = point[key]
+            out[key] = dict(value) if key == "buckets" and isinstance(
+                value, dict) else value
     return out
 
 
@@ -319,6 +458,7 @@ def _token_slot(store: dict, mint: str, symbol: str = "?") -> dict:
         tokens[mint] = slot
     slot.setdefault("points", [])
     slot.setdefault("cohort", {})
+    slot.setdefault("baseline", {})
     if symbol and symbol != "?":
         slot["symbol"] = symbol
     return slot
@@ -341,12 +481,21 @@ def _build_point(analysis: dict, score: dict, now: int) -> dict:
         "cohort_token_pct": score.get("remaining_pct"),
         "cohort_cut50_pct": score.get("cut50_pct"),
         "cohort_n": score.get("n") or 0,
+        "holder_count": _int(holders.get("wallets_analyzed")),
+        "buckets": bucket_counts(holders.get("depth")),
     }
 
 
 def ingest_one(store: dict, mint: str, analysis: dict | None, *,
-               now: int | None = None) -> dict:
-    """Tambah satu titik + update kohort. Mutasi ``store``."""
+               now: int | None = None, detail: bool = False) -> dict:
+    """Tambah satu titik + update kohort. Mutasi ``store``.
+
+    ``detail=True`` (scan **full** manual) juga menyimpan rekaman detail:
+    ``baseline`` ditulis sekali saja pada scan full pertama dan **tidak
+    pernah ditimpa** (itu data awal milik user), sementara
+    ``latest_detail`` diperbarui tiap scan full. Cron memakai
+    ``detail=False`` sehingga hanya menambah titik perubahan.
+    """
     mint = str(mint or "").strip()
     if not mint or not isinstance(analysis, dict):
         return store
@@ -374,7 +523,15 @@ def ingest_one(store: dict, mint: str, analysis: dict | None, *,
         score = score_cohort(frozen, cohort_now)
         if now - frozen_at >= COHORT_WINDOW_SEC and mid_balances:
             slot["cohort"] = {"frozen_at": now, "balances": mid_balances}
-    points.append(_build_point(analysis, score, now))
+    point = _build_point(analysis, score, now)
+    if detail:
+        snapshot = detail_snapshot(analysis, now)
+        if not (isinstance(slot.get("baseline"), dict)
+                and slot.get("baseline")):
+            slot["baseline"] = snapshot
+        slot["latest_detail"] = snapshot
+        point["full"] = True
+    points.append(point)
     if len(points) > MAX_POINTS:
         del points[:-MAX_POINTS]
     store["updated_at"] = now
@@ -382,13 +539,18 @@ def ingest_one(store: dict, mint: str, analysis: dict | None, *,
 
 
 def ingest_many(analyses: dict | None, *, now: int | None = None,
-                path: str | None = None, store: dict | None = None) -> dict:
-    """Catat banyak token lalu tulis ``holder_history.json``."""
+                path: str | None = None, store: dict | None = None,
+                detail: bool = False) -> dict:
+    """Catat banyak token lalu tulis ``holder_history.json``.
+
+    ``detail=True`` hanya dipakai scan full manual (menyimpan baseline /
+    detail terbaru); cron memakai default ``False``.
+    """
     store = dict(store or load_holder_history(path))
     store.setdefault("tokens", {})
     stamp = int(now or time.time())
     for mint, analysis in (analyses or {}).items():
-        ingest_one(store, mint, analysis, now=stamp)
+        ingest_one(store, mint, analysis, now=stamp, detail=detail)
     return save_holder_history(store, path)
 
 

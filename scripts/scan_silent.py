@@ -7,7 +7,10 @@ Untuk setiap token watchlist:
 
 1. ambil daftar holder (Helius DAS dulu — ``auto`` — fallback GMGN),
 2. pisahkan real vs dust, hitung dust % marketcap + mid-tier Crab/Fish,
-3. catat titik ke ``holder_history.json`` (grafik 4 jam),
+3. catat **titik perubahan** ke ``holder_history.json`` (grafik 4 jam) —
+   cron sengaja memakai ``ingest_many(..., detail=False)`` sehingga rekaman
+   detail hasil scan FULL manual (``baseline`` / ``latest_detail``) milik
+   user tidak pernah ditimpa,
 4. tulis ``silent_status.json`` lokal & publish ke branch ``silent-live``.
 
 Dijalankan GitHub Actions tiap ~15 menit.
@@ -118,7 +121,9 @@ def main(argv=None) -> int:
         history_store=store)
 
     if analyses:
-        history = ingest_many(analyses, store=store)
+        # detail=False: cron hanya menambah titik perubahan; baseline
+        # (detail scan FULL pertama dari halaman Holder) tetap utuh.
+        history = ingest_many(analyses, store=store, detail=False)
         status = publish_silent_status(
             analyses, watchlist, push=not args.no_push)
         print(f"Holder scan selesai: analyzed={len(analyses)} "

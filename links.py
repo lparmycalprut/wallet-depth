@@ -81,7 +81,7 @@ def pool_links_html(pool) -> str:
     meteora = _html.escape(meteora_dlmm_url(pool), quote=True)
     hawkfi = _html.escape(hawkfi_meteora_url(pool), quote=True)
     return (
-        f"<a href=\\\"{meteora}\\\" target=\\\"_blank\\\" "
-        f"rel=\\\"noopener noreferrer\\\">🌊Meteora</a> &nbsp; "
-        f"<a href=\\\"{hawkfi}\\\" target=\\\"_blank\\\" "
-        f"rel=\\\"noopener noreferrer\\\">🦅HawkFi</a>")
+        f'<a href="{meteora}" target="_blank" '
+        f'rel="noopener noreferrer">🌊Meteora</a> &nbsp; '
+        f'<a href="{hawkfi}" target="_blank" '
+        f'rel="noopener noreferrer">🦅HawkFi</a>')
