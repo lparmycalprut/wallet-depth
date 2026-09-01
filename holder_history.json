@@ -1,4 +1,84 @@
 {
-  "updated_at": null,
-  "tokens": {}
+  "updated_at": 1788230335,
+  "tokens": {
+    "So11111111111111111111111111111111111111112": {
+      "symbol": "?",
+      "cohort": {
+        "frozen_at": 1788230335,
+        "balances": {}
+      },
+      "points": [
+        {
+          "ts": 1788230335,
+          "price": 0.0,
+          "mc": 0.0,
+          "dust_count": 0,
+          "dust_pct_mc": null,
+          "dust_value_usd": 0.0,
+          "real_count": 0,
+          "real_pct_mc": null,
+          "mid_count": 0,
+          "mid_pct_mc": null,
+          "cohort_token_pct": null,
+          "cohort_cut50_pct": null,
+          "cohort_n": 0,
+          "holder_count": 0,
+          "buckets": {},
+          "full": true
+        }
+      ],
+      "baseline": {
+        "ts": 1788230335,
+        "symbol": "?",
+        "price": 0.0,
+        "mc": 0.0,
+        "source": "gmgn",
+        "fetched": 0,
+        "pages": 0,
+        "truncated": false,
+        "holder_count": 0,
+        "dust_count": 0,
+        "dust_pct_mc": null,
+        "real_count": 0,
+        "real_pct_mc": null,
+        "mid_count": 0,
+        "mid_pct_mc": null,
+        "depth": {
+          "buckets": [],
+          "tiers": [],
+          "buckets_include_pools": false,
+          "holders_all": 0,
+          "holders_wallet": 0,
+          "pool_excluded": 0,
+          "market_cap": 0.0
+        }
+      },
+      "latest_detail": {
+        "ts": 1788230335,
+        "symbol": "?",
+        "price": 0.0,
+        "mc": 0.0,
+        "source": "gmgn",
+        "fetched": 0,
+        "pages": 0,
+        "truncated": false,
+        "holder_count": 0,
+        "dust_count": 0,
+        "dust_pct_mc": null,
+        "real_count": 0,
+        "real_pct_mc": null,
+        "mid_count": 0,
+        "mid_pct_mc": null,
+        "depth": {
+          "buckets": [],
+          "tiers": [],
+          "buckets_include_pools": false,
+          "holders_all": 0,
+          "holders_wallet": 0,
+          "pool_excluded": 0,
+          "market_cap": 0.0
+        }
+      }
+    }
+  }
 }
