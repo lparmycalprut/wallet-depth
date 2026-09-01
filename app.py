@@ -350,7 +350,7 @@ def _render_meteora_scan() -> None:
     fetched = int(result.get("fetched") or 0)
     if fetched:
         st.caption(f"{len(rows)} pool ditampilkan · {hidden} disembunyikan "
-                   f"(dust > {DUST_LIMIT_USD_NOTE}) · listing {fetched}.")
+                   f"(dust > {DUST_LIMIT_PCT:.0f}% MC) · listing {fetched}.")
     if not rows:
         if result:
             st.info("Tidak ada pool yang lolos filter dust (atau listing kosong).")
