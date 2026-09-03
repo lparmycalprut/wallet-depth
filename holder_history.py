@@ -56,6 +56,11 @@ MIN_POINT_GAP_SEC = 8 * 60       # jangan dobel-titik < 8 menit
 # pertama (``baseline``) tetap tersimpan apa adanya.
 FULL_SCAN_MAX_WALLETS = 100_000
 
+# Kronologi wallet antar-scan FULL (lihat ``holder_chronology``).
+MAX_CHRONOLOGY_INTERVALS = 24
+MAX_SNAPSHOT_WALLETS = 400
+MAX_MOVEMENTS_PER_INTERVAL = 40
+
 # Crab $100–$1k + Fish $1k–$10k = pilar harga (bukan Shark, bukan dust).
 
 
@@ -266,6 +271,65 @@ def latest_detail_for_mint(store: dict | None, mint: str) -> dict:
     return baseline_for_mint(store, mint)
 
 
+def chronology_for_mint(store: dict | None, mint: str) -> dict:
+    """Kronologi scan FULL per token; schema lama → struktur kosong aman."""
+    slot = ((store or {}).get("tokens") or {}).get(str(mint) or "") or {}
+    raw = slot.get("chronology") if isinstance(slot, dict) else None
+    try:
+        from holder_chronology import compact_chronology, empty_chronology
+        if isinstance(raw, dict) and raw:
+            return compact_chronology(raw)
+        return empty_chronology()
+    except Exception:  # noqa: BLE001 - schema lama tidak boleh merusak load
+        return {"baseline_wallets": {}, "latest_wallets": {}, "intervals": []}
+
+
+def tracked_chronology_addresses(store: dict | None, mint: str) -> list[str]:
+    """Address yang harus diutamakan pada scan FULL berikutnya."""
+    try:
+        from holder_chronology import tracked_addresses
+        return tracked_addresses(chronology_for_mint(store, mint))
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def chronology_view_for_mint(store: dict | None, mint: str) -> dict:
+    """View model halaman Holder Analytic (aman untuk schema lama)."""
+    try:
+        from holder_chronology import build_chronology_view
+        return build_chronology_view(
+            baseline_for_mint(store, mint),
+            latest_detail_for_mint(store, mint),
+            chronology_for_mint(store, mint))
+    except Exception:  # noqa: BLE001
+        return {"state": "none", "intervals": []}
+
+
+def compact_chronology_for_status(store: dict | None, mint: str) -> dict:
+    """Salinan kronologi bounded untuk payload ``holder_status``."""
+    try:
+        from holder_chronology import compact_chronology_for_status as _pack
+        return _pack(chronology_for_mint(store, mint))
+    except Exception:  # noqa: BLE001
+        return {"intervals": []}
+
+
+def full_scan_usable(analysis: dict | None) -> bool:
+    """False hanya jika scan FULL jelas gagal (0 holder terambil).
+
+    Fixture lama tanpa ``total_fetched`` tetap dianggap usable supaya
+    schema/test yang sudah ada tidak pecah. Cron (``detail=False``)
+    tidak memakai helper ini.
+    """
+    if not isinstance(analysis, dict):
+        return False
+    holders = analysis.get("holders") if isinstance(analysis.get("holders"),
+                                                    dict) else {}
+    if "total_fetched" in holders and _int(holders.get("total_fetched")) <= 0:
+        return False
+    return True
+
+
 def bucket_delta(baseline: dict | None, latest: dict | None) -> list[dict]:
     """Perubahan tiap bucket antara baseline dan detail terbaru.
 
@@ -463,6 +527,65 @@ def _token_slot(store: dict, mint: str, symbol: str = "?") -> dict:
     return slot
 
 
+def _ingest_full_detail(slot: dict, analysis: dict, now: int) -> None:
+    """Tulis baseline/latest + interval kronologi setelah comparison selesai.
+
+    Baseline **tidak pernah ditimpa**. Snapshot wallet pembanding
+    (``latest_wallets``) baru diganti setelah interval dihitung terhadap
+    snapshot sebelumnya.
+    """
+    from holder_chronology import (compact_chronology, compare_snapshots,
+                                   snapshot_from_analysis)
+
+    snapshot = detail_snapshot(analysis, now)
+    wallets = snapshot_from_analysis(analysis, now)
+    chrono = slot.get("chronology") if isinstance(slot.get("chronology"),
+                                                  dict) else {}
+    baseline = slot.get("baseline") if isinstance(slot.get("baseline"),
+                                                  dict) else {}
+    if not baseline:
+        slot["baseline"] = snapshot
+        slot["latest_detail"] = snapshot
+        slot["chronology"] = compact_chronology({
+            "baseline_wallets": wallets,
+            "latest_wallets": wallets,
+            "intervals": [],
+        })
+        return
+
+    previous = {}
+    if isinstance(chrono.get("latest_wallets"), dict) and (
+            chrono.get("latest_wallets") or {}).get("wallets"):
+        previous = chrono.get("latest_wallets")
+    elif isinstance(chrono.get("baseline_wallets"), dict) and (
+            chrono.get("baseline_wallets") or {}).get("wallets"):
+        previous = chrono.get("baseline_wallets")
+
+    intervals = [row for row in (chrono.get("intervals") or [])
+                 if isinstance(row, dict)]
+    if previous:
+        latest_metrics = slot.get("latest_detail") if isinstance(
+            slot.get("latest_detail"), dict) else baseline
+        interval = compare_snapshots(
+            previous, wallets,
+            previous_metrics=latest_metrics, current_metrics=snapshot)
+        intervals.append(interval)
+    if len(intervals) > MAX_CHRONOLOGY_INTERVALS:
+        intervals = intervals[-MAX_CHRONOLOGY_INTERVALS:]
+
+    baseline_wallets = chrono.get("baseline_wallets") if isinstance(
+        chrono.get("baseline_wallets"), dict) else {}
+    if not (baseline_wallets or {}).get("wallets"):
+        baseline_wallets = wallets
+
+    slot["latest_detail"] = snapshot
+    slot["chronology"] = compact_chronology({
+        "baseline_wallets": baseline_wallets,
+        "latest_wallets": wallets,
+        "intervals": intervals,
+    })
+
+
 def _build_point(analysis: dict, score: dict, now: int) -> dict:
     holders = (analysis or {}).get("holders") or {}
     mid = holders.get("mid") if isinstance(holders.get("mid"), dict) else {}
@@ -498,6 +621,9 @@ def ingest_one(store: dict, mint: str, analysis: dict | None, *,
     mint = str(mint or "").strip()
     if not mint or not isinstance(analysis, dict):
         return store
+    if detail and not full_scan_usable(analysis):
+        # Scan FULL gagal: jangan sentuh baseline, latest, kronologi, atau titik.
+        return store
     now = int(now or analysis.get("analyzed_at") or time.time())
     slot = _token_slot(store, mint, str(analysis.get("symbol") or "?"))
     points = slot.setdefault("points", [])
@@ -524,11 +650,7 @@ def ingest_one(store: dict, mint: str, analysis: dict | None, *,
             slot["cohort"] = {"frozen_at": now, "balances": mid_balances}
     point = _build_point(analysis, score, now)
     if detail:
-        snapshot = detail_snapshot(analysis, now)
-        if not (isinstance(slot.get("baseline"), dict)
-                and slot.get("baseline")):
-            slot["baseline"] = snapshot
-        slot["latest_detail"] = snapshot
+        _ingest_full_detail(slot, analysis, now)
         point["full"] = True
     points.append(point)
     if len(points) > MAX_POINTS:
@@ -585,6 +707,48 @@ def seed_from_status(store: dict, status: dict | None) -> dict:
                     slot["alert_state"] = compact_alert_state(remote_alert)
             except Exception:  # noqa: BLE001 - history tetap dapat dipakai
                 pass
+        remote_chrono = token.get("chronology")
+        local_chrono = slot.get("chronology") if isinstance(
+            slot.get("chronology"), dict) else {}
+        local_n = len(local_chrono.get("intervals") or [])
+        remote_n = len((remote_chrono or {}).get("intervals") or []) if (
+            isinstance(remote_chrono, dict)) else 0
+        if isinstance(remote_chrono, dict) and remote_chrono and (
+                not local_chrono or remote_n > local_n
+                or (not (local_chrono.get("latest_wallets") or {}).get("wallets")
+                    and (remote_chrono.get("latest_wallets") or {}).get(
+                        "wallets"))):
+            try:
+                from holder_chronology import compact_chronology
+                merged = {
+                    "baseline_wallets": (
+                        local_chrono.get("baseline_wallets")
+                        or remote_chrono.get("baseline_wallets")),
+                    "latest_wallets": (
+                        local_chrono.get("latest_wallets")
+                        if (local_chrono.get("latest_wallets") or {}).get(
+                            "wallets")
+                        else remote_chrono.get("latest_wallets")),
+                    "intervals": (local_chrono.get("intervals")
+                                  or remote_chrono.get("intervals") or []),
+                }
+                if remote_n > local_n:
+                    merged["intervals"] = remote_chrono.get("intervals") or []
+                    if (remote_chrono.get("latest_wallets") or {}).get(
+                            "wallets"):
+                        merged["latest_wallets"] = remote_chrono.get(
+                            "latest_wallets")
+                slot["chronology"] = compact_chronology(merged)
+            except Exception:  # noqa: BLE001
+                pass
+        if not slot.get("baseline"):
+            remote_base = token.get("baseline")
+            if isinstance(remote_base, dict) and remote_base:
+                slot["baseline"] = remote_base
+        if not slot.get("latest_detail"):
+            remote_latest = token.get("latest_detail")
+            if isinstance(remote_latest, dict) and remote_latest:
+                slot["latest_detail"] = remote_latest
     return store
 
 

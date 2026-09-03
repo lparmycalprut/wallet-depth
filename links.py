@@ -16,6 +16,7 @@ GMGN_TOKEN_BASE = "https://gmgn.ai/sol/token/"
 DEXSCREENER_TOKEN_BASE = "https://dexscreener.com/solana/"
 METEORA_DLMM_BASE = "https://app.meteora.ag/dlmm/"
 HAWKFI_METEORA_BASE = "https://www.hawkfi.ag/meteora/"
+SOLSCAN_ACCOUNT_BASE = "https://solscan.io/account/"
 
 
 def safe_url_part(value) -> str:
@@ -26,6 +27,26 @@ def safe_url_part(value) -> str:
     that could alter the URL structure (``?``, ``#``, spaces, ``&``, ...).
     """
     return quote(str(value or ""), safe="")
+
+
+def solscan_account_url(address) -> str:
+    """Return the Solscan account URL for a wallet address.
+
+    The address is trimmed then URL-encoded. Solana Base58 is case-sensitive
+    and left intact by ``quote`` for the usual unreserved characters.
+    """
+    return f"{SOLSCAN_ACCOUNT_BASE}{safe_url_part(str(address or '').strip())}"
+
+
+def solscan_account_html(address, *, text: str = "Solscan") -> str:
+    """Safe new-tab Solscan anchor; ``href`` uses the full trimmed address."""
+    addr = str(address or "").strip()
+    if not addr:
+        return ""
+    url = _html.escape(solscan_account_url(addr), quote=True)
+    label = _html.escape(str(text or "Solscan"))
+    return (f'<a href="{url}" target="_blank" rel="noopener noreferrer">'
+            f"{label}</a>")
 
 
 def gmgn_token_url(ca) -> str:

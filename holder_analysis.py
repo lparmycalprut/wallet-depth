@@ -573,6 +573,22 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
         )
     except Exception:  # noqa: BLE001 - alert payload cannot fail analysis
         holder_stats.setdefault("wallet_snapshot", {})
+    try:
+        from holder_chronology import build_chrono_snapshot
+        holder_stats["chrono_snapshot"] = build_chrono_snapshot(
+            snapshot.get("holders") or [],
+            tracked_addresses=tracked_wallet_addrs or [],
+            pool_addresses=pools,
+            ts=analyzed_at,
+            price=price,
+            market_cap=mc,
+            dust_pct_mc=holder_stats.get("dust_pct_mc"),
+            holder_count=holder_stats.get("wallets_analyzed"),
+            dust_count=holder_stats.get("dust_count"),
+            truncated=bool(snapshot.get("truncated")),
+        )
+    except Exception:  # noqa: BLE001 - kronologi tidak boleh menggagalkan scan
+        holder_stats.setdefault("chrono_snapshot", {})
     return {
         "ca": ca,
         "symbol": str(symbol or market.get("symbol") or "?"),
