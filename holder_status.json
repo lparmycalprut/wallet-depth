@@ -925,7 +925,7 @@
         },
         "sent_event_ids": []
       },
-      "analyzed_at": 1788438075,
+      "analyzed_at": 1788438121,
       "cohort": {
         "balances": {
           "2XCTcxi8TfitTSzZdqzuYe8MSaMqGPbCpYfM8bazbPQJ": 2626309.521085,
@@ -1179,7 +1179,7 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788438075,
+          "computed_at": 1788438121,
           "holders_all": 1380,
           "holders_wallet": 1378,
           "market_cap": 53205.0,
@@ -2183,7 +2183,7 @@
         },
         "sent_event_ids": []
       },
-      "analyzed_at": 1788438076,
+      "analyzed_at": 1788438122,
       "cohort": {
         "balances": {
           "12i5WxbvSXbrRP3Qi6bnL3bVA1UJ6cVpL1QmSLvpGApf": 5006057.080356,
@@ -2420,7 +2420,7 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788438076,
+          "computed_at": 1788438122,
           "holders_all": 1517,
           "holders_wallet": 1515,
           "market_cap": 58135.0,
@@ -3424,7 +3424,7 @@
         },
         "sent_event_ids": []
       },
-      "analyzed_at": 1788438076,
+      "analyzed_at": 1788438121,
       "cohort": {
         "balances": {
           "149iCKvEBdK39mRKJGoX8mC54uzoWM1BAnQ2CMUwe3hQ": 1973169.251601,
@@ -3576,26 +3576,26 @@
         },
         {
           "buckets": {
-            "$10-$100": 194,
+            "$10-$100": 195,
             "$100-$1k": 61,
             "$100k-$500k": 0,
             "$10k-$100k": 0,
             "$1k-$10k": 3,
-            ">$0-$10": 3731,
+            ">$0-$10": 3730,
             ">$500k": 0
           },
           "cohort_cut50_pct": 4.4118,
           "cohort_n": 68,
           "cohort_token_pct": 97.2549,
-          "dust_count": 3731,
+          "dust_count": 3730,
           "dust_pct_mc": 3.6851,
-          "dust_value_usd": 1947.38,
+          "dust_value_usd": 1947.37,
           "holder_count": 3991,
           "mc": 52844.0,
           "mid_count": 64,
           "mid_pct_mc": 43.4317,
           "price": 5.455e-05,
-          "real_count": 260,
+          "real_count": 261,
           "real_pct_mc": 86.2359,
           "ts": 1788436800
         }
@@ -3604,20 +3604,20 @@
         "depth": {
           "buckets": [
             {
-              "count": 3731,
+              "count": 3730,
               "label": ">$0-$10",
               "max": 10.0,
               "min": 0.0,
               "pct_mc": 3.6851,
-              "value_usd": 1947.38
+              "value_usd": 1947.37
             },
             {
-              "count": 194,
+              "count": 195,
               "label": "$10-$100",
               "max": 100.0,
               "min": 10.0,
-              "pct_mc": 11.4539,
-              "value_usd": 6052.72
+              "pct_mc": 11.4949,
+              "value_usd": 6074.38
             },
             {
               "count": 61,
@@ -3661,7 +3661,7 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788438076,
+          "computed_at": 1788438121,
           "holders_all": 3991,
           "holders_wallet": 3989,
           "market_cap": 52844.0,
@@ -3672,9 +3672,9 @@
               "emoji": "\ud83e\udd90",
               "max": 100.0,
               "min": 0.0,
-              "pct_mc": 15.1391,
+              "pct_mc": 15.1801,
               "tier": "Shrimp",
-              "value_usd": 8000.1
+              "value_usd": 8021.76
             },
             {
               "count": 61,
@@ -3714,11 +3714,11 @@
             }
           ]
         },
-        "dust_count": 3731,
+        "dust_count": 3730,
         "dust_limit_usd": 10.0,
         "dust_pct_mc": 3.6851,
         "dust_pct_supply": 0.0,
-        "dust_value_usd": 1947.38,
+        "dust_value_usd": 1947.37,
         "mid": {
           "count": 64,
           "pct_mc": 43.4317,
@@ -3727,7 +3727,7 @@
         "new_dust": 0,
         "new_real": 0,
         "pages": 4,
-        "real_count": 260,
+        "real_count": 261,
         "real_pct_mc": 86.2359,
         "real_pct_supply": 0.0,
         "real_value_usd": 45570.52,
@@ -4665,7 +4665,7 @@
         },
         "sent_event_ids": []
       },
-      "analyzed_at": 1788438075,
+      "analyzed_at": 1788438120,
       "cohort": {
         "balances": {
           "2vG5yGc3Bgs9NmYNdmH9BupDt59smhxTKDFMJqYPFjdS": 12209946.103137,
@@ -4870,7 +4870,7 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788438075,
+          "computed_at": 1788438120,
           "holders_all": 993,
           "holders_wallet": 992,
           "market_cap": 31758.0,
@@ -5874,7 +5874,7 @@
         },
         "sent_event_ids": []
       },
-      "analyzed_at": 1788438076,
+      "analyzed_at": 1788438121,
       "cohort": {
         "balances": {
           "12LPkp5z6U5RjT31iRgUpqMY2odJdTSFzStr1JBxzZBa": 3106989.785593,
@@ -6123,7 +6123,7 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788438076,
+          "computed_at": 1788438121,
           "holders_all": 976,
           "holders_wallet": 974,
           "market_cap": 50329.0,
@@ -7127,7 +7127,7 @@
         },
         "sent_event_ids": []
       },
-      "analyzed_at": 1788438076,
+      "analyzed_at": 1788438121,
       "cohort": {
         "balances": {
           "2H39VKYdJd3asiRkmftDQA6sEzyirQkrXbwJmgYe7U3Z": 2118772.324918,
@@ -7396,7 +7396,7 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788438076,
+          "computed_at": 1788438121,
           "holders_all": 1691,
           "holders_wallet": 1690,
           "market_cap": 61615.0,
@@ -8400,7 +8400,7 @@
         },
         "sent_event_ids": []
       },
-      "analyzed_at": 1788438075,
+      "analyzed_at": 1788438121,
       "cohort": {
         "balances": {
           "12uB7rHhRFCkQwTqdgfhGmeAJEDrfiDqj5CKopPD9R7F": 2161363.176505,
@@ -8743,7 +8743,7 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788438075,
+          "computed_at": 1788438121,
           "holders_all": 1238,
           "holders_wallet": 1237,
           "market_cap": 114972.0,
@@ -8824,5 +8824,5 @@
       "symbol": "AGENTHQ"
     }
   },
-  "updated_at": 1788438076
+  "updated_at": 1788438122
 }
