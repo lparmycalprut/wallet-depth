@@ -187,6 +187,9 @@ def _ensure_status_branch(headers: dict) -> bool:
             json={"ref": f"refs/heads/{STATUS_REF}", "sha": sha},
             timeout=15)
         if created.status_code in (201, 422):
+            # Branch baru: beri GitHub waktu sebelum GET contents di
+            # branch tersebut (kalau tidak, GET 404 → PUT tanpa sha → 422).
+            time.sleep(2.0)
             return True
         print(f"WARN: holder_status create ref {created.status_code}: "
               f"{created.text[:200]}", file=sys.stderr)
@@ -195,7 +198,7 @@ def _ensure_status_branch(headers: dict) -> bool:
     return False
 
 
-def _github_push(status: dict, message: str, max_retries: int = 3) -> bool:
+def _github_push(status: dict, message: str, max_retries: int = 4) -> bool:
     tok = _github_token()
     if not tok:
         print("WARN: holder_status push skipped (no github_token)",
@@ -251,9 +254,12 @@ def _github_push(status: dict, message: str, max_retries: int = 3) -> bool:
             return True
         print(f"WARN: holder_status PUT {put.status_code}: "
               f"{put.text[:200]}", file=sys.stderr)
-        if put.status_code in (409, 429) or put.status_code >= 500:
+        # 422 "sha wasn't supplied": file sudah ada di branch (branch baru
+        # dibuat dari main yang sudah punya holder_status.json, GET sesaat
+        # sesudahnya masih 404). Tunggu lalu ulangi GET sha.
+        if put.status_code in (409, 422, 429) or put.status_code >= 500:
             if attempt < max_retries:
-                time.sleep(0.5 * (2 ** (attempt - 1)))
+                time.sleep(1.0 * (2 ** (attempt - 1)))
                 continue
         return False
     return False
