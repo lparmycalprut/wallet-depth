@@ -1,18 +1,10 @@
-"""Coverage dasar scanner cron silent-accumulation."""
+"""Coverage dasar scanner cron analisis holder."""
 from __future__ import annotations
 
 import unittest
 from unittest import mock
 
-from scripts.scan_silent import scan_watchlist
-
-
-class LegacyBridgeTest(unittest.TestCase):
-    def test_realtime_reversal_bridge_forwards_to_silent_scanner(self):
-        import scripts.realtime_reversal as bridge
-        with mock.patch("scripts.scan_silent.main", return_value=7) as main:
-            self.assertEqual(bridge.main(["--no-alert", "--mint", "X"]), 7)
-        main.assert_called_once_with([])
+from scripts.scan_holders import scan_watchlist
 
 
 class ScanWatchlistTest(unittest.TestCase):
@@ -26,7 +18,7 @@ class ScanWatchlistTest(unittest.TestCase):
             "GOOD": {"symbol": "GD"},
             "BAD": {"symbol": "BD"},
         }
-        with mock.patch("scripts.scan_silent.analyze_token",
+        with mock.patch("scripts.scan_holders.analyze_token",
                         side_effect=fake):
             out = scan_watchlist(watchlist, workers=1)
         self.assertEqual(set(out), {"GOOD"})
@@ -43,10 +35,10 @@ class MainExitCodeTest(unittest.TestCase):
     """Cron harus MERAH bila data holder/publish gagal (bukan hijau palsu)."""
 
     def _run(self, analyses, publish_ok=None, watchlist=None):
-        import scripts.scan_silent as mod
+        import scripts.scan_holders as mod
         wl = {"A": {"symbol": "AA"}} if watchlist is None else watchlist
         with mock.patch.object(mod, "load_watchlist", return_value=wl), \
-                mock.patch.object(mod, "load_silent_status",
+                mock.patch.object(mod, "load_holder_status",
                                   return_value={"tokens": {}}), \
                 mock.patch.object(mod, "load_holder_history",
                                   return_value={"tokens": {}}), \
@@ -56,7 +48,7 @@ class MainExitCodeTest(unittest.TestCase):
                                   return_value=analyses), \
                 mock.patch.object(mod, "ingest_many",
                                   return_value={"tokens": {}}), \
-                mock.patch.object(mod, "publish_silent_status",
+                mock.patch.object(mod, "publish_holder_status",
                                   return_value={"updated_at": 1}), \
                 mock.patch.object(mod, "last_publish_result",
                                   return_value={"ok": publish_ok,
@@ -82,10 +74,10 @@ class MainExitCodeTest(unittest.TestCase):
         self.assertEqual(out, 3)
 
     def test_no_push_ignores_publish(self):
-        import scripts.scan_silent as mod
+        import scripts.scan_holders as mod
         with mock.patch.object(mod, "load_watchlist",
                                return_value={"A": {}}), \
-                mock.patch.object(mod, "load_silent_status",
+                mock.patch.object(mod, "load_holder_status",
                                   return_value={"tokens": {}}), \
                 mock.patch.object(mod, "load_holder_history",
                                   return_value={"tokens": {}}), \
@@ -95,6 +87,6 @@ class MainExitCodeTest(unittest.TestCase):
                     "A": {"holders": {"total_fetched": 1}}}), \
                 mock.patch.object(mod, "ingest_many",
                                   return_value={"tokens": {}}), \
-                mock.patch.object(mod, "publish_silent_status",
+                mock.patch.object(mod, "publish_holder_status",
                                   return_value={}):
             self.assertEqual(mod.main(["--no-push"]), 0)

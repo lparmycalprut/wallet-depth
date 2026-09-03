@@ -21,8 +21,8 @@ from holder_history import (DUST_DANGER_PCT,
                             latest_detail_for_mint, load_holder_history,
                             merge_points, resample_4h, seed_from_status)
 from links import external_links_html
-from silent_accumulation import analyze_token
-from silent_status import load_silent_status
+from holder_analysis import analyze_token
+from holder_status import load_holder_status
 from watchlist import add_to_watchlist, load_watchlist
 
 st.set_page_config(page_title="Holder Analytic", page_icon="🧮",
@@ -233,7 +233,7 @@ def _distribution_section(mint: str, symbol: str, store: dict) -> None:
 
 watchlist = load_watchlist()
 mints = list(watchlist)
-status = load_silent_status()
+status = load_holder_status()
 store = seed_from_status(load_holder_history(), status)
 
 query_mint = str(st.query_params.get("mint") or "") if "mint" in st.query_params else ""
@@ -348,8 +348,8 @@ if st.button("🔄 Scan holder FULL token ini", type="primary",
             analysis = analyze_token(
                 mint, str((watchlist.get(mint) or {}).get("symbol")
                           or token.get("symbol") or "?"),
-                max_wallets=FULL_SCAN_MAX_WALLETS, max_trade_pages=1,
-                fetch_market=True, include_flow=False, cohort_addrs=addrs)
+                max_wallets=FULL_SCAN_MAX_WALLETS,
+                fetch_market=True, cohort_addrs=addrs)
         except Exception as exc:  # noqa: BLE001
             analysis = None
             st.error(f"Gagal: {exc}")

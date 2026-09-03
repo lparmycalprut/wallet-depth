@@ -3,7 +3,7 @@
 
 File store: ``holder_history.json``. Setiap scan menambahkan titik
 (dust count, dust % MC, sisa token kohort Crab+Fish yang di-freeze).
-Dashboard meresample ke bucket 4 jam. Snapshot ``silent_status``
+Dashboard meresample ke bucket 4 jam. Snapshot ``holder_status``
 menyimpan salinan ringkas ``history`` supaya cron GitHub tetap punya
 jejak antar-run.
 
@@ -355,7 +355,7 @@ def save_holder_history(store: dict, path: str | None = None) -> dict:
 
 
 def compact_point(point: dict | None) -> dict:
-    """Titik history tanpa peta address (aman untuk silent_status)."""
+    """Titik history tanpa peta address (aman untuk holder_status)."""
     point = point or {}
     keys = ("ts", "price", "mc", "dust_count", "dust_pct_mc", "dust_value_usd",
             "real_count", "real_pct_mc", "mid_count", "mid_pct_mc",
@@ -554,7 +554,7 @@ def ingest_many(analyses: dict | None, *, now: int | None = None,
 
 
 def seed_from_status(store: dict, status: dict | None) -> dict:
-    """Isi titik dari snapshot silent_status bila file history masih tipis."""
+    """Isi titik dari snapshot holder_status bila file history masih tipis."""
     store = store or empty_store()
     tokens = store.setdefault("tokens", {})
     for mint, token in ((status or {}).get("tokens") or {}).items():

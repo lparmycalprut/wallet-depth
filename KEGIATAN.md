@@ -12,7 +12,7 @@ Fokus UI ke **analisa holder dust** (bukan silent 12 jam) + Scan Meteora.
    jam, sisa token kohort Crab+Fish.
 4. CVD: buang 🧮 Holder Analytic + kartu silent 12 jam.
 5. `holder_history.py` + `holder_history.json`: catat dust/kohort tiap
-   scan, resample 4 jam. Cron watchlist `include_flow=False`.
+   scan, resample 4 jam. Cron watchlist holder-only.
 6. Scan Meteora di halaman utama: API 24h (fee_ratio≥250) + 1h (≥1),
    DLMM active_tvl≥1000. Pool 24h yang masih di 1h tetap tampil. Dust
    >2% MC disembunyikan. Shortcut Meteora DLMM + HawkFi.
@@ -27,7 +27,7 @@ yang memang hanya ada di GMGN):
    `getTokenSupply`; per-item bila tersedia; abort bersih bila tidak
    ketemu). Sebelumnya nilai USD holder 10^decimals× lebih besar (tier
    Shark bernilai triliunan $).
-2. `_fetch_holders_snapshot` & `_fetch_swaps_12h`: **Helius dulu, GMGN
+2. `_fetch_holders_snapshot`: **Helius dulu, GMGN
    fallback**. `fetch_swaps` Enhanced API diprioritaskan juga di
    `scripts/update_cvd.py` (fetch harian CVD) dengan fallback GMGN.
 3. **Solscan API dilepas total**: `solscan_holders.py` hanya tersisa

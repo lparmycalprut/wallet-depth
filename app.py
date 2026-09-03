@@ -16,8 +16,8 @@ from holder_history import (DUST_DANGER_PCT, dust_flag,
                             seed_from_status, sparkline_svg)
 from links import HOLDER_PAGE_PATH, external_links_html, pool_links_html
 from meteora_screener import scan_meteora
-from silent_accumulation import DUST_LIMIT_USD, analyze_token
-from silent_status import load_silent_status, publish_silent_status
+from holder_analysis import DUST_LIMIT_USD, analyze_token
+from holder_status import load_holder_status, publish_holder_status
 from trending_ui import (render_trending, run_screen, run_screen_h1,
                          run_screen_hrhr, run_screen_hrhr_h1)
 from watchlist import (add_to_watchlist, get_last_push_error, load_watchlist,
@@ -420,9 +420,9 @@ def _render_meteora_scan() -> None:
 # ---------------------------------------------------------------------------
 watchlist = load_watchlist()
 force_status = bool(st.session_state.pop("status_force_refresh", False))
-silent_status = load_silent_status(force_refresh=force_status)
-status_tokens = silent_status.get("tokens") or {}
-history_store = seed_from_status(load_holder_history(), silent_status)
+holder_status = load_holder_status(force_refresh=force_status)
+status_tokens = holder_status.get("tokens") or {}
+history_store = seed_from_status(load_holder_history(), holder_status)
 
 st.subheader("📋 Watchlist — Analisa Holder (Dust)")
 st.caption(
@@ -430,14 +430,14 @@ st.caption(
     f"pegang. ≥ {DUST_DANGER_PCT:.0f}% MC = BAHAYA "
     "(dust nambah pesat = jejak distribusi). "
     f"Ambang dust: ${DUST_LIMIT_USD:.0f}. "
-    f"Terakhir scan: {_wib(silent_status.get('updated_at'))}. "
+    f"Terakhir scan: {_wib(holder_status.get('updated_at'))}. "
     "Grafik kecil = dust % MC tiap 4 jam."
 )
 
 if watchlist and not status_tokens:
     st.warning(
-        "Belum ada data holder dari cron (`silent_status.json` di branch "
-        "`silent-live` kosong/tidak ada). Pastikan secret **HELIUS_API_KEY** "
+        "Belum ada data holder dari cron (`holder_status.json` di branch "
+        "`holder-live` kosong/tidak ada). Pastikan secret **HELIUS_API_KEY** "
         "dan **GITHUB_TOKEN/GH_TOKEN** terpasang di GitHub Actions, atau klik "
         "**Scan holder watchlist** untuk mengisi data sekarang.",
         icon="⚠️")
@@ -465,8 +465,7 @@ if st.button("🔄 Scan holder watchlist", type="primary",
             addrs = list((cohort.get("balances") or {}).keys())
             analyses[mint] = analyze_token(
                 mint, (meta or {}).get("symbol") or "?",
-                max_wallets=2000, max_trade_pages=1, fetch_market=True,
-                include_flow=False, cohort_addrs=addrs)
+                max_wallets=2000, fetch_market=True, cohort_addrs=addrs)
         except Exception:  # noqa: BLE001
             analyses[mint] = None
         done += 1
@@ -477,7 +476,7 @@ if st.button("🔄 Scan holder watchlist", type="primary",
           if isinstance(item, dict)}
     if ok:
         ingest_many(ok, store=history_store)
-        publish_silent_status(ok, watchlist, push=False)
+        publish_holder_status(ok, watchlist, push=False)
     st.session_state["status_force_refresh"] = True
     st.rerun()
 
@@ -578,8 +577,8 @@ with st.expander("➕ Tambah token", expanded=not bool(watchlist)):
 
 st.divider()
 st.subheader("🔍 Temukan Token")
-st.caption("Scan Trending/Degen menampilkan listing GMGN (tanpa kolom "
-           "holder 12 jam). Analisa dust ada di Scan Meteora dan watchlist.")
+st.caption("Scan Trending/Degen menampilkan listing GMGN. "
+           "Analisa dust ada di Scan Meteora dan watchlist.")
 
 st.markdown("""
 <style>

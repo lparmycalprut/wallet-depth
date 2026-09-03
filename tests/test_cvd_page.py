@@ -1,6 +1,6 @@
 """Streamlit AppTest coverage for the CVD/flow page (tanpa sinyal).
 
-Halaman ini hanya menampilkan agregasi harian & status silent 12 jam;
+Halaman ini hanya menampilkan agregasi harian;
 tes memastikan fetch manual memakai ``lookback_days`` dan data harian
 merender tabel tanpa menyentuh modul sinyal.
 """
@@ -36,7 +36,7 @@ def _patches(daily_rows):
     """Patch dependencies supaya halaman berjalan tanpa jaringan."""
     return (
         mock.patch("watchlist.load_watchlist", return_value={MINT: META}),
-        mock.patch("silent_status.load_silent_status",
+        mock.patch("holder_status.load_holder_status",
                    return_value={"updated_at": None, "tokens": {}}),
         mock.patch("daily_store.load_daily_effort",
                    return_value=daily_rows or []),
@@ -55,7 +55,7 @@ class CvdPageNoSignalTest(unittest.TestCase):
 
         with mock.patch("watchlist.load_watchlist",
                         return_value={MINT: META}), \
-             mock.patch("silent_status.load_silent_status",
+             mock.patch("holder_status.load_holder_status",
                         return_value={"updated_at": None, "tokens": {}}), \
              mock.patch("daily_store.load_daily_effort", return_value=[]), \
              mock.patch("scripts.update_cvd.refresh_single_token",
@@ -80,7 +80,7 @@ class CvdPageNoSignalTest(unittest.TestCase):
 
         with mock.patch("watchlist.load_watchlist",
                         return_value={MINT: META}), \
-             mock.patch("silent_status.load_silent_status",
+             mock.patch("holder_status.load_holder_status",
                         return_value={"updated_at": None, "tokens": {}}), \
              mock.patch("daily_store.load_daily_effort", return_value=[]), \
              mock.patch("scripts.update_cvd.refresh_single_token",
@@ -98,7 +98,7 @@ class CvdPageNoSignalTest(unittest.TestCase):
     def test_manual_ca_opens_token_not_in_watchlist(self):
         ca = "So11111111111111111111111111111111111111112"
         with mock.patch("watchlist.load_watchlist", return_value={}), \
-             mock.patch("silent_status.load_silent_status",
+             mock.patch("holder_status.load_holder_status",
                         return_value={"updated_at": None, "tokens": {}}), \
              mock.patch("daily_store.load_daily_effort", return_value=[]), \
              mock.patch("scripts.update_cvd.refresh_single_token"), \
@@ -115,7 +115,7 @@ class CvdPageNoSignalTest(unittest.TestCase):
     def test_manual_ca_invalid_format_stays_unselected(self):
         invalid = "not-a-valid-solana-mint"
         with mock.patch("watchlist.load_watchlist", return_value={}), \
-             mock.patch("silent_status.load_silent_status",
+             mock.patch("holder_status.load_holder_status",
                         return_value={"updated_at": None, "tokens": {}}), \
              mock.patch("daily_store.load_daily_effort", return_value=[]), \
              mock.patch("scripts.update_cvd.refresh_single_token"), \
@@ -135,7 +135,7 @@ class CvdPageNoSignalTest(unittest.TestCase):
                  "direction": "up", "volume_usd": 1234.0}]
         with mock.patch("watchlist.load_watchlist",
                         return_value={MINT: META}), \
-             mock.patch("silent_status.load_silent_status",
+             mock.patch("holder_status.load_holder_status",
                         return_value={"updated_at": None, "tokens": {}}), \
              mock.patch("daily_store.load_daily_effort", return_value=rows), \
              mock.patch("scripts.update_cvd.refresh_single_token"), \
@@ -148,7 +148,7 @@ class CvdPageNoSignalTest(unittest.TestCase):
             self.assertNotIn("Sinyal", body)
             self.assertNotIn("Telegram", body)
 
-    def test_page_has_no_holder_analytic_or_silent_banner(self):
+    def test_page_has_no_holder_analytic_banner(self):
         token = {"symbol": "TST",
                  "holders": {"real_count": 30, "dust_count": 270,
                              "dust_pct_mc": 0.5}}

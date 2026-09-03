@@ -101,14 +101,14 @@ class HolderPageChartTest(unittest.TestCase):
         """Jalankan halaman dengan semua dependensi jaringan di-mock."""
         patches = [
             mock.patch("watchlist.load_watchlist", return_value={MINT: META}),
-            mock.patch("silent_status.load_silent_status",
+            mock.patch("holder_status.load_holder_status",
                        return_value={"updated_at": None, "tokens": {}}),
             mock.patch("holder_history.load_holder_history",
                        return_value=_store()),
             mock.patch("core.get_helius_keys", return_value=["test-key"]),
         ]
         if analyze is not None:
-            patches.append(mock.patch("silent_accumulation.analyze_token",
+            patches.append(mock.patch("holder_analysis.analyze_token",
                                       side_effect=analyze))
         if ingest is not None:
             patches.append(mock.patch("holder_history.ingest_many",

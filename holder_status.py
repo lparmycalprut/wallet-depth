@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Snapshot status silent-accumulation 12 jam untuk dashboard.
+"""Snapshot status analisis holder (dust) untuk dashboard.
 
-Pengganti ``reversal_status``: scanner cron (GitHub Actions) menulis
-``silent_status.json`` ke branch ``silent-live``, dashboard membacanya
-pada tiap rerun. Tidak ada sinyal, tidak ada Telegram.
+Scanner cron (GitHub Actions) menulis ``holder_status.json`` ke branch
+``holder-live``, dashboard membacanya pada tiap rerun.
 """
 from __future__ import annotations
 
@@ -18,10 +17,10 @@ import requests
 from core import atomic_write_json
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-STATUS_PATH = os.path.join(BASE_DIR, "silent_status.json")
+STATUS_PATH = os.path.join(BASE_DIR, "holder_status.json")
 GITHUB_REPO = "lparmycalprut/wallet-depth"
-STATUS_REPO_PATH = "silent_status.json"
-STATUS_REF = "silent-live"
+STATUS_REPO_PATH = "holder_status.json"
+STATUS_REF = "holder-live"
 
 _CACHE_TTL = 15
 _CACHE = {"data": None, "ts": 0.0}
@@ -31,7 +30,7 @@ _LAST_PUBLISH = {"ok": None, "error": ""}
 
 
 def last_publish_result() -> dict:
-    """``{"ok": bool|None, "error": str}`` dari publish_silent_status terakhir."""
+    """``{"ok": bool|None, "error": str}`` dari publish_holder_status terakhir."""
     return dict(_LAST_PUBLISH)
 
 
@@ -134,18 +133,18 @@ def _github_pull() -> dict | None:
             response = requests.get(_contents_url(ref), headers=headers,
                                     timeout=10)
         except requests.RequestException as exc:
-            print(f"WARN: silent_status API {ref} network error: {exc}",
+            print(f"WARN: holder_status API {ref} network error: {exc}",
                   file=sys.stderr)
             continue
         if response.status_code != 200:
             if response.status_code != 404:
-                print(f"WARN: silent_status API {ref} {response.status_code}: "
+                print(f"WARN: holder_status API {ref} {response.status_code}: "
                       f"{response.text[:200]}", file=sys.stderr)
             continue
         try:
             parsed = _parse_status_payload(response.json())
         except Exception as exc:  # noqa: BLE001
-            print(f"WARN: silent_status API {ref} parse failed: {exc}",
+            print(f"WARN: holder_status API {ref} parse failed: {exc}",
                   file=sys.stderr)
             parsed = None
         if parsed is not None:
@@ -158,7 +157,7 @@ def _github_pull() -> dict | None:
         if response.status_code == 200:
             return _parse_status_payload(response.json()) or _empty_status()
     except (requests.RequestException, ValueError) as exc:
-        print(f"WARN: silent_status raw CDN failed: {exc}", file=sys.stderr)
+        print(f"WARN: holder_status raw CDN failed: {exc}", file=sys.stderr)
     return None
 
 
@@ -167,7 +166,7 @@ def _ensure_status_branch(headers: dict) -> bool:
     try:
         existing = requests.get(refs, headers=headers, timeout=10)
     except requests.RequestException as exc:
-        print(f"WARN: silent_status ref lookup failed: {exc}", file=sys.stderr)
+        print(f"WARN: holder_status ref lookup failed: {exc}", file=sys.stderr)
         return False
     if existing.status_code == 200:
         return True
@@ -189,17 +188,17 @@ def _ensure_status_branch(headers: dict) -> bool:
             timeout=15)
         if created.status_code in (201, 422):
             return True
-        print(f"WARN: silent_status create ref {created.status_code}: "
+        print(f"WARN: holder_status create ref {created.status_code}: "
               f"{created.text[:200]}", file=sys.stderr)
     except requests.RequestException as exc:
-        print(f"WARN: silent_status create ref failed: {exc}", file=sys.stderr)
+        print(f"WARN: holder_status create ref failed: {exc}", file=sys.stderr)
     return False
 
 
 def _github_push(status: dict, message: str, max_retries: int = 3) -> bool:
     tok = _github_token()
     if not tok:
-        print("WARN: silent_status push skipped (no github_token)",
+        print("WARN: holder_status push skipped (no github_token)",
               file=sys.stderr)
         return False
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{STATUS_REPO_PATH}"
@@ -207,7 +206,7 @@ def _github_push(status: dict, message: str, max_retries: int = 3) -> bool:
                "Accept": "application/vnd.github+json"}
     target_ref = STATUS_REF if _ensure_status_branch(headers) else "main"
     if target_ref == "main":
-        print("WARN: silent_status falling back to main", file=sys.stderr)
+        print("WARN: holder_status falling back to main", file=sys.stderr)
     body_content = base64.b64encode(
         json.dumps(status, indent=2, sort_keys=True).encode()).decode()
     for attempt in range(1, max_retries + 1):
@@ -215,7 +214,7 @@ def _github_push(status: dict, message: str, max_retries: int = 3) -> bool:
             current = requests.get(_contents_url(target_ref), headers=headers,
                                    timeout=15)
         except requests.RequestException as exc:
-            print(f"WARN: silent_status GET failed: {exc}", file=sys.stderr)
+            print(f"WARN: holder_status GET failed: {exc}", file=sys.stderr)
             if attempt < max_retries:
                 time.sleep(0.5 * (2 ** (attempt - 1)))
                 continue
@@ -228,7 +227,7 @@ def _github_push(status: dict, message: str, max_retries: int = 3) -> bool:
                 sha = None
         elif current.status_code != 404:
             if current.status_code in (401, 403):
-                print(f"ERROR: silent_status GET auth {current.status_code}",
+                print(f"ERROR: holder_status GET auth {current.status_code}",
                       file=sys.stderr)
                 return False
             if attempt < max_retries and (current.status_code in (409, 429)
@@ -243,14 +242,14 @@ def _github_push(status: dict, message: str, max_retries: int = 3) -> bool:
         try:
             put = requests.put(url, headers=headers, json=payload, timeout=15)
         except requests.RequestException as exc:
-            print(f"WARN: silent_status PUT failed: {exc}", file=sys.stderr)
+            print(f"WARN: holder_status PUT failed: {exc}", file=sys.stderr)
             if attempt < max_retries:
                 time.sleep(0.5 * (2 ** (attempt - 1)))
                 continue
             return False
         if put.status_code in (200, 201):
             return True
-        print(f"WARN: silent_status PUT {put.status_code}: "
+        print(f"WARN: holder_status PUT {put.status_code}: "
               f"{put.text[:200]}", file=sys.stderr)
         if put.status_code in (409, 429) or put.status_code >= 500:
             if attempt < max_retries:
@@ -260,7 +259,7 @@ def _github_push(status: dict, message: str, max_retries: int = 3) -> bool:
     return False
 
 
-def load_silent_status(force_refresh: bool = False) -> dict:
+def load_holder_status(force_refresh: bool = False) -> dict:
     """Muat snapshot: GitHub (durable) → file lokal → kosong."""
     now = time.time()
     if (not force_refresh and _CACHE["data"] is not None
@@ -288,7 +287,7 @@ def load_silent_status(force_refresh: bool = False) -> dict:
     return dict(status)
 
 
-def publish_silent_status(analyses: dict,
+def publish_holder_status(analyses: dict,
                           watchlist: dict | None = None,
                           *, push: bool = True) -> dict:
     """Tulis status lokal + (opsional) publish ke GitHub."""
@@ -303,11 +302,11 @@ def publish_silent_status(analyses: dict,
             _LAST_PUBLISH["error"] = "no github_token"
         else:
             ok = _github_push(status,
-                              f"silent-status: snapshot {stamp} [skip ci]")
+                              f"holder-status: snapshot {stamp} [skip ci]")
             _LAST_PUBLISH["ok"] = bool(ok)
             _LAST_PUBLISH["error"] = "" if ok else "github push failed"
         if not _LAST_PUBLISH["ok"]:
-            print("WARN: silent_status GitHub publish failed "
+            print("WARN: holder_status GitHub publish failed "
                   f"({_LAST_PUBLISH['error']}); dashboard akan pakai "
                   "snapshot lokal", file=sys.stderr)
     else:

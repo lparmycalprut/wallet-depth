@@ -138,7 +138,7 @@ python gmgn_screener.py          # prints the scored table
 (HTTP status, API `code`, or "200 OK but 0 tokens" when the filters match
 nothing) instead of failing silently.
 
-## Holder list (dipakai silent_accumulation.py)
+## Holder list (dipakai holder_analysis.py)
 
 ```
 GET https://gmgn.ai/vas/api/v1/token_holders/sol/<CA>
@@ -164,7 +164,7 @@ Referer: https://gmgn.ai/sol/token/<CA>
 
 ### Real vs dust
 
-`silent_accumulation.classify_holders` splits wallet rows by
+`holder_analysis.classify_holders` splits wallet rows by
 `usd_value`: real holder > $10; dust 0 < value <= $10. Dust % of
 marketcap = Σ(dust usd_value) / marketcap × 100. When the page cap
 (`max_wallets`) truncates the list, `truncated: true` means the number

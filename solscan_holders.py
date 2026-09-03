@@ -3,7 +3,7 @@
 
 Modul ini dulunya mengambil daftar holder dari Solscan API. Sumber data
 holder sekarang **sepenuhnya Helius** (lihat
-``silent_accumulation.fetch_holders_helius`` + ``helius_holders``) — nama
+``holder_analysis.fetch_holders_helius`` + ``helius_holders``) — nama
 file dipertahankan supaya perubahan impor tidak merembet.
 
 Yang tersisa di sini adalah definisi ambang & kalkulasi ``wallet_depth``:

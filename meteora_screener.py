@@ -206,7 +206,7 @@ def enrich_pools(rows: list[dict], *, max_wallets: int = 2000,
     """Fetch holder per mint unik, tempel ``analysis`` ke setiap baris pool."""
     if not rows:
         return rows
-    from silent_accumulation import analyze_token
+    from holder_analysis import analyze_token
     from holder_history import load_holder_history
 
     store = load_holder_history()
@@ -228,8 +228,7 @@ def enrich_pools(rows: list[dict], *, max_wallets: int = 2000,
         try:
             return mint, analyze_token(
                 mint, symbol, mc, max_wallets=max_wallets,
-                max_trade_pages=1, fetch_market=True, price_usd=price,
-                include_flow=False, cohort_addrs=addrs,
+                fetch_market=True, price_usd=price, cohort_addrs=addrs,
                 extra_pools=mint_pools.get(mint) or []), None
         except Exception as exc:  # noqa: BLE001
             return mint, None, str(exc)
