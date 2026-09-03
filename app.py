@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import streamlit as st
 
 from helius_holders import depth_bar_chart, scan_token_holders
-from holder_history import (DUST_CAUTION_PCT, DUST_LIMIT_PCT, dust_flag,
+from holder_history import (DUST_DANGER_PCT, dust_flag,
                             history_for_mint, ingest_many,
                             load_holder_history, merge_points, resample_4h,
                             seed_from_status, sparkline_svg)
@@ -44,8 +44,7 @@ h1, h2, h3, h4, h5, h6 {color:#000000;}
 .dust-badge {display:inline-block;padding:.28rem .58rem;border-radius:8px;
  font-size:.78rem;font-weight:800}
 .dust-ok {background:#14532d;color:#dcfce7}
-.dust-caution {background:#854d0e;color:#fef9c3}
-.dust-limit {background:#7f1d1d;color:#fee2e2}
+.dust-danger {background:#7f1d1d;color:#fee2e2}
 .dust-none {background:#e2e8f0;color:#000000}
 .watchlist-row {display:flex;align-items:center;padding:.75rem 0;
  border-bottom:1px solid #cbd5e1;}
@@ -68,7 +67,7 @@ h1, h2, h3, h4, h5, h6 {color:#000000;}
 </style>
 <div class="hero"><h1>🧮 Wallet Depth</h1>
 <p>Fokus analisa holder: dust wallet (≤ $10) sebagai jejak dump.
-≥ 1% MC hati-hati · &gt; 2% MC limit. Grafik 4 jam + Scan Meteora DLMM.</p></div>
+≥ 1% MC = BAHAYA. Grafik 4 jam + Scan Meteora DLMM.</p></div>
 """, unsafe_allow_html=True)
 
 
@@ -111,10 +110,9 @@ def _wib(ts):
 def _dust_badge_html(flag: dict) -> str:
     level = flag.get("level") or "unknown"
     label = str(flag.get("label") or "—")
-    if flag.get("rising") and level in ("caution", "limit"):
+    if flag.get("rising") and level == "danger":
         label = f"{label} ↑"
-    cls = {"ok": "dust-ok", "caution": "dust-caution",
-           "limit": "dust-limit"}.get(level, "dust-none")
+    cls = {"ok": "dust-ok", "danger": "dust-danger"}.get(level, "dust-none")
     return f'<span class="dust-badge {cls}">{html.escape(label)}</span>'
 
 
@@ -322,7 +320,7 @@ def _render_meteora_scan() -> None:
     st.caption(
         "Top DLMM 24 jam (`active_tvl ≥ 1000`, `fee_active_tvl_ratio ≥ 250`) "
         "dibandingkan 1 jam (`fee_active_tvl_ratio ≥ 1`). Pool 24 jam yang "
-        "masih muncul di 1 jam **tetap ditampilkan**. Dust holder **> 2% MC** "
+        "masih muncul di 1 jam **tetap ditampilkan**. Dust holder **≥ 1% MC (BAHAYA)** "
         "disembunyikan. Tombol kanan: Meteora + HawkFi."
     )
     if st.button("🌊 Scan Meteora + Holder", type="primary",
@@ -352,7 +350,7 @@ def _render_meteora_scan() -> None:
     fetched = int(result.get("fetched") or 0)
     if fetched:
         st.caption(f"{len(rows)} pool ditampilkan · {hidden} disembunyikan "
-                   f"(dust > {DUST_LIMIT_PCT:.0f}% MC) · listing {fetched}.")
+                   f"(dust ≥ {DUST_DANGER_PCT:.0f}% MC = BAHAYA) · listing {fetched}.")
     if not rows:
         if result:
             st.info("Tidak ada pool yang lolos filter dust (atau listing kosong).")
@@ -429,8 +427,8 @@ history_store = seed_from_status(load_holder_history(), silent_status)
 st.subheader("📋 Watchlist — Analisa Holder (Dust)")
 st.caption(
     "Ringkasan dust: jumlah wallet dan **berapa % marketcap** yang mereka "
-    f"pegang. ≥ {DUST_CAUTION_PCT:.0f}% MC = hati-hati · "
-    "> 2% MC = limit/DUMP (dust nambah pesat = jejak distribusi). "
+    f"pegang. ≥ {DUST_DANGER_PCT:.0f}% MC = BAHAYA "
+    "(dust nambah pesat = jejak distribusi). "
     f"Ambang dust: ${DUST_LIMIT_USD:.0f}. "
     f"Terakhir scan: {_wib(silent_status.get('updated_at'))}. "
     "Grafik kecil = dust % MC tiap 4 jam."

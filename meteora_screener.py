@@ -270,7 +270,7 @@ def enrich_pools(rows: list[dict], *, max_wallets: int = 2000,
 
 
 def hide_dust_limit(rows: list[dict]) -> tuple[list[dict], int]:
-    """Buang pool dust > 2% MC. Return (kept, n_hidden)."""
+    """Buang pool dust ≥ 1% MC. Return (kept, n_hidden)."""
     kept, hidden = [], 0
     for row in rows or []:
         pct = ((row.get("analysis") or {}).get("holders") or {}).get("dust_pct_mc")
@@ -285,7 +285,7 @@ def hide_dust_limit(rows: list[dict]) -> tuple[list[dict], int]:
 
 def scan_meteora(*, max_wallets: int = 2000, workers: int = 6,
                  progress=None, timeout: int = 25) -> dict:
-    """Listing + holder + filter dust > 2% MC."""
+    """Listing + holder + filter dust ≥ 1% MC."""
     rows, error = fetch_listing(timeout=timeout)
     fetched = len(rows)
     if rows:

@@ -7,9 +7,8 @@ Dashboard meresample ke bucket 4 jam. Snapshot ``silent_status``
 menyimpan salinan ringkas ``history`` supaya cron GitHub tetap punya
 jejak antar-run.
 
-Ambang dust (observasi dump):
-- >= 1% MC  → hati-hati
-- >  2% MC  → limit (sembunyikan dari Scan Meteora)
+Ambang dust (observasi dump) — satu garis:
+- >= 1% MC  → BAHAYA (disembunyikan dari Scan Meteora)
 """
 from __future__ import annotations
 
@@ -40,8 +39,10 @@ def _atomic_write_json(path: str, data, **dump_kwargs) -> None:
             pass
         raise
 
-DUST_CAUTION_PCT = 1.0
-DUST_LIMIT_PCT = 2.0
+DUST_DANGER_PCT = 1.0
+# alias lama (kompatibilitas import)
+DUST_CAUTION_PCT = DUST_DANGER_PCT
+DUST_LIMIT_PCT = DUST_DANGER_PCT
 INTERVAL_SEC = 4 * 3600          # grafik 4 jam sekali
 COHORT_WINDOW_SEC = 4 * 3600     # freeze Crab+Fish tiap 4 jam
 COHORT_MAX = 200                 # address yang diikuti
@@ -78,9 +79,10 @@ def empty_store() -> dict:
 
 
 def dust_flag(dust_pct_mc, prev_pct=None) -> dict:
-    """Klasifikasi dust % MC: ok / caution / limit.
+    """Klasifikasi dust % MC: ok / danger.
 
-    ``hide`` True hanya jika dust **> 2% MC** (limit Scan Meteora).
+    ``hide`` True jika dust **≥ 1% MC** (BAHAYA — disembunyikan dari
+    Scan Meteora).
     ``rising`` True jika % MC naik dibanding titik sebelumnya.
     """
     pct = _float(dust_pct_mc, None)
@@ -89,18 +91,15 @@ def dust_flag(dust_pct_mc, prev_pct=None) -> dict:
     if pct is None:
         return {"level": "unknown", "label": "—", "hide": False,
                 "rising": False, "pct": None}
-    if pct > DUST_LIMIT_PCT:
-        return {"level": "limit", "label": "DUMP", "hide": True,
-                "rising": rising, "pct": pct}
-    if pct >= DUST_CAUTION_PCT:
-        return {"level": "caution", "label": "HATI-HATI", "hide": False,
+    if pct >= DUST_DANGER_PCT:
+        return {"level": "danger", "label": "BAHAYA", "hide": True,
                 "rising": rising, "pct": pct}
     return {"level": "ok", "label": "AMAN", "hide": False,
             "rising": rising, "pct": pct}
 
 
 def should_hide_dust(dust_pct_mc) -> bool:
-    """True bila dust holder memegang > 2% marketcap."""
+    """True bila dust holder memegang ≥ 1% marketcap (BAHAYA)."""
     return bool(dust_flag(dust_pct_mc)["hide"])
 
 

@@ -5,7 +5,7 @@
 - UI fokus dust: watchlist ringkasan jumlah + % MC, badge 1%/2%, sparkline
   4 jam; Trending/Degen tanpa kolom holder/12 jam; CVD tanpa Holder Analytic.
 - Halaman baru `pages/5_🧮_Holder.py`. History di `holder_history.json`.
-- Scan Meteora DLMM 24h+1h, hide dust > 2% MC, shortcut Meteora + HawkFi.
+- Scan Meteora DLMM 24h+1h, hide dust ≥ 1% MC, shortcut Meteora + HawkFi.
 - Kohort Crab+Fish di-freeze 4 jam (sisa token, bukan USD).
 
 ## 2026-08-19 — Port sinyal SMART SEROK + watchlist bersih

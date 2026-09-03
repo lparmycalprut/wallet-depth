@@ -8,8 +8,7 @@ dust** sebagai jejak dump, plus **Scan Meteora DLMM**. Semua sinyal
 
 1. **Dust holder** — wallet murni dengan `0 < nilai ≤ $10`:
    - **dust % MC** = total nilai dust / marketcap × 100,
-   - ≥ **1% MC** → hati-hati,
-   - **> 2% MC** → limit / DUMP (disembunyikan dari Scan Meteora).
+   - ≥ **1% MC** → BAHAYA (disembunyikan dari Scan Meteora).
    Dust yang nambah pesat = holder sebelumnya sudah distribusi / bag
    merosot jadi sisa.
 2. **Kohort mid-tier (Crab+Fish, $100–$10k)** — daftar address di-freeze
@@ -41,7 +40,7 @@ Scan Holder Khusus (halaman utama) dan cron butuh `HELIUS_API_KEY`
 - 24 jam: `pool_type=dlmm && active_tvl≥1000 && fee_active_tvl_ratio≥250`
 - 1 jam: `pool_type=dlmm && active_tvl≥1000 && fee_active_tvl_ratio≥1`
 - Pool 24 jam yang masih muncul di 1 jam **tetap ditampilkan**
-- Dust holder **> 2% MC** disembunyikan
+- Dust holder **≥ 1% MC** (BAHAYA) disembunyikan
 - Shortcut: [Meteora DLMM](https://app.meteora.ag/dlmm/) + [HawkFi](https://www.hawkfi.ag/meteora/)
 
 ## Modul
@@ -49,7 +48,7 @@ Scan Holder Khusus (halaman utama) dan cron butuh `HELIUS_API_KEY`
 | File | Peran |
 |---|---|
 | `holder_history.py` | Pencatatan dust/kohort, resample 4 jam, sparkline |
-| `meteora_screener.py` | Listing DLMM 24h+1h, enrich holder, filter dust >2% |
+| `meteora_screener.py` | Listing DLMM 24h+1h, enrich holder, filter dust ≥1% |
 | `silent_accumulation.py` | Fetch holder Helius/GMGN, klasifikasi real/dust/mid |
 | `solscan_holders.py` | Kalkulasi wallet_depth (bucket & tier) |
 | `helius_holders.py` | Scan Holder Khusus satu token + bar chart |
