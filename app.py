@@ -10,14 +10,14 @@ import matplotlib.pyplot as plt
 import streamlit as st
 
 from helius_holders import depth_bar_chart, scan_token_holders
-from holder_history import (DUST_CAUTION_PCT, DUST_LIMIT_PCT, dust_flag,
+from holder_history import (DUST_DANGER_PCT, dust_flag,
                             history_for_mint, ingest_many,
                             load_holder_history, merge_points, resample_4h,
                             seed_from_status, sparkline_svg)
 from links import HOLDER_PAGE_PATH, external_links_html, pool_links_html
 from meteora_screener import scan_meteora
-from silent_accumulation import DUST_LIMIT_USD, analyze_token
-from silent_status import load_silent_status, publish_silent_status
+from holder_analysis import DUST_LIMIT_USD, analyze_token
+from holder_status import load_holder_status, publish_holder_status
 from trending_ui import (render_trending, run_screen, run_screen_h1,
                          run_screen_hrhr, run_screen_hrhr_h1)
 from watchlist import (add_to_watchlist, get_last_push_error, load_watchlist,
@@ -44,8 +44,7 @@ h1, h2, h3, h4, h5, h6 {color:#000000;}
 .dust-badge {display:inline-block;padding:.28rem .58rem;border-radius:8px;
  font-size:.78rem;font-weight:800}
 .dust-ok {background:#14532d;color:#dcfce7}
-.dust-caution {background:#854d0e;color:#fef9c3}
-.dust-limit {background:#7f1d1d;color:#fee2e2}
+.dust-danger {background:#7f1d1d;color:#fee2e2}
 .dust-none {background:#e2e8f0;color:#000000}
 .watchlist-row {display:flex;align-items:center;padding:.75rem 0;
  border-bottom:1px solid #cbd5e1;}
@@ -68,7 +67,7 @@ h1, h2, h3, h4, h5, h6 {color:#000000;}
 </style>
 <div class="hero"><h1>🧮 Wallet Depth</h1>
 <p>Fokus analisa holder: dust wallet (≤ $10) sebagai jejak dump.
-≥ 1% MC hati-hati · &gt; 2% MC limit. Grafik 4 jam + Scan Meteora DLMM.</p></div>
+≥ 1% MC = BAHAYA. Grafik 4 jam + Scan Meteora DLMM.</p></div>
 """, unsafe_allow_html=True)
 
 
@@ -111,10 +110,9 @@ def _wib(ts):
 def _dust_badge_html(flag: dict) -> str:
     level = flag.get("level") or "unknown"
     label = str(flag.get("label") or "—")
-    if flag.get("rising") and level in ("caution", "limit"):
+    if flag.get("rising") and level == "danger":
         label = f"{label} ↑"
-    cls = {"ok": "dust-ok", "caution": "dust-caution",
-           "limit": "dust-limit"}.get(level, "dust-none")
+    cls = {"ok": "dust-ok", "danger": "dust-danger"}.get(level, "dust-none")
     return f'<span class="dust-badge {cls}">{html.escape(label)}</span>'
 
 
@@ -322,7 +320,7 @@ def _render_meteora_scan() -> None:
     st.caption(
         "Top DLMM 24 jam (`active_tvl ≥ 1000`, `fee_active_tvl_ratio ≥ 250`) "
         "dibandingkan 1 jam (`fee_active_tvl_ratio ≥ 1`). Pool 24 jam yang "
-        "masih muncul di 1 jam **tetap ditampilkan**. Dust holder **> 2% MC** "
+        "masih muncul di 1 jam **tetap ditampilkan**. Dust holder **≥ 1% MC (BAHAYA)** "
         "disembunyikan. Tombol kanan: Meteora + HawkFi."
     )
     if st.button("🌊 Scan Meteora + Holder", type="primary",
@@ -352,7 +350,7 @@ def _render_meteora_scan() -> None:
     fetched = int(result.get("fetched") or 0)
     if fetched:
         st.caption(f"{len(rows)} pool ditampilkan · {hidden} disembunyikan "
-                   f"(dust > {DUST_LIMIT_PCT:.0f}% MC) · listing {fetched}.")
+                   f"(dust ≥ {DUST_DANGER_PCT:.0f}% MC = BAHAYA) · listing {fetched}.")
     if not rows:
         if result:
             st.info("Tidak ada pool yang lolos filter dust (atau listing kosong).")
@@ -422,19 +420,37 @@ def _render_meteora_scan() -> None:
 # ---------------------------------------------------------------------------
 watchlist = load_watchlist()
 force_status = bool(st.session_state.pop("status_force_refresh", False))
-silent_status = load_silent_status(force_refresh=force_status)
-status_tokens = silent_status.get("tokens") or {}
-history_store = seed_from_status(load_holder_history(), silent_status)
+holder_status = load_holder_status(force_refresh=force_status)
+status_tokens = holder_status.get("tokens") or {}
+history_store = seed_from_status(load_holder_history(), holder_status)
 
 st.subheader("📋 Watchlist — Analisa Holder (Dust)")
 st.caption(
     "Ringkasan dust: jumlah wallet dan **berapa % marketcap** yang mereka "
-    f"pegang. ≥ {DUST_CAUTION_PCT:.0f}% MC = hati-hati · "
-    "> 2% MC = limit/DUMP (dust nambah pesat = jejak distribusi). "
+    f"pegang. ≥ {DUST_DANGER_PCT:.0f}% MC = BAHAYA "
+    "(dust nambah pesat = jejak distribusi). "
     f"Ambang dust: ${DUST_LIMIT_USD:.0f}. "
-    f"Terakhir scan: {_wib(silent_status.get('updated_at'))}. "
+    f"Terakhir scan: {_wib(holder_status.get('updated_at'))}. "
     "Grafik kecil = dust % MC tiap 4 jam."
 )
+
+if watchlist and not status_tokens:
+    st.warning(
+        "Belum ada data holder dari cron (`holder_status.json` di branch "
+        "`holder-live` kosong/tidak ada). Pastikan secret **HELIUS_API_KEY** "
+        "dan **GITHUB_TOKEN/GH_TOKEN** terpasang di GitHub Actions, atau klik "
+        "**Scan holder watchlist** untuk mengisi data sekarang.",
+        icon="⚠️")
+elif watchlist:
+    _missing = [str((m or {}).get("symbol") or ca[:6]).upper()
+                for ca, m in watchlist.items()
+                if not ((status_tokens.get(ca) or {}).get("holders") or {}
+                        ).get("total_fetched")]
+    if _missing:
+        st.info("Holder belum terambil untuk: " + ", ".join(_missing[:8])
+                + (" …" if len(_missing) > 8 else "")
+                + ". Cron akan mencoba lagi ±15 menit; atau scan manual.",
+                icon="ℹ️")
 
 if st.button("🔄 Scan holder watchlist", type="primary",
              use_container_width=True):
@@ -449,8 +465,7 @@ if st.button("🔄 Scan holder watchlist", type="primary",
             addrs = list((cohort.get("balances") or {}).keys())
             analyses[mint] = analyze_token(
                 mint, (meta or {}).get("symbol") or "?",
-                max_wallets=2000, max_trade_pages=1, fetch_market=True,
-                include_flow=False, cohort_addrs=addrs)
+                max_wallets=2000, fetch_market=True, cohort_addrs=addrs)
         except Exception:  # noqa: BLE001
             analyses[mint] = None
         done += 1
@@ -461,7 +476,7 @@ if st.button("🔄 Scan holder watchlist", type="primary",
           if isinstance(item, dict)}
     if ok:
         ingest_many(ok, store=history_store)
-        publish_silent_status(ok, watchlist, push=False)
+        publish_holder_status(ok, watchlist, push=False)
     st.session_state["status_force_refresh"] = True
     st.rerun()
 
@@ -562,8 +577,8 @@ with st.expander("➕ Tambah token", expanded=not bool(watchlist)):
 
 st.divider()
 st.subheader("🔍 Temukan Token")
-st.caption("Scan Trending/Degen menampilkan listing GMGN (tanpa kolom "
-           "holder 12 jam). Analisa dust ada di Scan Meteora dan watchlist.")
+st.caption("Scan Trending/Degen menampilkan listing GMGN. "
+           "Analisa dust ada di Scan Meteora dan watchlist.")
 
 st.markdown("""
 <style>

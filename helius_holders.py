@@ -28,7 +28,7 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 
 from core import get_helius_keys, get_market
-from silent_accumulation import fetch_holders_helius
+from holder_analysis import fetch_holders_helius
 from solscan_holders import wallet_depth
 
 # Default batas holder yang dianalisis saat scan satu token. Lebih besar dari

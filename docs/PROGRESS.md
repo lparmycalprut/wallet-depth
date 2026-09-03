@@ -5,7 +5,7 @@
 - UI fokus dust: watchlist ringkasan jumlah + % MC, badge 1%/2%, sparkline
   4 jam; Trending/Degen tanpa kolom holder/12 jam; CVD tanpa Holder Analytic.
 - Halaman baru `pages/5_🧮_Holder.py`. History di `holder_history.json`.
-- Scan Meteora DLMM 24h+1h, hide dust > 2% MC, shortcut Meteora + HawkFi.
+- Scan Meteora DLMM 24h+1h, hide dust ≥ 1% MC, shortcut Meteora + HawkFi.
 - Kohort Crab+Fish di-freeze 4 jam (sisa token, bukan USD).
 
 ## 2026-08-19 — Port sinyal SMART SEROK + watchlist bersih
@@ -276,3 +276,18 @@
   dipatok 60 halaman — ikut `max_wallets` (batas keras 200 halaman).
 - Tes: `tests/test_holder_page.py` (AppTest) + kasus baru di
   `tests/test_holder_history.py`.
+
+# 2026-09-03 — Bersih-bersih silent accumulation + ambang dust tunggal
+
+- Ambang dust hanya satu: **≥ 1% MC = BAHAYA** (sekaligus filter hide
+  Scan Meteora). Ambang 2% / label HATI-HATI / DUMP dihapus.
+- Hapus sisa silent accumulation: `fetch_12h_flow`, `detect_silent`,
+  filter SILENT/LP/PUMPDUMP, `enrich_rows`, bridge
+  `scripts/realtime_reversal.py`. Rename `silent_accumulation.py` →
+  `holder_analysis.py`, `silent_status.py` → `holder_status.py`
+  (`holder_status.json`, ref `holder-live`), `scripts/scan_silent.py` →
+  `scripts/scan_holders.py`.
+- Scanner cron exit non-zero bila semua token 0 holder / publish gagal;
+  dashboard menampilkan peringatan bila data cron kosong.
+- Workflow perlu env `GITHUB_TOKEN` + `HELIUS_API_KEY` (harus di-commit
+  manual — GitHub App tanpa permission `workflows`).

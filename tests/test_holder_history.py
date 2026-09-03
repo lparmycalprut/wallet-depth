@@ -17,19 +17,19 @@ def _h(addr, usd, balance=None, is_wallet=True):
 
 
 class DustFlagTest(unittest.TestCase):
-    def test_caution_at_one_percent(self):
+    def test_danger_at_one_percent(self):
         flag = hh.dust_flag(1.0)
-        self.assertEqual(flag["level"], "caution")
-        self.assertEqual(flag["label"], "HATI-HATI")
-        self.assertFalse(flag["hide"])
-
-    def test_limit_above_two_percent(self):
-        flag = hh.dust_flag(2.01)
-        self.assertEqual(flag["level"], "limit")
+        self.assertEqual(flag["level"], "danger")
+        self.assertEqual(flag["label"], "BAHAYA")
         self.assertTrue(flag["hide"])
+        self.assertTrue(hh.should_hide_dust(1.0))
         self.assertTrue(hh.should_hide_dust(2.01))
-        self.assertFalse(hh.should_hide_dust(2.0))
-        self.assertFalse(hh.should_hide_dust(1.5))
+
+    def test_ok_below_one_percent(self):
+        flag = hh.dust_flag(0.99)
+        self.assertEqual(flag["level"], "ok")
+        self.assertFalse(flag["hide"])
+        self.assertFalse(hh.should_hide_dust(0.5))
 
     def test_rising_compared_to_previous(self):
         flag = hh.dust_flag(1.4, 1.1)

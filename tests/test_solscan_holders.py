@@ -109,7 +109,7 @@ class WalletDepthTest(unittest.TestCase):
 
 class HolderSourceResolveTest(unittest.TestCase):
     def test_resolve_priority(self):
-        import silent_accumulation as sa
+        import holder_analysis as sa
         with mock.patch("core.get_holder_source", return_value="helius"):
             self.assertEqual(sa.resolve_holder_source(None), "helius")
         with mock.patch("core.get_holder_source", return_value="gmgn"):
@@ -121,18 +121,18 @@ class HolderSourceResolveTest(unittest.TestCase):
 
     def test_fetch_snapshot_helius_first_then_gmgn_fallback(self):
         """auto/helius → Helius dulu (dengan depth); kosong → GMGN."""
-        import silent_accumulation as sa
+        import holder_analysis as sa
 
         # 1) Helius berisi data → snapshot helius + depth, GMGN tak dipanggil
         with mock.patch("core.get_helius_keys", return_value=["KEY"]):
-            with mock.patch("silent_accumulation.fetch_holders_helius"
+            with mock.patch("holder_analysis.fetch_holders_helius"
                             ) as helius_mock:
                 helius_mock.return_value = {"holders": [
                     {"address": "X", "usd_value": 1.0, "is_wallet": True}],
                     "source": "helius"}
                 with mock.patch("solscan_holders.wallet_depth",
                                 return_value={"buckets": []}) as depth_mock:
-                    with mock.patch("silent_accumulation.fetch_holders"
+                    with mock.patch("holder_analysis.fetch_holders"
                                     ) as gmgn_mock:
                         snap, depth = sa._fetch_holders_snapshot(
                             "MINT", "auto", max_wallets=10, timeout=20,
@@ -152,10 +152,10 @@ class HolderSourceResolveTest(unittest.TestCase):
 
         # 2) Helius kosong → fallback fetch_holders (GMGN)
         with mock.patch("core.get_helius_keys", return_value=["KEY"]):
-            with mock.patch("silent_accumulation.fetch_holders_helius",
+            with mock.patch("holder_analysis.fetch_holders_helius",
                             return_value={"holders": [], "source": "helius",
                                           "error": "kosong"}):
-                with mock.patch("silent_accumulation.fetch_holders"
+                with mock.patch("holder_analysis.fetch_holders"
                                 ) as gmgn_mock:
                     gmgn_mock.return_value = {"holders": [{"address": "G"}],
                                               "source": "gmgn"}
@@ -166,9 +166,9 @@ class HolderSourceResolveTest(unittest.TestCase):
                     self.assertIsNone(depth)
 
         # 3) source=gmgn paksa → Helius tidak disentuh sama sekali
-        with mock.patch("silent_accumulation.fetch_holders_helius"
+        with mock.patch("holder_analysis.fetch_holders_helius"
                         ) as helius_mock:
-            with mock.patch("silent_accumulation.fetch_holders") as gmgn_mock:
+            with mock.patch("holder_analysis.fetch_holders") as gmgn_mock:
                 gmgn_mock.return_value = {"holders": [], "source": "gmgn"}
                 snap, depth = sa._fetch_holders_snapshot(
                     "MINT", "gmgn", max_wallets=10, timeout=20,
@@ -179,9 +179,9 @@ class HolderSourceResolveTest(unittest.TestCase):
 
         # 4) tanpa Helius key → langsung GMGN
         with mock.patch("core.get_helius_keys", return_value=[]):
-            with mock.patch("silent_accumulation.fetch_holders_helius"
+            with mock.patch("holder_analysis.fetch_holders_helius"
                             ) as helius_mock:
-                with mock.patch("silent_accumulation.fetch_holders"
+                with mock.patch("holder_analysis.fetch_holders"
                                 ) as gmgn_mock:
                     gmgn_mock.return_value = {"holders": [{"address": "G"}],
                                               "source": "gmgn"}
@@ -193,41 +193,37 @@ class HolderSourceResolveTest(unittest.TestCase):
                     helius_mock.assert_not_called()
 
     def test_analyze_token_attaches_depth_for_helius(self):
-        import silent_accumulation as sa
+        import holder_analysis as sa
         snapshot = {"holders": [
                         {"address": "W1", "usd_value": 500.0,
                          "is_wallet": True, "amount_pct": 0.0},
                         {"address": "W2", "usd_value": 5.0,
                          "is_wallet": True, "amount_pct": 0.0}],
                     "source": "helius"}
-        with mock.patch("silent_accumulation.get_market",
+        with mock.patch("holder_analysis.get_market",
                         return_value={"symbol": "TST",
                                       "price_usd": 0.01,
                                       "marketcap": 100_000}):
-            with mock.patch("silent_accumulation._fetch_holders_snapshot",
+            with mock.patch("holder_analysis._fetch_holders_snapshot",
                             return_value=(snapshot, {
                                 "buckets": [], "tiers": []})):
-                with mock.patch("silent_accumulation.fetch_12h_flow",
-                                return_value={"source": "helius"}):
-                    analysis = sa.analyze_token(
-                        "MINT", "TST", holder_source="helius")
+                analysis = sa.analyze_token(
+                    "MINT", "TST", holder_source="helius")
         self.assertEqual(analysis["holders"]["source"], "helius")
         self.assertIn("depth", analysis["holders"])
         self.assertNotIn("api", analysis["holders"])
         self.assertAlmostEqual(analysis["holders"]["real_count"], 1)
 
     def test_analyze_token_gmgn_source_has_no_depth(self):
-        import silent_accumulation as sa
+        import holder_analysis as sa
         snapshot = {"holders": [{"address": "W1", "usd_value": 50.0,
                                  "is_wallet": True}],
                     "source": "gmgn", "pages": 1}
-        with mock.patch("silent_accumulation._fetch_holders_snapshot",
+        with mock.patch("holder_analysis._fetch_holders_snapshot",
                         return_value=(snapshot, None)):
-            with mock.patch("silent_accumulation.fetch_12h_flow",
-                            return_value={"source": "gmgn"}):
-                analysis = sa.analyze_token(
-                    "MINT", "TST", market_cap=1000,
-                    holder_source="gmgn")
+            analysis = sa.analyze_token(
+                "MINT", "TST", market_cap=1000,
+                holder_source="gmgn")
         self.assertEqual(analysis["holders"]["source"], "gmgn")
         self.assertNotIn("depth", analysis["holders"])
 

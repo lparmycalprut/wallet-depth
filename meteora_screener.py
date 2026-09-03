@@ -206,7 +206,7 @@ def enrich_pools(rows: list[dict], *, max_wallets: int = 2000,
     """Fetch holder per mint unik, tempel ``analysis`` ke setiap baris pool."""
     if not rows:
         return rows
-    from silent_accumulation import analyze_token
+    from holder_analysis import analyze_token
     from holder_history import load_holder_history
 
     store = load_holder_history()
@@ -228,8 +228,7 @@ def enrich_pools(rows: list[dict], *, max_wallets: int = 2000,
         try:
             return mint, analyze_token(
                 mint, symbol, mc, max_wallets=max_wallets,
-                max_trade_pages=1, fetch_market=True, price_usd=price,
-                include_flow=False, cohort_addrs=addrs,
+                fetch_market=True, price_usd=price, cohort_addrs=addrs,
                 extra_pools=mint_pools.get(mint) or []), None
         except Exception as exc:  # noqa: BLE001
             return mint, None, str(exc)
@@ -270,7 +269,7 @@ def enrich_pools(rows: list[dict], *, max_wallets: int = 2000,
 
 
 def hide_dust_limit(rows: list[dict]) -> tuple[list[dict], int]:
-    """Buang pool dust > 2% MC. Return (kept, n_hidden)."""
+    """Buang pool dust ≥ 1% MC. Return (kept, n_hidden)."""
     kept, hidden = [], 0
     for row in rows or []:
         pct = ((row.get("analysis") or {}).get("holders") or {}).get("dust_pct_mc")
@@ -285,7 +284,7 @@ def hide_dust_limit(rows: list[dict]) -> tuple[list[dict], int]:
 
 def scan_meteora(*, max_wallets: int = 2000, workers: int = 6,
                  progress=None, timeout: int = 25) -> dict:
-    """Listing + holder + filter dust > 2% MC."""
+    """Listing + holder + filter dust ≥ 1% MC."""
     rows, error = fetch_listing(timeout=timeout)
     fetched = len(rows)
     if rows:

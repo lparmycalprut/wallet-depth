@@ -1,7 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Silent accumulation (12 jam) & holder dust analysis untuk Wallet Depth.
-
-Modul pengganti seluruh engine sinyal lama (reversal / serok / telegram):
+"""Analisis holder (real vs dust) untuk Wallet Depth.
 
 1. ``fetch_holders`` / ``classify_holders``
    Membaca daftar holder token. Sumber utama = **Helius DAS**
@@ -10,51 +8,24 @@ Modul pengganti seluruh engine sinyal lama (reversal / serok / telegram):
    Memisahkan **real holder > $10 value** dengan **dust holder (0 < value
    <= $10)**, dan menghitung berapa % total marketcap yang dipegang dust.
 
-2. ``fetch_12h_flow``
-   Mengambil trade 12 jam terakhir dari **Helius Enhanced API** (pool
-   DexScreener) dengan fallback GMGN ``token_trades``, lalu menghitung
-   net flow USD, jumlah wallet yang mengakumulasi, dan perubahan harga —
-   dasar deteksi **silent accumulation**.
-
-3. ``analyze_token``
-   Gabungan dua data di atas untuk satu token (dipakai scanning Trending,
-   Degen, watchlist, dan cron).
+2. ``analyze_token``
+   Holder snapshot + klasifikasi + mid-tier/kohort untuk satu token
+   (dipakai watchlist, Scan Meteora, halaman Holder, dan cron).
 """
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
 from core import get_market, load_config
 
 # --- Ambang default -----------------------------------------------------------
 DUST_LIMIT_USD = 10.0          # "> $10 value" = real holder; sisanya dust
-SILENT_WINDOW_HOURS = 12       # window pengecekan 12 jam terakhir
-SILENT_NET_USD_MIN = 50.0      # net flow minimum agar layak disebut akumulasi
-SILENT_ACC_WALLETS_MIN = 3     # minimal wallet net-beli
-SILENT_PRICE_CHG_MAX = 5.0     # harga boleh bergerak maksimal ±5% (diam-diam)
-SILENT_BOT_SHARE_MAX = 0.35    # share volume mev/bot maksimal
 DEFAULT_MAX_WALLETS = 3000     # batas holder yang dianalisis per token
-DEFAULT_MAX_TRADE_PAGES = 8    # maks 800 trade / 12 jam per token
 HOLDER_PAGE_LIMIT = 1000
-
-# --- Filter holder depth ------------------------------------------------------
-FILTER_SILENT = "SILENT"
-FILTER_LP = "LP"
-FILTER_PUMPDUMP = "PUMPDUMP"
-FILTER_OPTIONS = (FILTER_SILENT, FILTER_LP, FILTER_PUMPDUMP)
-
-# LP: dust > 50% dari real (jumlah wallet) DAN real+dust hanya < 0.5% marketcap
-# (sisa supply dipegang LP/pool — hampir tidak ada holder organik).
-LP_DUST_TO_REAL_MIN = 0.5
-LP_HOLDERS_MC_MAX_PCT = 0.5
-# PUMPDUMP: real hanya < 20% dari dust (dominan dust, real sangat sedikit).
-PUMPDUMP_REAL_MAX = 0.2
 
 HOLDER_URL = "https://gmgn.ai/vas/api/v1/token_holders/sol/{ca}"
 
 # --- Sumber data holder -------------------------------------------------------
-# Helius adalah sumber utama SEMUA data (holder + flow) — data on-chain
+# Helius adalah sumber utama data holder — data on-chain
 # lengkap dan lancar. GMGN hanya dipakai untuk listing Trending/Degen dan
 # sebagai fallback darurat bila Helius tidak tersedia. Solscan sudah
 # dilepas total dari pipeline.
@@ -75,7 +46,6 @@ NOISE_TAGS = frozenset(("sandwich_bot", "mev_bot", "mev"))
 # membanjiri GMGN dalam beberapa detik.
 _CACHE_TTL = 600
 _HOLDER_CACHE: dict[str, dict] = {}
-_FLOW_CACHE: dict[str, dict] = {}
 
 
 def _float(value, default=0.0) -> float:
@@ -475,55 +445,6 @@ def classify_holders(snapshot: dict | None, market_cap: float = 0.0,
     }
 
 
-def _fetch_swaps_12h(ca: str, from_ts: int, now_ts: int,
-                     max_pages: int) -> tuple[list, str]:
-    """Ambil swap 12 jam: Helius dulu, fallback GMGN bila tidak tersedia.
-
-    Return ``(swaps, source)`` di mana source = "helius" atau "gmgn".
-    """
-    from cvd import fetch_gmgn_swaps, fetch_swaps
-    from core import get_helius_keys, select_dexscreener_pair
-
-    # 1) Helius Enhanced API (pool DexScreener) — sumber utama.
-    try:
-        keys = get_helius_keys()
-    except Exception:  # noqa: BLE001
-        keys = []
-    if keys:
-        pool = ""
-        try:
-            import requests as _requests
-            r = _requests.get(
-                f"https://api.dexscreener.com/latest/dex/tokens/{ca}",
-                timeout=15)
-            pairs = (r.json() or {}).get("pairs") or []
-            pair = select_dexscreener_pair(pairs, ca)
-            if pair:
-                pool = str(pair.get("pairAddress") or "")
-        except Exception:  # noqa: BLE001
-            pool = ""
-        if pool:
-            try:
-                swaps, _sig, _ts, _hit = fetch_swaps(
-                    keys[0], pool, ca,
-                    stop_ts=from_ts, max_pages=max_pages,
-                    sleep=0.0, use_gmgn=False,
-                    from_ts=from_ts, to_ts=now_ts)
-            except Exception:  # noqa: BLE001
-                swaps = []
-            if swaps:
-                return swaps, "helius"
-
-    # 2) Fallback darurat: GMGN token_trades.
-    try:
-        swaps, _sig, _ts, _hit = fetch_gmgn_swaps(
-            ca, from_ts=from_ts, to_ts=now_ts, max_pages=max_pages,
-            page_limit=100, sleep=0.0)
-    except Exception:  # noqa: BLE001
-        swaps = []
-    return swaps, "gmgn"
-
-
 def resolve_holder_source(requested: str | None = None) -> str:
     """Prioritas sumber holder: param → config/env ``holder_source`` → auto.
 
@@ -583,226 +504,17 @@ def _fetch_holders_snapshot(ca: str, source: str, *, max_wallets: int,
                          price_usd=price_usd), None
 
 
-def fetch_12h_flow(ca: str, *, now_ts: int | None = None,
-                   hours: float = SILENT_WINDOW_HOURS,
-                   max_pages: int = DEFAULT_MAX_TRADE_PAGES) -> dict:
-    """Net flow 12 jam terakhir: Helius Enhanced API dulu (fallback GMGN).
-
-    Mengembalikan buy/sell USD, net, jumlah wallet akumulator vs
-    distributor, bot share (hanya terisi dari tag GMGN; Helius tidak
-    memberi tag), dan price change dari trade pertama/terakhir.
-    Trade di luar window disaring ulang secara lokal (GMGN kadang
-    mengabaikan param from/to). Field ``source`` menunjukkan sumber data
-    (helius/gmgn).
-    """
-    ca = str(ca or "").strip()
-    now_ts = int(now_ts or time.time())
-    from_ts = now_ts - int(float(hours) * 3600)
-    cache_key = f"{ca}:{now_ts // 300}:{hours}:{max_pages}"
-    cached = _FLOW_CACHE.get(cache_key)
-    if cached and time.time() - cached.get("analyzed_at", 0) < _CACHE_TTL:
-        return dict(cached)
-
-    swaps, source = _fetch_swaps_12h(ca, from_ts, now_ts, max_pages)
-
-    buy_usd = sell_usd = buy_sol = sell_sol = 0.0
-    buy_tx = sell_tx = 0
-    per_wallet: dict[str, dict] = {}
-    prices: list[tuple[int, float]] = []
-    bot_usd = 0.0
-    for swap in swaps or []:
-        if not isinstance(swap, (list, tuple)) or len(swap) < 7:
-            continue
-        side = str(swap[0]).lower()
-        ts = _int(swap[2])
-        if side not in ("buy", "sell") or ts <= 0:
-            continue
-        if not (from_ts <= ts <= now_ts):  # filter lokal
-            continue
-        wallet = str(swap[3] or "").strip()
-        usd = _float(swap[5])
-        sol = _float(swap[1])
-        tags = set(str(tag).strip().lower() for tag in (swap[6] or []))
-        if side == "buy":
-            buy_usd += usd
-            buy_sol += sol
-            buy_tx += 1
-        else:
-            sell_usd += usd
-            sell_sol += sol
-            sell_tx += 1
-        if wallet:
-            slot = per_wallet.setdefault(wallet, {"buy_usd": 0.0,
-                                                  "sell_usd": 0.0,
-                                                  "buy_tx": 0, "sell_tx": 0})
-            slot[f"{side}_usd"] += usd
-            slot[f"{side}_tx"] += 1
-        price = _float(swap[4])
-        if price > 0:
-            prices.append((ts, price))
-        if tags & NOISE_TAGS:
-            bot_usd += usd
-
-    accumulators = [w for w, s in per_wallet.items()
-                    if s["buy_usd"] > s["sell_usd"] and s["buy_usd"] > 0]
-    distributors = [w for w, s in per_wallet.items()
-                    if s["sell_usd"] > s["buy_usd"] and s["sell_usd"] > 0]
-    flat = [w for w, s in per_wallet.items()
-            if w not in accumulators and w not in distributors]
-
-    volume = buy_usd + sell_usd
-    price_start = price_end = None
-    if prices:
-        prices.sort(key=lambda item: item[0])
-        price_start = prices[0][1]
-        price_end = prices[-1][1]
-    price_chg = None
-    if price_start and price_end and price_start > 0:
-        price_chg = (price_end / price_start - 1.0) * 100.0
-    result = {
-        "window_hours": float(hours),
-        "from_ts": from_ts,
-        "to_ts": now_ts,
-        "analyzed_at": int(now_ts),
-        "buy_usd": round(buy_usd, 2),
-        "sell_usd": round(sell_usd, 2),
-        "net_usd": round(buy_usd - sell_usd, 2),
-        "volume_usd": round(volume, 2),
-        "buy_tx": buy_tx,
-        "sell_tx": sell_tx,
-        "wallets": len(per_wallet),
-        "accumulators": len(accumulators),
-        "distributors": len(distributors),
-        "flat_wallets": len(flat),
-        "bot_usd": round(bot_usd, 2),
-        "bot_share": (bot_usd / volume) if volume > 0 else 0.0,
-        "price_start": price_start,
-        "price_end": price_end,
-        "price_chg_pct": round(price_chg, 4) if price_chg is not None else None,
-        "trades": len(swaps or []),
-        "source": source,
-    }
-    _FLOW_CACHE[cache_key] = result
-    return result
-
-
-def holder_filter_match(analysis: dict | None, name: str) -> bool:
-    """Satu filter holder depth terhadap hasil ``analyze_token``.
-
-    - ``SILENT``  : silent accumulation 12 jam terdeteksi.
-    - ``LP``      : dust > 50% dari real (count) DAN real+dust hanya
-      < 0.5% marketcap (supply hampir semua di LP/pool).
-    - ``PUMPDUMP``: real hanya < 20% dari dust (dominan dust).
-    """
-    if not isinstance(analysis, dict):
-        return False
-    name = str(name or "").strip().upper()
-    if name == FILTER_SILENT:
-        return bool((analysis.get("silent") or {}).get("silent"))
-    holders = analysis.get("holders") or {}
-    real = _float(holders.get("real_count"))
-    dust = _float(holders.get("dust_count"))
-    if name == FILTER_LP:
-        real_mc = holders.get("real_pct_mc")
-        dust_mc = holders.get("dust_pct_mc")
-        if (real <= 0 or dust <= 0 or real_mc is None or dust_mc is None):
-            return False
-        total_mc = _float(real_mc) + _float(dust_mc)
-        return (dust > LP_DUST_TO_REAL_MIN * real
-                and total_mc < LP_HOLDERS_MC_MAX_PCT)
-    if name == FILTER_PUMPDUMP:
-        if dust <= 0:
-            return False
-        return real < PUMPDUMP_REAL_MAX * dust
-    return False
-
-
-def filter_counts(rows: list[dict]) -> dict:
-    """Jumlah token per filter (untuk menu filter)."""
-    return {name: sum(1 for row in (rows or [])
-                      if holder_filter_match((row or {}).get("analysis"), name))
-            for name in FILTER_OPTIONS}
-
-
-def apply_filters(rows: list[dict], filters=None) -> list[dict]:
-    """Terapkan daftar filter (AND); kosong = semua baris."""
-    selected = [str(item).strip().upper() for item in (filters or [])
-                if item and str(item).strip().upper() in FILTER_OPTIONS]
-    if not selected:
-        return list(rows or [])
-    result = []
-    for row in rows or []:
-        if all(holder_filter_match((row or {}).get("analysis"), name)
-               for name in selected):
-            result.append(row)
-    return result
-
-
-def detect_silent(flow: dict | None, holders: dict | None = None,
-                  *, net_min: float | None = None,
-                  acc_wallets_min: int | None = None,
-                  price_max: float | None = None,
-                  bot_share_max: float | None = None) -> dict:
-    """Deteksi silent accumulation 12 jam: net-beli, harga belum bergerak.
-
-    Tidak ada sinyal / alert — hanya klasifikasi deskriptif untuk tabel.
-    """
-    flow = flow or {}
-    net = _float(flow.get("net_usd"))
-    acc = _int(flow.get("accumulators"))
-    price_chg = flow.get("price_chg_pct")
-    bot_share = _float(flow.get("bot_share"))
-    net_min = float(net_min if net_min is not None else SILENT_NET_USD_MIN)
-    acc_min = int(acc_wallets_min or SILENT_ACC_WALLETS_MIN)
-    price_max = float(price_max if price_max is not None
-                      else SILENT_PRICE_CHG_MAX)
-    bot_max = float(bot_share_max if bot_share_max is not None
-                    else SILENT_BOT_SHARE_MAX)
-
-    price_ok = price_chg is None or abs(_float(price_chg)) <= price_max
-    checks = {
-        "net_positive": net >= net_min,
-        "wallets_accumulating": acc >= acc_min,
-        "price_silent": price_ok,
-        "bot_share_low": bot_share <= bot_max,
-    }
-    silent = all(checks.values())
-    if silent:
-        strength = ("kuat" if (net >= net_min * 10 and acc >= acc_min * 3)
-                    else "sedang" if (net >= net_min * 3 and acc >= acc_min * 2)
-                    else "lemah")
-        reason = (f"net +${net:,.0f} dari {acc} wallet · harga "
-                  f"{_float(price_chg):+.1f}% / 12j · bot "
-                  f"{bot_share * 100:.0f}%")
-    else:
-        strength = "tidak"
-        reason = "net-belum-memenuhi"
-    return {
-        "silent": bool(silent),
-        "strength": strength,
-        "reason": reason,
-        "checks": checks,
-        "net_usd": net,
-        "accumulators": acc,
-        "price_chg_pct": price_chg,
-        "bot_share": round(bot_share, 4),
-    }
-
-
 def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
                   *, dust_limit: float | None = None,
                   max_wallets: int | None = None,
-                  max_trade_pages: int | None = None,
                   fetch_market: bool = True,
                   timeout: int = 20,
                   price_usd: float = 0.0,
                   holder_source: str | None = None,
-                  include_flow: bool = True,
                   extra_pools=None,
                   cohort_addrs=None) -> dict:
-    """Analisis holder (real vs dust + mid-tier) ± flow 12 jam.
+    """Analisis holder (real vs dust + mid-tier + kohort).
 
-    ``include_flow=False`` melewati fetch swap 12 jam (fokus dust/kohort).
     ``extra_pools``: address LP tambahan (mis. pool Meteora) yang dibuang
     dari hitungan wallet. ``cohort_addrs``: address Crab+Fish yang di-freeze
     pada scan sebelumnya — saldonya dikembalikan di ``holders.cohort_now``.
@@ -810,7 +522,6 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
     ca = str(ca or "").strip()
     dust_limit = float(DUST_LIMIT_USD if dust_limit is None else dust_limit)
     max_wallets = int(max_wallets or DEFAULT_MAX_WALLETS)
-    max_trade_pages = int(max_trade_pages or DEFAULT_MAX_TRADE_PAGES)
     source = resolve_holder_source(holder_source)
     market = {}
     if fetch_market:
@@ -845,15 +556,6 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
     except Exception:  # noqa: BLE001 - analisa holder jangan gagal total
         holder_stats.setdefault("mid", {"count": 0, "balances": {}})
         holder_stats.setdefault("cohort_now", {})
-    if include_flow:
-        flow = fetch_12h_flow(ca, max_pages=max_trade_pages)
-        silent = detect_silent(flow, holder_stats)
-    else:
-        flow = {}
-        silent = {"silent": False, "strength": "tidak",
-                  "reason": "holder-only", "checks": {},
-                  "net_usd": 0.0, "accumulators": 0,
-                  "price_chg_pct": None, "bot_share": 0.0}
     return {
         "ca": ca,
         "symbol": str(symbol or market.get("symbol") or "?"),
@@ -861,59 +563,5 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
         "price": price,
         "analyzed_at": int(time.time()),
         "holders": holder_stats,
-        "flow": flow,
-        "silent": silent,
     }
 
-
-def enrich_rows(rows: list[dict], *, dust_limit: float | None = None,
-                max_wallets: int | None = None,
-                max_trade_pages: int | None = None,
-                workers: int = 6,
-                progress=None,
-                holder_source: str | None = HOLDER_SOURCE_GMGN) -> list[dict]:
-    """Perkaya daftar listing (trending/degen) dengan analisis holder+12j.
-
-    ``progress`` opsional: callable ``(index, total, label)``.
-    Setiap baris gagal analisis tetap tampil dengan ``analysis=None``.
-    Default ``holder_source="gmgn"`` — listing massal memang hanya tersedia
-    dari GMGN; per-baris tetap fallback Helius otomatis bila GMGN kosong.
-    """
-    out = list(rows or ())
-    if not out:
-        return out
-    total = len(out)
-    workers = max(1, min(int(workers), 8))
-
-    def _job(idx_row):
-        idx, row = idx_row
-        try:
-            analysis = analyze_token(
-                row.get("ca") or "", row.get("symbol") or "?",
-                float(row.get("mc") or 0),
-                dust_limit=dust_limit, max_wallets=max_wallets,
-                max_trade_pages=max_trade_pages, fetch_market=False,
-                price_usd=float(row.get("price") or 0),
-                holder_source=holder_source)
-        except Exception:  # noqa: BLE001 - satu token gagal jangan batalkan
-            analysis = None
-        return idx, analysis
-
-    results: dict[int, dict | None] = {}
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(_job, item): item[0] for item in enumerate(out)}
-        done = 0
-        for future in as_completed(futures):
-            idx, analysis = future.result()
-            results[idx] = analysis
-            done += 1
-            if progress:
-                try:
-                    bar_label = (f"{done}/{total} · "
-                                 f"{(out[idx] or {}).get('symbol') or '?'}")
-                    progress(done, total, bar_label)
-                except Exception:
-                    pass
-    for idx, analysis in results.items():
-        out[idx]["analysis"] = analysis
-    return out

@@ -1,4 +1,4 @@
-"""Coverage listing Meteora 24h/1h + filter dust > 2% MC."""
+"""Coverage listing Meteora 24h/1h + filter dust ≥ 1% MC."""
 from __future__ import annotations
 
 import unittest
@@ -60,12 +60,12 @@ class MergePoolsTest(unittest.TestCase):
 
 
 class HideDustTest(unittest.TestCase):
-    def test_hides_over_two_percent_keeps_rest(self):
+    def test_hides_at_one_percent_keeps_rest(self):
         rows = [
             {"ca": "A", "dust_pct_mc": 2.4,
              "analysis": {"holders": {"dust_pct_mc": 2.4}}},
-            {"ca": "B", "dust_pct_mc": 1.5,
-             "analysis": {"holders": {"dust_pct_mc": 1.5}}},
+            {"ca": "B", "dust_pct_mc": 0.5,
+             "analysis": {"holders": {"dust_pct_mc": 0.5}}},
             {"ca": "C", "dust_pct_mc": None, "analysis": None},
         ]
         kept, hidden = ms.hide_dust_limit(rows)

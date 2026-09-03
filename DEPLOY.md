@@ -9,26 +9,20 @@
 - **Tidak ada** `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` — Telegram sudah
   dihapus.
 
-Watchlist di halaman utama menarik `silent_status.json` dari ref
-`silent-live` (bukan commit `main`). Tombol **Scan watchlist sekarang**
-menjalankan analisis lokal 12 jam + holder depth. Chart 📈 membuka halaman
-CVD historic (tanpa sinyal).
+Watchlist di halaman utama menarik `holder_status.json` dari ref
+`holder-live` (bukan commit `main`). Tombol **Scan holder watchlist**
+menjalankan analisis holder lokal. Chart 📈 membuka halaman CVD.
 
 ## GitHub Actions
 
-Workflow `.github/workflows/daily-effort.yml` berjalan setiap 15 menit
-(`*/15 * * * *`). Karena GitHub App tidak bisa mengubah file workflow
-(butuh permission `workflows`), workflow lama tetap memanggil
-`python scripts/realtime_reversal.py` yang kini adalah adapter ke
-`scripts/scan_silent.py` (silent-accumulation 12 jam + holder dust).
-Ubah manual workflow menjadi `python scripts/scan_silent.py` bila
-dibutuhkan; env `TELEGRAM_*` boleh dihapus dari secrets.
+Workflow `.github/workflows/daily-effort.yml` ("Holder Dust Scanner")
+berjalan setiap 15 menit dan memanggil `python scripts/scan_holders.py`.
 
 Langkah setelah scan:
 
-1. Analisis per token: holder GMGN (paginasi, max 3000 wallet), net flow
-   12 jam (max 8 halaman trade), klasifikasi real (>$10) vs dust.
-2. Publish snapshot `silent_status.json` ke branch `silent-live`
+1. Analisis per token: holder Helius DAS (fallback GMGN, max 3000
+   wallet), klasifikasi real (>$10) vs dust, dust % MC, mid-tier, kohort.
+2. Publish snapshot `holder_status.json` ke branch `holder-live`
    (dibuat otomatis pada publish pertama) agar dashboard Streamlit
    membaca data yang sama dengan cron tanpa commit ke `main`.
 
@@ -39,7 +33,22 @@ Langkah setelah scan:
      contents: write
    ```
 
-3. Tidak ada kirim Telegram.
+   dan env step scan harus diberi token + key Helius, kalau tidak
+   publish gagal dan watchlist di dashboard kosong (`—`):
 
-Jalankan manual lewat **Actions → Silent Accumulation 12H Scanner → Run
-workflow**.
+   ```yaml
+   env:
+     GITHUB_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+     HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+   ```
+
+   Secret repo yang perlu diset: **`HELIUS_API_KEY`** (wajib — GMGN
+   diblokir dari runner Actions) dan opsional `GH_TOKEN` (PAT) bila
+   token bawaan tidak cukup. Scanner exit non-zero (run merah) bila
+   semua token 0 holder atau publish gagal.
+
+> GitHub App tidak bisa mengubah file workflow (butuh permission
+> `workflows`) — perubahan workflow harus di-commit manual oleh pemilik
+> repo.
+
+Jalankan manual lewat **Actions → Holder Dust Scanner → Run workflow**.

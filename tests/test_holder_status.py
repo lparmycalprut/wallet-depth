@@ -1,11 +1,11 @@
-"""Coverage snapshot silent-status (tanpa sinyal/Telegram)."""
+"""Coverage snapshot holder-status."""
 from __future__ import annotations
 
 import json
 import tempfile
 import unittest
 
-import silent_status as ss
+import holder_status as ss
 
 
 ANALYSIS = {
@@ -18,8 +18,7 @@ ANALYSIS = {
                     "dust_pct_mc": 0.5},
     },
     "MintBad": {"symbol": "BAD", "marketcap": 0, "price": 0,
-                "analyzed_at": None, "holders": {}, "flow": {},
-                "silent": {}},
+                "analyzed_at": None, "holders": {}},
 }
 
 
@@ -33,8 +32,7 @@ class SnapshotStatusTest(unittest.TestCase):
         token = status["tokens"]["Mint123"]
         self.assertEqual(token["holders"]["dust_count"], 150)
         self.assertIn("history", token)
-        self.assertNotIn("silent", token)
-        self.assertNotIn("flow", token)
+        self.assertNotIn("cohort_now", token["holders"])
 
 
 class ParseStatusTest(unittest.TestCase):
