@@ -52,6 +52,25 @@ class ClassifyHoldersTest(unittest.TestCase):
         self.assertEqual(stats["real_count"], 0)
 
 
+class AnalyzeSnapshotTest(unittest.TestCase):
+    def test_analyze_builds_bounded_alert_balances_and_tracks_missing_wallet(self):
+        holder = _holder("DUST", 5.0)
+        holder["balance"] = 50.0
+        snapshot = {"holders": [holder], "source": "helius",
+                    "truncated": False, "pages": 1}
+        market = {"marketcap": 10_000, "price_usd": 0.1,
+                  "pair_addresses": []}
+        with mock.patch.object(sa, "get_market", return_value=market), \
+                mock.patch.object(sa, "_fetch_holders_snapshot",
+                                  return_value=(snapshot, None)):
+            result = sa.analyze_token(
+                "MINT", "TST", tracked_wallet_addrs=["MISSING"])
+        alert_snapshot = result["holders"]["wallet_snapshot"]
+        self.assertEqual(alert_snapshot["balances"]["DUST"], 50.0)
+        self.assertEqual(alert_snapshot["balances"]["MISSING"], 0.0)
+        self.assertEqual(alert_snapshot["dust"], ["DUST"])
+
+
 class HeliusFallbackTest(unittest.TestCase):
     def setUp(self):
         sa._HOLDER_CACHE.clear()

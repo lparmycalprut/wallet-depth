@@ -26,6 +26,26 @@ class ScanWatchlistTest(unittest.TestCase):
     def test_empty_watchlist_returns_empty(self):
         self.assertEqual(scan_watchlist({}), {})
 
+    def test_uses_passed_history_and_tracks_alert_wallets(self):
+        store = {"tokens": {"GOOD": {
+            "cohort": {"balances": {"COHORT": 5.0}},
+            "alert_state": {
+                "baseline": {"balances": {"BASE": 1.0}},
+                "rolling": {"balances": {"ROLL": 2.0}},
+            },
+        }}}
+        with mock.patch("scripts.scan_holders.load_holder_history") as load, \
+                mock.patch("scripts.scan_holders.analyze_token",
+                           return_value={"ca": "GOOD"}) as analyze:
+            out = scan_watchlist(
+                {"GOOD": {"symbol": "GD"}}, workers=1,
+                history_store=store)
+        self.assertEqual(out, {"GOOD": {"ca": "GOOD"}})
+        load.assert_not_called()
+        kwargs = analyze.call_args.kwargs
+        self.assertEqual(kwargs["cohort_addrs"], ["COHORT"])
+        self.assertEqual(set(kwargs["tracked_wallet_addrs"]), {"BASE", "ROLL"})
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
@@ -90,3 +110,46 @@ class MainExitCodeTest(unittest.TestCase):
                 mock.patch.object(mod, "publish_holder_status",
                                   return_value={}):
             self.assertEqual(mod.main(["--no-push"]), 0)
+
+    def test_alert_evaluation_happens_before_latest_snapshot_ingest(self):
+        import scripts.scan_holders as mod
+        store = {"tokens": {}}
+        analyses = {"A": {"symbol": "AA", "analyzed_at": 100,
+                           "holders": {"total_fetched": 1,
+                                       "dust_pct_mc": 0.4}}}
+        order = []
+
+        def process(items, supplied_store):
+            self.assertIs(supplied_store, store)
+            self.assertEqual(items, analyses)
+            order.append("alert")
+            supplied_store["alert_evaluated"] = True
+            return []
+
+        def ingest(items, **kwargs):
+            self.assertTrue(kwargs["store"]["alert_evaluated"])
+            order.append("ingest")
+            return kwargs["store"]
+
+        def publish(*_args, **kwargs):
+            self.assertTrue(kwargs["history_store"]["alert_evaluated"])
+            order.append("publish")
+            return {"updated_at": 100}
+
+        with mock.patch.object(mod, "load_watchlist",
+                               return_value={"A": {"symbol": "AA"}}), \
+                mock.patch.object(mod, "load_holder_status",
+                                  return_value={"tokens": {}}), \
+                mock.patch.object(mod, "load_holder_history",
+                                  return_value=store), \
+                mock.patch.object(mod, "seed_from_status",
+                                  side_effect=lambda current, _status: current), \
+                mock.patch.object(mod, "scan_watchlist",
+                                  return_value=analyses), \
+                mock.patch.object(mod, "process_holder_alerts",
+                                  side_effect=process), \
+                mock.patch.object(mod, "ingest_many", side_effect=ingest), \
+                mock.patch.object(mod, "publish_holder_status",
+                                  side_effect=publish):
+            self.assertEqual(mod.main(["--no-push"]), 0)
+        self.assertEqual(order, ["alert", "ingest", "publish"])

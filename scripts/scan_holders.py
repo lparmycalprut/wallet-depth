@@ -5,11 +5,13 @@ Untuk setiap token watchlist:
 
 1. ambil daftar holder (Helius DAS dulu — ``auto`` — fallback GMGN),
 2. pisahkan real vs dust, hitung dust % marketcap + mid-tier Crab/Fish,
-3. catat **titik perubahan** ke ``holder_history.json`` (grafik 4 jam) —
+3. evaluasi alert Telegram terhadap snapshot rolling ~4 jam dan snapshot
+   awal **sebelum** snapshot terbaru ditulis,
+4. catat **titik perubahan** ke ``holder_history.json`` (grafik 4 jam) —
    cron sengaja memakai ``ingest_many(..., detail=False)`` sehingga rekaman
    detail hasil scan FULL manual (``baseline`` / ``latest_detail``) milik
    user tidak pernah ditimpa,
-4. tulis ``holder_status.json`` lokal & publish ke branch ``holder-live``.
+5. tulis ``holder_status.json`` lokal & publish ke branch ``holder-live``.
 
 Dijalankan GitHub Actions tiap ~15 menit.
 """
@@ -30,6 +32,8 @@ from holder_history import ingest_many, load_holder_history, seed_from_status
 from holder_analysis import analyze_token
 from holder_status import (last_publish_result, load_holder_status,
                            publish_holder_status)
+from telegram_alerts import (process_holder_alerts, send_test_alert,
+                             tracked_wallet_addresses)
 from watchlist import load_watchlist
 
 
@@ -49,19 +53,21 @@ def scan_watchlist(watchlist: dict, *, dust_limit: float | None = None,
         return analyses
     workers = max(1, min(int(workers), 8))
 
-    store = load_holder_history()
+    store = (history_store if isinstance(history_store, dict)
+             else load_holder_history())
 
     def _job(item):
         mint, meta = item
         try:
-            cohort = ((store.get("tokens") or {}).get(mint) or {}).get(
-                "cohort") or {}
+            token_slot = ((store.get("tokens") or {}).get(mint) or {})
+            cohort = token_slot.get("cohort") or {}
             addrs = list((cohort.get("balances") or {}).keys())
+            tracked = tracked_wallet_addresses(token_slot.get("alert_state"))
             analysis = analyze_token(
                 mint, (meta or {}).get("symbol") or "?",
                 dust_limit=dust_limit, max_wallets=max_wallets,
                 fetch_market=True, holder_source=holder_source,
-                cohort_addrs=addrs)
+                cohort_addrs=addrs, tracked_wallet_addrs=tracked)
             return mint, analysis, None
         except Exception as exc:  # noqa: BLE001
             return mint, None, str(exc)
@@ -97,7 +103,20 @@ def main(argv=None) -> int:
                              "(auto = Helius dulu, fallback GMGN)")
     parser.add_argument("--no-push", action="store_true",
                         help="hanya tulis status lokal")
+    parser.add_argument("--telegram-test", action="store_true",
+                        help="kirim satu pesan test Telegram, lalu scan normal")
     args = parser.parse_args(argv)
+
+    if args.telegram_test:
+        delivery = send_test_alert()
+        if delivery.get("ok"):
+            print("Telegram test alert: terkirim")
+        elif delivery.get("skipped"):
+            print("Telegram test alert: dilewati (credential belum tersedia)")
+        else:
+            print(f"WARN: Telegram test alert gagal: "
+                  f"{delivery.get('error') or 'unknown error'}",
+                  file=sys.stderr)
 
     watchlist = load_watchlist()
     try:
@@ -125,13 +144,21 @@ def main(argv=None) -> int:
         history_store=store)
 
     if analyses:
+        # Rules read the old anchors first. process_holder_alerts mutates only
+        # alert state; ingest_many writes that state together with the newest
+        # history point afterwards.
+        deliveries = process_holder_alerts(analyses, store)
         # detail=False: cron hanya menambah titik perubahan; baseline
         # (detail scan FULL pertama dari halaman Holder) tetap utuh.
         history = ingest_many(analyses, store=store, detail=False)
         status = publish_holder_status(
-            analyses, watchlist, push=not args.no_push)
+            analyses, watchlist, push=not args.no_push,
+            history_store=history)
+        sent_alerts = sum(1 for item in deliveries
+                          if (item.get("delivery") or {}).get("ok"))
         print(f"Holder scan selesai: analyzed={len(analyses)} "
               f"history={len((history or {}).get('tokens') or {})} "
+              f"alerts={sent_alerts}/{len(deliveries)} "
               f"updated={status.get('updated_at')} "
               f"durasi={time.monotonic() - started:.1f}s")
         empty = 0

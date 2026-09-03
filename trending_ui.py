@@ -9,7 +9,9 @@ import streamlit as st
 from gmgn_screener import (screen, screen_hrhr, screen_hrhr_h1,
                            screen_trending_h1)
 from links import CVD_PAGE_PATH, external_links_html
-from watchlist import add_to_watchlist
+from watchlist import (add_many_to_watchlist, add_to_watchlist, address_key,
+                       load_watchlist, normalize_address,
+                       watchlist_address_keys)
 
 st.markdown("""
 <style>
@@ -74,6 +76,48 @@ def _token_identity_html(symbol, ca, row=None):
     )
 
 
+def merge_scan_rows(*groups) -> list[dict]:
+    """Merge screener groups, preserving order and deduplicating addresses."""
+    merged: list[dict] = []
+    seen: set[str] = set()
+    for group in groups:
+        for raw in group or []:
+            if not isinstance(raw, dict):
+                continue
+            ca = normalize_address(raw.get("ca") or raw.get("mint"))
+            key = address_key(ca)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            row = dict(raw)
+            row["ca"] = ca
+            merged.append(row)
+    return merged
+
+
+def filter_watchlisted_rows(rows, watchlist: dict | None) -> list[dict]:
+    """Hide watchlisted mints and duplicate scan rows on every render."""
+    hidden = watchlist_address_keys(watchlist)
+    return [row for row in merge_scan_rows(rows)
+            if address_key(row.get("ca")) not in hidden]
+
+
+def add_all_scan_results(rows, *, source: str) -> dict:
+    """Model-facing helper kept separate from Streamlit for unit tests."""
+    return add_many_to_watchlist(rows, source=source)
+
+
+def _add_all_feedback(result: dict) -> str:
+    added = int(result.get("added") or 0)
+    skipped = int(result.get("skipped") or 0)
+    duplicate = int(result.get("duplicates") or 0)
+    message = (f"{added} token berhasil ditambahkan; "
+               f"{skipped} dilewati karena sudah ada di watchlist.")
+    if duplicate:
+        message += f" {duplicate} duplikat hasil scan diabaikan."
+    return message
+
+
 def run_screen(force=False, key="trending_rows", **_kwargs):
     if force or key not in st.session_state:
         try:
@@ -118,10 +162,32 @@ def run_screen_hrhr_h1(force=False, key="degen_h1_rows", **_kwargs):
     return st.session_state[key], st.session_state[key + "_error"]
 
 
-def render_trending(rows, *, key_prefix="listing", source="trending"):
-    """Tabel listing GMGN: token, MC, 24h — tanpa kolom holder/12 jam."""
+def render_trending(rows, *, key_prefix="listing", source="trending",
+                    watchlist=None):
+    """Tabel listing GMGN, selalu menyembunyikan token watchlist."""
+    rows = list(rows or [])
+    current_watchlist = (load_watchlist() if watchlist is None else watchlist)
+    visible_rows = filter_watchlisted_rows(rows, current_watchlist)
+
+    if st.button("⭐ Add All to Watchlist",
+                 key=f"add-all-{key_prefix}", use_container_width=True):
+        if not rows:
+            st.info("Hasil scan kosong; tidak ada token untuk ditambahkan.")
+        else:
+            result = add_all_scan_results(rows, source=source)
+            feedback = _add_all_feedback(result)
+            if result.get("added"):
+                st.success(feedback)
+                # Semua address valid yang terlihat sekarang sudah masuk model.
+                visible_rows = []
+            else:
+                st.info(feedback)
+
     if not rows:
         st.info("Tidak ada token dari respons GMGN saat ini.")
+        return
+    if not visible_rows:
+        st.info("Semua token hasil scan sudah ada di watchlist.")
         return
 
     header_cols = st.columns([1.8, 1.0, 1.0, 0.55, 0.55])
@@ -142,7 +208,7 @@ def render_trending(rows, *, key_prefix="listing", source="trending"):
     st.markdown('<hr style="margin:0.4rem 0;border-color:#cbd5e1;">',
                 unsafe_allow_html=True)
 
-    for index, row in enumerate(rows):
+    for index, row in enumerate(visible_rows):
         ca = str(row.get("ca") or "")
         symbol = str(row.get("symbol") or "?").upper()
         mc = _compact(row.get("mc"))

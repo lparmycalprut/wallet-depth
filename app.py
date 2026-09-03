@@ -18,8 +18,8 @@ from links import HOLDER_PAGE_PATH, external_links_html, pool_links_html
 from meteora_screener import scan_meteora
 from holder_analysis import DUST_LIMIT_USD, analyze_token
 from holder_status import load_holder_status, publish_holder_status
-from trending_ui import (render_trending, run_screen, run_screen_h1,
-                         run_screen_hrhr, run_screen_hrhr_h1)
+from trending_ui import (merge_scan_rows, render_trending, run_screen,
+                         run_screen_h1, run_screen_hrhr, run_screen_hrhr_h1)
 from watchlist import (add_to_watchlist, get_last_push_error, load_watchlist,
                        remove_from_watchlist)
 
@@ -606,28 +606,24 @@ if selected_tab == DEGEN_TAB:
     if st.button("🔥 Scan Degen", use_container_width=True):
         rows_24, error_24 = run_screen_hrhr(force=True)
         rows_1, error_1 = run_screen_hrhr_h1(force=True)
-        combined = rows_24 + [row for row in rows_1
-                              if row.get("ca") not in
-                              {item.get("ca") for item in rows_24}]
+        combined = merge_scan_rows(rows_24, rows_1)
         st.session_state["degen_combined"] = combined
         st.session_state["degen_error"] = error_24 or error_1
     if st.session_state.get("degen_error"):
         st.error(st.session_state["degen_error"])
     render_trending(st.session_state.get("degen_combined", []),
-                    key_prefix="degen", source="degen")
+                    key_prefix="degen", source="degen", watchlist=watchlist)
 else:
     if st.button("🔎 Scan Trending", use_container_width=True):
         rows_24, error_24 = run_screen(force=True)
         rows_1, error_1 = run_screen_h1(force=True)
-        combined = rows_24 + [row for row in rows_1
-                              if row.get("ca") not in
-                              {item.get("ca") for item in rows_24}]
+        combined = merge_scan_rows(rows_24, rows_1)
         st.session_state["trend_combined"] = combined
         st.session_state["trend_error"] = error_24 or error_1
     if st.session_state.get("trend_error"):
         st.error(st.session_state["trend_error"])
     render_trending(st.session_state.get("trend_combined", []),
-                    key_prefix="trend", source="trending")
+                    key_prefix="trend", source="trending", watchlist=watchlist)
 
 _render_meteora_scan()
 _render_helius_holder_scan()

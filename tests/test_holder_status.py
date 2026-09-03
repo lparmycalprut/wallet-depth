@@ -34,6 +34,30 @@ class SnapshotStatusTest(unittest.TestCase):
         self.assertIn("history", token)
         self.assertNotIn("cohort_now", token["holders"])
 
+    def test_alert_state_persists_but_transient_wallet_snapshot_is_removed(self):
+        analyses = {"Mint123": dict(ANALYSIS["Mint123"])}
+        analyses["Mint123"]["holders"] = {
+            **ANALYSIS["Mint123"]["holders"],
+            "wallet_snapshot": {"ts": 200, "dust_pct_mc": 0.5,
+                                "balances": {"A": 2.0}, "dust": ["A"]},
+        }
+        history = {"tokens": {"Mint123": {
+            "alert_state": {
+                "baseline": {"ts": 100, "dust_pct_mc": 0.2,
+                             "balances": {"A": 1.0}, "dust": ["A"]},
+                "rolling": {"ts": 200, "dust_pct_mc": 0.5,
+                            "balances": {"A": 2.0}, "dust": ["A"]},
+                "sent_event_ids": ["event-1"],
+            },
+            "points": [], "cohort": {},
+        }}}
+        token = ss.snapshot_status(
+            analyses, history_store=history)["tokens"]["Mint123"]
+        self.assertNotIn("wallet_snapshot", token["holders"])
+        self.assertEqual(token["alert_state"]["sent_event_ids"], ["event-1"])
+        self.assertEqual(
+            token["alert_state"]["baseline"]["balances"]["A"], 1.0)
+
 
 class ParseStatusTest(unittest.TestCase):
     def test_accepts_payload_with_tokens(self):

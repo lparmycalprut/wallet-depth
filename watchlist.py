@@ -9,6 +9,7 @@ add/remove is also committed straight to the repo so it truly persists.
 import base64
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime
@@ -21,6 +22,30 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WATCHLIST_PATH = os.path.join(BASE_DIR, "watchlist.json")
 PENDING_PATH = os.path.join(BASE_DIR, "watchlist_pending.json")
 GITHUB_REPO = "lparmycalprut/wallet-depth"
+
+# Solana/Base58 mint addresses are case-sensitive.  EVM addresses are not,
+# so only a syntactically valid 0x address is case-folded.
+_EVM_ADDRESS_RE = re.compile(r"0x[0-9a-f]{40}", re.IGNORECASE)
+
+
+def normalize_address(address: str) -> str:
+    """Trim an address and canonicalize formats that are case-insensitive."""
+    normalized = str(address or "").strip()
+    if _EVM_ADDRESS_RE.fullmatch(normalized):
+        return normalized.lower()
+    return normalized
+
+
+def address_key(address: str) -> str:
+    """Comparison key for a contract/mint address."""
+    return normalize_address(address)
+
+
+def watchlist_address_keys(watchlist: dict | None) -> set[str]:
+    """Normalized non-empty address keys in *watchlist*."""
+    return {key for key in (address_key(raw) for raw in (watchlist or {}))
+            if key}
+
 
 # ---- short TTL cache for load_watchlist (avoid hammering API each rerun) ---
 _CACHE_TTL = 15  # seconds
@@ -498,8 +523,18 @@ def save_watchlist(wl: dict, action: str = "update") -> bool:
 def _journal(op: dict) -> None:
     """Append an op to the pending journal; an add cancels earlier removes
     for the same CA and vice versa (last op wins)."""
-    pending = [p for p in _load_pending() if p.get("ca") != op.get("ca")]
-    pending.append(op)
+    _journal_many([op])
+
+
+def _journal_many(ops: list[dict]) -> None:
+    """Journal multiple operations with one atomic write (last op wins)."""
+    if not ops:
+        return
+    incoming = {address_key(op.get("ca")): op for op in ops
+                if address_key(op.get("ca"))}
+    pending = [op for op in _load_pending()
+               if address_key(op.get("ca")) not in incoming]
+    pending.extend(incoming.values())
     _save_pending(pending)
 
 
@@ -534,6 +569,9 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
     how far the current price is above/below the average holder buy
     price. Cards show it as an "avg cost" stat.
     """
+    ca = normalize_address(ca)
+    if not ca:
+        return False
     if (not symbol or symbol == "?") and source == "manual":
         symbol = fetch_token_symbol(ca)
     entry = {"symbol": symbol, "note": note,
@@ -570,6 +608,86 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
     return saved
 
 
+def add_many_to_watchlist(rows, *, source: str = "") -> dict:
+    """Add unique scan rows in one local save/GitHub push.
+
+    Each row must contain ``ca`` (``mint`` is accepted as a fallback) and may
+    contain ``symbol``. Existing and input-duplicate addresses are not
+    written again. The returned counters describe local durable intent; a
+    failed remote push remains protected by the existing pending journal.
+    """
+    rows = list(rows or [])
+    watchlist = dict(_load_and_merge(force_refresh=False) or {})
+    known = watchlist_address_keys(watchlist)
+    seen: set[str] = set()
+    operations: list[dict] = []
+    added_addresses: list[str] = []
+    skipped = duplicates = invalid = 0
+
+    for raw in rows:
+        if not isinstance(raw, dict):
+            invalid += 1
+            continue
+        ca = normalize_address(raw.get("ca") or raw.get("mint"))
+        key = address_key(ca)
+        if not key:
+            invalid += 1
+            continue
+        if key in seen:
+            duplicates += 1
+            continue
+        seen.add(key)
+        if key in known:
+            skipped += 1
+            continue
+
+        symbol = str(raw.get("symbol") or "?").strip() or "?"
+        entry = {
+            "symbol": symbol,
+            "note": str(raw.get("note") or ""),
+            "added": datetime.now().strftime("%Y-%m-%d"),
+        }
+        row_source = str(source or raw.get("source") or "").strip()
+        if row_source:
+            entry["source"] = row_source
+        for field in ("down_ath", "avg_cost"):
+            if raw.get(field) is not None:
+                try:
+                    entry[field] = float(raw[field])
+                except (TypeError, ValueError):
+                    pass
+
+        watchlist[ca] = entry
+        known.add(key)
+        added_addresses.append(ca)
+        operations.append({"op": "add", "ca": ca, **entry})
+
+    if not operations:
+        return {
+            "added": 0, "skipped": skipped, "duplicates": duplicates,
+            "invalid": invalid, "saved": None, "addresses": [],
+        }
+
+    # Journal before any write/network operation, matching add_to_watchlist's
+    # durability guarantee while avoiding N journal writes and N commits.
+    _journal_many(operations)
+    try:
+        import streamlit as st
+        pending = st.session_state.setdefault("watchlist_auto_refresh_cas", set())
+        pending.update(added_addresses)
+    except Exception:
+        pass
+
+    label = f"add {len(added_addresses)} token dari {source or 'scanner'}"
+    saved = save_watchlist(watchlist, label)
+    request_immediate_scan()
+    return {
+        "added": len(added_addresses), "skipped": skipped,
+        "duplicates": duplicates, "invalid": invalid,
+        "saved": bool(saved), "addresses": added_addresses,
+    }
+
+
 def request_immediate_scan() -> bool:
     """Dispatch the scanner workflow so a new CA is fetched within seconds."""
     tok = _github_token()
@@ -593,6 +711,9 @@ def request_immediate_scan() -> bool:
 
 
 def remove_from_watchlist(ca: str) -> bool:
+    ca = normalize_address(ca)
+    if not ca:
+        return False
     _journal({"op": "remove", "ca": ca})
     wl = _load_and_merge(force_refresh=False)
     meta = wl.pop(ca, None) or {}
