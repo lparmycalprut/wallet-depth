@@ -42,6 +42,7 @@ def _holders_for_status(holders: dict | None) -> dict:
     """Buang peta address (berat) dari snapshot dashboard."""
     holders = dict(holders or {})
     holders.pop("cohort_now", None)
+    holders.pop("wallet_snapshot", None)
     mid = holders.get("mid")
     if isinstance(mid, dict):
         holders["mid"] = {
@@ -59,11 +60,13 @@ def snapshot_status(analyses: dict | None,
     try:
         from holder_history import (compact_history_for_status,
                                     load_holder_history)
+        from telegram_alerts import compact_alert_state
         store = history_store if history_store is not None \
             else load_holder_history()
     except Exception:
         store = {"tokens": {}}
         compact_history_for_status = lambda *_a, **_k: []  # noqa: E731
+        compact_alert_state = lambda *_a, **_k: {}  # noqa: E731
     tokens = {}
     stamps = []
     for mint, result in (analyses or {}).items():
@@ -80,6 +83,8 @@ def snapshot_status(analyses: dict | None,
             "holders": _holders_for_status(result.get("holders") or {}),
             "history": compact_history_for_status(store, mint),
             "cohort": hist_slot.get("cohort") or {},
+            "alert_state": compact_alert_state(
+                hist_slot.get("alert_state") or {}),
         }
         tokens[mint] = token
         if token["analyzed_at"]:
@@ -295,9 +300,11 @@ def load_holder_status(force_refresh: bool = False) -> dict:
 
 def publish_holder_status(analyses: dict,
                           watchlist: dict | None = None,
-                          *, push: bool = True) -> dict:
+                          *, push: bool = True,
+                          history_store: dict | None = None) -> dict:
     """Tulis status lokal + (opsional) publish ke GitHub."""
-    status = snapshot_status(analyses, watchlist)
+    status = snapshot_status(analyses, watchlist,
+                             history_store=history_store)
     atomic_write_json(STATUS_PATH, status, indent=2)
     _CACHE["data"] = dict(status)
     _CACHE["ts"] = time.time()

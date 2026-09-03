@@ -2,7 +2,8 @@
 
 Dashboard token Solana. Fokus: **analisa holder dust** (jumlah + % MC,
 grafik 4 jam, kohort Crab+Fish) dan **Scan Meteora DLMM**. Tidak ada
-sinyal, tidak ada silent accumulation / flow 12 jam, tidak ada Telegram.
+silent accumulation / flow 12 jam; Telegram hanya dipakai cron untuk alert
+perubahan holder dust.
 
 ## Sumber kebenaran
 
@@ -20,8 +21,10 @@ sinyal, tidak ada silent accumulation / flow 12 jam, tidak ada Telegram.
 - `helius_holders.py`: Scan Holder Khusus satu token.
 - `holder_status.py`: snapshot `holder_status.json` → ref `holder-live`
   (ikut `history` 4 jam).
-- `scripts/scan_holders.py`: cron watchlist, ingest history, publish
-  snapshot; exit non-zero bila 0 holder / publish gagal.
+- `scripts/scan_holders.py`: cron watchlist, evaluasi alert sebelum ingest
+  history, publish snapshot; exit non-zero bila 0 holder / publish gagal.
+- `telegram_alerts.py`: rule dust 4 jam (+0,25 pp dump; -0,50 pp + buyer
+  akumulasi), perubahan ±1 pp dari baseline, dedup, dan transport Telegram.
 - `gmgn_screener.py`: listing Trending/Degen.
 - `pages/5_🧮_Holder.py`: Holder Analytic (di bawah CVD).
 - `pages/4_📊_CVD.py`: CVD harian saja (tanpa Holder Analytic).
@@ -49,5 +52,6 @@ Jalankan:
 ```bash
 python -m unittest discover tests
 python -m py_compile holder_history.py meteora_screener.py \
-  holder_analysis.py holder_status.py scripts/scan_holders.py
+  holder_analysis.py holder_status.py telegram_alerts.py \
+  scripts/scan_holders.py trending_ui.py watchlist.py
 ```

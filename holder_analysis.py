@@ -512,12 +512,15 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
                   price_usd: float = 0.0,
                   holder_source: str | None = None,
                   extra_pools=None,
-                  cohort_addrs=None) -> dict:
+                  cohort_addrs=None,
+                  tracked_wallet_addrs=None) -> dict:
     """Analisis holder (real vs dust + mid-tier + kohort).
 
     ``extra_pools``: address LP tambahan (mis. pool Meteora) yang dibuang
     dari hitungan wallet. ``cohort_addrs``: address Crab+Fish yang di-freeze
     pada scan sebelumnya — saldonya dikembalikan di ``holders.cohort_now``.
+    ``tracked_wallet_addrs`` adalah sampel bounded dari snapshot alert lama;
+    address tersebut tetap dicatat sebagai saldo nol bila sudah menghilang.
     """
     ca = str(ca or "").strip()
     dust_limit = float(DUST_LIMIT_USD if dust_limit is None else dust_limit)
@@ -556,12 +559,26 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
     except Exception:  # noqa: BLE001 - analisa holder jangan gagal total
         holder_stats.setdefault("mid", {"count": 0, "balances": {}})
         holder_stats.setdefault("cohort_now", {})
+
+    analyzed_at = int(time.time())
+    try:
+        from telegram_alerts import build_wallet_snapshot
+        holder_stats["wallet_snapshot"] = build_wallet_snapshot(
+            snapshot.get("holders") or [],
+            dust_pct_mc=holder_stats.get("dust_pct_mc"),
+            dust_limit_usd=dust_limit,
+            tracked_addresses=tracked_wallet_addrs or [],
+            ts=analyzed_at,
+            truncated=bool(snapshot.get("truncated")),
+        )
+    except Exception:  # noqa: BLE001 - alert payload cannot fail analysis
+        holder_stats.setdefault("wallet_snapshot", {})
     return {
         "ca": ca,
         "symbol": str(symbol or market.get("symbol") or "?"),
         "marketcap": mc,
         "price": price,
-        "analyzed_at": int(time.time()),
+        "analyzed_at": analyzed_at,
         "holders": holder_stats,
     }
 

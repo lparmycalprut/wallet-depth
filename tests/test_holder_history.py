@@ -215,6 +215,23 @@ class HistoryStoreTest(unittest.TestCase):
         self.assertIn("MINT", loaded["tokens"])
         self.assertEqual(len(loaded["tokens"]["MINT"]["points"]), 1)
 
+    def test_seed_from_status_restores_alert_state_for_next_cron(self):
+        remote_state = {
+            "baseline": {"ts": 100, "dust_pct_mc": 0.2,
+                         "balances": {"A": 1.0}, "dust": ["A"]},
+            "rolling": {"ts": 200, "dust_pct_mc": 0.4,
+                        "balances": {"A": 2.0}, "dust": ["A"]},
+            "sent_event_ids": ["event-1"],
+        }
+        store = hh.seed_from_status(
+            hh.empty_store(),
+            {"tokens": {"MINT": {"symbol": "TST", "history": [],
+                                  "alert_state": remote_state}}},
+        )
+        restored = store["tokens"]["MINT"]["alert_state"]
+        self.assertEqual(restored["rolling"]["ts"], 200)
+        self.assertEqual(restored["sent_event_ids"], ["event-1"])
+
 
 if __name__ == "__main__":
     unittest.main()

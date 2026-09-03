@@ -574,6 +574,17 @@ def seed_from_status(store: dict, status: dict | None) -> dict:
                 "frozen_at": remote_cohort.get("frozen_at"),
                 "balances": dict(remote_cohort.get("balances") or {}),
             }
+        remote_alert = token.get("alert_state")
+        if isinstance(remote_alert, dict) and remote_alert:
+            try:
+                from telegram_alerts import compact_alert_state
+                local_alert = slot.get("alert_state") or {}
+                remote_ts = _int((remote_alert.get("rolling") or {}).get("ts"))
+                local_ts = _int((local_alert.get("rolling") or {}).get("ts"))
+                if not local_alert or remote_ts >= local_ts:
+                    slot["alert_state"] = compact_alert_state(remote_alert)
+            except Exception:  # noqa: BLE001 - history tetap dapat dipakai
+                pass
     return store
 
 

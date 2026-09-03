@@ -1,8 +1,9 @@
 # Wallet Depth — Holder Analytic (Dust)
 
 Wallet Depth memantau token Solana dan berfokus pada **analisa holder
-dust** sebagai jejak dump, plus **Scan Meteora DLMM**. Semua sinyal
-(silent accumulation 12 jam, reversal, Telegram) sudah dihapus dari UI.
+dust** sebagai jejak dump, plus **Scan Meteora DLMM**. Cron holder dapat
+mengirim alert Telegram khusus perubahan dust; sinyal lama seperti silent
+accumulation 12 jam dan reversal tetap tidak digunakan.
 
 ## Konsep
 
@@ -19,6 +20,18 @@ dust** sebagai jejak dump, plus **Scan Meteora DLMM**. Semua sinyal
 4. **Wallet Depth by Threshold** — Helius DAS `getTokenAccounts`, bucket
    `>$0-$10` … `>$500k` atas wallet murni (LP/pool DexScreener disingkirkan).
    Tier 🦐/🦀/🐟/🐬/🦈 selalu wallet murni.
+5. **Alert Telegram holder dust** — membandingkan `dust_pct_mc` terbaru
+   dengan anchor sekitar 4 jam sebelumnya menggunakan perubahan **poin
+   persentase**:
+   - naik minimal `+0.25` poin → indikasi dump;
+   - turun minimal `-0.50` poin **dan** ada wallet lama yang saldo tokennya
+     meningkat → kemungkinan akumulasi;
+   - berubah minimal `±1.00` poin dari snapshot awal → alert pemeriksaan
+     pergerakan wallet dust (membesar/keluar dust, jual habis/hilang,
+     mengecil/masuk dust, atau wallet dust baru).
+
+   Snapshot saldo dibatasi maksimum 300 wallet per anchor dan event yang
+   sukses dikirim dideduplikasi per bucket 4 jam.
 
 ## Sumber data
 
@@ -53,8 +66,9 @@ Scan Holder Khusus (halaman utama) dan cron butuh `HELIUS_API_KEY`
 | `solscan_holders.py` | Kalkulasi wallet_depth (bucket & tier) |
 | `helius_holders.py` | Scan Holder Khusus satu token + bar chart |
 | `holder_status.py` | Snapshot dashboard (ref `holder-live`) + history ringkas |
-| `scripts/scan_holders.py` | Cron watchlist: holder only, catat history |
-| `trending_ui.py` | Listing Trending/Degen (tanpa analisa holder) |
+| `scripts/scan_holders.py` | Cron watchlist: holder, alert, catat history |
+| `telegram_alerts.py` | Rule dust 4 jam/baseline, dedup, Telegram Bot API |
+| `trending_ui.py` | Listing Trending/Degen + Add All Watchlist |
 | `pages/4_📊_CVD.py` | Chart CVD harian |
 | `pages/5_🧮_Holder.py` | Holder Analytic: dust, grafik 4 jam, kohort |
 
@@ -68,14 +82,17 @@ streamlit run app.py
 Cron GitHub Actions ~15 menit (`.github/workflows/daily-effort.yml`)
 menjalankan `scripts/scan_holders.py`. Snapshot dibaca dari
 `holder_status.json` (ref `holder-live`). Lihat `DEPLOY.md` untuk env
-yang wajib (`HELIUS_API_KEY`, `GITHUB_TOKEN`).
+scanner (`HELIUS_API_KEY`, `GITHUB_TOKEN`) dan setup alert opsional
+(`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`). Tanpa credential Telegram,
+scan tetap berjalan dan pengiriman alert dilewati dengan aman.
 
 ## Pengujian
 
 ```bash
 python -m unittest discover tests
 python -m py_compile holder_history.py meteora_screener.py \
-  holder_analysis.py holder_status.py scripts/scan_holders.py
+  holder_analysis.py holder_status.py telegram_alerts.py \
+  scripts/scan_holders.py trending_ui.py watchlist.py
 ```
 
 Analisis bersifat heuristik dan bukan saran keuangan.

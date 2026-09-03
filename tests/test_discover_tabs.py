@@ -50,6 +50,11 @@ class DiscoverTabPersistenceTest(unittest.TestCase):
         return [button for button in app.button
                 if expected in (button.label or "")][0]
 
+    @staticmethod
+    def _add_all_button(app):
+        return [button for button in app.button
+                if "Add All to Watchlist" in (button.label or "")][0]
+
     def _body(self, app):
         return "\n".join(block.value for block in app.markdown)
 
@@ -58,11 +63,15 @@ class DiscoverTabPersistenceTest(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertEqual(app.segmented_control[0].value, TREND_TAB)
         self.assertIn("Scan Trending", self._scan_button(app).label)
+        self.assertTrue(any("Add All to Watchlist" in (button.label or "")
+                            for button in app.button))
 
     def test_scan_degen_keeps_the_degen_tab_active(self):
         app = AppTest.from_file(APP, default_timeout=30).run()
         app.segmented_control[0].set_value(DEGEN_TAB).run()
         self.assertIn("Scan Degen", self._scan_button(app, "Scan Degen").label)
+        self.assertTrue(any("Add All to Watchlist" in (button.label or "")
+                            for button in app.button))
 
         self._scan_button(app, "Scan Degen").click().run()
 
@@ -72,6 +81,39 @@ class DiscoverTabPersistenceTest(unittest.TestCase):
         self.assertIn("Scan Degen", self._scan_button(app, "Scan Degen").label)
         self.assertIn("$DGN", self._body(app))
         self.assertNotIn("$TRD", self._body(app))
+
+    def test_add_all_empty_scan_shows_feedback_without_model_write(self):
+        app = AppTest.from_file(APP, default_timeout=30).run()
+        with mock.patch("trending_ui.add_many_to_watchlist") as add_many:
+            self._add_all_button(app).click().run()
+        add_many.assert_not_called()
+        self.assertTrue(any("Hasil scan kosong" in node.value
+                            for node in app.info))
+
+    def test_add_all_uses_trending_source_and_shows_count_feedback(self):
+        app = AppTest.from_file(APP, default_timeout=30).run()
+        self._scan_button(app).click().run()
+        result = {"added": 1, "skipped": 0, "duplicates": 0,
+                  "invalid": 0, "saved": True, "addresses": ["TrendMint1111"]}
+        with mock.patch("trending_ui.add_many_to_watchlist",
+                        return_value=result) as add_many:
+            self._add_all_button(app).click().run()
+        add_many.assert_called_once()
+        self.assertEqual(add_many.call_args.kwargs["source"], "trending")
+        self.assertTrue(any("1 token berhasil ditambahkan" in node.value
+                            for node in app.success))
+
+    def test_add_all_uses_degen_source(self):
+        app = AppTest.from_file(APP, default_timeout=30).run()
+        app.segmented_control[0].set_value(DEGEN_TAB).run()
+        self._scan_button(app, "Scan Degen").click().run()
+        result = {"added": 1, "skipped": 0, "duplicates": 0,
+                  "invalid": 0, "saved": True, "addresses": ["DegenMint1111"]}
+        with mock.patch("trending_ui.add_many_to_watchlist",
+                        return_value=result) as add_many:
+            self._add_all_button(app).click().run()
+        add_many.assert_called_once()
+        self.assertEqual(add_many.call_args.kwargs["source"], "degen")
 
     def test_deselecting_keeps_the_last_active_tab(self):
         app = AppTest.from_file(APP, default_timeout=30).run()
