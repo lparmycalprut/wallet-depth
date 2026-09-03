@@ -55,6 +55,13 @@ MID_USD_MAX = 10_000.0           # Fish atas (<= $10k)
 MAX_POINTS = 84                  # 14 hari × 6 bucket 4 jam
 MIN_POINT_GAP_SEC = 8 * 60       # jangan dobel-titik < 8 menit
 
+# Volatilitas harga (konfirmasi alert dust) dari candle hourly GeckoTerminal.
+VOLATILITY_WINDOW_HOURS = 4          # window "4 jam terakhir"
+VOLATILITY_HISTORY_HOURS = 16        # konteks: 16 candle hourly terakhir
+VOLATILITY_MIN_CANDLES = 2           # < 2 close → stddev tidak bermakna
+HIGH_VOLATILITY_STDDEV_PCT = 3.0     # stddev close 4 jam > 3% = pasar liar
+VOLATILITY_STALE_SEC = 2 * 3600      # candle terbaru lebih tua dari ini = basi
+
 # Scan manual (halaman Holder) = FULL: ambil seluruh holder, bukan sampel.
 # Cron hanya mencatat perubahan (titik ringkas), jadi detail hasil scan
 # pertama (``baseline``) tetap tersimpan apa adanya.
@@ -121,6 +128,158 @@ def dust_level_rank(level) -> int:
 def should_hide_dust(dust_pct_mc) -> bool:
     """True bila dust holder memegang ≥ 1% marketcap (BAHAYA)."""
     return bool(dust_flag(dust_pct_mc)["hide"])
+
+
+def _volatility_rows(values) -> dict[int, dict]:
+    """Normalisasi candle hourly (dict atau baris OHLCV) → ``{ts: row}``.
+
+    Baris tanpa timestamp/close yang usable dibuang; harga non-positif dan
+    non-finite diabaikan supaya satu candle rusak tidak menghasilkan stddev
+    ``nan`` yang lalu lolos ke aturan alert.
+    """
+    rows: dict[int, dict] = {}
+    for value in values or []:
+        if isinstance(value, dict):
+            raw = (value.get("ts"), value.get("open"), value.get("high"),
+                   value.get("low"), value.get("close"),
+                   value.get("volume_usd", value.get("volume")))
+        elif isinstance(value, (list, tuple)) and len(value) >= 6:
+            raw = tuple(value[:6])
+        else:
+            continue
+        ts = _float(raw[0], None)
+        close = _float(raw[4], None)
+        if ts is None or ts <= 0 or close is None or close <= 0:
+            continue
+        opening = _float(raw[1], None)
+        high = _float(raw[2], None)
+        low = _float(raw[3], None)
+        volume = _float(raw[5], 0.0) or 0.0
+        rows[int(ts)] = {
+            "ts": int(ts),
+            "open": close if opening is None or opening <= 0 else opening,
+            "high": max(close, high if high is not None and high > 0 else close),
+            "low": min(close, low if low is not None and low > 0 else close),
+            "close": close,
+            "volume_usd": max(0.0, volume),
+        }
+    return rows
+
+
+def _stddev_pct(values, mean: float) -> float | None:
+    """Sample standard deviation (n-1) of *values* as a percent of *mean*."""
+    count = len(values)
+    if count < 2 or mean <= 0:
+        return None
+    variance = sum((value - mean) ** 2 for value in values) / (count - 1)
+    return round((variance ** 0.5) / mean * 100.0, 4)
+
+
+def calculate_volatility_metrics(candles, historical=None, *,
+                                 window_hours: int = VOLATILITY_WINDOW_HOURS,
+                                 history_hours: int = VOLATILITY_HISTORY_HOURS,
+                                 now=None,
+                                 high_volatility_pct: float = HIGH_VOLATILITY_STDDEV_PCT,
+                                 stale_after_sec: int = VOLATILITY_STALE_SEC) -> dict:
+    """Metrik volatilitas harga dari candle hourly (konfirmasi alert dust).
+
+    ``candles`` adalah candle window berjalan (idealnya 4 jam terakhir) dan
+    ``historical`` candle jam-jam sebelumnya (total ~16 candle = konteks
+    beberapa hari). Keduanya boleh dict ``{ts, open, high, low, close,
+    volume_usd}`` atau baris OHLCV mentah GeckoTerminal; timestamp duplikat
+    dihitung sekali.
+
+    Return (semua persentase terhadap harga rata-rata window):
+
+    - ``price_stddev_4h``      : sample stddev close per jam di window 4 jam (%).
+    - ``price_range_4h``       : (high tertinggi − low terendah) / rata-rata (%).
+    - ``intra_hour_volatility``: rata-rata (high−low)/close tiap jam (%),
+      plus ``intra_hour_volatility_max`` untuk jam paling liar.
+    - ``high_volatility``      : True bila ``price_stddev_4h`` > ambang (3%).
+    - ``price_change_4h_pct``  : open jam pertama → close jam terakhir (%).
+    - ``volume_4h``            : total volume USD window 4 jam.
+    - ``history_stddev_pct``   : stddev 16 jam sebagai pembanding.
+    - ``available``            : False bila candle < 2 / harga rata-rata 0 —
+      pemanggil wajib memperlakukannya sebagai "tidak tahu", bukan "tenang".
+    - ``candles_in_window``, ``missing_hours``, ``stale``, ``avg_price_4h``,
+      ``close_price``, ``window_hours``, ``history_hours``, ``anchor_ts``.
+
+    ``now`` opsional: tanpa itu candle terbaru dipakai sebagai jangkar, jadi
+    backfill data lama tetap konsisten. ``stale`` menandakan candle terbaru
+    sudah lebih tua dari ``stale_after_sec`` (sumber data telat/lubang).
+    """
+    # Historical lebih dulu: bila ada timestamp kembar, candle window berjalan
+    # (data yang lebih baru) yang menang.
+    rows = _volatility_rows(historical)
+    rows.update(_volatility_rows(candles))
+    ordered = [rows[ts] for ts in sorted(rows)]
+    window = max(1, int(window_hours or VOLATILITY_WINDOW_HOURS))
+    history = max(window, int(history_hours or VOLATILITY_HISTORY_HOURS))
+    high_threshold = _float(high_volatility_pct, HIGH_VOLATILITY_STDDEV_PCT)
+    empty = {
+        "available": False, "price_stddev_4h": None, "price_range_4h": None,
+        "intra_hour_volatility": None, "intra_hour_volatility_max": None,
+        "high_volatility": False, "price_change_4h_pct": None,
+        "volume_4h": None, "history_stddev_pct": None, "avg_price_4h": None,
+        "close_price": None, "candles_in_window": 0, "candles_total": len(ordered),
+        "missing_hours": window, "stale": False, "anchor_ts": None,
+        "window_hours": window, "history_hours": history,
+        "high_volatility_pct": high_threshold,
+    }
+    if not ordered:
+        return empty
+
+    anchor = _float(now, None)
+    anchor_ts = int(anchor) if anchor is not None else ordered[-1]["ts"]
+    window_from = anchor_ts - window * 3600
+    history_from = anchor_ts - history * 3600
+    in_window = [row for row in ordered if row["ts"] > window_from
+                 and row["ts"] <= anchor_ts]
+    in_history = [row for row in ordered if row["ts"] > history_from
+                  and row["ts"] <= anchor_ts]
+
+    closes = [row["close"] for row in in_window]
+    mean_price = (sum(closes) / len(closes)) if closes else 0.0
+    stddev_pct = _stddev_pct(closes, mean_price)
+    high = max((row["high"] for row in in_window), default=None)
+    low = min((row["low"] for row in in_window), default=None)
+    range_pct = (round((high - low) / mean_price * 100.0, 4)
+                 if high is not None and low is not None and mean_price > 0
+                 else None)
+    intra = [round((row["high"] - row["low"]) / row["close"] * 100.0, 4)
+             for row in in_window if row["close"] > 0 and row["high"] >= row["low"]]
+    change_pct = None
+    if in_window and in_window[0]["open"] > 0:
+        change_pct = round((in_window[-1]["close"] - in_window[0]["open"])
+                           / in_window[0]["open"] * 100.0, 4)
+    history_closes = [row["close"] for row in in_history]
+    history_mean = (sum(history_closes) / len(history_closes)) if history_closes else 0.0
+    distinct_hours = len({row["ts"] // 3600 for row in in_window})
+    available = len(closes) >= max(2, int(VOLATILITY_MIN_CANDLES)) and mean_price > 0
+    return {
+        "available": bool(available),
+        "price_stddev_4h": stddev_pct if available else None,
+        "price_range_4h": range_pct if available else None,
+        "intra_hour_volatility": (round(sum(intra) / len(intra), 4)
+                                  if available and intra else None),
+        "intra_hour_volatility_max": (max(intra) if available and intra else None),
+        "high_volatility": bool(available and stddev_pct is not None
+                                and stddev_pct > high_threshold),
+        "price_change_4h_pct": change_pct if available else None,
+        "volume_4h": round(sum(row["volume_usd"] for row in in_window), 2),
+        "history_stddev_pct": _stddev_pct(history_closes, history_mean),
+        "avg_price_4h": round(mean_price, 12) if mean_price > 0 else None,
+        "close_price": in_window[-1]["close"] if in_window else None,
+        "candles_in_window": len(in_window),
+        "candles_total": len(ordered),
+        "missing_hours": max(0, window - distinct_hours),
+        "stale": bool((anchor_ts - ordered[-1]["ts"])
+                      > max(0, int(stale_after_sec))),
+        "anchor_ts": anchor_ts,
+        "window_hours": window,
+        "history_hours": history,
+        "high_volatility_pct": high_threshold,
+    }
 
 
 def _pool_set(pool_addresses) -> set[str]:

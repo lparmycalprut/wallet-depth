@@ -159,3 +159,49 @@ accumulation 12 jam** dan **holder depth**.
 
 Tidak diubah tanpa perlu: watchlist GitHub, fetch GMGN/Helius, listing
 screener.
+## Lanjutan hari yang sama — konfirmasi volume + volatilitas (permintaan ke-3)
+
+User mengirim prompt baru: alert dust 0,25 pp masih sering false positive,
+jadi tiap sinyal harus divalidasi volume + harga + volatilitas dulu, tetap
+reaktif (< 5 menit), dan ambang dust yang ada tidak boleh diubah.
+
+1. **Volume correlation** — `validate_alert_with_volume()` di
+   `telegram_alerts.py`: dump butuh volume 4 jam ≥ 2× `avg_volume_7d`
+   **dan** harga ≤ −1%; akumulasi butuh ≥ 1,5× **dan** tekanan beli >
+   tekanan jual. Skor 0,70 dasar + ≤0,15 volume + ≤0,10 harga/tekanan +
+   0,20 volatilitas tinggi yang mendukung arah; gagal gerbang → ≤0,40.
+   `avg_volume_7d` dibaca sebagai rata-rata **per window 4 jam** selama
+   7 hari agar sebanding dengan `volume_4h`. Semua kandidat yang ditolak
+   di-log + dicatat ke `rejected_signals` supaya bisa diaudit.
+2. **Volatility metrics** — `calculate_volatility_metrics()` di
+   `holder_history.py` dari 16 candle hourly: `price_stddev_4h`,
+   `price_range_4h`, `intra_hour_volatility`. Kalau `price_stddev_4h > 3%`
+   ambang skor naik dari 0,70 ke **0,80** — dan karena volatilitas tinggi
+   tanpa dukungan arah harga tidak memberi bonus, ambang itu benar-benar
+   menyaring (terukur 0,702 < 0,80). Hasilnya disimpan berdampingan
+   dust % MC di `holder_status.json` sebagai `tokens[mint].market_signal`.
+3. **Sumber konteks** — `alert_context.py` (baru): candle hourly
+   GeckoTerminal → DexScreener (data yang sudah diambil `analyze_token`,
+   tanpa request tambahan) → `daily_effort.json`. Ditarik **lazy**: hanya
+   token yang punya kandidat (keputusan user), memo 1× per token per run,
+   jadi latensi run normal tidak bertambah. `core.get_hourly_candles()`
+   baru dan `get_daily_candles()` kini agregasi dari candle yang sama.
+4. **Data hilang** (keputusan user): alert tetap dikirim, diberi baris
+   `⚠️ TIDAK TERVERIFIKASI` dengan skor 0,50 — jadi tidak ada sinyal yang
+   hilang diam-diam saat GeckoTerminal mati.
+5. **Dedup 1 jam** — selain event id bucket 4 jam, kini ada jeda minimum
+   1 jam per token+jenis(+arah) lewat `alert_state.last_sent`; sebelumnya
+   dua alert identik bisa terkirim berjarak ±2 menit di sekitar batas
+   bucket.
+6. **Review optimasi** (diminta user, tabel lengkap di
+   `docs/PROGRESS.md`): heap untuk `matching_dexscreener_pairs` diukur
+   **tidak** lebih cepat sehingga tidak diubah; `get_daily_candles`
+   diperbaiki (sel null, `limit_days=0`, timestamp duplikat) dan batas UTC
+   diverifikasi sampai kasus kabisat; `classify_holders` dibuat single-pass
+   ramping (2,86 → 1,94 ms per 12k holder, keluaran identik di 500 trial);
+   `wallet_movements()` tidak lagi dihitung dua kali; dua `TODO(alerts)`
+   (429 `retry_after`, throttle GeckoTerminal).
+7. **Tes** — 6 file baru, 141 tes tambahan: 369 lulus (sebelumnya 228),
+   termasuk edge case volume 0, avg 0/None, NaN/inf, candle bolong,
+   candle < 2, candle basi, payload DexScreener rusak, provider gagal,
+   cooldown 1 jam, dan lazy-fetch.

@@ -1,5 +1,87 @@
 # Progress
 
+## 2026-09-03 — Konfirmasi volume + volatilitas untuk alert dust
+
+Permintaan user: ambang dust 0,25 pp terlalu berisik; sinyal harus
+divalidasi volume + harga + volatilitas dulu tanpa mengorbankan kecepatan
+reaksi (< 5 menit). Ambang dust (0,25 / 0,50 / ±1,00 pp) **tidak diubah** —
+konfirmasi ini dipasang di belakangnya, jadi filternya tidak saling menutupi.
+
+### Aturan
+- `telegram_alerts.validate_alert_with_volume(...)` →
+  `VolumeValidation(is_valid, confidence_score, reason, verified, details)`.
+  Gerbang keras: **dump** = volume 4 jam ≥ 2× `avg_volume_7d` **dan**
+  perubahan harga ≤ −1%; **akumulasi** = volume ≥ 1,5× **dan** buy pressure
+  > sell pressure. `avg_volume_7d` diartikan sebagai rata-rata volume
+  **per window 4 jam** selama 7 hari (bukan angka harian) supaya sebanding
+  dengan `volume_4h`.
+- Skor: 0,70 dasar + ≤0,15 kekuatan volume + ≤0,10 harga/tekanan beli +
+  0,20 bila volatilitas tinggi **dan** arah harga mendukung; gagal gerbang →
+  skor diagnostik ≤0,40. Ambang lolos 0,70, naik ke 0,80 bila
+  `price_stddev_4h > 3%`. Contoh di prompt (stddev >3% + dust ≥0,25 pp →
+  0,90 → lolos) direproduksi persis; dump tanpa volume (0,85 < 1,0 → 0,67)
+  dan akumulasi tanpa tekanan beli (0,62) ditolak.
+- Volatilitas tinggi **tanpa** dukungan arah harga tidak memberi bonus:
+  kalau diberi, ambang 0,80 tidak pernah menyaring apa pun (terukur —
+  akumulasi marginal menjadi 0,702 < 0,80 → ditolak).
+- `evaluate_4h_rules` / `evaluate_baseline_rule` memakai gerbang itu;
+  baseline shift divalidasi mengikuti arah perubahan (naik = dump, turun =
+  akumulasi). Kandidat yang ditolak di-log `Dust signal rejected …` (dust,
+  volume, harga, alasan) dan dicatat ke `alert_state.rejected_signals`
+  (maks 8/token) untuk audit false positive.
+- Kebijakan data hilang (keputusan user): alert **tetap dikirim**, diberi
+  baris `⚠️ TIDAK TERVERIFIKASI` + `Konfirmasi: ⚠️ data tidak lengkap`
+  (`ALLOW_UNVERIFIED_ALERTS = True`). `volume_4h = 0` diperlakukan sebagai
+  data valid, bukan data hilang → gerbang gagal.
+- Dedup: event id bucket 4 jam tetap, ditambah **jeda minimum 1 jam** per
+  token+jenis(+arah) lewat `alert_state.last_sent`. Sebelumnya dua alert
+  identik bisa terkirim berjarak ±2 menit di dua sisi batas bucket.
+
+### Data
+- `holder_history.calculate_volatility_metrics(candles, historical, ...)`:
+  16 candle hourly → `price_stddev_4h`, `price_range_4h`,
+  `intra_hour_volatility(+_max)`, `price_change_4h_pct`, `volume_4h`,
+  `missing_hours`, `stale`, `available`, `high_volatility`. Candle < 2 atau
+  harga 0 → `available: False` (bukan stddev 0 yang tampak "tenang");
+  candle basi (> `MAX_AGE_HOURS`) → `stale: True`.
+- `core.get_hourly_candles()` baru; `get_daily_candles()` kini agregasi dari
+  candle hourly yang sama (satu endpoint, dua bentuk, tanpa double-fetch).
+- `alert_context.py` (baru): `build_market_context()`, `volume_from_candles()`,
+  `volume_from_dexscreener()`, `volume_from_daily_rows()`,
+  `pressure_from_txns()`, `compact_signal()`, `market_context_provider()`.
+  Urutan sumber: candle hourly GeckoTerminal → DexScreener (sudah diambil
+  `analyze_token`, tanpa request tambahan) → `daily_effort.json`.
+  Ditarik **lazy**: hanya token yang punya kandidat, memo 1× per token per run.
+- `holder_analysis.analyze_token` kini meneruskan ringkasan `market`
+  (volume, price_change, txns, pair_addresses) di hasil analisis;
+  `holder_status.snapshot_status` menyimpan `tokens[mint].market_signal`
+  berdampingan dust % MC; `scripts/scan_holders.py` menyuntikkan provider
+  dan mencetak `unverified=`, `rejected=`, `konteks=N token (X ms)`.
+
+### Review optimasi (diminta user)
+| Fungsi | Temuan | Tindakan |
+|---|---|---|
+| `core.matching_dexscreener_pairs` | Sort O(n log n) atas ≤30 pair; heap/single-pass top-1 diukur **tidak lebih cepat** (5,6 vs 5,2 µs n=10; 271 vs 263 µs n=500) — biaya dominannya `_dex_liquidity_usd` per pair, bukan sort. `get_market` juga butuh seluruh urutan untuk `pair_addresses`. | Tidak diubah (terukur) |
+| `core.get_daily_candles` | Batas hari UTC benar (`datetime.date()`); diverifikasi 31 Des→1 Jan, 28→29 Feb kabisat, 30→31 Des, awal/akhir Maret. **Tiga bug nyata**: (1) sel `null` GeckoTerminal → `float(None)` TypeError **di luar** blok try; (2) `limit_days=0` mengembalikan seluruh riwayat (`[-0:]`); (3) timestamp duplikat menghitung volume dua kali. Hari UTC yang masih berjalan ikut ter-return (sudah disaring `cvd_daily.completed_dates`). | Diperbaiki + guard milidetik, dicatat di docstring |
+| `holder_analysis.classify_holders` | Konversi USD sudah sekali per wallet di fetcher (bukan di sini); yang boros ±9 lintasan atas holder yang sama. Single-pass **dengan `_float()` per baris justru lebih lambat** (4,15 vs 2,86 ms / 12k holder) karena overhead pemanggilan fungsi; single-pass ramping = **1,94 ms**. | Single-pass ramping; identik di 500 trial acak + 12k holder sintetis |
+| Dedup alert | Event id `holder-dust:mint:kind:bucket[:arah]` disimpan di `alert_state.sent_event_ids` (maks 96), hanya dicatat setelah kirim sukses → gagal kirim dicoba lagi. Granularitasnya bucket 4 jam, bukan 1 jam. | Jeda minimum 1 jam (`MIN_RESEND_SEC`) + `last_sent` |
+| `telegram_alerts._event` | `wallet_movements()` (O(W), W ≤ 800 address) dihitung dua kali untuk kandidat yang sama. | Dihitung sekali, diteruskan ke `_event` |
+| `telegram_alerts.compact_wallet_snapshot` | `sorted(dust, key=…)` identik dipanggil dua kali. | Diurut sekali |
+| `telegram_alerts.send_telegram_message` | 429 `retry_after` tidak dihormati (hanya di-log; event dikirim ulang run berikutnya). | `TODO(alerts)` di kode |
+| Beban API candle | GeckoTerminal publik ±30 req/menit; run yang memicu banyak sinyal bersamaan bisa tersentuh (lazy fetch sudah membatasi ke kandidat saja). | `TODO(alerts)` throttle |
+| Store JSON | `holder_history.json` / `holder_status.json` ditulis ulang penuh tiap run (atomic write). | Belum perlu; dipantau |
+
+### Tes
+369 tes lulus (sebelumnya 228). Baru: `test_volume_validation.py` (33),
+`test_volatility_metrics.py` (17), `test_alert_context.py` (32),
+`test_alert_gating.py` (27), `test_alert_pipeline.py` (8),
+`test_core_candles.py` (24) — mencakup edge case yang diminta: volume 0,
+`avg_volume_7d` 0/None (pool baru), NaN/inf, candle bolong (price gap),
+candle < 2, candle basi, timestamp milidetik, payload DexScreener rusak,
+provider gagal, cooldown 1 jam, dan lazy-fetch (provider tidak dipanggil
+bila tidak ada kandidat). `test_alert_pipeline.py` juga memastikan
+integrasi end-to-end tidak menulis `holder_status.json` asli.
+
 ## 2026-09-03 — Kronologi holder sejak snapshot awal (scan FULL)
 
 - Setelah `Scan holder FULL` pertama, halaman Holder Analytic menandai

@@ -47,14 +47,98 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
      pergerakan wallet dust (membesar/keluar dust, jual habis/hilang,
      mengecil/masuk dust, atau wallet dust baru).
 
-   Snapshot saldo dibatasi maksimum 300 wallet per anchor dan event yang
-   sukses dikirim dideduplikasi per bucket 4 jam.
+   Perubahan dust baru menghasilkan **kandidat** sinyal: setiap kandidat
+   harus lolos konfirmasi volume + harga + volatilitas dulu (bagian
+   berikutnya) sebelum dikirim. Snapshot saldo dibatasi maksimum 300 wallet
+   per anchor, event yang sukses dikirim dideduplikasi per bucket 4 jam
+   **dan** ditahan minimal 1 jam antar alert sejenis.
+
+## Konfirmasi volume & volatilitas (filter false positive)
+
+Kandidat sinyal dust diperiksa silang terhadap pasar sebelum dikirim
+(`telegram_alerts.validate_alert_with_volume`):
+
+| Sinyal | Gerbang keras |
+|---|---|
+| **Dump** (dust naik ≥ 0,25 pp) | volume 4 jam ≥ **2×** rata-rata 7 hari **dan** harga ≤ **-1%** |
+| **Akumulasi** (dust turun ≥ 0,50 pp + buyer) | volume 4 jam ≥ **1,5×** rata-rata 7 hari **dan** buy pressure > sell pressure |
+| **Baseline shift** (±1 pp dari snapshot awal) | mengikuti arah perubahan: naik → aturan dump, turun → aturan akumulasi |
+
+`avg_volume_7d` = rata-rata volume **per window 4 jam** selama 7 hari, jadi
+satuannya setara dengan `volume_4h` (bukan total volume harian).
+
+**Skor konfirmasi (0–1)** — hanya dihitung bila gerbang keras lolos: `0,70`
+dasar + hingga `0,15` kekuatan volume + hingga `0,10` kekuatan harga/tekanan
+beli + `0,20` bila volatilitas 4 jam tinggi **dan** arah harga mendukung.
+Ambang lolos **0,70**, naik menjadi **0,80** bila `price_stddev_4h > 3%`
+(pasar sedang liar → butuh bukti lebih kuat). Volatilitas tinggi tanpa arah
+harga yang mendukung tidak memberi bonus, supaya ambang 0,80 itu benar-benar
+menyaring. Kandidat yang ditolak dicatat ke `alert_state.rejected_signals`
+(maks 8 per token) dan ke log cron (`Dust signal rejected …`), jadi sinyal
+yang terbuang bisa diaudit.
+
+**Metrik volatilitas** — `holder_history.calculate_volatility_metrics`
+memakai 16 candle hourly terakhir dan menghasilkan `price_stddev_4h` (sample
+stddev close per jam, dalam % harga rata-rata), `price_range_4h`
+((high−low)/rata-rata), `intra_hour_volatility` + `intra_hour_volatility_max`
+(rentang dalam tiap jam), `price_change_4h_pct`, `volume_4h`, `missing_hours`
+(candle bolong), dan `stale`. Metrik ini disimpan di `holder_status.json`
+sebagai `tokens[mint].market_signal`, berdampingan dengan dust % MC.
+
+**Biaya & sumber data** — candle hourly GeckoTerminal (168 jam) ditarik
+**lazy**: hanya token yang punya kandidat sinyal, maksimal satu kali per run,
+jadi scan 15 menit yang tenang tidak menambah request apa pun. Bila
+GeckoTerminal gagal, konteks jatuh ke angka DexScreener yang **sudah** diambil
+saat scan (`volume.h6` di-skala ke 4 jam, baseline dari `volume.h24`,
+`priceChange.h6`, `txns` buys/sells) lalu ke `daily_effort.json` untuk
+rata-rata volume 7 hari.
+
+**Bila data tidak ada** (pool lebih muda dari 7 hari, API mati): alert **tetap
+dikirim** dengan baris `Verifikasi volume: ⚠️ TIDAK TERVERIFIKASI` — indikasi
+dump tidak boleh hilang senyap hanya karena sumber data sedang down. Set
+`telegram_alerts.ALLOW_UNVERIFIED_ALERTS = False` untuk perilaku strict.
+
+Alert yang lolos menyertakan rasio volume, perubahan harga, skor konfirmasi,
+ambang yang dipakai, dan stddev 4 jam di pesan Telegram.
+
+## Format alert Telegram (contoh)
+
+```text
+🚨 INDIKASI DUMP — HOLDER DUST NAIK
+Token: $WSOL
+Dust sebelumnya: 0.90% MC
+Dust terbaru: 1.24% MC
+Perubahan: +0.34 poin persentase
+Periode: ~4 jam
+Verifikasi volume: ✅ volume 4 jam 2.50× rata-rata 7d (ambang 2.0×) · harga -3.20% · buy 62/sell 38
+Skor konfirmasi: 0.79 (ambang 0.70) · stddev 4 jam 1.80%
+Wallet saldo meningkat: 7
+Pergerakan sampel wallet dust:
+- Membesar / keluar dust: 4
+- Jual habis / hilang: 1
+- Keluar dust lainnya: 0
+- Mengecil / masuk dust: 2
+- Wallet dust baru: 3
+- Masuk dust lainnya: 0
+Waktu: 2026-09-03 22:11:17 WIB (15:11 UTC)
+Mint: So11111111111111111111111111111111111111112
+```
+
+Dua baris `Verifikasi volume` / `Skor konfirmasi` hanya muncul bila konteks
+pasar berhasil diambil. Bila tidak, keduanya diganti satu baris:
+
+```text
+Verifikasi volume: ⚠️ TIDAK TERVERIFIKASI — data pasar tidak tersedia
+(volume_4h, avg_volume_7d, price_change_pct) — sinyal dikirim tanpa
+verifikasi volume
+```
 
 ## Sumber data
 
 **Helius** = sumber utama holder (DAS `getTokenAccounts`). **GMGN** hanya
 listing Trending/Degen + fallback. **Meteora** pool-discovery API untuk
-Scan Meteora. Harga/MC dari DexScreener. Solscan dilepas.
+Scan Meteora. Harga/MC/volume/`txns` dari DexScreener. Candle hourly & harian
+(volume + volatilitas) dari GeckoTerminal. Solscan dilepas.
 
 | `holder_source` | Perilaku |
 |---|---|
@@ -99,7 +183,8 @@ Meteora Pool** (`source=meteora`):
 
 | File | Peran |
 |---|---|
-| `holder_history.py` | Pencatatan dust/kohort, resample 4 jam, ambang HATI-HATI/BAHAYA, baseline FULL, kronologi |
+| `holder_history.py` | Pencatatan dust/kohort, resample 4 jam, ambang HATI-HATI/BAHAYA, metrik volatilitas 4 jam, baseline FULL, kronologi |
+| `alert_context.py` | Konteks pasar untuk konfirmasi alert: volume 4 jam, rata-rata 7 hari, buy/sell pressure, volatilitas (ditarik lazy) |
 | `holder_chronology.py` | Snapshot wallet bounded, klasifikasi pergerakan, narasi kronologi |
 | `lp_watchlist.py` | Card **Chart LP**: pisah watchlist Meteora, baris + grafik perubahan dust holder |
 | `meteora_screener.py` | Listing DLMM 24h+1h, enrich holder, filter dust ≥1% |
@@ -107,8 +192,9 @@ Meteora Pool** (`source=meteora`):
 | `solscan_holders.py` | Kalkulasi wallet_depth (bucket & tier) |
 | `helius_holders.py` | Scan Holder Khusus satu token + bar chart |
 | `holder_status.py` | Snapshot dashboard (ref `holder-live`) + history ringkas |
-| `scripts/scan_holders.py` | Cron watchlist: holder, alert, catat history |
-| `telegram_alerts.py` | Rule dust 4 jam/baseline, dedup, Telegram Bot API |
+| `core.py` | Config/key Helius, pasar DexScreener, candle hourly/harian GeckoTerminal |
+| `scripts/scan_holders.py` | Cron watchlist: holder, alert (konfirmasi volume lazy), catat history |
+| `telegram_alerts.py` | Rule dust 4 jam/baseline, gerbang volume+volatilitas, dedup bucket 4 jam + jeda 1 jam, Telegram Bot API |
 | `trending_ui.py` | Listing Trending/Degen + Add All Watchlist |
 | `pages/4_📊_CVD.py` | Chart CVD harian |
 | `pages/5_🧮_Holder.py` | Holder Analytic: dust, grafik 4 jam, kohort, kronologi FULL |
@@ -127,13 +213,41 @@ scanner (`HELIUS_API_KEY`, `GITHUB_TOKEN`) dan setup alert opsional
 (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`). Tanpa credential Telegram,
 scan tetap berjalan dan pengiriman alert dilewati dengan aman.
 
+## Kunci konfigurasi
+
+| Variabel / konstanta | Isi |
+|---|---|
+| `HELIUS_API_KEY` | API key Helius untuk data holder |
+| `GITHUB_TOKEN` | Token GitHub (push watchlist + snapshot) |
+| `GITHUB_REPO`, `GITHUB_REF` | default `lparmycalprut/wallet-depth`; scanner memakai branch aktif |
+| `WATCHLIST_FILE`, `HOLDER_STATUS_FILE` | default `watchlist.json`, `holder_status.json` |
+| `DAILY_EFFORT_PATH` | default `daily_effort.json` (cache harga/volume DexScreener) |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Alert Telegram (opsional) |
+| `TELEGRAM_ALERT_MODE` | `off` (default), `summary`, `full` |
+| `TELEGRAM_MAX_HOLDERS_PER_TOKEN`, `TELEGRAM_MAX_WALLETS_PER_TOKEN` | default 20, 10 |
+| `MAX_HOLDERS_PER_TOKEN` | cron 3000, UI 2000 |
+| `MIN_HOLDERS`, `MIN_WALLET_DEPTH_PCT` | 40, 75% — ambang minimum Holder Analytic |
+| `MAX_HOLDER_HISTORY`, `MAX_HOLDER_TOKENS`, `MAX_WALLETS_PER_TOKEN` | 1200, 120, 800 — batas store |
+| `DUMP_THRESHOLD_PP`, `ACCUMULATION_THRESHOLD_PP`, `BASELINE_SHIFT_THRESHOLD_PP` | 0.25, 0.50, 1.0 — ambang dust (tidak diubah) |
+| `DUMP_VOLUME_MULTIPLE`, `ACCUMULATION_VOLUME_MULTIPLE` | 2.0, 1.5 — gerbang volume konfirmasi |
+| `MIN_CONFIDENCE`, `MIN_CONFIDENCE_HIGH_VOLATILITY` | 0.70, 0.80 — ambang skor konfirmasi |
+| `UNVERIFIED_CONFIDENCE`, `ALLOW_UNVERIFIED_ALERTS` | 0.50, `True` — data pasar hilang → tetap kirim, ditandai ⚠️ |
+| `CONFIDENCE_VOLATILITY_BONUS` | 0.20 — bonus volatilitas tinggi + arah mendukung |
+| `MIN_RESEND_SEC` | 3600 — jeda minimum antar-alert token+jenis yang sama |
+| `VOLATILITY_WINDOW_HOURS`, `HIGH_VOLATILITY_STDDEV_PCT` | 4, 3.0 — `holder_history` |
+| `BASELINE_HOURS`, `MIN_BASELINE_HOURS` | 168, 24 — `alert_context` (baseline volume 7 hari) |
+
+Konstanta konfirmasi ada di `telegram_alerts.py`, metrik volatilitas di
+`holder_history.py`, dan pengambilan konteks di `alert_context.py`.
+
 ## Pengujian
 
 ```bash
 python -m unittest discover tests
 python -m py_compile holder_history.py holder_chronology.py meteora_screener.py \
-  holder_analysis.py holder_status.py telegram_alerts.py \
-  scripts/scan_holders.py trending_ui.py watchlist.py
+  holder_analysis.py holder_status.py telegram_alerts.py alert_context.py \
+  lp_watchlist.py core.py app.py scripts/scan_holders.py trending_ui.py \
+  watchlist.py
 ```
 
 Analisis bersifat heuristik dan bukan saran keuangan.

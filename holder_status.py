@@ -56,8 +56,15 @@ def _holders_for_status(holders: dict | None) -> dict:
 
 def snapshot_status(analyses: dict | None,
                     watchlist: dict | None = None,
-                    history_store: dict | None = None) -> dict:
-    """Bangun payload dashboard dari hasil analisis per token."""
+                    history_store: dict | None = None,
+                    contexts: dict | None = None) -> dict:
+    """Bangun payload dashboard dari hasil analisis per token.
+
+    ``contexts`` = ``{mint: market_context}`` dari ``alert_context`` (opsional).
+    Bila ada, metrik volatilitas + volume 4 jam disimpan **berdampingan dengan
+    dust % MC** sebagai ``tokens[mint]["market_signal"]`` supaya jejak
+    konfirmasi alert ikut terdokumentasi di snapshot.
+    """
     try:
         from holder_history import (compact_chronology_for_status,
                                     compact_history_for_status,
@@ -70,6 +77,11 @@ def snapshot_status(analyses: dict | None,
         compact_history_for_status = lambda *_a, **_k: []  # noqa: E731
         compact_chronology_for_status = lambda *_a, **_k: {}  # noqa: E731
         compact_alert_state = lambda *_a, **_k: {}  # noqa: E731
+    try:
+        from alert_context import compact_signal
+    except Exception:  # noqa: BLE001 - konteks pasar bersifat pelengkap
+        compact_signal = lambda *_a, **_k: {}  # noqa: E731
+    signals = contexts if isinstance(contexts, dict) else {}
     tokens = {}
     stamps = []
     for mint, result in (analyses or {}).items():
@@ -90,6 +102,11 @@ def snapshot_status(analyses: dict | None,
                 hist_slot.get("alert_state") or {}),
             "chronology": compact_chronology_for_status(store, mint),
         }
+        context = signals.get(mint)
+        if not isinstance(context, dict):
+            context = result.get("market_context")
+        if isinstance(context, dict):
+            token["market_signal"] = compact_signal(context)
         tokens[mint] = token
         if token["analyzed_at"]:
             stamps.append(int(token["analyzed_at"]))
@@ -305,10 +322,11 @@ def load_holder_status(force_refresh: bool = False) -> dict:
 def publish_holder_status(analyses: dict,
                           watchlist: dict | None = None,
                           *, push: bool = True,
-                          history_store: dict | None = None) -> dict:
+                          history_store: dict | None = None,
+                          contexts: dict | None = None) -> dict:
     """Tulis status lokal + (opsional) publish ke GitHub."""
     status = snapshot_status(analyses, watchlist,
-                             history_store=history_store)
+                             history_store=history_store, contexts=contexts)
     atomic_write_json(STATUS_PATH, status, indent=2)
     _CACHE["data"] = dict(status)
     _CACHE["ts"] = time.time()

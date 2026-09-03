@@ -408,27 +408,51 @@ def classify_holders(snapshot: dict | None, market_cap: float = 0.0,
     **dust % dari marketcap** (dust_value / marketcap * 100) plus
     dust % supply (dari amount_percentage) bila tersedia.
     Field ``source`` diteruskan dari snapshot (gmgn/helius).
+
+    Satu kali iterasi: sebelumnya daftar real/dust dibangun dulu lalu di-``sum``
+    terpisah (±9 lintasan atas holder yang sama). Dengan 3.000-10.000 baris per
+    scan itu dominan, jadi semua akumulator dihitung dalam satu lintasan.
+    Konversi USD sendiri sudah terjadi sekali per wallet di fetcher
+    (``balance × price``), bukan di sini.
     """
     dust_limit = float(DUST_LIMIT_USD if dust_limit is None else dust_limit)
     holders = (snapshot or {}).get("holders") or []
     source = str((snapshot or {}).get("source") or "gmgn")
-    real = [h for h in holders
-            if h.get("is_wallet") and h.get("usd_value", 0) > dust_limit]
-    dust = [h for h in holders
-            if h.get("is_wallet")
-            and 0 < h.get("usd_value", 0) <= dust_limit]
-    real_value = sum(h.get("usd_value", 0) for h in real)
-    dust_value = sum(h.get("usd_value", 0) for h in dust)
-    real_supply = sum(h.get("amount_pct", 0) for h in real)
-    dust_supply = sum(h.get("amount_pct", 0) for h in dust)
+    real_count = dust_count = 0
+    real_value = dust_value = 0.0
+    real_supply = dust_supply = 0.0
+    new_real = new_dust = suspicious_dust = 0
+    for row in holders:
+        # ``or 0.0`` menelan None; pemanggilan helper _float() per baris
+        # justru 2,4x lebih mahal daripada seluruh lintasan ini (terukur).
+        if not isinstance(row, dict) or not row.get("is_wallet"):
+            continue
+        usd = row.get("usd_value") or 0.0
+        if usd <= 0:
+            continue
+        supply = row.get("amount_pct") or 0.0
+        if usd > dust_limit:
+            real_count += 1
+            real_value += usd
+            real_supply += supply
+            if row.get("is_new"):
+                new_real += 1
+            continue
+        dust_count += 1
+        dust_value += usd
+        dust_supply += supply
+        if row.get("is_new"):
+            new_dust += 1
+        if row.get("is_suspicious"):
+            suspicious_dust += 1
     mc = float(market_cap or 0)
     dust_pct_mc = (dust_value / mc * 100.0) if mc > 0 else None
     real_pct_mc = (real_value / mc * 100.0) if mc > 0 else None
     return {
         "dust_limit_usd": dust_limit,
-        "real_count": len(real),
-        "dust_count": len(dust),
-        "wallets_analyzed": len(real) + len(dust),
+        "real_count": real_count,
+        "dust_count": dust_count,
+        "wallets_analyzed": real_count + dust_count,
         "total_fetched": len(holders),
         "truncated": bool((snapshot or {}).get("truncated")),
         "pages": int((snapshot or {}).get("pages") or 0),
@@ -438,9 +462,9 @@ def classify_holders(snapshot: dict | None, market_cap: float = 0.0,
         "real_pct_mc": round(real_pct_mc, 4) if real_pct_mc is not None else None,
         "dust_pct_supply": round(dust_supply * 100.0, 4),
         "real_pct_supply": round(real_supply * 100.0, 4),
-        "new_real": sum(1 for h in real if h.get("is_new")),
-        "new_dust": sum(1 for h in dust if h.get("is_new")),
-        "suspicious_dust": sum(1 for h in dust if h.get("is_suspicious")),
+        "new_real": new_real,
+        "new_dust": new_dust,
+        "suspicious_dust": suspicious_dust,
         "source": source,
     }
 
@@ -596,5 +620,17 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
         "price": price,
         "analyzed_at": analyzed_at,
         "holders": holder_stats,
+        # Ringkasan DexScreener yang SUDAH diambil di atas: dipakai
+        # alert_context untuk konfirmasi volume/harga tanpa request kedua.
+        "market": {
+            "price_usd": price or _float(market.get("price_usd"), 0.0),
+            "marketcap": mc,
+            "volume": market.get("volume") or {},
+            "price_change": market.get("price_change") or {},
+            "txns": market.get("txns") or {},
+            "pair_addresses": [str(p or "").strip() for p in
+                               (market.get("pair_addresses") or []) if p],
+            "dex": market.get("dex") or "?",
+        },
     }
 

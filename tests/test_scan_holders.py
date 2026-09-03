@@ -119,9 +119,11 @@ class MainExitCodeTest(unittest.TestCase):
                                        "dust_pct_mc": 0.4}}}
         order = []
 
-        def process(items, supplied_store):
+        def process(items, supplied_store, **kwargs):
             self.assertIs(supplied_store, store)
             self.assertEqual(items, analyses)
+            # Konteks volume/harga harus disuntikkan sebagai provider lazy.
+            self.assertTrue(callable(kwargs.get("context_provider")))
             order.append("alert")
             supplied_store["alert_evaluated"] = True
             return []
@@ -133,6 +135,9 @@ class MainExitCodeTest(unittest.TestCase):
 
         def publish(*_args, **kwargs):
             self.assertTrue(kwargs["history_store"]["alert_evaluated"])
+            # Cache konteks provider diteruskan supaya volatilitas/volume
+            # tersimpan di holder_status berdampingan dust % MC.
+            self.assertIsInstance(kwargs.get("contexts"), dict)
             order.append("publish")
             return {"updated_at": 100}
 
