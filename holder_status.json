@@ -1,8 +1,274 @@
 {
   "scanner": "holder-dust-v1",
   "tokens": {
+    "46vV3ZpFNLZn1CDRYnAvqPsdW5ejEYn9GK9kPcZFpump": {
+      "analyzed_at": 1788400051,
+      "cohort": {
+        "balances": {
+          "2XCTcxi8TfitTSzZdqzuYe8MSaMqGPbCpYfM8bazbPQJ": 2626309.521085,
+          "2Y9qAUSftcJTsAp6kPFZkrQEb8RNmBtjBJCQiTNUJ4st": 3501996.586933,
+          "2bDTGfjkmRL6DnEEt8WyC7Vc3PUYFUX9Bx2VNdqNzfD2": 4722566.309984,
+          "2uXb6oRUV1NcYJE19BT2FhVWJcXcNqyvxDq8j6miB42m": 2872995.958755,
+          "32RcovQxwcx24fSf2TTsDVxF4ZTYbF3DT4vtGuNiDMr1": 11561347.395508,
+          "3hsz9NU4ttgsVMTFZyfPjDctECYQMMHNkqL6Rx82gBSe": 2203014.161551,
+          "3sWqFZz4vUmRYzESWG86SrqWAwEy2VqqDKpCvwHiy9PH": 5097753.586429,
+          "44XJWNe2QHNKjPYWhSG27bhp2q1XXRHd3rPzWmJzaYXu": 3478556.416735,
+          "4NwX9i6nAZAuN6cmJ4KvvS1kK6tgYHcct2L7krCju79c": 5062088.133397,
+          "4PEBu2e1jocvZDPVXN41VQKDVN2fDqoDk8pEdsVX3No1": 26443824.961813,
+          "4RyxWgPdvxwyc2ibZSY1D1jUu3G8dEJfjmkDjQW85464": 29402877.624735,
+          "4TFBd3qVc6zqXEyrfv49xV5SSrrx7R9wWk1x3rzhWrAY": 6001712.08253,
+          "58xF7VtJz77twAVKkNxjFamQH54x1KhN3L3nuNGdQxJA": 1763991.773253,
+          "5CmJKbnXuW5Vp6N7dsspjMqUpvvTPxcpMWqJ5bsNXfnX": 5381570.313945,
+          "5RFCNwAm58M7qB2ohPA1QwHmTT4S5AVXRu26UiVnnzGb": 12381416.277561,
+          "5UyMJHD1w223f9gRfbmr2icveRMWo4N7Ey46S7Xj6pvY": 3000000.0,
+          "5WVTczr2jWDbUaECMjAUavoNky9T1CzGGGs4VYXLdqnX": 2438411.110246,
+          "5hf6njRw3paPptxn9iRGAh1qpsdxsbgphytYuhV8dGiw": 7075524.750086,
+          "5rmHJSabER33rvTHEYz4jizU1FdehVr8c6RTr2uCRwDK": 50002935.100215,
+          "5uyDzTDc6noUHd6wfpq3ic1TDyum31tjHzKJxzeFumoz": 7863105.377152,
+          "6Bsi9kvxwREgx2ksHmT2n1R5VEDx4r5CoWRG5bV7tK4r": 9430980.43805,
+          "6FzGsT5tGGvPCdnjnTsUeMA4hxtwueThbxqwsy11j2JT": 2503183.217142,
+          "6J54A2vuNSDvNthuFSJxg7FyuVUw57aGEXUQ2UecXfUw": 2789044.219938,
+          "6SyEc5vGePVXkHKx21sitsYmMHzS2GGiRqWuqY6FDwHv": 1716676.624343,
+          "6XG1Kpkq62HNLBaL5hRzwT1jr5UFph8nWdz3VMtMYkK1": 2366021.13188,
+          "74RbsHiopEar2WZaKBFkQKwqHdMt5wrJHUuBMR557zYe": 4267654.644001,
+          "77n6X7LtGy5AZprsvjZu1eaekJpxqLeVRZLPJZdBYyg9": 18937037.127937,
+          "7EvLxbcZo8XpoeGDiJmUskFPM2A3h3vWCh2NLUyM6Vcw": 6761173.779608,
+          "7Xs4bJQAytDvWrWssG3vgqJ7nJyJUB5473g8KM73Kvb7": 13413618.144496,
+          "7huWvy8fRAn1UxPKpr2ZyZV1ViMX2gTYWD52bD17Ljes": 6110605.001923,
+          "88f1k5BpwyAhFvepH9acCs7447rWGiAriLtiptWQRo3Q": 2444002.216134,
+          "8D5xHvAKkS7RsNVi8X1U63PDMAFPNehm7DaRcZGt2zZV": 5542280.457551,
+          "8HCP6PSroDm5qVNi9aB2DUWVB7pnXnrVgXyFXykK6ANa": 7148890.832109,
+          "8JkPQpoeicfjCndwppMpaJxNeXJC51wNoM4qNxqA5vuf": 4712200.563551,
+          "8m6D1tS9STtDTnQxCjvMYwJCBqJEPCN3TyedyYR2rpQ1": 3873642.504854,
+          "8p4FzY2KRwoWzaWCuYuBXgSPDNnjr9gian2hpNwwCTFs": 2495808.604503,
+          "8uF22Py5H2PUV3ePyPFHWKUwQD1mgUAreyttGqCqUbqL": 4000000.0,
+          "9C3htSy6NGPLXQFGvuuAFS1taAXJzsajS49VJJyKjj7B": 5029219.280872,
+          "9UDFAjh8wxaSALSWh1ms1yMiwWFCapyn21ZiWPwijxRE": 9383710.735237,
+          "9amx5781y8ALiKrGWkzr7Ujo5rxCJsCQU5efGPXJX9JP": 3720346.787141,
+          "9hBpEwEtGXT2khPfF3ZMa4cJ4gNcLk8zTZtCidsXQJEN": 1944811.67214,
+          "9wPrDC6YP8Y55FQ4XuC6Mfz9fGSfPTX2hn4X8TpCbwd3": 8568761.973463,
+          "AE3RSD7F55oWYaiCH6dpahQBoMoectUaiQ8FpGUzKzNc": 1992678.810441,
+          "AQmhAnVphYonZv3VVuHZGDtrHrD69s3B1EQRgyzDBsa7": 2004422.167394,
+          "An8bV6i8XrwK5rYdsTim4coH59dswZpdKZG3zKG7vRTJ": 15018337.246256,
+          "BXeEZ9zHXmhSzMsYhLTrpauN9fqDdnenTuRKwuCi13zL": 2025514.722722,
+          "BZFgtXmavwnUR7LNZrBxd3boMTgwhQGGnfRnHCVCQAKX": 6294588.057898,
+          "BrwdtPWKsHkCd9TTKVAZHDzwap2jhxXmeTnPC7WuVDQz": 15644514.901729,
+          "BsAGkwtZsJiJMUX47bkcmDBSRY2HfhLhdhN57abCgwDw": 2166065.445076,
+          "BsXgSxquALV5JCK5X1qMoZFSGBuzngLVxeBFNzYfFPtK": 2689064.525487,
+          "C5Jj9mi1FSbaGHzCtYQNmTjABCLGNGf8c3WWe8B1FJKr": 8611368.013416,
+          "C7MCRZRXLT7DATUpRn26wP2WwdaX6eTkgqgqNksceUgG": 1931798.336758,
+          "C8X83zm3ic241hWKtYDn7j3QcMEH8Q8L9aYRmVCrhaZK": 1984068.892444,
+          "CJ1gd8RAMfbrCqEGjU4yJ7K64N3ecAho1PCtuCviCc8W": 5744373.143519,
+          "CM9cJ6EK65YreZ4tJC8pW4MQjQ3JX9MZDstmwPBN2CtZ": 12954302.198986,
+          "CTe11EFRiVZdijH3YW862yqjdn2WiBNRUGB29RisuuxD": 1720694.646694,
+          "CUEbgxNpzwX29MxaCDdY6SqG61rVZ7tAGqohsBfoxVpi": 2914256.78018,
+          "CanRihoXMBScJSci5YVCTk1UpuYn2D8XQ8XineVydhnC": 4325513.619562,
+          "Ce9f5xwX94WRazF1Z1HCo7c6jLvjW4Gdk51EyD3a1cw1": 1999512.133636,
+          "CfkHHpKhoh3rQQRxWxe3Dxzzx1np6hEGWqUxhjh81EFM": 3754790.622478,
+          "CmSrwGT1NWtLccdYMRnoy4P8QWkzbC3Y6cmJZ7GdpSmE": 7973485.177132,
+          "Cq9RWisYhHDPeEsqr7mkt3QLg5hc7LdRQaXhpiTuhAES": 2000000.0,
+          "D83qm6mSNMaab6PCZuKFXUeebnx3fvPv1Fc8mQb9ZmF6": 7172705.836136,
+          "Drjmp2bjtnX7kHq6zByAHcq493Xy3r6swctRJqRJxzPr": 3004484.983268,
+          "DwAHvH6CsYNRRguwUKWNPtdcwV5Zx9SQqKwRoDYRwokL": 1759700.934809,
+          "E3prsTgVaz6WAsBDNCiQUBjUZz8CVf8EgxB3Ege5MtZt": 3227953.917733,
+          "EAKX8uSShEHYc5qyXYowun3aVZT7CPHd6rUDfbZ4jPgQ": 6042891.908043,
+          "EBMmM9reY1mVsrGMSDMjpTqVu8iXWFmMAzbRQMyP1wvQ": 3043198.211006,
+          "EZe6Y9Hwb78UDZiCXNYnobmJunpVMqNPAktZGotxKfqs": 7853498.398808,
+          "EcoPCGhzVtg7qJTGa8fdW7K7YC1u43nmc4SW41sPrbUF": 2457776.145994,
+          "F9UhUK39f5vKyy2d5n4UsdV5Z1gPLvSCiCcZLX6TYKK6": 4279206.166556,
+          "FFmkno7AYb9vGr4wgQ7J1pymnQvZqtTzWSYSSweLTVvi": 17134379.949917,
+          "FGMn2J97D9UcDeTRJo5drfKFh6QUffBL85nSVB94hwTm": 4953169.31046,
+          "FMrbX7D8LKghtsaAcUSyMpwvHHgLkZc1s9ovBHFVSsT4": 1694886.8717,
+          "FPBKxbiCp8DwDmXBo5Ni6DeSEYekoFD7xwrD5R4PwkkD": 2574898.529651,
+          "FSuZsTd3dAGpZgJLj1g6smstaC1n694kDHLDgewbE4un": 3607316.184003,
+          "FxTqK4vmfvWGX4HAyQpY9UGPrFz1dhb6fbLYBvYgYk2d": 2271585.0371,
+          "GSKuSDnUHQf6dRtrLHKrpWBRQCrRCDSk9EVRMJfkezaZ": 9550442.561367,
+          "GY48cGf4TTJqcF8aNBgpMaecRQUH6Ma9uDA3Poxxby6q": 2462975.774733,
+          "Gqy5T7w6sc5GNM6g5SeSrthSV6gHjRA4qMPqWv61HbD5": 2582958.533203,
+          "GsdYSPw3No6zJnVqiycnVzt8Y9Bheojj1owTPgGA1NND": 2485590.002889,
+          "HCYaKTuofo8R2zFpGmScKUh5namSw4c9FMPp1skjWiKP": 2983284.520147,
+          "HDqUbUmmVfW7m7oDmaXPAUA9hRWkHSZBC2cNuFzmWf1r": 9237336.42533,
+          "HUmFddQhMacCxeo8DA5yDe16cgwmhK5Fu94p7YC7staW": 4209437.843431,
+          "HfMTrg4ZhDvskaHVqsDtqmTwCRZZMjrLoyS3XkCfteKE": 3503653.863227,
+          "HpDRSJwFKZC2xdfQ554XYd74HaBniP3txtWk5iWdn3AJ": 2326960.008571,
+          "HtjGXiyLtWSfwWbZ7wwizxZLqNQaM6icseWwP47c5NSs": 3742635.635093,
+          "TDj2FfPAS8SNxRTx5sXrwtSv3YJYp8cWA316sWW2VSi": 2576420.558999,
+          "TdJx9CnQFeNCynx3dSsq7wG66ocd1Y8M5Z1zctMbSa2": 31099060.888401,
+          "jDqdVh9cgXvHCmiWRW5AJQ9FeFiEiaZTk16dTPXtWxm": 2849050.815861,
+          "vBJvStF96CPfW1YN6ZJURKoqTjJJFLRG9ZkJZqoZVPe": 2172918.844079
+        },
+        "frozen_at": 1788400051
+      },
+      "history": [
+        {
+          "buckets": {
+            "$10-$100": 214,
+            "$100-$1k": 85,
+            "$100k-$500k": 0,
+            "$10k-$100k": 0,
+            "$1k-$10k": 6,
+            ">$0-$10": 1127,
+            ">$500k": 0
+          },
+          "cohort_cut50_pct": 0.0,
+          "cohort_n": 91,
+          "cohort_token_pct": 100.0,
+          "dust_count": 1127,
+          "dust_pct_mc": 2.2225,
+          "dust_value_usd": 1292.92,
+          "holder_count": 1434,
+          "mc": 58173.0,
+          "mid_count": 91,
+          "mid_pct_mc": 59.6249,
+          "price": 6.015e-05,
+          "real_count": 307,
+          "real_pct_mc": 97.8417,
+          "ts": 1788393600
+        }
+      ],
+      "holders": {
+        "depth": {
+          "buckets": [
+            {
+              "count": 1127,
+              "label": ">$0-$10",
+              "max": 10.0,
+              "min": 0.0,
+              "pct_mc": 2.2225,
+              "value_usd": 1292.92
+            },
+            {
+              "count": 214,
+              "label": "$10-$100",
+              "max": 100.0,
+              "min": 10.0,
+              "pct_mc": 13.8799,
+              "value_usd": 8074.34
+            },
+            {
+              "count": 85,
+              "label": "$100-$1k",
+              "max": 1000.0,
+              "min": 100.0,
+              "pct_mc": 41.7349,
+              "value_usd": 24278.42
+            },
+            {
+              "count": 6,
+              "label": "$1k-$10k",
+              "max": 10000.0,
+              "min": 1000.0,
+              "pct_mc": 17.89,
+              "value_usd": 10407.16
+            },
+            {
+              "count": 0,
+              "label": "$10k-$100k",
+              "max": 100000.0,
+              "min": 10000.0,
+              "pct_mc": 0.0,
+              "value_usd": 0
+            },
+            {
+              "count": 0,
+              "label": "$100k-$500k",
+              "max": 500000.0,
+              "min": 100000.0,
+              "pct_mc": 0.0,
+              "value_usd": 0
+            },
+            {
+              "count": 0,
+              "label": ">$500k",
+              "max": null,
+              "min": 500000.0,
+              "pct_mc": 0.0,
+              "value_usd": 0
+            }
+          ],
+          "buckets_include_pools": false,
+          "computed_at": 1788400051,
+          "holders_all": 1434,
+          "holders_wallet": 1432,
+          "market_cap": 58173.0,
+          "pool_excluded": 2,
+          "tiers": [
+            {
+              "count": 1341,
+              "emoji": "\ud83e\udd90",
+              "max": 100.0,
+              "min": 0.0,
+              "pct_mc": 16.1024,
+              "tier": "Shrimp",
+              "value_usd": 9367.26
+            },
+            {
+              "count": 85,
+              "emoji": "\ud83e\udd80",
+              "max": 1000.0,
+              "min": 100.0,
+              "pct_mc": 41.7349,
+              "tier": "Crab",
+              "value_usd": 24278.42
+            },
+            {
+              "count": 6,
+              "emoji": "\ud83d\udc1f",
+              "max": 10000.0,
+              "min": 1000.0,
+              "pct_mc": 17.89,
+              "tier": "Fish",
+              "value_usd": 10407.16
+            },
+            {
+              "count": 0,
+              "emoji": "\ud83d\udc2c",
+              "max": 100000.0,
+              "min": 10000.0,
+              "pct_mc": 0.0,
+              "tier": "Dolphin",
+              "value_usd": 0
+            },
+            {
+              "count": 0,
+              "emoji": "\ud83e\udd88",
+              "max": null,
+              "min": 100000.0,
+              "pct_mc": 0.0,
+              "tier": "Shark",
+              "value_usd": 0
+            }
+          ]
+        },
+        "dust_count": 1127,
+        "dust_limit_usd": 10.0,
+        "dust_pct_mc": 2.2225,
+        "dust_pct_supply": 0.0,
+        "dust_value_usd": 1292.92,
+        "mid": {
+          "count": 91,
+          "pct_mc": 59.6249,
+          "value_usd": 34685.58
+        },
+        "new_dust": 0,
+        "new_real": 0,
+        "pages": 3,
+        "real_count": 307,
+        "real_pct_mc": 97.8417,
+        "real_pct_supply": 0.0,
+        "real_value_usd": 56917.44,
+        "source": "helius",
+        "suspicious_dust": 0,
+        "total_fetched": 1434,
+        "truncated": false,
+        "wallets_analyzed": 1434
+      },
+      "marketcap": 58173.0,
+      "price": 6.015e-05,
+      "symbol": "honse"
+    },
     "5mH155ePpNWJb2GktpftLJbcTvoxFaUrv7XkZPDtpump": {
-      "analyzed_at": 1788400020,
+      "analyzed_at": 1788400051,
       "cohort": {
         "balances": {
           "149iCKvEBdK39mRKJGoX8mC54uzoWM1BAnQ2CMUwe3hQ": 1973169.251601,
@@ -83,9 +349,9 @@
             ">$0-$10": 3723,
             ">$500k": 0
           },
-          "cohort_cut50_pct": 0.0,
+          "cohort_cut50_pct": 100.0,
           "cohort_n": 64,
-          "cohort_token_pct": 100.0,
+          "cohort_token_pct": 0.0,
           "dust_count": 3723,
           "dust_pct_mc": 3.6837,
           "dust_value_usd": 2018.22,
@@ -160,7 +426,7 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788400020,
+          "computed_at": 1788400051,
           "holders_all": 3991,
           "holders_wallet": 3989,
           "market_cap": 54788.0,
@@ -241,7 +507,7 @@
       "symbol": "catalyst"
     },
     "6LLNiWXRZp8hn5oTFTHEo8ERbJS3QJfHSKhnTCqipump": {
-      "analyzed_at": 1788400020,
+      "analyzed_at": 1788400051,
       "cohort": {
         "balances": {
           "2vG5yGc3Bgs9NmYNdmH9BupDt59smhxTKDFMJqYPFjdS": 12209946.103137,
@@ -374,7 +640,7 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788400020,
+          "computed_at": 1788400051,
           "holders_all": 995,
           "holders_wallet": 994,
           "market_cap": 32890.0,
@@ -455,7 +721,7 @@
       "symbol": "MEMIPEDE"
     },
     "FnLox4hs8zB3YefUyBdwFtTmZm7cMaNSHr5utV4Yswrm": {
-      "analyzed_at": 1788400020,
+      "analyzed_at": 1788400051,
       "cohort": {
         "balances": {
           "12uB7rHhRFCkQwTqdgfhGmeAJEDrfiDqj5CKopPD9R7F": 2161363.176505,
@@ -721,7 +987,7 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788400020,
+          "computed_at": 1788400051,
           "holders_all": 1243,
           "holders_wallet": 1242,
           "market_cap": 94731.0,
@@ -802,5 +1068,5 @@
       "symbol": "AGENTHQ"
     }
   },
-  "updated_at": 1788400020
+  "updated_at": 1788400051
 }
