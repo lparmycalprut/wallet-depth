@@ -2,7 +2,7 @@
   "scanner": "holder-dust-v1",
   "tokens": {
     "46vV3ZpFNLZn1CDRYnAvqPsdW5ejEYn9GK9kPcZFpump": {
-      "analyzed_at": 1788400173,
+      "analyzed_at": 1788400192,
       "cohort": {
         "balances": {
           "2XCTcxi8TfitTSzZdqzuYe8MSaMqGPbCpYfM8bazbPQJ": 2626309.521085,
@@ -187,7 +187,7 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788400173,
+          "computed_at": 1788400192,
           "holders_all": 1434,
           "holders_wallet": 1432,
           "market_cap": 58173.0,
@@ -268,7 +268,7 @@
       "symbol": "honse"
     },
     "488SaFq6wHF2z2k6NLSD3PtoSkXDNZaPkJwxze11pump": {
-      "analyzed_at": 1788400174,
+      "analyzed_at": 1788400193,
       "cohort": {
         "balances": {
           "12i5WxbvSXbrRP3Qi6bnL3bVA1UJ6cVpL1QmSLvpGApf": 5006057.080356,
@@ -357,9 +357,9 @@
             ">$0-$10": 1336,
             ">$500k": 0
           },
-          "cohort_cut50_pct": 0.0,
+          "cohort_cut50_pct": 100.0,
           "cohort_n": 72,
-          "cohort_token_pct": 100.0,
+          "cohort_token_pct": 0.0,
           "dust_count": 1336,
           "dust_pct_mc": 1.9527,
           "dust_value_usd": 1123.06,
@@ -434,7 +434,7 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788400174,
+          "computed_at": 1788400193,
           "holders_all": 1536,
           "holders_wallet": 1534,
           "market_cap": 57512.0,
@@ -515,7 +515,7 @@
       "symbol": "MOMO"
     },
     "5mH155ePpNWJb2GktpftLJbcTvoxFaUrv7XkZPDtpump": {
-      "analyzed_at": 1788400173,
+      "analyzed_at": 1788400193,
       "cohort": {
         "balances": {
           "149iCKvEBdK39mRKJGoX8mC54uzoWM1BAnQ2CMUwe3hQ": 1973169.251601,
@@ -673,7 +673,7 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788400173,
+          "computed_at": 1788400193,
           "holders_all": 3991,
           "holders_wallet": 3989,
           "market_cap": 53708.0,
@@ -754,7 +754,7 @@
       "symbol": "catalyst"
     },
     "6LLNiWXRZp8hn5oTFTHEo8ERbJS3QJfHSKhnTCqipump": {
-      "analyzed_at": 1788400173,
+      "analyzed_at": 1788400192,
       "cohort": {
         "balances": {
           "2vG5yGc3Bgs9NmYNdmH9BupDt59smhxTKDFMJqYPFjdS": 12209946.103137,
@@ -887,7 +887,7 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788400173,
+          "computed_at": 1788400192,
           "holders_all": 995,
           "holders_wallet": 994,
           "market_cap": 32890.0,
@@ -968,7 +968,7 @@
       "symbol": "MEMIPEDE"
     },
     "CGmBrG4GRiMvFSGaEiB7cwEd9uDYiqrXzkoyR2Qa3KrC": {
-      "analyzed_at": 1788400178,
+      "analyzed_at": 1788400193,
       "cohort": {
         "balances": {
           "12LPkp5z6U5RjT31iRgUpqMY2odJdTSFzStr1JBxzZBa": 3106989.785593,
@@ -1070,9 +1070,9 @@
             ">$0-$10": 765,
             ">$500k": 0
           },
-          "cohort_cut50_pct": 0.0,
+          "cohort_cut50_pct": 100.0,
           "cohort_n": 85,
-          "cohort_token_pct": 100.0,
+          "cohort_token_pct": 0.0,
           "dust_count": 765,
           "dust_pct_mc": 1.3854,
           "dust_value_usd": 729.16,
@@ -1147,7 +1147,7 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788400178,
+          "computed_at": 1788400193,
           "holders_all": 978,
           "holders_wallet": 976,
           "market_cap": 52631.0,
@@ -1228,7 +1228,7 @@
       "symbol": "TILLY"
     },
     "Dz2iVSLXFp7dXowD1nybWyCXuUcpV7cBZu68YPV5pump": {
-      "analyzed_at": 1788400174,
+      "analyzed_at": 1788400193,
       "cohort": {
         "balances": {
           "2H39VKYdJd3asiRkmftDQA6sEzyirQkrXbwJmgYe7U3Z": 2118772.324918,
@@ -1341,9 +1341,9 @@
             ">$0-$10": 1447,
             ">$500k": 0
           },
-          "cohort_cut50_pct": 0.0,
+          "cohort_cut50_pct": 100.0,
           "cohort_n": 96,
-          "cohort_token_pct": 100.0,
+          "cohort_token_pct": 0.0,
           "dust_count": 1447,
           "dust_pct_mc": 2.2612,
           "dust_value_usd": 1306.19,
@@ -1418,7 +1418,7 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788400174,
+          "computed_at": 1788400193,
           "holders_all": 1724,
           "holders_wallet": 1723,
           "market_cap": 57765.0,
@@ -1499,7 +1499,7 @@
       "symbol": "Sheep"
     },
     "FnLox4hs8zB3YefUyBdwFtTmZm7cMaNSHr5utV4Yswrm": {
-      "analyzed_at": 1788400172,
+      "analyzed_at": 1788400192,
       "cohort": {
         "balances": {
           "12uB7rHhRFCkQwTqdgfhGmeAJEDrfiDqj5CKopPD9R7F": 2161363.176505,
@@ -1765,7 +1765,7 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788400172,
+          "computed_at": 1788400192,
           "holders_all": 1244,
           "holders_wallet": 1243,
           "market_cap": 92872.0,
@@ -1846,5 +1846,5 @@
       "symbol": "AGENTHQ"
     }
   },
-  "updated_at": 1788400178
+  "updated_at": 1788400193
 }
