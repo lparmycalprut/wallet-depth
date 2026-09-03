@@ -19,7 +19,8 @@ from lp_watchlist import (LP_SOURCE, lp_card_rows, lp_chart_figure,
                           lp_overlay_figure, lp_summary, split_watchlist)
 from meteora_screener import scan_meteora
 from holder_analysis import DUST_LIMIT_USD, analyze_token
-from holder_status import load_holder_status, publish_holder_status
+from holder_status import (MANUAL_SCAN_KEY, apply_manual_scan,
+                           load_holder_status, publish_holder_status)
 from trending_ui import (merge_scan_rows, render_trending, run_screen,
                          run_screen_h1, run_screen_hrhr, run_screen_hrhr_h1)
 from watchlist import (add_to_watchlist, get_last_push_error, load_watchlist,
@@ -622,7 +623,11 @@ def _render_meteora_scan() -> None:
 # ---------------------------------------------------------------------------
 watchlist = load_watchlist()
 force_status = bool(st.session_state.pop("status_force_refresh", False))
-holder_status = load_holder_status(force_refresh=force_status)
+# Overlay scan manual dari halaman Holder Analytic supaya dashboard, watchlist,
+# dan Chart LP membaca angka yang sama dengan grafik (bukan snapshot cron lama).
+holder_status = apply_manual_scan(
+    load_holder_status(force_refresh=force_status),
+    st.session_state.get(MANUAL_SCAN_KEY))
 status_tokens = holder_status.get("tokens") or {}
 history_store = seed_from_status(load_holder_history(), holder_status)
 

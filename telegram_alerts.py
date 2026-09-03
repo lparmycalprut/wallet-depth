@@ -470,6 +470,18 @@ def required_confidence(volatility=None) -> float:
             else MIN_CONFIDENCE)
 
 
+# TODO(alerts): guard "re-klasifikasi harga" untuk kandidat dump. dust % MC
+# memakai cutoff **$10 per wallet dalam USD**, jadi saat harga TURUN banyak
+# wallet jatuh ke tier dust dan dust % MC naik tanpa ada yang jual — efek harga
+# saja bisa ±0,4-0,5 pp, sudah melewati ambang dump 0,25 pp, dan gerbang
+# volume/harga di bawah justru LOLOS saat harga turun (kasus AGENTHQ
+# 2026-09-03, arah sebaliknya: harga +74% membuat dust % MC turun 1,16% → 0,7%).
+# Keputusan user: **annotate, bukan reject** — alert tetap dikirim dengan baris
+# "⚠️ kemungkinan efek re-klasifikasi harga" dan skor dipotong, bila dust % MC
+# naik tetapi ``dust_count`` / pangsa supply dust tidak naik. Prasyarat:
+# ``dust_pct_supply`` harus terisi untuk sumber Helius — DAS tidak mengembalikan
+# ``amount_percentage`` sehingga ``holder_analysis`` meng-hardcode 0.0; alternatif
+# sementara adalah membandingkan ``dust_count`` dua titik history terakhir.
 def validate_alert_with_volume(dust_change_pp, current_volume_4h,
                                avg_volume_7d, current_price, price_change_pct,
                                *, kind: str = "dump", buy_pressure=None,

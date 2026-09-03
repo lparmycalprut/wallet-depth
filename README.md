@@ -12,7 +12,11 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
    - ≥ **0,5% MC** → **HATI-HATI** (badge kuning, peringatan dini),
    - ≥ **1% MC** → **BAHAYA** (disembunyikan dari Scan Meteora).
    Dust yang nambah pesat = holder sebelumnya sudah distribusi / bag
-   merosot jadi sisa.
+   merosot jadi sisa. **Catatan:** batas dust itu **$10 per wallet dalam
+   USD**, jadi dust % MC *tidak* invariant terhadap harga — harga naik
+   membuat wallet "lulus" ke >$10 (dust % MC turun walau tidak ada yang
+   jual), harga turun mendorong wallet masuk dust (dust % MC naik). Baca
+   angka ini bersama jumlah dust wallet.
 2. **Chart LP — watchlist terpisah** — token yang ditambahkan dari **Scan
    Meteora Pool** (⭐) atau ditambah manual ke card itu dikumpulkan di card
    paling atas dashboard. Card ini menampilkan **grafik perubahan dust
@@ -249,5 +253,20 @@ python -m py_compile holder_history.py holder_chronology.py meteora_screener.py 
   lp_watchlist.py core.py app.py scripts/scan_holders.py trending_ui.py \
   watchlist.py
 ```
+
+## Scan manual vs snapshot cron
+
+Tombol **🔄 Scan holder FULL token ini** di halaman Holder Analytic menulis
+titik baru ke `holder_history.json` (store) tetapi **tidak** mempublish
+`holder_status.json` — publish hanya dilakukan cron / *Scan holder watchlist*,
+dan `snapshot_status()` membangun `tokens` dari analyses yang diberikan saja
+(tidak merge), jadi publish satu token akan menghapus token lain dari
+dashboard. Supaya tidak ada dua angka berbeda untuk satu token (kartu metrik
+dari snapshot cron, grafik dari store), UI memakai
+`holder_status.apply_manual_scan()`: hasil scan manual disimpan ringkas di
+`st.session_state[MANUAL_SCAN_KEY]` lalu dioverlay ke snapshot bila
+`analyzed_at`-nya tidak lebih tua. Kartu metrik, badge HATI-HATI/BAHAYA,
+watchlist, dan Chart LP lalu membaca angka yang sama dengan grafik, dan
+caption menandai *scan manual barusan*. File snapshot tidak disentuh.
 
 Analisis bersifat heuristik dan bukan saran keuangan.

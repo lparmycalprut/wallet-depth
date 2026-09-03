@@ -29,7 +29,8 @@ from holder_history import (DUST_CAUTION_PCT, DUST_DANGER_PCT,
                             tracked_chronology_addresses)
 from links import external_links_html
 from holder_analysis import analyze_token
-from holder_status import load_holder_status
+from holder_status import (MANUAL_SCAN_KEY, apply_manual_scan,
+                           compact_manual_scan, load_holder_status)
 from watchlist import add_to_watchlist, load_watchlist
 
 st.set_page_config(page_title="Holder Analytic", page_icon="🧮",
@@ -382,7 +383,13 @@ def _chronology_section(mint: str, store: dict) -> None:
 
 watchlist = load_watchlist()
 mints = list(watchlist)
-status = load_holder_status()
+# Scan manual di halaman ini menulis titik baru ke holder_history.json
+# (store) tetapi TIDAK mempublish holder_status.json — publish hanya dari
+# cron/scan watchlist, dan snapshot_status tidak merge token lama. Tanpa
+# overlay ini kartu metrik menampilkan angka cron terakhir sementara grafik
+# sudah memuat titik scan manual (dua angka berbeda untuk satu token).
+status = apply_manual_scan(load_holder_status(),
+                           st.session_state.get(MANUAL_SCAN_KEY))
 store = seed_from_status(load_holder_history(), status)
 
 query_mint = str(st.query_params.get("mint") or "") if "mint" in st.query_params else ""
@@ -451,9 +458,12 @@ mid = holders.get("mid") if isinstance(holders.get("mid"), dict) else {}
 c4.metric("Pilar Crab+Fish", f"{int(mid.get('count') or 0):,}",
           _fmt_pct(mid.get("pct_mc")))
 st.markdown(_dust_badge(flag), unsafe_allow_html=True)
+_manual_view = token.get("view_source") == "manual"
 st.caption(
     f"Scan terakhir: {_wib(token.get('analyzed_at') or store.get('updated_at'))} "
-    f"· dust ≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI"
+    + ("· **scan manual barusan** (snapshot cron belum diperbarui) "
+       if _manual_view else "")
+    + f"· dust ≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI"
     f" · ≥ {DUST_DANGER_PCT:g}% MC = BAHAYA"
     + (" · dust sedang naik" if flag.get("rising") else "")
 )
@@ -507,4 +517,7 @@ if st.button("🔄 Scan holder FULL token ini", type="primary",
             st.error(f"Gagal: {exc}")
     if analysis:
         ingest_many({mint: analysis}, detail=True)
+        # Kartu metrik/badge ikut hasil scan ini (snapshot cron tidak ditimpa;
+        # publish satu token akan menghapus token lain dari dashboard).
+        st.session_state[MANUAL_SCAN_KEY] = compact_manual_scan(mint, analysis)
         st.rerun()

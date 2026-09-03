@@ -42,6 +42,12 @@ perubahan holder dust yang sudah dikonfirmasi volume + harga + volatilitas.
   token; `compact_signal()` untuk disimpan ke status. Ditarik **lazy**.
 - `holder_status.py`: snapshot `holder_status.json` → ref `holder-live`
   (ikut `history` 4 jam dan `market_signal` bila konteks pasar tersedia).
+  `snapshot_status` **tidak merge** token lama: publish satu token akan
+  menghapus token lain, jadi scan manual di halaman Holder tidak boleh
+  publish. Overlay `apply_manual_scan()` / `resolve_token_view()`
+  (`st.session_state[MANUAL_SCAN_KEY]`) membuat kartu metrik, badge,
+  watchlist, dan Chart LP ikut scan manual yang lebih baru daripada snapshot
+  cron — grafik sudah lebih dulu memuat titik itu dari `holder_history.json`.
 - `scripts/scan_holders.py`: cron watchlist, evaluasi alert sebelum ingest
   history, publish snapshot; exit non-zero bila 0 holder / publish gagal.
 - `telegram_alerts.py`: rule dust 4 jam (+0,25 pp dump; -0,50 pp + buyer
@@ -65,6 +71,9 @@ holder per mint lalu filter dust ≥ 1% MC.
 
 ```text
 dust_limit_usd        : 10.0  (real > $10; dust 0 < value <= $10)
+                          -> dust % MC TIDAK invariant harga: cutoff USD
+                          menggeser klasifikasi wallet (TODO(alerts):
+                          annotate re-klasifikasi, bukan reject)
 dust HATI-HATI        : >= 0.5% marketcap
 dust BAHAYA / hide    : >= 1% marketcap
 grafik / kohort       : bucket 4 jam

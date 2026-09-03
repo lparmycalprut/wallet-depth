@@ -205,3 +205,32 @@ reaktif (< 5 menit), dan ambang dust yang ada tidak boleh diubah.
    termasuk edge case volume 0, avg 0/None, NaN/inf, candle bolong,
    candle < 2, candle basi, payload DexScreener rusak, provider gagal,
    cooldown 1 jam, dan lazy-fetch.
+## Permintaan ke-4 — AGENTHQ: grafik 0,7% tapi kartu "Dust hold % MC" 1,16%
+
+User melaporkan angka yang tidak cocok di halaman Holder Analytic. Setelah
+ditelusuri (snapshot live di ref `holder-live` + DexScreener), ada dua lapis
+penyebab dan **bukan** bug grafik:
+
+1. **Kartu metrik dan grafik membaca dua sumber berbeda umur.** Kartu metrik,
+   badge, dan caption membaca snapshot `holder_status.json` (cron 21:35 WIB),
+   sedangkan grafik membaca `holder_history.json` yang sudah memuat titik scan
+   manual yang baru dijalankan. Tombol scan FULL hanya `ingest_many(detail=True)`;
+   ia tidak mempublish snapshot — dan memang tidak boleh, karena
+   `snapshot_status` membangun `tokens` hanya dari analyses yang diberikan
+   (publish satu token = token lain hilang dari dashboard).
+2. **Harga sedang pump +74% dan cutoff dust itu $10 dalam USD.** harga
+   0,0001085 → 0,0001889, MC $108.545 → ±$188.968. dust % MC invariant
+   terhadap harga, tetapi **klasifikasi**-nya tidak: wallet dengan 52.938–
+   92.166 token (nilai lama $5,74–$10) "lulus" menjadi real >$10, sehingga
+   ±40% nilai dust pindah bucket dan dust % MC turun 1,16% → 0,7% tanpa ada
+   yang jual. Cerminannya (harga turun) menaikkan dust % MC ±0,4-0,5 pp —
+   di atas ambang dump 0,25 pp — dan itu lolos gerbang volume/harga.
+
+Perbaikan yang dikerjakan (user memilih opsi A): `holder_status` mendapat
+`compact_manual_scan()`, `resolve_token_view()`, dan `apply_manual_scan()`;
+halaman Holder Analytic + `app.py` mengoverlay scan manual yang lebih baru ke
+snapshot sebelum render, sehingga kartu metrik, badge, watchlist, dan Chart LP
+setuju dengan grafik, dan caption menandai *scan manual barusan*. Guard
+re-klasifikasi harga (opsi B) belum dikerjakan — keputusannya (**annotate,
+bukan reject**) dicatat sebagai `TODO(alerts)` di `telegram_alerts.py`.
+Tes: 27 murni + 2 AppTest baru → **398 lulus**.

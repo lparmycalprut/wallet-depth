@@ -1,5 +1,61 @@
 # Progress
 
+## 2026-09-03 — Kartu metrik Holder Analytic mengikuti scan manual (kasus AGENTHQ)
+
+Laporan user: token **AGENTHQ** menampilkan dust hold **0,7% di grafik** tetapi
+**1,16% di kartu "Dust hold % MC"** pada saat yang sama.
+
+### Akar masalah (dua lapis)
+1. **Dua vintage data.** Halaman Holder Analytic mengambil kartu metrik dari
+   snapshot terpublikasi `holder_status.json` (`pages/5_🧮_Holder.py` baris
+   437/441/448) tetapi mengambil grafik dari `holder_history.json` + riwayat
+   snapshot (`_points_for`). Tombol **🔄 Scan holder FULL token ini** hanya
+   memanggil `ingest_many(..., detail=True)` → titik baru masuk store,
+   snapshot tidak diperbarui — dan memang tidak boleh: `snapshot_status`
+   membangun `tokens` dari analyses yang diberikan saja (tidak merge), jadi
+   publish satu token akan menghapus token lain dari dashboard. Kartu = cron
+   21:35 WIB, grafik = scan manual barusan.
+2. **Kenapa selisihnya besar.** AGENTHQ sedang pump: harga 0,0001085 →
+   0,0001889 (+74%; `priceChange.h1` +80%), MC $108.545 → ±$188.968.
+   dust % MC = nilai dust / MC sebenarnya **invariant terhadap harga**
+   ($1.256,73 × 1,741 ÷ $188.968 = 1,158%, tetap), **tetapi** cutoff dust
+   adalah **$10 per wallet dalam USD**: wallet yang memegang 52.938–92.166
+   token (nilai lama $5,74–$10) "lulus" ke >$10. Agar tampil 0,70%, nilai
+   dust harus tinggal ±$1.323 → ±40% nilai dust pindah bucket, dan slice
+   $5,74–$10 itu memang lazim memuat 40–45% nilai dust. Jadi **tidak ada yang
+   jual** — klasifikasinya yang bergeser. Cerminannya (harga turun → wallet
+   masuk dust → dust % MC naik ±0,4-0,5 pp, melewati ambang dump 0,25 pp)
+   justru **lolos** gerbang volume/harga karena harga ≤ −1% dan volume tinggi.
+
+### Perbaikan (opsi A — pilihan user)
+- `holder_status.compact_manual_scan()`: payload ringkas scan manual untuk
+  `st.session_state[MANUAL_SCAN_KEY]`; peta wallet / snapshot alert /
+  kronologi dibuang lewat `_holders_for_status`.
+- `holder_status.resolve_token_view()`: overlay scan manual di atas entri
+  snapshot bila `analyzed_at`-nya tidak lebih tua dan `holders` terisi;
+  `history`/`cohort`/`alert_state`/`chronology` tetap dari snapshot; menambah
+  `view_source` = `manual`/`snapshot`; tidak memutasi input; mint token lain
+  diabaikan.
+- `holder_status.apply_manual_scan()`: salinan status dengan token yang cocok
+  diganti view terbaru (token baru ditambahkan, token lain tidak dihapus,
+  file snapshot & cache publish tidak disentuh).
+- `pages/5_🧮_Holder.py` + `app.py` memakai overlay itu sebelum render → kartu
+  metrik, badge HATI-HATI/BAHAYA, watchlist, dan Chart LP setuju dengan
+  grafik; caption menandai **scan manual barusan**.
+- Guard arah turun (opsi B) **belum** dikerjakan; keputusan user dicatat
+  sebagai `TODO(alerts)` di atas `validate_alert_with_volume`: bila dust % MC
+  naik tetapi `dust_count`/pangsa supply tidak naik → **annotate, bukan
+  reject**. Prasyaratnya `dust_pct_supply` terisi untuk sumber Helius (DAS
+  tidak mengembalikan `amount_percentage`; `holder_analysis.py` meng-hardcode
+  0.0 — hanya GMGN yang mengisi).
+
+### Tes
+27 tes murni baru (`tests/test_holder_status_view.py`) + 2 tes AppTest
+(`tests/test_holder_page.py`): sebelum klik kartu 1,16% / 90 wallet, sesudah
+klik 0,90% / 130 wallet + caption "scan manual barusan" + badge HATI-HATI
+(bukan BAHAYA); scan manual token lain diabaikan; snapshot yang lebih baru
+mengalahkan scan manual; status asli tidak termutasi. Total **398 tes lulus**.
+
 ## 2026-09-03 — Konfirmasi volume + volatilitas untuk alert dust
 
 Permintaan user: ambang dust 0,25 pp terlalu berisik; sinyal harus

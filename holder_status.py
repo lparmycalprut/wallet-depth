@@ -54,6 +54,116 @@ def _holders_for_status(holders: dict | None) -> dict:
     return holders
 
 
+# Kunci ``st.session_state`` untuk hasil scan manual halaman Holder Analytic.
+MANUAL_SCAN_KEY = "holder_manual_scan"
+
+
+def _as_int(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def compact_manual_scan(mint: str, analysis: dict | None,
+                        saved_at: int | None = None) -> dict:
+    """Payload ringkas scan manual untuk ``st.session_state[MANUAL_SCAN_KEY]``.
+
+    Hanya bagian yang dibutuhkan kartu metrik UI (holders ringkas, harga,
+    marketcap, waktu). Peta wallet / snapshot alert / kronologi yang berat
+    dibuang lewat :func:`_holders_for_status` supaya session state tidak
+    membengkak.
+    """
+    analysis = analysis if isinstance(analysis, dict) else {}
+    holders = analysis.get("holders")
+    return {
+        "mint": str(mint or ""),
+        "saved_at": _as_int(saved_at) or int(time.time()),
+        "analysis": {
+            "symbol": analysis.get("symbol"),
+            "marketcap": analysis.get("marketcap"),
+            "price": analysis.get("price"),
+            "analyzed_at": analysis.get("analyzed_at"),
+            "holders": _holders_for_status(
+                holders if isinstance(holders, dict) else {}),
+        },
+    }
+
+
+def resolve_token_view(status_token: dict | None,
+                       manual_scan: dict | None = None,
+                       mint: str | None = None) -> dict:
+    """Gabungkan snapshot terpublikasi dengan scan manual yang lebih baru.
+
+    Halaman Holder Analytic menulis hasil scan manual ke
+    ``holder_history.json`` (``ingest_many``) tetapi **tidak** mempublish
+    ``holder_status.json`` — publish hanya dilakukan cron/scan watchlist, dan
+    :func:`snapshot_status` membangun ``tokens`` dari analyses yang diberikan
+    saja (tidak merge), jadi publish satu token akan menghapus token lain dari
+    dashboard. Akibatnya kartu metrik (Dust hold % MC, badge, jumlah wallet)
+    tetap menampilkan angka cron terakhir sementara grafik sudah memuat titik
+    scan manual: dua angka berbeda untuk satu token. Selisihnya bisa besar
+    bila harga bergerak cepat, karena cutoff dust **$10 per wallet dalam USD**
+    membuat klasifikasi wallet bergantung harga (harga naik → wallet "lulus"
+    ke >$10 → dust % MC turun walau tidak ada yang jual).
+
+    Scan manual dipakai hanya bila ``analyzed_at``-nya tidak lebih tua dari
+    snapshot dan ``holders``-nya terisi; selain itu snapshot yang menang.
+    Return dict snapshot (atau ``{}``) dengan ``holders``/``price``/
+    ``marketcap``/``symbol``/``analyzed_at`` dari sumber terbaru, plus
+    ``view_source`` = ``"manual"`` atau ``"snapshot"``. ``history``,
+    ``cohort``, ``alert_state``, dan ``chronology`` selalu dari snapshot.
+    """
+    token = dict(status_token) if isinstance(status_token, dict) else {}
+    token.setdefault("view_source", "snapshot")
+    scan = manual_scan if isinstance(manual_scan, dict) else {}
+    if not scan:
+        return token
+    if mint is not None and str(scan.get("mint") or "") != str(mint or ""):
+        return token
+    if str(scan.get("mint") or "") and str(token.get("mint") or "") \
+            and str(scan.get("mint")) != str(token.get("mint")):
+        return token
+    analysis = scan.get("analysis")
+    if not isinstance(analysis, dict):
+        return token
+    holders = analysis.get("holders")
+    if not isinstance(holders, dict) or not holders:
+        return token
+    manual_ts = (_as_int(analysis.get("analyzed_at"))
+                 or _as_int(scan.get("saved_at")))
+    if manual_ts < _as_int(token.get("analyzed_at")):
+        return token
+    token["holders"] = holders
+    for key in ("price", "marketcap", "symbol"):
+        if analysis.get(key) is not None:
+            token[key] = analysis[key]
+    token["analyzed_at"] = analysis.get("analyzed_at") or scan.get("saved_at")
+    token["view_source"] = "manual"
+    return token
+
+
+def apply_manual_scan(status: dict | None, manual_scan: dict | None) -> dict:
+    """Status salinan dengan token hasil scan manual diganti view terbaru.
+
+    Dipakai UI sebelum render: satu panggilan membuat kartu metrik, badge,
+    watchlist, dan Chart LP membaca angka yang sama dengan grafik. Tidak
+    menyentuh file ``holder_status.json`` maupun cache publish.
+    """
+    status = dict(status) if isinstance(status, dict) else {}
+    scan = manual_scan if isinstance(manual_scan, dict) else {}
+    mint = str(scan.get("mint") or "")
+    if not mint:
+        return status
+    tokens = dict(status.get("tokens") or {})
+    view = resolve_token_view(tokens.get(mint) or {}, scan, mint=mint)
+    if view.get("view_source") != "manual":
+        return status
+    tokens[mint] = view
+    status["tokens"] = tokens
+    return status
+
+
 def snapshot_status(analyses: dict | None,
                     watchlist: dict | None = None,
                     history_store: dict | None = None,
