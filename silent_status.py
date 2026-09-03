@@ -26,6 +26,14 @@ STATUS_REF = "silent-live"
 _CACHE_TTL = 15
 _CACHE = {"data": None, "ts": 0.0}
 
+# Hasil publish terakhir (dipakai scanner cron untuk exit code).
+_LAST_PUBLISH = {"ok": None, "error": ""}
+
+
+def last_publish_result() -> dict:
+    """``{"ok": bool|None, "error": str}`` dari publish_silent_status terakhir."""
+    return dict(_LAST_PUBLISH)
+
 
 def _empty_status() -> dict:
     return {"updated_at": None, "scanner": "holder-dust-v1", "tokens": {}}
@@ -290,10 +298,21 @@ def publish_silent_status(analyses: dict,
     _CACHE["ts"] = time.time()
     if push:
         stamp = status.get("updated_at") or int(time.time())
-        ok = _github_push(status, f"silent-status: snapshot {stamp} [skip ci]")
-        if not ok:
-            print("WARN: silent_status GitHub publish failed; "
-                  "dashboard akan pakai snapshot lokal", file=sys.stderr)
+        if not _github_token():
+            _LAST_PUBLISH["ok"] = False
+            _LAST_PUBLISH["error"] = "no github_token"
+        else:
+            ok = _github_push(status,
+                              f"silent-status: snapshot {stamp} [skip ci]")
+            _LAST_PUBLISH["ok"] = bool(ok)
+            _LAST_PUBLISH["error"] = "" if ok else "github push failed"
+        if not _LAST_PUBLISH["ok"]:
+            print("WARN: silent_status GitHub publish failed "
+                  f"({_LAST_PUBLISH['error']}); dashboard akan pakai "
+                  "snapshot lokal", file=sys.stderr)
+    else:
+        _LAST_PUBLISH["ok"] = None
+        _LAST_PUBLISH["error"] = ""
     return status
 
 

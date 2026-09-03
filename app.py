@@ -436,6 +436,24 @@ st.caption(
     "Grafik kecil = dust % MC tiap 4 jam."
 )
 
+if watchlist and not status_tokens:
+    st.warning(
+        "Belum ada data holder dari cron (`silent_status.json` di branch "
+        "`silent-live` kosong/tidak ada). Pastikan secret **HELIUS_API_KEY** "
+        "dan **GITHUB_TOKEN/GH_TOKEN** terpasang di GitHub Actions, atau klik "
+        "**Scan holder watchlist** untuk mengisi data sekarang.",
+        icon="⚠️")
+elif watchlist:
+    _missing = [str((m or {}).get("symbol") or ca[:6]).upper()
+                for ca, m in watchlist.items()
+                if not ((status_tokens.get(ca) or {}).get("holders") or {}
+                        ).get("total_fetched")]
+    if _missing:
+        st.info("Holder belum terambil untuk: " + ", ".join(_missing[:8])
+                + (" …" if len(_missing) > 8 else "")
+                + ". Cron akan mencoba lagi ±15 menit; atau scan manual.",
+                icon="ℹ️")
+
 if st.button("🔄 Scan holder watchlist", type="primary",
              use_container_width=True):
     analyses = {}

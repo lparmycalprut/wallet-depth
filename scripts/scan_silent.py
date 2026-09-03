@@ -30,7 +30,8 @@ if ROOT not in sys.path:
 
 from holder_history import ingest_many, load_holder_history, seed_from_status
 from silent_accumulation import analyze_token
-from silent_status import load_silent_status, publish_silent_status
+from silent_status import (last_publish_result, load_silent_status,
+                           publish_silent_status)
 from watchlist import load_watchlist
 
 
@@ -104,6 +105,15 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     watchlist = load_watchlist()
+    try:
+        from core import get_helius_keys
+        helius_ok = bool(get_helius_keys())
+    except Exception:  # noqa: BLE001
+        helius_ok = False
+    if not helius_ok:
+        print("WARN: HELIUS_API_KEY tidak ada — holder hanya via GMGN "
+              "(sering diblokir di runner Actions → dust kosong). "
+              "Set secret HELIUS_API_KEY di repo.", file=sys.stderr)
     print(f"Holder scanner: tokens={len(watchlist)} "
           f"time={datetime.now(timezone.utc).isoformat()} "
           f"max_wallets={args.max_wallets} "
@@ -130,16 +140,31 @@ def main(argv=None) -> int:
               f"history={len((history or {}).get('tokens') or {})} "
               f"updated={status.get('updated_at')} "
               f"durasi={time.monotonic() - started:.1f}s")
+        empty = 0
         for mint, item in sorted(analyses.items()):
             holders = item.get("holders") or {}
+            if not holders.get("total_fetched"):
+                empty += 1
             print(f"  {item.get('symbol') or '?'} "
+                  f"src={holders.get('source')} "
+                  f"fetched={holders.get('total_fetched')} "
                   f"real={holders.get('real_count')} "
                   f"dust={holders.get('dust_count')} "
                   f"dust%mc={holders.get('dust_pct_mc')} "
                   f"mid={((holders.get('mid') or {}).get('count'))}")
+        if empty == len(analyses):
+            print("ERROR: semua token 0 holder — sumber holder gagal "
+                  "(cek HELIUS_API_KEY / akses GMGN).", file=sys.stderr)
+            return 2
     else:
         publish_silent_status({}, watchlist, push=not args.no_push)
         print("Holder scan selesai: tidak ada token yang berhasil dianalisis")
+        if watchlist:
+            return 2
+    if not args.no_push and last_publish_result().get("ok") is False:
+        print(f"ERROR: publish silent_status gagal: "
+              f"{last_publish_result().get('error')}", file=sys.stderr)
+        return 3
     return 0
 
 

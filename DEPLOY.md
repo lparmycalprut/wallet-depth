@@ -32,12 +32,26 @@ Langkah setelah scan:
    (dibuat otomatis pada publish pertama) agar dashboard Streamlit
    membaca data yang sama dengan cron tanpa commit ke `main`.
 
-   **Wajib di workflow**:
+   **Wajib di workflow** (sudah ada di `daily-effort.yml`):
 
    ```yaml
    permissions:
      contents: write
    ```
+
+   dan env step scan harus diberi token + key Helius, kalau tidak
+   publish gagal diam-diam dan watchlist di dashboard kosong (`—`):
+
+   ```yaml
+   env:
+     GITHUB_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+     HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+   ```
+
+   Secret repo yang perlu diset: **`HELIUS_API_KEY`** (wajib — GMGN
+   diblokir dari runner Actions) dan opsional `GH_TOKEN` (PAT) bila
+   token bawaan tidak cukup. Scanner kini exit non-zero (run merah)
+   bila semua token 0 holder atau publish gagal.
 
 3. Tidak ada kirim Telegram.
 

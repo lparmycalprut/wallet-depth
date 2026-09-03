@@ -37,3 +37,64 @@ class ScanWatchlistTest(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class MainExitCodeTest(unittest.TestCase):
+    """Cron harus MERAH bila data holder/publish gagal (bukan hijau palsu)."""
+
+    def _run(self, analyses, publish_ok=None, watchlist=None):
+        import scripts.scan_silent as mod
+        wl = {"A": {"symbol": "AA"}} if watchlist is None else watchlist
+        with mock.patch.object(mod, "load_watchlist", return_value=wl), \
+                mock.patch.object(mod, "load_silent_status",
+                                  return_value={"tokens": {}}), \
+                mock.patch.object(mod, "load_holder_history",
+                                  return_value={"tokens": {}}), \
+                mock.patch.object(mod, "seed_from_status",
+                                  side_effect=lambda s, _st: s), \
+                mock.patch.object(mod, "scan_watchlist",
+                                  return_value=analyses), \
+                mock.patch.object(mod, "ingest_many",
+                                  return_value={"tokens": {}}), \
+                mock.patch.object(mod, "publish_silent_status",
+                                  return_value={"updated_at": 1}), \
+                mock.patch.object(mod, "last_publish_result",
+                                  return_value={"ok": publish_ok,
+                                                "error": "x"}):
+            return mod.main([])
+
+    def test_ok(self):
+        out = self._run({"A": {"symbol": "AA", "holders": {
+            "total_fetched": 5, "dust_count": 1}}}, publish_ok=True)
+        self.assertEqual(out, 0)
+
+    def test_zero_holders_fails(self):
+        out = self._run({"A": {"symbol": "AA", "holders": {
+            "total_fetched": 0}}}, publish_ok=True)
+        self.assertEqual(out, 2)
+
+    def test_no_analysis_fails(self):
+        self.assertEqual(self._run({}, publish_ok=True), 2)
+
+    def test_publish_failure_fails(self):
+        out = self._run({"A": {"symbol": "AA", "holders": {
+            "total_fetched": 5}}}, publish_ok=False)
+        self.assertEqual(out, 3)
+
+    def test_no_push_ignores_publish(self):
+        import scripts.scan_silent as mod
+        with mock.patch.object(mod, "load_watchlist",
+                               return_value={"A": {}}), \
+                mock.patch.object(mod, "load_silent_status",
+                                  return_value={"tokens": {}}), \
+                mock.patch.object(mod, "load_holder_history",
+                                  return_value={"tokens": {}}), \
+                mock.patch.object(mod, "seed_from_status",
+                                  side_effect=lambda s, _st: s), \
+                mock.patch.object(mod, "scan_watchlist", return_value={
+                    "A": {"holders": {"total_fetched": 1}}}), \
+                mock.patch.object(mod, "ingest_many",
+                                  return_value={"tokens": {}}), \
+                mock.patch.object(mod, "publish_silent_status",
+                                  return_value={}):
+            self.assertEqual(mod.main(["--no-push"]), 0)
