@@ -7,6 +7,12 @@ on:
     - cron: "*/15 * * * *"
 
   workflow_dispatch:
+    inputs:
+      telegram_test:
+        description: "Kirim test alert Telegram sebelum scan"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -36,13 +42,24 @@ jobs:
 
       - name: Scan holder dust watchlist
         env:
-          # Wajib: tanpa token, publish holder_status.json ke branch
-          # `holder-live` gagal diam-diam dan watchlist di dashboard kosong.
-          # Pakai PAT (secrets.GH_TOKEN) bila ada, fallback token bawaan.
+          # Token untuk publish holder_status.json ke branch holder-live.
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
-          # Wajib: holder diambil via Helius DAS. GMGN diblokir dari runner
-          # Actions sehingga tanpa key hasilnya 0 holder / dust "—".
+
+          # Holder source Helius.
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
           HELIUS_API_KEYS: ${{ secrets.HELIUS_API_KEYS }}
+
+          # Telegram holder-dust alerts.
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+          # Bernilai true ketika workflow_dispatch meminta test alert.
+          TELEGRAM_TEST: ${{ inputs.telegram_test || 'false' }}
+
         run: |
-          python scripts/scan_holders.py --max-wallets 3000
+          EXTRA_ARGS=""
+          if [ "$TELEGRAM_TEST" = "true" ]; then
+            EXTRA_ARGS="--telegram-test"
+          fi
+
+          python scripts/scan_holders.py --max-wallets 3000 $EXTRA_ARGS
