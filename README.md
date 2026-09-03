@@ -1,8 +1,10 @@
 # Wallet Depth — Holder Analytic (Dust)
 
 Wallet Depth memantau token Solana dan berfokus pada **analisa holder
-dust** sebagai jejak dump, plus **Scan Meteora DLMM**. Semua sinyal
-(silent accumulation 12 jam, reversal, Telegram) sudah dihapus dari UI.
+dust** sebagai jejak dump, plus **Scan Meteora DLMM**. Telegram alert
+tersedia: dust naik ≥ 0,25 poin persentase dalam 4 jam = indikasi dump;
+dust turun ≥ 0,5 poin persentase dan ada wallet yang menambah token =
+kemungkinan akumulasi.
 
 ## Konsep
 

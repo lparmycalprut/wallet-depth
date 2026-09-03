@@ -1,8 +1,9 @@
 # AGENTS.md — Wallet Depth
 
 Dashboard token Solana. Fokus: **analisa holder dust** (jumlah + % MC,
-grafik 4 jam, kohort Crab+Fish) dan **Scan Meteora DLMM**. Tidak ada
-sinyal, tidak ada silent accumulation / flow 12 jam, tidak ada Telegram.
+grafik 4 jam, kohort Crab+Fish) dan **Scan Meteora DLMM**. Sinyal trading
+lama dan silent accumulation / flow 12 jam sudah tidak dipakai. Telegram
+alert dust aktif melalui `telegram_alerts.py` dan secrets workflow.
 
 ## Sumber kebenaran
 

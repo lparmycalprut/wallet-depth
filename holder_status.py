@@ -39,9 +39,17 @@ def _empty_status() -> dict:
 
 
 def _holders_for_status(holders: dict | None) -> dict:
-    """Buang peta address (berat) dari snapshot dashboard."""
+    """Ringkas snapshot holder untuk dashboard dan evaluasi alert."""
     holders = dict(holders or {})
     holders.pop("cohort_now", None)
+    # Public addresses and balances are needed by the alert rule to verify
+    # that a falling dust percentage is accompanied by buying. Limit the
+    # payload to avoid making the status branch unnecessarily large.
+    balances = holders.get("wallet_balances")
+    if isinstance(balances, dict):
+        holders["wallet_balances"] = {
+            str(address): value for address, value in list(balances.items())[:5000]
+        }
     mid = holders.get("mid")
     if isinstance(mid, dict):
         holders["mid"] = {

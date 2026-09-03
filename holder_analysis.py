@@ -543,6 +543,14 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
         ca, source, max_wallets=max_wallets, timeout=timeout,
         price_usd=price, market_cap=mc, market=market)
     holder_stats = classify_holders(snapshot, mc, dust_limit=dust_limit)
+    # Keep a compact balance snapshot so the cron can distinguish a genuine
+    # buy (wallet balance increased) from dust merely leaving the bucket.
+    holder_stats["wallet_balances"] = {
+        str(row.get("address")): row.get("balance")
+        for row in (snapshot.get("holders") or [])
+        if isinstance(row, dict) and row.get("is_wallet") and row.get("address")
+        and row.get("balance") is not None
+    }
     if depth is not None:
         holder_stats["depth"] = depth
     pools = set(str(p or "").strip() for p in

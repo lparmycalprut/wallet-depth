@@ -125,6 +125,15 @@ def main(argv=None) -> int:
         history_store=store)
 
     if analyses:
+        alerts = evaluate_telegram_alerts(analyses, previous_status)
+        if alerts:
+            results = send_telegram_alerts(alerts)
+            for alert, result in zip(alerts, results):
+                if result.get("sent"):
+                    print(f"Telegram alert terkirim: {alert.get('event_id')}")
+                elif not result.get("skipped"):
+                    print(f"WARN Telegram alert gagal: {result.get('error')}",
+                          file=sys.stderr)
         # detail=False: cron hanya menambah titik perubahan; baseline
         # (detail scan FULL pertama dari halaman Holder) tetap utuh.
         history = ingest_many(analyses, store=store, detail=False)

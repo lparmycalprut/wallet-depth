@@ -6,8 +6,9 @@
 - Python: lihat `runtime.txt`
 - Dependencies: `requirements.txt`
 - Opsional secrets: `HELIUS_API_KEY`, `HELIUS_API_KEYS`, `GITHUB_TOKEN`.
-- **Tidak ada** `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` — Telegram sudah
-  dihapus.
+- Opsional: `TELEGRAM_BOT_TOKEN` dan `TELEGRAM_CHAT_ID` untuk mengaktifkan
+  alert dump / kemungkinan akumulasi. Simpan keduanya sebagai GitHub Actions
+  secrets (buat bot lewat BotFather, lalu tambahkan bot ke chat/channel).
 
 Watchlist di halaman utama menarik `holder_status.json` dari ref
 `holder-live` (bukan commit `main`). Tombol **Scan holder watchlist**

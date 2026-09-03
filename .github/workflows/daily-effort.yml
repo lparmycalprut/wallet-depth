@@ -44,5 +44,8 @@ jobs:
           # Actions sehingga tanpa key hasilnya 0 holder / dust "—".
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
           HELIUS_API_KEYS: ${{ secrets.HELIUS_API_KEYS }}
+          # Opsional: bot mengirim alert dump / kemungkinan akumulasi.
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python scripts/scan_holders.py --max-wallets 3000
