@@ -1,9 +1,9 @@
-name: Silent Accumulation 12H Scanner
+name: Holder Dust Scanner
 
 on:
   schedule:
-    # GitHub Actions dapat terlambat beberapa menit; engine memakai window
-    # rolling 12 jam sehingga tidak bergantung pada waktu mulai yang persis.
+    # GitHub Actions dapat terlambat beberapa menit; history di-resample
+    # per 4 jam sehingga tidak bergantung pada waktu mulai yang persis.
     - cron: "*/15 * * * *"
 
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: silent-scanner
+  group: holder-scanner
   cancel-in-progress: false
 
 jobs:
@@ -34,6 +34,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests curl_cffi
 
-      - name: Scan silent accumulation (12h) + holder dust
+      - name: Scan holder dust watchlist
+        env:
+          # Wajib: tanpa token, publish holder_status.json ke branch
+          # `holder-live` gagal diam-diam dan watchlist di dashboard kosong.
+          # Pakai PAT (secrets.GH_TOKEN) bila ada, fallback token bawaan.
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          # Wajib: holder diambil via Helius DAS. GMGN diblokir dari runner
+          # Actions sehingga tanpa key hasilnya 0 holder / dust "—".
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+          HELIUS_API_KEYS: ${{ secrets.HELIUS_API_KEYS }}
         run: |
-          python scripts/scan_silent.py --max-wallets 3000 --max-trade-pages 8
+          python scripts/scan_holders.py --max-wallets 3000
