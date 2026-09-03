@@ -25,16 +25,40 @@ class DustFlagTest(unittest.TestCase):
         self.assertTrue(hh.should_hide_dust(1.0))
         self.assertTrue(hh.should_hide_dust(2.01))
 
-    def test_ok_below_one_percent(self):
-        flag = hh.dust_flag(0.99)
-        self.assertEqual(flag["level"], "ok")
+    def test_caution_from_half_percent(self):
+        flag = hh.dust_flag(0.5)
+        self.assertEqual(flag["level"], "caution")
+        self.assertEqual(flag["label"], "HATI-HATI")
+        # HATI-HATI masih di bawah BAHAYA: tidak disembunyikan dari Meteora.
         self.assertFalse(flag["hide"])
         self.assertFalse(hh.should_hide_dust(0.5))
+        self.assertEqual(hh.dust_flag(0.99)["level"], "caution")
+
+    def test_ok_below_caution_threshold(self):
+        flag = hh.dust_flag(0.49)
+        self.assertEqual(flag["level"], "ok")
+        self.assertEqual(flag["label"], "AMAN")
+        self.assertFalse(flag["hide"])
+        self.assertFalse(hh.should_hide_dust(0.0))
+
+    def test_unknown_without_pct(self):
+        flag = hh.dust_flag(None)
+        self.assertEqual(flag["level"], "unknown")
+        self.assertFalse(flag["hide"])
+        self.assertFalse(flag["rising"])
+
+    def test_level_rank_orders_severity(self):
+        self.assertLess(hh.dust_level_rank("ok"), hh.dust_level_rank("caution"))
+        self.assertLess(hh.dust_level_rank("caution"),
+                        hh.dust_level_rank("danger"))
+        self.assertEqual(hh.dust_level_rank(None), -1)
 
     def test_rising_compared_to_previous(self):
         flag = hh.dust_flag(1.4, 1.1)
         self.assertTrue(flag["rising"])
         self.assertFalse(hh.dust_flag(1.4, 1.4)["rising"])
+        # naik di dalam zona HATI-HATI juga terdeteksi
+        self.assertTrue(hh.dust_flag(0.7, 0.55)["rising"])
 
 
 class MidTierAndCohortTest(unittest.TestCase):

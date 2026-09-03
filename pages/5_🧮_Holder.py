@@ -2,7 +2,8 @@
 """Analisa holder — dust % MC, grafik 4 jam, kohort mid-tier.
 
 Halaman di bawah CVD. Fokus: dust nambah = indikasi dump.
-- ≥ 1% MC → BAHAYA
+- ≥ 0,5% MC → HATI-HATI
+- ≥ 1% MC   → BAHAYA
 Kohort Crab+Fish di-freeze 4 jam; sisa token (bukan USD) mengukur exit pilar.
 """
 from __future__ import annotations
@@ -18,7 +19,7 @@ from holder_chronology import (SAMPLED_NOTE, SNAPSHOT_AWAL_MESSAGE,
                                TRUNCATED_NOTE, fmt_id_decimal, fmt_id_int,
                                format_wib as _chrono_wib, interval_narrative,
                                interval_title, movement_table_rows)
-from holder_history import (DUST_DANGER_PCT,
+from holder_history import (DUST_CAUTION_PCT, DUST_DANGER_PCT,
                             FULL_SCAN_MAX_WALLETS, baseline_for_mint,
                             bucket_delta, bucket_series,
                             chronology_view_for_mint, dust_flag,
@@ -35,8 +36,9 @@ st.set_page_config(page_title="Holder Analytic", page_icon="🧮",
                    layout="wide")
 st.title("🧮 Holder Analytic")
 st.caption(
-    f"Dust holder (nilai ≤ $10) sebagai jejak dump: **≥ {DUST_DANGER_PCT:.0f}% "
-    "MC = BAHAYA**. Grafik di-resample **4 jam sekali**. "
+    f"Dust holder (nilai ≤ $10) sebagai jejak dump: **≥ {DUST_CAUTION_PCT:g}% "
+    f"MC = HATI-HATI**, **≥ {DUST_DANGER_PCT:g}% MC = BAHAYA**. Grafik "
+    "di-resample **4 jam sekali**. "
     "Pilar harga = kohort Crab+Fish yang di-freeze: yang diukur sisa "
     "**token**, bukan dollar.")
 
@@ -70,10 +72,11 @@ def _points_for(mint: str, status_token: dict | None, store: dict) -> list:
 def _dust_badge(flag: dict) -> str:
     level = flag.get("level") or "unknown"
     label = str(flag.get("label") or "—")
-    if flag.get("rising") and level == "danger":
+    if flag.get("rising") and level in ("danger", "caution"):
         label = f"{label} ↑"
     colors = {
         "ok": ("#14532d", "#dcfce7"),
+        "caution": ("#78350f", "#fef3c7"),
         "danger": ("#7f1d1d", "#fee2e2"),
     }
     bg, fg = colors.get(level, ("#e2e8f0", "#000000"))
@@ -99,8 +102,10 @@ def _history_charts(points: list[dict]) -> None:
     fig, axis = plt.subplots(figsize=(11, 4.2))
     axis.plot(labels, dust_pct, color="#b45309", marker="o", linewidth=2.2,
               label="Dust % MC")
+    axis.axhline(DUST_CAUTION_PCT, color="#b45309", linestyle=":",
+                 linewidth=1, label=f"Hati-hati {DUST_CAUTION_PCT:g}%")
     axis.axhline(DUST_DANGER_PCT, color="#b91c1c", linestyle="--",
-                 linewidth=1, label=f"Bahaya {DUST_DANGER_PCT:.0f}%")
+                 linewidth=1, label=f"Bahaya {DUST_DANGER_PCT:g}%")
     axis.set_ylabel("Dust % marketcap")
     axis.tick_params(axis="x", rotation=30)
     axis.grid(alpha=.2)
@@ -448,7 +453,8 @@ c4.metric("Pilar Crab+Fish", f"{int(mid.get('count') or 0):,}",
 st.markdown(_dust_badge(flag), unsafe_allow_html=True)
 st.caption(
     f"Scan terakhir: {_wib(token.get('analyzed_at') or store.get('updated_at'))} "
-    f"· dust ≥ {DUST_DANGER_PCT:.0f}% MC = BAHAYA"
+    f"· dust ≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI"
+    f" · ≥ {DUST_DANGER_PCT:g}% MC = BAHAYA"
     + (" · dust sedang naik" if flag.get("rising") else "")
 )
 

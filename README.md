@@ -9,18 +9,26 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
 
 1. **Dust holder** — wallet murni dengan `0 < nilai ≤ $10`:
    - **dust % MC** = total nilai dust / marketcap × 100,
-   - ≥ **1% MC** → BAHAYA (disembunyikan dari Scan Meteora).
+   - ≥ **0,5% MC** → **HATI-HATI** (badge kuning, peringatan dini),
+   - ≥ **1% MC** → **BAHAYA** (disembunyikan dari Scan Meteora).
    Dust yang nambah pesat = holder sebelumnya sudah distribusi / bag
    merosot jadi sisa.
-2. **Kohort mid-tier (Crab+Fish, $100–$10k)** — daftar address di-freeze
+2. **Chart LP — watchlist terpisah** — token yang ditambahkan dari **Scan
+   Meteora Pool** (⭐) atau ditambah manual ke card itu dikumpulkan di card
+   paling atas dashboard. Card ini menampilkan **grafik perubahan dust
+   holder** (dust % MC + jumlah wallet dust per bucket 4 jam, garis ambang
+   0,5% / 1%), sparkline, Δ poin persentase 4 jam & total, overlay semua
+   token LP, plus tombol pindah card (📋 ↔ 🌊). Token LP tidak ditampilkan
+   dua kali di watchlist holder biasa.
+3. **Kohort mid-tier (Crab+Fish, $100–$10k)** — daftar address di-freeze
    4 jam, lalu diukur **sisa token** (bukan dollar) supaya dump harga
    tidak ketiru sebagai exit.
-3. **Grafik 4 jam** — setiap scan mencatat titik ke `holder_history.json`,
+4. **Grafik 4 jam** — setiap scan mencatat titik ke `holder_history.json`,
    ditampilkan per bucket 4 jam (watchlist sparkline + halaman Holder).
-4. **Wallet Depth by Threshold** — Helius DAS `getTokenAccounts`, bucket
+5. **Wallet Depth by Threshold** — Helius DAS `getTokenAccounts`, bucket
    `>$0-$10` … `>$500k` atas wallet murni (LP/pool DexScreener disingkirkan).
    Tier 🦐/🦀/🐟/🐬/🦈 selalu wallet murni.
-5. **Kronologi Holder (scan FULL)** — snapshot awal disimpan sekali dan
+6. **Kronologi Holder (scan FULL)** — snapshot awal disimpan sekali dan
    tidak ditimpa. Scan FULL berikutnya membandingkan **balance token**
    (bukan hanya nilai USD) untuk melihat wallet dust yang membesar, turun
    kategori, baru teramati, atau saldo menjadi nol. Kenaikan harga tanpa
@@ -29,7 +37,7 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
    verifikasi. Payload wallet dibatasi (sampel deterministik); hasil
    sampled/truncated tidak disebut daftar lengkap. Kronologi baru muncul
    setelah scan FULL kedua.
-6. **Alert Telegram holder dust** — membandingkan `dust_pct_mc` terbaru
+7. **Alert Telegram holder dust** — membandingkan `dust_pct_mc` terbaru
    dengan anchor sekitar 4 jam sebelumnya menggunakan perubahan **poin
    persentase**:
    - naik minimal `+0.25` poin → indikasi dump;
@@ -57,20 +65,43 @@ Scan Meteora. Harga/MC dari DexScreener. Solscan dilepas.
 Scan Holder Khusus (halaman utama) dan cron butuh `HELIUS_API_KEY`
 (config / env / Streamlit secrets). Tanpa key, fallback GMGN.
 
+## Chart LP (watchlist Meteora terpisah)
+
+Card paling atas dashboard, khusus token yang ditambahkan dari **Scan
+Meteora Pool** (`source=meteora`):
+
+- **Overlay** dust % MC semua token LP dalam satu grafik + grafik per token
+  (garis dust % MC, batang jumlah wallet dust, garis ambang 0,5% & 1%).
+- Per baris: MC, jumlah wallet dust, **Hold %MC** + badge
+  (AMAN / HATI-HATI / BAHAYA), **Δ 4 jam** dan Δ total dalam **poin
+  persentase**, sparkline 4 jam, tombol 🧮 Holder Analytic, 📋 pindah ke
+  watchlist holder, ✕ hapus.
+- Urut dari yang paling perlu diwaspadai (BAHAYA → HATI-HATI → AMAN, lalu
+  dust % MC terbesar).
+- Token LP **tidak** muncul dua kali di watchlist holder di bawahnya.
+- Tambah manual: form **➕ Tambah CA manual ke Chart LP** di dalam card, atau
+  radio *Masuk ke card* pada form **➕ Tambah token** (📋 Watchlist Holder /
+  🌊 Chart LP). Tombol 🌊 pada baris watchlist holder memindahkan token ke
+  Chart LP (`set_watchlist_source`).
+
 ## Scan Meteora Pool
 
 - 24 jam: `pool_type=dlmm && active_tvl≥1000 && fee_active_tvl_ratio≥250`
 - 1 jam: `pool_type=dlmm && active_tvl≥1000 && fee_active_tvl_ratio≥1`
 - Pool 24 jam yang masih muncul di 1 jam **tetap ditampilkan**
-- Dust holder **≥ 1% MC** (BAHAYA) disembunyikan
+- Dust holder **≥ 1% MC** (BAHAYA) disembunyikan, **≥ 0,5% MC** ditandai
+  badge **HATI-HATI**
+- Tombol **⭐** memasukkan token ke card **Chart LP** (watchlist terpisah di
+  bagian atas dashboard, lengkap dengan grafik perubahan dust holder)
 - Shortcut: [Meteora DLMM](https://app.meteora.ag/dlmm/) + [HawkFi](https://www.hawkfi.ag/meteora/)
 
 ## Modul
 
 | File | Peran |
 |---|---|
-| `holder_history.py` | Pencatatan dust/kohort, resample 4 jam, baseline FULL, kronologi |
+| `holder_history.py` | Pencatatan dust/kohort, resample 4 jam, ambang HATI-HATI/BAHAYA, baseline FULL, kronologi |
 | `holder_chronology.py` | Snapshot wallet bounded, klasifikasi pergerakan, narasi kronologi |
+| `lp_watchlist.py` | Card **Chart LP**: pisah watchlist Meteora, baris + grafik perubahan dust holder |
 | `meteora_screener.py` | Listing DLMM 24h+1h, enrich holder, filter dust ≥1% |
 | `holder_analysis.py` | Fetch holder Helius/GMGN, klasifikasi real/dust/mid |
 | `solscan_holders.py` | Kalkulasi wallet_depth (bucket & tier) |

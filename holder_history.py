@@ -7,8 +7,9 @@ Dashboard meresample ke bucket 4 jam. Snapshot ``holder_status``
 menyimpan salinan ringkas ``history`` supaya cron GitHub tetap punya
 jejak antar-run.
 
-Ambang dust (observasi dump) — satu garis:
-- >= 1% MC  → BAHAYA (disembunyikan dari Scan Meteora)
+Ambang dust (observasi dump) — dua garis:
+- >= 0,5% MC → HATI-HATI (peringatan dini, tetap tampil di Scan Meteora)
+- >= 1% MC   → BAHAYA (disembunyikan dari Scan Meteora)
 """
 from __future__ import annotations
 
@@ -40,9 +41,12 @@ def _atomic_write_json(path: str, data, **dump_kwargs) -> None:
         raise
 
 DUST_DANGER_PCT = 1.0
+# HATI-HATI: dust sudah memegang >= 0,5% MC tapi belum sebatas BAHAYA.
+DUST_CAUTION_PCT = 0.5
 # alias lama (kompatibilitas import)
-DUST_CAUTION_PCT = DUST_DANGER_PCT
 DUST_LIMIT_PCT = DUST_DANGER_PCT
+# Urutan keparahan badge (dipakai sorting Chart LP / watchlist).
+DUST_LEVEL_RANK = {"ok": 0, "caution": 1, "danger": 2}
 INTERVAL_SEC = 4 * 3600          # grafik 4 jam sekali
 COHORT_WINDOW_SEC = 4 * 3600     # freeze Crab+Fish tiap 4 jam
 COHORT_MAX = 200                 # address yang diikuti
@@ -84,10 +88,13 @@ def empty_store() -> dict:
 
 
 def dust_flag(dust_pct_mc, prev_pct=None) -> dict:
-    """Klasifikasi dust % MC: ok / danger.
+    """Klasifikasi dust % MC: ok / caution / danger.
 
-    ``hide`` True jika dust **≥ 1% MC** (BAHAYA — disembunyikan dari
-    Scan Meteora).
+    - ``>= 0,5% MC`` → **HATI-HATI** (``caution``): dust sudah memegang
+      porsi MC yang berarti, pantau lebih ketat.
+    - ``>= 1% MC`` → **BAHAYA** (``danger``): ``hide`` True, disembunyikan
+      dari Scan Meteora.
+
     ``rising`` True jika % MC naik dibanding titik sebelumnya.
     """
     pct = _float(dust_pct_mc, None)
@@ -99,8 +106,16 @@ def dust_flag(dust_pct_mc, prev_pct=None) -> dict:
     if pct >= DUST_DANGER_PCT:
         return {"level": "danger", "label": "BAHAYA", "hide": True,
                 "rising": rising, "pct": pct}
+    if pct >= DUST_CAUTION_PCT:
+        return {"level": "caution", "label": "HATI-HATI", "hide": False,
+                "rising": rising, "pct": pct}
     return {"level": "ok", "label": "AMAN", "hide": False,
             "rising": rising, "pct": pct}
+
+
+def dust_level_rank(level) -> int:
+    """Bobot keparahan level dust (``unknown`` = -1, ``danger`` = 2)."""
+    return int(DUST_LEVEL_RANK.get(str(level or ""), -1))
 
 
 def should_hide_dust(dust_pct_mc) -> bool:

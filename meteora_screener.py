@@ -7,7 +7,9 @@ Endpoint: ``pool-discovery-api.datapi.meteora.ag/pools``
 
 Pool 24 jam yang masih muncul di 1 jam **tetap ditampilkan**. Pool 1 jam
 yang belum ada di 24 jam ikut digabung (sama seperti listing Trending).
-Setelah fetch holder, pool dengan dust holder **> 2% marketcap** disembunyikan.
+Setelah fetch holder, pool dengan dust holder **≥ 1% marketcap (BAHAYA)**
+disembunyikan; **≥ 0,5% MC** tetap tampil dengan badge **HATI-HATI**.
+Baris yang di-⭐ masuk watchlist terpisah **Chart LP** di dashboard.
 """
 from __future__ import annotations
 

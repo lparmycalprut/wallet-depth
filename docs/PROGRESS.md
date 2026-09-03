@@ -306,3 +306,49 @@
   dashboard menampilkan peringatan bila data cron kosong.
 - Workflow perlu env `GITHUB_TOKEN` + `HELIUS_API_KEY` (harus di-commit
   manual — GitHub App tanpa permission `workflows`).
+
+# 2026-09-03 — Ambang HATI-HATI 0,5% + card Chart LP (watchlist Meteora terpisah)
+
+- `holder_history.py`: dua ambang dust — `DUST_CAUTION_PCT = 0.5`
+  (**HATI-HATI**, badge kuning, tidak disembunyikan) dan `DUST_DANGER_PCT =
+  1.0` (**BAHAYA**, `hide=True` → tetap disaring dari Scan Meteora).
+  `dust_flag` mengembalikan level `ok`/`caution`/`danger`/`unknown`; helper
+  baru `dust_level_rank` untuk sorting. Alias lama `DUST_CAUTION_PCT =
+  DUST_DANGER_PCT` diganti nilai sebenarnya.
+- Badge & grafik mengikuti: `app.py` (`.dust-caution`, panah ↑ juga untuk
+  caution), `pages/5_🧮_Holder.py` (warna badge + `axhline` 0,5% pada grafik
+  dust 4 jam), caption/hero menyebut kedua ambang.
+- Modul baru `lp_watchlist.py` (murni data + figure, tanpa Streamlit):
+  `split_watchlist` (token `source=meteora`/`lp`/`chart_lp` → card LP,
+  sisanya watchlist holder; tidak ada token yang muncul dua kali),
+  `build_lp_row`/`lp_card_rows` (dust % MC, dust count, Δ 4 jam & Δ total
+  dalam poin persentase, level, `has_chart`), `sort_lp_rows` (BAHAYA →
+  HATI-HATI → AMAN lalu % MC terbesar), `lp_summary`, `lp_chart_figure`
+  (garis dust % MC + batang wallet dust + garis ambang 0,5%/1%),
+  `lp_overlay_figure` (semua token LP dalam satu grafik).
+- `app.py`: card **🌊 Chart LP — Watchlist Meteora** di bagian paling atas
+  (`st.container(border=True)`) berisi header pill (jumlah token / BAHAYA /
+  HATI-HATI / dust naik), overlay chart, form **➕ Tambah CA manual ke Chart
+  LP**, dan baris per token: MC + waktu scan, dust count, Hold %MC + badge,
+  Δ 4 jam & total, sparkline, expander grafik per token (+ Wallet Depth),
+  tombol 🧮 / 📋 (pindah ke watchlist holder) / ✕.
+- Watchlist holder di bawah hanya berisi token non-LP, kolom tombol bertambah
+  🌊 (pindah ke Chart LP). Form **➕ Tambah token** punya radio *Masuk ke
+  card* (📋 Watchlist Holder / 🌊 Chart LP) + validasi CA (Solana base58 /
+  EVM) lewat `_ca_error`; pesan push-error kini membaca kunci `msg` yang
+  benar dari `get_last_push_error()`.
+- Scan Meteora: ⭐ memakai `source=meteora` → token langsung masuk Chart LP;
+  caption menyebut badge HATI-HATI dan card tujuan.
+- `watchlist.py`: op journal baru `"source"` (`set_watchlist_source(ca,
+  source)`) untuk pindah card — `_apply_ops` menimpa `source` tanpa membuat
+  entri baru, `_op_is_applied`/`_prune_pending` membuang op setelah repo
+  mencerminkannya, dan `_journal_many` melebur op `source` ke op `add` yang
+  belum ter-commit supaya entri baru tidak hilang. `add_to_watchlist`
+  mengambil symbol dari DexScreener setiap kali symbol tidak diketahui
+  (sebelumnya hanya `source="manual"`).
+- Tes: `tests/test_lp_watchlist.py` (split/order/ringkasan/figure/ambang),
+  `tests/test_watchlist_source.py` (op `source`, prune, journal merge,
+  `set_watchlist_source`), `tests/test_lp_card_ui.py` (AppTest: card LP
+  terpisah, badge HATI-HATI/BAHAYA, grafik, tombol pindah, radio tujuan
+  tambah manual, validasi CA), dan `DustFlagTest` diperbarui untuk tiga
+  level. Total 228 tes lulus.

@@ -1,3 +1,26 @@
+# Kegiatan — 3 September 2026
+
+Dua permintaan user: ambang **HATI-HATI** untuk dust holder dan watchlist
+terpisah **Chart LP** untuk token hasil Scan Meteora.
+
+1. **Ambang dust jadi dua tingkat**: `≥ 0,5% MC = HATI-HATI` (badge kuning,
+   peringatan dini) dan `≥ 1% MC = BAHAYA` (tetap disembunyikan dari Scan
+   Meteora). `holder_history.dust_flag` mengembalikan level
+   `ok`/`caution`/`danger`, helper baru `dust_level_rank`; badge di `app.py`
+   + halaman Holder, dan grafik 4 jam kini punya garis ambang 0,5% & 1%.
+   (Catatan: user sempat menulis 5%, lalu dikoreksi menjadi **0,5%**.)
+2. **Card 🌊 Chart LP di paling atas dashboard**: watchlist terpisah berisi
+   token `source=meteora`. Modul baru `lp_watchlist.py` menyiapkan baris
+   data + figure: grafik perubahan dust holder per token (dust % MC + jumlah
+   wallet dust + garis ambang), overlay semua token LP, Δ 4 jam & Δ total
+   dalam poin persentase, sparkline, dan urutan BAHAYA → HATI-HATI → AMAN.
+   Token LP tidak muncul lagi di watchlist holder bawah.
+3. **Tambah manual ke card Meteora**: form ➕ Tambah token punya radio
+   *Masuk ke card* (📋 Watchlist Holder / 🌊 Chart LP), card LP punya form
+   CA sendiri, ⭐ di Scan Meteora menulis `source=meteora`, tombol 🌊/📋
+   memindahkan token antar card lewat `watchlist.set_watchlist_source`
+   (op journal baru `"source"`, aman terhadap push gagal / entri baru).
+
 # Kegiatan — 1 September 2026
 
 Fokus UI ke **analisa holder dust** (bukan silent 12 jam) + Scan Meteora.
