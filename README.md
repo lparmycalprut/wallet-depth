@@ -20,7 +20,16 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
 4. **Wallet Depth by Threshold** — Helius DAS `getTokenAccounts`, bucket
    `>$0-$10` … `>$500k` atas wallet murni (LP/pool DexScreener disingkirkan).
    Tier 🦐/🦀/🐟/🐬/🦈 selalu wallet murni.
-5. **Alert Telegram holder dust** — membandingkan `dust_pct_mc` terbaru
+5. **Kronologi Holder (scan FULL)** — snapshot awal disimpan sekali dan
+   tidak ditimpa. Scan FULL berikutnya membandingkan **balance token**
+   (bukan hanya nilai USD) untuk melihat wallet dust yang membesar, turun
+   kategori, baru teramati, atau saldo menjadi nol. Kenaikan harga tanpa
+   kenaikan balance tidak dianggap pembelian. Perubahan saldo tidak dapat
+   membedakan swap dengan transfer — tautan Solscan disediakan untuk
+   verifikasi. Payload wallet dibatasi (sampel deterministik); hasil
+   sampled/truncated tidak disebut daftar lengkap. Kronologi baru muncul
+   setelah scan FULL kedua.
+6. **Alert Telegram holder dust** — membandingkan `dust_pct_mc` terbaru
    dengan anchor sekitar 4 jam sebelumnya menggunakan perubahan **poin
    persentase**:
    - naik minimal `+0.25` poin → indikasi dump;
@@ -60,7 +69,8 @@ Scan Holder Khusus (halaman utama) dan cron butuh `HELIUS_API_KEY`
 
 | File | Peran |
 |---|---|
-| `holder_history.py` | Pencatatan dust/kohort, resample 4 jam, sparkline |
+| `holder_history.py` | Pencatatan dust/kohort, resample 4 jam, baseline FULL, kronologi |
+| `holder_chronology.py` | Snapshot wallet bounded, klasifikasi pergerakan, narasi kronologi |
 | `meteora_screener.py` | Listing DLMM 24h+1h, enrich holder, filter dust ≥1% |
 | `holder_analysis.py` | Fetch holder Helius/GMGN, klasifikasi real/dust/mid |
 | `solscan_holders.py` | Kalkulasi wallet_depth (bucket & tier) |
@@ -70,7 +80,7 @@ Scan Holder Khusus (halaman utama) dan cron butuh `HELIUS_API_KEY`
 | `telegram_alerts.py` | Rule dust 4 jam/baseline, dedup, Telegram Bot API |
 | `trending_ui.py` | Listing Trending/Degen + Add All Watchlist |
 | `pages/4_📊_CVD.py` | Chart CVD harian |
-| `pages/5_🧮_Holder.py` | Holder Analytic: dust, grafik 4 jam, kohort |
+| `pages/5_🧮_Holder.py` | Holder Analytic: dust, grafik 4 jam, kohort, kronologi FULL |
 
 ## Menjalankan
 
@@ -90,7 +100,7 @@ scan tetap berjalan dan pengiriman alert dilewati dengan aman.
 
 ```bash
 python -m unittest discover tests
-python -m py_compile holder_history.py meteora_screener.py \
+python -m py_compile holder_history.py holder_chronology.py meteora_screener.py \
   holder_analysis.py holder_status.py telegram_alerts.py \
   scripts/scan_holders.py trending_ui.py watchlist.py
 ```

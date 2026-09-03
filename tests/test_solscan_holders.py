@@ -106,6 +106,13 @@ class WalletDepthTest(unittest.TestCase):
             market_cap=1000)
         self.assertEqual(depth["holders_all"], 0)
 
+    def test_holder_category_matches_dust_and_buckets(self):
+        self.assertEqual(sh.holder_category(0.01, 1.0), sh.DUST_CATEGORY)
+        self.assertEqual(sh.holder_category(10.0, 1.0), sh.DUST_CATEGORY)
+        self.assertEqual(sh.holder_category(10.01, 1.0), "$10-$100")
+        self.assertEqual(sh.holder_category(0.0, 0.0), sh.EXITED_CATEGORY)
+        self.assertEqual(sh.holder_category(None, 5.0), sh.UNKNOWN_CATEGORY)
+
 
 class HolderSourceResolveTest(unittest.TestCase):
     def test_resolve_priority(self):

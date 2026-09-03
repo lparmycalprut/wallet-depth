@@ -1,5 +1,20 @@
 # Progress
 
+## 2026-09-03 — Kronologi holder sejak snapshot awal (scan FULL)
+
+- Setelah `Scan holder FULL` pertama, halaman Holder Analytic menandai
+  **snapshot awal** (data pembanding belum cukup). Baseline tidak ditimpa.
+- Scan FULL berikutnya menambah interval kronologi: dust % MC, wallet
+  yang balance-nya naik/turun, wallet baru, saldo 0 / tidak teramati, dan
+  perpindahan kategori. Perbandingan memakai **balance token**, bukan
+  hanya USD, supaya kenaikan harga tidak dianggap pembelian.
+- Wallet LP/pool/noise dikecualikan. Setiap movement punya tautan Solscan
+  (address penuh, URL-encoded). Payload snapshot/movement dibatasi;
+  sampled/truncated dijelaskan. Schema history lama tetap bisa dibuka.
+- Modul baru `holder_chronology.py`; persistensi tetap di
+  `holder_history.py` / `holder_status.py` (versi compact).
+
+
 ## 2026-09-01 — Holder Analytic (dust) + Scan Meteora
 
 - UI fokus dust: watchlist ringkasan jumlah + % MC, badge 1%/2%, sparkline

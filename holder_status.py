@@ -43,6 +43,7 @@ def _holders_for_status(holders: dict | None) -> dict:
     holders = dict(holders or {})
     holders.pop("cohort_now", None)
     holders.pop("wallet_snapshot", None)
+    holders.pop("chrono_snapshot", None)
     mid = holders.get("mid")
     if isinstance(mid, dict):
         holders["mid"] = {
@@ -58,7 +59,8 @@ def snapshot_status(analyses: dict | None,
                     history_store: dict | None = None) -> dict:
     """Bangun payload dashboard dari hasil analisis per token."""
     try:
-        from holder_history import (compact_history_for_status,
+        from holder_history import (compact_chronology_for_status,
+                                    compact_history_for_status,
                                     load_holder_history)
         from telegram_alerts import compact_alert_state
         store = history_store if history_store is not None \
@@ -66,6 +68,7 @@ def snapshot_status(analyses: dict | None,
     except Exception:
         store = {"tokens": {}}
         compact_history_for_status = lambda *_a, **_k: []  # noqa: E731
+        compact_chronology_for_status = lambda *_a, **_k: {}  # noqa: E731
         compact_alert_state = lambda *_a, **_k: {}  # noqa: E731
     tokens = {}
     stamps = []
@@ -85,6 +88,7 @@ def snapshot_status(analyses: dict | None,
             "cohort": hist_slot.get("cohort") or {},
             "alert_state": compact_alert_state(
                 hist_slot.get("alert_state") or {}),
+            "chronology": compact_chronology_for_status(store, mint),
         }
         tokens[mint] = token
         if token["analyzed_at"]:

@@ -39,6 +39,22 @@ DEPTH_BUCKETS = (
     (">$500k", 500_000.0, None),
 )
 
+# Label kronologi: bucket pertama = Dust (0 < USD ≤ $10). UI, history, dan
+# test wajib memakai helper ``holder_category`` supaya ambang tidak drift.
+DUST_CATEGORY = "Dust"
+EXITED_CATEGORY = "Keluar/0"
+UNKNOWN_CATEGORY = "Tidak diketahui"
+CATEGORY_ORDER = (
+    EXITED_CATEGORY,
+    DUST_CATEGORY,
+    "$10-$100",
+    "$100-$1k",
+    "$1k-$10k",
+    "$10k-$100k",
+    "$100k-$500k",
+    ">$500k",
+)
+
 # --- Holder Distribution by Tier (wallet murni) ------------------------------
 TIERS = (
     ("🦐", "Shrimp", 0.0, 100.0),
@@ -57,6 +73,37 @@ def _float(value, default=0.0) -> float:
         return num if num == num else default  # NaN guard
     except (TypeError, ValueError):
         return default
+
+
+def holder_category(usd_value=None, balance=None) -> str:
+    """Kategori holder dari saldo token + nilai USD, selaras ``wallet_depth``.
+
+    - saldo token ≤ 0 → ``Keluar/0``
+    - ``0 < USD ≤ $10`` → ``Dust`` (bucket ``>$0-$10``)
+    - bucket berikutnya mengikuti ``DEPTH_BUCKETS``
+    - ada saldo token tetapi USD tidak tersedia → ``Tidak diketahui``
+    """
+    bal = None
+    if balance is not None and not isinstance(balance, bool):
+        try:
+            bal = float(balance)
+            if bal != bal:  # NaN
+                bal = None
+        except (TypeError, ValueError):
+            bal = None
+    if bal is not None and bal <= 0:
+        return EXITED_CATEGORY
+
+    usd = _float(usd_value, None)
+    if usd is None or usd <= 0:
+        if bal is not None and bal > 0:
+            return UNKNOWN_CATEGORY
+        return EXITED_CATEGORY
+
+    for label, lo, hi in DEPTH_BUCKETS:
+        if usd > lo and (hi is None or usd <= hi):
+            return DUST_CATEGORY if label == ">$0-$10" else label
+    return UNKNOWN_CATEGORY
 
 
 def wallet_depth(holders, market_cap: float = 0.0, *,

@@ -14,12 +14,18 @@ import matplotlib.pyplot as plt
 import streamlit as st
 
 from helius_holders import depth_bar_chart
+from holder_chronology import (SAMPLED_NOTE, SNAPSHOT_AWAL_MESSAGE,
+                               TRUNCATED_NOTE, fmt_id_decimal, fmt_id_int,
+                               format_wib as _chrono_wib, interval_narrative,
+                               interval_title, movement_table_rows)
 from holder_history import (DUST_DANGER_PCT,
                             FULL_SCAN_MAX_WALLETS, baseline_for_mint,
-                            bucket_delta, bucket_series, dust_flag,
+                            bucket_delta, bucket_series,
+                            chronology_view_for_mint, dust_flag,
                             history_for_mint, ingest_many,
                             latest_detail_for_mint, load_holder_history,
-                            merge_points, resample_4h, seed_from_status)
+                            merge_points, resample_4h, seed_from_status,
+                            tracked_chronology_addresses)
 from links import external_links_html
 from holder_analysis import analyze_token
 from holder_status import load_holder_status
@@ -231,6 +237,144 @@ def _distribution_section(mint: str, symbol: str, store: dict) -> None:
             use_container_width=True, hide_index=True)
 
 
+def _delta_int(before, after) -> str:
+    try:
+        return f"{int(after or 0) - int(before or 0):+,}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _delta_pct_points(before, after) -> str:
+    if before is None or after is None:
+        return "—"
+    try:
+        return f"{float(after) - float(before):+.2f} poin"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _movement_dataframe(movements) -> None:
+    rows = movement_table_rows(movements)
+    if not rows:
+        return
+    display = [{
+        "Wallet": row["Wallet"],
+        "Kategori awal": row["Kategori awal"],
+        "Kategori terbaru": row["Kategori terbaru"],
+        "Balance awal": row["Balance awal"],
+        "Balance terbaru": row["Balance terbaru"],
+        "Delta balance token": row["Delta balance token"],
+        "Nilai USD awal": row["Nilai USD awal"],
+        "Nilai USD terbaru": row["Nilai USD terbaru"],
+        "Interpretasi": row["Interpretasi"],
+        "Solscan": row["Solscan"],
+    } for row in rows]
+    kwargs = {
+        "use_container_width": True,
+        "hide_index": True,
+    }
+    try:
+        kwargs["column_config"] = {
+            "Solscan": st.column_config.LinkColumn("Solscan",
+                                                   display_text="Solscan"),
+        }
+    except Exception:  # noqa: BLE001 - Streamlit lama tanpa LinkColumn
+        pass
+    st.dataframe(display, **kwargs)
+
+
+def _chronology_section(mint: str, store: dict) -> None:
+    """Kronologi holder sejak snapshot FULL pertama — survive rerun."""
+    view = chronology_view_for_mint(store, mint)
+    st.subheader("🧭 Kronologi Holder Sejak Snapshot Awal")
+    state = view.get("state") or "none"
+    if state == "none":
+        st.info("Belum ada snapshot FULL. Jalankan **Scan holder FULL** untuk "
+                "menyimpan snapshot awal. Kronologi perubahan baru muncul "
+                "setelah scan FULL berikutnya.")
+        return
+    if state == "initial":
+        st.caption(
+            f"Snapshot awal: {_chrono_wib(view.get('baseline_ts'))}.")
+        st.info(view.get("message") or SNAPSHOT_AWAL_MESSAGE)
+        if view.get("sampled"):
+            st.caption(SAMPLED_NOTE)
+        if view.get("truncated"):
+            st.caption(TRUNCATED_NOTE)
+        return
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Snapshot awal", _chrono_wib(view.get("baseline_ts")))
+    c2.metric("Snapshot terbaru", _chrono_wib(view.get("latest_ts")))
+    c3.metric("Periode", view.get("duration_label") or "—")
+
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric("Jumlah holder",
+              _fmt_int(view.get("holder_count_to")),
+              _delta_int(view.get("holder_count_from"),
+                         view.get("holder_count_to")))
+    d2.metric("Dust wallet",
+              _fmt_int(view.get("dust_count_to")),
+              _delta_int(view.get("dust_count_from"),
+                         view.get("dust_count_to")))
+    d3.metric("dust % MC",
+              _fmt_pct(view.get("dust_pct_to")),
+              _delta_pct_points(view.get("dust_pct_from"),
+                                view.get("dust_pct_to")))
+    counts = view.get("counts") or {}
+    d4.metric("Wallet baru", fmt_id_int(counts.get("new_wallets")))
+
+    e1, e2, e3, e4 = st.columns(4)
+    e1.metric("Saldo meningkat", fmt_id_int(counts.get("increased")))
+    e2.metric("Saldo menurun", fmt_id_int(counts.get("decreased")))
+    e3.metric("Saldo 0 / tidak ditemukan",
+              fmt_id_int((counts.get("exited_total") or 0)
+                         + (counts.get("unobserved") or 0)))
+    e4.metric("Pindah kategori", fmt_id_int(counts.get("category_moves")))
+
+    st.write(view.get("narrative") or "")
+    if view.get("wallet_sample_lag"):
+        st.caption("Sampel wallet mulai dicatat setelah snapshot awal. "
+                   "Perpindahan wallet dihitung sejak sampel wallet pertama.")
+    if view.get("sampled"):
+        st.caption(SAMPLED_NOTE)
+    if view.get("truncated"):
+        st.caption(TRUNCATED_NOTE)
+    if view.get("price_missing"):
+        st.caption("Harga atau market cap tidak tersedia pada salah satu "
+                   "snapshot, jadi nilai USD / dust % MC mungkin tidak lengkap.")
+
+    cumulative = view.get("cumulative_movements") or []
+    if cumulative:
+        st.markdown("**Perpindahan wallet sejak snapshot awal (sampel)**")
+        _movement_dataframe(cumulative)
+
+    st.markdown("**Kronologi per Scan holder FULL**")
+    for interval in view.get("intervals") or []:
+        with st.expander(interval_title(interval), expanded=False):
+            from_m = interval.get("from_metrics") or {}
+            to_m = interval.get("to_metrics") or {}
+            st.caption(
+                f"{_chrono_wib(interval.get('from_ts'))} → "
+                f"{_chrono_wib(interval.get('to_ts'))} · holder "
+                f"{fmt_id_int(from_m.get('holder_count'))} → "
+                f"{fmt_id_int(to_m.get('holder_count'))} · dust "
+                f"{fmt_id_decimal(from_m.get('dust_pct_mc'))}% MC → "
+                f"{fmt_id_decimal(to_m.get('dust_pct_mc'))}% MC"
+                + (" · scan terpotong" if interval.get("truncated") else "")
+                + (" · sampel wallet" if interval.get("sampled") else ""))
+            st.write(interval_narrative(interval))
+            icounts = interval.get("counts") or {}
+            st.caption(
+                f"Saldo naik {fmt_id_int(icounts.get('increased'))} · "
+                f"saldo turun {fmt_id_int(icounts.get('decreased'))} · "
+                f"baru {fmt_id_int(icounts.get('new_wallets'))} · "
+                f"keluar/0 {fmt_id_int(icounts.get('exited_total'))} · "
+                f"tidak teramati {fmt_id_int(icounts.get('unobserved'))} · "
+                f"pindah kategori {fmt_id_int(icounts.get('category_moves'))}.")
+            _movement_dataframe(interval.get("movements") or [])
+
+
 watchlist = load_watchlist()
 mints = list(watchlist)
 status = load_holder_status()
@@ -332,6 +476,8 @@ st.subheader("🧱 Distribusi holder (scan FULL)")
 _distribution_section(
     mint, str((watchlist.get(mint) or {}).get("symbol")
               or token.get("symbol") or "?"), store)
+
+_chronology_section(mint, store)
 
 st.divider()
 st.caption(

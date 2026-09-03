@@ -2,7 +2,8 @@ import unittest
 
 from links import (cvd_shortcut_query, dexscreener_token_url,
                    external_links_html, gmgn_token_url, hawkfi_meteora_url,
-                   meteora_dlmm_url, pool_links_html, safe_url_part)
+                   meteora_dlmm_url, pool_links_html, safe_url_part,
+                   solscan_account_html, solscan_account_url)
 
 
 class LinksTest(unittest.TestCase):
@@ -68,6 +69,20 @@ class LinksTest(unittest.TestCase):
         html_out = pool_links_html("abc&def")
         self.assertIn("https://app.meteora.ag/dlmm/abc%26def", html_out)
         self.assertIn("https://www.hawkfi.ag/meteora/abc%26def", html_out)
+
+    def test_solscan_account_url_uses_full_address(self):
+        self.assertEqual(
+            solscan_account_url(self.CA),
+            f"https://solscan.io/account/{self.CA}")
+        html_out = solscan_account_html(self.CA)
+        self.assertIn(self.CA, html_out)
+        self.assertIn("target=\"_blank\"", html_out)
+        self.assertIn("rel=\"noopener", html_out)
+
+    def test_solscan_account_url_encodes_unsafe(self):
+        html_out = solscan_account_html("abc&def")
+        self.assertIn("https://solscan.io/account/abc%26def", html_out)
+        self.assertNotIn("abc&def", html_out)
 
 
 if __name__ == "__main__":

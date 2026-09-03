@@ -16,10 +16,13 @@ try:  # optional dev dependency — halaman butuh streamlit saat runtime
 except Exception:  # noqa: BLE001
     AppTest = None
 
+import holder_chronology as hc
 import holder_history as hh
 
 PAGE = str(Path(__file__).resolve().parent.parent / "pages" / "5_🧮_Holder.py")
 MINT = "So11111111111111111111111111111111111111112"
+OTHER = "TokenB1111111111111111111111111111111111111"
+GROW = "Grow1111111111111111111111111111111111111"
 META = {"symbol": "TST"}
 HOUR = 3600
 
@@ -61,6 +64,34 @@ def _store():
             "market_cap": 100_000.0,
         },
     }
+    grow_before = {"balance": 100.0, "usd": 5.0, "category": "Dust",
+                   "dust": True}
+    grow_after = {"balance": 250.0, "usd": 25.0, "category": "$10-$100",
+                  "dust": False}
+    interval = {
+        "from_ts": 4 * HOUR, "to_ts": 12 * HOUR,
+        "from_metrics": {"ts": 4 * HOUR, "holder_count": 130,
+                         "dust_count": 90, "dust_pct_mc": 1.40,
+                         "price": 0.01, "mc": 100_000.0},
+        "to_metrics": {"ts": 12 * HOUR, "holder_count": 171,
+                       "dust_count": 120, "dust_pct_mc": 0.72,
+                       "price": 0.01, "mc": 100_000.0},
+        "counts": {"increased": 1, "decreased": 0, "new_wallets": 0,
+                   "exited_total": 0, "unobserved": 0, "dust_grew_out": 1,
+                   "dust_price_exit": 0, "shrank_to_dust": 0,
+                   "category_moves": 1, "same_increased": 0,
+                   "same_decreased": 0, "compared_wallets": 1},
+        "movements": [{
+            "address": GROW, "from_category": "Dust",
+            "to_category": "$10-$100", "balance_before": 100.0,
+            "balance_after": 250.0, "delta_balance": 150.0, "delta_pct": 150.0,
+            "usd_before": 5.0, "usd_after": 25.0, "kind": "dust_grew_out",
+            "interpretation": ("Wallet menambah muatan dan berpindah dari "
+                               "Dust ke $10-$100."),
+            "solscan": f"https://solscan.io/account/{GROW}",
+        }],
+        "truncated": False, "sampled": False, "complete": True,
+    }
     return {
         "updated_at": 12 * HOUR,
         "tokens": {
@@ -69,13 +100,48 @@ def _store():
                 "cohort": {"frozen_at": 4 * HOUR, "balances": {"A": 10.0}},
                 "baseline": detail,
                 "latest_detail": {**detail, "ts": 12 * HOUR,
+                                  "dust_pct_mc": 0.72, "dust_count": 120,
+                                  "holder_count": 171,
                                   "depth": {**detail["depth"],
                                             "buckets": _buckets(120)}},
+                "chronology": {
+                    "baseline_wallets": {
+                        "ts": 4 * HOUR, "wallets": {GROW: grow_before},
+                        "sampled": False, "truncated": False,
+                    },
+                    "latest_wallets": {
+                        "ts": 12 * HOUR, "wallets": {GROW: grow_after},
+                        "sampled": False, "truncated": False,
+                    },
+                    "intervals": [interval],
+                },
                 "points": [_point(4 * HOUR, 90), _point(8 * HOUR, 105),
                            _point(12 * HOUR, 120)],
             }
         },
     }
+
+
+def _initial_store():
+    store = _store()
+    slot = store["tokens"][MINT]
+    slot["latest_detail"] = dict(slot["baseline"])
+    slot["chronology"] = {
+        "baseline_wallets": {
+            "ts": 4 * HOUR, "wallets": {
+                GROW: {"balance": 100.0, "usd": 5.0, "category": "Dust",
+                       "dust": True}},
+            "sampled": False, "truncated": False,
+        },
+        "latest_wallets": {
+            "ts": 4 * HOUR, "wallets": {
+                GROW: {"balance": 100.0, "usd": 5.0, "category": "Dust",
+                       "dust": True}},
+            "sampled": False, "truncated": False,
+        },
+        "intervals": [],
+    }
+    return store
 
 
 def _analysis():
@@ -97,14 +163,16 @@ def _analysis():
 @unittest.skipUnless(AppTest is not None, "streamlit is not installed")
 class HolderPageChartTest(unittest.TestCase):
     @contextlib.contextmanager
-    def _page(self, analyze=None, ingest=None):
+    def _page(self, analyze=None, ingest=None, store=None, watchlist=None,
+              query_mint=None):
         """Jalankan halaman dengan semua dependensi jaringan di-mock."""
         patches = [
-            mock.patch("watchlist.load_watchlist", return_value={MINT: META}),
+            mock.patch("watchlist.load_watchlist",
+                       return_value=watchlist or {MINT: META}),
             mock.patch("holder_status.load_holder_status",
                        return_value={"updated_at": None, "tokens": {}}),
             mock.patch("holder_history.load_holder_history",
-                       return_value=_store()),
+                       return_value=store if store is not None else _store()),
             mock.patch("core.get_helius_keys", return_value=["test-key"]),
         ]
         if analyze is not None:
@@ -117,6 +185,8 @@ class HolderPageChartTest(unittest.TestCase):
             patch.start()
         try:
             app = AppTest.from_file(PAGE, default_timeout=30)
+            if query_mint:
+                app.query_params["mint"] = query_mint
             app.run()
             yield app
         finally:

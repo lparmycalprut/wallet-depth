@@ -9,7 +9,10 @@ perubahan holder dust.
 
 - `holder_history.py`: store `holder_history.json`, freeze kohort 4 jam,
   resample grafik 4 jam, ambang dust **≥ 1% MC = BAHAYA**
-  (sembunyikan dari Meteora).
+  (sembunyikan dari Meteora). Baseline scan FULL immutable + kronologi
+  wallet bounded (`holder_chronology.py`).
+- `holder_chronology.py`: perbandingan scan FULL (balance token, kategori
+  `wallet_depth`, link Solscan). Tanpa LLM. Schema lama tetap bisa dibaca.
 - `meteora_screener.py`: pool-discovery Meteora 24h (`fee_ratio≥250`) +
   1h (`fee_ratio≥1`), `active_tvl≥1000`, DLMM. Pool 24h yang masih di 1h
   tetap tampil. Dust ≥ 1% MC dibuang.
@@ -26,7 +29,7 @@ perubahan holder dust.
 - `telegram_alerts.py`: rule dust 4 jam (+0,25 pp dump; -0,50 pp + buyer
   akumulasi), perubahan ±1 pp dari baseline, dedup, dan transport Telegram.
 - `gmgn_screener.py`: listing Trending/Degen.
-- `pages/5_🧮_Holder.py`: Holder Analytic (di bawah CVD).
+- `pages/5_🧮_Holder.py`: Holder Analytic (di bawah CVD) + kronologi FULL.
 - `pages/4_📊_CVD.py`: CVD harian saja (tanpa Holder Analytic).
 
 Watchlist di `app.py` membaca `load_holder_status()` + `holder_history`.
@@ -51,7 +54,7 @@ Jalankan:
 
 ```bash
 python -m unittest discover tests
-python -m py_compile holder_history.py meteora_screener.py \
+python -m py_compile holder_history.py holder_chronology.py meteora_screener.py \
   holder_analysis.py holder_status.py telegram_alerts.py \
   scripts/scan_holders.py trending_ui.py watchlist.py
 ```
