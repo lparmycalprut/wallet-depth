@@ -88,7 +88,10 @@ JSON compact, Contents API base64) di ref `holder-live`:
   (`summary: True` / `balances` berupa angka) **tidak** menimpa store.
 - `telegram_alerts.py`: rule dust 4 jam (+0,25 pp dump; -0,50 pp + buyer
   akumulasi), perubahan ±1 pp dari baseline, **gerbang konfirmasi
-  volume/harga/volatilitas**, dedup, dan transport Telegram. Aturan tidak
+  volume/harga/volatilitas**, dedup, dan transport Telegram. Pesan selalu
+  ditutup link token **🔗 GMGN + 🦆 DexScreener** dari
+  `links.token_link_lines(mint)` (URL satu sumber dengan link di UI; baris
+  link dilewati bila mint kosong). `send_test_alert()` sengaja tanpa link. Aturan tidak
   pernah fetch: pemanggil menyuntikkan `market_context` atau
   `context_provider(mint, analysis)` yang hanya dipanggil bila ada kandidat.
 - `gmgn_screener.py`: listing Trending/Degen.

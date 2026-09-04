@@ -27,6 +27,8 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from links import token_link_lines
+
 DUMP_THRESHOLD_PP = 0.25
 ACCUMULATION_THRESHOLD_PP = 0.50
 BASELINE_SHIFT_THRESHOLD_PP = 1.00
@@ -1033,6 +1035,10 @@ def format_alert_message(event: dict) -> str:
         f"- Masuk dust lainnya: {int(movement.get('dust_entered_other') or 0)}",
         f"Waktu: {_format_time(event.get('current_ts') or time.time())}",
         f"Mint: {event.get('mint') or '-'}",
+        # Link token supaya alert bisa langsung ditindaklanjuti di GMGN /
+        # DexScreener; hilang bila mint tidak diketahui (tidak ada label
+        # menggantung). URL dibangun links.py (satu sumber, sudah di-encode).
+        *token_link_lines(event.get("mint")),
     ]
     return "\n".join(lines)
 

@@ -103,7 +103,10 @@ dump tidak boleh hilang senyap hanya karena sumber data sedang down. Set
 `telegram_alerts.ALLOW_UNVERIFIED_ALERTS = False` untuk perilaku strict.
 
 Alert yang lolos menyertakan rasio volume, perubahan harga, skor konfirmasi,
-ambang yang dipakai, dan stddev 4 jam di pesan Telegram.
+ambang yang dipakai, stddev 4 jam, **dan link token ke GMGN + DexScreener**
+(`links.token_link_lines`) di pesan Telegram supaya alert bisa langsung
+ditindaklanjuti. Bila mint tidak diketahui, kedua baris link dilewati (tidak
+ada label menggantung).
 
 ## Format alert Telegram (contoh)
 
@@ -126,7 +129,13 @@ Pergerakan sampel wallet dust:
 - Masuk dust lainnya: 0
 Waktu: 2026-09-03 22:11:17 WIB (15:11 UTC)
 Mint: So11111111111111111111111111111111111111112
+🔗 GMGN: https://gmgn.ai/sol/token/So11111111111111111111111111111111111111112
+🦆 DexScreener: https://dexscreener.com/solana/So11111111111111111111111111111111111111112
 ```
+
+Dua baris link terakhir dibangun `links.token_link_lines(mint)` — helper yang
+sama dengan link 🔗GMGN/🦆Dex di tabel watchlist, jadi URL-nya satu sumber dan
+selalu ter-encode (Telegram otomatis me-link URL polos).
 
 Dua baris `Verifikasi volume` / `Skor konfirmasi` hanya muncul bila konteks
 pasar berhasil diambil. Bila tidak, keduanya diganti satu baris:
@@ -198,7 +207,8 @@ Meteora Pool** (`source=meteora`):
 | `holder_status.py` | Snapshot dashboard ramping (ref `holder-live`) + history ringkas + transport GitHub (JSON & byte/gzip) |
 | `core.py` | Config/key Helius, pasar DexScreener, candle hourly/harian GeckoTerminal |
 | `scripts/scan_holders.py` | Cron watchlist: holder, alert (konfirmasi volume lazy), catat history |
-| `telegram_alerts.py` | Rule dust 4 jam/baseline, gerbang volume+volatilitas, dedup bucket 4 jam + jeda 1 jam, Telegram Bot API |
+| `telegram_alerts.py` | Rule dust 4 jam/baseline, gerbang volume+volatilitas, dedup bucket 4 jam + jeda 1 jam, Telegram Bot API (+ link GMGN & DexScreener di pesan) |
+| `links.py` | Satu sumber URL eksternal: GMGN, DexScreener, Solscan, Meteora DLMM, HawkFi (HTML untuk UI, teks polos untuk Telegram) |
 | `trending_ui.py` | Listing Trending/Degen + Add All Watchlist |
 | `pages/4_📊_CVD.py` | Chart CVD harian |
 | `pages/5_🧮_Holder.py` | Holder Analytic: dust, grafik 4 jam, kohort, kronologi FULL |

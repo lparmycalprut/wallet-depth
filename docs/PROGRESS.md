@@ -1,5 +1,40 @@
 # Progress
 
+## 2026-09-04 — Link GMGN + DexScreener di alert Telegram
+
+Permintaan user: *"tambahkan link ke gmgn dan dexscreener ketika notifikasi
+telegram muncul"*. Alert holder dust sebelumnya berakhir di baris `Mint: …` —
+address harus disalin manual ke browser.
+
+### Perubahan
+- `links.token_link_lines(ca)`: dua baris teks polos
+  `🔗 GMGN: https://gmgn.ai/sol/token/<ca>` dan
+  `🦆 DexScreener: https://dexscreener.com/solana/<ca>`, dibangun dari
+  `gmgn_token_url()` / `dexscreener_token_url()` yang sudah ada (satu sumber
+  URL dengan link 🔗GMGN/🦆Dex di watchlist UI, address selalu ter-encode
+  lewat `safe_url_part`). Return `[]` bila address kosong.
+- `telegram_alerts.format_alert_message()`: menambahkan baris link tepat
+  setelah `Mint:` untuk **semua** jenis alert (dump, akumulasi, baseline
+  shift). Telegram mengirim teks polos dan otomatis me-link URL, jadi tidak
+  perlu `parse_mode` HTML (dan tidak ada risiko escaping).
+- `send_test_alert()` (`--telegram-test`) sengaja tetap tanpa link: pesan itu
+  bukan sinyal token.
+
+### Perilaku tepi
+- `mint` kosong/None → kedua baris dilewati, `Mint: -` tetap tampil (tidak ada
+  label menggantung).
+- Address berisi karakter berbahaya (`a?b&c d#e`) → ter-encode
+  (`a%3Fb%26c%20d%23e`) sehingga tidak bisa memutus struktur URL.
+- Tidak mengubah aturan alert, ambang, dedup, maupun gerbang volume — hanya
+  presentasi pesan.
+
+### Tes
+**477 tes lulus** (sebelumnya 465). Baru: `tests/test_links.py` +4 (isi baris,
+konsistensi dengan helper URL, address kosong, encoding) dan
+`tests/test_telegram_alerts.py::AlertMessageLinkTest` +8 (link terkirim untuk
+semua jenis alert, urutan setelah `Mint:`, tanpa mint → tanpa link, encoding,
+teks yang benar-benar dikirim ke Bot API, test-alert tetap tanpa link).
+
 ## 2026-09-04 — Backup durable store holder + snapshot dirampingkan
 
 Audit backup (pertanyaan user: *"cek sekarang apakah sudah ada backup juga?"*)

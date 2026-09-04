@@ -3,7 +3,8 @@ import unittest
 from links import (cvd_shortcut_query, dexscreener_token_url,
                    external_links_html, gmgn_token_url, hawkfi_meteora_url,
                    meteora_dlmm_url, pool_links_html, safe_url_part,
-                   solscan_account_html, solscan_account_url)
+                   solscan_account_html, solscan_account_url,
+                   token_link_lines)
 
 
 class LinksTest(unittest.TestCase):
@@ -83,6 +84,31 @@ class LinksTest(unittest.TestCase):
         html_out = solscan_account_html("abc&def")
         self.assertIn("https://solscan.io/account/abc%26def", html_out)
         self.assertNotIn("abc&def", html_out)
+
+    def test_token_link_lines_gmgn_dan_dexscreener(self):
+        self.assertEqual(
+            token_link_lines(self.CA),
+            [f"\U0001f517 GMGN: https://gmgn.ai/sol/token/{self.CA}",
+             f"\U0001f986 DexScreener: "
+             f"https://dexscreener.com/solana/{self.CA}"])
+
+    def test_token_link_lines_sumber_url_sama_dengan_helper(self):
+        lines = token_link_lines(self.CA)
+        self.assertIn(gmgn_token_url(self.CA), lines[0])
+        self.assertIn(dexscreener_token_url(self.CA), lines[1])
+
+    def test_token_link_lines_kosong_bila_tidak_ada_address(self):
+        for empty in ("", None, "   ", 0):
+            self.assertEqual(token_link_lines(empty), [], empty)
+
+    def test_token_link_lines_mengencode_address_berbahaya(self):
+        lines = token_link_lines(" a?b&c d#e/ ")
+        self.assertEqual(len(lines), 2)
+        for line in lines:
+            self.assertNotIn(" ", line.split(": ", 1)[1])
+            self.assertNotIn("?", line.split(": ", 1)[1])
+            self.assertNotIn("#", line.split(": ", 1)[1])
+        self.assertIn("a%3Fb%26c%20d%23e", lines[0])
 
 
 if __name__ == "__main__":
