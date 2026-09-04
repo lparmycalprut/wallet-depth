@@ -2,7 +2,8 @@
 """Analisa holder — dust % MC, grafik 4 jam, kohort mid-tier.
 
 Halaman di bawah CVD. Fokus: dust nambah = indikasi dump.
-- ≥ 1% MC → BAHAYA
+- ≥ 0,5% MC → HATI-HATI
+- ≥ 1% MC   → BAHAYA
 Kohort Crab+Fish di-freeze 4 jam; sisa token (bukan USD) mengukur exit pilar.
 """
 from __future__ import annotations
@@ -18,25 +19,28 @@ from holder_chronology import (SAMPLED_NOTE, SNAPSHOT_AWAL_MESSAGE,
                                TRUNCATED_NOTE, fmt_id_decimal, fmt_id_int,
                                format_wib as _chrono_wib, interval_narrative,
                                interval_title, movement_table_rows)
-from holder_history import (DUST_DANGER_PCT,
+from holder_history import (DUST_CAUTION_PCT, DUST_DANGER_PCT,
                             FULL_SCAN_MAX_WALLETS, baseline_for_mint,
                             bucket_delta, bucket_series,
                             chronology_view_for_mint, dust_flag,
                             history_for_mint, ingest_many,
-                            latest_detail_for_mint, load_holder_history,
+                            latest_detail_for_mint,
+                            load_durable_holder_history,
                             merge_points, resample_4h, seed_from_status,
                             tracked_chronology_addresses)
 from links import external_links_html
 from holder_analysis import analyze_token
-from holder_status import load_holder_status
+from holder_status import (MANUAL_SCAN_KEY, apply_manual_scan,
+                           compact_manual_scan, load_holder_status)
 from watchlist import add_to_watchlist, load_watchlist
 
 st.set_page_config(page_title="Holder Analytic", page_icon="🧮",
                    layout="wide")
 st.title("🧮 Holder Analytic")
 st.caption(
-    f"Dust holder (nilai ≤ $10) sebagai jejak dump: **≥ {DUST_DANGER_PCT:.0f}% "
-    "MC = BAHAYA**. Grafik di-resample **4 jam sekali**. "
+    f"Dust holder (nilai ≤ $10) sebagai jejak dump: **≥ {DUST_CAUTION_PCT:g}% "
+    f"MC = HATI-HATI**, **≥ {DUST_DANGER_PCT:g}% MC = BAHAYA**. Grafik "
+    "di-resample **4 jam sekali**. "
     "Pilar harga = kohort Crab+Fish yang di-freeze: yang diukur sisa "
     "**token**, bukan dollar.")
 
@@ -70,10 +74,11 @@ def _points_for(mint: str, status_token: dict | None, store: dict) -> list:
 def _dust_badge(flag: dict) -> str:
     level = flag.get("level") or "unknown"
     label = str(flag.get("label") or "—")
-    if flag.get("rising") and level == "danger":
+    if flag.get("rising") and level in ("danger", "caution"):
         label = f"{label} ↑"
     colors = {
         "ok": ("#14532d", "#dcfce7"),
+        "caution": ("#78350f", "#fef3c7"),
         "danger": ("#7f1d1d", "#fee2e2"),
     }
     bg, fg = colors.get(level, ("#e2e8f0", "#000000"))
@@ -99,8 +104,10 @@ def _history_charts(points: list[dict]) -> None:
     fig, axis = plt.subplots(figsize=(11, 4.2))
     axis.plot(labels, dust_pct, color="#b45309", marker="o", linewidth=2.2,
               label="Dust % MC")
+    axis.axhline(DUST_CAUTION_PCT, color="#b45309", linestyle=":",
+                 linewidth=1, label=f"Hati-hati {DUST_CAUTION_PCT:g}%")
     axis.axhline(DUST_DANGER_PCT, color="#b91c1c", linestyle="--",
-                 linewidth=1, label=f"Bahaya {DUST_DANGER_PCT:.0f}%")
+                 linewidth=1, label=f"Bahaya {DUST_DANGER_PCT:g}%")
     axis.set_ylabel("Dust % marketcap")
     axis.tick_params(axis="x", rotation=30)
     axis.grid(alpha=.2)
@@ -377,8 +384,16 @@ def _chronology_section(mint: str, store: dict) -> None:
 
 watchlist = load_watchlist()
 mints = list(watchlist)
-status = load_holder_status()
-store = seed_from_status(load_holder_history(), status)
+# Scan manual di halaman ini menulis titik baru ke holder_history.json
+# (store) tetapi TIDAK mempublish holder_status.json — publish hanya dari
+# cron/scan watchlist, dan snapshot_status tidak merge token lama. Tanpa
+# overlay ini kartu metrik menampilkan angka cron terakhir sementara grafik
+# sudah memuat titik scan manual (dua angka berbeda untuk satu token).
+status = apply_manual_scan(load_holder_status(),
+                           st.session_state.get(MANUAL_SCAN_KEY))
+# Store lokal + backup durable: di lingkungan ephemeral (Streamlit Cloud)
+# baseline scan FULL & kronologi dipulihkan dari holder_history.json.gz.
+store = seed_from_status(load_durable_holder_history(), status)
 
 query_mint = str(st.query_params.get("mint") or "") if "mint" in st.query_params else ""
 session_mint = st.session_state.get("holder_mint") or ""
@@ -446,9 +461,13 @@ mid = holders.get("mid") if isinstance(holders.get("mid"), dict) else {}
 c4.metric("Pilar Crab+Fish", f"{int(mid.get('count') or 0):,}",
           _fmt_pct(mid.get("pct_mc")))
 st.markdown(_dust_badge(flag), unsafe_allow_html=True)
+_manual_view = token.get("view_source") == "manual"
 st.caption(
     f"Scan terakhir: {_wib(token.get('analyzed_at') or store.get('updated_at'))} "
-    f"· dust ≥ {DUST_DANGER_PCT:.0f}% MC = BAHAYA"
+    + ("· **scan manual barusan** (snapshot cron belum diperbarui) "
+       if _manual_view else "")
+    + f"· dust ≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI"
+    f" · ≥ {DUST_DANGER_PCT:g}% MC = BAHAYA"
     + (" · dust sedang naik" if flag.get("rising") else "")
 )
 
@@ -501,4 +520,7 @@ if st.button("🔄 Scan holder FULL token ini", type="primary",
             st.error(f"Gagal: {exc}")
     if analysis:
         ingest_many({mint: analysis}, detail=True)
+        # Kartu metrik/badge ikut hasil scan ini (snapshot cron tidak ditimpa;
+        # publish satu token akan menghapus token lain dari dashboard).
+        st.session_state[MANUAL_SCAN_KEY] = compact_manual_scan(mint, analysis)
         st.rerun()

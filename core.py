@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Shared configuration and market/trade fetch infrastructure."""
+from datetime import datetime, timezone
 import json
+import math
 import os
 import tempfile
 import threading
@@ -375,6 +377,146 @@ def get_market(ca: str) -> dict:
     }
 
 
+GECKOTERMINAL_OHLCV_URL = ("https://api.geckoterminal.com/api/v2/networks/"
+                           "solana/pools/{pair}/ohlcv/hour")
+GECKOTERMINAL_MAX_LIMIT = 1000
+# 1e11 detik = tahun 5138: di atas itu timestamp pasti milidetik.
+MILLISECOND_TS_THRESHOLD = 100_000_000_000
+
+
+def _ohlcv_number(value) -> float | None:
+    """Return a finite float for one OHLCV cell, or ``None`` when unusable.
+
+    GeckoTerminal emits ``null`` cells for hours without trade, so every cell
+    is validated before it can poison a daily aggregate or a stddev.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def normalize_hourly_candles(values) -> list[dict]:
+    """Normalize a GeckoTerminal ``ohlcv_list`` payload into hourly candles.
+
+    Output rows are ``{ts, open, high, low, close, volume_usd}`` sorted by
+    timestamp ascending. A row is kept when it has a usable timestamp and a
+    finite ``close``; ``null`` open/high/low (hours without trade) fall back to
+    that close and missing volume falls back to zero, so a quiet hour still
+    counts as coverage instead of punching a hole in the series. Rows without a
+    usable close are dropped, and a repeated timestamp keeps the last
+    occurrence so hourly volume can never be counted twice.
+    """
+    rows: dict[int, dict] = {}
+    for value in values or []:
+        if not isinstance(value, (list, tuple)) or len(value) < 6:
+            continue
+        ts = _ohlcv_number(value[0])
+        close = _ohlcv_number(value[4])
+        if ts is None or ts <= 0 or close is None:
+            continue
+        if ts > MILLISECOND_TS_THRESHOLD:
+            # GeckoTerminal mengirim detik Unix; kalau suatu saat satuannya
+            # berganti ke milidetik, setiap jam akan tampak sebagai "hari"
+            # sendiri (tahun ~57.000) dan agregasi harian hening-heningan
+            # menghasilkan nol baris. Dinormalisasi di satu tempat.
+            ts = ts / 1000.0
+        opening = _ohlcv_number(value[1])
+        high = _ohlcv_number(value[2])
+        low = _ohlcv_number(value[3])
+        volume = _ohlcv_number(value[5]) or 0.0
+        rows[int(ts)] = {
+            "ts": int(ts),
+            "open": close if opening is None else opening,
+            "high": max(close, high if high is not None else close),
+            "low": min(close, low if low is not None else close),
+            "close": close,
+            "volume_usd": max(0.0, volume),
+        }
+    return [rows[ts] for ts in sorted(rows)]
+
+
+def get_hourly_candles(pair_address: str, limit_hours: int = 168, *,
+                       timeout: int = 25) -> list[dict]:
+    """Fetch hourly GeckoTerminal candles for one pool (oldest -> newest).
+
+    ``limit_hours`` defaults to 7 x 24 so one request can serve both a
+    four-hour volume window and a seven-day volume average. Transport or
+    parse failures return ``[]``: market data must never raise into a scan.
+    """
+    pair = str(pair_address or "").strip()
+    if not pair:
+        return []
+    try:
+        limit = max(1, min(GECKOTERMINAL_MAX_LIMIT, int(limit_hours)))
+        response = requests.get(
+            GECKOTERMINAL_OHLCV_URL.format(pair=pair),
+            params={"aggregate": 1, "limit": limit},
+            headers={"accept": "application/json"}, timeout=timeout)
+        response.raise_for_status()
+        payload = (response.json() or {}).get("data") or {}
+        values = ((payload.get("attributes") or {}).get("ohlcv_list")) or []
+    except Exception:  # noqa: BLE001 - pasar tidak boleh menggagalkan scan
+        return []
+    return normalize_hourly_candles(values)
+
+
+def aggregate_daily_candles(hourly, limit_days: int = 7) -> list[dict]:
+    """Aggregate hourly candles into UTC calendar days (pure, no HTTP).
+
+    The UTC day boundary matches the crypto-market day used by Helius and
+    Solscan; ``datetime.date()`` carries month/year edges itself, so no manual
+    day arithmetic is involved (verified untuk 31 Des → 1 Jan dan 28 → 29 Feb
+    tahun kabisat di ``tests/test_core_candles.py``). ``hours`` reports coverage
+    so a partial day stays recognizable — **hari UTC yang masih berjalan ikut
+    ter-return**, jadi pemanggil yang butuh hari lengkap harus menyaringnya
+    (lihat ``cvd_daily.completed_dates``). ``limit_days <= 0`` returns ``[]``
+    instead of the whole history (``[-0:]`` would otherwise silently return
+    everything).
+    """
+    try:
+        days = int(limit_days)
+    except (TypeError, ValueError):
+        days = 0
+    if days <= 0:
+        return []
+    grouped: dict[str, dict] = {}
+    for candle in hourly or []:
+        if not isinstance(candle, dict):
+            continue
+        ts = _ohlcv_number(candle.get("ts"))
+        close = _ohlcv_number(candle.get("close"))
+        if ts is None or ts <= 0 or close is None:
+            continue
+        high = _ohlcv_number(candle.get("high"))
+        low = _ohlcv_number(candle.get("low"))
+        opening = _ohlcv_number(candle.get("open"))
+        volume = _ohlcv_number(candle.get("volume_usd")) or 0.0
+        date = datetime.fromtimestamp(int(ts), timezone.utc).date().isoformat()
+        day = grouped.get(date)
+        if day is None:
+            grouped[date] = {
+                "date": date,
+                "open": close if opening is None else opening,
+                "high": close if high is None else high,
+                "low": close if low is None else low,
+                "close": close,
+                "volume_usd": max(0.0, volume),
+                "hours": 1,
+            }
+            continue
+        day["high"] = max(day["high"], close if high is None else high)
+        day["low"] = min(day["low"], close if low is None else low)
+        day["close"] = close
+        day["volume_usd"] += max(0.0, volume)
+        day["hours"] += 1
+    ordered = sorted(grouped.values(), key=lambda item: item["date"])
+    return ordered[-days:]
+
+
 def get_daily_candles(pair_address: str, limit_days: int = 7) -> list[dict]:
     """Fetch hourly GeckoTerminal candles and aggregate calendar days in UTC.
 
@@ -382,32 +524,10 @@ def get_daily_candles(pair_address: str, limit_days: int = 7) -> list[dict]:
     which matches the crypto-market day used by Helius and Solscan.
     """
     try:
-        limit = max(48, min(1000, int(limit_days) * 24 + 24))
-        response = requests.get(
-            f"https://api.geckoterminal.com/api/v2/networks/solana/pools/"
-            f"{pair_address}/ohlcv/hour",
-            params={"aggregate": 1, "limit": limit},
-            headers={"accept": "application/json"}, timeout=25)
-        response.raise_for_status()
-        values = (((response.json() or {}).get("data") or {})
-                  .get("attributes") or {}).get("ohlcv_list") or []
-    except Exception:
+        days = int(limit_days)
+    except (TypeError, ValueError):
         return []
-    from datetime import datetime as _datetime, timezone as _timezone
-    utc = _timezone.utc
-    grouped = {}
-    for value in sorted(values, key=lambda item: item[0]):
-        if not isinstance(value, (list, tuple)) or len(value) < 6:
-            continue
-        date = _datetime.fromtimestamp(int(value[0]), utc).date().isoformat()
-        candle = grouped.setdefault(date, {
-            "date": date, "open": float(value[1]), "high": float(value[2]),
-            "low": float(value[3]), "close": float(value[4]),
-            "volume_usd": 0.0, "hours": 0,
-        })
-        candle["high"] = max(candle["high"], float(value[2]))
-        candle["low"] = min(candle["low"], float(value[3]))
-        candle["close"] = float(value[4])
-        candle["volume_usd"] += float(value[5] or 0)
-        candle["hours"] += 1
-    return sorted(grouped.values(), key=lambda item: item["date"])[-limit_days:]
+    if days <= 0:
+        return []
+    hourly = get_hourly_candles(pair_address, limit_hours=days * 24 + 24)
+    return aggregate_daily_candles(hourly, limit_days=days)

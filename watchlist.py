@@ -103,7 +103,46 @@ def _apply_ops(wl: dict, ops: list) -> dict:
                     entry[_k] = op[_k]
         elif op.get("op") == "remove":
             wl.pop(op["ca"], None)
+        elif op.get("op") == "source":
+            # Pindah card (Watchlist Holder <-> Chart LP): source terakhir
+            # menang, field lain tidak disentuh. Entri disalin supaya dict
+            # yang di-cache remote tidak ikut termutasi.
+            entry = wl.get(op["ca"])
+            if isinstance(entry, dict) and op.get("source"):
+                wl[op["ca"]] = {**entry, "source": str(op["source"])}
     return wl
+
+
+def _op_is_applied(op: dict, wl: dict) -> bool:
+    """True bila isi repo *wl* sudah mencerminkan *op* (op boleh dibuang)."""
+    ca = op.get("ca")
+    if not ca:
+        return True
+    kind = op.get("op")
+    entry = wl.get(ca)
+    if kind == "add":
+        return entry is not None
+    if kind == "remove":
+        return entry is None
+    if kind == "source":
+        return (isinstance(entry, dict)
+                and str(entry.get("source") or "")
+                == str(op.get("source") or ""))
+    return True
+
+
+def _prune_pending(pending: list, wl: dict) -> list:
+    """Buang op journal yang sudah tercermin di repo."""
+    still = []
+    for op in pending:
+        try:
+            if _op_is_applied(op, wl):
+                continue
+        except Exception as exc:
+            print(f"WARN: _prune_pending check failed: {exc} op={op}",
+                  file=sys.stderr)
+        still.append(op)
+    return still
 
 
 def _github_token() -> str:
@@ -444,19 +483,7 @@ def _load_and_merge(force_refresh: bool = False) -> dict:
 
     pending = _load_pending()
     if pending:
-        still = []
-        for op in pending:
-            try:
-                ca = op.get("ca")
-                if not ca:
-                    continue
-                in_repo = ca in raw
-                if (op.get("op") == "add" and in_repo) or (op.get("op") == "remove" and not in_repo):
-                    continue
-                still.append(op)
-            except Exception as exc:
-                print(f"WARN: _load_and_merge pending check failed: {exc} op={op}", file=sys.stderr)
-                still.append(op)
+        still = _prune_pending(pending, raw)
         if still != pending:
             _save_pending(still)
             pending = still
@@ -500,19 +527,7 @@ def save_watchlist(wl: dict, action: str = "update") -> bool:
     if success:
         pending = _load_pending()
         if pending:
-            still = []
-            for op in pending:
-                try:
-                    ca = op.get("ca")
-                    if not ca:
-                        continue
-                    in_repo = ca in wl
-                    if (op.get("op") == "add" and in_repo) or (op.get("op") == "remove" and not in_repo):
-                        continue
-                    still.append(op)
-                except Exception as exc:
-                    print(f"WARN: save_watchlist pending check failed: {exc}", file=sys.stderr)
-                    still.append(op)
+            still = _prune_pending(pending, wl)
             if still != pending:
                 _save_pending(still)
     else:
@@ -530,10 +545,21 @@ def _journal_many(ops: list[dict]) -> None:
     """Journal multiple operations with one atomic write (last op wins)."""
     if not ops:
         return
-    incoming = {address_key(op.get("ca")): op for op in ops
-                if address_key(op.get("ca"))}
-    pending = [op for op in _load_pending()
-               if address_key(op.get("ca")) not in incoming]
+    incoming: dict[str, dict] = {}
+    for op in ops:
+        key = address_key(op.get("ca"))
+        if key:
+            incoming[key] = op
+    pending = []
+    for op in _load_pending():
+        key = address_key(op.get("ca"))
+        if key not in incoming:
+            pending.append(op)
+            continue
+        # "source" (pindah card) yang menyusul "add" belum ter-commit: lebur
+        # ke op add supaya entri baru tidak hilang saat journal diputar ulang.
+        if op.get("op") == "add" and incoming[key].get("op") == "source":
+            incoming[key] = {**op, "source": incoming[key].get("source")}
     pending.extend(incoming.values())
     _save_pending(pending)
 
@@ -572,7 +598,9 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
     ca = normalize_address(ca)
     if not ca:
         return False
-    if (not symbol or symbol == "?") and source == "manual":
+    if not symbol or symbol == "?":
+        # Symbol tidak diketahui (manual add / pindah card) → ambil dari
+        # DexScreener supaya card tidak menampilkan "$?".
         symbol = fetch_token_symbol(ca)
     entry = {"symbol": symbol, "note": note,
              "added": datetime.now().strftime("%Y-%m-%d")}
@@ -719,6 +747,30 @@ def remove_from_watchlist(ca: str) -> bool:
     meta = wl.pop(ca, None) or {}
     return save_watchlist(wl, f"remove {meta.get('symbol', '?')} "
                               f"({ca[:8]}…)")
+
+
+def set_watchlist_source(ca: str, source: str) -> bool:
+    """Pindahkan token antar card watchlist dengan mengubah ``source``.
+
+    ``source="meteora"`` → masuk card **Chart LP** (watchlist Meteora di
+    bagian atas dashboard); ``source="manual"`` → kembali ke watchlist
+    holder biasa. Entri yang belum ada di watchlist tidak dibuat.
+    """
+    ca = normalize_address(ca)
+    source = str(source or "").strip().lower()
+    if not ca or not source:
+        return False
+    wl = _load_and_merge(force_refresh=False)
+    entry = wl.get(ca)
+    if not isinstance(entry, dict):
+        # Tidak membuat entri baru: hanya token yang sudah ada yang dipindah.
+        return False
+    if str(entry.get("source") or "").strip().lower() == source:
+        return True
+    _journal({"op": "source", "ca": ca, "source": source})
+    wl[ca] = {**entry, "source": source}
+    symbol = entry.get("symbol") or "?"
+    return save_watchlist(wl, f"move {symbol} ({ca[:8]}…) → {source}")
 
 
 def update_local_meta(ca, fields):

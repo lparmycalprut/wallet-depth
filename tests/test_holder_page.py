@@ -160,19 +160,31 @@ def _analysis():
     }
 
 
+def _first_metric(app, label: str):
+    """Nilai metrik pertama dengan label itu (beberapa label muncul 2x: kartu
+    atas vs seksi kronologi)."""
+    for node in app.metric:
+        if node.label == label:
+            return node.value
+    return None
+
+
 @unittest.skipUnless(AppTest is not None, "streamlit is not installed")
 class HolderPageChartTest(unittest.TestCase):
     @contextlib.contextmanager
     def _page(self, analyze=None, ingest=None, store=None, watchlist=None,
-              query_mint=None):
+              query_mint=None, status=None):
         """Jalankan halaman dengan semua dependensi jaringan di-mock."""
         patches = [
             mock.patch("watchlist.load_watchlist",
                        return_value=watchlist or {MINT: META}),
             mock.patch("holder_status.load_holder_status",
-                       return_value={"updated_at": None, "tokens": {}}),
+                       return_value=status or {"updated_at": None,
+                                               "tokens": {}}),
             mock.patch("holder_history.load_holder_history",
                        return_value=store if store is not None else _store()),
+            # Backup durable store: tes tidak boleh menyentuh jaringan.
+            mock.patch("holder_history.pull_holder_history", return_value=None),
             mock.patch("core.get_helius_keys", return_value=["test-key"]),
         ]
         if analyze is not None:
@@ -226,6 +238,72 @@ class HolderPageChartTest(unittest.TestCase):
             self.assertEqual(seen.get("max_wallets"), hh.FULL_SCAN_MAX_WALLETS)
             self.assertTrue(seen.get("detail"))
             self.assertEqual(seen.get("mints"), [MINT])
+
+    def test_metric_cards_follow_manual_scan(self):
+        """Kartu metrik harus ikut scan manual, bukan snapshot cron lama.
+
+        Regression AGENTHQ: snapshot cron 1,16% (harga lama) vs titik scan
+        manual 0,90% — sebelum overlay ``apply_manual_scan``, grafik sudah
+        baru tetapi kartu "Dust hold % MC" + badge masih angka lama.
+        """
+        stale_status = {
+            "updated_at": 12 * HOUR,
+            "tokens": {MINT: {
+                "symbol": "TST", "price": 0.01, "marketcap": 100_000.0,
+                "analyzed_at": 12 * HOUR,
+                "holders": {"dust_count": 90, "dust_pct_mc": 1.16,
+                            "real_count": 40,
+                            "mid": {"count": 6, "pct_mc": 4.0}},
+                "history": [_point(4 * HOUR, 90), _point(8 * HOUR, 105),
+                            _point(12 * HOUR, 120)],
+                "cohort": {"frozen_at": 4 * HOUR, "balances": {"A": 10.0}},
+            }},
+        }
+        fresh = _analysis()  # analyzed_at 16 jam, dust_pct_mc 0.9, count 130
+
+        with self._page(analyze=lambda *a, **k: fresh,
+                        ingest=lambda *a, **k: _store(),
+                        status=stale_status) as app:
+            self.assertEqual(len(app.exception), 0)
+            self.assertEqual(_first_metric(app, "Dust hold % MC"), "1.16%")
+            self.assertEqual(_first_metric(app, "Dust wallet"), "90")
+            self.assertNotIn("scan manual barusan",
+                             " ".join(c.value for c in app.caption))
+
+            buttons = [b for b in app.button
+                       if "Scan holder FULL" in (b.label or "")]
+            self.assertTrue(buttons, "tombol scan FULL tidak ditemukan")
+            buttons[0].click().run()
+            self.assertEqual(len(app.exception), 0)
+
+            self.assertEqual(_first_metric(app, "Dust hold % MC"), "0.90%")
+            self.assertEqual(_first_metric(app, "Dust wallet"), "130")
+            self.assertEqual(_first_metric(app, "Real >$10"), "41")
+            captions = " ".join(c.value for c in app.caption)
+            self.assertIn("scan manual barusan", captions)
+            # badge mengikuti nilai baru: 0,90% -> HATI-HATI, bukan BAHAYA.
+            self.assertIn("HATI-HATI", captions + " ".join(
+                n.value for n in app.markdown))
+
+    def test_metric_cards_ignore_manual_scan_for_other_mint(self):
+        stale_status = {
+            "updated_at": 12 * HOUR,
+            "tokens": {MINT: {
+                "symbol": "TST", "analyzed_at": 12 * HOUR,
+                "holders": {"dust_count": 90, "dust_pct_mc": 1.16,
+                            "real_count": 40, "mid": {"count": 6}},
+            }},
+        }
+        with self._page(status=stale_status, query_mint=MINT) as app:
+            app.session_state["holder_manual_scan"] = {
+                "mint": OTHER, "saved_at": 99 * HOUR,
+                "analysis": {"analyzed_at": 99 * HOUR, "price": 0.02,
+                             "marketcap": 1.0, "symbol": "LAIN",
+                             "holders": {"dust_count": 1, "dust_pct_mc": 9.9,
+                                         "real_count": 1, "mid": {}}}}
+            app.run()
+            self.assertEqual(len(app.exception), 0)
+            self.assertEqual(_first_metric(app, "Dust hold % MC"), "1.16%")
 
 
 if __name__ == "__main__":

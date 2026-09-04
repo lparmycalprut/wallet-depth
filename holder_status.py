@@ -21,6 +21,11 @@ STATUS_PATH = os.path.join(BASE_DIR, "holder_status.json")
 GITHUB_REPO = "lparmycalprut/wallet-depth"
 STATUS_REPO_PATH = "holder_status.json"
 STATUS_REF = "holder-live"
+# Backup store penuh (holder_history.json) dipublish ke ref yang sama dalam
+# bentuk gzip: isinya 10x lebih kecil daripada JSON dan memuat peta wallet
+# (alert state, kohort, kronologi, baseline scan FULL) yang sengaja TIDAK
+# dikirim lagi di holder_status.json.
+HISTORY_REPO_PATH = "holder_history.json.gz"
 
 _CACHE_TTL = 15
 _CACHE = {"data": None, "ts": 0.0}
@@ -54,22 +59,190 @@ def _holders_for_status(holders: dict | None) -> dict:
     return holders
 
 
+# Kunci ``st.session_state`` untuk hasil scan manual halaman Holder Analytic.
+MANUAL_SCAN_KEY = "holder_manual_scan"
+
+
+def _as_int(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def compact_manual_scan(mint: str, analysis: dict | None,
+                        saved_at: int | None = None) -> dict:
+    """Payload ringkas scan manual untuk ``st.session_state[MANUAL_SCAN_KEY]``.
+
+    Hanya bagian yang dibutuhkan kartu metrik UI (holders ringkas, harga,
+    marketcap, waktu). Peta wallet / snapshot alert / kronologi yang berat
+    dibuang lewat :func:`_holders_for_status` supaya session state tidak
+    membengkak.
+    """
+    analysis = analysis if isinstance(analysis, dict) else {}
+    holders = analysis.get("holders")
+    return {
+        "mint": str(mint or ""),
+        "saved_at": _as_int(saved_at) or int(time.time()),
+        "analysis": {
+            "symbol": analysis.get("symbol"),
+            "marketcap": analysis.get("marketcap"),
+            "price": analysis.get("price"),
+            "analyzed_at": analysis.get("analyzed_at"),
+            "holders": _holders_for_status(
+                holders if isinstance(holders, dict) else {}),
+        },
+    }
+
+
+def resolve_token_view(status_token: dict | None,
+                       manual_scan: dict | None = None,
+                       mint: str | None = None) -> dict:
+    """Gabungkan snapshot terpublikasi dengan scan manual yang lebih baru.
+
+    Halaman Holder Analytic menulis hasil scan manual ke
+    ``holder_history.json`` (``ingest_many``) tetapi **tidak** mempublish
+    ``holder_status.json`` — publish hanya dilakukan cron/scan watchlist, dan
+    :func:`snapshot_status` membangun ``tokens`` dari analyses yang diberikan
+    saja (tidak merge), jadi publish satu token akan menghapus token lain dari
+    dashboard. Akibatnya kartu metrik (Dust hold % MC, badge, jumlah wallet)
+    tetap menampilkan angka cron terakhir sementara grafik sudah memuat titik
+    scan manual: dua angka berbeda untuk satu token. Selisihnya bisa besar
+    bila harga bergerak cepat, karena cutoff dust **$10 per wallet dalam USD**
+    membuat klasifikasi wallet bergantung harga (harga naik → wallet "lulus"
+    ke >$10 → dust % MC turun walau tidak ada yang jual).
+
+    Scan manual dipakai hanya bila ``analyzed_at``-nya tidak lebih tua dari
+    snapshot dan ``holders``-nya terisi; selain itu snapshot yang menang.
+    Return dict snapshot (atau ``{}``) dengan ``holders``/``price``/
+    ``marketcap``/``symbol``/``analyzed_at`` dari sumber terbaru, plus
+    ``view_source`` = ``"manual"`` atau ``"snapshot"``. ``history``,
+    ``cohort``, ``alert_state``, dan ``chronology`` selalu dari snapshot.
+    """
+    token = dict(status_token) if isinstance(status_token, dict) else {}
+    token.setdefault("view_source", "snapshot")
+    scan = manual_scan if isinstance(manual_scan, dict) else {}
+    if not scan:
+        return token
+    if mint is not None and str(scan.get("mint") or "") != str(mint or ""):
+        return token
+    if str(scan.get("mint") or "") and str(token.get("mint") or "") \
+            and str(scan.get("mint")) != str(token.get("mint")):
+        return token
+    analysis = scan.get("analysis")
+    if not isinstance(analysis, dict):
+        return token
+    holders = analysis.get("holders")
+    if not isinstance(holders, dict) or not holders:
+        return token
+    manual_ts = (_as_int(analysis.get("analyzed_at"))
+                 or _as_int(scan.get("saved_at")))
+    if manual_ts < _as_int(token.get("analyzed_at")):
+        return token
+    token["holders"] = holders
+    for key in ("price", "marketcap", "symbol"):
+        if analysis.get(key) is not None:
+            token[key] = analysis[key]
+    token["analyzed_at"] = analysis.get("analyzed_at") or scan.get("saved_at")
+    token["view_source"] = "manual"
+    return token
+
+
+def apply_manual_scan(status: dict | None, manual_scan: dict | None) -> dict:
+    """Status salinan dengan token hasil scan manual diganti view terbaru.
+
+    Dipakai UI sebelum render: satu panggilan membuat kartu metrik, badge,
+    watchlist, dan Chart LP membaca angka yang sama dengan grafik. Tidak
+    menyentuh file ``holder_status.json`` maupun cache publish.
+    """
+    status = dict(status) if isinstance(status, dict) else {}
+    scan = manual_scan if isinstance(manual_scan, dict) else {}
+    mint = str(scan.get("mint") or "")
+    if not mint:
+        return status
+    tokens = dict(status.get("tokens") or {})
+    view = resolve_token_view(tokens.get(mint) or {}, scan, mint=mint)
+    if view.get("view_source") != "manual":
+        return status
+    tokens[mint] = view
+    status["tokens"] = tokens
+    return status
+
+
+def _cohort_for_status(cohort: dict | None) -> dict:
+    """Ringkasan kohort beku tanpa peta balance (10,6% byte snapshot).
+
+    Dashboard cukup tahu kapan kohort dibekukan dan berapa address yang
+    dipantau; balance per address dipakai ``holder_history`` untuk mengukur
+    sisa token dan ikut terbackup di store durable.
+    """
+    cohort = cohort if isinstance(cohort, dict) else {}
+    balances = cohort.get("balances")
+    return {
+        "summary": True,
+        "frozen_at": cohort.get("frozen_at"),
+        "wallets": len(balances) if isinstance(balances, dict) else 0,
+    }
+
+
+def _chronology_for_status(packed: dict | None) -> dict:
+    """Kronologi untuk dashboard: interval + metrik, peta wallet jadi jumlah.
+
+    ``holder_chronology.compact_chronology_for_status`` masih membawa sampai
+    ``STATUS_MAX_WALLETS`` (200) entri per snapshot wallet; yang ditampilkan
+    UI hanyalah interval/pergerakan, jadi peta itu diganti jumlahnya. Snapshot
+    format lama (peta penuh) tetap bisa dipulihkan ``seed_from_status``.
+    """
+    packed = dict(packed) if isinstance(packed, dict) else {}
+    packed.setdefault("intervals", [])
+    for key in ("baseline_wallets", "latest_wallets"):
+        snap = packed.get(key)
+        if not isinstance(snap, dict):
+            continue
+        snap = dict(snap)
+        wallets = snap.get("wallets")
+        snap["wallets"] = len(wallets) if isinstance(wallets, dict) else 0
+        packed[key] = snap
+    return packed
+
+
 def snapshot_status(analyses: dict | None,
                     watchlist: dict | None = None,
-                    history_store: dict | None = None) -> dict:
-    """Bangun payload dashboard dari hasil analisis per token."""
+                    history_store: dict | None = None,
+                    contexts: dict | None = None) -> dict:
+    """Bangun payload dashboard dari hasil analisis per token.
+
+    ``contexts`` = ``{mint: market_context}`` dari ``alert_context`` (opsional).
+    Bila ada, metrik volatilitas + volume 4 jam disimpan **berdampingan dengan
+    dust % MC** sebagai ``tokens[mint]["market_signal"]`` supaya jejak
+    konfirmasi alert ikut terdokumentasi di snapshot.
+
+    Payload ini untuk **tampilan dashboard**, jadi peta wallet tidak ikut:
+    ``cohort`` dan ``alert_state`` diringkas jadi jumlah + timestamp
+    (terukur 94% byte snapshot: 2,22 MB -> ±133 KB untuk 36 token) dan peta
+    kronologi diganti jumlahnya. State penuh (balance per address, baseline
+    scan FULL, interval kronologi) dibackup terpisah oleh
+    ``holder_history.publish_holder_history`` ke ``holder_history.json.gz`` di
+    ref yang sama. Snapshot format lama yang masih membawa peta tetap bisa
+    dipulihkan ke store oleh ``holder_history.seed_from_status``.
+    """
     try:
         from holder_history import (compact_chronology_for_status,
                                     compact_history_for_status,
                                     load_holder_history)
-        from telegram_alerts import compact_alert_state
+        from telegram_alerts import alert_state_summary
         store = history_store if history_store is not None \
             else load_holder_history()
     except Exception:
         store = {"tokens": {}}
         compact_history_for_status = lambda *_a, **_k: []  # noqa: E731
         compact_chronology_for_status = lambda *_a, **_k: {}  # noqa: E731
-        compact_alert_state = lambda *_a, **_k: {}  # noqa: E731
+        alert_state_summary = lambda *_a, **_k: {"summary": True}  # noqa: E731
+    try:
+        from alert_context import compact_signal
+    except Exception:  # noqa: BLE001 - konteks pasar bersifat pelengkap
+        compact_signal = lambda *_a, **_k: {}  # noqa: E731
+    signals = contexts if isinstance(contexts, dict) else {}
     tokens = {}
     stamps = []
     for mint, result in (analyses or {}).items():
@@ -85,11 +258,21 @@ def snapshot_status(analyses: dict | None,
             "analyzed_at": result.get("analyzed_at"),
             "holders": _holders_for_status(result.get("holders") or {}),
             "history": compact_history_for_status(store, mint),
-            "cohort": hist_slot.get("cohort") or {},
-            "alert_state": compact_alert_state(
-                hist_slot.get("alert_state") or {}),
-            "chronology": compact_chronology_for_status(store, mint),
+            # Peta wallet (kohort, alert state, kronologi) TIDAK ikut snapshot:
+            # 94% byte payload dashboard dan hanya dibutuhkan perhitungan
+            # internal. Semuanya terbackup penuh di holder_history.json.gz
+            # (ref holder-live) lewat publish_holder_history().
+            "cohort": _cohort_for_status(hist_slot.get("cohort")),
+            "alert_state": alert_state_summary(hist_slot.get("alert_state")
+                                               or {}),
+            "chronology": _chronology_for_status(
+                compact_chronology_for_status(store, mint)),
         }
+        context = signals.get(mint)
+        if not isinstance(context, dict):
+            context = result.get("market_context")
+        if isinstance(context, dict):
+            token["market_signal"] = compact_signal(context)
         tokens[mint] = token
         if token["analyzed_at"]:
             stamps.append(int(token["analyzed_at"]))
@@ -127,47 +310,67 @@ def _parse_status_payload(data) -> dict | None:
     return None
 
 
-def _contents_url(ref: str | None = None) -> str:
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{STATUS_REPO_PATH}"
+def _contents_url(ref: str | None = None,
+                  repo_path: str = STATUS_REPO_PATH) -> str:
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{repo_path}"
     return f"{url}?ref={ref}" if ref else url
 
 
-def _github_pull() -> dict | None:
+def _github_get_bytes(repo_path: str = STATUS_REPO_PATH) -> bytes | None:
+    """Ambil satu file mentah dari ref ``holder-live`` -> ``main`` -> CDN raw.
+
+    ``Accept: application/vnd.github.raw+json`` wajib untuk file > 1 MB
+    (endpoint contents biasa menolak blob besar); CDN raw jadi jaring terakhir
+    bila API gagal/limit. Return ``None`` bila semua sumber gagal.
+    """
     tok = _github_token()
     headers = {"Accept": "application/vnd.github.raw+json"}
     if tok:
         headers["Authorization"] = f"Bearer {tok}"
     for ref in (STATUS_REF, "main"):
         try:
-            response = requests.get(_contents_url(ref), headers=headers,
-                                    timeout=10)
+            response = requests.get(_contents_url(ref, repo_path),
+                                    headers=headers, timeout=20)
         except requests.RequestException as exc:
-            print(f"WARN: holder_status API {ref} network error: {exc}",
+            print(f"WARN: {repo_path} API {ref} network error: {exc}",
                   file=sys.stderr)
             continue
         if response.status_code != 200:
             if response.status_code != 404:
-                print(f"WARN: holder_status API {ref} {response.status_code}: "
+                print(f"WARN: {repo_path} API {ref} {response.status_code}: "
                       f"{response.text[:200]}", file=sys.stderr)
             continue
-        try:
-            parsed = _parse_status_payload(response.json())
-        except Exception as exc:  # noqa: BLE001
-            print(f"WARN: holder_status API {ref} parse failed: {exc}",
-                  file=sys.stderr)
-            parsed = None
-        if parsed is not None:
-            return parsed
+        body = response.content
+        if body:
+            return body
     try:
-        raw = f"https://raw.githubusercontent.com/{GITHUB_REPO}/{STATUS_REF}/{STATUS_REPO_PATH}"
+        raw = (f"https://raw.githubusercontent.com/{GITHUB_REPO}/"
+               f"{STATUS_REF}/{repo_path}")
         response = requests.get(raw, params={"t": int(time.time())},
                                 headers={"Cache-Control": "no-cache",
-                                         "Pragma": "no-cache"}, timeout=10)
-        if response.status_code == 200:
-            return _parse_status_payload(response.json()) or _empty_status()
-    except (requests.RequestException, ValueError) as exc:
-        print(f"WARN: holder_status raw CDN failed: {exc}", file=sys.stderr)
+                                         "Pragma": "no-cache"}, timeout=20)
+        if response.status_code == 200 and response.content:
+            return response.content
+    except requests.RequestException as exc:
+        print(f"WARN: {repo_path} raw CDN failed: {exc}", file=sys.stderr)
     return None
+
+
+def _github_pull() -> dict | None:
+    """Muat ``holder_status.json`` dari GitHub (durable) sebagai dict."""
+    body = _github_get_bytes(STATUS_REPO_PATH)
+    if body is None:
+        return None
+    try:
+        return _parse_status_payload(json.loads(body.decode("utf-8")))
+    except (ValueError, TypeError, UnicodeDecodeError) as exc:
+        print(f"WARN: holder_status API parse failed: {exc}", file=sys.stderr)
+        return None
+
+
+def pull_store_backup() -> bytes | None:
+    """Bytes mentah backup store (gzip) dari ref durable; ``None`` bila gagal."""
+    return _github_get_bytes(HISTORY_REPO_PATH)
 
 
 def _ensure_status_branch(headers: dict) -> bool:
@@ -207,26 +410,32 @@ def _ensure_status_branch(headers: dict) -> bool:
     return False
 
 
-def _github_push(status: dict, message: str, max_retries: int = 4) -> bool:
+def _github_put_bytes(repo_path: str, payload: bytes, message: str,
+                      max_retries: int = 4) -> bool:
+    """Tulis satu file (bytes) ke ref ``holder-live`` lewat Contents API.
+
+    Retry dengan backoff untuk 409/422/429/5xx (422 "sha wasn't supplied"
+    terjadi sesaat setelah branch dibuat dari ``main``). Bila ref tidak bisa
+    disiapkan, jatuh ke ``main`` supaya data tidak hilang.
+    """
     tok = _github_token()
     if not tok:
-        print("WARN: holder_status push skipped (no github_token)",
+        print(f"WARN: {repo_path} push skipped (no github_token)",
               file=sys.stderr)
         return False
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{STATUS_REPO_PATH}"
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{repo_path}"
     headers = {"Authorization": f"Bearer {tok}",
                "Accept": "application/vnd.github+json"}
     target_ref = STATUS_REF if _ensure_status_branch(headers) else "main"
     if target_ref == "main":
-        print("WARN: holder_status falling back to main", file=sys.stderr)
-    body_content = base64.b64encode(
-        json.dumps(status, indent=2, sort_keys=True).encode()).decode()
+        print(f"WARN: {repo_path} falling back to main", file=sys.stderr)
+    body_content = base64.b64encode(payload).decode()
     for attempt in range(1, max_retries + 1):
         try:
-            current = requests.get(_contents_url(target_ref), headers=headers,
-                                   timeout=15)
+            current = requests.get(_contents_url(target_ref, repo_path),
+                                   headers=headers, timeout=20)
         except requests.RequestException as exc:
-            print(f"WARN: holder_status GET failed: {exc}", file=sys.stderr)
+            print(f"WARN: {repo_path} GET failed: {exc}", file=sys.stderr)
             if attempt < max_retries:
                 time.sleep(0.5 * (2 ** (attempt - 1)))
                 continue
@@ -235,11 +444,11 @@ def _github_push(status: dict, message: str, max_retries: int = 4) -> bool:
         if current.status_code == 200:
             try:
                 sha = (current.json() or {}).get("sha")
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 - sha opsional (file baru)
                 sha = None
         elif current.status_code != 404:
             if current.status_code in (401, 403):
-                print(f"ERROR: holder_status GET auth {current.status_code}",
+                print(f"ERROR: {repo_path} GET auth {current.status_code}",
                       file=sys.stderr)
                 return False
             if attempt < max_retries and (current.status_code in (409, 429)
@@ -247,31 +456,45 @@ def _github_push(status: dict, message: str, max_retries: int = 4) -> bool:
                 time.sleep(0.5 * (2 ** (attempt - 1)))
                 continue
             return False
-        payload = {"message": message, "content": body_content,
-                   "branch": STATUS_REF}
+        payload_json = {"message": message, "content": body_content,
+                        "branch": target_ref}
         if sha:
-            payload["sha"] = sha
+            payload_json["sha"] = sha
         try:
-            put = requests.put(url, headers=headers, json=payload, timeout=15)
+            put = requests.put(url, headers=headers, json=payload_json,
+                               timeout=30)
         except requests.RequestException as exc:
-            print(f"WARN: holder_status PUT failed: {exc}", file=sys.stderr)
+            print(f"WARN: {repo_path} PUT failed: {exc}", file=sys.stderr)
             if attempt < max_retries:
                 time.sleep(0.5 * (2 ** (attempt - 1)))
                 continue
             return False
         if put.status_code in (200, 201):
             return True
-        print(f"WARN: holder_status PUT {put.status_code}: "
-              f"{put.text[:200]}", file=sys.stderr)
-        # 422 "sha wasn't supplied": file sudah ada di branch (branch baru
-        # dibuat dari main yang sudah punya holder_status.json, GET sesaat
-        # sesudahnya masih 404). Tunggu lalu ulangi GET sha.
+        print(f"WARN: {repo_path} PUT {put.status_code}: {put.text[:200]}",
+              file=sys.stderr)
         if put.status_code in (409, 422, 429) or put.status_code >= 500:
             if attempt < max_retries:
                 time.sleep(1.0 * (2 ** (attempt - 1)))
                 continue
         return False
     return False
+
+
+def _github_push(status: dict, message: str, max_retries: int = 4) -> bool:
+    """Publish ``holder_status.json`` (payload dashboard) ke ref durable."""
+    body = json.dumps(status, indent=2, sort_keys=True).encode("utf-8")
+    return _github_put_bytes(STATUS_REPO_PATH, body, message,
+                             max_retries=max_retries)
+
+
+def push_store_backup(payload: bytes, message: str,
+                      max_retries: int = 4) -> bool:
+    """Publish backup store (gzip) ke ref durable; ``False`` bila gagal."""
+    if not payload:
+        return False
+    return _github_put_bytes(HISTORY_REPO_PATH, payload, message,
+                             max_retries=max_retries)
 
 
 def load_holder_status(force_refresh: bool = False) -> dict:
@@ -305,10 +528,11 @@ def load_holder_status(force_refresh: bool = False) -> dict:
 def publish_holder_status(analyses: dict,
                           watchlist: dict | None = None,
                           *, push: bool = True,
-                          history_store: dict | None = None) -> dict:
+                          history_store: dict | None = None,
+                          contexts: dict | None = None) -> dict:
     """Tulis status lokal + (opsional) publish ke GitHub."""
     status = snapshot_status(analyses, watchlist,
-                             history_store=history_store)
+                             history_store=history_store, contexts=contexts)
     atomic_write_json(STATUS_PATH, status, indent=2)
     _CACHE["data"] = dict(status)
     _CACHE["ts"] = time.time()

@@ -6,7 +6,10 @@ Untuk setiap token watchlist:
 1. ambil daftar holder (Helius DAS dulu — ``auto`` — fallback GMGN),
 2. pisahkan real vs dust, hitung dust % marketcap + mid-tier Crab/Fish,
 3. evaluasi alert Telegram terhadap snapshot rolling ~4 jam dan snapshot
-   awal **sebelum** snapshot terbaru ditulis,
+   awal **sebelum** snapshot terbaru ditulis; kandidat yang lolos ambang dust
+   masih harus dikonfirmasi volume + harga + volatilitas (konteks pasar
+   ditarik **lazy**, hanya untuk token yang punya kandidat, jadi scan tenang
+   tidak menambah satu pun request),
 4. catat **titik perubahan** ke ``holder_history.json`` (grafik 4 jam) —
    cron sengaja memakai ``ingest_many(..., detail=False)`` sehingga rekaman
    detail hasil scan FULL manual (``baseline`` / ``latest_detail``) milik
@@ -28,7 +31,11 @@ ROOT = __import__("os").path.dirname(__import__("os").path.dirname(
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-from holder_history import ingest_many, load_holder_history, seed_from_status
+from alert_context import market_context_provider
+from daily_store import load_daily_effort
+from holder_history import (ingest_many, load_holder_history, merge_stores,
+                            publish_holder_history, pull_holder_history,
+                            seed_from_status)
 from holder_analysis import analyze_token
 from holder_status import (last_publish_result, load_holder_status,
                            publish_holder_status)
@@ -134,8 +141,17 @@ def main(argv=None) -> int:
           f"holder_source={args.holder_source or 'config(auto)'}")
 
     started = time.monotonic()
-    store = seed_from_status(load_holder_history(),
-                            load_holder_status(force_refresh=True))
+    started_wall = int(time.time())
+    # Urutan pemulihan state: file lokal runner (kosong di Actions) -> backup
+    # durable holder_history.json.gz di ref holder-live (menang bila timestamp
+    # seri, karena itulah akumulasi run sebelumnya) -> titik/state dari snapshot
+    # dashboard sebagai jaring kedua (juga satu-satunya sumber bila backup belum
+    # pernah dibuat, mis. snapshot format lama yang masih membawa peta wallet).
+    durable = pull_holder_history()
+    store = merge_stores(load_holder_history(), durable or {})
+    store = seed_from_status(store, load_holder_status(force_refresh=True))
+    print(f"Store holder: tokens={len(store.get('tokens') or {})} "
+          f"backup={'ada' if durable else 'tidak ada'}")
     analyses = scan_watchlist(
         watchlist, dust_limit=args.dust_limit,
         max_wallets=args.max_wallets,
@@ -147,18 +163,56 @@ def main(argv=None) -> int:
         # Rules read the old anchors first. process_holder_alerts mutates only
         # alert state; ingest_many writes that state together with the newest
         # history point afterwards.
-        deliveries = process_holder_alerts(analyses, store)
+        # Konteks volume/harga/volatilitas ditarik lazy (hanya bila ada
+        # kandidat sinyal) dan di-memo per token untuk seluruh run ini.
+        contexts: dict = {}
+        provider = market_context_provider(cache=contexts,
+                                           daily_loader=load_daily_effort)
+        deliveries = process_holder_alerts(analyses, store,
+                                           context_provider=provider)
         # detail=False: cron hanya menambah titik perubahan; baseline
         # (detail scan FULL pertama dari halaman Holder) tetap utuh.
         history = ingest_many(analyses, store=store, detail=False)
         status = publish_holder_status(
             analyses, watchlist, push=not args.no_push,
-            history_store=history)
+            history_store=history, contexts=contexts)
+        # Backup store penuh (peta wallet alert/kohort, baseline FULL,
+        # kronologi) — tidak lagi ikut snapshot dashboard yang dirampingkan.
+        backup = publish_holder_history(history, push=not args.no_push)
         sent_alerts = sum(1 for item in deliveries
                           if (item.get("delivery") or {}).get("ok"))
+        unverified = sum(1 for item in deliveries
+                         if not ((item.get("event") or {}).get("volume_check")
+                                 or {}).get("verified", True))
+        rejected = 0
+        fetch_ms = 0
+        for mint in analyses:
+            slot = (store.get("tokens") or {}).get(mint) or {}
+            state = slot.get("alert_state") or {}
+            rejected += sum(1 for row in (state.get("rejected_signals") or [])
+                            if isinstance(row, dict)
+                            and int(row.get("ts") or 0) >= started_wall)
+            fetch_ms += int((contexts.get(mint) or {}).get("fetch_ms") or 0)
+        # Backup store tidak boleh membuat cron merah (data dashboard lebih
+        # penting), tapi kegagalannya harus kelihatan di log.
+        if backup.get("pushed"):
+            backup_label = f"ok {backup.get('bytes') or 0}B"
+            if backup.get("pruned"):
+                backup_label += f" pruned={len(backup['pruned'])}"
+            if backup.get("over_budget"):
+                backup_label += " OVER-BUDGET"
+        elif args.no_push:
+            backup_label = "skip (--no-push)"
+        else:
+            backup_label = f"GAGAL ({backup.get('error') or 'unknown'})"
+            print(f"WARN: backup holder_history gagal: "
+                  f"{backup.get('error') or 'unknown'}", file=sys.stderr)
         print(f"Holder scan selesai: analyzed={len(analyses)} "
               f"history={len((history or {}).get('tokens') or {})} "
               f"alerts={sent_alerts}/{len(deliveries)} "
+              f"unverified={unverified} rejected={rejected} "
+              f"konteks={len(contexts)} token ({fetch_ms} ms) "
+              f"backup={backup_label} "
               f"updated={status.get('updated_at')} "
               f"durasi={time.monotonic() - started:.1f}s")
         empty = 0

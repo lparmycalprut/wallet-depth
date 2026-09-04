@@ -7,11 +7,21 @@ Dashboard meresample ke bucket 4 jam. Snapshot ``holder_status``
 menyimpan salinan ringkas ``history`` supaya cron GitHub tetap punya
 jejak antar-run.
 
-Ambang dust (observasi dump) — satu garis:
-- >= 1% MC  → BAHAYA (disembunyikan dari Scan Meteora)
+Store penuh (peta wallet alert/kohort, baseline scan FULL, kronologi)
+dibackup terpisah sebagai ``holder_history.json.gz`` di ref ``holder-live``
+oleh :func:`publish_holder_history` dan dipulihkan oleh
+:func:`pull_holder_history` / :func:`load_durable_holder_history` — snapshot
+dashboard sengaja tidak membawa peta itu lagi (94% byte).
+
+Ambang dust (observasi dump) — dua garis:
+- >= 0,5% MC → HATI-HATI (peringatan dini, tetap tampil di Scan Meteora)
+- >= 1% MC   → BAHAYA (disembunyikan dari Scan Meteora)
 """
 from __future__ import annotations
 
+import copy
+import gzip
+import zlib
 import json
 import os
 import tempfile
@@ -40,9 +50,12 @@ def _atomic_write_json(path: str, data, **dump_kwargs) -> None:
         raise
 
 DUST_DANGER_PCT = 1.0
+# HATI-HATI: dust sudah memegang >= 0,5% MC tapi belum sebatas BAHAYA.
+DUST_CAUTION_PCT = 0.5
 # alias lama (kompatibilitas import)
-DUST_CAUTION_PCT = DUST_DANGER_PCT
 DUST_LIMIT_PCT = DUST_DANGER_PCT
+# Urutan keparahan badge (dipakai sorting Chart LP / watchlist).
+DUST_LEVEL_RANK = {"ok": 0, "caution": 1, "danger": 2}
 INTERVAL_SEC = 4 * 3600          # grafik 4 jam sekali
 COHORT_WINDOW_SEC = 4 * 3600     # freeze Crab+Fish tiap 4 jam
 COHORT_MAX = 200                 # address yang diikuti
@@ -50,6 +63,13 @@ MID_USD_MIN = 100.0              # Crab bawah (wallet_depth: > $100)
 MID_USD_MAX = 10_000.0           # Fish atas (<= $10k)
 MAX_POINTS = 84                  # 14 hari × 6 bucket 4 jam
 MIN_POINT_GAP_SEC = 8 * 60       # jangan dobel-titik < 8 menit
+
+# Volatilitas harga (konfirmasi alert dust) dari candle hourly GeckoTerminal.
+VOLATILITY_WINDOW_HOURS = 4          # window "4 jam terakhir"
+VOLATILITY_HISTORY_HOURS = 16        # konteks: 16 candle hourly terakhir
+VOLATILITY_MIN_CANDLES = 2           # < 2 close → stddev tidak bermakna
+HIGH_VOLATILITY_STDDEV_PCT = 3.0     # stddev close 4 jam > 3% = pasar liar
+VOLATILITY_STALE_SEC = 2 * 3600      # candle terbaru lebih tua dari ini = basi
 
 # Scan manual (halaman Holder) = FULL: ambil seluruh holder, bukan sampel.
 # Cron hanya mencatat perubahan (titik ringkas), jadi detail hasil scan
@@ -84,10 +104,13 @@ def empty_store() -> dict:
 
 
 def dust_flag(dust_pct_mc, prev_pct=None) -> dict:
-    """Klasifikasi dust % MC: ok / danger.
+    """Klasifikasi dust % MC: ok / caution / danger.
 
-    ``hide`` True jika dust **≥ 1% MC** (BAHAYA — disembunyikan dari
-    Scan Meteora).
+    - ``>= 0,5% MC`` → **HATI-HATI** (``caution``): dust sudah memegang
+      porsi MC yang berarti, pantau lebih ketat.
+    - ``>= 1% MC`` → **BAHAYA** (``danger``): ``hide`` True, disembunyikan
+      dari Scan Meteora.
+
     ``rising`` True jika % MC naik dibanding titik sebelumnya.
     """
     pct = _float(dust_pct_mc, None)
@@ -99,13 +122,173 @@ def dust_flag(dust_pct_mc, prev_pct=None) -> dict:
     if pct >= DUST_DANGER_PCT:
         return {"level": "danger", "label": "BAHAYA", "hide": True,
                 "rising": rising, "pct": pct}
+    if pct >= DUST_CAUTION_PCT:
+        return {"level": "caution", "label": "HATI-HATI", "hide": False,
+                "rising": rising, "pct": pct}
     return {"level": "ok", "label": "AMAN", "hide": False,
             "rising": rising, "pct": pct}
+
+
+def dust_level_rank(level) -> int:
+    """Bobot keparahan level dust (``unknown`` = -1, ``danger`` = 2)."""
+    return int(DUST_LEVEL_RANK.get(str(level or ""), -1))
 
 
 def should_hide_dust(dust_pct_mc) -> bool:
     """True bila dust holder memegang ≥ 1% marketcap (BAHAYA)."""
     return bool(dust_flag(dust_pct_mc)["hide"])
+
+
+def _volatility_rows(values) -> dict[int, dict]:
+    """Normalisasi candle hourly (dict atau baris OHLCV) → ``{ts: row}``.
+
+    Baris tanpa timestamp/close yang usable dibuang; harga non-positif dan
+    non-finite diabaikan supaya satu candle rusak tidak menghasilkan stddev
+    ``nan`` yang lalu lolos ke aturan alert.
+    """
+    rows: dict[int, dict] = {}
+    for value in values or []:
+        if isinstance(value, dict):
+            raw = (value.get("ts"), value.get("open"), value.get("high"),
+                   value.get("low"), value.get("close"),
+                   value.get("volume_usd", value.get("volume")))
+        elif isinstance(value, (list, tuple)) and len(value) >= 6:
+            raw = tuple(value[:6])
+        else:
+            continue
+        ts = _float(raw[0], None)
+        close = _float(raw[4], None)
+        if ts is None or ts <= 0 or close is None or close <= 0:
+            continue
+        opening = _float(raw[1], None)
+        high = _float(raw[2], None)
+        low = _float(raw[3], None)
+        volume = _float(raw[5], 0.0) or 0.0
+        rows[int(ts)] = {
+            "ts": int(ts),
+            "open": close if opening is None or opening <= 0 else opening,
+            "high": max(close, high if high is not None and high > 0 else close),
+            "low": min(close, low if low is not None and low > 0 else close),
+            "close": close,
+            "volume_usd": max(0.0, volume),
+        }
+    return rows
+
+
+def _stddev_pct(values, mean: float) -> float | None:
+    """Sample standard deviation (n-1) of *values* as a percent of *mean*."""
+    count = len(values)
+    if count < 2 or mean <= 0:
+        return None
+    variance = sum((value - mean) ** 2 for value in values) / (count - 1)
+    return round((variance ** 0.5) / mean * 100.0, 4)
+
+
+def calculate_volatility_metrics(candles, historical=None, *,
+                                 window_hours: int = VOLATILITY_WINDOW_HOURS,
+                                 history_hours: int = VOLATILITY_HISTORY_HOURS,
+                                 now=None,
+                                 high_volatility_pct: float = HIGH_VOLATILITY_STDDEV_PCT,
+                                 stale_after_sec: int = VOLATILITY_STALE_SEC) -> dict:
+    """Metrik volatilitas harga dari candle hourly (konfirmasi alert dust).
+
+    ``candles`` adalah candle window berjalan (idealnya 4 jam terakhir) dan
+    ``historical`` candle jam-jam sebelumnya (total ~16 candle = konteks
+    beberapa hari). Keduanya boleh dict ``{ts, open, high, low, close,
+    volume_usd}`` atau baris OHLCV mentah GeckoTerminal; timestamp duplikat
+    dihitung sekali.
+
+    Return (semua persentase terhadap harga rata-rata window):
+
+    - ``price_stddev_4h``      : sample stddev close per jam di window 4 jam (%).
+    - ``price_range_4h``       : (high tertinggi − low terendah) / rata-rata (%).
+    - ``intra_hour_volatility``: rata-rata (high−low)/close tiap jam (%),
+      plus ``intra_hour_volatility_max`` untuk jam paling liar.
+    - ``high_volatility``      : True bila ``price_stddev_4h`` > ambang (3%).
+    - ``price_change_4h_pct``  : open jam pertama → close jam terakhir (%).
+    - ``volume_4h``            : total volume USD window 4 jam.
+    - ``history_stddev_pct``   : stddev 16 jam sebagai pembanding.
+    - ``available``            : False bila candle < 2 / harga rata-rata 0 —
+      pemanggil wajib memperlakukannya sebagai "tidak tahu", bukan "tenang".
+    - ``candles_in_window``, ``missing_hours``, ``stale``, ``avg_price_4h``,
+      ``close_price``, ``window_hours``, ``history_hours``, ``anchor_ts``.
+
+    ``now`` opsional: tanpa itu candle terbaru dipakai sebagai jangkar, jadi
+    backfill data lama tetap konsisten. ``stale`` menandakan candle terbaru
+    sudah lebih tua dari ``stale_after_sec`` (sumber data telat/lubang).
+    """
+    # Historical lebih dulu: bila ada timestamp kembar, candle window berjalan
+    # (data yang lebih baru) yang menang.
+    rows = _volatility_rows(historical)
+    rows.update(_volatility_rows(candles))
+    ordered = [rows[ts] for ts in sorted(rows)]
+    window = max(1, int(window_hours or VOLATILITY_WINDOW_HOURS))
+    history = max(window, int(history_hours or VOLATILITY_HISTORY_HOURS))
+    high_threshold = _float(high_volatility_pct, HIGH_VOLATILITY_STDDEV_PCT)
+    empty = {
+        "available": False, "price_stddev_4h": None, "price_range_4h": None,
+        "intra_hour_volatility": None, "intra_hour_volatility_max": None,
+        "high_volatility": False, "price_change_4h_pct": None,
+        "volume_4h": None, "history_stddev_pct": None, "avg_price_4h": None,
+        "close_price": None, "candles_in_window": 0, "candles_total": len(ordered),
+        "missing_hours": window, "stale": False, "anchor_ts": None,
+        "window_hours": window, "history_hours": history,
+        "high_volatility_pct": high_threshold,
+    }
+    if not ordered:
+        return empty
+
+    anchor = _float(now, None)
+    anchor_ts = int(anchor) if anchor is not None else ordered[-1]["ts"]
+    window_from = anchor_ts - window * 3600
+    history_from = anchor_ts - history * 3600
+    in_window = [row for row in ordered if row["ts"] > window_from
+                 and row["ts"] <= anchor_ts]
+    in_history = [row for row in ordered if row["ts"] > history_from
+                  and row["ts"] <= anchor_ts]
+
+    closes = [row["close"] for row in in_window]
+    mean_price = (sum(closes) / len(closes)) if closes else 0.0
+    stddev_pct = _stddev_pct(closes, mean_price)
+    high = max((row["high"] for row in in_window), default=None)
+    low = min((row["low"] for row in in_window), default=None)
+    range_pct = (round((high - low) / mean_price * 100.0, 4)
+                 if high is not None and low is not None and mean_price > 0
+                 else None)
+    intra = [round((row["high"] - row["low"]) / row["close"] * 100.0, 4)
+             for row in in_window if row["close"] > 0 and row["high"] >= row["low"]]
+    change_pct = None
+    if in_window and in_window[0]["open"] > 0:
+        change_pct = round((in_window[-1]["close"] - in_window[0]["open"])
+                           / in_window[0]["open"] * 100.0, 4)
+    history_closes = [row["close"] for row in in_history]
+    history_mean = (sum(history_closes) / len(history_closes)) if history_closes else 0.0
+    distinct_hours = len({row["ts"] // 3600 for row in in_window})
+    available = len(closes) >= max(2, int(VOLATILITY_MIN_CANDLES)) and mean_price > 0
+    return {
+        "available": bool(available),
+        "price_stddev_4h": stddev_pct if available else None,
+        "price_range_4h": range_pct if available else None,
+        "intra_hour_volatility": (round(sum(intra) / len(intra), 4)
+                                  if available and intra else None),
+        "intra_hour_volatility_max": (max(intra) if available and intra else None),
+        "high_volatility": bool(available and stddev_pct is not None
+                                and stddev_pct > high_threshold),
+        "price_change_4h_pct": change_pct if available else None,
+        "volume_4h": round(sum(row["volume_usd"] for row in in_window), 2),
+        "history_stddev_pct": _stddev_pct(history_closes, history_mean),
+        "avg_price_4h": round(mean_price, 12) if mean_price > 0 else None,
+        "close_price": in_window[-1]["close"] if in_window else None,
+        "candles_in_window": len(in_window),
+        "candles_total": len(ordered),
+        "missing_hours": max(0, window - distinct_hours),
+        "stale": bool((anchor_ts - ordered[-1]["ts"])
+                      > max(0, int(stale_after_sec))),
+        "anchor_ts": anchor_ts,
+        "window_hours": window,
+        "history_hours": history,
+        "high_volatility_pct": high_threshold,
+    }
 
 
 def _pool_set(pool_addresses) -> set[str]:
@@ -675,6 +858,26 @@ def ingest_many(analyses: dict | None, *, now: int | None = None,
     return save_holder_history(store, path)
 
 
+def _sanitize_remote_chronology(chrono) -> dict | None:
+    """Buat kronologi dari snapshot aman untuk :func:`compact_chronology`.
+
+    Snapshot ramping mengirim ``wallets`` sebagai **jumlah** (int), bukan peta;
+    tanpa sanitasi nilai itu bisa bocor ke store dan merusak pembanding
+    kronologi. Peta kosong membuat logika "local menang bila sudah ada wallet"
+    di ``seed_from_status`` tetap benar.
+    """
+    if not isinstance(chrono, dict):
+        return None
+    out = dict(chrono)
+    for key in ("baseline_wallets", "latest_wallets"):
+        snap = out.get(key)
+        if isinstance(snap, dict) and not isinstance(snap.get("wallets"), dict):
+            snap = dict(snap)
+            snap["wallets"] = {}
+            out[key] = snap
+    return out
+
+
 def seed_from_status(store: dict, status: dict | None) -> dict:
     """Isi titik dari snapshot holder_status bila file history masih tipis."""
     store = store or empty_store()
@@ -689,6 +892,10 @@ def seed_from_status(store: dict, status: dict | None) -> dict:
             if len(slot["points"]) > MAX_POINTS:
                 slot["points"] = slot["points"][-MAX_POINTS:]
         remote_cohort = token.get("cohort")
+        # cohort ringkas ({"summary": True, "wallets": n}) tidak punya balance.
+        if isinstance(remote_cohort, dict) and remote_cohort.get("summary") \
+                and not isinstance(remote_cohort.get("balances"), dict):
+            remote_cohort = None
         local_cohort = slot.get("cohort") if isinstance(slot.get("cohort"), dict) else {}
         if (isinstance(remote_cohort, dict) and remote_cohort.get("balances")
                 and not (local_cohort or {}).get("balances")):
@@ -697,7 +904,11 @@ def seed_from_status(store: dict, status: dict | None) -> dict:
                 "balances": dict(remote_cohort.get("balances") or {}),
             }
         remote_alert = token.get("alert_state")
-        if isinstance(remote_alert, dict) and remote_alert:
+        # Snapshot ramping mengirim alert_state sebagai RINGKASAN (jumlah
+        # wallet, bukan peta balance) — jangan timpa state penuh di store.
+        # Snapshot format lama (peta balance) tetap dipulihkan seperti semula.
+        if isinstance(remote_alert, dict) \
+                and not _is_summary_alert_state(remote_alert):
             try:
                 from telegram_alerts import compact_alert_state
                 local_alert = slot.get("alert_state") or {}
@@ -707,7 +918,7 @@ def seed_from_status(store: dict, status: dict | None) -> dict:
                     slot["alert_state"] = compact_alert_state(remote_alert)
             except Exception:  # noqa: BLE001 - history tetap dapat dipakai
                 pass
-        remote_chrono = token.get("chronology")
+        remote_chrono = _sanitize_remote_chronology(token.get("chronology"))
         local_chrono = slot.get("chronology") if isinstance(
             slot.get("chronology"), dict) else {}
         local_n = len(local_chrono.get("intervals") or [])
@@ -755,3 +966,458 @@ def seed_from_status(store: dict, status: dict | None) -> dict:
 def compact_history_for_status(store: dict | None, mint: str) -> list[dict]:
     """Salinan titik 4 jam (resampling) untuk payload dashboard."""
     return resample_4h(history_for_mint(store, mint))
+# ---------------------------------------------------------------------------
+# Backup durable store — holder_history.json.gz di ref holder-live
+# ---------------------------------------------------------------------------
+# Snapshot holder_status.json hanya untuk tampilan dashboard, jadi state kerja
+# (peta balance alert/kohort, baseline scan FULL, kronologi) dibackup terpisah.
+# Payload dikompresi gzip: JSON store penuh berpuluh MB jadi ±1/10-nya, sehingga
+# satu file cukup (tanpa prune) dan pull di UI jauh lebih ringan.
+BACKUP_FORMAT = "gzip+json"
+
+
+def backup_enabled() -> bool:
+    """Kill-switch backup durable: ``HOLDER_STORE_BACKUP=0`` mematikan pull+push.
+
+    Berguna untuk dev offline / tes; default aktif supaya cron dan dashboard
+    mendapat store yang sama meski filesystem-nya ephemeral.
+    """
+    value = os.environ.get("HOLDER_STORE_BACKUP", "1").strip().lower()
+    return value not in ("0", "false", "no", "off")
+MAX_BACKUP_BYTES = 3_500_000   # terkompresi; PUT 2,85 MB sudah terbukti jalan
+DURABLE_CACHE_TTL = 600        # detik — UI/cron tidak pull di setiap rerun
+_DURABLE_CACHE: dict = {"data": None, "ts": 0.0}
+
+
+def _int_ts(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def store_backup_bytes(store: dict | None) -> bytes:
+    """Serialize store ke bytes gzip (JSON compact) untuk backup durable."""
+    store = store if isinstance(store, dict) else {}
+    tokens = store.get("tokens")
+    payload = {
+        "updated_at": store.get("updated_at"),
+        "tokens": tokens if isinstance(tokens, dict) else {},
+    }
+    text = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    return gzip.compress(text.encode("utf-8"), 6)
+
+
+def parse_store_backup(payload) -> dict | None:
+    """Baca bytes backup → store. Toleran gzip maupun JSON polos."""
+    if not payload:
+        return None
+    raw = payload if isinstance(payload, (bytes, bytearray)) else None
+    if raw is None:
+        return None
+    text = None
+    try:
+        text = gzip.decompress(raw).decode("utf-8")
+    except (OSError, EOFError, ValueError, UnicodeDecodeError, zlib.error):
+        try:
+            text = bytes(raw).decode("utf-8")
+        except (TypeError, UnicodeDecodeError, ValueError):
+            return None
+    try:
+        return _parse_store(json.loads(text))
+    except (ValueError, TypeError):
+        return None
+
+
+def _pick_by_ts(current, incoming, *, oldest: bool = False) -> dict:
+    """Pilih detail scan: default paling baru; ``oldest=True`` untuk baseline."""
+    current = current if isinstance(current, dict) else {}
+    incoming = incoming if isinstance(incoming, dict) else {}
+    if not incoming:
+        return current
+    if not current:
+        return incoming
+    left, right = _int_ts(current.get("ts")), _int_ts(incoming.get("ts"))
+    if oldest:
+        # baseline scan FULL immutable: yang paling tua yang dipertahankan.
+        return current if (left and (not right or left <= right)) else incoming
+    return incoming if right >= left else current
+
+
+def _pick_cohort(current, incoming) -> dict:
+    """Kohort beku: utamakan yang punya balance, lalu ``frozen_at`` terbaru."""
+    current = current if isinstance(current, dict) else {}
+    incoming = incoming if isinstance(incoming, dict) else {}
+
+    def _has(cohort):
+        return bool(isinstance(cohort.get("balances"), dict)
+                    and cohort.get("balances"))
+
+    if _has(current) != _has(incoming):
+        return current if _has(current) else incoming
+    if not _has(current):
+        return current or incoming
+    if _int_ts(incoming.get("frozen_at")) >= _int_ts(current.get("frozen_at")):
+        return incoming
+    return current
+
+
+def _is_summary_alert_state(state) -> bool:
+    """True bila ``alert_state`` snapshot adalah RINGKASAN, bukan peta wallet.
+
+    Snapshot ramping mengirim ``{"summary": True, "balances": <jumlah>}``;
+    snapshot format lama mengirim peta balance. Yang lama tetap dipulihkan —
+    termasuk saat petanya kosong — supaya ``sent_event_ids``/``last_sent``
+    (dedup alert) tidak hilang ketika backup durable belum tersedia.
+    """
+    if not isinstance(state, dict) or state.get("summary"):
+        return True
+    for key in ("baseline", "rolling"):
+        snap = state.get(key)
+        if isinstance(snap, dict) and snap.get("balances") is not None \
+                and not isinstance(snap.get("balances"), dict):
+            return True
+    return False
+
+
+def _has_wallet_map(snap) -> bool:
+    return bool(isinstance(snap, dict) and isinstance(snap.get("wallets"), dict)
+                and snap.get("wallets"))
+
+
+def _pick_chrono_snap(current, incoming, *, oldest: bool = False) -> dict:
+    """Snapshot kronologi: utamakan yang masih membawa peta wallet."""
+    current = current if isinstance(current, dict) else {}
+    incoming = incoming if isinstance(incoming, dict) else {}
+    if not incoming:
+        return current
+    if not current:
+        return incoming
+    if _has_wallet_map(current) != _has_wallet_map(incoming):
+        return current if _has_wallet_map(current) else incoming
+    return _pick_by_ts(current, incoming, oldest=oldest)
+
+
+def _merge_intervals(*groups) -> list:
+    """Union interval kronologi per (from_ts, to_ts); movements terbanyak menang."""
+    by_key: dict = {}
+    for group in groups:
+        for item in group or []:
+            if not isinstance(item, dict):
+                continue
+            key = (_int_ts(item.get("from_ts")), _int_ts(item.get("to_ts")))
+            previous = by_key.get(key)
+            if previous is None or len(item.get("movements") or []) > len(
+                    previous.get("movements") or []):
+                by_key[key] = item
+    return [by_key[key] for key in sorted(by_key)][-MAX_CHRONOLOGY_INTERVALS:]
+
+
+def _merge_chronology(current, incoming) -> dict:
+    current = current if isinstance(current, dict) else {}
+    incoming = incoming if isinstance(incoming, dict) else {}
+    if not incoming:
+        return current
+    if not current:
+        return incoming
+    return {
+        "baseline_wallets": _pick_chrono_snap(current.get("baseline_wallets"),
+                                              incoming.get("baseline_wallets"),
+                                              oldest=True),
+        "latest_wallets": _pick_chrono_snap(current.get("latest_wallets"),
+                                            incoming.get("latest_wallets")),
+        "intervals": _merge_intervals(current.get("intervals"),
+                                      incoming.get("intervals")),
+    }
+
+
+def _merge_alert_state(current, incoming) -> dict:
+    """Gabung state alert: snapshot terbaru, event id union, last_sent max."""
+    current = current if isinstance(current, dict) else {}
+    incoming = incoming if isinstance(incoming, dict) else {}
+    if not incoming:
+        return current
+    if not current:
+        return incoming
+    try:
+        from telegram_alerts import (MAX_LAST_SENT, MAX_REJECTED_SIGNALS,
+                                     MAX_SENT_EVENT_IDS)
+    except Exception:  # noqa: BLE001 - batas default bila import gagal
+        MAX_SENT_EVENT_IDS, MAX_LAST_SENT, MAX_REJECTED_SIGNALS = 96, 8, 8
+    merged = dict(current)
+    for key in ("baseline", "rolling"):
+        picked = _pick_by_ts(current.get(key), incoming.get(key))
+        if picked:
+            merged[key] = picked
+    ids = list(dict.fromkeys(
+        [str(item) for item in (current.get("sent_event_ids") or []) if item]
+        + [str(item) for item in (incoming.get("sent_event_ids") or []) if item]
+    ))
+    merged["sent_event_ids"] = ids[-MAX_SENT_EVENT_IDS:]
+    last = {str(key): _int_ts(ts)
+            for key, ts in (current.get("last_sent") or {}).items()
+            if _int_ts(ts)}
+    for key, ts in (incoming.get("last_sent") or {}).items():
+        ts = _int_ts(ts)
+        if ts and ts >= last.get(str(key), 0):
+            last[str(key)] = ts
+    merged["last_sent"] = dict(sorted(last.items(),
+                                      key=lambda item: -item[1])[:MAX_LAST_SENT])
+    rejected = ([row for row in (current.get("rejected_signals") or [])
+                 if isinstance(row, dict)]
+                + [row for row in (incoming.get("rejected_signals") or [])
+                   if isinstance(row, dict)])
+    merged["rejected_signals"] = rejected[-MAX_REJECTED_SIGNALS:]
+    return merged
+
+
+def merge_stores(*stores) -> dict:
+    """Gabung beberapa store; **argumen belakang menang** bila timestamp seri.
+
+    Cron memakai ``merge_stores(lokal, remote)`` (remote = akumulasi run
+    sebelumnya), UI memakai ``merge_stores(remote, lokal)`` supaya scan manual
+    yang baru ditulis tetap menang. Aturan per bagian:
+
+    - ``points``        : union per timestamp (``merge_points``), cap MAX_POINTS.
+    - ``baseline``      : yang paling **tua** (baseline scan FULL immutable).
+    - ``latest_detail`` : yang paling baru.
+    - ``cohort``        : yang punya balance, lalu ``frozen_at`` terbaru.
+    - ``chronology``    : interval union; snapshot wallet yang punya peta menang
+      (baseline paling tua, latest paling baru).
+    - ``alert_state``   : snapshot baseline/rolling terbaru; ``sent_event_ids``
+      union; ``last_sent`` max per kunci; ``rejected_signals`` gabungan.
+    """
+    out = empty_store()
+    stamps = []
+    for store in stores:
+        if not isinstance(store, dict):
+            continue
+        stamps.append(_int_ts(store.get("updated_at")))
+        for mint, slot in (store.get("tokens") or {}).items():
+            if not mint or not isinstance(slot, dict):
+                continue
+            target = _token_slot(out, str(mint), str(slot.get("symbol") or "?"))
+            if slot.get("symbol") and not target.get("symbol"):
+                target["symbol"] = slot.get("symbol")
+            points = merge_points(target.get("points") or [],
+                                  slot.get("points") or [])
+            target["points"] = points[-MAX_POINTS:] if len(points) > MAX_POINTS \
+                else points
+            baseline = _pick_by_ts(target.get("baseline"),
+                                   slot.get("baseline"), oldest=True)
+            if baseline:
+                target["baseline"] = baseline
+            latest = _pick_by_ts(target.get("latest_detail"),
+                                 slot.get("latest_detail"))
+            if latest:
+                target["latest_detail"] = latest
+            cohort = _pick_cohort(target.get("cohort"), slot.get("cohort"))
+            if cohort:
+                target["cohort"] = cohort
+            chronology = _merge_chronology(target.get("chronology"),
+                                           slot.get("chronology"))
+            if chronology:
+                target["chronology"] = chronology
+            state = _merge_alert_state(target.get("alert_state"),
+                                       slot.get("alert_state"))
+            if state:
+                target["alert_state"] = state
+    stamps = [stamp for stamp in stamps if stamp]
+    out["updated_at"] = max(stamps) if stamps else None
+    return out
+
+
+def prune_store_for_backup(store: dict | None,
+                           max_bytes: int = MAX_BACKUP_BYTES):
+    """Pangkas store sampai payload gzip ≤ ``max_bytes``.
+
+    Return ``(store, dropped)``. Urutan pembuangan (yang paling sedikit
+    informasinya lebih dulu) — baseline scan FULL dibuang paling akhir karena
+    itulah pembanding kronologi yang tidak bisa dibuat ulang tanpa scan FULL:
+
+    1. movements pada interval kronologi lama (sisakan 3 interval terbaru),
+    2. interval kronologi di luar 6 terbaru,
+    3. peta wallet kronologi (jumlahnya tetap),
+    4. ``points[].buckets`` (komposisi bucket per titik),
+    5. titik di luar 42 terbaru (7 hari),
+    6. ``latest_detail``.
+    """
+    dropped: list = []
+    if not isinstance(store, dict):
+        return empty_store(), dropped
+    if len(store_backup_bytes(store)) <= max_bytes:
+        return store, dropped
+    pruned = copy.deepcopy(store)
+    tokens = pruned.get("tokens") if isinstance(pruned.get("tokens"), dict) \
+        else {}
+
+    def _each_slot():
+        for slot in tokens.values():
+            if isinstance(slot, dict):
+                yield slot
+
+    def drop_old_movements():
+        for slot in _each_slot():
+            chrono = slot.get("chronology")
+            intervals = (chrono or {}).get("intervals") if isinstance(
+                chrono, dict) else None
+            if not isinstance(intervals, list) or len(intervals) <= 3:
+                continue
+            for interval in intervals[:-3]:
+                if isinstance(interval, dict) and interval.get("movements"):
+                    interval["movements"] = []
+
+    def trim_intervals():
+        for slot in _each_slot():
+            chrono = slot.get("chronology")
+            if isinstance(chrono, dict) and isinstance(
+                    chrono.get("intervals"), list):
+                chrono["intervals"] = chrono["intervals"][-6:]
+
+    def drop_chrono_wallets():
+        for slot in _each_slot():
+            chrono = slot.get("chronology")
+            if not isinstance(chrono, dict):
+                continue
+            for key in ("baseline_wallets", "latest_wallets"):
+                snap = chrono.get(key)
+                if isinstance(snap, dict) and isinstance(snap.get("wallets"),
+                                                         dict):
+                    snap["wallets"] = {}
+
+    def drop_point_buckets():
+        for slot in _each_slot():
+            for point in slot.get("points") or []:
+                if isinstance(point, dict):
+                    point.pop("buckets", None)
+
+    def trim_points():
+        for slot in _each_slot():
+            points = slot.get("points")
+            if isinstance(points, list) and len(points) > 42:
+                slot["points"] = points[-42:]
+
+    def drop_latest_detail():
+        for slot in _each_slot():
+            slot.pop("latest_detail", None)
+
+    steps = [
+        ("chronology.movements interval lama", drop_old_movements),
+        ("chronology.intervals di luar 6 terbaru", trim_intervals),
+        ("chronology peta wallet", drop_chrono_wallets),
+        ("points[].buckets", drop_point_buckets),
+        ("points di luar 42 terbaru", trim_points),
+        ("latest_detail", drop_latest_detail),
+    ]
+    for label, step in steps:
+        step()
+        dropped.append(label)
+        if len(store_backup_bytes(pruned)) <= max_bytes:
+            break
+    return pruned, dropped
+
+
+def publish_holder_history(store: dict | None, *, push: bool = True,
+                           save_local: bool = False,
+                           message: str | None = None,
+                           path: str | None = None) -> dict:
+    """Backup store penuh (gzip) ke ref ``holder-live``.
+
+    ``save_local=True`` juga menulis ``holder_history.json`` di disk — hanya
+    untuk pemanggil yang belum menyimpan store (mis. pemulihan manual); cron
+    memakai default ``False`` karena ``ingest_many`` sudah menyimpan store yang
+    sama. ``push=False`` = tidak menyentuh GitHub (dipakai ``--no-push``/tes).
+    Tidak pernah melempar: kegagalan backup dilaporkan lewat return value
+    supaya cron tetap berjalan (snapshot dashboard lebih penting).
+    """
+    store = store if isinstance(store, dict) else empty_store()
+    result = {"ok": None, "error": "", "bytes": 0, "pruned": [],
+              "pushed": False, "over_budget": False, "saved_local": False}
+    if save_local:
+        try:
+            save_holder_history(store, path)
+            result["saved_local"] = True
+        except Exception as exc:  # noqa: BLE001 - jangan matikan cron
+            result["error"] = f"local write failed: {exc}"
+            print(f"WARN: holder_history local write failed: {exc}")
+            return result
+    if not push:
+        return result
+    if not backup_enabled():
+        result["error"] = "disabled (HOLDER_STORE_BACKUP=0)"
+        return result
+    try:
+        from holder_status import push_store_backup
+    except Exception as exc:  # noqa: BLE001 - transport opsional
+        result.update(ok=False, error=f"transport unavailable: {exc}")
+        return result
+    payload = store_backup_bytes(store)
+    if len(payload) > MAX_BACKUP_BYTES:
+        pruned, dropped = prune_store_for_backup(store, MAX_BACKUP_BYTES)
+        payload = store_backup_bytes(pruned)
+        result["pruned"] = dropped
+        print(f"WARN: holder_history backup dipangkas ({', '.join(dropped)}) "
+              f"-> {len(payload)} bytes")
+    stamp = store.get("updated_at") or int(time.time())
+    try:
+        ok = push_store_backup(
+            payload, message or f"holder-history: backup {stamp} [skip ci]")
+    except Exception as exc:  # noqa: BLE001 - backup tidak boleh mematikan cron
+        result.update(ok=False, error=f"push raised: {exc}")
+        print(f"WARN: holder_history backup push error: {exc}")
+        return result
+    result.update(ok=bool(ok), bytes=len(payload), pushed=bool(ok),
+                  over_budget=bool(len(payload) > MAX_BACKUP_BYTES),
+                  error="" if ok else "github push failed")
+    if not ok:
+        print("WARN: holder_history backup push gagal — store lokal tetap "
+              "tersimpan, snapshot dashboard tidak terpengaruh")
+    return result
+
+
+def pull_holder_history() -> dict | None:
+    """Ambil backup store durable dari ref ``holder-live``; ``None`` bila gagal."""
+    if not backup_enabled():
+        return None
+    try:
+        from holder_status import pull_store_backup
+    except Exception:  # noqa: BLE001 - transport opsional
+        return None
+    try:
+        return parse_store_backup(pull_store_backup())
+    except Exception as exc:  # noqa: BLE001 - backup tidak boleh mematikan cron
+        print(f"WARN: holder_history backup parse failed: {exc}")
+        return None
+
+
+def load_durable_holder_history(*, ttl: int = DURABLE_CACHE_TTL,
+                                force: bool = False) -> dict:
+    """Store lokal + backup durable (cache TTL) — dipakai UI dan cron.
+
+    Lingkungan ephemeral (runner Actions, Streamlit Cloud) mulai dari file
+    kosong; backup durable mengembalikan baseline scan FULL, kohort, state
+    alert, dan kronologi. Store **lokal menang** bila timestamp seri, supaya
+    scan manual yang baru dijalankan tidak ditimpa backup lama.
+    """
+    local = load_holder_history()
+    now = time.time()
+    cached = _DURABLE_CACHE.get("data")
+    if (not force and isinstance(cached, dict)
+            and (now - float(_DURABLE_CACHE.get("ts") or 0.0)) < max(0, ttl)):
+        remote = cached
+    else:
+        remote = pull_holder_history()
+        if isinstance(remote, dict):
+            _DURABLE_CACHE["data"] = remote
+            _DURABLE_CACHE["ts"] = now
+        else:
+            remote = cached if isinstance(cached, dict) else None
+    if not isinstance(remote, dict):
+        return local
+    return merge_stores(remote, local)
+
+
+def reset_durable_cache() -> None:
+    """Test helper: kosongkan cache backup durable."""
+    _DURABLE_CACHE["data"] = None
+    _DURABLE_CACHE["ts"] = 0.0

@@ -7,6 +7,7 @@ from unittest import mock
 import requests
 
 import telegram_alerts as ta
+from links import dexscreener_token_url, gmgn_token_url
 
 NOW = 2_000_000
 FOUR_HOURS = 4 * 3600
@@ -200,6 +201,76 @@ class AlertStateTest(unittest.TestCase):
                              ta.MAX_COMPARISON_WALLETS)
         saved = ta.compact_wallet_snapshot(current)
         self.assertLessEqual(len(saved["balances"]), ta.MAX_STORED_WALLETS)
+
+
+def _dump_event(mint=MINT):
+    """Event dump nyata dari aturan baseline (bukan dict bikinan tangan)."""
+    baseline = _snapshot(NOW - FOUR_HOURS, 0.20, {"BIG": 20.0}, [])
+    current = _snapshot(NOW, 1.20, {"BIG": 2.0, "NEW": 1.0}, ["BIG", "NEW"])
+    return ta.evaluate_baseline_rule(baseline, current, mint=mint,
+                                     symbol="TST")[0]
+
+
+class AlertMessageLinkTest(unittest.TestCase):
+    """Pesan Telegram harus membawa link GMGN + DexScreener token."""
+
+    def test_link_gmgn_dan_dexscreener_ikut_terkirim(self):
+        message = ta.format_alert_message(_dump_event())
+        self.assertIn(f"\U0001f517 GMGN: {gmgn_token_url(MINT)}", message)
+        self.assertIn(f"\U0001f986 DexScreener: {dexscreener_token_url(MINT)}",
+                      message)
+
+    def test_link_pakai_helper_links_bukan_url_rakitan_sendiri(self):
+        message = ta.format_alert_message(_dump_event())
+        self.assertEqual(
+            [line for line in message.splitlines()
+             if "gmgn.ai" in line or "dexscreener.com" in line],
+            [f"\U0001f517 GMGN: {gmgn_token_url(MINT)}",
+             f"\U0001f986 DexScreener: {dexscreener_token_url(MINT)}"])
+
+    def test_link_muncul_setelah_baris_mint(self):
+        message = ta.format_alert_message(_dump_event())
+        self.assertLess(message.index("Mint:"), message.index("GMGN:"))
+        self.assertTrue(message.endswith(dexscreener_token_url(MINT)))
+
+    def test_tanpa_mint_tidak_ada_link_menggantung(self):
+        message = ta.format_alert_message(_dump_event(mint=""))
+        self.assertIn("Mint: -", message)
+        self.assertNotIn("GMGN", message)
+        self.assertNotIn("DexScreener", message)
+        self.assertNotIn("gmgn.ai", message)
+
+    def test_mint_berbahaya_diencode(self):
+        message = ta.format_alert_message(_dump_event(mint="a?b&c d#e"))
+        self.assertIn("a%3Fb%26c%20d%23e", message)
+        for line in message.splitlines():
+            if "gmgn.ai" in line or "dexscreener.com" in line:
+                self.assertNotIn(" ", line.split(": ", 1)[1])
+
+    def test_semua_jenis_alert_membawa_link(self):
+        for kind in ("dump", "accumulation", "baseline_shift", "lain"):
+            event = _dump_event()
+            event["kind"] = kind
+            message = ta.format_alert_message(event)
+            self.assertIn(gmgn_token_url(MINT), message, kind)
+            self.assertIn(dexscreener_token_url(MINT), message, kind)
+
+    def test_teks_yang_dikirim_ke_bot_api_memuat_link(self):
+        with mock.patch.object(ta, "send_telegram_message",
+                               return_value={"ok": True}) as send:
+            result = ta.send_telegram_alert(_dump_event())
+        self.assertTrue(result["ok"])
+        text = send.call_args.args[0]
+        self.assertIn(gmgn_token_url(MINT), text)
+        self.assertIn(dexscreener_token_url(MINT), text)
+
+    def test_alert_test_tetap_tanpa_link_token(self):
+        with mock.patch.object(ta, "send_telegram_message",
+                               return_value={"ok": True}) as send:
+            ta.send_test_alert()
+        text = send.call_args.args[0]
+        self.assertIn("TEST ALERT", text)
+        self.assertNotIn("gmgn.ai", text)
 
 
 class TelegramTransportTest(unittest.TestCase):

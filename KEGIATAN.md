@@ -1,3 +1,26 @@
+# Kegiatan — 3 September 2026
+
+Dua permintaan user: ambang **HATI-HATI** untuk dust holder dan watchlist
+terpisah **Chart LP** untuk token hasil Scan Meteora.
+
+1. **Ambang dust jadi dua tingkat**: `≥ 0,5% MC = HATI-HATI` (badge kuning,
+   peringatan dini) dan `≥ 1% MC = BAHAYA` (tetap disembunyikan dari Scan
+   Meteora). `holder_history.dust_flag` mengembalikan level
+   `ok`/`caution`/`danger`, helper baru `dust_level_rank`; badge di `app.py`
+   + halaman Holder, dan grafik 4 jam kini punya garis ambang 0,5% & 1%.
+   (Catatan: user sempat menulis 5%, lalu dikoreksi menjadi **0,5%**.)
+2. **Card 🌊 Chart LP di paling atas dashboard**: watchlist terpisah berisi
+   token `source=meteora`. Modul baru `lp_watchlist.py` menyiapkan baris
+   data + figure: grafik perubahan dust holder per token (dust % MC + jumlah
+   wallet dust + garis ambang), overlay semua token LP, Δ 4 jam & Δ total
+   dalam poin persentase, sparkline, dan urutan BAHAYA → HATI-HATI → AMAN.
+   Token LP tidak muncul lagi di watchlist holder bawah.
+3. **Tambah manual ke card Meteora**: form ➕ Tambah token punya radio
+   *Masuk ke card* (📋 Watchlist Holder / 🌊 Chart LP), card LP punya form
+   CA sendiri, ⭐ di Scan Meteora menulis `source=meteora`, tombol 🌊/📋
+   memindahkan token antar card lewat `watchlist.set_watchlist_source`
+   (op journal baru `"source"`, aman terhadap push gagal / entri baru).
+
 # Kegiatan — 1 September 2026
 
 Fokus UI ke **analisa holder dust** (bukan silent 12 jam) + Scan Meteora.
@@ -136,3 +159,78 @@ accumulation 12 jam** dan **holder depth**.
 
 Tidak diubah tanpa perlu: watchlist GitHub, fetch GMGN/Helius, listing
 screener.
+## Lanjutan hari yang sama — konfirmasi volume + volatilitas (permintaan ke-3)
+
+User mengirim prompt baru: alert dust 0,25 pp masih sering false positive,
+jadi tiap sinyal harus divalidasi volume + harga + volatilitas dulu, tetap
+reaktif (< 5 menit), dan ambang dust yang ada tidak boleh diubah.
+
+1. **Volume correlation** — `validate_alert_with_volume()` di
+   `telegram_alerts.py`: dump butuh volume 4 jam ≥ 2× `avg_volume_7d`
+   **dan** harga ≤ −1%; akumulasi butuh ≥ 1,5× **dan** tekanan beli >
+   tekanan jual. Skor 0,70 dasar + ≤0,15 volume + ≤0,10 harga/tekanan +
+   0,20 volatilitas tinggi yang mendukung arah; gagal gerbang → ≤0,40.
+   `avg_volume_7d` dibaca sebagai rata-rata **per window 4 jam** selama
+   7 hari agar sebanding dengan `volume_4h`. Semua kandidat yang ditolak
+   di-log + dicatat ke `rejected_signals` supaya bisa diaudit.
+2. **Volatility metrics** — `calculate_volatility_metrics()` di
+   `holder_history.py` dari 16 candle hourly: `price_stddev_4h`,
+   `price_range_4h`, `intra_hour_volatility`. Kalau `price_stddev_4h > 3%`
+   ambang skor naik dari 0,70 ke **0,80** — dan karena volatilitas tinggi
+   tanpa dukungan arah harga tidak memberi bonus, ambang itu benar-benar
+   menyaring (terukur 0,702 < 0,80). Hasilnya disimpan berdampingan
+   dust % MC di `holder_status.json` sebagai `tokens[mint].market_signal`.
+3. **Sumber konteks** — `alert_context.py` (baru): candle hourly
+   GeckoTerminal → DexScreener (data yang sudah diambil `analyze_token`,
+   tanpa request tambahan) → `daily_effort.json`. Ditarik **lazy**: hanya
+   token yang punya kandidat (keputusan user), memo 1× per token per run,
+   jadi latensi run normal tidak bertambah. `core.get_hourly_candles()`
+   baru dan `get_daily_candles()` kini agregasi dari candle yang sama.
+4. **Data hilang** (keputusan user): alert tetap dikirim, diberi baris
+   `⚠️ TIDAK TERVERIFIKASI` dengan skor 0,50 — jadi tidak ada sinyal yang
+   hilang diam-diam saat GeckoTerminal mati.
+5. **Dedup 1 jam** — selain event id bucket 4 jam, kini ada jeda minimum
+   1 jam per token+jenis(+arah) lewat `alert_state.last_sent`; sebelumnya
+   dua alert identik bisa terkirim berjarak ±2 menit di sekitar batas
+   bucket.
+6. **Review optimasi** (diminta user, tabel lengkap di
+   `docs/PROGRESS.md`): heap untuk `matching_dexscreener_pairs` diukur
+   **tidak** lebih cepat sehingga tidak diubah; `get_daily_candles`
+   diperbaiki (sel null, `limit_days=0`, timestamp duplikat) dan batas UTC
+   diverifikasi sampai kasus kabisat; `classify_holders` dibuat single-pass
+   ramping (2,86 → 1,94 ms per 12k holder, keluaran identik di 500 trial);
+   `wallet_movements()` tidak lagi dihitung dua kali; dua `TODO(alerts)`
+   (429 `retry_after`, throttle GeckoTerminal).
+7. **Tes** — 6 file baru, 141 tes tambahan: 369 lulus (sebelumnya 228),
+   termasuk edge case volume 0, avg 0/None, NaN/inf, candle bolong,
+   candle < 2, candle basi, payload DexScreener rusak, provider gagal,
+   cooldown 1 jam, dan lazy-fetch.
+## Permintaan ke-4 — AGENTHQ: grafik 0,7% tapi kartu "Dust hold % MC" 1,16%
+
+User melaporkan angka yang tidak cocok di halaman Holder Analytic. Setelah
+ditelusuri (snapshot live di ref `holder-live` + DexScreener), ada dua lapis
+penyebab dan **bukan** bug grafik:
+
+1. **Kartu metrik dan grafik membaca dua sumber berbeda umur.** Kartu metrik,
+   badge, dan caption membaca snapshot `holder_status.json` (cron 21:35 WIB),
+   sedangkan grafik membaca `holder_history.json` yang sudah memuat titik scan
+   manual yang baru dijalankan. Tombol scan FULL hanya `ingest_many(detail=True)`;
+   ia tidak mempublish snapshot — dan memang tidak boleh, karena
+   `snapshot_status` membangun `tokens` hanya dari analyses yang diberikan
+   (publish satu token = token lain hilang dari dashboard).
+2. **Harga sedang pump +74% dan cutoff dust itu $10 dalam USD.** harga
+   0,0001085 → 0,0001889, MC $108.545 → ±$188.968. dust % MC invariant
+   terhadap harga, tetapi **klasifikasi**-nya tidak: wallet dengan 52.938–
+   92.166 token (nilai lama $5,74–$10) "lulus" menjadi real >$10, sehingga
+   ±40% nilai dust pindah bucket dan dust % MC turun 1,16% → 0,7% tanpa ada
+   yang jual. Cerminannya (harga turun) menaikkan dust % MC ±0,4-0,5 pp —
+   di atas ambang dump 0,25 pp — dan itu lolos gerbang volume/harga.
+
+Perbaikan yang dikerjakan (user memilih opsi A): `holder_status` mendapat
+`compact_manual_scan()`, `resolve_token_view()`, dan `apply_manual_scan()`;
+halaman Holder Analytic + `app.py` mengoverlay scan manual yang lebih baru ke
+snapshot sebelum render, sehingga kartu metrik, badge, watchlist, dan Chart LP
+setuju dengan grafik, dan caption menandai *scan manual barusan*. Guard
+re-klasifikasi harga (opsi B) belum dikerjakan — keputusannya (**annotate,
+bukan reject**) dicatat sebagai `TODO(alerts)` di `telegram_alerts.py`.
+Tes: 27 murni + 2 AppTest baru → **398 lulus**.

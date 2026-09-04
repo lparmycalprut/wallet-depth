@@ -59,6 +59,20 @@ def dexscreener_token_url(ca) -> str:
     return f"{DEXSCREENER_TOKEN_BASE}{safe_url_part(ca)}"
 
 
+def token_link_lines(ca) -> list[str]:
+    """Plain-text GMGN + DexScreener lines for surfaces without HTML.
+
+    Dipakai pesan Telegram (Bot API mengirim teks polos dan otomatis
+    me-link URL). Return ``[]`` bila address kosong supaya pesan tidak
+    berakhir dengan label menggantung.
+    """
+    addr = str(ca or "").strip()
+    if not addr:
+        return []
+    return [f"\U0001f517 GMGN: {gmgn_token_url(addr)}",
+            f"\U0001f986 DexScreener: {dexscreener_token_url(addr)}"]
+
+
 def cvd_shortcut_query(ca) -> str:
     """Return the ``?mint=...`` query fragment that preselects a token on the
     CVD page (``pages/4_📊_CVD.py``)."""

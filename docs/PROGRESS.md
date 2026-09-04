@@ -1,5 +1,284 @@
 # Progress
 
+## 2026-09-04 — Link GMGN + DexScreener di alert Telegram
+
+Permintaan user: *"tambahkan link ke gmgn dan dexscreener ketika notifikasi
+telegram muncul"*. Alert holder dust sebelumnya berakhir di baris `Mint: …` —
+address harus disalin manual ke browser.
+
+### Perubahan
+- `links.token_link_lines(ca)`: dua baris teks polos
+  `🔗 GMGN: https://gmgn.ai/sol/token/<ca>` dan
+  `🦆 DexScreener: https://dexscreener.com/solana/<ca>`, dibangun dari
+  `gmgn_token_url()` / `dexscreener_token_url()` yang sudah ada (satu sumber
+  URL dengan link 🔗GMGN/🦆Dex di watchlist UI, address selalu ter-encode
+  lewat `safe_url_part`). Return `[]` bila address kosong.
+- `telegram_alerts.format_alert_message()`: menambahkan baris link tepat
+  setelah `Mint:` untuk **semua** jenis alert (dump, akumulasi, baseline
+  shift). Telegram mengirim teks polos dan otomatis me-link URL, jadi tidak
+  perlu `parse_mode` HTML (dan tidak ada risiko escaping).
+- `send_test_alert()` (`--telegram-test`) sengaja tetap tanpa link: pesan itu
+  bukan sinyal token.
+
+### Perilaku tepi
+- `mint` kosong/None → kedua baris dilewati, `Mint: -` tetap tampil (tidak ada
+  label menggantung).
+- Address berisi karakter berbahaya (`a?b&c d#e`) → ter-encode
+  (`a%3Fb%26c%20d%23e`) sehingga tidak bisa memutus struktur URL.
+- Tidak mengubah aturan alert, ambang, dedup, maupun gerbang volume — hanya
+  presentasi pesan.
+
+### Tes
+**477 tes lulus** (sebelumnya 465). Baru: `tests/test_links.py` +4 (isi baris,
+konsistensi dengan helper URL, address kosong, encoding) dan
+`tests/test_telegram_alerts.py::AlertMessageLinkTest` +8 (link terkirim untuk
+semua jenis alert, urutan setelah `Mint:`, tanpa mint → tanpa link, encoding,
+teks yang benar-benar dikirim ke Bot API, test-alert tetap tanpa link).
+
+## 2026-09-04 — Backup durable store holder + snapshot dirampingkan
+
+Audit backup (pertanyaan user: *"cek sekarang apakah sudah ada backup juga?"*)
+menemukan lubang: kode, `holder_status.json`, titik 4 jam, kohort, dan
+`alert_state` memang sudah ter-publish ke ref `holder-live`, tetapi
+**`holder_history.json` tidak pernah dibackup**. Runner Actions dan Streamlit
+Cloud ephemeral, jadi baseline scan FULL, kohort beku, state dedup alert
+(`sent_event_ids`/`last_sent`), dan kronologi wallet hilang setiap run — cron
+selalu mulai dari nol dan satu-satunya pemulihan adalah `seed_from_status()`
+dari snapshot. Pilihan user: **opsi A** (round-trip store ke `holder-live`)
+**+ rampingkan snapshot** (peta balance pindah ke store).
+
+### Yang ditambahkan
+- `holder_status.py`: transport digeneralisasi — `_github_get_bytes` /
+  `_github_put_bytes` (retry 4×, API → raw CDN) + pembungkus JSON
+  (`_github_pull` / `_github_push`) yang sudah ada; `pull_store_backup()` /
+  `push_store_backup(payload, message)` untuk `HISTORY_REPO_PATH =
+  "holder_history.json.gz"`.
+- `snapshot_status()` **ramping**: `alert_state` →
+  `telegram_alerts.alert_state_summary()` (jumlah balance/dust, `summary:
+  True`), kohort → `_cohort_for_status()` (jumlah wallet), kronologi →
+  `_chronology_for_status()` (jumlah + sampel movements ≤20/interval,
+  ≤12 interval). Angka yang dibaca UI tidak berubah.
+- `holder_history.py`: `store_backup_bytes` (gzip+JSON compact),
+  `parse_store_backup` (toleran gzip/JSON polos; payload rusak → `None`,
+  termasuk gzip terpotong `EOFError`/`zlib.error`), `merge_stores`,
+  `prune_store_for_backup`, `publish_holder_history`, `pull_holder_history`,
+  `load_durable_holder_history` (cache `DURABLE_CACHE_TTL` 600 detik),
+  `reset_durable_cache`, `backup_enabled()` (kill-switch
+  `HOLDER_STORE_BACKUP=0`), `MAX_BACKUP_BYTES = 3.500.000`.
+- `seed_from_status()` dikerasi: `alert_state`/`cohort` berbentuk ringkasan
+  tidak lagi menimpa store (`_is_summary_alert_state`); snapshot **format
+  lama** (peta wallet, termasuk yang petanya kosong) tetap dipulihkan supaya
+  id dedup alert tidak hilang saat backup durable belum ada;
+  `_sanitize_remote_chronology()` menolak peta wallet berbentuk angka.
+- `scripts/scan_holders.py`: `pull_holder_history()` →
+  `merge_stores(lokal, durable)` → `seed_from_status()` sebelum scan;
+  `publish_holder_history(history, push=not --no-push)` setelah publish
+  snapshot; log `Store holder: tokens=… backup=ada/tidak ada` dan
+  `backup=ok <n>B | skip (--no-push) | GAGAL (…)`.
+- `app.py` + `pages/5_🧮_Holder.py`: `load_holder_history()` →
+  `load_durable_holder_history()` (`merge_stores(durable, lokal)`: store lokal
+  menang bila seri, jadi scan manual baru tidak ditimpa backup lama).
+
+### Aturan merge (ukurannya = siapa yang menang)
+| Field | Aturan |
+|---|---|
+| `points` | union per `ts`, urut, ≤`MAX_POINTS` (84) |
+| `baseline` | **paling tua** — immutable, tidak bisa dibuat ulang tanpa scan FULL |
+| `latest_detail` | paling baru |
+| `cohort` | yang masih punya peta balance, lalu `frozen_at` terbaru |
+| `chronology.intervals` | union per `(from_ts, to_ts)`, movements terbanyak menang, ≤24 |
+| `chronology.*_wallets` | yang masih punya peta wallet, lalu ts (baseline paling tua) |
+| `alert_state` | snapshot `baseline`/`rolling` terbaru; `sent_event_ids` union ≤96; `last_sent` max per jenis ≤8; `rejected_signals` ≤8 |
+| seri | **argumen belakang menang** (cron: durable di belakang; UI: lokal di belakang) |
+
+### Ukuran (terukur ulang dengan helper asli pada snapshot live, 36 token)
+| Payload | Sebelum | Sesudah |
+|---|---|---|
+| `holder_status.json` (indent=2, bentuk yang di-publish) | 2.869.835 B | **300.372 B (−89,5%)** |
+| — compact JSON | 2.231.997 B | 157.397 B (−92,9%) |
+| — `alert_state` | 1.850.768 B (83% payload) | **10.695 B** (ringkasan jumlah) |
+| — `cohort` | 236.345 B | **1.890 B** (jumlah wallet) |
+| — `chronology` | 13.104 B | 13.032 B (peta wallet → jumlah, movements sampel ≤20/interval tetap) |
+| store penuh (36 token) | **tidak dibackup** | 15.051.771 B JSON compact → **576.832 B gzip (26,1×)**; body PUT base64 0,77 MB |
+| blob git baru per run (zlib −9) | 654.921 B | **±633.833 B** (snapshot 21.083 + gz 612.750) = **0,97×** |
+
+Artinya durability tambahan ini **tidak memperbesar repo**: gzip backup sudah
+tidak termampapkan lagi oleh git, tetapi snapshot yang −90% menutupinya
+(cron `*/15`: ±61 MB/hari, sebelumnya ±63 MB/hari).
+
+`MAX_BACKUP_BYTES` 3,5 MB praktis tidak pernah tersentuh (batas PUT Contents
+API terbukti aman di 2,85 MB). Tangga `prune_store_for_backup` (bila perlu):
+movements interval lama → interval di luar 6 terbaru → peta wallet kronologi →
+`points[].buckets` → titik di luar 42 terbaru → `latest_detail`; baseline
+dibuang paling akhir.
+
+### Keputusan yang sengaja diambil
+- Backup gagal **tidak** membuat cron merah (snapshot dashboard lebih
+  penting), tapi selalu tercetak sebagai `WARN` + `backup=GAGAL (…)` dan
+  `over_budget` ditandai bila payload tetap melebihi budget.
+- `publish_holder_history(save_local=False)` default: `ingest_many()` sudah
+  menulis `holder_history.json`, jadi tidak ada tulis ganda (dan tes tidak
+  menimpa file data repo).
+- Suite tes wajib offline: `tests/__init__.py` memasang kill-switch, dan tes
+  UI mem-mock `holder_history.pull_holder_history`. Verifikasi: 48 percobaan
+  jaringan saat `discover tests` → **0** setelahnya.
+- Guard B (anotasi `dust_pct_supply` 0 dari Helius) tetap `TODO(alerts)` —
+  tidak disentuh tugas ini.
+- Transisi aman tanpa migrasi: run pertama setelah deploy masih menemukan
+  snapshot **gemuk** di `holder-live` (belum ada `holder_history.json.gz`),
+  jadi `seed_from_status()` memulihkan peta wallet dari sana seperti sebelumnya
+  sambil membuat backup pertama. Run berikutnya memakai snapshot ramping +
+  backup `.gz`.
+
+### Tes
+**465 tes lulus** (sebelumnya 398). Baru: `tests/test_store_backup.py` (59) —
+round-trip gzip, parse payload rusak, semantik merge per field + immutability
+input, tangga prune, publish/pull (termasuk transport melempar, over-budget,
+kill-switch, `save_local`), cache TTL `load_durable_holder_history`,
+`seed_from_status` ringkas vs format lama, dan snapshot ramping (tanpa peta
+wallet, movements tetap bounded). `tests/test_scan_holders.py` +5 (restore +
+merge backup, push setelah publish, `--no-push`, backup gagal tidak merah,
+publish snapshot gagal tetap exit 3) dan `_run()` diperluas;
+`tests/test_holder_status.py` ditulis ulang ke kontrak ramping (7).
+
+## 2026-09-03 — Kartu metrik Holder Analytic mengikuti scan manual (kasus AGENTHQ)
+
+Laporan user: token **AGENTHQ** menampilkan dust hold **0,7% di grafik** tetapi
+**1,16% di kartu "Dust hold % MC"** pada saat yang sama.
+
+### Akar masalah (dua lapis)
+1. **Dua vintage data.** Halaman Holder Analytic mengambil kartu metrik dari
+   snapshot terpublikasi `holder_status.json` (`pages/5_🧮_Holder.py` baris
+   437/441/448) tetapi mengambil grafik dari `holder_history.json` + riwayat
+   snapshot (`_points_for`). Tombol **🔄 Scan holder FULL token ini** hanya
+   memanggil `ingest_many(..., detail=True)` → titik baru masuk store,
+   snapshot tidak diperbarui — dan memang tidak boleh: `snapshot_status`
+   membangun `tokens` dari analyses yang diberikan saja (tidak merge), jadi
+   publish satu token akan menghapus token lain dari dashboard. Kartu = cron
+   21:35 WIB, grafik = scan manual barusan.
+2. **Kenapa selisihnya besar.** AGENTHQ sedang pump: harga 0,0001085 →
+   0,0001889 (+74%; `priceChange.h1` +80%), MC $108.545 → ±$188.968.
+   dust % MC = nilai dust / MC sebenarnya **invariant terhadap harga**
+   ($1.256,73 × 1,741 ÷ $188.968 = 1,158%, tetap), **tetapi** cutoff dust
+   adalah **$10 per wallet dalam USD**: wallet yang memegang 52.938–92.166
+   token (nilai lama $5,74–$10) "lulus" ke >$10. Agar tampil 0,70%, nilai
+   dust harus tinggal ±$1.323 → ±40% nilai dust pindah bucket, dan slice
+   $5,74–$10 itu memang lazim memuat 40–45% nilai dust. Jadi **tidak ada yang
+   jual** — klasifikasinya yang bergeser. Cerminannya (harga turun → wallet
+   masuk dust → dust % MC naik ±0,4-0,5 pp, melewati ambang dump 0,25 pp)
+   justru **lolos** gerbang volume/harga karena harga ≤ −1% dan volume tinggi.
+
+### Perbaikan (opsi A — pilihan user)
+- `holder_status.compact_manual_scan()`: payload ringkas scan manual untuk
+  `st.session_state[MANUAL_SCAN_KEY]`; peta wallet / snapshot alert /
+  kronologi dibuang lewat `_holders_for_status`.
+- `holder_status.resolve_token_view()`: overlay scan manual di atas entri
+  snapshot bila `analyzed_at`-nya tidak lebih tua dan `holders` terisi;
+  `history`/`cohort`/`alert_state`/`chronology` tetap dari snapshot; menambah
+  `view_source` = `manual`/`snapshot`; tidak memutasi input; mint token lain
+  diabaikan.
+- `holder_status.apply_manual_scan()`: salinan status dengan token yang cocok
+  diganti view terbaru (token baru ditambahkan, token lain tidak dihapus,
+  file snapshot & cache publish tidak disentuh).
+- `pages/5_🧮_Holder.py` + `app.py` memakai overlay itu sebelum render → kartu
+  metrik, badge HATI-HATI/BAHAYA, watchlist, dan Chart LP setuju dengan
+  grafik; caption menandai **scan manual barusan**.
+- Guard arah turun (opsi B) **belum** dikerjakan; keputusan user dicatat
+  sebagai `TODO(alerts)` di atas `validate_alert_with_volume`: bila dust % MC
+  naik tetapi `dust_count`/pangsa supply tidak naik → **annotate, bukan
+  reject**. Prasyaratnya `dust_pct_supply` terisi untuk sumber Helius (DAS
+  tidak mengembalikan `amount_percentage`; `holder_analysis.py` meng-hardcode
+  0.0 — hanya GMGN yang mengisi).
+
+### Tes
+27 tes murni baru (`tests/test_holder_status_view.py`) + 2 tes AppTest
+(`tests/test_holder_page.py`): sebelum klik kartu 1,16% / 90 wallet, sesudah
+klik 0,90% / 130 wallet + caption "scan manual barusan" + badge HATI-HATI
+(bukan BAHAYA); scan manual token lain diabaikan; snapshot yang lebih baru
+mengalahkan scan manual; status asli tidak termutasi. Total **398 tes lulus**.
+
+## 2026-09-03 — Konfirmasi volume + volatilitas untuk alert dust
+
+Permintaan user: ambang dust 0,25 pp terlalu berisik; sinyal harus
+divalidasi volume + harga + volatilitas dulu tanpa mengorbankan kecepatan
+reaksi (< 5 menit). Ambang dust (0,25 / 0,50 / ±1,00 pp) **tidak diubah** —
+konfirmasi ini dipasang di belakangnya, jadi filternya tidak saling menutupi.
+
+### Aturan
+- `telegram_alerts.validate_alert_with_volume(...)` →
+  `VolumeValidation(is_valid, confidence_score, reason, verified, details)`.
+  Gerbang keras: **dump** = volume 4 jam ≥ 2× `avg_volume_7d` **dan**
+  perubahan harga ≤ −1%; **akumulasi** = volume ≥ 1,5× **dan** buy pressure
+  > sell pressure. `avg_volume_7d` diartikan sebagai rata-rata volume
+  **per window 4 jam** selama 7 hari (bukan angka harian) supaya sebanding
+  dengan `volume_4h`.
+- Skor: 0,70 dasar + ≤0,15 kekuatan volume + ≤0,10 harga/tekanan beli +
+  0,20 bila volatilitas tinggi **dan** arah harga mendukung; gagal gerbang →
+  skor diagnostik ≤0,40. Ambang lolos 0,70, naik ke 0,80 bila
+  `price_stddev_4h > 3%`. Contoh di prompt (stddev >3% + dust ≥0,25 pp →
+  0,90 → lolos) direproduksi persis; dump tanpa volume (0,85 < 1,0 → 0,67)
+  dan akumulasi tanpa tekanan beli (0,62) ditolak.
+- Volatilitas tinggi **tanpa** dukungan arah harga tidak memberi bonus:
+  kalau diberi, ambang 0,80 tidak pernah menyaring apa pun (terukur —
+  akumulasi marginal menjadi 0,702 < 0,80 → ditolak).
+- `evaluate_4h_rules` / `evaluate_baseline_rule` memakai gerbang itu;
+  baseline shift divalidasi mengikuti arah perubahan (naik = dump, turun =
+  akumulasi). Kandidat yang ditolak di-log `Dust signal rejected …` (dust,
+  volume, harga, alasan) dan dicatat ke `alert_state.rejected_signals`
+  (maks 8/token) untuk audit false positive.
+- Kebijakan data hilang (keputusan user): alert **tetap dikirim**, diberi
+  baris `⚠️ TIDAK TERVERIFIKASI` + `Konfirmasi: ⚠️ data tidak lengkap`
+  (`ALLOW_UNVERIFIED_ALERTS = True`). `volume_4h = 0` diperlakukan sebagai
+  data valid, bukan data hilang → gerbang gagal.
+- Dedup: event id bucket 4 jam tetap, ditambah **jeda minimum 1 jam** per
+  token+jenis(+arah) lewat `alert_state.last_sent`. Sebelumnya dua alert
+  identik bisa terkirim berjarak ±2 menit di dua sisi batas bucket.
+
+### Data
+- `holder_history.calculate_volatility_metrics(candles, historical, ...)`:
+  16 candle hourly → `price_stddev_4h`, `price_range_4h`,
+  `intra_hour_volatility(+_max)`, `price_change_4h_pct`, `volume_4h`,
+  `missing_hours`, `stale`, `available`, `high_volatility`. Candle < 2 atau
+  harga 0 → `available: False` (bukan stddev 0 yang tampak "tenang");
+  candle basi (> `MAX_AGE_HOURS`) → `stale: True`.
+- `core.get_hourly_candles()` baru; `get_daily_candles()` kini agregasi dari
+  candle hourly yang sama (satu endpoint, dua bentuk, tanpa double-fetch).
+- `alert_context.py` (baru): `build_market_context()`, `volume_from_candles()`,
+  `volume_from_dexscreener()`, `volume_from_daily_rows()`,
+  `pressure_from_txns()`, `compact_signal()`, `market_context_provider()`.
+  Urutan sumber: candle hourly GeckoTerminal → DexScreener (sudah diambil
+  `analyze_token`, tanpa request tambahan) → `daily_effort.json`.
+  Ditarik **lazy**: hanya token yang punya kandidat, memo 1× per token per run.
+- `holder_analysis.analyze_token` kini meneruskan ringkasan `market`
+  (volume, price_change, txns, pair_addresses) di hasil analisis;
+  `holder_status.snapshot_status` menyimpan `tokens[mint].market_signal`
+  berdampingan dust % MC; `scripts/scan_holders.py` menyuntikkan provider
+  dan mencetak `unverified=`, `rejected=`, `konteks=N token (X ms)`.
+
+### Review optimasi (diminta user)
+| Fungsi | Temuan | Tindakan |
+|---|---|---|
+| `core.matching_dexscreener_pairs` | Sort O(n log n) atas ≤30 pair; heap/single-pass top-1 diukur **tidak lebih cepat** (5,6 vs 5,2 µs n=10; 271 vs 263 µs n=500) — biaya dominannya `_dex_liquidity_usd` per pair, bukan sort. `get_market` juga butuh seluruh urutan untuk `pair_addresses`. | Tidak diubah (terukur) |
+| `core.get_daily_candles` | Batas hari UTC benar (`datetime.date()`); diverifikasi 31 Des→1 Jan, 28→29 Feb kabisat, 30→31 Des, awal/akhir Maret. **Tiga bug nyata**: (1) sel `null` GeckoTerminal → `float(None)` TypeError **di luar** blok try; (2) `limit_days=0` mengembalikan seluruh riwayat (`[-0:]`); (3) timestamp duplikat menghitung volume dua kali. Hari UTC yang masih berjalan ikut ter-return (sudah disaring `cvd_daily.completed_dates`). | Diperbaiki + guard milidetik, dicatat di docstring |
+| `holder_analysis.classify_holders` | Konversi USD sudah sekali per wallet di fetcher (bukan di sini); yang boros ±9 lintasan atas holder yang sama. Single-pass **dengan `_float()` per baris justru lebih lambat** (4,15 vs 2,86 ms / 12k holder) karena overhead pemanggilan fungsi; single-pass ramping = **1,94 ms**. | Single-pass ramping; identik di 500 trial acak + 12k holder sintetis |
+| Dedup alert | Event id `holder-dust:mint:kind:bucket[:arah]` disimpan di `alert_state.sent_event_ids` (maks 96), hanya dicatat setelah kirim sukses → gagal kirim dicoba lagi. Granularitasnya bucket 4 jam, bukan 1 jam. | Jeda minimum 1 jam (`MIN_RESEND_SEC`) + `last_sent` |
+| `telegram_alerts._event` | `wallet_movements()` (O(W), W ≤ 800 address) dihitung dua kali untuk kandidat yang sama. | Dihitung sekali, diteruskan ke `_event` |
+| `telegram_alerts.compact_wallet_snapshot` | `sorted(dust, key=…)` identik dipanggil dua kali. | Diurut sekali |
+| `telegram_alerts.send_telegram_message` | 429 `retry_after` tidak dihormati (hanya di-log; event dikirim ulang run berikutnya). | `TODO(alerts)` di kode |
+| Beban API candle | GeckoTerminal publik ±30 req/menit; run yang memicu banyak sinyal bersamaan bisa tersentuh (lazy fetch sudah membatasi ke kandidat saja). | `TODO(alerts)` throttle |
+| Store JSON | `holder_history.json` / `holder_status.json` ditulis ulang penuh tiap run (atomic write). | Belum perlu; dipantau. **2026-09-04**: store kini juga dibackup durable (`holder_history.json.gz`, ref `holder-live`) — lihat entri terbaru |
+
+### Tes
+369 tes lulus (sebelumnya 228). Baru: `test_volume_validation.py` (33),
+`test_volatility_metrics.py` (17), `test_alert_context.py` (32),
+`test_alert_gating.py` (27), `test_alert_pipeline.py` (8),
+`test_core_candles.py` (24) — mencakup edge case yang diminta: volume 0,
+`avg_volume_7d` 0/None (pool baru), NaN/inf, candle bolong (price gap),
+candle < 2, candle basi, timestamp milidetik, payload DexScreener rusak,
+provider gagal, cooldown 1 jam, dan lazy-fetch (provider tidak dipanggil
+bila tidak ada kandidat). `test_alert_pipeline.py` juga memastikan
+integrasi end-to-end tidak menulis `holder_status.json` asli.
+
 ## 2026-09-03 — Kronologi holder sejak snapshot awal (scan FULL)
 
 - Setelah `Scan holder FULL` pertama, halaman Holder Analytic menandai
@@ -306,3 +585,49 @@
   dashboard menampilkan peringatan bila data cron kosong.
 - Workflow perlu env `GITHUB_TOKEN` + `HELIUS_API_KEY` (harus di-commit
   manual — GitHub App tanpa permission `workflows`).
+
+# 2026-09-03 — Ambang HATI-HATI 0,5% + card Chart LP (watchlist Meteora terpisah)
+
+- `holder_history.py`: dua ambang dust — `DUST_CAUTION_PCT = 0.5`
+  (**HATI-HATI**, badge kuning, tidak disembunyikan) dan `DUST_DANGER_PCT =
+  1.0` (**BAHAYA**, `hide=True` → tetap disaring dari Scan Meteora).
+  `dust_flag` mengembalikan level `ok`/`caution`/`danger`/`unknown`; helper
+  baru `dust_level_rank` untuk sorting. Alias lama `DUST_CAUTION_PCT =
+  DUST_DANGER_PCT` diganti nilai sebenarnya.
+- Badge & grafik mengikuti: `app.py` (`.dust-caution`, panah ↑ juga untuk
+  caution), `pages/5_🧮_Holder.py` (warna badge + `axhline` 0,5% pada grafik
+  dust 4 jam), caption/hero menyebut kedua ambang.
+- Modul baru `lp_watchlist.py` (murni data + figure, tanpa Streamlit):
+  `split_watchlist` (token `source=meteora`/`lp`/`chart_lp` → card LP,
+  sisanya watchlist holder; tidak ada token yang muncul dua kali),
+  `build_lp_row`/`lp_card_rows` (dust % MC, dust count, Δ 4 jam & Δ total
+  dalam poin persentase, level, `has_chart`), `sort_lp_rows` (BAHAYA →
+  HATI-HATI → AMAN lalu % MC terbesar), `lp_summary`, `lp_chart_figure`
+  (garis dust % MC + batang wallet dust + garis ambang 0,5%/1%),
+  `lp_overlay_figure` (semua token LP dalam satu grafik).
+- `app.py`: card **🌊 Chart LP — Watchlist Meteora** di bagian paling atas
+  (`st.container(border=True)`) berisi header pill (jumlah token / BAHAYA /
+  HATI-HATI / dust naik), overlay chart, form **➕ Tambah CA manual ke Chart
+  LP**, dan baris per token: MC + waktu scan, dust count, Hold %MC + badge,
+  Δ 4 jam & total, sparkline, expander grafik per token (+ Wallet Depth),
+  tombol 🧮 / 📋 (pindah ke watchlist holder) / ✕.
+- Watchlist holder di bawah hanya berisi token non-LP, kolom tombol bertambah
+  🌊 (pindah ke Chart LP). Form **➕ Tambah token** punya radio *Masuk ke
+  card* (📋 Watchlist Holder / 🌊 Chart LP) + validasi CA (Solana base58 /
+  EVM) lewat `_ca_error`; pesan push-error kini membaca kunci `msg` yang
+  benar dari `get_last_push_error()`.
+- Scan Meteora: ⭐ memakai `source=meteora` → token langsung masuk Chart LP;
+  caption menyebut badge HATI-HATI dan card tujuan.
+- `watchlist.py`: op journal baru `"source"` (`set_watchlist_source(ca,
+  source)`) untuk pindah card — `_apply_ops` menimpa `source` tanpa membuat
+  entri baru, `_op_is_applied`/`_prune_pending` membuang op setelah repo
+  mencerminkannya, dan `_journal_many` melebur op `source` ke op `add` yang
+  belum ter-commit supaya entri baru tidak hilang. `add_to_watchlist`
+  mengambil symbol dari DexScreener setiap kali symbol tidak diketahui
+  (sebelumnya hanya `source="manual"`).
+- Tes: `tests/test_lp_watchlist.py` (split/order/ringkasan/figure/ambang),
+  `tests/test_watchlist_source.py` (op `source`, prune, journal merge,
+  `set_watchlist_source`), `tests/test_lp_card_ui.py` (AppTest: card LP
+  terpisah, badge HATI-HATI/BAHAYA, grafik, tombol pindah, radio tujuan
+  tambah manual, validasi CA), dan `DustFlagTest` diperbarui untuk tiga
+  level. Total 228 tes lulus.

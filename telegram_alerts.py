@@ -5,6 +5,15 @@ The rule functions are deliberately independent from the HTTP transport so a
 scan can be evaluated in unit tests without sending a Telegram request. Dust
 changes are *percentage-point* changes of ``dust_pct_mc``, never relative
 percentage changes.
+
+Perubahan dust saja baru menjadi *kandidat* sinyal. Sebelum alert dikirim,
+kandidat diperiksa silang terhadap pasar (volume + harga + volatilitas) oleh
+:func:`validate_alert_with_volume` / :func:`volume_verdict`, sehingga dust yang
+naik tanpa lonjakan volume atau tanpa tekanan harga dicatat lalu dibuang, bukan
+mengganggu user. Fungsi aturan tidak pernah mengambil data itu sendiri: pemanggil
+menyuntikkan dict konteks yang sudah jadi, atau ``context_provider(mint,
+analysis)`` yang **hanya dipanggil bila ada kandidat** (lazy — cron 15 menit
+tidak menambah satu pun API call saat pasar tenang).
 """
 from __future__ import annotations
 
@@ -13,14 +22,49 @@ import math
 import os
 import sys
 import time
-from typing import Callable, Iterable
+from typing import Callable, Iterable, NamedTuple
 from zoneinfo import ZoneInfo
 
 import requests
 
+from links import token_link_lines
+
 DUMP_THRESHOLD_PP = 0.25
 ACCUMULATION_THRESHOLD_PP = 0.50
 BASELINE_SHIFT_THRESHOLD_PP = 1.00
+
+# --- Konfirmasi volume/harga/volatilitas (filter false positive) -------------
+# ``avg_volume_7d`` SELALU berarti rata-rata volume per window 4 jam selama 7
+# hari terakhir, jadi pembandingnya setara dengan ``volume_4h`` (bukan total
+# volume harian — kalau harian, ambang 2x praktis tidak pernah tercapai).
+DUMP_VOLUME_MULTIPLE = 2.0             # dump: volume 4 jam >= 2x rata-rata
+ACCUMULATION_VOLUME_MULTIPLE = 1.5     # akumulasi: volume 4 jam >= 1,5x
+DUMP_PRICE_CHANGE_PCT = -1.0           # dump: harga sudah turun >= 1%
+VOLUME_FULL_BONUS_RATIO = 2.0          # bonus volume penuh pada 2x ambang rasio
+DUMP_PRICE_FULL_BONUS_PCT = -5.0       # bonus harga penuh pada -5%
+ACCUMULATION_PRESSURE_FULL_RATIO = 2.0  # bonus penuh saat buy >= 2x sell
+MIN_CONFIDENCE = 0.70                  # ambang skor konfirmasi
+MIN_CONFIDENCE_HIGH_VOLATILITY = 0.80  # ambang naik saat pasar sedang liar
+UNVERIFIED_CONFIDENCE = 0.50           # skor "data tidak tersedia"
+CONFIDENCE_BASE = 0.70                 # kedua gerbang keras terpenuhi
+CONFIDENCE_VOLUME_BONUS = 0.15
+CONFIDENCE_PRESSURE_BONUS = 0.10
+CONFIDENCE_VOLATILITY_BONUS = 0.20     # volatilitas tinggi + arah harga cocok
+# Volatilitas tinggi TANPA arah harga yang mendukung tidak memberi bonus:
+# ambang justru naik ke 0,80, jadi sinyal seperti itu harus membuktikan diri
+# lewat volume/tekanan beli yang lebih kuat (kalau tidak, ambang baru itu
+# tidak pernah menyaring apa pun).
+MAX_CONFIDENCE = 0.99
+MAX_DIAGNOSTIC_CONFIDENCE = 0.40       # skor kandidat yang gagal gerbang
+# Kebijakan saat konteks volume/harga tidak ada (API mati, pool < 7 hari):
+# alert TETAP dikirim tetapi ditandai tidak terverifikasi pada pesan Telegram.
+ALLOW_UNVERIFIED_ALERTS = True
+# Event id memakai bucket 4 jam, jadi dua sinyal di dua sisi batas bucket bisa
+# terkirim hanya berjarak menit. Jarak minimum per token+jenis(+arah) menutup
+# celah duplikasi dalam 1 jam.
+MIN_RESEND_SEC = 3600
+MAX_LAST_SENT = 8
+MAX_REJECTED_SIGNALS = 8
 ALERT_WINDOW_SEC = 4 * 3600
 # The scheduled job runs every 15 minutes. Allow a delayed run while still
 # rejecting a recent snapshot or a stale snapshot after a long outage.
@@ -163,10 +207,11 @@ def compact_wallet_snapshot(snapshot: dict | None,
     limit = max(1, min(_int(max_wallets, MAX_STORED_WALLETS),
                        MAX_STORED_WALLETS))
     dust_quota = max(1, limit // 2)
-    priority = sorted(dust, key=lambda address: (-balances[address], address))[
-        :dust_quota]
+    # ``dust`` diurut sekali (sebelumnya dua kali dengan key yang sama).
+    dust_ranked = sorted(dust, key=lambda address: (-balances[address], address))
+    priority = dust_ranked[:dust_quota]
     priority += sorted(balances, key=lambda address: (-balances[address], address))
-    priority += sorted(dust, key=lambda address: (-balances[address], address))
+    priority += dust_ranked
 
     selected = []
     seen = set()
@@ -273,17 +318,26 @@ def _event_id(mint: str, kind: str, current_ts: int,
 
 
 def _event(kind: str, previous: dict, current: dict, *, mint: str,
-           symbol: str, scope: str) -> dict:
+           symbol: str, scope: str, movement: dict | None = None,
+           volume_check: dict | None = None) -> dict:
+    """Satu event alert.
+
+    ``movement`` boleh dihitung sekali oleh pemanggil (satu snapshot bisa
+    memicu dump **dan** baseline shift, dan ``wallet_movements`` berjalan di
+    atas ratusan address). ``volume_check`` adalah verdict konfirmasi volume.
+    """
     old = _float(previous.get("dust_pct_mc"), 0.0) or 0.0
     new = _float(current.get("dust_pct_mc"), 0.0) or 0.0
     change = new - old
-    movement = wallet_movements(previous, current)
+    movement = (movement if isinstance(movement, dict)
+                else wallet_movements(previous, current))
     direction = "up" if change >= 0 else "down"
-    return {
+    event = {
         "id": _event_id(mint, kind, _int(current.get("ts")),
                         direction if kind == "baseline_shift" else ""),
         "kind": kind,
         "scope": scope,
+        "direction": direction,
         "mint": _address(mint),
         "symbol": str(symbol or "?").strip().upper() or "?",
         "previous_dust_pct_mc": old,
@@ -291,15 +345,365 @@ def _event(kind: str, previous: dict, current: dict, *, mint: str,
         "change_pp": change,
         "previous_ts": _int(previous.get("ts")),
         "current_ts": _int(current.get("ts")),
-        "wallet_increases": movement["increased"],
+        "wallet_increases": _int(movement.get("increased"), 0),
         "movements": movement,
     }
+    if isinstance(volume_check, dict):
+        event["volume_check"] = volume_check
+    return event
+
+
+def dedup_key(event: dict | None) -> str:
+    """Kunci dedup 1 jam: jenis event, plus arah hanya untuk baseline_shift.
+
+    Mengikuti bentuk ``_event_id``: dump dan akumulasi sudah searah dengan
+    tanda perubahan dust, sedangkan baseline_shift naik dan turun adalah dua
+    kabar yang berbeda dan tidak boleh saling membungkam.
+    """
+    kind = str((event or {}).get("kind") or "")
+    direction = str((event or {}).get("direction") or "")
+    if kind == "baseline_shift" and direction:
+        return f"{kind}:{direction}"
+    return kind
+
+
+def in_resend_cooldown(key: str, current_ts: int, last_sent=None) -> bool:
+    """True bila kunci itu sudah dikirim kurang dari ``MIN_RESEND_SEC`` lalu.
+
+    Event id memakai bucket 4 jam, jadi dua sinyal di dua sisi batas bucket
+    bisa terkirim hanya berjarak beberapa menit. Lapisan ini menutup celah
+    duplikasi dalam 1 jam tanpa mengubah granularitas bucket.
+    """
+    previous = _int((last_sent or {}).get(key), 0)
+    if not previous:
+        return False
+    age = _int(current_ts) - previous
+    return 0 <= age < MIN_RESEND_SEC
+
+
+def _cooldown_reason(key: str, current_ts: int, last_sent=None) -> str:
+    """Alasan penahanan duplikat, lengkap dengan jeda yang sudah berjalan."""
+    age = max(0, _int(current_ts) - _int((last_sent or {}).get(key), 0))
+    return (f"alert {key} baru dikirim {age // 60} menit lalu "
+            f"(jeda minimum {MIN_RESEND_SEC // 60} menit)")
+
+
+def _resolve_context(context_provider, mint: str):
+    """Ambil konteks pasar lewat provider lazy; kegagalan tidak boleh melempar."""
+    if not callable(context_provider):
+        return None
+    try:
+        context = context_provider(mint)
+    except Exception as exc:  # noqa: BLE001 - pasar tidak boleh mematikan aturan
+        print(f"WARN: konteks volume {_address(mint)[:8]} gagal diambil: {exc}",
+              file=sys.stderr)
+        return None
+    return context if isinstance(context, dict) else None
+
+
+def _note_rejection(rejected, event: dict, verdict: dict, *, cooldown=False):
+    """Catat + log kandidat sinyal yang tidak dikirim (audit false positive)."""
+    record = {
+        "ts": _int(event.get("current_ts")),
+        "kind": str(event.get("kind") or ""),
+        "change_pp": round(_float(event.get("change_pp"), 0.0) or 0.0, 4),
+        "cooldown": bool(cooldown),
+        "verified": bool(verdict.get("verified")),
+        "confidence_score": _float(verdict.get("confidence_score"), 0.0),
+        "required_confidence": _float(verdict.get("required_confidence"),
+                                      MIN_CONFIDENCE),
+        "reason": str(verdict.get("reason") or ""),
+    }
+    if isinstance(rejected, list):
+        rejected.append(record)
+    label = "suppressed (cooldown)" if cooldown else "rejected"
+    print(f"Dust signal {label} {event.get('symbol') or '?'} "
+          f"{record['kind']} {record['change_pp']:+.2f}pp - {record['reason']}",
+          file=sys.stderr)
+
+
+class VolumeValidation(NamedTuple):
+    """Hasil validasi volume/harga untuk satu kandidat sinyal dust.
+
+    Tiga field pertama adalah kontrak pemanggil (``is_valid``,
+    ``confidence_score``, ``reason``) sehingga hasilnya bisa dibaca sebagai
+    atribut (``check.is_valid``) maupun di-unpack (``check[:3]``). ``verified``
+    False berarti konteks pasarnya tidak tersedia — lihat
+    :data:`ALLOW_UNVERIFIED_ALERTS`; ``details`` memuat angka pembanding untuk
+    log dan pesan Telegram.
+    """
+
+    is_valid: bool
+    confidence_score: float
+    reason: str
+    verified: bool = True
+    details: dict | None = None
+
+
+def _clamp01(value) -> float:
+    number = _float(value, 0.0) or 0.0
+    return max(0.0, min(1.0, number))
+
+
+def _is_accumulation(kind) -> bool:
+    return str(kind or "").strip().lower().startswith("accum")
+
+
+def is_high_volatility(volatility) -> bool:
+    """True bila stddev close 4 jam melewati ambang pasar liar (default 3%).
+
+    Metriknya dihitung :func:`holder_history.calculate_volatility_metrics`;
+    di sini hanya dibaca supaya ``telegram_alerts`` tidak bergantung jaringan.
+    """
+    if not isinstance(volatility, dict) or not volatility.get("available"):
+        return False
+    flag = volatility.get("high_volatility")
+    if flag is not None:
+        return bool(flag)
+    stddev = _float(volatility.get("price_stddev_4h"), None)
+    threshold = _float(volatility.get("high_volatility_pct"), None)
+    return bool(stddev is not None and threshold is not None
+                and stddev > threshold)
+
+
+def required_confidence(volatility=None) -> float:
+    """Ambang skor konfirmasi: 0,80 saat pasar liar, selain itu 0,70."""
+    return (MIN_CONFIDENCE_HIGH_VOLATILITY if is_high_volatility(volatility)
+            else MIN_CONFIDENCE)
+
+
+# TODO(alerts): guard "re-klasifikasi harga" untuk kandidat dump. dust % MC
+# memakai cutoff **$10 per wallet dalam USD**, jadi saat harga TURUN banyak
+# wallet jatuh ke tier dust dan dust % MC naik tanpa ada yang jual — efek harga
+# saja bisa ±0,4-0,5 pp, sudah melewati ambang dump 0,25 pp, dan gerbang
+# volume/harga di bawah justru LOLOS saat harga turun (kasus AGENTHQ
+# 2026-09-03, arah sebaliknya: harga +74% membuat dust % MC turun 1,16% → 0,7%).
+# Keputusan user: **annotate, bukan reject** — alert tetap dikirim dengan baris
+# "⚠️ kemungkinan efek re-klasifikasi harga" dan skor dipotong, bila dust % MC
+# naik tetapi ``dust_count`` / pangsa supply dust tidak naik. Prasyarat:
+# ``dust_pct_supply`` harus terisi untuk sumber Helius — DAS tidak mengembalikan
+# ``amount_percentage`` sehingga ``holder_analysis`` meng-hardcode 0.0; alternatif
+# sementara adalah membandingkan ``dust_count`` dua titik history terakhir.
+def validate_alert_with_volume(dust_change_pp, current_volume_4h,
+                               avg_volume_7d, current_price, price_change_pct,
+                               *, kind: str = "dump", buy_pressure=None,
+                               sell_pressure=None,
+                               volatility=None) -> VolumeValidation:
+    """Konfirmasi satu kandidat sinyal dust dengan volume + harga + volatilitas.
+
+    Gerbang keras (harus dua-duanya terpenuhi):
+
+    - **dump**         : ``volume_4h >= avg_volume_7d * 2.0`` **dan**
+      ``price_change_pct <= -1.0`` (dust naik harus disertai tekanan jual).
+    - **akumulasi**    : ``volume_4h >= avg_volume_7d * 1.5`` **dan**
+      ``buy_pressure > sell_pressure``.
+
+    ``avg_volume_7d`` = rata-rata volume **per window 4 jam** selama 7 hari,
+    jadi satuannya setara dengan ``current_volume_4h``.
+
+    Skor konfirmasi (0..1) hanya dihitung bila gerbang lolos:
+    ``0,70`` dasar + hingga ``0,15`` kekuatan volume (penuh pada 2× ambang)
+    + hingga ``0,10`` kekuatan harga/tekanan beli + ``0,20`` bila volatilitas
+    4 jam > 3% **dan** arah harga mendukung (tanpa dukungan arah tidak ada
+    bonus, karena ambangnya justru naik). Kandidat yang gagal gerbang mendapat
+    skor diagnostik ≤ 0,40 agar tetap informatif di log tanpa pernah lolos
+    ambang. Contoh: gerbang tepat terpenuhi + stddev 4 jam 4,2% → 0,90
+    (ambang 0,80); gerbang tepat terpenuhi tanpa volatilitas → 0,70.
+
+    Ambang lolos: :func:`required_confidence` → 0,80 saat volatilitas tinggi,
+    0,70 selain itu.
+
+    Data hilang (``volume_4h`` None/negatif, ``avg_volume_7d`` None/0 — pool
+    lebih muda dari 7 hari, atau sumber mati — maupun harga/tekanan beli yang
+    tidak ada) menghasilkan ``verified=False``: fungsi ini **tidak** memblokir
+    alert karena ketidaktahuan, dan pemanggil (lihat :func:`volume_verdict`)
+    yang memutuskan kebijakan — default repo: tetap kirim, tandai.
+    """
+    accumulation = _is_accumulation(kind)
+    required_ratio = (ACCUMULATION_VOLUME_MULTIPLE if accumulation
+                      else DUMP_VOLUME_MULTIPLE)
+    dust_pp = _float(dust_change_pp, 0.0) or 0.0
+    volume = _float(current_volume_4h, None)
+    baseline = _float(avg_volume_7d, None)
+    price = _float(current_price, None)
+    change = _float(price_change_pct, None)
+    buys = _float(buy_pressure, None)
+    sells = _float(sell_pressure, None)
+    vol_metrics = volatility if isinstance(volatility, dict) else {}
+    stddev = _float(vol_metrics.get("price_stddev_4h"), None)
+
+    missing = []
+    if volume is None or volume < 0:
+        missing.append("volume_4h")
+    if baseline is None or baseline <= 0:
+        # Rata-rata 7 hari nol/absen = pool terlalu baru atau sumber mati.
+        # Rasio tidak terdefinisi → diperlakukan sebagai data hilang, bukan
+        # "volume tak terbatas" yang akan meloloskan sinyal apa pun.
+        missing.append("avg_volume_7d")
+    if accumulation and (buys is None or sells is None):
+        missing.append("buy/sell_pressure")
+    if not accumulation and change is None:
+        missing.append("price_change_pct")
+
+    details = {
+        "kind": "accumulation" if accumulation else "dump",
+        "dust_change_pp": round(dust_pp, 4),
+        "volume_4h": volume,
+        "avg_volume_7d": baseline,
+        "volume_ratio": (round(volume / baseline, 4)
+                         if volume is not None and baseline else None),
+        "required_ratio": required_ratio,
+        "price": price,
+        "price_change_pct": change,
+        "buy_pressure": buys,
+        "sell_pressure": sells,
+        "price_stddev_4h": stddev,
+        "high_volatility": is_high_volatility(vol_metrics),
+        "required_confidence": required_confidence(vol_metrics),
+        "missing": missing,
+    }
+    if missing:
+        return VolumeValidation(
+            True, UNVERIFIED_CONFIDENCE,
+            "data pasar tidak tersedia (" + ", ".join(missing)
+            + ") — sinyal dikirim tanpa verifikasi volume",
+            False, details)
+
+    ratio = volume / baseline if baseline > 0 else 0.0
+    volume_ok = ratio + BALANCE_EPSILON >= required_ratio
+    if accumulation:
+        confirm_ok = bool(buys > sells)
+        confirm_text = f"buy {buys:.0f} > sell {sells:.0f}"
+    else:
+        confirm_ok = bool(change <= DUMP_PRICE_CHANGE_PCT + BALANCE_EPSILON)
+        confirm_text = f"harga {change:+.2f}%"
+    is_valid = bool(volume_ok and confirm_ok)
+
+    volume_progress = _clamp01(
+        (ratio / required_ratio - 1.0) / max(1e-9, VOLUME_FULL_BONUS_RATIO - 1.0)
+    ) if required_ratio > 0 else 0.0
+    if accumulation:
+        if sells > 0:
+            pressure_ratio = buys / sells
+        else:
+            pressure_ratio = ACCUMULATION_PRESSURE_FULL_RATIO if buys > 0 else 0.0
+        confirm_progress = _clamp01(
+            (pressure_ratio - 1.0)
+            / max(1e-9, ACCUMULATION_PRESSURE_FULL_RATIO - 1.0))
+        details["pressure_ratio"] = round(pressure_ratio, 4)
+    else:
+        span = abs(DUMP_PRICE_FULL_BONUS_PCT) - abs(DUMP_PRICE_CHANGE_PCT)
+        confirm_progress = (_clamp01((abs(change) - abs(DUMP_PRICE_CHANGE_PCT)) / span)
+                            if span > 0 and change <= 0 else 0.0)
+
+    volatility_bonus = 0.0
+    if is_high_volatility(vol_metrics):
+        direction_ok = ((change >= 0) if accumulation
+                        else (change <= DUMP_PRICE_CHANGE_PCT))
+        if direction_ok:
+            volatility_bonus = CONFIDENCE_VOLATILITY_BONUS
+
+    details.update({"volume_ok": volume_ok, "confirm_ok": confirm_ok,
+                    "volume_progress": round(volume_progress, 4),
+                    "confirm_progress": round(confirm_progress, 4),
+                    "volatility_bonus": volatility_bonus})
+
+    if is_valid:
+        confidence = min(MAX_CONFIDENCE,
+                         CONFIDENCE_BASE
+                         + CONFIDENCE_VOLUME_BONUS * volume_progress
+                         + CONFIDENCE_PRESSURE_BONUS * confirm_progress
+                         + volatility_bonus)
+        reason = (f"volume 4 jam {ratio:.2f}x rata-rata 7d "
+                  f"(ambang {required_ratio:.1f}x) & {confirm_text}")
+        if volatility_bonus:
+            reason += f"; stddev 4 jam {stddev:.2f}% menguatkan"
+    else:
+        confidence = MAX_DIAGNOSTIC_CONFIDENCE * (
+            0.5 * _clamp01(ratio / required_ratio if required_ratio else 0.0)
+            + 0.5 * confirm_progress)
+        failed = []
+        if not volume_ok:
+            failed.append(f"volume 4 jam {ratio:.2f}x rata-rata 7d "
+                          f"< {required_ratio:.1f}x")
+        if not confirm_ok:
+            if accumulation:
+                failed.append(f"buy {buys:.0f} <= sell {sells:.0f} "
+                              "(tekanan beli belum dominan)")
+            else:
+                failed.append(f"harga {change:+.2f}% > "
+                              f"{DUMP_PRICE_CHANGE_PCT:.1f}% "
+                              "(belum ada tekanan jual)")
+        reason = "; ".join(failed) or "gerbang konfirmasi tidak terpenuhi"
+    details["confidence_score"] = round(confidence, 4)
+    return VolumeValidation(is_valid, round(confidence, 4), reason, True,
+                            details)
+
+
+def volume_verdict(kind: str, dust_change_pp, context=None) -> dict:
+    """Terapkan kebijakan repo atas :func:`validate_alert_with_volume`.
+
+    ``context`` adalah dict dari ``alert_context.build_market_context`` (boleh
+    ``None``/kosong). Return dict ``allow``/``verified``/``is_valid``/
+    ``confidence_score``/``required_confidence``/``reason`` + angka pembanding,
+    siap ditempel ke event alert dan ke log cron.
+
+    Kebijakan data hilang (:data:`ALLOW_UNVERIFIED_ALERTS` = True): alert tetap
+    dikirim dengan tanda "tidak terverifikasi" — dump tidak boleh hilang hanya
+    karena GeckoTerminal/DexScreener sedang tidak bisa diambil.
+    """
+    ctx = context if isinstance(context, dict) else {}
+    volatility = ctx.get("volatility") if isinstance(ctx.get("volatility"),
+                                                     dict) else None
+    check = validate_alert_with_volume(
+        dust_change_pp, ctx.get("volume_4h"), ctx.get("avg_volume_7d"),
+        ctx.get("price"), ctx.get("price_change_pct"), kind=kind,
+        buy_pressure=ctx.get("buy_pressure"),
+        sell_pressure=ctx.get("sell_pressure"), volatility=volatility)
+    required = required_confidence(volatility)
+    verified = bool(check.verified and ctx.get("available", True))
+    if verified:
+        allow = bool(check.is_valid and check.confidence_score >= required)
+        confidence = check.confidence_score
+        reason = check.reason
+    else:
+        allow = bool(ALLOW_UNVERIFIED_ALERTS)
+        confidence = UNVERIFIED_CONFIDENCE
+        reason = (check.reason if not check.verified else
+                  str(ctx.get("reason") or "konteks volume/harga tidak tersedia")
+                  + " — sinyal dikirim tanpa verifikasi")
+    verdict = dict(check.details or {})
+    verdict.update({
+        "kind": check.details.get("kind") if check.details else kind,
+        "allow": allow,
+        "verified": verified,
+        "is_valid": bool(check.is_valid),
+        "confidence_score": round(confidence, 4),
+        "required_confidence": required,
+        "reason": reason,
+        "volume_source": str(ctx.get("volume_source") or ""),
+        "price_change_window": str(ctx.get("price_change_window") or ""),
+        "candles": _int(ctx.get("candles"), 0),
+    })
+    return verdict
 
 
 def evaluate_4h_rules(previous: dict | None, current: dict | None, *,
-                      mint: str, symbol: str = "?",
-                      sent_event_ids=()) -> list[dict]:
-    """Evaluate dump/accumulation rules against one valid ~4-hour anchor."""
+                      mint: str, symbol: str = "?", sent_event_ids=(),
+                      market_context=None, context_provider=None,
+                      rejected=None, last_sent=None) -> list[dict]:
+    """Evaluate dump/accumulation rules against one valid ~4-hour anchor.
+
+    Ambang dust (dump +0,25 pp / akumulasi -0,50 pp dengan buyer) hanya
+    menghasilkan **kandidat**. Setiap kandidat lalu dikonfirmasi volume +
+    harga + volatilitas lewat :func:`volume_verdict`; yang gagal dicatat ke
+    ``rejected`` (list keluaran) dan di-log, bukan dikirim.
+
+    ``market_context`` adalah dict konteks yang sudah jadi. Bila ``None`` dan
+    ``context_provider`` tersedia, provider dipanggil **hanya setelah ada
+    kandidat** (lazy) — maksimal satu kali per evaluasi. ``last_sent``
+    (``{kunci: ts}`` dari alert state) menahan duplikat dalam 1 jam.
+    """
     if not is_valid_4h_snapshot(previous, current):
         return []
     old = _float((previous or {}).get("dust_pct_mc"), None)
@@ -308,39 +712,109 @@ def evaluate_4h_rules(previous: dict | None, current: dict | None, *,
         return []
     change = new - old
     movement = wallet_movements(previous, current)
-    events = []
+    current_ts = _int((current or {}).get("ts"))
+
+    candidates = []
     if change + BALANCE_EPSILON >= DUMP_THRESHOLD_PP:
-        events.append(_event("dump", previous, current, mint=mint,
-                             symbol=symbol, scope="~4 jam"))
+        candidates.append("dump")
     if (-change + BALANCE_EPSILON >= ACCUMULATION_THRESHOLD_PP
-            and movement["increased"] > 0):
-        events.append(_event("accumulation", previous, current, mint=mint,
-                             symbol=symbol, scope="~4 jam"))
+            and _int(movement.get("increased")) > 0):
+        candidates.append("accumulation")
+
     sent = set(sent_event_ids or [])
-    return [event for event in events if event["id"] not in sent]
+    context = market_context if isinstance(market_context, dict) else None
+    resolved = context is not None
+    events = []
+    for kind in candidates:
+        event = _event(kind, previous, current, mint=mint, symbol=symbol,
+                       scope="~4 jam", movement=movement)
+        if event["id"] in sent:
+            continue
+        key = dedup_key(event)
+        if in_resend_cooldown(key, current_ts, last_sent):
+            _note_rejection(rejected, event, {
+                "verified": True, "confidence_score": 0.0,
+                "required_confidence": MIN_CONFIDENCE,
+                "reason": _cooldown_reason(key, current_ts, last_sent)},
+                cooldown=True)
+            continue
+        if not resolved:
+            context = _resolve_context(context_provider, mint)
+            resolved = True
+        verdict = volume_verdict(kind, change, context)
+        event["volume_check"] = verdict
+        if verdict.get("allow"):
+            events.append(event)
+        else:
+            _note_rejection(rejected, event, verdict)
+    return events
 
 
 def evaluate_baseline_rule(baseline: dict | None, current: dict | None, *,
-                           mint: str, symbol: str = "?",
-                           sent_event_ids=()) -> list[dict]:
-    """Alert when dust moved at least ±1 point from the initial snapshot."""
+                           mint: str, symbol: str = "?", sent_event_ids=(),
+                           market_context=None, context_provider=None,
+                           rejected=None, last_sent=None) -> list[dict]:
+    """Alert when dust moved at least ±1 point from the initial snapshot.
+
+    Konfirmasi volume/harga memakai window 4 jam terakhir (window terdekat
+    yang tersedia): dust naik divalidasi sebagai **dump** (volume ≥ 2× dan
+    harga ≤ -1%), dust turun sebagai **akumulasi** (volume ≥ 1,5× dan
+    buy > sell). ``event["kind"]`` tetap ``baseline_shift``.
+    """
     old = _float((baseline or {}).get("dust_pct_mc"), None)
     new = _float((current or {}).get("dust_pct_mc"), None)
     if old is None or new is None:
         return []
-    if abs(new - old) + BALANCE_EPSILON < BASELINE_SHIFT_THRESHOLD_PP:
+    change = new - old
+    if abs(change) + BALANCE_EPSILON < BASELINE_SHIFT_THRESHOLD_PP:
         return []
+    movement = wallet_movements(baseline, current)
     event = _event("baseline_shift", baseline, current, mint=mint,
-                   symbol=symbol, scope="sejak snapshot awal")
-    return [] if event["id"] in set(sent_event_ids or []) else [event]
+                   symbol=symbol, scope="sejak snapshot awal",
+                   movement=movement)
+    if event["id"] in set(sent_event_ids or []):
+        return []
+    current_ts = _int((current or {}).get("ts"))
+    key = dedup_key(event)
+    if in_resend_cooldown(key, current_ts, last_sent):
+        _note_rejection(rejected, event, {
+            "verified": True, "confidence_score": 0.0,
+            "required_confidence": MIN_CONFIDENCE,
+            "reason": _cooldown_reason(key, current_ts, last_sent)},
+            cooldown=True)
+        return []
+    context = market_context if isinstance(market_context, dict) else \
+        _resolve_context(context_provider, mint)
+    kind = "dump" if change >= 0 else "accumulation"
+    verdict = volume_verdict(kind, change, context)
+    verdict["event_kind"] = "baseline_shift"
+    event["volume_check"] = verdict
+    if not verdict.get("allow"):
+        _note_rejection(rejected, event, verdict)
+        return []
+    return [event]
 
 
 def evaluate_alert_events(mint: str, analysis: dict,
-                          state: dict | None = None) -> tuple[list[dict], dict]:
-    """Pure state transition: evaluate old anchors, then advance snapshots."""
+                          state: dict | None = None, *,
+                          market_context=None,
+                          context_provider=None) -> tuple[list[dict], dict]:
+    """Pure state transition: evaluate old anchors, then advance snapshots.
+
+    ``market_context`` (dict siap pakai) atau ``context_provider(mint,
+    analysis)`` memasok volume/harga/volatilitas untuk konfirmasi sinyal.
+    Provider dipanggil **maksimal satu kali** per evaluasi dan hanya bila ada
+    kandidat (lazy), jadi scan 15 menit yang tenang tidak menambah API call.
+    Sinyal yang ditolak dikembalikan lewat ``next_state["rejected_signals"]``
+    untuk audit.
+    """
     state = dict(state or {})
     sent = list(dict.fromkeys(str(item) for item in
                               (state.get("sent_event_ids") or []) if item))
+    last_sent = {str(key): _int(ts) for key, ts in
+                 (state.get("last_sent") or {}).items()
+                 if isinstance(state.get("last_sent"), dict)} \
+        if isinstance(state.get("last_sent"), dict) else {}
     holders = (analysis or {}).get("holders") or {}
     raw_current = holders.get("wallet_snapshot") or {}
     current = dict(raw_current)
@@ -350,21 +824,48 @@ def evaluate_alert_events(mint: str, analysis: dict,
         current.get("dust_pct_mc", holders.get("dust_pct_mc")), None)
     symbol = str((analysis or {}).get("symbol") or "?")
 
+    previous_rejected = [row for row in (state.get("rejected_signals") or [])
+                         if isinstance(row, dict)]
     next_state = {
         "baseline": state.get("baseline") or {},
         "rolling": state.get("rolling") or {},
         "sent_event_ids": sent[-MAX_SENT_EVENT_IDS:],
+        "last_sent": last_sent,
+        "rejected_signals": previous_rejected[-MAX_REJECTED_SIGNALS:],
     }
     if current["dust_pct_mc"] is None:
         return [], next_state
 
+    context = market_context if isinstance(market_context, dict) else None
+    if context is None:
+        embedded = (analysis or {}).get("market_context")
+        context = embedded if isinstance(embedded, dict) else None
+
+    shared: dict = {}
+
+    def _lazy_context(_mint: str):
+        """Provider yang sudah diikat ke *analysis* + memo satu kali per evaluasi."""
+        if "ctx" not in shared:
+            try:
+                value = context_provider(mint, analysis)
+            except Exception as exc:  # noqa: BLE001
+                print(f"WARN: konteks volume {_address(mint)[:8]} gagal: {exc}",
+                      file=sys.stderr)
+                value = None
+            shared["ctx"] = value if isinstance(value, dict) else None
+        return shared["ctx"]
+
+    lazy = _lazy_context if callable(context_provider) else None
+
+    rejected: list[dict] = []
     events = []
     baseline = state.get("baseline") if isinstance(state.get("baseline"), dict) \
         else {}
     if baseline and baseline.get("dust_pct_mc") is not None:
         events.extend(evaluate_baseline_rule(
-            baseline, current, mint=mint, symbol=symbol,
-            sent_event_ids=sent))
+            baseline, current, mint=mint, symbol=symbol, sent_event_ids=sent,
+            market_context=context, context_provider=lazy, rejected=rejected,
+            last_sent=last_sent))
     else:
         next_state["baseline"] = compact_wallet_snapshot(current)
 
@@ -377,13 +878,18 @@ def evaluate_alert_events(mint: str, analysis: dict,
         if is_valid_4h_snapshot(rolling, current):
             events.extend(evaluate_4h_rules(
                 rolling, current, mint=mint, symbol=symbol,
-                sent_event_ids=sent))
+                sent_event_ids=sent, market_context=context,
+                context_provider=lazy, rejected=rejected,
+                last_sent=last_sent))
             next_state["rolling"] = compact_wallet_snapshot(current)
         elif age > ALERT_WINDOW_MAX_SEC or age < 0:
             # Stale/out-of-order anchors are unsafe for a four-hour rule.
             next_state["rolling"] = compact_wallet_snapshot(current)
         # A young anchor remains frozen until it reaches the valid window.
 
+    if rejected:
+        next_state["rejected_signals"] = (
+            previous_rejected + rejected)[-MAX_REJECTED_SIGNALS:]
     # A dump and baseline-shift can coexist; each has a distinct event id.
     unique = {event["id"]: event for event in events}
     return list(unique.values()), next_state
@@ -392,12 +898,64 @@ def evaluate_alert_events(mint: str, analysis: dict,
 def compact_alert_state(state: dict | None) -> dict:
     """Sanitize/bound state before persisting it in history/status JSON."""
     state = state or {}
+    raw_last = state.get("last_sent") if isinstance(state.get("last_sent"),
+                                                    dict) else {}
+    last_sent = {str(key): _int(ts) for key, ts in raw_last.items() if _int(ts)}
+    newest_first = sorted(last_sent.items(), key=lambda item: -item[1])
     return {
         "baseline": compact_wallet_snapshot(state.get("baseline")),
         "rolling": compact_wallet_snapshot(state.get("rolling")),
         "sent_event_ids": list(dict.fromkeys(
             str(item) for item in (state.get("sent_event_ids") or []) if item
         ))[-MAX_SENT_EVENT_IDS:],
+        "last_sent": dict(newest_first[:MAX_LAST_SENT]),
+        "rejected_signals": [row for row in (state.get("rejected_signals") or [])
+                             if isinstance(row, dict)][-MAX_REJECTED_SIGNALS:],
+    }
+
+
+def alert_state_summary(state: dict | None) -> dict:
+    """Ringkasan alert state TANPA peta wallet, untuk ``holder_status.json``.
+
+    Peta balance ``baseline``/``rolling`` (masing-masing sampai
+    :data:`MAX_STORED_WALLETS` address) adalah state kerja aturan 4 jam dan
+    memakan **83% byte** snapshot dashboard (terukur 1,85 MB dari 2,22 MB untuk
+    36 token). Sejak store ``holder_history.json`` ikut dipublish ke ref
+    ``holder-live`` (``holder_history.publish_holder_history``), peta itu tidak
+    perlu dikirim ke dashboard — cukup jumlah + timestamp supaya kondisi alert
+    tetap bisa diperiksa.
+
+    Flag ``"summary": True`` dipakai ``holder_history.seed_from_status`` untuk
+    mengenali payload ringkas dan **tidak** menimpanya sebagai state penuh
+    (snapshot format lama yang masih membawa peta tetap dipulihkan seperti
+    sebelumnya).
+    """
+    state = state if isinstance(state, dict) else {}
+
+    def _snap(raw) -> dict:
+        raw = raw if isinstance(raw, dict) else {}
+        balances = raw.get("balances")
+        dust = raw.get("dust")
+        return {
+            "ts": _int(raw.get("ts")),
+            "wallets_seen": _int(raw.get("wallets_seen")),
+            "balances": len(balances) if isinstance(balances, dict) else 0,
+            "dust": len(dust) if isinstance(dust, (list, dict, set)) else 0,
+            "dust_pct_mc": raw.get("dust_pct_mc"),
+            "truncated": bool(raw.get("truncated")),
+        }
+
+    raw_last = state.get("last_sent") if isinstance(state.get("last_sent"),
+                                                    dict) else {}
+    last_sent = sorted(((str(key), _int(ts)) for key, ts in raw_last.items()
+                        if _int(ts)), key=lambda item: -item[1])
+    return {
+        "summary": True,
+        "baseline": _snap(state.get("baseline")),
+        "rolling": _snap(state.get("rolling")),
+        "sent_event_ids": len(state.get("sent_event_ids") or []),
+        "last_sent": dict(last_sent[:MAX_LAST_SENT]),
+        "rejected_signals": len(state.get("rejected_signals") or []),
     }
 
 
@@ -408,6 +966,42 @@ def _format_time(timestamp: int) -> str:
         return f"{local:%Y-%m-%d %H:%M:%S WIB} ({moment:%H:%M UTC})"
     except Exception:  # pragma: no cover - tz database is available in CI
         return moment.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _verification_lines(event: dict) -> list[str]:
+    """Baris konfirmasi volume/harga untuk pesan Telegram (maks 2 baris)."""
+    check = event.get("volume_check")
+    if not isinstance(check, dict) or not check:
+        return []
+    if not check.get("verified"):
+        return [f"Verifikasi volume: ⚠️ TIDAK TERVERIFIKASI — "
+                f"{check.get('reason') or 'data pasar tidak tersedia'}"]
+    parts = []
+    ratio = _float(check.get("volume_ratio"), None)
+    if ratio is not None:
+        parts.append(f"volume 4 jam {ratio:.2f}× rata-rata 7d "
+                     f"(ambang {_float(check.get('required_ratio'), 0):.1f}×)")
+    change = _float(check.get("price_change_pct"), None)
+    if change is not None:
+        parts.append(f"harga {change:+.2f}%")
+    buys = _float(check.get("buy_pressure"), None)
+    sells = _float(check.get("sell_pressure"), None)
+    if buys is not None and sells is not None:
+        parts.append(f"buy {buys:.0f}/sell {sells:.0f}")
+    mark = "✅" if check.get("is_valid") else "⚠️"
+    lines = [f"Verifikasi volume: {mark} " + (" · ".join(parts) or "-")]
+    score = _float(check.get("confidence_score"), None)
+    required = _float(check.get("required_confidence"), None)
+    if score is not None:
+        tail = (f"Skor konfirmasi: {score:.2f}"
+                + (f" (ambang {required:.2f})" if required is not None else ""))
+        stddev = _float(check.get("price_stddev_4h"), None)
+        if stddev is not None:
+            tail += f" · stddev 4 jam {stddev:.2f}%"
+            if check.get("high_volatility"):
+                tail += " (pasar liar)"
+        lines.append(tail)
+    return lines
 
 
 def format_alert_message(event: dict) -> str:
@@ -430,6 +1024,7 @@ def format_alert_message(event: dict) -> str:
         f"Dust terbaru: {float(event.get('current_dust_pct_mc') or 0):.2f}% MC",
         f"Perubahan: {change:+.2f} poin persentase",
         f"Periode: {event.get('scope') or '~4 jam'}",
+        *_verification_lines(event),
         f"Wallet saldo meningkat: {int(event.get('wallet_increases') or 0)}",
         "Pergerakan sampel wallet dust:",
         f"- Membesar / keluar dust: {int(movement.get('dust_grew_out') or 0)}",
@@ -440,6 +1035,10 @@ def format_alert_message(event: dict) -> str:
         f"- Masuk dust lainnya: {int(movement.get('dust_entered_other') or 0)}",
         f"Waktu: {_format_time(event.get('current_ts') or time.time())}",
         f"Mint: {event.get('mint') or '-'}",
+        # Link token supaya alert bisa langsung ditindaklanjuti di GMGN /
+        # DexScreener; hilang bila mint tidak diketahui (tidak ada label
+        # menggantung). URL dibangun links.py (satu sumber, sudah di-encode).
+        *token_link_lines(event.get("mint")),
     ]
     return "\n".join(lines)
 
@@ -450,6 +1049,12 @@ def _safe_transport_error(exc: Exception, token: str) -> str:
     return message.replace(token, "[REDACTED]") if token else message
 
 
+# TODO(alerts): hormati 429 ``retry_after`` dari Bot API. Saat ini alert yang
+# kena rate-limit hanya di-log; event id-nya tidak dicatat sehingga dikirim
+# ulang pada run 15 menit berikutnya (aman, tapi bukan backoff sebenarnya).
+# TODO(alerts): beri throttle bila suatu saat banyak token memicu alert
+# bersamaan — GeckoTerminal publik ~30 request/menit dan konteks pasar ditarik
+# lazy per token yang punya kandidat sinyal.
 def send_telegram_message(text: str, *, bot_token: str | None = None,
                           chat_id: str | None = None, timeout: float = 10,
                           post: Callable | None = None) -> dict:
@@ -508,9 +1113,20 @@ def send_test_alert() -> dict:
 
 
 def process_holder_alerts(analyses: dict | None, history_store: dict,
-                          *, sender: Callable[[dict], dict] | None = None) -> list[dict]:
-    """Evaluate/send alerts, mutating state *before* history ingests new points."""
+                          *, sender: Callable[[dict], dict] | None = None,
+                          market_contexts=None,
+                          context_provider: Callable[[str, dict], dict] | None = None
+                          ) -> list[dict]:
+    """Evaluate/send alerts, mutating state *before* history ingests new points.
+
+    ``market_contexts`` (``{mint: context}``) dipakai bila konteks pasar sudah
+    disiapkan pemanggil; selain itu ``context_provider(mint, analysis)``
+    dipanggil lazy hanya untuk token yang punya kandidat sinyal. Setelah kirim
+    berhasil, ``last_sent[kunci]`` diperbarui agar alert sejenis tidak
+    berulang dalam ``MIN_RESEND_SEC``.
+    """
     sender = sender or send_telegram_alert
+    contexts = market_contexts if isinstance(market_contexts, dict) else {}
     tokens = history_store.setdefault("tokens", {})
     deliveries = []
     for mint, analysis in (analyses or {}).items():
@@ -527,8 +1143,13 @@ def process_holder_alerts(analyses: dict | None, history_store: dict,
                                         "cohort": {}, "points": []})
         old_state = slot.get(STATE_KEY) if isinstance(slot.get(STATE_KEY), dict) \
             else {}
-        events, next_state = evaluate_alert_events(mint, analysis, old_state)
+        context = contexts.get(mint) if isinstance(contexts.get(mint), dict) \
+            else None
+        events, next_state = evaluate_alert_events(
+            mint, analysis, old_state, market_context=context,
+            context_provider=context_provider)
         sent = list(next_state.get("sent_event_ids") or [])
+        last_sent = dict(next_state.get("last_sent") or {})
         for event in events:
             try:
                 result = sender(event)
@@ -543,9 +1164,13 @@ def process_holder_alerts(analyses: dict | None, history_store: dict,
             deliveries.append({"event": event, "delivery": result})
             if result.get("ok"):
                 sent.append(event["id"])
+                last_sent[dedup_key(event)] = _int(event.get("current_ts"))
             elif not result.get("skipped"):
                 print(f"WARN: Telegram alert {event['id']} gagal: "
                       f"{result.get('error') or 'unknown error'}", file=sys.stderr)
         next_state["sent_event_ids"] = sent[-MAX_SENT_EVENT_IDS:]
+        next_state["last_sent"] = last_sent
         slot[STATE_KEY] = compact_alert_state(next_state)
     return deliveries
+
+

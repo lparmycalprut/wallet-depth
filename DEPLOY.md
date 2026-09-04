@@ -14,6 +14,15 @@ Watchlist di halaman utama menarik `holder_status.json` dari ref
 `holder-live` (bukan commit `main`). Tombol **Scan holder watchlist**
 menjalankan analisis holder lokal. Chart 📈 membuka halaman CVD.
 
+Disk Streamlit Cloud **ephemeral**, jadi `holder_history.json` lokal hilang
+tiap restart. Store penuh dipulihkan dari backup durable
+`holder_history.json.gz` (ref `holder-live`) lewat
+`holder_history.load_durable_holder_history()` — store lokal menang bila
+timestamp seri, hasil pull di-cache 600 detik. Matikan round-trip dengan
+`HOLDER_STORE_BACKUP=0` (mis. untuk debugging offline); tanpa backup pun
+dashboard tetap jalan, hanya baseline scan FULL / kohort / kronologi wallet
+yang tidak bisa dipulihkan.
+
 ## GitHub Actions
 
 Workflow `.github/workflows/daily-effort.yml` ("Holder Dust Scanner")
@@ -27,6 +36,16 @@ Langkah setiap scan:
    ditulis. Snapshot wallet disimpan secara bounded di history/status.
 3. Publish `holder_status.json` ke branch `holder-live` (dibuat otomatis
    pada publish pertama) agar dashboard dan cron memakai state yang sama.
+   Snapshot ramping: peta balance alert / kohort / wallet kronologi tidak
+   ikut (hanya jumlah + sampel movements) — 2,87 MB → 0,30 MB untuk 36
+   token (−90%), jadi dashboard memuat jauh lebih ringan.
+4. Backup store penuh sebagai `holder_history.json.gz` (gzip, ref
+   `holder-live`) lewat `holder_history.publish_holder_history()` — baseline
+   scan FULL, kohort, state alert, dan kronologi wallet bertahan walau runner
+   ephemeral. Run berikutnya mem-pull + `merge_stores()` **sebelum** evaluasi
+   alert (langkah 2), jadi cron tidak pernah mulai dari nol. Backup gagal
+   hanya `WARN` (`backup=GAGAL (...)` di log), exit code tetap dari publish
+   snapshot. `--no-push` melewati keduanya.
 
 Workflow memerlukan permission berikut:
 
