@@ -7,7 +7,7 @@ perdagangan yang nyata?* Hasilnya sebuah dict konteks yang dikonsumsi
 jaringan.
 
 Dipanggil **lazy** oleh cron: hanya token yang dust-nya sudah melewati ambang
-yang menarik data ini, jadi scan 15 menit yang tenang tidak menambah satu pun
+yang menarik data ini, jadi scan 1 jam yang tenang tidak menambah satu pun
 request.
 
 Urutan sumber (paling akurat lebih dulu):

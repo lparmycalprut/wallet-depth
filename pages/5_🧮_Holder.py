@@ -91,7 +91,7 @@ def _history_charts(points: list[dict]) -> None:
     sampled = resample_4h(points)
     if len(sampled) < 2:
         st.info("Belum cukup titik untuk grafik 4 jam. Scan ulang beberapa "
-                "kali (cron ~15 menit atau tombol di bawah) supaya bucket "
+                "kali (cron ±1 jam atau tombol di bawah) supaya bucket "
                 "4 jam terisi.")
         return
     labels = [_wib(p.get("ts")) for p in sampled]
@@ -148,7 +148,7 @@ def _holder_count_chart(points: list[dict]) -> None:
     if len(rows) < 2:
         st.info("Grafik jumlah holder butuh minimal 2 titik. Tekan "
                 "**Scan holder FULL** lagi setelah beberapa jam, atau tunggu "
-                "cron (~15 menit) mencatat perubahan.")
+                "cron (±1 jam) mencatat perubahan.")
         return
     labels = [_wib(p.get("ts")) for p in rows]
     dust_n = [int(p.get("dust_count") or 0) for p in rows]
@@ -502,7 +502,7 @@ st.divider()
 st.caption(
     f"Scan manual = **FULL holder** (hingga {FULL_SCAN_MAX_WALLETS:,} akun, "
     "paginasi Helius sampai habis). Detail scan pertama disimpan permanen "
-    "sebagai **baseline** di `holder_history.json`; cron 15 menit hanya "
+    "sebagai **baseline** di `holder_history.json`; cron (±1 jam) hanya "
     "menambah titik perubahan dan tidak pernah menimpa baseline.")
 if st.button("🔄 Scan holder FULL token ini", type="primary",
              use_container_width=True):
