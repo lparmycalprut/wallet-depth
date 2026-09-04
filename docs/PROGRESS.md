@@ -1,5 +1,85 @@
 # Progress
 
+## 2026-09-04 — Cron hourly + badge 🏆 BEST POOL + alert ⚡ EARLY DUMP
+
+Tiga permintaan user dalam satu sesi: (1) cron pencatatan holder jadi
+**1×/jam** karena schedule GitHub `*/15` terbukti ter-throttle; (2) badge
+**BEST POOL** di listing Scan Meteora untuk pool dengan dust < 0,1% MC;
+(3) **early notification** saat dust pool Meteora naik di atas 0,1% supaya
+bisa exit LP lebih cepat. Jawaban user via ask_user: scope early dump =
+**hanya token pool (source=meteora/Chart LP)**; kirim **tanpa gerbang
+volume**; ulang **1× per bucket 4 jam** (+ reset saat ≤ 0,1%); badge hanya
+di **Scan Meteora**; history **MAX_POINTS → 336** (14 hari × 24 titik).
+
+### Keputusan & angka terukur
+
+- **Cron `0 * * * *`** + `timeout-minutes: 45` (run hourly yang lambat tidak
+  boleh menumpuk di concurrency group). Dokumen DEPLOY.md menjelaskan bahwa
+  schedule GitHub best-effort (kadens `*/15` terukur ±2 jam: run 18:02,
+  20:58, 22:57, 00:39 UTC) dan cara verifikasi kadens (log `updated=` /
+  `durasi=` / commit `holder-live`).
+- **MAX_POINTS 84 → 336** dipilih (bukan bucket 4 jam in-place): alert tetap
+  dapat resolusi per jam (crossing dibaca tiap run) sementara UI/chart tetap
+  `resample_4h` (≤ 84 bucket 4 jam = 14 hari), jadi snapshot dashboard tidak
+  membengkak. Terukur dengan store sintetis realistis 55 token × 336 titik
+  per jam: raw 3,22 → 10,22 MB tapi gzip hanya 901 kB → **1,03 MB** (rasio
+  9,9×; titik JSON sangat kompresibel) — jauh di bawah `MAX_BACKUP_BYTES`
+  3,5 MB. Backup nyata terakhir: 901 kB (55 token, masih muda: 1–8 titik/
+  token). Snapshot `holder_status.json` tetap ~0,4 MB karena
+  `compact_history_for_status` = resample 4 jam.
+- **Prune step 5 disesuaikan**: sebelumnya "titik di luar 42 terbaru (7 hari
+  @ 4 jam)". Dengan titik per jam, 42 mentah = 42 jam saja, jadi step 5 kini
+  `resample_4h(points)[-42:]` — backup yang terpaksa dipangkas tetap
+  menyimpan ~7 hari grafik bucket 4 jam.
+- **Badge BEST POOL**: `DUST_BEST_PCT = 0.1` + `DUST_BEST_LABEL = "BEST
+  POOL"` + `DUST_BEST_MIN_HOLDERS = 40` di holder_history.py; `dust_flag(pct,
+  prev, *, holders=...)` aditif (`best: bool`, level AMAN/HATI-HATI/BAHAYA
+  dan `dust_level_rank` tidak berubah → sorting Chart LP tidak terpengaruh).
+  **Guard data** (paling penting): BEST POOL tidak pernah keluar saat
+  `dust_pct_mc is None`, `total_fetched <= 0`, atau wallet dianalisis < 40 —
+  dust "0,00%" dari data gagal/kosong tidak boleh tampil sebagai pool
+  bersih. Pemanggil lama (watchlist, Chart LP, halaman Holder) tidak
+  mengirim `holders` → `best` selalu False, perilaku mereka tidak berubah.
+  Badge dirender hanya di listing Scan Meteora (chip `🏆 BEST POOL` di kolom
+  Dust %MC). **Boundary `== 0,1%`**: bukan BEST POOL (strict `< 0,1%`) dan
+  bukan pemicu early_dump (strict `> 0,1%`) — kedua sinyal tidak pernah
+  tumpang tindih di angka yang sama.
+- **Rule early_dump** (`telegram_alerts.py`, kind `early_dump`): crossing +
+  hysteresis — `previous` = marker `alert_state["early_dump"]` `{ts,
+  dust_pct_mc}` yang direkam tiap run; token baru dipantau tidak langsung
+  mengirim (mustahil membuktikan crossing); turun ≤ 0,1% = reset (tanpa
+  notifikasi turun). **Tanpa gerbang volume**: `early_dump_verdict()` selalu
+  `allow=True`, konteks volume/harga/volatilitas ditarik lazy dan tampil
+  sebagai info (`Verifikasi: ℹ️ … (info saja, tanpa gerbang volume)`), tanpa
+  data pasar → `⚠️ TIDAK TERVERIFIKASI`. Ulang maks 1× per bucket 4 jam
+  (event id) + `MIN_RESEND_SEC` 1 jam, hanya saat dust masih **naik**;
+  dedup/state/merge memakai mekanisme lama (`sent_event_ids`, `last_sent`,
+  `compact_alert_state`, `_merge_alert_state` — marker di-merge paling baru).
+  Wiring: `process_holder_alerts(..., lp_mints=...)` → `evaluate_alert_events(
+  ..., lp_mint=...)`; `scripts/scan_holders.py` mengisi `lp_mints` dari
+  `split_watchlist(watchlist)[0]`. **Blokir nyata**: watchlist saat ini
+  54 token = 52 degen / 2 manual / **0 meteora** → rule belum akan menyala
+  sampai user ⭐ pool dari Scan Meteora (dokumentasi README/AGENTS).
+  Keterbatasan terdokumentasi: cron tidak mengirim link `🌊 Meteora` /
+  `🦅 HawkFi` karena `watchlist.json` tidak menyimpan pool address; format
+  pesan siap memuatnya bila event membawa `pool_addresses` (field tidak
+  mengarang di watchlist.json). Pesan early dump tidak memuat blok
+  pergerakan wallet (marker tanpa peta balance).
+- Text "cron 15 menit" di app.py/pages/script docstring/README/DEPLOY/
+  DISABLED diganti target 1 jam.
+
+### Tes
+**508 lulus** (sebelumnya 477). Baru: `tests/test_holder_history.py` +12
+(best + guard data kosong/batas 0,1, MAX_POINTS 336, resample per jam tetap
+bucket 4 jam, merge cap), `tests/test_early_dump.py` +16 (crossing,
+hysteresis, dedup bucket, cooldown, tanpa/ada konteks pasar, pesan + link
+pool opsional, compact/summary/merge marker, wiring lp_mints via
+process_holder_alerts, zero-fetch tidak menggerakkan marker),
+`tests/test_store_backup.py` +1 (prune resample 42 bucket 4 jam; fixture
+_big_store titiknya disesuaikan ke jarak bucket 4 jam), `tests/test_lp_card_ui.py` +1 (AppTest badge BEST POOL hanya untuk
+data valid), `tests/test_scan_holders.py` +1 (cron meneruskan lp_mints).
+pyflakes: tidak ada warning baru.
+
 ## 2026-09-04 — Link GMGN + DexScreener di alert Telegram
 
 Permintaan user: *"tambahkan link ke gmgn dan dexscreener ketika notifikasi

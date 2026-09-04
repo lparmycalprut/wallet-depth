@@ -26,7 +26,28 @@ yang tidak bisa dipulihkan.
 ## GitHub Actions
 
 Workflow `.github/workflows/daily-effort.yml` ("Holder Dust Scanner")
-berjalan setiap 15 menit dan memanggil `python scripts/scan_holders.py`.
+menargetkan **1× per jam** (`schedule: cron "0 * * * *"`) dan memanggil
+`python scripts/scan_holders.py`. Job memakai `timeout-minutes: 45` supaya
+run yang macet tidak menumpuk antre di concurrency group `holder-scanner`
+(run hourly yang lambat bisa membuat beberapa run tertunda sekaligus).
+
+> **Schedule GitHub bersifat best-effort, bukan SLA.** GitHub bisa
+> men-throttle / melewatkan schedule: pada cron `*/15 * * * *` kadens nyata
+> terukur **±2 jam** (contoh run: 18:02, 20:58, 22:57, 00:39 UTC), bukan 15
+> menit. Artinya "1 jam" adalah **target**, bukan janji — alert bucket 4 jam,
+> titik per jam, dan cooldown 1 jam dirancang toleran terhadap run yang
+> telat/dilewati.
+>
+> Cara memverifikasi kadens nyata:
+> - log run: baris `Holder scan selesai: … updated=<ts> durasi=<detik>`
+>   (`updated=` adalah timestamp run; selisih antar log = kadens aktual), atau
+> - riwayat commit branch `holder-live` (commit `holder-history: backup …`
+>   dibuat tiap publish), atau
+> - tab **Actions → Holder Dust Scanner → schedule**.
+>
+> Repo yang tidak aktif > 60 hari otomatis dinonaktifkan GitHub Actions-nya
+> (kebijakan GitHub) — jadwal perlu diaktifkan ulang manual bila dashboard
+> berhenti diperbarui.
 
 Langkah setiap scan:
 
@@ -46,6 +67,21 @@ Langkah setiap scan:
    alert (langkah 2), jadi cron tidak pernah mulai dari nol. Backup gagal
    hanya `WARN` (`backup=GAGAL (...)` di log), exit code tetap dari publish
    snapshot. `--no-push` melewati keduanya.
+
+Cadence hourly (sejak 2026-09-04) dan ukuran ref `holder-live`:
+
+- `MAX_POINTS = 336` = 14 hari × 24 titik/jam per token. Grafik UI tetap
+  memakai `resample_4h` (bucket 4 jam, ≤ 84 titik), jadi snapshot dashboard
+  tidak ikut membengkak; store mentah yang membesar dibackup terkompresi
+  gzip. Terukur dengan store sintetis 55 token × 336 titik per jam:
+  backup ~**1,03 MB** (batas `MAX_BACKUP_BYTES` 3,5 MB) — estimasi
+  pertumbuhan ~**±633 kB × 24 run/hari ≈ 15 MB/hari** isi Git bila tiap run
+  mengganti blob (bandingkan ±7,6 MB/hari pada kadens 2 jam; git menyimpan
+  delta antar commit, nilai sesungguhnya lebih kecil).
+- Kuota holder: 55 token × 24 run/hari × ≤ 3000 wallet = sampai ~4 juta
+  akun/hari via Helius DAS + market DexScreener; `--max-wallets 3000` tetap.
+- `MIN_POINT_GAP_SEC` (8 menit) aman untuk run tiap jam: run ganda < 8 menit
+  (schedule + `workflow_dispatch`) menimpa titik yang sama, bukan menambah.
 
 Workflow memerlukan permission berikut:
 
