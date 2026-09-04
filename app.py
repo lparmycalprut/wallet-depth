@@ -27,6 +27,10 @@ from trending_ui import (merge_scan_rows, render_trending, run_screen,
                          run_screen_h1, run_screen_hrhr, run_screen_hrhr_h1)
 from watchlist import (add_to_watchlist, get_last_push_error, load_watchlist,
                        remove_from_watchlist, set_watchlist_source)
+from watchlist_detail import (SOURCE_HISTORY, change_html,
+                              dust_change_since_added, format_wib,
+                              previous_pct, resolve_view, sync_caption_text,
+                              sync_summary)
 
 st.set_page_config(page_title="Wallet Depth — Holder Analytic",
                    page_icon="🧮", layout="wide",
@@ -668,6 +672,20 @@ history_store = seed_from_status(load_durable_holder_history(),
 lp_watch, holder_watch = split_watchlist(watchlist)
 _render_lp_card(lp_card_rows(lp_watch, status_tokens, history_store))
 
+# Satu angka per baris watchlist: snapshot cron **atau** titik history yang
+# lebih baru (scan manual / cron yang publish snapshot-nya gagal). Dihitung
+# sekali di sini supaya caption "scan terakhir" dan angka di baris selalu
+# bicara tentang data yang sama (sebelumnya baris membaca snapshot sementara
+# grafik membaca history — dua angka untuk satu token).
+_now_ts = int(datetime.now(timezone.utc).timestamp())
+_holder_points = {mint: _points_for(mint, status_tokens.get(mint) or {},
+                                    history_store)
+                  for mint in holder_watch}
+_holder_views = {mint: resolve_view(status_tokens.get(mint) or {}, points,
+                                    now=_now_ts)
+                 for mint, points in _holder_points.items()}
+_watch_sync = sync_summary(_holder_views.values(), now=_now_ts)
+
 st.subheader("📋 Watchlist — Analisa Holder (Dust)")
 st.caption(
     "Ringkasan dust: jumlah wallet dan **berapa % marketcap** yang mereka "
@@ -675,10 +693,14 @@ st.caption(
     f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA "
     "(dust nambah pesat = jejak distribusi). "
     f"Ambang dust: ${DUST_LIMIT_USD:.0f}. "
-    f"Terakhir scan: {_wib(holder_status.get('updated_at'))}. "
-    "Grafik kecil = dust % MC tiap 4 jam. Token dari Scan Meteora ada di "
+    "Grafik kecil = dust % MC tiap 4 jam. Kolom **Sejak masuk** = perubahan "
+    "dust % MC sejak token ditambahkan sampai scan terakhir (hijau bila turun "
+    "≥ 50%, merah bila naik ≥ 100%). Token dari Scan Meteora ada di "
     "card **Chart LP** di atas."
 )
+st.caption(sync_caption_text(_watch_sync,
+                             status_updated_at=holder_status.get("updated_at")))
+
 
 if watchlist and not status_tokens:
     st.warning(
@@ -730,11 +752,12 @@ if not holder_watch:
     st.info("Watchlist holder kosong. Tambahkan contract address di bawah, "
             "atau pindahkan token dari card Chart LP (📋).")
 else:
-    header_cols = st.columns([1.6, 1.0, 0.95, 1.2, 0.45, 0.45, 0.45])
+    header_cols = st.columns([1.55, 0.85, 0.9, 1.05, 1.05, 0.4, 0.4, 0.4])
     header_style = "font-size:0.78rem;color:#000000;font-weight:700;"
     center = "text-align:center;" + header_style
-    header_titles = ["Token", "Dust", "Hold %MC", "4 jam", "", "", ""]
-    header_css = [header_style, center, center, center, center, center, center]
+    header_titles = ["Token", "Dust", "Hold %MC", "Sejak masuk", "4 jam",
+                     "", "", ""]
+    header_css = [header_style] + [center] * 7
     for col, style, title in zip(header_cols, header_css, header_titles):
         col.markdown(f'<div style="{style}">{title}</div>',
                      unsafe_allow_html=True)
@@ -742,8 +765,11 @@ else:
     st.markdown(
         '<div style="font-size:0.65rem;color:#64748b;margin:0.3rem 0;">'
         "Dust = wallet 0 &lt; value ≤ $10 (bukan LP). Grafik 4 jam = "
-        "perubahan dust % MC. 🧮 buka Holder Analytic · 🌊 pindahkan ke "
-        "Chart LP."
+        "perubahan dust % MC. <b>Sejak masuk</b> = perubahan dust % MC dari "
+        "titik pertama setelah token ditambahkan sampai scan terakhir "
+        "(<span style=\"color:#15803d;font-weight:700;\">hijau</span> turun "
+        "≥ 50% · <span style=\"color:#b91c1c;font-weight:700;\">merah</span> "
+        "naik ≥ 100%). 🧮 buka Holder Analytic · 🌊 pindahkan ke Chart LP."
         "</div>",
         unsafe_allow_html=True)
 
@@ -758,12 +784,18 @@ else:
         token = status_tokens.get(mint) or {}
         symbol = str(meta.get("symbol") or token.get("symbol") or "?").upper()
         holders = token.get("holders") or {}
-        points = _points_for(mint, token, history_store)
+        points = _holder_points.get(mint) or _points_for(mint, token,
+                                                         history_store)
+        view = _holder_views.get(mint) or resolve_view(token, points,
+                                                       now=_now_ts)
         sampled = resample_4h(points)
-        dust_count = holders.get("dust_count")
-        dust_pct = holders.get("dust_pct_mc")
-        prev_pct = sampled[-2].get("dust_pct_mc") if len(sampled) >= 2 else None
+        # Angka baris = sumber terbaru (snapshot cron / titik history / scan
+        # manual), bukan selalu snapshot — lihat sync_caption_text di atas.
+        dust_count = view.get("dust_count")
+        dust_pct = view.get("dust_pct")
+        prev_pct = previous_pct(sampled, view)
         flag = dust_flag(dust_pct, prev_pct)
+        change = dust_change_since_added(meta, points, view, now=_now_ts)
         truncated = holders.get("truncated", False)
         dust_txt = ("—" if dust_count is None
                     else (f"≥{int(dust_count)}" if truncated
@@ -772,12 +804,20 @@ else:
         spark = sparkline_svg(points, key="dust_pct_mc")
         if not spark:
             spark = '<span style="font-size:.7rem;color:#64748b;">belum ada grafik</span>'
+        scan_note = f"scan {format_wib(view.get('ts'))}"
+        if view.get("source") == SOURCE_HISTORY:
+            scan_note += " · titik history"
+        if view.get("drift"):
+            scan_note += " · ⚠️ snapshot ≠ history"
+        if view.get("stale"):
+            scan_note += " · basi"
 
-        cols = st.columns([1.6, 1.0, 0.95, 1.2, 0.45, 0.45, 0.45])
+        cols = st.columns([1.55, 0.85, 0.9, 1.05, 1.05, 0.4, 0.4, 0.4])
         cols[0].markdown(
             f'<div class="watchlist-token">'
             f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
             f'<span class="watchlist-mint">{html.escape(mint[:8])}…</span>'
+            f'<span class="watchlist-metric-sub">{scan_note}</span>'
             f'<div class="watchlist-links">{external_links_html(mint)}</div>'
             f"</div>", unsafe_allow_html=True)
         cols[1].markdown(
@@ -790,20 +830,21 @@ else:
             f'<div class="watchlist-metric-value">{pct_txt}</div>'
             f'{_dust_badge_html(flag)}</div>',
             unsafe_allow_html=True)
-        cols[3].markdown(
+        cols[3].markdown(change_html(change), unsafe_allow_html=True)
+        cols[4].markdown(
             f'<div style="text-align:center;">{spark}</div>',
             unsafe_allow_html=True)
-        if cols[4].button("🧮", key=f"holder-{mint}",
+        if cols[5].button("🧮", key=f"holder-{mint}",
                           help="Buka Holder Analytic",
                           use_container_width=True):
             st.session_state["holder_mint"] = mint
             st.switch_page(HOLDER_PAGE_PATH, query_params={"mint": mint})
-        if cols[5].button("🌊", key=f"to-lp-{mint}",
+        if cols[6].button("🌊", key=f"to-lp-{mint}",
                           help="Pindahkan ke Chart LP (watchlist Meteora)",
                           use_container_width=True):
             set_watchlist_source(mint, LP_SOURCE)
             st.rerun()
-        if cols[6].button("✕", key=f"remove-{mint}", help="Hapus watchlist",
+        if cols[7].button("✕", key=f"remove-{mint}", help="Hapus watchlist",
                           use_container_width=True):
             remove_from_watchlist(mint)
             st.rerun()
