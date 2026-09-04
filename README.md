@@ -10,7 +10,12 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
 1. **Dust holder** — wallet murni dengan `0 < nilai ≤ $10`:
    - **dust % MC** = total nilai dust / marketcap × 100,
    - ≥ **0,5% MC** → **HATI-HATI** (badge kuning, peringatan dini),
-   - ≥ **1% MC** → **BAHAYA** (disembunyikan dari Scan Meteora).
+   - ≥ **1% MC** → **BAHAYA** (disembunyikan dari Scan Meteora),
+   - < **0,1% MC** + data holder valid (≥ 40 wallet) → badge **🏆 BEST POOL**
+     di baris listing Scan Meteora (level AMAN tidak berubah — ini penanda
+     kebersihan distribusi, bukan level bahaya). Nilai **== 0,1%** sengaja
+     tidak dapat badge (butuh `< 0,1%`) dan juga tidak memicu alert
+     EARLY DUMP (butuh `> 0,1%`), jadi kedua sinyal tidak tumpang tindih.
    Dust yang nambah pesat = holder sebelumnya sudah distribusi / bag
    merosot jadi sisa. **Catatan:** batas dust itu **$10 per wallet dalam
    USD**, jadi dust % MC *tidak* invariant terhadap harga — harga naik
@@ -49,7 +54,15 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
      meningkat → kemungkinan akumulasi;
    - berubah minimal `±1.00` poin dari snapshot awal → alert pemeriksaan
      pergerakan wallet dust (membesar/keluar dust, jual habis/hilang,
-     mengecil/masuk dust, atau wallet dust baru).
+     mengecil/masuk dust, atau wallet dust baru);
+   - **khusus token pool** (Chart LP / `source=meteora`): dust
+     **menyeberang naik di atas 0,1% MC** dibanding nilai run sebelumnya →
+     **⚡ EARLY DUMP** (peringatan lebih awal untuk exit LP). Crossing +
+     hysteresis: token baru dipantau tidak langsung mengirim, turun ke
+     ≤ 0,1% = reset. Ulang maksimal 1× per bucket 4 jam dan hanya selama
+     dust masih naik; dikirim **tanpa** gerbang volume keras (konteks pasar
+     jadi info di pesan). Catatan: saat ini 0 token watchlist ber-source
+     meteora — rule aktif begitu ada pool yang di-⭐ dari Scan Meteora.
 
    Perubahan dust baru menghasilkan **kandidat** sinyal: setiap kandidat
    harus lolos konfirmasi volume + harga + volatilitas dulu (bagian
@@ -67,6 +80,12 @@ Kandidat sinyal dust diperiksa silang terhadap pasar sebelum dikirim
 | **Dump** (dust naik ≥ 0,25 pp) | volume 4 jam ≥ **2×** rata-rata 7 hari **dan** harga ≤ **-1%** |
 | **Akumulasi** (dust turun ≥ 0,50 pp + buyer) | volume 4 jam ≥ **1,5×** rata-rata 7 hari **dan** buy pressure > sell pressure |
 | **Baseline shift** (±1 pp dari snapshot awal) | mengikuti arah perubahan: naik → aturan dump, turun → aturan akumulasi |
+
+⚡ **EARLY DUMP** (token pool saja, crossing > 0,1% MC) sengaja **tidak**
+dipakai gerbang di tabel ini — delta crossing ambang absolut 0,1% bisa jauh
+di bawah 0,25 pp yang dirancang untuk gerbang dump. Volume/harga/volatilitas
+tetap diambil (lazy) sebagai **konteks info** di pesan; tanpa data pasar,
+pesan memuat `⚠️ TIDAK TERVERIFIKASI`.
 
 `avg_volume_7d` = rata-rata volume **per window 4 jam** selama 7 hari, jadi
 satuannya setara dengan `volume_4h` (bukan total volume harian).
@@ -91,7 +110,7 @@ sebagai `tokens[mint].market_signal`, berdampingan dengan dust % MC.
 
 **Biaya & sumber data** — candle hourly GeckoTerminal (168 jam) ditarik
 **lazy**: hanya token yang punya kandidat sinyal, maksimal satu kali per run,
-jadi scan 15 menit yang tenang tidak menambah request apa pun. Bila
+jadi scan 1 jam yang tenang tidak menambah request apa pun. Bila
 GeckoTerminal gagal, konteks jatuh ke angka DexScreener yang **sudah** diambil
 saat scan (`volume.h6` di-skala ke 4 jam, baseline dari `volume.h24`,
 `priceChange.h6`, `txns` buys/sells) lalu ke `daily_effort.json` untuk
@@ -136,6 +155,29 @@ Mint: So11111111111111111111111111111111111111112
 Dua baris link terakhir dibangun `links.token_link_lines(mint)` — helper yang
 sama dengan link 🔗GMGN/🦆Dex di tabel watchlist, jadi URL-nya satu sumber dan
 selalu ter-encode (Telegram otomatis me-link URL polos).
+
+Contoh alert **⚡ EARLY DUMP** (kind baru, token pool; tanpa blok pergerakan
+wallet karena dibandingkan dari nilai dust saja):
+
+```text
+⚡ EARLY DUMP — DUST HOLDER NAIK DI ATAS 0.1%
+Token: $LPDUMP
+Dust sebelumnya: 0.04% MC
+Dust terbaru: 0.42% MC
+Perubahan: +0.38 poin persentase
+Periode: sejak titik terakhir 2 jam lalu
+Verifikasi: ℹ️ volume 4 jam 1.50× rata-rata 7d · harga -2.50% (info saja, tanpa gerbang volume)
+Waktu: 2026-09-04 01:15:00 WIB (18:15 UTC)
+Mint: LpMint11111111111111111111111111111111111
+🔗 GMGN: https://gmgn.ai/sol/token/LpMint11111111111111111111111111111111111
+🦆 DexScreener: https://dexscreener.com/solana/LpMint11111111111111111111111111111111111
+```
+
+Bila konteks pasar tidak tersedia, baris `Verifikasi:` berubah menjadi
+`⚠️ TIDAK TERVERIFIKASI — data pasar tidak tersedia (info saja, early warning
+tanpa gerbang volume)`. Bila pool address Meteora diketahui, ditambahkan
+`🌊 Meteora:` + `🦅 HawkFi:` — cron **belum** bisa mengisinya karena
+`watchlist.json` tidak menyimpan pool address (lihat PROGRESS).
 
 Dua baris `Verifikasi volume` / `Skor konfirmasi` hanya muncul bila konteks
 pasar berhasil diambil. Bila tidak, keduanya diganti satu baris:
@@ -188,6 +230,10 @@ Meteora Pool** (`source=meteora`):
 - Pool 24 jam yang masih muncul di 1 jam **tetap ditampilkan**
 - Dust holder **≥ 1% MC** (BAHAYA) disembunyikan, **≥ 0,5% MC** ditandai
   badge **HATI-HATI**
+- Dust **< 0,1% MC** dengan data holder valid (≥ 40 wallet) diberi badge
+  **🏆 BEST POOL** di kolom Dust %MC — hanya di listing ini; card Chart LP /
+  halaman Holder Analytic tidak berubah (keputusan user). Dust 0,00% dari
+  data yang gagal/kosong **tidak pernah** mendapat badge
 - Tombol **⭐** memasukkan token ke card **Chart LP** (watchlist terpisah di
   bagian atas dashboard, lengkap dengan grafik perubahan dust holder)
 - Shortcut: [Meteora DLMM](https://app.meteora.ag/dlmm/) + [HawkFi](https://www.hawkfi.ag/meteora/)
@@ -196,18 +242,18 @@ Meteora Pool** (`source=meteora`):
 
 | File | Peran |
 |---|---|
-| `holder_history.py` | Pencatatan dust/kohort, resample 4 jam, ambang HATI-HATI/BAHAYA, metrik volatilitas 4 jam, baseline FULL, kronologi, backup durable store (`.gz`: merge/prune/publish/pull) |
+| `holder_history.py` | Pencatatan dust/kohort, resample 4 jam, ambang HATI-HATI/BAHAYA + BEST POOL 0,1% (aditif), metrik volatilitas 4 jam, baseline FULL, kronologi, backup durable store (`.gz`: merge/prune/publish/pull; titik mentah per jam, `MAX_POINTS` 336) |
 | `alert_context.py` | Konteks pasar untuk konfirmasi alert: volume 4 jam, rata-rata 7 hari, buy/sell pressure, volatilitas (ditarik lazy) |
 | `holder_chronology.py` | Snapshot wallet bounded, klasifikasi pergerakan, narasi kronologi |
 | `lp_watchlist.py` | Card **Chart LP**: pisah watchlist Meteora, baris + grafik perubahan dust holder |
-| `meteora_screener.py` | Listing DLMM 24h+1h, enrich holder, filter dust ≥1% |
+| `meteora_screener.py` | Listing DLMM 24h+1h, enrich holder, filter dust ≥1%; badge BEST POOL di UI app.py (dust < 0,1% + data valid) |
 | `holder_analysis.py` | Fetch holder Helius/GMGN, klasifikasi real/dust/mid |
 | `solscan_holders.py` | Kalkulasi wallet_depth (bucket & tier) |
 | `helius_holders.py` | Scan Holder Khusus satu token + bar chart |
 | `holder_status.py` | Snapshot dashboard ramping (ref `holder-live`) + history ringkas + transport GitHub (JSON & byte/gzip) |
 | `core.py` | Config/key Helius, pasar DexScreener, candle hourly/harian GeckoTerminal |
-| `scripts/scan_holders.py` | Cron watchlist: holder, alert (konfirmasi volume lazy), catat history |
-| `telegram_alerts.py` | Rule dust 4 jam/baseline, gerbang volume+volatilitas, dedup bucket 4 jam + jeda 1 jam, Telegram Bot API (+ link GMGN & DexScreener di pesan) |
+| `scripts/scan_holders.py` | Cron watchlist (target 1×/jam): holder, alert (konfirmasi volume lazy, scope early dump = token LP), catat history, publish snapshot + backup store |
+| `telegram_alerts.py` | Rule dust 4 jam/baseline + ⚡ EARLY DUMP (crossing 0,1% MC, token pool, tanpa gerbang volume), dedup bucket 4 jam + jeda 1 jam, Telegram Bot API (+ link GMGN & DexScreener di pesan) |
 | `links.py` | Satu sumber URL eksternal: GMGN, DexScreener, Solscan, Meteora DLMM, HawkFi (HTML untuk UI, teks polos untuk Telegram) |
 | `trending_ui.py` | Listing Trending/Degen + Add All Watchlist |
 | `pages/4_📊_CVD.py` | Chart CVD harian |
@@ -220,8 +266,12 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Cron GitHub Actions ~15 menit (`.github/workflows/daily-effort.yml`)
-menjalankan `scripts/scan_holders.py`. Snapshot dibaca dari
+Cron GitHub Actions menargetkan **1× per jam** (`cron: "0 * * * *"` di
+`.github/workflows/daily-effort.yml`, job `timeout-minutes: 45`) dan
+menjalankan `scripts/scan_holders.py`. Schedule GitHub bersifat
+**best-effort**: run bisa telat/dilewati (terukur ±2 jam saat `*/15`), jadi
+"1 jam" adalah target, bukan janji — lihat DEPLOY.md untuk cara memverifikasi
+kadens nyata. Snapshot dibaca dari
 `holder_status.json` dan store penuh dari `holder_history.json.gz`
 (keduanya ref `holder-live`) — lihat **Backup store holder**. Lihat
 `DEPLOY.md` untuk env
@@ -254,6 +304,9 @@ scan tetap berjalan dan pengiriman alert dilewati dengan aman.
 | `VOLATILITY_WINDOW_HOURS`, `HIGH_VOLATILITY_STDDEV_PCT` | 4, 3.0 — `holder_history` |
 | `BASELINE_HOURS`, `MIN_BASELINE_HOURS` | 168, 24 — `alert_context` (baseline volume 7 hari) |
 | `MAX_BACKUP_BYTES`, `DURABLE_CACHE_TTL` | 3.500.000, 600 — `holder_history` (budget backup `.gz`, cache pull UI) |
+| `MAX_POINTS` | 336 — 14 hari × 24 titik/jam (cron hourly; grafik tetap di-resample per bucket 4 jam) |
+| `DUST_BEST_PCT`, `DUST_BEST_MIN_HOLDERS` | 0.1, 40 — badge BEST POOL (strict `< 0,1%`) + guard data holder minimal |
+| `DUST_BEST_LABEL` | `BEST POOL` — label badge (tampil apa adanya) |
 
 Konstanta konfirmasi ada di `telegram_alerts.py`, metrik volatilitas di
 `holder_history.py`, dan pengambilan konteks di `alert_context.py`.

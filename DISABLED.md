@@ -26,7 +26,8 @@ Yang tetap aktif:
 - listing Trending/Degen tanpa ranking dan tanpa analisis holder;
 - penyimpanan `daily_effort.json` (agregasi harian saja, tanpa sinyal);
 - chart harga/CVD + volume USD;
-- cron GitHub Actions: scan holder watchlist setiap ~15 menit,
-  publish `holder_status.json` ke ref `holder-live`.
+- cron GitHub Actions: scan holder watchlist target 1× per jam
+  (`cron "0 * * * *"`; schedule GitHub best-effort, lihat DEPLOY.md),
+  publish `holder_status.json` + backup store ke ref `holder-live`.
 
 Jangan menghidupkan kembali modul atau palang `TELEGRAM_*` lama.

@@ -239,3 +239,63 @@ class EmptyChartLpCardTest(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+@unittest.skipIf(AppTest is None, "streamlit not installed")
+class MeteoraBestBadgeTest(unittest.TestCase):
+    """Badge 🏆 BEST POOL di listing Scan Meteora (dust < 0,1% + data valid)."""
+
+    CLEAN = "CleanMint1111111111111111111111111111111111"
+    BOGUS = "BogusMint1111111111111111111111111111111111"
+
+    def _scan_rows(self):
+        return {
+            "rows": [
+                # Pool bersih: dust 0,02% MC, data holder valid.
+                {"ca": self.CLEAN, "symbol": "CLN", "pool_address": "P1",
+                 "in_24h": True, "in_1h": False, "mc": 1_000_000.0,
+                 "dust_count": 3, "dust_pct_mc": 0.02, "real_count": 80,
+                 "analysis": {"holders": {
+                     "total_fetched": 200, "wallets_analyzed": 83,
+                     "real_count": 80, "dust_count": 3,
+                     "dust_pct_mc": 0.02}}},
+                # Data holder gagal (fetch 0) dengan dust 0,00%: TIDAK boleh
+                # dapat BEST POOL (dust 0 juga muncul saat data kosong).
+                {"ca": self.BOGUS, "symbol": "BGS", "pool_address": "P2",
+                 "in_24h": True, "in_1h": True, "mc": 900_000.0,
+                 "dust_count": 0, "dust_pct_mc": 0.0, "real_count": 0,
+                 "analysis": {"holders": {
+                     "total_fetched": 0, "wallets_analyzed": 0,
+                     "real_count": 0, "dust_count": 0, "dust_pct_mc": 0.0}}},
+            ],
+            "error": "", "fetched": 2, "hidden_dust": 0,
+            "analyzed_at": 1_800_000_000,
+        }
+
+    def test_badge_best_pool_hanya_untuk_data_valid(self):
+        patches = (
+            mock.patch("watchlist.load_watchlist", return_value={}),
+            mock.patch("holder_status.load_holder_status",
+                       return_value={"tokens": {}}),
+            mock.patch("holder_history.load_holder_history",
+                       return_value={"tokens": {}}),
+            mock.patch("holder_history.pull_holder_history",
+                       return_value=None),
+        )
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        app = AppTest.from_file(APP, default_timeout=60)
+        app.session_state["meteora_scan"] = self._scan_rows()
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn("$CLN", body)
+        self.assertIn("$BGS", body)
+        # Persis satu chip BEST POOL: untuk CLN (0,02% + 83 wallet). CSS
+        # .dust-best ikut di markdown <style>, jadi yang dihitung chip-nya.
+        self.assertEqual(body.count("dust-badge dust-best"), 1)
+        self.assertIn("🏆 BEST POOL", body)
+        # Baris BOGUS tetap AMAN tanpa chip BEST POOL.
+        ok_index = body.find("AMAN", body.find("$BGS"))
+        self.assertNotIn("dust-best", body[ok_index:ok_index + 200])

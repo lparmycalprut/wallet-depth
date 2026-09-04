@@ -12,8 +12,13 @@ kandidat diperiksa silang terhadap pasar (volume + harga + volatilitas) oleh
 naik tanpa lonjakan volume atau tanpa tekanan harga dicatat lalu dibuang, bukan
 mengganggu user. Fungsi aturan tidak pernah mengambil data itu sendiri: pemanggil
 menyuntikkan dict konteks yang sudah jadi, atau ``context_provider(mint,
-analysis)`` yang **hanya dipanggil bila ada kandidat** (lazy — cron 15 menit
+analysis)`` yang **hanya dipanggil bila ada kandidat** (lazy — cron 1 jam
 tidak menambah satu pun API call saat pasar tenang).
+
+Rule tambahan ``early_dump`` (⚡ EARLY DUMP, scope token pool Meteora/Chart
+LP) menyala saat dust **menyeberang naik** melewati ambang absolut 0,1% MC
+(:data:`holder_history.DUST_BEST_PCT`) dan sengaja **tanpa gerbang volume**
+keras — lihat :func:`early_dump_verdict`.
 """
 from __future__ import annotations
 
@@ -27,7 +32,8 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-from links import token_link_lines
+from holder_history import DUST_BEST_PCT
+from links import (hawkfi_meteora_url, meteora_dlmm_url, token_link_lines)
 
 DUMP_THRESHOLD_PP = 0.25
 ACCUMULATION_THRESHOLD_PP = 0.50
@@ -66,8 +72,9 @@ MIN_RESEND_SEC = 3600
 MAX_LAST_SENT = 8
 MAX_REJECTED_SIGNALS = 8
 ALERT_WINDOW_SEC = 4 * 3600
-# The scheduled job runs every 15 minutes. Allow a delayed run while still
-# rejecting a recent snapshot or a stale snapshot after a long outage.
+# The scheduled job targets 1 run/hour (since 2026-09-04; GitHub may delay).
+# Toleransi tetap longgar supaya run yang telat tetap menemukan snapshot
+# ~4 jam lalu, sementara snapshot terlalu muda/menua ditolak.
 ALERT_WINDOW_MIN_SEC = ALERT_WINDOW_SEC - 15 * 60
 ALERT_WINDOW_MAX_SEC = ALERT_WINDOW_SEC + 60 * 60
 EVENT_BUCKET_SEC = ALERT_WINDOW_SEC
@@ -795,18 +802,164 @@ def evaluate_baseline_rule(baseline: dict | None, current: dict | None, *,
     return [event]
 
 
+def _early_dump_event(previous: dict, current: dict, *, mint: str,
+                      symbol: str, scope: str) -> dict:
+    """Satu event ⚡ EARLY DUMP (tanpa peta wallet/movement).
+
+    Marker ``previous`` hanya membawa ``ts`` + ``dust_pct_mc`` (bukan
+    snapshot wallet), jadi event ini sengaja tidak memakai :func:`_event`
+    yang menghitung ``wallet_movements`` di atas ratusan address. Bidang
+    ``movements`` dikosongkan dan pesan early dump tidak menampilkan blok
+    pergerakan wallet.
+    """
+    current_ts = _int((current or {}).get("ts"))
+    old = _float((previous or {}).get("dust_pct_mc"), 0.0) or 0.0
+    new = _float((current or {}).get("dust_pct_mc"), 0.0) or 0.0
+    return {
+        "id": _event_id(mint, "early_dump", current_ts),
+        "kind": "early_dump",
+        "scope": scope,
+        "direction": "up",
+        "mint": _address(mint),
+        "symbol": str(symbol or "?").strip().upper() or "?",
+        "previous_dust_pct_mc": old,
+        "current_dust_pct_mc": new,
+        "change_pp": round(new - old, 6),
+        "previous_ts": _int((previous or {}).get("ts")),
+        "current_ts": current_ts,
+        "wallet_increases": 0,
+        "movements": {},
+        # Pool address tidak disimpan di watchlist.json; pemanggil cron belum
+        # bisa mengisinya (keterbatasan terdokumentasi). Field ini disiapkan
+        # supaya pesan bisa memuat 🌊 Meteora + 🦅 HawkFi bila suatu saat
+        # sumber pool address tersedia (mis. hasil scan_meteora).
+        "pool_addresses": [str(p or "").strip()
+                           for p in (current.get("pool_addresses") or []) if p],
+    }
+
+
+def early_dump_verdict(context=None) -> dict:
+    """Verdict **info saja** untuk kind ``early_dump`` — tanpa gerbang keras.
+
+    Rule dump/akumulasi/baseline (delta 0,25/0,50/1,00 pp) memakai
+    :func:`volume_verdict` sebagai gerbang konfirmasi. Crossing ambang
+    absolut 0,1% MC bisa terjadi dengan delta jauh lebih kecil dari 0,25 pp,
+    jadi gerbang itu tidak bisa dipakai apa adanya. Keputusan user (2026-09-04):
+    early warning dikirim **tanpa** gerbang volume supaya bisa exit LP lebih
+    cepat; volume/harga/volatilitas tetap disertakan sebagai konteks pesan,
+    dan ``verified`` False (data pasar hilang) membuat pesan memuat baris
+    ``⚠️ TIDAK TERVERIFIKASI``. ``allow`` selalu True.
+    """
+    ctx = context if isinstance(context, dict) else {}
+    volatility = ctx.get("volatility") if isinstance(ctx.get("volatility"),
+                                                     dict) else None
+    volume = _float(ctx.get("volume_4h"), None)
+    baseline = _float(ctx.get("avg_volume_7d"), None)
+    change = _float(ctx.get("price_change_pct"), None)
+    buys = _float(ctx.get("buy_pressure"), None)
+    sells = _float(ctx.get("sell_pressure"), None)
+    stddev = _float((volatility or {}).get("price_stddev_4h"), None)
+    has_data = any(value is not None for value in
+                   (volume, baseline, change, buys, sells, stddev))
+    verified = bool(ctx.get("available", True) and has_data)
+    return {
+        "kind": "early_dump",
+        "allow": True,
+        "verified": verified,
+        "is_valid": True,
+        "confidence_score": 0.0,
+        "required_confidence": 0.0,
+        "reason": ("" if verified else str(ctx.get("reason")
+                                           or "data pasar tidak tersedia")),
+        "volume_4h": volume,
+        "avg_volume_7d": baseline,
+        "volume_ratio": (round(volume / baseline, 4)
+                         if volume is not None and baseline else None),
+        "price": _float(ctx.get("price"), None),
+        "price_change_pct": change,
+        "buy_pressure": buys,
+        "sell_pressure": sells,
+        "price_stddev_4h": stddev,
+        "high_volatility": is_high_volatility(volatility),
+        "volume_source": str(ctx.get("volume_source") or ""),
+        "price_change_window": str(ctx.get("price_change_window") or ""),
+        "candles": _int(ctx.get("candles"), 0),
+    }
+
+
+def evaluate_early_dump_rule(previous: dict | None, current: dict | None, *,
+                             mint: str, symbol: str = "?",
+                             sent_event_ids=(), market_context=None,
+                             context_provider=None, rejected=None,
+                             last_sent=None) -> list[dict]:
+    """⚡ EARLY DUMP: dust pool Meteora menyeberang **naik** melewati 0,1% MC.
+
+    Rule pemantauan **tambahan** untuk token pool (Chart LP / source
+    meteora). Ambang 0,1% tidak mengubah rule lama (dump +0,25 pp dst tetap
+    berjalan dengan gerbang volumenya). Early dump sengaja:
+
+    - **crossing-based + hysteresis**: ``previous`` adalah nilai dust yang
+      direkam pada run sebelumnya (marker ``early_dump`` di alert state).
+      Token yang baru mulai dipantau (``previous`` None) tidak langsung
+      mengirim — tanpa titik sebelumnya mustahil membuktikan crossing.
+      Turun ke ``<= 0,1%`` = reset (tidak ada notifikasi turun; itu kabar
+      baik, bukan early warning).
+    - **tanpa gerbang volume keras**: lihat :func:`early_dump_verdict`.
+    - frekuensi dibatasi mekanisme lama (event id per bucket 4 jam +
+      ``MIN_RESEND_SEC`` 1 jam) dan hanya dikirim ulang saat dust **masih
+      naik** (lebih tinggi dari nilai terakhir): hover/turun di atas 0,1%
+      tidak mengulang notifikasi dengan angka yang sama/bagus.
+
+    Guard data: rule hanya dipanggil dengan ``dust_pct_mc`` yang valid
+    (pemanggil melewati token ``total_fetched <= 0`` dan nilai None).
+    """
+    old = _float((previous or {}).get("dust_pct_mc"), None)
+    new = _float((current or {}).get("dust_pct_mc"), None)
+    if old is None or new is None:
+        return []
+    if new <= DUST_BEST_PCT:
+        # Masih bersih / sudah turun lagi ke <= 0,1% = reset, bukan alert.
+        return []
+    if new <= old:
+        # Tidak ada kenaikan baru sejak run terakhir = tidak ada kabar baru.
+        return []
+    current_ts = _int((current or {}).get("ts"))
+    gap_hours = max(1, round((current_ts - _int((previous or {}).get("ts")))
+                             / 3600.0))
+    event = _early_dump_event(
+        previous, current, mint=mint, symbol=symbol,
+        scope=f"sejak titik terakhir {gap_hours} jam lalu")
+    if event["id"] in set(sent_event_ids or []):
+        return []
+    key = dedup_key(event)
+    if in_resend_cooldown(key, current_ts, last_sent):
+        _note_rejection(rejected, event, {
+            "verified": True, "confidence_score": 0.0,
+            "required_confidence": MIN_CONFIDENCE,
+            "reason": _cooldown_reason(key, current_ts, last_sent)},
+            cooldown=True)
+        return []
+    context = market_context if isinstance(market_context, dict) else \
+        _resolve_context(context_provider, mint)
+    event["volume_check"] = early_dump_verdict(context)
+    return [event]
+
+
 def evaluate_alert_events(mint: str, analysis: dict,
                           state: dict | None = None, *,
                           market_context=None,
-                          context_provider=None) -> tuple[list[dict], dict]:
+                          context_provider=None,
+                          lp_mint: bool = False) -> tuple[list[dict], dict]:
     """Pure state transition: evaluate old anchors, then advance snapshots.
 
     ``market_context`` (dict siap pakai) atau ``context_provider(mint,
     analysis)`` memasok volume/harga/volatilitas untuk konfirmasi sinyal.
     Provider dipanggil **maksimal satu kali** per evaluasi dan hanya bila ada
-    kandidat (lazy), jadi scan 15 menit yang tenang tidak menambah API call.
+    kandidat (lazy), jadi scan 1 jam yang tenang tidak menambah API call.
     Sinyal yang ditolak dikembalikan lewat ``next_state["rejected_signals"]``
-    untuk audit.
+    untuk audit. ``lp_mint=True`` (token pool Meteora/Chart LP) mengaktifkan
+    rule ``early_dump`` dan merekam marker ``next_state["early_dump"]``
+    (nilai dust + ts tiap run).
     """
     state = dict(state or {})
     sent = list(dict.fromkeys(str(item) for item in
@@ -826,12 +979,15 @@ def evaluate_alert_events(mint: str, analysis: dict,
 
     previous_rejected = [row for row in (state.get("rejected_signals") or [])
                          if isinstance(row, dict)]
+    raw_marker = state.get("early_dump")
+    early_marker = dict(raw_marker) if isinstance(raw_marker, dict) else {}
     next_state = {
         "baseline": state.get("baseline") or {},
         "rolling": state.get("rolling") or {},
         "sent_event_ids": sent[-MAX_SENT_EVENT_IDS:],
         "last_sent": last_sent,
         "rejected_signals": previous_rejected[-MAX_REJECTED_SIGNALS:],
+        "early_dump": early_marker,
     }
     if current["dust_pct_mc"] is None:
         return [], next_state
@@ -859,6 +1015,19 @@ def evaluate_alert_events(mint: str, analysis: dict,
 
     rejected: list[dict] = []
     events = []
+    # ⚡ EARLY DUMP (scope pool Meteora/Chart LP): crossing 0,1% dibaca dari
+    # marker run sebelumnya, lalu marker selalu dimajukan ke nilai run ini
+    # (nilai terakhir) — bahkan saat tidak ada event. Token di luar scope
+    # tidak dievaluasi dan markernya dipertahankan apa adanya.
+    if lp_mint and current.get("dust_pct_mc") is not None:
+        events.extend(evaluate_early_dump_rule(
+            early_marker or None, current, mint=mint, symbol=symbol,
+            sent_event_ids=sent, market_context=context,
+            context_provider=lazy, rejected=rejected, last_sent=last_sent))
+        next_state["early_dump"] = {
+            "ts": current["ts"],
+            "dust_pct_mc": current["dust_pct_mc"],
+        }
     baseline = state.get("baseline") if isinstance(state.get("baseline"), dict) \
         else {}
     if baseline and baseline.get("dust_pct_mc") is not None:
@@ -902,6 +1071,9 @@ def compact_alert_state(state: dict | None) -> dict:
                                                     dict) else {}
     last_sent = {str(key): _int(ts) for key, ts in raw_last.items() if _int(ts)}
     newest_first = sorted(last_sent.items(), key=lambda item: -item[1])
+    raw_marker = state.get("early_dump")
+    marker = dict(raw_marker) if isinstance(raw_marker, dict) else {}
+    marker_ts = _int(marker.get("ts"))
     return {
         "baseline": compact_wallet_snapshot(state.get("baseline")),
         "rolling": compact_wallet_snapshot(state.get("rolling")),
@@ -911,6 +1083,12 @@ def compact_alert_state(state: dict | None) -> dict:
         "last_sent": dict(newest_first[:MAX_LAST_SENT]),
         "rejected_signals": [row for row in (state.get("rejected_signals") or [])
                              if isinstance(row, dict)][-MAX_REJECTED_SIGNALS:],
+        # Marker rule EARLY DUMP: ringkas (ts + dust % MC terakhir), tanpa
+        # peta wallet — cukup untuk deteksi crossing run berikutnya.
+        "early_dump": ({"ts": marker_ts,
+                        "dust_pct_mc": (_float(marker.get("dust_pct_mc"), None)
+                                        if marker_ts else None)}
+                       if marker_ts else {}),
     }
 
 
@@ -1004,10 +1182,80 @@ def _verification_lines(event: dict) -> list[str]:
     return lines
 
 
+def _market_info_lines(check: dict | None) -> list[str]:
+    """Baris konteks pasar untuk ⚡ EARLY DUMP — info saja, tanpa gerbang.
+
+    Formatnya mirip :func:`_verification_lines` (angka pembanding volume /
+    harga / tekanan / volatilitas) tapi sengaja memakai awalan
+    ``Verifikasi:`` + penanda ℹ️ dan tidak menampilkan skor konfirmasi:
+    rule early dump tidak memakai ambang skor, jadi skor 0,00 tidak boleh
+    tampil seperti kegagalan verifikasi.
+    """
+    if not isinstance(check, dict) or not check:
+        return []
+    if not check.get("verified"):
+        return [f"Verifikasi: ⚠️ TIDAK TERVERIFIKASI — "
+                f"{check.get('reason') or 'data pasar tidak tersedia'} "
+                "(info saja, early warning tanpa gerbang volume)"]
+    parts = []
+    ratio = _float(check.get("volume_ratio"), None)
+    if ratio is not None:
+        parts.append(f"volume 4 jam {ratio:.2f}× rata-rata 7d")
+    change = _float(check.get("price_change_pct"), None)
+    if change is not None:
+        parts.append(f"harga {change:+.2f}%")
+    buys = _float(check.get("buy_pressure"), None)
+    sells = _float(check.get("sell_pressure"), None)
+    if buys is not None and sells is not None:
+        parts.append(f"buy {buys:.0f}/sell {sells:.0f}")
+    stddev = _float(check.get("price_stddev_4h"), None)
+    if stddev is not None:
+        parts.append(f"stddev 4 jam {stddev:.2f}%")
+    if not parts:
+        return ["Verifikasi: ℹ️ data pasar tersedia "
+                "(info saja, tanpa gerbang volume)"]
+    return ["Verifikasi: ℹ️ " + " · ".join(parts)
+            + " (info saja, tanpa gerbang volume)"]
+
+
+def _pool_link_lines(pools) -> list[str]:
+    """Baris 🌊 Meteora + 🦅 HawkFi per pool address (teks polos Telegram)."""
+    lines = []
+    for raw in pools or []:
+        pool = str(raw or "").strip()
+        if not pool:
+            continue
+        lines.append(f"🌊 Meteora: {meteora_dlmm_url(pool)}")
+        lines.append(f"🦅 HawkFi: {hawkfi_meteora_url(pool)}")
+    return lines
+
+
 def format_alert_message(event: dict) -> str:
     """Human-readable Telegram message containing all required fields."""
     kind = event.get("kind")
     change = _float(event.get("change_pp"), 0.0) or 0.0
+    if kind == "early_dump":
+        title = f"⚡ EARLY DUMP — DUST HOLDER NAIK DI ATAS {DUST_BEST_PCT:g}%"
+        lines = [
+            title,
+            f"Token: ${event.get('symbol') or '?'}",
+            f"Dust sebelumnya: "
+            f"{float(event.get('previous_dust_pct_mc') or 0):.2f}% MC",
+            f"Dust terbaru: "
+            f"{float(event.get('current_dust_pct_mc') or 0):.2f}% MC",
+            f"Perubahan: {change:+.2f} poin persentase",
+            f"Periode: {event.get('scope') or 'sejak run terakhir'}",
+            *_market_info_lines(event.get("volume_check")),
+            f"Waktu: {_format_time(event.get('current_ts') or time.time())}",
+            f"Mint: {event.get('mint') or '-'}",
+            # Link token + pool: token selalu (GMGN/DexScreener, via
+            # links.token_link_lines); pool (Meteora/HawkFi) hanya bila
+            # event membawa pool address yang diketahui benar (lihat
+            # keterbatasan cron di evaluate_early_dump_rule).
+            *token_link_lines(event.get("mint")),
+            *_pool_link_lines(event.get("pool_addresses")),
+        ]
+        return "\n".join(lines)
     if kind == "dump":
         title = "🚨 INDIKASI DUMP — HOLDER DUST NAIK"
     elif kind == "accumulation":
@@ -1051,7 +1299,7 @@ def _safe_transport_error(exc: Exception, token: str) -> str:
 
 # TODO(alerts): hormati 429 ``retry_after`` dari Bot API. Saat ini alert yang
 # kena rate-limit hanya di-log; event id-nya tidak dicatat sehingga dikirim
-# ulang pada run 15 menit berikutnya (aman, tapi bukan backoff sebenarnya).
+# ulang pada run 1 jam berikutnya (aman, tapi bukan backoff sebenarnya).
 # TODO(alerts): beri throttle bila suatu saat banyak token memicu alert
 # bersamaan — GeckoTerminal publik ~30 request/menit dan konteks pasar ditarik
 # lazy per token yang punya kandidat sinyal.
@@ -1115,18 +1363,21 @@ def send_test_alert() -> dict:
 def process_holder_alerts(analyses: dict | None, history_store: dict,
                           *, sender: Callable[[dict], dict] | None = None,
                           market_contexts=None,
-                          context_provider: Callable[[str, dict], dict] | None = None
-                          ) -> list[dict]:
+                          context_provider: Callable[[str, dict], dict] | None = None,
+                          lp_mints: set | None = None) -> list[dict]:
     """Evaluate/send alerts, mutating state *before* history ingests new points.
 
     ``market_contexts`` (``{mint: context}``) dipakai bila konteks pasar sudah
     disiapkan pemanggil; selain itu ``context_provider(mint, analysis)``
     dipanggil lazy hanya untuk token yang punya kandidat sinyal. Setelah kirim
     berhasil, ``last_sent[kunci]`` diperbarui agar alert sejenis tidak
-    berulang dalam ``MIN_RESEND_SEC``.
+    berulang dalam ``MIN_RESEND_SEC``. ``lp_mints`` = mint token pool
+    (Chart LP / ``source=meteora``) — scope rule ``early_dump``; kosong/None
+    = tidak ada token LP yang dipantau, rule tidak pernah menyala.
     """
     sender = sender or send_telegram_alert
     contexts = market_contexts if isinstance(market_contexts, dict) else {}
+    lp = {str(item) for item in (lp_mints or []) if item}
     tokens = history_store.setdefault("tokens", {})
     deliveries = []
     for mint, analysis in (analyses or {}).items():
@@ -1147,7 +1398,8 @@ def process_holder_alerts(analyses: dict | None, history_store: dict,
             else None
         events, next_state = evaluate_alert_events(
             mint, analysis, old_state, market_context=context,
-            context_provider=context_provider)
+            context_provider=context_provider,
+            lp_mint=bool(mint in lp))
         sent = list(next_state.get("sent_event_ids") or [])
         last_sent = dict(next_state.get("last_sent") or {})
         for event in events:

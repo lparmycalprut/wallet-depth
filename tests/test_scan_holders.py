@@ -261,3 +261,28 @@ class MainExitCodeTest(unittest.TestCase):
                                   side_effect=publish):
             self.assertEqual(mod.main(["--no-push"]), 0)
         self.assertEqual(order, ["alert", "ingest", "publish"])
+
+
+class EarlyDumpScopeWiringTest(unittest.TestCase):
+    """Cron harus meneruskan scope rule ⚡ EARLY DUMP (token Chart LP)."""
+
+    def test_lp_mints_diteruskan_dari_split_watchlist(self):
+        captured = {}
+        watchlist = {
+            "LpMint11111111111111111111111111111111111":
+                {"symbol": "LPT", "source": "meteora"},
+            "RegMint22222222222222222222222222222222222":
+                {"symbol": "REG", "source": "degen"},
+        }
+        analyses = {
+            "LpMint11111111111111111111111111111111111":
+                {"symbol": "LPT", "holders": {"total_fetched": 5}},
+            "RegMint22222222222222222222222222222222222":
+                {"symbol": "REG", "holders": {"total_fetched": 5}},
+        }
+        code = MainExitCodeTest()._run(analyses, publish_ok=True,
+                                       watchlist=watchlist, capture=captured)
+        self.assertEqual(code, 0)
+        kwargs = captured["alerts"].call_args.kwargs
+        self.assertEqual(kwargs.get("lp_mints"),
+                         {"LpMint11111111111111111111111111111111111"})

@@ -10,13 +10,17 @@ Untuk setiap token watchlist:
    masih harus dikonfirmasi volume + harga + volatilitas (konteks pasar
    ditarik **lazy**, hanya untuk token yang punya kandidat, jadi scan tenang
    tidak menambah satu pun request),
-4. catat **titik perubahan** ke ``holder_history.json`` (grafik 4 jam) —
-   cron sengaja memakai ``ingest_many(..., detail=False)`` sehingga rekaman
-   detail hasil scan FULL manual (``baseline`` / ``latest_detail``) milik
-   user tidak pernah ditimpa,
+4. catat **titik perubahan** ke ``holder_history.json`` (titik mentah per
+   run; grafik memakai bucket 4 jam) — cron sengaja memakai
+   ``ingest_many(..., detail=False)`` sehingga rekaman detail hasil scan
+   FULL manual (``baseline`` / ``latest_detail``) milik user tidak pernah
+   ditimpa,
 5. tulis ``holder_status.json`` lokal & publish ke branch ``holder-live``.
 
-Dijalankan GitHub Actions tiap ~15 menit.
+Dijalankan GitHub Actions dengan target **1× per jam** (``cron: "0 * * * *"``
+sejak 2026-09-04; schedule GitHub best-effort, lihat DEPLOY.md). Scope rule
+⚡ EARLY DUMP = token pool (Chart LP / ``source=meteora``) lewat
+``lp_watchlist.split_watchlist``.
 """
 from __future__ import annotations
 
@@ -39,6 +43,7 @@ from holder_history import (ingest_many, load_holder_history, merge_stores,
 from holder_analysis import analyze_token
 from holder_status import (last_publish_result, load_holder_status,
                            publish_holder_status)
+from lp_watchlist import split_watchlist
 from telegram_alerts import (process_holder_alerts, send_test_alert,
                              tracked_wallet_addresses)
 from watchlist import load_watchlist
@@ -168,8 +173,13 @@ def main(argv=None) -> int:
         contexts: dict = {}
         provider = market_context_provider(cache=contexts,
                                            daily_loader=load_daily_effort)
+        # Scope rule ⚡ EARLY DUMP = token pool (source=meteora / Chart LP).
+        # Watchlist saat ini belum punya pool address (keterbatasan: pesan
+        # early dump cron tidak menyertakan link 🌊 Meteora/🦅 HawkFi).
+        lp_mints = set(split_watchlist(watchlist)[0])
         deliveries = process_holder_alerts(analyses, store,
-                                           context_provider=provider)
+                                           context_provider=provider,
+                                           lp_mints=lp_mints)
         # detail=False: cron hanya menambah titik perubahan; baseline
         # (detail scan FULL pertama dari halaman Holder) tetap utuh.
         history = ingest_many(analyses, store=store, detail=False)
