@@ -20,6 +20,7 @@ from links import HOLDER_PAGE_PATH, external_links_html, pool_links_html
 from lp_watchlist import (LP_SOURCE, lp_card_rows, lp_chart_figure,
                           lp_overlay_figure, lp_summary, split_watchlist)
 from meteora_screener import scan_meteora
+import pre_pump_screener
 from holder_analysis import DUST_LIMIT_USD, analyze_token
 from holder_status import (MANUAL_SCAN_KEY, apply_manual_scan,
                            load_holder_status, publish_holder_status)
@@ -840,6 +841,15 @@ with st.expander("➕ Tambah token", expanded=not bool(watchlist)):
                                or f"Tersimpan lokal di {card}; sinkronisasi "
                                   "GitHub belum berhasil.")
                 st.rerun()
+
+# ---------------------------------------------------------------------------
+# 🚀 Pre-Pump Screener — 4 sinyal on-chain untuk token watchlist source=degen.
+# ``configure_page=False``: st.set_page_config sudah dipanggil di atas dan
+# hanya boleh sekali per halaman. Watchlist / snapshot holder / store durable
+# disuntikkan supaya section ini tidak menarik GitHub + DexScreener dua kali.
+# ---------------------------------------------------------------------------
+pre_pump_screener.main(configure_page=False, watchlist=watchlist,
+                       status_tokens=status_tokens, store=history_store)
 
 st.divider()
 st.subheader("🔍 Temukan Token")
