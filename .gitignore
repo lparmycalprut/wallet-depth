@@ -15,3 +15,5 @@ funders_cache.json
 watchlist_pending.json
 # Journal likuiditas Pre-Pump Screener (diisi tiap run, ephemeral)
 pre_pump_liq.json
+
+accumulation_history.json

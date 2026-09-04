@@ -124,7 +124,7 @@ JSON compact, Contents API base64) di ref `holder-live`:
 - `gmgn_screener.py`: listing Trending/Degen.
 - `pre_pump_screener.py`: section **🚀 Pre-Pump Screener** di `app.py`
   (`main(configure_page=False)`, watchlist/snapshot/store disuntikkan) +
-  halaman mandiri `pages/6_🚀_Pre-Pump.py`. Scope **hanya watchlist
+  halaman mandiri `pages/7_🚀_Pre-Pump.py`. Scope **hanya watchlist
   `source=degen`** (`load_degen_watchlist`). Empat sinyal, tiap sinyal
   mengembalikan `confidence` 0–1 dan `PUMP SCORE` = rata-rata berbobot
   0,25 × 4 × 10: **A** gelombang add likuiditas (journal lokal
@@ -142,6 +142,35 @@ JSON compact, Contents API base64) di ref `holder-live`:
   loop itu); hasil scan di-cache `st.session_state["pre_pump_results"]`.
 - `pages/5_🧮_Holder.py`: Holder Analytic (di bawah CVD) + kronologi FULL.
 - `pages/4_📊_CVD.py`: CVD harian saja (tanpa Holder Analytic).
+- `watchlist_detail.py`: detail baris watchlist — perubahan dust **sejak
+  tanggal masuk** (`added`) sampai **scan terakhir** (relatif %, poin
+  persentase, jumlah wallet) dengan ambang warna **turun ≥ 50% = hijau** /
+  **naik ≥ 100% = merah** (`MCAP_DROP_TONE_PCT` / `MCAP_RISE_TONE_PCT`), plus
+  penyatuan angka baris ↔ scan terakhir: `resolve_view()` memilih snapshot
+  cron **atau** titik history yang lebih baru (menandai `drift` bila keduanya
+  berbeda > 0,01 pp dan `stale` bila > 2 jam), `previous_pct()` memilih
+  pembanding badge yang benar, `sync_caption_text()` menulis satu caption
+  "Scan terakhir" + rincian sumber per token. Murni kalkulasi.
+- `accumulation.py`: 8 heuristik **Deteksi Akumulasi** (tier migration,
+  diamond hands, DCA vs one-off, smart money GMGN, silent range, spring/test,
+  fresh wallet prep, sell-side thinning) + skor 0–100 (`SCORE_AKUMULASI` 60)
+  + store snapshot `accumulation_history.json` (skema sendiri, git-ignored).
+  Setiap fungsi mengembalikan `{nilai, nilai_text, status, penjelasan,
+  cukup_data, detail, sumber}`; `cukup_data=False` **selalu** dipaksa ke
+  status `tidak_cukup_data` dan tidak ikut pembagi skor (pola `available`
+  di `calculate_volatility_metrics`). **Tanpa satu pun request jaringan** dan
+  **tanpa Helius** (keputusan user 2026-09-04): metrik 4 memakai
+  `realized_profit`/`maker_tags` GMGN dari `cvd._extract_gmgn_trade_meta`,
+  metrik 7 memakai tag `fresh_wallet` GMGN (identitas funder tidak tersedia
+  tanpa scan Helius → ditulis eksplisit di penjelasan), level metrik 6
+  diturunkan `derive_support_level()` dari candle harian
+  `core.get_daily_candles` karena repo ini tidak punya `levels.json`.
+- `pages/6_🔎_Deteksi_Akumulasi.py`: halaman Deteksi Akumulasi. Token **hanya**
+  dari `watchlist.load_watchlist()`; fetch lewat fetcher yang sudah ada
+  (`cvd.fetch_gmgn_swaps` dengan `stop_ts` + cap `max_pages`,
+  `core.get_market`, `core.get_hourly_candles`,
+  `holder_history.calculate_volatility_metrics`), jeda 0,4 detik antar token,
+  hasil di `st.session_state`, snapshot ringkas ke `accumulation_history.json`.
 
 Watchlist di `app.py` membaca `load_holder_status()` + `holder_history`
 lalu dipecah `lp_watchlist.split_watchlist()`: **Chart LP** (card paling
@@ -208,6 +237,34 @@ confidence_pct        : rata-rata confidence sinyal AKTIF saja
 auto-refresh          : 300 detik (st.fragment(run_every=...))
 journal likuiditas    : pre_pump_liq.json (gitignored), 72 jam / 900 titik
 
+Baris watchlist "Sejak masuk" (watchlist_detail.py):
+warna hijau           : dust % MC turun >= 50% sejak tanggal masuk
+                        (MCAP_DROP_TONE_PCT)
+warna merah           : dust % MC naik >= 100% sejak tanggal masuk
+                        (MCAP_RISE_TONE_PCT)
+data basi             : umur data > 2 jam (STALE_AFTER_SEC; cron 1x/jam)
+drift                 : |snapshot - titik history| > 0,01 pp dengan ts beda
+                        (DRIFT_TOLERANCE_PP) -> baris pakai yang terbaru
+
+Deteksi Akumulasi (accumulation.py) — semua heuristik, tanpa Helius:
+skor gabungan         : >= 60 = Terindikasi Akumulasi (SCORE_AKUMULASI),
+                        tanpa metrik cukup data = Tidak Cukup Data
+tier migration        : tier $100-$1k & $1k-$10k naik, dust relatif stabil
+                        (|delta| <= 10% = DUST_STABLE_PCT)
+diamond hands         : >= 60% wallet tak pernah net-sell = positif,
+                        < 35% = negatif (DIAMOND_*_PCT)
+DCA                   : >= 3 buy DAN satu buy <= 60% total buy wallet
+silent range          : volume 24 jam $10K–$250K (lantai wajib: token mati
+                        tidak boleh terbaca terakumulasi), stddev 4 jam
+                        <= 0,8x konteks, CVD net 0…+15%
+spring/test           : low < level <= close, volume <= 1,0x rata-rata
+                        4 candle sekitarnya (SPRING_VOLUME_RATIO)
+fresh wallet prep     : >= 3 wallet fresh_wallet, >= 2 buy tersebar
+                        >= 30 menit, satu buy <= 75%, 0 sell
+sell-side thinning    : >= 70% posisi net di wallet tanpa jual 14 hari
+floor sampel flow     : < 5 wallet teramati = tidak cukup data
+                        (MIN_WALLETS_FOR_FLOW)
+
 Wallet depth (buckets): >$0-$10 … >$500k — default wallet murni
 Tier: 🦐 Shrimp ≤$100, 🦀 Crab $100-$1k, 🐟 Fish $1k-$10k,
       🐬 Dolphin $10k-$100k, 🦈 Shark >$100k.
@@ -220,5 +277,6 @@ python -m unittest discover tests
 python -m py_compile holder_history.py holder_chronology.py meteora_screener.py \
   holder_analysis.py holder_status.py telegram_alerts.py alert_context.py \
   lp_watchlist.py core.py scripts/scan_holders.py trending_ui.py watchlist.py \
-  pre_pump_screener.py app.py "pages/6_🚀_Pre-Pump.py"
+  watchlist_detail.py accumulation.py pre_pump_screener.py app.py \
+  "pages/7_🚀_Pre-Pump.py"
 ```

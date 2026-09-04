@@ -3,7 +3,7 @@
 Permintaan user: halaman baru **🚀 Pre-Pump Screener** — deteksi memecoin
 yang mendekati pump lewat sinyal on-chain + velocity volume. Modul baru
 `pre_pump_screener.py` (scope: **hanya watchlist `source=degen`**), section
-di `app.py` + halaman mandiri `pages/6_🚀_Pre-Pump.py`.
+di `app.py` + halaman mandiri `pages/7_🚀_Pre-Pump.py`.
 
 1. **Empat sinyal** → `PUMP SCORE` 0–10 (rata-rata berbobot 0,25 × 4 × 10),
    kartu per token diurut skor menurun: ✅ Liquidity Wave (add kedua ≥ 5x
@@ -37,6 +37,110 @@ di `app.py` + halaman mandiri `pages/6_🚀_Pre-Pump.py`.
    gelombang add + journal, konsolidasi holder, profil volume, velocity
    Helius/DexScreener, skor, kartu UI lewat AppTest, integrasi `app.py`).
    Total suite 508 → **572 test, OK**.
+
+# Kegiatan — 4 September 2026 (lanjutan)
+
+Tiga permintaan user: (1) halaman baru **Deteksi Akumulasi** dengan 8 metrik,
+(2) koreksi metrik 4 supaya **GMGN saja** (kuota Helius terlalu boros),
+(3) detail baru di baris watchlist — perubahan dust sejak masuk + warna ambang
+— dan perbaikan sinkronisasi data watchlist ↔ scan terakhir.
+
+## 1. Halaman `pages/6_🔎_Deteksi_Akumulasi.py` + modul `accumulation.py`
+
+Semua logika masuk modul **baru** `accumulation.py` (murni kalkulasi, tanpa
+Streamlit, **tanpa satu pun request jaringan**); halaman hanya menarik bahan
+mentah lewat fetcher yang sudah ada dan merender hasilnya. Sumber daftar token
+**selalu** `watchlist.load_watchlist()` — bukan listing Meteora/trending, dan
+tidak ada file watchlist baru.
+
+| # | Metrik | Bahan mentah (fetcher lama, reuse) |
+|---|---|---|
+| 1 | Tier Migration Velocity | bucket wallet depth dua titik `holder_history` terakhir |
+| 2 | Diamond Hands Ratio | posisi net per wallet dari swap GMGN |
+| 3 | Pola DCA vs One-off Buy | jumlah buy unik + dominasi satu buy per wallet |
+| 4 | Smart Money / PnL Wallet | **GMGN**: `maker_tags` + `realized_profit` |
+| 5 | Silent Range Accumulation | `core.get_market` + `calculate_volatility_metrics` + CVD net swap |
+| 6 | Spring / Test Pattern | candle 4 jam (agregasi dari `core.get_hourly_candles`) vs level support D1 |
+| 7 | Fresh Wallet Prep | tag `fresh_wallet` GMGN + pola waktu buy |
+| 8 | Sell-Side Liquidity Thinning | posisi net per wallet tanpa jual 14 hari |
+
+Setiap fungsi mengembalikan `{key, nama, nilai, nilai_text, status,
+status_label, penjelasan, cukup_data, bobot, detail, sumber}`. `cukup_data`
+False **selalu** dipaksa ke status `tidak_cukup_data` dan tidak ikut pembagi
+skor (pola `available` di `calculate_volatility_metrics`): "tidak tahu" tidak
+pernah dihitung "netral". Skor 0–100 ≥ 60 → **Terindikasi Akumulasi**, selain
+itu **Netral**, tanpa data → **Tidak Cukup Data**.
+
+**Koreksi user (metrik 4)** — riwayat PnL lintas token lewat Helius Enhanced
+API **tidak diimplementasikan**: terlalu boros kuota Helius. Yang dipakai
+metadata per-wallet yang sudah diparsing `cvd._extract_gmgn_trade_meta`
+(`realized_profit`, `unrealized_profit`, `maker_tags` ∩
+`cvd_daily.SMART_MONEY_TAGS`). Konsekuensinya ditulis jujur di `penjelasan`
+dan `detail["catatan"]`: angka PnL = realized profit wallet itu **pada token
+ini** menurut GMGN, bukan rekam jejak lintas token. Seluruh halaman ini
+**tidak** memanggil Helius sama sekali (dijaga tes
+`tests/test_accumulation_page.py::test_helius_is_never_touched`).
+
+**Adaptasi karena modul yang disebut spec tidak ada di repo ini** (dicek:
+tidak ada `signals.py`, `breakout_guard.py`, `breakout_log.py`, `ai_prompt.py`,
+`levels.json`, `history.json`, `conviction.json`, `cvd.json`, `breakouts.json`,
+juga tidak ada test `test_breakout_guard.py` / `test_scoring_continuity.py` /
+`test_markup_ai_prompt.py`):
+
+- metrik 1 memakai `points[].buckets` dari `holder_history.json` (label
+  `>$0-$10` … `>$500k`; repo ini tidak punya boundary $1M),
+- metrik 6 menurunkan level support D1 sendiri
+  (`accumulation.derive_support_level` dari candle harian
+  `core.get_daily_candles`) karena `levels.json` tidak ada,
+- metrik 7 memakai tag `fresh_wallet` GMGN: **identitas funder tidak tersedia**
+  tanpa scan Helius, jadi yang diukur pola "wallet baru beli bertahap tanpa
+  jual", dan disclaimer itu ditulis eksplisit di penjelasan metrik.
+
+State baru disimpan di file **terpisah** `accumulation_history.json` (skema
+`wallet-depth-accumulation-v1`, git-ignored) — hanya skor/status + proporsi
+thinning per run, dipakai metrik 8 untuk menunjukkan arah (delta pp) dari waktu
+ke waktu. Format `watchlist.json`, `holder_history.json`, `holder_status.json`
+tidak diubah.
+
+## 2. Baris watchlist: kolom "Sejak masuk" + sinkronisasi (modul `watchlist_detail.py`)
+
+1. **Delta sejak masuk** — `dust_change_since_added()` membandingkan titik
+   pertama **pada/setelah** tanggal `added` dengan **scan terakhir**: perubahan
+   relatif %, poin persentase (satuan rule alert), dan perubahan jumlah wallet
+   dust. Tooltip memuat semuanya + umur window; bila belum ada titik setelah
+   tanggal masuk, pembandingnya titik pertama dan itu ditandai.
+2. **Warna sesuai ambang user** — `tone_for_change()`: turun **≥ 50%** = hijau
+   `#15803d`, naik **≥ 100%** = merah `#b91c1c`, di antaranya abu-abu; nilai
+   awal 0% → "—" (perubahan relatif dari nol tidak bermakna).
+3. **Sinkronisasi watchlist ↔ scan terakhir** — akar masalahnya sama dengan
+   kasus "grafik 0,7% tapi kartu 1,16%" di permintaan ke-4: baris watchlist
+   membaca snapshot `holder_status.json` (cron) sedangkan sparkline membaca
+   `holder_history.json` yang sudah memuat titik scan manual/scan lebih baru,
+   dan caption "Terakhir scan" memakai `status.updated_at` global. Perbaikan:
+   `resolve_view()` memilih sumber **terbaru** per baris (menandai `drift` bila
+   snapshot ≠ titik history > 0,01 pp, dan `stale` bila umur data > 2 jam),
+   `previous_pct()` memilih pembanding badge yang benar (bucket sebelum nilai
+   yang ditampilkan, bukan `sampled[-2]`), tiap baris kini menulis
+   `scan <waktu> · titik history · ⚠️ snapshot ≠ history · basi`, dan caption
+   card diganti `sync_caption_text()` — satu waktu "Scan terakhir" + rincian
+   berapa token memakai snapshot cron / titik history lebih baru / belum ada
+   data / basi.
+4. **Perubahan `app.py` dibatasi rendering**: impor `watchlist_detail`, hitung
+   `view`/`change` sekali per token, tambah kolom **Sejak masuk** (7 → 8
+   kolom), dan ganti caption. Tidak ada logika kalkulasi baru di `app.py`, dan
+   `lp_watchlist.py` / `holder_status.py` / `holder_history.py` tidak disentuh.
+
+## 3. Tes
+
+`tests/test_accumulation.py` (59), `tests/test_watchlist_detail.py` (37),
+`tests/test_watchlist_row_ui.py` (5, AppTest `app.py`),
+`tests/test_accumulation_page.py` (6, AppTest halaman baru + guard "Helius
+tidak tersentuh" + store snapshot di temp dir). Semua tanpa jaringan dan tanpa
+pytest, mengikuti pola suite yang ada.
+
+```
+Ran 615 tests ... OK   (sebelumnya 508)
+```
 
 # Kegiatan — 3 September 2026
 

@@ -848,10 +848,10 @@ class AppIntegrationTest(unittest.TestCase):
 @unittest.skipIf(pp is None or AppTest is None,
                  "UI dependencies are not installed")
 class StandalonePageTest(unittest.TestCase):
-    """``pages/6_🚀_Pre-Pump.py`` = rute mandiri ``main()``."""
+    """``pages/7_🚀_Pre-Pump.py`` = rute mandiri ``main()``."""
 
     PAGE = str(Path(__file__).resolve().parent.parent
-               / "pages" / "6_🚀_Pre-Pump.py")
+               / "pages" / "7_🚀_Pre-Pump.py")
 
     def setUp(self):
         patches = (
