@@ -10,7 +10,8 @@ import matplotlib.pyplot as plt
 import streamlit as st
 
 from helius_holders import depth_bar_chart, scan_token_holders
-from holder_history import (DUST_CAUTION_PCT, DUST_DANGER_PCT, dust_flag,
+from holder_history import (DUST_BEST_LABEL, DUST_BEST_PCT, DUST_CAUTION_PCT,
+                            DUST_DANGER_PCT, dust_flag,
                             history_for_mint, ingest_many,
                             load_durable_holder_history, merge_points,
                             resample_4h,
@@ -51,6 +52,7 @@ h1, h2, h3, h4, h5, h6 {color:#000000;}
 .dust-caution {background:#78350f;color:#fef3c7}
 .dust-danger {background:#7f1d1d;color:#fee2e2}
 .dust-none {background:#e2e8f0;color:#000000}
+.dust-best {background:#3b2f0a;color:#fde047;border:1px solid #facc15}
 .lp-head {display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;
  padding:.5rem 0 .1rem}
 .lp-title {font-size:1.15rem;font-weight:800;color:#000000}
@@ -129,6 +131,20 @@ def _dust_badge_html(flag: dict) -> str:
     cls = {"ok": "dust-ok", "caution": "dust-caution",
            "danger": "dust-danger"}.get(level, "dust-none")
     return f'<span class="dust-badge {cls}">{html.escape(label)}</span>'
+
+
+def _dust_best_html(flag: dict) -> str:
+    """Chip 🏆 BEST POOL — hanya Scan Meteora (permintaan user 2026-09-04).
+
+    ``flag["best"]`` sudah dijamin oleh ``dust_flag(..., holders=...)``:
+    dust % MC < 0,1% **dan** data holder valid (total_fetched > 0,
+    wallets_analyzed ≥ 40) — dust "0,00%" dari data gagal tidak pernah
+    mendapat chip ini. Level badge (AMAN) tidak berubah.
+    """
+    if not flag.get("best"):
+        return ""
+    label = html.escape(str(DUST_BEST_LABEL))
+    return f'<span class="dust-badge dust-best">🏆 {label}</span>'
 
 
 def _delta_pp_html(delta, digits: int = 2) -> str:
@@ -320,8 +336,9 @@ def _render_lp_row(row: dict) -> None:
                      expanded=False):
         figure = lp_chart_figure(row.get("points") or [], symbol)
         if figure is None:
-            st.info("Butuh minimal 2 titik bucket 4 jam. Cron (~15 menit) "
-                    "atau tombol **Scan holder watchlist** akan mengisinya.")
+            st.info("Butuh minimal 2 titik bucket 4 jam. Cron (target ±1 jam, "
+                    "best-effort) atau tombol **Scan holder watchlist** "
+                    "akan mengisinya.")
         else:
             st.pyplot(figure, use_container_width=True)
             plt.close(figure)
@@ -524,6 +541,9 @@ def _render_meteora_scan() -> None:
         "masih muncul di 1 jam **tetap ditampilkan**. Dust holder "
         f"**≥ {DUST_DANGER_PCT:g}% MC (BAHAYA)** disembunyikan, "
         f"**≥ {DUST_CAUTION_PCT:g}% MC** diberi badge **HATI-HATI**. "
+        f"Dust **< {DUST_BEST_PCT:g}% MC** dengan data holder valid "
+        "(≥ 40 wallet) diberi badge 🏆 BEST POOL — level AMAN tidak berubah, "
+        "hanya penanda kebersihan distribusi. "
         "⭐ memasukkan token ke card **Chart LP** di bagian atas dashboard. "
         "Tombol kanan: Meteora + HawkFi."
     )
@@ -575,7 +595,13 @@ def _render_meteora_scan() -> None:
         pool = str(row.get("pool_address") or "")
         dust_count = row.get("dust_count")
         dust_pct = row.get("dust_pct_mc")
-        flag = dust_flag(dust_pct)
+        # BEST POOL butuh bukti data holder valid (bukan cuma angka): guard
+        # ada di dust_flag(holders=…), lihat holder_history._holders_valid_for_best.
+        analysis = (row.get("analysis")
+                    if isinstance(row.get("analysis"), dict) else {})
+        holders = (analysis.get("holders")
+                   if isinstance(analysis.get("holders"), dict) else None)
+        flag = dust_flag(dust_pct, holders=holders)
         tf = []
         if row.get("in_24h"):
             tf.append("24H")
@@ -600,7 +626,8 @@ def _render_meteora_scan() -> None:
         pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.2f}%"
         cols[3].markdown(
             f'<div class="watchlist-metric"><div class="watchlist-metric-value">'
-            f"{pct_txt}</div>{_dust_badge_html(flag)}</div>",
+            f"{pct_txt}</div>{_dust_badge_html(flag)}"
+            f"{_dust_best_html(flag)}</div>",
             unsafe_allow_html=True)
         cols[4].markdown(
             f'<div class="watchlist-metric"><div class="watchlist-metric-value">'
@@ -668,7 +695,7 @@ elif watchlist:
     if _missing:
         st.info("Holder belum terambil untuk: " + ", ".join(_missing[:8])
                 + (" …" if len(_missing) > 8 else "")
-                + ". Cron akan mencoba lagi ±15 menit; atau scan manual.",
+                + ". Cron akan mencoba lagi ±1 jam; atau scan manual.",
                 icon="ℹ️")
 
 if st.button("🔄 Scan holder watchlist", type="primary",
