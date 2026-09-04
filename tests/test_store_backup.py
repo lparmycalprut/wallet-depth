@@ -255,9 +255,13 @@ class MergeStoresTest(unittest.TestCase):
 
 class PruneStoreTest(unittest.TestCase):
     def _big_store(self):
+        # Titik berjarak satu bucket 4 jam (skenario nyata cadence 4 jam) —
+        # langkah pangkas "42 bucket 4 jam terakhir" memakai resample_4h,
+        # jadi titik dengan jarak < 1 bucket akan runtuh ke 1 titik.
+        step = hh.INTERVAL_SEC
         return {"updated_at": 1, "tokens": {"B%02d" % i: {
             "symbol": "B%02d" % i,
-            "points": [{"ts": t, "dust_count": t,
+            "points": [{"ts": t * step, "dust_count": t,
                         "buckets": {">$0-$10": t, "$10-$100": t}}
                        for t in range(84)],
             "baseline": {"ts": 1, "depth": {"buckets": [{"label": "x"}] * 7}},
@@ -302,6 +306,26 @@ class PruneStoreTest(unittest.TestCase):
         self.assertNotIn("buckets", pruned["tokens"]["B00"]["points"][0])
 
     defInput = None
+
+    def test_titik_per_jam_diresample_ke_42_bucket_4_jam(self):
+        # Cadence hourly (2026-09-04): tangga pangkas harus menurunkan titik
+        # mentah ke bucket 4 jam dulu — 42 titik mentah hanya 42 jam, bukan
+        # lagi "7 hari grafik". 336 titik per jam (14 hari) → 42 bucket.
+        t0 = 1_800_000_000
+        store = {"updated_at": t0 + 335 * 3600, "tokens": {"H01": {
+            "symbol": "H01",
+            "points": [{"ts": t0 + hour * 3600, "dust_pct_mc": 0.1,
+                        "dust_count": hour % 9, "buckets": {">$0-$10": 1}}
+                       for hour in range(336)]}}}
+        pruned, dropped = hh.prune_store_for_backup(store, 1)
+        points = pruned["tokens"]["H01"]["points"]
+        self.assertEqual(len(points), 42)
+        for point in points:
+            self.assertEqual(int(point["ts"]) % hh.INTERVAL_SEC, 0)
+            self.assertNotIn("buckets", point)
+        self.assertEqual(points[-1]["ts"],
+                         ((t0 + 335 * 3600) // hh.INTERVAL_SEC)
+                         * hh.INTERVAL_SEC)
 
     def test_store_rusak(self):
         pruned, dropped = hh.prune_store_for_backup(None, 1)

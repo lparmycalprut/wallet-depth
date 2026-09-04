@@ -52,6 +52,17 @@ def _atomic_write_json(path: str, data, **dump_kwargs) -> None:
 DUST_DANGER_PCT = 1.0
 # HATI-HATI: dust sudah memegang >= 0,5% MC tapi belum sebatas BAHAYA.
 DUST_CAUTION_PCT = 0.5
+# BEST POOL: dust < 0,1% MC = distribusi holder sangat bersih (TAMBAHAN,
+# bukan pengganti level AMAN/HATI-HATI/BAHAYA). Boundary sengaja **strict
+# di bawah 0,1%**: nilai == 0,1% tidak mendapat badge BEST POOL dan juga
+# tidak memicu alert ``early_dump`` (yang menyala saat > 0,1%), jadi badge
+# dan alert tidak pernah tumpang tindih di angka yang sama.
+DUST_BEST_PCT = 0.1
+# Label badge BEST POOL (tampil apa adanya di UI — Scan Meteora).
+DUST_BEST_LABEL = "BEST POOL"
+# Data holder di bawah jumlah ini dianggap gagal/tidak representatif:
+# dust "0,00%" dari data kosong/rusak TIDAK BOLEH jadi BEST POOL.
+DUST_BEST_MIN_HOLDERS = 40
 # alias lama (kompatibilitas import)
 DUST_LIMIT_PCT = DUST_DANGER_PCT
 # Urutan keparahan badge (dipakai sorting Chart LP / watchlist).
@@ -61,7 +72,12 @@ COHORT_WINDOW_SEC = 4 * 3600     # freeze Crab+Fish tiap 4 jam
 COHORT_MAX = 200                 # address yang diikuti
 MID_USD_MIN = 100.0              # Crab bawah (wallet_depth: > $100)
 MID_USD_MAX = 10_000.0           # Fish atas (<= $10k)
-MAX_POINTS = 84                  # 14 hari × 6 bucket 4 jam
+# 14 hari × 24 titik/jam: cron naik ke 1× per jam (2026-09-04), sehingga 84
+# titik (kalibrasi 6×/hari) hanya muat 3,5 hari. 336 titik mentah per jam
+# di-resample ke bucket 4 jam di UI (resample_4h), jadi grafik/chart tetap
+# 14 hari × 6 bucket 4 jam dan snapshot dashboard tidak ikut membengkak
+# (compact_history_for_status = resample_4h, maks 84 bucket).
+MAX_POINTS = 336                 # 14 hari × 24 titik/jam (cron hourly)
 MIN_POINT_GAP_SEC = 8 * 60       # jangan dobel-titik < 8 menit
 
 # Volatilitas harga (konfirmasi alert dust) dari candle hourly GeckoTerminal.
@@ -103,30 +119,63 @@ def empty_store() -> dict:
     return {"updated_at": None, "tokens": {}}
 
 
-def dust_flag(dust_pct_mc, prev_pct=None) -> dict:
-    """Klasifikasi dust % MC: ok / caution / danger.
+def _holders_valid_for_best(holders) -> bool:
+    """Guard kebenaran data badge **BEST POOL**.
+
+    Dust ``0,00%`` bisa muncul bukan karena pool bersih, tapi karena data
+    holder gagal/kosong (provider mati, fetch 0 wallet) atau sampel terlalu
+    kecil untuk dipercaya. BEST POOL **hanya** boleh keluar bila:
+
+    - ada hasil holder yang benar-benar terambil (``total_fetched > 0``),
+    - jumlah wallet yang dianalisis ≥ :data:`DUST_BEST_MIN_HOLDERS` (40).
+
+    Catatan (isu terbuka): ``dust_pct_supply`` di-hardcode 0 untuk sumber
+    Helius — guard re-klasifikasi dust di ``TODO(alerts)`` bersifat anotasi
+    (peringatan), bukan reject, dan tidak dipakai di sini.
+    """
+    if not isinstance(holders, dict):
+        return False
+    if _int(holders.get("total_fetched")) <= 0:
+        return False
+    wallets = _int(holders.get("wallets_analyzed"),
+                   _int(holders.get("real_count")) + _int(holders.get("dust_count")))
+    return wallets >= DUST_BEST_MIN_HOLDERS
+
+
+def dust_flag(dust_pct_mc, prev_pct=None, *, holders=None) -> dict:
+    """Klasifikasi dust % MC: ok / caution / danger (+ info ``best``).
 
     - ``>= 0,5% MC`` → **HATI-HATI** (``caution``): dust sudah memegang
       porsi MC yang berarti, pantau lebih ketat.
     - ``>= 1% MC`` → **BAHAYA** (``danger``): ``hide`` True, disembunyikan
       dari Scan Meteora.
 
+    Level/label/hide yang lama **tidak berubah** (AMAN/HATI-HATI/BAHAYA
+    tetap). Tambahan aditif: ``best`` True hanya untuk pool dengan
+    ``dust_pct_mc < DUST_BEST_PCT`` (0,1%) **dan** data holder valid — lihat
+    :func:`_holders_valid_for_best` (``holders`` = dict hasil
+    ``analysis["holders"]``; ``None`` = tidak ada bukti → tidak pernah best,
+    supaya pemanggil lama seperti watchlist/LP card tidak berubah perilaku).
+    ``best`` tidak memengaruhi ``level``/``hide``/``dust_level_rank``.
+
     ``rising`` True jika % MC naik dibanding titik sebelumnya.
     """
     pct = _float(dust_pct_mc, None)
     prev = _float(prev_pct, None)
     rising = bool(pct is not None and prev is not None and pct > prev)
+    best = bool(pct is not None and pct < DUST_BEST_PCT
+                and _holders_valid_for_best(holders))
     if pct is None:
         return {"level": "unknown", "label": "—", "hide": False,
-                "rising": False, "pct": None}
+                "rising": False, "pct": None, "best": False}
     if pct >= DUST_DANGER_PCT:
         return {"level": "danger", "label": "BAHAYA", "hide": True,
-                "rising": rising, "pct": pct}
+                "rising": rising, "pct": pct, "best": False}
     if pct >= DUST_CAUTION_PCT:
         return {"level": "caution", "label": "HATI-HATI", "hide": False,
-                "rising": rising, "pct": pct}
+                "rising": rising, "pct": pct, "best": False}
     return {"level": "ok", "label": "AMAN", "hide": False,
-            "rising": rising, "pct": pct}
+            "rising": rising, "pct": pct, "best": best}
 
 
 def dust_level_rank(level) -> int:
@@ -1149,6 +1198,11 @@ def _merge_alert_state(current, incoming) -> dict:
         picked = _pick_by_ts(current.get(key), incoming.get(key))
         if picked:
             merged[key] = picked
+    # Marker ``early_dump`` (titik terakhir yang direkam rule early dump):
+    # yang paling baru menang, sama seperti rolling/latest_detail.
+    early = _pick_by_ts(current.get("early_dump"), incoming.get("early_dump"))
+    if early:
+        merged["early_dump"] = early
     ids = list(dict.fromkeys(
         [str(item) for item in (current.get("sent_event_ids") or []) if item]
         + [str(item) for item in (incoming.get("sent_event_ids") or []) if item]
@@ -1185,7 +1239,8 @@ def merge_stores(*stores) -> dict:
     - ``chronology``    : interval union; snapshot wallet yang punya peta menang
       (baseline paling tua, latest paling baru).
     - ``alert_state``   : snapshot baseline/rolling terbaru; ``sent_event_ids``
-      union; ``last_sent`` max per kunci; ``rejected_signals`` gabungan.
+      union; ``last_sent`` max per kunci; ``rejected_signals`` gabungan;
+      marker ``early_dump`` (rule EARLY DUMP) yang paling baru menang.
     """
     out = empty_store()
     stamps = []
@@ -1239,7 +1294,10 @@ def prune_store_for_backup(store: dict | None,
     2. interval kronologi di luar 6 terbaru,
     3. peta wallet kronologi (jumlahnya tetap),
     4. ``points[].buckets`` (komposisi bucket per titik),
-    5. titik di luar 42 terbaru (7 hari),
+    5. titik di luar **42 bucket 4 jam terakhir** (7 hari grafik) — titik
+       mentah per jam (cron hourly sejak 2026-09-04) di-resample dulu ke
+       bucket 4 jam supaya backup tetap menyimpan ~7 hari grafik, bukan 42
+       jam; ``resample_4h`` memakai titik terakhir per bucket,
     6. ``latest_detail``.
     """
     dropped: list = []
@@ -1292,10 +1350,14 @@ def prune_store_for_backup(store: dict | None,
                     point.pop("buckets", None)
 
     def trim_points():
+        # 42 titik mentah per jam = 42 jam saja (sebelumnya 7 hari saat
+        # cadence 6×/hari). Tangga pangkas ini mencari "grafik 7 hari di
+        # backup": resample ke bucket 4 jam dulu, baru sisakan 42 bucket
+        # terakhir (titik terakhir per bucket menang).
         for slot in _each_slot():
             points = slot.get("points")
             if isinstance(points, list) and len(points) > 42:
-                slot["points"] = points[-42:]
+                slot["points"] = resample_4h(points)[-42:]
 
     def drop_latest_detail():
         for slot in _each_slot():
@@ -1306,7 +1368,7 @@ def prune_store_for_backup(store: dict | None,
         ("chronology.intervals di luar 6 terbaru", trim_intervals),
         ("chronology peta wallet", drop_chrono_wallets),
         ("points[].buckets", drop_point_buckets),
-        ("points di luar 42 terbaru", trim_points),
+        ("points di luar 42 bucket 4 jam terakhir (7 hari)", trim_points),
         ("latest_detail", drop_latest_detail),
     ]
     for label, step in steps:

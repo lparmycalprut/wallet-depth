@@ -257,5 +257,115 @@ class HistoryStoreTest(unittest.TestCase):
         self.assertEqual(restored["sent_event_ids"], ["event-1"])
 
 
+
+
+def _valid_holders(fetched=55, wallets=45):
+    return {"total_fetched": fetched, "wallets_analyzed": wallets,
+            "real_count": wallets - 3, "dust_count": 3}
+
+
+class DustBestFlagTest(unittest.TestCase):
+    """Badge BEST POOL (dust < 0,1% MC) + guard kebenaran data (2026-09-04)."""
+
+    def test_best_hanya_di_bawah_01_persen_dengan_data_valid(self):
+        flag = hh.dust_flag(0.08, holders=_valid_holders())
+        self.assertTrue(flag["best"])
+        # Level lama tidak berubah: badge BEST POOL bersifat penanda tambahan.
+        self.assertEqual(flag["level"], "ok")
+        self.assertEqual(flag["label"], "AMAN")
+        self.assertFalse(flag["hide"])
+
+    def test_pas_di_01_persen_tidak_best_dan_tidak_memicu_alert(self):
+        # Boundary sengaja strict: == 0,1% bukan BEST POOL (< 0,1%) dan juga
+        # tidak memicu rule early_dump (> 0,1%) — dua sinyal tidak tumpang
+        # tindih di angka yang sama (dokumentasi PROGRESS.md).
+        flag = hh.dust_flag(0.1, holders=_valid_holders())
+        self.assertFalse(flag["best"])
+        self.assertEqual(flag["level"], "ok")
+
+    def test_di_atas_01_persen_tidak_best_walau_data_valid(self):
+        self.assertFalse(hh.dust_flag(0.1001, holders=_valid_holders())[
+                         "best"])
+        self.assertFalse(hh.dust_flag(0.5, holders=_valid_holders())["best"])
+
+    def test_tanpa_holders_tidak_pernah_best(self):
+        # Pemanggil lama (watchlist / Chart LP) tidak mengirim bukti data →
+        # perilaku default tidak berubah: tidak ada badge BEST POOL.
+        self.assertFalse(hh.dust_flag(0.05)["best"])
+        self.assertFalse(hh.dust_flag(0.05, holders=None)["best"])
+        self.assertFalse(hh.dust_flag(0.05, holders={})["best"])
+
+    def test_data_kosong_tidak_best(self):
+        # dust 0,00% juga muncul saat fetch holder gagal/kosong.
+        self.assertFalse(hh.dust_flag(0.0, holders={
+            "total_fetched": 0, "wallets_analyzed": 0})["best"])
+        self.assertFalse(hh.dust_flag(0.0, holders={
+            "total_fetched": 0, "wallets_analyzed": 45})["best"])
+
+    def test_holder_di_bawah_min_40_tidak_best(self):
+        self.assertFalse(hh.dust_flag(0.05, holders=_valid_holders(
+            fetched=39, wallets=38))["best"])
+        self.assertFalse(hh.dust_flag(0.05, holders={
+            "total_fetched": 400, "wallets_analyzed": 39})["best"])
+
+    def test_fallback_wallets_analyzed_dari_real_dan_dust(self):
+        holders = {"total_fetched": 80, "real_count": 30, "dust_count": 12}
+        self.assertTrue(hh.dust_flag(0.03, holders=holders)["best"])
+        holders = {"total_fetched": 80, "real_count": 20, "dust_count": 12}
+        self.assertFalse(hh.dust_flag(0.03, holders=holders)["best"])
+
+    def test_flag_tetap_aman_walau_unknown(self):
+        flag = hh.dust_flag(None, holders=_valid_holders())
+        self.assertFalse(flag["best"])
+        self.assertEqual(flag["level"], "unknown")
+
+
+class HourlyCadenceTest(unittest.TestCase):
+    """Cron 1×/jam (2026-09-04): MAX_POINTS 336 = 14 hari titik mentah."""
+
+    def test_max_points_dikalibrasi_14_hari_x_24_jam(self):
+        self.assertEqual(hh.MAX_POINTS, 24 * 14)
+
+    def test_ingest_hourly_potong_ke_336_titik_terbaru(self):
+        store = hh.empty_store()
+        t0 = 1_800_000_000
+        for hour in range(400):  # ~16,7 hari > 14 hari
+            hh.ingest_one(store, "MINT", {
+                "symbol": "TST", "analyzed_at": t0 + hour * 3600,
+                "holders": {"dust_count": hour % 10, "dust_pct_mc": 0.1,
+                            "dust_value_usd": 5.0, "real_count": 40,
+                            "mid": {"count": 5, "balances": {"A": 1.0}},
+                            "cohort_now": {}}}, now=t0 + hour * 3600)
+        points = store["tokens"]["MINT"]["points"]
+        self.assertEqual(len(points), hh.MAX_POINTS)
+        # 336 jam terakhir yang tersisa, urut naik.
+        self.assertEqual(points[0]["ts"], t0 + (400 - 336) * 3600)
+        self.assertEqual(points[-1]["ts"], t0 + 399 * 3600)
+
+    def test_resample_titik_per_jam_tetap_bucket_4_jam(self):
+        # 336 titik per jam = 14 hari → maksimal 84 bucket 4 jam (sama
+        # seperti sebelum cron hourly), nilai bucket = titik terakhir.
+        t0 = 1_800_000_000
+        points = [{"ts": t0 + hour * 3600, "dust_pct_mc": (hour % 7) / 10.0}
+                  for hour in range(336)]
+        sampled = hh.resample_4h(points)
+        self.assertLessEqual(len(sampled), 85)
+        last_bucket = sampled[-1]["ts"]
+        self.assertEqual(last_bucket % hh.INTERVAL_SEC, 0)
+        self.assertAlmostEqual(sampled[-1]["dust_pct_mc"], points[-1][
+            "dust_pct_mc"])
+        # Sparkline tetap jalan di atas titik mentah per jam.
+        self.assertIn("<svg", hh.sparkline_svg(points))
+
+    def test_merge_stores_ikut_batas_336(self):
+        banyak = {"updated_at": 1, "tokens": {"MINT": {
+            "symbol": "TST",
+            "points": [{"ts": t, "dust_count": t} for t in range(400)]}}}
+        merged = hh.merge_stores(banyak, {"updated_at": 2, "tokens": {}})
+        self.assertLessEqual(len(merged["tokens"]["MINT"]["points"]),
+                             hh.MAX_POINTS)
+        self.assertEqual(len(merged["tokens"]["MINT"]["points"]), 336)
+
+
 if __name__ == "__main__":
     unittest.main()
