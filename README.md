@@ -238,6 +238,64 @@ Meteora Pool** (`source=meteora`):
   bagian atas dashboard, lengkap dengan grafik perubahan dust holder)
 - Shortcut: [Meteora DLMM](https://app.meteora.ag/dlmm/) + [HawkFi](https://www.hawkfi.ag/meteora/)
 
+## Kolom "Sejak masuk" di watchlist
+
+Setiap baris 📋 Watchlist Holder menampilkan perubahan dust **sejak token
+ditambahkan** (`added` di `watchlist.json`) **sampai scan terakhir**:
+
+- perubahan **relatif** (%) dust % MC — angka besar di kolom **Sejak masuk**,
+- pembandingnya titik pertama **pada/setelah** tanggal masuk; bila belum ada
+  titik setelah tanggal itu, dipakai titik pertama dan ditandai di tooltip,
+- tooltip memuat nilai awal → akhir (% MC), perubahan **poin persentase**
+  (satuan rule alert), perubahan **jumlah wallet dust**, dan umur window,
+- warna mengikuti ambang permintaan user:
+  **turun ≥ 50%** = hijau (`#15803d`, dust menipis),
+  **naik ≥ 100%** = merah (`#b91c1c`, dust menebal 2×), di antaranya abu-abu.
+
+**Sinkronisasi baris ↔ scan terakhir.** Sebelumnya baris membaca snapshot
+`holder_status.json` (cron) sementara sparkline membaca `holder_history.json`
+yang sudah memuat titik scan manual/scan lebih baru — satu token bisa
+menampilkan dua angka berbeda. `watchlist_detail.resolve_view()` memilih
+sumber **terbaru** untuk satu baris, `previous_pct()` memilih pembanding
+badge yang benar, dan caption card diganti `sync_caption_text()`: satu waktu
+"Scan terakhir" + rincian berapa token memakai snapshot cron, berapa memakai
+titik history yang lebih baru, berapa yang datanya basi (> 2 jam), dan berapa
+yang snapshot-nya berbeda dari titik history (⚠️).
+
+## Deteksi Akumulasi (8 heuristik)
+
+Halaman `pages/6_🔎_Deteksi_Akumulasi.py` menghitung 8 heuristik untuk token
+**watchlist** (sumber daftar selalu `watchlist.load_watchlist()`), masing-masing
+mengembalikan `{nilai, status, penjelasan, cukup_data}` sehingga "tidak tahu"
+tidak pernah dihitung sebagai "netral":
+
+| # | Metrik | Bahan mentah |
+|---|---|---|
+| 1 | Tier Migration Velocity | bucket wallet depth dua titik `holder_history` terakhir |
+| 2 | Diamond Hands Ratio | posisi net per wallet dari swap GMGN (tidak pernah net-sell) |
+| 3 | Pola DCA vs One-off Buy | jumlah buy unik + dominasi satu buy per wallet |
+| 4 | Smart Money / PnL Wallet | **GMGN saja**: `maker_tags` + `realized_profit` per wallet |
+| 5 | Silent Range Accumulation | volume DexScreener (lantai $10K–plafon $250K), range menyempit, CVD net 0…+15% |
+| 6 | Spring / Test Pattern | candle 4 jam menusuk level support D1 lalu close di atasnya, volume tipis |
+| 7 | Fresh Wallet Prep | tag `fresh_wallet` GMGN, beli bertahap ≥ 30 menit, tanpa sell |
+| 8 | Sell-Side Liquidity Thinning | % posisi net di wallet tanpa jual 14 hari (+ delta dari snapshot sebelumnya) |
+
+Skor 0–100 = rata-rata berbobot metrik yang **cukup data**; ≥ 60 →
+**Terindikasi Akumulasi**, selain itu **Netral**, tanpa data →
+**Tidak Cukup Data**. Snapshot ringkas disimpan ke `accumulation_history.json`
+(skema sendiri, git-ignored) supaya metrik 8 bisa menunjukkan arah proporsinya.
+
+**Kuota Helius tidak dipakai halaman ini** (keputusan user 2026-09-04):
+metrik 4 memakai realized profit per wallet dari GMGN, bukan riwayat PnL
+lintas token lewat Helius Enhanced API, dan metrik 7 memakai tag
+`fresh_wallet` GMGN — identitas funder tidak tersedia tanpa scan Helius, jadi
+metrik itu menandai **pola** wallet baru (ditulis eksplisit di penjelasan).
+Level support metrik 6 diturunkan dari candle harian `core.get_daily_candles`
+karena repo ini tidak punya `levels.json`.
+
+⚠️ Seluruh metrik heuristik: penanda untuk diperiksa manual, bukan bukti
+akumulasi dan bukan prediksi arah harga.
+
 ## Modul
 
 | File | Peran |
@@ -258,6 +316,9 @@ Meteora Pool** (`source=meteora`):
 | `trending_ui.py` | Listing Trending/Degen + Add All Watchlist |
 | `pages/4_📊_CVD.py` | Chart CVD harian |
 | `pages/5_🧮_Holder.py` | Holder Analytic: dust, grafik 4 jam, kohort, kronologi FULL |
+| `watchlist_detail.py` | Baris watchlist: delta dust **sejak masuk watchlist** (relatif % + pp + jumlah wallet), warna ambang −50%/+100%, dan penyatuan angka baris ↔ scan terakhir |
+| `accumulation.py` | 8 heuristik deteksi akumulasi (murni kalkulasi, tanpa Helius) + skor 0–100 + store snapshot `accumulation_history.json` |
+| `pages/6_🔎_Deteksi_Akumulasi.py` | Halaman **Deteksi Akumulasi**: ringkasan skor/status per token watchlist + expander breakdown 8 metrik |
 
 ## Menjalankan
 
@@ -318,7 +379,7 @@ python -m unittest discover tests
 python -m py_compile holder_history.py holder_chronology.py meteora_screener.py \
   holder_analysis.py holder_status.py telegram_alerts.py alert_context.py \
   lp_watchlist.py core.py app.py scripts/scan_holders.py trending_ui.py \
-  watchlist.py
+  watchlist.py watchlist_detail.py accumulation.py
 ```
 
 ## Scan manual vs snapshot cron

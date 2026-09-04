@@ -13,3 +13,4 @@ venv/
 .streamlit/secrets.toml
 funders_cache.json
 watchlist_pending.json
+accumulation_history.json
