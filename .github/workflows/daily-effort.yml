@@ -2,9 +2,12 @@ name: Holder Dust Scanner
 
 on:
   schedule:
-    # GitHub Actions dapat terlambat beberapa menit; history di-resample
-    # per 4 jam sehingga tidak bergantung pada waktu mulai yang persis.
-    - cron: "*/15 * * * *"
+    # Target 1× per jam (sejak 2026-09-04). GitHub Actions men-throttle
+    # schedule (kadens nyata bisa jadi ±2 jam dan bisa telat/dilewati —
+    # lihat DEPLOY.md), jadi ini target, bukan janji. Alert/dedup memakai
+    # bucket 4 jam dan titik mentah per jam, sehingga run yang telat tetap
+    # aman; yang penting tidak lebih sering dari ~1 jam.
+    - cron: "0 * * * *"
 
   workflow_dispatch:
     inputs:
@@ -24,6 +27,11 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
+
+    # Run hourly yang lambat tidak boleh menumpuk antre di concurrency
+    # group: tanpa batas ini sebuah run > 1 jam bisa membuat beberapa run
+    # tertunda sekaligus (45 menit jauh di atas durasi scan normal).
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
