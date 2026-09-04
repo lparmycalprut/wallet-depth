@@ -238,6 +238,53 @@ Meteora Pool** (`source=meteora`):
   bagian atas dashboard, lengkap dengan grafik perubahan dust holder)
 - Shortcut: [Meteora DLMM](https://app.meteora.ag/dlmm/) + [HawkFi](https://www.hawkfi.ag/meteora/)
 
+## 🚀 Pre-Pump Screener
+
+Section di dashboard utama (`pre_pump_screener.main(configure_page=False)`)
+dan halaman mandiri `pages/7_🚀_Pre-Pump.py`. Scope: **hanya token watchlist
+`source=degen`** (token Meteora/LP dan manual dikecualikan). Empat sinyal
+independen, tiap sinyal mengembalikan `confidence` 0–1:
+
+| Sinyal | Sumber | Syarat menyala |
+|---|---|---|
+| ✅ **Liquidity wave** | `liquidity.usd` DexScreener → journal `pre_pump_liq.json` | add kedua ≥ **5x** add pertama dalam **48 jam** (token berlikuiditas < $25k: **3x**) |
+| ⚠️ **Holder consolidation** | `holder_status.json` + titik 24 jam lalu di `holder_history.json` | ≥ **5 wallet** keluar dari dust **dan** rata-rata bag real ≥ **2x** |
+| 🔥 **Volume calm-before-storm** | candle hourly GeckoTerminal 7 hari | 24 jam **pra-spike** ≤ **30%** rata-rata harian **dan** 6 jam terakhir ≥ **2x** baseline 6 jam |
+| 📊 **TX velocity** | swap Helius (`cvd.fetch_swaps`), fallback agregat `txns` DexScreener | akselerasi 2 jam akhir vs 2 jam awal ≥ **1,5** (+150%); `buy_pressure` ≥ **0,65** = whale |
+
+```text
+PUMP SCORE      = (0,25·liq + 0,25·consol + 0,25·vol + 0,25·vel) × 10
+confidence_pct  = rata-rata confidence sinyal AKTIF saja (tanpa sinyal = 0%)
+EST. ALPHA WINDOW: ≥3 sinyal & skor ≥ 6,5 → 2–6 jam (0–2 jam bila TX
+                   velocity sudah akselerasi); skor ≥ 5 → 6–24 jam
+```
+
+Catatan implementasi yang perlu diketahui:
+
+- **Journal likuiditas.** DexScreener tidak punya endpoint riwayat
+  likuiditas, jadi tiap scan mencatat `liquidity.usd` per pool ke
+  `pre_pump_liq.json` (gitignored, dipangkas ke 72 jam / 900 titik). Run
+  pertama hanya mengisi journal: dengan < 2 observasi confidence likuiditas
+  dikunci **0,3** (bukan 0, bukan 1). Pola dua gelombang baru terbaca
+  setelah beberapa run.
+- **Window volume tidak boleh tumpang tindih.** Syarat "24 jam ≤ 30%
+  rata-rata" dan "6 jam ≥ 2x baseline" mustahil benar bersamaan bila 24 jam-nya
+  trailing (window 6 jam ada di dalamnya). Window tenang dihitung pada 24 jam
+  **sebelum** window 6 jam; rasio 24 jam trailing tetap dilaporkan sebagai
+  `vol_ratio_24h_trailing`.
+- **`VOLUME_SPIKE_BASE`** (`"6h"` default) memilih pembanding lonjakan 6 jam;
+  ubah ke `"daily"` untuk membaca blueprint (`vol_6h ≥ 2x` rata-rata harian).
+- **Auto-refresh 5 menit** memakai `st.fragment(run_every=300)`, bukan
+  `while True: time.sleep(300)` — loop seperti itu tidak pernah kembali di
+  Streamlit (script dijalankan ulang per interaksi), UI akan membeku.
+  Fragment punya guard umur hasil scan supaya tidak rerun berulang.
+- **Tanpa `HELIUS_API_KEY`** sinyal TX velocity tetap jalan dari agregat
+  `txns` DexScreener, ditandai `source=dexscreener_txns` dengan confidence
+  dibatasi **0,6**.
+- Token tanpa history 7 hari → sinyal volume dilewati; snapshot holder < 24
+  jam → pakai titik tertua dan tandai **stale**; data likuiditas hilang →
+  confidence 0,3.
+
 ## Kolom "Sejak masuk" di watchlist
 
 Setiap baris 📋 Watchlist Holder menampilkan perubahan dust **sejak token
@@ -314,11 +361,14 @@ akumulasi dan bukan prediksi arah harga.
 | `telegram_alerts.py` | Rule dust 4 jam/baseline + ⚡ EARLY DUMP (crossing 0,1% MC, token pool, tanpa gerbang volume), dedup bucket 4 jam + jeda 1 jam, Telegram Bot API (+ link GMGN & DexScreener di pesan) |
 | `links.py` | Satu sumber URL eksternal: GMGN, DexScreener, Solscan, Meteora DLMM, HawkFi (HTML untuk UI, teks polos untuk Telegram) |
 | `trending_ui.py` | Listing Trending/Degen + Add All Watchlist |
+| `pre_pump_screener.py` | 🚀 Pre-Pump Screener: 4 sinyal on-chain (gelombang add likuiditas + journal, konsolidasi holder, volume calm-before-storm, TX velocity), PUMP SCORE 0–10, kartu token, auto-refresh `st.fragment(run_every=300)` |
 | `pages/4_📊_CVD.py` | Chart CVD harian |
 | `pages/5_🧮_Holder.py` | Holder Analytic: dust, grafik 4 jam, kohort, kronologi FULL |
+
 | `watchlist_detail.py` | Baris watchlist: delta dust **sejak masuk watchlist** (relatif % + pp + jumlah wallet), warna ambang −50%/+100%, dan penyatuan angka baris ↔ scan terakhir |
 | `accumulation.py` | 8 heuristik deteksi akumulasi (murni kalkulasi, tanpa Helius) + skor 0–100 + store snapshot `accumulation_history.json` |
 | `pages/6_🔎_Deteksi_Akumulasi.py` | Halaman **Deteksi Akumulasi**: ringkasan skor/status per token watchlist + expander breakdown 8 metrik |
+| `pages/7_🚀_Pre-Pump.py` | Halaman mandiri Pre-Pump Screener |
 
 ## Menjalankan
 

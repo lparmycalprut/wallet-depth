@@ -1,5 +1,45 @@
 # Kegiatan — 4 September 2026
 
+Permintaan user: halaman baru **🚀 Pre-Pump Screener** — deteksi memecoin
+yang mendekati pump lewat sinyal on-chain + velocity volume. Modul baru
+`pre_pump_screener.py` (scope: **hanya watchlist `source=degen`**), section
+di `app.py` + halaman mandiri `pages/7_🚀_Pre-Pump.py`.
+
+1. **Empat sinyal** → `PUMP SCORE` 0–10 (rata-rata berbobot 0,25 × 4 × 10),
+   kartu per token diurut skor menurun: ✅ Liquidity Wave (add kedua ≥ 5x
+   dalam 48 jam; 3x untuk likuiditas < $25k), ⚠️ Holder Consolidation
+   (≥ 5 wallet keluar dari dust + avg bag real ≥ 2x), 🔥 Volume Spike
+   (calm-before-storm 7 hari), 📊 TX Velocity (akselerasi ≥ 1,5 +
+   buy_pressure ≥ 0,65). Shortcut kartu: 🔗 Chart (DexScreener), 👥 Holders,
+   📈 CVD, plus link GMGN/Dex.
+2. **Journal likuiditas** `pre_pump_liq.json` (gitignored): DexScreener tidak
+   menyediakan riwayat likuiditas, jadi tiap scan mencatat `liquidity.usd`
+   per pool (72 jam / 900 titik). < 2 observasi → confidence likuiditas
+   dikunci **0,3**, bukan 0 dan bukan 1; pola dua gelombang baru terbaca
+   setelah beberapa run.
+3. **Tiga koreksi atas blueprint** (semuanya dijelaskan di docstring):
+   (a) syarat "24 jam ≤ 30% rata-rata" + "6 jam ≥ 2x baseline" mustahil
+   benar bersamaan bila 24 jam-nya trailing → window tenang dihitung pada
+   24 jam **sebelum** window 6 jam (`vol_ratio_24h_trailing` tetap
+   dilaporkan, `VOLUME_SPIKE_BASE="daily"` mengembalikan pembacaan harfiah);
+   (b) auto-refresh memakai `st.fragment(run_every=300)` + `st.rerun`, bukan
+   `while True: time.sleep(300)` yang membuat script Streamlit tidak pernah
+   kembali (UI beku); (c) `app.py` tidak punya tab bar, jadi screener masuk
+   sebagai section yang memanggil `main(configure_page=False)` —
+   `st.set_page_config` hanya boleh sekali per halaman.
+4. **Guard sinyal palsu**: token tanpa snapshot holder tidak pernah dihitung
+   sebagai konsolidasi (`_snapshot_usable`); tanpa `HELIUS_API_KEY`, TX
+   velocity jatuh ke agregat `txns` DexScreener dengan confidence dibatasi
+   0,6; history < 24 jam → sinyal volume `available: False` ("tidak tahu",
+   bukan "tenang"); snapshot 24 jam tidak ada → pakai titik tertua + tandai
+   `stale`.
+5. **Tes**: `tests/test_pre_pump_screener.py` (64 kasus: filter watchlist,
+   gelombang add + journal, konsolidasi holder, profil volume, velocity
+   Helius/DexScreener, skor, kartu UI lewat AppTest, integrasi `app.py`).
+   Total suite 508 → **572 test, OK**.
+
+# Kegiatan — 4 September 2026 (lanjutan)
+
 Tiga permintaan user: (1) halaman baru **Deteksi Akumulasi** dengan 8 metrik,
 (2) koreksi metrik 4 supaya **GMGN saja** (kuota Helius terlalu boros),
 (3) detail baru di baris watchlist — perubahan dust sejak masuk + warna ambang

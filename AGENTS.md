@@ -1,9 +1,11 @@
 # AGENTS.md — Wallet Depth
 
 Dashboard token Solana. Fokus: **analisa holder dust** (jumlah + % MC,
-grafik 4 jam, kohort Crab+Fish) dan **Scan Meteora DLMM**. Tidak ada
-silent accumulation / flow 12 jam; Telegram hanya dipakai cron untuk alert
-perubahan holder dust yang sudah dikonfirmasi volume + harga + volatilitas.
+grafik 4 jam, kohort Crab+Fish) dan **Scan Meteora DLMM**, ditambah
+**🚀 Pre-Pump Screener** (4 sinyal on-chain untuk token watchlist
+`source=degen`, lihat `pre_pump_screener.py`). Tidak ada silent accumulation
+/ flow 12 jam; Telegram hanya dipakai cron untuk alert perubahan holder dust
+yang sudah dikonfirmasi volume + harga + volatilitas.
 
 ## Sumber kebenaran
 
@@ -120,6 +122,24 @@ JSON compact, Contents API base64) di ref `holder-live`:
   tidak pernah fetch: pemanggil menyuntikkan `market_context` atau
   `context_provider(mint, analysis)` yang hanya dipanggil bila ada kandidat.
 - `gmgn_screener.py`: listing Trending/Degen.
+- `pre_pump_screener.py`: section **🚀 Pre-Pump Screener** di `app.py`
+  (`main(configure_page=False)`, watchlist/snapshot/store disuntikkan) +
+  halaman mandiri `pages/7_🚀_Pre-Pump.py`. Scope **hanya watchlist
+  `source=degen`** (`load_degen_watchlist`). Empat sinyal, tiap sinyal
+  mengembalikan `confidence` 0–1 dan `PUMP SCORE` = rata-rata berbobot
+  0,25 × 4 × 10: **A** gelombang add likuiditas (journal lokal
+  `pre_pump_liq.json` — DexScreener tidak punya riwayat likuiditas; < 2
+  observasi → confidence dikunci `LIQ_MISSING_CONFIDENCE` 0,3; ≥ 5x dalam
+  48 jam, 3x untuk likuiditas < $25k), **B** konsolidasi holder
+  (`dust_grew_out` kronologi, fallback selisih `dust_count`, + avg bag real
+  ≥ 2x; tanpa snapshot sekarang **tidak pernah** menyala — lihat
+  `_snapshot_usable`), **C** volume calm-before-storm (window tenang = 24 jam
+  **sebelum** window 6 jam; 24 jam trailing tidak bisa dipakai karena window
+  6 jam ada di dalamnya), **D** TX velocity (`cvd.fetch_swaps`, fallback
+  agregat `txns` DexScreener dengan confidence dibatasi 0,6). Auto-refresh
+  5 menit lewat `st.fragment(run_every=300)` + `st.rerun` — **bukan**
+  `while True: time.sleep(300)` (script Streamlit tidak pernah kembali dari
+  loop itu); hasil scan di-cache `st.session_state["pre_pump_results"]`.
 - `pages/5_🧮_Holder.py`: Holder Analytic (di bawah CVD) + kronologi FULL.
 - `pages/4_📊_CVD.py`: CVD harian saja (tanpa Holder Analytic).
 - `watchlist_detail.py`: detail baris watchlist — perubahan dust **sejak
@@ -197,6 +217,26 @@ data pasar tidak ada  : alert tetap dikirim, ditandai TIDAK TERVERIFIKASI
 mid-tier (pilar)      : Crab+Fish = $100–$10k, freeze max 200 address
 max holders/token     : 3000 (cron) / 2000 (scan UI)
 
+Pre-Pump Screener (pre_pump_screener.py; scope: watchlist source=degen):
+liquidity wave        : add kedua >= 5x add pertama dalam 48 jam
+                          -> 3x bila likuiditas pool < $25.000
+                          -> langkah < $500 atau < 5% = noise harga, diabaikan
+                          -> < 2 observasi journal = confidence 0,3
+holder consolidation  : >= 5 wallet keluar dari dust DAN avg bag real >= 2x
+                          (snapshot 24 jam +- 8 jam; di luar itu = stale,
+                          confidence x 0,8)
+volume calm-before    : 24 jam sebelum window 6 jam <= 30% avg harian 7 hari
+                          DAN 6 jam terakhir >= 2x baseline 6 jam
+                          (VOLUME_SPIKE_BASE="daily" = pembanding avg harian)
+                          coverage < 24 jam = available False (bukan "tenang")
+tx velocity           : (avg 2 jam akhir - avg 2 jam awal)/awal >= 1,5
+                        buy_pressure >= 0,65 = whale accumulation
+                        sumber DexScreener txns = confidence maksimal 0,6
+PUMP SCORE            : (0,25 x jumlah 4 confidence) x 10  -> 0..10
+confidence_pct        : rata-rata confidence sinyal AKTIF saja
+auto-refresh          : 300 detik (st.fragment(run_every=...))
+journal likuiditas    : pre_pump_liq.json (gitignored), 72 jam / 900 titik
+
 Baris watchlist "Sejak masuk" (watchlist_detail.py):
 warna hijau           : dust % MC turun >= 50% sejak tanggal masuk
                         (MCAP_DROP_TONE_PCT)
@@ -237,5 +277,6 @@ python -m unittest discover tests
 python -m py_compile holder_history.py holder_chronology.py meteora_screener.py \
   holder_analysis.py holder_status.py telegram_alerts.py alert_context.py \
   lp_watchlist.py core.py scripts/scan_holders.py trending_ui.py watchlist.py \
-  watchlist_detail.py accumulation.py app.py
+  watchlist_detail.py accumulation.py pre_pump_screener.py app.py \
+  "pages/7_🚀_Pre-Pump.py"
 ```
