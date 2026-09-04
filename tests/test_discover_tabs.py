@@ -35,6 +35,8 @@ class DiscoverTabPersistenceTest(unittest.TestCase):
             mock.patch("watchlist.load_watchlist", return_value={}),
             mock.patch("holder_status.load_holder_status",
                        return_value={"updated_at": None, "tokens": {}}),
+            # Backup durable store: tes tidak boleh menyentuh jaringan.
+            mock.patch("holder_history.pull_holder_history", return_value=None),
             # trending_ui binds the screeners at import time.
             mock.patch("trending_ui.screen", return_value=[TREND_ROW]),
             mock.patch("trending_ui.screen_trending_h1", return_value=[]),

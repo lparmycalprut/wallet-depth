@@ -24,7 +24,8 @@ from holder_history import (DUST_CAUTION_PCT, DUST_DANGER_PCT,
                             bucket_delta, bucket_series,
                             chronology_view_for_mint, dust_flag,
                             history_for_mint, ingest_many,
-                            latest_detail_for_mint, load_holder_history,
+                            latest_detail_for_mint,
+                            load_durable_holder_history,
                             merge_points, resample_4h, seed_from_status,
                             tracked_chronology_addresses)
 from links import external_links_html
@@ -390,7 +391,9 @@ mints = list(watchlist)
 # sudah memuat titik scan manual (dua angka berbeda untuk satu token).
 status = apply_manual_scan(load_holder_status(),
                            st.session_state.get(MANUAL_SCAN_KEY))
-store = seed_from_status(load_holder_history(), status)
+# Store lokal + backup durable: di lingkungan ephemeral (Streamlit Cloud)
+# baseline scan FULL & kronologi dipulihkan dari holder_history.json.gz.
+store = seed_from_status(load_durable_holder_history(), status)
 
 query_mint = str(st.query_params.get("mint") or "") if "mint" in st.query_params else ""
 session_mint = st.session_state.get("holder_mint") or ""

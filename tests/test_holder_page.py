@@ -183,6 +183,8 @@ class HolderPageChartTest(unittest.TestCase):
                                                "tokens": {}}),
             mock.patch("holder_history.load_holder_history",
                        return_value=store if store is not None else _store()),
+            # Backup durable store: tes tidak boleh menyentuh jaringan.
+            mock.patch("holder_history.pull_holder_history", return_value=None),
             mock.patch("core.get_helius_keys", return_value=["test-key"]),
         ]
         if analyze is not None:

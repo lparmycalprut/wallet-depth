@@ -38,6 +38,8 @@ def _patches(daily_rows):
         mock.patch("watchlist.load_watchlist", return_value={MINT: META}),
         mock.patch("holder_status.load_holder_status",
                    return_value={"updated_at": None, "tokens": {}}),
+        # Backup durable store: tes tidak boleh menyentuh jaringan.
+        mock.patch("holder_history.pull_holder_history", return_value=None),
         mock.patch("daily_store.load_daily_effort",
                    return_value=daily_rows or []),
         mock.patch("core.get_helius_keys", return_value=["test-key"]),

@@ -187,7 +187,7 @@ Meteora Pool** (`source=meteora`):
 
 | File | Peran |
 |---|---|
-| `holder_history.py` | Pencatatan dust/kohort, resample 4 jam, ambang HATI-HATI/BAHAYA, metrik volatilitas 4 jam, baseline FULL, kronologi |
+| `holder_history.py` | Pencatatan dust/kohort, resample 4 jam, ambang HATI-HATI/BAHAYA, metrik volatilitas 4 jam, baseline FULL, kronologi, backup durable store (`.gz`: merge/prune/publish/pull) |
 | `alert_context.py` | Konteks pasar untuk konfirmasi alert: volume 4 jam, rata-rata 7 hari, buy/sell pressure, volatilitas (ditarik lazy) |
 | `holder_chronology.py` | Snapshot wallet bounded, klasifikasi pergerakan, narasi kronologi |
 | `lp_watchlist.py` | Card **Chart LP**: pisah watchlist Meteora, baris + grafik perubahan dust holder |
@@ -195,7 +195,7 @@ Meteora Pool** (`source=meteora`):
 | `holder_analysis.py` | Fetch holder Helius/GMGN, klasifikasi real/dust/mid |
 | `solscan_holders.py` | Kalkulasi wallet_depth (bucket & tier) |
 | `helius_holders.py` | Scan Holder Khusus satu token + bar chart |
-| `holder_status.py` | Snapshot dashboard (ref `holder-live`) + history ringkas |
+| `holder_status.py` | Snapshot dashboard ramping (ref `holder-live`) + history ringkas + transport GitHub (JSON & byte/gzip) |
 | `core.py` | Config/key Helius, pasar DexScreener, candle hourly/harian GeckoTerminal |
 | `scripts/scan_holders.py` | Cron watchlist: holder, alert (konfirmasi volume lazy), catat history |
 | `telegram_alerts.py` | Rule dust 4 jam/baseline, gerbang volume+volatilitas, dedup bucket 4 jam + jeda 1 jam, Telegram Bot API |
@@ -212,7 +212,9 @@ streamlit run app.py
 
 Cron GitHub Actions ~15 menit (`.github/workflows/daily-effort.yml`)
 menjalankan `scripts/scan_holders.py`. Snapshot dibaca dari
-`holder_status.json` (ref `holder-live`). Lihat `DEPLOY.md` untuk env
+`holder_status.json` dan store penuh dari `holder_history.json.gz`
+(keduanya ref `holder-live`) — lihat **Backup store holder**. Lihat
+`DEPLOY.md` untuk env
 scanner (`HELIUS_API_KEY`, `GITHUB_TOKEN`) dan setup alert opsional
 (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`). Tanpa credential Telegram,
 scan tetap berjalan dan pengiriman alert dilewati dengan aman.
@@ -225,6 +227,7 @@ scan tetap berjalan dan pengiriman alert dilewati dengan aman.
 | `GITHUB_TOKEN` | Token GitHub (push watchlist + snapshot) |
 | `GITHUB_REPO`, `GITHUB_REF` | default `lparmycalprut/wallet-depth`; scanner memakai branch aktif |
 | `WATCHLIST_FILE`, `HOLDER_STATUS_FILE` | default `watchlist.json`, `holder_status.json` |
+| `HOLDER_STORE_BACKUP` | `1` (default) — `0`/`off` mematikan pull+push backup durable store (dev/offline; dipakai suite tes) |
 | `DAILY_EFFORT_PATH` | default `daily_effort.json` (cache harga/volume DexScreener) |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Alert Telegram (opsional) |
 | `TELEGRAM_ALERT_MODE` | `off` (default), `summary`, `full` |
@@ -240,6 +243,7 @@ scan tetap berjalan dan pengiriman alert dilewati dengan aman.
 | `MIN_RESEND_SEC` | 3600 — jeda minimum antar-alert token+jenis yang sama |
 | `VOLATILITY_WINDOW_HOURS`, `HIGH_VOLATILITY_STDDEV_PCT` | 4, 3.0 — `holder_history` |
 | `BASELINE_HOURS`, `MIN_BASELINE_HOURS` | 168, 24 — `alert_context` (baseline volume 7 hari) |
+| `MAX_BACKUP_BYTES`, `DURABLE_CACHE_TTL` | 3.500.000, 600 — `holder_history` (budget backup `.gz`, cache pull UI) |
 
 Konstanta konfirmasi ada di `telegram_alerts.py`, metrik volatilitas di
 `holder_history.py`, dan pengambilan konteks di `alert_context.py`.
@@ -268,5 +272,46 @@ dari snapshot cron, grafik dari store), UI memakai
 `analyzed_at`-nya tidak lebih tua. Kartu metrik, badge HATI-HATI/BAHAYA,
 watchlist, dan Chart LP lalu membaca angka yang sama dengan grafik, dan
 caption menandai *scan manual barusan*. File snapshot tidak disentuh.
+
+## Backup store holder (durable)
+
+Runner GitHub Actions dan Streamlit Cloud memakai filesystem **ephemeral**:
+`holder_history.json` lenyap setiap run/restart, jadi baseline scan FULL,
+kohort beku, state dedup alert, dan kronologi wallet tidak pernah bertahan.
+Store sekarang dibackup penuh ke ref `holder-live` sebagai
+**`holder_history.json.gz`** (gzip + JSON compact via Contents API base64):
+
+- **cron** (`scripts/scan_holders.py`): `pull_holder_history()` →
+  `merge_stores(lokal, durable)` → `seed_from_status()` (jaring kedua) →
+  scan → publish snapshot → `publish_holder_history()`. Backup gagal hanya
+  mencetak `WARN` + `backup=GAGAL (...)` di log; run tidak jadi merah.
+- **UI** (`app.py`, `pages/5_🧮_Holder.py`): `load_durable_holder_history()`
+  = `merge_stores(durable, lokal)` — **store lokal menang** bila timestamp
+  seri supaya scan manual yang baru tidak ditimpa backup lama; hasil pull
+  di-cache 600 detik (`DURABLE_CACHE_TTL`).
+
+| Data | `holder_status.json` (snapshot) | `holder_history.json.gz` (backup) |
+|---|---|---|
+| Dust per token, `holders`, `market_signal` | ✅ | ✅ |
+| Titik grafik 4 jam | ringkas (`history`) | penuh (`points`, ≤84) |
+| Balance alert `baseline`/`rolling`, `sent_event_ids` | **jumlah** | peta penuh |
+| Kohort Crab+Fish | **jumlah wallet** | peta balance penuh |
+| Kronologi wallet | **jumlah** + sampel movements (≤20/interval, ≤12 interval) | penuh |
+| Baseline scan FULL (`depth`, buckets) | ❌ | ✅ (dibuang paling akhir) |
+
+Perampingan snapshot (terukur pada 36 token live): **2,87 MB → 0,30 MB
+(−90%)** — `alert_state` 1.850.768 → 10.695 B, `cohort` 236.345 → 1.890 B,
+`chronology` hampir tetap (13.104 → 13.032 B, movements sampel dipertahankan).
+Store penuh 36 token = 15,05 MB JSON compact → **577 kB gzip (26×)**, jauh di
+bawah `MAX_BACKUP_BYTES` 3,5 MB dan di bawah batas PUT Contents API yang sudah
+terbukti (2,85 MB), jadi `prune_store_for_backup()` praktis tidak pernah
+terpicu. Bila perlu, pembuangannya berjenjang: movements interval lama →
+interval di luar 6 terbaru → peta wallet kronologi → `points[].buckets` →
+titik di luar 42 terbaru → `latest_detail`.
+
+Pertumbuhan repo **tidak bertambah**: blob baru per run ±655 kB (snapshot
+gemuk, zlib) → ±635 kB (snapshot ramping 21 kB + backup gzip 613 kB yang sudah
+tak termampapkan lagi). Pada cron `*/15` itu ±61 MB/hari, sebelumnya ±63
+MB/hari.
 
 Analisis bersifat heuristik dan bukan saran keuangan.

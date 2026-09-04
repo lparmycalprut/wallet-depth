@@ -12,7 +12,8 @@ import streamlit as st
 from helius_holders import depth_bar_chart, scan_token_holders
 from holder_history import (DUST_CAUTION_PCT, DUST_DANGER_PCT, dust_flag,
                             history_for_mint, ingest_many,
-                            load_holder_history, merge_points, resample_4h,
+                            load_durable_holder_history, merge_points,
+                            resample_4h,
                             seed_from_status, sparkline_svg)
 from links import HOLDER_PAGE_PATH, external_links_html, pool_links_html
 from lp_watchlist import (LP_SOURCE, lp_card_rows, lp_chart_figure,
@@ -629,7 +630,10 @@ holder_status = apply_manual_scan(
     load_holder_status(force_refresh=force_status),
     st.session_state.get(MANUAL_SCAN_KEY))
 status_tokens = holder_status.get("tokens") or {}
-history_store = seed_from_status(load_holder_history(), holder_status)
+# Store lokal + backup durable (ref holder-live) supaya lingkungan ephemeral
+# tetap punya baseline scan FULL, kohort, dan kronologi.
+history_store = seed_from_status(load_durable_holder_history(),
+                                  holder_status)
 
 # Watchlist dipecah dua: token Scan Meteora → card **Chart LP** paling atas,
 # sisanya → watchlist holder biasa. Scan tombol di bawah tetap memproses

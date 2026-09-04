@@ -1,5 +1,111 @@
 # Progress
 
+## 2026-09-04 — Backup durable store holder + snapshot dirampingkan
+
+Audit backup (pertanyaan user: *"cek sekarang apakah sudah ada backup juga?"*)
+menemukan lubang: kode, `holder_status.json`, titik 4 jam, kohort, dan
+`alert_state` memang sudah ter-publish ke ref `holder-live`, tetapi
+**`holder_history.json` tidak pernah dibackup**. Runner Actions dan Streamlit
+Cloud ephemeral, jadi baseline scan FULL, kohort beku, state dedup alert
+(`sent_event_ids`/`last_sent`), dan kronologi wallet hilang setiap run — cron
+selalu mulai dari nol dan satu-satunya pemulihan adalah `seed_from_status()`
+dari snapshot. Pilihan user: **opsi A** (round-trip store ke `holder-live`)
+**+ rampingkan snapshot** (peta balance pindah ke store).
+
+### Yang ditambahkan
+- `holder_status.py`: transport digeneralisasi — `_github_get_bytes` /
+  `_github_put_bytes` (retry 4×, API → raw CDN) + pembungkus JSON
+  (`_github_pull` / `_github_push`) yang sudah ada; `pull_store_backup()` /
+  `push_store_backup(payload, message)` untuk `HISTORY_REPO_PATH =
+  "holder_history.json.gz"`.
+- `snapshot_status()` **ramping**: `alert_state` →
+  `telegram_alerts.alert_state_summary()` (jumlah balance/dust, `summary:
+  True`), kohort → `_cohort_for_status()` (jumlah wallet), kronologi →
+  `_chronology_for_status()` (jumlah + sampel movements ≤20/interval,
+  ≤12 interval). Angka yang dibaca UI tidak berubah.
+- `holder_history.py`: `store_backup_bytes` (gzip+JSON compact),
+  `parse_store_backup` (toleran gzip/JSON polos; payload rusak → `None`,
+  termasuk gzip terpotong `EOFError`/`zlib.error`), `merge_stores`,
+  `prune_store_for_backup`, `publish_holder_history`, `pull_holder_history`,
+  `load_durable_holder_history` (cache `DURABLE_CACHE_TTL` 600 detik),
+  `reset_durable_cache`, `backup_enabled()` (kill-switch
+  `HOLDER_STORE_BACKUP=0`), `MAX_BACKUP_BYTES = 3.500.000`.
+- `seed_from_status()` dikerasi: `alert_state`/`cohort` berbentuk ringkasan
+  tidak lagi menimpa store (`_is_summary_alert_state`); snapshot **format
+  lama** (peta wallet, termasuk yang petanya kosong) tetap dipulihkan supaya
+  id dedup alert tidak hilang saat backup durable belum ada;
+  `_sanitize_remote_chronology()` menolak peta wallet berbentuk angka.
+- `scripts/scan_holders.py`: `pull_holder_history()` →
+  `merge_stores(lokal, durable)` → `seed_from_status()` sebelum scan;
+  `publish_holder_history(history, push=not --no-push)` setelah publish
+  snapshot; log `Store holder: tokens=… backup=ada/tidak ada` dan
+  `backup=ok <n>B | skip (--no-push) | GAGAL (…)`.
+- `app.py` + `pages/5_🧮_Holder.py`: `load_holder_history()` →
+  `load_durable_holder_history()` (`merge_stores(durable, lokal)`: store lokal
+  menang bila seri, jadi scan manual baru tidak ditimpa backup lama).
+
+### Aturan merge (ukurannya = siapa yang menang)
+| Field | Aturan |
+|---|---|
+| `points` | union per `ts`, urut, ≤`MAX_POINTS` (84) |
+| `baseline` | **paling tua** — immutable, tidak bisa dibuat ulang tanpa scan FULL |
+| `latest_detail` | paling baru |
+| `cohort` | yang masih punya peta balance, lalu `frozen_at` terbaru |
+| `chronology.intervals` | union per `(from_ts, to_ts)`, movements terbanyak menang, ≤24 |
+| `chronology.*_wallets` | yang masih punya peta wallet, lalu ts (baseline paling tua) |
+| `alert_state` | snapshot `baseline`/`rolling` terbaru; `sent_event_ids` union ≤96; `last_sent` max per jenis ≤8; `rejected_signals` ≤8 |
+| seri | **argumen belakang menang** (cron: durable di belakang; UI: lokal di belakang) |
+
+### Ukuran (terukur ulang dengan helper asli pada snapshot live, 36 token)
+| Payload | Sebelum | Sesudah |
+|---|---|---|
+| `holder_status.json` (indent=2, bentuk yang di-publish) | 2.869.835 B | **300.372 B (−89,5%)** |
+| — compact JSON | 2.231.997 B | 157.397 B (−92,9%) |
+| — `alert_state` | 1.850.768 B (83% payload) | **10.695 B** (ringkasan jumlah) |
+| — `cohort` | 236.345 B | **1.890 B** (jumlah wallet) |
+| — `chronology` | 13.104 B | 13.032 B (peta wallet → jumlah, movements sampel ≤20/interval tetap) |
+| store penuh (36 token) | **tidak dibackup** | 15.051.771 B JSON compact → **576.832 B gzip (26,1×)**; body PUT base64 0,77 MB |
+| blob git baru per run (zlib −9) | 654.921 B | **±633.833 B** (snapshot 21.083 + gz 612.750) = **0,97×** |
+
+Artinya durability tambahan ini **tidak memperbesar repo**: gzip backup sudah
+tidak termampapkan lagi oleh git, tetapi snapshot yang −90% menutupinya
+(cron `*/15`: ±61 MB/hari, sebelumnya ±63 MB/hari).
+
+`MAX_BACKUP_BYTES` 3,5 MB praktis tidak pernah tersentuh (batas PUT Contents
+API terbukti aman di 2,85 MB). Tangga `prune_store_for_backup` (bila perlu):
+movements interval lama → interval di luar 6 terbaru → peta wallet kronologi →
+`points[].buckets` → titik di luar 42 terbaru → `latest_detail`; baseline
+dibuang paling akhir.
+
+### Keputusan yang sengaja diambil
+- Backup gagal **tidak** membuat cron merah (snapshot dashboard lebih
+  penting), tapi selalu tercetak sebagai `WARN` + `backup=GAGAL (…)` dan
+  `over_budget` ditandai bila payload tetap melebihi budget.
+- `publish_holder_history(save_local=False)` default: `ingest_many()` sudah
+  menulis `holder_history.json`, jadi tidak ada tulis ganda (dan tes tidak
+  menimpa file data repo).
+- Suite tes wajib offline: `tests/__init__.py` memasang kill-switch, dan tes
+  UI mem-mock `holder_history.pull_holder_history`. Verifikasi: 48 percobaan
+  jaringan saat `discover tests` → **0** setelahnya.
+- Guard B (anotasi `dust_pct_supply` 0 dari Helius) tetap `TODO(alerts)` —
+  tidak disentuh tugas ini.
+- Transisi aman tanpa migrasi: run pertama setelah deploy masih menemukan
+  snapshot **gemuk** di `holder-live` (belum ada `holder_history.json.gz`),
+  jadi `seed_from_status()` memulihkan peta wallet dari sana seperti sebelumnya
+  sambil membuat backup pertama. Run berikutnya memakai snapshot ramping +
+  backup `.gz`.
+
+### Tes
+**465 tes lulus** (sebelumnya 398). Baru: `tests/test_store_backup.py` (59) —
+round-trip gzip, parse payload rusak, semantik merge per field + immutability
+input, tangga prune, publish/pull (termasuk transport melempar, over-budget,
+kill-switch, `save_local`), cache TTL `load_durable_holder_history`,
+`seed_from_status` ringkas vs format lama, dan snapshot ramping (tanpa peta
+wallet, movements tetap bounded). `tests/test_scan_holders.py` +5 (restore +
+merge backup, push setelah publish, `--no-push`, backup gagal tidak merah,
+publish snapshot gagal tetap exit 3) dan `_run()` diperluas;
+`tests/test_holder_status.py` ditulis ulang ke kontrak ramping (7).
+
 ## 2026-09-03 — Kartu metrik Holder Analytic mengikuti scan manual (kasus AGENTHQ)
 
 Laporan user: token **AGENTHQ** menampilkan dust hold **0,7% di grafik** tetapi
@@ -125,7 +231,7 @@ konfirmasi ini dipasang di belakangnya, jadi filternya tidak saling menutupi.
 | `telegram_alerts.compact_wallet_snapshot` | `sorted(dust, key=…)` identik dipanggil dua kali. | Diurut sekali |
 | `telegram_alerts.send_telegram_message` | 429 `retry_after` tidak dihormati (hanya di-log; event dikirim ulang run berikutnya). | `TODO(alerts)` di kode |
 | Beban API candle | GeckoTerminal publik ±30 req/menit; run yang memicu banyak sinyal bersamaan bisa tersentuh (lazy fetch sudah membatasi ke kandidat saja). | `TODO(alerts)` throttle |
-| Store JSON | `holder_history.json` / `holder_status.json` ditulis ulang penuh tiap run (atomic write). | Belum perlu; dipantau |
+| Store JSON | `holder_history.json` / `holder_status.json` ditulis ulang penuh tiap run (atomic write). | Belum perlu; dipantau. **2026-09-04**: store kini juga dibackup durable (`holder_history.json.gz`, ref `holder-live`) — lihat entri terbaru |
 
 ### Tes
 369 tes lulus (sebelumnya 228). Baru: `test_volume_validation.py` (33),

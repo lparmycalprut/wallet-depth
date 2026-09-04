@@ -912,6 +912,51 @@ def compact_alert_state(state: dict | None) -> dict:
     }
 
 
+def alert_state_summary(state: dict | None) -> dict:
+    """Ringkasan alert state TANPA peta wallet, untuk ``holder_status.json``.
+
+    Peta balance ``baseline``/``rolling`` (masing-masing sampai
+    :data:`MAX_STORED_WALLETS` address) adalah state kerja aturan 4 jam dan
+    memakan **83% byte** snapshot dashboard (terukur 1,85 MB dari 2,22 MB untuk
+    36 token). Sejak store ``holder_history.json`` ikut dipublish ke ref
+    ``holder-live`` (``holder_history.publish_holder_history``), peta itu tidak
+    perlu dikirim ke dashboard — cukup jumlah + timestamp supaya kondisi alert
+    tetap bisa diperiksa.
+
+    Flag ``"summary": True`` dipakai ``holder_history.seed_from_status`` untuk
+    mengenali payload ringkas dan **tidak** menimpanya sebagai state penuh
+    (snapshot format lama yang masih membawa peta tetap dipulihkan seperti
+    sebelumnya).
+    """
+    state = state if isinstance(state, dict) else {}
+
+    def _snap(raw) -> dict:
+        raw = raw if isinstance(raw, dict) else {}
+        balances = raw.get("balances")
+        dust = raw.get("dust")
+        return {
+            "ts": _int(raw.get("ts")),
+            "wallets_seen": _int(raw.get("wallets_seen")),
+            "balances": len(balances) if isinstance(balances, dict) else 0,
+            "dust": len(dust) if isinstance(dust, (list, dict, set)) else 0,
+            "dust_pct_mc": raw.get("dust_pct_mc"),
+            "truncated": bool(raw.get("truncated")),
+        }
+
+    raw_last = state.get("last_sent") if isinstance(state.get("last_sent"),
+                                                    dict) else {}
+    last_sent = sorted(((str(key), _int(ts)) for key, ts in raw_last.items()
+                        if _int(ts)), key=lambda item: -item[1])
+    return {
+        "summary": True,
+        "baseline": _snap(state.get("baseline")),
+        "rolling": _snap(state.get("rolling")),
+        "sent_event_ids": len(state.get("sent_event_ids") or []),
+        "last_sent": dict(last_sent[:MAX_LAST_SENT]),
+        "rejected_signals": len(state.get("rejected_signals") or []),
+    }
+
+
 def _format_time(timestamp: int) -> str:
     moment = datetime.fromtimestamp(_int(timestamp), tz=timezone.utc)
     try:

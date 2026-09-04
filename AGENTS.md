@@ -7,7 +7,8 @@ perubahan holder dust yang sudah dikonfirmasi volume + harga + volatilitas.
 
 ## Sumber kebenaran
 
-- `holder_history.py`: store `holder_history.json`, freeze kohort 4 jam,
+- `holder_history.py`: store `holder_history.json` (+ backup durable
+  `holder_history.json.gz`, lihat bawah), freeze kohort 4 jam,
   resample grafik 4 jam, ambang dust **≥ 0,5% MC = HATI-HATI** dan
   **≥ 1% MC = BAHAYA** (hanya BAHAYA yang disembunyikan dari Meteora).
   Baseline scan FULL immutable + kronologi wallet bounded
@@ -42,14 +43,49 @@ perubahan holder dust yang sudah dikonfirmasi volume + harga + volatilitas.
   token; `compact_signal()` untuk disimpan ke status. Ditarik **lazy**.
 - `holder_status.py`: snapshot `holder_status.json` → ref `holder-live`
   (ikut `history` 4 jam dan `market_signal` bila konteks pasar tersedia).
+  Snapshot **ramping**: peta balance alert, peta kohort, dan peta wallet
+  kronologi tidak ikut (hanya jumlah + sampel movements ≤20/interval,
+  ≤12 interval) — terukur 2,87 MB → **0,30 MB** untuk 36 token (−90%). Data penuh itu hidup di
+  backup store (bawah). Transport-nya generik: `_github_get_bytes` /
+  `_github_put_bytes` (+ pembungkus JSON) dipakai `holder_status.json` dan
+  `holder_history.json.gz` (`pull_store_backup` / `push_store_backup`).
   `snapshot_status` **tidak merge** token lama: publish satu token akan
   menghapus token lain, jadi scan manual di halaman Holder tidak boleh
   publish. Overlay `apply_manual_scan()` / `resolve_token_view()`
   (`st.session_state[MANUAL_SCAN_KEY]`) membuat kartu metrik, badge,
   watchlist, dan Chart LP ikut scan manual yang lebih baru daripada snapshot
   cron — grafik sudah lebih dulu memuat titik itu dari `holder_history.json`.
-- `scripts/scan_holders.py`: cron watchlist, evaluasi alert sebelum ingest
-  history, publish snapshot; exit non-zero bila 0 holder / publish gagal.
+- `scripts/scan_holders.py`: cron watchlist, **pull + merge backup store
+  sebelum scan**, evaluasi alert sebelum ingest history, publish snapshot,
+  **push backup store sesudahnya**; exit non-zero bila 0 holder / publish
+  snapshot gagal (backup gagal = `WARN` saja, tidak membuat cron merah).
+
+### Backup durable store holder
+
+Runner Actions & Streamlit Cloud ephemeral, jadi `holder_history.json` hilang
+tiap run. Store penuh dibackup sebagai **`holder_history.json.gz`** (gzip +
+JSON compact, Contents API base64) di ref `holder-live`:
+
+- `store_backup_bytes` / `parse_store_backup` (toleran gzip & JSON polos,
+  payload rusak → `None`, tidak pernah melempar).
+- `merge_stores(*stores)` — **argumen belakang menang** saat timestamp seri;
+  titik union (≤`MAX_POINTS`), `baseline` **paling tua** (immutable),
+  `latest_detail` terbaru, kohort yang masih punya balance lalu `frozen_at`
+  terbaru, interval kronologi union per `(from_ts, to_ts)` (movements
+  terbanyak menang), `alert_state` snapshot terbaru + union `sent_event_ids`
+  + `last_sent` maksimum. Cron: `merge_stores(lokal, durable)`; UI:
+  `merge_stores(durable, lokal)` (scan manual baru tidak ditimpa backup).
+- `prune_store_for_backup` — hanya bila payload > `MAX_BACKUP_BYTES`
+  (3,5 MB; terukur 577 kB untuk 36 token jadi praktis tak pernah): buang
+  movements interval lama → interval di luar 6 terbaru → peta wallet
+  kronologi → `points[].buckets` → titik di luar 42 terbaru →
+  `latest_detail`. **Baseline scan FULL dibuang paling akhir.**
+- `publish_holder_history` / `pull_holder_history` /
+  `load_durable_holder_history` (cache `DURABLE_CACHE_TTL` 600 detik) /
+  `reset_durable_cache`. Kill-switch `HOLDER_STORE_BACKUP=0`.
+- `seed_from_status` tetap jadi jaring kedua: snapshot **format lama** (masih
+  membawa peta wallet) dipulihkan seperti semula, snapshot ramping
+  (`summary: True` / `balances` berupa angka) **tidak** menimpa store.
 - `telegram_alerts.py`: rule dust 4 jam (+0,25 pp dump; -0,50 pp + buyer
   akumulasi), perubahan ±1 pp dari baseline, **gerbang konfirmasi
   volume/harga/volatilitas**, dedup, dan transport Telegram. Aturan tidak

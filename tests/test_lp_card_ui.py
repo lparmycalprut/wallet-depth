@@ -94,6 +94,8 @@ class ChartLpCardTest(unittest.TestCase):
                        side_effect=lambda **_kw: _status()),
             mock.patch("holder_history.load_holder_history",
                        side_effect=lambda *a, **kw: _store()),
+            # Backup durable store: tes tidak boleh menyentuh jaringan.
+            mock.patch("holder_history.pull_holder_history", return_value=None),
         )
         for patch in patches:
             patch.start()
@@ -221,6 +223,8 @@ class EmptyChartLpCardTest(unittest.TestCase):
                        return_value={"updated_at": None, "tokens": {}}),
             mock.patch("holder_history.load_holder_history",
                        return_value={"tokens": {}}),
+            # Backup durable store: tes tidak boleh menyentuh jaringan.
+            mock.patch("holder_history.pull_holder_history", return_value=None),
         )
         for patch in patches:
             patch.start()

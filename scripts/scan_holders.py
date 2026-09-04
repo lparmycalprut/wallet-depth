@@ -33,7 +33,9 @@ if ROOT not in sys.path:
 
 from alert_context import market_context_provider
 from daily_store import load_daily_effort
-from holder_history import ingest_many, load_holder_history, seed_from_status
+from holder_history import (ingest_many, load_holder_history, merge_stores,
+                            publish_holder_history, pull_holder_history,
+                            seed_from_status)
 from holder_analysis import analyze_token
 from holder_status import (last_publish_result, load_holder_status,
                            publish_holder_status)
@@ -140,8 +142,16 @@ def main(argv=None) -> int:
 
     started = time.monotonic()
     started_wall = int(time.time())
-    store = seed_from_status(load_holder_history(),
-                            load_holder_status(force_refresh=True))
+    # Urutan pemulihan state: file lokal runner (kosong di Actions) -> backup
+    # durable holder_history.json.gz di ref holder-live (menang bila timestamp
+    # seri, karena itulah akumulasi run sebelumnya) -> titik/state dari snapshot
+    # dashboard sebagai jaring kedua (juga satu-satunya sumber bila backup belum
+    # pernah dibuat, mis. snapshot format lama yang masih membawa peta wallet).
+    durable = pull_holder_history()
+    store = merge_stores(load_holder_history(), durable or {})
+    store = seed_from_status(store, load_holder_status(force_refresh=True))
+    print(f"Store holder: tokens={len(store.get('tokens') or {})} "
+          f"backup={'ada' if durable else 'tidak ada'}")
     analyses = scan_watchlist(
         watchlist, dust_limit=args.dust_limit,
         max_wallets=args.max_wallets,
@@ -166,6 +176,9 @@ def main(argv=None) -> int:
         status = publish_holder_status(
             analyses, watchlist, push=not args.no_push,
             history_store=history, contexts=contexts)
+        # Backup store penuh (peta wallet alert/kohort, baseline FULL,
+        # kronologi) — tidak lagi ikut snapshot dashboard yang dirampingkan.
+        backup = publish_holder_history(history, push=not args.no_push)
         sent_alerts = sum(1 for item in deliveries
                           if (item.get("delivery") or {}).get("ok"))
         unverified = sum(1 for item in deliveries
@@ -180,11 +193,26 @@ def main(argv=None) -> int:
                             if isinstance(row, dict)
                             and int(row.get("ts") or 0) >= started_wall)
             fetch_ms += int((contexts.get(mint) or {}).get("fetch_ms") or 0)
+        # Backup store tidak boleh membuat cron merah (data dashboard lebih
+        # penting), tapi kegagalannya harus kelihatan di log.
+        if backup.get("pushed"):
+            backup_label = f"ok {backup.get('bytes') or 0}B"
+            if backup.get("pruned"):
+                backup_label += f" pruned={len(backup['pruned'])}"
+            if backup.get("over_budget"):
+                backup_label += " OVER-BUDGET"
+        elif args.no_push:
+            backup_label = "skip (--no-push)"
+        else:
+            backup_label = f"GAGAL ({backup.get('error') or 'unknown'})"
+            print(f"WARN: backup holder_history gagal: "
+                  f"{backup.get('error') or 'unknown'}", file=sys.stderr)
         print(f"Holder scan selesai: analyzed={len(analyses)} "
               f"history={len((history or {}).get('tokens') or {})} "
               f"alerts={sent_alerts}/{len(deliveries)} "
               f"unverified={unverified} rejected={rejected} "
               f"konteks={len(contexts)} token ({fetch_ms} ms) "
+              f"backup={backup_label} "
               f"updated={status.get('updated_at')} "
               f"durasi={time.monotonic() - started:.1f}s")
         empty = 0
