@@ -51,8 +51,10 @@ run yang macet tidak menumpuk antre di concurrency group `holder-scanner`
 
 Langkah setiap scan:
 
-1. Analisis per token: holder Helius DAS (fallback GMGN, max 3000 wallet),
-   klasifikasi real (>$10) vs dust, `dust_pct_mc`, mid-tier, dan kohort.
+1. Analisis per token: holder Helius DAS (fallback GMGN, **scan FULL** —
+   paginasi sampai habis; `--max-wallets` default 100.000 sejak
+   2026-09-05), klasifikasi real (>$10) vs dust, `dust_pct_mc`, mid-tier,
+   kohort, lalu simpan detail baseline + kronologi (`detail=True`).
 2. Evaluasi alert terhadap snapshot lama **sebelum** snapshot terbaru
    ditulis. Snapshot wallet disimpan secara bounded di history/status.
 3. Publish `holder_status.json` ke branch `holder-live` (dibuat otomatis
@@ -78,8 +80,17 @@ Cadence hourly (sejak 2026-09-04) dan ukuran ref `holder-live`:
   pertumbuhan ~**±633 kB × 24 run/hari ≈ 15 MB/hari** isi Git bila tiap run
   mengganti blob (bandingkan ±7,6 MB/hari pada kadens 2 jam; git menyimpan
   delta antar commit, nilai sesungguhnya lebih kecil).
-- Kuota holder: 55 token × 24 run/hari × ≤ 3000 wallet = sampai ~4 juta
-  akun/hari via Helius DAS + market DexScreener; `--max-wallets 3000` tetap.
+- Kuota holder: sejak 2026-09-05 cron scan **FULL** (bukan sampel 3000):
+  token yang punya ≤ 3000 holder tidak berubah biayanya, token lebih besar
+  ikut semua halamannya (default `--max-wallets` = 100.000 = batas atas
+  aman). Workflow tidak lagi mengirim `--max-wallets 3000`. Perkiraan:
+  55 token × 24 run/hari × holder aktual per token (order ribuan untuk
+  token degen) via Helius DAS + market DexScreener; pantau durasi di log
+  `durasi=<detik>` dan kuota Helius bila watchlist membesar.
+- Baseline/kronologi: scan FULL pertama tiap token (setelah masuk
+  watchlist) menulis `baseline` immutable + snapshot wallet; run berikutnya
+  menambah interval kronologi (bounded: 24 interval / 400 wallet snapshot /
+  40 movement per interval per token).
 - `MIN_POINT_GAP_SEC` (8 menit) aman untuk run tiap jam: run ganda < 8 menit
   (schedule + `workflow_dispatch`) menimpa titik yang sama, bukan menambah.
 

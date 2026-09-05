@@ -206,9 +206,12 @@ def _distribution_section(mint: str, symbol: str, store: dict) -> None:
     baseline = baseline_for_mint(store, mint)
     latest = latest_detail_for_mint(store, mint)
     if not latest:
-        st.info("Belum ada scan FULL untuk token ini. Tekan tombol "
-                "**Scan holder FULL** di bawah — hasil detailnya disimpan "
-                "sebagai baseline dan tidak akan ditimpa cron.")
+        st.info("Belum ada scan FULL untuk token ini. Cron holder sekarang "
+                "scan **FULL otomatis** (tiap jam sejak token ada di "
+                "watchlist), jadi snapshot awal biasanya muncul ≤ ±1 jam — "
+                "atau tekan **Scan holder FULL** di bawah untuk langsung "
+                "menyimpannya sebagai baseline (titik awal; tidak akan "
+                "ditimpa).")
         return
 
     depth = latest.get("depth") or {}
@@ -296,9 +299,11 @@ def _chronology_section(mint: str, store: dict) -> None:
     st.subheader("🧭 Kronologi Holder Sejak Snapshot Awal")
     state = view.get("state") or "none"
     if state == "none":
-        st.info("Belum ada snapshot FULL. Jalankan **Scan holder FULL** untuk "
-                "menyimpan snapshot awal. Kronologi perubahan baru muncul "
-                "setelah scan FULL berikutnya.")
+        st.info("Belum ada snapshot FULL. Cron holder scan **FULL otomatis** "
+                "tiap jam untuk setiap token watchlist — snapshot awal "
+                "(titik awal kronologi) tersimpan pada scan pertama, lalu "
+                "kronologi perubahan muncul pada scan FULL berikutnya. Bisa "
+                "juga langsung tekan **Scan holder FULL** di bawah.")
         return
     if state == "initial":
         st.caption(
@@ -487,7 +492,7 @@ st.subheader("📊 Grafik holder")
 st.caption(
     "Jumlah holder sepanjang waktu (total, dust ≤ $10, real > $10, pilar "
     "Crab+Fish) dan komposisi holder per range nilai USD. Titik diambil dari "
-    "scan FULL manual + pencatatan perubahan oleh cron.")
+    "scan FULL (manual maupun cron tiap jam).")
 _holder_count_chart(points)
 _bucket_trend_chart(points)
 
@@ -500,10 +505,12 @@ _chronology_section(mint, store)
 
 st.divider()
 st.caption(
-    f"Scan manual = **FULL holder** (hingga {FULL_SCAN_MAX_WALLETS:,} akun, "
-    "paginasi Helius sampai habis). Detail scan pertama disimpan permanen "
-    "sebagai **baseline** di `holder_history.json`; cron (±1 jam) hanya "
-    "menambah titik perubahan dan tidak pernah menimpa baseline.")
+    f"Scan = **FULL holder** (hingga {FULL_SCAN_MAX_WALLETS:,} akun, "
+    "paginasi sampai habis). Sejak 2026-09-05 cron juga scan FULL otomatis "
+    "tiap jam untuk semua token watchlist: scan pertama setelah token masuk "
+    "watchlist disimpan permanen sebagai **baseline** (titik awal holder "
+    "analytic) di `holder_history.json` dan tidak pernah ditimpa, scan "
+    "berikutnya memperbarui detail + kronologi.")
 if st.button("🔄 Scan holder FULL token ini", type="primary",
              use_container_width=True):
     cohort = ((store.get("tokens") or {}).get(mint) or {}).get("cohort") or {}

@@ -286,3 +286,60 @@ class EarlyDumpScopeWiringTest(unittest.TestCase):
         kwargs = captured["alerts"].call_args.kwargs
         self.assertEqual(kwargs.get("lp_mints"),
                          {"LpMint11111111111111111111111111111111111"})
+
+
+class CronFullScanTest(unittest.TestCase):
+    """Sejak 2026-09-05 cron scan holder **FULL** + simpan detail.
+
+    Tiap token watchlist (sudah ada maupun baru ditambahkan) menjadi titik
+    awal holder analytic: ``ingest_many(detail=True)`` menulis baseline pada
+    scan pertama, lalu kronologi antar-scan FULL terakumulasi otomatis.
+    """
+
+    def test_main_ingests_detail_true(self):
+        import scripts.scan_holders as mod
+        import holder_history as hh
+        seen = {}
+        analyses = {"A": {"symbol": "AA", "holders": {"total_fetched": 5}}}
+        with mock.patch.object(mod, "load_watchlist",
+                               return_value={"A": {"symbol": "AA"}}), \
+                mock.patch.object(mod, "load_holder_status",
+                                  return_value={"tokens": {}}), \
+                mock.patch.object(mod, "load_holder_history",
+                                  return_value={"tokens": {}}), \
+                mock.patch.object(mod, "pull_holder_history",
+                                  return_value=None), \
+                mock.patch.object(mod, "seed_from_status",
+                                  side_effect=lambda s, _st: s), \
+                mock.patch.object(mod, "scan_watchlist",
+                                  side_effect=lambda *a, **kw:
+                                  (seen.update(max_wallets=kw.get(
+                                      "max_wallets")) or analyses)), \
+                mock.patch.object(mod, "ingest_many",
+                                  side_effect=lambda *a, **kw:
+                                  (seen.update(detail=kw.get("detail")) or
+                                   {"tokens": {}})), \
+                mock.patch.object(mod, "process_holder_alerts",
+                                  return_value=[]), \
+                mock.patch.object(mod, "publish_holder_status",
+                                  return_value={"updated_at": 1}), \
+                mock.patch.object(mod, "publish_holder_history",
+                                  return_value={"ok": True, "pushed": True,
+                                                "bytes": 1, "pruned": [],
+                                                "over_budget": False,
+                                                "error": ""}), \
+                mock.patch.object(mod, "last_publish_result",
+                                  return_value={"ok": True, "error": ""}):
+            self.assertEqual(mod.main([]), 0)
+        self.assertEqual(seen.get("max_wallets"), hh.FULL_SCAN_MAX_WALLETS)
+        self.assertTrue(seen.get("detail"))
+
+    def test_scan_watchlist_defaults_to_full(self):
+        import holder_history as hh
+        seen = {}
+        with mock.patch("scripts.scan_holders.analyze_token",
+                        side_effect=lambda *a, **kw:
+                        (seen.update(kw) or {"ca": "A"})):
+            out = scan_watchlist({"A": {"symbol": "AA"}}, workers=1)
+        self.assertEqual(set(out), {"A"})
+        self.assertEqual(seen.get("max_wallets"), hh.FULL_SCAN_MAX_WALLETS)

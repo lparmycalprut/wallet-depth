@@ -326,5 +326,60 @@ class SyncSummaryTest(unittest.TestCase):
         self.assertIn("01 Sep 00:00", wd.format_wib(ADDED_TS))
 
 
+class RowSortKeyTest(unittest.TestCase):
+    """Urutan baris watchlist (permintaan user 2026-09-05).
+
+    Default ``SORT_DROP``: minus dust holder terbesar (pct_change paling
+    negatif sejak masuk, mis. GPRO −60%) di urutan pertama; baris yang
+    belum punya pembanding ditaruh di bawah (tidak bisa diklaim minus).
+    """
+
+    def test_default_drop_places_most_negative_first(self):
+        rows = [wd.row_sort_key(wd.SORT_DROP, pct_change=-10.0, symbol="A"),
+                wd.row_sort_key(wd.SORT_DROP, pct_change=-60.0, symbol="G"),
+                wd.row_sort_key(wd.SORT_DROP, pct_change=120.0, symbol="B"),
+                wd.row_sort_key(wd.SORT_DROP, pct_change=-35.5, symbol="S")]
+        self.assertLess(rows[1], rows[3])
+        self.assertLess(rows[3], rows[0])
+        self.assertLess(rows[0], rows[2])
+
+    def test_drop_tokens_without_comparison_go_below(self):
+        known = wd.row_sort_key(wd.SORT_DROP, pct_change=999.0, symbol="A")
+        unknown = wd.row_sort_key(wd.SORT_DROP, pct_change=None, symbol="A")
+        self.assertLess(known, unknown)
+        # GPRO (−60%) ada data -> di atas token yang belum ada pembanding.
+        gpro = wd.row_sort_key(wd.SORT_DROP, pct_change=-60.0, symbol="GPRO")
+        self.assertLess(gpro, unknown)
+
+    def test_drop_badges_example_order(self):
+        # Kasus user: GPRO & Sue (-60%) harus di atas token lain yang lebih
+        # netral atau belum ada datanya.
+        keys = [wd.row_sort_key(wd.SORT_DROP, pct_change=10.0, symbol="TOADS"),
+                wd.row_sort_key(wd.SORT_DROP, pct_change=-62.0, symbol="SUE"),
+                wd.row_sort_key(wd.SORT_DROP, pct_change=None, symbol="MOMO"),
+                wd.row_sort_key(wd.SORT_DROP, pct_change=-60.0, symbol="GPRO")]
+        ordered = sorted(keys)
+        self.assertEqual(ordered, [keys[1], keys[3], keys[0], keys[2]])
+
+    def test_pct_mode_puts_highest_dust_first(self):
+        keys = [wd.row_sort_key(wd.SORT_PCT, dust_pct=0.2, symbol="A"),
+                wd.row_sort_key(wd.SORT_PCT, dust_pct=1.2, symbol="B"),
+                wd.row_sort_key(wd.SORT_PCT, dust_pct=None, symbol="C")]
+        ordered = sorted(keys)
+        self.assertEqual(ordered, [keys[1], keys[0], keys[2]])
+
+    def test_name_mode_is_alphabetical(self):
+        keys = [wd.row_sort_key(wd.SORT_NAME, symbol="GPRO"),
+                wd.row_sort_key(wd.SORT_NAME, symbol="Sue"),
+                wd.row_sort_key(wd.SORT_NAME, symbol="ANTSEM")]
+        ordered = sorted(keys)
+        self.assertEqual(ordered, [keys[2], keys[0], keys[1]])
+
+    def test_symbol_is_case_insensitive_tiebreak(self):
+        lower = wd.row_sort_key(wd.SORT_DROP, pct_change=-60.0, symbol="sue")
+        upper = wd.row_sort_key(wd.SORT_DROP, pct_change=-60.0, symbol="SUE")
+        self.assertEqual(lower, upper)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

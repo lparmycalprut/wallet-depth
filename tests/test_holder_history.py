@@ -196,7 +196,7 @@ class HistoryStoreTest(unittest.TestCase):
         }
         hh.ingest_one(store, "MINT", full, now=100, detail=True)
         hh.ingest_one(store, "MINT", self._analysis(dust_count=99),
-                      now=100 + 3600)  # cron: detail=False
+                      now=100 + 3600)  # scan non-detail: hanya titik ringkas
         self.assertEqual(hh.baseline_for_mint(store, "MINT")["ts"], 100)
         self.assertEqual(
             hh.latest_detail_for_mint(store, "MINT")["ts"], 100)

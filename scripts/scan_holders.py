@@ -11,10 +11,13 @@ Untuk setiap token watchlist:
    ditarik **lazy**, hanya untuk token yang punya kandidat, jadi scan tenang
    tidak menambah satu pun request),
 4. catat **titik perubahan** ke ``holder_history.json`` (titik mentah per
-   run; grafik memakai bucket 4 jam) — cron sengaja memakai
-   ``ingest_many(..., detail=False)`` sehingga rekaman detail hasil scan
-   FULL manual (``baseline`` / ``latest_detail``) milik user tidak pernah
-   ditimpa,
+   run; grafik memakai bucket 4 jam). Sejak 2026-09-05 cron memakai
+   ``ingest_many(..., detail=True)``: tiap token watchlist di-scan
+   **FULL** (semua halaman holder, bukan sampel 3000) sehingga scan
+   pertama setelah token masuk watchlist menjadi **titik awal holder
+   analytic** (``baseline`` immutable), lalu tiap run berikutnya
+   memperbarui ``latest_detail`` + interval **kronologi** — tanpa perlu
+   scan manual lagi,
 5. tulis ``holder_status.json`` lokal & publish ke branch ``holder-live``.
 
 Dijalankan GitHub Actions dengan target **1× per jam** (``cron: "0 * * * *"``
@@ -37,7 +40,8 @@ if ROOT not in sys.path:
 
 from alert_context import market_context_provider
 from daily_store import load_daily_effort
-from holder_history import (ingest_many, load_holder_history, merge_stores,
+from holder_history import (FULL_SCAN_MAX_WALLETS, ingest_many,
+                            load_holder_history, merge_stores,
                             publish_holder_history, pull_holder_history,
                             seed_from_status)
 from holder_analysis import analyze_token
@@ -50,7 +54,7 @@ from watchlist import load_watchlist
 
 
 def scan_watchlist(watchlist: dict, *, dust_limit: float | None = None,
-                   max_wallets: int = 3000,
+                   max_wallets: int | None = None,
                    workers: int = 4, progress=None,
                    holder_source: str | None = None,
                    history_store: dict | None = None) -> dict:
@@ -58,12 +62,19 @@ def scan_watchlist(watchlist: dict, *, dust_limit: float | None = None,
 
     ``holder_source``: ``gmgn`` / ``helius`` / ``auto`` — default
     ``None`` = ikuti config/env (default ``auto`` = Helius dulu).
+
+    ``max_wallets`` default = ``FULL_SCAN_MAX_WALLETS`` (100.000): cron
+    sejak 2026-09-05 memakai batas atas yang sama dengan tombol scan FULL
+    di halaman Holder, jadi holder diambil sampai habis (bukan sampel
+    3000) dan kronologi antar-scan FULL bisa dibangun otomatis.
     """
     analyses: dict[str, dict] = {}
     total = len(watchlist or {})
     if not total:
         return analyses
     workers = max(1, min(int(workers), 8))
+    max_wallets = (FULL_SCAN_MAX_WALLETS if max_wallets is None
+                   else int(max_wallets))
 
     store = (history_store if isinstance(history_store, dict)
              else load_holder_history())
@@ -106,8 +117,11 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dust-limit", type=float, default=None,
                         help="batas value USD dust (default 10)")
-    parser.add_argument("--max-wallets", type=int, default=3000,
-                        help="maks holder dianalisis per token")
+    parser.add_argument("--max-wallets", type=int, default=None,
+                        help="maks holder dianalisis per token (default: "
+                             f"FULL = {FULL_SCAN_MAX_WALLETS:,} — semua "
+                             "halaman sampai habis, sama seperti tombol "
+                             "scan FULL manual)")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--holder-source", choices=("gmgn", "helius",
                                                     "auto"), default=None,
@@ -140,9 +154,11 @@ def main(argv=None) -> int:
         print("WARN: HELIUS_API_KEY tidak ada — holder hanya via GMGN "
               "(sering diblokir di runner Actions → dust kosong). "
               "Set secret HELIUS_API_KEY di repo.", file=sys.stderr)
+    max_wallets = (FULL_SCAN_MAX_WALLETS if args.max_wallets is None
+                   else int(args.max_wallets))
     print(f"Holder scanner: tokens={len(watchlist)} "
           f"time={datetime.now(timezone.utc).isoformat()} "
-          f"max_wallets={args.max_wallets} "
+          f"max_wallets={max_wallets} (FULL) "
           f"holder_source={args.holder_source or 'config(auto)'}")
 
     started = time.monotonic()
@@ -159,7 +175,7 @@ def main(argv=None) -> int:
           f"backup={'ada' if durable else 'tidak ada'}")
     analyses = scan_watchlist(
         watchlist, dust_limit=args.dust_limit,
-        max_wallets=args.max_wallets,
+        max_wallets=max_wallets,
         workers=args.workers,
         holder_source=args.holder_source,
         history_store=store)
@@ -180,9 +196,11 @@ def main(argv=None) -> int:
         deliveries = process_holder_alerts(analyses, store,
                                            context_provider=provider,
                                            lp_mints=lp_mints)
-        # detail=False: cron hanya menambah titik perubahan; baseline
-        # (detail scan FULL pertama dari halaman Holder) tetap utuh.
-        history = ingest_many(analyses, store=store, detail=False)
+        # detail=True (sejak 2026-09-05): cron scan FULL, jadi rekaman
+        # baseline (titik awal holder analytic sejak token masuk watchlist),
+        # latest_detail, dan kronologi dibuat/diperbarui otomatis — tidak
+        # lagi hanya titik ringkas. Baseline tetap immutable.
+        history = ingest_many(analyses, store=store, detail=True)
         status = publish_holder_status(
             analyses, watchlist, push=not args.no_push,
             history_store=history, contexts=contexts)

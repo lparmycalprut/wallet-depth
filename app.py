@@ -28,10 +28,12 @@ from trending_ui import (merge_scan_rows, render_trending, run_screen,
                          run_screen_h1, run_screen_hrhr, run_screen_hrhr_h1)
 from watchlist import (add_to_watchlist, get_last_push_error, load_watchlist,
                        remove_from_watchlist, set_watchlist_source)
-from watchlist_detail import (SOURCE_HISTORY, change_html,
+from watchlist_detail import (SORT_DEFAULT, SORT_DROP, SORT_LABELS,
+                              SORT_NAME, SORT_OPTIONS, SORT_PCT,
+                              SOURCE_HISTORY, change_html,
                               dust_change_since_added, format_wib,
-                              previous_pct, resolve_view, sync_caption_text,
-                              sync_summary)
+                              previous_pct, resolve_view, row_sort_key,
+                              sync_caption_text, sync_summary)
 
 st.set_page_config(page_title="Wallet Depth — Holder Analytic",
                    page_icon="🧮", layout="wide",
@@ -753,6 +755,36 @@ if not holder_watch:
     st.info("Watchlist holder kosong. Tambahkan contract address di bawah, "
             "atau pindahkan token dari card Chart LP (📋).")
 else:
+    # Perubahan "Sejak masuk" per token dihitung sekali di sini karena
+    # dipakai untuk urutan baris DAN dirender di kolomnya.
+    _change_by_mint = {
+        mint: dust_change_since_added(meta, _holder_points.get(mint) or [],
+                                      _holder_views.get(mint) or {},
+                                      now=_now_ts)
+        for mint, meta in holder_watch.items()}
+
+    # Urutan baris (permintaan user 2026-09-05): default token dengan minus
+    # dust holder terbesar (dust % MC turun paling banyak sejak masuk) di
+    # atas — mis. GPRO −60% dari awal watchlist.
+    _sort_keys = [key for key, _label in SORT_OPTIONS]
+    _sort_col, _sort_note = st.columns([0.30, 0.70])
+    sort_mode = _sort_col.selectbox(
+        "Urutkan baris watchlist", options=_sort_keys,
+        index=_sort_keys.index(SORT_DEFAULT),
+        format_func=lambda key: SORT_LABELS.get(str(key), str(key)))
+    _sort_notes = {
+        SORT_DROP: ("Token dengan <b>minus dust terbesar sejak masuk</b> di "
+                    "paling atas (dust % MC turun paling banyak, mis. "
+                    "−60%) — yang belum ada pembanding di bawah."),
+        SORT_PCT: ("Token dengan <b>dust % MC saat ini tertinggi</b> di "
+                   "paling atas (risiko distribusi / BAHAYA lebih dulu)."),
+        SORT_NAME: "Urutan alfabetis A–Z (urutan lama).",
+    }
+    _sort_note.markdown(
+        '<div style="font-size:0.72rem;color:#64748b;">'
+        f"{_sort_notes.get(str(sort_mode), '')}</div>",
+        unsafe_allow_html=True)
+
     header_cols = st.columns([1.55, 0.85, 0.9, 1.05, 1.05, 0.4, 0.4, 0.4])
     header_style = "font-size:0.78rem;color:#000000;font-weight:700;"
     center = "text-align:center;" + header_style
@@ -777,10 +809,14 @@ else:
     st.markdown('<hr style="margin:0.5rem 0;border-color:#cbd5e1;">',
                 unsafe_allow_html=True)
 
-    ordered = sorted(holder_watch.items(),
-                     key=lambda item: str(
-                         (status_tokens.get(item[0]) or {}).get("symbol")
-                         or item[1].get("symbol") or item[0]).upper())
+    ordered = sorted(
+        holder_watch.items(),
+        key=lambda item: row_sort_key(
+            sort_mode,
+            pct_change=(_change_by_mint.get(item[0]) or {}).get("pct_change"),
+            dust_pct=(_holder_views.get(item[0]) or {}).get("dust_pct"),
+            symbol=str((status_tokens.get(item[0]) or {}).get("symbol")
+                       or item[1].get("symbol") or "?")))
     for mint, meta in ordered:
         token = status_tokens.get(mint) or {}
         symbol = str(meta.get("symbol") or token.get("symbol") or "?").upper()
@@ -796,7 +832,7 @@ else:
         dust_pct = view.get("dust_pct")
         prev_pct = previous_pct(sampled, view)
         flag = dust_flag(dust_pct, prev_pct)
-        change = dust_change_since_added(meta, points, view, now=_now_ts)
+        change = _change_by_mint.get(mint) or {}
         truncated = holders.get("truncated", False)
         dust_txt = ("—" if dust_count is None
                     else (f"≥{int(dust_count)}" if truncated

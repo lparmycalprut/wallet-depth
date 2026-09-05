@@ -21,7 +21,11 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   (14 hari × 24 titik/jam, cron hourly); UI tetap memakai
   `resample_4h` (maks 84 bucket 4 jam).
   Baseline scan FULL immutable + kronologi wallet bounded
-  (`holder_chronology.py`). `calculate_volatility_metrics()` = metrik
+  (`holder_chronology.py`). **Sejak 2026-09-05 cron ikut scan FULL +
+  `detail=True`** — scan pertama setelah token masuk watchlist menjadi
+  `baseline` (titik awal holder analytic) dan kronologi terakumulasi
+  otomatis (interval per scan FULL, `MAX_CHRONOLOGY_INTERVALS` 24).
+  `calculate_volatility_metrics()` = metrik
   volatilitas 4 jam dari candle hourly (`price_stddev_4h`, `price_range_4h`,
   `intra_hour_volatility`, `missing_hours`, `stale`); candle < 2 →
   `available: False` (artinya "tidak tahu", bukan "tenang").
@@ -74,7 +78,11 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   sesudahnya**; exit non-zero bila 0 holder / publish snapshot gagal
   (backup gagal = `WARN` saja, tidak membuat cron merah). Scope rule
   ⚡ EARLY DUMP diteruskan lewat `lp_mints` = set `split_watchlist(
-  watchlist)[0]` (token pool).
+  watchlist)[0]` (token pool). **Sejak 2026-09-05 cron scan FULL**
+  (`--max-wallets` default = `holder_history.FULL_SCAN_MAX_WALLETS`
+  100.000; workflow tidak lagi mengirim `--max-wallets 3000`) dan
+  `ingest_many(..., detail=True)`: token watchlist (lama maupun baru)
+  menjadi titik awal holder analytic tanpa scan manual.
 
 ### Backup durable store holder
 
@@ -150,7 +158,11 @@ JSON compact, Contents API base64) di ref `holder-live`:
   cron **atau** titik history yang lebih baru (menandai `drift` bila keduanya
   berbeda > 0,01 pp dan `stale` bila > 2 jam), `previous_pct()` memilih
   pembanding badge yang benar, `sync_caption_text()` menulis satu caption
-  "Scan terakhir" + rincian sumber per token. Murni kalkulasi.
+  "Scan terakhir" + rincian sumber per token. Urutan baris (2026-09-05):
+  default `SORT_DROP` — **minus dust terbesar di atas** (`pct_change`
+  "Sejak masuk" paling negatif, mis. GPRO −60%; tanpa pembanding di
+  bawah), opsi lain `SORT_PCT` (dust % MC tertinggi) / `SORT_NAME`
+  (alfabetis) lewat `row_sort_key()`. Murni kalkulasi.
 - `accumulation.py`: 8 heuristik **Deteksi Akumulasi** (tier migration,
   diamond hands, DCA vs one-off, smart money GMGN, silent range, spring/test,
   fresh wallet prep, sell-side thinning) + skor 0–100 (`SCORE_AKUMULASI` 60)
@@ -215,7 +227,10 @@ dedup                 : bucket 4 jam (event id) + jeda minimum 1 jam
 data pasar tidak ada  : alert tetap dikirim, ditandai TIDAK TERVERIFIKASI
                         (ALLOW_UNVERIFIED_ALERTS = True)
 mid-tier (pilar)      : Crab+Fish = $100–$10k, freeze max 200 address
-max holders/token     : 3000 (cron) / 2000 (scan UI)
+max holders/token     : FULL default 100.000 (cron & tombol "Scan holder
+                        FULL" halaman Holder, paginasi sampai habis) /
+                        2.000 (tombol scan watchlist di app.py, titik
+                        ringkas tanpa detail)
 
 Pre-Pump Screener (pre_pump_screener.py; scope: watchlist source=degen):
 liquidity wave        : add kedua >= 5x add pertama dalam 48 jam
@@ -245,6 +260,10 @@ warna merah           : dust % MC naik >= 100% sejak tanggal masuk
 data basi             : umur data > 2 jam (STALE_AFTER_SEC; cron 1x/jam)
 drift                 : |snapshot - titik history| > 0,01 pp dengan ts beda
                         (DRIFT_TOLERANCE_PP) -> baris pakai yang terbaru
+urutan baris          : default minus dust terbesar di atas (pct_change
+                        paling negatif sejak masuk; tanpa pembanding di
+                        bawah) — SORT_DROP; pilihan lain SORT_PCT /
+                        SORT_NAME lewat selectbox "Urutkan baris watchlist"
 
 Deteksi Akumulasi (accumulation.py) — semua heuristik, tanpa Helius:
 skor gabungan         : >= 60 = Terindikasi Akumulasi (SCORE_AKUMULASI),
