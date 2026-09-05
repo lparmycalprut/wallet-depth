@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MORTY Dust % Market Cap History</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        .chart-container {
+            width: 100%;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            background: #1a1a2e;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        }
+        
+        .chart-title {
+            color: #e94560;
+            text-align: center;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin-bottom: 20px;
+            font-size: 1.5rem;
+        }
+        
+        .chart-subtitle {
+            color: #8b8b8b;
+            text-align: center;
+            font-size: 0.9rem;
+            margin-bottom: 20px;
+        }
+        
+        .stats-card {
+            background: #16213e;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+        }
+        
+        .stat-item {
+            text-align: center;
+            padding: 10px 20px;
+        }
+        
+        .stat-value {
+            color: #e94560;
+            font-size: 1.5rem;
+            font-weight: bold;
+        }
+        
+        .stat-label {
+            color: #8b8b8b;
+            font-size: 0.85rem;
+            margin-top: 5px;
+        }
+        
+        body {
+            background: #0f0f1a;
+            color: #ffffff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        
+        .loading {
+            text-align: center;
+            color: #8b8b8b;
+            padding: 40px;
+        }
+    </style>
+</head>
+<body>
+    <div class="chart-container">
+        <h2 class="chart-title">📊 MORTY Dust Wallet % Market Cap</h2>
+        <p class="chart-subtitle">Perubahan persentase Market Cap yang dipegang oleh dust wallets ($0-$10)</p>
+        
+        <canvas id="dustChart"></canvas>
+        
+        <div class="stats-card">
+            <div class="stat-item">
+                <div class="stat-value" id="currentValue">-</div>
+                <div class="stat-label">Current % MCAP</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="avgValue">-</div>
+                <div class="stat-label">30d Average</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="maxValue">-</div>
+                <div class="stat-label">30d Max</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="changeValue">-</div>
+                <div class="stat-label">24h Change</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Load historical data from JSON file
+        async function loadDustHistory() {
+            try {
+                // Jika file ada di server lokal
+                const response = await fetch('/cron/dust_history.json');
+                if (!response.ok) throw new Error('File not found');
+                return await response.json();
+            } catch (e) {
+                // Fallback: mock data untuk demo
+                console.log('Using mock data for demo');
+                return generateMockData();
+            }
+        }
+
+        function generateMockData() {
+            // Generate mock data for the last 30 days
+            const entries = [];
+            const now = new Date();
+            
+            // Simulasi data: mulai dari 0.3%, naik ke 0.59%
+            let currentValue = 0.3;
+            
+            for (let i = 29; i >= 0; i--) {
+                const date = new Date(now);
+                date.setDate(date.getDate() - i);
+                
+                // Random fluctuation
+                const fluctuation = (Math.random() * 0.06) - 0.03;
+                currentValue = Math.max(0.25, Math.min(0.65, currentValue + fluctuation));
+                
+                entries.push({
+                    timestamp: date.toISOString(),
+                    date: date.toISOString().split('T')[0],
+                    time: date.toISOString().split('T')[1].split('.')[0],
+                    dust_percentage: parseFloat(currentValue.toFixed(2)),
+                    dust_percentage_display: `${currentValue.toFixed(2)}%`
+                });
+            }
+            
+            // Pastikan data terakhir = 0.59% (dari snapshot asli)
+            entries[entries.length - 1].dust_percentage = 0.59;
+            entries[entries.length - 1].dust_percentage_display = '0.59%';
+            
+            return { entries };
+        }
+
+        function createChart(data) {
+            const ctx = document.getElementById('dustChart').getContext('2d');
+            
+            // Sort by timestamp
+            const sortedEntries = [...data.entries].sort((a, b) => 
+                new Date(a.timestamp) - new Date(b.timestamp)
+            );
+            
+            const labels = sortedEntries.map(entry => entry.date);
+            const values = sortedEntries.map(entry => entry.dust_percentage);
+            
+            // Calculate stats
+            const current = sortedEntries[sortedEntries.length - 1];
+            const previous = sortedEntries.length > 1 ? sortedEntries[sortedEntries.length - 2] : current;
+            
+            const avg = (values.reduce((a, b) => a + b, 0) / values.length).toFixed(2);
+            const max = Math.max(...values).toFixed(2);
+            const change = ((current.dust_percentage - previous.dust_percentage) / previous.dust_percentage * 100).toFixed(2);
+            
+            // Update stats card
+            document.getElementById('currentValue').textContent = `${current.dust_percentage.toFixed(2)}%`;
+            document.getElementById('avgValue').textContent = `${avg}%`;
+            document.getElementById('maxValue').textContent = `${max}%`;
+            document.getElementById('changeValue').textContent = `${change > 0 ? '+' : ''}${change}%`;
+            document.getElementById('changeValue').style.color = change > 0 ? '#4caf50' : change < 0 ? '#f44336' : '#8b8b8b';
+            
+            // Create gradient
+            const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+            gradient.addColorStop(0, 'rgba(233, 69, 96, 0.3)');
+            gradient.addColorStop(1, 'rgba(233, 69, 96, 0)');
+            
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: '% Market Cap (Dust: $0-$10)',
+                        data: values,
+                        borderColor: '#e94560',
+                        backgroundColor: gradient,
+                        borderWidth: 3,
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 4,
+                        pointBackgroundColor: '#e94560',
+                        pointBorderColor: '#ffffff',
+                        pointBorderWidth: 2,
+                        pointHoverRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            labels: {
+                                color: '#ffffff',
+                                font: {
+                                    size: 14
+                                }
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: '#1a1a2e',
+                            titleColor: '#ffffff',
+                            bodyColor: '#ffffff',
+                            borderColor: '#e94560',
+                            borderWidth: 1,
+                            callbacks: {
+                                label: function(context) {
+                                    return `% Market Cap: ${context.parsed.y.toFixed(2)}%`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            },
+                            ticks: {
+                                color: '#8b8b8b',
+                                font: {
+                                    size: 12
+                                }
+                            }
+                        },
+                        y: {
+                            beginAtZero: false,
+                            min: Math.min(...values) - 0.05,
+                            max: Math.max(...values) + 0.05,
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            },
+                            ticks: {
+                                color: '#8b8b8b',
+                                font: {
+                                    size: 12
+                                },
+                                callback: function(value) {
+                                    return `${value.toFixed(2)}%`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Load and create chart
+        loadDustHistory().then(data => {
+            createChart(data);
+        });
+    </script>
+</body>
+</html>

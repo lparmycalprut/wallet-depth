@@ -1,0 +1,31 @@
+{
+  "name": "morty-dust-tracker",
+  "version": "1.0.0",
+  "description": "Track and visualize MORTY dust wallet % Market Cap changes",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "cron": "node historical_dust_tracker.js",
+    "cron:test": "node historical_dust_tracker.js && cat dust_history.json",
+    "setup": "npm install express chart.js"
+  },
+  "keywords": [
+    "morty",
+    "solana",
+    "helius",
+    "dust",
+    "wallet",
+    "chart",
+    "market-cap"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "chart.js": "^4.4.0"
+  },
+  "devDependencies": {
+    "node-cron": "^3.0.2"
+  }
+}
