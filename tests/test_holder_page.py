@@ -2,7 +2,8 @@
 
 Fokus: grafik holder baru (jumlah holder + komposisi bucket + distribusi
 scan FULL) dan tombol scan manual yang wajib **FULL** serta menyimpan
-detail baseline (``detail=True``) — cron tetap hanya mencatat perubahan.
+detail baseline (``detail=True``). Sejak 2026-09-05 cron ikut scan FULL
++ ``detail=True`` (lihat ``scripts/scan_holders.py``).
 """
 from __future__ import annotations
 

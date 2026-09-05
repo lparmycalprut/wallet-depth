@@ -1,3 +1,47 @@
+# Kegiatan — 5 September 2026
+
+Dua permintaan user: (1) token yang sudah ada di watchlist maupun baru
+ditambahkan menjadi **titik awal holder analytic** — cron mulai sekarang
+scan **holder FULL** sehingga kronologi bisa langsung dilihat tanpa scan
+manual; (2) baris watchlist diurut dari **minus dust holder terbesar**
+(contoh: GPRO −60% sejak masuk harus di atas, Sue juga).
+
+## 1. Watchlist = titik awal holder analytic; cron scan FULL
+
+Sebelumnya hanya tombol manual "Scan holder FULL" di halaman Holder yang
+memanggil `ingest_many(detail=True)` — baseline (snapshot FULL pertama)
+dan kronologi tidak pernah terbentuk untuk token yang tidak pernah di-scan
+manual. Sekarang `scripts/scan_holders.py`:
+
+- `--max-wallets` default = **FULL** (`holder_history.FULL_SCAN_MAX_WALLETS`
+  100.000, sama dengan tombol scan FULL manual; sebelumnya 3000) dan
+  `ingest_many(..., detail=True)` — scan pertama setelah token masuk
+  watchlist (token lama maupun baru) menulis **baseline immutable** (titik
+  awal), tiap run berikutnya memperbarui `latest_detail` + interval
+  **kronologi** (bounded: `MAX_CHRONOLOGY_INTERVALS` 24, snapshot 400
+  wallet, 40 movement/interval) yang tampil di halaman Holder.
+
+Biaya ekstra hanya untuk token > 3.000 holder (token ≤ 3.000 sama seperti
+sebelumnya). Teks kosong di halaman Holder diperbarui: "Belum ada scan
+FULL" kini menyebut cron otomatis ≤ ±1 jam. Tes baru
+`tests/test_scan_holders.py::CronFullScanTest` memastikan cron memakai
+`detail=True` + `FULL_SCAN_MAX_WALLETS`.
+
+Catatan: baris `--max-wallets 3000` di `.github/workflows/daily-effort.yml`
+belum bisa dihapus lewat bot (butuh izin `workflows` di repo) — sampai
+dihapus manual, cron produksi masih terbatas 3.000 wallet/token; token
+≤ 3.000 tidak terpengaruh, baseline + kronologi tetap jalan.
+
+## 2. Watchlist: minus dust holder terbesar di atas
+
+`watchlist_detail.py` mendapat `row_sort_key()` + konstanta
+`SORT_DROP` (default) / `SORT_PCT` / `SORT_NAME`. Default baris watchlist
+di `app.py` kini diurut dari `pct_change` "Sejak masuk" paling **negatif**
+(dust % MC turun paling banyak — GPRO −60%, Sue — di baris paling atas);
+token tanpa pembanding ditaruh di bawah. Ada selectbox "Urutkan baris
+watchlist" untuk beralih ke dust % MC tertinggi / nama A–Z. Tes unit
+`RowSortKeyTest` + AppTest urutan `DRP(−75%) → SYN(+137%) → RSE(+200%)`.
+
 # Kegiatan — 4 September 2026
 
 Permintaan user: halaman baru **🚀 Pre-Pump Screener** — deteksi memecoin

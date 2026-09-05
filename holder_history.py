@@ -88,11 +88,14 @@ HIGH_VOLATILITY_STDDEV_PCT = 3.0     # stddev close 4 jam > 3% = pasar liar
 VOLATILITY_STALE_SEC = 2 * 3600      # candle terbaru lebih tua dari ini = basi
 
 # Scan manual (halaman Holder) = FULL: ambil seluruh holder, bukan sampel.
-# Cron hanya mencatat perubahan (titik ringkas), jadi detail hasil scan
-# pertama (``baseline``) tetap tersimpan apa adanya.
+# Sejak 2026-09-05 cron ikut FULL (default scripts/scan_holders.py), jadi
+# detail hasil scan pertama tiap token watchlist (``baseline`` = titik awal
+# holder analytic) tersimpan apa adanya dan kronologi terakumulasi otomatis.
 FULL_SCAN_MAX_WALLETS = 100_000
 
-# Kronologi wallet antar-scan FULL (lihat ``holder_chronology``).
+# Kronologi wallet antar-scan FULL (lihat ``holder_chronology``). Cron
+# scan FULL tiap jam sejak 2026-09-05 → interval per scan dipertahankan
+# 24 terakhir; narasi kumulatif baseline → terbaru tidak ikut dipangkas.
 MAX_CHRONOLOGY_INTERVALS = 24
 MAX_SNAPSHOT_WALLETS = 400
 MAX_MOVEMENTS_PER_INTERVAL = 40
@@ -550,8 +553,8 @@ def full_scan_usable(analysis: dict | None) -> bool:
     """False hanya jika scan FULL jelas gagal (0 holder terambil).
 
     Fixture lama tanpa ``total_fetched`` tetap dianggap usable supaya
-    schema/test yang sudah ada tidak pecah. Cron (``detail=False``)
-    tidak memakai helper ini.
+    schema/test yang sudah ada tidak pecah. Scan non-detail tidak memakai
+    helper ini.
     """
     if not isinstance(analysis, dict):
         return False
@@ -844,11 +847,12 @@ def ingest_one(store: dict, mint: str, analysis: dict | None, *,
                now: int | None = None, detail: bool = False) -> dict:
     """Tambah satu titik + update kohort. Mutasi ``store``.
 
-    ``detail=True`` (scan **full** manual) juga menyimpan rekaman detail:
+    ``detail=True`` (scan **full**) juga menyimpan rekaman detail:
     ``baseline`` ditulis sekali saja pada scan full pertama dan **tidak
-    pernah ditimpa** (itu data awal milik user), sementara
-    ``latest_detail`` diperbarui tiap scan full. Cron memakai
-    ``detail=False`` sehingga hanya menambah titik perubahan.
+    pernah ditimpa** (titik awal holder analytic), sementara
+    ``latest_detail`` diperbarui tiap scan full. Cron sejak 2026-09-05
+    ikut memakai ``detail=True`` (scan FULL tiap jam), jadi baseline +
+    kronologi terbentuk otomatis untuk semua token watchlist.
     """
     mint = str(mint or "").strip()
     if not mint or not isinstance(analysis, dict):
@@ -896,8 +900,9 @@ def ingest_many(analyses: dict | None, *, now: int | None = None,
                 detail: bool = False) -> dict:
     """Catat banyak token lalu tulis ``holder_history.json``.
 
-    ``detail=True`` hanya dipakai scan full manual (menyimpan baseline /
-    detail terbaru); cron memakai default ``False``.
+    ``detail=True`` dipakai scan full manual dan cron (sejak 2026-09-05
+    cron scan FULL — menyimpan baseline / detail terbaru / kronologi);
+    ``detail=False`` hanya menambah titik ringkas.
     """
     store = dict(store or load_holder_history(path))
     store.setdefault("tokens", {})

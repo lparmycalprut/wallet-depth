@@ -164,6 +164,19 @@ class WatchlistRowDetailTest(unittest.TestCase):
         self.assertIn("HATI-HATI", body)   # SYN 0,71% MC
         self.assertIn("AMAN", body)        # DRP 0,10% MC
 
+    def test_default_sort_puts_biggest_dust_drop_first(self):
+        """Urutan default sejak 2026-09-05: minus dust sejak masuk di atas.
+
+        DRP turun −75% → baris paling atas, SYN (+137%) di tengah, RSE
+        (+200%) paling bawah (sebelumnya urutan alfabetis DRP, RSE, SYN).
+        """
+        body = self._body(self._app())
+        order = [body.find(f"${symbol}")
+                 for symbol in ("DRP", "SYN", "RSE")]
+        self.assertGreater(order[0], -1)
+        self.assertLess(order[0], order[1])
+        self.assertLess(order[1], order[2])
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

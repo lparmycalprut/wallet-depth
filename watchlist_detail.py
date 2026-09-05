@@ -22,6 +22,11 @@ Dua hal yang dikerjakan modul ini (murni kalkulasi, tanpa Streamlit/jaringan):
    caption "scan terakhir" tidak lagi mengklaim waktu yang tidak cocok dengan
    angka di baris.
 
+3. **Urutan baris watchlist** (permintaan user 2026-09-05) — default
+   ``SORT_DROP``: token dengan **minus dust terbesar** (``pct_change``
+   ``Sejak masuk`` paling negatif, mis. GPRO −60%) di baris paling atas;
+   lihat :func:`row_sort_key`.
+
 Ambang warna (permintaan user 2026-09-04):
 
 - ``% MC`` yang dipegang dust **turun ≥ 50%** → hijau (dust menipis),
@@ -72,6 +77,49 @@ TONE_LABELS = {
 
 SOURCE_SNAPSHOT = "snapshot"
 SOURCE_HISTORY = "history"
+
+# --- Urutan baris watchlist holder (permintaan user 2026-09-05) ---------------
+# Default: token dengan "minus dust holder" terbesar di atas — token yang
+# dust % MC-nya turun paling banyak sejak masuk watchlist (mis. GPRO -60%)
+# berada paling atas; token tanpa pembanding / dust naik di bawah.
+SORT_DROP = "drop"          # dust % MC turun terbesar sejak masuk (minus → atas)
+SORT_PCT = "pct"            # dust % MC saat ini tertinggi di atas (risiko)
+SORT_NAME = "name"          # alfabetis A–Z (urutan lama)
+SORT_DEFAULT = SORT_DROP
+SORT_OPTIONS = (
+    (SORT_DROP, "🔻 Dust turun sejak masuk — minus terbesar di atas"),
+    (SORT_PCT, "🔥 Dust % MC tertinggi di atas"),
+    (SORT_NAME, "🔤 Nama A–Z"),
+)
+SORT_LABELS = {key: label for key, label in SORT_OPTIONS}
+
+
+def row_sort_key(mode: str, *, pct_change=None, dust_pct=None,
+                 symbol: str = "") -> tuple:
+    """Kunci urut satu baris watchlist (bandingkan hasilnya antar baris).
+
+    - ``drop`` (default): ``pct_change`` (perubahan relatif dust % MC sejak
+      masuk) paling kecil/negatif di urutan pertama; baris tanpa nilai
+      pembanding ditaruh di bawah (tidak bisa diklaim "minus terbesar").
+    - ``pct``: ``dust_pct`` saat ini tertinggi di atas.
+    - ``name``: alfabetis ``symbol``.
+
+    Tuple selalu berformat ``(bawah?, nilai, nama)`` sehingga aman
+    dibandingkan dan deterministik (nama jadi tie-breaker).
+    """
+    name = str(symbol or "").upper()
+    if mode == SORT_NAME:
+        return (0, 0.0, name)
+    if mode == SORT_PCT:
+        value = _float(dust_pct, None)
+        if value is None:
+            return (1, 0.0, name)
+        return (0, -value, name)
+    # SORT_DROP — default: minus terbesar dulu.
+    value = _float(pct_change, None)
+    if value is None:
+        return (1, 0.0, name)
+    return (0, value, name)
 
 
 # ---------------------------------------------------------------------------
