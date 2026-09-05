@@ -83,7 +83,12 @@ Cadence hourly (sejak 2026-09-04) dan ukuran ref `holder-live`:
 - Kuota holder: sejak 2026-09-05 cron scan **FULL** (bukan sampel 3000):
   token yang punya ≤ 3000 holder tidak berubah biayanya, token lebih besar
   ikut semua halamannya (default `--max-wallets` = 100.000 = batas atas
-  aman). Workflow tidak lagi mengirim `--max-wallets 3000`. Perkiraan:
+  aman). **Catatan:** baris workflow yang masih mengirim
+  `--max-wallets 3000` belum bisa dihapus lewat bot (butuh izin
+  `workflows` di repo) — selama ada, cron produksi terbatas 3.000
+  wallet/token; token ≤ 3.000 tidak terpengaruh, baseline + kronologi
+  otomatis tetap jalan. Hapus flag itu dari workflow untuk FULL penuh.
+  Perkiraan:
   55 token × 24 run/hari × holder aktual per token (order ribuan untuk
   token degen) via Helius DAS + market DexScreener; pantau durasi di log
   `durasi=<detik>` dan kuota Helius bila watchlist membesar.

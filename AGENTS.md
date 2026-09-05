@@ -80,9 +80,14 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   ⚡ EARLY DUMP diteruskan lewat `lp_mints` = set `split_watchlist(
   watchlist)[0]` (token pool). **Sejak 2026-09-05 cron scan FULL**
   (`--max-wallets` default = `holder_history.FULL_SCAN_MAX_WALLETS`
-  100.000; workflow tidak lagi mengirim `--max-wallets 3000`) dan
+  100.000) dan
   `ingest_many(..., detail=True)`: token watchlist (lama maupun baru)
-  menjadi titik awal holder analytic tanpa scan manual.
+  menjadi titik awal holder analytic tanpa scan manual. **Catatan:** baris
+  `.github/workflows/daily-effort.yml` yang masih mengirim
+  `--max-wallets 3000` belum bisa diubah lewat bot (butuh izin
+  `workflows` di repo) — selama ada, cron produksi terbatas 3.000
+  wallet/token (token ≤ 3.000 tidak terpengaruh; baseline + kronologi
+  otomatis tetap jalan). Hapus flag itu dari workflow untuk FULL penuh.
 
 ### Backup durable store holder
 

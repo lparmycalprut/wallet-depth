@@ -15,9 +15,7 @@ manual. Sekarang `scripts/scan_holders.py`:
 
 - `--max-wallets` default = **FULL** (`holder_history.FULL_SCAN_MAX_WALLETS`
   100.000, sama dengan tombol scan FULL manual; sebelumnya 3000) dan
-  workflow `.github/workflows/daily-effort.yml` tidak lagi mengirim
-  `--max-wallets 3000`;
-- `ingest_many(..., detail=True)` — scan pertama setelah token masuk
+  `ingest_many(..., detail=True)` — scan pertama setelah token masuk
   watchlist (token lama maupun baru) menulis **baseline immutable** (titik
   awal), tiap run berikutnya memperbarui `latest_detail` + interval
   **kronologi** (bounded: `MAX_CHRONOLOGY_INTERVALS` 24, snapshot 400
@@ -28,6 +26,11 @@ sebelumnya). Teks kosong di halaman Holder diperbarui: "Belum ada scan
 FULL" kini menyebut cron otomatis ≤ ±1 jam. Tes baru
 `tests/test_scan_holders.py::CronFullScanTest` memastikan cron memakai
 `detail=True` + `FULL_SCAN_MAX_WALLETS`.
+
+Catatan: baris `--max-wallets 3000` di `.github/workflows/daily-effort.yml`
+belum bisa dihapus lewat bot (butuh izin `workflows` di repo) — sampai
+dihapus manual, cron produksi masih terbatas 3.000 wallet/token; token
+≤ 3.000 tidak terpengaruh, baseline + kronologi tetap jalan.
 
 ## 2. Watchlist: minus dust holder terbesar di atas
 
