@@ -3,8 +3,13 @@
 
 Watchlist ini terpisah dari ``watchlist.json`` (Solana). File-nya:
 
-- ``watchlist_robinhood.json`` — daftar token ``0x…`` (persisted ke GitHub).
-- ``watchlist_robinhood_pending.json`` — journal add/remove (gitignored).
+- ``watchlist_robinhood.json`` — daftar token ``0x…`` (persisted ke GitHub),
+  dipecah dua card lewat field ``source``:
+  **Robinhood LP** (default, scan cepat ±15 menit + pengingat > 0,1% MC
+  berulang) dan **Robinhood biasa** (``source="regular"``, scan ±4 jam +
+  rule 🔔 HIGH DROP) — lihat :func:`split_robinhood_watchlist`.
+- ``watchlist_robinhood_pending.json`` — journal add/remove/source
+  (gitignored).
 - ``holder_status_robinhood.json`` — snapshot dashboard (ref ``holder-live``).
 - ``holder_history_robinhood.json`` / ``.json.gz`` — store/backup history.
 
@@ -36,6 +41,38 @@ HISTORY_LOCAL_PATH = os.path.join(BASE_DIR, "holder_history_robinhood.json")
 
 CHAIN_SLUG = robinhood_holders.CHAIN_SLUG
 CHAIN_NAME = robinhood_holders.CHAIN_NAME
+
+# Watchlist Robinhood dipecah dua card (permintaan user 2026-09-05):
+# - **Robinhood LP**    : scan cepat ±15 menit bersama Chart LP (Meteora);
+#   pengingat ⚡ EARLY DUMP berulang selama dust % MC > 0,1%.
+# - **Robinhood** (biasa): scan ±4 jam; rule 🔔 HIGH DROP (turun >= 50%
+#   dari titik high hold % MC).
+# Split memakai field ``source`` di file watchlist yang sama, seperti split
+# Chart LP di watchlist Solana. Default (source manual/kosong) = **LP** —
+# warisan struktur lama saat seluruh watchlist Robinhood dipantau cepat,
+# jadi token yang sudah ada tidak berpindah card.
+RH_LP_SOURCE = "lp"
+RH_REGULAR_SOURCE = "regular"
+
+
+def is_regular_entry(meta) -> bool:
+    """True bila entri watchlist Robinhood ada di card **biasa** (4 jam)."""
+    source = str((meta or {}).get("source") or "").strip().lower()
+    return source == RH_REGULAR_SOURCE
+
+
+def split_robinhood_watchlist(watchlist: dict | None) -> tuple[dict, dict]:
+    """Pisah watchlist Robinhood jadi ``(lp, regular)`` tanpa mengubah urutan."""
+    lp: dict = {}
+    regular: dict = {}
+    for ca, meta in (watchlist or {}).items():
+        if not ca:
+            continue
+        if is_regular_entry(meta):
+            regular[ca] = meta or {}
+        else:
+            lp[ca] = meta or {}
+    return lp, regular
 
 
 def load_watchlist(force_refresh: bool = False) -> dict:
@@ -161,15 +198,20 @@ def scan_watchlist(watchlist: dict | None, *, history_store: dict | None = None,
 def publish_scan(analyses: dict, watchlist: dict, *,
                  history_store: dict | None = None,
                  push: bool = False,
-                 contexts: dict | None = None) -> dict:
-    """Ingest + publish status/history Robinhood ke file lokal/GitHub."""
+                 contexts: dict | None = None,
+                 merge_status: dict | None = None) -> dict:
+    """Ingest + publish status/history Robinhood ke file lokal/GitHub.
+
+    ``merge_status`` (snapshot sebelumnya) mewariskan token yang tidak
+    ikut dianalisis run cepat — lihat ``holder_status.snapshot_status``.
+    """
     store = history_store if isinstance(history_store, dict) \
         else load_history()
     history = ingest_many(analyses, store=store, path=HISTORY_LOCAL_PATH,
                           detail=True)
     status = publish_holder_status(
         analyses, watchlist, push=push, history_store=history,
-        contexts=contexts,
+        contexts=contexts, merge_status=merge_status,
         repo_path=STATUS_REPO_PATH,
         local_path=STATUS_LOCAL_PATH)
     if push:

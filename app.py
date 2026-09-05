@@ -23,6 +23,8 @@ from meteora_screener import scan_meteora
 import pre_pump_screener
 import robinhood_holders
 import robinhood_watchlist
+from robinhood_watchlist import (RH_LP_SOURCE, RH_REGULAR_SOURCE,
+                                 split_robinhood_watchlist)
 from holder_analysis import DUST_LIMIT_USD, analyze_token
 from holder_status import (MANUAL_SCAN_KEY, apply_manual_scan,
                            load_holder_status, publish_holder_status)
@@ -32,7 +34,9 @@ from watchlist import (add_to_watchlist, get_last_push_error, load_watchlist,
                        remove_from_watchlist, set_watchlist_source)
 from watchlist_detail import (SORT_DEFAULT, SORT_DROP, SORT_LABELS,
                               SORT_NAME, SORT_OPTIONS, SORT_PCT,
-                              SOURCE_HISTORY, change_html,
+                              SOURCE_HISTORY, STALE_AFTER_SEC,
+                              STALE_REGULAR_AFTER_SEC,
+                              change_html,
                               dust_change_since_added, format_wib,
                               previous_pct, resolve_view, row_sort_key,
                               sync_caption_text, sync_summary)
@@ -345,9 +349,9 @@ def _render_lp_row(row: dict) -> None:
                      expanded=False):
         figure = lp_chart_figure(row.get("points") or [], symbol)
         if figure is None:
-            st.info("Butuh minimal 2 titik bucket 4 jam. Cron (target ±1 jam, "
-                    "best-effort) atau tombol **Scan holder watchlist** "
-                    "akan mengisinya.")
+            st.info("Butuh minimal 2 titik bucket 4 jam. Cron watchlist LP "
+                    "(target ±15 menit, best-effort) atau tombol **Scan "
+                    "holder watchlist** akan mengisinya.")
         else:
             st.pyplot(figure, use_container_width=True)
             plt.close(figure)
@@ -369,7 +373,11 @@ def _render_lp_card(rows: list[dict]) -> None:
         st.markdown(_lp_head_html(summary), unsafe_allow_html=True)
         st.caption(
             "Watchlist terpisah untuk token yang ditambahkan dari **Scan "
-            "Meteora Pool** (⭐) atau ditambah manual ke card ini. Grafik "
+            "Meteora Pool** (⭐) atau ditambah manual ke card ini. Di-scan "
+            "cron **tiap ±15 menit** supaya exit LP lebih awal: selama "
+            f"hold % MC dust di atas **{DUST_BEST_PCT:g}%**, alert ⚡ "
+            "Telegram dikirim **berulang tiap scan** — berhenti bila token "
+            "dihapus (✕) atau dipindah ke watchlist biasa (📋). Grafik "
             "menampilkan **perubahan dust holder** per bucket 4 jam: "
             f"≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
             f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA.")
@@ -656,24 +664,39 @@ def _render_meteora_scan() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Watchlist Robinhood Chain (EVM, chain id 4663)
+# Watchlist Robinhood Chain (EVM, chain id 4663) — dua card sejak 2026-09-05:
+# **Robinhood LP** (scan cepat ±15 menit, pengingat ⚡ > 0,1% MC berulang) dan
+# **Robinhood biasa** (scan ±4 jam, rule 🔔 HIGH DROP titik high).
 # ---------------------------------------------------------------------------
-RH_CARD_TITLE = "🦅 Watchlist Robinhood Chain — Holder Dust"
+RH_CARD_TITLE = "🦅 Watchlist Robinhood LP — Holder Dust"
+RH_REGULAR_CARD_TITLE = "🦅 Watchlist Robinhood — Holder Dust"
 RH_ADD_FORM = "rh-add-token"
+RH_LP_TAB = "🦅 Robinhood LP (scan ±15 menit)"
+RH_REGULAR_TAB = "📋 Robinhood biasa (scan ±4 jam)"
+RH_ADD_TARGETS = [RH_LP_TAB, RH_REGULAR_TAB]
+RH_ADD_TARGET_SOURCE = {RH_LP_TAB: RH_LP_SOURCE,
+                        RH_REGULAR_TAB: RH_REGULAR_SOURCE}
 
 
-def _rh_head_html(total: int, danger: int, caution: int) -> str:
+def _rh_head_html(title: str, total: int, danger: int, caution: int) -> str:
     pills = [f'<span class="lp-count">{total} token</span>']
     if danger:
         pills.append(f'<span class="lp-warn">BAHAYA {danger}</span>')
     if caution:
         pills.append(f'<span class="lp-warn" style="color:#78350f;'
                      f'background:#fef3c7;">HATI-HATI {caution}</span>')
-    return (f'<div class="lp-head"><span class="lp-title">{RH_CARD_TITLE}'
+    return (f'<div class="lp-head"><span class="lp-title">{title}'
             f"</span>{''.join(pills)}</div>")
 
 
-def _render_rh_row(row: dict) -> None:
+def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
+    """Satu baris watchlist Robinhood (``variant`` = ``lp`` / ``regular``).
+
+    Kunci tombol varian LP dipertahankan ``rh-*`` (kompatibilitas uji UI);
+    varian biasa memakai awalan ``rhreg-*`` supaya tombol kedua card tidak
+    bentrok saat token berpindah card dalam satu sesi.
+    """
+    prefix = "rh" if variant == "lp" else "rhreg"
     mint = row.get("mint") or ""
     symbol = row.get("symbol") or "?"
     holders = row.get("holders") or {}
@@ -690,13 +713,15 @@ def _render_rh_row(row: dict) -> None:
         spark = ('<span style="font-size:.7rem;color:#64748b;">'
                  "belum ada grafik</span>")
 
-    cols = st.columns([1.7, 0.8, 0.95, 1.0, 1.25, 0.42, 0.42])
+    cols = st.columns([1.7, 0.8, 0.95, 1.0, 1.25, 0.42, 0.42, 0.42])
+    chain_note = ("LP · scan ±15 menit" if variant == "lp"
+                  else "biasa · scan ±4 jam")
     cols[0].markdown(
         f'<div class="watchlist-token">'
         f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
         f'<span class="watchlist-mint">{html.escape(mint[:10])}…</span>'
         f'<span class="watchlist-metric-sub">'
-        f'MC {_compact(row.get("mc"))} · chain Robinhood · '
+        f'MC {_compact(row.get("mc"))} · chain Robinhood · {chain_note} · '
         f'scan {format_wib(row.get("view_ts"))}</span>'
         f'<div class="watchlist-links">{external_links_html(mint)}</div>'
         f"</div>", unsafe_allow_html=True)
@@ -718,14 +743,32 @@ def _render_rh_row(row: dict) -> None:
         unsafe_allow_html=True)
     cols[4].markdown(f'<div style="text-align:center;">{spark}</div>',
                      unsafe_allow_html=True)
-    if cols[5].button("🧮", key=f"rh-holder-{mint}",
+    if cols[5].button("🧮", key=f"{prefix}-holder-{mint}",
                       help="Buka Holder Analytic (Robinhood Chain)",
                       use_container_width=True):
         st.session_state["holder_mint"] = mint
         st.switch_page(HOLDER_PAGE_PATH, query_params={"mint": mint})
-    if cols[6].button("✕", key=f"rh-remove-{mint}",
-                      help="Hapus dari watchlist Robinhood",
-                      use_container_width=True):
+    if variant == "lp":
+        if cols[6].button("📋", key=f"rh-move-{mint}",
+                          help="Pindahkan ke Watchlist Robinhood (biasa, "
+                               "scan ±4 jam) — pengingat ⚡ >0,1% berhenti",
+                          use_container_width=True):
+            robinhood_watchlist.set_robinhood_watchlist_source(
+                mint, RH_REGULAR_SOURCE)
+            st.rerun()
+        remove_col = cols[7]
+    else:
+        if cols[6].button("⚡", key=f"rhreg-move-{mint}",
+                          help="Pindahkan ke Watchlist Robinhood LP "
+                               "(scan cepat ±15 menit)",
+                          use_container_width=True):
+            robinhood_watchlist.set_robinhood_watchlist_source(
+                mint, RH_LP_SOURCE)
+            st.rerun()
+        remove_col = cols[7]
+    if remove_col.button("✕", key=f"{prefix}-remove-{mint}",
+                         help="Hapus dari watchlist Robinhood",
+                         use_container_width=True):
         robinhood_watchlist.remove_from_robinhood_watchlist(mint)
         st.rerun()
     if isinstance(holders.get("depth"), dict):
@@ -735,15 +778,19 @@ def _render_rh_row(row: dict) -> None:
 
 
 def _render_rh_card(watchlist: dict, status_tokens: dict,
-                    history_store: dict, now: int) -> None:
-    """Card watchlist holder Robinhood Chain (EVM) dengan rule dust sama."""
+                    history_store: dict, now: int, *,
+                    variant: str = "lp") -> None:
+    """Card watchlist Robinhood Chain (EVM): ``lp`` (cepat) / ``regular``."""
     rows = []
     danger = caution = 0
     for mint, meta in (watchlist or {}).items():
         token = status_tokens.get(mint) or {}
         points = merge_points(history_for_mint(history_store, mint),
                               token.get("history") or [])
-        view = resolve_view(token, points, now=now)
+        view = resolve_view(
+            token, points, now=now,
+            stale_after=(STALE_AFTER_SEC if variant == "lp"
+                         else STALE_REGULAR_AFTER_SEC))
         sampled = resample_4h(points)
         prev = previous_pct(sampled, view)
         dust_pct = view.get("dust_pct")
@@ -769,76 +816,112 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
             "delta_total": view.get("delta_total"),
         })
 
+    title = RH_CARD_TITLE if variant == "lp" else RH_REGULAR_CARD_TITLE
     with st.container(border=True):
-        st.markdown(_rh_head_html(len(watchlist or {}), danger, caution),
-                    unsafe_allow_html=True)
-        st.caption(
-            "Watchlist terpisah untuk token **Robinhood Chain** "
-            "(`0x…`, chain id 4663). Rule persis sama dengan Solana: "
-            "dust wallet ≤ $10, "
-            f"≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
-            f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA. "
-            "Data holder dari Blockscout, harga/marketcap dari DexScreener, "
-            "scan manual dan token yang ditambahkan berikutnya akan mengisi "
-            "grafik 4 jam."
-        )
+        st.markdown(_rh_head_html(title, len(watchlist or {}), danger,
+                                  caution), unsafe_allow_html=True)
+        if variant == "lp":
+            st.caption(
+                "Watchlist **Robinhood LP** (`0x…`, chain id 4663) — "
+                "di-scan cron **tiap ±15 menit** bersama Chart LP Meteora "
+                "supaya exit bisa lebih awal. Selama hold % MC dust di atas "
+                f"**{DUST_BEST_PCT:g}%**, alert ⚡ Telegram dikirim "
+                "**berulang tiap scan** — berhenti hanya bila token "
+                "dihapus (✕) atau dipindah ke watchlist biasa (📋). "
+                "Rule lain tetap jalan: ≥ "
+                f"{DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
+                f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA. "
+                "Data holder dari Blockscout, harga/marketcap dari "
+                "DexScreener.")
+        else:
+            st.caption(
+                "Watchlist **Robinhood biasa** (`0x…`) — di-scan cron "
+                "**tiap ±4 jam**. Titik acuan alert = **titik high**: "
+                "hold % MC dust terbesar yang pernah tercatat (bukan "
+                "snapshot awal). Bila dust % MC **turun ≥ 50% dari titik "
+                "high**, alert 🔔 Telegram dikirim (satu kali per titik "
+                "high; naik ke titik high baru = acuan baru). Ambang badge "
+                f"sama: ≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
+                f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA.")
 
-        with st.expander("➕ Tambah token Robinhood ke watchlist",
-                         expanded=not rows):
-            with st.form(RH_ADD_FORM, clear_on_submit=True):
-                rh_ca = st.text_input(
-                    "Contract address (0x…)", key="rh-ca-input",
-                    help="Pastikan address benar di rh-scan.com / Blockscout")
-                if st.form_submit_button("🦅 Tambah ke Watchlist Robinhood"):
-                    ca = str(rh_ca or "").strip()
-                    if not robinhood_holders.is_robinhood_address(ca):
-                        st.warning("Format CA Robinhood tidak valid. "
-                                   "Gunakan 0x + 40 hex.")
-                    else:
-                        added = robinhood_watchlist.add_to_robinhood_watchlist(
-                            ca, "?", source="manual")
-                        st.success(f"{ca[:10]}… masuk watchlist Robinhood.")
-                        st.rerun()
+        if variant == "lp":
+            with st.expander("➕ Tambah token Robinhood ke watchlist",
+                             expanded=not rows):
+                with st.form(RH_ADD_FORM, clear_on_submit=True):
+                    rh_ca = st.text_input(
+                        "Contract address (0x…)", key="rh-ca-input",
+                        help="Pastikan address benar di rh-scan.com / "
+                             "Blockscout")
+                    rh_target = st.radio(
+                        "Masuk ke card", RH_ADD_TARGETS, index=0,
+                        key="rh-add-target", horizontal=True,
+                        help=("🦅 Robinhood LP = scan cepat ±15 menit + "
+                              "pengingat ⚡ tiap scan selama dust > 0,1% MC. "
+                              "📋 Robinhood biasa = scan ±4 jam + rule 🔔 "
+                              "titik high."))
+                    if st.form_submit_button(
+                            "🦅 Tambah ke Watchlist Robinhood"):
+                        ca = str(rh_ca or "").strip()
+                        if not robinhood_holders.is_robinhood_address(ca):
+                            st.warning("Format CA Robinhood tidak valid. "
+                                       "Gunakan 0x + 40 hex.")
+                        else:
+                            robinhood_watchlist.add_to_robinhood_watchlist(
+                                ca, "?",
+                                source=RH_ADD_TARGET_SOURCE.get(
+                                    rh_target, RH_LP_SOURCE))
+                            st.success(f"{ca[:10]}… masuk watchlist "
+                                       "Robinhood.")
+                            st.rerun()
 
-        if st.button("🔄 Scan holder watchlist Robinhood", type="primary",
-                     use_container_width=True):
-            bar = st.progress(0.0, text="Scan Robinhood 0/…")
+            if st.button("🔄 Scan holder watchlist Robinhood (LP + biasa)",
+                         type="primary", use_container_width=True):
+                bar = st.progress(0.0, text="Scan Robinhood 0/…")
 
-            def _progress(index, total, label):
-                bar.progress(index / max(total, 1),
-                             text=f"Scan {index}/{total} · {label}")
+                def _progress(index, total, label):
+                    bar.progress(index / max(total, 1),
+                                 text=f"Scan {index}/{total} · {label}")
 
-            try:
-                analyses = robinhood_watchlist.scan_watchlist(
-                    watchlist, history_store=history_store, max_wallets=2000,
-                    workers=4, progress=_progress)
-            finally:
-                bar.empty()
-            ok = {mint: item for mint, item in analyses.items()
-                  if isinstance(item, dict)}
-            if ok:
-                robinhood_watchlist.publish_scan(
-                    ok, watchlist, history_store=history_store, push=False)
-            else:
-                st.warning("Tidak ada token Robinhood yang berhasil dianalisis.")
-            st.rerun()
+                try:
+                    analyses = robinhood_watchlist.scan_watchlist(
+                        watchlist, history_store=history_store,
+                        max_wallets=2000, workers=4, progress=_progress)
+                finally:
+                    bar.empty()
+                ok = {mint: item for mint, item in analyses.items()
+                      if isinstance(item, dict)}
+                if ok:
+                    robinhood_watchlist.publish_scan(
+                        ok, watchlist, history_store=history_store,
+                        push=False)
+                else:
+                    st.warning("Tidak ada token Robinhood yang berhasil "
+                               "dianalisis.")
+                st.rerun()
 
         if not rows:
-            st.info("Watchlist Robinhood masih kosong. "
-                    "Tambahkan address 0x… di form atas.")
+            empty_text = (
+                "Watchlist Robinhood LP masih kosong. Tambahkan address "
+                "0x… di form atas."
+                if variant == "lp" else
+                "Watchlist Robinhood biasa masih kosong — pindahkan token "
+                "dari card Robinhood LP (⚡ di baris LP) atau tambah lewat "
+                "form di card LP.")
+            st.info(empty_text)
             return
 
-        header = st.columns([1.7, 0.8, 0.95, 1.0, 1.25, 0.42, 0.42])
+        header = st.columns([1.7, 0.8, 0.95, 1.0, 1.25, 0.42, 0.42, 0.42])
         style = "font-size:0.72rem;color:#000000;font-weight:700;"
-        titles = ["Token", "Dust", "Hold %MC", "Δ 4 jam", "Grafik 4 jam", "", ""]
-        for col, title in zip(header, titles):
-            align = "" if title == "Token" else "text-align:center;"
-            col.markdown(f'<div style="{style}{align}">{title}</div>',
+        titles = ["Token", "Dust", "Hold %MC", "Δ 4 jam", "Grafik 4 jam",
+                  "", "", ""]
+        for col, col_title in zip(header, titles):
+            align = "" if col_title == "Token" else "text-align:center;"
+            col.markdown(f'<div style="{style}{align}">{col_title}</div>',
                          unsafe_allow_html=True)
         st.markdown('<hr style="margin:0.4rem 0;border-color:#cbd5e1;">',
                     unsafe_allow_html=True)
         for row in rows:
-            _render_rh_row(row)
+            _render_rh_row(row, variant=variant)
 
 
 # ---------------------------------------------------------------------------
@@ -876,7 +959,15 @@ _rh_now_ts = int(datetime.now(timezone.utc).timestamp())
 # seluruh watchlist supaya kedua card punya data.
 lp_watch, holder_watch = split_watchlist(watchlist)
 _render_lp_card(lp_card_rows(lp_watch, status_tokens, history_store))
-_render_rh_card(rh_watchlist, rh_status_tokens, rh_history_store, _rh_now_ts)
+
+# Watchlist Robinhood dipecah dua card (2026-09-05): **Robinhood LP** (scan
+# cepat ±15 menit, pengingat ⚡ >0,1% berulang) di atas, **Robinhood biasa**
+# (scan ±4 jam, rule 🔔 titik high) di bawahnya.
+rh_lp_watch, rh_regular_watch = split_robinhood_watchlist(rh_watchlist)
+_render_rh_card(rh_lp_watch, rh_status_tokens, rh_history_store, _rh_now_ts,
+                variant="lp")
+_render_rh_card(rh_regular_watch, rh_status_tokens, rh_history_store,
+                _rh_now_ts, variant="regular")
 
 # Satu angka per baris watchlist: snapshot cron **atau** titik history yang
 # lebih baru (scan manual / cron yang publish snapshot-nya gagal). Dihitung
@@ -887,8 +978,11 @@ _now_ts = int(datetime.now(timezone.utc).timestamp())
 _holder_points = {mint: _points_for(mint, status_tokens.get(mint) or {},
                                     history_store)
                   for mint in holder_watch}
+# Watchlist biasa di-scan cron tiap ±4 jam → ambang "basi" baris mengikuti
+# kadens itu (bukan 2 jam milik watchlist LP).
 _holder_views = {mint: resolve_view(status_tokens.get(mint) or {}, points,
-                                    now=_now_ts)
+                                    now=_now_ts,
+                                    stale_after=STALE_REGULAR_AFTER_SEC)
                  for mint, points in _holder_points.items()}
 _watch_sync = sync_summary(_holder_views.values(), now=_now_ts)
 
@@ -902,10 +996,14 @@ st.caption(
     "Grafik kecil = dust % MC tiap 4 jam. Kolom **Sejak masuk** = perubahan "
     "dust % MC sejak token ditambahkan sampai scan terakhir (hijau bila turun "
     "≥ 50%, merah bila naik ≥ 100%). Token dari Scan Meteora ada di "
-    "card **Chart LP** di atas."
+    "card **Chart LP** di atas. Cadens cron: watchlist LP ±15 menit, "
+    "watchlist biasa ±4 jam — dan rule 🔔 **titik high**: bila dust % MC "
+    "turun ≥ 50% dari hold % MC **terbesar** yang pernah tercatat, alert "
+    "Telegram dikirim."
 )
 st.caption(sync_caption_text(_watch_sync,
-                             status_updated_at=holder_status.get("updated_at")))
+                             status_updated_at=holder_status.get("updated_at"),
+                             stale_after=STALE_REGULAR_AFTER_SEC))
 
 
 if watchlist and not status_tokens:
@@ -923,7 +1021,9 @@ elif watchlist:
     if _missing:
         st.info("Holder belum terambil untuk: " + ", ".join(_missing[:8])
                 + (" …" if len(_missing) > 8 else "")
-                + ". Cron akan mencoba lagi ±1 jam; atau scan manual.",
+                + ". Cron LP mencoba tiap ±15 menit, watchlist biasa tiap "
+                  "±4 jam (token baru langsung di-scan pada run berikutnya); "
+                  "atau scan manual.",
                 icon="ℹ️")
 
 if st.button("🔄 Scan holder watchlist", type="primary",
@@ -1026,8 +1126,9 @@ else:
         holders = token.get("holders") or {}
         points = _holder_points.get(mint) or _points_for(mint, token,
                                                          history_store)
-        view = _holder_views.get(mint) or resolve_view(token, points,
-                                                       now=_now_ts)
+        view = (_holder_views.get(mint)
+                or resolve_view(token, points, now=_now_ts,
+                                stale_after=STALE_REGULAR_AFTER_SEC))
         sampled = resample_4h(points)
         # Angka baris = sumber terbaru (snapshot cron / titik history / scan
         # manual), bukan selalu snapshot — lihat sync_caption_text di atas.
@@ -1099,7 +1200,8 @@ with st.expander("➕ Tambah token", expanded=not bool(watchlist)):
             "Contract address", key="add-token-input",
             help="Symbol di-fetch otomatis dari DexScreener")
         target = st.radio(
-            "Masuk ke card", ADD_TARGETS, index=0, horizontal=True,
+            "Masuk ke card", ADD_TARGETS, index=0, key="add-token-target",
+            horizontal=True,
             help=("📋 Watchlist Holder = daftar analisa dust biasa. "
                   "🌊 Chart LP = watchlist terpisah (card paling atas) untuk "
                   "token Meteora/LP beserta grafik perubahan dust holder."))

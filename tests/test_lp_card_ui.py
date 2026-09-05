@@ -157,7 +157,9 @@ class ChartLpCardTest(unittest.TestCase):
 
     def test_manual_add_can_target_the_lp_card(self):
         app = self._app()
-        radios = [node for node in app.radio if node.label == "Masuk ke card"]
+        # Radio form add token Solana (bukan form Robinhood yang juga punya
+        # radio "Masuk ke card") — dibedakan lewat key eksplisit.
+        radios = [node for node in app.radio if node.key == "add-token-target"]
         self.assertTrue(radios, "radio pilihan card tidak ditemukan")
         self.assertEqual(list(radios[0].options), [HOLDER_TAB, LP_TAB])
 

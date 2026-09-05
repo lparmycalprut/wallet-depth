@@ -44,8 +44,12 @@ from datetime import datetime, timedelta, timezone
 MCAP_DROP_TONE_PCT = 50.0     # turun >= 50% -> hijau
 MCAP_RISE_TONE_PCT = 100.0    # naik >= 100% -> merah
 
-# Cron holder jalan 1x/jam (lihat AGENTS.md): data lebih tua dari ini = basi.
+# Cron holder watchlist **LP** jalan tiap ±15 menit sejak 2026-09-05: data
+# lebih tua dari ini = basi.
 STALE_AFTER_SEC = 2 * 3600
+# Watchlist **biasa** sengaja di-scan tiap ±4 jam (slot 4 jam + catch-up),
+# jadi ambang basinya mengikuti kadens itu, bukan 2 jam.
+STALE_REGULAR_AFTER_SEC = 4 * 3600 + 30 * 60
 
 # Zona tampil UI (WIB). ``watchlist.add_to_watchlist`` menulis ``added`` dengan
 # ``datetime.now()``; tanggal itu dibaca sebagai awal hari WIB supaya window
@@ -230,7 +234,8 @@ def parse_added_ts(meta, *, tz_offset_hours: int = WIB_OFFSET_HOURS) -> int | No
 # ---------------------------------------------------------------------------
 # 1) Sinkronisasi: satu angka per baris, dari sumber terbaru
 # ---------------------------------------------------------------------------
-def resolve_view(token: dict | None, points, *, now=None) -> dict:
+def resolve_view(token: dict | None, points, *, now=None,
+                 stale_after: int = STALE_AFTER_SEC) -> dict:
     """Pilih nilai dust **terbaru** antara snapshot status dan titik history.
 
     ``token`` = ``holder_status["tokens"][mint]`` (sudah lewat
@@ -246,7 +251,9 @@ def resolve_view(token: dict | None, points, *, now=None) -> dict:
     - ``drift`` = True bila kedua sumber punya angka berbeda melebihi
       ``DRIFT_TOLERANCE_PP`` — persis kondisi "watchlist dan scan terakhir
       kurang sinkron" yang dilaporkan user,
-    - ``stale`` = data lebih tua dari ``STALE_AFTER_SEC``.
+    - ``stale`` = data lebih tua dari ``stale_after`` (kirim
+      ``STALE_REGULAR_AFTER_SEC`` untuk baris watchlist biasa yang cadens
+      cron-nya ±4 jam).
     """
     token = token if isinstance(token, dict) else {}
     holders = token.get("holders") if isinstance(token.get("holders"), dict) \
@@ -279,13 +286,14 @@ def resolve_view(token: dict | None, points, *, now=None) -> dict:
     anchor = _int(now, None)
     ts = history_ts if use_history else (snapshot_ts or history_ts)
     age = (anchor - ts) if (anchor and ts) else None
+    limit = int(stale_after) if int(stale_after or 0) > 0 else STALE_AFTER_SEC
     return {
         "dust_pct": dust_pct,
         "dust_count": _int(dust_count, None) if dust_count is not None else None,
         "ts": ts or None,
         "source": SOURCE_HISTORY if use_history else SOURCE_SNAPSHOT,
         "age_sec": age,
-        "stale": bool(age is not None and age > STALE_AFTER_SEC),
+        "stale": bool(age is not None and age > limit),
         "drift": bool(drift),
         "snapshot_pct": snapshot_pct,
         "history_pct": history_pct,
@@ -517,7 +525,8 @@ def sync_summary(views, *, now=None) -> dict:
     return summary
 
 
-def sync_caption_text(summary: dict | None, *, status_updated_at=None) -> str:
+def sync_caption_text(summary: dict | None, *, status_updated_at=None,
+                      stale_after: int = STALE_AFTER_SEC) -> str:
     """Kalimat caption: waktu scan terakhir + dari mana angka baris diambil."""
     summary = summary if isinstance(summary, dict) else {}
     last_ts = summary.get("last_scan_ts") or _int(status_updated_at, None)
@@ -539,7 +548,7 @@ def sync_caption_text(summary: dict | None, *, status_updated_at=None) -> str:
                         "(baris memakai yang terbaru)")
         if summary.get("stale"):
             bits.append(f"{summary['stale']} token datanya lebih tua dari "
-                        f"{format_age(STALE_AFTER_SEC)}")
+                        f"{format_age(stale_after)}")
     if summary.get("max_age_sec") is not None:
         bits.append(f"umur data tertua {format_age(summary['max_age_sec'])}")
     return " · ".join(bits)

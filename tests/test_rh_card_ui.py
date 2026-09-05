@@ -81,7 +81,7 @@ class RobinhoodCardHolderButtonTest(unittest.TestCase):
         app = self._app()
         self.assertEqual(len(app.exception), 0)
         body = "\n".join(node.value for node in app.markdown)
-        self.assertIn("Watchlist Robinhood Chain", body)
+        self.assertIn("Watchlist Robinhood LP", body)
         self.assertIn("$VLAD", body)
         keys = [button.key or "" for button in app.button]
         self.assertIn(f"rh-holder-{CA}", keys)

@@ -1,3 +1,83 @@
+# Kegiatan — 5 September 2026 (sesi 2 · scan 15 menit + titik high)
+
+Empat permintaan user: (1) watchlist **Meteora (Chart LP) & Robinhood LP**
+di-scan cron tiap **±15 menit** (awalnya minta 30 menit, dikoreksi jadi 15
+"agar exit bisa lebih early"); watchlist lain tetap ±4 jam; (2) bila hold
+dust **> 0,1% MC**, pemberitahuan dikirim **berulang** sampai token
+dihapus dari watchlist atau dipindah ke watchlist biasa; (3) watchlist
+Robinhood lama diganti **"watchlist Robinhood LP"**, terpisah dari
+watchlist Robinhood biasa; (4) titik acuan alert watchlist biasa bukan
+lagi snapshot awal melainkan **hold % MC terbesar (titik high)** — turun
+**≥ 50% dari titik high** mengirim alert Telegram.
+
+## 1. Cron 15 menit untuk watchlist LP (Meteora + Robinhood LP)
+
+`scripts/scan_holders.py` punya `build_scan_plan()`: token LP
+(`source=meteora` / watchlist Robinhood LP) **due tiap run**, watchlist
+biasa hanya di **slot 4 jam** (`REGULAR_SLOTS` 16/hari) atau saat token
+baru belum punya titik (`token_needs_scan`), plus catch-up bila slot
+terlewat (`REGULAR_CATCHUP_SEC` 3,75 jam). Flag baru `--scope
+auto|fast|all` (auto = default cron; fast = hanya LP; all = dispatch
+manual) + gate run ganda (`recently_published`, `MIN_RUN_GAP_SEC` 14
+menit) yang bisa dilewati `--ignore-gap`. Run cepat mem-publish snapshot
+dengan `merge_status` — token biasa di luar slot diwariskan agar
+dashboard tidak kehilangan baris. Blok Robinhood best-effort (gagal
+jaringan tidak merahkan cron) kini juga dipecah LP/biasa dengan scope
+rule masing-masing.
+
+`.github/workflows/daily-effort.yml` **tidak bisa diedit/dipush lewat
+bot** (GitHub menolak tanpa izin `workflows` — push ditolak saat sesi
+ini). Isi lengkap workflow baru disiapkan di **`daily-effort-15menit.yml`**
+(berkas di luar repo, satu tingkat di atas folder repo): cron `*/15`,
+input dispatch `scan_all` (menjalankan `--scope all --ignore-gap`) dan
+`telegram_test`, langkah "Chain run berikutnya" men-dispatch run
+berikutnya tepat setelah batas 15 menit, permissions
+`contents: write` + `actions: write`, concurrency `holder-scanner`.
+Salin isinya ke `.github/workflows/daily-effort.yml` lewat GitHub UI.
+Catatan: `--max-wallets 3000` masih disematkan di workflow (menjaga
+durasi run ≤ 45 menit pada slot 4 jam) — hapus manual bila mau FULL
+100 ribu di cron.
+
+## 2. Pengingat ⚡ > 0,1% MC berulang (level-based)
+
+`telegram_alerts.evaluate_early_dump_rule()` berubah dari crossing-based
+menjadi **level-based**: selama dust % MC di atas `DUST_BEST_PCT`
+(0,1%), tiap evaluasi mengirim event — naik, turun sedikit, atau hover
+sama. Frekuensi dibatasi bucket **15 menit** (`FAST_BUCKET_SEC`) +
+cooldown `EARLY_DUMP_RESEND_SEC` (15 menit); turun ke ≤ 0,1% MC = reset
+otomatis. Scope rule = watchlist Meteora (Chart LP) + **Robinhood LP**.
+Penghenti hanya: hapus token (✕) atau pindah ke watchlist biasa (📋 di
+baris Robinhood LP, 📋 `lp-move` di Chart LP).
+
+## 3. Watchlist Robinhood dipecah dua card
+
+`robinhood_watchlist` punya `RH_LP_SOURCE` / `RH_REGULAR_SOURCE` +
+`split_robinhood_watchlist()` (default/manual = LP; `"regular"` =
+biasa). `app.py` merender **dua card**: "🦅 Watchlist Robinhood LP —
+Holder Dust" (scan ±15 menit, pengingat ⚡ berulang) dan "🦅 Watchlist
+Robinhood — Holder Dust" (scan ±4 jam, rule 🔔 titik high), lengkap
+tombol pindah ⚡/📋 antar card, form tambah dengan radio tujuan card, dan
+caption kadens masing-masing.
+
+## 4. Rule 🔔 HIGH DROP: titik acuan = titik high
+
+`telegram_alerts` baru: `evaluate_high_drop_rule()` +
+`high_drop_marker_next()` dengan marker `{high, high_ts, notified_high}`
+(satu alert per titik high). Naik ke high baru / keluar zona drop =
+re-arm. Konek ke cron: `process_holder_alerts(lp_mints=…,
+high_mints=…, watchlist_meta=…)` — `high_mints` = watchlist biasa
+Solana + Robinhood biasa. Turun ≥ 50% dari titik high mengirim alert
+"🔔 DUST TURUN ≥ 50% DARI TITIK HIGH" tanpa gerbang volume keras
+(konteks pasar info saja). Caption + selectbox urut baris watchlist
+menyebut rule titik high.
+
+## Verifikasi
+
+`python -m unittest discover tests` — 725 test hijau (termasuk 14 test
+baru `tests/test_high_drop.py`, 2 test `ScanScopeMergeTest`, revisi
+test early dump ke semantik bucket 15 menit). `py_compile` semua modul
+teredit lolos.
+
 # Kegiatan — 5 September 2026
 
 Dua permintaan user: (1) token yang sudah ada di watchlist maupun baru
