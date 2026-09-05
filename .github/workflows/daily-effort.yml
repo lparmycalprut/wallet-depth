@@ -2,12 +2,15 @@ name: Holder Dust Scanner
 
 on:
   schedule:
-    # Target 1× per jam (sejak 2026-09-04). GitHub Actions men-throttle
-    # schedule (kadens nyata bisa jadi ±2 jam dan bisa telat/dilewati —
-    # lihat DEPLOY.md), jadi ini target, bukan janji. Alert/dedup memakai
-    # bucket 4 jam dan titik mentah per jam, sehingga run yang telat tetap
-    # aman; yang penting tidak lebih sering dari ~1 jam.
-    - cron: "0 * * * *"
+    # Kadens target **±15 menit** sejak 2026-09-05 (watchlist LP: Chart LP
+    # Meteora + Robinhood LP; watchlist biasa tetap di-scan penuh tiap slot
+    # 4 jam oleh scripts/scan_holders.py). Schedule GitHub bersifat
+    # best-effort dan bisa terthrottle sampai ±2 jam (lihat DEPLOY.md), jadi
+    # kadens 15 menit yang sesungguhnya dijaga langkah "chain" di bawah:
+    # tiap run men-dispatch run berikutnya setelah tidur sampai batas 15
+    # menit berikutnya. Run ganda (chain + schedule) dicek gate
+    # MIN_RUN_GAP_SEC di scanner dan keluar tanpa kerja.
+    - cron: "*/15 * * * *"
 
   workflow_dispatch:
     inputs:
@@ -16,9 +19,16 @@ on:
         required: false
         default: false
         type: boolean
+      scan_all:
+        description: "Scan SEMUA token sekarang (scope=all + abaikan gate run ganda) — dipakai saat token baru ditambahkan"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
+  # Chain dispatch: langkah terakhir POST /actions/workflows/.../dispatches.
+  actions: write
 
 concurrency:
   group: holder-scanner
@@ -27,47 +37,47 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
-
-    # Run hourly yang lambat tidak boleh menumpuk antre di concurrency
-    # group: tanpa batas ini sebuah run > 1 jam bisa membuat beberapa run
-    # tertunda sekaligus (45 menit jauh di atas durasi scan normal).
     timeout-minutes: 45
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Install runtime dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests curl_cffi
+      - name: Install dependencies
+        run: pip install requests curl_cffi
 
-      - name: Scan holder dust watchlist
+      - name: Holder scan (LP ±15 menit · biasa slot 4 jam)
         env:
-          # Token untuk publish holder_status.json ke branch holder-live.
-          GITHUB_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
-
-          # Holder source Helius.
-          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
-          HELIUS_API_KEYS: ${{ secrets.HELIUS_API_KEYS }}
-
-          # Telegram holder-dust alerts.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-
-          # Bernilai true ketika workflow_dispatch meminta test alert.
-          TELEGRAM_TEST: ${{ inputs.telegram_test || 'false' }}
-
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+        # --max-wallets 3000: jaga durasi run (slot 4 jam memindai token
+        # biasa sekaligus). Hapus flag ini bila mau FULL 100.000 wallet.
         run: |
-          EXTRA_ARGS=""
-          if [ "$TELEGRAM_TEST" = "true" ]; then
-            EXTRA_ARGS="--telegram-test"
+          ARGS=""
+          if [ "${{ inputs.telegram_test }}" = "true" ]; then
+            ARGS="$ARGS --telegram-test"
           fi
+          if [ "${{ inputs.scan_all }}" = "true" ]; then
+            ARGS="$ARGS --scope all --ignore-gap"
+          fi
+          python scripts/scan_holders.py --max-wallets 3000 $ARGS
 
-          python scripts/scan_holders.py --max-wallets 3000 $EXTRA_ARGS
+      - name: Chain run berikutnya
+        if: success() || failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NOW=$(date +%s)
+          WAIT=$((900 - NOW % 900 + 20))
+          echo "Tidur ${WAIT}s lalu dispatch run berikutnya."
+          sleep $WAIT
+          curl -sSf -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/actions/workflows/daily-effort.yml/dispatches \
+            -d '{"ref":"main"}'
