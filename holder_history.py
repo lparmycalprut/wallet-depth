@@ -1040,7 +1040,7 @@ def backup_enabled() -> bool:
     return value not in ("0", "false", "no", "off")
 MAX_BACKUP_BYTES = 3_500_000   # terkompresi; PUT 2,85 MB sudah terbukti jalan
 DURABLE_CACHE_TTL = 600        # detik — UI/cron tidak pull di setiap rerun
-_DURABLE_CACHE: dict = {"data": None, "ts": 0.0}
+_DURABLE_CACHE: dict[str, dict] = {}
 
 
 def _int_ts(value) -> int:
@@ -1387,8 +1387,13 @@ def prune_store_for_backup(store: dict | None,
 def publish_holder_history(store: dict | None, *, push: bool = True,
                            save_local: bool = False,
                            message: str | None = None,
-                           path: str | None = None) -> dict:
+                           path: str | None = None,
+                           repo_path: str | None = None) -> dict:
     """Backup store penuh (gzip) ke ref ``holder-live``.
+
+    ``repo_path`` default ``holder_history.json.gz``; Robinhood memakai
+    ``holder_history_robinhood.json.gz`` supaya store kedua jaringan tidak
+    tercampur.
 
     ``save_local=True`` juga menulis ``holder_history.json`` di disk — hanya
     untuk pemanggil yang belum menyimpan store (mis. pemulihan manual); cron
@@ -1428,7 +1433,8 @@ def publish_holder_history(store: dict | None, *, push: bool = True,
     stamp = store.get("updated_at") or int(time.time())
     try:
         ok = push_store_backup(
-            payload, message or f"holder-history: backup {stamp} [skip ci]")
+            payload, message or f"holder-history: backup {stamp} [skip ci]",
+            repo_path=repo_path)
     except Exception as exc:  # noqa: BLE001 - backup tidak boleh mematikan cron
         result.update(ok=False, error=f"push raised: {exc}")
         print(f"WARN: holder_history backup push error: {exc}")
@@ -1442,8 +1448,12 @@ def publish_holder_history(store: dict | None, *, push: bool = True,
     return result
 
 
-def pull_holder_history() -> dict | None:
-    """Ambil backup store durable dari ref ``holder-live``; ``None`` bila gagal."""
+def pull_holder_history(repo_path: str | None = None) -> dict | None:
+    """Ambil backup store durable dari ref ``holder-live``; ``None`` bila gagal.
+
+    ``repo_path`` default ``holder_history.json.gz``; Robinhood memakai
+    ``holder_history_robinhood.json.gz``.
+    """
     if not backup_enabled():
         return None
     try:
@@ -1451,34 +1461,40 @@ def pull_holder_history() -> dict | None:
     except Exception:  # noqa: BLE001 - transport opsional
         return None
     try:
-        return parse_store_backup(pull_store_backup())
+        return parse_store_backup(pull_store_backup(repo_path=repo_path))
     except Exception as exc:  # noqa: BLE001 - backup tidak boleh mematikan cron
         print(f"WARN: holder_history backup parse failed: {exc}")
         return None
 
 
 def load_durable_holder_history(*, ttl: int = DURABLE_CACHE_TTL,
-                                force: bool = False) -> dict:
+                                force: bool = False,
+                                path: str | None = None,
+                                repo_path: str | None = None) -> dict:
     """Store lokal + backup durable (cache TTL) — dipakai UI dan cron.
+
+    ``path``/``repo_path`` default Solana; Robinhood memakai
+    ``holder_history_robinhood.json`` dan backup
+    ``holder_history_robinhood.json.gz``.
 
     Lingkungan ephemeral (runner Actions, Streamlit Cloud) mulai dari file
     kosong; backup durable mengembalikan baseline scan FULL, kohort, state
     alert, dan kronologi. Store **lokal menang** bila timestamp seri, supaya
     scan manual yang baru dijalankan tidak ditimpa backup lama.
     """
-    local = load_holder_history()
+    repo_path = str(repo_path or "holder_history.json.gz").strip().lstrip("/")
+    local = load_holder_history(path)
     now = time.time()
-    cached = _DURABLE_CACHE.get("data")
-    if (not force and isinstance(cached, dict)
-            and (now - float(_DURABLE_CACHE.get("ts") or 0.0)) < max(0, ttl)):
-        remote = cached
+    cached = _DURABLE_CACHE.get(repo_path) or {}
+    if (not force and isinstance(cached.get("data"), dict)
+            and (now - float(cached.get("ts") or 0.0)) < max(0, ttl)):
+        remote = cached["data"]
     else:
-        remote = pull_holder_history()
+        remote = pull_holder_history(repo_path=repo_path)
         if isinstance(remote, dict):
-            _DURABLE_CACHE["data"] = remote
-            _DURABLE_CACHE["ts"] = now
+            _DURABLE_CACHE[repo_path] = {"data": remote, "ts": now}
         else:
-            remote = cached if isinstance(cached, dict) else None
+            remote = cached.get("data") if isinstance(cached.get("data"), dict) else None
     if not isinstance(remote, dict):
         return local
     return merge_stores(remote, local)
@@ -1486,5 +1502,4 @@ def load_durable_holder_history(*, ttl: int = DURABLE_CACHE_TTL,
 
 def reset_durable_cache() -> None:
     """Test helper: kosongkan cache backup durable."""
-    _DURABLE_CACHE["data"] = None
-    _DURABLE_CACHE["ts"] = 0.0
+    _DURABLE_CACHE.clear()

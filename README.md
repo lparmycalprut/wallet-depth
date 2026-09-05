@@ -69,6 +69,14 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
    berikutnya) sebelum dikirim. Snapshot saldo dibatasi maksimum 300 wallet
    per anchor, event yang sukses dikirim dideduplikasi per bucket 4 jam
    **dan** ditahan minimal 1 jam antar alert sejenis.
+8. **Watchlist Robinhood Chain (EVM)** — token yang ditambahkan dari form
+   /kartu terpisah ke `watchlist_robinhood.json` dipantau dengan **rule
+   holder dust yang sama** dengan Solana: holder diambil dari Blockscout
+   (`robinhoodchain.blockscout.com`, chain id 4663), harga/marketcap dari
+   DexScreener (`chainId=robinhood`), grafik 4 jam dan alert Telegram
+   memakai aturan/aturan yang sama. Link card memakai rh-scan.com,
+   DexScreener robinhood, dan Blockscout; watchlist, snapshot, dan history
+   token disimpan terpisah dari `watchlist.json` / `holder_status.json`.
 
 ## Konfirmasi volume & volatilitas (filter false positive)
 
@@ -353,6 +361,8 @@ akumulasi dan bukan prediksi arah harga.
 | `lp_watchlist.py` | Card **Chart LP**: pisah watchlist Meteora, baris + grafik perubahan dust holder |
 | `meteora_screener.py` | Listing DLMM 24h+1h, enrich holder, filter dust ≥1%; badge BEST POOL di UI app.py (dust < 0,1% + data valid) |
 | `holder_analysis.py` | Fetch holder Helius/GMGN, klasifikasi real/dust/mid |
+| `robinhood_holders.py` | Robinhood Chain (chain 4663): holder Blockscout, decimals/supply, analisa dust sama dengan Solana |
+| `robinhood_watchlist.py` | Watchlist/path Robinhood: `watchlist_robinhood.json`, status & history terpisah, scan + publish best-effort |
 | `solscan_holders.py` | Kalkulasi wallet_depth (bucket & tier) |
 | `helius_holders.py` | Scan Holder Khusus satu token + bar chart |
 | `holder_status.py` | Snapshot dashboard ramping (ref `holder-live`) + history ringkas + transport GitHub (JSON & byte/gzip) |
@@ -425,7 +435,9 @@ Konstanta konfirmasi ada di `telegram_alerts.py`, metrik volatilitas di
 ## Pengujian
 
 ```bash
-python -m unittest discover tests
+# -s tests -t . membuat unittest meng-import paket test sebagai `tests.*`,
+# sehingga `tests/__init__.py` (kill-switch offline Robinhood/backup) aktif.
+python -m unittest discover -s tests -t .
 python -m py_compile holder_history.py holder_chronology.py meteora_screener.py \
   holder_analysis.py holder_status.py telegram_alerts.py alert_context.py \
   lp_watchlist.py core.py app.py scripts/scan_holders.py trending_ui.py \

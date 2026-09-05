@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
+from unittest import mock
 
 import holder_status as ss
 
@@ -125,6 +127,54 @@ class ParseStatusTest(unittest.TestCase):
 
     def test_rejects_other_shapes(self):
         self.assertIsNone(ss._parse_status_payload({"data": []}))
+
+
+class PerPathCacheTest(unittest.TestCase):
+    """Cache ``_CACHE`` dikunci per ``repo_path`` supaya watchlist Solana dan
+    Robinhood memakai snapshot masing-masing."""
+
+    def setUp(self):
+        ss.reset_cache()
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        ss.reset_cache()
+        self.tmp.cleanup()
+
+    def _write(self, name, token, updated_at):
+        payload = {"updated_at": updated_at, "scanner": "holder-dust-v1",
+                   "tokens": {token: {"symbol": token.upper()}}}
+        path = os.path.join(self.tmp.name, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+        return path
+
+    def test_repo_path_tidak_saling_menimpa(self):
+        p1 = self._write("s.json", "SolToken", 1)
+        p2 = self._write("rh.json", "0xRobinhood", 2)
+        with mock.patch.object(ss, "_github_pull", return_value=None):
+            first = ss.load_holder_status(repo_path="watchlist.json",
+                                          local_path=p1)
+            second = ss.load_holder_status(repo_path="watchlist_robinhood.json",
+                                           local_path=p2)
+        self.assertEqual(set(first["tokens"]), {"SolToken"})
+        self.assertEqual(set(second["tokens"]), {"0xRobinhood"})
+        self.assertIn("watchlist.json", ss._CACHE)
+        self.assertIn("watchlist_robinhood.json", ss._CACHE)
+
+    def test_force_refresh_hanya_memperbarui_path_tersebut(self):
+        p1 = self._write("s.json", "SolToken", 1)
+        p2 = self._write("rh.json", "0xRobinhood", 2)
+        with mock.patch.object(ss, "_github_pull", return_value=None):
+            first = ss.load_holder_status(repo_path="watchlist.json",
+                                          local_path=p1)
+            second = ss.load_holder_status(repo_path="watchlist_robinhood.json",
+                                           local_path=p2)
+            third = ss.load_holder_status(repo_path="watchlist.json",
+                                          local_path=p1, force_refresh=True)
+        self.assertEqual(first, third)
+        self.assertEqual(set(third["tokens"]), {"SolToken"})
+        self.assertEqual(set(second["tokens"]), {"0xRobinhood"})
 
 
 if __name__ == "__main__":  # pragma: no cover

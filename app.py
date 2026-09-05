@@ -21,6 +21,8 @@ from lp_watchlist import (LP_SOURCE, lp_card_rows, lp_chart_figure,
                           lp_overlay_figure, lp_summary, split_watchlist)
 from meteora_screener import scan_meteora
 import pre_pump_screener
+import robinhood_holders
+import robinhood_watchlist
 from holder_analysis import DUST_LIMIT_USD, analyze_token
 from holder_status import (MANUAL_SCAN_KEY, apply_manual_scan,
                            load_holder_status, publish_holder_status)
@@ -654,6 +656,187 @@ def _render_meteora_scan() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Watchlist Robinhood Chain (EVM, chain id 4663)
+# ---------------------------------------------------------------------------
+RH_CARD_TITLE = "🦅 Watchlist Robinhood Chain — Holder Dust"
+RH_ADD_FORM = "rh-add-token"
+
+
+def _rh_head_html(total: int, danger: int, caution: int) -> str:
+    pills = [f'<span class="lp-count">{total} token</span>']
+    if danger:
+        pills.append(f'<span class="lp-warn">BAHAYA {danger}</span>')
+    if caution:
+        pills.append(f'<span class="lp-warn" style="color:#78350f;'
+                     f'background:#fef3c7;">HATI-HATI {caution}</span>')
+    return (f'<div class="lp-head"><span class="lp-title">{RH_CARD_TITLE}'
+            f"</span>{''.join(pills)}</div>")
+
+
+def _render_rh_row(row: dict) -> None:
+    mint = row.get("mint") or ""
+    symbol = row.get("symbol") or "?"
+    holders = row.get("holders") or {}
+    flag = row.get("flag") or {}
+    dust_count = row.get("dust_count")
+    dust_pct = row.get("dust_pct")
+    truncated = bool(holders.get("truncated"))
+    dust_txt = ("—" if dust_count is None
+                else (f"≥{int(dust_count)}" if truncated
+                      else f"{int(dust_count):,}"))
+    pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.2f}%"
+    spark = sparkline_svg(row.get("points") or [], key="dust_pct_mc")
+    if not spark:
+        spark = ('<span style="font-size:.7rem;color:#64748b;">'
+                 "belum ada grafik</span>")
+
+    cols = st.columns([1.7, 0.8, 0.95, 1.0, 1.25, 0.42])
+    cols[0].markdown(
+        f'<div class="watchlist-token">'
+        f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
+        f'<span class="watchlist-mint">{html.escape(mint[:10])}…</span>'
+        f'<span class="watchlist-metric-sub">'
+        f'MC {_compact(row.get("mc"))} · chain Robinhood · '
+        f'scan {format_wib(row.get("view_ts"))}</span>'
+        f'<div class="watchlist-links">{external_links_html(mint)}</div>'
+        f"</div>", unsafe_allow_html=True)
+    cols[1].markdown(
+        f'<div class="watchlist-metric">'
+        f'<div class="watchlist-metric-value">{dust_txt}</div>'
+        f'<div class="watchlist-metric-sub">wallet dust</div></div>',
+        unsafe_allow_html=True)
+    cols[2].markdown(
+        f'<div class="watchlist-metric">'
+        f'<div class="watchlist-metric-value">{pct_txt}</div>'
+        f'{_dust_badge_html(flag)}</div>', unsafe_allow_html=True)
+    cols[3].markdown(
+        f'<div class="watchlist-metric">'
+        f'<div class="watchlist-metric-value">'
+        f'{_delta_pp_html(row.get("delta_4h"))}</div>'
+        f'<div class="watchlist-metric-sub">total '
+        f'{_delta_pp_html(row.get("delta_total"), 2)}</div></div>',
+        unsafe_allow_html=True)
+    cols[4].markdown(f'<div style="text-align:center;">{spark}</div>',
+                     unsafe_allow_html=True)
+    if cols[5].button("✕", key=f"rh-remove-{mint}",
+                      help="Hapus dari watchlist Robinhood",
+                      use_container_width=True):
+        robinhood_watchlist.remove_from_robinhood_watchlist(mint)
+        st.rerun()
+    if isinstance(holders.get("depth"), dict):
+        _render_depth(holders, symbol)
+    st.markdown('<hr style="margin:0.3rem 0;border-color:#cbd5e1;">',
+                unsafe_allow_html=True)
+
+
+def _render_rh_card(watchlist: dict, status_tokens: dict,
+                    history_store: dict, now: int) -> None:
+    """Card watchlist holder Robinhood Chain (EVM) dengan rule dust sama."""
+    rows = []
+    danger = caution = 0
+    for mint, meta in (watchlist or {}).items():
+        token = status_tokens.get(mint) or {}
+        points = merge_points(history_for_mint(history_store, mint),
+                              token.get("history") or [])
+        view = resolve_view(token, points, now=now)
+        sampled = resample_4h(points)
+        prev = previous_pct(sampled, view)
+        dust_pct = view.get("dust_pct")
+        flag = dust_flag(dust_pct, prev, holders=token.get("holders"))
+        level = flag.get("level")
+        if level == "danger":
+            danger += 1
+        elif level == "caution":
+            caution += 1
+        rows.append({
+            "mint": mint,
+            "symbol": str(meta.get("symbol") or token.get("symbol") or "?")
+            .upper(),
+            "holders": token.get("holders") or {},
+            "dust_count": view.get("dust_count"),
+            "dust_pct": dust_pct,
+            "flag": flag,
+            "points": points,
+            "mc": view.get("mc"),
+            "view_ts": view.get("ts"),
+            "delta_4h": (view.get("latest") or {}).get("delta_pp")
+            if isinstance(view.get("latest"), dict) else None,
+            "delta_total": view.get("delta_total"),
+        })
+
+    with st.container(border=True):
+        st.markdown(_rh_head_html(len(watchlist or {}), danger, caution),
+                    unsafe_allow_html=True)
+        st.caption(
+            "Watchlist terpisah untuk token **Robinhood Chain** "
+            "(`0x…`, chain id 4663). Rule persis sama dengan Solana: "
+            "dust wallet ≤ $10, "
+            f"≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
+            f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA. "
+            "Data holder dari Blockscout, harga/marketcap dari DexScreener, "
+            "scan manual dan token yang ditambahkan berikutnya akan mengisi "
+            "grafik 4 jam."
+        )
+
+        with st.expander("➕ Tambah token Robinhood ke watchlist",
+                         expanded=not rows):
+            with st.form(RH_ADD_FORM, clear_on_submit=True):
+                rh_ca = st.text_input(
+                    "Contract address (0x…)", key="rh-ca-input",
+                    help="Pastikan address benar di rh-scan.com / Blockscout")
+                if st.form_submit_button("🦅 Tambah ke Watchlist Robinhood"):
+                    ca = str(rh_ca or "").strip()
+                    if not robinhood_holders.is_robinhood_address(ca):
+                        st.warning("Format CA Robinhood tidak valid. "
+                                   "Gunakan 0x + 40 hex.")
+                    else:
+                        added = robinhood_watchlist.add_to_robinhood_watchlist(
+                            ca, "?", source="manual")
+                        st.success(f"{ca[:10]}… masuk watchlist Robinhood.")
+                        st.rerun()
+
+        if st.button("🔄 Scan holder watchlist Robinhood", type="primary",
+                     use_container_width=True):
+            bar = st.progress(0.0, text="Scan Robinhood 0/…")
+
+            def _progress(index, total, label):
+                bar.progress(index / max(total, 1),
+                             text=f"Scan {index}/{total} · {label}")
+
+            try:
+                analyses = robinhood_watchlist.scan_watchlist(
+                    watchlist, history_store=history_store, max_wallets=2000,
+                    workers=4, progress=_progress)
+            finally:
+                bar.empty()
+            ok = {mint: item for mint, item in analyses.items()
+                  if isinstance(item, dict)}
+            if ok:
+                robinhood_watchlist.publish_scan(
+                    ok, watchlist, history_store=history_store, push=False)
+            else:
+                st.warning("Tidak ada token Robinhood yang berhasil dianalisis.")
+            st.rerun()
+
+        if not rows:
+            st.info("Watchlist Robinhood masih kosong. "
+                    "Tambahkan address 0x… di form atas.")
+            return
+
+        header = st.columns([1.7, 0.8, 0.95, 1.0, 1.25, 0.42])
+        style = "font-size:0.72rem;color:#000000;font-weight:700;"
+        titles = ["Token", "Dust", "Hold %MC", "Δ 4 jam", "Grafik 4 jam", ""]
+        for col, title in zip(header, titles):
+            align = "" if title == "Token" else "text-align:center;"
+            col.markdown(f'<div style="{style}{align}">{title}</div>',
+                         unsafe_allow_html=True)
+        st.markdown('<hr style="margin:0.4rem 0;border-color:#cbd5e1;">',
+                    unsafe_allow_html=True)
+        for row in rows:
+            _render_rh_row(row)
+
+
+# ---------------------------------------------------------------------------
 # Data
 # ---------------------------------------------------------------------------
 watchlist = load_watchlist()
@@ -669,11 +852,26 @@ status_tokens = holder_status.get("tokens") or {}
 history_store = seed_from_status(load_durable_holder_history(),
                                   holder_status)
 
+# --- Watchlist Robinhood Chain (EVM): data & status terpisah ---------------
+# sengaja dibaca setelah store Solana supaya kedua jaringan tidak saling
+# menimpa file atau cache.
+rh_watchlist = robinhood_watchlist.load_watchlist()
+if rh_watchlist:
+    rh_status = robinhood_watchlist.load_status()
+    rh_status_tokens = rh_status.get("tokens") or {}
+    rh_history_store = robinhood_watchlist.load_history()
+else:
+    rh_status = {"updated_at": None, "tokens": {}}
+    rh_status_tokens = {}
+    rh_history_store = {"updated_at": None, "tokens": {}}
+_rh_now_ts = int(datetime.now(timezone.utc).timestamp())
+
 # Watchlist dipecah dua: token Scan Meteora → card **Chart LP** paling atas,
 # sisanya → watchlist holder biasa. Scan tombol di bawah tetap memproses
 # seluruh watchlist supaya kedua card punya data.
 lp_watch, holder_watch = split_watchlist(watchlist)
 _render_lp_card(lp_card_rows(lp_watch, status_tokens, history_store))
+_render_rh_card(rh_watchlist, rh_status_tokens, rh_history_store, _rh_now_ts)
 
 # Satu angka per baris watchlist: snapshot cron **atau** titik history yang
 # lebih baru (scan manual / cron yang publish snapshot-nya gagal). Dihitung

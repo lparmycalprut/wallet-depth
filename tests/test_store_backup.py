@@ -504,7 +504,7 @@ class DurableLoaderTest(unittest.TestCase):
                 mock.patch.object(hh, "pull_holder_history",
                                   return_value=_store(ts=90)) as pull:
             hh.load_durable_holder_history(ttl=60)
-            hh._DURABLE_CACHE["ts"] -= 61
+            hh._DURABLE_CACHE["holder_history.json.gz"]["ts"] -= 61
             hh.load_durable_holder_history(ttl=60)
             self.assertEqual(pull.call_count, 2)
 
@@ -528,9 +528,25 @@ class DurableLoaderTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"HOLDER_STORE_BACKUP": "0"}), \
                 self._local(_store()), \
                 mock.patch("holder_status.pull_store_backup") as pull:
-            merged = hh.load_durable_holder_history()
+            self.assertEqual(hh.load_durable_holder_history(), _store())
         pull.assert_not_called()
-        self.assertEqual(merged, _store())
+
+    def test_cache_durable_dipisah_per_repo_path(self):
+        """Cache backup dikunci ``repo_path`` sehingga store Solana dan
+        Robinhood tidak saling menimpa."""
+        with self._local(None), \
+                mock.patch.object(hh, "pull_holder_history",
+                                  return_value=_store(ts=90)) as pull:
+            sol = hh.load_durable_holder_history(
+                path=os.path.join(self.tmp.name, "s.json"),
+                repo_path="holder_history.json.gz")
+            rh = hh.load_durable_holder_history(
+                path=os.path.join(self.tmp.name, "rh.json"),
+                repo_path="holder_history_robinhood.json.gz")
+        self.assertEqual(sol, rh)
+        self.assertEqual(pull.call_count, 2)
+        self.assertIn("holder_history.json.gz", hh._DURABLE_CACHE)
+        self.assertIn("holder_history_robinhood.json.gz", hh._DURABLE_CACHE)
 
 
 class SeedFromSlimStatusTest(unittest.TestCase):

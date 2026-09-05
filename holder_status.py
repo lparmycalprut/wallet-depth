@@ -28,7 +28,10 @@ STATUS_REF = "holder-live"
 HISTORY_REPO_PATH = "holder_history.json.gz"
 
 _CACHE_TTL = 15
-_CACHE = {"data": None, "ts": 0.0}
+# Cache per repo path (Solana ``holder_status.json`` vs Robinhood
+# ``holder_status_robinhood.json``) supaya kedua jaringan tidak saling
+# menimpa dalam satu proses.
+_CACHE: dict[str, dict] = {}
 
 # Hasil publish terakhir (dipakai scanner cron untuk exit code).
 _LAST_PUBLISH = {"ok": None, "error": ""}
@@ -356,9 +359,15 @@ def _github_get_bytes(repo_path: str = STATUS_REPO_PATH) -> bytes | None:
     return None
 
 
-def _github_pull() -> dict | None:
-    """Muat ``holder_status.json`` dari GitHub (durable) sebagai dict."""
-    body = _github_get_bytes(STATUS_REPO_PATH)
+def _github_pull(repo_path: str | None = None) -> dict | None:
+    """Muat file status dari GitHub (durable) sebagai dict.
+
+    ``repo_path`` default ``holder_status.json``; Robinhood memakai
+    ``holder_status_robinhood.json`` supaya status kedua jaringan tidak
+    tercampur.
+    """
+    repo_path = str(repo_path or STATUS_REPO_PATH).strip().lstrip("/")
+    body = _github_get_bytes(repo_path)
     if body is None:
         return None
     try:
@@ -368,9 +377,14 @@ def _github_pull() -> dict | None:
         return None
 
 
-def pull_store_backup() -> bytes | None:
-    """Bytes mentah backup store (gzip) dari ref durable; ``None`` bila gagal."""
-    return _github_get_bytes(HISTORY_REPO_PATH)
+def pull_store_backup(repo_path: str | None = None) -> bytes | None:
+    """Bytes mentah backup store (gzip) dari ref durable; ``None`` bila gagal.
+
+    ``repo_path`` default ``holder_history.json.gz``; Robinhood memakai
+    ``holder_history_robinhood.json.gz``.
+    """
+    repo_path = str(repo_path or HISTORY_REPO_PATH).strip().lstrip("/")
+    return _github_get_bytes(repo_path)
 
 
 def _ensure_status_branch(headers: dict) -> bool:
@@ -481,32 +495,45 @@ def _github_put_bytes(repo_path: str, payload: bytes, message: str,
     return False
 
 
-def _github_push(status: dict, message: str, max_retries: int = 4) -> bool:
-    """Publish ``holder_status.json`` (payload dashboard) ke ref durable."""
+def _github_push(status: dict, message: str, max_retries: int = 4,
+                 repo_path: str | None = None) -> bool:
+    """Publish file status (payload dashboard) ke ref durable."""
+    repo_path = str(repo_path or STATUS_REPO_PATH).strip().lstrip("/")
     body = json.dumps(status, indent=2, sort_keys=True).encode("utf-8")
-    return _github_put_bytes(STATUS_REPO_PATH, body, message,
+    return _github_put_bytes(repo_path, body, message,
                              max_retries=max_retries)
 
 
 def push_store_backup(payload: bytes, message: str,
-                      max_retries: int = 4) -> bool:
+                      max_retries: int = 4,
+                      repo_path: str | None = None) -> bool:
     """Publish backup store (gzip) ke ref durable; ``False`` bila gagal."""
     if not payload:
         return False
-    return _github_put_bytes(HISTORY_REPO_PATH, payload, message,
+    repo_path = str(repo_path or HISTORY_REPO_PATH).strip().lstrip("/")
+    return _github_put_bytes(repo_path, payload, message,
                              max_retries=max_retries)
 
 
-def load_holder_status(force_refresh: bool = False) -> dict:
-    """Muat snapshot: GitHub (durable) → file lokal → kosong."""
+def load_holder_status(force_refresh: bool = False,
+                       repo_path: str | None = None,
+                       local_path: str | None = None) -> dict:
+    """Muat snapshot: GitHub (durable) → file lokal → kosong.
+
+    ``repo_path``/``local_path`` default Solana; Robinhood memakai
+    ``holder_status_robinhood.json``.
+    """
+    repo_path = str(repo_path or STATUS_REPO_PATH).strip().lstrip("/")
+    local_path = str(local_path or STATUS_PATH)
     now = time.time()
-    if (not force_refresh and _CACHE["data"] is not None
-            and (now - _CACHE["ts"]) < _CACHE_TTL):
-        return dict(_CACHE["data"])
-    remote = _github_pull()
+    cached = _CACHE.get(repo_path) or {}
+    if (not force_refresh and cached.get("data") is not None
+            and (now - float(cached.get("ts") or 0.0)) < _CACHE_TTL):
+        return dict(cached["data"])
+    remote = _github_pull(repo_path)
     local = None
     try:
-        with open(STATUS_PATH, encoding="utf-8") as handle:
+        with open(local_path, encoding="utf-8") as handle:
             local = _parse_status_payload(json.load(handle))
     except (OSError, ValueError, TypeError):
         local = None
@@ -520,8 +547,7 @@ def load_holder_status(force_refresh: bool = False) -> dict:
             except (TypeError, ValueError):
                 return 0.0
         status = max(candidates, key=_stamp)
-    _CACHE["data"] = dict(status)
-    _CACHE["ts"] = now
+    _CACHE[repo_path] = {"data": dict(status), "ts": now}
     return dict(status)
 
 
@@ -529,13 +555,20 @@ def publish_holder_status(analyses: dict,
                           watchlist: dict | None = None,
                           *, push: bool = True,
                           history_store: dict | None = None,
-                          contexts: dict | None = None) -> dict:
-    """Tulis status lokal + (opsional) publish ke GitHub."""
+                          contexts: dict | None = None,
+                          repo_path: str | None = None,
+                          local_path: str | None = None) -> dict:
+    """Tulis status lokal + (opsional) publish ke GitHub.
+
+    ``repo_path``/``local_path`` default Solana; Robinhood memakai
+    ``holder_status_robinhood.json``.
+    """
+    repo_path = str(repo_path or STATUS_REPO_PATH).strip().lstrip("/")
+    local_path = str(local_path or STATUS_PATH)
     status = snapshot_status(analyses, watchlist,
                              history_store=history_store, contexts=contexts)
-    atomic_write_json(STATUS_PATH, status, indent=2)
-    _CACHE["data"] = dict(status)
-    _CACHE["ts"] = time.time()
+    atomic_write_json(local_path, status, indent=2)
+    _CACHE[repo_path] = {"data": dict(status), "ts": time.time()}
     if push:
         stamp = status.get("updated_at") or int(time.time())
         if not _github_token():
@@ -543,7 +576,8 @@ def publish_holder_status(analyses: dict,
             _LAST_PUBLISH["error"] = "no github_token"
         else:
             ok = _github_push(status,
-                              f"holder-status: snapshot {stamp} [skip ci]")
+                              f"holder-status: snapshot {stamp} [skip ci]",
+                              repo_path=repo_path)
             _LAST_PUBLISH["ok"] = bool(ok)
             _LAST_PUBLISH["error"] = "" if ok else "github push failed"
         if not _LAST_PUBLISH["ok"]:
@@ -558,5 +592,4 @@ def publish_holder_status(analyses: dict,
 
 def reset_cache() -> None:
     """Test helper."""
-    _CACHE["data"] = None
-    _CACHE["ts"] = 0.0
+    _CACHE.clear()
