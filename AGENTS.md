@@ -34,6 +34,15 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   `point_wallets()` / `point_usable()` / `usable_points()`; titik dari scan
   bersampel pendek ditandai `degraded: True` saat `ingest_one` (penanda ikut
   `compact_point`). Lihat "Kelayakan data holder" di tabel ambang bawah.
+- **Scan holder dari halaman utama** (`app.py`) tidak boleh mengganti
+  snapshot: selalu `publish_holder_status(..., merge_status=holder_status)`
+  (tanpa merge, `snapshot_status` membangun `tokens` **hanya** dari analyses
+  yang diberikan → token yang gagal/timeout pada run itu hilang dari
+  dashboard dan nilai terakhirnya terbuang), filter analyses dengan
+  `holders_usable` supaya scan bersampel pendek tidak menulis apa pun, dan
+  biarkan `ingest_many(..., detail=False)` agar baseline scan FULL +
+  `latest_detail` + kronologi tidak tertimpa. Tombol Robinhood
+  (`robinhood_watchlist.publish_scan`) berlaku sama.
 - `lp_watchlist.py`: card **Chart LP** — watchlist terpisah berisi token
   `source=meteora`; baris data (dust % MC, Δ poin persentase, level) +
   figure matplotlib grafik perubahan dust holder (garis ambang 0,5% / 1%)

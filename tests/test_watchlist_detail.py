@@ -502,5 +502,39 @@ class DegradedScanTest(unittest.TestCase):
         self.assertIn("1 token", caption)
 
 
+class SnapshotTimeReportingTest(unittest.TestCase):
+    """List holder diperbarui **sesuai waktu snapshot tiap token**.
+
+    Satu angka "Scan terakhir" saja menyesatkan bila sebagian baris masih
+    memakai snapshot run sebelumnya — caption harus menyebut berapa token
+    yang duduk di waktu terbaru dan berapa yang lebih lama.
+    """
+
+    def test_summary_memisah_token_di_waktu_terbaru(self):
+        views = [wd.resolve_view({}, [_point(3_000, 0.30, 100)], now=4_000),
+                 wd.resolve_view({}, [_point(3_000, 0.40, 120)], now=4_000),
+                 wd.resolve_view({}, [_point(1_000, 0.20, 90)], now=4_000)]
+        summary = wd.sync_summary(views, now=4_000)
+        self.assertEqual(summary["last_scan_ts"], 3_000)
+        self.assertEqual(summary["latest_count"], 2)
+        self.assertEqual(summary["older_count"], 1)
+
+    def test_caption_menyebut_jumlah_token_per_waktu_snapshot(self):
+        views = [wd.resolve_view({}, [_point(3_000, 0.30, 100)], now=4_000),
+                 wd.resolve_view({}, [_point(3_000, 0.40, 120)], now=4_000),
+                 wd.resolve_view({}, [_point(1_000, 0.20, 90)], now=4_000)]
+        caption = wd.sync_caption_text(wd.sync_summary(views, now=4_000))
+        self.assertIn(f"Scan terakhir: **{wd.format_wib(3_000)}** (2 token)",
+                      caption)
+        self.assertIn("1 token masih di snapshot sebelumnya", caption)
+
+    def test_tooltip_sejak_masuk_menyebut_ujung_window(self):
+        points = [_point(ADDED_TS + HOUR, 0.40, 200),
+                  _point(ADDED_TS + DAY, 0.20, 150)]
+        change = wd.dust_change_since_added({"added": "2026-09-01"}, points)
+        self.assertIn(f"sampai snapshot {wd.format_wib(ADDED_TS + DAY)}",
+                      wd.explain_change(change))
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

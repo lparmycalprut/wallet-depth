@@ -349,6 +349,28 @@ guard badge 🏆 BEST POOL):
 - `telegram_alerts.process_holder_alerts()` melewatkan scan tidak layak,
   sehingga rule 🔔 HIGH DROP tidak pernah menyala dari "dust 0%" palsu.
 
+### Scan dari halaman utama = update per token, bukan timpa data
+
+Tombol **🔄 Scan holder watchlist** (halaman utama) memperbarui **list holder
+terbaru sesuai waktu snapshot masing-masing token** tanpa menimpa data yang
+sudah tercatat:
+
+- Snapshot di-publish dengan `merge_status` → token yang **gagal/timeout** pada
+  run itu tetap memakai baris + nilai terakhirnya (tidak hilang dari
+  dashboard).
+- Scan yang **tidak lengkap** (kurang dari 40 wallet terambil) tidak
+  di-publish dan tidak masuk history → angka lama dipertahankan.
+- `ingest_many(..., detail=False)`: **baseline scan FULL**, `latest_detail`,
+  dan kronologi tidak pernah ditimpa oleh scan halaman utama — angka
+  "Δ bucket vs baseline" tetap memakai data scan FULL.
+- Setelah scan muncul ringkasan: `N token diperbarui · K token tetap memakai
+  data yang sudah tercatat · F scan gagal · S scan tidak lengkap dilewati
+  (ticker) · list holder diperbarui sampai snapshot <waktu>`.
+- Caption dashboard menyebut **berapa token yang ada di waktu snapshot
+  terbaru** (`Scan terakhir: 06 Sep 03:01 WIB (36 token) · 41 token masih di
+  snapshot sebelumnya`), dan tooltip **Sejak masuk** menyebut waktu snapshot
+  yang dipakai — jadi satu angka waktu global tidak menyesatkan.
+
 ## Deteksi Akumulasi (8 heuristik)
 
 Halaman `pages/6_🔎_Deteksi_Akumulasi.py` menghitung 8 heuristik untuk token

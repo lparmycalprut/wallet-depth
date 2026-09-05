@@ -1,5 +1,76 @@
 # Progress
 
+## 2026-09-06 (sore): scan holder dari halaman utama tidak menimpa data tercatat
+
+Laporan: *"ketika saya scan dari main app page, jangan timpa data awal yang
+sudah tercatat, tapi update holder list terbaru sesuai time snapshot."*
+
+### Masalah (dibuktikan lewat script, bukan asumsi)
+
+Tombol **"🔄 Scan holder watchlist"** di `app.py` memanggil
+`publish_holder_status(analyses, …)` dengan `analyses` = token yang **berhasil
+di-scan** saja. `snapshot_status` membangun `tokens` hanya dari analyses yang
+diberikan, lalu `publish_holder_status` menulis file dan mengganti
+`holder_status._CACHE`. Akibatnya:
+
+- token yang **gagal / timeout** pada run itu **hilang dari snapshot** →
+  dashboard kehilangan baris + nilai terakhir yang sudah tercatat;
+- scan **tidak lengkap** ikut di-publish → nilai 0,00% palsu menimpa angka
+  yang benar (bagian dari bug −100%);
+- tombol **Robinhood** (`robinhood_watchlist.publish_scan`) sama, tanpa merge.
+
+### Perbaikan
+
+- **Merge, bukan ganti.** `publish_holder_status(…, merge_status=holder_status)`
+  (dan `merge_status=rh_status` untuk tombol Robinhood): token yang tidak ikut
+  scan run ini tetap memakai snapshot-nya. Scan jadi *update per token*, bukan
+  penggantian massal.
+- **Hanya scan layak yang masuk.** Analyses di-filter `holders_usable` sebelum
+  `ingest_many` dan sebelum publish → scan pendek (provider mengembalikan
+  sampel) tidak menulis apa pun; angka lama dipertahankan dan token itu
+  dilaporkan sebagai "dilewati".
+- **Data awal tidak disentuh.** `ingest_many(fresh, store=…)` tetap
+  `detail=False`: baseline scan FULL, `latest_detail`, dan kronologi tidak
+  pernah ditimpa scan dari halaman utama (sudah didokumentasikan di
+  `holder_history._ingest_full_detail`, sekarang benar-benar dijaga).
+- **Laporan setelah scan** (`st.session_state["watchlist_scan_report"]` +
+  `st.info`): `N token diperbarui · K token tetap memakai data yang sudah
+  tercatat · F scan gagal · S scan tidak lengkap dilewati (ticker) · list
+  holder diperbarui sampai snapshot <waktu>`, ditutup "Baseline scan FULL,
+  latest detail, dan kronologi tidak ditimpa".
+
+### Waktu snapshot per token
+
+- `watchlist_detail.sync_summary` menambah `latest_count` / `older_count`
+  (berapa token yang benar-benar duduk di waktu snapshot terbaru vs masih di
+  snapshot sebelumnya) dan caption membacanya:
+  `Scan terakhir: **06 Sep 03:01 WIB** (36 token) · 41 token masih di snapshot
+  sebelumnya — waktu tiap baris ada di kolom scan`. Satu angka "Scan terakhir"
+  saja menyesatkan kalau sebagian baris belum ter-update run terakhir.
+- Tooltip **"Sejak masuk"** kini menyebut ujung window-nya:
+  `dari 1,00% (23,45 hari lalu, 05 Sep 03:01 WIB) ke 0,50% (1,00 hari lalu,
+  sampai snapshot 06 Sep 03:01 WIB)` → jelas angka itu snapshot **kapan**.
+
+### Yang **tidak** berubah
+
+Scan manual tetap memakai analisis SAMPLE, jadi ia hanya menambah titik baru
+di atas kronologi yang sudah ada; scan FULL tetap lewat
+`pages/5_🧮_Holder.py` / cron, dan tombol manual tetap menulis lokal
+(`push=False`) seperti sebelumnya.
+
+### Verifikasi
+
+`tests/test_watchlist_manual_scan.py` (6 AppTest, token GOOD/FAILS/SHORT):
+token gagal **bertahan** di snapshot, scan pendek **tidak** di-publish dan
+**tidak** masuk history, baseline/`latest_detail` tidak tersentuh, laporan
+menyebut jumlah + ticker + waktu snapshot. Di `HEAD` sebelumnya 4 dari tes itu
+**gagal**. `SnapshotTimeReportingTest` (3 tes) untuk summary/caption/tooltip.
+Suite penuh **760 passed** (`pytest tests -q`); replay data produksi tetap
+0 exception.
+
+---
+
+
 ## 2026-09-06 — Watchlist: scan holder tidak lengkap tidak lagi terbaca "−100%"
 
 **Laporan user**: "Perbaiki tampilan data watchlist, banyak yang jadi −100%

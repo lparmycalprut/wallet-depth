@@ -534,6 +534,9 @@ def explain_change(change: dict) -> str:
     days = _float(change.get("days"), None)
     if days is not None:
         parts.append(f"{days:.1f} hari")
+    last_ts = _int(change.get("last_ts"), 0)
+    if last_ts:
+        parts.append(f"sampai snapshot {format_wib(last_ts)}")
     if change.get("anchor_fallback"):
         parts.append(f"pembanding: titik pertama ({change['anchor_fallback']})")
     note = str(change.get("degraded_note") or "")
@@ -592,11 +595,20 @@ def change_html(change: dict, *, show_detail: bool = True) -> str:
 # 3) Ringkasan sinkronisasi untuk caption dashboard
 # ---------------------------------------------------------------------------
 def sync_summary(views, *, now=None) -> dict:
-    """Rekap sumber data per baris (dipakai caption "scan terakhir")."""
+    """Rekap sumber data per baris (dipakai caption "scan terakhir").
+
+    Selain sumber per token, rekap ini menghitung **berapa token yang
+    benar-benar duduk di waktu snapshot terbaru** (``latest_count``) dan
+    berapa yang masih memakai snapshot lebih lama (``older_count``): satu
+    angka "Scan terakhir" saja menyesatkan bila sebagian baris belum
+    ter-update sejak run sebelumnya.
+    """
     anchor = _int(now, None)
     summary = {"total": 0, "dari_history": 0, "dari_snapshot": 0,
                "tanpa_data": 0, "stale": 0, "drift": 0, "degraded": 0,
-               "last_scan_ts": None, "max_age_sec": None}
+               "last_scan_ts": None, "latest_count": 0, "older_count": 0,
+               "max_age_sec": None}
+    stamps = []
     for view in views or []:
         view = view if isinstance(view, dict) else {}
         summary["total"] += 1
@@ -618,8 +630,14 @@ def sync_summary(views, *, now=None) -> dict:
         if age is not None and (summary["max_age_sec"] is None
                                 or age > summary["max_age_sec"]):
             summary["max_age_sec"] = age
+        stamps.append(ts)
         if summary["last_scan_ts"] is None or ts > summary["last_scan_ts"]:
             summary["last_scan_ts"] = ts
+    if stamps:
+        newest = max(stamps)
+        summary["latest_count"] = sum(1 for stamp in stamps
+                                      if stamp == newest)
+        summary["older_count"] = len(stamps) - summary["latest_count"]
     return summary
 
 
@@ -629,6 +647,13 @@ def sync_caption_text(summary: dict | None, *, status_updated_at=None,
     summary = summary if isinstance(summary, dict) else {}
     last_ts = summary.get("last_scan_ts") or _int(status_updated_at, None)
     bits = [f"Scan terakhir: **{format_wib(last_ts)}**"]
+    if _int(summary.get("latest_count"), 0):
+        bits[0] += f" ({summary['latest_count']} token)"
+    if _int(summary.get("older_count"), 0):
+        # Setiap baris membawa waktu snapshotnya sendiri (kolom "scan …" di
+        # baris) — sebutkan berapa yang belum ikut waktu terbaru.
+        bits.append(f"{summary['older_count']} token masih di snapshot "
+                    "sebelumnya — waktu tiap baris ada di kolom scan")
     total = _int(summary.get("total"), 0)
     if total:
         sumber = []

@@ -12,7 +12,7 @@ import streamlit as st
 from helius_holders import depth_bar_chart, scan_token_holders
 from holder_history import (DUST_BEST_LABEL, DUST_BEST_PCT, DUST_CAUTION_PCT,
                             DUST_DANGER_PCT, dust_flag,
-                            history_for_mint, ingest_many,
+                            history_for_mint, holders_usable, ingest_many,
                             load_durable_holder_history, merge_points,
                             resample_4h,
                             seed_from_status, sparkline_svg, usable_points)
@@ -895,13 +895,23 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
                     bar.empty()
                 ok = {mint: item for mint, item in analyses.items()
                       if isinstance(item, dict)}
-                if ok:
+                # Sama seperti watchlist Solana: scan bersampel pendek tidak
+                # menimpa data tercatat, dan snapshot di-merge supaya token
+                # yang tidak ikut scan run ini tidak hilang.
+                fresh = {mint: item for mint, item in ok.items()
+                         if holders_usable(item.get("holders"))}
+                if fresh:
                     robinhood_watchlist.publish_scan(
-                        ok, watchlist, history_store=history_store,
-                        push=False)
+                        fresh, watchlist, history_store=history_store,
+                        push=False, merge_status=rh_status)
+                    st.success(f"{len(fresh)} token Robinhood diperbarui"
+                               + (f" · {len(ok) - len(fresh)} scan tidak "
+                                  "lengkap dilewati" if len(ok) != len(fresh)
+                                  else "") + ".")
                 else:
                     st.warning("Tidak ada token Robinhood yang berhasil "
-                               "dianalisis.")
+                               "dianalisis — data yang sudah tercatat tidak "
+                               "diubah.")
                 st.rerun()
 
         if not rows:
@@ -1051,13 +1061,62 @@ if st.button("🔄 Scan holder watchlist", type="primary",
         bar.progress(done / max(total, 1),
                      text=f"Scan {done}/{total} · "
                           f"{str((meta or {}).get('symbol') or '?')}")
+    bar.empty()
     ok = {mint: item for mint, item in analyses.items()
           if isinstance(item, dict)}
-    if ok:
-        ingest_many(ok, store=history_store)
-        publish_holder_status(ok, watchlist, push=False)
+    # Scan yang holdernya **tidak lengkap** (provider mengembalikan sampel
+    # pendek, mis. 20 wallet) tidak boleh menimpa angka yang sudah
+    # tercatat: dust dari sampel pendek selalu 0 dan akan terbaca seperti
+    # "dust habis" (lihat holder_history.holders_usable).
+    fresh = {mint: item for mint, item in ok.items()
+             if holders_usable(item.get("holders"))}
+    skipped_short = sorted(set(ok) - set(fresh))
+    failed = sorted(mint for mint, item in analyses.items()
+                    if not isinstance(item, dict))
+    _published = None
+    if fresh:
+        # ``detail=False``: baseline scan FULL + ``latest_detail`` +
+        # kronologi (data awal yang sudah tercatat) **tidak disentuh** —
+        # scan ini hanya menambah titik baru di atasnya.
+        ingest_many(fresh, store=history_store)
+        # ``merge_status``: token yang gagal / tidak dapat scan layak tetap
+        # memakai snapshot sebelumnya. ``snapshot_status`` membangun
+        # ``tokens`` dari analyses yang diberikan saja, jadi tanpa merge
+        # baris token yang tidak ikut scan run ini **hilang** dari
+        # dashboard (data awalnya tertimpa).
+        _published = publish_holder_status(fresh, watchlist, push=False,
+                                           history_store=history_store,
+                                           merge_status=holder_status)
+    st.session_state["watchlist_scan_report"] = {
+        "total": total, "updated": len(fresh), "failed": len(failed),
+        "short": len(skipped_short),
+        "snapshot_ts": ((_published or holder_status).get("updated_at")),
+        "short_symbols": [str((watchlist.get(mint) or {}).get("symbol")
+                              or mint[:6]).upper()
+                          for mint in skipped_short[:6]],
+    }
     st.session_state["status_force_refresh"] = True
     st.rerun()
+
+_scan_report = st.session_state.pop("watchlist_scan_report", None)
+if isinstance(_scan_report, dict):
+    _bits = [f"{_scan_report.get('updated') or 0} token diperbarui"]
+    _kept = ((_scan_report.get("total") or 0)
+             - (_scan_report.get("updated") or 0))
+    if _kept > 0:
+        _bits.append(f"{_kept} token tetap memakai data yang sudah tercatat")
+    if _scan_report.get("failed"):
+        _bits.append(f"{_scan_report['failed']} scan gagal")
+    if _scan_report.get("short"):
+        _names = ", ".join(_scan_report.get("short_symbols") or [])
+        _bits.append(f"{_scan_report['short']} scan tidak lengkap dilewati "
+                     f"({_names}) — angka lama dipertahankan")
+    _bits.append("list holder diperbarui sampai snapshot "
+                 f"**{format_wib(_scan_report.get('snapshot_ts'))}**")
+    st.info("Scan watchlist selesai: " + " · ".join(_bits)
+            + ". Baseline scan FULL, latest detail, dan kronologi tidak "
+              "ditimpa; tiap baris menampilkan angka sesuai waktu "
+              "snapshotnya sendiri.", icon="✅")
 
 if not holder_watch:
     st.info("Watchlist holder kosong. Tambahkan contract address di bawah, "
