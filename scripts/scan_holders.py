@@ -48,6 +48,7 @@ from holder_analysis import analyze_token
 from holder_status import (last_publish_result, load_holder_status,
                            publish_holder_status)
 from lp_watchlist import split_watchlist
+import robinhood_watchlist
 from telegram_alerts import (process_holder_alerts, send_test_alert,
                              tracked_wallet_addresses)
 from watchlist import load_watchlist
@@ -268,6 +269,40 @@ def main(argv=None) -> int:
         print(f"ERROR: publish holder_status gagal: "
               f"{last_publish_result().get('error')}", file=sys.stderr)
         return 3
+
+    # --- Robinhood Chain: watchlist terpisah (EVM, chain id 4663) -----------
+    # Scan best-effort: kegagalan jaringan Robinhood tidak boleh membuat cron
+    # Solana mati (data dashboard Solana lebih penting dari card tambahan).
+    try:
+        rh_watch = robinhood_watchlist.load_watchlist()
+        if rh_watch:
+            rh_store = robinhood_watchlist.load_history()
+            rh_analyses = robinhood_watchlist.scan_watchlist(
+                rh_watch, history_store=rh_store,
+                max_wallets=max_wallets, workers=args.workers)
+            if rh_analyses:
+                rh_contexts: dict = {}
+                # Konteks pasar memakai data DexScreener yang sudah disuntik
+                # analysis["market"]; geckoterminal/networks Solana tidak
+                # dipakai untuk chain EVM, jadi seluruh fetch dimatikan.
+                rh_provider = market_context_provider(fetch=False,
+                                                      cache=rh_contexts)
+                process_holder_alerts(rh_analyses, rh_store,
+                                      context_provider=rh_provider)
+                rh_status = robinhood_watchlist.publish_scan(
+                    rh_analyses, rh_watch, history_store=rh_store,
+                    push=not args.no_push, contexts=rh_contexts)
+                rh_ok = sum(1 for item in rh_analyses.values()
+                            if (item.get("holders") or {}).get("total_fetched"))
+                print(f"Robinhood scan selesai: tokens={len(rh_analyses)} "
+                      f"fetched={rh_ok}/{len(rh_analyses)} "
+                      f"updated={rh_status.get('updated_at')}")
+            else:
+                print("Robinhood scan selesai: tidak ada token berhasil")
+        else:
+            print("Robinhood scan dilewati: watchlist kosong")
+    except Exception as exc:  # noqa: BLE001 - best-effort
+        print(f"WARN: Robinhood scanner gagal: {exc}", file=sys.stderr)
     return 0
 
 

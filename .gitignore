@@ -13,6 +13,12 @@ venv/
 .streamlit/secrets.toml
 funders_cache.json
 watchlist_pending.json
+watchlist_robinhood_pending.json
+# Snapshot/history Robinhood Chain disimpan ke branch holder-live saat cron;
+# file lokal runner tidak perlu di-commit.
+holder_status_robinhood.json
+holder_history_robinhood.json
+holder_history_robinhood.json.gz
 # Journal likuiditas Pre-Pump Screener (diisi tiap run, ephemeral)
 pre_pump_liq.json
 

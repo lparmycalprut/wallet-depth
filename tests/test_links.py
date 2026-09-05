@@ -1,8 +1,9 @@
 import unittest
 
-from links import (cvd_shortcut_query, dexscreener_token_url,
-                   external_links_html, gmgn_token_url, hawkfi_meteora_url,
-                   meteora_dlmm_url, pool_links_html, safe_url_part,
+from links import (blockscout_token_url, cvd_shortcut_query,
+                   dexscreener_token_url, external_links_html,
+                   gmgn_token_url, hawkfi_meteora_url, meteora_dlmm_url,
+                   pool_links_html, rh_scan_token_url, safe_url_part,
                    solscan_account_html, solscan_account_url,
                    token_link_lines)
 
@@ -109,6 +110,55 @@ class LinksTest(unittest.TestCase):
             self.assertNotIn("?", line.split(": ", 1)[1])
             self.assertNotIn("#", line.split(": ", 1)[1])
         self.assertIn("a%3Fb%26c%20d%23e", lines[0])
+
+
+class LinksEvmTest(unittest.TestCase):
+    CA = "0x8490acd2d52d0ebd34cb13e01bd9a9380b36411d"
+
+    def test_dexscreener_robinhood_url(self):
+        self.assertEqual(
+            dexscreener_token_url(self.CA),
+            f"https://dexscreener.com/robinhood/{self.CA}")
+
+    def test_rh_scan_dan_blockscout_urls(self):
+        self.assertEqual(
+            rh_scan_token_url(self.CA),
+            f"https://rh-scan.com/token/{self.CA}")
+        self.assertEqual(
+            blockscout_token_url(self.CA),
+            f"https://robinhoodchain.blockscout.com/token/{self.CA}")
+
+    def test_external_links_html_evm(self):
+        html_out = external_links_html(self.CA)
+        self.assertIn(f"https://rh-scan.com/token/{self.CA}", html_out)
+        self.assertIn(f"https://dexscreener.com/robinhood/{self.CA}", html_out)
+        self.assertIn(
+            f"https://robinhoodchain.blockscout.com/token/{self.CA}", html_out)
+        self.assertIn("\U0001f50dRH", html_out)
+        self.assertIn("\U0001f986Dex", html_out)
+        self.assertIn("\U0001f310Blockscout", html_out)
+        self.assertNotIn("gmgn.ai/sol/token/", html_out)
+        self.assertIn("target=\"_blank\"", html_out)
+        self.assertIn("rel=\"noopener", html_out)
+
+    def test_solscan_account_routes_evm_to_blockscout(self):
+        self.assertEqual(
+            solscan_account_url(self.CA),
+            f"https://robinhoodchain.blockscout.com/address/{self.CA}")
+        html_out = solscan_account_html(self.CA)
+        self.assertIn(
+            f"https://robinhoodchain.blockscout.com/address/{self.CA}",
+            html_out)
+        self.assertIn("Blockscout", html_out)
+        self.assertNotIn("solscan.io/account/", html_out)
+
+    def test_token_link_lines_evm(self):
+        lines = token_link_lines(self.CA)
+        self.assertEqual(len(lines), 3)
+        self.assertIn(f"https://rh-scan.com/token/{self.CA}", lines[0])
+        self.assertIn(f"https://dexscreener.com/robinhood/{self.CA}", lines[1])
+        self.assertIn(
+            f"https://robinhoodchain.blockscout.com/token/{self.CA}", lines[2])
 
 
 if __name__ == "__main__":

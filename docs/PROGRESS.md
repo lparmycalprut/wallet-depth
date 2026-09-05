@@ -1,5 +1,33 @@
 # Progress
 
+## 2026-09-05 — Watchlist holder Robinhood Chain (EVM, chain id 4663)
+
+User minta tambahan **holder watchlist untuk jaringan Robinhood** dengan rule
+yang sama seperti Solana, contoh token `0x8490acd2d52d0ebd34cb13e01bd9a9380b36411d`
+(VLAD). Implementasi:
+
+- Watchlist terpisah `watchlist_robinhood.json` + pending journal; snapshot
+  `holder_status_robinhood.json`, history `holder_history_robinhood.json(.gz)`
+  di ref `holder-live`.
+- Holder diambil dari Blockscout `robinhoodchain.blockscout.com`
+  (`module=token&action=getTokenHolders`, pagination `page`/`offset`), decimals
+  & supply dari `getToken`; harga/marketcap/volume dari DexScreener
+  `chainId=robinhood` (filter `get_market(..., chain_id="robinhood")`).
+- Rule dust tetap sama: `$10` per wallet, ≥0,5% HATI-HATI, ≥1% BAHAYA,
+  grafik 4 jam, tracking wallet/alert Telegram. Link UI/pesan memakai
+  rh-scan.com + DexScreener robinhood + Blockscout, sedangkan Solana tetap
+  GMGN + DexScreener + Solscan.
+- `scripts/scan_holders.py` men-scan Robinhood best-effort setelah Solana
+  (kegagalan Robinhood tidak mematikan cron Solana); dashboard merender card
+  terpisah "🦅 Watchlist Robinhood Chain".
+- **Tes**: 704 lulus (111 skip Streamlit UI), termasuk per-path cache untuk
+  `holder_status`/`holder_history`, EVM branch `links`, routing
+  `watchlist_robinhood`, dan `test_store_backup`. Perintah unittest di
+  README diubah ke `python -m unittest discover -s tests -t .` supaya
+  `tests/__init__.py` (kill-switch offline Robinhood/backup) ikut aktif —
+  tanpa ini, `watchlist_robinhood.json` yang terisi membuat test cron
+  mencoba skan Robinhood sungguhan.
+
 ## 2026-09-04 — Cron hourly + badge 🏆 BEST POOL + alert ⚡ EARLY DUMP
 
 Tiga permintaan user dalam satu sesi: (1) cron pencatatan holder jadi

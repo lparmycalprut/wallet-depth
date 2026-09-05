@@ -49,7 +49,9 @@ def watchlist_address_keys(watchlist: dict | None) -> set[str]:
 
 # ---- short TTL cache for load_watchlist (avoid hammering API each rerun) ---
 _CACHE_TTL = 15  # seconds
-_REMOTE_CACHE = {"data": None, "ts": 0.0}
+# Cache per repo path: ``{repo_path: {"data": dict, "ts": float}}`` supaya
+# watchlist Solana dan Robinhood tidak saling menimpa dalam satu proses.
+_REMOTE_CACHE: dict[str, dict] = {}
 
 # ---- last push error (surfaced to UI) ---------------------------------------
 _LAST_PUSH_ERROR = {"msg": "", "ts": 0.0, "status": None}
@@ -68,26 +70,27 @@ def get_last_push_error() -> dict:
 
 def _reset_cache():
     """Reset in-memory cache (used by tests)."""
-    _REMOTE_CACHE["data"] = None
-    _REMOTE_CACHE["ts"] = 0.0
+    _REMOTE_CACHE.clear()
     _LAST_PUSH_ERROR["msg"] = ""
     _LAST_PUSH_ERROR["ts"] = 0.0
     _LAST_PUSH_ERROR["status"] = None
 
 
-def _load_pending() -> list:
+def _load_pending(path: str | None = None) -> list:
+    target = str(path or PENDING_PATH)
     try:
-        with open(PENDING_PATH, "r", encoding="utf-8") as f:
+        with open(target, "r", encoding="utf-8") as f:
             return json.load(f) or []
     except Exception:
         return []
 
 
-def _save_pending(ops: list) -> None:
+def _save_pending(ops: list, path: str | None = None) -> None:
+    target = str(path or PENDING_PATH)
     try:
-        atomic_write_json(PENDING_PATH, ops)
+        atomic_write_json(target, ops)
     except Exception as exc:
-        print(f"WARN: failed to save {PENDING_PATH}: {exc}", file=sys.stderr)
+        print(f"WARN: failed to save {target}: {exc}", file=sys.stderr)
 
 
 def _apply_ops(wl: dict, ops: list) -> dict:
@@ -162,14 +165,18 @@ def _github_token() -> str:
         return ""
 
 
-def _github_pull() -> dict | None:
-    """Read watchlist.json from the repo (source of truth).
+def _github_pull(repo_path: str | None = None) -> dict | None:
+    """Read a watchlist file from the repo (source of truth).
 
     Order:
       1. GitHub API with token (no CDN cache)
       2. GitHub API without token (avoids raw CDN, but rate-limited 60/h)
       3. raw.githubusercontent.com with cache-busting + no-cache headers
+
+    ``repo_path`` defaults to ``watchlist.json``; Robinhood uses its own
+    file (``watchlist_robinhood.json``) so the two networks stay separate.
     """
+    repo_path = str(repo_path or "watchlist.json").strip().lstrip("/")
     tok = _github_token()
 
     # 1) API with token
@@ -177,7 +184,7 @@ def _github_pull() -> dict | None:
         try:
             r = requests.get(
                 f"https://api.github.com/repos/{GITHUB_REPO}/contents/"
-                f"watchlist.json",
+                f"{repo_path}",
                 headers={"Authorization": f"Bearer {tok}",
                          "Accept": "application/vnd.github.raw+json"},
                 timeout=10)
@@ -202,7 +209,7 @@ def _github_pull() -> dict | None:
     try:
         r = requests.get(
             f"https://api.github.com/repos/{GITHUB_REPO}/contents/"
-            f"watchlist.json",
+            f"{repo_path}",
             headers={"Accept": "application/vnd.github.raw+json"},
             timeout=10)
         if r.status_code == 200:
@@ -225,7 +232,7 @@ def _github_pull() -> dict | None:
 
     # 3) raw CDN fallback (can be stale, but better than nothing)
     try:
-        url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/watchlist.json"
+        url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/{repo_path}"
         params = {"t": int(time.time())}
         hdrs = {"Cache-Control": "no-cache", "Pragma": "no-cache"}
         r = requests.get(url, params=params, headers=hdrs, timeout=10)
@@ -246,19 +253,25 @@ def _github_pull() -> dict | None:
     return None
 
 
-def _github_push(wl: dict, action: str, max_retries: int = 3) -> bool:
-    """Commit watchlist.json to the repo with retry + re-fetch sha on 409.
+def _github_push(wl: dict, action: str, max_retries: int = 3,
+                 repo_path: str | None = None) -> bool:
+    """Commit a watchlist file to the repo with retry + re-fetch sha on 409.
+
+    ``repo_path`` defaults to ``watchlist.json``; the Robinhood watchlist
+    uses ``watchlist_robinhood.json`` while keeping the same durable
+    journal/merge semantics.
 
     On 409 conflict it re-fetches the latest remote, merges pending ops
     (and the original wl) to avoid lost-update, then retries.
     """
+    repo_path = str(repo_path or "watchlist.json").strip().lstrip("/")
     tok = _github_token()
     if not tok:
         _set_last_error("no github_token configured", status=0)
         print(f"WARN: _github_push no token, action={action}", file=sys.stderr)
         return False
 
-    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/watchlist.json"
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{repo_path}"
     hdrs = {"Authorization": f"Bearer {tok}",
             "Accept": "application/vnd.github+json"}
 
@@ -388,8 +401,8 @@ def _github_push(wl: dict, action: str, max_retries: int = 3) -> bool:
                 return False
 
             if p.status_code in (200, 201):
-                _REMOTE_CACHE["data"] = dict(wl_to_push)
-                _REMOTE_CACHE["ts"] = time.time()
+                _REMOTE_CACHE[repo_path] = {"data": dict(wl_to_push),
+                                            "ts": time.time()}
                 _set_last_error("", status=p.status_code)
                 print(f"INFO: _github_push success attempt {attempt} status {p.status_code} action={action}", file=sys.stderr)
                 return True
@@ -430,48 +443,64 @@ def _github_push(wl: dict, action: str, max_retries: int = 3) -> bool:
     return False
 
 
-def _fetch_raw_remote(force_refresh: bool = False) -> dict | None:
-    """Fetch raw remote with TTL cache, returning a copy or None."""
-    now = time.time()
-    if not force_refresh and _REMOTE_CACHE["data"] is not None and (now - _REMOTE_CACHE["ts"]) < _CACHE_TTL:
-        try:
-            return dict(_REMOTE_CACHE["data"])
-        except Exception:
-            return _REMOTE_CACHE["data"]
+def _fetch_raw_remote(force_refresh: bool = False,
+                      repo_path: str | None = None) -> dict | None:
+    """Fetch raw remote with TTL cache, returning a copy or None.
 
-    remote = _github_pull()
+    ``repo_path`` isolates the Robinhood watchlist from the default
+    Solana watchlist while still sharing the short TTL cache. The cache is
+    keyed by file path so separate networks never shadow each other.
+    """
+    repo_path = str(repo_path or "watchlist.json").strip().lstrip("/")
+    now = time.time()
+    cached = _REMOTE_CACHE.get(repo_path) or {}
+    if not force_refresh and cached.get("data") is not None \
+            and (now - float(cached.get("ts") or 0.0)) < _CACHE_TTL:
+        try:
+            return dict(cached["data"])
+        except Exception:
+            return cached["data"]
+
+    remote = _github_pull(repo_path)
     if remote is not None:
         if not isinstance(remote, dict):
             print(f"WARN: _fetch_raw_remote got non-dict {type(remote)}, coercing to {{}}", file=sys.stderr)
             remote = {}
-        _REMOTE_CACHE["data"] = dict(remote)
-        _REMOTE_CACHE["ts"] = now
+        _REMOTE_CACHE[repo_path] = {"data": dict(remote), "ts": now}
         try:
             return dict(remote)
         except Exception:
             return remote
 
     # fallback to stale cache if pull failed
-    if _REMOTE_CACHE["data"] is not None:
-        age = now - _REMOTE_CACHE["ts"]
+    if cached.get("data") is not None:
+        age = now - float(cached.get("ts") or 0.0)
         print(f"WARN: _github_pull returned None, using stale cache age {age:.0f}s", file=sys.stderr)
         try:
-            return dict(_REMOTE_CACHE["data"])
+            return dict(cached["data"])
         except Exception:
-            return _REMOTE_CACHE["data"]
+            return cached["data"]
     return None
 
 
-def _load_and_merge(force_refresh: bool = False) -> dict:
+def _load_and_merge(force_refresh: bool = False,
+                    repo_path: str | None = None,
+                    local_path: str | None = None,
+                    pending_path: str | None = None) -> dict:
     """Load raw remote + pending journal merged, without pushing.
 
     This is the non-pushing core used by add/remove to avoid double-push.
+    ``repo_path``/``local_path``/``pending_path`` default to the Solana
+    watchlist files; the Robinhood watchlist passes its own trio.
     """
-    raw = _fetch_raw_remote(force_refresh=force_refresh)
+    repo_path = str(repo_path or "watchlist.json").strip().lstrip("/")
+    local_path = str(local_path or WATCHLIST_PATH)
+    pending_path = str(pending_path or PENDING_PATH)
+    raw = _fetch_raw_remote(force_refresh=force_refresh, repo_path=repo_path)
     if raw is None:
         # offline fallback to local file
         try:
-            with open(WATCHLIST_PATH, "r", encoding="utf-8") as f:
+            with open(local_path, "r", encoding="utf-8") as f:
                 loaded = json.load(f) or {}
                 raw = loaded if isinstance(loaded, dict) else {}
         except Exception:
@@ -481,77 +510,93 @@ def _load_and_merge(force_refresh: bool = False) -> dict:
         print(f"WARN: raw watchlist not dict type={type(raw)}, resetting", file=sys.stderr)
         raw = {}
 
-    pending = _load_pending()
+    pending = _load_pending(pending_path)
     if pending:
         still = _prune_pending(pending, raw)
         if still != pending:
-            _save_pending(still)
+            _save_pending(still, pending_path)
             pending = still
         if pending:
             raw = _apply_ops(raw, pending)
     return raw
 
 
-def load_watchlist(force_refresh: bool = False) -> dict:
+def load_watchlist(force_refresh: bool = False,
+                   repo_path: str | None = None,
+                   local_path: str | None = None,
+                   pending_path: str | None = None) -> dict:
     """Merge: repo copy (durable truth) + pending journal (recent local ops).
 
     Pending ops always win; they are dropped only once the repo reflects them.
     An add/remove therefore never visually reverts.
 
     Uses a short TTL cache to avoid hammering GitHub on every Streamlit rerun.
+    ``repo_path``/``local_path``/``pending_path`` default to the Solana
+    watchlist files; the Robinhood watchlist passes its own trio.
     """
-    merged = _load_and_merge(force_refresh=force_refresh)
-    pending = _load_pending()
+    repo_path = str(repo_path or "watchlist.json").strip().lstrip("/")
+    local_path = str(local_path or WATCHLIST_PATH)
+    pending_path = str(pending_path or PENDING_PATH)
+    merged = _load_and_merge(force_refresh=force_refresh, repo_path=repo_path,
+                             local_path=local_path, pending_path=pending_path)
+    pending = _load_pending(pending_path)
     if pending:
         # opportunistic flush: try committing the merged state once per load
         if _github_token():
-            if _github_push(merged, "sync pending ops"):
-                _save_pending([])
+            if _github_push(merged, "sync pending ops", repo_path=repo_path):
+                _save_pending([], pending_path)
             else:
                 print(f"WARN: load_watchlist sync pending ops push failed, keeping {len(pending)} pending ops", file=sys.stderr)
     try:
-        atomic_write_json(WATCHLIST_PATH, merged, indent=1)
+        atomic_write_json(local_path, merged, indent=1)
     except Exception as exc:
-        print(f"WARN: failed to save {WATCHLIST_PATH}: {exc}", file=sys.stderr)
+        print(f"WARN: failed to save {local_path}: {exc}", file=sys.stderr)
     return merged
 
 
-def save_watchlist(wl: dict, action: str = "update") -> bool:
+def save_watchlist(wl: dict, action: str = "update",
+                   repo_path: str | None = None,
+                   local_path: str | None = None,
+                   pending_path: str | None = None) -> bool:
     """Write locally AND commit to GitHub. Returns True if committed."""
+    repo_path = str(repo_path or "watchlist.json").strip().lstrip("/")
+    local_path = str(local_path or WATCHLIST_PATH)
+    pending_path = str(pending_path or PENDING_PATH)
     try:
-        atomic_write_json(WATCHLIST_PATH, wl, indent=1)
+        atomic_write_json(local_path, wl, indent=1)
     except Exception as exc:
-        print(f"WARN: failed to save {WATCHLIST_PATH}: {exc}", file=sys.stderr)
+        print(f"WARN: failed to save {local_path}: {exc}", file=sys.stderr)
 
-    success = _github_push(wl, action)
+    success = _github_push(wl, action, repo_path=repo_path)
     if success:
-        pending = _load_pending()
+        pending = _load_pending(pending_path)
         if pending:
             still = _prune_pending(pending, wl)
             if still != pending:
-                _save_pending(still)
+                _save_pending(still, pending_path)
     else:
         print(f"WARN: save_watchlist push failed action={action}, pending journal kept", file=sys.stderr)
     return success
 
 
-def _journal(op: dict) -> None:
+def _journal(op: dict, pending_path: str | None = None) -> None:
     """Append an op to the pending journal; an add cancels earlier removes
     for the same CA and vice versa (last op wins)."""
-    _journal_many([op])
+    _journal_many([op], pending_path=pending_path)
 
 
-def _journal_many(ops: list[dict]) -> None:
+def _journal_many(ops: list[dict], pending_path: str | None = None) -> None:
     """Journal multiple operations with one atomic write (last op wins)."""
     if not ops:
         return
+    target_pending = pending_path or PENDING_PATH
     incoming: dict[str, dict] = {}
     for op in ops:
         key = address_key(op.get("ca"))
         if key:
             incoming[key] = op
     pending = []
-    for op in _load_pending():
+    for op in _load_pending(target_pending):
         key = address_key(op.get("ca"))
         if key not in incoming:
             pending.append(op)
@@ -561,14 +606,22 @@ def _journal_many(ops: list[dict]) -> None:
         if op.get("op") == "add" and incoming[key].get("op") == "source":
             incoming[key] = {**op, "source": incoming[key].get("source")}
     pending.extend(incoming.values())
-    _save_pending(pending)
+    if pending_path is None:
+        _save_pending(pending)
+    else:
+        _save_pending(pending, pending_path)
 
 
-def fetch_token_symbol(ca: str) -> str:
-    """Resolve ticker from DexScreener; return '?' if lookup fails."""
+def fetch_token_symbol(ca: str, *, chain_id: str | None = None) -> str:
+    """Resolve ticker from DexScreener; return '?' if lookup fails.
+
+    ``chain_id`` (mis. ``robinhood``) memfilter DexScreener supaya address
+    EVM yang kebetulan juga muncul di jaringan lain tidak mengambil simbol
+    dari jaringan salah.
+    """
     try:
         from core import get_market
-        market = get_market(ca) or {}
+        market = get_market(ca, chain_id=chain_id) or {}
         symbol = str(market.get("symbol") or "").strip()
         if symbol and symbol != "?":
             return symbol
@@ -580,8 +633,12 @@ def fetch_token_symbol(ca: str) -> str:
 
 def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
                      source: str = "", down_ath: float = None,
-                     avg_cost: float = None) -> bool:
-    """Add *ca* to the watchlist.
+                     avg_cost: float = None,
+                     repo_path: str | None = None,
+                     local_path: str | None = None,
+                     pending_path: str | None = None,
+                     chain_id: str | None = None) -> bool:
+    """Add *ca* to a watchlist file.
 
     *source* tracks where the token came from (``"trending"``,
     ``"hrhr"``, ``"manual"``).  LP Radar uses it to decide which
@@ -594,6 +651,10 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
     *avg_cost* (optional) is GMGN's holder average-cost change % —
     how far the current price is above/below the average holder buy
     price. Cards show it as an "avg cost" stat.
+
+    The path trio defaults to the Solana ``watchlist.json``; the
+    Robinhood watchlist passes ``watchlist_robinhood.json`` so both
+    networks can coexist without losing either journal.
     """
     ca = normalize_address(ca)
     if not ca:
@@ -601,7 +662,7 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
     if not symbol or symbol == "?":
         # Symbol tidak diketahui (manual add / pindah card) → ambil dari
         # DexScreener supaya card tidak menampilkan "$?".
-        symbol = fetch_token_symbol(ca)
+        symbol = fetch_token_symbol(ca, chain_id=chain_id)
     entry = {"symbol": symbol, "note": note,
              "added": datetime.now().strftime("%Y-%m-%d")}
     if source:
@@ -612,7 +673,10 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
         entry["avg_cost"] = float(avg_cost)
     # journal FIRST -> the change can never visually revert (stale reads,
     # failed commits, redeploys); journal is cleaned once repo reflects it
-    _journal({"op": "add", "ca": ca, **entry})
+    if pending_path is None:
+        _journal({"op": "add", "ca": ca, **entry})
+    else:
+        _journal({"op": "add", "ca": ca, **entry}, pending_path=pending_path)
     # Flag the CA for the main app's auto-refresh sweep
     try:
         import streamlit as st
@@ -622,7 +686,8 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
     except Exception:
         pass
     # use non-pushing loader to avoid double push
-    wl = _load_and_merge(force_refresh=False)
+    wl = _load_and_merge(force_refresh=False, repo_path=repo_path,
+                         local_path=local_path, pending_path=pending_path)
     wl[ca] = {**entry, **(wl.get(ca) or {})}
     if symbol and symbol != "?":
         wl[ca]["symbol"] = symbol
@@ -630,13 +695,18 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
         wl[ca]["source"] = source
     if avg_cost is not None:
         wl[ca]["avg_cost"] = float(avg_cost)
-    saved = save_watchlist(wl, f"add {symbol} ({ca[:8]}…)")
+    saved = save_watchlist(wl, f"add {symbol} ({ca[:8]}…)",
+                           repo_path=repo_path, local_path=local_path,
+                           pending_path=pending_path)
     # Ask Actions to pull the last 48h immediately (best-effort).
     request_immediate_scan()
     return saved
 
 
-def add_many_to_watchlist(rows, *, source: str = "") -> dict:
+def add_many_to_watchlist(rows, *, source: str = "",
+                          repo_path: str | None = None,
+                          local_path: str | None = None,
+                          pending_path: str | None = None) -> dict:
     """Add unique scan rows in one local save/GitHub push.
 
     Each row must contain ``ca`` (``mint`` is accepted as a fallback) and may
@@ -645,7 +715,9 @@ def add_many_to_watchlist(rows, *, source: str = "") -> dict:
     failed remote push remains protected by the existing pending journal.
     """
     rows = list(rows or [])
-    watchlist = dict(_load_and_merge(force_refresh=False) or {})
+    watchlist = dict(_load_and_merge(force_refresh=False, repo_path=repo_path,
+                                     local_path=local_path,
+                                     pending_path=pending_path) or {})
     known = watchlist_address_keys(watchlist)
     seen: set[str] = set()
     operations: list[dict] = []
@@ -698,7 +770,10 @@ def add_many_to_watchlist(rows, *, source: str = "") -> dict:
 
     # Journal before any write/network operation, matching add_to_watchlist's
     # durability guarantee while avoiding N journal writes and N commits.
-    _journal_many(operations)
+    if pending_path is None:
+        _journal_many(operations)
+    else:
+        _journal_many(operations, pending_path=pending_path)
     try:
         import streamlit as st
         pending = st.session_state.setdefault("watchlist_auto_refresh_cas", set())
@@ -707,7 +782,8 @@ def add_many_to_watchlist(rows, *, source: str = "") -> dict:
         pass
 
     label = f"add {len(added_addresses)} token dari {source or 'scanner'}"
-    saved = save_watchlist(watchlist, label)
+    saved = save_watchlist(watchlist, label, repo_path=repo_path,
+                           local_path=local_path, pending_path=pending_path)
     request_immediate_scan()
     return {
         "added": len(added_addresses), "skipped": skipped,
@@ -738,18 +814,29 @@ def request_immediate_scan() -> bool:
     return False
 
 
-def remove_from_watchlist(ca: str) -> bool:
+def remove_from_watchlist(ca: str, *, repo_path: str | None = None,
+                          local_path: str | None = None,
+                          pending_path: str | None = None) -> bool:
     ca = normalize_address(ca)
     if not ca:
         return False
-    _journal({"op": "remove", "ca": ca})
-    wl = _load_and_merge(force_refresh=False)
+    if pending_path is None:
+        _journal({"op": "remove", "ca": ca})
+    else:
+        _journal({"op": "remove", "ca": ca}, pending_path=pending_path)
+    wl = _load_and_merge(force_refresh=False, repo_path=repo_path,
+                         local_path=local_path, pending_path=pending_path)
     meta = wl.pop(ca, None) or {}
     return save_watchlist(wl, f"remove {meta.get('symbol', '?')} "
-                              f"({ca[:8]}…)")
+                              f"({ca[:8]}…)",
+                          repo_path=repo_path, local_path=local_path,
+                          pending_path=pending_path)
 
 
-def set_watchlist_source(ca: str, source: str) -> bool:
+def set_watchlist_source(ca: str, source: str, *,
+                         repo_path: str | None = None,
+                         local_path: str | None = None,
+                         pending_path: str | None = None) -> bool:
     """Pindahkan token antar card watchlist dengan mengubah ``source``.
 
     ``source="meteora"`` → masuk card **Chart LP** (watchlist Meteora di
@@ -760,17 +847,24 @@ def set_watchlist_source(ca: str, source: str) -> bool:
     source = str(source or "").strip().lower()
     if not ca or not source:
         return False
-    wl = _load_and_merge(force_refresh=False)
+    wl = _load_and_merge(force_refresh=False, repo_path=repo_path,
+                         local_path=local_path, pending_path=pending_path)
     entry = wl.get(ca)
     if not isinstance(entry, dict):
         # Tidak membuat entri baru: hanya token yang sudah ada yang dipindah.
         return False
     if str(entry.get("source") or "").strip().lower() == source:
         return True
-    _journal({"op": "source", "ca": ca, "source": source})
+    if pending_path is None:
+        _journal({"op": "source", "ca": ca, "source": source})
+    else:
+        _journal({"op": "source", "ca": ca, "source": source},
+                 pending_path=pending_path)
     wl[ca] = {**entry, "source": source}
     symbol = entry.get("symbol") or "?"
-    return save_watchlist(wl, f"move {symbol} ({ca[:8]}…) → {source}")
+    return save_watchlist(wl, f"move {symbol} ({ca[:8]}…) → {source}",
+                          repo_path=repo_path, local_path=local_path,
+                          pending_path=pending_path)
 
 
 def update_local_meta(ca, fields):

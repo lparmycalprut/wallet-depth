@@ -275,7 +275,23 @@ def _dex_token_address(pair: dict, side: str) -> str:
     return str(token.get("address") or "").strip()
 
 
-def matching_dexscreener_pairs(pairs, ca: str) -> list:
+def _address_matches_screening(left: str, right: str) -> bool:
+    """Compare two token addresses for matching.
+
+    Solana base58 is case-sensitive, while EVM/Robinhood ``0x`` addresses are
+    case-insensitive. Normalizing only EVM addresses keeps existing Solana
+    behavior unchanged while allowing Robinhood's mixed-case DexScreener
+    payload (e.g. ``0x8490ACd2…``) to match a lower-cased watchlist key.
+    """
+    a = str(left or "").strip()
+    b = str(right or "").strip()
+    if a.startswith("0x") or b.startswith("0x"):
+        return a.lower() == b.lower()
+    return a == b
+
+
+def matching_dexscreener_pairs(pairs, ca: str, *,
+                               chain_id: str | None = None) -> list:
     """Return DexScreener pairs for exactly ``ca``, in safe display order.
 
     ``/latest/dex/tokens/<CA>`` can include a cross-pair where the requested
@@ -287,18 +303,27 @@ def matching_dexscreener_pairs(pairs, ca: str) -> list:
     ``baseToken`` come first, then quote-side fallbacks; each group is sorted
     by liquidity. This keeps DexScreener's normal price/FDV semantics while
     still allowing a quote-side-only token to be identified honestly.
+
+    ``chain_id`` (e.g. ``robinhood``) optionally filters the chain so an EVM
+    address reused on another network cannot leak its market data into the
+    Robinhood watchlist.
     """
     target = str(ca or "").strip()
     if not target:
         return []
+    wanted_chain = str(chain_id or "").strip()
 
     base_matches, quote_matches = [], []
     for pair in pairs or []:
         if not isinstance(pair, dict):
             continue
-        if _dex_token_address(pair, "baseToken") == target:
+        if wanted_chain and str(pair.get("chainId") or "").strip() != wanted_chain:
+            continue
+        if _address_matches_screening(_dex_token_address(pair, "baseToken"),
+                                      target):
             base_matches.append(pair)
-        elif _dex_token_address(pair, "quoteToken") == target:
+        elif _address_matches_screening(_dex_token_address(pair, "quoteToken"),
+                                        target):
             quote_matches.append(pair)
 
     def _sort_key(pair):
@@ -331,23 +356,24 @@ def dexscreener_pair_token(pair: dict, ca: str) -> dict:
     if not target or not isinstance(pair, dict):
         return {}
     for side in ("baseToken", "quoteToken"):
-        if _dex_token_address(pair, side) == target:
+        if _address_matches_screening(_dex_token_address(pair, side), target):
             token = pair.get(side)
             return dict(token) if isinstance(token, dict) else {}
     return {}
 
 
-def get_market(ca: str) -> dict:
+def get_market(ca: str, *, chain_id: str | None = None) -> dict:
     """DexScreener market data for exactly one token contract address.
 
     The endpoint can return cross-pairs where ``ca`` is the quote token.
     Filter and order those responses before reading metadata so a liquid
     unrelated base token cannot replace the requested token in the UI.
+    ``chain_id`` (e.g. ``robinhood``) keeps EVM networks isolated.
     """
     r = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{ca}",
                      timeout=20)
     raw_pairs = (r.json() or {}).get("pairs") or []
-    pairs = matching_dexscreener_pairs(raw_pairs, ca)
+    pairs = matching_dexscreener_pairs(raw_pairs, ca, chain_id=chain_id)
     if not pairs:
         return {}
     pair = pairs[0]
@@ -355,6 +381,7 @@ def get_market(ca: str) -> dict:
     return {
         "name": token.get("name", "?"),
         "symbol": token.get("symbol", "?"),
+        "chain_id": pair.get("chainId", ""),
         "price_usd": float(pair.get("priceUsd") or 0),
         "marketcap": float(pair.get("marketCap") or pair.get("fdv") or 0),
         "liquidity_usd": _dex_liquidity_usd(pair),
