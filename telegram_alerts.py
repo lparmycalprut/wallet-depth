@@ -16,9 +16,10 @@ analysis)`` yang **hanya dipanggil bila ada kandidat** (lazy — cron 1 jam
 tidak menambah satu pun API call saat pasar tenang).
 
 Rule tambahan ``early_dump`` (⚡ EARLY DUMP, scope token pool Meteora/Chart
-LP) menyala saat dust **menyeberang naik** melewati ambang absolut 0,1% MC
-(:data:`holder_history.DUST_BEST_PCT`) dan sengaja **tanpa gerbang volume**
-keras — lihat :func:`early_dump_verdict`.
+LP maupun seluruh watchlist Robinhood Chain — pemanggil cron mengirim
+``lp_mints``) menyala saat dust **menyeberang naik** melewati ambang absolut
+0,1% MC (:data:`holder_history.DUST_BEST_PCT`) dan sengaja **tanpa gerbang
+volume** keras — lihat :func:`early_dump_verdict`.
 """
 from __future__ import annotations
 

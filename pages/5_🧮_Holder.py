@@ -9,6 +9,7 @@ Kohort Crab+Fish di-freeze 4 jam; sisa token (bukan USD) mengukur exit pilar.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import os
 import re
 
 import matplotlib.pyplot as plt
@@ -32,6 +33,8 @@ from links import external_links_html
 from holder_analysis import analyze_token
 from holder_status import (MANUAL_SCAN_KEY, apply_manual_scan,
                            compact_manual_scan, load_holder_status)
+import robinhood_holders
+import robinhood_watchlist
 from watchlist import add_to_watchlist, load_watchlist
 
 st.set_page_config(page_title="Holder Analytic", page_icon="🧮",
@@ -387,22 +390,55 @@ def _chronology_section(mint: str, store: dict) -> None:
             _movement_dataframe(interval.get("movements") or [])
 
 
-watchlist = load_watchlist()
-mints = list(watchlist)
-# Scan manual di halaman ini menulis titik baru ke holder_history.json
-# (store) tetapi TIDAK mempublish holder_status.json — publish hanya dari
-# cron/scan watchlist, dan snapshot_status tidak merge token lama. Tanpa
-# overlay ini kartu metrik menampilkan angka cron terakhir sementara grafik
-# sudah memuat titik scan manual (dua angka berbeda untuk satu token).
-status = apply_manual_scan(load_holder_status(),
-                           st.session_state.get(MANUAL_SCAN_KEY))
-# Store lokal + backup durable: di lingkungan ephemeral (Streamlit Cloud)
-# baseline scan FULL & kronologi dipulihkan dari holder_history.json.gz.
-store = seed_from_status(load_durable_holder_history(), status)
+def _is_evm(value) -> bool:
+    """True untuk CA Robinhood Chain (0x + 40 hex) — memakai pemisah chain."""
+    return bool(robinhood_holders.is_robinhood_address(str(value or "").strip()))
+
+
+def _chain_manual_scan(is_evm: bool) -> dict | None:
+    """Overlay scan manual hanya untuk chain yang sedang dibuka.
+
+    ``MANUAL_SCAN_KEY`` dipakai bersama halaman utama Solana. Token hasil
+    scan manual di halaman ini tidak boleh bocor ke chain lain, jadi overlay
+    disaring berdasarkan format address dulu.
+    """
+    manual = st.session_state.get(MANUAL_SCAN_KEY)
+    if not isinstance(manual, dict):
+        return None
+    if _is_evm(manual.get("mint")) != is_evm:
+        return None
+    return manual
+
 
 query_mint = str(st.query_params.get("mint") or "") if "mint" in st.query_params else ""
 session_mint = st.session_state.get("holder_mint") or ""
-candidate = session_mint or query_mint
+raw_candidate = str(session_mint or query_mint or "").strip()
+is_evm = _is_evm(raw_candidate)
+
+if is_evm:
+    # Robinhood Chain: watchlist/status/history terpisah (EVM, chain 4663),
+    # data holder Blockscout, harga DexScreener — rule dust sama dengan Solana.
+    watchlist = robinhood_watchlist.load_watchlist()
+    mints = list(watchlist)
+    status = apply_manual_scan(robinhood_watchlist.load_status(),
+                               _chain_manual_scan(True))
+    store = seed_from_status(robinhood_watchlist.load_history(), status)
+else:
+    watchlist = load_watchlist()
+    mints = list(watchlist)
+    # Scan manual di halaman ini menulis titik baru ke holder_history.json
+    # (store) tetapi TIDAK mempublish holder_status.json — publish hanya dari
+    # cron/scan watchlist, dan snapshot_status tidak merge token lama. Tanpa
+    # overlay ini kartu metrik menampilkan angka cron terakhir sementara grafik
+    # sudah memuat titik scan manual (dua angka berbeda untuk satu token).
+    status = apply_manual_scan(load_holder_status(), _chain_manual_scan(False))
+    # Store lokal + backup durable: di lingkungan ephemeral (Streamlit Cloud)
+    # baseline scan FULL & kronologi dipulihkan dari holder_history.json.gz.
+    store = seed_from_status(load_durable_holder_history(), status)
+
+candidate = raw_candidate
+if candidate and is_evm:
+    candidate = robinhood_holders.normalize_address(candidate)
 selected = candidate if candidate in mints else (candidate or (mints[0] if mints else ""))
 
 with st.expander("🔍 Token di luar watchlist — tempel CA",
@@ -410,15 +446,20 @@ with st.expander("🔍 Token di luar watchlist — tempel CA",
     with st.form("holder-ca-form"):
         ca_input = st.text_input(
             "Contract address (CA)",
-            placeholder="So11111111111111111111111111111111111111112")
+            placeholder="So11111111111111111111111111111111111111112 "
+                        "atau 0x… (Robinhood Chain)")
         submitted = st.form_submit_button("Buka analisa", type="primary")
     if submitted:
         manual_ca = _normalize_ca(ca_input)
         if not manual_ca:
             st.warning("Masukkan contract address terlebih dahulu.")
-        elif not SOLANA_CA_RE.match(manual_ca):
-            st.warning("Format CA Solana tidak valid.")
+        elif not (SOLANA_CA_RE.match(manual_ca)
+                  or robinhood_holders.is_robinhood_address(manual_ca)):
+            st.warning("Format CA tidak valid. Gunakan base58 Solana atau "
+                       "0x + 40 hex (Robinhood Chain).")
         else:
+            if robinhood_holders.is_robinhood_address(manual_ca):
+                manual_ca = robinhood_holders.normalize_address(manual_ca)
             st.session_state["holder_mint"] = manual_ca
             st.query_params["mint"] = manual_ca
             st.rerun()
@@ -440,12 +481,18 @@ if in_watchlist:
 else:
     mint = selected
     symbol = str((watchlist.get(mint) or {}).get("symbol") or "?")
+    hist_name = (os.path.basename(robinhood_watchlist.HISTORY_LOCAL_PATH)
+                 if is_evm else "holder_history.json")
     st.warning("Token belum ada di watchlist. Scan lokal tetap mencatat "
-               "history di file holder_history.json.")
+               f"history di file {hist_name}.")
     st.markdown(f"**${symbol.upper()}** — `{mint}`")
     st.markdown(external_links_html(mint), unsafe_allow_html=True)
     if st.button("➕ Tambahkan ke watchlist"):
-        add_to_watchlist(mint, symbol, source="manual")
+        if is_evm:
+            robinhood_watchlist.add_to_robinhood_watchlist(mint, symbol,
+                                                           source="manual")
+        else:
+            add_to_watchlist(mint, symbol, source="manual")
         st.rerun()
 
 token = (status.get("tokens") or {}).get(mint) or {}
@@ -504,29 +551,41 @@ _distribution_section(
 _chronology_section(mint, store)
 
 st.divider()
+_hist_note = (f"di `{os.path.basename(robinhood_watchlist.HISTORY_LOCAL_PATH)}`"
+              if is_evm else "di `holder_history.json`")
+_scan_source = ("Blockscout (Robinhood Chain)" if is_evm else "Helius")
 st.caption(
     f"Scan = **FULL holder** (hingga {FULL_SCAN_MAX_WALLETS:,} akun, "
     "paginasi sampai habis). Sejak 2026-09-05 cron juga scan FULL otomatis "
     "tiap jam untuk semua token watchlist: scan pertama setelah token masuk "
     "watchlist disimpan permanen sebagai **baseline** (titik awal holder "
-    "analytic) di `holder_history.json` dan tidak pernah ditimpa, scan "
-    "berikutnya memperbarui detail + kronologi.")
+    f"analytic) {_hist_note} dan tidak pernah ditimpa, scan berikutnya "
+    "memperbarui detail + kronologi.")
 if st.button("🔄 Scan holder FULL token ini", type="primary",
              use_container_width=True):
     cohort = ((store.get("tokens") or {}).get(mint) or {}).get("cohort") or {}
     addrs = list((cohort.get("balances") or {}).keys())
-    with st.status("Mengambil SELURUH holder dari Helius…", expanded=False):
+    with st.status(f"Mengambil SELURUH holder dari {_scan_source}…",
+                   expanded=False):
         try:
-            analysis = analyze_token(
-                mint, str((watchlist.get(mint) or {}).get("symbol")
-                          or token.get("symbol") or "?"),
-                max_wallets=FULL_SCAN_MAX_WALLETS,
-                fetch_market=True, cohort_addrs=addrs)
+            symbol = str((watchlist.get(mint) or {}).get("symbol")
+                         or token.get("symbol") or "?")
+            if is_evm:
+                analysis = robinhood_holders.analyze_token(
+                    mint, symbol, max_wallets=FULL_SCAN_MAX_WALLETS,
+                    fetch_market=True, cohort_addrs=addrs)
+                ingest_many({mint: analysis}, store=store,
+                            path=robinhood_watchlist.HISTORY_LOCAL_PATH,
+                            detail=True)
+            else:
+                analysis = analyze_token(
+                    mint, symbol, max_wallets=FULL_SCAN_MAX_WALLETS,
+                    fetch_market=True, cohort_addrs=addrs)
+                ingest_many({mint: analysis}, detail=True)
         except Exception as exc:  # noqa: BLE001
             analysis = None
             st.error(f"Gagal: {exc}")
     if analysis:
-        ingest_many({mint: analysis}, detail=True)
         # Kartu metrik/badge ikut hasil scan ini (snapshot cron tidak ditimpa;
         # publish satu token akan menghapus token lain dari dashboard).
         st.session_state[MANUAL_SCAN_KEY] = compact_manual_scan(mint, analysis)

@@ -1,5 +1,37 @@
 # Progress
 
+## 2026-09-05 (kedua) — Notifikasi early dump Robinhood + tombol Holder Analytic
+
+Dua permintaan user lanjutan di sesi yang sama:
+
+1. **Notifikasi watchlist Robinhood dengan kriteria sama** seperti token pool
+   Meteora: jika dust holder menyeberang naik **> 0,1% MC**, alert
+   ⚡ EARLY DUMP dikirim (tanpa gerbang volume keras, ulang 1×/bucket 4 jam,
+   hanya saat masih naik). Watchlist RH tidak dipecah Chart LP, jadi scope =
+   **seluruh `rh_watch`**; cron kini memanggil
+   `process_holder_alerts(..., lp_mints=set(rh_watch))` di blok Robinhood
+   `scripts/scan_holders.py`. Aturan `early_dump` sendiri chain-agnostic
+   (mint hanya string; link pesan sudah EVM-aware rh-scan/DexScreener/
+   Blockscout).
+2. **Tombol Holder Analytic (🧮) di baris watchlist Meteora dan Robinhood.**
+   Card Chart LP (Meteora) sudah punya tombol sejak 2026-09-03; yang baru:
+   - `app.py` card Robinhood: kolom diperlebar 6 → 7, tombol `rh-holder-{mint}`
+     (🧮, switch_page ke halaman Holder dengan `?mint=0x…`), ✕ pindah ke
+     kolom terakhir.
+   - `pages/5_🧮_Holder.py` kini mendukung **dua chain**: pemilihan chain
+     ikut format address `mint` (`0x…` = Robinhood, selain itu Solana).
+     EVM memakai `robinhood_watchlist.load_watchlist/load_status/load_history`
+     + `seed_from_status`, form CA menerima base58 Solana **dan** `0x…`,
+     tombol "+ Tambahkan ke watchlist" dan "Scan holder FULL" dirutekan ke
+     `robinhood_holders.analyze_token` + store `holder_history_robinhood.json`.
+     Overlay scan manual (`MANUAL_SCAN_KEY`) disaring per chain agar hasil
+     scan EVM tidak bocor ke watchlist Solana dan sebaliknya.
+
+**Tes**: 708 lulus (AppTest Streamlit aktif: 2 tes baru card RH, 1 tes
+halaman Holder EVM, 1 tes wiring cron RH).
+
+# Progress
+
 ## 2026-09-05 — Watchlist holder Robinhood Chain (EVM, chain id 4663)
 
 User minta tambahan **holder watchlist untuk jaringan Robinhood** dengan rule

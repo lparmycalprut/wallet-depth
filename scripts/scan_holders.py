@@ -23,7 +23,9 @@ Untuk setiap token watchlist:
 Dijalankan GitHub Actions dengan target **1× per jam** (``cron: "0 * * * *"``
 sejak 2026-09-04; schedule GitHub best-effort, lihat DEPLOY.md). Scope rule
 ⚡ EARLY DUMP = token pool (Chart LP / ``source=meteora``) lewat
-``lp_watchlist.split_watchlist``.
+``lp_watchlist.split_watchlist``; untuk watchlist Robinhood Chain seluruh
+token ikut scope yang sama (kriteria identik, lihat blok Robinhood di
+bawah).
 """
 from __future__ import annotations
 
@@ -287,8 +289,13 @@ def main(argv=None) -> int:
                 # dipakai untuk chain EVM, jadi seluruh fetch dimatikan.
                 rh_provider = market_context_provider(fetch=False,
                                                       cache=rh_contexts)
+                # Scope rule ⚡ EARLY DUMP untuk Robinhood = seluruh watchlist
+                # (watchlist RH tidak dipecah Chart LP seperti Meteora):
+                # kriteria sama dengan token pool Meteora — dust holder
+                # menyeberang naik > 0,1% MC tanpa gerbang volume keras.
                 process_holder_alerts(rh_analyses, rh_store,
-                                      context_provider=rh_provider)
+                                      context_provider=rh_provider,
+                                      lp_mints=set(rh_watch))
                 rh_status = robinhood_watchlist.publish_scan(
                     rh_analyses, rh_watch, history_store=rh_store,
                     push=not args.no_push, contexts=rh_contexts)
