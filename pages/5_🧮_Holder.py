@@ -21,14 +21,16 @@ from holder_chronology import (SAMPLED_NOTE, SNAPSHOT_AWAL_MESSAGE,
                                format_wib as _chrono_wib, interval_narrative,
                                interval_title, movement_table_rows)
 from holder_history import (DUST_CAUTION_PCT, DUST_DANGER_PCT,
-                            FULL_SCAN_MAX_WALLETS, baseline_for_mint,
+                            FULL_SCAN_MAX_WALLETS, MIN_USABLE_WALLETS,
+                            baseline_for_mint,
                             bucket_delta, bucket_series,
                             chronology_view_for_mint, dust_flag,
-                            history_for_mint, ingest_many,
+                            history_for_mint, holders_usable, ingest_many,
                             latest_detail_for_mint,
                             load_durable_holder_history,
-                            merge_points, resample_4h, seed_from_status,
-                            tracked_chronology_addresses)
+                            merge_points, point_wallets, resample_4h,
+                            seed_from_status, tracked_chronology_addresses,
+                            usable_points)
 from links import external_links_html
 from holder_analysis import analyze_token
 from holder_status import (MANUAL_SCAN_KEY, apply_manual_scan,
@@ -499,22 +501,50 @@ else:
         st.rerun()
 
 token = (status.get("tokens") or {}).get(mint) or {}
-holders = token.get("holders") or {}
+raw_holders = token.get("holders") or {}
+# Scan holder bisa pulang dengan sampel pendek tanpa menandai ``truncated``
+# (kasus nyata 2026-09-06: Helius mati → fallback GMGN mengembalikan 20
+# holder). Wallet dust ada di ekor daftar, jadi sampel pendek selalu berisi
+# dust 0 / 0,00% MC — angka itu tidak boleh disajikan sebagai hasil scan.
+short_scan = bool(raw_holders) and not holders_usable(raw_holders)
+holders = {} if short_scan else raw_holders
 points = _points_for(mint, token, store)
-sampled = resample_4h(points)
+# Titik dari scan pendek dibuang dari grafik & pembanding badge.
+sampled = resample_4h(usable_points(points))
+last_row = sampled[-1] if sampled else {}
 prev_pct = sampled[-2].get("dust_pct_mc") if len(sampled) >= 2 else None
 current_pct = holders.get("dust_pct_mc")
 if current_pct is None and sampled:
     current_pct = sampled[-1].get("dust_pct_mc")
 flag = dust_flag(current_pct, prev_pct)
 
+
+def _count(value) -> str:
+    return "—" if value is None else f"{int(value):,}"
+
+
+dust_count = holders.get("dust_count")
+if dust_count is None and last_row:
+    dust_count = last_row.get("dust_count")
+real_count = holders.get("real_count")
+if real_count is None and last_row:
+    real_count = last_row.get("real_count")
+
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Dust wallet", f"{int(holders.get('dust_count') or 0):,}")
+c1.metric("Dust wallet", _count(dust_count))
 c2.metric("Dust hold % MC", _fmt_pct(current_pct))
-c3.metric("Real >$10", f"{int(holders.get('real_count') or 0):,}")
+c3.metric("Real >$10", _count(real_count))
 mid = holders.get("mid") if isinstance(holders.get("mid"), dict) else {}
-c4.metric("Pilar Crab+Fish", f"{int(mid.get('count') or 0):,}",
+c4.metric("Pilar Crab+Fish", _count(mid.get("count")),
           _fmt_pct(mid.get("pct_mc")))
+if short_scan:
+    st.warning(
+        f"Scan holder terakhir **tidak lengkap**: provider cuma "
+        f"mengembalikan {point_wallets(raw_holders):,} wallet (ambang "
+        f"{MIN_USABLE_WALLETS} wallet). Dust 0% dari sampel sependek itu "
+        "bukan berarti dust habis — angka di atas memakai titik history "
+        "layak terakhir. Cron akan mencoba lagi pada run berikutnya.",
+        icon="⚠️")
 st.markdown(_dust_badge(flag), unsafe_allow_html=True)
 _manual_view = token.get("view_source") == "manual"
 st.caption(

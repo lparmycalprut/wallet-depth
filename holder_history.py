@@ -63,6 +63,15 @@ DUST_BEST_LABEL = "BEST POOL"
 # Data holder di bawah jumlah ini dianggap gagal/tidak representatif:
 # dust "0,00%" dari data kosong/rusak TIDAK BOLEH jadi BEST POOL.
 DUST_BEST_MIN_HOLDERS = 40
+# Ambang yang sama dipakai sebagai lantai **kelayakan data** di seluruh
+# dashboard/alert (lihat :func:`holders_usable` / :func:`point_usable`).
+# Kasus nyata 2026-09-06: Helius gagal (rate limit) dan fallback GMGN
+# mengembalikan satu halaman berisi **20** holder dengan
+# ``truncated: False``. Wallet dust (nilai ≤ $10) ada di **ekor** daftar
+# holder, jadi sampel 20 wallet selalu menghasilkan ``dust_count = 0`` /
+# ``dust_pct_mc = 0.0`` — watchlist lalu menampilkan "dust turun -100%
+# sejak masuk" untuk puluhan token padahal tidak ada yang menjual.
+MIN_USABLE_WALLETS = DUST_BEST_MIN_HOLDERS
 # alias lama (kompatibilitas import)
 DUST_LIMIT_PCT = DUST_DANGER_PCT
 # Urutan keparahan badge (dipakai sorting Chart LP / watchlist).
@@ -143,6 +152,92 @@ def _holders_valid_for_best(holders) -> bool:
     wallets = _int(holders.get("wallets_analyzed"),
                    _int(holders.get("real_count")) + _int(holders.get("dust_count")))
     return wallets >= DUST_BEST_MIN_HOLDERS
+
+
+def scan_degraded(holders, *, min_wallets: int = MIN_USABLE_WALLETS) -> bool:
+    """True bila ada **bukti** scan holder tidak lengkap/gagal.
+
+    Provider holder bisa mengembalikan daftar yang sangat pendek tanpa
+    menandai ``truncated`` — kasus nyata 2026-09-06: Helius mati (rate
+    limit) lalu fallback GMGN mengembalikan **20** holder dengan
+    ``truncated: False``. Wallet dust (nilai ≤ $10) ada di ekor daftar,
+    jadi sampel sependek itu selalu menghasilkan ``dust_count = 0`` /
+    ``dust_pct_mc = 0.0`` yang **terlihat** seperti "semua dust keluar"
+    (watchlist lalu mengklaim −100% sejak masuk).
+
+    Bukti yang dipakai: ``total_fetched`` < :data:`MIN_USABLE_WALLETS`
+    (termasuk 0 = fetch gagal) atau jumlah wallet dianalisis di bawah
+    lantai yang sama. Dict tanpa bukti jumlah wallet sama sekali
+    (snapshot skema lama/fixture) **tidak** dianggap degraded — tanpa
+    bukti kita tidak menolak data.
+    """
+    if not isinstance(holders, dict) or not holders:
+        return False
+    if "total_fetched" in holders \
+            and _int(holders.get("total_fetched")) < int(min_wallets):
+        return True
+    wallets = point_wallets(holders)
+    return bool(0 < wallets < int(min_wallets))
+
+
+def holders_usable(holders, *, min_wallets: int = MIN_USABLE_WALLETS) -> bool:
+    """True bila hasil fetch holder layak **ditampilkan/dibandingkan**.
+
+    Kebalikan dari :func:`scan_degraded`, plus syarat ada datanya: dict
+    kosong/bukan dict → False (tidak ada bukti sama sekali).
+    """
+    if not isinstance(holders, dict) or not holders:
+        return False
+    return not scan_degraded(holders, min_wallets=min_wallets)
+
+
+def point_wallets(point) -> int:
+    """Jumlah wallet yang dianalisis satu titik/hasil holder.
+
+    Dua bentuk dict diterima: titik history memakai ``holder_count``
+    (diisi dari ``wallets_analyzed`` oleh :func:`_build_point`), sedangkan
+    dict hasil ``classify_holders`` memakai ``wallets_analyzed``. Bila
+    keduanya tidak ada (skema lama/fixture) dipakai
+    ``real_count + dust_count``.
+    """
+    row = point if isinstance(point, dict) else {}
+    explicit = [_int(row.get(key)) for key in ("wallets_analyzed",
+                                               "holder_count")
+                if key in row]
+    if explicit:
+        return max(explicit)
+    return _int(row.get("real_count")) + _int(row.get("dust_count"))
+
+
+def point_usable(point, *, min_wallets: int = MIN_USABLE_WALLETS) -> bool:
+    """True bila satu titik history layak dipakai angka/grafik/pembanding.
+
+    Titik dari scan yang datanya tidak lengkap (:func:`scan_degraded`)
+    ditandai ``degraded`` saat di-ingest; titik lama yang belum punya
+    penanda itu tetap tersaring dari lantai jumlah wallet
+    (:data:`MIN_USABLE_WALLETS`) selama jumlahnya tercatat — titik tanpa
+    informasi jumlah wallet (skema lama/fixture) tidak ditolak. Titik
+    tanpa ``dust_pct_mc`` juga ditolak: nilainya tidak bisa dibandingkan
+    dan biasanya ikut menandakan scan gagal.
+    """
+    row = point if isinstance(point, dict) else {}
+    if not row:
+        return False
+    if row.get("degraded"):
+        return False
+    if _float(row.get("dust_pct_mc"), None) is None:
+        return False
+    wallets = point_wallets(row)
+    if wallets <= 0:
+        return True
+    return wallets >= int(min_wallets)
+
+
+def usable_points(points, *, min_wallets: int = MIN_USABLE_WALLETS) -> list:
+    """Titik history yang layak tampil (urutan asli dipertahankan)."""
+    return [row for row in (points or [])
+            if isinstance(row, dict)
+            and point_usable(row, min_wallets=min_wallets)]
 
 
 def dust_flag(dust_pct_mc, prev_pct=None, *, holders=None) -> dict:
@@ -555,6 +650,11 @@ def full_scan_usable(analysis: dict | None) -> bool:
     Fixture lama tanpa ``total_fetched`` tetap dianggap usable supaya
     schema/test yang sudah ada tidak pecah. Scan non-detail tidak memakai
     helper ini.
+
+    Catatan: scan yang holdernya **tidak lengkap** (sampel pendek, lihat
+    :func:`scan_degraded`) masih lolos di sini — baseline/``latest_detail``
+    tetap ditulis — tetapi titiknya ditandai ``degraded`` sehingga tidak
+    pernah dipakai angka baris watchlist, grafik, maupun alert.
     """
     if not isinstance(analysis, dict):
         return False
@@ -654,12 +754,18 @@ def save_holder_history(store: dict, path: str | None = None) -> dict:
 
 
 def compact_point(point: dict | None) -> dict:
-    """Titik history tanpa peta address (aman untuk holder_status)."""
+    """Titik history tanpa peta address (aman untuk holder_status).
+
+    Penanda ``degraded`` (scan holder tidak lengkap — lihat
+    :func:`scan_degraded`) ikut terbawa supaya filter display di
+    ``watchlist_detail`` tetap mengenal titik itu setelah melewati
+    ``resample_4h`` / snapshot.
+    """
     point = point or {}
     keys = ("ts", "price", "mc", "dust_count", "dust_pct_mc", "dust_value_usd",
             "real_count", "real_pct_mc", "mid_count", "mid_pct_mc",
             "cohort_token_pct", "cohort_cut50_pct", "cohort_n",
-            "holder_count", "buckets", "full")
+            "holder_count", "buckets", "full", "degraded")
     out = {}
     for key in keys:
         if key in point:
@@ -853,6 +959,11 @@ def ingest_one(store: dict, mint: str, analysis: dict | None, *,
     ``latest_detail`` diperbarui tiap scan full. Cron sejak 2026-09-05
     ikut memakai ``detail=True`` (scan FULL tiap jam), jadi baseline +
     kronologi terbentuk otomatis untuk semua token watchlist.
+
+    Titik dari scan yang holdernya terbukti tidak lengkap
+    (:func:`scan_degraded`) ditandai ``degraded: True``: jejak run-nya
+    tetap ada, tetapi tidak dipakai sebagai angka baris watchlist, titik
+    grafik, pembanding "sejak masuk", maupun pemicu alert.
     """
     mint = str(mint or "").strip()
     if not mint or not isinstance(analysis, dict):
@@ -885,6 +996,11 @@ def ingest_one(store: dict, mint: str, analysis: dict | None, *,
         if now - frozen_at >= COHORT_WINDOW_SEC and mid_balances:
             slot["cohort"] = {"frozen_at": now, "balances": mid_balances}
     point = _build_point(analysis, score, now)
+    if scan_degraded(holders):
+        # Bukti scan tidak lengkap (mis. provider mengembalikan 20 holder):
+        # titik tetap dicatat sebagai jejak run, tetapi UI/alert tidak
+        # boleh memakainya sebagai angka (lihat watchlist_detail).
+        point["degraded"] = True
     if detail:
         _ingest_full_detail(slot, analysis, now)
         point["full"] = True

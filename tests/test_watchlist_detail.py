@@ -381,5 +381,126 @@ class RowSortKeyTest(unittest.TestCase):
         self.assertEqual(lower, upper)
 
 
+class DegradedScanTest(unittest.TestCase):
+    """Scan holder yang datanya tidak lengkap tidak boleh jadi angka baris.
+
+    Kasus produksi 2026-09-06: Helius mati (rate limit) lalu fallback GMGN
+    mengembalikan **20** holder dengan ``truncated: False``. Wallet dust ada
+    di ekor daftar holder, jadi sampel pendek selalu berisi ``dust 0`` /
+    ``0,00% MC`` — 34 dari 79 baris watchlist lalu mengklaim "−100% sejak
+    masuk" padahal tidak ada yang menjual.
+    """
+
+    def _good(self, ts, pct, count):
+        row = _point(ts, pct, count)
+        row["holder_count"] = count + 40
+        row["real_count"] = 40
+        return row
+
+    def _short(self, ts, wallets=19, *, flagged=False):
+        row = {"ts": int(ts), "dust_pct_mc": 0.0, "dust_count": 0,
+               "real_count": wallets, "holder_count": wallets,
+               "price": 0.01, "mc": 100_000.0}
+        if flagged:
+            row["degraded"] = True
+        return row
+
+    def _short_token(self, ts, wallets=19):
+        return {"symbol": "TST", "analyzed_at": int(ts),
+                "marketcap": 100_000.0,
+                "holders": {"dust_count": 0, "dust_pct_mc": 0.0,
+                            "real_count": wallets,
+                            "wallets_analyzed": wallets,
+                            "total_fetched": wallets + 1,
+                            "source": "gmgn"}}
+
+    def test_short_sample_snapshot_is_replaced_by_the_last_good_point(self):
+        points = [self._good(1_000, 0.30, 120), self._short(3_000)]
+        view = wd.resolve_view(self._short_token(3_000), points, now=4_000)
+        self.assertEqual(view["dust_pct"], 0.30)
+        self.assertEqual(view["ts"], 1_000)
+        self.assertEqual(view["source"], wd.SOURCE_HISTORY)
+        self.assertTrue(view["degraded"])
+        self.assertEqual(view["degraded_wallets"], 19)
+        self.assertIn("19 wallet", view["degraded_note"])
+
+    def test_short_sample_point_without_the_flag_is_also_rejected(self):
+        # Titik yang sudah terlanjur tersimpan di store produksi tidak punya
+        # penanda ``degraded`` — lantai jumlah wallet yang menyaringnya.
+        points = [self._good(1_000, 0.30, 120), self._short(3_000)]
+        view = wd.resolve_view({}, points, now=4_000)
+        self.assertEqual(view["dust_pct"], 0.30)
+        self.assertTrue(view["degraded"])
+
+    def test_flagged_point_is_rejected_even_with_many_wallets(self):
+        points = [self._good(1_000, 0.30, 120)]
+        broken = self._good(3_000, 0.0, 900)
+        broken["degraded"] = True
+        view = wd.resolve_view({}, points + [broken], now=4_000)
+        self.assertEqual(view["dust_pct"], 0.30)
+        self.assertTrue(view["degraded"])
+
+    def test_good_newest_scan_is_not_marked_degraded(self):
+        points = [self._good(1_000, 0.30, 120), self._good(3_000, 0.42, 150)]
+        view = wd.resolve_view({}, points, now=4_000)
+        self.assertEqual(view["dust_pct"], 0.42)
+        self.assertFalse(view["degraded"])
+        self.assertEqual(view["degraded_note"], "")
+
+    def test_change_since_added_is_not_minus_100_from_a_short_scan(self):
+        meta = {"added": "2026-09-01"}
+        points = [self._good(ADDED_TS + HOUR, 0.40, 200),
+                  self._good(ADDED_TS + DAY, 0.30, 150),
+                  self._short(ADDED_TS + 2 * DAY, flagged=True)]
+        change = wd.dust_change_since_added(
+            meta, points, now=ADDED_TS + 2 * DAY)
+        self.assertTrue(change["cukup_data"])
+        # sebelum perbaikan: 0.40% -> 0.00% = -100.0% (hijau, menyesatkan)
+        self.assertEqual(change["pct_change"], -25.0)
+        self.assertEqual(change["to_pct"], 0.30)
+        self.assertEqual(change["last_ts"], ADDED_TS + DAY)
+        self.assertTrue(change["degraded"])
+        self.assertIn("wallet", change["alasan"])
+
+    def test_degraded_anchor_point_is_skipped(self):
+        meta = {"added": "2026-09-01"}
+        points = [self._short(ADDED_TS + HOUR, flagged=True),
+                  self._good(ADDED_TS + DAY, 0.40, 200),
+                  self._good(ADDED_TS + 2 * DAY, 0.20, 150)]
+        change = wd.dust_change_since_added(meta, points,
+                                            now=ADDED_TS + 2 * DAY)
+        self.assertEqual(change["anchor_ts"], ADDED_TS + DAY)
+        self.assertEqual(change["from_pct"], 0.40)
+        self.assertEqual(change["pct_change"], -50.0)
+
+    def test_token_with_only_short_scans_has_no_comparator(self):
+        meta = {"added": "2026-09-01"}
+        points = [self._short(ADDED_TS + HOUR, flagged=True),
+                  self._short(ADDED_TS + DAY, flagged=True)]
+        change = wd.dust_change_since_added(meta, points,
+                                            now=ADDED_TS + 2 * DAY)
+        self.assertFalse(change["cukup_data"])
+        self.assertIn("tidak lengkap", change["alasan"])
+        self.assertEqual(change["tone"], wd.TONE_UNKNOWN)
+
+    def test_change_html_carries_a_warning_marker(self):
+        meta = {"added": "2026-09-01"}
+        points = [self._good(ADDED_TS + HOUR, 0.40, 200),
+                  self._short(ADDED_TS + DAY, flagged=True)]
+        html = wd.change_html(
+            wd.dust_change_since_added(meta, points, now=ADDED_TS + DAY))
+        self.assertIn("⚠️", html)
+
+    def test_summary_and_caption_report_degraded_rows(self):
+        points = [self._good(1_000, 0.30, 120), self._short(3_000)]
+        views = [wd.resolve_view(self._short_token(3_000), points, now=4_000),
+                 wd.resolve_view({}, [self._good(2_000, 0.20, 100)], now=4_000)]
+        summary = wd.sync_summary(views, now=4_000)
+        self.assertEqual(summary["degraded"], 1)
+        caption = wd.sync_caption_text(summary)
+        self.assertIn("tidak lengkap", caption)
+        self.assertIn("1 token", caption)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

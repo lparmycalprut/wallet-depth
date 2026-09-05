@@ -1,5 +1,85 @@
 # Progress
 
+## 2026-09-06 — Watchlist: scan holder tidak lengkap tidak lagi terbaca "−100%"
+
+**Laporan user**: "Perbaiki tampilan data watchlist, banyak yang jadi −100%
+padahal cron sudah terjadi beberapa kali."
+
+### Diagnosis (dipakai data produksi sungguhan, ref `holder-live`)
+
+Bukan bug perhitungan perubahan. Dari 79 token watchlist Solana:
+
+| Gejala | Sebelum | Sesudah |
+|---|---|---|
+| Baris **Sejak masuk** = −100,0% | **34** | **0** |
+| Snapshot cron dengan holder tidak layak | 43 dari 79 | tetap 43 (datanya), tapi tidak lagi ditampilkan sebagai angka |
+| Titik history yang dibuang dari grafik/angka | — | 190 dari 633 |
+| Baris tanpa pembanding layak | 0 (semua "punya angka") | 2 (jujur menulis *belum ada data ⚠️*) |
+
+Penyebabnya **data**, bukan rumus: scan terakhir puluhan token cuma mengambil
+**20 holder**. Helius gagal (rate limit) → fallback GMGN mengembalikan satu
+halaman pendek dengan `truncated: False` (`total_fetched: 20`,
+`wallets_analyzed: 19`, `source: gmgn`). Wallet dust (nilai ≤ $10) berada di
+**ekor** daftar holder, jadi sampel sependek itu selalu berisi
+`dust_count 0` / `dust_pct_mc 0.0`, dan kolom **Sejak masuk** menghitung
+`(0 − 2,68) / 2,68 = −100%` — hijau, seolah dust habis keluar padahal tidak ada
+transaksi. Snapshot `holder_status.json` membawa angka yang sama, jadi kolom
+**Hold %MC** ikut menampilkan `0,00%` + badge **AMAN**.
+
+### Perbaikan
+
+1. **Lantai kelayakan data holder** (`holder_history`): `MIN_USABLE_WALLETS`
+   (40, sama dengan guard BEST POOL) + `scan_degraded()` /
+   `holders_usable()` / `point_wallets()` / `point_usable()` /
+   `usable_points()`. Aturan: `total_fetched < 40` atau jumlah wallet
+   dianalisis `< 40` = **tidak layak**; dict tanpa bukti jumlah wallet sama
+   sekali (snapshot skema lama/fixture) **tidak** ditolak, jadi perilaku lama
+   tidak berubah. Titik hasil scan tidak lengkap ditandai `degraded: True`
+   saat `ingest_one` (penanda ikut lewat `compact_point` → `resample_4h` →
+   snapshot).
+2. **`watchlist_detail.resolve_view()`** memilih nilai **layak** terbaru,
+   bukan sekadar terbaru: snapshot/titik dari scan pendek tidak pernah jadi
+   angka baris; hasil membawa `degraded`, `degraded_ts`, `degraded_wallets`,
+   `degraded_note`, `usable_points`, `skipped_scans`. `drift` hanya dihitung
+   bila snapshot layak. `anchor_point()` juga melewati titik tidak layak
+   supaya nilai awal "sejak masuk" tidak ikut rusak.
+3. **UI** (`app.py`): baris memakai scan layak terakhir, sub-baris waktu
+   scan menulis `⚠️ scan 06 Sep 03:00 WIB cuma 19 wallet`, kolom **Sejak
+   masuk** diberi penanda ⚠️ (dan `belum ada data ⚠️` + alasan di tooltip
+   bila belum ada satu pun scan layak), sparkline + pembanding badge hanya
+   digambar dari titik layak, dan `sync_caption_text()` menghitung berapa
+   token yang scan terakhirnya tidak lengkap. Card **Chart LP**
+   (`lp_watchlist.build_lp_row` + grafik/overlay) memakai aturan yang sama.
+4. **Halaman Holder Analytic** (`pages/5_🧮_Holder.py`): kartu metrik jatuh
+   ke titik history layak terakhir dan menampilkan peringatan "scan holder
+   terakhir tidak lengkap (19 wallet)" alih-alih menyajikan `Dust 0 / 0,00%`
+   sebagai fakta.
+5. **Alert**: `telegram_alerts.process_holder_alerts()` melewatkan scan yang
+   holder-nya tidak layak (guard lama hanya menolak `total_fetched <= 0`).
+   Tanpa ini, setiap run dengan sampel pendek akan membaca "dust turun 100%
+   dari titik high" dan mengirim 🔔 HIGH DROP palsu.
+
+### Yang **tidak** diubah (dan kenapa)
+
+- `full_scan_usable()` tetap hanya menolak `total_fetched <= 0`: baseline /
+  `latest_detail` / kronologi masih ditulis untuk scan pendek. Menyamakan
+  ambangnya akan mengubah arti fixture scan kecil yang sudah ada
+  (mis. `wallets_analyzed: 14` di `tests/test_holder_history.py`). Konsekuensi
+  yang diketahui: Δ bucket vs baseline di halaman Holder bisa menyesatkan
+  tepat setelah scan pendek — titiknya sudah ditandai `degraded`, jadi guard
+  bisa dipasang kemudian tanpa mengubah skema.
+- Sumber masalahnya (Helius rate limit → GMGN satu halaman) tidak disentuh di
+  layer fetch. Selama provider mengembalikan sampel pendek, run berikutnya
+  tetap mencoba; UI hanya berhenti mengklaim angka yang tidak terbukti.
+
+**Tes**: 751 lulus (26 tes baru: 9 `DegradedScanTest` di
+`tests/test_watchlist_detail.py`, 8 `HolderDataUsabilityTest` di
+`tests/test_holder_history.py`, 2 alert di `tests/test_high_drop.py`,
+5 AppTest `tests/test_watchlist_degraded_scan.py`, 2 AppTest halaman Holder).
+Verifikasi tambahan: `app.py` dijalankan lewat `AppTest` dengan **snapshot +
+store produksi asli** (79 token, 2,7 MB / 3,4 MB gzip) — 0 exception, 0
+kemunculan `−100.0%`.
+
 ## 2026-09-05 (kedua) — Notifikasi early dump Robinhood + tombol Holder Analytic
 
 Dua permintaan user lanjutan di sesi yang sama:

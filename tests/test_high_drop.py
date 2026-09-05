@@ -10,6 +10,7 @@ atau keluar dari zona drop me-re-arm (bisa mengirim lagi).
 from __future__ import annotations
 
 import unittest
+from unittest import mock
 
 import telegram_alerts as ta
 
@@ -166,6 +167,51 @@ class HighDropFlowTest(unittest.TestCase):
             high_track=True, market_context=self._NO_CTX)
         self.assertEqual(
             [e for e in events3 if e.get("kind") == "high_drop"], [])
+
+
+class DegradedScanAlertTest(unittest.TestCase):
+    """Scan holder bersampel pendek tidak boleh memicu 🔔 HIGH DROP.
+
+    Provider yang mengembalikan 20 holder selalu melaporkan ``dust 0`` —
+    tanpa gerbang ini setiap token watchlist biasa akan "turun 100% dari
+    titik high" dan mengirim alert palsu.
+    """
+
+    def _analysis(self, pct, *, wallets, ts=NOW):
+        return {"ca": MINT, "symbol": "REG", "analyzed_at": ts,
+                "holders": {"dust_pct_mc": pct,
+                            "dust_count": 0 if wallets < 40 else 250,
+                            "real_count": wallets,
+                            "wallets_analyzed": wallets,
+                            "total_fetched": wallets + 1}}
+
+    def _store(self):
+        return {"tokens": {MINT: {"symbol": "REG", "cohort": {}, "points": [],
+                                  "alert_state": {
+                                      "high_drop": _marker(1.0),
+                                      "sent_event_ids": []}}}}
+
+    def test_sampel_pendek_dilewati_tanpa_alert(self):
+        store = self._store()
+        sender = mock.Mock(return_value={"ok": True, "skipped": False})
+        deliveries = ta.process_holder_alerts(
+            {MINT: self._analysis(0.0, wallets=19)}, store, sender=sender,
+            high_mints={MINT})
+        self.assertEqual(deliveries, [])
+        sender.assert_not_called()
+        # titik high tidak boleh digeser/di-reset oleh scan rusak
+        marker = store["tokens"][MINT]["alert_state"]["high_drop"]
+        self.assertEqual(marker["high"], 1.0)
+        self.assertEqual(marker["notified_high"], 0.0)
+
+    def test_scan_lengkap_tetap_mengirim(self):
+        store = self._store()
+        sender = mock.Mock(return_value={"ok": True, "skipped": False})
+        deliveries = ta.process_holder_alerts(
+            {MINT: self._analysis(0.4, wallets=900)}, store, sender=sender,
+            high_mints={MINT})
+        self.assertEqual(len(deliveries), 1)
+        self.assertEqual(deliveries[0]["event"]["kind"], "high_drop")
 
 
 if __name__ == "__main__":  # pragma: no cover

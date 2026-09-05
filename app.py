@@ -15,7 +15,7 @@ from holder_history import (DUST_BEST_LABEL, DUST_BEST_PCT, DUST_CAUTION_PCT,
                             history_for_mint, ingest_many,
                             load_durable_holder_history, merge_points,
                             resample_4h,
-                            seed_from_status, sparkline_svg)
+                            seed_from_status, sparkline_svg, usable_points)
 from links import HOLDER_PAGE_PATH, external_links_html, pool_links_html
 from lp_watchlist import (LP_SOURCE, lp_card_rows, lp_chart_figure,
                           lp_overlay_figure, lp_summary, split_watchlist)
@@ -299,18 +299,23 @@ def _render_lp_row(row: dict) -> None:
                 else (f"≥{int(dust_count)}" if truncated
                       else f"{int(dust_count):,}"))
     pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.2f}%"
-    spark = sparkline_svg(row.get("points") or [], key="dust_pct_mc")
+    # Titik dari scan yang datanya tidak lengkap tidak digambar (lihat
+    # holder_history.point_usable) — kalau tidak, grafik menukik ke 0%.
+    chart_points = usable_points(row.get("points") or [])
+    spark = sparkline_svg(chart_points, key="dust_pct_mc")
     if not spark:
         spark = ('<span style="font-size:.7rem;color:#64748b;">'
                  "belum ada grafik</span>")
 
+    short_note = (" · ⚠️ scan terakhir tidak lengkap"
+                  if row.get("degraded") else "")
     cols = st.columns([1.7, 0.75, 0.95, 0.9, 1.25, 0.42, 0.42, 0.42])
     cols[0].markdown(
         f'<div class="watchlist-token">'
         f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
         f'<span class="watchlist-mint">{html.escape(mint[:8])}…</span>'
         f'<span class="watchlist-metric-sub">MC {_compact(row.get("mc"))} · '
-        f'scan {_wib(row.get("analyzed_at"))}</span>'
+        f'scan {_wib(row.get("analyzed_at"))}{short_note}</span>'
         f'<div class="watchlist-links">{external_links_html(mint)}</div>'
         f"</div>", unsafe_allow_html=True)
     cols[1].markdown(
@@ -347,7 +352,7 @@ def _render_lp_row(row: dict) -> None:
 
     with st.expander(f"📈 Grafik perubahan dust holder — ${symbol}",
                      expanded=False):
-        figure = lp_chart_figure(row.get("points") or [], symbol)
+        figure = lp_chart_figure(chart_points, symbol)
         if figure is None:
             st.info("Butuh minimal 2 titik bucket 4 jam. Cron watchlist LP "
                     "(target ±15 menit, best-effort) atau tombol **Scan "
@@ -1129,7 +1134,10 @@ else:
         view = (_holder_views.get(mint)
                 or resolve_view(token, points, now=_now_ts,
                                 stale_after=STALE_REGULAR_AFTER_SEC))
-        sampled = resample_4h(points)
+        # Grafik & pembanding badge hanya memakai titik yang datanya layak:
+        # titik dari scan yang cuma mengambil 20 wallet berisi dust 0 dan
+        # akan menggambar tebing palsu ke 0% (lihat holder_history).
+        sampled = resample_4h(usable_points(points))
         # Angka baris = sumber terbaru (snapshot cron / titik history / scan
         # manual), bukan selalu snapshot — lihat sync_caption_text di atas.
         dust_count = view.get("dust_count")
@@ -1142,7 +1150,7 @@ else:
                     else (f"≥{int(dust_count)}" if truncated
                           else f"{int(dust_count):,}"))
         pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.2f}%"
-        spark = sparkline_svg(points, key="dust_pct_mc")
+        spark = sparkline_svg(usable_points(points), key="dust_pct_mc")
         if not spark:
             spark = '<span style="font-size:.7rem;color:#64748b;">belum ada grafik</span>'
         scan_note = f"scan {format_wib(view.get('ts'))}"
@@ -1150,6 +1158,19 @@ else:
             scan_note += " · titik history"
         if view.get("drift"):
             scan_note += " · ⚠️ snapshot ≠ history"
+        if view.get("degraded"):
+            # Run terakhir datanya tidak lengkap → angka baris dari scan
+            # layak sebelumnya; bilang terus terang, jangan diam-diam.
+            wallets = view.get("degraded_wallets")
+            if view.get("ts"):
+                scan_note += (f" · ⚠️ scan "
+                              f"{format_wib(view.get('degraded_ts'))} cuma "
+                              f"{int(wallets or 0):,} wallet")
+            else:
+                # Belum ada satu pun scan yang layak: jangan tulis "scan —".
+                scan_note = (f"⚠️ scan "
+                             f"{format_wib(view.get('degraded_ts'))} tidak "
+                             f"lengkap ({int(wallets or 0):,} wallet)")
         if view.get("stale"):
             scan_note += " · basi"
 

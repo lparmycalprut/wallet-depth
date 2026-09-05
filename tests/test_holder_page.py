@@ -355,5 +355,72 @@ class HolderPageRobinhoodTest(unittest.TestCase):
         self.assertNotIn("Belum ada token", " ".join(
             node.value for node in app.info))
 
+@unittest.skipUnless(AppTest is not None, "streamlit is not installed")
+class HolderPageShortScanTest(unittest.TestCase):
+    """Snapshot cron dari scan holder **tidak lengkap** tidak boleh jadi angka.
+
+    Kasus produksi 2026-09-06: Helius mati → fallback GMGN mengembalikan 20
+    holder (``truncated: False``) → ``dust 0`` / ``0,00% MC``. Kartu metrik
+    halaman ini membaca snapshot, jadi tanpa guard ia menyajikan "dust habis"
+    yang tidak pernah terjadi.
+    """
+
+    SHORT = {"dust_count": 0, "dust_pct_mc": 0.0, "real_count": 19,
+             "wallets_analyzed": 19, "total_fetched": 20, "source": "gmgn"}
+
+    @contextlib.contextmanager
+    def _page(self, status):
+        patches = [
+            mock.patch("watchlist.load_watchlist",
+                       return_value={MINT: META}),
+            mock.patch("holder_status.load_holder_status",
+                       return_value=status),
+            mock.patch("holder_history.load_holder_history",
+                       return_value=_store()),
+            mock.patch("holder_history.pull_holder_history",
+                       return_value=None),
+            mock.patch("core.get_helius_keys", return_value=["test-key"]),
+        ]
+        for patch in patches:
+            patch.start()
+        try:
+            app = AppTest.from_file(PAGE, default_timeout=30)
+            app.run()
+            yield app
+        finally:
+            for patch in reversed(patches):
+                patch.stop()
+
+    def test_short_scan_falls_back_to_history_and_warns(self):
+        status = {"updated_at": 12 * HOUR,
+                  "tokens": {MINT: {"symbol": "TST", "analyzed_at": 12 * HOUR,
+                                    "holders": dict(self.SHORT)}}}
+        with self._page(status) as app:
+            self.assertEqual(len(app.exception), 0)
+            warnings = " ".join(node.value for node in app.warning)
+            self.assertIn("tidak lengkap", warnings)
+            self.assertIn("19 wallet", warnings)
+            # angka memakai titik history layak terakhir (120 dust / 0,80%),
+            # bukan 0 dari sampel 20 wallet.
+            self.assertEqual(_first_metric(app, "Dust wallet"), "120")
+            self.assertEqual(_first_metric(app, "Dust hold % MC"), "0.80%")
+
+    def test_complete_scan_still_uses_the_snapshot(self):
+        status = {"updated_at": 16 * HOUR,
+                  "tokens": {MINT: {"symbol": "TST", "analyzed_at": 16 * HOUR,
+                                    "holders": {
+                                        "dust_count": 130,
+                                        "dust_pct_mc": 0.9,
+                                        "real_count": 41,
+                                        "wallets_analyzed": 171,
+                                        "total_fetched": 4_300}}}}
+        with self._page(status) as app:
+            self.assertEqual(len(app.exception), 0)
+            self.assertNotIn("tidak lengkap",
+                             " ".join(node.value for node in app.warning))
+            self.assertEqual(_first_metric(app, "Dust wallet"), "130")
+            self.assertEqual(_first_metric(app, "Dust hold % MC"), "0.90%")
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

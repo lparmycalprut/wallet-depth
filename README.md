@@ -317,6 +317,38 @@ badge yang benar, dan caption card diganti `sync_caption_text()`: satu waktu
 titik history yang lebih baru, berapa yang datanya basi (> 2 jam), dan berapa
 yang snapshot-nya berbeda dari titik history (⚠️).
 
+### Scan holder yang tidak lengkap tidak dihitung sebagai angka
+
+Provider holder bisa pulang dengan **sampel pendek tanpa menandai
+`truncated`** (kasus nyata 2026-09-06: Helius mati karena rate limit →
+fallback GMGN mengembalikan 20 holder). Wallet dust (nilai ≤ $10) ada di
+**ekor** daftar holder, jadi sampel sependek itu selalu berisi
+`dust_count 0` / `dust_pct_mc 0.0`. Kalau angka itu dipakai apa adanya, kolom
+**Sejak masuk** melaporkan **−100%** (hijau, "dust habis") untuk puluhan token
+padahal tidak ada yang menjual — dan **Hold %MC** ikut menampilkan `0,00%` +
+badge **AMAN**.
+
+Aturan yang dipakai (`holder_history.MIN_USABLE_WALLETS` = 40, sama dengan
+guard badge 🏆 BEST POOL):
+
+- `scan_degraded(holders)` / `holders_usable(holders)` — `total_fetched < 40`
+  atau jumlah wallet dianalisis `< 40` = **tidak layak**. Snapshot lama tanpa
+  info jumlah wallet tidak ditolak (tidak ada bukti).
+- `point_usable(point)` / `usable_points(points)` — titik history dari scan
+  pendek (atau yang sudah ditandai `degraded: True` saat ingest) dibuang dari
+  angka baris, pembanding "sejak masuk", sparkline, grafik 4 jam, dan overlay
+  Chart LP.
+- `watchlist_detail.resolve_view()` memilih nilai **layak** terbaru dan
+  melaporkan `degraded` + `degraded_note`; baris menulis
+  `⚠️ scan 06 Sep 03:00 WIB cuma 19 wallet`, kolom **Sejak masuk** diberi ⚠️,
+  dan caption menyebut berapa token yang scan terakhirnya tidak lengkap.
+- Token yang **semua** scan-nya pendek menulis `belum ada data ⚠️` (tooltip
+  menjelaskan alasannya) — bukan `0,00%`.
+- Halaman **Holder Analytic** memakai aturan yang sama: kartu metrik jatuh ke
+  titik layak terakhir + peringatan "scan holder terakhir tidak lengkap".
+- `telegram_alerts.process_holder_alerts()` melewatkan scan tidak layak,
+  sehingga rule 🔔 HIGH DROP tidak pernah menyala dari "dust 0%" palsu.
+
 ## Deteksi Akumulasi (8 heuristik)
 
 Halaman `pages/6_🔎_Deteksi_Akumulasi.py` menghitung 8 heuristik untuk token
