@@ -212,13 +212,21 @@ def _chronology_for_status(packed: dict | None) -> dict:
 def snapshot_status(analyses: dict | None,
                     watchlist: dict | None = None,
                     history_store: dict | None = None,
-                    contexts: dict | None = None) -> dict:
+                    contexts: dict | None = None,
+                    merge_status: dict | None = None) -> dict:
     """Bangun payload dashboard dari hasil analisis per token.
 
     ``contexts`` = ``{mint: market_context}`` dari ``alert_context`` (opsional).
     Bila ada, metrik volatilitas + volume 4 jam disimpan **berdampingan dengan
     dust % MC** sebagai ``tokens[mint]["market_signal"]`` supaya jejak
     konfirmasi alert ikut terdokumentasi di snapshot.
+
+    ``merge_status`` = snapshot publish sebelumnya. Dipakai cron sejak
+    cadens dua tingkat (2026-09-05): run cepat ±15 menit hanya meng-analisis
+    watchlist LP, jadi token watchlist biasa **diwariskikan** dari snapshot
+    lama (kunci di luar watchlist saat ini dibuang supaya token yang
+    dihapus tidak menggantung) alih-alih hilang dari dashboard sampai run
+    4 jam berikutnya. Token yang ikut dianalisis selalu menimpa warisan.
 
     Payload ini untuk **tampilan dashboard**, jadi peta wallet tidak ikut:
     ``cohort`` dan ``alert_state`` diringkas jadi jumlah + timestamp
@@ -246,8 +254,24 @@ def snapshot_status(analyses: dict | None,
     except Exception:  # noqa: BLE001 - konteks pasar bersifat pelengkap
         compact_signal = lambda *_a, **_k: {}  # noqa: E731
     signals = contexts if isinstance(contexts, dict) else {}
-    tokens = {}
+    allowed = {str(key) for key in (watchlist or {})} if watchlist else set()
+    tokens: dict = {}
     stamps = []
+    if isinstance(merge_status, dict):
+        for mint, token in (merge_status.get("tokens") or {}).items():
+            if not mint or mint in (analyses or {}):
+                continue
+            if not isinstance(token, dict):
+                continue
+            # Token yang sudah keluar watchlist tidak dipertahankan.
+            if allowed and str(mint) not in allowed:
+                continue
+            tokens[mint] = token
+            if token.get("analyzed_at"):
+                try:
+                    stamps.append(int(token["analyzed_at"]))
+                except (TypeError, ValueError):
+                    pass
     for mint, result in (analyses or {}).items():
         if not mint or not isinstance(result, dict):
             continue
@@ -556,17 +580,20 @@ def publish_holder_status(analyses: dict,
                           *, push: bool = True,
                           history_store: dict | None = None,
                           contexts: dict | None = None,
+                          merge_status: dict | None = None,
                           repo_path: str | None = None,
                           local_path: str | None = None) -> dict:
     """Tulis status lokal + (opsional) publish ke GitHub.
 
+    ``merge_status`` (snapshot sebelumnya) mewariskan token yang tidak
+    ikut dianalisis run ini — lihat :func:`snapshot_status`.
     ``repo_path``/``local_path`` default Solana; Robinhood memakai
     ``holder_status_robinhood.json``.
     """
     repo_path = str(repo_path or STATUS_REPO_PATH).strip().lstrip("/")
     local_path = str(local_path or STATUS_PATH)
-    status = snapshot_status(analyses, watchlist,
-                             history_store=history_store, contexts=contexts)
+    status = snapshot_status(analyses, watchlist, history_store=history_store,
+                             contexts=contexts, merge_status=merge_status)
     atomic_write_json(local_path, status, indent=2)
     _CACHE[repo_path] = {"data": dict(status), "ts": time.time()}
     if push:

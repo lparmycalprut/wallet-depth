@@ -1203,11 +1203,13 @@ def _merge_alert_state(current, incoming) -> dict:
         picked = _pick_by_ts(current.get(key), incoming.get(key))
         if picked:
             merged[key] = picked
-    # Marker ``early_dump`` (titik terakhir yang direkam rule early dump):
-    # yang paling baru menang, sama seperti rolling/latest_detail.
-    early = _pick_by_ts(current.get("early_dump"), incoming.get("early_dump"))
-    if early:
-        merged["early_dump"] = early
+    # Marker ``early_dump`` (titik terakhir yang direkam rule early dump) dan
+    # marker ``high_drop`` (titik high rule HIGH DROP): yang paling baru
+    # menang, sama seperti rolling/latest_detail.
+    for key in ("early_dump", "high_drop"):
+        picked = _pick_by_ts(current.get(key), incoming.get(key))
+        if picked:
+            merged[key] = picked
     ids = list(dict.fromkeys(
         [str(item) for item in (current.get("sent_event_ids") or []) if item]
         + [str(item) for item in (incoming.get("sent_event_ids") or []) if item]
@@ -1245,7 +1247,8 @@ def merge_stores(*stores) -> dict:
       (baseline paling tua, latest paling baru).
     - ``alert_state``   : snapshot baseline/rolling terbaru; ``sent_event_ids``
       union; ``last_sent`` max per kunci; ``rejected_signals`` gabungan;
-      marker ``early_dump`` (rule EARLY DUMP) yang paling baru menang.
+      marker ``early_dump`` (rule EARLY DUMP) dan ``high_drop`` (titik high
+      rule HIGH DROP) yang paling baru menang.
     """
     out = empty_store()
     stamps = []

@@ -171,7 +171,11 @@ class WatchlistRowDetailTest(unittest.TestCase):
         (+200%) paling bawah (sebelumnya urutan alfabetis DRP, RSE, SYN).
         """
         body = self._body(self._app())
-        order = [body.find(f"${symbol}")
+        # Card Robinhood (LP + biasa) dirender SEBELUM card Solana dan pada
+        # run unittest (stub conftest pytest tidak aktif) ikut menampilkan
+        # token watchlist Solana dengan symbol sama — pakai kemunculan
+        # TERAKHIR supaya yang dinilai baris card Solana yang terurut.
+        order = [body.rfind(f"${symbol}")
                  for symbol in ("DRP", "SYN", "RSE")]
         self.assertGreater(order[0], -1)
         self.assertLess(order[0], order[1])

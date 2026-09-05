@@ -383,6 +383,9 @@ class RobinhoodEarlyDumpScopeWiringTest(unittest.TestCase):
                                   return_value={"ok": True, "error": ""}), \
                 mock.patch.object(rw_mod, "load_watchlist",
                                   return_value=rh_watch), \
+                mock.patch.object(rw_mod, "load_status",
+                                  return_value={"updated_at": None,
+                                                "tokens": {}}), \
                 mock.patch.object(rw_mod, "load_history",
                                   return_value={"tokens": {}}), \
                 mock.patch.object(rw_mod, "scan_watchlist",
@@ -393,3 +396,77 @@ class RobinhoodEarlyDumpScopeWiringTest(unittest.TestCase):
                                   side_effect=_process):
             self.assertEqual(mod.main([]), 0)
         self.assertEqual(seen.get("lp_mints"), {ca})
+
+
+class ScanScopeMergeTest(unittest.TestCase):
+    """Scope cron (2026-09-05): LP ±15 menit, biasa slot 4 jam, all = semua.
+
+    - ``--scope fast``: hanya watchlist LP yang di-scan dan snapshot
+      dipublish **dengan** ``merge_status`` (token watchlist biasa
+      diwariskan dari snapshot sebelumnya);
+    - ``--scope all``: seluruh watchlist di-scan dan snapshot dipublish
+      **tanpa** ``merge_status`` (data penuh menang).
+    """
+
+    def _run(self, argv, watchlist, capture):
+        import scripts.scan_holders as mod
+        with mock.patch.object(mod, "load_watchlist",
+                               return_value=watchlist), \
+                mock.patch.object(mod, "load_holder_status",
+                                  return_value={"updated_at": 111,
+                                                "tokens": {}}) as status_mock, \
+                mock.patch.object(mod, "load_holder_history",
+                                  return_value={"tokens": {}}), \
+                mock.patch.object(mod, "pull_holder_history",
+                                  return_value=None), \
+                mock.patch.object(mod, "seed_from_status",
+                                  side_effect=lambda s, _st: s), \
+                mock.patch.object(mod, "scan_watchlist",
+                                  side_effect=lambda due, **kw:
+                                      {mint: {"symbol": "X", "holders": {
+                                          "total_fetched": 1}}
+                                       for mint in due}) as scan_mock, \
+                mock.patch.object(mod, "ingest_many",
+                                  return_value={"tokens": {}}), \
+                mock.patch.object(mod, "publish_holder_status",
+                                  return_value={"updated_at": 1}) as pub_mock, \
+                mock.patch.object(mod, "publish_holder_history",
+                                  return_value={"pushed": True,
+                                                "bytes": 1, "pruned": [],
+                                                "over_budget": False,
+                                                "error": ""}), \
+                mock.patch.object(mod, "process_holder_alerts",
+                                  return_value=[]), \
+                mock.patch.object(mod, "last_publish_result",
+                                  return_value={"ok": True, "error": ""}):
+            code = mod.main(list(argv))
+        capture["scan_args"] = scan_mock.call_args
+        capture["pub_kwargs"] = pub_mock.call_args.kwargs
+        capture["current_status"] = status_mock.return_value
+        return code
+
+    def test_scope_fast_hanya_scan_watchlist_lp(self):
+        wl = {"LpMint11111111111111111111111111111111111":
+              {"symbol": "LP", "source": "meteora"},
+              "Watch11111111111111111111111111111111111":
+              {"symbol": "REG", "source": "manual"}}
+        capture: dict = {}
+        code = self._run(["--scope", "fast"], wl, capture)
+        self.assertEqual(code, 0)
+        scanned = set(capture["scan_args"].args[0])
+        self.assertEqual(scanned, {"LpMint11111111111111111111111111111111111"})
+        # Run cepat mewarisi snapshot token biasa (merge_status).
+        self.assertEqual(capture["pub_kwargs"].get("merge_status"),
+                         capture["current_status"])
+
+    def test_scope_all_scan_semua_tanpa_merge(self):
+        wl = {"LpMint11111111111111111111111111111111111":
+              {"symbol": "LP", "source": "meteora"},
+              "Watch11111111111111111111111111111111111":
+              {"symbol": "REG", "source": "manual"}}
+        capture: dict = {}
+        code = self._run(["--scope", "all"], wl, capture)
+        self.assertEqual(code, 0)
+        scanned = set(capture["scan_args"].args[0])
+        self.assertEqual(scanned, set(wl))
+        self.assertIsNone(capture["pub_kwargs"].get("merge_status"))

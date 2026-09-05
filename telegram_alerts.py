@@ -16,10 +16,25 @@ analysis)`` yang **hanya dipanggil bila ada kandidat** (lazy — cron 1 jam
 tidak menambah satu pun API call saat pasar tenang).
 
 Rule tambahan ``early_dump`` (⚡ EARLY DUMP, scope token pool Meteora/Chart
-LP maupun seluruh watchlist Robinhood Chain — pemanggil cron mengirim
-``lp_mints``) menyala saat dust **menyeberang naik** melewati ambang absolut
-0,1% MC (:data:`holder_history.DUST_BEST_PCT`) dan sengaja **tanpa gerbang
-volume** keras — lihat :func:`early_dump_verdict`.
+LP maupun watchlist Robinhood LP — pemanggil cron mengirim ``lp_mints``)
+menyala **selama** dust berada di atas ambang absolut 0,1% MC
+(:data:`holder_history.DUST_BEST_PCT`): sejak 2026-09-05 pengingat dikirim
+ulang **tiap scan** (±15 menit) sampai token dihapus dari watchlist LP atau
+dipindah ke watchlist biasa — tanpa gerbang volume keras (konteks pasar =
+info di pesan, lihat :func:`early_dump_verdict`), dedup per bucket 15 menit
+(:data:`FAST_BUCKET_SEC`) + jeda :data:`EARLY_DUMP_RESEND_SEC`; turun ke
+<= 0,1% = reset; marker ``alert_state["early_dump"]`` = ``{ts,
+dust_pct_mc}`` run terakhir (di-merge paling baru oleh
+``holder_history._merge_alert_state``, dipertahankan
+``compact_alert_state``).
+
+Rule ``high_drop`` (🔔 HIGH DROP, scope watchlist **biasa** Solana/Robinhood
+— pemanggil cron mengirim ``high_mints``): titik acuan = **hold % MC
+terbesar** yang pernah tercatat (marker ``alert_state["high_drop"]`` =
+``{ts, high, high_ts, notified_high}``); dust % MC yang turun >= 50%
+(:data:`HIGH_DROP_RATIO`) dari titik high mengirim alert satu kali per titik
+high (naik ke high baru / keluar zona drop = re-arm), tanpa gerbang volume
+keras, dedup bucket 4 jam + ``MIN_RESEND_SEC``.
 """
 from __future__ import annotations
 
@@ -70,6 +85,19 @@ ALLOW_UNVERIFIED_ALERTS = True
 # terkirim hanya berjarak menit. Jarak minimum per token+jenis(+arah) menutup
 # celah duplikasi dalam 1 jam.
 MIN_RESEND_SEC = 3600
+# ⚡ EARLY DUMP (watchlist LP) sejak 2026-09-05: cron scan watchlist LP
+# (Meteora + Robinhood LP) tiap ±15 menit dan pengingat "dust > 0,1% MC"
+# dikirim ulang **tiap scan** selama masih di atas ambang — bukan hanya saat
+# naik. Dedup memakai bucket 15 menit + cooldown 15 menit supaya run ganda
+# dalam satu slot tidak mengirim dua pesan yang sama.
+FAST_BUCKET_SEC = 15 * 60
+EARLY_DUMP_RESEND_SEC = FAST_BUCKET_SEC
+# 🔔 HIGH DROP (watchlist biasa Solana/Robinhood, permintaan user 2026-09-05):
+# titik acuan alert bukan snapshot awal melainkan **hold % MC terbesar** yang
+# pernah tercatat (titik high); dust % MC yang turun >= 50% dari titik high
+# memicu alert Telegram.
+HIGH_DROP_RATIO = 0.5
+HIGH_DROP_KIND = "high_drop"
 MAX_LAST_SENT = 8
 MAX_REJECTED_SIGNALS = 8
 ALERT_WINDOW_SEC = 4 * 3600
@@ -319,8 +347,8 @@ def is_valid_4h_snapshot(previous: dict | None, current: dict | None) -> bool:
 
 
 def _event_id(mint: str, kind: str, current_ts: int,
-              direction: str = "") -> str:
-    bucket = max(0, _int(current_ts)) // EVENT_BUCKET_SEC
+              direction: str = "", *, bucket_sec: int = EVENT_BUCKET_SEC) -> str:
+    bucket = max(0, _int(current_ts)) // max(1, int(bucket_sec))
     suffix = f":{direction}" if direction else ""
     return f"holder-dust:{_address(mint)}:{kind}:{bucket}{suffix}"
 
@@ -375,25 +403,28 @@ def dedup_key(event: dict | None) -> str:
     return kind
 
 
-def in_resend_cooldown(key: str, current_ts: int, last_sent=None) -> bool:
-    """True bila kunci itu sudah dikirim kurang dari ``MIN_RESEND_SEC`` lalu.
+def in_resend_cooldown(key: str, current_ts: int, last_sent=None, *,
+                       min_resend_sec: int = MIN_RESEND_SEC) -> bool:
+    """True bila kunci itu sudah dikirim kurang dari ``min_resend_sec`` lalu.
 
-    Event id memakai bucket 4 jam, jadi dua sinyal di dua sisi batas bucket
-    bisa terkirim hanya berjarak beberapa menit. Lapisan ini menutup celah
-    duplikasi dalam 1 jam tanpa mengubah granularitas bucket.
+    Event id memakai bucket (4 jam untuk rule lama, 15 menit untuk pengingat
+    LP), jadi dua sinyal di dua sisi batas bucket bisa terkirim hanya
+    berjarak beberapa menit. Lapisan ini menutup celah duplikasi dalam satu
+    interval tanpa mengubah granularitas bucket.
     """
     previous = _int((last_sent or {}).get(key), 0)
     if not previous:
         return False
     age = _int(current_ts) - previous
-    return 0 <= age < MIN_RESEND_SEC
+    return 0 <= age < min_resend_sec
 
 
-def _cooldown_reason(key: str, current_ts: int, last_sent=None) -> str:
+def _cooldown_reason(key: str, current_ts: int, last_sent=None,
+                     min_resend_sec: int = MIN_RESEND_SEC) -> str:
     """Alasan penahanan duplikat, lengkap dengan jeda yang sudah berjalan."""
     age = max(0, _int(current_ts) - _int((last_sent or {}).get(key), 0))
     return (f"alert {key} baru dikirim {age // 60} menit lalu "
-            f"(jeda minimum {MIN_RESEND_SEC // 60} menit)")
+            f"(jeda minimum {min_resend_sec // 60} menit)")
 
 
 def _resolve_context(context_provider, mint: str):
@@ -811,13 +842,15 @@ def _early_dump_event(previous: dict, current: dict, *, mint: str,
     snapshot wallet), jadi event ini sengaja tidak memakai :func:`_event`
     yang menghitung ``wallet_movements`` di atas ratusan address. Bidang
     ``movements`` dikosongkan dan pesan early dump tidak menampilkan blok
-    pergerakan wallet.
+    pergerakan wallet. Event id memakai **bucket 15 menit**
+    (:data:`FAST_BUCKET_SEC`) karena pengingat dikirim ulang tiap scan LP.
     """
     current_ts = _int((current or {}).get("ts"))
     old = _float((previous or {}).get("dust_pct_mc"), 0.0) or 0.0
     new = _float((current or {}).get("dust_pct_mc"), 0.0) or 0.0
     return {
-        "id": _event_id(mint, "early_dump", current_ts),
+        "id": _event_id(mint, "early_dump", current_ts,
+                        bucket_sec=FAST_BUCKET_SEC),
         "kind": "early_dump",
         "scope": scope,
         "direction": "up",
@@ -839,17 +872,18 @@ def _early_dump_event(previous: dict, current: dict, *, mint: str,
     }
 
 
-def early_dump_verdict(context=None) -> dict:
-    """Verdict **info saja** untuk kind ``early_dump`` — tanpa gerbang keras.
+def early_dump_verdict(context=None, kind: str = "early_dump") -> dict:
+    """Verdict **info saja** tanpa gerbang keras (early_dump / high_drop).
 
     Rule dump/akumulasi/baseline (delta 0,25/0,50/1,00 pp) memakai
-    :func:`volume_verdict` sebagai gerbang konfirmasi. Crossing ambang
-    absolut 0,1% MC bisa terjadi dengan delta jauh lebih kecil dari 0,25 pp,
-    jadi gerbang itu tidak bisa dipakai apa adanya. Keputusan user (2026-09-04):
-    early warning dikirim **tanpa** gerbang volume supaya bisa exit LP lebih
-    cepat; volume/harga/volatilitas tetap disertakan sebagai konteks pesan,
-    dan ``verified`` False (data pasar hilang) membuat pesan memuat baris
-    ``⚠️ TIDAK TERVERIFIKASI``. ``allow`` selalu True.
+    :func:`volume_verdict` sebagai gerbang konfirmasi. Crossing/pengingat
+    ambang absolut 0,1% MC dan penurunan dari titik high bisa terjadi dengan
+    delta jauh lebih kecil dari 0,25 pp, jadi gerbang itu tidak bisa dipakai
+    apa adanya. Keputusan user (2026-09-04): early warning dikirim **tanpa**
+    gerbang volume supaya bisa exit LP lebih cepat; volume/harga/volatilitas
+    tetap disertakan sebagai konteks pesan, dan ``verified`` False (data
+    pasar hilang) membuat pesan memuat baris ``⚠️ TIDAK TERVERIFIKASI``.
+    ``allow`` selalu True.
     """
     ctx = context if isinstance(context, dict) else {}
     volatility = ctx.get("volatility") if isinstance(ctx.get("volatility"),
@@ -864,7 +898,7 @@ def early_dump_verdict(context=None) -> dict:
                    (volume, baseline, change, buys, sells, stddev))
     verified = bool(ctx.get("available", True) and has_data)
     return {
-        "kind": "early_dump",
+        "kind": kind,
         "allow": True,
         "verified": verified,
         "is_valid": True,
@@ -893,26 +927,31 @@ def evaluate_early_dump_rule(previous: dict | None, current: dict | None, *,
                              sent_event_ids=(), market_context=None,
                              context_provider=None, rejected=None,
                              last_sent=None) -> list[dict]:
-    """⚡ EARLY DUMP: dust pool Meteora menyeberang **naik** melewati 0,1% MC.
+    """⚡ EARLY DUMP: dust pool LP **masih di atas** 0,1% MC → pengingat tiap scan.
 
-    Rule pemantauan **tambahan** untuk token pool (Chart LP / source
-    meteora). Ambang 0,1% tidak mengubah rule lama (dump +0,25 pp dst tetap
-    berjalan dengan gerbang volumenya). Early dump sengaja:
+    Sejak 2026-09-05 (permintaan user, scan watchlist LP tiap ±15 menit) rule
+    ini berubah dari *crossing-based* menjadi **level-based**: selama
+    ``dust_pct_mc`` di atas :data:`holder_history.DUST_BEST_PCT` (0,1%),
+    SETIAP evaluasi menghasilkan event — naik, turun sedikit, atau hover di
+    nilai yang sama. Pengingat berhenti hanya bila:
 
-    - **crossing-based + hysteresis**: ``previous`` adalah nilai dust yang
-      direkam pada run sebelumnya (marker ``early_dump`` di alert state).
-      Token yang baru mulai dipantau (``previous`` None) tidak langsung
-      mengirim — tanpa titik sebelumnya mustahil membuktikan crossing.
-      Turun ke ``<= 0,1%`` = reset (tidak ada notifikasi turun; itu kabar
-      baik, bukan early warning).
-    - **tanpa gerbang volume keras**: lihat :func:`early_dump_verdict`.
-    - frekuensi dibatasi mekanisme lama (event id per bucket 4 jam +
-      ``MIN_RESEND_SEC`` 1 jam) dan hanya dikirim ulang saat dust **masih
-      naik** (lebih tinggi dari nilai terakhir): hover/turun di atas 0,1%
-      tidak mengulang notifikasi dengan angka yang sama/bagus.
+    - dust kembali ``<= 0,1%`` MC (reset otomatis, tanpa notifikasi turun),
+      atau
+    - token dihapus dari watchlist LP / dipindah ke watchlist biasa (scope
+      ``lp_mints`` di cron tidak lagi memuat token itu).
+
+    Frekuensi tetap dibatasi: event id per **bucket 15 menit**
+    (:data:`FAST_BUCKET_SEC`) + cooldown :data:`EARLY_DUMP_RESEND_SEC`, jadi
+    run ganda dalam satu slot tidak mengirim pesan kembar. Rule lama (dump
+    +0,25 pp dst dengan gerbang volume) tidak berubah dan tetap berjalan
+    untuk token LP.
 
     Guard data: rule hanya dipanggil dengan ``dust_pct_mc`` yang valid
     (pemanggil melewati token ``total_fetched <= 0`` dan nilai None).
+    Tanpa marker ``previous`` rule belum mengirim — cron selalu memajukan
+    marker ``alert_state["early_dump"]`` tiap evaluasi, jadi token LP baru
+    yang langsung > 0,1% MC mengirim pengingat pertama pada scan
+    berikutnya (±15 menit) dan berulang setelahnya.
     """
     old = _float((previous or {}).get("dust_pct_mc"), None)
     new = _float((current or {}).get("dust_pct_mc"), None)
@@ -921,15 +960,123 @@ def evaluate_early_dump_rule(previous: dict | None, current: dict | None, *,
     if new <= DUST_BEST_PCT:
         # Masih bersih / sudah turun lagi ke <= 0,1% = reset, bukan alert.
         return []
-    if new <= old:
-        # Tidak ada kenaikan baru sejak run terakhir = tidak ada kabar baru.
-        return []
+    had_marker = bool(previous) and old > 0
+    if had_marker:
+        scope = (f"masih di atas {DUST_BEST_PCT:g}% MC — pengingat berulang "
+                 f"(scan ±{FAST_BUCKET_SEC // 60} menit)")
+    else:
+        scope = f"pertama kali terpantau di atas {DUST_BEST_PCT:g}% MC"
     current_ts = _int((current or {}).get("ts"))
-    gap_hours = max(1, round((current_ts - _int((previous or {}).get("ts")))
-                             / 3600.0))
-    event = _early_dump_event(
-        previous, current, mint=mint, symbol=symbol,
-        scope=f"sejak titik terakhir {gap_hours} jam lalu")
+    event = _early_dump_event(previous, current, mint=mint, symbol=symbol,
+                              scope=scope)
+    if event["id"] in set(sent_event_ids or []):
+        return []
+    key = dedup_key(event)
+    if in_resend_cooldown(key, current_ts, last_sent,
+                          min_resend_sec=EARLY_DUMP_RESEND_SEC):
+        _note_rejection(rejected, event, {
+            "verified": True, "confidence_score": 0.0,
+            "required_confidence": MIN_CONFIDENCE,
+            "reason": _cooldown_reason(key, current_ts, last_sent,
+                                       min_resend_sec=EARLY_DUMP_RESEND_SEC)},
+            cooldown=True)
+        return []
+    context = market_context if isinstance(market_context, dict) else \
+        _resolve_context(context_provider, mint)
+    event["volume_check"] = early_dump_verdict(context)
+    return [event]
+
+
+def high_drop_marker_next(marker: dict | None, current: dict,
+                          emitted: bool) -> dict:
+    """Majukan marker titik high (🔔 HIGH DROP) setelah satu evaluasi.
+
+    Selalu dipanggil untuk token scope high (watchlist biasa), event dikirim
+    atau tidak:
+
+    - nilai sekarang >= high lama (atau marker kosong) → high baru, re-arm
+      (``notified_high`` di-nol-kan);
+    - nilai sekarang di luar zona drop tapi di bawah high → high
+      dipertahankan; ``notified_high`` di-nol-kan bila nilai sudah keluar
+      dari zona drop supaya penurunan berikutnya ke dalam zona bisa mengirim
+      lagi;
+    - event terkirim → ``notified_high`` = high ini (satu alert per titik
+      high; naik ke high baru = titik high baru yang bisa mengirim lagi).
+    """
+    marker = marker if isinstance(marker, dict) else {}
+    cur = _float(current.get("dust_pct_mc"), None)
+    cur_ts = _int(current.get("ts"))
+    high = _float(marker.get("high"), None)
+    high_ts = _int(marker.get("high_ts"), 0)
+    notified = _float(marker.get("notified_high"), 0.0) or 0.0
+    if cur is None:
+        return {"ts": _int(marker.get("ts"), 0), "high": high,
+                "high_ts": high_ts, "notified_high": notified}
+    if high is None or high <= 0 or cur >= high:
+        return {"ts": cur_ts, "high": cur, "high_ts": cur_ts,
+                "notified_high": 0.0}
+    zone = high * (1.0 - HIGH_DROP_RATIO)
+    if emitted:
+        notified = high
+    elif cur > zone:
+        notified = 0.0
+    return {"ts": cur_ts, "high": high,
+            "high_ts": high_ts or _int(marker.get("ts"), 0),
+            "notified_high": notified}
+
+
+def evaluate_high_drop_rule(marker: dict | None, current: dict | None, *,
+                            mint: str, symbol: str = "?",
+                            sent_event_ids=(), market_context=None,
+                            context_provider=None, rejected=None,
+                            last_sent=None) -> list[dict]:
+    """🔔 HIGH DROP: dust % MC turun >= 50% dari **titik high**-nya.
+
+    Untuk watchlist **biasa** (selain Meteora/Robinhood LP), titik acuan
+    alert bukan snapshot awal melainkan **hold % MC terbesar** yang pernah
+    tercatat (permintaan user 2026-09-05). Bila dust % MC sekarang turun
+    minimal :data:`HIGH_DROP_RATIO` (50%) dari titik high itu, kirim alert
+    Telegram **tanpa gerbang volume keras** — konteks pasar info saja, pola
+    yang sama dengan ⚡ EARLY DUMP (lihat :func:`early_dump_verdict`).
+
+    - satu alert per titik high: ``notified_high`` menyimpan nilai high yang
+      sudah pernah diberitahu (:func:`high_drop_marker_next`);
+    - dedup bucket 4 jam + cooldown ``MIN_RESEND_SEC`` (1 jam) mencegah flap
+      antar run;
+    - token tanpa marker (belum pernah discan) tidak mengirim — high belum
+      ada; marker dibangun :func:`high_drop_marker_next` pada evaluasi yang
+      sama.
+    """
+    high = _float((marker or {}).get("high"), None)
+    cur = _float((current or {}).get("dust_pct_mc"), None)
+    if high is None or high <= 0 or cur is None or cur >= high:
+        return []
+    notified = _float((marker or {}).get("notified_high"), 0.0) or 0.0
+    if notified and abs(notified - high) <= BALANCE_EPSILON:
+        return []  # titik high ini sudah pernah diberitahu
+    zone = high * (1.0 - HIGH_DROP_RATIO)
+    if cur > zone:
+        return []  # belum turun 50% dari high
+    current_ts = _int((current or {}).get("ts"))
+    high_ts = (_int((marker or {}).get("high_ts"), 0)
+               or _int((marker or {}).get("ts"), 0))
+    drop_pct = round((high - cur) / high * 100.0, 2)
+    event = {
+        "id": _event_id(mint, HIGH_DROP_KIND, current_ts),
+        "kind": HIGH_DROP_KIND,
+        "scope": f"dari titik high {high:.2f}% MC",
+        "direction": "down",
+        "mint": _address(mint),
+        "symbol": str(symbol or "?").strip().upper() or "?",
+        "previous_dust_pct_mc": high,
+        "current_dust_pct_mc": cur,
+        "change_pp": round(cur - high, 6),
+        "drop_pct": drop_pct,
+        "previous_ts": high_ts,
+        "current_ts": current_ts,
+        "wallet_increases": 0,
+        "movements": {},
+    }
     if event["id"] in set(sent_event_ids or []):
         return []
     key = dedup_key(event)
@@ -942,7 +1089,7 @@ def evaluate_early_dump_rule(previous: dict | None, current: dict | None, *,
         return []
     context = market_context if isinstance(market_context, dict) else \
         _resolve_context(context_provider, mint)
-    event["volume_check"] = early_dump_verdict(context)
+    event["volume_check"] = early_dump_verdict(context, kind=HIGH_DROP_KIND)
     return [event]
 
 
@@ -950,7 +1097,8 @@ def evaluate_alert_events(mint: str, analysis: dict,
                           state: dict | None = None, *,
                           market_context=None,
                           context_provider=None,
-                          lp_mint: bool = False) -> tuple[list[dict], dict]:
+                          lp_mint: bool = False,
+                          high_track: bool = False) -> tuple[list[dict], dict]:
     """Pure state transition: evaluate old anchors, then advance snapshots.
 
     ``market_context`` (dict siap pakai) atau ``context_provider(mint,
@@ -958,9 +1106,12 @@ def evaluate_alert_events(mint: str, analysis: dict,
     Provider dipanggil **maksimal satu kali** per evaluasi dan hanya bila ada
     kandidat (lazy), jadi scan 1 jam yang tenang tidak menambah API call.
     Sinyal yang ditolak dikembalikan lewat ``next_state["rejected_signals"]``
-    untuk audit. ``lp_mint=True`` (token pool Meteora/Chart LP) mengaktifkan
-    rule ``early_dump`` dan merekam marker ``next_state["early_dump"]``
-    (nilai dust + ts tiap run).
+    untuk audit. ``lp_mint=True`` (token pool Meteora/Chart LP atau watchlist
+    Robinhood LP) mengaktifkan rule ``early_dump`` — pengingat berulang
+    selama dust % MC > 0,1% — dan merekam marker
+    ``next_state["early_dump"]``. ``high_track=True`` (watchlist biasa)
+    mengaktifkan rule ``high_drop`` (turun ≥ 50% dari titik high) dengan
+    marker ``next_state["high_drop"]`` (high = hold % MC terbesar).
     """
     state = dict(state or {})
     sent = list(dict.fromkeys(str(item) for item in
@@ -982,6 +1133,8 @@ def evaluate_alert_events(mint: str, analysis: dict,
                          if isinstance(row, dict)]
     raw_marker = state.get("early_dump")
     early_marker = dict(raw_marker) if isinstance(raw_marker, dict) else {}
+    raw_high = state.get("high_drop")
+    high_marker = dict(raw_high) if isinstance(raw_high, dict) else {}
     next_state = {
         "baseline": state.get("baseline") or {},
         "rolling": state.get("rolling") or {},
@@ -989,6 +1142,7 @@ def evaluate_alert_events(mint: str, analysis: dict,
         "last_sent": last_sent,
         "rejected_signals": previous_rejected[-MAX_REJECTED_SIGNALS:],
         "early_dump": early_marker,
+        "high_drop": high_marker,
     }
     if current["dust_pct_mc"] is None:
         return [], next_state
@@ -1016,10 +1170,12 @@ def evaluate_alert_events(mint: str, analysis: dict,
 
     rejected: list[dict] = []
     events = []
-    # ⚡ EARLY DUMP (scope pool Meteora/Chart LP): crossing 0,1% dibaca dari
-    # marker run sebelumnya, lalu marker selalu dimajukan ke nilai run ini
-    # (nilai terakhir) — bahkan saat tidak ada event. Token di luar scope
-    # tidak dievaluasi dan markernya dipertahankan apa adanya.
+    # ⚡ EARLY DUMP (scope pool Meteora/Chart LP + watchlist Robinhood LP):
+    # pengingat level-based — selama dust % MC > 0,1%, setiap evaluasi
+    # mengirim event (lihat evaluate_early_dump_rule). Marker selalu
+    # dimajukan ke nilai run ini (nilai terakhir) — bahkan saat tidak ada
+    # event. Token di luar scope tidak dievaluasi dan markernya dipertahankan
+    # apa adanya.
     if lp_mint and current.get("dust_pct_mc") is not None:
         events.extend(evaluate_early_dump_rule(
             early_marker or None, current, mint=mint, symbol=symbol,
@@ -1029,6 +1185,17 @@ def evaluate_alert_events(mint: str, analysis: dict,
             "ts": current["ts"],
             "dust_pct_mc": current["dust_pct_mc"],
         }
+    # 🔔 HIGH DROP (scope watchlist biasa Solana/Robinhood): titik acuan =
+    # hold % MC terbesar yang pernah tercatat; turun >= 50% dari titik itu
+    # mengirim alert. Marker (high + status notifikasi) selalu dimajukan.
+    if high_track and current.get("dust_pct_mc") is not None:
+        high_events = evaluate_high_drop_rule(
+            high_marker or None, current, mint=mint, symbol=symbol,
+            sent_event_ids=sent, market_context=context,
+            context_provider=lazy, rejected=rejected, last_sent=last_sent)
+        events.extend(high_events)
+        next_state["high_drop"] = high_drop_marker_next(
+            high_marker, current, emitted=bool(high_events))
     baseline = state.get("baseline") if isinstance(state.get("baseline"), dict) \
         else {}
     if baseline and baseline.get("dust_pct_mc") is not None:
@@ -1075,6 +1242,9 @@ def compact_alert_state(state: dict | None) -> dict:
     raw_marker = state.get("early_dump")
     marker = dict(raw_marker) if isinstance(raw_marker, dict) else {}
     marker_ts = _int(marker.get("ts"))
+    raw_high = state.get("high_drop")
+    high_marker = dict(raw_high) if isinstance(raw_high, dict) else {}
+    high_ts = _int(high_marker.get("ts"))
     return {
         "baseline": compact_wallet_snapshot(state.get("baseline")),
         "rolling": compact_wallet_snapshot(state.get("rolling")),
@@ -1085,11 +1255,20 @@ def compact_alert_state(state: dict | None) -> dict:
         "rejected_signals": [row for row in (state.get("rejected_signals") or [])
                              if isinstance(row, dict)][-MAX_REJECTED_SIGNALS:],
         # Marker rule EARLY DUMP: ringkas (ts + dust % MC terakhir), tanpa
-        # peta wallet — cukup untuk deteksi crossing run berikutnya.
+        # peta wallet — cukup untuk pengingat run berikutnya.
         "early_dump": ({"ts": marker_ts,
                         "dust_pct_mc": (_float(marker.get("dust_pct_mc"), None)
                                         if marker_ts else None)}
                        if marker_ts else {}),
+        # Marker rule HIGH DROP: high = hold % MC terbesar + flag high yang
+        # sudah pernah diberitahu (satu alert per titik high).
+        "high_drop": ({"ts": high_ts,
+                       "high": (_float(high_marker.get("high"), None)
+                                if high_ts else None),
+                       "high_ts": _int(high_marker.get("high_ts"), 0),
+                       "notified_high": (_float(high_marker.get("notified_high"),
+                                                0.0) if high_ts else 0.0)}
+                      if high_ts else {}),
     }
 
 
@@ -1236,7 +1415,7 @@ def format_alert_message(event: dict) -> str:
     kind = event.get("kind")
     change = _float(event.get("change_pp"), 0.0) or 0.0
     if kind == "early_dump":
-        title = f"⚡ EARLY DUMP — DUST HOLDER NAIK DI ATAS {DUST_BEST_PCT:g}%"
+        title = f"⚡ EARLY DUMP — DUST HOLDER DI ATAS {DUST_BEST_PCT:g}%"
         lines = [
             title,
             f"Token: ${event.get('symbol') or '?'}",
@@ -1246,6 +1425,11 @@ def format_alert_message(event: dict) -> str:
             f"{float(event.get('current_dust_pct_mc') or 0):.2f}% MC",
             f"Perubahan: {change:+.2f} poin persentase",
             f"Periode: {event.get('scope') or 'sejak run terakhir'}",
+            # Pengingat berulang (permintaan user 2026-09-05): dikirim tiap
+            # scan selama dust masih > 0,1% — sebutkan cara menghentikannya.
+            "🔔 Pengingat berulang tiap ±15 menit selama dust di atas "
+            f"{DUST_BEST_PCT:g}% MC. Hentikan dengan menghapus token dari "
+            "watchlist LP atau memindahkannya ke watchlist biasa.",
             *_market_info_lines(event.get("volume_check")),
             f"Waktu: {_format_time(event.get('current_ts') or time.time())}",
             f"Mint: {event.get('mint') or '-'}",
@@ -1255,6 +1439,29 @@ def format_alert_message(event: dict) -> str:
             # keterbatasan cron di evaluate_early_dump_rule).
             *token_link_lines(event.get("mint")),
             *_pool_link_lines(event.get("pool_addresses")),
+        ]
+        return "\n".join(lines)
+    if kind == HIGH_DROP_KIND:
+        drop = _float(event.get("drop_pct"), None)
+        title = f"🔔 DUST TURUN ≥ {HIGH_DROP_RATIO * 100:g}% DARI TITIK HIGH"
+        drop_line = (f"Penurunan: −{drop:.1f}% dari titik high"
+                     if drop is not None else
+                     f"Perubahan: {change:+.2f} poin persentase")
+        lines = [
+            title,
+            f"Token: ${event.get('symbol') or '?'}",
+            f"Titik high: "
+            f"{float(event.get('previous_dust_pct_mc') or 0):.2f}% MC",
+            f"Dust terbaru: "
+            f"{float(event.get('current_dust_pct_mc') or 0):.2f}% MC",
+            drop_line,
+            f"Periode: {event.get('scope') or 'sejak titik high'}",
+            # Tanpa gerbang volume: konteks pasar = info saja (pola sama
+            # dengan ⚡ EARLY DUMP).
+            *_market_info_lines(event.get("volume_check")),
+            f"Waktu: {_format_time(event.get('current_ts') or time.time())}",
+            f"Mint: {event.get('mint') or '-'}",
+            *token_link_lines(event.get("mint")),
         ]
         return "\n".join(lines)
     if kind == "dump":
@@ -1361,24 +1568,56 @@ def send_test_alert() -> dict:
     )
 
 
+def _reset_markers_on_readd(state: dict | None, meta) -> dict:
+    """Buang marker LP/high bila token di-add **ulang** ke watchlist.
+
+    ``meta`` entri watchlist membawa tanggal ``added``; marker (early_dump /
+    high_drop) yang lebih tua dari tanggal itu berasal dari periode
+    watchlist sebelumnya dan tidak boleh dipakai (high lama bisa memicu
+    alert palsu begitu token dipantau lagi). State lain tidak disentuh.
+    """
+    state = dict(state or {})
+    added = None
+    try:
+        from watchlist_detail import parse_added_ts
+        added = parse_added_ts(meta)
+    except Exception:  # noqa: BLE001 - reset bersifat pelengkap
+        added = None
+    if not added:
+        return state
+    for key in ("early_dump", "high_drop"):
+        marker = state.get(key)
+        if isinstance(marker, dict) and 0 < _int(marker.get("ts"), 0) < added:
+            state[key] = {}
+    return state
+
+
 def process_holder_alerts(analyses: dict | None, history_store: dict,
                           *, sender: Callable[[dict], dict] | None = None,
                           market_contexts=None,
                           context_provider: Callable[[str, dict], dict] | None = None,
-                          lp_mints: set | None = None) -> list[dict]:
+                          lp_mints: set | None = None,
+                          high_mints: set | None = None,
+                          watchlist_meta: dict | None = None) -> list[dict]:
     """Evaluate/send alerts, mutating state *before* history ingests new points.
 
     ``market_contexts`` (``{mint: context}``) dipakai bila konteks pasar sudah
     disiapkan pemanggil; selain itu ``context_provider(mint, analysis)``
     dipanggil lazy hanya untuk token yang punya kandidat sinyal. Setelah kirim
     berhasil, ``last_sent[kunci]`` diperbarui agar alert sejenis tidak
-    berulang dalam ``MIN_RESEND_SEC``. ``lp_mints`` = mint token pool
-    (Chart LP / ``source=meteora``) — scope rule ``early_dump``; kosong/None
-    = tidak ada token LP yang dipantau, rule tidak pernah menyala.
+    berulang dalam interval dedupnya. ``lp_mints`` = mint token LP (Chart LP /
+    ``source=meteora`` + watchlist Robinhood LP) — scope rule ``early_dump``
+    (pengingat berulang > 0,1% MC); ``high_mints`` = mint watchlist biasa —
+    scope rule ``high_drop`` (turun ≥ 50% dari titik high). Keduanya
+    kosong/None = rule terkait tidak pernah menyala. ``watchlist_meta``
+    (``{mint: meta}``, opsional) dipakai untuk me-reset marker bila token
+    baru di-add ulang ke watchlist.
     """
     sender = sender or send_telegram_alert
     contexts = market_contexts if isinstance(market_contexts, dict) else {}
+    meta_map = watchlist_meta if isinstance(watchlist_meta, dict) else {}
     lp = {str(item) for item in (lp_mints or []) if item}
+    high = {str(item) for item in (high_mints or []) if item}
     tokens = history_store.setdefault("tokens", {})
     deliveries = []
     for mint, analysis in (analyses or {}).items():
@@ -1395,12 +1634,13 @@ def process_holder_alerts(analyses: dict | None, history_store: dict,
                                         "cohort": {}, "points": []})
         old_state = slot.get(STATE_KEY) if isinstance(slot.get(STATE_KEY), dict) \
             else {}
+        old_state = _reset_markers_on_readd(old_state, meta_map.get(mint))
         context = contexts.get(mint) if isinstance(contexts.get(mint), dict) \
             else None
         events, next_state = evaluate_alert_events(
             mint, analysis, old_state, market_context=context,
             context_provider=context_provider,
-            lp_mint=bool(mint in lp))
+            lp_mint=bool(mint in lp), high_track=bool(mint in high))
         sent = list(next_state.get("sent_event_ids") or [])
         last_sent = dict(next_state.get("last_sent") or {})
         for event in events:

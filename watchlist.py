@@ -793,7 +793,13 @@ def add_many_to_watchlist(rows, *, source: str = "",
 
 
 def request_immediate_scan() -> bool:
-    """Dispatch the scanner workflow so a new CA is fetched within seconds."""
+    """Dispatch the scanner workflow so a new CA is fetched within seconds.
+
+    Input ``scan_all=true`` membuat run dispatch memakai ``--scope all
+    --ignore-gap``: token yang baru ditambahkan (LP maupun biasa) di-scan
+    segera tanpa menunggu slot 4 jam watchlist biasa dan tanpa gate run
+    ganda (run cepat ±15 menit mungkin baru saja lewat).
+    """
     tok = _github_token()
     if not tok:
         return False
@@ -803,7 +809,7 @@ def request_immediate_scan() -> bool:
             f"daily-effort.yml/dispatches",
             headers={"Authorization": f"Bearer {tok}",
                      "Accept": "application/vnd.github+json"},
-            json={"ref": "main"},
+            json={"ref": "main", "inputs": {"scan_all": "true"}},
             timeout=15)
         if response.status_code in (201, 204):
             return True

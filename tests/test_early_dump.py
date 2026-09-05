@@ -1,10 +1,12 @@
-"""Rule ⚡ EARLY DUMP: crossing 0,1% MC, dedup bucket 4 jam, wiring lp_mints.
+"""Rule ⚡ EARLY DUMP: level > 0,1% MC, dedup bucket 15 menit, wiring lp_mints.
 
 Latar belakang (2026-09-04): user ingin peringatan **lebih awal** saat dust
-pool Meteora naik di atas 0,1% MC supaya bisa exit LP lebih cepat. Keputusan:
-scope hanya token pool (Chart LP / ``source=meteora``), tanpa gerbang volume
-keras (konteks pasar = info saja), ulang maksimal 1× per bucket 4 jam dan
-hanya selama dust masih naik; turun ke ≤ 0,1% = reset.
+pool Meteora naik di atas 0,1% MC supaya bisa exit LP lebih cepat.
+Revisi 2026-09-05 (user): karena watchlist LP di-scan cron tiap **±15 menit**,
+rule jadi **level-based** — selama dust masih di atas 0,1% MC, pengingat
+dikirim **berulang** (naik, turun sedikit, atau hover sama saja), dibatasi
+satu event per bucket 15 menit + cooldown 15 menit. Turun ke ≤ 0,1% MC =
+reset otomatis; berhenti bila token dihapus/dipindah dari watchlist LP.
 """
 from __future__ import annotations
 
@@ -69,7 +71,7 @@ class EarlyDumpRuleTest(unittest.TestCase):
         self.assertAlmostEqual(event["current_dust_pct_mc"], 0.11)
         self.assertAlmostEqual(event["change_pp"], 0.06)
         self.assertEqual(event["direction"], "up")
-        self.assertIn("sejak titik terakhir", event["scope"])
+        self.assertIn("pengingat berulang", event["scope"])
 
     def test_titik_pertama_tanpa_marker_tidak_langsung_mengirim(self):
         # Token baru dipantau: mustahil membuktikan crossing tanpa titik
@@ -85,13 +87,26 @@ class EarlyDumpRuleTest(unittest.TestCase):
                 mint=MINT)
             self.assertEqual(events, [], f"current 0.1 vs previous {value}")
 
-    def test_turun_tapi_masih_di_atas_tidak_mengulang(self):
-        # 0,2 → 0,15 (masih > 0,1% tapi TURUN): bukan kabar early dump baru.
+    def test_turun_tapi_masih_di_atas_tetap_mengingatkan(self):
+        """Sejak 2026-09-05 rule level-based: selama > 0,1% MC tetap kirim.
+
+        0,2 → 0,15 (turun) dan hover 0,12 → 0,12 tetap mengirim pengingat
+        (berulang tiap scan ±15 menit); turun ke ≤ 0,1% MC = reset, tanpa
+        notifikasi turun.
+        """
+        falling = ta.evaluate_early_dump_rule(
+            _marker(NOW - 900, 0.2), _current(NOW, 0.15), mint=MINT,
+            symbol="tst")
+        self.assertEqual(len(falling), 1)
+        self.assertGreater(falling[0]["current_dust_pct_mc"],
+                           hh.DUST_BEST_PCT)
+        hover = ta.evaluate_early_dump_rule(
+            _marker(NOW - 900, 0.12), _current(NOW, 0.12), mint=MINT,
+            symbol="?")
+        self.assertEqual(len(hover), 1)
+        # Turun ke <= 0,1% MC: pengingat berhenti (reset otomatis).
         self.assertEqual(ta.evaluate_early_dump_rule(
-            _marker(NOW - 3600, 0.2), _current(NOW, 0.15), mint=MINT), [])
-        # Hover di nilai sama juga tidak mengulang.
-        self.assertEqual(ta.evaluate_early_dump_rule(
-            _marker(NOW - 3600, 0.12), _current(NOW, 0.12), mint=MINT), [])
+            _marker(NOW - 900, 0.12), _current(NOW, 0.1), mint=MINT), [])
 
     def test_satu_event_per_bucket_4_jam(self):
         first = ta.evaluate_early_dump_rule(
@@ -111,16 +126,16 @@ class EarlyDumpRuleTest(unittest.TestCase):
         self.assertEqual(len(later), 1)
         self.assertNotEqual(later[0]["id"], event_id)
 
-    def test_cooldown_min_resend_memblokir_bucket_baru(self):
+    def test_cooldown_15_menit_memblokir_slot_sama(self):
         sent_ts = NOW
         blocked = ta.evaluate_early_dump_rule(
-            _marker(sent_ts, 0.15), _current(sent_ts + 30 * 60, 0.25),
+            _marker(sent_ts, 0.15), _current(sent_ts + 10 * 60, 0.25),
             mint=MINT, symbol="?", rejected=[], last_sent={"early_dump": NOW})
         self.assertEqual(blocked, [])
-        # Lewat 1 jam → lolos lagi (bucket juga baru).
+        # Lewat cooldown ±15 menit (dan bucket baru) → boleh kirim lagi.
         later = ta.evaluate_early_dump_rule(
-            _marker(sent_ts + 30 * 60, 0.25),
-            _current(sent_ts + 61 * 60, 0.30),
+            _marker(sent_ts + 10 * 60, 0.25),
+            _current(sent_ts + 16 * 60, 0.30),
             mint=MINT, symbol="?", last_sent={"early_dump": NOW})
         self.assertEqual(len(later), 1)
 
