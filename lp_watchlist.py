@@ -11,16 +11,29 @@ Card ini menampilkan **grafik perubahan dust holder** (dust % MC per bucket
 
 Modul ini murni data + figure matplotlib (tanpa Streamlit) supaya bisa
 diuji; ``app.py`` hanya merender hasilnya.
+
+``matplotlib`` di-import **lazy** di dalam fungsi figure: cron
+``scripts/scan_holders.py`` hanya memakai ``split_watchlist`` dan
+workflow-nya cuma menginstal ``requests`` + ``curl_cffi`` (tanpa
+matplotlib), jadi import top-level akan mematikan scan.
 """
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-
-import matplotlib.pyplot as plt
+from typing import TYPE_CHECKING
 
 from holder_history import (DUST_CAUTION_PCT, DUST_DANGER_PCT, dust_flag,
                             dust_level_rank, history_for_mint, merge_points,
                             resample_4h)
+
+if TYPE_CHECKING:  # pragma: no cover - hanya untuk anotasi tipe
+    from matplotlib.figure import Figure
+
+
+def _pyplot():
+    """Import ``matplotlib.pyplot`` saat dibutuhkan saja (lihat docstring)."""
+    import matplotlib.pyplot as plt
+    return plt
 
 # ``source`` yang masuk card Chart LP (bukan watchlist holder biasa).
 LP_SOURCES = ("meteora", "lp", "chart_lp")
@@ -186,7 +199,7 @@ def _threshold_lines(axis) -> None:
                  linewidth=1.1, label=f"Bahaya {DUST_DANGER_PCT:g}%")
 
 
-def lp_chart_figure(points, symbol: str = "?") -> plt.Figure | None:
+def lp_chart_figure(points, symbol: str = "?") -> Figure | None:
     """Grafik perubahan dust holder satu token (bucket 4 jam).
 
     Garis = dust % MC (sumbu kiri), batang = jumlah wallet dust (sumbu
@@ -200,6 +213,7 @@ def lp_chart_figure(points, symbol: str = "?") -> plt.Figure | None:
     pct = [_float(row.get("dust_pct_mc"), float("nan")) for row in sampled]
     count = [_int(row.get("dust_count")) for row in sampled]
 
+    plt = _pyplot()
     fig, axis = plt.subplots(figsize=(11, 3.4))
     twin = axis.twinx()
     twin.bar(labels, count, color="#f59e0b", alpha=.35, width=.6,
@@ -223,7 +237,7 @@ def lp_chart_figure(points, symbol: str = "?") -> plt.Figure | None:
     return fig
 
 
-def lp_overlay_figure(rows) -> plt.Figure | None:
+def lp_overlay_figure(rows) -> Figure | None:
     """Overlay dust % MC seluruh token Chart LP dalam satu grafik."""
     series = []
     for row in rows or []:
@@ -239,6 +253,7 @@ def lp_overlay_figure(rows) -> plt.Figure | None:
 
     stamps = sorted({ts for _label, points in series for ts, _v in points})
     labels = [_wib(ts) for ts in stamps]
+    plt = _pyplot()
     fig, axis = plt.subplots(figsize=(11, 3.8))
     for label, points in series:
         values = dict(points)
