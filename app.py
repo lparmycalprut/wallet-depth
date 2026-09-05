@@ -690,7 +690,7 @@ def _render_rh_row(row: dict) -> None:
         spark = ('<span style="font-size:.7rem;color:#64748b;">'
                  "belum ada grafik</span>")
 
-    cols = st.columns([1.7, 0.8, 0.95, 1.0, 1.25, 0.42])
+    cols = st.columns([1.7, 0.8, 0.95, 1.0, 1.25, 0.42, 0.42])
     cols[0].markdown(
         f'<div class="watchlist-token">'
         f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
@@ -718,7 +718,12 @@ def _render_rh_row(row: dict) -> None:
         unsafe_allow_html=True)
     cols[4].markdown(f'<div style="text-align:center;">{spark}</div>',
                      unsafe_allow_html=True)
-    if cols[5].button("✕", key=f"rh-remove-{mint}",
+    if cols[5].button("🧮", key=f"rh-holder-{mint}",
+                      help="Buka Holder Analytic (Robinhood Chain)",
+                      use_container_width=True):
+        st.session_state["holder_mint"] = mint
+        st.switch_page(HOLDER_PAGE_PATH, query_params={"mint": mint})
+    if cols[6].button("✕", key=f"rh-remove-{mint}",
                       help="Hapus dari watchlist Robinhood",
                       use_container_width=True):
         robinhood_watchlist.remove_from_robinhood_watchlist(mint)
@@ -823,9 +828,9 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
                     "Tambahkan address 0x… di form atas.")
             return
 
-        header = st.columns([1.7, 0.8, 0.95, 1.0, 1.25, 0.42])
+        header = st.columns([1.7, 0.8, 0.95, 1.0, 1.25, 0.42, 0.42])
         style = "font-size:0.72rem;color:#000000;font-weight:700;"
-        titles = ["Token", "Dust", "Hold %MC", "Δ 4 jam", "Grafik 4 jam", ""]
+        titles = ["Token", "Dust", "Hold %MC", "Δ 4 jam", "Grafik 4 jam", "", ""]
         for col, title in zip(header, titles):
             align = "" if title == "Token" else "text-align:center;"
             col.markdown(f'<div style="{style}{align}">{title}</div>',

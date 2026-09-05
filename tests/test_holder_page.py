@@ -306,6 +306,54 @@ class HolderPageChartTest(unittest.TestCase):
             self.assertEqual(len(app.exception), 0)
             self.assertEqual(_first_metric(app, "Dust hold % MC"), "1.16%")
 
+@unittest.skipUnless(AppTest is not None, "streamlit is not installed")
+class HolderPageRobinhoodTest(unittest.TestCase):
+    """Halaman Holder Analytic harus membuka token Robinhood Chain (0x…).
 
-if __name__ == "__main__":
+    Tombol 🧮 di card Watchlist Robinhood memakai query param `mint` 0x…;
+    halaman memilih watchlist/status/history Robinhood yang terpisah dan
+    rule dust (charts/metrik) tetap sama dengan Solana.
+    """
+
+    RH_CA = "0x" + "a" * 40
+
+    def _rh_status(self):
+        points = [_point(4 * HOUR, 90), _point(8 * HOUR, 95)]
+        return {
+            "updated_at": 8 * HOUR,
+            "tokens": {self.RH_CA: {
+                "symbol": "VLAD", "price": 0.01, "marketcap": 100_000.0,
+                "analyzed_at": 8 * HOUR,
+                "holders": {"dust_count": 95, "dust_pct_mc": 0.42,
+                            "real_count": 40, "mid": {"count": 6,
+                                                      "pct_mc": 4.0}},
+                "history": points,
+                "cohort": {"frozen_at": 4 * HOUR, "balances": {}},
+            }},
+        }
+
+    def test_page_renders_evm_token(self):
+        import robinhood_watchlist as rw_mod
+        status = self._rh_status()
+        with mock.patch.object(rw_mod, "load_watchlist",
+                               return_value={self.RH_CA: {"symbol": "VLAD"}}), \
+                mock.patch.object(rw_mod, "load_status",
+                                  return_value=status), \
+                mock.patch.object(rw_mod, "load_history",
+                                  return_value={"updated_at": None,
+                                                "tokens": {}}):
+            app = AppTest.from_file(PAGE, default_timeout=30)
+            app.query_params["mint"] = self.RH_CA
+            app.run()
+        self.assertEqual(len(app.exception), 0)
+        headers = " ".join(node.value for node in app.subheader)
+        self.assertIn("Grafik holder", headers)
+        self.assertEqual(_first_metric(app, "Dust hold % MC"), "0.42%")
+        self.assertEqual(_first_metric(app, "Dust wallet"), "95")
+        # Token Robinhood tampil sebagai pilihan yang sedang aktif, bukan
+        # peringatan "belum ada token".
+        self.assertNotIn("Belum ada token", " ".join(
+            node.value for node in app.info))
+
+if __name__ == "__main__":  # pragma: no cover
     unittest.main()

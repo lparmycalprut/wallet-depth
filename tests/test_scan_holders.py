@@ -343,3 +343,53 @@ class CronFullScanTest(unittest.TestCase):
             out = scan_watchlist({"A": {"symbol": "AA"}}, workers=1)
         self.assertEqual(set(out), {"A"})
         self.assertEqual(seen.get("max_wallets"), hh.FULL_SCAN_MAX_WALLETS)
+
+
+class RobinhoodEarlyDumpScopeWiringTest(unittest.TestCase):
+    """Cron harus meneruskan scope rule ⚡ EARLY DUMP untuk watchlist Robinhood.
+
+    Watchlist RH tidak dipecah Chart LP seperti Meteora, jadi seluruh token
+    `0x…` di watchlist ikut scope early_dump (kriteria sama: crossing naik
+    dust holder > 0,1% MC tanpa gerbang volume keras).
+    """
+
+    def test_rh_watchlist_menjadi_lp_mints_alert(self):
+        import scripts.scan_holders as mod
+        import robinhood_watchlist as rw_mod
+        ca = "0x" + "a" * 40
+        rh_watch = {ca: {"symbol": "VLAD", "source": "manual"}}
+        rh_analyses = {ca: {"symbol": "VLAD", "analyzed_at": 100,
+                            "holders": {"total_fetched": 5,
+                                        "dust_pct_mc": 0.4}}}
+        seen = {}
+
+        def _process(items, store, **kwargs):
+            seen["lp_mints"] = kwargs.get("lp_mints")
+            self.assertEqual(items, rh_analyses)
+            return []
+
+        with mock.patch.object(mod, "load_watchlist", return_value={}), \
+                mock.patch.object(mod, "load_holder_status",
+                                  return_value={"tokens": {}}), \
+                mock.patch.object(mod, "load_holder_history",
+                                  return_value={"tokens": {}}), \
+                mock.patch.object(mod, "pull_holder_history",
+                                  return_value=None), \
+                mock.patch.object(mod, "seed_from_status",
+                                  side_effect=lambda s, _st: s), \
+                mock.patch.object(mod, "publish_holder_status",
+                                  return_value={"updated_at": 1}), \
+                mock.patch.object(mod, "last_publish_result",
+                                  return_value={"ok": True, "error": ""}), \
+                mock.patch.object(rw_mod, "load_watchlist",
+                                  return_value=rh_watch), \
+                mock.patch.object(rw_mod, "load_history",
+                                  return_value={"tokens": {}}), \
+                mock.patch.object(rw_mod, "scan_watchlist",
+                                  return_value=rh_analyses), \
+                mock.patch.object(rw_mod, "publish_scan",
+                                  return_value={"updated_at": 2}), \
+                mock.patch.object(mod, "process_holder_alerts",
+                                  side_effect=_process):
+            self.assertEqual(mod.main([]), 0)
+        self.assertEqual(seen.get("lp_mints"), {ca})

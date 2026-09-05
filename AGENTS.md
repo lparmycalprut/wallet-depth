@@ -78,7 +78,9 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   sesudahnya**; exit non-zero bila 0 holder / publish snapshot gagal
   (backup gagal = `WARN` saja, tidak membuat cron merah). Scope rule
   ⚡ EARLY DUMP diteruskan lewat `lp_mints` = set `split_watchlist(
-  watchlist)[0]` (token pool). **Sejak 2026-09-05 cron scan FULL**
+  watchlist)[0]` (token pool); untuk blok Robinhood di cron, `lp_mints` =
+  seluruh `rh_watch` (watchlist RH tidak dipecah Chart LP). Sejak
+  **2026-09-05 cron scan FULL**
   (`--max-wallets` default = `holder_history.FULL_SCAN_MAX_WALLETS`
   100.000) dan
   `ingest_many(..., detail=True)`: token watchlist (lama maupun baru)
@@ -122,7 +124,8 @@ JSON compact, Contents API base64) di ref `holder-live`:
   volume/harga/volatilitas**, dedup, transport Telegram, dan rule
   **⚡ EARLY DUMP** (kind `early_dump`): crossing naik melewati
   `DUST_BEST_PCT` 0,1% untuk token pool (`lp_mints` → `lp_mint` di
-  `evaluate_alert_events`), **tanpa gerbang volume keras**
+  `evaluate_alert_events`) maupun **seluruh watchlist Robinhood**
+  (cron mengirim `lp_mints=set(rh_watch)`), **tanpa gerbang volume keras**
   (`early_dump_verdict`: `allow` selalu True, konteks pasar = info di
   pesan), ulang 1× per bucket 4 jam + `MIN_RESEND_SEC`, hanya saat dust
   masih naik; marker `alert_state["early_dump"]` = `{ts, dust_pct_mc}`
@@ -154,6 +157,12 @@ JSON compact, Contents API base64) di ref `holder-live`:
   `while True: time.sleep(300)` (script Streamlit tidak pernah kembali dari
   loop itu); hasil scan di-cache `st.session_state["pre_pump_results"]`.
 - `pages/5_🧮_Holder.py`: Holder Analytic (di bawah CVD) + kronologi FULL.
+  Sejak 2026-09-05 mendukung **dua chain**: Solana (watchlist/status/history
+  utama) dan **Robinhood Chain** (`0x…`, watchlist/status/history terpisah
+  lewat `robinhood_watchlist`) — pemilihan chain ikut format CA query param
+  `mint`; overlay scan manual disaring per chain agar tidak bocor antar
+  watchlist. Scan FULL EVM memakai `robinhood_holders.analyze_token` +
+  store `holder_history_robinhood.json`.
 - `pages/4_📊_CVD.py`: CVD harian saja (tanpa Holder Analytic).
 - `watchlist_detail.py`: detail baris watchlist — perubahan dust **sejak
   tanggal masuk** (`added`) sampai **scan terakhir** (relatif %, poin
@@ -218,11 +227,13 @@ Konfirmasi alert (setelah ambang dust di atas terpenuhi):
 dump                  : volume 4 jam >= 2.0x avg_volume_7d DAN harga <= -1%
 akumulasi             : volume 4 jam >= 1.5x avg_volume_7d DAN buy > sell
 baseline shift +-1 pp : ikut arah perubahan (naik = dump, turun = akumulasi)
-early dump (LP pool)  : crossing naik > 0.1% (dibanding nilai run
+early dump (pool LP)  : crossing naik > 0.1% (dibanding nilai run
                         sebelumnya, marker alert_state["early_dump"]) —
-                        TANPA gerbang volume (konteks = info), sekali per
-                        bucket 4 jam + jeda 1 jam, hanya saat masih naik;
-                        turun ke <= 0.1% = reset
+                        scope token pool Meteora/Chart LP + seluruh
+                        watchlist Robinhood Chain — TANPA gerbang volume
+                        (konteks = info), sekali per bucket 4 jam + jeda
+                        1 jam, hanya saat masih naik; turun ke <= 0.1% =
+                        reset
 skor konfirmasi       : 0.70 dasar + <=0.15 volume + <=0.10 harga/pressure
                         + 0.20 volatilitas tinggi dengan arah mendukung
 ambang skor           : 0.70; 0.80 bila price_stddev_4h > 3%
