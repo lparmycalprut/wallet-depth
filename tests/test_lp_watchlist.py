@@ -1,6 +1,9 @@
 """Card **Chart LP**: watchlist terpisah token Meteora + grafik dust holder."""
 from __future__ import annotations
 
+import pathlib
+import subprocess
+import sys
 import unittest
 
 import matplotlib
@@ -211,6 +214,32 @@ class PointsForMintTest(unittest.TestCase):
         status = {LP_MINT: {"history": [_point(1, 0.8)]}}
         points = lw.points_for_mint(LP_MINT, status, store)
         self.assertEqual([p["ts"] for p in points], [BUCKET, 2 * BUCKET])
+
+
+class LazyMatplotlibTest(unittest.TestCase):
+    """Cron ``scripts/scan_holders.py`` jalan tanpa matplotlib terinstal
+    (workflow hanya ``pip install requests curl_cffi``); modul harus bisa
+    di-import dan ``split_watchlist`` berfungsi tanpa matplotlib."""
+
+    def test_import_and_split_without_matplotlib(self):
+        code = (
+            "import builtins, sys\n"
+            "real = builtins.__import__\n"
+            "def blocked(name, *a, **k):\n"
+            "    if name.split('.')[0] == 'matplotlib':\n"
+            "        raise ModuleNotFoundError(\"No module named 'matplotlib'\")\n"
+            "    return real(name, *a, **k)\n"
+            "builtins.__import__ = blocked\n"
+            "import lp_watchlist as lw\n"
+            "lp, holder = lw.split_watchlist("
+            "{'a': {'source': 'meteora'}, 'b': {'source': 'manual'}})\n"
+            "assert set(lp) == {'a'} and set(holder) == {'b'}, (lp, holder)\n"
+            "assert 'matplotlib' not in sys.modules\n"
+        )
+        result = subprocess.run([sys.executable, "-c", code],
+                                capture_output=True, text=True,
+                                cwd=str(pathlib.Path(lw.__file__).parent))
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":  # pragma: no cover
