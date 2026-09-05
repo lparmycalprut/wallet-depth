@@ -48,7 +48,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-from holder_history import DUST_BEST_PCT
+from holder_history import DUST_BEST_PCT, holders_usable
 from links import (hawkfi_meteora_url, meteora_dlmm_url, token_link_lines)
 
 DUMP_THRESHOLD_PP = 0.25
@@ -1625,10 +1625,12 @@ def process_holder_alerts(analyses: dict | None, history_store: dict,
             continue
         holders = analysis.get("holders") or {}
         # A provider outage can still return an analysis object with zero
-        # fetched holders. Never advance anchors or emit a false baseline drop
-        # from that failed scan.
-        if ("total_fetched" in holders
-                and _int(holders.get("total_fetched")) <= 0):
+        # fetched holders — or, worse, a *short* page (Helius down → GMGN
+        # returning 20 holders, `truncated: False`). Dust wallets sit at the
+        # tail of the holder list, so a short sample always yields dust 0 and
+        # would look like a 100% dump. Never advance anchors or emit a false
+        # drop/high-drop alert from a scan whose holder data is unusable.
+        if not holders_usable(holders):
             continue
         slot = tokens.setdefault(mint, {"symbol": analysis.get("symbol") or "?",
                                         "cohort": {}, "points": []})

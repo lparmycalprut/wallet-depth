@@ -40,6 +40,9 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+from holder_history import (MIN_USABLE_WALLETS, holders_usable, point_usable,
+                            point_wallets, usable_points)
+
 # --- ambang warna (relatif terhadap nilai dust % MC saat masuk watchlist) ------
 MCAP_DROP_TONE_PCT = 50.0     # turun >= 50% -> hijau
 MCAP_RISE_TONE_PCT = 100.0    # naik >= 100% -> merah
@@ -234,16 +237,31 @@ def parse_added_ts(meta, *, tz_offset_hours: int = WIB_OFFSET_HOURS) -> int | No
 # ---------------------------------------------------------------------------
 # 1) Sinkronisasi: satu angka per baris, dari sumber terbaru
 # ---------------------------------------------------------------------------
+def _degraded_note(ts, wallets, source: str, *, used_ts) -> str:
+    """Kalimat pendek untuk scan yang datanya tidak lengkap.
+
+    Contoh hasil: ``"scan 06 Sep 03:00 WIB · hanya 19 wallet terambil ·
+    snapshot cron — angka memakai scan 05 Sep 23:00 WIB"``.
+    """
+    bits = [f"scan {format_wib(ts)}"]
+    bits.append(f"hanya {int(wallets or 0):,} wallet terambil")
+    bits.append("snapshot cron" if source == "snapshot" else "titik history")
+    text = " · ".join(bits)
+    if used_ts:
+        text += f" — angka memakai scan {format_wib(used_ts)}"
+    return text
+
+
 def resolve_view(token: dict | None, points, *, now=None,
                  stale_after: int = STALE_AFTER_SEC) -> dict:
-    """Pilih nilai dust **terbaru** antara snapshot status dan titik history.
+    """Pilih nilai dust **terbaru yang datanya layak** untuk satu baris.
 
     ``token`` = ``holder_status["tokens"][mint]`` (sudah lewat
     ``apply_manual_scan`` di UI). ``points`` = titik gabungan
     ``holder_history`` + salinan ringkas snapshot (``_points_for`` di app.py).
 
     Return ``{dust_pct, dust_count, ts, source, age_sec, stale, drift,
-    snapshot_pct, history_pct}``:
+    snapshot_pct, history_pct, degraded, ...}``:
 
     - ``source`` = ``"snapshot"`` bila snapshot sama baru/lebih baru, atau
       ``"history"`` bila titik history lebih baru (scan manual / cron yang
@@ -254,25 +272,49 @@ def resolve_view(token: dict | None, points, *, now=None,
     - ``stale`` = data lebih tua dari ``stale_after`` (kirim
       ``STALE_REGULAR_AFTER_SEC`` untuk baris watchlist biasa yang cadens
       cron-nya ±4 jam).
+
+    **Scan yang datanya tidak lengkap dilewati** (perbaikan 2026-09-06).
+    Provider holder bisa mengembalikan daftar pendek tanpa menandai
+    ``truncated`` (kasus nyata: Helius mati → fallback GMGN mengembalikan
+    20 holder). Wallet dust ada di ekor daftar holder, jadi sampel pendek
+    selalu menghasilkan ``dust 0`` / ``0,00% MC`` — dan watchlist lalu
+    mengklaim "−100% sejak masuk" untuk puluhan token padahal tidak ada
+    yang menjual. Snapshot/titik seperti itu (``holder_history.
+    holders_usable`` / ``point_usable``) tidak dipakai sebagai angka:
+    baris memakai scan layak terbaru, ``degraded`` = True, dan
+    ``degraded_note`` menjelaskan kenapa angkanya lebih tua dari run
+    terakhir.
     """
     token = token if isinstance(token, dict) else {}
     holders = token.get("holders") if isinstance(token.get("holders"), dict) \
         else {}
     rows = [row for row in (points or [])
             if isinstance(row, dict) and _int(row.get("ts")) > 0]
-    last_point = rows[-1] if rows else {}
+    good_rows = [row for row in rows if point_usable(row)]
+    last_point = good_rows[-1] if good_rows else {}
 
-    snapshot_pct = _float(holders.get("dust_pct_mc"), None)
+    raw_snapshot_pct = _float(holders.get("dust_pct_mc"), None)
+    snapshot_pct = raw_snapshot_pct
     snapshot_count = holders.get("dust_count")
-    snapshot_ts = _int(token.get("analyzed_at"), 0)
+    raw_snapshot_ts = _int(token.get("analyzed_at"), 0)
+    snapshot_ts = raw_snapshot_ts
+    snapshot_ok = bool(holders) and holders_usable(holders)
     history_pct = _float(last_point.get("dust_pct_mc"), None)
     history_count = last_point.get("dust_count")
     history_ts = _int(last_point.get("ts"), 0)
 
+    if not snapshot_ok:
+        # Snapshot tidak layak dipakai (fetch gagal / sampel pendek):
+        # angkanya tidak boleh jadi nilai baris sama sekali — baris jatuh ke
+        # titik history layak terbaru, atau "—" bila tidak ada.
+        snapshot_pct = None
+        snapshot_count = None
+        snapshot_ts = 0
     use_history = (history_ts > snapshot_ts and history_pct is not None)
-    drift = (snapshot_pct is not None and history_pct is not None
-             and abs(snapshot_pct - history_pct) > DRIFT_TOLERANCE_PP
-             and snapshot_ts != history_ts)
+    drift = (snapshot_ok and raw_snapshot_pct is not None
+             and history_pct is not None
+             and abs(raw_snapshot_pct - history_pct) > DRIFT_TOLERANCE_PP
+             and raw_snapshot_ts != history_ts)
 
     if use_history:
         dust_pct = history_pct if history_pct is not None else snapshot_pct
@@ -287,6 +329,22 @@ def resolve_view(token: dict | None, points, *, now=None,
     ts = history_ts if use_history else (snapshot_ts or history_ts)
     age = (anchor - ts) if (anchor and ts) else None
     limit = int(stale_after) if int(stale_after or 0) > 0 else STALE_AFTER_SEC
+
+    # --- Scan terbaru yang datanya dibuang (untuk catatan di UI) ----------
+    rejected = []
+    if holders and not snapshot_ok:
+        rejected.append({"ts": raw_snapshot_ts,
+                         "wallets": point_wallets(holders),
+                         "source": "snapshot"})
+    for row in rows:
+        if not point_usable(row):
+            rejected.append({"ts": _int(row.get("ts")),
+                             "wallets": point_wallets(row),
+                             "source": "history"})
+    rejected = [item for item in rejected if item["ts"] > 0]
+    rejected.sort(key=lambda item: item["ts"])
+    newest = rejected[-1] if rejected else None
+    degraded = bool(newest) and (not ts or newest["ts"] > ts)
     return {
         "dust_pct": dust_pct,
         "dust_count": _int(dust_count, None) if dust_count is not None else None,
@@ -295,11 +353,20 @@ def resolve_view(token: dict | None, points, *, now=None,
         "age_sec": age,
         "stale": bool(age is not None and age > limit),
         "drift": bool(drift),
-        "snapshot_pct": snapshot_pct,
+        "snapshot_pct": raw_snapshot_pct,
+        "snapshot_usable": snapshot_ok,
         "history_pct": history_pct,
-        "snapshot_ts": snapshot_ts or None,
+        "snapshot_ts": raw_snapshot_ts or None,
         "history_ts": history_ts or None,
         "points": len(rows),
+        "usable_points": len(good_rows),
+        "skipped_scans": len(rejected),
+        "degraded": degraded,
+        "degraded_ts": newest["ts"] if degraded else None,
+        "degraded_wallets": newest["wallets"] if degraded else None,
+        "degraded_note": (_degraded_note(newest["ts"], newest["wallets"],
+                                         newest["source"], used_ts=ts)
+                          if degraded else ""),
     }
 
 
@@ -337,10 +404,14 @@ def anchor_point(meta, points, *, tz_offset_hours: int = WIB_OFFSET_HOURS) -> di
     titik setelah tanggal itu (token baru masuk, cron belum jalan), dipakai
     titik paling awal yang tersedia dan ditandai ``fallback`` supaya UI bisa
     menyebut "titik pertama" alih-alih mengklaim "sejak masuk".
+
+    Hanya titik yang datanya layak (:func:`holder_history.point_usable`)
+    yang boleh jadi pembanding: titik dari scan yang cuma mengambil 20
+    holder selalu berisi ``dust 0``, dan memakainya sebagai nilai awal
+    membuat perubahan "sejak masuk" terbaca +∞/−100% tanpa ada transaksi.
     """
-    rows = [row for row in (points or [])
-            if isinstance(row, dict) and _int(row.get("ts")) > 0
-            and _float(row.get("dust_pct_mc"), None) is not None]
+    rows = [row for row in usable_points(points)
+            if _int(row.get("ts")) > 0]
     if not rows:
         return {}
     added_ts = parse_added_ts(meta, tz_offset_hours=tz_offset_hours)
@@ -399,12 +470,20 @@ def dust_change_since_added(meta, points, view: dict | None = None, *,
         "days": (round((last_ts - anchor_ts) / 86_400.0, 2)
                  if (last_ts and anchor_ts and last_ts >= anchor_ts) else None),
         "source": resolved.get("source") or "",
+        "degraded": bool(resolved.get("degraded")),
+        "degraded_note": str(resolved.get("degraded_note") or ""),
         "tone": TONE_UNKNOWN,
     }
 
     if not from_row:
-        result["alasan"] = ("Belum ada titik history untuk token ini — cron "
-                            "holder belum pernah mencatat scan.")
+        if [row for row in (points or []) if isinstance(row, dict)]:
+            result["alasan"] = (
+                "Semua titik scan token ini datanya tidak lengkap "
+                f"(< {MIN_USABLE_WALLETS} wallet terambil) — belum ada "
+                "pembanding yang bisa dipercaya sejak masuk watchlist.")
+        else:
+            result["alasan"] = ("Belum ada titik history untuk token ini — "
+                                "cron holder belum pernah mencatat scan.")
         return result
     if from_pct is None or to_pct is None:
         result["alasan"] = "Nilai dust % MC belum tersedia di salah satu ujung window."
@@ -455,8 +534,14 @@ def explain_change(change: dict) -> str:
     days = _float(change.get("days"), None)
     if days is not None:
         parts.append(f"{days:.1f} hari")
+    last_ts = _int(change.get("last_ts"), 0)
+    if last_ts:
+        parts.append(f"sampai snapshot {format_wib(last_ts)}")
     if change.get("anchor_fallback"):
         parts.append(f"pembanding: titik pertama ({change['anchor_fallback']})")
+    note = str(change.get("degraded_note") or "")
+    if note:
+        parts.append(f"\u26a0\ufe0f {note}")
     return " · ".join(parts)
 
 
@@ -466,12 +551,26 @@ def change_html(change: dict, *, show_detail: bool = True) -> str:
     tone = str(change.get("tone") or TONE_UNKNOWN)
     color = TONE_COLORS.get(tone, TONE_COLORS[TONE_UNKNOWN])
     if not change.get("cukup_data"):
-        return ('<div class="watchlist-metric"><div '
+        # Tanpa pembanding tetap dijelaskan **kenapa** (scan terakhir datanya
+        # tidak lengkap vs cron belum pernah mencatat), supaya "belum ada
+        # data" tidak dibaca sebagai "dust-nya nol".
+        reason = str(change.get("alasan") or "")
+        note = str(change.get("degraded_note") or "")
+        title = " — ".join(bit for bit in (reason, note) if bit)
+        label = ("belum ada data ⚠️" if change.get("degraded")
+                 else "belum ada data")
+        attr = f' title="{title.replace(chr(34), chr(39))}"' if title else ""
+        return (f'<div class="watchlist-metric"{attr}><div '
                 f'style="font-size:.8rem;color:{TONE_COLORS[TONE_UNKNOWN]};">'
-                "belum ada data</div></div>")
+                f"{label}</div></div>")
     relative = _float(change.get("pct_change"), None)
     head = ("—" if relative is None
             else f"{TONE_ARROWS.get(tone, '')} {relative:+.1f}%".strip())
+    if change.get("degraded"):
+        # Run terakhir datanya tidak lengkap: angka ini dari scan valid
+        # sebelumnya, jadi diberi penanda supaya tidak dibaca sebagai hasil
+        # scan terbaru.
+        head += " ⚠️"
     title = (explain_change(change) + " — "
              + TONE_LABELS.get(tone, "")).replace('"', "'")
     detail = ""
@@ -496,14 +595,25 @@ def change_html(change: dict, *, show_detail: bool = True) -> str:
 # 3) Ringkasan sinkronisasi untuk caption dashboard
 # ---------------------------------------------------------------------------
 def sync_summary(views, *, now=None) -> dict:
-    """Rekap sumber data per baris (dipakai caption "scan terakhir")."""
+    """Rekap sumber data per baris (dipakai caption "scan terakhir").
+
+    Selain sumber per token, rekap ini menghitung **berapa token yang
+    benar-benar duduk di waktu snapshot terbaru** (``latest_count``) dan
+    berapa yang masih memakai snapshot lebih lama (``older_count``): satu
+    angka "Scan terakhir" saja menyesatkan bila sebagian baris belum
+    ter-update sejak run sebelumnya.
+    """
     anchor = _int(now, None)
     summary = {"total": 0, "dari_history": 0, "dari_snapshot": 0,
-               "tanpa_data": 0, "stale": 0, "drift": 0,
-               "last_scan_ts": None, "max_age_sec": None}
+               "tanpa_data": 0, "stale": 0, "drift": 0, "degraded": 0,
+               "last_scan_ts": None, "latest_count": 0, "older_count": 0,
+               "max_age_sec": None}
+    stamps = []
     for view in views or []:
         view = view if isinstance(view, dict) else {}
         summary["total"] += 1
+        if view.get("degraded"):
+            summary["degraded"] += 1
         ts = _int(view.get("ts"), 0)
         if not ts or view.get("dust_pct") is None:
             summary["tanpa_data"] += 1
@@ -520,8 +630,14 @@ def sync_summary(views, *, now=None) -> dict:
         if age is not None and (summary["max_age_sec"] is None
                                 or age > summary["max_age_sec"]):
             summary["max_age_sec"] = age
+        stamps.append(ts)
         if summary["last_scan_ts"] is None or ts > summary["last_scan_ts"]:
             summary["last_scan_ts"] = ts
+    if stamps:
+        newest = max(stamps)
+        summary["latest_count"] = sum(1 for stamp in stamps
+                                      if stamp == newest)
+        summary["older_count"] = len(stamps) - summary["latest_count"]
     return summary
 
 
@@ -531,6 +647,13 @@ def sync_caption_text(summary: dict | None, *, status_updated_at=None,
     summary = summary if isinstance(summary, dict) else {}
     last_ts = summary.get("last_scan_ts") or _int(status_updated_at, None)
     bits = [f"Scan terakhir: **{format_wib(last_ts)}**"]
+    if _int(summary.get("latest_count"), 0):
+        bits[0] += f" ({summary['latest_count']} token)"
+    if _int(summary.get("older_count"), 0):
+        # Setiap baris membawa waktu snapshotnya sendiri (kolom "scan …" di
+        # baris) — sebutkan berapa yang belum ikut waktu terbaru.
+        bits.append(f"{summary['older_count']} token masih di snapshot "
+                    "sebelumnya — waktu tiap baris ada di kolom scan")
     total = _int(summary.get("total"), 0)
     if total:
         sumber = []
@@ -546,6 +669,12 @@ def sync_caption_text(summary: dict | None, *, status_updated_at=None,
         if summary.get("drift"):
             bits.append(f"⚠️ {summary['drift']} token snapshot ≠ titik history "
                         "(baris memakai yang terbaru)")
+        if summary.get("degraded"):
+            bits.append(
+                f"⚠️ {summary['degraded']} token: scan terakhirnya tidak "
+                f"lengkap (< {MIN_USABLE_WALLETS} wallet terambil, provider "
+                "holder mengembalikan sampel pendek) — angka baris memakai "
+                "scan layak terakhir, bukan 0% palsu")
         if summary.get("stale"):
             bits.append(f"{summary['stale']} token datanya lebih tua dari "
                         f"{format_age(stale_after)}")

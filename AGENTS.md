@@ -29,6 +29,20 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   volatilitas 4 jam dari candle hourly (`price_stddev_4h`, `price_range_4h`,
   `intra_hour_volatility`, `missing_hours`, `stale`); candle < 2 →
   `available: False` (artinya "tidak tahu", bukan "tenang").
+  **Sejak 2026-09-06** modul ini juga pemilik lantai kelayakan data holder:
+  `MIN_USABLE_WALLETS` (40) + `scan_degraded()` / `holders_usable()` /
+  `point_wallets()` / `point_usable()` / `usable_points()`; titik dari scan
+  bersampel pendek ditandai `degraded: True` saat `ingest_one` (penanda ikut
+  `compact_point`). Lihat "Kelayakan data holder" di tabel ambang bawah.
+- **Scan holder dari halaman utama** (`app.py`) tidak boleh mengganti
+  snapshot: selalu `publish_holder_status(..., merge_status=holder_status)`
+  (tanpa merge, `snapshot_status` membangun `tokens` **hanya** dari analyses
+  yang diberikan → token yang gagal/timeout pada run itu hilang dari
+  dashboard dan nilai terakhirnya terbuang), filter analyses dengan
+  `holders_usable` supaya scan bersampel pendek tidak menulis apa pun, dan
+  biarkan `ingest_many(..., detail=False)` agar baseline scan FULL +
+  `latest_detail` + kronologi tidak tertimpa. Tombol Robinhood
+  (`robinhood_watchlist.publish_scan`) berlaku sama.
 - `lp_watchlist.py`: card **Chart LP** — watchlist terpisah berisi token
   `source=meteora`; baris data (dust % MC, Δ poin persentase, level) +
   figure matplotlib grafik perubahan dust holder (garis ambang 0,5% / 1%)
@@ -172,7 +186,15 @@ JSON compact, Contents API base64) di ref `holder-live`:
   cron **atau** titik history yang lebih baru (menandai `drift` bila keduanya
   berbeda > 0,01 pp dan `stale` bila > 2 jam), `previous_pct()` memilih
   pembanding badge yang benar, `sync_caption_text()` menulis satu caption
-  "Scan terakhir" + rincian sumber per token. Urutan baris (2026-09-05):
+  "Scan terakhir" + rincian sumber per token. **Sejak 2026-09-06 "terbaru"
+  berarti "terbaru yang datanya layak"**: snapshot/titik dari scan holder
+  tidak lengkap (`holder_history.holders_usable` / `point_usable` — sampel
+  < 40 wallet, mis. GMGN mengembalikan 20 holder saat Helius mati) tidak
+  pernah jadi angka baris; `resolve_view()` mengembalikan `degraded` /
+  `degraded_note` / `usable_points` / `skipped_scans`, UI menulis
+  `⚠️ scan … cuma 19 wallet`, dan token yang semua scan-nya pendek menulis
+  `belum ada data ⚠️`. Tanpa ini kolom "Sejak masuk" melaporkan **−100%**
+  (dust "habis") dari sampel yang memang tidak memuat wallet dust. Urutan baris (2026-09-05):
   default `SORT_DROP` — **minus dust terbesar di atas** (`pct_change`
   "Sejak masuk" paling negatif, mis. GPRO −60%; tanpa pembanding di
   bawah), opsi lain `SORT_PCT` (dust % MC tertinggi) / `SORT_NAME`
@@ -280,6 +302,21 @@ urutan baris          : default minus dust terbesar di atas (pct_change
                         paling negatif sejak masuk; tanpa pembanding di
                         bawah) — SORT_DROP; pilihan lain SORT_PCT /
                         SORT_NAME lewat selectbox "Urutkan baris watchlist"
+
+Kelayakan data holder (holder_history) — filter sebelum angka ditampilkan:
+MIN_USABLE_WALLETS    : 40 (= DUST_BEST_MIN_HOLDERS); total_fetched atau
+                        jumlah wallet dianalisis di bawahnya = scan tidak
+                        layak (provider mengembalikan sampel pendek tanpa
+                        menandai truncated; wallet dust ada di ekor daftar)
+scan_degraded()       : True hanya bila ADA bukti sampel pendek/0 wallet —
+                        dict tanpa info jumlah wallet (skema lama) tidak
+                        ditolak, jadi perilaku lama tidak berubah
+point_usable()        : titik ber-penanda degraded, tanpa dust_pct_mc, atau
+                        < 40 wallet -> dibuang dari angka baris, pembanding
+                        "sejak masuk", sparkline, grafik 4 jam, overlay LP
+alert                 : process_holder_alerts() melewatkan scan tidak layak
+                        (rule HIGH DROP tidak boleh menyala dari dust 0%
+                        palsu)
 
 Deteksi Akumulasi (accumulation.py) — semua heuristik, tanpa Helius:
 skor gabungan         : >= 60 = Terindikasi Akumulasi (SCORE_AKUMULASI),

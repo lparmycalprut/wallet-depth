@@ -12,10 +12,10 @@ import streamlit as st
 from helius_holders import depth_bar_chart, scan_token_holders
 from holder_history import (DUST_BEST_LABEL, DUST_BEST_PCT, DUST_CAUTION_PCT,
                             DUST_DANGER_PCT, dust_flag,
-                            history_for_mint, ingest_many,
+                            history_for_mint, holders_usable, ingest_many,
                             load_durable_holder_history, merge_points,
                             resample_4h,
-                            seed_from_status, sparkline_svg)
+                            seed_from_status, sparkline_svg, usable_points)
 from links import HOLDER_PAGE_PATH, external_links_html, pool_links_html
 from lp_watchlist import (LP_SOURCE, lp_card_rows, lp_chart_figure,
                           lp_overlay_figure, lp_summary, split_watchlist)
@@ -299,18 +299,23 @@ def _render_lp_row(row: dict) -> None:
                 else (f"≥{int(dust_count)}" if truncated
                       else f"{int(dust_count):,}"))
     pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.2f}%"
-    spark = sparkline_svg(row.get("points") or [], key="dust_pct_mc")
+    # Titik dari scan yang datanya tidak lengkap tidak digambar (lihat
+    # holder_history.point_usable) — kalau tidak, grafik menukik ke 0%.
+    chart_points = usable_points(row.get("points") or [])
+    spark = sparkline_svg(chart_points, key="dust_pct_mc")
     if not spark:
         spark = ('<span style="font-size:.7rem;color:#64748b;">'
                  "belum ada grafik</span>")
 
+    short_note = (" · ⚠️ scan terakhir tidak lengkap"
+                  if row.get("degraded") else "")
     cols = st.columns([1.7, 0.75, 0.95, 0.9, 1.25, 0.42, 0.42, 0.42])
     cols[0].markdown(
         f'<div class="watchlist-token">'
         f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
         f'<span class="watchlist-mint">{html.escape(mint[:8])}…</span>'
         f'<span class="watchlist-metric-sub">MC {_compact(row.get("mc"))} · '
-        f'scan {_wib(row.get("analyzed_at"))}</span>'
+        f'scan {_wib(row.get("analyzed_at"))}{short_note}</span>'
         f'<div class="watchlist-links">{external_links_html(mint)}</div>'
         f"</div>", unsafe_allow_html=True)
     cols[1].markdown(
@@ -347,7 +352,7 @@ def _render_lp_row(row: dict) -> None:
 
     with st.expander(f"📈 Grafik perubahan dust holder — ${symbol}",
                      expanded=False):
-        figure = lp_chart_figure(row.get("points") or [], symbol)
+        figure = lp_chart_figure(chart_points, symbol)
         if figure is None:
             st.info("Butuh minimal 2 titik bucket 4 jam. Cron watchlist LP "
                     "(target ±15 menit, best-effort) atau tombol **Scan "
@@ -890,13 +895,23 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
                     bar.empty()
                 ok = {mint: item for mint, item in analyses.items()
                       if isinstance(item, dict)}
-                if ok:
+                # Sama seperti watchlist Solana: scan bersampel pendek tidak
+                # menimpa data tercatat, dan snapshot di-merge supaya token
+                # yang tidak ikut scan run ini tidak hilang.
+                fresh = {mint: item for mint, item in ok.items()
+                         if holders_usable(item.get("holders"))}
+                if fresh:
                     robinhood_watchlist.publish_scan(
-                        ok, watchlist, history_store=history_store,
-                        push=False)
+                        fresh, watchlist, history_store=history_store,
+                        push=False, merge_status=rh_status)
+                    st.success(f"{len(fresh)} token Robinhood diperbarui"
+                               + (f" · {len(ok) - len(fresh)} scan tidak "
+                                  "lengkap dilewati" if len(ok) != len(fresh)
+                                  else "") + ".")
                 else:
                     st.warning("Tidak ada token Robinhood yang berhasil "
-                               "dianalisis.")
+                               "dianalisis — data yang sudah tercatat tidak "
+                               "diubah.")
                 st.rerun()
 
         if not rows:
@@ -1046,13 +1061,62 @@ if st.button("🔄 Scan holder watchlist", type="primary",
         bar.progress(done / max(total, 1),
                      text=f"Scan {done}/{total} · "
                           f"{str((meta or {}).get('symbol') or '?')}")
+    bar.empty()
     ok = {mint: item for mint, item in analyses.items()
           if isinstance(item, dict)}
-    if ok:
-        ingest_many(ok, store=history_store)
-        publish_holder_status(ok, watchlist, push=False)
+    # Scan yang holdernya **tidak lengkap** (provider mengembalikan sampel
+    # pendek, mis. 20 wallet) tidak boleh menimpa angka yang sudah
+    # tercatat: dust dari sampel pendek selalu 0 dan akan terbaca seperti
+    # "dust habis" (lihat holder_history.holders_usable).
+    fresh = {mint: item for mint, item in ok.items()
+             if holders_usable(item.get("holders"))}
+    skipped_short = sorted(set(ok) - set(fresh))
+    failed = sorted(mint for mint, item in analyses.items()
+                    if not isinstance(item, dict))
+    _published = None
+    if fresh:
+        # ``detail=False``: baseline scan FULL + ``latest_detail`` +
+        # kronologi (data awal yang sudah tercatat) **tidak disentuh** —
+        # scan ini hanya menambah titik baru di atasnya.
+        ingest_many(fresh, store=history_store)
+        # ``merge_status``: token yang gagal / tidak dapat scan layak tetap
+        # memakai snapshot sebelumnya. ``snapshot_status`` membangun
+        # ``tokens`` dari analyses yang diberikan saja, jadi tanpa merge
+        # baris token yang tidak ikut scan run ini **hilang** dari
+        # dashboard (data awalnya tertimpa).
+        _published = publish_holder_status(fresh, watchlist, push=False,
+                                           history_store=history_store,
+                                           merge_status=holder_status)
+    st.session_state["watchlist_scan_report"] = {
+        "total": total, "updated": len(fresh), "failed": len(failed),
+        "short": len(skipped_short),
+        "snapshot_ts": ((_published or holder_status).get("updated_at")),
+        "short_symbols": [str((watchlist.get(mint) or {}).get("symbol")
+                              or mint[:6]).upper()
+                          for mint in skipped_short[:6]],
+    }
     st.session_state["status_force_refresh"] = True
     st.rerun()
+
+_scan_report = st.session_state.pop("watchlist_scan_report", None)
+if isinstance(_scan_report, dict):
+    _bits = [f"{_scan_report.get('updated') or 0} token diperbarui"]
+    _kept = ((_scan_report.get("total") or 0)
+             - (_scan_report.get("updated") or 0))
+    if _kept > 0:
+        _bits.append(f"{_kept} token tetap memakai data yang sudah tercatat")
+    if _scan_report.get("failed"):
+        _bits.append(f"{_scan_report['failed']} scan gagal")
+    if _scan_report.get("short"):
+        _names = ", ".join(_scan_report.get("short_symbols") or [])
+        _bits.append(f"{_scan_report['short']} scan tidak lengkap dilewati "
+                     f"({_names}) — angka lama dipertahankan")
+    _bits.append("list holder diperbarui sampai snapshot "
+                 f"**{format_wib(_scan_report.get('snapshot_ts'))}**")
+    st.info("Scan watchlist selesai: " + " · ".join(_bits)
+            + ". Baseline scan FULL, latest detail, dan kronologi tidak "
+              "ditimpa; tiap baris menampilkan angka sesuai waktu "
+              "snapshotnya sendiri.", icon="✅")
 
 if not holder_watch:
     st.info("Watchlist holder kosong. Tambahkan contract address di bawah, "
@@ -1129,7 +1193,10 @@ else:
         view = (_holder_views.get(mint)
                 or resolve_view(token, points, now=_now_ts,
                                 stale_after=STALE_REGULAR_AFTER_SEC))
-        sampled = resample_4h(points)
+        # Grafik & pembanding badge hanya memakai titik yang datanya layak:
+        # titik dari scan yang cuma mengambil 20 wallet berisi dust 0 dan
+        # akan menggambar tebing palsu ke 0% (lihat holder_history).
+        sampled = resample_4h(usable_points(points))
         # Angka baris = sumber terbaru (snapshot cron / titik history / scan
         # manual), bukan selalu snapshot — lihat sync_caption_text di atas.
         dust_count = view.get("dust_count")
@@ -1142,7 +1209,7 @@ else:
                     else (f"≥{int(dust_count)}" if truncated
                           else f"{int(dust_count):,}"))
         pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.2f}%"
-        spark = sparkline_svg(points, key="dust_pct_mc")
+        spark = sparkline_svg(usable_points(points), key="dust_pct_mc")
         if not spark:
             spark = '<span style="font-size:.7rem;color:#64748b;">belum ada grafik</span>'
         scan_note = f"scan {format_wib(view.get('ts'))}"
@@ -1150,6 +1217,19 @@ else:
             scan_note += " · titik history"
         if view.get("drift"):
             scan_note += " · ⚠️ snapshot ≠ history"
+        if view.get("degraded"):
+            # Run terakhir datanya tidak lengkap → angka baris dari scan
+            # layak sebelumnya; bilang terus terang, jangan diam-diam.
+            wallets = view.get("degraded_wallets")
+            if view.get("ts"):
+                scan_note += (f" · ⚠️ scan "
+                              f"{format_wib(view.get('degraded_ts'))} cuma "
+                              f"{int(wallets or 0):,} wallet")
+            else:
+                # Belum ada satu pun scan yang layak: jangan tulis "scan —".
+                scan_note = (f"⚠️ scan "
+                             f"{format_wib(view.get('degraded_ts'))} tidak "
+                             f"lengkap ({int(wallets or 0):,} wallet)")
         if view.get("stale"):
             scan_note += " · basi"
 

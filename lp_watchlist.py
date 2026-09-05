@@ -23,8 +23,9 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from holder_history import (DUST_CAUTION_PCT, DUST_DANGER_PCT, dust_flag,
-                            dust_level_rank, history_for_mint, merge_points,
-                            resample_4h)
+                            dust_level_rank, history_for_mint, holders_usable,
+                            merge_points, point_usable, resample_4h,
+                            usable_points)
 
 if TYPE_CHECKING:  # pragma: no cover - hanya untuk anotasi tipe
     from matplotlib.figure import Figure
@@ -103,22 +104,43 @@ def _delta_pp(before, after):
 
 def build_lp_row(mint: str, meta: dict | None, status_tokens: dict | None,
                  store: dict | None) -> dict:
-    """Satu baris data card Chart LP (siap dirender ``app.py``)."""
+    """Satu baris data card Chart LP (siap dirender ``app.py``).
+
+    Snapshot/titik yang datanya tidak lengkap (:func:`holder_history.
+    holders_usable` / :func:`point_usable`) **tidak** dipakai sebagai angka:
+    provider holder bisa mengembalikan sampel pendek (kasus nyata 20 holder)
+    yang selalu berisi ``dust 0`` / ``0,00% MC``. Baris memakai scan layak
+    terbaru dan menandai ``degraded`` supaya UI bilang angka itu bukan hasil
+    run terakhir.
+    """
     meta = meta or {}
     token = (status_tokens or {}).get(mint) or {}
     holders = token.get("holders") if isinstance(token.get("holders"), dict) \
         else {}
     points = points_for_mint(mint, status_tokens, store)
-    sampled = resample_4h(points)
+    sampled = resample_4h(usable_points(points))
 
-    dust_pct = _float(holders.get("dust_pct_mc"), None)
+    holders_ok = bool(holders) and holders_usable(holders)
+    dust_pct = _float(holders.get("dust_pct_mc"), None) if holders_ok else None
     if dust_pct is None and sampled:
         dust_pct = _float(sampled[-1].get("dust_pct_mc"), None)
-    dust_count = holders.get("dust_count")
+    dust_count = holders.get("dust_count") if holders_ok else None
     if dust_count is None and sampled:
         dust_count = sampled[-1].get("dust_count")
     prev_pct = sampled[-2].get("dust_pct_mc") if len(sampled) >= 2 else None
     first_pct = sampled[0].get("dust_pct_mc") if sampled else None
+
+    raw_rows = [row for row in points
+                if isinstance(row, dict) and _int(row.get("ts")) > 0]
+    last_raw = raw_rows[-1] if raw_rows else {}
+    snapshot_ts = _int(token.get("analyzed_at"), 0)
+    newest_ts = max(snapshot_ts if holders else 0,
+                    _int(last_raw.get("ts"), 0))
+    used_ts = (snapshot_ts if holders_ok
+               else (_int(sampled[-1].get("ts"), 0) if sampled else 0))
+    degraded = bool(newest_ts) and newest_ts > used_ts and (
+        (bool(holders) and not holders_ok)
+        or (bool(last_raw) and not point_usable(last_raw)))
 
     return {
         "mint": str(mint),
@@ -140,6 +162,9 @@ def build_lp_row(mint: str, meta: dict | None, status_tokens: dict | None,
         "price": _float(token.get("price"), None),
         "analyzed_at": token.get("analyzed_at"),
         "has_chart": len(sampled) >= 2,
+        "degraded": degraded,
+        "used_ts": used_ts or None,
+        "newest_ts": newest_ts or None,
     }
 
 
@@ -205,8 +230,12 @@ def lp_chart_figure(points, symbol: str = "?") -> Figure | None:
     Garis = dust % MC (sumbu kiri), batang = jumlah wallet dust (sumbu
     kanan), plus garis ambang HATI-HATI/BAHAYA. ``None`` bila titik 4 jam
     belum cukup (< 2). Pemanggil wajib ``plt.close(fig)``.
+
+    Titik dari scan yang datanya tidak lengkap dibuang lebih dulu
+    (:func:`holder_history.point_usable`) supaya grafik tidak menggambar
+    tebing palsu ke 0%.
     """
-    sampled = resample_4h(points)
+    sampled = resample_4h(usable_points(points))
     if len(sampled) < 2:
         return None
     labels = [_wib(row.get("ts")) for row in sampled]
@@ -241,7 +270,7 @@ def lp_overlay_figure(rows) -> Figure | None:
     """Overlay dust % MC seluruh token Chart LP dalam satu grafik."""
     series = []
     for row in rows or []:
-        sampled = resample_4h((row or {}).get("points") or [])
+        sampled = resample_4h(usable_points((row or {}).get("points") or []))
         points = [(point.get("ts"), _float(point.get("dust_pct_mc"), None))
                   for point in sampled]
         points = [(ts, value) for ts, value in points if value is not None]

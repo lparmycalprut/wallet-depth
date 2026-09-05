@@ -367,5 +367,88 @@ class HourlyCadenceTest(unittest.TestCase):
         self.assertEqual(len(merged["tokens"]["MINT"]["points"]), 336)
 
 
+class HolderDataUsabilityTest(unittest.TestCase):
+    """Lantai kelayakan data holder (perbaikan watchlist −100%, 2026-09-06).
+
+    Kasus produksi: Helius mati lalu fallback GMGN mengembalikan 20 holder
+    dengan ``truncated: False`` → ``dust_count 0`` / ``dust_pct_mc 0.0``.
+    Angka itu tidak boleh dipakai sebagai nilai baris, titik grafik,
+    pembanding "sejak masuk", maupun pemicu alert.
+    """
+
+    def test_sampel_pendek_terbukti_degraded(self):
+        self.assertTrue(hh.scan_degraded(
+            {"total_fetched": 20, "wallets_analyzed": 19, "dust_count": 0,
+             "real_count": 19, "dust_pct_mc": 0.0}))
+        self.assertFalse(hh.holders_usable(
+            {"total_fetched": 20, "wallets_analyzed": 19}))
+
+    def test_fetch_gagal_nol_wallet_degraded(self):
+        self.assertTrue(hh.scan_degraded({"total_fetched": 0,
+                                          "wallets_analyzed": 0}))
+
+    def test_scan_lengkap_tetap_usable(self):
+        holders = {"total_fetched": 999, "wallets_analyzed": 999,
+                   "dust_count": 880, "real_count": 119,
+                   "dust_pct_mc": 0.39}
+        self.assertFalse(hh.scan_degraded(holders))
+        self.assertTrue(hh.holders_usable(holders))
+
+    def test_tanpa_bukti_jumlah_wallet_tidak_ditolak(self):
+        # Snapshot skema lama / fixture tanpa info jumlah wallet: tidak ada
+        # bukti sampel pendek, jadi perilaku lama dipertahankan.
+        self.assertFalse(hh.scan_degraded({"dust_pct_mc": 1.3}))
+        self.assertTrue(hh.holders_usable({"dust_pct_mc": 1.3}))
+        # dict kosong = tidak ada bukti sama sekali → tidak usable.
+        self.assertFalse(hh.holders_usable({}))
+        self.assertFalse(hh.holders_usable(None))
+
+    def test_ambang_40_wallet(self):
+        self.assertTrue(hh.scan_degraded({"wallets_analyzed":
+                                          hh.MIN_USABLE_WALLETS - 1}))
+        self.assertFalse(hh.scan_degraded({"wallets_analyzed":
+                                           hh.MIN_USABLE_WALLETS}))
+
+    def test_titik_history_dari_scan_pendek_tidak_usable(self):
+        pendek = {"ts": 100, "dust_pct_mc": 0.0, "dust_count": 0,
+                  "real_count": 19, "holder_count": 19}
+        bagus = {"ts": 200, "dust_pct_mc": 1.5, "dust_count": 1_400,
+                 "real_count": 596, "holder_count": 1_996}
+        ditandai = dict(bagus, ts=300, dust_pct_mc=0.0, degraded=True)
+        self.assertFalse(hh.point_usable(pendek))
+        self.assertTrue(hh.point_usable(bagus))
+        self.assertFalse(hh.point_usable(ditandai))
+        self.assertFalse(hh.point_usable({"ts": 400, "dust_pct_mc": None,
+                                          "holder_count": 900}))
+        self.assertEqual(hh.usable_points([bagus, pendek, ditandai]), [bagus])
+
+    def test_penanda_degraded_ikut_lewat_compact_point(self):
+        point = {"ts": 5, "dust_pct_mc": 0.0, "holder_count": 19,
+                 "degraded": True}
+        self.assertTrue(hh.compact_point(point).get("degraded"))
+        self.assertFalse(hh.point_usable(hh.compact_point(point)))
+
+    def test_ingest_menandai_scan_pendek(self):
+        store = hh.empty_store()
+        pendek = {"symbol": "TST", "marketcap": 50_000, "price": 0.01,
+                  "analyzed_at": 100,
+                  "holders": {"total_fetched": 20, "wallets_analyzed": 19,
+                              "dust_count": 0, "dust_pct_mc": 0.0,
+                              "real_count": 19}}
+        lengkap = {"symbol": "TST", "marketcap": 50_000, "price": 0.01,
+                   "analyzed_at": 100 + 3600,
+                   "holders": {"total_fetched": 900, "wallets_analyzed": 900,
+                               "dust_count": 700, "dust_pct_mc": 1.2,
+                               "real_count": 200}}
+        hh.ingest_one(store, "MINT", pendek, now=100)
+        hh.ingest_one(store, "MINT", lengkap, now=100 + 3600)
+        points = store["tokens"]["MINT"]["points"]
+        self.assertTrue(points[0].get("degraded"))
+        self.assertNotIn("degraded", points[1])
+        # UI hanya melihat titik yang layak → nilai scan pendek tidak ikut.
+        self.assertEqual([p["ts"] for p in hh.usable_points(points)],
+                         [100 + 3600])
+
+
 if __name__ == "__main__":
     unittest.main()
