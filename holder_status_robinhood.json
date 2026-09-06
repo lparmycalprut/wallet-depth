@@ -26,7 +26,7 @@
         "sent_event_ids": 1,
         "summary": true
       },
-      "analyzed_at": 1788660035,
+      "analyzed_at": 1788660961,
       "chronology": {
         "baseline_wallets": {
           "dust_count": 0,
@@ -472,10 +472,10 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788660035,
+          "computed_at": 1788660961,
           "holders_all": 0,
           "holders_wallet": 0,
-          "market_cap": 377587.0,
+          "market_cap": 530740.0,
           "pool_excluded": 0,
           "tiers": [
             {
@@ -548,8 +548,8 @@
         "truncated": false,
         "wallets_analyzed": 0
       },
-      "marketcap": 377587.0,
-      "price": 0.0003814,
+      "marketcap": 530740.0,
+      "price": 0.0005361,
       "symbol": "Onboard"
     },
     "0x8490acd2d52d0ebd34cb13e01bd9a9380b36411d": {
@@ -563,7 +563,7 @@
           "wallets_seen": 2929
         },
         "last_sent": {
-          "early_dump": 1788660042
+          "early_dump": 1788660952
         },
         "rejected_signals": 8,
         "rolling": {
@@ -574,10 +574,10 @@
           "ts": 1788658246,
           "wallets_seen": 2630
         },
-        "sent_event_ids": 26,
+        "sent_event_ids": 27,
         "summary": true
       },
-      "analyzed_at": 1788660042,
+      "analyzed_at": 1788660952,
       "chronology": {
         "baseline_wallets": {
           "dust_count": 2220,
@@ -592,329 +592,6 @@
           "wallets_seen": 2929
         },
         "intervals": [
-          {
-            "complete": true,
-            "counts": {
-              "category_moves": 8,
-              "compared_wallets": 383,
-              "decreased": 19,
-              "dust_grew_out": 0,
-              "dust_price_exit": 0,
-              "exited_total": 17,
-              "increased": 5,
-              "new_wallets": 17,
-              "same_decreased": 2,
-              "same_increased": 5,
-              "shrank_to_dust": 0,
-              "unobserved": 0
-            },
-            "from_metrics": {
-              "dust_count": 1468,
-              "dust_pct_mc": 3.4544,
-              "holder_count": 2000,
-              "mc": 93927.0,
-              "price": 9.392e-05,
-              "sampled": true,
-              "truncated": false,
-              "ts": 1788646546
-            },
-            "from_ts": 1788646546,
-            "movements": [
-              {
-                "address": "0x0f05e3567f5520c600470822fdc293db67fe22bf",
-                "balance_after": 1100033.988823186,
-                "balance_before": 1100033.988823186,
-                "delta_balance": 0.0,
-                "delta_pct": 0.0,
-                "from_category": "$100-$1k",
-                "interpretation": "Wallet berpindah dari $100-$1k ke $10-$100 terutama karena perubahan harga; balance token tidak menurun signifikan.",
-                "kind": "category_down",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0x0f05e3567f5520c600470822fdc293db67fe22bf",
-                "to_category": "$10-$100",
-                "usd_after": 95.18594105287028,
-                "usd_before": 103.31519223027361
-              },
-              {
-                "address": "0x2808aac01c40c0992eada1298e273ff33f15716c",
-                "balance_after": 1100750.8498185447,
-                "balance_before": 1100750.8498185447,
-                "delta_balance": 0.0,
-                "delta_pct": 0.0,
-                "from_category": "$100-$1k",
-                "interpretation": "Wallet berpindah dari $100-$1k ke $10-$100 terutama karena perubahan harga; balance token tidak menurun signifikan.",
-                "kind": "category_down",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0x2808aac01c40c0992eada1298e273ff33f15716c",
-                "to_category": "$10-$100",
-                "usd_after": 95.24797103479867,
-                "usd_before": 103.38251981495772
-              },
-              {
-                "address": "0x39790f4fae4fb905689be7cc99d724908746cec2",
-                "balance_after": 1114909.1198490206,
-                "balance_before": 1114909.1198490206,
-                "delta_balance": 0.0,
-                "delta_pct": 0.0,
-                "from_category": "$100-$1k",
-                "interpretation": "Wallet berpindah dari $100-$1k ke $10-$100 terutama karena perubahan harga; balance token tidak menurun signifikan.",
-                "kind": "category_down",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0x39790f4fae4fb905689be7cc99d724908746cec2",
-                "to_category": "$10-$100",
-                "usd_after": 96.47308614053576,
-                "usd_before": 104.71226453622
-              },
-              {
-                "address": "0x400d503d8007e3dcdc7c4d231468feb4a8e2ffe9",
-                "balance_after": 1068862.8335227564,
-                "balance_before": 1068862.8335227564,
-                "delta_balance": 0.0,
-                "delta_pct": 0.0,
-                "from_category": "$100-$1k",
-                "interpretation": "Wallet berpindah dari $100-$1k ke $10-$100 terutama karena perubahan harga; balance token tidak menurun signifikan.",
-                "kind": "category_down",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0x400d503d8007e3dcdc7c4d231468feb4a8e2ffe9",
-                "to_category": "$10-$100",
-                "usd_after": 92.4887009847241,
-                "usd_before": 100.38759732445727
-              },
-              {
-                "address": "0x784598ce6d9ba9782e4a01362d9272ffc06b6fc3",
-                "balance_after": 1146516.0341271344,
-                "balance_before": 1146516.0341271344,
-                "delta_balance": 0.0,
-                "delta_pct": 0.0,
-                "from_category": "$100-$1k",
-                "interpretation": "Wallet berpindah dari $100-$1k ke $10-$100 terutama karena perubahan harga; balance token tidak menurun signifikan.",
-                "kind": "category_down",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0x784598ce6d9ba9782e4a01362d9272ffc06b6fc3",
-                "to_category": "$10-$100",
-                "usd_after": 99.20803243302093,
-                "usd_before": 107.68078592522045
-              },
-              {
-                "address": "0x88362b9c13b441a7e37b2d3a2bb8020d93f60291",
-                "balance_after": 110788.09575112228,
-                "balance_before": 110788.09575112228,
-                "delta_balance": 0.0,
-                "delta_pct": 0.0,
-                "from_category": "$10-$100",
-                "interpretation": "Wallet berpindah dari $10-$100 ke Dust terutama karena perubahan harga; balance token tidak menurun signifikan.",
-                "kind": "category_down",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0x88362b9c13b441a7e37b2d3a2bb8020d93f60291",
-                "to_category": "Dust",
-                "usd_after": 9.58649392534461,
-                "usd_before": 10.405217952945405
-              },
-              {
-                "address": "0x8ab8c0843d9738885d6273dfe3de86c56eea364c",
-                "balance_after": 11110692.795639131,
-                "balance_before": 11110692.795639131,
-                "delta_balance": 0.0,
-                "delta_pct": 0.0,
-                "from_category": "$1k-$10k",
-                "interpretation": "Wallet berpindah dari $1k-$10k ke $100-$1k terutama karena perubahan harga; balance token tidak menurun signifikan.",
-                "kind": "category_down",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0x8ab8c0843d9738885d6273dfe3de86c56eea364c",
-                "to_category": "$100-$1k",
-                "usd_after": 961.4082476066541,
-                "usd_before": 1043.5162673664272
-              },
-              {
-                "address": "0xa358d248898c50c2714f699f37952630a85dd6ea",
-                "balance_after": 1101078.0975243817,
-                "balance_before": 1101078.0975243817,
-                "delta_balance": 0.0,
-                "delta_pct": 0.0,
-                "from_category": "$100-$1k",
-                "interpretation": "Wallet berpindah dari $100-$1k ke $10-$100 terutama karena perubahan harga; balance token tidak menurun signifikan.",
-                "kind": "category_down",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0xa358d248898c50c2714f699f37952630a85dd6ea",
-                "to_category": "$10-$100",
-                "usd_after": 95.27628777878475,
-                "usd_before": 103.41325491948993
-              },
-              {
-                "address": "0x8efed34e8dfc9469d163df59bc228a28168725d6",
-                "balance_after": 0.0,
-                "balance_before": 1010376.7835500141,
-                "delta_balance": -1010376.7835500141,
-                "delta_pct": -100.0,
-                "from_category": "$10-$100",
-                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
-                "kind": "exited_total",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0x8efed34e8dfc9469d163df59bc228a28168725d6",
-                "to_category": "Keluar/0",
-                "usd_after": null,
-                "usd_before": 94.89458751101732
-              },
-              {
-                "address": "0x8d12eea338642feee12b6d2b92a4800784b8992a",
-                "balance_after": 0.0,
-                "balance_before": 854722.4944707867,
-                "delta_balance": -854722.4944707867,
-                "delta_pct": -100.0,
-                "from_category": "$10-$100",
-                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
-                "kind": "exited_total",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0x8d12eea338642feee12b6d2b92a4800784b8992a",
-                "to_category": "Keluar/0",
-                "usd_after": null,
-                "usd_before": 80.27553668069628
-              },
-              {
-                "address": "0xee21acb8829b44fd4aa1f525603d9df27ddc9b3d",
-                "balance_after": 0.0,
-                "balance_before": 89635.00578216101,
-                "delta_balance": -89635.00578216101,
-                "delta_pct": -100.0,
-                "from_category": "Dust",
-                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
-                "kind": "exited_total",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0xee21acb8829b44fd4aa1f525603d9df27ddc9b3d",
-                "to_category": "Keluar/0",
-                "usd_after": null,
-                "usd_before": 8.418519743060562
-              },
-              {
-                "address": "0x606289766cb6a0f9b9f3cc6a842434e1470fcf89",
-                "balance_after": 0.0,
-                "balance_before": 89577.99562256136,
-                "delta_balance": -89577.99562256136,
-                "delta_pct": -100.0,
-                "from_category": "Dust",
-                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
-                "kind": "exited_total",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0x606289766cb6a0f9b9f3cc6a842434e1470fcf89",
-                "to_category": "Keluar/0",
-                "usd_after": null,
-                "usd_before": 8.413165348870962
-              },
-              {
-                "address": "0x8256314cfc4cbaf86d0ed02ffb4f6af5fc55cf52",
-                "balance_after": 0.0,
-                "balance_before": 89378.37094200685,
-                "delta_balance": -89378.37094200685,
-                "delta_pct": -100.0,
-                "from_category": "Dust",
-                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
-                "kind": "exited_total",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0x8256314cfc4cbaf86d0ed02ffb4f6af5fc55cf52",
-                "to_category": "Keluar/0",
-                "usd_after": null,
-                "usd_before": 8.394416598873283
-              },
-              {
-                "address": "0xc4e036f8a68f4b4fc6302343d6ae8fd19e31f86c",
-                "balance_after": 0.0,
-                "balance_before": 89271.86289361937,
-                "delta_balance": -89271.86289361937,
-                "delta_pct": -100.0,
-                "from_category": "Dust",
-                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
-                "kind": "exited_total",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0xc4e036f8a68f4b4fc6302343d6ae8fd19e31f86c",
-                "to_category": "Keluar/0",
-                "usd_after": null,
-                "usd_before": 8.384413362968731
-              },
-              {
-                "address": "0x83ed16de367bbecb23a1ff12b742d268be6d951d",
-                "balance_after": 0.0,
-                "balance_before": 89168.36773073937,
-                "delta_balance": -89168.36773073937,
-                "delta_pct": -100.0,
-                "from_category": "Dust",
-                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
-                "kind": "exited_total",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0x83ed16de367bbecb23a1ff12b742d268be6d951d",
-                "to_category": "Keluar/0",
-                "usd_after": null,
-                "usd_before": 8.374693097271042
-              },
-              {
-                "address": "0xafd48c24346cd15818033a73dbd9b57ea72c5036",
-                "balance_after": 0.0,
-                "balance_before": 88576.49838493468,
-                "delta_balance": -88576.49838493468,
-                "delta_pct": -100.0,
-                "from_category": "Dust",
-                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
-                "kind": "exited_total",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0xafd48c24346cd15818033a73dbd9b57ea72c5036",
-                "to_category": "Keluar/0",
-                "usd_after": null,
-                "usd_before": 8.319104728313064
-              },
-              {
-                "address": "0x434574d345dd50675d7f08ca7cd2b595df5569f4",
-                "balance_after": 0.0,
-                "balance_before": 87924.24027929653,
-                "delta_balance": -87924.24027929653,
-                "delta_pct": -100.0,
-                "from_category": "Dust",
-                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
-                "kind": "exited_total",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0x434574d345dd50675d7f08ca7cd2b595df5569f4",
-                "to_category": "Keluar/0",
-                "usd_after": null,
-                "usd_before": 8.25784464703153
-              },
-              {
-                "address": "0x2dab64afaafc308d445b80362bc12095a13724e5",
-                "balance_after": 0.0,
-                "balance_before": 87786.24684133568,
-                "delta_balance": -87786.24684133568,
-                "delta_pct": -100.0,
-                "from_category": "Dust",
-                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
-                "kind": "exited_total",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0x2dab64afaafc308d445b80362bc12095a13724e5",
-                "to_category": "Keluar/0",
-                "usd_after": null,
-                "usd_before": 8.244884303338248
-              },
-              {
-                "address": "0x43a3330e6e86755492cd13e153fab2c83f7a8e78",
-                "balance_after": 0.0,
-                "balance_before": 87392.92552189433,
-                "delta_balance": -87392.92552189433,
-                "delta_pct": -100.0,
-                "from_category": "Dust",
-                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
-                "kind": "exited_total",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0x43a3330e6e86755492cd13e153fab2c83f7a8e78",
-                "to_category": "Keluar/0",
-                "usd_after": null,
-                "usd_before": 8.207943565016315
-              },
-              {
-                "address": "0x454d70815769f527f618143035831cac4a083348",
-                "balance_after": 0.0,
-                "balance_before": 87287.50546662703,
-                "delta_balance": -87287.50546662703,
-                "delta_pct": -100.0,
-                "from_category": "Dust",
-                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
-                "kind": "exited_total",
-                "solscan": "https://robinhoodchain.blockscout.com/address/0x454d70815769f527f618143035831cac4a083348",
-                "to_category": "Keluar/0",
-                "usd_after": null,
-                "usd_before": 8.19804251342561
-              }
-            ],
-            "sampled": true,
-            "to_metrics": {
-              "dust_count": 1492,
-              "dust_pct_mc": 3.6429,
-              "holder_count": 2000,
-              "mc": 86537.0,
-              "price": 8.653e-05,
-              "sampled": true,
-              "truncated": false,
-              "ts": 1788647450
-            },
-            "to_ts": 1788647450,
-            "truncated": false
-          },
           {
             "complete": true,
             "counts": {
@@ -4285,19 +3962,286 @@
             },
             "to_ts": 1788660046,
             "truncated": false
+          },
+          {
+            "complete": true,
+            "counts": {
+              "category_moves": 8,
+              "compared_wallets": 397,
+              "decreased": 4,
+              "dust_grew_out": 1,
+              "dust_price_exit": 0,
+              "exited_total": 3,
+              "increased": 2,
+              "new_wallets": 3,
+              "same_decreased": 1,
+              "same_increased": 1,
+              "shrank_to_dust": 0,
+              "unobserved": 0
+            },
+            "from_metrics": {
+              "dust_count": 505,
+              "dust_pct_mc": 2.468,
+              "holder_count": 1000,
+              "mc": 92079.0,
+              "price": 9.207e-05,
+              "sampled": true,
+              "truncated": false,
+              "ts": 1788660046
+            },
+            "from_ts": 1788660046,
+            "movements": [
+              {
+                "address": "0xb45fd375d11bd304f13a03a5a2d21cca3b86146c",
+                "balance_after": 185097.97964910668,
+                "balance_before": 55377.68112312537,
+                "delta_balance": 129720.29852598131,
+                "delta_pct": 234.24653379321612,
+                "from_category": "Dust",
+                "interpretation": "Wallet menambah muatan dan berpindah dari Dust ke $10-$100.",
+                "kind": "dust_grew_out",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0xb45fd375d11bd304f13a03a5a2d21cca3b86146c",
+                "to_category": "$10-$100",
+                "usd_after": 16.647712289640655,
+                "usd_before": 5.098623101006153
+              },
+              {
+                "address": "0x0f05e3567f5520c600470822fdc293db67fe22bf",
+                "balance_after": 1100033.988823186,
+                "balance_before": 1100033.988823186,
+                "delta_balance": 0.0,
+                "delta_pct": 0.0,
+                "from_category": "$100-$1k",
+                "interpretation": "Wallet berpindah dari $100-$1k ke $10-$100 terutama karena perubahan harga; balance token tidak menurun signifikan.",
+                "kind": "category_down",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x0f05e3567f5520c600470822fdc293db67fe22bf",
+                "to_category": "$10-$100",
+                "usd_after": 98.93705695475734,
+                "usd_before": 101.28012935095073
+              },
+              {
+                "address": "0x2808aac01c40c0992eada1298e273ff33f15716c",
+                "balance_after": 1100750.8498185447,
+                "balance_before": 1100750.8498185447,
+                "delta_balance": 0.0,
+                "delta_pct": 0.0,
+                "from_category": "$100-$1k",
+                "interpretation": "Wallet berpindah dari $100-$1k ke $10-$100 terutama karena perubahan harga; balance token tidak menurun signifikan.",
+                "kind": "category_down",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x2808aac01c40c0992eada1298e273ff33f15716c",
+                "to_category": "$10-$100",
+                "usd_after": 99.00153143267991,
+                "usd_before": 101.34613074279342
+              },
+              {
+                "address": "0x386e47db40862150df736a827b85d0b78b119eca",
+                "balance_after": 110795.24310982537,
+                "balance_before": 110795.24310982537,
+                "delta_balance": 0.0,
+                "delta_pct": 0.0,
+                "from_category": "$10-$100",
+                "interpretation": "Wallet berpindah dari $10-$100 ke Dust terutama karena perubahan harga; balance token tidak menurun signifikan.",
+                "kind": "category_down",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x386e47db40862150df736a827b85d0b78b119eca",
+                "to_category": "Dust",
+                "usd_after": 9.964924165297694,
+                "usd_before": 10.200918033121622
+              },
+              {
+                "address": "0x4209c625915000a1c52aeac6f7bf31c4e67ffb56",
+                "balance_after": 108756.05172010469,
+                "balance_before": 108756.05172010469,
+                "delta_balance": 0.0,
+                "delta_pct": 0.0,
+                "from_category": "$10-$100",
+                "interpretation": "Wallet berpindah dari $10-$100 ke Dust terutama karena perubahan harga; balance token tidak menurun signifikan.",
+                "kind": "category_down",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x4209c625915000a1c52aeac6f7bf31c4e67ffb56",
+                "to_category": "Dust",
+                "usd_after": 9.781519291706216,
+                "usd_before": 10.013169681870039
+              },
+              {
+                "address": "0x75e863d6b4f4edcf5df6771bd8ddde0d1ef6e455",
+                "balance_after": 111115.11476365682,
+                "balance_before": 111115.11476365682,
+                "delta_balance": 0.0,
+                "delta_pct": 0.0,
+                "from_category": "$10-$100",
+                "interpretation": "Wallet berpindah dari $10-$100 ke Dust terutama karena perubahan harga; balance token tidak menurun signifikan.",
+                "kind": "category_down",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x75e863d6b4f4edcf5df6771bd8ddde0d1ef6e455",
+                "to_category": "Dust",
+                "usd_after": 9.993693421843293,
+                "usd_before": 10.230368616289883
+              },
+              {
+                "address": "0x88362b9c13b441a7e37b2d3a2bb8020d93f60291",
+                "balance_after": 110788.09575112228,
+                "balance_before": 110788.09575112228,
+                "delta_balance": 0.0,
+                "delta_pct": 0.0,
+                "from_category": "$10-$100",
+                "interpretation": "Wallet berpindah dari $10-$100 ke Dust terutama karena perubahan harga; balance token tidak menurun signifikan.",
+                "kind": "category_down",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x88362b9c13b441a7e37b2d3a2bb8020d93f60291",
+                "to_category": "Dust",
+                "usd_after": 9.964281331855938,
+                "usd_before": 10.200259975805828
+              },
+              {
+                "address": "0x8ab8c0843d9738885d6273dfe3de86c56eea364c",
+                "balance_after": 11110692.795639131,
+                "balance_before": 11110692.795639131,
+                "delta_balance": 0.0,
+                "delta_pct": 0.0,
+                "from_category": "$1k-$10k",
+                "interpretation": "Wallet berpindah dari $1k-$10k ke $100-$1k terutama karena perubahan harga; balance token tidak menurun signifikan.",
+                "kind": "category_down",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x8ab8c0843d9738885d6273dfe3de86c56eea364c",
+                "to_category": "$100-$1k",
+                "usd_after": 999.2957100397834,
+                "usd_before": 1022.9614856944949
+              },
+              {
+                "address": "0x5ae81152ff542d3c1197df4c73e8c3bb3ec58668",
+                "balance_after": 0.0,
+                "balance_before": 113542.0549276899,
+                "delta_balance": -113542.0549276899,
+                "delta_pct": -100.0,
+                "from_category": "$10-$100",
+                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
+                "kind": "exited_total",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x5ae81152ff542d3c1197df4c73e8c3bb3ec58668",
+                "to_category": "Keluar/0",
+                "usd_after": null,
+                "usd_before": 10.453816997192408
+              },
+              {
+                "address": "0x9278e40b23f6a1b453ff1b6aefd1ab70fdb799c2",
+                "balance_after": 0.0,
+                "balance_before": 112101.80762910015,
+                "delta_balance": -112101.80762910015,
+                "delta_pct": -100.0,
+                "from_category": "$10-$100",
+                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
+                "kind": "exited_total",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x9278e40b23f6a1b453ff1b6aefd1ab70fdb799c2",
+                "to_category": "Keluar/0",
+                "usd_after": null,
+                "usd_before": 10.321213428411252
+              },
+              {
+                "address": "0x163b9641b78306dd210f563b7e0cf4215fc4b9ce",
+                "balance_after": 0.0,
+                "balance_before": 79834.26888905135,
+                "delta_balance": -79834.26888905135,
+                "delta_pct": -100.0,
+                "from_category": "Dust",
+                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
+                "kind": "exited_total",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x163b9641b78306dd210f563b7e0cf4215fc4b9ce",
+                "to_category": "Keluar/0",
+                "usd_after": null,
+                "usd_before": 7.350341136614959
+              },
+              {
+                "address": "0x8b051ebb5a08e2a89e263ecf4a1773d81c0837bb",
+                "balance_after": 50009.28759421031,
+                "balance_before": 0.0,
+                "delta_balance": 50009.28759421031,
+                "delta_pct": null,
+                "from_category": "\u2014",
+                "interpretation": "Wallet baru teramati pada snapshot terbaru.",
+                "kind": "new_wallet",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x8b051ebb5a08e2a89e263ecf4a1773d81c0837bb",
+                "to_category": "Dust",
+                "usd_after": 4.497835326223275,
+                "usd_before": null
+              },
+              {
+                "address": "0x4e72e09dffbf7284acdb22141cbda46f47251041",
+                "balance_after": 49918.643244456835,
+                "balance_before": 0.0,
+                "delta_balance": 49918.643244456835,
+                "delta_pct": null,
+                "from_category": "\u2014",
+                "interpretation": "Wallet baru teramati pada snapshot terbaru.",
+                "kind": "new_wallet",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x4e72e09dffbf7284acdb22141cbda46f47251041",
+                "to_category": "Dust",
+                "usd_after": 4.4896827734064475,
+                "usd_before": null
+              },
+              {
+                "address": "0xd6477f8e85dcfa5babba51ccc440e80244381e72",
+                "balance_after": 12782.761006761715,
+                "balance_before": 0.0,
+                "delta_balance": 12782.761006761715,
+                "delta_pct": null,
+                "from_category": "\u2014",
+                "interpretation": "Wallet baru teramati pada snapshot terbaru.",
+                "kind": "new_wallet",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0xd6477f8e85dcfa5babba51ccc440e80244381e72",
+                "to_category": "Dust",
+                "usd_after": 1.1496815249481487,
+                "usd_before": null
+              },
+              {
+                "address": "0x8366a39cc670b4001a1121b8f6a443a643e40951",
+                "balance_after": 139571934.53834838,
+                "balance_before": 137924912.43073544,
+                "delta_balance": 1647022.1076129377,
+                "delta_pct": 1.1941440299554704,
+                "from_category": "$10k-$100k",
+                "interpretation": "Wallet tetap di $10k-$100k tetapi balance token meningkat.",
+                "kind": "increased_same",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x8366a39cc670b4001a1121b8f6a443a643e40951",
+                "to_category": "$10k-$100k",
+                "usd_after": 12553.099792379053,
+                "usd_before": 12698.746687497813
+              },
+              {
+                "address": "0x46fca49d5cb2be8c09872c355abf9410520aab2d",
+                "balance_after": 1125598.4203828757,
+                "balance_before": 2251196.8407657514,
+                "delta_balance": -1125598.4203828757,
+                "delta_pct": -50.0,
+                "from_category": "$100-$1k",
+                "interpretation": "Wallet tetap di $100-$1k tetapi balance token menurun.",
+                "kind": "decreased_same",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x46fca49d5cb2be8c09872c355abf9410520aab2d",
+                "to_category": "$100-$1k",
+                "usd_after": 101.23632192923584,
+                "usd_before": 207.26769312930276
+              }
+            ],
+            "sampled": true,
+            "to_metrics": {
+              "dust_count": 1510,
+              "dust_pct_mc": 3.2876,
+              "holder_count": 2000,
+              "mc": 89949.0,
+              "price": 8.994e-05,
+              "sampled": true,
+              "truncated": false,
+              "ts": 1788660962
+            },
+            "to_ts": 1788660962,
+            "truncated": false
           }
         ],
         "latest_wallets": {
-          "dust_count": 505,
-          "dust_pct_mc": 2.468,
-          "holder_count": 1000,
-          "mc": 92079.0,
-          "price": 9.207e-05,
+          "dust_count": 1510,
+          "dust_pct_mc": 3.2876,
+          "holder_count": 2000,
+          "mc": 89949.0,
+          "price": 8.994e-05,
           "sampled": true,
           "truncated": false,
-          "ts": 1788660042,
+          "ts": 1788660952,
           "wallets": 200,
-          "wallets_seen": 1000
+          "wallets_seen": 2000
         }
       },
       "cohort": {
@@ -4386,28 +4330,28 @@
         },
         {
           "buckets": {
-            "$10-$100": 360,
-            "$100-$1k": 120,
+            "$10-$100": 358,
+            "$100-$1k": 118,
             "$100k-$500k": 0,
             "$10k-$100k": 1,
-            "$1k-$10k": 14,
-            ">$0-$10": 505,
+            "$1k-$10k": 13,
+            ">$0-$10": 1510,
             ">$500k": 0
           },
-          "cohort_cut50_pct": 1.6667,
+          "cohort_cut50_pct": 2.5,
           "cohort_n": 120,
-          "cohort_token_pct": 99.7109,
-          "dust_count": 505,
-          "dust_pct_mc": 2.468,
-          "dust_value_usd": 2272.52,
+          "cohort_token_pct": 99.5457,
+          "dust_count": 1510,
+          "dust_pct_mc": 3.2876,
+          "dust_value_usd": 2957.14,
           "full": true,
-          "holder_count": 1000,
-          "mc": 92079.0,
-          "mid_count": 134,
-          "mid_pct_mc": 70.7966,
-          "price": 9.207e-05,
-          "real_count": 495,
-          "real_pct_mc": 96.6941,
+          "holder_count": 2000,
+          "mc": 89949.0,
+          "mid_count": 131,
+          "mid_pct_mc": 70.3554,
+          "price": 8.994e-05,
+          "real_count": 490,
+          "real_pct_mc": 96.6705,
           "ts": 1788652800
         }
       ],
@@ -4415,44 +4359,44 @@
         "depth": {
           "buckets": [
             {
-              "count": 505,
+              "count": 1510,
               "label": ">$0-$10",
               "max": 10.0,
               "min": 0.0,
-              "pct_mc": 2.468,
-              "value_usd": 2272.52
+              "pct_mc": 3.2876,
+              "value_usd": 2957.14
             },
             {
-              "count": 360,
+              "count": 358,
               "label": "$10-$100",
               "max": 100.0,
               "min": 10.0,
-              "pct_mc": 12.1064,
-              "value_usd": 11147.43
+              "pct_mc": 12.3594,
+              "value_usd": 11117.11
             },
             {
-              "count": 120,
+              "count": 118,
               "label": "$100-$1k",
               "max": 1000.0,
               "min": 100.0,
-              "pct_mc": 41.7355,
-              "value_usd": 38429.67
+              "pct_mc": 42.4053,
+              "value_usd": 38143.16
             },
             {
-              "count": 14,
+              "count": 13,
               "label": "$1k-$10k",
               "max": 10000.0,
               "min": 1000.0,
-              "pct_mc": 29.0611,
-              "value_usd": 26759.15
+              "pct_mc": 27.9501,
+              "value_usd": 25140.79
             },
             {
               "count": 1,
               "label": "$10k-$100k",
               "max": 100000.0,
               "min": 10000.0,
-              "pct_mc": 13.7911,
-              "value_usd": 12698.75
+              "pct_mc": 13.9558,
+              "value_usd": 12553.1
             },
             {
               "count": 0,
@@ -4472,47 +4416,47 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788660042,
-          "holders_all": 1000,
-          "holders_wallet": 1000,
-          "market_cap": 92079.0,
+          "computed_at": 1788660952,
+          "holders_all": 2000,
+          "holders_wallet": 2000,
+          "market_cap": 89949.0,
           "pool_excluded": 0,
           "tiers": [
             {
-              "count": 865,
+              "count": 1868,
               "emoji": "\ud83e\udd90",
               "max": 100.0,
               "min": 0.0,
-              "pct_mc": 14.5744,
+              "pct_mc": 15.6469,
               "tier": "Shrimp",
-              "value_usd": 13419.95
+              "value_usd": 14074.25
             },
             {
-              "count": 120,
+              "count": 118,
               "emoji": "\ud83e\udd80",
               "max": 1000.0,
               "min": 100.0,
-              "pct_mc": 41.7355,
+              "pct_mc": 42.4053,
               "tier": "Crab",
-              "value_usd": 38429.67
+              "value_usd": 38143.16
             },
             {
-              "count": 14,
+              "count": 13,
               "emoji": "\ud83d\udc1f",
               "max": 10000.0,
               "min": 1000.0,
-              "pct_mc": 29.0611,
+              "pct_mc": 27.9501,
               "tier": "Fish",
-              "value_usd": 26759.15
+              "value_usd": 25140.79
             },
             {
               "count": 1,
               "emoji": "\ud83d\udc2c",
               "max": 100000.0,
               "min": 10000.0,
-              "pct_mc": 13.7911,
+              "pct_mc": 13.9558,
               "tier": "Dolphin",
-              "value_usd": 12698.75
+              "value_usd": 12553.1
             },
             {
               "count": 0,
@@ -4525,51 +4469,51 @@
             }
           ]
         },
-        "dust_count": 505,
+        "dust_count": 1510,
         "dust_limit_usd": 10.0,
-        "dust_pct_mc": 2.468,
-        "dust_pct_supply": 2.4683,
-        "dust_value_usd": 2272.52,
+        "dust_pct_mc": 3.2876,
+        "dust_pct_supply": 3.2879,
+        "dust_value_usd": 2957.14,
         "mid": {
-          "count": 134,
-          "pct_mc": 70.7966,
-          "value_usd": 65188.82
+          "count": 131,
+          "pct_mc": 70.3554,
+          "value_usd": 63283.95
         },
         "new_dust": 0,
         "new_real": 0,
-        "pages": 1,
-        "real_count": 495,
-        "real_pct_mc": 96.6941,
-        "real_pct_supply": 96.7036,
-        "real_value_usd": 89035.0,
+        "pages": 2,
+        "real_count": 490,
+        "real_pct_mc": 96.6705,
+        "real_pct_supply": 96.6802,
+        "real_value_usd": 86954.16,
         "source": "blockscout",
         "suspicious_dust": 0,
-        "total_fetched": 1000,
+        "total_fetched": 2000,
         "truncated": false,
-        "wallets_analyzed": 1000
+        "wallets_analyzed": 2000
       },
       "market_signal": {
         "available": true,
-        "avg_volume_7d": 290724.97,
-        "buy_pressure": 317.0,
+        "avg_volume_7d": 236981.13,
+        "buy_pressure": 285.0,
         "candles": 0,
         "high_volatility": false,
         "intra_hour_volatility": null,
         "intra_hour_volatility_max": null,
         "missing": [],
-        "price_change_pct": -52.12,
+        "price_change_pct": -59.73,
         "price_change_window": "dexscreener_h6",
         "price_range_4h": null,
         "price_stddev_4h": null,
-        "sell_pressure": 410.0,
-        "ts": 1788660046,
+        "sell_pressure": 376.0,
+        "ts": 1788660961,
         "volatility_available": false,
-        "volume_4h": 54737.23,
-        "volume_ratio_7d": 0.1883,
+        "volume_4h": 49339.71,
+        "volume_ratio_7d": 0.2082,
         "volume_source": "dexscreener_h6_scaled"
       },
-      "marketcap": 92079.0,
-      "price": 9.207e-05,
+      "marketcap": 89949.0,
+      "price": 8.994e-05,
       "symbol": "VLAD"
     },
     "0xd1632dfcb716c531ed8bec15a4586cd6f5a91e18": {
@@ -4583,7 +4527,7 @@
           "wallets_seen": 2000
         },
         "last_sent": {
-          "early_dump": 1788659151
+          "early_dump": 1788660955
         },
         "rejected_signals": 1,
         "rolling": {
@@ -4594,10 +4538,10 @@
           "ts": 1788657348,
           "wallets_seen": 2000
         },
-        "sent_event_ids": 2,
+        "sent_event_ids": 3,
         "summary": true
       },
-      "analyzed_at": 1788660046,
+      "analyzed_at": 1788660955,
       "chronology": {
         "baseline_wallets": {
           "dust_count": 0,
@@ -5580,19 +5524,342 @@
             },
             "to_ts": 1788660046,
             "truncated": false
+          },
+          {
+            "complete": true,
+            "counts": {
+              "category_moves": 8,
+              "compared_wallets": 137,
+              "decreased": 265,
+              "dust_grew_out": 1,
+              "dust_price_exit": 0,
+              "exited_total": 263,
+              "increased": 13,
+              "new_wallets": 263,
+              "same_decreased": 1,
+              "same_increased": 12,
+              "shrank_to_dust": 0,
+              "unobserved": 0
+            },
+            "from_metrics": {
+              "dust_count": 971,
+              "dust_pct_mc": 0.7809,
+              "holder_count": 2000,
+              "mc": 404880.0,
+              "price": 0.0004132,
+              "sampled": true,
+              "truncated": false,
+              "ts": 1788660046
+            },
+            "from_ts": 1788660046,
+            "movements": [
+              {
+                "address": "0x682158a3ed89353d97b4adab147a9288fa292cdb",
+                "balance_after": 31201.30720883186,
+                "balance_before": 12259.66180695014,
+                "delta_balance": 18941.645401881717,
+                "delta_pct": 154.5038166643674,
+                "from_category": "Dust",
+                "interpretation": "Wallet menambah muatan dan berpindah dari Dust ke $10-$100.",
+                "kind": "dust_grew_out",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x682158a3ed89353d97b4adab147a9288fa292cdb",
+                "to_category": "$10-$100",
+                "usd_after": 10.39003530054101,
+                "usd_before": 5.065692258631798
+              },
+              {
+                "address": "0x785ae2337e816a68b04a5ae5cda9bcaaaaaaaaaa",
+                "balance_after": 2151878.2493392425,
+                "balance_before": 4580548.979975539,
+                "delta_balance": -2428670.730636297,
+                "delta_pct": -53.02138982147214,
+                "from_category": "$1k-$10k",
+                "interpretation": "Wallet mengurangi muatan dan turun dari $1k-$10k ke $100-$1k.",
+                "kind": "category_down",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x785ae2337e816a68b04a5ae5cda9bcaaaaaaaaaa",
+                "to_category": "$100-$1k",
+                "usd_after": 716.5754570299678,
+                "usd_before": 1892.682838525893
+              },
+              {
+                "address": "0x1d0a132ced9e9dc3cfb04f6e987242c56e3ca538",
+                "balance_after": 2510862.2144315657,
+                "balance_before": 2510862.2144315657,
+                "delta_balance": 0.0,
+                "delta_pct": 0.0,
+                "from_category": "$1k-$10k",
+                "interpretation": "Wallet berpindah dari $1k-$10k ke $100-$1k terutama karena perubahan harga; balance token tidak menurun signifikan.",
+                "kind": "category_down",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x1d0a132ced9e9dc3cfb04f6e987242c56e3ca538",
+                "to_category": "$100-$1k",
+                "usd_after": 836.1171174057114,
+                "usd_before": 1037.488267003123
+              },
+              {
+                "address": "0x558c47f244581c5a8b5d82bc40934b47b3ea3784",
+                "balance_after": 251416.18701446019,
+                "balance_before": 251416.18701446019,
+                "delta_balance": 0.0,
+                "delta_pct": 0.0,
+                "from_category": "$100-$1k",
+                "interpretation": "Wallet berpindah dari $100-$1k ke $10-$100 terutama karena perubahan harga; balance token tidak menurun signifikan.",
+                "kind": "category_down",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x558c47f244581c5a8b5d82bc40934b47b3ea3784",
+                "to_category": "$10-$100",
+                "usd_after": 83.72159027581525,
+                "usd_before": 103.88516847437495
+              },
+              {
+                "address": "0x9a12a536ab0455949eeb3725b7a7ad10dc0ca7ea",
+                "balance_after": 2601779.8705616454,
+                "balance_before": 2601779.8705616454,
+                "delta_balance": 0.0,
+                "delta_pct": 0.0,
+                "from_category": "$1k-$10k",
+                "interpretation": "Wallet berpindah dari $1k-$10k ke $100-$1k terutama karena perubahan harga; balance token tidak menurun signifikan.",
+                "kind": "category_down",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x9a12a536ab0455949eeb3725b7a7ad10dc0ca7ea",
+                "to_category": "$100-$1k",
+                "usd_after": 866.3926968970279,
+                "usd_before": 1075.055442516072
+              },
+              {
+                "address": "0xa37bfe740bf81756624c2b6a9cfff1c6ea1faa8e",
+                "balance_after": 250968.6972082892,
+                "balance_before": 250968.6972082892,
+                "delta_balance": 0.0,
+                "delta_pct": 0.0,
+                "from_category": "$100-$1k",
+                "interpretation": "Wallet berpindah dari $100-$1k ke $10-$100 terutama karena perubahan harga; balance token tidak menurun signifikan.",
+                "kind": "category_down",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0xa37bfe740bf81756624c2b6a9cfff1c6ea1faa8e",
+                "to_category": "$10-$100",
+                "usd_after": 83.5725761703603,
+                "usd_before": 103.7002656864651
+              },
+              {
+                "address": "0xc2779ffb5278d5b02bfded34de4827f681f0228c",
+                "balance_after": 2813003.6242037443,
+                "balance_before": 2813003.6242037443,
+                "delta_balance": 0.0,
+                "delta_pct": 0.0,
+                "from_category": "$1k-$10k",
+                "interpretation": "Wallet berpindah dari $1k-$10k ke $100-$1k terutama karena perubahan harga; balance token tidak menurun signifikan.",
+                "kind": "category_down",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0xc2779ffb5278d5b02bfded34de4827f681f0228c",
+                "to_category": "$100-$1k",
+                "usd_after": 936.7302068598469,
+                "usd_before": 1162.3330975209872
+              },
+              {
+                "address": "0xfeaa3b9e0c552e239eac9c5a128211b4bece8127",
+                "balance_after": 2513142.5927416356,
+                "balance_before": 2513142.5927416356,
+                "delta_balance": 0.0,
+                "delta_pct": 0.0,
+                "from_category": "$1k-$10k",
+                "interpretation": "Wallet berpindah dari $1k-$10k ke $100-$1k terutama karena perubahan harga; balance token tidak menurun signifikan.",
+                "kind": "category_down",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0xfeaa3b9e0c552e239eac9c5a128211b4bece8127",
+                "to_category": "$100-$1k",
+                "usd_after": 836.8764833829647,
+                "usd_before": 1038.4305193208438
+              },
+              {
+                "address": "0xe3eaa6dcea6dbd7e0ae3cd8b4ee5b3cc636a19cb",
+                "balance_after": 0.0,
+                "balance_before": 8464389.998507332,
+                "delta_balance": -8464389.998507332,
+                "delta_pct": -100.0,
+                "from_category": "$1k-$10k",
+                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
+                "kind": "exited_total",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0xe3eaa6dcea6dbd7e0ae3cd8b4ee5b3cc636a19cb",
+                "to_category": "Keluar/0",
+                "usd_after": null,
+                "usd_before": 3497.48594738323
+              },
+              {
+                "address": "0x7d4df90bd5ce7d8524790a52e3fae15823600df5",
+                "balance_after": 0.0,
+                "balance_before": 4963888.995011386,
+                "delta_balance": -4963888.995011386,
+                "delta_pct": -100.0,
+                "from_category": "$1k-$10k",
+                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
+                "kind": "exited_total",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x7d4df90bd5ce7d8524790a52e3fae15823600df5",
+                "to_category": "Keluar/0",
+                "usd_after": null,
+                "usd_before": 2051.078932738705
+              },
+              {
+                "address": "0x7496dd7d86b2ff803d0ab20d684153fcb53e3a6a",
+                "balance_after": 0.0,
+                "balance_before": 4108760.0200543394,
+                "delta_balance": -4108760.0200543394,
+                "delta_pct": -100.0,
+                "from_category": "$1k-$10k",
+                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
+                "kind": "exited_total",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x7496dd7d86b2ff803d0ab20d684153fcb53e3a6a",
+                "to_category": "Keluar/0",
+                "usd_after": null,
+                "usd_before": 1697.739640286453
+              },
+              {
+                "address": "0x89e94432b7b1712d1a0107238d77920473aa8f6e",
+                "balance_after": 0.0,
+                "balance_before": 3550631.7945546014,
+                "delta_balance": -3550631.7945546014,
+                "delta_pct": -100.0,
+                "from_category": "$1k-$10k",
+                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
+                "kind": "exited_total",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x89e94432b7b1712d1a0107238d77920473aa8f6e",
+                "to_category": "Keluar/0",
+                "usd_after": null,
+                "usd_before": 1467.1210575099612
+              },
+              {
+                "address": "0xbd8db7c5b345b2263cf42c24551a8300fc96feff",
+                "balance_after": 0.0,
+                "balance_before": 3432529.697396288,
+                "delta_balance": -3432529.697396288,
+                "delta_pct": -100.0,
+                "from_category": "$1k-$10k",
+                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
+                "kind": "exited_total",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0xbd8db7c5b345b2263cf42c24551a8300fc96feff",
+                "to_category": "Keluar/0",
+                "usd_after": null,
+                "usd_before": 1418.3212709641464
+              },
+              {
+                "address": "0x5a17fb43794212f5fac2298747c8757b8dd94a17",
+                "balance_after": 0.0,
+                "balance_before": 3390780.1423952584,
+                "delta_balance": -3390780.1423952584,
+                "delta_pct": -100.0,
+                "from_category": "$1k-$10k",
+                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
+                "kind": "exited_total",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x5a17fb43794212f5fac2298747c8757b8dd94a17",
+                "to_category": "Keluar/0",
+                "usd_after": null,
+                "usd_before": 1401.0703548377207
+              },
+              {
+                "address": "0x5c4c4868c88401bc8357df3c53c6c735a6707fea",
+                "balance_after": 0.0,
+                "balance_before": 1880152.9981205105,
+                "delta_balance": -1880152.9981205105,
+                "delta_pct": -100.0,
+                "from_category": "$100-$1k",
+                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
+                "kind": "exited_total",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x5c4c4868c88401bc8357df3c53c6c735a6707fea",
+                "to_category": "Keluar/0",
+                "usd_after": null,
+                "usd_before": 776.8792188233949
+              },
+              {
+                "address": "0x133d9b7109ad0e1b0c54bb25c18d7d7f1738ad11",
+                "balance_after": 0.0,
+                "balance_before": 1802758.8337574303,
+                "delta_balance": -1802758.8337574303,
+                "delta_pct": -100.0,
+                "from_category": "$100-$1k",
+                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
+                "kind": "exited_total",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x133d9b7109ad0e1b0c54bb25c18d7d7f1738ad11",
+                "to_category": "Keluar/0",
+                "usd_after": null,
+                "usd_before": 744.8999501085702
+              },
+              {
+                "address": "0x7948efb79c0a2d861eb4cada358450b5dc70aa04",
+                "balance_after": 0.0,
+                "balance_before": 1472076.4266163937,
+                "delta_balance": -1472076.4266163937,
+                "delta_pct": -100.0,
+                "from_category": "$100-$1k",
+                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
+                "kind": "exited_total",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x7948efb79c0a2d861eb4cada358450b5dc70aa04",
+                "to_category": "Keluar/0",
+                "usd_after": null,
+                "usd_before": 608.2619794778939
+              },
+              {
+                "address": "0x1c264111a21327173c365800bda995d520293758",
+                "balance_after": 0.0,
+                "balance_before": 880279.8669603807,
+                "delta_balance": -880279.8669603807,
+                "delta_pct": -100.0,
+                "from_category": "$100-$1k",
+                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
+                "kind": "exited_total",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x1c264111a21327173c365800bda995d520293758",
+                "to_category": "Keluar/0",
+                "usd_after": null,
+                "usd_before": 363.7316410280293
+              },
+              {
+                "address": "0x141369acb5c074caf0d761384ffd5051694c2609",
+                "balance_after": 0.0,
+                "balance_before": 711068.6759642843,
+                "delta_balance": -711068.6759642843,
+                "delta_pct": -100.0,
+                "from_category": "$100-$1k",
+                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
+                "kind": "exited_total",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x141369acb5c074caf0d761384ffd5051694c2609",
+                "to_category": "Keluar/0",
+                "usd_after": null,
+                "usd_before": 293.8135769084423
+              },
+              {
+                "address": "0x704f3e1624cb6818542a4fa6c6f07e6f25e52a89",
+                "balance_after": 0.0,
+                "balance_before": 670590.5162431924,
+                "delta_balance": -670590.5162431924,
+                "delta_pct": -100.0,
+                "from_category": "$100-$1k",
+                "interpretation": "Saldo token menjadi 0 / wallet keluar total. Ini dapat berarti jual seluruh holding atau transfer keluar; buka Solscan untuk verifikasi.",
+                "kind": "exited_total",
+                "solscan": "https://robinhoodchain.blockscout.com/address/0x704f3e1624cb6818542a4fa6c6f07e6f25e52a89",
+                "to_category": "Keluar/0",
+                "usd_after": null,
+                "usd_before": 277.0880013116871
+              }
+            ],
+            "sampled": true,
+            "to_metrics": {
+              "dust_count": 118,
+              "dust_pct_mc": 0.3027,
+              "holder_count": 1000,
+              "mc": 326285.0,
+              "price": 0.000333,
+              "sampled": true,
+              "truncated": false,
+              "ts": 1788660962
+            },
+            "to_ts": 1788660962,
+            "truncated": false
           }
         ],
         "latest_wallets": {
-          "dust_count": 971,
-          "dust_pct_mc": 0.7809,
-          "holder_count": 2000,
-          "mc": 404880.0,
-          "price": 0.0004132,
+          "dust_count": 118,
+          "dust_pct_mc": 0.3027,
+          "holder_count": 1000,
+          "mc": 326285.0,
+          "price": 0.000333,
           "sampled": true,
           "truncated": false,
-          "ts": 1788660046,
+          "ts": 1788660955,
           "wallets": 200,
-          "wallets_seen": 2000
+          "wallets_seen": 1000
         }
       },
       "cohort": {
@@ -5603,28 +5870,28 @@
       "history": [
         {
           "buckets": {
-            "$10-$100": 641,
-            "$100-$1k": 311,
+            "$10-$100": 561,
+            "$100-$1k": 262,
             "$100k-$500k": 1,
             "$10k-$100k": 0,
-            "$1k-$10k": 76,
-            ">$0-$10": 971,
+            "$1k-$10k": 58,
+            ">$0-$10": 118,
             ">$500k": 0
           },
-          "cohort_cut50_pct": 70.5,
+          "cohort_cut50_pct": 76.0,
           "cohort_n": 200,
-          "cohort_token_pct": 53.2064,
-          "dust_count": 971,
-          "dust_pct_mc": 0.7809,
-          "dust_value_usd": 3161.53,
+          "cohort_token_pct": 45.832,
+          "dust_count": 118,
+          "dust_pct_mc": 0.3027,
+          "dust_value_usd": 987.6,
           "full": true,
-          "holder_count": 2000,
-          "mc": 404880.0,
-          "mid_count": 387,
-          "mid_pct_mc": 67.1212,
-          "price": 0.0004132,
-          "real_count": 1029,
-          "real_pct_mc": 101.27,
+          "holder_count": 1000,
+          "mc": 326285.0,
+          "mid_count": 320,
+          "mid_pct_mc": 64.184,
+          "price": 0.000333,
+          "real_count": 882,
+          "real_pct_mc": 101.1182,
           "ts": 1788652800
         }
       ],
@@ -5632,36 +5899,36 @@
         "depth": {
           "buckets": [
             {
-              "count": 971,
+              "count": 118,
               "label": ">$0-$10",
               "max": 10.0,
               "min": 0.0,
-              "pct_mc": 0.7809,
-              "value_usd": 3161.53
+              "pct_mc": 0.3027,
+              "value_usd": 987.6
             },
             {
-              "count": 641,
+              "count": 561,
               "label": "$10-$100",
               "max": 100.0,
               "min": 10.0,
-              "pct_mc": 5.9153,
-              "value_usd": 23949.88
+              "pct_mc": 6.2725,
+              "value_usd": 20466.11
             },
             {
-              "count": 311,
+              "count": 262,
               "label": "$100-$1k",
               "max": 1000.0,
               "min": 100.0,
-              "pct_mc": 24.0413,
-              "value_usd": 97338.6
+              "pct_mc": 23.9994,
+              "value_usd": 78306.36
             },
             {
-              "count": 76,
+              "count": 58,
               "label": "$1k-$10k",
               "max": 10000.0,
               "min": 1000.0,
-              "pct_mc": 43.0799,
-              "value_usd": 174421.83
+              "pct_mc": 40.1847,
+              "value_usd": 131116.53
             },
             {
               "count": 0,
@@ -5676,8 +5943,8 @@
               "label": "$100k-$500k",
               "max": 500000.0,
               "min": 100000.0,
-              "pct_mc": 28.2334,
-              "value_usd": 114311.54
+              "pct_mc": 30.6617,
+              "value_usd": 100044.59
             },
             {
               "count": 0,
@@ -5689,38 +5956,38 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788660046,
-          "holders_all": 2000,
-          "holders_wallet": 2000,
-          "market_cap": 404880.0,
+          "computed_at": 1788660955,
+          "holders_all": 1000,
+          "holders_wallet": 1000,
+          "market_cap": 326285.0,
           "pool_excluded": 0,
           "tiers": [
             {
-              "count": 1612,
+              "count": 679,
               "emoji": "\ud83e\udd90",
               "max": 100.0,
               "min": 0.0,
-              "pct_mc": 6.6962,
+              "pct_mc": 6.5751,
               "tier": "Shrimp",
-              "value_usd": 27111.41
+              "value_usd": 21453.71
             },
             {
-              "count": 311,
+              "count": 262,
               "emoji": "\ud83e\udd80",
               "max": 1000.0,
               "min": 100.0,
-              "pct_mc": 24.0413,
+              "pct_mc": 23.9994,
               "tier": "Crab",
-              "value_usd": 97338.6
+              "value_usd": 78306.36
             },
             {
-              "count": 76,
+              "count": 58,
               "emoji": "\ud83d\udc1f",
               "max": 10000.0,
               "min": 1000.0,
-              "pct_mc": 43.0799,
+              "pct_mc": 40.1847,
               "tier": "Fish",
-              "value_usd": 174421.83
+              "value_usd": 131116.53
             },
             {
               "count": 0,
@@ -5736,39 +6003,59 @@
               "emoji": "\ud83e\udd88",
               "max": null,
               "min": 100000.0,
-              "pct_mc": 28.2334,
+              "pct_mc": 30.6617,
               "tier": "Shark",
-              "value_usd": 114311.54
+              "value_usd": 100044.59
             }
           ]
         },
-        "dust_count": 971,
+        "dust_count": 118,
         "dust_limit_usd": 10.0,
-        "dust_pct_mc": 0.7809,
-        "dust_pct_supply": 0.7651,
-        "dust_value_usd": 3161.53,
+        "dust_pct_mc": 0.3027,
+        "dust_pct_supply": 0.2966,
+        "dust_value_usd": 987.6,
         "mid": {
-          "count": 387,
-          "pct_mc": 67.1212,
-          "value_usd": 271760.42
+          "count": 320,
+          "pct_mc": 64.184,
+          "value_usd": 209422.89
         },
         "new_dust": 0,
         "new_real": 0,
-        "pages": 2,
-        "real_count": 1029,
-        "real_pct_mc": 101.27,
-        "real_pct_supply": 99.2308,
-        "real_value_usd": 410021.85,
+        "pages": 1,
+        "real_count": 882,
+        "real_pct_mc": 101.1182,
+        "real_pct_supply": 99.0792,
+        "real_value_usd": 329933.6,
         "source": "blockscout",
         "suspicious_dust": 0,
-        "total_fetched": 2000,
+        "total_fetched": 1000,
         "truncated": false,
-        "wallets_analyzed": 2000
+        "wallets_analyzed": 1000
       },
-      "marketcap": 404880.0,
-      "price": 0.0004132,
+      "market_signal": {
+        "available": true,
+        "avg_volume_7d": 1021571.35,
+        "buy_pressure": 28988.0,
+        "candles": 0,
+        "high_volatility": false,
+        "intra_hour_volatility": null,
+        "intra_hour_volatility_max": null,
+        "missing": [],
+        "price_change_pct": 1450.0,
+        "price_change_window": "dexscreener_h6",
+        "price_range_4h": null,
+        "price_stddev_4h": null,
+        "sell_pressure": 30162.0,
+        "ts": 1788660962,
+        "volatility_available": false,
+        "volume_4h": 4086285.39,
+        "volume_ratio_7d": 4.0,
+        "volume_source": "dexscreener_h6_scaled"
+      },
+      "marketcap": 326285.0,
+      "price": 0.000333,
       "symbol": "LIQLORACLE"
     }
   },
-  "updated_at": 1788660046
+  "updated_at": 1788660961
 }
