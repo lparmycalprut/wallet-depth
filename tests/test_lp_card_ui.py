@@ -132,6 +132,22 @@ class ChartLpCardTest(unittest.TestCase):
         self.assertIn(f"ambang HATI-HATI {hh.DUST_CAUTION_PCT:g}% / BAHAYA "
                       f"{hh.DUST_DANGER_PCT:g}%", captions)
 
+    def test_caption_chart_lp_scanned_every_five_minutes(self):
+        """Teks kadens mengikuti permintaan user 2026-09-06 (Meteora 5 menit)."""
+        app = self._app()
+        captions = [node.value for node in app.caption]
+        lp = [text for text in captions if "Meteora Pool" in text]
+        self.assertTrue(lp, "caption card Chart LP tidak ter-render")
+        text = lp[0]
+        self.assertIn("tiap ±5 menit", text)
+        self.assertIn("perubahan holder langsung kelihatan", text)
+        # Jangan ada lagi janji "Meteora tetap 15 menit" di caption card ini.
+        self.assertNotIn("15 menit", text)
+        # Caption watchlist biasa ikut menyebut kedua lane LP secepat ini.
+        joined = "\n".join(captions)
+        self.assertIn("semua watchlist LP", joined)
+        self.assertNotIn("Chart LP (Meteora) ±15 menit", joined)
+
     def test_lp_rows_are_separate_from_holder_watchlist(self):
         app = self._app()
         keys = [button.key or "" for button in app.button]

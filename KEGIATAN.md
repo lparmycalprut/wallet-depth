@@ -166,7 +166,8 @@ Yang diminta hanya Robinhood, jadi lane dipecah (`scripts/scan_holders.py`):
   tetap 15 menit per token (`telegram_alerts`), hanya caption UI yang berubah.
 - Teks UI mengikuti: label radio, caption card, `chain_note` baris
   ("LP · scan ±5 menit"), help tombol ⚡, caption "Cadens cron" — Chart LP
-  Meteora tetap tertulis ±15 menit.
+  Meteora tetap tertulis ±15 menit *(kalimat ini berlaku sampai sesi 5; kini
+  kedua lane LP tertulis ±5 menit di semua caption)*.
 
 ## 3. Bug silang jaringan di `watchlist._github_push` (ikut diperbaiki)
 
