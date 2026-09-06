@@ -106,8 +106,18 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   (`st.session_state[MANUAL_SCAN_KEY]`) membuat kartu metrik, badge,
   watchlist, dan Chart LP ikut scan manual yang lebih baru daripada snapshot
   cron — grafik sudah lebih dulu memuat titik itu dari `holder_history.json`.
-- `scripts/scan_holders.py`: cron watchlist (target **1×/jam** sejak
-  2026-09-04), **pull + merge backup store sebelum scan**, evaluasi alert
+- `scripts/scan_holders.py`: cron watchlist. **Kadens run ±5 menit sejak
+  2026-09-06** (dulu 1×/jam → ±15 menit); lane diatur scanner, bukan cron:
+  **Robinhood LP tiap run** (±5 mnt), **Chart LP Meteora slot ±15 mnt**
+  (`lp_slot_due(now, status.updated_at)` — jangan ikut dipercepat: satu scan
+  Solana menarik Helius sampai 100.000 wallet), **watchlist biasa slot 4 jam**
+  (48 slot × 5 menit). Dua invarian yang wajib dijaga bila kadens diubah
+  lagi: `MIN_RUN_GAP_SEC` (gate run ganda) dan
+  `holder_history.MIN_POINT_GAP_SEC` harus **di antara** gate itu dan kadens
+  run tercepat — kalau ambang titik ≥ kadens, tiap titik baru menimpa titik
+  sebelumnya dan history lane itu berhenti tumbuh
+  (`tests/test_holder_history.py::FiveMinuteCadenceTest`). **Pull + merge
+  backup store sebelum scan**, evaluasi alert
   sebelum ingest history, publish snapshot, **push backup store
   sesudahnya**; exit non-zero bila 0 holder / publish snapshot gagal
   (backup gagal = `WARN` saja, tidak membuat cron merah). Scope rule
@@ -124,6 +134,11 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   `workflows` di repo) — selama ada, cron produksi terbatas 3.000
   wallet/token (token ≤ 3.000 tidak terpengaruh; baseline + kronologi
   otomatis tetap jalan). Hapus flag itu dari workflow untuk FULL penuh.
+  Berkas workflow **tidak pernah bisa** diubah dari sisi bot (GitHub App tanpa
+  izin `workflows` → 403 saat push/PUT): perubahan kadens 2026-09-06
+  (`*/5` + `WAIT=300`) karena itu disimpan sebagai `daily-effort-5menit.yml`
+  di root repo untuk disalin manual — jangan dianggap sudah terpasang sebelum
+  ada run Actions tiap 5 menit di tab **Actions**.
 
 ### Backup durable store holder
 
@@ -263,6 +278,34 @@ muncul di satu card. Tombol 🌊/📋 memanggil `set_watchlist_source()`
 Trending/Degen **tidak** menganalisa holder. Scan Meteora menganalisa
 holder per mint lalu filter dust ≥ 1% MC.
 
+### Persistensi watchlist: tulis lokal + commit latar belakang
+
+Semua mutasi watchlist (tambah ➕, hapus ✕, pindah card 📋/⚡ — Solana **dan**
+Robinhood) lewat `watchlist.add_to_watchlist` / `remove_from_watchlist` /
+`set_watchlist_source` / `add_many_to_watchlist` dengan urutan tetap:
+
+1. **journal dulu** (`watchlist_pending.json`; `save_watchlist` prune hanya
+   sesudah remote menerima) — tidak boleh dipindah ke belakang;
+2. tulis file watchlist lokal;
+3. kirim ke GitHub (`_github_push`: GET sha → merge remote+pending → PUT,
+   retry + re-fetch sha saat 409).
+
+Langkah 3 **wajib non-blocking di jalur UI**: `app.py` dan `pages/` selalu
+meneruskan `background=True`, yang men-*seed* `_REMOTE_CACHE` dengan state baru
+lalu menyerahkan commit ke worker `_queue_github_push` (satu worker per
+terhadap file; job terbaru menimpa job lama). Mengembalikan panggilan
+sinkron di handler Streamlit = membuat klik terasa macet lagi (terukur
+2,4 s/klik pada RTT 0,8 dtk, dan berlipat sampai ±2 menit saat API GitHub
+lambat karena 3 percobaan × timeout 15 dtk + pull 3× timeout 10 dtk).
+`load_watchlist()` me-flush journal yang tersisa, tapi **melewati** flush
+inline selama `push_inflight(repo_path)` masih benar (mencegah balap 409),
+dan status terakhir bisa dibaca UI lewat `push_status(repo_path)`
+(badge `🔄 sinkron…` / `⚠️ belum sinkron` di kepala card Robinhood).
+Pemanggil non-UI (cron/skrip) tetap default `background=False`.
+`_CACHE_TTL` load watchlist 60 dtk karena perubahan lokal selalu men-*seed*
+cache — menaikkan lagi TTL tidak membuat UI lebih cepat, menurunkannya
+mengembali-kan round-trip tiap rerun.
+
 ## Ambang
 
 ```text
@@ -330,7 +373,9 @@ warna hijau           : dust % MC turun >= 50% sejak tanggal masuk
                         (MCAP_DROP_TONE_PCT)
 warna merah           : dust % MC naik >= 100% sejak tanggal masuk
                         (MCAP_RISE_TONE_PCT)
-data basi             : umur data > 2 jam (STALE_AFTER_SEC; cron 1x/jam)
+data basi             : umur data > 2 jam (STALE_AFTER_SEC; cron Robinhood
+                        LP ±5 mnt / Chart LP ±15 mnt — ambangnya sengaja jauh
+                        di atas kadens supaya hanya cron yang mati yang kena)
 drift                 : |snapshot - titik history| > 0,01 pp dengan ts beda
                         (DRIFT_TOLERANCE_PP) -> baris pakai yang terbaru
 urutan baris          : default minus dust terbesar di atas (pct_change

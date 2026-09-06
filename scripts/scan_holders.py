@@ -36,13 +36,19 @@ Untuk setiap token yang discan:
    sebelumnya (``publish_holder_status(..., merge_status=...)``) supaya
    dashboard tidak kehilangan baris di antara dua run 4 jam.
 
-Dijalankan GitHub Actions dengan kadens target **±15 menit**: workflow
-memakai ``schedule: */15`` (best-effort, GitHub bisa men-throttle sampai
-±2 jam — lihat DEPLOY.md) plus **chain dispatch** (tiap run men-dispatch run
-berikutnya setelah tidur sampai batas 15 menit berikutnya). Run ganda
-(chain + schedule) dicek gate :data:`MIN_RUN_GAP_SEC` di :func:`main` dan
-dilewati tanpa kerja. Scope bisa dipaksa lewat ``--scope all`` (semua token)
-atau ``--scope fast`` (hanya LP).
+Dijalankan GitHub Actions dengan kadens run **±5 menit** sejak 2026-09-06
+(watchlist **Robinhood LP** di-scan tiap run): workflow memakai
+``schedule: */5`` (best-effort, GitHub bisa men-throttle sampai ±2 jam — lihat
+DEPLOY.md) plus **chain dispatch** (tiap run men-dispatch run berikutnya
+setelah tidur sampai batas 5 menit berikutnya). Run ganda (chain + schedule)
+dicek gate :data:`MIN_RUN_GAP_SEC` di :func:`main` dan dilewati tanpa kerja.
+
+Karena hanya Robinhood yang diminta dipercepat, **Chart LP Meteora** (Solana)
+tetap di-scan pada **slot ±15 menit**: run di luar slot itu tidak menarik
+Helius sama sekali (budget rate-limit tidak berubah), hanya card Robinhood
+yang bekerja. Watchlist biasa (Solana & Robinhood biasa) tetap slot **4 jam**.
+Scope bisa dipaksa lewat ``--scope all`` (semua token) atau ``--scope fast``
+(hanya LP, tanpa gate slot).
 """
 from __future__ import annotations
 
@@ -72,56 +78,92 @@ from telegram_alerts import (process_holder_alerts, send_test_alert,
                              tracked_wallet_addresses)
 from watchlist import load_watchlist
 
-# --- Cadens dua tingkat (2026-09-05) ----------------------------------------
-FAST_SCAN_INTERVAL_SEC = 15 * 60        # watchlist LP: tiap ±15 menit
+# --- Cadens tiga jalur (2026-09-06: Robinhood LP dipercepat ke 5 menit) -----
+# Watchlist Robinhood LP diminta user di-scan **tiap ±5 menit** "supaya exit
+# bisa lebih awal". Karena cron hanya punya satu jam dinding, yang berubah
+# adalah **kadens run** (workflow chain-dispatch): tiap 5 menit. Lane lain
+# tetap seperti semula, jadi beban Helius (Solana) dan Telegram tidak naik 3×.
+RH_FAST_SCAN_INTERVAL_SEC = 5 * 60      # Robinhood LP: tiap run
+RUN_SCAN_INTERVAL_SEC = RH_FAST_SCAN_INTERVAL_SEC  # kadens cron/chain dispatch
+METEORA_LP_SCAN_INTERVAL_SEC = 15 * 60  # Chart LP Meteora (Solana): slot 15 mnt
 REGULAR_SCAN_INTERVAL_SEC = 4 * 3600    # watchlist biasa: tetap 4 jam
-REGULAR_SLOTS = (REGULAR_SCAN_INTERVAL_SEC // FAST_SCAN_INTERVAL_SEC)  # 16
+# Alias lama: "jalur cepat" sekarang = lane Robinhood (tiap run).
+FAST_SCAN_INTERVAL_SEC = RH_FAST_SCAN_INTERVAL_SEC
+REGULAR_SLOTS = (REGULAR_SCAN_INTERVAL_SEC // RUN_SCAN_INTERVAL_SEC)  # 48
 # Token biasa yang datanya lebih tua dari ini ikut di-scan meski bukan slot
 # 4 jam (catch-up run telat/terlewat); juga jadi ambang bootstrap token baru.
-REGULAR_CATCHUP_SEC = REGULAR_SCAN_INTERVAL_SEC - FAST_SCAN_INTERVAL_SEC
+REGULAR_CATCHUP_SEC = REGULAR_SCAN_INTERVAL_SEC - RUN_SCAN_INTERVAL_SEC
 # Run ganda chain-dispatch + schedule dalam satu slot dicek dari umur
-# snapshot publish terakhir: lebih muda dari ini = skip tanpa kerja.
-MIN_RUN_GAP_SEC = FAST_SCAN_INTERVAL_SEC - 60
+# snapshot publish terakhir: lebih muda dari ini = skip tanpa kerja. Wajib
+# lebih kecil dari kadens run (5 menit) supaya lane Robinhood tidak ikut
+# dibungkam — 4 menit dipilih agar tabrakan chain+schedule tetap ter-bitih.
+MIN_RUN_GAP_SEC = RUN_SCAN_INTERVAL_SEC - 60
 
 
 def regular_slot_due(now_ts: int) -> bool:
-    """True bila ``now_ts`` jatuh di slot **4 jam** (slot 15 menit ke-%16)."""
-    return (max(0, int(now_ts)) // FAST_SCAN_INTERVAL_SEC) % REGULAR_SLOTS == 0
+    """True bila ``now_ts`` jatuh di slot **4 jam** (slot 5 menit ke-48)."""
+    return (max(0, int(now_ts)) // RUN_SCAN_INTERVAL_SEC) % REGULAR_SLOTS == 0
 
 
-def token_needs_scan(store: dict, mint: str, now_ts: int) -> bool:
+def lp_slot_due(now_ts: int, last_scan_ts: int = 0) -> bool:
+    """True bila run ini berada di **slot 15 menit** yang berbeda.
+
+    Lane Chart LP Meteora (Solana) sengaja TIDAK ikut dipercepat ke 5 menit:
+    setiap scan Solana menarik Helius sampai 100 ribu wallet. Gate-nya adalah
+    nomor slot 15 menit terakhir kali snapshot dipublish (:func:`main`
+    memakai ``updated_at`` snapshot), jadi:
+
+    - run di tengah slot (5/10 menit setelah scan) tidak bekerja sama sekali;
+    - run yang **terlewat atau gagal** tetap mengerjakan LP pada run
+      berikutnya, karena ``updated_at`` tidak maju selama publish gagal.
+    """
+    last = int(last_scan_ts or 0)
+    if last <= 0:
+        return True
+    return (max(0, int(now_ts)) // METEORA_LP_SCAN_INTERVAL_SEC) > (
+        last // METEORA_LP_SCAN_INTERVAL_SEC)
+
+
+def token_needs_scan(store: dict, mint: str, now_ts: int, *,
+                     max_age_sec: int = REGULAR_CATCHUP_SEC) -> bool:
     """Token watchlist biasa due bila belum pernah discan / datanya menua.
 
     Bootstrap: token yang baru masuk watchlist (belum punya titik history)
     ikut scan run berikutnya — tidak perlu menunggu slot 4 jam. Catch-up:
-    titik terakhir lebih tua dari :data:`REGULAR_CATCHUP_SEC` (3 jam 45
-    menit) → scan pada run berikutnya supaya run telat/terlewat tetap pulih.
+    titik terakhir lebih tua dari ``max_age_sec`` (default
+    :data:`REGULAR_CATCHUP_SEC`, 3 jam 55 menit) → scan pada run berikutnya
+    supaya run telat/terlewat tetap pulih.
     """
     rows = [row for row in (history_for_mint(store, mint) or [])
             if isinstance(row, dict) and int(row.get("ts") or 0) > 0]
     if not rows:
         return True
     latest = max(int(row.get("ts") or 0) for row in rows)
-    return latest <= 0 or (int(now_ts) - latest) >= REGULAR_CATCHUP_SEC
+    return latest <= 0 or (int(now_ts) - latest) >= int(max_age_sec)
 
 
-def build_scan_plan(watchlist: dict, store: dict, now_ts: int) -> dict:
+def build_scan_plan(watchlist: dict, store: dict, now_ts: int, *,
+                    lp_slot: bool = True) -> dict:
     """Pecah watchlist jadi scope LP (cepat) + biasa, lalu pilih yang due.
 
-    Return ``{lp, regular, due, regular_slot}`` — ``due`` adalah dict token
-    yang harus di-scan run ini (LP selalu; biasa saat slot 4 jam / catch-up /
-    bootstrap).
+    Return ``{lp, regular, due, regular_slot, lp_slot}`` — ``due`` adalah dict
+    token yang harus di-scan run ini (LP selama :func:`lp_slot_due` benar;
+    biasa saat slot 4 jam / catch-up / bootstrap). ``lp_slot=False`` dipakai
+    run di luar slot 15 menit: watchlist Meteora tidak di-scan, hanya token
+    biasa yang genuinely due. Dispatch manual (``--scope fast|all``) melewati
+    gate ini karena pemanggil yang memutuskan.
     """
     lp, regular = split_watchlist(watchlist)
     slot = regular_slot_due(now_ts)
-    due = dict(lp)
+    due = dict(lp) if lp_slot else {}
     if slot:
         due.update(regular)
     else:
         for mint, meta in regular.items():
             if token_needs_scan(store, mint, now_ts):
                 due[mint] = meta
-    return {"lp": lp, "regular": regular, "due": due, "regular_slot": slot}
+    return {"lp": lp, "regular": regular, "due": due,
+            "regular_slot": slot, "lp_slot": lp_slot}
 
 
 def recently_published(status, now_ts: int,
@@ -255,7 +297,8 @@ def main(argv=None) -> int:
           f"max_wallets={max_wallets} (FULL) "
           f"holder_source={args.holder_source or 'config(auto)'} "
           f"scope={args.scope} "
-          f"(LP ±{FAST_SCAN_INTERVAL_SEC // 60} menit · biasa ±"
+          f"(Robinhood LP ±{RUN_SCAN_INTERVAL_SEC // 60} menit · Chart LP "
+          f"Meteora ±{METEORA_LP_SCAN_INTERVAL_SEC // 60} menit · biasa ±"
           f"{REGULAR_SCAN_INTERVAL_SEC // 3600} jam)")
 
     started = time.monotonic()
@@ -274,7 +317,11 @@ def main(argv=None) -> int:
     print(f"Store holder: tokens={len(store.get('tokens') or {})} "
           f"backup={'ada' if durable else 'tidak ada'}")
 
-    plan = build_scan_plan(watchlist, store, started_wall)
+    # Lane Solana (Chart LP Meteora) hanya jalan pada slot ±15 menit; anchor-
+    # nya timestamp snapshot terakhir supaya run yang terlewat tetap mengejar.
+    lp_slot = lp_slot_due(started_wall,
+                          int((current_status or {}).get("updated_at") or 0))
+    plan = build_scan_plan(watchlist, store, started_wall, lp_slot=lp_slot)
     if args.scope == "fast":
         due = dict(plan["lp"])
     elif args.scope == "all":
@@ -289,6 +336,7 @@ def main(argv=None) -> int:
             due = {}
     print(f"Rencana scan: LP={len(plan['lp'])} "
           f"biasa={len(plan['regular'])} due={len(due)} "
+          f"slot_lp={'ya' if lp_slot else 'bukan'} "
           f"slot_4jam={'ya' if plan['regular_slot'] else 'bukan'}")
 
     if due:
@@ -405,8 +453,9 @@ def main(argv=None) -> int:
     # --- Robinhood Chain: watchlist terpisah (EVM, chain id 4663) -----------
     # Scan best-effort: kegagalan jaringan Robinhood tidak boleh membuat cron
     # Solana mati (data dashboard Solana lebih penting dari card tambahan).
-    # Split (2026-09-05): **Robinhood LP** tiap ±15 menit (pengingat > 0,1%
-    # MC berulang), **Robinhood biasa** tiap ±4 jam (rule 🔔 HIGH DROP).
+    # Split (2026-09-05, kadens LP diubah 2026-09-06): **Robinhood LP** tiap
+    # run = ±5 menit (pengingat > 0,1% MC berulang), **Robinhood biasa** tiap
+    # ±4 jam (rule 🔔 HIGH DROP).
     try:
         rh_watch = robinhood_watchlist.load_watchlist()
         if rh_watch:
@@ -432,7 +481,9 @@ def main(argv=None) -> int:
                       "chain dispatch + schedule).")
                 rh_due = {}
             print(f"Rencana scan Robinhood: LP={len(rh_lp)} "
-                  f"biasa={len(rh_regular)} due={len(rh_due)}")
+                  f"biasa={len(rh_regular)} due={len(rh_due)} "
+                  f"(LP tiap run ±{RUN_SCAN_INTERVAL_SEC // 60} menit · "
+                  f"biasa slot {REGULAR_SCAN_INTERVAL_SEC // 3600} jam)")
             if rh_due:
                 rh_analyses = robinhood_watchlist.scan_watchlist(
                     rh_due, history_store=rh_store,

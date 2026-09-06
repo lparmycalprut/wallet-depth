@@ -320,6 +320,50 @@ class DustBestFlagTest(unittest.TestCase):
         self.assertEqual(flag["level"], "unknown")
 
 
+class FiveMinuteCadenceTest(unittest.TestCase):
+    """Kadens 5 menit (Robinhood LP, 2026-09-06) tidak boleh membunuh history.
+
+    ``MIN_POINT_GAP_SEC`` adalah ambang "scan dobel": titik yang lebih muda
+    dari itu **ditimpa**, bukan ditambahkan. Di kalibrasi lama (8 menit) run
+    tiap 5 menit akan saling menimpa selamanya — store Robinhood berhenti
+    tumbuh dan grafik/Δ 4 jam membeku. Test ini mengunci invarian:
+    ``MIN_POINT_GAP_SEC < kadens run tercepat``.
+    """
+
+    BASE = 1_800_000_000
+
+    def _ingest_at(self, store, offset: int, dust: int) -> None:
+        hh.ingest_one(store, "RH", {
+            "symbol": "RH", "analyzed_at": self.BASE + offset,
+            "holders": {"dust_count": dust, "dust_pct_mc": 0.2,
+                        "dust_value_usd": 5.0, "real_count": 40,
+                        "mid": {"count": 5, "balances": {}},
+                        "cohort_now": {}}}, now=self.BASE + offset)
+
+    def test_ambang_di_bawah_kadens_run(self):
+        import scripts.scan_holders as scan
+        self.assertLess(hh.MIN_POINT_GAP_SEC, scan.RUN_SCAN_INTERVAL_SEC)
+        self.assertGreaterEqual(hh.MIN_POINT_GAP_SEC, scan.MIN_RUN_GAP_SEC)
+
+    def test_titik_per_5_menit_semua_tersimpan(self):
+        store = hh.empty_store()
+        for run in range(6):     # 0, 5, 10, 15, 20, 25 menit
+            self._ingest_at(store, run * 300, dust=run)
+        points = store["tokens"]["RH"]["points"]
+        self.assertEqual([p["ts"] for p in points],
+                         [self.BASE + run * 300 for run in range(6)])
+        self.assertEqual([p["dust_count"] for p in points], list(range(6)))
+
+    def test_run_ganda_dalam_satu_menit_tetap_ditimpa(self):
+        store = hh.empty_store()
+        self._ingest_at(store, 0, dust=1)
+        self._ingest_at(store, 60, dust=2)      # < MIN_POINT_GAP_SEC
+        points = store["tokens"]["RH"]["points"]
+        self.assertEqual(len(points), 1)
+        self.assertEqual(points[0]["ts"], self.BASE + 60)
+        self.assertEqual(points[0]["dust_count"], 2)
+
+
 class HourlyCadenceTest(unittest.TestCase):
     """Cron 1×/jam (2026-09-04): MAX_POINTS 336 = 14 hari titik mentah."""
 

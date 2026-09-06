@@ -77,6 +77,11 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
    memakai aturan/aturan yang sama. Link card memakai rh-scan.com,
    DexScreener robinhood, dan Blockscout; watchlist, snapshot, dan history
    token disimpan terpisah dari `watchlist.json` / `holder_status.json`.
+   Card **Robinhood LP** di-scan cron tiap **±5 menit** sejak 2026-09-06
+   (sebelumnya 15 menit) supaya exit LP bisa lebih awal; **Robinhood biasa**
+   tetap ±4 jam dan **Chart LP Meteora** tetap ±15 menit — lihat **Cadens
+   scan**. Aksi ➕ / ✕ / 📋 di card ini tidak menunggu GitHub lagi — lihat
+   **Sinkronisasi watchlist non-blocking**.
 
 ## Konfirmasi volume & volatilitas (filter false positive)
 
@@ -421,7 +426,7 @@ akumulasi dan bukan prediksi arah harga.
 | `helius_holders.py` | Scan Holder Khusus satu token + bar chart |
 | `holder_status.py` | Snapshot dashboard ramping (ref `holder-live`) + history ringkas + transport GitHub (JSON & byte/gzip) |
 | `core.py` | Config/key Helius, pasar DexScreener, candle hourly/harian GeckoTerminal |
-| `scripts/scan_holders.py` | Cron watchlist (target 1×/jam): holder, alert (konfirmasi volume lazy, scope early dump = token LP), catat history, publish snapshot + backup store |
+| `scripts/scan_holders.py` | Cron watchlist (run ±5 menit; Robinhood LP tiap run, Chart LP ±15 menit, biasa slot 4 jam): holder, alert (konfirmasi volume lazy, scope early dump = token LP), catat history, publish snapshot + backup store |
 | `telegram_alerts.py` | Rule dust 4 jam/baseline + ⚡ EARLY DUMP (crossing 0,1% MC, token pool, tanpa gerbang volume), dedup bucket 4 jam + jeda 1 jam, Telegram Bot API (+ link GMGN & DexScreener di pesan) |
 | `links.py` | Satu sumber URL eksternal: GMGN, DexScreener, Solscan, Meteora DLMM, HawkFi (HTML untuk UI, teks polos untuk Telegram) + slug halaman internal (`/Holder?mint=…`) |
 | `page_router.py` | Router deep link: `?mint=`/`?page=` yang jatuh ke halaman utama dipantulkan ke halaman yang dituju (`st.switch_page`) |
@@ -467,18 +472,39 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Cron GitHub Actions menargetkan **1× per jam** (`cron: "0 * * * *"` di
-`.github/workflows/daily-effort.yml`, job `timeout-minutes: 45`) dan
-menjalankan `scripts/scan_holders.py`. Schedule GitHub bersifat
-**best-effort**: run bisa telat/dilewati (terukur ±2 jam saat `*/15`), jadi
-"1 jam" adalah target, bukan janji — lihat DEPLOY.md untuk cara memverifikasi
-kadens nyata. Snapshot dibaca dari
-`holder_status.json` dan store penuh dari `holder_history.json.gz`
-(keduanya ref `holder-live`) — lihat **Backup store holder**. Lihat
-`DEPLOY.md` untuk env
-scanner (`HELIUS_API_KEY`, `GITHUB_TOKEN`) dan setup alert opsional
-(`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`). Tanpa credential Telegram,
-scan tetap berjalan dan pengiriman alert dilewati dengan aman.
+Snapshot dibaca dari `holder_status.json` dan store penuh dari
+`holder_history.json.gz` (keduanya ref `holder-live`) — lihat **Backup store
+holder**. Lihat `DEPLOY.md` untuk env scanner (`HELIUS_API_KEY`,
+`GITHUB_TOKEN`) dan setup alert opsional (`TELEGRAM_BOT_TOKEN`,
+`TELEGRAM_CHAT_ID`). Tanpa credential Telegram, scan tetap berjalan dan
+pengiriman alert dilewati dengan aman.
+
+## Cadens scan
+
+Sejak **2026-09-06** cron berjalan **tiap ±5 menit** dan scanner yang membagi
+pekerjaannya per lane (`scripts/scan_holders.py`):
+
+| Lane | Kadens | Alasan |
+| --- | --- | --- |
+| 🦅 **Watchlist Robinhood LP** | tiap run = **±5 menit** | permintaan user: "percepat fetch watchlist robinhood menjadi 5 menit sekali" |
+| 🌊 **Chart LP Meteora** (Solana) | slot **±15 menit** (`lp_slot_due`) | tiap scan Solana menarik Helius sampai 100.000 wallet — budget rate-limit tidak boleh naik 3× |
+| 📋 **Watchlist biasa** (Solana & Robinhood biasa) | slot **4 jam** = 48 slot 5 menit | tidak berubah |
+
+Run di luar slot LP tidak memanggil Helius sama sekali (log run:
+`Rencana scan: … slot_lp=bukan`). **Gate run ganda** `MIN_RUN_GAP_SEC`
+sekaligus diturunkan ke **4 menit** supaya tetap di bawah kadens 5 menit —
+kalau tidak, lane Robinhood justru dibungkam gate-nya sendiri.
+
+Kadens dijaga dua mekanisme di `.github/workflows/daily-effort.yml`: `schedule:
+"*/5 * * * *"` (fallback) dan langkah **chain dispatch** yang tidur sampai
+batas 5 menit berikutnya lalu men-dispatch run baru. Berkas workflow tidak
+bisa ditulis bot (GitHub menolak tanpa izin `workflows`), jadi kedua perubahan
+itu disiapkan di **`daily-effort-5menit.yml`** — salin isinya ke
+`.github/workflows/daily-effort.yml` lewat UI GitHub. Selama belum disalin,
+cron tetap 15 menit dan semua lane aman (Robinhood hanya belum 5 menit). Schedule GitHub bersifat
+**best-effort** — run bisa telat/dilewati (pada `*/15` pernah terukur ±2 jam)
+— jadi yang menjaga ritme adalah chain dispatch. Lihat `DEPLOY.md` untuk cara
+memverifikasi kadens nyata dan cara mengembalikan kadens ke 15 menit.
 
 ## Kunci konfigurasi
 
@@ -523,6 +549,44 @@ python -m py_compile holder_history.py holder_chronology.py meteora_screener.py 
   lp_watchlist.py core.py app.py scripts/scan_holders.py trending_ui.py \
   watchlist.py watchlist_detail.py accumulation.py
 ```
+
+## Sinkronisasi watchlist non-blocking
+
+Tombol ➕ / ✕ / 📋 di card watchlist (Solana, Chart LP, dan Robinhood)
+**tidak lagi menunggu GitHub** sebelum tabel berubah. Jalur lama menarik
+remote dua kali dalam satu klik: `remove_from_watchlist()` →
+`_load_and_merge()` (pull: sampai 3 GET × timeout 10 dtk) → `save_watchlist()`
+→ `_github_push()` (GET+PUT × 3 percobaan, timeout 15 dtk). Diukur dengan stub
+RTT 0,8 dtk: **2,40 s** per klik, 3 panggilan HTTP di jalur klik, dan
+membengkak sampai sekitar dua menit saat API lambat (retry + backoff) —
+itulah keluhan "hapus dari watchlist Robinhood kurang responsif".
+
+Sekarang (flag `background=True` yang dipakai semua jalur UI):
+
+1. state dibaca **lokal** (`_load_and_merge(local_first=True)`: cache
+   `_REMOTE_CACHE` → file watchlist), tanpa HTTP;
+2. perubahan ditulis ke file lokal + **journal** `watchlist_pending.json`
+   (kontrak lama: journal selalu ditulis sebelum write/push apa pun);
+3. cache remote di-*seed* dengan hasil baru → render ulang langsung menampilkan
+   state benar dan **tidak** pull lagi (`_CACHE_TTL` naik 15 → 60 detik);
+4. commit ke GitHub dijalankan di **thread daemon** (`_queue_github_push`),
+   satu worker per file watchlist; job terbaru menimpa job lama, jadi klik
+   cepat beruntun hanya menghasilkan satu commit final;
+5. journal dibersihkan **hanya** setelah commit sukses — kegagalan apa pun
+   membuat operasi tetap tertunda dan di-flush oleh `load_watchlist()`
+   berikutnya (yang otomatis melewat flush inline selama worker masih jalan,
+   supaya tidak balap 409).
+
+Hasil terukur setelah perubahan: **1,4 ms** untuk klik + 0,9 ms untuk render
+ulang, 0 panggilan jaringan di jalur klik. Badge kecil di kepala card
+menunjukkan statusnya: `🔄 sinkron…` (masih dikirim) atau `⚠️ belum sinkron`
+(commit terakhir gagal; lihat `watchlist.push_status()`).
+
+Catatan durability: filesystem Streamlit Cloud ephemeral, jadi window antara
+klik dan commit adalah window risiko — sebelumnya window itu sepanjang
+percobaan push (bisa puluhan detik saat API macet), sekarang ±0,4–2 dtk.
+Perubahan yang belum ter-commit hilang bila proses mati di dalam window itu,
+persis seperti push yang gagal.
 
 ## Scan manual vs snapshot cron
 

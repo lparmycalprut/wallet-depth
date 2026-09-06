@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sys
+import threading
 import time
 from datetime import datetime
 
@@ -48,7 +49,12 @@ def watchlist_address_keys(watchlist: dict | None) -> set[str]:
 
 
 # ---- short TTL cache for load_watchlist (avoid hammering API each rerun) ---
-_CACHE_TTL = 15  # seconds
+# 60 detik sejak 2026-09-06: satu klik di UI (tambah/hapus/pindah card) tidak
+# lagi menarik GitHub dua kali — perubahan lokal **men-seed** cache ini (lihat
+# :func:`_seed_remote_cache`), jadi render ulang langsung memakai state terbaru
+# tanpa menunggu TTL kedaluwarsa. TTL panjang hanya memperlambat terlihatnya
+# perubahan dari *sesi lain* (browser kedua), itu pun disusul paling lambat 60s.
+_CACHE_TTL = 60  # seconds
 # Cache per repo path: ``{repo_path: {"data": dict, "ts": float}}`` supaya
 # watchlist Solana dan Robinhood tidak saling menimpa dalam satu proses.
 _REMOTE_CACHE: dict[str, dict] = {}
@@ -74,6 +80,10 @@ def _reset_cache():
     _LAST_PUSH_ERROR["msg"] = ""
     _LAST_PUSH_ERROR["ts"] = 0.0
     _LAST_PUSH_ERROR["status"] = None
+    with _PUSH_LOCK:
+        _PUSH_QUEUES.clear()
+        _PUSH_RESULT.clear()
+        _SCAN_DISPATCH["ts"] = 0.0
 
 
 def _load_pending(path: str | None = None) -> list:
@@ -254,7 +264,9 @@ def _github_pull(repo_path: str | None = None) -> dict | None:
 
 
 def _github_push(wl: dict, action: str, max_retries: int = 3,
-                 repo_path: str | None = None) -> bool:
+                 repo_path: str | None = None,
+                 pending_path: str | None = None,
+                 merge_journal: bool = True) -> bool:
     """Commit a watchlist file to the repo with retry + re-fetch sha on 409.
 
     ``repo_path`` defaults to ``watchlist.json``; the Robinhood watchlist
@@ -263,6 +275,13 @@ def _github_push(wl: dict, action: str, max_retries: int = 3,
 
     On 409 conflict it re-fetches the latest remote, merges pending ops
     (and the original wl) to avoid lost-update, then retries.
+
+    ``pending_path`` **wajib** dipakai bersama file watchlist-nya: tanpa itu,
+    jurnal Solana ikut di-merge ke payload Robinhood (dan sebaliknya) sehingga
+    mint dari jaringan lain bisa nyempil di file yang salah.
+    ``merge_journal=False`` menutup merge itu untuk file non-watchlist
+    (``holder_status*.json`` memakai fungsi push yang sama tapi tidak punya
+    jurnal operasi).
     """
     repo_path = str(repo_path or "watchlist.json").strip().lstrip("/")
     tok = _github_token()
@@ -358,7 +377,8 @@ def _github_push(wl: dict, action: str, max_retries: int = 3,
             # a token between our earlier load and this push does not get overwritten.
             if latest_remote is not None:
                 try:
-                    pending_now = _load_pending()
+                    pending_now = _load_pending(pending_path) \
+                        if merge_journal else []
                     merged = dict(latest_remote)
                     if pending_now:
                         merged = _apply_ops(merged, pending_now)
@@ -443,6 +463,196 @@ def _github_push(wl: dict, action: str, max_retries: int = 3,
     return False
 
 
+# ---- background push: UI tidak menunggu GitHub ------------------------------
+# Satu klik ✕/➕/📋 di watchlist dulu memblokir rerun Streamlit sampai
+# commit GitHub selesai: 1 pull (≤3 GET × 10 dtk) + 1 push (GET+PUT ×3
+# percobaan, timeout 15 dtk) — terukur 2,4 s per klik pada RTT 0,8 dtk dan
+# bisa mendekati dua menit saat API lambat. Perubahan watchlist sekarang
+# ditulis lokal + di-journal **lalu** dikirim ke GitHub di thread latar:
+# UI repaint instan, jurnal dibersihkan saat commit sukses.
+PUSH_DEBOUNCE_SEC = 0.35   # klik beruntun dalam jendela ini jadi satu commit
+_PUSH_LOCK = threading.Lock()
+# ``{repo_path: {"job": (wl, action, pending_path) | None, "running": bool,
+#                "thread": Thread | None}}`` — satu worker per file watchlist.
+_PUSH_QUEUES: dict[str, dict] = {}
+_PUSH_RESULT: dict[str, dict] = {}
+_SCAN_DISPATCH: dict = {"ts": 0.0}   # rem dispatch "scan sekarang" (anti-banjir)
+# Jurnal pending dibaca-ubah-tulis (bukan append atomik): worker latar
+# belakang mem-prune jurnal tepat setelah commit sukses, dan pada saat yang
+# sama thread UI bisa menambahkan op baru. Tanpa lock, op yang baru ditulis
+# bisa hilang tertimpa hasil prune (token muncul lagi). RLock: jalur load
+# kadang sudah memegangnya.
+_JOURNAL_LOCK = threading.RLock()
+
+
+def _norm_repo_path(repo_path) -> str:
+    return str(repo_path or "watchlist.json").strip().lstrip("/")
+
+
+def _seed_remote_cache(repo_path: str, data: dict) -> None:
+    """Pakai state hasil perubahan lokal sebagai "remote terbaru" sementara.
+
+    Tanpa ini, rerun tepat setelah klik akan menarik GitHub lagi (dan bisa
+    menampilkan state **lama** karena write remote belum tentu sampai).
+    :func:`_github_push` menimpa seed ini dengan isi yang benar-benar ter-commit.
+    """
+    _REMOTE_CACHE[_norm_repo_path(repo_path)] = {"data": dict(data),
+                                                 "ts": time.time()}
+
+
+def _read_local_watchlist(local_path) -> dict | None:
+    """Isi file watchlist lokal (``None`` bila tidak ada/rusak)."""
+    try:
+        with open(str(local_path or WATCHLIST_PATH), "r",
+                  encoding="utf-8") as handle:
+            loaded = json.load(handle) or {}
+    except Exception:
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
+def _local_entry(ca: str, *, repo_path: str | None = None,
+                 local_path: str | None = None) -> dict:
+    """Entri token dari state lokal (cache remote → file lokal).
+
+    Dipakai jalur ``background`` untuk mengambil simbol sebelum journal
+    applied (journal remove sudah menghapus entry-nya di state gabungan),
+    supaya pesan commit tetap menyebut tickernya, bukan ``?``.
+    """
+    sources = (_REMOTE_CACHE.get(_norm_repo_path(repo_path), {}).get("data"),
+               _read_local_watchlist(local_path))
+    for source in sources:
+        if isinstance(source, dict):
+            entry = source.get(ca)
+            if isinstance(entry, dict):
+                return dict(entry)
+    return {}
+
+
+def push_inflight(repo_path=None) -> bool:
+    """True bila masih ada antrian/pekerjaan commit untuk file watchlist ini."""
+    with _PUSH_LOCK:
+        queue = _PUSH_QUEUES.get(_norm_repo_path(repo_path)) or {}
+        return bool(queue.get("running")) or queue.get("job") is not None
+
+
+def push_status(repo_path=None) -> dict:
+    """Status sinkronisasi latar belakang: ``{state, ts, msg}``.
+
+    ``state`` = ``idle`` (tidak pernah ada antrian) / ``syncing`` (masih
+    jalan) / ``ok`` (commit terakhir sukses) / ``error`` (gagal, jurnal
+    dipertahankan dan dicoba lagi saat load berikutnya).
+    """
+    key = _norm_repo_path(repo_path)
+    with _PUSH_LOCK:
+        queue = _PUSH_QUEUES.get(key) or {}
+        busy = bool(queue.get("running")) or queue.get("job") is not None
+        result = dict(_PUSH_RESULT.get(key) or {})
+    if busy:
+        return {"state": "syncing", "ts": result.get("ts"), "msg": ""}
+    return {"state": result.get("state") or "idle",
+            "ts": result.get("ts"), "msg": result.get("msg") or ""}
+
+
+def wait_for_pushes(repo_path=None, timeout: float = 30.0) -> None:
+    """Join worker thread satu (atau semua) file watchlist.
+
+    Hanya untuk uji/dev: menunggu commit latar belakang selesai supaya jurnal
+    bisa diperiksa. Tidak dipakai jalur UI.
+    """
+    key = _norm_repo_path(repo_path) if repo_path else None
+    for _round in range(4):
+        with _PUSH_LOCK:
+            threads = [queue.get("thread")
+                       for path, queue in _PUSH_QUEUES.items()
+                       if (key is None or path == key) and queue.get("running")]
+        live = [thread for thread in threads if thread is not None]
+        if not live:
+            return
+        for thread in live:
+            thread.join(timeout)
+
+
+def _set_push_result(repo_path: str, state: str, msg: str = "") -> None:
+    _PUSH_RESULT[repo_path] = {"state": state, "ts": time.time(),
+                                "msg": str(msg or "")}
+
+
+def _queue_github_push(wl: dict, action: str, *, repo_path: str,
+                       pending_path: str | None = None) -> None:
+    """Serahkan commit ke thread latar (fire-and-forget, satu job terakhir menang).
+
+    Job di-*coalesce*: kalau worker masih jalan, state terbaru cukup ditulis ke
+    antrian — worker mengambilnya lagi setelah commit sebelumnya, jadi klik
+    cepat beruntun tidak memicu balap commit.
+    """
+    key = _norm_repo_path(repo_path)
+    job = (dict(wl), str(action), str(pending_path or PENDING_PATH))
+    with _PUSH_LOCK:
+        queue = _PUSH_QUEUES.setdefault(key, {"job": None, "running": False,
+                                              "thread": None})
+        queue["job"] = job
+        if queue["running"]:
+            _set_push_result(key, "syncing")
+            return
+        queue["running"] = True
+        _set_push_result(key, "syncing")
+        worker = threading.Thread(target=_push_worker, args=(key,),
+                                  name=f"watchlist-push-{key}", daemon=True)
+        queue["thread"] = worker
+    worker.start()
+
+
+def _push_worker(repo_path: str) -> None:
+    """Loop commit: ambil job terbaru → ``_github_push`` → bersihkan jurnal."""
+    while True:
+        with _PUSH_LOCK:
+            queue = _PUSH_QUEUES.get(repo_path) or {}
+            job = queue.get("job")
+            queue["job"] = None
+            if job is None:
+                queue["running"] = False
+                return
+        if PUSH_DEBOUNCE_SEC > 0:
+            # Tunggu sebentar supaya rentetan klik (hapus 2 token cepat)
+            # ter-bitih jadi satu commit; state terbaru yang menang.
+            time.sleep(PUSH_DEBOUNCE_SEC)
+            with _PUSH_LOCK:
+                queue = _PUSH_QUEUES.get(repo_path) or {}
+                if queue.get("job") is not None:
+                    continue   # job lebih baru sudah masuk: lewati yang ini
+        wl, action, pending_path = job
+        try:
+            ok = _github_push(wl, action, repo_path=repo_path,
+                              pending_path=pending_path)
+        except Exception as exc:  # jangan pernah membahayakan proses UI
+            print(f"WARN: background _github_push raised: {exc} "
+                  f"repo_path={repo_path} action={action}", file=sys.stderr)
+            ok = False
+            _set_last_error(f"background push error: {exc}", status=None)
+        if ok:
+            try:
+                with _JOURNAL_LOCK:
+                    pending = _load_pending(pending_path)
+                    if pending:
+                        pushed = _REMOTE_CACHE.get(repo_path, {}).get("data")
+                        still = _prune_pending(pending,
+                                              pushed if isinstance(pushed, dict)
+                                              else wl)
+                        if still != pending:
+                            _save_pending(still, pending_path)
+            except Exception as exc:
+                print(f"WARN: background pending prune failed: {exc}",
+                      file=sys.stderr)
+            _set_push_result(repo_path, "ok")
+        else:
+            _set_push_result(repo_path, "error",
+                             str(_LAST_PUSH_ERROR.get("msg") or ""))
+            print(f"WARN: background push failed repo_path={repo_path} "
+                  f"action={action} — jurnal pending dipertahankan",
+                  file=sys.stderr)
+
+
 def _fetch_raw_remote(force_refresh: bool = False,
                       repo_path: str | None = None) -> dict | None:
     """Fetch raw remote with TTL cache, returning a copy or None.
@@ -486,17 +696,35 @@ def _fetch_raw_remote(force_refresh: bool = False,
 def _load_and_merge(force_refresh: bool = False,
                     repo_path: str | None = None,
                     local_path: str | None = None,
-                    pending_path: str | None = None) -> dict:
+                    pending_path: str | None = None,
+                    local_first: bool = False) -> dict:
     """Load raw remote + pending journal merged, without pushing.
 
     This is the non-pushing core used by add/remove to avoid double-push.
     ``repo_path``/``local_path``/``pending_path`` default to the Solana
     watchlist files; the Robinhood watchlist passes its own trio.
+
+    ``local_first=True`` (dipakai jalur mutation di UI) sama sekali tidak
+    menyentuh jaringan: state = cache remote (umurnya selalu hasil tulis/push
+    terbaru) atau file lokal, lalu journal di atasnya. :func:`_github_push`
+    tetap membaca remote terbaru sebelum commit, jadi tidak ada lost-update.
     """
     repo_path = str(repo_path or "watchlist.json").strip().lstrip("/")
     local_path = str(local_path or WATCHLIST_PATH)
     pending_path = str(pending_path or PENDING_PATH)
-    raw = _fetch_raw_remote(force_refresh=force_refresh, repo_path=repo_path)
+    if local_first:
+        cached = _REMOTE_CACHE.get(repo_path) or {}
+        raw = cached.get("data") if isinstance(cached.get("data"), dict) else None
+        if raw is None:
+            try:
+                with open(local_path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f) or {}
+                    raw = loaded if isinstance(loaded, dict) else {}
+            except Exception:
+                raw = {}
+        raw = dict(raw)
+    else:
+        raw = _fetch_raw_remote(force_refresh=force_refresh, repo_path=repo_path)
     if raw is None:
         # offline fallback to local file
         try:
@@ -510,14 +738,15 @@ def _load_and_merge(force_refresh: bool = False,
         print(f"WARN: raw watchlist not dict type={type(raw)}, resetting", file=sys.stderr)
         raw = {}
 
-    pending = _load_pending(pending_path)
-    if pending:
-        still = _prune_pending(pending, raw)
-        if still != pending:
-            _save_pending(still, pending_path)
-            pending = still
+    with _JOURNAL_LOCK:
+        pending = _load_pending(pending_path)
         if pending:
-            raw = _apply_ops(raw, pending)
+            still = _prune_pending(pending, raw)
+            if still != pending:
+                _save_pending(still, pending_path)
+                pending = still
+            if pending:
+                raw = _apply_ops(raw, pending)
     return raw
 
 
@@ -543,10 +772,20 @@ def load_watchlist(force_refresh: bool = False,
     if pending:
         # opportunistic flush: try committing the merged state once per load
         if _github_token():
-            if _github_push(merged, "sync pending ops", repo_path=repo_path):
-                _save_pending([], pending_path)
+            # Antrian commit latar belakang (dari tambah/hapus/pindah card)
+            # sudah memegang state yang sama — flush di sini hanya menambah
+            # round-trip (dan bisa balap 409) tepat saat UI merender ulang.
+            if push_inflight(repo_path):
+                print(f"INFO: load_watchlist skip flush — push {repo_path} "
+                      "masih berjalan di latar belakang", file=sys.stderr)
+            elif _github_push(merged, "sync pending ops",
+                              repo_path=repo_path,
+                              pending_path=pending_path):
+                with _JOURNAL_LOCK:
+                    _save_pending([], pending_path)
             else:
-                print(f"WARN: load_watchlist sync pending ops push failed, keeping {len(pending)} pending ops", file=sys.stderr)
+                print(f"WARN: load_watchlist sync pending ops push failed, "
+                      f"keeping {len(pending)} pending ops", file=sys.stderr)
     try:
         atomic_write_json(local_path, merged, indent=1)
     except Exception as exc:
@@ -557,8 +796,16 @@ def load_watchlist(force_refresh: bool = False,
 def save_watchlist(wl: dict, action: str = "update",
                    repo_path: str | None = None,
                    local_path: str | None = None,
-                   pending_path: str | None = None) -> bool:
-    """Write locally AND commit to GitHub. Returns True if committed."""
+                   pending_path: str | None = None,
+                   background: bool = False) -> bool:
+    """Write locally AND commit to GitHub. Returns True if committed.
+
+    ``background=True`` (jalur UI): tulis lokal + seed cache + serahkan commit
+    ke thread latar → return ``True`` segera (perubahan sudah durable di file
+    lokal & journal; sukses/gagal GitHub dibaca lewat :func:`push_status`).
+    Commit model ini tetap memakai seluruh mekanisme merge-retry
+    :func:`_github_push`, hanya tidak menunggu.
+    """
     repo_path = str(repo_path or "watchlist.json").strip().lstrip("/")
     local_path = str(local_path or WATCHLIST_PATH)
     pending_path = str(pending_path or PENDING_PATH)
@@ -567,13 +814,21 @@ def save_watchlist(wl: dict, action: str = "update",
     except Exception as exc:
         print(f"WARN: failed to save {local_path}: {exc}", file=sys.stderr)
 
-    success = _github_push(wl, action, repo_path=repo_path)
+    if background:
+        _seed_remote_cache(repo_path, wl)
+        _queue_github_push(wl, action, repo_path=repo_path,
+                           pending_path=pending_path)
+        return True
+
+    success = _github_push(wl, action, repo_path=repo_path,
+                           pending_path=pending_path)
     if success:
-        pending = _load_pending(pending_path)
-        if pending:
-            still = _prune_pending(pending, wl)
-            if still != pending:
-                _save_pending(still, pending_path)
+        with _JOURNAL_LOCK:
+            pending = _load_pending(pending_path)
+            if pending:
+                still = _prune_pending(pending, wl)
+                if still != pending:
+                    _save_pending(still, pending_path)
     else:
         print(f"WARN: save_watchlist push failed action={action}, pending journal kept", file=sys.stderr)
     return success
@@ -589,6 +844,11 @@ def _journal_many(ops: list[dict], pending_path: str | None = None) -> None:
     """Journal multiple operations with one atomic write (last op wins)."""
     if not ops:
         return
+    with _JOURNAL_LOCK:
+        _journal_many_locked(ops, pending_path)
+
+
+def _journal_many_locked(ops: list[dict], pending_path: str | None = None) -> None:
     target_pending = pending_path or PENDING_PATH
     incoming: dict[str, dict] = {}
     for op in ops:
@@ -637,7 +897,8 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
                      repo_path: str | None = None,
                      local_path: str | None = None,
                      pending_path: str | None = None,
-                     chain_id: str | None = None) -> bool:
+                     chain_id: str | None = None,
+                     background: bool = False) -> bool:
     """Add *ca* to a watchlist file.
 
     *source* tracks where the token came from (``"trending"``,
@@ -655,6 +916,10 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
     The path trio defaults to the Solana ``watchlist.json``; the
     Robinhood watchlist passes ``watchlist_robinhood.json`` so both
     networks can coexist without losing either journal.
+
+    ``background=True`` (jalur UI): tidak ada pull GitHub sebelum menulis,
+    commit + dispatch scan dijalankan di thread latar sehingga tombol
+    "tambah token" langsung menampilkan barisnya.
     """
     ca = normalize_address(ca)
     if not ca:
@@ -687,7 +952,8 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
         pass
     # use non-pushing loader to avoid double push
     wl = _load_and_merge(force_refresh=False, repo_path=repo_path,
-                         local_path=local_path, pending_path=pending_path)
+                         local_path=local_path, pending_path=pending_path,
+                         local_first=background)
     wl[ca] = {**entry, **(wl.get(ca) or {})}
     if symbol and symbol != "?":
         wl[ca]["symbol"] = symbol
@@ -697,16 +963,20 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
         wl[ca]["avg_cost"] = float(avg_cost)
     saved = save_watchlist(wl, f"add {symbol} ({ca[:8]}…)",
                            repo_path=repo_path, local_path=local_path,
-                           pending_path=pending_path)
-    # Ask Actions to pull the last 48h immediately (best-effort).
-    request_immediate_scan()
+                           pending_path=pending_path, background=background)
+    # Ask Actions to pull the last 48h immediately (best-effort, non-blocking).
+    if background:
+        dispatch_scan_async()
+    else:
+        request_immediate_scan()
     return saved
 
 
 def add_many_to_watchlist(rows, *, source: str = "",
                           repo_path: str | None = None,
                           local_path: str | None = None,
-                          pending_path: str | None = None) -> dict:
+                          pending_path: str | None = None,
+                          background: bool = False) -> dict:
     """Add unique scan rows in one local save/GitHub push.
 
     Each row must contain ``ca`` (``mint`` is accepted as a fallback) and may
@@ -717,7 +987,8 @@ def add_many_to_watchlist(rows, *, source: str = "",
     rows = list(rows or [])
     watchlist = dict(_load_and_merge(force_refresh=False, repo_path=repo_path,
                                      local_path=local_path,
-                                     pending_path=pending_path) or {})
+                                     pending_path=pending_path,
+                                     local_first=background) or {})
     known = watchlist_address_keys(watchlist)
     seen: set[str] = set()
     operations: list[dict] = []
@@ -783,13 +1054,37 @@ def add_many_to_watchlist(rows, *, source: str = "",
 
     label = f"add {len(added_addresses)} token dari {source or 'scanner'}"
     saved = save_watchlist(watchlist, label, repo_path=repo_path,
-                           local_path=local_path, pending_path=pending_path)
-    request_immediate_scan()
+                           local_path=local_path, pending_path=pending_path,
+                           background=background)
+    if background:
+        dispatch_scan_async()
+    else:
+        request_immediate_scan()
     return {
         "added": len(added_addresses), "skipped": skipped,
         "duplicates": duplicates, "invalid": invalid,
         "saved": bool(saved), "addresses": added_addresses,
     }
+
+
+def dispatch_scan_async(*, min_gap_sec: float = 10.0) -> bool:
+    """Dispatch workflow di thread latar (non-blocking) dengan rem anti-banjir.
+
+    :func:`request_immediate_scan` adalah POST biasa yang best-effort: tidak
+    ada hasilnya yang dibaca UI, jadi tidak perlu memblokir klik "tambah
+    token". ``min_gap_sec`` menggabungkan rentetan tambah (mis. 5 token dari
+    scanner) jadi satu dispatch — run ``scan_all`` toh memproses seluruh
+    watchlist.
+    """
+    now = time.time()
+    with _PUSH_LOCK:
+        last = float(_SCAN_DISPATCH.get("ts") or 0.0)
+        if now - last < max(0.0, float(min_gap_sec)):
+            return False
+        _SCAN_DISPATCH["ts"] = now
+    threading.Thread(target=request_immediate_scan, daemon=True,
+                     name="watchlist-scan-dispatch").start()
+    return True
 
 
 def request_immediate_scan() -> bool:
@@ -798,7 +1093,7 @@ def request_immediate_scan() -> bool:
     Input ``scan_all=true`` membuat run dispatch memakai ``--scope all
     --ignore-gap``: token yang baru ditambahkan (LP maupun biasa) di-scan
     segera tanpa menunggu slot 4 jam watchlist biasa dan tanpa gate run
-    ganda (run cepat ±15 menit mungkin baru saja lewat).
+    ganda (run cepat ±5 menit mungkin baru saja lewat).
     """
     tok = _github_token()
     if not tok:
@@ -822,7 +1117,15 @@ def request_immediate_scan() -> bool:
 
 def remove_from_watchlist(ca: str, *, repo_path: str | None = None,
                           local_path: str | None = None,
-                          pending_path: str | None = None) -> bool:
+                          pending_path: str | None = None,
+                          background: bool = False) -> bool:
+    """Hapus satu token dari watchlist.
+
+    ``background=True`` dipakai tombol ✕ di UI: state dibaca dari cache/file
+    lokal (tanpa pull GitHub), hasil penghapusan ditulis lokal + di-journal,
+    dan commit ke GitHub jalan di thread latar — tabel langsung berubah tanpa
+    membuat user menunggu round-trip API.
+    """
     ca = normalize_address(ca)
     if not ca:
         return False
@@ -830,31 +1133,39 @@ def remove_from_watchlist(ca: str, *, repo_path: str | None = None,
         _journal({"op": "remove", "ca": ca})
     else:
         _journal({"op": "remove", "ca": ca}, pending_path=pending_path)
+    meta = (_local_entry(ca, repo_path=repo_path, local_path=local_path)
+            if background else {})
     wl = _load_and_merge(force_refresh=False, repo_path=repo_path,
-                         local_path=local_path, pending_path=pending_path)
-    meta = wl.pop(ca, None) or {}
+                         local_path=local_path, pending_path=pending_path,
+                         local_first=background)
+    meta = wl.pop(ca, None) or meta
     return save_watchlist(wl, f"remove {meta.get('symbol', '?')} "
                               f"({ca[:8]}…)",
                           repo_path=repo_path, local_path=local_path,
-                          pending_path=pending_path)
+                          pending_path=pending_path, background=background)
 
 
 def set_watchlist_source(ca: str, source: str, *,
                          repo_path: str | None = None,
                          local_path: str | None = None,
-                         pending_path: str | None = None) -> bool:
+                         pending_path: str | None = None,
+                         background: bool = False) -> bool:
     """Pindahkan token antar card watchlist dengan mengubah ``source``.
 
     ``source="meteora"`` → masuk card **Chart LP** (watchlist Meteora di
     bagian atas dashboard); ``source="manual"`` → kembali ke watchlist
     holder biasa. Entri yang belum ada di watchlist tidak dibuat.
+
+    ``background=True`` = sama seperti tambah/hapus: state dibaca lokal,
+    commit ke GitHub di thread latar (tombol 📋/⚡ di baris tidak menunggu).
     """
     ca = normalize_address(ca)
     source = str(source or "").strip().lower()
     if not ca or not source:
         return False
     wl = _load_and_merge(force_refresh=False, repo_path=repo_path,
-                         local_path=local_path, pending_path=pending_path)
+                         local_path=local_path, pending_path=pending_path,
+                         local_first=background)
     entry = wl.get(ca)
     if not isinstance(entry, dict):
         # Tidak membuat entri baru: hanya token yang sudah ada yang dipindah.
@@ -870,7 +1181,7 @@ def set_watchlist_source(ca: str, source: str, *,
     symbol = entry.get("symbol") or "?"
     return save_watchlist(wl, f"move {symbol} ({ca[:8]}…) → {source}",
                           repo_path=repo_path, local_path=local_path,
-                          pending_path=pending_path)
+                          pending_path=pending_path, background=background)
 
 
 def update_local_meta(ca, fields):

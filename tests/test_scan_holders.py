@@ -1,10 +1,17 @@
 """Coverage dasar scanner cron analisis holder."""
 from __future__ import annotations
 
+import time
+import types
 import unittest
 from unittest import mock
 
 from scripts.scan_holders import scan_watchlist
+
+# Catatan: seluruh modul ini tetap offline karena ``tests/__init__.py``
+# men-stub ``robinhood_watchlist.load_watchlist/load_status/load_history``
+# (kill-switch suite). Test yang menguji blok Robinhood menimpa stub-nya
+# sendiri lewat ``mock.patch.object`` — termasuk ScanCadenceTest di bawah.
 
 
 class ScanWatchlistTest(unittest.TestCase):
@@ -470,3 +477,192 @@ class ScanScopeMergeTest(unittest.TestCase):
         scanned = set(capture["scan_args"].args[0])
         self.assertEqual(scanned, set(wl))
         self.assertIsNone(capture["pub_kwargs"].get("merge_status"))
+
+
+class ScanCadenceTest(unittest.TestCase):
+    """Cadens tiga jalur sejak 2026-09-06: Robinhood LP 5 menit per run.
+
+    User minta **watchlist Robinhood** di-fetch tiap 5 menit "supaya exit bisa
+    lebih awal", TAPI scan Solana (Chart LP Meteora) tetap ±15 menit: tiap
+    scan Solana menarik Helius sampai 100 ribu wallet, dan watchlist biasa
+    tetap slot 4 jam. Karena cron hanya punya satu jam dinding, kadens run
+    turun ke 5 menit dan lane Solana digate lewat :func:`lp_slot_due`.
+    """
+
+    def test_konstanta_kadens(self):
+        import scripts.scan_holders as mod
+        self.assertEqual(mod.RH_FAST_SCAN_INTERVAL_SEC, 5 * 60)
+        self.assertEqual(mod.RUN_SCAN_INTERVAL_SEC,
+                         mod.RH_FAST_SCAN_INTERVAL_SEC)
+        self.assertEqual(mod.FAST_SCAN_INTERVAL_SEC, mod.RUN_SCAN_INTERVAL_SEC)
+        self.assertEqual(mod.METEORA_LP_SCAN_INTERVAL_SEC, 15 * 60)
+        self.assertEqual(mod.REGULAR_SCAN_INTERVAL_SEC, 4 * 3600)
+        self.assertEqual(mod.REGULAR_SLOTS, 48)   # 4 jam / 5 menit
+        self.assertEqual(mod.REGULAR_CATCHUP_SEC, 4 * 3600 - 5 * 60)
+        # Invarian penting: gate run ganda WAJIB lebih kecil dari kadens run,
+        # kalau tidak lane Robinhood 5 menit dibungkam gate-nya sendiri.
+        self.assertLess(mod.MIN_RUN_GAP_SEC, mod.RUN_SCAN_INTERVAL_SEC)
+        self.assertEqual(mod.MIN_RUN_GAP_SEC, 4 * 60)
+
+    def test_slot_4jam_masih_di_batas_4_jam(self):
+        import scripts.scan_holders as mod
+        boundary = (int(time.time()) // mod.REGULAR_SCAN_INTERVAL_SEC) \
+            * mod.REGULAR_SCAN_INTERVAL_SEC
+        self.assertTrue(mod.regular_slot_due(boundary))
+        self.assertFalse(mod.regular_slot_due(boundary + mod.RUN_SCAN_INTERVAL_SEC))
+
+    def test_lp_slot_due(self):
+        import scripts.scan_holders as mod
+        lp = mod.METEORA_LP_SCAN_INTERVAL_SEC
+        boundary = (1_789_000_000 // lp) * lp
+        self.assertTrue(mod.lp_slot_due(boundary, 0))          # bootstrap
+        self.assertFalse(mod.lp_slot_due(boundary + 300, boundary))   # tengah slot
+        self.assertFalse(mod.lp_slot_due(boundary + 600, boundary))
+        self.assertTrue(mod.lp_slot_due(boundary + lp, boundary))     # slot baru
+        self.assertTrue(mod.lp_slot_due(boundary + 5 * lp, boundary))  # run terlewat
+        self.assertFalse(mod.lp_slot_due(boundary, boundary + lp))  # jam mundur
+
+    def test_build_scan_plan_di_luar_slot_lp_tidak_menarik_solana(self):
+        import scripts.scan_holders as mod
+        lp_mint = "LpMint111111111111111111111111111111111111"
+        reg_mint = "RegMint11111111111111111111111111111111111"
+        wl = {lp_mint: {"symbol": "LP", "source": "meteora"},
+              reg_mint: {"symbol": "REG", "source": "manual"}}
+        # LP punya titik segar (barusaja di-scan), token biasa belum pernah.
+        store = {"tokens": {lp_mint: {"points": [
+            {"ts": 1_789_000_000 + 300, "dust_count": 5}]}}}
+        plan = mod.build_scan_plan(wl, store, 1_789_000_000 + 300,
+                                   lp_slot=False)
+        self.assertFalse(plan["lp_slot"])
+        self.assertEqual(set(plan["due"]), {reg_mint})
+        plan = mod.build_scan_plan(wl, store, 1_789_000_000 + 300,
+                                   lp_slot=True)
+        self.assertEqual(set(plan["due"]), {lp_mint, reg_mint})
+
+    def _cron_env(self, *, now_ts, status_ts, solana_watch, rh_watch, mocks):
+        """Panggil ``main()`` dengan jam + IO terkendali (ExitStack + mocks)."""
+        import contextlib
+        import scripts.scan_holders as mod
+        import robinhood_watchlist as rw_mod
+
+        clock = types.SimpleNamespace(time=lambda: float(now_ts),
+                                       monotonic=lambda: 0.0,
+                                       sleep=lambda _s: None)
+        rh_ok = {ca: {"symbol": "RH", "analyzed_at": now_ts,
+                      "holders": {"total_fetched": 120,
+                                  "wallets_analyzed": 120,
+                                  "dust_count": 3, "dust_pct_mc": 0.2}}
+                 for ca in rh_watch}
+        published: dict = {}
+        stack = contextlib.ExitStack()
+
+        def add(name, patch):
+            mocks[name] = stack.enter_context(patch)
+            return mocks[name]
+
+        add("time", mock.patch.object(mod, "time", clock))
+        add("load_watchlist", mock.patch.object(mod, "load_watchlist",
+                                                return_value=solana_watch))
+        add("load_status", mock.patch.object(
+            mod, "load_holder_status",
+            return_value={"updated_at": status_ts, "tokens": {}}))
+        add("load_history", mock.patch.object(mod, "load_holder_history",
+                                               return_value={"tokens": {}}))
+        add("pull_history", mock.patch.object(mod, "pull_holder_history",
+                                              return_value=None))
+        add("seed", mock.patch.object(mod, "seed_from_status",
+                                      side_effect=lambda store, _s: store))
+        solana_ok = {ca: {"symbol": (meta or {}).get("symbol") or "S",
+                           "analyzed_at": now_ts,
+                           "holders": {"total_fetched": 100,
+                                       "wallets_analyzed": 100,
+                                       "dust_count": 1,
+                                       "dust_pct_mc": 0.1}}
+                      for ca, meta in solana_watch.items()}
+        add("solana_scan", mock.patch.object(mod, "scan_watchlist",
+                                             return_value=solana_ok))
+        add("ingest", mock.patch.object(mod, "ingest_many",
+                                        return_value={"tokens": {}}))
+        add("publish", mock.patch.object(mod, "publish_holder_status",
+                                         return_value={"updated_at": now_ts}))
+        add("backup", mock.patch.object(mod, "publish_holder_history",
+                                        return_value={"pushed": True,
+                                                      "bytes": 1, "pruned": [],
+                                                      "over_budget": False,
+                                                      "error": ""}))
+        add("alerts", mock.patch.object(mod, "process_holder_alerts",
+                                        return_value=[]))
+        add("publish_result", mock.patch.object(
+            mod, "last_publish_result",
+            return_value={"ok": True, "error": ""}))
+        add("rh_watchlist", mock.patch.object(rw_mod, "load_watchlist",
+                                             return_value=rh_watch))
+        add("rh_status", mock.patch.object(
+            rw_mod, "load_status",
+            return_value={"updated_at": status_ts, "tokens": {}}))
+        add("rh_history", mock.patch.object(rw_mod, "load_history",
+                                            return_value={"tokens": {}}))
+        add("rh_scan", mock.patch.object(rw_mod, "scan_watchlist",
+                                         return_value=rh_ok))
+        add("rh_publish", mock.patch.object(
+            rw_mod, "publish_scan",
+            side_effect=lambda *a, **k: published.update(k)
+            or {"updated_at": now_ts}))
+        mocks["published"] = published
+        return stack
+
+    def test_run_di_tengah_slot_hanya_scan_robinhood(self):
+        """Inti perubahan: run tiap 5 menit = Robinhood saja, Solana diam."""
+        import scripts.scan_holders as mod
+        lp = mod.METEORA_LP_SCAN_INTERVAL_SEC
+        boundary = (int(time.time()) // lp) * lp
+        T = boundary + mod.RUN_SCAN_INTERVAL_SEC      # 5 menit ke dalam slot
+        lp_mint = "LpMint111111111111111111111111111111111111"
+        rh_ca = "0x" + "a" * 40
+        mocks: dict = {}
+        with self._cron_env(now_ts=T, status_ts=boundary,
+                            solana_watch={lp_mint: {"symbol": "LP",
+                                                    "source": "meteora"}},
+                            rh_watch={rh_ca: {"symbol": "VLAD"}},
+                            mocks=mocks):
+            self.assertEqual(mod.main([]), 0)
+        mocks["solana_scan"].assert_not_called()   # Helius hemat: belum slot LP
+        mocks["rh_scan"].assert_called_once()      # Robinhood LP: tiap run
+        self.assertEqual(set(mocks["rh_scan"].call_args.args[0]), {rh_ca})
+
+    def test_run_di_slot_lp_tetap_scan_solana(self):
+        """Pada slot 15 menit berikutnya lane Meteora tetap jalan."""
+        import scripts.scan_holders as mod
+        lp = mod.METEORA_LP_SCAN_INTERVAL_SEC
+        boundary = (int(time.time()) // lp) * lp
+        T = boundary + lp
+        lp_mint = "LpMint111111111111111111111111111111111111"
+        mocks: dict = {}
+        with self._cron_env(now_ts=T, status_ts=boundary,
+                            solana_watch={lp_mint: {"symbol": "LP",
+                                                    "source": "meteora"}},
+                            rh_watch={}, mocks=mocks):
+            self.assertEqual(mod.main([]), 0)
+        mocks["solana_scan"].assert_called_once()
+        self.assertEqual(set(mocks["solana_scan"].call_args.args[0]),
+                         {lp_mint})
+
+    def test_gate_run_ganda_tidak_membungkam_lane_robinhood(self):
+        """Snapshot < 4 menit = run ganda (chain + schedule) → semua lane diam."""
+        import scripts.scan_holders as mod
+        lp = mod.METEORA_LP_SCAN_INTERVAL_SEC
+        boundary = (int(time.time()) // lp) * lp
+        T = boundary + lp
+        rh_ca = "0x" + "a" * 40
+        mocks: dict = {}
+        with self._cron_env(now_ts=T, status_ts=T - 60,
+                            solana_watch={"Lp11111111111111111111111111111111111111":
+                                          {"symbol": "LP", "source": "meteora"}},
+                            rh_watch={rh_ca: {"symbol": "VLAD"}},
+                            mocks=mocks):
+            self.assertEqual(mod.main([]), 0)
+        mocks["solana_scan"].assert_not_called()
+        mocks["rh_scan"].assert_not_called()
+
+if __name__ == "__main__":  # pragma: no cover
+    unittest.main()

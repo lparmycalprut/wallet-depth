@@ -87,7 +87,13 @@ MID_USD_MAX = 10_000.0           # Fish atas (<= $10k)
 # 14 hari × 6 bucket 4 jam dan snapshot dashboard tidak ikut membengkak
 # (compact_history_for_status = resample_4h, maks 84 bucket).
 MAX_POINTS = 336                 # 14 hari × 24 titik/jam (cron hourly)
-MIN_POINT_GAP_SEC = 8 * 60       # jangan dobel-titik < 8 menit
+# Ambang "scan dobel" (run ganda chain dispatch + schedule). Sejak
+# 2026-09-06 lane **Robinhood LP** di-scan tiap **5 menit**, jadi ambang ini
+# WAJIB di bawah kadens itu: dengan 8 menit tiap titik baru menimpa titik
+# sebelumnya sehingga riwayat Robinhood berhenti tumbuh (selalu 1 titik).
+# 4 menit = `scripts.scan_holders.MIN_RUN_GAP_SEC` — run yang benar-benar
+# berjarak 5 menit tetap dicatat, tabungan 60 detik masih dibuang.
+MIN_POINT_GAP_SEC = 4 * 60
 
 # Volatilitas harga (konfirmasi alert dust) dari candle hourly GeckoTerminal.
 VOLATILITY_WINDOW_HOURS = 4          # window "4 jam terakhir"

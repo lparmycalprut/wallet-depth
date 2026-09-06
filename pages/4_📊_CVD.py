@@ -139,7 +139,8 @@ else:
     st.markdown(f"**${symbol.upper()}** — `{mint}`")
     st.markdown(f"{external_links_html(mint)}", unsafe_allow_html=True)
     if st.button("➕ Tambahkan ke watchlist"):
-        add_to_watchlist(mint, symbol, source="manual")
+        add_to_watchlist(mint, symbol, source="manual",
+                         background=True)
         st.rerun()
 
 # --- Manual fetch panel -------------------------------------------------------

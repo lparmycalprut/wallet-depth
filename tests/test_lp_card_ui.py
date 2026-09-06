@@ -146,14 +146,14 @@ class ChartLpCardTest(unittest.TestCase):
         with mock.patch("watchlist.set_watchlist_source",
                         return_value=True) as move:
             self._button(app, f"to-lp-{HOLDER_MINT}").click().run()
-        move.assert_called_once_with(HOLDER_MINT, "meteora")
+        move.assert_called_once_with(HOLDER_MINT, "meteora", background=True)
 
     def test_move_back_button_returns_token_to_holder_watchlist(self):
         app = self._app()
         with mock.patch("watchlist.set_watchlist_source",
                         return_value=True) as move:
             self._button(app, f"lp-move-{LP_MINT}").click().run()
-        move.assert_called_once_with(LP_MINT, "manual")
+        move.assert_called_once_with(LP_MINT, "manual", background=True)
 
     def test_manual_add_can_target_the_lp_card(self):
         app = self._app()

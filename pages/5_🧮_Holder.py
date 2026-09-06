@@ -493,11 +493,13 @@ else:
     st.markdown(f"**${symbol.upper()}** — `{mint}`")
     st.markdown(external_links_html(mint), unsafe_allow_html=True)
     if st.button("➕ Tambahkan ke watchlist"):
+        # background=True: commit ke GitHub + dispatch scan di thread latar,
+        # jadi tombol langsung responsif (tidak menunggu API round-trip).
         if is_evm:
-            robinhood_watchlist.add_to_robinhood_watchlist(mint, symbol,
-                                                           source="manual")
+            robinhood_watchlist.add_to_robinhood_watchlist(
+                mint, symbol, source="manual", background=True)
         else:
-            add_to_watchlist(mint, symbol, source="manual")
+            add_to_watchlist(mint, symbol, source="manual", background=True)
         st.rerun()
 
 token = (status.get("tokens") or {}).get(mint) or {}

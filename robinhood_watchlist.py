@@ -5,9 +5,10 @@ Watchlist ini terpisah dari ``watchlist.json`` (Solana). File-nya:
 
 - ``watchlist_robinhood.json`` — daftar token ``0x…`` (persisted ke GitHub),
   dipecah dua card lewat field ``source``:
-  **Robinhood LP** (default, scan cepat ±15 menit + pengingat > 0,1% MC
-  berulang) dan **Robinhood biasa** (``source="regular"``, scan ±4 jam +
-  rule 🔔 HIGH DROP) — lihat :func:`split_robinhood_watchlist`.
+  **Robinhood LP** (default, scan cepat **±5 menit** sejak 2026-09-06 +
+  pengingat > 0,1% MC berulang, dibatasi bucket 15 menit per token) dan
+  **Robinhood biasa** (``source="regular"``, scan ±4 jam + rule 🔔 HIGH DROP)
+  — lihat :func:`split_robinhood_watchlist`.
 - ``watchlist_robinhood_pending.json`` — journal add/remove/source
   (gitignored).
 - ``holder_status_robinhood.json`` — snapshot dashboard (ref ``holder-live``).
@@ -44,8 +45,10 @@ CHAIN_SLUG = robinhood_holders.CHAIN_SLUG
 CHAIN_NAME = robinhood_holders.CHAIN_NAME
 
 # Watchlist Robinhood dipecah dua card (permintaan user 2026-09-05):
-# - **Robinhood LP**    : scan cepat ±15 menit bersama Chart LP (Meteora);
-#   pengingat ⚡ EARLY DUMP berulang selama dust % MC > 0,1%.
+# - **Robinhood LP**    : scan cepat — **tiap run cron ±5 menit** sejak
+#   2026-09-06 (sebelumnya 15 menit bersama Chart LP Meteora, yang memang
+#   sengaja dibiarkan 15 menit karena anggaran Helius); pengingat ⚡ EARLY
+#   DUMP berulang selama dust % MC > 0,1%, dibatasi bucket 15 menit/token.
 # - **Robinhood** (biasa): scan ±4 jam; rule 🔔 HIGH DROP (turun >= 50%
 #   dari titik high hold % MC).
 # Split memakai field ``source`` di file watchlist yang sama, seperti split
@@ -90,36 +93,60 @@ def _watchlist_module():
 
 
 def add_to_robinhood_watchlist(ca: str, symbol: str = "?", note: str = "",
-                               source: str = "manual", **kwargs) -> bool:
+                               source: str = "manual", *,
+                               background: bool = False,
+                               **kwargs) -> bool:
+    """Tambah token Robinhood ke watchlist.
+
+    ``background=True`` (dipakai card Robinhood di dashboard): hasil tulis
+    langsung terlihat di tabel, commit ke GitHub + dispatch scan dikerjakan
+    di thread latar — tidak ada lagi jeda beberapa detik saat menekan tombol.
+    """
     return _watchlist_module().add_to_watchlist(
         ca, symbol, note=note, source=source,
         repo_path=WATCHLIST_REPO_PATH,
         local_path=WATCHLIST_LOCAL_PATH,
         pending_path=WATCHLIST_PENDING_PATH,
-        chain_id=CHAIN_SLUG, **kwargs)
+        chain_id=CHAIN_SLUG, background=background, **kwargs)
 
 
-def add_many_to_robinhood_watchlist(rows, *, source: str = "manual") -> dict:
+def add_many_to_robinhood_watchlist(rows, *, source: str = "manual",
+                                    background: bool = False) -> dict:
     return _watchlist_module().add_many_to_watchlist(
-        rows, source=source,
+        rows, source=source, background=background,
         repo_path=WATCHLIST_REPO_PATH,
         local_path=WATCHLIST_LOCAL_PATH,
         pending_path=WATCHLIST_PENDING_PATH)
 
 
-def remove_from_robinhood_watchlist(ca: str) -> bool:
+def remove_from_robinhood_watchlist(ca: str, *,
+                                    background: bool = False) -> bool:
+    """Hapus token dari watchlist Robinhood.
+
+    ``background=True``: state dibaca dari cache/file lokal, perubahan ditulis
+    + di-journal, dan commit ke GitHub jalan di thread latar. Ini jalur yang
+    dipakai tombol ✕ di card — see :func:`watchlist.remove_from_watchlist`.
+    """
     return _watchlist_module().remove_from_watchlist(
         ca, repo_path=WATCHLIST_REPO_PATH,
         local_path=WATCHLIST_LOCAL_PATH,
-        pending_path=WATCHLIST_PENDING_PATH)
+        pending_path=WATCHLIST_PENDING_PATH, background=background)
 
 
-def set_robinhood_watchlist_source(ca: str, source: str) -> bool:
+def set_robinhood_watchlist_source(ca: str, source: str, *,
+                                   background: bool = False) -> bool:
+    """Pindahkan token antar card watchlist Robinhood (``background`` seperti
+    pada :func:`remove_from_robinhood_watchlist`)."""
     return _watchlist_module().set_watchlist_source(
         ca, source,
         repo_path=WATCHLIST_REPO_PATH,
         local_path=WATCHLIST_LOCAL_PATH,
-        pending_path=WATCHLIST_PENDING_PATH)
+        pending_path=WATCHLIST_PENDING_PATH, background=background)
+
+
+def sync_state() -> dict:
+    """Status sinkronisasi GitHub watchlist Robinhood (dipakai caption card)."""
+    return _watchlist_module().push_status(WATCHLIST_REPO_PATH)
 
 
 def load_status(force_refresh: bool = False) -> dict:

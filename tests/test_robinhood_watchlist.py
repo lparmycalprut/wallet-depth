@@ -152,6 +152,13 @@ class ProviderFailureTest(unittest.TestCase):
 
 
 class WrapperTest(unittest.TestCase):
+    """Wrapper Robinhood hanya memilih trio path + meneruskan ``background``.
+
+    ``background`` adalah jalur UI non-blocking (lihat 2026-09-06): default
+    ``False`` untuk pemanggil script/cron, ``True`` untuk tombol di card
+    supaya commit GitHub tidak memblokir rerun Streamlit.
+    """
+
     def test_add_passes_robinhood_paths(self):
         with mock.patch.object(wl, "add_to_watchlist", return_value=True) as add:
             self.assertTrue(rw.add_to_robinhood_watchlist(EV, "VLAD"))
@@ -160,7 +167,15 @@ class WrapperTest(unittest.TestCase):
             repo_path="watchlist_robinhood.json",
             local_path=rw.WATCHLIST_LOCAL_PATH,
             pending_path=rw.WATCHLIST_PENDING_PATH,
-            chain_id="robinhood")
+            chain_id="robinhood", background=False)
+
+    def test_add_background_flag_diteruskan(self):
+        with mock.patch.object(wl, "add_to_watchlist", return_value=True) as add:
+            self.assertTrue(rw.add_to_robinhood_watchlist(
+                EV, "VLAD", source="lp", background=True))
+        self.assertTrue(add.call_args.kwargs["background"])
+        self.assertEqual(add.call_args.kwargs["repo_path"],
+                         "watchlist_robinhood.json")
 
     def test_remove_passes_robinhood_paths(self):
         with mock.patch.object(wl, "remove_from_watchlist",
@@ -169,7 +184,31 @@ class WrapperTest(unittest.TestCase):
         remove.assert_called_once_with(
             EV, repo_path="watchlist_robinhood.json",
             local_path=rw.WATCHLIST_LOCAL_PATH,
-            pending_path=rw.WATCHLIST_PENDING_PATH)
+            pending_path=rw.WATCHLIST_PENDING_PATH, background=False)
+
+    def test_remove_background_flag_diteruskan(self):
+        with mock.patch.object(wl, "remove_from_watchlist",
+                               return_value=True) as remove:
+            self.assertTrue(rw.remove_from_robinhood_watchlist(
+                EV, background=True))
+        remove.assert_called_once_with(
+            EV, repo_path="watchlist_robinhood.json",
+            local_path=rw.WATCHLIST_LOCAL_PATH,
+            pending_path=rw.WATCHLIST_PENDING_PATH, background=True)
+
+    def test_move_background_flag_diteruskan(self):
+        with mock.patch.object(wl, "set_watchlist_source",
+                               return_value=True) as move:
+            self.assertTrue(rw.set_robinhood_watchlist_source(
+                EV, rw.RH_REGULAR_SOURCE, background=True))
+        self.assertEqual(move.call_args.args, (EV, rw.RH_REGULAR_SOURCE))
+        self.assertTrue(move.call_args.kwargs["background"])
+
+    def test_sync_state_membaca_status_push_file_robinhood(self):
+        with mock.patch.object(wl, "push_status",
+                               return_value={"state": "syncing"}) as status:
+            self.assertEqual(rw.sync_state(), {"state": "syncing"})
+        status.assert_called_once_with("watchlist_robinhood.json")
 
 
 if __name__ == "__main__":  # pragma: no cover

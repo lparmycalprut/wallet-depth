@@ -26,17 +26,44 @@ yang tidak bisa dipulihkan.
 ## GitHub Actions
 
 Workflow `.github/workflows/daily-effort.yml` ("Holder Dust Scanner")
-menargetkan **1× per jam** (`schedule: cron "0 * * * *"`) dan memanggil
-`python scripts/scan_holders.py`. Job memakai `timeout-minutes: 45` supaya
-run yang macet tidak menumpuk antre di concurrency group `holder-scanner`
-(run hourly yang lambat bisa membuat beberapa run tertunda sekaligus).
+berjalan **tiap ±5 menit** sejak 2026-09-06 (`schedule: cron "*/5 * * * *"`
++ langkah **chain dispatch**) dan memanggil `python scripts/scan_holders.py`.
+Scanner yang membagi pekerjaannya per lane: **Robinhood LP** tiap run
+(±5 menit), **Chart LP Meteora** hanya pada slot ±15 menit
+(`scripts/scan_holders.lp_slot_due`), **watchlist biasa** slot 4 jam — jadi
+kuota Helius tidak naik 3× meski cronnya 3× lebih sering. Job memakai
+`timeout-minutes: 45` supaya run yang macet tidak menumpuk antre di
+concurrency group `holder-scanner`.
+
+> **Berkas workflow tidak bisa ditulis bot.** GitHub menolak push/PUT ke
+> `.github/workflows/*` tanpa izin `workflows` (403 `refusing to allow a GitHub
+> App to create or update workflow`). Isi lengkap untuk kadens 5 menit ada di
+> **`daily-effort-5menit.yml`** di root repo — salin lewat UI GitHub (atau ubah
+> dua angka saja: `cron "*/15 * * * *"` → `"*/5 * * * *"` dan
+> `WAIT=$((900 - NOW % 900 + 20))` → `300`). Kode scanner sudah mendukung
+> keduanya: workflow 15 menit = Robinhood LP 15 menit (tidak ada yang rusak),
+> workflow 5 menit = Robinhood LP 5 menit + Chart LP tetap 15 menit.
+>
+> **Cara mengubah kadens kembali ke 15 menit** (atau ke berapa pun): dua
+> angka saja, keduanya harus bergerak bersamaan —
+> `WAIT=$((300 - NOW % 300 + 20))` → `900` di langkah "Chain run berikutnya",
+> `cron: "*/5 * * * *"` → `"*/15 * * * *"`, lalu `RH_FAST_SCAN_INTERVAL_SEC` /
+> `METEORA_LP_SCAN_INTERVAL_SEC` / `MIN_RUN_GAP_SEC` di
+> `scripts/scan_holders.py` (gate run ganda wajib **lebih kecil** dari kadens
+> run, dan `holder_history.MIN_POINT_GAP_SEC` juga — kalau tidak, titik
+> history tiap run saling menimpa). Beban Actions naik 3×: ±288 run/hari
+> (repo publik = menit Actions gratis; tiap run ±5 menit sebagian besar tidur
+> di langkah chain).
 
 > **Schedule GitHub bersifat best-effort, bukan SLA.** GitHub bisa
 > men-throttle / melewatkan schedule: pada cron `*/15 * * * *` kadens nyata
 > terukur **±2 jam** (contoh run: 18:02, 20:58, 22:57, 00:39 UTC), bukan 15
-> menit. Artinya "1 jam" adalah **target**, bukan janji — alert bucket 4 jam,
-> titik per jam, dan cooldown 1 jam dirancang toleran terhadap run yang
-> telat/dilewati.
+> menit. Karena itu ritme 5 menit dipegang **chain dispatch** (tiap run
+> men-dispatch run berikutnya setelah tidur sampai batas berikutnya) dan
+> schedule hanya jaring pengaman. Artinya "5 menit" tetap **target**, bukan
+> janji — alert bucket 4 jam, titik per 4 jam, dan cooldown 1 jam dirancang
+> toleran terhadap run yang telat/dilewati; pengingat ⚡ lane LP sengaja tidak
+> ikut dipercepat (bucket `FAST_BUCKET_SEC` tetap 15 menit per token).
 >
 > Cara memverifikasi kadens nyata:
 > - log run: baris `Holder scan selesai: … updated=<ts> durasi=<detik>`
@@ -70,7 +97,8 @@ Langkah setiap scan:
    hanya `WARN` (`backup=GAGAL (...)` di log), exit code tetap dari publish
    snapshot. `--no-push` melewati keduanya.
 
-Cadence hourly (sejak 2026-09-04) dan ukuran ref `holder-live`:
+Cadence (2026-09-04 hourly → 2026-09-05 LP 15 menit → 2026-09-06 run 5
+menit khusus lane Robinhood) dan ukuran ref `holder-live`:
 
 - `MAX_POINTS = 336` = 14 hari × 24 titik/jam per token. Grafik UI tetap
   memakai `resample_4h` (bucket 4 jam, ≤ 84 titik), jadi snapshot dashboard
@@ -96,8 +124,14 @@ Cadence hourly (sejak 2026-09-04) dan ukuran ref `holder-live`:
   watchlist) menulis `baseline` immutable + snapshot wallet; run berikutnya
   menambah interval kronologi (bounded: 24 interval / 400 wallet snapshot /
   40 movement per interval per token).
-- `MIN_POINT_GAP_SEC` (8 menit) aman untuk run tiap jam: run ganda < 8 menit
-  (schedule + `workflow_dispatch`) menimpa titik yang sama, bukan menambah.
+- `MIN_POINT_GAP_SEC` (4 menit sejak 2026-09-06; dulu 8 menit) adalah ambang
+  "run ganda": titik yang lebih muda dari itu ditimpa, bukan ditambahkan.
+  Nilainya harus berada di antara `MIN_RUN_GAP_SEC` (4 menit) dan kadens run
+  tercepat (5 menit) — di luar rentang itu history salah satu lane berhenti
+  tumbuh (`tests/test_holder_history.py::FiveMinuteCadenceTest` mengunci ini).
+  Konsekuensi lain: store mentah lane 5 menit hanya menyimpan 336 titik ≈
+  ±28 jam; grafik 4 jam & snapshot dashboard tetap 84 bucket (14 hari) karena
+  memakai `resample_4h`.
 
 Workflow memerlukan permission berikut:
 

@@ -143,6 +143,63 @@ class RobinhoodCardHolderButtonTest(unittest.TestCase):
         self.assertEqual(app.session_state["_deep_link_routed"],
                          (HOLDER_PAGE_PATH, CA))
 
+    def _button(self, app, key: str):
+        return next(node for node in app.button if (node.key or "") == key)
+
+    def test_hapus_tombol_memakai_jalur_nonblocking(self):
+        """✕ wajib memanggil penghapusan ``background=True``.
+
+        Tanpa flag itu, satu klik menahan rerun Streamlit sampai commit GitHub
+        selesai (terukur 2,4 s per klik pada RTT 0,8 dtk; bisa mendekati dua
+        menit saat API melambat) — keluhan user: "kurang responsif".
+        """
+        app = self._app()
+        with mock.patch(
+                "robinhood_watchlist.remove_from_robinhood_watchlist",
+                return_value=True) as remove:
+            self._button(app, f"rh-remove-{CA}").click().run()
+        self.assertEqual(len(app.exception), 0)
+        remove.assert_called_once_with(CA, background=True)
+
+    def test_pindah_card_memakai_jalur_nonblocking(self):
+        app = self._app()
+        with mock.patch(
+                "robinhood_watchlist.set_robinhood_watchlist_source",
+                return_value=True) as move:
+            self._button(app, f"rh-move-{CA}").click().run()
+        self.assertEqual(len(app.exception), 0)
+        move.assert_called_once_with(
+            "0x8490acd2d52d0ebd34cb13e01bd9a9380b36411d".lower(),
+            "regular", background=True)
+
+    def test_kadens_baris_menyebut_5_menit(self):
+        """Caption card + baris harus menyebut kadens Robinhood yang baru."""
+        app = self._app()
+        body = "\n".join(node.value for node in app.markdown)
+        captions = "\n".join(node.value for node in app.caption)
+        self.assertIn("LP · scan ±5 menit", body)
+        self.assertIn("tiap ±5 menit", captions)
+        self.assertNotIn("LP · scan ±15 menit", body)
+
+    def test_badge_sinkronisasi_hanya_ketika_perlu(self):
+        app = self._app()
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertNotIn("sinkron…", body)
+
+        with mock.patch("robinhood_watchlist.sync_state",
+                       return_value={"state": "syncing", "ts": None,
+                                     "msg": ""}):
+            app = self._app()
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn("🔄 sinkron…", body)
+
+        with mock.patch("robinhood_watchlist.sync_state",
+                       return_value={"state": "error", "ts": None,
+                                     "msg": "GET 500"}):
+            app = self._app()
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn("⚠️ belum sinkron", body)
+
     def test_incomplete_scan_is_not_presented_as_result(self):
         """Scan RH yang pulang dengan 0 wallet harus bilang begitu di barisnya."""
         broken = {"dust_count": 0, "dust_pct_mc": 0.0, "real_count": 0,

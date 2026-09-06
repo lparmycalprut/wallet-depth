@@ -1,3 +1,111 @@
+# Kegiatan — 6 September 2026 (sesi 4 · ✕ watchlist responsif + fetch Robinhood 5 menit)
+
+Permintaan user: **"perbaiki juga hapus dari watchlist robinhood, kurang
+responsif, lalu percepat fetch untuk watchlist robinhood menjadi 5 menit
+sekali."**
+
+## 1. Hapus dari watchlist: tidak lagi menunggu GitHub di dalam rerun
+
+Diukur dengan stub RTT 0,8 dtk (skrip sementara; angka di log Actions nyata
+lebih besar): satu klik ✕ = **2,40 s** tertahan dan **3 panggilan HTTP** di
+jalur klik — `remove_from_watchlist()` → `_load_and_merge()` menarik remote
+(sampai 3 GET × timeout 10 dtk) lalu `save_watchlist()` → `_github_push()`
+(GET sha + PUT, 3 percobaan × timeout 15 dtk + backoff). Saat API melambat
+klik bisa mendekati ±2 menit, dan setiap render ulang ikut mem-flush journal
+yang gagal → terasa "kurang responsif".
+
+**Perbaikan (`watchlist.py`)** — kontrak baru untuk jalur UI, flag
+`background=True` (default `False` untuk cron/skrip):
+
+1. state dibaca **lokal** (`_load_and_merge(local_first=True)`: cache
+   `_REMOTE_CACHE` → file watchlist) — nol HTTP;
+2. journal + tulis file lokal seperti semula;
+3. `_seed_remote_cache()` memasang state baru sebagai "remote terbaru" →
+   render ulang berikutnya **tidak** pull (TTL load watchlist 15 → **60 dtk**);
+4. commit ke GitHub di **thread daemon** `_queue_github_push` (satu worker per
+   file; job terbaru menimpa job lama, jadi klik cepat beruntun = satu commit
+   final); journal dibersihkan hanya setelah commit sukses;
+5. `load_watchlist()` melewati flush inline selama `push_inflight()` benar
+   (mencegah balap 409 dengan worker); dispatch "scan sekarang"
+   (`request_immediate_scan`) pindah ke `dispatch_scan_async()` dengan rem 10s.
+
+Terukur setelahnya: **1,4 ms** untuk klik + 0,9 ms render ulang, **0 HTTP** di
+jalur klik. Badge status di kepala card Robinhood: `🔄 sinkron…` /
+`⚠️ belum sinkron` (`push_status()`). Dipakai di semua jalur UI: ✕/📋/⚡ di
+card Robinhood (lp & biasa), ✕/📋 Chart LP, ✕/🌊 watchlist holder, form tambah
+(Solana + Robinhood), tombol ➕ di `pages/4_📊_CVD.py` dan
+`pages/5_🧮_Holder.py`.
+
+## 2. Fetch watchlist Robinhood jadi tiap 5 menit
+
+Kadens lama = **satu angka** (`FAST_SCAN_INTERVAL_SEC` 15 menit) untuk Chart
+LP Meteora **dan** Robinhood LP, dijaga chain dispatch `WAIT=900-NOW%900+20`.
+Yang diminta hanya Robinhood, jadi lane dipecah (`scripts/scan_holders.py`):
+
+| Lane | Kadens | Konstanta |
+| --- | --- | --- |
+| 🦅 Robinhood LP | tiap run = ±5 menit | `RH_FAST_SCAN_INTERVAL_SEC` = `RUN_SCAN_INTERVAL_SEC` = 300 |
+| 🌊 Chart LP Meteora | slot ±15 menit | `METEORA_LP_SCAN_INTERVAL_SEC` + gate baru `lp_slot_due(now, snapshot.updated_at)` |
+| 📋 biasa (Solana + Robinhood) | slot 4 jam | `REGULAR_SLOTS` 16 → **48** |
+
+- Cron `*/15` → **`*/5`** dan chain `900` → **`300`**. Berkas
+  `.github/workflows/daily-effort.yml` **ditolak GitHub** saat di-push/PUT
+  (GitHub App tanpa izin `workflows`, 403), jadi workflow lengkapnya disiapkan
+  di root repo sebagai **`daily-effort-5menit.yml`** untuk disalin lewat UI
+  GitHub; selama belum disalin cron tetap 15 menit dan lane Robinhood ikut 15
+  menit (tidak ada yang rusak — scanner sudah mendukung keduanya).
+- **`MIN_RUN_GAP_SEC` 840 → 240 dtk.** Ini wajib: gate run ganda dibaca dari
+  umur snapshot, dan kalau ambangnya ≥ kadens run (5 menit), lane Robinhood
+  justru dibungkam gate-nya sendiri. Invarian ini dites.
+- **`holder_history.MIN_POINT_GAP_SEC` 8 → 4 menit.** Bug yang dicegah:
+  titik yang lebih muda dari ambang **ditimpa**, jadi dengan run tiap 5 menit
+  dan ambang 8 menit store Robinhood tidak pernah punya lebih dari satu titik
+  (grafik/Δ membeku). `FiveMinuteCadenceTest` mengunci
+  `MIN_RUN_GAP_SEC ≤ MIN_POINT_GAP_SEC < kadens run`.
+- Solana **tidak** ikut 3× lebih sering: run di luar slot LP tidak memanggil
+  Helius sama sekali (log `Rencana scan: … slot_lp=bukan`), jadi kuota
+  Helius tetap. Repo publik → menit Actions gratis (±288 run/hari,
+  sebagian besar tidur di langkah chain).
+- Alert **tidak** ikut spam: bucket pengingat ⚡ `FAST_BUCKET_SEC` sengaja
+  tetap 15 menit per token (`telegram_alerts`), hanya caption UI yang berubah.
+- Teks UI mengikuti: label radio, caption card, `chain_note` baris
+  ("LP · scan ±5 menit"), help tombol ⚡, caption "Cadens cron" — Chart LP
+  Meteora tetap tertulis ±15 menit.
+
+## 3. Bug silang jaringan di `watchlist._github_push` (ikut diperbaiki)
+
+Sebelum merge journal di-push, fungsi itu selalu membaca
+`watchlist_pending.json` (**journal Solana**) — padahal ia dipakai untuk tiga
+file: `watchlist.json`, `watchlist_robinhood.json`, **dan**
+`holder_status*.json` (publish snapshot). Artinya op `add` yang masih tertunda
+di satu jaringan disuntikkan ke payload file jaringan lain
+(`_apply_ops(latest_remote, pending_solana)`), bahkan ke snapshot dashboard.
+Sekarang `_github_push(..., pending_path=…)` membaca jurnal **milik file yang
+sedang ditulis** (diteruskan oleh `save_watchlist`, `load_watchlist`, dan
+worker latar belakang), dan `holder_status.publish_holder_status` mengirim
+`merge_journal=False` karena file snapshot tidak punya jurnal operasi.
+Dua uji `GithubPushJournalIsolationTest` menguncinya.
+
+Selain itu tulis-baca journal kini dilindungi `_JOURNAL_LOCK` (RLock): worker
+latar belakang mem-prune jurnal tepat setelah commit sukses, dan tanpa lock
+op yang baru ditulis thread UI pada detik yang sama bisa ikut terhapus
+(token muncul lagi di render berikutnya).
+
+## Verifikasi
+
+`python -m pytest -q` → **824 hijau** (sebelumnya 794; +30) dan
+`python -m unittest discover -s tests -t .` lolos. Test baru: `tests/test_watchlist_background_push.py` (12: nol HTTP di
+jalur klik, commit di thread lalu journal dibersihkan, push gagal = journal
+dipertahankan + status `error`, coalescing, flag sinkron tidak berubah,
+badge/`push_status`, rem dispatch), `ScanCadenceTest` di
+`tests/test_scan_holders.py` (konstanta + `lp_slot_due` + `build_scan_plan`
++ dua integrasi `main()` dengan jam tersumbat: tengah slot hanya Robinhood,
+di slot LP Solana ikut, gate run ganda membungkam semuanya),
+`FiveMinuteCadenceTest` di `tests/test_holder_history.py` (3), dan 5 test UI
+di `tests/test_rh_card_ui.py` (✕/📋 wajib `background=True`, caption ±5 menit,
+badge sinkron). Test lama yang memassert kwargs pemanggilan diperbarui
+(`tests/test_lp_card_ui.py`, `tests/test_robinhood_watchlist.py`).
+
 # Kegiatan — 6 September 2026 (sesi 3 · tautan 🧮 Holder + scan Robinhood jujur)
 
 Laporan user: menempel URL `…streamlit.app/…/pages/5_🧮_Holder.py?mint=0x1a3876…`
