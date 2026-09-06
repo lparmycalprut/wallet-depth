@@ -75,6 +75,82 @@ class FetchHoldersTest(unittest.TestCase):
         self.assertEqual(out["fetched"], 3)
 
 
+class ProviderFailureTest(unittest.TestCase):
+    """Scan yang gagal tidak boleh terbaca seperti hasil (dust 0% = AMAN)."""
+
+    @staticmethod
+    def _http_error(status):
+        import requests
+
+        response = mock.Mock(status_code=status)
+        return requests.exceptions.HTTPError(f"{status}", response=response)
+
+    def test_transient_status_dicoba_ulang(self):
+        calls = []
+        ok = mock.Mock()
+        ok.raise_for_status.return_value = None
+        ok.json.return_value = {"status": "1", "result": {"decimals": "18"}}
+
+        def fake_get(*args, **kwargs):
+            calls.append(kwargs.get("params") or args)
+            if len(calls) == 1:
+                raise self._http_error(429)
+            return ok
+
+        with mock.patch.object(rh.requests, "get", side_effect=fake_get), \
+                mock.patch.object(rh.time, "sleep") as sleep:
+            payload = rh._jsjson({"module": "token"})
+        self.assertEqual(payload["status"], "1")
+        self.assertEqual(len(calls), 2)
+        sleep.assert_called_once()
+
+    def test_error_terminal_tidak_diulang(self):
+        def fake_get(*args, **kwargs):
+            raise self._http_error(404)
+
+        with mock.patch.object(rh.requests, "get", side_effect=fake_get), \
+                mock.patch.object(rh.time, "sleep") as sleep:
+            with self.assertRaises(Exception):
+                rh._jsjson({"module": "token"})
+        sleep.assert_not_called()
+
+    def test_is_transient_error_jenis(self):
+        import requests
+
+        self.assertTrue(rh.is_transient_error(
+            requests.exceptions.ConnectionError("closed")))
+        self.assertTrue(rh.is_transient_error(self._http_error(503)))
+        self.assertFalse(rh.is_transient_error(self._http_error(400)))
+        self.assertFalse(rh.is_transient_error(ValueError("json")))
+
+    def test_getToken_status_nol_dilempar(self):
+        """Blockscout menolak (rate limit) → error, bukan decimals -1 diam-diam."""
+        with mock.patch.object(rh, "_jsjson", return_value={
+                "status": "0", "message": "Max rate limit reached",
+                "result": None}):
+            with self.assertRaises(RuntimeError) as ctx:
+                rh.fetch_token_info(EV_LOWER)
+        self.assertIn("Max rate limit reached", str(ctx.exception))
+
+    def test_fetch_holders_menyalin_error_provider(self):
+        with mock.patch.object(rh, "fetch_token_info",
+                               side_effect=RuntimeError("getToken down")):
+            out = rh.fetch_holders(EV_LOWER, price_usd=1.0, decimals=None)
+        self.assertEqual(out["fetched"], 0)
+        self.assertEqual(out["holders"], [])
+        self.assertIn("getToken down", out["error"])
+
+    def test_analyze_token_membawa_fetch_error_ke_hasil(self):
+        with mock.patch.object(rh, "get_market", return_value={
+                "price_usd": 0.5, "marketcap": 1000.0, "symbol": "VLAD"}), \
+                mock.patch.object(rh, "fetch_token_info",
+                                  side_effect=RuntimeError("429 rate limit")):
+            result = rh.analyze_token(EV_LOWER, "VLAD", fetch_market=True)
+        holders = result["holders"]
+        self.assertEqual(holders["total_fetched"], 0)
+        self.assertIn("429 rate limit", holders["fetch_error"])
+
+
 class WrapperTest(unittest.TestCase):
     def test_add_passes_robinhood_paths(self):
         with mock.patch.object(wl, "add_to_watchlist", return_value=True) as add:

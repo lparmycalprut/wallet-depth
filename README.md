@@ -423,7 +423,8 @@ akumulasi dan bukan prediksi arah harga.
 | `core.py` | Config/key Helius, pasar DexScreener, candle hourly/harian GeckoTerminal |
 | `scripts/scan_holders.py` | Cron watchlist (target 1×/jam): holder, alert (konfirmasi volume lazy, scope early dump = token LP), catat history, publish snapshot + backup store |
 | `telegram_alerts.py` | Rule dust 4 jam/baseline + ⚡ EARLY DUMP (crossing 0,1% MC, token pool, tanpa gerbang volume), dedup bucket 4 jam + jeda 1 jam, Telegram Bot API (+ link GMGN & DexScreener di pesan) |
-| `links.py` | Satu sumber URL eksternal: GMGN, DexScreener, Solscan, Meteora DLMM, HawkFi (HTML untuk UI, teks polos untuk Telegram) |
+| `links.py` | Satu sumber URL eksternal: GMGN, DexScreener, Solscan, Meteora DLMM, HawkFi (HTML untuk UI, teks polos untuk Telegram) + slug halaman internal (`/Holder?mint=…`) |
+| `page_router.py` | Router deep link: `?mint=`/`?page=` yang jatuh ke halaman utama dipantulkan ke halaman yang dituju (`st.switch_page`) |
 | `trending_ui.py` | Listing Trending/Degen + Add All Watchlist |
 | `pre_pump_screener.py` | 🚀 Pre-Pump Screener: 4 sinyal on-chain (gelombang add likuiditas + journal, konsolidasi holder, volume calm-before-storm, TX velocity), PUMP SCORE 0–10, kartu token, auto-refresh `st.fragment(run_every=300)` |
 | `pages/4_📊_CVD.py` | Chart CVD harian |
@@ -433,6 +434,31 @@ akumulasi dan bukan prediksi arah harga.
 | `accumulation.py` | 8 heuristik deteksi akumulasi (murni kalkulasi, tanpa Helius) + skor 0–100 + store snapshot `accumulation_history.json` |
 | `pages/6_🔎_Deteksi_Akumulasi.py` | Halaman **Deteksi Akumulasi**: ringkasan skor/status per token watchlist + expander breakdown 8 metrik |
 | `pages/7_🚀_Pre-Pump.py` | Halaman mandiri Pre-Pump Screener |
+
+## Tautan Holder Analytic (deep link)
+
+Tombol **🧮** di setiap baris watchlist membuka **tab baru** ke analisa holder
+token itu. URL-nya memakai **slug halaman** Streamlit, bukan path file:
+
+```text
+https://<app>.streamlit.app/Holder?mint=<contract address>   ✅ berfungsi
+https://<app>.streamlit.app/pages/5_🧮_Holder.py?mint=…      ❌ bukan route
+```
+
+Streamlit menyetel URL halaman dari nama file di `pages/` dengan prefiks nomor
+dan emoji dibuang (`5_🧮_Holder.py` → `/Holder`, `4_📊_CVD.py` → `/CVD`,
+`6_🔎_Deteksi_Akumulasi.py` → `/Deteksi_Akumulasi`), dan pencocokannya
+**case-sensitive**. Bentuk kedua tidak cocok dengan halaman mana pun:
+Streamlit menampilkan "Page not found" lalu menjalankan halaman utama, sehingga
+`?mint=` tidak pernah dibaca.
+
+Tautan lama (dan URL yang salah ketik/salah kapitalisasi) tetap dipakai
+bersama: `page_router` di halaman utama melihat `mint=` di URL lalu memantulkan
+ke halaman yang benar lewat `st.switch_page`. Parameter yang dimengerti:
+`mint` / `ca` / `token` / `address` (CA Solana base58 atau `0x`+40 hex
+Robinhood Chain) dan `page` (slug / nomor halaman / nama file). Nilai yang
+bukan address valid diabaikan — navigasi user tidak pernah dibajak. Bisa juga
+dipakai manual: `?page=cvd&mint=…`.
 
 ## Menjalankan
 

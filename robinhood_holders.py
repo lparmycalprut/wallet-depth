@@ -58,18 +58,61 @@ def _int(value, default=0) -> int:
     return int(_float(value, float(default)))
 
 
-def _jsjson(params: dict) -> dict:
-    """GET JSON dari Blockscout dengan header browser sederhana."""
+# Blockscout publik membatasi laju (HTTP 429) dan sesekali membalas 5xx.
+# Satu request yang gagal pernah membuat seluruh scan satu token pulang
+# dengan 0 wallet — dan karena ``classify_holders`` tidak membawa pesan
+# error, angka "dust 0,00%" tampil seperti hasil scan yang sungguh-sungguh.
+# Karena itu error sementara diulang satu kali dengan jeda pendek.
+TRANSIENT_STATUS = frozenset({429, 500, 502, 503, 504})
+RETRY_ATTEMPTS = 1
+RETRY_BACKOFF_SEC = 3.0
+
+
+def _status_code(exc) -> int:
+    response = getattr(exc, "response", None)
+    try:
+        return int(getattr(response, "status_code", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def is_transient_error(exc) -> bool:
+    """True untuk kegagalan jaringan/HTTP yang layak dicoba ulang."""
+    if _status_code(exc) in TRANSIENT_STATUS:
+        return True
+    return isinstance(exc, (requests.exceptions.Timeout,
+                            requests.exceptions.ConnectionError))
+
+
+def _jsjson(params: dict, *, retries: int = RETRY_ATTEMPTS,
+            timeout: int = 25) -> dict:
+    """GET JSON dari Blockscout dengan header browser sederhana.
+
+    Kegagalan sementara (429/5xx/timeout) diulang ``retries`` kali dengan
+    jeda :data:`RETRY_BACKOFF_SEC`; error lain (dan kegagalan percobaan
+    terakhir) dilempar seperti sebelumnya supaya pemanggil tetap bisa
+    memutuskan sendiri (``fetch_holders`` mencatatnya sebagai ``error``).
+    """
     headers = {
         "accept": "application/json, text/plain, */*",
         "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
                        "Chrome/150.0.0.0 Safari/537.36"),
     }
-    response = requests.get(BLOCKSCOUT_API, params=params, headers=headers,
-                            timeout=25)
-    response.raise_for_status()
-    return response.json() or {}
+    attempts = max(0, int(retries))
+    last_exc: Exception | None = None
+    for attempt in range(attempts + 1):
+        try:
+            response = requests.get(BLOCKSCOUT_API, params=params,
+                                    headers=headers, timeout=timeout)
+            response.raise_for_status()
+            return response.json() or {}
+        except Exception as exc:  # noqa: BLE001 - jenis error ditentukan caller
+            last_exc = exc
+            if attempt >= attempts or not is_transient_error(exc):
+                raise
+            time.sleep(RETRY_BACKOFF_SEC * (attempt + 1))
+    raise last_exc  # pragma: no cover - loop selalu return/raise
 
 
 def normalize_address(address: str) -> str:
@@ -86,12 +129,24 @@ def is_robinhood_address(address: str) -> bool:
 
 
 def fetch_token_info(ca: str) -> dict:
-    """``{name, symbol, decimals, total_supply}`` dari Blockscout."""
+    """``{name, symbol, decimals, total_supply}`` dari Blockscout.
+
+    Blockscout menjawab dengan ``status: "0"`` + ``message`` untuk request
+    yang ditolak (rate limit, token belum di-index). payload seperti itu dulu
+    jatuh diam-diam ke ``decimals: -1`` lalu membuat seluruh scan holder
+    pulang dengan 0 wallet tanpa keterangan — jadi sekarang di-lempar;
+    ``analyze_token`` / ``scan_watchlist`` sudah menangkap exception itu dan
+    menuliskan error provider di log.
+    """
     payload = _jsjson({
         "module": "token",
         "action": "getToken",
         "contractaddress": normalize_address(ca),
     })
+    status = str(payload.get("status") or "").strip()
+    if status not in ("1", ""):
+        raise RuntimeError(str(payload.get("message")
+                               or "Blockscout getToken menolak request"))
     result = payload.get("result") if isinstance(payload.get("result"), dict) \
         else {}
     decimals = _int(result.get("decimals"), -1)
@@ -130,7 +185,13 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
                 "analyzed_at": int(time.time()), "source": "blockscout",
                 "decimals": decimals, "error": "price/address empty"}
     if decimals is None or decimals < 0:
-        info = fetch_token_info(ca)
+        try:
+            info = fetch_token_info(ca)
+        except Exception as exc:  # noqa: BLE001 - kontrak: selalu kembalikan dict
+            return {"holders": [], "pages": 0, "truncated": False,
+                    "fetched": 0, "analyzed_at": int(time.time()),
+                    "source": "blockscout", "decimals": None,
+                    "error": f"Blockscout getToken: {exc}"}
         decimals = info.get("decimals")
         if decimals is None or decimals < 0:
             return {"holders": [], "pages": 0, "truncated": False,
@@ -291,6 +352,12 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
     pools = _known_pools(market, extra_pools)
     snapshot["holders"] = _mark_pools(snapshot.get("holders") or [], pools)
     holder_stats = classify_holders(snapshot, mc, dust_limit=dust_limit)
+    # Alasan provider (rate limit, token belum di-index) dulu hilang di sini,
+    # sehingga scan yang pulang dengan 0 wallet terbaca seperti hasil sungguhan
+    # ("dust 0 wallet = AMAN"). Dibawa terus supaya UI + snapshot bisa jujur.
+    fetch_error = str(snapshot.get("error") or "")
+    if fetch_error:
+        holder_stats["fetch_error"] = fetch_error
 
     try:
         from solscan_holders import wallet_depth

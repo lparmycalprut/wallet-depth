@@ -42,7 +42,27 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   `holders_usable` supaya scan bersampel pendek tidak menulis apa pun, dan
   biarkan `ingest_many(..., detail=False)` agar baseline scan FULL +
   `latest_detail` + kronologi tidak tertimpa. Tombol Robinhood
-  (`robinhood_watchlist.publish_scan`) berlaku sama.
+  (`robinhood_watchlist.publish_scan`) berlaku sama — saringan
+  `holders_usable` dipasang di sana (2026-09-06) sehingga scan yang gagal /
+  mengembalikan 0 wallet **tidak pernah** masuk snapshot
+  `holder_status_robinhood.json`; titiknya tetap dicatat (ditandai
+  `degraded`) supaya jejak kegagalan terlihat, dan token itu mewarisi angka
+  lama lewat `merge_status`. Alasan provider dibawa sebagai
+  `holders["fetch_error"]` (dulu ditelan `classify_holders` sehingga "dust
+  0 wallet" terbaca seperti hasil nyata).
+- **Tautan halaman internal = slug, bukan path file.** Streamlit memberi
+  setiap file `pages/` URL dari nama file yang sudah dibersihkan (prefiks
+  nomor + emoji leading dibuang): `pages/5_🧮_Holder.py` → `/Holder`,
+  `pages/4_📊_CVD.py` → `/CVD`; frontend mencocokkan dengan
+  `pathname.endsWith('/' + url_pathname)` sehingga `pages/5_🧮_Holder.py`
+  **bukan route** (app jatuh ke halaman utama + "Page not found"). Karena itu
+  tautan 🧮 dibangun lewat `links.page_url_path` / `links.page_url` (slug +
+  `server.baseUrlPath`) dan **jangan** disambung manual. `page_router.apply()`
+  — dipanggil paling awal di `app.py` — memantulkan `?mint=|ca=|token=|address=`
+  (opsional `?page=<slug|nomor|file|path>`) yang mendarat di halaman utama ke
+  halaman yang dituju lewat `st.switch_page`, supaya tautan lama tetap hidup;
+  registry alias dibaca dari folder `pages/` (tanpa hardcoded), CA divalidasi
+  format, dan penanda `st.session_state["_deep_link_routed"]` mencegah loop.
 - `lp_watchlist.py`: card **Chart LP** — watchlist terpisah berisi token
   `source=meteora`; baris data (dust % MC, Δ poin persentase, level) +
   figure matplotlib grafik perubahan dust holder (garis ambang 0,5% / 1%)
@@ -170,6 +190,21 @@ JSON compact, Contents API base64) di ref `holder-live`:
   5 menit lewat `st.fragment(run_every=300)` + `st.rerun` — **bukan**
   `while True: time.sleep(300)` (script Streamlit tidak pernah kembali dari
   loop itu); hasil scan di-cache `st.session_state["pre_pump_results"]`.
+- `links.py` (+ `page_router.py`): **tautan internal memakai slug halaman
+  Streamlit, bukan path file.** `pages/5_🧮_Holder.py` dilayani di `/Holder`
+  (prefiks nomor + emoji dibuang, case-sensitive — frontend mencocokkan
+  `pathname.endsWith('/' + urlPathname)`); href `pages/…py` membuat Streamlit
+  jatuh ke halaman utama dengan "Page not found" sehingga `?mint=` tidak dibaca
+  (bug yang dilaporkan user 2026-09-06). `page_url_path()` meniru aturan
+  `streamlit.source_util.page_icon_and_name` (dipakai `_mpa_v1`),
+  `page_url()`/`holder_analytic_url()` root-absolute + `server.baseUrlPath`.
+  `page_router.apply()` — dipanggil **paling awal** di `app.py` — memantulkan
+  `?mint=`/`?ca=`/`?token=`/`?address=` (opsional `?page=`) ke
+  `st.switch_page`, jadi tautan lama yang sudah tersebar tetap hidup; CA
+  divalidasi dulu (base58 Solana / `0x`+40 hex) supaya sampah tidak membajak
+  navigasi, dan `st.session_state["_deep_link_routed"]` mencegah loop saat
+  user kembali ke dashboard. **Jangan** menulis ulang path halaman manual di
+  UI; tambah tombol baru lewat helper ini.
 - `pages/5_🧮_Holder.py`: Holder Analytic (di bawah CVD) + kronologi FULL.
   Sejak 2026-09-05 mendukung **dua chain**: Solana (watchlist/status/history
   utama) dan **Robinhood Chain** (`0x…`, watchlist/status/history terpisah

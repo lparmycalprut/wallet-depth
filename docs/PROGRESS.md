@@ -1,5 +1,80 @@
 # Progress
 
+## 2026-09-06 (malam): tautan 🧮 Holder Analytic tidak pernah sampai ke halamannya
+
+Laporan user: menempel
+`https://…streamlit.app/~/+/pages/5_🧮_Holder.py?mint=0x1a3876…` dengan
+keterangan *"belum berfungsi"*.
+
+### Masalah (dibuktikan lewat script, bukan asumsi)
+
+- `links.holder_analytic_link_html` membuat href `pages/5_🧮_Holder.py?mint=…`.
+  Streamlit **tidak** melayani file di `pages/` lewat path file. Registry
+  runtime app ini (dibaca langsung dari websocket `/_stcore/stream`) berisi
+  `url_pathname`: `CVD`, `Holder`, `Deteksi_Akumulasi`, `Pre-Pump`, dan
+  frontend mencocokkan URL dengan
+  `pathname.endsWith('/' + url_pathname)` (case-sensitive). Path file tidak
+  cocok dengan halaman mana pun → Streamlit menampilkan "Page not found" dan
+  menjalankan **halaman utama**, sehingga `?mint=` tidak pernah dibaca
+  halaman Holder.
+- Efek yang sama terlihat di test: `tests/test_rh_card_ui.py` sudah merah di
+  HEAD (aksi 🧮 pernah jadi tombol `st.switch_page`, lalu diganti anchor tanpa
+  target yang benar).
+- Data holder Robinhood Chain ikut diperiksa karena baris Onboard/VLAD
+  menampilkan dust 0: snapshot `holder_status_robinhood.json` di ref
+  `holder-live` (dibaca 2026-09-06 ±01:00 UTC) berisi
+  `total_fetched: 0, wallets_analyzed: 0, dust_count: 0, dust_pct_mc: 0.0`
+  untuk kedua token. Penyebabnya: error provider ditelan
+  `classify_holders` sehingga **scan gagal terbaca seperti hasil sungguhan**,
+  dan blok Robinhood — tidak seperti jalur Solana — mempublikasikan apa pun
+  tanpa saringan `holders_usable`.
+
+### Perbaikan
+
+1. **Slug halaman, bukan path file.** `links.page_url_path()` menghitung path
+   URL dengan aturan Streamlit sendiri (`source_util.page_icon_and_name`,
+   fallback lokal identik bila streamlit tidak terimpor), `links.base_url_path()`
+   menghormati `server.baseUrlPath`, dan `links.holder_analytic_url()`
+   mengembalikan `/Holder?mint=<ca>` — root-absolute sehingga tidak patah saat
+   dibuka dari halaman lain. `holder_analytic_link_html` sekarang memakainya.
+2. **`page_router.py` (baru)** + `page_router.apply()` di awal `app.py`:
+   `mint|ca|token|address` (dan `page=<slug|nomor|nama file|path>`) yang
+   mendarat di halaman utama dipantulkan ke halaman yang benar lewat
+   `st.switch_page(page, query_params={"mint": …})`. Tautan lama yang sudah
+   tersebar — termasuk URL yang ditempel user — ikut pulih. CA wajib lolos
+   format (base58 Solana / `0x`+40 hex) supaya nilai sampah tidak membajak
+   navigasi, dan penanda di `st.session_state` mencegah pantulan berulang
+   ketika user sengaja kembali ke dashboard membawa `?mint=`.
+3. **Robinhood Chain tidak lagi berbohong.** `_jsjson` mengulang error
+   sementara (429/5xx/timeout) satu kali dengan jeda; `fetch_token_info`
+   melempar bila Blockscout membalas `status: "0"` (rate limit) alih-alih
+   diam-diam mengembalikan `decimals: -1`; `fetch_holders` menyalin alasan
+   kegagalan ke `error`, dan `analyze_token` menempelnya sebagai
+   `holders.fetch_error`. `robinhood_watchlist.publish_scan` menyaring
+   analisis yang tidak layak (`holder_history.holders_usable`) dari snapshot —
+   aturan yang sama dengan cron Solana — sambil tetap mencatat titiknya di
+   history (ditandai `degraded`) supaya jejak "scan gagal" tidak hilang.
+   Baris card RH menulis **"⚠️ scan terakhir tidak lengkap (…)"**, bukan
+   "dust 0,00% MC" yang terbaca AMAN.
+4. **Halaman Holder** menampilkan alasan provider pada peringatan scan pendek
+   (`Scan holder terakhir tidak lengkap: … Alasan provider: …`).
+
+### Catatan operasional
+
+`holder_history_robinhood.json`/`holder_status_robinhood.json` tidak ada di
+repo (gitignored, hidup di ref `holder-live`), jadi titik grafik Onboard baru
+muncul setelah 2 bucket 4 jam terisi oleh cron — tombol **🔄 Scan holder FULL
+token ini** di halaman Holder mengisi titik pertama sekarang juga.
+
+### Tes
+
+`tests/test_page_router.py` (13 uji: resolusi alias, validasi CA, AppTest
+pantulan dari halaman utama), `HolderDeepLinkTest` di `tests/test_links.py`
+(slug == `page_icon_and_name` untuk **semua** file di `pages/`, encoding,
+`baseUrlPath`), `ProviderFailureTest` di `tests/test_robinhood_watchlist.py`,
+guard publish + pesan baris di `tests/test_rh_card_ui.py`.
+Suite: **794 passed** (sebelumnya 758 passed + 2 failed).
+
 ## 2026-09-06 (sore): scan holder dari halaman utama tidak menimpa data tercatat
 
 Laporan: *"ketika saya scan dari main app page, jangan timpa data awal yang

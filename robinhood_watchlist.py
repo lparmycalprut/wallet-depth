@@ -22,7 +22,8 @@ from __future__ import annotations
 
 import os
 
-from holder_history import (ingest_many, load_durable_holder_history,
+from holder_history import (holders_usable, ingest_many,
+                            load_durable_holder_history,
                             publish_holder_history, seed_from_status)
 from holder_status import load_holder_status, publish_holder_status
 import robinhood_holders
@@ -199,18 +200,42 @@ def publish_scan(analyses: dict, watchlist: dict, *,
                  history_store: dict | None = None,
                  push: bool = False,
                  contexts: dict | None = None,
-                 merge_status: dict | None = None) -> dict:
+                 merge_status: dict | None = None,
+                 skip_unusable: bool = True) -> dict:
     """Ingest + publish status/history Robinhood ke file lokal/GitHub.
 
     ``merge_status`` (snapshot sebelumnya) mewariskan token yang tidak
     ikut dianalisis run cepat — lihat ``holder_status.snapshot_status``.
+
+    ``skip_unusable=True`` (default) menyaring hasil yang **tidak layak**
+    (``holder_history.holders_usable``: 0 wallet / sampel di bawah
+    ``MIN_USABLE_WALLETS``, mis. satu request Blockscout kena rate limit) dari
+    snapshot dashboard — aturan yang sama dengan cron Solana. Tanpa saringan
+    ini, scan gagal mempublikasikan ``dust_count 0`` / ``dust 0,00% MC`` di
+    atas angka cron terakhir yang masih benar, sehingga dashboard berbunyi
+    "AMAN" padahal tidak ada data. Titiknya TETAP masuk history (``ingest_many``
+    menandainya ``degraded``) supaya jejak scan gagal tidak hilang, dan token itu
+    mewarisi angka snapshot lama lewat ``merge_status``.
     """
     store = history_store if isinstance(history_store, dict) \
         else load_history()
     history = ingest_many(analyses, store=store, path=HISTORY_LOCAL_PATH,
                           detail=True)
+    publishable = analyses
+    skipped: list[str] = []
+    if skip_unusable:
+        publishable = {}
+        for mint, analysis in (analyses or {}).items():
+            if holders_usable((analysis or {}).get("holders")):
+                publishable[mint] = analysis
+            else:
+                skipped.append(str(mint))
+        if skipped:
+            print("Robinhood publish: %d token dilewati (holder scan tidak "
+                  "layak): %s" % (len(skipped), ", ".join(s[:10] for s in skipped)),
+                  file=__import__("sys").stderr)
     status = publish_holder_status(
-        analyses, watchlist, push=push, history_store=history,
+        publishable, watchlist, push=push, history_store=history,
         contexts=contexts, merge_status=merge_status,
         repo_path=STATUS_REPO_PATH,
         local_path=STATUS_LOCAL_PATH)

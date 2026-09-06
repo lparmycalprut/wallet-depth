@@ -21,6 +21,7 @@ from links import (external_links_html, holder_analytic_link_html,
 from lp_watchlist import (LP_SOURCE, lp_card_rows, lp_chart_figure,
                           lp_overlay_figure, lp_summary, split_watchlist)
 from meteora_screener import scan_meteora
+import page_router
 import pre_pump_screener
 import robinhood_holders
 import robinhood_watchlist
@@ -45,6 +46,13 @@ from watchlist_detail import (SORT_DEFAULT, SORT_DROP, SORT_LABELS,
 st.set_page_config(page_title="Wallet Depth — Holder Analytic",
                    page_icon="🧮", layout="wide",
                    initial_sidebar_state="collapsed")
+
+# Deep link ``?mint=…`` / ``?page=…`` harus diselesaikan SEBELUM ada elemen
+# lain: kalau tidak cocok dengan slug halaman (mis. tautan lama berbentuk
+# ``pages/5_🧮_Holder.py?mint=…``), Streamlit menjalankan halaman utama ini dan
+# router memantulkannya ke halaman Holder. switch_page menghentikan run ini,
+# jadi tidak ada work/scan yang terbuang.
+page_router.apply()
 
 st.markdown("""
 <style>
@@ -726,13 +734,23 @@ def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
     cols = st.columns([1.7, 0.8, 0.95, 1.0, 1.25, 0.42, 0.42, 0.42])
     chain_note = ("LP · scan ±15 menit" if variant == "lp"
                   else "biasa · scan ±4 jam")
+    # Scan yang pulang dengan 0 wallet (provider holder gagal/kena rate limit)
+    # tidak boleh terbaca seperti hasil: bilang terus terang apa yang terjadi.
+    fetch_error = str(holders.get("fetch_error") or "")
+    scan_note = f"scan {format_wib(row.get('view_ts'))}"
+    if holders and not holders_usable(holders):
+        scan_note += " · ⚠️ scan terakhir tidak lengkap"
+        if fetch_error:
+            scan_note += f" ({html.escape(fetch_error[:90])})"
+    elif fetch_error:
+        scan_note += f" · ⚠️ provider holder: {html.escape(fetch_error[:90])}"
     cols[0].markdown(
         f'<div class="watchlist-token">'
         f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
         f'<span class="watchlist-mint">{html.escape(mint[:10])}…</span>'
         f'<span class="watchlist-metric-sub">'
         f'MC {_compact(row.get("mc"))} · chain Robinhood · {chain_note} · '
-        f'scan {format_wib(row.get("view_ts"))}</span>'
+        f'{scan_note}</span>'
         f'<div class="watchlist-links">{external_links_html(mint)}</div>'
         f"</div>", unsafe_allow_html=True)
     cols[1].markdown(

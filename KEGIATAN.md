@@ -1,3 +1,60 @@
+# Kegiatan — 6 September 2026 (sesi 3 · tautan 🧮 Holder + scan Robinhood jujur)
+
+Laporan user: menempel URL `…streamlit.app/…/pages/5_🧮_Holder.py?mint=0x1a3876…`
+dengan keterangan **"belum berfungsi"**.
+
+## 1. Penyebab: tautan memakai path file, bukan slug halaman
+
+Streamlit tidak melayani file `pages/` lewat path file-nya. Registry runtime
+app ini dibaca lewat websocket `/_stcore/stream` dan berisi `url_pathname`:
+`CVD`, `Holder`, `Deteksi_Akumulasi`, `Pre-Pump`; frontend mencocokkan URL
+dengan `pathname.endsWith('/' + urlPathname)` (case-sensitive). Jadi
+`pages/5_🧮_Holder.py?mint=…` tidak cocok dengan halaman mana pun →
+"Page not found" + halaman utama yang jalan → `?mint=` tak pernah dibaca
+halaman Holder. (Dua uji `tests/test_rh_card_ui.py` sudah merah di HEAD karena
+ganti tombol → anchor ini.)
+
+**Perbaikan:** `links.page_url_path()` (mirror aturan Streamlit
+`source_util.page_icon_and_name`, fallback lokal identik) + `page_url()` yang
+root-absolute dan menghormati `server.baseUrlPath` →
+`holder_analytic_url(ca)` = `/Holder?mint=…`. **Jaring:** modul baru
+`page_router.py` + `page_router.apply()` di awal `app.py` memantulkan
+`mint|ca|token|address` (opsional `page=<slug|nomor|file|path>`) yang mendarat
+di halaman utama ke `st.switch_page` — tautan lama yang sudah tersebar ikut
+pulih. CA divalidasi (base58 Solana / `0x`+40 hex), registry alias dibaca dari
+folder `pages/` (tidak ada path hardcoded), penanda
+`st.session_state["_deep_link_routed"]` mencegah pantulan berulang.
+
+## 2. Scan holder Robinhood tidak boleh tampil sebagai "dust 0,00%"
+
+Snapshot `holder_status_robinhood.json` di ref `holder-live` (dibaca langsung)
+menunjukkan `total_fetched: 0, wallets_analyzed: 0, dust_count: 0,
+dust_pct_mc: 0.0` untuk **0x1a38… (Onboard)** dan **0x8490… (VLAD)** padahal
+VLAD punya 2.929 wallet di history — scan provider gagal, dan untuk chain ini
+hasilnya tetap di-publish (jalur Solana sudah disaring `holders_usable`,
+jalur Robinhood belum).
+
+- `robinhood_holders._jsjson`: error sementara (429/5xx/timeout) diulang 1×
+  dengan jeda 3 detik; `fetch_token_info` melempar bila Blockscout membalas
+  `status: "0"` (sebelumnya diam-diam jadi `decimals: -1` lalu seluruh scan
+  pulang dengan 0 wallet); `fetch_holders` menyalin alasan ke `error` dan
+  `analyze_token` menempelnya sebagai `holders.fetch_error`.
+- `robinhood_watchlist.publish_scan(..., skip_unusable=True)`: analisis yang
+  `holders_usable`-nya False tidak masuk snapshot (aturan cron Solana), titiknya
+  tetap di-ingest dengan penanda `degraded`, dan token mewarisi angka lama
+  lewat `merge_status`.
+- Baris card Robinhood di `app.py` kini menulis
+  **"⚠️ scan terakhir tidak lengkap (Blockscout getToken: 429 …)"**; halaman
+  Holder menambahkan "Alasan provider: …" di peringatan scan pendek.
+
+## Verifikasi
+
+`python -m pytest -q` → **794 passed** (sebelumnya 758 passed + 2 failed).
+Uji baru: `tests/test_page_router.py` (13), `HolderDeepLinkTest` di
+`tests/test_links.py` (assert slug == `page_icon_and_name` untuk **semua** file
+`pages/`), `ProviderFailureTest` di `tests/test_robinhood_watchlist.py`, guard
+publish + pesan baris di `tests/test_rh_card_ui.py`.
+
 # Kegiatan — 5 September 2026 (sesi 2 · scan 15 menit + titik high)
 
 Empat permintaan user: (1) watchlist **Meteora (Chart LP) & Robinhood LP**

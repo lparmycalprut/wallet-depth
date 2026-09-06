@@ -538,12 +538,14 @@ mid = holders.get("mid") if isinstance(holders.get("mid"), dict) else {}
 c4.metric("Pilar Crab+Fish", _count(mid.get("count")),
           _fmt_pct(mid.get("pct_mc")))
 if short_scan:
+    _fetch_error = str(raw_holders.get("fetch_error") or "").strip()
     st.warning(
         f"Scan holder terakhir **tidak lengkap**: provider cuma "
         f"mengembalikan {point_wallets(raw_holders):,} wallet (ambang "
         f"{MIN_USABLE_WALLETS} wallet). Dust 0% dari sampel sependek itu "
         "bukan berarti dust habis — angka di atas memakai titik history "
-        "layak terakhir. Cron akan mencoba lagi pada run berikutnya.",
+        "layak terakhir. Cron akan mencoba lagi pada run berikutnya."
+        + (f" Alasan provider: `{_fetch_error}`." if _fetch_error else ""),
         icon="⚠️")
 st.markdown(_dust_badge(flag), unsafe_allow_html=True)
 _manual_view = token.get("view_source") == "manual"
