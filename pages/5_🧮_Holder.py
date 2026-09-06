@@ -400,6 +400,56 @@ def _is_evm(value) -> bool:
     return bool(robinhood_holders.is_robinhood_address(str(value or "").strip()))
 
 
+def _full_scan_section(mint: str, token: dict, store: dict, watchlist: dict,
+                       is_evm: bool) -> None:
+    """Tombol scan FULL manual — ditaruh paling atas halaman.
+
+    Aksi utama halaman ini, jadi tidak perlu scroll sampai bawah dulu.
+    """
+    hist_note = (f"di `{os.path.basename(robinhood_watchlist.HISTORY_LOCAL_PATH)}`"
+                 if is_evm else "di `holder_history.json`")
+    scan_source = "Blockscout (Robinhood Chain)" if is_evm else "Helius"
+    if st.button("🔄 Scan holder FULL token ini", type="primary",
+                 use_container_width=True):
+        cohort = ((store.get("tokens") or {}).get(mint) or {}).get("cohort") or {}
+        addrs = list((cohort.get("balances") or {}).keys())
+        with st.status(f"Mengambil SELURUH holder dari {scan_source}…",
+                       expanded=False):
+            try:
+                symbol = str((watchlist.get(mint) or {}).get("symbol")
+                             or token.get("symbol") or "?")
+                if is_evm:
+                    analysis = robinhood_holders.analyze_token(
+                        mint, symbol, max_wallets=FULL_SCAN_MAX_WALLETS,
+                        fetch_market=True, cohort_addrs=addrs)
+                    ingest_many({mint: analysis}, store=store,
+                                path=robinhood_watchlist.HISTORY_LOCAL_PATH,
+                                detail=True)
+                else:
+                    analysis = analyze_token(
+                        mint, symbol, max_wallets=FULL_SCAN_MAX_WALLETS,
+                        fetch_market=True, cohort_addrs=addrs)
+                    ingest_many({mint: analysis}, detail=True)
+            except Exception as exc:  # noqa: BLE001
+                analysis = None
+                st.error(f"Gagal: {exc}")
+        if analysis:
+            # Kartu metrik/badge ikut hasil scan ini (snapshot cron tidak
+            # ditimpa; publish satu token akan menghapus token lain dari
+            # dashboard).
+            st.session_state[MANUAL_SCAN_KEY] = compact_manual_scan(
+                mint, analysis)
+            st.rerun()
+    st.caption(
+        f"Scan = **FULL holder** (hingga {FULL_SCAN_MAX_WALLETS:,} akun, "
+        "paginasi sampai habis). Sejak 2026-09-05 cron juga scan FULL otomatis "
+        "tiap jam untuk semua token watchlist: scan pertama setelah token masuk "
+        "watchlist disimpan permanen sebagai **baseline** (titik awal holder "
+        f"analytic) {hist_note} dan tidak pernah ditimpa, scan berikutnya "
+        "memperbarui detail + kronologi.")
+    st.divider()
+
+
 def _chain_manual_scan(is_evm: bool) -> dict | None:
     """Overlay scan manual hanya untuk chain yang sedang dibuka.
 
@@ -503,6 +553,8 @@ else:
         st.rerun()
 
 token = (status.get("tokens") or {}).get(mint) or {}
+# Tombol scan FULL manual naik ke paling atas (sebelum kartu metrik/grafik).
+_full_scan_section(mint, token, store, watchlist, is_evm)
 raw_holders = token.get("holders") or {}
 # Scan holder bisa pulang dengan sampel pendek tanpa menandai ``truncated``
 # (kasus nyata 2026-09-06: Helius mati → fallback GMGN mengembalikan 20
@@ -586,44 +638,3 @@ _distribution_section(
               or token.get("symbol") or "?"), store)
 
 _chronology_section(mint, store)
-
-st.divider()
-_hist_note = (f"di `{os.path.basename(robinhood_watchlist.HISTORY_LOCAL_PATH)}`"
-              if is_evm else "di `holder_history.json`")
-_scan_source = ("Blockscout (Robinhood Chain)" if is_evm else "Helius")
-st.caption(
-    f"Scan = **FULL holder** (hingga {FULL_SCAN_MAX_WALLETS:,} akun, "
-    "paginasi sampai habis). Sejak 2026-09-05 cron juga scan FULL otomatis "
-    "tiap jam untuk semua token watchlist: scan pertama setelah token masuk "
-    "watchlist disimpan permanen sebagai **baseline** (titik awal holder "
-    f"analytic) {_hist_note} dan tidak pernah ditimpa, scan berikutnya "
-    "memperbarui detail + kronologi.")
-if st.button("🔄 Scan holder FULL token ini", type="primary",
-             use_container_width=True):
-    cohort = ((store.get("tokens") or {}).get(mint) or {}).get("cohort") or {}
-    addrs = list((cohort.get("balances") or {}).keys())
-    with st.status(f"Mengambil SELURUH holder dari {_scan_source}…",
-                   expanded=False):
-        try:
-            symbol = str((watchlist.get(mint) or {}).get("symbol")
-                         or token.get("symbol") or "?")
-            if is_evm:
-                analysis = robinhood_holders.analyze_token(
-                    mint, symbol, max_wallets=FULL_SCAN_MAX_WALLETS,
-                    fetch_market=True, cohort_addrs=addrs)
-                ingest_many({mint: analysis}, store=store,
-                            path=robinhood_watchlist.HISTORY_LOCAL_PATH,
-                            detail=True)
-            else:
-                analysis = analyze_token(
-                    mint, symbol, max_wallets=FULL_SCAN_MAX_WALLETS,
-                    fetch_market=True, cohort_addrs=addrs)
-                ingest_many({mint: analysis}, detail=True)
-        except Exception as exc:  # noqa: BLE001
-            analysis = None
-            st.error(f"Gagal: {exc}")
-    if analysis:
-        # Kartu metrik/badge ikut hasil scan ini (snapshot cron tidak ditimpa;
-        # publish satu token akan menghapus token lain dari dashboard).
-        st.session_state[MANUAL_SCAN_KEY] = compact_manual_scan(mint, analysis)
-        st.rerun()
