@@ -120,6 +120,28 @@ def cvd_shortcut_query(ca) -> str:
     return f"?mint={safe_url_part(ca)}"
 
 
+def holder_analytic_link_html(ca) -> str:
+    """Render the watchlist Holder Analytic action as a background-tab link.
+
+    Streamlit's ``st.switch_page`` navigates the current tab, which makes it
+    awkward to inspect several watchlist tokens at once.  A normal anchor is
+    deliberately used here so the browser can create a new tab without
+    triggering a Streamlit rerun in the watchlist.  ``window.focus`` asks the
+    browser to keep the watchlist tab active after opening the new one (where
+    the browser permits that preference).
+    """
+    addr = str(ca or "").strip()
+    if not addr:
+        return ""
+    url = _html.escape(
+        f"pages/{HOLDER_PAGE_PATH.split('/', 1)[-1]}?mint={safe_url_part(addr)}",
+        quote=True)
+    return (
+        f'<a class="watchlist-holder-link" href="{url}" target="_blank" '
+        f'rel="noopener noreferrer" aria-label="Buka Holder Analytic" '
+        f'onclick="setTimeout(function(){{window.focus();}},0);">🧮</a>')
+
+
 def meteora_dlmm_url(pool) -> str:
     """Return the Meteora DLMM pool page URL."""
     return f"{METEORA_DLMM_BASE}{safe_url_part(pool)}"

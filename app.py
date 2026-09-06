@@ -16,7 +16,8 @@ from holder_history import (DUST_BEST_LABEL, DUST_BEST_PCT, DUST_CAUTION_PCT,
                             load_durable_holder_history, merge_points,
                             resample_4h,
                             seed_from_status, sparkline_svg, usable_points)
-from links import HOLDER_PAGE_PATH, external_links_html, pool_links_html
+from links import (external_links_html, holder_analytic_link_html,
+                   pool_links_html)
 from lp_watchlist import (LP_SOURCE, lp_card_rows, lp_chart_figure,
                           lp_overlay_figure, lp_summary, split_watchlist)
 from meteora_screener import scan_meteora
@@ -84,6 +85,12 @@ h1, h2, h3, h4, h5, h6 {color:#000000;}
 .watchlist-links a {font-size:.75rem;color:#1d4ed8;font-weight:600;
  text-decoration:none;}
 .watchlist-links a:hover {color:#000000;text-decoration:underline;}
+.watchlist-holder-link {display:flex;align-items:center;justify-content:center;
+ width:2rem;height:2rem;border:1px solid #cbd5e1;border-radius:.35rem;
+ background:#ffffff;color:#000000;text-decoration:none;font-size:1rem;
+ line-height:1;cursor:pointer;}
+.watchlist-holder-link:hover {background:#e0e7ff;border-color:#6366f1;
+ color:#000000;text-decoration:none;}
 .watchlist-metric {text-align:center;}
 .watchlist-metric-label {font-size:.65rem;color:#000000;text-transform:uppercase;
  letter-spacing:.04em;}
@@ -336,10 +343,8 @@ def _render_lp_row(row: dict) -> None:
         unsafe_allow_html=True)
     cols[4].markdown(f'<div style="text-align:center;">{spark}</div>',
                      unsafe_allow_html=True)
-    if cols[5].button("🧮", key=f"lp-holder-{mint}",
-                      help="Buka Holder Analytic", use_container_width=True):
-        st.session_state["holder_mint"] = mint
-        st.switch_page(HOLDER_PAGE_PATH, query_params={"mint": mint})
+    cols[5].markdown(holder_analytic_link_html(mint),
+                     unsafe_allow_html=True)
     if cols[6].button("📋", key=f"lp-move-{mint}",
                       help="Pindahkan ke Watchlist Holder",
                       use_container_width=True):
@@ -748,11 +753,8 @@ def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
         unsafe_allow_html=True)
     cols[4].markdown(f'<div style="text-align:center;">{spark}</div>',
                      unsafe_allow_html=True)
-    if cols[5].button("🧮", key=f"{prefix}-holder-{mint}",
-                      help="Buka Holder Analytic (Robinhood Chain)",
-                      use_container_width=True):
-        st.session_state["holder_mint"] = mint
-        st.switch_page(HOLDER_PAGE_PATH, query_params={"mint": mint})
+    cols[5].markdown(holder_analytic_link_html(mint),
+                     unsafe_allow_html=True)
     if variant == "lp":
         if cols[6].button("📋", key=f"rh-move-{mint}",
                           help="Pindahkan ke Watchlist Robinhood (biasa, "
@@ -1255,11 +1257,8 @@ else:
         cols[4].markdown(
             f'<div style="text-align:center;">{spark}</div>',
             unsafe_allow_html=True)
-        if cols[5].button("🧮", key=f"holder-{mint}",
-                          help="Buka Holder Analytic",
-                          use_container_width=True):
-            st.session_state["holder_mint"] = mint
-            st.switch_page(HOLDER_PAGE_PATH, query_params={"mint": mint})
+        cols[5].markdown(holder_analytic_link_html(mint),
+                         unsafe_allow_html=True)
         if cols[6].button("🌊", key=f"to-lp-{mint}",
                           help="Pindahkan ke Chart LP (watchlist Meteora)",
                           use_container_width=True):
