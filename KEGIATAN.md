@@ -94,7 +94,8 @@ op yang baru ditulis thread UI pada detik yang sama bisa ikut terhapus
 ## Verifikasi
 
 `python -m pytest -q` → **824 hijau** (sebelumnya 794; +30) dan
-`python -m unittest discover -s tests -t .` lolos. Test baru: `tests/test_watchlist_background_push.py` (12: nol HTTP di
+`python -m unittest discover -s tests -t .` lolos. Test baru:
+`tests/test_watchlist_background_push.py` (12: nol HTTP di
 jalur klik, commit di thread lalu journal dibersihkan, push gagal = journal
 dipertahankan + status `error`, coalescing, flag sinkron tidak berubah,
 badge/`push_status`, rem dispatch), `ScanCadenceTest` di
