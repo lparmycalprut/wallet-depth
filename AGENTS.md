@@ -71,6 +71,18 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   🏆 BEST POOL **tidak** dirender di card ini (scope: listing Scan
   Meteora saja, keputusan user) — `build_lp_row` memanggil
   `dust_flag(pct, prev)` tanpa `holders`, jadi `best` selalu False.
+- `alert_settings.py`: setelan UI yang memengaruhi cron — saat ini satu
+  tombol **on/off notif Telegram watchlist biasa** (Solana `source` manual/
+  degen). Disimpan di `alert_settings.json` pada ref `holder-live` lewat
+  transport `holder_status._github_get_bytes/_github_put_bytes` (fallback
+  file lokal → default **ON**; kegagalan API tidak boleh membisukan alert).
+  Toggle dirender di `app.py` tepat di atas card watchlist biasa; cron
+  membaca `regular_telegram_enabled(force_refresh=True)` dan meneruskan
+  `mute_mints=set(plan["regular"])` ke `process_holder_alerts` saat OFF.
+  **Muted = kirim dilewati, evaluasi TIDAK**: marker `high_drop`/`early_dump`
+  tetap dimajukan supaya menyalakan notif lagi tidak membanjiri user dengan
+  alert titik high lama. Scope sengaja tidak menyentuh Chart LP Meteora dan
+  kedua card Robinhood.
 - `holder_chronology.py`: perbandingan scan FULL (balance token, kategori
   `wallet_depth`, link Solscan). Tanpa LLM. Schema lama tetap bisa dibaca.
 - `meteora_screener.py`: pool-discovery Meteora 24h (`fee_ratio≥250`) +
