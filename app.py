@@ -34,7 +34,8 @@ from holder_status import (MANUAL_SCAN_KEY, apply_manual_scan,
 from trending_ui import (merge_scan_rows, render_trending, run_screen,
                          run_screen_h1, run_screen_hrhr, run_screen_hrhr_h1)
 from watchlist import (add_to_watchlist, get_last_push_error, load_watchlist,
-                       remove_from_watchlist, set_watchlist_source)
+                       remove_from_watchlist, remove_many_from_watchlist,
+                       set_watchlist_source)
 from watchlist_detail import (SORT_DEFAULT, SORT_DROP, SORT_LABELS,
                               SORT_NAME, SORT_OPTIONS, SORT_PCT,
                               SOURCE_HISTORY, STALE_AFTER_SEC,
@@ -1193,6 +1194,18 @@ if isinstance(_scan_report, dict):
               "ditimpa; tiap baris menampilkan angka sesuai waktu "
               "snapshotnya sendiri.", icon="✅")
 
+# Laporan tombol 🗑️ Hapus semua (ditulis sebelum st.rerun di bawah) supaya
+# hasilnya terlihat di tempat card yang baru saja dikosongkan.
+_clear_report = st.session_state.pop("watchlist_clear_report", None)
+if isinstance(_clear_report, dict):
+    _n = int(_clear_report.get("removed") or 0)
+    if _n > 0:
+        st.success(f"{_n} token dihapus dari watchlist biasa. Commit GitHub "
+                   "berjalan di latar belakang; Chart LP Meteora dan "
+                   "watchlist Robinhood tidak disentuh.", icon="🗑️")
+    else:
+        st.info("Tidak ada token watchlist biasa yang dihapus.", icon="ℹ️")
+
 if not holder_watch:
     st.info("Watchlist holder kosong. Tambahkan contract address di bawah, "
             "atau pindahkan token dari card Chart LP (📋).")
@@ -1209,7 +1222,10 @@ else:
     # dust holder terbesar (dust % MC turun paling banyak sejak masuk) di
     # atas — mis. GPRO −60% dari awal watchlist.
     _sort_keys = [key for key, _label in SORT_OPTIONS]
-    _sort_col, _sort_note = st.columns([0.30, 0.70])
+    # ``vertical_alignment="bottom"``: selectbox punya label di atasnya,
+    # tombol 🗑️ tidak — tanpa ini tombolnya menggantung sejajar label.
+    _sort_col, _sort_note, _clear_col = st.columns(
+        [0.30, 0.50, 0.20], vertical_alignment="bottom")
     sort_mode = _sort_col.selectbox(
         "Urutkan baris watchlist", options=_sort_keys,
         index=_sort_keys.index(SORT_DEFAULT),
@@ -1226,6 +1242,33 @@ else:
         '<div style="font-size:0.72rem;color:#64748b;">'
         f"{_sort_notes.get(str(sort_mode), '')}</div>",
         unsafe_allow_html=True)
+
+    # --- 🗑️ Hapus semua (watchlist biasa saja) ------------------------------
+    # Permintaan user 2026-09-06. Scope = ``holder_watch`` (hasil
+    # ``split_watchlist``: token Solana non-LP) — Chart LP Meteora dan kedua
+    # card Robinhood punya file/watchlist sendiri dan SENGAJA tidak ikut.
+    # Aksi destruktif atas puluhan token → butuh konfirmasi eksplisit di
+    # popover; satu journal + satu commit latar (bukan N klik ✕).
+    _clear_total = len(holder_watch)
+    with _clear_col.popover("🗑️ Hapus semua", use_container_width=True,
+                            help=("Kosongkan watchlist biasa (semua baris "
+                                  "card ini). Chart LP Meteora dan watchlist "
+                                  "Robinhood tidak ikut terhapus.")):
+        st.markdown(
+            f"Hapus **{_clear_total} token** dari watchlist biasa?  \n"
+            "Termasuk token `degen` yang dipantau **🚀 Pre-Pump Screener**. "
+            "**Tidak** menyentuh Chart LP Meteora maupun watchlist "
+            "Robinhood. History holder yang sudah tercatat tidak dihapus.")
+        if st.button(f"Ya, hapus {_clear_total} token",
+                     key="clear-regular-watchlist", type="primary",
+                     use_container_width=True):
+            _cleared = remove_many_from_watchlist(
+                list(holder_watch), note="watchlist biasa", background=True)
+            st.session_state["watchlist_clear_report"] = {
+                "removed": int(_cleared.get("removed") or 0),
+                "saved": _cleared.get("saved"),
+            }
+            st.rerun()
 
     header_cols = st.columns([1.55, 0.85, 0.9, 1.05, 1.05, 0.4, 0.4, 0.4])
     header_style = "font-size:0.78rem;color:#000000;font-weight:700;"

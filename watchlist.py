@@ -1183,6 +1183,73 @@ def remove_from_watchlist(ca: str, *, repo_path: str | None = None,
                           pending_path=pending_path, background=background)
 
 
+def remove_many_from_watchlist(cas, *, note: str = "",
+                               repo_path: str | None = None,
+                               local_path: str | None = None,
+                               pending_path: str | None = None,
+                               background: bool = False) -> dict:
+    """Hapus banyak token sekaligus: satu tulis journal + satu commit.
+
+    Dipakai tombol **🗑️ Hapus semua** di card watchlist biasa (``app.py``).
+    Scope ditentukan **pemanggil** lewat daftar *cas* — fungsi ini tidak
+    menyaring ``source`` (sama seperti :func:`remove_from_watchlist`), jadi
+    UI-lah yang memastikan hanya token watchlist biasa yang dikirim, bukan
+    Chart LP Meteora / Robinhood.
+
+    Semantik durabilitas identik dengan hapus satu token, hanya di-batch:
+    journal ``remove`` per CA ditulis **lebih dulu** dalam satu tulis atomik
+    (:func:`_journal_many`), lalu file lokal, lalu **satu** commit GitHub
+    (``background=True`` = thread latar) — bukan N journal write + N commit
+    seperti kalau ✕ diklik N kali. Urutan load → journal → save mengikuti
+    :func:`add_many_to_watchlist`: state dibaca sebelum journal supaya
+    jumlah yang benar-benar terhapus bisa dihitung (setelah journal, op
+    ``remove`` sudah diterapkan ke state gabungan).
+
+    *note* (opsional) ditempel ke pesan commit, mis. ``"watchlist biasa"``.
+
+    Mengembalikan ``{"removed", "missing", "saved", "addresses"}``:
+    ``removed`` = CA yang memang ada di state dan dihapus; ``missing`` = CA
+    valid yang tidak ditemukan — tetap di-journal supaya remote yang lebih
+    baru daripada state lokal ikut dibersihkan (``_op_is_applied`` akan
+    mem-prune op itu bila token memang sudah tidak ada). ``saved`` ``None``
+    berarti tidak ada CA valid sehingga tidak ada yang ditulis.
+    """
+    seen: set[str] = set()
+    targets: list[str] = []
+    for raw in (cas or []):
+        ca = normalize_address(raw)
+        if not ca or ca in seen:
+            continue
+        seen.add(ca)
+        targets.append(ca)
+    if not targets:
+        return {"removed": 0, "missing": 0, "saved": None, "addresses": []}
+
+    wl = dict(_load_and_merge(force_refresh=False, repo_path=repo_path,
+                              local_path=local_path,
+                              pending_path=pending_path,
+                              local_first=background) or {})
+    removed = [ca for ca in targets if wl.pop(ca, None) is not None]
+
+    # Journal SEBELUM tulis lokal/jaringan (kontrak durabilitas watchlist):
+    # satu tulis atomik untuk semua op, last-op-wins per CA membatalkan
+    # ``add`` yang masih tertunda untuk address yang sama.
+    ops = [{"op": "remove", "ca": ca} for ca in targets]
+    if pending_path is None:
+        _journal_many(ops)
+    else:
+        _journal_many(ops, pending_path=pending_path)
+
+    action = f"remove {len(removed)} token"
+    if note:
+        action += f" ({note})"
+    saved = save_watchlist(wl, action, repo_path=repo_path,
+                           local_path=local_path, pending_path=pending_path,
+                           background=background)
+    return {"removed": len(removed), "missing": len(targets) - len(removed),
+            "saved": bool(saved), "addresses": removed}
+
+
 def set_watchlist_source(ca: str, source: str, *,
                          repo_path: str | None = None,
                          local_path: str | None = None,

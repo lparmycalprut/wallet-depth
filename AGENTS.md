@@ -300,8 +300,9 @@ holder per mint lalu filter dust ≥ 1% MC.
 
 ### Persistensi watchlist: tulis lokal + commit latar belakang
 
-Semua mutasi watchlist (tambah ➕, hapus ✕, pindah card 📋/⚡ — Solana **dan**
-Robinhood) lewat `watchlist.add_to_watchlist` / `remove_from_watchlist` /
+Semua mutasi watchlist (tambah ➕, hapus ✕, hapus semua 🗑️, pindah card
+📋/⚡ — Solana **dan** Robinhood) lewat `watchlist.add_to_watchlist` /
+`remove_from_watchlist` / `remove_many_from_watchlist` /
 `set_watchlist_source` / `add_many_to_watchlist` dengan urutan tetap:
 
 1. **journal dulu** (`watchlist_pending.json`; `save_watchlist` prune hanya
@@ -338,6 +339,22 @@ Pemanggil non-UI (cron/skrip) tetap default `background=False`.
 `_CACHE_TTL` load watchlist 60 dtk karena perubahan lokal selalu men-*seed*
 cache — menaikkan lagi TTL tidak membuat UI lebih cepat, menurunkannya
 mengembali-kan round-trip tiap rerun.
+
+**🗑️ Hapus semua (2026-09-06)** — tombol popover di kepala card watchlist
+biasa (`app.py`, sebelah selectbox "Urutkan baris watchlist"; hanya dirender
+bila `holder_watch` tidak kosong) → konfirmasi "Ya, hapus N token"
+(`key="clear-regular-watchlist"`) → `remove_many_from_watchlist(
+list(holder_watch), note="watchlist biasa", background=True)`. Scope =
+`holder_watch` hasil `split_watchlist` (token Solana non-LP, termasuk
+`degen` yang dipakai Pre-Pump Screener); Chart LP Meteora dan kedua card
+Robinhood **sengaja tidak ikut** — fungsi ini tidak menyaring `source`,
+pemanggil yang menentukan daftar CA. Satu tulis journal (`_journal_many`,
+last-op-wins per CA membatalkan `add` tertunda) + **satu** commit, bukan N
+klik ✕. Op `remove` untuk CA yang tidak ada di state lokal tetap
+di-journal (remote yang lebih baru ikut bersih; `_op_is_applied` mem-prune
+bila memang sudah tidak ada). History/snapshot holder tidak dihapus —
+`snapshot_status` sudah membuang kunci di luar watchlist saat publish
+berikutnya.
 
 ## Ambang
 

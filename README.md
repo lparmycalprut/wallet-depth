@@ -601,6 +601,20 @@ percobaan push (bisa puluhan detik saat API macet), sekarang ±0,4–2 dtk.
 Perubahan yang belum ter-commit hilang bila proses mati di dalam window itu,
 persis seperti push yang gagal.
 
+### 🗑️ Hapus semua (watchlist biasa saja)
+
+Di kepala card **📋 Watchlist — Analisa Holder (Dust)**, di sebelah pilihan
+"Urutkan baris watchlist", ada tombol **🗑️ Hapus semua**. Tombol ini membuka
+popover konfirmasi yang menyebut jumlah token yang akan dihapus; baru setelah
+**Ya, hapus N token** diklik seluruh watchlist biasa dikosongkan lewat
+`watchlist.remove_many_from_watchlist()` — **satu** tulis journal + **satu**
+commit GitHub di latar belakang (bukan N klik ✕). Scope-nya **hanya** token
+Solana non-LP (`manual`/`degen`, termasuk token yang dipantau Pre-Pump
+Screener): **Chart LP Meteora dan kedua card Robinhood tidak ikut terhapus**.
+History holder yang sudah tercatat tidak dihapus; snapshot cron berikutnya
+otomatis membuang token yang sudah tidak ada di watchlist. Tombol tidak
+ditampilkan bila card sudah kosong.
+
 ## Scan manual vs snapshot cron
 
 Tombol **🔄 Scan holder FULL token ini** di halaman Holder Analytic menulis
