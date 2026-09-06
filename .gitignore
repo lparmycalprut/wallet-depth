@@ -23,3 +23,5 @@ holder_history_robinhood.json.gz
 pre_pump_liq.json
 
 accumulation_history.json
+# Setelan tombol notif Telegram (dipublish ke branch holder-live oleh UI/cron)
+alert_settings.json

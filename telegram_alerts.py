@@ -1610,6 +1610,7 @@ def process_holder_alerts(analyses: dict | None, history_store: dict,
                           context_provider: Callable[[str, dict], dict] | None = None,
                           lp_mints: set | None = None,
                           high_mints: set | None = None,
+                          mute_mints: set | None = None,
                           watchlist_meta: dict | None = None) -> list[dict]:
     """Evaluate/send alerts, mutating state *before* history ingests new points.
 
@@ -1624,12 +1625,19 @@ def process_holder_alerts(analyses: dict | None, history_store: dict,
     kosong/None = rule terkait tidak pernah menyala. ``watchlist_meta``
     (``{mint: meta}``, opsional) dipakai untuk me-reset marker bila token
     baru di-add ulang ke watchlist.
+
+    ``mute_mints`` = token yang **pesan Telegram-nya dimatikan user** (tombol
+    on/off notif watchlist biasa, lihat :mod:`alert_settings`). Rule tetap
+    dievaluasi dan state/marker tetap ditulis — hanya pengirimannya yang
+    dilewati — supaya begitu notif dinyalakan lagi, titik high/anchor tidak
+    kacau dan user tidak langsung dibanjiri alert lama.
     """
     sender = sender or send_telegram_alert
     contexts = market_contexts if isinstance(market_contexts, dict) else {}
     meta_map = watchlist_meta if isinstance(watchlist_meta, dict) else {}
     lp = {str(item) for item in (lp_mints or []) if item}
     high = {str(item) for item in (high_mints or []) if item}
+    muted = {str(item) for item in (mute_mints or []) if item}
     tokens = history_store.setdefault("tokens", {})
     deliveries = []
     for mint, analysis in (analyses or {}).items():
@@ -1657,6 +1665,18 @@ def process_holder_alerts(analyses: dict | None, history_store: dict,
             lp_mint=bool(mint in lp), high_track=bool(mint in high))
         sent = list(next_state.get("sent_event_ids") or [])
         last_sent = dict(next_state.get("last_sent") or {})
+        if mint in muted:
+            # Notif dimatikan user untuk token ini: rule sudah dievaluasi dan
+            # marker (titik high / early dump) ikut tersimpan di next_state,
+            # jadi state tidak melompat saat notif dinyalakan lagi. Yang
+            # dilewati hanya pengiriman pesannya.
+            for event in events:
+                deliveries.append({"event": event,
+                                   "delivery": {"ok": False, "skipped": True,
+                                                "muted": True,
+                                                "error": "telegram muted"}})
+            slot[STATE_KEY] = compact_alert_state(next_state)
+            continue
         for event in events:
             try:
                 result = sender(event)

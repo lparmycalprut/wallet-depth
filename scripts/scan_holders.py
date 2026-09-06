@@ -72,6 +72,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from alert_context import market_context_provider
+from alert_settings import regular_telegram_enabled
 from daily_store import load_daily_effort
 from holder_history import (FULL_SCAN_MAX_WALLETS, history_for_mint,
                             ingest_many, load_holder_history, merge_stores,
@@ -398,9 +399,19 @@ def main(argv=None) -> int:
         # turun >= 50% dari titik high mengirim alert.
         # Watchlist saat ini belum punya pool address (keterbatasan: pesan
         # early dump cron tidak menyertakan link 🌊 Meteora/🦅 HawkFi).
+        # Tombol on/off notif Telegram watchlist biasa (dashboard →
+        # alert_settings.json di ref holder-live). Saat OFF, token watchlist
+        # biasa tetap di-scan/di-evaluasi (marker titik high tetap maju),
+        # hanya pesannya yang tidak dikirim. Chart LP Meteora & Robinhood
+        # tidak terpengaruh.
+        regular_notif = regular_telegram_enabled(force_refresh=True)
+        if not regular_notif:
+            print("Telegram watchlist biasa: OFF (setelan dashboard) — "
+                  f"{len(plan['regular'])} token dibisukan")
         deliveries = process_holder_alerts(
             analyses, store, context_provider=provider,
             lp_mints=set(plan["lp"]), high_mints=set(plan["regular"]),
+            mute_mints=(set() if regular_notif else set(plan["regular"])),
             watchlist_meta=watchlist)
         # detail=True (sejak 2026-09-05): cron scan FULL, jadi rekaman
         # baseline (titik awal holder analytic sejak token masuk watchlist),

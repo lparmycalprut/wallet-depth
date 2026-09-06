@@ -18,6 +18,7 @@ from holder_history import (DUST_BEST_LABEL, DUST_BEST_PCT, DUST_CAUTION_PCT,
                             seed_from_status, sparkline_svg, usable_points)
 from links import (external_links_html, holder_analytic_link_html,
                    pool_links_html)
+import alert_settings
 from lp_watchlist import (LP_SOURCE, lp_card_rows, lp_chart_figure,
                           lp_overlay_figure, lp_summary, split_watchlist)
 from meteora_screener import scan_meteora
@@ -1066,6 +1067,33 @@ st.caption(
 st.caption(sync_caption_text(_watch_sync,
                              status_updated_at=holder_status.get("updated_at"),
                              stale_after=STALE_REGULAR_AFTER_SEC))
+
+# --- Tombol on/off notifikasi Telegram (watchlist biasa saja) --------------
+# Permintaan user 2026-09-06: watchlist biasa kadang cukup dipantau di
+# dashboard tanpa pesan Telegram. Scope SENGAJA hanya watchlist Solana biasa
+# — Chart LP Meteora dan kedua card Robinhood punya rule ⚡/🔔 sendiri dan
+# tidak ikut dimatikan. Saat OFF, cron tetap scan + tetap memajukan marker
+# titik high; hanya pengiriman pesannya yang dilewati.
+_notif_on = alert_settings.regular_telegram_enabled()
+_notif_toggle = st.toggle(
+    "🔔 Notifikasi Telegram watchlist biasa",
+    value=_notif_on, key="regular-telegram-toggle",
+    help=("ON = alert 🔔 HIGH DROP / dump / akumulasi untuk watchlist biasa "
+          "dikirim ke Telegram. OFF = token tetap di-scan dan grafiknya "
+          "tetap jalan, pesannya saja yang tidak dikirim. Tidak memengaruhi "
+          "Chart LP Meteora maupun watchlist Robinhood."))
+if bool(_notif_toggle) != bool(_notif_on):
+    _saved = alert_settings.set_regular_telegram_enabled(bool(_notif_toggle))
+    if not _saved:
+        st.warning("Pilihan tersimpan lokal, tapi sinkronisasi ke GitHub "
+                   "gagal — cron mungkin masih memakai setelan lama.",
+                   icon="⚠️")
+    st.rerun()
+st.caption(
+    ("Notif Telegram watchlist biasa **AKTIF**." if _notif_toggle else
+     "Notif Telegram watchlist biasa **NONAKTIF** — scan & grafik tetap "
+     "jalan, pesan tidak dikirim.")
+    + " Chart LP Meteora dan Robinhood tidak terpengaruh tombol ini.")
 
 
 if watchlist and not status_tokens:
