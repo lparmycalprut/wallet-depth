@@ -55,8 +55,18 @@ def watchlist_address_keys(watchlist: dict | None) -> set[str]:
 # tanpa menunggu TTL kedaluwarsa. TTL panjang hanya memperlambat terlihatnya
 # perubahan dari *sesi lain* (browser kedua), itu pun disusul paling lambat 60s.
 _CACHE_TTL = 60  # seconds
-# Cache per repo path: ``{repo_path: {"data": dict, "ts": float}}`` supaya
-# watchlist Solana dan Robinhood tidak saling menimpa dalam satu proses.
+# Cache per repo path: ``{repo_path: {"data": dict, "ts": float,
+# "settled": bool}}`` supaya watchlist Solana dan Robinhood tidak saling
+# menimpa dalam satu proses.
+#
+# ``settled`` membedakan dua isi cache:
+#   * ``True``  -> isi **mencerminkan repo** (hasil pull GitHub atau push yang
+#                  sudah sukses). Jurnal pending **boleh** di-prune terhadapnya.
+#   * ``False`` -> isi **optimis belaka** (seed dari jalur UI saat perubahan baru
+#                  saja ditulis lokal; commit GitHub belum tentu sampai).
+#                  Jurnal **tidak boleh** di-prune terhadapnya — kalau di-prune,
+#                  op (mis. ``remove``) hilang sebelum remote menerimanya, dan
+#                  token yang dihapus muncul lagi di render berikutnya.
 _REMOTE_CACHE: dict[str, dict] = {}
 
 # ---- last push error (surfaced to UI) ---------------------------------------
@@ -421,8 +431,9 @@ def _github_push(wl: dict, action: str, max_retries: int = 3,
                 return False
 
             if p.status_code in (200, 201):
-                _REMOTE_CACHE[repo_path] = {"data": dict(wl_to_push),
-                                            "ts": time.time()}
+                # Push sukses = isi cache kini mencerminkan repo (settled=True),
+                # sehingga jurnal pending boleh di-prune terhadapnya.
+                _set_remote_cache(repo_path, wl_to_push, settled=True)
                 _set_last_error("", status=p.status_code)
                 print(f"INFO: _github_push success attempt {attempt} status {p.status_code} action={action}", file=sys.stderr)
                 return True
@@ -489,15 +500,30 @@ def _norm_repo_path(repo_path) -> str:
     return str(repo_path or "watchlist.json").strip().lstrip("/")
 
 
+def _set_remote_cache(repo_path: str, data: dict, settled: bool) -> None:
+    """Tulis entri cache remote untuk *repo_path* dengan penanda ``settled``.
+
+    ``settled=True`` berarti *data* adalah pandangan **terkonfirmasi** isi repo
+    (hasil pull GitHub atau push yang sukses); ``settled=False`` berarti *data*
+    adalah state **optimis** hasil perubahan lokal yang commit-nya belum tentu
+    sampai ke GitHub (lihat :func:`_seed_remote_cache`).
+    """
+    _REMOTE_CACHE[_norm_repo_path(repo_path)] = {
+        "data": dict(data), "ts": time.time(), "settled": bool(settled)}
+
+
 def _seed_remote_cache(repo_path: str, data: dict) -> None:
     """Pakai state hasil perubahan lokal sebagai "remote terbaru" sementara.
 
     Tanpa ini, rerun tepat setelah klik akan menarik GitHub lagi (dan bisa
     menampilkan state **lama** karena write remote belum tentu sampai).
     :func:`_github_push` menimpa seed ini dengan isi yang benar-benar ter-commit.
+
+    Seed ditandai ``settled=False``: ia *bukan* bukti remote menerima perubahan,
+    jadi jurnal pending tidak boleh di-prune terhadapnya (lihat
+    :func:`_load_and_merge`).
     """
-    _REMOTE_CACHE[_norm_repo_path(repo_path)] = {"data": dict(data),
-                                                 "ts": time.time()}
+    _set_remote_cache(repo_path, data, settled=False)
 
 
 def _read_local_watchlist(local_path) -> dict | None:
@@ -632,13 +658,16 @@ def _push_worker(repo_path: str) -> None:
             _set_last_error(f"background push error: {exc}", status=None)
         if ok:
             try:
+                # Push sukses: remote kini mencerminkan ``wl`` yang kita commit.
+                # Prune jurnal terhadap ``wl`` — bukan cache — supaya benar meski
+                # ``_github_push`` di-stub (yang tidak menulis cache) dan tetap
+                # aman bila mutation lain men-seed cache kembali saat push jalan:
+                # op yang belum dicerminkan ``wl`` (mis. operasi yang masuk
+                # belakangan lewat coalescing) tidak ikut terhapus.
                 with _JOURNAL_LOCK:
                     pending = _load_pending(pending_path)
                     if pending:
-                        pushed = _REMOTE_CACHE.get(repo_path, {}).get("data")
-                        still = _prune_pending(pending,
-                                              pushed if isinstance(pushed, dict)
-                                              else wl)
+                        still = _prune_pending(pending, wl)
                         if still != pending:
                             _save_pending(still, pending_path)
             except Exception as exc:
@@ -676,7 +705,8 @@ def _fetch_raw_remote(force_refresh: bool = False,
         if not isinstance(remote, dict):
             print(f"WARN: _fetch_raw_remote got non-dict {type(remote)}, coercing to {{}}", file=sys.stderr)
             remote = {}
-        _REMOTE_CACHE[repo_path] = {"data": dict(remote), "ts": now}
+        # Pull = isi repo langsung -> settled=True.
+        _set_remote_cache(repo_path, remote, settled=True)
         try:
             return dict(remote)
         except Exception:
@@ -741,10 +771,18 @@ def _load_and_merge(force_refresh: bool = False,
     with _JOURNAL_LOCK:
         pending = _load_pending(pending_path)
         if pending:
-            still = _prune_pending(pending, raw)
-            if still != pending:
-                _save_pending(still, pending_path)
-                pending = still
+            settled = bool((_REMOTE_CACHE.get(repo_path) or {}).get("settled"))
+            # Jurnal hanya boleh di-prune terhadap state yang **benar-benar**
+            # mencerminkan repo (``settled=True``). State optimis (seed dari
+            # jalur UI, ``settled=False``) atau local file bukan bukti remote
+            # menerima op — mem-prune di sini menghapus jurnal sebelum push
+            # berhasil, sehingga token yang dihapus muncul lagi di render
+            # berikutnya saat cache kedaluwarsa dan server menarik ulang GitHub.
+            if not local_first and settled:
+                still = _prune_pending(pending, raw)
+                if still != pending:
+                    _save_pending(still, pending_path)
+                    pending = still
             if pending:
                 raw = _apply_ops(raw, pending)
     return raw
@@ -770,22 +808,22 @@ def load_watchlist(force_refresh: bool = False,
                              local_path=local_path, pending_path=pending_path)
     pending = _load_pending(pending_path)
     if pending:
-        # opportunistic flush: try committing the merged state once per load
+        # opportunistic flush: commit the merged state *di latar belakang*.
+        #
+        # Dulu flush ini sinkron (``_github_push`` langsung) — saat push
+        # gagal, jurnal dipertahankan lalu **setiap** render ulang mencoba
+        # push sinkron lagi (GET+PUT ×3 percobaan, bisa ±2 menit) dan UI
+        # membeku. Sekarang diserahkan ke thread latar (fire-and-forget):
+        # UI tidak menunggu, jurnal dibersihkan oleh worker setelah commit
+        # sukses (lihat :func:`_push_worker`).
         if _github_token():
-            # Antrian commit latar belakang (dari tambah/hapus/pindah card)
-            # sudah memegang state yang sama — flush di sini hanya menambah
-            # round-trip (dan bisa balap 409) tepat saat UI merender ulang.
             if push_inflight(repo_path):
                 print(f"INFO: load_watchlist skip flush — push {repo_path} "
                       "masih berjalan di latar belakang", file=sys.stderr)
-            elif _github_push(merged, "sync pending ops",
-                              repo_path=repo_path,
-                              pending_path=pending_path):
-                with _JOURNAL_LOCK:
-                    _save_pending([], pending_path)
             else:
-                print(f"WARN: load_watchlist sync pending ops push failed, "
-                      f"keeping {len(pending)} pending ops", file=sys.stderr)
+                _queue_github_push(merged, "sync pending ops",
+                                   repo_path=repo_path,
+                                   pending_path=pending_path)
     try:
         atomic_write_json(local_path, merged, indent=1)
     except Exception as exc:

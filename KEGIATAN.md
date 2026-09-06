@@ -1,3 +1,51 @@
+# Kegiatan — 6 September 2026 (sesi 6 · ✕ watchlist bolak balik + flush latar)
+
+Permintaan user: **"fungsi hapus dari watchlist masih bolak balik dan tidak
+optimal."**
+
+## 1. Akar "bolak balik": jurnal remove di-prune prematur terhadap cache optimis
+
+Reproduksi: token dihapus (✕) tapi **muncul lagi** di render berikutnya setelah
+push GitHub gagal. Penyebab ada di `watchlist._load_and_merge`: ia mem-prune
+jurnal pending terhadap `raw` yang (dalam TTL 60 dtk) berasal dari **cache
+seed** hasil perubahan lokal — state **optimis**, belum tentu sudah sampai ke
+GitHub. Kalau push latar belakang gagal, jurnal `remove` sudah di-prune,
+sehingga begitu cache kedaluwarsa dan `load_watchlist()` menarik ulang remote
+yang *masih memuat* token itu, tidak ada lagi op `remove` yang mengoreksi →
+token muncul lagi (dan setiap render ulang mem-flush sinkron yang membekukan UI
+selama push gagal). Ini juga berlaku untuk `add`/`source` (sekali saja push
+gagal, perubahan "hilang" lalu timbul kembali).
+
+**Perbaikan (`watchlist.py`):**
+
+- Cache `_REMOTE_CACHE` kini menyimpan penanda **`settled`**: `True` bila isi
+  **mencerminkan repo** (hasil `_github_pull` atau `_github_push` yang sukses),
+  `False` bila isi **optimis** (seed `_seed_remote_cache` setelah perubahan
+  lokal). Helper baru `_set_remote_cache(repo_path, data, settled)`.
+- `_load_and_merge` (dan `_push_worker`) **hanya mem-prune jurnal terhadap
+  state `settled=True`**; terhadap seed optimis atau file lokal, jurnal
+  dipertahankan. Jadi `remove` yang belum ter-commit aman dikoreksi ulang saat
+  remote ditarik.
+- `_push_worker` mem-prune terhadap `wl` yang **benar-benar di-commit** (bukan
+  cache yang bisa saja di-seed ulang mutation lain saat push jalan).
+
+## 2. "Tidak optimal": flush `load_watchlist` jadi latar belakang
+
+Dulu `load_watchlist()` yang menemukan sisa jurnal (mis. push gagal) langsung
+`_github_push` **sinkron** — setiap render ulang memblokir sampai ±2 menit saat
+API lambat. Sekarang diserahkan ke `_queue_github_push` (fire-and-forget):
+UI tidak menunggu, jurnal dibersihkan worker setelah commit sukses, dan
+`push_inflight` tetap menahan flush dobel saat worker masih jalan.
+
+## Verifikasi
+
+- `python -m pytest -q` → **830 hijau** dan `python -m unittest discover -s
+  tests -t .` → **830 OK** (sebelumnya 829).
+- Test baru `RemoveBackgroundTest::test_remove_tidak_muncul_lagi_saat_push_belum_berhasil`:
+  push selalu gagal (remote masih memuat CA), lalu `load_watchlist` memakai seed
+  cache dan `force_refresh` menarik remote lama → CA tetap hilang karena jurnal
+  remove dipertahankan.
+
 # Kegiatan — 6 September 2026 (sesi 5 · Chart LP Meteora ikut 5 menit)
 
 Permintaan user: **"iya untuk watchlist meteora juga, per 5 menit, biar
