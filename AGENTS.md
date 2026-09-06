@@ -305,10 +305,23 @@ terhadap file; job terbaru menimpa job lama). Mengembalikan panggilan
 sinkron di handler Streamlit = membuat klik terasa macet lagi (terukur
 2,4 s/klik pada RTT 0,8 dtk, dan berlipat sampai ±2 menit saat API GitHub
 lambat karena 3 percobaan × timeout 15 dtk + pull 3× timeout 10 dtk).
-`load_watchlist()` me-flush journal yang tersisa, tapi **melewati** flush
-inline selama `push_inflight(repo_path)` masih benar (mencegah balap 409),
-dan status terakhir bisa dibaca UI lewat `push_status(repo_path)`
+`load_watchlist()` me-flush journal yang tersisa **di latar belakang**
+(`_queue_github_push`, non-blocking — dulu sinkron sehingga setiap rerun bisa
+membeku sampai ±2 menit saat push gagal), tapi **melewati** enqueue selama
+`push_inflight(repo_path)` masih benar (mencegah balap 409), dan status terakhir
+bisa dibaca UI lewat `push_status(repo_path)`
 (badge `🔄 sinkron…` / `⚠️ belum sinkron` di kepala card Robinhood).
+
+**Jurnal hanya di-prune terhadap state yang terkonfirmasi mencerminkan repo**
+(cache ditandai `settled=True`: hasil pull GitHub atau push yang sukses).
+State optimis hasil perubahan lokal (`_seed_remote_cache`, `settled=False`) atau
+file lokal **bukan** bukti remote menerima op — mem-prune terhadapnya menghapus
+jurnal sebelum push berhasil, sehingga token yang dihapus muncul lagi di render
+berikutnya saat cache kedaluwarsa dan server menarik ulang GitHub (bug
+"bolak balik" pada hapus watchlist). Karena itu `_load_and_merge` / `_push_worker`
+mem-prune jurnal hanya bila data acuannya `settled=True`, dan worker mem-prune
+terhadap `wl` yang benar-benar di-commit (bukan cache yang bisa saja di-seed
+ulang oleh mutation lain saat push jalan).
 Pemanggil non-UI (cron/skrip) tetap default `background=False`.
 `_CACHE_TTL` load watchlist 60 dtk karena perubahan lokal selalu men-*seed*
 cache — menaikkan lagi TTL tidak membuat UI lebih cepat, menurunkannya

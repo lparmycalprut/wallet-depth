@@ -170,6 +170,48 @@ class RemoveBackgroundTest(_Sandbox):
         self._wait()
         self.assertIn("remove AAA", self.push.call_args.args[1])
 
+    def test_remove_tidak_muncul_lagi_saat_push_belum_berhasil(self):
+        """Jurnal remove tidak boleh di-prune terhadap seed cache optimis.
+
+        Bug: ``_load_and_merge`` mem-prune jurnal terhadap *seed cache* (state
+        hasil perubahan lokal yang ditandai belum ``settled``). Kalau push GitHub
+        gagal, jurnal sudah hilang -> begitu cache kedaluwarsa dan server menarik
+        ulang remote yang masih memuat token, token yang dihapus **muncul lagi**
+        (\"bolak balik\").
+
+        Jalankan: push selalu gagal (remote masih punya CA_A), lalu *load* yang
+        memakai seed cache, lalu *force refresh* yang menarik remote lama. CA_A
+        harus tetap hilang karena jurnal remove dipertahankan.
+        """
+        # remote masih memuat CA_A (push gagal) -> jurnal menjadi jaring pengaman.
+        self.pull.return_value = {CA_A: {"symbol": "AAA"},
+                                  CA_B: {"symbol": "BBB"}}
+        self.push.return_value = False
+
+        self._remove(CA_A)
+        self._wait()
+
+        # push gagal -> jurnal dipertahankan.
+        self.assertEqual([op["op"] for op in self._journal()], ["remove"])
+        self.assertEqual(wl.push_status(REPO_PATH)["state"], "error")
+
+        # load_watchlist memakai seed cache (settled=False): jurnal TIDAK boleh
+        # di-prune sebelum remote benar-benar menerima penghapusan.
+        loaded = wl.load_watchlist(repo_path=REPO_PATH, local_path=self.local,
+                                   pending_path=self.pending)
+        self.assertEqual(list(loaded), [CA_B])
+        self.assertEqual([op["op"] for op in self._journal()], ["remove"],
+                         "jurnal harus dipertahankan sebelum push sukses")
+
+        # cache kedaluwarsa + force refresh -> pull mengembalikan remote LAMA
+        # (CA_A masih ada). Karena jurnal remove masih ada, token tetap hilang.
+        wl._REMOTE_CACHE[wl._norm_repo_path(REPO_PATH)] = {"data": {}, "ts": 0.0}
+        loaded2 = wl.load_watchlist(force_refresh=True, repo_path=REPO_PATH,
+                                    local_path=self.local,
+                                    pending_path=self.pending)
+        self.assertNotIn(CA_A, loaded2)
+        self.assertEqual(list(loaded2), [CA_B])
+
 
 class LoadWatchlistFlushTest(_Sandbox):
     def test_flush_journal_tidak_dobel_ketika_push_masih_berjalan(self):
