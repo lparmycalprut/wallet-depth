@@ -77,6 +77,12 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
    memakai aturan/aturan yang sama. Link card memakai rh-scan.com,
    DexScreener robinhood, dan Blockscout; watchlist, snapshot, dan history
    token disimpan terpisah dari `watchlist.json` / `holder_status.json`.
+   Card **Robinhood LP** dan card **Chart LP** (Meteora) sama-sama di-scan
+   cron tiap **±5 menit** sejak 2026-09-06 (sebelumnya 15 menit) supaya exit
+   LP bisa lebih awal dan perubahan holder langsung kelihatan; **watchlist
+   biasa** (Solana & Robinhood biasa) tetap ±4 jam — lihat **Cadens scan**.
+   Aksi ➕ / ✕ / 📋 di card ini tidak menunggu GitHub lagi — lihat
+   **Sinkronisasi watchlist non-blocking**.
 
 ## Konfirmasi volume & volatilitas (filter false positive)
 
@@ -409,7 +415,7 @@ akumulasi dan bukan prediksi arah harga.
 
 | File | Peran |
 |---|---|
-| `holder_history.py` | Pencatatan dust/kohort, resample 4 jam, ambang HATI-HATI/BAHAYA + BEST POOL 0,1% (aditif), metrik volatilitas 4 jam, baseline FULL, kronologi, backup durable store (`.gz`: merge/prune/publish/pull; titik mentah per jam, `MAX_POINTS` 336) |
+| `holder_history.py` | Pencatatan dust/kohort, resample 4 jam, ambang HATI-HATI/BAHAYA + BEST POOL 0,1% (aditif), metrik volatilitas 4 jam, baseline FULL, kronologi, backup durable store (`.gz`: merge/prune/publish/pull; titik mentah per run, `MAX_POINTS` 1008) |
 | `alert_context.py` | Konteks pasar untuk konfirmasi alert: volume 4 jam, rata-rata 7 hari, buy/sell pressure, volatilitas (ditarik lazy) |
 | `holder_chronology.py` | Snapshot wallet bounded, klasifikasi pergerakan, narasi kronologi |
 | `lp_watchlist.py` | Card **Chart LP**: pisah watchlist Meteora, baris + grafik perubahan dust holder |
@@ -421,9 +427,10 @@ akumulasi dan bukan prediksi arah harga.
 | `helius_holders.py` | Scan Holder Khusus satu token + bar chart |
 | `holder_status.py` | Snapshot dashboard ramping (ref `holder-live`) + history ringkas + transport GitHub (JSON & byte/gzip) |
 | `core.py` | Config/key Helius, pasar DexScreener, candle hourly/harian GeckoTerminal |
-| `scripts/scan_holders.py` | Cron watchlist (target 1×/jam): holder, alert (konfirmasi volume lazy, scope early dump = token LP), catat history, publish snapshot + backup store |
+| `scripts/scan_holders.py` | Cron watchlist (run ±5 menit; kedua lane LP tiap run, biasa slot 4 jam, `LP_SCAN_RUN_MULTIPLIER` untuk rem Helius): holder, alert (konfirmasi volume lazy, scope early dump = token LP), catat history, publish snapshot + backup store |
 | `telegram_alerts.py` | Rule dust 4 jam/baseline + ⚡ EARLY DUMP (crossing 0,1% MC, token pool, tanpa gerbang volume), dedup bucket 4 jam + jeda 1 jam, Telegram Bot API (+ link GMGN & DexScreener di pesan) |
-| `links.py` | Satu sumber URL eksternal: GMGN, DexScreener, Solscan, Meteora DLMM, HawkFi (HTML untuk UI, teks polos untuk Telegram) |
+| `links.py` | Satu sumber URL eksternal: GMGN, DexScreener, Solscan, Meteora DLMM, HawkFi (HTML untuk UI, teks polos untuk Telegram) + slug halaman internal (`/Holder?mint=…`) |
+| `page_router.py` | Router deep link: `?mint=`/`?page=` yang jatuh ke halaman utama dipantulkan ke halaman yang dituju (`st.switch_page`) |
 | `trending_ui.py` | Listing Trending/Degen + Add All Watchlist |
 | `pre_pump_screener.py` | 🚀 Pre-Pump Screener: 4 sinyal on-chain (gelombang add likuiditas + journal, konsolidasi holder, volume calm-before-storm, TX velocity), PUMP SCORE 0–10, kartu token, auto-refresh `st.fragment(run_every=300)` |
 | `pages/4_📊_CVD.py` | Chart CVD harian |
@@ -434,6 +441,31 @@ akumulasi dan bukan prediksi arah harga.
 | `pages/6_🔎_Deteksi_Akumulasi.py` | Halaman **Deteksi Akumulasi**: ringkasan skor/status per token watchlist + expander breakdown 8 metrik |
 | `pages/7_🚀_Pre-Pump.py` | Halaman mandiri Pre-Pump Screener |
 
+## Tautan Holder Analytic (deep link)
+
+Tombol **🧮** di setiap baris watchlist membuka **tab baru** ke analisa holder
+token itu. URL-nya memakai **slug halaman** Streamlit, bukan path file:
+
+```text
+https://<app>.streamlit.app/Holder?mint=<contract address>   ✅ berfungsi
+https://<app>.streamlit.app/pages/5_🧮_Holder.py?mint=…      ❌ bukan route
+```
+
+Streamlit menyetel URL halaman dari nama file di `pages/` dengan prefiks nomor
+dan emoji dibuang (`5_🧮_Holder.py` → `/Holder`, `4_📊_CVD.py` → `/CVD`,
+`6_🔎_Deteksi_Akumulasi.py` → `/Deteksi_Akumulasi`), dan pencocokannya
+**case-sensitive**. Bentuk kedua tidak cocok dengan halaman mana pun:
+Streamlit menampilkan "Page not found" lalu menjalankan halaman utama, sehingga
+`?mint=` tidak pernah dibaca.
+
+Tautan lama (dan URL yang salah ketik/salah kapitalisasi) tetap dipakai
+bersama: `page_router` di halaman utama melihat `mint=` di URL lalu memantulkan
+ke halaman yang benar lewat `st.switch_page`. Parameter yang dimengerti:
+`mint` / `ca` / `token` / `address` (CA Solana base58 atau `0x`+40 hex
+Robinhood Chain) dan `page` (slug / nomor halaman / nama file). Nilai yang
+bukan address valid diabaikan — navigasi user tidak pernah dibajak. Bisa juga
+dipakai manual: `?page=cvd&mint=…`.
+
 ## Menjalankan
 
 ```bash
@@ -441,18 +473,51 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Cron GitHub Actions menargetkan **1× per jam** (`cron: "0 * * * *"` di
-`.github/workflows/daily-effort.yml`, job `timeout-minutes: 45`) dan
-menjalankan `scripts/scan_holders.py`. Schedule GitHub bersifat
-**best-effort**: run bisa telat/dilewati (terukur ±2 jam saat `*/15`), jadi
-"1 jam" adalah target, bukan janji — lihat DEPLOY.md untuk cara memverifikasi
-kadens nyata. Snapshot dibaca dari
-`holder_status.json` dan store penuh dari `holder_history.json.gz`
-(keduanya ref `holder-live`) — lihat **Backup store holder**. Lihat
-`DEPLOY.md` untuk env
-scanner (`HELIUS_API_KEY`, `GITHUB_TOKEN`) dan setup alert opsional
-(`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`). Tanpa credential Telegram,
-scan tetap berjalan dan pengiriman alert dilewati dengan aman.
+Snapshot dibaca dari `holder_status.json` dan store penuh dari
+`holder_history.json.gz` (keduanya ref `holder-live`) — lihat **Backup store
+holder**. Lihat `DEPLOY.md` untuk env scanner (`HELIUS_API_KEY`,
+`GITHUB_TOKEN`) dan setup alert opsional (`TELEGRAM_BOT_TOKEN`,
+`TELEGRAM_CHAT_ID`). Tanpa credential Telegram, scan tetap berjalan dan
+pengiriman alert dilewati dengan aman.
+
+## Cadens scan
+
+Sejak **2026-09-06** cron berjalan **tiap ±5 menit** dan scanner yang membagi
+pekerjaannya per lane (`scripts/scan_holders.py`):
+
+| Lane | Kadens | Alasan |
+| --- | --- | --- |
+| 🦅 **Watchlist Robinhood LP** | tiap run = **±5 menit** | permintaan user: "percepat fetch watchlist robinhood menjadi 5 menit sekali" |
+| 🌊 **Chart LP Meteora** (Solana) | tiap run = **±5 menit** | permintaan user susulan: "iya untuk watchlist meteora juga, per 5 menit, biar perubahan holder bisa langsung ketahuan" |
+| 📋 **Watchlist biasa** (Solana & Robinhood biasa) | slot **4 jam** = 48 slot 5 menit | tidak berubah |
+
+Harga yang dibayar: tiap run sekarang menarik holder penuh semua token Meteora
+dari Helius (±3× dibanding era 15 menit) dan ±30 halaman Blockscout per token
+Robinhood. Kalau kuota mulai ketat, TIDAK perlu mengubah kode — set
+`LP_SCAN_RUN_MULTIPLIER: "3"` di langkah scan pada workflow, lalu `lp_slot_due`
+menahan lane Solana di luar slot 15 menitnya (log:
+`Rencana scan: … slot_lp=bukan`) sementara Robinhood LP tetap tiap run.
+**Gate run ganda** `MIN_RUN_GAP_SEC` = **4 menit**, wajib di bawah kadens run —
+kalau tidak, lane LP justru dibungkam gate-nya sendiri. Yang sengaja tidak ikut
+dipercepat: pengingat ⚡ Telegram (`FAST_BUCKET_SEC` tetap 15 menit/token —
+kalau tidak, satu token bisa dapat 3 pesan yang sama per 15 menit).
+
+Densitas titik riwayat mengikuti kadens run, jadi `holder_history.MAX_POINTS`
+naik **336 → 1008** (±3,5 hari pada titik 5 menit) supaya "Grafik 4 jam" di
+card LP tetap 21 bucket; tanpa itu jendela grafik menyusut jadi 28 jam.
+
+Kadens dijaga dua mekanisme di `.github/workflows/daily-effort.yml`: `schedule:
+"*/5 * * * *"` (fallback) dan langkah **chain dispatch** yang tidur sampai
+batas 5 menit berikutnya lalu men-dispatch run baru. Berkas workflow tidak
+bisa ditulis bot (GitHub menolak tanpa izin `workflows`), jadi kedua perubahan
+itu disiapkan di **`daily-effort-5menit.yml`** — salin isinya ke
+`.github/workflows/daily-effort.yml` lewat UI GitHub. Selama belum disalin,
+cron tetap ±15 menit untuk SEMUA lane (aman, hanya saja belum secepat yang
+diminta). Schedule GitHub bersifat
+**best-effort** — run bisa telat/dilewati (pada `*/15` pernah terukur ±2 jam)
+— jadi yang menjaga ritme adalah chain dispatch. Lihat `DEPLOY.md` untuk cara
+memverifikasi kadens nyata, memperlambat lane Solana, atau mengembalikan
+keseluruhan kadens ke 15 menit.
 
 ## Kunci konfigurasi
 
@@ -479,7 +544,7 @@ scan tetap berjalan dan pengiriman alert dilewati dengan aman.
 | `VOLATILITY_WINDOW_HOURS`, `HIGH_VOLATILITY_STDDEV_PCT` | 4, 3.0 — `holder_history` |
 | `BASELINE_HOURS`, `MIN_BASELINE_HOURS` | 168, 24 — `alert_context` (baseline volume 7 hari) |
 | `MAX_BACKUP_BYTES`, `DURABLE_CACHE_TTL` | 3.500.000, 600 — `holder_history` (budget backup `.gz`, cache pull UI) |
-| `MAX_POINTS` | 336 — 14 hari × 24 titik/jam (cron hourly; grafik tetap di-resample per bucket 4 jam) |
+| `MAX_POINTS` | 1008 — batas titik mentah per token; ±3,5 hari pada densitas LP 5 menit, 168 hari pada lane biasa 4 jam (grafik UI tetap di-resample per bucket 4 jam) |
 | `DUST_BEST_PCT`, `DUST_BEST_MIN_HOLDERS` | 0.1, 40 — badge BEST POOL (strict `< 0,1%`) + guard data holder minimal |
 | `DUST_BEST_LABEL` | `BEST POOL` — label badge (tampil apa adanya) |
 
@@ -497,6 +562,44 @@ python -m py_compile holder_history.py holder_chronology.py meteora_screener.py 
   lp_watchlist.py core.py app.py scripts/scan_holders.py trending_ui.py \
   watchlist.py watchlist_detail.py accumulation.py
 ```
+
+## Sinkronisasi watchlist non-blocking
+
+Tombol ➕ / ✕ / 📋 di card watchlist (Solana, Chart LP, dan Robinhood)
+**tidak lagi menunggu GitHub** sebelum tabel berubah. Jalur lama menarik
+remote dua kali dalam satu klik: `remove_from_watchlist()` →
+`_load_and_merge()` (pull: sampai 3 GET × timeout 10 dtk) → `save_watchlist()`
+→ `_github_push()` (GET+PUT × 3 percobaan, timeout 15 dtk). Diukur dengan stub
+RTT 0,8 dtk: **2,40 s** per klik, 3 panggilan HTTP di jalur klik, dan
+membengkak sampai sekitar dua menit saat API lambat (retry + backoff) —
+itulah keluhan "hapus dari watchlist Robinhood kurang responsif".
+
+Sekarang (flag `background=True` yang dipakai semua jalur UI):
+
+1. state dibaca **lokal** (`_load_and_merge(local_first=True)`: cache
+   `_REMOTE_CACHE` → file watchlist), tanpa HTTP;
+2. perubahan ditulis ke file lokal + **journal** `watchlist_pending.json`
+   (kontrak lama: journal selalu ditulis sebelum write/push apa pun);
+3. cache remote di-*seed* dengan hasil baru → render ulang langsung menampilkan
+   state benar dan **tidak** pull lagi (`_CACHE_TTL` naik 15 → 60 detik);
+4. commit ke GitHub dijalankan di **thread daemon** (`_queue_github_push`),
+   satu worker per file watchlist; job terbaru menimpa job lama, jadi klik
+   cepat beruntun hanya menghasilkan satu commit final;
+5. journal dibersihkan **hanya** setelah commit sukses — kegagalan apa pun
+   membuat operasi tetap tertunda dan di-flush oleh `load_watchlist()`
+   berikutnya (yang otomatis melewat flush inline selama worker masih jalan,
+   supaya tidak balap 409).
+
+Hasil terukur setelah perubahan: **1,4 ms** untuk klik + 0,9 ms untuk render
+ulang, 0 panggilan jaringan di jalur klik. Badge kecil di kepala card
+menunjukkan statusnya: `🔄 sinkron…` (masih dikirim) atau `⚠️ belum sinkron`
+(commit terakhir gagal; lihat `watchlist.push_status()`).
+
+Catatan durability: filesystem Streamlit Cloud ephemeral, jadi window antara
+klik dan commit adalah window risiko — sebelumnya window itu sepanjang
+percobaan push (bisa puluhan detik saat API macet), sekarang ±0,4–2 dtk.
+Perubahan yang belum ter-commit hilang bila proses mati di dalam window itu,
+persis seperti push yang gagal.
 
 ## Scan manual vs snapshot cron
 

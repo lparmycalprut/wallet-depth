@@ -26,17 +26,56 @@ yang tidak bisa dipulihkan.
 ## GitHub Actions
 
 Workflow `.github/workflows/daily-effort.yml` ("Holder Dust Scanner")
-menargetkan **1× per jam** (`schedule: cron "0 * * * *"`) dan memanggil
-`python scripts/scan_holders.py`. Job memakai `timeout-minutes: 45` supaya
-run yang macet tidak menumpuk antre di concurrency group `holder-scanner`
-(run hourly yang lambat bisa membuat beberapa run tertunda sekaligus).
+berjalan **tiap ±5 menit** sejak 2026-09-06 (`schedule: cron "*/5 * * * *"`
++ langkah **chain dispatch**) dan memanggil `python scripts/scan_holders.py`.
+Scanner yang membagi pekerjaannya per lane: **KEDUA watchlist LP**
+(Robinhood LP + Chart LP Meteora) tiap run = ±5 menit, **watchlist biasa**
+slot 4 jam. Beban API ikut naik 3× di kedua chain (Helius untuk Meteora,
+Blockscout untuk Robinhood) — itu konsekuensi yang diterima saat user minta
+"untuk watchlist meteora juga, per 5 menit, biar perubahan holder bisa
+langsung ketahuan". Kalau kuota Helius mulai ketat: set
+`LP_SCAN_RUN_MULTIPLIER: "3"` di langkah scan (env, tanpa ubah kode) sehingga
+scan Solana kembali ±15 menit sementara Robinhood LP tetap tiap run. Job memakai
+`timeout-minutes: 45` supaya run yang macet tidak menumpuk antre di
+concurrency group `holder-scanner`.
+
+> **Berkas workflow tidak bisa ditulis bot.** GitHub menolak push/PUT ke
+> `.github/workflows/*` tanpa izin `workflows` (403 `refusing to allow a GitHub
+> App to create or update workflow`). Isi lengkap untuk kadens 5 menit ada di
+> **`daily-effort-5menit.yml`** di root repo — salin lewat UI GitHub (atau ubah
+> dua angka saja: `cron "*/15 * * * *"` → `"*/5 * * * *"` dan
+> `WAIT=$((900 - NOW % 900 + 20))` → `300`). Kode scanner sudah mendukung
+> keduanya: workflow 15 menit = semua lane LP 15 menit (tidak ada yang rusak),
+> workflow 5 menit = kedua lane LP 5 menit.
+>
+> **Cara memperlambat scan Solana saja** (kalau kuota Helius menipis, tanpa
+> menyentuh kode): tambah env `LP_SCAN_RUN_MULTIPLIER: "3"` di langkah
+> "Holder scan" → lane Meteora tiap 3 run (±15 menit), Robinhood LP tetap tiap
+> run, watchlist biasa tetap slot 4 jam.
+>
+> **Cara mengembalikan SELURUH kadens ke 15 menit** (atau ke berapa pun):
+> angka-angka ini harus bergerak bersamaan —
+> `WAIT=$((300 - NOW % 300 + 20))` → `900` di langkah "Chain run berikutnya",
+> `cron: "*/5 * * * *"` → `"*/15 * * * *"`, `RUN_SCAN_INTERVAL_SEC` (yang
+> menurunkan `RH_FAST_SCAN_INTERVAL_SEC` / `METEORA_LP_SCAN_INTERVAL_SEC` /
+> `REGULAR_SLOTS`) dan `MIN_RUN_GAP_SEC` di `scripts/scan_holders.py` (gate run
+> ganda wajib **lebih kecil** dari kadens run), dan `holder_history.MAX_POINTS`
+> kembali ke 336 kalau densitas titik juga ikut melambat (1008 titik @ 15 menit
+> = 10,5 hari). `holder_history.MIN_POINT_GAP_SEC` aman dibiarkan 4 menit —
+> yang berbahaya justru kalau ia Naik sampai ≥ kadens run: titik tiap run saling
+> menimpa dan history berhenti tumbuh. Beban Actions ±288 run/hari
+> (repo publik = menit Actions gratis; tiap run ±5 menit sebagian besar tidur
+> di langkah chain).
 
 > **Schedule GitHub bersifat best-effort, bukan SLA.** GitHub bisa
 > men-throttle / melewatkan schedule: pada cron `*/15 * * * *` kadens nyata
 > terukur **±2 jam** (contoh run: 18:02, 20:58, 22:57, 00:39 UTC), bukan 15
-> menit. Artinya "1 jam" adalah **target**, bukan janji — alert bucket 4 jam,
-> titik per jam, dan cooldown 1 jam dirancang toleran terhadap run yang
-> telat/dilewati.
+> menit. Karena itu ritme 5 menit dipegang **chain dispatch** (tiap run
+> men-dispatch run berikutnya setelah tidur sampai batas berikutnya) dan
+> schedule hanya jaring pengaman. Artinya "5 menit" tetap **target**, bukan
+> janji — alert bucket 4 jam, titik per 4 jam, dan cooldown 1 jam dirancang
+> toleran terhadap run yang telat/dilewati; pengingat ⚡ lane LP sengaja tidak
+> ikut dipercepat (bucket `FAST_BUCKET_SEC` tetap 15 menit per token).
 >
 > Cara memverifikasi kadens nyata:
 > - log run: baris `Holder scan selesai: … updated=<ts> durasi=<detik>`
@@ -70,16 +109,33 @@ Langkah setiap scan:
    hanya `WARN` (`backup=GAGAL (...)` di log), exit code tetap dari publish
    snapshot. `--no-push` melewati keduanya.
 
-Cadence hourly (sejak 2026-09-04) dan ukuran ref `holder-live`:
+Cadence (2026-09-04 hourly → 2026-09-05 LP 15 menit → 2026-09-06 run 5 menit:
+pertama khusus lane Robinhood, lalu hari yang kedua untuk KEDUA lane LP) dan
+ukuran ref `holder-live`:
 
-- `MAX_POINTS = 336` = 14 hari × 24 titik/jam per token. Grafik UI tetap
+- `MAX_POINTS = 1008` — densitas titik riwayat mengikuti kadens run, jadi
+  batasnya ikut dikalibrasi. Sejak kedua lane LP di-scan tiap 5 menit, batas
+  lama 336 (= 14 hari × 24 titik/jam di era hourly) cuma bertahan **28 jam**
+  dan grafik bucket 4 jam menyusut 3×; 1008 titik @ 5 menit = ±3,5 hari =
+  **21 bucket 4 jam**, persis jendela yang dulu dihasilkan 336 titik @ 15
+  menit. Lane biasa (6 titik/hari) tidak terpengaruh. Grafik UI tetap
   memakai `resample_4h` (bucket 4 jam, ≤ 84 titik), jadi snapshot dashboard
   tidak ikut membengkak; store mentah yang membesar dibackup terkompresi
   gzip. Terukur dengan store sintetis 55 token × 336 titik per jam:
-  backup ~**1,03 MB** (batas `MAX_BACKUP_BYTES` 3,5 MB) — estimasi
+  backup ~**1,03 MB** (batas `MAX_BACKUP_BYTES` 3,5 MB); varian dengan 10
+  token LP @ 1008 titik 5 menit menghasilkan **0,33 MB** untuk 10 token LP itu
+  (vs 0,25 MB @ 336 titik 15 menit) — jauh di bawah budget, dan tangga prune
+  backup tetap merapatkan store ke 42 bucket 4 jam kalau suatu saat melewati
+  `MAX_BACKUP_BYTES`. Estimasi
   pertumbuhan ~**±633 kB × 24 run/hari ≈ 15 MB/hari** isi Git bila tiap run
   mengganti blob (bandingkan ±7,6 MB/hari pada kadens 2 jam; git menyimpan
   delta antar commit, nilai sesungguhnya lebih kecil).
+- Ukuran repo `holder-live`: tiap run menulis DUA commit (`holder-status:` +
+  `holder-history:`), jadi kadens 5 menit = ±576 commit/hari. Saat ini total
+  repo terukur ±56 MB pada kadens 15 menit; kalau pertumbuhannya ganggu,
+  tinggal batasi **publish backup .gz** ke run slot 4 jam (grafik toh
+  di-resample per bucket) sementara snapshot `holder_status.json` tetap tiap
+  run — belum perlu sekarang, cukup dipantau.
 - Kuota holder: sejak 2026-09-05 cron scan **FULL** (bukan sampel 3000):
   token yang punya ≤ 3000 holder tidak berubah biayanya, token lebih besar
   ikut semua halamannya (default `--max-wallets` = 100.000 = batas atas
@@ -89,15 +145,23 @@ Cadence hourly (sejak 2026-09-04) dan ukuran ref `holder-live`:
   wallet/token; token ≤ 3.000 tidak terpengaruh, baseline + kronologi
   otomatis tetap jalan. Hapus flag itu dari workflow untuk FULL penuh.
   Perkiraan:
-  55 token × 24 run/hari × holder aktual per token (order ribuan untuk
-  token degen) via Helius DAS + market DexScreener; pantau durasi di log
-  `durasi=<detik>` dan kuota Helius bila watchlist membesar.
+  token LP × 288 run/hari (kedua chain) + token biasa × 6 run/hari, holder
+  aktual per token (order ribuan untuk token degen) via Helius DAS + market
+  DexScreener; pantau durasi di log `durasi=<detik>` dan kuota Helius bila
+  watchlist membesar — katupnya `LP_SCAN_RUN_MULTIPLIER` atau
+  `--max-wallets` yang lebih kecil.
 - Baseline/kronologi: scan FULL pertama tiap token (setelah masuk
   watchlist) menulis `baseline` immutable + snapshot wallet; run berikutnya
   menambah interval kronologi (bounded: 24 interval / 400 wallet snapshot /
   40 movement per interval per token).
-- `MIN_POINT_GAP_SEC` (8 menit) aman untuk run tiap jam: run ganda < 8 menit
-  (schedule + `workflow_dispatch`) menimpa titik yang sama, bukan menambah.
+- `MIN_POINT_GAP_SEC` (4 menit sejak 2026-09-06; dulu 8 menit) adalah ambang
+  "run ganda": titik yang lebih muda dari itu ditimpa, bukan ditambahkan.
+  Nilainya harus berada di antara `MIN_RUN_GAP_SEC` (4 menit) dan kadens run
+  tercepat (5 menit) — di luar rentang itu history salah satu lane berhenti
+  tumbuh (`tests/test_holder_history.py::FiveMinuteCadenceTest` mengunci ini).
+  Konsekuensi lain: store mentah lane 5 menit menyimpan `MAX_POINTS` titik
+  (= 1008 ≈ ±3,5 hari sejak 2026-09-06); grafik 4 jam & snapshot dashboard
+  tetap ≤ 84 bucket karena memakai `resample_4h`.
 
 Workflow memerlukan permission berikut:
 

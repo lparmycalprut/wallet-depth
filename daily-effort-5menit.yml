@@ -1,0 +1,124 @@
+# Kadens 5 menit — SCANDED UNTUK DISESALIAKAN (repo ini tidak bisa diubah
+# lewat bot: GitHub menolak push/PUT berkas `.github/workflows/*` tanpa izin
+# `workflows` pada GitHub App, 403 "refusing to allow a GitHub App to create or
+# update workflow").
+#
+# Cara memasang (salah satu):
+#   1. GitHub UI → Actions → "Holder Dust Scanner" → edit
+#      `.github/workflows/daily-effort.yml` → timpa seluruh isinya dengan isi
+#      berkas ini → commit; ATAU
+#   2. ubah 3 baris saja di workflow yang ada:
+#        - cron: "*/15 * * * *"            →  "*/5 * * * *"
+#        - WAIT=$((900 - NOW % 900 + 20))  →  WAIT=$((300 - NOW % 300 + 20))
+#        - nama langkah "Holder scan (LP ±15 menit · biasa slot 4 jam)"
+#                                          →  "Holder scan (LP ±5 menit · biasa slot 4 jam)"
+#
+# Kode scanner SUDAH siap (scripts/scan_holders.py): selama workflow masih
+# 15 menit, cron berjalan 15 menit dan KEDUA lane LP ikut 15 menit — tidak ada
+# yang rusak. Setelah workflow di atas dipasang, Chart LP Meteora + Robinhood
+# LP sama-sama ±5 menit (itu yang diminta user), watchlist biasa tetap slot 4
+# jam, dan pengingat ⚡ Telegram tetap maks 1× per 15 menit per token. Kalau
+# kuota Helius mulai ketat tanpa mau menyentuh kode: tambah env
+# ``LP_SCAN_RUN_MULTIPLIER: "3"`` di langkah scan → scan Solana kembali 15
+# menit, Robinhood tetap 5 menit. Berkas ini bukan workflow aktif (GitHub
+# hanya membaca folder .github/workflows).
+
+name: Holder Dust Scanner
+
+on:
+  schedule:
+    # Kadens target **±5 menit** sejak 2026-09-06 (permintaan user: watchlist
+    # Robinhood LP harus lebih cepat supaya exit bisa lebih awal, lalu watchlist
+    # Meteora juga 5 menit "biar perubahan holder bisa langsung ketahuan"). Yang
+    # berubah adalah kadens RUN; scanner yang mengatur lane-nya
+    # (scripts/scan_holders.py): KEDUA watchlist LP tiap run (±5 menit),
+    # watchlist biasa tetap slot 4 jam. Schedule GitHub bersifat best-effort dan bisa
+    # terthrottle sampai ±2 jam (lihat DEPLOY.md), jadi kadens 5 menit yang
+    # sesungguhnya dijaga langkah "chain" di bawah: tiap run men-dispatch run
+    # berikutnya setelah tidur sampai batas 5 menit berikutnya. Run ganda
+    # (chain + schedule) dicek gate MIN_RUN_GAP_SEC (4 menit) di scanner lalu
+    # keluar tanpa kerja.
+    - cron: "*/5 * * * *"
+
+  workflow_dispatch:
+    inputs:
+      telegram_test:
+        description: "Kirim test alert Telegram sebelum scan"
+        required: false
+        default: false
+        type: boolean
+      scan_all:
+        description: "Scan SEMUA token sekarang (scope=all + abaikan gate run ganda) — dipakai saat token baru ditambahkan"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  # Chain dispatch: langkah terakhir POST /actions/workflows/.../dispatches.
+  actions: write
+
+concurrency:
+  group: holder-scanner
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install requests curl_cffi
+
+      - name: Holder scan (LP ±5 menit · biasa slot 4 jam)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+          # Opsional — katup hemat kuota Helius. Uncomment kalau request 5
+          # menit per mulai ditolak 429; 3 = scan Solana kembali ±15 menit,
+          # Robinhood LP tetap tiap run. Default 1 (semua lane LP tiap run).
+          # LP_SCAN_RUN_MULTIPLIER: "3"
+        # --max-wallets 3000: jaga durasi run (slot 4 jam memindai token
+        # biasa sekaligus). Hapus flag ini bila mau FULL 100.000 wallet.
+        # Catatan kadens 5 menit (2026-09-06): KEDUA lane LP memakai nilai
+        # yang sama, jadi tiap run menarik ±30 halaman holder per token dari
+        # Blockscout DAN holder penuh tiap token Meteora dari Helius (±3×
+        # dibanding kemarin). Bila mulai kena 429 (client sudah backoff 3 s),
+        # turunkan angka ini atau naikkan LP_SCAN_RUN_MULTIPLIER — run slot 4
+        # jam tidak terpengaruh.
+        run: |
+          ARGS=""
+          if [ "${{ inputs.telegram_test }}" = "true" ]; then
+            ARGS="$ARGS --telegram-test"
+          fi
+          if [ "${{ inputs.scan_all }}" = "true" ]; then
+            ARGS="$ARGS --scope all --ignore-gap"
+          fi
+          python scripts/scan_holders.py --max-wallets 3000 $ARGS
+
+      - name: Chain run berikutnya
+        if: success() || failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NOW=$(date +%s)
+          # Bangun tepat setelah batas 5 menit berikutnya (+20 s supaya tidak
+          # menabrak run schedule pada batas yang sama). Sebelum 2026-09-06
+          # konstanta di bawah 900 (kadens 15 menit).
+          WAIT=$((300 - NOW % 300 + 20))
+          echo "Tidur ${WAIT}s lalu dispatch run berikutnya."
+          sleep $WAIT
+          curl -sSf -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/${{ github.repository }}/actions/workflows/daily-effort.yml/dispatches \
+            -d '{"ref":"main"}'

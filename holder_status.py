@@ -222,7 +222,7 @@ def snapshot_status(analyses: dict | None,
     konfirmasi alert ikut terdokumentasi di snapshot.
 
     ``merge_status`` = snapshot publish sebelumnya. Dipakai cron sejak
-    cadens dua tingkat (2026-09-05): run cepat ±15 menit hanya meng-analisis
+    cadens dua tingkat (2026-09-06): run cepat ±5 menit hanya meng-analisis
     watchlist LP, jadi token watchlist biasa **diwariskikan** dari snapshot
     lama (kunci di luar watchlist saat ini dibuang supaya token yang
     dihapus tidak menggantung) alih-alih hilang dari dashboard sampai run
@@ -602,9 +602,13 @@ def publish_holder_status(analyses: dict,
             _LAST_PUBLISH["ok"] = False
             _LAST_PUBLISH["error"] = "no github_token"
         else:
+            # merge_journal=False: file snapshot tidak punya jurnal operasi,
+            # dan men-merge journal watchlist ke sini bisa menyuntik mint
+            # Solana/Robinhood ke dalam holder_status*.json (bug silang
+            # jaringan; lihat watchlist._github_push).
             ok = _github_push(status,
                               f"holder-status: snapshot {stamp} [skip ci]",
-                              repo_path=repo_path)
+                              repo_path=repo_path, merge_journal=False)
             _LAST_PUBLISH["ok"] = bool(ok)
             _LAST_PUBLISH["error"] = "" if ok else "github push failed"
         if not _LAST_PUBLISH["ok"]:

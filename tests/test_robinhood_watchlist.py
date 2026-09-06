@@ -75,7 +75,90 @@ class FetchHoldersTest(unittest.TestCase):
         self.assertEqual(out["fetched"], 3)
 
 
+class ProviderFailureTest(unittest.TestCase):
+    """Scan yang gagal tidak boleh terbaca seperti hasil (dust 0% = AMAN)."""
+
+    @staticmethod
+    def _http_error(status):
+        import requests
+
+        response = mock.Mock(status_code=status)
+        return requests.exceptions.HTTPError(f"{status}", response=response)
+
+    def test_transient_status_dicoba_ulang(self):
+        calls = []
+        ok = mock.Mock()
+        ok.raise_for_status.return_value = None
+        ok.json.return_value = {"status": "1", "result": {"decimals": "18"}}
+
+        def fake_get(*args, **kwargs):
+            calls.append(kwargs.get("params") or args)
+            if len(calls) == 1:
+                raise self._http_error(429)
+            return ok
+
+        with mock.patch.object(rh.requests, "get", side_effect=fake_get), \
+                mock.patch.object(rh.time, "sleep") as sleep:
+            payload = rh._jsjson({"module": "token"})
+        self.assertEqual(payload["status"], "1")
+        self.assertEqual(len(calls), 2)
+        sleep.assert_called_once()
+
+    def test_error_terminal_tidak_diulang(self):
+        def fake_get(*args, **kwargs):
+            raise self._http_error(404)
+
+        with mock.patch.object(rh.requests, "get", side_effect=fake_get), \
+                mock.patch.object(rh.time, "sleep") as sleep:
+            with self.assertRaises(Exception):
+                rh._jsjson({"module": "token"})
+        sleep.assert_not_called()
+
+    def test_is_transient_error_jenis(self):
+        import requests
+
+        self.assertTrue(rh.is_transient_error(
+            requests.exceptions.ConnectionError("closed")))
+        self.assertTrue(rh.is_transient_error(self._http_error(503)))
+        self.assertFalse(rh.is_transient_error(self._http_error(400)))
+        self.assertFalse(rh.is_transient_error(ValueError("json")))
+
+    def test_getToken_status_nol_dilempar(self):
+        """Blockscout menolak (rate limit) → error, bukan decimals -1 diam-diam."""
+        with mock.patch.object(rh, "_jsjson", return_value={
+                "status": "0", "message": "Max rate limit reached",
+                "result": None}):
+            with self.assertRaises(RuntimeError) as ctx:
+                rh.fetch_token_info(EV_LOWER)
+        self.assertIn("Max rate limit reached", str(ctx.exception))
+
+    def test_fetch_holders_menyalin_error_provider(self):
+        with mock.patch.object(rh, "fetch_token_info",
+                               side_effect=RuntimeError("getToken down")):
+            out = rh.fetch_holders(EV_LOWER, price_usd=1.0, decimals=None)
+        self.assertEqual(out["fetched"], 0)
+        self.assertEqual(out["holders"], [])
+        self.assertIn("getToken down", out["error"])
+
+    def test_analyze_token_membawa_fetch_error_ke_hasil(self):
+        with mock.patch.object(rh, "get_market", return_value={
+                "price_usd": 0.5, "marketcap": 1000.0, "symbol": "VLAD"}), \
+                mock.patch.object(rh, "fetch_token_info",
+                                  side_effect=RuntimeError("429 rate limit")):
+            result = rh.analyze_token(EV_LOWER, "VLAD", fetch_market=True)
+        holders = result["holders"]
+        self.assertEqual(holders["total_fetched"], 0)
+        self.assertIn("429 rate limit", holders["fetch_error"])
+
+
 class WrapperTest(unittest.TestCase):
+    """Wrapper Robinhood hanya memilih trio path + meneruskan ``background``.
+
+    ``background`` adalah jalur UI non-blocking (lihat 2026-09-06): default
+    ``False`` untuk pemanggil script/cron, ``True`` untuk tombol di card
+    supaya commit GitHub tidak memblokir rerun Streamlit.
+    """
+
     def test_add_passes_robinhood_paths(self):
         with mock.patch.object(wl, "add_to_watchlist", return_value=True) as add:
             self.assertTrue(rw.add_to_robinhood_watchlist(EV, "VLAD"))
@@ -84,7 +167,15 @@ class WrapperTest(unittest.TestCase):
             repo_path="watchlist_robinhood.json",
             local_path=rw.WATCHLIST_LOCAL_PATH,
             pending_path=rw.WATCHLIST_PENDING_PATH,
-            chain_id="robinhood")
+            chain_id="robinhood", background=False)
+
+    def test_add_background_flag_diteruskan(self):
+        with mock.patch.object(wl, "add_to_watchlist", return_value=True) as add:
+            self.assertTrue(rw.add_to_robinhood_watchlist(
+                EV, "VLAD", source="lp", background=True))
+        self.assertTrue(add.call_args.kwargs["background"])
+        self.assertEqual(add.call_args.kwargs["repo_path"],
+                         "watchlist_robinhood.json")
 
     def test_remove_passes_robinhood_paths(self):
         with mock.patch.object(wl, "remove_from_watchlist",
@@ -93,7 +184,31 @@ class WrapperTest(unittest.TestCase):
         remove.assert_called_once_with(
             EV, repo_path="watchlist_robinhood.json",
             local_path=rw.WATCHLIST_LOCAL_PATH,
-            pending_path=rw.WATCHLIST_PENDING_PATH)
+            pending_path=rw.WATCHLIST_PENDING_PATH, background=False)
+
+    def test_remove_background_flag_diteruskan(self):
+        with mock.patch.object(wl, "remove_from_watchlist",
+                               return_value=True) as remove:
+            self.assertTrue(rw.remove_from_robinhood_watchlist(
+                EV, background=True))
+        remove.assert_called_once_with(
+            EV, repo_path="watchlist_robinhood.json",
+            local_path=rw.WATCHLIST_LOCAL_PATH,
+            pending_path=rw.WATCHLIST_PENDING_PATH, background=True)
+
+    def test_move_background_flag_diteruskan(self):
+        with mock.patch.object(wl, "set_watchlist_source",
+                               return_value=True) as move:
+            self.assertTrue(rw.set_robinhood_watchlist_source(
+                EV, rw.RH_REGULAR_SOURCE, background=True))
+        self.assertEqual(move.call_args.args, (EV, rw.RH_REGULAR_SOURCE))
+        self.assertTrue(move.call_args.kwargs["background"])
+
+    def test_sync_state_membaca_status_push_file_robinhood(self):
+        with mock.patch.object(wl, "push_status",
+                               return_value={"state": "syncing"}) as status:
+            self.assertEqual(rw.sync_state(), {"state": "syncing"})
+        status.assert_called_once_with("watchlist_robinhood.json")
 
 
 if __name__ == "__main__":  # pragma: no cover

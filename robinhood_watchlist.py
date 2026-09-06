@@ -5,9 +5,10 @@ Watchlist ini terpisah dari ``watchlist.json`` (Solana). File-nya:
 
 - ``watchlist_robinhood.json`` — daftar token ``0x…`` (persisted ke GitHub),
   dipecah dua card lewat field ``source``:
-  **Robinhood LP** (default, scan cepat ±15 menit + pengingat > 0,1% MC
-  berulang) dan **Robinhood biasa** (``source="regular"``, scan ±4 jam +
-  rule 🔔 HIGH DROP) — lihat :func:`split_robinhood_watchlist`.
+  **Robinhood LP** (default, scan cepat **±5 menit** sejak 2026-09-06 +
+  pengingat > 0,1% MC berulang, dibatasi bucket 15 menit per token) dan
+  **Robinhood biasa** (``source="regular"``, scan ±4 jam + rule 🔔 HIGH DROP)
+  — lihat :func:`split_robinhood_watchlist`.
 - ``watchlist_robinhood_pending.json`` — journal add/remove/source
   (gitignored).
 - ``holder_status_robinhood.json`` — snapshot dashboard (ref ``holder-live``).
@@ -22,7 +23,8 @@ from __future__ import annotations
 
 import os
 
-from holder_history import (ingest_many, load_durable_holder_history,
+from holder_history import (holders_usable, ingest_many,
+                            load_durable_holder_history,
                             publish_holder_history, seed_from_status)
 from holder_status import load_holder_status, publish_holder_status
 import robinhood_holders
@@ -43,8 +45,10 @@ CHAIN_SLUG = robinhood_holders.CHAIN_SLUG
 CHAIN_NAME = robinhood_holders.CHAIN_NAME
 
 # Watchlist Robinhood dipecah dua card (permintaan user 2026-09-05):
-# - **Robinhood LP**    : scan cepat ±15 menit bersama Chart LP (Meteora);
-#   pengingat ⚡ EARLY DUMP berulang selama dust % MC > 0,1%.
+# - **Robinhood LP**    : scan cepat — **tiap run cron ±5 menit** sejak
+#   2026-09-06 (sebelumnya 15 menit, sama seperti Chart LP Meteora yang kini
+#   ikut 5 menit); pengingat ⚡ EARLY DUMP berulang selama dust % MC > 0,1%,
+#   dibatasi bucket 15 menit/token.
 # - **Robinhood** (biasa): scan ±4 jam; rule 🔔 HIGH DROP (turun >= 50%
 #   dari titik high hold % MC).
 # Split memakai field ``source`` di file watchlist yang sama, seperti split
@@ -89,36 +93,60 @@ def _watchlist_module():
 
 
 def add_to_robinhood_watchlist(ca: str, symbol: str = "?", note: str = "",
-                               source: str = "manual", **kwargs) -> bool:
+                               source: str = "manual", *,
+                               background: bool = False,
+                               **kwargs) -> bool:
+    """Tambah token Robinhood ke watchlist.
+
+    ``background=True`` (dipakai card Robinhood di dashboard): hasil tulis
+    langsung terlihat di tabel, commit ke GitHub + dispatch scan dikerjakan
+    di thread latar — tidak ada lagi jeda beberapa detik saat menekan tombol.
+    """
     return _watchlist_module().add_to_watchlist(
         ca, symbol, note=note, source=source,
         repo_path=WATCHLIST_REPO_PATH,
         local_path=WATCHLIST_LOCAL_PATH,
         pending_path=WATCHLIST_PENDING_PATH,
-        chain_id=CHAIN_SLUG, **kwargs)
+        chain_id=CHAIN_SLUG, background=background, **kwargs)
 
 
-def add_many_to_robinhood_watchlist(rows, *, source: str = "manual") -> dict:
+def add_many_to_robinhood_watchlist(rows, *, source: str = "manual",
+                                    background: bool = False) -> dict:
     return _watchlist_module().add_many_to_watchlist(
-        rows, source=source,
+        rows, source=source, background=background,
         repo_path=WATCHLIST_REPO_PATH,
         local_path=WATCHLIST_LOCAL_PATH,
         pending_path=WATCHLIST_PENDING_PATH)
 
 
-def remove_from_robinhood_watchlist(ca: str) -> bool:
+def remove_from_robinhood_watchlist(ca: str, *,
+                                    background: bool = False) -> bool:
+    """Hapus token dari watchlist Robinhood.
+
+    ``background=True``: state dibaca dari cache/file lokal, perubahan ditulis
+    + di-journal, dan commit ke GitHub jalan di thread latar. Ini jalur yang
+    dipakai tombol ✕ di card — see :func:`watchlist.remove_from_watchlist`.
+    """
     return _watchlist_module().remove_from_watchlist(
         ca, repo_path=WATCHLIST_REPO_PATH,
         local_path=WATCHLIST_LOCAL_PATH,
-        pending_path=WATCHLIST_PENDING_PATH)
+        pending_path=WATCHLIST_PENDING_PATH, background=background)
 
 
-def set_robinhood_watchlist_source(ca: str, source: str) -> bool:
+def set_robinhood_watchlist_source(ca: str, source: str, *,
+                                   background: bool = False) -> bool:
+    """Pindahkan token antar card watchlist Robinhood (``background`` seperti
+    pada :func:`remove_from_robinhood_watchlist`)."""
     return _watchlist_module().set_watchlist_source(
         ca, source,
         repo_path=WATCHLIST_REPO_PATH,
         local_path=WATCHLIST_LOCAL_PATH,
-        pending_path=WATCHLIST_PENDING_PATH)
+        pending_path=WATCHLIST_PENDING_PATH, background=background)
+
+
+def sync_state() -> dict:
+    """Status sinkronisasi GitHub watchlist Robinhood (dipakai caption card)."""
+    return _watchlist_module().push_status(WATCHLIST_REPO_PATH)
 
 
 def load_status(force_refresh: bool = False) -> dict:
@@ -199,18 +227,42 @@ def publish_scan(analyses: dict, watchlist: dict, *,
                  history_store: dict | None = None,
                  push: bool = False,
                  contexts: dict | None = None,
-                 merge_status: dict | None = None) -> dict:
+                 merge_status: dict | None = None,
+                 skip_unusable: bool = True) -> dict:
     """Ingest + publish status/history Robinhood ke file lokal/GitHub.
 
     ``merge_status`` (snapshot sebelumnya) mewariskan token yang tidak
     ikut dianalisis run cepat — lihat ``holder_status.snapshot_status``.
+
+    ``skip_unusable=True`` (default) menyaring hasil yang **tidak layak**
+    (``holder_history.holders_usable``: 0 wallet / sampel di bawah
+    ``MIN_USABLE_WALLETS``, mis. satu request Blockscout kena rate limit) dari
+    snapshot dashboard — aturan yang sama dengan cron Solana. Tanpa saringan
+    ini, scan gagal mempublikasikan ``dust_count 0`` / ``dust 0,00% MC`` di
+    atas angka cron terakhir yang masih benar, sehingga dashboard berbunyi
+    "AMAN" padahal tidak ada data. Titiknya TETAP masuk history (``ingest_many``
+    menandainya ``degraded``) supaya jejak scan gagal tidak hilang, dan token itu
+    mewarisi angka snapshot lama lewat ``merge_status``.
     """
     store = history_store if isinstance(history_store, dict) \
         else load_history()
     history = ingest_many(analyses, store=store, path=HISTORY_LOCAL_PATH,
                           detail=True)
+    publishable = analyses
+    skipped: list[str] = []
+    if skip_unusable:
+        publishable = {}
+        for mint, analysis in (analyses or {}).items():
+            if holders_usable((analysis or {}).get("holders")):
+                publishable[mint] = analysis
+            else:
+                skipped.append(str(mint))
+        if skipped:
+            print("Robinhood publish: %d token dilewati (holder scan tidak "
+                  "layak): %s" % (len(skipped), ", ".join(s[:10] for s in skipped)),
+                  file=__import__("sys").stderr)
     status = publish_holder_status(
-        analyses, watchlist, push=push, history_store=history,
+        publishable, watchlist, push=push, history_store=history,
         contexts=contexts, merge_status=merge_status,
         repo_path=STATUS_REPO_PATH,
         local_path=STATUS_LOCAL_PATH)

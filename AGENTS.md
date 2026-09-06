@@ -17,9 +17,10 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   `DUST_BEST_LABEL = "BEST POOL"`) bersifat **aditif**: `dust_flag(pct,
   prev, *, holders=...)` mengembalikan `best: bool` tanpa mengubah
   level/label/hide lama; guard `_holders_valid_for_best` menolak data
-  kosong/gagal (`total_fetched <= 0`, `< 40 wallet`). `MAX_POINTS = 336`
-  (14 hari × 24 titik/jam, cron hourly); UI tetap memakai
-  `resample_4h` (maks 84 bucket 4 jam).
+  kosong/gagal (`total_fetched <= 0`, `< 40 wallet`). `MAX_POINTS = 1008` —
+  jendela titik mentah per token, dikalibrasi ke densitas run LP 5 menit
+  (±3,5 hari = 21 bucket 4 jam; dulu 336 untuk cron hourly/15 mnt); UI tetap
+  memakai `resample_4h` (maks 84 bucket 4 jam).
   Baseline scan FULL immutable + kronologi wallet bounded
   (`holder_chronology.py`). **Sejak 2026-09-05 cron ikut scan FULL +
   `detail=True`** — scan pertama setelah token masuk watchlist menjadi
@@ -42,7 +43,27 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   `holders_usable` supaya scan bersampel pendek tidak menulis apa pun, dan
   biarkan `ingest_many(..., detail=False)` agar baseline scan FULL +
   `latest_detail` + kronologi tidak tertimpa. Tombol Robinhood
-  (`robinhood_watchlist.publish_scan`) berlaku sama.
+  (`robinhood_watchlist.publish_scan`) berlaku sama — saringan
+  `holders_usable` dipasang di sana (2026-09-06) sehingga scan yang gagal /
+  mengembalikan 0 wallet **tidak pernah** masuk snapshot
+  `holder_status_robinhood.json`; titiknya tetap dicatat (ditandai
+  `degraded`) supaya jejak kegagalan terlihat, dan token itu mewarisi angka
+  lama lewat `merge_status`. Alasan provider dibawa sebagai
+  `holders["fetch_error"]` (dulu ditelan `classify_holders` sehingga "dust
+  0 wallet" terbaca seperti hasil nyata).
+- **Tautan halaman internal = slug, bukan path file.** Streamlit memberi
+  setiap file `pages/` URL dari nama file yang sudah dibersihkan (prefiks
+  nomor + emoji leading dibuang): `pages/5_🧮_Holder.py` → `/Holder`,
+  `pages/4_📊_CVD.py` → `/CVD`; frontend mencocokkan dengan
+  `pathname.endsWith('/' + url_pathname)` sehingga `pages/5_🧮_Holder.py`
+  **bukan route** (app jatuh ke halaman utama + "Page not found"). Karena itu
+  tautan 🧮 dibangun lewat `links.page_url_path` / `links.page_url` (slug +
+  `server.baseUrlPath`) dan **jangan** disambung manual. `page_router.apply()`
+  — dipanggil paling awal di `app.py` — memantulkan `?mint=|ca=|token=|address=`
+  (opsional `?page=<slug|nomor|file|path>`) yang mendarat di halaman utama ke
+  halaman yang dituju lewat `st.switch_page`, supaya tautan lama tetap hidup;
+  registry alias dibaca dari folder `pages/` (tanpa hardcoded), CA divalidasi
+  format, dan penanda `st.session_state["_deep_link_routed"]` mencegah loop.
 - `lp_watchlist.py`: card **Chart LP** — watchlist terpisah berisi token
   `source=meteora`; baris data (dust % MC, Δ poin persentase, level) +
   figure matplotlib grafik perubahan dust holder (garis ambang 0,5% / 1%)
@@ -86,8 +107,25 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   (`st.session_state[MANUAL_SCAN_KEY]`) membuat kartu metrik, badge,
   watchlist, dan Chart LP ikut scan manual yang lebih baru daripada snapshot
   cron — grafik sudah lebih dulu memuat titik itu dari `holder_history.json`.
-- `scripts/scan_holders.py`: cron watchlist (target **1×/jam** sejak
-  2026-09-04), **pull + merge backup store sebelum scan**, evaluasi alert
+- `scripts/scan_holders.py`: cron watchlist. **Kadens run ±5 menit sejak
+  2026-09-06** (dulu 1×/jam → ±15 menit); lane diatur scanner, bukan cron:
+  **KEDUA lane LP tiap run** (Chart LP Meteora + Robinhood LP, ±5 mnt —
+  permintaan user: "buat meteora juga, per 5 menit, biar perubahan holder bisa
+  langsung ketahuan"), **watchlist biasa slot 4 jam** (48 slot × 5 menit).
+  Beban API naik 3× di kedua chain; katup hematnya
+  `LP_SCAN_RUN_MULTIPLIER` (env, default 1) → `lp_slot_due(now,
+  status.updated_at)` menahan scan **Solana** sampai tiap N run kalau kuota
+  Helius menipis, tanpa menyentuh kode. Tiga invarian yang wajib dijaga bila
+  kadens diubah lagi: `MIN_RUN_GAP_SEC` (gate run ganda) dan
+  `holder_history.MIN_POINT_GAP_SEC` harus **di antara** gate itu dan kadens
+  run tercepat — kalau ambang titik ≥ kadens, tiap titik baru menimpa titik
+  sebelumnya dan history lane itu berhenti tumbuh
+  (`tests/test_holder_history.py::FiveMinuteCadenceTest`); dan
+  `holder_history.MAX_POINTS` harus ikut density run supaya jendela grafik LP
+  tidak menyusut (`ScanDensityCalibrationTest`). Yang SENGAJA tidak ikut
+  dipercepat: bucket pengingat ⚡ Telegram (`telegram_alerts.FAST_BUCKET_SEC`
+  15 menit/token — kalau ikut, satu token dapat 3 pesan identik per 15 menit). **Pull + merge
+  backup store sebelum scan**, evaluasi alert
   sebelum ingest history, publish snapshot, **push backup store
   sesudahnya**; exit non-zero bila 0 holder / publish snapshot gagal
   (backup gagal = `WARN` saja, tidak membuat cron merah). Scope rule
@@ -104,6 +142,11 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   `workflows` di repo) — selama ada, cron produksi terbatas 3.000
   wallet/token (token ≤ 3.000 tidak terpengaruh; baseline + kronologi
   otomatis tetap jalan). Hapus flag itu dari workflow untuk FULL penuh.
+  Berkas workflow **tidak pernah bisa** diubah dari sisi bot (GitHub App tanpa
+  izin `workflows` → 403 saat push/PUT): perubahan kadens 2026-09-06
+  (`*/5` + `WAIT=300`) karena itu disimpan sebagai `daily-effort-5menit.yml`
+  di root repo untuk disalin manual — jangan dianggap sudah terpasang sebelum
+  ada run Actions tiap 5 menit di tab **Actions**.
 
 ### Backup durable store holder
 
@@ -170,6 +213,21 @@ JSON compact, Contents API base64) di ref `holder-live`:
   5 menit lewat `st.fragment(run_every=300)` + `st.rerun` — **bukan**
   `while True: time.sleep(300)` (script Streamlit tidak pernah kembali dari
   loop itu); hasil scan di-cache `st.session_state["pre_pump_results"]`.
+- `links.py` (+ `page_router.py`): **tautan internal memakai slug halaman
+  Streamlit, bukan path file.** `pages/5_🧮_Holder.py` dilayani di `/Holder`
+  (prefiks nomor + emoji dibuang, case-sensitive — frontend mencocokkan
+  `pathname.endsWith('/' + urlPathname)`); href `pages/…py` membuat Streamlit
+  jatuh ke halaman utama dengan "Page not found" sehingga `?mint=` tidak dibaca
+  (bug yang dilaporkan user 2026-09-06). `page_url_path()` meniru aturan
+  `streamlit.source_util.page_icon_and_name` (dipakai `_mpa_v1`),
+  `page_url()`/`holder_analytic_url()` root-absolute + `server.baseUrlPath`.
+  `page_router.apply()` — dipanggil **paling awal** di `app.py` — memantulkan
+  `?mint=`/`?ca=`/`?token=`/`?address=` (opsional `?page=`) ke
+  `st.switch_page`, jadi tautan lama yang sudah tersebar tetap hidup; CA
+  divalidasi dulu (base58 Solana / `0x`+40 hex) supaya sampah tidak membajak
+  navigasi, dan `st.session_state["_deep_link_routed"]` mencegah loop saat
+  user kembali ke dashboard. **Jangan** menulis ulang path halaman manual di
+  UI; tambah tombol baru lewat helper ini.
 - `pages/5_🧮_Holder.py`: Holder Analytic (di bawah CVD) + kronologi FULL.
   Sejak 2026-09-05 mendukung **dua chain**: Solana (watchlist/status/history
   utama) dan **Robinhood Chain** (`0x…`, watchlist/status/history terpisah
@@ -228,6 +286,34 @@ muncul di satu card. Tombol 🌊/📋 memanggil `set_watchlist_source()`
 Trending/Degen **tidak** menganalisa holder. Scan Meteora menganalisa
 holder per mint lalu filter dust ≥ 1% MC.
 
+### Persistensi watchlist: tulis lokal + commit latar belakang
+
+Semua mutasi watchlist (tambah ➕, hapus ✕, pindah card 📋/⚡ — Solana **dan**
+Robinhood) lewat `watchlist.add_to_watchlist` / `remove_from_watchlist` /
+`set_watchlist_source` / `add_many_to_watchlist` dengan urutan tetap:
+
+1. **journal dulu** (`watchlist_pending.json`; `save_watchlist` prune hanya
+   sesudah remote menerima) — tidak boleh dipindah ke belakang;
+2. tulis file watchlist lokal;
+3. kirim ke GitHub (`_github_push`: GET sha → merge remote+pending → PUT,
+   retry + re-fetch sha saat 409).
+
+Langkah 3 **wajib non-blocking di jalur UI**: `app.py` dan `pages/` selalu
+meneruskan `background=True`, yang men-*seed* `_REMOTE_CACHE` dengan state baru
+lalu menyerahkan commit ke worker `_queue_github_push` (satu worker per
+terhadap file; job terbaru menimpa job lama). Mengembalikan panggilan
+sinkron di handler Streamlit = membuat klik terasa macet lagi (terukur
+2,4 s/klik pada RTT 0,8 dtk, dan berlipat sampai ±2 menit saat API GitHub
+lambat karena 3 percobaan × timeout 15 dtk + pull 3× timeout 10 dtk).
+`load_watchlist()` me-flush journal yang tersisa, tapi **melewati** flush
+inline selama `push_inflight(repo_path)` masih benar (mencegah balap 409),
+dan status terakhir bisa dibaca UI lewat `push_status(repo_path)`
+(badge `🔄 sinkron…` / `⚠️ belum sinkron` di kepala card Robinhood).
+Pemanggil non-UI (cron/skrip) tetap default `background=False`.
+`_CACHE_TTL` load watchlist 60 dtk karena perubahan lokal selalu men-*seed*
+cache — menaikkan lagi TTL tidak membuat UI lebih cepat, menurunkannya
+mengembali-kan round-trip tiap rerun.
+
 ## Ambang
 
 ```text
@@ -242,8 +328,8 @@ badge BEST POOL       : < 0.1% marketcap (DUST_BEST_PCT, aditif) + data
                         (DUST_BEST_MIN_HOLDERS). == 0.1% bukan BEST POOL
                         dan bukan pemicu early_dump (strict < dan >).
                         Hanya dirender di listing Scan Meteora.
-grafik / kohort       : bucket 4 jam (resample_4h; titik mentah per jam,
-                        MAX_POINTS 336 = 14 hari x 24 titik)
+grafik / kohort       : bucket 4 jam (resample_4h; titik mentah per run,
+                        MAX_POINTS 1008 = 3,5 hari @ 5 menit LP)
 
 Konfirmasi alert (setelah ambang dust di atas terpenuhi):
 dump                  : volume 4 jam >= 2.0x avg_volume_7d DAN harga <= -1%
@@ -295,7 +381,9 @@ warna hijau           : dust % MC turun >= 50% sejak tanggal masuk
                         (MCAP_DROP_TONE_PCT)
 warna merah           : dust % MC naik >= 100% sejak tanggal masuk
                         (MCAP_RISE_TONE_PCT)
-data basi             : umur data > 2 jam (STALE_AFTER_SEC; cron 1x/jam)
+data basi             : umur data > 2 jam (STALE_AFTER_SEC; kedua lane LP
+                        ±5 mnt sejak 2026-09-06 — ambangnya sengaja jauh
+                        di atas kadens supaya hanya cron yang mati yang kena)
 drift                 : |snapshot - titik history| > 0,01 pp dengan ts beda
                         (DRIFT_TOLERANCE_PP) -> baris pakai yang terbaru
 urutan baris          : default minus dust terbesar di atas (pct_change

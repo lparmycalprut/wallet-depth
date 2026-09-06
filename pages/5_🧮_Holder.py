@@ -96,7 +96,7 @@ def _history_charts(points: list[dict]) -> None:
     sampled = resample_4h(points)
     if len(sampled) < 2:
         st.info("Belum cukup titik untuk grafik 4 jam. Scan ulang beberapa "
-                "kali (cron ±15 menit untuk watchlist LP, ±4 jam untuk "
+                "kali (cron ±5 menit untuk watchlist LP, ±4 jam untuk "
                 "watchlist biasa, atau tombol di bawah) supaya bucket "
                 "4 jam terisi.")
         return
@@ -154,7 +154,7 @@ def _holder_count_chart(points: list[dict]) -> None:
     if len(rows) < 2:
         st.info("Grafik jumlah holder butuh minimal 2 titik. Tekan "
                 "**Scan holder FULL** lagi setelah beberapa jam, atau tunggu "
-                "cron (±15 menit watchlist LP · ±4 jam watchlist biasa) "
+                "cron (±5 menit watchlist LP · ±4 jam watchlist biasa) "
                 "mencatat perubahan.")
         return
     labels = [_wib(p.get("ts")) for p in rows]
@@ -214,7 +214,7 @@ def _distribution_section(mint: str, symbol: str, store: dict) -> None:
     latest = latest_detail_for_mint(store, mint)
     if not latest:
         st.info("Belum ada scan FULL untuk token ini. Cron holder sekarang "
-                "scan **FULL otomatis** (±15 menit sejak token masuk "
+                "scan **FULL otomatis** (±5 menit sejak token masuk "
                 "watchlist LP; token baru watchlist biasa langsung di-scan "
                 "pada run berikutnya), jadi snapshot awal biasanya muncul "
                 "cepat — atau tekan **Scan holder FULL** di bawah untuk "
@@ -493,11 +493,13 @@ else:
     st.markdown(f"**${symbol.upper()}** — `{mint}`")
     st.markdown(external_links_html(mint), unsafe_allow_html=True)
     if st.button("➕ Tambahkan ke watchlist"):
+        # background=True: commit ke GitHub + dispatch scan di thread latar,
+        # jadi tombol langsung responsif (tidak menunggu API round-trip).
         if is_evm:
-            robinhood_watchlist.add_to_robinhood_watchlist(mint, symbol,
-                                                           source="manual")
+            robinhood_watchlist.add_to_robinhood_watchlist(
+                mint, symbol, source="manual", background=True)
         else:
-            add_to_watchlist(mint, symbol, source="manual")
+            add_to_watchlist(mint, symbol, source="manual", background=True)
         st.rerun()
 
 token = (status.get("tokens") or {}).get(mint) or {}
@@ -538,12 +540,14 @@ mid = holders.get("mid") if isinstance(holders.get("mid"), dict) else {}
 c4.metric("Pilar Crab+Fish", _count(mid.get("count")),
           _fmt_pct(mid.get("pct_mc")))
 if short_scan:
+    _fetch_error = str(raw_holders.get("fetch_error") or "").strip()
     st.warning(
         f"Scan holder terakhir **tidak lengkap**: provider cuma "
         f"mengembalikan {point_wallets(raw_holders):,} wallet (ambang "
         f"{MIN_USABLE_WALLETS} wallet). Dust 0% dari sampel sependek itu "
         "bukan berarti dust habis — angka di atas memakai titik history "
-        "layak terakhir. Cron akan mencoba lagi pada run berikutnya.",
+        "layak terakhir. Cron akan mencoba lagi pada run berikutnya."
+        + (f" Alasan provider: `{_fetch_error}`." if _fetch_error else ""),
         icon="⚠️")
 st.markdown(_dust_badge(flag), unsafe_allow_html=True)
 _manual_view = token.get("view_source") == "manual"

@@ -1,11 +1,17 @@
 import unittest
+from pathlib import Path
+from unittest import mock
 
+import links
 from links import (blockscout_token_url, cvd_shortcut_query,
                    dexscreener_token_url, external_links_html,
-                   gmgn_token_url, hawkfi_meteora_url, meteora_dlmm_url,
-                   pool_links_html, rh_scan_token_url, safe_url_part,
-                   solscan_account_html, solscan_account_url,
+                   gmgn_token_url, hawkfi_meteora_url, holder_analytic_url,
+                   holder_analytic_link_html, meteora_dlmm_url, page_url,
+                   page_url_path, pool_links_html, rh_scan_token_url,
+                   safe_url_part, solscan_account_html, solscan_account_url,
                    token_link_lines)
+
+PAGES_DIR = Path(__file__).resolve().parent.parent / "pages"
 
 
 class LinksTest(unittest.TestCase):
@@ -161,5 +167,86 @@ class LinksEvmTest(unittest.TestCase):
             f"https://robinhoodchain.blockscout.com/token/{self.CA}", lines[2])
 
 
-if __name__ == "__main__":
+class HolderDeepLinkTest(unittest.TestCase):
+    """Tautan 🧮 harus memakai slug halaman Streamlit, bukan path file."""
+
+    SOL = "So11111111111111111111111111111111111111112"
+    EVM = "0x1a3876a32619cf2668e91ebcd90a596537ec8695"
+
+    def test_url_solana_dan_evm(self):
+        self.assertEqual(holder_analytic_url(self.SOL),
+                         f"/Holder?mint={self.SOL}")
+        self.assertEqual(holder_analytic_url(self.EVM),
+                         f"/Holder?mint={self.EVM}")
+        self.assertEqual(holder_analytic_url(f"  {self.EVM}  "),
+                         f"/Holder?mint={self.EVM}")
+
+    def test_url_kosong(self):
+        for empty in ("", None, "   "):
+            self.assertEqual(holder_analytic_url(empty), "")
+            self.assertEqual(holder_analytic_link_html(empty), "")
+
+    def test_anchor_baru_tab_dengan_mint_terencode(self):
+        html_out = holder_analytic_link_html("abc&def?x=1")
+        self.assertIn('target="_blank"', html_out)
+        self.assertIn('rel="noopener', html_out)
+        self.assertIn('href="/Holder?mint=abc%26def%3Fx%3D1"', html_out)
+        self.assertNotIn("pages/", html_out)
+        self.assertNotIn("\\", html_out)
+
+    def test_anchor_tidak_lagi_mengarah_ke_path_file(self):
+        """Regresi: ``pages/5_🧮_Holder.py`` bukan route → app balas 404."""
+        html_out = holder_analytic_link_html(self.SOL)
+        self.assertNotIn("5_\U0001f9ee_Holder.py", html_out)
+
+    def test_slug_sama_dengan_streamlit(self):
+        """Slug harus sama dengan yang dihitung Streamlit untuk tiap halaman."""
+        try:
+            from streamlit.source_util import page_icon_and_name
+        except Exception:  # pragma: no cover - streamlit selalu ada di suite ini
+            self.skipTest("streamlit tidak tersedia")
+        names = sorted(p.name for p in PAGES_DIR.glob("*.py"))
+        self.assertTrue(names, "folder pages/ kosong?")
+        for name in names:
+            with self.subTest(name=name):
+                self.assertEqual(page_url_path(name),
+                                 page_icon_and_name(Path(name))[1])
+
+    def test_slug_semua_halaman(self):
+        expected = {"4_📊_CVD.py": "CVD",
+                    "5_🧮_Holder.py": "Holder",
+                    "6_🔎_Deteksi_Akumulasi.py": "Deteksi_Akumulasi",
+                    "7_🚀_Pre-Pump.py": "Pre-Pump"}
+        for name, slug in expected.items():
+            self.assertEqual(page_url_path("pages/" + name), slug, name)
+
+    def test_slug_idempoten_dan_input_kosong(self):
+        self.assertEqual(page_url_path("Holder"), "Holder")
+        self.assertEqual(page_url_path("pages/5_🧮_Holder"), "Holder")
+        self.assertEqual(page_url_path(""), "")
+        self.assertEqual(page_url_path(None), "")
+
+    def test_halaman_tanpa_nomor_tetap_punya_slug(self):
+        self.assertEqual(page_url_path("Lima_Halaman.py"), "Lima_Halaman")
+
+    def test_query_params_diurlencode(self):
+        self.assertEqual(page_url("pages/5_🧮_Holder.py", mint="a b&c"),
+                         "/Holder?mint=a%20b%26c")
+        self.assertEqual(page_url("pages/5_🧮_Holder.py"), "/Holder")
+
+    def test_base_url_path_dihormati(self):
+        with mock.patch.object(links, "base_url_path",
+                               return_value="/wallet-depth"):
+            self.assertEqual(holder_analytic_url(self.SOL),
+                             f"/wallet-depth/Holder?mint={self.SOL}")
+
+    def test_base_url_path_dari_konfigurasi_streamlit(self):
+        with mock.patch("streamlit.config.get_option",
+                        return_value="dashboard"):
+            self.assertEqual(links.base_url_path(), "/dashboard")
+        with mock.patch("streamlit.config.get_option", return_value=None):
+            self.assertEqual(links.base_url_path(), "")
+
+
+if __name__ == "__main__":  # pragma: no cover
     unittest.main()

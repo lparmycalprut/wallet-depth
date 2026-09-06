@@ -47,8 +47,10 @@ from holder_history import (MIN_USABLE_WALLETS, holders_usable, point_usable,
 MCAP_DROP_TONE_PCT = 50.0     # turun >= 50% -> hijau
 MCAP_RISE_TONE_PCT = 100.0    # naik >= 100% -> merah
 
-# Cron holder watchlist **LP** jalan tiap ±15 menit sejak 2026-09-05: data
-# lebih tua dari ini = basi.
+# Cron holder watchlist **LP** jalan tiap ±5 menit sejak 2026-09-06 (sebelum
+# itu 15 menit; 1×/jam lebih lama lagi): data lebih tua dari ini = basi.
+# Ambangnya sengaja jauh di atas kadens supaya hanya cron yang benar-benar
+# mati (atau publish yang gagal berulang) yang ditandai basi.
 STALE_AFTER_SEC = 2 * 3600
 # Watchlist **biasa** sengaja di-scan tiap ±4 jam (slot 4 jam + catch-up),
 # jadi ambang basinya mengikuti kadens itu, bukan 2 jam.
