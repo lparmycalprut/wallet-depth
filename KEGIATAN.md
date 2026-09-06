@@ -1,3 +1,59 @@
+# Kegiatan — 6 September 2026 (sesi 7 · 🗑️ Hapus semua watchlist biasa)
+
+Permintaan user: **"tambahkan tombol delete all watchlist di watchlist biasa
+selain meteora dan robinhood."**
+
+## 1. Backend: `watchlist.remove_many_from_watchlist()`
+
+Hapus satu token (`remove_from_watchlist`) memakai satu journal write + satu
+commit per klik ✕; mengosongkan 79 token biasa dengan cara itu berarti 79
+commit (worker sudah men-*coalesce*, tetapi journal tetap ditulis 79×). Fungsi
+baru menerima **daftar CA** dan memakai kontrak durabilitas yang sama, hanya
+di-batch:
+
+- `_load_and_merge(local_first=background)` → hitung yang benar-benar ada;
+- **journal dulu** lewat `_journal_many` (satu tulis atomik; last-op-wins per
+  CA membatalkan `add` yang masih tertunda);
+- `save_watchlist(..., background=True)` = tulis lokal + seed cache + **satu**
+  commit di thread latar (`remove N token (watchlist biasa)`).
+
+Fungsi **tidak menyaring `source`** — pemanggil yang menentukan scope, sama
+seperti `remove_from_watchlist`. Op `remove` untuk CA yang tidak ada di state
+lokal tetap di-journal supaya remote yang lebih baru ikut bersih
+(`_op_is_applied` mem-prune bila memang sudah tidak ada). Return
+`{removed, missing, saved, addresses}`.
+
+## 2. UI (`app.py`): tombol popover di kepala card watchlist biasa
+
+Di sebelah selectbox "Urutkan baris watchlist" (kolom ketiga,
+`vertical_alignment="bottom"`): **🗑️ Hapus semua** → popover berisi teks
+"Hapus **N token** dari watchlist biasa?" + tombol primary **Ya, hapus N
+token** (`key="clear-regular-watchlist"`). Klik → `remove_many_from_watchlist(
+list(holder_watch), note="watchlist biasa", background=True)` → laporan
+`st.success` setelah rerun (lewat `st.session_state["watchlist_clear_report"]`).
+
+Scope = `holder_watch` hasil `split_watchlist` (token Solana non-LP). Card
+**Chart LP Meteora** dan kedua card **Robinhood** SENGAJA tidak ikut — mereka
+punya file/watchlist sendiri dan tidak diberi tombol serupa. Teks konfirmasi
+menyebut bahwa token `degen` (Pre-Pump Screener) ikut terhapus, dan bahwa
+history holder tidak dihapus (`snapshot_status` membuang kunci di luar
+watchlist pada publish berikutnya). Tombol tidak dirender bila card kosong.
+
+## Verifikasi
+
+- `python -m pytest -q` → **850 hijau** (sebelumnya 836; +14 test baru di
+  `tests/test_watchlist_clear.py`).
+- Backend: hanya CA yang diminta yang dihapus (token `meteora` di file
+  tetap), satu `_save_pending` untuk seluruh batch, nol pull di jalur klik,
+  tepat satu `_github_push`, jurnal dibersihkan setelah commit sukses dan
+  dipertahankan saat gagal (token tidak muncul lagi di `load_watchlist`),
+  duplikat/kosong diabaikan, daftar kosong tidak menulis apa pun, `remove`
+  membatalkan `add` tertunda, jalur sinkron (`background=False`) tetap ada.
+- AppTest: tombol menyebut "2 token" (LP tidak dihitung), klik konfirmasi
+  memanggil `remove_many_from_watchlist` dengan CA non-LP saja +
+  `background=True`, laporan sukses tampil, tombol tidak ada bila watchlist
+  hanya berisi token LP, tombol ✕ per baris tetap ada.
+
 # Kegiatan — 6 September 2026 (sesi 6 · ✕ watchlist bolak balik + flush latar)
 
 Permintaan user: **"fungsi hapus dari watchlist masih bolak balik dan tidak
