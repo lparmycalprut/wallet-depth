@@ -4,5 +4,11 @@
   "added_at": 1788577063,
   "source": "manual",
   "chain": "robinhood"
+ },
+ "0x1a3876a32619cf2668e91ebcd90a596537ec8695": {
+  "symbol": "Onboard",
+  "note": "",
+  "added": "2026-09-06",
+  "source": "lp"
  }
 }
