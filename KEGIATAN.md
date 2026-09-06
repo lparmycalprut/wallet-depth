@@ -1,3 +1,95 @@
+# Kegiatan — 6 September 2026 (sesi 5 · Chart LP Meteora ikut 5 menit)
+
+Permintaan user: **"iya untuk watchlist meteora juga, per 5 menit, biar
+perubahan holder bisa langsung ketahuan."** Ini **membatalkan** keputusan sesi 4
+yang sengaja menahan lane Solana di slot ±15 menit demi anggaran Helius —
+readernya: laju 5 menit sekarang berlaku untuk KEDUA card LP, dan penghematan
+Helius menjadi knob opsional, bukan default kode.
+
+## 1. Lane Meteora = tiap run (satu knob, bukan dua jam dinding)
+
+Sebelum sesi ini ada dua gerbang di `scripts/scan_holders.py`
+(`RH_FAST_SCAN_INTERVAL_SEC` 5 menit untuk Robinhood, `METEORA_LP_SCAN_INTERVAL_SEC`
+15 menit untuk Solana). Sekarang keduanya menempel satu jam dinding run:
+
+```
+RUN_SCAN_INTERVAL_SEC = RH_FAST_SCAN_INTERVAL_SEC = FAST_SCAN_INTERVAL_SEC = 300
+LP_SCAN_RUN_MULTIPLIER = int(env, default 1)          # katup hemat, opsional
+lp_slot_sec() = RUN_SCAN_INTERVAL_SEC * MULTIPLIER    # slot LP = slot run
+```
+
+`lp_slot_due(now, snapshot.updated_at)` tetap ada dan tetap berbasis **nomor
+slot** (bukan umur titik): dengan multiplier 1 setiap cron run = slot LP baru,
+jadi Helius ditarik tiap 5 menit; yang tidak due hanyalah run KEDUA dalam satu
+slot (chain dispatch menabrak schedule) — persis yang diinginkan. Gate lama
+berbasis umur titik tidak dipakai lagi sejak sesi 2 karena publish yang gagal
+membuat token tidak pernah terkejar.
+
+Bila kuota Helius mulai menipis, tidak perlu sentuh kode: env
+`LP_SCAN_RUN_MULTIPLIER: "3"` di langkah "Holder scan" pada workflow → lane
+Solana kembali ±15 menit, Robinhood LP tetap tiap run. Log run selalu
+menyebutkan kadens aktif: `Rencana scan: LP=… biasa=… due=… slot_lp=… (LP ±5
+menit · tiap run · biasa ±4 jam)`.
+
+## 2. Konsekuensi yang harus ikut digerakkan: `MAX_POINTS`
+
+Densitas titik riwayat = kadens run. `ingest_point` **menimpa** titik yang lebih
+muda dari `MIN_POINT_GAP_SEC`, jadi tidak ada cara "scan 5 menit tapi simpan
+tiap 15 menit" dengan mekanisme itu (titik terakhir selalu berjarak 5 menit →
+satu-satunya titik yang pernah ada). Satu-satunya knob panjang grafik =
+`holder_history.MAX_POINTS`:
+
+| | densitas | batas | jendela | bucket 4 jam |
+| --- | --- | --- | --- | --- |
+| lama (sesi 2–4) | 15 menit | 336 | 3,5 hari | 21 |
+| 5 menit, batas lama | 5 menit | 336 | **28 jam** | **7** |
+| sekarang | 5 menit | **1008** | 3,5 hari | 21 |
+
+Tanpa kenaikan itu "Grafik 4 jam" di card LP menyusut 3× persis saat datanya
+paling rapat. Ukuran tetap aman: snapshot dashboard selalu
+`compact_history_for_status` (≤ 84 bucket `resample_4h`) dan sparkline
+meresample internal, jadi payload HTML tidak berubah; simulasi store sintetis
+(10 token LP @ 1008 titik 5 menit + 45 token biasa @ 336 titik/hari) =
+**0,33 MB gz** vs 0,25 MB sebelum perubahan, di bawah `MAX_BACKUP_BYTES`
+3,5 MB. `MIN_POINT_GAP_SEC` (4 menit) dan `MIN_RUN_GAP_SEC` (4 menit) tetap
+**— harus di bawah 5 menit**, itu yang dikunci
+`ScanCadenceTest::test_konstanta_kadens`.
+
+## 3. Teks yang ikut disinkronkan
+
+Caption/penjelasan kadens di `app.py` (kepala card Chart LP & Robinhood,
+helper tab, komentar router), `pages/5_🧮_Holder.py`, komentar
+`watchlist_detail.py` (ambang basi tetap 20 menit — sengaja jauh di atas
+kadens supaya hanya cron mati yang kena), `robinhood_watchlist.py`,
+`holder_status.py`, dan `telegram_alerts.py`. Yang SENGAJA tidak berubah:
+bucket pengingat ⚡ (`FAST_BUCKET_SEC` 15 menit/token) — kalau ikut dipercepat,
+satu token menerima 3 pesan identik per 15 menit; data dashboard sendiri tetap
+diperbarui tiap run.
+
+## 4. Workflow (satu-satunya langkah manual)
+
+Berkas workflow tidak bisa ditulis bot (GitHub menolak push/PUT ke
+`.github/workflows/*`, 403). Kadens cron **tidak perlu diubah lagi** untuk sesi
+ini — `*/5` + chain `WAIT=$((300 - NOW % 300 + 20))` sudah ada di
+`daily-effort-5menit.yml`; yang berubah hanya nama langkah + catatan env
+opsional. Terukur dari `holder-live`: commit masih berjarak 15 menit (01:00,
+01:15, 01:30, … UTC) → berkas itu belum ditempel. Setelah ditempel, bukti
+kadens nyata = baris `Rencana scan: … (LP ±5 menit · tiap run …)` dan commit
+`holder-status: snapshot …` tiap 5 menit. Konsekuensi: ±576 commit/hari di
+branch `holder-live` (repo terukur ±56 MB pada kadens 15 menit).
+
+## Verifikasi
+
+- `python -m pytest -q` dan `python -m unittest discover -s tests -t .` — lihat
+  angka di PR; yang relevan: `ScanCadenceTest` (kadens + `main()` integration
+  dengan jam tersumbat), `ScanDensityCalibrationTest` (kalibrasi `MAX_POINTS`,
+  21 bucket 4 jam, lane biasa), `FiveMinuteCadenceTest`,
+  `test_watchlist_background_push`, `test_rh_card_ui`.
+- Uji baru yang spesifik menahan permintaan sesi ini:
+  `test_run_biasa_scan_kedua_lane_lp` (tiap run = Meteora **dan** Robinhood),
+  `test_multiplier_menahan_solana_tetapi_tidak_robinhood` (katup hemat bekerja),
+  `test_lp_slot_due_default_setiap_run`.
+
 # Kegiatan — 6 September 2026 (sesi 4 · ✕ watchlist responsif + fetch Robinhood 5 menit)
 
 Permintaan user: **"perbaiki juga hapus dari watchlist robinhood, kurang
@@ -46,6 +138,10 @@ Yang diminta hanya Robinhood, jadi lane dipecah (`scripts/scan_holders.py`):
 | --- | --- | --- |
 | 🦅 Robinhood LP | tiap run = ±5 menit | `RH_FAST_SCAN_INTERVAL_SEC` = `RUN_SCAN_INTERVAL_SEC` = 300 |
 | 🌊 Chart LP Meteora | slot ±15 menit | `METEORA_LP_SCAN_INTERVAL_SEC` + gate baru `lp_slot_due(now, snapshot.updated_at)` |
+
+> Baris Chart LP pada tabel ini **sudah digantikan sesi 5** (lihat di atas):
+> sejak itu lane Meteora ikut tiap run, dan `lp_slot_due` hanya mengikat kalau
+> `LP_SCAN_RUN_MULTIPLIER` > 1.
 | 📋 biasa (Solana + Robinhood) | slot 4 jam | `REGULAR_SLOTS` 16 → **48** |
 
 - Cron `*/15` → **`*/5`** dan chain `900` → **`300`**. Berkas

@@ -368,7 +368,7 @@ def _render_lp_row(row: dict) -> None:
         figure = lp_chart_figure(chart_points, symbol)
         if figure is None:
             st.info("Butuh minimal 2 titik bucket 4 jam. Cron watchlist LP "
-                    "(target ±15 menit, best-effort) atau tombol **Scan "
+                    "(target ±5 menit, best-effort) atau tombol **Scan "
                     "holder watchlist** akan mengisinya.")
         else:
             st.pyplot(figure, use_container_width=True)
@@ -392,7 +392,8 @@ def _render_lp_card(rows: list[dict]) -> None:
         st.caption(
             "Watchlist terpisah untuk token yang ditambahkan dari **Scan "
             "Meteora Pool** (⭐) atau ditambah manual ke card ini. Di-scan "
-            "cron **tiap ±15 menit** supaya exit LP lebih awal: selama "
+            "cron **tiap ±5 menit** supaya exit LP lebih awal dan perubahan "
+            "holder langsung kelihatan: selama "
             f"hold % MC dust di atas **{DUST_BEST_PCT:g}%**, alert ⚡ "
             "Telegram dikirim **berulang tiap scan** — berhenti bila token "
             "dihapus (✕) atau dipindah ke watchlist biasa (📋). Grafik "
@@ -687,8 +688,9 @@ def _render_meteora_scan() -> None:
 # Watchlist Robinhood Chain (EVM, chain id 4663) — dua card sejak 2026-09-05:
 # **Robinhood LP** (scan cepat ±5 menit sejak 2026-09-06, pengingat ⚡ > 0,1%
 # MC berulang) dan **Robinhood biasa** (scan ±4 jam, rule 🔔 HIGH DROP titik
-# high). Chart LP Meteora tetap ±15 menit: satu run cron tiap 5 menit, scan
-# Solana hanya dijalankan pada slot 15 menitnya (budget Helius).
+# high). Sejak 2026-09-06 KEDUA card LP (Chart LP Meteora + Robinhood LP)
+# ikut di-scan tiap run = ±5 menit; tinggal watchlist biasa yang 4 jam
+# (LP_SCAN_RUN_MULTIPLIER tersedia kalau kuota Helius perlu dihemat).
 # ---------------------------------------------------------------------------
 RH_CARD_TITLE = "🦅 Watchlist Robinhood LP — Holder Dust"
 RH_REGULAR_CARD_TITLE = "🦅 Watchlist Robinhood — Holder Dust"
@@ -867,8 +869,9 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
         if variant == "lp":
             st.caption(
                 "Watchlist **Robinhood LP** (`0x…`, chain id 4663) — "
-                "di-scan cron **tiap ±5 menit** (sejak 2026-09-06; Chart LP "
-                "Meteora tetap ±15 menit) supaya exit bisa lebih awal. "
+                "di-scan cron **tiap ±5 menit** (sejak 2026-09-06, sama "
+                "cepatnya dengan Chart LP Meteora) supaya exit bisa lebih "
+                "awal. "
                 "Pengingat ⚡ Telegram tetap dibatasi ±15 menit per token "
                 "agar notifikasi tidak spam. Selama hold % MC dust di atas "
                 f"**{DUST_BEST_PCT:g}%**, alert ⚡ Telegram dikirim "
@@ -1055,11 +1058,10 @@ st.caption(
     "Grafik kecil = dust % MC tiap 4 jam. Kolom **Sejak masuk** = perubahan "
     "dust % MC sejak token ditambahkan sampai scan terakhir (hijau bila turun "
     "≥ 50%, merah bila naik ≥ 100%). Token dari Scan Meteora ada di "
-    "card **Chart LP** di atas. Cadens cron: Chart LP (Meteora) ±15 menit, "
-    "Robinhood LP ±5 menit, watchlist biasa ±4 jam — dan rule 🔔 **titik "
-    "high**: bila dust % MC "
-    "turun ≥ 50% dari hold % MC **terbesar** yang pernah tercatat, alert "
-    "Telegram dikirim."
+    "card **Chart LP** di atas. Cadens cron: semua watchlist LP (Chart LP "
+    "Meteora + Robinhood LP) **±5 menit** sejak 2026-09-06, watchlist biasa "
+    "±4 jam — dan rule 🔔 **titik high**: bila dust % MC turun ≥ 50% dari "
+    "hold % MC **terbesar** yang pernah tercatat, alert Telegram dikirim."
 )
 st.caption(sync_caption_text(_watch_sync,
                              status_updated_at=holder_status.get("updated_at"),
@@ -1081,7 +1083,7 @@ elif watchlist:
     if _missing:
         st.info("Holder belum terambil untuk: " + ", ".join(_missing[:8])
                 + (" …" if len(_missing) > 8 else "")
-                + ". Cron LP mencoba tiap ±15 menit, watchlist biasa tiap "
+                + ". Cron LP mencoba tiap ±5 menit, watchlist biasa tiap "
                   "±4 jam (token baru langsung di-scan pada run berikutnya); "
                   "atau scan manual.",
                 icon="ℹ️")

@@ -17,9 +17,10 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   `DUST_BEST_LABEL = "BEST POOL"`) bersifat **aditif**: `dust_flag(pct,
   prev, *, holders=...)` mengembalikan `best: bool` tanpa mengubah
   level/label/hide lama; guard `_holders_valid_for_best` menolak data
-  kosong/gagal (`total_fetched <= 0`, `< 40 wallet`). `MAX_POINTS = 336`
-  (14 hari × 24 titik/jam, cron hourly); UI tetap memakai
-  `resample_4h` (maks 84 bucket 4 jam).
+  kosong/gagal (`total_fetched <= 0`, `< 40 wallet`). `MAX_POINTS = 1008` —
+  jendela titik mentah per token, dikalibrasi ke densitas run LP 5 menit
+  (±3,5 hari = 21 bucket 4 jam; dulu 336 untuk cron hourly/15 mnt); UI tetap
+  memakai `resample_4h` (maks 84 bucket 4 jam).
   Baseline scan FULL immutable + kronologi wallet bounded
   (`holder_chronology.py`). **Sejak 2026-09-05 cron ikut scan FULL +
   `detail=True`** — scan pertama setelah token masuk watchlist menjadi
@@ -108,15 +109,22 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   cron — grafik sudah lebih dulu memuat titik itu dari `holder_history.json`.
 - `scripts/scan_holders.py`: cron watchlist. **Kadens run ±5 menit sejak
   2026-09-06** (dulu 1×/jam → ±15 menit); lane diatur scanner, bukan cron:
-  **Robinhood LP tiap run** (±5 mnt), **Chart LP Meteora slot ±15 mnt**
-  (`lp_slot_due(now, status.updated_at)` — jangan ikut dipercepat: satu scan
-  Solana menarik Helius sampai 100.000 wallet), **watchlist biasa slot 4 jam**
-  (48 slot × 5 menit). Dua invarian yang wajib dijaga bila kadens diubah
-  lagi: `MIN_RUN_GAP_SEC` (gate run ganda) dan
+  **KEDUA lane LP tiap run** (Chart LP Meteora + Robinhood LP, ±5 mnt —
+  permintaan user: "buat meteora juga, per 5 menit, biar perubahan holder bisa
+  langsung ketahuan"), **watchlist biasa slot 4 jam** (48 slot × 5 menit).
+  Beban API naik 3× di kedua chain; katup hematnya
+  `LP_SCAN_RUN_MULTIPLIER` (env, default 1) → `lp_slot_due(now,
+  status.updated_at)` menahan scan **Solana** sampai tiap N run kalau kuota
+  Helius menipis, tanpa menyentuh kode. Tiga invarian yang wajib dijaga bila
+  kadens diubah lagi: `MIN_RUN_GAP_SEC` (gate run ganda) dan
   `holder_history.MIN_POINT_GAP_SEC` harus **di antara** gate itu dan kadens
   run tercepat — kalau ambang titik ≥ kadens, tiap titik baru menimpa titik
   sebelumnya dan history lane itu berhenti tumbuh
-  (`tests/test_holder_history.py::FiveMinuteCadenceTest`). **Pull + merge
+  (`tests/test_holder_history.py::FiveMinuteCadenceTest`); dan
+  `holder_history.MAX_POINTS` harus ikut density run supaya jendela grafik LP
+  tidak menyusut (`ScanDensityCalibrationTest`). Yang SENGAJA tidak ikut
+  dipercepat: bucket pengingat ⚡ Telegram (`telegram_alerts.FAST_BUCKET_SEC`
+  15 menit/token — kalau ikut, satu token dapat 3 pesan identik per 15 menit). **Pull + merge
   backup store sebelum scan**, evaluasi alert
   sebelum ingest history, publish snapshot, **push backup store
   sesudahnya**; exit non-zero bila 0 holder / publish snapshot gagal
@@ -320,8 +328,8 @@ badge BEST POOL       : < 0.1% marketcap (DUST_BEST_PCT, aditif) + data
                         (DUST_BEST_MIN_HOLDERS). == 0.1% bukan BEST POOL
                         dan bukan pemicu early_dump (strict < dan >).
                         Hanya dirender di listing Scan Meteora.
-grafik / kohort       : bucket 4 jam (resample_4h; titik mentah per jam,
-                        MAX_POINTS 336 = 14 hari x 24 titik)
+grafik / kohort       : bucket 4 jam (resample_4h; titik mentah per run,
+                        MAX_POINTS 1008 = 3,5 hari @ 5 menit LP)
 
 Konfirmasi alert (setelah ambang dust di atas terpenuhi):
 dump                  : volume 4 jam >= 2.0x avg_volume_7d DAN harga <= -1%
@@ -373,8 +381,8 @@ warna hijau           : dust % MC turun >= 50% sejak tanggal masuk
                         (MCAP_DROP_TONE_PCT)
 warna merah           : dust % MC naik >= 100% sejak tanggal masuk
                         (MCAP_RISE_TONE_PCT)
-data basi             : umur data > 2 jam (STALE_AFTER_SEC; cron Robinhood
-                        LP ±5 mnt / Chart LP ±15 mnt — ambangnya sengaja jauh
+data basi             : umur data > 2 jam (STALE_AFTER_SEC; kedua lane LP
+                        ±5 mnt sejak 2026-09-06 — ambangnya sengaja jauh
                         di atas kadens supaya hanya cron yang mati yang kena)
 drift                 : |snapshot - titik history| > 0,01 pp dengan ts beda
                         (DRIFT_TOLERANCE_PP) -> baris pakai yang terbaru

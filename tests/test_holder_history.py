@@ -364,16 +364,40 @@ class FiveMinuteCadenceTest(unittest.TestCase):
         self.assertEqual(points[0]["dust_count"], 2)
 
 
-class HourlyCadenceTest(unittest.TestCase):
-    """Cron 1×/jam (2026-09-04): MAX_POINTS 336 = 14 hari titik mentah."""
+class ScanDensityCalibrationTest(unittest.TestCase):
+    """Kalibrasi ``MAX_POINTS`` terhadap kadens run cron (5 menit, 2026-09-06).
 
-    def test_max_points_dikalibrasi_14_hari_x_24_jam(self):
-        self.assertEqual(hh.MAX_POINTS, 24 * 14)
+    Density titik ikut kadens run — tidak bisa ditebalkan/ditipiskan lewat
+    gerbang umur (``ingest_point`` menimpa titik yang lebih muda dari
+    ``MIN_POINT_GAP_SEC``, jadi titik per 15 menit tidak akan pernah
+    "settle"). Satu-satunya knob panjang/pendek grafik = ``MAX_POINTS``.
+    """
 
-    def test_ingest_hourly_potong_ke_336_titik_terbaru(self):
+    def test_max_points_dikalibrasi_ke_kadens_lp_5_menit(self):
+        # 1008 = 3,5 hari × 288 titik/hari. Dulu 336 titik @ 15 menit; setelah
+        # KEDUA lane LP di-scan tiap run (±5 menit) batas lama cuma bertahan
+        # 28 jam dan grafik "perubahan dust holder per bucket 4 jam" menyusut
+        # jadi 7 bucket.
+        self.assertEqual(hh.MAX_POINTS, 336 * 3)
+
+    def test_window_grafik_lp_tetap_21_bucket_4_jam(self):
+        # Invarian yang dijaga kalibrasi di atas: 1008 titik @ 5 menit = 84
+        # jam = 21 bucket 4 jam — sama persis seperti 336 titik @ 15 menit.
+        t0 = 1_800_000_000 // hh.INTERVAL_SEC * hh.INTERVAL_SEC
+        points = [{"ts": t0 + i * 300, "dust_pct_mc": 0.1}
+                  for i in range(hh.MAX_POINTS)]
+        self.assertEqual(len(hh.resample_4h(points)), 21)
+
+    def test_lane_biasa_tidak_kepotong(self):
+        # Watchlist biasa di-scan 1× per slot 4 jam → 1008 titik = 168 hari,
+        # jauh di atas target 14 hari cron hourly lama.
+        self.assertGreaterEqual(hh.MAX_POINTS * hh.INTERVAL_SEC // 86400, 14)
+
+    def test_ingest_hourly_potong_ke_max_points_terbaru(self):
         store = hh.empty_store()
         t0 = 1_800_000_000
-        for hour in range(400):  # ~16,7 hari > 14 hari
+        extra = 64
+        for hour in range(hh.MAX_POINTS + extra):  # > batas
             hh.ingest_one(store, "MINT", {
                 "symbol": "TST", "analyzed_at": t0 + hour * 3600,
                 "holders": {"dust_count": hour % 10, "dust_pct_mc": 0.1,
@@ -382,9 +406,9 @@ class HourlyCadenceTest(unittest.TestCase):
                             "cohort_now": {}}}, now=t0 + hour * 3600)
         points = store["tokens"]["MINT"]["points"]
         self.assertEqual(len(points), hh.MAX_POINTS)
-        # 336 jam terakhir yang tersisa, urut naik.
-        self.assertEqual(points[0]["ts"], t0 + (400 - 336) * 3600)
-        self.assertEqual(points[-1]["ts"], t0 + 399 * 3600)
+        # Titik-titik TERBARU yang tersisa, urut naik.
+        self.assertEqual(points[0]["ts"], t0 + extra * 3600)
+        self.assertEqual(points[-1]["ts"], t0 + (hh.MAX_POINTS + extra - 1) * 3600)
 
     def test_resample_titik_per_jam_tetap_bucket_4_jam(self):
         # 336 titik per jam = 14 hari → maksimal 84 bucket 4 jam (sama
@@ -401,14 +425,16 @@ class HourlyCadenceTest(unittest.TestCase):
         # Sparkline tetap jalan di atas titik mentah per jam.
         self.assertIn("<svg", hh.sparkline_svg(points))
 
-    def test_merge_stores_ikut_batas_336(self):
+    def test_merge_stores_ikut_batas_max_points(self):
+        n = hh.MAX_POINTS + 64
         banyak = {"updated_at": 1, "tokens": {"MINT": {
             "symbol": "TST",
-            "points": [{"ts": t, "dust_count": t} for t in range(400)]}}}
+            "points": [{"ts": t, "dust_count": t} for t in range(n)]}}}
         merged = hh.merge_stores(banyak, {"updated_at": 2, "tokens": {}})
         self.assertLessEqual(len(merged["tokens"]["MINT"]["points"]),
                              hh.MAX_POINTS)
-        self.assertEqual(len(merged["tokens"]["MINT"]["points"]), 336)
+        self.assertEqual(len(merged["tokens"]["MINT"]["points"]),
+                         hh.MAX_POINTS)
 
 
 class HolderDataUsabilityTest(unittest.TestCase):

@@ -1,5 +1,40 @@
 # Progress
 
+## 2026-09-06 (siang): watchlist Meteora ikut 5 menit + jendela grafik LP dipulihkan
+
+Permintaan user: *"iya untuk watchlist meteora juga, per 5 menit, biar
+perubahan holder bisa langsung ketahuan."*
+
+**Status: selesai & tes hijau.** Menggantikan keputusan sesi pagi (lane Solana
+sengaja dibiarkan ±15 menit demi Helius). Sekarang kedua card LP di-scan
+**tiap run cron = ±5 menit**; penghematan kuota jadi knob:
+`LP_SCAN_RUN_MULTIPLIER` (env, default 1) di workflow, bukan lagi di kode.
+
+- `scripts/scan_holders.py`: `METEORA_LP_SCAN_INTERVAL_SEC` diturunkan dari
+  `lp_slot_sec() = RUN_SCAN_INTERVAL_SEC × LP_SCAN_RUN_MULTIPLIER`;
+  `lp_slot_due` tetap berbasis nomor slot (self-healing, tidak mengandalkan umur
+  titik) tetapi pada default selalu due — yang tersisa hanyalah penolakan run
+  KEDUA dalam satu slot.
+- `holder_history.MAX_POINTS` **336 → 1008**: densitas titik = kadens run, dan
+  `ingest_point` menimpa titik yang lebih muda dari `MIN_POINT_GAP_SEC`, jadi
+  tidak ada jalur "scan 5 menit, simpan 15 menit" — satu-satunya knob jendela
+  grafik adalah batas titik. 1008 @ 5 menit = 3,5 hari = **21 bucket 4 jam**,
+  sama persis seperti 336 @ 15 menit; tanpa ini grafik card LP menyusut ke 28
+  jam.
+- Teks kadens disinkronkan di `app.py`, `pages/5_🧮_Holder.py`,
+  `robinhood_watchlist.py`, `watchlist_detail.py`, `holder_status.py`,
+  `telegram_alerts.py`, README/DEPLOY/AGENTS. Yang TIDAK ikut dipercepat:
+  bucket pengingat ⚡ Telegram (15 menit/token) dan watchlist biasa (slot 4 jam).
+- `daily-effort-5menit.yml` (root, manual paste — `workflows/*` ditolak GitHub
+  App): cron `*/5` + chain `WAIT=300-NOW%300+20` **sudah cukup** untuk perubahan
+  ini; yang berubah hanya nama langkah dan contoh env `LP_SCAN_RUN_MULTIPLIER`.
+  Tercatat dari ref `holder-live` commit masih 15 menit (01:00/01:15/01:30 UTC),
+  jadi langkah manual itu belum dijalankan user.
+- Tes: `ScanCadenceTest` ditulis ulang (tiap run = kedua lane; multiplier
+  menahan Solana saja), `HourlyCadenceTest` → `ScanDensityCalibrationTest`
+  (kalibrasi `MAX_POINTS`, 21 bucket, lane biasa tidak kepotong, trim ingest &
+  merge mengikuti konstanta).
+
 ## 2026-09-06 (pagi): ✕ watchlist dibebaskan dari GitHub + fetch Robinhood 5 menit
 
 Permintaan user: *"perbaiki juga hapus dari watchlist robinhood, kurang

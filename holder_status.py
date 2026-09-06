@@ -222,7 +222,7 @@ def snapshot_status(analyses: dict | None,
     konfirmasi alert ikut terdokumentasi di snapshot.
 
     ``merge_status`` = snapshot publish sebelumnya. Dipakai cron sejak
-    cadens dua tingkat (2026-09-05): run cepat ±15 menit hanya meng-analisis
+    cadens dua tingkat (2026-09-06): run cepat ±5 menit hanya meng-analisis
     watchlist LP, jadi token watchlist biasa **diwariskikan** dari snapshot
     lama (kunci di luar watchlist saat ini dibuang supaya token yang
     dihapus tidak menggantung) alih-alih hilang dari dashboard sampai run

@@ -480,13 +480,14 @@ class ScanScopeMergeTest(unittest.TestCase):
 
 
 class ScanCadenceTest(unittest.TestCase):
-    """Cadens tiga jalur sejak 2026-09-06: Robinhood LP 5 menit per run.
+    """Cadens sejak 2026-09-06: KEDUA lane LP di-scan tiap run (±5 menit).
 
     User minta **watchlist Robinhood** di-fetch tiap 5 menit "supaya exit bisa
-    lebih awal", TAPI scan Solana (Chart LP Meteora) tetap ±15 menit: tiap
-    scan Solana menarik Helius sampai 100 ribu wallet, dan watchlist biasa
-    tetap slot 4 jam. Karena cron hanya punya satu jam dinding, kadens run
-    turun ke 5 menit dan lane Solana digate lewat :func:`lp_slot_due`.
+    lebih awal", lalu menambah "iya untuk watchlist meteora juga, per 5 menit,
+    biar perubahan holder bisa langsung ketahuan". Jadi tiap run cron menarik
+    kedua chain; yang sengaja TIDAK ikut dipercepat: watchlist biasa (slot 4
+    jam) dan bucket pengingat ⚡ Telegram (15 menit/token). Hemat kuota Helius
+    tetap mungkin lewat ``LP_SCAN_RUN_MULTIPLIER`` (gate :func:`lp_slot_due`).
     """
 
     def test_konstanta_kadens(self):
@@ -495,7 +496,11 @@ class ScanCadenceTest(unittest.TestCase):
         self.assertEqual(mod.RUN_SCAN_INTERVAL_SEC,
                          mod.RH_FAST_SCAN_INTERVAL_SEC)
         self.assertEqual(mod.FAST_SCAN_INTERVAL_SEC, mod.RUN_SCAN_INTERVAL_SEC)
-        self.assertEqual(mod.METEORA_LP_SCAN_INTERVAL_SEC, 15 * 60)
+        # Chart LP Meteora = laju yang sama dengan Robinhood LP & interval run.
+        self.assertEqual(mod.METEORA_LP_SCAN_INTERVAL_SEC, 5 * 60)
+        self.assertEqual(mod.LP_SCAN_INTERVAL_SEC, mod.RUN_SCAN_INTERVAL_SEC)
+        self.assertEqual(mod.lp_slot_sec(), mod.RUN_SCAN_INTERVAL_SEC)
+        self.assertEqual(mod.LP_SCAN_RUN_MULTIPLIER, 1)
         self.assertEqual(mod.REGULAR_SCAN_INTERVAL_SEC, 4 * 3600)
         self.assertEqual(mod.REGULAR_SLOTS, 48)   # 4 jam / 5 menit
         self.assertEqual(mod.REGULAR_CATCHUP_SEC, 4 * 3600 - 5 * 60)
@@ -511,16 +516,34 @@ class ScanCadenceTest(unittest.TestCase):
         self.assertTrue(mod.regular_slot_due(boundary))
         self.assertFalse(mod.regular_slot_due(boundary + mod.RUN_SCAN_INTERVAL_SEC))
 
-    def test_lp_slot_due(self):
+    def test_lp_slot_due_default_setiap_run(self):
         import scripts.scan_holders as mod
-        lp = mod.METEORA_LP_SCAN_INTERVAL_SEC
-        boundary = (1_789_000_000 // lp) * lp
-        self.assertTrue(mod.lp_slot_due(boundary, 0))          # bootstrap
-        self.assertFalse(mod.lp_slot_due(boundary + 300, boundary))   # tengah slot
-        self.assertFalse(mod.lp_slot_due(boundary + 600, boundary))
-        self.assertTrue(mod.lp_slot_due(boundary + lp, boundary))     # slot baru
-        self.assertTrue(mod.lp_slot_due(boundary + 5 * lp, boundary))  # run terlewat
-        self.assertFalse(mod.lp_slot_due(boundary, boundary + lp))  # jam mundur
+        run = mod.RUN_SCAN_INTERVAL_SEC
+        boundary = (1_789_000_000 // run) * run
+        # Default multiplier=1: setiap cron run = slot LP baru, tidak ada yang
+        # ditahan — itu isi permintaan user (holder berubah = langsung tahu).
+        for ago in (300, 900, 2400, 48 * run):
+            self.assertTrue(mod.lp_slot_due(boundary + ago, boundary),
+                            f"ago={ago}")
+        # Run ganda dalam satu slot (chain dispatch + schedule) = skip Helius.
+        for ago in (0, 60, run - 1):
+            self.assertFalse(mod.lp_slot_due(boundary + ago, boundary),
+                             f"ago={ago}")
+        self.assertTrue(mod.lp_slot_due(boundary, 0))     # belum pernah scan
+        self.assertFalse(mod.lp_slot_due(boundary, boundary + run))  # jam mundur
+
+    def test_lp_slot_due_dibatasi_kalau_hidelius_stres(self):
+        """LP_SCAN_RUN_MULTIPLIER=3 -> scan Solana ±15 menit, Robinhood tetap."""
+        import scripts.scan_holders as mod
+        run, last = mod.RUN_SCAN_INTERVAL_SEC, 1_789_000_000 - 1_789_000_000 % 900
+        with mock.patch.object(mod, "LP_SCAN_RUN_MULTIPLIER", 3):
+            self.assertEqual(mod.lp_slot_sec(), 3 * run)
+            self.assertFalse(mod.lp_slot_due(last, last))         # slot sama
+            self.assertFalse(mod.lp_slot_due(last + run, last))   # 5 mnt kemudian
+            self.assertFalse(mod.lp_slot_due(last + 2 * run, last))
+            self.assertTrue(mod.lp_slot_due(last + 3 * run, last))  # slot baru
+            self.assertTrue(mod.lp_slot_due(last + 9 * run, last))  # run terlewat
+            self.assertTrue(mod.lp_slot_due(last + run, 0))       # bootstrap
 
     def test_build_scan_plan_di_luar_slot_lp_tidak_menarik_solana(self):
         import scripts.scan_holders as mod
@@ -611,29 +634,47 @@ class ScanCadenceTest(unittest.TestCase):
         mocks["published"] = published
         return stack
 
-    def test_run_di_tengah_slot_hanya_scan_robinhood(self):
-        """Inti perubahan: run tiap 5 menit = Robinhood saja, Solana diam."""
+    def test_run_biasa_scan_kedua_lane_lp(self):
+        """Inti perubahan: tiap run = Robinhood LP **dan** Chart LP Meteora."""
         import scripts.scan_holders as mod
-        lp = mod.METEORA_LP_SCAN_INTERVAL_SEC
-        boundary = (int(time.time()) // lp) * lp
-        T = boundary + mod.RUN_SCAN_INTERVAL_SEC      # 5 menit ke dalam slot
+        run = mod.RUN_SCAN_INTERVAL_SEC
+        T = (int(time.time()) // run) * run + run     # run 5 menit berikutnya
         lp_mint = "LpMint111111111111111111111111111111111111"
         rh_ca = "0x" + "a" * 40
         mocks: dict = {}
-        with self._cron_env(now_ts=T, status_ts=boundary,
+        with self._cron_env(now_ts=T, status_ts=T - run,
                             solana_watch={lp_mint: {"symbol": "LP",
                                                     "source": "meteora"}},
                             rh_watch={rh_ca: {"symbol": "VLAD"}},
                             mocks=mocks):
             self.assertEqual(mod.main([]), 0)
-        mocks["solana_scan"].assert_not_called()   # Helius hemat: belum slot LP
-        mocks["rh_scan"].assert_called_once()      # Robinhood LP: tiap run
+        mocks["solana_scan"].assert_called_once()   # Meteora LP: tiap run
+        self.assertEqual(set(mocks["solana_scan"].call_args.args[0]), {lp_mint})
+        mocks["rh_scan"].assert_called_once()       # Robinhood LP: tiap run
         self.assertEqual(set(mocks["rh_scan"].call_args.args[0]), {rh_ca})
 
-    def test_run_di_slot_lp_tetap_scan_solana(self):
-        """Pada slot 15 menit berikutnya lane Meteora tetap jalan."""
+    def test_multiplier_menahan_solana_tetapi_tidak_robinhood(self):
+        """Escape hatch kuota: LP_SCAN_RUN_MULTIPLIER=3 -> Solana tiap 15 mnt."""
         import scripts.scan_holders as mod
-        lp = mod.METEORA_LP_SCAN_INTERVAL_SEC
+        run = mod.RUN_SCAN_INTERVAL_SEC
+        T = (int(time.time()) // 900) * 900 + run     # 5 menit ke dalam slot LP
+        lp_mint = "LpMint111111111111111111111111111111111111"
+        rh_ca = "0x" + "a" * 40
+        mocks: dict = {}
+        with mock.patch.object(mod, "LP_SCAN_RUN_MULTIPLIER", 3):
+            with self._cron_env(now_ts=T, status_ts=T - run,
+                                solana_watch={lp_mint: {"symbol": "LP",
+                                                        "source": "meteora"}},
+                                rh_watch={rh_ca: {"symbol": "VLAD"}},
+                                mocks=mocks):
+                self.assertEqual(mod.main([]), 0)
+        mocks["solana_scan"].assert_not_called()   # bukan slot LP (dibatasi)
+        mocks["rh_scan"].assert_called_once()
+
+    def test_run_di_slot_lp_tetap_scan_solana(self):
+        """Lane Meteora jalan terus meski data LP terlihat masih 'segar'."""
+        import scripts.scan_holders as mod
+        lp = mod.lp_slot_sec()
         boundary = (int(time.time()) // lp) * lp
         T = boundary + lp
         lp_mint = "LpMint111111111111111111111111111111111111"
@@ -650,7 +691,7 @@ class ScanCadenceTest(unittest.TestCase):
     def test_gate_run_ganda_tidak_membungkam_lane_robinhood(self):
         """Snapshot < 4 menit = run ganda (chain + schedule) → semua lane diam."""
         import scripts.scan_holders as mod
-        lp = mod.METEORA_LP_SCAN_INTERVAL_SEC
+        lp = mod.lp_slot_sec()
         boundary = (int(time.time()) // lp) * lp
         T = boundary + lp
         rh_ca = "0x" + "a" * 40

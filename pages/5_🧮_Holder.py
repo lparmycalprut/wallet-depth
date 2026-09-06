@@ -96,7 +96,7 @@ def _history_charts(points: list[dict]) -> None:
     sampled = resample_4h(points)
     if len(sampled) < 2:
         st.info("Belum cukup titik untuk grafik 4 jam. Scan ulang beberapa "
-                "kali (cron ±15 menit untuk watchlist LP, ±4 jam untuk "
+                "kali (cron ±5 menit untuk watchlist LP, ±4 jam untuk "
                 "watchlist biasa, atau tombol di bawah) supaya bucket "
                 "4 jam terisi.")
         return
@@ -154,7 +154,7 @@ def _holder_count_chart(points: list[dict]) -> None:
     if len(rows) < 2:
         st.info("Grafik jumlah holder butuh minimal 2 titik. Tekan "
                 "**Scan holder FULL** lagi setelah beberapa jam, atau tunggu "
-                "cron (±15 menit watchlist LP · ±4 jam watchlist biasa) "
+                "cron (±5 menit watchlist LP · ±4 jam watchlist biasa) "
                 "mencatat perubahan.")
         return
     labels = [_wib(p.get("ts")) for p in rows]
@@ -214,7 +214,7 @@ def _distribution_section(mint: str, symbol: str, store: dict) -> None:
     latest = latest_detail_for_mint(store, mint)
     if not latest:
         st.info("Belum ada scan FULL untuk token ini. Cron holder sekarang "
-                "scan **FULL otomatis** (±15 menit sejak token masuk "
+                "scan **FULL otomatis** (±5 menit sejak token masuk "
                 "watchlist LP; token baru watchlist biasa langsung di-scan "
                 "pada run berikutnya), jadi snapshot awal biasanya muncul "
                 "cepat — atau tekan **Scan holder FULL** di bawah untuk "

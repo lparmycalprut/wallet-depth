@@ -11,24 +11,28 @@
 #        - cron: "*/15 * * * *"            →  "*/5 * * * *"
 #        - WAIT=$((900 - NOW % 900 + 20))  →  WAIT=$((300 - NOW % 300 + 20))
 #        - nama langkah "Holder scan (LP ±15 menit · biasa slot 4 jam)"
-#                                          →  "Holder scan (Robinhood LP ±5 menit · Chart LP ±15 · biasa 4 jam)"
+#                                          →  "Holder scan (LP ±5 menit · biasa slot 4 jam)"
 #
 # Kode scanner SUDAH siap (scripts/scan_holders.py): selama workflow masih
-# 15 menit, cron berjalan 15 menit dan lane Robinhood ikut 15 menit — tidak
-# ada yang rusak; setelah workflow di atas dipasang, Robinhood LP otomatis
-# jadi 5 menit sementara Chart LP Meteora tetap 15 menit. Berkas ini bukan
-# workflow aktif (GitHub hanya membaca folder .github/workflows).
+# 15 menit, cron berjalan 15 menit dan KEDUA lane LP ikut 15 menit — tidak ada
+# yang rusak. Setelah workflow di atas dipasang, Chart LP Meteora + Robinhood
+# LP sama-sama ±5 menit (itu yang diminta user), watchlist biasa tetap slot 4
+# jam, dan pengingat ⚡ Telegram tetap maks 1× per 15 menit per token. Kalau
+# kuota Helius mulai ketat tanpa mau menyentuh kode: tambah env
+# ``LP_SCAN_RUN_MULTIPLIER: "3"`` di langkah scan → scan Solana kembali 15
+# menit, Robinhood tetap 5 menit. Berkas ini bukan workflow aktif (GitHub
+# hanya membaca folder .github/workflows).
 
 name: Holder Dust Scanner
 
 on:
   schedule:
     # Kadens target **±5 menit** sejak 2026-09-06 (permintaan user: watchlist
-    # Robinhood LP harus lebih cepat supaya exit bisa lebih awal). Yang berubah
-    # adalah kadens RUN; scanner yang mengatur lane-nya
-    # (scripts/scan_holders.py): Robinhood LP tiap run (±5 menit), Chart LP
-    # Meteora hanya pada slot ±15 menit (budget Helius tidak naik), watchlist
-    # biasa tetap slot 4 jam. Schedule GitHub bersifat best-effort dan bisa
+    # Robinhood LP harus lebih cepat supaya exit bisa lebih awal, lalu watchlist
+    # Meteora juga 5 menit "biar perubahan holder bisa langsung ketahuan"). Yang
+    # berubah adalah kadens RUN; scanner yang mengatur lane-nya
+    # (scripts/scan_holders.py): KEDUA watchlist LP tiap run (±5 menit),
+    # watchlist biasa tetap slot 4 jam. Schedule GitHub bersifat best-effort dan bisa
     # terthrottle sampai ±2 jam (lihat DEPLOY.md), jadi kadens 5 menit yang
     # sesungguhnya dijaga langkah "chain" di bawah: tiap run men-dispatch run
     # berikutnya setelah tidur sampai batas 5 menit berikutnya. Run ganda
@@ -73,18 +77,24 @@ jobs:
       - name: Install dependencies
         run: pip install requests curl_cffi
 
-      - name: Holder scan (Robinhood LP ±5 menit · Chart LP ±15 · biasa 4 jam)
+      - name: Holder scan (LP ±5 menit · biasa slot 4 jam)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
+          # Opsional — katup hemat kuota Helius. Uncomment kalau request 5
+          # menit per mulai ditolak 429; 3 = scan Solana kembali ±15 menit,
+          # Robinhood LP tetap tiap run. Default 1 (semua lane LP tiap run).
+          # LP_SCAN_RUN_MULTIPLIER: "3"
         # --max-wallets 3000: jaga durasi run (slot 4 jam memindai token
         # biasa sekaligus). Hapus flag ini bila mau FULL 100.000 wallet.
-        # Catatan kadens 5 menit (2026-09-06): nilai yang sama dipakai lane
-        # Robinhood, jadi tiap run menarik ±30 halaman holder per token dari
-        # Blockscout. Bila mulai kena 429 (client sudah backoff 3 s), turunkan
-        # angka ini — 15 menit hanya untuk run slot 4 jam tidak terpengaruh.
+        # Catatan kadens 5 menit (2026-09-06): KEDUA lane LP memakai nilai
+        # yang sama, jadi tiap run menarik ±30 halaman holder per token dari
+        # Blockscout DAN holder penuh tiap token Meteora dari Helius (±3×
+        # dibanding kemarin). Bila mulai kena 429 (client sudah backoff 3 s),
+        # turunkan angka ini atau naikkan LP_SCAN_RUN_MULTIPLIER — run slot 4
+        # jam tidak terpengaruh.
         run: |
           ARGS=""
           if [ "${{ inputs.telegram_test }}" = "true" ]; then

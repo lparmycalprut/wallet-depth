@@ -46,9 +46,9 @@ CHAIN_NAME = robinhood_holders.CHAIN_NAME
 
 # Watchlist Robinhood dipecah dua card (permintaan user 2026-09-05):
 # - **Robinhood LP**    : scan cepat — **tiap run cron ±5 menit** sejak
-#   2026-09-06 (sebelumnya 15 menit bersama Chart LP Meteora, yang memang
-#   sengaja dibiarkan 15 menit karena anggaran Helius); pengingat ⚡ EARLY
-#   DUMP berulang selama dust % MC > 0,1%, dibatasi bucket 15 menit/token.
+#   2026-09-06 (sebelumnya 15 menit, sama seperti Chart LP Meteora yang kini
+#   ikut 5 menit); pengingat ⚡ EARLY DUMP berulang selama dust % MC > 0,1%,
+#   dibatasi bucket 15 menit/token.
 # - **Robinhood** (biasa): scan ±4 jam; rule 🔔 HIGH DROP (turun >= 50%
 #   dari titik high hold % MC).
 # Split memakai field ``source`` di file watchlist yang sama, seperti split

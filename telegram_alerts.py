@@ -20,8 +20,8 @@ LP maupun watchlist Robinhood LP — pemanggil cron mengirim ``lp_mints``)
 menyala **selama** dust berada di atas ambang absolut 0,1% MC
 (:data:`holder_history.DUST_BEST_PCT`): sejak 2026-09-05 pengingat dikirim
 ulang **tiap scan** sampai token dihapus dari watchlist LP atau
-dipindah ke watchlist biasa — sejak 2026-09-06 scan **Robinhood LP** berjalan
-tiap ±5 menit (Chart LP Meteora tetap ±15 menit), tetapi Telegram TIDAK
+dipindah ke watchlist biasa — sejak 2026-09-06 **KEDUA** lane LP (Robinhood
+dan Chart LP Meteora) di-scan tiap ±5 menit, tetapi Telegram TIDAK
 di-ikutkan: bucket + cooldown tetap 15 menit per token, jadi pengingat tidak
 berlipat 3× — tanpa gerbang volume keras (konteks pasar =
 info di pesan, lihat :func:`early_dump_verdict`), dedup per bucket 15 menit
@@ -93,10 +93,12 @@ MIN_RESEND_SEC = 3600
 # dikirim ulang **tiap scan** selama masih di atas ambang — bukan hanya saat
 # naik. Dedup memakai bucket 15 menit + cooldown 15 menit supaya run ganda
 # dalam satu slot tidak mengirim dua pesan yang sama.
-# Bucket dedup + cooldown pengingat ⚠️/⚡ lane LP. SEJAK 2026-09-06 scan
-# Robinhood LP berjalan tiap 5 menit, tapi nilai ini sengaja TETAP 15 menit:
-# satu token hanya boleh mengingatkan sekali per 15 menit (kalau ikut
-# dipercepat, Telegram menerima 3× pesan yang sama).
+# Bucket dedup + cooldown pengingat ⚠️/⚡ lane LP. SEJAK 2026-09-06 kedua
+# lane LP (Chart LP Meteora + Robinhood) di-scan tiap 5 menit, tapi nilai ini
+# sengaja TETAP 15 menit: satu token hanya boleh mengingatkan sekali per 15
+# menit (kalau ikut dipercepat, Telegram menerima 3× pesan yang sama).
+# Catatan: fetch/snapshot dashboard TETAP diperbarui tiap 5 menit — yang
+# dibatasi hanya pengiriman pesannya.
 FAST_BUCKET_SEC = 15 * 60
 EARLY_DUMP_RESEND_SEC = FAST_BUCKET_SEC
 # 🔔 HIGH DROP (watchlist biasa Solana/Robinhood, permintaan user 2026-09-05):
@@ -950,7 +952,7 @@ def evaluate_early_dump_rule(previous: dict | None, current: dict | None, *,
     Frekuensi tetap dibatasi: event id per **bucket 15 menit**
     (:data:`FAST_BUCKET_SEC`) + cooldown :data:`EARLY_DUMP_RESEND_SEC`, jadi
     run ganda dalam satu slot tidak mengirim pesan kembar — dan sejak
-    2026-09-06 run tiap 5 menit (lane Robinhood) juga tidak: bucket dihitung
+    2026-09-06 run tiap 5 menit (KEDUA lane LP) juga tidak: bucket dihitung
     dari timestamp titik, bukan dari jumlah run. Rule lama (dump
     +0,25 pp dst dengan gerbang volume) tidak berubah dan tetap berjalan
     untuk token LP.
@@ -960,8 +962,8 @@ def evaluate_early_dump_rule(previous: dict | None, current: dict | None, *,
     Tanpa marker ``previous`` rule belum mengirim — cron selalu memajukan
     marker ``alert_state["early_dump"]`` tiap evaluasi, jadi token LP baru
     yang langsung > 0,1% MC mengirim pengingat pertama pada scan
-    berikutnya (±5 menit untuk Robinhood LP, ±15 menit untuk Chart LP
-    Meteora) dan berulang setelahnya, tetap dibatasi :data:`FAST_BUCKET_SEC`.
+    berikutnya (±5 menit — kedua lane LP kini di-scan tiap run) dan
+    berulang setelahnya, tetap dibatasi :data:`FAST_BUCKET_SEC`.
     """
     old = _float((previous or {}).get("dust_pct_mc"), None)
     new = _float((current or {}).get("dust_pct_mc"), None)

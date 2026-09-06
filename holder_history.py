@@ -81,18 +81,23 @@ COHORT_WINDOW_SEC = 4 * 3600     # freeze Crab+Fish tiap 4 jam
 COHORT_MAX = 200                 # address yang diikuti
 MID_USD_MIN = 100.0              # Crab bawah (wallet_depth: > $100)
 MID_USD_MAX = 10_000.0           # Fish atas (<= $10k)
-# 14 hari × 24 titik/jam: cron naik ke 1× per jam (2026-09-04), sehingga 84
-# titik (kalibrasi 6×/hari) hanya muat 3,5 hari. 336 titik mentah per jam
-# di-resample ke bucket 4 jam di UI (resample_4h), jadi grafik/chart tetap
-# 14 hari × 6 bucket 4 jam dan snapshot dashboard tidak ikut membengkak
-# (compact_history_for_status = resample_4h, maks 84 bucket).
-MAX_POINTS = 336                 # 14 hari × 24 titik/jam (cron hourly)
-# Ambang "scan dobel" (run ganda chain dispatch + schedule). Sejak
-# 2026-09-06 lane **Robinhood LP** di-scan tiap **5 menit**, jadi ambang ini
-# WAJIB di bawah kadens itu: dengan 8 menit tiap titik baru menimpa titik
-# sebelumnya sehingga riwayat Robinhood berhenti tumbuh (selalu 1 titik).
-# 4 menit = `scripts.scan_holders.MIN_RUN_GAP_SEC` — run yang benar-benar
-# berjarak 5 menit tetap dicatat, tabungan 60 detik masih dibuang.
+# Kalibrasi per kadens scan: 14 hari × 24 titik/jam = 336 (cron hourly,
+# 2026-09-04). Sejak **2026-09-06 kedua lane LP di-scan tiap 5 menit**
+# (Chart LP Meteora + Robinhood LP), dan 336 titik hanya bertahan 28 jam pada
+# densitas itu — jendela "Grafik 4 jam" menyusut dari ±21 bucket jadi 7.
+# 1008 titik = 3,5 hari × 288 titik/hari → jendela grafik LP tetap sama seperti
+# pada kadens 15 menit. Watchlist biasa (6 titik/hari) tidak terpengaruh:
+# prune backup tetap membatasi mereka ke 42 bucket 4 jam (7 hari), dan
+# snapshot dashboard selalu di-compact ke ≤84 bucket (resample_4h) sehingga
+# payload holder_status tidak ikut membengkak.
+MAX_POINTS = 1008                # 3,5 hari × 288 titik/hari (kadens LP 5 mnt)
+# Ambang "scan dobel": titik yang lebih muda dari ini **ditimpa**, bukan
+# ditambahkan (run ganda chain dispatch + schedule). Sejak 2026-09-06 kedua
+# lane LP di-scan tiap **5 menit**, jadi ambang ini WAJIB di bawah kadens itu:
+# dengan 8 menit tiap titik baru menimpa titik sebelumnya sehingga riwayat
+# lane LP berhenti tumbuh (selalu 1 titik). 4 menit =
+# `scripts.scan_holders.MIN_RUN_GAP_SEC` — run yang benar-benar berjarak 5
+# menit tetap dicatat, tabungan 60 detik masih dibuang.
 MIN_POINT_GAP_SEC = 4 * 60
 
 # Volatilitas harga (konfirmasi alert dust) dari candle hourly GeckoTerminal.
