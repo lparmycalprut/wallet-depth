@@ -1,16 +1,15 @@
+# Holder Dust Scanner — kadens run ±5 menit (KEDUA lane LP tiap run).
 name: Holder Dust Scanner
 
 on:
   schedule:
-    # Kadens target **±15 menit** sejak 2026-09-05 (watchlist LP: Chart LP
-    # Meteora + Robinhood LP; watchlist biasa tetap di-scan penuh tiap slot
-    # 4 jam oleh scripts/scan_holders.py). Schedule GitHub bersifat
-    # best-effort dan bisa terthrottle sampai ±2 jam (lihat DEPLOY.md), jadi
-    # kadens 15 menit yang sesungguhnya dijaga langkah "chain" di bawah:
-    # tiap run men-dispatch run berikutnya setelah tidur sampai batas 15
-    # menit berikutnya. Run ganda (chain + schedule) dicek gate
-    # MIN_RUN_GAP_SEC di scanner dan keluar tanpa kerja.
-    - cron: "*/15 * * * *"
+    # Kadens target ±5 menit sejak 2026-09-06. Yang berubah hanya kadens RUN;
+    # scanner (scripts/scan_holders.py) yang membagi lane-nya: KEDUA watchlist
+    # LP (Chart LP Meteora + Robinhood LP) tiap run, watchlist biasa slot 4 jam,
+    # pengingat ⚡ Telegram tetap maks 1x/15 menit per token. Schedule GitHub
+    # bersifat best-effort (bisa terthrottle sampai ±2 jam), jadi ritme 5 menit
+    # dipegang langkah "Chain run berikutnya" di bawah.
+    - cron: "*/5 * * * *"
 
   workflow_dispatch:
     inputs:
@@ -49,14 +48,18 @@ jobs:
       - name: Install dependencies
         run: pip install requests curl_cffi
 
-      - name: Holder scan (LP ±15 menit · biasa slot 4 jam)
+      - name: Holder scan (LP ±5 menit · biasa slot 4 jam)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
-        # --max-wallets 3000: jaga durasi run (slot 4 jam memindai token
-        # biasa sekaligus). Hapus flag ini bila mau FULL 100.000 wallet.
+          # Katup hemat kuota Helius (opsional). 3 = scan Solana kembali
+          # ±15 menit, Robinhood LP tetap tiap run. Default 1 = tiap run.
+          # LP_SCAN_RUN_MULTIPLIER: "3"
+        # --max-wallets 3000 menjaga durasi run. Hapus flag ini bila mau FULL
+        # 100.000 wallet. Kalau mulai kena 429: turunkan angkanya atau
+        # uncomment LP_SCAN_RUN_MULTIPLIER di atas.
         run: |
           ARGS=""
           if [ "${{ inputs.telegram_test }}" = "true" ]; then
@@ -73,7 +76,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           NOW=$(date +%s)
-          WAIT=$((900 - NOW % 900 + 20))
+          # Bangun tepat setelah batas 5 menit berikutnya (+20 s supaya tidak
+          # menabrak run schedule pada batas yang sama). Sebelum 2026-09-06
+          # angkanya 900 (kadens 15 menit).
+          WAIT=$((300 - NOW % 300 + 20))
           echo "Tidur ${WAIT}s lalu dispatch run berikutnya."
           sleep $WAIT
           curl -sSf -X POST \
