@@ -1,5 +1,24 @@
 # Progress
 
+## 2026-09-06 (sore): tombol "Scan holder FULL token ini" naik ke paling atas
+
+Permintaan user: *"pindahkan tombol scan full holder token ini di holder
+analytic ke tempat paling atas."*
+
+**Status: selesai & tes hijau (836 passed).**
+
+- `pages/5_🧮_Holder.py`: blok tombol scan FULL manual (tombol + caption
+  penjelas + divider) dipindah dari dasar halaman ke atas, tepat setelah
+  token dipilih dan sebelum kartu metrik/badge dust. Logikanya diekstrak ke
+  helper `_full_scan_section(mint, token, store, watchlist, is_evm)` supaya
+  urutan render bisa diubah tanpa menduplikasi kode.
+- Perilaku tidak berubah: tetap `FULL_SCAN_MAX_WALLETS`, tetap
+  `ingest_many(..., detail=True)` (baseline + kronologi), tetap overlay
+  `MANUAL_SCAN_KEY` + `st.rerun()` supaya kartu metrik memakai hasil scan
+  barusan, dan tetap dua cabang chain (Helius vs Blockscout/EVM).
+- Karena tombol dirender sebelum kartu metrik, hasil scan manual langsung
+  terlihat di layar yang sama tanpa perlu scroll ke bawah dulu.
+
 ## 2026-09-06 (siang): watchlist Meteora ikut 5 menit + jendela grafik LP dipulihkan
 
 Permintaan user: *"iya untuk watchlist meteora juga, per 5 menit, biar
