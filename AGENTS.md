@@ -235,7 +235,7 @@ JSON compact, Contents API base64) di ref `holder-live`:
   waktu WIB tanpa detik; tanpa tabel wallet/skor/penjelasan panjang.
   Rule terkonfirmasi tetap punya satu baris pasar atau ⚠️ TIDAK
   TERVERIFIKASI; LP/high-drop tanpa baris pasar. Judul `exit_cutloss` =
-  `🚨 WAKTUNYA EXIT / CUTLOSS / Reshape 20 80 10 bin`, tebal melalui native
+  `🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 10 bin - TP 5% - 10%`, tebal melalui native
   entity `bold` (offset/panjang **UTF-16**, bukan `len` karakter Python).
   Telegram tidak mendukung ukuran/warna/teks berkedip: jangan kirim
   HTML/CSS palsu. Teks tetap literal, tanpa `parse_mode`;
@@ -425,7 +425,7 @@ exit/cutloss (pool LP): eskalasi episode EARLY DUMP — dust naik
                         ESCALATION_MIN_RISES (3) scan 5 menit berturut
                         dalam ESCALATION_WINDOW_SEC (15 mnt, +1 bucket
                         toleransi cron telat) -> ESCALATION_TITLE
-                        (EXIT / CUTLOSS / Reshape 20 80 10 bin),
+                        (EXIT / CUTLOSS / Reshape bid-ask 10 bin - TP 5% - 10%),
                         1x per episode (marker escalated)
 titik aman (pool LP)  : dust turun kembali <= 0.1% MC di jendela yang sama
                         -> "KEMBALI KE TITIK AMAN", 1x, episode ditutup
