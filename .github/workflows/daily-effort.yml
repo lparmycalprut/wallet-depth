@@ -1,14 +1,12 @@
-# Holder Dust Scanner — kadens run ±5 menit (KEDUA lane LP tiap run).
+# Holder Dust Scanner — cron HANYA ±5 menit, lane LP saja.
+# Watchlist biasa (slot 4 jam) DIMATIKAN di scanner (REGULAR_SCAN_ENABLED=0).
+# Pengingat ⚡ Telegram = tiap scan 5 menit selama dust > 0,1% MC.
 name: Holder Dust Scanner
 
 on:
   schedule:
-    # Kadens target ±5 menit sejak 2026-09-06. Yang berubah hanya kadens RUN;
-    # scanner (scripts/scan_holders.py) yang membagi lane-nya: KEDUA watchlist
-    # LP (Chart LP Meteora + Robinhood LP) tiap run, watchlist biasa slot 4 jam,
-    # pengingat ⚡ Telegram tetap maks 1x/15 menit per token. Schedule GitHub
-    # bersifat best-effort (bisa terthrottle sampai ±2 jam), jadi ritme 5 menit
-    # dipegang langkah "Chain run berikutnya" di bawah.
+    # Target ±5 menit. GitHub schedule best-effort (bisa telat sampai jam),
+    # jadi ritme dijaga langkah "Chain run berikutnya" di bawah.
     - cron: "*/5 * * * *"
 
   workflow_dispatch:
@@ -19,14 +17,13 @@ on:
         default: false
         type: boolean
       scan_all:
-        description: "Scan SEMUA token sekarang (scope=all + abaikan gate run ganda) — dipakai saat token baru ditambahkan"
+        description: "Scan SEMUA token sekarang (scope=all + abaikan gate run ganda) — watchlist biasa + LP, termasuk slot 4 jam"
         required: false
         default: false
         type: boolean
 
 permissions:
   contents: write
-  # Chain dispatch: langkah terakhir POST /actions/workflows/.../dispatches.
   actions: write
 
 concurrency:
@@ -48,18 +45,16 @@ jobs:
       - name: Install dependencies
         run: pip install requests curl_cffi
 
-      - name: Holder scan (LP ±5 menit · biasa slot 4 jam)
+      - name: Holder scan (LP ±5 menit · 4 jam off)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
-          # Katup hemat kuota Helius (opsional). 3 = scan Solana kembali
-          # ±15 menit, Robinhood LP tetap tiap run. Default 1 = tiap run.
+          # 4 jam watchlist biasa: default OFF di kode. Nyalakan lagi:
+          # REGULAR_SCAN_ENABLED: "1"
+          # Hemat Helius (Meteora tiap 3 run = ±15 menit, Robinhood tetap 5 menit):
           # LP_SCAN_RUN_MULTIPLIER: "3"
-        # --max-wallets 3000 menjaga durasi run. Hapus flag ini bila mau FULL
-        # 100.000 wallet. Kalau mulai kena 429: turunkan angkanya atau
-        # uncomment LP_SCAN_RUN_MULTIPLIER di atas.
         run: |
           ARGS=""
           if [ "${{ inputs.telegram_test }}" = "true" ]; then
@@ -76,9 +71,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           NOW=$(date +%s)
-          # Bangun tepat setelah batas 5 menit berikutnya (+20 s supaya tidak
-          # menabrak run schedule pada batas yang sama). Sebelum 2026-09-06
-          # angkanya 900 (kadens 15 menit).
           WAIT=$((300 - NOW % 300 + 20))
           echo "Tidur ${WAIT}s lalu dispatch run berikutnya."
           sleep $WAIT
