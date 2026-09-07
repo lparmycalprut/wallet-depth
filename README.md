@@ -9,13 +9,18 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
 
 1. **Dust holder** — wallet murni dengan `0 < nilai ≤ $10`:
    - **dust % MC** = total nilai dust / marketcap × 100,
-   - ≥ **0,5% MC** → **HATI-HATI** (badge kuning, peringatan dini),
-   - ≥ **1% MC** → **BAHAYA** (disembunyikan dari Scan Meteora),
-   - < **0,1% MC** + data holder valid (≥ 40 wallet) → badge **🏆 BEST POOL**
-     di baris listing Scan Meteora (level AMAN tidak berubah — ini penanda
-     kebersihan distribusi, bukan level bahaya). Nilai **== 0,1%** sengaja
-     tidak dapat badge (butuh `< 0,1%`) dan juga tidak memicu alert
-     EARLY DUMP (butuh `> 0,1%`), jadi kedua sinyal tidak tumpang tindih.
+   - ≥ **0,5% MC** → **HATI-HATI** (badge kuning, peringatan dini — Chart LP
+     / watchlist),
+   - ≥ **1% MC** → **BAHAYA** (Chart LP / watchlist),
+   - **Scan Meteora** (sejak 2026-09-07): hanya pool dengan dust **≤ 0,1% MC**
+     yang ditampilkan (`DUST_SCAN_HIDE_PCT`); dust > 0,1% disembunyikan
+     seluruhnya, sehingga badge AMAN/HATI-HATI/BAHAYA **dinonaktifkan** di
+     listing itu,
+   - < **0,1% MC** + data holder valid (≥ 40 wallet) + **TVL pool ≥ 10K USD**
+     (`DUST_BEST_MIN_TVL_USD`) → badge **🏆 BEST POOL** di baris listing Scan
+     Meteora. Nilai **== 0,1%** sengaja tidak dapat badge (butuh `< 0,1%`)
+     dan juga tidak memicu alert EARLY DUMP (butuh `> 0,1%`), jadi kedua
+     sinyal tidak tumpang tindih.
    Dust yang nambah pesat = holder sebelumnya sudah distribusi / bag
    merosot jadi sisa. **Catatan:** batas dust itu **$10 per wallet dalam
    USD**, jadi dust % MC *tidak* invariant terhadap harga — harga naik
@@ -244,12 +249,15 @@ Meteora Pool** (`source=meteora`):
 - 24 jam: `pool_type=dlmm && active_tvl≥1000 && fee_active_tvl_ratio≥250`
 - 1 jam: `pool_type=dlmm && active_tvl≥1000 && fee_active_tvl_ratio≥1`
 - Pool 24 jam yang masih muncul di 1 jam **tetap ditampilkan**
-- Dust holder **≥ 1% MC** (BAHAYA) disembunyikan, **≥ 0,5% MC** ditandai
-  badge **HATI-HATI**
-- Dust **< 0,1% MC** dengan data holder valid (≥ 40 wallet) diberi badge
-  **🏆 BEST POOL** di kolom Dust %MC — hanya di listing ini; card Chart LP /
-  halaman Holder Analytic tidak berubah (keputusan user). Dust 0,00% dari
-  data yang gagal/kosong **tidak pernah** mendapat badge
+- Hanya pool dengan dust holder **≤ 0,1% MC** yang ditampilkan
+  (`DUST_SCAN_HIDE_PCT`, sejak 2026-09-07); dust > 0,1% disembunyikan.
+  Badge AMAN/HATI-HATI/BAHAYA **tidak dipakai** di listing ini (semua baris
+  sudah ≤ 0,1%). Dust `None` (holder gagal di-fetch) tetap tampil tanpa angka
+- Kolom **TVL** (TVL pool dari API Meteora) ikut ditampilkan
+- Dust **< 0,1% MC** + data holder valid (≥ 40 wallet) + **TVL ≥ 10K USD**
+  diberi badge **🏆 BEST POOL** di kolom Dust %MC — hanya di listing ini;
+  card Chart LP / halaman Holder Analytic tidak berubah (keputusan user).
+  Dust 0,00% dari data yang gagal/kosong **tidak pernah** mendapat badge
 - Tombol **⭐** memasukkan token ke card **Chart LP** (watchlist terpisah di
   bagian atas dashboard, lengkap dengan grafik perubahan dust holder)
 - Shortcut: [Meteora DLMM](https://app.meteora.ag/dlmm/) + [HawkFi](https://www.hawkfi.ag/meteora/)
@@ -421,7 +429,7 @@ akumulasi dan bukan prediksi arah harga.
 | `alert_context.py` | Konteks pasar untuk konfirmasi alert: volume 4 jam, rata-rata 7 hari, buy/sell pressure, volatilitas (ditarik lazy) |
 | `holder_chronology.py` | Snapshot wallet bounded, klasifikasi pergerakan, narasi kronologi |
 | `lp_watchlist.py` | Card **Chart LP**: pisah watchlist Meteora, baris + grafik perubahan dust holder |
-| `meteora_screener.py` | Listing DLMM 24h+1h, enrich holder, filter dust ≥1%; badge BEST POOL di UI app.py (dust < 0,1% + data valid) |
+| `meteora_screener.py` | Listing DLMM 24h+1h, enrich holder, filter dust > 0,1% MC; badge BEST POOL di UI app.py (dust < 0,1% + data valid + TVL ≥ 10K) |
 | `holder_analysis.py` | Fetch holder Helius/GMGN, klasifikasi real/dust/mid |
 | `robinhood_holders.py` | Robinhood Chain (chain 4663): holder Blockscout, decimals/supply, analisa dust sama dengan Solana |
 | `robinhood_watchlist.py` | Watchlist/path Robinhood: `watchlist_robinhood.json`, status & history terpisah, scan + publish best-effort |
@@ -561,7 +569,8 @@ keseluruhan kadens ke 15 menit.
 | `BASELINE_HOURS`, `MIN_BASELINE_HOURS` | 168, 24 — `alert_context` (baseline volume 7 hari) |
 | `MAX_BACKUP_BYTES`, `DURABLE_CACHE_TTL` | 3.500.000, 600 — `holder_history` (budget backup `.gz`, cache pull UI) |
 | `MAX_POINTS` | 1008 — batas titik mentah per token; ±3,5 hari pada densitas LP 5 menit, 168 hari pada lane biasa 4 jam (grafik UI tetap di-resample per bucket 4 jam) |
-| `DUST_BEST_PCT`, `DUST_BEST_MIN_HOLDERS` | 0.1, 40 — badge BEST POOL (strict `< 0,1%`) + guard data holder minimal |
+| `DUST_BEST_PCT`, `DUST_BEST_MIN_HOLDERS`, `DUST_BEST_MIN_TVL_USD` | 0.1, 40, 10000 — badge BEST POOL (strict `< 0,1%`) + guard data holder minimal + TVL pool minimal |
+| `DUST_SCAN_HIDE_PCT` | 0.1 — Scan Meteora menyembunyikan pool dust `> 0,1%` MC (`should_hide_dust`) |
 | `DUST_BEST_LABEL` | `BEST POOL` — label badge (tampil apa adanya) |
 
 Konstanta konfirmasi ada di `telegram_alerts.py`, metrik volatilitas di

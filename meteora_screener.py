@@ -7,8 +7,11 @@ Endpoint: ``pool-discovery-api.datapi.meteora.ag/pools``
 
 Pool 24 jam yang masih muncul di 1 jam **tetap ditampilkan**. Pool 1 jam
 yang belum ada di 24 jam ikut digabung (sama seperti listing Trending).
-Setelah fetch holder, pool dengan dust holder **≥ 1% marketcap (BAHAYA)**
-disembunyikan; **≥ 0,5% MC** tetap tampil dengan badge **HATI-HATI**.
+Setelah fetch holder, pool dengan dust holder **> 0,1% marketcap**
+disembunyikan (sejak 2026-09-07; sebelumnya hanya ≥ 1% = BAHAYA). Badge
+AMAN/HATI-HATI/BAHAYA **tidak lagi dipakai** di listing ini — yang lolos
+sudah pasti ≤ 0,1%. Badge 🏆 BEST POOL (di UI ``app.py``) menambah syarat
+data holder valid (≥ 40 wallet) **dan TVL pool ≥ 10K USD**.
 Baris yang di-⭐ masuk watchlist terpisah **Chart LP** di dashboard.
 """
 from __future__ import annotations
@@ -16,7 +19,7 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from holder_history import should_hide_dust
+from holder_history import DUST_SCAN_HIDE_PCT, should_hide_dust
 
 POOLS_URL = "https://pool-discovery-api.datapi.meteora.ag/pools"
 PAGE_SIZE = 50
@@ -271,7 +274,11 @@ def enrich_pools(rows: list[dict], *, max_wallets: int = 2000,
 
 
 def hide_dust_limit(rows: list[dict]) -> tuple[list[dict], int]:
-    """Buang pool dust ≥ 1% MC. Return (kept, n_hidden)."""
+    """Buang pool dust > ``DUST_SCAN_HIDE_PCT`` (0,1% MC). Return (kept, n_hidden).
+
+    Dust ``None`` (holder gagal di-fetch) tetap ditampilkan tanpa angka —
+    tidak ada bukti dust, tetapi juga tidak akan mendapat BEST POOL.
+    """
     kept, hidden = [], 0
     for row in rows or []:
         pct = ((row.get("analysis") or {}).get("holders") or {}).get("dust_pct_mc")
@@ -286,7 +293,7 @@ def hide_dust_limit(rows: list[dict]) -> tuple[list[dict], int]:
 
 def scan_meteora(*, max_wallets: int = 2000, workers: int = 6,
                  progress=None, timeout: int = 25) -> dict:
-    """Listing + holder + filter dust ≥ 1% MC."""
+    """Listing + holder + filter dust > 0,1% MC (``DUST_SCAN_HIDE_PCT``)."""
     rows, error = fetch_listing(timeout=timeout)
     fetched = len(rows)
     if rows:
@@ -300,5 +307,6 @@ def scan_meteora(*, max_wallets: int = 2000, workers: int = 6,
         "error": error,
         "fetched": fetched,
         "hidden_dust": hidden,
+        "hide_pct": float(DUST_SCAN_HIDE_PCT),
         "analyzed_at": int(time.time()),
     }

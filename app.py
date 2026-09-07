@@ -10,8 +10,9 @@ import matplotlib.pyplot as plt
 import streamlit as st
 
 from helius_holders import depth_bar_chart, scan_token_holders
-from holder_history import (DUST_BEST_LABEL, DUST_BEST_PCT, DUST_CAUTION_PCT,
-                            DUST_DANGER_PCT, dust_flag,
+from holder_history import (DUST_BEST_LABEL, DUST_BEST_MIN_TVL_USD,
+                            DUST_BEST_PCT, DUST_CAUTION_PCT,
+                            DUST_DANGER_PCT, DUST_SCAN_HIDE_PCT, dust_flag,
                             history_for_mint, holders_usable, ingest_many,
                             load_durable_holder_history, merge_points,
                             resample_4h,
@@ -113,7 +114,8 @@ h1, h2, h3, h4, h5, h6 {color:#000000;}
 </style>
 <div class="hero"><h1>🧮 Wallet Depth</h1>
 <p>Fokus analisa holder: dust wallet (≤ $10) sebagai jejak dump.
-≥ 0,5% MC = HATI-HATI · ≥ 1% MC = BAHAYA. Grafik 4 jam + Scan Meteora DLMM.</p></div>
+Chart LP: ≥ 0,5% MC = HATI-HATI · ≥ 1% MC = BAHAYA. Scan Meteora DLMM hanya
+menampilkan pool dust ≤ 0,1% MC (🏆 BEST POOL = + holder valid + TVL ≥ 10K).</p></div>
 """, unsafe_allow_html=True)
 
 
@@ -166,10 +168,10 @@ def _dust_badge_html(flag: dict) -> str:
 def _dust_best_html(flag: dict) -> str:
     """Chip 🏆 BEST POOL — hanya Scan Meteora (permintaan user 2026-09-04).
 
-    ``flag["best"]`` sudah dijamin oleh ``dust_flag(..., holders=...)``:
+    ``flag["best"]`` sudah dijamin oleh ``dust_flag(..., holders=..., tvl=...)``:
     dust % MC < 0,1% **dan** data holder valid (total_fetched > 0,
-    wallets_analyzed ≥ 40) — dust "0,00%" dari data gagal tidak pernah
-    mendapat chip ini. Level badge (AMAN) tidak berubah.
+    wallets_analyzed ≥ 40) **dan** TVL pool ≥ 10K USD (2026-09-07) — dust
+    "0,00%" dari data gagal tidak pernah mendapat chip ini.
     """
     if not flag.get("best"):
         return ""
@@ -631,12 +633,12 @@ def _render_meteora_scan() -> None:
     st.caption(
         "Top DLMM 24 jam (`active_tvl ≥ 1000`, `fee_active_tvl_ratio ≥ 250`) "
         "dibandingkan 1 jam (`fee_active_tvl_ratio ≥ 1`). Pool 24 jam yang "
-        "masih muncul di 1 jam **tetap ditampilkan**. Dust holder "
-        f"**≥ {DUST_DANGER_PCT:g}% MC (BAHAYA)** disembunyikan, "
-        f"**≥ {DUST_CAUTION_PCT:g}% MC** diberi badge **HATI-HATI**. "
-        f"Dust **< {DUST_BEST_PCT:g}% MC** dengan data holder valid "
-        "(≥ 40 wallet) diberi badge 🏆 BEST POOL — level AMAN tidak berubah, "
-        "hanya penanda kebersihan distribusi. "
+        "masih muncul di 1 jam **tetap ditampilkan**. Hanya pool dengan dust "
+        f"holder **≤ {DUST_SCAN_HIDE_PCT:g}% MC** yang ditampilkan — sisanya "
+        "disembunyikan (badge AMAN/HATI-HATI/BAHAYA tidak dipakai di sini). "
+        f"Dust **< {DUST_BEST_PCT:g}% MC** + data holder valid (≥ 40 wallet) "
+        f"+ **TVL ≥ ${DUST_BEST_MIN_TVL_USD / 1000:g}K** diberi badge "
+        "🏆 BEST POOL. "
         "⭐ memasukkan token ke card **Chart LP** di bagian atas dashboard. "
         "Tombol kanan: Meteora + HawkFi."
     )
@@ -667,14 +669,15 @@ def _render_meteora_scan() -> None:
     fetched = int(result.get("fetched") or 0)
     if fetched:
         st.caption(f"{len(rows)} pool ditampilkan · {hidden} disembunyikan "
-                   f"(dust ≥ {DUST_DANGER_PCT:.0f}% MC = BAHAYA) · listing {fetched}.")
+                   f"(dust > {DUST_SCAN_HIDE_PCT:g}% MC) · listing {fetched}.")
     if not rows:
         if result:
             st.info("Tidak ada pool yang lolos filter dust (atau listing kosong).")
         return
 
-    header_cols = st.columns([1.6, 0.8, 0.7, 0.9, 0.7, 1.2, 0.45])
-    titles = ["Token", "MC", "Dust", "Dust %MC", "TF", "Pool", ""]
+    col_spec = [1.6, 0.8, 0.8, 0.7, 0.9, 0.7, 1.2, 0.45]
+    header_cols = st.columns(col_spec)
+    titles = ["Token", "MC", "TVL", "Dust", "Dust %MC", "TF", "Pool", ""]
     style = "font-size:0.72rem;color:#000000;font-weight:700;text-align:center;"
     for col, title in zip(header_cols, titles):
         col.markdown(f'<div style="{style}">{title}</div>',
@@ -688,20 +691,22 @@ def _render_meteora_scan() -> None:
         pool = str(row.get("pool_address") or "")
         dust_count = row.get("dust_count")
         dust_pct = row.get("dust_pct_mc")
-        # BEST POOL butuh bukti data holder valid (bukan cuma angka): guard
-        # ada di dust_flag(holders=…), lihat holder_history._holders_valid_for_best.
+        tvl = row.get("tvl")
+        # BEST POOL butuh bukti data holder valid (bukan cuma angka) + TVL
+        # pool ≥ 10K: guard ada di dust_flag(holders=…, tvl=…), lihat
+        # holder_history._holders_valid_for_best / _tvl_valid_for_best.
         analysis = (row.get("analysis")
                     if isinstance(row.get("analysis"), dict) else {})
         holders = (analysis.get("holders")
                    if isinstance(analysis.get("holders"), dict) else None)
-        flag = dust_flag(dust_pct, holders=holders)
+        flag = dust_flag(dust_pct, holders=holders, tvl=tvl)
         tf = []
         if row.get("in_24h"):
             tf.append("24H")
         if row.get("in_1h"):
             tf.append("1H")
         tf_txt = "+".join(tf) or "—"
-        cols = st.columns([1.6, 0.8, 0.7, 0.9, 0.7, 1.2, 0.45])
+        cols = st.columns(col_spec)
         cols[0].markdown(
             f'<div class="watchlist-token">'
             f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
@@ -711,25 +716,32 @@ def _render_meteora_scan() -> None:
         cols[1].markdown(
             f'<div class="watchlist-metric"><div class="watchlist-metric-value">'
             f'{_compact(row.get("mc"))}</div></div>', unsafe_allow_html=True)
+        tvl_txt = "—" if tvl is None else _compact(tvl)
         cols[2].markdown(
+            f'<div class="watchlist-metric"><div class="watchlist-metric-value">'
+            f'{tvl_txt}</div><div class="watchlist-metric-sub">tvl</div></div>',
+            unsafe_allow_html=True)
+        cols[3].markdown(
             f'<div class="watchlist-metric"><div class="watchlist-metric-value">'
             f'{_number(dust_count, ".0f")}</div>'
             f'<div class="watchlist-metric-sub">wallet</div></div>',
             unsafe_allow_html=True)
         pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.2f}%"
-        cols[3].markdown(
-            f'<div class="watchlist-metric"><div class="watchlist-metric-value">'
-            f"{pct_txt}</div>{_dust_badge_html(flag)}"
-            f"{_dust_best_html(flag)}</div>",
-            unsafe_allow_html=True)
+        # Badge level (AMAN/HATI-HATI/BAHAYA) sengaja TIDAK dirender di
+        # listing ini sejak 2026-09-07: semua baris sudah ≤ 0,1% MC, jadi
+        # hanya chip 🏆 BEST POOL yang informatif.
         cols[4].markdown(
+            f'<div class="watchlist-metric"><div class="watchlist-metric-value">'
+            f"{pct_txt}</div>{_dust_best_html(flag)}</div>",
+            unsafe_allow_html=True)
+        cols[5].markdown(
             f'<div class="watchlist-metric"><div class="watchlist-metric-value">'
             f"{html.escape(tf_txt)}</div></div>", unsafe_allow_html=True)
         pool_html = pool_links_html(pool) or '<span>—</span>'
-        cols[5].markdown(
+        cols[6].markdown(
             f'<div class="pool-links">{pool_html}</div>',
             unsafe_allow_html=True)
-        if cols[6].button("⭐", key=f"meteora-star-{index}",
+        if cols[7].button("⭐", key=f"meteora-star-{index}",
                           help="Tambah ke Chart LP (watchlist Meteora di atas)",
                           use_container_width=True):
             if ca:

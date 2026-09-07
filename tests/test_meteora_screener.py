@@ -1,4 +1,4 @@
-"""Coverage listing Meteora 24h/1h + filter dust ≥ 1% MC."""
+"""Coverage listing Meteora 24h/1h + filter dust > 0,1% MC."""
 from __future__ import annotations
 
 import unittest
@@ -60,17 +60,37 @@ class MergePoolsTest(unittest.TestCase):
 
 
 class HideDustTest(unittest.TestCase):
-    def test_hides_at_one_percent_keeps_rest(self):
+    def test_hides_above_01_percent_keeps_rest(self):
+        # Sejak 2026-09-07: hanya dust ≤ 0,1% MC yang tampil. BAHAYA (2,4%),
+        # HATI-HATI (0,5%) dan AMAN-tapi->0,1% (0,2%) sama-sama dibuang.
         rows = [
             {"ca": "A", "dust_pct_mc": 2.4,
              "analysis": {"holders": {"dust_pct_mc": 2.4}}},
             {"ca": "B", "dust_pct_mc": 0.5,
              "analysis": {"holders": {"dust_pct_mc": 0.5}}},
+            {"ca": "B2", "dust_pct_mc": 0.2,
+             "analysis": {"holders": {"dust_pct_mc": 0.2}}},
             {"ca": "C", "dust_pct_mc": None, "analysis": None},
+            {"ca": "D", "dust_pct_mc": 0.1,
+             "analysis": {"holders": {"dust_pct_mc": 0.1}}},
+            {"ca": "E", "dust_pct_mc": 0.03,
+             "analysis": {"holders": {"dust_pct_mc": 0.03}}},
         ]
         kept, hidden = ms.hide_dust_limit(rows)
-        self.assertEqual(hidden, 1)
-        self.assertEqual([r["ca"] for r in kept], ["B", "C"])
+        self.assertEqual(hidden, 3)
+        self.assertEqual([r["ca"] for r in kept], ["C", "D", "E"])
+
+    def test_analysis_pct_wins_over_row_pct(self):
+        rows = [{"ca": "A", "dust_pct_mc": 0.05,
+                 "analysis": {"holders": {"dust_pct_mc": 0.8}}}]
+        kept, hidden = ms.hide_dust_limit(rows)
+        self.assertEqual((len(kept), hidden), (0, 1))
+
+    def test_scan_result_reports_hide_pct(self):
+        with mock.patch.object(ms, "fetch_listing", return_value=([], "")):
+            result = ms.scan_meteora()
+        self.assertEqual(result["hide_pct"], ms.DUST_SCAN_HIDE_PCT)
+        self.assertEqual(result["hide_pct"], 0.1)
 
 
 class FetchListingTest(unittest.TestCase):
