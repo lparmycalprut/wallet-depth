@@ -110,8 +110,9 @@ class LazyFetchTest(unittest.TestCase):
         self.assertAlmostEqual(check["volume_ratio"], 3.7333, places=3)
         self.assertLess(check["price_change_pct"], 0)
         message = ta.format_alert_message(event)
-        self.assertIn("Verifikasi volume: ✅", message)
-        self.assertIn("Skor konfirmasi:", message)
+        self.assertIn("✅ Pasar: vol 4j 3.73× avg 7d · harga -6.00%", message)
+        self.assertNotIn("Skor konfirmasi:", message)
+        self.assertIn("confidence_score", check)
 
     def test_quiet_volume_rejects_the_signal_and_records_the_reason(self):
         flat = candles([(1.0, 1_000.0)] * 4)

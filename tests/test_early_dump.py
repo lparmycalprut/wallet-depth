@@ -169,7 +169,7 @@ class EarlyDumpRuleTest(unittest.TestCase):
 
 
 class EarlyDumpMessageTest(unittest.TestCase):
-    """Pesan Telegram kind early_dump: judul, angka, verifikasi, link."""
+    """Pesan Telegram kind early_dump: judul, angka ringkas, emoji, link."""
 
     def test_judul_dan_field_pokok(self):
         events = ta.evaluate_early_dump_rule(
@@ -179,9 +179,7 @@ class EarlyDumpMessageTest(unittest.TestCase):
         self.assertIn("⚡ EARLY DUMP", message)
         self.assertIn("0.1%", message)           # DUST_BEST_PCT 0,1
         self.assertIn("$LPDUMP", message)
-        self.assertIn("Dust sebelumnya: 0.04% MC", message)
-        self.assertIn("Dust terbaru: 0.42% MC", message)
-        self.assertIn("+0.38 poin persentase", message)
+        self.assertIn("📊 Dust: 0.04% → 0.42% MC (+0.38 pp)", message)
         # Kind baru tetap memakai blok link token (aturan semua jenis alert).
         self.assertIn("🔗 GMGN:", message)
         self.assertIn("🦆 DexScreener:", message)
@@ -204,7 +202,7 @@ class EarlyDumpMessageTest(unittest.TestCase):
         self.assertNotIn("Meteora:", message)
         self.assertNotIn("HawkFi:", message)
 
-    def test_kind_early_dump_tidak_mengubah_pesan_lama(self):
+    def test_dump_biasa_juga_memakai_format_ringkas(self):
         dump = {"id": "x", "kind": "dump", "scope": "~4 jam", "mint": MINT,
                 "symbol": "DMP", "previous_dust_pct_mc": 1.0,
                 "current_dust_pct_mc": 1.4, "change_pp": 0.4,
@@ -212,7 +210,8 @@ class EarlyDumpMessageTest(unittest.TestCase):
                 "wallet_increases": 2, "movements": {}, "volume_check": {}}
         message = ta.format_alert_message(dump)
         self.assertIn("🚨 INDIKASI DUMP", message)
-        self.assertIn("Pergerakan sampel wallet dust", message)
+        self.assertIn("📊 Dust: 1.00% → 1.40% MC (+0.40 pp)", message)
+        self.assertNotIn("Pergerakan sampel wallet dust", message)
 
 
 class EarlyDumpStateTest(unittest.TestCase):

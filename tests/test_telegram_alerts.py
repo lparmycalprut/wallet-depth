@@ -1,17 +1,21 @@
 """Unit coverage for holder-dust Telegram rules, state, and transport."""
 from __future__ import annotations
 
+from copy import deepcopy
 import unittest
 from unittest import mock
 
 import requests
 
 import telegram_alerts as ta
-from links import dexscreener_token_url, gmgn_token_url
+from links import (blockscout_token_url, dexscreener_token_url,
+                   gmgn_token_url, rh_scan_token_url)
 
 NOW = 2_000_000
 FOUR_HOURS = 4 * 3600
 MINT = "MintAddress123"
+ALERT_KINDS = ("early_dump", ta.ESCALATION_KIND, ta.SAFE_RETURN_KIND,
+               ta.HIGH_DROP_KIND, "dump", "accumulation", "baseline_shift")
 
 
 def _snapshot(ts, dust_pct, balances=None, dust=None):
@@ -135,7 +139,7 @@ class BaselineShiftTest(unittest.TestCase):
         self.assertEqual(event["movements"]["new_dust"], 1)
         message = ta.format_alert_message(event)
         self.assertIn("SNAPSHOT AWAL", message)
-        self.assertIn("+1.00 poin persentase", message)
+        self.assertIn("+1.00 pp", message)
         self.assertIn(MINT, message)
 
 
@@ -248,7 +252,7 @@ class AlertMessageLinkTest(unittest.TestCase):
                 self.assertNotIn(" ", line.split(": ", 1)[1])
 
     def test_semua_jenis_alert_membawa_link(self):
-        for kind in ("dump", "accumulation", "baseline_shift", "lain"):
+        for kind in (*ALERT_KINDS, "lain"):
             event = _dump_event()
             event["kind"] = kind
             message = ta.format_alert_message(event)
@@ -271,6 +275,145 @@ class AlertMessageLinkTest(unittest.TestCase):
         text = send.call_args.args[0]
         self.assertIn("TEST ALERT", text)
         self.assertNotIn("gmgn.ai", text)
+        self.assertEqual(len(text.splitlines()), 4)
+        self.assertIn("🧪 Uji koneksi, bukan sinyal token.", text)
+        for line in text.splitlines():
+            self.assertTrue(line.startswith(("✅", "📡", "🧪", "🕒")))
+        self.assertIn("WIB", text)
+        self.assertNotIn("UTC", text)
+
+
+class CompactAlertMessageTest(unittest.TestCase):
+    def test_all_kinds_use_short_emoji_lines_without_changing_event(self):
+        emojis = ("⚡", "🚨", "✅", "🔔", "🟢", "🔎", "🪙", "📊", "📈", "🛡️",
+                  "📉", "⚠️", "🕒", "📋", "🔗", "🦆")
+        for kind in ALERT_KINDS:
+            with self.subTest(kind=kind):
+                event = dict(_dump_event(), kind=kind, episode_minutes=10,
+                             drop_pct=60.0)
+                before = deepcopy(event)
+                message = ta.format_alert_message(event)
+                self.assertEqual(event, before)
+                self.assertLessEqual(len(message.splitlines()), 9)
+                for line in message.splitlines():
+                    if line:
+                        self.assertTrue(line.startswith(emojis), line)
+                for verbose in ("Periode:", "Verifikasi:", "Verifikasi volume:",
+                                "Skor konfirmasi:", "Wallet saldo meningkat:",
+                                "Pergerakan sampel wallet dust", "tanpa henti",
+                                "Pengingat berulang"):
+                    self.assertNotIn(verbose, message)
+                times = [line for line in message.splitlines()
+                         if line.startswith("🕒 ")]
+                self.assertEqual(times, ["🕒 1970-01-24 10:33 WIB"])
+                self.assertNotIn("UTC", message)
+
+    def test_decreasing_dust_keeps_negative_percentage_points(self):
+        event = dict(_dump_event(), kind="accumulation",
+                     previous_dust_pct_mc=1.2, current_dust_pct_mc=0.6,
+                     change_pp=-0.6)
+        message = ta.format_alert_message(event)
+        self.assertTrue(message.startswith("🟢 KEMUNGKINAN AKUMULASI\n"))
+        self.assertIn("📊 Dust: 1.20% → 0.60% MC (-0.60 pp)", message)
+        self.assertNotIn("-50.00 pp", message)  # Bukan perubahan relatif %.
+
+    def test_high_drop_distinguishes_high_and_relative_drop(self):
+        event = dict(_dump_event(), kind=ta.HIGH_DROP_KIND,
+                     previous_dust_pct_mc=1.0, current_dust_pct_mc=0.4,
+                     change_pp=-0.6, drop_pct=60.0)
+        message = ta.format_alert_message(event)
+        self.assertIn("🔔 DUST TURUN ≥ 50% DARI HIGH", message)
+        self.assertIn("📊 Dust (high → kini): 1.00% → 0.40% MC (-0.60 pp)", message)
+        self.assertIn("📉 Turun 60.0% dari high", message)
+        self.assertNotIn("TIDAK TERVERIFIKASI", message)
+
+    def test_robinhood_links_preserved_for_all_alert_kinds(self):
+        mint = "0x" + "aB" * 20
+        for kind in ALERT_KINDS:
+            with self.subTest(kind=kind):
+                message = ta.format_alert_message(dict(_dump_event(mint), kind=kind))
+                self.assertIn(f"📋 Mint: {mint}", message)
+                self.assertIn(f"🦆 rh-scan: {rh_scan_token_url(mint)}", message)
+                self.assertIn(f"🦆 DexScreener: {dexscreener_token_url(mint)}", message)
+                self.assertIn(f"🌏 Blockscout: {blockscout_token_url(mint)}", message)
+                self.assertNotIn("gmgn.ai", message)
+                self.assertNotIn("dexscreener.com/solana", message)
+
+    def test_pool_links_preserved_for_all_lp_alerts(self):
+        pool = "PoolAddress123"
+        for kind in ("early_dump", ta.ESCALATION_KIND, ta.SAFE_RETURN_KIND):
+            with self.subTest(kind=kind):
+                message = ta.format_alert_message(dict(
+                    _dump_event(), kind=kind, pool_addresses=[pool, "", None]))
+                self.assertIn(f"🌊 Meteora: {ta.meteora_dlmm_url(pool)}", message)
+                self.assertIn(f"🦅 HawkFi: {ta.hawkfi_meteora_url(pool)}", message)
+                self.assertEqual(message.count("🌊 Meteora:"), 1)
+                self.assertNotIn("TIDAK TERVERIFIKASI", message)
+
+    def test_unverified_warning_stays_short_without_provider_diagnostics(self):
+        event = dict(_dump_event(), volume_check={
+            "verified": False, "reason": "provider traceback " * 500})
+        message = ta.format_alert_message(event)
+        self.assertIn("⚠️ TIDAK TERVERIFIKASI — data pasar tidak tersedia", message)
+        self.assertNotIn("provider traceback", message)
+        self.assertLess(len(message), 600)
+
+    def test_wib_format_and_date_rollover(self):
+        self.assertEqual(ta._format_wib(0), "1970-01-01 07:00 WIB")
+        self.assertEqual(ta._format_wib(31 * 86400 - 60), "1970-02-01 06:59 WIB")
+
+
+class TelegramFormattingDeliveryTest(unittest.TestCase):
+    def _payload(self, event=None):
+        response = mock.Mock(status_code=200)
+        response.json.return_value = {"ok": True}
+        with mock.patch.dict(ta.os.environ, {"TELEGRAM_BOT_TOKEN": "token",
+                                             "TELEGRAM_CHAT_ID": "chat"}), \
+                mock.patch.object(ta.requests, "post", return_value=response) as post:
+            result = (ta.send_test_alert() if event is None
+                      else ta.send_telegram_alert(event))
+        self.assertTrue(result["ok"])
+        post.assert_called_once()
+        return post.call_args.kwargs["json"]
+
+    def test_exit_header_bold_covers_exact_text_with_utf16_emoji_length(self):
+        event = dict(_dump_event(), kind=ta.ESCALATION_KIND)
+        payload = self._payload(event)
+        title = "🚨 WAKTUNYA EXIT / CUTLOSS / Reshape 20 80 10 bin"
+        self.assertTrue(payload["text"].startswith(title + "\n\n🪙"))
+        self.assertEqual(payload["text"], ta.format_alert_message(event))
+        length = len(title.encode("utf-16-le")) // 2
+        self.assertEqual(length, len(title) + 1)  # 🚨 bukan satu unit UTF-16.
+        self.assertEqual(payload["entities"], [
+            {"type": "bold", "offset": 0, "length": length}])
+        marked = payload["text"].encode("utf-16-le")[:length * 2].decode("utf-16-le")
+        self.assertEqual(marked, title)  # Detail token tidak ikut tebal.
+        self.assertNotIn("parse_mode", payload)
+        self.assertEqual(payload["link_preview_options"], {"is_disabled": True})
+
+    def test_other_alerts_and_test_do_not_get_exit_emphasis(self):
+        for kind in (*ALERT_KINDS, None):
+            if kind == ta.ESCALATION_KIND:
+                continue
+            with self.subTest(kind=kind):
+                event = dict(_dump_event(), kind=kind) if kind else None
+                payload = self._payload(event)
+                self.assertNotIn("entities", payload)
+                self.assertNotIn("Reshape", payload["text"])
+                self.assertNotIn("parse_mode", payload)
+                self.assertEqual(payload["link_preview_options"], {"is_disabled": True})
+
+    def test_untrusted_names_and_mints_remain_literal_not_markup(self):
+        mint = 'a<b>&"[_]/?'
+        symbol = 'TST<&>_*[]🚀'
+        for kind in ALERT_KINDS:
+            with self.subTest(kind=kind):
+                event = dict(_dump_event(mint), kind=kind, symbol=symbol)
+                payload = self._payload(event)
+                self.assertIn(f"🪙 ${symbol}", payload["text"])
+                self.assertIn(f"📋 Mint: {mint}", payload["text"])
+                self.assertIn(gmgn_token_url(mint), payload["text"])
+                self.assertNotIn("parse_mode", payload)
 
 
 class TelegramTransportTest(unittest.TestCase):
@@ -290,7 +433,9 @@ class TelegramTransportTest(unittest.TestCase):
             "hello", bot_token="token", chat_id="chat", post=post)
         self.assertTrue(result["ok"])
         self.assertFalse(result["skipped"])
-        self.assertEqual(post.call_args.kwargs["json"]["chat_id"], "chat")
+        self.assertEqual(post.call_args.kwargs["json"], {
+            "chat_id": "chat", "text": "hello",
+            "link_preview_options": {"is_disabled": True}})
         self.assertEqual(post.call_args.kwargs["timeout"], 10)
 
     def test_timeout_does_not_raise(self):
