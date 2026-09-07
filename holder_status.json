@@ -16,7 +16,7 @@
           "escalated": false,
           "first_ts": 0,
           "rises": 0,
-          "ts": 1788820834
+          "ts": 1788821131
         },
         "high_drop": {},
         "last_sent": {},
@@ -32,7 +32,7 @@
         "sent_event_ids": 0,
         "summary": true
       },
-      "analyzed_at": 1788820834,
+      "analyzed_at": 1788821131,
       "chronology": {
         "baseline_wallets": {
           "dust_count": 0,
@@ -113,7 +113,7 @@
           "mid_pct_mc": 2.1877,
           "price": 949.46,
           "real_count": 730,
-          "real_pct_mc": 8.7535,
+          "real_pct_mc": 8.7543,
           "ts": 1788811200
         }
       ],
@@ -134,7 +134,7 @@
               "max": 100.0,
               "min": 10.0,
               "pct_mc": 0.22,
-              "value_usd": 16115.53
+              "value_usd": 16116.71
             },
             {
               "count": 175,
@@ -178,7 +178,7 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788820834,
+          "computed_at": 1788821131,
           "holders_all": 3974,
           "holders_wallet": 3969,
           "market_cap": 7324119.0,
@@ -191,7 +191,7 @@
               "min": 0.0,
               "pct_mc": 0.2847,
               "tier": "Shrimp",
-              "value_usd": 20848.65
+              "value_usd": 20849.82
             },
             {
               "count": 175,
@@ -245,9 +245,9 @@
         "new_real": 0,
         "pages": 4,
         "real_count": 730,
-        "real_pct_mc": 8.7535,
+        "real_pct_mc": 8.7543,
         "real_pct_supply": 0.0,
-        "real_value_usd": 641114.03,
+        "real_value_usd": 641173.07,
         "source": "helius",
         "suspicious_dust": 0,
         "total_fetched": 3974,
@@ -259,5 +259,5 @@
       "symbol": "ANTHROPIC"
     }
   },
-  "updated_at": 1788820834
+  "updated_at": 1788821131
 }
