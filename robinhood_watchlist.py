@@ -232,11 +232,16 @@ def publish_scan(analyses: dict, watchlist: dict, *,
                  contexts: dict | None = None,
                  merge_status: dict | None = None,
                  skip_unusable: bool = True,
-                 detail: bool = True) -> dict:
+                 detail: bool = True,
+                 keep_mints=None) -> dict:
     """Ingest + publish status/history Robinhood ke file lokal/GitHub.
 
     ``merge_status`` (snapshot sebelumnya) mewariskan token yang tidak
     ikut dianalisis run cepat — lihat ``holder_status.snapshot_status``.
+
+    ``keep_mints`` diteruskan ke ``holder_history.publish_holder_history``:
+    cron lane LP mengisinya dengan watchlist Robinhood aktif supaya backup
+    durable tidak menyeret token yang sudah keluar dari watchlist.
 
     ``skip_unusable=True`` (default) menyaring hasil yang **tidak layak**
     (``holder_history.holders_usable``: 0 wallet / sampel di bawah
@@ -273,7 +278,8 @@ def publish_scan(analyses: dict, watchlist: dict, *,
     if push:
         try:
             publish_holder_history(history, push=True,
-                                   repo_path=HISTORY_REPO_PATH)
+                                   repo_path=HISTORY_REPO_PATH,
+                                   keep_mints=keep_mints)
         except Exception as exc:  # noqa: BLE001
             print(f"WARN: robinhood backup publish failed: {exc}",
                   file=__import__("sys").stderr)

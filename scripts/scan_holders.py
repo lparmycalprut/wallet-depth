@@ -1,57 +1,51 @@
 #!/usr/bin/env python3
-"""Scanner analisa holder (dust + kohort) untuk watchlist.
+"""Scanner holder **lane LP saja**: Chart LP Meteora + Robinhood LP.
 
-Cadens dua tingkat (2026-09-05: LP ±15 menit; **2026-09-06: LP ±5 menit**):
+Dirampingkan **2026-09-07** (permintaan user: "rampingkan dan fokuskan ke
+holder scan untuk meteora dan robinhood saja agar fungsi berjalan dengan
+normal … semua pencatatan lain tidak usah dilakukan yang tidak perlu").
 
-- **Watchlist LP** — token pool Meteora (Chart LP, ``source=meteora``) dan
-  watchlist **Robinhood LP** — di-scan **tiap run = ±5 menit**
-  (:data:`RUN_SCAN_INTERVAL_SEC`) supaya exit LP bisa lebih awal DAN perubahan
-  holder langsung kelihatan (permintaan user 2026-09-06: "untuk watchlist
-  meteora juga, per 5 menit, biar perubahan holder bisa langsung ketahuan").
-  Selama dust % MC token LP berada di atas 0,1%, pengingat ⚡ Telegram dikirim
-  ulang **tiap scan ±5 menit** (bucket ``telegram_alerts.FAST_BUCKET_SEC``).
-  Kuota Helius naik 3× karena ini; kalau mulai ketat, set
-  ``LP_SCAN_RUN_MULTIPLIER=2``/``3`` (env) supaya scan **Solana** hanya jalan
-  tiap 2/3 run (Robinhood tetap tiap run) — gate-nya
-  :func:`lp_slot_due`.
-- **Watchlist biasa** (Solana non-LP + Robinhood biasa): slot **4 jam
-  DIMATIKAN** (:data:`REGULAR_SCAN_ENABLED` = False). Cron auto hanya
-  mencatat holder watchlist LP tiap ±5 menit. ``--scope all`` tetap
-  memindai semua token secara manual.
+Yang dikerjakan tiap run (±5 menit):
 
-Untuk setiap token yang discan:
+1. **Chart LP Meteora** — token ``source=meteora`` di ``watchlist.json``
+   (Solana, holder via Helius DAS, fallback GMGN);
+2. **Robinhood LP** — entri non-``regular`` di ``watchlist_robinhood.json``
+   (chain EVM Robinhood id 4663, holder via Blockscout);
+3. hitung holder real vs dust + dust % marketcap + mid-tier Crab/Fish, lalu
+   evaluasi alert ⚡ EARLY DUMP terhadap snapshot rolling ±4 jam (konteks
+   volume/harga ditarik **lazy** — hanya untuk token yang punya kandidat, jadi
+   run tenang tidak menambah satu pun request);
+4. catat **satu titik** per token ke store history, publish snapshot dashboard
+   (``holder_status.json`` / ``holder_status_robinhood.json`` di ref
+   ``holder-live``) + backup durable store.
 
-1. ambil daftar holder (Helius DAS dulu — ``auto`` — fallback GMGN),
-2. pisahkan real vs dust, hitung dust % marketcap + mid-tier Crab/Fish,
-3. evaluasi alert Telegram terhadap snapshot rolling ~4 jam dan snapshot
-   awal **sebelum** snapshot terbaru ditulis; kandidat yang lolos ambang dust
-   masih harus dikonfirmasi volume + harga + volatilitas (konteks pasar
-   ditarik **lazy**, hanya untuk token yang punya kandidat, jadi scan tenang
-   tidak menambah satu pun request),
-4. catat **titik perubahan** ke ``holder_history.json`` (titik mentah per
-   run; grafik memakai bucket 4 jam); cron scan **FULL** + ``detail=True``:
-   scan pertama setelah token masuk watchlist menjadi titik awal holder
-   analytic (``baseline`` immutable), lalu tiap run berikutnya memperbarui
-   ``latest_detail`` + interval **kronologi**,
-5. tulis ``holder_status.json`` lokal & publish ke branch ``holder-live``.
-   Run cepat **merge**: token watchlist biasa diwariskikan dari snapshot
-   sebelumnya (``publish_holder_status(..., merge_status=...)``) supaya
-   dashboard tidak kehilangan baris di antara dua run 4 jam.
+Yang **tidak** lagi dikerjakan cron (tetap tersedia sebagai scan manual di
+dashboard):
 
-Dijalankan GitHub Actions dengan kadens run **±5 menit** sejak 2026-09-06
-(kedua watchlist LP — Robinhood LP dan Chart LP Meteora — di-scan tiap run):
-workflow memakai
-``schedule: */5`` (best-effort, GitHub bisa men-throttle sampai ±2 jam — lihat
-DEPLOY.md) plus **chain dispatch** (tiap run men-dispatch run berikutnya
-setelah tidur sampai batas 5 menit berikutnya). Run ganda (chain + schedule)
-dicek gate :data:`MIN_RUN_GAP_SEC` di :func:`main` dan dilewati tanpa kerja.
+- **watchlist biasa** (Solana non-LP & Robinhood ``source=regular``): slot
+  4 jam, catch-up run telat, bootstrap token baru, dan rule 🔔 HIGH DROP
+  dihapus dari jalur cron;
+- pencatatan yang ikut lane itu: ``merge_status`` (mewariskan baris token
+  biasa ke snapshot), pembacaan toggle Telegram watchlist biasa
+  (``alert_settings.regular_telegram_enabled`` — satu request GitHub per run),
+  dan token lama di backup durable — ``publish_holder_history(...,
+  keep_mints=…)`` hanya men-push token watchlist LP aktif, bukan 81 token
+  watchlist lama (±2,1 MB tiap 5 menit).
 
-Watchlist biasa (Solana & Robinhood biasa) **tidak** di-scan cron auto.
-Store
-history LP ikut dikalibrasi ulang (``holder_history.MAX_POINTS`` 336 → 1008)
-supaya jendela "Grafik 4 jam" tetap ±3,5 hari pada densitas titik 5 menit.
-Scope bisa dipaksa lewat ``--scope all`` (semua token) atau ``--scope fast``
-(hanya LP, tanpa gate slot).
+Scan FULL (baseline immutable + kronologi wallet antar-scan) tidak
+dijadwalkan cron lagi; jalankan manual bila perlu::
+
+    python scripts/scan_holders.py --full          # kedua lane LP, detail=True
+
+Ritme ±5 menit dipegang workflow ``.github/workflows/daily-effort.yml``:
+``schedule: */5`` (best-effort, GitHub bisa men-throttle) + **chain dispatch**
+di akhir tiap run (langkah itu melewati dispatch bila masih ada run
+mengantre/berjalan, supaya antrean concurrency ``holder-scanner`` tidak
+menumpuk dan saling membatalkan). Run ganda yang lolos (chain menabrak
+schedule) disaring gate :data:`MIN_RUN_GAP_SEC` di :func:`main` — run kedua
+keluar tanpa kerja. Katup hemat kuota Helius: ``LP_SCAN_RUN_MULTIPLIER=2|3``
+(env) menahan lane **Solana** sampai tiap N run; lane Robinhood tidak
+terpengaruh karena chain-nya Blockscout, bukan Helius.
 """
 from __future__ import annotations
 
@@ -68,10 +62,9 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from alert_context import market_context_provider
-from alert_settings import regular_telegram_enabled
 from daily_store import load_daily_effort
-from holder_history import (FULL_SCAN_MAX_WALLETS, history_for_mint,
-                            ingest_many, load_holder_history, merge_stores,
+from holder_history import (FULL_SCAN_MAX_WALLETS, ingest_many,
+                            load_holder_history, merge_stores,
                             publish_holder_history, pull_holder_history,
                             seed_from_status)
 from holder_analysis import analyze_token
@@ -83,15 +76,10 @@ from telegram_alerts import (process_holder_alerts, send_test_alert,
                              tracked_wallet_addresses)
 from watchlist import load_watchlist
 
-# --- Cadens dua tingkat, jalur LP = tiap run (2026-09-06) -------------------
-# Kedua watchlist LP (Chart LP Meteora + Robinhood LP) di-scan **tiap run**;
-# yang diminta user: "percepat fetch … menjadi 5 menit sekali", lalu "untuk
-# watchlist meteora juga, per 5 menit, biar perubahan holder bisa langsung
-# ketahuan". Watchlist biasa (slot 4 jam) DIMATIKAN di cron auto
-# (:data:`REGULAR_SCAN_ENABLED`). Pengingat ⚡ Telegram = tiap scan 5 menit.
+# --- Kadens: kedua lane LP di-scan tiap run (±5 menit) ----------------------
 RUN_SCAN_INTERVAL_SEC = 5 * 60          # kadens cron/chain dispatch
 RH_FAST_SCAN_INTERVAL_SEC = RUN_SCAN_INTERVAL_SEC   # Robinhood LP: tiap run
-FAST_SCAN_INTERVAL_SEC = RUN_SCAN_INTERVAL_SEC   # alias lama (jalur cepat)
+METEORA_LP_SCAN_INTERVAL_SEC = RUN_SCAN_INTERVAL_SEC   # Chart LP Meteora
 # Hemat kuota Helius: >1 = scan **Solana** hanya pada tiap N run (gate slot di
 # bawah). Robinhood tidak terpengaruh — chain-nya Blockscout, bukan Helius.
 LP_SCAN_RUN_MULTIPLIER = max(1, int(os.environ.get("LP_SCAN_RUN_MULTIPLIER",
@@ -110,17 +98,6 @@ def lp_slot_sec() -> int:
 
 
 LP_SCAN_INTERVAL_SEC = lp_slot_sec()
-METEORA_LP_SCAN_INTERVAL_SEC = LP_SCAN_INTERVAL_SEC   # alias eksplisit (uji)
-REGULAR_SCAN_INTERVAL_SEC = 4 * 3600    # watchlist biasa: slot 4 jam (off)
-REGULAR_SLOTS = (REGULAR_SCAN_INTERVAL_SEC // RUN_SCAN_INTERVAL_SEC)  # 48
-# Cron auto tidak memindai watchlist biasa. Nyalakan lagi lewat env
-# ``REGULAR_SCAN_ENABLED=1`` atau ``--scope all``.
-REGULAR_SCAN_ENABLED = str(
-    os.environ.get("REGULAR_SCAN_ENABLED", "0") or "0"
-).strip().lower() in ("1", "true", "yes", "on")
-# Token biasa yang datanya lebih tua dari ini ikut di-scan meski bukan slot
-# 4 jam (catch-up run telat/terlewat); juga jadi ambang bootstrap token baru.
-REGULAR_CATCHUP_SEC = REGULAR_SCAN_INTERVAL_SEC - RUN_SCAN_INTERVAL_SEC
 # Run ganda chain-dispatch + schedule dalam satu slot dicek dari umur
 # snapshot publish terakhir: lebih muda dari ini = skip tanpa kerja. Wajib
 # lebih kecil dari kadens run (5 menit) supaya lane LP tidak ikut dibungkam
@@ -129,26 +106,14 @@ REGULAR_CATCHUP_SEC = REGULAR_SCAN_INTERVAL_SEC - RUN_SCAN_INTERVAL_SEC
 MIN_RUN_GAP_SEC = RUN_SCAN_INTERVAL_SEC - 60
 
 
-def regular_slot_due(now_ts: int) -> bool:
-    """True bila ``now_ts`` jatuh di slot **4 jam** (slot 5 menit ke-48).
-
-    Saat :data:`REGULAR_SCAN_ENABLED` False (default), selalu False: cron
-    auto tidak memindai watchlist biasa.
-    """
-    if not REGULAR_SCAN_ENABLED:
-        return False
-    return (max(0, int(now_ts)) // RUN_SCAN_INTERVAL_SEC) % REGULAR_SLOTS == 0
-
-
 def lp_slot_due(now_ts: int, last_scan_ts: int = 0) -> bool:
     """True bila run ini berada di **slot LP** yang berbeda.
 
     Default (``LP_SCAN_RUN_MULTIPLIER=1``) membuat slot LP = slot run, jadi
-    **setiap cron run** menarik Helius — keduanya (Chart LP Meteora + Robinhood
-    LP) di-scan tiap ±5 menit, sesuai permintaan user 2026-09-06. Yang tidak
-    due hanyalah run KEDUA dalam slot yang sama (chain dispatch menabrak
-    schedule) — itu memang yang diinginkan. Gate berbasis **nomor slot** (bukan
-    umur titik) ini tetap self-healing:
+    **setiap cron run** menarik Helius — kedua lane LP di-scan tiap ±5 menit.
+    Yang tidak due hanyalah run KEDUA dalam slot yang sama (chain dispatch
+    menabrak schedule) — itu memang yang diinginkan. Gate berbasis **nomor
+    slot** (bukan umur titik) ini tetap self-healing:
 
     - run yang terlewat / publish gagal → ``updated_at`` tidak maju, jadi run
       berikutnya otomatis mengerjakan LP;
@@ -160,48 +125,6 @@ def lp_slot_due(now_ts: int, last_scan_ts: int = 0) -> bool:
     if last <= 0:
         return True                     # pertama kali / belum ada snapshot
     return (max(0, int(now_ts)) // slot) > (last // slot)
-
-
-def token_needs_scan(store: dict, mint: str, now_ts: int, *,
-                     max_age_sec: int = REGULAR_CATCHUP_SEC) -> bool:
-    """Token watchlist biasa due bila belum pernah discan / datanya menua.
-
-    Bootstrap: token yang baru masuk watchlist (belum punya titik history)
-    ikut scan run berikutnya — tidak perlu menunggu slot 4 jam. Catch-up:
-    titik terakhir lebih tua dari ``max_age_sec`` (default
-    :data:`REGULAR_CATCHUP_SEC`, 3 jam 55 menit) → scan pada run berikutnya
-    supaya run telat/terlewat tetap pulih.
-    """
-    rows = [row for row in (history_for_mint(store, mint) or [])
-            if isinstance(row, dict) and int(row.get("ts") or 0) > 0]
-    if not rows:
-        return True
-    latest = max(int(row.get("ts") or 0) for row in rows)
-    return latest <= 0 or (int(now_ts) - latest) >= int(max_age_sec)
-
-
-def build_scan_plan(watchlist: dict, store: dict, now_ts: int, *,
-                    lp_slot: bool = True) -> dict:
-    """Pecah watchlist jadi scope LP (cepat) + biasa, lalu pilih yang due.
-
-    Return ``{lp, regular, due, regular_slot, lp_slot}`` — ``due`` adalah dict
-    token yang harus di-scan run ini (LP selama :func:`lp_slot_due` benar;
-    biasa saat slot 4 jam / catch-up / bootstrap). ``lp_slot=False`` hanya
-    terjadi kalau scan Solana DIBATASI lewat ``LP_SCAN_RUN_MULTIPLIER`` (slot
-    LP belum tiba): watchlist Meteora tidak di-scan, tinggal token biasa yang
-    genuinely due. Dispatch manual (``--scope fast|all``) melewati gate ini
-    karena pemanggil yang memutuskan.
-    """
-    lp, regular = split_watchlist(watchlist)
-    slot = regular_slot_due(now_ts)
-    due = dict(lp) if lp_slot else {}
-    if slot:
-        due.update(regular)
-    # Catch-up / bootstrap watchlist biasa DIMATIKAN: cron 5 menit hanya
-    # mencatat holder LP. Token biasa menunggu ``--scope all`` atau tombol
-    # scan manual di dashboard.
-    return {"lp": lp, "regular": regular, "due": due,
-            "regular_slot": slot, "lp_slot": lp_slot}
 
 
 def recently_published(status, now_ts: int,
@@ -225,15 +148,14 @@ def scan_watchlist(watchlist: dict, *, dust_limit: float | None = None,
                    holder_source: str | None = None,
                    history_store: dict | None = None,
                    detail: bool = True) -> dict:
-    """Analisis semua token watchlist; return {mint: analysis}.
+    """Analisis semua token yang diberikan; return {mint: analysis}.
 
     ``holder_source``: ``gmgn`` / ``helius`` / ``auto`` — default
     ``None`` = ikuti config/env (default ``auto`` = Helius dulu).
 
     ``max_wallets`` default = ``FULL_SCAN_MAX_WALLETS`` (100.000): cron
-    sejak 2026-09-05 memakai batas atas yang sama dengan tombol scan FULL
-    di halaman Holder, jadi holder diambil sampai habis (bukan sampel
-    3000) dan kronologi antar-scan FULL bisa dibangun otomatis.
+    memakai batas atas yang sama dengan tombol scan FULL di halaman Holder,
+    jadi holder diambil sampai habis (bukan sampel 3000).
     """
     analyses: dict[str, dict] = {}
     total = len(watchlist or {})
@@ -283,24 +205,23 @@ def scan_watchlist(watchlist: dict, *, dust_limit: float | None = None,
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description="Holder scan lane LP: Chart LP Meteora + Robinhood LP.")
     parser.add_argument("--dust-limit", type=float, default=None,
                         help="batas value USD dust (default 10)")
     parser.add_argument("--max-wallets", type=int, default=None,
                         help="maks holder dianalisis per token (default: "
                              f"FULL = {FULL_SCAN_MAX_WALLETS:,} — semua "
-                             "halaman sampai habis, sama seperti tombol "
-                             "scan FULL manual)")
+                             "halaman sampai habis)")
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--holder-source", choices=("gmgn", "helius",
                                                     "auto"), default=None,
                         help="sumber holder; default ikut config/env "
                              "(auto = Helius dulu, fallback GMGN)")
-    parser.add_argument("--scope", choices=("auto", "fast", "all"),
-                        default="auto",
-                        help="auto = watchlist LP tiap run (±5 menit); "
-                             "watchlist biasa tidak di-scan cron (4 jam "
-                             "dimatikan); fast = hanya LP; all = semua token")
+    parser.add_argument("--full", action="store_true",
+                        help="scan FULL: detail=True (baseline immutable + "
+                             "kronologi wallet) + konfirmasi volume/harga "
+                             "untuk kedua lane LP — default cron off")
     parser.add_argument("--ignore-gap", action="store_true",
                         help="lewati gate run ganda (dipakai dispatch "
                              "manual saat token baru ditambahkan)")
@@ -308,7 +229,21 @@ def main(argv=None) -> int:
                         help="hanya tulis status lokal")
     parser.add_argument("--telegram-test", action="store_true",
                         help="kirim satu pesan test Telegram, lalu scan normal")
+    # Alias sementara untuk workflow lama yang masih mengirim ``--scope``
+    # (berkas workflow tidak bisa ditulis bot — lihat DEPLOY.md). ``all``
+    # diperlakukan sebagai ``--full``; nilai lain diabaikan karena cron hanya
+    # punya satu lane. Hapus setelah ``daily-effort-5menit.yml`` terpasang.
+    parser.add_argument("--scope", choices=("auto", "fast", "all"),
+                        default=None, help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
+
+    if args.scope:
+        alias = "; dianggap --full" if args.scope == "all" else "; diabaikan"
+        print(f"WARN: --scope {args.scope} sudah tidak dipakai (cron hanya "
+              f"lane LP sejak 2026-09-07){alias}. Perbarui workflow ke "
+              "input full_scan.", file=sys.stderr)
+        if args.scope == "all":
+            args.full = True
 
     if args.telegram_test:
         delivery = send_test_alert()
@@ -321,143 +256,99 @@ def main(argv=None) -> int:
                   f"{delivery.get('error') or 'unknown error'}",
                   file=sys.stderr)
 
+    # Lane Solana = Chart LP Meteora saja; watchlist biasa tidak di-scan cron.
     watchlist = load_watchlist()
+    lp_watch, _regular_watch = split_watchlist(watchlist)
     try:
         from core import get_helius_keys
         helius_ok = bool(get_helius_keys())
     except Exception:  # noqa: BLE001
         helius_ok = False
-    if not helius_ok:
+    if lp_watch and not helius_ok:
         print("WARN: HELIUS_API_KEY tidak ada — holder hanya via GMGN "
               "(sering diblokir di runner Actions → dust kosong). "
               "Set secret HELIUS_API_KEY di repo.", file=sys.stderr)
     max_wallets = (FULL_SCAN_MAX_WALLETS if args.max_wallets is None
                    else int(args.max_wallets))
-    print(f"Holder scanner: tokens={len(watchlist)} "
+    print(f"Holder scanner (lane LP): meteora={len(lp_watch)} "
           f"time={datetime.now(timezone.utc).isoformat()} "
-          f"max_wallets={max_wallets} (FULL) "
+          f"max_wallets={max_wallets} "
           f"holder_source={args.holder_source or 'config(auto)'} "
-          f"scope={args.scope} "
-          f"(LP ±{lp_slot_sec() // 60} menit · tiap run"
+          f"full={'ya' if args.full else 'tidak'} "
+          f"(LP tiap run ±{RUN_SCAN_INTERVAL_SEC // 60} menit"\
           + (f", Solana tiap {lp_slot_sec() // 60} menit"
-             if lp_slot_sec() > RUN_SCAN_INTERVAL_SEC else "")
-          + f" · biasa ±{REGULAR_SCAN_INTERVAL_SEC // 3600} jam)")
+             if lp_slot_sec() > RUN_SCAN_INTERVAL_SEC else "") + ")")
 
     started = time.monotonic()
     started_wall = int(time.time())
     # Urutan pemulihan state: file lokal runner (kosong di Actions) -> backup
     # durable holder_history.json.gz di ref holder-live (menang bila timestamp
     # seri, karena itulah akumulasi run sebelumnya) -> titik/state dari snapshot
-    # dashboard sebagai jaring kedua (juga satu-satunya sumber bila backup belum
-    # pernah dibuat, mis. snapshot format lama yang masih membawa peta wallet).
+    # dashboard sebagai jaring kedua.
     durable = pull_holder_history()
     store = merge_stores(load_holder_history(), durable or {})
-    # Snapshot publish terakhir dipakai tiga kali: seed store, gate run ganda,
-    # dan dasar merge publish run cepat (token watchlist biasa diwariskan).
+    # Snapshot publish terakhir dipakai dua kali: seed store + gate run ganda.
     current_status = load_holder_status(force_refresh=True)
     store = seed_from_status(store, current_status)
     print(f"Store holder: tokens={len(store.get('tokens') or {})} "
           f"backup={'ada' if durable else 'tidak ada'}")
 
-    # Lane Solana (Chart LP Meteora) jalan tiap run; gerbangnya tetap berbasis
-    # nomor slot (default = slot run itu sendiri) dengan anchor timestamp
-    # snapshot terakhir, supaya run yang terlewat/publish gagal mengejar.
+    # Gerbang slot LP berbasis nomor slot dengan anchor timestamp snapshot
+    # terakhir, supaya run yang terlewat/publish gagal mengejar.
     lp_slot = lp_slot_due(started_wall,
                           int((current_status or {}).get("updated_at") or 0))
-    plan = build_scan_plan(watchlist, store, started_wall, lp_slot=lp_slot)
-    if args.scope == "fast":
-        due = dict(plan["lp"])
-    elif args.scope == "all":
-        due = dict(watchlist)
-    else:
-        due = plan["due"]
-        if due and not args.ignore_gap \
-                and recently_published(current_status, started_wall):
-            print(f"Scan Solana dilewati: snapshot terbaru < "
-                  f"{MIN_RUN_GAP_SEC // 60} menit lalu (run ganda "
-                  "chain dispatch + schedule).")
-            due = {}
-    print(f"Rencana scan: LP={len(plan['lp'])} "
-          f"biasa={len(plan['regular'])} due={len(due)} "
-          f"slot_lp={'ya' if lp_slot else 'bukan'} "
-          f"slot_4jam={'ya' if plan['regular_slot'] else 'bukan'}")
+    due = dict(lp_watch) if (args.full or lp_slot) else {}
+    if due and not args.ignore_gap \
+            and recently_published(current_status, started_wall):
+        print(f"Scan Meteora dilewati: snapshot terbaru < "
+              f"{MIN_RUN_GAP_SEC // 60} menit lalu (run ganda "
+              "chain dispatch + schedule).")
+        due = {}
+    print(f"Rencana scan Meteora LP: watchlist={len(lp_watch)} "
+          f"due={len(due)} slot_lp={'ya' if lp_slot else 'bukan'}")
 
-    # Slot 4 jam / ``--scope all`` = scan penuh (kronologi, rule dump).
-    # Selain itu (cron 5 menit LP) = pencatatan holder + ⚡ early_dump saja.
-    volume_rules = bool(args.scope == "all" or plan["regular_slot"])
+    analyses = {}
     if due:
         analyses = scan_watchlist(
             due, dust_limit=args.dust_limit,
             max_wallets=max_wallets,
             workers=args.workers,
             holder_source=args.holder_source,
-            history_store=store, detail=volume_rules)
-    else:
-        analyses = {}
+            history_store=store, detail=args.full)
 
+    exit_code = 0
     if analyses:
         # Rules read the old anchors first. process_holder_alerts mutates only
         # alert state; ingest_many writes that state together with the newest
-        # history point afterwards.
-        # Konteks volume/harga/volatilitas ditarik lazy (hanya bila ada
-        # kandidat sinyal) dan di-memo per token untuk seluruh run ini.
+        # history point afterwards. Konteks volume/harga/volatilitas ditarik
+        # lazy (hanya bila ada kandidat sinyal) dan di-memo per token.
         contexts: dict = {}
         provider = None
-        if volume_rules:
+        if args.full:
             provider = market_context_provider(cache=contexts,
                                                daily_loader=load_daily_effort)
-        # Scope rule ⚡ EARLY DUMP = watchlist LP (source=meteora / Chart LP):
-        # pengingat berulang selama dust % MC > 0,1% sampai token dihapus
-        # dari watchlist LP atau dipindah ke watchlist biasa. Scope rule
-        # 🔔 HIGH DROP = watchlist biasa: titik acuan = hold % MC terbesar;
-        # turun >= 50% dari titik high mengirim alert.
-        # Watchlist saat ini belum punya pool address (keterbatasan: pesan
-        # early dump cron tidak menyertakan link 🌊 Meteora/🦅 HawkFi).
-        # Tombol on/off notif Telegram watchlist biasa (dashboard →
-        # alert_settings.json di ref holder-live). Saat OFF, token watchlist
-        # biasa tetap di-scan/di-evaluasi (marker titik high tetap maju),
-        # hanya pesannya yang tidak dikirim. Chart LP Meteora & Robinhood
-        # tidak terpengaruh.
-        regular_notif = regular_telegram_enabled(force_refresh=True)
-        if not regular_notif:
-            print("Telegram watchlist biasa: OFF (setelan dashboard) — "
-                  f"{len(plan['regular'])} token dibisukan")
+        # Scope rule ⚡ EARLY DUMP = seluruh lane LP: pengingat berulang selama
+        # dust % MC > 0,1% sampai token dihapus dari watchlist LP. Rule
+        # 🔔 HIGH DROP (watchlist biasa) tidak dijalankan cron — ``high_mints``
+        # selalu kosong.
         deliveries = process_holder_alerts(
             analyses, store, context_provider=provider,
-            lp_mints=set(plan["lp"]),
-            high_mints=(set(plan["regular"]) if volume_rules else set()),
-            mute_mints=(set() if regular_notif else set(plan["regular"])),
-            watchlist_meta=watchlist, volume_rules=volume_rules)
-        history = ingest_many(analyses, store=store, detail=volume_rules)
-        # Run cepat merge: token yang tidak ikut scan run ini (watchlist
-        # biasa di luar slot 4 jam) diwariskan dari snapshot sebelumnya,
-        # jadi dashboard tidak kehilangan baris di antara dua run 4 jam.
-        merge_status = current_status if args.scope != "all" else None
+            lp_mints=set(lp_watch), high_mints=set(),
+            watchlist_meta=lp_watch, volume_rules=args.full)
+        history = ingest_many(analyses, store=store, detail=args.full)
         status = publish_holder_status(
-            analyses, watchlist, push=not args.no_push,
-            history_store=history, contexts=contexts,
-            merge_status=merge_status)
-        # Backup store penuh (peta wallet alert/kohort, baseline FULL,
-        # kronologi) — tidak lagi ikut snapshot dashboard yang dirampingkan.
-        backup = publish_holder_history(history, push=not args.no_push)
+            analyses, lp_watch, push=not args.no_push,
+            history_store=history, contexts=contexts)
+        # Backup durable dibatasi token watchlist LP aktif: token lama yang
+        # sudah tidak di-scan tidak perlu di-push ulang tiap 5 menit.
+        backup = publish_holder_history(history, push=not args.no_push,
+                                       keep_mints=set(lp_watch))
         sent_alerts = sum(1 for item in deliveries
                           if (item.get("delivery") or {}).get("ok"))
-        unverified = sum(1 for item in deliveries
-                         if not ((item.get("event") or {}).get("volume_check")
-                                 or {}).get("verified", True))
-        rejected = 0
-        fetch_ms = 0
-        for mint in analyses:
-            slot = (store.get("tokens") or {}).get(mint) or {}
-            state = slot.get("alert_state") or {}
-            rejected += sum(1 for row in (state.get("rejected_signals") or [])
-                            if isinstance(row, dict)
-                            and int(row.get("ts") or 0) >= started_wall)
-            fetch_ms += int((contexts.get(mint) or {}).get("fetch_ms") or 0)
-        # Backup store tidak boleh membuat cron merah (data dashboard lebih
-        # penting), tapi kegagalannya harus kelihatan di log.
         if backup.get("pushed"):
             backup_label = f"ok {backup.get('bytes') or 0}B"
+            if backup.get("dropped_tokens"):
+                backup_label += f" tanpa {backup['dropped_tokens']} token lama"
             if backup.get("pruned"):
                 backup_label += f" pruned={len(backup['pruned'])}"
             if backup.get("over_budget"):
@@ -468,14 +359,12 @@ def main(argv=None) -> int:
             backup_label = f"GAGAL ({backup.get('error') or 'unknown'})"
             print(f"WARN: backup holder_history gagal: "
                   f"{backup.get('error') or 'unknown'}", file=sys.stderr)
-        print(f"Holder scan selesai: analyzed={len(analyses)} "
+        print(f"Meteora scan selesai: analyzed={len(analyses)} "
               f"history={len((history or {}).get('tokens') or {})} "
               f"alerts={sent_alerts}/{len(deliveries)} "
-              f"unverified={unverified} rejected={rejected} "
-              f"konteks={len(contexts)} token ({fetch_ms} ms) "
+              f"konteks={len(contexts)} token "
               f"backup={backup_label} "
               f"updated={status.get('updated_at')} "
-              f"merged={'ya' if merge_status else 'tidak'} "
               f"durasi={time.monotonic() - started:.1f}s")
         empty = 0
         for mint, item in sorted(analyses.items()):
@@ -492,57 +381,51 @@ def main(argv=None) -> int:
         if empty == len(analyses):
             print("ERROR: semua token 0 holder — sumber holder gagal "
                   "(cek HELIUS_API_KEY / akses GMGN).", file=sys.stderr)
-            return 2
+            exit_code = 2
     elif due:
-        publish_holder_status({}, watchlist, push=not args.no_push)
-        print("Holder scan selesai: tidak ada token yang berhasil dianalisis")
+        publish_holder_status({}, lp_watch, push=not args.no_push)
+        print("Meteora scan selesai: tidak ada token yang berhasil dianalisis")
         return 2
     else:
-        print("Holder scan selesai: tidak ada token jatuh tempo run ini "
-              "(watchlist LP kosong dan watchlist biasa belum due).")
+        print("Meteora scan dilewati: tidak ada token LP jatuh tempo run ini.")
     if not args.no_push and due and last_publish_result().get("ok") is False:
         print(f"ERROR: publish holder_status gagal: "
               f"{last_publish_result().get('error')}", file=sys.stderr)
         return 3
 
-    # --- Robinhood Chain: watchlist terpisah (EVM, chain id 4663) -----------
+    # --- Robinhood Chain: lane LP watchlist terpisah (EVM, chain id 4663) ----
     # Scan best-effort: kegagalan jaringan Robinhood tidak boleh membuat cron
-    # Solana mati (data dashboard Solana lebih penting dari card tambahan).
-    # Split (2026-09-05, kadens LP diubah 2026-09-06): **Robinhood LP** tiap
-    # run = ±5 menit (pengingat > 0,1% MC berulang), **Robinhood biasa** tiap
-    # ±4 jam (rule 🔔 HIGH DROP).
+    # Solana mati. Entri ``source=regular`` (slot 4 jam + rule 🔔 HIGH DROP)
+    # tidak di-scan cron sejak 2026-09-07.
+    rh_done = 0
+    rh_due = 0
     try:
         rh_watch = robinhood_watchlist.load_watchlist()
-        if rh_watch:
-            rh_lp, rh_regular = \
-                robinhood_watchlist.split_robinhood_watchlist(rh_watch)
-            rh_status_now = robinhood_watchlist.load_status(
-                force_refresh=True)
+        rh_lp, rh_regular = robinhood_watchlist.split_robinhood_watchlist(
+            rh_watch)
+        if rh_lp:
+            rh_status_now = robinhood_watchlist.load_status(force_refresh=True)
             rh_store = robinhood_watchlist.load_history()
-            rh_due = dict(rh_lp)
-            rh_volume = bool(args.scope == "all" or regular_slot_due(started_wall))
-            if args.scope == "all" or rh_volume:
-                # ``--scope all`` atau slot 4 jam (jika dinyalakan lagi).
-                rh_due.update(rh_regular)
-            if rh_due and not args.ignore_gap and args.scope == "auto" \
+            rh_due = len(rh_lp)
+            rh_targets = dict(rh_lp)
+            if not args.ignore_gap \
                     and recently_published(rh_status_now, started_wall):
                 print(f"Scan Robinhood dilewati: snapshot terbaru < "
                       f"{MIN_RUN_GAP_SEC // 60} menit lalu (run ganda "
                       "chain dispatch + schedule).")
-                rh_due = {}
-            print(f"Rencana scan Robinhood: LP={len(rh_lp)} "
-                  f"biasa={len(rh_regular)} due={len(rh_due)} "
-                  f"(LP tiap run ±{RUN_SCAN_INTERVAL_SEC // 60} menit · "
-                  f"biasa slot {REGULAR_SCAN_INTERVAL_SEC // 3600} jam)")
-            if rh_due:
+                rh_targets = {}
+            print(f"Rencana scan Robinhood LP: watchlist={rh_due} "
+                  f"due={len(rh_targets)} "
+                  f"(biasa {len(rh_regular)} token tidak di-scan cron)")
+            if rh_targets:
                 rh_analyses = robinhood_watchlist.scan_watchlist(
-                    rh_due, history_store=rh_store,
+                    rh_targets, history_store=rh_store,
                     max_wallets=max_wallets, workers=args.workers,
-                    detail=rh_volume)
+                    detail=args.full)
                 if rh_analyses:
                     rh_contexts: dict = {}
                     rh_provider = None
-                    if rh_volume:
+                    if args.full:
                         # Konteks pasar memakai data DexScreener yang sudah
                         # disuntik analysis["market"]; geckoterminal/networks
                         # Solana tidak dipakai untuk chain EVM.
@@ -551,28 +434,25 @@ def main(argv=None) -> int:
                     process_holder_alerts(
                         rh_analyses, rh_store,
                         context_provider=rh_provider,
-                        lp_mints=set(rh_lp),
-                        high_mints=(set(rh_regular) if rh_volume else set()),
-                        watchlist_meta=rh_watch, volume_rules=rh_volume)
+                        lp_mints=set(rh_lp), high_mints=set(),
+                        watchlist_meta=rh_watch, volume_rules=args.full)
                     rh_status = robinhood_watchlist.publish_scan(
                         rh_analyses, rh_watch, history_store=rh_store,
                         push=not args.no_push, contexts=rh_contexts,
-                        merge_status=(rh_status_now
-                                      if args.scope != "all" else None),
-                        detail=rh_volume)
-                    rh_ok = sum(1 for item in rh_analyses.values()
-                                if (item.get("holders") or {}).get(
-                                    "total_fetched"))
+                        detail=args.full, keep_mints=set(rh_watch))
+                    rh_done = sum(1 for item in rh_analyses.values()
+                                  if (item.get("holders") or {}).get(
+                                      "total_fetched"))
                     print(f"Robinhood scan selesai: tokens={len(rh_analyses)} "
-                          f"fetched={rh_ok}/{len(rh_analyses)} "
+                          f"fetched={rh_done}/{len(rh_analyses)} "
                           f"updated={rh_status.get('updated_at')}")
                 else:
                     print("Robinhood scan selesai: tidak ada token berhasil")
         else:
-            print("Robinhood scan dilewati: watchlist kosong")
+            print("Robinhood scan dilewati: watchlist LP kosong")
     except Exception as exc:  # noqa: BLE001 - best-effort
         print(f"WARN: Robinhood scanner gagal: {exc}", file=sys.stderr)
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":  # pragma: no cover

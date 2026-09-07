@@ -424,14 +424,14 @@ class RobinhoodEarlyDumpScopeWiringTest(unittest.TestCase):
         self.assertEqual(seen.get("lp_mints"), {ca})
 
 
-class ScanScopeMergeTest(unittest.TestCase):
-    """Scope cron: LP ±5 menit, biasa slot 4 jam DIMATIKAN, all = semua.
+class ScanLaneScopeTest(unittest.TestCase):
+    """Cron 2026-09-07: **lane LP saja** (Chart LP Meteora + Robinhood LP).
 
-    - ``--scope fast``: hanya watchlist LP yang di-scan dan snapshot
-      dipublish **dengan** ``merge_status`` (token watchlist biasa
-      diwariskan dari snapshot sebelumnya);
-    - ``--scope all``: seluruh watchlist di-scan dan snapshot dipublish
-      **tanpa** ``merge_status`` (data penuh menang).
+    - token watchlist biasa (non-LP) tidak pernah ikut scan cron;
+    - snapshot dipublish **tanpa** ``merge_status`` (tidak ada baris token
+      biasa yang perlu diwariskan lagi);
+    - backup durable dibatasi token LP aktif (``keep_mints``);
+    - ``--full`` menghidupkan ``detail=True`` (baseline + kronologi wallet).
     """
 
     def _run(self, argv, watchlist, capture):
@@ -449,18 +449,19 @@ class ScanScopeMergeTest(unittest.TestCase):
                                   side_effect=lambda s, _st: s), \
                 mock.patch.object(mod, "scan_watchlist",
                                   side_effect=lambda due, **kw:
-                                      {mint: {"symbol": "X", "holders": {
-                                          "total_fetched": 1}}
-                                       for mint in due}) as scan_mock, \
+                                      (capture.update(scan_kwargs=kw) or
+                                       {mint: {"symbol": "X", "holders": {
+                                           "total_fetched": 1}}
+                                        for mint in due})) as scan_mock, \
                 mock.patch.object(mod, "ingest_many",
-                                  return_value={"tokens": {}}), \
+                                  return_value={"tokens": {}}) as ingest_mock, \
                 mock.patch.object(mod, "publish_holder_status",
                                   return_value={"updated_at": 1}) as pub_mock, \
                 mock.patch.object(mod, "publish_holder_history",
-                                  return_value={"pushed": True,
-                                                "bytes": 1, "pruned": [],
-                                                "over_budget": False,
-                                                "error": ""}), \
+                                  return_value={"pushed": True, "bytes": 1,
+                                                "pruned": [], "over_budget": False,
+                                                "dropped_tokens": 0,
+                                                "error": ""}) as backup_mock, \
                 mock.patch.object(mod, "process_holder_alerts",
                                   return_value=[]), \
                 mock.patch.object(mod, "last_publish_result",
@@ -468,34 +469,71 @@ class ScanScopeMergeTest(unittest.TestCase):
             code = mod.main(list(argv))
         capture["scan_args"] = scan_mock.call_args
         capture["pub_kwargs"] = pub_mock.call_args.kwargs
+        capture["pub_args"] = pub_mock.call_args.args
+        capture["backup_kwargs"] = backup_mock.call_args.kwargs
+        capture["ingest_kwargs"] = ingest_mock.call_args.kwargs
         capture["current_status"] = status_mock.return_value
         return code
 
-    def test_scope_fast_hanya_scan_watchlist_lp(self):
-        wl = {"LpMint11111111111111111111111111111111111":
-              {"symbol": "LP", "source": "meteora"},
-              "Watch11111111111111111111111111111111111":
-              {"symbol": "REG", "source": "manual"}}
-        capture: dict = {}
-        code = self._run(["--scope", "fast"], wl, capture)
-        self.assertEqual(code, 0)
-        scanned = set(capture["scan_args"].args[0])
-        self.assertEqual(scanned, {"LpMint11111111111111111111111111111111111"})
-        # Run cepat mewarisi snapshot token biasa (merge_status).
-        self.assertEqual(capture["pub_kwargs"].get("merge_status"),
-                         capture["current_status"])
+    WL = {"LpMint11111111111111111111111111111111111":
+          {"symbol": "LP", "source": "meteora"},
+          "Watch11111111111111111111111111111111111":
+          {"symbol": "REG", "source": "manual"}}
 
-    def test_scope_all_scan_semua_tanpa_merge(self):
-        wl = {"LpMint11111111111111111111111111111111111":
-              {"symbol": "LP", "source": "meteora"},
-              "Watch11111111111111111111111111111111111":
-              {"symbol": "REG", "source": "manual"}}
+    def test_hanya_token_lp_yang_discan(self):
         capture: dict = {}
-        code = self._run(["--scope", "all"], wl, capture)
+        code = self._run([], self.WL, capture)
         self.assertEqual(code, 0)
-        scanned = set(capture["scan_args"].args[0])
-        self.assertEqual(scanned, set(wl))
-        self.assertIsNone(capture["pub_kwargs"].get("merge_status"))
+        self.assertEqual(set(capture["scan_args"].args[0]),
+                         {"LpMint11111111111111111111111111111111111"})
+        # Snapshot + ingest + backup semuanya dibatasi lane LP.
+        self.assertEqual(capture["pub_args"][1],
+                         {"LpMint11111111111111111111111111111111111":
+                          {"symbol": "LP", "source": "meteora"}})
+        self.assertEqual(capture["backup_kwargs"].get("keep_mints"),
+                         {"LpMint11111111111111111111111111111111111"})
+
+    def test_tanpa_merge_status_dan_detail_off(self):
+        capture: dict = {}
+        code = self._run([], self.WL, capture)
+        self.assertEqual(code, 0)
+        # Tidak ada lagi pewarisan baris token watchlist biasa.
+        self.assertNotIn("merge_status", capture["pub_kwargs"])
+        # Cron = pencatatan titik holder, bukan kronologi FULL.
+        self.assertFalse(capture["scan_kwargs"].get("detail"))
+        self.assertFalse(capture["ingest_kwargs"].get("detail"))
+
+    def test_flag_full_menyalakan_detail(self):
+        capture: dict = {}
+        code = self._run(["--full", "--ignore-gap"], self.WL, capture)
+        self.assertEqual(code, 0)
+        self.assertTrue(capture["scan_kwargs"].get("detail"))
+        self.assertTrue(capture["ingest_kwargs"].get("detail"))
+        # ``--full`` tetap lane LP saja — watchlist biasa tidak ikut.
+        self.assertEqual(set(capture["scan_args"].args[0]),
+                         {"LpMint11111111111111111111111111111111111"})
+
+    def test_alias_scope_all_lama_dianggap_full(self):
+        """Workflow lama masih mengirim ``--scope all`` — tidak boleh crash.
+
+        Berkas workflow tidak bisa ditulis bot (403 tanpa izin ``workflows``),
+        jadi input ``scan_all`` yang mengirim ``--scope all --ignore-gap``
+        tetap harus jalan sampai ``daily-effort-5menit.yml`` disalin manual.
+        """
+        capture: dict = {}
+        code = self._run(["--scope", "all", "--ignore-gap"], self.WL, capture)
+        self.assertEqual(code, 0)
+        self.assertTrue(capture["scan_kwargs"].get("detail"))
+        self.assertEqual(set(capture["scan_args"].args[0]),
+                         {"LpMint11111111111111111111111111111111111"})
+
+    def test_alias_scope_fast_lama_tetap_lane_lp(self):
+        capture: dict = {}
+        code = self._run(["--scope", "fast"], self.WL, capture)
+        self.assertEqual(code, 0)
+        self.assertFalse(capture["scan_kwargs"].get("detail"))
+        self.assertEqual(set(capture["scan_args"].args[0]),
+                         {"LpMint11111111111111111111111111111111111"})
 
 
 class ScanCadenceTest(unittest.TestCase):
@@ -514,31 +552,24 @@ class ScanCadenceTest(unittest.TestCase):
         self.assertEqual(mod.RH_FAST_SCAN_INTERVAL_SEC, 5 * 60)
         self.assertEqual(mod.RUN_SCAN_INTERVAL_SEC,
                          mod.RH_FAST_SCAN_INTERVAL_SEC)
-        self.assertEqual(mod.FAST_SCAN_INTERVAL_SEC, mod.RUN_SCAN_INTERVAL_SEC)
         # Chart LP Meteora = laju yang sama dengan Robinhood LP & interval run.
         self.assertEqual(mod.METEORA_LP_SCAN_INTERVAL_SEC, 5 * 60)
         self.assertEqual(mod.LP_SCAN_INTERVAL_SEC, mod.RUN_SCAN_INTERVAL_SEC)
         self.assertEqual(mod.lp_slot_sec(), mod.RUN_SCAN_INTERVAL_SEC)
         self.assertEqual(mod.LP_SCAN_RUN_MULTIPLIER, 1)
-        self.assertEqual(mod.REGULAR_SCAN_INTERVAL_SEC, 4 * 3600)
-        self.assertEqual(mod.REGULAR_SLOTS, 48)   # 4 jam / 5 menit
-        self.assertEqual(mod.REGULAR_CATCHUP_SEC, 4 * 3600 - 5 * 60)
-        self.assertFalse(mod.REGULAR_SCAN_ENABLED)
+        # Lane watchlist biasa (slot 4 jam + catch-up) dilepas dari cron
+        # 2026-09-07: tidak boleh ada lagi pintu masuk yang menyalakannya.
+        for name in ("REGULAR_SCAN_INTERVAL_SEC", "REGULAR_SLOTS",
+                     "REGULAR_CATCHUP_SEC", "REGULAR_SCAN_ENABLED",
+                     "FAST_SCAN_INTERVAL_SEC"):
+            self.assertFalse(hasattr(mod, name), name)
+        for name in ("regular_slot_due", "token_needs_scan",
+                     "build_scan_plan"):
+            self.assertFalse(hasattr(mod, name), name)
         # Invarian penting: gate run ganda WAJIB lebih kecil dari kadens run,
         # kalau tidak lane Robinhood 5 menit dibungkam gate-nya sendiri.
         self.assertLess(mod.MIN_RUN_GAP_SEC, mod.RUN_SCAN_INTERVAL_SEC)
         self.assertEqual(mod.MIN_RUN_GAP_SEC, 4 * 60)
-
-    def test_slot_4jam_dimatikan_di_cron_auto(self):
-        import scripts.scan_holders as mod
-        boundary = (int(time.time()) // mod.REGULAR_SCAN_INTERVAL_SEC) \
-            * mod.REGULAR_SCAN_INTERVAL_SEC
-        self.assertFalse(mod.regular_slot_due(boundary))
-        self.assertFalse(mod.regular_slot_due(boundary + mod.RUN_SCAN_INTERVAL_SEC))
-        with mock.patch.object(mod, "REGULAR_SCAN_ENABLED", True):
-            self.assertTrue(mod.regular_slot_due(boundary))
-            self.assertFalse(mod.regular_slot_due(
-                boundary + mod.RUN_SCAN_INTERVAL_SEC))
 
     def test_lp_slot_due_default_setiap_run(self):
         import scripts.scan_holders as mod
@@ -569,23 +600,28 @@ class ScanCadenceTest(unittest.TestCase):
             self.assertTrue(mod.lp_slot_due(last + 9 * run, last))  # run terlewat
             self.assertTrue(mod.lp_slot_due(last + run, 0))       # bootstrap
 
-    def test_build_scan_plan_di_luar_slot_lp_tidak_menarik_solana(self):
+    def test_token_biasa_tidak_discan_meski_datanya_basi(self):
+        """Catch-up/bootstrap watchlist biasa sudah dilepas dari cron.
+
+        Dulu token non-LP yang datanya menua ikut di-scan (``token_needs_scan``
+        + slot 4 jam). Sejak 2026-09-07 cron hanya lane LP, jadi token biasa
+        tidak pernah masuk rencana scan seberapa pun basi datanya.
+        """
         import scripts.scan_holders as mod
+        run = mod.RUN_SCAN_INTERVAL_SEC
+        T = (int(time.time()) // run) * run + run
         lp_mint = "LpMint111111111111111111111111111111111111"
-        reg_mint = "RegMint11111111111111111111111111111111111"
-        wl = {lp_mint: {"symbol": "LP", "source": "meteora"},
-              reg_mint: {"symbol": "REG", "source": "manual"}}
-        # LP punya titik segar (barusaja di-scan), token biasa belum pernah.
-        store = {"tokens": {lp_mint: {"points": [
-            {"ts": 1_789_000_000 + 300, "dust_count": 5}]}}}
-        plan = mod.build_scan_plan(wl, store, 1_789_000_000 + 300,
-                                   lp_slot=False)
-        self.assertFalse(plan["lp_slot"])
-        # Watchlist biasa tidak ikut catch-up / slot 4 jam.
-        self.assertEqual(set(plan["due"]), set())
-        plan = mod.build_scan_plan(wl, store, 1_789_000_000 + 300,
-                                   lp_slot=True)
-        self.assertEqual(set(plan["due"]), {lp_mint})
+        reg_mint = "RegMint22222222222222222222222222222222222"
+        mocks: dict = {}
+        with self._cron_env(now_ts=T, status_ts=T - run,
+                            solana_watch={
+                                lp_mint: {"symbol": "LP", "source": "meteora"},
+                                reg_mint: {"symbol": "REG",
+                                           "source": "manual"}},
+                            rh_watch={}, mocks=mocks):
+            self.assertEqual(mod.main([]), 0)
+        mocks["solana_scan"].assert_called_once()
+        self.assertEqual(set(mocks["solana_scan"].call_args.args[0]), {lp_mint})
 
     def _cron_env(self, *, now_ts, status_ts, solana_watch, rh_watch, mocks):
         """Panggil ``main()`` dengan jam + IO terkendali (ExitStack + mocks)."""
