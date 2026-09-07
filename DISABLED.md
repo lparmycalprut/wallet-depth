@@ -10,7 +10,16 @@ dan notifikasi sudah dihapus total:
 - semua alert & transport **Telegram** (`signals.py`, secrets, callback mute);
 - backtest/confidence sinyal lama;
 - **silent accumulation 12 jam** (net flow 12 jam, `detect_silent`,
-  filter SILENT/LP/PUMPDUMP, `enrich_rows`) — dihapus 2026-09-03.
+  filter SILENT/LP/PUMPDUMP, `enrich_rows`) — dihapus 2026-09-03;
+- **Overlay dust % MC semua token LP** (expander di card Chart LP,
+  `lp_watchlist.lp_overlay_figure` tidak lagi dirender) — 2026-09-07;
+- **kolom tabel `Δ 4 jam` + `Grafik 4 jam`** (sparkline) di semua card
+  watchlist — 2026-09-07; grafik hanya tersisa di expander per token;
+- **halaman `📊 CVD`, `🔎 Deteksi Akumulasi`, `🚀 Pre-Pump`** beserta section
+  Pre-Pump di dashboard — dihapus dari `pages/` 2026-09-07. Modul
+  `cvd.py` / `accumulation.py` / `pre_pump_screener.py` masih ada (dipakai
+  test + skrip), tapi tidak ada rute UI ke sana dan alias deep-link lama
+  (`?page=cvd`, `?page=akumulasi`, `?page=prepump`) berhenti di dashboard.
 
 Modul yang dihapus: `signals.py`, `serok_engine.py`, `reversal_engine.py`,
 `reversal_state.py`, `reversal_status.py`, `price_structure.py`,

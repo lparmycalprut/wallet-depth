@@ -382,3 +382,26 @@ class MeteoraBestBadgeTest(unittest.TestCase):
         for cls in ("dust-badge dust-ok", "dust-badge dust-caution",
                     "dust-badge dust-danger", "dust-badge dust-none"):
             self.assertNotIn(cls, listing)
+
+
+@unittest.skipIf(AppTest is None, "streamlit not installed")
+class TableColumnsRemovedTest(ChartLpCardTest):
+    """Kolom **Δ 4 jam** + **Grafik 4 jam** dihapus (permintaan 2026-09-07)."""
+
+    def test_delta_and_sparkline_columns_are_gone(self):
+        app = self._app()
+        self.assertEqual(len(app.exception), 0)
+        body = self._body(app)
+        self.assertNotIn("Δ 4 jam", body)
+        self.assertNotIn("Grafik 4 jam", body)
+        self.assertNotIn("<svg", body)          # sparkline baris hilang
+        self.assertNotIn("belum ada grafik", body)
+        # Kolom yang tersisa tetap ada.
+        for title in ("Token", "Dust", "Hold %MC"):
+            self.assertIn(title, body)
+
+    def test_lp_chart_uses_five_minute_buckets(self):
+        app = self._app()
+        captions = "\n".join(node.value for node in app.caption)
+        self.assertIn("titik per 5 menit", captions)
+        self.assertNotIn("titik per 4 jam", captions)

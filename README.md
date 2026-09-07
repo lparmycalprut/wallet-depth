@@ -30,15 +30,21 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
 2. **Chart LP — watchlist terpisah** — token yang ditambahkan dari **Scan
    Meteora Pool** (⭐) atau ditambah manual ke card itu dikumpulkan di card
    paling atas dashboard. Card ini menampilkan **grafik perubahan dust
-   holder** (dust % MC + jumlah wallet dust per bucket 4 jam, garis ambang
-   0,5% / 1%), sparkline, Δ poin persentase 4 jam & total, overlay semua
-   token LP, plus tombol pindah card (📋 ↔ 🌊). Token LP tidak ditampilkan
+   holder** (dust % MC + jumlah wallet dust per bucket **5 menit** —
+   mengikuti kadens cron lane LP, garis ambang
+   0,5% / 1%) di dalam expander per token. **Sejak 2026-09-07 kolom tabel
+   `Δ 4 jam` dan `Grafik 4 jam` (sparkline) dihapus dari semua card
+   watchlist** — baris tinggal Token · Dust · Hold %MC (+ Sejak masuk di
+   watchlist biasa) dan tombol aksi; grafik hanya di expander. Tersedia juga
+   overlay semua token LP, plus tombol pindah card (📋 ↔ 🌊). Token LP tidak ditampilkan
    dua kali di watchlist holder biasa.
 3. **Kohort mid-tier (Crab+Fish, $100–$10k)** — daftar address di-freeze
    4 jam, lalu diukur **sisa token** (bukan dollar) supaya dump harga
    tidak ketiru sebagai exit.
-4. **Grafik 4 jam** — setiap scan mencatat titik ke `holder_history.json`,
-   ditampilkan per bucket 4 jam (watchlist sparkline + halaman Holder).
+4. **Grafik** — setiap scan mencatat titik ke `holder_history.json`.
+   Lane LP (Chart LP Meteora + Robinhood LP) digambar per bucket **5 menit**
+   (`resample_5m`, `LP_INTERVAL_SEC`); watchlist biasa dan halaman Holder
+   tetap per bucket 4 jam (`resample_4h`).
 5. **Wallet Depth by Threshold** — Helius DAS `getTokenAccounts`, bucket
    `>$0-$10` … `>$500k` atas wallet murni (LP/pool DexScreener disingkirkan).
    Tier 🦐/🦀/🐟/🐬/🦈 selalu wallet murni.
@@ -68,6 +74,20 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
      dust masih naik; dikirim **tanpa** gerbang volume keras (konteks pasar
      jadi info di pesan). Catatan: saat ini 0 token watchlist ber-source
      meteora — rule aktif begitu ada pool yang di-⭐ dari Scan Meteora.
+   - **🚨 WAKTUNYA EXIT / CUTLOSS** (2026-09-07) — eskalasi dari ⚡ EARLY
+     DUMP: bila dalam **15 menit** setelah pengingat pertama dust terus
+     bertambah selama **3 scan 5 menit berturut-turut** (holder dust
+     nambah tanpa henti), satu alert eksplisit dikirim. Maksimal 1× per
+     episode; toleransi +1 bucket 5 menit untuk run cron yang telat.
+   - **✅ KEMBALI KE TITIK AMAN** (2026-09-07) — penutup episode: bila di
+     jendela yang sama dust **turun lagi ke bawah 0,1% MC**, satu alert
+     kabar baik dikirim dan episode ditutup (hitungan `first_ts` / `rises`
+     / `escalated` direset, pengingat ⚡ berhenti).
+
+   **Format pesan** (2026-09-07) sengaja ringkas: judul, token, dust
+   sebelum/sesudah, perubahan pp, waktu **WIB saja**, mint, dan link
+   token/pool. Baris `Periode:`, `Verifikasi:` dan pengingat berulang
+   sudah dihapus.
 
    Perubahan dust baru menghasilkan **kandidat** sinyal: setiap kandidat
    harus lolos konfirmasi volume + harga + volatilitas dulu (bagian
@@ -444,7 +464,7 @@ akumulasi dan bukan prediksi arah harga.
 | `trending_ui.py` | Listing Trending/Degen + Add All Watchlist |
 | `pre_pump_screener.py` | 🚀 Pre-Pump Screener: 4 sinyal on-chain (gelombang add likuiditas + journal, konsolidasi holder, volume calm-before-storm, TX velocity), PUMP SCORE 0–10, kartu token, auto-refresh `st.fragment(run_every=300)` |
 | `pages/4_📊_CVD.py` | Chart CVD harian |
-| `pages/5_🧮_Holder.py` | Holder Analytic: dust, grafik 4 jam, kohort, kronologi FULL |
+| `pages/5_🧮_Holder.py` | Holder Analytic: dust, grafik 4 jam, kohort, kronologi FULL (satu-satunya halaman sejak 2026-09-07) |
 
 | `watchlist_detail.py` | Baris watchlist: delta dust **sejak masuk watchlist** (relatif % + pp + jumlah wallet), warna ambang −50%/+100%, dan penyatuan angka baris ↔ scan terakhir |
 | `accumulation.py` | 8 heuristik deteksi akumulasi (murni kalkulasi, tanpa Helius) + skor 0–100 + store snapshot `accumulation_history.json` |

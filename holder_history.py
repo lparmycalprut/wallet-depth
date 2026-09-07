@@ -85,7 +85,11 @@ DUST_SCAN_HIDE_PCT = DUST_BEST_PCT
 DUST_LIMIT_PCT = DUST_SCAN_HIDE_PCT
 # Urutan keparahan badge (dipakai sorting Chart LP / watchlist).
 DUST_LEVEL_RANK = {"ok": 0, "caution": 1, "danger": 2}
-INTERVAL_SEC = 4 * 3600          # grafik 4 jam sekali
+INTERVAL_SEC = 4 * 3600          # grafik 4 jam sekali (watchlist biasa)
+# Lane LP (Chart LP Meteora + Robinhood LP) di-scan cron tiap ±5 menit dan
+# fokus user adalah pergerakan 5 menitan, jadi grafik/sparkline card LP
+# memakai bucket ini — bukan 4 jam (permintaan user 2026-09-07).
+LP_INTERVAL_SEC = 5 * 60         # grafik 5 menit (lane LP)
 COHORT_WINDOW_SEC = 4 * 3600     # freeze Crab+Fish tiap 4 jam
 COHORT_MAX = 200                 # address yang diikuti
 MID_USD_MIN = 100.0              # Crab bawah (wallet_depth: > $100)
@@ -835,11 +839,17 @@ def resample_4h(points: Iterable[dict] | None, *,
     return ordered
 
 
+def resample_5m(points: Iterable[dict] | None) -> list[dict]:
+    """Satu titik per bucket **5 menit** — grafik lane LP (scan ±5 menit)."""
+    return resample_4h(points, interval=LP_INTERVAL_SEC)
+
+
 def sparkline_svg(points: Iterable[dict] | None, *, key: str = "dust_pct_mc",
-                  width: int = 140, height: int = 36) -> str:
-    """Sparkline inline SVG dari titik 4 jam. Kosong jika < 2 nilai."""
+                  width: int = 140, height: int = 36,
+                  interval: int = INTERVAL_SEC) -> str:
+    """Sparkline inline SVG dari titik ter-resample. Kosong jika < 2 nilai."""
     series = []
-    for row in resample_4h(points):
+    for row in resample_4h(points, interval=interval):
         value = _float(row.get(key), None)
         if value is not None:
             series.append(value)

@@ -804,9 +804,14 @@ class MainSectionTest(unittest.TestCase):
 
 
 @unittest.skipIf(pp is None or AppTest is None,
-                 "UI dependencies are not installed")
-class AppIntegrationTest(unittest.TestCase):
-    """Section Pre-Pump ikut ter-render di dashboard tanpa request jaringan."""
+                 "pre_pump_screener / streamlit not installed")
+class DashboardSectionRemovedTest(unittest.TestCase):
+    """Section Pre-Pump dihapus dari dashboard (permintaan user 2026-09-07).
+
+    Modul ``pre_pump_screener`` sendiri tetap ada (logika screener masih
+    diuji di atas), tapi tidak lagi dirender di ``app.py`` dan halaman
+    ``pages/7_🚀_Pre-Pump.py`` sudah dihapus bersama CVD & Deteksi Akumulasi.
+    """
 
     def setUp(self):
         patches = (
@@ -815,7 +820,6 @@ class AppIntegrationTest(unittest.TestCase):
                                                 "source": "degen"}}),
             mock.patch("holder_status.load_holder_status",
                        return_value={"updated_at": None, "tokens": {}}),
-            # Backup durable store: tes tidak boleh menyentuh jaringan.
             mock.patch("holder_history.pull_holder_history",
                        return_value=None),
             mock.patch("trending_ui.screen", return_value=[]),
@@ -827,53 +831,18 @@ class AppIntegrationTest(unittest.TestCase):
             patch.start()
             self.addCleanup(patch.stop)
 
-    def test_dashboard_renders_the_pre_pump_section(self):
+    def test_dashboard_no_longer_renders_pre_pump(self):
         app = AppTest.from_file(APP, default_timeout=60).run()
         self.assertFalse(app.exception)
-        self.assertTrue(any("Pre-Pump Screener" in block.value
-                            for block in app.subheader))
-        self.assertTrue(any("Jalankan Pre-Pump Scan" in (button.label or "")
-                            for button in app.button))
+        self.assertFalse(any("Pre-Pump" in block.value
+                             for block in app.subheader))
+        self.assertFalse(any("Pre-Pump" in (button.label or "")
+                             for button in app.button))
 
-    def test_dashboard_scan_button_calls_the_screener(self):
-        app = AppTest.from_file(APP, default_timeout=60).run()
-        submit = [button for button in app.button
-                  if "Jalankan Pre-Pump Scan" in (button.label or "")][0]
-        with mock.patch.object(pp, "run_screen", return_value=[]) as screen:
-            app = submit.click().run()
-        self.assertFalse(app.exception)
-        screen.assert_called_once()
-
-
-@unittest.skipIf(pp is None or AppTest is None,
-                 "UI dependencies are not installed")
-class StandalonePageTest(unittest.TestCase):
-    """``pages/7_🚀_Pre-Pump.py`` = rute mandiri ``main()``."""
-
-    PAGE = str(Path(__file__).resolve().parent.parent
-               / "pages" / "7_🚀_Pre-Pump.py")
-
-    def setUp(self):
-        patches = (
-            mock.patch("watchlist.load_watchlist",
-                       return_value={DEGEN_CA: {"symbol": "DGN",
-                                                "source": "degen"}}),
-            # Halaman mandiri menarik snapshot + store sendiri; tes offline.
-            mock.patch("pre_pump_screener.load_holder_status",
-                       return_value={"updated_at": None, "tokens": {}}),
-            mock.patch("pre_pump_screener.load_durable_holder_history",
-                       return_value={"tokens": {}}),
-        )
-        for patch in patches:
-            patch.start()
-            self.addCleanup(patch.stop)
-
-    def test_page_renders_its_own_title_and_controls(self):
-        app = AppTest.from_file(self.PAGE, default_timeout=60).run()
-        self.assertFalse(app.exception)
-        self.assertIn("Pre-Pump Screener", app.title[0].value)
-        self.assertTrue(any("Jalankan Pre-Pump Scan" in (button.label or "")
-                            for button in app.button))
+    def test_pre_pump_page_file_is_gone(self):
+        pages = Path(__file__).resolve().parent.parent / "pages"
+        names = sorted(path.name for path in pages.glob("*.py"))
+        self.assertEqual(names, ["5_🧮_Holder.py"])
 
 
 if __name__ == "__main__":  # pragma: no cover
