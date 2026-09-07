@@ -136,7 +136,8 @@ class MainExitCodeTest(unittest.TestCase):
         di-mock, jadi wiring cron benar-benar teruji.
         """
         import scripts.scan_holders as mod
-        wl = {"A": {"symbol": "AA"}} if watchlist is None else watchlist
+        wl = ({"A": {"symbol": "AA", "source": "meteora"}}
+              if watchlist is None else watchlist)
         store = {"tokens": {}} if local_store is None else local_store
         backup_result = ({"ok": True, "pushed": True, "bytes": 1234,
                           "pruned": [], "over_budget": False, "error": ""}
@@ -190,7 +191,7 @@ class MainExitCodeTest(unittest.TestCase):
     def test_no_push_ignores_publish(self):
         import scripts.scan_holders as mod
         with mock.patch.object(mod, "load_watchlist",
-                               return_value={"A": {}}), \
+                               return_value={"A": {"source": "meteora"}}), \
                 mock.patch.object(mod, "load_holder_status",
                                   return_value={"tokens": {}}), \
                 mock.patch.object(mod, "load_holder_history",
@@ -226,8 +227,9 @@ class MainExitCodeTest(unittest.TestCase):
             self.assertIsInstance(supplied_store.get("tokens"), dict)
             seen["store"] = supplied_store
             self.assertEqual(items, analyses)
-            # Konteks volume/harga harus disuntikkan sebagai provider lazy.
-            self.assertTrue(callable(kwargs.get("context_provider")))
+            # Scan 5 menit LP: tanpa konteks volume (fitur 4 jam dimatikan).
+            self.assertIsNone(kwargs.get("context_provider"))
+            self.assertFalse(kwargs.get("volume_rules"))
             order.append("alert")
             supplied_store["alert_evaluated"] = True
             return []
@@ -248,7 +250,7 @@ class MainExitCodeTest(unittest.TestCase):
             return {"updated_at": 100}
 
         with mock.patch.object(mod, "load_watchlist",
-                               return_value={"A": {"symbol": "AA"}}), \
+                               return_value={"A": {"symbol": "AA", "source": "meteora"}}), \
                 mock.patch.object(mod, "load_holder_status",
                                   return_value={"tokens": {}}), \
                 mock.patch.object(mod, "load_holder_history",
@@ -309,7 +311,7 @@ class CronFullScanTest(unittest.TestCase):
         seen = {}
         analyses = {"A": {"symbol": "AA", "holders": {"total_fetched": 5}}}
         with mock.patch.object(mod, "load_watchlist",
-                               return_value={"A": {"symbol": "AA"}}), \
+                               return_value={"A": {"symbol": "AA", "source": "meteora"}}), \
                 mock.patch.object(mod, "load_holder_status",
                                   return_value={"tokens": {}}), \
                 mock.patch.object(mod, "load_holder_history",
@@ -339,7 +341,8 @@ class CronFullScanTest(unittest.TestCase):
                                   return_value={"ok": True, "error": ""}):
             self.assertEqual(mod.main([]), 0)
         self.assertEqual(seen.get("max_wallets"), hh.FULL_SCAN_MAX_WALLETS)
-        self.assertTrue(seen.get("detail"))
+        # Cron auto 5 menit: pencatatan holder, bukan kronologi FULL.
+        self.assertFalse(seen.get("detail"))
 
     def test_scan_watchlist_defaults_to_full(self):
         import holder_history as hh
@@ -350,6 +353,22 @@ class CronFullScanTest(unittest.TestCase):
             out = scan_watchlist({"A": {"symbol": "AA"}}, workers=1)
         self.assertEqual(set(out), {"A"})
         self.assertEqual(seen.get("max_wallets"), hh.FULL_SCAN_MAX_WALLETS)
+        self.assertTrue(seen.get("detail", True))
+
+    def test_scan_watchlist_detail_false_skips_tracked_wallets(self):
+        store = {"tokens": {"A": {
+            "cohort": {"balances": {"COHORT": 5.0}},
+            "alert_state": {"baseline": {"balances": {"BASE": 1.0}}},
+        }}}
+        seen = {}
+        with mock.patch("scripts.scan_holders.analyze_token",
+                        side_effect=lambda *a, **kw:
+                        (seen.update(kw) or {"ca": "A"})):
+            scan_watchlist({"A": {"symbol": "AA"}}, workers=1,
+                           history_store=store, detail=False)
+        self.assertEqual(seen.get("cohort_addrs"), [])
+        self.assertEqual(seen.get("tracked_wallet_addrs"), [])
+        self.assertFalse(seen.get("detail"))
 
 
 class RobinhoodEarlyDumpScopeWiringTest(unittest.TestCase):
@@ -406,7 +425,7 @@ class RobinhoodEarlyDumpScopeWiringTest(unittest.TestCase):
 
 
 class ScanScopeMergeTest(unittest.TestCase):
-    """Scope cron (2026-09-05): LP ±15 menit, biasa slot 4 jam, all = semua.
+    """Scope cron: LP ±5 menit, biasa slot 4 jam DIMATIKAN, all = semua.
 
     - ``--scope fast``: hanya watchlist LP yang di-scan dan snapshot
       dipublish **dengan** ``merge_status`` (token watchlist biasa
@@ -486,7 +505,7 @@ class ScanCadenceTest(unittest.TestCase):
     lebih awal", lalu menambah "iya untuk watchlist meteora juga, per 5 menit,
     biar perubahan holder bisa langsung ketahuan". Jadi tiap run cron menarik
     kedua chain; yang sengaja TIDAK ikut dipercepat: watchlist biasa (slot 4
-    jam) dan bucket pengingat ⚡ Telegram (15 menit/token). Hemat kuota Helius
+    jam, DIMATIKAN). Pengingat ⚡ Telegram = tiap scan 5 menit. Hemat kuota Helius
     tetap mungkin lewat ``LP_SCAN_RUN_MULTIPLIER`` (gate :func:`lp_slot_due`).
     """
 
@@ -504,17 +523,22 @@ class ScanCadenceTest(unittest.TestCase):
         self.assertEqual(mod.REGULAR_SCAN_INTERVAL_SEC, 4 * 3600)
         self.assertEqual(mod.REGULAR_SLOTS, 48)   # 4 jam / 5 menit
         self.assertEqual(mod.REGULAR_CATCHUP_SEC, 4 * 3600 - 5 * 60)
+        self.assertFalse(mod.REGULAR_SCAN_ENABLED)
         # Invarian penting: gate run ganda WAJIB lebih kecil dari kadens run,
         # kalau tidak lane Robinhood 5 menit dibungkam gate-nya sendiri.
         self.assertLess(mod.MIN_RUN_GAP_SEC, mod.RUN_SCAN_INTERVAL_SEC)
         self.assertEqual(mod.MIN_RUN_GAP_SEC, 4 * 60)
 
-    def test_slot_4jam_masih_di_batas_4_jam(self):
+    def test_slot_4jam_dimatikan_di_cron_auto(self):
         import scripts.scan_holders as mod
         boundary = (int(time.time()) // mod.REGULAR_SCAN_INTERVAL_SEC) \
             * mod.REGULAR_SCAN_INTERVAL_SEC
-        self.assertTrue(mod.regular_slot_due(boundary))
+        self.assertFalse(mod.regular_slot_due(boundary))
         self.assertFalse(mod.regular_slot_due(boundary + mod.RUN_SCAN_INTERVAL_SEC))
+        with mock.patch.object(mod, "REGULAR_SCAN_ENABLED", True):
+            self.assertTrue(mod.regular_slot_due(boundary))
+            self.assertFalse(mod.regular_slot_due(
+                boundary + mod.RUN_SCAN_INTERVAL_SEC))
 
     def test_lp_slot_due_default_setiap_run(self):
         import scripts.scan_holders as mod
@@ -557,10 +581,11 @@ class ScanCadenceTest(unittest.TestCase):
         plan = mod.build_scan_plan(wl, store, 1_789_000_000 + 300,
                                    lp_slot=False)
         self.assertFalse(plan["lp_slot"])
-        self.assertEqual(set(plan["due"]), {reg_mint})
+        # Watchlist biasa tidak ikut catch-up / slot 4 jam.
+        self.assertEqual(set(plan["due"]), set())
         plan = mod.build_scan_plan(wl, store, 1_789_000_000 + 300,
                                    lp_slot=True)
-        self.assertEqual(set(plan["due"]), {lp_mint, reg_mint})
+        self.assertEqual(set(plan["due"]), {lp_mint})
 
     def _cron_env(self, *, now_ts, status_ts, solana_watch, rh_watch, mocks):
         """Panggil ``main()`` dengan jam + IO terkendali (ExitStack + mocks)."""

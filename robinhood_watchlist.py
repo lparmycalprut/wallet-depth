@@ -6,7 +6,7 @@ Watchlist ini terpisah dari ``watchlist.json`` (Solana). File-nya:
 - ``watchlist_robinhood.json`` — daftar token ``0x…`` (persisted ke GitHub),
   dipecah dua card lewat field ``source``:
   **Robinhood LP** (default, scan cepat **±5 menit** sejak 2026-09-06 +
-  pengingat > 0,1% MC berulang, dibatasi bucket 15 menit per token) dan
+  pengingat > 0,1% MC berulang, dibatasi bucket 5 menit per token) dan
   **Robinhood biasa** (``source="regular"``, scan ±4 jam + rule 🔔 HIGH DROP)
   — lihat :func:`split_robinhood_watchlist`.
 - ``watchlist_robinhood_pending.json`` — journal add/remove/source
@@ -48,7 +48,7 @@ CHAIN_NAME = robinhood_holders.CHAIN_NAME
 # - **Robinhood LP**    : scan cepat — **tiap run cron ±5 menit** sejak
 #   2026-09-06 (sebelumnya 15 menit, sama seperti Chart LP Meteora yang kini
 #   ikut 5 menit); pengingat ⚡ EARLY DUMP berulang selama dust % MC > 0,1%,
-#   dibatasi bucket 15 menit/token.
+#   dibatasi bucket 5 menit/token.
 # - **Robinhood** (biasa): scan ±4 jam; rule 🔔 HIGH DROP (turun >= 50%
 #   dari titik high hold % MC).
 # Split memakai field ``source`` di file watchlist yang sama, seperti split
@@ -166,7 +166,8 @@ def scan_watchlist(watchlist: dict | None, *, history_store: dict | None = None,
                    max_wallets: int | None = None,
                    dust_limit: float | None = None,
                    workers: int = 4,
-                   progress=None) -> dict:
+                   progress=None,
+                   detail: bool = True) -> dict:
     """Scan semua token 0x… pada watchlist Robinhood Chain.
 
     Memanggil :func:`robinhood_holders.analyze_token` sehingga bentuk output
@@ -186,20 +187,22 @@ def scan_watchlist(watchlist: dict | None, *, history_store: dict | None = None,
         try:
             token_slot = ((store.get("tokens") or {}).get(mint) or {})
             cohort = token_slot.get("cohort") or {}
-            addrs = list((cohort.get("balances") or {}).keys())
+            addrs = list((cohort.get("balances") or {}).keys()) if detail else []
             tracked = []
-            try:
-                from telegram_alerts import tracked_wallet_addresses
-                tracked = tracked_wallet_addresses(token_slot.get("alert_state"))
-            except Exception:  # noqa: BLE001 - tracked bersifat pelengkap
-                tracked = []
+            if detail:
+                try:
+                    from telegram_alerts import tracked_wallet_addresses
+                    tracked = tracked_wallet_addresses(token_slot.get("alert_state"))
+                except Exception:  # noqa: BLE001 - tracked bersifat pelengkap
+                    tracked = []
             analysis = robinhood_holders.analyze_token(
                 mint, (meta or {}).get("symbol") or "?",
                 dust_limit=dust_limit,
                 max_wallets=int(max_wallets or 100_000),
                 fetch_market=True,
                 cohort_addrs=addrs,
-                tracked_wallet_addrs=tracked)
+                tracked_wallet_addrs=tracked,
+                detail=detail)
             return mint, analysis, None
         except Exception as exc:  # noqa: BLE001
             return mint, None, str(exc)
@@ -228,7 +231,8 @@ def publish_scan(analyses: dict, watchlist: dict, *,
                  push: bool = False,
                  contexts: dict | None = None,
                  merge_status: dict | None = None,
-                 skip_unusable: bool = True) -> dict:
+                 skip_unusable: bool = True,
+                 detail: bool = True) -> dict:
     """Ingest + publish status/history Robinhood ke file lokal/GitHub.
 
     ``merge_status`` (snapshot sebelumnya) mewariskan token yang tidak
@@ -247,7 +251,7 @@ def publish_scan(analyses: dict, watchlist: dict, *,
     store = history_store if isinstance(history_store, dict) \
         else load_history()
     history = ingest_many(analyses, store=store, path=HISTORY_LOCAL_PATH,
-                          detail=True)
+                          detail=detail)
     publishable = analyses
     skipped: list[str] = []
     if skip_unusable:

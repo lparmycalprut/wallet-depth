@@ -602,13 +602,14 @@ def publish_holder_status(analyses: dict,
             _LAST_PUBLISH["ok"] = False
             _LAST_PUBLISH["error"] = "no github_token"
         else:
-            # merge_journal=False: file snapshot tidak punya jurnal operasi,
-            # dan men-merge journal watchlist ke sini bisa menyuntik mint
-            # Solana/Robinhood ke dalam holder_status*.json (bug silang
-            # jaringan; lihat watchlist._github_push).
-            ok = _github_push(status,
-                              f"holder-status: snapshot {stamp} [skip ci]",
-                              repo_path=repo_path, merge_journal=False)
+            # ``holder_status._github_push`` menulis Contents API langsung —
+            # BUKAN ``watchlist._github_push``. Jangan kirim ``merge_journal``
+            # (kwarg milik watchlist): TypeError itu menelan seluruh publish
+            # (termasuk Robinhood, yang exception-nya di-best-effort) sehingga
+            # snapshot + marker Telegram tidak pernah sampai ke holder-live.
+            ok = _github_push(
+                status, f"holder-status: snapshot {stamp} [skip ci]",
+                repo_path=repo_path)
             _LAST_PUBLISH["ok"] = bool(ok)
             _LAST_PUBLISH["error"] = "" if ok else "github push failed"
         if not _LAST_PUBLISH["ok"]:
