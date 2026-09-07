@@ -222,15 +222,25 @@ JSON compact, Contents API base64) di ref `holder-live`:
   `DUST_BEST_PCT` 0,1% untuk token pool (`lp_mints` → `lp_mint` di
   `evaluate_alert_events`) maupun **seluruh watchlist Robinhood**
   (cron mengirim `lp_mints=set(rh_watch)`), **tanpa gerbang volume keras**
-  (`early_dump_verdict`: `allow` selalu True, konteks pasar = info di
-  pesan), ulang 1× per bucket 4 jam + `MIN_RESEND_SEC`, hanya saat dust
+  (`early_dump_verdict`: `allow` selalu True, konteks pasar untuk
+  audit), ulang 1× per bucket 4 jam + `MIN_RESEND_SEC`, hanya saat dust
   masih naik; marker `alert_state["early_dump"]` = `{ts, dust_pct_mc}`
   run terakhir (di-merge paling baru oleh `holder_history._merge_alert_state`,
   dipertahankan `compact_alert_state`). Pesan selalu ditutup link token
   **🔗 GMGN + 🦆 DexScreener** dari `links.token_link_lines(mint)`; bila
   event membawa `pool_addresses`, ditambah `🌊 Meteora` + `🦅 HawkFi`
   (`_pool_link_lines`) — cron belum bisa mengisinya (watchlist tidak
-  menyimpan pool address). `send_test_alert()` sengaja tanpa link. Aturan
+  menyimpan pool address). **Format semua notifikasi (2026-09-07)**:
+  setiap baris beremoji, dust sebelum → sesudah + Δ pp dalam satu baris,
+  waktu WIB tanpa detik; tanpa tabel wallet/skor/penjelasan panjang.
+  Rule terkonfirmasi tetap punya satu baris pasar atau ⚠️ TIDAK
+  TERVERIFIKASI; LP/high-drop tanpa baris pasar. Judul `exit_cutloss` =
+  `🚨 WAKTUNYA EXIT / CUTLOSS / Reshape 20 80 10 bin`, tebal melalui native
+  entity `bold` (offset/panjang **UTF-16**, bukan `len` karakter Python).
+  Telegram tidak mendukung ukuran/warna/teks berkedip: jangan kirim
+  HTML/CSS palsu. Teks tetap literal, tanpa `parse_mode`;
+  `link_preview_options.is_disabled=True` menjaga pesan tetap pendek.
+  `send_test_alert()` juga beremoji dan sengaja tanpa link. Aturan
   tidak pernah fetch: pemanggil menyuntikkan `market_context` atau
   `context_provider(mint, analysis)` yang hanya dipanggil bila ada kandidat.
 - `gmgn_screener.py`: listing Trending/Degen.
@@ -414,13 +424,16 @@ baseline shift +-1 pp : ikut arah perubahan (naik = dump, turun = akumulasi)
 exit/cutloss (pool LP): eskalasi episode EARLY DUMP — dust naik
                         ESCALATION_MIN_RISES (3) scan 5 menit berturut
                         dalam ESCALATION_WINDOW_SEC (15 mnt, +1 bucket
-                        toleransi cron telat) -> "WAKTUNYA EXIT / CUTLOSS",
+                        toleransi cron telat) -> ESCALATION_TITLE
+                        (EXIT / CUTLOSS / Reshape 20 80 10 bin),
                         1x per episode (marker escalated)
 titik aman (pool LP)  : dust turun kembali <= 0.1% MC di jendela yang sama
                         -> "KEMBALI KE TITIK AMAN", 1x, episode ditutup
                         (marker first_ts/rises/escalated direset)
-format notifikasi     : ringkas (2026-09-07) — tanpa baris Periode,
-                        Verifikasi, dan pengingat berulang; waktu WIB saja
+format notifikasi     : ringkas + emoji (2026-09-07); satu baris dust + pp,
+                        waktu WIB saja; judul EXIT tebal. Tanpa tabel
+                        wallet/skor/Periode/pengingat panjang; rule pasar
+                        tetap menandai TIDAK TERVERIFIKASI bila data gagal
 early dump (pool LP)  : crossing naik > 0.1% (dibanding nilai run
                         sebelumnya, marker alert_state["early_dump"]) —
                         scope token pool Meteora/Chart LP + seluruh

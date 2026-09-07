@@ -124,15 +124,20 @@ class EpisodeMessageTest(unittest.TestCase):
 
     def test_pesan_exit_cutloss(self):
         message = self._message([0.15, 0.22, 0.31], ta.ESCALATION_KIND)
-        self.assertIn("🚨 WAKTUNYA EXIT / CUTLOSS", message)
+        self.assertEqual(
+            message.splitlines()[0],
+            "🚨 WAKTUNYA EXIT / CUTLOSS / Reshape 20 80 10 bin")
+        self.assertEqual(message.splitlines()[1], "")
         self.assertIn("$LPX", message)
-        self.assertIn("Dust terbaru: 0.31% MC", message)
+        self.assertIn("📊 Dust: 0.22% → 0.31% MC (+0.09 pp)", message)
+        self.assertIn("📈 Naik 3 scan berturut (±10 menit)", message)
         self.assertIn("🔗 GMGN:", message)
 
     def test_pesan_titik_aman(self):
         message = self._message([0.15, 0.22, 0.05], ta.SAFE_RETURN_KIND)
         self.assertIn("✅ KEMBALI KE TITIK AMAN", message)
-        self.assertIn("Dust terbaru: 0.05% MC", message)
+        self.assertIn("📊 Dust: 0.22% → 0.05% MC (-0.17 pp)", message)
+        self.assertIn("🛡️ Dust kembali ≤ 0.1% MC (±10 menit)", message)
 
 
 class SimpleFormatTest(unittest.TestCase):
@@ -153,7 +158,7 @@ class SimpleFormatTest(unittest.TestCase):
     def test_waktu_hanya_wib(self):
         message = self._early_message()
         waktu = [line for line in message.splitlines()
-                 if line.startswith("Waktu:")]
+                 if line.startswith("🕒 ")]
         self.assertEqual(len(waktu), 1)
         self.assertIn("WIB", waktu[0])
         self.assertNotIn("UTC", waktu[0])

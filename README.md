@@ -72,10 +72,11 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
      hysteresis: token baru dipantau tidak langsung mengirim, turun ke
      ≤ 0,1% = reset. Ulang maksimal 1× per bucket 4 jam dan hanya selama
      dust masih naik; dikirim **tanpa** gerbang volume keras (konteks pasar
-     jadi info di pesan). Catatan: saat ini 0 token watchlist ber-source
+     disimpan untuk audit). Catatan: saat ini 0 token watchlist ber-source
      meteora — rule aktif begitu ada pool yang di-⭐ dari Scan Meteora.
-   - **🚨 WAKTUNYA EXIT / CUTLOSS** (2026-09-07) — eskalasi dari ⚡ EARLY
-     DUMP: bila dalam **15 menit** setelah pengingat pertama dust terus
+   - **🚨 WAKTUNYA EXIT / CUTLOSS / Reshape 20 80 10 bin** (2026-09-07)
+     — eskalasi dari ⚡ EARLY DUMP: bila dalam **15 menit** setelah
+     pengingat pertama dust terus
      bertambah selama **3 scan 5 menit berturut-turut** (holder dust
      nambah tanpa henti), satu alert eksplisit dikirim. Maksimal 1× per
      episode; toleransi +1 bucket 5 menit untuk run cron yang telat.
@@ -84,10 +85,12 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
      kabar baik dikirim dan episode ditutup (hitungan `first_ts` / `rises`
      / `escalated` direset, pengingat ⚡ berhenti).
 
-   **Format pesan** (2026-09-07) sengaja ringkas: judul, token, dust
-   sebelum/sesudah, perubahan pp, waktu **WIB saja**, mint, dan link
-   token/pool. Baris `Periode:`, `Verifikasi:` dan pengingat berulang
-   sudah dihapus.
+   **Format semua pesan** (2026-09-07) ringkas dan beremoji: judul, token,
+   satu baris dust sebelum → sesudah beserta perubahan **pp** (poin
+   persentase), waktu **WIB saja**, mint, dan link token/pool. Rincian
+   wallet, skor, periode, serta pengingat panjang tidak ditampilkan.
+   Khusus judul exit memakai **tebal + 🚨**; Telegram tidak mendukung
+   ukuran/warna huruf khusus atau teks berkedip.
 
    Perubahan dust baru menghasilkan **kandidat** sinyal: setiap kandidat
    harus lolos konfirmasi volume + harga + volatilitas dulu (bagian
@@ -125,8 +128,8 @@ Kandidat sinyal dust diperiksa silang terhadap pasar sebelum dikirim
 ⚡ **EARLY DUMP** (token pool saja, crossing > 0,1% MC) sengaja **tidak**
 dipakai gerbang di tabel ini — delta crossing ambang absolut 0,1% bisa jauh
 di bawah 0,25 pp yang dirancang untuk gerbang dump. Volume/harga/volatilitas
-tetap diambil (lazy) sebagai **konteks info** di pesan; tanpa data pasar,
-pesan memuat `⚠️ TIDAK TERVERIFIKASI`.
+tetap diambil (lazy) sebagai konteks **audit** di event/state, tidak
+dicetak di pesan LP yang ringkas.
 
 `avg_volume_7d` = rata-rata volume **per window 4 jam** selama 7 hari, jadi
 satuannya setara dengan `volume_4h` (bukan total volume harian).
@@ -157,77 +160,72 @@ saat scan (`volume.h6` di-skala ke 4 jam, baseline dari `volume.h24`,
 `priceChange.h6`, `txns` buys/sells) lalu ke `daily_effort.json` untuk
 rata-rata volume 7 hari.
 
-**Bila data tidak ada** (pool lebih muda dari 7 hari, API mati): alert **tetap
-dikirim** dengan baris `Verifikasi volume: ⚠️ TIDAK TERVERIFIKASI` — indikasi
-dump tidak boleh hilang senyap hanya karena sumber data sedang down. Set
+**Bila data tidak ada** (pool lebih muda dari 7 hari, API mati): alert dump,
+akumulasi, dan baseline **tetap dikirim** dengan satu baris
+`⚠️ TIDAK TERVERIFIKASI — data pasar tidak tersedia`. Set
 `telegram_alerts.ALLOW_UNVERIFIED_ALERTS = False` untuk perilaku strict.
-
-Alert yang lolos menyertakan rasio volume, perubahan harga, skor konfirmasi,
-ambang yang dipakai, stddev 4 jam, **dan link token ke GMGN + DexScreener**
-(`links.token_link_lines`) di pesan Telegram supaya alert bisa langsung
-ditindaklanjuti. Bila mint tidak diketahui, kedua baris link dilewati (tidak
-ada label menggantung).
+Jika terkonfirmasi, cukup satu baris rasio volume + perubahan harga
+(dan penanda volatilitas tinggi bila relevan); skor, ambang, serta rincian
+wallet tetap ada di event/state untuk audit, tidak dicetak ke Telegram.
+Alert LP dan high-drop tidak menampilkan verifikasi pasar.
 
 ## Format alert Telegram (contoh)
 
-```text
-🚨 INDIKASI DUMP — HOLDER DUST NAIK
-Token: $WSOL
-Dust sebelumnya: 0.90% MC
-Dust terbaru: 1.24% MC
-Perubahan: +0.34 poin persentase
-Periode: ~4 jam
-Verifikasi volume: ✅ volume 4 jam 2.50× rata-rata 7d (ambang 2.0×) · harga -3.20% · buy 62/sell 38
-Skor konfirmasi: 0.79 (ambang 0.70) · stddev 4 jam 1.80%
-Wallet saldo meningkat: 7
-Pergerakan sampel wallet dust:
-- Membesar / keluar dust: 4
-- Jual habis / hilang: 1
-- Keluar dust lainnya: 0
-- Mengecil / masuk dust: 2
-- Wallet dust baru: 3
-- Masuk dust lainnya: 0
-Waktu: 2026-09-03 22:11:17 WIB (15:11 UTC)
-Mint: So11111111111111111111111111111111111111112
-🔗 GMGN: https://gmgn.ai/sol/token/So11111111111111111111111111111111111111112
-🦆 DexScreener: https://dexscreener.com/solana/So11111111111111111111111111111111111111112
-```
+Semua notifikasi, termasuk test koneksi, memakai emoji dan detail pendek.
+Angka `pp` berarti **poin persentase**, bukan perubahan relatif %.
+Preview tautan dimatikan agar pesan tidak dipenuhi kartu pratinjau.
 
-Dua baris link terakhir dibangun `links.token_link_lines(mint)` — helper yang
-sama dengan link 🔗GMGN/🦆Dex di tabel watchlist, jadi URL-nya satu sumber dan
-selalu ter-encode (Telegram otomatis me-link URL polos).
-
-Contoh alert **⚡ EARLY DUMP** (kind baru, token pool; tanpa blok pergerakan
-wallet karena dibandingkan dari nilai dust saja):
+Khusus **EXIT / CUTLOSS**, judul persis berikut ditampilkan **tebal** dan
+dipisahkan dari detail. Telegram Bot API tidak mendukung ukuran font khusus,
+warna teks merah, atau teks berkedip, jadi penekanan memakai **tebal + 🚨**,
+bukan HTML/CSS yang tidak didukung. Aturan pemicu dan frekuensi tidak berubah.
 
 ```text
-⚡ EARLY DUMP — DUST HOLDER NAIK DI ATAS 0.1%
-Token: $LPDUMP
-Dust sebelumnya: 0.04% MC
-Dust terbaru: 0.42% MC
-Perubahan: +0.38 poin persentase
-Periode: sejak titik terakhir 2 jam lalu
-Verifikasi: ℹ️ volume 4 jam 1.50× rata-rata 7d · harga -2.50% (info saja, tanpa gerbang volume)
-Waktu: 2026-09-04 01:15:00 WIB (18:15 UTC)
-Mint: LpMint11111111111111111111111111111111111
+🚨 WAKTUNYA EXIT / CUTLOSS / Reshape 20 80 10 bin
+
+🪙 $LPX
+📊 Dust: 0.22% → 0.31% MC (+0.09 pp)
+📈 Naik 3 scan berturut (±10 menit)
+🕒 2026-09-07 21:10 WIB
+📋 Mint: LpMint11111111111111111111111111111111111
 🔗 GMGN: https://gmgn.ai/sol/token/LpMint11111111111111111111111111111111111
 🦆 DexScreener: https://dexscreener.com/solana/LpMint11111111111111111111111111111111111
 ```
 
-Bila konteks pasar tidak tersedia, baris `Verifikasi:` berubah menjadi
-`⚠️ TIDAK TERVERIFIKASI — data pasar tidak tersedia (info saja, early warning
-tanpa gerbang volume)`. Bila pool address Meteora diketahui, ditambahkan
-`🌊 Meteora:` + `🦅 HawkFi:` — cron **belum** bisa mengisinya karena
-`watchlist.json` tidak menyimpan pool address (lihat PROGRESS).
-
-Dua baris `Verifikasi volume` / `Skor konfirmasi` hanya muncul bila konteks
-pasar berhasil diambil. Bila tidak, keduanya diganti satu baris:
+Contoh pengingat LP:
 
 ```text
-Verifikasi volume: ⚠️ TIDAK TERVERIFIKASI — data pasar tidak tersedia
-(volume_4h, avg_volume_7d, price_change_pct) — sinyal dikirim tanpa
-verifikasi volume
+⚡ EARLY DUMP — DUST > 0.1%
+🪙 $LPX
+📊 Dust: 0.04% → 0.15% MC (+0.11 pp)
+🕒 2026-09-07 21:00 WIB
+📋 Mint: LpMint11111111111111111111111111111111111
+🔗 GMGN: https://gmgn.ai/sol/token/LpMint11111111111111111111111111111111111
+🦆 DexScreener: https://dexscreener.com/solana/LpMint11111111111111111111111111111111111
 ```
+
+Contoh rule dump dengan konfirmasi pasar:
+
+```text
+🚨 INDIKASI DUMP
+🪙 $WSOL
+📊 Dust: 0.90% → 1.24% MC (+0.34 pp)
+✅ Pasar: vol 4j 2.50× avg 7d · harga -3.20%
+🕒 2026-09-07 21:15 WIB
+📋 Mint: So11111111111111111111111111111111111111112
+🔗 GMGN: https://gmgn.ai/sol/token/So11111111111111111111111111111111111111112
+🦆 DexScreener: https://dexscreener.com/solana/So11111111111111111111111111111111111111112
+```
+
+URL tetap dibangun `links.token_link_lines(mint)`, satu sumber dengan tabel
+watchlist dan selalu ter-encode. Token Robinhood memakai **🦆 rh-scan,
+🦆 DexScreener Robinhood, 🌏 Blockscout**, bukan link Solana. Bila mint
+kosong, link dilewati. Bila event LP membawa pool address Meteora,
+ditambahkan **🌊 Meteora + 🦅 HawkFi**; cron belum menyimpan pool address.
+
+Transport tetap mengirim teks literal (tanpa `parse_mode`), sehingga nama
+token dengan karakter HTML/Markdown tidak merusak pesan. Judul exit diberi
+native entity `bold` dengan panjang **UTF-16** (emoji 🚨 = dua unit).
 
 ## Sumber data
 

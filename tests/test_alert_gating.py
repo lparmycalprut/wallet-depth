@@ -362,7 +362,7 @@ class ProcessAlertsTest(unittest.TestCase):
         self.assertIn("TIDAK TERVERIFIKASI", message)
         self.assertNotIn("Skor konfirmasi", message)
 
-    def test_verified_alert_message_shows_ratio_and_score(self):
+    def test_verified_alert_message_shows_compact_market_summary(self):
         rolling = _snapshot(NOW - FOUR_HOURS, 1.00, {"A": 10.0}, ["A"])
         current = _snapshot(NOW, 1.30, {"A": 9.0}, ["A"])
         events, _ = ta.evaluate_alert_events(
@@ -370,12 +370,14 @@ class ProcessAlertsTest(unittest.TestCase):
                 CONFIRMED_DUMP, volatility=WILD)),
             {"baseline": rolling, "rolling": rolling, "sent_event_ids": []})
         message = ta.format_alert_message(events[0])
-        self.assertIn("Verifikasi volume: ✅", message)
-        self.assertIn("4.00× rata-rata 7d", message)
-        self.assertIn("harga -3.00%", message)
-        self.assertIn("Skor konfirmasi:", message)
-        self.assertIn("stddev 4 jam 4.80%", message)
-        self.assertIn("(pasar liar)", message)
+        self.assertIn(
+            "✅ Pasar: vol 4j 4.00× avg 7d · harga -3.00% · volatilitas tinggi",
+            message)
+        self.assertNotIn("Skor konfirmasi:", message)
+        self.assertNotIn("stddev", message)
+        # Rincian tetap ada untuk audit; hanya tampilan yang diringkas.
+        self.assertIn("confidence_score", events[0]["volume_check"])
+        self.assertEqual(events[0]["volume_check"]["price_stddev_4h"], 4.8)
 
     def test_state_compaction_keeps_the_new_fields_bounded(self):
         state = {

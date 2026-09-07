@@ -21,7 +21,7 @@ menyala **selama** dust berada di atas ambang absolut 0,1% MC
 (:data:`holder_history.DUST_BEST_PCT`): pengingat dikirim ulang **tiap
 scan ±5 menit** (kadens yang sama dengan pencatatan holder LP) sampai
 token dihapus dari watchlist LP atau dipindah ke watchlist biasa —
-tanpa gerbang volume keras (konteks pasar = info di pesan, lihat
+tanpa gerbang volume keras (konteks pasar hanya untuk audit, lihat
 :func:`early_dump_verdict`), dedup per bucket 5 menit
 (:data:`FAST_BUCKET_SEC`) + jeda :data:`EARLY_DUMP_RESEND_SEC`; turun ke
 <= 0,1% = reset; observasi pertama di atas ambang **ikut dikirim**
@@ -40,13 +40,12 @@ keras, dedup bucket 4 jam + ``MIN_RESEND_SEC``.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import math
 import os
 import sys
 import time
 from typing import Callable, Iterable, NamedTuple
-from zoneinfo import ZoneInfo
 
 import requests
 
@@ -119,6 +118,7 @@ HIGH_DROP_KIND = "high_drop"
 ESCALATION_WINDOW_SEC = 15 * 60
 ESCALATION_MIN_RISES = 3
 ESCALATION_KIND = "exit_cutloss"
+ESCALATION_TITLE = "🚨 WAKTUNYA EXIT / CUTLOSS / Reshape 20 80 10 bin"
 SAFE_RETURN_KIND = "safe_return"
 MAX_LAST_SENT = 8
 MAX_REJECTED_SIGNALS = 8
@@ -903,9 +903,9 @@ def early_dump_verdict(context=None, kind: str = "early_dump") -> dict:
     delta jauh lebih kecil dari 0,25 pp, jadi gerbang itu tidak bisa dipakai
     apa adanya. Keputusan user (2026-09-04): early warning dikirim **tanpa**
     gerbang volume supaya bisa exit LP lebih cepat; volume/harga/volatilitas
-    tetap disertakan sebagai konteks pesan, dan ``verified`` False (data
-    pasar hilang) membuat pesan memuat baris ``⚠️ TIDAK TERVERIFIKASI``.
-    ``allow`` selalu True.
+    tetap disimpan sebagai konteks audit (``verified`` False bila data
+    pasar hilang), tanpa memperpanjang pesan LP/high-drop. ``allow``
+    selalu True.
     """
     ctx = context if isinstance(context, dict) else {}
     volatility = ctx.get("volatility") if isinstance(ctx.get("volatility"),
@@ -1532,94 +1532,34 @@ def alert_state_summary(state: dict | None) -> dict:
     }
 
 
-def _format_time(timestamp: int) -> str:
-    moment = datetime.fromtimestamp(_int(timestamp), tz=timezone.utc)
-    try:
-        local = moment.astimezone(ZoneInfo("Asia/Jakarta"))
-        return f"{local:%Y-%m-%d %H:%M:%S WIB} ({moment:%H:%M UTC})"
-    except Exception:  # pragma: no cover - tz database is available in CI
-        return moment.strftime("%Y-%m-%d %H:%M:%S UTC")
-
-
 def _format_wib(timestamp: int) -> str:
-    """Waktu WIB saja — format pesan ringkas (permintaan user 2026-09-07)."""
-    moment = datetime.fromtimestamp(_int(timestamp), tz=timezone.utc)
-    try:
-        return f"{moment.astimezone(ZoneInfo('Asia/Jakarta')):%Y-%m-%d %H:%M:%S} WIB"
-    except Exception:  # pragma: no cover - tz database tersedia di CI
-        return moment.strftime("%Y-%m-%d %H:%M:%S UTC")
+    """WIB (UTC+7) saja, tanpa detik atau ketergantungan database timezone."""
+    moment = datetime.fromtimestamp(_int(timestamp),
+                                    tz=timezone(timedelta(hours=7)))
+    return f"{moment:%Y-%m-%d %H:%M} WIB"
 
 
 def _verification_lines(event: dict) -> list[str]:
-    """Baris konfirmasi volume/harga untuk pesan Telegram (maks 2 baris)."""
+    """Satu baris pasar untuk rule terkonfirmasi; rincian tetap di event."""
     check = event.get("volume_check")
     if not isinstance(check, dict) or not check:
         return []
     if not check.get("verified"):
-        return [f"Verifikasi volume: ⚠️ TIDAK TERVERIFIKASI — "
-                f"{check.get('reason') or 'data pasar tidak tersedia'}"]
+        return ["⚠️ TIDAK TERVERIFIKASI — data pasar tidak tersedia"]
     parts = []
     ratio = _float(check.get("volume_ratio"), None)
     if ratio is not None:
-        parts.append(f"volume 4 jam {ratio:.2f}× rata-rata 7d "
-                     f"(ambang {_float(check.get('required_ratio'), 0):.1f}×)")
+        parts.append(f"vol 4j {ratio:.2f}× avg 7d")
     change = _float(check.get("price_change_pct"), None)
     if change is not None:
         parts.append(f"harga {change:+.2f}%")
-    buys = _float(check.get("buy_pressure"), None)
-    sells = _float(check.get("sell_pressure"), None)
-    if buys is not None and sells is not None:
-        parts.append(f"buy {buys:.0f}/sell {sells:.0f}")
+    if check.get("high_volatility"):
+        parts.append("volatilitas tinggi")
     mark = "✅" if check.get("is_valid") else "⚠️"
-    lines = [f"Verifikasi volume: {mark} " + (" · ".join(parts) or "-")]
-    score = _float(check.get("confidence_score"), None)
-    required = _float(check.get("required_confidence"), None)
-    if score is not None:
-        tail = (f"Skor konfirmasi: {score:.2f}"
-                + (f" (ambang {required:.2f})" if required is not None else ""))
-        stddev = _float(check.get("price_stddev_4h"), None)
-        if stddev is not None:
-            tail += f" · stddev 4 jam {stddev:.2f}%"
-            if check.get("high_volatility"):
-                tail += " (pasar liar)"
-        lines.append(tail)
-    return lines
-
-
-def _market_info_lines(check: dict | None) -> list[str]:
-    """Baris konteks pasar untuk ⚡ EARLY DUMP — info saja, tanpa gerbang.
-
-    Formatnya mirip :func:`_verification_lines` (angka pembanding volume /
-    harga / tekanan / volatilitas) tapi sengaja memakai awalan
-    ``Verifikasi:`` + penanda ℹ️ dan tidak menampilkan skor konfirmasi:
-    rule early dump tidak memakai ambang skor, jadi skor 0,00 tidak boleh
-    tampil seperti kegagalan verifikasi.
-    """
-    if not isinstance(check, dict) or not check:
-        return []
-    if not check.get("verified"):
-        return [f"Verifikasi: ⚠️ TIDAK TERVERIFIKASI — "
-                f"{check.get('reason') or 'data pasar tidak tersedia'} "
-                "(info saja, early warning tanpa gerbang volume)"]
-    parts = []
-    ratio = _float(check.get("volume_ratio"), None)
-    if ratio is not None:
-        parts.append(f"volume 4 jam {ratio:.2f}× rata-rata 7d")
-    change = _float(check.get("price_change_pct"), None)
-    if change is not None:
-        parts.append(f"harga {change:+.2f}%")
-    buys = _float(check.get("buy_pressure"), None)
-    sells = _float(check.get("sell_pressure"), None)
-    if buys is not None and sells is not None:
-        parts.append(f"buy {buys:.0f}/sell {sells:.0f}")
-    stddev = _float(check.get("price_stddev_4h"), None)
-    if stddev is not None:
-        parts.append(f"stddev 4 jam {stddev:.2f}%")
-    if not parts:
-        return ["Verifikasi: ℹ️ data pasar tersedia "
-                "(info saja, tanpa gerbang volume)"]
-    return ["Verifikasi: ℹ️ " + " · ".join(parts)
-            + " (info saja, tanpa gerbang volume)"]
+    if parts:
+        return [f"{mark} Pasar: " + " · ".join(parts)]
+    status = "terkonfirmasi" if check.get("is_valid") else "belum terkonfirmasi"
+    return [f"{mark} Pasar {status}"]
 
 
 def _pool_link_lines(pools) -> list[str]:
@@ -1635,117 +1575,62 @@ def _pool_link_lines(pools) -> list[str]:
 
 
 def format_alert_message(event: dict) -> str:
-    """Human-readable Telegram message containing all required fields."""
+    """Pesan ringkas beremoji; teks tetap literal, bukan HTML/Markdown.
+
+    Semua jenis memakai blok angka/waktu/link yang sama. Rincian wallet,
+    skor, dan alasan verifikasi panjang tetap ada di event/state untuk audit,
+    bukan di notifikasi. Rule LP/high-drop tanpa baris verifikasi.
+    """
     kind = event.get("kind")
     change = _float(event.get("change_pp"), 0.0) or 0.0
-    # Format ringkas (permintaan user 2026-09-07): baris pengingat berulang
-    # dan baris Verifikasi dibuang; waktu ditulis WIB saja.
+    previous = float(event.get("previous_dust_pct_mc") or 0)
+    current = float(event.get("current_dust_pct_mc") or 0)
+    lp_kind = kind in ("early_dump", ESCALATION_KIND, SAFE_RETURN_KIND)
+    details = []
+    dust_label = "Dust"
+    minutes = _int(event.get("episode_minutes"))
+    episode_time = f" (±{minutes} menit)" if minutes > 0 else ""
+
     if kind == "early_dump":
-        lines = [
-            f"⚡ EARLY DUMP — DUST DI ATAS {DUST_BEST_PCT:g}%",
-            f"Token: ${event.get('symbol') or '?'}",
-            f"Dust sebelumnya: "
-            f"{float(event.get('previous_dust_pct_mc') or 0):.2f}% MC",
-            f"Dust terbaru: "
-            f"{float(event.get('current_dust_pct_mc') or 0):.2f}% MC",
-            f"Perubahan: {change:+.2f} poin persentase",
-            f"Waktu: {_format_wib(event.get('current_ts') or time.time())}",
-            f"Mint: {event.get('mint') or '-'}",
-            *token_link_lines(event.get("mint")),
-            *_pool_link_lines(event.get("pool_addresses")),
-        ]
-        return "\n".join(lines)
-    if kind == ESCALATION_KIND:
-        minutes = _int(event.get("episode_minutes"))
-        lines = [
-            "🚨 WAKTUNYA EXIT / CUTLOSS",
-            f"Token: ${event.get('symbol') or '?'}",
-            f"Dust sebelumnya: "
-            f"{float(event.get('previous_dust_pct_mc') or 0):.2f}% MC",
-            f"Dust terbaru: "
-            f"{float(event.get('current_dust_pct_mc') or 0):.2f}% MC",
-            f"Perubahan: {change:+.2f} poin persentase",
-            f"Dust naik terus {ESCALATION_MIN_RISES} scan berturut "
-            f"(±{minutes} menit) — holder dust bertambah tanpa henti.",
-            f"Waktu: {_format_wib(event.get('current_ts') or time.time())}",
-            f"Mint: {event.get('mint') or '-'}",
-            *token_link_lines(event.get("mint")),
-            *_pool_link_lines(event.get("pool_addresses")),
-        ]
-        return "\n".join(lines)
-    if kind == SAFE_RETURN_KIND:
-        minutes = _int(event.get("episode_minutes"))
-        lines = [
-            "✅ KEMBALI KE TITIK AMAN",
-            f"Token: ${event.get('symbol') or '?'}",
-            f"Dust sebelumnya: "
-            f"{float(event.get('previous_dust_pct_mc') or 0):.2f}% MC",
-            f"Dust terbaru: "
-            f"{float(event.get('current_dust_pct_mc') or 0):.2f}% MC",
-            f"Perubahan: {change:+.2f} poin persentase",
-            f"Dust turun lagi ke bawah {DUST_BEST_PCT:g}% MC "
-            f"(±{minutes} menit sejak peringatan pertama).",
-            f"Waktu: {_format_wib(event.get('current_ts') or time.time())}",
-            f"Mint: {event.get('mint') or '-'}",
-            *token_link_lines(event.get("mint")),
-            *_pool_link_lines(event.get("pool_addresses")),
-        ]
-        return "\n".join(lines)
-    if kind == HIGH_DROP_KIND:
+        title = f"⚡ EARLY DUMP — DUST > {DUST_BEST_PCT:g}%"
+    elif kind == ESCALATION_KIND:
+        title = ESCALATION_TITLE
+        details.append(f"📈 Naik {ESCALATION_MIN_RISES} scan berturut{episode_time}")
+    elif kind == SAFE_RETURN_KIND:
+        title = "✅ KEMBALI KE TITIK AMAN"
+        details.append(f"🛡️ Dust kembali ≤ {DUST_BEST_PCT:g}% MC{episode_time}")
+    elif kind == HIGH_DROP_KIND:
+        title = f"🔔 DUST TURUN ≥ {HIGH_DROP_RATIO * 100:g}% DARI HIGH"
+        dust_label = "Dust (high → kini)"
         drop = _float(event.get("drop_pct"), None)
-        title = f"🔔 DUST TURUN ≥ {HIGH_DROP_RATIO * 100:g}% DARI TITIK HIGH"
-        drop_line = (f"Penurunan: −{drop:.1f}% dari titik high"
-                     if drop is not None else
-                     f"Perubahan: {change:+.2f} poin persentase")
-        lines = [
-            title,
-            f"Token: ${event.get('symbol') or '?'}",
-            f"Titik high: "
-            f"{float(event.get('previous_dust_pct_mc') or 0):.2f}% MC",
-            f"Dust terbaru: "
-            f"{float(event.get('current_dust_pct_mc') or 0):.2f}% MC",
-            drop_line,
-            f"Periode: {event.get('scope') or 'sejak titik high'}",
-            # Tanpa gerbang volume: konteks pasar = info saja (pola sama
-            # dengan ⚡ EARLY DUMP).
-            *_market_info_lines(event.get("volume_check")),
-            f"Waktu: {_format_time(event.get('current_ts') or time.time())}",
-            f"Mint: {event.get('mint') or '-'}",
-            *token_link_lines(event.get("mint")),
-        ]
-        return "\n".join(lines)
-    if kind == "dump":
-        title = "🚨 INDIKASI DUMP — HOLDER DUST NAIK"
+        if drop is not None:
+            details.append(f"📉 Turun {drop:.1f}% dari high")
+    elif kind == "dump":
+        title = "🚨 INDIKASI DUMP"
     elif kind == "accumulation":
-        title = "🟢 KEMUNGKINAN AKUMULASI — HOLDER DUST TURUN"
+        title = "🟢 KEMUNGKINAN AKUMULASI"
     else:
         direction = "NAIK" if change >= 0 else "TURUN"
-        title = f"🔎 CEK PERUBAHAN DUST DARI SNAPSHOT AWAL — {direction}"
+        title = f"🔎 DUST DARI SNAPSHOT AWAL — {direction}"
 
-    movement = event.get("movements") or {}
-    lines = [
-        title,
-        f"Token: ${event.get('symbol') or '?'}",
-        f"Dust sebelumnya: {float(event.get('previous_dust_pct_mc') or 0):.2f}% MC",
-        f"Dust terbaru: {float(event.get('current_dust_pct_mc') or 0):.2f}% MC",
-        f"Perubahan: {change:+.2f} poin persentase",
-        f"Periode: {event.get('scope') or '~4 jam'}",
-        *_verification_lines(event),
-        f"Wallet saldo meningkat: {int(event.get('wallet_increases') or 0)}",
-        "Pergerakan sampel wallet dust:",
-        f"- Membesar / keluar dust: {int(movement.get('dust_grew_out') or 0)}",
-        f"- Jual habis / hilang: {int(movement.get('dust_sold_out') or 0)}",
-        f"- Keluar dust lainnya: {int(movement.get('dust_left_other') or 0)}",
-        f"- Mengecil / masuk dust: {int(movement.get('larger_shrank_into_dust') or 0)}",
-        f"- Wallet dust baru: {int(movement.get('new_dust') or 0)}",
-        f"- Masuk dust lainnya: {int(movement.get('dust_entered_other') or 0)}",
-        f"Waktu: {_format_time(event.get('current_ts') or time.time())}",
-        f"Mint: {event.get('mint') or '-'}",
-        # Link token supaya alert bisa langsung ditindaklanjuti di GMGN /
-        # DexScreener; hilang bila mint tidak diketahui (tidak ada label
-        # menggantung). URL dibangun links.py (satu sumber, sudah di-encode).
+    if not lp_kind and kind != HIGH_DROP_KIND:
+        details.extend(_verification_lines(event))
+
+    lines = [title]
+    if kind == ESCALATION_KIND:
+        lines.append("")  # Judul penting dipisahkan dari detail.
+    lines.extend([
+        f"🪙 ${event.get('symbol') or '?'}",
+        f"📊 {dust_label}: {previous:.2f}% → {current:.2f}% MC ({change:+.2f} pp)",
+        *details,
+        f"🕒 {_format_wib(event.get('current_ts') or time.time())}",
+        f"📋 Mint: {event.get('mint') or '-'}",
+        # URL tetap dari satu sumber, ter-encode, dan tidak ditambahkan
+        # bila mint kosong. Link preview dimatikan di transport.
         *token_link_lines(event.get("mint")),
-    ]
+    ])
+    if lp_kind:
+        lines.extend(_pool_link_lines(event.get("pool_addresses")))
     return "\n".join(lines)
 
 
@@ -1763,8 +1648,13 @@ def _safe_transport_error(exc: Exception, token: str) -> str:
 # lazy per token yang punya kandidat sinyal.
 def send_telegram_message(text: str, *, bot_token: str | None = None,
                           chat_id: str | None = None, timeout: float = 10,
-                          post: Callable | None = None) -> dict:
-    """Send one Bot API ``sendMessage`` request; never raise to the scanner."""
+                          post: Callable | None = None,
+                          entities: list[dict] | None = None) -> dict:
+    """Send one Bot API request; never raise to the scanner.
+
+    Native entities format literal text without parsing token names/mints as
+    markup. Link previews are disabled to keep every notification compact.
+    """
     token = (os.environ.get("TELEGRAM_BOT_TOKEN", "")
              if bot_token is None else str(bot_token)).strip()
     target = (os.environ.get("TELEGRAM_CHAT_ID", "")
@@ -1775,9 +1665,13 @@ def send_telegram_message(text: str, *, bot_token: str | None = None,
 
     request_post = post or requests.post
     try:
+        body = {"chat_id": target, "text": str(text),
+                "link_preview_options": {"is_disabled": True}}
+        if entities:
+            body["entities"] = entities
         response = request_post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            json={"chat_id": target, "text": str(text)}, timeout=timeout)
+            json=body, timeout=timeout)
     except requests.RequestException as exc:
         return {"ok": False, "skipped": False,
                 "error": "Telegram request failed: "
@@ -1804,17 +1698,26 @@ def send_telegram_message(text: str, *, bot_token: str | None = None,
 
 
 def send_telegram_alert(event: dict) -> dict:
-    return send_telegram_message(format_alert_message(event))
+    message = format_alert_message(event)
+    entities = None
+    if event.get("kind") == ESCALATION_KIND:
+        # Telegram tidak mendukung ukuran/warna font atau teks berkedip.
+        # Khusus EXIT: judul tebal + 🚨, tanpa HTML/CSS yang tidak didukung.
+        # Bot API menghitung offset/length dalam UTF-16 (🚨 = dua unit).
+        header = message.split("\n", 1)[0]
+        entities = [{"type": "bold", "offset": 0,
+                     "length": len(header.encode("utf-16-le")) // 2}]
+    return send_telegram_message(message, entities=entities)
 
 
 def send_test_alert() -> dict:
     """Send a harmless deployment test using the same transport as alerts."""
-    stamp = _format_time(int(time.time()))
+    stamp = _format_wib(int(time.time()))
     return send_telegram_message(
         "✅ TEST ALERT HOLDER DUST\n"
-        "Integrasi Telegram Wallet Depth aktif.\n"
-        f"Waktu: {stamp}\n"
-        "Pesan ini hanya pengujian, bukan sinyal token."
+        "📡 Telegram Wallet Depth aktif.\n"
+        "🧪 Uji koneksi, bukan sinyal token.\n"
+        f"🕒 {stamp}"
     )
 
 
