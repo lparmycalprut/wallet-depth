@@ -1,3 +1,57 @@
+# Kegiatan — 7 September 2026 (sesi 8 · 🌊 Scan Meteora: hanya dust ≤ 0,1% + BEST POOL TVL ≥ 10K)
+
+Permintaan user: **"jangan tampilkan yang dust sudah > 0,1%, jadi sesi
+deteksi dan notifikasi aman, hati-hati, bahaya sudah tidak diperlukan lagi,
+bisa dinonaktifkan. Lalu best pool kriterianya dari kriteria kita tambah
+minimum TVL adalah 10K."**
+
+## 1. Filter listing: `hide` = dust > 0,1% MC (`holder_history.py`)
+
+- Konstanta baru `DUST_SCAN_HIDE_PCT = DUST_BEST_PCT` (0,1). `dust_flag()`
+  kini mengisi `hide = pct > DUST_SCAN_HIDE_PCT` untuk semua level — dulu
+  hanya BAHAYA (≥ 1%) yang `hide`. `should_hide_dust()` (dipakai
+  `meteora_screener.hide_dust_limit`) otomatis ikut. Boundary strict `>`:
+  tepat 0,1% masih tampil (tapi bukan BEST POOL karena butuh `<`), dust
+  `None` (holder gagal) tetap tampil tanpa angka.
+- **Level/label AMAN/HATI-HATI/BAHAYA tidak dihapus** dari `dust_flag` —
+  Chart LP Meteora, Robinhood LP, cron dan alert masih memakainya. Yang
+  dinonaktifkan hanya *tampilannya* di listing Scan Meteora.
+- `DUST_LIMIT_PCT` (alias lama) sekarang menunjuk `DUST_SCAN_HIDE_PCT`.
+
+## 2. BEST POOL + minimum TVL 10K
+
+- `DUST_BEST_MIN_TVL_USD = 10_000.0` + guard `_tvl_valid_for_best()`.
+  `dust_flag(..., holders=..., tvl=...)` → `best` True hanya bila dust
+  < 0,1% **dan** holder valid (≥ 40 wallet) **dan** TVL ≥ 10K. `tvl=None`
+  → bukan best (sama seperti `holders=None`), jadi Chart LP / watchlist yang
+  tidak mengirim TVL tidak berubah perilaku.
+- Sumber TVL = field `tvl` pool dari API Meteora (sudah ada di baris hasil
+  `_row_from_pool`).
+
+## 3. UI `app.py` (`_render_meteora_scan`)
+
+- Baris listing **tidak lagi** merender `_dust_badge_html` (chip
+  AMAN/HATI-HATI/BAHAYA); hanya angka dust % MC + chip 🏆 BEST POOL.
+- Kolom baru **TVL** di antara MC dan Dust (`col_spec` 8 kolom).
+- Caption + ringkasan "N disembunyikan (dust > 0,1% MC)" + hero text
+  disesuaikan; `scan_meteora()` menambah `hide_pct` di hasil.
+
+## Verifikasi
+
+- `tests/test_holder_history.py`: boundary hide 0,1 (strict), guard TVL
+  (None / "abc" / 9 999,99 → bukan best; 10 000 / "12000" → best).
+- `tests/test_meteora_screener.py`: 2,4% / 0,5% / 0,2% disembunyikan,
+  `None` / 0,1 / 0,03 tetap; `analysis.holders.dust_pct_mc` menang atas
+  `row.dust_pct_mc`; `hide_pct` di hasil scan.
+- `tests/test_lp_card_ui.py::MeteoraBestBadgeTest`: 3 baris (CLN TVL 25K →
+  BEST; BGS holder 0 → bukan; THN TVL 4K → bukan), kolom TVL dirender,
+  tidak ada chip level di listing.
+- Suite penuh: 867 passed (1 test `StandalonePageTest` pre-pump gagal
+  karena sandbox tanpa akses jaringan — sudah gagal di `main`, tidak
+  terkait).
+
+---
+
 # Kegiatan — 6 September 2026 (sesi 7 · 🗑️ Hapus semua watchlist biasa)
 
 Permintaan user: **"tambahkan tombol delete all watchlist di watchlist biasa

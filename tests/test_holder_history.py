@@ -29,17 +29,29 @@ class DustFlagTest(unittest.TestCase):
         flag = hh.dust_flag(0.5)
         self.assertEqual(flag["level"], "caution")
         self.assertEqual(flag["label"], "HATI-HATI")
-        # HATI-HATI masih di bawah BAHAYA: tidak disembunyikan dari Meteora.
-        self.assertFalse(flag["hide"])
-        self.assertFalse(hh.should_hide_dust(0.5))
+        # Sejak 2026-09-07 Scan Meteora hanya menampilkan dust ≤ 0,1% MC:
+        # HATI-HATI ikut disembunyikan (level tetap untuk Chart LP).
+        self.assertTrue(flag["hide"])
+        self.assertTrue(hh.should_hide_dust(0.5))
         self.assertEqual(hh.dust_flag(0.99)["level"], "caution")
 
     def test_ok_below_caution_threshold(self):
         flag = hh.dust_flag(0.49)
         self.assertEqual(flag["level"], "ok")
         self.assertEqual(flag["label"], "AMAN")
-        self.assertFalse(flag["hide"])
+        # AMAN tapi > 0,1% MC → tetap disembunyikan dari Scan Meteora.
+        self.assertTrue(flag["hide"])
         self.assertFalse(hh.should_hide_dust(0.0))
+
+    def test_scan_hide_boundary_strict_above_01(self):
+        # Ambang sembunyi = DUST_SCAN_HIDE_PCT (0,1%), strict ">": tepat
+        # 0,1% masih tampil (tapi bukan BEST POOL karena butuh "<").
+        self.assertEqual(hh.DUST_SCAN_HIDE_PCT, hh.DUST_BEST_PCT)
+        self.assertFalse(hh.should_hide_dust(0.1))
+        self.assertFalse(hh.dust_flag(0.1)["hide"])
+        self.assertTrue(hh.should_hide_dust(0.1001))
+        self.assertFalse(hh.should_hide_dust(0.05))
+        self.assertFalse(hh.should_hide_dust(None))
 
     def test_unknown_without_pct(self):
         flag = hh.dust_flag(None)
@@ -264,11 +276,15 @@ def _valid_holders(fetched=55, wallets=45):
             "real_count": wallets - 3, "dust_count": 3}
 
 
+TVL_OK = 25_000.0
+
+
 class DustBestFlagTest(unittest.TestCase):
-    """Badge BEST POOL (dust < 0,1% MC) + guard kebenaran data (2026-09-04)."""
+    """Badge BEST POOL (dust < 0,1% MC) + guard kebenaran data (2026-09-04)
+    + guard TVL pool ≥ 10K (2026-09-07)."""
 
     def test_best_hanya_di_bawah_01_persen_dengan_data_valid(self):
-        flag = hh.dust_flag(0.08, holders=_valid_holders())
+        flag = hh.dust_flag(0.08, holders=_valid_holders(), tvl=TVL_OK)
         self.assertTrue(flag["best"])
         # Level lama tidak berubah: badge BEST POOL bersifat penanda tambahan.
         self.assertEqual(flag["level"], "ok")
@@ -279,43 +295,66 @@ class DustBestFlagTest(unittest.TestCase):
         # Boundary sengaja strict: == 0,1% bukan BEST POOL (< 0,1%) dan juga
         # tidak memicu rule early_dump (> 0,1%) — dua sinyal tidak tumpang
         # tindih di angka yang sama (dokumentasi PROGRESS.md).
-        flag = hh.dust_flag(0.1, holders=_valid_holders())
+        flag = hh.dust_flag(0.1, holders=_valid_holders(), tvl=TVL_OK)
         self.assertFalse(flag["best"])
         self.assertEqual(flag["level"], "ok")
+        self.assertFalse(flag["hide"])
 
     def test_di_atas_01_persen_tidak_best_walau_data_valid(self):
-        self.assertFalse(hh.dust_flag(0.1001, holders=_valid_holders())[
-                         "best"])
-        self.assertFalse(hh.dust_flag(0.5, holders=_valid_holders())["best"])
+        self.assertFalse(hh.dust_flag(0.1001, holders=_valid_holders(),
+                                      tvl=TVL_OK)["best"])
+        self.assertFalse(hh.dust_flag(0.5, holders=_valid_holders(),
+                                      tvl=TVL_OK)["best"])
 
     def test_tanpa_holders_tidak_pernah_best(self):
         # Pemanggil lama (watchlist / Chart LP) tidak mengirim bukti data →
         # perilaku default tidak berubah: tidak ada badge BEST POOL.
         self.assertFalse(hh.dust_flag(0.05)["best"])
-        self.assertFalse(hh.dust_flag(0.05, holders=None)["best"])
-        self.assertFalse(hh.dust_flag(0.05, holders={})["best"])
+        self.assertFalse(hh.dust_flag(0.05, holders=None, tvl=TVL_OK)["best"])
+        self.assertFalse(hh.dust_flag(0.05, holders={}, tvl=TVL_OK)["best"])
+
+    def test_tanpa_tvl_tidak_pernah_best(self):
+        # Kriteria baru 2026-09-07: TVL pool minimum 10K. Tanpa angka TVL
+        # (None / tidak terbaca) tidak ada bukti likuiditas → bukan best.
+        self.assertFalse(hh.dust_flag(0.05, holders=_valid_holders())["best"])
+        self.assertFalse(hh.dust_flag(0.05, holders=_valid_holders(),
+                                      tvl=None)["best"])
+        self.assertFalse(hh.dust_flag(0.05, holders=_valid_holders(),
+                                      tvl="abc")["best"])
+
+    def test_tvl_di_bawah_10k_tidak_best(self):
+        self.assertEqual(hh.DUST_BEST_MIN_TVL_USD, 10_000.0)
+        self.assertFalse(hh.dust_flag(0.05, holders=_valid_holders(),
+                                      tvl=9_999.99)["best"])
+        self.assertFalse(hh.dust_flag(0.05, holders=_valid_holders(),
+                                      tvl=0)["best"])
+        # Tepat 10K sudah memenuhi (>=).
+        self.assertTrue(hh.dust_flag(0.05, holders=_valid_holders(),
+                                     tvl=10_000)["best"])
+        self.assertTrue(hh.dust_flag(0.05, holders=_valid_holders(),
+                                     tvl="12000")["best"])
 
     def test_data_kosong_tidak_best(self):
         # dust 0,00% juga muncul saat fetch holder gagal/kosong.
         self.assertFalse(hh.dust_flag(0.0, holders={
-            "total_fetched": 0, "wallets_analyzed": 0})["best"])
+            "total_fetched": 0, "wallets_analyzed": 0}, tvl=TVL_OK)["best"])
         self.assertFalse(hh.dust_flag(0.0, holders={
-            "total_fetched": 0, "wallets_analyzed": 45})["best"])
+            "total_fetched": 0, "wallets_analyzed": 45}, tvl=TVL_OK)["best"])
 
     def test_holder_di_bawah_min_40_tidak_best(self):
         self.assertFalse(hh.dust_flag(0.05, holders=_valid_holders(
-            fetched=39, wallets=38))["best"])
+            fetched=39, wallets=38), tvl=TVL_OK)["best"])
         self.assertFalse(hh.dust_flag(0.05, holders={
-            "total_fetched": 400, "wallets_analyzed": 39})["best"])
+            "total_fetched": 400, "wallets_analyzed": 39}, tvl=TVL_OK)["best"])
 
     def test_fallback_wallets_analyzed_dari_real_dan_dust(self):
         holders = {"total_fetched": 80, "real_count": 30, "dust_count": 12}
-        self.assertTrue(hh.dust_flag(0.03, holders=holders)["best"])
+        self.assertTrue(hh.dust_flag(0.03, holders=holders, tvl=TVL_OK)["best"])
         holders = {"total_fetched": 80, "real_count": 20, "dust_count": 12}
-        self.assertFalse(hh.dust_flag(0.03, holders=holders)["best"])
+        self.assertFalse(hh.dust_flag(0.03, holders=holders, tvl=TVL_OK)["best"])
 
     def test_flag_tetap_aman_walau_unknown(self):
-        flag = hh.dust_flag(None, holders=_valid_holders())
+        flag = hh.dust_flag(None, holders=_valid_holders(), tvl=TVL_OK)
         self.assertFalse(flag["best"])
         self.assertEqual(flag["level"], "unknown")
 

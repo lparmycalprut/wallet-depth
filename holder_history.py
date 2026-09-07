@@ -63,6 +63,10 @@ DUST_BEST_LABEL = "BEST POOL"
 # Data holder di bawah jumlah ini dianggap gagal/tidak representatif:
 # dust "0,00%" dari data kosong/rusak TIDAK BOLEH jadi BEST POOL.
 DUST_BEST_MIN_HOLDERS = 40
+# BEST POOL juga mensyaratkan likuiditas pool (TVL Meteora, USD) minimal
+# 10K (permintaan user 2026-09-07). Pool tipis dengan dust 0% bukan "best".
+# ``tvl=None`` (pemanggil tidak punya angka TVL, mis. Chart LP) → bukan best.
+DUST_BEST_MIN_TVL_USD = 10_000.0
 # Ambang yang sama dipakai sebagai lantai **kelayakan data** di seluruh
 # dashboard/alert (lihat :func:`holders_usable` / :func:`point_usable`).
 # Kasus nyata 2026-09-06: Helius gagal (rate limit) dan fallback GMGN
@@ -72,8 +76,13 @@ DUST_BEST_MIN_HOLDERS = 40
 # ``dust_pct_mc = 0.0`` — watchlist lalu menampilkan "dust turun -100%
 # sejak masuk" untuk puluhan token padahal tidak ada yang menjual.
 MIN_USABLE_WALLETS = DUST_BEST_MIN_HOLDERS
+# Scan Meteora (2026-09-07): listing hanya menampilkan pool dengan dust
+# **≤ 0,1% MC**. Pool dengan dust > 0,1% MC disembunyikan seluruhnya —
+# level AMAN/HATI-HATI/BAHAYA tidak lagi dipakai di listing itu (badge-nya
+# dinonaktifkan; ``dust_flag`` tetap mengembalikan level untuk Chart LP).
+DUST_SCAN_HIDE_PCT = DUST_BEST_PCT
 # alias lama (kompatibilitas import)
-DUST_LIMIT_PCT = DUST_DANGER_PCT
+DUST_LIMIT_PCT = DUST_SCAN_HIDE_PCT
 # Urutan keparahan badge (dipakai sorting Chart LP / watchlist).
 DUST_LEVEL_RANK = {"ok": 0, "caution": 1, "danger": 2}
 INTERVAL_SEC = 4 * 3600          # grafik 4 jam sekali
@@ -251,20 +260,33 @@ def usable_points(points, *, min_wallets: int = MIN_USABLE_WALLETS) -> list:
             and point_usable(row, min_wallets=min_wallets)]
 
 
-def dust_flag(dust_pct_mc, prev_pct=None, *, holders=None) -> dict:
+def _tvl_valid_for_best(tvl) -> bool:
+    """Guard likuiditas badge **BEST POOL**: TVL pool ≥ 10K USD.
+
+    ``None``/tidak terbaca → False (tidak ada bukti likuiditas → bukan best),
+    sama seperti perlakuan ``holders=None``.
+    """
+    value = _float(tvl, None)
+    return bool(value is not None and value >= DUST_BEST_MIN_TVL_USD)
+
+
+def dust_flag(dust_pct_mc, prev_pct=None, *, holders=None, tvl=None) -> dict:
     """Klasifikasi dust % MC: ok / caution / danger (+ info ``best``).
 
     - ``>= 0,5% MC`` → **HATI-HATI** (``caution``): dust sudah memegang
-      porsi MC yang berarti, pantau lebih ketat.
-    - ``>= 1% MC`` → **BAHAYA** (``danger``): ``hide`` True, disembunyikan
-      dari Scan Meteora.
+      porsi MC yang berarti, pantau lebih ketat (Chart LP / watchlist).
+    - ``>= 1% MC`` → **BAHAYA** (``danger``).
+    - ``hide`` True bila ``dust_pct_mc > DUST_SCAN_HIDE_PCT`` (0,1%): baris
+      disembunyikan dari listing **Scan Meteora** (sejak 2026-09-07 listing
+      itu hanya memuat pool dengan dust ≤ 0,1% MC dan tidak lagi menampilkan
+      badge AMAN/HATI-HATI/BAHAYA).
 
-    Level/label/hide yang lama **tidak berubah** (AMAN/HATI-HATI/BAHAYA
-    tetap). Tambahan aditif: ``best`` True hanya untuk pool dengan
-    ``dust_pct_mc < DUST_BEST_PCT`` (0,1%) **dan** data holder valid — lihat
-    :func:`_holders_valid_for_best` (``holders`` = dict hasil
-    ``analysis["holders"]``; ``None`` = tidak ada bukti → tidak pernah best,
-    supaya pemanggil lama seperti watchlist/LP card tidak berubah perilaku).
+    ``best`` True hanya untuk pool dengan ``dust_pct_mc < DUST_BEST_PCT``
+    (0,1%) **dan** data holder valid (:func:`_holders_valid_for_best`;
+    ``holders`` = dict hasil ``analysis["holders"]``) **dan** TVL pool
+    ≥ :data:`DUST_BEST_MIN_TVL_USD` (10K USD, :func:`_tvl_valid_for_best`).
+    ``holders=None`` / ``tvl=None`` = tidak ada bukti → tidak pernah best,
+    supaya pemanggil lama seperti watchlist/LP card tidak berubah perilaku.
     ``best`` tidak memengaruhi ``level``/``hide``/``dust_level_rank``.
 
     ``rising`` True jika % MC naik dibanding titik sebelumnya.
@@ -273,17 +295,19 @@ def dust_flag(dust_pct_mc, prev_pct=None, *, holders=None) -> dict:
     prev = _float(prev_pct, None)
     rising = bool(pct is not None and prev is not None and pct > prev)
     best = bool(pct is not None and pct < DUST_BEST_PCT
-                and _holders_valid_for_best(holders))
+                and _holders_valid_for_best(holders)
+                and _tvl_valid_for_best(tvl))
     if pct is None:
         return {"level": "unknown", "label": "—", "hide": False,
                 "rising": False, "pct": None, "best": False}
+    hide = bool(pct > DUST_SCAN_HIDE_PCT)
     if pct >= DUST_DANGER_PCT:
-        return {"level": "danger", "label": "BAHAYA", "hide": True,
+        return {"level": "danger", "label": "BAHAYA", "hide": hide,
                 "rising": rising, "pct": pct, "best": False}
     if pct >= DUST_CAUTION_PCT:
-        return {"level": "caution", "label": "HATI-HATI", "hide": False,
+        return {"level": "caution", "label": "HATI-HATI", "hide": hide,
                 "rising": rising, "pct": pct, "best": False}
-    return {"level": "ok", "label": "AMAN", "hide": False,
+    return {"level": "ok", "label": "AMAN", "hide": hide,
             "rising": rising, "pct": pct, "best": best}
 
 
@@ -293,7 +317,12 @@ def dust_level_rank(level) -> int:
 
 
 def should_hide_dust(dust_pct_mc) -> bool:
-    """True bila dust holder memegang ≥ 1% marketcap (BAHAYA)."""
+    """True bila dust holder memegang **> 0,1%** marketcap.
+
+    Dipakai Scan Meteora: listing hanya menampilkan pool dengan dust
+    ≤ :data:`DUST_SCAN_HIDE_PCT`. Dust ``None`` (data gagal) tidak
+    disembunyikan (tidak ada bukti dust), tapi juga tidak pernah BEST POOL.
+    """
     return bool(dust_flag(dust_pct_mc)["hide"])
 
 
