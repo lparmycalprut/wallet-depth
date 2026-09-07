@@ -126,7 +126,7 @@ class EpisodeMessageTest(unittest.TestCase):
         message = self._message([0.15, 0.22, 0.31], ta.ESCALATION_KIND)
         self.assertEqual(
             message.splitlines()[0],
-            "🚨 WAKTUNYA EXIT / CUTLOSS / Reshape 20 80 10 bin")
+            "🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 10 bin - TP 5% - 10%")
         self.assertEqual(message.splitlines()[1], "")
         self.assertIn("$LPX", message)
         self.assertIn("📊 Dust: 0.22% → 0.31% MC (+0.09 pp)", message)

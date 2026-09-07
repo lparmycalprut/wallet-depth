@@ -74,7 +74,7 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
      dust masih naik; dikirim **tanpa** gerbang volume keras (konteks pasar
      disimpan untuk audit). Catatan: saat ini 0 token watchlist ber-source
      meteora — rule aktif begitu ada pool yang di-⭐ dari Scan Meteora.
-   - **🚨 WAKTUNYA EXIT / CUTLOSS / Reshape 20 80 10 bin** (2026-09-07)
+   - **🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 10 bin - TP 5% - 10%** (2026-09-07)
      — eskalasi dari ⚡ EARLY DUMP: bila dalam **15 menit** setelah
      pengingat pertama dust terus
      bertambah selama **3 scan 5 menit berturut-turut** (holder dust
@@ -181,7 +181,7 @@ warna teks merah, atau teks berkedip, jadi penekanan memakai **tebal + 🚨**,
 bukan HTML/CSS yang tidak didukung. Aturan pemicu dan frekuensi tidak berubah.
 
 ```text
-🚨 WAKTUNYA EXIT / CUTLOSS / Reshape 20 80 10 bin
+🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 10 bin - TP 5% - 10%
 
 🪙 $LPX
 📊 Dust: 0.22% → 0.31% MC (+0.09 pp)
