@@ -4,7 +4,8 @@
 Token yang ditambahkan dari Scan Meteora (``source="meteora"``) atau
 ditambahkan manual ke card LP dikumpulkan di card paling atas dashboard.
 Card ini menampilkan **grafik perubahan dust holder** (dust % MC per bucket
-4 jam + jumlah wallet dust) beserta garis ambang:
+**5 menit** — mengikuti kadens cron lane LP — + jumlah wallet dust) beserta
+garis ambang:
 
 - ``>= 0,5% MC`` → HATI-HATI
 - ``>= 1% MC``   → BAHAYA
@@ -22,10 +23,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
-from holder_history import (DUST_CAUTION_PCT, DUST_DANGER_PCT, dust_flag,
-                            dust_level_rank, history_for_mint, holders_usable,
-                            merge_points, point_usable, resample_4h,
-                            usable_points)
+from holder_history import (DUST_CAUTION_PCT, DUST_DANGER_PCT,
+                            LP_INTERVAL_SEC, dust_flag, dust_level_rank,
+                            history_for_mint, holders_usable, merge_points,
+                            point_usable, resample_5m, usable_points)
 
 if TYPE_CHECKING:  # pragma: no cover - hanya untuk anotasi tipe
     from matplotlib.figure import Figure
@@ -118,7 +119,7 @@ def build_lp_row(mint: str, meta: dict | None, status_tokens: dict | None,
     holders = token.get("holders") if isinstance(token.get("holders"), dict) \
         else {}
     points = points_for_mint(mint, status_tokens, store)
-    sampled = resample_4h(usable_points(points))
+    sampled = resample_5m(usable_points(points))
 
     holders_ok = bool(holders) and holders_usable(holders)
     dust_pct = _float(holders.get("dust_pct_mc"), None) if holders_ok else None
@@ -156,6 +157,10 @@ def build_lp_row(mint: str, meta: dict | None, status_tokens: dict | None,
         "prev_pct": _float(prev_pct, None),
         "first_pct": _float(first_pct, None),
         "flag": dust_flag(dust_pct, prev_pct),
+        # Δ terhadap bucket 5 menit sebelumnya. Kolom ini tidak lagi
+        # dirender di tabel (permintaan user 2026-09-07); tetap dihitung
+        # untuk konsumen data lain.
+        "delta_prev": _delta_pp(prev_pct, dust_pct),
         "delta_4h": _delta_pp(prev_pct, dust_pct),
         "delta_total": _delta_pp(first_pct, dust_pct),
         "mc": _float(token.get("marketcap"), None),
@@ -225,17 +230,17 @@ def _threshold_lines(axis) -> None:
 
 
 def lp_chart_figure(points, symbol: str = "?") -> Figure | None:
-    """Grafik perubahan dust holder satu token (bucket 4 jam).
+    """Grafik perubahan dust holder satu token (bucket 5 menit).
 
     Garis = dust % MC (sumbu kiri), batang = jumlah wallet dust (sumbu
-    kanan), plus garis ambang HATI-HATI/BAHAYA. ``None`` bila titik 4 jam
+    kanan), plus garis ambang HATI-HATI/BAHAYA. ``None`` bila titik 5 menit
     belum cukup (< 2). Pemanggil wajib ``plt.close(fig)``.
 
     Titik dari scan yang datanya tidak lengkap dibuang lebih dulu
     (:func:`holder_history.point_usable`) supaya grafik tidak menggambar
     tebing palsu ke 0%.
     """
-    sampled = resample_4h(usable_points(points))
+    sampled = resample_5m(usable_points(points))
     if len(sampled) < 2:
         return None
     labels = [_wib(row.get("ts")) for row in sampled]
@@ -254,7 +259,8 @@ def lp_chart_figure(points, symbol: str = "?") -> Figure | None:
               label="Dust % MC", zorder=3)
     _threshold_lines(axis)
     axis.set_ylabel("Dust % marketcap")
-    axis.set_title(f"Perubahan dust holder ${str(symbol).upper()} (4 jam)")
+    axis.set_title(f"Perubahan dust holder ${str(symbol).upper()} "
+                   f"({LP_INTERVAL_SEC // 60} menit)")
     axis.tick_params(axis="x", rotation=30, labelsize=8)
     axis.grid(alpha=.2)
     axis.margins(x=.02)
@@ -270,7 +276,7 @@ def lp_overlay_figure(rows) -> Figure | None:
     """Overlay dust % MC seluruh token Chart LP dalam satu grafik."""
     series = []
     for row in rows or []:
-        sampled = resample_4h(usable_points((row or {}).get("points") or []))
+        sampled = resample_5m(usable_points((row or {}).get("points") or []))
         points = [(point.get("ts"), _float(point.get("dust_pct_mc"), None))
                   for point in sampled]
         points = [(ts, value) for ts, value in points if value is not None]

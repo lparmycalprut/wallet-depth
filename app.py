@@ -16,15 +16,15 @@ from holder_history import (DUST_BEST_LABEL, DUST_BEST_MIN_TVL_USD,
                             history_for_mint, holders_usable, ingest_many,
                             load_durable_holder_history, merge_points,
                             resample_4h,
-                            seed_from_status, sparkline_svg, usable_points)
+                            resample_5m, seed_from_status,
+                            usable_points)
 from links import (external_links_html, holder_analytic_link_html,
                    pool_links_html)
 import alert_settings
 from lp_watchlist import (LP_SOURCE, lp_card_rows, lp_chart_figure,
-                          lp_overlay_figure, lp_summary, split_watchlist)
+                          lp_summary, split_watchlist)
 from meteora_screener import scan_meteora
 import page_router
-import pre_pump_screener
 import robinhood_holders
 import robinhood_watchlist
 from robinhood_watchlist import (RH_LP_SOURCE, RH_REGULAR_SOURCE,
@@ -321,14 +321,10 @@ def _render_lp_row(row: dict) -> None:
     # Titik dari scan yang datanya tidak lengkap tidak digambar (lihat
     # holder_history.point_usable) — kalau tidak, grafik menukik ke 0%.
     chart_points = usable_points(row.get("points") or [])
-    spark = sparkline_svg(chart_points, key="dust_pct_mc")
-    if not spark:
-        spark = ('<span style="font-size:.7rem;color:#64748b;">'
-                 "belum ada grafik</span>")
 
     short_note = (" · ⚠️ scan terakhir tidak lengkap"
                   if row.get("degraded") else "")
-    cols = st.columns([1.7, 0.75, 0.95, 0.9, 1.25, 0.42, 0.42, 0.42])
+    cols = st.columns([1.7, 0.75, 0.95, 0.42, 0.42, 0.42])
     cols[0].markdown(
         f'<div class="watchlist-token">'
         f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
@@ -346,23 +342,14 @@ def _render_lp_row(row: dict) -> None:
         f'<div class="watchlist-metric">'
         f'<div class="watchlist-metric-value">{pct_txt}</div>'
         f'{_dust_badge_html(flag)}</div>', unsafe_allow_html=True)
-    cols[3].markdown(
-        f'<div class="watchlist-metric">'
-        f'<div class="watchlist-metric-value">'
-        f'{_delta_pp_html(row.get("delta_4h"))}</div>'
-        f'<div class="watchlist-metric-sub">total '
-        f'{_delta_pp_html(row.get("delta_total"), 2)}</div></div>',
-        unsafe_allow_html=True)
-    cols[4].markdown(f'<div style="text-align:center;">{spark}</div>',
+    cols[3].markdown(holder_analytic_link_html(mint),
                      unsafe_allow_html=True)
-    cols[5].markdown(holder_analytic_link_html(mint),
-                     unsafe_allow_html=True)
-    if cols[6].button("📋", key=f"lp-move-{mint}",
+    if cols[4].button("📋", key=f"lp-move-{mint}",
                       help="Pindahkan ke Watchlist Holder",
                       use_container_width=True):
         set_watchlist_source(mint, "manual", background=True)
         st.rerun()
-    if cols[7].button("✕", key=f"lp-remove-{mint}",
+    if cols[5].button("✕", key=f"lp-remove-{mint}",
                       help="Hapus dari Chart LP", use_container_width=True):
         remove_from_watchlist(mint, background=True)
         st.rerun()
@@ -371,7 +358,7 @@ def _render_lp_row(row: dict) -> None:
                      expanded=False):
         figure = lp_chart_figure(chart_points, symbol)
         if figure is None:
-            st.info("Butuh minimal 2 titik bucket 4 jam. Cron watchlist LP "
+            st.info("Butuh minimal 2 titik bucket 5 menit. Cron watchlist LP "
                     "(tiap ±5 menit) atau tombol **Scan sekarang** di card "
                     "ini akan mengisinya.")
         else:
@@ -380,7 +367,7 @@ def _render_lp_row(row: dict) -> None:
         st.caption(
             f"Garis = dust % marketcap · batang = jumlah wallet dust · "
             f"ambang HATI-HATI {DUST_CAUTION_PCT:g}% / BAHAYA "
-            f"{DUST_DANGER_PCT:g}% · titik per 4 jam "
+            f"{DUST_DANGER_PCT:g}% · titik per 5 menit "
             f"({len(row.get('sampled') or [])} bucket).")
         if isinstance(holders.get("depth"), dict):
             _render_depth(holders, symbol)
@@ -403,7 +390,7 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
             f"hold % MC dust di atas **{DUST_BEST_PCT:g}%**, alert ⚡ "
             "Telegram dikirim **berulang tiap scan** — berhenti bila token "
             "dihapus (✕) atau dipindah ke watchlist biasa (📋). Grafik "
-            "menampilkan **perubahan dust holder** per bucket 4 jam: "
+            "menampilkan **perubahan dust holder** per bucket 5 menit: "
             f"≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
             f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA.")
 
@@ -481,17 +468,9 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
                     "Meteora Pool** di bawah atau tempel CA di form atas.")
             return
 
-        overlay = lp_overlay_figure(rows)
-        if overlay is not None:
-            with st.expander("📈 Overlay dust % MC semua token LP",
-                             expanded=True):
-                st.pyplot(overlay, use_container_width=True)
-                plt.close(overlay)
-
-        header = st.columns([1.7, 0.75, 0.95, 0.9, 1.25, 0.42, 0.42, 0.42])
+        header = st.columns([1.7, 0.75, 0.95, 0.42, 0.42, 0.42])
         style = "font-size:0.72rem;color:#000000;font-weight:700;"
-        titles = ["Token", "Dust", "Hold %MC", "Δ 4 jam", "Grafik 4 jam",
-                  "", "", ""]
+        titles = ["Token", "Dust", "Hold %MC", "", "", ""]
         for col, title in zip(header, titles):
             align = "" if title == "Token" else "text-align:center;"
             col.markdown(f'<div style="{style}{align}">{title}</div>',
@@ -811,12 +790,8 @@ def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
                 else (f"≥{int(dust_count)}" if truncated
                       else f"{int(dust_count):,}"))
     pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.2f}%"
-    spark = sparkline_svg(row.get("points") or [], key="dust_pct_mc")
-    if not spark:
-        spark = ('<span style="font-size:.7rem;color:#64748b;">'
-                 "belum ada grafik</span>")
 
-    cols = st.columns([1.7, 0.8, 0.95, 1.0, 1.25, 0.42, 0.42, 0.42])
+    cols = st.columns([1.7, 0.8, 0.95, 0.42, 0.42, 0.42])
     chain_note = ("LP · scan ±5 menit" if variant == "lp"
                   else "biasa · scan ±4 jam")
     # Scan yang pulang dengan 0 wallet (provider holder gagal/kena rate limit)
@@ -847,35 +822,26 @@ def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
         f'<div class="watchlist-metric">'
         f'<div class="watchlist-metric-value">{pct_txt}</div>'
         f'{_dust_badge_html(flag)}</div>', unsafe_allow_html=True)
-    cols[3].markdown(
-        f'<div class="watchlist-metric">'
-        f'<div class="watchlist-metric-value">'
-        f'{_delta_pp_html(row.get("delta_4h"))}</div>'
-        f'<div class="watchlist-metric-sub">total '
-        f'{_delta_pp_html(row.get("delta_total"), 2)}</div></div>',
-        unsafe_allow_html=True)
-    cols[4].markdown(f'<div style="text-align:center;">{spark}</div>',
-                     unsafe_allow_html=True)
-    cols[5].markdown(holder_analytic_link_html(mint),
+    cols[3].markdown(holder_analytic_link_html(mint),
                      unsafe_allow_html=True)
     if variant == "lp":
-        if cols[6].button("📋", key=f"rh-move-{mint}",
+        if cols[4].button("📋", key=f"rh-move-{mint}",
                           help="Pindahkan ke Watchlist Robinhood (biasa, "
                                "scan ±4 jam) — pengingat ⚡ >0,1% berhenti",
                           use_container_width=True):
             robinhood_watchlist.set_robinhood_watchlist_source(
                 mint, RH_REGULAR_SOURCE, background=True)
             st.rerun()
-        remove_col = cols[7]
+        remove_col = cols[5]
     else:
-        if cols[6].button("⚡", key=f"rhreg-move-{mint}",
+        if cols[4].button("⚡", key=f"rhreg-move-{mint}",
                           help="Pindahkan ke Watchlist Robinhood LP "
                                "(scan cepat ±5 menit)",
                           use_container_width=True):
             robinhood_watchlist.set_robinhood_watchlist_source(
                 mint, RH_LP_SOURCE, background=True)
             st.rerun()
-        remove_col = cols[7]
+        remove_col = cols[5]
     if remove_col.button("✕", key=f"{prefix}-remove-{mint}",
                          help="Hapus dari watchlist Robinhood",
                          use_container_width=True):
@@ -902,7 +868,8 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
             token, points, now=now,
             stale_after=(STALE_AFTER_SEC if variant == "lp"
                          else STALE_REGULAR_AFTER_SEC))
-        sampled = resample_4h(points)
+        sampled = (resample_5m(points) if variant == "lp"
+                   else resample_4h(points))
         prev = previous_pct(sampled, view)
         dust_pct = view.get("dust_pct")
         flag = dust_flag(dust_pct, prev, holders=token.get("holders"))
@@ -1041,10 +1008,9 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
             st.info(empty_text)
             return
 
-        header = st.columns([1.7, 0.8, 0.95, 1.0, 1.25, 0.42, 0.42, 0.42])
+        header = st.columns([1.7, 0.8, 0.95, 0.42, 0.42, 0.42])
         style = "font-size:0.72rem;color:#000000;font-weight:700;"
-        titles = ["Token", "Dust", "Hold %MC", "Δ 4 jam", "Grafik 4 jam",
-                  "", "", ""]
+        titles = ["Token", "Dust", "Hold %MC", "", "", ""]
         for col, col_title in zip(header, titles):
             align = "" if col_title == "Token" else "text-align:center;"
             col.markdown(f'<div style="{style}{align}">{col_title}</div>',
@@ -1090,6 +1056,9 @@ _rh_now_ts = int(datetime.now(timezone.utc).timestamp())
 # seluruh watchlist supaya kedua card punya data.
 lp_watch, holder_watch = split_watchlist(watchlist)
 _render_lp_card(lp_watch, status_tokens, history_store)
+# Scan Meteora Pool tepat di bawah card Chart LP (permintaan user
+# 2026-09-07): sumber token card itu, jadi alurnya scan -> ⭐ -> card.
+_render_meteora_scan()
 
 # Watchlist Robinhood dipecah dua card (2026-09-05): **Robinhood LP** (scan
 # cepat ±5 menit sejak 2026-09-06, pengingat ⚡ >0,1% berulang) di atas,
@@ -1339,20 +1308,20 @@ else:
             }
             st.rerun()
 
-    header_cols = st.columns([1.55, 0.85, 0.9, 1.05, 1.05, 0.4, 0.4, 0.4])
+    header_cols = st.columns([1.55, 0.85, 0.9, 1.05, 0.4, 0.4, 0.4])
     header_style = "font-size:0.78rem;color:#000000;font-weight:700;"
     center = "text-align:center;" + header_style
-    header_titles = ["Token", "Dust", "Hold %MC", "Sejak masuk", "4 jam",
+    header_titles = ["Token", "Dust", "Hold %MC", "Sejak masuk",
                      "", "", ""]
-    header_css = [header_style] + [center] * 7
+    header_css = [header_style] + [center] * 6
     for col, style, title in zip(header_cols, header_css, header_titles):
         col.markdown(f'<div style="{style}">{title}</div>',
                      unsafe_allow_html=True)
 
     st.markdown(
         '<div style="font-size:0.65rem;color:#64748b;margin:0.3rem 0;">'
-        "Dust = wallet 0 &lt; value ≤ $10 (bukan LP). Grafik 4 jam = "
-        "perubahan dust % MC. <b>Sejak masuk</b> = perubahan dust % MC dari "
+        "Dust = wallet 0 &lt; value ≤ $10 (bukan LP). "
+        "<b>Sejak masuk</b> = perubahan dust % MC dari "
         "titik pertama setelah token ditambahkan sampai scan terakhir "
         "(<span style=\"color:#15803d;font-weight:700;\">hijau</span> turun "
         "≥ 50% · <span style=\"color:#b91c1c;font-weight:700;\">merah</span> "
@@ -1396,9 +1365,6 @@ else:
                     else (f"≥{int(dust_count)}" if truncated
                           else f"{int(dust_count):,}"))
         pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.2f}%"
-        spark = sparkline_svg(usable_points(points), key="dust_pct_mc")
-        if not spark:
-            spark = '<span style="font-size:.7rem;color:#64748b;">belum ada grafik</span>'
         scan_note = f"scan {format_wib(view.get('ts'))}"
         if view.get("source") == SOURCE_HISTORY:
             scan_note += " · titik history"
@@ -1420,7 +1386,7 @@ else:
         if view.get("stale"):
             scan_note += " · basi"
 
-        cols = st.columns([1.55, 0.85, 0.9, 1.05, 1.05, 0.4, 0.4, 0.4])
+        cols = st.columns([1.55, 0.85, 0.9, 1.05, 0.4, 0.4, 0.4])
         cols[0].markdown(
             f'<div class="watchlist-token">'
             f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
@@ -1439,17 +1405,14 @@ else:
             f'{_dust_badge_html(flag)}</div>',
             unsafe_allow_html=True)
         cols[3].markdown(change_html(change), unsafe_allow_html=True)
-        cols[4].markdown(
-            f'<div style="text-align:center;">{spark}</div>',
-            unsafe_allow_html=True)
-        cols[5].markdown(holder_analytic_link_html(mint),
+        cols[4].markdown(holder_analytic_link_html(mint),
                          unsafe_allow_html=True)
-        if cols[6].button("🌊", key=f"to-lp-{mint}",
+        if cols[5].button("🌊", key=f"to-lp-{mint}",
                           help="Pindahkan ke Chart LP (watchlist Meteora)",
                           use_container_width=True):
             set_watchlist_source(mint, LP_SOURCE, background=True)
             st.rerun()
-        if cols[7].button("✕", key=f"remove-{mint}", help="Hapus watchlist",
+        if cols[6].button("✕", key=f"remove-{mint}", help="Hapus watchlist",
                           use_container_width=True):
             remove_from_watchlist(mint, background=True)
             st.rerun()
@@ -1488,14 +1451,8 @@ with st.expander("➕ Tambah token", expanded=not bool(watchlist)):
                                   "GitHub belum berhasil.")
                 st.rerun()
 
-# ---------------------------------------------------------------------------
-# 🚀 Pre-Pump Screener — 4 sinyal on-chain untuk token watchlist source=degen.
-# ``configure_page=False``: st.set_page_config sudah dipanggil di atas dan
-# hanya boleh sekali per halaman. Watchlist / snapshot holder / store durable
-# disuntikkan supaya section ini tidak menarik GitHub + DexScreener dua kali.
-# ---------------------------------------------------------------------------
-pre_pump_screener.main(configure_page=False, watchlist=watchlist,
-                       status_tokens=status_tokens, store=history_store)
+# Pre-Pump Screener dinonaktifkan 2026-09-07 (permintaan user) — section
+# dihapus dari halaman utama bersama page CVD & Deteksi Akumulasi.
 
 st.divider()
 st.subheader("🔍 Temukan Token")
@@ -1547,5 +1504,4 @@ else:
     render_trending(st.session_state.get("trend_combined", []),
                     key_prefix="trend", source="trending", watchlist=watchlist)
 
-_render_meteora_scan()
 _render_helius_holder_scan()

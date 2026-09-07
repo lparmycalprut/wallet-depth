@@ -13,7 +13,7 @@ berfungsi, begitu pula URL yang salah kapitalisasi atau memakai path file.
 Aturan:
 
 * ``?mint=<ca>`` (atau ``ca`` / ``token`` / ``address``) → halaman Holder
-  Analytic; ``?page=cvd`` memindahkannya ke CVD.
+  Analytic (satu-satunya halaman tersisa sejak 2026-09-07).
 * ``?page=<slug|angka|nama file|path>`` tanpa token → pindah halaman saja.
 * Nilai ``mint`` wajib lolos format address (base58 Solana atau ``0x``+40 hex
   Robinhood Chain). Sampah tidak pernah memicu navigasi, jadi parameter lain
@@ -48,18 +48,15 @@ MAIN_PAGE_VALUES = {"", "main", "home", "dashboard", "index", "app", "0"}
 
 #: Alias tambahan di luar slug/nama file (slug sudah dihitung otomatis dari
 #: isi folder ``pages/``; ini sekadar toleransi ejaan).
+# Halaman CVD / Deteksi Akumulasi / Pre-Pump dihapus 2026-09-07 (permintaan
+# user). Alias lamanya sengaja **tidak** dipetakan ulang ke halaman lain:
+# ``resolve_page`` mengembalikan "" sehingga deep link lama berhenti di
+# dashboard, bukan melempar user ke halaman yang tidak dia minta.
 EXTRA_ALIASES = {
     "analytic": "holder",
     "analytica": "holder",
     "holderanalytic": "holder",
     "dust": "holder",
-    "akumulasi": "deteksi_akumulasi",
-    "deteksiakumulasi": "deteksi_akumulasi",
-    "deteksi-akumulasi": "deteksi_akumulasi",
-    "accumulation": "deteksi_akumulasi",
-    "prepump": "pre-pump",
-    "pre_pump": "pre-pump",
-    "prepump-screener": "pre-pump",
 }
 
 SOLANA_CA_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")

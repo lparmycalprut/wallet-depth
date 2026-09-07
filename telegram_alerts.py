@@ -100,6 +100,26 @@ EARLY_DUMP_RESEND_SEC = FAST_BUCKET_SEC
 # memicu alert Telegram.
 HIGH_DROP_RATIO = 0.5
 HIGH_DROP_KIND = "high_drop"
+# 🚨 WAKTUNYA EXIT / CUTLOSS + ✅ KEMBALI KE TITIK AMAN (permintaan user
+# 2026-09-07): eskalasi/penutup dari satu "episode" ⚡ EARLY DUMP.
+#
+# Episode dimulai pada pengingat ⚡ pertama (dust > 0,1% MC) dan tercatat di
+# marker ``alert_state["early_dump"]`` lewat ``first_ts``. Dalam 15 menit
+# sesudahnya:
+#
+# - dust NAIK terus pada :data:`ESCALATION_MIN_RISES` scan 5 menit berturut
+#   (3 scan = ±15 menit) -> kirim **WAKTUNYA EXIT / CUTLOSS** satu kali per
+#   episode (marker ``escalated``);
+# - dust TURUN kembali ke <= 0,1% MC -> kirim **KEMBALI KE TITIK AMAN** satu
+#   kali, lalu episode ditutup (marker bersih, pengingat ⚡ berhenti).
+#
+# Toleransi satu bucket 5 menit ditambahkan ke jendela: run cron GitHub sering
+# telat beberapa menit, dan tanpa itu scan ketiga yang jatuh di menit ke-16
+# akan kehilangan eskalasi yang jelas-jelas memenuhi syarat "3 scan naik".
+ESCALATION_WINDOW_SEC = 15 * 60
+ESCALATION_MIN_RISES = 3
+ESCALATION_KIND = "exit_cutloss"
+SAFE_RETURN_KIND = "safe_return"
 MAX_LAST_SENT = 8
 MAX_REJECTED_SIGNALS = 8
 ALERT_WINDOW_SEC = 4 * 3600
@@ -985,6 +1005,163 @@ def evaluate_early_dump_rule(previous: dict | None, current: dict | None, *,
     return [event]
 
 
+def early_episode_next(marker: dict | None, current: dict, *,
+                       emitted: bool = False,
+                       escalated: bool = False) -> dict:
+    """Marker episode ⚡ EARLY DUMP setelah satu evaluasi lane LP.
+
+    Marker membawa nilai run terakhir (``ts`` / ``dust_pct_mc``) plus state
+    episode yang dipakai dua rule turunan:
+
+    - ``first_ts``  : kapan pengingat ⚡ pertama episode ini muncul (mulai
+      jendela 15 menit :data:`ESCALATION_WINDOW_SEC`);
+    - ``rises``     : berapa scan berturut-turut dust **naik** sejak episode
+      dimulai (scan pertama dihitung 1);
+    - ``escalated`` : WAKTUNYA EXIT / CUTLOSS sudah dikirim untuk episode ini.
+
+    Dust kembali ``<= 0,1%`` MC menutup episode: state dikosongkan sehingga
+    kenaikan berikutnya memulai episode baru dengan hitungan bersih.
+    """
+    marker = marker if isinstance(marker, dict) else {}
+    ts = _int((current or {}).get("ts"))
+    new = _float((current or {}).get("dust_pct_mc"), None)
+    base = {"ts": ts, "dust_pct_mc": new}
+    if new is None or new <= DUST_BEST_PCT:
+        # Bersih lagi → episode selesai, hitungan direset.
+        return base
+    old = _float(marker.get("dust_pct_mc"), None)
+    first_ts = _int(marker.get("first_ts"))
+    rises = _int(marker.get("rises"))
+    if not first_ts:
+        # Episode baru: pengingat ⚡ pertama = observasi ini.
+        first_ts, rises = ts, 1
+    elif old is not None and new > old:
+        rises += 1
+    else:
+        # Datar/turun (tapi masih di atas ambang): rangkaian "naik terus"
+        # putus — eskalasi butuh kenaikan beruntun, bukan sekadar bertahan.
+        rises = 1
+        first_ts = ts
+    return {**base, "first_ts": first_ts, "rises": rises,
+            "escalated": bool(marker.get("escalated")) or bool(escalated)}
+
+
+def escalation_due(marker: dict | None, current: dict | None) -> bool:
+    """True bila episode ⚡ layak dieskalasi ke WAKTUNYA EXIT / CUTLOSS.
+
+    Syarat (permintaan user 2026-09-07): dalam ±15 menit sejak pengingat ⚡
+    pertama, dust naik terus selama :data:`ESCALATION_MIN_RISES` scan 5
+    menit. Dikirim maksimal **satu kali per episode**.
+    """
+    marker = marker if isinstance(marker, dict) else {}
+    new = _float((current or {}).get("dust_pct_mc"), None)
+    if new is None or new <= DUST_BEST_PCT or marker.get("escalated"):
+        return False
+    old = _float(marker.get("dust_pct_mc"), None)
+    if old is None or new <= old:
+        return False                      # run ini tidak naik
+    first_ts = _int(marker.get("first_ts"))
+    if not first_ts:
+        return False                      # episode belum punya titik awal
+    if _int(marker.get("rises")) + 1 < ESCALATION_MIN_RISES:
+        return False
+    age = _int((current or {}).get("ts")) - first_ts
+    # Toleransi 1 bucket: run cron yang telat tidak boleh membatalkan sinyal.
+    return 0 <= age <= ESCALATION_WINDOW_SEC + FAST_BUCKET_SEC
+
+
+def safe_return_due(marker: dict | None, current: dict | None) -> bool:
+    """True bila dust turun kembali ke <= 0,1% MC dalam jendela episode.
+
+    Penutup episode ⚡ (permintaan user 2026-09-07): kabar baik dikirim satu
+    kali saja, dan hanya bila memang ada episode berjalan — token yang
+    sejak awal bersih tidak boleh mengirim apa pun.
+    """
+    marker = marker if isinstance(marker, dict) else {}
+    new = _float((current or {}).get("dust_pct_mc"), None)
+    if new is None or new > DUST_BEST_PCT:
+        return False
+    old = _float(marker.get("dust_pct_mc"), None)
+    if old is None or old <= DUST_BEST_PCT:
+        return False                      # tidak ada episode yang ditutup
+    first_ts = _int(marker.get("first_ts"))
+    if not first_ts:
+        return False
+    age = _int((current or {}).get("ts")) - first_ts
+    return 0 <= age <= ESCALATION_WINDOW_SEC + FAST_BUCKET_SEC
+
+
+def _episode_event(marker: dict, current: dict, *, kind: str, mint: str,
+                   symbol: str, scope: str) -> dict:
+    """Event turunan episode ⚡ (exit_cutloss / safe_return)."""
+    current_ts = _int((current or {}).get("ts"))
+    old = _float((marker or {}).get("dust_pct_mc"), 0.0) or 0.0
+    new = _float((current or {}).get("dust_pct_mc"), 0.0) or 0.0
+    first_ts = _int((marker or {}).get("first_ts"))
+    return {
+        "id": _event_id(mint, kind, current_ts, bucket_sec=FAST_BUCKET_SEC),
+        "kind": kind,
+        "scope": scope,
+        "direction": "up" if kind == ESCALATION_KIND else "down",
+        "mint": _address(mint),
+        "symbol": str(symbol or "?").strip().upper() or "?",
+        "previous_dust_pct_mc": old,
+        "current_dust_pct_mc": new,
+        "change_pp": round(new - old, 6),
+        "previous_ts": _int((marker or {}).get("ts")),
+        "current_ts": current_ts,
+        "episode_start_ts": first_ts,
+        "episode_minutes": (max(0, current_ts - first_ts) // 60
+                            if first_ts else 0),
+        "rises": _int((marker or {}).get("rises")),
+        "wallet_increases": 0,
+        "movements": {},
+        "pool_addresses": [str(p or "").strip()
+                           for p in ((current or {}).get("pool_addresses")
+                                     or []) if p],
+    }
+
+
+def evaluate_episode_rules(marker: dict | None, current: dict | None, *,
+                           mint: str, symbol: str = "?",
+                           sent_event_ids=(), market_context=None,
+                           context_provider=None,
+                           last_sent=None) -> list[dict]:
+    """🚨 WAKTUNYA EXIT / CUTLOSS + ✅ KEMBALI KE TITIK AMAN.
+
+    Kedua rule membaca marker episode yang sama (``alert_state
+    ["early_dump"]``) dan saling eksklusif: eskalasi hanya saat dust masih
+    di atas ambang dan naik terus, penutup hanya saat sudah turun ke
+    ``<= 0,1%`` MC. Keduanya tanpa gerbang volume (konteks pasar = info),
+    sama seperti ⚡ EARLY DUMP.
+    """
+    marker = marker if isinstance(marker, dict) else {}
+    if escalation_due(marker, current):
+        minutes = ESCALATION_WINDOW_SEC // 60
+        scope = (f"dust naik {ESCALATION_MIN_RISES} scan berturut "
+                 f"(±{minutes} menit) sejak pengingat pertama")
+        kind = ESCALATION_KIND
+    elif safe_return_due(marker, current):
+        scope = (f"dust turun kembali ke bawah {DUST_BEST_PCT:g}% MC "
+                 f"dalam ±{ESCALATION_WINDOW_SEC // 60} menit")
+        kind = SAFE_RETURN_KIND
+    else:
+        return []
+    event = _episode_event(marker, current, kind=kind, mint=mint,
+                           symbol=symbol, scope=scope)
+    if event["id"] in set(sent_event_ids or []):
+        return []
+    key = dedup_key(event)
+    current_ts = _int((current or {}).get("ts"))
+    if in_resend_cooldown(key, current_ts, last_sent,
+                          min_resend_sec=EARLY_DUMP_RESEND_SEC):
+        return []
+    context = market_context if isinstance(market_context, dict) else \
+        _resolve_context(context_provider, mint)
+    event["volume_check"] = early_dump_verdict(context, kind=kind)
+    return [event]
+
+
 def high_drop_marker_next(marker: dict | None, current: dict,
                           emitted: bool) -> dict:
     """Majukan marker titik high (🔔 HIGH DROP) setelah satu evaluasi.
@@ -1183,10 +1360,20 @@ def evaluate_alert_events(mint: str, analysis: dict,
             early_marker or None, current, mint=mint, symbol=symbol,
             sent_event_ids=sent, market_context=context,
             context_provider=lazy, rejected=rejected, last_sent=last_sent))
-        next_state["early_dump"] = {
-            "ts": current["ts"],
-            "dust_pct_mc": current["dust_pct_mc"],
-        }
+        # Rule turunan episode (permintaan user 2026-09-07): eskalasi
+        # 🚨 WAKTUNYA EXIT / CUTLOSS bila dust naik 3 scan berturut dalam ±15
+        # menit, dan penutup ✅ KEMBALI KE TITIK AMAN bila dust turun lagi ke
+        # <= 0,1% MC di jendela yang sama. Dievaluasi terhadap marker LAMA,
+        # sebelum marker dimajukan ke nilai run ini.
+        episode_events = evaluate_episode_rules(
+            early_marker or None, current, mint=mint, symbol=symbol,
+            sent_event_ids=sent, market_context=context,
+            context_provider=lazy, last_sent=last_sent)
+        events.extend(episode_events)
+        next_state["early_dump"] = early_episode_next(
+            early_marker, current,
+            escalated=any(item.get("kind") == ESCALATION_KIND
+                          for item in episode_events))
     # 🔔 HIGH DROP (scope watchlist biasa Solana/Robinhood): titik acuan =
     # hold % MC terbesar yang pernah tercatat; turun >= 50% dari titik itu
     # mengirim alert. Marker (high + status notifikasi) selalu dimajukan.
@@ -1259,9 +1446,14 @@ def compact_alert_state(state: dict | None) -> dict:
                              if isinstance(row, dict)][-MAX_REJECTED_SIGNALS:],
         # Marker rule EARLY DUMP: ringkas (ts + dust % MC terakhir), tanpa
         # peta wallet — cukup untuk pengingat run berikutnya.
+        # ``first_ts``/``rises``/``escalated`` = state episode untuk rule
+        # 🚨 EXIT / ✅ AMAN; runner cron ephemeral kehilangan eskalasi tanpa ini.
         "early_dump": ({"ts": marker_ts,
                         "dust_pct_mc": (_float(marker.get("dust_pct_mc"), None)
-                                        if marker_ts else None)}
+                                        if marker_ts else None),
+                        "first_ts": _int(marker.get("first_ts"), 0),
+                        "rises": _int(marker.get("rises"), 0),
+                        "escalated": bool(marker.get("escalated"))}
                        if marker_ts else {}),
         # Marker rule HIGH DROP: high = hold % MC terbesar + flag high yang
         # sudah pernah diberitahu (satu alert per titik high).
@@ -1327,7 +1519,10 @@ def alert_state_summary(state: dict | None) -> dict:
         # butuh early_dump di snapshot status supaya scan 5 menit berikutnya
         # tidak kehilangan state bila history backup gagal di-push.
         "early_dump": ({"ts": early_ts,
-                        "dust_pct_mc": _float(raw_early.get("dust_pct_mc"), None)}
+                        "dust_pct_mc": _float(raw_early.get("dust_pct_mc"), None),
+                        "first_ts": _int(raw_early.get("first_ts"), 0),
+                        "rises": _int(raw_early.get("rises"), 0),
+                        "escalated": bool(raw_early.get("escalated"))}
                        if early_ts else {}),
         "high_drop": ({"ts": high_ts,
                        "high": _float(raw_high.get("high"), None),
@@ -1343,6 +1538,15 @@ def _format_time(timestamp: int) -> str:
         local = moment.astimezone(ZoneInfo("Asia/Jakarta"))
         return f"{local:%Y-%m-%d %H:%M:%S WIB} ({moment:%H:%M UTC})"
     except Exception:  # pragma: no cover - tz database is available in CI
+        return moment.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _format_wib(timestamp: int) -> str:
+    """Waktu WIB saja — format pesan ringkas (permintaan user 2026-09-07)."""
+    moment = datetime.fromtimestamp(_int(timestamp), tz=timezone.utc)
+    try:
+        return f"{moment.astimezone(ZoneInfo('Asia/Jakarta')):%Y-%m-%d %H:%M:%S} WIB"
+    except Exception:  # pragma: no cover - tz database tersedia di CI
         return moment.strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
@@ -1434,29 +1638,55 @@ def format_alert_message(event: dict) -> str:
     """Human-readable Telegram message containing all required fields."""
     kind = event.get("kind")
     change = _float(event.get("change_pp"), 0.0) or 0.0
+    # Format ringkas (permintaan user 2026-09-07): baris pengingat berulang
+    # dan baris Verifikasi dibuang; waktu ditulis WIB saja.
     if kind == "early_dump":
-        title = f"⚡ EARLY DUMP — DUST HOLDER DI ATAS {DUST_BEST_PCT:g}%"
         lines = [
-            title,
+            f"⚡ EARLY DUMP — DUST DI ATAS {DUST_BEST_PCT:g}%",
             f"Token: ${event.get('symbol') or '?'}",
             f"Dust sebelumnya: "
             f"{float(event.get('previous_dust_pct_mc') or 0):.2f}% MC",
             f"Dust terbaru: "
             f"{float(event.get('current_dust_pct_mc') or 0):.2f}% MC",
             f"Perubahan: {change:+.2f} poin persentase",
-            f"Periode: {event.get('scope') or 'sejak run terakhir'}",
-            # Pengingat berulang (permintaan user 2026-09-05): dikirim tiap
-            # scan selama dust masih > 0,1% — sebutkan cara menghentikannya.
-            "🔔 Pengingat berulang tiap ±5 menit selama dust di atas "
-            f"{DUST_BEST_PCT:g}% MC. Hentikan dengan menghapus token dari "
-            "watchlist LP atau memindahkannya ke watchlist biasa.",
-            *_market_info_lines(event.get("volume_check")),
-            f"Waktu: {_format_time(event.get('current_ts') or time.time())}",
+            f"Waktu: {_format_wib(event.get('current_ts') or time.time())}",
             f"Mint: {event.get('mint') or '-'}",
-            # Link token + pool: token selalu (GMGN/DexScreener, via
-            # links.token_link_lines); pool (Meteora/HawkFi) hanya bila
-            # event membawa pool address yang diketahui benar (lihat
-            # keterbatasan cron di evaluate_early_dump_rule).
+            *token_link_lines(event.get("mint")),
+            *_pool_link_lines(event.get("pool_addresses")),
+        ]
+        return "\n".join(lines)
+    if kind == ESCALATION_KIND:
+        minutes = _int(event.get("episode_minutes"))
+        lines = [
+            "🚨 WAKTUNYA EXIT / CUTLOSS",
+            f"Token: ${event.get('symbol') or '?'}",
+            f"Dust sebelumnya: "
+            f"{float(event.get('previous_dust_pct_mc') or 0):.2f}% MC",
+            f"Dust terbaru: "
+            f"{float(event.get('current_dust_pct_mc') or 0):.2f}% MC",
+            f"Perubahan: {change:+.2f} poin persentase",
+            f"Dust naik terus {ESCALATION_MIN_RISES} scan berturut "
+            f"(±{minutes} menit) — holder dust bertambah tanpa henti.",
+            f"Waktu: {_format_wib(event.get('current_ts') or time.time())}",
+            f"Mint: {event.get('mint') or '-'}",
+            *token_link_lines(event.get("mint")),
+            *_pool_link_lines(event.get("pool_addresses")),
+        ]
+        return "\n".join(lines)
+    if kind == SAFE_RETURN_KIND:
+        minutes = _int(event.get("episode_minutes"))
+        lines = [
+            "✅ KEMBALI KE TITIK AMAN",
+            f"Token: ${event.get('symbol') or '?'}",
+            f"Dust sebelumnya: "
+            f"{float(event.get('previous_dust_pct_mc') or 0):.2f}% MC",
+            f"Dust terbaru: "
+            f"{float(event.get('current_dust_pct_mc') or 0):.2f}% MC",
+            f"Perubahan: {change:+.2f} poin persentase",
+            f"Dust turun lagi ke bawah {DUST_BEST_PCT:g}% MC "
+            f"(±{minutes} menit sejak peringatan pertama).",
+            f"Waktu: {_format_wib(event.get('current_ts') or time.time())}",
+            f"Mint: {event.get('mint') or '-'}",
             *token_link_lines(event.get("mint")),
             *_pool_link_lines(event.get("pool_addresses")),
         ]

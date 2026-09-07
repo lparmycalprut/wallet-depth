@@ -23,9 +23,9 @@ APP = str(ROOT / "app.py")
 SOL = "So11111111111111111111111111111111111111112"
 EVM = "0x1a3876a32619cf2668e91ebcd90a596537ec8695"
 HOLDER = "pages/5_🧮_Holder.py"
-CVD = "pages/4_📊_CVD.py"
-DETEKSI = "pages/6_🔎_Deteksi_Akumulasi.py"
-PREPUMP = "pages/7_🚀_Pre-Pump.py"
+# Halaman CVD / Deteksi Akumulasi / Pre-Pump dihapus 2026-09-07.
+GONE = ("cvd", "4", "pages/4_📊_CVD.py", "deteksi_akumulasi",
+        "deteksi-akumulasi", "akumulasi", "6", "pre-pump", "prepump", "7")
 
 
 class ResolveTest(unittest.TestCase):
@@ -41,32 +41,30 @@ class ResolveTest(unittest.TestCase):
 
     def test_page_memilih_halaman(self):
         cases = {
-            "cvd": CVD,
-            "4": CVD,
-            "4_📊_cvd": CVD,
-            "pages/4_📊_CVD.py": CVD,
             "holder": HOLDER,
             "5_🧮_holder": HOLDER,
             "Holder": HOLDER,          # kapital berbeda tetap dikenali
             "pages/5_🧮_Holder.py": HOLDER,   # tautan lama (path file)
             "dust": HOLDER,
             "analytic": HOLDER,
-            "deteksi_akumulasi": DETEKSI,
-            "deteksi-akumulasi": DETEKSI,
-            "akumulasi": DETEKSI,
-            "6": DETEKSI,
-            "pre-pump": PREPUMP,
-            "prepump": PREPUMP,
-            "7": PREPUMP,
         }
         for value, expected in cases.items():
             self.assertEqual(pr.resolve({"page": value}).get("page"), expected,
                              value)
 
     def test_page_dan_mint_bersama(self):
-        out = pr.resolve({"page": "cvd", "mint": SOL})
-        self.assertEqual(out["page"], CVD)
+        out = pr.resolve({"page": "holder", "mint": SOL})
+        self.assertEqual(out["page"], HOLDER)
         self.assertEqual(out["params"], {"mint": SOL})
+
+    def test_halaman_yang_dihapus_tidak_di_router(self):
+        """CVD / Akumulasi / Pre-Pump dihapus: alias lama berhenti di dashboard."""
+        for value in GONE:
+            self.assertEqual(pr.resolve({"page": value}), {}, value)
+        # Dengan CA valid, fallback tetap Holder (bukan halaman yang hilang).
+        for value in GONE:
+            self.assertEqual(pr.resolve({"page": value, "mint": SOL})["page"],
+                             HOLDER, value)
 
     def test_tanpa_param_tidak_di_router(self):
         for query in ({}, {"mint": ""}, {"page": ""}, {"page": None}):

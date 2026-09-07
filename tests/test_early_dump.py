@@ -147,8 +147,10 @@ class EarlyDumpRuleTest(unittest.TestCase):
         check = events[0]["volume_check"]
         self.assertTrue(check["allow"])          # tanpa gerbang volume
         self.assertFalse(check["verified"])      # data pasar tidak ada
+        # Sejak 2026-09-07 pesan diringkas: verdict tetap dihitung (audit),
+        # tapi baris verifikasi tidak lagi dicetak ke Telegram.
         message = ta.format_alert_message(events[0])
-        self.assertIn("TIDAK TERVERIFIKASI", message)
+        self.assertNotIn("TIDAK TERVERIFIKASI", message)
 
     def test_konteks_pasar_ditampilkan_sebagai_info(self):
         context = {"available": True, "volume_4h": 12_000.0,
@@ -160,10 +162,10 @@ class EarlyDumpRuleTest(unittest.TestCase):
         check = events[0]["volume_check"]
         self.assertTrue(check["verified"])
         self.assertAlmostEqual(check["volume_ratio"], 1.5)
+        # Format ringkas 2026-09-07: konteks pasar tidak dicetak lagi.
         message = ta.format_alert_message(events[0])
-        self.assertIn("volume 4 jam 1.50× rata-rata 7d", message)
-        self.assertIn("harga -2.50%", message)
-        self.assertIn("(info saja, tanpa gerbang volume)", message)
+        self.assertNotIn("volume 4 jam", message)
+        self.assertNotIn("(info saja, tanpa gerbang volume)", message)
 
 
 class EarlyDumpMessageTest(unittest.TestCase):
@@ -180,7 +182,6 @@ class EarlyDumpMessageTest(unittest.TestCase):
         self.assertIn("Dust sebelumnya: 0.04% MC", message)
         self.assertIn("Dust terbaru: 0.42% MC", message)
         self.assertIn("+0.38 poin persentase", message)
-        self.assertIn("Periode:", message)
         # Kind baru tetap memakai blok link token (aturan semua jenis alert).
         self.assertIn("🔗 GMGN:", message)
         self.assertIn("🦆 DexScreener:", message)
@@ -220,8 +221,8 @@ class EarlyDumpStateTest(unittest.TestCase):
     def test_compact_alert_state_menyimpan_marker_ringkas(self):
         state = _state(_marker(NOW, 0.123), sent=["id-1"])
         compact = ta.compact_alert_state(state)
-        self.assertEqual(compact["early_dump"],
-                         {"ts": NOW, "dust_pct_mc": 0.123})
+        self.assertEqual(compact["early_dump"]["ts"], NOW)
+        self.assertAlmostEqual(compact["early_dump"]["dust_pct_mc"], 0.123)
         # Tanpa marker → {} (tidak mengganggu state lama).
         self.assertEqual(ta.compact_alert_state({})["early_dump"], {})
 

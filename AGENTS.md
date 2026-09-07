@@ -23,7 +23,12 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   TVL pool `< DUST_BEST_MIN_TVL_USD` (10K) atau `None`. `MAX_POINTS = 1008` —
   jendela titik mentah per token, dikalibrasi ke densitas run LP 5 menit
   (±3,5 hari = 21 bucket 4 jam; dulu 336 untuk cron hourly/15 mnt); UI tetap
-  memakai `resample_4h` (maks 84 bucket 4 jam).
+  memakai `resample_4h` (maks 84 bucket 4 jam) untuk watchlist biasa /
+  halaman Holder, dan **`resample_5m` (`LP_INTERVAL_SEC` = 5 menit)** untuk
+  lane LP — Chart LP Meteora + Robinhood LP di-scan tiap ±5 menit, jadi
+  grafiknya 5 menitan (permintaan user 2026-09-07). Pada tanggal yang sama
+  kolom tabel **`Δ 4 jam` dan `Grafik 4 jam` (sparkline) dihapus dari semua
+  card watchlist**; grafik hanya tampil di expander per token.
   Baseline scan FULL immutable + kronologi wallet bounded
   (`holder_chronology.py`). **Sejak 2026-09-05 cron ikut scan FULL +
   `detail=True`** — scan pertama setelah token masuk watchlist menjadi
@@ -397,6 +402,8 @@ badge BEST POOL       : < 0.1% marketcap (DUST_BEST_PCT, aditif) + data
                         == 0.1% bukan BEST POOL dan bukan pemicu
                         early_dump (strict < dan >).
                         Hanya dirender di listing Scan Meteora.
+grafik lane LP        : bucket 5 menit (resample_5m / LP_INTERVAL_SEC)
+kolom tabel watchlist : Δ 4 jam + sparkline Grafik 4 jam DIHAPUS (2026-09-07)
 grafik / kohort       : bucket 4 jam (resample_4h; titik mentah per run,
                         MAX_POINTS 1008 = 3,5 hari @ 5 menit LP)
 
@@ -404,6 +411,16 @@ Konfirmasi alert (setelah ambang dust di atas terpenuhi):
 dump                  : volume 4 jam >= 2.0x avg_volume_7d DAN harga <= -1%
 akumulasi             : volume 4 jam >= 1.5x avg_volume_7d DAN buy > sell
 baseline shift +-1 pp : ikut arah perubahan (naik = dump, turun = akumulasi)
+exit/cutloss (pool LP): eskalasi episode EARLY DUMP — dust naik
+                        ESCALATION_MIN_RISES (3) scan 5 menit berturut
+                        dalam ESCALATION_WINDOW_SEC (15 mnt, +1 bucket
+                        toleransi cron telat) -> "WAKTUNYA EXIT / CUTLOSS",
+                        1x per episode (marker escalated)
+titik aman (pool LP)  : dust turun kembali <= 0.1% MC di jendela yang sama
+                        -> "KEMBALI KE TITIK AMAN", 1x, episode ditutup
+                        (marker first_ts/rises/escalated direset)
+format notifikasi     : ringkas (2026-09-07) — tanpa baris Periode,
+                        Verifikasi, dan pengingat berulang; waktu WIB saja
 early dump (pool LP)  : crossing naik > 0.1% (dibanding nilai run
                         sebelumnya, marker alert_state["early_dump"]) —
                         scope token pool Meteora/Chart LP + seluruh
@@ -507,5 +524,5 @@ python -m py_compile holder_history.py holder_chronology.py meteora_screener.py 
   holder_analysis.py holder_status.py telegram_alerts.py alert_context.py \
   lp_watchlist.py core.py scripts/scan_holders.py trending_ui.py watchlist.py \
   watchlist_detail.py accumulation.py pre_pump_screener.py app.py \
-  "pages/7_🚀_Pre-Pump.py"
+  page_router.py "pages/5_🧮_Holder.py"
 ```
