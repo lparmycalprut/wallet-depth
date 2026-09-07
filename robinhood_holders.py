@@ -313,12 +313,14 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
                   price_usd: float = 0.0,
                   extra_pools=None,
                   cohort_addrs=None,
-                  tracked_wallet_addrs=None) -> dict:
+                  tracked_wallet_addrs=None,
+                  detail: bool = True) -> dict:
     """Analisis holder token Robinhood Chain (Blockscout + DexScreener).
 
     Menghasilkan bentuk yang sama dengan
     ``holder_analysis.analyze_token`` sehingga seluruh alur watchlist,
     holder_history, dan telegram_alerts dapat dipakai langsung.
+    ``detail=False`` (scan 5 menit LP): catat dust/holder saja.
     """
     ca = normalize_address(ca)
     dust_limit = float(DUST_LIMIT_USD if dust_limit is None else dust_limit)
@@ -378,34 +380,41 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
         holder_stats.setdefault("cohort_now", {})
 
     analyzed_at = int(time.time())
-    try:
-        from telegram_alerts import build_wallet_snapshot
-        holder_stats["wallet_snapshot"] = build_wallet_snapshot(
-            snapshot.get("holders") or [],
-            dust_pct_mc=holder_stats.get("dust_pct_mc"),
-            dust_limit_usd=dust_limit,
-            tracked_addresses=tracked_wallet_addrs or [],
-            ts=analyzed_at,
-            truncated=bool(snapshot.get("truncated")),
-        )
-    except Exception:  # noqa: BLE001
-        holder_stats.setdefault("wallet_snapshot", {})
-    try:
-        from holder_chronology import build_chrono_snapshot
-        holder_stats["chrono_snapshot"] = build_chrono_snapshot(
-            snapshot.get("holders") or [],
-            tracked_addresses=tracked_wallet_addrs or [],
-            pool_addresses=pools,
-            ts=analyzed_at,
-            price=price,
-            market_cap=mc,
-            dust_pct_mc=holder_stats.get("dust_pct_mc"),
-            holder_count=holder_stats.get("wallets_analyzed"),
-            dust_count=holder_stats.get("dust_count"),
-            truncated=bool(snapshot.get("truncated")),
-        )
-    except Exception:  # noqa: BLE001 - kronologi tidak boleh mematikan scan
-        holder_stats.setdefault("chrono_snapshot", {})
+    if detail:
+        try:
+            from telegram_alerts import build_wallet_snapshot
+            holder_stats["wallet_snapshot"] = build_wallet_snapshot(
+                snapshot.get("holders") or [],
+                dust_pct_mc=holder_stats.get("dust_pct_mc"),
+                dust_limit_usd=dust_limit,
+                tracked_addresses=tracked_wallet_addrs or [],
+                ts=analyzed_at,
+                truncated=bool(snapshot.get("truncated")),
+            )
+        except Exception:  # noqa: BLE001
+            holder_stats.setdefault("wallet_snapshot", {})
+        try:
+            from holder_chronology import build_chrono_snapshot
+            holder_stats["chrono_snapshot"] = build_chrono_snapshot(
+                snapshot.get("holders") or [],
+                tracked_addresses=tracked_wallet_addrs or [],
+                pool_addresses=pools,
+                ts=analyzed_at,
+                price=price,
+                market_cap=mc,
+                dust_pct_mc=holder_stats.get("dust_pct_mc"),
+                holder_count=holder_stats.get("wallets_analyzed"),
+                dust_count=holder_stats.get("dust_count"),
+                truncated=bool(snapshot.get("truncated")),
+            )
+        except Exception:  # noqa: BLE001 - kronologi tidak boleh mematikan scan
+            holder_stats.setdefault("chrono_snapshot", {})
+    else:
+        holder_stats["wallet_snapshot"] = {
+            "ts": analyzed_at,
+            "dust_pct_mc": holder_stats.get("dust_pct_mc"),
+            "balances": {}, "dust": [], "wallets_seen": 0, "truncated": False,
+        }
 
     return {
         "ca": ca,

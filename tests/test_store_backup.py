@@ -563,6 +563,24 @@ class SeedFromSlimStatusTest(unittest.TestCase):
         store = hh.seed_from_status(hh.empty_store(), remote)
         self.assertNotIn("alert_state", store["tokens"][MINT])
 
+    def test_alert_state_ringkas_memulihkan_marker_early_dump(self):
+        remote = {"tokens": {MINT: {
+            "symbol": "TST",
+            "alert_state": {"summary": True,
+                            "baseline": {"ts": 1, "balances": 3, "dust": 1},
+                            "rolling": {"ts": 2, "balances": 3, "dust": 0},
+                            "sent_event_ids": 2,
+                            "early_dump": {"ts": 9, "dust_pct_mc": 0.4},
+                            "high_drop": {"ts": 8, "high": 2.0,
+                                          "high_ts": 7, "notified_high": 0}},
+        }}}
+        store = hh.seed_from_status(hh.empty_store(), remote)
+        state = store["tokens"][MINT]["alert_state"]
+        self.assertEqual(state["early_dump"]["ts"], 9)
+        self.assertAlmostEqual(state["early_dump"]["dust_pct_mc"], 0.4)
+        self.assertEqual(state["high_drop"]["ts"], 8)
+        self.assertNotIn("rolling", state)
+
     def test_alert_state_format_lama_tetap_dipulihkan(self):
         remote = {"tokens": {MINT: {
             "symbol": "TST",

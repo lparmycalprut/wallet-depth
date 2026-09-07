@@ -218,6 +218,45 @@ class ChartLpCardTest(unittest.TestCase):
             submit[0].click().run()
         self.assertEqual(add.call_args.kwargs["source"], "meteora")
 
+    def test_scan_sekarang_button_on_chart_lp(self):
+        app = self._app()
+        keys = [button.key or "" for button in app.button]
+        self.assertIn("lp-scan-now", keys)
+        labels = [button.label or "" for button in app.button]
+        self.assertTrue(any("Scan sekarang Chart LP" in lab for lab in labels))
+
+    def test_scan_sekarang_hanya_token_lp(self):
+        app = self._app()
+        btn = [button for button in app.button if button.key == "lp-scan-now"]
+        self.assertTrue(btn, "tombol Scan sekarang Chart LP tidak ditemukan")
+        analysis = {
+            "ca": LP_MINT, "symbol": "LPRISK", "analyzed_at": 1,
+            "holders": {"total_fetched": 80, "wallets_analyzed": 80,
+                        "dust_count": 10, "dust_pct_mc": 1.0, "real_count": 70},
+        }
+
+        def _analyze(mint, *args, **kwargs):
+            item = dict(analysis)
+            item["ca"] = mint
+            return item
+
+        with mock.patch("holder_analysis.analyze_token",
+                        side_effect=_analyze) as analyze, \
+                mock.patch("holder_history.ingest_many") as ingest, \
+                mock.patch("holder_status.publish_holder_status",
+                           return_value={"updated_at": 1}) as pub:
+            result = btn[0].click().run()
+        self.assertEqual(len(result.exception), 0)
+        scanned = {call.args[0] for call in analyze.call_args_list}
+        self.assertIn(LP_MINT, scanned)
+        self.assertIn(LP_SAFE, scanned)
+        self.assertNotIn(HOLDER_MINT, scanned)
+        self.assertTrue(analyze.call_args.kwargs.get("detail") is False)
+        ingest.assert_called()
+        self.assertFalse(ingest.call_args.kwargs.get("detail"))
+        pub.assert_called()
+        self.assertFalse(pub.call_args.kwargs.get("push"))
+
     def test_invalid_ca_is_rejected_without_adding(self):
         app = self._app()
         inputs = [node for node in app.text_input

@@ -1,11 +1,11 @@
-"""Rule ⚡ EARLY DUMP: level > 0,1% MC, dedup bucket 15 menit, wiring lp_mints.
+"""Rule ⚡ EARLY DUMP: level > 0,1% MC, dedup bucket 5 menit, wiring lp_mints.
 
 Latar belakang (2026-09-04): user ingin peringatan **lebih awal** saat dust
 pool Meteora naik di atas 0,1% MC supaya bisa exit LP lebih cepat.
-Revisi 2026-09-05 (user): karena watchlist LP di-scan cron tiap **±15 menit**,
+Revisi 2026-09-05 (user): karena watchlist LP di-scan cron tiap **±5 menit**,
 rule jadi **level-based** — selama dust masih di atas 0,1% MC, pengingat
 dikirim **berulang** (naik, turun sedikit, atau hover sama saja), dibatasi
-satu event per bucket 15 menit + cooldown 15 menit. Turun ke ≤ 0,1% MC =
+satu event per bucket 5 menit + cooldown 5 menit. Turun ke ≤ 0,1% MC =
 reset otomatis; berhenti bila token dihapus/dipindah dari watchlist LP.
 """
 from __future__ import annotations
@@ -73,12 +73,12 @@ class EarlyDumpRuleTest(unittest.TestCase):
         self.assertEqual(event["direction"], "up")
         self.assertIn("pengingat berulang", event["scope"])
 
-    def test_titik_pertama_tanpa_marker_tidak_langsung_mengirim(self):
-        # Token baru dipantau: mustahil membuktikan crossing tanpa titik
-        # sebelumnya → cukup rekam marker, jangan mengirim.
+    def test_titik_pertama_tanpa_marker_langsung_mengirim(self):
+        # Observasi pertama di atas 0,1% MC ikut dikirim (level-based).
         events = ta.evaluate_early_dump_rule(
             None, _current(NOW, 0.3), mint=MINT, symbol="?")
-        self.assertEqual(events, [])
+        self.assertEqual(len(events), 1)
+        self.assertIn("pertama kali terpantau", events[0]["scope"])
 
     def test_masih_di_bawah_atau_pas_01_tidak_menyala(self):
         for value in (0.05, 0.099, 0.1):
@@ -91,7 +91,7 @@ class EarlyDumpRuleTest(unittest.TestCase):
         """Sejak 2026-09-05 rule level-based: selama > 0,1% MC tetap kirim.
 
         0,2 → 0,15 (turun) dan hover 0,12 → 0,12 tetap mengirim pengingat
-        (berulang tiap scan ±15 menit); turun ke ≤ 0,1% MC = reset, tanpa
+        (berulang tiap scan ±5 menit); turun ke ≤ 0,1% MC = reset, tanpa
         notifikasi turun.
         """
         falling = ta.evaluate_early_dump_rule(
@@ -108,34 +108,35 @@ class EarlyDumpRuleTest(unittest.TestCase):
         self.assertEqual(ta.evaluate_early_dump_rule(
             _marker(NOW - 900, 0.12), _current(NOW, 0.1), mint=MINT), [])
 
-    def test_satu_event_per_bucket_4_jam(self):
+    def test_satu_event_per_bucket_5_menit(self):
         first = ta.evaluate_early_dump_rule(
             _marker(NOW - 3600, 0.05), _current(NOW, 0.11),
             mint=MINT, symbol="?")
         self.assertEqual(len(first), 1)
         event_id = first[0]["id"]
-        # Run berikutnya di bucket yang sama → id sama → dedup.
+        # Run berikutnya di bucket 5 menit yang sama → id sama → dedup.
         again = ta.evaluate_early_dump_rule(
-            _marker(NOW, 0.11), _current(NOW + 600, 0.13),
+            _marker(NOW, 0.11), _current(NOW + 60, 0.13),
             mint=MINT, symbol="?", sent_event_ids=[event_id])
         self.assertEqual(again, [])
-        # Bucket baru (>= 4 jam) + cooldown 1 jam lewat → boleh kirim lagi.
+        # Bucket baru (>= 5 menit) + cooldown lewat → boleh kirim lagi.
         later = ta.evaluate_early_dump_rule(
-            _marker(NOW + 600, 0.13), _current(NOW + BUCKET + 600, 0.20),
+            _marker(NOW + 60, 0.13),
+            _current(NOW + ta.FAST_BUCKET_SEC + 60, 0.20),
             mint=MINT, symbol="?", sent_event_ids=[event_id])
         self.assertEqual(len(later), 1)
         self.assertNotEqual(later[0]["id"], event_id)
 
-    def test_cooldown_15_menit_memblokir_slot_sama(self):
+    def test_cooldown_5_menit_memblokir_slot_sama(self):
         sent_ts = NOW
         blocked = ta.evaluate_early_dump_rule(
-            _marker(sent_ts, 0.15), _current(sent_ts + 10 * 60, 0.25),
+            _marker(sent_ts, 0.15), _current(sent_ts + 2 * 60, 0.25),
             mint=MINT, symbol="?", rejected=[], last_sent={"early_dump": NOW})
         self.assertEqual(blocked, [])
-        # Lewat cooldown ±15 menit (dan bucket baru) → boleh kirim lagi.
+        # Lewat cooldown ±5 menit (dan bucket baru) → boleh kirim lagi.
         later = ta.evaluate_early_dump_rule(
-            _marker(sent_ts + 10 * 60, 0.25),
-            _current(sent_ts + 16 * 60, 0.30),
+            _marker(sent_ts + 2 * 60, 0.25),
+            _current(sent_ts + 6 * 60, 0.30),
             mint=MINT, symbol="?", last_sent={"early_dump": NOW})
         self.assertEqual(len(later), 1)
 
@@ -229,6 +230,8 @@ class EarlyDumpStateTest(unittest.TestCase):
         summary = ta.alert_state_summary(state)
         self.assertTrue(summary["summary"])
         self.assertEqual(summary["sent_event_ids"], 0)
+        self.assertEqual(summary["early_dump"]["ts"], NOW)
+        self.assertAlmostEqual(summary["early_dump"]["dust_pct_mc"], 0.2)
 
     def test_merge_stores_marker_early_dump_terbaru_menang(self):
         old = {"updated_at": NOW, "tokens": {MINT: {
@@ -282,6 +285,19 @@ class EarlyDumpIntegrationTest(unittest.TestCase):
             reg_crossing, store, sender=sender,
             lp_mints={MINT})
         self.assertEqual(sender.call_count, 0)
+
+    def test_observasi_pertama_di_atas_ambang_langsung_kirim(self):
+        analysis = _analysis(MINT, "LPT", 0.3)
+        store = {"tokens": {}}
+        sender = mock.Mock(return_value={"ok": True, "skipped": False})
+        deliveries = ta.process_holder_alerts(
+            {MINT: analysis}, store, sender=sender, lp_mints={MINT},
+            volume_rules=False)
+        self.assertEqual(len(deliveries), 1)
+        self.assertTrue(deliveries[0]["delivery"]["ok"])
+        self.assertEqual(deliveries[0]["event"]["kind"], "early_dump")
+        self.assertIn("pertama kali terpantau", deliveries[0]["event"]["scope"])
+        sender.assert_called_once()
 
     def test_zero_fetch_tidak_menggerakkan_marker(self):
         store = {"tokens": {MINT: {

@@ -537,7 +537,8 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
                   holder_source: str | None = None,
                   extra_pools=None,
                   cohort_addrs=None,
-                  tracked_wallet_addrs=None) -> dict:
+                  tracked_wallet_addrs=None,
+                  detail: bool = True) -> dict:
     """Analisis holder (real vs dust + mid-tier + kohort).
 
     ``extra_pools``: address LP tambahan (mis. pool Meteora) yang dibuang
@@ -545,6 +546,8 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
     pada scan sebelumnya — saldonya dikembalikan di ``holders.cohort_now``.
     ``tracked_wallet_addrs`` adalah sampel bounded dari snapshot alert lama;
     address tersebut tetap dicatat sebagai saldo nol bila sudah menghilang.
+    ``detail=False`` (scan 5 menit LP): catat dust/holder saja, tanpa peta
+    wallet alert / kronologi (fitur berat untuk slot 4 jam).
     """
     ca = str(ca or "").strip()
     dust_limit = float(DUST_LIMIT_USD if dust_limit is None else dust_limit)
@@ -585,34 +588,42 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
         holder_stats.setdefault("cohort_now", {})
 
     analyzed_at = int(time.time())
-    try:
-        from telegram_alerts import build_wallet_snapshot
-        holder_stats["wallet_snapshot"] = build_wallet_snapshot(
-            snapshot.get("holders") or [],
-            dust_pct_mc=holder_stats.get("dust_pct_mc"),
-            dust_limit_usd=dust_limit,
-            tracked_addresses=tracked_wallet_addrs or [],
-            ts=analyzed_at,
-            truncated=bool(snapshot.get("truncated")),
-        )
-    except Exception:  # noqa: BLE001 - alert payload cannot fail analysis
-        holder_stats.setdefault("wallet_snapshot", {})
-    try:
-        from holder_chronology import build_chrono_snapshot
-        holder_stats["chrono_snapshot"] = build_chrono_snapshot(
-            snapshot.get("holders") or [],
-            tracked_addresses=tracked_wallet_addrs or [],
-            pool_addresses=pools,
-            ts=analyzed_at,
-            price=price,
-            market_cap=mc,
-            dust_pct_mc=holder_stats.get("dust_pct_mc"),
-            holder_count=holder_stats.get("wallets_analyzed"),
-            dust_count=holder_stats.get("dust_count"),
-            truncated=bool(snapshot.get("truncated")),
-        )
-    except Exception:  # noqa: BLE001 - kronologi tidak boleh menggagalkan scan
-        holder_stats.setdefault("chrono_snapshot", {})
+    if detail:
+        try:
+            from telegram_alerts import build_wallet_snapshot
+            holder_stats["wallet_snapshot"] = build_wallet_snapshot(
+                snapshot.get("holders") or [],
+                dust_pct_mc=holder_stats.get("dust_pct_mc"),
+                dust_limit_usd=dust_limit,
+                tracked_addresses=tracked_wallet_addrs or [],
+                ts=analyzed_at,
+                truncated=bool(snapshot.get("truncated")),
+            )
+        except Exception:  # noqa: BLE001 - alert payload cannot fail analysis
+            holder_stats.setdefault("wallet_snapshot", {})
+        try:
+            from holder_chronology import build_chrono_snapshot
+            holder_stats["chrono_snapshot"] = build_chrono_snapshot(
+                snapshot.get("holders") or [],
+                tracked_addresses=tracked_wallet_addrs or [],
+                pool_addresses=pools,
+                ts=analyzed_at,
+                price=price,
+                market_cap=mc,
+                dust_pct_mc=holder_stats.get("dust_pct_mc"),
+                holder_count=holder_stats.get("wallets_analyzed"),
+                dust_count=holder_stats.get("dust_count"),
+                truncated=bool(snapshot.get("truncated")),
+            )
+        except Exception:  # noqa: BLE001 - kronologi tidak boleh menggagalkan scan
+            holder_stats.setdefault("chrono_snapshot", {})
+    else:
+        # Scan 5 menit: early_dump cukup dust % MC + analyzed_at.
+        holder_stats["wallet_snapshot"] = {
+            "ts": analyzed_at,
+            "dust_pct_mc": holder_stats.get("dust_pct_mc"),
+            "balances": {}, "dust": [], "wallets_seen": 0, "truncated": False,
+        }
     return {
         "ca": ca,
         "symbol": str(symbol or market.get("symbol") or "?"),

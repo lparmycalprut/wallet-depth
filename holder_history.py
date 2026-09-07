@@ -1099,6 +1099,26 @@ def seed_from_status(store: dict, status: dict | None) -> dict:
                     slot["alert_state"] = compact_alert_state(remote_alert)
             except Exception:  # noqa: BLE001 - history tetap dapat dipakai
                 pass
+        elif isinstance(remote_alert, dict):
+            # Snapshot ramping: jangan timpa peta wallet, tapi pulihkan
+            # marker early_dump / high_drop (tanpa peta) supaya scan 5 menit
+            # berikutnya masih punya state Telegram bila backup gzip gagal.
+            local_alert = slot.get("alert_state") if isinstance(
+                slot.get("alert_state"), dict) else {}
+            local_alert = dict(local_alert or {})
+            changed = False
+            for key in ("early_dump", "high_drop"):
+                remote_m = remote_alert.get(key)
+                if not isinstance(remote_m, dict) or not _int(remote_m.get("ts")):
+                    continue
+                local_m = local_alert.get(key) if isinstance(
+                    local_alert.get(key), dict) else {}
+                if not local_m or _int(remote_m.get("ts")) >= _int(
+                        (local_m or {}).get("ts")):
+                    local_alert[key] = dict(remote_m)
+                    changed = True
+            if changed:
+                slot["alert_state"] = local_alert
         remote_chrono = _sanitize_remote_chronology(token.get("chronology"))
         local_chrono = slot.get("chronology") if isinstance(
             slot.get("chronology"), dict) else {}

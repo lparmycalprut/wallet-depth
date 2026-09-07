@@ -370,8 +370,8 @@ def _render_lp_row(row: dict) -> None:
         figure = lp_chart_figure(chart_points, symbol)
         if figure is None:
             st.info("Butuh minimal 2 titik bucket 4 jam. Cron watchlist LP "
-                    "(target ±5 menit, best-effort) atau tombol **Scan "
-                    "holder watchlist** akan mengisinya.")
+                    "(tiap ±5 menit) atau tombol **Scan sekarang** di card "
+                    "ini akan mengisinya.")
         else:
             st.pyplot(figure, use_container_width=True)
             plt.close(figure)
@@ -386,8 +386,10 @@ def _render_lp_row(row: dict) -> None:
                 unsafe_allow_html=True)
 
 
-def _render_lp_card(rows: list[dict]) -> None:
+def _render_lp_card(lp_watch: dict, status_tokens: dict,
+                    history_store: dict) -> None:
     """Card paling atas: watchlist Meteora + grafik perubahan dust holder."""
+    rows = lp_card_rows(lp_watch, status_tokens, history_store)
     summary = lp_summary(rows)
     with st.container(border=True):
         st.markdown(_lp_head_html(summary), unsafe_allow_html=True)
@@ -419,6 +421,58 @@ def _render_lp_card(rows: list[dict]) -> None:
                                          background=True)
                         st.success(f"{ca[:8]}… masuk Chart LP.")
                         st.rerun()
+
+        if st.button("🔄 Scan sekarang Chart LP", type="primary",
+                     key="lp-scan-now", use_container_width=True):
+            analyses = {}
+            total = len(lp_watch or {})
+            bar = st.progress(0.0, text=f"Scan Chart LP 0/{total}…")
+            done = 0
+            for mint, meta in (lp_watch or {}).items():
+                try:
+                    analyses[mint] = analyze_token(
+                        mint, (meta or {}).get("symbol") or "?",
+                        max_wallets=2000, fetch_market=True, detail=False)
+                except Exception:  # noqa: BLE001
+                    analyses[mint] = None
+                done += 1
+                bar.progress(done / max(total, 1),
+                             text=f"Scan Chart LP {done}/{total} · "
+                                  f"{str((meta or {}).get('symbol') or '?')}")
+            bar.empty()
+            ok = {mint: item for mint, item in analyses.items()
+                  if isinstance(item, dict)}
+            fresh = {mint: item for mint, item in ok.items()
+                     if holders_usable(item.get("holders"))}
+            skipped_short = sorted(set(ok) - set(fresh))
+            failed = sorted(mint for mint, item in analyses.items()
+                            if not isinstance(item, dict))
+            published = None
+            if fresh:
+                ingest_many(fresh, store=history_store, detail=False)
+                published = publish_holder_status(
+                    fresh, watchlist, push=False,
+                    history_store=history_store,
+                    merge_status=holder_status)
+            st.session_state["lp_scan_report"] = {
+                "total": total, "updated": len(fresh), "failed": len(failed),
+                "short": len(skipped_short),
+                "snapshot_ts": ((published or holder_status).get("updated_at")),
+            }
+            st.session_state["status_force_refresh"] = True
+            st.rerun()
+
+        _lp_report = st.session_state.pop("lp_scan_report", None)
+        if isinstance(_lp_report, dict):
+            bits = [f"{_lp_report.get('updated') or 0} token Chart LP "
+                    "diperbarui"]
+            if _lp_report.get("failed"):
+                bits.append(f"{_lp_report['failed']} gagal")
+            if _lp_report.get("short"):
+                bits.append(f"{_lp_report['short']} scan tidak lengkap "
+                            "dilewati")
+            st.info("Scan sekarang selesai: " + " · ".join(bits) + ".",
+                    icon="✅")
 
         if not rows:
             st.info("Chart LP masih kosong. Tambahkan token dari **⭐ Scan "
@@ -874,8 +928,8 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
                 "di-scan cron **tiap ±5 menit** (sejak 2026-09-06, sama "
                 "cepatnya dengan Chart LP Meteora) supaya exit bisa lebih "
                 "awal. "
-                "Pengingat ⚡ Telegram tetap dibatasi ±15 menit per token "
-                "agar notifikasi tidak spam. Selama hold % MC dust di atas "
+                "Pengingat ⚡ Telegram dikirim tiap ±5 menit per token "
+                "selama dust masih di atas ambang. Selama hold % MC dust di atas "
                 f"**{DUST_BEST_PCT:g}%**, alert ⚡ Telegram dikirim "
                 "**berulang tiap scan** — berhenti hanya bila token "
                 "dihapus (✕) atau dipindah ke watchlist biasa (📋). "
@@ -886,8 +940,10 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
                 "DexScreener.")
         else:
             st.caption(
-                "Watchlist **Robinhood biasa** (`0x…`) — di-scan cron "
-                "**tiap ±4 jam**. Titik acuan alert = **titik high**: "
+                "Watchlist **Robinhood biasa** (`0x…`) — cron **4 jam "
+                "dimatikan**; token ini tidak di-scan otomatis (pakai "
+                "tombol scan manual atau pindah ke card LP). "
+                "Titik acuan alert = **titik high**: "
                 "hold % MC dust terbesar yang pernah tercatat (bukan "
                 "snapshot awal). Bila dust % MC **turun ≥ 50% dari titik "
                 "high**, alert 🔔 Telegram dikirim (satu kali per titik "
@@ -907,10 +963,10 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
                         "Masuk ke card", RH_ADD_TARGETS, index=0,
                         key="rh-add-target", horizontal=True,
                         help=("🦅 Robinhood LP = scan cepat ±5 menit + "
-                              "pengingat ⚡ (maks ±15 menit per token) "
-                              "selama dust > 0,1% MC. "
-                              "📋 Robinhood biasa = scan ±4 jam + rule 🔔 "
-                              "titik high."))
+                              "pengingat ⚡ tiap scan selama dust > 0,1% MC. "
+                              "📋 Robinhood biasa = tidak di-scan cron "
+                              "(4 jam dimatikan); pakai pindah card / "
+                              "scan manual. Rule 🔔 titik high."))
                     if st.form_submit_button(
                             "🦅 Tambah ke Watchlist Robinhood"):
                         ca = str(rh_ca or "").strip()
@@ -1021,7 +1077,7 @@ _rh_now_ts = int(datetime.now(timezone.utc).timestamp())
 # sisanya → watchlist holder biasa. Scan tombol di bawah tetap memproses
 # seluruh watchlist supaya kedua card punya data.
 lp_watch, holder_watch = split_watchlist(watchlist)
-_render_lp_card(lp_card_rows(lp_watch, status_tokens, history_store))
+_render_lp_card(lp_watch, status_tokens, history_store)
 
 # Watchlist Robinhood dipecah dua card (2026-09-05): **Robinhood LP** (scan
 # cepat ±5 menit sejak 2026-09-06, pengingat ⚡ >0,1% berulang) di atas,
@@ -1061,9 +1117,11 @@ st.caption(
     "dust % MC sejak token ditambahkan sampai scan terakhir (hijau bila turun "
     "≥ 50%, merah bila naik ≥ 100%). Token dari Scan Meteora ada di "
     "card **Chart LP** di atas. Cadens cron: semua watchlist LP (Chart LP "
-    "Meteora + Robinhood LP) **±5 menit** sejak 2026-09-06, watchlist biasa "
-    "±4 jam — dan rule 🔔 **titik high**: bila dust % MC turun ≥ 50% dari "
-    "hold % MC **terbesar** yang pernah tercatat, alert Telegram dikirim."
+    "Meteora + Robinhood LP) **±5 menit**. Watchlist biasa **tidak** "
+    "di-scan cron (slot 4 jam dimatikan) — pakai tombol scan manual. "
+    "Rule 🔔 **titik high** tetap ada di scan manual: bila dust % MC turun "
+    "≥ 50% dari hold % MC **terbesar** yang pernah tercatat, alert Telegram "
+    "dikirim."
 )
 st.caption(sync_caption_text(_watch_sync,
                              status_updated_at=holder_status.get("updated_at"),
@@ -1112,9 +1170,8 @@ elif watchlist:
     if _missing:
         st.info("Holder belum terambil untuk: " + ", ".join(_missing[:8])
                 + (" …" if len(_missing) > 8 else "")
-                + ". Cron LP mencoba tiap ±5 menit, watchlist biasa tiap "
-                  "±4 jam (token baru langsung di-scan pada run berikutnya); "
-                  "atau scan manual.",
+                + ". Cron LP mencoba tiap ±5 menit; watchlist biasa tidak "
+                  "di-scan cron (4 jam dimatikan) — pakai scan manual.",
                 icon="ℹ️")
 
 if st.button("🔄 Scan holder watchlist", type="primary",
