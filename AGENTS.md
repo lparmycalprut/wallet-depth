@@ -119,13 +119,24 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   (`st.session_state[MANUAL_SCAN_KEY]`) membuat kartu metrik, badge,
   watchlist, dan Chart LP ikut scan manual yang lebih baru daripada snapshot
   cron — grafik sudah lebih dulu memuat titik itu dari `holder_history.json`.
-- `scripts/scan_holders.py`: cron watchlist. **Kadens run ±5 menit sejak
-  2026-09-06** (dulu 1×/jam → ±15 menit); lane diatur scanner, bukan cron:
-  **KEDUA lane LP tiap run** (Chart LP Meteora + Robinhood LP, ±5 mnt —
-  permintaan user: "buat meteora juga, per 5 menit, biar perubahan holder bisa
-  langsung ketahuan"), **watchlist biasa slot 4 jam** (48 slot × 5 menit).
-  Beban API naik 3× di kedua chain; katup hematnya
-  `LP_SCAN_RUN_MULTIPLIER` (env, default 1) → `lp_slot_due(now,
+- `scripts/scan_holders.py`: cron **lane LP saja** sejak **2026-09-07**
+  (permintaan user: "rampingkan dan fokuskan ke holder scan untuk meteora dan
+  robinhood saja … semua pencatatan lain tidak usah dilakukan yang tidak
+  perlu"). Yang di-scan tiap run **±5 menit**: Chart LP Meteora
+  (`split_watchlist(watchlist)[0]`, Solana/Helius) + Robinhood LP
+  (`split_robinhood_watchlist(rh_watch)[0]`, EVM/Blockscout). **Watchlist
+  biasa tidak di-scan cron**: slot 4 jam, `token_needs_scan` (catch-up +
+  bootstrap), `build_scan_plan`, `--scope`, `merge_status`, pembacaan
+  `alert_settings.regular_telegram_enabled()`, dan rule 🔔 HIGH DROP
+  (`high_mints` selalu kosong) sudah **dihapus dari modul** — jangan
+  dikembalikan tanpa alasan; scan manual di dashboard tetap melayani token
+  biasa. Pencatatan ikut dibatasi: `publish_holder_history(...,
+  keep_mints=set(lp_watch))` / `robinhood_watchlist.publish_scan(...,
+  keep_mints=set(rh_watch))` hanya men-push token watchlist aktif
+  (`holder_history.restrict_store_to_mints`; terukur 2.135.084 → 10.050 byte
+  gzip pada store live 81 token → 1 token LP). Scan FULL (baseline immutable +
+  kronologi) tidak dijadwalkan cron; jalankan `--full` manual. Katup hemat
+  kuota: `LP_SCAN_RUN_MULTIPLIER` (env, default 1) → `lp_slot_due(now,
   status.updated_at)` menahan scan **Solana** sampai tiap N run kalau kuota
   Helius menipis, tanpa menyentuh kode. Tiga invarian yang wajib dijaga bila
   kadens diubah lagi: `MIN_RUN_GAP_SEC` (gate run ganda) dan
@@ -143,22 +154,28 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   (backup gagal = `WARN` saja, tidak membuat cron merah). Scope rule
   ⚡ EARLY DUMP diteruskan lewat `lp_mints` = set `split_watchlist(
   watchlist)[0]` (token pool); untuk blok Robinhood di cron, `lp_mints` =
-  seluruh `rh_watch` (watchlist RH tidak dipecah Chart LP). Sejak
-  **2026-09-05 cron scan FULL**
-  (`--max-wallets` default = `holder_history.FULL_SCAN_MAX_WALLETS`
-  100.000) dan
-  `ingest_many(..., detail=True)`: token watchlist (lama maupun baru)
-  menjadi titik awal holder analytic tanpa scan manual. **Catatan:** baris
-  `.github/workflows/daily-effort.yml` yang masih mengirim
-  `--max-wallets 3000` belum bisa diubah lewat bot (butuh izin
-  `workflows` di repo) — selama ada, cron produksi terbatas 3.000
-  wallet/token (token ≤ 3.000 tidak terpengaruh; baseline + kronologi
-  otomatis tetap jalan). Hapus flag itu dari workflow untuk FULL penuh.
+  set `split_robinhood_watchlist(rh_watch)[0]` (**hanya lane LP** — entri
+  `source=regular` tidak di-scan cron sejak 2026-09-07). Cron memakai
+  `detail=False` (`scan_watchlist(..., detail=args.full)` +
+  `ingest_many(..., detail=args.full)`): tiap run hanya menambah titik holder
+  + evaluasi ⚡; baseline immutable + kronologi wallet ditulis scan FULL
+  manual (`--full`) atau tombol scan FULL di dashboard. Workflow tetap
+  mengirim `--max-wallets 3000`, jadi cron produksi terbatas 3.000
+  wallet/token (token ≤ 3.000 tidak terpengaruh); default modul tetap
+  `holder_history.FULL_SCAN_MAX_WALLETS` 100.000 untuk `--full`/scan manual.
   Berkas workflow **tidak pernah bisa** diubah dari sisi bot (GitHub App tanpa
-  izin `workflows` → 403 saat push/PUT): perubahan kadens 2026-09-06
-  (`*/5` + `WAIT=300`) karena itu disimpan sebagai `daily-effort-5menit.yml`
-  di root repo untuk disalin manual — jangan dianggap sudah terpasang sebelum
-  ada run Actions tiap 5 menit di tab **Actions**.
+  izin `workflows` → 403 saat push/PUT; diverifikasi ulang 2026-09-07:
+  `refusing to allow a GitHub App to create or update workflow
+  .github/workflows/daily-effort.yml without 'workflows' permission`). Karena
+  itu `daily-effort-5menit.yml` di root repo = **satu-satunya tempat**
+  perubahan workflow disiapkan untuk disalin manual lewat UI GitHub; isinya
+  versi 2026-09-07 (lane LP, input `full_scan` menggantikan `scan_all`, dua rem
+  anti-tabrakan di langkah chain, `timeout-minutes: 15`). Jangan dianggap sudah
+  terpasang sebelum terlihat di tab **Actions**. Supaya workflow lama tidak
+  crash selama belum disalin, `scripts/scan_holders.py` masih menerima
+  `--scope auto|fast|all` sebagai **alias tersembunyi** (`argparse.SUPPRESS`):
+  `all` → `--full`, selain itu diabaikan + `WARN`. Hapus alias itu begitu
+  `daily-effort-5menit.yml` terpasang.
 
 ### Backup durable store holder
 

@@ -26,39 +26,70 @@ yang tidak bisa dipulihkan.
 ## GitHub Actions
 
 Workflow `.github/workflows/daily-effort.yml` ("Holder Dust Scanner")
-berjalan **tiap ±5 menit** sejak 2026-09-06 (`schedule: cron "*/5 * * * *"`
-+ langkah **chain dispatch**) dan memanggil `python scripts/scan_holders.py`.
-Scanner yang membagi pekerjaannya per lane: **KEDUA watchlist LP**
-(Robinhood LP + Chart LP Meteora) tiap run = ±5 menit, **watchlist biasa**
-slot 4 jam. Beban API ikut naik 3× di kedua chain (Helius untuk Meteora,
-Blockscout untuk Robinhood) — itu konsekuensi yang diterima saat user minta
-"untuk watchlist meteora juga, per 5 menit, biar perubahan holder bisa
-langsung ketahuan". Kalau kuota Helius mulai ketat: set
+berjalan **tiap ±5 menit** (`schedule: cron "*/5 * * * *"` + langkah **chain
+dispatch**) dan memanggil `python scripts/scan_holders.py`. Sejak
+**2026-09-07** scanner hanya mengerjakan **lane LP**: Chart LP Meteora
+(Solana/Helius) + Robinhood LP (EVM/Blockscout), keduanya tiap run = ±5 menit.
+Watchlist biasa (Solana non-LP & Robinhood `source=regular`) tidak di-scan cron
+lagu — slot 4 jam, catch-up, bootstrap, dan rule 🔔 HIGH DROP dilepas dari
+jalur cron (scan manual di dashboard tetap ada). Pencatatan ikut dirampingkan:
+snapshot dipublish tanpa `merge_status`, toggle Telegram watchlist biasa tidak
+dibaca lagi, dan backup durable dibatasi token LP aktif
+(`publish_holder_history(..., keep_mints=…)` — terukur 2.135.084 → 10.050 byte
+gzip pada store live). Kalau kuota Helius mulai ketat: set
 `LP_SCAN_RUN_MULTIPLIER: "3"` di langkah scan (env, tanpa ubah kode) sehingga
-scan Solana kembali ±15 menit sementara Robinhood LP tetap tiap run. Job memakai
-`timeout-minutes: 45` supaya run yang macet tidak menumpuk antre di
-concurrency group `holder-scanner`.
+scan Solana kembali ±15 menit sementara Robinhood LP tetap tiap run.
+`timeout-minutes` job diusulkan turun 45 → 15 menit di `daily-effort-5menit.yml`
+(scan ±1-2 menit + tidur chain ±5 menit) supaya run yang macet tidak menumpuk
+antre di concurrency group `holder-scanner`; workflow terpasang masih 45.
 
-> **Berkas workflow tidak bisa ditulis bot.** GitHub menolak push/PUT ke
-> `.github/workflows/*` tanpa izin `workflows` (403 `refusing to allow a GitHub
-> App to create or update workflow`). Isi lengkap untuk kadens 5 menit ada di
-> **`daily-effort-5menit.yml`** di root repo — salin lewat UI GitHub (atau ubah
-> dua angka saja: `cron "*/15 * * * *"` → `"*/5 * * * *"` dan
-> `WAIT=$((900 - NOW % 900 + 20))` → `300`). Kode scanner sudah mendukung
-> keduanya: workflow 15 menit = semua lane LP 15 menit (tidak ada yang rusak),
-> workflow 5 menit = kedua lane LP 5 menit.
+> **Run "cancelled" dengan pesan `Canceling since a higher priority waiting
+> request for holder-scanner exists` bukan prioritas lain.** Tidak ada workflow
+> lain yang memakai concurrency group `holder-scanner` (satu-satunya workflow
+> lain, `lp-safe-radar.yml`, statusnya `disabled_manually` dan berkasnya sudah
+> tidak ada di `main` → 404 saat dibaca lewat API). Penyebabnya run dari
+> workflow ini sendiri: GitHub hanya menahan **satu** run mengantre per
+> concurrency group, jadi saat chain dispatch + `schedule */5` (+ dispatch
+> manual) menghasilkan request ketiga, run yang sedang mengantre dibatalkan
+> dengan pesan itu. Contoh nyata 2026-09-07: run 34092534104 dibuat 06:49:20
+> UTC lalu `conclusion: cancelled` pada 06:50:23 UTC **tanpa punya job sama
+> sekali** (API `/actions/runs/34092534104/jobs` → `total_count: 0`), dua detik
+> sesudah run 34092608329 dibuat 06:50:21 UTC — persis pola "yang mengantre
+> ditendang request lebih baru".
+>
+> Perbaikannya ada di **`daily-effort-5menit.yml`** (menunggu disalin ke
+> `.github/workflows/daily-effort.yml` lewat UI — lihat catatan 403 di bawah):
+> langkah "Chain run berikutnya" dapat dua rem — dispatch **dilewati** bila
+> masih ada run workflow ini yang `queued`/`in_progress`/`waiting`, dan
+> **dilewati** juga bila schedule `*/5` terbukti sehat (run `event=schedule`
+> terakhir < 15 menit) — jadi chain hanya menambal saat schedule di-throttle.
+> Run ganda yang tetap lolos disaring gate `MIN_RUN_GAP_SEC` (4 menit) di
+> scanner dan keluar tanpa kerja.
+
+> **Berkas workflow tidak bisa ditulis bot — terverifikasi ulang 2026-09-07.**
+> `git push` ke branch berisi perubahan `.github/workflows/daily-effort.yml`
+> ditolak remote:
+> `refusing to allow a GitHub App to create or update workflow
+> .github/workflows/daily-effort.yml without 'workflows' permission`. Isi
+> lengkap versi terbaru (lane LP + dua rem chain dispatch + input `full_scan` +
+> `timeout-minutes: 15`) ada di **`daily-effort-5menit.yml`** di root repo —
+> salin lewat UI GitHub (Actions → Holder Dust Scanner → edit → timpa dari
+> baris `name:` ke bawah → commit). Selama belum disalin: cron terpasang tetap
+> jalan normal (dipanggil tanpa argumen = lane LP tiap run), `--scope all` dari
+> input `scan_all` masih diterima sebagai alias `--full` (tidak crash), hanya
+> rem anti-tabrakan antrean yang belum aktif.
 >
 > **Cara memperlambat scan Solana saja** (kalau kuota Helius menipis, tanpa
 > menyentuh kode): tambah env `LP_SCAN_RUN_MULTIPLIER: "3"` di langkah
 > "Holder scan" → lane Meteora tiap 3 run (±15 menit), Robinhood LP tetap tiap
-> run, watchlist biasa tetap slot 4 jam.
+> run.
 >
 > **Cara mengembalikan SELURUH kadens ke 15 menit** (atau ke berapa pun):
 > angka-angka ini harus bergerak bersamaan —
 > `WAIT=$((300 - NOW % 300 + 20))` → `900` di langkah "Chain run berikutnya",
 > `cron: "*/5 * * * *"` → `"*/15 * * * *"`, `RUN_SCAN_INTERVAL_SEC` (yang
-> menurunkan `RH_FAST_SCAN_INTERVAL_SEC` / `METEORA_LP_SCAN_INTERVAL_SEC` /
-> `REGULAR_SLOTS`) dan `MIN_RUN_GAP_SEC` di `scripts/scan_holders.py` (gate run
+> menurunkan `RH_FAST_SCAN_INTERVAL_SEC` / `METEORA_LP_SCAN_INTERVAL_SEC`) dan
+> `MIN_RUN_GAP_SEC` di `scripts/scan_holders.py` (gate run
 > ganda wajib **lebih kecil** dari kadens run), dan `holder_history.MAX_POINTS`
 > kembali ke 336 kalau densitas titik juga ikut melambat (1008 titik @ 15 menit
 > = 10,5 hari). `holder_history.MIN_POINT_GAP_SEC` aman dibiarkan 4 menit —
@@ -90,23 +121,28 @@ concurrency group `holder-scanner`.
 
 Langkah setiap scan:
 
-1. Analisis per token: holder Helius DAS (fallback GMGN, **scan FULL** —
-   paginasi sampai habis; `--max-wallets` default 100.000 sejak
-   2026-09-05), klasifikasi real (>$10) vs dust, `dust_pct_mc`, mid-tier,
-   kohort, lalu simpan detail baseline + kronologi (`detail=True`).
+1. Analisis per token **lane LP**: holder Helius DAS untuk Chart LP Meteora
+   (fallback GMGN) dan Blockscout untuk Robinhood LP (`--max-wallets 3000`
+   dikirim workflow; default modul 100.000), klasifikasi real (>$10) vs dust,
+   `dust_pct_mc`, mid-tier. Cron memakai `detail=False` (titik holder +
+   alert ⚡ saja); baseline immutable + kronologi wallet hanya ditulis scan
+   FULL manual (`--full`).
 2. Evaluasi alert terhadap snapshot lama **sebelum** snapshot terbaru
    ditulis. Snapshot wallet disimpan secara bounded di history/status.
 3. Publish `holder_status.json` ke branch `holder-live` (dibuat otomatis
-   pada publish pertama) agar dashboard dan cron memakai state yang sama.
-   Snapshot ramping: peta balance alert / kohort / wallet kronologi tidak
-   ikut (hanya jumlah + sampel movements) — 2,87 MB → 0,30 MB untuk 36
-   token (−90%), jadi dashboard memuat jauh lebih ringan.
-4. Backup store penuh sebagai `holder_history.json.gz` (gzip, ref
-   `holder-live`) lewat `holder_history.publish_holder_history()` — baseline
-   scan FULL, kohort, state alert, dan kronologi wallet bertahan walau runner
-   ephemeral. Run berikutnya mem-pull + `merge_stores()` **sebelum** evaluasi
-   alert (langkah 2), jadi cron tidak pernah mulai dari nol. Backup gagal
-   hanya `WARN` (`backup=GAGAL (...)` di log), exit code tetap dari publish
+   pada publish pertama) agar dashboard dan cron memakai state yang sama —
+   **tanpa** `merge_status` sejak 2026-09-07 (tidak ada baris token watchlist
+   biasa yang perlu diwariskan). Snapshot ramping: peta balance alert /
+   kohort / wallet kronologi tidak ikut (hanya jumlah + sampel movements) —
+   2,87 MB → 0,30 MB untuk 36 token (−90%), jadi dashboard memuat jauh lebih
+   ringan.
+4. Backup store sebagai `holder_history.json.gz` (gzip, ref `holder-live`)
+   lewat `holder_history.publish_holder_history(..., keep_mints=watchlist LP)`
+   — state alert, kohort, dan titik grafik bertahan walau runner ephemeral,
+   tanpa menyeret token watchlist lama (lihat bullet ukuran repo di bawah).
+   Run berikutnya mem-pull + `merge_stores()` **sebelum** evaluasi alert
+   (langkah 2), jadi cron tidak pernah mulai dari nol. Backup gagal hanya
+   `WARN` (`backup=GAGAL (...)` di log), exit code tetap dari publish
    snapshot. `--no-push` melewati keduanya.
 
 Cadence (2026-09-04 hourly → 2026-09-05 LP 15 menit → 2026-09-06 run 5 menit:
@@ -131,11 +167,14 @@ ukuran ref `holder-live`:
   mengganti blob (bandingkan ±7,6 MB/hari pada kadens 2 jam; git menyimpan
   delta antar commit, nilai sesungguhnya lebih kecil).
 - Ukuran repo `holder-live`: tiap run menulis DUA commit (`holder-status:` +
-  `holder-history:`), jadi kadens 5 menit = ±576 commit/hari. Saat ini total
-  repo terukur ±56 MB pada kadens 15 menit; kalau pertumbuhannya ganggu,
-  tinggal batasi **publish backup .gz** ke run slot 4 jam (grafik toh
-  di-resample per bucket) sementara snapshot `holder_status.json` tetap tiap
-  run — belum perlu sekarang, cukup dipantau.
+  `holder-history:`), jadi kadens 5 menit = ±576 commit/hari. Sejak
+  **2026-09-07** blob `holder_history.json.gz` dibatasi token LP aktif
+  (`keep_mints`), jadi ukurannya mengikuti jumlah token watchlist LP, bukan
+  akumulasi token lama: pada store live 81 token (1 token LP aktif) payload
+  turun **2.135.084 → 10.050 byte** per commit. Snapshot
+  `holder_status.json` tetap tiap run. Bila suatu saat blob LP membesar lagi,
+  tangga `prune_store_for_backup()` (batas `MAX_BACKUP_BYTES` 3,5 MB) tetap
+  bekerja seperti sebelumnya.
 - Kuota holder: sejak 2026-09-05 cron scan **FULL** (bukan sampel 3000):
   token yang punya ≤ 3000 holder tidak berubah biayanya, token lebih besar
   ikut semua halamannya (default `--max-wallets` = 100.000 = batas atas

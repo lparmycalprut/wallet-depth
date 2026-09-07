@@ -334,6 +334,82 @@ class PruneStoreTest(unittest.TestCase):
 
 
 @mock.patch.dict(os.environ, {"HOLDER_STORE_BACKUP": "1"})
+class KeepMintsBackupTest(unittest.TestCase):
+    """``keep_mints`` = backup durable hanya untuk token yang di-scan cron.
+
+    Sejak 2026-09-07 cron holder hanya lane LP (Chart LP Meteora + Robinhood
+    LP). Token watchlist lama yang sudah tidak di-scan tidak perlu di-push
+    ulang tiap 5 menit (terukur 81 token = ±2,1 MB per run), jadi scanner
+    memanggil ``publish_holder_history(..., keep_mints=watchlist LP)``.
+    """
+
+    OLD = "OldMint111111111111111111111111111111111"
+
+    def setUp(self):
+        hh.reset_durable_cache()
+
+    def _two_tokens(self):
+        store = _store()
+        store["tokens"][self.OLD] = _slot(90, symbol="OLD")
+        return store
+
+    def test_hanya_token_lp_yang_dibackup(self):
+        store = self._two_tokens()
+        with mock.patch("holder_status.push_store_backup",
+                        return_value=True) as push:
+            result = hh.publish_holder_history(store, push=True,
+                                               keep_mints={MINT})
+        backed = hh.parse_store_backup(push.call_args.args[0]) or {}
+        self.assertEqual(set(backed.get("tokens") or {}), {MINT})
+        self.assertEqual(result["dropped_tokens"], 1)
+        self.assertEqual(backed.get("updated_at"), store["updated_at"])
+
+    def test_keep_mints_kosong_mengosongkan_payload(self):
+        with mock.patch("holder_status.push_store_backup",
+                        return_value=True) as push:
+            result = hh.publish_holder_history(self._two_tokens(), push=True,
+                                               keep_mints=set())
+        backed = hh.parse_store_backup(push.call_args.args[0]) or {}
+        self.assertEqual(backed.get("tokens"), {})
+        self.assertEqual(result["dropped_tokens"], 2)
+
+    def test_tanpa_keep_mints_semua_token_ikut(self):
+        store = self._two_tokens()
+        with mock.patch("holder_status.push_store_backup",
+                        return_value=True) as push:
+            result = hh.publish_holder_history(store, push=True)
+        backed = hh.parse_store_backup(push.call_args.args[0]) or {}
+        self.assertEqual(set(backed.get("tokens") or {}), set(store["tokens"]))
+        self.assertEqual(result["dropped_tokens"], 0)
+
+    def test_payload_keep_mints_lebih_kecil(self):
+        store = self._two_tokens()
+        with mock.patch("holder_status.push_store_backup",
+                        return_value=True) as push:
+            hh.publish_holder_history(store, push=True, keep_mints={MINT})
+            small = len(push.call_args.args[0])
+            hh.publish_holder_history(store, push=True)
+            full = len(push.call_args.args[0])
+        self.assertLess(small, full)
+
+    def test_restrict_tidak_memutasi_store_asli(self):
+        store = self._two_tokens()
+        restricted = hh.restrict_store_to_mints(store, {MINT})
+        self.assertEqual(set(store["tokens"]), {MINT, self.OLD})
+        self.assertEqual(set(restricted["tokens"]), {MINT})
+        self.assertEqual(restricted["updated_at"], store["updated_at"])
+
+    def test_restrict_store_rusak(self):
+        self.assertEqual(
+            hh.restrict_store_to_mints(None, {MINT})["tokens"], {})
+        self.assertEqual(
+            hh.restrict_store_to_mints({"tokens": []}, {MINT})["tokens"], {})
+        self.assertEqual(
+            hh.restrict_store_to_mints({"tokens": {MINT: {}}}, None)["tokens"],
+            {})
+
+
+@mock.patch.dict(os.environ, {"HOLDER_STORE_BACKUP": "1"})
 class PublishHolderHistoryTest(unittest.TestCase):
     def setUp(self):
         hh.reset_durable_cache()

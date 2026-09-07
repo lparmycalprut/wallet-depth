@@ -79,8 +79,10 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
    token disimpan terpisah dari `watchlist.json` / `holder_status.json`.
    Card **Robinhood LP** dan card **Chart LP** (Meteora) sama-sama di-scan
    cron tiap **±5 menit** sejak 2026-09-06 (sebelumnya 15 menit) supaya exit
-   LP bisa lebih awal dan perubahan holder langsung kelihatan; **watchlist
-   biasa** (Solana & Robinhood biasa) tetap ±4 jam — lihat **Cadens scan**.
+   LP bisa lebih awal dan perubahan holder langsung kelihatan; sejak
+   **2026-09-07** hanya dua lane itu yang di-scan cron — **watchlist biasa**
+   (Solana non-LP & Robinhood `source=regular`) lewat tombol scan manual di
+   dashboard — lihat **Cadens scan**.
    Aksi ➕ / ✕ / 📋 di card ini tidak menunggu GitHub lagi — lihat
    **Sinkronisasi watchlist non-blocking**.
 
@@ -427,7 +429,7 @@ akumulasi dan bukan prediksi arah harga.
 | `helius_holders.py` | Scan Holder Khusus satu token + bar chart |
 | `holder_status.py` | Snapshot dashboard ramping (ref `holder-live`) + history ringkas + transport GitHub (JSON & byte/gzip) |
 | `core.py` | Config/key Helius, pasar DexScreener, candle hourly/harian GeckoTerminal |
-| `scripts/scan_holders.py` | Cron watchlist (run ±5 menit; kedua lane LP tiap run, biasa slot 4 jam, `LP_SCAN_RUN_MULTIPLIER` untuk rem Helius): holder, alert (konfirmasi volume lazy, scope early dump = token LP), catat history, publish snapshot + backup store |
+| `scripts/scan_holders.py` | Cron **lane LP saja** (run ±5 menit: Chart LP Meteora + Robinhood LP; `LP_SCAN_RUN_MULTIPLIER` untuk rem Helius, `--full` untuk scan FULL manual): holder, alert ⚡ (konfirmasi volume lazy), satu titik history per token, publish snapshot + backup store yang dibatasi token LP aktif |
 | `telegram_alerts.py` | Rule dust 4 jam/baseline + ⚡ EARLY DUMP (crossing 0,1% MC, token pool, tanpa gerbang volume), dedup bucket 4 jam + jeda 1 jam, Telegram Bot API (+ link GMGN & DexScreener di pesan) |
 | `links.py` | Satu sumber URL eksternal: GMGN, DexScreener, Solscan, Meteora DLMM, HawkFi (HTML untuk UI, teks polos untuk Telegram) + slug halaman internal (`/Holder?mint=…`) |
 | `page_router.py` | Router deep link: `?mint=`/`?page=` yang jatuh ke halaman utama dipantulkan ke halaman yang dituju (`st.switch_page`) |
@@ -482,25 +484,34 @@ pengiriman alert dilewati dengan aman.
 
 ## Cadens scan
 
-Sejak **2026-09-06** cron berjalan **tiap ±5 menit** dan scanner yang membagi
-pekerjaannya per lane (`scripts/scan_holders.py`):
+Sejak **2026-09-07** cron dirampingkan jadi **lane LP saja** dan berjalan
+**tiap ±5 menit** (`scripts/scan_holders.py`):
 
 | Lane | Kadens | Alasan |
 | --- | --- | --- |
-| 🦅 **Watchlist Robinhood LP** | tiap run = **±5 menit** | permintaan user: "percepat fetch watchlist robinhood menjadi 5 menit sekali" |
-| 🌊 **Chart LP Meteora** (Solana) | tiap run = **±5 menit** | permintaan user susulan: "iya untuk watchlist meteora juga, per 5 menit, biar perubahan holder bisa langsung ketahuan" |
-| 📋 **Watchlist biasa** (Solana & Robinhood biasa) | slot **4 jam** = 48 slot 5 menit | tidak berubah |
+| 🌊 **Chart LP Meteora** (Solana/Helius) | tiap run = **±5 menit** | permintaan user: "untuk watchlist meteora juga, per 5 menit, biar perubahan holder bisa langsung ketahuan" |
+| 🦅 **Watchlist Robinhood LP** (EVM/Blockscout) | tiap run = **±5 menit** | permintaan user: "percepat fetch watchlist robinhood menjadi 5 menit sekali" |
+| 📋 **Watchlist biasa** (Solana non-LP & Robinhood `source=regular`) | **tidak di-scan cron** | dirampingkan 2026-09-07: "fokuskan ke holder scan untuk meteora dan robinhood saja … pencatatan lain tidak perlu" — tetap bisa di-scan manual dari dashboard |
 
-Harga yang dibayar: tiap run sekarang menarik holder penuh semua token Meteora
-dari Helius (±3× dibanding era 15 menit) dan ±30 halaman Blockscout per token
-Robinhood. Kalau kuota mulai ketat, TIDAK perlu mengubah kode — set
-`LP_SCAN_RUN_MULTIPLIER: "3"` di langkah scan pada workflow, lalu `lp_slot_due`
-menahan lane Solana di luar slot 15 menitnya (log:
-`Rencana scan: … slot_lp=bukan`) sementara Robinhood LP tetap tiap run.
-**Gate run ganda** `MIN_RUN_GAP_SEC` = **4 menit**, wajib di bawah kadens run —
-kalau tidak, lane LP justru dibungkam gate-nya sendiri. Yang sengaja tidak ikut
-dipercepat: pengingat ⚡ Telegram (`FAST_BUCKET_SEC` tetap 15 menit/token —
-kalau tidak, satu token bisa dapat 3 pesan yang sama per 15 menit).
+Yang ikut dibuang bersama lane biasa: slot 4 jam + catch-up + bootstrap token
+baru, rule 🔔 HIGH DROP di cron, `merge_status` (pewarisan baris token biasa ke
+snapshot), pembacaan toggle Telegram watchlist biasa per run, dan token lama di
+backup durable — `publish_holder_history(..., keep_mints=watchlist LP)` hanya
+men-push token yang memang di-scan (terukur pada store nyata: **2.135.084 →
+10.050 byte** gzip, 81 token → 1 token LP aktif). Scan FULL (baseline immutable
++ kronologi wallet) tidak dijadwalkan lagi; jalankan manual bila perlu:
+`python scripts/scan_holders.py --full`.
+
+Harga yang dibayar: tiap run menarik holder penuh semua token Meteora dari
+Helius dan ±30 halaman Blockscout per token Robinhood. Kalau kuota mulai ketat,
+TIDAK perlu mengubah kode — set `LP_SCAN_RUN_MULTIPLIER: "3"` di langkah scan
+pada workflow, lalu `lp_slot_due` menahan lane Solana di luar slot 15 menitnya
+(log: `Rencana scan Meteora LP: … slot_lp=bukan`) sementara Robinhood LP tetap
+tiap run. **Gate run ganda** `MIN_RUN_GAP_SEC` = **4 menit**, wajib di bawah
+kadens run — kalau tidak, lane LP justru dibungkam gate-nya sendiri. Yang
+sengaja tidak ikut dipercepat: pengingat ⚡ Telegram (`FAST_BUCKET_SEC` tetap
+15 menit/token — kalau tidak, satu token bisa dapat 3 pesan yang sama per
+15 menit).
 
 Densitas titik riwayat mengikuti kadens run, jadi `holder_history.MAX_POINTS`
 naik **336 → 1008** (±3,5 hari pada titik 5 menit) supaya "Grafik 4 jam" di
@@ -508,12 +519,17 @@ card LP tetap 21 bucket; tanpa itu jendela grafik menyusut jadi 28 jam.
 
 Kadens dijaga dua mekanisme di `.github/workflows/daily-effort.yml`: `schedule:
 "*/5 * * * *"` (fallback) dan langkah **chain dispatch** yang tidur sampai
-batas 5 menit berikutnya lalu men-dispatch run baru. Berkas workflow tidak
-bisa ditulis bot (GitHub menolak tanpa izin `workflows`), jadi kedua perubahan
-itu disiapkan di **`daily-effort-5menit.yml`** — salin isinya ke
-`.github/workflows/daily-effort.yml` lewat UI GitHub. Selama belum disalin,
-cron tetap ±15 menit untuk SEMUA lane (aman, hanya saja belum secepat yang
-diminta). Schedule GitHub bersifat
+batas 5 menit berikutnya lalu men-dispatch run baru — dengan dua rem supaya
+antrean concurrency `holder-scanner` tidak menumpuk dan saling membatalkan
+("Canceling since a higher priority waiting request …"): dispatch dilewati bila
+masih ada run mengantre/berjalan, dan dilewati juga bila schedule `*/5`
+terbukti sehat (run schedule terakhir < 15 menit). Kedua rem itu (beserta
+input `full_scan` dan `timeout-minutes: 15`) ada di **`daily-effort-5menit.yml`**
+dan menunggu disalin ke `.github/workflows/daily-effort.yml` lewat UI GitHub —
+berkas workflow tidak bisa ditulis bot (`git push` ditolak 403 `refusing to
+allow a GitHub App to create or update workflow`); selama belum disalin, cron
+terpasang tetap jalan normal karena scanner menerima `--scope` lama sebagai
+alias. Schedule GitHub bersifat
 **best-effort** — run bisa telat/dilewati (pada `*/15` pernah terukur ±2 jam)
 — jadi yang menjaga ritme adalah chain dispatch. Lihat `DEPLOY.md` untuk cara
 memverifikasi kadens nyata, memperlambat lane Solana, atau mengembalikan
@@ -640,7 +656,15 @@ Store sekarang dibackup penuh ke ref `holder-live` sebagai
 
 - **cron** (`scripts/scan_holders.py`): `pull_holder_history()` →
   `merge_stores(lokal, durable)` → `seed_from_status()` (jaring kedua) →
-  scan → publish snapshot → `publish_holder_history()`. Backup gagal hanya
+  scan → publish snapshot → `publish_holder_history(..., keep_mints=watchlist
+  LP)`. **Sejak 2026-09-07 payload backup dibatasi token lane LP aktif**
+  (`holder_history.restrict_store_to_mints`): token watchlist lama yang sudah
+  tidak di-scan cron tidak ikut di-push ulang tiap 5 menit. Terukur pada store
+  live (81 token, hanya 1 token LP aktif): **2.135.084 → 10.050 byte gzip
+  (−99,5%)**, jadi riwayat branch `holder-live` tidak lagi menampung ±600 MB
+  blob per hari. Store lokal (`holder_history.json`) tetap penuh; yang
+  dibatasi hanya byte yang naik ke GitHub, dan jumlah token yang dibuang
+  dilaporkan sebagai `tanpa N token lama` di log run. Backup gagal hanya
   mencetak `WARN` + `backup=GAGAL (...)` di log; run tidak jadi merah.
 - **UI** (`app.py`, `pages/5_🧮_Holder.py`): `load_durable_holder_history()`
   = `merge_stores(durable, lokal)` — **store lokal menang** bila timestamp

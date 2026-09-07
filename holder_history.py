@@ -1534,16 +1534,56 @@ def prune_store_for_backup(store: dict | None,
     return pruned, dropped
 
 
+def restrict_store_to_mints(store: dict | None, mints) -> dict:
+    """Buang token di luar ``mints`` dari store (backup cron lane LP).
+
+    Sejak **2026-09-07** cron holder hanya memindai **lane LP** (Chart LP
+    Meteora + Robinhood LP), jadi backup durable tidak perlu lagi menyeret
+    token watchlist lama yang sudah tidak di-scan: 81 token × titik mentah
+    membuat payload ±2,1 MB di-push ulang tiap 5 menit (±600 MB/hari riwayat
+    git) padahal hanya token LP aktif yang dibaca dashboard. ``mints`` kosong
+    → store kosong (tidak ada yang boleh di-backup). Store tidak disalin bila
+    tidak ada token yang dibuang.
+    """
+    if not isinstance(store, dict):
+        return empty_store()
+    keep = {mint for mint in (mints or []) if mint}
+    raw = store.get("tokens")
+    tokens = raw if isinstance(raw, dict) else {}
+    kept = {mint: slot for mint, slot in tokens.items() if mint in keep}
+    if isinstance(raw, dict) and len(kept) == len(tokens):
+        return store                    # tidak ada yang dibuang: tanpa salinan
+    out = dict(store)
+    out["tokens"] = kept
+    return out
+
+
+def dropped_token_count(store: dict | None, restricted: dict | None) -> int:
+    """Jumlah token yang dibuang :func:`restrict_store_to_mints`."""
+    def _count(data):
+        tokens = (data or {}).get("tokens") if isinstance(data, dict) else None
+        return len(tokens) if isinstance(tokens, dict) else 0
+    return max(0, _count(store) - _count(restricted))
+
+
 def publish_holder_history(store: dict | None, *, push: bool = True,
                            save_local: bool = False,
                            message: str | None = None,
                            path: str | None = None,
-                           repo_path: str | None = None) -> dict:
-    """Backup store penuh (gzip) ke ref ``holder-live``.
+                           repo_path: str | None = None,
+                           keep_mints=None) -> dict:
+    """Backup store (gzip) ke ref ``holder-live``.
 
     ``repo_path`` default ``holder_history.json.gz``; Robinhood memakai
     ``holder_history_robinhood.json.gz`` supaya store kedua jaringan tidak
     tercampur.
+
+    ``keep_mints`` ( iterable address ) membatasi **payload yang di-push** ke
+    token-token itu saja (:func:`restrict_store_to_mints`) — dipakai cron lane
+    LP supaya token watchlist lama tidak ikut di-backup ulang tiap 5 menit.
+    Store lokal (``save_local``) tetap penuh; yang dibatasi hanya byte yang
+    naik ke GitHub. Jumlah token yang dibuang dilaporkan di
+    ``result["dropped_tokens"]``.
 
     ``save_local=True`` juga menulis ``holder_history.json`` di disk — hanya
     untuk pemanggil yang belum menyimpan store (mis. pemulihan manual); cron
@@ -1554,7 +1594,8 @@ def publish_holder_history(store: dict | None, *, push: bool = True,
     """
     store = store if isinstance(store, dict) else empty_store()
     result = {"ok": None, "error": "", "bytes": 0, "pruned": [],
-              "pushed": False, "over_budget": False, "saved_local": False}
+              "pushed": False, "over_budget": False, "saved_local": False,
+              "dropped_tokens": 0}
     if save_local:
         try:
             save_holder_history(store, path)
@@ -1573,14 +1614,18 @@ def publish_holder_history(store: dict | None, *, push: bool = True,
     except Exception as exc:  # noqa: BLE001 - transport opsional
         result.update(ok=False, error=f"transport unavailable: {exc}")
         return result
-    payload = store_backup_bytes(store)
+    payload_store = store
+    if keep_mints is not None:
+        payload_store = restrict_store_to_mints(store, keep_mints)
+        result["dropped_tokens"] = dropped_token_count(store, payload_store)
+    payload = store_backup_bytes(payload_store)
     if len(payload) > MAX_BACKUP_BYTES:
-        pruned, dropped = prune_store_for_backup(store, MAX_BACKUP_BYTES)
+        pruned, dropped = prune_store_for_backup(payload_store, MAX_BACKUP_BYTES)
         payload = store_backup_bytes(pruned)
         result["pruned"] = dropped
         print(f"WARN: holder_history backup dipangkas ({', '.join(dropped)}) "
               f"-> {len(payload)} bytes")
-    stamp = store.get("updated_at") or int(time.time())
+    stamp = payload_store.get("updated_at") or int(time.time())
     try:
         ok = push_store_backup(
             payload, message or f"holder-history: backup {stamp} [skip ci]",
