@@ -12,11 +12,11 @@
           "wallets_seen": 0
         },
         "early_dump": {
-          "dust_pct_mc": 0.0641,
+          "dust_pct_mc": 0.0544,
           "escalated": false,
           "first_ts": 0,
           "rises": 0,
-          "ts": 1788831639
+          "ts": 1788831942
         },
         "high_drop": {},
         "last_sent": {
@@ -36,7 +36,7 @@
         "sent_event_ids": 4,
         "summary": true
       },
-      "analyzed_at": 1788831639,
+      "analyzed_at": 1788831942,
       "chronology": {
         "baseline_wallets": {
           "dust_count": 0,
@@ -72,27 +72,27 @@
       "history": [
         {
           "buckets": {
-            "$10-$100": 1396,
-            "$100-$1k": 905,
+            "$10-$100": 1398,
+            "$100-$1k": 944,
             "$100k-$500k": 0,
-            "$10k-$100k": 57,
-            "$1k-$10k": 252,
-            ">$0-$10": 1380,
+            "$10k-$100k": 63,
+            "$1k-$10k": 269,
+            ">$0-$10": 1316,
             ">$500k": 0
           },
           "cohort_cut50_pct": 100.0,
           "cohort_n": 200,
           "cohort_token_pct": 0.0,
-          "dust_count": 1382,
-          "dust_pct_mc": 0.0641,
-          "dust_value_usd": 4250.81,
+          "dust_count": 1318,
+          "dust_pct_mc": 0.0544,
+          "dust_value_usd": 4090.31,
           "holder_count": 3995,
-          "mc": 6632127.0,
-          "mid_count": 1157,
-          "mid_pct_mc": 15.2193,
-          "price": 0.006896,
-          "real_count": 2613,
-          "real_pct_mc": 40.8958,
+          "mc": 7513740.0,
+          "mid_count": 1213,
+          "mid_pct_mc": 14.39,
+          "price": 0.007813,
+          "real_count": 2677,
+          "real_pct_mc": 40.7381,
           "ts": 1788825600
         }
       ],
@@ -100,44 +100,44 @@
         "depth": {
           "buckets": [
             {
-              "count": 1380,
+              "count": 1316,
               "label": ">$0-$10",
               "max": 10.0,
               "min": 0.0,
-              "pct_mc": 0.064,
-              "value_usd": 4243.32
+              "pct_mc": 0.0543,
+              "value_usd": 4081.83
             },
             {
-              "count": 1396,
+              "count": 1398,
               "label": "$10-$100",
               "max": 100.0,
               "min": 10.0,
-              "pct_mc": 0.8094,
-              "value_usd": 53679.39
+              "pct_mc": 0.7197,
+              "value_usd": 54074.5
             },
             {
-              "count": 905,
+              "count": 944,
               "label": "$100-$1k",
               "max": 1000.0,
               "min": 100.0,
-              "pct_mc": 4.3722,
-              "value_usd": 289969.09
+              "pct_mc": 4.1282,
+              "value_usd": 310182.31
             },
             {
-              "count": 252,
+              "count": 269,
               "label": "$1k-$10k",
               "max": 10000.0,
               "min": 1000.0,
-              "pct_mc": 10.8471,
-              "value_usd": 719395.18
+              "pct_mc": 10.2618,
+              "value_usd": 771042.68
             },
             {
-              "count": 57,
+              "count": 63,
               "label": "$10k-$100k",
               "max": 100000.0,
               "min": 10000.0,
-              "pct_mc": 22.4507,
-              "value_usd": 1488961.53
+              "pct_mc": 23.3186,
+              "value_usd": 1752101.8
             },
             {
               "count": 0,
@@ -157,47 +157,47 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1788831639,
+          "computed_at": 1788831942,
           "holders_all": 3995,
           "holders_wallet": 3990,
-          "market_cap": 6632127.0,
+          "market_cap": 7513740.0,
           "pool_excluded": 5,
           "tiers": [
             {
-              "count": 2776,
+              "count": 2714,
               "emoji": "\ud83e\udd90",
               "max": 100.0,
               "min": 0.0,
-              "pct_mc": 0.8734,
+              "pct_mc": 0.774,
               "tier": "Shrimp",
-              "value_usd": 57922.72
+              "value_usd": 58156.33
             },
             {
-              "count": 905,
+              "count": 944,
               "emoji": "\ud83e\udd80",
               "max": 1000.0,
               "min": 100.0,
-              "pct_mc": 4.3722,
+              "pct_mc": 4.1282,
               "tier": "Crab",
-              "value_usd": 289969.09
+              "value_usd": 310182.31
             },
             {
-              "count": 252,
+              "count": 269,
               "emoji": "\ud83d\udc1f",
               "max": 10000.0,
               "min": 1000.0,
-              "pct_mc": 10.8471,
+              "pct_mc": 10.2618,
               "tier": "Fish",
-              "value_usd": 719395.18
+              "value_usd": 771042.68
             },
             {
-              "count": 57,
+              "count": 63,
               "emoji": "\ud83d\udc2c",
               "max": 100000.0,
               "min": 10000.0,
-              "pct_mc": 22.4507,
+              "pct_mc": 23.3186,
               "tier": "Dolphin",
-              "value_usd": 1488961.53
+              "value_usd": 1752101.8
             },
             {
               "count": 0,
@@ -210,33 +210,33 @@
             }
           ]
         },
-        "dust_count": 1382,
+        "dust_count": 1318,
         "dust_limit_usd": 10.0,
-        "dust_pct_mc": 0.0641,
+        "dust_pct_mc": 0.0544,
         "dust_pct_supply": 0.0,
-        "dust_value_usd": 4250.81,
+        "dust_value_usd": 4090.31,
         "mid": {
-          "count": 1157,
-          "pct_mc": 15.2193,
-          "value_usd": 1009364.27
+          "count": 1213,
+          "pct_mc": 14.39,
+          "value_usd": 1081224.98
         },
         "new_dust": 0,
         "new_real": 0,
         "pages": 4,
-        "real_count": 2613,
-        "real_pct_mc": 40.8958,
+        "real_count": 2677,
+        "real_pct_mc": 40.7381,
         "real_pct_supply": 0.0,
-        "real_value_usd": 2712260.18,
+        "real_value_usd": 3060952.5,
         "source": "helius",
         "suspicious_dust": 0,
         "total_fetched": 3995,
         "truncated": true,
         "wallets_analyzed": 3995
       },
-      "marketcap": 6632127.0,
-      "price": 0.006896,
+      "marketcap": 7513740.0,
+      "price": 0.007813,
       "symbol": "NASDUCK"
     }
   },
-  "updated_at": 1788831639
+  "updated_at": 1788831942
 }
