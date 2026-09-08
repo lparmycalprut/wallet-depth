@@ -548,33 +548,58 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
 
 
 # ---------------------------------------------------------------------------
-# Scan Holder Khusus — Helius (satu token)
+# Scan Holder Khusus — Helius / Robinhood (satu token)
 # ---------------------------------------------------------------------------
+def _scan_source_meta(result: dict) -> tuple[str, str, str]:
+    """``(label metrik, help metrik, label caption)`` dari sumber holder.
+
+    ``result["source"]`` berasal dari ``helius_holders.scan_token_holders``
+    (``"helius"``) atau ``robinhood_holders.scan_token_holders``
+    (``"gmgn+robinhood"`` / ``"blockscout"`` /
+    ``"gmgn+robinhood(fail)→blockscout"`` — GMGN gagal, Blockscout yang
+    pulang, jadi labelnya Blockscout).
+    """
+    source = str(result.get("source") or "").lower()
+    if "blockscout" in source:
+        return ("Blockscout",
+                "Akun token yang diambil dari Blockscout (Robinhood Chain).",
+                "🦅 Blockscout (Robinhood Chain)")
+    if source.startswith("gmgn") or source in ("", "robinhood"):
+        return ("GMGN",
+                "Akun token yang diambil dari GMGN (chain robinhood).",
+                "🦅 GMGN (Robinhood Chain)")
+    return ("Helius",
+            "Akun token yang diambil dari Helius DAS getTokenAccounts.",
+            "🛰 Helius DAS getTokenAccounts")
+
+
 def _render_helius_holder_scan() -> None:
-    """Section: input CA satu token → scan holder via Helius + bar chart."""
+    """Section: input CA satu token → scan holder (Solana via Helius,
+    Robinhood Chain via GMGN/Blockscout) + bar chart."""
     st.divider()
-    st.subheader("🛰 Scan Holder Khusus — Helius")
+    st.subheader("🛰 Scan Holder Khusus — Helius / Robinhood")
     st.caption(
         "Tempel **contract address (CA)** satu token untuk mengambil seluruh "
-        "daftar holder langsung dari **Helius DAS** (getTokenAccounts) dan "
-        "menampilkan **bar chart distribusi holder** per range nilai USD "
-        "(Wallet Depth by Threshold). **Default: LP/pool AMM disingkirkan "
-        "dari bucket.**"
+        "daftar holder: Solana (base58) langsung dari **Helius DAS** "
+        "(getTokenAccounts), **Robinhood Chain** (`0x…`) dari **GMGN** "
+        "(fallback Blockscout) — lalu menampilkan **bar chart distribusi "
+        "holder** per range nilai USD (Wallet Depth by Threshold). "
+        "**Default: LP/pool AMM disingkirkan dari bucket.**"
     )
 
     with st.form("helius-holder-form"):
         col_ca, col_max, col_pool, col_btn = st.columns([3, 1, 2, 1])
         ca_input = col_ca.text_input(
-            "Contract address (CA)",
-            placeholder="So11111111111111111111111111111111111111112")
+            "Contract address (CA)", key="helius-ca-input",
+            placeholder="So1111… (Solana) atau 0x… (Robinhood Chain)")
         max_wallets = col_max.number_input(
             "Maks holder", min_value=1000, max_value=100_000,
             value=100_000, step=1_000,
-            help=("FULL (default): urutan getTokenAccounts Helius tidak "
-                  "urut saldo, jadi cap kecil = sampel acak yang bias — "
-                  "dust (≤$10) bisa kurang terhitung dan angkanya tidak "
-                  "sinkron dengan cron/Telegram. Turunkan hanya bila quota "
-                  "Helius ketat."))
+            help=("FULL (default): untuk Solana, urutan getTokenAccounts "
+                  "Helius tidak urut saldo, jadi cap kecil = sampel acak "
+                  "yang bias — dust (≤$10) bisa kurang terhitung dan "
+                  "angkanya tidak sinkron dengan cron/Telegram. Turunkan "
+                  "hanya bila quota ketat."))
         include_pools = col_pool.checkbox(
             "Sertakan LP/pool di bucket", value=False,
             help="Default OFF: pool/AMM disingkirkan dari list/bucket holder.")
@@ -582,16 +607,24 @@ def _render_helius_holder_scan() -> None:
 
     if run:
         ca = str(ca_input or "").strip()
+        is_evm = robinhood_holders.is_robinhood_address(ca)
         if not ca:
             st.warning("Masukkan contract address terlebih dahulu.")
-        elif not SOLANA_CA_RE.match(ca):
-            st.warning("Format CA Solana tidak valid. Gunakan address base58 "
-                       "sepanjang 32–44 karakter.")
+        elif not (SOLANA_CA_RE.match(ca) or is_evm):
+            st.warning("Format CA tidak valid. Solana: base58 sepanjang "
+                       "32–44 karakter · Robinhood Chain: 0x + 40 hex.")
         else:
-            with st.status("Mengambil holder dari Helius…",
-                           expanded=False) as box:
+            if is_evm:
+                ca = robinhood_holders.normalize_address(ca)
+                scan_fn = robinhood_holders.scan_token_holders
+                status_label = "Mengambil holder dari GMGN/Blockscout " \
+                               "(Robinhood Chain)…"
+            else:
+                scan_fn = scan_token_holders
+                status_label = "Mengambil holder dari Helius…"
+            with st.status(status_label, expanded=False) as box:
                 try:
-                    result = scan_token_holders(
+                    result = scan_fn(
                         ca, max_wallets=int(max_wallets),
                         include_pools=bool(include_pools))
                 except Exception as exc:  # noqa: BLE001
@@ -609,7 +642,8 @@ def _render_helius_holder_scan() -> None:
 
 
 def _render_helius_holder_result(result: dict) -> None:
-    """Tampilkan metrik + bar chart + tabel depth hasil scan holder Helius."""
+    """Tampilkan metrik + bar chart + tabel depth hasil scan holder
+    (Solana/Helius atau Robinhood Chain — shape dict sama)."""
     mint = result.get("mint") or ""
     market = result.get("market") or {}
     snapshot = result.get("snapshot") or {}
@@ -620,6 +654,7 @@ def _render_helius_holder_result(result: dict) -> None:
     holders_all = int(depth.get("holders_all") or 0)
     holders_wallet = int(depth.get("holders_wallet") or 0)
     mc = float(market.get("marketcap") or depth.get("market_cap") or 0)
+    source_short, source_help, source_label = _scan_source_meta(result)
 
     st.markdown(f"**${html.escape(symbol)}** — `{html.escape(mint)}`")
     st.markdown(external_links_html(mint), unsafe_allow_html=True)
@@ -631,8 +666,11 @@ def _render_helius_holder_result(result: dict) -> None:
     if result.get("scan_failed"):
         detail = str((result.get("snapshot") or {}).get("error") or "")
         detail = detail.strip()
-        message = ("Scan tidak menghasilkan holder. Pastikan CA valid, harga "
-                   "token tersedia (DexScreener), dan Helius API key aktif.")
+        message = ("Scan tidak menghasilkan holder. Pastikan CA valid dan "
+                   "harga token tersedia (DexScreener)"
+                   + (" serta Helius API key aktif"
+                      if source_short == "Helius" else "")
+                   + ".")
         if detail:
             message += f" Detail: {detail}"
         st.error(message)
@@ -643,8 +681,8 @@ def _render_helius_holder_result(result: dict) -> None:
     pool_n = int(depth.get("pool_excluded") or 0)
     bucket_n = holders_all if buckets_with_pools else holders_wallet
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Akun holder (Helius)", f"{prefix}{fetched:,}",
-              help="Akun token yang diambil dari Helius DAS getTokenAccounts.")
+    c1.metric(f"Akun holder ({source_short})", f"{prefix}{fetched:,}",
+              help=source_help)
     c2.metric(
         f"Bucket > $0 ({'semua akun' if buckets_with_pools else 'tanpa pool'})",
         f"{bucket_n:,}",
@@ -670,7 +708,7 @@ def _render_helius_holder_result(result: dict) -> None:
     pool_note = ("" if buckets_with_pools or not pool_n
                  else f" · 🚫 {pool_n:,} akun LP/pool disingkirkan dari bucket")
     st.caption(
-        f"Sumber holder: 🛰 Helius DAS getTokenAccounts · "
+        f"Sumber holder: {source_label} · "
         f"{prefix}{fetched:,} akun dianalisis · {pages} halaman{pool_note} · "
         "nilai USD = balance × harga token (DexScreener)."
     )

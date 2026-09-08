@@ -240,8 +240,12 @@ Scan Meteora. Harga/MC/volume/`txns` dari DexScreener. Candle hourly & harian
 | `helius` | Paksa Helius → fallback GMGN. |
 | `gmgn` | GMGN saja (listing Trending/Degen), fallback Helius. |
 
-Scan Holder Khusus (halaman utama) dan cron butuh `HELIUS_API_KEY`
-(config / env / Streamlit secrets). Tanpa key, fallback GMGN.
+Scan Holder Khusus (halaman utama) menerima **dua chain**: CA Solana
+(base58) → Helius DAS, CA **Robinhood Chain** (`0x…`) → GMGN (fallback
+Blockscout) lewat `robinhood_holders.scan_token_holders` — hasil (bar chart
+Wallet Depth + tabel) dirender sama. Jalur Solana dan cron butuh
+`HELIUS_API_KEY` (config / env / Streamlit secrets); jalur Robinhood tidak
+membutuhkan key. Tanpa key, jalur Solana memakai fallback GMGN.
 
 ## Chart LP (watchlist Meteora terpisah)
 
@@ -449,10 +453,10 @@ akumulasi dan bukan prediksi arah harga.
 | `lp_watchlist.py` | Card **Chart LP**: pisah watchlist Meteora, baris + grafik perubahan dust holder |
 | `meteora_screener.py` | Listing DLMM 24h+1h, enrich holder, filter dust > 0,1% MC; badge BEST POOL di UI app.py (dust < 0,1% + data valid + TVL ≥ 10K) |
 | `holder_analysis.py` | Fetch holder Helius/GMGN, klasifikasi real/dust/mid |
-| `robinhood_holders.py` | Robinhood Chain (chain 4663): holder Blockscout, decimals/supply, analisa dust sama dengan Solana |
+| `robinhood_holders.py` | Robinhood Chain (chain 4663): holder GMGN (primary) + Blockscout (fallback), decimals/supply, analisa dust + `scan_token_holders` (padanan EVM Scan Holder Khusus) sama dengan Solana |
 | `robinhood_watchlist.py` | Watchlist/path Robinhood: `watchlist_robinhood.json`, status & history terpisah, scan + publish best-effort |
 | `solscan_holders.py` | Kalkulasi wallet_depth (bucket & tier) |
-| `helius_holders.py` | Scan Holder Khusus satu token + bar chart |
+| `helius_holders.py` | Scan Holder Khusus satu token (Solana/Helius) + bar chart |
 | `holder_status.py` | Snapshot dashboard ramping (ref `holder-live`) + history ringkas + transport GitHub (JSON & byte/gzip) |
 | `core.py` | Config/key Helius, pasar DexScreener, candle hourly/harian GeckoTerminal |
 | `scripts/scan_holders.py` | Cron **lane LP saja** (run ±5 menit: Chart LP Meteora + Robinhood LP; `LP_SCAN_RUN_MULTIPLIER` untuk rem Helius, `--full` untuk scan FULL manual): holder, alert ⚡ (konfirmasi volume lazy), satu titik history per token, publish snapshot + backup store yang dibatasi token LP aktif |

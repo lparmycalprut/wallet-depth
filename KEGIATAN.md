@@ -1,3 +1,63 @@
+# Kegiatan — 8 September 2026 (sesi 9 · 🛰 Scan Holder Khusus: + Robinhood Chain)
+
+Permintaan user: **"tambahkan fungsi kita bisa scan robinhood disini juga"**
+(section **🛰 Scan Holder Khusus — Helius** di halaman utama).
+
+## 1. Backend: `robinhood_holders.scan_token_holders()`
+
+Padanan EVM dari `helius_holders.scan_token_holders` — alurnya sama:
+market (harga & marketcap) dari DexScreener (`chain_id=robinhood`), token
+info (decimals & supply) dari Blockscout, seluruh holder dari
+`fetch_holders` (GMGN primary, Blockscout fallback), lalu
+`solscan_holders.wallet_depth`. **Shape dict hasilnya sama persis**
+(`mint/symbol/market/snapshot/depth/source/no_helius_keys/scan_failed`)
+supaya UI dipakai ulang tanpa cabang. Pool AMM (`pair_addresses`
+DexScreener + penanda non-wallet GMGN) ditandai `_mark_pools` lalu
+default **disingkirkan dari bucket** (`include_pools=False`) — sama
+dengan perilaku jalur Helius. `no_helius_keys` selalu `False` (jalur ini
+tidak butuh key Helius).
+
+## 2. UI `app.py` (`_render_helius_holder_scan` / `_render_helius_holder_result`)
+
+- Judul section: **🛰 Scan Holder Khusus — Helius / Robinhood**; caption +
+  placeholder form menjelaskan kedua chain (base58 Solana / `0x…`
+  Robinhood).
+- Validasi CA menerima **dua format**: base58 (Solana) ATAU `0x` + 40 hex
+  (Robinhood) — pesan error menyebut keduanya. CA EVM di-normalize
+  (lowercase) sebelum scan.
+- Dispatch per chain: `0x…` → `robinhood_holders.scan_token_holders`
+  (status "Mengambil holder dari GMGN/Blockscout (Robinhood Chain)…"),
+  base58 → `scan_token_holders` Helius (perilaku lama).
+- Helper baru `app._scan_source_meta(result)`: label metrik "Akun holder
+  (…)", help, dan caption "Sumber holder: …" dihitung dari
+  `result["source"]` — `gmgn+robinhood*` → **GMGN (Robinhood Chain)**;
+  ada `blockscout` (GMGN gagal, Blockscout yang pulang) →
+  **Blockscout (Robinhood Chain)**; selain itu → **Helius DAS**
+  (perilaku lama). Pesan error `scan_failed` hanya menyebut "Helius API
+  key aktif" untuk jalur Helius.
+- Input CA diberi key `helius-ca-input` (konvensi `lp-ca-input`/
+  `add-token-input`) supaya bisa ditarget test.
+
+## Verifikasi
+
+- `tests/test_robinhood_watchlist.py::ScanTokenHoldersTest`: shape hasil
+  identik jalur Helius; pool keluar dari bucket default / masuk saat
+  `include_pools=True`; `max_wallets/price_usd/decimals/total_supply`
+  diteruskan; tanpa harga → `scan_failed` + `fetch_token_info` tidak
+  dipanggil; GMGN+Blockscout gagal → `scan_failed` + alasan provider
+  tersimpan.
+- `tests/test_rh_card_ui.py::HolderKhususRobinhoodScanTest` (AppTest):
+  CA `0x…` (mixed case) → `robinhood_holders.scan_token_holders` dengan
+  CA lowercase + `max_wallets=100_000`, hasil dirender "Akun holder
+  (GMGN)" + caption "GMGN (Robinhood Chain)" + tautan rh-scan/Blockscout;
+  source fallback → label "Akun holder (Blockscout)"; CA base58 tetap →
+  `helius_holders.scan_token_holders` + label "Akun holder (Helius)";
+  `0x123` → ditolak tanpa scan.
+- Suite penuh: 916 passed (termasuk test Helius lama — jalur Solana
+  tidak berubah).
+
+---
+
 # Kegiatan — 7 September 2026 (sesi 8 · 🌊 Scan Meteora: hanya dust ≤ 0,1% + BEST POOL TVL ≥ 10K)
 
 Permintaan user: **"jangan tampilkan yang dust sudah > 0,1%, jadi sesi
