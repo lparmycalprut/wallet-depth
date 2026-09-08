@@ -50,10 +50,17 @@ class FetchHoldersTest(unittest.TestCase):
                         {"address": EV_LOWER, "value": "500000000000000000"},
                     ]}
 
-        with mock.patch.object(rh, "_jsjson", side_effect=fake_json):
+        # GMGN gagal → fallback ke Blockscout
+        gmgn_empty = {"holders": [], "pages": 0, "truncated": False,
+                      "fetched": 0, "analyzed_at": 0,
+                      "source": "gmgn+robinhood", "decimals": None,
+                      "error": "GMGN tidak merespons"}
+        with mock.patch.object(rh, "fetch_holders_gmgn",
+                               return_value=gmgn_empty), \
+                mock.patch.object(rh, "_jsjson", side_effect=fake_json):
             out = rh.fetch_holders(EV_LOWER, price_usd=1.0, decimals=18,
                                    total_supply=1_000_000.0)
-        self.assertEqual(out["source"], "blockscout")
+        self.assertIn("blockscout", out["source"])
         self.assertEqual(out["fetched"], 2)
         by_addr = {row["address"]: row for row in out["holders"]}
         self.assertAlmostEqual(by_addr[EV_LOWER]["balance"], 0.5)
@@ -67,12 +74,35 @@ class FetchHoldersTest(unittest.TestCase):
                 for a in range(5)
             ]}
 
-        with mock.patch.object(rh, "_jsjson", side_effect=fake_json):
+        gmgn_empty = {"holders": [], "pages": 0, "truncated": False,
+                      "fetched": 0, "analyzed_at": 0,
+                      "source": "gmgn+robinhood", "decimals": None,
+                      "error": "GMGN tidak merespons"}
+        with mock.patch.object(rh, "fetch_holders_gmgn",
+                               return_value=gmgn_empty), \
+                mock.patch.object(rh, "_jsjson", side_effect=fake_json):
             out = rh.fetch_holders(
                 EV_LOWER, price_usd=1.0, decimals=18, total_supply=1_000.0,
                 max_wallets=3)
         self.assertTrue(out["truncated"])
         self.assertEqual(out["fetched"], 3)
+
+    def test_fetch_holders_gmgn_primary(self):
+        """GMGN berhasil → source = gmgn+robinhood, tanpa menyentuh Blockscout."""
+        gmgn_data = {"holders": [{"address": EV_LOWER, "balance": 100.0,
+                                   "usd_value": 50.0, "amount_pct": 0.01,
+                                   "is_wallet": True}],
+                     "pages": 1, "truncated": False, "fetched": 1,
+                     "analyzed_at": 0, "source": "gmgn+robinhood",
+                     "decimals": None, "error": ""}
+        with mock.patch.object(rh, "fetch_holders_gmgn",
+                               return_value=gmgn_data) as gmgn_call, \
+                mock.patch.object(rh, "_jsjson") as bs_call:
+            out = rh.fetch_holders(EV_LOWER, price_usd=0.5, decimals=18)
+        self.assertEqual(out["source"], "gmgn+robinhood")
+        self.assertEqual(out["fetched"], 1)
+        gmgn_call.assert_called_once()
+        bs_call.assert_not_called()
 
 
 class ProviderFailureTest(unittest.TestCase):
@@ -133,16 +163,28 @@ class ProviderFailureTest(unittest.TestCase):
         self.assertIn("Max rate limit reached", str(ctx.exception))
 
     def test_fetch_holders_menyalin_error_provider(self):
-        with mock.patch.object(rh, "fetch_token_info",
-                               side_effect=RuntimeError("getToken down")):
+        gmgn_empty = {"holders": [], "pages": 0, "truncated": False,
+                      "fetched": 0, "analyzed_at": 0,
+                      "source": "gmgn+robinhood", "decimals": None,
+                      "error": "GMGN tidak merespons"}
+        with mock.patch.object(rh, "fetch_holders_gmgn",
+                               return_value=gmgn_empty), \
+                mock.patch.object(rh, "fetch_token_info",
+                                  side_effect=RuntimeError("getToken down")):
             out = rh.fetch_holders(EV_LOWER, price_usd=1.0, decimals=None)
         self.assertEqual(out["fetched"], 0)
         self.assertEqual(out["holders"], [])
         self.assertIn("getToken down", out["error"])
 
     def test_analyze_token_membawa_fetch_error_ke_hasil(self):
+        gmgn_empty = {"holders": [], "pages": 0, "truncated": False,
+                      "fetched": 0, "analyzed_at": 0,
+                      "source": "gmgn+robinhood", "decimals": None,
+                      "error": "GMGN tidak merespons"}
         with mock.patch.object(rh, "get_market", return_value={
                 "price_usd": 0.5, "marketcap": 1000.0, "symbol": "VLAD"}), \
+                mock.patch.object(rh, "fetch_holders_gmgn",
+                                  return_value=gmgn_empty), \
                 mock.patch.object(rh, "fetch_token_info",
                                   side_effect=RuntimeError("429 rate limit")):
             result = rh.analyze_token(EV_LOWER, "VLAD", fetch_market=True)

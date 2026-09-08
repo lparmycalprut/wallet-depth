@@ -169,3 +169,27 @@ Referer: https://gmgn.ai/sol/token/<CA>
 marketcap = Σ(dust usd_value) / marketcap × 100. When the page cap
 (`max_wallets`) truncates the list, `truncated: true` means the number
 is a lower bound over the analyzed top wallets.
+
+## Holder list — Robinhood Chain (dipakai robinhood_holders.py)
+
+```
+GET https://gmgn.ai/vas/api/v1/token_holders/robinhood/<CA>
+    ?limit=1000&cost=20&orderby=amount_percentage&direction=desc
+    + device_id / fp_did / from_app / tz_name / tz_offset / app_lang /
+      os / worker
+Referer: https://gmgn.ai/robinhood/token/<CA>
+```
+
+### Notes (2026-09-08)
+
+- Same endpoint shape as Solana — only the chain slug changes
+  (`sol` → `robinhood`). GMGN web UI menampilkan 5K+ holder di
+  `gmgn.ai/robinhood/token/<CA>` tanpa masalah rate limit.
+- Primary source untuk `robinhood_holders.fetch_holders`; Blockscout
+  (`robinhoodchain.blockscout.com/api`) dipakai sebagai fallback bila
+  GMGN gagal total. Blockscout publik rate limit keras (429 setelah
+  beberapa page paginasi).
+- `curl_cffi` dengan impersonate chrome/safari untuk TLS fingerprint —
+  menghindari bot-block. Fallback ke `requests` biasa bila `curl_cffi`
+  tidak tersedia.
+- Jeda 0.3 dtk antar page (< 50 page), 0.8 dtk untuk page > 50.
