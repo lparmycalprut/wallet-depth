@@ -1,6 +1,3 @@
-# Holder Dust Scanner — cron HANYA ±5 menit, lane LP saja.
-# Watchlist biasa (slot 4 jam) DIMATIKAN di scanner (REGULAR_SCAN_ENABLED=0).
-# Pengingat ⚡ Telegram = tiap scan 5 menit selama dust > 0,1% MC.
 name: Holder Dust Scanner
 
 on:
@@ -16,8 +13,8 @@ on:
         required: false
         default: false
         type: boolean
-      scan_all:
-        description: "Scan SEMUA token sekarang (scope=all + abaikan gate run ganda) — watchlist biasa + LP, termasuk slot 4 jam"
+      full_scan:
+        description: "Scan FULL lane LP (detail + baseline + kronologi wallet)"
         required: false
         default: false
         type: boolean
@@ -33,7 +30,7 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -45,37 +42,71 @@ jobs:
       - name: Install dependencies
         run: pip install requests curl_cffi
 
-      - name: Holder scan (LP ±5 menit · 4 jam off)
+      - name: Holder scan LP (Meteora + Robinhood, ±5 menit)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
-          # 4 jam watchlist biasa: default OFF di kode. Nyalakan lagi:
-          # REGULAR_SCAN_ENABLED: "1"
-          # Hemat Helius (Meteora tiap 3 run = ±15 menit, Robinhood tetap 5 menit):
+          # Hemat Helius bila kuota menipis (tanpa ubah kode): scan Solana
+          # hanya tiap N run — Robinhood tetap tiap 5 menit.
           # LP_SCAN_RUN_MULTIPLIER: "3"
         run: |
           ARGS=""
           if [ "${{ inputs.telegram_test }}" = "true" ]; then
             ARGS="$ARGS --telegram-test"
           fi
-          if [ "${{ inputs.scan_all }}" = "true" ]; then
-            ARGS="$ARGS --scope all --ignore-gap"
+          if [ "${{ inputs.full_scan }}" = "true" ]; then
+            ARGS="$ARGS --full --ignore-gap"
           fi
-          python scripts/scan_holders.py --max-wallets 3000 $ARGS
+          # JANGAN pasang --max-wallets: urutan getTokenAccounts Helius
+          # TIDAK urut saldo, jadi fetch terpotong (mis. 3000 dari 3994
+          # akun) = sampel acak yang bias — dust (≤$10) bisa jauh lebih
+          # kecil dari nilai aslinya, dan angka cron/Telegram tidak sinkron
+          # dengan scan Helius di dashboard. Default kode sudah FULL
+          # (FULL_SCAN_MAX_WALLETS=100.000, semua halaman sampai habis).
+          # Kadar quota Helius: `LP_SCAN_RUN_MULTIPLIER: "3"` di env di
+          # atas — itu pengganti cap wallet.
+          python scripts/scan_holders.py $ARGS
 
       - name: Chain run berikutnya
         if: success() || failure()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          API="https://api.github.com/repos/${{ github.repository }}/actions/workflows/daily-effort.yml/runs"
           NOW=$(date +%s)
           WAIT=$((300 - NOW % 300 + 20))
-          echo "Tidur ${WAIT}s lalu dispatch run berikutnya."
-          sleep $WAIT
+          echo "Tidur ${WAIT}s sampai batas 5 menit berikutnya."
+          sleep "$WAIT"
+
+          # Guard 1 — jangan menumpuk antrean concurrency `holder-scanner`.
+          # GitHub hanya menahan SATU run mengantre per group; request ketiga
+          # membatalkan yang sedang mengantre ("Canceling since a higher
+          # priority waiting request for holder-scanner exists").
+          ACTIVE=$(curl -sSf -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" "$API?per_page=25" \
+            | python3 -c "import json,sys; runs=json.load(sys.stdin).get('workflow_runs') or []; me='${{ github.run_id }}'; print(sum(1 for r in runs if str(r.get('id')) != me and r.get('status') in ('queued','in_progress','waiting')))")
+          if [ "${ACTIVE:-0}" -gt 0 ]; then
+            echo "Sudah ada ${ACTIVE} run aktif/mengantre — dispatch dilewati (anti tabrakan holder-scanner)."
+            exit 0
+          fi
+
+          # Guard 2 — bila schedule */5 GitHub sedang sehat, biarkan cron yang
+          # menjaga ritme; chain dispatch hanya cadangan saat schedule di-throttle.
+          LAST_SCHEDULE=$(curl -sSf -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "$API?event=schedule&status=completed&per_page=1" \
+            | python3 -c "import json,sys,datetime; runs=json.load(sys.stdin).get('workflow_runs') or []; ts=(runs[0].get('updated_at') or '') if runs else ''; print(int(datetime.datetime.strptime(ts,'%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc).timestamp()) if ts else 0)")
+          AGE=$(( $(date +%s) - ${LAST_SCHEDULE:-0} ))
+          if [ "${LAST_SCHEDULE:-0}" -gt 0 ] && [ "$AGE" -lt 900 ]; then
+            echo "Schedule */5 sehat (run terakhir ${AGE}s lalu) — dispatch dilewati."
+            exit 0
+          fi
+
           curl -sSf -X POST \
             -H "Authorization: Bearer $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/actions/workflows/daily-effort.yml/dispatches \
-            -d '{"ref":"main"}'
+            -d '{"ref":"${{ github.ref_name }}"}'
+          echo "Run berikutnya di-dispatch (schedule terakhir ${AGE}s lalu)."
