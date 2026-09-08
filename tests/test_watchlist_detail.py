@@ -142,6 +142,35 @@ class ResolveViewTest(unittest.TestCase):
         self.assertEqual(view["dust_pct"], 0.42)
 
 
+    def test_titik_terpotong_baru_kalah_dari_snapshot_lengkap(self):
+        """Kandidat baru yang ``truncated=True`` (sampel bias) kalah dari
+        snapshot eksplisit lengkap — angka bias tidak boleh menang hanya
+        karena lebih baru."""
+        points = [_point(1_000, 0.30, 90)]
+        new_pt = _point(4_000, 0.02, 5)
+        new_pt["real_count"] = 100  # sampel layak (dust bias = truncated)
+        new_pt["truncated"] = True
+        points.append(new_pt)
+        token = _token(pct=0.30, count=120, analyzed_at=2_000)
+        token["holders"]["truncated"] = False
+        view = wd.resolve_view(token, points, now=5_000)
+        self.assertEqual(view["source"], wd.SOURCE_SNAPSHOT)
+        self.assertEqual(view["dust_pct"], 0.30)
+        self.assertTrue(view["truncation_swap"])
+        self.assertFalse(view["drift"])
+
+    def test_snapshot_terpotong_tetap_dipakai_bila_tidak_ada_alternatif(self):
+        """Snapshot terpotong tetap jadi angka bila itu satu-satunya
+        kandidat layak (lebih baik angka bias berlabel daripada kosong)."""
+        token = _token(pct=0.05, count=5, analyzed_at=2_000)
+        token["holders"]["real_count"] = 100  # sampel layak
+        token["holders"]["truncated"] = True
+        view = wd.resolve_view(token, [], now=5_000)
+        self.assertEqual(view["dust_pct"], 0.05)
+        self.assertTrue(view["snapshot_truncated"])
+        self.assertFalse(view["truncation_swap"])
+
+
 class PreviousPctTest(unittest.TestCase):
     def test_comparison_point_is_the_bucket_before_the_displayed_value(self):
         sampled = [_point(1_000, 0.10), _point(2_000, 0.20),

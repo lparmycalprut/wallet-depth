@@ -13,8 +13,9 @@ from helius_holders import depth_bar_chart, scan_token_holders
 from holder_history import (DUST_BEST_LABEL, DUST_BEST_MIN_TVL_USD,
                             DUST_BEST_PCT, DUST_CAUTION_PCT,
                             DUST_DANGER_PCT, DUST_SCAN_HIDE_PCT, dust_flag,
+                            FULL_SCAN_MAX_WALLETS,
                             history_for_mint, holders_usable, ingest_many,
-                            load_durable_holder_history, merge_points,
+                            load_durable_holder_history, merge_status_history,
                             resample_4h,
                             resample_5m, seed_from_status,
                             usable_points)
@@ -120,6 +121,55 @@ menampilkan pool dust ≤ 0,1% MC (🏆 BEST POOL = + holder valid + TVL ≥ 10K
 
 
 # ---------------------------------------------------------------------------
+# Auto-refresh data (±60 detik)
+# ---------------------------------------------------------------------------
+# Cron menulis ``holder_status.json`` baru tiap ±5 menit (lane LP), tapi
+# halaman Streamlit hanya meng-fetch ulang saat user berinteraksi (rerun).
+# Tanpa ini, card yang sudah terbuka bisa memamerkan snapshot lama selama
+# beberapa menit — "di watchlist masih 0,05%" padahal Telegram/cron sudah
+# 0,1% (kasus nyata 2026-09-08, $Nasduck). Fragment di bawah jalan tiap 60
+# detik: bandingkan ``updated_at`` status (fetch ringan, cache 15 detik),
+# dan bila ada snapshot baru → rerun penuh halaman dengan data baru.
+AUTOREFRESH_SEC = 60
+
+
+def _autorefresh_status_ts() -> int:
+    try:
+        latest = load_holder_status()
+        value = (latest or {}).get("updated_at") or 0
+        return int(value)
+    except (TypeError, ValueError, OSError):
+        return 0
+
+
+@st.fragment(run_every=f"{AUTOREFRESH_SEC}s")
+def _autorefresh_tick():
+    if not st.session_state.get("autorefresh_on", True):
+        return
+    latest_ts = _autorefresh_status_ts()
+    if not latest_ts:
+        return
+    if st.session_state.get("autorefresh_seen_ts") != latest_ts:
+        st.session_state["autorefresh_seen_ts"] = latest_ts
+        st.rerun()
+
+
+_autorefresh_col = st.columns([0.30, 0.70])
+_autorefresh_col[0].toggle(
+    "🔄 Auto-refresh ±60 dtk",
+    value=st.session_state.get("autorefresh_on", True),
+    key="autorefresh_on",
+    help="Lempar ulang halaman otomatis saat snapshot cron baru "
+         "muncul (±60 dtk sekali cek). OFF = halaman hanya "
+         "terupdate saat ada interaksi manual.")
+_autorefresh_col[1].markdown(
+    '<div style="font-size:.72rem;color:#64748b;align-self:center;">'
+    "Data baris = snapshot cron (±5 menit); saat ada snapshot baru, "
+    "halaman menyegarkan sendiri angkanya.</div>",
+    unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 def _number(value, pattern=".1f"):
@@ -209,8 +259,8 @@ def _ca_error(value) -> str:
 
 
 def _points_for(mint, token, store):
-    return merge_points(history_for_mint(store, mint),
-                        (token or {}).get("history") or [])
+    return merge_status_history(history_for_mint(store, mint),
+                                (token or {}).get("history") or [])
 
 
 def _depth_tables_html(depth: dict) -> str:
@@ -313,7 +363,11 @@ def _render_lp_row(row: dict) -> None:
     flag = row.get("flag") or {}
     dust_pct = row.get("dust_pct")
     dust_count = row.get("dust_count")
-    truncated = bool(holders.get("truncated"))
+    # ``truncated`` mengikuti **sumber angka yang benar-benar ditampilkan**
+    # (snapshot ATAU titik history terbaru — lihat build_lp_row), bukan
+    # selalu snapshot.
+    truncated = bool(row.get("used_truncated",
+                             holders.get("truncated")))
     dust_txt = ("—" if dust_count is None
                 else (f"≥{int(dust_count)}" if truncated
                       else f"{int(dust_count):,}"))
@@ -324,13 +378,21 @@ def _render_lp_row(row: dict) -> None:
 
     short_note = (" · ⚠️ scan terakhir tidak lengkap"
                   if row.get("degraded") else "")
+    if row.get("drift"):
+        short_note += " · ⚠️ snapshot ≠ history"
+    if row.get("truncation_swap"):
+        short_note += " · ⚠️ memakai scan lengkap sebelumnya"
+    # Waktu ANGKA yang ditampilkan (used_ts), bukan selalu waktu snapshot —
+    # dulu label selalu menampilkan analyzed_at snapshot, sehingga label
+    # bisa menunjukkan jam yang beda dari angka yang tampil.
+    scan_ts = row.get("used_ts") or row.get("analyzed_at")
     cols = st.columns([1.7, 0.75, 0.95, 0.42, 0.42, 0.42])
     cols[0].markdown(
         f'<div class="watchlist-token">'
         f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
         f'<span class="watchlist-mint">{html.escape(mint[:8])}…</span>'
         f'<span class="watchlist-metric-sub">MC {_compact(row.get("mc"))} · '
-        f'scan {_wib(row.get("analyzed_at"))}{short_note}</span>'
+        f'scan {_wib(scan_ts)}{short_note}</span>'
         f'<div class="watchlist-links">{external_links_html(mint)}</div>'
         f"</div>", unsafe_allow_html=True)
     cols[1].markdown(
@@ -419,9 +481,13 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
             done = 0
             for mint, meta in (lp_watch or {}).items():
                 try:
+                    # FULL (100.000): urutan getTokenAccounts Helius tidak
+                    # urut saldo → cap kecil (dulu 2000) = sampel acak yang
+                    # bias, dust terpotong → angka tidak sinkron dgn cron.
                     analyses[mint] = analyze_token(
                         mint, (meta or {}).get("symbol") or "?",
-                        max_wallets=2000, fetch_market=True, detail=False)
+                        max_wallets=FULL_SCAN_MAX_WALLETS,
+                        fetch_market=True, detail=False)
                 except Exception:  # noqa: BLE001
                     analyses[mint] = None
                 done += 1
@@ -503,7 +569,12 @@ def _render_helius_holder_scan() -> None:
             placeholder="So11111111111111111111111111111111111111112")
         max_wallets = col_max.number_input(
             "Maks holder", min_value=1000, max_value=100_000,
-            value=20_000, step=1_000)
+            value=100_000, step=1_000,
+            help=("FULL (default): urutan getTokenAccounts Helius tidak "
+                  "urut saldo, jadi cap kecil = sampel acak yang bias — "
+                  "dust (≤$10) bisa kurang terhitung dan angkanya tidak "
+                  "sinkron dengan cron/Telegram. Turunkan hanya bila quota "
+                  "Helius ketat."))
         include_pools = col_pool.checkbox(
             "Sertakan LP/pool di bucket", value=False,
             help="Default OFF: pool/AMM disingkirkan dari list/bucket holder.")
@@ -630,8 +701,10 @@ def _render_meteora_scan() -> None:
                          text=f"Holder {index}/{total} · {label}")
 
         try:
-            result = scan_meteora(max_wallets=2000, workers=6,
-                                  progress=_progress)
+            # FULL: filter dust > 0,1% MC di listing butuh dust akurat;
+            # cap 2000 dulu = sampel bias (urutan Helius tidak urut saldo).
+            result = scan_meteora(max_wallets=FULL_SCAN_MAX_WALLETS,
+                                  workers=6, progress=_progress)
         except Exception as exc:  # noqa: BLE001
             result = {"rows": [], "error": str(exc), "hidden_dust": 0,
                       "fetched": 0}
@@ -862,8 +935,8 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
     danger = caution = 0
     for mint, meta in (watchlist or {}).items():
         token = status_tokens.get(mint) or {}
-        points = merge_points(history_for_mint(history_store, mint),
-                              token.get("history") or [])
+        points = merge_status_history(history_for_mint(history_store, mint),
+                                      token.get("history") or [])
         view = resolve_view(
             token, points, now=now,
             stale_after=(STALE_AFTER_SEC if variant == "lp"
@@ -1168,7 +1241,8 @@ if st.button("🔄 Scan holder watchlist", type="primary",
             addrs = list((cohort.get("balances") or {}).keys())
             analyses[mint] = analyze_token(
                 mint, (meta or {}).get("symbol") or "?",
-                max_wallets=2000, fetch_market=True, cohort_addrs=addrs)
+                max_wallets=FULL_SCAN_MAX_WALLETS,
+                fetch_market=True, cohort_addrs=addrs)
         except Exception:  # noqa: BLE001
             analyses[mint] = None
         done += 1
@@ -1370,6 +1444,12 @@ else:
             scan_note += " · titik history"
         if view.get("drift"):
             scan_note += " · ⚠️ snapshot ≠ history"
+        if view.get("truncation_swap"):
+            scan_note += " · ⚠️ memakai scan lengkap sebelumnya " \
+                         "(scan teranyar sampel terpotong)"
+        elif view.get("snapshot_truncated") and \
+                view.get("source") == SOURCE_SNAPSHOT:
+            scan_note += " · ≥ sampel terpotong"
         if view.get("degraded"):
             # Run terakhir datanya tidak lengkap → angka baris dari scan
             # layak sebelumnya; bilang terus terang, jangan diam-diam.

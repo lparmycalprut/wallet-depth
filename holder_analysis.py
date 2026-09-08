@@ -252,6 +252,13 @@ def fetch_holders_helius(ca: str, *, max_wallets: int | None = None,
             break
         accounts = result.get("token_accounts") or []
         pages += 1
+        if not accounts:
+            # Halaman kosong: daftar sudah habis. Sebagian respons DAS
+            # masih membawa ``cursor`` padahal tidak ada data lagi —
+            # lanjutkan loop dan kita akan membakar halaman kosong sampai
+            # ``page_cap`` (±100 call ekstra per scan) lalu menandai
+            # ``truncated=True`` palsu. Hentikan bersih di sini.
+            break
         for acc in accounts:
             if not isinstance(acc, dict):
                 continue
@@ -401,13 +408,21 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
 
 
 def classify_holders(snapshot: dict | None, market_cap: float = 0.0,
-                     *, dust_limit: float | None = None) -> dict:
+                     *, dust_limit: float | None = None,
+                     pool_addresses=None) -> dict:
     """Pisahkan real holder (>$10 value) vs dust (0 < value <= $10).
 
     Return metrik: jumlah wallet, nilai USD kedua kelompok, dan
     **dust % dari marketcap** (dust_value / marketcap * 100) plus
     dust % supply (dari amount_percentage) bila tersedia.
     Field ``source`` diteruskan dari snapshot (gmgn/helius).
+
+    ``pool_addresses`` (pair DexScreener): akun LP/pool AMM
+    **disingkirkan** dari hitungan real/dust — konsisten dengan bucket
+    Wallet Depth (``solscan_holders.wallet_depth``, ``include_pools=
+    False``) dan definisi dust di UI ("wallet 0 < nilai ≤ $10, **bukan
+    LP**"). Vault pool kecil (≤$10) dulu ikut terhitung sebagai wallet
+    dust sehingga dust % MC sedikit bengkak dibanding bucket depth.
 
     Satu kali iterasi: sebelumnya daftar real/dust dibangun dulu lalu di-``sum``
     terpisah (±9 lintasan atas holder yang sama). Dengan 3.000-10.000 baris per
@@ -418,6 +433,8 @@ def classify_holders(snapshot: dict | None, market_cap: float = 0.0,
     dust_limit = float(DUST_LIMIT_USD if dust_limit is None else dust_limit)
     holders = (snapshot or {}).get("holders") or []
     source = str((snapshot or {}).get("source") or "gmgn")
+    pool_set = {str(p or "").strip().lower() for p in (pool_addresses or [])
+                if p}
     real_count = dust_count = 0
     real_value = dust_value = 0.0
     real_supply = dust_supply = 0.0
@@ -426,6 +443,10 @@ def classify_holders(snapshot: dict | None, market_cap: float = 0.0,
         # ``or 0.0`` menelan None; pemanggilan helper _float() per baris
         # justru 2,4x lebih mahal daripada seluruh lintasan ini (terukur).
         if not isinstance(row, dict) or not row.get("is_wallet"):
+            continue
+        if pool_set and str(row.get("address") or "").lower() in pool_set:
+            # Vault LP/pool AMM — bukan wallet (sama seperti
+            # solscan_holders.wallet_depth dengan include_pools=False).
             continue
         usd = row.get("usd_value") or 0.0
         if usd <= 0:
@@ -572,11 +593,12 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
     snapshot, depth = _fetch_holders_snapshot(
         ca, source, max_wallets=max_wallets, timeout=timeout,
         price_usd=price, market_cap=mc, market=market)
-    holder_stats = classify_holders(snapshot, mc, dust_limit=dust_limit)
-    if depth is not None:
-        holder_stats["depth"] = depth
     pools = set(str(p or "").strip() for p in
                 (market.get("pair_addresses") or []) if p)
+    holder_stats = classify_holders(
+        snapshot, mc, dust_limit=dust_limit, pool_addresses=pools)
+    if depth is not None:
+        holder_stats["depth"] = depth
     try:
         from holder_history import lookup_balances, mid_tier_stats
         holder_stats["mid"] = mid_tier_stats(

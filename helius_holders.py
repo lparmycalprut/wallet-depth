@@ -31,10 +31,13 @@ from core import get_helius_keys, get_market
 from holder_analysis import fetch_holders_helius
 from solscan_holders import wallet_depth
 
-# Default batas holder yang dianalisis saat scan satu token. Lebih besar dari
-# nilai default global (3000) supaya distribusi bucket lebih mewakili; masih
-# dibatasi keras oleh pengaman paginasi di fetch_holders_helius (60 halaman).
-SCAN_DEFAULT_MAX_WALLETS = 20_000
+# Default batas holder yang dianalisis saat scan satu token. **Wajib sama
+# dengan jalur lain** (cron/Telegram = FULL_SCAN_MAX_WALLETS, tombol scan
+# app) supaya dust % MC sinkron: urutan getTokenAccounts Helius tidak urut
+# saldo, jadi cap yang berbeda = populasi berbeda = angka berbeda.
+from holder_history import FULL_SCAN_MAX_WALLETS
+
+SCAN_DEFAULT_MAX_WALLETS = FULL_SCAN_MAX_WALLETS
 
 # Warna per bucket, urut dari nilai kecil → besar (sekitar palette app).
 _BUCKET_COLORS = (

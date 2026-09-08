@@ -561,3 +561,33 @@ class HolderDataUsabilityTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class MergeStatusHistoryTest(unittest.TestCase):
+    """Titik resample 4 jam dari holder_status vs titik scan mentah.
+
+    Titik resample memakai ts batas bucket + nilai titik terakhir di
+    bucket; bila bucket sudah punya titik mentah, titik resample adalah
+    "fantasi" (nilai scan yang lebih baru digambar pada jam yang nilainya
+    belum ada) dan harus dibuang dari gabungan.
+    """
+
+    BUCKET = hh.INTERVAL_SEC
+
+    def test_resample_dibuang_bila_bucket_punya_titik_mentah(self):
+        raw = [{"ts": 86_400 + 3_600, "dust_pct_mc": 0.2, "dust_count": 20}]
+        compact = [{"ts": 86_400, "dust_pct_mc": 0.1, "dust_count": 10}]
+        merged = hh.merge_status_history(raw, compact)
+        self.assertEqual([p["ts"] for p in merged], [86_400 + 3_600])
+
+    def test_resample_dipertahankan_bila_grup_mentah_kosong(self):
+        compact = [{"ts": 86_400, "dust_pct_mc": 0.1}]
+        merged = hh.merge_status_history([], compact)
+        self.assertEqual([p["ts"] for p in merged], [86_400])
+
+    def test_resample_bucket_lain_tetap_dipertahankan(self):
+        raw = [{"ts": 86_400 + 3_600, "dust_pct_mc": 0.2}]
+        compact = [{"ts": 86_400 - 4 * 3_600, "dust_pct_mc": 0.05},
+                   {"ts": 86_400, "dust_pct_mc": 0.1}]
+        merged = hh.merge_status_history(raw, compact)
+        self.assertEqual(sorted(p["ts"] for p in merged),
+                         [86_400 - 4 * 3_600, 86_400 + 3_600])

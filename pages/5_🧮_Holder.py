@@ -28,7 +28,7 @@ from holder_history import (DUST_CAUTION_PCT, DUST_DANGER_PCT,
                             history_for_mint, holders_usable, ingest_many,
                             latest_detail_for_mint,
                             load_durable_holder_history,
-                            merge_points, point_wallets, resample_4h,
+                            merge_status_history, point_wallets, resample_4h,
                             seed_from_status, tracked_chronology_addresses,
                             usable_points)
 from links import external_links_html
@@ -73,7 +73,7 @@ def _fmt_pct(value, digits: int = 2) -> str:
 
 def _points_for(mint: str, status_token: dict | None, store: dict) -> list:
     status_pts = (status_token or {}).get("history") or []
-    return merge_points(history_for_mint(store, mint), status_pts)
+    return merge_status_history(history_for_mint(store, mint), status_pts)
 
 
 def _dust_badge(flag: dict) -> str:

@@ -25,8 +25,9 @@ from typing import TYPE_CHECKING
 
 from holder_history import (DUST_CAUTION_PCT, DUST_DANGER_PCT,
                             LP_INTERVAL_SEC, dust_flag, dust_level_rank,
-                            history_for_mint, holders_usable, merge_points,
+                            history_for_mint, holders_usable, merge_status_history,
                             point_usable, resample_5m, usable_points)
+from watchlist_detail import DRIFT_TOLERANCE_PP
 
 if TYPE_CHECKING:  # pragma: no cover - hanya untuk anotasi tipe
     from matplotlib.figure import Figure
@@ -90,8 +91,8 @@ def points_for_mint(mint: str, status_tokens: dict | None,
                     store: dict | None) -> list[dict]:
     """Gabung titik history file + salinan ringkas dari holder_status."""
     token = (status_tokens or {}).get(mint) or {}
-    return merge_points(history_for_mint(store, mint),
-                        (token or {}).get("history") or [])
+    return merge_status_history(history_for_mint(store, mint),
+                                (token or {}).get("history") or [])
 
 
 def _delta_pp(before, after):
@@ -122,23 +123,55 @@ def build_lp_row(mint: str, meta: dict | None, status_tokens: dict | None,
     sampled = resample_5m(usable_points(points))
 
     holders_ok = bool(holders) and holders_usable(holders)
-    dust_pct = _float(holders.get("dust_pct_mc"), None) if holders_ok else None
-    if dust_pct is None and sampled:
-        dust_pct = _float(sampled[-1].get("dust_pct_mc"), None)
-    dust_count = holders.get("dust_count") if holders_ok else None
-    if dust_count is None and sampled:
-        dust_count = sampled[-1].get("dust_count")
+    # Sumber angka baris: kandidat TERBARU yang datanya layak menang
+    # (snapshot cron ATAU titik history — scan manual app yang titik
+    # history-nya lebih baru dari snapshot, atau sebaliknya). Dulu baris
+    # selalu memprioritaskan snapshot walau titik history lebih baru,
+    # sehingga baris bisa menampilkan angka basi sementara grafik di
+    # bawahnya sudah menunjukkan titik yang baru ("tidak sinkron").
+    snapshot_pct = _float(holders.get("dust_pct_mc"), None) if holders_ok \
+        else None
+    snapshot_count = holders.get("dust_count") if holders_ok else None
+    snapshot_ts = _int(token.get("analyzed_at"), 0) if holders_ok else 0
+    last_sampled = sampled[-1] if sampled else {}
+    history_pct = _float(last_sampled.get("dust_pct_mc"), None)
+    history_count = last_sampled.get("dust_count")
+    history_ts = _int(last_sampled.get("ts"), 0) if sampled else 0
+
+    use_history = (history_ts > snapshot_ts and history_pct is not None)
+    # Titik/snapshot terpotong (dust bias — urutan Helius tidak urut
+    # saldo) kalah dari kandidat eksplisit lengkap, walau lebih lama.
+    truncation_swap = (use_history and snapshot_pct is not None
+                       and last_sampled.get("truncated") is True
+                       and holders.get("truncated") is not True)
+    if truncation_swap:
+        use_history = False
+    # Selisih akibat truncation_swap tidak di-flag drift (sudah dijelaskan
+    # penanda swap-nya sendiri).
+    drift = (holders_ok and snapshot_pct is not None
+             and history_pct is not None
+             and abs(snapshot_pct - history_pct) > DRIFT_TOLERANCE_PP
+             and snapshot_ts != history_ts
+             and not truncation_swap)
+
+    if use_history:
+        dust_pct = history_pct
+        dust_count = history_count
+    else:
+        dust_pct = snapshot_pct if snapshot_pct is not None else history_pct
+        dust_count = (snapshot_count if snapshot_count is not None
+                      else history_count)
     prev_pct = sampled[-2].get("dust_pct_mc") if len(sampled) >= 2 else None
     first_pct = sampled[0].get("dust_pct_mc") if sampled else None
 
     raw_rows = [row for row in points
                 if isinstance(row, dict) and _int(row.get("ts")) > 0]
     last_raw = raw_rows[-1] if raw_rows else {}
-    snapshot_ts = _int(token.get("analyzed_at"), 0)
-    newest_ts = max(snapshot_ts if holders else 0,
+    raw_snapshot_ts = _int(token.get("analyzed_at"), 0)
+    newest_ts = max(raw_snapshot_ts if holders else 0,
                     _int(last_raw.get("ts"), 0))
-    used_ts = (snapshot_ts if holders_ok
-               else (_int(sampled[-1].get("ts"), 0) if sampled else 0))
+    # Waktu ANGKA yang ditampilkan (bukan selalu waktu snapshot).
+    used_ts = history_ts if use_history else (snapshot_ts or history_ts)
     degraded = bool(newest_ts) and newest_ts > used_ts and (
         (bool(holders) and not holders_ok)
         or (bool(last_raw) and not point_usable(last_raw)))
@@ -168,6 +201,12 @@ def build_lp_row(mint: str, meta: dict | None, status_tokens: dict | None,
         "analyzed_at": token.get("analyzed_at"),
         "has_chart": len(sampled) >= 2,
         "degraded": degraded,
+        "drift": bool(drift),
+        "truncation_swap": bool(truncation_swap),
+        "snapshot_truncated": bool(holders.get("truncated") is True),
+        "used_truncated": bool(
+            (last_sampled.get("truncated") is True) if use_history
+            else (holders.get("truncated") is True)),
         "used_ts": used_ts or None,
         "newest_ts": newest_ts or None,
     }

@@ -51,6 +51,31 @@ class ClassifyHoldersTest(unittest.TestCase):
         self.assertEqual(stats["dust_count"], 1)
         self.assertEqual(stats["real_count"], 0)
 
+    def test_pool_vaults_dikecualikan_dari_dust(self):
+        """Akun LP/pool (pair address) bukan wallet: vault pool kecil
+        (≤$10) dulu ikut terhitung sebagai dust → dust % MC bengkak
+        dibanding bucket Wallet Depth yang sudah menyaring pool."""
+        snapshot = {"holders": [
+            _holder("dust1", 9.0),
+            _holder("POOL_SMALL", 8.0),
+            _holder("POOL_BIG", 50_000.0),
+        ]}
+        stats_all = sa.classify_holders(snapshot, market_cap=10_000)
+        self.assertEqual(stats_all["dust_count"], 2)
+        self.assertEqual(stats_all["real_count"], 1)
+        stats = sa.classify_holders(
+            snapshot, market_cap=10_000,
+            pool_addresses=["POOL_SMALL", "POOL_BIG"])
+        self.assertEqual(stats["dust_count"], 1)
+        self.assertEqual(stats["real_count"], 0)
+        self.assertAlmostEqual(stats["dust_pct_mc"], 0.09, places=4)
+        # casing-insensitive (pool_set dinormalisasi lowercase)
+        stats2 = sa.classify_holders(
+            snapshot, market_cap=10_000,
+            pool_addresses=["pool_small", "Pool_Big"])
+        self.assertEqual(stats2["dust_count"], 1)
+        self.assertEqual(stats2["real_count"], 0)
+
 
 class AnalyzeSnapshotTest(unittest.TestCase):
     def test_analyze_builds_bounded_alert_balances_and_tracks_missing_wallet(self):
@@ -177,6 +202,39 @@ class HeliusFallbackTest(unittest.TestCase):
         self.assertEqual(result["holders"], [])
         self.assertEqual(result["fetched"], 0)
         self.assertIn("decimals", result["error"])
+
+    def test_helius_halaman_kosong_berhenti_bersih_tanpa_truncated(self):
+        """Halaman terakhir DAS bisa membawa ``cursor`` tanpa data lagi
+        (quirk pagination). Loop harus berhenti di halaman kosong — bukan
+        membakar halaman kosong sampai ``page_cap`` (~100 call ekstra)
+        lalu menandai ``truncated=True`` palsu atas daftar yang sudah
+        selesai diambil (kasus nyata 2026-09-08: 3994 akun + truncated).
+        """
+        page1 = {
+            "token_accounts": [
+                {"owner": "A", "amount": 1_000_000.0, "address": "acc1"},
+            ],
+            "cursor": "last-cursor",
+        }
+        calls = {"getTokenAccounts": 0}
+
+        def fake_rpc(method, params, helius_keys=None, **_kwargs):
+            if method == "getAsset":
+                return {"token_info": {"decimals": 6}}
+            if method == "getTokenAccounts":
+                calls["getTokenAccounts"] += 1
+                if params.get("cursor"):
+                    return {"token_accounts": [], "cursor": "stuck"}
+                return page1
+            raise AssertionError(f"method tak terduga: {method}")
+
+        with mock.patch("core.helius_rpc", side_effect=fake_rpc):
+            with mock.patch("core.get_helius_keys", return_value=["key1"]):
+                result = sa.fetch_holders_helius(
+                    "MINT", max_wallets=100_000, price_usd=0.05)
+        self.assertEqual(len(result["holders"]), 1)
+        self.assertFalse(result["truncated"])
+        self.assertEqual(calls["getTokenAccounts"], 2)
 
     def test_holder_fallback_gmgn_to_helius(self):
         """GMGN error → otomatis fallback ke Helius."""
