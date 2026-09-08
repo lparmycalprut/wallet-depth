@@ -1,15 +1,25 @@
 # -*- coding: utf-8 -*-
 """Holder analysis for **Robinhood Chain** (chain id 4663, EVM).
 
-Walpaper Depth saat ini dominan memalai Solana (Helius/GMGN). Robinhood
+Wallet Depth saat ini dominan memakai Solana (Helius/GMGN). Robinhood
 Chain adalah EVM L2 (Arbitrum Orbit), jadi jangkar contract-address-nya
-``0x…`` dan data holder diambil dari Blockscout
-(``robinhoodchain.blockscout.com``) — Etherscan/Helius tidak mendukung
-chain id 4663. Modul ini menyediakan:
+``0x…`` dan data holder diambil dari dua provider:
+
+1. **GMGN** (primary) — ``/vas/api/v1/token_holders/robinhood/<CA>``
+   dengan paginasi cursor ``next``. GMGN web UI menampilkan 5K+ holder
+   tanpa masalah rate limit; internal API-nya gratis, tidak perlu API
+   key, dan TLS-fingerprint via ``curl_cffi`` menghindari bot-block.
+2. **Blockscout** (fallback) — ``robinhoodchain.blockscout.com/api``
+   dipakai bila GMGN gagal total (network error, chain belum di-index
+   di GMGN). Blockscout publik membatasi laju keras (429) sehingga
+   retry-nya pakai jeda lebih panjang + exponential backoff.
+
+Modul ini menyediakan:
 
 1. :func:`fetch_token_info` — decimals/symbol/supply dari Blockscout.
-2. :func:`fetch_holders` — seluruh daftar holder ERC-20 terpaginasi,
-   nilai token diubah ke unit UI lalu ke USD memakai harga DexScreener.
+2. :func:`fetch_holders` — seluruh daftar holder ERC-20 terpaginasi.
+   GMGN sebagai primary (``source: "gmgn+robinhood"``), Blockscout
+   sebagai fallback (``source: "blockscout"``).
 3. :func:`analyze_token` — output yang bentuknya sama persis dengan
    :func:`holder_analysis.analyze_token` sehingga rule dust holder,
    chart 4 jam, kronologi, dan alert Telegram dipakai ulang tanpa logika
@@ -23,6 +33,7 @@ Semua rule sama dengan Solana:
 from __future__ import annotations
 
 import time
+import uuid
 
 import requests
 
@@ -36,6 +47,19 @@ BLOCKSCOUT_API = "https://robinhoodchain.blockscout.com/api"
 BLOCKSCOUT_BASE = "https://robinhoodchain.blockscout.com"
 RH_SCAN_TOKEN_BASE = "https://rh-scan.com/token/"
 DEXSCREENER_CHAIN = CHAIN_SLUG
+
+# GMGN holder API — endpoint yang dipakai web UI gmgn.ai/robinhood/token/<CA>.
+# Paginasi pakai cursor ``next`` (base64), max 1000 rows per page.
+GMGN_ORIGIN = "https://gmgn.ai"
+GMGN_HOLDER_URL = (GMGN_ORIGIN
+                   + "/vas/api/v1/token_holders/robinhood/{ca}")
+GMGN_DEVICE_ID = str(uuid.uuid4())
+GMGN_FP_DID = uuid.uuid4().hex
+# Cache in-memory: TTL singkat supaya scan ulang dalam beberapa detik
+# tidak membanjiri GMGN.
+_GMGN_CACHE_TTL = 600
+_GMGN_HOLDER_CACHE: dict[str, dict] = {}
+
 # Blockscout pagination; cukup besar supaya scan FULL tidak perlu ratusan
 # request untuk token biasa.
 HOLDER_PAGE_SIZE = 1000
@@ -58,14 +82,229 @@ def _int(value, default=0) -> int:
     return int(_float(value, float(default)))
 
 
+# ---------------------------------------------------------------------------
+# GMGN internal API — primary holder source untuk Robinhood Chain
+# ---------------------------------------------------------------------------
+# GMGN web UI menampilkan holder untuk chain ``robinhood`` (verified di
+# https://gmgn.ai/robinhood/token/<CA>). Internal API-nya sama dengan
+# Solana — hanya ganti slug chain di URL. Rate limit jauh lebih longgar
+# daripada Blockscout publik (yang kena 429 setelah beberapa page).
+# Pakai ``curl_cffi`` untuk TLS fingerprint supaya tidak di-block sebagai
+# bot; fallback ke ``requests`` biasa bila curl_cffi tidak tersedia.
+
+def _gmgn_headers(referer_path: str = "") -> dict:
+    return {
+        "accept": "application/json, text/plain; */*",
+        "origin": GMGN_ORIGIN,
+        "referer": f"{GMGN_ORIGIN}/{referer_path}" if referer_path
+                   else f"{GMGN_ORIGIN}/",
+        "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/150.0.0.0 Safari/537.36"),
+    }
+
+
+def _gmgn_holder_params(cursor: str | None = None,
+                        limit: int = 1000) -> dict:
+    """Query params untuk GMGN token holder endpoint."""
+    params = {
+        "limit": limit,
+        "cost": "20",
+        "orderby": "amount_percentage",
+        "direction": "desc",
+        "device_id": GMGN_DEVICE_ID,
+        "fp_did": GMGN_FP_DID,
+        "from_app": "gmgn",
+        "tz_name": "Asia/Jakarta",
+        "tz_offset": "25200",
+        "app_lang": "en-US",
+        "os": "web",
+        "worker": "0",
+    }
+    if cursor:
+        params["next"] = cursor
+    return params
+
+
+def _gmgn_http_get(url: str, params: dict, *, timeout: int = 20) -> dict:
+    """GET JSON dari GMGN dengan TLS fingerprint browser.
+
+    Coba ``curl_cffi`` dulu (impersonate chrome), fallback ``requests``
+    biasa. Mengembalikan dict kosong bila semua usaha gagal — caller
+    memutuskan apakah akan fallback ke Blockscout.
+    """
+    headers = _gmgn_headers("robinhood/token/" +
+                            str(params.get("contractaddress", "")))
+    try:
+        from curl_cffi import requests as client
+        for identity in ("chrome", "chrome131", "safari17_0"):
+            try:
+                response = client.get(url, params=params, timeout=timeout,
+                                      impersonate=identity, headers=headers)
+                if response.status_code == 200:
+                    return response.json() or {}
+                if response.status_code == 429:
+                    time.sleep(2.0)
+                    continue
+                return {}
+            except Exception:
+                continue
+    except ImportError:
+        pass
+    # Fallback: requests biasa
+    try:
+        response = requests.get(url, params=params, headers=headers,
+                                timeout=timeout)
+        if response.status_code == 200:
+            return response.json() or {}
+    except Exception:
+        pass
+    return {}
+
+
+def _normalize_gmgn_holder(raw: dict, price_usd: float,
+                           total_supply: float | None) -> dict | None:
+    """Normalisasi satu baris holder GMGN ke bentuk yang sama dengan
+    ``robinhood_holders.fetch_holders`` output (EVM/Blockscout shape).
+
+    Return ``None`` bila baris tidak valid atau balance nol.
+    """
+    if not isinstance(raw, dict):
+        return None
+    addr = normalize_address(raw.get("address") or raw.get("wallet_address"))
+    if not addr:
+        return None
+    balance = _float(raw.get("balance") or raw.get("amount"))
+    if balance <= 0:
+        return None
+    usd_value = _float(raw.get("usd_value"))
+    if usd_value <= 0 and price_usd > 0:
+        usd_value = balance * price_usd
+    amount_pct = _float(raw.get("amount_percentage"))
+    if amount_pct > 1:
+        amount_pct /= 100.0
+    if amount_pct <= 0 and total_supply and total_supply > 0:
+        amount_pct = balance / total_supply
+    # Tandai pool/AMM (addr_type != 0) — disaring ulang di _mark_pools.
+    addr_type = _int(raw.get("addr_type"))
+    tags = raw.get("tags") or raw.get("maker_token_tags") or []
+    return {
+        "address": addr,
+        "account_address": addr,
+        "balance": balance,
+        "usd_value": usd_value,
+        "amount_pct": amount_pct,
+        "is_wallet": addr_type == 0,
+        "is_new": bool(raw.get("is_new")),
+        "is_suspicious": bool(raw.get("is_suspicious")),
+        "start_holding_at": _int(raw.get("start_holding_timestamp")
+                                 or raw.get("first_buy_timestamp")),
+        "last_active_at": _int(raw.get("last_active_timestamp")),
+        "netflow_usd": _float(raw.get("netflow_usd")),
+        "current_buy_amount": _float(raw.get("current_buy_amount")),
+        "current_sell_amount": _float(raw.get("current_sell_amount")),
+        "current_transfer_in": _float(raw.get("current_transfer_in")),
+        "current_transfer_out": _float(raw.get("current_transfer_out")),
+        "wallet_tag": str(raw.get("addr_tag") or ""),
+        "tags": list(tags) if isinstance(tags, list) else [],
+        "maker_token_tags": list(raw.get("maker_token_tags") or []),
+    }
+
+
+def fetch_holders_gmgn(ca: str, *, max_wallets: int | None = None,
+                       price_usd: float = 0.0,
+                       total_supply: float | None = None,
+                       timeout: int = 20) -> dict:
+    """Ambil holder ERC-20 dari GMGN (chain robinhood), paginasi cursor.
+
+    Return shape sama dengan ``fetch_holders``:
+    ``{"holders": [...], "pages", "truncated", "fetched", "analyzed_at",
+    "source": "gmgn+robinhood", "decimals": None, "error"}``.
+
+    Mengembalikan ``error`` tidak kosong bila gagal total (0 holder);
+    caller (``fetch_holders``) akan fallback ke Blockscout.
+    """
+    ca = normalize_address(ca)
+    if not ca:
+        return {"holders": [], "pages": 0, "truncated": False, "fetched": 0,
+                "analyzed_at": int(time.time()), "source": "gmgn+robinhood",
+                "decimals": None, "error": "address empty"}
+    max_wallets = int(max_wallets or DEFAULT_MAX_WALLETS)
+    # Cache
+    cache_key = f"rh:{ca}:{max_wallets}"
+    cached = _GMGN_HOLDER_CACHE.get(cache_key)
+    if cached and time.time() - cached.get("analyzed_at", 0) < _GMGN_CACHE_TTL:
+        return dict(cached)
+
+    holders: dict[str, dict] = {}
+    cursor = None
+    pages = 0
+    seen_cursors: set[str] = set()
+    truncated = False
+    error = ""
+    url = GMGN_HOLDER_URL.format(ca=ca)
+    while True:
+        payload = _gmgn_http_get(url, _gmgn_holder_params(cursor),
+                                 timeout=timeout)
+        if not payload:
+            error = "GMGN tidak merespons"
+            break
+        code = payload.get("code")
+        if code not in (None, 0, "0", "success"):
+            error = (f"GMGN code={code}: "
+                     f"{payload.get('msg') or payload.get('message') or '?'}")
+            break
+        data = payload.get("data") or {}
+        rows = data.get("list") or []
+        if not isinstance(rows, list):
+            error = "GMGN return holder tidak valid"
+            break
+        pages += 1
+        for raw in rows:
+            holder = _normalize_gmgn_holder(raw, price_usd, total_supply)
+            if holder and holder["address"] not in holders:
+                holders[holder["address"]] = holder
+        next_cursor = str(data.get("next") or "").strip()
+        if len(holders) >= max_wallets:
+            truncated = True
+            break
+        if not next_cursor or next_cursor in seen_cursors:
+            break
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+        # Jeda singkat antar page supaya tidak memicu rate limit GMGN
+        if pages < 50:
+            time.sleep(0.3)
+        else:
+            time.sleep(0.8)
+        if pages >= 60:
+            truncated = True
+            break
+
+    result = {
+        "holders": list(holders.values()),
+        "pages": pages,
+        "truncated": truncated,
+        "fetched": len(holders),
+        "analyzed_at": int(time.time()),
+        "source": "gmgn+robinhood",
+        "decimals": None,
+        "error": error,
+    }
+    if result["holders"]:
+        _GMGN_HOLDER_CACHE[cache_key] = result
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Blockscout — fallback provider
+# ---------------------------------------------------------------------------
 # Blockscout publik membatasi laju (HTTP 429) dan sesekali membalas 5xx.
-# Satu request yang gagal pernah membuat seluruh scan satu token pulang
-# dengan 0 wallet — dan karena ``classify_holders`` tidak membawa pesan
-# error, angka "dust 0,00%" tampil seperti hasil scan yang sungguh-sungguh.
-# Karena itu error sementara diulang satu kali dengan jeda pendek.
+# Retry pakai exponential backoff supaya paginasi 5-6 page tidak langsung
+# kena ban. Blockscout hanya dipakai bila GMGN gagal total.
 TRANSIENT_STATUS = frozenset({429, 500, 502, 503, 504})
-RETRY_ATTEMPTS = 1
-RETRY_BACKOFF_SEC = 3.0
+RETRY_ATTEMPTS = 2
+RETRY_BACKOFF_SEC = 5.0
 
 
 def _status_code(exc) -> int:
@@ -89,12 +328,11 @@ def _jsjson(params: dict, *, retries: int = RETRY_ATTEMPTS,
     """GET JSON dari Blockscout dengan header browser sederhana.
 
     Kegagalan sementara (429/5xx/timeout) diulang ``retries`` kali dengan
-    jeda :data:`RETRY_BACKOFF_SEC`; error lain (dan kegagalan percobaan
-    terakhir) dilempar seperti sebelumnya supaya pemanggil tetap bisa
-    memutuskan sendiri (``fetch_holders`` mencatatnya sebagai ``error``).
+    jeda exponential (``RETRY_BACKOFF_SEC * 2^attempt``); error lain (dan
+    kegagalan percobaan terakhir) dilempar supaya caller bisa fallback.
     """
     headers = {
-        "accept": "application/json, text/plain, */*",
+        "accept": "application/json, text/plain; */*",
         "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
                        "Chrome/150.0.0.0 Safari/537.36"),
@@ -111,7 +349,7 @@ def _jsjson(params: dict, *, retries: int = RETRY_ATTEMPTS,
             last_exc = exc
             if attempt >= attempts or not is_transient_error(exc):
                 raise
-            time.sleep(RETRY_BACKOFF_SEC * (attempt + 1))
+            time.sleep(RETRY_BACKOFF_SEC * (2 ** attempt))
     raise last_exc  # pragma: no cover - loop selalu return/raise
 
 
@@ -169,35 +407,57 @@ def _is_pool_address(address: str, pools: set) -> bool:
 def fetch_holders(ca: str, *, max_wallets: int | None = None,
                   price_usd: float = 0.0, decimals: int | None = None,
                   total_supply: float | None = None) -> dict:
-    """Ambil seluruh holder ERC-20 di Robinhood Chain via Blockscout.
+    """Ambil seluruh holder ERC-20 di Robinhood Chain.
 
-    Return shape sama dengan ``holder_analysis.fetch_holders``:
-    ``{"holders": [...], "pages", "truncated", "fetched", "analyzed_at",
-    "source", "decimals", "error"}``.
+    **GMGN** dicoba pertama (``source: "gmgn+robinhood"``). Bila gagal
+    total (0 holder atau error), fallback ke **Blockscout**
+    (``source: "blockscout"``). Kedua provider dikembalikan dalam shape
+    yang sama agar ``classify_holders`` bisa dipakai tanpa cabang.
+
+    Return shape: ``{"holders": [...], "pages", "truncated", "fetched",
+    "analyzed_at", "source", "decimals", "error"}``.
 
     ``value`` dari Blockscout adalah unit RAW ERC-20, jadi harus dibagi
     ``10 ** decimals`` sebelum dihitung USD (sama seperti amount RAW
-    Helius).
+    Helius). GMGN mengembalikan balance dalam unit UI + ``usd_value``.
     """
     ca = normalize_address(ca)
     if not ca or price_usd <= 0:
         return {"holders": [], "pages": 0, "truncated": False, "fetched": 0,
-                "analyzed_at": int(time.time()), "source": "blockscout",
+                "analyzed_at": int(time.time()), "source": "gmgn+robinhood",
                 "decimals": decimals, "error": "price/address empty"}
+
+    # ---- Primary: GMGN -------------------------------------------------------
+    gmgn_result = fetch_holders_gmgn(
+        ca, max_wallets=max_wallets, price_usd=price_usd,
+        total_supply=total_supply)
+    if gmgn_result.get("holders"):
+        return gmgn_result
+
+    # ---- Fallback: Blockscout ------------------------------------------------
+    gmgn_error = gmgn_result.get("error") or ""
     if decimals is None or decimals < 0:
         try:
             info = fetch_token_info(ca)
-        except Exception as exc:  # noqa: BLE001 - kontrak: selalu kembalikan dict
-            return {"holders": [], "pages": 0, "truncated": False,
-                    "fetched": 0, "analyzed_at": int(time.time()),
-                    "source": "blockscout", "decimals": None,
-                    "error": f"Blockscout getToken: {exc}"}
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "holders": [], "pages": 0, "truncated": False, "fetched": 0,
+                "analyzed_at": int(time.time()),
+                "source": f"gmgn+robinhood(fail)→blockscout(fail)",
+                "decimals": None,
+                "error": (f"GMGN: {gmgn_error}; "
+                          f"Blockscout getToken: {exc}"),
+            }
         decimals = info.get("decimals")
         if decimals is None or decimals < 0:
-            return {"holders": [], "pages": 0, "truncated": False,
-                    "fetched": 0, "analyzed_at": int(time.time()),
-                    "source": "blockscout", "decimals": None,
-                    "error": "decimals mint tidak ditemukan"}
+            return {
+                "holders": [], "pages": 0, "truncated": False, "fetched": 0,
+                "analyzed_at": int(time.time()),
+                "source": f"gmgn+robinhood(fail)→blockscout(fail)",
+                "decimals": None,
+                "error": (f"GMGN: {gmgn_error}; "
+                          "decimals mint tidak ditemukan"),
+            }
 
     max_wallets = int(max_wallets or DEFAULT_MAX_WALLETS)
     holders: dict[str, dict] = {}
@@ -269,16 +529,23 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
         if pages >= HOLDER_PAGE_CAP:
             truncated = True
             break
+        # Jeda antar page Blockscout — rate limit lebih keras daripada GMGN
+        time.sleep(1.5)
         page += 1
+
+    source = "blockscout"
+    if gmgn_error:
+        source = f"gmgn+robinhood(fail)→blockscout"
     return {
         "holders": list(holders.values()),
         "pages": pages,
         "truncated": truncated,
         "fetched": len(holders),
         "analyzed_at": int(time.time()),
-        "source": "blockscout",
+        "source": source,
         "decimals": decimals,
-        "error": error,
+        "error": (f"GMGN: {gmgn_error}; Blockscout: {error}"
+                  if gmgn_error and error else error),
     }
 
 
@@ -315,7 +582,7 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
                   cohort_addrs=None,
                   tracked_wallet_addrs=None,
                   detail: bool = True) -> dict:
-    """Analisis holder token Robinhood Chain (Blockscout + DexScreener).
+    """Analisis holder token Robinhood Chain (GMGN primary + Blockscout fallback).
 
     Menghasilkan bentuk yang sama dengan
     ``holder_analysis.analyze_token`` sehingga seluruh alur watchlist,
