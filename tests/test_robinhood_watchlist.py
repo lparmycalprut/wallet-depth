@@ -16,6 +16,9 @@ import watchlist as wl
 
 EV = "0x8490AcD2d52D0Ebd34CB13E01Bd9a9380b36411D"
 EV_LOWER = EV.lower()
+POOL = "0x" + "ab" * 20
+WALLET = "0x" + "cd" * 20
+DUST = "0x" + "ef" * 20
 
 
 class AddressTest(unittest.TestCase):
@@ -251,6 +254,131 @@ class WrapperTest(unittest.TestCase):
                                return_value={"state": "syncing"}) as status:
             self.assertEqual(rw.sync_state(), {"state": "syncing"})
         status.assert_called_once_with("watchlist_robinhood.json")
+
+
+class ScanTokenHoldersTest(unittest.TestCase):
+    """Scan Holder Khusus (section app) untuk CA Robinhood Chain.
+
+    Shape hasil harus **sama persis** dengan
+    ``helius_holders.scan_token_holders`` supaya UI Scan Holder Khusus
+    dipakai ulang tanpa cabang.
+    """
+
+    MARKET = {"symbol": "VLAD", "price_usd": 1.0, "marketcap": 100_000.0,
+              "pair_addresses": [POOL.upper()]}
+    SNAPSHOT = {
+        "holders": [
+            {"address": WALLET, "balance": 500.0, "usd_value": 500.0,
+             "amount_pct": 0.5, "is_wallet": True},
+            {"address": DUST, "balance": 5.0, "usd_value": 5.0,
+             "amount_pct": 0.005, "is_wallet": True},
+            # Pool AMM (di market.pair_addresses) — default harus keluar
+            # dari bucket, tetap dihitung pool_excluded.
+            {"address": POOL, "balance": 90_000.0, "usd_value": 90_000.0,
+             "amount_pct": 90.0, "is_wallet": True},
+        ],
+        "pages": 1, "truncated": False, "fetched": 3, "analyzed_at": 0,
+        "source": "gmgn+robinhood", "decimals": 18, "error": ""}
+
+    def _patch(self, snapshot=None, market=None, decimals=18,
+               total_supply=100_000.0):
+        snapshot = self.SNAPSHOT if snapshot is None else snapshot
+        market = self.MARKET if market is None else market
+        return (
+            mock.patch.object(rh, "get_market",
+                              return_value=dict(market)),
+            mock.patch.object(rh, "fetch_token_info",
+                              return_value={"name": "Vlad",
+                                            "symbol": "VLAD",
+                                            "decimals": decimals,
+                                            "total_supply": total_supply}),
+            mock.patch.object(rh, "fetch_holders",
+                              return_value=dict(snapshot)),
+        )
+
+    def test_scan_uses_robinhood_holders_and_builds_depth(self):
+        """GMGN berhasil → source gmgn+robinhood, depth seperti Helius."""
+        patches = self._patch()
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        result = rh.scan_token_holders(EV)
+
+        # shape identik dengan helius_holders.scan_token_holders
+        for key in ("mint", "symbol", "market", "snapshot", "depth",
+                    "source", "no_helius_keys", "scan_failed"):
+            self.assertIn(key, result)
+        self.assertEqual(result["mint"], EV_LOWER)  # EVM di-normalize
+        self.assertEqual(result["symbol"], "VLAD")
+        self.assertEqual(result["source"], "gmgn+robinhood")
+        self.assertFalse(result["no_helius_keys"])
+        self.assertFalse(result["scan_failed"])
+        # default: LP/pool disingkirkan dari bucket
+        by_label = {b["label"]: b for b in result["depth"]["buckets"]}
+        self.assertEqual(by_label[">$0-$10"]["count"], 1)   # DUST
+        self.assertEqual(by_label["$100-$1k"]["count"], 1)  # WALLET
+        self.assertEqual(by_label["$10k-$100k"]["count"], 0)  # POOL keluar
+        self.assertFalse(result["depth"]["buckets_include_pools"])
+        self.assertEqual(result["depth"]["holders_all"], 3)
+        self.assertEqual(result["depth"]["holders_wallet"], 2)
+        self.assertEqual(result["depth"]["pool_excluded"], 1)
+
+    def test_scan_include_pools_keeps_pool_in_buckets(self):
+        patches = self._patch()
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        result = rh.scan_token_holders(EV, include_pools=True)
+        by_label = {b["label"]: b for b in result["depth"]["buckets"]}
+        self.assertEqual(by_label["$10k-$100k"]["count"], 1)  # POOL masuk
+        self.assertTrue(result["depth"]["buckets_include_pools"])
+
+    def test_scan_passes_max_wallets_decimals_and_supply(self):
+        with mock.patch.object(rh, "get_market",
+                               return_value=dict(self.MARKET)), \
+                mock.patch.object(rh, "fetch_token_info",
+                                  return_value={"decimals": 18,
+                                                "total_supply": 100_000.0}), \
+                mock.patch.object(rh, "fetch_holders",
+                                  return_value=dict(self.SNAPSHOT)) as fetch:
+            rh.scan_token_holders(EV, max_wallets=2000)
+        self.assertEqual(fetch.call_args.kwargs["max_wallets"], 2000)
+        self.assertEqual(fetch.call_args.kwargs["price_usd"], 1.0)
+        self.assertEqual(fetch.call_args.kwargs["decimals"], 18)
+        self.assertEqual(fetch.call_args.kwargs["total_supply"], 100_000.0)
+
+    def test_scan_without_price_flags_failed(self):
+        """DexScreener kosong → tanpa fetch holder, scan_failed=True."""
+        market_empty = {"symbol": "VLAD", "price_usd": 0.0, "marketcap": 0.0,
+                        "pair_addresses": []}
+        no_price = {"holders": [], "pages": 0, "truncated": False,
+                    "fetched": 0, "analyzed_at": 0, "source": "gmgn+robinhood",
+                    "decimals": None, "error": "price/address empty"}
+        with mock.patch.object(rh, "get_market", return_value=market_empty), \
+                mock.patch.object(rh, "fetch_token_info") as info, \
+                mock.patch.object(rh, "fetch_holders",
+                                  return_value=no_price) as fetch:
+            result = rh.scan_token_holders(EV)
+        self.assertTrue(result["scan_failed"])
+        self.assertFalse(result["no_helius_keys"])
+        info.assert_not_called()  # tanpa harga tidak perlu decimals
+        self.assertEqual(fetch.call_args.kwargs["price_usd"], 0.0)
+
+    def test_scan_provider_failure_flags_failed_with_detail(self):
+        """GMGN + Blockscout sama-sama gagal → scan_failed + alasan provider."""
+        failed = {"holders": [], "pages": 0, "truncated": False,
+                  "fetched": 0, "analyzed_at": 0,
+                  "source": "gmgn+robinhood(fail)→blockscout(fail)",
+                  "decimals": None,
+                  "error": "GMGN: 429; Blockscout: 429 Too Many Requests"}
+        patches = self._patch(snapshot=failed)
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        result = rh.scan_token_holders(EV)
+        self.assertTrue(result["scan_failed"])
+        self.assertIn("blockscout", result["source"])
+        self.assertIn("429", result["snapshot"]["error"])
 
 
 if __name__ == "__main__":  # pragma: no cover

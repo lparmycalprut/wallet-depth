@@ -39,6 +39,7 @@ import requests
 
 from core import get_market
 from holder_analysis import DUST_LIMIT_USD, DEFAULT_MAX_WALLETS, classify_holders
+from solscan_holders import wallet_depth
 
 CHAIN_SLUG = "robinhood"
 CHAIN_ID = "4663"
@@ -570,6 +571,76 @@ def _known_pools(market: dict | None, extra_pools=None) -> list[str]:
     pool = list((market or {}).get("pair_addresses") or [])
     pool.extend(str(p or "").strip() for p in (extra_pools or []) if p)
     return list(dict.fromkeys(pool))
+
+
+def scan_token_holders(ca: str, *, max_wallets: int | None = None,
+                       include_pools: bool = False) -> dict:
+    """Scan on-demand holder satu token Robinhood Chain (EVM, chain 4663).
+
+    Padanan EVM dari ``helius_holders.scan_token_holders`` untuk section
+    **Scan Holder Khusus** di halaman utama: alurnya sama —
+    market (harga & marketcap) dari DexScreener
+    (``chain_id=robinhood``), token info (decimals & supply) dari
+    Blockscout, seluruh holder dari :func:`fetch_holders` (GMGN primary,
+    Blockscout fallback), lalu Wallet Depth by Threshold dari
+    ``solscan_holders.wallet_depth``.
+
+    ``include_pools``: bila ``False`` (default) akun LP/pool yang dikenal
+    (``pair_addresses`` DexScreener + penanda non-wallet GMGN)
+    **disingkirkan dari list/bucket holder** — pool AMM bisa menyerap
+    puluhan persen supply dan menyesatkan bucket (sama dengan jalur
+    Helius).
+
+    Return dict — **shape-nya sama persis** dengan
+    ``helius_holders.scan_token_holders`` sehingga UI Scan Holder Khusus
+    dipakai ulang tanpa cabang::
+
+        {
+          "market": {...},            # dari get_market (bisa {})
+          "snapshot": {...},          # dari fetch_holders
+          "depth": {...},             # dari wallet_depth
+          "source": str,              # "gmgn+robinhood" / "blockscout" / …
+          "no_helius_keys": False,    # selalu False (tidak butuh key Helius)
+          "scan_failed": bool,
+        }
+    """
+    ca = normalize_address(ca)
+    market = {}
+    try:
+        market = get_market(ca, chain_id=DEXSCREENER_CHAIN) or {}
+    except Exception:  # noqa: BLE001 - market gagal, lanjut dengan nilai kosong
+        market = {}
+    price = float(market.get("price_usd") or 0)
+    mc = float(market.get("marketcap") or 0)
+    max_wallets = int(max_wallets or DEFAULT_MAX_WALLETS)
+
+    info: dict = {}
+    if price > 0:
+        try:
+            info = fetch_token_info(ca)
+        except Exception:  # noqa: BLE001 - info gagal, fetch_holders coba lagi
+            info = {}
+    decimals = info.get("decimals")
+    supply = info.get("total_supply")
+
+    snapshot = fetch_holders(ca, max_wallets=max_wallets, price_usd=price,
+                             decimals=decimals, total_supply=supply)
+    pools = _known_pools(market)
+    snapshot["holders"] = _mark_pools(snapshot.get("holders") or [], pools)
+    depth = wallet_depth(snapshot.get("holders") or [], mc,
+                         pool_addresses=pools, include_pools=include_pools)
+    symbol = str(market.get("symbol")
+                 or (info or {}).get("symbol") or "?").upper()
+    return {
+        "mint": ca,
+        "symbol": symbol,
+        "market": market,
+        "snapshot": snapshot,
+        "depth": depth,
+        "source": str(snapshot.get("source") or "robinhood"),
+        "no_helius_keys": False,
+        "scan_failed": bool(not snapshot.get("holders") or price <= 0),
+    }
 
 
 def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,

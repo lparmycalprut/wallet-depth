@@ -105,7 +105,15 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   real/dust + mid-tier + kohort. `extra_pools` + `cohort_addrs`
   untuk Meteora / kohort.
 - `solscan_holders.py`: hanya kalkulasi `wallet_depth`.
-- `helius_holders.py`: Scan Holder Khusus satu token.
+- `helius_holders.py`: Scan Holder Khusus satu token (Solana/Helius).
+  Padanan Robinhood Chain: `robinhood_holders.scan_token_holders`
+  (GMGN primary + Blockscout fallback, `chain_id=robinhood` di
+  `get_market`) — **shape dict hasilnya sama persis**
+  (`mint/symbol/market/snapshot/depth/source/no_helius_keys/scan_failed`)
+  supaya section **Scan Holder Khusus** di `app.py` dipakai ulang tanpa
+  cabang: CA `0x…` → jalur Robinhood, base58 → Helius; label sumber
+  metrik/caption dihitung dari `result["source"]`
+  (`app._scan_source_meta`).
 - `core.py`: config/key Helius, pasar DexScreener (`get_market` ikut
   mengembalikan `volume`, `price_change`, `txns`), candle GeckoTerminal —
   `get_hourly_candles()` (mentah, per jam) dan `get_daily_candles()`

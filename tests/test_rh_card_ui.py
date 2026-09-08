@@ -252,5 +252,151 @@ class RobinhoodPublishGuardTest(unittest.TestCase):
         self.assertIn("a", publish.call_args[0][0])
 
 
+@unittest.skipIf(AppTest is None, "streamlit not installed")
+class HolderKhususRobinhoodScanTest(unittest.TestCase):
+    """Section **Scan Holder Khusus** (app.py) kini menerima CA Robinhood.
+
+    Permintaan user 2026-09-08: "tambahkan fungsi kita bisa scan robinhood
+    disini juga". CA EVM (0x…) → ``robinhood_holders.scan_token_holders``
+    (GMGN primary, Blockscout fallback) dengan shape hasil yang sama; CA
+    Solana tetap → ``helius_holders.scan_token_holders`` (Helius DAS).
+    """
+
+    SOL_MINT = "So11111111111111111111111111111111111111112"
+
+    @staticmethod
+    def _depth_result(mint: str, symbol: str, source: str) -> dict:
+        return {
+            "mint": mint,
+            "symbol": symbol,
+            "market": {"price_usd": 1.0, "marketcap": 100_000.0},
+            "snapshot": {"fetched": 3, "pages": 1, "truncated": False},
+            "depth": {
+                "buckets": [
+                    {"label": ">$0-$10", "count": 1, "value_usd": 5.0,
+                     "pct_mc": 0.005},
+                    {"label": "$10-$100", "count": 0, "value_usd": 0.0,
+                     "pct_mc": 0.0},
+                    {"label": "$100-$1k", "count": 1, "value_usd": 500.0,
+                     "pct_mc": 0.5},
+                    {"label": "$1k-$10k", "count": 0, "value_usd": 0.0,
+                     "pct_mc": 0.0},
+                    {"label": "$10k-$100k", "count": 1, "value_usd": 90_000.0,
+                     "pct_mc": 90.0},
+                    {"label": "$100k-$500k", "count": 0, "value_usd": 0.0,
+                     "pct_mc": 0.0},
+                    {"label": ">$500k", "count": 0, "value_usd": 0.0,
+                     "pct_mc": 0.0},
+                ],
+                "tiers": [],
+                "holders_all": 3, "holders_wallet": 2, "pool_excluded": 1,
+                "buckets_include_pools": False,
+                "market_cap": 100_000.0,
+            },
+            "source": source,
+            "no_helius_keys": False,
+            "scan_failed": False,
+        }
+
+    def _app(self):
+        patches = (
+            mock.patch("watchlist.load_watchlist", return_value={}),
+            mock.patch("holder_status.load_holder_status",
+                       return_value={"updated_at": None, "tokens": {}}),
+            mock.patch("holder_history.load_holder_history",
+                       return_value={"tokens": {}}),
+            mock.patch("holder_history.pull_holder_history",
+                       return_value=None),
+            mock.patch("robinhood_watchlist.load_watchlist",
+                       return_value={}),
+            mock.patch("robinhood_watchlist.load_status",
+                       return_value={"updated_at": None, "tokens": {}}),
+            mock.patch("robinhood_watchlist.load_history",
+                       return_value={"updated_at": None, "tokens": {}}),
+        )
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        app = AppTest.from_file(APP, default_timeout=60)
+        return app.run()
+
+    def _submit(self, app, ca: str):
+        inputs = [node for node in app.text_input
+                  if node.key == "helius-ca-input"]
+        self.assertTrue(inputs, "input CA Scan Holder Khusus tidak ditemukan")
+        inputs[0].set_value(ca)
+        submit = [button for button in app.button
+                  if (button.label or "").strip() == "🛰 Scan Holder"]
+        self.assertTrue(submit, "tombol Scan Holder tidak ditemukan")
+        return submit[0].click().run()
+
+    def test_robinhood_ca_routes_to_robinhood_scan(self):
+        """CA 0x… → scan Robinhood (GMGN), hasil dirender label Robinhood."""
+        app = self._app()
+        ca_mixed = "0x" + CA[2:].upper()  # prefix 0x tetap lowercase
+        with mock.patch("robinhood_holders.scan_token_holders",
+                        return_value=self._depth_result(CA, "VLAD",
+                                                        "gmgn+robinhood")) \
+                as rh_scan, \
+                mock.patch("helius_holders.scan_token_holders") as helius:
+            result = self._submit(app, ca_mixed)
+        self.assertEqual(len(result.exception), 0)
+        helius.assert_not_called()
+        rh_scan.assert_called_once()
+        # EVM di-normalize (lowercase) sebelum scan
+        self.assertEqual(rh_scan.call_args.args[0], CA.lower())
+        self.assertEqual(rh_scan.call_args.kwargs["max_wallets"], 100_000)
+        self.assertFalse(rh_scan.call_args.kwargs["include_pools"])
+
+        body = "\n".join(node.value for node in result.markdown)
+        metrics = "\n".join(m.label for m in result.metric)
+        captions = "\n".join(node.value for node in result.caption)
+        self.assertIn("$VLAD", body)
+        self.assertIn("Akun holder (GMGN)", metrics)
+        self.assertNotIn("Helius", metrics)
+        self.assertIn("GMGN (Robinhood Chain)", captions)
+        # tautan eksternal EVM (bukan GMGN/Solscan Solana)
+        self.assertIn("rh-scan.com", body)
+        self.assertIn("robinhoodchain.blockscout.com", body)
+
+    def test_robinhood_ca_blockscout_source_label(self):
+        """GMGN gagal → label sumber menunjukkan Blockscout (fallback)."""
+        app = self._app()
+        with mock.patch("robinhood_holders.scan_token_holders",
+                        return_value=self._depth_result(
+                            CA, "VLAD", "gmgn+robinhood(fail)→blockscout")):
+            result = self._submit(app, CA)
+        metrics = "\n".join(m.label for m in result.metric)
+        captions = "\n".join(node.value for node in result.caption)
+        self.assertIn("Akun holder (Blockscout)", metrics)
+        self.assertIn("Blockscout (Robinhood Chain)", captions)
+
+    def test_solana_ca_still_routes_to_helius(self):
+        """CA base58 → Helius (perilaku lama tidak berubah)."""
+        app = self._app()
+        with mock.patch("helius_holders.scan_token_holders",
+                        return_value=self._depth_result(
+                            self.SOL_MINT, "USDC", "helius")) as helius, \
+                mock.patch("robinhood_holders.scan_token_holders") as rh_scan:
+            result = self._submit(app, self.SOL_MINT)
+        self.assertEqual(len(result.exception), 0)
+        rh_scan.assert_not_called()
+        helius.assert_called_once()
+        self.assertEqual(helius.call_args.args[0], self.SOL_MINT)
+        metrics = "\n".join(m.label for m in result.metric)
+        self.assertIn("Akun holder (Helius)", metrics)
+
+    def test_invalid_ca_is_rejected(self):
+        app = self._app()
+        with mock.patch("robinhood_holders.scan_token_holders") as rh_scan, \
+                mock.patch("helius_holders.scan_token_holders") as helius:
+            result = self._submit(app, "0x123")
+        self.assertEqual(len(result.exception), 0)
+        rh_scan.assert_not_called()
+        helius.assert_not_called()
+        warnings = [w.value for w in result.warning]
+        self.assertTrue(any("Format CA tidak valid" in w for w in warnings))
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
