@@ -86,7 +86,15 @@ jobs:
           if [ "${{ inputs.full_scan }}" = "true" ]; then
             ARGS="$ARGS --full --ignore-gap"
           fi
-          python scripts/scan_holders.py --max-wallets 3000 $ARGS
+          # JANGAN pasang --max-wallets: urutan getTokenAccounts Helius
+          # TIDAK urut saldo, jadi fetch terpotong (mis. 3000 dari 3994
+          # akun) = sampel acak yang bias — dust (≤$10) bisa jauh lebih
+          # kecil dari nilai aslinya, dan angka cron/Telegram tidak sinkron
+          # dengan scan Helius di dashboard. Default kode sudah FULL
+          # (FULL_SCAN_MAX_WALLETS=100.000, semua halaman sampai habis).
+          # Kadar quota Helius: `LP_SCAN_RUN_MULTIPLIER: "3"` di env di
+          # atas — itu pengganti cap wallet.
+          python scripts/scan_holders.py $ARGS
 
       - name: Chain run berikutnya
         if: success() || failure()

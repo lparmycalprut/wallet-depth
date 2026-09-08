@@ -8,6 +8,7 @@ __pycache__/
 .handoff_extract/
 .venv/
 venv/
+.venv-test/
 
 # Streamlit secrets lokal
 .streamlit/secrets.toml

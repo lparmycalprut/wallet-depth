@@ -125,6 +125,39 @@ class LpRowTest(unittest.TestCase):
         self.assertEqual(row["flag"]["level"], "caution")
         self.assertEqual(row["flag"]["label"], "HATI-HATI")
 
+    def test_row_memakai_titik_history_yang_lebih_baru_dari_snapshot(self):
+        """Scan manual (titik history) yang lebih baru dari snapshot
+        harus memenangkan angka baris + label jam — dulu snapshot
+        selalu menang, jadi baris menampilkan angka basi sementara
+        grafik expander sudah menunjukkan titik baru (kasus
+        "tidak sinkron" 2026-09-08, $Nasduck)."""
+        status = {LP_MINT: _status(LP_MINT, pct=0.50, count=70)}
+        status[LP_MINT]["analyzed_at"] = 2 * BUCKET  # snapshot lebih lama
+        store = _store({LP_MINT: [_point(0, 0.40, 80),
+                                  _point(1, 0.62, 95),
+                                  _point(2, 1.30, 140)]})
+        row = lw.build_lp_row(LP_MINT, {"source": "meteora"}, status, store)
+        self.assertEqual(row["dust_pct"], 1.30)
+        self.assertEqual(row["dust_count"], 140)
+        self.assertEqual(row["used_ts"], 3 * BUCKET)
+        self.assertTrue(row["drift"])  # 1.30 vs 0.50 > 0.01 pp
+
+    def test_titik_terpotong_baru_kalah_dari_snapshot_lengkap(self):
+        """Titik TERBARU yang sampelnya terpotong (dust bias — urutan
+        Helius tidak urut saldo) tidak boleh menimpa snapshot lengkap
+        yang lebih lama; baris memakai yang lengkap + penanda."""
+        status = {LP_MINT: _status(LP_MINT, pct=0.10, count=15)}
+        status[LP_MINT]["holders"]["real_count"] = 100  # → snapshot layak
+        status[LP_MINT]["analyzed_at"] = 3 * BUCKET
+        new_pt = _point(1, 0.02, 3)
+        new_pt["ts"] = 4 * BUCKET
+        new_pt["truncated"] = True  # scan terpotong → dust bias
+        store = _store({LP_MINT: [_point(0, 0.40, 80), new_pt]})
+        row = lw.build_lp_row(LP_MINT, {"source": "meteora"}, status, store)
+        self.assertEqual(row["dust_pct"], 0.10)
+        self.assertTrue(row["truncation_swap"])
+        self.assertEqual(row["used_ts"], 3 * BUCKET)
+
 
 class LpCardOrderTest(unittest.TestCase):
     def test_rows_sorted_by_severity_then_dust_pct(self):

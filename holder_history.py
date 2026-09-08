@@ -809,7 +809,7 @@ def compact_point(point: dict | None) -> dict:
     keys = ("ts", "price", "mc", "dust_count", "dust_pct_mc", "dust_value_usd",
             "real_count", "real_pct_mc", "mid_count", "mid_pct_mc",
             "cohort_token_pct", "cohort_cut50_pct", "cohort_n",
-            "holder_count", "buckets", "full", "degraded")
+            "holder_count", "buckets", "full", "degraded", "truncated")
     out = {}
     for key in keys:
         if key in point:
@@ -904,6 +904,42 @@ def merge_points(*groups) -> list[dict]:
     return [by_ts[ts] for ts in sorted(by_ts)]
 
 
+def merge_status_history(raw_points, compact_points) -> list[dict]:
+    """Gabung titik scan mentah + titik resample 4 jam dari holder_status.
+
+    Titik hasil :func:`resample_4h` memakai ts **batas bucket**
+    (``ts // 4h * 4h``) yang nilainya ikut titik TERAKHIR di bucket itu.
+    Bila bucket 4 jam yang sama sudah punya titik scan mentah, titik
+    resample-nya redundan dan menyesatkan: ia menggambar nilai (yang
+    berasal dari scan LEBIH BARU di dalam bucket) pada jam yang nilainya
+    memang belum ada — di grafik 5 menit lane LP ini muncul sebagai titik
+    "fantasi" (kasus nyata 2026-09-08: titik 07:00 WIB membawa nilai
+    scan 08:15 untuk token yang baru masuk watchlist pukul 08:00).
+
+    Titik resample dibuang bila bucket 4 jam-nya memuat titik mentah;
+    bila grup mentah kosong (lingkungan ephemeral, file lokal kosong)
+    semua titik resample tetap dipakai — itu satu-satunya data.
+    """
+    raw_rows = [p for p in (raw_points or [])
+                if isinstance(p, dict) and _int(p.get("ts")) > 0]
+    compact_rows = [p for p in (compact_points or [])
+                    if isinstance(p, dict) and _int(p.get("ts")) > 0]
+    if not raw_rows or not compact_rows:
+        return merge_points(raw_points, compact_points)
+    import bisect
+    raw_ts = sorted(_int(p.get("ts")) for p in raw_rows)
+    interval = max(60, INTERVAL_SEC)
+    kept = []
+    for row in compact_rows:
+        ts = _int(row.get("ts"))
+        bucket_start = (ts // interval) * interval
+        pos = bisect.bisect_left(raw_ts, bucket_start)
+        if pos < len(raw_ts) and raw_ts[pos] < bucket_start + interval:
+            continue  # bucket 4 jam ini sudah punya titik mentah
+        kept.append(row)
+    return merge_points(raw_rows, kept)
+
+
 def _token_slot(store: dict, mint: str, symbol: str = "?") -> dict:
     tokens = store.setdefault("tokens", {})
     slot = tokens.get(mint)
@@ -996,6 +1032,12 @@ def _build_point(analysis: dict, score: dict, now: int) -> dict:
         "cohort_n": score.get("n") or 0,
         "holder_count": _int(holders.get("wallets_analyzed")),
         "buckets": bucket_counts(holders.get("depth")),
+        # Apakah scan ini terpotong cap max_wallets? Urutan
+        # getTokenAccounts Helius tidak urut saldo → titik terpotong
+        # membawa dust yang bias; filter display (resolve_view /
+        # build_lp_row) memakai penanda ini untuk kalah dari titik
+        # lengkap yang lebih lama daripada memakai angka bias yang baru.
+        "truncated": bool(holders.get("truncated")),
     }
 
 

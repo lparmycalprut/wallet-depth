@@ -313,10 +313,25 @@ def resolve_view(token: dict | None, points, *, now=None,
         snapshot_count = None
         snapshot_ts = 0
     use_history = (history_ts > snapshot_ts and history_pct is not None)
+    # Titik/snapshot yang **terpotong** cap max_wallets membawa dust yang
+    # bias (urutan getTokenAccounts Helius tidak urut saldo — sampel pendek
+    # = subset acak, bukan "top holders"). Kalau kandidat baru terpotong
+    # dan kandidat lama eksplisit lengkap, yang lama menang — angka bias
+    # tidak boleh menimpa angka lengkap hanya karena lebih baru.
+    truncation_swap = (use_history and snapshot_ok
+                       and raw_snapshot_pct is not None
+                       and last_point.get("truncated") is True
+                       and holders.get("truncated") is not True)
+    if truncation_swap:
+        use_history = False
+    # Bila selisihnya sudah dijelaskan truncation_swap (angka baru bias
+    # karena sampel terpotong), jangan flag drift lagi — penanda swap +
+    # note sudah cukup.
     drift = (snapshot_ok and raw_snapshot_pct is not None
              and history_pct is not None
              and abs(raw_snapshot_pct - history_pct) > DRIFT_TOLERANCE_PP
-             and raw_snapshot_ts != history_ts)
+             and raw_snapshot_ts != history_ts
+             and not truncation_swap)
 
     if use_history:
         dust_pct = history_pct if history_pct is not None else snapshot_pct
@@ -355,6 +370,9 @@ def resolve_view(token: dict | None, points, *, now=None,
         "age_sec": age,
         "stale": bool(age is not None and age > limit),
         "drift": bool(drift),
+        "truncation_swap": bool(truncation_swap),
+        "snapshot_truncated": bool(holders.get("truncated") is True),
+        "history_truncated": bool(last_point.get("truncated") is True),
         "snapshot_pct": raw_snapshot_pct,
         "snapshot_usable": snapshot_ok,
         "history_pct": history_pct,

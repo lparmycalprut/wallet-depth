@@ -291,9 +291,16 @@ def hide_dust_limit(rows: list[dict]) -> tuple[list[dict], int]:
     return kept, hidden
 
 
-def scan_meteora(*, max_wallets: int = 2000, workers: int = 6,
+def scan_meteora(*, max_wallets: int | None = None, workers: int = 6,
                  progress=None, timeout: int = 25) -> dict:
     """Listing + holder + filter dust > 0,1% MC (``DUST_SCAN_HIDE_PCT``)."""
+    # Default FULL (holder_history.FULL_SCAN_MAX_WALLETS): urutan
+    # getTokenAccounts Helius tidak urut saldo → cap kecil menghasilkan
+    # sampel acak yang bias (dust ≤$10 kurang terhitung) dan filter
+    # ``DUST_SCAN_HIDE_PCT`` bisa salah menyembunyikan/menampilkan pool.
+    if max_wallets is None:
+        from holder_history import FULL_SCAN_MAX_WALLETS
+        max_wallets = FULL_SCAN_MAX_WALLETS
     rows, error = fetch_listing(timeout=timeout)
     fetched = len(rows)
     if rows:
