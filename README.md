@@ -280,6 +280,11 @@ Meteora Pool** (`source=meteora`):
   diberi badge **🏆 BEST POOL** di kolom Dust %MC — hanya di listing ini;
   card Chart LP / halaman Holder Analytic tidak berubah (keputusan user).
   Dust 0,00% dari data yang gagal/kosong **tidak pernah** mendapat badge
+- **Urutan listing (sejak 2026-09-08): BEST POOL selalu di atas**
+  (`meteora_screener.sort_rows`). Kunci urut: `best` dulu → dust % MC
+  **terkecil** → TVL **terbesar** → simbol (deterministik). Baris tanpa
+  angka dust (holder gagal) ditaruh paling bawah. Ringkasan di atas tabel
+  menyebut jumlah BEST POOL yang ditemukan
 - Tombol **⭐** memasukkan token ke card **Chart LP** (watchlist terpisah di
   bagian atas dashboard, lengkap dengan grafik perubahan dust holder)
 - Shortcut: [Meteora DLMM](https://app.meteora.ag/dlmm/) + [HawkFi](https://www.hawkfi.ag/meteora/)

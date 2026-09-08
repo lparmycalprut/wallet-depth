@@ -383,6 +383,47 @@ class MeteoraBestBadgeTest(unittest.TestCase):
                     "dust-badge dust-danger", "dust-badge dust-none"):
             self.assertNotIn(cls, listing)
 
+    def test_best_pool_dirender_paling_atas(self):
+        """Permintaan user 2026-09-08: BEST POOL urut pertama di listing.
+
+        Data uji sengaja menaruh CLEAN (satu-satunya BEST POOL) di posisi
+        pertama input, lalu diacak: setelah sort, CLN tetap harus di atas
+        BGS/THN meski aslinya bukan yang teratas dari API.
+        """
+        patches = (
+            mock.patch("watchlist.load_watchlist", return_value={}),
+            mock.patch("holder_status.load_holder_status",
+                       return_value={"tokens": {}}),
+            mock.patch("holder_history.load_holder_history",
+                       return_value={"tokens": {}}),
+            mock.patch("holder_history.pull_holder_history",
+                       return_value=None),
+        )
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        scan = self._scan_rows()
+        # Acak: BEST POOL (CLN) ditaruh paling BELAKANG oleh "API".
+        scan["rows"] = [scan["rows"][1], scan["rows"][2], scan["rows"][0]]
+        app = AppTest.from_file(APP, default_timeout=60)
+        app.session_state["meteora_scan"] = scan
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        cln_index = body.find("$CLN")
+        bgs_index = body.find("$BGS")
+        thn_index = body.find("$THN")
+        self.assertNotEqual(cln_index, -1)
+        # BEST POOL naik ke urutan pertama meski input menaruhnya terakhir.
+        self.assertLess(cln_index, bgs_index)
+        self.assertLess(cln_index, thn_index)
+        # Chip-nya tetap menempel di baris CLN saja.
+        self.assertIn("dust-best", body[cln_index:min(bgs_index, thn_index)])
+        self.assertEqual(body.count("dust-badge dust-best"), 1)
+        # Ringkasan menyebut jumlah BEST POOL.
+        caption = "\n".join(node.value for node in app.caption)
+        self.assertIn("BEST POOL di urutan teratas", caption)
+
 
 @unittest.skipIf(AppTest is None, "streamlit not installed")
 class TableColumnsRemovedTest(ChartLpCardTest):

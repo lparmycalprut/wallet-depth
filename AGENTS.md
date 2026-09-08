@@ -100,6 +100,12 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   POOL (dust < 0,1% + holder valid + TVL ≥ 10K) dirender di `app.py`
   (`_dust_best_html`), bukan di modul ini; badge AMAN/HATI-HATI/BAHAYA
   tidak dirender di listing Scan Meteora.
+  **Urutan baris = `sort_rows()`** (2026-09-08): BEST POOL di atas, lalu
+  dust % MC terkecil, TVL terbesar, simbol. `row_flag()` / `row_dust_pct()`
+  dipakai bersama modul ini dan `app.py` supaya angka yang menyaring,
+  mengurutkan, dan yang tampil selalu satu sumber. `scan_meteora()`
+  mengembalikan `best_count`; `app.py` tetap memanggil `sort_rows()` lagi
+  saat render karena hasil scan lama di `session_state` belum terurut.
 - `holder_analysis.py`: **Helius** sumber holder utama
   (`fetch_holders_helius`, fallback GMGN). `analyze_token` = holder
   real/dust + mid-tier + kohort. `extra_pools` + `cohort_addrs`

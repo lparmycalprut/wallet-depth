@@ -19,7 +19,7 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from holder_history import DUST_SCAN_HIDE_PCT, should_hide_dust
+from holder_history import DUST_SCAN_HIDE_PCT, dust_flag, should_hide_dust
 
 POOLS_URL = "https://pool-discovery-api.datapi.meteora.ag/pools"
 PAGE_SIZE = 50
@@ -273,6 +273,63 @@ def enrich_pools(rows: list[dict], *, max_wallets: int = 2000,
     return out
 
 
+def row_dust_pct(row: dict | None):
+    """Dust % MC satu baris pool: ``analysis`` dulu, fallback field baris.
+
+    Dipakai bersama oleh :func:`hide_dust_limit`, :func:`row_flag`, dan
+    ``app._render_meteora_scan`` supaya angka yang menyaring, mengurutkan,
+    dan yang tampil di layar **selalu** berasal dari sumber yang sama.
+    """
+    row = row or {}
+    pct = ((row.get("analysis") or {}).get("holders") or {}).get("dust_pct_mc")
+    if pct is None:
+        pct = row.get("dust_pct_mc")
+    return pct
+
+
+def row_flag(row: dict | None) -> dict:
+    """``dust_flag`` satu baris pool lengkap dengan guard holder + TVL.
+
+    ``best`` hanya True bila dust < 0,1% MC, data holder valid (≥ 40 wallet),
+    dan TVL pool ≥ 10K USD — persis syarat badge 🏆 BEST POOL di UI.
+    """
+    row = row or {}
+    analysis = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
+    holders = (analysis.get("holders")
+               if isinstance(analysis.get("holders"), dict) else None)
+    return dust_flag(row_dust_pct(row), holders=holders, tvl=row.get("tvl"))
+
+
+def sort_rows(rows: list[dict]) -> list[dict]:
+    """Urutkan listing Scan Meteora: **BEST POOL dulu**, lalu yang lain.
+
+    Permintaan user 2026-09-08: badge 🏆 BEST POOL tidak lagi tersebar acak
+    mengikuti urutan API Meteora — pool terbaik harus tampil paling atas.
+
+    Kunci urut (kecil = atas):
+
+    1. ``best`` (BEST POOL) di atas non-best;
+    2. dust % MC **terkecil** dulu — makin sedikit dust makin bersih;
+       baris tanpa angka dust (holder gagal) ditaruh paling bawah karena
+       tidak ada bukti dan tidak pernah bisa jadi BEST POOL;
+    3. TVL **terbesar** dulu sebagai tie-break (likuiditas lebih tebal);
+    4. simbol alfabetis supaya urutannya deterministik (stabil antar scan).
+    """
+    def _key(row):
+        row = row or {}
+        pct = _float(row_dust_pct(row), None)
+        tvl = _float(row.get("tvl"), 0.0)
+        return (
+            0 if row_flag(row).get("best") else 1,
+            0 if pct is not None else 1,
+            pct if pct is not None else 0.0,
+            -tvl,
+            str(row.get("symbol") or "").upper(),
+        )
+
+    return sorted(list(rows or []), key=_key)
+
+
 def hide_dust_limit(rows: list[dict]) -> tuple[list[dict], int]:
     """Buang pool dust > ``DUST_SCAN_HIDE_PCT`` (0,1% MC). Return (kept, n_hidden).
 
@@ -281,10 +338,7 @@ def hide_dust_limit(rows: list[dict]) -> tuple[list[dict], int]:
     """
     kept, hidden = [], 0
     for row in rows or []:
-        pct = ((row.get("analysis") or {}).get("holders") or {}).get("dust_pct_mc")
-        if pct is None:
-            pct = row.get("dust_pct_mc")
-        if should_hide_dust(pct):
+        if should_hide_dust(row_dust_pct(row)):
             hidden += 1
             continue
         kept.append(row)
@@ -307,6 +361,9 @@ def scan_meteora(*, max_wallets: int | None = None, workers: int = 6,
         rows = enrich_pools(rows, max_wallets=max_wallets, workers=workers,
                             progress=progress)
         rows, hidden = hide_dust_limit(rows)
+        # BEST POOL di urutan teratas (permintaan user 2026-09-08); urutan
+        # mentah dari API Meteora menyebar pool terbaik ke tengah listing.
+        rows = sort_rows(rows)
     else:
         hidden = 0
     return {
@@ -315,5 +372,6 @@ def scan_meteora(*, max_wallets: int | None = None, workers: int = 6,
         "fetched": fetched,
         "hidden_dust": hidden,
         "hide_pct": float(DUST_SCAN_HIDE_PCT),
+        "best_count": sum(1 for row in rows if row_flag(row).get("best")),
         "analyzed_at": int(time.time()),
     }

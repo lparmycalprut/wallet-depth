@@ -105,5 +105,99 @@ class FetchListingTest(unittest.TestCase):
         self.assertTrue(rows[0]["in_24h"] and rows[0]["in_1h"])
 
 
+def _sort_row(symbol, pct, tvl, *, wallets=80, fetched=200):
+    """Baris pool untuk uji urutan; ``wallets=None`` = data holder gagal."""
+    analysis = None
+    if wallets is not None:
+        analysis = {"holders": {"total_fetched": fetched,
+                                "wallets_analyzed": wallets,
+                                "real_count": wallets, "dust_count": 2,
+                                "dust_pct_mc": pct}}
+    return {"ca": symbol * 4, "symbol": symbol, "pool_address": "P" + symbol,
+            "tvl": tvl, "mc": 1_000_000.0, "dust_pct_mc": pct,
+            "in_24h": True, "in_1h": False, "analysis": analysis}
+
+
+class SortRowsTest(unittest.TestCase):
+    """Listing Scan Meteora: 🏆 BEST POOL wajib di urutan teratas.
+
+    Permintaan user 2026-09-08. Sebelumnya baris tampil apa adanya mengikuti
+    urutan API Meteora sehingga pool terbaik terselip di tengah.
+    """
+
+    def _rows(self):
+        # Sengaja diacak seperti urutan mentah API.
+        return [
+            _sort_row("THIN", 0.01, 4_000.0),         # TVL < 10K → bukan best
+            _sort_row("BEST2", 0.05, 12_000.0),
+            _sort_row("NODATA", None, 90_000.0, wallets=None),
+            _sort_row("BEST1", 0.01, 20_000.0),       # dust terkecil → juara
+            _sort_row("BOGUS", 0.0, 50_000.0, wallets=0, fetched=0),
+            _sort_row("BEST3", 0.05, 80_000.0),       # dust seri → TVL menang
+        ]
+
+    def test_best_pool_naik_ke_atas(self):
+        out = ms.sort_rows(self._rows())
+        flags = [ms.row_flag(row)["best"] for row in out]
+        self.assertEqual(flags, sorted(flags, reverse=True))
+        self.assertEqual([r["symbol"] for r in out][:3],
+                         ["BEST1", "BEST3", "BEST2"])
+
+    def test_dust_terkecil_dulu_lalu_tvl_terbesar(self):
+        out = [r["symbol"] for r in ms.sort_rows(self._rows())]
+        # BEST1 (0,01%) < BEST3/BEST2 (0,05%); BEST3 TVL 80K > BEST2 12K.
+        self.assertLess(out.index("BEST1"), out.index("BEST3"))
+        self.assertLess(out.index("BEST3"), out.index("BEST2"))
+
+    def test_baris_tanpa_data_dust_paling_bawah(self):
+        out = [r["symbol"] for r in ms.sort_rows(self._rows())]
+        self.assertEqual(out[-1], "NODATA")
+
+    def test_urutan_deterministik(self):
+        rows = self._rows()
+        first = [r["symbol"] for r in ms.sort_rows(rows)]
+        second = [r["symbol"] for r in ms.sort_rows(list(reversed(rows)))]
+        self.assertEqual(first, second)
+
+    def test_sort_rows_tidak_mengubah_list_asli(self):
+        rows = self._rows()
+        before = [r["symbol"] for r in rows]
+        ms.sort_rows(rows)
+        self.assertEqual([r["symbol"] for r in rows], before)
+
+    def test_input_kosong_aman(self):
+        self.assertEqual(ms.sort_rows([]), [])
+        self.assertEqual(ms.sort_rows(None), [])
+
+    def test_scan_meteora_mengurutkan_dan_menghitung_best(self):
+        rows = self._rows()
+        with mock.patch.object(ms, "fetch_listing", return_value=(rows, "")), \
+                mock.patch.object(ms, "enrich_pools", side_effect=lambda r, **k: r):
+            result = ms.scan_meteora()
+        self.assertEqual([r["symbol"] for r in result["rows"]][:3],
+                         ["BEST1", "BEST3", "BEST2"])
+        self.assertEqual(result["best_count"], 3)
+
+
+class RowFlagTest(unittest.TestCase):
+    def test_row_dust_pct_analysis_menang(self):
+        row = {"dust_pct_mc": 0.05,
+               "analysis": {"holders": {"dust_pct_mc": 0.8}}}
+        self.assertEqual(ms.row_dust_pct(row), 0.8)
+
+    def test_row_dust_pct_fallback_ke_field_baris(self):
+        self.assertEqual(ms.row_dust_pct({"dust_pct_mc": 0.02}), 0.02)
+        self.assertIsNone(ms.row_dust_pct({}))
+        self.assertIsNone(ms.row_dust_pct(None))
+
+    def test_row_flag_butuh_holder_valid_dan_tvl(self):
+        self.assertTrue(ms.row_flag(_sort_row("A", 0.01, 20_000.0))["best"])
+        # holder gagal (0 wallet) → bukan best walau dust 0
+        self.assertFalse(ms.row_flag(
+            _sort_row("B", 0.0, 50_000.0, wallets=0, fetched=0))["best"])
+        # TVL < 10K → bukan best
+        self.assertFalse(ms.row_flag(_sort_row("C", 0.01, 4_000.0))["best"])
+
+
 if __name__ == "__main__":
     unittest.main()
