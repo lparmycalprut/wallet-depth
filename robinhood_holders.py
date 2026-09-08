@@ -1,25 +1,42 @@
 # -*- coding: utf-8 -*-
 """Holder analysis for **Robinhood Chain** (chain id 4663, EVM).
 
-Wallet Depth saat ini dominan memakai Solana (Helius/GMGN). Robinhood
-Chain adalah EVM L2 (Arbitrum Orbit), jadi jangkar contract-address-nya
-``0x…`` dan data holder diambil dari dua provider:
+Robinhood Chain adalah EVM L2 (Arbitrum Orbit) dengan
+contract-address ``0x…``. Sumber holder-nya **Blockscout saja** —
+``robinhoodchain.blockscout.com``, explorer resmi chain ini. GMGN
+**tidak dipakai lagi** (dilepas 2026-09-08): endpoint
+``/vas/api/v1/token_holders/robinhood/<CA>`` memang menjawab
+``code: 0`` tetapi ``data.list`` selalu **kosong** — GMGN tidak
+meng-index chain 4663. Karena kode lama memperlakukan GMGN sebagai
+*primary*, tiap scan membuang satu request lalu jatuh ke Blockscout,
+dan bila Blockscout ikut tersendat hasilnya "0 holder" yang terbaca
+seperti "dust hilang semua".
 
-1. **GMGN** (primary) — ``/vas/api/v1/token_holders/robinhood/<CA>``
-   dengan paginasi cursor ``next``. GMGN web UI menampilkan 5K+ holder
-   tanpa masalah rate limit; internal API-nya gratis, tidak perlu API
-   key, dan TLS-fingerprint via ``curl_cffi`` menghindari bot-block.
-2. **Blockscout** (fallback) — ``robinhoodchain.blockscout.com/api``
-   dipakai bila GMGN gagal total (network error, chain belum di-index
-   di GMGN). Blockscout publik membatasi laju keras (429) sehingga
-   retry-nya pakai jeda lebih panjang + exponential backoff.
+Tiga jalur Blockscout dipakai berurutan, dari yang paling lengkap:
+
+1. **CSV export** (utama, TANPA limit paginasi) —
+   ``/api/v2/tokens/<CA>/holders/csv`` mengembalikan **seluruh** holder
+   dalam satu response, sudah ter-scale decimals
+   (``HolderAddress,Balance``). Instance ini memakai mode sinkron
+   (``/api/v2/config/csv-export`` → ``async_enabled: false``,
+   ``limit: 10000``), jadi satu request = satu daftar penuh.
+2. **REST v2 keyset** (fallback) — ``/api/v2/tokens/<CA>/holders``
+   dengan cursor ``next_page_params`` (``address_hash`` + ``value``).
+   Maksimum **50 baris/halaman** (``items_count`` > 50 ditolak 422),
+   tetapi cursor-nya tidak punya batas kedalaman dan membawa metadata
+   kontrak/pool (``is_contract``, ``name``) yang dipakai menandai LP.
+3. **Legacy RPC** (fallback terakhir) —
+   ``?module=token&action=getTokenHolders``. Perhatian: ``offset``
+   dibatasi **≤ 400** (nilai lebih besar dijawab
+   ``{"status":"0","message":"Something went wrong."}``) — inilah yang
+   membuat versi lama, yang meminta ``offset=1000``, **selalu gagal**.
 
 Modul ini menyediakan:
 
 1. :func:`fetch_token_info` — decimals/symbol/supply dari Blockscout.
-2. :func:`fetch_holders` — seluruh daftar holder ERC-20 terpaginasi.
-   GMGN sebagai primary (``source: "gmgn+robinhood"``), Blockscout
-   sebagai fallback (``source: "blockscout"``).
+2. :func:`fetch_holders` — seluruh daftar holder ERC-20
+   (``source: "blockscout-csv"`` / ``"blockscout-v2"`` /
+   ``"blockscout-rpc"``).
 3. :func:`analyze_token` — output yang bentuknya sama persis dengan
    :func:`holder_analysis.analyze_token` sehingga rule dust holder,
    chart 4 jam, kronologi, dan alert Telegram dipakai ulang tanpa logika
@@ -32,8 +49,9 @@ Semua rule sama dengan Solana:
 """
 from __future__ import annotations
 
+import csv
+import io
 import time
-import uuid
 
 import requests
 
@@ -46,25 +64,29 @@ CHAIN_ID = "4663"
 CHAIN_NAME = "Robinhood Chain"
 BLOCKSCOUT_API = "https://robinhoodchain.blockscout.com/api"
 BLOCKSCOUT_BASE = "https://robinhoodchain.blockscout.com"
+BLOCKSCOUT_V2 = f"{BLOCKSCOUT_BASE}/api/v2"
 RH_SCAN_TOKEN_BASE = "https://rh-scan.com/token/"
 DEXSCREENER_CHAIN = CHAIN_SLUG
 
-# GMGN holder API — endpoint yang dipakai web UI gmgn.ai/robinhood/token/<CA>.
-# Paginasi pakai cursor ``next`` (base64), max 1000 rows per page.
-GMGN_ORIGIN = "https://gmgn.ai"
-GMGN_HOLDER_URL = (GMGN_ORIGIN
-                   + "/vas/api/v1/token_holders/robinhood/{ca}")
-GMGN_DEVICE_ID = str(uuid.uuid4())
-GMGN_FP_DID = uuid.uuid4().hex
-# Cache in-memory: TTL singkat supaya scan ulang dalam beberapa detik
-# tidak membanjiri GMGN.
-_GMGN_CACHE_TTL = 600
-_GMGN_HOLDER_CACHE: dict[str, dict] = {}
+SOURCE_CSV = "blockscout-csv"
+SOURCE_V2 = "blockscout-v2"
+SOURCE_RPC = "blockscout-rpc"
 
-# Blockscout pagination; cukup besar supaya scan FULL tidak perlu ratusan
-# request untuk token biasa.
-HOLDER_PAGE_SIZE = 1000
-HOLDER_PAGE_CAP = 200
+# Cache in-memory: TTL singkat supaya rerun Streamlit dalam hitungan detik
+# tidak menembak Blockscout berkali-kali. HARUS jauh di bawah
+# ``holder_history.LP_INTERVAL_SEC`` (300 dtk) supaya scan LP 5 menit selalu
+# memotret data baru, bukan snapshot cache yang bikin grafik mendatar.
+_HOLDER_CACHE_TTL = 90
+_HOLDER_CACHE: dict[str, dict] = {}
+
+# Batas nyata Blockscout (terukur di robinhoodchain.blockscout.com,
+# 2026-09-08). Melewatinya = request ditolak, bukan sekadar dipotong.
+V2_PAGE_SIZE = 50            # /api/v2/…/holders → items_count max 50
+V2_PAGE_CAP = 600            # 600 × 50 = 30k wallet (jalur cadangan terakhir)
+HOLDER_PAGE_SIZE = 400       # legacy RPC → offset max 400 (bukan 1000!)
+HOLDER_PAGE_CAP = 500        # 500 × 400 = 200k wallet, cukup untuk token terbesar
+PAGE_SLEEP_SEC = 0.6         # ~1,7 req/s — sopan untuk instance publik
+CSV_TIMEOUT = 90             # satu response bisa memuat puluhan ribu baris
 
 _EVM_ADDRESS_RE = __import__("re").compile(r"0x[0-9a-fA-F]{40}")
 
@@ -84,225 +106,12 @@ def _int(value, default=0) -> int:
 
 
 # ---------------------------------------------------------------------------
-# GMGN internal API — primary holder source untuk Robinhood Chain
+# Blockscout — satu-satunya sumber holder Robinhood Chain
 # ---------------------------------------------------------------------------
-# GMGN web UI menampilkan holder untuk chain ``robinhood`` (verified di
-# https://gmgn.ai/robinhood/token/<CA>). Internal API-nya sama dengan
-# Solana — hanya ganti slug chain di URL. Rate limit jauh lebih longgar
-# daripada Blockscout publik (yang kena 429 setelah beberapa page).
-# Pakai ``curl_cffi`` untuk TLS fingerprint supaya tidak di-block sebagai
-# bot; fallback ke ``requests`` biasa bila curl_cffi tidak tersedia.
-
-def _gmgn_headers(referer_path: str = "") -> dict:
-    return {
-        "accept": "application/json, text/plain; */*",
-        "origin": GMGN_ORIGIN,
-        "referer": f"{GMGN_ORIGIN}/{referer_path}" if referer_path
-                   else f"{GMGN_ORIGIN}/",
-        "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                       "AppleWebKit/537.36 (KHTML, like Gecko) "
-                       "Chrome/150.0.0.0 Safari/537.36"),
-    }
-
-
-def _gmgn_holder_params(cursor: str | None = None,
-                        limit: int = 1000) -> dict:
-    """Query params untuk GMGN token holder endpoint."""
-    params = {
-        "limit": limit,
-        "cost": "20",
-        "orderby": "amount_percentage",
-        "direction": "desc",
-        "device_id": GMGN_DEVICE_ID,
-        "fp_did": GMGN_FP_DID,
-        "from_app": "gmgn",
-        "tz_name": "Asia/Jakarta",
-        "tz_offset": "25200",
-        "app_lang": "en-US",
-        "os": "web",
-        "worker": "0",
-    }
-    if cursor:
-        params["next"] = cursor
-    return params
-
-
-def _gmgn_http_get(url: str, params: dict, *, timeout: int = 20) -> dict:
-    """GET JSON dari GMGN dengan TLS fingerprint browser.
-
-    Coba ``curl_cffi`` dulu (impersonate chrome), fallback ``requests``
-    biasa. Mengembalikan dict kosong bila semua usaha gagal — caller
-    memutuskan apakah akan fallback ke Blockscout.
-    """
-    headers = _gmgn_headers("robinhood/token/" +
-                            str(params.get("contractaddress", "")))
-    try:
-        from curl_cffi import requests as client
-        for identity in ("chrome", "chrome131", "safari17_0"):
-            try:
-                response = client.get(url, params=params, timeout=timeout,
-                                      impersonate=identity, headers=headers)
-                if response.status_code == 200:
-                    return response.json() or {}
-                if response.status_code == 429:
-                    time.sleep(2.0)
-                    continue
-                return {}
-            except Exception:
-                continue
-    except ImportError:
-        pass
-    # Fallback: requests biasa
-    try:
-        response = requests.get(url, params=params, headers=headers,
-                                timeout=timeout)
-        if response.status_code == 200:
-            return response.json() or {}
-    except Exception:
-        pass
-    return {}
-
-
-def _normalize_gmgn_holder(raw: dict, price_usd: float,
-                           total_supply: float | None) -> dict | None:
-    """Normalisasi satu baris holder GMGN ke bentuk yang sama dengan
-    ``robinhood_holders.fetch_holders`` output (EVM/Blockscout shape).
-
-    Return ``None`` bila baris tidak valid atau balance nol.
-    """
-    if not isinstance(raw, dict):
-        return None
-    addr = normalize_address(raw.get("address") or raw.get("wallet_address"))
-    if not addr:
-        return None
-    balance = _float(raw.get("balance") or raw.get("amount"))
-    if balance <= 0:
-        return None
-    usd_value = _float(raw.get("usd_value"))
-    if usd_value <= 0 and price_usd > 0:
-        usd_value = balance * price_usd
-    amount_pct = _float(raw.get("amount_percentage"))
-    if amount_pct > 1:
-        amount_pct /= 100.0
-    if amount_pct <= 0 and total_supply and total_supply > 0:
-        amount_pct = balance / total_supply
-    # Tandai pool/AMM (addr_type != 0) — disaring ulang di _mark_pools.
-    addr_type = _int(raw.get("addr_type"))
-    tags = raw.get("tags") or raw.get("maker_token_tags") or []
-    return {
-        "address": addr,
-        "account_address": addr,
-        "balance": balance,
-        "usd_value": usd_value,
-        "amount_pct": amount_pct,
-        "is_wallet": addr_type == 0,
-        "is_new": bool(raw.get("is_new")),
-        "is_suspicious": bool(raw.get("is_suspicious")),
-        "start_holding_at": _int(raw.get("start_holding_timestamp")
-                                 or raw.get("first_buy_timestamp")),
-        "last_active_at": _int(raw.get("last_active_timestamp")),
-        "netflow_usd": _float(raw.get("netflow_usd")),
-        "current_buy_amount": _float(raw.get("current_buy_amount")),
-        "current_sell_amount": _float(raw.get("current_sell_amount")),
-        "current_transfer_in": _float(raw.get("current_transfer_in")),
-        "current_transfer_out": _float(raw.get("current_transfer_out")),
-        "wallet_tag": str(raw.get("addr_tag") or ""),
-        "tags": list(tags) if isinstance(tags, list) else [],
-        "maker_token_tags": list(raw.get("maker_token_tags") or []),
-    }
-
-
-def fetch_holders_gmgn(ca: str, *, max_wallets: int | None = None,
-                       price_usd: float = 0.0,
-                       total_supply: float | None = None,
-                       timeout: int = 20) -> dict:
-    """Ambil holder ERC-20 dari GMGN (chain robinhood), paginasi cursor.
-
-    Return shape sama dengan ``fetch_holders``:
-    ``{"holders": [...], "pages", "truncated", "fetched", "analyzed_at",
-    "source": "gmgn+robinhood", "decimals": None, "error"}``.
-
-    Mengembalikan ``error`` tidak kosong bila gagal total (0 holder);
-    caller (``fetch_holders``) akan fallback ke Blockscout.
-    """
-    ca = normalize_address(ca)
-    if not ca:
-        return {"holders": [], "pages": 0, "truncated": False, "fetched": 0,
-                "analyzed_at": int(time.time()), "source": "gmgn+robinhood",
-                "decimals": None, "error": "address empty"}
-    max_wallets = int(max_wallets or DEFAULT_MAX_WALLETS)
-    # Cache
-    cache_key = f"rh:{ca}:{max_wallets}"
-    cached = _GMGN_HOLDER_CACHE.get(cache_key)
-    if cached and time.time() - cached.get("analyzed_at", 0) < _GMGN_CACHE_TTL:
-        return dict(cached)
-
-    holders: dict[str, dict] = {}
-    cursor = None
-    pages = 0
-    seen_cursors: set[str] = set()
-    truncated = False
-    error = ""
-    url = GMGN_HOLDER_URL.format(ca=ca)
-    while True:
-        payload = _gmgn_http_get(url, _gmgn_holder_params(cursor),
-                                 timeout=timeout)
-        if not payload:
-            error = "GMGN tidak merespons"
-            break
-        code = payload.get("code")
-        if code not in (None, 0, "0", "success"):
-            error = (f"GMGN code={code}: "
-                     f"{payload.get('msg') or payload.get('message') or '?'}")
-            break
-        data = payload.get("data") or {}
-        rows = data.get("list") or []
-        if not isinstance(rows, list):
-            error = "GMGN return holder tidak valid"
-            break
-        pages += 1
-        for raw in rows:
-            holder = _normalize_gmgn_holder(raw, price_usd, total_supply)
-            if holder and holder["address"] not in holders:
-                holders[holder["address"]] = holder
-        next_cursor = str(data.get("next") or "").strip()
-        if len(holders) >= max_wallets:
-            truncated = True
-            break
-        if not next_cursor or next_cursor in seen_cursors:
-            break
-        seen_cursors.add(next_cursor)
-        cursor = next_cursor
-        # Jeda singkat antar page supaya tidak memicu rate limit GMGN
-        if pages < 50:
-            time.sleep(0.3)
-        else:
-            time.sleep(0.8)
-        if pages >= 60:
-            truncated = True
-            break
-
-    result = {
-        "holders": list(holders.values()),
-        "pages": pages,
-        "truncated": truncated,
-        "fetched": len(holders),
-        "analyzed_at": int(time.time()),
-        "source": "gmgn+robinhood",
-        "decimals": None,
-        "error": error,
-    }
-    if result["holders"]:
-        _GMGN_HOLDER_CACHE[cache_key] = result
-    return result
-
-
-# ---------------------------------------------------------------------------
-# Blockscout — fallback provider
-# ---------------------------------------------------------------------------
-# Blockscout publik membatasi laju (HTTP 429) dan sesekali membalas 5xx.
-# Retry pakai exponential backoff supaya paginasi 5-6 page tidak langsung
-# kena ban. Blockscout hanya dipakai bila GMGN gagal total.
+# GMGN dilepas 2026-09-08: chain 4663 tidak di-index di sana (``data.list``
+# selalu []), jadi memakainya sebagai primary hanya menambah satu request
+# gagal per scan. Blockscout publik membatasi laju (HTTP 429) dan sesekali
+# membalas 5xx, jadi transport-nya tetap memakai retry + backoff.
 TRANSIENT_STATUS = frozenset({429, 500, 502, 503, 504})
 RETRY_ATTEMPTS = 2
 RETRY_BACKOFF_SEC = 5.0
@@ -347,6 +156,36 @@ def _jsjson(params: dict, *, retries: int = RETRY_ATTEMPTS,
             response.raise_for_status()
             return response.json() or {}
         except Exception as exc:  # noqa: BLE001 - jenis error ditentukan caller
+            last_exc = exc
+            if attempt >= attempts or not is_transient_error(exc):
+                raise
+            time.sleep(RETRY_BACKOFF_SEC * (2 ** attempt))
+    raise last_exc  # pragma: no cover - loop selalu return/raise
+
+
+def _http_get(url: str, *, params: dict | None = None,
+              retries: int = RETRY_ATTEMPTS, timeout: int = 25):
+    """GET mentah ke Blockscout dengan retry yang sama seperti :func:`_jsjson`.
+
+    Dipakai endpoint non-``/api`` (REST v2 + CSV export) yang tidak memakai
+    bentuk ``module/action``. Response dikembalikan apa adanya supaya caller
+    bisa membaca ``.json()`` maupun ``.text`` (CSV).
+    """
+    headers = {
+        "accept": "application/json, text/csv, text/plain; */*",
+        "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/150.0.0.0 Safari/537.36"),
+    }
+    attempts = max(0, int(retries))
+    last_exc: Exception | None = None
+    for attempt in range(attempts + 1):
+        try:
+            response = requests.get(url, params=params, headers=headers,
+                                    timeout=timeout)
+            response.raise_for_status()
+            return response
+        except Exception as exc:  # noqa: BLE001 - caller memutuskan fallback
             last_exc = exc
             if attempt >= attempts or not is_transient_error(exc):
                 raise
@@ -401,71 +240,164 @@ def fetch_token_info(ca: str) -> dict:
     }
 
 
+def clear_holder_cache() -> None:
+    """Kosongkan cache holder in-memory (dipakai test & tombol refresh)."""
+    _HOLDER_CACHE.clear()
+
+
+def fetch_holders_count(ca: str) -> int:
+    """Jumlah holder on-chain via ``/api/v2/tokens/<CA>/counters``.
+
+    Dipakai sebagai sanity-check: kalau daftar yang berhasil ditarik jauh
+    lebih pendek daripada angka ini, hasilnya ditandai ``truncated``.
+    Mengembalikan 0 kalau endpoint tidak menjawab (bukan error fatal).
+    """
+    try:
+        payload = _http_get(
+            f"{BLOCKSCOUT_V2}/tokens/{normalize_address(ca)}/counters",
+            timeout=20).json() or {}
+    except Exception:  # noqa: BLE001 - counters hanya pelengkap
+        return 0
+    return _int(payload.get("token_holders_count"), 0)
+
+
+def _holder_row(address: str, balance: float, price_usd: float,
+                supply: float, pools: set, *, is_contract: bool = False,
+                label: str = "") -> dict:
+    """Bentuk baris holder yang dipakai classify_holders/wallet_depth."""
+    addr_l = str(address or "").strip().lower()
+    is_pool = bool(is_contract) or _is_pool_address(addr_l, pools)
+    return {
+        "address": addr_l,
+        "account_address": addr_l,
+        "balance": balance,
+        "usd_value": balance * price_usd if price_usd > 0 else 0.0,
+        # fraksi 0-1 (bukan persen) — holder_analysis yang mengalikan 100
+        "amount_pct": (balance / supply) if supply > 0 else 0.0,
+        "is_wallet": not is_pool,
+        "is_new": False,
+        "is_suspicious": False,
+        "start_holding_at": None,
+        "last_active_at": None,
+        "netflow_usd": 0.0,
+        "current_buy_amount": 0.0,
+        "current_sell_amount": 0.0,
+        "current_transfer_in": 0.0,
+        "current_transfer_out": 0.0,
+        "wallet_tag": label,
+        "tags": [label] if label else [],
+        "maker_token_tags": [],
+    }
+
+
+def fetch_holders_csv(ca: str, *, price_usd: float = 0.0,
+                      supply: float = 0.0, pools: set | None = None,
+                      max_wallets: int | None = None) -> list[dict]:
+    """Seluruh holder lewat CSV export Blockscout — **satu request, tanpa paginasi**.
+
+    ``GET /api/v2/tokens/<CA>/holders/csv`` membalas ``text/csv`` dengan
+    header ``HolderAddress,Balance`` dan **balance yang sudah dibagi
+    decimals**, jadi tidak perlu ``10**decimals`` lagi. Ini jalur paling
+    lengkap sekaligus paling murah: token dengan 10 ribu holder pun cukup
+    satu panggilan (instance ini sinkron, lihat ``/api/v2/config/csv-export``).
+
+    Melempar exception kalau response bukan CSV holder yang valid supaya
+    :func:`fetch_holders` bisa turun ke jalur v2.
+    """
+    pools = pools or set()
+    response = _http_get(f"{BLOCKSCOUT_V2}/tokens/{normalize_address(ca)}"
+                         "/holders/csv", timeout=CSV_TIMEOUT)
+    text = response.text or ""
+    if text.lstrip().startswith("<") or "HolderAddress" not in text[:200]:
+        raise RuntimeError("CSV export Blockscout tidak mengembalikan tabel holder")
+    rows: list[dict] = []
+    limit = int(max_wallets) if max_wallets else 0
+    for row in csv.DictReader(io.StringIO(text)):
+        address = (row.get("HolderAddress") or "").strip()
+        if not is_robinhood_address(address):
+            continue
+        balance = _float(row.get("Balance"), 0.0)
+        if balance <= 0:
+            continue
+        rows.append(_holder_row(address, balance, price_usd, supply, pools))
+        if limit and len(rows) >= limit:
+            break
+    if not rows:
+        raise RuntimeError("CSV export Blockscout kosong")
+    rows.sort(key=lambda item: item["balance"], reverse=True)
+    return rows
+
+
+def fetch_holders_v2(ca: str, *, price_usd: float = 0.0, supply: float = 0.0,
+                     decimals: int = 18, pools: set | None = None,
+                     max_wallets: int | None = None) -> list[dict]:
+    """Holder via REST v2 keyset pagination (50/halaman, cursor tanpa batas).
+
+    Lebih lambat daripada CSV tetapi membawa metadata address
+    (``is_contract``, ``name``) sehingga LP/kontrak bisa ditandai otomatis —
+    berguna untuk token yang tidak punya pair terdaftar di DexScreener.
+    """
+    pools = pools or set()
+    scale = 10.0 ** int(decimals if decimals is not None and decimals >= 0 else 18)
+    limit = int(max_wallets) if max_wallets else 0
+    url = f"{BLOCKSCOUT_V2}/tokens/{normalize_address(ca)}/holders"
+    params: dict = {"items_count": V2_PAGE_SIZE}
+    rows: list[dict] = []
+    for _ in range(V2_PAGE_CAP):
+        payload = _http_get(url, params=params, timeout=30).json() or {}
+        items = payload.get("items")
+        if not isinstance(items, list) or not items:
+            break
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            info = item.get("address") if isinstance(item.get("address"), dict) \
+                else {}
+            address = str(info.get("hash") or "").strip()
+            if not is_robinhood_address(address):
+                continue
+            balance = _float(item.get("value"), 0.0) / scale
+            if balance <= 0:
+                continue
+            rows.append(_holder_row(
+                address, balance, price_usd, supply, pools,
+                is_contract=bool(info.get("is_contract")),
+                label=str(info.get("name") or ""),
+            ))
+        if limit and len(rows) >= limit:
+            rows = rows[:limit]
+            break
+        cursor = payload.get("next_page_params")
+        if not isinstance(cursor, dict) or not cursor:
+            break
+        params = dict(cursor)
+        params.setdefault("items_count", V2_PAGE_SIZE)
+    return rows
+
+
 def _is_pool_address(address: str, pools: set) -> bool:
     return str(address or "").lower() in pools
 
 
-def fetch_holders(ca: str, *, max_wallets: int | None = None,
-                  price_usd: float = 0.0, decimals: int | None = None,
-                  total_supply: float | None = None) -> dict:
-    """Ambil seluruh holder ERC-20 di Robinhood Chain.
+def fetch_holders_rpc(ca: str, *, price_usd: float = 0.0, supply: float = 0.0,
+                      decimals: int = 18, pools: set | None = None,
+                      max_wallets: int | None = None) -> tuple[list[dict], int, bool, str]:
+    """Holder via legacy RPC ``getTokenHolders`` — fallback terakhir.
 
-    **GMGN** dicoba pertama (``source: "gmgn+robinhood"``). Bila gagal
-    total (0 holder atau error), fallback ke **Blockscout**
-    (``source: "blockscout"``). Kedua provider dikembalikan dalam shape
-    yang sama agar ``classify_holders`` bisa dipakai tanpa cabang.
+    ``offset`` **wajib <= 400**; nilai lebih besar (versi lama memakai
+    1000) dijawab ``{"status":"0","message":"Something went wrong."}``
+    sehingga scan pulang tanpa satu pun holder. Halaman setelah data
+    habis membalas ``result: []`` — itulah kondisi berhenti.
 
-    Return shape: ``{"holders": [...], "pages", "truncated", "fetched",
-    "analyzed_at", "source", "decimals", "error"}``.
-
-    ``value`` dari Blockscout adalah unit RAW ERC-20, jadi harus dibagi
-    ``10 ** decimals`` sebelum dihitung USD (sama seperti amount RAW
-    Helius). GMGN mengembalikan balance dalam unit UI + ``usd_value``.
+    Return ``(rows, pages, truncated, error)``.
     """
-    ca = normalize_address(ca)
-    if not ca or price_usd <= 0:
-        return {"holders": [], "pages": 0, "truncated": False, "fetched": 0,
-                "analyzed_at": int(time.time()), "source": "gmgn+robinhood",
-                "decimals": decimals, "error": "price/address empty"}
-
-    # ---- Primary: GMGN -------------------------------------------------------
-    gmgn_result = fetch_holders_gmgn(
-        ca, max_wallets=max_wallets, price_usd=price_usd,
-        total_supply=total_supply)
-    if gmgn_result.get("holders"):
-        return gmgn_result
-
-    # ---- Fallback: Blockscout ------------------------------------------------
-    gmgn_error = gmgn_result.get("error") or ""
-    if decimals is None or decimals < 0:
-        try:
-            info = fetch_token_info(ca)
-        except Exception as exc:  # noqa: BLE001
-            return {
-                "holders": [], "pages": 0, "truncated": False, "fetched": 0,
-                "analyzed_at": int(time.time()),
-                "source": f"gmgn+robinhood(fail)→blockscout(fail)",
-                "decimals": None,
-                "error": (f"GMGN: {gmgn_error}; "
-                          f"Blockscout getToken: {exc}"),
-            }
-        decimals = info.get("decimals")
-        if decimals is None or decimals < 0:
-            return {
-                "holders": [], "pages": 0, "truncated": False, "fetched": 0,
-                "analyzed_at": int(time.time()),
-                "source": f"gmgn+robinhood(fail)→blockscout(fail)",
-                "decimals": None,
-                "error": (f"GMGN: {gmgn_error}; "
-                          "decimals mint tidak ditemukan"),
-            }
-
-    max_wallets = int(max_wallets or DEFAULT_MAX_WALLETS)
-    holders: dict[str, dict] = {}
+    pools = pools or set()
+    scale = 10.0 ** int(decimals if decimals is not None and decimals >= 0 else 18)
+    limit = int(max_wallets or DEFAULT_MAX_WALLETS)
+    seen: dict[str, dict] = {}
     pages = 0
     truncated = False
     error = ""
-    divisor = 10.0 ** decimals
     page = 1
     while True:
         try:
@@ -486,9 +418,11 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
         if not isinstance(rows, list):
             error = "Blockscout return holder tidak valid"
             break
+        if not rows:
+            break
         pages += 1
         for raw in rows:
-            if len(holders) >= max_wallets:
+            if len(seen) >= limit:
                 truncated = True
                 break
             if not isinstance(raw, dict):
@@ -496,33 +430,12 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
             addr = normalize_address(raw.get("address"))
             if not addr:
                 continue
-            balance = _float(raw.get("value")) / divisor
+            balance = _float(raw.get("value")) / scale
             if balance <= 0:
                 continue
-            if addr not in holders:
-                holders[addr] = {
-                    "address": addr,
-                    "account_address": addr,
-                    "balance": balance,
-                    "usd_value": balance * float(price_usd),
-                    "amount_pct": (balance / float(total_supply)
-                                   if total_supply and total_supply > 0
-                                   else 0.0),
-                    "is_wallet": True,
-                    "is_new": False,
-                    "is_suspicious": False,
-                    "start_holding_at": 0,
-                    "last_active_at": 0,
-                    "netflow_usd": 0.0,
-                    "current_buy_amount": 0.0,
-                    "current_sell_amount": 0.0,
-                    "current_transfer_in": 0.0,
-                    "current_transfer_out": 0.0,
-                    "wallet_tag": "",
-                    "tags": [],
-                    "maker_token_tags": [],
-                }
-        if len(holders) >= max_wallets:
+            seen.setdefault(addr, _holder_row(addr, balance, price_usd,
+                                              supply, pools))
+        if len(seen) >= limit:
             truncated = True
             break
         if len(rows) < HOLDER_PAGE_SIZE:
@@ -530,24 +443,146 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
         if pages >= HOLDER_PAGE_CAP:
             truncated = True
             break
-        # Jeda antar page Blockscout — rate limit lebih keras daripada GMGN
-        time.sleep(1.5)
+        # Jeda antar page — Blockscout publik rate-limit-nya cukup keras.
+        time.sleep(PAGE_SLEEP_SEC)
         page += 1
+    return list(seen.values()), pages, truncated, error
 
-    source = "blockscout"
-    if gmgn_error:
-        source = f"gmgn+robinhood(fail)→blockscout"
-    return {
-        "holders": list(holders.values()),
-        "pages": pages,
+
+def fetch_holders(ca: str, *, max_wallets: int | None = None,
+                  price_usd: float = 0.0, decimals: int | None = None,
+                  total_supply: float | None = None) -> dict:
+    """Ambil **seluruh** holder ERC-20 di Robinhood Chain dari Blockscout.
+
+    Tiga jalur dicoba berurutan, berhenti pada yang pertama berhasil:
+
+    1. **CSV export** (``source: "blockscout-csv"``) — satu request,
+       tanpa paginasi, balance sudah ter-scale decimals. Ini jalur
+       "tanpa limit" yang dipakai untuk hampir semua token.
+    2. **REST v2 keyset** (``"blockscout-v2"``) — cursor 50/halaman,
+       dipakai bila CSV ditolak atau hasilnya jelas terpotong
+       (mis. token dengan lebih dari 10.000 holder).
+    3. **Legacy RPC** (``"blockscout-rpc"``) — ``offset=400``.
+
+    GMGN **tidak lagi dipakai**: chain 4663 tidak di-index di sana dan
+    endpoint holder-nya selalu membalas list kosong.
+
+    Return shape: ``{"holders": [...], "pages", "truncated", "fetched",
+    "analyzed_at", "source", "decimals", "error", "holders_count"}``.
+    """
+    ca = normalize_address(ca)
+    if not ca or price_usd <= 0:
+        return {"holders": [], "pages": 0, "truncated": False, "fetched": 0,
+                "analyzed_at": int(time.time()), "source": SOURCE_CSV,
+                "decimals": decimals, "error": "price/address empty"}
+
+    cache_key = f"{ca}:{int(max_wallets or 0)}:{round(float(price_usd), 10)}"
+    cached = _HOLDER_CACHE.get(cache_key)
+    if cached and (time.time() - cached.get("analyzed_at", 0)) < _HOLDER_CACHE_TTL:
+        return dict(cached)
+
+    supply = float(total_supply or 0.0)
+    if decimals is None or decimals < 0 or supply <= 0:
+        try:
+            info = fetch_token_info(ca)
+        except Exception as exc:  # noqa: BLE001 - decimals wajib untuk v2/rpc
+            info = {}
+            token_err = str(exc)
+        else:
+            token_err = ""
+        if decimals is None or decimals < 0:
+            decimals = info.get("decimals")
+        if supply <= 0:
+            supply = float(info.get("total_supply") or 0.0)
+    else:
+        token_err = ""
+
+    limit = int(max_wallets or DEFAULT_MAX_WALLETS)
+    pools: set = set()
+    onchain_count = fetch_holders_count(ca)
+    errors: list[str] = []
+    if token_err:
+        errors.append(f"getToken: {token_err}")
+
+    # ---- 1) CSV export: satu request untuk seluruh daftar --------------------
+    holders: list[dict] = []
+    source = SOURCE_CSV
+    pages = 1
+    truncated = False
+    try:
+        holders = fetch_holders_csv(ca, price_usd=price_usd, supply=supply,
+                                    pools=pools, max_wallets=max_wallets)
+    except Exception as exc:  # noqa: BLE001 - lanjut ke jalur berikutnya
+        errors.append(f"csv: {exc}")
+        holders = []
+
+    # CSV instance ini sinkron dengan plafon 10.000 baris. Kalau counters
+    # bilang holder-nya lebih banyak (dan user memang minta lebih), daftar
+    # CSV pasti terpotong -> lengkapi lewat jalur paginasi.
+    csv_capped = bool(holders and onchain_count > len(holders)
+                      and limit > len(holders))
+    if csv_capped:
+        errors.append(f"csv terpotong {len(holders)}/{onchain_count}")
+
+    # ---- 2) Legacy RPC: 400 baris/halaman, 8x lebih hemat daripada v2 -------
+    # Untuk token besar (85k holder) v2 butuh ~1.700 request sedangkan RPC
+    # hanya ~213, jadi RPC yang dicoba lebih dulu saat CSV tidak cukup.
+    if (not holders or csv_capped) and decimals is not None and decimals >= 0:
+        rpc_rows, rpc_pages, rpc_trunc, rpc_err = fetch_holders_rpc(
+            ca, price_usd=price_usd, supply=supply, decimals=_int(decimals, 18),
+            pools=pools, max_wallets=max_wallets)
+        if rpc_err:
+            errors.append(f"rpc: {rpc_err}")
+        if len(rpc_rows) > len(holders):
+            holders = rpc_rows
+            source = SOURCE_RPC
+            pages = rpc_pages
+            truncated = rpc_trunc
+
+    # ---- 3) REST v2 keyset: paling lambat, tapi cursor-nya tak berbatas ------
+    if not holders or (csv_capped and source == SOURCE_CSV):
+        try:
+            v2_rows = fetch_holders_v2(
+                ca, price_usd=price_usd, supply=supply,
+                decimals=_int(decimals, 18), pools=pools,
+                max_wallets=max_wallets)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"v2: {exc}")
+            v2_rows = []
+        if len(v2_rows) > len(holders):
+            holders = v2_rows
+            source = SOURCE_V2
+            pages = max(1, -(-len(v2_rows) // V2_PAGE_SIZE))
+            truncated = bool(limit and len(v2_rows) >= limit)
+
+    if not holders and (decimals is None or decimals < 0):
+        return {
+            "holders": [], "pages": 0, "truncated": False, "fetched": 0,
+            "analyzed_at": int(time.time()),
+            "source": f"{SOURCE_CSV}(fail)",
+            "decimals": None, "holders_count": onchain_count,
+            "error": "; ".join(errors) or "decimals mint tidak ditemukan",
+        }
+
+    if not holders:
+        source = f"{SOURCE_CSV}(fail)"
+    elif onchain_count and len(holders) < onchain_count and not truncated:
+        truncated = bool(limit and len(holders) >= limit)
+
+    result = {
+        "holders": holders,
+        "pages": pages if holders else 0,
         "truncated": truncated,
         "fetched": len(holders),
         "analyzed_at": int(time.time()),
         "source": source,
         "decimals": decimals,
-        "error": (f"GMGN: {gmgn_error}; Blockscout: {error}"
-                  if gmgn_error and error else error),
+        "holders_count": onchain_count,
+        "error": "; ".join(e for e in errors if e) if not holders else "",
     }
+    if holders:
+        _HOLDER_CACHE[cache_key] = dict(result)
+    return result
 
 
 def _mark_pools(holders: list[dict], pool_addresses) -> list[dict]:
@@ -581,12 +616,12 @@ def scan_token_holders(ca: str, *, max_wallets: int | None = None,
     **Scan Holder Khusus** di halaman utama: alurnya sama —
     market (harga & marketcap) dari DexScreener
     (``chain_id=robinhood``), token info (decimals & supply) dari
-    Blockscout, seluruh holder dari :func:`fetch_holders` (GMGN primary,
-    Blockscout fallback), lalu Wallet Depth by Threshold dari
+    Blockscout, seluruh holder dari :func:`fetch_holders` (CSV export →
+    REST v2 → legacy RPC), lalu Wallet Depth by Threshold dari
     ``solscan_holders.wallet_depth``.
 
     ``include_pools``: bila ``False`` (default) akun LP/pool yang dikenal
-    (``pair_addresses`` DexScreener + penanda non-wallet GMGN)
+    (``pair_addresses`` DexScreener + kontrak yang ditandai Blockscout)
     **disingkirkan dari list/bucket holder** — pool AMM bisa menyerap
     puluhan persen supply dan menyesatkan bucket (sama dengan jalur
     Helius).
@@ -599,7 +634,7 @@ def scan_token_holders(ca: str, *, max_wallets: int | None = None,
           "market": {...},            # dari get_market (bisa {})
           "snapshot": {...},          # dari fetch_holders
           "depth": {...},             # dari wallet_depth
-          "source": str,              # "gmgn+robinhood" / "blockscout" / …
+          "source": str,              # "blockscout-csv" / "blockscout-v2" / …
           "no_helius_keys": False,    # selalu False (tidak butuh key Helius)
           "scan_failed": bool,
         }
@@ -653,7 +688,7 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
                   cohort_addrs=None,
                   tracked_wallet_addrs=None,
                   detail: bool = True) -> dict:
-    """Analisis holder token Robinhood Chain (GMGN primary + Blockscout fallback).
+    """Analisis holder token Robinhood Chain (Blockscout: CSV → v2 → RPC).
 
     Menghasilkan bentuk yang sama dengan
     ``holder_analysis.analyze_token`` sehingga seluruh alur watchlist,

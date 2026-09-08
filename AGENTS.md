@@ -100,6 +100,12 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   POOL (dust < 0,1% + holder valid + TVL ≥ 10K) dirender di `app.py`
   (`_dust_best_html`), bukan di modul ini; badge AMAN/HATI-HATI/BAHAYA
   tidak dirender di listing Scan Meteora.
+  **Urutan baris = `sort_rows()`** (2026-09-08): BEST POOL di atas, lalu
+  dust % MC terkecil, TVL terbesar, simbol. `row_flag()` / `row_dust_pct()`
+  dipakai bersama modul ini dan `app.py` supaya angka yang menyaring,
+  mengurutkan, dan yang tampil selalu satu sumber. `scan_meteora()`
+  mengembalikan `best_count`; `app.py` tetap memanggil `sort_rows()` lagi
+  saat render karena hasil scan lama di `session_state` belum terurut.
 - `holder_analysis.py`: **Helius** sumber holder utama
   (`fetch_holders_helius`, fallback GMGN). `analyze_token` = holder
   real/dust + mid-tier + kohort. `extra_pools` + `cohort_addrs`
@@ -107,7 +113,7 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
 - `solscan_holders.py`: hanya kalkulasi `wallet_depth`.
 - `helius_holders.py`: Scan Holder Khusus satu token (Solana/Helius).
   Padanan Robinhood Chain: `robinhood_holders.scan_token_holders`
-  (GMGN primary + Blockscout fallback, `chain_id=robinhood` di
+  (Blockscout CSV → v2 → RPC, `chain_id=robinhood` di
   `get_market`) — **shape dict hasilnya sama persis**
   (`mint/symbol/market/snapshot/depth/source/no_helius_keys/scan_failed`)
   supaya section **Scan Holder Khusus** di `app.py` dipakai ulang tanpa
@@ -243,7 +249,7 @@ JSON compact, Contents API base64) di ref `holder-live`:
   waktu WIB tanpa detik; tanpa tabel wallet/skor/penjelasan panjang.
   Rule terkonfirmasi tetap punya satu baris pasar atau ⚠️ TIDAK
   TERVERIFIKASI; LP/high-drop tanpa baris pasar. Judul `exit_cutloss` =
-  `🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 10 bin - TP 5% - 10%`, tebal melalui native
+  `🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 25 bin`, tebal melalui native
   entity `bold` (offset/panjang **UTF-16**, bukan `len` karakter Python).
   Telegram tidak mendukung ukuran/warna/teks berkedip: jangan kirim
   HTML/CSS palsu. Teks tetap literal, tanpa `parse_mode`;
@@ -433,7 +439,7 @@ exit/cutloss (pool LP): eskalasi episode EARLY DUMP — dust naik
                         ESCALATION_MIN_RISES (3) scan 5 menit berturut
                         dalam ESCALATION_WINDOW_SEC (15 mnt, +1 bucket
                         toleransi cron telat) -> ESCALATION_TITLE
-                        (EXIT / CUTLOSS / Reshape bid-ask 10 bin - TP 5% - 10%),
+                        (EXIT / CUTLOSS / Reshape bid-ask 25 bin),
                         1x per episode (marker escalated)
 titik aman (pool LP)  : dust turun kembali <= 0.1% MC di jendela yang sama
                         -> "KEMBALI KE TITIK AMAN", 1x, episode ditutup

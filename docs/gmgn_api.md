@@ -170,26 +170,24 @@ marketcap = Σ(dust usd_value) / marketcap × 100. When the page cap
 (`max_wallets`) truncates the list, `truncated: true` means the number
 is a lower bound over the analyzed top wallets.
 
-## Holder list — Robinhood Chain (dipakai robinhood_holders.py)
+## Holder list — Robinhood Chain → **Blockscout** (bukan GMGN)
+
+> **GMGN dilepas 2026-09-08.** Endpoint
+> `https://gmgn.ai/vas/api/v1/token_holders/robinhood/<CA>` **selalu**
+> membalas `{"code":0, "data":{"list":[]}}` — GMGN tidak meng-index chain
+> 4663. Karena dulu ia dipakai sebagai *primary*, tiap scan membuang satu
+> request lalu jatuh ke fallback; itu sumber output holder yang rusak.
+> Sumber resmi sekarang: explorer **Blockscout** chain 4663.
+
+Detail lengkap ada di [`docs/robinhood_holders_api.md`](robinhood_holders_api.md).
+Ringkasnya, `robinhood_holders.fetch_holders` mencoba tiga jalur berurutan:
 
 ```
-GET https://gmgn.ai/vas/api/v1/token_holders/robinhood/<CA>
-    ?limit=1000&cost=20&orderby=amount_percentage&direction=desc
-    + device_id / fp_did / from_app / tz_name / tz_offset / app_lang /
-      os / worker
-Referer: https://gmgn.ai/robinhood/token/<CA>
+1. GET https://robinhoodchain.blockscout.com/api/v2/tokens/<CA>/holders/csv
+      -> text/csv "HolderAddress,Balance", SELURUH holder dalam 1 request,
+         balance SUDAH dibagi decimals. Plafon 10.000 baris.
+2. GET .../api/v2/tokens/<CA>/holders?items_count=50   (keyset cursor)
+      -> items[].address{hash,is_contract,name}, next_page_params
+3. GET .../api?module=token&action=getTokenHolders&contractaddress=<CA>
+        &page=<n>&offset=400                            (offset MAKS 400)
 ```
-
-### Notes (2026-09-08)
-
-- Same endpoint shape as Solana — only the chain slug changes
-  (`sol` → `robinhood`). GMGN web UI menampilkan 5K+ holder di
-  `gmgn.ai/robinhood/token/<CA>` tanpa masalah rate limit.
-- Primary source untuk `robinhood_holders.fetch_holders`; Blockscout
-  (`robinhoodchain.blockscout.com/api`) dipakai sebagai fallback bila
-  GMGN gagal total. Blockscout publik rate limit keras (429 setelah
-  beberapa page paginasi).
-- `curl_cffi` dengan impersonate chrome/safari untuk TLS fingerprint —
-  menghindari bot-block. Fallback ke `requests` biasa bila `curl_cffi`
-  tidak tersedia.
-- Jeda 0.3 dtk antar page (< 50 page), 0.8 dtk untuk page > 50.

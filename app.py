@@ -24,7 +24,7 @@ from links import (external_links_html, holder_analytic_link_html,
 import alert_settings
 from lp_watchlist import (LP_SOURCE, lp_card_rows, lp_chart_figure,
                           lp_summary, split_watchlist)
-from meteora_screener import scan_meteora
+from meteora_screener import row_flag, scan_meteora, sort_rows
 import page_router
 import robinhood_holders
 import robinhood_watchlist
@@ -555,19 +555,19 @@ def _scan_source_meta(result: dict) -> tuple[str, str, str]:
 
     ``result["source"]`` berasal dari ``helius_holders.scan_token_holders``
     (``"helius"``) atau ``robinhood_holders.scan_token_holders``
-    (``"gmgn+robinhood"`` / ``"blockscout"`` /
-    ``"gmgn+robinhood(fail)→blockscout"`` — GMGN gagal, Blockscout yang
-    pulang, jadi labelnya Blockscout).
+    (``"blockscout-csv"`` / ``"blockscout-rpc"`` / ``"blockscout-v2"`` —
+    ketiganya Blockscout, hanya beda jalur pengambilan).
     """
     source = str(result.get("source") or "").lower()
-    if "blockscout" in source:
+    if "blockscout" in source or source in ("", "robinhood"):
+        jalur = {"blockscout-csv": "CSV export",
+                 "blockscout-v2": "REST v2",
+                 "blockscout-rpc": "RPC"}.get(source, "")
+        detail = f" via {jalur}" if jalur else ""
         return ("Blockscout",
-                "Akun token yang diambil dari Blockscout (Robinhood Chain).",
+                f"Akun token yang diambil dari Blockscout{detail} "
+                "(Robinhood Chain).",
                 "🦅 Blockscout (Robinhood Chain)")
-    if source.startswith("gmgn") or source in ("", "robinhood"):
-        return ("GMGN",
-                "Akun token yang diambil dari GMGN (chain robinhood).",
-                "🦅 GMGN (Robinhood Chain)")
     return ("Helius",
             "Akun token yang diambil dari Helius DAS getTokenAccounts.",
             "🛰 Helius DAS getTokenAccounts")
@@ -575,14 +575,14 @@ def _scan_source_meta(result: dict) -> tuple[str, str, str]:
 
 def _render_helius_holder_scan() -> None:
     """Section: input CA satu token → scan holder (Solana via Helius,
-    Robinhood Chain via GMGN/Blockscout) + bar chart."""
+    Robinhood Chain via Blockscout) + bar chart."""
     st.divider()
     st.subheader("🛰 Scan Holder Khusus — Helius / Robinhood")
     st.caption(
         "Tempel **contract address (CA)** satu token untuk mengambil seluruh "
         "daftar holder: Solana (base58) langsung dari **Helius DAS** "
-        "(getTokenAccounts), **Robinhood Chain** (`0x…`) dari **GMGN** "
-        "(fallback Blockscout) — lalu menampilkan **bar chart distribusi "
+        "(getTokenAccounts), **Robinhood Chain** (`0x…`) dari **Blockscout** "
+        "(CSV export tanpa limit) — lalu menampilkan **bar chart distribusi "
         "holder** per range nilai USD (Wallet Depth by Threshold). "
         "**Default: LP/pool AMM disingkirkan dari bucket.**"
     )
@@ -617,7 +617,7 @@ def _render_helius_holder_scan() -> None:
             if is_evm:
                 ca = robinhood_holders.normalize_address(ca)
                 scan_fn = robinhood_holders.scan_token_holders
-                status_label = "Mengambil holder dari GMGN/Blockscout " \
+                status_label = "Mengambil holder dari Blockscout " \
                                "(Robinhood Chain)…"
             else:
                 scan_fn = scan_token_holders
@@ -726,7 +726,8 @@ def _render_meteora_scan() -> None:
         "disembunyikan (badge AMAN/HATI-HATI/BAHAYA tidak dipakai di sini). "
         f"Dust **< {DUST_BEST_PCT:g}% MC** + data holder valid (≥ 40 wallet) "
         f"+ **TVL ≥ ${DUST_BEST_MIN_TVL_USD / 1000:g}K** diberi badge "
-        "🏆 BEST POOL. "
+        "🏆 BEST POOL — **BEST POOL diurutkan paling atas**, lalu dust % MC "
+        "terkecil dan TVL terbesar. "
         "⭐ memasukkan token ke card **Chart LP** di bagian atas dashboard. "
         "Tombol kanan: Meteora + HawkFi."
     )
@@ -754,12 +755,19 @@ def _render_meteora_scan() -> None:
     error = result.get("error") or ""
     if error:
         st.warning(f"Meteora API: {error}")
-    rows = result.get("rows") or []
+    # BEST POOL selalu di atas. scan_meteora() sudah mengurutkan, tapi
+    # hasil lama yang tersimpan di session_state (sebelum fitur ini) belum —
+    # urutkan lagi di sini supaya listing konsisten tanpa perlu scan ulang.
+    rows = sort_rows(result.get("rows") or [])
     hidden = int(result.get("hidden_dust") or 0)
     fetched = int(result.get("fetched") or 0)
+    best_count = sum(1 for row in rows if row_flag(row).get("best"))
     if fetched:
+        best_txt = (f" · 🏆 {best_count} BEST POOL di urutan teratas"
+                    if best_count else "")
         st.caption(f"{len(rows)} pool ditampilkan · {hidden} disembunyikan "
-                   f"(dust > {DUST_SCAN_HIDE_PCT:g}% MC) · listing {fetched}.")
+                   f"(dust > {DUST_SCAN_HIDE_PCT:g}% MC) · listing {fetched}"
+                   f"{best_txt}.")
     if not rows:
         if result:
             st.info("Tidak ada pool yang lolos filter dust (atau listing kosong).")
@@ -785,11 +793,7 @@ def _render_meteora_scan() -> None:
         # BEST POOL butuh bukti data holder valid (bukan cuma angka) + TVL
         # pool ≥ 10K: guard ada di dust_flag(holders=…, tvl=…), lihat
         # holder_history._holders_valid_for_best / _tvl_valid_for_best.
-        analysis = (row.get("analysis")
-                    if isinstance(row.get("analysis"), dict) else {})
-        holders = (analysis.get("holders")
-                   if isinstance(analysis.get("holders"), dict) else None)
-        flag = dust_flag(dust_pct, holders=holders, tvl=tvl)
+        flag = row_flag(row)
         tf = []
         if row.get("in_24h"):
             tf.append("24H")
@@ -831,7 +835,11 @@ def _render_meteora_scan() -> None:
         cols[6].markdown(
             f'<div class="pool-links">{pool_html}</div>',
             unsafe_allow_html=True)
-        if cols[7].button("⭐", key=f"meteora-star-{index}",
+        # Key diikat ke pool/CA, bukan nomor baris: urutan listing berubah
+        # (BEST POOL naik ke atas) sehingga key berbasis index bisa membuat
+        # klik ⭐ menempel ke token yang berbeda setelah re-render.
+        star_key = f"meteora-star-{pool or ca or index}"
+        if cols[7].button("⭐", key=star_key,
                           help="Tambah ke Chart LP (watchlist Meteora di atas)",
                           use_container_width=True):
             if ca:
