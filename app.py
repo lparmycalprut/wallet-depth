@@ -555,19 +555,19 @@ def _scan_source_meta(result: dict) -> tuple[str, str, str]:
 
     ``result["source"]`` berasal dari ``helius_holders.scan_token_holders``
     (``"helius"``) atau ``robinhood_holders.scan_token_holders``
-    (``"gmgn+robinhood"`` / ``"blockscout"`` /
-    ``"gmgn+robinhood(fail)→blockscout"`` — GMGN gagal, Blockscout yang
-    pulang, jadi labelnya Blockscout).
+    (``"blockscout-csv"`` / ``"blockscout-rpc"`` / ``"blockscout-v2"`` —
+    ketiganya Blockscout, hanya beda jalur pengambilan).
     """
     source = str(result.get("source") or "").lower()
-    if "blockscout" in source:
+    if "blockscout" in source or source in ("", "robinhood"):
+        jalur = {"blockscout-csv": "CSV export",
+                 "blockscout-v2": "REST v2",
+                 "blockscout-rpc": "RPC"}.get(source, "")
+        detail = f" via {jalur}" if jalur else ""
         return ("Blockscout",
-                "Akun token yang diambil dari Blockscout (Robinhood Chain).",
+                f"Akun token yang diambil dari Blockscout{detail} "
+                "(Robinhood Chain).",
                 "🦅 Blockscout (Robinhood Chain)")
-    if source.startswith("gmgn") or source in ("", "robinhood"):
-        return ("GMGN",
-                "Akun token yang diambil dari GMGN (chain robinhood).",
-                "🦅 GMGN (Robinhood Chain)")
     return ("Helius",
             "Akun token yang diambil dari Helius DAS getTokenAccounts.",
             "🛰 Helius DAS getTokenAccounts")
@@ -575,14 +575,14 @@ def _scan_source_meta(result: dict) -> tuple[str, str, str]:
 
 def _render_helius_holder_scan() -> None:
     """Section: input CA satu token → scan holder (Solana via Helius,
-    Robinhood Chain via GMGN/Blockscout) + bar chart."""
+    Robinhood Chain via Blockscout) + bar chart."""
     st.divider()
     st.subheader("🛰 Scan Holder Khusus — Helius / Robinhood")
     st.caption(
         "Tempel **contract address (CA)** satu token untuk mengambil seluruh "
         "daftar holder: Solana (base58) langsung dari **Helius DAS** "
-        "(getTokenAccounts), **Robinhood Chain** (`0x…`) dari **GMGN** "
-        "(fallback Blockscout) — lalu menampilkan **bar chart distribusi "
+        "(getTokenAccounts), **Robinhood Chain** (`0x…`) dari **Blockscout** "
+        "(CSV export tanpa limit) — lalu menampilkan **bar chart distribusi "
         "holder** per range nilai USD (Wallet Depth by Threshold). "
         "**Default: LP/pool AMM disingkirkan dari bucket.**"
     )
@@ -617,7 +617,7 @@ def _render_helius_holder_scan() -> None:
             if is_evm:
                 ca = robinhood_holders.normalize_address(ca)
                 scan_fn = robinhood_holders.scan_token_holders
-                status_label = "Mengambil holder dari GMGN/Blockscout " \
+                status_label = "Mengambil holder dari Blockscout " \
                                "(Robinhood Chain)…"
             else:
                 scan_fn = scan_token_holders

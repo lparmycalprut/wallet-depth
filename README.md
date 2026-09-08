@@ -74,7 +74,7 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
      dust masih naik; dikirim **tanpa** gerbang volume keras (konteks pasar
      disimpan untuk audit). Catatan: saat ini 0 token watchlist ber-source
      meteora — rule aktif begitu ada pool yang di-⭐ dari Scan Meteora.
-   - **🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 10 bin - TP 5% - 10%** (2026-09-07)
+   - **🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 25 bin** (2026-09-07)
      — eskalasi dari ⚡ EARLY DUMP: bila dalam **15 menit** setelah
      pengingat pertama dust terus
      bertambah selama **3 scan 5 menit berturut-turut** (holder dust
@@ -181,7 +181,7 @@ warna teks merah, atau teks berkedip, jadi penekanan memakai **tebal + 🚨**,
 bukan HTML/CSS yang tidak didukung. Aturan pemicu dan frekuensi tidak berubah.
 
 ```text
-🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 10 bin - TP 5% - 10%
+🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 25 bin
 
 🪙 $LPX
 📊 Dust: 0.22% → 0.31% MC (+0.09 pp)
@@ -241,8 +241,8 @@ Scan Meteora. Harga/MC/volume/`txns` dari DexScreener. Candle hourly & harian
 | `gmgn` | GMGN saja (listing Trending/Degen), fallback Helius. |
 
 Scan Holder Khusus (halaman utama) menerima **dua chain**: CA Solana
-(base58) → Helius DAS, CA **Robinhood Chain** (`0x…`) → GMGN (fallback
-Blockscout) lewat `robinhood_holders.scan_token_holders` — hasil (bar chart
+(base58) → Helius DAS, CA **Robinhood Chain** (`0x…`) → **Blockscout**
+(CSV export, tanpa limit) lewat `robinhood_holders.scan_token_holders` — hasil (bar chart
 Wallet Depth + tabel) dirender sama. Jalur Solana dan cron butuh
 `HELIUS_API_KEY` (config / env / Streamlit secrets); jalur Robinhood tidak
 membutuhkan key. Tanpa key, jalur Solana memakai fallback GMGN.
@@ -453,7 +453,7 @@ akumulasi dan bukan prediksi arah harga.
 | `lp_watchlist.py` | Card **Chart LP**: pisah watchlist Meteora, baris + grafik perubahan dust holder |
 | `meteora_screener.py` | Listing DLMM 24h+1h, enrich holder, filter dust > 0,1% MC; badge BEST POOL di UI app.py (dust < 0,1% + data valid + TVL ≥ 10K) |
 | `holder_analysis.py` | Fetch holder Helius/GMGN, klasifikasi real/dust/mid |
-| `robinhood_holders.py` | Robinhood Chain (chain 4663): holder GMGN (primary) + Blockscout (fallback), decimals/supply, analisa dust + `scan_token_holders` (padanan EVM Scan Holder Khusus) sama dengan Solana |
+| `robinhood_holders.py` | Robinhood Chain (chain 4663): holder **Blockscout** — CSV export (utama, seluruh daftar dalam 1 request) → REST v2 keyset → legacy RPC `offset=400`; decimals/supply, analisa dust + `scan_token_holders` (padanan EVM Scan Holder Khusus) sama dengan Solana |
 | `robinhood_watchlist.py` | Watchlist/path Robinhood: `watchlist_robinhood.json`, status & history terpisah, scan + publish best-effort |
 | `solscan_holders.py` | Kalkulasi wallet_depth (bucket & tier) |
 | `helius_holders.py` | Scan Holder Khusus satu token (Solana/Helius) + bar chart |

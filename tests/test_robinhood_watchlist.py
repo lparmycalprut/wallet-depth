@@ -21,6 +21,40 @@ WALLET = "0x" + "cd" * 20
 DUST = "0x" + "ef" * 20
 
 
+class _CsvResponse:
+    """Response minimal ala requests untuk CSV export Blockscout."""
+
+    def __init__(self, text):
+        self.text = text
+        self.status_code = 200
+
+    def raise_for_status(self):
+        return None
+
+
+class _JsonResponse:
+    def __init__(self, payload):
+        self._payload = payload
+        self.text = ""
+        self.status_code = 200
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        return None
+
+
+def _only_rpc():
+    """Matikan CSV + v2 + counters supaya jalur legacy RPC yang diuji."""
+    return mock.patch.multiple(
+        rh,
+        fetch_holders_csv=mock.Mock(side_effect=RuntimeError("csv off")),
+        fetch_holders_v2=mock.Mock(return_value=[]),
+        fetch_holders_count=mock.Mock(return_value=0),
+    )
+
+
 class AddressTest(unittest.TestCase):
     def test_normalize_lowercases_evm(self):
         self.assertEqual(rh.normalize_address(EV), EV_LOWER)
@@ -37,6 +71,9 @@ class AddressTest(unittest.TestCase):
 
 
 class FetchHoldersTest(unittest.TestCase):
+    def setUp(self):
+        rh.clear_holder_cache()
+
     def test_fetch_holders_converts_raw_by_decimals(self):
         calls = []
         other = "0x" + "1" * 40
@@ -53,17 +90,12 @@ class FetchHoldersTest(unittest.TestCase):
                         {"address": EV_LOWER, "value": "500000000000000000"},
                     ]}
 
-        # GMGN gagal → fallback ke Blockscout
-        gmgn_empty = {"holders": [], "pages": 0, "truncated": False,
-                      "fetched": 0, "analyzed_at": 0,
-                      "source": "gmgn+robinhood", "decimals": None,
-                      "error": "GMGN tidak merespons"}
-        with mock.patch.object(rh, "fetch_holders_gmgn",
-                               return_value=gmgn_empty), \
+        # CSV + v2 tidak tersedia → jatuh ke legacy RPC
+        with _only_rpc(), \
                 mock.patch.object(rh, "_jsjson", side_effect=fake_json):
             out = rh.fetch_holders(EV_LOWER, price_usd=1.0, decimals=18,
                                    total_supply=1_000_000.0)
-        self.assertIn("blockscout", out["source"])
+        self.assertEqual(out["source"], rh.SOURCE_RPC)
         self.assertEqual(out["fetched"], 2)
         by_addr = {row["address"]: row for row in out["holders"]}
         self.assertAlmostEqual(by_addr[EV_LOWER]["balance"], 0.5)
@@ -77,12 +109,7 @@ class FetchHoldersTest(unittest.TestCase):
                 for a in range(5)
             ]}
 
-        gmgn_empty = {"holders": [], "pages": 0, "truncated": False,
-                      "fetched": 0, "analyzed_at": 0,
-                      "source": "gmgn+robinhood", "decimals": None,
-                      "error": "GMGN tidak merespons"}
-        with mock.patch.object(rh, "fetch_holders_gmgn",
-                               return_value=gmgn_empty), \
+        with _only_rpc(), \
                 mock.patch.object(rh, "_jsjson", side_effect=fake_json):
             out = rh.fetch_holders(
                 EV_LOWER, price_usd=1.0, decimals=18, total_supply=1_000.0,
@@ -90,22 +117,97 @@ class FetchHoldersTest(unittest.TestCase):
         self.assertTrue(out["truncated"])
         self.assertEqual(out["fetched"], 3)
 
-    def test_fetch_holders_gmgn_primary(self):
-        """GMGN berhasil → source = gmgn+robinhood, tanpa menyentuh Blockscout."""
-        gmgn_data = {"holders": [{"address": EV_LOWER, "balance": 100.0,
-                                   "usd_value": 50.0, "amount_pct": 0.01,
-                                   "is_wallet": True}],
-                     "pages": 1, "truncated": False, "fetched": 1,
-                     "analyzed_at": 0, "source": "gmgn+robinhood",
-                     "decimals": None, "error": ""}
-        with mock.patch.object(rh, "fetch_holders_gmgn",
-                               return_value=gmgn_data) as gmgn_call, \
-                mock.patch.object(rh, "_jsjson") as bs_call:
-            out = rh.fetch_holders(EV_LOWER, price_usd=0.5, decimals=18)
-        self.assertEqual(out["source"], "gmgn+robinhood")
+    def test_fetch_holders_csv_primary(self):
+        """CSV export berhasil → satu request, tanpa paginasi sama sekali."""
+        csv_rows = [{"address": EV_LOWER, "balance": 100.0, "usd_value": 50.0,
+                     "amount_pct": 0.01, "is_wallet": True}]
+        with mock.patch.object(rh, "fetch_holders_csv",
+                               return_value=csv_rows) as csv_call, \
+                mock.patch.object(rh, "fetch_holders_count", return_value=1), \
+                mock.patch.object(rh, "fetch_holders_v2") as v2_call, \
+                mock.patch.object(rh, "_jsjson") as rpc_call:
+            out = rh.fetch_holders(EV_LOWER, price_usd=0.5, decimals=18,
+                                   total_supply=1_000.0)
+        self.assertEqual(out["source"], rh.SOURCE_CSV)
         self.assertEqual(out["fetched"], 1)
-        gmgn_call.assert_called_once()
-        bs_call.assert_not_called()
+        self.assertEqual(out["pages"], 1)
+        self.assertFalse(out["truncated"])
+        csv_call.assert_called_once()
+        v2_call.assert_not_called()
+        rpc_call.assert_not_called()
+
+    def test_fetch_holders_csv_parses_decimal_balances(self):
+        """CSV Blockscout sudah ter-scale decimals → jangan dibagi lagi."""
+        body = ("HolderAddress,Balance\n"
+                f"{EV},90.15199648\n"
+                "0x" + "2" * 40 + ",0.000000000000000001\n"
+                "0x" + "3" * 40 + ",0\n"
+                "bukan-address,5\n")
+        with mock.patch.object(rh, "_http_get",
+                               return_value=_CsvResponse(body)):
+            rows = rh.fetch_holders_csv(EV_LOWER, price_usd=2.0,
+                                        supply=1_000.0)
+        self.assertEqual(len(rows), 2)          # nol + address invalid dibuang
+        self.assertAlmostEqual(rows[0]["balance"], 90.15199648)
+        self.assertAlmostEqual(rows[0]["usd_value"], 180.30399296)
+        self.assertAlmostEqual(rows[0]["amount_pct"], 90.15199648 / 1_000.0)
+        self.assertEqual(rows[0]["address"], EV_LOWER)   # ter-lowercase
+        self.assertTrue(rows[0]["is_wallet"])
+
+    def test_fetch_holders_rpc_offset_max_400(self):
+        """Regresi: offset > 400 ditolak Blockscout ("Something went wrong")."""
+        seen = []
+
+        def fake_json(params):
+            seen.append(params)
+            if int(params.get("offset", 0)) > 400:
+                return {"status": "0", "message": "Something went wrong."}
+            return {"status": "1", "message": "OK", "result": [
+                {"address": f"0x{a:040x}", "value": "1000000000000000000"}
+                for a in range(3)]}
+
+        with _only_rpc(), mock.patch.object(rh, "_jsjson",
+                                            side_effect=fake_json):
+            out = rh.fetch_holders(EV_LOWER, price_usd=1.0, decimals=18,
+                                   total_supply=1_000.0)
+        self.assertEqual(rh.HOLDER_PAGE_SIZE, 400)
+        self.assertTrue(seen)
+        self.assertTrue(all(int(p["offset"]) <= 400 for p in seen))
+        self.assertEqual(out["fetched"], 3)
+        self.assertEqual(out["error"], "")
+
+    def test_fetch_holders_v2_keyset_pagination(self):
+        """v2 mengikuti cursor next_page_params dan menandai kontrak = pool."""
+        pages = [
+            {"items": [{"address": {"hash": EV, "is_contract": False},
+                        "value": "2000000000000000000"},
+                       {"address": {"hash": "0x" + "4" * 40, "is_contract": True,
+                                    "name": "UniswapV3Pool"},
+                        "value": "9000000000000000000"}],
+             "next_page_params": {"address_hash": "0x" + "4" * 40,
+                                  "value": "9"}},
+            {"items": [{"address": {"hash": "0x" + "5" * 40,
+                                    "is_contract": False},
+                        "value": "1000000000000000000"}],
+             "next_page_params": None},
+        ]
+        calls = []
+
+        def fake_get(url, params=None, **kw):
+            calls.append(dict(params or {}))
+            return _JsonResponse(pages[len(calls) - 1])
+
+        with mock.patch.object(rh, "_http_get", side_effect=fake_get):
+            rows = rh.fetch_holders_v2(EV_LOWER, price_usd=1.0,
+                                       supply=1_000.0, decimals=18)
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(calls[0]["items_count"], 50)
+        self.assertEqual(calls[1]["address_hash"], "0x" + "4" * 40)
+        by_addr = {r["address"]: r for r in rows}
+        self.assertTrue(by_addr[EV_LOWER]["is_wallet"])
+        pool = by_addr["0x" + "4" * 40]
+        self.assertFalse(pool["is_wallet"])          # kontrak = pool/LP
+        self.assertEqual(pool["wallet_tag"], "UniswapV3Pool")
 
 
 class ProviderFailureTest(unittest.TestCase):
@@ -166,12 +268,7 @@ class ProviderFailureTest(unittest.TestCase):
         self.assertIn("Max rate limit reached", str(ctx.exception))
 
     def test_fetch_holders_menyalin_error_provider(self):
-        gmgn_empty = {"holders": [], "pages": 0, "truncated": False,
-                      "fetched": 0, "analyzed_at": 0,
-                      "source": "gmgn+robinhood", "decimals": None,
-                      "error": "GMGN tidak merespons"}
-        with mock.patch.object(rh, "fetch_holders_gmgn",
-                               return_value=gmgn_empty), \
+        with _only_rpc(), \
                 mock.patch.object(rh, "fetch_token_info",
                                   side_effect=RuntimeError("getToken down")):
             out = rh.fetch_holders(EV_LOWER, price_usd=1.0, decimals=None)
@@ -180,14 +277,9 @@ class ProviderFailureTest(unittest.TestCase):
         self.assertIn("getToken down", out["error"])
 
     def test_analyze_token_membawa_fetch_error_ke_hasil(self):
-        gmgn_empty = {"holders": [], "pages": 0, "truncated": False,
-                      "fetched": 0, "analyzed_at": 0,
-                      "source": "gmgn+robinhood", "decimals": None,
-                      "error": "GMGN tidak merespons"}
         with mock.patch.object(rh, "get_market", return_value={
                 "price_usd": 0.5, "marketcap": 1000.0, "symbol": "VLAD"}), \
-                mock.patch.object(rh, "fetch_holders_gmgn",
-                                  return_value=gmgn_empty), \
+                _only_rpc(), \
                 mock.patch.object(rh, "fetch_token_info",
                                   side_effect=RuntimeError("429 rate limit")):
             result = rh.analyze_token(EV_LOWER, "VLAD", fetch_market=True)
@@ -278,7 +370,7 @@ class ScanTokenHoldersTest(unittest.TestCase):
              "amount_pct": 90.0, "is_wallet": True},
         ],
         "pages": 1, "truncated": False, "fetched": 3, "analyzed_at": 0,
-        "source": "gmgn+robinhood", "decimals": 18, "error": ""}
+        "source": rh.SOURCE_CSV, "decimals": 18, "error": ""}
 
     def _patch(self, snapshot=None, market=None, decimals=18,
                total_supply=100_000.0):
@@ -297,7 +389,7 @@ class ScanTokenHoldersTest(unittest.TestCase):
         )
 
     def test_scan_uses_robinhood_holders_and_builds_depth(self):
-        """GMGN berhasil → source gmgn+robinhood, depth seperti Helius."""
+        """CSV Blockscout berhasil → source blockscout-csv, depth seperti Helius."""
         patches = self._patch()
         for patch in patches:
             patch.start()
@@ -310,7 +402,7 @@ class ScanTokenHoldersTest(unittest.TestCase):
             self.assertIn(key, result)
         self.assertEqual(result["mint"], EV_LOWER)  # EVM di-normalize
         self.assertEqual(result["symbol"], "VLAD")
-        self.assertEqual(result["source"], "gmgn+robinhood")
+        self.assertEqual(result["source"], rh.SOURCE_CSV)
         self.assertFalse(result["no_helius_keys"])
         self.assertFalse(result["scan_failed"])
         # default: LP/pool disingkirkan dari bucket
@@ -352,7 +444,7 @@ class ScanTokenHoldersTest(unittest.TestCase):
         market_empty = {"symbol": "VLAD", "price_usd": 0.0, "marketcap": 0.0,
                         "pair_addresses": []}
         no_price = {"holders": [], "pages": 0, "truncated": False,
-                    "fetched": 0, "analyzed_at": 0, "source": "gmgn+robinhood",
+                    "fetched": 0, "analyzed_at": 0, "source": rh.SOURCE_CSV,
                     "decimals": None, "error": "price/address empty"}
         with mock.patch.object(rh, "get_market", return_value=market_empty), \
                 mock.patch.object(rh, "fetch_token_info") as info, \
@@ -365,12 +457,12 @@ class ScanTokenHoldersTest(unittest.TestCase):
         self.assertEqual(fetch.call_args.kwargs["price_usd"], 0.0)
 
     def test_scan_provider_failure_flags_failed_with_detail(self):
-        """GMGN + Blockscout sama-sama gagal → scan_failed + alasan provider."""
+        """Semua jalur Blockscout gagal → scan_failed + alasan provider."""
         failed = {"holders": [], "pages": 0, "truncated": False,
                   "fetched": 0, "analyzed_at": 0,
-                  "source": "gmgn+robinhood(fail)→blockscout(fail)",
+                  "source": f"{rh.SOURCE_CSV}(fail)",
                   "decimals": None,
-                  "error": "GMGN: 429; Blockscout: 429 Too Many Requests"}
+                  "error": "csv: 429; rpc: 429 Too Many Requests"}
         patches = self._patch(snapshot=failed)
         for patch in patches:
             patch.start()

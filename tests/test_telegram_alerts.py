@@ -379,7 +379,7 @@ class TelegramFormattingDeliveryTest(unittest.TestCase):
     def test_exit_header_bold_covers_exact_text_with_utf16_emoji_length(self):
         event = dict(_dump_event(), kind=ta.ESCALATION_KIND)
         payload = self._payload(event)
-        title = "🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 10 bin - TP 5% - 10%"
+        title = "🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 25 bin"
         self.assertTrue(payload["text"].startswith(title + "\n\n🪙"))
         self.assertEqual(payload["text"], ta.format_alert_message(event))
         length = len(title.encode("utf-16-le")) // 2

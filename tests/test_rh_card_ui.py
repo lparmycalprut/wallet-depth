@@ -258,7 +258,7 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
 
     Permintaan user 2026-09-08: "tambahkan fungsi kita bisa scan robinhood
     disini juga". CA EVM (0x…) → ``robinhood_holders.scan_token_holders``
-    (GMGN primary, Blockscout fallback) dengan shape hasil yang sama; CA
+    (Blockscout: CSV export → REST v2 → RPC) dengan shape hasil yang sama; CA
     Solana tetap → ``helius_holders.scan_token_holders`` (Helius DAS).
     """
 
@@ -331,12 +331,12 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
         return submit[0].click().run()
 
     def test_robinhood_ca_routes_to_robinhood_scan(self):
-        """CA 0x… → scan Robinhood (GMGN), hasil dirender label Robinhood."""
+        """CA 0x… → scan Robinhood (Blockscout), dirender label Robinhood."""
         app = self._app()
         ca_mixed = "0x" + CA[2:].upper()  # prefix 0x tetap lowercase
         with mock.patch("robinhood_holders.scan_token_holders",
                         return_value=self._depth_result(CA, "VLAD",
-                                                        "gmgn+robinhood")) \
+                                                        "blockscout-csv")) \
                 as rh_scan, \
                 mock.patch("helius_holders.scan_token_holders") as helius:
             result = self._submit(app, ca_mixed)
@@ -352,19 +352,20 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
         metrics = "\n".join(m.label for m in result.metric)
         captions = "\n".join(node.value for node in result.caption)
         self.assertIn("$VLAD", body)
-        self.assertIn("Akun holder (GMGN)", metrics)
+        self.assertIn("Akun holder (Blockscout)", metrics)
         self.assertNotIn("Helius", metrics)
-        self.assertIn("GMGN (Robinhood Chain)", captions)
+        self.assertNotIn("GMGN", metrics)
+        self.assertIn("Blockscout (Robinhood Chain)", captions)
         # tautan eksternal EVM (bukan GMGN/Solscan Solana)
         self.assertIn("rh-scan.com", body)
         self.assertIn("robinhoodchain.blockscout.com", body)
 
     def test_robinhood_ca_blockscout_source_label(self):
-        """GMGN gagal → label sumber menunjukkan Blockscout (fallback)."""
+        """CSV terpotong → jalur RPC, label sumber tetap Blockscout."""
         app = self._app()
         with mock.patch("robinhood_holders.scan_token_holders",
                         return_value=self._depth_result(
-                            CA, "VLAD", "gmgn+robinhood(fail)→blockscout")):
+                            CA, "VLAD", "blockscout-rpc")):
             result = self._submit(app, CA)
         metrics = "\n".join(m.label for m in result.metric)
         captions = "\n".join(node.value for node in result.caption)
