@@ -1,5 +1,15 @@
 # Progress
 
+## 2026-09-09 (siang): Telegram — judul "Reshape bid-ask 50 bin" + link jadi hyperlink
+
+**Status: selesai & tes hijau (969 passed).**
+
+- `ESCALATION_TITLE` = "🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 50 bin".
+- `telegram_alerts.build_alert_message()` → `(teks, entities)`; baris link
+  `🔗 GMGN` / `🦆 DexScreener` / `🌊 Meteora` / `🦅 HawkFi` / `🦆 rh-scan` /
+  `🌏 Blockscout` menjadi entity `text_link` (URL tidak ditulis di teks).
+  `links.token_links()` sumber tunggal `(emoji, label, url)`.
+
 ## 2026-09-09: Blockscout PRO API — beberapa key sekaligus (round-robin + parkir)
 
 User punya 4 key. Kuota free tier dihitung per akun (100K kredit/hari,

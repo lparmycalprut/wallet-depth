@@ -126,12 +126,13 @@ class EpisodeMessageTest(unittest.TestCase):
         message = self._message([0.15, 0.22, 0.31], ta.ESCALATION_KIND)
         self.assertEqual(
             message.splitlines()[0],
-            "🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 25 bin")
+            "🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 50 bin")
         self.assertEqual(message.splitlines()[1], "")
         self.assertIn("$LPX", message)
         self.assertIn("📊 Dust: 0.22% → 0.31% MC (+0.09 pp)", message)
         self.assertIn("📈 Naik 3 scan berturut (±10 menit)", message)
-        self.assertIn("🔗 GMGN:", message)
+        self.assertIn("\n🔗 GMGN\n", message)   # hyperlink: URL di entity
+        self.assertNotIn("http", message)
 
     def test_pesan_titik_aman(self):
         message = self._message([0.15, 0.22, 0.05], ta.SAFE_RETURN_KIND)

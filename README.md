@@ -74,7 +74,8 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
      dust masih naik; dikirim **tanpa** gerbang volume keras (konteks pasar
      disimpan untuk audit). Catatan: saat ini 0 token watchlist ber-source
      meteora — rule aktif begitu ada pool yang di-⭐ dari Scan Meteora.
-   - **🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 25 bin** (2026-09-07)
+   - **🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 50 bin** (2026-09-07;
+     judul "50 bin" sejak 2026-09-09)
      — eskalasi dari ⚡ EARLY DUMP: bila dalam **15 menit** setelah
      pengingat pertama dust terus
      bertambah selama **3 scan 5 menit berturut-turut** (holder dust
@@ -181,16 +182,22 @@ warna teks merah, atau teks berkedip, jadi penekanan memakai **tebal + 🚨**,
 bukan HTML/CSS yang tidak didukung. Aturan pemicu dan frekuensi tidak berubah.
 
 ```text
-🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 25 bin
+🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 50 bin
 
 🪙 $LPX
 📊 Dust: 0.22% → 0.31% MC (+0.09 pp)
 📈 Naik 3 scan berturut (±10 menit)
 🕒 2026-09-07 21:10 WIB
 📋 Mint: LpMint11111111111111111111111111111111111
-🔗 GMGN: https://gmgn.ai/sol/token/LpMint11111111111111111111111111111111111
-🦆 DexScreener: https://dexscreener.com/solana/LpMint11111111111111111111111111111111111
+🔗 GMGN
+🦆 DexScreener
 ```
+
+Baris `🔗 GMGN` / `🦆 DexScreener` (dan `🌊 Meteora` / `🦅 HawkFi` bila pool
+diketahui; `🦆 rh-scan` / `🌏 Blockscout` untuk Robinhood) adalah
+**hyperlink** — labelnya diberi entity `text_link` Bot API, URL-nya tidak
+ditulis di teks (sejak 2026-09-09; sebelumnya URL polos 44+ karakter
+membuat pesan panjang).
 
 Contoh pengingat LP:
 
@@ -200,8 +207,8 @@ Contoh pengingat LP:
 📊 Dust: 0.04% → 0.15% MC (+0.11 pp)
 🕒 2026-09-07 21:00 WIB
 📋 Mint: LpMint11111111111111111111111111111111111
-🔗 GMGN: https://gmgn.ai/sol/token/LpMint11111111111111111111111111111111111
-🦆 DexScreener: https://dexscreener.com/solana/LpMint11111111111111111111111111111111111
+🔗 GMGN
+🦆 DexScreener
 ```
 
 Contoh rule dump dengan konfirmasi pasar:
@@ -213,19 +220,21 @@ Contoh rule dump dengan konfirmasi pasar:
 ✅ Pasar: vol 4j 2.50× avg 7d · harga -3.20%
 🕒 2026-09-07 21:15 WIB
 📋 Mint: So11111111111111111111111111111111111111112
-🔗 GMGN: https://gmgn.ai/sol/token/So11111111111111111111111111111111111111112
-🦆 DexScreener: https://dexscreener.com/solana/So11111111111111111111111111111111111111112
+🔗 GMGN
+🦆 DexScreener
 ```
 
-URL tetap dibangun `links.token_link_lines(mint)`, satu sumber dengan tabel
-watchlist dan selalu ter-encode. Token Robinhood memakai **🦆 rh-scan,
-🦆 DexScreener Robinhood, 🌏 Blockscout**, bukan link Solana. Bila mint
-kosong, link dilewati. Bila event LP membawa pool address Meteora,
-ditambahkan **🌊 Meteora + 🦅 HawkFi**; cron belum menyimpan pool address.
+URL hyperlink dibangun `links.token_links(mint)` (satu sumber dengan tabel
+watchlist dan `token_link_lines()` versi teks polos untuk log/CLI) dan
+selalu ter-encode. Token Robinhood memakai **🦆 rh-scan, 🦆 DexScreener
+Robinhood, 🌏 Blockscout**, bukan link Solana. Bila mint kosong, link
+dilewati. Bila event LP membawa pool address Meteora, ditambahkan
+**🌊 Meteora + 🦅 HawkFi**; cron belum menyimpan pool address.
 
 Transport tetap mengirim teks literal (tanpa `parse_mode`), sehingga nama
 token dengan karakter HTML/Markdown tidak merusak pesan. Judul exit diberi
-native entity `bold` dengan panjang **UTF-16** (emoji 🚨 = dua unit).
+native entity `bold` dan setiap label link diberi entity `text_link`,
+keduanya dengan offset/panjang **UTF-16** (emoji 🚨 / 🔗 = dua unit).
 
 ## Sumber data
 

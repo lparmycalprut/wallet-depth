@@ -1,3 +1,27 @@
+# Kegiatan — 9 September 2026 (sesi 12 · 📨 Telegram: judul 50 bin + hyperlink)
+
+Permintaan user: judul eskalasi diganti menjadi **"🚨 WAKTUNYA EXIT /
+CUTLOSS / Reshape bid-ask 50 bin"** (dulu 25 bin), dan baris link
+`🔗 GMGN: https://gmgn.ai/sol/token/<mint>` / `🦆 DexScreener: https://…`
+diganti **hyperlink** saja, bukan URL polos.
+
+- `telegram_alerts.ESCALATION_TITLE` → "… 50 bin".
+- `build_alert_message(event)` baru → `(teks, entities)`: baris link hanya
+  `"<emoji> <label>"` dan label diberi entity `text_link` Bot API (offset /
+  length UTF-16, sama seperti entity `bold` judul EXIT yang sudah ada).
+  Berlaku untuk semua jenis alert dan semua link: GMGN, DexScreener,
+  Meteora, HawkFi (LP), rh-scan, Blockscout (Robinhood). `send_telegram_alert`
+  memakai builder ini; `format_alert_message()` sekarang hanya teksnya
+  (dipakai log/tes). Tanpa mint → tanpa baris link & tanpa entity.
+- `links.token_links(ca)` → `[(emoji, label, url)]` sebagai satu sumber;
+  `token_link_lines()` (teks polos) tetap ada untuk log/CLI, tidak lagi
+  dipakai Telegram. `telegram_alerts._pool_links()` padanannya untuk pool.
+- Tes diperbarui: `test_telegram_alerts.py` (helper `_utf16_slice`/`_links`
+  memverifikasi label & URL tiap entity, offset tepat walau symbol/mint
+  beremoji, alert lain tanpa bold, test alert tanpa entities),
+  `test_exit_cutloss.py`, `test_early_dump.py`. **Suite penuh 969 passed.**
+- README (contoh pesan + catatan hyperlink), AGENTS.md.
+
 # Kegiatan — 9 September 2026 (sesi 11 · 🦅 Blockscout PRO API: beberapa key sekaligus)
 
 Pertanyaan user: *"1 api cukup atau tidak? atau beberapa api sekaligus?"* →

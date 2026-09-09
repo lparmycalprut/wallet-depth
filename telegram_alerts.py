@@ -50,7 +50,7 @@ from typing import Callable, Iterable, NamedTuple
 import requests
 
 from holder_history import DUST_BEST_PCT, holders_usable
-from links import (hawkfi_meteora_url, meteora_dlmm_url, token_link_lines)
+from links import hawkfi_meteora_url, meteora_dlmm_url, token_links
 
 DUMP_THRESHOLD_PP = 0.25
 ACCUMULATION_THRESHOLD_PP = 0.50
@@ -118,7 +118,7 @@ HIGH_DROP_KIND = "high_drop"
 ESCALATION_WINDOW_SEC = 15 * 60
 ESCALATION_MIN_RISES = 3
 ESCALATION_KIND = "exit_cutloss"
-ESCALATION_TITLE = "🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 25 bin"
+ESCALATION_TITLE = "🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 50 bin"
 SAFE_RETURN_KIND = "safe_return"
 MAX_LAST_SENT = 8
 MAX_REJECTED_SIGNALS = 8
@@ -1562,24 +1562,32 @@ def _verification_lines(event: dict) -> list[str]:
     return [f"{mark} Pasar {status}"]
 
 
-def _pool_link_lines(pools) -> list[str]:
-    """Baris 🌊 Meteora + 🦅 HawkFi per pool address (teks polos Telegram)."""
-    lines = []
+def _pool_links(pools) -> list[tuple[str, str, str]]:
+    """``[(emoji, label, url), …]`` 🌊 Meteora + 🦅 HawkFi per pool address."""
+    links = []
     for raw in pools or []:
         pool = str(raw or "").strip()
         if not pool:
             continue
-        lines.append(f"🌊 Meteora: {meteora_dlmm_url(pool)}")
-        lines.append(f"🦅 HawkFi: {hawkfi_meteora_url(pool)}")
-    return lines
+        links.append(("🌊", "Meteora", meteora_dlmm_url(pool)))
+        links.append(("🦅", "HawkFi", hawkfi_meteora_url(pool)))
+    return links
 
 
-def format_alert_message(event: dict) -> str:
-    """Pesan ringkas beremoji; teks tetap literal, bukan HTML/Markdown.
+def _utf16_len(text: str) -> int:
+    """Panjang dalam unit UTF-16 — satuan offset/length entity Bot API."""
+    return len(str(text).encode("utf-16-le")) // 2
 
-    Semua jenis memakai blok angka/waktu/link yang sama. Rincian wallet,
-    skor, dan alasan verifikasi panjang tetap ada di event/state untuk audit,
-    bukan di notifikasi. Rule LP/high-drop tanpa baris verifikasi.
+
+def build_alert_message(event: dict) -> tuple[str, list[dict]]:
+    """``(teks, entities)`` pesan alert — link sebagai **hyperlink** Telegram.
+
+    Baris link ditulis ``"<emoji> <label>"`` saja dan ``label`` diberi entity
+    ``text_link`` (URL tidak muncul di teks; permintaan user 2026-09-09 —
+    URL polos 44+ karakter membuat pesan panjang dan tidak enak dibaca).
+    Judul EXIT / CUTLOSS diberi entity ``bold``. Semua offset/length dihitung
+    dalam **UTF-16** (emoji = dua unit). Teks lain tetap literal tanpa
+    ``parse_mode`` sehingga nama token/mint tidak bisa menjadi markup.
     """
     kind = event.get("kind")
     change = _float(event.get("change_pp"), 0.0) or 0.0
@@ -1625,13 +1633,39 @@ def format_alert_message(event: dict) -> str:
         *details,
         f"🕒 {_format_wib(event.get('current_ts') or time.time())}",
         f"📋 Mint: {event.get('mint') or '-'}",
-        # URL tetap dari satu sumber, ter-encode, dan tidak ditambahkan
-        # bila mint kosong. Link preview dimatikan di transport.
-        *token_link_lines(event.get("mint")),
     ])
+    # URL tetap dari satu sumber (links.py), ter-encode, dan tidak
+    # ditambahkan bila mint kosong. Link preview dimatikan di transport.
+    links = list(token_links(event.get("mint")))
     if lp_kind:
-        lines.extend(_pool_link_lines(event.get("pool_addresses")))
-    return "\n".join(lines)
+        links.extend(_pool_links(event.get("pool_addresses")))
+
+    entities: list[dict] = []
+    if kind == ESCALATION_KIND:
+        # Telegram tidak mendukung ukuran/warna font atau teks berkedip.
+        # Khusus EXIT: judul tebal + 🚨, tanpa HTML/CSS yang tidak didukung.
+        entities.append({"type": "bold", "offset": 0,
+                         "length": _utf16_len(title)})
+    offset = _utf16_len("\n".join(lines)) + (1 if lines else 0)
+    for emoji, label, url in links:
+        prefix = f"{emoji} "
+        lines.append(prefix + label)
+        entities.append({"type": "text_link",
+                         "offset": offset + _utf16_len(prefix),
+                         "length": _utf16_len(label),
+                         "url": url})
+        offset += _utf16_len(prefix + label) + 1  # + "\n"
+    return "\n".join(lines), entities
+
+
+def format_alert_message(event: dict) -> str:
+    """Teks pesan alert (tanpa entities) — untuk log, tes, dan tampilan polos.
+
+    Sama persis dengan teks yang dikirim :func:`send_telegram_alert`; baris
+    link hanya berisi ``"<emoji> <label>"`` karena URL-nya ada di entity
+    hyperlink (lihat :func:`build_alert_message`).
+    """
+    return build_alert_message(event)[0]
 
 
 def _safe_transport_error(exc: Exception, token: str) -> str:
@@ -1698,16 +1732,9 @@ def send_telegram_message(text: str, *, bot_token: str | None = None,
 
 
 def send_telegram_alert(event: dict) -> dict:
-    message = format_alert_message(event)
-    entities = None
-    if event.get("kind") == ESCALATION_KIND:
-        # Telegram tidak mendukung ukuran/warna font atau teks berkedip.
-        # Khusus EXIT: judul tebal + 🚨, tanpa HTML/CSS yang tidak didukung.
-        # Bot API menghitung offset/length dalam UTF-16 (🚨 = dua unit).
-        header = message.split("\n", 1)[0]
-        entities = [{"type": "bold", "offset": 0,
-                     "length": len(header.encode("utf-16-le")) // 2}]
-    return send_telegram_message(message, entities=entities)
+    """Kirim satu alert: teks literal + entities (bold judul EXIT, hyperlink)."""
+    message, entities = build_alert_message(event)
+    return send_telegram_message(message, entities=entities or None)
 
 
 def send_test_alert() -> dict:
