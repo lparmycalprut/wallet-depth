@@ -561,8 +561,10 @@ Snapshot dibaca dari `holder_status.json` dan store penuh dari
 `holder_history.json.gz` (keduanya ref `holder-live`) — lihat **Backup store
 holder**. Lihat `DEPLOY.md` untuk env scanner (`HELIUS_API_KEY`,
 `GITHUB_TOKEN`) dan setup alert opsional (`TELEGRAM_BOT_TOKEN`,
-`TELEGRAM_CHAT_ID`). Tanpa credential Telegram, scan tetap berjalan dan
-pengiriman alert dilewati dengan aman.
+`TELEGRAM_CHAT_ID`). **Secret GitHub dan secret Streamlit Cloud terpisah**
+— cron memakai yang pertama, scan manual di dashboard memakai yang kedua;
+keduanya butuh token bot **dan** chat ID. Tanpa credential Telegram, scan
+tetap berjalan dan pengiriman alert dilewati dengan aman.
 
 ## Cadens scan
 
