@@ -1732,25 +1732,44 @@ def _safe_transport_error(exc: Exception, token: str) -> str:
 # TODO(alerts): beri throttle bila suatu saat banyak token memicu alert
 # bersamaan — GeckoTerminal publik ~30 request/menit dan konteks pasar ditarik
 # lazy per token yang punya kandidat sinyal.
+_TELEGRAM_TOKEN_KEYS = ("TELEGRAM_BOT_TOKEN", "telegram_bot_token")
+_TELEGRAM_CHAT_KEYS = ("TELEGRAM_CHAT_ID", "telegram_chat_id")
+
+
+def _first_secret(source, *names) -> str:
+    """Nilai non-kosong pertama dari mapping (env / config / ``st.secrets``)."""
+    getter = getattr(source, "get", None)
+    for name in names:
+        try:
+            raw = getter(name, "") if callable(getter) else source[name]
+        except Exception:  # noqa: BLE001 - key absen / secrets belum ada
+            continue
+        text = str(raw or "").strip()
+        if text:
+            return text
+    return ""
+
+
 def _telegram_credentials() -> tuple[str, str]:
     """``(bot_token, chat_id)`` dari env → ``config.json`` → Streamlit secrets.
 
     Cron (GitHub Actions) cukup dengan env ``TELEGRAM_BOT_TOKEN`` /
-    ``TELEGRAM_CHAT_ID``. Sejak 2026-09-09 **scan manual di dashboard ikut
-    mengirim alert** (permintaan user), jadi transport juga harus menemukan
-    kredensial di tempat dashboard menyimpannya. Dua sumber tambahan dibaca
-    lazy + di-``try``: runner Actions hanya memasang ``requests`` +
-    ``curl_cffi``, jadi modul ini tidak boleh bergantung Streamlit.
+    ``TELEGRAM_CHAT_ID``. Scan manual di dashboard **tidak** melihat secret
+    GitHub: itu runtime terpisah, jadi kredensial harus dipasang lagi di
+    Streamlit Cloud **Secrets** (atau ``config.json`` lokal). Nama key
+    huruf besar (konvensi GitHub/DEPLOY) dan huruf kecil (TOML Streamlit
+    lama) keduanya diterima. Sumber tambahan dibaca lazy + di-``try``:
+    runner Actions hanya memasang ``requests`` + ``curl_cffi``.
     """
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    target = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    token = _first_secret(os.environ, *_TELEGRAM_TOKEN_KEYS)
+    target = _first_secret(os.environ, *_TELEGRAM_CHAT_KEYS)
     if token and target:
         return token, target
     try:
         import core  # config.json (semua key); import ringan tanpa streamlit
         cfg = core.load_config()
-        token = token or str(cfg.get("telegram_bot_token") or "").strip()
-        target = target or str(cfg.get("telegram_chat_id") or "").strip()
+        token = token or _first_secret(cfg, *_TELEGRAM_TOKEN_KEYS)
+        target = target or _first_secret(cfg, *_TELEGRAM_CHAT_KEYS)
     except Exception:  # noqa: BLE001 - kredensial bersifat opsional
         pass
     if token and target:
@@ -1759,8 +1778,8 @@ def _telegram_credentials() -> tuple[str, str]:
         import streamlit as st
         # core.load_config hanya memetakan key yang ada di default-nya ke
         # st.secrets, jadi dua key Telegram dibaca langsung dari secrets.
-        token = token or str(st.secrets.get("telegram_bot_token", "")).strip()
-        target = target or str(st.secrets.get("telegram_chat_id", "")).strip()
+        token = token or _first_secret(st.secrets, *_TELEGRAM_TOKEN_KEYS)
+        target = target or _first_secret(st.secrets, *_TELEGRAM_CHAT_KEYS)
     except Exception:  # noqa: BLE001 - di luar Streamlit tidak ada secrets
         pass
     return token, target

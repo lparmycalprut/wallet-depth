@@ -46,7 +46,12 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   ikut ditampilkan** supaya "kredensial Telegram tidak terpasang" tidak
   terbaca seperti "tidak ada sinyal". Kredensial: env → `config.json` →
   `st.secrets` (`telegram_alerts._telegram_credentials()`, lazy supaya cron
-  Actions yang hanya memasang requests + curl_cffi tetap jalan). Batasan:
+  Actions yang hanya memasang requests + curl_cffi tetap jalan). Nama key
+  `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` (huruf besar, konvensi GitHub)
+  **dan** `telegram_bot_token`/`telegram_chat_id` (huruf kecil) keduanya
+  diterima. **Secret GitHub tidak sampai ke Streamlit Cloud** — scan manual
+  butuh secret yang sama dipasang di **Settings → Secrets** aplikasi
+  Streamlit (keduanya: token **dan** chat ID). Batasan:
   scan manual tetap `push=False`, jadi state alert UI hanya hidup di file
   lokal host dashboard — cron dan dashboard bisa mengirim ⚡ yang sama untuk
   kondisi yang sama (dedup berlaku per host).

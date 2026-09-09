@@ -18,7 +18,9 @@
   key yang kreditnya habis/ditolak diparkir otomatis (lihat langkah di
   bawah).
 - Secrets alert Telegram opsional: `TELEGRAM_BOT_TOKEN` dan
-  `TELEGRAM_CHAT_ID`.
+  `TELEGRAM_CHAT_ID`. **Secret GitHub ≠ secret Streamlit** — cron
+  Actions membaca yang pertama, scan manual di dashboard membaca yang
+  kedua. Keduanya harus dipasang (lihat **Setup Telegram**).
 
 Watchlist di halaman utama menarik `holder_status.json` dari ref
 `holder-live` (bukan commit `main`). Tombol **Scan holder watchlist**
@@ -276,19 +278,37 @@ ada di `.gitignore` hanya untuk pemakaian lokal.
 
 ## Setup Telegram
 
+Dua runtime, dua tempat secret. Memasang di GitHub **tidak** membuat
+dashboard Streamlit ikut bisa mengirim (dan sebaliknya). Butuh **keduanya**:
+token bot **dan** chat ID — token saja = pesan
+`Telegram credentials are not configured`.
+
 1. Buat bot melalui **@BotFather** dan salin token bot.
 2. Tambahkan bot ke chat/grup tujuan. Untuk grup, pastikan bot dapat mengirim
    pesan.
 3. Dapatkan chat ID, misalnya dari update bot (`getUpdates`) setelah mengirim
    pesan ke bot/grup. Chat ID grup biasanya bernilai negatif.
-4. Di GitHub buka **Settings → Secrets and variables → Actions → New
-   repository secret**, lalu simpan dua secret terpisah:
+4. **GitHub (cron / scan terjadwal)** → repo → **Settings → Secrets and
+   variables → Actions → New repository secret**, dua secret terpisah:
    - `TELEGRAM_BOT_TOKEN`
    - `TELEGRAM_CHAT_ID`
+5. **Streamlit Cloud (scan manual di dashboard)** → aplikasi → ⋮
+   **Settings → Secrets** → tambahkan (format TOML, nama key huruf besar
+   atau kecil sama-sama dibaca):
 
-Jangan menaruh nilainya di repository, workflow, log, `config.json`, atau
-Streamlit source. Credential kosong/tidak valid tidak menghentikan scan;
-pengiriman dilewati atau dicatat sebagai warning tanpa membocorkan token.
+   ```toml
+   TELEGRAM_BOT_TOKEN = "123456:ABC-token-dari-BotFather"
+   TELEGRAM_CHAT_ID = "-1001234567890"
+   ```
+
+   Klik **Save** — aplikasi restart otomatis. Tanpa langkah ini tombol scan
+   manual menampilkan `1 alert GAGAL dikirim (Telegram credentials are not
+   configured)` meski secret GitHub sudah terpasang.
+
+Jangan menaruh nilainya di repository, workflow, log, `config.json` yang
+di-commit, atau source Streamlit. Credential kosong/tidak valid tidak
+menghentikan scan; pengiriman dilewati atau dicatat sebagai warning tanpa
+membocorkan token.
 
 ### Test pengiriman
 

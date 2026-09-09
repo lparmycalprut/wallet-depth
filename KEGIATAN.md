@@ -1,3 +1,27 @@
+# Kegiatan — 9 September 2026 (secret GitHub ≠ secret Streamlit)
+
+User: *\"1 alert GAGAL dikirim (Telegram credentials are not configured).
+sebentar, saya sudah setting token di secret loh, apa butuh di setting di
+streamlit juga?\"*
+
+Ya. Secret **GitHub Actions** (`Settings → Secrets → Actions`) hanya
+terlihat cron; scan manual jalan di proses Streamlit Cloud yang tidak
+menerima env itu. Perlu **dua** secret di **kedua** tempat:
+`TELEGRAM_BOT_TOKEN` **dan** `TELEGRAM_CHAT_ID`. Token bot saja tetap
+gagal dengan pesan yang sama.
+
+- `_telegram_credentials()` kini menerima nama key huruf besar
+  (`TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID`, konvensi GitHub/DEPLOY)
+  **dan** huruf kecil (`telegram_bot_token` / `telegram_chat_id`) dari
+  env, `config.json`, dan `st.secrets` — sebelumnya Streamlit hanya
+  membaca huruf kecil, jadi secret yang disalin persis dari GitHub ke
+  Streamlit Cloud tidak ketemu.
+- DEPLOY.md bagian **Setup Telegram** memisahkan langkah GitHub (cron)
+  vs Streamlit Cloud (scan manual) + contoh TOML. AGENTS.md + README
+  menyebut pemisahan yang sama.
+- Tes baru: secrets Streamlit huruf besar, huruf kecil, dan token tanpa
+  chat ID tetap dilaporkan belum terpasang.
+
 # Kegiatan — 9 September 2026 (MOO 0,11% tanpa alert: cron mati + scan manual bisu)
 
 Laporan user: `0xc103ac00a25173870c909223c5676d50bf5728b2` (MOO) menampilkan

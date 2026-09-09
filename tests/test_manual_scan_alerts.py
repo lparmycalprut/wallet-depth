@@ -176,6 +176,53 @@ class TelegramCredentialFallbackTest(unittest.TestCase):
         self.assertEqual(result.get("error"),
                          "Telegram credentials are not configured")
 
+    def test_kredensial_dari_streamlit_secrets_huruf_besar(self):
+        """Secret GitHub/DEPLOY memakai TELEGRAM_*; Streamlit harus sama."""
+        self._without_env()
+        import core
+        secrets = {"TELEGRAM_BOT_TOKEN": "123:ST",
+                   "TELEGRAM_CHAT_ID": "-100ST"}
+        with tempfile.TemporaryDirectory() as tmp:
+            empty = os.path.join(tmp, "config.json")
+            with open(empty, "w", encoding="utf-8") as handle:
+                json.dump({}, handle)
+            with mock.patch.object(core, "CONFIG_PATH", empty):
+                with mock.patch("streamlit.secrets", secrets):
+                    self.assertEqual(ta._telegram_credentials(),
+                                     ("123:ST", "-100ST"))
+
+    def test_kredensial_dari_streamlit_secrets_huruf_kecil(self):
+        self._without_env()
+        import core
+        secrets = {"telegram_bot_token": "123:st",
+                   "telegram_chat_id": "-100st"}
+        with tempfile.TemporaryDirectory() as tmp:
+            empty = os.path.join(tmp, "config.json")
+            with open(empty, "w", encoding="utf-8") as handle:
+                json.dump({}, handle)
+            with mock.patch.object(core, "CONFIG_PATH", empty):
+                with mock.patch("streamlit.secrets", secrets):
+                    self.assertEqual(ta._telegram_credentials(),
+                                     ("123:st", "-100st"))
+
+    def test_token_saja_tanpa_chat_id_tetap_belum_terpasang(self):
+        """Bot token tanpa chat ID = kredensial belum lengkap."""
+        self._without_env()
+        import core
+        with mock.patch.dict(os.environ, {"TELEGRAM_BOT_TOKEN": "123:ONLY"}):
+            with tempfile.TemporaryDirectory() as tmp:
+                empty = os.path.join(tmp, "config.json")
+                with open(empty, "w", encoding="utf-8") as handle:
+                    json.dump({}, handle)
+                with mock.patch.object(core, "CONFIG_PATH", empty):
+                    with mock.patch("streamlit.secrets", {}):
+                        self.assertEqual(ta._telegram_credentials(),
+                                         ("123:ONLY", ""))
+                        result = ta.send_telegram_message("uji")
+        self.assertFalse(result.get("ok"))
+        self.assertEqual(result.get("error"),
+                         "Telegram credentials are not configured")
+
 
 @unittest.skipIf(AppTest is None, "streamlit not installed")
 class ManualScanAlertTest(unittest.TestCase):
