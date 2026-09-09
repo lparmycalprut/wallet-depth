@@ -2,8 +2,10 @@ name: Holder Dust Scanner
 
 on:
   schedule:
-    # Target ±5 menit. GitHub schedule best-effort (bisa telat sampai jam),
-    # jadi ritme dijaga langkah "Chain run berikutnya" di bawah.
+    # Target ±5 menit. GitHub schedule best-effort (terukur 2026-09-09: cuma
+    # menyala 4x sehari, jarak antar-kejadian 4,5-5,2 JAM), jadi ritme
+    # dipegang langkah "Chain run berikutnya" di bawah; schedule hanya jaring
+    # pengaman kalau rantai putus.
     - cron: "*/5 * * * *"
 
   workflow_dispatch:
@@ -68,7 +70,7 @@ jobs:
           fi
           # JANGAN pasang --max-wallets: urutan getTokenAccounts Helius
           # TIDAK urut saldo, jadi fetch terpotong (mis. 3000 dari 3994
-          # akun) = sampel acak yang bias — dust (≤$10) bisa jauh lebih
+          # akun) = sampel acak yang bias — dust (<=10 USD) bisa jauh lebih
           # kecil dari nilai aslinya, dan angka cron/Telegram tidak sinkron
           # dengan scan Helius di dashboard. Default kode sudah FULL
           # (FULL_SCAN_MAX_WALLETS=100.000, semua halaman sampai habis).
@@ -80,40 +82,12 @@ jobs:
         if: success() || failure()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          API="https://api.github.com/repos/${{ github.repository }}/actions/workflows/daily-effort.yml/runs"
-          NOW=$(date +%s)
-          WAIT=$((300 - NOW % 300 + 20))
-          echo "Tidur ${WAIT}s sampai batas 5 menit berikutnya."
-          sleep "$WAIT"
-
-          # Guard 1 — jangan menumpuk antrean concurrency `holder-scanner`.
-          # GitHub hanya menahan SATU run mengantre per group; request ketiga
-          # membatalkan yang sedang mengantre ("Canceling since a higher
-          # priority waiting request for holder-scanner exists").
-          ACTIVE=$(curl -sSf -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" "$API?per_page=25" \
-            | python3 -c "import json,sys; runs=json.load(sys.stdin).get('workflow_runs') or []; me='${{ github.run_id }}'; print(sum(1 for r in runs if str(r.get('id')) != me and r.get('status') in ('queued','in_progress','waiting')))")
-          if [ "${ACTIVE:-0}" -gt 0 ]; then
-            echo "Sudah ada ${ACTIVE} run aktif/mengantre — dispatch dilewati (anti tabrakan holder-scanner)."
-            exit 0
-          fi
-
-          # Guard 2 — bila schedule */5 GitHub sedang sehat, biarkan cron yang
-          # menjaga ritme; chain dispatch hanya cadangan saat schedule di-throttle.
-          LAST_SCHEDULE=$(curl -sSf -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "$API?event=schedule&status=completed&per_page=1" \
-            | python3 -c "import json,sys,datetime; runs=json.load(sys.stdin).get('workflow_runs') or []; ts=(runs[0].get('updated_at') or '') if runs else ''; print(int(datetime.datetime.strptime(ts,'%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc).timestamp()) if ts else 0)")
-          AGE=$(( $(date +%s) - ${LAST_SCHEDULE:-0} ))
-          if [ "${LAST_SCHEDULE:-0}" -gt 0 ] && [ "$AGE" -lt 900 ]; then
-            echo "Schedule */5 sehat (run terakhir ${AGE}s lalu) — dispatch dilewati."
-            exit 0
-          fi
-
-          curl -sSf -X POST \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/actions/workflows/daily-effort.yml/dispatches \
-            -d '{"ref":"${{ github.ref_name }}"}'
-          echo "Run berikutnya di-dispatch (schedule terakhir ${AGE}s lalu)."
+          # Semua keputusan rantai ada di scripts/chain_next_run.py supaya
+          # bisa diubah lewat commit biasa (bot ditolak menulis folder
+          # .github/workflows). Kadens boleh dikalibrasi dari sini TANPA
+          # menyentuh kode: ubah cron di atas + CHAIN_CADENCE_SEC di sini.
+          CHAIN_CADENCE_SEC: "300"
+          CHAIN_WORKFLOW: "daily-effort.yml"
+          # CHAIN_QUIET_SEC: "240"   # wajib < CHAIN_CADENCE_SEC
+          # CHAIN_LEAD_SEC: "20"
+        run: python scripts/chain_next_run.py
