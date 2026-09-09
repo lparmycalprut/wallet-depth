@@ -211,7 +211,8 @@ def main(argv=None) -> int:
     parser.add_argument("--dust-limit", type=float, default=None,
                         help="batas value USD dust (default 10)")
     parser.add_argument("--max-wallets", type=int, default=None,
-                        help="maks holder dianalisis per token (default: "
+                        help="maks holder Solana per token (Robinhood selalu FULL; "
+                             "default: "
                              f"FULL = {FULL_SCAN_MAX_WALLETS:,} — semua "
                              "halaman sampai habis)")
     parser.add_argument("--workers", type=int, default=4)
@@ -428,7 +429,10 @@ def main(argv=None) -> int:
             if rh_targets:
                 rh_analyses = robinhood_watchlist.scan_watchlist(
                     rh_targets, history_store=rh_store,
-                    max_wallets=max_wallets, workers=args.workers,
+                    # Blockscout sorts richest first: a 3k sample can omit
+                    # the entire dust tail. Keep RH at the dedicated scan cap;
+                    # the workflow --max-wallets budget is for Solana only.
+                    max_wallets=FULL_SCAN_MAX_WALLETS, workers=args.workers,
                     detail=args.full)
                 if rh_analyses:
                     rh_contexts: dict = {}

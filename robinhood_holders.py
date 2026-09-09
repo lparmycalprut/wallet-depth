@@ -88,8 +88,12 @@ import time
 import requests
 
 from core import CONFIG_PATH, get_market, merge_helius_keys
-from holder_analysis import DUST_LIMIT_USD, DEFAULT_MAX_WALLETS, classify_holders
+from holder_analysis import DUST_LIMIT_USD, classify_holders
+from holder_history import FULL_SCAN_MAX_WALLETS
 from solscan_holders import wallet_depth
+
+# Same coverage for watchlist, cron and the dedicated holder scan.
+DEFAULT_MAX_WALLETS = FULL_SCAN_MAX_WALLETS
 
 CHAIN_SLUG = "robinhood"
 CHAIN_ID = "4663"
@@ -123,6 +127,7 @@ V2_PAGE_CAP = 600            # 600 × 50 = 30k wallet (jalur cadangan terakhir)
 HOLDER_PAGE_SIZE = 400       # legacy RPC → offset max 400 (bukan 1000!)
 HOLDER_PAGE_CAP = 500        # 500 × 400 = 200k wallet, cukup untuk token terbesar
 PAGE_SLEEP_SEC = 0.6         # ~1,7 req/s — sopan untuk instance publik
+CSV_EXPORT_LIMIT = 10_000    # server-side synchronous export ceiling
 CSV_TIMEOUT = 90             # satu response bisa memuat puluhan ribu baris
 
 _EVM_ADDRESS_RE = __import__("re").compile(r"0x[0-9a-fA-F]{40}")
@@ -1083,7 +1088,7 @@ def fetch_holders_rpc(ca: str, *, price_usd: float = 0.0, supply: float = 0.0,
         # Jeda antar page — Blockscout publik rate-limit-nya cukup keras.
         time.sleep(PAGE_SLEEP_SEC)
         page += 1
-    return list(seen.values()), pages, truncated, error
+    return list(seen.values()), pages, truncated or bool(error), error
 
 
 def fetch_holders(ca: str, *, max_wallets: int | None = None,
@@ -1164,7 +1169,7 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
     truncated = False
     try:
         holders = fetch_holders_csv(ca, price_usd=price_usd, supply=supply,
-                                    pools=pools, max_wallets=max_wallets)
+                                    pools=pools, max_wallets=limit)
     except Exception as exc:  # noqa: BLE001 - lanjut ke jalur berikutnya
         _note("csv", exc)
         holders = []
@@ -1172,10 +1177,13 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
     # CSV instance ini sinkron dengan plafon 10.000 baris. Kalau counters
     # bilang holder-nya lebih banyak (dan user memang minta lebih), daftar
     # CSV pasti terpotong -> lengkapi lewat jalur paginasi.
-    csv_capped = bool(holders and onchain_count > len(holders)
-                      and limit > len(holders))
+    csv_incomplete = bool(holders and (
+        onchain_count > len(holders)
+        or (not onchain_count and len(holders) >= min(limit, CSV_EXPORT_LIMIT))))
+    truncated = csv_incomplete
+    csv_capped = csv_incomplete and limit > len(holders)
     if csv_capped:
-        errors.append(f"csv terpotong {len(holders)}/{onchain_count}")
+        errors.append(f"csv terpotong {len(holders)}/{onchain_count or '?'}")
 
     # ---- 2) Legacy RPC: 400 baris/halaman, 8x lebih hemat daripada v2 -------
     # Untuk token besar (85k holder) v2 butuh ~1.700 request sedangkan RPC
@@ -1209,7 +1217,7 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
             holders = v2_rows
             source = SOURCE_V2
             pages = max(1, -(-len(v2_rows) // V2_PAGE_SIZE))
-            truncated = bool(limit and len(v2_rows) >= limit)
+            truncated = len(v2_rows) >= min(limit, V2_PAGE_CAP * V2_PAGE_SIZE)
 
     blocked = bool(blocked_hits) and not holders
     if blocked:
@@ -1230,8 +1238,12 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
 
     if not holders:
         source = f"{SOURCE_CSV}(fail)"
-    elif onchain_count and len(holders) < onchain_count and not truncated:
-        truncated = bool(limit and len(holders) >= limit)
+    elif onchain_count and len(holders) < onchain_count:
+        # A provider cap or failed fallback is incomplete even BELOW our limit.
+        truncated = True
+    if holders and truncated:
+        errors.append(f"holder tidak lengkap: {len(holders)}/{onchain_count or '?'}; "
+                      "dust % MC belum dapat dipakai")
 
     result = {
         "holders": holders,
@@ -1242,7 +1254,7 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
         "source": source_with_route(source) if holders else source,
         "decimals": decimals,
         "holders_count": onchain_count,
-        "error": "; ".join(e for e in errors if e) if not holders else "",
+        "error": "; ".join(e for e in errors if e) if not holders or truncated else "",
         "blocked": blocked,
         # Label key PRO (``key#N``) request sukses terakhir — untuk caption
         # UI/log; kosong bila lewat instance publik atau gagal. ``pro_keys``

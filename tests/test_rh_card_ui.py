@@ -91,6 +91,16 @@ class RobinhoodCardHolderButtonTest(unittest.TestCase):
             app.query_params = dict(query_params)
         return app.run()
 
+    def test_manual_watchlist_scan_uses_dedicated_full_coverage(self):
+        import holder_history as hh
+        with mock.patch("robinhood_watchlist.scan_watchlist", return_value={}) as scan:
+            app = self._app()
+            button = next(b for b in app.button
+                          if b.label == "🔄 Scan holder watchlist Robinhood LP")
+            button.click().run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(scan.call_args.kwargs["max_wallets"], hh.FULL_SCAN_MAX_WALLETS)
+
     def test_row_has_holder_analytic_link(self):
         app = self._app()
         self.assertEqual(len(app.exception), 0)

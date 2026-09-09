@@ -842,7 +842,7 @@ class DashboardSectionRemovedTest(unittest.TestCase):
     def test_pre_pump_page_file_is_gone(self):
         pages = Path(__file__).resolve().parent.parent / "pages"
         names = sorted(path.name for path in pages.glob("*.py"))
-        self.assertEqual(names, ["5_🧮_Holder.py"])
+        self.assertEqual(names, ["5_🧮_Holder.py", "8_temp.py"])
 
 
 if __name__ == "__main__":  # pragma: no cover

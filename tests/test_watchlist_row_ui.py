@@ -116,7 +116,7 @@ class WatchlistRowDetailTest(unittest.TestCase):
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
-        return AppTest.from_file(APP, default_timeout=60).run()
+        return AppTest.from_file(APP, default_timeout=60).switch_page("pages/8_temp.py").run()
 
     def _body(self, app):
         return "\n".join(node.value for node in app.markdown)

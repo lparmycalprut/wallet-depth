@@ -159,14 +159,14 @@ class ResolveViewTest(unittest.TestCase):
         self.assertTrue(view["truncation_swap"])
         self.assertFalse(view["drift"])
 
-    def test_snapshot_terpotong_tetap_dipakai_bila_tidak_ada_alternatif(self):
-        """Snapshot terpotong tetap jadi angka bila itu satu-satunya
-        kandidat layak (lebih baik angka bias berlabel daripada kosong)."""
+    def test_snapshot_terpotong_tanpa_alternatif_tidak_jadi_angka(self):
+        """Top holder tanpa ekor dust bukan angka valid, meski belum ada alternatif."""
         token = _token(pct=0.05, count=5, analyzed_at=2_000)
         token["holders"]["real_count"] = 100  # sampel layak
         token["holders"]["truncated"] = True
         view = wd.resolve_view(token, [], now=5_000)
-        self.assertEqual(view["dust_pct"], 0.05)
+        self.assertIsNone(view["dust_pct"])
+        self.assertTrue(view["degraded"])
         self.assertTrue(view["snapshot_truncated"])
         self.assertFalse(view["truncation_swap"])
 

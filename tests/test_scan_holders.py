@@ -714,6 +714,22 @@ class ScanCadenceTest(unittest.TestCase):
         mocks["rh_scan"].assert_called_once()       # Robinhood LP: tiap run
         self.assertEqual(set(mocks["rh_scan"].call_args.args[0]), {rh_ca})
 
+    def test_workflow_small_cap_only_applies_to_solana_not_robinhood(self):
+        import scripts.scan_holders as mod
+        import holder_history as hh
+        run = mod.RUN_SCAN_INTERVAL_SEC
+        now = (int(time.time()) // run) * run + run
+        mocks = {}
+        with self._cron_env(now_ts=now, status_ts=now - run,
+                            solana_watch={"SOL": {"source": "meteora"}},
+                            rh_watch={"0x" + "a" * 40: {"source": "lp"}},
+                            mocks=mocks):
+            self.assertEqual(mod.main(["--max-wallets", "3000"]), 0)
+        self.assertEqual(mocks["solana_scan"].call_args.kwargs["max_wallets"], 3000)
+        self.assertEqual(mocks["rh_scan"].call_args.kwargs["max_wallets"],
+                         hh.FULL_SCAN_MAX_WALLETS)
+        self.assertFalse(mocks["rh_scan"].call_args.kwargs["detail"])
+
     def test_multiplier_menahan_solana_tetapi_tidak_robinhood(self):
         """Escape hatch kuota: LP_SCAN_RUN_MULTIPLIER=3 -> Solana tiap 15 mnt."""
         import scripts.scan_holders as mod

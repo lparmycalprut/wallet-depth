@@ -7,6 +7,28 @@ grafik 4 jam, kohort Crab+Fish) dan **Scan Meteora DLMM**, ditambah
 / flow 12 jam; Telegram hanya dipakai cron untuk alert perubahan holder dust
 yang sudah dikonfirmasi volume + harga + volatilitas.
 
+## Pembagian halaman (2026-09-09)
+
+- `app.py` = halaman utama: Chart LP Meteora → Scan Meteora → Robinhood LP
+  → Scan Holder Khusus. **Jangan render watchlist biasa/Temukan Token di sini.**
+- `pages/8_temp.py` → slug **`/temp`**, judul **temp**, memanggil
+  `temp_ui.render_temp()`: Robinhood biasa (non-LP), Watchlist — Analisa
+  Holder (Dust), dan Temukan Token (Trending/Degen), termasuk semua kontrol.
+  Tautan `st.page_link` main ↔ temp; bukan salinan watchlist baru.
+- `dashboard_components.py`: CSS/helper presentasi, card Robinhood bersama
+  (`variant="lp"|"regular"`, snapshot merge diberikan eksplisit), dan
+  `load_dashboard_data()` (store Solana & Robinhood terpisah, overlay scan
+  manual tetap berlaku). Import modul tidak merender UI atau memuat store.
+- Scan manual hanya lane card yang sedang dibuka: Solana biasa di temp
+  memakai `holder_watch`, bukan seluruh watchlist termasuk Meteora LP;
+  scan Robinhood memakai subset LP/biasa sesuai halaman. Semua tetap
+  memakai guard kelayakan + merge snapshot. Form Robinhood tersedia di
+  kedua halaman, default sesuai lane. Pemindahan UI **tidak** menghapus
+  token/history, mengubah `source`, cron, atau pengaturan Telegram.
+- AppTest untuk halaman temp dijalankan dari entrypoint `app.py` lalu
+  `.switch_page("pages/8_temp.py")` agar registry multipage/navigation sama
+  dengan deployment (bukan menjalankan file halaman sebagai main script).
+
 ## Sumber kebenaran
 
 - `holder_history.py`: store `holder_history.json` (+ backup durable
@@ -43,7 +65,8 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   `point_wallets()` / `point_usable()` / `usable_points()`; titik dari scan
   bersampel pendek ditandai `degraded: True` saat `ingest_one` (penanda ikut
   `compact_point`). Lihat "Kelayakan data holder" di tabel ambang bawah.
-- **Scan holder dari halaman utama** (`app.py`) tidak boleh mengganti
+- **Scan holder manual** (Chart LP di `app.py`, watchlist biasa di
+  `temp_ui.py`) tidak boleh mengganti
   snapshot: selalu `publish_holder_status(..., merge_status=holder_status)`
   (tanpa merge, `snapshot_status` membangun `tokens` **hanya** dari analyses
   yang diberikan → token yang gagal/timeout pada run itu hilang dari
@@ -130,6 +153,10 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   pindah ke key berikutnya di putaran yang sama (kuota per akun, jadi N
   akun = N× plafon). `pro_key_summary()` untuk log; hasil membawa
   `pro_key`/`pro_keys`. Jangan kembali ke `get_pro_api_key()` tunggal.
+  **Cakupan dust (2026-09-09):** default Robinhood 100.000, bukan default
+  Solana 3.000. CSV mencapai cap tanpa counters, jumlah di bawah counters,
+  RPC gagal di tengah jalan, atau v2 mencapai page cap → `truncated=True`;
+  hasil parsial membawa alasan dan tidak boleh menjadi angka/alert valid.
   Instance publik memblokir server dengan 403 bot-protection; itu
   `BlockscoutBlocked` — **bukan transient, jangan di-retry**, dan
   `fetch_holders` merangkumnya jadi **satu** kalimat + `blocked: True`
@@ -201,9 +228,13 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   `ingest_many(..., detail=args.full)`): tiap run hanya menambah titik holder
   + evaluasi ⚡; baseline immutable + kronologi wallet ditulis scan FULL
   manual (`--full`) atau tombol scan FULL di dashboard. Workflow tetap
-  mengirim `--max-wallets 3000`, jadi cron produksi terbatas 3.000
-  wallet/token (token ≤ 3.000 tidak terpengaruh); default modul tetap
-  `holder_history.FULL_SCAN_MAX_WALLETS` 100.000 untuk `--full`/scan manual.
+  mengirim `--max-wallets 3000`: sejak **2026-09-09** batas itu hanya
+  untuk **Solana**. Robinhood selalu memakai
+  `holder_history.FULL_SCAN_MAX_WALLETS` (100.000), sama dengan tombol
+  watchlist dan Scan Holder Khusus. Blockscout mengurutkan saldo terbesar
+  dulu; cap 2.000/3.000 melewatkan ekor dust (laporan PARE 0,00% vs 0,03%).
+  `--full` tetap hanya mengaktifkan detail/baseline/kronologi, bukan syarat
+  mengambil seluruh daftar Robinhood.
   Berkas workflow **tidak pernah bisa** diubah dari sisi bot (GitHub App tanpa
   izin `workflows` → 403 saat push/PUT; diverifikasi ulang 2026-09-07:
   `refusing to allow a GitHub App to create or update workflow
@@ -533,10 +564,12 @@ MIN_USABLE_WALLETS    : 40 (= DUST_BEST_MIN_HOLDERS); total_fetched atau
                         jumlah wallet dianalisis di bawahnya = scan tidak
                         layak (provider mengembalikan sampel pendek tanpa
                         menandai truncated; wallet dust ada di ekor daftar)
-scan_degraded()       : True hanya bila ADA bukti sampel pendek/0 wallet —
+scan_degraded()       : True bila truncated/degraded, termasuk ribuan top
+                        holder tanpa ekor dust; atau bukti sampel pendek/0 wallet —
                         dict tanpa info jumlah wallet (skema lama) tidak
                         ditolak, jadi perilaku lama tidak berubah
-point_usable()        : titik ber-penanda degraded, tanpa dust_pct_mc, atau
+point_usable()        : titik ber-penanda truncated/degraded (termasuk
+                        history lama), tanpa dust_pct_mc, atau
                         < 40 wallet -> dibuang dari angka baris, pembanding
                         "sejak masuk", sparkline, grafik 4 jam, overlay LP
 alert                 : process_holder_alerts() melewatkan scan tidak layak

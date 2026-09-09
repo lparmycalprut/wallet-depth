@@ -198,7 +198,7 @@ def scan_watchlist(watchlist: dict | None, *, history_store: dict | None = None,
             analysis = robinhood_holders.analyze_token(
                 mint, (meta or {}).get("symbol") or "?",
                 dust_limit=dust_limit,
-                max_wallets=int(max_wallets or 100_000),
+                max_wallets=int(max_wallets or robinhood_holders.DEFAULT_MAX_WALLETS),
                 fetch_market=True,
                 cohort_addrs=addrs,
                 tracked_wallet_addrs=tracked,

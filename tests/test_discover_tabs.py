@@ -61,7 +61,7 @@ class DiscoverTabPersistenceTest(unittest.TestCase):
         return "\n".join(block.value for block in app.markdown)
 
     def test_default_tab_is_trending(self):
-        app = AppTest.from_file(APP, default_timeout=30).run()
+        app = AppTest.from_file(APP, default_timeout=30).switch_page("pages/8_temp.py").run()
         self.assertFalse(app.exception)
         self.assertEqual(app.segmented_control[0].value, TREND_TAB)
         self.assertIn("Scan Trending", self._scan_button(app).label)
@@ -69,7 +69,7 @@ class DiscoverTabPersistenceTest(unittest.TestCase):
                             for button in app.button))
 
     def test_scan_degen_keeps_the_degen_tab_active(self):
-        app = AppTest.from_file(APP, default_timeout=30).run()
+        app = AppTest.from_file(APP, default_timeout=30).switch_page("pages/8_temp.py").run()
         app.segmented_control[0].set_value(DEGEN_TAB).run()
         self.assertIn("Scan Degen", self._scan_button(app, "Scan Degen").label)
         self.assertTrue(any("Add All to Watchlist" in (button.label or "")
@@ -85,7 +85,7 @@ class DiscoverTabPersistenceTest(unittest.TestCase):
         self.assertNotIn("$TRD", self._body(app))
 
     def test_add_all_empty_scan_shows_feedback_without_model_write(self):
-        app = AppTest.from_file(APP, default_timeout=30).run()
+        app = AppTest.from_file(APP, default_timeout=30).switch_page("pages/8_temp.py").run()
         with mock.patch("trending_ui.add_many_to_watchlist") as add_many:
             self._add_all_button(app).click().run()
         add_many.assert_not_called()
@@ -93,7 +93,7 @@ class DiscoverTabPersistenceTest(unittest.TestCase):
                             for node in app.info))
 
     def test_add_all_uses_trending_source_and_shows_count_feedback(self):
-        app = AppTest.from_file(APP, default_timeout=30).run()
+        app = AppTest.from_file(APP, default_timeout=30).switch_page("pages/8_temp.py").run()
         self._scan_button(app).click().run()
         result = {"added": 1, "skipped": 0, "duplicates": 0,
                   "invalid": 0, "saved": True, "addresses": ["TrendMint1111"]}
@@ -106,7 +106,7 @@ class DiscoverTabPersistenceTest(unittest.TestCase):
                             for node in app.success))
 
     def test_add_all_uses_degen_source(self):
-        app = AppTest.from_file(APP, default_timeout=30).run()
+        app = AppTest.from_file(APP, default_timeout=30).switch_page("pages/8_temp.py").run()
         app.segmented_control[0].set_value(DEGEN_TAB).run()
         self._scan_button(app, "Scan Degen").click().run()
         result = {"added": 1, "skipped": 0, "duplicates": 0,
@@ -118,7 +118,7 @@ class DiscoverTabPersistenceTest(unittest.TestCase):
         self.assertEqual(add_many.call_args.kwargs["source"], "degen")
 
     def test_deselecting_keeps_the_last_active_tab(self):
-        app = AppTest.from_file(APP, default_timeout=30).run()
+        app = AppTest.from_file(APP, default_timeout=30).switch_page("pages/8_temp.py").run()
         app.segmented_control[0].set_value(DEGEN_TAB).run()
         # Clicking the active pill again clears the widget value.
         app.segmented_control[0].set_value(None).run()
@@ -128,7 +128,7 @@ class DiscoverTabPersistenceTest(unittest.TestCase):
         self.assertIn("Scan Degen", self._scan_button(app, "Scan Degen").label)
 
     def test_scan_trending_stays_on_trending(self):
-        app = AppTest.from_file(APP, default_timeout=30).run()
+        app = AppTest.from_file(APP, default_timeout=30).switch_page("pages/8_temp.py").run()
         self._scan_button(app, "Scan Trending").click().run()
 
         self.assertFalse(app.exception)
