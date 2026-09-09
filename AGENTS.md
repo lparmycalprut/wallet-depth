@@ -9,8 +9,14 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
 
 ## Pembagian halaman (2026-09-09)
 
-- `app.py` = halaman utama: Chart LP Meteora → Scan Meteora → Robinhood LP
-  → Scan Holder Khusus. **Jangan render watchlist biasa/Temukan Token di sini.**
+- `app.py` = halaman utama: **grid 2 kolom** (`st.columns([1, 1],
+  gap="medium")`, 2026-09-09) — **kiri** Chart LP Meteora, **kanan** Scan
+  Meteora; di bawahnya Robinhood LP → Scan Holder Khusus (full-width,
+  dipisah `st.divider()`). Kedua card grid ber-`st.container(border=True)`
+  dengan kepala seragam dari `_card_head_html()` (pill ringkasan di sebelah
+  judul). Hero header halaman (judul + ringkasan ambang) **dihapus**
+  2026-09-09 bersama CSS `.hero`. **Jangan render watchlist biasa/Temukan
+  Token di sini.**
 - `pages/8_temp.py` → slug **`/temp`**, judul **temp**, memanggil
   `temp_ui.render_temp()`: Robinhood biasa (non-LP), Watchlist — Analisa
   Holder (Dust), dan Temukan Token (Trending/Degen), termasuk semua kontrol.
@@ -25,6 +31,25 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   memakai guard kelayakan + merge snapshot. Form Robinhood tersedia di
   kedua halaman, default sesuai lane. Pemindahan UI **tidak** menghapus
   token/history, mengubah `source`, cron, atau pengaturan Telegram.
+- **Scan manual ikut mengirim alert Telegram** (permintaan user 2026-09-09):
+  ketiga tombol scan manual — Chart LP Meteora (`app.py`), Robinhood
+  LP/biasa (`dashboard_components._render_rh_card`), watchlist biasa Solana
+  (`temp_ui.py`) — memanggil `process_holder_alerts(...)` **sebelum**
+  `ingest_many`/`publish_scan`, jadi rule membaca anchor lama dan state hasil
+  evaluasi (`sent_event_ids`/`last_sent`/marker) ikut tertulis saat store
+  disimpan (pola cron). Scope mengikuti lane (`lp_mints` = ⚡ EARLY DUMP +
+  eskalasi EXIT, `high_mints` = 🔔 HIGH DROP), `mute_mints` mengikuti tombol
+  on/off notif watchlist biasa, dan `volume_rules=False` supaya scan ad-hoc
+  tidak menggeser anchor 4 jam / peta wallet milik cron. Hasil kirim
+  dilaporkan `_store_alert_note` → `_render_alert_note` (lewat
+  `session_state`, karena setiap tombol langsung `st.rerun()`); **gagal kirim
+  ikut ditampilkan** supaya "kredensial Telegram tidak terpasang" tidak
+  terbaca seperti "tidak ada sinyal". Kredensial: env → `config.json` →
+  `st.secrets` (`telegram_alerts._telegram_credentials()`, lazy supaya cron
+  Actions yang hanya memasang requests + curl_cffi tetap jalan). Batasan:
+  scan manual tetap `push=False`, jadi state alert UI hanya hidup di file
+  lokal host dashboard — cron dan dashboard bisa mengirim ⚡ yang sama untuk
+  kondisi yang sama (dedup berlaku per host).
 - AppTest untuk halaman temp dijalankan dari entrypoint `app.py` lalu
   `.switch_page("pages/8_temp.py")` agar registry multipage/navigation sama
   dengan deployment (bukan menjalankan file halaman sebagai main script).

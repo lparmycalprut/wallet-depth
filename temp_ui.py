@@ -34,8 +34,12 @@ def render_temp() -> None:
                                   sync_caption_text, sync_summary)
 
     from dashboard_components import (_ca_error, _dust_badge_html,
-                                      _points_for, _render_depth, _render_rh_card,
-                                      load_dashboard_data, render_styles)
+                                      _points_for, _render_alert_note,
+                                      _render_depth, _render_rh_card,
+                                      _store_alert_note,
+                                      load_dashboard_data, render_styles,
+                                      ALERT_NOTE_KEY)
+    from telegram_alerts import process_holder_alerts
 
     render_styles()
     st.title("temp")
@@ -177,6 +181,21 @@ def render_temp() -> None:
                         if not isinstance(item, dict))
         _published = None
         if fresh:
+            # Alert ikut dievaluasi + dikirim dari scan manual (permintaan user
+            # 2026-09-09). Lane watchlist biasa TIDAK di-scan cron sejak
+            # 2026-09-07, jadi tombol ini satu-satunya jalur rule 🔔 HIGH DROP
+            # (turun >= 50% dari titik high) — tanpa evaluasi di sini token
+            # biasa tidak pernah bisa mengirim notif. Sebelum ingest_many
+            # supaya state alert ikut tersimpan; volume_rules=False = anchor
+            # 4 jam cron tidak digeser. Tombol on/off notif watchlist biasa
+            # tetap dihormati lewat mute_mints (evaluasi jalan, kirim dilewati).
+            _store_alert_note(process_holder_alerts(
+                fresh, history_store, lp_mints=set(),
+                high_mints=set(holder_watch),
+                mute_mints=(set() if alert_settings.regular_telegram_enabled()
+                            else set(holder_watch)),
+                watchlist_meta=holder_watch,
+                volume_rules=False), f"{ALERT_NOTE_KEY}regular")
             # ``detail=False``: baseline scan FULL + ``latest_detail`` +
             # kronologi (data awal yang sudah tercatat) **tidak disentuh** —
             # scan ini hanya menambah titik baru di atasnya.
@@ -219,6 +238,7 @@ def render_temp() -> None:
                 + ". Baseline scan FULL, latest detail, dan kronologi tidak "
                   "ditimpa; tiap baris menampilkan angka sesuai waktu "
                   "snapshotnya sendiri.", icon="✅")
+    _render_alert_note(f"{ALERT_NOTE_KEY}regular")
 
     # Laporan tombol 🗑️ Hapus semua (ditulis sebelum st.rerun di bawah) supaya
     # hasilnya terlihat di tempat card yang baru saja dikosongkan.

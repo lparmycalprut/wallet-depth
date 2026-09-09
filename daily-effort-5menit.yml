@@ -13,8 +13,15 @@
 #   1. langkah "Chain run berikutnya" punya DUA rem supaya antrean concurrency
 #      `holder-scanner` tidak menumpuk lalu saling membatalkan
 #      ("Canceling since a higher priority waiting request …"): dispatch
-#      dilewati bila masih ada run workflow ini yang queued/in_progress, dan
-#      dilewati juga bila schedule */5 terbukti sehat (< 15 menit);
+#      dilewati bila masih ada run workflow ini yang queued/in_progress
+#      (Guard 1), atau bila run lain baru selesai < CHAIN_QUIET_SEC=240 detik
+#      (Guard 2). **Perbaikan 2026-09-09:** Guard 2 lama membandingkan umur
+#      run *schedule* terakhir dengan 900 detik dan menyimpulkan "schedule
+#      sehat" — padahal scheduler GitHub bisa di-throttle berjam-jam, jadi
+#      sekali dispatch dilewati pipeline mati total (2026-09-09: kosong
+#      12:05→15:15 UTC, ⚡ EARLY DUMP Robinhood tidak terkirim). Sekarang
+#      pembandingnya run terakhir event apa pun dengan jendela < kadens
+#      5 menit, sehingga rantai selalu menyambung lagi;
 #   2. input `scan_all` (--scope all) diganti `full_scan` (--full) — scanner
 #      hanya punya lane LP sejak 2026-09-07; `--scope` lama masih diterima
 #      sebagai alias sementara supaya dispatch manual tidak crash sebelum
@@ -109,6 +116,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           API="https://api.github.com/repos/${{ github.repository }}/actions/workflows/daily-effort.yml/runs"
+          # Jendela "run lain baru saja selesai" untuk Guard 2. HARUS lebih
+          # pendek dari kadens 5 menit (300 detik) — kalau tidak, rantai
+          # dispatch mematikan dirinya sendiri dan pipeline berhenti total.
+          CHAIN_QUIET_SEC=240
           NOW=$(date +%s)
           WAIT=$((300 - NOW % 300 + 20))
           echo "Tidur ${WAIT}s sampai batas 5 menit berikutnya."
@@ -126,15 +137,28 @@ jobs:
             exit 0
           fi
 
-          # Guard 2 — bila schedule */5 GitHub sedang sehat, biarkan cron yang
-          # menjaga ritme; chain dispatch hanya cadangan saat schedule di-throttle.
-          LAST_SCHEDULE=$(curl -sSf -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "$API?event=schedule&status=completed&per_page=1" \
-            | python3 -c "import json,sys,datetime; runs=json.load(sys.stdin).get('workflow_runs') or []; ts=(runs[0].get('updated_at') or '') if runs else ''; print(int(datetime.datetime.strptime(ts,'%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc).timestamp()) if ts else 0)")
-          AGE=$(( $(date +%s) - ${LAST_SCHEDULE:-0} ))
-          if [ "${LAST_SCHEDULE:-0}" -gt 0 ] && [ "$AGE" -lt 900 ]; then
-            echo "Schedule */5 sehat (run terakhir ${AGE}s lalu) — dispatch dilewati."
+          # Guard 2 — rem anti run kembar, BUKAN penilai kesehatan schedule.
+          #
+          # Perbaikan 2026-09-09: pembandingnya **run terakhir event apa pun**
+          # dengan jendela CHAIN_QUIET_SEC (240 detik — lebih pendek dari
+          # kadens 5 menit), bukan "run schedule terakhir < 15 menit".
+          # Versi lama menyimpulkan "schedule */5 sehat" hanya karena ada run
+          # schedule yang baru selesai, lalu MELEWATI dispatch — padahal
+          # scheduler GitHub bisa di-throttle berjam-jam, dan begitu satu
+          # dispatch dilewati tidak ada lagi yang membangunkan pipeline.
+          # Kasus nyata 2026-09-09: run terakhir selesai 12:05 UTC lalu kosong
+          # sampai 15:15 UTC (±3 jam) — snapshot holder basi dan ⚡ EARLY DUMP
+          # Robinhood tidak terkirim meski token sudah di atas 0,1% MC.
+          # Aman dari stall: langkah ini selalu tidur sampai batas 5 menit
+          # berikutnya sebelum memeriksa, jadi satu run minimal berlangsung
+          # ±320 detik — run yang baru selesai pasti lebih tua dari jendela
+          # 240 detik dan rantai selalu tersambung lagi.
+          LAST_RUN=$(curl -sSf -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" "$API?per_page=25" \
+            | python3 -c "import json,sys,datetime; runs=json.load(sys.stdin).get('workflow_runs') or []; me='${{ github.run_id }}'; ts=[int(datetime.datetime.strptime(r['updated_at'],'%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc).timestamp()) for r in runs if str(r.get('id')) != me and r.get('status') == 'completed' and r.get('updated_at')]; print(max(ts) if ts else 0)")
+          AGE=$(( $(date +%s) - ${LAST_RUN:-0} ))
+          if [ "${LAST_RUN:-0}" -gt 0 ] && [ "$AGE" -lt "$CHAIN_QUIET_SEC" ]; then
+            echo "Run lain selesai ${AGE}s lalu (< ${CHAIN_QUIET_SEC}s) — dispatch dilewati, run itu yang merantai."
             exit 0
           fi
 
@@ -143,4 +167,4 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/${{ github.repository }}/actions/workflows/daily-effort.yml/dispatches \
             -d '{"ref":"${{ github.ref_name }}"}'
-          echo "Run berikutnya di-dispatch (schedule terakhir ${AGE}s lalu)."
+          echo "Run berikutnya di-dispatch (run terakhir selesai ${AGE}s lalu)."
