@@ -1,3 +1,47 @@
+# Kegiatan — 9 September 2026 (halaman temp)
+
+Permintaan user: parkir tiga section yang sementara tidak digunakan ke
+halaman baru bernama **temp**.
+
+- `pages/8_temp.py` (`/temp`) + `temp_ui.py`: Robinhood biasa/non-LP,
+  Watchlist — Analisa Holder (Dust), dan Temukan Token (Trending/Degen).
+  Data dan kontrol tambah, scan, pindah lane, hapus, serta setelan Telegram
+  tetap tersedia. Scan manual hanya lane yang tampil, bukan token LP di
+  halaman lain; snapshot lain tetap di-merge.
+- `app.py`: hanya Chart LP Meteora, Scan Meteora, Robinhood LP, dan Scan
+  Holder Khusus. Tautan **📦 temp** di atas; halaman temp memiliki tautan
+  kembali. Tidak mengubah source token, store, cron, atau setelan alert.
+- `dashboard_components.py`: presentasi/CSS dan card Robinhood bersama;
+  loader data menjaga store Solana/Robinhood dan overlay manual. Tidak
+  mengimpor/menjalankan halaman utama untuk membuka temp.
+- AppTest lama diarahkan ke halaman baru sesuai section; 9 tes navigasi,
+  pembagian layout, persistensi, scan per lane (Robinhood tetap 100.000),
+  default form, dan pindah token antarhalaman ditambahkan.
+- Validasi: **991 passed, 37 subtests passed**, py_compile dan pemeriksaan
+  import/nama tidak terdefinisi lolos. Live preview Streamlit port 8501.
+
+# Kegiatan — 9 September 2026 (PARE: cakupan scan watchlist)
+
+Laporan: PARE `0x15d36b6a28d8327abc7afabf0f106ae2c9af5c4d`
+0,00% di watchlist vs 0,03% di Scan Holder Khusus.
+
+- Akar masalah kode: cap watchlist Robinhood 2.000 / cron 3.000 berbeda
+  dari scan khusus 100.000. Urutan saldo terbesar Blockscout memotong ekor
+  dust. Tombol dan cron Robinhood sekarang 100.000; budget workflow
+  `--max-wallets` hanya untuk Solana. Default modul Robinhood juga 100.000.
+- Penanda `truncated` diperbaiki untuk CSV capped/counters tak lengkap,
+  RPC gagal setelah sebagian halaman, dan batas halaman v2. Alasan hasil
+  parsial diteruskan; guard bersama menolaknya dari snapshot, angka baris,
+  grafik, dan alert, termasuk history lama bertanda truncated. Data lama
+  tidak diubah; memakai hasil lengkap terakhir atau belum ada data.
+- Tes baru mereproduksi cap 2.000/3.000 → 0,00% dan lengkap → 0,03%
+  memakai fixture sintetis 3.300 holder. Wiring tombol UI dan cron lama,
+  fallback provider, publish/history, dan guard alert ikut diuji.
+- Validasi: **982 passed, 36 subtests passed**, py_compile sukses.
+  API live tidak terverifikasi dari sandbox karena kegagalan TLS; angka
+  0,03% produksi berasal dari laporan user, bukan hasil scan live sesi ini.
+  Tidak mengubah workflow atau file status/history produksi.
+
 # Kegiatan — 9 September 2026 (sesi 12 · 📨 Telegram: judul 50 bin + hyperlink)
 
 Permintaan user: judul eskalasi diganti menjadi **"🚨 WAKTUNYA EXIT /

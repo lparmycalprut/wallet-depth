@@ -189,7 +189,9 @@ def scan_degraded(holders, *, min_wallets: int = MIN_USABLE_WALLETS) -> bool:
     ``dust_pct_mc = 0.0`` yang **terlihat** seperti "semua dust keluar"
     (watchlist lalu mengklaim −100% sejak masuk).
 
-    Bukti yang dipakai: ``total_fetched`` < :data:`MIN_USABLE_WALLETS`
+    Scan bertanda ``truncated``/``degraded`` selalu ditolak, termasuk
+    ribuan top holder tanpa ekor dust (PARE, 2026-09-09).
+    Bukti lain: ``total_fetched`` < :data:`MIN_USABLE_WALLETS`
     (termasuk 0 = fetch gagal) atau jumlah wallet dianalisis di bawah
     lantai yang sama. Dict tanpa bukti jumlah wallet sama sekali
     (snapshot skema lama/fixture) **tidak** dianggap degraded — tanpa
@@ -197,6 +199,8 @@ def scan_degraded(holders, *, min_wallets: int = MIN_USABLE_WALLETS) -> bool:
     """
     if not isinstance(holders, dict) or not holders:
         return False
+    if holders.get("truncated") or holders.get("degraded"):
+        return True
     if "total_fetched" in holders \
             and _int(holders.get("total_fetched")) < int(min_wallets):
         return True
@@ -247,7 +251,7 @@ def point_usable(point, *, min_wallets: int = MIN_USABLE_WALLETS) -> bool:
     row = point if isinstance(point, dict) else {}
     if not row:
         return False
-    if row.get("degraded"):
+    if scan_degraded(row, min_wallets=min_wallets):
         return False
     if _float(row.get("dust_pct_mc"), None) is None:
         return False

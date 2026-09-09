@@ -143,22 +143,22 @@ class ChartLpCardTest(unittest.TestCase):
         self.assertIn("perubahan holder langsung kelihatan", text)
         # Jangan ada lagi janji "Meteora tetap 15 menit" di caption card ini.
         self.assertNotIn("15 menit", text)
-        # Caption watchlist biasa ikut menyebut kedua lane LP secepat ini.
+        # Caption watchlist biasa sekarang hanya ada di halaman temp.
         joined = "\n".join(captions)
-        self.assertIn("semua watchlist LP", joined)
+        self.assertNotIn("semua watchlist LP", joined)
         self.assertNotIn("Chart LP (Meteora) ±15 menit", joined)
 
     def test_lp_rows_are_separate_from_holder_watchlist(self):
         app = self._app()
         keys = [button.key or "" for button in app.button]
         self.assertIn(f"lp-move-{LP_MINT}", keys)
-        self.assertIn(f"to-lp-{HOLDER_MINT}", keys)
+        self.assertNotIn(f"to-lp-{HOLDER_MINT}", keys)
         # token LP tidak punya tombol baris watchlist biasa
         self.assertNotIn(f"to-lp-{LP_MINT}", keys)
         self.assertNotIn(f"remove-{LP_MINT}", keys)
 
     def test_move_button_sends_token_to_lp_card(self):
-        app = self._app()
+        app = self._app().switch_page("pages/8_temp.py").run()
         with mock.patch("watchlist.set_watchlist_source",
                         return_value=True) as move:
             self._button(app, f"to-lp-{HOLDER_MINT}").click().run()
@@ -172,7 +172,7 @@ class ChartLpCardTest(unittest.TestCase):
         move.assert_called_once_with(LP_MINT, "manual", background=True)
 
     def test_manual_add_can_target_the_lp_card(self):
-        app = self._app()
+        app = self._app().switch_page("pages/8_temp.py").run()
         # Radio form add token Solana (bukan form Robinhood yang juga punya
         # radio "Masuk ke card") — dibedakan lewat key eksplisit.
         radios = [node for node in app.radio if node.key == "add-token-target"]
@@ -193,7 +193,7 @@ class ChartLpCardTest(unittest.TestCase):
         self.assertEqual(add.call_args.kwargs["source"], "meteora")
 
     def test_manual_add_defaults_to_holder_watchlist(self):
-        app = self._app()
+        app = self._app().switch_page("pages/8_temp.py").run()
         inputs = [node for node in app.text_input
                   if node.key == "add-token-input"]
         inputs[0].set_value(HOLDER_MINT[:32])

@@ -255,3 +255,32 @@ Builder 15 RPS ($49), Pro 30 RPS ($199).
 jeda `PAGE_SLEEP_SEC = 0.6` dtk antar halaman (± 1,7 req/dtk) plus retry
 exponential-backoff untuk 429/5xx (`RETRY_ATTEMPTS`, `RETRY_BACKOFF_SEC`);
 403 **tidak** di-retry (lihat atas).
+
+
+## Cakupan dust: watchlist = Scan Holder Khusus (2026-09-09)
+
+Laporan PARE (`0x15d36b6a28d8327abc7afabf0f106ae2c9af5c4d`):
+watchlist 0,00%, Scan Holder Khusus 0,03%. Kode watchlist sebelumnya
+memotong daftar ke 2.000 holder, cron ke 3.000, sedangkan scan khusus
+memakai 100.000. Karena Blockscout mengurutkan saldo terbesar dahulu,
+ekor wallet ≤ $10 bisa hilang seluruhnya. Ini masalah cakupan, bukan
+pembulatan atau rumus `dust_value / marketcap × 100`.
+
+- Tombol watchlist Robinhood, cron Robinhood, dan default modul sekarang
+  memakai `FULL_SCAN_MAX_WALLETS` (100.000). Argumen workflow lama
+  `--max-wallets 3000` hanya membatasi Solana; tidak perlu mengedit workflow.
+- Detail tetap terpisah: cron biasa `detail=False`, `--full` untuk
+  baseline/kronologi. Pengambilan CSV lengkap tidak menambah request untuk
+  token di bawah plafon server (10.000); token besar perlu paginasi.
+- `truncated=True` bila daftar kurang dari counters, CSV mencapai cap tanpa
+  counters, RPC gagal di tengah paginasi, atau v2 mencapai plafon halaman.
+  Hasil parsial menyimpan alasan kegagalan, bukan sukses dengan error kosong.
+- Guard bersama `holders_usable`/`point_usable` menolak scan terpotong meski
+  berisi ribuan wallet. Snapshot/grafik memakai scan lengkap terakhir atau
+  belum ada data; alert tidak dievaluasi dari angka parsial. Titik history
+  lama bertanda `truncated` ikut tersaring tanpa mengubah file data produksi.
+
+Regresi offline: 3.000 wallet bernilai $20 disusul 300 wallet bernilai $1,
+MC $1 juta → scan lengkap 0,03%, cap lama 0,00% dan kini ditolak sebagai
+hasil tidak lengkap. Ini fixture sintetis, bukan snapshot live PARE;
+koneksi API dari sandbox saat investigasi gagal verifikasi TLS.

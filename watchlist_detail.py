@@ -313,20 +313,12 @@ def resolve_view(token: dict | None, points, *, now=None,
         snapshot_count = None
         snapshot_ts = 0
     use_history = (history_ts > snapshot_ts and history_pct is not None)
-    # Titik/snapshot yang **terpotong** cap max_wallets membawa dust yang
-    # bias (urutan getTokenAccounts Helius tidak urut saldo — sampel pendek
-    # = subset acak, bukan "top holders"). Kalau kandidat baru terpotong
-    # dan kandidat lama eksplisit lengkap, yang lama menang — angka bias
-    # tidak boleh menimpa angka lengkap hanya karena lebih baru.
-    truncation_swap = (use_history and snapshot_ok
-                       and raw_snapshot_pct is not None
-                       and last_point.get("truncated") is True
-                       and holders.get("truncated") is not True)
-    if truncation_swap:
-        use_history = False
-    # Bila selisihnya sudah dijelaskan truncation_swap (angka baru bias
-    # karena sampel terpotong), jangan flag drift lagi — penanda swap +
-    # note sudah cukup.
+    # Truncated scans have already been rejected by the usability guards.
+    # Keep the existing UI warning when a newer partial scan was skipped.
+    newest_raw = rows[-1] if rows else {}
+    truncation_swap = bool(snapshot_ok and newest_raw.get("truncated")
+                           and _int(newest_raw.get("ts"), 0)
+                           > max(snapshot_ts, history_ts))
     drift = (snapshot_ok and raw_snapshot_pct is not None
              and history_pct is not None
              and abs(raw_snapshot_pct - history_pct) > DRIFT_TOLERANCE_PP

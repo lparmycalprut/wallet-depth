@@ -5,6 +5,22 @@ dust** sebagai jejak dump, plus **Scan Meteora DLMM**. Cron holder dapat
 mengirim alert Telegram khusus perubahan dust; sinyal lama seperti silent
 accumulation 12 jam dan reversal tetap tidak digunakan.
 
+## Halaman
+
+- **Halaman utama**: Chart LP Meteora, Scan Meteora, Watchlist Robinhood LP,
+  dan Scan Holder Khusus (Helius / Robinhood).
+- **temp** (`/temp`, sejak 2026-09-09): **🦅 Watchlist Robinhood — Holder
+  Dust** (biasa/non-LP), **📋 Watchlist — Analisa Holder (Dust)**, dan
+  **🔍 Temukan Token** (Trending/Degen). Dibuka lewat tautan **📦 temp**
+  di halaman utama atau sidebar; tersedia tautan kembali ke halaman utama.
+  Fitur sementara diparkir, **bukan dihapus**: data, form tambah, scan manual,
+  dan tombol pindah/hapus token tetap tersedia. Scan manual hanya memproses
+  lane pada card tersebut; snapshot lane lain tetap dipertahankan.
+- **Holder**: analisa detail satu token dan scan FULL/kronologi.
+
+Pemindahan halaman tidak mengubah file watchlist, source token, jadwal cron,
+atau setelan Telegram. Robinhood LP tetap di halaman utama, bukan di temp.
+
 ## Konsep
 
 1. **Dust holder** — wallet murni dengan `0 < nilai ≤ $10`:

@@ -133,7 +133,7 @@ class ManualWatchlistScanTest(unittest.TestCase):
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
-        app = AppTest.from_file(APP, default_timeout=60).run()
+        app = AppTest.from_file(APP, default_timeout=60).switch_page("pages/8_temp.py").run()
         self.assertEqual(len(app.exception), 0)
         # Label Robinhood ("🔄 Scan holder watchlist Robinhood …") punya
         # prefiks yang sama — pilih yang persis tombol watchlist Solana.

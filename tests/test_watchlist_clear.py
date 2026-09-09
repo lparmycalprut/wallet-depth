@@ -258,7 +258,7 @@ class ClearRegularWatchlistButtonTest(unittest.TestCase):
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
-        return AppTest.from_file(APP, default_timeout=60).run()
+        return AppTest.from_file(APP, default_timeout=60).switch_page("pages/8_temp.py").run()
 
     def _button(self, app, key):
         found = [button for button in app.button if button.key == key]
@@ -304,8 +304,8 @@ class ClearRegularWatchlistButtonTest(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         keys = [button.key or "" for button in app.button]
         self.assertNotIn(CLEAR_KEY, keys)
-        # baris LP tetap ada di card Chart LP
-        self.assertIn(f"lp-move-{LP_MINT}", keys)
+        # Baris LP tetap di halaman utama, bukan halaman temp.
+        self.assertNotIn(f"lp-move-{LP_MINT}", keys)
 
     def test_tombol_baris_lama_tetap_ada(self):
         """Hapus semua melengkapi ✕ per baris, bukan menggantikannya."""

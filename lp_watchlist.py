@@ -139,15 +139,12 @@ def build_lp_row(mint: str, meta: dict | None, status_tokens: dict | None,
     history_ts = _int(last_sampled.get("ts"), 0) if sampled else 0
 
     use_history = (history_ts > snapshot_ts and history_pct is not None)
-    # Titik/snapshot terpotong (dust bias — urutan Helius tidak urut
-    # saldo) kalah dari kandidat eksplisit lengkap, walau lebih lama.
-    truncation_swap = (use_history and snapshot_pct is not None
-                       and last_sampled.get("truncated") is True
-                       and holders.get("truncated") is not True)
-    if truncation_swap:
-        use_history = False
-    # Selisih akibat truncation_swap tidak di-flag drift (sudah dijelaskan
-    # penanda swap-nya sendiri).
+    # Truncated scans have already been rejected by the usability guards.
+    # Keep the existing UI warning when a newer partial scan was skipped.
+    newest_raw = points[-1] if points else {}
+    truncation_swap = bool(holders_ok and newest_raw.get("truncated")
+                           and _int(newest_raw.get("ts"), 0)
+                           > max(snapshot_ts, history_ts))
     drift = (holders_ok and snapshot_pct is not None
              and history_pct is not None
              and abs(snapshot_pct - history_pct) > DRIFT_TOLERANCE_PP
