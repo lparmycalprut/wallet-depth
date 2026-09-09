@@ -1,43 +1,52 @@
-# Holder Dust Scanner — versi **lane LP saja** (Chart LP Meteora + Robinhood LP).
+# Holder Dust Scanner — BERKAS SIAP PASANG (lane LP saja: Chart LP Meteora +
+# Robinhood LP).
 #
 # ⚠️ INI BUKAN WORKFLOW AKTIF. GitHub hanya membaca folder `.github/workflows`,
-# dan bot tidak bisa menulis ke sana (terbukti 2026-09-07: `git push` ditolak
-# `refusing to allow a GitHub App to create or update workflow
-# .github/workflows/daily-effort.yml without 'workflows' permission`).
+# dan bot tidak bisa menulis ke sana (403 `refusing to allow a GitHub App to
+# create or update workflow ... without 'workflows' permission`).
 #
 # Cara memasang: GitHub UI → Actions → "Holder Dust Scanner" → edit
-# `.github/workflows/daily-effort.yml` → timpa seluruh isinya dengan berkas ini
-# (mulai baris `name:` di bawah) → commit.
+# `.github/workflows/daily-effort.yml` → timpa SELURUH isinya dengan berkas ini
+# (mulai baris `name:` di bawah) → commit. Setelah itu tidak ada lagi
+# langkah bash rantai di YAML: seluruh logika ritme hidup di
+# `scripts/chain_next_run.py` (bot BISA mengubahnya lewat commit + test
+# `tests/test_chain_next_run.py`).
 #
-# Yang berubah dibanding workflow terpasang sekarang:
-#   1. langkah "Chain run berikutnya" punya DUA rem supaya antrean concurrency
-#      `holder-scanner` tidak menumpuk lalu saling membatalkan
-#      ("Canceling since a higher priority waiting request …"): dispatch
-#      dilewati bila masih ada run workflow ini yang queued/in_progress
-#      (Guard 1), atau bila run lain baru selesai < CHAIN_QUIET_SEC=240 detik
-#      (Guard 2). **Perbaikan 2026-09-09:** Guard 2 lama membandingkan umur
-#      run *schedule* terakhir dengan 900 detik dan menyimpulkan "schedule
-#      sehat" — padahal scheduler GitHub bisa di-throttle berjam-jam, jadi
-#      sekali dispatch dilewati pipeline mati total (2026-09-09: kosong
-#      12:05→15:15 UTC, ⚡ EARLY DUMP Robinhood tidak terkirim). Sekarang
-#      pembandingnya run terakhir event apa pun dengan jendela < kadens
-#      5 menit, sehingga rantai selalu menyambung lagi;
-#   2. input `scan_all` (--scope all) diganti `full_scan` (--full) — scanner
-#      hanya punya lane LP sejak 2026-09-07; `--scope` lama masih diterima
-#      sebagai alias sementara supaya dispatch manual tidak crash sebelum
-#      berkas ini terpasang;
-#   3. `timeout-minutes` 45 → 15 (scan ±1-2 menit + tidur chain ±5 menit).
+# Kenapa perlu dipasang (data run asli, 2026-09-09):
+#   * `schedule: */5` GitHub hampir tidak pernah tepat waktu — hanya 4 run
+#     schedule sehari (01:35, 06:41, 11:56, 16:30 UTC; jarak 4,5-5,2 jam);
+#   * YAML terpasang masih punya Guard 2 lama: "run `event=schedule` terakhir
+#     < 900 detik = schedule sehat → dispatch DILEWATI". Setelah setiap
+#     schedule (telat) itu, dispatch berikutnya pasti dibuang → pipeline mati
+#     sampai schedule berikutnya. Cron #1182 mati 16:40:24 UTC; tidak ada scan
+#     sampai 17:29 UTC ke atas — snapshot basi + ⚡ EARLY DUMP Robinhood tidak
+#     terkirim;
+#   * Guard 2 baru membandingkan umur run terakhir (event APA PUN) dengan
+#     jendela 240 detik (< kadens), jadi rantai selalu menyambung lagi;
+#   * plus: query API kini retry + FAIL-OPEN. `bash -e` versi lama membuat
+#     satu hiccup `curl | python3` membatalkan langkah rantai secara senyap
+#     (stall yang sama, penyebab berbeda).
 #
-# Kode scanner (`scripts/scan_holders.py`) sudah selaras: selama berkas ini
-# belum disalin, cron terpasang tetap jalan normal (tanpa argumen = lane LP
-# tiap run) — hanya rem anti-tabrakan dan input `full_scan` yang belum aktif.
+# Delta vs workflow TERPASANG (dicek `git diff` 2026-09-09): HANYA langkah
+# "Chain run berikutnya" — Guard 2 lama (umur run `event=schedule` < 900 s =
+# "schedule sehat" → dispatch dibuang) diganti `python scripts/chain_next_run.py`
+# dengan guard baru. Input `full_scan` dan `timeout-minutes: 15` sudah
+# terpasang; seluruh berkas tetap ditimpa supaya YAML dan root repo identik —
+# begitu YAML memanggil skrip, kalibrasi ritme berikutnya tidak perlu lagi
+# menyentuh folder workflow (yang tidak bisa ditulis bot).
+#
+# Alias `--scope all` (dispatch manual `watchlist.request_immediate_scan`)
+# sengaja TIDAK dihapus dari `scripts/scan_holders.py` sampai berkas ini
+# terpasang.
 
 name: Holder Dust Scanner
 
 on:
   schedule:
-    # Target ±5 menit. GitHub schedule best-effort (bisa telat sampai jam),
-    # jadi ritme dijaga langkah "Chain run berikutnya" di bawah.
+    # Target ±5 menit. GitHub schedule best-effort (terukur 2026-09-09: cuma
+    # menyala 4x sehari, jarak antar-kejadian 4,5-5,2 JAM), jadi ritme
+    # dipegang langkah "Chain run berikutnya" di bawah; schedule hanya jaring
+    # pengaman kalau rantai putus.
     - cron: "*/5 * * * *"
 
   workflow_dispatch:
@@ -102,7 +111,7 @@ jobs:
           fi
           # JANGAN pasang --max-wallets: urutan getTokenAccounts Helius
           # TIDAK urut saldo, jadi fetch terpotong (mis. 3000 dari 3994
-          # akun) = sampel acak yang bias — dust (≤$10) bisa jauh lebih
+          # akun) = sampel acak yang bias — dust (<=10 USD) bisa jauh lebih
           # kecil dari nilai aslinya, dan angka cron/Telegram tidak sinkron
           # dengan scan Helius di dashboard. Default kode sudah FULL
           # (FULL_SCAN_MAX_WALLETS=100.000, semua halaman sampai habis).
@@ -114,57 +123,12 @@ jobs:
         if: success() || failure()
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          API="https://api.github.com/repos/${{ github.repository }}/actions/workflows/daily-effort.yml/runs"
-          # Jendela "run lain baru saja selesai" untuk Guard 2. HARUS lebih
-          # pendek dari kadens 5 menit (300 detik) — kalau tidak, rantai
-          # dispatch mematikan dirinya sendiri dan pipeline berhenti total.
-          CHAIN_QUIET_SEC=240
-          NOW=$(date +%s)
-          WAIT=$((300 - NOW % 300 + 20))
-          echo "Tidur ${WAIT}s sampai batas 5 menit berikutnya."
-          sleep "$WAIT"
-
-          # Guard 1 — jangan menumpuk antrean concurrency `holder-scanner`.
-          # GitHub hanya menahan SATU run mengantre per group; request ketiga
-          # membatalkan yang sedang mengantre ("Canceling since a higher
-          # priority waiting request for holder-scanner exists").
-          ACTIVE=$(curl -sSf -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" "$API?per_page=25" \
-            | python3 -c "import json,sys; runs=json.load(sys.stdin).get('workflow_runs') or []; me='${{ github.run_id }}'; print(sum(1 for r in runs if str(r.get('id')) != me and r.get('status') in ('queued','in_progress','waiting')))")
-          if [ "${ACTIVE:-0}" -gt 0 ]; then
-            echo "Sudah ada ${ACTIVE} run aktif/mengantre — dispatch dilewati (anti tabrakan holder-scanner)."
-            exit 0
-          fi
-
-          # Guard 2 — rem anti run kembar, BUKAN penilai kesehatan schedule.
-          #
-          # Perbaikan 2026-09-09: pembandingnya **run terakhir event apa pun**
-          # dengan jendela CHAIN_QUIET_SEC (240 detik — lebih pendek dari
-          # kadens 5 menit), bukan "run schedule terakhir < 15 menit".
-          # Versi lama menyimpulkan "schedule */5 sehat" hanya karena ada run
-          # schedule yang baru selesai, lalu MELEWATI dispatch — padahal
-          # scheduler GitHub bisa di-throttle berjam-jam, dan begitu satu
-          # dispatch dilewati tidak ada lagi yang membangunkan pipeline.
-          # Kasus nyata 2026-09-09: run terakhir selesai 12:05 UTC lalu kosong
-          # sampai 15:15 UTC (±3 jam) — snapshot holder basi dan ⚡ EARLY DUMP
-          # Robinhood tidak terkirim meski token sudah di atas 0,1% MC.
-          # Aman dari stall: langkah ini selalu tidur sampai batas 5 menit
-          # berikutnya sebelum memeriksa, jadi satu run minimal berlangsung
-          # ±320 detik — run yang baru selesai pasti lebih tua dari jendela
-          # 240 detik dan rantai selalu tersambung lagi.
-          LAST_RUN=$(curl -sSf -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" "$API?per_page=25" \
-            | python3 -c "import json,sys,datetime; runs=json.load(sys.stdin).get('workflow_runs') or []; me='${{ github.run_id }}'; ts=[int(datetime.datetime.strptime(r['updated_at'],'%Y-%m-%dT%H:%M:%SZ').replace(tzinfo=datetime.timezone.utc).timestamp()) for r in runs if str(r.get('id')) != me and r.get('status') == 'completed' and r.get('updated_at')]; print(max(ts) if ts else 0)")
-          AGE=$(( $(date +%s) - ${LAST_RUN:-0} ))
-          if [ "${LAST_RUN:-0}" -gt 0 ] && [ "$AGE" -lt "$CHAIN_QUIET_SEC" ]; then
-            echo "Run lain selesai ${AGE}s lalu (< ${CHAIN_QUIET_SEC}s) — dispatch dilewati, run itu yang merantai."
-            exit 0
-          fi
-
-          curl -sSf -X POST \
-            -H "Authorization: Bearer $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/${{ github.repository }}/actions/workflows/daily-effort.yml/dispatches \
-            -d '{"ref":"${{ github.ref_name }}"}'
-          echo "Run berikutnya di-dispatch (run terakhir selesai ${AGE}s lalu)."
+          # Semua keputusan rantai ada di scripts/chain_next_run.py supaya
+          # bisa diubah lewat commit biasa (bot ditolak menulis folder
+          # .github/workflows). Kadens boleh dikalibrasi dari sini TANPA
+          # menyentuh kode: ubah cron di atas + CHAIN_CADENCE_SEC di sini.
+          CHAIN_CADENCE_SEC: "300"
+          CHAIN_WORKFLOW: "daily-effort.yml"
+          # CHAIN_QUIET_SEC: "240"   # wajib < CHAIN_CADENCE_SEC
+          # CHAIN_LEAD_SEC: "20"
+        run: python scripts/chain_next_run.py

@@ -1,3 +1,79 @@
+# Kegiatan — 9 September 2026 (cron 5 menit mati lagi: rantai dipindah ke skrip)
+
+User: *"coba cek kenapa cron tidak berjalan per 5 menit"* (run #1182 selesai
+16:40:24 UTC; tidak ada run baru sampai 17:29 UTC ke atas).
+
+## 1. Diagnosa (angka dari `GET /actions/workflows/daily-effort.yml/runs`)
+
+- Repo **publik** (`isPrivate: false`) dan workflow berstatus `active` → bukan
+  kuota billing, bukan workflow dinonaktifkan.
+- Hari itu `schedule: */5` hanya menghasilkan **4 run** (01:35, 06:41, 11:56,
+  16:30 UTC) dari 288 yang dijadwalkan — scheduler GitHub di-throttle, jarak
+  antar-kejadian 4,5–5,2 JAM. Bukan anomali baru: `*/15` pernah terukur ±2 jam
+  (DEPLOY.md).
+- Pola tiap kejadian schedule identik: schedule → **tepat satu** chain dispatch
+  → hening (01:35→01:35, 06:41→06:45, 11:56→12:00, 16:30→16:35). Empat stall
+  hari itu (01:40, 06:50, 12:05, 16:40 UTC) = empat kejadian schedule.
+- Akar masalah: **Guard 2 di `.github/workflows/daily-effort.yml`** — dispatch
+  dilewati bila run `event=schedule` terakhir selesai < 900 detik lalu. Chain
+  dispatch berjalan ±5 menit setelah schedule, jadi umurnya selalu ~300 detik →
+  "schedule */5 sehat" → dispatch dibuang → tidak ada yang membangunkan
+  pipeline sampai schedule (telat berjam-jam) berikutnya. Guard lama juga tidak
+  mengecualikan run sendiri (query `event=schedule&status=completed&per_page=1`),
+  akibatnya run schedule SELALU dispatch dan run dispatch SELALU skip —
+  persis rasio 1:1 yang terukur.
+- Perbaikan Guard 2 sudah ditulis pagi harinya di `daily-effort-5menit.yml`
+  (root repo) tapi **tidak pernah terpasang**: `git push` yang menyentuh
+  `.github/workflows/*` ditolak remote (`refusing to allow a GitHub App to
+  create or update workflow ... without 'workflows' permission`) — diverifikasi
+  ulang hari ini dengan pesan yang sama.
+- Temuan tambahan: langkah rantai versi inline bash **fail-closed** — di bawah
+  `bash -e`, satu hiccup `curl -sSf` di `ACTIVE=$(…)` membatalkan seluruh
+  langkah tanpa dispatch (stall yang sama, penyebab lain), dan daftar run
+  queried 2× per run (Guard 1 + Guard 2) padahal cukup sekali.
+
+## 2. Perbaikan
+
+- **`scripts/chain_next_run.py`** (baru, stdlib saja): tidur ke batas kadens →
+  SATU `GET …/runs` dipakai Guard 1 (antrean `holder-scanner`) + Guard 2 (umur
+  run `completed` terbaru, event apa pun, cabang sama, run sendiri dikecualikan)
+  → `POST dispatches`. `CHAIN_QUIET_SEC=240` < kadens 300 supaya rantai tidak
+  bisa mematikan dirinya sendiri; API error = **fail-open** (tetap dispatch —
+  run ganda sudah disaring `MIN_RUN_GAP_SEC` di scanner); retry 3× GET / 4×
+  POST dengan backoff, 400/401/404/422 tidak diulang; dispatch buntu → `exit 1`
+  + pesan "rantai TERPUTUS" supaya run merah, bukan hijau tanpa penerus; tanpa
+  `GITHUB_TOKEN`/`GITHUB_REPOSITORY` (jalankan lokal) → `exit 0` diam.
+- **`daily-effort-5menit.yml`**: langkah "Chain run berikutnya" jadi satu baris
+  `python scripts/chain_next_run.py` + env `CHAIN_CADENCE_SEC`/`CHAIN_WORKFLOW`.
+  Karena logika pindah ke skrip, yang butuh UI tinggal satu baris YAML;
+  alternatif permanen: **Settings → Third-party Access → app bot → Repository
+  permissions → Actions Workflows: Read & write**.
+- **`tests/test_chain_next_run.py`** (28 test, offline): tabel keputusan guard
+  termasuk **regresi stall 2026-09-09** (`active=0`, umur run schedule 299 s →
+  wajib dispatch), filter cabang/dirinya, `--quiet-sec ≥ --cadence` dipotong
+  otomatis, retry 5xx vs 4xx permanen, fail-open saat API mati, exit 1 saat
+  dispatch buntu, dan `next_boundary_wait`.
+
+## 3. Yang harus dilakukan user
+
+1. **Pasang `daily-effort-5menit.yml` ke `.github/workflows/daily-effort.yml`**
+   (GitHub UI → Actions → Holder Dust Scanner → edit → timpa dari baris `name:`
+   → commit). Tanpa ini Guard 2 lama tetap membuang dispatch.
+2. Sembari menunggu, **jalankan "Run workflow" manual** (tanpa centang): rantai
+   langsung tersambung lagi — guard lama hanya membuang dispatch bila ada run
+   `schedule` selesai < 15 menit lalu, jadi mulai sekarang chain jalan terus
+   sampai kejadian schedule berikutnya.
+
+## 4. Batas verifikasi
+
+Sandbox tidak bisa mengunduh log run (`results-receiver`/blob storage diblokir),
+jadi pesan guard disimpulkan dari **pola waktu run** (create/update + event),
+bukan dari stdout langkah "Chain run berikutnya". Skrip diverifikasi terhadap
+API asli read-only (50 run terbaca; `head_branch`, `updated_at`, status
+`completed`+conclusion `cancelled` diperlakukan benar) dan jalur fail-open
+dengan token palsu (404 → dispatch tetap dicoba, retry tidak dibakar).
+Kadens nyata setelah fix terpasang baru terbukti ±1–2 jam di tab Actions.
+
 # Kegiatan — 9 September 2026 (secret GitHub ≠ secret Streamlit)
 
 User: *\"1 alert GAGAL dikirim (Telegram credentials are not configured).
