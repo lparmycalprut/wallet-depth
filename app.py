@@ -21,10 +21,12 @@ from lp_watchlist import (LP_SOURCE, lp_card_rows, lp_chart_figure,
 from meteora_screener import row_flag, scan_meteora, sort_rows
 import page_router
 from dashboard_components import (_ca_error, _compact, _dust_badge_html, _dust_best_html,
-                                  _number, _render_depth, _render_rh_card, _wib,
-                                  _depth_tables_html,
+                                  _number, _render_alert_note, _render_depth,
+                                  _render_rh_card, _store_alert_note, _wib,
+                                  _depth_tables_html, ALERT_NOTE_KEY,
                                   SOLANA_CA_RE, load_dashboard_data,
                                   render_styles)
+from telegram_alerts import process_holder_alerts
 import robinhood_holders
 from robinhood_watchlist import (split_robinhood_watchlist)
 from holder_analysis import analyze_token
@@ -43,12 +45,6 @@ st.set_page_config(page_title="Wallet Depth — Holder Analytic",
 page_router.apply()
 
 render_styles()
-st.markdown("""
-<div class="hero"><h1>🧮 Wallet Depth</h1>
-<p>Fokus analisa holder: dust wallet (≤ $10) sebagai jejak dump.
-Chart LP: ≥ 0,5% MC = HATI-HATI · ≥ 1% MC = BAHAYA. Scan Meteora DLMM hanya
-menampilkan pool dust ≤ 0,1% MC (🏆 BEST POOL = + holder valid + TVL ≥ 10K).</p></div>
-""", unsafe_allow_html=True)
 st.page_link("pages/8_temp.py", label="temp", icon="📦")
 
 
@@ -108,6 +104,17 @@ LP_CARD_TITLE = "🌊 Chart LP — Watchlist Meteora"
 LP_ADD_FORM = "lp-add-token"
 
 
+def _card_head_html(title: str, pills: list[str] | None = None) -> str:
+    """Header card grid: judul tebal + pill ringkasan di sebelahnya.
+
+    Dipakai card **Chart LP** (kolom kiri) dan **Scan Meteora Pool** (kolom
+    kanan) supaya dua card yang sejajar itu berkepala sama.
+    """
+    chips = "".join(pills or [])
+    return (f'<div class="lp-head"><span class="lp-title">{title}'
+            f"</span>{chips}</div>")
+
+
 def _lp_head_html(summary: dict) -> str:
     """Header card Chart LP: jumlah token + rekap level dust."""
     pills = [f'<span class="lp-count">{summary.get("total", 0)} token</span>']
@@ -120,8 +127,7 @@ def _lp_head_html(summary: dict) -> str:
     if summary.get("rising"):
         pills.append(f'<span class="lp-count">dust naik {summary["rising"]}'
                      '</span>')
-    return (f'<div class="lp-head"><span class="lp-title">{LP_CARD_TITLE}'
-            f"</span>{''.join(pills)}</div>")
+    return _card_head_html(LP_CARD_TITLE, pills)
 
 
 def _render_lp_row(row: dict) -> None:
@@ -208,7 +214,7 @@ def _render_lp_row(row: dict) -> None:
 
 def _render_lp_card(lp_watch: dict, status_tokens: dict,
                     history_store: dict) -> None:
-    """Card paling atas: watchlist Meteora + grafik perubahan dust holder."""
+    """Card kolom kiri grid: watchlist Meteora + grafik perubahan dust."""
     rows = lp_card_rows(lp_watch, status_tokens, history_store)
     summary = lp_summary(rows)
     with st.container(border=True):
@@ -273,6 +279,18 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
                             if not isinstance(item, dict))
             published = None
             if fresh:
+                # Alert ikut dievaluasi + dikirim dari scan manual (permintaan
+                # user 2026-09-09), bukan hanya dari cron. HARUS sebelum
+                # ingest_many: rule membaca anchor lama, lalu state hasil
+                # evaluasi (sent_event_ids/last_sent/marker episode) ikut
+                # tertulis saat ingest_many menyimpan store — pola yang sama
+                # dengan cron scripts/scan_holders.py. volume_rules=False:
+                # hanya rule lane LP (⚡ EARLY DUMP + eskalasi EXIT), anchor
+                # 4 jam / peta wallet cron tidak digeser scan ad-hoc.
+                _store_alert_note(process_holder_alerts(
+                    fresh, history_store, lp_mints=set(lp_watch),
+                    high_mints=set(), watchlist_meta=lp_watch,
+                    volume_rules=False), f"{ALERT_NOTE_KEY}lp")
                 ingest_many(fresh, store=history_store, detail=False)
                 published = publish_holder_status(
                     fresh, watchlist, push=False,
@@ -297,10 +315,12 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
                             "dilewati")
             st.info("Scan sekarang selesai: " + " · ".join(bits) + ".",
                     icon="✅")
+        _render_alert_note(f"{ALERT_NOTE_KEY}lp")
 
         if not rows:
             st.info("Chart LP masih kosong. Tambahkan token dari **⭐ Scan "
-                    "Meteora Pool** di bawah atau tempel CA di form atas.")
+                    "Meteora Pool** di kolom kanan atau tempel CA di form "
+                    "atas.")
             return
 
         header = st.columns([1.7, 0.75, 0.95, 0.42, 0.42, 0.42])
@@ -513,140 +533,175 @@ def _render_helius_holder_result(result: dict) -> None:
     )
 
 
+METEORA_CARD_TITLE = "🌊 Scan Meteora Pool"
+
+
+def _meteora_head_html(rows: list, hidden: int, best_count: int) -> str:
+    """Header card Scan Meteora: jumlah pool + rekap BEST / disembunyikan."""
+    pills = [f'<span class="lp-count">{len(rows)} pool</span>']
+    if best_count:
+        pills.append('<span class="lp-count" style="color:#3b2f0a;'
+                     'background:#fde047;border:1px solid #facc15;">'
+                     f'🏆 {best_count} BEST</span>')
+    if hidden:
+        pills.append('<span class="lp-count" style="color:#334155;'
+                     f'background:#e2e8f0;">{hidden} disembunyikan</span>')
+    return _card_head_html(METEORA_CARD_TITLE, pills)
+
+
 def _render_meteora_scan() -> None:
-    """Scan pool Meteora DLMM 24h ∩ 1h + holder dust."""
-    st.divider()
-    st.subheader("🌊 Scan Meteora Pool")
-    st.caption(
-        "Top DLMM 24 jam (`active_tvl ≥ 1000`, `fee_active_tvl_ratio ≥ 250`) "
-        "dibandingkan 1 jam (`fee_active_tvl_ratio ≥ 1`). Pool 24 jam yang "
-        "masih muncul di 1 jam **tetap ditampilkan**. Hanya pool dengan dust "
-        f"holder **≤ {DUST_SCAN_HIDE_PCT:g}% MC** yang ditampilkan — sisanya "
-        "disembunyikan (badge AMAN/HATI-HATI/BAHAYA tidak dipakai di sini). "
-        f"Dust **< {DUST_BEST_PCT:g}% MC** + data holder valid (≥ 40 wallet) "
-        f"+ **TVL ≥ ${DUST_BEST_MIN_TVL_USD / 1000:g}K** diberi badge "
-        "🏆 BEST POOL — **BEST POOL diurutkan paling atas**, lalu dust % MC "
-        "terkecil dan TVL terbesar. "
-        "⭐ memasukkan token ke card **Chart LP** di bagian atas dashboard. "
-        "Tombol kanan: Meteora + HawkFi."
-    )
-    if st.button("🌊 Scan Meteora + Holder", type="primary",
-                 use_container_width=True):
-        bar = st.progress(0.0, text="Listing pool Meteora…")
+    """Scan pool Meteora DLMM 24h ∩ 1h + holder dust (card kolom kanan)."""
+    with st.container(border=True):
+        # Kepala card butuh angka hasil scan terakhir, jadi hasil disimpan /
+        # dibaca lebih dulu — pill ringkasan dan listing di bawahnya selalu
+        # satu sumber data (selesai scan → ``st.rerun()`` seperti card LP).
+        if st.button("🌊 Scan Meteora + Holder", type="primary",
+                     key="meteora-scan-now", use_container_width=True):
+            bar = st.progress(0.0, text="Listing pool Meteora…")
 
-        def _progress(index, total, label):
-            bar.progress(index / max(total, 1),
-                         text=f"Holder {index}/{total} · {label}")
+            def _progress(index, total, label):
+                bar.progress(index / max(total, 1),
+                             text=f"Holder {index}/{total} · {label}")
 
-        try:
-            # FULL: filter dust > 0,1% MC di listing butuh dust akurat;
-            # cap 2000 dulu = sampel bias (urutan Helius tidak urut saldo).
-            result = scan_meteora(max_wallets=FULL_SCAN_MAX_WALLETS,
-                                  workers=6, progress=_progress)
-        except Exception as exc:  # noqa: BLE001
-            result = {"rows": [], "error": str(exc), "hidden_dust": 0,
-                      "fetched": 0}
-        finally:
-            bar.empty()
-        st.session_state["meteora_scan"] = result
+            try:
+                # FULL: filter dust > 0,1% MC di listing butuh dust akurat;
+                # cap 2000 dulu = sampel bias (urutan Helius tidak urut
+                # saldo).
+                result = scan_meteora(max_wallets=FULL_SCAN_MAX_WALLETS,
+                                      workers=6, progress=_progress)
+            except Exception as exc:  # noqa: BLE001
+                result = {"rows": [], "error": str(exc), "hidden_dust": 0,
+                          "fetched": 0}
+            finally:
+                bar.empty()
+            st.session_state["meteora_scan"] = result
+            st.rerun()
 
-    result = st.session_state.get("meteora_scan") or {}
-    error = result.get("error") or ""
-    if error:
-        st.warning(f"Meteora API: {error}")
-    # BEST POOL selalu di atas. scan_meteora() sudah mengurutkan, tapi
-    # hasil lama yang tersimpan di session_state (sebelum fitur ini) belum —
-    # urutkan lagi di sini supaya listing konsisten tanpa perlu scan ulang.
-    rows = sort_rows(result.get("rows") or [])
-    hidden = int(result.get("hidden_dust") or 0)
-    fetched = int(result.get("fetched") or 0)
-    best_count = sum(1 for row in rows if row_flag(row).get("best"))
-    if fetched:
-        best_txt = (f" · 🏆 {best_count} BEST POOL di urutan teratas"
-                    if best_count else "")
-        st.caption(f"{len(rows)} pool ditampilkan · {hidden} disembunyikan "
-                   f"(dust > {DUST_SCAN_HIDE_PCT:g}% MC) · listing {fetched}"
-                   f"{best_txt}.")
-    if not rows:
-        if result:
-            st.info("Tidak ada pool yang lolos filter dust (atau listing kosong).")
-        return
+        result = st.session_state.get("meteora_scan") or {}
+        error = result.get("error") or ""
+        # BEST POOL selalu di atas. scan_meteora() sudah mengurutkan, tapi
+        # hasil lama yang tersimpan di session_state (sebelum fitur ini)
+        # belum — urutkan lagi di sini supaya listing konsisten tanpa perlu
+        # scan ulang.
+        rows = sort_rows(result.get("rows") or [])
+        hidden = int(result.get("hidden_dust") or 0)
+        fetched = int(result.get("fetched") or 0)
+        best_count = sum(1 for row in rows if row_flag(row).get("best"))
 
-    col_spec = [1.6, 0.8, 0.8, 0.7, 0.9, 0.7, 1.2, 0.45]
-    header_cols = st.columns(col_spec)
-    titles = ["Token", "MC", "TVL", "Dust", "Dust %MC", "TF", "Pool", ""]
-    style = "font-size:0.72rem;color:#000000;font-weight:700;text-align:center;"
-    for col, title in zip(header_cols, titles):
-        col.markdown(f'<div style="{style}">{title}</div>',
-                     unsafe_allow_html=True)
-    st.markdown('<hr style="margin:0.4rem 0;border-color:#cbd5e1;">',
-                unsafe_allow_html=True)
-
-    for index, row in enumerate(rows):
-        ca = str(row.get("ca") or "")
-        symbol = str(row.get("symbol") or "?").upper()
-        pool = str(row.get("pool_address") or "")
-        dust_count = row.get("dust_count")
-        dust_pct = row.get("dust_pct_mc")
-        tvl = row.get("tvl")
-        # BEST POOL butuh bukti data holder valid (bukan cuma angka) + TVL
-        # pool ≥ 10K: guard ada di dust_flag(holders=…, tvl=…), lihat
-        # holder_history._holders_valid_for_best / _tvl_valid_for_best.
-        flag = row_flag(row)
-        tf = []
-        if row.get("in_24h"):
-            tf.append("24H")
-        if row.get("in_1h"):
-            tf.append("1H")
-        tf_txt = "+".join(tf) or "—"
-        cols = st.columns(col_spec)
-        cols[0].markdown(
-            f'<div class="watchlist-token">'
-            f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
-            f'<span class="watchlist-mint">{html.escape(ca[:8])}…</span>'
-            f'<div class="watchlist-links">{external_links_html(ca)}</div>'
-            f"</div>", unsafe_allow_html=True)
-        cols[1].markdown(
-            f'<div class="watchlist-metric"><div class="watchlist-metric-value">'
-            f'{_compact(row.get("mc"))}</div></div>', unsafe_allow_html=True)
-        tvl_txt = "—" if tvl is None else _compact(tvl)
-        cols[2].markdown(
-            f'<div class="watchlist-metric"><div class="watchlist-metric-value">'
-            f'{tvl_txt}</div><div class="watchlist-metric-sub">tvl</div></div>',
-            unsafe_allow_html=True)
-        cols[3].markdown(
-            f'<div class="watchlist-metric"><div class="watchlist-metric-value">'
-            f'{_number(dust_count, ".0f")}</div>'
-            f'<div class="watchlist-metric-sub">wallet</div></div>',
-            unsafe_allow_html=True)
-        pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.2f}%"
-        # Badge level (AMAN/HATI-HATI/BAHAYA) sengaja TIDAK dirender di
-        # listing ini sejak 2026-09-07: semua baris sudah ≤ 0,1% MC, jadi
-        # hanya chip 🏆 BEST POOL yang informatif.
-        cols[4].markdown(
-            f'<div class="watchlist-metric"><div class="watchlist-metric-value">'
-            f"{pct_txt}</div>{_dust_best_html(flag)}</div>",
-            unsafe_allow_html=True)
-        cols[5].markdown(
-            f'<div class="watchlist-metric"><div class="watchlist-metric-value">'
-            f"{html.escape(tf_txt)}</div></div>", unsafe_allow_html=True)
-        pool_html = pool_links_html(pool) or '<span>—</span>'
-        cols[6].markdown(
-            f'<div class="pool-links">{pool_html}</div>',
-            unsafe_allow_html=True)
-        # Key diikat ke pool/CA, bukan nomor baris: urutan listing berubah
-        # (BEST POOL naik ke atas) sehingga key berbasis index bisa membuat
-        # klik ⭐ menempel ke token yang berbeda setelah re-render.
-        star_key = f"meteora-star-{pool or ca or index}"
-        if cols[7].button("⭐", key=star_key,
-                          help="Tambah ke Chart LP (watchlist Meteora di atas)",
-                          use_container_width=True):
-            if ca:
-                add_to_watchlist(ca, symbol, source=LP_SOURCE,
-                                 background=True)
-                st.success(f"${symbol} masuk Chart LP")
-        st.markdown('<hr style="margin:0.25rem 0;border-color:#cbd5e1;">',
+        st.markdown(_meteora_head_html(rows, hidden, best_count),
                     unsafe_allow_html=True)
+        st.caption(
+            "Top DLMM 24 jam (`active_tvl ≥ 1000`, "
+            "`fee_active_tvl_ratio ≥ 250`) dibandingkan 1 jam "
+            "(`fee_active_tvl_ratio ≥ 1`). Pool 24 jam yang masih muncul di "
+            "1 jam **tetap ditampilkan**. Hanya pool dengan dust holder "
+            f"**≤ {DUST_SCAN_HIDE_PCT:g}% MC** yang ditampilkan — sisanya "
+            "disembunyikan (badge AMAN/HATI-HATI/BAHAYA tidak dipakai di "
+            f"sini). Dust **< {DUST_BEST_PCT:g}% MC** + data holder valid "
+            f"(≥ 40 wallet) + **TVL ≥ ${DUST_BEST_MIN_TVL_USD / 1000:g}K** "
+            "diberi badge 🏆 BEST POOL — **BEST POOL diurutkan paling atas**,"
+            " lalu dust % MC terkecil dan TVL terbesar. ⭐ memasukkan token "
+            "ke card **Chart LP** di kolom kiri. Tombol kanan: Meteora + "
+            "HawkFi."
+        )
+        if error:
+            st.warning(f"Meteora API: {error}")
+        if fetched:
+            best_txt = (f" · 🏆 {best_count} BEST POOL di urutan teratas"
+                        if best_count else "")
+            st.caption(f"{len(rows)} pool ditampilkan · {hidden} "
+                       f"disembunyikan (dust > {DUST_SCAN_HIDE_PCT:g}% MC) · "
+                       f"listing {fetched}{best_txt}.")
+        if not rows:
+            if result:
+                st.info("Tidak ada pool yang lolos filter dust (atau "
+                        "listing kosong).")
+            return
+
+        col_spec = [1.6, 0.8, 0.8, 0.7, 0.9, 0.7, 1.2, 0.45]
+        header_cols = st.columns(col_spec)
+        titles = ["Token", "MC", "TVL", "Dust", "Dust %MC", "TF", "Pool", ""]
+        style = ("font-size:0.72rem;color:#000000;font-weight:700;"
+                 "text-align:center;")
+        for col, title in zip(header_cols, titles):
+            col.markdown(f'<div style="{style}">{title}</div>',
+                         unsafe_allow_html=True)
+        st.markdown('<hr style="margin:0.4rem 0;border-color:#cbd5e1;">',
+                    unsafe_allow_html=True)
+
+        for index, row in enumerate(rows):
+            ca = str(row.get("ca") or "")
+            symbol = str(row.get("symbol") or "?").upper()
+            pool = str(row.get("pool_address") or "")
+            dust_count = row.get("dust_count")
+            dust_pct = row.get("dust_pct_mc")
+            tvl = row.get("tvl")
+            # BEST POOL butuh bukti data holder valid (bukan cuma angka) +
+            # TVL pool ≥ 10K: guard ada di dust_flag(holders=…, tvl=…),
+            # lihat holder_history._holders_valid_for_best /
+            # _tvl_valid_for_best.
+            flag = row_flag(row)
+            tf = []
+            if row.get("in_24h"):
+                tf.append("24H")
+            if row.get("in_1h"):
+                tf.append("1H")
+            tf_txt = "+".join(tf) or "—"
+            cols = st.columns(col_spec)
+            cols[0].markdown(
+                f'<div class="watchlist-token">'
+                f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
+                f'<span class="watchlist-mint">{html.escape(ca[:8])}…</span>'
+                f'<div class="watchlist-links">{external_links_html(ca)}</div>'
+                f"</div>", unsafe_allow_html=True)
+            cols[1].markdown(
+                '<div class="watchlist-metric">'
+                '<div class="watchlist-metric-value">'
+                f'{_compact(row.get("mc"))}</div></div>',
+                unsafe_allow_html=True)
+            tvl_txt = "—" if tvl is None else _compact(tvl)
+            cols[2].markdown(
+                '<div class="watchlist-metric">'
+                '<div class="watchlist-metric-value">'
+                f'{tvl_txt}</div><div class="watchlist-metric-sub">tvl</div>'
+                '</div>', unsafe_allow_html=True)
+            cols[3].markdown(
+                '<div class="watchlist-metric">'
+                '<div class="watchlist-metric-value">'
+                f'{_number(dust_count, ".0f")}</div>'
+                '<div class="watchlist-metric-sub">wallet</div></div>',
+                unsafe_allow_html=True)
+            pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.2f}%"
+            # Badge level (AMAN/HATI-HATI/BAHAYA) sengaja TIDAK dirender di
+            # listing ini sejak 2026-09-07: semua baris sudah ≤ 0,1% MC,
+            # jadi hanya chip 🏆 BEST POOL yang informatif.
+            cols[4].markdown(
+                '<div class="watchlist-metric">'
+                '<div class="watchlist-metric-value">'
+                f"{pct_txt}</div>{_dust_best_html(flag)}</div>",
+                unsafe_allow_html=True)
+            cols[5].markdown(
+                '<div class="watchlist-metric">'
+                '<div class="watchlist-metric-value">'
+                f"{html.escape(tf_txt)}</div></div>", unsafe_allow_html=True)
+            pool_html = pool_links_html(pool) or '<span>—</span>'
+            cols[6].markdown(
+                f'<div class="pool-links">{pool_html}</div>',
+                unsafe_allow_html=True)
+            # Key diikat ke pool/CA, bukan nomor baris: urutan listing
+            # berubah (BEST POOL naik ke atas) sehingga key berbasis index
+            # bisa membuat klik ⭐ menempel ke token yang berbeda setelah
+            # re-render.
+            star_key = f"meteora-star-{pool or ca or index}"
+            if cols[7].button("⭐", key=star_key,
+                              help="Tambah ke Chart LP (kolom kiri)",
+                              use_container_width=True):
+                if ca:
+                    add_to_watchlist(ca, symbol, source=LP_SOURCE,
+                                     background=True)
+                    st.success(f"${symbol} masuk Chart LP")
+            st.markdown('<hr style="margin:0.25rem 0;border-color:#cbd5e1;">',
+                        unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------
@@ -662,8 +717,21 @@ data = load_dashboard_data()
 watchlist, holder_status, history_store = data.watchlist, data.status, data.history
 status_tokens = holder_status.get("tokens") or {}
 lp_watch, _ = split_watchlist(watchlist)
-_render_lp_card(lp_watch, status_tokens, history_store)
-_render_meteora_scan()
+
+# ---------------------------------------------------------------------------
+# Grid 2 kolom (permintaan user 2026-09-09): **kiri** Chart LP — Watchlist
+# Meteora, **kanan** Scan Meteora Pool. Dua card sejajar, bukan tumpuk
+# vertikal; ⭐ di kanan memasukkan token ke card kiri. Robinhood LP dan Scan
+# Holder Khusus tetap full-width di bawah (baris + chart-nya lebar). Di layar
+# sempit Streamlit otomatis menumpuk kolomnya.
+# ---------------------------------------------------------------------------
+_lp_col, _meteora_col = st.columns([1, 1], gap="medium")
+with _lp_col:
+    _render_lp_card(lp_watch, status_tokens, history_store)
+with _meteora_col:
+    _render_meteora_scan()
+
+st.divider()
 rh_lp_watch, _ = split_robinhood_watchlist(data.rh_watchlist)
 _render_rh_card(rh_lp_watch, data.rh_status.get("tokens") or {}, data.rh_history,
                 int(datetime.now(timezone.utc).timestamp()), variant="lp",

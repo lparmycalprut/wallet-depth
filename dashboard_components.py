@@ -13,9 +13,12 @@ from holder_history import (DUST_BEST_LABEL, DUST_BEST_PCT, DUST_CAUTION_PCT,
                             history_for_mint, holders_usable, merge_status_history,
                             resample_4h, resample_5m)
 from links import external_links_html, holder_analytic_link_html
+import alert_settings
 import robinhood_holders
 import robinhood_watchlist
 from robinhood_watchlist import RH_LP_SOURCE, RH_REGULAR_SOURCE
+from telegram_alerts import (delivery_note, process_holder_alerts,
+                             summarize_deliveries)
 from watchlist_detail import (STALE_AFTER_SEC, STALE_REGULAR_AFTER_SEC,
                               format_wib, previous_pct, resolve_view)
 
@@ -30,11 +33,6 @@ def render_styles() -> None:
     [data-testid="stCaptionContainer"] p,
     [data-testid="stMetricLabel"], [data-testid="stMetricValue"],
     [data-testid="stWidgetLabel"] p {color:#000000 !important;}
-    .hero {padding:1.4rem 1.6rem;border:1px solid #334155;border-radius:18px;
-     background:linear-gradient(135deg,#0f172a,#172554);
-     margin-bottom:1.2rem}
-    .hero h1, .hero p, .hero {color:#ffffff;}
-    .hero h1 {font-size:2rem;margin:0 0 .4rem}.hero p{color:#ffffff;margin:0}
     .dust-badge {display:inline-block;padding:.28rem .58rem;border-radius:8px;
      font-size:.78rem;font-weight:800}
     .dust-ok {background:#14532d;color:#dcfce7}
@@ -237,6 +235,40 @@ def _render_depth(holders: dict, symbol: str) -> None:
 
 RH_CARD_TITLE = "🦅 Watchlist Robinhood LP — Holder Dust"
 RH_REGULAR_CARD_TITLE = "🦅 Watchlist Robinhood — Holder Dust"
+ALERT_NOTE_KEY = "manual_alert_note_"
+
+
+def _store_alert_note(deliveries, key: str) -> None:
+    """Simpan ringkasan kirim alert scan manual untuk ditampilkan setelah rerun.
+
+    Ketiga tombol scan manual (Chart LP Meteora, Robinhood LP/biasa, watchlist
+    biasa Solana) langsung ``st.rerun()`` setelah scan, jadi catatan hasil
+    kirim harus lewat ``session_state`` — permintaan user 2026-09-09: hasil
+    scan manual yang memenuhi syarat **ikut dikirim** ke Telegram, dan UI
+    harus melaporkan apakah pesannya benar-benar keluar.
+    """
+    summary = summarize_deliveries(deliveries)
+    if not summary.get("total"):
+        st.session_state.pop(key, None)
+        return
+    st.session_state[key] = {"text": delivery_note(summary),
+                             "failed": bool(summary.get("failed"))}
+
+
+def _render_alert_note(key: str) -> None:
+    """Tampilkan (sekali) catatan kirim alert scan manual di card."""
+    note = st.session_state.pop(key, None)
+    if not isinstance(note, dict):
+        return
+    text = str(note.get("text") or "").strip()
+    if not text:
+        return
+    if note.get("failed"):
+        st.warning(text)
+    else:
+        st.info(text, icon="⚡")
+
+
 RH_ADD_FORM = "rh-add-token"
 RH_LP_TAB = "🦅 Robinhood LP (scan ±5 menit)"
 RH_REGULAR_TAB = "📋 Robinhood biasa (scan ±4 jam)"
@@ -489,6 +521,27 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
             fresh = {mint: item for mint, item in ok.items()
                      if holders_usable(item.get("holders"))}
             if fresh:
+                # Alert ikut dievaluasi + dikirim dari scan manual (permintaan
+                # user 2026-09-09), bukan hanya dari cron. HARUS sebelum
+                # publish_scan: rule membaca anchor lama, dan state hasil
+                # evaluasi (sent_event_ids/last_sent/marker) ikut tertulis saat
+                # ingest_many menyimpan store — pola cron scan_holders.py.
+                # volume_rules=False: scan manual hanya menjalankan rule lane
+                # (⚡ EARLY DUMP di LP, 🔔 HIGH DROP di lane biasa) dan tidak
+                # menggeser anchor 4 jam / peta wallet milik cron.
+                lane_lp = variant == "lp"
+                lane_mints = set(watchlist or {})
+                # Tombol on/off notif watchlist biasa: evaluasi + marker tetap
+                # jalan, hanya pengiriman yang dilewati (mute, sama seperti cron).
+                muted = (set() if lane_lp
+                         or alert_settings.regular_telegram_enabled()
+                         else set(lane_mints))
+                _store_alert_note(process_holder_alerts(
+                    fresh, history_store,
+                    lp_mints=lane_mints if lane_lp else set(),
+                    high_mints=set() if lane_lp else lane_mints,
+                    mute_mints=muted, watchlist_meta=watchlist,
+                    volume_rules=False), f"{ALERT_NOTE_KEY}rh_{variant}")
                 robinhood_watchlist.publish_scan(
                     fresh, watchlist, history_store=history_store,
                     push=False, merge_status=merge_status)
@@ -501,6 +554,8 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
                            "dianalisis — data yang sudah tercatat tidak "
                            "diubah.")
             st.rerun()
+
+        _render_alert_note(f"{ALERT_NOTE_KEY}rh_{variant}")
 
         if not rows:
             empty_text = (

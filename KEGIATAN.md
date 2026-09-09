@@ -1,3 +1,136 @@
+# Kegiatan — 9 September 2026 (MOO 0,11% tanpa alert: cron mati + scan manual bisu)
+
+Laporan user: `0xc103ac00a25173870c909223c5676d50bf5728b2` (MOO) menampilkan
+**0,11% MC** di card Robinhood tetapi tidak ada pesan Telegram.
+
+## 1. Diagnosa (semua angka dari API GitHub, bukan asumsi)
+
+- Token **benar** ada di lane LP: `watchlist_robinhood.json` di `main`
+  (commit `3c537ff`, 2026-09-09T21:53:20+07:00 = **14:53:20 UTC**) memuat MOO
+  dengan `source: "lp"` — jadi scope rule ⚡ EARLY DUMP mencakupnya.
+- **Cron berhenti**: run workflow `Holder Dust Scanner` terakhir selesai
+  **2026-09-09T12:05:24Z**; tidak ada run lagi sampai 15:16 UTC (±3 jam)
+  meski jadwalnya `*/5 * * * *`. Hari itu schedule GitHub hanya menyala 3×
+  (01:35, 06:41, 11:56 UTC), masing-masing diikuti **tepat satu** chain
+  dispatch lalu hening. MOO baru masuk watchlist **14:53 UTC**, jadi cron
+  belum pernah memindainya sama sekali → tidak mungkin ada alert.
+- Snapshot Robinhood di ref `holder-live` terakhir
+  **2026-09-08T03:56:11Z** dan hanya berisi CME. Ini **bukan** lane rusak:
+  pada run 11:56 UTC watchlist Robinhood di `main` masih `{}` (PARE baru
+  ditambah 13:24 UTC, NUDES 14:01 UTC), jadi scanner memang mencetak
+  "watchlist LP kosong".
+- **Akar masalah ritme**: langkah "Chain run berikutnya" punya Guard 2 yang
+  menyimpulkan "schedule */5 sehat" bila ada run `event=schedule` yang
+  selesai < 900 detik lalu, lalu **melewati dispatch**. Scheduler GitHub bisa
+  di-throttle berjam-jam, jadi begitu satu dispatch dilewati tidak ada lagi
+  yang membangunkan pipeline. Dibuktikan dengan data run asli: pada
+  12:05:24Z umur run schedule terakhir 299 detik → guard lama
+  `299 < 900` = lewati (stall), guard baru `299 ≥ 240` = dispatch.
+- **Scan manual tidak pernah mengirim alert**: `process_holder_alerts`
+  hanya dipanggil `scripts/scan_holders.py`; tombol scan di dashboard cuma
+  `publish_scan(..., push=False)`. Angka 0,11% yang dilihat user berasal
+  dari scan manual itu — tampil di dashboard, tidak pernah jadi pesan.
+- Rule-nya sendiri sehat: simulasi `process_holder_alerts(lp_mints={MOO},
+  volume_rules=False)` dengan dust 0,11% MC menghasilkan 1 event
+  ⚡ EARLY DUMP (tanpa `lp_mints` → 0 event).
+
+## 2. Perbaikan
+
+- **Scan manual ikut mengirim alert** (permintaan user). Tiga tombol —
+  Chart LP Meteora (`app.py`), Robinhood LP/biasa
+  (`dashboard_components._render_rh_card`), watchlist biasa Solana
+  (`temp_ui.py`) — memanggil `process_holder_alerts` **sebelum**
+  `ingest_many`/`publish_scan`, jadi rule membaca anchor lama dan state
+  (`sent_event_ids`/`last_sent`/marker episode) ikut tersimpan bersama titik
+  baru. `volume_rules=False`: hanya rule lane (⚡ EARLY DUMP + eskalasi EXIT
+  di LP, 🔔 HIGH DROP di lane biasa), anchor 4 jam cron tidak digeser.
+  `mute_mints` mengikuti tombol on/off notif watchlist biasa.
+- **Hasil kirim dilaporkan ke UI** (`_store_alert_note` /
+  `_render_alert_note`, lewat `session_state` karena tiap tombol langsung
+  `st.rerun()`): "⚡ 1 alert Telegram dikirim", "dilewati (notif watchlist
+  biasa OFF)", atau "**GAGAL dikirim** (alasan)" — kegagalan tidak lagi
+  terbaca seperti "tidak ada sinyal".
+- **Kredensial Telegram** dibaca `env → config.json → st.secrets`
+  (`telegram_alerts._telegram_credentials()`, lazy + guarded karena runner
+  Actions hanya memasang requests + curl_cffi). Dashboard tidak punya env
+  Actions, jadi tanpa ini scan manual selalu gagal kirim.
+- **Guard 2 chain dispatch** di `daily-effort-5menit.yml`: pembandingnya run
+  terakhir **event apa pun** dengan jendela `CHAIN_QUIET_SEC=240` (< kadens
+  5 menit), bukan umur run schedule 900 detik. Aman dari stall karena
+  langkah ini tidur sampai batas 5 menit berikutnya, jadi satu run minimal
+  ±320 detik — run yang baru selesai pasti lebih tua dari jendela.
+
+## 3. Yang harus dilakukan user
+
+1. **Salin `daily-effort-5menit.yml` ke `.github/workflows/daily-effort.yml`**
+   lewat GitHub UI (bot ditolak menulis folder workflow: tanpa izin
+   `workflows`). Selama belum disalin, cron tetap memakai Guard 2 lama dan
+   bisa mati berjam-jam lagi.
+2. Pasang **`telegram_bot_token` + `telegram_chat_id`** di secrets Streamlit
+   (atau `config.json`) bila ingin notif dari scan manual; tanpa itu UI kini
+   menampilkan "GAGAL dikirim (Telegram credentials are not configured)".
+3. Untuk memicu scan sekarang: Actions → "Holder Dust Scanner" → **Run
+   workflow** (MOO sudah di lane LP, jadi ⚡ EARLY DUMP langsung terkirim
+   bila dust masih > 0,1% MC).
+
+## 4. Validasi & batas verifikasi
+
+- **1007 passed, 37 subtests passed** (991 baseline + 16 tes baru di
+  `tests/test_manual_scan_alerts.py`: ringkasan kirim, fallback kredensial
+  config.json/env, scan manual Chart LP mengirim ⚡ di 0,11% dan diam di
+  0,05%, 🚨 EXIT/CUTLOSS saat naik 3× berturut, ✅ KEMBALI KE TITIK AMAN saat
+  turun ≤ 0,1% MC, dedup bucket 5 menit antar scan manual, state alert ikut
+  tersimpan, Robinhood LP mengirim ⚡, lane biasa memakai 🔔 HIGH DROP, dan
+  mute saat notif OFF).
+- Tabel karakteristik → notif diverifikasi dengan menjalankan
+  `process_holder_alerts` langsung (fungsi yang dipanggil tombol scan
+  manual): 0,11% → ⚡; 0,05% dan tepat 0,10% → diam; naik 3× dalam 15 menit →
+  ⚡ + 🚨 `exit_cutloss`; turun ke 0,08% dalam jendela episode → ✅
+  `safe_return`; high 0,80% → 0,20% → 🔔; high 0,80% → 0,50% → diam; holder
+  10 wallet (scan tidak layak) → diam; notif biasa OFF → mute.
+  Catatan: marker episode **wajib** bersarang di
+  `alert_state["early_dump"]` (dan 🔔 di `alert_state["high_drop"]`) — bentuk
+  yang salah membuat rule episode tidak pernah melihat episodenya; dua tes
+  baru mengunci bentuk itu.
+- Log run Actions **tidak terbaca** dari sandbox (unduh log `EOF`), daftar
+  secret repo **403**, dan API live Blockscout/DexScreener tidak terjangkau
+  (egress sandbox hanya GitHub/PyPI) — jadi penyebab pasti kosongnya lane
+  Robinhood di run-run sebelumnya disimpulkan dari isi watchlist per commit +
+  timestamp snapshot, bukan dari log.
+
+# Kegiatan — 9 September 2026 (header dihapus + grid 2 kolom)
+
+Permintaan user: buang header penjelasan di atas halaman utama, lalu
+tampilkan **Chart LP — Watchlist Meteora** di kiri dan **Scan Meteora Pool**
+di kanan sebagai grid 2 kolom.
+
+- `app.py`: blok `.hero` (judul 🧮 Wallet Depth + ringkasan ambang) dihapus;
+  halaman sekarang mulai dari tautan 📦 temp + toggle auto-refresh. Card
+  Chart LP dan Scan Meteora dirender berdampingan lewat
+  `st.columns([1, 1], gap="medium")` — dua card ber-`border` sejajar, ⭐ di
+  kanan tetap memasukkan token ke card kiri. Robinhood LP dan Scan Holder
+  Khusus tetap full-width di bawah, dan `st.divider()` dipindah ke sebelum
+  card Robinhood (divider milik Scan Meteora hilang bersama subheader-nya).
+  Di layar sempit kolom Streamlit menumpuk sendiri.
+- `_render_meteora_scan()`: `st.divider()` + `st.subheader` diganti
+  `st.container(border=True)` + kepala `_card_head_html()` (helper baru,
+  dipakai juga oleh `_lp_head_html`) dengan pill `N pool` / `🏆 N BEST` /
+  `N disembunyikan`. Hasil scan disimpan ke `session_state` lalu
+  `st.rerun()` supaya pill, caption, dan listing satu sumber data — pola
+  yang sama dengan tombol Scan di card LP. Kolom tabel, badge 🏆 BEST POOL,
+  filter dust ≤ 0,1% MC, urutan `sort_rows()`, dan key tombol tidak berubah.
+- `dashboard_components.py`: CSS `.hero` dihapus (sudah tidak ada pemakai).
+- Teks petunjuk ikut disinkronkan: "Scan Meteora Pool **di bawah**" →
+  "**di kolom kanan**", "⭐ … ke card Chart LP di bagian atas dashboard" →
+  "di kolom kiri"; AGENTS.md + docstring `lp_watchlist` diperbarui.
+- Validasi: **991 passed, 37 subtests passed** (sama dengan baseline
+  sebelum perubahan), `py_compile` daftar modul AGENTS.md lolos, dan
+  AppTest ad-hoc memastikan grid benar-benar 2 kolom (kolom 0 = card Chart
+  LP + form/tombol scan LP, kolom 1 = card Scan Meteora + ⭐) tanpa
+  exception. Live preview Streamlit port 8501; scan live Meteora/Helius
+  tidak dijalankan dari sandbox (tanpa API key), jadi preview menampilkan
+  listing kosong sampai tombol scan ditekan.
+
 # Kegiatan — 9 September 2026 (halaman temp)
 
 Permintaan user: parkir tiga section yang sementara tidak digunakan ke

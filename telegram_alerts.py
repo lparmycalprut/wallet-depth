@@ -1422,6 +1422,58 @@ def evaluate_alert_events(mint: str, analysis: dict,
     return list(unique.values()), next_state
 
 
+def summarize_deliveries(deliveries) -> dict:
+    """Ringkasan hasil kirim alert — dipakai UI scan manual.
+
+    :func:`process_holder_alerts` mengembalikan satu baris per event; UI butuh
+    angka + alasan supaya user bisa membedakan **"tidak ada sinyal"** dari
+    **"ada sinyal tapi gagal terkirim"** (mis. kredensial Telegram tidak
+    terpasang di deployment dashboard).
+    """
+    rows = [row for row in (deliveries or []) if isinstance(row, dict)]
+    sent = muted = failed = 0
+    kinds: list[str] = []
+    errors: list[str] = []
+    for row in rows:
+        event = row.get("event") or {}
+        delivery = row.get("delivery") or {}
+        kinds.append(str(event.get("kind") or "?"))
+        if delivery.get("ok"):
+            sent += 1
+        elif delivery.get("muted"):
+            muted += 1
+        else:
+            failed += 1
+            error = str(delivery.get("error") or "").strip()
+            if error and error not in errors:
+                errors.append(error)
+    return {"total": len(rows), "sent": sent, "muted": muted, "failed": failed,
+            "kinds": kinds, "errors": errors}
+
+
+def delivery_note(summary: dict | None) -> str:
+    """Satu kalimat hasil kirim alert scan manual (ditampilkan di card).
+
+    Sengaja menyebutkan kegagalan: scan manual adalah satu-satunya jalur
+    alert untuk token yang tidak di-scan cron (watchlist biasa), jadi
+    "kredensial tidak terpasang" tidak boleh terbaca seperti "aman".
+    """
+    summary = summary if isinstance(summary, dict) else {}
+    if not int(summary.get("total") or 0):
+        return "Tidak ada alert dari hasil scan ini."
+    bits = []
+    if summary.get("sent"):
+        bits.append(f"⚡ {int(summary['sent'])} alert Telegram dikirim")
+    if summary.get("muted"):
+        bits.append(f"{int(summary['muted'])} alert dilewati "
+                    "(notif watchlist biasa OFF)")
+    if summary.get("failed"):
+        reason = ("; ".join(summary.get("errors") or [])
+                  or "penyebab tidak diketahui")
+        bits.append(f"{int(summary['failed'])} alert GAGAL dikirim ({reason})")
+    return " · ".join(bits) + "."
+
+
 def compact_alert_state(state: dict | None) -> dict:
     """Sanitize/bound state before persisting it in history/status JSON."""
     state = state or {}
@@ -1680,6 +1732,40 @@ def _safe_transport_error(exc: Exception, token: str) -> str:
 # TODO(alerts): beri throttle bila suatu saat banyak token memicu alert
 # bersamaan — GeckoTerminal publik ~30 request/menit dan konteks pasar ditarik
 # lazy per token yang punya kandidat sinyal.
+def _telegram_credentials() -> tuple[str, str]:
+    """``(bot_token, chat_id)`` dari env → ``config.json`` → Streamlit secrets.
+
+    Cron (GitHub Actions) cukup dengan env ``TELEGRAM_BOT_TOKEN`` /
+    ``TELEGRAM_CHAT_ID``. Sejak 2026-09-09 **scan manual di dashboard ikut
+    mengirim alert** (permintaan user), jadi transport juga harus menemukan
+    kredensial di tempat dashboard menyimpannya. Dua sumber tambahan dibaca
+    lazy + di-``try``: runner Actions hanya memasang ``requests`` +
+    ``curl_cffi``, jadi modul ini tidak boleh bergantung Streamlit.
+    """
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    target = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+    if token and target:
+        return token, target
+    try:
+        import core  # config.json (semua key); import ringan tanpa streamlit
+        cfg = core.load_config()
+        token = token or str(cfg.get("telegram_bot_token") or "").strip()
+        target = target or str(cfg.get("telegram_chat_id") or "").strip()
+    except Exception:  # noqa: BLE001 - kredensial bersifat opsional
+        pass
+    if token and target:
+        return token, target
+    try:
+        import streamlit as st
+        # core.load_config hanya memetakan key yang ada di default-nya ke
+        # st.secrets, jadi dua key Telegram dibaca langsung dari secrets.
+        token = token or str(st.secrets.get("telegram_bot_token", "")).strip()
+        target = target or str(st.secrets.get("telegram_chat_id", "")).strip()
+    except Exception:  # noqa: BLE001 - di luar Streamlit tidak ada secrets
+        pass
+    return token, target
+
+
 def send_telegram_message(text: str, *, bot_token: str | None = None,
                           chat_id: str | None = None, timeout: float = 10,
                           post: Callable | None = None,
@@ -1689,10 +1775,12 @@ def send_telegram_message(text: str, *, bot_token: str | None = None,
     Native entities format literal text without parsing token names/mints as
     markup. Link previews are disabled to keep every notification compact.
     """
-    token = (os.environ.get("TELEGRAM_BOT_TOKEN", "")
-             if bot_token is None else str(bot_token)).strip()
-    target = (os.environ.get("TELEGRAM_CHAT_ID", "")
-              if chat_id is None else str(chat_id)).strip()
+    if bot_token is None or chat_id is None:
+        cfg_token, cfg_target = _telegram_credentials()
+    else:
+        cfg_token, cfg_target = "", ""
+    token = (str(bot_token).strip() if bot_token is not None else cfg_token)
+    target = (str(chat_id).strip() if chat_id is not None else cfg_target)
     if not token or not target:
         return {"ok": False, "skipped": True,
                 "error": "Telegram credentials are not configured"}

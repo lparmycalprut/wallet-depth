@@ -2,7 +2,8 @@
 """Watchlist terpisah **Chart LP** — token dari Scan Meteora Pool.
 
 Token yang ditambahkan dari Scan Meteora (``source="meteora"``) atau
-ditambahkan manual ke card LP dikumpulkan di card paling atas dashboard.
+ditambahkan manual ke card LP dikumpulkan di card **kolom kiri** grid
+halaman utama (2026-09-09; dulu card paling atas dashboard).
 Card ini menampilkan **grafik perubahan dust holder** (dust % MC per bucket
 **5 menit** — mengikuti kadens cron lane LP — + jumlah wallet dust) beserta
 garis ambang:
