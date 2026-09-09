@@ -1,5 +1,44 @@
 # Progress
 
+## 2026-09-09: Blockscout PRO API — beberapa key sekaligus (round-robin + parkir)
+
+User punya 4 key. Kuota free tier dihitung per akun (100K kredit/hari,
+5 RPS), 1 key ≈ cukup untuk ≤ 3–4 token LP pada kadens 5 menit.
+
+**Status: selesai & tes hijau (965 passed; +12 tes transport, +2 AppTest).**
+
+- `robinhood_holders.get_pro_api_keys()` menggabung `BLOCKSCOUT_API_KEY` /
+  `BLOCKSCOUT_API_KEYS` (koma) / config `blockscout_api_key(s)` / secrets.
+  `_ProKeyPool`: round-robin key aktif; 401/403 parkir 60/5 mnt, 402 parkir
+  30 mnt, 429 sesuai `x-ratelimit-reset`; pindah key di putaran yang sama;
+  semua parkir → instance publik. Log/UI hanya `key#N` + sisa kredit.
+- UI/cron membedakan "belum ada key" vs "key ada tapi semua ditolak/habis".
+- DEPLOY.md: langkah pasang key di Streamlit Cloud & GitHub Actions.
+
+## 2026-09-08 (sore): Blockscout 403 bot-protection → PRO API ber-key + fallback publik
+
+Laporan user: scan Robinhood `0x1209ec…bb6e` gagal `getToken/csv/v2: 403
+Client Error: Forbidden` dan UI menyalahkan CA. Penyebab: instance publik
+`robinhoodchain.blockscout.com` memblokir klien server (Cloudflare "Just a
+moment…"); akses per-instance resmi deprecated → PRO API dengan key gratis.
+
+**Status: selesai & tes hijau (952 passed; +19 tes transport, +3 AppTest).**
+
+- `robinhood_holders.py`: `_blockscout_get` = PRO API
+  (`api.blockscout.com/4663/…`, Bearer `BLOCKSCOUT_API_KEY` dari
+  env/config/secrets) → instance publik (curl_cffi impersonate dirotasi saat
+  403 → `requests`). `BlockscoutBlocked` non-transient; `fetch_holders`
+  pulang **satu** pesan 403 + `blocked: True`; `source` berakhiran
+  `@pro`/`@public` (`source_base`, `route_label`).
+- UI: pesan Scan Holder Khusus menyebut 403 + cara pasang key (bukan
+  "pastikan CA valid"); caption menampilkan rute; baris watchlist &
+  halaman Holder ikut memberi petunjuk; cron menulis `WARN` + `route=`.
+- Workflow env `BLOCKSCOUT_API_KEY`, `config.example.json`, README, DEPLOY,
+  AGENTS, `docs/robinhood_holders_api.md` diperbarui.
+- Tindakan user: buat key di dev.blockscout.com, isi Streamlit secrets +
+  GitHub secret `BLOCKSCOUT_API_KEY`, salin env baru ke
+  `.github/workflows/daily-effort.yml` bila push bot ditolak.
+
 ## 2026-09-06 (sore): tombol "Scan holder FULL token ini" naik ke paling atas
 
 Permintaan user: *"pindahkan tombol scan full holder token ini di holder

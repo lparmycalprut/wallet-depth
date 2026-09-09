@@ -372,6 +372,131 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
         self.assertIn("Akun holder (Blockscout)", metrics)
         self.assertIn("Blockscout (Robinhood Chain)", captions)
 
+    def test_robinhood_source_route_suffix_in_caption(self):
+        """``blockscout-csv@pro`` → caption menyebut PRO API (2026-09-08)."""
+        app = self._app()
+        with mock.patch("robinhood_holders.scan_token_holders",
+                        return_value=self._depth_result(
+                            CA, "VLAD", "blockscout-csv@pro")):
+            result = self._submit(app, CA)
+        self.assertEqual(len(result.exception), 0)
+        metrics = "\n".join(m.label for m in result.metric)
+        captions = "\n".join(node.value for node in result.caption)
+        self.assertIn("Akun holder (Blockscout)", metrics)
+        self.assertIn("Blockscout (Robinhood Chain) · PRO API", captions)
+
+    def test_robinhood_403_blocked_shows_api_key_hint(self):
+        """Regresi 2026-09-08: 403 bot-protection Blockscout publik.
+
+        Sebelumnya UI menulis "Scan tidak menghasilkan holder. Pastikan CA
+        valid …" + tiga URL 403 — menyesatkan, CA-nya sah. Sekarang pesan
+        menyebut 403 bot-protection dan cara memperbaikinya
+        (``BLOCKSCOUT_API_KEY``), tanpa menyalahkan CA/harga.
+        """
+        app = self._app()
+        failed = {
+            "mint": CA, "symbol": "PUSHEEN",
+            "market": {"price_usd": 0.001, "marketcap": 1_000.0,
+                       "symbol": "PUSHEEN"},
+            "snapshot": {
+                "holders": [], "fetched": 0, "pages": 0, "truncated": False,
+                "source": "blockscout-csv(fail)", "blocked": True,
+                "error": ("Blockscout publik menolak request (HTTP 403 "
+                          "bot-protection) di /api [cf-mitigated=challenge] "
+                          "— pasang BLOCKSCOUT_API_KEY (key gratis: "
+                          "https://dev.blockscout.com) agar scan lewat "
+                          "PRO API"),
+            },
+            "depth": {"buckets": [], "tiers": [], "holders_all": 0,
+                      "holders_wallet": 0, "pool_excluded": 0,
+                      "buckets_include_pools": False, "market_cap": 1_000.0},
+            "source": "blockscout-csv(fail)",
+            "no_helius_keys": False,
+            "scan_failed": True,
+        }
+        with mock.patch("robinhood_holders.scan_token_holders",
+                        return_value=failed):
+            result = self._submit(app, CA)
+        self.assertEqual(len(result.exception), 0)
+        errors = "\n".join(node.value for node in result.error)
+        self.assertIn("HTTP 403", errors)
+        self.assertIn("BLOCKSCOUT_API_KEY", errors)
+        self.assertIn("dev.blockscout.com", errors)
+        self.assertIn("bukan karena CA salah", errors)
+        self.assertNotIn("Pastikan CA valid", errors)
+        self.assertNotIn("Helius API key", errors)
+
+    def test_robinhood_403_with_keys_points_to_dashboard_not_install(self):
+        """Key PRO sudah ada tapi semua gagal → jangan suruh 'pasang key'."""
+        app = self._app()
+        failed = {
+            "mint": CA, "symbol": "PUSHEEN",
+            "market": {"price_usd": 0.001, "marketcap": 1_000.0,
+                       "symbol": "PUSHEEN"},
+            "snapshot": {
+                "holders": [], "fetched": 0, "pages": 0, "truncated": False,
+                "source": "blockscout-csv(fail)", "blocked": True,
+                "pro_keys": 4, "pro_key": "",
+                "error": ("Blockscout publik menolak request (HTTP 403 "
+                          "bot-protection) di /api [PRO: PRO API 402 Out of "
+                          "credits (key#4)] — key PRO API ada tetapi "
+                          "semuanya ditolak / kreditnya habis"),
+            },
+            "depth": {"buckets": [], "tiers": [], "holders_all": 0,
+                      "holders_wallet": 0, "pool_excluded": 0,
+                      "buckets_include_pools": False, "market_cap": 1_000.0},
+            "source": "blockscout-csv(fail)",
+            "no_helius_keys": False,
+            "scan_failed": True,
+        }
+        with mock.patch("robinhood_holders.scan_token_holders",
+                        return_value=failed):
+            result = self._submit(app, CA)
+        self.assertEqual(len(result.exception), 0)
+        errors = "\n".join(node.value for node in result.error)
+        self.assertIn("HTTP 403", errors)
+        self.assertIn("4 key PRO API terpasang", errors)
+        self.assertIn("dev.blockscout.com", errors)
+        self.assertIn("BLOCKSCOUT_API_KEYS", errors)
+        self.assertNotIn("Pasang `BLOCKSCOUT_API_KEY`", errors)
+        self.assertNotIn("Pastikan CA valid", errors)
+
+    def test_robinhood_caption_shows_which_pro_key_was_used(self):
+        app = self._app()
+        ok = self._depth_result(CA, "VLAD", "blockscout-csv@pro")
+        ok["snapshot"]["pro_key"] = "key#3"
+        ok["snapshot"]["pro_keys"] = 4
+        with mock.patch("robinhood_holders.scan_token_holders",
+                        return_value=ok):
+            result = self._submit(app, CA)
+        self.assertEqual(len(result.exception), 0)
+        captions = "\n".join(node.value for node in result.caption)
+        self.assertIn("Blockscout (Robinhood Chain) · PRO API key#3", captions)
+
+    def test_robinhood_generic_failure_keeps_old_message(self):
+        """Kegagalan non-403 (mis. token belum di-index) → pesan lama."""
+        app = self._app()
+        failed = {
+            "mint": CA, "symbol": "?",
+            "market": {},
+            "snapshot": {"holders": [], "fetched": 0, "pages": 0,
+                         "truncated": False, "source": "blockscout-csv(fail)",
+                         "blocked": False, "error": "price/address empty"},
+            "depth": {"buckets": [], "tiers": [], "holders_all": 0,
+                      "holders_wallet": 0, "pool_excluded": 0,
+                      "buckets_include_pools": False, "market_cap": 0.0},
+            "source": "blockscout-csv(fail)",
+            "no_helius_keys": False,
+            "scan_failed": True,
+        }
+        with mock.patch("robinhood_holders.scan_token_holders",
+                        return_value=failed):
+            result = self._submit(app, CA)
+        errors = "\n".join(node.value for node in result.error)
+        self.assertIn("Pastikan CA valid", errors)
+        self.assertIn("price/address empty", errors)
+        self.assertNotIn("HTTP 403", errors)
+
     def test_solana_ca_still_routes_to_helius(self):
         """CA base58 → Helius (perilaku lama tidak berubah)."""
         app = self._app()

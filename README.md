@@ -244,8 +244,30 @@ Scan Holder Khusus (halaman utama) menerima **dua chain**: CA Solana
 (base58) → Helius DAS, CA **Robinhood Chain** (`0x…`) → **Blockscout**
 (CSV export, tanpa limit) lewat `robinhood_holders.scan_token_holders` — hasil (bar chart
 Wallet Depth + tabel) dirender sama. Jalur Solana dan cron butuh
-`HELIUS_API_KEY` (config / env / Streamlit secrets); jalur Robinhood tidak
-membutuhkan key. Tanpa key, jalur Solana memakai fallback GMGN.
+`HELIUS_API_KEY` (config / env / Streamlit secrets). Tanpa key, jalur
+Solana memakai fallback GMGN.
+
+Jalur Robinhood **sebaiknya** diberi `BLOCKSCOUT_API_KEY` (env /
+`blockscout_api_key` di `config.json` / Streamlit secrets; key gratis
+dari <https://dev.blockscout.com>, tanpa kartu). Sejak 2026-09-08
+instance publik `robinhoodchain.blockscout.com` memasang bot-protection:
+request dari server (Streamlit Cloud, GitHub runner) sering dijawab
+**HTTP 403** "Just a moment…" serentak untuk `getToken`, CSV export, dan
+REST v2 — dulu terbaca sebagai *"Scan tidak menghasilkan holder. Pastikan
+CA valid…"* padahal CA-nya sah. Dengan key, semua request lewat **PRO
+API** `https://api.blockscout.com/4663/…` (header `Authorization:
+Bearer`, path & bentuk respons identik dengan instance publik; free tier
+5 RPS / 100K kredit per hari ≈ 3.000–5.000 request). **Beberapa key**
+boleh dipasang sekaligus (`BLOCKSCOUT_API_KEYS`, dipisah koma) — kuota
+free tier dihitung per akun, jadi key dari akun berbeda menaikkan
+plafon; request dibagi bergantian dan key yang ditolak / kreditnya
+habis (401/402/403/429) diparkir sementara lalu request pindah ke key
+berikutnya, key aslinya tidak pernah masuk log (hanya `key#N`). Tanpa key modul
+tetap mencoba instance publik dengan TLS browser (`curl_cffi`, profil
+dirotasi saat 403) lalu `requests` biasa; bila semuanya ditolak hasil
+pulang dengan `blocked: True` + satu kalimat yang menyebut 403 dan cara
+memasang key (bukan menyalahkan CA). Rute yang dipakai terlihat di
+`source` (`blockscout-csv@pro` / `@public`) dan caption UI.
 
 ## Chart LP (watchlist Meteora terpisah)
 
@@ -575,6 +597,8 @@ keseluruhan kadens ke 15 menit.
 | Variabel / konstanta | Isi |
 |---|---|
 | `HELIUS_API_KEY` | API key Helius untuk data holder |
+| `BLOCKSCOUT_API_KEY` | Key **Blockscout PRO API** (gratis di dev.blockscout.com) untuk holder Robinhood Chain; tanpa key modul memakai instance publik yang sejak 2026-09-08 sering menjawab 403 bot-protection. Alias: `BLOCKSCOUT_PRO_API_KEY`, `blockscout_api_key` di `config.json` / Streamlit secrets |
+| `BLOCKSCOUT_API_KEYS` | Beberapa key PRO API dipisah koma/baris baru (digabung dengan `BLOCKSCOUT_API_KEY`, dedup). Round-robin; 401/403 parkir 60/5 mnt, 402 kredit habis parkir 30 mnt, 429 parkir sesuai `x-ratelimit-reset`. Alias `blockscout_api_keys` di `config.json` / secrets |
 | `GITHUB_TOKEN` | Token GitHub (push watchlist + snapshot) |
 | `GITHUB_REPO`, `GITHUB_REF` | default `lparmycalprut/wallet-depth`; scanner memakai branch aktif |
 | `WATCHLIST_FILE`, `HOLDER_STATUS_FILE` | default `watchlist.json`, `holder_status.json` |

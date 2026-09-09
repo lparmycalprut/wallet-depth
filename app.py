@@ -556,18 +556,26 @@ def _scan_source_meta(result: dict) -> tuple[str, str, str]:
     ``result["source"]`` berasal dari ``helius_holders.scan_token_holders``
     (``"helius"``) atau ``robinhood_holders.scan_token_holders``
     (``"blockscout-csv"`` / ``"blockscout-rpc"`` / ``"blockscout-v2"`` —
-    ketiganya Blockscout, hanya beda jalur pengambilan).
+    ketiganya Blockscout, hanya beda jalur pengambilan; akhiran ``@pro`` /
+    ``@public`` (sejak 2026-09-08) menandai transport: PRO API ber-key
+    atau instance publik).
     """
     source = str(result.get("source") or "").lower()
     if "blockscout" in source or source in ("", "robinhood"):
         jalur = {"blockscout-csv": "CSV export",
                  "blockscout-v2": "REST v2",
-                 "blockscout-rpc": "RPC"}.get(source, "")
+                 "blockscout-rpc": "RPC"}.get(
+                     robinhood_holders.source_base(source), "")
         detail = f" via {jalur}" if jalur else ""
+        route = robinhood_holders.route_label(source)
+        key_label = str((result.get("snapshot") or {}).get("pro_key") or "")
+        if route and key_label:
+            route = f"{route} {key_label}"
+        transport = f" · {route}" if route else ""
         return ("Blockscout",
-                f"Akun token yang diambil dari Blockscout{detail} "
+                f"Akun token yang diambil dari Blockscout{detail}{transport} "
                 "(Robinhood Chain).",
-                "🦅 Blockscout (Robinhood Chain)")
+                f"🦅 Blockscout (Robinhood Chain){transport}")
     return ("Helius",
             "Akun token yang diambil dari Helius DAS getTokenAccounts.",
             "🛰 Helius DAS getTokenAccounts")
@@ -664,8 +672,30 @@ def _render_helius_holder_result(result: dict) -> None:
                  "config.json / env `HELIUS_API_KEY` / Streamlit secrets.")
         return
     if result.get("scan_failed"):
-        detail = str((result.get("snapshot") or {}).get("error") or "")
-        detail = detail.strip()
+        snapshot_err = result.get("snapshot") or {}
+        detail = str(snapshot_err.get("error") or "").strip()
+        if snapshot_err.get("blocked"):
+            # 403 bot-protection Blockscout publik: CA & harga tidak
+            # salah. Tanpa key → suruh pasang key; key sudah ada → semua
+            # key ditolak/kreditnya habis, arahkan ke dashboard.
+            n_keys = int(snapshot_err.get("pro_keys") or 0)
+            if n_keys:
+                remedy = (f"{n_keys} key PRO API terpasang tetapi semuanya "
+                          "ditolak / kredit hariannya habis — cek dashboard "
+                          f"{robinhood_holders.BLOCKSCOUT_KEY_URL} "
+                          "(`x-credits-remaining`) atau tambah key dari akun "
+                          "lain ke `BLOCKSCOUT_API_KEYS`.")
+            else:
+                remedy = ("Pasang `BLOCKSCOUT_API_KEY` (key gratis: "
+                          f"{robinhood_holders.BLOCKSCOUT_KEY_URL}; env / "
+                          "`blockscout_api_key` di config.json / Streamlit "
+                          "secrets; beberapa key dipisah koma di "
+                          "`BLOCKSCOUT_API_KEYS`) supaya scan lewat PRO API.")
+            st.error(
+                "Blockscout publik menolak request scan (HTTP 403 "
+                "bot-protection) — bukan karena CA salah. " + remedy
+                + (f" Detail: {detail}" if detail else ""))
+            return
         message = ("Scan tidak menghasilkan holder. Pastikan CA valid dan "
                    "harga token tersedia (DexScreener)"
                    + (" serta Helius API key aktif"
@@ -916,6 +946,13 @@ def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
     # Scan yang pulang dengan 0 wallet (provider holder gagal/kena rate limit)
     # tidak boleh terbaca seperti hasil: bilang terus terang apa yang terjadi.
     fetch_error = str(holders.get("fetch_error") or "")
+    if holders.get("blocked"):
+        # 403 bot-protection Blockscout publik (2026-09-08): ringkas +
+        # langsung ke obatnya; pesan panjangnya terpotong 90 karakter.
+        fetch_error = ("Blockscout 403 — semua key PRO ditolak/kredit habis"
+                       if holders.get("pro_keys") else
+                       "Blockscout 403 bot-protection — pasang "
+                       "BLOCKSCOUT_API_KEY (PRO API)")
     scan_note = f"scan {format_wib(row.get('view_ts'))}"
     if holders and not holders_usable(holders):
         scan_note += " · ⚠️ scan terakhir tidak lengkap"

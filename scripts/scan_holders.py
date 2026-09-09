@@ -71,6 +71,7 @@ from holder_analysis import analyze_token
 from holder_status import (last_publish_result, load_holder_status,
                            publish_holder_status)
 from lp_watchlist import split_watchlist
+import robinhood_holders
 import robinhood_watchlist
 from telegram_alerts import (process_holder_alerts, send_test_alert,
                              tracked_wallet_addresses)
@@ -414,9 +415,16 @@ def main(argv=None) -> int:
                       f"{MIN_RUN_GAP_SEC // 60} menit lalu (run ganda "
                       "chain dispatch + schedule).")
                 rh_targets = {}
+            rh_n_keys = len(robinhood_holders.get_pro_api_keys())
             print(f"Rencana scan Robinhood LP: watchlist={rh_due} "
                   f"due={len(rh_targets)} "
-                  f"(biasa {len(rh_regular)} token tidak di-scan cron)")
+                  f"(biasa {len(rh_regular)} token tidak di-scan cron) "
+                  f"blockscout_pro_keys={rh_n_keys}")
+            if rh_targets and not rh_n_keys:
+                print("WARN: BLOCKSCOUT_API_KEY(S) tidak ada — holder "
+                      "Robinhood lewat instance publik yang sering menjawab "
+                      "403 bot-protection di runner Actions. Set secret "
+                      "BLOCKSCOUT_API_KEYS (koma) di repo.", file=sys.stderr)
             if rh_targets:
                 rh_analyses = robinhood_watchlist.scan_watchlist(
                     rh_targets, history_store=rh_store,
@@ -443,9 +451,43 @@ def main(argv=None) -> int:
                     rh_done = sum(1 for item in rh_analyses.values()
                                   if (item.get("holders") or {}).get(
                                       "total_fetched"))
+                    rh_blocked = sum(1 for item in rh_analyses.values()
+                                     if (item.get("holders") or {}).get(
+                                         "blocked"))
+                    rh_routes = sorted({
+                        robinhood_holders.route_label(
+                            str(((item.get("holders") or {}).get("source"))
+                                or "")) or "?"
+                        for item in rh_analyses.values()
+                        if (item.get("holders") or {}).get("total_fetched")})
                     print(f"Robinhood scan selesai: tokens={len(rh_analyses)} "
                           f"fetched={rh_done}/{len(rh_analyses)} "
-                          f"updated={rh_status.get('updated_at')}")
+                          f"updated={rh_status.get('updated_at')}"
+                          + (f" route={'/'.join(rh_routes)}"
+                             if rh_routes else ""))
+                    # Ringkasan pool key PRO (label key#N + sisa kredit dari
+                    # header x-credits-remaining) — key aslinya tidak dicetak.
+                    rh_keys_note = robinhood_holders.pro_key_summary()
+                    if rh_keys_note:
+                        print(rh_keys_note)
+                    if rh_blocked:
+                        # 403 bot-protection instance publik: nyatakan
+                        # terang di log Actions + cara memperbaikinya.
+                        if robinhood_holders.pro_keys_configured():
+                            remedy = ("Semua key PRO API ditolak / kredit "
+                                      "hariannya habis — cek dashboard "
+                                      f"{robinhood_holders.BLOCKSCOUT_KEY_URL}"
+                                      " atau tambah key akun lain ke secret "
+                                      "BLOCKSCOUT_API_KEYS.")
+                        else:
+                            remedy = ("Pasang secret BLOCKSCOUT_API_KEY "
+                                      "(key gratis: "
+                                      f"{robinhood_holders.BLOCKSCOUT_KEY_URL}"
+                                      ") supaya scan lewat PRO API.")
+                        print(f"WARN: Blockscout menolak scan "
+                              f"{rh_blocked}/{len(rh_analyses)} token "
+                              f"(HTTP 403 bot-protection). {remedy}",
+                              file=sys.stderr)
                 else:
                     print("Robinhood scan selesai: tidak ada token berhasil")
         else:

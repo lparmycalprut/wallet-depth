@@ -119,7 +119,24 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   supaya section **Scan Holder Khusus** di `app.py` dipakai ulang tanpa
   cabang: CA `0x…` → jalur Robinhood, base58 → Helius; label sumber
   metrik/caption dihitung dari `result["source"]`
-  (`app._scan_source_meta`).
+  (`app._scan_source_meta`). **Transport Blockscout (sejak 2026-09-08):**
+  semua request lewat `_blockscout_get()` = **PRO API**
+  `api.blockscout.com/4663/…` (bila ada key: `BLOCKSCOUT_API_KEY` /
+  `BLOCKSCOUT_API_KEYS` daftar koma / `blockscout_api_key(s)` config /
+  secrets — digabung lewat `get_pro_api_keys()`; header Bearer, key tak
+  pernah di URL/log, label `key#N`) → instance publik (curl_cffi
+  impersonate dirotasi saat 403 → `requests`). **Multi-key** (2026-09-09):
+  `_ProKeyPool` round-robin; 401/403/402/429 memarkir key itu dan request
+  pindah ke key berikutnya di putaran yang sama (kuota per akun, jadi N
+  akun = N× plafon). `pro_key_summary()` untuk log; hasil membawa
+  `pro_key`/`pro_keys`. Jangan kembali ke `get_pro_api_key()` tunggal.
+  Instance publik memblokir server dengan 403 bot-protection; itu
+  `BlockscoutBlocked` — **bukan transient, jangan di-retry**, dan
+  `fetch_holders` merangkumnya jadi **satu** kalimat + `blocked: True`
+  (`analyze_token` → `holders["blocked"]`) supaya UI/cron bilang "pasang
+  BLOCKSCOUT_API_KEY", bukan "pastikan CA valid". `source` sukses diberi
+  akhiran `@pro`/`@public` — bandingkan lewat `source_base()`, label UI
+  lewat `route_label()`. Detail: `docs/robinhood_holders_api.md`.
 - `core.py`: config/key Helius, pasar DexScreener (`get_market` ikut
   mengembalikan `volume`, `price_change`, `txns`), candle GeckoTerminal —
   `get_hourly_candles()` (mentah, per jam) dan `get_daily_candles()`
