@@ -119,7 +119,24 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   supaya section **Scan Holder Khusus** di `app.py` dipakai ulang tanpa
   cabang: CA `0x…` → jalur Robinhood, base58 → Helius; label sumber
   metrik/caption dihitung dari `result["source"]`
-  (`app._scan_source_meta`).
+  (`app._scan_source_meta`). **Transport Blockscout (sejak 2026-09-08):**
+  semua request lewat `_blockscout_get()` = **PRO API**
+  `api.blockscout.com/4663/…` (bila ada key: `BLOCKSCOUT_API_KEY` /
+  `BLOCKSCOUT_API_KEYS` daftar koma / `blockscout_api_key(s)` config /
+  secrets — digabung lewat `get_pro_api_keys()`; header Bearer, key tak
+  pernah di URL/log, label `key#N`) → instance publik (curl_cffi
+  impersonate dirotasi saat 403 → `requests`). **Multi-key** (2026-09-09):
+  `_ProKeyPool` round-robin; 401/403/402/429 memarkir key itu dan request
+  pindah ke key berikutnya di putaran yang sama (kuota per akun, jadi N
+  akun = N× plafon). `pro_key_summary()` untuk log; hasil membawa
+  `pro_key`/`pro_keys`. Jangan kembali ke `get_pro_api_key()` tunggal.
+  Instance publik memblokir server dengan 403 bot-protection; itu
+  `BlockscoutBlocked` — **bukan transient, jangan di-retry**, dan
+  `fetch_holders` merangkumnya jadi **satu** kalimat + `blocked: True`
+  (`analyze_token` → `holders["blocked"]`) supaya UI/cron bilang "pasang
+  BLOCKSCOUT_API_KEY", bukan "pastikan CA valid". `source` sukses diberi
+  akhiran `@pro`/`@public` — bandingkan lewat `source_base()`, label UI
+  lewat `route_label()`. Detail: `docs/robinhood_holders_api.md`.
 - `core.py`: config/key Helius, pasar DexScreener (`get_market` ikut
   mengembalikan `volume`, `price_change`, `txns`), candle GeckoTerminal —
   `get_hourly_candles()` (mentah, per jam) dan `get_daily_candles()`
@@ -241,16 +258,23 @@ JSON compact, Contents API base64) di ref `holder-live`:
   masih naik; marker `alert_state["early_dump"]` = `{ts, dust_pct_mc}`
   run terakhir (di-merge paling baru oleh `holder_history._merge_alert_state`,
   dipertahankan `compact_alert_state`). Pesan selalu ditutup link token
-  **🔗 GMGN + 🦆 DexScreener** dari `links.token_link_lines(mint)`; bila
+  **🔗 GMGN + 🦆 DexScreener** dari `links.token_links(mint)`; bila
   event membawa `pool_addresses`, ditambah `🌊 Meteora` + `🦅 HawkFi`
-  (`_pool_link_lines`) — cron belum bisa mengisinya (watchlist tidak
+  (`_pool_links`) — cron belum bisa mengisinya (watchlist tidak
   menyimpan pool address). **Format semua notifikasi (2026-09-07)**:
   setiap baris beremoji, dust sebelum → sesudah + Δ pp dalam satu baris,
   waktu WIB tanpa detik; tanpa tabel wallet/skor/penjelasan panjang.
   Rule terkonfirmasi tetap punya satu baris pasar atau ⚠️ TIDAK
   TERVERIFIKASI; LP/high-drop tanpa baris pasar. Judul `exit_cutloss` =
-  `🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 25 bin`, tebal melalui native
-  entity `bold` (offset/panjang **UTF-16**, bukan `len` karakter Python).
+  `🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 50 bin` (2026-09-09; dulu
+  25 bin), tebal melalui native entity `bold` (offset/panjang **UTF-16**,
+  bukan `len` karakter Python). **Link = hyperlink (2026-09-09)**:
+  `build_alert_message(event)` → `(teks, entities)`; baris link hanya
+  `"<emoji> <label>"` (`🔗 GMGN`, `🦆 DexScreener`, `🌊 Meteora`,
+  `🦅 HawkFi`, `🦆 rh-scan`, `🌏 Blockscout`) dan label diberi entity
+  `text_link` dengan URL dari `links.token_links()` / `_pool_links()` —
+  URL **tidak** ditulis di teks. `format_alert_message()` = teksnya saja.
+  Jangan kembali ke `token_link_lines()` (URL polos) untuk Telegram.
   Telegram tidak mendukung ukuran/warna/teks berkedip: jangan kirim
   HTML/CSS palsu. Teks tetap literal, tanpa `parse_mode`;
   `link_preview_options.is_disabled=True` menjaga pesan tetap pendek.
@@ -439,7 +463,7 @@ exit/cutloss (pool LP): eskalasi episode EARLY DUMP — dust naik
                         ESCALATION_MIN_RISES (3) scan 5 menit berturut
                         dalam ESCALATION_WINDOW_SEC (15 mnt, +1 bucket
                         toleransi cron telat) -> ESCALATION_TITLE
-                        (EXIT / CUTLOSS / Reshape bid-ask 25 bin),
+                        (EXIT / CUTLOSS / Reshape bid-ask 50 bin),
                         1x per episode (marker escalated)
 titik aman (pool LP)  : dust turun kembali <= 0.1% MC di jendela yang sama
                         -> "KEMBALI KE TITIK AMAN", 1x, episode ditutup

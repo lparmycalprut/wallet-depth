@@ -1,3 +1,192 @@
+# Kegiatan — 9 September 2026 (sesi 12 · 📨 Telegram: judul 50 bin + hyperlink)
+
+Permintaan user: judul eskalasi diganti menjadi **"🚨 WAKTUNYA EXIT /
+CUTLOSS / Reshape bid-ask 50 bin"** (dulu 25 bin), dan baris link
+`🔗 GMGN: https://gmgn.ai/sol/token/<mint>` / `🦆 DexScreener: https://…`
+diganti **hyperlink** saja, bukan URL polos.
+
+- `telegram_alerts.ESCALATION_TITLE` → "… 50 bin".
+- `build_alert_message(event)` baru → `(teks, entities)`: baris link hanya
+  `"<emoji> <label>"` dan label diberi entity `text_link` Bot API (offset /
+  length UTF-16, sama seperti entity `bold` judul EXIT yang sudah ada).
+  Berlaku untuk semua jenis alert dan semua link: GMGN, DexScreener,
+  Meteora, HawkFi (LP), rh-scan, Blockscout (Robinhood). `send_telegram_alert`
+  memakai builder ini; `format_alert_message()` sekarang hanya teksnya
+  (dipakai log/tes). Tanpa mint → tanpa baris link & tanpa entity.
+- `links.token_links(ca)` → `[(emoji, label, url)]` sebagai satu sumber;
+  `token_link_lines()` (teks polos) tetap ada untuk log/CLI, tidak lagi
+  dipakai Telegram. `telegram_alerts._pool_links()` padanannya untuk pool.
+- Tes diperbarui: `test_telegram_alerts.py` (helper `_utf16_slice`/`_links`
+  memverifikasi label & URL tiap entity, offset tepat walau symbol/mint
+  beremoji, alert lain tanpa bold, test alert tanpa entities),
+  `test_exit_cutloss.py`, `test_early_dump.py`. **Suite penuh 969 passed.**
+- README (contoh pesan + catatan hyperlink), AGENTS.md.
+
+# Kegiatan — 9 September 2026 (sesi 11 · 🦅 Blockscout PRO API: beberapa key sekaligus)
+
+Pertanyaan user: *"1 api cukup atau tidak? atau beberapa api sekaligus?"* →
+hitungan: ±3 request Blockscout per token per scan (getToken + counters +
+CSV ≈ 60–80 kredit), cron 288 run/hari, free tier 100K kredit/hari & 5 RPS
+**per akun** → 1 key cukup untuk ≤ 3–4 token LP; token > 10.000 holder
+(paginasi RPC) atau watchlist lebih besar butuh lebih. Key tambahan dari
+akun yang **sama** tidak menambah kuota. User: *"saya sudah punya 4 key,
+kita menggunakan lebih dari 1 key, tolong bikinkan"*.
+
+## 1. `robinhood_holders.py`: pool key PRO (`_ProKeyPool`)
+
+- `get_pro_api_keys()` menggabungkan semua sumber (pola
+  `core.get_helius_keys`, memakai `merge_helius_keys`): env
+  `BLOCKSCOUT_API_KEY` / `BLOCKSCOUT_API_KEYS` (koma/baris baru) /
+  `BLOCKSCOUT_PRO_API_KEY` → `blockscout_api_key` / `blockscout_api_keys`
+  di `config.json` → Streamlit secrets nama sama; dedup, urutan = label
+  `key#1..N`. `get_pro_api_key()` tetap ada (key pertama).
+- `_pro_round()`: round-robin di antara key **aktif**; `ProApiError`
+  401/403 → parkir 60/5 mnt, 402 kredit habis → parkir 30 mnt (probe ulang
+  murah karena reset harian Blockscout tidak berjam tetap), 429 → parkir
+  sesuai `x-ratelimit-reset` (≤ 60 dtk); request langsung pindah ke key
+  berikutnya di putaran yang sama tanpa backoff. 404 rute → publik.
+  Semua key diparkir → `ProKeysParked` → publik. Sisa kredit dibaca dari
+  `x-credits-remaining`. Thread-safe (ThreadPool `scan_watchlist`);
+  `clear_holder_cache()` juga me-reset pool.
+- Pelaporan tanpa bocor key: `pro_key_status()`, `pro_key_summary()`
+  (*"Blockscout PRO API: 4 key · key#1 sisa 90,850 kredit, 5 req · key#2
+  parkir 402 kredit habis (30 mnt) · …"*), `WARN` sekali per key di stderr.
+  Hasil `fetch_holders` bertambah `pro_key` (label yang dipakai) &
+  `pro_keys` (jumlah key); `analyze_token` meneruskannya ke `holders`.
+- `BlockscoutBlocked` punya `hint` terpisah: tanpa key → "pasang
+  BLOCKSCOUT_API_KEY"; key ada tapi PRO ikut gagal →
+  `HINT_KEYS_FAILED` ("key PRO API ada tetapi semuanya ditolak / kreditnya
+  habis — periksa dashboard") + detail `PRO: PRO API 402 … (key#4)`.
+
+## 2. UI, cron, konfigurasi
+
+- `app.py`: caption *Blockscout (Robinhood Chain) · PRO API key#3*; pesan
+  `scan_failed`+`blocked` dibedakan: 0 key → "Pasang `BLOCKSCOUT_API_KEY`
+  …", N key → "N key PRO API terpasang tetapi semuanya ditolak / kredit
+  hariannya habis — cek dashboard … atau tambah key akun lain ke
+  `BLOCKSCOUT_API_KEYS`"; baris watchlist ikut. `pages/5_🧮_Holder.py`
+  sama.
+- `scripts/scan_holders.py`: `blockscout_pro_keys=N` di baris rencana,
+  `WARN` bila 0 key, ringkasan pool setelah scan, `route=` dari label.
+- Workflow (`daily-effort-5menit.yml` + `.github/workflows/daily-effort.yml`)
+  meneruskan `BLOCKSCOUT_API_KEYS`; `config.example.json` +
+  `blockscout_api_keys`.
+
+## 3. Tes & dokumen
+
+- `tests/test_robinhood_transport.py` +12 (31 total): sumber key
+  (env daftar, config dua nama, secrets list/string), round-robin, 402 →
+  parkir & pindah key, 429 sesuai header, probe ulang setelah parkir,
+  semua key gagal → publik + pesan "key habis" tanpa bocor key, label key
+  di hasil/analyze_token, pool dibangun ulang saat daftar key berubah.
+  `tests/test_rh_card_ui.py` +2 AppTest. **Suite penuh 965 passed** (1
+  flaky lama `test_watchlist_clear` lulus saat diisolasi).
+- Dok: DEPLOY.md bagian baru **Setup key Blockscout PRO API** (langkah
+  Streamlit Cloud + GitHub), README (paragraf + tabel env), AGENTS.md,
+  `docs/robinhood_holders_api.md` (diagram pool).
+
+# Kegiatan — 8 September 2026 (sesi 10 · 🦅 Blockscout 403 → PRO API + fallback publik)
+
+Laporan user: Scan Holder Khusus untuk CA Robinhood
+`0x1209ec401498a1b781412576c978eee0daa0bb6e` pulang *"Scan tidak
+menghasilkan holder. Pastikan CA valid dan harga token tersedia
+(DexScreener). Detail: getToken: 403 Client Error: Forbidden …; csv: 403 …;
+v2: 403 …"*. Analisis user (WAF/Cloudflare atau migrasi ke PRO API, bukan CA
+salah) **divalidasi benar**: dari klien browser endpoint yang sama masih 200
+(Pusheen, 409 holder, 18 desimal), dan dokumen resmi Blockscout menyatakan
+instance publik dilindungi bot-protection (403 + halaman "Just a moment…")
+sementara akses API per-instance **deprecated** → akses program lewat
+**PRO API** `https://api.blockscout.com/4663/…` dengan key gratis
+(`proapi_…`, <https://dev.blockscout.com>, tanpa kartu; free tier 5 RPS /
+100K kredit per hari ≈ 3.000–5.000 request). Opsi #2 user (User-Agent
+browser) sudah dipakai sejak awal dan terbukti tidak cukup — yang difilter
+TLS fingerprint/IP server.
+
+## 1. `robinhood_holders.py`: transport PRO API → instance publik
+
+- Semua request lewat `_blockscout_get(url)`: bila `BLOCKSCOUT_API_KEY`
+  ada (env `BLOCKSCOUT_API_KEY`/`BLOCKSCOUT_PRO_API_KEY` →
+  `blockscout_api_key` di `config.json` → `st.secrets`) → **PRO API**
+  dengan path identik (`_pro_url`) dan header `Authorization: Bearer`
+  (key tidak pernah di URL/log/pesan error); PRO 401/402/403/404 → jatuh
+  ke instance publik. Tanpa key → publik: `curl_cffi` impersonate
+  (`chrome → chrome136 → chrome131 → safari184 → safari17_0 → firefox133`,
+  dirotasi saat 403, `_curl_requests()` bisa di-mock) lalu `requests`
+  biasa + header browser.
+- `BlockscoutBlocked` (403, atau 503 berbadan halaman challenge Cloudflare;
+  detail `cf-mitigated`/`server`) **bukan transient**: tidak di-retry,
+  `is_transient_error` → False, `is_blocked_error` baru. Response tanpa
+  `status_code` numerik (stub test lama) diserahkan ke `raise_for_status`
+  bawaan (`_status_of`).
+- `fetch_holders()` merangkum 403 dari getToken/CSV/RPC/v2 menjadi **satu**
+  kalimat (*"Blockscout publik menolak request (HTTP 403 bot-protection) di
+  /api [cf-mitigated=challenge Cloudflare] — pasang BLOCKSCOUT_API_KEY (key
+  gratis: https://dev.blockscout.com) agar scan lewat PRO API"*) + key baru
+  `blocked: bool` (juga di early-return); bila PRO ikut gagal alasannya
+  disambung (`…; PRO: PRO API 401 Invalid API key`). `fetch_holders_rpc`
+  mengembalikan instance `BlockscoutBlocked` sebagai error ke-4.
+- `source` sukses diberi akhiran rute: `blockscout-csv@pro` /
+  `@public` (thread-local `_ROUTE_STATE`, aman untuk ThreadPool
+  `scan_watchlist`); helper `source_with_route`, `source_base`,
+  `route_label`, `last_route`. `analyze_token` meneruskan
+  `holders["blocked"]` di samping `holders["fetch_error"]`.
+- Shape dict hasil (`mint/symbol/market/snapshot/depth/source/…`) dan gate
+  `holders_usable`/`fetch_error` tidak berubah; snapshot lama tetap tidak
+  ditimpa saat 403.
+
+## 2. UI & cron
+
+- `app.py` `_scan_source_meta`: cocokkan jalur lewat `source_base()` dan
+  tambahkan " · PRO API" / " · instance publik" ke help + caption.
+  `scan_failed` dengan `snapshot["blocked"]` → pesan baru *"Blockscout
+  publik menolak request scan (HTTP 403 bot-protection) — bukan karena CA
+  salah. Pasang `BLOCKSCOUT_API_KEY` …"* (pesan lama "Pastikan CA valid"
+  tetap untuk kegagalan non-403). Baris watchlist Robinhood: `blocked` →
+  catatan ringkas "Blockscout 403 bot-protection — pasang
+  BLOCKSCOUT_API_KEY (PRO API)".
+- `pages/5_🧮_Holder.py`: peringatan "scan tidak lengkap" menyebut 403 +
+  key bila `holders["blocked"]`.
+- `scripts/scan_holders.py`: log lane Robinhood menambah `route=pro|public`
+  dan `WARN: Blockscout publik menolak scan N/M token …` ke stderr.
+- Workflow (`daily-effort-5menit.yml` + `.github/workflows/daily-effort.yml`)
+  meneruskan `BLOCKSCOUT_API_KEY: ${{ secrets.BLOCKSCOUT_API_KEY }}`
+  (secret perlu dibuat di GitHub; push ke `.github/workflows` mungkin ditolak
+  untuk bot — salin manual seperti biasa). `config.example.json` +
+  `blockscout_api_key`.
+
+## 3. Tes & dokumen
+
+- Baru `tests/test_robinhood_transport.py` (19 tes): key env/config/secrets,
+  `_pro_url`, PRO Bearer tanpa key di URL, PRO 401/402 → publik, PRO+publik
+  gagal → pesan gabungan tanpa bocor key, 403 → `BlockscoutBlocked` tanpa
+  retry, rotasi profil TLS, header UA tidak menimpa impersonate, curl_cffi
+  rusak → requests, 503 challenge, 429 masih di-retry, `fetch_holders`
+  semua jalur 403 (dengan/tanpa decimals) → satu pesan + `blocked`,
+  `analyze_token`/`scan_token_holders` meneruskan penanda, label rute.
+  `tests/test_rh_card_ui.py` +3 AppTest (caption `@pro`, pesan 403 di Scan
+  Holder Khusus, pesan lama untuk kegagalan biasa). **Suite penuh 952
+  passed.**
+- Dok: `docs/robinhood_holders_api.md` (bagian *Transport* + rate limit PRO;
+  koreksi klaim lama "mirror PRO jangan dipakai"), README (paragraf Scan
+  Holder Khusus + tabel env), DEPLOY (secrets + env Actions), AGENTS.md.
+
+## Yang harus dilakukan user
+
+1. Buat key gratis di <https://dev.blockscout.com> (Sign in → *Create API
+   key*; key `proapi_…` hanya ditampilkan sekali).
+2. Streamlit Cloud → *Settings → Secrets*: `BLOCKSCOUT_API_KEY = "proapi_…"`
+   (atau `blockscout_api_key` di `config.json` lokal).
+3. GitHub → *Settings → Secrets and variables → Actions*: secret
+   `BLOCKSCOUT_API_KEY`, lalu pastikan `.github/workflows/daily-effort.yml`
+   memuat baris env baru (lihat `daily-effort-5menit.yml`).
+4. Ulangi scan `0x1209ec…bb6e`: caption harus berbunyi *Blockscout
+   (Robinhood Chain) · PRO API*.
+
+Belum dikerjakan (opsional, bila PRO API pun tidak memadai): fallback
+on-chain lewat RPC publik `https://rpc.mainnet.chain.robinhood.com`
+(`eth_getLogs` Transfer + `balanceOf`; rate-limited, "bukan untuk indexer")
+dan Bitquery (berbayar).
+
 # Kegiatan — 8 September 2026 (sesi 9 · 🛰 Scan Holder Khusus: + Robinhood Chain)
 
 Permintaan user: **"tambahkan fungsi kita bisa scan robinhood disini juga"**

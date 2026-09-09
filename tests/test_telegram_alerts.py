@@ -215,58 +215,97 @@ def _dump_event(mint=MINT):
                                      symbol="TST")[0]
 
 
-class AlertMessageLinkTest(unittest.TestCase):
-    """Pesan Telegram harus membawa link GMGN + DexScreener token."""
+def _utf16_slice(text: str, offset: int, length: int) -> str:
+    """Potongan teks yang dirujuk satu entity (satuan UTF-16 Bot API)."""
+    raw = text.encode("utf-16-le")
+    return raw[offset * 2:(offset + length) * 2].decode("utf-16-le")
 
-    def test_link_gmgn_dan_dexscreener_ikut_terkirim(self):
-        message = ta.format_alert_message(_dump_event())
-        self.assertIn(f"\U0001f517 GMGN: {gmgn_token_url(MINT)}", message)
-        self.assertIn(f"\U0001f986 DexScreener: {dexscreener_token_url(MINT)}",
-                      message)
+
+def _links(text: str, entities: list[dict]) -> list[tuple[str, str]]:
+    """``[(label, url), …]`` dari entity ``text_link`` sesuai urutan teks."""
+    return [(_utf16_slice(text, e["offset"], e["length"]), e["url"])
+            for e in entities if e.get("type") == "text_link"]
+
+
+class AlertMessageLinkTest(unittest.TestCase):
+    """Link GMGN + DexScreener = **hyperlink** (entity ``text_link``).
+
+    Sejak 2026-09-09 URL tidak lagi ditulis di teks (dulu
+    ``🔗 GMGN: https://gmgn.ai/sol/token/<mint>`` — panjang dan tidak enak
+    dibaca); baris hanya ``🔗 GMGN`` dan labelnya diberi entity hyperlink.
+    """
+
+    def test_link_gmgn_dan_dexscreener_jadi_hyperlink(self):
+        text, entities = ta.build_alert_message(_dump_event())
+        self.assertIn("\n\U0001f517 GMGN\n", text)
+        self.assertTrue(text.endswith("\n\U0001f986 DexScreener"))
+        self.assertEqual(_links(text, entities),
+                         [("GMGN", gmgn_token_url(MINT)),
+                          ("DexScreener", dexscreener_token_url(MINT))])
+
+    def test_url_tidak_ditulis_di_teks(self):
+        text, entities = ta.build_alert_message(_dump_event())
+        self.assertNotIn("http", text)
+        self.assertNotIn("gmgn.ai", text)
+        self.assertNotIn("dexscreener.com", text)
+        self.assertEqual(ta.format_alert_message(_dump_event()), text)
+        # emoji tidak ikut jadi bagian hyperlink, hanya labelnya
+        for entity in entities:
+            self.assertNotIn("\U0001f517", _utf16_slice(
+                text, entity["offset"], entity["length"]))
 
     def test_link_pakai_helper_links_bukan_url_rakitan_sendiri(self):
-        message = ta.format_alert_message(_dump_event())
-        self.assertEqual(
-            [line for line in message.splitlines()
-             if "gmgn.ai" in line or "dexscreener.com" in line],
-            [f"\U0001f517 GMGN: {gmgn_token_url(MINT)}",
-             f"\U0001f986 DexScreener: {dexscreener_token_url(MINT)}"])
+        text, entities = ta.build_alert_message(_dump_event())
+        self.assertEqual([url for _, url in _links(text, entities)],
+                         [gmgn_token_url(MINT), dexscreener_token_url(MINT)])
 
     def test_link_muncul_setelah_baris_mint(self):
-        message = ta.format_alert_message(_dump_event())
-        self.assertLess(message.index("Mint:"), message.index("GMGN:"))
-        self.assertTrue(message.endswith(dexscreener_token_url(MINT)))
+        text, _ = ta.build_alert_message(_dump_event())
+        self.assertLess(text.index("Mint:"), text.index("GMGN"))
 
     def test_tanpa_mint_tidak_ada_link_menggantung(self):
-        message = ta.format_alert_message(_dump_event(mint=""))
-        self.assertIn("Mint: -", message)
-        self.assertNotIn("GMGN", message)
-        self.assertNotIn("DexScreener", message)
-        self.assertNotIn("gmgn.ai", message)
+        text, entities = ta.build_alert_message(_dump_event(mint=""))
+        self.assertIn("Mint: -", text)
+        self.assertTrue(text.endswith("Mint: -"))
+        self.assertNotIn("GMGN", text)
+        self.assertNotIn("DexScreener", text)
+        self.assertEqual(entities, [])
 
-    def test_mint_berbahaya_diencode(self):
-        message = ta.format_alert_message(_dump_event(mint="a?b&c d#e"))
-        self.assertIn("a%3Fb%26c%20d%23e", message)
-        for line in message.splitlines():
-            if "gmgn.ai" in line or "dexscreener.com" in line:
-                self.assertNotIn(" ", line.split(": ", 1)[1])
+    def test_mint_berbahaya_diencode_di_url_entity(self):
+        text, entities = ta.build_alert_message(_dump_event(mint="a?b&c d#e"))
+        for _, url in _links(text, entities):
+            self.assertIn("a%3Fb%26c%20d%23e", url)
+            self.assertNotIn(" ", url)
+        # mint mentah tetap literal di baris Mint (bukan markup)
+        self.assertIn("📋 Mint: a?b&c d#e", text)
 
     def test_semua_jenis_alert_membawa_link(self):
         for kind in (*ALERT_KINDS, "lain"):
             event = _dump_event()
             event["kind"] = kind
-            message = ta.format_alert_message(event)
-            self.assertIn(gmgn_token_url(MINT), message, kind)
-            self.assertIn(dexscreener_token_url(MINT), message, kind)
+            text, entities = ta.build_alert_message(event)
+            self.assertEqual(
+                _links(text, entities),
+                [("GMGN", gmgn_token_url(MINT)),
+                 ("DexScreener", dexscreener_token_url(MINT))], kind)
 
-    def test_teks_yang_dikirim_ke_bot_api_memuat_link(self):
+    def test_entities_yang_dikirim_ke_bot_api_memuat_hyperlink(self):
         with mock.patch.object(ta, "send_telegram_message",
                                return_value={"ok": True}) as send:
             result = ta.send_telegram_alert(_dump_event())
         self.assertTrue(result["ok"])
         text = send.call_args.args[0]
-        self.assertIn(gmgn_token_url(MINT), text)
-        self.assertIn(dexscreener_token_url(MINT), text)
+        entities = send.call_args.kwargs["entities"]
+        self.assertNotIn("http", text)
+        self.assertEqual(_links(text, entities),
+                         [("GMGN", gmgn_token_url(MINT)),
+                          ("DexScreener", dexscreener_token_url(MINT))])
+
+    def test_offset_utf16_tepat_walau_symbol_dan_mint_beremoji(self):
+        event = dict(_dump_event(mint="M🚀int" + "x" * 20), symbol="TST🚀🚀")
+        text, entities = ta.build_alert_message(event)
+        labels = [label for label, _ in _links(text, entities)]
+        self.assertEqual(labels, ["GMGN", "DexScreener"])
 
     def test_alert_test_tetap_tanpa_link_token(self):
         with mock.patch.object(ta, "send_telegram_message",
@@ -331,24 +370,44 @@ class CompactAlertMessageTest(unittest.TestCase):
         mint = "0x" + "aB" * 20
         for kind in ALERT_KINDS:
             with self.subTest(kind=kind):
-                message = ta.format_alert_message(dict(_dump_event(mint), kind=kind))
-                self.assertIn(f"📋 Mint: {mint}", message)
-                self.assertIn(f"🦆 rh-scan: {rh_scan_token_url(mint)}", message)
-                self.assertIn(f"🦆 DexScreener: {dexscreener_token_url(mint)}", message)
-                self.assertIn(f"🌏 Blockscout: {blockscout_token_url(mint)}", message)
-                self.assertNotIn("gmgn.ai", message)
-                self.assertNotIn("dexscreener.com/solana", message)
+                text, entities = ta.build_alert_message(
+                    dict(_dump_event(mint), kind=kind))
+                self.assertIn(f"📋 Mint: {mint}", text)
+                self.assertIn("\n🦆 rh-scan\n🦆 DexScreener\n🌏 Blockscout", text)
+                self.assertEqual(
+                    _links(text, entities),
+                    [("rh-scan", rh_scan_token_url(mint)),
+                     ("DexScreener", dexscreener_token_url(mint)),
+                     ("Blockscout", blockscout_token_url(mint))])
+                self.assertNotIn("http", text)
+                for _, url in _links(text, entities):
+                    self.assertNotIn("gmgn.ai", url)
+                    self.assertNotIn("dexscreener.com/solana", url)
 
     def test_pool_links_preserved_for_all_lp_alerts(self):
         pool = "PoolAddress123"
         for kind in ("early_dump", ta.ESCALATION_KIND, ta.SAFE_RETURN_KIND):
             with self.subTest(kind=kind):
-                message = ta.format_alert_message(dict(
+                text, entities = ta.build_alert_message(dict(
                     _dump_event(), kind=kind, pool_addresses=[pool, "", None]))
-                self.assertIn(f"🌊 Meteora: {ta.meteora_dlmm_url(pool)}", message)
-                self.assertIn(f"🦅 HawkFi: {ta.hawkfi_meteora_url(pool)}", message)
-                self.assertEqual(message.count("🌊 Meteora:"), 1)
-                self.assertNotIn("TIDAK TERVERIFIKASI", message)
+                self.assertTrue(text.endswith("\n🌊 Meteora\n🦅 HawkFi"))
+                self.assertEqual(text.count("🌊 Meteora"), 1)
+                self.assertEqual(
+                    _links(text, entities)[-2:],
+                    [("Meteora", ta.meteora_dlmm_url(pool)),
+                     ("HawkFi", ta.hawkfi_meteora_url(pool))])
+                self.assertNotIn("TIDAK TERVERIFIKASI", text)
+
+    def test_pool_links_absent_for_non_lp_alerts(self):
+        pool = "PoolAddress123"
+        for kind in ALERT_KINDS:
+            if kind in ("early_dump", ta.ESCALATION_KIND, ta.SAFE_RETURN_KIND):
+                continue
+            with self.subTest(kind=kind):
+                text, entities = ta.build_alert_message(dict(
+                    _dump_event(), kind=kind, pool_addresses=[pool]))
+                self.assertNotIn("Meteora", text)
+                self.assertEqual(len(_links(text, entities)), 2)
 
     def test_unverified_warning_stays_short_without_provider_diagnostics(self):
         event = dict(_dump_event(), volume_check={
@@ -379,15 +438,20 @@ class TelegramFormattingDeliveryTest(unittest.TestCase):
     def test_exit_header_bold_covers_exact_text_with_utf16_emoji_length(self):
         event = dict(_dump_event(), kind=ta.ESCALATION_KIND)
         payload = self._payload(event)
-        title = "🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 25 bin"
+        title = "🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 50 bin"
+        self.assertEqual(title, ta.ESCALATION_TITLE)
         self.assertTrue(payload["text"].startswith(title + "\n\n🪙"))
         self.assertEqual(payload["text"], ta.format_alert_message(event))
         length = len(title.encode("utf-16-le")) // 2
         self.assertEqual(length, len(title) + 1)  # 🚨 bukan satu unit UTF-16.
-        self.assertEqual(payload["entities"], [
-            {"type": "bold", "offset": 0, "length": length}])
+        bold = [e for e in payload["entities"] if e["type"] == "bold"]
+        self.assertEqual(bold, [{"type": "bold", "offset": 0, "length": length}])
         marked = payload["text"].encode("utf-16-le")[:length * 2].decode("utf-16-le")
         self.assertEqual(marked, title)  # Detail token tidak ikut tebal.
+        # Link token ikut sebagai hyperlink di payload yang sama.
+        self.assertEqual(_links(payload["text"], payload["entities"]),
+                         [("GMGN", gmgn_token_url(MINT)),
+                          ("DexScreener", dexscreener_token_url(MINT))])
         self.assertNotIn("parse_mode", payload)
         self.assertEqual(payload["link_preview_options"], {"is_disabled": True})
 
@@ -398,7 +462,12 @@ class TelegramFormattingDeliveryTest(unittest.TestCase):
             with self.subTest(kind=kind):
                 event = dict(_dump_event(), kind=kind) if kind else None
                 payload = self._payload(event)
-                self.assertNotIn("entities", payload)
+                if kind is None:
+                    self.assertNotIn("entities", payload)   # test alert polos
+                else:
+                    self.assertEqual(
+                        [e["type"] for e in payload["entities"]],
+                        ["text_link", "text_link"])         # tanpa bold
                 self.assertNotIn("Reshape", payload["text"])
                 self.assertNotIn("parse_mode", payload)
                 self.assertEqual(payload["link_preview_options"], {"is_disabled": True})
@@ -412,7 +481,8 @@ class TelegramFormattingDeliveryTest(unittest.TestCase):
                 payload = self._payload(event)
                 self.assertIn(f"🪙 ${symbol}", payload["text"])
                 self.assertIn(f"📋 Mint: {mint}", payload["text"])
-                self.assertIn(gmgn_token_url(mint), payload["text"])
+                self.assertIn(("GMGN", gmgn_token_url(mint)),
+                              _links(payload["text"], payload["entities"]))
                 self.assertNotIn("parse_mode", payload)
 
 

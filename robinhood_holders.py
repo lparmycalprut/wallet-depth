@@ -12,6 +12,34 @@ meng-index chain 4663. Karena kode lama memperlakukan GMGN sebagai
 dan bila Blockscout ikut tersendat hasilnya "0 holder" yang terbaca
 seperti "dust hilang semua".
 
+**Transport (sejak 2026-09-08 sore): PRO API → instance publik.**
+Instance publik ``robinhoodchain.blockscout.com`` kini duduk di belakang
+bot-protection (Cloudflare): request "script" (TLS ``python-requests``,
+UA apa pun) dijawab **HTTP 403** berbadan HTML "Just a moment…" — request
+tidak pernah sampai ke Blockscout, jadi ``getToken`` / CSV / v2 gagal
+serentak dan scan pulang "0 holder" walau CA valid dan harga DexScreener
+tersedia (kejadian nyata: CA Pusheen ``0x1209ec…``, 409 holder). Jalur
+resmi untuk akses programatik adalah **PRO API**
+``https://api.blockscout.com/4663/…`` (key gratis di
+https://dev.blockscout.com — 5 RPS, 100K kredit/hari ≈ 5.000 panggilan).
+Karena itu setiap request lewat :func:`_blockscout_get`:
+
+1. **PRO API** bila ada key (env ``BLOCKSCOUT_API_KEY`` /
+   ``BLOCKSCOUT_API_KEYS`` daftar koma, ``config.json``
+   ``blockscout_api_key(s)``, Streamlit secrets) — path **sama persis**,
+   hanya host + prefiks chain id; key dikirim sebagai header
+   ``Authorization: Bearer`` (bukan query) supaya tidak bocor ke URL di
+   pesan error/log. **Beberapa key** (sejak 2026-09-09) dipakai
+   round-robin lewat :class:`_ProKeyPool`: key yang dijawab 401/403
+   (ditolak), 402 (kredit harian habis) atau 429 (RPS) diparkir sementara
+   dan request pindah ke key berikutnya di putaran yang sama — kuota
+   free tier (100K kredit/hari, 5 RPS) dihitung per akun, jadi N akun =
+   N× plafon. Baru bila semua key diparkir / PRO 404 → jalur publik.
+2. **Instance publik** dengan TLS browser (``curl_cffi``, profil dirotasi
+   saat 403 — pola yang sama dengan GMGN di ``cvd.py``), lalu ``requests``
+   biasa. 403/challenge dilaporkan sebagai :class:`BlockscoutBlocked`
+   (bukan transient: tidak diulang, pesannya menyebut cara memperbaiki).
+
 Tiga jalur Blockscout dipakai berurutan, dari yang paling lengkap:
 
 1. **CSV export** (utama, TANPA limit paginasi) —
@@ -51,11 +79,15 @@ from __future__ import annotations
 
 import csv
 import io
+import json
+import os
+import sys
+import threading
 import time
 
 import requests
 
-from core import get_market
+from core import CONFIG_PATH, get_market, merge_helius_keys
 from holder_analysis import DUST_LIMIT_USD, DEFAULT_MAX_WALLETS, classify_holders
 from solscan_holders import wallet_depth
 
@@ -65,6 +97,11 @@ CHAIN_NAME = "Robinhood Chain"
 BLOCKSCOUT_API = "https://robinhoodchain.blockscout.com/api"
 BLOCKSCOUT_BASE = "https://robinhoodchain.blockscout.com"
 BLOCKSCOUT_V2 = f"{BLOCKSCOUT_BASE}/api/v2"
+# PRO API multichain Blockscout: host tunggal + prefiks chain id, path sisanya
+# identik dengan instance publik (``/api?module=…`` maupun ``/api/v2/…``).
+BLOCKSCOUT_PRO_BASE = "https://api.blockscout.com"
+BLOCKSCOUT_PRO_CHAIN_BASE = f"{BLOCKSCOUT_PRO_BASE}/{CHAIN_ID}"
+BLOCKSCOUT_KEY_URL = "https://dev.blockscout.com"
 RH_SCAN_TOKEN_BASE = "https://rh-scan.com/token/"
 DEXSCREENER_CHAIN = CHAIN_SLUG
 
@@ -116,6 +153,115 @@ TRANSIENT_STATUS = frozenset({429, 500, 502, 503, 504})
 RETRY_ATTEMPTS = 2
 RETRY_BACKOFF_SEC = 5.0
 
+# Bot-protection instance publik (terlihat 2026-09-08 sore): HTTP 403 dengan
+# badan HTML "Just a moment…" / cf-mitigated=challenge. Bukan error API dan
+# bukan transient — mengulang request yang sama hanya membuang waktu. Profil
+# TLS browser dirotasi dulu (pola GMGN di ``cvd.py``); kalau semuanya ditolak,
+# hasilnya :class:`BlockscoutBlocked` dengan petunjuk perbaikan.
+BLOCKED_STATUS = frozenset({403})
+BLOCKSCOUT_IMPERSONATE = (
+    "chrome",
+    "chrome136",
+    "chrome131",
+    "safari184",
+    "safari17_0",
+    "firefox133",
+)
+BROWSER_HEADERS = {
+    "accept": "application/json, text/csv, text/plain, */*",
+    "accept-language": "en-US,en;q=0.9,id;q=0.8",
+    "referer": f"{BLOCKSCOUT_BASE}/",
+    "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) "
+                   "Chrome/150.0.0.0 Safari/537.36"),
+}
+# ``impersonate`` curl_cffi memasang UA + Client Hints yang cocok dengan JA3;
+# header kita yang sama tidak boleh menimpanya.
+_IMPERSONATE_OWNED_HEADERS = {"user-agent", "sec-ch-ua", "sec-ch-ua-mobile",
+                              "sec-ch-ua-platform"}
+
+# Jalur transport yang dipakai satu request — dilaporkan di ``source`` hasil
+# scan (``blockscout-csv@pro``) supaya UI/log tahu request lewat mana.
+ROUTE_PRO = "pro"
+ROUTE_PUBLIC = "public"
+
+# Key PRO API boleh **lebih dari satu** (sejak 2026-09-09). Kuota free tier
+# dihitung per akun (100K kredit/hari, 5 RPS), jadi beberapa key dari akun
+# berbeda menaikkan plafon harian dan RPS. Request dibagi rata (round-robin)
+# ke semua key; key yang dijawab 401/403 (ditolak), 402 (kredit habis) atau
+# 429 (RPS) "diparkir" sementara dan request langsung pindah ke key
+# berikutnya — scan tidak gagal selama masih ada satu key yang hidup.
+# Konvensi sumber sama dengan Helius: env tunggal + env daftar (koma/baris
+# baru) + config.json + Streamlit secrets, semuanya digabung & didedup.
+_PRO_KEY_ENV = ("BLOCKSCOUT_API_KEY", "BLOCKSCOUT_API_KEYS",
+                "BLOCKSCOUT_PRO_API_KEY")
+_PRO_KEY_CONFIG = ("blockscout_api_key", "blockscout_api_keys")
+# Status PRO API yang berkaitan dengan *key*, bukan data → parkir key itu dan
+# coba key lain. 404 (rute/chain tidak dikenal) tidak diparkir: langsung ke
+# instance publik.
+PRO_ROTATE_STATUS = frozenset({401, 402, 403, 429})
+PRO_FALLBACK_STATUS = PRO_ROTATE_STATUS | {404}
+# Lama parkir per status (detik). 402 free tier reset harian pada jam yang
+# tidak dipublikasikan → probe ulang tiap 30 menit (satu request 402 murah).
+# 429 memakai header ``x-ratelimit-reset`` (ms) bila ada, dibatasi 60 dtk.
+PRO_PARK_SEC = {401: 3600.0, 403: 300.0, 402: 1800.0, 429: 2.0}
+PRO_PARK_429_MAX_SEC = 60.0
+
+
+class BlockscoutBlocked(RuntimeError):
+    """Instance publik menolak request lewat bot-protection (HTTP 403).
+
+    Dipisah dari error HTTP biasa supaya (1) tidak masuk retry transient,
+    (2) pesannya menjelaskan penyebab + perbaikan, bukan sekadar
+    ``403 Client Error: Forbidden for url: …``.
+    """
+
+    HINT_NO_KEY = (f"pasang BLOCKSCOUT_API_KEY (key gratis: "
+                   f"{BLOCKSCOUT_KEY_URL}) agar scan lewat PRO API")
+    HINT_KEYS_FAILED = ("key PRO API ada tetapi semuanya ditolak / kreditnya "
+                        f"habis — periksa dashboard {BLOCKSCOUT_KEY_URL}")
+
+    def __init__(self, url: str, detail: str = "", hint: str | None = None):
+        self.url = str(url or "")
+        self.detail = str(detail or "")
+        self.hint = self.HINT_NO_KEY if hint is None else str(hint)
+        path = self.url.split("?", 1)[0]
+        for base in (BLOCKSCOUT_BASE, BLOCKSCOUT_PRO_CHAIN_BASE):
+            if path.startswith(base):
+                path = path[len(base):] or "/"
+                break
+        msg = (f"Blockscout publik menolak request (HTTP 403 bot-protection) "
+               f"di {path}")
+        if self.detail:
+            msg += f" [{self.detail}]"
+        if self.hint:
+            msg += f" — {self.hint}"
+        super().__init__(msg)
+
+
+class ProApiError(requests.exceptions.HTTPError):
+    """PRO API menjawab status yang berkaitan dengan key/kuota/rute.
+
+    ``status`` 401/403 = key ditolak, 402 = kredit habis, 429 = RPS key itu
+    terlampaui, 404 = rute/chain tidak dikenal. ``key_label`` hanya
+    ``key#N`` — key aslinya tidak pernah ikut ke pesan.
+    """
+
+    def __init__(self, status: int, detail: str, response, key_label: str):
+        self.status = int(status)
+        self.detail = str(detail or "")
+        self.key_label = str(key_label or "")
+        msg = f"PRO API {self.status}"
+        if self.detail:
+            msg += f" {self.detail}"
+        if self.key_label:
+            msg += f" ({self.key_label})"
+        super().__init__(msg, response=response)
+
+
+class ProKeysParked(RuntimeError):
+    """Semua key PRO sedang diparkir (ditolak / kredit habis / RPS)."""
+
 
 def _status_code(exc) -> int:
     response = getattr(exc, "response", None)
@@ -127,70 +273,557 @@ def _status_code(exc) -> int:
 
 def is_transient_error(exc) -> bool:
     """True untuk kegagalan jaringan/HTTP yang layak dicoba ulang."""
+    if isinstance(exc, BlockscoutBlocked):
+        return False
     if _status_code(exc) in TRANSIENT_STATUS:
         return True
-    return isinstance(exc, (requests.exceptions.Timeout,
-                            requests.exceptions.ConnectionError))
+    if isinstance(exc, (requests.exceptions.Timeout,
+                        requests.exceptions.ConnectionError)):
+        return True
+    # curl_cffi punya hierarki exception sendiri (bukan subclass requests).
+    name = type(exc).__name__
+    module = type(exc).__module__ or ""
+    return module.startswith("curl_cffi") and name in (
+        "Timeout", "ConnectTimeout", "ReadTimeout", "ConnectionError",
+        "DNSError", "SSLError", "ChunkedEncodingError", "IncompleteRead")
+
+
+def is_blocked_error(exc) -> bool:
+    """True bila kegagalan berasal dari bot-protection (403/challenge)."""
+    return isinstance(exc, BlockscoutBlocked) or _status_code(exc) in BLOCKED_STATUS
+
+
+def _config_pro_keys() -> list[str]:
+    try:
+        with open(CONFIG_PATH, "r", encoding="utf-8") as handle:
+            cfg = json.load(handle) or {}
+    except Exception:  # noqa: BLE001 - config opsional
+        return []
+    return merge_helius_keys(*(cfg.get(name) for name in _PRO_KEY_CONFIG))
+
+
+def _secrets_pro_keys() -> list[str]:
+    try:
+        import streamlit as st
+        values = []
+        for name in _PRO_KEY_CONFIG + _PRO_KEY_ENV:
+            if name in st.secrets:
+                values.append(st.secrets[name])
+        return merge_helius_keys(*values)
+    except Exception:  # noqa: BLE001 - di luar Streamlit / tanpa secrets
+        return []
+
+
+def get_pro_api_keys() -> list[str]:
+    """Semua key PRO API (``proapi_…``), urut & tanpa duplikat.
+
+    Sumber digabung (bukan saling menimpa) — env ``BLOCKSCOUT_API_KEY`` /
+    ``BLOCKSCOUT_API_KEYS`` (koma/baris baru) / ``BLOCKSCOUT_PRO_API_KEY``,
+    lalu ``blockscout_api_key`` / ``blockscout_api_keys`` di config.json, lalu
+    Streamlit secrets dengan nama-nama yang sama. Urutan ini menentukan
+    label ``key#1``, ``key#2``, … di log/UI. Kosong = jalur publik saja.
+    Key **tidak pernah** ditulis ke URL, log, atau pesan error.
+    """
+    return merge_helius_keys(
+        *(os.environ.get(name) for name in _PRO_KEY_ENV),
+        _config_pro_keys(),
+        _secrets_pro_keys(),
+    )
+
+
+def get_pro_api_key() -> str:
+    """Key pertama dari :func:`get_pro_api_keys` (kompatibilitas)."""
+    keys = get_pro_api_keys()
+    return keys[0] if keys else ""
+
+
+def pro_keys_configured() -> bool:
+    """True bila minimal satu key PRO API terpasang."""
+    return bool(get_pro_api_keys())
+
+
+class _ProKeyPool:
+    """Round-robin + parkir sementara untuk sekumpulan key PRO API.
+
+    Aman dipakai dari beberapa thread (``scan_watchlist`` memakai
+    ThreadPool). State hanya in-memory: proses cron yang baru mulai dari
+    nol (paling banter satu request probe per key yang tadinya diparkir).
+    """
+
+    def __init__(self, keys) -> None:
+        self.keys: tuple[str, ...] = tuple(keys)
+        self._lock = threading.Lock()
+        self._cursor = 0
+        self._parked: dict[str, tuple[float, int, str]] = {}
+        self._credits: dict[str, int] = {}
+        self._rps_left: dict[str, int] = {}
+        self._used: dict[str, int] = {}
+        self._warned: set[str] = set()
+
+    # -- identitas tanpa membocorkan key ----------------------------------
+    def label(self, key: str) -> str:
+        try:
+            return f"key#{self.keys.index(key) + 1}"
+        except ValueError:
+            return "key#?"
+
+    # -- pemilihan key ------------------------------------------------------
+    def candidates(self) -> list[str]:
+        """Key yang boleh dipakai sekarang, mulai dari giliran round-robin."""
+        now = time.time()
+        with self._lock:
+            active = []
+            for key in self.keys:
+                parked = self._parked.get(key)
+                if parked and parked[0] > now:
+                    continue
+                if parked:
+                    del self._parked[key]   # masa parkir habis → dicoba lagi
+                active.append(key)
+            if not active:
+                return []
+            # Giliran dihitung di antara key yang aktif saja supaya beban
+            # tetap rata walau sebagian key sedang diparkir.
+            start = self._cursor % len(active)
+            self._cursor += 1
+            return active[start:] + active[:start]
+
+    def park(self, key: str, status: int, response=None, detail: str = "") -> None:
+        seconds = float(PRO_PARK_SEC.get(int(status), 300.0))
+        if int(status) == 429:
+            reset_ms = _header_int(response, "x-ratelimit-reset")
+            if reset_ms and reset_ms > 0:
+                seconds = min(PRO_PARK_429_MAX_SEC, max(0.5, reset_ms / 1000.0))
+        with self._lock:
+            self._parked[key] = (time.time() + seconds, int(status), str(detail or ""))
+            if int(status) == 402:
+                self._credits[key] = 0
+
+    def note_success(self, key: str, response) -> None:
+        credits = _header_int(response, "x-credits-remaining")
+        rps_left = _header_int(response, "x-ratelimit-remaining")
+        with self._lock:
+            self._used[key] = self._used.get(key, 0) + 1
+            if credits is not None and credits >= 0:
+                self._credits[key] = credits
+            if rps_left is not None and rps_left >= 0:
+                self._rps_left[key] = rps_left
+
+    def warn_once(self, key: str) -> bool:
+        """True hanya pada peringatan pertama untuk key ini (log tidak banjir)."""
+        with self._lock:
+            if key in self._warned:
+                return False
+            self._warned.add(key)
+            return True
+
+    # -- pelaporan ----------------------------------------------------------
+    def status(self) -> list[dict]:
+        now = time.time()
+        with self._lock:
+            rows = []
+            for key in self.keys:
+                parked = self._parked.get(key)
+                active = not (parked and parked[0] > now)
+                rows.append({
+                    "label": self.label(key),
+                    "active": active,
+                    "parked_status": None if active else parked[1],
+                    "parked_detail": "" if active else parked[2],
+                    "parked_for_sec": 0 if active else max(0, int(parked[0] - now)),
+                    "credits_remaining": self._credits.get(key),
+                    "requests": self._used.get(key, 0),
+                })
+            return rows
+
+    def summary(self) -> str:
+        rows = self.status()
+        if not rows:
+            return ""
+        parts = []
+        for row in rows:
+            if row["active"]:
+                credits = row["credits_remaining"]
+                note = (f"sisa {credits:,} kredit" if credits is not None
+                        else "siap")
+                if row["requests"]:
+                    note += f", {row['requests']} req"
+            else:
+                mins = -(-row["parked_for_sec"] // 60)
+                reason = {401: "ditolak", 403: "ditolak", 402: "kredit habis",
+                          429: "RPS"}.get(row["parked_status"],
+                                          str(row["parked_status"]))
+                note = f"parkir {row['parked_status']} {reason} ({mins} mnt)"
+            parts.append(f"{row['label']} {note}")
+        return " · ".join(parts)
+
+
+_PRO_POOL: _ProKeyPool | None = None
+_PRO_POOL_LOCK = threading.Lock()
+
+
+def _pro_pool() -> _ProKeyPool:
+    """Pool key aktif; dibangun ulang bila daftar key berubah (secrets/env)."""
+    global _PRO_POOL
+    keys = tuple(get_pro_api_keys())
+    with _PRO_POOL_LOCK:
+        if _PRO_POOL is None or _PRO_POOL.keys != keys:
+            _PRO_POOL = _ProKeyPool(keys)
+        return _PRO_POOL
+
+
+def reset_pro_key_pool() -> None:
+    """Lupakan status parkir/kredit semua key (test, tombol refresh)."""
+    global _PRO_POOL
+    with _PRO_POOL_LOCK:
+        _PRO_POOL = None
+
+
+def pro_key_status() -> list[dict]:
+    """Status tiap key PRO (label ``key#N``, aktif/parkir, sisa kredit) — tanpa key."""
+    return _pro_pool().status()
+
+
+def pro_key_summary() -> str:
+    """Satu baris ringkasan pool key untuk log cron/UI; ``""`` bila tanpa key."""
+    pool = _pro_pool()
+    if not pool.keys:
+        return ""
+    return f"Blockscout PRO API: {len(pool.keys)} key · {pool.summary()}"
+
+
+def _header_int(response, name: str) -> int | None:
+    try:
+        headers = getattr(response, "headers", None) or {}
+        for key, value in dict(headers).items():
+            if str(key).lower() == name:
+                return int(float(str(value).strip()))
+    except Exception:  # noqa: BLE001 - header hanya pelengkap
+        return None
+    return None
+
+
+def _pro_url(url: str) -> str:
+    """Padanan PRO API dari URL instance publik (path identik)."""
+    if url.startswith(BLOCKSCOUT_PRO_CHAIN_BASE):
+        return url
+    if url.startswith(BLOCKSCOUT_BASE):
+        return BLOCKSCOUT_PRO_CHAIN_BASE + url[len(BLOCKSCOUT_BASE):]
+    return url
+
+
+def _looks_like_challenge(response) -> bool:
+    """Deteksi halaman challenge Cloudflare (HTML) yang menyamar 403/503."""
+    try:
+        headers = {str(k).lower(): str(v)
+                   for k, v in dict(getattr(response, "headers", {}) or {}).items()}
+    except Exception:  # noqa: BLE001
+        headers = {}
+    if headers.get("cf-mitigated"):
+        return True
+    try:
+        head = (getattr(response, "text", None) or "")[:600].lower()
+    except Exception:  # noqa: BLE001
+        head = ""
+    return "just a moment" in head or "cf-chl" in head or "_cf_chl_opt" in head
+
+
+def _describe_block(response) -> str:
+    parts = []
+    try:
+        headers = {str(k).lower(): str(v)
+                   for k, v in dict(getattr(response, "headers", {}) or {}).items()}
+    except Exception:  # noqa: BLE001
+        headers = {}
+    if headers.get("cf-mitigated"):
+        parts.append(f"cf-mitigated={headers['cf-mitigated']}")
+    if "cloudflare" in (headers.get("server") or "").lower():
+        parts.append("Cloudflare")
+    return " ".join(parts)
+
+
+def _status_of(response) -> int:
+    """``status_code`` sebagai int; 0 bila tidak ada/bukan angka (mis. stub)."""
+    value = getattr(response, "status_code", None)
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return 0
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _raise_for_status(response, url: str) -> None:
+    """``raise_for_status`` yang membedakan 403 bot-protection dari error lain.
+
+    403 (atau 503 berbadan halaman challenge) → :class:`BlockscoutBlocked`;
+    4xx/5xx lain → ``requests.exceptions.HTTPError`` dengan ``response``
+    terpasang (supaya :func:`is_transient_error` bisa membaca statusnya).
+    Response tanpa ``status_code`` numerik (stub/test) diserahkan ke
+    ``raise_for_status()`` miliknya sendiri.
+    """
+    status = _status_of(response)
+    if not status:
+        raiser = getattr(response, "raise_for_status", None)
+        if callable(raiser):
+            raiser()
+        return
+    if status in BLOCKED_STATUS or (status == 503 and _looks_like_challenge(response)):
+        raise BlockscoutBlocked(url, _describe_block(response))
+    if status >= 400:
+        raise requests.exceptions.HTTPError(
+            f"{status} untuk {url.split('?', 1)[0]}", response=response)
+
+
+def _pro_get(url: str, params: dict | None, key: str, timeout: int,
+             key_label: str = "") -> object:
+    """Satu GET ke PRO API dengan satu key. Response 2xx atau melempar.
+
+    Status key/kuota/rute (:data:`PRO_FALLBACK_STATUS`) dilempar sebagai
+    :class:`ProApiError` supaya :func:`_pro_round` bisa memutuskan: parkir
+    key & coba key lain (401/402/403/429) atau langsung ke publik (404).
+    """
+    headers = {"accept": BROWSER_HEADERS["accept"],
+               "authorization": f"Bearer {key}",
+               "user-agent": "wallet-depth/robinhood-holders"}
+    response = requests.get(url, params=params, headers=headers,
+                            timeout=timeout)
+    status = _status_of(response)
+    if status in PRO_FALLBACK_STATUS:
+        detail = ""
+        try:
+            detail = str((response.json() or {}).get("error") or "")
+        except Exception:  # noqa: BLE001
+            detail = ""
+        raise ProApiError(status, detail, response, key_label)
+    _raise_for_status(response, url)
+    return response
+
+
+def _pro_round(pool: _ProKeyPool, url: str, params: dict | None,
+               timeout: int) -> tuple[object | None, Exception | None]:
+    """Satu putaran PRO API lewat key yang tersedia → ``(response, error)``.
+
+    Key dicoba mulai dari giliran round-robin; 401/402/403/429 memarkir key
+    itu dan lanjut ke key berikutnya **dalam request yang sama**. Error lain
+    (404 rute, 5xx, timeout) dikembalikan apa adanya — pemanggil yang
+    memutuskan retry/backoff atau jatuh ke instance publik.
+    """
+    candidates = pool.candidates()
+    if not candidates:
+        return None, ProKeysParked(
+            f"semua {len(pool.keys)} key PRO diparkir ({pool.summary()})")
+    last: Exception | None = None
+    for key in candidates:
+        label = pool.label(key)
+        try:
+            response = _pro_get(_pro_url(url), params, key, timeout, label)
+        except ProApiError as exc:
+            last = exc
+            if exc.status in PRO_ROTATE_STATUS:
+                pool.park(key, exc.status, exc.response, exc.detail)
+                if exc.status in (401, 402, 403) and pool.warn_once(key):
+                    print(f"WARN: Blockscout PRO API {label} {exc.status} "
+                          f"{exc.detail or ''} — key diparkir "
+                          f"{int(PRO_PARK_SEC.get(exc.status, 300) // 60)} mnt",
+                          file=sys.stderr)
+                continue
+            return None, exc
+        except Exception as exc:  # noqa: BLE001 - jaringan/5xx: retry di luar
+            return None, exc
+        pool.note_success(key, response)
+        try:
+            response.blockscout_route = ROUTE_PRO
+            response.blockscout_key = label
+        except Exception:  # noqa: BLE001 - atribut hanya pelengkap
+            pass
+        return response, None
+    return None, last
+
+
+def _curl_requests():
+    """Modul ``curl_cffi.requests`` bila terpasang & bisa dipakai, else None.
+
+    Dipisah supaya test bisa mematikannya (``mock.patch.object(rh,
+    "_curl_requests", return_value=None)``) dan supaya install curl_cffi yang
+    rusak tidak menggagalkan fallback ``requests``.
+    """
+    try:
+        from curl_cffi import requests as cr
+        return cr
+    except Exception:  # noqa: BLE001 - opsional
+        return None
+
+
+def _public_get(url: str, params: dict | None, timeout: int):
+    """GET ke instance publik: TLS browser (curl_cffi) dulu, lalu ``requests``.
+
+    Profil ``impersonate`` dirotasi saat 403 — Cloudflare sering menolak satu
+    JA3 dan menerima yang lain. Baru bila **semua** profil dan ``requests``
+    biasa ditolak, :class:`BlockscoutBlocked` dilempar. Kegagalan runtime
+    curl_cffi (profil tidak dikenal, TLS reset) tidak menghentikan fallback.
+    """
+    blocked: BlockscoutBlocked | None = None
+    cr = _curl_requests()
+    if cr is not None:
+        headers = {k: v for k, v in BROWSER_HEADERS.items()
+                   if k.lower() not in _IMPERSONATE_OWNED_HEADERS}
+        for profile in BLOCKSCOUT_IMPERSONATE:
+            try:
+                response = cr.get(url, params=params, headers=headers,
+                                  impersonate=profile, timeout=timeout)
+            except Exception:  # noqa: BLE001 - profil lain / requests biasa
+                continue
+            try:
+                _raise_for_status(response, url)
+            except BlockscoutBlocked as exc:
+                blocked = exc
+                continue
+            return response
+    # ``requests`` biasa = percobaan terakhir; error-nya yang dilaporkan
+    # (kecuali sudah jelas kena bot-protection di profil browser).
+    try:
+        response = requests.get(url, params=params, headers=BROWSER_HEADERS,
+                                timeout=timeout)
+    except Exception:
+        if blocked is not None:
+            raise blocked
+        raise
+    try:
+        _raise_for_status(response, url)
+    except BlockscoutBlocked:
+        raise
+    except Exception:
+        if blocked is not None:
+            raise blocked
+        raise
+    return response
+
+
+def _blockscout_get(url: str, *, params: dict | None = None,
+                    retries: int = RETRY_ATTEMPTS, timeout: int = 25):
+    """GET ke Blockscout: **PRO API (bila ada key) → instance publik**.
+
+    ``url`` selalu ditulis sebagai URL instance publik; padanan PRO-nya
+    dibentuk otomatis (host + ``/4663`` prefiks, path sama). Response yang
+    dikembalikan diberi atribut ``blockscout_route`` (``"pro"`` /
+    ``"public"``) untuk pelaporan ``source``.
+
+    Kegagalan sementara (429/5xx/timeout) diulang ``retries`` kali dengan
+    jeda exponential (``RETRY_BACKOFF_SEC * 2^attempt``); 403 bot-protection
+    (:class:`BlockscoutBlocked`) dan error lain langsung dilempar supaya
+    caller bisa fallback ke jalur data berikutnya.
+    """
+    attempts = max(0, int(retries))
+    pool = _pro_pool()
+    last_exc: Exception | None = None
+    for attempt in range(attempts + 1):
+        pro_exc: Exception | None = None
+        if pool.keys:
+            response, pro_exc = _pro_round(pool, url, params, timeout)
+            if response is not None:
+                return response
+            if pro_exc is not None and is_transient_error(pro_exc) \
+                    and attempt < attempts:
+                last_exc = pro_exc
+                time.sleep(RETRY_BACKOFF_SEC * (2 ** attempt))
+                continue
+        try:
+            response = _public_get(url, params, timeout)
+            try:
+                response.blockscout_route = ROUTE_PUBLIC
+                response.blockscout_key = ""
+            except Exception:  # noqa: BLE001
+                pass
+            return response
+        except Exception as exc:  # noqa: BLE001 - jenis error ditentukan caller
+            last_exc = exc
+            if isinstance(exc, BlockscoutBlocked) and pro_exc is not None:
+                # Dua-duanya gagal: sebut alasan PRO juga supaya key yang
+                # salah/kuota habis tidak tersamar di balik 403 publik —
+                # dan petunjuknya bukan lagi "pasang key" (key sudah ada).
+                last_exc = BlockscoutBlocked(
+                    url, f"{exc.detail + '; ' if exc.detail else ''}"
+                         f"PRO: {pro_exc}",
+                    hint=BlockscoutBlocked.HINT_KEYS_FAILED)
+            if attempt >= attempts or not is_transient_error(exc):
+                raise last_exc
+            time.sleep(RETRY_BACKOFF_SEC * (2 ** attempt))
+    raise last_exc  # pragma: no cover - loop selalu return/raise
+
+
+def _route_of(response) -> str:
+    return str(getattr(response, "blockscout_route", "") or "")
+
+
+# Rute request Blockscout terakhir yang sukses **di thread ini** —
+# ``fetch_holders`` (dipanggil paralel oleh ``scan_watchlist``) membacanya
+# untuk melabeli ``source`` (``blockscout-csv@pro``). Thread-local supaya
+# worker yang berbeda tidak saling menimpa.
+_ROUTE_STATE = threading.local()
+
+
+def _remember_route(response) -> None:
+    route = _route_of(response)
+    if route:
+        _ROUTE_STATE.last = route
+        _ROUTE_STATE.last_key = str(
+            getattr(response, "blockscout_key", "") or "")
+
+
+def last_route() -> str:
+    """Rute (``"pro"``/``"public"``) request Blockscout sukses terakhir."""
+    return str(getattr(_ROUTE_STATE, "last", "") or "")
+
+
+def last_key_label() -> str:
+    """Label key PRO (``key#N``) request sukses terakhir; ``""`` bila publik."""
+    return str(getattr(_ROUTE_STATE, "last_key", "") or "")
+
+
+def source_with_route(source: str, route: str | None = None) -> str:
+    """``blockscout-csv`` + rute → ``blockscout-csv@pro`` (tanpa rute: apa adanya)."""
+    base = str(source or "")
+    route = str(route if route is not None else last_route())
+    if not base or not route or "@" in base or base.endswith("(fail)"):
+        return base
+    return f"{base}@{route}"
+
+
+def source_base(source: str) -> str:
+    """Kebalikan :func:`source_with_route`: buang akhiran ``@pro``/``@public``."""
+    return str(source or "").split("@", 1)[0]
+
+
+ROUTE_LABELS = {ROUTE_PRO: "PRO API", ROUTE_PUBLIC: "instance publik"}
+
+
+def route_label(source: str) -> str:
+    """Label rute untuk UI dari ``source`` (``…@pro`` → ``"PRO API"``; else ``""``)."""
+    _, _, route = str(source or "").partition("@")
+    return ROUTE_LABELS.get(route.strip().lower(), "")
 
 
 def _jsjson(params: dict, *, retries: int = RETRY_ATTEMPTS,
             timeout: int = 25) -> dict:
-    """GET JSON dari Blockscout dengan header browser sederhana.
-
-    Kegagalan sementara (429/5xx/timeout) diulang ``retries`` kali dengan
-    jeda exponential (``RETRY_BACKOFF_SEC * 2^attempt``); error lain (dan
-    kegagalan percobaan terakhir) dilempar supaya caller bisa fallback.
-    """
-    headers = {
-        "accept": "application/json, text/plain; */*",
-        "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                       "AppleWebKit/537.36 (KHTML, like Gecko) "
-                       "Chrome/150.0.0.0 Safari/537.36"),
-    }
-    attempts = max(0, int(retries))
-    last_exc: Exception | None = None
-    for attempt in range(attempts + 1):
-        try:
-            response = requests.get(BLOCKSCOUT_API, params=params,
-                                    headers=headers, timeout=timeout)
-            response.raise_for_status()
-            return response.json() or {}
-        except Exception as exc:  # noqa: BLE001 - jenis error ditentukan caller
-            last_exc = exc
-            if attempt >= attempts or not is_transient_error(exc):
-                raise
-            time.sleep(RETRY_BACKOFF_SEC * (2 ** attempt))
-    raise last_exc  # pragma: no cover - loop selalu return/raise
+    """GET JSON endpoint legacy ``/api?module=…&action=…`` (PRO → publik)."""
+    response = _blockscout_get(BLOCKSCOUT_API, params=params,
+                               retries=retries, timeout=timeout)
+    _remember_route(response)
+    return response.json() or {}
 
 
 def _http_get(url: str, *, params: dict | None = None,
               retries: int = RETRY_ATTEMPTS, timeout: int = 25):
-    """GET mentah ke Blockscout dengan retry yang sama seperti :func:`_jsjson`.
+    """GET mentah (REST v2 + CSV export) lewat :func:`_blockscout_get`.
 
-    Dipakai endpoint non-``/api`` (REST v2 + CSV export) yang tidak memakai
-    bentuk ``module/action``. Response dikembalikan apa adanya supaya caller
-    bisa membaca ``.json()`` maupun ``.text`` (CSV).
+    Response dikembalikan apa adanya supaya caller bisa membaca ``.json()``
+    maupun ``.text`` (CSV) dan atribut ``blockscout_route``.
     """
-    headers = {
-        "accept": "application/json, text/csv, text/plain; */*",
-        "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                       "AppleWebKit/537.36 (KHTML, like Gecko) "
-                       "Chrome/150.0.0.0 Safari/537.36"),
-    }
-    attempts = max(0, int(retries))
-    last_exc: Exception | None = None
-    for attempt in range(attempts + 1):
-        try:
-            response = requests.get(url, params=params, headers=headers,
-                                    timeout=timeout)
-            response.raise_for_status()
-            return response
-        except Exception as exc:  # noqa: BLE001 - caller memutuskan fallback
-            last_exc = exc
-            if attempt >= attempts or not is_transient_error(exc):
-                raise
-            time.sleep(RETRY_BACKOFF_SEC * (2 ** attempt))
-    raise last_exc  # pragma: no cover - loop selalu return/raise
+    response = _blockscout_get(url, params=params, retries=retries,
+                               timeout=timeout)
+    _remember_route(response)
+    return response
 
 
 def normalize_address(address: str) -> str:
@@ -241,8 +874,9 @@ def fetch_token_info(ca: str) -> dict:
 
 
 def clear_holder_cache() -> None:
-    """Kosongkan cache holder in-memory (dipakai test & tombol refresh)."""
+    """Kosongkan cache holder in-memory + status parkir key PRO (test/refresh)."""
     _HOLDER_CACHE.clear()
+    reset_pro_key_pool()
 
 
 def fetch_holders_count(ca: str) -> int:
@@ -381,7 +1015,7 @@ def _is_pool_address(address: str, pools: set) -> bool:
 
 def fetch_holders_rpc(ca: str, *, price_usd: float = 0.0, supply: float = 0.0,
                       decimals: int = 18, pools: set | None = None,
-                      max_wallets: int | None = None) -> tuple[list[dict], int, bool, str]:
+                      max_wallets: int | None = None) -> tuple[list[dict], int, bool, object]:
     """Holder via legacy RPC ``getTokenHolders`` — fallback terakhir.
 
     ``offset`` **wajib <= 400**; nilai lebih besar (versi lama memakai
@@ -389,7 +1023,8 @@ def fetch_holders_rpc(ca: str, *, price_usd: float = 0.0, supply: float = 0.0,
     sehingga scan pulang tanpa satu pun holder. Halaman setelah data
     habis membalas ``result: []`` — itulah kondisi berhenti.
 
-    Return ``(rows, pages, truncated, error)``.
+    Return ``(rows, pages, truncated, error)`` — ``error`` berupa string,
+    atau instance :class:`BlockscoutBlocked` bila request ditolak 403.
     """
     pools = pools or set()
     scale = 10.0 ** int(decimals if decimals is not None and decimals >= 0 else 18)
@@ -409,7 +1044,9 @@ def fetch_holders_rpc(ca: str, *, price_usd: float = 0.0, supply: float = 0.0,
                 "offset": HOLDER_PAGE_SIZE,
             })
         except Exception as exc:  # noqa: BLE001 - provider outage -> clean stop
-            error = str(exc)
+            # BlockscoutBlocked dikembalikan apa adanya (bukan str) supaya
+            # fetch_holders bisa mengenali 403 bot-protection dari jalur ini.
+            error = exc if isinstance(exc, BlockscoutBlocked) else str(exc)
             break
         if str(payload.get("status") or "").strip() not in ("1", ""):
             error = str(payload.get("message") or "Blockscout error")
@@ -467,19 +1104,42 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
     GMGN **tidak lagi dipakai**: chain 4663 tidak di-index di sana dan
     endpoint holder-nya selalu membalas list kosong.
 
+    Setiap request lewat :func:`_blockscout_get` (PRO API bila ada
+    ``BLOCKSCOUT_API_KEY`` → instance publik dengan TLS browser). ``source``
+    diberi akhiran rute yang benar-benar dipakai — ``blockscout-csv@pro`` /
+    ``blockscout-csv@public`` — dan bila semua jalur ditolak bot-protection
+    (403), ``error`` menyebutkan itu satu kali dengan petunjuk key, bukan
+    tiga baris ``403 Client Error: Forbidden for url: …``.
+
     Return shape: ``{"holders": [...], "pages", "truncated", "fetched",
-    "analyzed_at", "source", "decimals", "error", "holders_count"}``.
+    "analyzed_at", "source", "decimals", "error", "holders_count",
+    "blocked", "pro_key", "pro_keys"}``.
     """
     ca = normalize_address(ca)
     if not ca or price_usd <= 0:
         return {"holders": [], "pages": 0, "truncated": False, "fetched": 0,
                 "analyzed_at": int(time.time()), "source": SOURCE_CSV,
-                "decimals": decimals, "error": "price/address empty"}
+                "decimals": decimals, "error": "price/address empty",
+                "blocked": False, "pro_key": "",
+                "pro_keys": len(get_pro_api_keys())}
 
     cache_key = f"{ca}:{int(max_wallets or 0)}:{round(float(price_usd), 10)}"
     cached = _HOLDER_CACHE.get(cache_key)
     if cached and (time.time() - cached.get("analyzed_at", 0)) < _HOLDER_CACHE_TTL:
         return dict(cached)
+    _ROUTE_STATE.last = ""
+    _ROUTE_STATE.last_key = ""
+
+    blocked_hits: list[BlockscoutBlocked] = []
+    errors: list[str] = []
+
+    def _note(label: str, exc: Exception) -> None:
+        # 403 bot-protection dicatat sekali di akhir (bukan per jalur) supaya
+        # pesan ke user tidak berupa tiga URL 403 yang sama.
+        if isinstance(exc, BlockscoutBlocked):
+            blocked_hits.append(exc)
+            return
+        errors.append(f"{label}: {exc}")
 
     supply = float(total_supply or 0.0)
     if decimals is None or decimals < 0 or supply <= 0:
@@ -487,22 +1147,15 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
             info = fetch_token_info(ca)
         except Exception as exc:  # noqa: BLE001 - decimals wajib untuk v2/rpc
             info = {}
-            token_err = str(exc)
-        else:
-            token_err = ""
+            _note("getToken", exc)
         if decimals is None or decimals < 0:
             decimals = info.get("decimals")
         if supply <= 0:
             supply = float(info.get("total_supply") or 0.0)
-    else:
-        token_err = ""
 
     limit = int(max_wallets or DEFAULT_MAX_WALLETS)
     pools: set = set()
     onchain_count = fetch_holders_count(ca)
-    errors: list[str] = []
-    if token_err:
-        errors.append(f"getToken: {token_err}")
 
     # ---- 1) CSV export: satu request untuk seluruh daftar --------------------
     holders: list[dict] = []
@@ -513,7 +1166,7 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
         holders = fetch_holders_csv(ca, price_usd=price_usd, supply=supply,
                                     pools=pools, max_wallets=max_wallets)
     except Exception as exc:  # noqa: BLE001 - lanjut ke jalur berikutnya
-        errors.append(f"csv: {exc}")
+        _note("csv", exc)
         holders = []
 
     # CSV instance ini sinkron dengan plafon 10.000 baris. Kalau counters
@@ -532,7 +1185,10 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
             ca, price_usd=price_usd, supply=supply, decimals=_int(decimals, 18),
             pools=pools, max_wallets=max_wallets)
         if rpc_err:
-            errors.append(f"rpc: {rpc_err}")
+            if isinstance(rpc_err, BlockscoutBlocked):
+                _note("rpc", rpc_err)
+            else:
+                errors.append(f"rpc: {rpc_err}")
         if len(rpc_rows) > len(holders):
             holders = rpc_rows
             source = SOURCE_RPC
@@ -547,13 +1203,19 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
                 decimals=_int(decimals, 18), pools=pools,
                 max_wallets=max_wallets)
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"v2: {exc}")
+            _note("v2", exc)
             v2_rows = []
         if len(v2_rows) > len(holders):
             holders = v2_rows
             source = SOURCE_V2
             pages = max(1, -(-len(v2_rows) // V2_PAGE_SIZE))
             truncated = bool(limit and len(v2_rows) >= limit)
+
+    blocked = bool(blocked_hits) and not holders
+    if blocked:
+        # Satu kalimat untuk semua jalur yang kena 403 — pesan
+        # BlockscoutBlocked sudah memuat path + petunjuk BLOCKSCOUT_API_KEY.
+        errors.append(str(blocked_hits[0]))
 
     if not holders and (decimals is None or decimals < 0):
         return {
@@ -562,6 +1224,8 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
             "source": f"{SOURCE_CSV}(fail)",
             "decimals": None, "holders_count": onchain_count,
             "error": "; ".join(errors) or "decimals mint tidak ditemukan",
+            "blocked": blocked, "pro_key": "",
+            "pro_keys": len(_pro_pool().keys),
         }
 
     if not holders:
@@ -575,10 +1239,17 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
         "truncated": truncated,
         "fetched": len(holders),
         "analyzed_at": int(time.time()),
-        "source": source,
+        "source": source_with_route(source) if holders else source,
         "decimals": decimals,
         "holders_count": onchain_count,
         "error": "; ".join(e for e in errors if e) if not holders else "",
+        "blocked": blocked,
+        # Label key PRO (``key#N``) request sukses terakhir — untuk caption
+        # UI/log; kosong bila lewat instance publik atau gagal. ``pro_keys``
+        # = jumlah key terpasang, supaya UI tahu apakah petunjuk "pasang
+        # key" masih relevan saat 403.
+        "pro_key": last_key_label() if holders else "",
+        "pro_keys": len(_pro_pool().keys),
     }
     if holders:
         _HOLDER_CACHE[cache_key] = dict(result)
@@ -733,6 +1404,15 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
     fetch_error = str(snapshot.get("error") or "")
     if fetch_error:
         holder_stats["fetch_error"] = fetch_error
+    if snapshot.get("blocked"):
+        # 403 bot-protection: bukan "token ini tidak punya holder" —
+        # penanda dibawa supaya cron/UI bisa membedakan dari kegagalan biasa.
+        holder_stats["blocked"] = True
+    # Jumlah key PRO terpasang + key yang benar-benar dipakai (``key#N``),
+    # supaya pesan UI/cron tepat: "pasang key" vs "key ditolak/kredit habis".
+    holder_stats["pro_keys"] = int(snapshot.get("pro_keys") or 0)
+    if snapshot.get("pro_key"):
+        holder_stats["pro_key"] = str(snapshot.get("pro_key"))
 
     try:
         from solscan_holders import wallet_depth

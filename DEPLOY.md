@@ -7,6 +7,16 @@
 - Dependencies: `requirements.txt`
 - Secrets scanner utama: `HELIUS_API_KEY`/`HELIUS_API_KEYS` dan
   `GITHUB_TOKEN`.
+- Secret holder Robinhood Chain: `BLOCKSCOUT_API_KEY` (Blockscout PRO API,
+  key gratis di <https://dev.blockscout.com>). Tanpa key modul memakai
+  instance publik `robinhoodchain.blockscout.com` yang sejak 2026-09-08
+  sering menjawab **HTTP 403 bot-protection** untuk request server
+  (Streamlit Cloud / runner Actions). Di Streamlit Cloud isi di
+  **Secrets** (`BLOCKSCOUT_API_KEY = "proapi_…"`) atau
+  `blockscout_api_key` di `config.json`. Punya lebih dari satu akun?
+  `BLOCKSCOUT_API_KEYS = "proapi_1,proapi_2,…"` — dipakai bergantian,
+  key yang kreditnya habis/ditolak diparkir otomatis (lihat langkah di
+  bawah).
 - Secrets alert Telegram opsional: `TELEGRAM_BOT_TOKEN` dan
   `TELEGRAM_CHAT_ID`.
 
@@ -216,14 +226,53 @@ env:
   GITHUB_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
   HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
   HELIUS_API_KEYS: ${{ secrets.HELIUS_API_KEYS }}
+  BLOCKSCOUT_API_KEY: ${{ secrets.BLOCKSCOUT_API_KEY }}
+  BLOCKSCOUT_API_KEYS: ${{ secrets.BLOCKSCOUT_API_KEYS }}
   TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
   TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 ```
 
 `HELIUS_API_KEY` wajib untuk hasil holder yang andal di Actions karena GMGN
-sering memblokir runner. `GH_TOKEN` opsional bila token bawaan tidak memiliki
+sering memblokir runner. `BLOCKSCOUT_API_KEY` sama pentingnya untuk lane
+Robinhood LP: tanpa key, 403 bot-protection instance publik membuat semua
+token Robinhood pulang 0 wallet (log Actions menulis `WARN: Blockscout
+publik menolak scan …`; snapshot lama tidak ditimpa berkat gate
+`holders_usable`). `GH_TOKEN` opsional bila token bawaan tidak memiliki
 permission publish. Scanner exit non-zero bila semua token menghasilkan nol
 holder atau publish status gagal.
+
+## Setup key Blockscout PRO API (Robinhood Chain)
+
+Satu key gratis = 100K kredit/hari & 5 RPS **per akun**; ±3 request per
+token per scan (≈60–80 kredit) → 1 key cukup untuk ≤ 3–4 token LP Robinhood
+pada kadens 5 menit. Lebih dari itu, atau token > 10.000 holder (paginasi
+RPC), pasang beberapa key dari **akun berbeda**.
+
+1. Buat key di <https://dev.blockscout.com> (Sign in → **API Keys** →
+   *Create*; key `proapi_…` hanya ditampilkan sekali — salin saat itu juga).
+   Ulangi di akun lain bila perlu lebih dari satu key.
+2. **Streamlit Cloud** → aplikasi → ⋮ **Settings** → **Secrets** → tambahkan
+   (format TOML, satu baris, key dipisah koma, tanpa spasi di dalam tanda
+   kutip tidak masalah karena dibersihkan):
+
+   ```toml
+   BLOCKSCOUT_API_KEYS = "proapi_AAA,proapi_BBB,proapi_CCC,proapi_DDD"
+   ```
+
+   Klik **Save** — aplikasi restart otomatis. Cek: Scan Holder Khusus dengan
+   CA Robinhood → caption *Blockscout (Robinhood Chain) · PRO API key#N*.
+3. **GitHub** → repo → **Settings** → **Secrets and variables** → **Actions**
+   → **New repository secret**: Name `BLOCKSCOUT_API_KEYS`, Secret =
+   daftar key yang sama dipisah koma → **Add secret**.
+4. Pastikan `.github/workflows/daily-effort.yml` meneruskan env
+   `BLOCKSCOUT_API_KEYS: ${{ secrets.BLOCKSCOUT_API_KEYS }}` (sudah ada di
+   `daily-effort-5menit.yml`; salin manual bila push bot ke folder workflow
+   ditolak). Cek log run berikutnya: baris
+   `Rencana scan Robinhood LP: … blockscout_pro_keys=4` dan
+   `Blockscout PRO API: 4 key · key#1 sisa 99,800 kredit …`.
+
+Jangan pernah menaruh key di `config.json` yang di-commit; `config.json`
+ada di `.gitignore` hanya untuk pemakaian lokal.
 
 ## Setup Telegram
 

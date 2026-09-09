@@ -169,23 +169,36 @@ def blockscout_token_url(ca) -> str:
     return f"{BLOCKSCOUT_TOKEN_BASE}{safe_url_part(ca)}"
 
 
-def token_link_lines(ca) -> list[str]:
-    """Plain-text explorer/market links for surfaces without HTML.
+def token_links(ca) -> list[tuple[str, str, str]]:
+    """``[(emoji, label, url), …]`` explorer/market untuk satu token.
 
     Solana → GMGN + DexScreener. EVM (Robinhood Chain) → rh-scan.com +
-    DexScreener robinhood + Blockscout. Dipakai pesan Telegram (Bot API
-    mengirim teks polos dan otomatis me-link URL). Return ``[]`` bila
-    address kosong supaya pesan tidak berakhir dengan label menggantung.
+    DexScreener robinhood + Blockscout. Satu sumber untuk **hyperlink**
+    Telegram (entity ``text_link`` pada ``label``, URL tidak ditulis di
+    teks — permintaan user 2026-09-09) maupun teks polos
+    (:func:`token_link_lines`). Return ``[]`` bila address kosong supaya
+    pesan tidak berakhir dengan label menggantung.
     """
     addr = str(ca or "").strip()
     if not addr:
         return []
     if _is_evm(addr):
-        return [f"\U0001f986 rh-scan: {rh_scan_token_url(addr)}",
-                f"\U0001f986 DexScreener: {dexscreener_token_url(addr)}",
-                f"\U0001f30f Blockscout: {blockscout_token_url(addr)}"]
-    return [f"\U0001f517 GMGN: {gmgn_token_url(addr)}",
-            f"\U0001f986 DexScreener: {dexscreener_token_url(addr)}"]
+        return [("\U0001f986", "rh-scan", rh_scan_token_url(addr)),
+                ("\U0001f986", "DexScreener", dexscreener_token_url(addr)),
+                ("\U0001f30f", "Blockscout", blockscout_token_url(addr))]
+    return [("\U0001f517", "GMGN", gmgn_token_url(addr)),
+            ("\U0001f986", "DexScreener", dexscreener_token_url(addr))]
+
+
+def token_link_lines(ca) -> list[str]:
+    """Plain-text explorer/market links for surfaces without HTML/entities.
+
+    Bentuk ``"<emoji> <label>: <url>"`` dari :func:`token_links` — untuk
+    log, CLI, atau klien yang tidak bisa menampilkan hyperlink. Pesan
+    Telegram **tidak** lagi memakai ini (URL polos panjang), melainkan
+    ``telegram_alerts.build_alert_message`` yang membuat hyperlink.
+    """
+    return [f"{emoji} {label}: {url}" for emoji, label, url in token_links(ca)]
 
 
 def cvd_shortcut_query(ca) -> str:

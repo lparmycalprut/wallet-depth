@@ -180,9 +180,13 @@ class EarlyDumpMessageTest(unittest.TestCase):
         self.assertIn("0.1%", message)           # DUST_BEST_PCT 0,1
         self.assertIn("$LPDUMP", message)
         self.assertIn("📊 Dust: 0.04% → 0.42% MC (+0.38 pp)", message)
-        # Kind baru tetap memakai blok link token (aturan semua jenis alert).
-        self.assertIn("🔗 GMGN:", message)
-        self.assertIn("🦆 DexScreener:", message)
+        # Kind baru tetap memakai blok link token (aturan semua jenis alert)
+        # — sebagai hyperlink: label di teks, URL di entity text_link.
+        self.assertIn("\n🔗 GMGN\n🦆 DexScreener", message)
+        self.assertNotIn("http", message)
+        _, entities = ta.build_alert_message(events[0])
+        self.assertEqual([e["url"] for e in entities],
+                         [ta.token_links(MINT)[0][2], ta.token_links(MINT)[1][2]])
         # Tanpa movement wallet: marker early dump tidak punya peta balance.
         self.assertNotIn("Pergerakan sampel wallet dust", message)
 
@@ -191,9 +195,10 @@ class EarlyDumpMessageTest(unittest.TestCase):
             _marker(NOW - 3600, 0.05),
             _current(NOW, 0.11, pools=[POOL]),
             mint=MINT, symbol="?")
-        message = ta.format_alert_message(events[0])
-        self.assertIn(f"🌊 Meteora: {ta.meteora_dlmm_url(POOL)}", message)
-        self.assertIn(f"🦅 HawkFi: {ta.hawkfi_meteora_url(POOL)}", message)
+        message, entities = ta.build_alert_message(events[0])
+        self.assertTrue(message.endswith("\n🌊 Meteora\n🦅 HawkFi"))
+        self.assertEqual([e["url"] for e in entities][-2:],
+                         [ta.meteora_dlmm_url(POOL), ta.hawkfi_meteora_url(POOL)])
         # Tanpa pool address (kondisi cron saat ini) → tanpa baris pool.
         events = ta.evaluate_early_dump_rule(
             _marker(NOW - 3600, 0.05), _current(NOW, 0.11),

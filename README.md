@@ -74,7 +74,8 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
      dust masih naik; dikirim **tanpa** gerbang volume keras (konteks pasar
      disimpan untuk audit). Catatan: saat ini 0 token watchlist ber-source
      meteora — rule aktif begitu ada pool yang di-⭐ dari Scan Meteora.
-   - **🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 25 bin** (2026-09-07)
+   - **🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 50 bin** (2026-09-07;
+     judul "50 bin" sejak 2026-09-09)
      — eskalasi dari ⚡ EARLY DUMP: bila dalam **15 menit** setelah
      pengingat pertama dust terus
      bertambah selama **3 scan 5 menit berturut-turut** (holder dust
@@ -181,16 +182,22 @@ warna teks merah, atau teks berkedip, jadi penekanan memakai **tebal + 🚨**,
 bukan HTML/CSS yang tidak didukung. Aturan pemicu dan frekuensi tidak berubah.
 
 ```text
-🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 25 bin
+🚨 WAKTUNYA EXIT / CUTLOSS / Reshape bid-ask 50 bin
 
 🪙 $LPX
 📊 Dust: 0.22% → 0.31% MC (+0.09 pp)
 📈 Naik 3 scan berturut (±10 menit)
 🕒 2026-09-07 21:10 WIB
 📋 Mint: LpMint11111111111111111111111111111111111
-🔗 GMGN: https://gmgn.ai/sol/token/LpMint11111111111111111111111111111111111
-🦆 DexScreener: https://dexscreener.com/solana/LpMint11111111111111111111111111111111111
+🔗 GMGN
+🦆 DexScreener
 ```
+
+Baris `🔗 GMGN` / `🦆 DexScreener` (dan `🌊 Meteora` / `🦅 HawkFi` bila pool
+diketahui; `🦆 rh-scan` / `🌏 Blockscout` untuk Robinhood) adalah
+**hyperlink** — labelnya diberi entity `text_link` Bot API, URL-nya tidak
+ditulis di teks (sejak 2026-09-09; sebelumnya URL polos 44+ karakter
+membuat pesan panjang).
 
 Contoh pengingat LP:
 
@@ -200,8 +207,8 @@ Contoh pengingat LP:
 📊 Dust: 0.04% → 0.15% MC (+0.11 pp)
 🕒 2026-09-07 21:00 WIB
 📋 Mint: LpMint11111111111111111111111111111111111
-🔗 GMGN: https://gmgn.ai/sol/token/LpMint11111111111111111111111111111111111
-🦆 DexScreener: https://dexscreener.com/solana/LpMint11111111111111111111111111111111111
+🔗 GMGN
+🦆 DexScreener
 ```
 
 Contoh rule dump dengan konfirmasi pasar:
@@ -213,19 +220,21 @@ Contoh rule dump dengan konfirmasi pasar:
 ✅ Pasar: vol 4j 2.50× avg 7d · harga -3.20%
 🕒 2026-09-07 21:15 WIB
 📋 Mint: So11111111111111111111111111111111111111112
-🔗 GMGN: https://gmgn.ai/sol/token/So11111111111111111111111111111111111111112
-🦆 DexScreener: https://dexscreener.com/solana/So11111111111111111111111111111111111111112
+🔗 GMGN
+🦆 DexScreener
 ```
 
-URL tetap dibangun `links.token_link_lines(mint)`, satu sumber dengan tabel
-watchlist dan selalu ter-encode. Token Robinhood memakai **🦆 rh-scan,
-🦆 DexScreener Robinhood, 🌏 Blockscout**, bukan link Solana. Bila mint
-kosong, link dilewati. Bila event LP membawa pool address Meteora,
-ditambahkan **🌊 Meteora + 🦅 HawkFi**; cron belum menyimpan pool address.
+URL hyperlink dibangun `links.token_links(mint)` (satu sumber dengan tabel
+watchlist dan `token_link_lines()` versi teks polos untuk log/CLI) dan
+selalu ter-encode. Token Robinhood memakai **🦆 rh-scan, 🦆 DexScreener
+Robinhood, 🌏 Blockscout**, bukan link Solana. Bila mint kosong, link
+dilewati. Bila event LP membawa pool address Meteora, ditambahkan
+**🌊 Meteora + 🦅 HawkFi**; cron belum menyimpan pool address.
 
 Transport tetap mengirim teks literal (tanpa `parse_mode`), sehingga nama
 token dengan karakter HTML/Markdown tidak merusak pesan. Judul exit diberi
-native entity `bold` dengan panjang **UTF-16** (emoji 🚨 = dua unit).
+native entity `bold` dan setiap label link diberi entity `text_link`,
+keduanya dengan offset/panjang **UTF-16** (emoji 🚨 / 🔗 = dua unit).
 
 ## Sumber data
 
@@ -244,8 +253,30 @@ Scan Holder Khusus (halaman utama) menerima **dua chain**: CA Solana
 (base58) → Helius DAS, CA **Robinhood Chain** (`0x…`) → **Blockscout**
 (CSV export, tanpa limit) lewat `robinhood_holders.scan_token_holders` — hasil (bar chart
 Wallet Depth + tabel) dirender sama. Jalur Solana dan cron butuh
-`HELIUS_API_KEY` (config / env / Streamlit secrets); jalur Robinhood tidak
-membutuhkan key. Tanpa key, jalur Solana memakai fallback GMGN.
+`HELIUS_API_KEY` (config / env / Streamlit secrets). Tanpa key, jalur
+Solana memakai fallback GMGN.
+
+Jalur Robinhood **sebaiknya** diberi `BLOCKSCOUT_API_KEY` (env /
+`blockscout_api_key` di `config.json` / Streamlit secrets; key gratis
+dari <https://dev.blockscout.com>, tanpa kartu). Sejak 2026-09-08
+instance publik `robinhoodchain.blockscout.com` memasang bot-protection:
+request dari server (Streamlit Cloud, GitHub runner) sering dijawab
+**HTTP 403** "Just a moment…" serentak untuk `getToken`, CSV export, dan
+REST v2 — dulu terbaca sebagai *"Scan tidak menghasilkan holder. Pastikan
+CA valid…"* padahal CA-nya sah. Dengan key, semua request lewat **PRO
+API** `https://api.blockscout.com/4663/…` (header `Authorization:
+Bearer`, path & bentuk respons identik dengan instance publik; free tier
+5 RPS / 100K kredit per hari ≈ 3.000–5.000 request). **Beberapa key**
+boleh dipasang sekaligus (`BLOCKSCOUT_API_KEYS`, dipisah koma) — kuota
+free tier dihitung per akun, jadi key dari akun berbeda menaikkan
+plafon; request dibagi bergantian dan key yang ditolak / kreditnya
+habis (401/402/403/429) diparkir sementara lalu request pindah ke key
+berikutnya, key aslinya tidak pernah masuk log (hanya `key#N`). Tanpa key modul
+tetap mencoba instance publik dengan TLS browser (`curl_cffi`, profil
+dirotasi saat 403) lalu `requests` biasa; bila semuanya ditolak hasil
+pulang dengan `blocked: True` + satu kalimat yang menyebut 403 dan cara
+memasang key (bukan menyalahkan CA). Rute yang dipakai terlihat di
+`source` (`blockscout-csv@pro` / `@public`) dan caption UI.
 
 ## Chart LP (watchlist Meteora terpisah)
 
@@ -575,6 +606,8 @@ keseluruhan kadens ke 15 menit.
 | Variabel / konstanta | Isi |
 |---|---|
 | `HELIUS_API_KEY` | API key Helius untuk data holder |
+| `BLOCKSCOUT_API_KEY` | Key **Blockscout PRO API** (gratis di dev.blockscout.com) untuk holder Robinhood Chain; tanpa key modul memakai instance publik yang sejak 2026-09-08 sering menjawab 403 bot-protection. Alias: `BLOCKSCOUT_PRO_API_KEY`, `blockscout_api_key` di `config.json` / Streamlit secrets |
+| `BLOCKSCOUT_API_KEYS` | Beberapa key PRO API dipisah koma/baris baru (digabung dengan `BLOCKSCOUT_API_KEY`, dedup). Round-robin; 401/403 parkir 60/5 mnt, 402 kredit habis parkir 30 mnt, 429 parkir sesuai `x-ratelimit-reset`. Alias `blockscout_api_keys` di `config.json` / secrets |
 | `GITHUB_TOKEN` | Token GitHub (push watchlist + snapshot) |
 | `GITHUB_REPO`, `GITHUB_REF` | default `lparmycalprut/wallet-depth`; scanner memakai branch aktif |
 | `WATCHLIST_FILE`, `HOLDER_STATUS_FILE` | default `watchlist.json`, `holder_status.json` |

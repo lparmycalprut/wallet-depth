@@ -593,12 +593,29 @@ c4.metric("Pilar Crab+Fish", _count(mid.get("count")),
           _fmt_pct(mid.get("pct_mc")))
 if short_scan:
     _fetch_error = str(raw_holders.get("fetch_error") or "").strip()
+    if raw_holders.get("blocked") and raw_holders.get("pro_keys"):
+        _blocked_hint = (
+            " Penyebabnya **Blockscout menolak request (HTTP 403)** dan "
+            f"semua {int(raw_holders.get('pro_keys') or 0)} key PRO API "
+            "ditolak / kredit hariannya habis — cek dashboard "
+            f"{robinhood_holders.BLOCKSCOUT_KEY_URL} atau tambah key akun "
+            "lain ke `BLOCKSCOUT_API_KEYS`.")
+    elif raw_holders.get("blocked"):
+        _blocked_hint = (
+            " Penyebabnya **Blockscout publik menolak request (HTTP 403 "
+            "bot-protection)**, bukan token/CA-nya — pasang "
+            f"`BLOCKSCOUT_API_KEY` (key gratis: "
+            f"{robinhood_holders.BLOCKSCOUT_KEY_URL}) supaya scan lewat "
+            "PRO API.")
+    else:
+        _blocked_hint = ""
     st.warning(
         f"Scan holder terakhir **tidak lengkap**: provider cuma "
         f"mengembalikan {point_wallets(raw_holders):,} wallet (ambang "
         f"{MIN_USABLE_WALLETS} wallet). Dust 0% dari sampel sependek itu "
         "bukan berarti dust habis — angka di atas memakai titik history "
         "layak terakhir. Cron akan mencoba lagi pada run berikutnya."
+        + _blocked_hint
         + (f" Alasan provider: `{_fetch_error}`." if _fetch_error else ""),
         icon="⚠️")
 st.markdown(_dust_badge(flag), unsafe_allow_html=True)

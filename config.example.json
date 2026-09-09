@@ -1,6 +1,8 @@
 {
   "helius_api_key": "PASTE-API-KEY-KAMU-DISINI",
   "helius_extra_keys": "",
+  "blockscout_api_key": "",
+  "blockscout_api_keys": "",
   "custom_rpc": "",
   "dust_limit_usd": 10,
   "holder_source": "auto"
