@@ -27,12 +27,17 @@
 #     satu hiccup `curl | python3` membatalkan langkah rantai secara senyap
 #     (stall yang sama, penyebab berbeda).
 #
-# Perubahan lain dibanding workflow terpasang sekarang:
-#   1. input `scan_all` (--scope all) diganti `full_scan` (--full) — scanner
-#      hanya punya lane LP sejak 2026-09-07; `--scope` lama masih diterima
-#      sebagai alias sementara supaya dispatch manual tidak crash sebelum
-#      berkas ini terpasang;
-#   2. `timeout-minutes` 45 → 15 (scan ±1-2 menit + tidur chain ±5 menit).
+# Delta vs workflow TERPASANG (dicek `git diff` 2026-09-09): HANYA langkah
+# "Chain run berikutnya" — Guard 2 lama (umur run `event=schedule` < 900 s =
+# "schedule sehat" → dispatch dibuang) diganti `python scripts/chain_next_run.py`
+# dengan guard baru. Input `full_scan` dan `timeout-minutes: 15` sudah
+# terpasang; seluruh berkas tetap ditimpa supaya YAML dan root repo identik —
+# begitu YAML memanggil skrip, kalibrasi ritme berikutnya tidak perlu lagi
+# menyentuh folder workflow (yang tidak bisa ditulis bot).
+#
+# Alias `--scope all` (dispatch manual `watchlist.request_immediate_scan`)
+# sengaja TIDAK dihapus dari `scripts/scan_holders.py` sampai berkas ini
+# terpasang.
 
 name: Holder Dust Scanner
 
