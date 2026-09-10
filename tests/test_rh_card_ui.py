@@ -105,7 +105,15 @@ class RobinhoodCardHolderButtonTest(unittest.TestCase):
         app = self._app()
         self.assertEqual(len(app.exception), 0)
         body = "\n".join(node.value for node in app.markdown)
-        self.assertIn("Watchlist Robinhood LP", body)
+        # Judul card LP sejak 2026-09-10: "🦅 Watchlist Robinhood" (detail
+        # karakteristik pindah ke tooltip judul, bukan caption panjang).
+        self.assertIn("🦅 Watchlist Robinhood</span>", body)
+        self.assertIn('title="Watchlist Robinhood LP (0x…, chain id 4663)',
+                      body)
+        captions = "\n".join(node.value for node in app.caption)
+        self.assertNotIn("Pengingat ⚡ Telegram dikirim tiap ±5 menit per "
+                         "token", captions)
+        self.assertNotIn("Watchlist Robinhood LP — Holder Dust</span>", body)
         self.assertIn("$VLAD", body)
         # Aksi 🧮 = tautan tab baru ke SLUG halaman, bukan path file.
         self.assertIn(f'href="/Holder?mint={CA}"', body)
@@ -183,12 +191,17 @@ class RobinhoodCardHolderButtonTest(unittest.TestCase):
             "regular", background=True)
 
     def test_kadens_baris_menyebut_5_menit(self):
-        """Caption card + baris harus menyebut kadens Robinhood yang baru."""
+        """Baris + tooltip judul card harus menyebut kadens Robinhood.
+
+        Sejak 2026-09-10 teks kadens card bukan caption lagi — pindah ke
+        tooltip (``title="…"``) di teks judul card.
+        """
         app = self._app()
         body = "\n".join(node.value for node in app.markdown)
-        captions = "\n".join(node.value for node in app.caption)
         self.assertIn("LP · scan ±5 menit", body)
-        self.assertIn("tiap ±5 menit", captions)
+        self.assertIn('title="Watchlist Robinhood LP (0x…, chain id 4663)',
+                      body)
+        self.assertIn("tiap ±5 menit", body)
         self.assertNotIn("LP · scan ±15 menit", body)
 
     def test_badge_sinkronisasi_hanya_ketika_perlu(self):
@@ -264,7 +277,7 @@ class RobinhoodPublishGuardTest(unittest.TestCase):
 
 @unittest.skipIf(AppTest is None, "streamlit not installed")
 class HolderKhususRobinhoodScanTest(unittest.TestCase):
-    """Section **Scan Holder Khusus** (app.py) kini menerima CA Robinhood.
+    """Section **Scan Holder Solana / Robinhood** (app.py) menerima CA Robinhood.
 
     Permintaan user 2026-09-08: "tambahkan fungsi kita bisa scan robinhood
     disini juga". CA EVM (0x…) → ``robinhood_holders.scan_token_holders``
@@ -333,7 +346,7 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
     def _submit(self, app, ca: str):
         inputs = [node for node in app.text_input
                   if node.key == "helius-ca-input"]
-        self.assertTrue(inputs, "input CA Scan Holder Khusus tidak ditemukan")
+        self.assertTrue(inputs, "input CA Scan Holder tidak ditemukan")
         inputs[0].set_value(ca)
         submit = [button for button in app.button
                   if (button.label or "").strip() == "🛰 Scan Holder"]

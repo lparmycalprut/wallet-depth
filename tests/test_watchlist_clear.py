@@ -276,7 +276,7 @@ class ClearRegularWatchlistButtonTest(unittest.TestCase):
         self.assertIn("2 token", button.label)
         body = self._body(app)
         self.assertIn("Hapus **2 token** dari watchlist biasa?", body)
-        self.assertIn("Tidak** menyentuh Chart LP Meteora", body)
+        self.assertIn("Tidak** menyentuh Watchlist Meteora", body)
 
     def test_klik_konfirmasi_hanya_menghapus_token_non_lp(self):
         app = self._app()

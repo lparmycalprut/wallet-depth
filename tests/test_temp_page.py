@@ -1,4 +1,4 @@
-"""The three parked sections live on /temp, not on the active LP dashboard."""
+"""The parked sections live on /temp, not on the active LP dashboard."""
 import copy
 import unittest
 from pathlib import Path
@@ -62,19 +62,22 @@ class TempPageTest(unittest.TestCase):
             app = self._app()
         body = self._body(app)
         headings = [node.value for node in app.subheader]
-        self.assertIn("Chart LP — Watchlist Meteora", body)
-        self.assertIn("Watchlist Robinhood LP — Holder Dust", body)
-        self.assertIn("🛰 Scan Holder Khusus — Helius / Robinhood", headings)
+        self.assertIn("🌊 Watchlist Meteora</span>", body)
+        self.assertIn("🦅 Watchlist Robinhood</span>", body)
+        self.assertIn("🛰 Scan Holder Solana / Robinhood", body)
         self.assertNotIn("Watchlist Robinhood — Holder Dust</span>", body)
+        self.assertNotIn("🌊 Scan Meteora Pool", body)
+        self.assertNotIn("Top DLMM", body)
         self.assertNotIn("📋 Watchlist — Analisa Holder (Dust)", headings)
         self.assertNotIn("🔍 Temukan Token", headings)
+        self.assertNotIn("Scan Holder Khusus", body)
         self.assertNotIn("$RHREG", body)
         self.assertNotIn("$REGSOL", body)
         self.assertIn("temp", [node.proto.label for node in app.get("page_link")])
         alerts.assert_not_called()
         discovery.assert_not_called()
 
-    def test_temp_has_all_three_sections_but_not_lp_or_dedicated_scan(self):
+    def test_temp_has_all_parked_sections_but_not_lp_or_dedicated_scan(self):
         app = self._app(temp=True)
         body = self._body(app)
         headings = [node.value for node in app.subheader]
@@ -82,9 +85,12 @@ class TempPageTest(unittest.TestCase):
         self.assertIn("Watchlist Robinhood — Holder Dust</span>", body)
         self.assertIn("📋 Watchlist — Analisa Holder (Dust)", headings)
         self.assertIn("🔍 Temukan Token", headings)
-        self.assertNotIn("Watchlist Robinhood LP — Holder Dust</span>", body)
-        self.assertNotIn("Chart LP — Watchlist Meteora", body)
-        self.assertNotIn("🛰 Scan Holder Khusus — Helius / Robinhood", headings)
+        # Scan Meteora Pool pindah ke temp sejak 2026-09-10.
+        self.assertIn("🌊 Scan Meteora Pool</span>", body)
+        self.assertNotIn("🦅 Watchlist Robinhood</span>", body)
+        self.assertNotIn("🌊 Watchlist Meteora</span>", body)
+        self.assertNotIn("Scan Holder Solana / Robinhood", body)
+        self.assertNotIn("Scan Holder Khusus", body)
         self.assertIn("$RHREG", body)
         self.assertIn("$REGSOL", body)
         self.assertNotIn("$RHLP", body)
@@ -150,6 +156,32 @@ class TempPageTest(unittest.TestCase):
             app.switch_page("app.py").run()
         self.assertEqual(len(app.exception), 0)
         self.assertIn("$RHREG", self._body(app))
+
+    def test_meteora_scan_card_on_temp_star_targets_lp_card(self):
+        """Card 🌊 Scan Meteora Pool (pindahan 2026-09-10) di temp: ⭐ =
+        tambah ke card **Watchlist Meteora** halaman utama (source=meteora).
+        """
+        scan = {"rows": [{"ca": LP, "symbol": "LPSOL",
+                          "pool_address": "PoolAddr1",
+                          "in_24h": True, "in_1h": False,
+                          "mc": 100_000.0, "tvl": 20_000.0,
+                          "dust_count": 2, "dust_pct_mc": 0.05,
+                          "real_count": 60}],
+                "error": "", "fetched": 1, "hidden_dust": 0}
+        app = self._app(temp=True)
+        app.session_state["meteora_scan"] = scan
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = self._body(app)
+        self.assertIn("🌊 Scan Meteora Pool</span>", body)
+        self.assertIn("$LPSOL", body)
+        star = next(b for b in app.button
+                    if (b.key or "").startswith("meteora-star-"))
+        with mock.patch("watchlist.add_to_watchlist",
+                        return_value=True) as add:
+            star.click().run()
+        add.assert_called_once_with(LP, "LPSOL", source="meteora",
+                                    background=True)
 
     def test_temp_is_a_real_page_slug(self):
         self.assertEqual(page_url_path(TEMP), "temp")

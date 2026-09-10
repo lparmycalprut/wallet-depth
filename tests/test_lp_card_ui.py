@@ -1,11 +1,14 @@
-"""AppTest: card **Chart LP** (watchlist Meteora terpisah) di halaman utama.
+"""AppTest: card **Watchlist Meteora** (dulu "Chart LP") di halaman utama.
 
 Menutup perilaku yang diminta user:
 - token ``source=meteora`` tampil di card paling atas, bukan di watchlist biasa;
 - badge **HATI-HATI** (≥ 0,5% MC) dan **BAHAYA** (≥ 1% MC);
 - grafik perubahan dust holder ikut ter-render;
-- tambah manual bisa diarahkan ke Chart LP (radio) atau lewat form di card;
-- tombol 🌊 memindahkan token watchlist biasa ke Chart LP.
+- tambah manual bisa diarahkan ke Watchlist Meteora (radio) atau lewat form
+  di card;
+- tombol 🌊 memindahkan token watchlist biasa ke Watchlist Meteora;
+- detail karakteristik card = tooltip judul (2026-09-10), bukan caption;
+- card **Scan Meteora Pool** pindah ke halaman temp (2026-09-10).
 """
 from __future__ import annotations
 
@@ -21,13 +24,14 @@ except Exception:  # noqa: BLE001
 import holder_history as hh
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
+TEMP = "pages/8_temp.py"
 
 LP_MINT = "LpMint11111111111111111111111111111111111"
 LP_SAFE = "LpSafe22222222222222222222222222222222222"
 # base58 valid (tanpa 0/O/I/l) supaya lolos validasi CA di UI
 HOLDER_MINT = "Watch11111111111111111111111111111111111"
 BUCKET = hh.INTERVAL_SEC
-LP_TAB = "🌊 Chart LP (Meteora)"
+LP_TAB = "🌊 Watchlist Meteora"
 HOLDER_TAB = "📋 Watchlist Holder"
 
 
@@ -114,7 +118,7 @@ class ChartLpCardTest(unittest.TestCase):
         app = self._app()
         self.assertEqual(len(app.exception), 0)
         body = self._body(app)
-        self.assertIn("Chart LP — Watchlist Meteora", body)
+        self.assertIn("🌊 Watchlist Meteora</span>", body)
         self.assertIn("HATI-HATI", body)     # LPSAFE 0,61% MC
         self.assertIn("BAHAYA", body)        # LPRISK 1,35% MC
         self.assertIn("$LPRISK", body)
@@ -132,21 +136,31 @@ class ChartLpCardTest(unittest.TestCase):
         self.assertIn(f"ambang HATI-HATI {hh.DUST_CAUTION_PCT:g}% / BAHAYA "
                       f"{hh.DUST_DANGER_PCT:g}%", captions)
 
-    def test_caption_chart_lp_scanned_every_five_minutes(self):
-        """Teks kadens mengikuti permintaan user 2026-09-06 (Meteora 5 menit)."""
+    def test_card_detail_is_hover_tooltip_on_title(self):
+        """Detail karakteristik card = tooltip judul (permintaan 2026-09-10).
+
+        Caption panjang di badan card diganti atribut ``title`` pada teks
+        judul — hanya muncul saat kursor digeser ke tulisan "Watchlist
+        Meteora". Ambang (0,1 / 0,5 / 1% MC) harus tetap disebut di dalamnya.
+        """
         app = self._app()
-        captions = [node.value for node in app.caption]
-        lp = [text for text in captions if "Meteora Pool" in text]
-        self.assertTrue(lp, "caption card Chart LP tidak ter-render")
-        text = lp[0]
-        self.assertIn("tiap ±5 menit", text)
-        self.assertIn("perubahan holder langsung kelihatan", text)
-        # Jangan ada lagi janji "Meteora tetap 15 menit" di caption card ini.
-        self.assertNotIn("15 menit", text)
+        body = self._body(app)
+        captions = "\n".join(node.value for node in app.caption)
+        # Teks detail tidak lagi dirender sebagai caption card.
+        self.assertNotIn("berulang tiap scan", captions)
+        self.assertNotIn("perubahan holder langsung kelihatan", captions)
+        # ... tapi ada sebagai tooltip (title="…") di span judul card.
+        self.assertIn('title="Watchlist terpisah', body)
+        self.assertIn("berulang tiap scan", body)
+        self.assertIn("perubahan holder langsung kelihatan", body)
+        self.assertIn("per bucket 5 menit", body)
+        # Jangan ada lagi janji "Meteora tetap 15 menit" di tooltip ini.
+        tooltip = body.split('title="Watchlist terpisah', 1)[1]
+        tooltip = tooltip.split('"', 1)[0]
+        self.assertIn("tiap ±5 menit", tooltip)
+        self.assertNotIn("15 menit", tooltip)
         # Caption watchlist biasa sekarang hanya ada di halaman temp.
-        joined = "\n".join(captions)
-        self.assertNotIn("semua watchlist LP", joined)
-        self.assertNotIn("Chart LP (Meteora) ±15 menit", joined)
+        self.assertNotIn("semua watchlist LP", captions)
 
     def test_lp_rows_are_separate_from_holder_watchlist(self):
         app = self._app()
@@ -211,7 +225,7 @@ class ChartLpCardTest(unittest.TestCase):
         self.assertTrue(inputs, "form CA di card LP tidak ditemukan")
         inputs[0].set_value(LP_MINT[:32])
         submit = [button for button in app.button
-                  if "Tambah ke Chart LP" in (button.label or "")]
+                  if "Tambah ke Watchlist Meteora" in (button.label or "")]
         self.assertTrue(submit)
         with mock.patch("watchlist.add_to_watchlist",
                         return_value=True) as add:
@@ -223,12 +237,14 @@ class ChartLpCardTest(unittest.TestCase):
         keys = [button.key or "" for button in app.button]
         self.assertIn("lp-scan-now", keys)
         labels = [button.label or "" for button in app.button]
-        self.assertTrue(any("Scan sekarang Chart LP" in lab for lab in labels))
+        self.assertTrue(any("Scan sekarang Watchlist Meteora" in lab
+                            for lab in labels))
 
     def test_scan_sekarang_hanya_token_lp(self):
         app = self._app()
         btn = [button for button in app.button if button.key == "lp-scan-now"]
-        self.assertTrue(btn, "tombol Scan sekarang Chart LP tidak ditemukan")
+        self.assertTrue(btn, "tombol Scan sekarang Watchlist Meteora "
+                             "tidak ditemukan")
         analysis = {
             "ca": LP_MINT, "symbol": "LPRISK", "analyzed_at": 1,
             "holders": {"total_fetched": 80, "wallets_analyzed": 80,
@@ -263,7 +279,7 @@ class ChartLpCardTest(unittest.TestCase):
                   if node.key == "lp-ca-input"]
         inputs[0].set_value("bukan-address")
         submit = [button for button in app.button
-                  if "Tambah ke Chart LP" in (button.label or "")][0]
+                  if "Tambah ke Watchlist Meteora" in (button.label or "")][0]
         with mock.patch("watchlist.add_to_watchlist") as add:
             result = submit.click().run()
         add.assert_not_called()
@@ -289,8 +305,8 @@ class EmptyChartLpCardTest(unittest.TestCase):
         app = AppTest.from_file(APP, default_timeout=60).run()
         self.assertEqual(len(app.exception), 0)
         body = "\n".join(node.value for node in app.markdown)
-        self.assertIn("Chart LP — Watchlist Meteora", body)
-        self.assertTrue(any("Chart LP masih kosong" in node.value
+        self.assertIn("🌊 Watchlist Meteora</span>", body)
+        self.assertTrue(any("Watchlist Meteora masih kosong" in node.value
                             for node in app.info))
 
 
@@ -300,7 +316,40 @@ if __name__ == "__main__":  # pragma: no cover
 
 @unittest.skipIf(AppTest is None, "streamlit not installed")
 class MeteoraBestBadgeTest(unittest.TestCase):
-    """Badge 🏆 BEST POOL di listing Scan Meteora (dust < 0,1% + data valid)."""
+    """Badge 🏆 BEST POOL di listing Scan Meteora (dust < 0,1% + data valid).
+
+    Card **Scan Meteora Pool** dipindah ke halaman temp sejak 2026-09-10 —
+    AppTest dijalankan dari entrypoint ``app.py`` lalu ``switch_page`` ke
+    temp (pola yang sama dengan test_temp_page) supaya registry multipage
+    sama dengan deployment.
+    """
+
+    def _temp_app(self):
+        patches = (
+            mock.patch("watchlist.load_watchlist", return_value={}),
+            mock.patch("holder_status.load_holder_status",
+                       return_value={"tokens": {}}),
+            mock.patch("holder_history.load_holder_history",
+                       return_value={"tokens": {}}),
+            mock.patch("holder_history.pull_holder_history",
+                       return_value=None),
+            # Store Robinhood + setelan notif: tes ini tidak boleh menyentuh
+            # jaringan / file lokal sama sekali.
+            mock.patch("robinhood_watchlist.load_watchlist",
+                       return_value={}),
+            mock.patch("robinhood_watchlist.load_status",
+                       return_value={"updated_at": None, "tokens": {}}),
+            mock.patch("robinhood_watchlist.load_history",
+                       return_value={"updated_at": None, "tokens": {}}),
+            mock.patch("alert_settings.regular_telegram_enabled",
+                       return_value=True),
+        )
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        app = AppTest.from_file(APP, default_timeout=60)
+        app.switch_page(TEMP)
+        return app
 
     CLEAN = "CleanMint1111111111111111111111111111111111"
     BOGUS = "BogusMint1111111111111111111111111111111111"
@@ -342,19 +391,7 @@ class MeteoraBestBadgeTest(unittest.TestCase):
         }
 
     def test_badge_best_pool_hanya_untuk_data_valid(self):
-        patches = (
-            mock.patch("watchlist.load_watchlist", return_value={}),
-            mock.patch("holder_status.load_holder_status",
-                       return_value={"tokens": {}}),
-            mock.patch("holder_history.load_holder_history",
-                       return_value={"tokens": {}}),
-            mock.patch("holder_history.pull_holder_history",
-                       return_value=None),
-        )
-        for patch in patches:
-            patch.start()
-            self.addCleanup(patch.stop)
-        app = AppTest.from_file(APP, default_timeout=60)
+        app = self._temp_app()
         app.session_state["meteora_scan"] = self._scan_rows()
         app.run()
         self.assertEqual(len(app.exception), 0)
@@ -390,22 +427,10 @@ class MeteoraBestBadgeTest(unittest.TestCase):
         pertama input, lalu diacak: setelah sort, CLN tetap harus di atas
         BGS/THN meski aslinya bukan yang teratas dari API.
         """
-        patches = (
-            mock.patch("watchlist.load_watchlist", return_value={}),
-            mock.patch("holder_status.load_holder_status",
-                       return_value={"tokens": {}}),
-            mock.patch("holder_history.load_holder_history",
-                       return_value={"tokens": {}}),
-            mock.patch("holder_history.pull_holder_history",
-                       return_value=None),
-        )
-        for patch in patches:
-            patch.start()
-            self.addCleanup(patch.stop)
         scan = self._scan_rows()
         # Acak: BEST POOL (CLN) ditaruh paling BELAKANG oleh "API".
         scan["rows"] = [scan["rows"][1], scan["rows"][2], scan["rows"][0]]
-        app = AppTest.from_file(APP, default_timeout=60)
+        app = self._temp_app()
         app.session_state["meteora_scan"] = scan
         app.run()
         self.assertEqual(len(app.exception), 0)

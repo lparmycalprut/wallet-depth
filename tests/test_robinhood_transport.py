@@ -4,7 +4,7 @@
 Latar (2026-09-08): instance publik ``robinhoodchain.blockscout.com`` mulai
 menolak request script dengan **HTTP 403** bot-protection (halaman
 "Just a moment…" Cloudflare) — ``getToken``, CSV export, dan REST v2 gagal
-serentak sehingga Scan Holder Khusus menulis "Scan tidak menghasilkan
+serentak sehingga Scan Holder Solana / Robinhood menulis "Scan tidak menghasilkan
 holder. Pastikan CA valid …" untuk CA yang sah (Pusheen ``0x1209ec…``,
 409 holder). Suite ini mengunci perilaku barunya:
 

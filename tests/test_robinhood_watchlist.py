@@ -349,10 +349,10 @@ class WrapperTest(unittest.TestCase):
 
 
 class ScanTokenHoldersTest(unittest.TestCase):
-    """Scan Holder Khusus (section app) untuk CA Robinhood Chain.
+    """Scan Holder Solana / Robinhood (section app) untuk CA Robinhood Chain.
 
     Shape hasil harus **sama persis** dengan
-    ``helius_holders.scan_token_holders`` supaya UI Scan Holder Khusus
+    ``helius_holders.scan_token_holders`` supaya UI Scan Holder Solana / Robinhood
     dipakai ulang tanpa cabang.
     """
 

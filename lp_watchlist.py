@@ -333,7 +333,7 @@ def lp_overlay_figure(rows) -> Figure | None:
                   marker="o", linewidth=1.8, label=f"${label}")
     _threshold_lines(axis)
     axis.set_ylabel("Dust % marketcap")
-    axis.set_title("Chart LP — dust % MC semua token watchlist Meteora")
+    axis.set_title("Watchlist Meteora — dust % MC semua token")
     axis.tick_params(axis="x", rotation=30, labelsize=8)
     axis.grid(alpha=.2)
     axis.legend(frameon=False, loc="upper left", fontsize=8, ncols=3)
