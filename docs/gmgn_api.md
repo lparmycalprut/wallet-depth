@@ -98,6 +98,43 @@ insider/bundler penalty silently never fired**. The real keys are:
 
 All rates are **0-1 fractions**, not percentages.
 
+## Rank listing (GET, publik) — dipakai Scan Best Robinhood Coin
+
+Diverifikasi **live 2026-09-10** (tanpa cookie, tanpa `authorization`):
+
+```
+GET https://gmgn.ai/defi/quotation/v1/rank/<chain>/swaps/<interval>
+    ?orderby=volume&direction=desc&limit=50
+```
+
+- `<chain>` = `robinhood` (chain id 4663); `<interval>` = `1m` / `5m` /
+  `1h` / `6h` / `24h`. Field `volume`, `price_change_percent`, `swaps`,
+  `buys`, `sells` mengikuti `<interval>`.
+- Respons: `{"code":0,"data":{"rank":[…]}}` — token ada di `data.rank[]`
+  (bukan `data[0].tokens` seperti `trending_rank`).
+- Jalan dengan GET polos — tanpa param `device_id`/`fp_did`/`client_id`
+  dan tanpa TLS fingerprint khusus (teruji dari klien HTTP sederhana).
+- Field per token (robinhood) yang dipakai `robinhood_best_scan.py`:
+  `address`, `symbol`, `name`, `price`, `market_cap`, `liquidity`,
+  `volume`, `swaps`, `buys`, `sells`, `holder_count`,
+  `top_10_holder_rate` (**fraksi 0-1**), `price_change_percent[1m|5m|1h]`,
+  `creation_timestamp`, `open_timestamp`, `launchpad_platform`,
+  `is_honeypot`, `is_renounced`, `is_open_source`,
+  **Dexboost: `dexscr_boost_ts`** (timestamp boost terakhir; 0 = belum ada)
+  **+ `dexscr_boost_fee`** (biaya boost, USD) — `dexscr_ad`/`dexscr_ad_ts`
+  adalah iklan DEX Screener, **berbeda** dari boost; `score`, `rank`,
+  `hot_level`, `bundler_rate`, `entrapment_ratio`, `bot_degen_rate`,
+  `dev_team_hold_rate`, `top70_sniper_hold_rate`.
+- Dipakai `robinhood_best_scan.py` (card **Scan Best Robinhood Coin** di
+  halaman utama, 2026-09-10): top volume 6 jam → filter top 10 holder
+  < 30% → dust holder ≤ 0,05% MC (dust dihitung dari Blockscout via
+  `robinhood_holders.analyze_token`) → urut dust % MC terkecil, lalu
+  volume 6 jam terbesar; pernah Dexboost = poin tambah (badge 🚀).
+- ⚠️ Endpoint `follow_token/following_group_tokens/<chain>` (curl tab
+  "Following") **bukan** sumber scan yang layak: butuh `authorization:
+  Bearer` (token user, hidup ±30 menit) dan hanya mengembalikan token yang
+  di-follow user (`all_following`).
+
 ## Per-token stats (richer, one CA at a time)
 
 ```

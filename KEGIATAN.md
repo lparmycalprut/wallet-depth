@@ -1,3 +1,50 @@
+# Kegiatan — 10 September 2026 (Scan Best Robinhood Coin di halaman utama)
+
+Permintaan user: *"buatkan saya Scan Best Coin Robinhood — datanya dari
+gmgn … ini pakai volume 6 jam terakhir; sortnya: %dust paling kecil,
+volume paling besar; hanya tampilkan yang top holder dibawah 30%; jika
+pernah ada dexboost, menjadi poin tambah; hanya tampilkan yang %dust
+<= 0,05%; buat di main app, seperti scan meteora pool; kasih nama Scan
+Best Robinhood Coin; kasih tombol copy CA, add watchlist ke watchlist
+robinhood."*
+
+- Modul baru `robinhood_best_scan.py` + card **🦅 Scan Best Robinhood
+  Coin** di halaman utama (`app.py`, full-width di bawah Scan Holder);
+  bentuk meniru **Scan Meteora Pool** (tombol scan + progress, hasil di
+  `session_state`, ⭐ per baris) + input "Jumlah kandidat" (default 50,
+  sesuai `limit=50` di curl user).
+- Sumber data: **endpoint rank publik GMGN** (diverifikasi live
+  2026-09-10, tanpa auth): `GET
+  /defi/quotation/v1/rank/robinhood/swaps/6h?orderby=volume&direction=
+  desc&limit=N` → `data.rank[]` sudah berisi `top_10_holder_rate` +
+  penanda Dexboost (`dexscr_boost_ts` / `dexscr_boost_fee`). Endpoint
+  `follow_token/following_group_tokens` dari curl user **tidak dipakai**
+  — butuh Bearer token user (hidup ±30 menit) dan hanya mengembalikan
+  token yang di-follow; dicatat di `docs/gmgn_api.md`.
+- Dust % MC dari **Blockscout** via `robinhood_holders.analyze_token`
+  (FULL 100.000, LP/pool disingkirkan; harga + MC dari baris GMGN agar
+  rasio konsisten dengan listing, `fetch_market` hanya untuk metadata
+  pool). Rule: **top 10 holder < 30%** + **dust ≤ 0,05% MC** (nilai
+  0,05% tepat ikut tampil), honeypot dikeluarkan; urut **dust % MC
+  terkecil → volume 6 jam terbesar** (deterministik, tie simbol A-Z).
+  Pernah Dexboost = **poin tambah**: badge 🚀 DEXBOOST + rekap di kepala
+  card (bukan kunci sort).
+- Baris: kolom Token/MC/Vol 6J/Liq/Holders/Top10/Dust %MC + tombol **📋
+  copy CA** (JS clipboard + fallback; dirender `st.iframe` karena
+  markdown Streamlit men-trip `<script>`; `st.components.v1.html` sudah
+  deprecated di 1.61) dan **⭐ tambah ke Watchlist Robinhood LP**
+  (halaman utama, scan cron ±5 menit; tanpa `st.rerun()` — pola ⭐
+  Scan Meteora).
+- Validasi: 24 test baru `tests/test_robinhood_best_scan.py`
+  (normalisasi, filter/ambang, urutan, dexboost, AppTest card + tombol
+  scan + ⭐); suite penuh **1067 tests** hijau.
+- Catatan utk test: request GMGN/Blockscout **live tidak lulus jaringan
+  sandbox** (TLS diputus — batasan yang sudah lama terdokumentasi);
+  preview live hanya menampilkan warning "GMGN API: koneksi TLS …".
+  Endpoint sudah diverifikasi publik & normal via klien lain; dari
+  browser/Streamlit Cloud seharusnya langsung jalan.
+  (Permintaan user: selesai dulu, nanti test & rapikan ulang bersama PR
+  lain.)
 # Kegiatan — 10 September 2026 (🏆 Scan Best Pool Meteora di halaman utama)
 
 Permintaan user: *"replika scan meteora pool, masukkan ke main app page …

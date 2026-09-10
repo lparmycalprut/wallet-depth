@@ -15,8 +15,15 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   kadens ±5 menit berdampingan (2026-09-10); di bawahnya **🏆 Scan Best
   Pool Meteora** (full-width, `best_pool_ui.render_best_pool_scan()`,
   2026-09-10) lalu 🛰 Scan Holder Solana / Robinhood (dulu "Scan Holder
-  Khusus — Helius / Robinhood", full-width, masing-masing dipisah
-  `st.divider()`). Kedua card grid
+  Khusus — Helius / Robinhood", full-width), dan di bawahnya lagi
+  **🦅 Scan Best Robinhood Coin** (full-width, 2026-09-10; modul
+  `robinhood_best_scan.py` — listing GMGN `GET
+  /defi/quotation/v1/rank/robinhood/swaps/6h?orderby=volume` **publik
+  tanpa auth**, filter top 10 holder < 30% + dust ≤ 0,05% MC dari
+  Blockscout, urut dust terkecil lalu volume 6 jam terbesar, pernah
+  Dexboost = poin tambah 🚀; baris: 📋 copy CA via `st.iframe` + ⭐
+  Watchlist Robinhood LP; detail endpoint di `docs/gmgn_api.md`). Tiap
+  section dipisah `st.divider()`. Kedua card grid
   ber-`st.container(border=True)` dengan kepala seragam dari
   `dashboard_components.card_head_html()` (pill ringkasan di sebelah judul).
   Hero header halaman (judul + ringkasan ambang) **dihapus**

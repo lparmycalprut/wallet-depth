@@ -11,9 +11,15 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
   dengan **🦅 Watchlist Robinhood** (LP) dalam grid 2 kolom, **🏆 Scan Best
   Pool Meteora** full-width di bawahnya (sejak 2026-09-10), plus **🛰 Scan
   Holder Solana / Robinhood** (dulu "Scan Holder Khusus — Helius /
-  Robinhood") full-width di paling bawah. Detail karakteristik tiap
-  card/section bukan caption panjang lagi — jadi **tooltip** yang muncul saat
-  kursor digeser ke teks judulnya (sejak 2026-09-10).
+  Robinhood") full-width di bawahnya, dan **🦅 Scan Best Robinhood Coin**
+  (2026-09-10; full-width paling bawah) — listing GMGN Robinhood Chain
+  **volume 6 jam terakhir** → hanya tampilkan **top 10 holder < 30%** dan
+  **dust ≤ 0,05% MC** (dust dari Blockscout), urut **dust % MC terkecil** lalu
+  **volume 6 jam terbesar**; pernah **Dexboost** = poin tambah (badge 🚀).
+  Baris: 📋 copy CA dan ⭐ tambah ke **Watchlist Robinhood** LP. Detail
+  karakteristik tiap card/section
+  bukan caption panjang lagi — jadi **tooltip** yang muncul saat kursor
+  digeser ke teks judulnya (sejak 2026-09-10).
 - **temp** (`/temp`, sejak 2026-09-09): **🦅 Watchlist Robinhood — Holder
   Dust** (biasa/non-LP), **📋 Watchlist — Analisa Holder (Dust)**,
   **🌊 Scan Meteora Pool** (dipindah dari halaman utama sejak 2026-09-10 —
