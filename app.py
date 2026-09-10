@@ -11,13 +11,13 @@ import streamlit as st
 from helius_holders import depth_bar_chart, scan_token_holders
 from holder_history import (DUST_BEST_PCT, DUST_CAUTION_PCT,
                             DUST_DANGER_PCT, FULL_SCAN_MAX_WALLETS,
-                            holders_usable, ingest_many, usable_points)
+                            LP_INTERVAL_SEC, holders_usable, ingest_many)
 from links import external_links_html, holder_analytic_link_html
-from lp_watchlist import (LP_SOURCE, lp_card_rows, lp_chart_figure,
+from lp_watchlist import (LP_SOURCE, lp_card_rows,
                           lp_summary, split_watchlist)
 import page_router
 from dashboard_components import (_ca_error, _compact, _dust_badge_html,
-                                  _render_alert_note, _render_depth,
+                                  _render_alert_note, _render_dust_change,
                                   _render_rh_card, _store_alert_note,
                                   _wib, _depth_tables_html, ALERT_NOTE_KEY,
                                   card_head_html, hover_title_html,
@@ -155,9 +155,6 @@ def _render_lp_row(row: dict) -> None:
                 else (f"≥{int(dust_count)}" if truncated
                       else f"{int(dust_count):,}"))
     pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.2f}%"
-    # Titik dari scan yang datanya tidak lengkap tidak digambar (lihat
-    # holder_history.point_usable) — kalau tidak, grafik menukik ke 0%.
-    chart_points = usable_points(row.get("points") or [])
 
     short_note = (" · ⚠️ scan terakhir tidak lengkap"
                   if row.get("degraded") else "")
@@ -200,23 +197,11 @@ def _render_lp_row(row: dict) -> None:
         remove_from_watchlist(mint, background=True)
         st.rerun()
 
-    with st.expander(f"📈 Grafik perubahan dust holder — ${symbol}",
-                     expanded=False):
-        figure = lp_chart_figure(chart_points, symbol)
-        if figure is None:
-            st.info("Butuh minimal 2 titik bucket 5 menit. Cron watchlist LP "
-                    "(tiap ±5 menit) atau tombol **Scan sekarang** di card "
-                    "ini akan mengisinya.")
-        else:
-            st.pyplot(figure, use_container_width=True)
-            plt.close(figure)
-        st.caption(
-            f"Garis = dust % marketcap · batang = jumlah wallet dust · "
-            f"ambang HATI-HATI {DUST_CAUTION_PCT:g}% / BAHAYA "
-            f"{DUST_DANGER_PCT:g}% · titik per 5 menit "
-            f"({len(row.get('sampled') or [])} bucket).")
-        if isinstance(holders.get("depth"), dict):
-            _render_depth(holders, symbol)
+    # Grafik perubahan dust holder + tabel Wallet Depth ter-nested —
+    # bentuk rujukan yang kini dipakai semua card watchlist
+    # (dashboard_components._render_dust_change).
+    _render_dust_change(row.get("points"), holders, symbol,
+                        interval=LP_INTERVAL_SEC)
     st.markdown('<hr style="margin:0.3rem 0;border-color:#cbd5e1;">',
                 unsafe_allow_html=True)
 

@@ -164,6 +164,20 @@ class WatchlistRowDetailTest(unittest.TestCase):
         self.assertIn("HATI-HATI", body)   # SYN 0,71% MC
         self.assertIn("AMAN", body)        # DRP 0,10% MC
 
+    def test_row_renders_dust_change_chart_like_watchlist_meteora(self):
+        """Watchlist biasa = grafik perubahan dust holder ala Watchlist
+        Meteora (permintaan user 2026-09-10), bucket 4 jam sesuai kadens."""
+        app = self._app()
+        self.assertEqual(len(app.exception), 0)
+        labels = [node.label or "" for node in app.expander]
+        self.assertTrue(any("📈 Grafik perubahan dust holder" in label
+                            for label in labels),
+                        f"expander grafik tidak ditemukan: {labels}")
+        captions = self._captions(app)
+        self.assertIn("Garis = dust % marketcap", captions)
+        self.assertIn("titik per 4 jam", captions)
+        self.assertGreaterEqual(len(app.get("image")), 1)
+
     def test_default_sort_puts_biggest_dust_drop_first(self):
         """Urutan default sejak 2026-09-05: minus dust sejak masuk di atas.
 

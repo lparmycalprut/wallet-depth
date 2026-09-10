@@ -30,6 +30,19 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   konstanta itu — ambang diambil dari konstanta holder_history agar tidak
   pernah beda dengan rule yang jalan. Atribut `title` tidak mengenal
   markdown (plain text tanpa `**`).
+- **Grafik perubahan dust holder seragam di semua card (2026-09-10)** —
+  setiap baris watchlist (Watchlist Meteora di `app.py`, Watchlist
+  Robinhood LP/biasa di `dashboard_components._render_rh_row`, Watchlist
+  Holder biasa di `temp_ui.py`) memakai satu pembuat expander yang sama,
+  `dashboard_components._render_dust_change(points, holders, symbol,
+  interval=…)`: **📈 Grafik perubahan dust holder — $SYM** berisi grafik
+  `lp_watchlist.lp_chart_figure(..., interval=…)` (garis dust % MC + garis
+  ambang HATI-HATI/BAHAYA + batang jumlah wallet dust), dan tabel **📊
+  Wallet Depth by Threshold** ter-nested di dalamnya bila scan menghasilkan
+  `depth` — expander tabel mandiri di baris Robinhood/temp dihapus. Bucket
+  mengikuti kadens lane: `LP_INTERVAL_SEC` (5 menit) untuk lane LP,
+  `INTERVAL_SEC` (4 jam) untuk lane biasa; teks info < 2 bucket ikut
+  mengikuti (`_dust_change_empty_note`).
 - `pages/8_temp.py` → slug **`/temp`**, judul **temp**, memanggil
   `temp_ui.render_temp()`: Robinhood biasa (non-LP), Watchlist — Analisa
   Holder (Dust), **🌊 Scan Meteora Pool** (`temp_ui.render_meteora_scan()`,

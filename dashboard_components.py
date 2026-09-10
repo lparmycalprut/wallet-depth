@@ -9,10 +9,12 @@ import re
 import streamlit as st
 
 from holder_history import (DUST_BEST_LABEL, DUST_BEST_PCT, DUST_CAUTION_PCT,
-                            DUST_DANGER_PCT, FULL_SCAN_MAX_WALLETS, dust_flag,
-                            history_for_mint, holders_usable, merge_status_history,
-                            resample_4h, resample_5m)
+                            DUST_DANGER_PCT, FULL_SCAN_MAX_WALLETS, INTERVAL_SEC,
+                            LP_INTERVAL_SEC, dust_flag, history_for_mint,
+                            holders_usable, merge_status_history, resample_4h,
+                            resample_5m, usable_points)
 from links import external_links_html, holder_analytic_link_html
+from lp_watchlist import interval_label, lp_chart_figure
 import alert_settings
 import robinhood_holders
 import robinhood_watchlist
@@ -235,6 +237,53 @@ def _render_depth(holders: dict, symbol: str) -> None:
         )
 
 
+def _dust_change_empty_note(interval: int) -> str:
+    """Pesan bila grafik belum bisa digambar (< 2 bucket layak)."""
+    label = interval_label(interval)
+    if int(interval) <= LP_INTERVAL_SEC:
+        return (f"Butuh minimal 2 titik bucket {label}. Cron watchlist LP "
+                f"(tiap ±{label}) atau tombol **Scan sekarang** di card ini "
+                "akan mengisinya.")
+    return (f"Butuh minimal 2 titik bucket {label}. Scan beberapa kali "
+            "(tombol scan di card ini / halaman Holder Analytic) supaya "
+            f"bucket {label} terisi.")
+
+
+def _render_dust_change(points, holders: dict, symbol: str, *,
+                        interval: int = INTERVAL_SEC,
+                        empty_note: str = "") -> None:
+    """Expander **📈 Grafik perubahan dust holder** ala Watchlist Meteora.
+
+    Bentuk yang sama persis dengan expander grafik per token di card
+    Watchlist Meteora (`app.py`, permintaan user 2026-09-10: semua card
+    watchlist memakai grafik perubahan dust holder, bukan cuma tabel Wallet
+    Depth): garis dust % MC + garis ambang HATI-HATI/BAHAYA, batang jumlah
+    wallet dust, caption, lalu tabel **📊 Wallet Depth by Threshold**
+    ter-nested di dalamnya bila scan menghasilkan ``depth``. ``interval`` =
+    bucket resample (``LP_INTERVAL_SEC`` 5 menit untuk lane LP,
+    ``INTERVAL_SEC`` 4 jam untuk watchlist biasa).
+    """
+    label = interval_label(interval)
+    with st.expander(f"📈 Grafik perubahan dust holder — ${symbol}",
+                     expanded=False):
+        figure = lp_chart_figure(points, symbol, interval=interval)
+        if figure is None:
+            st.info(empty_note or _dust_change_empty_note(interval))
+        else:
+            import matplotlib.pyplot as plt  # lazy: module-level import
+            # dashboard_components ikut di-import jalur non-UI.
+            st.pyplot(figure, use_container_width=True)
+            plt.close(figure)
+        sampled = resample_4h(usable_points(points), interval=interval)
+        st.caption(
+            f"Garis = dust % marketcap · batang = jumlah wallet dust · "
+            f"ambang HATI-HATI {DUST_CAUTION_PCT:g}% / BAHAYA "
+            f"{DUST_DANGER_PCT:g}% · titik per {label} "
+            f"({len(sampled)} bucket).")
+        if isinstance((holders or {}).get("depth"), dict):
+            _render_depth(holders, symbol)
+
+
 def card_head_html(title: str, pills: list[str] | None = None,
                    tooltip: str = "") -> str:
     """Header card grid: judul tebal + pill ringkasan di sebelahnya.
@@ -432,8 +481,12 @@ def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
         robinhood_watchlist.remove_from_robinhood_watchlist(
             mint, background=True)
         st.rerun()
-    if isinstance(holders.get("depth"), dict):
-        _render_depth(holders, symbol)
+    # Grafik perubahan dust holder ala Watchlist Meteora (permintaan user
+    # 2026-09-10) — lane LP bucket 5 menit, lane biasa bucket 4 jam; tabel
+    # Wallet Depth by Threshold ikut ter-nested di dalam expander.
+    _render_dust_change(row.get("points"), holders, symbol,
+                        interval=(LP_INTERVAL_SEC if variant == "lp"
+                                  else INTERVAL_SEC))
     st.markdown('<hr style="margin:0.3rem 0;border-color:#cbd5e1;">',
                 unsafe_allow_html=True)
 
