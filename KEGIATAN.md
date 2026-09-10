@@ -1,3 +1,66 @@
+# Kegiatan — 10 September 2026 (🏆 Scan Best Pool Meteora di halaman utama)
+
+Permintaan user: *"replika scan meteora pool, masukkan ke main app page …
+ganti filter baru seperti ini"* (curl `filter_by=pool_type=dlmm&&fee_pct>=5
+&&active_tvl>=10000`, timeframe 24 jam, category top) — yang ditampilkan
+hanya pool dengan dust holder < 0,05% MC, active TVL > 10K, fee/active TVL
+> 20%, volatility > 5%, top 10 holder < 30%, total LPs > 20, **diurutkan
+dari % dust terkecil lalu volume terbesar** ("ambil yang terbesar dan
+terbaik"). Judul card: **Scan Best Pool Meteora**.
+
+- `meteora_screener.py`: blok konstanta `BEST_*` + fungsi baru —
+  `best_filter_by()` (menghasilkan `pool_type=dlmm&&fee_pct>=5&&
+  active_tvl>=10000` persis filter UI Meteora), `fetch_best_pools()`,
+  `rows_from_pools()` (dedup `pool_address`), `row_best_gaps()` (5 metrik
+  pool: active TVL, fee/active TVL, volatility, top 10 holder, total LPs),
+  `row_dust_ok()` (dust < 0,05% MC), `filter_best_rows()`,
+  `sort_best_rows()`, dan `scan_best_meteora()`. Semua syarat **ketat**
+  (`>`/`<`): angka pas di ambang tidak lolos, dan data hilang (`None`) juga
+  gugur — helper `_maybe_float()` membedakan "nol" dari "tidak ada data"
+  (beda dari `_float()` yang menelan `None` jadi 0).
+- `_row_from_pool()` kini ikut membawa `volatility`, `total_lps`, dan
+  `top_holders_pct` (diambil dari **token base**, bukan sisi quote SOL/USDC)
+  supaya saringan baru punya datanya; field lama tidak berubah sehingga
+  card **🌊 Scan Meteora Pool** di halaman temp tetap seperti semula.
+- Hemat kuota Helius: 5 syarat metrik pool disaring **sebelum**
+  `enrich_pools()`, jadi holder hanya di-fetch untuk pool yang masih bisa
+  lolos; dust < 0,05% MC baru dicek setelahnya.
+- Urutan baris `sort_best_rows()`: **dust % MC terkecil → volume terbesar**.
+  Kunci dust dibulatkan ke `BEST_DUST_SORT_DECIMALS` (3 desimal = angka yang
+  tampil di card) supaya dua pool yang di layar sama-sama "0,030%" diurutkan
+  menurut volumenya; baris tanpa angka dust paling bawah, simbol alfabetis
+  sebagai tie-break terakhir (deterministik antar scan).
+- Card baru `best_pool_ui.render_best_pool_scan()` dirender full-width di
+  **halaman utama** (`app.py`, antara grid watchlist dan 🛰 Scan Holder,
+  dipisah `st.divider()`): 12 kolom listing (Token · MC · A.TVL · Fee/TVL ·
+  Vol · Top10 · LPs · Fee · Dust · Dust %MC 3 desimal · Pool · ⭐), kepala
+  card `card_head_html()` dengan pill jumlah pool + yang disembunyikan, dan
+  detail karakteristik di **tooltip judul** (`BEST_POOL_TOOLTIP`) mengikuti
+  konvensi 2026-09-10. Tombol scan: **🏆 Scan Best Pool Meteora + Holder**
+  (progress bar holder, hasil di `session_state["best_pool_scan"]`).
+- ⭐ memakai `source=meteora` (`lp_watchlist.LP_SOURCE`) → token masuk card
+  **🌊 Watchlist Meteora** di halaman utama dan ikut cron ±5 menit; key
+  tombol diikat ke pool address, bukan nomor baris (urutan listing berubah
+  setelah scan ulang).
+- Tidak ada perubahan data/cron/alert: `watchlist*.json`, history, source
+  token, jadwal scan, dan rule Telegram tidak disentuh. Card **🌊 Scan
+  Meteora Pool** di halaman temp tetap ada dengan filter lamanya (24 jam
+  `fee_active_tvl_ratio≥250` + 1 jam `≥1`).
+- Validasi: suite penuh **1059 tests** hijau lewat `pytest` (16 test baru di
+  `tests/test_best_pool_scan.py`: string `filter_by`, parameter
+  `fetch_best_pools`, ekstraksi metrik baru, tiap syarat ketat + boundary
+  0,05%/10K/20%/5%/30%/20, `filter_best_rows`, urutan dust→volume termasuk
+  tie presisi tampilan, `scan_best_meteora` end-to-end dengan `enrich_pools`
+  di-mock — memastikan pool yang gugur di metrik tidak di-fetch holder-nya —
+  serta AppTest `app.py` yang memastikan card + tombol + listing terender di
+  halaman utama); `python -m py_compile` semua modul daftar AGENTS.md bersih;
+  live preview Streamlit port 8501. **Catatan:** API Meteora/DexScreener
+  tidak terjangkau dari sandbox ini (TLS ditutup), jadi listing live
+  diverifikasi lewat endpoint `pool-discovery-api.datapi.meteora.ag/pools`
+  dengan `filter_by` yang sama (32 pool, field `volatility`/`total_lps`/
+  `top_holders_pct` ada di response); angka dust tetap butuh `HELIUS_API_KEY`
+  saat dijalankan di dashboard.
+
 # Kegiatan — 10 September 2026 (Wallet Depth by Threshold → grafik perubahan dust holder ala Watchlist Meteora)
 
 Permintaan user: *"📊 Wallet Depth by Threshold - ganti seperti pada
