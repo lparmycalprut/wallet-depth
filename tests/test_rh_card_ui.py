@@ -126,6 +126,27 @@ class RobinhoodCardHolderButtonTest(unittest.TestCase):
         # token Solana kosong di test ini — tidak ada baris holder biasa
         self.assertFalse(any(k.startswith("holder-") for k in keys))
 
+    def test_row_renders_dust_change_chart_like_watchlist_meteora(self):
+        """Baris RH = grafik perubahan dust holder ala Watchlist Meteora.
+
+        Permintaan user 2026-09-10: expander mandiri "📊 Wallet Depth by
+        Threshold" diganti expander grafik seperti card Watchlist Meteora
+        (bucket 5 menit untuk lane LP); tabel Wallet Depth tetap ada,
+        ter-nested di dalam expander grafik bila scan menghasilkan depth.
+        """
+        app = self._app()
+        self.assertEqual(len(app.exception), 0)
+        labels = [node.label or "" for node in app.expander]
+        self.assertTrue(any("📈 Grafik perubahan dust holder" in label
+                            for label in labels),
+                        f"expander grafik tidak ditemukan: {labels}")
+        captions = "\n".join(node.value for node in app.caption)
+        self.assertIn("Garis = dust % marketcap", captions)
+        self.assertIn("titik per 5 menit", captions)
+        # Dua titik history (2 jam & 6 jam lalu) = ≥ 2 bucket 5 menit →
+        # grafik matplotlib ikut ter-render di baris.
+        self.assertGreaterEqual(len(app.get("image")), 1)
+
     def test_holder_link_targets_streamlit_page_slug(self):
         """Slug tautan harus sama dengan yang diberikan Streamlit ke file-nya.
 

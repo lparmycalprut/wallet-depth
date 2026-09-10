@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 from holder_history import (DUST_CAUTION_PCT, DUST_DANGER_PCT,
                             LP_INTERVAL_SEC, dust_flag, dust_level_rank,
                             history_for_mint, holders_usable, merge_status_history,
-                            point_usable, resample_5m, usable_points)
+                            point_usable, resample_4h, resample_5m, usable_points)
 from watchlist_detail import DRIFT_TOLERANCE_PP
 
 if TYPE_CHECKING:  # pragma: no cover - hanya untuk anotasi tipe
@@ -266,18 +266,31 @@ def _threshold_lines(axis) -> None:
                  linewidth=1.1, label=f"Bahaya {DUST_DANGER_PCT:g}%")
 
 
-def lp_chart_figure(points, symbol: str = "?") -> Figure | None:
-    """Grafik perubahan dust holder satu token (bucket 5 menit).
+def interval_label(interval: int) -> str:
+    """Label bucket yang mudah dibaca: 300 → ``5 menit``, 14400 → ``4 jam``."""
+    seconds = max(60, int(interval))
+    if seconds % 3600 == 0:
+        return f"{seconds // 3600} jam"
+    return f"{max(1, seconds // 60)} menit"
+
+
+def lp_chart_figure(points, symbol: str = "?", *,
+                    interval: int = LP_INTERVAL_SEC) -> Figure | None:
+    """Grafik perubahan dust holder satu token (bentuk **Watchlist Meteora**).
 
     Garis = dust % MC (sumbu kiri), batang = jumlah wallet dust (sumbu
-    kanan), plus garis ambang HATI-HATI/BAHAYA. ``None`` bila titik 5 menit
-    belum cukup (< 2). Pemanggil wajib ``plt.close(fig)``.
+    kanan), plus garis ambang HATI-HATI/BAHAYA. ``interval`` memilih bucket
+    resample: default **5 menit** (kadens lane LP); lane watchlist biasa
+    memakai ``holder_history.INTERVAL_SEC`` (4 jam) dengan figure yang sama
+    (permintaan user 2026-09-10: semua card memakai grafik ala Watchlist
+    Meteora). ``None`` bila titik belum cukup (< 2 bucket). Pemanggil wajib
+    ``plt.close(fig)``.
 
     Titik dari scan yang datanya tidak lengkap dibuang lebih dulu
     (:func:`holder_history.point_usable`) supaya grafik tidak menggambar
     tebing palsu ke 0%.
     """
-    sampled = resample_5m(usable_points(points))
+    sampled = resample_4h(usable_points(points), interval=interval)
     if len(sampled) < 2:
         return None
     labels = [_wib(row.get("ts")) for row in sampled]
@@ -297,7 +310,7 @@ def lp_chart_figure(points, symbol: str = "?") -> Figure | None:
     _threshold_lines(axis)
     axis.set_ylabel("Dust % marketcap")
     axis.set_title(f"Perubahan dust holder ${str(symbol).upper()} "
-                   f"({LP_INTERVAL_SEC // 60} menit)")
+                   f"({interval_label(interval)})")
     axis.tick_params(axis="x", rotation=30, labelsize=8)
     axis.grid(alpha=.2)
     axis.margins(x=.02)

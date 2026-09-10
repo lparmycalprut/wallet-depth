@@ -223,7 +223,7 @@ def render_temp() -> None:
 
     from dashboard_components import (_ca_error, _dust_badge_html,
                                       _points_for, _render_alert_note,
-                                      _render_depth, _render_rh_card,
+                                      _render_dust_change, _render_rh_card,
                                       _store_alert_note,
                                       load_dashboard_data, render_styles,
                                       ALERT_NOTE_KEY)
@@ -273,7 +273,8 @@ def render_temp() -> None:
         f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA "
         "(dust nambah pesat = jejak distribusi). "
         f"Ambang dust: ${DUST_LIMIT_USD:.0f}. "
-        "Grafik kecil = dust % MC tiap 4 jam. Kolom **Sejak masuk** = perubahan "
+        "Grafik perubahan dust holder (bucket 4 jam, ala Watchlist Meteora) "
+        "ada di expander tiap baris. Kolom **Sejak masuk** = perubahan "
         "dust % MC sejak token ditambahkan sampai scan terakhir (hijau bila turun "
         "≥ 50%, merah bila naik ≥ 100%). Token dari Scan Meteora ada di "
         "card **Watchlist Meteora** di halaman utama. Cadens cron: semua "
@@ -621,8 +622,10 @@ def render_temp() -> None:
                               use_container_width=True):
                 remove_from_watchlist(mint, background=True)
                 st.rerun()
-            if isinstance(holders.get("depth"), dict):
-                _render_depth(holders, symbol)
+            # Grafik perubahan dust holder ala Watchlist Meteora (permintaan
+            # user 2026-09-10): bucket 4 jam (kadens watchlist biasa) + tabel
+            # Wallet Depth by Threshold ter-nested di dalam expander.
+            _render_dust_change(points, holders, symbol)
             st.markdown('<hr style="margin:0.3rem 0;border-color:#cbd5e1;">',
                         unsafe_allow_html=True)
 

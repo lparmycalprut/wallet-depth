@@ -224,6 +224,27 @@ class LpChartTest(unittest.TestCase):
         self.assertIsNone(lw.lp_chart_figure([], "A"))
         self.assertIsNone(lw.lp_chart_figure(None, "A"))
 
+    def test_figure_supports_four_hour_interval(self):
+        """Figure yang sama dipakai watchlist biasa (bucket 4 jam, 2026-09-10)."""
+        points = [_point(0, 0.30), _point(1, 0.70), _point(2, 1.20)]
+        fig = lw.lp_chart_figure(points, "REG", interval=hh.INTERVAL_SEC)
+        self.assertIsNotNone(fig)
+        try:
+            axis = fig.axes[0]
+            self.assertIn("REG", axis.get_title())
+            self.assertIn("(4 jam)", axis.get_title())
+            labels = [text.get_text()
+                      for text in axis.get_legend().get_texts()]
+            self.assertIn("Hati-hati 0.5%", labels)
+            self.assertIn("Bahaya 1%", labels)
+        finally:
+            plt.close(fig)
+
+    def test_interval_label(self):
+        self.assertEqual(lw.interval_label(hh.LP_INTERVAL_SEC), "5 menit")
+        self.assertEqual(lw.interval_label(hh.INTERVAL_SEC), "4 jam")
+        self.assertEqual(lw.interval_label(3600), "1 jam")
+
     def test_overlay_skips_tokens_without_history(self):
         rows = [{"symbol": "A", "points": [_point(0, 0.3), _point(1, 0.9)]},
                 {"symbol": "B", "points": [_point(0, 0.2)]}]

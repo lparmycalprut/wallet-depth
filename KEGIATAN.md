@@ -1,3 +1,38 @@
+# Kegiatan — 10 September 2026 (Wallet Depth by Threshold → grafik perubahan dust holder ala Watchlist Meteora)
+
+Permintaan user: *"📊 Wallet Depth by Threshold - ganti seperti pada
+**Watchlist Meteor** / Grafik perubahan dust holder"* — expander mandiri
+**📊 Wallet Depth by Threshold** (hanya tabel bucket + tier) di baris
+watchlist diganti expander grafik seperti card **Watchlist Meteora**; tabel
+Wallet Depth tidak dihapus melainkan ikut ter-nested di dalam expander
+grafik (persis susunan di Watchlist Meteora).
+
+- Pembuat bersama baru `dashboard_components._render_dust_change(points,
+  holders, symbol, interval=…)`: expander **📈 Grafik perubahan dust
+  holder — $SYM** berisi grafik `lp_watchlist.lp_chart_figure(...,
+  interval=…)` (garis dust % MC + garis ambang HATI-HATI/BAHAYA + batang
+  jumlah wallet dust), caption ringkas, lalu `_render_depth` ter-nested
+  bila scan menghasilkan `depth`. Pesan "belum cukup titik" mengikuti
+  kadens (`_dust_change_empty_note`).
+- `lp_watchlist.lp_chart_figure` kini menerima `interval` (default tetap
+  `LP_INTERVAL_SEC` = bucket 5 menit, jadi output Watchlist Meteora tidak
+  berubah); helper `interval_label()` memberi judul "(5 menit)" /
+  "(4 jam)". `resample_5m` di figure diganti `resample_4h(...,
+  interval=…)` yang identik untuk default lama.
+- Dipakai di tiga card: **🦅 Watchlist Robinhood** LP (bucket 5 menit) +
+  Robinhood biasa (bucket 4 jam) di `dashboard_components._render_rh_row`,
+  dan **📋 Watchlist Holder** biasa di `temp_ui.py` (bucket 4 jam).
+  `_render_lp_row` di `app.py` dipindah ke pembuat yang sama supaya bentuk
+  rujukan tidak bercabang (caption/jumlah bucket tetap sama).
+- Tidak ada perubahan data/cron/alert: `watchlist*.json`, history, source
+  token, jadwal scan, dan rule Telegram tidak disentuh — hanya presentasi
+  baris watchlist.
+- Validasi: suite penuh **1043 tests** hijau (5 test baru: figure bucket 4
+  jam + `interval_label`, AppTest baris Robinhood LP & watchlist biasa
+  merender expander grafik + caption); AppTest data asli repo tanpa
+  exception (expander grafik tampil di baris $STONK dan $ORBIO); live
+  preview Streamlit port 8501.
+
 # Kegiatan — 10 September 2026 (rename card + detail jadi tooltip judul)
 
 Permintaan user: ganti judul card — **🌊 Chart LP — Watchlist Meteora** →
