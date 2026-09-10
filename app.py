@@ -25,6 +25,7 @@ from dashboard_components import (_ca_error, _compact, _dust_badge_html,
                                   SOLANA_CA_RE, load_dashboard_data,
                                   render_styles)
 from telegram_alerts import process_holder_alerts
+import activity_log
 import robinhood_best_scan
 import robinhood_holders
 from robinhood_watchlist import (split_robinhood_watchlist)
@@ -587,3 +588,15 @@ _render_helius_holder_scan()
 # ---------------------------------------------------------------------------
 st.divider()
 robinhood_best_scan.render_robinhood_best_scan()
+
+# ---------------------------------------------------------------------------
+# 🧾 Log Aktivitas (2026-09-10, paling bawah) — kejadian penting semua card:
+# scan mulai/selesai (Meteora/Best Pool/Best Robinhood/Scan Holder), rate
+# limit & parkir key PRO Blockscout, fallback instance publik, 403
+# bot-protection, sync watchlist GitHub gagal. Merah bold = perlu perubahan
+# manual user (pasang/ganti API key, kredit habis). Kepala panel menampilkan
+# status pool key PRO (`pro_key_summary`) — jawaban langsung "kena limit di
+# key mana".
+# ---------------------------------------------------------------------------
+st.divider()
+activity_log.render_activity_log()

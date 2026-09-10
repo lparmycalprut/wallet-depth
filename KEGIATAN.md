@@ -1,3 +1,44 @@
+# Kegiatan — 10 September 2026 (🧾 Log Aktivitas + scan "macet 6/7")
+
+User melaporkan **Scan Best Robinhood macet di 6/7** dan **Scan Holder
+biasa Robinhood ikut lambat** ("apakah kena limit? di 4 API semuanya?").
+Diagnosa: bukan hang — kandidat terakhir jatuh ke paginasi RPC Blockscout
+(400 wallet/halaman + jeda 0,6 dtk; token 80-100rb holder ≈ 10-15 menit),
+sementara progress bar hanya di-update saat kandidat **selesai**
+(`as_completed`) jadi terlihat diam. Scan Holder biasa melambat karena
+**pool key PRO Blockscout dipakai bersama** oleh semua card dalam satu
+proses; 6 worker Scan Best menabrak 5 RPS/key → key diparkir berantai →
+request jatuh ke instance publik yang lambat.
+
+Perbaikan (permintaan user: progress jujur + budget waktu + **log**):
+
+- **`activity_log.py` (modul baru)** — ring buffer in-memory thread-safe
+  (400 entri, dedup 60 dtk → `×N`), 4 level: `info` / `warn` / `error` /
+  **`action` = perlu perubahan manual user → merah bold** (permintaan
+  user eksplisit). Panel **🧾 Log Aktivitas** dirender di **paling bawah
+  `app.py`**; kepala panel menampilkan pill jumlah per level +
+  `pro_key_summary()` (status per key PRO: sisa kredit / parkir) —
+  jawaban langsung "kena limit di key mana".
+- **Instrumentasi**: `robinhood_holders` (key diparkir 401/402/403 =
+  action, 429 = warn; semua key parkir → fallback publik = warn; 403
+  bot-protection = action dengan petunjuk key; hasil fetch holder per
+  token: sukses/terpotong/gagal), `robinhood_best_scan` +
+  `meteora_screener` (scan mulai/selesai/listing gagal),
+  `helius_holders` (key hilang = action, scan gagal = error),
+  `watchlist._github_push` (token hilang = action, push gagal = error).
+  Semua `import activity_log` dibungkus try/except — cron/tes tanpa
+  modul/Streamlit tetap jalan.
+- **`scan_candidates` (Scan Best Robinhood)**: progress dipanggil juga
+  saat kandidat **mulai** dengan label `sedang: SYMBOL (+N lagi)` — 6/7
+  tidak lagi terlihat seperti hang; **budget waktu per scan**
+  (`CANDIDATE_TIMEOUT_SEC = 300` dtk): kandidat yang lewat budget
+  dilewati (dicatat di log), thread telatnya dibiarkan selesai di latar
+  (`shutdown(wait=False)` — sengaja bukan `with ThreadPoolExecutor` yang
+  `shutdown(wait=True)`).
+
+Tes: `tests/test_activity_log.py` (16) + 3 tes `scan_candidates`
+(timeout/progress) → **1102 lulus** (71 dtk).
+
 # Kegiatan — 10 September 2026 (Scan Best Robinhood Coin di halaman utama)
 
 Permintaan user: *"buatkan saya Scan Best Coin Robinhood — datanya dari

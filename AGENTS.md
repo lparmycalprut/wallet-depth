@@ -22,7 +22,19 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   tanpa auth**, filter top 10 holder < 30% + dust ≤ 0,05% MC dari
   Blockscout, urut dust terkecil lalu volume 6 jam terbesar, pernah
   Dexboost = poin tambah 🚀; baris: 📋 copy CA via `st.iframe` + ⭐
-  Watchlist Robinhood LP; detail endpoint di `docs/gmgn_api.md`). Tiap
+  Watchlist Robinhood LP; detail endpoint di `docs/gmgn_api.md`). Paling
+  bawah: **🧾 Log Aktivitas** (`activity_log.render_activity_log()`,
+  2026-09-10) — ring buffer in-memory thread-safe (`activity_log.py`)
+  yang mencatat kejadian penting semua card: scan mulai/selesai
+  (Meteora/Best Pool/Best Robinhood/Scan Holder), parkir key PRO
+  Blockscout (401/402/403/429), fallback ke instance publik, 403
+  bot-protection, fetch holder gagal/terpotong, sync watchlist GitHub
+  gagal. Level `action` = **perlu perubahan manual user** (pasang/ganti
+  API key, kredit habis) dan dirender **merah bold**; kepala panel
+  menampilkan `robinhood_holders.pro_key_summary()` (status per key).
+  Log hidup di memori proses (kosong setelah restart); modul lain
+  menulis lewat `import activity_log` yang selalu dibungkus try/except
+  supaya cron/tes tanpa Streamlit tetap jalan. Tiap
   section dipisah `st.divider()`. Kedua card grid
   ber-`st.container(border=True)` dengan kepala seragam dari
   `dashboard_components.card_head_html()` (pill ringkasan di sebelah judul).

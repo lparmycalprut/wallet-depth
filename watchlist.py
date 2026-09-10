@@ -298,6 +298,14 @@ def _github_push(wl: dict, action: str, max_retries: int = 3,
     if not tok:
         _set_last_error("no github_token configured", status=0)
         print(f"WARN: _github_push no token, action={action}", file=sys.stderr)
+        try:
+            import activity_log
+            activity_log.action(
+                "watchlist", "sync GitHub gagal: github_token belum "
+                "terpasang (config.json / Streamlit secrets) — perubahan "
+                "watchlist hanya tersimpan lokal")
+        except Exception:  # noqa: BLE001 - log hanya pelengkap
+            pass
         return False
 
     url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{repo_path}"
@@ -471,6 +479,20 @@ def _github_push(wl: dict, action: str, max_retries: int = 3,
             return False
 
     print(f"ERROR: _github_push failed after {max_retries} attempts action={action} last={last_err_msg}", file=sys.stderr)
+    try:
+        import activity_log
+        if "no github_token" in (last_err_msg or "").lower() or not tok:
+            activity_log.action(
+                "watchlist", "sync GitHub gagal: github_token belum "
+                "terpasang (config.json / Streamlit secrets) — perubahan "
+                "watchlist hanya tersimpan lokal")
+        else:
+            activity_log.error(
+                "watchlist", f"sync GitHub {repo_path} gagal setelah "
+                f"{max_retries}x ({(last_err_msg or 'tanpa detail')[:120]}) — "
+                "jurnal pending disimpan, dicoba lagi di push berikutnya")
+    except Exception:  # noqa: BLE001 - log hanya pelengkap
+        pass
     return False
 
 
