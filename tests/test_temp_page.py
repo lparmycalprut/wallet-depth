@@ -66,7 +66,12 @@ class TempPageTest(unittest.TestCase):
         self.assertIn("🦅 Watchlist Robinhood</span>", body)
         self.assertIn("🛰 Scan Holder Solana / Robinhood", body)
         self.assertNotIn("Watchlist Robinhood — Holder Dust</span>", body)
-        self.assertNotIn("🌊 Scan Meteora Pool", body)
+        # Card scan temp TIDAK dirender di halaman utama — yang dicek kepala
+        # card + tombol scan-nya, bukan penyebutan namanya: tooltip card Best
+        # Pool memang menjelaskan bahwa dirinya replika listing itu.
+        self.assertNotIn("🌊 Scan Meteora Pool</span>", body)
+        self.assertNotIn("🌊 Scan Meteora Pool + Holder",
+                         [button.label for button in app.button])
         self.assertNotIn("Top DLMM", body)
         self.assertNotIn("📋 Watchlist — Analisa Holder (Dust)", headings)
         self.assertNotIn("🔍 Temukan Token", headings)

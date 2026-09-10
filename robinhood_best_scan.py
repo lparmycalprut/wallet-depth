@@ -21,10 +21,14 @@ Rule (permintaan user 2026-09-10):
 - hanya tampilkan **top 10 holder < 30%**,
 - hanya tampilkan **dust ≤ 0,05% MC** (dust = wallet 0 < nilai ≤ $10),
 - urutan: **dust % MC terkecil** dulu, lalu **volume 6 jam terbesar**,
-- pernah **Dexboost** = poin tambah (badge 🚀 + rekap di kepala card).
+- pernah **Dexboost** = poin tambah (badge 🚀 + rekap di kepala card),
+- **tidak ada budget waktu**: semua kandidat ditunggu sampai selesai (lihat
+  :func:`scan_candidates`).
 
-Card ini dirender di halaman utama (``app.py``) di bawah Scan Holder;
+Card ini dirender di halaman utama (``app.py``) di bawah Watchlist Robinhood;
 ⭐-nya memasukkan token ke **Watchlist Robinhood** LP (scan cron ±5 menit).
+Detail karakteristik card = tooltip pada teks judul (``RH_SCAN_TOOLTIP``),
+bukan caption panjang di badan card (konvensi 2026-09-10).
 """
 from __future__ import annotations
 
@@ -55,17 +59,24 @@ RH_SCAN_MAX_TOP10_PCT = 30.0
 CARD_TITLE = "🦅 Scan Best Robinhood Coin"
 SESSION_KEY = "rh_best_scan"
 
-# Detail karakteristik card (2026-09-10): tooltip judul, plain text tanpa
-# markdown (atribut title native browser) — konvensi yang sama dengan card
-# lain (LP_CARD_TOOLTIP, RH_CARD_TOOLTIP).
+# Detail karakteristik card = tooltip judul (konvensi 2026-09-10; permintaan
+# user: "ini juga bikin tooltip saja") — caption panjang di badan card dihapus,
+# seluruh isinya pindah ke sini. Atribut ``title`` browser tidak mengenal
+# markdown, jadi teksnya plain tanpa ``**``; ambang diambil dari konstanta
+# RH_SCAN_* di atas supaya tidak pernah beda dengan rule yang jalan.
 RH_SCAN_TOOLTIP = (
-    "Scan token Robinhood Chain dari listing GMGN: top volume 6 jam terakhir "
-    f"→ filter top 10 holder < {RH_SCAN_MAX_TOP10_PCT:g}% dan dust holder ≤ "
-    f"{RH_SCAN_MAX_DUST_PCT:g}% MC. Urutan: dust % MC terkecil dulu, lalu "
-    "volume 6 jam terbesar. Pernah Dexboost = poin tambah (badge 🚀). "
-    "Dust = wallet 0 < nilai ≤ $10 dari Blockscout (FULL 100.000 holder, "
-    "LP/pool disingkirkan). Honeypot tidak ditampilkan. Tombol: 📋 copy CA · "
-    "⭐ tambah ke Watchlist Robinhood LP (halaman utama, scan cron ±5 menit).")
+    "Listing GMGN Robinhood Chain (defi/quotation/v1/rank/robinhood/swaps/6h, "
+    "tanpa auth) diurutkan volume 6 jam terakhir. Yang ditampilkan hanya coin "
+    f"dengan top 10 holder < {RH_SCAN_MAX_TOP10_PCT:g}% dan dust holder ≤ "
+    f"{RH_SCAN_MAX_DUST_PCT:g}% MC — dust = wallet 0 < nilai ≤ $10 dari "
+    "Blockscout (LP/pool disingkirkan, scan FULL). Urutan: dust % MC terkecil "
+    "dulu, lalu volume 6 jam terbesar. Coin yang pernah Dexboost dapat poin "
+    "tambah (badge 🚀). Honeypot otomatis dikeluarkan. Tombol per baris: 📋 "
+    "copy CA · ⭐ tambah ke Watchlist Robinhood LP (halaman utama, scan cron "
+    "±5 menit). Token ber-holder puluhan ribu butuh paginasi Blockscout yang "
+    "panjang — semua kandidat tetap ditunggu sampai selesai (budget waktu per "
+    "kandidat sudah dihapus), jadi scan bisa makan waktu puluhan menit.")
+
 
 def _short_error(error) -> str:
     """Ringkasan error koneksi untuk caption UI (bukan trace mentah)."""
@@ -80,18 +91,6 @@ def _short_error(error) -> str:
         return "timeout koneksi ke gmgn.ai"
     return text[:200]
 
-
-CAPTION = (
-    "Listing GMGN Robinhood Chain diurutkan **volume 6 jam terakhir** "
-    "(``defi/quotation/v1/rank/robinhood/swaps/6h``, tanpa auth). Yang "
-    f"ditampilkan: **top 10 holder < {RH_SCAN_MAX_TOP10_PCT:g}%** dan **dust "
-    f"≤ {RH_SCAN_MAX_DUST_PCT:g}% MC** — dust = wallet 0 < nilai ≤ $10 dari "
-    "Blockscout (LP/pool disingkirkan, scan FULL). Urutan: **dust % MC "
-    "terkecil** dulu, lalu **volume 6 jam terbesar**. Coin yang **pernah "
-    "Dexboost** dapat poin tambah (🚀). Honeypot otomatis dikeluarkan. 📋 "
-    "copy CA · ⭐ tambah ke **Watchlist Robinhood** LP (halaman utama, "
-    "scan cron ±5 menit)."
-)
 
 HEADERS = {
     "accept": "application/json, text/plain, */*",
@@ -250,18 +249,17 @@ def sort_rows(rows: list | None) -> list:
     return out
 
 
-# Budget waktu satu kandidat (detik). Token ber-holder sangat banyak jatuh
-# ke paginasi RPC 400/halaman + jeda 0,6 dtk — bisa 10-15 menit sendirian dan
-# progress bar terlihat "macet 6/7" (kejadian nyata 2026-09-10). Lewat budget
-# → kandidat ditandai gagal ("holder tidak lengkap") dan scan lanjut; thread
-# yang telat dibiarkan menyelesaikan request terakhirnya di latar belakang
-# (future Python tidak bisa dibunuh paksa) tetapi hasilnya tidak ditunggu.
-CANDIDATE_TIMEOUT_SEC = 300
+# TIDAK ada budget waktu per kandidat (permintaan user 2026-09-10 setelah
+# kejadian "macet 6/7"): yang bikin lama bukan scan-nya hang, tapi jumlah
+# holder kandidat terakhir yang memang puluhan ribu — paginasi Blockscout 400
+# akun/halaman + jeda 0,6 dtk ≈ 10-15 menit untuk satu token. Jadi semua
+# kandidat **ditunggu sampai selesai**; progress bar ikut diperbarui saat
+# kandidat mulai digiling (label "sedang: SYMBOL") supaya yang lama tetap
+# kelihatan hidup.
 
 
 def scan_candidates(candidates: list, *, max_wallets: int | None = None,
-                    workers: int = DEFAULT_WORKERS, progress=None,
-                    timeout_sec: float = CANDIDATE_TIMEOUT_SEC) -> dict:
+                    workers: int = DEFAULT_WORKERS, progress=None) -> dict:
     """Dust holder Blockscout per kandidat; return ``{ca: analysis}``.
 
     Harga & marketcap diambil dari baris GMGN (bukan DexScreener) supaya
@@ -271,15 +269,13 @@ def scan_candidates(candidates: list, *, max_wallets: int | None = None,
 
     ``progress(done, total, label)`` dipanggil saat kandidat **mulai**
     dikerjakan dan saat selesai — label menyebut simbol/CA yang sedang
-    digiling supaya "6/7" tidak terlihat seperti hang. ``timeout_sec``
-    membatasi umur satu kandidat; sisa yang belum selesai saat budget habis
-    dilewati (bukan digantung selamanya).
+    digiling supaya "6/7" tidak terlihat seperti hang.
     """
     import threading
 
     import holder_analysis
     import robinhood_holders
-    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+    from concurrent.futures import ThreadPoolExecutor, as_completed
 
     max_wallets = int(max_wallets or holder_history.FULL_SCAN_MAX_WALLETS)
     analyses: dict = {}
@@ -331,55 +327,27 @@ def scan_candidates(candidates: list, *, max_wallets: int | None = None,
             with active_lock:
                 active.pop(ca, None)
 
-    deadline = time.monotonic() + max(1.0, float(timeout_sec))
-    # BUKAN ``with ThreadPoolExecutor(...)``: __exit__ memanggil
-    # shutdown(wait=True) yang menunggu SEMUA thread selesai — persis
-    # gantungan yang mau dihindari. shutdown(wait=False) di finally.
-    pool = ThreadPoolExecutor(max_workers=workers)
-    pending = {pool.submit(_job, row): str(row.get("ca") or "")
-               for row in (candidates or [])}
-    try:
-        while pending:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            finished, _ = wait(pending, timeout=min(remaining, 5.0),
-                               return_when=FIRST_COMPLETED)
-            for future in finished:
-                del pending[future]
-                ca, analysis, error = future.result()
-                if analysis is not None:
-                    analyses[ca] = analysis
-                elif error:
-                    print(f"WARN rh-best {ca[:8]}: {error}",
-                          file=__import__("sys").stderr)
-                    try:
-                        import activity_log
-                        activity_log.error(
-                            "scan-best-rh",
-                            f"kandidat {ca[:10]}… gagal: {error[:140]}")
-                    except Exception:  # noqa: BLE001
-                        pass
-                done += 1
-                _emit(_running_label() or ca[:8])
-        if pending:
-            # Budget habis: kandidat yang tersisa dianggap gagal
-            # ("holder tidak lengkap") — jangan menunggu selamanya.
-            slow = [pending_ca[:10] + "…" for pending_ca in pending.values()]
-            try:
-                import activity_log
-                activity_log.warn(
-                    "scan-best-rh",
-                    f"{len(slow)} kandidat lewat budget "
-                    f"{int(timeout_sec)} dtk dan dilewati: "
-                    f"{', '.join(slow[:5])} — biasanya token ber-holder "
-                    "sangat banyak (paginasi Blockscout lambat)")
-            except Exception:  # noqa: BLE001
-                pass
-    finally:
-        # Thread yang masih jalan dibiarkan menyelesaikan request
-        # terakhirnya di latar belakang; hasilnya tidak ditunggu.
-        pool.shutdown(wait=False, cancel_futures=True)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_job, row) for row in (candidates or [])]
+        # as_completed TANPA timeout: kandidat terakhir yang holdernya puluhan
+        # ribu memang butuh 10-15 menit — hasilnya tetap dipakai, tidak
+        # dibuang hanya karena lama.
+        for future in as_completed(futures):
+            ca, analysis, error = future.result()
+            if analysis is not None:
+                analyses[ca] = analysis
+            elif error:
+                print(f"WARN rh-best {ca[:8]}: {error}",
+                      file=__import__("sys").stderr)
+                try:
+                    import activity_log
+                    activity_log.error(
+                        "scan-best-rh",
+                        f"kandidat {ca[:10]}… gagal: {error[:140]}")
+                except Exception:  # noqa: BLE001
+                    pass
+            done += 1
+            _emit(_running_label() or ca[:8])
     return analyses
 
 
@@ -583,7 +551,8 @@ def render_robinhood_best_scan() -> None:
 
         st.markdown(_head_html(rows, skipped_total, dexboost_count),
                     unsafe_allow_html=True)
-        st.caption(CAPTION)
+        # Tanpa caption ambang: detail karakteristik card sudah pindah ke
+        # tooltip judul (``RH_SCAN_TOOLTIP``) — permintaan user 2026-09-10.
         if error:
             st.warning(f"GMGN API: {_short_error(error) or error[:200]}")
         if int(result.get("blocked") or 0):
@@ -596,7 +565,8 @@ def render_robinhood_best_scan() -> None:
             st.caption(
                 f"Listing {int(result.get('fetched') or 0)} coin "
                 f"(volume {SCAN_INTERVAL}) · {skipped_total} dilewati: dust "
-                f"> {RH_SCAN_MAX_DUST_PCT:g}% MC = {int(skipped.get('dust') or 0)}, "
+                f"> {RH_SCAN_MAX_DUST_PCT:g}% MC = "
+                f"{int(skipped.get('dust') or 0)}, "
                 f"top 10 holder ≥ {RH_SCAN_MAX_TOP10_PCT:g}% = "
                 f"{int(skipped.get('top10') or 0)}, honeypot = "
                 f"{int(skipped.get('honeypot') or 0)}, holder gagal/tidak "

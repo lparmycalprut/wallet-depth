@@ -24,7 +24,16 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   tanpa auth**, filter top 10 holder < 30% + dust ≤ 0,05% MC dari
   Blockscout, urut dust terkecil lalu volume 6 jam terbesar, pernah
   Dexboost = poin tambah 🚀; baris: 📋 copy CA via `st.iframe` + ⭐
-  Watchlist Robinhood LP; detail endpoint di `docs/gmgn_api.md`). Paling
+  Watchlist Robinhood LP; detail endpoint di `docs/gmgn_api.md`).
+  **Budget waktu kandidat DIHAPUS 2026-09-10**: `scan_candidates` menunggu
+  **semua** kandidat sampai selesai (`as_completed` tanpa timeout, di dalam
+  `with ThreadPoolExecutor`) — `CANDIDATE_TIMEOUT_SEC = 300` dulu membuang
+  kandidat lambat, padahal yang lambat itu token ber-holder puluhan ribu
+  (paginasi Blockscout memang 10-15 menit per token) sehingga hasilnya sayang
+  dibuang. Yang dipertahankan dari perbaikan "macet 6/7" hanya label progress
+  `sedang: SYMBOL (+N lagi)` saat kandidat **mulai**. Timeout HTTP per request
+  (`_get_json(timeout=25)`, `CSV_TIMEOUT`, masa parkir key PRO) **tidak** ikut
+  dihapus — yang dihapus hanya batas umur scan. Paling
   bawah: **🧾 Log Aktivitas** (`activity_log.render_activity_log()`,
   2026-09-10) — ring buffer in-memory thread-safe (`activity_log.py`)
   yang mencatat kejadian penting semua card: scan mulai/selesai
@@ -33,7 +42,16 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   bot-protection, fetch holder gagal/terpotong, sync watchlist GitHub
   gagal. Level `action` = **perlu perubahan manual user** (pasang/ganti
   API key, kredit habis) dan dirender **merah bold**; kepala panel
-  menampilkan `robinhood_holders.pro_key_summary()` (status per key).
+  menampilkan `robinhood_holders.pro_key_summary()` (status per key) **dan
+  sisa kredit key Helius** (`core.helius_usage_summary()`, permintaan user
+  2026-09-10) — baris Helius dibaca dari cache ±5 menit dan disegarkan di
+  **thread latar** (`core.refresh_helius_usage_async`), jadi render halaman
+  tidak pernah menunggu `api.helius.xyz`; suite tes mematikan probe lewat
+  `HELIUS_USAGE_PROBE=0` (`tests/__init__.py`). Bentuk respons Helius beda per
+  plan; `core.parse_helius_credits()` menerima semuanya dan mengembalikan
+  `None` bila tidak ada angka — **dilarang mengarang angka kredit**, UI lalu
+  menampilkan hitungan request lokal (`core.helius_request_count()`). Key tidak
+  pernah tampil: label `key#N` + `_scrub_key_text()`.
   Log hidup di memori proses (kosong setelah restart); modul lain
   menulis lewat `import activity_log` yang selalu dibungkus try/except
   supaya cron/tes tanpa Streamlit tetap jalan. Tiap
@@ -46,13 +64,24 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
 - **Detail karakteristik card/section = tooltip judul (2026-09-10)** —
   caption panjang di badan card dihapus. Teksnya hidup di konstanta
   `LP_CARD_TOOLTIP` (app.py), `RH_CARD_TOOLTIP`
-  (dashboard_components.py), dan `SCAN_HOLDER_TOOLTIP` (app.py); dirender
+  (dashboard_components.py), `SCAN_HOLDER_TOOLTIP` (app.py),
+  `best_pool_ui.best_pool_tooltip()` dan `robinhood_best_scan.RH_SCAN_TOOLTIP`
+  (dua card scan best menyusul 2026-09-10: caption ambangnya dihapus, seluruh
+  isinya pindah ke tooltip); dirender
   sebagai atribut `title="…"` pada teks judul (`card_head_html(tooltip=…)`
   / `hover_title_html()`) sehingga **hanya muncul saat kursor digeser ke
-  atas tulisan judul**. Kalau karakteristik berubah, ubah teks di
-  konstanta itu — ambang diambil dari konstanta holder_history agar tidak
-  pernah beda dengan rule yang jalan. Atribut `title` tidak mengenal
-  markdown (plain text tanpa `**`).
+  atas tulisan judul**. Yang boleh tersisa di badan card hanya **rekap hasil
+  scan** (jumlah lolos / disembunyikan / dilewati) — itu data, bukan deskripsi
+  rule. Kalau karakteristik berubah, ubah teks di konstanta itu — ambang
+  **selalu** diambil dari konstanta rule (`holder_history`,
+  `meteora_screener.BEST_*`, `RH_SCAN_*`) agar tidak pernah beda dengan yang
+  jalan. Atribut `title` tidak mengenal markdown (plain text tanpa `**`).
+  `best_pool_tooltip()` membaca konstantanya **saat dipanggil** (impor
+  `meteora_screener` di dalam fungsi) supaya modul UI tetap ringan saat
+  diimpor — jangan hard-code angka ambang di teksnya. Teks tooltip juga jangan
+  memuat judul persis card halaman lain (emoji + `Scan Meteora Pool`):
+  `tests/test_temp_page.py` memakai string itu untuk memastikan card temp
+  tidak dirender di halaman utama.
 - **Grafik perubahan dust holder seragam di semua card (2026-09-10)** —
   setiap baris watchlist (Watchlist Meteora di `app.py`, Watchlist
   Robinhood LP/biasa di `dashboard_components._render_rh_row`, Watchlist
@@ -263,7 +292,16 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   BLOCKSCOUT_API_KEY", bukan "pastikan CA valid". `source` sukses diberi
   akhiran `@pro`/`@public` — bandingkan lewat `source_base()`, label UI
   lewat `route_label()`. Detail: `docs/robinhood_holders_api.md`.
-- `core.py`: config/key Helius, pasar DexScreener (`get_market` ikut
+- `core.py`: **status + sisa kredit key Helius** (`helius_key_status` =
+  blocking, untuk cron/tes; `helius_usage_status(background=True)` =
+  non-blokir untuk UI; `helius_usage_summary()` untuk panel 🧾;
+  `helius_credit_remaining()`; `helius_request_count()`), cache
+  `HELIUS_USAGE_TTL_SEC` + kill-switch `HELIUS_USAGE_PROBE=0`. Urutan pool
+  key: nilai eksplisit → `config` passed → **Streamlit secrets → env →
+  config.json** (`merge_helius_keys` first-wins; secrets di depan config.json
+  supaya placeholder `PASTE-API-KEY-KAMU-DISINI` yang ikut ter-bundle tidak
+  menutupi key asli — placeholder juga dibuang `_KEY_PLACEHOLDER_RE`).
+  config/key Helius, pasar DexScreener (`get_market` ikut
   mengembalikan `volume`, `price_change`, `txns`), candle GeckoTerminal —
   `get_hourly_candles()` (mentah, per jam) dan `get_daily_candles()`
   (agregasi hari UTC; **hari UTC yang masih berjalan ikut ter-return**,

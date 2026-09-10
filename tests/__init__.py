@@ -17,6 +17,11 @@ import robinhood_watchlist as _rw
 
 os.environ["HOLDER_STORE_BACKUP"] = "0"
 
+# Panel 🧾 Log Aktivitas memeriksa sisa kredit key Helius (thread latar).
+# Suite tidak boleh menyentuh jaringan sama sekali, jadi probe-nya dimatikan;
+# tes transport kredit (tests/test_helius_usage.py) menyalakannya lagi sendiri.
+os.environ["HELIUS_USAGE_PROBE"] = "0"
+
 _rw.load_watchlist = lambda *args, **kwargs: {}
 _rw.load_status = lambda *args, **kwargs: {"updated_at": None, "tokens": {}}
 _rw.load_history = lambda *args, **kwargs: {"updated_at": None, "tokens": {}}
