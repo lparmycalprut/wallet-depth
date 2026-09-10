@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import streamlit as st
 
 from helius_holders import depth_bar_chart, scan_token_holders
+from best_pool_ui import render_best_pool_scan
 from holder_history import (DUST_BEST_PCT, DUST_CAUTION_PCT,
                             DUST_DANGER_PCT, FULL_SCAN_MAX_WALLETS,
                             LP_INTERVAL_SEC, holders_usable, ingest_many)
@@ -559,6 +560,20 @@ with _rh_col:
                     data.rh_history,
                     int(datetime.now(timezone.utc).timestamp()), variant="lp",
                     merge_status=data.rh_status)
+
+st.divider()
+
+# ---------------------------------------------------------------------------
+# 🏆 Scan Best Pool Meteora (permintaan user 2026-09-10) — replika **🌊 Scan
+# Meteora Pool** (halaman temp) di halaman utama dengan filter baru: listing
+# API Meteora 24 jam ``pool_type=dlmm&&fee_pct>=5&&active_tvl>=10000``, lalu
+# saringan layar dust holder < 0,05% MC, active TVL > 10K, fee/active TVL >
+# 20%, volatility > 5%, top 10 holder < 30%, total LPs > 20. Urutan baris:
+# dust % MC terkecil lalu volume terbesar. Card-nya full-width (12 kolom
+# listing) jadi tidak ikut grid 2 kolom watchlist di atas; ⭐ tetap
+# memasukkan token ke card Watchlist Meteora (kiri).
+# ---------------------------------------------------------------------------
+render_best_pool_scan()
 
 st.divider()
 _render_helius_holder_scan()

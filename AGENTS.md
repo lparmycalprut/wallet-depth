@@ -12,9 +12,11 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
 - `app.py` = halaman utama: **grid 2 kolom** (`st.columns([1, 1],
   gap="medium")`) — **kiri** 🌊 Watchlist Meteora (dulu "Chart LP — Watchlist
   Meteora"), **kanan** 🦅 Watchlist Robinhood (LP) — dua watchlist LP
-  kadens ±5 menit berdampingan (2026-09-10); di bawahnya 🛰 Scan Holder
-  Solana / Robinhood (dulu "Scan Holder Khusus — Helius / Robinhood",
-  full-width, dipisah `st.divider()`). Kedua card grid
+  kadens ±5 menit berdampingan (2026-09-10); di bawahnya **🏆 Scan Best
+  Pool Meteora** (full-width, `best_pool_ui.render_best_pool_scan()`,
+  2026-09-10) lalu 🛰 Scan Holder Solana / Robinhood (dulu "Scan Holder
+  Khusus — Helius / Robinhood", full-width, masing-masing dipisah
+  `st.divider()`). Kedua card grid
   ber-`st.container(border=True)` dengan kepala seragam dari
   `dashboard_components.card_head_html()` (pill ringkasan di sebelah judul).
   Hero header halaman (judul + ringkasan ambang) **dihapus**
@@ -188,6 +190,23 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   mengurutkan, dan yang tampil selalu satu sumber. `scan_meteora()`
   mengembalikan `best_count`; `app.py` tetap memanggil `sort_rows()` lagi
   saat render karena hasil scan lama di `session_state` belum terurut.
+  **🏆 Scan Best Pool Meteora** (2026-09-10, halaman utama) = replika
+  listing itu dengan filter baru, semua ambangnya konstanta `BEST_*` di
+  modul ini: query API `best_filter_by()` =
+  `pool_type=dlmm&&fee_pct>=5&&active_tvl>=10000` (24 jam, `category=top`,
+  `page_size=50`, `fetch_best_pools()`), lalu saringan layar ketat
+  (`row_best_gaps()` untuk 5 metrik pool + `row_dust_ok()` untuk dust
+  < 0,05% MC; angka `None` = gugur). `scan_best_meteora()` menjalankan
+  saringan metrik **sebelum** `enrich_pools()` supaya kuota Helius tidak
+  terbakar untuk pool yang pasti gugur, lalu `sort_best_rows()`: **dust %
+  MC terkecil → volume terbesar** (kunci dust dibulatkan ke
+  `BEST_DUST_SORT_DECIMALS` = 3 desimal = presisi tampilan card, jadi pool
+  yang di layar sama-sama "0,030%" diurutkan volumenya), baris tanpa dust
+  paling bawah, simbol sebagai tie-break terakhir. Hasil scan:
+  `rows/error/fetched/hidden_metric/hidden_dust/analyzed_at`. UI-nya
+  `best_pool_ui.render_best_pool_scan()` (card full-width di `app.py`,
+  tooltip `BEST_POOL_TOOLTIP`, session key `best_pool_scan`, ⭐ =
+  `source=meteora` → card Watchlist Meteora).
 - `holder_analysis.py`: **Helius** sumber holder utama
   (`fetch_holders_helius`, fallback GMGN). `analyze_token` = holder
   real/dust + mid-tier + kohort. `extra_pools` + `cohort_addrs`
@@ -540,6 +559,16 @@ badge BEST POOL       : < 0.1% marketcap (DUST_BEST_PCT, aditif) + data
                         == 0.1% bukan BEST POOL dan bukan pemicu
                         early_dump (strict < dan >).
                         Hanya dirender di listing Scan Meteora.
+🏆 Scan Best Pool     : query API pool_type=dlmm && fee_pct>=5 &&
+                        active_tvl>=10000 (24 jam, category=top); layar:
+                        dust < 0.05% MC (BEST_DUST_MAX_PCT), active TVL
+                        > 10K USD (BEST_ACTIVE_TVL_MIN), fee/active TVL
+                        > 20% (BEST_FEE_RATIO_MIN), volatility > 5%
+                        (BEST_VOLATILITY_MIN), top 10 holder < 30%
+                        (BEST_TOP10_MAX_PCT), total LPs > 20
+                        (BEST_TOTAL_LPS_MIN). Semua ketat — angka pas di
+                        ambang atau data hilang (None) = gugur.
+                        Urutan: dust % MC terkecil -> volume terbesar.
 grafik lane LP        : bucket 5 menit (resample_5m / LP_INTERVAL_SEC)
 kolom tabel watchlist : Δ 4 jam + sparkline Grafik 4 jam DIHAPUS (2026-09-07)
 grafik / kohort       : bucket 4 jam (resample_4h; titik mentah per run,
@@ -667,5 +696,5 @@ python -m py_compile holder_history.py holder_chronology.py meteora_screener.py 
   holder_analysis.py holder_status.py telegram_alerts.py alert_context.py \
   lp_watchlist.py core.py scripts/scan_holders.py trending_ui.py watchlist.py \
   watchlist_detail.py accumulation.py pre_pump_screener.py app.py \
-  page_router.py "pages/5_🧮_Holder.py"
+  best_pool_ui.py page_router.py "pages/5_🧮_Holder.py"
 ```

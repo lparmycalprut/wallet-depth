@@ -13,6 +13,16 @@ AMAN/HATI-HATI/BAHAYA **tidak lagi dipakai** di listing ini — yang lolos
 sudah pasti ≤ 0,1%. Badge 🏆 BEST POOL (di UI ``app.py``) menambah syarat
 data holder valid (≥ 40 wallet) **dan TVL pool ≥ 10K USD**.
 Baris yang di-⭐ masuk watchlist terpisah **Chart LP** di dashboard.
+
+**🏆 Scan Best Pool Meteora** (permintaan user 2026-09-10) = replika
+listing di atas untuk **halaman utama** dengan filter baru (lihat blok
+konstanta ``BEST_*`` di bawah): query API
+``pool_type=dlmm&&fee_pct>=5&&active_tvl>=10000`` (timeframe 24 jam,
+category top), lalu saringan layar dust holder **< 0,05% MC**, active TVL
+**> 10K**, fee/active TVL **> 20%**, volatility **> 5%**, top 10 holder
+**< 30%**, dan total LPs **> 20**. Urutannya: **dust % MC terkecil dulu,
+lalu volume terbesar** sebagai tie-break — "ambil yang terbesar dan
+terbaik".
 """
 from __future__ import annotations
 
@@ -26,6 +36,28 @@ PAGE_SIZE = 50
 TVL_MIN = 1000.0
 FEE_RATIO_24H = 250.0
 FEE_RATIO_1H = 1.0
+
+# ---------------------------------------------------------------------------
+# 🏆 Scan Best Pool Meteora (permintaan user 2026-09-10) — ambang filter.
+# Dua lapis: ``BEST_FEE_PCT_MIN`` + ``BEST_ACTIVE_TVL_MIN`` ikut dikirim ke
+# API Meteora sebagai ``filter_by`` (listing sudah tersaring di server),
+# sisanya disaring di layar setelah data pool + holder diambil. Semua angka
+# persen API Meteora sudah dalam satuan persen (``fee_active_tvl_ratio``
+# 88.56 = 88,56%; ``volatility`` 6.2 = 6,2%; ``top_holders_pct`` 35.75 =
+# 35,75% supply di 10 holder teratas token base).
+# ---------------------------------------------------------------------------
+BEST_CARD_TITLE = "🏆 Scan Best Pool Meteora"
+BEST_FEE_PCT_MIN = 5.0            # query API: fee_pct >= 5 (tier fee pool)
+BEST_ACTIVE_TVL_MIN = 10_000.0    # query API + layar: active TVL > 10K USD
+BEST_DUST_MAX_PCT = 0.05          # layar: dust holder < 0,05% MC
+BEST_FEE_RATIO_MIN = 20.0         # layar: fee / active TVL > 20%
+BEST_VOLATILITY_MIN = 5.0         # layar: volatility > 5%
+BEST_TOP10_MAX_PCT = 30.0         # layar: top 10 holder < 30% supply
+BEST_TOTAL_LPS_MIN = 20.0         # layar: total LPs > 20
+# Presisi kunci urut dust % MC di listing Best Pool — sama dengan angka yang
+# tampil di card, jadi dua pool yang di layar sama-sama "0,041%" benar-benar
+# dianggap seri dan **volume terbesar** yang menentukan urutannya.
+BEST_DUST_SORT_DECIMALS = 3
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
@@ -137,6 +169,12 @@ def _row_from_pool(pool: dict, *, in_24h: bool, in_1h: bool) -> dict:
         "fee_active_tvl_ratio": _float(pool.get("fee_active_tvl_ratio")),
         "volume": _float(pool.get("volume")),
         "fee_pct": _float(pool.get("fee_pct")),
+        # Metrik tambahan untuk 🏆 Scan Best Pool Meteora (2026-09-10):
+        # volatility pool (%), jumlah LP total, dan konsentrasi 10 holder
+        # teratas token base (% supply, dari pool-discovery API).
+        "volatility": _float(pool.get("volatility")),
+        "total_lps": _float(pool.get("total_lps")),
+        "top_holders_pct": _float(token.get("top_holders_pct")),
         "in_24h": bool(in_24h),
         "in_1h": bool(in_1h),
         "analysis": None,
@@ -373,5 +411,208 @@ def scan_meteora(*, max_wallets: int | None = None, workers: int = 6,
         "hidden_dust": hidden,
         "hide_pct": float(DUST_SCAN_HIDE_PCT),
         "best_count": sum(1 for row in rows if row_flag(row).get("best")),
+        "analyzed_at": int(time.time()),
+    }
+
+
+# ---------------------------------------------------------------------------
+# 🏆 Scan Best Pool Meteora — replika listing untuk halaman utama ``app.py``
+# (permintaan user 2026-09-10). Dua lapis saringan:
+#
+# 1. **server** (query API Meteora, sama seperti filter UI Meteora):
+#    ``pool_type=dlmm&&fee_pct>=5&&active_tvl>=10000``, timeframe 24 jam,
+#    category ``top``;
+# 2. **layar** (setelah data pool + holder ada): dust holder < 0,05% MC,
+#    active TVL > 10K USD, fee/active TVL > 20%, volatility > 5%, top 10
+#    holder < 30% supply, total LPs > 20.
+#
+# Urutan baris: **dust % MC terkecil dulu, lalu volume terbesar** sebagai
+# tie-break — "ambil yang terbesar dan terbaik" (permintaan user 2026-09-10).
+# Data yang hilang (``None``) selalu menggugurkan baris: card ini menjual
+# bukti, jadi pool tanpa angka tidak ikut ditampilkan.
+# ---------------------------------------------------------------------------
+def _maybe_float(value):
+    """Float atau ``None`` (NaN/bool/tipe salah → ``None``).
+
+    Berbeda dari :func:`_float` yang menelan ``None`` jadi 0: saringan Best
+    Pool harus bisa membedakan "angkanya nol" dari "datanya tidak ada".
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    return num if num == num else None
+
+
+def best_filter_by(pool_type: str = "dlmm",
+                   fee_pct_min: float = BEST_FEE_PCT_MIN,
+                   active_tvl_min: float = BEST_ACTIVE_TVL_MIN) -> str:
+    """Query ``filter_by`` Scan Best Pool Meteora (&&-join ala UI Meteora).
+
+    Hasil default: ``pool_type=dlmm&&fee_pct>=5&&active_tvl>=10000``.
+    """
+    def _num(value: float) -> str:
+        number = float(value)
+        return str(int(number)) if number == int(number) else f"{number:g}"
+
+    return (f"pool_type={pool_type}"
+            f"&&fee_pct>={_num(fee_pct_min)}"
+            f"&&active_tvl>={_num(active_tvl_min)}")
+
+
+def fetch_best_pools(*, timeframe: str = "24h", page_size: int = PAGE_SIZE,
+                     fee_pct_min: float = BEST_FEE_PCT_MIN,
+                     active_tvl_min: float = BEST_ACTIVE_TVL_MIN,
+                     timeout: int = 25) -> list[dict]:
+    """Top pool 24 jam untuk Scan Best Pool Meteora. Gagal → raise."""
+    params = {
+        "page_size": max(1, min(int(page_size), 50)),
+        "timeframe": str(timeframe or "24h"),
+        "category": "top",
+        "filter_by": best_filter_by(fee_pct_min=fee_pct_min,
+                                    active_tvl_min=active_tvl_min),
+    }
+    payload = _http_get(POOLS_URL, params, timeout=timeout)
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def rows_from_pools(pools: list[dict] | None) -> list[dict]:
+    """Baris listing (dedup ``pool_address``) dari payload pool-discovery."""
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for pool in pools or []:
+        if not isinstance(pool, dict):
+            continue
+        row = _row_from_pool(pool, in_24h=True, in_1h=False)
+        addr = row["pool_address"]
+        if addr:
+            if addr in seen:
+                continue
+            seen.add(addr)
+        rows.append(row)
+    return rows
+
+
+def row_best_gaps(row: dict | None) -> list[str]:
+    """Label syarat **metrik pool** yang tidak dipenuhi (kosong = lolos).
+
+    Lima syarat yang datanya sudah ada di response pool-discovery —
+    dijalankan SEBELUM fetch holder supaya kuota Helius tidak terbakar
+    untuk pool yang pasti gugur. Dust holder dicek terpisah oleh
+    :func:`row_dust_ok` karena butuh analisa holder.
+    """
+    row = row or {}
+    gaps: list[str] = []
+    active = _maybe_float(row.get("active_tvl"))
+    if active is None or active <= BEST_ACTIVE_TVL_MIN:
+        gaps.append(f"active TVL ≤ ${BEST_ACTIVE_TVL_MIN / 1000:g}K")
+    ratio = _maybe_float(row.get("fee_active_tvl_ratio"))
+    if ratio is None or ratio <= BEST_FEE_RATIO_MIN:
+        gaps.append(f"fee/active TVL ≤ {BEST_FEE_RATIO_MIN:g}%")
+    volatility = _maybe_float(row.get("volatility"))
+    if volatility is None or volatility <= BEST_VOLATILITY_MIN:
+        gaps.append(f"volatility ≤ {BEST_VOLATILITY_MIN:g}%")
+    top10 = _maybe_float(row.get("top_holders_pct"))
+    if top10 is None or top10 >= BEST_TOP10_MAX_PCT:
+        gaps.append(f"top 10 holder ≥ {BEST_TOP10_MAX_PCT:g}%")
+    lps = _maybe_float(row.get("total_lps"))
+    if lps is None or lps <= BEST_TOTAL_LPS_MIN:
+        gaps.append(f"total LPs ≤ {BEST_TOTAL_LPS_MIN:g}")
+    return gaps
+
+
+def row_dust_ok(row: dict | None) -> bool:
+    """True bila dust holder **< 0,05% MC** (angka wajib ada).
+
+    Lebih ketat dari ``DUST_SCAN_HIDE_PCT`` (0,1%): listing Best Pool hanya
+    memuat pool dengan distribusi holder yang benar-benar bersih. Dust
+    ``None`` (holder gagal di-fetch) **tidak** lolos — tidak ada bukti.
+    """
+    pct = _maybe_float(row_dust_pct(row))
+    return bool(pct is not None and pct < BEST_DUST_MAX_PCT)
+
+
+def filter_best_rows(rows: list[dict] | None) -> tuple[list[dict], int, int]:
+    """Terapkan semua saringan layar. Return (kept, hidden_metric, hidden_dust)."""
+    kept: list[dict] = []
+    hidden_metric = hidden_dust = 0
+    for row in rows or []:
+        if row_best_gaps(row):
+            hidden_metric += 1
+            continue
+        if not row_dust_ok(row):
+            hidden_dust += 1
+            continue
+        kept.append(row)
+    return kept, hidden_metric, hidden_dust
+
+
+def sort_best_rows(rows: list[dict] | None) -> list[dict]:
+    """Urutan listing Best Pool: **dust % MC terkecil**, lalu **volume terbesar**.
+
+    Permintaan user 2026-09-10: setelah % dust terkecil, pool bervolume
+    terbesar naik — supaya yang teratas adalah pool "terbesar dan terbaik".
+    Kunci dust dibulatkan ke presisi tampilan
+    (:data:`BEST_DUST_SORT_DECIMALS`, 3 desimal = angka yang muncul di card),
+    jadi pool yang di layar sama-sama "0,041%" dianggap seri dan **volume
+    terbesar** yang menentukan urutannya. Baris tanpa angka dust (holder
+    gagal) ditaruh paling bawah, lalu simbol alfabetis sebagai tie-break
+    terakhir supaya urutan deterministik antar scan.
+    """
+    def _key(row):
+        row = row or {}
+        pct = _maybe_float(row_dust_pct(row))
+        volume = _float(row.get("volume"), 0.0)
+        return (
+            0 if pct is not None else 1,
+            round(pct, BEST_DUST_SORT_DECIMALS) if pct is not None else 0.0,
+            -volume,
+            str(row.get("symbol") or "").upper(),
+        )
+
+    return sorted(list(rows or []), key=_key)
+
+
+def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
+                      progress=None, timeout: int = 25,
+                      timeframe: str = "24h",
+                      page_size: int = PAGE_SIZE) -> dict:
+    """Listing 24 jam + holder + 6 saringan layar Scan Best Pool Meteora.
+
+    Saringan metrik pool jalan lebih dulu (data API), baru holder di-fetch
+    untuk sisanya — jadi 5 syarat yang tidak butuh Helius tidak membakar
+    kuota. Urutan hasil: dust % MC terkecil → volume terbesar.
+    """
+    # Default FULL seperti ``scan_meteora``: urutan getTokenAccounts Helius
+    # tidak urut saldo, jadi cap kecil menghasilkan sampel bias dan angka
+    # dust < 0,05% MC tidak bisa dipercaya.
+    if max_wallets is None:
+        from holder_history import FULL_SCAN_MAX_WALLETS
+        max_wallets = FULL_SCAN_MAX_WALLETS
+    try:
+        pools = fetch_best_pools(timeframe=timeframe, page_size=page_size,
+                                 timeout=timeout)
+        error = ""
+    except Exception as exc:  # noqa: BLE001 - kegagalan API jadi pesan card
+        pools, error = [], str(exc)
+    rows = rows_from_pools(pools)
+    candidates = [row for row in rows if not row_best_gaps(row)]
+    hidden_metric = len(rows) - len(candidates)
+    if candidates:
+        candidates = enrich_pools(candidates, max_wallets=max_wallets,
+                                  workers=workers, progress=progress)
+    kept, _, hidden_dust = filter_best_rows(candidates)
+    kept = sort_best_rows(kept)
+    return {
+        "rows": kept,
+        "error": error,
+        "fetched": len(rows),
+        "hidden_metric": hidden_metric,
+        "hidden_dust": hidden_dust,
         "analyzed_at": int(time.time()),
     }

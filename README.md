@@ -8,11 +8,12 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
 ## Halaman
 
 - **Halaman utama**: **🌊 Watchlist Meteora** (dulu "Chart LP") berdampingan
-  dengan **🦅 Watchlist Robinhood** (LP) dalam grid 2 kolom, plus **🛰 Scan
+  dengan **🦅 Watchlist Robinhood** (LP) dalam grid 2 kolom, **🏆 Scan Best
+  Pool Meteora** full-width di bawahnya (sejak 2026-09-10), plus **🛰 Scan
   Holder Solana / Robinhood** (dulu "Scan Holder Khusus — Helius /
-  Robinhood") full-width di bawahnya. Detail karakteristik tiap card/section
-  bukan caption panjang lagi — jadi **tooltip** yang muncul saat kursor
-  digeser ke teks judulnya (sejak 2026-09-10).
+  Robinhood") full-width di paling bawah. Detail karakteristik tiap
+  card/section bukan caption panjang lagi — jadi **tooltip** yang muncul saat
+  kursor digeser ke teks judulnya (sejak 2026-09-10).
 - **temp** (`/temp`, sejak 2026-09-09): **🦅 Watchlist Robinhood — Holder
   Dust** (biasa/non-LP), **📋 Watchlist — Analisa Holder (Dust)**,
   **🌊 Scan Meteora Pool** (dipindah dari halaman utama sejak 2026-09-10 —
@@ -325,6 +326,39 @@ karakteristik card (kadens scan, rule alert berulang, ambang grafik) ada di
   (📋 Watchlist Holder /
   🌊 Watchlist Meteora). Tombol 🌊 pada baris watchlist holder memindahkan
   token ke card ini (`set_watchlist_source`).
+
+## 🏆 Scan Best Pool Meteora (halaman utama, sejak 2026-09-10)
+
+Replika **🌊 Scan Meteora Pool** untuk halaman utama dengan **filter baru**
+(semua ambang hidup di konstanta `meteora_screener.BEST_*`):
+
+- **Query API Meteora** (24 jam, `category=top`, `page_size=50`):
+  `pool_type=dlmm && fee_pct>=5 && active_tvl>=10000`
+- **Saringan layar** (ketat, `>`/`<` — angka pas di ambang **tidak** lolos;
+  data hilang/`None` juga tidak lolos):
+  | Syarat | Ambang |
+  |---|---|
+  | Dust holder | **< 0,05% MC** (`BEST_DUST_MAX_PCT`) |
+  | Active TVL | **> 10K USD** (`BEST_ACTIVE_TVL_MIN`) |
+  | Fee / active TVL | **> 20%** (`BEST_FEE_RATIO_MIN`) |
+  | Volatility | **> 5%** (`BEST_VOLATILITY_MIN`) |
+  | Top 10 holder | **< 30%** supply (`BEST_TOP10_MAX_PCT`, token base) |
+  | Total LPs | **> 20** (`BEST_TOTAL_LPS_MIN`) |
+- **Urutan baris**: **dust % MC terkecil** dulu, lalu **volume terbesar**
+  sebagai tie-break — kunci dust dibulatkan ke presisi tampilan (3 desimal)
+  supaya dua pool yang di layar sama-sama "0,030%" diurutkan menurut
+  volumenya ("ambil yang terbesar dan terbaik"). Baris tanpa angka dust
+  paling bawah, lalu simbol alfabetis.
+- Lima syarat metrik pool disaring **sebelum** holder di-fetch, jadi kuota
+  Helius tidak terpakai untuk pool yang pasti gugur; dust holder baru
+  dihitung untuk sisanya.
+- Kolom listing: Token · MC · A.TVL · Fee/TVL · Vol · Top10 · LPs · Fee ·
+  Dust (wallet) · Dust %MC (3 desimal) · Pool (Meteora DLMM + HawkFi) · ⭐
+- Tombol **⭐** memasukkan token ke card **🌊 Watchlist Meteora** di halaman
+  utama (`source=meteora`, sama seperti card temp) — token lalu ikut di-scan
+  cron ±5 menit lengkap dengan grafik perubahan dust holder.
+- Detail karakteristik card ada di **tooltip judul** (kursor di atas tulisan
+  "🏆 Scan Best Pool Meteora"), bukan caption panjang.
 
 ## 🌊 Scan Meteora Pool (halaman temp sejak 2026-09-10)
 
