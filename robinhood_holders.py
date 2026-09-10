@@ -1296,7 +1296,7 @@ def scan_token_holders(ca: str, *, max_wallets: int | None = None,
     """Scan on-demand holder satu token Robinhood Chain (EVM, chain 4663).
 
     Padanan EVM dari ``helius_holders.scan_token_holders`` untuk section
-    **Scan Holder Khusus** di halaman utama: alurnya sama —
+    **Scan Holder Solana / Robinhood** di halaman utama: alurnya sama —
     market (harga & marketcap) dari DexScreener
     (``chain_id=robinhood``), token info (decimals & supply) dari
     Blockscout, seluruh holder dari :func:`fetch_holders` (CSV export →
@@ -1310,8 +1310,8 @@ def scan_token_holders(ca: str, *, max_wallets: int | None = None,
     Helius).
 
     Return dict — **shape-nya sama persis** dengan
-    ``helius_holders.scan_token_holders`` sehingga UI Scan Holder Khusus
-    dipakai ulang tanpa cabang::
+    ``helius_holders.scan_token_holders`` sehingga UI Scan Holder Solana /
+    Robinhood dipakai ulang tanpa cabang::
 
         {
           "market": {...},            # dari get_market (bisa {})

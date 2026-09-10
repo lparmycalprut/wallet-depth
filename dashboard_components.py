@@ -43,6 +43,8 @@ def render_styles() -> None:
     .lp-head {display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;
      padding:.5rem 0 .1rem}
     .lp-title {font-size:1.15rem;font-weight:800;color:#000000}
+    /* Judul card/section beralih tooltip (title="…") — hint visual halus. */
+    .lp-title[title], .md-title-tip[title] {cursor:help;}
     .lp-count {font-size:.75rem;font-weight:700;color:#312e81;background:#e0e7ff;
      padding:.2rem .5rem;border-radius:999px}
     .lp-warn {font-size:.75rem;font-weight:700;color:#7f1d1d;background:#fee2e2;
@@ -233,8 +235,55 @@ def _render_depth(holders: dict, symbol: str) -> None:
         )
 
 
-RH_CARD_TITLE = "🦅 Watchlist Robinhood LP — Holder Dust"
+def card_head_html(title: str, pills: list[str] | None = None,
+                   tooltip: str = "") -> str:
+    """Header card grid: judul tebal + pill ringkasan di sebelahnya.
+
+    Dipakai card **Watchlist Meteora** (halaman utama), **Watchlist
+    Robinhood**, dan **Scan Meteora Pool** (halaman temp) supaya card yang
+    berkepala sama itu punya satu pembuat. ``tooltip`` (opsional) = detail
+    karakteristik card yang HANYA muncul saat kursor berada di atas teks
+    judul (atribut ``title`` native browser — permintaan user 2026-09-10
+    supaya card tetap ramping, bukan caption panjang di badan card). Atribut
+    ``title`` tidak mengenal markdown, jadi tulis plain text tanpa ``**``.
+    """
+    tip = f' title="{html.escape(tooltip)}"' if tooltip else ""
+    chips = "".join(pills or [])
+    return (f'<div class="lp-head"><span class="lp-title"{tip}>{title}'
+            f"</span>{chips}</div>")
+
+
+def hover_title_html(text: str, tooltip: str) -> str:
+    """Judul section (heading markdown ``###``) dengan tooltip di teksnya.
+
+    Pengganti caption panjang di bawah judul section (2026-09-10): detail
+    hanya muncul saat kursor berada di atas teks judul — karena itu teksnya
+    dibungkus ``<span title="…">``, bukan ditempel di seluruh lebar baris.
+    Markdown ``###`` dipertahankan supaya styling sama persis dengan
+    ``st.subheader``; atribut ``title`` tidak mengenal markdown (plain text).
+    """
+    return (f'### <span class="md-title-tip" title="{html.escape(tooltip)}" '
+            f'style="cursor:help;">{html.escape(text)}</span>')
+
+
+RH_CARD_TITLE = "🦅 Watchlist Robinhood"
 RH_REGULAR_CARD_TITLE = "🦅 Watchlist Robinhood — Holder Dust"
+# Detail karakteristik card LP (2026-09-10) tidak lagi jadi caption panjang
+# di badan card — pindah ke tooltip judul (title="…", muncul saat kursor di
+# atas teks "Watchlist Robinhood"). Kalau karakteristiknya berubah, ubah
+# teks di sini; ambang diambil dari konstanta holder_history supaya tooltip
+# tidak pernah beda dengan rule yang benar-benar jalan.
+RH_CARD_TOOLTIP = (
+    "Watchlist Robinhood LP (0x…, chain id 4663) — di-scan cron tiap ±5 "
+    "menit (sejak 2026-09-06, sama cepatnya dengan Watchlist Meteora) "
+    "supaya exit bisa lebih awal. Pengingat ⚡ Telegram dikirim tiap ±5 "
+    "menit per token selama dust masih di atas ambang. Selama hold % MC "
+    f"dust di atas {DUST_BEST_PCT:g}%, alert ⚡ Telegram dikirim berulang "
+    "tiap scan — berhenti hanya bila token dihapus (✕) atau dipindah ke "
+    "watchlist biasa (📋). Rule lain tetap jalan: "
+    f"≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
+    f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA. Data holder dari Blockscout, "
+    "harga/marketcap dari DexScreener.")
 ALERT_NOTE_KEY = "manual_alert_note_"
 
 
@@ -278,12 +327,13 @@ RH_ADD_TARGET_SOURCE = {RH_LP_TAB: RH_LP_SOURCE,
 
 
 def _rh_head_html(title: str, total: int, danger: int, caution: int,
-                  sync: str = "") -> str:
+                  sync: str = "", tooltip: str = "") -> str:
     """Kepala card Robinhood; ``sync`` = badge status sinkronisasi GitHub.
 
     Ditampilkan hanya bila masih ada commit latar belakang berjalan
     (``🔄 sinkron…``) atau commit terakhir gagal (``⚠️ belum sinkron``), jadi
-    badge tidak menumpuk saat semua sudah tersimpan.
+    badge tidak menumpuk saat semua sudah tersimpan. ``tooltip`` = detail
+    karakteristik card di atribut judul (lihat ``card_head_html``).
     """
     pills = [f'<span class="lp-count">{total} token</span>']
     if sync == "syncing":
@@ -295,8 +345,7 @@ def _rh_head_html(title: str, total: int, danger: int, caution: int,
     if caution:
         pills.append(f'<span class="lp-warn" style="color:#78350f;'
                      f'background:#fef3c7;">HATI-HATI {caution}</span>')
-    return (f'<div class="lp-head"><span class="lp-title">{title}'
-            f"</span>{''.join(pills)}</div>")
+    return card_head_html(title, pills, tooltip=tooltip)
 
 
 def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
@@ -432,28 +481,17 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
 
     title = RH_CARD_TITLE if variant == "lp" else RH_REGULAR_CARD_TITLE
     with st.container(border=True):
+        # Card LP: detail karakteristik = tooltip di teks judul (2026-09-10),
+        # bukan caption panjang — lihat RH_CARD_TOOLTIP. Card biasa (temp)
+        # tetap pakai caption karena teksnya belum diminta dipindah.
         st.markdown(_rh_head_html(title, len(watchlist or {}), danger,
                                   caution,
                                   sync=robinhood_watchlist.sync_state().get(
-                                      "state") or ""),
+                                      "state") or "",
+                                  tooltip=RH_CARD_TOOLTIP
+                                  if variant == "lp" else ""),
                     unsafe_allow_html=True)
-        if variant == "lp":
-            st.caption(
-                "Watchlist **Robinhood LP** (`0x…`, chain id 4663) — "
-                "di-scan cron **tiap ±5 menit** (sejak 2026-09-06, sama "
-                "cepatnya dengan Chart LP Meteora) supaya exit bisa lebih "
-                "awal. "
-                "Pengingat ⚡ Telegram dikirim tiap ±5 menit per token "
-                "selama dust masih di atas ambang. Selama hold % MC dust di atas "
-                f"**{DUST_BEST_PCT:g}%**, alert ⚡ Telegram dikirim "
-                "**berulang tiap scan** — berhenti hanya bila token "
-                "dihapus (✕) atau dipindah ke watchlist biasa (📋). "
-                "Rule lain tetap jalan: ≥ "
-                f"{DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
-                f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA. "
-                "Data holder dari Blockscout, harga/marketcap dari "
-                "DexScreener.")
-        else:
+        if variant != "lp":
             st.caption(
                 "Watchlist **Robinhood biasa** (`0x…`) — cron **4 jam "
                 "dimatikan**; token ini tidak di-scan otomatis (pakai "

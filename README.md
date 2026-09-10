@@ -7,10 +7,16 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
 
 ## Halaman
 
-- **Halaman utama**: Chart LP Meteora, Scan Meteora, Watchlist Robinhood LP,
-  dan Scan Holder Khusus (Helius / Robinhood).
+- **Halaman utama**: **🌊 Watchlist Meteora** (dulu "Chart LP") berdampingan
+  dengan **🦅 Watchlist Robinhood** (LP) dalam grid 2 kolom, plus **🛰 Scan
+  Holder Solana / Robinhood** (dulu "Scan Holder Khusus — Helius /
+  Robinhood") full-width di bawahnya. Detail karakteristik tiap card/section
+  bukan caption panjang lagi — jadi **tooltip** yang muncul saat kursor
+  digeser ke teks judulnya (sejak 2026-09-10).
 - **temp** (`/temp`, sejak 2026-09-09): **🦅 Watchlist Robinhood — Holder
-  Dust** (biasa/non-LP), **📋 Watchlist — Analisa Holder (Dust)**, dan
+  Dust** (biasa/non-LP), **📋 Watchlist — Analisa Holder (Dust)**,
+  **🌊 Scan Meteora Pool** (dipindah dari halaman utama sejak 2026-09-10 —
+  ⭐-nya tetap memasukkan token ke Watchlist Meteora di halaman utama), dan
   **🔍 Temukan Token** (Trending/Degen). Dibuka lewat tautan **📦 temp**
   di halaman utama atau sidebar; tersedia tautan kembali ke halaman utama.
   Fitur sementara diparkir, **bukan dihapus**: data, form tambah, scan manual,
@@ -43,9 +49,10 @@ atau setelan Telegram. Robinhood LP tetap di halaman utama, bukan di temp.
    membuat wallet "lulus" ke >$10 (dust % MC turun walau tidak ada yang
    jual), harga turun mendorong wallet masuk dust (dust % MC naik). Baca
    angka ini bersama jumlah dust wallet.
-2. **Chart LP — watchlist terpisah** — token yang ditambahkan dari **Scan
-   Meteora Pool** (⭐) atau ditambah manual ke card itu dikumpulkan di card
-   paling atas dashboard. Card ini menampilkan **grafik perubahan dust
+2. **Watchlist Meteora (Chart LP) — watchlist terpisah** — token yang
+   ditambahkan dari **Scan Meteora Pool** (⭐) atau ditambah manual ke card
+   itu dikumpulkan di card kiri atas dashboard. Card ini menampilkan
+   **grafik perubahan dust
    holder** (dust % MC + jumlah wallet dust per bucket **5 menit** —
    mengikuti kadens cron lane LP, garis ambang
    0,5% / 1%) di dalam expander per token. **Sejak 2026-09-07 kolom tabel
@@ -265,7 +272,8 @@ Scan Meteora. Harga/MC/volume/`txns` dari DexScreener. Candle hourly & harian
 | `helius` | Paksa Helius → fallback GMGN. |
 | `gmgn` | GMGN saja (listing Trending/Degen), fallback Helius. |
 
-Scan Holder Khusus (halaman utama) menerima **dua chain**: CA Solana
+Scan Holder Solana / Robinhood (halaman utama; dulu "Scan Holder Khusus")
+menerima **dua chain**: CA Solana
 (base58) → Helius DAS, CA **Robinhood Chain** (`0x…`) → **Blockscout**
 (CSV export, tanpa limit) lewat `robinhood_holders.scan_token_holders` — hasil (bar chart
 Wallet Depth + tabel) dirender sama. Jalur Solana dan cron butuh
@@ -294,10 +302,13 @@ pulang dengan `blocked: True` + satu kalimat yang menyebut 403 dan cara
 memasang key (bukan menyalahkan CA). Rute yang dipakai terlihat di
 `source` (`blockscout-csv@pro` / `@public`) dan caption UI.
 
-## Chart LP (watchlist Meteora terpisah)
+## 🌊 Watchlist Meteora (Chart LP — watchlist Meteora terpisah)
 
-Card paling atas dashboard, khusus token yang ditambahkan dari **Scan
-Meteora Pool** (`source=meteora`):
+Card kiri atas dashboard (sebelah **🦅 Watchlist Robinhood**), khusus token
+yang ditambahkan dari **Scan Meteora Pool** (`source=meteora`). Detail
+karakteristik card (kadens scan, rule alert berulang, ambang grafik) ada di
+**tooltip judul** — arahkan kursor ke tulisan "🌊 Watchlist Meteora"
+(sejak 2026-09-10, bukan caption lagi):
 
 - **Overlay** dust % MC semua token LP dalam satu grafik + grafik per token
   (garis dust % MC, batang jumlah wallet dust, garis ambang 0,5% & 1%).
@@ -308,12 +319,14 @@ Meteora Pool** (`source=meteora`):
 - Urut dari yang paling perlu diwaspadai (BAHAYA → HATI-HATI → AMAN, lalu
   dust % MC terbesar).
 - Token LP **tidak** muncul dua kali di watchlist holder di bawahnya.
-- Tambah manual: form **➕ Tambah CA manual ke Chart LP** di dalam card, atau
-  radio *Masuk ke card* pada form **➕ Tambah token** (📋 Watchlist Holder /
-  🌊 Chart LP). Tombol 🌊 pada baris watchlist holder memindahkan token ke
-  Chart LP (`set_watchlist_source`).
+- Tambah manual: form **➕ Tambah CA manual ke Watchlist Meteora** di dalam
+  card, atau
+  radio *Masuk ke card* pada form **➕ Tambah token** di halaman temp
+  (📋 Watchlist Holder /
+  🌊 Watchlist Meteora). Tombol 🌊 pada baris watchlist holder memindahkan
+  token ke card ini (`set_watchlist_source`).
 
-## Scan Meteora Pool
+## 🌊 Scan Meteora Pool (halaman temp sejak 2026-09-10)
 
 - 24 jam: `pool_type=dlmm && active_tvl≥1000 && fee_active_tvl_ratio≥250`
 - 1 jam: `pool_type=dlmm && active_tvl≥1000 && fee_active_tvl_ratio≥1`
@@ -332,8 +345,8 @@ Meteora Pool** (`source=meteora`):
   **terkecil** → TVL **terbesar** → simbol (deterministik). Baris tanpa
   angka dust (holder gagal) ditaruh paling bawah. Ringkasan di atas tabel
   menyebut jumlah BEST POOL yang ditemukan
-- Tombol **⭐** memasukkan token ke card **Chart LP** (watchlist terpisah di
-  bagian atas dashboard, lengkap dengan grafik perubahan dust holder)
+- Tombol **⭐** memasukkan token ke card **Watchlist Meteora** (watchlist
+  terpisah di halaman utama, lengkap dengan grafik perubahan dust holder)
 - Shortcut: [Meteora DLMM](https://app.meteora.ag/dlmm/) + [HawkFi](https://www.hawkfi.ag/meteora/)
 
 ## 🚀 Pre-Pump Screener
@@ -505,10 +518,10 @@ akumulasi dan bukan prediksi arah harga.
 | `lp_watchlist.py` | Card **Chart LP**: pisah watchlist Meteora, baris + grafik perubahan dust holder |
 | `meteora_screener.py` | Listing DLMM 24h+1h, enrich holder, filter dust > 0,1% MC; badge BEST POOL di UI app.py (dust < 0,1% + data valid + TVL ≥ 10K) |
 | `holder_analysis.py` | Fetch holder Helius/GMGN, klasifikasi real/dust/mid |
-| `robinhood_holders.py` | Robinhood Chain (chain 4663): holder **Blockscout** — CSV export (utama, seluruh daftar dalam 1 request) → REST v2 keyset → legacy RPC `offset=400`; decimals/supply, analisa dust + `scan_token_holders` (padanan EVM Scan Holder Khusus) sama dengan Solana |
+| `robinhood_holders.py` | Robinhood Chain (chain 4663): holder **Blockscout** — CSV export (utama, seluruh daftar dalam 1 request) → REST v2 keyset → legacy RPC `offset=400`; decimals/supply, analisa dust + `scan_token_holders` (padanan EVM Scan Holder Solana / Robinhood) sama dengan Solana |
 | `robinhood_watchlist.py` | Watchlist/path Robinhood: `watchlist_robinhood.json`, status & history terpisah, scan + publish best-effort |
 | `solscan_holders.py` | Kalkulasi wallet_depth (bucket & tier) |
-| `helius_holders.py` | Scan Holder Khusus satu token (Solana/Helius) + bar chart |
+| `helius_holders.py` | Scan Holder Solana satu token (Solana/Helius) + bar chart |
 | `holder_status.py` | Snapshot dashboard ramping (ref `holder-live`) + history ringkas + transport GitHub (JSON & byte/gzip) |
 | `core.py` | Config/key Helius, pasar DexScreener, candle hourly/harian GeckoTerminal |
 | `scripts/scan_holders.py` | Cron **lane LP saja** (run ±5 menit: Chart LP Meteora + Robinhood LP; `LP_SCAN_RUN_MULTIPLIER` untuk rem Helius, `--full` untuk scan FULL manual): holder, alert ⚡ (konfirmasi volume lazy), satu titik history per token, publish snapshot + backup store yang dibatasi token LP aktif |

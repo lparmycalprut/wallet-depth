@@ -1,3 +1,55 @@
+# Kegiatan — 10 September 2026 (rename card + detail jadi tooltip judul)
+
+Permintaan user: ganti judul card — **🌊 Chart LP — Watchlist Meteora** →
+**🌊 Watchlist Meteora**, **🦅 Watchlist Robinhood LP — Holder Dust** →
+**🦅 Watchlist Robinhood**, **🛰 Scan Holder Khusus — Helius / Robinhood** →
+**🛰 Scan Holder Solana / Robinhood** — dan teks detail karakteristiknya
+bukan caption lagi melainkan **tooltip** yang hanya muncul saat kursor
+digeser ke tulisan judulnya. Selain itu **🌊 Scan Meteora Pool** dipindah ke
+halaman temp dan **Watchlist Robinhood** (LP) pindah ke samping **Watchlist
+Meteora**.
+
+- Tooltip = atribut `title="…"` native browser di teks judul, bukan elemen
+  tambahan: card memakai `dashboard_components.card_head_html(title, pills,
+  tooltip=…)` (atribut menempel di `<span class="lp-title">`), section Scan
+  Holder memakai `hover_title_html()` — heading markdown `###` dengan
+  `<span title>` supaya styling persis `st.subheader` dan tooltip hanya
+  aktif di atas teks (bukan seluruh lebar baris). CSS `cursor:help`
+  ditambahkan sebagai hint halus.
+- Teks detail hidup di konstanta — `LP_CARD_TOOLTIP` + `SCAN_HOLDER_TOOLTIP`
+  (`app.py`), `RH_CARD_TOOLTIP` (`dashboard_components.py`) — dengan ambang
+  diambil dari konstanta `holder_history` (`DUST_BEST_PCT`,
+  `DUST_CAUTION_PCT`, `DUST_DANGER_PCT`), jadi kalau karakteristik/rule
+  berubah tinggal edit konstanta dan angkanya tetap sinkron. Atribut
+  `title` tidak mengenal markdown → teks plain (tanpa `**`).
+- `app.py`: grid 2 kolom kini **kiri** Watchlist Meteora, **kanan** Watchlist
+  Robinhood LP (`_render_rh_card(variant="lp")` dipindah dari full-width ke
+  kolom kanan; `split_robinhood_watchlist` naik ke atas grid). Scan Holder
+  tetap full-width di bawah `st.divider()`. Label di dalam card LP ikut
+  diganti ("Tambah CA manual ke Watchlist Meteora", "Scan sekarang Watchlist
+  Meteora", ✕ "Hapus dari Watchlist Meteora", info kosong menunjuk
+  **⭐ Scan Meteora Pool di halaman temp (📦)**).
+- `temp_ui.py`: `render_meteora_scan()` (pindahan `app.py`, termasuk
+  `_meteora_head_html` + `METEORA_CARD_TITLE`) dipanggil sebelum section
+  **🔍 Temukan Token**; `card_head_html` kini pembuat kepala bersama.
+  ⭐ tetap `add_to_watchlist(..., source=meteora)` — targetnya card
+  **Watchlist Meteora** di halaman utama; caption/help di halaman temp
+  disinkronkan ("Chart LP" → "Watchlist Meteora").
+- `dashboard_components.py`: judul card LP Robinhood menjadi
+  `RH_CARD_TITLE = "🦅 Watchlist Robinhood"` (card biasa/temp tetap
+  "🦅 Watchlist Robinhood — Holder Dust"); caption LP dihapus dan digantikan
+  tooltip, caption card biasa (temp) tidak diubah.
+- Tidak ada perubahan data/cron: `watchlist.json`,
+  `watchlist_robinhood.json`, source token, jadwal scan ±5 menit, dan rule
+  alert Telegram sama persis — hanya judul, teks, dan posisi card.
+- Validasi: `py_compile` app/temp_ui/dashboard_components lolos; suite
+  penuh **1038 tests** = sama dengan baseline (2 FAIL `test_scan_holders`
+  itu pre-existing saat dijalankan `discover`, terbukti ikut muncul di
+  `git stash` baseline); AppTest ad-hoc memastikan tiga tooltip ter-render
+  di markup (atribut `title` lengkap) tanpa exception; live preview
+  Streamlit port 8501. Frontend Streamlit memakai `rehype-raw`, jadi HTML
+  inline (termasuk `title`) di dalam heading markdown ikut ter-render.
+
 # Kegiatan — 9 September 2026 (cron 5 menit mati lagi: rantai dipindah ke skrip)
 
 User: *"coba cek kenapa cron tidak berjalan per 5 menit"* (run #1182 selesai

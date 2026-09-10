@@ -7,19 +7,35 @@ grafik 4 jam, kohort Crab+Fish) dan **Scan Meteora DLMM**, ditambah
 / flow 12 jam; Telegram hanya dipakai cron untuk alert perubahan holder dust
 yang sudah dikonfirmasi volume + harga + volatilitas.
 
-## Pembagian halaman (2026-09-09)
+## Pembagian halaman (2026-09-10)
 
 - `app.py` = halaman utama: **grid 2 kolom** (`st.columns([1, 1],
-  gap="medium")`, 2026-09-09) — **kiri** Chart LP Meteora, **kanan** Scan
-  Meteora; di bawahnya Robinhood LP → Scan Holder Khusus (full-width,
-  dipisah `st.divider()`). Kedua card grid ber-`st.container(border=True)`
-  dengan kepala seragam dari `_card_head_html()` (pill ringkasan di sebelah
-  judul). Hero header halaman (judul + ringkasan ambang) **dihapus**
+  gap="medium")`) — **kiri** 🌊 Watchlist Meteora (dulu "Chart LP — Watchlist
+  Meteora"), **kanan** 🦅 Watchlist Robinhood (LP) — dua watchlist LP
+  kadens ±5 menit berdampingan (2026-09-10); di bawahnya 🛰 Scan Holder
+  Solana / Robinhood (dulu "Scan Holder Khusus — Helius / Robinhood",
+  full-width, dipisah `st.divider()`). Kedua card grid
+  ber-`st.container(border=True)` dengan kepala seragam dari
+  `dashboard_components.card_head_html()` (pill ringkasan di sebelah judul).
+  Hero header halaman (judul + ringkasan ambang) **dihapus**
   2026-09-09 bersama CSS `.hero`. **Jangan render watchlist biasa/Temukan
   Token di sini.**
+- **Detail karakteristik card/section = tooltip judul (2026-09-10)** —
+  caption panjang di badan card dihapus. Teksnya hidup di konstanta
+  `LP_CARD_TOOLTIP` (app.py), `RH_CARD_TOOLTIP`
+  (dashboard_components.py), dan `SCAN_HOLDER_TOOLTIP` (app.py); dirender
+  sebagai atribut `title="…"` pada teks judul (`card_head_html(tooltip=…)`
+  / `hover_title_html()`) sehingga **hanya muncul saat kursor digeser ke
+  atas tulisan judul**. Kalau karakteristik berubah, ubah teks di
+  konstanta itu — ambang diambil dari konstanta holder_history agar tidak
+  pernah beda dengan rule yang jalan. Atribut `title` tidak mengenal
+  markdown (plain text tanpa `**`).
 - `pages/8_temp.py` → slug **`/temp`**, judul **temp**, memanggil
   `temp_ui.render_temp()`: Robinhood biasa (non-LP), Watchlist — Analisa
-  Holder (Dust), dan Temukan Token (Trending/Degen), termasuk semua kontrol.
+  Holder (Dust), **🌊 Scan Meteora Pool** (`temp_ui.render_meteora_scan()`,
+  dipindah dari halaman utama 2026-09-10; ⭐-nya tetap memasukkan token ke
+  card Watchlist Meteora di halaman utama), dan Temukan Token
+  (Trending/Degen), termasuk semua kontrol.
   Tautan `st.page_link` main ↔ temp; bukan salinan watchlist baru.
 - `dashboard_components.py`: CSS/helper presentasi, card Robinhood bersama
   (`variant="lp"|"regular"`, snapshot merge diberikan eksplisit), dan
