@@ -237,34 +237,47 @@ class ScanBestTest(unittest.TestCase):
 
 
 class ScanCandidatesTest(unittest.TestCase):
-    """Budget waktu per kandidat + progress "sedang" (2026-09-10).
+    """Semua kandidat ditunggu — budget waktu sudah DIHAPUS (2026-09-10).
 
-    Kejadian nyata: progress macet di "Holder 6/7" berjam-jam karena satu
-    token ber-holder sangat banyak jatuh ke paginasi RPC lambat. Sekarang
-    kandidat yang lewat ``timeout_sec`` dilewati (dianggap gagal) dan label
-    progress menyebut token yang sedang digiling.
+    Kejadian nyata: progress tampak macet di "Holder 6/7" bukan karena hang,
+    tapi karena satu token ber-holder puluhan ribu memang butuh paginasi
+    Blockscout 10-15 menit. User memutuskan (2026-09-10): "hapus timeoutnya,
+    gak papa ternyata tadi masalahnya holdernya sangat banyak, jadi agak lama
+    memang fetchingnya" — jadi kandidat lambat TIDAK boleh dibuang lagi, dan
+    label progress menyebut token yang sedang digiling supaya tetap kelihatan
+    hidup.
     """
 
     def _row(self, ca, symbol="TOK"):
         return {"ca": ca, "symbol": symbol, "mc": 1_000_000, "price": 0.5}
 
-    def test_kandidat_lambat_dilewati_setelah_budget(self):
+    def test_kandidat_lambat_tetap_ditunggu_sampai_selesai(self):
         import threading
         release = threading.Event()
-        self.addCleanup(release.set)  # thread lambat tidak bocor antar tes
+        threading.Timer(0.4, release.set).start()   # lama, tapi selesai
 
         def _analyze(ca, symbol, **kwargs):
             if ca == CA_B:
-                release.wait(timeout=30)  # jauh melebihi budget tes
+                release.wait(timeout=30)
             return {"holders": _analysis(0.01)["holders"]}
 
         with mock.patch("robinhood_holders.analyze_token",
                         side_effect=_analyze):
             analyses = rbs.scan_candidates(
-                [self._row(CA_A), self._row(CA_B)],
-                workers=2, timeout_sec=1.0)
-        self.assertIn(CA_A, analyses)      # yang cepat tetap dapat hasil
-        self.assertNotIn(CA_B, analyses)   # yang lambat dilewati, bukan digantung
+                [self._row(CA_A), self._row(CA_B)], workers=2)
+        # Dua-duanya dapat hasil — yang lambat tidak dikorbankan.
+        self.assertIn(CA_A, analyses)
+        self.assertIn(CA_B, analyses)
+
+    def test_scan_candidates_tidak_menerima_budget_waktu(self):
+        """``timeout_sec``/``CANDIDATE_TIMEOUT_SEC`` sudah dihapus total."""
+        import inspect
+
+        source = inspect.getsource(rbs.scan_candidates)
+        self.assertNotIn("timeout_sec", source)
+        self.assertNotIn("deadline", source)
+        self.assertNotIn("CANDIDATE_TIMEOUT_SEC",
+                         inspect.getsource(rbs))
 
     def test_progress_menyebut_kandidat_yang_sedang_jalan(self):
         labels = []
@@ -330,6 +343,32 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertIn("🦅 Scan Best Robinhood Coin</span>", self._body(app))
         self.assertIn("volume 6 jam terakhir", self._body(app))
+
+    def test_detail_karakteristik_di_tooltip_bukan_caption(self):
+        """Caption panjang card pindah ke tooltip judul (permintaan user).
+
+        ``st.caption`` hanya boleh berisi hasil scan (jumlah coin / yang
+        dilewati) — rule filter, sumber dust, dan tombol dijelaskan di atribut
+        ``title`` pada teks judul card.
+        """
+        from streamlit.testing.v1 import AppTest
+
+        with mock.patch.object(rbs, "scan_best", return_value=self._result()):
+            app = AppTest.from_file(self.APP, default_timeout=30)
+            app.run()
+            button = next(b for b in app.button if b.label == rbs.CARD_TITLE)
+            app = button.click().run()   # hasil scan → caption rekap + listing
+        body = self._body(app)
+        captions = "\n".join(node.value for node in app.caption)
+        # masih ada di tooltip judul…
+        self.assertIn('title="Listing GMGN Robinhood Chain', body)
+        self.assertIn("Honeypot otomatis dikeluarkan", body)
+        self.assertIn("scan cron ±5 menit", body)
+        # …dan sudah TIDAK di caption card.
+        self.assertNotIn("Honeypot otomatis dikeluarkan", captions)
+        self.assertNotIn("top 10 holder < 30%", captions)
+        # caption hasil scan tetap ada (itu data, bukan deskripsi rule).
+        self.assertIn("Listing 10 coin", captions)
 
     def test_tombol_scan_memanggil_scan_best_lalu_render_baris(self):
         from streamlit.testing.v1 import AppTest

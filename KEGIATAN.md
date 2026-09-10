@@ -1,3 +1,125 @@
+# Kegiatan — 10 September 2026 (scan best jadi tooltip, kredit Helius di 🧾, budget waktu Scan Best Robinhood dihapus)
+
+Tiga permintaan user sekaligus (sesi sebelum tidur — "nanti kalau sudah
+selesai langsung create pr dan merge saja"):
+
+1. *caption rule* **🏆 Scan Best Pool Meteora** dan **🦅 Scan Best Robinhood
+   Coin** → *"ini juga bikin tooltip saja"*,
+2. **🧾 Log Aktivitas** → *"tampilkan juga berapa kredit tersisa dari helius
+   key kita"*,
+3. **🦅 Scan Best Robinhood Coin** → *"hapus timeoutnya, gak papa ternyata
+   tadi masalahnya holdernya sangat banyak, jadi agak lama memang
+   fetchingnya"*.
+
+## 1 · Detail card scan best = tooltip judul (bukan caption)
+
+- `best_pool_ui.py`: `st.caption(...)` berisi seluruh ambang **dihapus**;
+  gantinya `best_pool_tooltip()` yang **menyusun teks dari konstanta**
+  `meteora_screener.BEST_*` saat dipanggil. Sebelumnya tooltip ini teks
+  hardcoded, jadi angka bisa basi; sekarang ubah ambang = tooltip ikut
+  berubah. Yang tersisa di badan card hanya rekap hasil scan
+  (`N pool lolos · M disembunyikan · listing K pool`) — itu data.
+- `robinhood_best_scan.py`: konstanta `CAPTION` + `st.caption(CAPTION)`
+  dihapus, isinya (endpoint rank GMGN, filter, urutan, Dexboost, honeypot,
+  tombol 📋/⭐, cron ±5 menit) digabung ke `RH_SCAN_TOOLTIP` yang sudah
+  membaca `RH_SCAN_MAX_*`.
+- Tes: `test_best_pool_scan.py` **16 → 18** (teks rule ada di
+  `title="…"` pada judul dan TIDAK lagi di caption; tooltip dibangun dari
+  konstanta sehingga ikut berubah kalau `BEST_DUST_MAX_PCT` diubah) dan
+  `test_robinhood_best_scan.py` **27 → 29** (`title="Listing GMGN Robinhood
+  Chain…"`, caption rule hilang, caption rekap hasil tetap ada).
+- `tests/test_temp_page.py`: cek "card temp tidak muncul di halaman utama"
+  dipindah dari *string nama card di body* ke *kepala card* `…</span>` +
+  label tombol scan, karena tooltip card Best Pool memang menyebut nama
+  listing yang direplikanya (dan teks tooltip sengaja tidak memakai emoji +
+  nama persis itu).
+
+## 2 · 🧾 Log Aktivitas: sisa kredit key Helius
+
+Baris baru di bawah status pool Blockscout, contoh:
+
+```
+Helius API: 2 key · key#1 (wallet-depth) kredit tersisa 812,345 dari
+1,000,000 (pakai 18.8%) · ±1,204 request sesi ini · dicek 3 mnt lalu
+```
+
+- `core.py` (modul pemilik pool key — bukan UI): `helius_key_status()`
+  memprobe metadata key `GET https://api.helius.xyz/v0/keys` per key di pool
+  (fallback `mainnet.helius-rpc.com/v0/keys`), `parse_helius_credits()`
+  menerima **semua** bentuk respons plan (objek `{total, used, available}`,
+  angka tunggal, field datar `creditsRemaining`, string berpemisah ribu) dan
+  mengembalikan `None` bila Helius tidak lapor; `total` & `used` → sisa
+  dihitung, bukan ditebak. Persentase memakai `used` bila ada, jika tidak
+  `(total - remaining) / total`.
+- **Key tidak pernah bocor**: pesan error di-*scrub* (`api-key=…` →
+  `api-key=***`), baris hanya berisi `key#N` + nama key dari Helius.
+- **Kredit per project, bukan per key** — beberapa key satu project melaporkan
+  plafon yang sama, jadi nilainya **tidak dijumlah** (didedup;
+  `helius_credit_remaining()` menjumlah nilai unikat).
+- Render non-blokir: `helius_usage_summary()` dipakai panel log lewat
+  `helius_usage_status(background=True)` → **tidak pernah memblokir render**: cache
+  ±5 menit (`HELIUS_USAGE_TTL_SEC`, env) dibaca, dan bila basi satu thread
+  daemon (`refresh_helius_usage_async`, guard `_helius_usage_inflight`)
+  mengisinya; angka muncul pada auto-refresh ±60 dtk berikutnya. Cron/tes bisa
+  minta probe inline (`background=False`).
+- Level log: kredit `0` atau key ditolak 401/403 → **❗ `action`** (merah bold,
+  sesuai konvensi "perlu perubahan manual"); tidak bisa dihubungi / kredit
+  menipis ≥ 90% → ⚠️ `warn` (dedup 30 mnt supaya rerun tidak banjir).
+  Plan yang tidak mengirim angka kredit → tidak ada entri log, hanya caption
+  "Helius tidak mengirim angka kredit untuk plan ini (sisa hanya terlihat di
+  dashboard.helius.dev)" + hitungan request lokal.
+- Pelengkap baru lain: `helius_request_count()` — dihitung di
+  `helius_rpc_request()`/`helius_api_get()` saat request sukses, jadi "±N
+  request sesi ini" selalu benar walau Helius tidak mengirim angka.
+- Suite offline: `tests/__init__.py` menyetel `HELIUS_USAGE_PROBE=0`
+  (kill-switch `core._helius_probe_enabled()`); tes yang menguji transport
+  menyalakannya sendiri lewat `mock.patch.dict`.
+- **Perbaikan berbarengan (bug nyata yang membuat angka "sisa kredit" tak akan
+  pernah terbaca)**: urutan pool key jadi *eksplisit → config passed →
+  Streamlit secrets → env → config.json* dan placeholder
+  `PASTE-API-KEY-KAMU-DISINI` disaring `_KEY_PLACEHOLDER_RE`. Sebelumnya
+  `config.json` (berisi placeholder, ikut ter-bundle di Streamlit Cloud)
+  menang atas secrets, `merge_helius_keys` first-wins, dan
+  `helius_rpc_request` **tidak** rotation-fallback pada HTTP 401 — tiap scan
+  holder mati walaupun key valid terpasang.
+- Tes baru `tests/test_helius_usage.py` (**32**) — parser bentuk kredit,
+  scrub key,
+  cache/TTL + invalidasi saat daftar key berubah, kill-switch offline,
+  fallback host kedua, level log per kejadian, teks summary (termasuk plafon
+  dibagi beberapa key), urutan sumber key, counter request, dan AppTest
+  halaman utama yang memastikan caption Helius benar-benar dirender.
+
+## 3 · Budget waktu Scan Best Robinhood dihapus
+
+- `scan_candidates()`: `CANDIDATE_TIMEOUT_SEC = 300`, `deadline =
+  time.monotonic() + …`, `wait(FIRST_COMPLETED)`, `shutdown(wait=False,
+  cancel_futures=True)` dan param `timeout_sec` **dihapus** →
+  `with ThreadPoolExecutor` + `as_completed(futures)` tanpa timeout. Kandidat
+  ber-holder puluhan ribu tidak lagi ditandai "gagal/lewat budget"; hasil
+  scan tidak kehilangan baris, hanya butuh lebih lama (sesuai keputusan user).
+  Entri log `kandidat lewat budget … dan dilewati` ikut hilang.
+- Yang **tidak** ikut dihapus: timeout HTTP per request GMGN
+  (`_get_json(timeout=25)`), `CSV_TIMEOUT` Blockscout 90 dtk, `PAGE_SLEEP_SEC`,
+  dan masa parkir key PRO (401/402/403/429) — itu proteksi koneksi/kuota,
+  bukan batas umur scan. `timeout-minutes: 15` di workflow cron juga tetap
+  (watchdog Actions; scan best hanya jalan dari tombol UI).
+- Tooltip card sekarang jujur soal durasi ("semua kandidat ditunggu sampai
+  selesai … bisa makan waktu puluhan menit"); label progress `sedang: SYMBOL
+  (+N lagi)` tetap supaya scan panjang tidak kelihatan hang.
+- Tes: `ScanCandidatesTest` dibalik — `test_kandidat_lambat_dilewati_setelah_budget`
+  (dulu menuntut kandidat lambat dibuang) jadi
+  `test_kandidat_lambat_tetap_ditunggu_sampai_selesai`, plus
+  `test_scan_candidates_tidak_menerima_budget_waktu` yang membaca sumber
+  modul: `timeout_sec` / `deadline` / `CANDIDATE_TIMEOUT_SEC` tidak boleh
+  muncul lagi.
+
+Catatan hasil: `python -m unittest discover tests` → **1138 tes** (sebelumnya
+1102: +2 Best Pool, +2 Best Robinhood, +32 Helius) — lulus kecuali 2 tes
+`test_scan_holders` (DurableStoreBackup + EarlyDumpScope) yang **sudah gagal
+di HEAD sebelum perubahan ini juga** (polusi state antar tes saat whole-suite
+discover — store/watchlist betulan; lolos kalau modulnya dijalankan sendiri),
+jadi bukan efek perubahan ini.
+
 # Kegiatan — 10 September 2026 (grid 2 kolom: scan best di bawah watchlist chain-nya)
 
 Permintaan user: *"🏆 Scan Best Pool Meteora dibawah 🌊 Watchlist

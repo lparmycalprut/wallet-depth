@@ -19,6 +19,7 @@ try:  # optional dev dependency
 except Exception:  # noqa: BLE001
     AppTest = None
 
+import best_pool_ui as bp
 import meteora_screener as ms
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
@@ -245,6 +246,43 @@ class BestPoolCardTest(unittest.TestCase):
         self.assertIn(ms.BEST_CARD_TITLE, body)
         keys = [button.key or "" for button in app.button]
         self.assertIn("best-pool-scan-now", keys)
+
+    def test_detail_karakteristik_di_tooltip_bukan_caption(self):
+        """Rule filter card jadi tooltip judul (permintaan user 2026-09-10).
+
+        Teks ambang masih harus disebut — tapi di atribut ``title`` pada teks
+        judul, bukan sebagai caption panjang di badan card. angkanya dibaca
+        dari ``meteora_screener.BEST_*`` sehingga tidak bisa beda dari rule.
+        """
+        import html as _html
+
+        app = self._app()
+        # atribut ``title`` di-escape (``<`` → ``&lt;``) — unescape dulu
+        body = _html.unescape("\n".join(node.value for node in app.markdown))
+        captions = "\n".join(node.value for node in app.caption)
+        self.assertIn('title="Replika listing Scan Meteora Pool', body)
+        for label in (f"dust holder < {ms.BEST_DUST_MAX_PCT:g}% marketcap",
+                      f"fee/active TVL > {ms.BEST_FEE_RATIO_MIN:g}%",
+                      f"volatility > {ms.BEST_VOLATILITY_MIN:g}%",
+                      f"top 10 holder < {ms.BEST_TOP10_MAX_PCT:g}% supply",
+                      f"total LPs > {ms.BEST_TOTAL_LPS_MIN:g}",
+                      "dust % marketcap terkecil dulu, lalu volume terbesar"):
+            self.assertIn(label, body)
+        # caption deskripsi rule sudah hilang dari badan card…
+        self.assertNotIn("Urutan: **dust % MC terkecil**, lalu", captions)
+        self.assertNotIn("lalu saringan layar: dust holder", captions)
+        # …dan judul card-nya yang membawa tooltip, bukan teks telanjang.
+        self.assertIn('title="Replika', "\n".join(
+            node.value for node in app.markdown))
+
+    def test_tooltip_mengikuti_perubahan_konstanta(self):
+        """Tooltip dibangun dari konstanta — ubah ambang, teks ikut berubah."""
+        tooltip = bp.best_pool_tooltip()
+        self.assertIn(f"{ms.BEST_DUST_MAX_PCT:g}%", tooltip)
+        self.assertIn(f"{int(ms.BEST_ACTIVE_TVL_MIN):,}", tooltip)
+        with mock.patch.object(ms, "BEST_DUST_MAX_PCT", 0.07):
+            self.assertIn("0.07%", bp.best_pool_tooltip())
+        self.assertNotIn("0.07%", bp.best_pool_tooltip())
 
     def test_listing_uses_stored_result_without_new_scan(self):
         app = self._app()

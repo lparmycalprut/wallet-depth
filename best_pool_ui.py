@@ -12,8 +12,10 @@ halaman temp) dengan filter baru (permintaan user 2026-09-10):
   total LPs **> 20**;
 - urutan baris: **dust % MC terkecil**, lalu **volume terbesar** (tie-break).
 
-Ambangnya hidup di konstanta ``meteora_screener.BEST_*`` supaya angka di
-tooltip/caption tidak pernah beda dari rule yang benar-benar jalan. ⭐
+Detail karakteristik card = **tooltip judul** (konvensi 2026-09-10,
+permintaan user: "ini juga bikin tooltip saja") — bukan caption panjang di
+badan card. Angka ambangnya diambil dari konstanta ``meteora_screener.BEST_*``
+supaya teks tooltip tidak pernah beda dari rule yang benar-benar jalan. ⭐
 memasukkan token ke card **Watchlist Meteora** di halaman utama
 (``source=meteora``, sama seperti card temp).
 """
@@ -21,17 +23,36 @@ from __future__ import annotations
 
 BEST_SESSION_KEY = "best_pool_scan"
 
-# Detail karakteristik card = tooltip judul (konvensi 2026-09-10): bukan
-# caption panjang di badan card. Atribut ``title`` tidak mengenal markdown.
-BEST_POOL_TOOLTIP = (
-    "Replika Scan Meteora Pool untuk halaman utama dengan filter baru. "
-    "Listing API Meteora (24 jam, category top): pool_type=dlmm, "
-    "fee_pct>=5, active_tvl>=10000. Yang ditampilkan hanya pool dengan "
-    "dust holder < 0.05% marketcap, active TVL > 10K USD, fee/active TVL "
-    "> 20%, volatility > 5%, top 10 holder < 30% supply, dan total LPs "
-    "> 20. Urutan: dust % marketcap terkecil dulu, lalu volume terbesar. "
-    "Tombol bintang memasukkan token ke card Watchlist Meteora; tombol "
-    "kanan membuka Meteora DLMM + HawkFi.")
+
+def best_pool_tooltip() -> str:
+    """Detail karakteristik card — teks tooltip di judul (bukan caption).
+
+    Atribut ``title`` browser tidak mengenal markdown, jadi teksnya plain
+    tanpa ``**``. Semua ambang diambil dari ``meteora_screener.BEST_*``
+    (sumber kebenaran rule), sehingga tooltip ikut berubah kalau filternya
+    diubah — tidak mungkin lagi ada angka tooltip yang beda dengan angka
+    yang jalan.
+    """
+    from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_DUST_MAX_PCT,
+                                  BEST_FEE_PCT_MIN, BEST_FEE_RATIO_MIN,
+                                  BEST_TOTAL_LPS_MIN, BEST_TOP10_MAX_PCT,
+                                  BEST_VOLATILITY_MIN)
+    return (
+        "Replika listing Scan Meteora Pool (halaman temp) untuk halaman "
+        "utama, dengan filter khusus. Listing API Meteora 24 jam (category "
+        "top): pool_type=dlmm, "
+        f"fee_pct>={BEST_FEE_PCT_MIN:g}, "
+        f"active_tvl>={int(BEST_ACTIVE_TVL_MIN):,}. Yang ditampilkan hanya "
+        f"pool dengan dust holder < {BEST_DUST_MAX_PCT:g}% marketcap, active "
+        f"TVL > ${BEST_ACTIVE_TVL_MIN / 1000:g}K, fee/active TVL > "
+        f"{BEST_FEE_RATIO_MIN:g}%, volatility > {BEST_VOLATILITY_MIN:g}%, top "
+        f"10 holder < {BEST_TOP10_MAX_PCT:g}% supply, dan total LPs > "
+        f"{BEST_TOTAL_LPS_MIN:g}. Urutan: dust % marketcap terkecil dulu, lalu "
+        "volume terbesar. ⭐ memasukkan token ke card 🌊 Watchlist Meteora di "
+        "halaman utama; tombol kanan membuka Meteora DLMM + HawkFi. Dust "
+        "dihitung dari scan FULL holder Helius (bukan sampel), jadi scan "
+        "token ber-holder banyak bisa makan waktu beberapa menit.")
+
 
 # Lebar kolom listing: Token, MC, A.TVL, Fee/TVL, Vol, Top10, LPs, Fee,
 # Dust (wallet), Dust %MC, Pool, ⭐.
@@ -49,7 +70,7 @@ def _best_head_html(rows: list, hidden: int) -> str:
     if hidden:
         pills.append('<span class="lp-count" style="color:#334155;'
                      f'background:#e2e8f0;">{hidden} disembunyikan</span>')
-    return card_head_html(BEST_CARD_TITLE, pills, tooltip=BEST_POOL_TOOLTIP)
+    return card_head_html(BEST_CARD_TITLE, pills, tooltip=best_pool_tooltip())
 
 
 def _pct_txt(value, digits: int = 2) -> str:
@@ -72,11 +93,7 @@ def render_best_pool_scan() -> None:
     from holder_history import FULL_SCAN_MAX_WALLETS
     from links import external_links_html, pool_links_html
     from lp_watchlist import LP_SOURCE
-    from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_DUST_MAX_PCT,
-                                  BEST_FEE_PCT_MIN, BEST_FEE_RATIO_MIN,
-                                  BEST_TOTAL_LPS_MIN, BEST_TOP10_MAX_PCT,
-                                  BEST_VOLATILITY_MIN, scan_best_meteora,
-                                  sort_best_rows)
+    from meteora_screener import scan_best_meteora, sort_best_rows
     from watchlist import add_to_watchlist
 
     with st.container(border=True):
@@ -116,20 +133,9 @@ def render_best_pool_scan() -> None:
             int(result.get("hidden_dust") or 0)
         fetched = int(result.get("fetched") or 0)
 
+        # Tanpa caption ambang: detail karakteristik card sudah jadi tooltip
+        # judul (``best_pool_tooltip()``) — permintaan user 2026-09-10.
         st.markdown(_best_head_html(rows, hidden), unsafe_allow_html=True)
-        st.caption(
-            f"Top DLMM 24 jam (`pool_type=dlmm`, `fee_pct ≥ "
-            f"{BEST_FEE_PCT_MIN:g}`, `active_tvl ≥ "
-            f"{int(BEST_ACTIVE_TVL_MIN)}`) lalu saringan layar: dust holder "
-            f"**< {BEST_DUST_MAX_PCT:g}% MC**, active TVL **> "
-            f"${BEST_ACTIVE_TVL_MIN / 1000:g}K**, fee/active TVL **> "
-            f"{BEST_FEE_RATIO_MIN:g}%**, volatility **> "
-            f"{BEST_VOLATILITY_MIN:g}%**, top 10 holder **< "
-            f"{BEST_TOP10_MAX_PCT:g}%**, total LPs **> "
-            f"{BEST_TOTAL_LPS_MIN:g}**. Urutan: **dust % MC terkecil**, lalu "
-            "**volume terbesar**. ⭐ memasukkan token ke card **Watchlist "
-            "Meteora** di halaman utama."
-        )
         if error:
             st.warning(f"Meteora API: {error}")
         if fetched:

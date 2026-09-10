@@ -10,7 +10,7 @@ dan Streamlit sama-sama boleh menulis). Empat level:
 
 - ``info``   — kejadian normal (scan mulai/selesai, sumber data terpakai);
 - ``warn``   — anomali yang pulih sendiri (429 rate limit, retry, fallback
-  ke instance publik, kandidat lewat budget waktu);
+  ke instance publik, kredit Helius menipis);
 - ``error``  — kegagalan satu operasi (listing gagal, scan exception);
 - ``action`` — **butuh perubahan manual user** (key ditolak/kredit habis,
   API key belum terpasang) → dirender **merah bold**.
@@ -151,9 +151,13 @@ def entry_html(entry: dict) -> str:
 def render_activity_log() -> None:
     """Panel **🧾 Log Aktivitas** — dipanggil di paling bawah ``app.py``.
 
-    Kepala panel: pill jumlah ❗ action / ✖ error / ⚠️ warn + ringkasan pool
-    key PRO Blockscout (`key#N sisa kredit / parkir`) supaya pertanyaan
-    "apakah kena limit di semua key?" terjawab tanpa buka terminal.
+    Kepala panel: pill jumlah ❗ action / ✖ error / ⚠️ warn + dua baris
+    status kuota: pool key PRO Blockscout (`pro_key_summary()`, ``key#N sisa
+    kredit / parkir``) dan **sisa kredit Helius**
+    (`core.helius_usage_summary()`) — pertanyaan "apakah kena limit di semua
+    key?" dan "kredit Helius tinggal berapa?" terjawab tanpa buka terminal.
+    Baris Helius dibaca dari cache (probe jalan di thread latar) supaya render
+    halaman tidak pernah menunggu jaringan.
     """
     import streamlit as st
 
@@ -170,7 +174,8 @@ def render_activity_log() -> None:
                      f'background:#fecaca;">✖ {stats[LEVEL_ERROR]} error</span>')
     if stats.get(LEVEL_WARN):
         pills.append('<span class="lp-count" style="color:#78350f;'
-                     f'background:#fde68a;">⚠️ {stats[LEVEL_WARN]} warning</span>')
+                     f'background:#fde68a;">⚠️ {stats[LEVEL_WARN]} '
+                     'warning</span>')
     total = sum(stats.values())
     pills.append(f'<span class="lp-count">{total} entri</span>')
 
@@ -179,10 +184,12 @@ def render_activity_log() -> None:
             "🧾 Log Aktivitas", pills,
             tooltip=("Kejadian penting semua card sesi app ini: scan "
                      "mulai/selesai, rate limit & parkir key PRO Blockscout, "
-                     "fallback instance publik, kandidat lewat budget waktu, "
+                     "fallback instance publik, status kredit/key Helius, "
                      "listing gagal. Merah bold = perlu perubahan manual "
                      "(pasang/ganti API key, kredit habis). Log hidup di "
-                     "memori proses app — kosong lagi setelah restart.")),
+                     "memori proses app — kosong lagi setelah restart. Baris "
+                     "kuota di bawah dibaca dari cache 5 menit, bukan setiap "
+                     "render.")),
             unsafe_allow_html=True)
 
         # Status pool key PRO Blockscout — jawaban langsung "kena limit di
@@ -198,6 +205,17 @@ def render_activity_log() -> None:
                            "semua request Robinhood lewat instance publik "
                            "(rate limit ketat).")
         except Exception:  # noqa: BLE001 - status key hanya pelengkap
+            pass
+
+        # Sisa kredit Helius (permintaan user 2026-09-10) — plafon bulanan
+        # key yang dipakai semua scan holder Solana. Non-blokir: angka dari
+        # cache, probe pertama/berusia > 5 mnt dijalankan di thread latar.
+        try:
+            import core
+            helius = core.helius_usage_summary()
+            if helius:
+                st.caption(helius)
+        except Exception:  # noqa: BLE001 - status kredit hanya pelengkap
             pass
 
         rows = entries(RENDER_LIMIT)
