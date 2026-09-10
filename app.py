@@ -25,6 +25,7 @@ from dashboard_components import (_ca_error, _compact, _dust_badge_html,
                                   SOLANA_CA_RE, load_dashboard_data,
                                   render_styles)
 from telegram_alerts import process_holder_alerts
+import robinhood_best_scan
 import robinhood_holders
 from robinhood_watchlist import (split_robinhood_watchlist)
 from holder_analysis import analyze_token
@@ -577,3 +578,12 @@ render_best_pool_scan()
 
 st.divider()
 _render_helius_holder_scan()
+
+# ---------------------------------------------------------------------------
+# Scan Best Robinhood Coin (2026-09-10) — listing GMGN volume 6 jam + filter
+# top 10 holder < 30% + dust holder ≤ 0,05% MC (Blockscout); urut dust
+# terkecil lalu volume 6 jam terbesar; pernah Dexboost = poin tambah (🚀).
+# Bentuk card meniru Scan Meteora Pool (⭐ = Watchlist Robinhood LP).
+# ---------------------------------------------------------------------------
+st.divider()
+robinhood_best_scan.render_robinhood_best_scan()
