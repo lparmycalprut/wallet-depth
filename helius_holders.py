@@ -128,6 +128,25 @@ def scan_token_holders(ca: str, *, max_wallets: int | None = None,
     depth = wallet_depth(snapshot.get("holders") or [], mc,
                          pool_addresses=pools, include_pools=include_pools)
     scan_failed = not snapshot.get("holders") or price <= 0
+    try:
+        import activity_log
+        short = f"{ca[:8]}…"
+        if no_keys:
+            activity_log.action(
+                "scan-holder", "Helius API key belum terpasang — isi "
+                "helius_api_key di config.json / env HELIUS_API_KEY / "
+                "Streamlit secrets")
+        elif scan_failed:
+            activity_log.error(
+                "scan-holder", f"scan {short} gagal: "
+                f"{str(snapshot.get('error') or 'tanpa holder/harga')[:140]}")
+        else:
+            activity_log.info(
+                "scan-holder", f"scan {short}: "
+                f"{int(snapshot.get('fetched') or 0):,} akun via Helius"
+                + (" (terpotong)" if snapshot.get("truncated") else ""))
+    except Exception:  # noqa: BLE001 - log hanya pelengkap
+        pass
     return {
         "mint": ca,
         "symbol": str(market.get("symbol") or "?"),

@@ -236,6 +236,64 @@ class ScanBestTest(unittest.TestCase):
         self.assertEqual(result["skipped"]["failed"], 3)
 
 
+class ScanCandidatesTest(unittest.TestCase):
+    """Budget waktu per kandidat + progress "sedang" (2026-09-10).
+
+    Kejadian nyata: progress macet di "Holder 6/7" berjam-jam karena satu
+    token ber-holder sangat banyak jatuh ke paginasi RPC lambat. Sekarang
+    kandidat yang lewat ``timeout_sec`` dilewati (dianggap gagal) dan label
+    progress menyebut token yang sedang digiling.
+    """
+
+    def _row(self, ca, symbol="TOK"):
+        return {"ca": ca, "symbol": symbol, "mc": 1_000_000, "price": 0.5}
+
+    def test_kandidat_lambat_dilewati_setelah_budget(self):
+        import threading
+        release = threading.Event()
+        self.addCleanup(release.set)  # thread lambat tidak bocor antar tes
+
+        def _analyze(ca, symbol, **kwargs):
+            if ca == CA_B:
+                release.wait(timeout=30)  # jauh melebihi budget tes
+            return {"holders": _analysis(0.01)["holders"]}
+
+        with mock.patch("robinhood_holders.analyze_token",
+                        side_effect=_analyze):
+            analyses = rbs.scan_candidates(
+                [self._row(CA_A), self._row(CA_B)],
+                workers=2, timeout_sec=1.0)
+        self.assertIn(CA_A, analyses)      # yang cepat tetap dapat hasil
+        self.assertNotIn(CA_B, analyses)   # yang lambat dilewati, bukan digantung
+
+    def test_progress_menyebut_kandidat_yang_sedang_jalan(self):
+        labels = []
+
+        def _analyze(ca, symbol, **kwargs):
+            return {"holders": _analysis(0.01)["holders"]}
+
+        with mock.patch("robinhood_holders.analyze_token",
+                        side_effect=_analyze):
+            rbs.scan_candidates(
+                [self._row(CA_A, "AAA")], workers=1,
+                progress=lambda done, total, label: labels.append(label))
+        self.assertTrue(any("AAA" in str(label) for label in labels),
+                        f"label progress tidak menyebut token: {labels}")
+
+    def test_progress_error_tidak_mematikan_scan(self):
+        def _analyze(ca, symbol, **kwargs):
+            return {"holders": _analysis(0.01)["holders"]}
+
+        def _boom(*args):
+            raise RuntimeError("progress rusak")
+
+        with mock.patch("robinhood_holders.analyze_token",
+                        side_effect=_analyze):
+            analyses = rbs.scan_candidates([self._row(CA_A)], workers=1,
+                                           progress=_boom)
+        self.assertIn(CA_A, analyses)
+
+
 class RenderTest(unittest.TestCase):
     """AppTest halaman utama: card + tombol scan + baris hasil."""
 

@@ -393,7 +393,15 @@ def scan_meteora(*, max_wallets: int | None = None, workers: int = 6,
     if max_wallets is None:
         from holder_history import FULL_SCAN_MAX_WALLETS
         max_wallets = FULL_SCAN_MAX_WALLETS
+    try:
+        import activity_log as _alog
+    except Exception:  # noqa: BLE001 - log hanya pelengkap
+        _alog = None
+    if _alog:
+        _alog.info("scan-meteora", "scan mulai: listing pool DLMM Meteora")
     rows, error = fetch_listing(timeout=timeout)
+    if _alog and error:
+        _alog.error("scan-meteora", f"listing Meteora gagal: {error[:160]}")
     fetched = len(rows)
     if rows:
         rows = enrich_pools(rows, max_wallets=max_wallets, workers=workers,
@@ -404,6 +412,10 @@ def scan_meteora(*, max_wallets: int | None = None, workers: int = 6,
         rows = sort_rows(rows)
     else:
         hidden = 0
+    if _alog:
+        _alog.info("scan-meteora",
+                   f"scan selesai: {len(rows)} pool tampil dari {fetched} "
+                   f"listing ({hidden} disembunyikan dust)")
     return {
         "rows": rows,
         "error": error,
@@ -595,11 +607,20 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
         from holder_history import FULL_SCAN_MAX_WALLETS
         max_wallets = FULL_SCAN_MAX_WALLETS
     try:
+        import activity_log as _alog
+    except Exception:  # noqa: BLE001 - log hanya pelengkap
+        _alog = None
+    if _alog:
+        _alog.info("scan-best-pool", "scan mulai: listing Best Pool Meteora")
+    try:
         pools = fetch_best_pools(timeframe=timeframe, page_size=page_size,
                                  timeout=timeout)
         error = ""
     except Exception as exc:  # noqa: BLE001 - kegagalan API jadi pesan card
         pools, error = [], str(exc)
+        if _alog:
+            _alog.error("scan-best-pool",
+                        f"listing Meteora gagal: {str(exc)[:160]}")
     rows = rows_from_pools(pools)
     candidates = [row for row in rows if not row_best_gaps(row)]
     hidden_metric = len(rows) - len(candidates)
@@ -608,6 +629,11 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
                                   workers=workers, progress=progress)
     kept, _, hidden_dust = filter_best_rows(candidates)
     kept = sort_best_rows(kept)
+    if _alog:
+        _alog.info("scan-best-pool",
+                   f"scan selesai: {len(kept)} pool lolos dari {len(rows)} "
+                   f"listing ({hidden_metric} gugur metrik, {hidden_dust} "
+                   "gugur dust)")
     return {
         "rows": kept,
         "error": error,

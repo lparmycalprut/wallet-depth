@@ -250,18 +250,36 @@ def sort_rows(rows: list | None) -> list:
     return out
 
 
+# Budget waktu satu kandidat (detik). Token ber-holder sangat banyak jatuh
+# ke paginasi RPC 400/halaman + jeda 0,6 dtk — bisa 10-15 menit sendirian dan
+# progress bar terlihat "macet 6/7" (kejadian nyata 2026-09-10). Lewat budget
+# → kandidat ditandai gagal ("holder tidak lengkap") dan scan lanjut; thread
+# yang telat dibiarkan menyelesaikan request terakhirnya di latar belakang
+# (future Python tidak bisa dibunuh paksa) tetapi hasilnya tidak ditunggu.
+CANDIDATE_TIMEOUT_SEC = 300
+
+
 def scan_candidates(candidates: list, *, max_wallets: int | None = None,
-                    workers: int = DEFAULT_WORKERS, progress=None) -> dict:
+                    workers: int = DEFAULT_WORKERS, progress=None,
+                    timeout_sec: float = CANDIDATE_TIMEOUT_SEC) -> dict:
     """Dust holder Blockscout per kandidat; return ``{ca: analysis}``.
 
     Harga & marketcap diambil dari baris GMGN (bukan DexScreener) supaya
     dust % MC konsisten dengan sumber listing; ``fetch_market=True`` tetap
     dinyalakan **hanya** untuk metadata pool DexScreener (LP/pool
     disingkirkan dari hitungan dust) — satu panggilan ringan per token.
+
+    ``progress(done, total, label)`` dipanggil saat kandidat **mulai**
+    dikerjakan dan saat selesai — label menyebut simbol/CA yang sedang
+    digiling supaya "6/7" tidak terlihat seperti hang. ``timeout_sec``
+    membatasi umur satu kandidat; sisa yang belum selesai saat budget habis
+    dilewati (bukan digantung selamanya).
     """
+    import threading
+
     import holder_analysis
     import robinhood_holders
-    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
     max_wallets = int(max_wallets or holder_history.FULL_SCAN_MAX_WALLETS)
     analyses: dict = {}
@@ -270,8 +288,33 @@ def scan_candidates(candidates: list, *, max_wallets: int | None = None,
         return analyses
     workers = max(1, min(int(workers), 8))
 
+    active: dict[str, str] = {}   # ca → label yang sedang jalan
+    active_lock = threading.Lock()
+    done = 0
+
+    def _emit(label: str) -> None:
+        if progress:
+            try:
+                progress(done, total, label)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _running_label() -> str:
+        with active_lock:
+            running = list(active.values())
+        if not running:
+            return ""
+        label = running[0]
+        if len(running) > 1:
+            label += f" (+{len(running) - 1} lagi)"
+        return f"sedang: {label}"
+
     def _job(row):
         ca = str(row.get("ca") or "")
+        label = str(row.get("symbol") or ca[:8] or "?").upper()
+        with active_lock:
+            active[ca] = label
+        _emit(_running_label())
         try:
             analysis = robinhood_holders.analyze_token(
                 ca, str(row.get("symbol") or "?"),
@@ -284,24 +327,59 @@ def scan_candidates(candidates: list, *, max_wallets: int | None = None,
             return ca, analysis, None
         except Exception as exc:  # noqa: BLE001
             return ca, None, str(exc)
+        finally:
+            with active_lock:
+                active.pop(ca, None)
 
-    done = 0
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(_job, row): str(row.get("ca") or "")
-                   for row in (candidates or [])}
-        for future in as_completed(futures):
-            ca, analysis, error = future.result()
-            if analysis is not None:
-                analyses[ca] = analysis
-            elif error:
-                print(f"WARN rh-best {ca[:8]}: {error}",
-                      file=__import__("sys").stderr)
-            done += 1
-            if progress:
-                try:
-                    progress(done, total, ca[:8])
-                except Exception:  # noqa: BLE001
-                    pass
+    deadline = time.monotonic() + max(1.0, float(timeout_sec))
+    # BUKAN ``with ThreadPoolExecutor(...)``: __exit__ memanggil
+    # shutdown(wait=True) yang menunggu SEMUA thread selesai — persis
+    # gantungan yang mau dihindari. shutdown(wait=False) di finally.
+    pool = ThreadPoolExecutor(max_workers=workers)
+    pending = {pool.submit(_job, row): str(row.get("ca") or "")
+               for row in (candidates or [])}
+    try:
+        while pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            finished, _ = wait(pending, timeout=min(remaining, 5.0),
+                               return_when=FIRST_COMPLETED)
+            for future in finished:
+                del pending[future]
+                ca, analysis, error = future.result()
+                if analysis is not None:
+                    analyses[ca] = analysis
+                elif error:
+                    print(f"WARN rh-best {ca[:8]}: {error}",
+                          file=__import__("sys").stderr)
+                    try:
+                        import activity_log
+                        activity_log.error(
+                            "scan-best-rh",
+                            f"kandidat {ca[:10]}… gagal: {error[:140]}")
+                    except Exception:  # noqa: BLE001
+                        pass
+                done += 1
+                _emit(_running_label() or ca[:8])
+        if pending:
+            # Budget habis: kandidat yang tersisa dianggap gagal
+            # ("holder tidak lengkap") — jangan menunggu selamanya.
+            slow = [pending_ca[:10] + "…" for pending_ca in pending.values()]
+            try:
+                import activity_log
+                activity_log.warn(
+                    "scan-best-rh",
+                    f"{len(slow)} kandidat lewat budget "
+                    f"{int(timeout_sec)} dtk dan dilewati: "
+                    f"{', '.join(slow[:5])} — biasanya token ber-holder "
+                    "sangat banyak (paginasi Blockscout lambat)")
+            except Exception:  # noqa: BLE001
+                pass
+    finally:
+        # Thread yang masih jalan dibiarkan menyelesaikan request
+        # terakhirnya di latar belakang; hasilnya tidak ditunggu.
+        pool.shutdown(wait=False, cancel_futures=True)
     return analyses
 
 
@@ -313,7 +391,18 @@ def scan_best(limit: int = DEFAULT_LIMIT, workers: int = DEFAULT_WORKERS,
     from holder_history import holders_usable
 
     limit = max(1, int(limit))
+    try:
+        import activity_log as _alog
+    except Exception:  # noqa: BLE001 - log hanya pelengkap
+        _alog = None
+    if _alog:
+        _alog.info("scan-best-rh",
+                   f"scan mulai: listing GMGN top {limit} (volume "
+                   f"{SCAN_INTERVAL})")
     fetched_rows, error = fetch_ranking(interval=SCAN_INTERVAL, limit=limit)
+    if _alog and error:
+        _alog.error("scan-best-rh",
+                    f"listing GMGN gagal: {_short_error(error)}")
     result = {
         "rows": [],
         "error": error,
@@ -365,6 +454,18 @@ def scan_best(limit: int = DEFAULT_LIMIT, workers: int = DEFAULT_WORKERS,
 
     result["rows"] = sort_rows(kept)
     result["dexboost"] = sum(1 for r in result["rows"] if r.get("dexboost"))
+    if _alog:
+        sk = result["skipped"]
+        _alog.info(
+            "scan-best-rh",
+            f"scan selesai: {len(result['rows'])} coin lolos dari "
+            f"{len(fetched_rows)} listing (dust>{RH_SCAN_MAX_DUST_PCT:g}%="
+            f"{sk['dust']}, top10={sk['top10']}, honeypot={sk['honeypot']}, "
+            f"gagal={sk['failed']})")
+        if result.get("blocked"):
+            _alog.warn("scan-best-rh",
+                       f"{int(result['blocked'])} kandidat tertolak "
+                       "Blockscout 403 — lihat entri blockscout di log")
     return result
 
 

@@ -268,6 +268,63 @@ class ProKeysParked(RuntimeError):
     """Semua key PRO sedang diparkir (ditolak / kredit habis / RPS)."""
 
 
+# ---------------------------------------------------------------------------
+# Log aktivitas (panel 🧾 di bawah halaman utama, 2026-09-10) — kejadian pool
+# key PRO / bot-protection dicatat supaya user melihat "kena limit di key
+# mana" tanpa membuka terminal. Import ditunda + dibungkus supaya modul ini
+# tetap jalan di cron/tes tanpa activity_log.
+# ---------------------------------------------------------------------------
+def _log_key_parked(label: str, status: int, detail: str = "") -> None:
+    try:
+        import activity_log
+    except Exception:  # noqa: BLE001 - log hanya pelengkap
+        return
+    status = int(status)
+    minutes = int(PRO_PARK_SEC.get(status, 300) // 60)
+    if status == 402:
+        activity_log.action(
+            "blockscout", f"PRO API {label}: kredit harian HABIS (402) — "
+            f"parkir {minutes} mnt; tunggu reset harian atau tambah key "
+            "akun lain ke BLOCKSCOUT_API_KEYS")
+    elif status in (401, 403):
+        activity_log.action(
+            "blockscout", f"PRO API {label}: key DITOLAK ({status}"
+            f"{', ' + detail if detail else ''}) — parkir {minutes} mnt; "
+            f"periksa key di dashboard {BLOCKSCOUT_KEY_URL}")
+    else:  # 429 — pulih sendiri, cukup warning
+        activity_log.warn(
+            "blockscout", f"PRO API {label}: rate limit RPS (429) — key "
+            "diparkir sebentar, request pindah ke key berikutnya")
+
+
+def _log_all_keys_parked(pool) -> None:
+    try:
+        import activity_log
+    except Exception:  # noqa: BLE001
+        return
+    activity_log.warn(
+        "blockscout", f"SEMUA {len(pool.keys)} key PRO diparkir — request "
+        f"jatuh ke instance publik (lambat). {pool.summary()}")
+
+
+def _log_blocked(exc) -> None:
+    try:
+        import activity_log
+    except Exception:  # noqa: BLE001
+        return
+    keys = len(get_pro_api_keys())
+    if keys:
+        activity_log.action(
+            "blockscout", "Instance publik menolak request (403 "
+            f"bot-protection) dan {keys} key PRO tidak menolong — "
+            f"periksa kredit/status key di {BLOCKSCOUT_KEY_URL}")
+    else:
+        activity_log.action(
+            "blockscout", "Instance publik menolak request (403 "
+            "bot-protection) — pasang BLOCKSCOUT_API_KEY (key gratis: "
+            f"{BLOCKSCOUT_KEY_URL}) supaya scan lewat PRO API")
+
+
 def _status_code(exc) -> int:
     response = getattr(exc, "response", None)
     try:
@@ -616,6 +673,7 @@ def _pro_round(pool: _ProKeyPool, url: str, params: dict | None,
     """
     candidates = pool.candidates()
     if not candidates:
+        _log_all_keys_parked(pool)
         return None, ProKeysParked(
             f"semua {len(pool.keys)} key PRO diparkir ({pool.summary()})")
     last: Exception | None = None
@@ -632,6 +690,7 @@ def _pro_round(pool: _ProKeyPool, url: str, params: dict | None,
                           f"{exc.detail or ''} — key diparkir "
                           f"{int(PRO_PARK_SEC.get(exc.status, 300) // 60)} mnt",
                           file=sys.stderr)
+                _log_key_parked(label, exc.status, exc.detail)
                 continue
             return None, exc
         except Exception as exc:  # noqa: BLE001 - jaringan/5xx: retry di luar
@@ -752,6 +811,8 @@ def _blockscout_get(url: str, *, params: dict | None = None,
                          f"PRO: {pro_exc}",
                     hint=BlockscoutBlocked.HINT_KEYS_FAILED)
             if attempt >= attempts or not is_transient_error(exc):
+                if isinstance(last_exc, BlockscoutBlocked):
+                    _log_blocked(last_exc)
                 raise last_exc
             time.sleep(RETRY_BACKOFF_SEC * (2 ** attempt))
     raise last_exc  # pragma: no cover - loop selalu return/raise
@@ -1244,6 +1305,24 @@ def fetch_holders(ca: str, *, max_wallets: int | None = None,
     if holders and truncated:
         errors.append(f"holder tidak lengkap: {len(holders)}/{onchain_count or '?'}; "
                       "dust % MC belum dapat dipakai")
+    try:
+        import activity_log
+        short = f"{ca[:10]}…"
+        if not holders:
+            activity_log.error(
+                "blockscout", f"fetch holder {short} GAGAL: "
+                f"{'; '.join(errors)[:160] or 'tanpa detail'}")
+        elif truncated:
+            activity_log.warn(
+                "blockscout", f"fetch holder {short}: TERPOTONG "
+                f"{len(holders)}/{onchain_count or '?'} via {source} — "
+                "dust % MC tidak dipakai")
+        else:
+            activity_log.info(
+                "blockscout", f"fetch holder {short}: {len(holders):,} "
+                f"wallet via {source}{' (' + last_key_label() + ')' if last_key_label() else ''}")
+    except Exception:  # noqa: BLE001 - log hanya pelengkap
+        pass
 
     result = {
         "holders": holders,

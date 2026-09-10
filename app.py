@@ -25,6 +25,7 @@ from dashboard_components import (_ca_error, _compact, _dust_badge_html,
                                   SOLANA_CA_RE, load_dashboard_data,
                                   render_styles)
 from telegram_alerts import process_holder_alerts
+import activity_log
 import robinhood_best_scan
 import robinhood_holders
 from robinhood_watchlist import (split_robinhood_watchlist)
@@ -545,9 +546,11 @@ status_tokens = holder_status.get("tokens") or {}
 lp_watch, _ = split_watchlist(watchlist)
 
 # ---------------------------------------------------------------------------
-# Grid 2 kolom (2026-09-10): **kiri** Watchlist Meteora, **kanan** Watchlist
-# Robinhood — dua watchlist LP yang sama-sama di-scan cron tiap ±5 menit
-# berdampingan (permintaan user). Scan Meteora Pool pindah ke halaman temp
+# Grid 2 kolom (2026-09-10): **kiri** kolom Meteora (🌊 Watchlist Meteora +
+# 🏆 Scan Best Pool Meteora di bawahnya), **kanan** kolom Robinhood (🦅
+# Watchlist Robinhood + 🦅 Scan Best Robinhood Coin di bawahnya) — permintaan
+# user 2026-09-10: card scan best tiap chain menempel di bawah watchlist
+# chain-nya, bukan full-width. Scan Meteora Pool tetap di halaman temp
 # (⭐-nya tetap memasukkan token ke card kiri ini). Scan Holder tetap
 # full-width di bawah (form + chart-nya lebar). Di layar sempit Streamlit
 # otomatis menumpuk kolomnya.
@@ -556,34 +559,34 @@ rh_lp_watch, _ = split_robinhood_watchlist(data.rh_watchlist)
 _lp_col, _rh_col = st.columns([1, 1], gap="medium")
 with _lp_col:
     _render_lp_card(lp_watch, status_tokens, history_store)
+    # 🏆 Scan Best Pool Meteora — listing API Meteora 24 jam
+    # ``pool_type=dlmm&&fee_pct>=5&&active_tvl>=10000``, saringan layar dust
+    # holder < 0,05% MC, active TVL > 10K, fee/active TVL > 20%, volatility
+    # > 5%, top 10 holder < 30%, total LPs > 20; urut dust terkecil lalu
+    # volume terbesar. ⭐ memasukkan token ke card Watchlist Meteora di atas.
+    render_best_pool_scan()
 with _rh_col:
     _render_rh_card(rh_lp_watch, data.rh_status.get("tokens") or {},
                     data.rh_history,
                     int(datetime.now(timezone.utc).timestamp()), variant="lp",
                     merge_status=data.rh_status)
-
-st.divider()
-
-# ---------------------------------------------------------------------------
-# 🏆 Scan Best Pool Meteora (permintaan user 2026-09-10) — replika **🌊 Scan
-# Meteora Pool** (halaman temp) di halaman utama dengan filter baru: listing
-# API Meteora 24 jam ``pool_type=dlmm&&fee_pct>=5&&active_tvl>=10000``, lalu
-# saringan layar dust holder < 0,05% MC, active TVL > 10K, fee/active TVL >
-# 20%, volatility > 5%, top 10 holder < 30%, total LPs > 20. Urutan baris:
-# dust % MC terkecil lalu volume terbesar. Card-nya full-width (12 kolom
-# listing) jadi tidak ikut grid 2 kolom watchlist di atas; ⭐ tetap
-# memasukkan token ke card Watchlist Meteora (kiri).
-# ---------------------------------------------------------------------------
-render_best_pool_scan()
+    # 🦅 Scan Best Robinhood Coin — listing GMGN volume 6 jam + filter top 10
+    # holder < 30% + dust holder ≤ 0,05% MC (Blockscout); urut dust terkecil
+    # lalu volume 6 jam terbesar; pernah Dexboost = poin tambah (🚀).
+    # ⭐ = Watchlist Robinhood LP di atas.
+    robinhood_best_scan.render_robinhood_best_scan()
 
 st.divider()
 _render_helius_holder_scan()
 
 # ---------------------------------------------------------------------------
-# Scan Best Robinhood Coin (2026-09-10) — listing GMGN volume 6 jam + filter
-# top 10 holder < 30% + dust holder ≤ 0,05% MC (Blockscout); urut dust
-# terkecil lalu volume 6 jam terbesar; pernah Dexboost = poin tambah (🚀).
-# Bentuk card meniru Scan Meteora Pool (⭐ = Watchlist Robinhood LP).
+# 🧾 Log Aktivitas (2026-09-10, paling bawah) — kejadian penting semua card:
+# scan mulai/selesai (Meteora/Best Pool/Best Robinhood/Scan Holder), rate
+# limit & parkir key PRO Blockscout, fallback instance publik, 403
+# bot-protection, sync watchlist GitHub gagal. Merah bold = perlu perubahan
+# manual user (pasang/ganti API key, kredit habis). Kepala panel menampilkan
+# status pool key PRO (`pro_key_summary`) — jawaban langsung "kena limit di
+# key mana".
 # ---------------------------------------------------------------------------
 st.divider()
-robinhood_best_scan.render_robinhood_best_scan()
+activity_log.render_activity_log()
