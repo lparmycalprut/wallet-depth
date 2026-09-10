@@ -1,3 +1,18 @@
+# Kegiatan — 10 September 2026 (grid 2 kolom: scan best di bawah watchlist chain-nya)
+
+Permintaan user: *"🏆 Scan Best Pool Meteora dibawah 🌊 Watchlist
+Meteora; 🦅 Scan Best Robinhood Coin dibawah 🦅 Watchlist Robinhood —
+kita edit tampilannya, menjadi 2 grid."*
+
+- `app.py`: kedua card scan best pindah **masuk ke grid 2 kolom** —
+  kolom kiri = 🌊 Watchlist Meteora + 🏆 Scan Best Pool Meteora, kolom
+  kanan = 🦅 Watchlist Robinhood + 🦅 Scan Best Robinhood Coin. Dulu
+  keduanya full-width di bawah grid (Best Pool sebelum Scan Holder,
+  Best Robinhood setelahnya). 🛰 Scan Holder dan 🧾 Log Aktivitas tetap
+  full-width di bawah grid. Tidak ada perubahan logika scan/render card
+  — hanya penempatan (listing di dalam card memakai kolom relatif, jadi
+  aman menyempit setengah lebar).
+
 # Kegiatan — 10 September 2026 (🧾 Log Aktivitas + scan "macet 6/7")
 
 User melaporkan **Scan Best Robinhood macet di 6/7** dan **Scan Holder

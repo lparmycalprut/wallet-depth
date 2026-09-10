@@ -10,13 +10,15 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
 ## Pembagian halaman (2026-09-10)
 
 - `app.py` = halaman utama: **grid 2 kolom** (`st.columns([1, 1],
-  gap="medium")`) — **kiri** 🌊 Watchlist Meteora (dulu "Chart LP — Watchlist
-  Meteora"), **kanan** 🦅 Watchlist Robinhood (LP) — dua watchlist LP
-  kadens ±5 menit berdampingan (2026-09-10); di bawahnya **🏆 Scan Best
-  Pool Meteora** (full-width, `best_pool_ui.render_best_pool_scan()`,
-  2026-09-10) lalu 🛰 Scan Holder Solana / Robinhood (dulu "Scan Holder
-  Khusus — Helius / Robinhood", full-width), dan di bawahnya lagi
-  **🦅 Scan Best Robinhood Coin** (full-width, 2026-09-10; modul
+  gap="medium")`) — **kiri** kolom Meteora: 🌊 Watchlist Meteora (dulu
+  "Chart LP — Watchlist Meteora") + **🏆 Scan Best Pool Meteora**
+  (`best_pool_ui.render_best_pool_scan()`) di bawahnya; **kanan** kolom
+  Robinhood: 🦅 Watchlist Robinhood (LP) + **🦅 Scan Best Robinhood
+  Coin** di bawahnya — card scan best tiap chain menempel di bawah
+  watchlist chain-nya (2026-09-10, dulu keduanya full-width). Di bawah
+  grid: 🛰 Scan Holder Solana / Robinhood (dulu "Scan Holder Khusus —
+  Helius / Robinhood", full-width). Detail **🦅 Scan Best Robinhood
+  Coin** (2026-09-10; modul
   `robinhood_best_scan.py` — listing GMGN `GET
   /defi/quotation/v1/rank/robinhood/swaps/6h?orderby=volume` **publik
   tanpa auth**, filter top 10 holder < 30% + dust ≤ 0,05% MC dari
