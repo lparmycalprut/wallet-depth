@@ -1,3 +1,181 @@
+# Kegiatan — 11 September 2026 (🏆 Scan Best Pool Meteora: kriteria diganti total)
+
+Permintaan user: *"untuk Scan Meteora pool kita ganti seperti ini … kriteria
+yang sebelumnya, ganti total dengan ini"* — disertai curl
+`pool-discovery-api.datapi.meteora.ag/pools?page_size=50&timeframe=24h&category=top&filter_by=pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000`
++ respons JSON-nya, dan daftar "kondisi": hanya tampilkan dust < 0,05% MC,
+kasih detail fee / active TVL di tabel, urut dust terkecil lalu fee/active
+TVL terbesar, volatility minimal 2%, lalu urutkan dari kenaikan volume
+terbesar. Ditanya balik, user memilih: card = **🏆 Scan Best Pool Meteora**
+saja (card 🌊 /temp + 🦅 tidak disentuh), saringan lama = **dihapus** (bukan
+ditumpuk), "kenaikan volume" = **`volume_change_pct`** (bukan volume
+absolut).
+
+## 1 · Rule baru (`meteora_screener.py`)
+
+- Konstanta: `BEST_FEE_PCT_MIN` 5,0 → **2,0**, `BEST_ACTIVE_TVL_MIN` 10.000
+  → **50.000** (keduanya hanya dikirim ke API sebagai `filter_by`, TIDAK
+  diulang di layar), `BEST_VOLATILITY_MIN` 5,0 → **2,0** dengan operator
+  **`>=`** ("minimal 2%" — 2,0% lolos; beda dari rule lama yang ketat `>`).
+  `BEST_DUST_MAX_PCT` tetap **0,05** dan tetap ketat `<` (data dust hilang =
+  gugur). `BEST_FEE_RATIO_MIN`, `BEST_TOP10_MAX_PCT`, `BEST_TOTAL_LPS_MIN`
+  **dihapus** bersama layarnya.
+- `row_best_gaps()` menyusut dari 5 cek metrik jadi **1 cek** (volatility).
+  Fungsi + label gapnya tetap satu-satunya sumber angka "gugur metrik"
+  (`hidden_metric`) supaya pill "N disembunyikan" jujur.
+- `_row_from_pool()` menambah **`fee`** (fee 24 jam, USD) dan
+  **`volume_change_pct`** — dipakai tabel + kunci urut. Card 🌊 Scan Meteora
+  Pool memakai fungsi yang sama tapi tidak menampilkan field baru, jadi
+  listingnya tidak berubah.
+- `sort_best_rows()`: `(bawa dust? , dust % MC asc (3 desimal tampilan),
+  -fee/active TVL, -volume_change_pct, simbol)`. Baris tanpa angka dust tetap
+  paling bawah.
+
+## 2 · Tabel + tooltip card (`best_pool_ui.py`)
+
+- Kepala tabel sekarang: `Token · MC · A.TVL · Fee/TVL · Vol 24h · Volat ·
+  Top10 · LPs · Dust · Dust %MC · Pool · ⭐` — tetap 12 kolom: kolom "Fee"
+  (tier fee saja) dihapus dan posisinya dipakai untuk **Vol 24h** (Δ volume
+  hijau/merah jadi baris kecilnya), tier fee pindah ke baris kecil
+  **Fee/TVL** (`fee $97.7K·2%`), dan kolom volatilitas lama `Vol` berganti
+  nama jadi `Volat` supaya tidak tabrakan. Jadi "detail fee / active TVL"
+  bisa dibaca langsung: A.TVL = penyebut, fee = pembilang, rasio = kunci urut
+  kedua.
+- Tiap sel metrik dapat atribut `title` berisi **angka penuh** + statusnya
+  ("kunci urut kedua (terbesar dulu)", "hanya informasi, bukan saringan lagi
+  sejak 2026-09-11"). Konvensi 2026-09-10 tetap: prose rule hanya di tooltip
+  judul, badan card hanya angka rekap.
+- `best_pool_tooltip()` ditulis ulang — query API, dua saringan, tiga kunci
+  urut — dan **semua angkanya dibaca dari konstanta** `meteora_screener.BEST_*`
+  (konvensi AGENTS.md). Enam konstanta lama yang dihapus tidak lagi diimpor
+  (kalau dibiarkan, card langsung melempar ImportError jadi baris peringatan).
+
+## 3 · Tes & docs
+
+- `tests/test_best_pool_scan.py` ditulis ulang (22 tes): query = persis curl
+  user; `fee_pct>=2`/`active_tvl>=50000`; volatility 2,0% **lolos** dan
+  1,99% gugur; deretan saringan lama diuji **tidak** menggugurkan lagi +
+  konstantanya benar-benar hilang (`hasattr`); rantai urut dust → rasio → Δ
+  volume; tabel harus memuat `fee $…`, rasio, dan `+12,5%`; tooltip berubah
+  kalau konstantanya di-patch.
+- `tests/test_strategy_shift.py` tetap hijau — `STRATEGY_SHIFT_PCT` (0,06)
+  masih di atas `BEST_DUST_MAX_PCT` (0,05), ambang notifikasi tidak ikut
+  berubah.
+- README (§🏆 Scan Best Pool Meteora + tabel kolom), AGENTS.md (blok modul
+  `meteora_screener.py` + tabel angka kunci), `docs/PROGRESS.md` mengikuti.
+- **Batas verifikasi:** sandbox tidak punya jaringan, jadi payload API
+  sungguhan tidak pernah dipanggil — bentuk respons diambil dari JSON yang
+  user tempel (field `fee`, `volume_change_pct`, `fee_active_tvl_ratio`,
+  `volatility`; satuan persen sudah final, tidak dikali 100 lagi).
+  Suite: **1049 passed** (+4 tes), 21 subtests, 0 gagal.
+
+# Kegiatan — 11 September 2026 (satu notifikasi: 🚨 GANTI STRATEGI · caption dobel tooltip dihapus)
+
+Dua permintaan user:
+
+1. *"tulisan ini hapus donk, sudah ada di tooltip"* → ditanya balik, user
+   memilih **semuanya**: semua caption yang mengulang isi tooltip judul
+   dihapus (3 tempat).
+2. *"buat 1 notifikasi lagi — jika %dust diatas >= 0,06 kasih notif, WAKTUNYA
+   GANTI STRATEGI"* + *"hapus notif lainnya"* → rule notifikasi diganti satu
+   saja; ditanya balik soal kadens, user memilih **tiap scan selama masih di
+   atas ambang** (`every_scan`).
+
+## 1 · Caption rule → tooltip saja
+
+- **🌊 Scan Meteora Pool** (halaman temp) sebelumnya **tidak punya tooltip
+  sama sekali** — captionnya panjang dan mengarang ulang isi yang sama, jadi
+  teksnya tidak dibuang tapi **dipindah**: fungsi baru
+  `temp_ui.meteora_scan_tooltip()` menyusun rule + ambang dari konstanta
+  (`meteora_screener.TVL_MIN`/`FEE_RATIO_24H`/`FEE_RATIO_1H`,
+  `holder_history.DUST_SCAN_HIDE_PCT`/`DUST_BEST_PCT`/`DUST_BEST_MIN_*`) dan
+  dipasang sebagai `tooltip=` pada `card_head_html()` di
+  `temp_ui._meteora_head_html()` (impor dilakukan di dalam fungsi, sama seperti
+  `best_pool_ui.best_pool_tooltip()`). Caption rekap di bawahnya kehilangan
+  angka yang dobel — dulu `… {hidden} disembunyikan (dust > 0,1% MC) · listing
+  K · 🏆 X BEST POOL di urutan teratas`, sekarang
+  `{N} pool ditampilkan · {M} disembunyikan · listing {K}[ · 🏆 X BEST POOL]`.
+  Kepala card scan best memang bukan `<details>`/accordion, hanya
+  `<div class="lp-head">` dengan pill — tidak ada yang diubah di struktur itu.
+  Card Robinhood (`_head_html`/`_rh_head_html`) sudah memakai helper tooltip
+  yang sama, tidak disentuh.
+- **🦅 Scan Best Robinhood Coin** (`robinhood_best_scan`): caption rekap masih
+  menulis ulang **angka** ambangnya
+  ("…= 2, top 10 holder ≥ 30% = 1, honeypot = …") — sekarang hanya
+  `Listing N coin · M dilewati · dust X · top 10 Y · honeypot Z · holder gagal W.`;
+  seluruh prose sudah ada di `RH_SCAN_TOOLTIP`.
+- **Toggle Auto-refresh** di header halaman utama: teks abu-abu
+  `st.caption("Data baris = snapshot cron (±5 menit); halaman ini re-check tiap
+  ±60 detik.")` dihapus — `help` toggle sudah berkata persis begitu.
+- Pin regression baru: `tests/test_temp_page.py::TooltipBukanCaptionTest`
+  (teks toggle hilang dari badan halaman **tapi tetap ada di `proto.help`**;
+  kepala card /temp memuat `title="Top DLMM 24 jam…"` dan captionnya bebas
+  angka rule) + perluasan
+  `tests/test_robinhood_best_scan.py::RenderTest.test_detail_karakteristik_di_tooltip_bukan_caption`.
+
+## 2 · Satu rule: 🚨 WAKTUNYA GANTI STRATEGI (dust ≥ 0,06% MC)
+
+- `telegram_alerts.py` ditulis ulang (1078 baris):
+  `STRATEGY_SHIFT_PCT = 0.06`, kind/marker `strategy_shift`,
+  `STRATEGY_SHIFT_TITLE = "🚨 WAKTUNYA GANTI STRATEGI"`,
+  `evaluate_strategy_shift_rule(marker, current, *, mint, symbol, sent_event_ids,
+  last_sent, market_context)`. Sifatnya **level-based**: selama
+  `dust_pct_mc >= 0.06` tiap evaluasi menghasilkan event; `< 0.06` = marker
+  `{}` dan **tidak ada** pesan "sudah aman". Ulang dibatasi bucket event
+  `FAST_BUCKET_SEC` 300 dtk + `STRATEGY_SHIFT_RESEND_SEC` 300 dtk per token,
+  jadi cron 5 menit + scan manual + run ganda tidak mengirim pesan kembar.
+  Ambangnya sengaja **di atas** filter listing 0,05%
+  (`meteora_screener.BEST_DUST_MAX_PCT`, `robinhood_best_scan.RH_SCAN_*`)
+  supaya token yang baru masuk daftar tidak langsung bunyi — dipin
+  `ThresholdTest`.
+- **Dihapus**: ⚡ EARLY DUMP (crossing > 0,1%), 🔔 HIGH DROP (≥50% dari titik
+  high), 🚨 EXIT/CUTLOSS + ✅ KEMBALI KE TITIK AMAN, rule dust 4 jam
+  (dump +0,25 pp / akumulasi −0,50 pp), baseline shift ±1 pp, **gerbang
+  konfirmasi volume/harga/volatilitas** (`validate_alert_with_volume`,
+  `volume_verdict`, `is_high_volatility`, skor 0,70/0,80), `escalation_due`,
+  `safe_return_due`, dan **jejak audit `rejected_signals`**. `NoLegacyRulesTest`
+  menuntut simbol-simbol itu tidak ada lagi dan `lp_mints=` menolak TypeError.
+  Yang **tidak** ikut dihapus: anchor `baseline`/`rolling` +
+  `tracked_wallet_addresses()` (dipakai `holder_analysis`, `robinhood_holders`,
+  `robinhood_watchlist` untuk kronologi/peta wallet) dan `alert_context.py`
+  — konteks pasar sekarang murni baris info `📈 Pasar`, diambil **lazy** hanya
+  saat pesan jadi dikirim, disimpan di `event["market"]` (key hanya diisi bila
+  ada nilai non-None).
+- **Baru di API**: `advance_anchors` (default True) memisahkan "kirim notif"
+  dari "geser anchor". Cron `scripts/scan_holders.py` → `advance_anchors=args.full`;
+  **semua** tombol scan manual (`app.py`, `dashboard_components._render_rh_card`,
+  `temp_ui.py`) sekarang ikut mengirim notif dengan `advance_anchors=False`
+  + tanpa flag scope. `holder_history` hanya menyimpan/menggabung marker
+  `("strategy_shift",)` (2 tempat: restore snapshot ringkas + `_merge_alert_state`);
+  `holder_status._alert_state_for_status` membuang `rejected_signals` + marker
+  legacy. Tooltip card (`app.LP_CARD_TOOLTIP`, `RH_CARD_TOOLTIP`,
+  `RH_REGULAR_CARD_TOOLTIP`) menyebut rule baru dari konstanta impor, bukan angka
+  diketik manual, dan `st.info(..., icon="🚨")` di panel hasil scan.
+
+## Hasil tes
+
+`/home/user/.venv/bin/python -m pytest -q tests` → **1043 passed, 21 subtests
+passed, 0 gagal** (~63 s). Berkas tes yang ikut dipensiunkan
+(`git rm`): `test_early_dump.py`, `test_high_drop.py`, `test_exit_cutloss.py`,
+`test_alert_gating.py`, `test_volume_validation.py`. Baru:
+`tests/test_strategy_shift.py` (26 tes + 13 subtests). Ditulis ulang:
+`tests/test_telegram_alerts.py` (32). Diperbaiki ikut menyesuaikan:
+`test_alert_pipeline.py`, `test_manual_scan_alerts.py` (19), `test_scan_holders.py`,
+`test_robinhood_dust_coverage.py`, `test_holder_status.py`, `test_store_backup.py`,
+`test_alert_settings.py`, `test_lp_card_ui.py`.
+
+Bug produk yang ketemu **berkat tes**, bukan tesnya yang diubah:
+`evaluate_strategy_shift_rule` dulu mensyaratkan `since_ts` untuk
+"in-episode", padahal `compact_alert_state` bisa membuangnya → marker hasil
+state terkompaksi diperlakukan sebagai episode baru dan teks
+"baru melewati ambang" muncul terus. Sekarang `since_ts = marker["since_ts"]
+or marker["ts"]` (fallback sama di `strategy_shift_marker_next`).
+
+Dokumen yang disamakan: `README.md` (seksi alert, "Konteks pasar di pesan",
+format contoh pesan, tabel konstanta), `AGENTS.md` (bullet scan-manual,
+`alert_settings`, cron, `telegram_alerts`, tabel angka kunci, konvensi
+tooltip), `DEPLOY.md`.
+
 # Kegiatan — 10 September 2026 (scan best jadi tooltip, kredit Helius di 🧾, budget waktu Scan Best Robinhood dihapus)
 
 Tiga permintaan user sekaligus (sesi sebelum tidur — "nanti kalau sudah
@@ -260,7 +438,7 @@ terbaik"). Judul card: **Scan Best Pool Meteora**.
   dipisah `st.divider()`): 12 kolom listing (Token · MC · A.TVL · Fee/TVL ·
   Vol · Top10 · LPs · Fee · Dust · Dust %MC 3 desimal · Pool · ⭐), kepala
   card `card_head_html()` dengan pill jumlah pool + yang disembunyikan, dan
-  detail karakteristik di **tooltip judul** (`BEST_POOL_TOOLTIP`) mengikuti
+  detail karakteristik di **tooltip judul** (`best_pool_tooltip()`) mengikuti
   konvensi 2026-09-10. Tombol scan: **🏆 Scan Best Pool Meteora + Holder**
   (progress bar holder, hasil di `session_state["best_pool_scan"]`).
 - ⭐ memakai `source=meteora` (`lp_watchlist.LP_SOURCE`) → token masuk card

@@ -1,5 +1,77 @@
 # Progress
 
+## 2026-09-11: 🏆 Scan Best Pool Meteora — kriteria diganti total (query UI Meteora)
+
+**Status: selesai & tes hijau (1049 passed, 21 subtests).**
+
+User mengirim curl Meteora + respons JSON-nya dan meminta *"kriteria yang
+sebelumnya, ganti total dengan ini"*: listing
+`pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000` (24 jam, `category=top`,
+`page_size=50`), yang ditampilkan hanya dust < 0,05% MC, volatility minimal
+2%, tabel diberi detail fee / active TVL, dan urutannya dust terkecil →
+fee/active TVL terbesar → kenaikan volume terbesar. Tiga keputusan user:
+hanya card **🏆 Scan Best Pool Meteora** (🌊 /temp + 🦅 tetap), saringan lama
+**dihapus** (bukan ditumpuk), "kenaikan volume" = **`volume_change_pct`**.
+
+- `meteora_screener.py`: `BEST_FEE_PCT_MIN` 5 → **2**, `BEST_ACTIVE_TVL_MIN`
+  10K → **50K** (keduanya hanya jadi `filter_by` API), `BEST_VOLATILITY_MIN`
+  5 → **2** dengan **`>=`** ("minimal"), `BEST_DUST_MAX_PCT` tetap 0,05
+  (`<` ketat). `BEST_FEE_RATIO_MIN` / `BEST_TOP10_MAX_PCT` /
+  `BEST_TOTAL_LPS_MIN` dihapus; `row_best_gaps()` tinggal 1 cek (tetap satu
+  sumber label "gugur metrik" untuk `hidden_metric` + pill "N disembunyikan").
+  `_row_from_pool()` membawa `fee` + `volume_change_pct`;
+  `sort_best_rows()` = dust asc (3 desimal tampilan) → `-fee_active_tvl_ratio`
+  → `-volume_change_pct` → simbol.
+- `best_pool_ui.py`: tooltip judul ditulis ulang (angka dibaca dari
+  konstanta, konvensi 2026-09-10) dan tabel 12 kolom kini
+  `Token · MC · A.TVL · Fee/TVL · Vol 24h · Volat · Top10 · LPs · Dust ·
+  Dust %MC · Pool · ⭐` — baris kecil Fee/TVL = `fee $97.7K·2%` (USD + tier),
+  baris kecil Vol 24h = Δ volume bewarna; tiap sel ber-`title` dengan angka
+  penuh + statusnya sebagai kunci urut.
+- Tidak berubah: notifikasi Telegram (`STRATEGY_SHIFT_PCT` 0,06 tetap di atas
+  ambang listing 0,05 — dipin di `tests/test_strategy_shift.py`), card 🌊
+  Scan Meteora Pool /temp, card 🦅 Robinhood, schedule cron, watchlist.
+- **Batas verifikasi:** tanpa jaringan di sandbox — field API (`fee`,
+  `volume_change_pct`, satuan persen) diambil dari payload yang user tempel,
+  bukan dari request sungguhan; logika dipin oleh 22 tes
+  `tests/test_best_pool_scan.py`.
+
+Detail: `KEGIATAN.md` 11 September 2026 (blok 🏆 Scan Best Pool Meteora).
+
+## 2026-09-11: satu notifikasi — 🚨 WAKTUNYA GANTI STRATEGI (dust ≥ 0,06% MC)
+
+**Status: selesai & tes hijau (1043 passed, 21 subtests).**
+
+Semua rule Telegram lama dihapus atas permintaan user ("buat 1 notifikasi
+lagi … hapus notif lainnya"), menyisakan satu rule level-based di
+`telegram_alerts.py`: `dust_pct_mc >= STRATEGY_SHIFT_PCT` (0.06) menghasilkan
+event di **setiap** evaluasi selama dust masih di atas ambang (keputusan user
+`every_scan`), dibatasi bucket `FAST_BUCKET_SEC` +
+`STRATEGY_SHIFT_RESEND_SEC` (300 dtk/token) supaya cron 5 menit, scan manual,
+dan run ganda tidak menghasilkan pesan kembar. Turun di bawah ambang = marker
+`alert_state["strategy_shift"] = {}`, tanpa pesan penutup. Ambang 0,06%
+dipilih **di atas** filter listing 0,05% (Meteora/RH) — token baru tidak
+langsung bunyi.
+
+Yang hilang: ⚡ EARLY DUMP, 🔔 HIGH DROP, 🚨 EXIT/CUTLOSS,
+✅ KEMBALI KE TITIK AMAN, rule 4 jam/baseline, gerbang konfirmasi
+volume + skor + `rejected_signals`, flag scope `lp_mints`/`high_mints`,
+`volume_rules`. `alert_context` tetap ada tapi perannya berubah jadi baris
+info `📈 Pasar` (lazy, hanya saat pesan dikirim). Anchor `baseline`/`rolling`
+**tetap** dipertahankan — `tracked_wallet_addresses()` membacanya.
+
+Semua jalur scan kini mengirim notif: cron (`advance_anchors=args.full`) dan
+tombol manual (`advance_anchors=False`). Tombol manual tidak lagi "bisu"
+terhadap Telegram — konsekuensi langsung dari satu rule yang berlaku global.
+
+Di UI: caption yang mengulang isi tooltip judul dihapus di 3 tempat
+(🌊 Scan Meteora Pool /temp — teksnya **dipindah** ke
+`temp_ui.meteora_scan_tooltip()` karena card itu belum punya tooltip;
+🦅 Scan Best Robinhood — caption tidak lagi menulis angka ambang; toggle
+Auto-refresh halaman utama — teks abu-abu dihapus, `help` sudah memuatnya).
+
+Detail: `KEGIATAN.md` 11 September 2026.
+
 ## 2026-09-09 (siang): Telegram — judul "Reshape bid-ask 50 bin" + link jadi hyperlink
 
 **Status: selesai & tes hijau (969 passed).**

@@ -639,22 +639,24 @@ class SeedFromSlimStatusTest(unittest.TestCase):
         store = hh.seed_from_status(hh.empty_store(), remote)
         self.assertNotIn("alert_state", store["tokens"][MINT])
 
-    def test_alert_state_ringkas_memulihkan_marker_early_dump(self):
+    def test_alert_state_ringkas_memulihkan_marker_ganti_strategi(self):
         remote = {"tokens": {MINT: {
             "symbol": "TST",
             "alert_state": {"summary": True,
                             "baseline": {"ts": 1, "balances": 3, "dust": 1},
                             "rolling": {"ts": 2, "balances": 3, "dust": 0},
                             "sent_event_ids": 2,
-                            "early_dump": {"ts": 9, "dust_pct_mc": 0.4},
-                            "high_drop": {"ts": 8, "high": 2.0,
-                                          "high_ts": 7, "notified_high": 0}},
+                            "strategy_shift": {"ts": 9, "dust_pct_mc": 0.4,
+                                                "since_ts": 5},
+                            # marker rule lama TIDAK dipulihkan lagi
+                            "high_drop": {"ts": 8, "high": 2.0}},
         }}}
         store = hh.seed_from_status(hh.empty_store(), remote)
         state = store["tokens"][MINT]["alert_state"]
-        self.assertEqual(state["early_dump"]["ts"], 9)
-        self.assertAlmostEqual(state["early_dump"]["dust_pct_mc"], 0.4)
-        self.assertEqual(state["high_drop"]["ts"], 8)
+        self.assertEqual(state["strategy_shift"]["ts"], 9)
+        self.assertAlmostEqual(state["strategy_shift"]["dust_pct_mc"], 0.4)
+        self.assertEqual(state["strategy_shift"]["since_ts"], 5)
+        self.assertNotIn("high_drop", state)
         self.assertNotIn("rolling", state)
 
     def test_alert_state_format_lama_tetap_dipulihkan(self):

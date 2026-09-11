@@ -191,3 +191,68 @@ class TempPageTest(unittest.TestCase):
     def test_temp_is_a_real_page_slug(self):
         self.assertEqual(page_url_path(TEMP), "temp")
         self.assertEqual(page_router.resolve({"page": "temp"})["page"], TEMP)
+
+
+class TooltipBukanCaptionTest(unittest.TestCase):
+    """Tulisan rule/ambang yang dobel dengan tooltip judul DIHAPUS (2026-09-11).
+
+    Permintaan user: "tulisan ini hapus donk, sudah ada di tooltip". Badan card
+    hanya boleh menampilkan rekap hasil scan (angka); karakteristik rule hidup
+    di atribut ``title`` pada teks judul.
+    """
+
+    def setUp(self):
+        self.status = {"updated_at": 1000, "tokens": {}}
+        self.history = {"updated_at": 1000, "tokens": {}}
+        patches = [
+            mock.patch("watchlist.load_watchlist",
+                       side_effect=lambda **kw: {LP: {"symbol": "LPSOL",
+                                                       "source": "meteora"}}),
+            mock.patch("holder_status.load_holder_status",
+                       return_value=self.status),
+            mock.patch("holder_history.load_durable_holder_history",
+                       return_value=self.history),
+            mock.patch("robinhood_watchlist.load_watchlist",
+                       side_effect=lambda **kw: {}),
+            mock.patch("robinhood_watchlist.load_status",
+                       return_value=self.status),
+            mock.patch("robinhood_watchlist.load_history",
+                       return_value=self.history),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def _run(self, *, temp=False):
+        app = AppTest.from_file(APP, default_timeout=30)
+        if temp:
+            app.switch_page(TEMP)
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        return app
+
+    @staticmethod
+    def _text(app):
+        return "\n".join([node.value for node in app.markdown]
+                         + [node.value for node in app.caption])
+
+    def test_halaman_utama_tanpa_teks_penjelasan_auto_refresh(self):
+        """Teks abu-abu di samping toggle dihapus — help-nya sudah berkata sama."""
+        app = self._run()
+        body = self._text(app)
+        self.assertNotIn("Data baris = snapshot cron", body)
+        toggle = next(t for t in app.get("toggle")
+                      if "Auto-refresh" in str(t.proto.label))
+        self.assertIn("Data baris = snapshot cron", str(toggle.proto.help))
+        self.assertIn("interaksi manual", str(toggle.proto.help))
+
+    def test_card_scan_meteora_pakai_tooltip_bukan_caption_rule(self):
+        app = self._run(temp=True)
+        body = self._text(app)
+        # rule + ambang hanya di tooltip judul…
+        self.assertIn('title="Top DLMM 24 jam', body)
+        self.assertIn("fee_active_tvl_ratio ≥ 250", body)
+        # …dan caption card hanya berisi angka rekap.
+        captions = "\n".join(node.value for node in app.caption)
+        self.assertNotIn("Top DLMM 24 jam", captions)
+        self.assertNotIn("fee_active_tvl_ratio", captions)

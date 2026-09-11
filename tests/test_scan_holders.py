@@ -272,10 +272,17 @@ class MainExitCodeTest(unittest.TestCase):
         self.assertEqual(order, ["alert", "ingest", "publish"])
 
 
-class EarlyDumpScopeWiringTest(unittest.TestCase):
-    """Cron harus meneruskan scope rule ⚡ EARLY DUMP (token Chart LP)."""
+class AlertScopeWiringTest(unittest.TestCase):
+    """Cron meneruskan state watchlist ke rule 🚨 WAKTUNYA GANTI STRATEGI.
 
-    def test_lp_mints_diteruskan_dari_split_watchlist(self):
+    Sejak 2026-09-11 notifikasinya satu dan tidak ada lagi **scope flag**
+    (``lp_mints``/``high_mints``/``volume_rules``): tiap token yang di-scan
+    run ini dievaluasi. Yang tetap harus diteruskan adalah
+    ``watchlist_meta`` — dipakai untuk membuang marker episode lama ketika
+    token di-add ulang ke watchlist.
+    """
+
+    def test_meta_diteruskan_dan_scope_flag_hilang(self):
         captured = {}
         watchlist = {
             "LpMint11111111111111111111111111111111111":
@@ -293,8 +300,14 @@ class EarlyDumpScopeWiringTest(unittest.TestCase):
                                        watchlist=watchlist, capture=captured)
         self.assertEqual(code, 0)
         kwargs = captured["alerts"].call_args.kwargs
-        self.assertEqual(kwargs.get("lp_mints"),
-                         {"LpMint11111111111111111111111111111111111"})
+        self.assertEqual(kwargs.get("watchlist_meta"),
+                         {"LpMint11111111111111111111111111111111111":
+                          {"symbol": "LPT", "source": "meteora"}})
+        # (Scope lane = token LP saja — dijaga ScanLaneScopeTest.)
+        for gone in ("lp_mints", "high_mints", "volume_rules"):
+            self.assertNotIn(gone, kwargs)
+        # Run LP biasa (tanpa --full) tidak menggeser anchor peta wallet.
+        self.assertFalse(kwargs.get("advance_anchors"))
 
 
 class CronFullScanTest(unittest.TestCase):
@@ -371,15 +384,15 @@ class CronFullScanTest(unittest.TestCase):
         self.assertFalse(seen.get("detail"))
 
 
-class RobinhoodEarlyDumpScopeWiringTest(unittest.TestCase):
-    """Cron harus meneruskan scope rule ⚡ EARLY DUMP untuk watchlist Robinhood.
+class RobinhoodAlertWiringTest(unittest.TestCase):
+    """Cron juga mengevaluasi notifikasi 🚨 untuk watchlist Robinhood LP.
 
     Watchlist RH tidak dipecah Chart LP seperti Meteora, jadi seluruh token
-    `0x…` di watchlist ikut scope early_dump (kriteria sama: crossing naik
-    dust holder > 0,1% MC tanpa gerbang volume keras).
+    `0x…` yang di-scan dievaluasi — rule-nya sama persis dengan lane Solana
+    (dust ≥ 0,06% MC, tanpa gerbang volume).
     """
 
-    def test_rh_watchlist_menjadi_lp_mints_alert(self):
+    def test_rh_watchlist_diteruskan_keproses_alerts(self):
         import scripts.scan_holders as mod
         import robinhood_watchlist as rw_mod
         ca = "0x" + "a" * 40
@@ -390,7 +403,9 @@ class RobinhoodEarlyDumpScopeWiringTest(unittest.TestCase):
         seen = {}
 
         def _process(items, store, **kwargs):
-            seen["lp_mints"] = kwargs.get("lp_mints")
+            seen["meta"] = kwargs.get("watchlist_meta")
+            seen["advance"] = kwargs.get("advance_anchors")
+            seen["kwargs"] = kwargs
             self.assertEqual(items, rh_analyses)
             return []
 
@@ -421,7 +436,10 @@ class RobinhoodEarlyDumpScopeWiringTest(unittest.TestCase):
                 mock.patch.object(mod, "process_holder_alerts",
                                   side_effect=_process):
             self.assertEqual(mod.main([]), 0)
-        self.assertEqual(seen.get("lp_mints"), {ca})
+        self.assertEqual(seen.get("meta"), rh_watch)
+        self.assertFalse(seen.get("advance"))
+        for gone in ("lp_mints", "high_mints", "volume_rules"):
+            self.assertNotIn(gone, seen["kwargs"])
 
 
 class ScanLaneScopeTest(unittest.TestCase):

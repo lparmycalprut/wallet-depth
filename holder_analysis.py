@@ -640,7 +640,8 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
         except Exception:  # noqa: BLE001 - kronologi tidak boleh menggagalkan scan
             holder_stats.setdefault("chrono_snapshot", {})
     else:
-        # Scan 5 menit: early_dump cukup dust % MC + analyzed_at.
+        # Scan 5 menit: notifikasi 🚨 cukup dust % MC + analyzed_at
+        # (peta wallet per address hanya dibutuhkan scan FULL).
         holder_stats["wallet_snapshot"] = {
             "ts": analyzed_at,
             "dust_pct_mc": holder_stats.get("dust_pct_mc"),

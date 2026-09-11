@@ -367,8 +367,15 @@ class RenderTest(unittest.TestCase):
         # …dan sudah TIDAK di caption card.
         self.assertNotIn("Honeypot otomatis dikeluarkan", captions)
         self.assertNotIn("top 10 holder < 30%", captions)
+        # 2026-09-11: caption tidak lagi menulis ulang ANGKA ambangnya juga —
+        # dulu "dust > 0,05% MC = 2, top 10 holder ≥ 30% = 1, honeypot = …".
+        self.assertNotIn("0.05% MC", captions)
+        self.assertNotIn("≥ 30%", captions)
+        self.assertNotIn("volume 6h", captions)
         # caption hasil scan tetap ada (itu data, bukan deskripsi rule).
         self.assertIn("Listing 10 coin", captions)
+        self.assertIn("6 dilewati", captions)
+        self.assertIn("dust 2", captions)
 
     def test_tombol_scan_memanggil_scan_best_lalu_render_baris(self):
         from streamlit.testing.v1 import AppTest

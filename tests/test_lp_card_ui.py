@@ -445,9 +445,13 @@ class MeteoraBestBadgeTest(unittest.TestCase):
         # Chip-nya tetap menempel di baris CLN saja.
         self.assertIn("dust-best", body[cln_index:min(bgs_index, thn_index)])
         self.assertEqual(body.count("dust-badge dust-best"), 1)
-        # Ringkasan menyebut jumlah BEST POOL.
+        # Ringkasan menyebut jumlah BEST POOL — angka saja, tanpa menulis
+        # ulang ambangnya (itu isi tooltip judul; 2026-09-11).
         caption = "\n".join(node.value for node in app.caption)
-        self.assertIn("BEST POOL di urutan teratas", caption)
+        self.assertIn("🏆 1 BEST POOL", caption)
+        self.assertNotIn("dust > 0.1% MC", caption)
+        self.assertIn('title="Top DLMM 24 jam', "\n".join(
+            node.value for node in app.markdown))
 
 
 @unittest.skipIf(AppTest is None, "streamlit not installed")
