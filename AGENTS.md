@@ -9,22 +9,26 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
 
 ## Pembagian halaman (2026-09-10)
 
-- `app.py` = halaman utama: **grid 2 kolom** (`st.columns([1, 1],
-  gap="medium")`) — **kiri** kolom Meteora: 🌊 Watchlist Meteora (dulu
-  "Chart LP — Watchlist Meteora") + **🏆 Scan Best Pool Meteora**
-  (`best_pool_ui.render_best_pool_scan()`) di bawahnya; **kanan** kolom
-  Robinhood: 🦅 Watchlist Robinhood (LP) + **🦅 Scan Best Robinhood
-  Coin** di bawahnya — card scan best tiap chain menempel di bawah
-  watchlist chain-nya (2026-09-10, dulu keduanya full-width). Di bawah
-  grid: 🛰 Scan Holder Solana / Robinhood (dulu "Scan Holder Khusus —
-  Helius / Robinhood", full-width). Detail **🦅 Scan Best Robinhood
-  Coin** (2026-09-10; modul
-  `robinhood_best_scan.py` — listing GMGN `GET
+- `app.py` = halaman utama: **grid 2 kolom** watchlist (`st.columns([1, 1],
+  gap="medium")`) — **kiri** 🌊 Watchlist Meteora (dulu
+  "Chart LP — Watchlist Meteora"), **kanan** 🦅 Watchlist Robinhood (LP).
+  **🏆 Scan Best Pool Meteora** (`best_pool_ui.render_best_pool_scan()`)
+  **full-width di bawah grid**, sebelum 🛰 Scan Holder (2026-09-11,
+  permintaan user: "jangan dibuat grid lagi" — 2026-09-10 dulu menempel di
+  bawah card Meteora di dalam grid). **🦅 Scan Best Robinhood Coin**
+  diparkir di **halaman temp** (📦) sejak 2026-09-11 (permintaan user:
+  "pindah ke page temp karena belum berfungsi"; 2026-09-10 dulu di bawah
+  card Robinhood di dalam grid). Di bawah grid: 🏆 Scan Best Pool Meteora
+  (full-width), lalu 🛰 Scan Holder Solana / Robinhood (dulu "Scan Holder
+  Khusus — Helius / Robinhood", full-width). Detail **🦅 Scan Best Robinhood
+  Coin** (modul `robinhood_best_scan.py`, dirender
+  `temp_ui.render_temp()` di halaman temp — listing GMGN `GET
   /defi/quotation/v1/rank/robinhood/swaps/6h?orderby=volume` **publik
   tanpa auth**, filter top 10 holder < 30% + dust ≤ 0,05% MC dari
   Blockscout, urut dust terkecil lalu volume 6 jam terbesar, pernah
   Dexboost = poin tambah 🚀; baris: 📋 copy CA via `st.iframe` + ⭐
-  Watchlist Robinhood LP; detail endpoint di `docs/gmgn_api.md`).
+  Watchlist Robinhood LP **di halaman utama**; detail endpoint di
+  `docs/gmgn_api.md`).
   **Budget waktu kandidat DIHAPUS 2026-09-10**: `scan_candidates` menunggu
   **semua** kandidat sampai selesai (`as_completed` tanpa timeout, di dalam
   `with ThreadPoolExecutor`) — `CANDIDATE_TIMEOUT_SEC = 300` dulu membuang
@@ -112,7 +116,10 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   `temp_ui.render_temp()`: Robinhood biasa (non-LP), Watchlist — Analisa
   Holder (Dust), **🌊 Scan Meteora Pool** (`temp_ui.render_meteora_scan()`,
   dipindah dari halaman utama 2026-09-10; ⭐-nya tetap memasukkan token ke
-  card Watchlist Meteora di halaman utama), dan Temukan Token
+  card Watchlist Meteora di halaman utama), **🦅 Scan Best Robinhood Coin**
+  (`robinhood_best_scan.render_robinhood_best_scan()`, diparkir dari halaman
+  utama 2026-09-11 — "belum berfungsi"; ⭐-nya tetap memasukkan token ke
+  card Watchlist Robinhood LP di halaman utama), dan Temukan Token
   (Trending/Degen), termasuk semua kontrol.
   Tautan `st.page_link` main ↔ temp; bukan salinan watchlist baru.
 - `dashboard_components.py`: CSS/helper presentasi, card Robinhood bersama
@@ -283,9 +290,11 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   menurut rasio fee/TVL-nya), baris tanpa dust paling bawah, simbol sebagai
   tie-break terakhir. Hasil scan:
   `rows/error/fetched/hidden_metric/hidden_dust/analyzed_at`. UI-nya
-  `best_pool_ui.render_best_pool_scan()` (card di kolom kiri bawah
-  Watchlist Meteora, tooltip `best_pool_tooltip()`, session key
-  `best_pool_scan`, ⭐ = `source=meteora` → card Watchlist Meteora). Tabel
+  `best_pool_ui.render_best_pool_scan()` (card full-width di bawah grid 2
+  kolom watchlist sejak 2026-09-11 — "jangan dibuat grid lagi"; dulu di
+  dalam grid, kolom kiri bawah Watchlist Meteora; tooltip
+  `best_pool_tooltip()`, session key `best_pool_scan`, ⭐ = `source=meteora`
+  → card Watchlist Meteora). Tabel
   card = detail fee / active TVL: kolom **A.TVL**, **Fee/TVL** (baris kecil
   angka fee USD), **Vol 24h** (baris kecil Δ volume), tiap sel ber-`title`
   dengan angka penuh + statusnya sebagai kunci urut.

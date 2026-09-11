@@ -25,10 +25,13 @@ Rule (permintaan user 2026-09-10):
 - **tidak ada budget waktu**: semua kandidat ditunggu sampai selesai (lihat
   :func:`scan_candidates`).
 
-Card ini dirender di halaman utama (``app.py``) di bawah Watchlist Robinhood;
-⭐-nya memasukkan token ke **Watchlist Robinhood** LP (scan cron ±5 menit).
-Detail karakteristik card = tooltip pada teks judul (``RH_SCAN_TOOLTIP``),
-bukan caption panjang di badan card (konvensi 2026-09-10).
+Card ini diparkir di **halaman temp** (``pages/8_temp.py`` →
+``temp_ui.render_temp()``) sejak 2026-09-11 — permintaan user: "pindah ke
+page temp karena belum berfungsi"; 2026-09-10 dulu dirender di halaman utama
+(``app.py``) di bawah Watchlist Robinhood. ⭐-nya tetap memasukkan token ke
+**Watchlist Robinhood** LP di halaman utama (scan cron ±5 menit). Detail
+karakteristik card = tooltip pada teks judul (``RH_SCAN_TOOLTIP``), bukan
+caption panjang di badan card (konvensi 2026-09-10).
 """
 from __future__ import annotations
 
@@ -494,11 +497,13 @@ def copy_ca_html(ca: str) -> str:
 
 
 def render_robinhood_best_scan() -> None:
-    """Card **Scan Best Robinhood Coin** (halaman utama, 2026-09-10) —
-    bentuknya meniru **Scan Meteora Pool** (``temp_ui.render_meteora_scan``):
-    tombol scan + progress, hasil disimpan di ``session_state`` (kepala
-    card dan listing selalu satu sumber data), lalu baris per coin dengan
-    tombol 📋 copy CA dan ⭐ Watchlist Robinhood LP."""
+    """Card **Scan Best Robinhood Coin** (diparkir di halaman temp,
+    2026-09-11 — permintaan user "belum berfungsi"; 2026-09-10 dulu di
+    halaman utama) — bentuknya meniru **Scan Meteora Pool**
+    (``temp_ui.render_meteora_scan``): tombol scan + progress, hasil disimpan
+    di ``session_state`` (kepala card dan listing selalu satu sumber data),
+    lalu baris per coin dengan tombol 📋 copy CA dan ⭐ Watchlist Robinhood
+    LP di halaman utama."""
     import streamlit as st
 
     from dashboard_components import _compact
