@@ -8,16 +8,18 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
 ## Halaman
 
 - **Halaman utama**: **🌊 Watchlist Meteora** (dulu "Chart LP") berdampingan
-  dengan **🦅 Watchlist Robinhood** (LP) dalam grid 2 kolom — **🏆 Scan Best
-  Pool Meteora** (sejak 2026-09-10) menempel di bawah card Meteora, **🦅
-  Scan Best Robinhood Coin** di bawah card Robinhood — plus **🛰 Scan
-  Holder Solana / Robinhood** (dulu "Scan Holder Khusus — Helius /
-  Robinhood") full-width di bawahnya, dan **🦅 Scan Best Robinhood Coin**
-  (2026-09-10; full-width paling bawah) — listing GMGN Robinhood Chain
+  dengan **🦅 Watchlist Robinhood** (LP) dalam grid 2 kolom, di bawahnya
+  **🏆 Scan Best Pool Meteora** (sejak 2026-09-10; **full-width** sejak
+  2026-09-11 — "jangan dibuat grid lagi", dulu menempel di bawah card
+  Meteora di dalam grid) dan **🛰 Scan Holder Solana / Robinhood** (dulu
+  "Scan Holder Khusus — Helius / Robinhood") — keduanya full-width.
+  **🦅 Scan Best Robinhood Coin** (2026-09-10) **diparkir di halaman temp
+  (📦) sejak 2026-09-11** — "belum berfungsi": listing GMGN Robinhood Chain
   **volume 6 jam terakhir** → hanya tampilkan **top 10 holder < 30%** dan
   **dust ≤ 0,05% MC** (dust dari Blockscout), urut **dust % MC terkecil** lalu
   **volume 6 jam terbesar**; pernah **Dexboost** = poin tambah (badge 🚀).
-  Baris: 📋 copy CA dan ⭐ tambah ke **Watchlist Robinhood** LP. Detail
+  Baris: 📋 copy CA dan ⭐ tambah ke **Watchlist Robinhood** LP di halaman
+  utama. Detail
   karakteristik tiap card/section
   bukan caption panjang lagi — jadi **tooltip** yang muncul saat kursor
   digeser ke teks judulnya (sejak 2026-09-10; **🏆 Scan Best Pool Meteora**
@@ -36,8 +38,11 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
 - **temp** (`/temp`, sejak 2026-09-09): **🦅 Watchlist Robinhood — Holder
   Dust** (biasa/non-LP), **📋 Watchlist — Analisa Holder (Dust)**,
   **🌊 Scan Meteora Pool** (dipindah dari halaman utama sejak 2026-09-10 —
-  ⭐-nya tetap memasukkan token ke Watchlist Meteora di halaman utama), dan
-  **🔍 Temukan Token** (Trending/Degen). Dibuka lewat tautan **📦 temp**
+  ⭐-nya tetap memasukkan token ke Watchlist Meteora di halaman utama),
+  **🦅 Scan Best Robinhood Coin** (diparkir dari halaman utama sejak
+  2026-09-11 — "belum berfungsi"; ⭐-nya tetap memasukkan token ke
+  **Watchlist Robinhood** LP di halaman utama), dan **🔍 Temukan Token**
+  (Trending/Degen). Dibuka lewat tautan **📦 temp**
   di halaman utama atau sidebar; tersedia tautan kembali ke halaman utama.
   Fitur sementara diparkir, **bukan dihapus**: data, form tambah, scan manual,
   dan tombol pindah/hapus token tetap tersedia. Scan manual hanya memproses
@@ -298,7 +303,10 @@ pernah ditulis manual):
 
 ## 🏆 Scan Best Pool Meteora (halaman utama, sejak 2026-09-10)
 
-Listing pool Meteora khusus halaman utama. **Kriteria diganti total
+Listing pool Meteora khusus halaman utama. **Penempatan (2026-09-11):**
+card dirender **full-width** di bawah grid 2 kolom watchlist — permintaan
+user "jangan dibuat grid lagi" (2026-09-10 dulu menempel di bawah 🌊
+Watchlist Meteora di dalam grid). **Kriteria diganti total
 2026-09-11** mengikuti query UI Meteora (semua ambang hidup di konstanta
 `meteora_screener.BEST_*`):
 
@@ -546,8 +554,8 @@ akumulasi dan bukan prediksi arah harga.
 | `holder_status.py` | Snapshot dashboard ramping (ref `holder-live`) + history ringkas + transport GitHub (JSON & byte/gzip) |
 | `core.py` | Config/key Helius (pool round-robin; placeholder `PASTE-API-KEY-…` disaring, Streamlit secrets menang atas `config.json`), pasar DexScreener, candle hourly/harian GeckoTerminal, **status + sisa kredit key Helius** (`helius_key_status` / `helius_usage_summary`) dan hitungan request lokal |
 | `activity_log.py` | Ring buffer kejadian semua card (400 entri, dedup 60 dtk, level `action` = merah bold) + panel **🧾 Log Aktivitas**: status pool key PRO Blockscout & **sisa kredit Helius** |
-| `best_pool_ui.py` | Card **🏆 Scan Best Pool Meteora** (halaman utama) — listing + saringan `meteora_screener.BEST_*`, ⭐ → Watchlist Meteora, detail = tooltip judul |
-| `robinhood_best_scan.py` | Card **🦅 Scan Best Robinhood Coin** (halaman utama) — rank GMGN `swaps/6h` + dust Blockscout, badge 🚀 Dexboost, 📋 copy CA, ⭐ → Watchlist Robinhood LP; semua kandidat ditunggu (tanpa budget waktu) |
+| `best_pool_ui.py` | Card **🏆 Scan Best Pool Meteora** (halaman utama, full-width di bawah grid 2 kolom sejak 2026-09-11) — listing + saringan `meteora_screener.BEST_*`, ⭐ → Watchlist Meteora, detail = tooltip judul |
+| `robinhood_best_scan.py` | Card **🦅 Scan Best Robinhood Coin** (diparkir di halaman temp 2026-09-11, "belum berfungsi") — rank GMGN `swaps/6h` + dust Blockscout, badge 🚀 Dexboost, 📋 copy CA, ⭐ → Watchlist Robinhood LP di halaman utama; semua kandidat ditunggu (tanpa budget waktu) |
 | `scripts/scan_holders.py` | Cron **lane LP saja** (run ±5 menit: Chart LP Meteora + Robinhood LP; `LP_SCAN_RUN_MULTIPLIER` untuk rem Helius, `--full` untuk scan FULL manual): holder, alert ⚡ (konfirmasi volume lazy), satu titik history per token, publish snapshot + backup store yang dibatasi token LP aktif |
 | `telegram_alerts.py` | **Satu rule** 🚨 WAKTUNYA GANTI STRATEGI (dust ≥ 0,06% MC, level-based, tanpa gerbang volume), dedup bucket 5 menit + jeda 5 menit, marker `alert_state["strategy_shift"]`, Telegram Bot API (+ link GMGN & DexScreener di pesan) |
 | `links.py` | Satu sumber URL eksternal: GMGN, DexScreener, Solscan, Meteora DLMM, HawkFi (HTML untuk UI, teks polos untuk Telegram) + slug halaman internal (`/Holder?mint=…`) |

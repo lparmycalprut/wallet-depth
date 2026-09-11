@@ -246,6 +246,7 @@ def render_temp() -> None:
                                       load_dashboard_data, render_styles,
                                       ALERT_NOTE_KEY)
     from telegram_alerts import process_holder_alerts
+    import robinhood_best_scan
 
     render_styles()
     st.title("temp")
@@ -678,6 +679,12 @@ def render_temp() -> None:
     # Card Scan Meteora Pool dipindah ke sini dari halaman utama (2026-09-10);
     # ⭐ tetap memasukkan token ke card Watchlist Meteora di halaman utama.
     render_meteora_scan()
+
+    # 🦅 Scan Best Robinhood Coin diparkir ke sini dari halaman utama
+    # (2026-09-11, permintaan user: "pindah ke page temp karena belum
+    # berfungsi") — logika scan, data, dan tombol tidak disentuh; ⭐ tetap
+    # memasukkan token ke card Watchlist Robinhood LP di halaman utama.
+    robinhood_best_scan.render_robinhood_best_scan()
 
     st.divider()
     st.subheader("🔍 Temukan Token")

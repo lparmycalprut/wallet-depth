@@ -5,7 +5,8 @@ Rule user: data listing GMGN **volume 6 jam terakhir**, hanya tampilkan
 top 10 holder < 30% dan dust ≤ 0,05% MC; urutan dust % MC terkecil dulu
 lalu volume 6 jam terbesar; pernah Dexboost = poin tambah (badge 🚀).
 Jaringan (GMGN + Blockscout) selalu di-mock; UI dicoba lewat AppTest
-halaman utama.
+halaman **temp** — card diparkir ke /temp sejak 2026-09-11 (permintaan
+user: "pindah ke page temp karena belum berfungsi").
 """
 from __future__ import annotations
 
@@ -308,10 +309,24 @@ class ScanCandidatesTest(unittest.TestCase):
 
 
 class RenderTest(unittest.TestCase):
-    """AppTest halaman utama: card + tombol scan + baris hasil."""
+    """AppTest halaman **temp**: card + tombol scan + baris hasil.
+
+    Card diparkir di /temp sejak 2026-09-11 ("belum berfungsi"), jadi
+    AppTest dibuka lewat entrypoint ``app.py`` lalu
+    ``switch_page("pages/8_temp.py")`` — registry multipage sama dengan
+    deployment (pola ``tests/test_temp_page.py``).
+    """
 
     ROOT = __import__("pathlib").Path(__file__).resolve().parent.parent
     APP = str(ROOT / "app.py")
+    TEMP = "pages/8_temp.py"
+
+    def _app(self):
+        from streamlit.testing.v1 import AppTest
+
+        app = AppTest.from_file(self.APP, default_timeout=60)
+        app.switch_page(self.TEMP)
+        return app
 
     @staticmethod
     def _result():
@@ -334,11 +349,9 @@ class RenderTest(unittest.TestCase):
     def _body(app):
         return "\n".join(node.value for node in app.markdown)
 
-    def test_card_tampil_di_halaman_utama(self):
-        from streamlit.testing.v1 import AppTest
-
+    def test_card_tampil_di_halaman_temp(self):
         with mock.patch.object(rbs, "scan_best", return_value=self._result()):
-            app = AppTest.from_file(self.APP, default_timeout=30)
+            app = self._app()
             app.run()
         self.assertEqual(len(app.exception), 0)
         self.assertIn("🦅 Scan Best Robinhood Coin</span>", self._body(app))
@@ -351,10 +364,8 @@ class RenderTest(unittest.TestCase):
         dilewati) — rule filter, sumber dust, dan tombol dijelaskan di atribut
         ``title`` pada teks judul card.
         """
-        from streamlit.testing.v1 import AppTest
-
         with mock.patch.object(rbs, "scan_best", return_value=self._result()):
-            app = AppTest.from_file(self.APP, default_timeout=30)
+            app = self._app()
             app.run()
             button = next(b for b in app.button if b.label == rbs.CARD_TITLE)
             app = button.click().run()   # hasil scan → caption rekap + listing
@@ -378,11 +389,9 @@ class RenderTest(unittest.TestCase):
         self.assertIn("dust 2", captions)
 
     def test_tombol_scan_memanggil_scan_best_lalu_render_baris(self):
-        from streamlit.testing.v1 import AppTest
-
         with mock.patch.object(rbs, "scan_best", return_value=self._result()) \
                 as scan:
-            app = AppTest.from_file(self.APP, default_timeout=30)
+            app = self._app()
             app.run()
             self.assertEqual(len(app.exception), 0)
             button = next(b for b in app.button
@@ -401,12 +410,10 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(len(stars), 2)
 
     def test_star_menambah_ke_watchlist_robinhood(self):
-        from streamlit.testing.v1 import AppTest
-
         with mock.patch.object(rbs, "scan_best", return_value=self._result()), \
              mock.patch("robinhood_watchlist.add_to_robinhood_watchlist",
                         return_value=True) as add:
-            app = AppTest.from_file(self.APP, default_timeout=30)
+            app = self._app()
             app.run()
             scan_button = next(b for b in app.button
                                if b.label == rbs.CARD_TITLE)

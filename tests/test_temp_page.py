@@ -73,6 +73,12 @@ class TempPageTest(unittest.TestCase):
         self.assertNotIn("🌊 Scan Meteora Pool + Holder",
                          [button.label for button in app.button])
         self.assertNotIn("Top DLMM", body)
+        # 🦅 Scan Best Robinhood Coin diparkir ke /temp 2026-09-11
+        # ("belum berfungsi") — kepala card + tombol scan-nya hilang dari
+        # halaman utama.
+        self.assertNotIn("🦅 Scan Best Robinhood Coin</span>", body)
+        self.assertNotIn("🦅 Scan Best Robinhood Coin",
+                         [button.label for button in app.button])
         self.assertNotIn("📋 Watchlist — Analisa Holder (Dust)", headings)
         self.assertNotIn("🔍 Temukan Token", headings)
         self.assertNotIn("Scan Holder Khusus", body)
@@ -92,6 +98,11 @@ class TempPageTest(unittest.TestCase):
         self.assertIn("🔍 Temukan Token", headings)
         # Scan Meteora Pool pindah ke temp sejak 2026-09-10.
         self.assertIn("🌊 Scan Meteora Pool</span>", body)
+        # Scan Best Robinhood Coin diparkir ke temp 2026-09-11 (belum
+        # berfungsi) — kepala card + tombol scan-nya ada di halaman ini.
+        self.assertIn("🦅 Scan Best Robinhood Coin</span>", body)
+        self.assertIn("🦅 Scan Best Robinhood Coin",
+                      [button.label for button in app.button])
         self.assertNotIn("🦅 Watchlist Robinhood</span>", body)
         self.assertNotIn("🌊 Watchlist Meteora</span>", body)
         self.assertNotIn("Scan Holder Solana / Robinhood", body)

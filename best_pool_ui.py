@@ -28,6 +28,10 @@ badan card. Angka ambangnya diambil dari konstanta ``meteora_screener.BEST_*``
 supaya teks tooltip tidak pernah beda dari rule yang benar-benar jalan. ⭐
 memasukkan token ke card **Watchlist Meteora** di halaman utama
 (``source=meteora``, sama seperti card temp).
+
+**Penempatan (2026-09-11):** card dirender **full-width** di bawah grid 2
+kolom watchlist — permintaan user: "jangan dibuat grid lagi" (2026-09-10
+dulu menempel di bawah 🌊 Watchlist Meteora di dalam grid).
 """
 from __future__ import annotations
 

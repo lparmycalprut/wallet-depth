@@ -1,5 +1,31 @@
 # Progress
 
+## 2026-09-11: 🦅 Scan Best Robinhood Coin → temp · 🏆 Scan Best Pool Meteora keluar grid
+
+**Status: selesai & tes hijau (1049 passed, 21 subtests — sama dengan baseline).**
+
+Dua permintaan user: (1) **🦅 Scan Best Robinhood Coin** *"pindah ke page
+temp karena belum berfungsi"*, (2) **🏆 Scan Best Pool Meteora** *"jangan
+dibuat grid lagi"*.
+
+- `app.py`: card Robinhood best dihapus dari kolom kanan grid (hanya
+  penempatan; logika scan/filter/urut/tombol tidak disentuh). Card Best Pool
+  keluar dari grid 2 kolom → **full-width** di bawah grid, sebelum 🛰 Scan
+  Holder (posisi seperti sebelum grid 2026-09-10). Grid 2 kolom tetap untuk
+  dua card watchlist (kiri 🌊 Watchlist Meteora, kanan 🦅 Watchlist Robinhood
+  LP).
+- `temp_ui.py`: `render_temp()` memanggil
+  `robinhood_best_scan.render_robinhood_best_scan()` setelah card 🌊 Scan
+  Meteora Pool, sebelum 🔍 Temukan Token. ⭐ tetap menulis ke **Watchlist
+  Robinhood LP** di halaman utama — data/cron/alert tidak disentuh.
+- Tes: `tests/test_robinhood_best_scan.py::RenderTest` (4 AppTest) kini
+  membuka halaman temp via `switch_page("pages/8_temp.py")`
+  (`test_card_tampil_di_halaman_utama` → `..._temp`);
+  `tests/test_temp_page.py` mem-pin bahwa halaman utama tidak lagi merender
+  card tersebut dan halaman temp merendernya.
+
+Detail: `KEGIATAN.md` 11 September 2026 (blok paling atas).
+
 ## 2026-09-11: 🏆 Scan Best Pool Meteora — kriteria diganti total (query UI Meteora)
 
 **Status: selesai & tes hijau (1049 passed, 21 subtests).**

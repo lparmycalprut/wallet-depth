@@ -1,3 +1,36 @@
+# Kegiatan — 11 September 2026 (🦅 Scan Best Robinhood Coin → temp · 🏆 Scan Best Pool Meteora keluar dari grid)
+
+Dua permintaan user sekaligus:
+
+1. **🦅 Scan Best Robinhood Coin** → *"pindah ke page temp karena belum
+   berfungsi"*,
+2. **🏆 Scan Best Pool Meteora** → *"jangan dibuat grid lagi"*.
+
+- `app.py`: card **🦅 Scan Best Robinhood Coin**
+  (`robinhood_best_scan.render_robinhood_best_scan()`) dihapus dari kolom
+  kanan grid 2 kolom — **hanya penempatan** yang berubah: logika scan,
+  filter, urutan, tombol 📋/⭐, dan session key tidak disentuh. Card **🏆
+  Scan Best Pool Meteora** keluar dari grid 2 kolom (dulu menempel di bawah
+  🌊 Watchlist Meteora, kolom kiri) dan dirender **full-width** di bawah
+  grid, sebelum 🛰 Scan Holder — posisi seperti sebelum grid 2 kolom
+  2026-09-10 (dipisah `st.divider()`). Grid 2 kolom tetap untuk dua card
+  watchlist: kiri 🌊 Watchlist Meteora, kanan 🦅 Watchlist Robinhood (LP).
+- `temp_ui.py`: `render_temp()` memanggil
+  `robinhood_best_scan.render_robinhood_best_scan()` setelah card 🌊 Scan
+  Meteora Pool, sebelum section 🔍 Temukan Token. ⭐ card tetap memasukkan
+  token ke **Watchlist Robinhood LP** di halaman utama (source/target tidak
+  berubah); data, cron, dan alert tidak disentuh.
+- Docstring `robinhood_best_scan.py` (modul + `render_robinhood_best_scan`)
+  dan `best_pool_ui.py` mengikuti (penempatan + alasan diparkir).
+- Tidak ada perubahan logika sama sekali — murni pemindahan card + layout.
+- Tes: `tests/test_robinhood_best_scan.py::RenderTest` (4 AppTest) kini
+  membuka halaman **temp** via `switch_page("pages/8_temp.py")` (pola
+  `tests/test_temp_page.py`), `test_card_tampil_di_halaman_utama` diganti
+  `test_card_tampil_di_halaman_temp`; `tests/test_temp_page.py` menambah pin:
+  halaman utama TIDAK lagi merender kepala/tombol Scan Best Robinhood, dan
+  halaman temp MEMENUangnya. Suite penuh: **1049 passed, 21 subtests**
+  (sama dengan baseline).
+
 # Kegiatan — 11 September 2026 (🏆 Scan Best Pool Meteora: kriteria diganti total)
 
 Permintaan user: *"untuk Scan Meteora pool kita ganti seperti ini … kriteria

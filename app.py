@@ -27,7 +27,6 @@ from dashboard_components import (_ca_error, _compact, _dust_badge_html,
 from telegram_alerts import (STRATEGY_SHIFT_PCT, STRATEGY_SHIFT_TITLE,
                              process_holder_alerts)
 import activity_log
-import robinhood_best_scan
 import robinhood_holders
 from robinhood_watchlist import (split_robinhood_watchlist)
 from holder_analysis import analyze_token
@@ -547,35 +546,34 @@ status_tokens = holder_status.get("tokens") or {}
 lp_watch, _ = split_watchlist(watchlist)
 
 # ---------------------------------------------------------------------------
-# Grid 2 kolom (2026-09-10): **kiri** kolom Meteora (🌊 Watchlist Meteora +
-# 🏆 Scan Best Pool Meteora di bawahnya), **kanan** kolom Robinhood (🦅
-# Watchlist Robinhood + 🦅 Scan Best Robinhood Coin di bawahnya) — permintaan
-# user 2026-09-10: card scan best tiap chain menempel di bawah watchlist
-# chain-nya, bukan full-width. Scan Meteora Pool tetap di halaman temp
-# (⭐-nya tetap memasukkan token ke card kiri ini). Scan Holder tetap
-# full-width di bawah (form + chart-nya lebar). Di layar sempit Streamlit
-# otomatis menumpuk kolomnya.
+# Grid 2 kolom watchlist (2026-09-10): **kiri** 🌊 Watchlist Meteora,
+# **kanan** 🦅 Watchlist Robinhood (LP).
+# 🏆 Scan Best Pool Meteora **keluar dari grid** — permintaan user
+# 2026-09-11: "jangan dibuat grid lagi" → full-width di bawah grid (posisi
+# seperti sebelum grid 2 kolom 2026-09-10). 🦅 Scan Best Robinhood Coin
+# diparkir di halaman temp (📦) 2026-09-11 ("belum berfungsi"). Scan Holder
+# tetap full-width di bawah (form + chart-nya lebar). Di layar sempit
+# Streamlit otomatis menumpuk kolomnya.
 # ---------------------------------------------------------------------------
 rh_lp_watch, _ = split_robinhood_watchlist(data.rh_watchlist)
 _lp_col, _rh_col = st.columns([1, 1], gap="medium")
 with _lp_col:
     _render_lp_card(lp_watch, status_tokens, history_store)
-    # 🏆 Scan Best Pool Meteora — listing API Meteora 24 jam
-    # ``pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000`` (kriteria 2026-09-11);
-    # saringan layar: dust holder < 0,05% MC + volatility >= 2%. Urut: dust
-    # terkecil → fee/active TVL terbesar → kenaikan volume 24 jam terbesar.
-    # ⭐ memasukkan token ke card Watchlist Meteora di atas.
-    render_best_pool_scan()
 with _rh_col:
     _render_rh_card(rh_lp_watch, data.rh_status.get("tokens") or {},
                     data.rh_history,
                     int(datetime.now(timezone.utc).timestamp()), variant="lp",
                     merge_status=data.rh_status)
-    # 🦅 Scan Best Robinhood Coin — listing GMGN volume 6 jam + filter top 10
-    # holder < 30% + dust holder ≤ 0,05% MC (Blockscout); urut dust terkecil
-    # lalu volume 6 jam terbesar; pernah Dexboost = poin tambah (🚀).
-    # ⭐ = Watchlist Robinhood LP di atas.
-    robinhood_best_scan.render_robinhood_best_scan()
+
+# 🏆 Scan Best Pool Meteora — full-width, **tidak** di dalam grid 2 kolom
+# (permintaan user 2026-09-11: "jangan dibuat grid lagi"). Listing API
+# Meteora 24 jam ``pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000``
+# (kriteria 2026-09-11); saringan layar: dust holder < 0,05% MC +
+# volatility >= 2%. Urut: dust terkecil → fee/active TVL terbesar →
+# kenaikan volume 24 jam terbesar. ⭐ memasukkan token ke card Watchlist
+# Meteora di atas.
+st.divider()
+render_best_pool_scan()
 
 st.divider()
 _render_helius_holder_scan()
