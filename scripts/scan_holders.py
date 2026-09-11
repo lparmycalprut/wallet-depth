@@ -28,10 +28,17 @@ dashboard):
   4 jam, catch-up run telat, dan bootstrap token baru dihapus dari jalur cron;
 - pencatatan yang ikut lane itu: ``merge_status`` (mewariskan baris token
   biasa ke snapshot), pembacaan toggle Telegram watchlist biasa
-  (``alert_settings.regular_telegram_enabled`` — satu request GitHub per run),
-  dan token lama di backup durable — ``publish_holder_history(...,
-  keep_mints=…)`` hanya men-push token watchlist LP aktif, bukan 81 token
-  watchlist lama (±2,1 MB tiap 5 menit).
+  (``alert_settings.regular_telegram_enabled``), dan token lama di backup
+  durable — ``publish_holder_history(..., keep_mints=…)`` hanya men-push
+  token watchlist LP aktif, bukan 81 token watchlist lama (±2,1 MB tiap 5
+  menit).
+
+Yang **dibaca** cron dari ``alert_settings.json`` (ref ``holder-live``, satu
+request GitHub per run — di-cache modulnya sendiri): ``muted_mints`` = token
+yang toggle alert-nya dimatikan user dari dashboard (tombol 🔔/🔕 per baris
+watchlist Meteora/Robinhood, 2026-09-11). Token itu tetap di-scan + marker
+``strategy_shift`` tetap dimajukan; hanya pengiriman Telegram-nya dilewati
+(``mute_mints``), jadi cron dan dashboard menghormati pilihan yang sama.
 
 Scan FULL (baseline immutable + kronologi wallet antar-scan) tidak
 dijadwalkan cron lagi; jalankan manual bila perlu::
@@ -62,6 +69,7 @@ ROOT = __import__("os").path.dirname(__import__("os").path.dirname(
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+import alert_settings
 from alert_context import market_context_provider
 from daily_store import load_daily_effort
 from holder_history import (FULL_SCAN_MAX_WALLETS, ingest_many,
@@ -295,6 +303,13 @@ def main(argv=None) -> int:
     store = seed_from_status(store, current_status)
     print(f"Store holder: tokens={len(store.get('tokens') or {})} "
           f"backup={'ada' if durable else 'tidak ada'}")
+    # Toggle alert per token (tombol 🔔/🔕 di dashboard, 2026-09-11): satu
+    # bacaan untuk kedua lane. Token yang dimatikan tetap di-scan + marker
+    # 🚨 tetap dimajukan; hanya pengirimannya yang dilewati.
+    muted_alerts = alert_settings.muted_mints(force_refresh=True)
+    print(f"Toggle alert per token: {len(muted_alerts)} dimatikan"
+          + (f" ({', '.join(sorted(muted_alerts))[:120]})"
+             if muted_alerts else ""))
 
     # Gerbang slot LP berbasis nomor slot dengan anchor timestamp snapshot
     # terakhir, supaya run yang terlewat/publish gagal mengejar.
@@ -336,6 +351,7 @@ def main(argv=None) -> int:
         # (anchor ±4 jam) hanya digeser oleh scan FULL.
         deliveries = process_holder_alerts(
             analyses, store, context_provider=provider,
+            mute_mints=alert_settings.mutes_for(analyses),
             watchlist_meta=lp_watch, advance_anchors=args.full)
         history = ingest_many(analyses, store=store, detail=args.full)
         status = publish_holder_status(
@@ -446,6 +462,7 @@ def main(argv=None) -> int:
                     process_holder_alerts(
                         rh_analyses, rh_store,
                         context_provider=rh_provider,
+                        mute_mints=alert_settings.mutes_for(rh_analyses),
                         watchlist_meta=rh_watch,
                         advance_anchors=args.full)
                     rh_status = robinhood_watchlist.publish_scan(

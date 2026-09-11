@@ -10,7 +10,17 @@ by dedicated tests that monkeypatch the network layer.
 """
 import pytest
 
+import alert_settings
 import robinhood_watchlist
+
+
+@pytest.fixture(autouse=True)
+def _alert_settings_offline(monkeypatch):
+    """Toggle alert tidak boleh menyentuh GitHub di suite (lihat __init__.py)."""
+    monkeypatch.setattr(alert_settings, "_read_remote",
+                        lambda *args, **kwargs: None)
+    monkeypatch.setattr(alert_settings, "_write_remote",
+                        lambda *args, **kwargs: True)
 
 
 @pytest.fixture(autouse=True)

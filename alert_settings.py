@@ -1,16 +1,32 @@
 # -*- coding: utf-8 -*-
 """Setelan alert Telegram yang bisa diubah dari dashboard.
 
-Saat ini isinya satu tombol: **on/off notifikasi Telegram untuk watchlist
-biasa** (watchlist Solana ``source`` manual/degen — bukan Chart LP Meteora,
-bukan Robinhood). Permintaan user 2026-09-06: kadang watchlist biasa hanya
-ingin dipantau di dashboard tanpa dikirimi pesan Telegram. Notifikasinya kini
-satu: 🚨 WAKTUNYA GANTI STRATEGI (dust ≥ 0,06% MC; rule lama ⚡/🔔 sudah
-dihapus 2026-09-11).
+Dua setelan:
+
+1. **on/off notifikasi Telegram untuk watchlist biasa** (watchlist Solana
+   ``source`` manual/degen — bukan Chart LP Meteora, bukan Robinhood).
+   Permintaan user 2026-09-06: kadang watchlist biasa hanya ingin dipantau di
+   dashboard tanpa dikirimi pesan Telegram.
+2. **on/off notifikasi Telegram per token** (``muted_mints``) untuk token
+   watchlist **Meteora** dan **Robinhood** — permintaan user 2026-09-11:
+   *"kasih toggle alert on off per token … jadi misal saya sudah tau ada
+   notif, saya bisa nonaktifkan. tapi pas awal memasukkan ke watchlist,
+   otomatis on"*. Karena daftar ini **blocklist**, token baru otomatis ON:
+   tidak perlu menulis apa pun saat token di-add, dan ``watchlist`` /
+   ``robinhood_watchlist`` memanggil :func:`forget_mint_alert` supaya token
+   yang di-add **ulang** tidak mewarisi pilihan OFF periode sebelumnya.
+
+Notifikasinya kini satu: 🚨 WAKTUNYA GANTI STRATEGI (dust ≥ 0,06% MC; rule
+lama ⚡/🔔 sudah dihapus 2026-09-11). Pemakaiannya di
+``telegram_alerts.process_holder_alerts(mute_mints=…)``: rule tetap
+**dievaluasi** dan marker (``strategy_shift``) tetap dimajukan, hanya
+pengiriman pesannya yang dilewati — jadi menyalakan notif lagi tidak
+membanjiri user dengan pengingat episode lama.
 
 Kenapa file terpisah dan bukan ``watchlist.json``: setelan ini bukan data
 token, dan ``watchlist.json`` punya jalur journal + merge sendiri yang
-sengaja tidak boleh kemasukan field lain.
+sengaja tidak boleh kemasukan field lain. Satu file dipakai bersama kedua
+jaringan (Solana & Robinhood) supaya cron cukup membaca satu kali.
 
 Persistensi memakai transport durable yang sama dengan snapshot holder
 (``holder_status._github_get_bytes`` / ``_github_put_bytes`` di ref
@@ -27,6 +43,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
 
@@ -36,12 +53,31 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_REPO_PATH = "alert_settings.json"
 SETTINGS_PATH = os.path.join(BASE_DIR, SETTINGS_REPO_PATH)
 
-# Kunci setelan. Default semuanya True (perilaku lama: alert menyala).
+# Kunci setelan. Default: notif watchlist biasa ON + tidak ada token yang
+# dimatikan (token baru selalu ON).
 KEY_REGULAR_TELEGRAM = "telegram_regular_enabled"
-DEFAULTS = {KEY_REGULAR_TELEGRAM: True}
+KEY_MUTED_MINTS = "muted_mints"
+DEFAULTS = {KEY_REGULAR_TELEGRAM: True, KEY_MUTED_MINTS: []}
+
+# Pesan commit default; toggle per token menimpa lewat ``save_settings``.
+COMMIT_MESSAGE = "alert-settings: update toggle Telegram [skip ci]"
 
 _CACHE_TTL = 30
 _CACHE: dict = {"data": None, "ts": 0.0}
+
+_EVM_ADDRESS_RE = re.compile(r"0x[0-9a-fA-F]{40}\Z")
+
+
+def mint_key(mint) -> str:
+    """Kunci perbandingan mint/CA: EVM (``0x…``) disamakan huruf kecilnya.
+
+    Sama dengan ``watchlist.address_key`` (tanpa impor ``watchlist`` supaya
+    modul ini tetap ringan dan bebas siklus impor).
+    """
+    text = str(mint or "").strip()
+    if _EVM_ADDRESS_RE.match(text):
+        return text.lower()
+    return text
 
 
 def _as_bool(value, default: bool) -> bool:
@@ -58,12 +94,35 @@ def _as_bool(value, default: bool) -> bool:
     return default
 
 
+def _normalize_mints(value) -> list[str]:
+    """Daftar mint unik berurut — bentuk kanonik isi ``muted_mints``.
+
+    Menerima list/tuple/set **atau** satu string (toleran terhadap file yang
+    ditulis tangan / versi lama), membuang entri kosong, dan mengurutkan
+    supaya payload JSON stabil (tidak ada commit "berubah" tanpa perubahan).
+    """
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        key = mint_key(item)
+        if key and key not in seen:
+            seen.add(key)
+            out.append(key)
+    return sorted(out)
+
+
 def _normalize(data) -> dict:
-    out = dict(DEFAULTS)
+    out = {KEY_REGULAR_TELEGRAM: True, KEY_MUTED_MINTS: []}
     if isinstance(data, dict):
-        for key, default in DEFAULTS.items():
-            if key in data:
-                out[key] = _as_bool(data.get(key), default)
+        if KEY_REGULAR_TELEGRAM in data:
+            out[KEY_REGULAR_TELEGRAM] = _as_bool(
+                data.get(KEY_REGULAR_TELEGRAM), True)
+        if KEY_MUTED_MINTS in data:
+            out[KEY_MUTED_MINTS] = _normalize_mints(data.get(KEY_MUTED_MINTS))
     return out
 
 
@@ -113,7 +172,20 @@ def load_settings(force_refresh: bool = False) -> dict:
     return dict(settings)
 
 
-def save_settings(settings: dict, *, push: bool = True) -> bool:
+def _write_remote(payload: dict, message: str) -> bool:
+    """Commit setelan ke ref durable ``holder-live`` (transport snapshot).
+
+    Dipisah sebagai fungsi modul supaya suite tes bisa mematikannya tanpa
+    menyentuh jaringan (``tests/__init__.py``) dan supaya satu-satunya tempat
+    yang tahu bentuk JSON + pesan commit ada di sini.
+    """
+    from holder_status import _github_put_bytes
+    body = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
+    return bool(_github_put_bytes(SETTINGS_REPO_PATH, body, str(message)))
+
+
+def save_settings(settings: dict, *, push: bool = True,
+                  message: str | None = None) -> bool:
     """Tulis setelan ke file lokal + (opsional) ref durable ``holder-live``.
 
     Return ``True`` bila push remote berhasil (atau ``push=False``); ``False``
@@ -131,15 +203,10 @@ def save_settings(settings: dict, *, push: bool = True) -> bool:
     if not push:
         return True
     try:
-        from holder_status import _github_put_bytes
-        body = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
-        ok = bool(_github_put_bytes(
-            SETTINGS_REPO_PATH, body,
-            "alert-settings: update toggle Telegram [skip ci]"))
+        return bool(_write_remote(payload, str(message or COMMIT_MESSAGE)))
     except Exception as exc:  # noqa: BLE001
         print(f"WARN: alert_settings push gagal: {exc}", file=sys.stderr)
         return False
-    return ok
 
 
 def regular_telegram_enabled(force_refresh: bool = False) -> bool:
@@ -152,3 +219,73 @@ def set_regular_telegram_enabled(enabled: bool) -> bool:
     settings = load_settings()
     settings[KEY_REGULAR_TELEGRAM] = bool(enabled)
     return save_settings(settings)
+
+
+# ---------------------------------------------------------------------------
+# Toggle alert per token (watchlist Meteora + Robinhood)
+# ---------------------------------------------------------------------------
+
+def muted_mints(force_refresh: bool = False) -> set[str]:
+    """Token yang notif Telegram-nya dimatikan user (selain ON = default)."""
+    return {str(item) for item in
+            (load_settings(force_refresh=force_refresh).get(KEY_MUTED_MINTS)
+             or []) if item}
+
+
+def is_mint_muted(mint, force_refresh: bool = False) -> bool:
+    """True bila notif Telegram untuk token ini sedang dimatikan user."""
+    key = mint_key(mint)
+    if not key:
+        return False
+    return key in muted_mints(force_refresh=force_refresh)
+
+
+def mutes_for(mints, force_refresh: bool = False) -> set[str]:
+    """Irisan ``mints`` dengan daftar mute — siap dipakai sebagai ``mute_mints``."""
+    wanted = {mint_key(item) for item in (mints or []) if mint_key(item)}
+    return wanted & muted_mints(force_refresh=force_refresh)
+
+
+def set_mint_alert_enabled(mint, enabled: bool, *,
+                           push: bool = True) -> bool:
+    """Nyalakan/matikan notif Telegram satu token; ``False`` = push gagal.
+
+    ``enabled=False`` menulis token ke ``muted_mints`` (cron + scan manual
+    melewati pengiriman, evaluasi & marker tetap jalan); ``enabled=True``
+    menghapusnya. Default (token baru / tidak ada di daftar) selalu ON.
+    """
+    key = mint_key(mint)
+    if not key:
+        return False
+    settings = load_settings()
+    muted = set(_normalize_mints(settings.get(KEY_MUTED_MINTS)))
+    if enabled:
+        muted.discard(key)
+    else:
+        muted.add(key)
+    settings[KEY_MUTED_MINTS] = sorted(muted)
+    label = "on" if enabled else "off"
+    return save_settings(
+        settings, push=push,
+        message=(f"alert-settings: notif {label} {key[:12]} [skip ci]"))
+
+
+def forget_mint_alert(mint, *, push: bool = True) -> bool:
+    """Buang setelan OFF token — dipakai ``watchlist`` saat token **di-add**.
+
+    Permintaan user: token yang baru masuk watchlist selalu ON. Tanpa ini,
+    token yang pernah dimatikan lalu dihapus dan di-add ulang akan mewarisi
+    ``muted_mints`` lamanya. Mint yang memang tidak ada di daftar **tidak**
+    menulis/meng-commit apa pun (jalur add harus tetap cepat).
+    """
+    key = mint_key(mint)
+    if not key:
+        return False
+    settings = load_settings()
+    muted = _normalize_mints(settings.get(KEY_MUTED_MINTS))
+    if key not in muted:
+        return True
+    settings[KEY_MUTED_MINTS] = [item for item in muted if item != key]
+    return save_settings(
+        settings, push=push,
+        message=f"alert-settings: notif on {key[:12]} (add ulang) [skip ci]")

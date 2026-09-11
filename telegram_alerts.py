@@ -637,8 +637,10 @@ def delivery_note(summary: dict | None) -> str:
         bits.append(f"🚨 {int(summary['sent'])} notifikasi "
                     "WAKTUNYA GANTI STRATEGI dikirim")
     if summary.get("muted"):
+        # Sejak toggle 🔔/🔕 per token (2026-09-11) alasan "dilewati" tidak
+        # lagi selalu toggle global watchlist biasa — sebut sebabnya netral.
         bits.append(f"{int(summary['muted'])} notifikasi dilewati "
-                    "(notif watchlist biasa OFF)")
+                    "(notif token itu sedang dimatikan)")
     if summary.get("failed"):
         reason = ("; ".join(summary.get("errors") or [])
                   or "penyebab tidak diketahui")

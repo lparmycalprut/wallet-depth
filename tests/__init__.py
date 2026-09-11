@@ -13,9 +13,17 @@ sendiri.
 """
 import os
 
+import alert_settings as _as
 import robinhood_watchlist as _rw
 
 os.environ["HOLDER_STORE_BACKUP"] = "0"
+
+# Toggle alert (``alert_settings``) dibaca/ditulis dari UI → cron. Suite tidak
+# boleh menyentuh GitHub sama sekali: baca remote = None (jatuh ke file lokal /
+# default), tulis remote = sukses palsu (tanpa network). Tes yang memang
+# menguji transport-nya mem-mock kedua fungsi ini sendiri.
+_as._read_remote = lambda *args, **kwargs: None
+_as._write_remote = lambda *args, **kwargs: True
 
 # Panel 🧾 Log Aktivitas memeriksa sisa kredit key Helius (thread latar).
 # Suite tidak boleh menyentuh jaringan sama sekali, jadi probe-nya dimatikan;

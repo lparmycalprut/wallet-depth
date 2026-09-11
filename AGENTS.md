@@ -99,6 +99,23 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   dan
   `tests/test_robinhood_best_scan.py::RenderTest`
   `.test_detail_karakteristik_di_tooltip_bukan_caption`.
+- **Toggle alert Telegram per token di baris watchlist (2026-09-11)** —
+  permintaan user: "kasih toggle alert on/off per token yang ada di watchlist
+  meteora dan robinhood … pas awal memasukkan ke watchlist, otomatis on".
+  Tombol 🔔 (ON, klik = matikan) / 🔕 (OFF, klik = nyalakan) ada di kolom
+  **sebelum** 📋/⚡ dan ✕ pada ketiga baris — `lp-alert-<mint>` di
+  `app.py::_render_lp_row` (scope `lp`), `rh-alert-<0x…>` dan
+  `rhreg-alert-<0x…>` di `dashboard_components._render_rh_row` (scope dari
+  `_rh_scope`: card LP halaman utama / card biasa halaman temp). Grid baris
+  jadi **7 kolom** (LP `[1.7, 0.75, 0.95, 0.42, 0.42, 0.42, 0.42]`, RH
+  `[1.7, 0.8, 0.95, 0.42, 0.42, 0.42, 0.42]`) dan kepala card menampilkan
+  pill `🔕 N` (`_muted_pill_html`) bila ada token yang dimatikan. Baris yang
+  dimatikan menambah **· 🔕 notif off** di captionnya; pilihan disimpan
+  `alert_settings.set_mint_alert_enabled` (pusatnya di bullet
+  `alert_settings.py` di bawah — bukan `watchlist.json`). Watchlist Holder
+  biasa di `temp_ui.py` **tidak** ikut diberi tombol (scope permintaan user
+  = Meteora + Robinhood), tetapi `mute_mints`-nya tetap dihormati bila token
+  dipindah ke sana.
 - **Grafik perubahan dust holder seragam di semua card (2026-09-10)** —
   setiap baris watchlist (Watchlist Meteora di `app.py`, Watchlist
   Robinhood LP/biasa di `dashboard_components._render_rh_row`, Watchlist
@@ -140,14 +157,19 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   `last_sent` / marker `strategy_shift`) ikut tertulis saat store disimpan
   (pola cron):
   - `scripts/scan_holders.py` (LP + Robinhood LP) — `advance_anchors=args.full`
-    (hanya scan FULL yang menggeser anchor);
-  - 🔍 Scan LP Meteora manual di `app.py` — `advance_anchors=False`, tanpa
-    `mute_mints` (lane LP selalu boleh kirim);
+    (hanya scan FULL yang menggeser anchor) dan
+    `mute_mints=alert_settings.mutes_for(analyses)` (per-lane) dari
+    `muted_mints(force_refresh=True)` yang dibaca **sekali** per run;
+  - 🔍 Scan LP Meteora manual di `app.py` —
+    `mute_mints=alert_settings.mutes_for(fresh)`, `advance_anchors=False`;
   - Scan ulang card Robinhood di `dashboard_components._render_rh_card` —
-    `mute_mints` mengikuti tombol 🔕 per token, `advance_anchors=False`;
-  - 🔍 Scan ulang / scan watchlist biasa di `temp_ui.py` — `mute_mints` kosong
-    hanya bila `alert_settings.regular_telegram_enabled()`, `watchlist_meta =
-    holder_watch`, `advance_anchors=False`.
+    `mute_mints` = tombol 🔕 per token, **ditambah** seluruh token lane
+    `regular` bila `alert_settings.regular_telegram_enabled()` OFF,
+    `advance_anchors=False`;
+  - 🔍 Scan ulang / scan watchlist biasa di `temp_ui.py` — `mute_mints` =
+    tombol 🔕 per token (ikut terbawa bila token dipindah card) **ditambah**
+    seluruh `holder_watch` bila toggle global watchlist biasa OFF,
+    `watchlist_meta = holder_watch`, `advance_anchors=False`.
   Flag scope lama `lp_mints`/`high_mints` dan `volume_rules` **dihapus** — tidak
   ada lagi pemisahan "lane LP dapat ⚡, lane biasa dapat 🔔"; token mana pun yang
   dievaluasi memakai rule yang sama. Hasil kirim dilaporkan
@@ -242,21 +264,39 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   🏆 BEST POOL **tidak** dirender di card ini (scope: listing Scan
   Meteora saja, keputusan user) — `build_lp_row` memanggil
   `dust_flag(pct, prev)` tanpa `holders`, jadi `best` selalu False.
-- `alert_settings.py`: setelan UI yang memengaruhi cron — saat ini satu
-  tombol **on/off notif Telegram watchlist biasa** (Solana `source` manual/
-  degen). Disimpan di `alert_settings.json` pada ref `holder-live` lewat
-  transport `holder_status._github_get_bytes/_github_put_bytes` (fallback
-  file lokal → default **ON**; kegagalan API tidak boleh membisukan alert).
-  Toggle dirender di `app.py` tepat di atas card watchlist biasa; cron
-  membaca `regular_telegram_enabled(force_refresh=True)` dan meneruskan
-  `mute_mints=set(plan["regular"])` ke `process_holder_alerts` saat OFF.
+- `alert_settings.py`: setelan UI yang memengaruhi cron. Dua hal, satu file
+  `alert_settings.json` di ref `holder-live` lewat transport
+  `holder_status._github_get_bytes/_github_put_bytes` (fallback file lokal →
+  default **ON**; kegagalan API tidak boleh membisukan alert):
+  1. `telegram_regular_enabled` — **on/off notif Telegram watchlist biasa**
+     (Solana `source` manual/degen), tombol di `temp_ui.py` (halaman temp),
+     dibaca `dashboard_components._render_rh_card` + `temp_ui` saat scan
+     manual. Lane biasa tidak di-scan cron, jadi cron **tidak** membaca key
+     ini.
+  2. `muted_mints` — **toggle alert per token** (2026-09-11, permintaan user:
+     "kasih toggle alert on/off per token yang ada di watchlist meteora dan
+     robinhood … pas awal memasukkan ke watchlist, otomatis on"). Ini
+     **blocklist**: default ON, jadi tidak ada yang perlu ditulis saat token
+     ditambah; sebaliknya `watchlist.add_to_watchlist` /
+     `add_many_to_watchlist` memanggil `forget_mint_alert(ca)` supaya token
+     yang di-add **ulang** tidak mewarisi pilihan OFF lama. API:
+     `mint_key` (EVM `0x…` di-lowercase, mint Solana case-sensitive),
+     `muted_mints`, `is_mint_muted`, `mutes_for(mints)` (irisan siap pakai
+     sebagai `mute_mints`), `set_mint_alert_enabled(mint, enabled)` (pesan
+     commit `alert-settings: notif off <mint12> [skip ci]`),
+     `forget_mint_alert` (no-op tanpa tulis/commit bila mint memang tidak
+     dimatikan). Cron membaca `muted_mints(force_refresh=True)` **sekali per
+     run** (1 request GitHub) lalu meneruskan `mutes_for(...)` per lane;
+     jalur scan manual memakai fungsi yang sama, jadi cron dan dashboard
+     selalu sepakat.
   **Muted = kirim dilewati, evaluasi TIDAK**: marker `strategy_shift`
   (`ts`/`dust_pct_mc`/`since_ts`) tetap dimajukan supaya menyalakan notif lagi
-  tidak membanjiri user dengan pengingat episode lama. Scope toggle hanya
-  watchlist biasa (jalur manual dashboard); Chart LP Meteora dan kedua card
-  Robinhood tidak pernah punya toggle. Sejak 2026-09-11 cron **tidak** lagi
-  membaca toggle ini — lane biasa tidak di-scan cron dan `mute_mints` hilang
-  dari kedua pemanggilan `process_holder_alerts` di cron.
+  tidak membanjiri user dengan pengingat episode lama. Tombol 🔔/🔕 dirender
+  per baris: `lp-alert-<mint>` (Watchlist Meteora di `app.py`), `rh-alert-…`
+  + `rhreg-alert-…` (`dashboard_components._render_rh_row`, scope dari
+  `_rh_scope`), plus pill `🔕 N` di kepala card dan catatan "🔕 notif off" di
+  barisnya. Catatan gagal-sinkron per card lewat `_store_toggle_note` /
+  `_render_toggle_note(scope)` (session_state, karena klik langsung rerun).
 - `holder_chronology.py`: perbandingan scan FULL (balance token, kategori
   `wallet_depth`, link Solscan). Tanpa LLM. Schema lama tetap bisa dibaca.
 - `meteora_screener.py`: pool-discovery Meteora 24h (`fee_ratio≥250`) +
@@ -372,9 +412,11 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   (`split_watchlist(watchlist)[0]`, Solana/Helius) + Robinhood LP
   (`split_robinhood_watchlist(rh_watch)[0]`, EVM/Blockscout). **Watchlist
   biasa tidak di-scan cron**: slot 4 jam, `token_needs_scan` (catch-up +
-  bootstrap), `build_scan_plan`, `--scope`, `merge_status`, pembacaan
-  `alert_settings.regular_telegram_enabled()`, rule 🔔 HIGH DROP, dan semua
-  flag scope rule (`lp_mints`/`high_mints`) sudah **dihapus dari modul** —
+  bootstrap), `build_scan_plan`, `--scope`, `merge_status`, rule 🔔 HIGH DROP,
+  dan semua flag scope rule (`lp_mints`/`high_mints`) sudah **dihapus dari
+  modul** — (yang tetap dibaca cron: `alert_settings.muted_mints` = toggle
+  🔔/🔕 **per token** dari dashboard, satu bacaan per run, lihat bullet
+  `alert_settings.py`) —
   jangan dikembalikan tanpa alasan; scan manual di dashboard tetap melayani
   token biasa. Pencatatan ikut dibatasi: `publish_holder_history(...,
   keep_mints=set(lp_watch))` / `robinhood_watchlist.publish_scan(...,

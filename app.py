@@ -17,9 +17,12 @@ from links import external_links_html, holder_analytic_link_html
 from lp_watchlist import (LP_SOURCE, lp_card_rows,
                           lp_summary, split_watchlist)
 import page_router
-from dashboard_components import (_ca_error, _compact, _dust_badge_html,
-                                  _render_alert_note, _render_dust_change,
-                                  _render_rh_card, _store_alert_note,
+from alert_settings import mutes_for
+from dashboard_components import (_alert_toggle_button, _ca_error, _compact,
+                                  _dust_badge_html, _mint_alert_on,
+                                  _muted_pill_html, _render_alert_note,
+                                  _render_dust_change, _render_rh_card,
+                                  _render_toggle_note, _store_alert_note,
                                   _wib, _depth_tables_html, ALERT_NOTE_KEY,
                                   card_head_html, hover_title_html,
                                   SOLANA_CA_RE, load_dashboard_data,
@@ -114,7 +117,10 @@ LP_CARD_TOOLTIP = (
     f"kelihatan: satu-satunya notifikasi Telegram adalah "
     f"{STRATEGY_SHIFT_TITLE} — dikirim berulang tiap scan selama hold "
     f"% MC dust masih ≥ {STRATEGY_SHIFT_PCT:g}% (berhenti bila token "
-    "dihapus (✕) atau dipindah ke watchlist biasa (📋)). Grafik "
+    "dihapus (✕) atau dipindah ke watchlist biasa (📋)). Notif bisa "
+    "dimatikan per token lewat tombol 🔕 di barisnya — token yang baru "
+    "masuk watchlist selalu 🔔 ON, dan scan + grafik tetap jalan walau "
+    "notifnya mati. Grafik "
     "menampilkan perubahan dust holder per bucket 5 menit: "
     f"≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
     f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA.")
@@ -129,6 +135,9 @@ def _lp_head_html(summary: dict) -> str:
     karakteristik card ada di tooltip judul (``LP_CARD_TOOLTIP``).
     """
     pills = [f'<span class="lp-count">{summary.get("total", 0)} token</span>']
+    _muted_pill = _muted_pill_html(summary.get("muted"))
+    if _muted_pill:
+        pills.append(_muted_pill)
     if summary.get("danger"):
         pills.append(f'<span class="lp-warn">BAHAYA {summary["danger"]}</span>')
     if summary.get("caution"):
@@ -169,7 +178,13 @@ def _render_lp_row(row: dict) -> None:
     # dulu label selalu menampilkan analyzed_at snapshot, sehingga label
     # bisa menunjukkan jam yang beda dari angka yang tampil.
     scan_ts = row.get("used_ts") or row.get("analyzed_at")
-    cols = st.columns([1.7, 0.75, 0.95, 0.42, 0.42, 0.42])
+    alert_on = _mint_alert_on(mint)
+    if not alert_on:
+        short_note += " · 🔕 notif off"
+    # 7 kolom: token · dust · hold %MC · 🧮 holder · 🔔 toggle alert per
+    # token · 📋 pindah ke watchlist biasa · ✕ hapus (kolom toggle ditambah
+    # 2026-09-11, permintaan user).
+    cols = st.columns([1.7, 0.75, 0.95, 0.42, 0.42, 0.42, 0.42])
     cols[0].markdown(
         f'<div class="watchlist-token">'
         f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
@@ -189,12 +204,15 @@ def _render_lp_row(row: dict) -> None:
         f'{_dust_badge_html(flag)}</div>', unsafe_allow_html=True)
     cols[3].markdown(holder_analytic_link_html(mint),
                      unsafe_allow_html=True)
-    if cols[4].button("📋", key=f"lp-move-{mint}",
+    # 🔔/🔕: notif Telegram khusus token ini; token baru masuk watchlist
+    # selalu ON (lihat watchlist._reset_alert_toggle_on_add).
+    _alert_toggle_button(cols[4], mint, symbol, scope="lp", alert_on=alert_on)
+    if cols[5].button("📋", key=f"lp-move-{mint}",
                       help="Pindahkan ke Watchlist Holder",
                       use_container_width=True):
         set_watchlist_source(mint, "manual", background=True)
         st.rerun()
-    if cols[5].button("✕", key=f"lp-remove-{mint}",
+    if cols[6].button("✕", key=f"lp-remove-{mint}",
                       help="Hapus dari Watchlist Meteora",
                       use_container_width=True):
         remove_from_watchlist(mint, background=True)
@@ -219,6 +237,9 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
     """
     rows = lp_card_rows(lp_watch, status_tokens, history_store)
     summary = lp_summary(rows)
+    # Jumlah token yang notif Telegram-nya dimatikan user (toggle 🔔/🔕 di
+    # baris) — ditampilkan sebagai pill di kepala card.
+    summary["muted"] = len(mutes_for(lp_watch or {}))
     with st.container(border=True):
         st.markdown(_lp_head_html(summary), unsafe_allow_html=True)
 
@@ -277,8 +298,13 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
                 # saat ingest_many menyimpan store — pola yang sama dengan cron
                 # scripts/scan_holders.py. advance_anchors=False: scan ad-hoc
                 # tidak menggeser anchor peta wallet milik scan FULL cron.
+                # Toggle 🔔/🔕 **per token** dihormati di jalur manual ini
+                # sama seperti cron: rule tetap dievaluasi + marker tetap
+                # tersimpan, hanya pengirimannya yang dilewati.
                 _store_alert_note(process_holder_alerts(
-                    fresh, history_store, watchlist_meta=lp_watch,
+                    fresh, history_store,
+                    mute_mints=mutes_for(fresh),
+                    watchlist_meta=lp_watch,
                     advance_anchors=False), f"{ALERT_NOTE_KEY}lp")
                 ingest_many(fresh, store=history_store, detail=False)
                 published = publish_holder_status(
@@ -305,6 +331,7 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
             st.info("Scan sekarang selesai: " + " · ".join(bits) + ".",
                     icon="✅")
         _render_alert_note(f"{ALERT_NOTE_KEY}lp")
+        _render_toggle_note("lp")
 
         if not rows:
             st.info("Watchlist Meteora masih kosong. Tambahkan token dari "
@@ -312,9 +339,9 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
                     "tempel CA di form atas.")
             return
 
-        header = st.columns([1.7, 0.75, 0.95, 0.42, 0.42, 0.42])
+        header = st.columns([1.7, 0.75, 0.95, 0.42, 0.42, 0.42, 0.42])
         style = "font-size:0.72rem;color:#000000;font-weight:700;"
-        titles = ["Token", "Dust", "Hold %MC", "", "", ""]
+        titles = ["Token", "Dust", "Hold %MC", "", "", "", ""]
         for col, title in zip(header, titles):
             align = "" if title == "Token" else "text-align:center;"
             col.markdown(f'<div style="{style}{align}">{title}</div>',
