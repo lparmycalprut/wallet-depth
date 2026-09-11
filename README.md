@@ -84,7 +84,9 @@ atau setelan Telegram. Robinhood LP tetap di halaman utama, bukan di temp.
    `Δ 4 jam` dan `Grafik 4 jam` (sparkline) dihapus dari semua card
    watchlist** — baris tinggal Token · Dust · Hold %MC (+ Sejak masuk di
    watchlist biasa) dan tombol aksi; grafik hanya di expander. Tersedia juga
-   overlay semua token LP, plus tombol pindah card (📋 ↔ 🌊). Token LP tidak ditampilkan
+   overlay semua token LP, plus tombol pindah card (📋 ↔ 🌊) dan — sejak
+   2026-09-11 — tombol **🔔/🔕 on/off notif Telegram per token** di baris
+   Watchlist Meteora & Robinhood. Token LP tidak ditampilkan
    dua kali di watchlist holder biasa.
 3. **Kohort mid-tier (Crab+Fish, $100–$10k)** — daftar address di-freeze
    4 jam, lalu diukur **sisa token** (bukan dollar) supaya dump harga
@@ -116,6 +118,18 @@ atau setelan Telegram. Robinhood LP tetap di halaman utama, bukan di temp.
    dikosongkan (episode berikutnya mulai dari nol) dan **tidak** ada pesan
    "sudah aman". Pengingat berhenti permanen bila token dihapus (✕) atau
    dipindah lane.
+
+   **On/off per token (2026-09-11)** — tiap baris Watchlist Meteora dan
+   kedua card Robinhood punya tombol **🔔/🔕**: klik 🔕 saat notifnya sudah
+   tidak perlu (mis. sudah tahu dan memutuskan keluar), token tetap di-scan
+   dan grafiknya tetap jalan — hanya pesan Telegram token itu yang dilewati.
+   Token yang **baru masuk watchlist selalu 🔔 ON** (dan token yang pernah
+   dimatikan lalu dihapus + di-add ulang ikut menyala lagi, karena daftar
+   mute disimpan sebagai daftar "yang dimatikan", bukan "yang dinyalakan").
+   Pilihan disimpan di `alert_settings.json` (ref `holder-live`) sehingga
+   **cron dan dashboard memakai pilihan yang sama**; evaluasi rule + marker
+   `strategy_shift` tetap berjalan saat 🔕 supaya menyalakan lagi tidak
+   membanjiri pengingat episode lama.
 
    Yang **DIHAPUS** bersama menyatukan notifikasi (permintaan user "hapus
    notif lainnya"): ⚡ EARLY DUMP (crossing > 0,1% MC), 🔔 HIGH DROP (turun
@@ -624,8 +638,8 @@ Sejak **2026-09-07** cron dirampingkan jadi **lane LP saja** dan berjalan
 
 Yang ikut dibuang bersama lane biasa: slot 4 jam + catch-up + bootstrap token
 baru, `merge_status` (pewarisan baris token biasa ke
-snapshot), pembacaan toggle Telegram watchlist biasa per run, dan token lama di
-backup durable — `publish_holder_history(..., keep_mints=watchlist LP)` hanya
+snapshot), pembacaan toggle **global** Telegram watchlist biasa per run, dan
+token lama di backup durable — `publish_holder_history(..., keep_mints=watchlist LP)` hanya
 men-push token yang memang di-scan (terukur pada store nyata: **2.135.084 →
 10.050 byte** gzip, 81 token → 1 token LP aktif). Scan FULL (baseline immutable
 + kronologi wallet) tidak dijadwalkan lagi; jalankan manual bila perlu:

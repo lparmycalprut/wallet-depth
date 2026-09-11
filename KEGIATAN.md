@@ -1,3 +1,84 @@
+# Kegiatan — 11 September 2026 (🔔/🔕 toggle alert Telegram per token: Meteora + Robinhood)
+
+Permintaan user: *"kasih toggle alert on/off per token yang ada di watchlist
+meteora dan robinhood. jadi misal saya sudah tau ada notif, saya bisa
+nonaktifkan. tapi pas awal memasukkan ke watchlist, otomatis on"*.
+
+## 1 · Penyimpanan pilihan: `alert_settings.muted_mints` (blocklist)
+
+- `alert_settings.py` menampung setelan kedua di file yang sama
+  (`alert_settings.json`, ref `holder-live`): `muted_mints` = daftar token
+  yang notifnya **dimatikan**. Karena bentuknya *blocklist*, token baru
+  otomatis ON — tidak ada tulis/commit saat menambah token.
+- API baru: `mint_key()` (EVM `0x…` di-lowercase, mint Solana
+  case-sensitive), `muted_mints()`, `is_mint_muted()`,
+  `mutes_for(mints)` (irisan siap pakai sebagai `mute_mints`),
+  `set_mint_alert_enabled(mint, enabled)`, `forget_mint_alert(mint)`.
+  `save_settings()` dapat `message=` (commit per token, e.g.
+  `alert-settings: notif off 0xe2324ff2a59 [skip ci]`) dan transport
+  dipindah ke `_write_remote()` supaya suite bisa mematikannya.
+- **Token yang di-add ulang selalu ON**: `watchlist.add_to_watchlist` dan
+  `add_many_to_watchlist` memanggil `forget_mint_alert(ca)`
+  (`_reset_alert_toggle_on_add`). Tanpa ini token yang pernah dimatikan,
+  dihapus, lalu di-add lagi akan mewarisi pilihan OFF periode sebelumnya.
+  Mint yang memang tidak pernah dimatikan tidak menulis/meng-commit apa pun.
+
+## 2 · Yang menghormatinya (cron + semua scan manual)
+
+- Cron `scripts/scan_holders.py`: membaca `muted_mints(force_refresh=True)`
+  **sekali per run** (1 request GitHub, tercetak di log
+  `Toggle alert per token: N dimatikan`) dan meneruskan
+  `mute_mints=alert_settings.mutes_for(...)` ke **kedua** lane LP.
+- Scan manual: 🔍 Scan LP Meteora (`app.py`), scan ulang card Robinhood
+  (`dashboard_components._render_rh_card`), dan scan watchlist biasa
+  (`temp_ui.py`) memakai `mutes_for(fresh)` — sehingga token yang dipindah
+  card (Meteora → Holder, LP → biasa) tetap senyap.
+- Semantiknya tetap **"kirim dilewati, evaluasi jalan"**: rule 🚨 tetap
+  dievaluasi dan marker `strategy_shift` tetap dimajukan, jadi menyalakan
+  notif lagi tidak membanjiri pengingat episode lama. Catatan hasil scan
+  manual ikut menyebut jumlah yang dilewati.
+
+## 3 · Tombolnya di UI
+
+- Baris Watchlist Meteora (`app.py`) dan kedua card Robinhood
+  (`dashboard_components._render_rh_row`) dapat kolom baru: **🔔** (ON, klik
+  = matikan) / **🔕** (OFF, klik = nyalakan) dengan key `lp-alert-<mint>`,
+  `rh-alert-<0x…>`, `rhreg-alert-<0x…>`. Grid baris jadi 7 kolom; 📋/⚡ dan ✕
+  bergeser satu kolom.
+- Kepala card menampilkan pill **🔕 N** (`_muted_pill_html`) dan baris yang
+  dimatikan menambah **· 🔕 notif off** di caption, jadi statusnya kelihatan
+  tanpa menebak dari emoji tombol.
+- Gagal sinkron GitHub tidak ditelan: `_store_toggle_note` /
+  `_render_toggle_note(scope)` menampilkan peringatan **di card pemiliknya**
+  (karena klik langsung `st.rerun()`), plus entri di 🧾 Log Aktivitas.
+- `LP_CARD_TOOLTIP`, `RH_CARD_TOOLTIP`, `RH_REGULAR_CARD_TOOLTIP`, dan help
+  toggle global watchlist biasa (halaman temp) menyebut tombol per token ini.
+- Catatan hasil scan manual (`telegram_alerts.delivery_note`) tidak lagi
+  berbunyi "notif watchlist biasa OFF" — jadi
+  "(notif token itu sedang dimatikan)" supaya benar untuk kedua sumber mute.
+- Watchlist Holder biasa di halaman temp **tidak** diberi tombol (scope
+  permintaan user = Meteora + Robinhood); `mute_mints`-nya tetap dihormati.
+
+## 4 · Tes
+
+- Baru: `tests/test_alert_toggle_per_token.py` (27 tes) — store (default ON,
+  mute → nyala lagi, EVM case-insensitive, `forget_mint_alert` tanpa tulis
+  bila tidak dimatikan, payload rusak/toleran, push gagal tetap lokal),
+  add-ulang = ON (satu + massal), UI AppTest (bell 🔔/🔕 di tiga card, pill
+  🔕, caption "🔕 notif off", klik menyimpan pilihan, peringatan gagal
+  sinkron), jalur scan (LP Meteora, Robinhood LP, Robinhood biasa saat toggle
+  global ON, watchlist Holder Solana) memastikan **tidak ada** pesan terkirim
+  tapi marker `strategy_shift` tetap tersimpan, dan wiring cron (mute
+  diteruskan ke kedua lane).
+- Dua tes khusus menegaskan **per token, bukan global**: dari dua token LP di
+  card yang sama, hanya baris yang di-🔕 berlabel 🔕 (yang lain tetap 🔔, pill
+  cukup "🔕 1"), dan scan-nya mengirim Telegram untuk token 🔔 sambil melewati
+  token 🔕 (dihitung di laporan scan manual).
+- Suite offline: `tests/__init__.py` + `conftest.py` men-stub
+  `alert_settings._read_remote`/`_write_remote`; dua assertion lama
+  (`tests/test_manual_scan_alerts.py`) menyesuaikan kalimat `delivery_note`.
+- Suite penuh: **1076 lulus** (sebelumnya 1049), 21 subtests.
+
 # Kegiatan — 11 September 2026 (🦅 Scan Best Robinhood Coin → temp · 🏆 Scan Best Pool Meteora keluar dari grid)
 
 Dua permintaan user sekaligus:

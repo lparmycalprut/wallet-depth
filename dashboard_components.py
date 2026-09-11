@@ -329,7 +329,9 @@ RH_CARD_TOOLTIP = (
     "supaya exit bisa lebih awal. Satu-satunya notifikasi Telegram: "
     f"{STRATEGY_SHIFT_TITLE} — dikirim berulang tiap scan selama hold % MC "
     f"dust masih ≥ {STRATEGY_SHIFT_PCT:g}%, berhenti hanya bila token "
-    "dihapus (✕) atau dipindah ke watchlist biasa (📋). Badge level dust "
+    "dihapus (✕) atau dipindah ke watchlist biasa (📋). Notif bisa "
+    "dimatikan per token lewat tombol 🔕 di barisnya (token baru selalu "
+    "🔔 ON; scan + grafik tetap jalan). Badge level dust "
     f"tetap di baris: ≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
     f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA. Data holder dari Blockscout, "
     "harga/marketcap dari DexScreener.")
@@ -342,7 +344,8 @@ RH_REGULAR_CARD_TOOLTIP = (
     "card ini atau pindah ke card LP. Notifikasinya sama seperti lane LP: "
     f"{STRATEGY_SHIFT_TITLE} dikirim tiap scan selama hold % MC dust "
     f"≥ {STRATEGY_SHIFT_PCT:g}% (hanya bila notif watchlist biasa ON di "
-    "bawah card). Badge level dust di baris: "
+    "bawah card dan tombol 🔔 token itu tidak dimatikan). Badge level dust "
+    "di baris: "
     f"≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
     f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA. Data holder dari Blockscout, "
     "harga/marketcap dari DexScreener.")
@@ -381,6 +384,101 @@ def _render_alert_note(key: str) -> None:
         st.info(text, icon="🚨")
 
 
+# ---------------------------------------------------------------------------
+# Toggle alert Telegram **per token** (🔔/🔕 di tiap baris watchlist)
+# ---------------------------------------------------------------------------
+# Permintaan user 2026-09-11: *"kasih toggle alert on/off per token yang ada
+# di watchlist meteora dan robinhood … jadi misal saya sudah tau ada notif,
+# saya bisa nonaktifkan. tapi pas awal memasukkan ke watchlist, otomatis
+# on"*. Pilihan user hidup di ``alert_settings.muted_mints`` (blocklist →
+# default ON, dan ``watchlist`` membersihkan entri saat token di-add) supaya
+# **cron** GitHub Actions ikut menghormatinya — bukan di ``watchlist.json``,
+# yang punya jalur journal + merge sendiri.
+ALERT_TOGGLE_NOTE_KEY = "alert_toggle_note_"
+
+
+def _alert_toggle_label(alert_on: bool) -> str:
+    """🔔 = notif menyala (klik untuk mematikan), 🔕 = sedang dimatikan."""
+    return "🔔" if alert_on else "🔕"
+
+
+def _alert_toggle_help(symbol: str, alert_on: bool) -> str:
+    """Tooltip tombol 🔔/🔕 — menjelaskan apa yang terjadi, bukan rule-nya."""
+    if alert_on:
+        return (f"Matikan notif Telegram untuk ${symbol}: token tetap "
+                "di-scan + grafiknya tetap jalan, hanya pesan 🚨 yang tidak "
+                "dikirim. Token yang baru masuk watchlist selalu ON.")
+    return (f"Nyalakan lagi notif Telegram untuk ${symbol} (default ON). "
+            "Sinyal yang sudah lewat saat mati tidak dikirim ulang.")
+
+
+def _muted_pill_html(muted: int) -> str:
+    """Pill jumlah token yang notifnya dimatikan user (kosong bila 0)."""
+    try:
+        count = int(muted or 0)
+    except (TypeError, ValueError):
+        count = 0
+    if count <= 0:
+        return ""
+    return ('<span class="lp-count" style="color:#374151;background:#e5e7eb;">'
+            f'🔕 {count}</span>')
+
+
+def _store_toggle_note(scope: str, text: str) -> None:
+    """Simpan catatan toggle untuk ditampilkan setelah rerun (per card)."""
+    st.session_state[f"{ALERT_TOGGLE_NOTE_KEY}{scope}"] = str(text)
+
+
+def _render_toggle_note(scope: str) -> None:
+    """Tampilkan (sekali) catatan toggle di card pemiliknya."""
+    text = st.session_state.pop(f"{ALERT_TOGGLE_NOTE_KEY}{scope}", None)
+    if text:
+        st.warning(text, icon="⚠️")
+
+
+def _mint_alert_on(mint) -> bool:
+    """True bila notif Telegram token ini menyala (default = ON)."""
+    return not alert_settings.is_mint_muted(mint)
+
+
+def _alert_toggle_button(column, mint: str, symbol: str, *, scope: str,
+                         alert_on: bool) -> None:
+    """Render tombol 🔔/🔕 satu baris; klik = simpan pilihan + rerun.
+
+    ``scope`` menentukan awalan key (``lp`` / ``rh`` / ``rhreg``) sekaligus
+    card pemilik catatan gagal-sinkron (``_render_toggle_note``) supaya
+    peringatan tidak nyasar ke card lain di halaman yang sama.
+    """
+    if not column.button(_alert_toggle_label(alert_on),
+                         key=f"{scope}-alert-{mint}",
+                         help=_alert_toggle_help(symbol, alert_on),
+                         use_container_width=True):
+        return
+    ok = alert_settings.set_mint_alert_enabled(mint, not alert_on)
+    if not ok:
+        _store_toggle_note(
+            scope,
+            f"Pilihan notif ${symbol} tersimpan di file lokal, tapi "
+            "sinkronisasi ke GitHub gagal — cron mungkin masih memakai "
+            "setelan lama.")
+    try:
+        import activity_log
+        if ok:
+            activity_log.info(
+                "alert",
+                f"Notif Telegram ${symbol} "
+                f"{'dimatikan' if alert_on else 'dinyalakan'} "
+                "(toggle per token)")
+        else:
+            activity_log.warn(
+                "alert",
+                f"Toggle notif ${symbol} tersimpan lokal, sinkron GitHub "
+                "gagal — cron bisa masih memakai setelan lama")
+    except Exception:  # noqa: BLE001 - log bersifat pelengkap
+        pass
+    st.rerun()
+
+
 RH_ADD_FORM = "rh-add-token"
 RH_LP_TAB = "🦅 Robinhood LP (scan ±5 menit)"
 RH_REGULAR_TAB = "📋 Robinhood biasa (scan ±4 jam)"
@@ -390,15 +488,20 @@ RH_ADD_TARGET_SOURCE = {RH_LP_TAB: RH_LP_SOURCE,
 
 
 def _rh_head_html(title: str, total: int, danger: int, caution: int,
-                  sync: str = "", tooltip: str = "") -> str:
+                  sync: str = "", tooltip: str = "",
+                  muted: int = 0) -> str:
     """Kepala card Robinhood; ``sync`` = badge status sinkronisasi GitHub.
 
     Ditampilkan hanya bila masih ada commit latar belakang berjalan
     (``🔄 sinkron…``) atau commit terakhir gagal (``⚠️ belum sinkron``), jadi
-    badge tidak menumpuk saat semua sudah tersimpan. ``tooltip`` = detail
-    karakteristik card di atribut judul (lihat ``card_head_html``).
+    badge tidak menumpuk saat semua sudah tersimpan. ``muted`` = jumlah token
+    yang toggle 🔕-nya dimatikan user. ``tooltip`` = detail karakteristik card
+    di atribut judul (lihat ``card_head_html``).
     """
     pills = [f'<span class="lp-count">{total} token</span>']
+    muted_pill = _muted_pill_html(muted)
+    if muted_pill:
+        pills.append(muted_pill)
     if sync == "syncing":
         pills.append('<span class="lp-count">🔄 sinkron…</span>')
     elif sync == "error":
@@ -411,14 +514,20 @@ def _rh_head_html(title: str, total: int, danger: int, caution: int,
     return card_head_html(title, pills, tooltip=tooltip)
 
 
-def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
-    """Satu baris watchlist Robinhood (``variant`` = ``lp`` / ``regular``).
+def _rh_scope(variant: str) -> str:
+    """Awalan key tombol card Robinhood: ``rh`` (LP) / ``rhreg`` (biasa).
 
     Kunci tombol varian LP dipertahankan ``rh-*`` (kompatibilitas uji UI);
     varian biasa memakai awalan ``rhreg-*`` supaya tombol kedua card tidak
-    bentrok saat token berpindah card dalam satu sesi.
+    bentrok saat token berpindah card dalam satu sesi. Dipakai juga sebagai
+    ``scope`` catatan toggle alert (``_render_toggle_note``).
     """
-    prefix = "rh" if variant == "lp" else "rhreg"
+    return "rh" if variant == "lp" else "rhreg"
+
+
+def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
+    """Satu baris watchlist Robinhood (``variant`` = ``lp`` / ``regular``)."""
+    prefix = _rh_scope(variant)
     mint = row.get("mint") or ""
     symbol = row.get("symbol") or "?"
     holders = row.get("holders") or {}
@@ -431,7 +540,10 @@ def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
                       else f"{int(dust_count):,}"))
     pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.2f}%"
 
-    cols = st.columns([1.7, 0.8, 0.95, 0.42, 0.42, 0.42])
+    # 7 kolom: token · dust · hold %MC · 🧮 holder · 🔔 toggle alert ·
+    # aksi pindah card · hapus (kolom toggle ditambah 2026-09-11).
+    cols = st.columns([1.7, 0.8, 0.95, 0.42, 0.42, 0.42, 0.42])
+    alert_on = _mint_alert_on(mint)
     chain_note = ("LP · scan ±5 menit" if variant == "lp"
                   else "biasa · scan ±4 jam")
     # Scan yang pulang dengan 0 wallet (provider holder gagal/kena rate limit)
@@ -451,6 +563,8 @@ def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
             scan_note += f" ({html.escape(fetch_error[:90])})"
     elif fetch_error:
         scan_note += f" · ⚠️ provider holder: {html.escape(fetch_error[:90])}"
+    if not alert_on:
+        scan_note += " · 🔕 notif off"
     cols[0].markdown(
         f'<div class="watchlist-token">'
         f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
@@ -471,8 +585,11 @@ def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
         f'{_dust_badge_html(flag)}</div>', unsafe_allow_html=True)
     cols[3].markdown(holder_analytic_link_html(mint),
                      unsafe_allow_html=True)
+    # 🔔/🔕: notif Telegram khusus token ini (token baru selalu ON).
+    _alert_toggle_button(cols[4], mint, symbol, scope=prefix,
+                         alert_on=alert_on)
     if variant == "lp":
-        if cols[4].button("📋", key=f"rh-move-{mint}",
+        if cols[5].button("📋", key=f"rh-move-{mint}",
                           help="Pindahkan ke Watchlist Robinhood (biasa, "
                                "halaman temp) — pengingat 🚨 dust ≥ 0,06% MC "
                                "berhenti",
@@ -480,16 +597,16 @@ def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
             robinhood_watchlist.set_robinhood_watchlist_source(
                 mint, RH_REGULAR_SOURCE, background=True)
             st.rerun()
-        remove_col = cols[5]
+        remove_col = cols[6]
     else:
-        if cols[4].button("⚡", key=f"rhreg-move-{mint}",
+        if cols[5].button("⚡", key=f"rhreg-move-{mint}",
                           help="Pindahkan ke Watchlist Robinhood LP "
                                "(scan cepat ±5 menit)",
                           use_container_width=True):
             robinhood_watchlist.set_robinhood_watchlist_source(
                 mint, RH_LP_SOURCE, background=True)
             st.rerun()
-        remove_col = cols[5]
+        remove_col = cols[6]
     if remove_col.button("✕", key=f"{prefix}-remove-{mint}",
                          help="Hapus dari watchlist Robinhood",
                          use_container_width=True):
@@ -547,6 +664,7 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
             "delta_total": view.get("delta_total"),
         })
 
+    muted = alert_settings.mutes_for(watchlist or {})
     title = RH_CARD_TITLE if variant == "lp" else RH_REGULAR_CARD_TITLE
     with st.container(border=True):
         # Detail karakteristik KEDUA card = tooltip di teks judul
@@ -554,7 +672,7 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
         # panjang di badan card. Lihat RH_CARD_TOOLTIP /
         # RH_REGULAR_CARD_TOOLTIP.
         st.markdown(_rh_head_html(title, len(watchlist or {}), danger,
-                                  caution,
+                                  caution, muted=len(muted),
                                   sync=robinhood_watchlist.sync_state().get(
                                       "state") or "",
                                   tooltip=RH_CARD_TOOLTIP if variant == "lp"
@@ -626,11 +744,15 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
                 # saat ingest_many menyimpan store — pola cron scan_holders.py.
                 # advance_anchors=False: scan ad-hoc tidak menggeser anchor
                 # 4 jam / peta wallet milik scan FULL cron.
-                # Tombol on/off notif watchlist biasa (lane non-LP): evaluasi +
-                # marker tetap jalan, hanya pengiriman yang dilewati.
-                muted = (set() if variant == "lp"
-                         or alert_settings.regular_telegram_enabled()
-                         else set(watchlist or {}))
+                # Mute = evaluasi + marker tetap jalan, hanya pengiriman yang
+                # dilewati. Dua sumbernya: toggle 🔔/🔕 **per token**
+                # (alert_settings.muted_mints — berlaku juga di cron) dan
+                # toggle global notif watchlist biasa untuk lane non-LP
+                # (card Robinhood biasa di halaman temp).
+                muted = alert_settings.mutes_for(fresh)
+                if variant != "lp" \
+                        and not alert_settings.regular_telegram_enabled():
+                    muted |= set(fresh)
                 _store_alert_note(process_holder_alerts(
                     fresh, history_store, mute_mints=muted,
                     watchlist_meta=watchlist,
@@ -649,6 +771,7 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
             st.rerun()
 
         _render_alert_note(f"{ALERT_NOTE_KEY}rh_{variant}")
+        _render_toggle_note(_rh_scope(variant))
 
         if not rows:
             empty_text = (
@@ -661,9 +784,9 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
             st.info(empty_text)
             return
 
-        header = st.columns([1.7, 0.8, 0.95, 0.42, 0.42, 0.42])
+        header = st.columns([1.7, 0.8, 0.95, 0.42, 0.42, 0.42, 0.42])
         style = "font-size:0.72rem;color:#000000;font-weight:700;"
-        titles = ["Token", "Dust", "Hold %MC", "", "", ""]
+        titles = ["Token", "Dust", "Hold %MC", "", "", "", ""]
         for col, col_title in zip(header, titles):
             align = "" if col_title == "Token" else "text-align:center;"
             col.markdown(f'<div style="{style}{align}">{col_title}</div>',

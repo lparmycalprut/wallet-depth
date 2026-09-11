@@ -86,7 +86,7 @@ class DeliverySummaryTest(unittest.TestCase):
         self.assertEqual(summary["kinds"], [kinds, kinds, kinds])
         note = ta.delivery_note(summary)
         self.assertIn("1 notifikasi WAKTUNYA GANTI STRATEGI dikirim", note)
-        self.assertIn("1 notifikasi dilewati (notif watchlist biasa OFF)", note)
+        self.assertIn("1 notifikasi dilewati (notif token itu sedang dimatikan)", note)
         self.assertIn("1 notifikasi GAGAL dikirim", note)
         self.assertIn("Telegram credentials are not configured", note)
 
@@ -448,7 +448,7 @@ class ManualScanAlertTest(unittest.TestCase):
         app = self._run_rh_scan("regular", 0.20, telegram_on=False)
         self.assertEqual(self.sent, [], "notif OFF tapi pesan tetap terkirim")
         note = self._infos(app)
-        self.assertIn("dilewati (notif watchlist biasa OFF)", note)
+        self.assertIn("dilewati (notif token itu sedang dimatikan)", note)
         self.assertNotIn("GAGAL dikirim", note)
 
 

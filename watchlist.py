@@ -18,6 +18,7 @@ from datetime import datetime
 import requests
 
 from core import atomic_write_json
+import alert_settings
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WATCHLIST_PATH = os.path.join(BASE_DIR, "watchlist.json")
@@ -951,6 +952,26 @@ def fetch_token_symbol(ca: str, *, chain_id: str | None = None) -> str:
     return "?"
 
 
+def _reset_alert_toggle_on_add(ca: str) -> None:
+    """Token yang baru masuk watchlist selalu **ON** (toggle alert per token).
+
+    ``alert_settings.muted_mints`` menyimpan token yang notif Telegram-nya
+    dimatikan user (permintaan user 2026-09-11). Membuang entri itu saat add
+    membuat aturan "awal memasukkan ke watchlist = otomatis ON" tetap benar
+    untuk token yang pernah dimatikan, dihapus, lalu di-add ulang — tanpa ini
+    token itu mewarisi pilihan OFF periode sebelumnya.
+
+    Mint yang memang tidak pernah dimatikan tidak menulis/meng-commit apa pun
+    (jalur add normal tetap cepat), dan kegagalan apa pun tidak boleh
+    menggagalkan penambahan token.
+    """
+    try:
+        alert_settings.forget_mint_alert(ca)
+    except Exception as exc:  # noqa: BLE001 - reset bersifat pelengkap
+        print(f"WARN: reset toggle alert {str(ca)[:10]} gagal: {exc}",
+              file=sys.stderr)
+
+
 def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
                      source: str = "", down_ath: float = None,
                      avg_cost: float = None,
@@ -984,6 +1005,8 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
     ca = normalize_address(ca)
     if not ca:
         return False
+    # Token baru = notif ON (buang sisa pilihan OFF periode watchlist lama).
+    _reset_alert_toggle_on_add(ca)
     if not symbol or symbol == "?":
         # Symbol tidak diketahui (manual add / pindah card) → ambil dari
         # DexScreener supaya card tidak menampilkan "$?".
@@ -1105,6 +1128,10 @@ def add_many_to_watchlist(rows, *, source: str = "",
         _journal_many(operations)
     else:
         _journal_many(operations, pending_path=pending_path)
+    # Toggle alert per token: token baru selalu ON (lihat
+    # _reset_alert_toggle_on_add) — sama seperti add satu-per-satu.
+    for ca in added_addresses:
+        _reset_alert_toggle_on_add(ca)
     try:
         import streamlit as st
         pending = st.session_state.setdefault("watchlist_auto_refresh_cas", set())

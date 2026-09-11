@@ -319,7 +319,8 @@ def render_temp() -> None:
               "notifikasi) untuk watchlist biasa dikirim ke Telegram. OFF = "
               "token tetap di-scan dan grafiknya tetap jalan, pesannya saja "
               "yang tidak dikirim. Tidak memengaruhi Watchlist Meteora maupun "
-              "watchlist Robinhood."))
+              "watchlist Robinhood — di kedua card itu notifnya diatur "
+              "**per token** lewat tombol 🔔/🔕 di barisnya."))
     if bool(_notif_toggle) != bool(_notif_on):
         _saved = alert_settings.set_regular_telegram_enabled(bool(_notif_toggle))
         if not _saved:
@@ -331,7 +332,8 @@ def render_temp() -> None:
         ("Notif Telegram watchlist biasa **AKTIF**." if _notif_toggle else
          "Notif Telegram watchlist biasa **NONAKTIF** — scan & grafik tetap "
          "jalan, pesan tidak dikirim.")
-        + " Watchlist Meteora dan Robinhood tidak terpengaruh tombol ini.")
+        + " Watchlist Meteora dan Robinhood tidak terpengaruh tombol ini "
+        "(notif di sana diatur per token: 🔔/🔕 di barisnya).")
 
 
     if holder_watch and not status_tokens:
@@ -394,12 +396,16 @@ def render_temp() -> None:
             # itu — tanpa evaluasi di sini token biasa tidak pernah bisa
             # mengirim notif. Sebelum ingest_many supaya state alert ikut
             # tersimpan; advance_anchors=False = anchor 4 jam cron tidak
-            # digeser. Tombol on/off notif watchlist biasa tetap dihormati
-            # lewat mute_mints (evaluasi jalan, kirim dilewati).
+            # digeser. Mute = evaluasi jalan, kirim dilewati; sumbernya dua:
+            # toggle 🔔/🔕 per token (alert_settings.muted_mints — dipasang di
+            # card Meteora/Robinhood, ikut terbawa bila token pindah card) dan
+            # toggle global notif watchlist biasa di atas card ini.
+            _muted_lane = alert_settings.mutes_for(fresh)
+            if not alert_settings.regular_telegram_enabled():
+                _muted_lane |= set(fresh)
             _store_alert_note(process_holder_alerts(
                 fresh, history_store,
-                mute_mints=(set() if alert_settings.regular_telegram_enabled()
-                            else set(holder_watch)),
+                mute_mints=_muted_lane,
                 watchlist_meta=holder_watch,
                 advance_anchors=False), f"{ALERT_NOTE_KEY}regular")
             # ``detail=False``: baseline scan FULL + ``latest_detail`` +
