@@ -61,7 +61,7 @@ nonaktifkan. tapi pas awal memasukkan ke watchlist, otomatis on"*.
 
 ## 4 · Tes
 
-- Baru: `tests/test_alert_toggle_per_token.py` (25 tes) — store (default ON,
+- Baru: `tests/test_alert_toggle_per_token.py` (27 tes) — store (default ON,
   mute → nyala lagi, EVM case-insensitive, `forget_mint_alert` tanpa tulis
   bila tidak dimatikan, payload rusak/toleran, push gagal tetap lokal),
   add-ulang = ON (satu + massal), UI AppTest (bell 🔔/🔕 di tiga card, pill
@@ -70,10 +70,14 @@ nonaktifkan. tapi pas awal memasukkan ke watchlist, otomatis on"*.
   global ON, watchlist Holder Solana) memastikan **tidak ada** pesan terkirim
   tapi marker `strategy_shift` tetap tersimpan, dan wiring cron (mute
   diteruskan ke kedua lane).
+- Dua tes khusus menegaskan **per token, bukan global**: dari dua token LP di
+  card yang sama, hanya baris yang di-🔕 berlabel 🔕 (yang lain tetap 🔔, pill
+  cukup "🔕 1"), dan scan-nya mengirim Telegram untuk token 🔔 sambil melewati
+  token 🔕 (dihitung di laporan scan manual).
 - Suite offline: `tests/__init__.py` + `conftest.py` men-stub
   `alert_settings._read_remote`/`_write_remote`; dua assertion lama
   (`tests/test_manual_scan_alerts.py`) menyesuaikan kalimat `delivery_note`.
-- Suite penuh: **1074 lulus** (sebelumnya 1049), 21 subtests.
+- Suite penuh: **1076 lulus** (sebelumnya 1049), 21 subtests.
 
 # Kegiatan — 11 September 2026 (🦅 Scan Best Robinhood Coin → temp · 🏆 Scan Best Pool Meteora keluar dari grid)
 

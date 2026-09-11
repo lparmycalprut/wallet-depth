@@ -43,6 +43,7 @@ APP = str(Path(__file__).resolve().parent.parent / "app.py")
 TEMP = "pages/8_temp.py"
 
 LP_MINT = "LpMint11111111111111111111111111111111111"
+LP_SAFE = "LpSafe22222222222222222222222222222222222"
 # base58 valid (tanpa 0/O/I/l) supaya lolos validasi CA di UI
 SOL_MINT = "Watch11111111111111111111111111111111111"
 RH_CA = "0x" + "a" * 40
@@ -225,22 +226,33 @@ def _point(ts: int, pct: float, count: int) -> dict:
 def _status_lp() -> dict:
     return {
         "updated_at": NOW,
-        "tokens": {LP_MINT: {
-            "symbol": "RAYCAT", "price": 0.01, "marketcap": 100_000.0,
-            "analyzed_at": NOW,
-            "holders": {"dust_count": 70, "dust_pct_mc": 0.55,
-                        "real_count": 40, "total_fetched": 110},
-            "history": [_point(NOW - BUCKET, 0.30, 50),
-                        _point(NOW, 0.55, 70)],
-        }},
+        "tokens": {
+            LP_MINT: _status_token("RAYCAT", 0.55),
+            LP_SAFE: _status_token("LPSAFE", 0.31),
+        },
     }
 
 
+def _status_token(symbol: str, pct: float) -> dict:
+    return {"symbol": symbol, "price": 0.01, "marketcap": 100_000.0,
+            "analyzed_at": NOW,
+            "holders": {"dust_count": 70, "dust_pct_mc": pct,
+                        "real_count": 40, "total_fetched": 110},
+            "history": [_point(NOW - BUCKET, 0.30, 50),
+                        _point(NOW, pct, 70)]}
+
+
 def _store_lp() -> dict:
-    return {"updated_at": NOW, "tokens": {LP_MINT: {
-        "symbol": "RAYCAT", "cohort": {},
-        "points": [_point(NOW - BUCKET, 0.30, 50),
-                   _point(NOW, 0.55, 70)]}}}
+    return {"updated_at": NOW, "tokens": {
+        LP_MINT: _store_token("RAYCAT", 0.55),
+        LP_SAFE: _store_token("LPSAFE", 0.31),
+    }}
+
+
+def _store_token(symbol: str, pct: float) -> dict:
+    return {"symbol": symbol, "cohort": {},
+            "points": [_point(NOW - BUCKET, 0.30, 50),
+                       _point(NOW, pct, 70)]}
 
 
 def _analysis(symbol: str, pct: float, ts: int = NOW) -> dict:
@@ -295,6 +307,8 @@ class AlertToggleUiTest(unittest.TestCase):
     # --- harness ------------------------------------------------------------
     def watchlist(self):
         return {LP_MINT: {"symbol": "RAYCAT", "source": "meteora",
+                          "added": "2026-09-11"},
+                LP_SAFE: {"symbol": "LPSAFE", "source": "meteora",
                           "added": "2026-09-11"},
                 SOL_MINT: {"symbol": "HOLDT", "source": "manual",
                            "added": "2026-09-11"}}
@@ -372,6 +386,31 @@ class AlertToggleUiTest(unittest.TestCase):
         self.assertIn("$RAYCAT", self._body(app))
         self.assertIn("0.55%", self._body(app))
 
+    def test_bukan_global_hanya_token_yang_dimatikan(self):
+        """🔕 hanya di token yang dipilih; token lain di card yang sama 🔔."""
+        self.muted = {LP_MINT}
+        app = self._app()
+        self.assertEqual(self._button(app, f"lp-alert-{LP_MINT}").label, "🔕")
+        self.assertEqual(self._button(app, f"lp-alert-{LP_SAFE}").label, "🔔")
+        body = self._body(app)
+        self.assertIn("🔕 1", body)          # rekap: satu token, bukan semua
+        self.assertNotIn("🔕 2", body)
+        # Baris LPSAFE tidak diberi catatan "notif off".
+        self.assertEqual(body.count("🔕 notif off"), 1)
+
+    def test_scan_hanya_melewati_token_yang_dimatikan(self):
+        """Scan satu card: token 🔕 senyap, token 🔔 tetap kirim."""
+        self.muted = {LP_MINT}
+        app = self._app()
+        with mock.patch("holder_analysis.analyze_token",
+                        side_effect=lambda mint, *a, **kw:
+                        _analysis(str(mint)[:6], 0.11)):
+            app = self._button(app, "lp-scan-now").click().run()
+        self.assertEqual([event["mint"] for event in self.sent], [LP_SAFE])
+        self.assertIn("1 notifikasi WAKTUNYA GANTI STRATEGI dikirim",
+                      self._info(app))
+        self.assertIn("1 notifikasi dilewati", self._info(app))
+
     def test_klik_bell_off_menyalakan_lagi(self):
         self.muted = {LP_MINT}
         app = self._app()
@@ -407,7 +446,8 @@ class AlertToggleUiTest(unittest.TestCase):
                         return_value=_analysis("RAYCAT", 0.11)):
             app = self._button(app, "lp-scan-now").click().run()
         self.assertEqual(len(app.exception), 0)
-        self.assertEqual(self.sent, [], "token yang dimatikan tidak boleh kirim")
+        self.assertEqual([event["mint"] for event in self.sent], [LP_SAFE],
+                         "token yang dimatikan tidak boleh kirim")
         self.assertIn("dilewati", self._info(app))
         # Evaluasi tetap jalan: marker episode ikut tersimpan.
         state = ((self.store.get("tokens") or {}).get(LP_MINT) or {}).get(
@@ -417,9 +457,11 @@ class AlertToggleUiTest(unittest.TestCase):
     def test_scan_lp_manual_tanpa_bell_off_tetap_kirim(self):
         app = self._app()
         with mock.patch("holder_analysis.analyze_token",
-                        return_value=_analysis("RAYCAT", 0.11)):
+                        side_effect=lambda mint, *a, **kw:
+                        _analysis(str(mint)[:6], 0.11)):
             app = self._button(app, "lp-scan-now").click().run()
-        self.assertEqual(len(self.sent), 1, self.sent)
+        self.assertEqual(sorted(event["mint"] for event in self.sent),
+                         sorted([LP_MINT, LP_SAFE]))
         self.assertIn("dikirim", self._info(app))
 
     def test_scan_robinhood_lp_manual_menghormati_bell_off(self):
