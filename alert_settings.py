@@ -4,8 +4,9 @@
 Saat ini isinya satu tombol: **on/off notifikasi Telegram untuk watchlist
 biasa** (watchlist Solana ``source`` manual/degen — bukan Chart LP Meteora,
 bukan Robinhood). Permintaan user 2026-09-06: kadang watchlist biasa hanya
-ingin dipantau di dashboard tanpa dikirimi pesan 🔔 HIGH DROP / dump /
-akumulasi.
+ingin dipantau di dashboard tanpa dikirimi pesan Telegram. Notifikasinya kini
+satu: 🚨 WAKTUNYA GANTI STRATEGI (dust ≥ 0,06% MC; rule lama ⚡/🔔 sudah
+dihapus 2026-09-11).
 
 Kenapa file terpisah dan bukan ``watchlist.json``: setelan ini bukan data
 token, dan ``watchlist.json`` punya jalur journal + merge sendiri yang

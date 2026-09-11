@@ -139,8 +139,7 @@ class PartialScanSafetyTest(unittest.TestCase):
         store = {"tokens": {CA: {"points": [self.old_point]}}}
         before = copy.deepcopy(store)
         with mock.patch.object(ta, "evaluate_alert_events") as evaluate:
-            result = ta.process_holder_alerts({CA: self.analysis}, store,
-                                              lp_mints={CA}, high_mints={CA})
+            result = ta.process_holder_alerts({CA: self.analysis}, store)
         self.assertEqual(result, [])
         evaluate.assert_not_called()
         self.assertEqual(store, before)

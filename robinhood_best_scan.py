@@ -562,15 +562,17 @@ def render_robinhood_best_scan() -> None:
                 "(key gratis, lihat card Scan Holder) supaya semua kandidat "
                 "bisa dihitung dustnya.")
         if result:
+            # Hanya rekap hasil scan (angka), TANPA menulis ulang ambangnya:
+            # rule dust / top 10 / honeypot sudah ada di tooltip judul
+            # (permintaan user 2026-09-11: "tulisan ini hapus, sudah ada di
+            # tooltip").
             st.caption(
-                f"Listing {int(result.get('fetched') or 0)} coin "
-                f"(volume {SCAN_INTERVAL}) · {skipped_total} dilewati: dust "
-                f"> {RH_SCAN_MAX_DUST_PCT:g}% MC = "
-                f"{int(skipped.get('dust') or 0)}, "
-                f"top 10 holder ≥ {RH_SCAN_MAX_TOP10_PCT:g}% = "
-                f"{int(skipped.get('top10') or 0)}, honeypot = "
-                f"{int(skipped.get('honeypot') or 0)}, holder gagal/tidak "
-                f"lengkap = {int(skipped.get('failed') or 0)}.")
+                f"Listing {int(result.get('fetched') or 0)} coin · "
+                f"{skipped_total} dilewati · dust "
+                f"{int(skipped.get('dust') or 0)} · top 10 "
+                f"{int(skipped.get('top10') or 0)} · honeypot "
+                f"{int(skipped.get('honeypot') or 0)} · holder gagal "
+                f"{int(skipped.get('failed') or 0)}.")
         if not rows:
             if result:
                 st.info("Tidak ada coin yang lolos filter (atau listing "

@@ -12,9 +12,11 @@ Yang dikerjakan tiap run (±5 menit):
 2. **Robinhood LP** — entri non-``regular`` di ``watchlist_robinhood.json``
    (chain EVM Robinhood id 4663, holder via Blockscout);
 3. hitung holder real vs dust + dust % marketcap + mid-tier Crab/Fish, lalu
-   evaluasi alert ⚡ EARLY DUMP terhadap snapshot rolling ±4 jam (konteks
-   volume/harga ditarik **lazy** — hanya untuk token yang punya kandidat, jadi
-   run tenang tidak menambah satu pun request);
+   evaluasi **satu-satunya** notifikasi — 🚨 WAKTUNYA GANTI STRATEGI, diulang
+   tiap scan selama dust ≥ 0,06% MC (rule ⚡ EARLY DUMP / 🔔 HIGH DROP /
+   eskalasi EXIT-CUTLOSS DIHAPUS 2026-09-11). Konteks pasar untuk baris
+   pelengkap pesan ditarik **lazy** — hanya untuk token yang dinotifikasi,
+   jadi run tenang tidak menambah satu pun request);
 4. catat **satu titik** per token ke store history, publish snapshot dashboard
    (``holder_status.json`` / ``holder_status_robinhood.json`` di ref
    ``holder-live``) + backup durable store.
@@ -23,8 +25,7 @@ Yang **tidak** lagi dikerjakan cron (tetap tersedia sebagai scan manual di
 dashboard):
 
 - **watchlist biasa** (Solana non-LP & Robinhood ``source=regular``): slot
-  4 jam, catch-up run telat, bootstrap token baru, dan rule 🔔 HIGH DROP
-  dihapus dari jalur cron;
+  4 jam, catch-up run telat, dan bootstrap token baru dihapus dari jalur cron;
 - pencatatan yang ikut lane itu: ``merge_status`` (mewariskan baris token
   biasa ke snapshot), pembacaan toggle Telegram watchlist biasa
   (``alert_settings.regular_telegram_enabled`` — satu request GitHub per run),
@@ -320,23 +321,22 @@ def main(argv=None) -> int:
 
     exit_code = 0
     if analyses:
-        # Rules read the old anchors first. process_holder_alerts mutates only
-        # alert state; ingest_many writes that state together with the newest
-        # history point afterwards. Konteks volume/harga/volatilitas ditarik
-        # lazy (hanya bila ada kandidat sinyal) dan di-memo per token.
+        # The rule reads the old marker first. process_holder_alerts mutates
+        # only alert state; ingest_many writes that state together with the
+        # newest history point afterwards. Konteks pasar (volume/harga) ditarik
+        # lazy — hanya untuk token yang benar-benar akan dinotifikasi — dan
+        # di-memo per token, jadi run yang tenang tidak menambah request.
         contexts: dict = {}
         provider = None
         if args.full:
             provider = market_context_provider(cache=contexts,
                                                daily_loader=load_daily_effort)
-        # Scope rule ⚡ EARLY DUMP = seluruh lane LP: pengingat berulang selama
-        # dust % MC > 0,1% sampai token dihapus dari watchlist LP. Rule
-        # 🔔 HIGH DROP (watchlist biasa) tidak dijalankan cron — ``high_mints``
-        # selalu kosong.
+        # 🚨 WAKTUNYA GANTI STRATEGI = satu-satunya notifikasi, scope-nya
+        # seluruh lane yang di-scan run ini. advance_anchors: peta wallet
+        # (anchor ±4 jam) hanya digeser oleh scan FULL.
         deliveries = process_holder_alerts(
             analyses, store, context_provider=provider,
-            lp_mints=set(lp_watch), high_mints=set(),
-            watchlist_meta=lp_watch, volume_rules=args.full)
+            watchlist_meta=lp_watch, advance_anchors=args.full)
         history = ingest_many(analyses, store=store, detail=args.full)
         status = publish_holder_status(
             analyses, lp_watch, push=not args.no_push,
@@ -397,8 +397,8 @@ def main(argv=None) -> int:
 
     # --- Robinhood Chain: lane LP watchlist terpisah (EVM, chain id 4663) ----
     # Scan best-effort: kegagalan jaringan Robinhood tidak boleh membuat cron
-    # Solana mati. Entri ``source=regular`` (slot 4 jam + rule 🔔 HIGH DROP)
-    # tidak di-scan cron sejak 2026-09-07.
+    # Solana mati. Entri ``source=regular`` (slot 4 jam) tidak di-scan cron
+    # sejak 2026-09-07.
     rh_done = 0
     rh_due = 0
     try:
@@ -446,8 +446,8 @@ def main(argv=None) -> int:
                     process_holder_alerts(
                         rh_analyses, rh_store,
                         context_provider=rh_provider,
-                        lp_mints=set(rh_lp), high_mints=set(),
-                        watchlist_meta=rh_watch, volume_rules=args.full)
+                        watchlist_meta=rh_watch,
+                        advance_anchors=args.full)
                     rh_status = robinhood_watchlist.publish_scan(
                         rh_analyses, rh_watch, history_store=rh_store,
                         push=not args.no_push, contexts=rh_contexts,

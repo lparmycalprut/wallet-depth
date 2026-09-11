@@ -69,14 +69,18 @@ class SettingsStoreTest(unittest.TestCase):
 
 
 class MuteMintsTest(unittest.TestCase):
-    """``mute_mints`` menahan kiriman tapi tetap memajukan state."""
+    """``mute_mints`` menahan kiriman tapi tetap memajukan state.
+
+    Tombolnya tetap berguna walau notifikasinya tinggal satu (🚨 WAKTUNYA
+    GANTI STRATEGI): watchlist biasa kadang cukup dipantau di dashboard.
+    """
 
     def _run(self, muted):
         store = {"tokens": {"MINT": {
             "symbol": "AA",
             "alert_state": {
-                "high_drop": {"ts": 100, "high": 2.0, "high_ts": 100,
-                              "notified_high": 0.0},
+                "strategy_shift": {"ts": 900, "dust_pct_mc": 0.2,
+                                   "since_ts": 900},
             },
         }}}
         sent = []
@@ -86,8 +90,8 @@ class MuteMintsTest(unittest.TestCase):
             return {"ok": True, "skipped": False}
 
         deliveries = process_holder_alerts(
-            {"MINT": _analysis(0.5)}, store, sender=sender,
-            high_mints={"MINT"}, mute_mints=muted)
+            {"MINT": _analysis(0.5, ts=1_000)}, store, sender=sender,
+            mute_mints=muted)
         state = store["tokens"]["MINT"]["alert_state"]
         return sent, deliveries, state
 
@@ -95,7 +99,8 @@ class MuteMintsTest(unittest.TestCase):
         sent, deliveries, state = self._run(set())
         self.assertEqual(len(sent), 1)
         self.assertTrue(deliveries[0]["delivery"]["ok"])
-        self.assertEqual(state["high_drop"]["notified_high"], 2.0)
+        self.assertEqual(state["strategy_shift"]["dust_pct_mc"], 0.5)
+        self.assertEqual(state["strategy_shift"]["ts"], 1_000)
 
     def test_muted_skips_send_but_keeps_marker(self):
         sent, deliveries, state = self._run({"MINT"})
@@ -104,8 +109,9 @@ class MuteMintsTest(unittest.TestCase):
         self.assertTrue(deliveries[0]["delivery"]["muted"])
         self.assertTrue(deliveries[0]["delivery"]["skipped"])
         # Marker tetap maju: menyalakan notif lagi tidak membanjiri user
-        # dengan alert titik high yang sudah lewat.
-        self.assertEqual(state["high_drop"]["high"], 2.0)
+        # dengan episode lama yang sudah lewat.
+        self.assertEqual(state["strategy_shift"]["dust_pct_mc"], 0.5)
+        self.assertEqual(state["strategy_shift"]["since_ts"], 900)
 
 
 if __name__ == "__main__":  # pragma: no cover

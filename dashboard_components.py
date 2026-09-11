@@ -8,7 +8,7 @@ import html
 import re
 import streamlit as st
 
-from holder_history import (DUST_BEST_LABEL, DUST_BEST_PCT, DUST_CAUTION_PCT,
+from holder_history import (DUST_BEST_LABEL, DUST_CAUTION_PCT,
                             DUST_DANGER_PCT, FULL_SCAN_MAX_WALLETS, INTERVAL_SEC,
                             LP_INTERVAL_SEC, dust_flag, history_for_mint,
                             holders_usable, merge_status_history, resample_4h,
@@ -19,7 +19,8 @@ import alert_settings
 import robinhood_holders
 import robinhood_watchlist
 from robinhood_watchlist import RH_LP_SOURCE, RH_REGULAR_SOURCE
-from telegram_alerts import (delivery_note, process_holder_alerts,
+from telegram_alerts import (STRATEGY_SHIFT_PCT, STRATEGY_SHIFT_TITLE,
+                             delivery_note, process_holder_alerts,
                              summarize_deliveries)
 from watchlist_detail import (STALE_AFTER_SEC, STALE_REGULAR_AFTER_SEC,
                               format_wib, previous_pct, resolve_view)
@@ -325,14 +326,27 @@ RH_REGULAR_CARD_TITLE = "🦅 Watchlist Robinhood — Holder Dust"
 RH_CARD_TOOLTIP = (
     "Watchlist Robinhood LP (0x…, chain id 4663) — di-scan cron tiap ±5 "
     "menit (sejak 2026-09-06, sama cepatnya dengan Watchlist Meteora) "
-    "supaya exit bisa lebih awal. Pengingat ⚡ Telegram dikirim tiap ±5 "
-    "menit per token selama dust masih di atas ambang. Selama hold % MC "
-    f"dust di atas {DUST_BEST_PCT:g}%, alert ⚡ Telegram dikirim berulang "
-    "tiap scan — berhenti hanya bila token dihapus (✕) atau dipindah ke "
-    "watchlist biasa (📋). Rule lain tetap jalan: "
+    "supaya exit bisa lebih awal. Satu-satunya notifikasi Telegram: "
+    f"{STRATEGY_SHIFT_TITLE} — dikirim berulang tiap scan selama hold % MC "
+    f"dust masih ≥ {STRATEGY_SHIFT_PCT:g}%, berhenti hanya bila token "
+    "dihapus (✕) atau dipindah ke watchlist biasa (📋). Badge level dust "
+    f"tetap di baris: ≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
+    f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA. Data holder dari Blockscout, "
+    "harga/marketcap dari DexScreener.")
+# Card Robinhood **biasa** (halaman temp): detail karakteristik juga tooltip
+# (2026-09-11) — caption panjangnya dihapus karena mengulang isi tooltip dan
+# masih menyebut rule 🔔 titik high yang sudah tidak ada.
+RH_REGULAR_CARD_TOOLTIP = (
+    "Watchlist Robinhood biasa (0x…, chain id 4663) — TIDAK di-scan cron "
+    "(slot 4 jam dimatikan); datanya jalan lewat tombol scan manual di "
+    "card ini atau pindah ke card LP. Notifikasinya sama seperti lane LP: "
+    f"{STRATEGY_SHIFT_TITLE} dikirim tiap scan selama hold % MC dust "
+    f"≥ {STRATEGY_SHIFT_PCT:g}% (hanya bila notif watchlist biasa ON di "
+    "bawah card). Badge level dust di baris: "
     f"≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
     f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA. Data holder dari Blockscout, "
     "harga/marketcap dari DexScreener.")
+
 ALERT_NOTE_KEY = "manual_alert_note_"
 
 
@@ -364,7 +378,7 @@ def _render_alert_note(key: str) -> None:
     if note.get("failed"):
         st.warning(text)
     else:
-        st.info(text, icon="⚡")
+        st.info(text, icon="🚨")
 
 
 RH_ADD_FORM = "rh-add-token"
@@ -460,7 +474,8 @@ def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
     if variant == "lp":
         if cols[4].button("📋", key=f"rh-move-{mint}",
                           help="Pindahkan ke Watchlist Robinhood (biasa, "
-                               "halaman temp) — pengingat ⚡ >0,1% berhenti",
+                               "halaman temp) — pengingat 🚨 dust ≥ 0,06% MC "
+                               "berhenti",
                           use_container_width=True):
             robinhood_watchlist.set_robinhood_watchlist_source(
                 mint, RH_REGULAR_SOURCE, background=True)
@@ -534,28 +549,20 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
 
     title = RH_CARD_TITLE if variant == "lp" else RH_REGULAR_CARD_TITLE
     with st.container(border=True):
-        # Card LP: detail karakteristik = tooltip di teks judul (2026-09-10),
-        # bukan caption panjang — lihat RH_CARD_TOOLTIP. Card biasa (temp)
-        # tetap pakai caption karena teksnya belum diminta dipindah.
+        # Detail karakteristik KEDUA card = tooltip di teks judul
+        # (2026-09-10; card biasa menyusul 2026-09-11) — bukan caption
+        # panjang di badan card. Lihat RH_CARD_TOOLTIP /
+        # RH_REGULAR_CARD_TOOLTIP.
         st.markdown(_rh_head_html(title, len(watchlist or {}), danger,
                                   caution,
                                   sync=robinhood_watchlist.sync_state().get(
                                       "state") or "",
-                                  tooltip=RH_CARD_TOOLTIP
-                                  if variant == "lp" else ""),
+                                  tooltip=RH_CARD_TOOLTIP if variant == "lp"
+                                  else RH_REGULAR_CARD_TOOLTIP),
                     unsafe_allow_html=True)
-        if variant != "lp":
-            st.caption(
-                "Watchlist **Robinhood biasa** (`0x…`) — cron **4 jam "
-                "dimatikan**; token ini tidak di-scan otomatis (pakai "
-                "tombol scan manual atau pindah ke card LP). "
-                "Titik acuan alert = **titik high**: "
-                "hold % MC dust terbesar yang pernah tercatat (bukan "
-                "snapshot awal). Bila dust % MC **turun ≥ 50% dari titik "
-                "high**, alert 🔔 Telegram dikirim (satu kali per titik "
-                "high; naik ke titik high baru = acuan baru). Ambang badge "
-                f"sama: ≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
-                f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA.")
+        # Caption rule di card biasa DIHAPUS (2026-09-11): tulisan itu
+        # mengulang isi tooltip judul, dan rule 🔔 titik high sudah tidak ada.
+        # Karakteristik card pindah ke RH_REGULAR_CARD_TOOLTIP (tooltip judul).
 
         with st.expander("➕ Tambah token Robinhood ke watchlist",
                          expanded=not rows):
@@ -568,10 +575,10 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
                     "Masuk ke card", RH_ADD_TARGETS, index=(0 if variant == "lp" else 1),
                     key="rh-add-target", horizontal=True,
                     help=("🦅 Robinhood LP = scan cepat ±5 menit + "
-                          "pengingat ⚡ tiap scan selama dust > 0,1% MC. "
+                          "pengingat 🚨 tiap scan selama dust ≥ 0,06% MC. "
                           "📋 Robinhood biasa = tidak di-scan cron "
                           "(4 jam dimatikan); pakai pindah card / "
-                          "scan manual. Rule 🔔 titik high."))
+                          "scan manual."))
                 if st.form_submit_button(
                         "🦅 Tambah ke Watchlist Robinhood"):
                     ca = str(rh_ca or "").strip()
@@ -614,25 +621,20 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
             if fresh:
                 # Alert ikut dievaluasi + dikirim dari scan manual (permintaan
                 # user 2026-09-09), bukan hanya dari cron. HARUS sebelum
-                # publish_scan: rule membaca anchor lama, dan state hasil
-                # evaluasi (sent_event_ids/last_sent/marker) ikut tertulis saat
-                # ingest_many menyimpan store — pola cron scan_holders.py.
-                # volume_rules=False: scan manual hanya menjalankan rule lane
-                # (⚡ EARLY DUMP di LP, 🔔 HIGH DROP di lane biasa) dan tidak
-                # menggeser anchor 4 jam / peta wallet milik cron.
-                lane_lp = variant == "lp"
-                lane_mints = set(watchlist or {})
-                # Tombol on/off notif watchlist biasa: evaluasi + marker tetap
-                # jalan, hanya pengiriman yang dilewati (mute, sama seperti cron).
-                muted = (set() if lane_lp
+                # publish_scan: rule membaca marker lama, dan state hasil
+                # evaluasi (sent_event_ids/last_sent/marker 🚨) ikut tertulis
+                # saat ingest_many menyimpan store — pola cron scan_holders.py.
+                # advance_anchors=False: scan ad-hoc tidak menggeser anchor
+                # 4 jam / peta wallet milik scan FULL cron.
+                # Tombol on/off notif watchlist biasa (lane non-LP): evaluasi +
+                # marker tetap jalan, hanya pengiriman yang dilewati.
+                muted = (set() if variant == "lp"
                          or alert_settings.regular_telegram_enabled()
-                         else set(lane_mints))
+                         else set(watchlist or {}))
                 _store_alert_note(process_holder_alerts(
-                    fresh, history_store,
-                    lp_mints=lane_mints if lane_lp else set(),
-                    high_mints=set() if lane_lp else lane_mints,
-                    mute_mints=muted, watchlist_meta=watchlist,
-                    volume_rules=False), f"{ALERT_NOTE_KEY}rh_{variant}")
+                    fresh, history_store, mute_mints=muted,
+                    watchlist_meta=watchlist,
+                    advance_anchors=False), f"{ALERT_NOTE_KEY}rh_{variant}")
                 robinhood_watchlist.publish_scan(
                     fresh, watchlist, history_store=history_store,
                     push=False, merge_status=merge_status)

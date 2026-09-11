@@ -10,8 +10,8 @@ import streamlit as st
 
 from helius_holders import depth_bar_chart, scan_token_holders
 from best_pool_ui import render_best_pool_scan
-from holder_history import (DUST_BEST_PCT, DUST_CAUTION_PCT,
-                            DUST_DANGER_PCT, FULL_SCAN_MAX_WALLETS,
+from holder_history import (DUST_CAUTION_PCT, DUST_DANGER_PCT,
+                            FULL_SCAN_MAX_WALLETS,
                             LP_INTERVAL_SEC, holders_usable, ingest_many)
 from links import external_links_html, holder_analytic_link_html
 from lp_watchlist import (LP_SOURCE, lp_card_rows,
@@ -24,7 +24,8 @@ from dashboard_components import (_ca_error, _compact, _dust_badge_html,
                                   card_head_html, hover_title_html,
                                   SOLANA_CA_RE, load_dashboard_data,
                                   render_styles)
-from telegram_alerts import process_holder_alerts
+from telegram_alerts import (STRATEGY_SHIFT_PCT, STRATEGY_SHIFT_TITLE,
+                             process_holder_alerts)
 import activity_log
 import robinhood_best_scan
 import robinhood_holders
@@ -82,19 +83,18 @@ def _autorefresh_tick():
         st.rerun()
 
 
+# Teks penjelas di samping toggle **dihapus** (permintaan user 2026-09-11:
+# "sudah ada di tooltip") — help toggle di bawah ini sudah bilang hal yang
+# sama, jadi tidak ada lagi baris abu-abu di bawahnya.
 _autorefresh_col = st.columns([0.30, 0.70])
 _autorefresh_col[0].toggle(
     "🔄 Auto-refresh ±60 dtk",
     value=st.session_state.get("autorefresh_on", True),
     key="autorefresh_on",
     help="Lempar ulang halaman otomatis saat snapshot cron baru "
-         "muncul (±60 dtk sekali cek). OFF = halaman hanya "
-         "terupdate saat ada interaksi manual.")
-_autorefresh_col[1].markdown(
-    '<div style="font-size:.72rem;color:#64748b;align-self:center;">'
-    "Data baris = snapshot cron (±5 menit); saat ada snapshot baru, "
-    "halaman menyegarkan sendiri angkanya.</div>",
-    unsafe_allow_html=True)
+         "muncul (±60 dtk sekali cek). Data baris = snapshot cron "
+         "(±5 menit); OFF = halaman hanya terupdate saat ada interaksi "
+         "manual.")
 
 
 # ---------------------------------------------------------------------------
@@ -112,10 +112,11 @@ LP_CARD_TOOLTIP = (
     "Watchlist terpisah untuk token yang ditambahkan dari Scan Meteora "
     "Pool (⭐) atau ditambah manual ke card ini. Di-scan cron tiap ±5 "
     "menit supaya exit LP lebih awal dan perubahan holder langsung "
-    f"kelihatan: selama hold % MC dust di atas {DUST_BEST_PCT:g}%, alert "
-    "⚡ Telegram dikirim berulang tiap scan — berhenti bila token dihapus "
-    "(✕) atau dipindah ke watchlist biasa (📋). Grafik menampilkan "
-    "perubahan dust holder per bucket 5 menit: "
+    f"kelihatan: satu-satunya notifikasi Telegram adalah "
+    f"{STRATEGY_SHIFT_TITLE} — dikirim berulang tiap scan selama hold "
+    f"% MC dust masih ≥ {STRATEGY_SHIFT_PCT:g}% (berhenti bila token "
+    "dihapus (✕) atau dipindah ke watchlist biasa (📋)). Grafik "
+    "menampilkan perubahan dust holder per bucket 5 menit: "
     f"≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
     f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA.")
 LP_ADD_FORM = "lp-add-token"
@@ -272,16 +273,14 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
             if fresh:
                 # Alert ikut dievaluasi + dikirim dari scan manual (permintaan
                 # user 2026-09-09), bukan hanya dari cron. HARUS sebelum
-                # ingest_many: rule membaca anchor lama, lalu state hasil
-                # evaluasi (sent_event_ids/last_sent/marker episode) ikut
-                # tertulis saat ingest_many menyimpan store — pola yang sama
-                # dengan cron scripts/scan_holders.py. volume_rules=False:
-                # hanya rule lane LP (⚡ EARLY DUMP + eskalasi EXIT), anchor
-                # 4 jam / peta wallet cron tidak digeser scan ad-hoc.
+                # ingest_many: rule membaca marker lama, lalu state hasil
+                # evaluasi (sent_event_ids/last_sent/marker 🚨) ikut tertulis
+                # saat ingest_many menyimpan store — pola yang sama dengan cron
+                # scripts/scan_holders.py. advance_anchors=False: scan ad-hoc
+                # tidak menggeser anchor peta wallet milik scan FULL cron.
                 _store_alert_note(process_holder_alerts(
-                    fresh, history_store, lp_mints=set(lp_watch),
-                    high_mints=set(), watchlist_meta=lp_watch,
-                    volume_rules=False), f"{ALERT_NOTE_KEY}lp")
+                    fresh, history_store, watchlist_meta=lp_watch,
+                    advance_anchors=False), f"{ALERT_NOTE_KEY}lp")
                 ingest_many(fresh, store=history_store, detail=False)
                 published = publish_holder_status(
                     fresh, watchlist, push=False,
@@ -533,11 +532,13 @@ def _render_helius_holder_result(result: dict) -> None:
 
 # ---------------------------------------------------------------------------
 # Watchlist Robinhood Chain (EVM, chain id 4663) — dua card sejak 2026-09-05:
-# **Robinhood LP** (scan cepat ±5 menit sejak 2026-09-06, pengingat ⚡ > 0,1%
-# MC berulang) dan **Robinhood biasa** (scan ±4 jam, rule 🔔 HIGH DROP titik
-# high). Sejak 2026-09-06 KEDUA card LP (Chart LP Meteora + Robinhood LP)
-# ikut di-scan tiap run = ±5 menit; tinggal watchlist biasa yang 4 jam
-# (LP_SCAN_RUN_MULTIPLIER tersedia kalau kuota Helius perlu dihemat).
+# **Robinhood LP** (scan cepat ±5 menit sejak 2026-09-06) dan **Robinhood
+# biasa** (scan manual). Notifikasinya satu untuk semua lane: 🚨 WAKTUNYA
+# GANTI STRATEGI selama dust ≥ 0,06% MC (2026-09-11; rule ⚡ EARLY DUMP dan
+# 🔔 HIGH DROP sudah dihapus). Sejak 2026-09-06 KEDUA card LP (Chart LP
+# Meteora + Robinhood LP) ikut di-scan tiap run = ±5 menit; tinggal watchlist
+# biasa yang hanya jalan lewat tombol scan (LP_SCAN_RUN_MULTIPLIER tersedia
+# kalau kuota Helius perlu dihemat).
 # ---------------------------------------------------------------------------
 # Shared stores; moving sections does not change watchlist sources or cron.
 data = load_dashboard_data()

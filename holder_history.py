@@ -53,10 +53,11 @@ DUST_DANGER_PCT = 1.0
 # HATI-HATI: dust sudah memegang >= 0,5% MC tapi belum sebatas BAHAYA.
 DUST_CAUTION_PCT = 0.5
 # BEST POOL: dust < 0,1% MC = distribusi holder sangat bersih (TAMBAHAN,
-# bukan pengganti level AMAN/HATI-HATI/BAHAYA). Boundary sengaja **strict
-# di bawah 0,1%**: nilai == 0,1% tidak mendapat badge BEST POOL dan juga
-# tidak memicu alert ``early_dump`` (yang menyala saat > 0,1%), jadi badge
-# dan alert tidak pernah tumpang tindih di angka yang sama.
+# bukan pengganti level AMAN/HATI-HATI/BAHAYA). Boundary sengaja **strict di
+# bawah 0,1%** supaya tidak pernah tumpang tindih dengan badge 🏆 (butuh
+# ``<``). Notifikasi Telegram sendiri tidak lagi membaca angka ini: sejak
+# 2026-09-11 hanya ada satu rule — dust ≥ 0,06% MC → 🚨 WAKTUNYA GANTI
+# STRATEGI (lihat ``telegram_alerts.STRATEGY_SHIFT_PCT``).
 DUST_BEST_PCT = 0.1
 # Label badge BEST POOL (tampil apa adanya di UI — Scan Meteora).
 DUST_BEST_LABEL = "BEST POOL"
@@ -1186,13 +1187,13 @@ def seed_from_status(store: dict, status: dict | None) -> dict:
                 pass
         elif isinstance(remote_alert, dict):
             # Snapshot ramping: jangan timpa peta wallet, tapi pulihkan
-            # marker early_dump / high_drop (tanpa peta) supaya scan 5 menit
+            # marker 🚨 strategy_shift (tanpa peta) supaya scan 5 menit
             # berikutnya masih punya state Telegram bila backup gzip gagal.
             local_alert = slot.get("alert_state") if isinstance(
                 slot.get("alert_state"), dict) else {}
             local_alert = dict(local_alert or {})
             changed = False
-            for key in ("early_dump", "high_drop"):
+            for key in ("strategy_shift",):
                 remote_m = remote_alert.get(key)
                 if not isinstance(remote_m, dict) or not _int(remote_m.get("ts")):
                     continue
@@ -1426,19 +1427,19 @@ def _merge_alert_state(current, incoming) -> dict:
     if not current:
         return incoming
     try:
-        from telegram_alerts import (MAX_LAST_SENT, MAX_REJECTED_SIGNALS,
-                                     MAX_SENT_EVENT_IDS)
+        from telegram_alerts import MAX_LAST_SENT, MAX_SENT_EVENT_IDS
     except Exception:  # noqa: BLE001 - batas default bila import gagal
-        MAX_SENT_EVENT_IDS, MAX_LAST_SENT, MAX_REJECTED_SIGNALS = 96, 8, 8
+        MAX_SENT_EVENT_IDS, MAX_LAST_SENT = 96, 8
     merged = dict(current)
     for key in ("baseline", "rolling"):
         picked = _pick_by_ts(current.get(key), incoming.get(key))
         if picked:
             merged[key] = picked
-    # Marker ``early_dump`` (titik terakhir yang direkam rule early dump) dan
-    # marker ``high_drop`` (titik high rule HIGH DROP): yang paling baru
-    # menang, sama seperti rolling/latest_detail.
-    for key in ("early_dump", "high_drop"):
+    # Marker ``strategy_shift`` (dust terakhir yang direkam rule 🚨 WAKTUNYA
+    # GANTI STRATEGI): yang paling baru menang, sama seperti rolling/detail.
+    # Marker rule lama (``early_dump``/``high_drop``) sengaja tidak dibagikan
+    # lagi — rule-nya sudah dihapus, sisanya hilang sendiri dari store.
+    for key in ("strategy_shift",):
         picked = _pick_by_ts(current.get(key), incoming.get(key))
         if picked:
             merged[key] = picked
@@ -1456,11 +1457,6 @@ def _merge_alert_state(current, incoming) -> dict:
             last[str(key)] = ts
     merged["last_sent"] = dict(sorted(last.items(),
                                       key=lambda item: -item[1])[:MAX_LAST_SENT])
-    rejected = ([row for row in (current.get("rejected_signals") or [])
-                 if isinstance(row, dict)]
-                + [row for row in (incoming.get("rejected_signals") or [])
-                   if isinstance(row, dict)])
-    merged["rejected_signals"] = rejected[-MAX_REJECTED_SIGNALS:]
     return merged
 
 
@@ -1478,9 +1474,8 @@ def merge_stores(*stores) -> dict:
     - ``chronology``    : interval union; snapshot wallet yang punya peta menang
       (baseline paling tua, latest paling baru).
     - ``alert_state``   : snapshot baseline/rolling terbaru; ``sent_event_ids``
-      union; ``last_sent`` max per kunci; ``rejected_signals`` gabungan;
-      marker ``early_dump`` (rule EARLY DUMP) dan ``high_drop`` (titik high
-      rule HIGH DROP) yang paling baru menang.
+      union; ``last_sent`` max per kunci; marker ``strategy_shift`` (🚨 WAKTUNYA
+      GANTI STRATEGI) yang paling baru menang.
     """
     out = empty_store()
     stamps = []

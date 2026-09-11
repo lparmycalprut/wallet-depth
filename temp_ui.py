@@ -6,6 +6,38 @@ from __future__ import annotations
 METEORA_CARD_TITLE = "🌊 Scan Meteora Pool"
 
 
+def meteora_scan_tooltip() -> str:
+    """Detail karakteristik card — teks tooltip di judul (bukan caption).
+
+    Sama seperti dua card scan best di halaman utama (konvensi 2026-09-10):
+    caption panjang di badan card dihapus, seluruh isinya pindah ke atribut
+    ``title`` pada teks judul, jadi hanya muncul saat kursor digeser ke judul.
+    Permintaan user 2026-09-11 mengkonfirmasi: tulisan rule memang tidak perlu
+    dua-duanya. Atribut ``title`` tidak mengenal markdown (plain text tanpa
+    ``**``); semua ambang dibaca dari konstanta rule saat dipanggil — impor di
+    dalam fungsi supaya modul halaman tetap ringan.
+    """
+    import holder_history
+    import meteora_screener
+
+    return (
+        "Top DLMM 24 jam "
+        f"(active_tvl ≥ {meteora_screener.TVL_MIN:g}, "
+        "fee_active_tvl_ratio ≥ "
+        f"{meteora_screener.FEE_RATIO_24H:g}) dibandingkan 1 jam "
+        f"(fee_active_tvl_ratio ≥ {meteora_screener.FEE_RATIO_1H:g}). "
+        "Pool 24 jam yang masih muncul di 1 jam tetap ditampilkan. Hanya pool "
+        f"dengan dust holder ≤ {holder_history.DUST_SCAN_HIDE_PCT:g}% MC yang "
+        "ditampilkan — sisanya disembunyikan (badge AMAN/HATI-HATI/BAHAYA "
+        "tidak dipakai di sini). Dust "
+        f"< {holder_history.DUST_BEST_PCT:g}% MC + data holder valid "
+        f"(≥ {holder_history.DUST_BEST_MIN_HOLDERS:g} wallet) + TVL ≥ "
+        f"${holder_history.DUST_BEST_MIN_TVL_USD / 1000:g}K diberi badge 🏆 "
+        "BEST POOL dan diurutkan paling atas, lalu dust % MC terkecil dan TVL "
+        "terbesar. ⭐ memasukkan token ke card Watchlist Meteora di halaman "
+        "utama. Tombol kanan: Meteora + HawkFi.")
+
+
 def _meteora_head_html(rows: list, hidden: int, best_count: int) -> str:
     """Header card Scan Meteora: jumlah pool + rekap BEST / disembunyikan."""
     from dashboard_components import card_head_html
@@ -18,7 +50,8 @@ def _meteora_head_html(rows: list, hidden: int, best_count: int) -> str:
     if hidden:
         pills.append('<span class="lp-count" style="color:#334155;'
                      f'background:#e2e8f0;">{hidden} disembunyikan</span>')
-    return card_head_html(METEORA_CARD_TITLE, pills)
+    return card_head_html(METEORA_CARD_TITLE, pills,
+                          tooltip=meteora_scan_tooltip())
 
 
 def render_meteora_scan() -> None:
@@ -30,8 +63,7 @@ def render_meteora_scan() -> None:
     import streamlit as st
 
     from dashboard_components import (_compact, _dust_best_html, _number)
-    from holder_history import (DUST_BEST_MIN_TVL_USD, DUST_BEST_PCT,
-                                DUST_SCAN_HIDE_PCT, FULL_SCAN_MAX_WALLETS)
+    from holder_history import FULL_SCAN_MAX_WALLETS
     from links import external_links_html, pool_links_html
     from lp_watchlist import LP_SOURCE
     from meteora_screener import row_flag, scan_meteora, sort_rows
@@ -74,30 +106,16 @@ def render_meteora_scan() -> None:
         fetched = int(result.get("fetched") or 0)
         best_count = sum(1 for row in rows if row_flag(row).get("best"))
 
+        # Tidak ada caption ambang lagi (2026-09-11): seluruh deskripsi rule
+        # hanya ada di tooltip judul — lihat ``meteora_scan_tooltip()``.
         st.markdown(_meteora_head_html(rows, hidden, best_count),
                     unsafe_allow_html=True)
-        st.caption(
-            "Top DLMM 24 jam (`active_tvl ≥ 1000`, "
-            "`fee_active_tvl_ratio ≥ 250`) dibandingkan 1 jam "
-            "(`fee_active_tvl_ratio ≥ 1`). Pool 24 jam yang masih muncul di "
-            "1 jam **tetap ditampilkan**. Hanya pool dengan dust holder "
-            f"**≤ {DUST_SCAN_HIDE_PCT:g}% MC** yang ditampilkan — sisanya "
-            "disembunyikan (badge AMAN/HATI-HATI/BAHAYA tidak dipakai di "
-            f"sini). Dust **< {DUST_BEST_PCT:g}% MC** + data holder valid "
-            f"(≥ 40 wallet) + **TVL ≥ ${DUST_BEST_MIN_TVL_USD / 1000:g}K** "
-            "diberi badge 🏆 BEST POOL — **BEST POOL diurutkan paling atas**,"
-            " lalu dust % MC terkecil dan TVL terbesar. ⭐ memasukkan token "
-            "ke card **Watchlist Meteora** di halaman utama. Tombol kanan: "
-            "Meteora + HawkFi."
-        )
         if error:
             st.warning(f"Meteora API: {error}")
         if fetched:
-            best_txt = (f" · 🏆 {best_count} BEST POOL di urutan teratas"
-                        if best_count else "")
-            st.caption(f"{len(rows)} pool ditampilkan · {hidden} "
-                       f"disembunyikan (dust > {DUST_SCAN_HIDE_PCT:g}% MC) · "
-                       f"listing {fetched}{best_txt}.")
+            best_txt = (f" · 🏆 {best_count} BEST POOL" if best_count else "")
+            st.caption(f"{len(rows)} pool ditampilkan · {hidden} disembunyikan"
+                       f" · listing {fetched}{best_txt}.")
         if not rows:
             if result:
                 st.info("Tidak ada pool yang lolos filter dust (atau "
@@ -280,10 +298,7 @@ def render_temp() -> None:
         "card **Watchlist Meteora** di halaman utama. Cadens cron: semua "
         "watchlist LP (Watchlist Meteora + Robinhood LP) **±5 menit**. "
         "Watchlist biasa **tidak** "
-        "di-scan cron (slot 4 jam dimatikan) — pakai tombol scan manual. "
-        "Rule 🔔 **titik high** tetap ada di scan manual: bila dust % MC turun "
-        "≥ 50% dari hold % MC **terbesar** yang pernah tercatat, alert Telegram "
-        "dikirim."
+        "di-scan cron (slot 4 jam dimatikan) — pakai tombol scan manual."
     )
     st.caption(sync_caption_text(_watch_sync,
                                  status_updated_at=holder_status.get("updated_at"),
@@ -292,17 +307,18 @@ def render_temp() -> None:
     # --- Tombol on/off notifikasi Telegram (watchlist biasa saja) --------------
     # Permintaan user 2026-09-06: watchlist biasa kadang cukup dipantau di
     # dashboard tanpa pesan Telegram. Scope SENGAJA hanya watchlist Solana biasa
-    # — Chart LP Meteora dan kedua card Robinhood punya rule ⚡/🔔 sendiri dan
-    # tidak ikut dimatikan. Saat OFF, cron tetap scan + tetap memajukan marker
-    # titik high; hanya pengiriman pesannya yang dilewati.
+    # — Chart LP Meteora dan kedua card Robinhood tidak ikut dimatikan. Saat
+    # OFF, cron tetap scan + tetap memajukan marker 🚨; hanya pengiriman
+    # pesannya yang dilewati.
     _notif_on = alert_settings.regular_telegram_enabled()
     _notif_toggle = st.toggle(
         "🔔 Notifikasi Telegram watchlist biasa",
         value=_notif_on, key="regular-telegram-toggle",
-        help=("ON = alert 🔔 HIGH DROP / dump / akumulasi untuk watchlist biasa "
-              "dikirim ke Telegram. OFF = token tetap di-scan dan grafiknya "
-              "tetap jalan, pesannya saja yang tidak dikirim. Tidak memengaruhi "
-              "Watchlist Meteora maupun watchlist Robinhood."))
+        help=("ON = notifikasi 🚨 WAKTUNYA GANTI STRATEGI (satu-satunya "
+              "notifikasi) untuk watchlist biasa dikirim ke Telegram. OFF = "
+              "token tetap di-scan dan grafiknya tetap jalan, pesannya saja "
+              "yang tidak dikirim. Tidak memengaruhi Watchlist Meteora maupun "
+              "watchlist Robinhood."))
     if bool(_notif_toggle) != bool(_notif_on):
         _saved = alert_settings.set_regular_telegram_enabled(bool(_notif_toggle))
         if not _saved:
@@ -373,19 +389,18 @@ def render_temp() -> None:
         if fresh:
             # Alert ikut dievaluasi + dikirim dari scan manual (permintaan user
             # 2026-09-09). Lane watchlist biasa TIDAK di-scan cron sejak
-            # 2026-09-07, jadi tombol ini satu-satunya jalur rule 🔔 HIGH DROP
-            # (turun >= 50% dari titik high) — tanpa evaluasi di sini token
-            # biasa tidak pernah bisa mengirim notif. Sebelum ingest_many
-            # supaya state alert ikut tersimpan; volume_rules=False = anchor
-            # 4 jam cron tidak digeser. Tombol on/off notif watchlist biasa
-            # tetap dihormati lewat mute_mints (evaluasi jalan, kirim dilewati).
+            # 2026-09-07, jadi tombol ini satu-satunya jalur notifikasi lane
+            # itu — tanpa evaluasi di sini token biasa tidak pernah bisa
+            # mengirim notif. Sebelum ingest_many supaya state alert ikut
+            # tersimpan; advance_anchors=False = anchor 4 jam cron tidak
+            # digeser. Tombol on/off notif watchlist biasa tetap dihormati
+            # lewat mute_mints (evaluasi jalan, kirim dilewati).
             _store_alert_note(process_holder_alerts(
-                fresh, history_store, lp_mints=set(),
-                high_mints=set(holder_watch),
+                fresh, history_store,
                 mute_mints=(set() if alert_settings.regular_telegram_enabled()
                             else set(holder_watch)),
                 watchlist_meta=holder_watch,
-                volume_rules=False), f"{ALERT_NOTE_KEY}regular")
+                advance_anchors=False), f"{ALERT_NOTE_KEY}regular")
             # ``detail=False``: baseline scan FULL + ``latest_detail`` +
             # kronologi (data awal yang sudah tercatat) **tidak disentuh** —
             # scan ini hanya menambah titik baru di atasnya.

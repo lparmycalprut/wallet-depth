@@ -43,8 +43,11 @@ dispatch**) dan memanggil `python scripts/scan_holders.py`. Sejak
 **2026-09-07** scanner hanya mengerjakan **lane LP**: Chart LP Meteora
 (Solana/Helius) + Robinhood LP (EVM/Blockscout), keduanya tiap run = ±5 menit.
 Watchlist biasa (Solana non-LP & Robinhood `source=regular`) tidak di-scan cron
-lagu — slot 4 jam, catch-up, bootstrap, dan rule 🔔 HIGH DROP dilepas dari
-jalur cron (scan manual di dashboard tetap ada). Pencatatan ikut dirampingkan:
+lagu — slot 4 jam, catch-up, bootstrap, pembacaan toggle Telegram-nya, dan
+semua rule lama (🔔 HIGH DROP, ⚡ EARLY DUMP, exit/aman) dilepas dari jalur
+cron (scan manual di dashboard tetap ada; sejak 2026-09-11 kedua jalur memakai
+satu-satunya rule 🚨 WAKTUNYA GANTI STRATEGI — dust ≥ 0,06% MC, diulang tiap
+scan selama masih di atas ambang). Pencatatan ikut dirampingkan:
 snapshot dipublish tanpa `merge_status`, toggle Telegram watchlist biasa tidak
 dibaca lagi, dan backup durable dibatasi token LP aktif
 (`publish_holder_history(..., keep_mints=…)` — terukur 2.135.084 → 10.050 byte

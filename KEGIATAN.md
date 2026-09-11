@@ -1,3 +1,110 @@
+# Kegiatan — 11 September 2026 (satu notifikasi: 🚨 GANTI STRATEGI · caption dobel tooltip dihapus)
+
+Dua permintaan user:
+
+1. *"tulisan ini hapus donk, sudah ada di tooltip"* → ditanya balik, user
+   memilih **semuanya**: semua caption yang mengulang isi tooltip judul
+   dihapus (3 tempat).
+2. *"buat 1 notifikasi lagi — jika %dust diatas >= 0,06 kasih notif, WAKTUNYA
+   GANTI STRATEGI"* + *"hapus notif lainnya"* → rule notifikasi diganti satu
+   saja; ditanya balik soal kadens, user memilih **tiap scan selama masih di
+   atas ambang** (`every_scan`).
+
+## 1 · Caption rule → tooltip saja
+
+- **🌊 Scan Meteora Pool** (halaman temp) sebelumnya **tidak punya tooltip
+  sama sekali** — captionnya panjang dan mengarang ulang isi yang sama, jadi
+  teksnya tidak dibuang tapi **dipindah**: fungsi baru
+  `temp_ui.meteora_scan_tooltip()` menyusun rule + ambang dari konstanta
+  (`meteora_screener.TVL_MIN`/`FEE_RATIO_24H`/`FEE_RATIO_1H`,
+  `holder_history.DUST_SCAN_HIDE_PCT`/`DUST_BEST_PCT`/`DUST_BEST_MIN_*`) dan
+  dipasang sebagai `tooltip=` pada `card_head_html()` di
+  `temp_ui._meteora_head_html()` (impor dilakukan di dalam fungsi, sama seperti
+  `best_pool_ui.best_pool_tooltip()`). Caption rekap di bawahnya kehilangan
+  angka yang dobel — dulu `… {hidden} disembunyikan (dust > 0,1% MC) · listing
+  K · 🏆 X BEST POOL di urutan teratas`, sekarang
+  `{N} pool ditampilkan · {M} disembunyikan · listing {K}[ · 🏆 X BEST POOL]`.
+  Kepala card scan best memang bukan `<details>`/accordion, hanya
+  `<div class="lp-head">` dengan pill — tidak ada yang diubah di struktur itu.
+  Card Robinhood (`_head_html`/`_rh_head_html`) sudah memakai helper tooltip
+  yang sama, tidak disentuh.
+- **🦅 Scan Best Robinhood Coin** (`robinhood_best_scan`): caption rekap masih
+  menulis ulang **angka** ambangnya
+  ("…= 2, top 10 holder ≥ 30% = 1, honeypot = …") — sekarang hanya
+  `Listing N coin · M dilewati · dust X · top 10 Y · honeypot Z · holder gagal W.`;
+  seluruh prose sudah ada di `RH_SCAN_TOOLTIP`.
+- **Toggle Auto-refresh** di header halaman utama: teks abu-abu
+  `st.caption("Data baris = snapshot cron (±5 menit); halaman ini re-check tiap
+  ±60 detik.")` dihapus — `help` toggle sudah berkata persis begitu.
+- Pin regression baru: `tests/test_temp_page.py::TooltipBukanCaptionTest`
+  (teks toggle hilang dari badan halaman **tapi tetap ada di `proto.help`**;
+  kepala card /temp memuat `title="Top DLMM 24 jam…"` dan captionnya bebas
+  angka rule) + perluasan
+  `tests/test_robinhood_best_scan.py::RenderTest.test_detail_karakteristik_di_tooltip_bukan_caption`.
+
+## 2 · Satu rule: 🚨 WAKTUNYA GANTI STRATEGI (dust ≥ 0,06% MC)
+
+- `telegram_alerts.py` ditulis ulang (1078 baris):
+  `STRATEGY_SHIFT_PCT = 0.06`, kind/marker `strategy_shift`,
+  `STRATEGY_SHIFT_TITLE = "🚨 WAKTUNYA GANTI STRATEGI"`,
+  `evaluate_strategy_shift_rule(marker, current, *, mint, symbol, sent_event_ids,
+  last_sent, market_context)`. Sifatnya **level-based**: selama
+  `dust_pct_mc >= 0.06` tiap evaluasi menghasilkan event; `< 0.06` = marker
+  `{}` dan **tidak ada** pesan "sudah aman". Ulang dibatasi bucket event
+  `FAST_BUCKET_SEC` 300 dtk + `STRATEGY_SHIFT_RESEND_SEC` 300 dtk per token,
+  jadi cron 5 menit + scan manual + run ganda tidak mengirim pesan kembar.
+  Ambangnya sengaja **di atas** filter listing 0,05%
+  (`meteora_screener.BEST_DUST_MAX_PCT`, `robinhood_best_scan.RH_SCAN_*`)
+  supaya token yang baru masuk daftar tidak langsung bunyi — dipin
+  `ThresholdTest`.
+- **Dihapus**: ⚡ EARLY DUMP (crossing > 0,1%), 🔔 HIGH DROP (≥50% dari titik
+  high), 🚨 EXIT/CUTLOSS + ✅ KEMBALI KE TITIK AMAN, rule dust 4 jam
+  (dump +0,25 pp / akumulasi −0,50 pp), baseline shift ±1 pp, **gerbang
+  konfirmasi volume/harga/volatilitas** (`validate_alert_with_volume`,
+  `volume_verdict`, `is_high_volatility`, skor 0,70/0,80), `escalation_due`,
+  `safe_return_due`, dan **jejak audit `rejected_signals`**. `NoLegacyRulesTest`
+  menuntut simbol-simbol itu tidak ada lagi dan `lp_mints=` menolak TypeError.
+  Yang **tidak** ikut dihapus: anchor `baseline`/`rolling` +
+  `tracked_wallet_addresses()` (dipakai `holder_analysis`, `robinhood_holders`,
+  `robinhood_watchlist` untuk kronologi/peta wallet) dan `alert_context.py`
+  — konteks pasar sekarang murni baris info `📈 Pasar`, diambil **lazy** hanya
+  saat pesan jadi dikirim, disimpan di `event["market"]` (key hanya diisi bila
+  ada nilai non-None).
+- **Baru di API**: `advance_anchors` (default True) memisahkan "kirim notif"
+  dari "geser anchor". Cron `scripts/scan_holders.py` → `advance_anchors=args.full`;
+  **semua** tombol scan manual (`app.py`, `dashboard_components._render_rh_card`,
+  `temp_ui.py`) sekarang ikut mengirim notif dengan `advance_anchors=False`
+  + tanpa flag scope. `holder_history` hanya menyimpan/menggabung marker
+  `("strategy_shift",)` (2 tempat: restore snapshot ringkas + `_merge_alert_state`);
+  `holder_status._alert_state_for_status` membuang `rejected_signals` + marker
+  legacy. Tooltip card (`app.LP_CARD_TOOLTIP`, `RH_CARD_TOOLTIP`,
+  `RH_REGULAR_CARD_TOOLTIP`) menyebut rule baru dari konstanta impor, bukan angka
+  diketik manual, dan `st.info(..., icon="🚨")` di panel hasil scan.
+
+## Hasil tes
+
+`/home/user/.venv/bin/python -m pytest -q tests` → **1043 passed, 21 subtests
+passed, 0 gagal** (~63 s). Berkas tes yang ikut dipensiunkan
+(`git rm`): `test_early_dump.py`, `test_high_drop.py`, `test_exit_cutloss.py`,
+`test_alert_gating.py`, `test_volume_validation.py`. Baru:
+`tests/test_strategy_shift.py` (26 tes + 13 subtests). Ditulis ulang:
+`tests/test_telegram_alerts.py` (32). Diperbaiki ikut menyesuaikan:
+`test_alert_pipeline.py`, `test_manual_scan_alerts.py` (19), `test_scan_holders.py`,
+`test_robinhood_dust_coverage.py`, `test_holder_status.py`, `test_store_backup.py`,
+`test_alert_settings.py`, `test_lp_card_ui.py`.
+
+Bug produk yang ketemu **berkat tes**, bukan tesnya yang diubah:
+`evaluate_strategy_shift_rule` dulu mensyaratkan `since_ts` untuk
+"in-episode", padahal `compact_alert_state` bisa membuangnya → marker hasil
+state terkompaksi diperlakukan sebagai episode baru dan teks
+"baru melewati ambang" muncul terus. Sekarang `since_ts = marker["since_ts"]
+or marker["ts"]` (fallback sama di `strategy_shift_marker_next`).
+
+Dokumen yang disamakan: `README.md` (seksi alert, "Konteks pasar di pesan",
+format contoh pesan, tabel konstanta), `AGENTS.md` (bullet scan-manual,
+`alert_settings`, cron, `telegram_alerts`, tabel angka kunci, konvensi
+tooltip), `DEPLOY.md`.
+
 # Kegiatan — 10 September 2026 (scan best jadi tooltip, kredit Helius di 🧾, budget waktu Scan Best Robinhood dihapus)
 
 Tiga permintaan user sekaligus (sesi sebelum tidur — "nanti kalau sudah
