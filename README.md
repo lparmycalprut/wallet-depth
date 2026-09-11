@@ -8,8 +8,9 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
 ## Halaman
 
 - **Halaman utama**: **🌊 Watchlist Meteora** (dulu "Chart LP") berdampingan
-  dengan **🦅 Watchlist Robinhood** (LP) dalam grid 2 kolom, **🏆 Scan Best
-  Pool Meteora** full-width di bawahnya (sejak 2026-09-10), plus **🛰 Scan
+  dengan **🦅 Watchlist Robinhood** (LP) dalam grid 2 kolom — **🏆 Scan Best
+  Pool Meteora** (sejak 2026-09-10) menempel di bawah card Meteora, **🦅
+  Scan Best Robinhood Coin** di bawah card Robinhood — plus **🛰 Scan
   Holder Solana / Robinhood** (dulu "Scan Holder Khusus — Helius /
   Robinhood") full-width di bawahnya, dan **🦅 Scan Best Robinhood Coin**
   (2026-09-10; full-width paling bawah) — listing GMGN Robinhood Chain
@@ -297,31 +298,36 @@ pernah ditulis manual):
 
 ## 🏆 Scan Best Pool Meteora (halaman utama, sejak 2026-09-10)
 
-Replika **🌊 Scan Meteora Pool** untuk halaman utama dengan **filter baru**
-(semua ambang hidup di konstanta `meteora_screener.BEST_*`):
+Listing pool Meteora khusus halaman utama. **Kriteria diganti total
+2026-09-11** mengikuti query UI Meteora (semua ambang hidup di konstanta
+`meteora_screener.BEST_*`):
 
 - **Query API Meteora** (24 jam, `category=top`, `page_size=50`):
-  `pool_type=dlmm && fee_pct>=5 && active_tvl>=10000`
-- **Saringan layar** (ketat, `>`/`<` — angka pas di ambang **tidak** lolos;
-  data hilang/`None` juga tidak lolos):
+  `pool_type=dlmm && fee_pct>=2 && active_tvl>=50000` — tier fee dan active
+  TVL disaring **oleh API**, jadi tidak diulang sebagai saringan layar.
+- **Saringan layar** — tinggal dua (data hilang/`None` = gugur):
   | Syarat | Ambang |
   |---|---|
-  | Dust holder | **< 0,05% MC** (`BEST_DUST_MAX_PCT`) |
-  | Active TVL | **> 10K USD** (`BEST_ACTIVE_TVL_MIN`) |
-  | Fee / active TVL | **> 20%** (`BEST_FEE_RATIO_MIN`) |
-  | Volatility | **> 5%** (`BEST_VOLATILITY_MIN`) |
-  | Top 10 holder | **< 30%** supply (`BEST_TOP10_MAX_PCT`, token base) |
-  | Total LPs | **> 20** (`BEST_TOTAL_LPS_MIN`) |
-- **Urutan baris**: **dust % MC terkecil** dulu, lalu **volume terbesar**
-  sebagai tie-break — kunci dust dibulatkan ke presisi tampilan (3 desimal)
-  supaya dua pool yang di layar sama-sama "0,030%" diurutkan menurut
-  volumenya ("ambil yang terbesar dan terbaik"). Baris tanpa angka dust
-  paling bawah, lalu simbol alfabetis.
-- Lima syarat metrik pool disaring **sebelum** holder di-fetch, jadi kuota
-  Helius tidak terpakai untuk pool yang pasti gugur; dust holder baru
-  dihitung untuk sisanya.
-- Kolom listing: Token · MC · A.TVL · Fee/TVL · Vol · Top10 · LPs · Fee ·
-  Dust (wallet) · Dust %MC (3 desimal) · Pool (Meteora DLMM + HawkFi) · ⭐
+  | Dust holder | **< 0,05% MC** (`BEST_DUST_MAX_PCT`, ketat `<`) |
+  | Volatility | **≥ 2%** (`BEST_VOLATILITY_MIN` — "minimal 2%", 2,0% lolos) |
+  Saringan lama (active TVL > 10K, fee/active TVL > 20%, top 10 holder
+  < 30%, total LPs > 20) **dihapus**; Top10 + LPs tetap tampil sebagai
+  informasi tapi tidak lagi menyaring.
+- **Urutan baris**: **dust % MC terkecil** → **fee / active TVL terbesar** →
+  **kenaikan volume 24 jam** (`volume_change_pct`) terbesar — kunci dust
+  dibulatkan ke presisi tampilan (3 desimal) supaya dua pool yang di layar
+  sama-sama "0,030%" diurutkan menurut rasio fee/active TVL-nya, lalu Δ
+  volumenya. Baris tanpa angka dust paling bawah, lalu simbol alfabetis.
+- Volatilitas disaring **sebelum** holder di-fetch, jadi kuota Helius tidak
+  terpakai untuk pool yang pasti gugur; dust holder baru dihitung untuk
+  sisanya.
+- Kolom listing (detail fee / active TVL ada di sini): Token · MC · **A.TVL** ·
+  **Fee/TVL** (baris kecil = fee 24 jam dalam USD + tier fee) · **Vol 24h**
+  (baris kecil = Δ volume 24 jam, hijau naik / merah turun) · Volat · Top10 ·
+  LPs ·
+  Dust (wallet) · Dust %MC (3 desimal) · Pool (Meteora DLMM + HawkFi) · ⭐ —
+  hover tiap angka memberi angka penuh + keterangan apakah metrik itu kunci
+  urut atau hanya informasi.
 - Tombol **⭐** memasukkan token ke card **🌊 Watchlist Meteora** di halaman
   utama (`source=meteora`, sama seperti card temp) — token lalu ikut di-scan
   cron ±5 menit lengkap dengan grafik perubahan dust holder.

@@ -1,3 +1,74 @@
+# Kegiatan — 11 September 2026 (🏆 Scan Best Pool Meteora: kriteria diganti total)
+
+Permintaan user: *"untuk Scan Meteora pool kita ganti seperti ini … kriteria
+yang sebelumnya, ganti total dengan ini"* — disertai curl
+`pool-discovery-api.datapi.meteora.ag/pools?page_size=50&timeframe=24h&category=top&filter_by=pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000`
++ respons JSON-nya, dan daftar "kondisi": hanya tampilkan dust < 0,05% MC,
+kasih detail fee / active TVL di tabel, urut dust terkecil lalu fee/active
+TVL terbesar, volatility minimal 2%, lalu urutkan dari kenaikan volume
+terbesar. Ditanya balik, user memilih: card = **🏆 Scan Best Pool Meteora**
+saja (card 🌊 /temp + 🦅 tidak disentuh), saringan lama = **dihapus** (bukan
+ditumpuk), "kenaikan volume" = **`volume_change_pct`** (bukan volume
+absolut).
+
+## 1 · Rule baru (`meteora_screener.py`)
+
+- Konstanta: `BEST_FEE_PCT_MIN` 5,0 → **2,0**, `BEST_ACTIVE_TVL_MIN` 10.000
+  → **50.000** (keduanya hanya dikirim ke API sebagai `filter_by`, TIDAK
+  diulang di layar), `BEST_VOLATILITY_MIN` 5,0 → **2,0** dengan operator
+  **`>=`** ("minimal 2%" — 2,0% lolos; beda dari rule lama yang ketat `>`).
+  `BEST_DUST_MAX_PCT` tetap **0,05** dan tetap ketat `<` (data dust hilang =
+  gugur). `BEST_FEE_RATIO_MIN`, `BEST_TOP10_MAX_PCT`, `BEST_TOTAL_LPS_MIN`
+  **dihapus** bersama layarnya.
+- `row_best_gaps()` menyusut dari 5 cek metrik jadi **1 cek** (volatility).
+  Fungsi + label gapnya tetap satu-satunya sumber angka "gugur metrik"
+  (`hidden_metric`) supaya pill "N disembunyikan" jujur.
+- `_row_from_pool()` menambah **`fee`** (fee 24 jam, USD) dan
+  **`volume_change_pct`** — dipakai tabel + kunci urut. Card 🌊 Scan Meteora
+  Pool memakai fungsi yang sama tapi tidak menampilkan field baru, jadi
+  listingnya tidak berubah.
+- `sort_best_rows()`: `(bawa dust? , dust % MC asc (3 desimal tampilan),
+  -fee/active TVL, -volume_change_pct, simbol)`. Baris tanpa angka dust tetap
+  paling bawah.
+
+## 2 · Tabel + tooltip card (`best_pool_ui.py`)
+
+- Kepala tabel sekarang: `Token · MC · A.TVL · Fee/TVL · Vol 24h · Volat ·
+  Top10 · LPs · Dust · Dust %MC · Pool · ⭐` — tetap 12 kolom: kolom "Fee"
+  (tier fee saja) dihapus dan posisinya dipakai untuk **Vol 24h** (Δ volume
+  hijau/merah jadi baris kecilnya), tier fee pindah ke baris kecil
+  **Fee/TVL** (`fee $97.7K·2%`), dan kolom volatilitas lama `Vol` berganti
+  nama jadi `Volat` supaya tidak tabrakan. Jadi "detail fee / active TVL"
+  bisa dibaca langsung: A.TVL = penyebut, fee = pembilang, rasio = kunci urut
+  kedua.
+- Tiap sel metrik dapat atribut `title` berisi **angka penuh** + statusnya
+  ("kunci urut kedua (terbesar dulu)", "hanya informasi, bukan saringan lagi
+  sejak 2026-09-11"). Konvensi 2026-09-10 tetap: prose rule hanya di tooltip
+  judul, badan card hanya angka rekap.
+- `best_pool_tooltip()` ditulis ulang — query API, dua saringan, tiga kunci
+  urut — dan **semua angkanya dibaca dari konstanta** `meteora_screener.BEST_*`
+  (konvensi AGENTS.md). Enam konstanta lama yang dihapus tidak lagi diimpor
+  (kalau dibiarkan, card langsung melempar ImportError jadi baris peringatan).
+
+## 3 · Tes & docs
+
+- `tests/test_best_pool_scan.py` ditulis ulang (22 tes): query = persis curl
+  user; `fee_pct>=2`/`active_tvl>=50000`; volatility 2,0% **lolos** dan
+  1,99% gugur; deretan saringan lama diuji **tidak** menggugurkan lagi +
+  konstantanya benar-benar hilang (`hasattr`); rantai urut dust → rasio → Δ
+  volume; tabel harus memuat `fee $…`, rasio, dan `+12,5%`; tooltip berubah
+  kalau konstantanya di-patch.
+- `tests/test_strategy_shift.py` tetap hijau — `STRATEGY_SHIFT_PCT` (0,06)
+  masih di atas `BEST_DUST_MAX_PCT` (0,05), ambang notifikasi tidak ikut
+  berubah.
+- README (§🏆 Scan Best Pool Meteora + tabel kolom), AGENTS.md (blok modul
+  `meteora_screener.py` + tabel angka kunci), `docs/PROGRESS.md` mengikuti.
+- **Batas verifikasi:** sandbox tidak punya jaringan, jadi payload API
+  sungguhan tidak pernah dipanggil — bentuk respons diambil dari JSON yang
+  user tempel (field `fee`, `volume_change_pct`, `fee_active_tvl_ratio`,
+  `volatility`; satuan persen sudah final, tidak dikali 100 lagi).
+  Suite: **1049 passed** (+4 tes), 21 subtests, 0 gagal.
+
 # Kegiatan — 11 September 2026 (satu notifikasi: 🚨 GANTI STRATEGI · caption dobel tooltip dihapus)
 
 Dua permintaan user:
@@ -367,7 +438,7 @@ terbaik"). Judul card: **Scan Best Pool Meteora**.
   dipisah `st.divider()`): 12 kolom listing (Token · MC · A.TVL · Fee/TVL ·
   Vol · Top10 · LPs · Fee · Dust · Dust %MC 3 desimal · Pool · ⭐), kepala
   card `card_head_html()` dengan pill jumlah pool + yang disembunyikan, dan
-  detail karakteristik di **tooltip judul** (`BEST_POOL_TOOLTIP`) mengikuti
+  detail karakteristik di **tooltip judul** (`best_pool_tooltip()`) mengikuti
   konvensi 2026-09-10. Tombol scan: **🏆 Scan Best Pool Meteora + Holder**
   (progress bar holder, hasil di `session_state["best_pool_scan"]`).
 - ⭐ memakai `source=meteora` (`lp_watchlist.LP_SOURCE`) → token masuk card

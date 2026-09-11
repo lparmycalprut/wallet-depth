@@ -14,15 +14,17 @@ sudah pasti ≤ 0,1%. Badge 🏆 BEST POOL (di UI ``app.py``) menambah syarat
 data holder valid (≥ 40 wallet) **dan TVL pool ≥ 10K USD**.
 Baris yang di-⭐ masuk watchlist terpisah **Chart LP** di dashboard.
 
-**🏆 Scan Best Pool Meteora** (permintaan user 2026-09-10) = replika
-listing di atas untuk **halaman utama** dengan filter baru (lihat blok
-konstanta ``BEST_*`` di bawah): query API
-``pool_type=dlmm&&fee_pct>=5&&active_tvl>=10000`` (timeframe 24 jam,
-category top), lalu saringan layar dust holder **< 0,05% MC**, active TVL
-**> 10K**, fee/active TVL **> 20%**, volatility **> 5%**, top 10 holder
-**< 30%**, dan total LPs **> 20**. Urutannya: **dust % MC terkecil dulu,
-lalu volume terbesar** sebagai tie-break — "ambil yang terbesar dan
-terbaik".
+**🏆 Scan Best Pool Meteora** — kriteria diganti total 2026-09-11 (lihat
+blok konstanta ``BEST_*`` di bawah): listing API Meteora 24 jam
+``pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000`` (category ``top``,
+page_size 50), jadi **tier fee** dan **active TVL** sudah disaring di
+server. Saringan layar tinggal dua: dust holder **< 0,05% MC** dan
+volatility **>= 2%** ("minimal 2%"). Urutannya: **dust % MC terkecil** →
+**fee / active TVL terbesar** → **kenaikan volume 24 jam**
+(``volume_change_pct``) terbesar. Saringan lama active TVL > 10K,
+fee/active TVL > 20%, top 10 holder < 30%, dan total LPs > 20 **dihapus**
+(ambang volatility lama 5% turun jadi 2%); datanya tetap dibawa dan tetap
+ditampilkan di tabel sebagai informasi.
 """
 from __future__ import annotations
 
@@ -38,25 +40,24 @@ FEE_RATIO_24H = 250.0
 FEE_RATIO_1H = 1.0
 
 # ---------------------------------------------------------------------------
-# 🏆 Scan Best Pool Meteora (permintaan user 2026-09-10) — ambang filter.
-# Dua lapis: ``BEST_FEE_PCT_MIN`` + ``BEST_ACTIVE_TVL_MIN`` ikut dikirim ke
-# API Meteora sebagai ``filter_by`` (listing sudah tersaring di server),
-# sisanya disaring di layar setelah data pool + holder diambil. Semua angka
-# persen API Meteora sudah dalam satuan persen (``fee_active_tvl_ratio``
-# 88.56 = 88,56%; ``volatility`` 6.2 = 6,2%; ``top_holders_pct`` 35.75 =
-# 35,75% supply di 10 holder teratas token base).
+# 🏆 Scan Best Pool Meteora — ambang filter (kriteria diganti total
+# 2026-09-11 sesuai request UI Meteora). Dua lapis: ``BEST_FEE_PCT_MIN`` +
+# ``BEST_ACTIVE_TVL_MIN`` ikut dikirim ke API Meteora sebagai ``filter_by``
+# (listing sudah tersaring di server, tidak diulang di layar), sisanya
+# disaring di layar setelah data pool diambil. Semua angka persen API
+# Meteora sudah dalam satuan persen (``fee_active_tvl_ratio`` 88.56 =
+# 88,56%; ``volatility`` 6.2 = 6,2%; ``volume_change_pct`` 13.24 = +13,24%;
+# ``top_holders_pct`` 35.75 = 35,75% supply di 10 holder teratas token base).
 # ---------------------------------------------------------------------------
 BEST_CARD_TITLE = "🏆 Scan Best Pool Meteora"
-BEST_FEE_PCT_MIN = 5.0            # query API: fee_pct >= 5 (tier fee pool)
-BEST_ACTIVE_TVL_MIN = 10_000.0    # query API + layar: active TVL > 10K USD
+BEST_FEE_PCT_MIN = 2.0            # query API: fee_pct >= 2 (tier fee pool)
+BEST_ACTIVE_TVL_MIN = 50_000.0    # query API: active TVL >= 50K USD
 BEST_DUST_MAX_PCT = 0.05          # layar: dust holder < 0,05% MC
-BEST_FEE_RATIO_MIN = 20.0         # layar: fee / active TVL > 20%
-BEST_VOLATILITY_MIN = 5.0         # layar: volatility > 5%
-BEST_TOP10_MAX_PCT = 30.0         # layar: top 10 holder < 30% supply
-BEST_TOTAL_LPS_MIN = 20.0         # layar: total LPs > 20
+BEST_VOLATILITY_MIN = 2.0         # layar: volatility >= 2% ("minimal 2%")
 # Presisi kunci urut dust % MC di listing Best Pool — sama dengan angka yang
 # tampil di card, jadi dua pool yang di layar sama-sama "0,041%" benar-benar
-# dianggap seri dan **volume terbesar** yang menentukan urutannya.
+# dianggap seri dan **fee / active TVL terbesar** yang menentukan urutannya
+# (lalu kenaikan volume 24 jam, lihat :func:`sort_best_rows`).
 BEST_DUST_SORT_DECIMALS = 3
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
@@ -169,12 +170,16 @@ def _row_from_pool(pool: dict, *, in_24h: bool, in_1h: bool) -> dict:
         "fee_active_tvl_ratio": _float(pool.get("fee_active_tvl_ratio")),
         "volume": _float(pool.get("volume")),
         "fee_pct": _float(pool.get("fee_pct")),
-        # Metrik tambahan untuk 🏆 Scan Best Pool Meteora (2026-09-10):
-        # volatility pool (%), jumlah LP total, dan konsentrasi 10 holder
-        # teratas token base (% supply, dari pool-discovery API).
+        # Metrik untuk 🏆 Scan Best Pool Meteora: volatility pool (%), jumlah
+        # LP total, dan konsentrasi 10 holder teratas token base (% supply)
+        # tetap dibawa sebagai informasi baris; ``fee`` (USD 24 jam) +
+        # ``volume_change_pct`` dipakai card sebagai detail fee/active TVL dan
+        # kunci urut ketiga (permintaan user 2026-09-11).
         "volatility": _float(pool.get("volatility")),
         "total_lps": _float(pool.get("total_lps")),
         "top_holders_pct": _float(token.get("top_holders_pct")),
+        "fee": _float(pool.get("fee")),
+        "volume_change_pct": _float(pool.get("volume_change_pct")),
         "in_24h": bool(in_24h),
         "in_1h": bool(in_1h),
         "analysis": None,
@@ -428,20 +433,20 @@ def scan_meteora(*, max_wallets: int | None = None, workers: int = 6,
 
 
 # ---------------------------------------------------------------------------
-# 🏆 Scan Best Pool Meteora — replika listing untuk halaman utama ``app.py``
-# (permintaan user 2026-09-10). Dua lapis saringan:
+# 🏆 Scan Best Pool Meteora — listing khusus halaman utama ``app.py``.
+# Kriteria diganti total 2026-09-11 (curl UI Meteora dari user). Dua lapis:
 #
 # 1. **server** (query API Meteora, sama seperti filter UI Meteora):
-#    ``pool_type=dlmm&&fee_pct>=5&&active_tvl>=10000``, timeframe 24 jam,
-#    category ``top``;
-# 2. **layar** (setelah data pool + holder ada): dust holder < 0,05% MC,
-#    active TVL > 10K USD, fee/active TVL > 20%, volatility > 5%, top 10
-#    holder < 30% supply, total LPs > 20.
+#    ``pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000``, timeframe 24 jam,
+#    category ``top``, page_size 50 — tier fee dan active TVL TIDAK diulang
+#    sebagai saringan layar;
+# 2. **layar** (setelah data pool + holder ada): dust holder < 0,05% MC dan
+#    volatility minimal 2%.
 #
-# Urutan baris: **dust % MC terkecil dulu, lalu volume terbesar** sebagai
-# tie-break — "ambil yang terbesar dan terbaik" (permintaan user 2026-09-10).
-# Data yang hilang (``None``) selalu menggugurkan baris: card ini menjual
-# bukti, jadi pool tanpa angka tidak ikut ditampilkan.
+# Urutan baris: **dust % MC terkecil** → **fee / active TVL terbesar** →
+# **kenaikan volume 24 jam** (``volume_change_pct``) terbesar (permintaan
+# user 2026-09-11). Data yang hilang (``None``) selalu menggugurkan baris:
+# card ini menjual bukti, jadi pool tanpa angka tidak ikut ditampilkan.
 # ---------------------------------------------------------------------------
 def _maybe_float(value):
     """Float atau ``None`` (NaN/bool/tipe salah → ``None``).
@@ -463,7 +468,11 @@ def best_filter_by(pool_type: str = "dlmm",
                    active_tvl_min: float = BEST_ACTIVE_TVL_MIN) -> str:
     """Query ``filter_by`` Scan Best Pool Meteora (&&-join ala UI Meteora).
 
-    Hasil default: ``pool_type=dlmm&&fee_pct>=5&&active_tvl>=10000``.
+    Hasil default (kriteria 2026-09-11):
+    ``pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000`` — persis query yang
+    dipakai UI Meteora di request user, dan satu-satunya tempat angka
+    ``fee_pct`` / ``active_tvl`` Best Pool ditulis (API yang menyaring,
+    bukan layar).
     """
     def _num(value: float) -> str:
         number = float(value)
@@ -513,28 +522,20 @@ def rows_from_pools(pools: list[dict] | None) -> list[dict]:
 def row_best_gaps(row: dict | None) -> list[str]:
     """Label syarat **metrik pool** yang tidak dipenuhi (kosong = lolos).
 
-    Lima syarat yang datanya sudah ada di response pool-discovery —
-    dijalankan SEBELUM fetch holder supaya kuota Helius tidak terbakar
-    untuk pool yang pasti gugur. Dust holder dicek terpisah oleh
+    Kriteria 2026-09-11 hanya menyisakan satu syarat yang diuji di layar —
+    volatility minimal :data:`BEST_VOLATILITY_MIN` — karena tier fee dan
+    active TVL sudah disaring API lewat ``filter_by``. Saringan fee/active
+    TVL, top 10 holder, dan total LPs yang lama **dihapus** (datanya tetap
+    dibawa di baris untuk ditampilkan). Data hilang (``None``) = gugur.
+    Syarat ini jalan SEBELUM fetch holder supaya kuota Helius tidak terbakar
+    untuk pool yang pasti gugur; dust holder dicek terpisah oleh
     :func:`row_dust_ok` karena butuh analisa holder.
     """
     row = row or {}
     gaps: list[str] = []
-    active = _maybe_float(row.get("active_tvl"))
-    if active is None or active <= BEST_ACTIVE_TVL_MIN:
-        gaps.append(f"active TVL ≤ ${BEST_ACTIVE_TVL_MIN / 1000:g}K")
-    ratio = _maybe_float(row.get("fee_active_tvl_ratio"))
-    if ratio is None or ratio <= BEST_FEE_RATIO_MIN:
-        gaps.append(f"fee/active TVL ≤ {BEST_FEE_RATIO_MIN:g}%")
     volatility = _maybe_float(row.get("volatility"))
-    if volatility is None or volatility <= BEST_VOLATILITY_MIN:
-        gaps.append(f"volatility ≤ {BEST_VOLATILITY_MIN:g}%")
-    top10 = _maybe_float(row.get("top_holders_pct"))
-    if top10 is None or top10 >= BEST_TOP10_MAX_PCT:
-        gaps.append(f"top 10 holder ≥ {BEST_TOP10_MAX_PCT:g}%")
-    lps = _maybe_float(row.get("total_lps"))
-    if lps is None or lps <= BEST_TOTAL_LPS_MIN:
-        gaps.append(f"total LPs ≤ {BEST_TOTAL_LPS_MIN:g}")
+    if volatility is None or volatility < BEST_VOLATILITY_MIN:
+        gaps.append(f"volatility < {BEST_VOLATILITY_MIN:g}%")
     return gaps
 
 
@@ -565,25 +566,28 @@ def filter_best_rows(rows: list[dict] | None) -> tuple[list[dict], int, int]:
 
 
 def sort_best_rows(rows: list[dict] | None) -> list[dict]:
-    """Urutan listing Best Pool: **dust % MC terkecil**, lalu **volume terbesar**.
+    """Urutan listing Best Pool: dust → fee/active TVL → kenaikan volume.
 
-    Permintaan user 2026-09-10: setelah % dust terkecil, pool bervolume
-    terbesar naik — supaya yang teratas adalah pool "terbesar dan terbaik".
-    Kunci dust dibulatkan ke presisi tampilan
-    (:data:`BEST_DUST_SORT_DECIMALS`, 3 desimal = angka yang muncul di card),
-    jadi pool yang di layar sama-sama "0,041%" dianggap seri dan **volume
-    terbesar** yang menentukan urutannya. Baris tanpa angka dust (holder
-    gagal) ditaruh paling bawah, lalu simbol alfabetis sebagai tie-break
-    terakhir supaya urutan deterministik antar scan.
+    Permintaan user 2026-09-11: "urut dust dari yang paling kecil, lalu
+    fee/active TVL paling besar, lalu kenaikan volume yang terjadi terbesar".
+    Kunci dust dibulatkan ke presisi tampilan (:data:`BEST_DUST_SORT_DECIMALS`,
+    3 desimal = angka yang muncul di card), jadi pool yang di layar
+    sama-sama "0,041%" dianggap seri dan **fee / active TVL terbesar** yang
+    menentukan; kalau rasio itu juga sama, **kenaikan volume 24 jam**
+    (``volume_change_pct``) yang jadi tie-break terakhir sebelum simbol
+    alfabetis supaya urutan deterministik antar scan. Baris tanpa angka dust
+    (holder gagal) tetap ditaruh paling bawah — tidak ada bukti.
     """
     def _key(row):
         row = row or {}
         pct = _maybe_float(row_dust_pct(row))
-        volume = _float(row.get("volume"), 0.0)
+        ratio = _float(row.get("fee_active_tvl_ratio"), 0.0)
+        change = _float(row.get("volume_change_pct"), 0.0)
         return (
             0 if pct is not None else 1,
             round(pct, BEST_DUST_SORT_DECIMALS) if pct is not None else 0.0,
-            -volume,
+            -ratio,
+            -change,
             str(row.get("symbol") or "").upper(),
         )
 
@@ -594,11 +598,13 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
                       progress=None, timeout: int = 25,
                       timeframe: str = "24h",
                       page_size: int = PAGE_SIZE) -> dict:
-    """Listing 24 jam + holder + 6 saringan layar Scan Best Pool Meteora.
+    """Listing 24 jam + holder + saringan layar Scan Best Pool Meteora.
 
-    Saringan metrik pool jalan lebih dulu (data API), baru holder di-fetch
-    untuk sisanya — jadi 5 syarat yang tidak butuh Helius tidak membakar
-    kuota. Urutan hasil: dust % MC terkecil → volume terbesar.
+    Kriteria 2026-09-11: API sudah menyaring ``pool_type=dlmm``,
+    ``fee_pct>=2``, ``active_tvl>=50000``; layar menambah volatility
+    ``>= 2%`` (dicek SEBELUM fetch holder supaya kuota Helius tidak terbakar)
+    dan dust holder ``< 0,05% MC`` (butuh holder). Urutan hasil: dust % MC
+    terkecil → fee/active TVL terbesar → kenaikan volume 24 jam terbesar.
     """
     # Default FULL seperti ``scan_meteora``: urutan getTokenAccounts Helius
     # tidak urut saldo, jadi cap kecil menghasilkan sampel bias dan angka

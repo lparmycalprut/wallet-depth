@@ -1,12 +1,16 @@
-"""Coverage 🏆 Scan Best Pool Meteora (filter baru + urutan dust → volume).
+"""Coverage 🏆 Scan Best Pool Meteora (kriteria 2026-09-11).
 
-Filter yang diminta user 2026-09-10:
+Filter yang diminta user 2026-09-11 (kriteria lama **diganti total**):
 
-- query API Meteora ``pool_type=dlmm&&fee_pct>=5&&active_tvl>=10000``
-  (timeframe 24 jam, category ``top``);
-- layar: dust holder < 0,05% MC, active TVL > 10K, fee/active TVL > 20%,
-  volatility > 5%, top 10 holder < 30%, total LPs > 20;
-- urutan: dust % MC terkecil dulu, lalu volume terbesar.
+- query API Meteora ``pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000``
+  (timeframe 24 jam, category ``top``, page_size 50);
+- saringan layar: dust holder **< 0,05% MC** dan volatility **>= 2%** —
+  saringan lama (active TVL > 10K, fee/active TVL > 20%, top 10 holder
+  < 30%, total LPs > 20) dihapus;
+- urutan: dust % MC terkecil → fee/active TVL terbesar → kenaikan volume
+  24 jam (``volume_change_pct``) terbesar;
+- tabel menampilkan detail fee + active TVL (kolom A.TVL, Fee/TVL dengan
+  angka fee USD, Vol 24h dengan Δ volume).
 """
 from __future__ import annotations
 
@@ -24,6 +28,7 @@ import meteora_screener as ms
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
 SOL = ms.SOL_MINT
+QUERY = "pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000"
 
 
 def _token(addr, symbol="TOK", mc=1_000_000, top10=20.0):
@@ -32,15 +37,16 @@ def _token(addr, symbol="TOK", mc=1_000_000, top10=20.0):
             "top_holders_pct": top10}
 
 
-def _pool(addr="P1", mint="MintAAA", *, active_tvl=25_000, ratio=40.0,
-          volatility=6.2, total_lps=88, fee_pct=5.0, volume=120_000,
-          top10=20.0):
+def _pool(addr="P1", mint="MintAAA", *, active_tvl=60_000, ratio=40.0,
+          volatility=6.2, total_lps=88, fee_pct=2.0, volume=120_000,
+          fee=24_000.0, volume_change_pct=12.5, top10=20.0):
     return {
         "pool_address": addr, "name": "TOK-SOL", "pool_type": "dlmm",
         "token_x": _token(mint, top10=top10),
         "token_y": _token(SOL, "SOL", mc=1e9, top10=0.5),
         "tvl": active_tvl * 1.1, "active_tvl": active_tvl,
-        "fee_active_tvl_ratio": ratio, "volume": volume,
+        "fee_active_tvl_ratio": ratio, "volume": volume, "fee": fee,
+        "volume_change_pct": volume_change_pct,
         "fee_pct": fee_pct, "volatility": volatility,
         "total_lps": total_lps,
     }
@@ -49,9 +55,10 @@ def _pool(addr="P1", mint="MintAAA", *, active_tvl=25_000, ratio=40.0,
 def _row(**over):
     row = {
         "pool_address": "P1", "ca": "MintAAA", "symbol": "AAA",
-        "mc": 1_000_000, "tvl": 27_000, "active_tvl": 25_000,
-        "fee_active_tvl_ratio": 40.0, "volume": 120_000, "fee_pct": 5.0,
-        "volatility": 6.2, "total_lps": 88, "top_holders_pct": 20.0,
+        "mc": 1_000_000, "tvl": 66_000, "active_tvl": 60_000,
+        "fee_active_tvl_ratio": 40.0, "volume": 120_000, "fee": 24_000.0,
+        "volume_change_pct": 12.5, "fee_pct": 2.0, "volatility": 6.2,
+        "total_lps": 88, "top_holders_pct": 20.0,
         "analysis": {"holders": {"dust_pct_mc": 0.03, "dust_count": 12,
                                  "total_fetched": 1200,
                                  "wallets_analyzed": 1100}},
@@ -60,10 +67,20 @@ def _row(**over):
     return row
 
 
+def _dust(row, pct):
+    row = dict(row)
+    row["analysis"] = {"holders": {"dust_pct_mc": pct, "dust_count": 5,
+                                   "total_fetched": 1000,
+                                   "wallets_analyzed": 900}}
+    return row
+
+
 class BestFilterQueryTest(unittest.TestCase):
     def test_filter_by_matches_curl(self):
-        self.assertEqual(ms.best_filter_by(),
-                         "pool_type=dlmm&&fee_pct>=5&&active_tvl>=10000")
+        """Query = persis curl user, angka dibaca dari konstanta."""
+        self.assertEqual(ms.best_filter_by(), QUERY)
+        self.assertEqual(ms.BEST_FEE_PCT_MIN, 2.0)
+        self.assertEqual(ms.BEST_ACTIVE_TVL_MIN, 50_000.0)
 
     def test_fetch_sends_best_params(self):
         with mock.patch.object(ms, "_http_get",
@@ -73,7 +90,7 @@ class BestFilterQueryTest(unittest.TestCase):
         self.assertEqual(args[0], ms.POOLS_URL)
         self.assertEqual(args[1], {
             "page_size": 50, "timeframe": "24h", "category": "top",
-            "filter_by": "pool_type=dlmm&&fee_pct>=5&&active_tvl>=10000",
+            "filter_by": QUERY,
         })
 
     def test_payload_rows_only(self):
@@ -85,14 +102,26 @@ class BestFilterQueryTest(unittest.TestCase):
 
 
 class RowMetricsTest(unittest.TestCase):
-    def test_row_captures_new_metrics_from_base_token(self):
+    def test_row_captures_detail_and_sort_metrics(self):
         row = ms.rows_from_pools(
-            [_pool(volatility=7.1, total_lps=64, top10=23.5)])[0]
+            [_pool(volatility=7.1, total_lps=64, top10=23.5,
+                   fee=97_718.0, volume_change_pct=-34.46)])[0]
         self.assertEqual(row["volatility"], 7.1)
         self.assertEqual(row["total_lps"], 64)
         # top 10 holder diambil dari token base, bukan sisi quote (SOL 0,5%).
         self.assertEqual(row["top_holders_pct"], 23.5)
+        # detail fee / active TVL + kunci urut kenaikan volume.
+        self.assertEqual(row["fee"], 97_718.0)
+        self.assertEqual(row["volume_change_pct"], -34.46)
+        self.assertEqual(row["active_tvl"], 60_000)
         self.assertEqual(row["ca"], "MintAAA")
+
+    def test_missing_change_defaults_to_zero(self):
+        pool = _pool()
+        pool.pop("volume_change_pct")
+        pool.pop("fee")
+        row = ms.rows_from_pools([pool])[0]
+        self.assertEqual((row["volume_change_pct"], row["fee"]), (0.0, 0.0))
 
     def test_duplicate_pool_address_dropped(self):
         rows = ms.rows_from_pools([_pool("P1"), _pool("P1"), _pool("P2")])
@@ -100,22 +129,27 @@ class RowMetricsTest(unittest.TestCase):
 
 
 class BestGatesTest(unittest.TestCase):
+    """Layar hanya dua: volatility >= 2% (metrik) dan dust < 0,05% MC."""
+
     def test_passing_row_has_no_gap(self):
         self.assertEqual(ms.row_best_gaps(_row()), [])
         self.assertTrue(ms.row_dust_ok(_row()))
 
-    def test_each_rule_is_strict(self):
-        cases = {
-            "active TVL == 10K": _row(active_tvl=10_000),
-            "fee/active TVL == 20%": _row(fee_active_tvl_ratio=20.0),
-            "volatility == 5%": _row(volatility=5.0),
-            "top10 == 30%": _row(top_holders_pct=30.0),
-            "total LPs == 20": _row(total_lps=20),
-        }
-        for label, row in cases.items():
-            gaps = ms.row_best_gaps(row)
-            self.assertEqual(len(gaps), 1, label)
-            self.assertFalse(ms.row_best_gaps(row) == [], label)
+    def test_volatility_minimal_inklusif(self):
+        """Volatility 2,0% = "minimal 2%" → lolos; di bawah itu gugur."""
+        self.assertEqual(ms.row_best_gaps(_row(volatility=2.0)), [])
+        self.assertEqual(ms.row_best_gaps(_row(volatility=1.99)),
+                         ["volatility < 2%"])
+
+    def test_old_screens_are_gone(self):
+        """Fee/active TVL, top 10 holder, total LPs, active TVL tidak lagi
+        menyaring (kriteria lama diganti total 2026-09-11)."""
+        row = _row(active_tvl=0, fee_active_tvl_ratio=0.1,
+                   top_holders_pct=99.0, total_lps=0, fee_pct=0.5)
+        self.assertEqual(ms.row_best_gaps(row), [])
+        for gone in ("BEST_FEE_RATIO_MIN", "BEST_TOP10_MAX_PCT",
+                     "BEST_TOTAL_LPS_MIN"):
+            self.assertFalse(hasattr(ms, gone), gone)
 
     def test_missing_data_is_rejected(self):
         self.assertEqual(len(ms.row_best_gaps(_row(volatility=None))), 1)
@@ -127,6 +161,7 @@ class BestGatesTest(unittest.TestCase):
         bad = _row(analysis={"holders": {"dust_pct_mc": 0.05}})
         self.assertTrue(ms.row_dust_ok(ok))
         self.assertFalse(ms.row_dust_ok(bad))
+        self.assertEqual(ms.BEST_DUST_MAX_PCT, 0.05)
 
 
 class FilterAndSortTest(unittest.TestCase):
@@ -141,43 +176,62 @@ class FilterAndSortTest(unittest.TestCase):
         self.assertEqual([r["pool_address"] for r in kept], ["P1"])
         self.assertEqual((hidden_metric, hidden_dust), (1, 1))
 
-    def test_sort_dust_ascending_then_volume_descending(self):
-        def _dust(row, pct):
-            return _row(**row, analysis={"holders": {"dust_pct_mc": pct}})
-
+    def test_sort_dust_then_fee_ratio_then_volume_change(self):
         rows = [
-            _dust({"pool_address": "A", "symbol": "AAA", "volume": 1_000},
+            _dust({"pool_address": "A", "symbol": "AAA",
+                   "fee_active_tvl_ratio": 10.0, "volume_change_pct": 99.0},
                   0.030),
-            _dust({"pool_address": "B", "symbol": "BBB", "volume": 500},
+            _dust({"pool_address": "B", "symbol": "BBB",
+                   "fee_active_tvl_ratio": 5.0, "volume_change_pct": 80.0},
                   0.010),
-            _dust({"pool_address": "C", "symbol": "CCC", "volume": 9_000},
+            _dust({"pool_address": "C", "symbol": "CCC",
+                   "fee_active_tvl_ratio": 90.0, "volume_change_pct": 1.0},
                   0.030),
-            _row(pool_address="D", symbol="DDD", volume=10 ** 9,
+            _dust({"pool_address": "D", "symbol": "DDD",
+                   "fee_active_tvl_ratio": 10.0, "volume_change_pct": 5.0},
+                  0.030),
+            _row(pool_address="E", symbol="EEE", fee_active_tvl_ratio=999.0,
                  analysis=None),
         ]
         order = [row["pool_address"] for row in ms.sort_best_rows(rows)]
-        # dust terkecil dulu (B), lalu volume terbesar di dust yang sama
-        # (C sebelum A), baris tanpa dust paling bawah (D).
-        self.assertEqual(order, ["B", "C", "A", "D"])
+        # dust terkecil dulu (B); di dust 0,030% fee/active TVL terbesar dulu
+        # (C 90% → A 10% Δvol 99 → D 10% Δvol 5); baris tanpa dust paling
+        # bawah meski rasionya paling gede (E).
+        self.assertEqual(order, ["B", "C", "A", "D", "E"])
 
-    def test_sort_tie_uses_display_precision(self):
-        """0,0301% dan 0,0304% tampil sama (0,030%) → volume terbesar dulu."""
+    def test_tie_break_uses_display_precision(self):
+        """0,0301% dan 0,0304% tampil sama (0,030%) → fee/TVL yang menentukan.
+
+        Angka yang sama di layar dianggap seri, jadi rasio fee/active TVL
+        yang memutuskan urutannya."""
         rows = [
-            _row(pool_address="SMALL", symbol="AAA", volume=1_000,
+            _row(pool_address="LOW", symbol="AAA", fee_active_tvl_ratio=3.0,
                  analysis={"holders": {"dust_pct_mc": 0.0301}}),
-            _row(pool_address="BIG", symbol="BBB", volume=250_000,
+            _row(pool_address="HIGH", symbol="BBB", fee_active_tvl_ratio=70.0,
                  analysis={"holders": {"dust_pct_mc": 0.0304}}),
         ]
         order = [row["pool_address"] for row in ms.sort_best_rows(rows)]
-        self.assertEqual(order, ["BIG", "SMALL"])
+        self.assertEqual(order, ["HIGH", "LOW"])
+
+    def test_identical_dust_and_ratio_kenaikan_volume(self):
+        rows = [
+            _row(pool_address="KECIL", symbol="AAA", fee_active_tvl_ratio=50.0,
+                 volume_change_pct=4.0,
+                 analysis={"holders": {"dust_pct_mc": 0.02}}),
+            _row(pool_address="BESAR", symbol="BBB",
+                 fee_active_tvl_ratio=50.0, volume_change_pct=61.0,
+                 analysis={"holders": {"dust_pct_mc": 0.02}}),
+        ]
+        order = [row["pool_address"] for row in ms.sort_best_rows(rows)]
+        self.assertEqual(order, ["BESAR", "KECIL"])
 
 
 class ScanBestTest(unittest.TestCase):
     def test_scan_filters_before_holder_and_sorts_result(self):
         pools = [_pool("P1", "MintAAA", volume=5_000),
                  _pool("P2", "MintBBB", volatility=1.0, volume=9_000),
-                 _pool("P3", "MintCCC", volume=50_000)]
-        dusts = {"MintAAA": 0.02, "MintBBB": 0.01, "MintCCC": 0.01}
+                 _pool("P3", "MintCCC", volume=50_000, ratio=80.0)]
+        dusts = {"MintAAA": 0.02, "MintBBB": 0.01, "MintCCC": 0.02}
 
         def fake_enrich(rows, **_kwargs):
             out = []
@@ -204,8 +258,8 @@ class ScanBestTest(unittest.TestCase):
         self.assertEqual(result["hidden_metric"], 1)
         self.assertEqual(result["hidden_dust"], 0)
         self.assertEqual(result["error"], "")
-        # dust sama (0,01%) hanya untuk P3; P3 bervolume terbesar tetap di
-        # atas P1 (dust 0,02%).
+        # dust sama (0,02%) → fee/active TVL terbesar dulu: P3 (80) di atas
+        # P1 (40), meski volume P1 lebih kecil.
         self.assertEqual([row["pool_address"] for row in result["rows"]],
                          ["P3", "P1"])
 
@@ -248,11 +302,11 @@ class BestPoolCardTest(unittest.TestCase):
         self.assertIn("best-pool-scan-now", keys)
 
     def test_detail_karakteristik_di_tooltip_bukan_caption(self):
-        """Rule filter card jadi tooltip judul (permintaan user 2026-09-10).
+        """Rule filter card jadi tooltip judul (bukan caption panjang).
 
-        Teks ambang masih harus disebut — tapi di atribut ``title`` pada teks
-        judul, bukan sebagai caption panjang di badan card. angkanya dibaca
-        dari ``meteora_screener.BEST_*`` sehingga tidak bisa beda dari rule.
+        angkanya dibaca dari ``meteora_screener.BEST_*`` sehingga tidak bisa
+        beda dari rule yang jalan. Kriteria lama (fee/active TVL > 20%, top
+        10 < 30%, total LPs > 20, active TVL > 10K) tidak boleh muncul lagi.
         """
         import html as _html
 
@@ -260,29 +314,40 @@ class BestPoolCardTest(unittest.TestCase):
         # atribut ``title`` di-escape (``<`` → ``&lt;``) — unescape dulu
         body = _html.unescape("\n".join(node.value for node in app.markdown))
         captions = "\n".join(node.value for node in app.caption)
-        self.assertIn('title="Replika listing Scan Meteora Pool', body)
-        for label in (f"dust holder < {ms.BEST_DUST_MAX_PCT:g}% marketcap",
-                      f"fee/active TVL > {ms.BEST_FEE_RATIO_MIN:g}%",
-                      f"volatility > {ms.BEST_VOLATILITY_MIN:g}%",
-                      f"top 10 holder < {ms.BEST_TOP10_MAX_PCT:g}% supply",
-                      f"total LPs > {ms.BEST_TOTAL_LPS_MIN:g}",
-                      "dust % marketcap terkecil dulu, lalu volume terbesar"):
+        self.assertIn("title=\"Listing API Meteora 24 jam", body)
+        for label in (f"pool_type=dlmm&&fee_pct>={ms.BEST_FEE_PCT_MIN:g}"
+                      f"&&active_tvl>={int(ms.BEST_ACTIVE_TVL_MIN)}",
+                      f"dust holder < {ms.BEST_DUST_MAX_PCT:g}% marketcap",
+                      f"volatility >= {ms.BEST_VOLATILITY_MIN:g}%",
+                      "fee/active TVL paling besar, lalu kenaikan volume 24 "
+                      "jam paling besar"):
             self.assertIn(label, body)
-        # caption deskripsi rule sudah hilang dari badan card…
+        # rule lama sudah diganti total — tidak boleh tersisa di tooltip
+        # card ini (card lain, mis. 🦅 Scan Best Robinhood Coin, memang masih
+        # memakai top 10 holder < 30% — makanya dicek di tooltip Best Pool).
+        tooltip = bp.best_pool_tooltip()
+        self.assertNotIn("top 10 holder", tooltip)
+        self.assertNotIn("total LPs", tooltip)
+        self.assertNotIn("Replika listing", tooltip)
+        # …dan caption deskripsi rule tetap hilang dari badan card.
         self.assertNotIn("Urutan: **dust % MC terkecil**, lalu", captions)
         self.assertNotIn("lalu saringan layar: dust holder", captions)
         # …dan judul card-nya yang membawa tooltip, bukan teks telanjang.
-        self.assertIn('title="Replika', "\n".join(
+        self.assertIn("title=\"Listing API Meteora", "\n".join(
             node.value for node in app.markdown))
 
     def test_tooltip_mengikuti_perubahan_konstanta(self):
         """Tooltip dibangun dari konstanta — ubah ambang, teks ikut berubah."""
         tooltip = bp.best_pool_tooltip()
         self.assertIn(f"{ms.BEST_DUST_MAX_PCT:g}%", tooltip)
-        self.assertIn(f"{int(ms.BEST_ACTIVE_TVL_MIN):,}", tooltip)
-        with mock.patch.object(ms, "BEST_DUST_MAX_PCT", 0.07):
-            self.assertIn("0.07%", bp.best_pool_tooltip())
-        self.assertNotIn("0.07%", bp.best_pool_tooltip())
+        self.assertIn(f"{int(ms.BEST_ACTIVE_TVL_MIN)}", tooltip)
+        self.assertIn(f"volatility >= {ms.BEST_VOLATILITY_MIN:g}%", tooltip)
+        with mock.patch.object(ms, "BEST_VOLATILITY_MIN", 3.5):
+            self.assertIn("volatility >= 3.5%", bp.best_pool_tooltip())
+        self.assertNotIn("3.5%", bp.best_pool_tooltip())
+        with mock.patch.object(ms, "BEST_ACTIVE_TVL_MIN", 75_000.0):
+            self.assertIn("active_tvl>=75000", bp.best_pool_tooltip())
+        self.assertNotIn("75000", bp.best_pool_tooltip())
 
     def test_listing_uses_stored_result_without_new_scan(self):
         app = self._app()
@@ -290,7 +355,7 @@ class BestPoolCardTest(unittest.TestCase):
             "rows": [_row(pool_address="PoolBest", ca="MintAAA",
                           symbol="AAA", dust_pct_mc=0.03,
                           analysis={"holders": {"dust_pct_mc": 0.03,
-                                                "dust_count": 12}})],
+                                               "dust_count": 12}})],
             "error": "", "fetched": 4, "hidden_metric": 2,
             "hidden_dust": 1,
         }
@@ -307,6 +372,24 @@ class BestPoolCardTest(unittest.TestCase):
         # tombol ⭐ baris (key diikat ke pool address, bukan index)
         self.assertIn("best-pool-star-PoolBest",
                       [button.key or "" for button in app.button])
+
+    def test_tabel_memakai_kolom_detail_fee_dan_vol(self):
+        """Detail fee / active TVL + Δ volume harus tampil di tabel card."""
+        app = self._app()
+        app.session_state["best_pool_scan"] = {
+            "rows": [_row(pool_address="PoolBest", dust_pct_mc=0.03)],
+            "error": "", "fetched": 1, "hidden_metric": 0, "hidden_dust": 0,
+        }
+        app.run()
+        body = "\n".join(node.value for node in app.markdown)
+        for title in ("A.TVL", "Fee/TVL", "Vol 24h", "Volat", "Dust %MC"):
+            self.assertIn(title, body)
+        # angka fee USD + tier fee + rasio + perubahan volume (Δ) per baris
+        self.assertIn("fee $24.0K·2%", body)
+        self.assertIn("40.0%", body)
+        self.assertIn("+12.5%", body)
+        # kunci urut dijelaskan di tooltip sel (bukan caption)
+        self.assertIn("kunci urut kedua", body)
 
 
 if __name__ == "__main__":

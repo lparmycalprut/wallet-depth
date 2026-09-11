@@ -265,23 +265,30 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   mengurutkan, dan yang tampil selalu satu sumber. `scan_meteora()`
   mengembalikan `best_count`; `app.py` tetap memanggil `sort_rows()` lagi
   saat render karena hasil scan lama di `session_state` belum terurut.
-  **🏆 Scan Best Pool Meteora** (2026-09-10, halaman utama) = replika
-  listing itu dengan filter baru, semua ambangnya konstanta `BEST_*` di
-  modul ini: query API `best_filter_by()` =
-  `pool_type=dlmm&&fee_pct>=5&&active_tvl>=10000` (24 jam, `category=top`,
-  `page_size=50`, `fetch_best_pools()`), lalu saringan layar ketat
-  (`row_best_gaps()` untuk 5 metrik pool + `row_dust_ok()` untuk dust
-  < 0,05% MC; angka `None` = gugur). `scan_best_meteora()` menjalankan
-  saringan metrik **sebelum** `enrich_pools()` supaya kuota Helius tidak
-  terbakar untuk pool yang pasti gugur, lalu `sort_best_rows()`: **dust %
-  MC terkecil → volume terbesar** (kunci dust dibulatkan ke
-  `BEST_DUST_SORT_DECIMALS` = 3 desimal = presisi tampilan card, jadi pool
-  yang di layar sama-sama "0,030%" diurutkan volumenya), baris tanpa dust
-  paling bawah, simbol sebagai tie-break terakhir. Hasil scan:
+  **🏆 Scan Best Pool Meteora** (halaman utama; kriteria **diganti total**
+  2026-09-11) — semua ambangnya konstanta `BEST_*` di modul ini: query API
+  `best_filter_by()` = `pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000`
+  (24 jam, `category=top`, `page_size=50`, `fetch_best_pools()`) sehingga
+  tier fee + active TVL tersearing di server. Saringan layar tinggal dua:
+  `row_best_gaps()` (volatility ≥ `BEST_VOLATILITY_MIN` 2%) +
+  `row_dust_ok()` (dust < `BEST_DUST_MAX_PCT` 0,05% MC; angka `None` =
+  gugur). Saringan fee/active TVL / top 10 holder / total LPs / active TVL
+  yang lama **dihapus** — konstantanya tidak ada lagi, jangan dipakai ulang.
+  `scan_best_meteora()` menjalankan saringan metrik **sebelum**
+  `enrich_pools()` supaya kuota Helius tidak terbakar untuk pool yang pasti
+  gugur, lalu `sort_best_rows()`: **dust % MC terkecil → fee/active TVL
+  terbesar → kenaikan volume 24 jam (`volume_change_pct`) terbesar** (kunci
+  dust dibulatkan ke `BEST_DUST_SORT_DECIMALS` = 3 desimal = presisi
+  tampilan card, jadi pool yang di layar sama-sama "0,030%" diurutkan
+  menurut rasio fee/TVL-nya), baris tanpa dust paling bawah, simbol sebagai
+  tie-break terakhir. Hasil scan:
   `rows/error/fetched/hidden_metric/hidden_dust/analyzed_at`. UI-nya
-  `best_pool_ui.render_best_pool_scan()` (card full-width di `app.py`,
-  tooltip `BEST_POOL_TOOLTIP`, session key `best_pool_scan`, ⭐ =
-  `source=meteora` → card Watchlist Meteora).
+  `best_pool_ui.render_best_pool_scan()` (card di kolom kiri bawah
+  Watchlist Meteora, tooltip `best_pool_tooltip()`, session key
+  `best_pool_scan`, ⭐ = `source=meteora` → card Watchlist Meteora). Tabel
+  card = detail fee / active TVL: kolom **A.TVL**, **Fee/TVL** (baris kecil
+  angka fee USD), **Vol 24h** (baris kecil Δ volume), tiap sel ber-`title`
+  dengan angka penuh + statusnya sebagai kunci urut.
 - `holder_analysis.py`: **Helius** sumber holder utama
   (`fetch_holders_helius`, fallback GMGN). `analyze_token` = holder
   real/dust + mid-tier + kohort. `extra_pools` + `cohort_addrs`
@@ -674,16 +681,18 @@ badge BEST POOL       : < 0.1% marketcap (DUST_BEST_PCT, aditif) + data
                         == 0.1% bukan BEST POOL (strict <). Notifikasi
                         tidak lagi memakai angka ini (ambang sendiri 0.06).
                         Hanya dirender di listing Scan Meteora.
-🏆 Scan Best Pool     : query API pool_type=dlmm && fee_pct>=5 &&
-                        active_tvl>=10000 (24 jam, category=top); layar:
-                        dust < 0.05% MC (BEST_DUST_MAX_PCT), active TVL
-                        > 10K USD (BEST_ACTIVE_TVL_MIN), fee/active TVL
-                        > 20% (BEST_FEE_RATIO_MIN), volatility > 5%
-                        (BEST_VOLATILITY_MIN), top 10 holder < 30%
-                        (BEST_TOP10_MAX_PCT), total LPs > 20
-                        (BEST_TOTAL_LPS_MIN). Semua ketat — angka pas di
-                        ambang atau data hilang (None) = gugur.
-                        Urutan: dust % MC terkecil -> volume terbesar.
+🏆 Scan Best Pool     : query API pool_type=dlmm && fee_pct>=2 &&
+                        active_tvl>=50000 (24 jam, category=top, page_size
+                        50) — fee tier + active TVL disaring API, bukan di
+                        layar. Saringan layar (kriteria diganti total
+                        2026-09-11): dust < 0.05% MC (BEST_DUST_MAX_PCT,
+                        ketat <) + volatility >= 2% (BEST_VOLATILITY_MIN,
+                        "minimal 2%" -> 2,0% lolos). Data hilang (None) =
+                        gugur. Saringan lama fee/active TVL > 20%, top 10
+                        holder < 30%, total LPs > 20, active TVL > 10K =
+                        DIHAPUS. Urutan: dust % MC terkecil -> fee/active
+                        TVL terbesar -> kenaikan volume 24 jam terbesar
+                        (volume_change_pct).
 grafik lane LP        : bucket 5 menit (resample_5m / LP_INTERVAL_SEC)
 kolom tabel watchlist : Δ 4 jam + sparkline Grafik 4 jam DIHAPUS (2026-09-07)
 grafik / kohort       : bucket 4 jam (resample_4h; titik mentah per run,

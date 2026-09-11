@@ -561,10 +561,10 @@ _lp_col, _rh_col = st.columns([1, 1], gap="medium")
 with _lp_col:
     _render_lp_card(lp_watch, status_tokens, history_store)
     # 🏆 Scan Best Pool Meteora — listing API Meteora 24 jam
-    # ``pool_type=dlmm&&fee_pct>=5&&active_tvl>=10000``, saringan layar dust
-    # holder < 0,05% MC, active TVL > 10K, fee/active TVL > 20%, volatility
-    # > 5%, top 10 holder < 30%, total LPs > 20; urut dust terkecil lalu
-    # volume terbesar. ⭐ memasukkan token ke card Watchlist Meteora di atas.
+    # ``pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000`` (kriteria 2026-09-11);
+    # saringan layar: dust holder < 0,05% MC + volatility >= 2%. Urut: dust
+    # terkecil → fee/active TVL terbesar → kenaikan volume 24 jam terbesar.
+    # ⭐ memasukkan token ke card Watchlist Meteora di atas.
     render_best_pool_scan()
 with _rh_col:
     _render_rh_card(rh_lp_watch, data.rh_status.get("tokens") or {},
