@@ -9,11 +9,12 @@ Kriteria **diganti total** 2026-09-11 sesuai request user (curl UI Meteora):
   disaring **oleh API**, tidak diulang sebagai saringan layar;
 - saringan layar tinggal dua: dust holder **< 0,05% MC** dan volatility
   **≥ 2%**;
-- urutan baris: **dust % MC terkecil** → **fee / active TVL terbesar** →
-  **kenaikan volume 24 jam (``volume_change_pct``) terbesar**;
+- urutan baris: **kenaikan volume 24 jam (``volume_change_pct``) terbesar** →
+  **dust % MC terkecil** → **fee / active TVL terbesar** (sejak 2026-09-11
+  sore; sebelumnya dust → fee/TVL → volume);
 - tabel menampilkan detail fee dan active TVL (kolom **A.TVL**, **Fee/TVL**
   dengan angka fee USD + tier fee di baris kecilnya, **Vol 24h** dengan Δ
-  volume) supaya rasio yang jadi kunci urut bisa diperiksa, bukan cuma
+  volume) supaya kunci urutnya bisa diperiksa, bukan cuma
   dipercaya. Kolom lama ``Fee`` (tier saja) dihapus — tier fee ikut nempel di
   baris kecil Fee/TVL; kolom ``Vol`` lama (= volatilitas) berganti nama jadi
   **Volat** karena **Vol 24h** sekarang benar-benar volume.
@@ -55,9 +56,9 @@ def best_pool_tooltip() -> str:
         f"{int(BEST_ACTIVE_TVL_MIN)} — tier fee dan active TVL disaring "
         "langsung oleh Meteora, bukan di layar. Yang ditampilkan hanya pool "
         f"dengan dust holder < {BEST_DUST_MAX_PCT:g}% marketcap dan "
-        f"volatility >= {BEST_VOLATILITY_MIN:g}%. Urutan: dust % marketcap "
-        "terkecil dulu, lalu fee/active TVL paling besar, lalu kenaikan "
-        "volume 24 jam paling besar. Di tabel: A.TVL = active TVL "
+        f"volatility >= {BEST_VOLATILITY_MIN:g}%. Urutan: kenaikan volume 24 "
+        "jam paling besar dulu, lalu dust % marketcap terkecil, lalu "
+        "fee/active TVL paling besar. Di tabel: A.TVL = active TVL "
         "pool, Fee/TVL = fee 24 jam dibagi active TVL (baris kecilnya angka "
         "fee + tier fee), Vol 24h = volume dengan perubahannya (Δ) — kolom "
         "Top10 dan LPs hanya informasi, keduanya bukan saringan lagi. ⭐ "
@@ -101,7 +102,7 @@ def _signed_pct(value) -> tuple[str, str]:
     """Persen dengan tanda +/− + warna (hijau naik, merah turun).
 
     Dipakai untuk **Δ volume** — kenaikan volume 24 jam adalah kunci urut
-    ketiga card, jadi tandanya harus terbaca sekali lihat. ``None`` → ``—``.
+    PERTAMA card, jadi tandanya harus terbaca sekali lihat. ``None`` → ``—``.
     """
     if value is None:
         return "—", ""
@@ -253,7 +254,7 @@ def render_best_pool_scan() -> None:
                 fee_sub += f"·{_number(fee_pct, '.4g')}%"
             delta_txt, delta_color = _signed_pct(volume_change)
             # Δ volume boleh bewarna (hijau/merah) dan jadi baris kecil
-            # kolom "Vol 24h" — kunci urut ketiga, tidak perlu kolom baru.
+            # kolom "Vol 24h" — kunci urut PERTAMA, tidak perlu kolom baru.
             delta_html = (f'<span style="color:{delta_color};">Δ '
                           f"{delta_txt}</span>" if delta_color
                           else f"<span>Δ {delta_txt}</span>")
@@ -265,9 +266,10 @@ def render_best_pool_scan() -> None:
                 f'<div class="watchlist-links">{external_links_html(ca)}</div>'
                 "</div>", unsafe_allow_html=True)
             # Detail fee / active TVL + kunci urut (permintaan user
-            # 2026-09-11): kolom Fee/TVL memegang rasio yang jadi kunci urut
-            # kedua dengan angka fee 24 jam di baris kecilnya, A.TVL memegang
-            # penyebutnya, Vol 24h memegang Δ volume (kunci urut ketiga).
+            # 2026-09-11 sore: volume → dust → fee/TVL): kolom Fee/TVL
+            # memegang rasio yang jadi kunci urut KETIGA dengan angka fee 24
+            # jam di baris kecilnya, A.TVL memegang penyebutnya, Vol 24h
+            # memegang Δ volume (kunci urut PERTAMA).
             # Tooltip tiap sel memberi angka penuh supaya angka ringkas bisa
             # diperiksa.
             cells = (
@@ -280,11 +282,11 @@ def render_best_pool_scan() -> None:
                  f"tier fee {_num_or_dash(fee_pct, '.4g')}% · fee 24 jam "
                  f"{_usd_or_dash(fee, compact=False)} / active TVL "
                  f"{_usd_or_dash(active_tvl, compact=False)} = "
-                 f"{_num_or_dash(ratio, ',.2f')}% — kunci urut kedua "
+                 f"{_num_or_dash(ratio, ',.2f')}% — kunci urut ketiga "
                  "(terbesar dulu)"),
                 (_usd_or_dash(volume), delta_html,
                  f"volume 24 jam {_usd_or_dash(volume, compact=False)} · "
-                 f"perubahan {delta_txt} — kunci urut ketiga (terbesar dulu)"),
+                 f"perubahan {delta_txt} — kunci urut pertama (terbesar dulu)"),
                 (_pct_or_dash(row.get("volatility")), "volat",
                  "volatility pool "
                  f"{_num_or_dash(row.get('volatility'), ',.2f')}% — saringan "
@@ -299,7 +301,7 @@ def render_best_pool_scan() -> None:
                  "jumlah wallet dust di bawah ambang dust"),
                 (_pct_txt(dust_pct, 3), "dust",
                  f"dust holder < {BEST_DUST_MAX_PCT:g}% marketcap — saringan "
-                 "sekaligus kunci urut pertama (terkecil dulu)"),
+                 "sekaligus kunci urut kedua (terkecil dulu)"),
             )
             for position, (value, sub, tip) in enumerate(cells, start=1):
                 cols[position].markdown(_cell(value, sub, tip),

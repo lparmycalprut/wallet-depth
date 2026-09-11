@@ -7,8 +7,9 @@ Filter yang diminta user 2026-09-11 (kriteria lama **diganti total**):
 - saringan layar: dust holder **< 0,05% MC** dan volatility **>= 2%** —
   saringan lama (active TVL > 10K, fee/active TVL > 20%, top 10 holder
   < 30%, total LPs > 20) dihapus;
-- urutan: dust % MC terkecil → fee/active TVL terbesar → kenaikan volume
-  24 jam (``volume_change_pct``) terbesar;
+- urutan: kenaikan volume 24 jam (``volume_change_pct``) terbesar → dust %
+  MC terkecil → fee/active TVL terbesar (sejak 2026-09-11 sore; pagi harinya
+  masih dust → fee/TVL → volume);
 - tabel menampilkan detail fee + active TVL (kolom A.TVL, Fee/TVL dengan
   angka fee USD, Vol 24h dengan Δ volume).
 """
@@ -176,7 +177,7 @@ class FilterAndSortTest(unittest.TestCase):
         self.assertEqual([r["pool_address"] for r in kept], ["P1"])
         self.assertEqual((hidden_metric, hidden_dust), (1, 1))
 
-    def test_sort_dust_then_fee_ratio_then_volume_change(self):
+    def test_sort_volume_change_then_dust_then_fee_ratio(self):
         rows = [
             _dust({"pool_address": "A", "symbol": "AAA",
                    "fee_active_tvl_ratio": 10.0, "volume_change_pct": 99.0},
@@ -185,25 +186,26 @@ class FilterAndSortTest(unittest.TestCase):
                    "fee_active_tvl_ratio": 5.0, "volume_change_pct": 80.0},
                   0.010),
             _dust({"pool_address": "C", "symbol": "CCC",
-                   "fee_active_tvl_ratio": 90.0, "volume_change_pct": 1.0},
+                   "fee_active_tvl_ratio": 90.0, "volume_change_pct": 80.0},
                   0.030),
             _dust({"pool_address": "D", "symbol": "DDD",
-                   "fee_active_tvl_ratio": 10.0, "volume_change_pct": 5.0},
+                   "fee_active_tvl_ratio": 10.0, "volume_change_pct": 80.0},
                   0.030),
             _row(pool_address="E", symbol="EEE", fee_active_tvl_ratio=999.0,
-                 analysis=None),
+                 volume_change_pct=500.0, analysis=None),
         ]
         order = [row["pool_address"] for row in ms.sort_best_rows(rows)]
-        # dust terkecil dulu (B); di dust 0,030% fee/active TVL terbesar dulu
-        # (C 90% → A 10% Δvol 99 → D 10% Δvol 5); baris tanpa dust paling
-        # bawah meski rasionya paling gede (E).
-        self.assertEqual(order, ["B", "C", "A", "D", "E"])
+        # kenaikan volume terbesar dulu (A Δ99%); di Δ80% yang sama dust
+        # terkecil dulu (B 0,010% → C/D 0,030%); di dust seri fee/active TVL
+        # terbesar dulu (C 90% → D 10%); baris tanpa dust paling bawah meski
+        # Δ volume + rasio fee-nya paling gede (E).
+        self.assertEqual(order, ["A", "B", "C", "D", "E"])
 
     def test_tie_break_uses_display_precision(self):
         """0,0301% dan 0,0304% tampil sama (0,030%) → fee/TVL yang menentukan.
 
-        Angka yang sama di layar dianggap seri, jadi rasio fee/active TVL
-        yang memutuskan urutannya."""
+        Kedua baris Δ volumenya sama (default 12,5%) dan dust tampilannya
+        seri, jadi rasio fee/active TVL yang memutuskan urutannya."""
         rows = [
             _row(pool_address="LOW", symbol="AAA", fee_active_tvl_ratio=3.0,
                  analysis={"holders": {"dust_pct_mc": 0.0301}}),
@@ -213,7 +215,12 @@ class FilterAndSortTest(unittest.TestCase):
         order = [row["pool_address"] for row in ms.sort_best_rows(rows)]
         self.assertEqual(order, ["HIGH", "LOW"])
 
-    def test_identical_dust_and_ratio_kenaikan_volume(self):
+    def test_volume_change_is_primary_key(self):
+        """Kenaikan volume memutuskan duluan (kunci urut pertama).
+
+        Dust dan fee/active TVL sama persis → Δ volume 61% di atas Δ 4%
+        (sejak 2026-09-11 sore; sebelumnya volume hanya tie-break terakhir).
+        """
         rows = [
             _row(pool_address="KECIL", symbol="AAA", fee_active_tvl_ratio=50.0,
                  volume_change_pct=4.0,
@@ -258,8 +265,8 @@ class ScanBestTest(unittest.TestCase):
         self.assertEqual(result["hidden_metric"], 1)
         self.assertEqual(result["hidden_dust"], 0)
         self.assertEqual(result["error"], "")
-        # dust sama (0,02%) → fee/active TVL terbesar dulu: P3 (80) di atas
-        # P1 (40), meski volume P1 lebih kecil.
+        # Δ volume sama (default 12,5%) + dust sama (0,02%) → fee/active TVL
+        # terbesar dulu: P3 (80) di atas P1 (40), meski volume P1 lebih kecil.
         self.assertEqual([row["pool_address"] for row in result["rows"]],
                          ["P3", "P1"])
 
@@ -319,8 +326,9 @@ class BestPoolCardTest(unittest.TestCase):
                       f"&&active_tvl>={int(ms.BEST_ACTIVE_TVL_MIN)}",
                       f"dust holder < {ms.BEST_DUST_MAX_PCT:g}% marketcap",
                       f"volatility >= {ms.BEST_VOLATILITY_MIN:g}%",
-                      "fee/active TVL paling besar, lalu kenaikan volume 24 "
-                      "jam paling besar"):
+                      "kenaikan volume 24 jam paling besar dulu, lalu dust % "
+                      "marketcap terkecil, lalu fee/active TVL paling "
+                      "besar"):
             self.assertIn(label, body)
         # rule lama sudah diganti total — tidak boleh tersisa di tooltip
         # card ini (card lain, mis. 🦅 Scan Best Robinhood Coin, memang masih
@@ -388,8 +396,11 @@ class BestPoolCardTest(unittest.TestCase):
         self.assertIn("fee $24.0K·2%", body)
         self.assertIn("40.0%", body)
         self.assertIn("+12.5%", body)
-        # kunci urut dijelaskan di tooltip sel (bukan caption)
-        self.assertIn("kunci urut kedua", body)
+        # kunci urut dijelaskan di tooltip sel (bukan caption): Vol 24h =
+        # pertama, Dust %MC = kedua, Fee/TVL = ketiga.
+        for key in ("kunci urut pertama", "kunci urut kedua",
+                    "kunci urut ketiga"):
+            self.assertIn(key, body)
 
 
 if __name__ == "__main__":
