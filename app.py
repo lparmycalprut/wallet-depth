@@ -569,8 +569,8 @@ with _rh_col:
 # (permintaan user 2026-09-11: "jangan dibuat grid lagi"). Listing API
 # Meteora 24 jam ``pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000``
 # (kriteria 2026-09-11); saringan layar: dust holder < 0,05% MC +
-# volatility >= 2%. Urut: dust terkecil → fee/active TVL terbesar →
-# kenaikan volume 24 jam terbesar. ⭐ memasukkan token ke card Watchlist
+# volatility >= 2%. Urut: kenaikan volume 24 jam terbesar → dust terkecil →
+# fee/active TVL terbesar. ⭐ memasukkan token ke card Watchlist
 # Meteora di atas.
 st.divider()
 render_best_pool_scan()

@@ -19,9 +19,11 @@ blok konstanta ``BEST_*`` di bawah): listing API Meteora 24 jam
 ``pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000`` (category ``top``,
 page_size 50), jadi **tier fee** dan **active TVL** sudah disaring di
 server. Saringan layar tinggal dua: dust holder **< 0,05% MC** dan
-volatility **>= 2%** ("minimal 2%"). Urutannya: **dust % MC terkecil** →
-**fee / active TVL terbesar** → **kenaikan volume 24 jam**
-(``volume_change_pct``) terbesar. Saringan lama active TVL > 10K,
+volatility **>= 2%** ("minimal 2%"). Urutannya: **kenaikan volume 24 jam**
+(``volume_change_pct``) terbesar → **dust % MC terkecil** → **fee / active TVL**
+terbesar (sejak 2026-09-11 sore; sebelumnya dust dulu baru fee/TVL baru
+volume — permintaan user: "peningkatan volume terbesar dulu, baru dust
+terkecil"). Saringan lama active TVL > 10K,
 fee/active TVL > 20%, top 10 holder < 30%, dan total LPs > 20 **dihapus**
 (ambang volatility lama 5% turun jadi 2%); datanya tetap dibawa dan tetap
 ditampilkan di tabel sebagai informasi.
@@ -56,8 +58,9 @@ BEST_DUST_MAX_PCT = 0.05          # layar: dust holder < 0,05% MC
 BEST_VOLATILITY_MIN = 2.0         # layar: volatility >= 2% ("minimal 2%")
 # Presisi kunci urut dust % MC di listing Best Pool — sama dengan angka yang
 # tampil di card, jadi dua pool yang di layar sama-sama "0,041%" benar-benar
-# dianggap seri dan **fee / active TVL terbesar** yang menentukan urutannya
-# (lalu kenaikan volume 24 jam, lihat :func:`sort_best_rows`).
+# dianggap seri dan kunci urut berikutnya yang menentukan (lihat
+# :func:`sort_best_rows`). Dust adalah kunci urut KEDUA sejak 2026-09-11 sore
+# (sebelumnya pertama): volume dulu, lalu dust, lalu fee/active TVL.
 BEST_DUST_SORT_DECIMALS = 3
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
@@ -174,7 +177,8 @@ def _row_from_pool(pool: dict, *, in_24h: bool, in_1h: bool) -> dict:
         # LP total, dan konsentrasi 10 holder teratas token base (% supply)
         # tetap dibawa sebagai informasi baris; ``fee`` (USD 24 jam) +
         # ``volume_change_pct`` dipakai card sebagai detail fee/active TVL dan
-        # kunci urut ketiga (permintaan user 2026-09-11).
+        # kunci urut PERTAMA = kenaikan volume (permintaan user 2026-09-11
+        # sore; sebelumnya kunci urut ketiga).
         "volatility": _float(pool.get("volatility")),
         "total_lps": _float(pool.get("total_lps")),
         "top_holders_pct": _float(token.get("top_holders_pct")),
@@ -443,9 +447,10 @@ def scan_meteora(*, max_wallets: int | None = None, workers: int = 6,
 # 2. **layar** (setelah data pool + holder ada): dust holder < 0,05% MC dan
 #    volatility minimal 2%.
 #
-# Urutan baris: **dust % MC terkecil** → **fee / active TVL terbesar** →
-# **kenaikan volume 24 jam** (``volume_change_pct``) terbesar (permintaan
-# user 2026-09-11). Data yang hilang (``None``) selalu menggugurkan baris:
+# Urutan baris: **kenaikan volume 24 jam** (``volume_change_pct``) terbesar →
+# **dust % MC terkecil** → **fee / active TVL terbesar** (permintaan user
+# 2026-09-11 sore; sebelumnya dust → fee/TVL → volume). Data yang hilang
+# (``None``) selalu menggugurkan baris:
 # card ini menjual bukti, jadi pool tanpa angka tidak ikut ditampilkan.
 # ---------------------------------------------------------------------------
 def _maybe_float(value):
@@ -566,17 +571,17 @@ def filter_best_rows(rows: list[dict] | None) -> tuple[list[dict], int, int]:
 
 
 def sort_best_rows(rows: list[dict] | None) -> list[dict]:
-    """Urutan listing Best Pool: dust → fee/active TVL → kenaikan volume.
+    """Urutan listing Best Pool: kenaikan volume → dust → fee/active TVL.
 
-    Permintaan user 2026-09-11: "urut dust dari yang paling kecil, lalu
-    fee/active TVL paling besar, lalu kenaikan volume yang terjadi terbesar".
-    Kunci dust dibulatkan ke presisi tampilan (:data:`BEST_DUST_SORT_DECIMALS`,
-    3 desimal = angka yang muncul di card), jadi pool yang di layar
-    sama-sama "0,041%" dianggap seri dan **fee / active TVL terbesar** yang
-    menentukan; kalau rasio itu juga sama, **kenaikan volume 24 jam**
-    (``volume_change_pct``) yang jadi tie-break terakhir sebelum simbol
-    alfabetis supaya urutan deterministik antar scan. Baris tanpa angka dust
-    (holder gagal) tetap ditaruh paling bawah — tidak ada bukti.
+    Permintaan user 2026-09-11 sore: "peningkatan volume terbesar dulu, baru
+    dust terkecil, dll" — menggantikan urutan pagi harinya (dust terkecil →
+    fee/active TVL terbesar → kenaikan volume terbesar). Kunci dust dibulatkan
+    ke presisi tampilan (:data:`BEST_DUST_SORT_DECIMALS`, 3 desimal = angka
+    yang muncul di card), jadi pool yang di layar sama-sama "0,041%" dianggap
+    seri dan **fee / active TVL terbesar** yang menentukan; kalau rasio itu
+    juga sama, simbol alfabetis jadi tie-break terakhir supaya urutan
+    deterministik antar scan. Baris tanpa angka dust (holder gagal) tetap
+    ditaruh paling bawah — tidak ada bukti, sebesar apa pun volumenya.
     """
     def _key(row):
         row = row or {}
@@ -585,9 +590,9 @@ def sort_best_rows(rows: list[dict] | None) -> list[dict]:
         change = _float(row.get("volume_change_pct"), 0.0)
         return (
             0 if pct is not None else 1,
+            -change,
             round(pct, BEST_DUST_SORT_DECIMALS) if pct is not None else 0.0,
             -ratio,
-            -change,
             str(row.get("symbol") or "").upper(),
         )
 
@@ -603,8 +608,8 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
     Kriteria 2026-09-11: API sudah menyaring ``pool_type=dlmm``,
     ``fee_pct>=2``, ``active_tvl>=50000``; layar menambah volatility
     ``>= 2%`` (dicek SEBELUM fetch holder supaya kuota Helius tidak terbakar)
-    dan dust holder ``< 0,05% MC`` (butuh holder). Urutan hasil: dust % MC
-    terkecil → fee/active TVL terbesar → kenaikan volume 24 jam terbesar.
+    dan dust holder ``< 0,05% MC`` (butuh holder). Urutan hasil: kenaikan
+    volume 24 jam terbesar → dust % MC terkecil → fee/active TVL terbesar.
     """
     # Default FULL seperti ``scan_meteora``: urutan getTokenAccounts Helius
     # tidak urut saldo, jadi cap kecil menghasilkan sampel bias dan angka
