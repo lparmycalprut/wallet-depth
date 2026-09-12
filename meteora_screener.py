@@ -27,6 +27,10 @@ terkecil"). Saringan lama active TVL > 10K,
 fee/active TVL > 20%, top 10 holder < 30%, dan total LPs > 20 **dihapus**
 (ambang volatility lama 5% turun jadi 2%); datanya tetap dibawa dan tetap
 ditampilkan di tabel sebagai informasi.
+
+Baris dengan dust **<= 0,035% MC** (``BEST_DUST_MARK_PCT``,
+:func:`row_best_pool`, 2026-09-12) ditandai chip **🏆 BEST POOL** di kolom
+Dust %MC — penanda murni visual, bukan saringan (saringan tetap 0,05%).
 """
 from __future__ import annotations
 
@@ -56,6 +60,12 @@ BEST_FEE_PCT_MIN = 2.0            # query API: fee_pct >= 2 (tier fee pool)
 BEST_ACTIVE_TVL_MIN = 50_000.0    # query API: active TVL >= 50K USD
 BEST_DUST_MAX_PCT = 0.05          # layar: dust holder < 0,05% MC
 BEST_VOLATILITY_MIN = 2.0         # layar: volatility >= 2% ("minimal 2%")
+# Tanda 🏆 BEST POOL di kolom Dust %MC (permintaan user 2026-09-12): baris
+# dengan dust **<= 0,035% MC** (inklusif — 0,035 persis ikut ditandai)
+# diberi chip emas di ``best_pool_ui``. Ini BUKAN saringan tambahan: saringan
+# layar tetap ``BEST_DUST_MAX_PCT`` (0,05%, lebih longgar); tanda hanya
+# memudahkan melihat pool yang benar-benar bersih di dalam listing.
+BEST_DUST_MARK_PCT = 0.035
 # Presisi kunci urut dust % MC di listing Best Pool — sama dengan angka yang
 # tampil di card, jadi dua pool yang di layar sama-sama "0,041%" benar-benar
 # dianggap seri dan kunci urut berikutnya yang menentukan (lihat
@@ -553,6 +563,19 @@ def row_dust_ok(row: dict | None) -> bool:
     """
     pct = _maybe_float(row_dust_pct(row))
     return bool(pct is not None and pct < BEST_DUST_MAX_PCT)
+
+
+def row_best_pool(row: dict | None) -> bool:
+    """True bila dust holder **<= 0,035% MC** → baris ditandai 🏆 BEST POOL.
+
+    Penanda visual (2026-09-12, permintaan user: "tandai jika %dust <=
+    0.035 menjadi Best Pool"), bukan saringan: saringan listing tetap
+    :func:`row_dust_ok` (``BEST_DUST_MAX_PCT`` 0,05%, lebih longgar). Batas
+    **inklusif** (dust 0,035 persis ikut ditandai); dust ``None`` (holder
+    gagal di-fetch) tidak pernah ditandai — tidak ada bukti.
+    """
+    pct = _maybe_float(row_dust_pct(row))
+    return bool(pct is not None and pct <= BEST_DUST_MARK_PCT)
 
 
 def filter_best_rows(rows: list[dict] | None) -> tuple[list[dict], int, int]:

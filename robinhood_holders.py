@@ -1395,7 +1395,9 @@ def scan_token_holders(ca: str, *, max_wallets: int | None = None,
         {
           "market": {...},            # dari get_market (bisa {})
           "snapshot": {...},          # dari fetch_holders
-          "depth": {...},             # dari wallet_depth
+          "depth": {...},             # dari wallet_depth + dust_pct_mc /
+                                      # dust_count / dust_value_usd /
+                                      # dust_limit_usd (classify_holders)
           "source": str,              # "blockscout-csv" / "blockscout-v2" / …
           "no_helius_keys": False,    # selalu False (tidak butuh key Helius)
           "scan_failed": bool,
@@ -1426,6 +1428,17 @@ def scan_token_holders(ca: str, *, max_wallets: int | None = None,
     snapshot["holders"] = _mark_pools(snapshot.get("holders") or [], pools)
     depth = wallet_depth(snapshot.get("holders") or [], mc,
                          pool_addresses=pools, include_pools=include_pools)
+    # Detail dust % MC untuk metrik Scan Holder (2026-09-12) — persis jalur
+    # Helius (``helius_holders.scan_token_holders``): definisi kolom **Hold
+    # %MC** watchlist (wallet 0 < nilai ≤ $10, LP/pool disingkirkan) supaya
+    # UI kedua sumber identik. ``_mark_pools`` sudah menandai ``is_wallet``
+    # pool, dan pair_addresses ikut dikirim — dua lapisan seperti
+    # ``analyze_token``.
+    dust = classify_holders(snapshot, mc, pool_addresses=pools)
+    depth["dust_pct_mc"] = dust.get("dust_pct_mc")
+    depth["dust_count"] = dust.get("dust_count")
+    depth["dust_value_usd"] = dust.get("dust_value_usd")
+    depth["dust_limit_usd"] = dust.get("dust_limit_usd", DUST_LIMIT_USD)
     symbol = str(market.get("symbol")
                  or (info or {}).get("symbol") or "?").upper()
     return {

@@ -116,6 +116,22 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   biasa di `temp_ui.py` **tidak** ikut diberi tombol (scope permintaan user
   = Meteora + Robinhood), tetapi `mute_mints`-nya tetap dihormati bila token
   dipindah ke sana.
+- **Persentase %MC 3 desimal + metrik Dust %MC di Scan Holder
+  (2026-09-12)** — permintaan user dalam tiga bagian: (1) tanda di 🏆 Scan
+  Best Pool Meteora (lihat bullet `meteora_screener` di bawah); (2) kolom
+  **Hold %MC** 🌊 Watchlist Meteora (`app.py::_render_lp_row`) dan 🦅
+  Watchlist Robinhood (`dashboard_components._render_rh_row` — varian LP
+  *dan* biasa ikut karena satu renderer) tampil **3 angka di belakang
+  koma** (`.3f` — dua desimal menyembunyikan beda 0,044% vs 0,037%); (3)
+  section 🛰 Scan Holder Solana / Robinhood mendapat metrik **`Dust %MC`
+  tepat di kiri "Akun holder (…)"** — angkanya `classify_holders` yang
+  ditempel ke `depth` di dalam `scan_token_holders` (Helius *dan*
+  Robinhood: `dust_pct_mc`, `dust_count`, `dust_value_usd`,
+  `dust_limit_usd`), jadi definisinya persis kolom Hold %MC watchlist
+  (wallet 0 < nilai ≤ $10, LP/pool disingkirkan). Semua persen %MC di Scan
+  Holder 3 desimal: metrik, label batang `depth_bar_chart` (`.3f`), dan
+  kolom **% Market Cap** `_depth_tables_html` (dipakai juga tabel Wallet
+  Depth nested di expander watchlist — seragam, jangan dibalikan).
 - **Grafik perubahan dust holder seragam di semua card (2026-09-10)** —
   setiap baris watchlist (Watchlist Meteora di `app.py`, Watchlist
   Robinhood LP/biasa di `dashboard_components._render_rh_row`, Watchlist
@@ -338,6 +354,13 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   card = detail fee / active TVL: kolom **A.TVL**, **Fee/TVL** (baris kecil
   angka fee USD), **Vol 24h** (baris kecil Δ volume), tiap sel ber-`title`
   dengan angka penuh + statusnya sebagai kunci urut.
+  **Tanda 🏆 BEST POOL (2026-09-12):** baris dengan dust **<=
+  `BEST_DUST_MARK_PCT` 0,035% MC** (inklusif, `row_best_pool()`) ditandai —
+  angka dust diwarnai emas + sub sel kolom Dust %MC diganti chip
+  `dust-badge dust-best`, dan kepala card menghitungnya di pill `🏆 BEST
+  POOL N`. Penanda **visual, bukan saringan** (saringan tetap 0,05%);
+  ambangnya dibaca konstanta di tooltip card dan tooltip sel — jangan
+  hard-code angkanya di teks.
 - `holder_analysis.py`: **Helius** sumber holder utama
   (`fetch_holders_helius`, fallback GMGN). `analyze_token` = holder
   real/dust + mid-tier + kohort. `extra_pools` + `cohort_addrs`

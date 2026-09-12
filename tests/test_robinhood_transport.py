@@ -596,6 +596,41 @@ class FetchHoldersBlockedTest(_Base):
         self.assertEqual(out["error"], "")
 
 
+class ScanHoldersDustStatsTest(unittest.TestCase):
+    """``scan_token_holders`` menempel detail % dust ke ``depth`` (2026-09-12).
+
+    Metrik **Dust %MC** di kiri "Akun holder (Blockscout)" pada section Scan
+    Holder — definisi persis kolom Hold %MC watchlist (``classify_holders``:
+    wallet 0 < nilai ≤ $10, LP/pool disingkirkan), sama seperti jalur Helius
+    (``test_helius_holders``)."""
+
+    def test_depth_membawa_dust_pct_mc(self):
+        holders = [
+            {"address": "0xaaa", "usd_value": 5.0, "is_wallet": True},
+            {"address": "0xbbb", "usd_value": 500.0, "is_wallet": True},
+            # LP/pool dust kecil TIDAK ikut hitungan (bukan wallet).
+            {"address": "0xpool", "usd_value": 8.0, "is_wallet": True},
+        ]
+        market = {"price_usd": 0.01, "marketcap": 100_000.0,
+                  "symbol": "PUSHEEN", "pair_addresses": ["0xpool"]}
+        with mock.patch.object(rh, "get_market", return_value=market), \
+                mock.patch.object(rh, "fetch_token_info",
+                                  return_value={"decimals": 18,
+                                                "total_supply": 1e9}), \
+                mock.patch.object(rh, "fetch_holders",
+                                  return_value={
+                                      "holders": holders, "pages": 1,
+                                      "truncated": False, "fetched": 3,
+                                      "source": "blockscout-csv"}):
+            result = rh.scan_token_holders(CA)
+        depth = result["depth"]
+        self.assertFalse(result["scan_failed"])
+        self.assertEqual(depth["dust_count"], 1)            # hanya 0xaaa ($5)
+        self.assertAlmostEqual(depth["dust_pct_mc"], 0.005, places=6)
+        self.assertEqual(depth["dust_value_usd"], 5.0)
+        self.assertEqual(depth["dust_limit_usd"], 10.0)
+
+
 class SourceRouteLabelTest(unittest.TestCase):
     def test_source_with_route_dan_source_base(self):
         self.assertEqual(rh.source_with_route("blockscout-csv", "pro"),

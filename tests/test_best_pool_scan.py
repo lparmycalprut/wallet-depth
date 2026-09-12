@@ -11,7 +11,11 @@ Filter yang diminta user 2026-09-11 (kriteria lama **diganti total**):
   MC terkecil → fee/active TVL terbesar (sejak 2026-09-11 sore; pagi harinya
   masih dust → fee/TVL → volume);
 - tabel menampilkan detail fee + active TVL (kolom A.TVL, Fee/TVL dengan
-  angka fee USD, Vol 24h dengan Δ volume).
+  angka fee USD, Vol 24h dengan Δ volume);
+- tanda chip **🏆 BEST POOL** (2026-09-12): baris dengan dust <= 0,035% MC
+  (``BEST_DUST_MARK_PCT``, inklusif) ditandai di kolom Dust %MC + dihitung
+  di pill kepala card — penanda visual, bukan saringan (saringan tetap
+  0,05%).
 """
 from __future__ import annotations
 
@@ -163,6 +167,40 @@ class BestGatesTest(unittest.TestCase):
         self.assertTrue(ms.row_dust_ok(ok))
         self.assertFalse(ms.row_dust_ok(bad))
         self.assertEqual(ms.BEST_DUST_MAX_PCT, 0.05)
+
+
+class BestPoolMarkTest(unittest.TestCase):
+    """Tanda chip 🏆 BEST POOL: dust **<= 0,035% MC** (inklusif, 2026-09-12)."""
+
+    def test_mark_boundary_is_inclusive(self):
+        self.assertEqual(ms.BEST_DUST_MARK_PCT, 0.035)
+        self.assertTrue(ms.row_best_pool(_dust(_row(), 0.0)))
+        self.assertTrue(ms.row_best_pool(_dust(_row(), 0.035)))
+        self.assertTrue(ms.row_best_pool(_dust(_row(), 0.034999)))
+        self.assertFalse(ms.row_best_pool(_dust(_row(), 0.035001)))
+
+    def test_mark_is_visual_not_a_filter(self):
+        """0,04% tetap lolos listing (saringan 0,05%) — hanya tanpa tanda."""
+        row = _dust(_row(), 0.04)
+        self.assertTrue(ms.row_dust_ok(row))
+        self.assertFalse(ms.row_best_pool(row))
+
+    def test_mark_never_for_missing_dust(self):
+        self.assertFalse(ms.row_best_pool(_row(analysis=None,
+                                               dust_pct_mc=None)))
+        self.assertFalse(ms.row_best_pool({"analysis":
+                                           {"holders": {"dust_pct_mc": None}},
+                                           "dust_pct_mc": None}))
+
+    def test_fallback_to_row_level_dust(self):
+        """Baris session lama (tanpa ``analysis``) dinilai dari field baris."""
+        self.assertTrue(ms.row_best_pool({"dust_pct_mc": 0.02}))
+        self.assertFalse(ms.row_best_pool({"dust_pct_mc": 0.045}))
+
+    def test_tooltip_mentions_the_mark(self):
+        tooltip = bp.best_pool_tooltip()
+        self.assertIn(f"dust <= {ms.BEST_DUST_MARK_PCT:g}% marketcap", tooltip)
+        self.assertIn("🏆 BEST POOL", tooltip)
 
 
 class FilterAndSortTest(unittest.TestCase):
@@ -380,6 +418,60 @@ class BestPoolCardTest(unittest.TestCase):
         # tombol ⭐ baris (key diikat ke pool address, bukan index)
         self.assertIn("best-pool-star-PoolBest",
                       [button.key or "" for button in app.button])
+
+    def test_baris_dust_0035_ditandai_chip_best_pool(self):
+        """Chip 🏆 BEST POOL (2026-09-12) hanya di baris dust <= 0,035% MC.
+
+        Permintaan user: "tandai jika %dust <= 0.035 menjadi Best Pool" —
+        baris 0,032% dapat chip emas di sel Dust %MC + pill rekap di kepala
+        card; baris 0,041% (lolos saringan 0,05%) tidak."""
+        app = self._app()
+        app.session_state["best_pool_scan"] = {
+            "rows": [
+                _row(pool_address="PoolBest", ca="MintBest", symbol="BST",
+                     dust_pct_mc=0.032,
+                     analysis={"holders": {"dust_pct_mc": 0.032,
+                                           "dust_count": 4}}),
+                _row(pool_address="PoolOk", ca="MintOkk", symbol="OKP",
+                     dust_pct_mc=0.041, volume_change_pct=3.0,
+                     analysis={"holders": {"dust_pct_mc": 0.041,
+                                           "dust_count": 7}}),
+            ],
+            "error": "", "fetched": 2, "hidden_metric": 0, "hidden_dust": 0,
+        }
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        bst, okp = body.index("$BST"), body.index("$OKP")
+        segment_bst = body[bst:okp]
+        # chip tepat satu, di baris 0,032% (angka emas ditandai span).
+        self.assertEqual(segment_bst.count('class="dust-badge dust-best"'), 1)
+        self.assertIn("🏆 BEST POOL</span>", segment_bst)
+        self.assertEqual(body[okp:].count('class="dust-badge dust-best"'), 0)
+        # pill rekap kepala card menghitung baris bertanda; tooltip sel dan
+        # tooltip card menjelaskan ambang tandanya (angka dari konstanta —
+        # ``<=`` di-escape ``&lt;=`` di atribut title, unescape dulu).
+        self.assertIn("🏆 BEST POOL 1</span>", body)
+        import html as _html
+        self.assertIn(f"dust <= {ms.BEST_DUST_MARK_PCT:g}% marketcap",
+                      _html.unescape(body))
+
+    def test_tanpa_baris_bertanda_tidak_ada_chip(self):
+        """Semua dust di atas 0,035% → tidak ada chip, tidak ada pill."""
+        app = self._app()
+        app.session_state["best_pool_scan"] = {
+            "rows": [_row(pool_address="PoolOk", ca="MintOkk", symbol="OKP",
+                          dust_pct_mc=0.041,
+                          analysis={"holders": {"dust_pct_mc": 0.041,
+                                                "dust_count": 7}})],
+            "error": "", "fetched": 1, "hidden_metric": 0, "hidden_dust": 0,
+        }
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertNotIn('class="dust-badge dust-best"', body)
+        self.assertNotIn("🏆 BEST POOL</span>", body)   # teks chip
+        self.assertNotIn("🏆 BEST POOL 1</span>", body)  # pill
 
     def test_tabel_memakai_kolom_detail_fee_dan_vol(self):
         """Detail fee / active TVL + Δ volume harus tampil di tabel card."""

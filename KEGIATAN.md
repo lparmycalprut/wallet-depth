@@ -1,3 +1,71 @@
+# Kegiatan — 12 September 2026 (🏆 tanda Best Pool ≤ 0,035% · Hold %MC 3 desimal · Dust %MC di Scan Holder)
+
+Permintaan user (tiga bagian):
+*\"pada 🏆 Scan Best Pool Meteora tandai jika %dust <= 0.035 menjadi Best
+Pool; pada 🌊 Watchlist Meteora dan 🦅 Watchlist Robinhood pada kolom Hold
+%MC buat menjadi 3 angka dibelakang koma persenannya; lalu pada 🛰 Scan
+Holder Solana / Robinhood tambahkan detail % dust di sebelah kiri Akun
+holder (Blockscout) — pada scan holder ini, kita buat menjadi 3 angka
+dibelakang koma juga, termasuk di grafik\"*.
+
+## 1 · 🏆 Scan Best Pool Meteora: tanda Best Pool untuk dust ≤ 0,035%
+
+- Konstanta baru `meteora_screener.BEST_DUST_MARK_PCT = 0.035` + helper
+  `row_best_pool()` (batas **inklusif** — 0,035 persis ikut ditandai; dust
+  `None` tidak pernah). Penanda **visual, bukan saringan**: saringan
+  listing tetap `BEST_DUST_MAX_PCT` 0,05% (lebih longgar), jadi listing
+  tidak menyempit dan pool 0,04% tetap tampil hanya tanpa tanda.
+- UI `best_pool_ui`: kolom **Dust %MC** baris yang lolos tanda menampilkan
+  angka warna emas + chip `dust-badge dust-best` 🏆 BEST POOL (chip mengganti
+  sub "dust" di selnya); kepala card mendapat pill emas **🏆 BEST POOL N**
+  di antara pill jumlah pool dan "disembunyikan". Tooltip sel dan tooltip
+  judul card menjelaskan ambangnya dengan angka dari konstanta (konvensi
+  2026-09-10: tooltip mengikuti konstanta, tidak hard-code).
+- Coverage: `tests/test_best_pool_scan.py::BestPoolMarkTest` (batas
+  inklusif 0,035 / bukan saringan — 0,04% tetap lolos / `None` tak pernah /
+  fallback field baris / tooltip) + 2 AppTest (chip hanya di baris ≤0,035
+  dengan pill rekap; tanpa baris bertanda = tanpa chip/pill).
+
+## 2 · Kolom Hold %MC di watchlist → 3 desimal
+
+- `app.py::_render_lp_row` (🌊 Watchlist Meteora) dan
+  `dashboard_components._render_rh_row` (🦅 Watchlist Robinhood — varian LP
+  halaman utama *dan* varian biasa halaman temp ikut karena satu renderer):
+  `pct_txt` `.2f` → `.3f` ("0.450%" bukan "0.45%"). Dust watchlist LP sering
+  di kisaran 0,01–0,09% MC; dua desimal menyembunyikan beda 0,044% vs
+  0,037% yang justru penting untuk memutuskan masuk pool.
+- Yang **tidak** ikut berubah: Watchlist Holder biasa di `temp_ui.py`
+  (scope permintaan hanya kedua card watchlist chain) dan pembanding
+  `watchlist_detail` (Δ→% MC format lain).
+
+## 3 · 🛰 Scan Holder: metrik Dust %MC + semua persen 3 desimal
+
+- **Metrik baru `Dust %MC` tepat di kiri "Akun holder (…)"**
+  (`app.py::_render_helius_holder_result`, kolom metrik jadi 5): nilai
+  `dust_pct_mc` yang dihitung `classify_holders` **di dalam**
+  `scan_token_holders` — Helius *dan* Robinhood — lalu ditempel ke
+  `depth` (`dust_pct_mc`, `dust_count`, `dust_value_usd`,
+  `dust_limit_usd`). Kenapa bukan bucket `$0-$10` depth: definisi
+  `classify_holders` adalah sumber kebenaran kolom **Hold %MC** watchlist
+  (wallet 0 < nilai ≤ $10, LP/pool disingkirkan lewat pair_addresses +
+  `is_wallet`), jadi angka Scan Holder identik dengan watchlist token yang
+  sama untuk kedua sumber (Helius/Blockscout). Help metrik membawa jumlah
+  wallet (≥ bila scan terpotong) + total nilai USD dust.
+- **3 desimal**: metrik baru (`.3f`), label batang grafik
+  `helius_holders.depth_bar_chart` (`.1f` → `.3f` — bucket dust 0,008% MC
+  dulu memayat jadi "0.0%"), dan kolom **% Market Cap**
+  `dashboard_components._depth_tables_html` (`.2f` → `.3f`; tabel ini juga
+  dipakai Wallet Depth nested di expander watchlist — seragam). Tooltip
+  judul section (`SCAN_HOLDER_TOOLTIP`) ikut menyebut definisi + presisi.
+- Coverage: `tests/test_helius_holders.py` (depth membawa dust stats; LP
+  dust tidak ikut; marketcap 0 → `dust_pct_mc` `None` → metrik "—"; label
+  grafik 3 desimal), `tests/test_robinhood_transport.py::ScanHoldersDustStatsTest`
+  (jalur Blockscout identik), `tests/test_rh_card_ui.py` (AppTest: metrik
+  "Dust %MC" = "0.035%" tepat sebelum "Akun holder (Blockscout)"), dan
+  pin 3 desimal di `tests/test_lp_card_ui.py` (🌊, "0.610%"/"1.350%"),
+  `tests/test_rh_card_ui.py` (🦅, "0.550%"), `tests/test_alert_toggle_per_token.py`
+  (assert "0.55%" → "0.550%").
+
 # Kegiatan — 11 September 2026 (🔔/🔕 toggle alert Telegram per token: Meteora + Robinhood)
 
 Permintaan user: *"kasih toggle alert on/off per token yang ada di watchlist
