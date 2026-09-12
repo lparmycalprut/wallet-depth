@@ -1,3 +1,24 @@
+# Kegiatan — 12 September 2026 (klik pill N disembunyikan → listing pool tersembunyi)
+
+Permintaan user: *\"ketika saya klik disitu, app akan menampilkan pool yang
+disembunyikan sorted by kenaikan volume 24 jam, tapi tetap dengan kriteria
+minimal volume 24 jam 1M, dan minimum % dust dibawah 0.05%\"* (konteks:
+pill **N disembunyikan** di card 🏆 Scan Best Pool Meteora).
+
+- `scan_best_meteora()` kini meng-enrich semua pool **volume 24 jam ≥ $1M**
+  (bukan hanya yang lolos volatility) supaya dust < 0,05% MC bisa dicek di
+  listing tersembunyi. Pool sepi (< $1M) tetap tidak di-fetch holder.
+  Hasil baru `hidden_rows`: volume ≥ $1M + dust < 0,05% MC, **bukan** di
+  listing utama (gagal volatility), urut `sort_best_rows` (Δ volume 24 jam
+  terbesar dulu).
+- UI `best_pool_ui`: tombol **▶ N disembunyikan** (HTML pill tidak bisa
+  diklik di Streamlit) membuka listing itu; **◀ kembali ke N pool lolos**
+  mengembalikan listing utama. ⭐ listing tersembunyi memakai key
+  `best-pool-hidden-star-…`.
+- Coverage: `tests/test_best_pool_scan.py` — `hidden_rows` menolak volume
+  < $1M dan dust ≥ 0,05%, urut Δ volume; AppTest klik tombol menampilkan
+  token tersembunyi dan menyembunyikan yang lolos.
+
 # Kegiatan — 12 September 2026 (🛰 Scan Holder: tulisan BEST emas kelap-kelip · 🏆 Best Pool: volume 24 jam ≥ $1M)
 
 Permintaan user (dua bagian, menyusul entri tiga bagian sebelumnya di hari

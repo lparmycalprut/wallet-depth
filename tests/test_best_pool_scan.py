@@ -419,10 +419,11 @@ class ScanBestTest(unittest.TestCase):
                                   side_effect=fake_enrich) as enrich:
             result = ms.scan_best_meteora(max_wallets=2000)
 
-        # P2 gugur di volatility, P4 di volume 24 jam → holder keduanya
-        # tidak perlu di-fetch (saringan metrik jalan sebelum enrich).
+        # P4 gugur volume 24 jam → holder tidak di-fetch. P2 gugur
+        # volatility tapi volume ≥ $1M → tetap di-enrich supaya listing
+        # "disembunyikan" bisa menyaring dust < 0,05%.
         fetched = [row["pool_address"] for row in enrich.call_args.args[0]]
-        self.assertEqual(fetched, ["P1", "P3"])
+        self.assertEqual(fetched, ["P1", "P2", "P3"])
         self.assertEqual(result["fetched"], 4)
         self.assertEqual(result["hidden_metric"], 2)
         self.assertEqual(result["hidden_dust"], 0)
@@ -431,6 +432,54 @@ class ScanBestTest(unittest.TestCase):
         # terbesar dulu: P3 (80) di atas P1 (40), meski volume P1 lebih kecil.
         self.assertEqual([row["pool_address"] for row in result["rows"]],
                          ["P3", "P1"])
+        self.assertEqual([row["pool_address"] for row in result["hidden_rows"]],
+                         ["P2"])
+
+    def test_hidden_rows_keep_volume_and_dust_gates(self):
+        """Klik pill disembunyikan: volume ≥ 1M + dust < 0,05%, urut Δ vol.
+
+        P-LOWVOL lolos volume+dust tapi gagal volatility → hidden_rows.
+        P-SEPI volume < 1M tidak di-enrich / tidak masuk hidden.
+        P-DUST dust 0,4% tidak masuk hidden meski volume besar.
+        P-OK tetap di listing utama, bukan hidden.
+        """
+        pools = [
+            _pool("P-OK", "MintOK", volume=2_000_000, volume_change_pct=10.0),
+            _pool("P-LOWVOL", "MintLow", volume=3_000_000, volatility=1.0,
+                  volume_change_pct=80.0),
+            _pool("P-LOWVOL2", "MintLow2", volume=1_500_000, volatility=0.5,
+                  volume_change_pct=20.0),
+            _pool("P-SEPI", "MintSepi", volume=400_000, volume_change_pct=999.0),
+            _pool("P-DUST", "MintDust", volume=4_000_000, volatility=1.2,
+                  volume_change_pct=50.0),
+        ]
+        dusts = {"MintOK": 0.02, "MintLow": 0.01, "MintLow2": 0.04,
+                 "MintDust": 0.40}
+
+        def fake_enrich(rows, **_kwargs):
+            out = []
+            for row in rows:
+                item = dict(row)
+                pct = dusts.get(row["ca"])
+                item["analysis"] = {"holders": {
+                    "dust_pct_mc": pct, "dust_count": 5,
+                    "total_fetched": 1000, "wallets_analyzed": 900}}
+                item["dust_pct_mc"] = pct
+                item["dust_count"] = 5
+                out.append(item)
+            return out
+
+        with mock.patch.object(ms, "fetch_best_pools", return_value=pools), \
+                mock.patch.object(ms, "enrich_pools",
+                                  side_effect=fake_enrich) as enrich:
+            result = ms.scan_best_meteora(max_wallets=2000)
+
+        fetched = [row["pool_address"] for row in enrich.call_args.args[0]]
+        self.assertNotIn("P-SEPI", fetched)
+        self.assertEqual([row["pool_address"] for row in result["rows"]],
+                         ["P-OK"])
+        self.assertEqual([row["pool_address"] for row in result["hidden_rows"]],
+                         ["P-LOWVOL", "P-LOWVOL2"])
 
     def test_scan_reports_api_error(self):
         with mock.patch.object(ms, "fetch_best_pools",
@@ -549,6 +598,36 @@ class BestPoolCardTest(unittest.TestCase):
         # tombol ⭐ baris (key diikat ke pool address, bukan index)
         self.assertIn("best-pool-star-PoolBest",
                       [button.key or "" for button in app.button])
+        self.assertIn("best-pool-toggle-hidden",
+                      [button.key or "" for button in app.button])
+
+    def test_klik_disembunyikan_menampilkan_hidden_rows(self):
+        """Tombol N disembunyikan membuka listing volume≥1M + dust<0,05%."""
+        app = self._app()
+        hidden_row = _row(pool_address="PoolHide", ca="MintHide",
+                          symbol="HID", dust_pct_mc=0.02, volatility=1.0,
+                          volume_change_pct=88.0,
+                          analysis={"holders": {"dust_pct_mc": 0.02,
+                                                "dust_count": 3}})
+        app.session_state["best_pool_scan"] = {
+            "rows": [_row(pool_address="PoolBest", ca="MintAAA",
+                          symbol="AAA", dust_pct_mc=0.03,
+                          analysis={"holders": {"dust_pct_mc": 0.03,
+                                               "dust_count": 12}})],
+            "hidden_rows": [hidden_row],
+            "error": "", "fetched": 4, "hidden_metric": 2, "hidden_dust": 1,
+        }
+        app.run()
+        app.button(key="best-pool-toggle-hidden").click().run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn("$HID", body)
+        self.assertIn("MintHide", body)
+        self.assertNotIn("$AAA", body)
+        self.assertIn("best-pool-hidden-star-PoolHide",
+                      [button.key or "" for button in app.button])
+        captions = "\n".join(node.value for node in app.caption)
+        self.assertIn("1 pool disembunyikan ditampilkan", captions)
 
     def test_baris_dust_0035_ditandai_chip_best_pool(self):
         """Chip 🏆 BEST POOL (2026-09-12) hanya di baris dust <= 0,035% MC.

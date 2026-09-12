@@ -543,6 +543,16 @@ def rows_from_pools(pools: list[dict] | None) -> list[dict]:
     return rows
 
 
+def row_volume_ok(row: dict | None) -> bool:
+    """True bila volume 24 jam **>= 1 juta USD** (angka wajib ada).
+
+    Dipakai bersama listing utama dan listing **disembunyikan** (klik pill)
+    supaya keduanya tidak pernah menampilkan pool sepi. ``None`` = gugur.
+    """
+    volume = _maybe_float((row or {}).get("volume"))
+    return bool(volume is not None and volume >= BEST_VOLUME_24H_MIN)
+
+
 def row_best_gaps(row: dict | None) -> list[str]:
     """Label syarat **metrik pool** yang tidak dipenuhi (kosong = lolos).
 
@@ -672,13 +682,30 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
             _alog.error("scan-best-pool",
                         f"listing Meteora gagal: {str(exc)[:160]}")
     rows = rows_from_pools(pools)
-    candidates = [row for row in rows if not row_best_gaps(row)]
+    # Volume 24 jam >= $1M wajib untuk listing utama **dan** listing
+    # disembunyikan (permintaan user 2026-09-12: klik pill "N
+    # disembunyikan" tetap kriteria 1M + dust < 0,05%). Pool sepi tidak
+    # di-enrich (hemat kuota Helius). Volatility tetap saringan listing
+    # utama — yang gagal volatility tapi lolos volume+dust masuk
+    # ``hidden_rows``.
+    volume_ok = [row for row in rows if row_volume_ok(row)]
+    candidates = [row for row in volume_ok if not row_best_gaps(row)]
     hidden_metric = len(rows) - len(candidates)
-    if candidates:
-        candidates = enrich_pools(candidates, max_wallets=max_wallets,
-                                  workers=workers, progress=progress)
+    if volume_ok:
+        volume_ok = enrich_pools(volume_ok, max_wallets=max_wallets,
+                                 workers=workers, progress=progress)
+        by_addr = {str(row.get("pool_address") or ""): row
+                   for row in volume_ok}
+        candidates = [by_addr.get(str(row.get("pool_address") or ""), row)
+                      for row in candidates]
     kept, _, hidden_dust = filter_best_rows(candidates)
     kept = sort_best_rows(kept)
+    kept_addrs = {str(row.get("pool_address") or "") for row in kept}
+    hidden_rows = sort_best_rows([
+        row for row in volume_ok
+        if str(row.get("pool_address") or "") not in kept_addrs
+        and row_dust_ok(row)
+    ])
     if _alog:
         _alog.info("scan-best-pool",
                    f"scan selesai: {len(kept)} pool lolos dari {len(rows)} "
@@ -686,6 +713,7 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
                    "gugur dust)")
     return {
         "rows": kept,
+        "hidden_rows": hidden_rows,
         "error": error,
         "fetched": len(rows),
         "hidden_metric": hidden_metric,

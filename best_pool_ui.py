@@ -42,6 +42,7 @@ dulu menempel di bawah 🌊 Watchlist Meteora di dalam grid).
 from __future__ import annotations
 
 BEST_SESSION_KEY = "best_pool_scan"
+BEST_SHOW_HIDDEN_KEY = "best_pool_show_hidden"
 
 
 def best_pool_tooltip() -> str:
@@ -87,12 +88,15 @@ _TITLES = ["Token", "MC", "A.TVL", "Fee/TVL", "Vol 24h", "Volat", "Top10",
            "LPs", "Dust", "Dust %MC", "Pool", ""]
 
 
-def _best_head_html(rows: list, hidden: int) -> str:
+def _best_head_html(rows: list, hidden: int, *, showing_hidden: bool = False) -> str:
     """Header card: judul + pill jumlah pool / pool yang disembunyikan.
 
     Pill emas **🏆 BEST POOL N** (2026-09-12) menghitung berapa baris yang
     lolos tanda dust <= ``BEST_DUST_MARK_PCT`` — jawaban langsung "pool
-    bersihnya mana saja" tanpa membaca satu per satu.
+    bersihnya mana saja" tanpa membaca satu per satu. Pill **N
+    disembunyikan** tetap di sini sebagai rekap; tombol kliknya dirender
+    Streamlit di bawah kepala (HTML ``<span>`` tidak bisa diklik di
+    Streamlit) — permintaan user 2026-09-12.
     """
     from dashboard_components import card_head_html
     from meteora_screener import BEST_CARD_TITLE, row_best_pool
@@ -103,8 +107,10 @@ def _best_head_html(rows: list, hidden: int) -> str:
         pills.append('<span class="lp-warn" style="color:#3b2f0a;'
                      f'background:#fde047;">🏆 BEST POOL {best}</span>')
     if hidden:
-        pills.append('<span class="lp-count" style="color:#334155;'
-                     f'background:#e2e8f0;">{hidden} disembunyikan</span>')
+        tone = ("color:#1e3a8a;background:#bfdbfe;" if showing_hidden
+                else "color:#334155;background:#e2e8f0;")
+        pills.append(f'<span class="lp-count" style="{tone}">'
+                     f"{hidden} disembunyikan</span>")
     return card_head_html(BEST_CARD_TITLE, pills, tooltip=best_pool_tooltip())
 
 
@@ -180,21 +186,124 @@ def _cell(value: str, sub: str = "", title: str = "") -> str:
             f'<div class="watchlist-metric-sub"{tip}>{sub}</div></div>')
 
 
-def render_best_pool_scan() -> None:
-    """Card **🏆 Scan Best Pool Meteora** di halaman utama."""
+def _render_best_table(rows: list, *, key_prefix: str = "best-pool") -> None:
+    """Tabel listing Best Pool (listing utama atau yang disembunyikan)."""
     import html
 
     import streamlit as st
 
     from dashboard_components import _number
-    from holder_history import FULL_SCAN_MAX_WALLETS
     from links import external_links_html, pool_links_html
     from lp_watchlist import LP_SOURCE
     from meteora_screener import (BEST_DUST_MARK_PCT, BEST_DUST_MAX_PCT,
                                   BEST_VOLATILITY_MIN, BEST_VOLUME_24H_MIN,
-                                  row_best_pool,
-                                  scan_best_meteora, sort_best_rows)
+                                  row_best_pool)
     from watchlist import add_to_watchlist
+
+    header_cols = st.columns(_COL_SPEC)
+    style = ("font-size:0.72rem;color:#000000;font-weight:700;"
+             "text-align:center;")
+    for col, title in zip(header_cols, _TITLES):
+        col.markdown(f'<div style="{style}">{title}</div>',
+                     unsafe_allow_html=True)
+    st.markdown('<hr style="margin:0.4rem 0;border-color:#cbd5e1;">',
+                unsafe_allow_html=True)
+
+    for index, row in enumerate(rows):
+        ca = str(row.get("ca") or "")
+        symbol = str(row.get("symbol") or "?").upper()
+        pool = str(row.get("pool_address") or "")
+        dust_pct = row.get("dust_pct_mc")
+        fee = row.get("fee")
+        active_tvl = row.get("active_tvl")
+        ratio = row.get("fee_active_tvl_ratio")
+        volume = row.get("volume")
+        volume_change = row.get("volume_change_pct")
+        fee_pct = row.get("fee_pct")
+        fee_sub = f"fee {_usd_or_dash(fee)}"
+        if fee_pct is not None:
+            fee_sub += f"·{_number(fee_pct, '.4g')}%"
+        delta_txt, delta_color = _signed_pct(volume_change)
+        delta_html = (f'<span style="color:{delta_color};">Δ '
+                      f"{delta_txt}</span>" if delta_color
+                      else f"<span>Δ {delta_txt}</span>")
+        dust_is_best = row_best_pool(row)
+        dust_value = _pct_txt(dust_pct, 3)
+        dust_sub = "dust"
+        dust_tip = (f"dust holder < {BEST_DUST_MAX_PCT:g}% marketcap — "
+                    "saringan sekaligus kunci urut kedua (terkecil dulu)")
+        if dust_is_best:
+            dust_value = (f'<span style="color:#b45309;">{dust_value}'
+                          "</span>")
+            dust_sub = ('<span class="dust-badge dust-best" '
+                        'style="font-size:0.58rem;padding:0.1rem 0.3rem;'
+                        'border-radius:6px;">🏆 BEST POOL</span>')
+            dust_tip += (f" · 🏆 BEST POOL: dust <= "
+                         f"{BEST_DUST_MARK_PCT:g}% marketcap")
+        cols = st.columns(_COL_SPEC)
+        cols[0].markdown(
+            '<div class="watchlist-token">'
+            f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
+            f'<span class="watchlist-mint">{html.escape(ca[:8])}…</span>'
+            f'<div class="watchlist-links">{external_links_html(ca)}</div>'
+            "</div>", unsafe_allow_html=True)
+        cells = (
+            (_usd_or_dash(row.get("mc")), "",
+             f"market cap {_usd_or_dash(row.get('mc'), compact=False)}"),
+            (_usd_or_dash(active_tvl), "active tvl",
+             f"active TVL {_usd_or_dash(active_tvl, compact=False)} · "
+             f"TVL total {_usd_or_dash(row.get('tvl'), compact=False)}"),
+            (_pct_or_dash(ratio), fee_sub,
+             f"tier fee {_num_or_dash(fee_pct, '.4g')}% · fee 24 jam "
+             f"{_usd_or_dash(fee, compact=False)} / active TVL "
+             f"{_usd_or_dash(active_tvl, compact=False)} = "
+             f"{_num_or_dash(ratio, ',.2f')}% — kunci urut ketiga "
+             "(terbesar dulu)"),
+            (_usd_or_dash(volume), delta_html,
+             f"volume 24 jam {_usd_or_dash(volume, compact=False)} · "
+             f"perubahan {delta_txt} — kunci urut pertama (terbesar "
+             f"dulu) · saringan layar: minimal "
+             f"${BEST_VOLUME_24H_MIN:,.0f}"),
+            (_pct_or_dash(row.get("volatility")), "volat",
+             "volatility pool "
+             f"{_num_or_dash(row.get('volatility'), ',.2f')}% — saringan "
+             f"layar: minimal {BEST_VOLATILITY_MIN:g}%"),
+            (_pct_or_dash(row.get("top_holders_pct")), "top10",
+             "10 holder teratas token base (% supply) — hanya "
+             "informasi, bukan saringan lagi sejak 2026-09-11"),
+            (_num_or_dash(row.get("total_lps")), "lps",
+             "jumlah liquidity provider pool — hanya informasi, bukan "
+             "saringan lagi sejak 2026-09-11"),
+            (_num_or_dash(row.get("dust_count")), "wallet",
+             "jumlah wallet dust di bawah ambang dust"),
+            (dust_value, dust_sub, dust_tip),
+        )
+        for position, (value, sub, tip) in enumerate(cells, start=1):
+            cols[position].markdown(_cell(value, sub, tip),
+                                    unsafe_allow_html=True)
+        pool_html = pool_links_html(pool) or "<span>—</span>"
+        cols[10].markdown(f'<div class="pool-links">{pool_html}</div>',
+                          unsafe_allow_html=True)
+        star_key = f"{key_prefix}-star-{pool or ca or index}"
+        if cols[11].button("⭐", key=star_key,
+                           help="Tambah ke Watchlist Meteora "
+                                "(halaman utama)",
+                           use_container_width=True):
+            if ca:
+                add_to_watchlist(ca, symbol, source=LP_SOURCE,
+                                 background=True)
+                st.success(f"${symbol} masuk Watchlist Meteora")
+        st.markdown('<hr style="margin:0.25rem 0;border-color:#cbd5e1;">',
+                    unsafe_allow_html=True)
+
+
+def render_best_pool_scan() -> None:
+    """Card **🏆 Scan Best Pool Meteora** di halaman utama."""
+    import streamlit as st
+
+    from holder_history import FULL_SCAN_MAX_WALLETS
+    from meteora_screener import (BEST_DUST_MAX_PCT, BEST_VOLUME_24H_MIN,
+                                  scan_best_meteora, sort_best_rows)
 
     with st.container(border=True):
         # Kepala card butuh hasil scan terakhir (jumlah pool + yang
@@ -216,11 +325,12 @@ def render_best_pool_scan() -> None:
                 result = scan_best_meteora(max_wallets=FULL_SCAN_MAX_WALLETS,
                                            workers=6, progress=_progress)
             except Exception as exc:  # noqa: BLE001 - kegagalan = pesan card
-                result = {"rows": [], "error": str(exc), "fetched": 0,
-                          "hidden_metric": 0, "hidden_dust": 0}
+                result = {"rows": [], "hidden_rows": [], "error": str(exc),
+                          "fetched": 0, "hidden_metric": 0, "hidden_dust": 0}
             finally:
                 bar.empty()
             st.session_state[BEST_SESSION_KEY] = result
+            st.session_state[BEST_SHOW_HIDDEN_KEY] = False
             st.rerun()
 
         result = st.session_state.get(BEST_SESSION_KEY) or {}
@@ -230,135 +340,53 @@ def render_best_pool_scan() -> None:
         # diurutkan lagi dengan rule baru agar listing konsisten tanpa perlu
         # scan ulang (kolom yang dibutuhkan sort ada di baris lama juga).
         rows = sort_best_rows(result.get("rows") or [])
+        hidden_rows = sort_best_rows(result.get("hidden_rows") or [])
         hidden = int(result.get("hidden_metric") or 0) + \
             int(result.get("hidden_dust") or 0)
         fetched = int(result.get("fetched") or 0)
+        showing_hidden = bool(st.session_state.get(BEST_SHOW_HIDDEN_KEY))
 
         # Tanpa caption ambang: detail karakteristik card sudah jadi tooltip
         # judul (``best_pool_tooltip()``) — permintaan user 2026-09-10.
-        st.markdown(_best_head_html(rows, hidden), unsafe_allow_html=True)
+        st.markdown(_best_head_html(rows, hidden,
+                                    showing_hidden=showing_hidden),
+                    unsafe_allow_html=True)
+        if hidden:
+            # HTML pill tidak bisa diklik di Streamlit — tombol di bawah
+            # kepala membuka listing pool yang disembunyikan (volume ≥ 1M,
+            # dust < 0,05%, urut kenaikan volume 24 jam).
+            label = (f"◀ kembali ke {len(rows)} pool lolos"
+                     if showing_hidden
+                     else f"▶ {hidden} disembunyikan")
+            if st.button(label, key="best-pool-toggle-hidden",
+                         help=("Tampilkan pool yang disembunyikan dari "
+                               "listing utama, tetap volume 24 jam "
+                               f">= ${BEST_VOLUME_24H_MIN:,.0f} dan dust "
+                               f"< {BEST_DUST_MAX_PCT:g}% MC, urut "
+                               "kenaikan volume 24 jam."),
+                         use_container_width=True):
+                st.session_state[BEST_SHOW_HIDDEN_KEY] = not showing_hidden
+                st.rerun()
         if error:
             st.warning(f"Meteora API: {error}")
         if fetched:
             st.caption(f"{len(rows)} pool lolos · {hidden} disembunyikan "
                        f"· listing {fetched} pool.")
+        if showing_hidden:
+            if not hidden_rows:
+                st.info("Tidak ada pool tersembunyi yang lolos volume "
+                        f">= ${BEST_VOLUME_24H_MIN:,.0f} dan dust "
+                        f"< {BEST_DUST_MAX_PCT:g}% MC.")
+                return
+            st.caption(
+                f"{len(hidden_rows)} pool disembunyikan ditampilkan "
+                f"(volume ≥ ${BEST_VOLUME_24H_MIN:,.0f}, dust "
+                f"< {BEST_DUST_MAX_PCT:g}% MC, urut Δ volume 24 jam).")
+            _render_best_table(hidden_rows, key_prefix="best-pool-hidden")
+            return
         if not rows:
             if result:
                 st.info("Tidak ada pool yang lolos filter Best Pool "
                         "(atau listing kosong).")
             return
-
-        header_cols = st.columns(_COL_SPEC)
-        style = ("font-size:0.72rem;color:#000000;font-weight:700;"
-                 "text-align:center;")
-        for col, title in zip(header_cols, _TITLES):
-            col.markdown(f'<div style="{style}">{title}</div>',
-                         unsafe_allow_html=True)
-        st.markdown('<hr style="margin:0.4rem 0;border-color:#cbd5e1;">',
-                    unsafe_allow_html=True)
-
-        for index, row in enumerate(rows):
-            ca = str(row.get("ca") or "")
-            symbol = str(row.get("symbol") or "?").upper()
-            pool = str(row.get("pool_address") or "")
-            dust_pct = row.get("dust_pct_mc")
-            fee = row.get("fee")
-            active_tvl = row.get("active_tvl")
-            ratio = row.get("fee_active_tvl_ratio")
-            volume = row.get("volume")
-            volume_change = row.get("volume_change_pct")
-            # Baris kecil kolom Fee/TVL: angka fee 24 jam + tier fee pool —
-            # tier tidak punya kolom sendiri lagi (query API sudah menjamin
-            # fee_pct >= BEST_FEE_PCT_MIN) tapi tetap harus terbaca.
-            fee_pct = row.get("fee_pct")
-            fee_sub = f"fee {_usd_or_dash(fee)}"
-            if fee_pct is not None:
-                fee_sub += f"·{_number(fee_pct, '.4g')}%"
-            delta_txt, delta_color = _signed_pct(volume_change)
-            # Δ volume boleh bewarna (hijau/merah) dan jadi baris kecil
-            # kolom "Vol 24h" — kunci urut PERTAMA, tidak perlu kolom baru.
-            delta_html = (f'<span style="color:{delta_color};">Δ '
-                          f"{delta_txt}</span>" if delta_color
-                          else f"<span>Δ {delta_txt}</span>")
-            # 🏆 BEST POOL (2026-09-12): dust <= 0,035% MC (inklusif) → angka
-            # dust diwarnai emas + sub "dust" diganti chip, supaya tanda
-            # terlihat persis di sel tempat buktinya (kolom Dust %MC).
-            # Penanda visual saja — saringan listing tetap 0,05%.
-            dust_is_best = row_best_pool(row)
-            dust_value = _pct_txt(dust_pct, 3)
-            dust_sub = "dust"
-            dust_tip = (f"dust holder < {BEST_DUST_MAX_PCT:g}% marketcap — "
-                        "saringan sekaligus kunci urut kedua (terkecil dulu)")
-            if dust_is_best:
-                dust_value = (f'<span style="color:#b45309;">{dust_value}'
-                              "</span>")
-                dust_sub = ('<span class="dust-badge dust-best" '
-                            'style="font-size:0.58rem;padding:0.1rem 0.3rem;'
-                            'border-radius:6px;">🏆 BEST POOL</span>')
-                dust_tip += (f" · 🏆 BEST POOL: dust <= "
-                             f"{BEST_DUST_MARK_PCT:g}% marketcap")
-            cols = st.columns(_COL_SPEC)
-            cols[0].markdown(
-                '<div class="watchlist-token">'
-                f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
-                f'<span class="watchlist-mint">{html.escape(ca[:8])}…</span>'
-                f'<div class="watchlist-links">{external_links_html(ca)}</div>'
-                "</div>", unsafe_allow_html=True)
-            # Detail fee / active TVL + kunci urut (permintaan user
-            # 2026-09-11 sore: volume → dust → fee/TVL): kolom Fee/TVL
-            # memegang rasio yang jadi kunci urut KETIGA dengan angka fee 24
-            # jam di baris kecilnya, A.TVL memegang penyebutnya, Vol 24h
-            # memegang Δ volume (kunci urut PERTAMA).
-            # Tooltip tiap sel memberi angka penuh supaya angka ringkas bisa
-            # diperiksa.
-            cells = (
-                (_usd_or_dash(row.get("mc")), "",
-                 f"market cap {_usd_or_dash(row.get('mc'), compact=False)}"),
-                (_usd_or_dash(active_tvl), "active tvl",
-                 f"active TVL {_usd_or_dash(active_tvl, compact=False)} · "
-                 f"TVL total {_usd_or_dash(row.get('tvl'), compact=False)}"),
-                (_pct_or_dash(ratio), fee_sub,
-                 f"tier fee {_num_or_dash(fee_pct, '.4g')}% · fee 24 jam "
-                 f"{_usd_or_dash(fee, compact=False)} / active TVL "
-                 f"{_usd_or_dash(active_tvl, compact=False)} = "
-                 f"{_num_or_dash(ratio, ',.2f')}% — kunci urut ketiga "
-                 "(terbesar dulu)"),
-                (_usd_or_dash(volume), delta_html,
-                 f"volume 24 jam {_usd_or_dash(volume, compact=False)} · "
-                 f"perubahan {delta_txt} — kunci urut pertama (terbesar "
-                 f"dulu) · saringan layar: minimal "
-                 f"${BEST_VOLUME_24H_MIN:,.0f}"),
-                (_pct_or_dash(row.get("volatility")), "volat",
-                 "volatility pool "
-                 f"{_num_or_dash(row.get('volatility'), ',.2f')}% — saringan "
-                 f"layar: minimal {BEST_VOLATILITY_MIN:g}%"),
-                (_pct_or_dash(row.get("top_holders_pct")), "top10",
-                 "10 holder teratas token base (% supply) — hanya "
-                 "informasi, bukan saringan lagi sejak 2026-09-11"),
-                (_num_or_dash(row.get("total_lps")), "lps",
-                 "jumlah liquidity provider pool — hanya informasi, bukan "
-                 "saringan lagi sejak 2026-09-11"),
-                (_num_or_dash(row.get("dust_count")), "wallet",
-                 "jumlah wallet dust di bawah ambang dust"),
-                (dust_value, dust_sub, dust_tip),
-            )
-            for position, (value, sub, tip) in enumerate(cells, start=1):
-                cols[position].markdown(_cell(value, sub, tip),
-                                        unsafe_allow_html=True)
-            pool_html = pool_links_html(pool) or "<span>—</span>"
-            cols[10].markdown(f'<div class="pool-links">{pool_html}</div>',
-                              unsafe_allow_html=True)
-            # Key diikat ke pool/CA, bukan nomor baris: urutan listing bisa
-            # berubah setelah scan ulang sehingga key berbasis index membuat
-            # klik ⭐ menempel ke token yang berbeda.
-            star_key = f"best-pool-star-{pool or ca or index}"
-            if cols[11].button("⭐", key=star_key,
-                               help="Tambah ke Watchlist Meteora "
-                                    "(halaman utama)",
-                               use_container_width=True):
-                if ca:
-                    add_to_watchlist(ca, symbol, source=LP_SOURCE,
-                                     background=True)
-                    st.success(f"${symbol} masuk Watchlist Meteora")
-            st.markdown('<hr style="margin:0.25rem 0;border-color:#cbd5e1;">',
-                        unsafe_allow_html=True)
+        _render_best_table(rows, key_prefix="best-pool")

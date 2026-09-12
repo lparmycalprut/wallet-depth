@@ -359,9 +359,11 @@ Watchlist Meteora di dalam grid). **Kriteria diganti total
   supaya dua pool yang di layar sama-sama "0,030%" diurutkan menurut rasio
   fee/active TVL-nya. Baris tanpa angka dust paling bawah, lalu simbol
   alfabetis.
-- Volatility **dan volume 24 jam** disaring **sebelum** holder di-fetch
-  (`row_best_gaps` → `hidden_metric`), jadi kuota Helius tidak terpakai
-  untuk pool yang pasti gugur; dust holder baru dihitung untuk sisanya.
+- **Volume 24 jam ≥ $1M** disaring **sebelum** holder di-fetch, jadi kuota
+  Helius tidak terpakai untuk pool sepi. Pool volume ≥ $1M yang gagal
+  volatility tetap di-scan holder: dust < 0,05% MC-nya masuk listing
+  **disembunyikan** (tombol **▶ N disembunyikan** di card, urut kenaikan
+  volume 24 jam). Listing utama tetap butuh volatility ≥ 2% juga.
 - Kolom listing (detail fee / active TVL ada di sini): Token · MC · **A.TVL** ·
   **Fee/TVL** (baris kecil = fee 24 jam dalam USD + tier fee) · **Vol 24h**
   (baris kecil = Δ volume 24 jam, hijau naik / merah turun) · Volat · Top10 ·
