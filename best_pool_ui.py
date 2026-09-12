@@ -7,8 +7,10 @@ Kriteria **diganti total** 2026-09-11 sesuai request user (curl UI Meteora):
   (timeframe 24 jam, category ``top``, page_size 50) — lihat
   ``meteora_screener.best_filter_by``; tier fee ≥ 2% dan active TVL ≥ $50K
   disaring **oleh API**, tidak diulang sebagai saringan layar;
-- saringan layar tinggal dua: dust holder **< 0,05% MC** dan volatility
-  **≥ 2%**;
+- saringan layar tinggal tiga: dust holder **< 0,05% MC**, volatility
+  **≥ 2%**, dan **volume 24 jam ≥ 1 juta USD**
+  (``meteora_screener.BEST_VOLUME_24H_MIN``, permintaan user 2026-09-12:
+  "minimal volume 24 jam adalah 1M, dibawah itu jangan di show");
 - urutan baris: **kenaikan volume 24 jam (``volume_change_pct``) terbesar** →
   **dust % MC terkecil** → **fee / active TVL terbesar** (sejak 2026-09-11
   sore; sebelumnya dust → fee/TVL → volume);
@@ -53,20 +55,23 @@ def best_pool_tooltip() -> str:
     """
     from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_DUST_MARK_PCT,
                                   BEST_DUST_MAX_PCT, BEST_FEE_PCT_MIN,
-                                  BEST_VOLATILITY_MIN)
+                                  BEST_VOLATILITY_MIN, BEST_VOLUME_24H_MIN)
     return (
         "Listing API Meteora 24 jam (category top, page_size 50) dengan "
         f"filter pool_type=dlmm&&fee_pct>={BEST_FEE_PCT_MIN:g}&&active_tvl>="
         f"{int(BEST_ACTIVE_TVL_MIN)} — tier fee dan active TVL disaring "
         "langsung oleh Meteora, bukan di layar. Yang ditampilkan hanya pool "
-        f"dengan dust holder < {BEST_DUST_MAX_PCT:g}% marketcap dan "
+        f"dengan volume 24 jam >= ${BEST_VOLUME_24H_MIN:,.0f} (di bawah itu "
+        "tidak ditampilkan), dust holder < "
+        f"{BEST_DUST_MAX_PCT:g}% marketcap dan "
         f"volatility >= {BEST_VOLATILITY_MIN:g}%. Baris dengan dust <= "
         f"{BEST_DUST_MARK_PCT:g}% marketcap ditandai chip 🏆 BEST POOL di "
         "kolom Dust %MC (penanda, bukan saringan). Urutan: kenaikan volume "
         "24 jam paling besar dulu, lalu dust % marketcap terkecil, lalu "
         "fee/active TVL paling besar. Di tabel: A.TVL = active TVL "
         "pool, Fee/TVL = fee 24 jam dibagi active TVL (baris kecilnya angka "
-        "fee + tier fee), Vol 24h = volume dengan perubahannya (Δ) — kolom "
+        "fee + tier fee), Vol 24h = volume 24 jam dengan perubahannya (Δ) — "
+        "angkanya bukti saringan volume di atas — kolom "
         "Top10 dan LPs hanya informasi, keduanya bukan saringan lagi. ⭐ "
         "memasukkan token ke card 🌊 Watchlist Meteora di halaman utama; "
         "tombol kanan "
@@ -186,7 +191,8 @@ def render_best_pool_scan() -> None:
     from links import external_links_html, pool_links_html
     from lp_watchlist import LP_SOURCE
     from meteora_screener import (BEST_DUST_MARK_PCT, BEST_DUST_MAX_PCT,
-                                  BEST_VOLATILITY_MIN, row_best_pool,
+                                  BEST_VOLATILITY_MIN, BEST_VOLUME_24H_MIN,
+                                  row_best_pool,
                                   scan_best_meteora, sort_best_rows)
     from watchlist import add_to_watchlist
 
@@ -319,7 +325,9 @@ def render_best_pool_scan() -> None:
                  "(terbesar dulu)"),
                 (_usd_or_dash(volume), delta_html,
                  f"volume 24 jam {_usd_or_dash(volume, compact=False)} · "
-                 f"perubahan {delta_txt} — kunci urut pertama (terbesar dulu)"),
+                 f"perubahan {delta_txt} — kunci urut pertama (terbesar "
+                 f"dulu) · saringan layar: minimal "
+                 f"${BEST_VOLUME_24H_MIN:,.0f}"),
                 (_pct_or_dash(row.get("volatility")), "volat",
                  "volatility pool "
                  f"{_num_or_dash(row.get('volatility'), ',.2f')}% — saringan "

@@ -18,8 +18,10 @@ Baris yang di-⭐ masuk watchlist terpisah **Chart LP** di dashboard.
 blok konstanta ``BEST_*`` di bawah): listing API Meteora 24 jam
 ``pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000`` (category ``top``,
 page_size 50), jadi **tier fee** dan **active TVL** sudah disaring di
-server. Saringan layar tinggal dua: dust holder **< 0,05% MC** dan
-volatility **>= 2%** ("minimal 2%"). Urutannya: **kenaikan volume 24 jam**
+server. Saringan layar tinggal tiga: dust holder **< 0,05% MC**,
+volatility **>= 2%** ("minimal 2%"), dan **volume 24 jam >= 1 juta USD**
+(``BEST_VOLUME_24H_MIN``, permintaan user 2026-09-12: "minimal volume 24
+jam adalah 1M, dibawah itu jangan di show"). Urutannya: **kenaikan volume 24 jam**
 (``volume_change_pct``) terbesar → **dust % MC terkecil** → **fee / active TVL**
 terbesar (sejak 2026-09-11 sore; sebelumnya dust dulu baru fee/TVL baru
 volume — permintaan user: "peningkatan volume terbesar dulu, baru dust
@@ -60,6 +62,13 @@ BEST_FEE_PCT_MIN = 2.0            # query API: fee_pct >= 2 (tier fee pool)
 BEST_ACTIVE_TVL_MIN = 50_000.0    # query API: active TVL >= 50K USD
 BEST_DUST_MAX_PCT = 0.05          # layar: dust holder < 0,05% MC
 BEST_VOLATILITY_MIN = 2.0         # layar: volatility >= 2% ("minimal 2%")
+# Layar: **volume 24 jam minimal 1 juta USD** (permintaan user 2026-09-12:
+# "minimal volume 24 jam adalah 1M, dibawah itu jangan di show"). Batas
+# inklusif (tepat $1.000.000 lolos); angka hilang (``None``) = gugur, sama
+# seperti volatility — pool tanpa data volume tidak bisa dibuktikan ramai.
+# Dicek di :func:`row_best_gaps`, jadi SEBELUM fetch holder: kuota Helius
+# tidak terbakar untuk pool sepi yang pasti gugur.
+BEST_VOLUME_24H_MIN = 1_000_000.0
 # Tanda 🏆 BEST POOL di kolom Dust %MC (permintaan user 2026-09-12): baris
 # dengan dust **<= 0,035% MC** (inklusif — 0,035 persis ikut ditandai)
 # diberi chip emas di ``best_pool_ui``. Ini BUKAN saringan tambahan: saringan
@@ -537,20 +546,26 @@ def rows_from_pools(pools: list[dict] | None) -> list[dict]:
 def row_best_gaps(row: dict | None) -> list[str]:
     """Label syarat **metrik pool** yang tidak dipenuhi (kosong = lolos).
 
-    Kriteria 2026-09-11 hanya menyisakan satu syarat yang diuji di layar —
-    volatility minimal :data:`BEST_VOLATILITY_MIN` — karena tier fee dan
-    active TVL sudah disaring API lewat ``filter_by``. Saringan fee/active
-    TVL, top 10 holder, dan total LPs yang lama **dihapus** (datanya tetap
-    dibawa di baris untuk ditampilkan). Data hilang (``None``) = gugur.
-    Syarat ini jalan SEBELUM fetch holder supaya kuota Helius tidak terbakar
-    untuk pool yang pasti gugur; dust holder dicek terpisah oleh
-    :func:`row_dust_ok` karena butuh analisa holder.
+    Tier fee dan active TVL sudah disaring API lewat ``filter_by``, jadi yang
+    diuji di layar tinggal dua: volatility minimal
+    :data:`BEST_VOLATILITY_MIN` (2026-09-11) dan **volume 24 jam minimal
+    :data:`BEST_VOLUME_24H_MIN`** (1 juta USD, 2026-09-12 — permintaan user:
+    "minimal volume 24 jam adalah 1M, dibawah itu jangan di show"). Keduanya
+    inklusif (tepat di ambang = lolos). Saringan fee/active TVL, top 10
+    holder, dan total LPs yang lama **dihapus** (datanya tetap dibawa di
+    baris untuk ditampilkan). Data hilang (``None``) = gugur. Syarat ini
+    jalan SEBELUM fetch holder supaya kuota Helius tidak terbakar untuk pool
+    yang pasti gugur; dust holder dicek terpisah oleh :func:`row_dust_ok`
+    karena butuh analisa holder.
     """
     row = row or {}
     gaps: list[str] = []
     volatility = _maybe_float(row.get("volatility"))
     if volatility is None or volatility < BEST_VOLATILITY_MIN:
         gaps.append(f"volatility < {BEST_VOLATILITY_MIN:g}%")
+    volume = _maybe_float(row.get("volume"))
+    if volume is None or volume < BEST_VOLUME_24H_MIN:
+        gaps.append(f"volume 24 jam < ${BEST_VOLUME_24H_MIN:,.0f}")
     return gaps
 
 
@@ -628,11 +643,12 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
                       page_size: int = PAGE_SIZE) -> dict:
     """Listing 24 jam + holder + saringan layar Scan Best Pool Meteora.
 
-    Kriteria 2026-09-11: API sudah menyaring ``pool_type=dlmm``,
-    ``fee_pct>=2``, ``active_tvl>=50000``; layar menambah volatility
-    ``>= 2%`` (dicek SEBELUM fetch holder supaya kuota Helius tidak terbakar)
-    dan dust holder ``< 0,05% MC`` (butuh holder). Urutan hasil: kenaikan
-    volume 24 jam terbesar → dust % MC terkecil → fee/active TVL terbesar.
+    Kriteria 2026-09-11 (+volume 2026-09-12): API sudah menyaring
+    ``pool_type=dlmm``, ``fee_pct>=2``, ``active_tvl>=50000``; layar menambah
+    volatility ``>= 2%`` dan **volume 24 jam ``>= 1 juta USD``** (keduanya
+    dicek SEBELUM fetch holder supaya kuota Helius tidak terbakar) serta dust
+    holder ``< 0,05% MC`` (butuh holder). Urutan hasil: kenaikan volume 24
+    jam terbesar → dust % MC terkecil → fee/active TVL terbesar.
     """
     # Default FULL seperti ``scan_meteora``: urutan getTokenAccounts Helius
     # tidak urut saldo, jadi cap kecil menghasilkan sampel bias dan angka

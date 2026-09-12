@@ -68,7 +68,10 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
 - **Detail karakteristik card/section = tooltip judul (2026-09-10)** —
   caption panjang di badan card dihapus. Teksnya hidup di konstanta
   `LP_CARD_TOOLTIP` (app.py), `RH_CARD_TOOLTIP`
-  (dashboard_components.py), `SCAN_HOLDER_TOOLTIP` (app.py),
+  (dashboard_components.py), `app.scan_holder_tooltip()` (dulu konstanta
+  `SCAN_HOLDER_TOOLTIP`; **jadi fungsi 2026-09-12** supaya ambang tanda BEST
+  dibaca dari `meteora_screener.BEST_DUST_MARK_PCT` saat dipanggil — pola
+  yang sama dengan `best_pool_tooltip()`),
   `best_pool_ui.best_pool_tooltip()`, `temp_ui.meteora_scan_tooltip()` dan
   `robinhood_best_scan.RH_SCAN_TOOLTIP` (dua card scan best menyusul
   2026-09-10/11: caption ambangnya dihapus, seluruh isinya pindah ke tooltip —
@@ -132,6 +135,35 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   Holder 3 desimal: metrik, label batang `depth_bar_chart` (`.3f`), dan
   kolom **% Market Cap** `_depth_tables_html` (dipakai juga tabel Wallet
   Depth nested di expander watchlist — seragam, jangan dibalikan).
+- **Tulisan BEST emas kelap-kelip di 🛰 Scan Holder (2026-09-12)** —
+  permintaan user: *"jika kondisi %dust <= 0.035 kasih tulisan BEST yang
+  agak besar, dengan efek kelap kelip, warnanya GOLD"*. Bila
+  `depth["dust_pct_mc"] <= meteora_screener.BEST_DUST_MARK_PCT` (0,035%,
+  **inklusif** — ambang yang sama dengan tanda 🏆 BEST POOL card Best Pool,
+  satu sumber konstanta) maka `_render_helius_holder_result` merender
+  `<span class="scan-best-gold">BEST</span>` **di kolom metrik Dust %MC**
+  (`c0.markdown`, tepat di bawah angkanya — tanda menempel pada buktinya),
+  untuk **kedua** jalur (Helius *dan* Blockscout, satu renderer).
+  HTML-nya dibuat `dashboard_components._scan_best_badge_html()` (return
+  `""` bila tidak lolos → tidak ada elemen kosong), syaratnya
+  `_scan_best_mark_ok()` (dust `None`/teks tak terbaca = tidak pernah
+  ditandai), dan **seluruh gayanya hidup di CSS `render_styles`**
+  (`.scan-best-gold`, `@keyframes scan-best-blink` = kelap-kelip opacity,
+  `scan-best-shine` = kilau gradien emas menyapu, plus
+  `@media (prefers-reduced-motion: reduce)` yang mematikan animasi) karena
+  `st.markdown` **men-sanitasi atribut `style` inline** — jangan pernah
+  menaruh warna/ukuran/animasi badge ini di atribut style. Nama class-nya
+  **sengaja bukan** varian `dust-best`: pin regression card Scan Meteora
+  menghitung kemunculan string class chip emas itu di seluruh body halaman
+  (`tests/test_lp_card_ui.py`, `tests/test_best_pool_scan.py`), dan CSS ikut
+  ter-render di body. Penanda **visual** saja — tidak mengubah metrik,
+  saringan, atau angka mana pun. Rule + ambangnya dijelaskan di tooltip
+  judul section (`scan_holder_tooltip()`), bukan caption. Coverage:
+  `tests/test_rh_card_ui.py` (AppTest: badge tepat di 0,035 & jalur Helius,
+  tidak muncul di 0,036/0,041/0,55 dan saat dust `None`, CSS + tooltip
+  ikut ter-render) dan `tests/test_best_pool_scan.py::ScanHolderBestBadgeTest`
+  (unit helper: batas inklusif, data hilang, tanpa `style=` inline, CSS di
+  `render_styles`, ambang mengikuti konstanta).
 - **Grafik perubahan dust holder seragam di semua card (2026-09-10)** —
   setiap baris watchlist (Watchlist Meteora di `app.py`, Watchlist
   Robinhood LP/biasa di `dashboard_components._render_rh_row`, Watchlist
@@ -332,15 +364,21 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   2026-09-11) — semua ambangnya konstanta `BEST_*` di modul ini: query API
   `best_filter_by()` = `pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000`
   (24 jam, `category=top`, `page_size=50`, `fetch_best_pools()`) sehingga
-  tier fee + active TVL tersearing di server. Saringan layar tinggal dua:
-  `row_best_gaps()` (volatility ≥ `BEST_VOLATILITY_MIN` 2%) +
-  `row_dust_ok()` (dust < `BEST_DUST_MAX_PCT` 0,05% MC; angka `None` =
-  gugur). Saringan fee/active TVL / top 10 holder / total LPs / active TVL
-  yang lama **dihapus** — konstantanya tidak ada lagi, jangan dipakai ulang.
+  tier fee + active TVL tersearing di server. Saringan layar tinggal tiga:
+  `row_best_gaps()` (volatility ≥ `BEST_VOLATILITY_MIN` 2% **dan volume 24
+  jam ≥ `BEST_VOLUME_24H_MIN` $1.000.000** — keduanya inklusif, angka
+  `None` = gugur) + `row_dust_ok()` (dust < `BEST_DUST_MAX_PCT` 0,05% MC;
+  angka `None` = gugur). **Volume 24 jam ≥ 1M ditambah 2026-09-12**
+  (permintaan user: *"minimal volume 24 jam adalah 1M, dibawah itu jangan di
+  show"*) dan ikut masuk `hidden_metric` karena volumenya metrik listing API
+  — tidak butuh scan holder. Saringan fee/active TVL / top 10 holder / total
+  LPs / active TVL yang lama **dihapus** — konstantanya tidak ada lagi,
+  jangan dipakai ulang.
   `scan_best_meteora()` menjalankan saringan metrik **sebelum**
   `enrich_pools()` supaya kuota Helius tidak terbakar untuk pool yang pasti
-  gugur, lalu `sort_best_rows()`: **dust % MC terkecil → fee/active TVL
-  terbesar → kenaikan volume 24 jam (`volume_change_pct`) terbesar** (kunci
+  gugur, lalu `sort_best_rows()`: **kenaikan volume 24 jam
+  (`volume_change_pct`) terbesar → dust % MC terkecil → fee/active TVL
+  terbesar** (sejak 2026-09-11 sore; kunci
   dust dibulatkan ke `BEST_DUST_SORT_DECIMALS` = 3 desimal = presisi
   tampilan card, jadi pool yang di layar sama-sama "0,030%" diurutkan
   menurut rasio fee/TVL-nya), baris tanpa dust paling bawah, simbol sebagai

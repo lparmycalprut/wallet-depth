@@ -265,6 +265,23 @@ Wallet Depth + tabel) dirender sama. Jalur Solana dan cron butuh
 `HELIUS_API_KEY` (config / env / Streamlit secrets). Tanpa key, jalur
 Solana memakai fallback GMGN.
 
+Metrik hasil scan (2026-09-12): **Dust %MC** di kiri **Akun holder (…)**,
+lalu Bucket > $0, Wallet murni (tier), dan Marketcap — semua persen %MC 3
+desimal (metrik, label batang chart, kolom % Market Cap tabel), dan Dust
+%MC memakai definisi kolom **Hold %MC** watchlist (wallet `0 < nilai ≤ $10`,
+LP/pool disingkirkan). Bila **Dust %MC ≤ 0,035%**
+(`meteora_screener.BEST_DUST_MARK_PCT`, inklusif — ambang yang sama dengan
+tanda 🏆 BEST POOL di card **🏆 Scan Best Pool Meteora**), di bawah metrik
+itu muncul tulisan **BEST** agak besar berwarna **emas (GOLD)** dengan efek
+**kelap-kelip** (`dashboard_components._scan_best_badge_html` + CSS
+`.scan-best-gold` / `@keyframes scan-best-blink`, hormati
+`prefers-reduced-motion`). Penanda **visual** saja: tidak ada angka/saringan
+yang berubah, dan dust yang gagal diambil (`None`) tidak pernah ditandai.
+Nama class-nya sengaja bukan varian `dust-best` karena pin regression card
+Scan Meteora menghitung kemunculan string class chip emas itu di body
+halaman. Rule-nya dijelaskan di **tooltip judul section**
+(`app.scan_holder_tooltip()`), bukan caption.
+
 Jalur Robinhood **sebaiknya** diberi `BLOCKSCOUT_API_KEY` (env /
 `blockscout_api_key` di `config.json` / Streamlit secrets; key gratis
 dari <https://dev.blockscout.com>, tanpa kartu). Sejak 2026-09-08
@@ -327,22 +344,24 @@ Watchlist Meteora di dalam grid). **Kriteria diganti total
 - **Query API Meteora** (24 jam, `category=top`, `page_size=50`):
   `pool_type=dlmm && fee_pct>=2 && active_tvl>=50000` — tier fee dan active
   TVL disaring **oleh API**, jadi tidak diulang sebagai saringan layar.
-- **Saringan layar** — tinggal dua (data hilang/`None` = gugur):
+- **Saringan layar** — tinggal tiga (data hilang/`None` = gugur):
   | Syarat | Ambang |
   |---|---|
+  | Volume 24 jam | **≥ $1.000.000** (`BEST_VOLUME_24H_MIN`, 2026-09-12 — "minimal volume 24 jam adalah 1M, dibawah itu jangan di show"; tepat $1M lolos) |
   | Dust holder | **< 0,05% MC** (`BEST_DUST_MAX_PCT`, ketat `<`) |
   | Volatility | **≥ 2%** (`BEST_VOLATILITY_MIN` — "minimal 2%", 2,0% lolos) |
   Saringan lama (active TVL > 10K, fee/active TVL > 20%, top 10 holder
   < 30%, total LPs > 20) **dihapus**; Top10 + LPs tetap tampil sebagai
   informasi tapi tidak lagi menyaring.
-- **Urutan baris**: **dust % MC terkecil** → **fee / active TVL terbesar** →
-  **kenaikan volume 24 jam** (`volume_change_pct`) terbesar — kunci dust
-  dibulatkan ke presisi tampilan (3 desimal) supaya dua pool yang di layar
-  sama-sama "0,030%" diurutkan menurut rasio fee/active TVL-nya, lalu Δ
-  volumenya. Baris tanpa angka dust paling bawah, lalu simbol alfabetis.
-- Volatilitas disaring **sebelum** holder di-fetch, jadi kuota Helius tidak
-  terpakai untuk pool yang pasti gugur; dust holder baru dihitung untuk
-  sisanya.
+- **Urutan baris**: **kenaikan volume 24 jam** (`volume_change_pct`)
+  terbesar → **dust % MC terkecil** → **fee / active TVL terbesar** (sejak
+  2026-09-11 sore) — kunci dust dibulatkan ke presisi tampilan (3 desimal)
+  supaya dua pool yang di layar sama-sama "0,030%" diurutkan menurut rasio
+  fee/active TVL-nya. Baris tanpa angka dust paling bawah, lalu simbol
+  alfabetis.
+- Volatility **dan volume 24 jam** disaring **sebelum** holder di-fetch
+  (`row_best_gaps` → `hidden_metric`), jadi kuota Helius tidak terpakai
+  untuk pool yang pasti gugur; dust holder baru dihitung untuk sisanya.
 - Kolom listing (detail fee / active TVL ada di sini): Token · MC · **A.TVL** ·
   **Fee/TVL** (baris kecil = fee 24 jam dalam USD + tier fee) · **Vol 24h**
   (baris kecil = Δ volume 24 jam, hijau naik / merah turun) · Volat · Top10 ·
