@@ -22,7 +22,8 @@ from dashboard_components import (_alert_toggle_button, _ca_error, _compact,
                                   _dust_badge_html, _mint_alert_on,
                                   _muted_pill_html, _render_alert_note,
                                   _render_dust_change, _render_rh_card,
-                                  _render_toggle_note, _store_alert_note,
+                                  _render_toggle_note, _scan_best_badge_html,
+                                  _store_alert_note,
                                   _wib, _depth_tables_html, ALERT_NOTE_KEY,
                                   card_head_html, hover_title_html,
                                   SOLANA_CA_RE, load_dashboard_data,
@@ -361,16 +362,34 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
 # tooltip judul (hanya muncul saat kursor digeser ke teksnya), bukan caption.
 # ---------------------------------------------------------------------------
 SCAN_HOLDER_TITLE = "🛰 Scan Holder Solana / Robinhood"
-SCAN_HOLDER_TOOLTIP = (
-    "Tempel contract address (CA) satu token untuk mengambil seluruh "
-    "daftar holder: Solana (base58) langsung dari Helius DAS "
-    "(getTokenAccounts), Robinhood Chain (0x…) dari Blockscout (CSV "
-    "export tanpa limit) — lalu menampilkan bar chart distribusi holder "
-    "per range nilai USD (Wallet Depth by Threshold). Default: LP/pool "
-    "AMM disingkirkan dari bucket. Metrik Dust %MC (kiri Akun holder) "
-    "memakai definisi kolom Hold %MC watchlist: wallet 0 < nilai ≤ $10, "
-    "bukan LP/pool. Semua persen %MC di section ini 3 desimal, termasuk "
-    "label di grafik.")
+
+
+def scan_holder_tooltip() -> str:
+    """Detail karakteristik section — teks tooltip judul (bukan caption).
+
+    Konvensi 2026-09-10: angka ambang **selalu** dibaca dari konstanta rule
+    (di sini ``meteora_screener.BEST_DUST_MARK_PCT``, sumber tanda 🏆 BEST
+    POOL) supaya tooltip tidak pernah beda dari yang benar-benar jalan;
+    impornya di dalam fungsi seperti ``best_pool_ui.best_pool_tooltip``.
+    Atribut ``title`` browser tidak mengenal markdown.
+    """
+    from meteora_screener import BEST_DUST_MARK_PCT
+    return (
+        "Tempel contract address (CA) satu token untuk mengambil seluruh "
+        "daftar holder: Solana (base58) langsung dari Helius DAS "
+        "(getTokenAccounts), Robinhood Chain (0x…) dari Blockscout (CSV "
+        "export tanpa limit) — lalu menampilkan bar chart distribusi holder "
+        "per range nilai USD (Wallet Depth by Threshold). Default: LP/pool "
+        "AMM disingkirkan dari bucket. Metrik Dust %MC (kiri Akun holder) "
+        "memakai definisi kolom Hold %MC watchlist: wallet 0 < nilai ≤ $10, "
+        "bukan LP/pool. Semua persen %MC di section ini 3 desimal, termasuk "
+        "label di grafik. Bila Dust %MC <= "
+        f"{BEST_DUST_MARK_PCT:g}% marketcap (inklusif), di bawah metriknya "
+        "muncul tulisan emas berkelap-kelip BEST — penanda visual saja "
+        "(ambang yang sama dengan tanda 🏆 BEST POOL di card Scan Best Pool "
+        "Meteora), bukan saringan; dust yang gagal diambil tidak pernah "
+        "ditandai.")
+
 
 
 def _scan_source_meta(result: dict) -> tuple[str, str, str]:
@@ -408,7 +427,7 @@ def _render_helius_holder_scan() -> None:
     """Section: input CA satu token → scan holder (Solana via Helius,
     Robinhood Chain via Blockscout) + bar chart."""
     st.divider()
-    st.markdown(hover_title_html(SCAN_HOLDER_TITLE, SCAN_HOLDER_TOOLTIP),
+    st.markdown(hover_title_html(SCAN_HOLDER_TITLE, scan_holder_tooltip()),
                 unsafe_allow_html=True)
 
     with st.form("helius-holder-form"):
@@ -543,6 +562,17 @@ def _render_helius_holder_result(result: dict) -> None:
               f"{prefix}{int(dust_count or 0):,} wallet, total "
               f"{_compact(dust_value)}. Persentase terhadap marketcap; "
               "angka ini sesuai kolom «Hold %MC» di card watchlist."))
+    # Tulisan **BEST** emas berkelap-kelip (2026-09-12, permintaan user:
+    # "jika kondisi %dust <= 0.035 kasih tulisan BEST yang agak besar, dengan
+    # efek kelap kelip, warnanya GOLD") — persis di bawah metrik Dust %MC,
+    # jadi tandanya menempel pada angka yang menjadi buktinya. Ambangnya satu
+    # sumber dengan tanda 🏆 BEST POOL card Scan Best Pool Meteora
+    # (``meteora_screener.BEST_DUST_MARK_PCT``); HTML/CSS-nya dibuat
+    # ``dashboard_components._scan_best_badge_html`` (kosong bila tidak
+    # memenuhi syarat → tidak ada elemen yang dirender).
+    best_html = _scan_best_badge_html(dust_pct)
+    if best_html:
+        c0.markdown(best_html, unsafe_allow_html=True)
     c1.metric(f"Akun holder ({source_short})", f"{prefix}{fetched:,}",
               help=source_help)
     c2.metric(

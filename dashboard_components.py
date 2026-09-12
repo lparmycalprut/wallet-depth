@@ -43,6 +43,36 @@ def render_styles() -> None:
     .dust-danger {background:#7f1d1d;color:#fee2e2}
     .dust-none {background:#e2e8f0;color:#000000}
     .dust-best {background:#3b2f0a;color:#fde047;border:1px solid #facc15}
+    /* Tulisan BEST emas berkelap-kelip di metrik Dust %MC section Scan Holder
+       (2026-09-12, permintaan user: agak besar, kelap kelip, warna GOLD).
+       Nama class-nya sengaja BUKAN varian `dust-best`: pin regression card
+       Scan Meteora menghitung kemunculan string class chip emas itu di
+       seluruh body halaman (tests/test_lp_card_ui.py, test_best_pool_scan.py)
+       — CSS ini ikut ter-render di body, jadi namanya harus bebas substring
+       tersebut. Semua gaya hidup di sini karena st.markdown men-sanitasi
+       atribut style inline. */
+    .scan-best-gold {display:inline-block;margin-top:.15rem;padding:.05rem .5rem;
+     font-size:1.45rem;font-weight:900;letter-spacing:.1em;line-height:1.15;
+     text-align:center;border-radius:8px;border:1px solid #b8860b;
+     background-image:linear-gradient(100deg,#8a5a00 0%,#ffd700 22%,
+      #fff6b0 42%,#ffd700 62%,#b8860b 100%);
+     background-size:220% 100%;
+     -webkit-background-clip:text;background-clip:text;
+     -webkit-text-fill-color:transparent;color:transparent;
+     text-shadow:0 0 6px rgba(255,215,0,.55),0 0 16px rgba(255,193,7,.35);
+     animation:scan-best-blink 1.05s ease-in-out infinite,
+      scan-best-shine 2.8s linear infinite;}
+    .scan-best-gold::after {content:"🏆";margin-left:.3rem;font-size:.95rem;
+     -webkit-text-fill-color:initial;color:initial;text-shadow:none;}
+    /* Kelap-kelip: opacity (aman untuk background-clip:text — text-shadow
+       ikut memudar sehingga emasnya benar-benar berkedip, bukan cuma glow). */
+    @keyframes scan-best-blink {0%,100% {opacity:1} 50% {opacity:.32}}
+    /* Kilau menyapu: gradien emasnya bergeser perlahan. */
+    @keyframes scan-best-shine {from {background-position:0% 50%}
+     to {background-position:220% 50%}}
+    @media (prefers-reduced-motion: reduce) {
+     .scan-best-gold {animation:none;opacity:1}
+    }
     .lp-head {display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;
      padding:.5rem 0 .1rem}
     .lp-title {font-size:1.15rem;font-weight:800;color:#000000}
@@ -137,6 +167,48 @@ def _dust_best_html(flag: dict) -> str:
         return ""
     label = html.escape(str(DUST_BEST_LABEL))
     return f'<span class="dust-badge dust-best">🏆 {label}</span>'
+
+
+def _scan_best_mark_ok(dust_pct) -> bool:
+    """True bila dust % MC **<= 0,035%** → tulisan emas **BEST** boleh tampil.
+
+    Ambangnya satu sumber dengan tanda 🏆 BEST POOL di card **🏆 Scan Best
+    Pool Meteora** (``meteora_screener.BEST_DUST_MARK_PCT``, 2026-09-12) —
+    permintaan user 2026-09-12: "jika kondisi %dust <= 0.035 kasih tulisan
+    BEST yang agak besar, dengan efek kelap kelip, warnanya GOLD" di section
+    🛰 Scan Holder Solana / Robinhood. Batas **inklusif** (0,035 persis ikut
+    ditandai); angka yang tidak terbaca (``None``/teks kosong) tidak pernah
+    ditandai — tidak ada bukti. ``meteora_screener`` diimpor di dalam fungsi
+    (pola ``best_pool_ui.best_pool_tooltip``) supaya impor modul UI ini tetap
+    ringan dan bebas dependensi baru di level atas.
+    """
+    from meteora_screener import BEST_DUST_MARK_PCT
+    try:
+        pct = float(dust_pct)
+    except (TypeError, ValueError):
+        return False
+    return pct <= BEST_DUST_MARK_PCT
+
+
+def _scan_best_badge_html(dust_pct, label: str = "BEST") -> str:
+    """HTML tulisan **BEST** emas berkelap-kelip di bawah metrik Dust %MC.
+
+    Return ``""`` bila dust tidak memenuhi :func:`_scan_best_mark_ok`, jadi
+    pemanggil tidak perlu merender markdown kosong. Penanda **visual** saja —
+    tidak ada saringan/angka yang berubah; seluruh gayanya (ukuran, warna
+    emas, kelap-kelip) ada di CSS ``.scan-best-gold`` pada
+    :func:`render_styles`. Aturan angkanya ikut ditulis di atribut ``title``
+    (tooltip native, konvensi 2026-09-10) dengan angka dari konstanta, bukan
+    hard-code.
+    """
+    if not _scan_best_mark_ok(dust_pct):
+        return ""
+    from meteora_screener import BEST_DUST_MARK_PCT
+    tip = (f"Dust {float(dust_pct):.3f}% MC <= {BEST_DUST_MARK_PCT:g}% "
+           "marketcap — distribusi holder sangat bersih (ambang yang sama "
+           "dengan tanda 🏆 BEST POOL di Scan Best Pool Meteora).")
+    return (f'<span class="scan-best-gold" title="{html.escape(tip)}">'
+            f"{html.escape(str(label))}</span>")
 
 
 def _delta_pp_html(delta, digits: int = 2) -> str:

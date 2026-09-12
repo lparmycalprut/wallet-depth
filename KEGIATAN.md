@@ -1,3 +1,89 @@
+# Kegiatan — 12 September 2026 (🛰 Scan Holder: tulisan BEST emas kelap-kelip · 🏆 Best Pool: volume 24 jam ≥ $1M)
+
+Permintaan user (dua bagian, menyusul entri tiga bagian sebelumnya di hari
+yang sama):
+*\"lalu kita tambahkan juga disini, jika kondisi %dust <= 0.035 kasih tulisan
+BEST yang agak besar, dengan efek kelap kelip, warnanya GOLD\"* (konteks:
+section 🛰 Scan Holder Solana / Robinhood yang baru mendapat metrik Dust %MC)
+dan *\"🏆 Scan Best Pool Meteora — tambahkan juga kriteria disini, minimal
+volume 24 jam adalah 1M, dibawah itu jangan di show\"*.
+
+## 1 · 🛰 Scan Holder: tulisan **BEST** emas kelap-kelip bila dust ≤ 0,035% MC
+
+- Syarat: `depth["dust_pct_mc"] <= meteora_screener.BEST_DUST_MARK_PCT`
+  (0,035%, **inklusif** — angka yang sama dengan tanda 🏆 BEST POOL di card
+  🏆 Scan Best Pool Meteora, jadi satu sumber konstanta dan tidak bisa
+  menyimpang). Dust `None`/tidak terbaca = tidak pernah ditandai.
+- Helper baru `dashboard_components._scan_best_mark_ok()` (syaratnya, impor
+  `meteora_screener` di dalam fungsi — pola `best_pool_tooltip()`) +
+  `_scan_best_badge_html()` (HTML-nya, return `""` bila tidak lolos supaya
+  tidak ada elemen kosong). Dirender `app.py::_render_helius_holder_result`
+  dengan `c0.markdown(...)` = **kolom metrik Dust %MC**, tepat di bawah
+  angkanya, untuk **kedua jalur** (Helius *dan* Blockscout — satu renderer).
+- Tampilan: **agak besar** (1,45rem, weight 900, letter-spacing), warna
+  **GOLD** (gradien `#8a5a00 → #ffd700 → #fff6b0` di-clip ke teks + glow
+  emas), **kelap-kelip** (`@keyframes scan-best-blink`, opacity 1 → 0,32,
+  1,05s infinite) plus kilau menyapu (`scan-best-shine`, 2,8s) dan 🏆 kecil
+  di ujungnya. Semua gaya hidup di CSS `render_styles()` karena
+  `st.markdown` **men-sanitasi atribut `style` inline**;
+  `@media (prefers-reduced-motion: reduce)` mematikan animasinya.
+- Nama class-nya `.scan-best-gold`, **sengaja bukan** varian `dust-best`:
+  pin regression card Scan Meteora menghitung kemunculan string class chip
+  emas itu di seluruh body halaman (`tests/test_lp_card_ui.py`,
+  `tests/test_best_pool_scan.py`) dan CSS ikut ter-render di body — memakai
+  nama yang mengandung substring itu langsung memecahkan dua tes tersebut
+  (terjadi saat implementasi, sudah diperbaiki + diberi komentar di CSS).
+- Penanda **visual** saja: tidak ada metrik, saringan, atau angka yang
+  berubah. Rule + ambangnya dijelaskan di **tooltip judul section**
+  (`app.scan_holder_tooltip()` — konstanta `SCAN_HOLDER_TOOLTIP` dijadikan
+  fungsi supaya angkanya dibaca dari `BEST_DUST_MARK_PCT` saat dipanggil),
+  bukan caption baru di badan section.
+- Coverage: `tests/test_rh_card_ui.py` (AppTest: badge tepat satu di 0,035%
+  dan di jalur Helius; tidak muncul di 0,036/0,041/0,55/9,0 maupun saat dust
+  `None`; CSS `.scan-best-gold` + `@keyframes scan-best-blink` + warna emas
+  ikut ter-render; tooltip section menyebut rule-nya dan caption tidak) +
+  `tests/test_best_pool_scan.py::ScanHolderBestBadgeTest` (unit helper:
+  batas inklusif, data hilang, teks tanpa `style=` inline, isi CSS
+  `render_styles`, ambang mengikuti konstanta).
+
+## 2 · 🏆 Scan Best Pool Meteora: saringan **volume 24 jam ≥ $1.000.000**
+
+- Konstanta baru `meteora_screener.BEST_VOLUME_24H_MIN = 1_000_000.0`
+  (USD, **inklusif** — tepat $1M lolos) dan syaratnya masuk
+  `row_best_gaps()`: label gap `volume 24 jam < $1,000,000`, volume `None`
+  = gugur (sama seperti volatility — pool tanpa data volume tidak terbukti
+  ramai). Saringan layar card jadi **tiga**: volume ≥ $1M + volatility ≥ 2%
+  (`row_best_gaps`) dan dust < 0,05% MC (`row_dust_ok`).
+- Karena `row_best_gaps()` jalan **sebelum** `enrich_pools()`, pool sepi
+  gugur tanpa membakar kuota Helius; hitungannya masuk `hidden_metric`
+  (bukan `hidden_dust`) sehingga rekap \"N pool lolos · M disembunyikan\" dan
+  log aktivitas tetap benar tanpa perubahan UI.
+- Bukan query API: `best_filter_by()` tetap `pool_type=dlmm&&fee_pct>=2&&
+  active_tvl>=50000` (kunci `filter_by` yang dipakai UI Meteora — kunci
+  volume tidak terverifikasi di endpoint itu, jadi disaring di layar supaya
+  tidak diam-diam kehilangan seluruh listing).
+- UI `best_pool_ui`: tooltip card menyebut ambangnya dari konstanta
+  (`volume 24 jam >= $1,000,000 (di bawah itu tidak ditampilkan)`), dan
+  tooltip sel **Vol 24h** kini menutup dengan `saringan layar: minimal
+  $1,000,000` supaya angka yang jadi bukti saringan terlihat di selnya.
+- Coverage: `tests/test_best_pool_scan.py` — batas inklusif ($1M lolos,
+  $999.999,99 / $0 gugur), volume `None` gugur, label gap mengikuti
+  konstanta, `filter_best_rows` memasukkan pool sepi ke `hidden_metric`,
+  `scan_best_meteora` tidak mem-fetch holder pool $400K (fixture default
+  dinaikkan ke $1,2M supaya tetap menguji satu syarat per tes), tooltip card
+  + tooltip sel, dan AppTest sel Vol 24h menampilkan `$1.20M` /
+  `volume 24 jam $1,200,000`.
+
+## Verifikasi
+
+- Suite penuh: **1102 tes lulus** (sebelumnya 1092 — 10 tes baru), tanpa
+  network (`tests/conftest.py` + `tests/__init__.py`).
+- Dokumentasi ikut diperbarui: `AGENTS.md` (bullet baru tanda BEST di Scan
+  Holder, `scan_holder_tooltip()` menggantikan konstanta `SCAN_HOLDER_TOOLTIP`,
+  saringan layar Best Pool jadi tiga + urutan baris yang sempat basi
+  dikoreksi ke volume → dust → fee/TVL) dan `README.md` (tabel saringan
+  layar Best Pool + paragraf metrik/BEST di section Scan Holder).
+
 # Kegiatan — 12 September 2026 (🏆 tanda Best Pool ≤ 0,035% · Hold %MC 3 desimal · Dust %MC di Scan Holder)
 
 Permintaan user (tiga bagian):

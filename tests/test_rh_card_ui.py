@@ -429,6 +429,97 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
         values = {m.label: m.value for m in result.metric}
         self.assertEqual(values.get("Dust %MC"), "0.035%")
 
+    # ------------------------------------------------------------------
+    # Tulisan **BEST** emas berkelap-kelip di bawah metrik Dust %MC
+    # (2026-09-12, permintaan user: "jika kondisi %dust <= 0.035 kasih
+    # tulisan BEST yang agak besar, dengan efek kelap kelip, warnanya
+    # GOLD"). Ambangnya satu sumber dengan tanda 🏆 BEST POOL card Scan
+    # Best Pool Meteora (``meteora_screener.BEST_DUST_MARK_PCT``).
+    # ------------------------------------------------------------------
+    BADGE = 'class="scan-best-gold"'
+
+    def _result_with_dust(self, pct, *, mint=None, symbol="VLAD",
+                          source="blockscout-csv"):
+        result = self._depth_result(mint or CA, symbol, source)
+        result["depth"]["dust_pct_mc"] = pct
+        return result
+
+    def test_best_gold_muncul_pada_batas_0035(self):
+        """Dust 0,035% persis (inklusif) → satu tulisan BEST emas."""
+        app = self._app()
+        with mock.patch("robinhood_holders.scan_token_holders",
+                        return_value=self._result_with_dust(0.035)):
+            result = self._submit(app, CA)
+        self.assertEqual(len(result.exception), 0)
+        body = "\n".join(node.value for node in result.markdown)
+        # Tepat satu badge (CSS ``.scan-best-gold`` juga ada di body, jadi
+        # yang dihitung pemakaian class-nya di elemen, bukan substring).
+        self.assertEqual(body.count(self.BADGE), 1)
+        self.assertIn(">BEST</span>", body)
+        # Gaya emas + kelap-kelipnya hidup di CSS halaman (inline style
+        # disanitasi st.markdown → tidak boleh bergantung padanya).
+        self.assertIn(".scan-best-gold", body)
+        self.assertIn("@keyframes scan-best-blink", body)
+        self.assertIn("#ffd700", body.lower())
+        # Aturan angkanya ikut jadi tooltip badge (angka dari konstanta).
+        import html as _html
+        unescaped = _html.unescape(body)
+        self.assertIn("Dust 0.035% MC <= 0.035% marketcap", unescaped)
+
+    def test_best_gold_juga_di_jalur_helius(self):
+        """Section-nya satu renderer: CA Solana/Helius ikut memberi tanda."""
+        app = self._app()
+        with mock.patch("helius_holders.scan_token_holders",
+                        return_value=self._result_with_dust(
+                            0.02, mint=self.SOL_MINT, symbol="USDC",
+                            source="helius")):
+            result = self._submit(app, self.SOL_MINT)
+        self.assertEqual(len(result.exception), 0)
+        body = "\n".join(node.value for node in result.markdown)
+        self.assertEqual(body.count(self.BADGE), 1)
+
+    def test_best_gold_tidak_muncul_di_atas_0035(self):
+        """0,036% (dan 0,041% yang masih "bersih") → tanpa tulisan BEST."""
+        for pct in (0.036, 0.041, 0.55, 9.0):
+            app = self._app()
+            with mock.patch("robinhood_holders.scan_token_holders",
+                            return_value=self._result_with_dust(pct)):
+                result = self._submit(app, CA)
+            self.assertEqual(len(result.exception), 0)
+            body = "\n".join(node.value for node in result.markdown)
+            self.assertNotIn(self.BADGE, body, pct)
+            self.assertNotIn(">BEST</span>", body)
+            # Metrik Dust %MC-nya sendiri tetap tampil apa adanya.
+            values = {m.label: m.value for m in result.metric}
+            self.assertEqual(values.get("Dust %MC"), f"{pct:.3f}%")
+
+    def test_best_gold_tidak_muncul_bila_dust_gagal_diambil(self):
+        """Dust ``None`` (harga/marketcap tidak ada) = tidak ada bukti."""
+        app = self._app()
+        with mock.patch("robinhood_holders.scan_token_holders",
+                        return_value=self._result_with_dust(None)):
+            result = self._submit(app, CA)
+        self.assertEqual(len(result.exception), 0)
+        body = "\n".join(node.value for node in result.markdown)
+        self.assertNotIn(self.BADGE, body)
+        values = {m.label: m.value for m in result.metric}
+        self.assertEqual(values.get("Dust %MC"), "—")
+
+    def test_tooltip_section_menyebut_aturan_best(self):
+        """Rule-nya di tooltip judul section (konvensi 2026-09-10), dengan
+        angka dari konstanta — bukan caption baru di badan section."""
+        import html as _html
+        import meteora_screener as ms
+
+        app = self._app()
+        body = _html.unescape("\n".join(node.value for node in app.markdown))
+        captions = "\n".join(node.value for node in app.caption)
+        self.assertIn("Bila Dust %MC <= "
+                      f"{ms.BEST_DUST_MARK_PCT:g}% marketcap", body)
+        self.assertIn("tulisan emas berkelap-kelip BEST", body)
+        # Badan section tidak mengulang rule-nya sebagai caption.
+        self.assertNotIn("Dust %MC <=", captions)
+
     def test_robinhood_ca_blockscout_source_label(self):
         """CSV terpotong → jalur RPC, label sumber tetap Blockscout."""
         app = self._app()
