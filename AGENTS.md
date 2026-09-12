@@ -374,9 +374,13 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   — tidak butuh scan holder. Saringan fee/active TVL / top 10 holder / total
   LPs / active TVL yang lama **dihapus** — konstantanya tidak ada lagi,
   jangan dipakai ulang.
-  `scan_best_meteora()` menjalankan saringan metrik **sebelum**
-  `enrich_pools()` supaya kuota Helius tidak terbakar untuk pool yang pasti
-  gugur, lalu `sort_best_rows()`: **kenaikan volume 24 jam
+  `scan_best_meteora()` menjalankan saringan **volume 24 jam ≥ $1M**
+  sebelum `enrich_pools()` (pool sepi tidak membakar kuota Helius). Pool
+  volume ≥ $1M yang gagal volatility tetap di-enrich: hasilnya
+  `hidden_rows` (volume ≥ 1M + dust < 0,05% MC, urut
+  `sort_best_rows`) untuk tombol **N disembunyikan** di
+  `best_pool_ui` (klik = listing itu; klik lagi = kembali ke yang lolos).
+  Lalu `sort_best_rows()`: **kenaikan volume 24 jam
   (`volume_change_pct`) terbesar → dust % MC terkecil → fee/active TVL
   terbesar** (sejak 2026-09-11 sore; kunci
   dust dibulatkan ke `BEST_DUST_SORT_DECIMALS` = 3 desimal = presisi
