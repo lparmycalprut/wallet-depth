@@ -12,6 +12,9 @@ Kriteria **diganti total** 2026-09-11 sesuai request user (curl UI Meteora):
 - urutan baris: **kenaikan volume 24 jam (``volume_change_pct``) terbesar** →
   **dust % MC terkecil** → **fee / active TVL terbesar** (sejak 2026-09-11
   sore; sebelumnya dust → fee/TVL → volume);
+- baris dengan dust **<= 0,035% MC** (``meteora_screener.BEST_DUST_MARK_PCT``,
+  inklusif; 2026-09-12) ditandai chip **🏆 BEST POOL** di kolom Dust %MC +
+  dihitung di pill kepala card — penanda visual, bukan saringan;
 - tabel menampilkan detail fee dan active TVL (kolom **A.TVL**, **Fee/TVL**
   dengan angka fee USD + tier fee di baris kecilnya, **Vol 24h** dengan Δ
   volume) supaya kunci urutnya bisa diperiksa, bukan cuma
@@ -48,16 +51,19 @@ def best_pool_tooltip() -> str:
     diubah — tidak mungkin lagi ada angka tooltip yang beda dengan angka
     yang jalan.
     """
-    from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_DUST_MAX_PCT,
-                                  BEST_FEE_PCT_MIN, BEST_VOLATILITY_MIN)
+    from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_DUST_MARK_PCT,
+                                  BEST_DUST_MAX_PCT, BEST_FEE_PCT_MIN,
+                                  BEST_VOLATILITY_MIN)
     return (
         "Listing API Meteora 24 jam (category top, page_size 50) dengan "
         f"filter pool_type=dlmm&&fee_pct>={BEST_FEE_PCT_MIN:g}&&active_tvl>="
         f"{int(BEST_ACTIVE_TVL_MIN)} — tier fee dan active TVL disaring "
         "langsung oleh Meteora, bukan di layar. Yang ditampilkan hanya pool "
         f"dengan dust holder < {BEST_DUST_MAX_PCT:g}% marketcap dan "
-        f"volatility >= {BEST_VOLATILITY_MIN:g}%. Urutan: kenaikan volume 24 "
-        "jam paling besar dulu, lalu dust % marketcap terkecil, lalu "
+        f"volatility >= {BEST_VOLATILITY_MIN:g}%. Baris dengan dust <= "
+        f"{BEST_DUST_MARK_PCT:g}% marketcap ditandai chip 🏆 BEST POOL di "
+        "kolom Dust %MC (penanda, bukan saringan). Urutan: kenaikan volume "
+        "24 jam paling besar dulu, lalu dust % marketcap terkecil, lalu "
         "fee/active TVL paling besar. Di tabel: A.TVL = active TVL "
         "pool, Fee/TVL = fee 24 jam dibagi active TVL (baris kecilnya angka "
         "fee + tier fee), Vol 24h = volume dengan perubahannya (Δ) — kolom "
@@ -77,11 +83,20 @@ _TITLES = ["Token", "MC", "A.TVL", "Fee/TVL", "Vol 24h", "Volat", "Top10",
 
 
 def _best_head_html(rows: list, hidden: int) -> str:
-    """Header card: judul + pill jumlah pool / pool yang disembunyikan."""
+    """Header card: judul + pill jumlah pool / pool yang disembunyikan.
+
+    Pill emas **🏆 BEST POOL N** (2026-09-12) menghitung berapa baris yang
+    lolos tanda dust <= ``BEST_DUST_MARK_PCT`` — jawaban langsung "pool
+    bersihnya mana saja" tanpa membaca satu per satu.
+    """
     from dashboard_components import card_head_html
-    from meteora_screener import BEST_CARD_TITLE
+    from meteora_screener import BEST_CARD_TITLE, row_best_pool
 
     pills = [f'<span class="lp-count">{len(rows)} pool</span>']
+    best = sum(1 for row in rows if row_best_pool(row))
+    if best:
+        pills.append('<span class="lp-warn" style="color:#3b2f0a;'
+                     f'background:#fde047;">🏆 BEST POOL {best}</span>')
     if hidden:
         pills.append('<span class="lp-count" style="color:#334155;'
                      f'background:#e2e8f0;">{hidden} disembunyikan</span>')
@@ -170,7 +185,8 @@ def render_best_pool_scan() -> None:
     from holder_history import FULL_SCAN_MAX_WALLETS
     from links import external_links_html, pool_links_html
     from lp_watchlist import LP_SOURCE
-    from meteora_screener import (BEST_DUST_MAX_PCT, BEST_VOLATILITY_MIN,
+    from meteora_screener import (BEST_DUST_MARK_PCT, BEST_DUST_MAX_PCT,
+                                  BEST_VOLATILITY_MIN, row_best_pool,
                                   scan_best_meteora, sort_best_rows)
     from watchlist import add_to_watchlist
 
@@ -258,6 +274,23 @@ def render_best_pool_scan() -> None:
             delta_html = (f'<span style="color:{delta_color};">Δ '
                           f"{delta_txt}</span>" if delta_color
                           else f"<span>Δ {delta_txt}</span>")
+            # 🏆 BEST POOL (2026-09-12): dust <= 0,035% MC (inklusif) → angka
+            # dust diwarnai emas + sub "dust" diganti chip, supaya tanda
+            # terlihat persis di sel tempat buktinya (kolom Dust %MC).
+            # Penanda visual saja — saringan listing tetap 0,05%.
+            dust_is_best = row_best_pool(row)
+            dust_value = _pct_txt(dust_pct, 3)
+            dust_sub = "dust"
+            dust_tip = (f"dust holder < {BEST_DUST_MAX_PCT:g}% marketcap — "
+                        "saringan sekaligus kunci urut kedua (terkecil dulu)")
+            if dust_is_best:
+                dust_value = (f'<span style="color:#b45309;">{dust_value}'
+                              "</span>")
+                dust_sub = ('<span class="dust-badge dust-best" '
+                            'style="font-size:0.58rem;padding:0.1rem 0.3rem;'
+                            'border-radius:6px;">🏆 BEST POOL</span>')
+                dust_tip += (f" · 🏆 BEST POOL: dust <= "
+                             f"{BEST_DUST_MARK_PCT:g}% marketcap")
             cols = st.columns(_COL_SPEC)
             cols[0].markdown(
                 '<div class="watchlist-token">'
@@ -299,9 +332,7 @@ def render_best_pool_scan() -> None:
                  "saringan lagi sejak 2026-09-11"),
                 (_num_or_dash(row.get("dust_count")), "wallet",
                  "jumlah wallet dust di bawah ambang dust"),
-                (_pct_txt(dust_pct, 3), "dust",
-                 f"dust holder < {BEST_DUST_MAX_PCT:g}% marketcap — saringan "
-                 "sekaligus kunci urut kedua (terkecil dulu)"),
+                (dust_value, dust_sub, dust_tip),
             )
             for position, (value, sub, tip) in enumerate(cells, start=1):
                 cols[position].markdown(_cell(value, sub, tip),

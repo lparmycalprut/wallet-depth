@@ -166,7 +166,10 @@ def _render_lp_row(row: dict) -> None:
     dust_txt = ("—" if dust_count is None
                 else (f"≥{int(dust_count)}" if truncated
                       else f"{int(dust_count):,}"))
-    pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.2f}%"
+    # Kolom Hold %MC memakai 3 desimal sejak 2026-09-12 (permintaan user) —
+    # dust watchlist LP sering < 0,1% MC, dua desimal menyembunyikan beda
+    # 0,044% vs 0,037% yang justru penting untuk entri pool.
+    pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.3f}%"
 
     short_note = (" · ⚠️ scan terakhir tidak lengkap"
                   if row.get("degraded") else "")
@@ -364,7 +367,10 @@ SCAN_HOLDER_TOOLTIP = (
     "(getTokenAccounts), Robinhood Chain (0x…) dari Blockscout (CSV "
     "export tanpa limit) — lalu menampilkan bar chart distribusi holder "
     "per range nilai USD (Wallet Depth by Threshold). Default: LP/pool "
-    "AMM disingkirkan dari bucket.")
+    "AMM disingkirkan dari bucket. Metrik Dust %MC (kiri Akun holder) "
+    "memakai definisi kolom Hold %MC watchlist: wallet 0 < nilai ≤ $10, "
+    "bukan LP/pool. Semua persen %MC di section ini 3 desimal, termasuk "
+    "label di grafik.")
 
 
 def _scan_source_meta(result: dict) -> tuple[str, str, str]:
@@ -520,7 +526,23 @@ def _render_helius_holder_result(result: dict) -> None:
     buckets_with_pools = bool(depth.get("buckets_include_pools", True))
     pool_n = int(depth.get("pool_excluded") or 0)
     bucket_n = holders_all if buckets_with_pools else holders_wallet
-    c1, c2, c3, c4 = st.columns(4)
+    # Metrik detail **Dust %MC** di kiri "Akun holder" (permintaan user
+    # 2026-09-12) — definisi persis kolom Hold %MC watchlist (dihitung
+    # classify_holders di dalam scan_token_holders dan ditempel ke depth),
+    # tampil 3 desimal seperti watchlist/grafik.
+    dust_pct = depth.get("dust_pct_mc")
+    dust_count = depth.get("dust_count")
+    dust_value = depth.get("dust_value_usd")
+    c0, c1, c2, c3, c4 = st.columns(5)
+    c0.metric(
+        "Dust %MC",
+        "—" if dust_pct is None else f"{float(dust_pct):.3f}%",
+        help=("Wallet dust: 0 < nilai ≤ "
+              f"${float(depth.get('dust_limit_usd') or 10.0):.0f} per "
+              "akun (bukan LP/pool) — "
+              f"{prefix}{int(dust_count or 0):,} wallet, total "
+              f"{_compact(dust_value)}. Persentase terhadap marketcap; "
+              "angka ini sesuai kolom «Hold %MC» di card watchlist."))
     c1.metric(f"Akun holder ({source_short})", f"{prefix}{fetched:,}",
               help=source_help)
     c2.metric(

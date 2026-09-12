@@ -28,7 +28,8 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 
 from core import get_helius_keys, get_market
-from holder_analysis import fetch_holders_helius
+from holder_analysis import DUST_LIMIT_USD, classify_holders, \
+    fetch_holders_helius
 from solscan_holders import wallet_depth
 
 # Default batas holder yang dianalisis saat scan satu token. **Wajib sama
@@ -97,7 +98,9 @@ def scan_token_holders(ca: str, *, max_wallets: int | None = None,
         {
           "market": {...},            # dari get_market (bisa {})
           "snapshot": {...},          # dari fetch_holders_helius
-          "depth": {...},             # dari wallet_depth
+          "depth": {...},             # dari wallet_depth + dust_pct_mc /
+                                      # dust_count / dust_value_usd /
+                                      # dust_limit_usd (classify_holders)
           "source": "helius",
           "scan_failed": bool,        # True bila tak ada holder/market valid
         }
@@ -127,6 +130,18 @@ def scan_token_holders(ca: str, *, max_wallets: int | None = None,
                 (market.get("pair_addresses") or []) if p)
     depth = wallet_depth(snapshot.get("holders") or [], mc,
                          pool_addresses=pools, include_pools=include_pools)
+    # Detail dust % MC untuk metrik Scan Holder (2026-09-12, permintaan
+    # user: "% dust di sebelah kiri Akun holder"): definisi persis kolom
+    # **Hold %MC** watchlist — ``classify_holders`` (wallet 0 < nilai ≤
+    # $10, LP/pool disingkirkan lewat pair_addresses) — jadi angka di
+    # section ini sinkron dengan card watchlist untuk token yang sama.
+    # Ditempel ke ``depth`` (bukan kolom hasil baru) supaya UI tidak perlu
+    # menghitung ulang dan jalur Robinhood berbentuk sama.
+    dust = classify_holders(snapshot, mc, pool_addresses=pools)
+    depth["dust_pct_mc"] = dust.get("dust_pct_mc")
+    depth["dust_count"] = dust.get("dust_count")
+    depth["dust_value_usd"] = dust.get("dust_value_usd")
+    depth["dust_limit_usd"] = dust.get("dust_limit_usd", DUST_LIMIT_USD)
     scan_failed = not snapshot.get("holders") or price <= 0
     try:
         import activity_log
@@ -179,11 +194,13 @@ def depth_bar_chart(depth: dict | None, *, title: str = "Holder") -> plt.Figure 
     colors = list(_BUCKET_COLORS[:len(labels)])
     axis.bar(labels, counts, color=colors, alpha=.9, edgecolor="white")
 
-    # Label pada tiap batang: jumlah holder + nilai USD (2 baris).
+    # Label pada tiap batang: jumlah holder + nilai USD + % MC (3 desimal
+    # sejak 2026-09-12 — bucket dust sering < 0,01% MC sehingga satu desimal
+    # selalu memayatkannya jadi "0.0%").
     for index, (count, value, pct) in enumerate(zip(counts, values, pcts)):
         line = f"{count:,}\n{_compact(value)}"
         if pct is not None and value > 0:
-            line += f" · {_float(pct):.1f}%MC"
+            line += f" · {_float(pct):.3f}%MC"
         axis.text(index, count, line, ha="center", va="bottom",
                   fontsize=9, fontweight="bold")
 

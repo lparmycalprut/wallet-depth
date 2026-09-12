@@ -103,6 +103,55 @@ class ScanTokenHoldersTest(unittest.TestCase):
         self.assertEqual(result["depth"]["holders_wallet"], 2)
         self.assertEqual(result["depth"]["pool_excluded"], 1)
 
+    def test_scan_attaches_hold_pct_dust_stats(self):
+        """depth membawa detail % dust untuk metrik Scan Holder (2026-09-12).
+
+        Permintaan user: "% dust di sebelah kiri Akun holder" — definisi
+        persis kolom Hold %MC watchlist (``classify_holders``: wallet 0 <
+        nilai ≤ $10, LP/pool disingkirkan lewat pair_addresses)."""
+        market = {"symbol": "TST", "price_usd": 0.01, "marketcap": 100_000,
+                  "pair_addresses": ["POOL"]}
+        snapshot = {
+            "holders": [
+                {"address": "A", "usd_value": 500.0, "is_wallet": True},
+                {"address": "B", "usd_value": 5.0, "is_wallet": True},
+                # LP dust kecil TIDAK ikut hitungan (bukan wallet).
+                {"address": "POOL", "usd_value": 8.0, "is_wallet": True},
+            ],
+            "pages": 1, "fetched": 3, "truncated": False,
+            "source": "helius",
+        }
+        with mock.patch("helius_holders.get_market", return_value=market):
+            with mock.patch("helius_holders.get_helius_keys",
+                            return_value=["KEY"]):
+                with mock.patch("helius_holders.fetch_holders_helius",
+                                return_value=snapshot):
+                    result = hh.scan_token_holders("MINT")
+
+        depth = result["depth"]
+        self.assertEqual(depth["dust_count"], 1)          # hanya B ($5)
+        self.assertAlmostEqual(depth["dust_pct_mc"], 0.005, places=6)
+        self.assertEqual(depth["dust_value_usd"], 5.0)
+        self.assertEqual(depth["dust_limit_usd"], 10.0)
+
+    def test_scan_without_marketcap_keeps_dust_pct_none(self):
+        """Marketcap tidak ada → dust_pct_mc None (metrik tampil "—")."""
+        market = {"symbol": "TST", "price_usd": 0.01, "marketcap": 0}
+        snapshot = {
+            "holders": [{"address": "B", "usd_value": 5.0,
+                         "is_wallet": True}],
+            "pages": 1, "fetched": 1, "truncated": False,
+            "source": "helius",
+        }
+        with mock.patch("helius_holders.get_market", return_value=market):
+            with mock.patch("helius_holders.get_helius_keys",
+                            return_value=["KEY"]):
+                with mock.patch("helius_holders.fetch_holders_helius",
+                                return_value=snapshot):
+                    result = hh.scan_token_holders("MINT")
+        self.assertIsNone(result["depth"]["dust_pct_mc"])
+        self.assertEqual(result["depth"]["dust_count"], 1)
+
     def test_no_helius_keys_flags_and_no_fetch(self):
         """Tanpa key Helius → scan_failed & no_helius_keys=True."""
         with mock.patch("helius_holders.get_market",
@@ -150,6 +199,23 @@ class DepthBarChartTest(unittest.TestCase):
     def test_empty_depth_returns_none(self):
         self.assertIsNone(hh.depth_bar_chart({}, title="X"))
         self.assertIsNone(hh.depth_bar_chart({"buckets": []}, title="X"))
+
+    def test_chart_pct_labels_use_three_decimals(self):
+        """Label % MC batang 3 desimal (2026-09-12): bucket dust 0,008% tidak
+        boleh memayat jadi "0.0%" (grafik Scan Holder)."""
+        depth = {
+            "buckets": [
+                {"label": ">$0-$10", "count": 50, "value_usd": 8.0,
+                 "pct_mc": 0.008},
+                {"label": "$10-$100", "count": 10, "value_usd": 300.0,
+                 "pct_mc": 0.3},
+            ]
+        }
+        fig = hh.depth_bar_chart(depth, title="TST")
+        texts = [txt.get_text() for txt in fig.axes[0].texts]
+        plt.close(fig)
+        self.assertTrue(any("0.008%MC" in t for t in texts), texts)
+        self.assertTrue(any("0.300%MC" in t for t in texts), texts)
 
     def test_compact_formatting(self):
         self.assertEqual(hh._compact(0), "$0")

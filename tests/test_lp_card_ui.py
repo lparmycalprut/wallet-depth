@@ -123,6 +123,9 @@ class ChartLpCardTest(unittest.TestCase):
         self.assertIn("BAHAYA", body)        # LPRISK 1,35% MC
         self.assertIn("$LPRISK", body)
         self.assertIn("$LPSAFE", body)
+        # Kolom Hold %MC 3 desimal sejak 2026-09-12 (permintaan user).
+        self.assertIn('watchlist-metric-value">0.610%', body)
+        self.assertIn('watchlist-metric-value">1.350%', body)
         # token non-meteora tidak masuk card LP
         self.assertNotIn(f"lp-move-{HOLDER_MINT}",
                          " ".join(b.key or "" for b in app.button))

@@ -115,6 +115,8 @@ class RobinhoodCardHolderButtonTest(unittest.TestCase):
                          "token", captions)
         self.assertNotIn("Watchlist Robinhood LP — Holder Dust</span>", body)
         self.assertIn("$VLAD", body)
+        # Kolom Hold %MC 3 desimal sejak 2026-09-12 (0,55% → "0.550%").
+        self.assertIn('watchlist-metric-value">0.550%', body)
         # Aksi 🧮 = tautan tab baru ke SLUG halaman, bukan path file.
         self.assertIn(f'href="/Holder?mint={CA}"', body)
         self.assertIn('target="_blank"', body)
@@ -336,6 +338,10 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
                 "holders_all": 3, "holders_wallet": 2, "pool_excluded": 1,
                 "buckets_include_pools": False,
                 "market_cap": 100_000.0,
+                # Detail % dust untuk metrik Scan Holder (2026-09-12) —
+                # dihitung classify_holders di dalam scan_token_holders.
+                "dust_pct_mc": 0.035, "dust_count": 1,
+                "dust_value_usd": 5.0, "dust_limit_usd": 10.0,
             },
             "source": source,
             "no_helius_keys": False,
@@ -403,6 +409,25 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
         # tautan eksternal EVM (bukan GMGN/Solscan Solana)
         self.assertIn("rh-scan.com", body)
         self.assertIn("robinhoodchain.blockscout.com", body)
+
+    def test_scan_holder_metric_dust_pct_mc_tiga_desimal(self):
+        """Metrik **Dust %MC** tepat di kiri "Akun holder" (2026-09-12).
+
+        Permintaan user: "tambahkan detail % dust di sebelah kiri Akun
+        holder (Blockscout)" + 3 angka di belakang koma — angkanya diambil
+        dari ``depth["dust_pct_mc"]`` (definisi Hold %MC watchlist)."""
+        app = self._app()
+        with mock.patch("robinhood_holders.scan_token_holders",
+                        return_value=self._depth_result(
+                            CA, "VLAD", "blockscout-csv")):
+            result = self._submit(app, CA)
+        self.assertEqual(len(result.exception), 0)
+        labels = [m.label for m in result.metric]
+        # urutan metrik: Dust %MC dulu, baru Akun holder (Blockscout)
+        self.assertLess(labels.index("Dust %MC"),
+                        labels.index("Akun holder (Blockscout)"))
+        values = {m.label: m.value for m in result.metric}
+        self.assertEqual(values.get("Dust %MC"), "0.035%")
 
     def test_robinhood_ca_blockscout_source_label(self):
         """CSV terpotong → jalur RPC, label sumber tetap Blockscout."""
@@ -555,6 +580,9 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
         self.assertEqual(helius.call_args.args[0], self.SOL_MINT)
         metrics = "\n".join(m.label for m in result.metric)
         self.assertIn("Akun holder (Helius)", metrics)
+        # Metrik Dust %MC (2026-09-12) juga ada di jalur Helius, 3 desimal.
+        values = {m.label: m.value for m in result.metric}
+        self.assertEqual(values.get("Dust %MC"), "0.035%")
 
     def test_invalid_ca_is_rejected(self):
         app = self._app()

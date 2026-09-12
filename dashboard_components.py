@@ -174,10 +174,16 @@ def _points_for(mint, token, store):
 
 
 def _depth_tables_html(depth: dict) -> str:
-    """Tabel Wallet Depth by Threshold + tier ala Solscan (HTML)."""
+    """Tabel Wallet Depth by Threshold + tier ala Solscan (HTML).
+
+    Kolom **% Market Cap** memakai 3 desimal sejak 2026-09-12 (permintaan
+    user — sama seperti Hold %MC watchlist dan grafik Scan Holder); bucket
+    dust sering jauh di bawah 0,01% MC sehingga dua desimal selalu tampil
+    ``0.00%``.
+    """
     def _pct(item):
         pct = item.get("pct_mc")
-        return "—" if pct is None else f"{float(pct):.2f}%"
+        return "—" if pct is None else f"{float(pct):.3f}%"
 
     def _count(item):
         return "—" if item.get("count") is None else f"{int(item['count']):,}"
@@ -538,7 +544,9 @@ def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
     dust_txt = ("—" if dust_count is None
                 else (f"≥{int(dust_count)}" if truncated
                       else f"{int(dust_count):,}"))
-    pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.2f}%"
+    # Kolom Hold %MC memakai 3 desimal sejak 2026-09-12 (permintaan user,
+    # sama seperti baris 🌊 Watchlist Meteora di app.py).
+    pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.3f}%"
 
     # 7 kolom: token · dust · hold %MC · 🧮 holder · 🔔 toggle alert ·
     # aksi pindah card · hapus (kolom toggle ditambah 2026-09-11).

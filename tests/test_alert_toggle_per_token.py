@@ -382,9 +382,10 @@ class AlertToggleUiTest(unittest.TestCase):
         self.assertEqual(self._button(app, f"lp-alert-{LP_MINT}").label, "🔕")
         self.assertIn("🔕 notif off", self._body(app))
         self.assertIn("🔕 1", self._body(app))     # pill di kepala card
-        # Token tetap dipantau: baris + dust tetap dirender.
+        # Token tetap dipantau: baris + dust tetap dirender (Hold %MC
+        # 3 desimal sejak 2026-09-12: 0,55% tampil "0.550%").
         self.assertIn("$RAYCAT", self._body(app))
-        self.assertIn("0.55%", self._body(app))
+        self.assertIn("0.550%", self._body(app))
 
     def test_bukan_global_hanya_token_yang_dimatikan(self):
         """🔕 hanya di token yang dipilih; token lain di card yang sama 🔔."""
