@@ -330,6 +330,13 @@ patokan saat token di-add (`app.LP_CARD_TOOLTIP` membangun teksnya dari
 
 - **Overlay** dust % MC semua token LP dalam satu grafik + grafik per token
   (garis dust % MC, batang jumlah wallet dust, garis ambang 0,5% & 1%).
+- **Detail tiap token** (klik 📈 di barisnya) dibuka dengan satu baris
+  **dust % MC saat token pertama masuk watchlist** — patokan notifikasi
+  ⚡ EARLY DUMP, jadi kenaikan 0,02% yang memicu pesan bisa dihitung sendiri
+  dari angka itu; di baris yang sama ditulis dust sekarang + selisih **pp**
+  (`watchlist_detail.added_baseline()` / `baseline_note()`). Kalau tanggal
+  masuk tidak terbaca atau belum ada scan sejak tanggal itu, teksnya menyebut
+  varian yang dipakai — bukan diam-diam memakai titik lain.
 - Per baris: MC, jumlah wallet dust, **Hold %MC** + badge
   (AMAN / HATI-HATI / BAHAYA), **Δ 4 jam** dan Δ total dalam **poin
   persentase**, sparkline 4 jam, tombol 🧮 Holder Analytic, 📋 pindah ke
@@ -509,6 +516,12 @@ ditambahkan** (`added` di `watchlist.json`) **sampai scan terakhir**:
 - warna mengikuti ambang permintaan user:
   **turun ≥ 50%** = hijau (`#15803d`, dust menipis),
   **naik ≥ 100%** = merah (`#b91c1c`, dust menebal 2×), di antaranya abu-abu.
+- **detail tiap token** (expander 📈) dibuka dengan baris **dust % MC saat
+  token pertama masuk watchlist** (sejak 2026-09-13) — angka yang sama dengan
+  patokan notifikasi ⚡ EARLY DUMP, lengkap dengan dust sekarang + selisih pp;
+  varian fallback (tanggal masuk tak terbaca / belum ada titik sejak masuk)
+  ikut ditulis. Berlaku di semua card watchlist (Meteora LP, Robinhood
+  LP/biasa, watchlist Holder) karena semuanya memakai expander yang sama.
 
 **Sinkronisasi baris ↔ scan terakhir.** Sebelumnya baris membaca snapshot
 `holder_status.json` (cron) sementara sparkline membaca `holder_history.json`

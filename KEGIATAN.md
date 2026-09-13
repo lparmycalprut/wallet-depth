@@ -1,3 +1,55 @@
+# Kegiatan — 13 September 2026 (detail watchlist: dust % MC saat token pertama masuk watchlist)
+
+Permintaan user: *"pada detail watchlist, juga tunjukkan pertama kali saya
+menambahkan ke watchlist, posisi % dust di berapa %"*.
+
+## Angka yang sudah dihitung, tinggal ditampilkan
+
+`watchlist_detail.py` sudah punya pembanding "sejak masuk" — `anchor_point()`
+memilih titik **pertama pada/setelah** tanggal `added` yang datanya layak.
+Titik yang sama juga dipakai notifikasi ⚡ EARLY DUMP sebagai patokan
+(`telegram_alerts.add_baseline_for_mint`), jadi yang dikerjakan tinggal
+menampilkannya:
+
+- `added_baseline(meta, points)` → `{pct, count, ts, added_ts, fallback}`;
+  titik tidak layak (sampel < 40 wallet / `truncated`) tidak pernah jadi
+  patokan.
+- `baseline_note(baseline, current_pct=…)` → satu baris caption:
+
+  ```text
+  📌 Saat masuk watchlist (10 Sep 12:05 WIB): dust 0.012% MC · sekarang
+  0.036% MC (+0.024 pp) — patokan notif ⚡ EARLY DUMP (tiap +0.02% dihitung
+  dari angka ini).
+  ```
+
+  Varian fallback tetap jujur, tidak menyamar sebagai "sejak masuk":
+  `Titik pertama yang tercatat` (tanggal `added` tidak terbaca),
+  `Titik pertama yang tersedia` (belum ada scan sejak tanggal masuk), atau
+  "belum bisa dihitung" (tanpa titik layak sama sekali).
+
+## Di mana muncul
+
+Baris **pertama** expander 📈 Grafik perubahan dust holder tiap baris —
+`dashboard_components._render_dust_change(..., meta=, current_pct=)` — jadi
+keempat lane ikut: 🌊 Watchlist Meteora (`app.py`), 🦅 Watchlist Robinhood
+LP/biasa (`dashboard_components._render_rh_row`; baris RH kini membawa
+`added`), dan 📋 watchlist Holder di halaman temp (`temp_ui`).
+
+## Verifikasi
+
+`python -m unittest discover -s tests -t .` → **Ran 1150 tests, OK**.
+Tes baru 9: 8 di `tests/test_watchlist_detail.py` (`AddedBaselineTest`:
+titik pertama setelah tanggal masuk, titik tidak layak dilewati, tanpa
+tanggal masuk, belum ada titik setelah add, tanpa titik sama sekali, teks
+caption + varian fallback) dan 1 AppTest di `tests/test_lp_card_ui.py`
+(`test_detail_menampilkan_dust_saat_masuk_watchlist`); assert tambahan di
+`tests/test_rh_card_ui.py` memastikan caption ikut ter-render di lane
+Robinhood.
+
+Teks yang ikut disinkronkan: `README.md` (bagian 🌊 Watchlist Meteora +
+Kolom "Sejak masuk"), `AGENTS.md` (bulket `watchlist_detail.py` + spec blok),
+dan entri `docs/PROGRESS.md`.
+
 # Kegiatan — 13 September 2026 (🌊 Scan Meteora: urut volume/active TVL · notif delta ⚡ EARLY DUMP tiap 0,02%)
 
 Permintaan user: *"kita benahi lagi scan meteora kita — sort pertama adalah

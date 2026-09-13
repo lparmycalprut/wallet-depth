@@ -723,7 +723,22 @@ JSON compact, Contents API base64) di ref `holder-live`:
   `degraded_note` / `usable_points` / `skipped_scans`, UI menulis
   `⚠️ scan … cuma 19 wallet`, dan token yang semua scan-nya pendek menulis
   `belum ada data ⚠️`. Tanpa ini kolom "Sejak masuk" melaporkan **−100%**
-  (dust "habis") dari sampel yang memang tidak memuat wallet dust. Urutan baris (2026-09-05):
+  (dust "habis") dari sampel yang memang tidak memuat wallet dust.
+  **Dust saat masuk watchlist (2026-09-13)** — permintaan user *"pada detail
+  watchlist, juga tunjukkan pertama kali saya menambahkan ke watchlist, posisi
+  % dust di berapa %"*: `added_baseline(meta, points)` mengembalikan
+  `{pct, count, ts, added_ts, fallback}` dari titik pembanding yang **sama**
+  dengan kolom "Sejak masuk" (`anchor_point`, titik pertama pada/setelah
+  `added` yang layak — identik dengan patokan `telegram_alerts.
+  add_baseline_for_mint`), dan `baseline_note()` merangkainya jadi satu baris
+  caption `📌 Saat masuk watchlist (…): dust X% MC · sekarang Y% MC (+Z pp) —
+  patokan notif ⚡ EARLY DUMP`. Varian `fallback` (`no_added_date` /
+  belum ada titik setelah tanggal masuk) tetap ditulis apa adanya; tanpa titik
+  layak sama sekali → "belum bisa dihitung". Captionnya dirender di baris
+  pertama expander detail `dashboard_components._render_dust_change(…, meta=,
+  current_pct=)` — keempat lane (Meteora LP, Robinhood LP/biasa, watchlist
+  biasa Solana) memakai expander itu.
+  Urutan baris (2026-09-05):
   default `SORT_DROP` — **minus dust terbesar di atas** (`pct_change`
   "Sejak masuk" paling negatif, mis. GPRO −60%; tanpa pembanding di
   bawah), opsi lain `SORT_PCT` (dust % MC tertinggi) / `SORT_NAME`
@@ -935,6 +950,12 @@ auto-refresh          : 300 detik (st.fragment(run_every=...))
 journal likuiditas    : pre_pump_liq.json (gitignored), 72 jam / 900 titik
 
 Baris watchlist "Sejak masuk" (watchlist_detail.py):
+dust saat masuk       : baris pertama detail card menulis dust % MC saat
+                        token masuk watchlist (added_baseline() +
+                        baseline_note(), 2026-09-13) — angka yang sama dengan
+                        patokan notif ⚡ EARLY DUMP; varian fallback
+                        (tanggal `added` tidak terbaca / belum ada titik
+                        setelah add) ditandai di teksnya
 warna hijau           : dust % MC turun >= 50% sejak tanggal masuk
                         (MCAP_DROP_TONE_PCT)
 warna merah           : dust % MC naik >= 100% sejak tanggal masuk

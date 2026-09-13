@@ -1,5 +1,30 @@
 # Progress
 
+## 2026-09-13: detail watchlist — dust % MC saat token pertama masuk watchlist
+
+**Status: selesai & tes hijau (1150 tests, OK).**
+
+Permintaan user: *"pada detail watchlist, juga tunjukkan pertama kali saya
+menambahkan ke watchlist, posisi % dust di berapa %"*.
+
+- `watchlist_detail.added_baseline(meta, points)` — dust % MC di titik
+  pertama pada/setelah tanggal `added` yang layak (pembanding yang sama
+  dengan kolom "Sejak masuk" dan patokan `telegram_alerts.
+  add_baseline_for_mint`), plus `ts`/`count`/`added_ts`/`fallback`.
+- `watchlist_detail.baseline_note(...)` — satu baris caption
+  `📌 Saat masuk watchlist (…): dust X% MC · sekarang Y% MC (+Z pp) —
+  patokan notif ⚡ EARLY DUMP`; varian fallback (tanggal masuk tak terbaca /
+  belum ada titik sejak add / belum ada titik layak) ditulis apa adanya.
+- Dirender di baris pertama expander detail
+  `dashboard_components._render_dust_change(..., meta=, current_pct=)` →
+  berlaku di 🌊 Watchlist Meteora, 🦅 Robinhood LP/biasa, dan 📋 watchlist
+  Holder.
+- Tes: `tests/test_watchlist_detail.py::AddedBaselineTest` (8) +
+  `tests/test_lp_card_ui.py::test_detail_menampilkan_dust_saat_masuk_watchlist`
+  + assert di `tests/test_rh_card_ui.py`.
+
+Detail: `KEGIATAN.md` 13 September 2026 (blok paling atas).
+
 ## 2026-09-13: 🌊 Scan Meteora — urut volume/active TVL · notif delta ⚡ EARLY DUMP 0,02%
 
 **Status: selesai & tes hijau (1140 tests, OK).**

@@ -228,7 +228,8 @@ def _render_lp_row(row: dict) -> None:
     # bentuk rujukan yang kini dipakai semua card watchlist
     # (dashboard_components._render_dust_change).
     _render_dust_change(row.get("points"), holders, symbol,
-                        interval=LP_INTERVAL_SEC)
+                        interval=LP_INTERVAL_SEC, meta=row,
+                        current_pct=dust_pct)
     st.markdown('<hr style="margin:0.3rem 0;border-color:#cbd5e1;">',
                 unsafe_allow_html=True)
 

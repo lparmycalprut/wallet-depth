@@ -667,7 +667,8 @@ def render_temp() -> None:
             # Grafik perubahan dust holder ala Watchlist Meteora (permintaan
             # user 2026-09-10): bucket 4 jam (kadens watchlist biasa) + tabel
             # Wallet Depth by Threshold ter-nested di dalam expander.
-            _render_dust_change(points, holders, symbol)
+            _render_dust_change(points, holders, symbol, meta=meta,
+                                current_pct=dust_pct)
             st.markdown('<hr style="margin:0.3rem 0;border-color:#cbd5e1;">',
                         unsafe_allow_html=True)
 
