@@ -28,7 +28,7 @@ from dashboard_components import (_alert_toggle_button, _ca_error, _compact,
                                   card_head_html, hover_title_html,
                                   SOLANA_CA_RE, load_dashboard_data,
                                   render_styles)
-from telegram_alerts import (STRATEGY_SHIFT_PCT, STRATEGY_SHIFT_TITLE,
+from telegram_alerts import (EARLY_DUMP_STEP_PCT, EARLY_DUMP_TITLE,
                              process_holder_alerts)
 import activity_log
 import robinhood_holders
@@ -116,8 +116,10 @@ LP_CARD_TOOLTIP = (
     "Pool (⭐) atau ditambah manual ke card ini. Di-scan cron tiap ±5 "
     "menit supaya exit LP lebih awal dan perubahan holder langsung "
     f"kelihatan: satu-satunya notifikasi Telegram adalah "
-    f"{STRATEGY_SHIFT_TITLE} — dikirim berulang tiap scan selama hold "
-    f"% MC dust masih ≥ {STRATEGY_SHIFT_PCT:g}% (berhenti bila token "
+    f"{EARLY_DUMP_TITLE} — dikirim tiap kali dust % MC naik "
+    f"≥ {EARLY_DUMP_STEP_PCT:g}% dari angka saat token masuk watchlist, lalu "
+    "berulang untuk tiap kelipatan "
+    f"{EARLY_DUMP_STEP_PCT:g}% berikutnya (berhenti bila token "
     "dihapus (✕) atau dipindah ke watchlist biasa (📋)). Notif bisa "
     "dimatikan per token lewat tombol 🔕 di barisnya — token yang baru "
     "masuk watchlist selalu 🔔 ON, dan scan + grafik tetap jalan walau "
@@ -611,9 +613,10 @@ def _render_helius_holder_result(result: dict) -> None:
 # ---------------------------------------------------------------------------
 # Watchlist Robinhood Chain (EVM, chain id 4663) — dua card sejak 2026-09-05:
 # **Robinhood LP** (scan cepat ±5 menit sejak 2026-09-06) dan **Robinhood
-# biasa** (scan manual). Notifikasinya satu untuk semua lane: 🚨 WAKTUNYA
-# GANTI STRATEGI selama dust ≥ 0,06% MC (2026-09-11; rule ⚡ EARLY DUMP dan
-# 🔔 HIGH DROP sudah dihapus). Sejak 2026-09-06 KEDUA card LP (Chart LP
+# biasa** (scan manual). Notifikasinya satu untuk semua lane: ⚡ EARLY DUMP
+# TERJADI - GANTI WIDE RANGE tiap dust naik ≥ 0,02% MC dari angka saat token
+# masuk watchlist (2026-09-13; rule ambang 0,06% MC sudah diganti). Sejak
+# 2026-09-06 KEDUA card LP (Chart LP
 # Meteora + Robinhood LP) ikut di-scan tiap run = ±5 menit; tinggal watchlist
 # biasa yang hanya jalan lewat tombol scan (LP_SCAN_RUN_MULTIPLIER tersedia
 # kalau kuota Helius perlu dihemat).

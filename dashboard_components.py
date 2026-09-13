@@ -19,7 +19,7 @@ import alert_settings
 import robinhood_holders
 import robinhood_watchlist
 from robinhood_watchlist import RH_LP_SOURCE, RH_REGULAR_SOURCE
-from telegram_alerts import (STRATEGY_SHIFT_PCT, STRATEGY_SHIFT_TITLE,
+from telegram_alerts import (EARLY_DUMP_STEP_PCT, EARLY_DUMP_TITLE,
                              delivery_note, process_holder_alerts,
                              summarize_deliveries)
 from watchlist_detail import (STALE_AFTER_SEC, STALE_REGULAR_AFTER_SEC,
@@ -405,8 +405,9 @@ RH_CARD_TOOLTIP = (
     "Watchlist Robinhood LP (0x…, chain id 4663) — di-scan cron tiap ±5 "
     "menit (sejak 2026-09-06, sama cepatnya dengan Watchlist Meteora) "
     "supaya exit bisa lebih awal. Satu-satunya notifikasi Telegram: "
-    f"{STRATEGY_SHIFT_TITLE} — dikirim berulang tiap scan selama hold % MC "
-    f"dust masih ≥ {STRATEGY_SHIFT_PCT:g}%, berhenti hanya bila token "
+    f"{EARLY_DUMP_TITLE} — dikirim tiap kali dust % MC naik "
+    f"≥ {EARLY_DUMP_STEP_PCT:g}% dari angka saat token masuk watchlist "
+    f"(berulang tiap kelipatan {EARLY_DUMP_STEP_PCT:g}%), berhenti hanya bila token "
     "dihapus (✕) atau dipindah ke watchlist biasa (📋). Notif bisa "
     "dimatikan per token lewat tombol 🔕 di barisnya (token baru selalu "
     "🔔 ON; scan + grafik tetap jalan). Badge level dust "
@@ -420,8 +421,9 @@ RH_REGULAR_CARD_TOOLTIP = (
     "Watchlist Robinhood biasa (0x…, chain id 4663) — TIDAK di-scan cron "
     "(slot 4 jam dimatikan); datanya jalan lewat tombol scan manual di "
     "card ini atau pindah ke card LP. Notifikasinya sama seperti lane LP: "
-    f"{STRATEGY_SHIFT_TITLE} dikirim tiap scan selama hold % MC dust "
-    f"≥ {STRATEGY_SHIFT_PCT:g}% (hanya bila notif watchlist biasa ON di "
+    f"{EARLY_DUMP_TITLE} dikirim tiap kali dust % MC naik "
+    f"≥ {EARLY_DUMP_STEP_PCT:g}% dari angka saat token masuk watchlist "
+    "(hanya bila notif watchlist biasa ON di "
     "bawah card dan tombol 🔔 token itu tidak dimatikan). Badge level dust "
     "di baris: "
     f"≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "

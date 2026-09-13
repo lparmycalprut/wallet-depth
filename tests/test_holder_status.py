@@ -53,12 +53,13 @@ class SnapshotStatusTest(unittest.TestCase):
                             "balances": {addr: 2.0}, "dust": [addr],
                             "wallets_seen": 9},
                 "sent_event_ids": ["event-1"],
-                "last_sent": {"strategy_shift": 199},
-                "strategy_shift": {"ts": 200, "dust_pct_mc": 0.5,
-                                   "since_ts": 150},
+                "last_sent": {"early_dump": 199},
+                "early_dump": {"ts": 200, "dust_pct_mc": 0.5,
+                               "baseline_pct": 0.1, "baseline_ts": 150,
+                               "step": 20, "baseline_src": "history"},
                 # sisa rule lama harus hilang dari payload dashboard
                 "rejected_signals": [{"reason": "x"}],
-                "early_dump": {"ts": 1},
+                "strategy_shift": {"ts": 1},
             },
             "points": [], "cohort": {"frozen_at": 50, "balances": {addr: 3.0}},
         }}}
@@ -74,11 +75,15 @@ class SnapshotStatusTest(unittest.TestCase):
         # ``rejected_signals`` (audit gerbang volume lama) tidak diringkas lagi
         # — rule-nya sudah dihapus 2026-09-11.
         self.assertNotIn("rejected_signals", state)
-        self.assertNotIn("early_dump", state)
-        self.assertEqual(state["last_sent"], {"strategy_shift": 199})
-        self.assertEqual(state["strategy_shift"]["ts"], 200)
-        self.assertAlmostEqual(state["strategy_shift"]["dust_pct_mc"], 0.5)
-        self.assertEqual(state["strategy_shift"]["since_ts"], 150)
+        self.assertNotIn("strategy_shift", state)
+        self.assertEqual(state["last_sent"], {"early_dump": 199})
+        self.assertEqual(state["early_dump"]["ts"], 200)
+        self.assertAlmostEqual(state["early_dump"]["dust_pct_mc"], 0.5)
+        # Patokan + langkah ikut diringkas: tanpa itu runner cron ephemeral
+        # kehilangan hitungan 0,02% dan berhenti berbunyi.
+        self.assertAlmostEqual(state["early_dump"]["baseline_pct"], 0.1)
+        self.assertEqual(state["early_dump"]["baseline_ts"], 150)
+        self.assertEqual(state["early_dump"]["step"], 20)
         self.assertEqual(state["baseline"]["balances"], 1)
         self.assertEqual(state["baseline"]["dust"], 1)
         self.assertEqual(state["baseline"]["ts"], 100)

@@ -9,9 +9,9 @@ yang baru dipantau — atau token di lane yang tidak di-scan cron sama sekali
 dashboard sudah menampilkan dust di atas ambang (kasus nyata: MOO
 ``0xc103ac…`` 0,11% MC di Robinhood, tidak ada pesan Telegram).
 
-Sejak 2026-09-11 notifnya satu: 🚨 **WAKTUNYA GANTI STRATEGI** (dust ≥ 0,06%
-MC) — dan lane mana pun yang di-scan boleh mengirimnya, termasuk watchlist
-biasa lewat tombol scan manual.
+Sejak 2026-09-13 notifnya satu: ⚡ **EARLY DUMP TERJADI - GANTI WIDE RANGE**
+(dust naik ≥ 0,02% MC dari patokan saat token di-add) — dan lane mana pun yang
+di-scan boleh mengirimnya, termasuk watchlist biasa lewat tombol scan manual.
 
 Yang dikunci di sini:
 
@@ -66,11 +66,24 @@ def _analysis(symbol: str, dust_pct: float, **kwargs) -> dict:
             "market": {"marketcap": 250_000.0, "price": 0.001}}
 
 
+def _episode(dust_pct, *, baseline=0.05, step=0, ts=NOW - 300):
+    """Marker ⚡ seperti tulisan ``early_dump_marker_next`` (siap berbunyi).
+
+    ``dust_pct_mc`` = angka run terakhir, ``baseline_pct`` = patokan saat token
+    masuk watchlist, ``step`` = langkah 0,02% yang sudah dikabarkan. Rule baru
+    berbunyi kalau ``dust_pct_mc`` run ini sudah melewati langkah berikutnya.
+    """
+    return {ta.EARLY_DUMP_MARKER: {
+        "ts": ts, "dust_pct_mc": dust_pct,
+        "baseline_pct": baseline, "baseline_ts": NOW - 900,
+        "step": step, "baseline_src": "history"}}
+
+
 class DeliverySummaryTest(unittest.TestCase):
     """Ringkasan kirim alert yang dipakai UI scan manual."""
 
     def test_sent_muted_failed_dan_kosong(self):
-        kinds = ta.STRATEGY_SHIFT_KIND
+        kinds = ta.EARLY_DUMP_KIND
         rows = [
             {"event": {"kind": kinds}, "delivery": {"ok": True}},
             {"event": {"kind": kinds},
@@ -85,7 +98,7 @@ class DeliverySummaryTest(unittest.TestCase):
                           summary["failed"]), (3, 1, 1, 1))
         self.assertEqual(summary["kinds"], [kinds, kinds, kinds])
         note = ta.delivery_note(summary)
-        self.assertIn("1 notifikasi WAKTUNYA GANTI STRATEGI dikirim", note)
+        self.assertIn("1 notifikasi EARLY DUMP TERJADI dikirim", note)
         self.assertIn("1 notifikasi dilewati (notif token itu sedang dimatikan)", note)
         self.assertIn("1 notifikasi GAGAL dikirim", note)
         self.assertIn("Telegram credentials are not configured", note)
@@ -269,9 +282,9 @@ class ManualScanAlertTest(unittest.TestCase):
     def _run_lp_scan(self, dust_pct: float, *, alert_state=None):
         """Scan manual Chart LP; ``alert_state`` = state alert tersimpan.
 
-        Marker episode bersarang di ``alert_state["strategy_shift"]`` (bentuk
-        yang dibaca ``evaluate_alert_events``) — salah sarang berarti rule
-        tidak pernah melihat episode sebelumnya.
+        Marker ⚡ bersarang di ``alert_state["early_dump"]`` (bentuk yang
+        dibaca ``evaluate_alert_events``) — salah sarang berarti rule tidak
+        pernah melihat episode sebelumnya.
         """
         store = {"tokens": {LP_MINT: {"symbol": "LPRISK", "cohort": {},
                                       "points": [],
@@ -300,19 +313,32 @@ class ManualScanAlertTest(unittest.TestCase):
         return app
 
     def test_chart_lp_scan_manual_mengirim_notif(self):
-        app = self._run_lp_scan(0.11)
+        app = self._run_lp_scan(0.11, alert_state=_episode(0.05))
         self.assertEqual(len(self.sent), 1, self.sent)
-        self.assertEqual(self.sent[0]["kind"], ta.STRATEGY_SHIFT_KIND)
+        self.assertEqual(self.sent[0]["kind"], ta.EARLY_DUMP_KIND)
         self.assertEqual(self.sent[0]["mint"], LP_MINT)
         self.assertAlmostEqual(self.sent[0]["current_dust_pct_mc"], 0.11)
-        self.assertIn("1 notifikasi WAKTUNYA GANTI STRATEGI dikirim",
+        # 0,11% vs patokan 0,05% = 3 langkah 0,02% (bukan ambang 0,06%).
+        self.assertEqual(self.sent[0]["step"], 3)
+        self.assertIn("1 notifikasi EARLY DUMP TERJADI dikirim",
                       self._infos(app))
 
-    def test_chart_lp_di_bawah_ambang_tidak_mengirim(self):
-        # 0,05% MC masih di bawah ambang notif (0,06) — dan persis ambang
-        # tampil listing scan best, jadi tidak boleh ada spam.
-        app = self._run_lp_scan(0.05)
+    def test_chart_lp_di_bawah_langkah_tidak_mengirim(self):
+        # 0,06% vs patokan 0,05% = naik 0,01% → belum sampai satu langkah
+        # 0,02%, jadi tidak ada spam.
+        app = self._run_lp_scan(0.06, alert_state=_episode(0.05))
         self.assertEqual(self.sent, [])
+        self.assertNotIn("notifikasi", self._infos(app))
+
+    def test_scan_pertama_memasang_patokan_tanpa_notif(self):
+        """Tanpa state = run pertama rule ini: patokan dipasang, diam dulu."""
+        app = self._run_lp_scan(0.30)
+        self.assertEqual(self.sent, [])
+        state = ((self.store.get("tokens") or {}).get(LP_MINT) or {}).get(
+            "alert_state") or {}
+        marker = state["early_dump"]
+        self.assertAlmostEqual(marker["baseline_pct"], 0.30)
+        self.assertEqual(marker["step"], 0)
         self.assertNotIn("notifikasi", self._infos(app))
 
     def test_state_alert_tersimpan_bersama_store(self):
@@ -321,40 +347,43 @@ class ManualScanAlertTest(unittest.TestCase):
         Tanpa ini scan manual berikutnya mengirim pesan yang sama lagi:
         dedup event id + cooldown dibaca dari ``alert_state``.
         """
-        self._run_lp_scan(0.11)
+        self._run_lp_scan(0.11, alert_state=_episode(0.05))
         state = ((self.store.get("tokens") or {}).get(LP_MINT) or {}).get(
             "alert_state") or {}
-        self.assertIn("strategy_shift", state)
-        self.assertAlmostEqual(state["strategy_shift"]["dust_pct_mc"], 0.11)
-        self.assertIn(ta.STRATEGY_SHIFT_KIND, state.get("last_sent") or {})
+        marker = state["early_dump"]
+        self.assertAlmostEqual(marker["dust_pct_mc"], 0.11)
+        self.assertAlmostEqual(marker["baseline_pct"], 0.05)
+        self.assertEqual(marker["step"], 3)
+        self.assertIn(ta.EARLY_DUMP_KIND, state.get("last_sent") or {})
 
-    def test_episode_lama_dilanjutkan_bukan_dimulai_ulang(self):
-        """Marker ≥ ambang → pengingat berulang, bukan "pertama kali".
+    def test_langkah_berikutnya_dilanjutkan_bukan_dimulai_ulang(self):
+        """Marker langkah 4 → kenaikan ke langkah 5 = pengingat berulang.
 
-        Rule eskalasi lama (🚨 EXIT / CUTLOSS + ✅ KEMBALI KE TITIK AMAN)
-        dihapus 2026-09-11; yang tersisa hanya kesinambungan episode: ``ts``
-        marker dimajukan dan ``since_ts`` episode lama dipertahankan.
+        Patokan (``baseline_pct``/``baseline_ts``) TIDAK digeser saat run
+        berjalan: 0,02% selalu dihitung dari angka saat token di-add.
         """
-        episode = {"strategy_shift": {"ts": NOW - 300, "dust_pct_mc": 0.13,
-                                      "since_ts": NOW - 900}}
+        episode = _episode(0.13, baseline=0.05, step=4)
         self._run_lp_scan(0.15, alert_state=episode)
-        self.assertEqual([e["kind"] for e in self.sent],
-                         [ta.STRATEGY_SHIFT_KIND])
-        self.assertIn("pengingat berulang", self.sent[0]["scope"])
+        self.assertEqual([e["kind"] for e in self.sent], [ta.EARLY_DUMP_KIND])
+        self.assertEqual(self.sent[0]["step"], 5)
         state = ((self.store.get("tokens") or {}).get(LP_MINT) or {}).get(
             "alert_state") or {}
-        self.assertEqual(state["strategy_shift"]["ts"], NOW)
-        self.assertEqual(state["strategy_shift"]["since_ts"], NOW - 900)
+        marker = state["early_dump"]
+        self.assertEqual(marker["ts"], NOW)
+        self.assertAlmostEqual(marker["baseline_pct"], 0.05)
+        self.assertEqual(marker["baseline_ts"], NOW - 900)
+        self.assertEqual(marker["step"], 5)
 
-    def test_turun_di_bawah_ambang_tanpa_notif_penutup(self):
-        """Dust turun lagi = marker dibersihkan, TIDAK ada pesan "aman"."""
-        episode = {"strategy_shift": {"ts": NOW - 300, "dust_pct_mc": 0.14,
-                                      "since_ts": NOW - 900}}
+    def test_turun_di_bawah_patokan_tanpa_notif_penutup(self):
+        """Dust turun lagi = diam, TIDAK ada pesan "aman"; step tidak mundur."""
+        episode = _episode(0.14, baseline=0.05, step=4)
         self._run_lp_scan(0.02, alert_state=episode)
         self.assertEqual(self.sent, [])
         state = ((self.store.get("tokens") or {}).get(LP_MINT) or {}).get(
             "alert_state") or {}
-        self.assertEqual(state.get("strategy_shift"), {})
+        marker = state["early_dump"]
+        self.assertAlmostEqual(marker["baseline_pct"], 0.05)
+        self.assertEqual(marker["step"], 4)   # high water mark tidak mundur
 
     def test_scan_manual_kedua_di_bucket_sama_tidak_mengirim_ulang(self):
         """Dedup event id per bucket 5 menit harus bertahan antar scan.
@@ -362,7 +391,7 @@ class ManualScanAlertTest(unittest.TestCase):
         State hasil scan pertama ikut ditulis ``ingest_many``; scan manual
         kedua pada bucket yang sama tidak boleh mengirim pesan kembar.
         """
-        self._run_lp_scan(0.11)
+        self._run_lp_scan(0.11, alert_state=_episode(0.05))
         self.assertEqual(len(self.sent), 1)
         state = ((self.store.get("tokens") or {}).get(LP_MINT) or {}).get(
             "alert_state") or {}
@@ -374,12 +403,14 @@ class ManualScanAlertTest(unittest.TestCase):
     def _run_rh_scan(self, variant: str, dust_pct: float, *,
                      telegram_on: bool = True, marker=None):
         source = "lp" if variant == "lp" else "regular"
-        # Marker episode bersarang di ``alert_state["strategy_shift"]``
-        # (lihat telegram_alerts.evaluate_alert_events).
+        # Marker ⚡ bersarang di ``alert_state["early_dump"]`` (lihat
+        # telegram_alerts.evaluate_alert_events). Default = episode dengan
+        # patokan 0,05%, jadi dust 0,11% sudah 3 langkah di atasnya.
+        if marker is None:
+            marker = _episode(0.05)[ta.EARLY_DUMP_MARKER]
         store = {"tokens": {RH_CA: {"symbol": "MOO", "cohort": {},
                                     "points": [],
-                                    "alert_state": ({"strategy_shift": marker}
-                                                    if marker else {})}}}
+                                    "alert_state": {"early_dump": marker}}}}
         patches = [
             mock.patch("watchlist.load_watchlist", return_value={}),
             mock.patch("holder_status.load_holder_status",
@@ -421,26 +452,26 @@ class ManualScanAlertTest(unittest.TestCase):
     def test_robinhood_lp_scan_manual_mengirim_notif(self):
         app = self._run_rh_scan("lp", 0.11)
         self.assertEqual(len(self.sent), 1, self.sent)
-        self.assertEqual(self.sent[0]["kind"], ta.STRATEGY_SHIFT_KIND)
+        self.assertEqual(self.sent[0]["kind"], ta.EARLY_DUMP_KIND)
         self.assertEqual(self.sent[0]["mint"], RH_CA)
-        self.assertIn("1 notifikasi WAKTUNYA GANTI STRATEGI dikirim",
+        self.assertIn("1 notifikasi EARLY DUMP TERJADI dikirim",
                       self._infos(app))
 
-    def test_robinhood_lp_di_bawah_ambang_tidak_mengirim(self):
-        app = self._run_rh_scan("lp", 0.04)
+    def test_robinhood_lp_di_bawah_langkah_tidak_mengirim(self):
+        app = self._run_rh_scan("lp", 0.06)
         self.assertEqual(self.sent, [])
         self.assertNotIn("notifikasi", self._infos(app))
 
     def test_lane_biasa_juga_mengirim_notif_yang_sama(self):
         """Watchlist biasa tidak di-scan cron: scan manual satu-satunya jalur.
 
-        Dulu lane ini punya rule sendiri (🔔 titik high); sejak 2026-09-11
-        notifikasinya satu untuk semua lane.
+        Dulu lane ini punya rule sendiri (🔔 titik high); sekarang
+        notifikasinya satu untuk semua lane (⚡ delta 0,02%).
         """
         app = self._run_rh_scan("regular", 0.20)
         self.assertEqual(len(self.sent), 1, self.sent)
-        self.assertEqual(self.sent[0]["kind"], ta.STRATEGY_SHIFT_KIND)
-        self.assertIn("1 notifikasi WAKTUNYA GANTI STRATEGI dikirim",
+        self.assertEqual(self.sent[0]["kind"], ta.EARLY_DUMP_KIND)
+        self.assertIn("1 notifikasi EARLY DUMP TERJADI dikirim",
                       self._infos(app))
 
     def test_notif_lane_biasa_dimatikan_user_tetap_dievaluasi(self):

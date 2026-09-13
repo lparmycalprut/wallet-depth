@@ -144,17 +144,19 @@ class ChartLpCardTest(unittest.TestCase):
 
         Caption panjang di badan card diganti atribut ``title`` pada teks
         judul — hanya muncul saat kursor digeser ke tulisan "Watchlist
-        Meteora". Ambang (0,1 / 0,5 / 1% MC) harus tetap disebut di dalamnya.
+        Meteora". Ambang level dust (0,5 / 1% MC) dan rule notifikasi delta
+        0,02% harus tetap disebut di dalamnya.
         """
         app = self._app()
         body = self._body(app)
         captions = "\n".join(node.value for node in app.caption)
         # Teks detail tidak lagi dirender sebagai caption card.
-        self.assertNotIn("berulang tiap scan", captions)
+        self.assertNotIn("berulang untuk tiap kelipatan", captions)
         self.assertNotIn("perubahan holder langsung kelihatan", captions)
         # ... tapi ada sebagai tooltip (title="…") di span judul card.
         self.assertIn('title="Watchlist terpisah', body)
-        self.assertIn("berulang tiap scan", body)
+        self.assertIn("berulang untuk tiap kelipatan 0.02%", body)
+        self.assertIn("⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE", body)
         self.assertIn("perubahan holder langsung kelihatan", body)
         self.assertIn("per bucket 5 menit", body)
         # Jangan ada lagi janji "Meteora tetap 15 menit" di tooltip ini.

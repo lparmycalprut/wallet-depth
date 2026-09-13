@@ -16,10 +16,11 @@ Dua setelan:
    ``robinhood_watchlist`` memanggil :func:`forget_mint_alert` supaya token
    yang di-add **ulang** tidak mewarisi pilihan OFF periode sebelumnya.
 
-Notifikasinya kini satu: 🚨 WAKTUNYA GANTI STRATEGI (dust ≥ 0,06% MC; rule
-lama ⚡/🔔 sudah dihapus 2026-09-11). Pemakaiannya di
+Notifikasinya kini satu: ⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE (dust
+naik ≥ 0,02% MC dari angka saat token masuk watchlist, berulang tiap
+kelipatan 0,02%; rule ambang 0,06% sudah diganti 2026-09-13). Pemakaiannya di
 ``telegram_alerts.process_holder_alerts(mute_mints=…)``: rule tetap
-**dievaluasi** dan marker (``strategy_shift``) tetap dimajukan, hanya
+**dievaluasi** dan marker (``early_dump``) tetap dimajukan, hanya
 pengiriman pesannya yang dilewati — jadi menyalakan notif lagi tidak
 membanjiri user dengan pengingat episode lama.
 

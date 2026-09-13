@@ -1,5 +1,44 @@
 # Progress
 
+## 2026-09-13: 🌊 Scan Meteora — urut volume/active TVL · notif delta ⚡ EARLY DUMP 0,02%
+
+**Status: selesai & tes hijau (1140 tests, OK).**
+
+Permintaan user: *"kita benahi lagi scan meteora kita — sort pertama adalah
+dari volume / active tvl yang paling besar dulu — lalu dari %dust yang paling
+kecil — lalu notifikasi telegram akan muncul ketika %dust naik 0.02%, jadi
+sekarang bukan ambang batas, tapi notif berulang ketika dust bertambah 0.02%
+dari pertama add watchlist — notifnya jadi gini: EARLY DUMP TERJADI - GANTI
+WIDE RANGE"*.
+
+- **Urutan listing** — kunci pertama `volume_active_tvl_ratio` (field API
+  Meteora; user menempel payload dan menunjukkan TACZ = 1646,63%), kunci
+  kedua dust %MC terkecil. `meteora_screener.row_vol_tvl_ratio()` satu sumber
+  angka (fallback `volume / active_tvl × 100` untuk baris lama tanpa field),
+  `sort_best_rows()` = rasio → dust → simbol, `sort_rows()` tie-break #3
+  berganti TVL → rasio, `_row_from_pool()` membawa field itu. Baris kecil
+  kolom Vol 24h menampilkan `Δ x% · 1,647× A.TVL`.
+- **Notifikasi bukan ambang lagi** — rule level `STRATEGY_SHIFT_PCT` 0,06
+  diganti rule delta: patokan dust saat token masuk watchlist
+  (`baseline_pct`, dari titik `holder_history` pertama setelah tanggal
+  `added`, fallback scan pertama) dan pesan tiap kelipatan
+  `EARLY_DUMP_STEP_PCT` 0,02% yang belum dikabarkan
+  (`_steps_from_baseline`, high water mark, tanpa pesan "sudah aman").
+  Marker `alert_state["early_dump"] = {ts, dust_pct_mc, baseline_pct,
+  baseline_ts, step, baseline_src}`; hanya `_reset_markers_on_readd` yang
+  mengosongkannya. Judul baru **⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE**,
+  baris `📊 Dust: a% → b% MC (+x pp · langkah N× 0,02%)` + `⏱️ N menit sejak
+  masuk watchlist`. Dedup bucket 5 menit + jeda 300 dtk tetap;
+  langkah 0,02% tidak dimakan bila semua kirim gagal (`_restore_step`).
+- **Tes** — `tests/test_strategy_shift.py` → `tests/test_early_dump.py`
+  (35 tes, termasuk `NoLegacyRulesTest` yang memastikan simbol rule lama
+  hilang); `test_best_pool_scan.py` +3 tes urutan/fallback rasio;
+  `test_meteora_screener.py` ikut signature `_sort_row(..., ratio, tvl=)`.
+- **Teks** — `README.md`, `AGENTS.md`, `DEPLOY.md`, `KEGIATAN.md` (entri ini),
+  tooltip `best_pool_ui` / `temp_ui` / `app` / `dashboard_components`.
+
+Detail: `KEGIATAN.md` 13 September 2026 (blok paling atas).
+
 ## 2026-09-13: 🌊/🏆 Scan Meteora — Dust %MC tidak lagi 0,000% palsu
 
 **Status: selesai.** Permintaan user: *"di scan meteora menunjukkan 0.000%

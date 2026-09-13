@@ -45,9 +45,10 @@ dispatch**) dan memanggil `python scripts/scan_holders.py`. Sejak
 Watchlist biasa (Solana non-LP & Robinhood `source=regular`) tidak di-scan cron
 lagu — slot 4 jam, catch-up, bootstrap, pembacaan toggle Telegram-nya, dan
 semua rule lama (🔔 HIGH DROP, ⚡ EARLY DUMP, exit/aman) dilepas dari jalur
-cron (scan manual di dashboard tetap ada; sejak 2026-09-11 kedua jalur memakai
-satu-satunya rule 🚨 WAKTUNYA GANTI STRATEGI — dust ≥ 0,06% MC, diulang tiap
-scan selama masih di atas ambang). Pencatatan ikut dirampingkan:
+cron (scan manual di dashboard tetap ada; sejak 2026-09-13 kedua jalur memakai
+satu-satunya rule ⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE — dust naik ≥ 0,02%
+MC dari patokan saat token masuk watchlist, berulang tiap kelipatan 0,02%).
+Pencatatan ikut dirampingkan:
 snapshot dipublish tanpa `merge_status`, toggle Telegram watchlist biasa tidak
 dibaca lagi, dan backup durable dibatasi token LP aktif
 (`publish_holder_history(..., keep_mints=…)` — terukur 2.135.084 → 10.050 byte

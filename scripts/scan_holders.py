@@ -12,9 +12,10 @@ Yang dikerjakan tiap run (±5 menit):
 2. **Robinhood LP** — entri non-``regular`` di ``watchlist_robinhood.json``
    (chain EVM Robinhood id 4663, holder via Blockscout);
 3. hitung holder real vs dust + dust % marketcap + mid-tier Crab/Fish, lalu
-   evaluasi **satu-satunya** notifikasi — 🚨 WAKTUNYA GANTI STRATEGI, diulang
-   tiap scan selama dust ≥ 0,06% MC (rule ⚡ EARLY DUMP / 🔔 HIGH DROP /
-   eskalasi EXIT-CUTLOSS DIHAPUS 2026-09-11). Konteks pasar untuk baris
+   evaluasi **satu-satunya** notifikasi — ⚡ EARLY DUMP TERJADI - GANTI WIDE
+   RANGE, dikirim tiap dust % MC naik ≥ 0,02% dari angka saat token masuk
+   watchlist (rule ambang 0,06% MC / 🔔 HIGH DROP / eskalasi EXIT-CUTLOSS
+   DIGANTI 2026-09-13). Konteks pasar untuk baris
    pelengkap pesan ditarik **lazy** — hanya untuk token yang dinotifikasi,
    jadi run tenang tidak menambah satu pun request);
 4. catat **satu titik** per token ke store history, publish snapshot dashboard
@@ -37,7 +38,7 @@ Yang **dibaca** cron dari ``alert_settings.json`` (ref ``holder-live``, satu
 request GitHub per run — di-cache modulnya sendiri): ``muted_mints`` = token
 yang toggle alert-nya dimatikan user dari dashboard (tombol 🔔/🔕 per baris
 watchlist Meteora/Robinhood, 2026-09-11). Token itu tetap di-scan + marker
-``strategy_shift`` tetap dimajukan; hanya pengiriman Telegram-nya dilewati
+``early_dump`` tetap dimajukan; hanya pengiriman Telegram-nya dilewati
 (``mute_mints``), jadi cron dan dashboard menghormati pilihan yang sama.
 
 Scan FULL (baseline immutable + kronologi wallet antar-scan) tidak
@@ -346,9 +347,9 @@ def main(argv=None) -> int:
         if args.full:
             provider = market_context_provider(cache=contexts,
                                                daily_loader=load_daily_effort)
-        # 🚨 WAKTUNYA GANTI STRATEGI = satu-satunya notifikasi, scope-nya
-        # seluruh lane yang di-scan run ini. advance_anchors: peta wallet
-        # (anchor ±4 jam) hanya digeser oleh scan FULL.
+        # ⚡ EARLY DUMP = satu-satunya notifikasi, scope-nya seluruh lane yang
+        # di-scan run ini (patokan 0,02% per token diambil dari history).
+        # advance_anchors: peta wallet (anchor ±4 jam) hanya digeser scan FULL.
         deliveries = process_holder_alerts(
             analyses, store, context_provider=provider,
             mute_mints=alert_settings.mutes_for(analyses),

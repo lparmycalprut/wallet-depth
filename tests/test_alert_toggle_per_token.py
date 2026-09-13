@@ -246,13 +246,37 @@ def _store_lp() -> dict:
     return {"updated_at": NOW, "tokens": {
         LP_MINT: _store_token("RAYCAT", 0.55),
         LP_SAFE: _store_token("LPSAFE", 0.31),
+        # Watchlist biasa Solana memakai store yang sama; marker ⚡-nya juga
+        # harus ada supaya uji mute tombol scan di halaman temp berbunyi.
+        SOL_MINT: {"symbol": "HOLDT", "cohort": {}, "points": [],
+                   "alert_state": _episode_marker()},
     }}
+
+
+def _store_rh() -> dict:
+    """Riwayat lane Robinhood dengan patokan ⚡ untuk kedua token uji."""
+    return {"updated_at": NOW, "tokens": {
+        RH_CA: {"symbol": "CME", "cohort": {}, "points": [],
+                "alert_state": _episode_marker()},
+        RH_CA2: {"symbol": "MOO", "cohort": {}, "points": [],
+                 "alert_state": _episode_marker()},
+    }}
+
+
+def _episode_marker(dust_pct: float = 0.07) -> dict:
+    """Marker ⚡ siap berbunyi: patokan 0,07%, belum ada langkah dikabarkan."""
+    return {"early_dump": {"ts": NOW - BUCKET, "dust_pct_mc": dust_pct,
+                           "baseline_pct": dust_pct, "baseline_ts": NOW - 3600,
+                           "step": 0, "baseline_src": "history"}}
 
 
 def _store_token(symbol: str, pct: float) -> dict:
     return {"symbol": symbol, "cohort": {},
             "points": [_point(NOW - BUCKET, 0.30, 50),
-                       _point(NOW, pct, 70)]}
+                       _point(NOW, pct, 70)],
+            # Patokan ⚡ sudah ada: scan manual ber-dust 0,11% = 2 langkah
+            # 0,02% di atasnya, jadi notifikasi memang harus berbunyi.
+            "alert_state": _episode_marker()}
 
 
 def _analysis(symbol: str, pct: float, ts: int = NOW) -> dict:
@@ -289,7 +313,7 @@ class AlertToggleUiTest(unittest.TestCase):
             mock.patch("robinhood_watchlist.load_status",
                        return_value={"updated_at": NOW, "tokens": {}}),
             mock.patch("robinhood_watchlist.load_history",
-                       return_value={"updated_at": NOW, "tokens": {}}),
+                       side_effect=lambda *a, **kw: _store_rh()),
             mock.patch("robinhood_watchlist.sync_state",
                        return_value={"state": ""}),
             mock.patch("alert_settings.muted_mints",
@@ -306,18 +330,22 @@ class AlertToggleUiTest(unittest.TestCase):
 
     # --- harness ------------------------------------------------------------
     def watchlist(self):
+        # Tanggal ``added`` harus SEBELUM NOW: marker ⚡ yang lebih tua dari
+        # tanggal add dianggap milik periode watchlist sebelumnya dan dibuang
+        # (``telegram_alerts._reset_markers_on_readd``) — patokan lalu dipasang
+        # ulang dan tidak ada notifikasi.
         return {LP_MINT: {"symbol": "RAYCAT", "source": "meteora",
-                          "added": "2026-09-11"},
+                          "added": "2026-01-05"},
                 LP_SAFE: {"symbol": "LPSAFE", "source": "meteora",
-                          "added": "2026-09-11"},
+                          "added": "2026-01-05"},
                 SOL_MINT: {"symbol": "HOLDT", "source": "manual",
-                           "added": "2026-09-11"}}
+                           "added": "2026-01-05"}}
 
     def rh_watchlist(self):
         return {RH_CA: {"symbol": "CME", "source": "lp",
-                        "added": "2026-09-11"},
+                        "added": "2026-01-05"},
                 RH_CA2: {"symbol": "MOO", "source": "regular",
-                         "added": "2026-09-11"}}
+                         "added": "2026-01-05"}}
 
     def _write(self, path, payload, **_kw):
         self.written[str(path)] = payload
@@ -408,7 +436,7 @@ class AlertToggleUiTest(unittest.TestCase):
                         _analysis(str(mint)[:6], 0.11)):
             app = self._button(app, "lp-scan-now").click().run()
         self.assertEqual([event["mint"] for event in self.sent], [LP_SAFE])
-        self.assertIn("1 notifikasi WAKTUNYA GANTI STRATEGI dikirim",
+        self.assertIn("1 notifikasi EARLY DUMP TERJADI dikirim",
                       self._info(app))
         self.assertIn("1 notifikasi dilewati", self._info(app))
 
@@ -450,10 +478,12 @@ class AlertToggleUiTest(unittest.TestCase):
         self.assertEqual([event["mint"] for event in self.sent], [LP_SAFE],
                          "token yang dimatikan tidak boleh kirim")
         self.assertIn("dilewati", self._info(app))
-        # Evaluasi tetap jalan: marker episode ikut tersimpan.
+        # Evaluasi tetap jalan: marker ⚡ ikut tersimpan (langkah 0,02%
+        # dimajukan walau pesannya dilewati).
         state = ((self.store.get("tokens") or {}).get(LP_MINT) or {}).get(
             "alert_state") or {}
-        self.assertIn("strategy_shift", state)
+        self.assertIn("early_dump", state)
+        self.assertEqual(state["early_dump"]["step"], 2)
 
     def test_scan_lp_manual_tanpa_bell_off_tetap_kirim(self):
         app = self._app()
@@ -499,7 +529,8 @@ class AlertToggleUiTest(unittest.TestCase):
 
         Toggle-nya tidak dirender di card Holder, jadi yang diuji di sini
         adalah pilihan yang **ikut terbawa** token — bukan memaksa user
-        mencari tokennya kembali di card Meteora.
+        mencari tokennya kembali di card Meteora. Marker ⚡ tetap maju
+        (evaluasi jalan) walau pesannya dilewati.
         """
         self.muted = {SOL_MINT}
         app = self._app(temp=True)

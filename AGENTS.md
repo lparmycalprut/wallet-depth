@@ -197,12 +197,13 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   memakai guard kelayakan + merge snapshot. Form Robinhood tersedia di
   kedua halaman, default sesuai lane. Pemindahan UI **tidak** menghapus
   token/history, mengubah `source`, cron, atau pengaturan Telegram.
-- **Semua jalur scan mengirim alert Telegram** — sejak 2026-09-11 hanya ada
-  **satu rule**: 🚨 **WAKTUNYA GANTI STRATEGI** (`dust_pct_mc >= 0.06`,
-  level-based, tanpa gerbang volume). Keempat jalur memanggil
+- **Semua jalur scan mengirim alert Telegram** — sejak 2026-09-13 hanya ada
+  **satu rule**: ⚡ **EARLY DUMP TERJADI - GANTI WIDE RANGE**
+  (`dust_pct_mc` naik ≥ `EARLY_DUMP_STEP_PCT` 0.02 dari patokan watchlist —
+  delta berulang, tanpa gerbang volume). Keempat jalur memanggil
   `process_holder_alerts(...)` **sebelum** `ingest_many`/`publish_scan`, jadi
   rule membaca anchor lama dan state hasil evaluasi (`sent_event_ids` /
-  `last_sent` / marker `strategy_shift`) ikut tertulis saat store disimpan
+  `last_sent` / marker `early_dump`) ikut tertulis saat store disimpan
   (pola cron):
   - `scripts/scan_holders.py` (LP + Robinhood LP) — `advance_anchors=args.full`
     (hanya scan FULL yang menggeser anchor) dan
@@ -337,8 +338,8 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
      run** (1 request GitHub) lalu meneruskan `mutes_for(...)` per lane;
      jalur scan manual memakai fungsi yang sama, jadi cron dan dashboard
      selalu sepakat.
-  **Muted = kirim dilewati, evaluasi TIDAK**: marker `strategy_shift`
-  (`ts`/`dust_pct_mc`/`since_ts`) tetap dimajukan supaya menyalakan notif lagi
+  **Muted = kirim dilewati, evaluasi TIDAK**: marker `early_dump`
+  (`ts`/`dust_pct_mc`/`step`) tetap dimajukan supaya menyalakan notif lagi
   tidak membanjiri user dengan pengingat episode lama. Tombol 🔔/🔕 dirender
   per baris: `lp-alert-<mint>` (Watchlist Meteora di `app.py`), `rh-alert-…`
   + `rhreg-alert-…` (`dashboard_components._render_rh_row`, scope dari
@@ -354,8 +355,9 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   POOL (dust < 0,1% + holder valid + TVL ≥ 10K) dirender di `app.py`
   (`_dust_best_html`), bukan di modul ini; badge AMAN/HATI-HATI/BAHAYA
   tidak dirender di listing Scan Meteora.
-  **Urutan baris = `sort_rows()`** (2026-09-08): BEST POOL di atas, lalu
-  dust % MC terkecil, TVL terbesar, simbol. `row_flag()` / `row_dust_pct()`
+  **Urutan baris = `sort_rows()`** (2026-09-08; kunci rasio 2026-09-13):
+  BEST POOL di atas, lalu dust % MC terkecil, **volume 24 jam / active TVL**
+  (`volume_active_tvl_ratio`) terbesar, simbol. `row_flag()` / `row_dust_pct()`
   dipakai bersama modul ini dan `app.py` supaya angka yang menyaring,
   mengurutkan, dan yang tampil selalu satu sumber. `scan_meteora()`
   mengembalikan `best_count`; `app.py` tetap memanggil `sort_rows()` lagi
@@ -380,13 +382,13 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   `hidden_rows` (volume ≥ 1M + dust < 0,05% MC, urut
   `sort_best_rows`) untuk tombol **N disembunyikan** di
   `best_pool_ui` (klik = listing itu; klik lagi = kembali ke yang lolos).
-  Lalu `sort_best_rows()`: **kenaikan volume 24 jam
-  (`volume_change_pct`) terbesar → dust % MC terkecil → fee/active TVL
-  terbesar** (sejak 2026-09-11 sore; kunci
+  Lalu `sort_best_rows()`: **volume 24 jam / active TVL
+  (`volume_active_tvl_ratio` — angka persen dari API Meteora; field absen
+  dihitung ulang `volume/active_tvl*100`) terbesar → dust % MC terkecil**
+  (sejak 2026-09-13; kunci
   dust dibulatkan ke `BEST_DUST_SORT_DECIMALS` = 3 desimal = presisi
-  tampilan card, jadi pool yang di layar sama-sama "0,030%" diurutkan
-  menurut rasio fee/TVL-nya), baris tanpa dust paling bawah, simbol sebagai
-  tie-break terakhir. Hasil scan:
+  tampilan card, jadi pool yang di layar sama-sama "0,030%" dianggap seri),
+  baris tanpa dust paling bawah, simbol sebagai tie-break terakhir. Hasil scan:
   `rows/error/fetched/hidden_metric/hidden_dust/analyzed_at`. UI-nya
   `best_pool_ui.render_best_pool_scan()` (card full-width di bawah grid 2
   kolom watchlist sejak 2026-09-11 — "jangan dibuat grid lagi"; dulu di
@@ -394,8 +396,8 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   `best_pool_tooltip()`, session key `best_pool_scan`, ⭐ = `source=meteora`
   → card Watchlist Meteora). Tabel
   card = detail fee / active TVL: kolom **A.TVL**, **Fee/TVL** (baris kecil
-  angka fee USD), **Vol 24h** (baris kecil Δ volume), tiap sel ber-`title`
-  dengan angka penuh + statusnya sebagai kunci urut.
+  angka fee USD), **Vol 24h** (baris kecil Δ volume + `N× A.TVL`), tiap sel
+  ber-`title` dengan angka penuh + statusnya sebagai kunci urut.
   **Tanda 🏆 BEST POOL (2026-09-12):** baris dengan dust **<=
   `BEST_DUST_MARK_PCT` 0,035% MC** (inklusif, `row_best_pool()`) ditandai —
   angka dust diwarnai emas + sub sel kolom Dust %MC diganti chip
@@ -529,15 +531,15 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   `holder_history.MAX_POINTS` harus ikut density run supaya jendela grafik LP
   tidak menyusut (`ScanDensityCalibrationTest`).
   Yang menahan pesan kembar: bucket event + jeda kirim
-  (`telegram_alerts.FAST_BUCKET_SEC` = `STRATEGY_SHIFT_RESEND_SEC` = **300 dtk
-  per token**) — token yang berhari-hari di atas ambang mengirim **maks 1 pesan
-  per scan**, dan run ganda yang lolos chain dispatch tetap teredam
+  (`telegram_alerts.FAST_BUCKET_SEC` = `EARLY_DUMP_RESEND_SEC` = **300 dtk
+  per token**) — token yang sudah lewat beberapa langkah 0,02% mengirim
+  **maks 1 pesan per scan**, dan run ganda yang lolos chain dispatch tetap teredam
   (`MIN_RUN_GAP_SEC` 4 menit + cooldown per-token). **Pull + merge
   backup store sebelum scan**, evaluasi alert
   sebelum ingest history, publish snapshot, **push backup store
   sesudahnya**; exit non-zero bila 0 holder / publish snapshot gagal
   (backup gagal = `WARN` saja, tidak membuat cron merah). Rule tidak lagi
-  punya flag scope: semua token yang dievaluasi memakai satu rule 🚨 yang
+  punya flag scope: semua token yang dievaluasi memakai satu rule ⚡ yang
   sama. Yang diteruskan hanya `watchlist_meta` = set `split_watchlist(
   watchlist)[0]` (Solana) / `split_robinhood_watchlist(rh_watch)[0]`
   (Robinhood) untuk **marker re-add** (`_reset_markers_on_readd` — token yang
@@ -598,41 +600,47 @@ JSON compact, Contents API base64) di ref `holder-live`:
 - `seed_from_status` tetap jadi jaring kedua: snapshot **format lama** (masih
   membawa peta wallet) dipulihkan seperti semula, snapshot ramping
   (`summary: True` / `balances` berupa angka) **tidak** menimpa store.
-- `telegram_alerts.py`: **satu rule** — 🚨 **WAKTUNYA GANTI STRATEGI**
-  (kind + marker `strategy_shift`), menyala selama `dust_pct_mc >=
-  STRATEGY_SHIFT_PCT` (**0.06**) pada token mana pun yang dievaluasi.
-  **Level-based, bukan crossing**: tiap evaluasi selama dust masih di atas
-  ambang menghasilkan event (dibatasi bucket `FAST_BUCKET_SEC` =
-  `STRATEGY_SHIFT_RESEND_SEC` = 300 dtk/token), jadi pengingat tetap ada
-  selama episode, bukan hanya saat melewati ambang. Turun di bawah ambang =
-  marker dikosongkan `{}` **tanpa pesan penutup**. Marker
-  `alert_state["strategy_shift"]` = `{ts, dust_pct_mc, since_ts}`
-  (`since_ts` = awal episode → baris `⏱️ N menit di atas ambang`; `ts`/
-  `dust_pct_mc` digeser tiap kirim oleh `strategy_shift_marker_next`,
-  `since_ts` diKEEP; `{}` kapan pun rule tidak menghasilkan event, sehingga
-  episode berikutnya mulai dari nol). Marker dipertahankan
+- `telegram_alerts.py`: **satu rule** — ⚡ **EARLY DUMP TERJADI - GANTI WIDE
+  RANGE** (kind + marker `early_dump`), menyala ketika `dust_pct_mc` naik
+  ≥ `EARLY_DUMP_STEP_PCT` (**0.02**) dari **patokan watchlist**
+  (`baseline_pct` = dust saat token masuk watchlist; boleh dari titik
+  `holder_history` pertama setelah tanggal `added`, ditandai `baseline_src`
+  `history`/`first-scan`) pada token mana pun yang dievaluasi.
+  **Delta berulang, bukan ambang**: `_steps_from_baseline()` menghitung
+  `floor((dust - baseline)/0.02)`, event dibuat hanya bila langkah itu
+  **lebih besar** dari `marker["step"]` — 0,02% pertama, kedua, dst.
+  masing-masing satu pesan, dan turun-naik ke level yang sudah dikabarkan
+  tidak mengirim ulang. Tiap evaluasi dibatasi bucket `FAST_BUCKET_SEC` =
+  `EARLY_DUMP_RESEND_SEC` = 300 dtk/token. Dust turun **tidak**
+  mengosongkan patokan dan **tidak** ada pesan penutup. Marker
+  `alert_state["early_dump"]` = `{ts, dust_pct_mc, baseline_pct,
+  baseline_ts, step, baseline_src}` (`baseline_ts` = saat patokan dipasang →
+  baris `⏱️ N menit sejak masuk watchlist`; `ts` digeser tiap kirim oleh
+  `early_dump_marker_next`, `baseline_*` diKEEP). Marker dipertahankan
   `compact_alert_state`, di-merge terbaru oleh
   `holder_history._merge_alert_state` (daftar kunci marker =
-  `("strategy_shift",)` — tambah key baru di DUA tempat itu).
+  `("early_dump",)` — tambah key baru di DUA tempat itu).
   **Yang DIHAPUS 2026-09-11** (permintaan user "hapus notif lainnya"): rule
-  dust 4 jam (+0,25/−0,50 pp), baseline shift ±1 pp, ⚡ EARLY DUMP, 🔔 HIGH
-  DROP, 🚨 EXIT/CUTLOSS + ✅ TITIK AMAN, **gerbang konfirmasi
+  dust 4 jam (+0,25/−0,50 pp), baseline shift ±1 pp, 🔔 HIGH
+  DROP, 🚨 EXIT/CUTLOSS + ✅ TITIK AMAN, 🚨 WAKTUNYA GANTI STRATEGI
+  (level ≥ 0,06% MC, sempat menggantikan ⚡ EARLY DUMP 2026-09-11—2026-09-13),
+  **gerbang konfirmasi
   volume/harga/volatilitas** (`validate_alert_with_volume`, skor 0,70/0,80,
   `is_high_volatility`, `required_confidence`), `escalation_due`,
   `safe_return_due`, `volume_verdict`, `MAX_HOLDER_DETAILS`/
   `MAX_WALLETS_SUMMARY` di pesan, dan **`rejected_signals`** (jejak audit
   kandidat ditolak — jangan ditulis ulang di state). Simbol-simbol itu
-  asserted tidak ada lagi oleh `tests/test_strategy_shift.py::
+  asserted tidak ada lagi oleh `tests/test_early_dump.py::
   NoLegacyRulesTest`; jangan menghidupkannya tanpa permintaan user.
   Pesan selalu ditutup link token **🔗 GMGN + 🦆 DexScreener** dari
   `links.token_links(mint)`; bila event membawa `pool_addresses`, ditambah
   `🌊 Meteora` + `🦅 HawkFi` (`_pool_links`) — cron belum bisa mengisinya
   (watchlist tidak menyimpan pool address). **Format notifikasi (2026-09-07,
-  judul/ambang 2026-09-11)**: setiap baris beremoji, dust sebelum → sesudah
-  + Δ pp + `· ambang ≥ 0,06%` dalam satu baris, durasi episode, waktu WIB
-  tanpa detik; tanpa tabel wallet/skor/penjelasan panjang. Observasi pertama
-  (`previous` None) → `📊 Dust: X% MC — baru melewati ambang ≥ 0,06%` dan
-  tanpa baris `⏱️`. `event["market"]` (konteks pasar) **hanya** dilampirkan
+  judul 2026-09-13)**: setiap baris beremoji, dust sebelum → sesudah
+  + Δ pp + `· langkah N× 0.02%` dalam satu baris, durasi episode, waktu WIB
+  tanpa detik; tanpa tabel wallet/skor/penjelasan panjang. Token tanpa
+  patokan (`baseline_ts`) atau patokan dari scan pertama tanpa tanggal
+  `added` tidak menampilkan baris `⏱️`. `event["market"]` (konteks pasar) **hanya** dilampirkan
   bila provider mengembalikan minimal satu nilai non-None — jadi jangan
   menguji ketiadaan key `"market"`, uji field-nya
   (`volume_ratio`/`price_change_pct`). Judulnya tebal melalui native entity
@@ -836,7 +844,8 @@ badge BEST POOL       : < 0.1% marketcap (DUST_BEST_PCT, aditif) + data
                         (DUST_BEST_MIN_HOLDERS) + TVL pool >= 10K USD
                         (DUST_BEST_MIN_TVL_USD; None = bukan best).
                         == 0.1% bukan BEST POOL (strict <). Notifikasi
-                        tidak lagi memakai angka ini (ambang sendiri 0.06).
+                        tidak memakai angka ini (pemicunya delta +0.02 dari
+                        patokan watchlist).
                         Hanya dirender di listing Scan Meteora.
 🏆 Scan Best Pool     : query API pool_type=dlmm && fee_pct>=2 &&
                         active_tvl>=50000 (24 jam, category=top, page_size
@@ -847,38 +856,49 @@ badge BEST POOL       : < 0.1% marketcap (DUST_BEST_PCT, aditif) + data
                         "minimal 2%" -> 2,0% lolos). Data hilang (None) =
                         gugur. Saringan lama fee/active TVL > 20%, top 10
                         holder < 30%, total LPs > 20, active TVL > 10K =
-                        DIHAPUS. Urutan: dust % MC terkecil -> fee/active
-                        TVL terbesar -> kenaikan volume 24 jam terbesar
-                        (volume_change_pct).
+                        DIHAPUS. Urutan (2026-09-13): volume 24 jam /
+                        active TVL (volume_active_tvl_ratio) terbesar ->
+                        dust % MC terkecil -> simbol.
 grafik lane LP        : bucket 5 menit (resample_5m / LP_INTERVAL_SEC)
 kolom tabel watchlist : Δ 4 jam + sparkline Grafik 4 jam DIHAPUS (2026-09-07)
 grafik / kohort       : bucket 4 jam (resample_4h; titik mentah per run,
                         MAX_POINTS 1008 = 3,5 hari @ 5 menit LP)
 
-Notifikasi Telegram — HANYA SATU RULE sejak 2026-09-11:
-ganti strategi       : dust_pct_mc >= STRATEGY_SHIFT_PCT 0.06 (% MC, bukan pp,
-                        bukan crossing). Level-based: diulang tiap scan selama
-                        masih >= ambang; < 0.06 = marker dihapus, TANPA pesan
-                        "sudah aman". Berlaku untuk token mana pun yang
+Notifikasi Telegram — HANYA SATU RULE sejak 2026-09-13:
+early dump            : dust_pct_mc naik >= EARLY_DUMP_STEP_PCT 0.02 (% MC
+                        di atas PATOKAN, bukan ambang dan bukan crossing).
+                        Patokan = baseline_pct dust saat token masuk watchlist;
+                        boleh diambil dari titik holder_history pertama setelah
+                        tanggal `added` (baseline_src `history`) atau dipasang
+                        scan pertama (baseline_src `first-scan`). Delta
+                        berulang: `_steps_from_baseline` = floor((dust-baseline)/
+                        0.02); event hanya bila step > marker["step"] — 0,02%
+                        pertama, kedua, dst. masing-masing satu pesan; turun di
+                        bawah patokan TIDAK mengosongkan patokan dan TANPA
+                        pesan "sudah aman". Berlaku untuk token mana pun yang
                         dievaluasi (Chart LP, Robinhood LP, watchlist biasa) —
                         tidak ada lagi scope lane
 dedup                 : event id per bucket FAST_BUCKET_SEC 300 dtk + jeda
-                        kirim STRATEGY_SHIFT_RESEND_SEC 300 dtk per token
+                        kirim EARLY_DUMP_RESEND_SEC 300 dtk per token
                         (`EVENT_BUCKET_SEC` = `FAST_BUCKET_SEC`; state
                         `sent_event_ids` dipangkas ke `MAX_SENT_EVENT_IDS` = 96
                         id, `last_sent` ke `MAX_LAST_SENT` = 8 entri) — run
                         ganda / scan manual di atas hasil cron tidak mengirim
                         pesan kembar; tick tanpa hasil scan (fetch 0 mint) tidak
                         menggeser marker
-marker                : alert_state["strategy_shift"] = {ts, dust_pct_mc,
-                        since_ts}; `since_ts` awal episode (dipakai
-                        `minutes_above`), fallback ke `ts` bila state terkompaksi
-                        — JANGAN memakai `last_seen_ts`/`updated_at` store untuk
-                        episode (diisi ulang oleh restore ringkas)
+marker                : alert_state["early_dump"] = {ts, dust_pct_mc,
+                        baseline_pct, baseline_ts, step, baseline_src};
+                        baseline_* KEEP (dipakai baris `⏱️`) dan hanya direset
+                        `_reset_markers_on_readd` saat token di-add ulang; `ts`
+                        digeser tiap kirim. JANGAN memakai `last_seen_ts`/
+                        `updated_at` store untuk patokan (diisi ulang oleh
+                        restore ringkas)
 format notifikasi     : ringkas + emoji (2026-09-07); judul tebal
-                        `🚨 WAKTUNYA GANTI STRATEGI` (entity bold, UTF-16),
-                        satu baris `📊 Dust: a% → b% MC (+x pp) · ambang ≥
-                        0.06%`, `⏱️ N menit di atas ambang`, baris `📈 Pasar`
+                        `⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE` (entity
+                        bold, UTF-16),
+                        satu baris `📊 Dust: a% → b% MC (+x pp · langkah N×
+                        0.02%)`, `⏱️ N menit sejak masuk watchlist`, baris
+                        `📈 Pasar`
                         HANYA bila konteks tersedia (tidak ada lagi
                         TIDAK TERVERIFIKASI — gerbangnya dihapus), waktu WIB,
                         mint, link text_link

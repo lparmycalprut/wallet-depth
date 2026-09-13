@@ -1,6 +1,7 @@
-"""Integrasi: scan → notifikasi 🚨 (+konteks pasar lazy) → holder_status.json.
+"""Integrasi: scan → notifikasi ⚡ (+konteks pasar lazy) → holder_status.json.
 
-Rule-nya satu sejak 2026-09-11 (dust ≥ 0,06% MC → 🚨 WAKTUNYA GANTI STRATEGI).
+Rule-nya satu (sejak 2026-09-13 delta: dust naik ≥ 0,02% MC dari patokan saat
+token di-add → ⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE).
 Yang dijaga file ini adalah **sambungan** antar-lapisan: konteks pasar hanya
 ditarik untuk token yang benar-benar dinotifikasi (lazy), angka itu mendarat di
 pesan sebagai satu baris info, dan konteks yang sama ditulis
@@ -42,6 +43,24 @@ def candles(tail=CONFIRMING_TAIL, *, hours=168, base_volume=1_000.0,
     return rows
 
 
+def episode_state(*, baseline=0.30, marker_dust=0.32, step=0):
+    """``alert_state`` dengan marker ⚡ sudah berpatokan (siap berbunyi).
+
+    Rule baru hanya mengirim pesan kalau dust **naik ≥ 0,02%** dari patokan,
+    jadi tes yang ingin melihat notifikasi harus menyediakan state dari run
+    sebelumnya — bukan mengandalkan ambang seperti rule lama.
+    """
+    return {ta.EARLY_DUMP_MARKER: {
+        "ts": NOW - ta.FAST_BUCKET_SEC, "dust_pct_mc": marker_dust,
+        "baseline_pct": baseline, "baseline_ts": NOW - FOUR_HOURS,
+        "step": step, "baseline_src": "first-scan"}}
+
+
+def store_with_episode(mint=HOT_MINT, *, symbol="HOT", **kwargs) -> dict:
+    return {"tokens": {mint: {"symbol": symbol, "points": [], "cohort": {},
+                              "alert_state": episode_state(**kwargs)}}}
+
+
 def analysis(mint, symbol, dust_pct, *, market=None):
     snapshot = {"ts": NOW, "dust_pct_mc": dust_pct,
                 "balances": {"A": 100.0 - dust_pct}, "dust": ["A"],
@@ -69,12 +88,15 @@ class LazyFetchTest(unittest.TestCase):
             cache={}, hourly_fetcher=fetcher, daily_loader=lambda: [],
             now=NOW)
         analyses = {
-            # dust 0,42% MC → ≥ 0,06% → notifikasi → konteks ditarik
+            # dust 0,42% MC vs patokan 0,30% → naik 6 langkah → notifikasi
             HOT_MINT: analysis(HOT_MINT, "HOT", 0.42),
-            # dust 0,02% MC → di bawah ambang → tidak boleh menarik apa pun
+            # dust 0,02% MC → di bawah patokan → tidak boleh menarik apa pun
             QUIET_MINT: analysis(QUIET_MINT, "QET", 0.02),
         }
-        store = {"tokens": {}}
+        store = store_with_episode()
+        store["tokens"][QUIET_MINT] = {
+            "symbol": "QET", "points": [], "cohort": {},
+            "alert_state": episode_state(baseline=0.05, marker_dust=0.05)}
         sender = mock.Mock(return_value={"ok": True, "skipped": False})
         deliveries = ta.process_holder_alerts(
             analyses, store, sender=sender, context_provider=provider)
@@ -93,8 +115,8 @@ class LazyFetchTest(unittest.TestCase):
             daily_loader=lambda: [], now=NOW)
         sender = mock.Mock(return_value={"ok": True, "skipped": False})
         deliveries = ta.process_holder_alerts(
-            {HOT_MINT: analysis(HOT_MINT, "HOT", 0.42)}, {"tokens": {}},
-            sender=sender, context_provider=provider)
+            {HOT_MINT: analysis(HOT_MINT, "HOT", 0.42)},
+            store_with_episode(), sender=sender, context_provider=provider)
         event = deliveries[0]["event"]
         # Bukan gerbang: verdict lama (allow/confidence_score) sudah hilang…
         self.assertNotIn("volume_check", event)
@@ -107,12 +129,12 @@ class LazyFetchTest(unittest.TestCase):
         self.assertNotIn("TIDAK TERVERIFIKASI", message)
 
     def test_volume_sepi_tidak_lagi_membungkam_notifikasi(self):
-        """Gerbang volume DIHAPUS — dust di atas ambang selalu diberitahu."""
+        """Gerbang volume DIHAPUS — kenaikan 0,02% selalu diberitahu."""
         flat = candles([(1.0, 1_000.0)] * 4)
         provider = ac.market_context_provider(
             cache={}, hourly_fetcher=mock.Mock(return_value=flat),
             daily_loader=lambda: [], now=NOW)
-        store = {"tokens": {}}
+        store = store_with_episode()
         sender = mock.Mock(return_value={"ok": True, "skipped": False})
         deliveries = ta.process_holder_alerts(
             {HOT_MINT: analysis(HOT_MINT, "HOT", 0.42)}, store,
@@ -131,7 +153,7 @@ class LazyFetchTest(unittest.TestCase):
         provider = ac.market_context_provider(
             cache={}, hourly_fetcher=mock.Mock(return_value=[]),
             daily_loader=lambda: [], now=NOW)
-        store = {"tokens": {}}
+        store = store_with_episode()
         sender = mock.Mock(return_value={"ok": True, "skipped": False})
         deliveries = ta.process_holder_alerts(
             {HOT_MINT: bare}, store, sender=sender, context_provider=provider)
@@ -142,12 +164,12 @@ class LazyFetchTest(unittest.TestCase):
         self.assertIsNone((event.get("market") or {}).get("volume_ratio"))
         self.assertIsNone((event.get("market") or {}).get("price_change_pct"))
         message = ta.format_alert_message(event)
-        self.assertIn("🚨 WAKTUNYA GANTI STRATEGI", message)
+        self.assertIn("⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE", message)
         self.assertNotIn("📈 Pasar", message)
         # State hanya marker rule ini — tidak ada sisa rule lama.
         state = store["tokens"][HOT_MINT]["alert_state"]
         self.assertNotIn("rejected_signals", state)
-        self.assertIn("strategy_shift", state)
+        self.assertIn("early_dump", state)
 
 
 class StatusStorageTest(unittest.TestCase):
@@ -160,7 +182,10 @@ class StatusStorageTest(unittest.TestCase):
             daily_loader=lambda: [], now=NOW)
         analyses = {HOT_MINT: analysis(HOT_MINT, "HOT", 1.30),
                     QUIET_MINT: analysis(QUIET_MINT, "QET", 0.02)}
-        store = {"tokens": {}}
+        store = store_with_episode()
+        store["tokens"][QUIET_MINT] = {
+            "symbol": "QET", "points": [], "cohort": {},
+            "alert_state": episode_state(baseline=0.05, marker_dust=0.05)}
         ta.process_holder_alerts(
             analyses, store, context_provider=provider,
             sender=mock.Mock(return_value={"ok": True, "skipped": False}))
@@ -177,7 +202,8 @@ class StatusStorageTest(unittest.TestCase):
         self.assertIsNotNone(signal["intra_hour_volatility"])
         self.assertTrue(signal["volatility_available"])
         self.assertEqual(signal["volume_source"], "geckoterminal_hourly")
-        # Token di bawah ambang tidak menarik konteks → tidak punya sinyal.
+        # Token yang dust-nya tidak naik 0,02% tidak menarik konteks →
+        # tidak punya sinyal.
         self.assertNotIn("market_signal", status["tokens"][QUIET_MINT])
 
     def test_status_survives_a_context_from_the_analysis_payload(self):

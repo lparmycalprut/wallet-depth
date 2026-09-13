@@ -67,6 +67,9 @@ def _row(**over):
         "mc": 1_000_000, "tvl": 66_000, "active_tvl": 60_000,
         "fee_active_tvl_ratio": 40.0, "volume": 1_200_000, "fee": 24_000.0,
         "volume_change_pct": 12.5, "fee_pct": 2.0, "volatility": 6.2,
+        # Rasio volume/active TVL seperti API Meteora (kunci urut pertama):
+        # 1,2 juta / 60 ribu × 100 = 2000%.
+        "volume_active_tvl_ratio": 2000.0,
         "total_lps": 88, "top_holders_pct": 20.0,
         "analysis": {"holders": {"dust_pct_mc": 0.03, "dust_count": 12,
                                  "total_fetched": 1200,
@@ -349,60 +352,77 @@ class FilterAndSortTest(unittest.TestCase):
         self.assertEqual([r["pool_address"] for r in kept], ["P1", "PAS"])
         self.assertEqual((hidden_metric, hidden_dust), (1, 0))
 
-    def test_sort_volume_change_then_dust_then_fee_ratio(self):
+    def test_sort_volume_active_tvl_then_dust(self):
+        """Urutan 2026-09-13: rasio volume/active TVL → dust %MC terkecil."""
         rows = [
-            _dust({"pool_address": "A", "symbol": "AAA",
-                   "fee_active_tvl_ratio": 10.0, "volume_change_pct": 99.0},
-                  0.030),
-            _dust({"pool_address": "B", "symbol": "BBB",
-                   "fee_active_tvl_ratio": 5.0, "volume_change_pct": 80.0},
-                  0.010),
-            _dust({"pool_address": "C", "symbol": "CCC",
-                   "fee_active_tvl_ratio": 90.0, "volume_change_pct": 80.0},
-                  0.030),
-            _dust({"pool_address": "D", "symbol": "DDD",
-                   "fee_active_tvl_ratio": 10.0, "volume_change_pct": 80.0},
-                  0.030),
-            _row(pool_address="E", symbol="EEE", fee_active_tvl_ratio=999.0,
-                 volume_change_pct=500.0, analysis=None),
+            _dust(_row(pool_address="A", symbol="AAA",
+                       volume_active_tvl_ratio=10.0), 0.030),
+            _dust(_row(pool_address="B", symbol="BBB",
+                       volume_active_tvl_ratio=5.0), 0.010),
+            _dust(_row(pool_address="C", symbol="CCC",
+                       volume_active_tvl_ratio=90.0), 0.030),
+            _dust(_row(pool_address="D", symbol="DDD",
+                       volume_active_tvl_ratio=90.0), 0.030),
+            _row(pool_address="E", symbol="EEE",
+                 volume_active_tvl_ratio=9999.0, analysis=None),
         ]
         order = [row["pool_address"] for row in ms.sort_best_rows(rows)]
-        # kenaikan volume terbesar dulu (A Δ99%); di Δ80% yang sama dust
-        # terkecil dulu (B 0,010% → C/D 0,030%); di dust seri fee/active TVL
-        # terbesar dulu (C 90% → D 10%); baris tanpa dust paling bawah meski
-        # Δ volume + rasio fee-nya paling gede (E).
-        self.assertEqual(order, ["A", "B", "C", "D", "E"])
+        # Rasio terbesar dulu (C/D 90% — seri, jadi simbol alfabetis); dust
+        # hanya kunci KEDUA, jadi A (rasio 10%) tetap di atas B (5%) walau
+        # dust B lebih kecil; baris tanpa dust paling bawah meski rasionya
+        # paling gede (E).
+        self.assertEqual(order, ["C", "D", "A", "B", "E"])
 
     def test_tie_break_uses_display_precision(self):
-        """0,0301% dan 0,0304% tampil sama (0,030%) → fee/TVL yang menentukan.
+        """0,0301% dan 0,0304% tampil sama (0,030%) → simbol yang menentukan.
 
-        Kedua baris Δ volumenya sama (default 12,5%) dan dust tampilannya
-        seri, jadi rasio fee/active TVL yang memutuskan urutannya."""
+        Kedua baris rasionya sama (7%); dust dibulatkan ke presisi tampilan
+        (3 desimal) supaya dua pool yang di layar tampak seri tidak diurutkan
+        berdasarkan angka di belakang koma yang tidak terlihat.
+        """
         rows = [
-            _row(pool_address="LOW", symbol="AAA", fee_active_tvl_ratio=3.0,
+            _row(pool_address="MENTAH", symbol="ZZZ",
+                 volume_active_tvl_ratio=7.0,
                  analysis={"holders": {"dust_pct_mc": 0.0301}}),
-            _row(pool_address="HIGH", symbol="BBB", fee_active_tvl_ratio=70.0,
+            _row(pool_address="TAMPIL", symbol="AAA",
+                 volume_active_tvl_ratio=7.0,
                  analysis={"holders": {"dust_pct_mc": 0.0304}}),
         ]
         order = [row["pool_address"] for row in ms.sort_best_rows(rows)]
-        self.assertEqual(order, ["HIGH", "LOW"])
+        self.assertEqual(order, ["TAMPIL", "MENTAH"])
 
-    def test_volume_change_is_primary_key(self):
-        """Kenaikan volume memutuskan duluan (kunci urut pertama).
+    def test_volume_active_tvl_ratio_is_primary_key(self):
+        """Rasio volume/active TVL memutuskan duluan (kunci urut pertama).
 
-        Dust dan fee/active TVL sama persis → Δ volume 61% di atas Δ 4%
-        (sejak 2026-09-11 sore; sebelumnya volume hanya tie-break terakhir).
+        Dust sama persis (0,02%), fee/active TVL sama, Δ volume justru lebih
+        besar di baris SEPI → rasio 1646,63% (angka TACZ dari respons API
+        user) tetap menang atas 8,5%.
         """
         rows = [
-            _row(pool_address="KECIL", symbol="AAA", fee_active_tvl_ratio=50.0,
-                 volume_change_pct=4.0,
+            _row(pool_address="SEPI", symbol="AAA", fee_active_tvl_ratio=50.0,
+                 volume_change_pct=400.0, volume_active_tvl_ratio=8.5,
                  analysis={"holders": {"dust_pct_mc": 0.02}}),
-            _row(pool_address="BESAR", symbol="BBB",
-                 fee_active_tvl_ratio=50.0, volume_change_pct=61.0,
+            _row(pool_address="RAMAI", symbol="BBB",
+                 fee_active_tvl_ratio=50.0, volume_change_pct=4.0,
+                 volume_active_tvl_ratio=1646.63,
                  analysis={"holders": {"dust_pct_mc": 0.02}}),
         ]
         order = [row["pool_address"] for row in ms.sort_best_rows(rows)]
-        self.assertEqual(order, ["BESAR", "KECIL"])
+        self.assertEqual(order, ["RAMAI", "SEPI"])
+
+    def test_rasio_dihitung_ulang_untuk_baris_lama(self):
+        """Hasil scan lama (tanpa field API) tetap ikut urutan yang sama."""
+        rows = [
+            _dust(_row(pool_address="LAMA", symbol="AAA", volume=300_000,
+                       active_tvl=100_000,
+                       volume_active_tvl_ratio=None), 0.02),
+            _dust(_row(pool_address="BARU", symbol="BBB", volume=1_200_000,
+                       active_tvl=60_000,
+                       volume_active_tvl_ratio=None), 0.02),
+        ]
+        order = [row["pool_address"] for row in ms.sort_best_rows(rows)]
+        # 300K/100K = 300% vs 1,2M/60K = 2000% → BARU dulu.
+        self.assertEqual(order, ["BARU", "LAMA"])
 
 
 class ScanBestTest(unittest.TestCase):
@@ -443,8 +463,8 @@ class ScanBestTest(unittest.TestCase):
         self.assertEqual(result["hidden_metric"], 2)
         self.assertEqual(result["hidden_dust"], 0)
         self.assertEqual(result["error"], "")
-        # Δ volume sama (default 12,5%) + dust sama (0,02%) → fee/active TVL
-        # terbesar dulu: P3 (80) di atas P1 (40), meski volume P1 lebih kecil.
+        # Dust sama (0,02%) → rasio volume/active TVL terbesar dulu: P3
+        # (5 juta / 60 ribu = 8333%) di atas P1 (1,2 juta / 60 ribu = 2000%).
         self.assertEqual([row["pool_address"] for row in result["rows"]],
                          ["P3", "P1"])
         self.assertEqual([row["pool_address"] for row in result["hidden_rows"]],
@@ -656,9 +676,10 @@ class BestPoolCardTest(unittest.TestCase):
                       # saringan volume 24 jam (2026-09-12) ikut dijelaskan
                       # di tooltip dengan angka dari konstanta.
                       f"volume 24 jam >= ${ms.BEST_VOLUME_24H_MIN:,.0f}",
-                      "kenaikan volume 24 jam paling besar dulu, lalu dust % "
-                      "marketcap terkecil, lalu fee/active TVL paling "
-                      "besar"):
+                      "volume 24 jam dibagi active TVL (rasio yang "
+                      "dikirim API Meteora — angkanya di baris kecil kolom "
+                      "Vol 24h) paling besar dulu, lalu dust % marketcap "
+                      "terkecil"):
             self.assertIn(label, body)
         # rule lama sudah diganti total — tidak boleh tersisa di tooltip
         # card ini (card lain, mis. 🦅 Scan Best Robinhood Coin, memang masih
@@ -794,7 +815,7 @@ class BestPoolCardTest(unittest.TestCase):
         self.assertNotIn("🏆 BEST POOL 1</span>", body)  # pill
 
     def test_tabel_memakai_kolom_detail_fee_dan_vol(self):
-        """Detail fee / active TVL + Δ volume harus tampil di tabel card."""
+        """Detail fee / active TVL + Δ volume + rasio volume/active TVL."""
         app = self._app()
         app.session_state["best_pool_scan"] = {
             "rows": [_row(pool_address="PoolBest", dust_pct_mc=0.03)],
@@ -809,10 +830,12 @@ class BestPoolCardTest(unittest.TestCase):
         self.assertIn("40.0%", body)
         self.assertIn("+12.5%", body)
         # kunci urut dijelaskan di tooltip sel (bukan caption): Vol 24h =
-        # pertama, Dust %MC = kedua, Fee/TVL = ketiga.
-        for key in ("kunci urut pertama", "kunci urut kedua",
-                    "kunci urut ketiga"):
-            self.assertIn(key, body)
+        # pertama (rasio volume/active TVL, 2026-09-13), Dust %MC = kedua,
+        # dan Fee/TVL sudah BUKAN kunci urut lagi.
+        self.assertIn("kunci urut pertama", body)
+        self.assertIn("kunci urut kedua", body)
+        self.assertIn("bukan kunci urut lagi sejak 2026-09-13", body)
+        self.assertIn("2,000× A.TVL", body)   # rasio tampil di baris kecil
         # Sel Vol 24h = bukti saringan volume baru (2026-09-12): angka
         # ringkas di card, angka penuh + ambang saringan di tooltip sel.
         self.assertIn("$1.20M", body)

@@ -1,3 +1,88 @@
+# Kegiatan — 13 September 2026 (🌊 Scan Meteora: urut volume/active TVL · notif delta ⚡ EARLY DUMP tiap 0,02%)
+
+Permintaan user: *"kita benahi lagi scan meteora kita — sort pertama adalah
+dari volume / active tvl yang paling besar dulu — lalu dari %dust yang paling
+kecil — lalu notifikasi telegram akan muncul ketika %dust naik 0.02%, jadi
+sekarang bukan ambang batas, tapi notif berulang ketika dust bertambah 0.02%
+dari pertama add watchlist — notifnya jadi gini: EARLY DUMP TERJADI - GANTI
+WIDE RANGE"*.
+
+## 1. Urutan listing: volume 24 jam / active TVL → dust
+
+Kunci urut pertama pindah dari "kenaikan volume 24 jam" ke **rasio volume /
+active TVL** — angka yang memang sudah dikirim API Meteora
+(`volume_active_tvl_ratio`; user menempel payload pool-discovery dan
+menunjukkan TACZ = 1646,63%). Kunci kedua tetap dust %MC terkecil.
+
+- `meteora_screener.row_vol_tvl_ratio()` — satu sumber angka untuk urutan,
+  UI, dan tooltip: pakai field API bila ada; baris lama di `session_state`
+  (hasil scan versi sebelumnya) dihitung ulang `volume / active_tvl × 100`
+  supaya kriteria urut tidak berubah hanya karena hasil lama masih tersimpan;
+  `None` = tidak ada bahan hitung → barisnya paling bawah.
+- `sort_best_rows()` (card 🏆 Scan Best Pool Meteora) = dust-ada → **rasio
+  terbesar** → dust %MC terkecil (3 desimal tampilan) → simbol. Urutan lama
+  (dust → fee/active TVL → `volume_change_pct`) tidak dipakai lagi.
+- `sort_rows()` (listing 🌊 Scan Meteora Pool) tetap BEST POOL dulu → dust:
+  tie-break #3 kini **rasio** (sebelumnya TVL terbesar).
+- `_row_from_pool()` membawa field `volume_active_tvl_ratio`; absen = `None`
+  (bukan 0,0 — kalau 0,0, fallback hitung ulang tidak pernah jalan dan semua
+  baris seri).
+- UI: baris kecil kolom **Vol 24h** = `Δ x% · 1,647× A.TVL` (bukti urutannya,
+  sekali lihat); tooltip sel Fee/TVL menulis "informasi, bukan kunci urut lagi
+  sejak 2026-09-13"; tooltip judul card dibangun dari konstanta yang sama.
+
+## 2. Notifikasi: delta 0,02% dari patokan add-watchlist
+
+Satu rule Telegram yang ada (level-based `dust >= STRATEGY_SHIFT_PCT` 0,06)
+diganti **delta**: patokan = angka dust **saat token masuk watchlist**
+(`baseline_pct`), dan pesan dikirim tiap kali dust naik melewati langkah 0,02%
+MC yang belum pernah dikabarkan (`EARLY_DUMP_STEP_PCT` 0,02; kind + marker
+`early_dump`).
+
+- `_steps_from_baseline(pct, baseline) = floor((pct − baseline) / 0,02)`
+  (toleransi `1e-9` untuk galat float). Langkah bersifat **high water mark**:
+  dust turun tidak mengurangi langkah, jadi naik lagi ke level yang sudah
+  dikabarkan tidak mengirim ulang; tidak ada pesan penutup "sudah aman".
+- Marker `alert_state["early_dump"] = {ts, dust_pct_mc, baseline_pct,
+  baseline_ts, step, baseline_src}`; `baseline_*` tidak pernah bergeser selama
+  token dipantau dan di-reset hanya oleh `_reset_markers_on_readd` (token
+  dihapus lalu di-add ulang = episode baru).
+- Patokan diambil dari titik `holder_history` **pertama setelah tanggal
+  `added`** (`add_baseline_for_mint` + `watchlist_detail.parse_added_ts`,
+  `baseline_src="history"`) supaya kenaikan yang sudah terjadi sejak add tidak
+  hilang; kalau tidak ada titik layak, patokan dipasang dari scan pertama
+  (`"first-scan"`) dan token itu tidak bunyi di evaluasi pemasangan (tidak
+  membanjiri Telegram saat rule baru dipasang).
+- Dedup: event id per bucket `FAST_BUCKET_SEC` + jeda `EARLY_DUMP_RESEND_SEC`
+  (300 dtk/token) — run ganda / scan manual di atas hasil cron tidak mengirim
+  pesan kembar. Lapisan kedua: langkah 0,02% **tidak dimakan** kalau semua
+  pengiriman gagal (`_restore_step`) supaya scan berikutnya mengirim ulang
+  kabar yang sama.
+- Judul baru: **"⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE"**; baris dust
+  `📊 Dust: 0.012% → 0.036% MC (+0.024 pp · langkah 1× 0.02%)` +
+  `⏱️ N menit sejak masuk watchlist` (baris ini hilang bila patokan tidak
+  punya timestamp).
+- Jalur kirim tidak berubah: cron LP + scan manual (Chart LP, watchlist biasa,
+  Robinhood LP) memakai `process_holder_alerts` yang sama; toggle 🔔/🔕 per
+  token tetap dihormati (evaluasi + marker tetap jalan, hanya kirim yang
+  dilewati).
+
+## Verifikasi
+
+`python -m unittest discover -s tests -t .` → **Ran 1140 tests, OK** (semua
+hijau). `tests/test_strategy_shift.py` di-`git mv` + ditulis ulang sebagai
+`tests/test_early_dump.py` (35 tes: langkah/patokan, `baseline_hint`, pesan,
+pipeline, bentuk state, `NoLegacyRulesTest`). `tests/test_best_pool_scan.py`
+menambah `test_sort_volume_active_tvl_then_dust`,
+`test_volume_active_tvl_ratio_is_primary_key`, dan
+`test_rasio_dihitung_ulang_untuk_baris_lama`;
+`tests/test_meteora_screener.py` memakai `_sort_row(..., ratio, tvl=)`.
+
+Teks yang ikut disinkronkan: `README.md` (Konsep 1 + 7, 🏆 Scan Best Pool,
+🌊 Scan Meteora Pool, format alert Contoh, tabel env), `AGENTS.md` (bulket
+`telegram_alerts.py` + `meteora_screener.py` + spec blok), `DEPLOY.md`
+(ringkasan cron), dan `docs/PROGRESS.md` (entri 2026-09-13 kedua).
+
 # Kegiatan — 13 September 2026 (🌊 Scan Meteora: 0,000% palsu dibersihkan — satu pembagi MC + tanpa angka tanpa bukti holder)
 
 Permintaan user: *\\\"di scan meteora menunjukkan **0.000% baru saya scan** padahal

@@ -71,16 +71,18 @@ class SettingsStoreTest(unittest.TestCase):
 class MuteMintsTest(unittest.TestCase):
     """``mute_mints`` menahan kiriman tapi tetap memajukan state.
 
-    Tombolnya tetap berguna walau notifikasinya tinggal satu (🚨 WAKTUNYA
-    GANTI STRATEGI): watchlist biasa kadang cukup dipantau di dashboard.
+    Tombolnya tetap berguna walau notifikasinya tinggal satu (⚡ EARLY DUMP
+    TERJADI - GANTI WIDE RANGE): watchlist biasa kadang cukup dipantau di
+    dashboard.
     """
 
     def _run(self, muted):
         store = {"tokens": {"MINT": {
             "symbol": "AA",
             "alert_state": {
-                "strategy_shift": {"ts": 900, "dust_pct_mc": 0.2,
-                                   "since_ts": 900},
+                "early_dump": {"ts": 900, "dust_pct_mc": 0.2,
+                               "baseline_pct": 0.2, "baseline_ts": 900,
+                               "step": 0, "baseline_src": "first-scan"},
             },
         }}}
         sent = []
@@ -99,8 +101,11 @@ class MuteMintsTest(unittest.TestCase):
         sent, deliveries, state = self._run(set())
         self.assertEqual(len(sent), 1)
         self.assertTrue(deliveries[0]["delivery"]["ok"])
-        self.assertEqual(state["strategy_shift"]["dust_pct_mc"], 0.5)
-        self.assertEqual(state["strategy_shift"]["ts"], 1_000)
+        self.assertEqual(state["early_dump"]["dust_pct_mc"], 0.5)
+        self.assertEqual(state["early_dump"]["ts"], 1_000)
+        # Patokan tidak ikut bergeser — langkah 0,02% dihitung dari titik add.
+        self.assertEqual(state["early_dump"]["baseline_pct"], 0.2)
+        self.assertEqual(state["early_dump"]["step"], 15)
 
     def test_muted_skips_send_but_keeps_marker(self):
         sent, deliveries, state = self._run({"MINT"})
@@ -110,8 +115,8 @@ class MuteMintsTest(unittest.TestCase):
         self.assertTrue(deliveries[0]["delivery"]["skipped"])
         # Marker tetap maju: menyalakan notif lagi tidak membanjiri user
         # dengan episode lama yang sudah lewat.
-        self.assertEqual(state["strategy_shift"]["dust_pct_mc"], 0.5)
-        self.assertEqual(state["strategy_shift"]["since_ts"], 900)
+        self.assertEqual(state["early_dump"]["dust_pct_mc"], 0.5)
+        self.assertEqual(state["early_dump"]["step"], 15)
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -56,8 +56,9 @@ DUST_CAUTION_PCT = 0.5
 # bukan pengganti level AMAN/HATI-HATI/BAHAYA). Boundary sengaja **strict di
 # bawah 0,1%** supaya tidak pernah tumpang tindih dengan badge 🏆 (butuh
 # ``<``). Notifikasi Telegram sendiri tidak lagi membaca angka ini: sejak
-# 2026-09-11 hanya ada satu rule — dust ≥ 0,06% MC → 🚨 WAKTUNYA GANTI
-# STRATEGI (lihat ``telegram_alerts.STRATEGY_SHIFT_PCT``).
+# 2026-09-13 hanya ada satu rule — dust naik ≥ 0,02% MC dari patokan saat
+# token masuk watchlist → ⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE (lihat
+# ``telegram_alerts.EARLY_DUMP_STEP_PCT``).
 DUST_BEST_PCT = 0.1
 # Label badge BEST POOL (tampil apa adanya di UI — Scan Meteora).
 DUST_BEST_LABEL = "BEST POOL"
@@ -1187,13 +1188,14 @@ def seed_from_status(store: dict, status: dict | None) -> dict:
                 pass
         elif isinstance(remote_alert, dict):
             # Snapshot ramping: jangan timpa peta wallet, tapi pulihkan
-            # marker 🚨 strategy_shift (tanpa peta) supaya scan 5 menit
-            # berikutnya masih punya state Telegram bila backup gzip gagal.
+            # marker ⚡ early_dump (patokan + langkah 0,02%, tanpa peta) supaya
+            # scan 5 menit berikutnya masih punya state Telegram bila backup
+            # gzip gagal.
             local_alert = slot.get("alert_state") if isinstance(
                 slot.get("alert_state"), dict) else {}
             local_alert = dict(local_alert or {})
             changed = False
-            for key in ("strategy_shift",):
+            for key in ("early_dump",):
                 remote_m = remote_alert.get(key)
                 if not isinstance(remote_m, dict) or not _int(remote_m.get("ts")):
                     continue
@@ -1435,11 +1437,12 @@ def _merge_alert_state(current, incoming) -> dict:
         picked = _pick_by_ts(current.get(key), incoming.get(key))
         if picked:
             merged[key] = picked
-    # Marker ``strategy_shift`` (dust terakhir yang direkam rule 🚨 WAKTUNYA
-    # GANTI STRATEGI): yang paling baru menang, sama seperti rolling/detail.
-    # Marker rule lama (``early_dump``/``high_drop``) sengaja tidak dibagikan
-    # lagi — rule-nya sudah dihapus, sisanya hilang sendiri dari store.
-    for key in ("strategy_shift",):
+    # Marker ``early_dump`` (patokan dust saat token di-add + langkah 0,02%
+    # yang sudah dikabarkan — rule ⚡ EARLY DUMP): yang paling baru menang,
+    # sama seperti rolling/detail. Marker rule lama (``strategy_shift``/
+    # ``high_drop``) sengaja tidak dibagikan lagi — rule-nya sudah dihapus,
+    # sisanya hilang sendiri dari store.
+    for key in ("early_dump",):
         picked = _pick_by_ts(current.get(key), incoming.get(key))
         if picked:
             merged[key] = picked
@@ -1474,8 +1477,8 @@ def merge_stores(*stores) -> dict:
     - ``chronology``    : interval union; snapshot wallet yang punya peta menang
       (baseline paling tua, latest paling baru).
     - ``alert_state``   : snapshot baseline/rolling terbaru; ``sent_event_ids``
-      union; ``last_sent`` max per kunci; marker ``strategy_shift`` (🚨 WAKTUNYA
-      GANTI STRATEGI) yang paling baru menang.
+      union; ``last_sent`` max per kunci; marker ``early_dump`` (⚡ EARLY DUMP
+      TERJADI - GANTI WIDE RANGE) yang paling baru menang.
     """
     out = empty_store()
     stamps = []

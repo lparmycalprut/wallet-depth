@@ -39,8 +39,10 @@ def meteora_scan_tooltip() -> str:
         f"< {holder_history.DUST_BEST_PCT:g}% MC + data holder valid "
         f"(≥ {holder_history.DUST_BEST_MIN_HOLDERS:g} wallet) + TVL ≥ "
         f"${holder_history.DUST_BEST_MIN_TVL_USD / 1000:g}K diberi badge 🏆 "
-        "BEST POOL dan diurutkan paling atas, lalu dust % MC terkecil dan TVL "
-        "terbesar. ⭐ memasukkan token ke card Watchlist Meteora di halaman "
+        "BEST POOL dan diurutkan paling atas, lalu dust % MC terkecil dan "
+        "**volume 24 jam / active TVL** terbesar (rasio dari API Meteora — "
+        "permintaan user 2026-09-13; sebelumnya TVL terbesar). ⭐ memasukkan "
+        "token ke card Watchlist Meteora di halaman "
         "utama. Tombol kanan: Meteora + HawkFi.")
 
 
@@ -327,13 +329,13 @@ def render_temp() -> None:
     # Permintaan user 2026-09-06: watchlist biasa kadang cukup dipantau di
     # dashboard tanpa pesan Telegram. Scope SENGAJA hanya watchlist Solana biasa
     # — Chart LP Meteora dan kedua card Robinhood tidak ikut dimatikan. Saat
-    # OFF, cron tetap scan + tetap memajukan marker 🚨; hanya pengiriman
+    # OFF, cron tetap scan + tetap memajukan marker ⚡; hanya pengiriman
     # pesannya yang dilewati.
     _notif_on = alert_settings.regular_telegram_enabled()
     _notif_toggle = st.toggle(
         "🔔 Notifikasi Telegram watchlist biasa",
         value=_notif_on, key="regular-telegram-toggle",
-        help=("ON = notifikasi 🚨 WAKTUNYA GANTI STRATEGI (satu-satunya "
+        help=("ON = notifikasi ⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE (satu-satunya "
               "notifikasi) untuk watchlist biasa dikirim ke Telegram. OFF = "
               "token tetap di-scan dan grafiknya tetap jalan, pesannya saja "
               "yang tidak dikirim. Tidak memengaruhi Watchlist Meteora maupun "
