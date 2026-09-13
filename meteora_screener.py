@@ -33,16 +33,16 @@ Badge 🏆 BEST POOL menambah syarat data holder valid (≥ 40 wallet)
 **dan TVL pool ≥ 10K USD**.
 Baris yang di-⭐ masuk watchlist terpisah **Chart LP** di dashboard.
 
-**🏆 Scan Best Pool Meteora** — kriteria 2026-09-13 (dust filter **dihapus**
-per request user \"dust% syaratnya hapus saja\"): listing API Meteora 24 jam
+**🏆 Scan Best Pool Meteora** — kriteria 2026-09-13 (semua saringan layar
+**dihapus** per request user \"dust% syaratnya hapus saja\" + \"volatility dan
+minimum volume juga hapus\"): listing API Meteora 24 jam
 ``pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000`` (category ``top``,
-page_size 50), jadi **tier fee** dan **active TVL** sudah disaring di
-server. Saringan layar tinggal dua: volatility **>= 2%** (\"minimal 2%\"),
-dan **volume 24 jam >= 1 juta USD** (``BEST_VOLUME_24H_MIN``). Dust holder
-**tidak lagi** jadi saringan — tetap ditampilkan sebagai informasi di kolom
-Dust %MC. Urutannya: **volume 24 jam / active TVL** (``volume_active_tvl_ratio``)
-terbesar → **dust % MC terkecil** (permintaan user 2026-09-13). Saringan lama
-active TVL > 10K, fee/active TVL > 20%, top 10 holder < 30%, dan total LPs > 20
+page_size 50) — hanya filter server ini yang tersisa. Saringan layar
+dust <0,05%, volatility >=2%, volume >=1M **dihapus total** — semua pool
+dari API (kecuali quote-only) ditampilkan apa adanya. Dust, volatility,
+volume tetap sebagai informasi + kunci urut: **volume 24 jam / active TVL**
+terbesar → **dust %MC terkecil**. Saringan lama active TVL >10K,
+fee/active TVL >20%, top10 <30%, total LPs >20 juga dihapus.
 **dihapus** (ambang volatility lama 5% turun jadi 2%); datanya tetap dibawa
 dan tetap ditampilkan di tabel sebagai informasi.
 
@@ -924,39 +924,24 @@ def row_vol_tvl_ratio(row: dict | None):
 
 
 def row_volume_ok(row: dict | None) -> bool:
-    """True bila volume 24 jam **>= 1 juta USD** (angka wajib ada).
+    """Volume filter **dinonaktifkan** 2026-09-13 per request user.
 
-    Dipakai bersama listing utama dan listing **disembunyikan** (klik pill)
-    supaya keduanya tidak pernah menampilkan pool sepi. ``None`` = gugur.
+    Sebelumnya: True bila volume 24 jam >= 1 juta USD.
+    Sekarang: selalu True — semua pool dari API ditampilkan, volume tetap
+    jadi informasi di kolom Vol 24h dan kunci urut pertama.
     """
-    volume = _maybe_float((row or {}).get("volume"))
-    return bool(volume is not None and volume >= BEST_VOLUME_24H_MIN)
+    return True
 
 
 def row_best_gaps(row: dict | None) -> list[str]:
-    """Label syarat **metrik pool** yang tidak dipenuhi (kosong = lolos).
+    """Semua saringan layar Best Pool **dinonaktifkan** 2026-09-13.
 
-    Tier fee dan active TVL sudah disaring API lewat ``filter_by``, jadi yang
-    diuji di layar tinggal dua: volatility minimal
-    :data:`BEST_VOLATILITY_MIN` (2026-09-11) dan **volume 24 jam minimal
-    :data:`BEST_VOLUME_24H_MIN`** (1 juta USD, 2026-09-12 — permintaan user:
-    "minimal volume 24 jam adalah 1M, dibawah itu jangan di show"). Keduanya
-    inklusif (tepat di ambang = lolos). Saringan fee/active TVL, top 10
-    holder, dan total LPs yang lama **dihapus** (datanya tetap dibawa di
-    baris untuk ditampilkan). Data hilang (``None``) = gugur. Syarat ini
-    jalan SEBELUM fetch holder supaya kuota Helius tidak terbakar untuk pool
-    yang pasti gugur; dust holder dicek terpisah oleh :func:`row_dust_ok`
-    karena butuh analisa holder.
+    Sebelumnya: volatility >=2% dan volume >=1M.
+    Sekarang: selalu [] — tidak ada pool yang gugur karena metrik.
+    Dust, volatility, volume tetap ditampilkan sebagai informasi.
+    Permintaan user: \"volatility dan minimum volume juga hapus\".
     """
-    row = row or {}
-    gaps: list[str] = []
-    volatility = _maybe_float(row.get("volatility"))
-    if volatility is None or volatility < BEST_VOLATILITY_MIN:
-        gaps.append(f"volatility < {BEST_VOLATILITY_MIN:g}%")
-    volume = _maybe_float(row.get("volume"))
-    if volume is None or volume < BEST_VOLUME_24H_MIN:
-        gaps.append(f"volume 24 jam < ${BEST_VOLUME_24H_MIN:,.0f}")
-    return gaps
+    return []
 
 
 def row_dust_ok(row: dict | None) -> bool:
@@ -985,21 +970,14 @@ def row_best_pool(row: dict | None) -> bool:
 
 
 def filter_best_rows(rows: list[dict] | None) -> tuple[list[dict], int, int]:
-    """Terapkan saringan layar **tanpa dust** (dust syarat dihapus).
+    """Semua saringan layar Best Pool **dinonaktifkan** (2026-09-13).
 
-    Sebelumnya: metrik pool + dust < 0,05% MC.
-    Sekarang: hanya metrik pool (volatility >=2% & volume >=1M).
-    Return ``(kept, hidden_metric, 0)`` — ``hidden_dust`` selalu 0 agar
-    caller lama tetap kompatibel.
+    Sebelumnya: metrik pool + dust <0,05% MC, lalu hanya metrik.
+    Sekarang: tidak ada saringan — semua rows kept.
+    Return ``(kept, 0, 0)`` agar caller lama tetap kompatibel.
+    Permintaan user: \"volatility dan minimum volume juga hapus\".
     """
-    kept: list[dict] = []
-    hidden_metric = 0
-    for row in rows or []:
-        if row_best_gaps(row):
-            hidden_metric += 1
-            continue
-        kept.append(row)
-    return kept, hidden_metric, 0
+    return list(rows or []), 0, 0
 
 
 def sort_best_rows(rows: list[dict] | None) -> list[dict]:
@@ -1036,16 +1014,17 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
                       progress=None, timeout: int = 25,
                       timeframe: str = "24h",
                       page_size: int = PAGE_SIZE) -> dict:
-    """Listing 24 jam + holder + saringan layar Scan Best Pool Meteora.
+    """Listing 24 jam + holder — **tanpa saringan layar** (2026-09-13).
 
-    Kriteria 2026-09-13 (dust syarat **dihapus** per user request):
-    API sudah menyaring ``pool_type=dlmm``, ``fee_pct>=2``,
-    ``active_tvl>=50000``; layar menambah volatility ``>= 2%`` dan
-    **volume 24 jam ``>= 1 juta USD``** (keduanya dicek SEBELUM fetch
-    holder supaya kuota Helius tidak terbakar). Dust holder **tidak lagi**
-    jadi saringan — tetap ditampilkan sebagai informasi di kolom Dust %MC.
-    Urutan hasil: volume 24 jam / active TVL terbesar → dust % MC terkecil
-    (lihat :func:`sort_best_rows`).
+    Kriteria 2026-09-13 per request user:
+    - dust% dihapus (sebelumnya <0,05%),
+    - volatility >=2% dihapus,
+    - volume 24 jam >=1M dihapus.
+    Sekarang hanya filter server API Meteora:
+    ``pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000``.
+    Semua pool yang dikembalikan API (kecuali quote-only) ditampilkan,
+    dust/volatility/volume tetap sebagai informasi + kunci urut.
+    Urutan: volume/active TVL terbesar → dust %MC terkecil.
     """
     # Default FULL seperti ``scan_meteora``: urutan getTokenAccounts Helius
     # tidak urut saldo, jadi cap kecil menghasilkan sampel bias dan angka
@@ -1072,36 +1051,23 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
     fetched = len(rows)
     # Pool quote-only (tanpa sisi memecoin) tidak dianalisa dan tidak ikut
     # listing — dust %-nya terhadap MC SOL/USDC selalu 0,000% (lihat
-    # :func:`unanalysable_row`).
+    # :func:`unanalysable_row`). Ini satu-satunya filter yang tersisa.
     rows, quote_skipped = drop_quote_rows(rows)
-    # Volume 24 jam >= $1M wajib untuk listing utama **dan** listing
-    # disembunyikan. Pool sepi tidak di-enrich (hemat kuota Helius).
-    # Volatility tetap saringan listing utama — yang gagal volatility
-    # tapi lolos volume masuk ``hidden_rows``. Dust **tidak lagi**
-    # jadi saringan (permintaan user 2026-09-13).
-    volume_ok = [row for row in rows if row_volume_ok(row)]
-    candidates = [row for row in volume_ok if not row_best_gaps(row)]
-    hidden_metric = len(rows) - len(candidates)
-    if volume_ok:
-        volume_ok = enrich_pools(volume_ok, max_wallets=max_wallets,
-                                 workers=workers, progress=progress)
-        by_addr = {str(row.get("pool_address") or ""): row
-                   for row in volume_ok}
-        candidates = [by_addr.get(str(row.get("pool_address") or ""), row)
-                      for row in candidates]
-    kept, _, hidden_dust = filter_best_rows(candidates)
-    kept = sort_best_rows(kept)
-    kept_addrs = {str(row.get("pool_address") or "") for row in kept}
-    # Dust syarat dihapus: hidden_rows = semua volume_ok yang gagal metrik
-    # (volatility), tanpa filter dust.
-    hidden_rows = sort_best_rows([
-        row for row in volume_ok
-        if str(row.get("pool_address") or "") not in kept_addrs
-    ])
+    # Semua saringan layar dihapus per request user 2026-09-13:
+    # dust% (sebelumnya <0,05%), volatility >=2%, volume >=1M — semuanya
+    # tidak lagi menggugurkan pool. Semua rows di-enrich holder lalu
+    # diurutkan.
+    if rows:
+        rows = enrich_pools(rows, max_wallets=max_wallets,
+                            workers=workers, progress=progress)
+    kept = sort_best_rows(rows)
+    hidden_rows: list[dict] = []
+    hidden_metric = 0
+    hidden_dust = 0
     if _alog:
         _alog.info("scan-best-pool",
-                   f"scan selesai: {len(kept)} pool lolos dari {len(rows)} "
-                   f"listing ({hidden_metric} gugur metrik"
+                   f"scan selesai: {len(kept)} pool tampil dari {fetched} "
+                   f"listing (tanpa saringan layar"
                    + (f", {quote_skipped} pool quote dilewati"
                       if quote_skipped else "") + ")")
     return {
@@ -1111,8 +1077,8 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
         "fetched": fetched,
         "hidden_metric": hidden_metric,
         "hidden_dust": hidden_dust,
-        # Dust filter dinonaktifkan 2026-09-13: hidden_dust selalu 0,
-        # baris tanpa bukti dust tetap tampil sebagai informasi.
+        # Semua filter layar dinonaktifkan 2026-09-13: dust, volatility,
+        # volume — hanya filter API server yang tersisa.
         "skipped_quote": quote_skipped,
         "analyzed_at": int(time.time()),
     }
