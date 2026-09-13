@@ -147,27 +147,22 @@ def _wib(ts):
 
 
 def _dust_badge_html(flag: dict) -> str:
-    level = flag.get("level") or "unknown"
-    label = str(flag.get("label") or "—")
-    if flag.get("rising") and level in ("danger", "caution"):
-        label = f"{label} ↑"
-    cls = {"ok": "dust-ok", "caution": "dust-caution",
-           "danger": "dust-danger"}.get(level, "dust-none")
-    return f'<span class="dust-badge {cls}">{html.escape(label)}</span>'
+    """Badge level dust (AMAN/HATI-HATI/BAHAYA) — **dihapus** 2026-09-13.
+
+    Permintaan user: \"tulisan aman, hati2, bahaya dll terkait % dust hapus
+    juga\". Return ``\"\"`` supaya pemanggil tidak perlu diubah — angka
+    Dust %MC tetap tampil, hanya label level-nya yang hilang.
+    """
+    return ""
 
 
 def _dust_best_html(flag: dict) -> str:
-    """Chip 🏆 BEST POOL — hanya Scan Meteora (permintaan user 2026-09-04).
+    """Chip 🏆 BEST POOL — **dihapus** 2026-09-13 per permintaan user.
 
-    ``flag["best"]`` sudah dijamin oleh ``dust_flag(..., holders=..., tvl=...)``:
-    dust % MC < 0,1% **dan** data holder valid (total_fetched > 0,
-    wallets_analyzed ≥ 40) **dan** TVL pool ≥ 10K USD (2026-09-07) — dust
-    "0,00%" dari data gagal tidak pernah mendapat chip ini.
+    Selalu return ``""``. Permintaan user: "tulisan aman, hati2, bahaya
+    dll terkait % dust hapus juga".
     """
-    if not flag.get("best"):
-        return ""
-    label = html.escape(str(DUST_BEST_LABEL))
-    return f'<span class="dust-badge dust-best">🏆 {label}</span>'
+    return ""
 
 
 def _scan_best_mark_ok(dust_pct) -> bool:
@@ -183,33 +178,18 @@ def _scan_best_mark_ok(dust_pct) -> bool:
     (pola ``best_pool_ui.best_pool_tooltip``) supaya impor modul UI ini tetap
     ringan dan bebas dependensi baru di level atas.
     """
-    from meteora_screener import BEST_DUST_MARK_PCT
-    try:
-        pct = float(dust_pct)
-    except (TypeError, ValueError):
-        return False
-    return pct <= BEST_DUST_MARK_PCT
+    # Tulisan BEST emas **dihapus** 2026-09-13 per permintaan user:
+    # "tulisan aman, hati2, bahaya dll terkait % dust hapus juga".
+    return False
 
 
 def _scan_best_badge_html(dust_pct, label: str = "BEST") -> str:
-    """HTML tulisan **BEST** emas berkelap-kelip di bawah metrik Dust %MC.
+    """HTML tulisan BEST emas — **dihapus** 2026-09-13 per permintaan user.
 
-    Return ``""`` bila dust tidak memenuhi :func:`_scan_best_mark_ok`, jadi
-    pemanggil tidak perlu merender markdown kosong. Penanda **visual** saja —
-    tidak ada saringan/angka yang berubah; seluruh gayanya (ukuran, warna
-    emas, kelap-kelip) ada di CSS ``.scan-best-gold`` pada
-    :func:`render_styles`. Aturan angkanya ikut ditulis di atribut ``title``
-    (tooltip native, konvensi 2026-09-10) dengan angka dari konstanta, bukan
-    hard-code.
+    Selalu return ``""``. Permintaan user: "tulisan aman, hati2, bahaya
+    dll terkait % dust hapus juga".
     """
-    if not _scan_best_mark_ok(dust_pct):
-        return ""
-    from meteora_screener import BEST_DUST_MARK_PCT
-    tip = (f"Dust {float(dust_pct):.3f}% MC <= {BEST_DUST_MARK_PCT:g}% "
-           "marketcap — distribusi holder sangat bersih (ambang yang sama "
-           "dengan tanda 🏆 BEST POOL di Scan Best Pool Meteora).")
-    return (f'<span class="scan-best-gold" title="{html.escape(tip)}">'
-            f"{html.escape(str(label))}</span>")
+    return ""
 
 
 def _delta_pp_html(delta, digits: int = 2) -> str:
@@ -601,11 +581,8 @@ def _rh_head_html(title: str, total: int, danger: int, caution: int,
         pills.append('<span class="lp-count">🔄 sinkron…</span>')
     elif sync == "error":
         pills.append('<span class="lp-warn">⚠️ belum sinkron</span>')
-    if danger:
-        pills.append(f'<span class="lp-warn">BAHAYA {danger}</span>')
-    if caution:
-        pills.append(f'<span class="lp-warn" style="color:#78350f;'
-                     f'background:#fef3c7;">HATI-HATI {caution}</span>')
+    # Pill BAHAYA/HATI-HATI dihapus 2026-09-13 per permintaan user:
+    # \"tulisan aman, hati2, bahaya dll terkait % dust hapus juga\".
     return card_head_html(title, pills, tooltip=tooltip)
 
 

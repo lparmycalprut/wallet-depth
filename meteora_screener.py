@@ -813,20 +813,17 @@ def scan_meteora(*, max_wallets: int | None = None, workers: int = 6,
 
 # ---------------------------------------------------------------------------
 # 🏆 Scan Best Pool Meteora — listing khusus halaman utama ``app.py``.
-# Kriteria diganti total 2026-09-11 (curl UI Meteora dari user). Dua lapis:
+# Kriteria 2026-09-13 (semua saringan layar + fee_pct dihapus):
 #
-# 1. **server** (query API Meteora, sama seperti filter UI Meteora):
-#    ``pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000``, timeframe 24 jam,
-#    category ``top``, page_size 50 — tier fee dan active TVL TIDAK diulang
-#    sebagai saringan layar;
-# 2. **layar** (setelah data pool + holder ada): dust holder < 0,05% MC dan
-#    volatility minimal 2%.
+# 1. **server** (query API Meteora): ``pool_type=dlmm&&active_tvl>=50000``,
+#    timeframe 24H + 30M, category ``top``, page_size 50 — active TVL
+#    disaring di server. ``fee_pct>=2`` **dihapus** 2026-09-13 sore
+#    (permintaan user: pool ber-fee rendah seperti EMBER/USDC harus muncul);
+# 2. **layar**: tidak ada saringan — semua pool ditampilkan apa adanya.
 #
 # Urutan baris: **volume 24 jam / active TVL** (``volume_active_tvl_ratio``)
-# terbesar → **dust % MC terkecil** (permintaan user 2026-09-13; sebelumnya
-# kenaikan volume 24 jam → dust → fee/active TVL, 2026-09-11 sore). Data yang hilang
-# (``None``) selalu menggugurkan baris:
-# card ini menjual bukti, jadi pool tanpa angka tidak ikut ditampilkan.
+# terbesar → **dust % MC terkecil**. Data yang hilang (``None``) selalu
+# menggugurkan baris dari urutan (tapi tetap tampil di listing).
 # ---------------------------------------------------------------------------
 def _maybe_float(value):
     """Float atau ``None`` (NaN/Infinity/bool/tipe salah → ``None``).
@@ -844,30 +841,37 @@ def _maybe_float(value):
 
 
 def best_filter_by(pool_type: str = "dlmm",
-                   fee_pct_min: float = BEST_FEE_PCT_MIN,
+                   fee_pct_min: float | None = None,
                    active_tvl_min: float = BEST_ACTIVE_TVL_MIN) -> str:
     """Query ``filter_by`` Scan Best Pool Meteora (&&-join ala UI Meteora).
 
-    Hasil default (kriteria 2026-09-11):
-    ``pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000`` — persis query yang
-    dipakai UI Meteora di request user, dan satu-satunya tempat angka
-    ``fee_pct`` / ``active_tvl`` Best Pool ditulis (API yang menyaring,
-    bukan layar).
+    Sejak 2026-09-13 filter ``fee_pct>=2`` **dihapus** (permintaan user:
+    pool dengan fee tier rendah seperti EMBER/USDC harus muncul). Satu-
+    satunya filter server yang tersisa: ``pool_type=dlmm&&active_tvl>=
+    50000``. Kwarg ``fee_pct_min`` dipertahankan untuk kompatibilitas
+    caller lama (``None`` = tidak menambah filter fee_pct).
     """
     def _num(value: float) -> str:
         number = float(value)
         return str(int(number)) if number == int(number) else f"{number:g}"
 
-    return (f"pool_type={pool_type}"
-            f"&&fee_pct>={_num(fee_pct_min)}"
+    text = (f"pool_type={pool_type}"
             f"&&active_tvl>={_num(active_tvl_min)}")
+    if fee_pct_min is not None:
+        text += f"&&fee_pct>={_num(fee_pct_min)}"
+    return text
 
 
 def fetch_best_pools(*, timeframe: str = "24h", page_size: int = PAGE_SIZE,
-                     fee_pct_min: float = BEST_FEE_PCT_MIN,
+                     fee_pct_min: float | None = None,
                      active_tvl_min: float = BEST_ACTIVE_TVL_MIN,
                      timeout: int = 25) -> list[dict]:
-    """Top pool 24 jam untuk Scan Best Pool Meteora. Gagal → raise."""
+    """Top pool untuk Scan Best Pool Meteora. Gagal → raise.
+
+    Sejak 2026-09-13 filter ``fee_pct`` dihapus (default ``None``): semua
+    pool DLMM dengan ``active_tvl >= 50K`` dari API ditampilkan, termasuk
+    pool ber-fee rendah (EMBER/USDC, SOL/USDC, dll).
+    """
     params = {
         "page_size": max(1, min(int(page_size), 50)),
         "timeframe": str(timeframe or "24h"),
@@ -882,20 +886,57 @@ def fetch_best_pools(*, timeframe: str = "24h", page_size: int = PAGE_SIZE,
     return [row for row in rows if isinstance(row, dict)]
 
 
-def rows_from_pools(pools: list[dict] | None) -> list[dict]:
-    """Baris listing (dedup ``pool_address``) dari payload pool-discovery."""
+def rows_from_pools(pools: list[dict] | None, *,
+                    timeframe: str = "24h") -> list[dict]:
+    """Baris listing (dedup ``pool_address``) dari payload pool-discovery.
+
+    ``timeframe`` dipakai sejak 2026-09-13 supaya Scan Best Pool Meteora
+    bisa mengambil **dua lane** (24H + 30M) dan menandai source masing-masing
+    pool. Pool yang sama di dua timeframe menjadi dua record terpisah
+    (lihat :func:`best_rows_from_lanes`).
+    """
     rows: list[dict] = []
     seen: set[str] = set()
+    is_24h = timeframe == "24h"
     for pool in pools or []:
         if not isinstance(pool, dict):
             continue
-        row = _row_from_pool(pool, in_24h=True, in_1h=False)
+        row = _row_from_pool(pool, timeframe=timeframe,
+                             in_24h=is_24h, in_1h=not is_24h)
         addr = row["pool_address"]
         if addr:
             if addr in seen:
                 continue
             seen.add(addr)
         rows.append(row)
+    return rows
+
+
+def best_rows_from_lanes(pools_24h: list[dict] | None,
+                         pools_30m: list[dict] | None) -> list[dict]:
+    """Gabung pool Best Pool dari dua timeframe (24H lalu 30M).
+
+    Satu pool yang muncul di kedua timeframe **sengaja menjadi dua record**:
+    metrik fee/volatility berbeda antar timeframe dan kolom **Src** di tabel
+    harus menunjukkan dari mana pool itu berasal (permintaan user 2026-09-13:
+    \"dan pool tersebut berasal dari 24H atau 30M\"). Dedup dilakukan di
+    dalam masing-masing timeframe (berdasarkan ``pool_address``).
+    """
+    rows: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for timeframe, pools in (("24h", pools_24h), ("30m", pools_30m)):
+        for pool in pools or []:
+            if not isinstance(pool, dict):
+                continue
+            row = _row_from_pool(pool, timeframe=timeframe,
+                                 in_24h=(timeframe == "24h"),
+                                 in_1h=(timeframe == "30m"))
+            address = row["pool_address"]
+            key = (timeframe, address or f"{timeframe}:{len(rows)}")
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(row)
     return rows
 
 
@@ -1014,14 +1055,22 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
                       progress=None, timeout: int = 25,
                       timeframe: str = "24h",
                       page_size: int = PAGE_SIZE) -> dict:
-    """Listing 24 jam + holder — **tanpa saringan layar** (2026-09-13).
+    """Listing 24H + 30M + holder — **tanpa saringan layar** (2026-09-13).
+
+    Sejak 2026-09-13 scan mengambil **dua timeframe** (24H dan 30M) dan
+    menandai source tiap pool di kolom **Src** (permintaan user: \"pool
+    tersebut berasal dari 24H atau 30M\"). Kwarg ``timeframe`` dipertahankan
+    untuk kompatibilitas caller lama tetapi tidak lagi membatasi fetch —
+    kedua lane selalu diambil.
 
     Kriteria 2026-09-13 per request user:
     - dust% dihapus (sebelumnya <0,05%),
     - volatility >=2% dihapus,
-    - volume 24 jam >=1M dihapus.
+    - volume 24 jam >=1M dihapus,
+    - fee_pct >=2% dihapus (2026-09-13 sore — pool ber-fee rendah seperti
+      EMBER/USDC sekarang muncul).
     Sekarang hanya filter server API Meteora:
-    ``pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000``.
+    ``pool_type=dlmm&&active_tvl>=50000``.
     Semua pool yang dikembalikan API (kecuali quote-only) ditampilkan,
     dust/volatility/volume tetap sebagai informasi + kunci urut.
     Urutan: volume/active TVL terbesar → dust %MC terkecil.
@@ -1037,17 +1086,31 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
     except Exception:  # noqa: BLE001 - log hanya pelengkap
         _alog = None
     if _alog:
-        _alog.info("scan-best-pool", "scan mulai: listing Best Pool Meteora")
+        _alog.info("scan-best-pool",
+                   "scan mulai: listing Best Pool Meteora 24H + 30M")
+    errors: list[str] = []
+    pools_24h: list[dict] = []
+    pools_30m: list[dict] = []
     try:
-        pools = fetch_best_pools(timeframe=timeframe, page_size=page_size,
-                                 timeout=timeout)
-        error = ""
+        pools_24h = fetch_best_pools(timeframe="24h", page_size=page_size,
+                                     timeout=timeout)
     except Exception as exc:  # noqa: BLE001 - kegagalan API jadi pesan card
-        pools, error = [], str(exc)
+        errors.append(f"24H: {exc}")
         if _alog:
             _alog.error("scan-best-pool",
-                        f"listing Meteora gagal: {str(exc)[:160]}")
-    rows = rows_from_pools(pools)
+                        f"listing Meteora 24H gagal: {str(exc)[:160]}")
+    try:
+        pools_30m = fetch_best_pools(timeframe="30m", page_size=page_size,
+                                     timeout=timeout)
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"30M: {exc}")
+        if _alog:
+            _alog.error("scan-best-pool",
+                        f"listing Meteora 30M gagal: {str(exc)[:160]}")
+    error = " · ".join(errors)
+    # Gabung kedua lane; pool yang sama di dua timeframe jadi dua record
+    # (kolom Src di tabel membedakan 24H vs 30M).
+    rows = best_rows_from_lanes(pools_24h, pools_30m)
     fetched = len(rows)
     # Pool quote-only (tanpa sisi memecoin) tidak dianalisa dan tidak ikut
     # listing — dust %-nya terhadap MC SOL/USDC selalu 0,000% (lihat
@@ -1067,7 +1130,7 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
     if _alog:
         _alog.info("scan-best-pool",
                    f"scan selesai: {len(kept)} pool tampil dari {fetched} "
-                   f"listing (tanpa saringan layar"
+                   f"listing (24H + 30M, tanpa saringan layar"
                    + (f", {quote_skipped} pool quote dilewati"
                       if quote_skipped else "") + ")")
     return {
