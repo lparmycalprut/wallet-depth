@@ -1,45 +1,40 @@
 # -*- coding: utf-8 -*-
 """Card **🏆 Scan Best Pool Meteora** untuk halaman utama (``app.py``).
 
-Kriteria **diganti total** 2026-09-11 sesuai request user (curl UI Meteora):
+Kriteria 2026-09-13 (dust filter **dihapus** per request user
+\"dust% syaratnya hapus saja\"):
 
 - query API Meteora ``pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000``
   (timeframe 24 jam, category ``top``, page_size 50) — lihat
   ``meteora_screener.best_filter_by``; tier fee ≥ 2% dan active TVL ≥ $50K
   disaring **oleh API**, tidak diulang sebagai saringan layar;
-- saringan layar tinggal tiga: dust holder **< 0,05% MC**, volatility
-  **≥ 2%**, dan **volume 24 jam ≥ 1 juta USD**
-  (``meteora_screener.BEST_VOLUME_24H_MIN``, permintaan user 2026-09-12:
-  "minimal volume 24 jam adalah 1M, dibawah itu jangan di show");
+- saringan layar tinggal dua: volatility **≥ 2%**, dan
+  **volume 24 jam ≥ 1 juta USD**
+  (``meteora_screener.BEST_VOLUME_24H_MIN``) — dust holder **tidak lagi**
+  jadi saringan, tetap tampil sebagai informasi di kolom Dust %MC;
 - urutan baris: **volume 24 jam / active TVL (``volume_active_tvl_ratio``)
-  terbesar** → **dust % MC terkecil** (sejak 2026-09-13; sebelumnya kenaikan
-  volume 24 jam → dust → fee/TVL). Rasionya dikirim langsung API Meteora dan
-  ditampilkan di baris kecil kolom **Vol 24h**, jadi kunci urutnya bisa
-  diperiksa;
+  terbesar** → **dust % MC terkecil** (sejak 2026-09-13). Rasionya dikirim
+  langsung API Meteora dan ditampilkan di baris kecil kolom **Vol 24h**, jadi
+  kunci urutnya bisa diperiksa;
 - baris dengan dust **<= 0,035% MC** (``meteora_screener.BEST_DUST_MARK_PCT``,
   inklusif; 2026-09-12) ditandai chip **🏆 BEST POOL** di kolom Dust %MC +
   dihitung di pill kepala card — penanda visual, bukan saringan;
 - tabel menampilkan detail fee dan active TVL (kolom **A.TVL**, **Fee/TVL**
   dengan angka fee USD + tier fee di baris kecilnya, **Vol 24h** dengan Δ
-  volume + rasio volume/active TVL) supaya kunci urutnya bisa diperiksa, bukan
-  cuma dipercaya. Kolom lama ``Fee`` (tier saja) dihapus — tier fee ikut
-  nempel di baris kecil Fee/TVL; kolom ``Vol`` lama (= volatilitas) berganti
-  nama jadi **Volat** karena **Vol 24h** sekarang benar-benar volume.
+  volume + rasio volume/active TVL) supaya kunci urutnya bisa diperiksa.
 
 Saringan lama (fee/active TVL > 20%, top 10 holder < 30%, total LPs > 20,
-active TVL > 10K) **dihapus** — top 10 holder dan total LPs tetap tampil
-sebagai informasi.
+active TVL > 10K, dust <0,05%) **dihapus** — top 10 holder, total LPs, dan
+dust tetap tampil sebagai informasi.
 
-Detail karakteristik card = **tooltip judul** (konvensi 2026-09-10,
-permintaan user: "ini juga bikin tooltip saja") — bukan caption panjang di
+Detail karakteristik card = **tooltip judul** — bukan caption panjang di
 badan card. Angka ambangnya diambil dari konstanta ``meteora_screener.BEST_*``
 supaya teks tooltip tidak pernah beda dari rule yang benar-benar jalan. ⭐
 memasukkan token ke card **Watchlist Meteora** di halaman utama
 (``source=meteora``, sama seperti card temp).
 
 **Penempatan (2026-09-11):** card dirender **full-width** di bawah grid 2
-kolom watchlist — permintaan user: "jangan dibuat grid lagi" (2026-09-10
-dulu menempel di bawah 🌊 Watchlist Meteora di dalam grid).
+kolom watchlist.
 """
 from __future__ import annotations
 
@@ -55,42 +50,43 @@ def best_pool_tooltip() -> str:
     (sumber kebenaran rule), sehingga tooltip ikut berubah kalau filternya
     diubah — tidak mungkin lagi ada angka tooltip yang beda dengan angka
     yang jalan.
+
+    Dust filter **dinonaktifkan** 2026-09-13 per request user
+    \"dust% syaratnya hapus saja\" — dust tetap tampil sebagai informasi.
     """
     from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_DUST_MARK_PCT,
-                                  BEST_DUST_MAX_PCT, BEST_FEE_PCT_MIN,
-                                  BEST_VOLATILITY_MIN, BEST_VOLUME_24H_MIN)
+                                  BEST_FEE_PCT_MIN, BEST_VOLATILITY_MIN,
+                                  BEST_VOLUME_24H_MIN)
     return (
         "Listing API Meteora 24 jam (category top, page_size 50) dengan "
         f"filter pool_type=dlmm&&fee_pct>={BEST_FEE_PCT_MIN:g}&&active_tvl>="
         f"{int(BEST_ACTIVE_TVL_MIN)} — tier fee dan active TVL disaring "
         "langsung oleh Meteora, bukan di layar. Yang ditampilkan hanya pool "
         f"dengan volume 24 jam >= ${BEST_VOLUME_24H_MIN:,.0f} (di bawah itu "
-        "tidak ditampilkan), dust holder < "
-        f"{BEST_DUST_MAX_PCT:g}% marketcap dan "
-        f"volatility >= {BEST_VOLATILITY_MIN:g}%. Baris dengan dust <= "
-        f"{BEST_DUST_MARK_PCT:g}% marketcap ditandai chip 🏆 BEST POOL di "
-        "kolom Dust %MC (penanda, bukan saringan). Urutan: volume 24 jam "
-        "dibagi active TVL (rasio yang dikirim API Meteora — angkanya di "
-        "baris kecil kolom Vol 24h) paling besar dulu, lalu dust % marketcap "
-        "terkecil. Di tabel: A.TVL = active TVL "
+        "tidak ditampilkan) dan "
+        f"volatility >= {BEST_VOLATILITY_MIN:g}% (dust holder TIDAK lagi "
+        "jadi saringan — tetap tampil sebagai informasi di kolom Dust %MC). "
+        f"Baris dengan dust <= {BEST_DUST_MARK_PCT:g}% marketcap ditandai "
+        "chip 🏆 BEST POOL di kolom Dust %MC (penanda visual, bukan saringan). "
+        "Urutan: volume 24 jam dibagi active TVL (rasio yang dikirim API "
+        "Meteora — angkanya di baris kecil kolom Vol 24h) paling besar dulu, "
+        "lalu dust % marketcap terkecil. Di tabel: A.TVL = active TVL "
         "pool, Fee/TVL = fee 24 jam dibagi active TVL (baris kecilnya angka "
         "fee + tier fee — informasi, bukan kunci urut lagi), Vol 24h = volume "
         "24 jam dengan perubahannya (Δ) dan rasio volume/active TVL — "
         "angkanya bukti saringan volume di atas — kolom "
         "Top10 dan LPs hanya informasi, keduanya bukan saringan lagi. ⭐ "
         "memasukkan token ke card 🌊 Watchlist Meteora di halaman utama; "
-        "tombol kanan "
-        "membuka Meteora DLMM + HawkFi. Dust dihitung dari scan FULL holder "
-        "Helius (bukan sampel), jadi scan token ber-holder banyak bisa makan "
-        "waktu beberapa menit. Pembagi Dust %MC = market cap dari "
+        "tombol kanan membuka Meteora DLMM + HawkFi. Dust dihitung dari scan "
+        "FULL holder Helius (bukan sampel), jadi scan token ber-holder banyak "
+        "bisa makan waktu beberapa menit. Pembagi Dust %MC = market cap dari "
         "DexScreener — angka yang sama dipakai 🛰 Scan Holder dan Watchlist "
         "Meteora, jadi dua card selalu bisa dibandingkan (kolom MC di tabel "
         "adalah angka yang dipakai itu, bukan MC listing Meteora). Pool "
         "tanpa sisi memecoin (SOL/USDC/USDT) dilewati sebelum holder "
         "di-fetch: dust-nya terhadap MC SOL selalu terbaca 0,000%. Baris "
-        "yang scan holdernya gagal, 0 wallet, atau terpotong dianggap "
-        "tanpa bukti: gugur dari listing, tidak pernah tampil sebagai "
-        "0,000% + chip 🏆 BEST POOL.")
+        "yang scan holdernya gagal tetap tampil dengan Dust %MC = — (bukan "
+        "0,000% + chip 🏆 BEST POOL).")
 
 
 # Lebar kolom listing: Token, MC, A.TVL, Fee/TVL, Vol 24h, Volatilitas,
@@ -209,7 +205,7 @@ def _render_best_table(rows: list, *, key_prefix: str = "best-pool") -> None:
     from dashboard_components import _number
     from links import external_links_html, pool_links_html
     from lp_watchlist import LP_SOURCE
-    from meteora_screener import (BEST_DUST_MARK_PCT, BEST_DUST_MAX_PCT,
+    from meteora_screener import (BEST_DUST_MARK_PCT,
                                   BEST_VOLATILITY_MIN, BEST_VOLUME_24H_MIN,
                                   row_best_pool, row_dust_pct,
                                   row_vol_tvl_ratio)
@@ -229,10 +225,9 @@ def _render_best_table(rows: list, *, key_prefix: str = "best-pool") -> None:
         symbol = str(row.get("symbol") or "?").upper()
         pool = str(row.get("pool_address") or "")
         # Satu sumber angka dengan saringan + urutan: ``row_dust_pct`` sudah
-        # mengembalikan ``None`` untuk scan holder tanpa bukti (gagal/terpotong/
-        # sampel pendek) — baris begitu tidak pernah lolos saringan card ini,
-        # jadi angka 0,000% dari provider mati tidak bisa lagi menyamar jadi
-        # pool terbersih.
+        # mengembalikan ``None`` untuk scan holder tanpa bukti — dust tetap
+        # tampil sebagai informasi (—) bukan 0,000% palsu. Filter dust
+        # dinonaktifkan 2026-09-13.
         dust_pct = row_dust_pct(row)
         fee = row.get("fee")
         active_tvl = row.get("active_tvl")
@@ -256,8 +251,8 @@ def _render_best_table(rows: list, *, key_prefix: str = "best-pool") -> None:
         dust_is_best = row_best_pool(row)
         dust_value = _pct_txt(dust_pct, 3)
         dust_sub = "dust"
-        dust_tip = (f"dust holder < {BEST_DUST_MAX_PCT:g}% marketcap — "
-                    "saringan sekaligus kunci urut kedua (terkecil dulu) · "
+        dust_tip = ("dust holder — informasi (filter dust dinonaktifkan "
+                    "2026-09-13) · kunci urut kedua (terkecil dulu) · "
                     "pembaginya market cap DexScreener (kolom MC), sumber "
                     "yang sama dengan 🛰 Scan Holder")
         if dust_is_best:
@@ -332,7 +327,7 @@ def render_best_pool_scan() -> None:
     import streamlit as st
 
     from holder_history import FULL_SCAN_MAX_WALLETS
-    from meteora_screener import (BEST_DUST_MAX_PCT, BEST_VOLUME_24H_MIN,
+    from meteora_screener import (BEST_VOLUME_24H_MIN,
                                   scan_best_meteora, sort_best_rows)
 
     with st.container(border=True):
@@ -385,16 +380,15 @@ def render_best_pool_scan() -> None:
         if hidden:
             # HTML pill tidak bisa diklik di Streamlit — tombol di bawah
             # kepala membuka listing pool yang disembunyikan (volume ≥ 1M,
-            # dust < 0,05%, urut volume/active TVL → dust).
+            # urut volume/active TVL → dust sebagai info).
             label = (f"◀ kembali ke {len(rows)} pool lolos"
                      if showing_hidden
                      else f"▶ {hidden} disembunyikan")
             if st.button(label, key="best-pool-toggle-hidden",
                          help=("Tampilkan pool yang disembunyikan dari "
                                "listing utama, tetap volume 24 jam "
-                               f">= ${BEST_VOLUME_24H_MIN:,.0f} dan dust "
-                               f"< {BEST_DUST_MAX_PCT:g}% MC, urut "
-                               "volume/active TVL lalu dust."),
+                               f">= ${BEST_VOLUME_24H_MIN:,.0f}, urut "
+                               "volume/active TVL lalu dust (info)."),
                          use_container_width=True):
                 st.session_state[BEST_SHOW_HIDDEN_KEY] = not showing_hidden
                 st.rerun()
@@ -408,14 +402,12 @@ def render_best_pool_scan() -> None:
         if showing_hidden:
             if not hidden_rows:
                 st.info("Tidak ada pool tersembunyi yang lolos volume "
-                        f">= ${BEST_VOLUME_24H_MIN:,.0f} dan dust "
-                        f"< {BEST_DUST_MAX_PCT:g}% MC.")
+                        f">= ${BEST_VOLUME_24H_MIN:,.0f}.")
                 return
             st.caption(
                 f"{len(hidden_rows)} pool disembunyikan ditampilkan "
-                f"(volume ≥ ${BEST_VOLUME_24H_MIN:,.0f}, dust "
-                f"< {BEST_DUST_MAX_PCT:g}% MC, urut volume/active TVL "
-                "lalu dust).")
+                f"(volume ≥ ${BEST_VOLUME_24H_MIN:,.0f}, urut "
+                "volume/active TVL lalu dust sebagai info).")
             _render_best_table(hidden_rows, key_prefix="best-pool-hidden")
             return
         if not rows:
