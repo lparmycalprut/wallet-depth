@@ -1,3 +1,55 @@
+# Kegiatan — 13 September 2026 (kolom tabel "Awal Masuk" = dust %MC saat token masuk watchlist)
+
+Permintaan user: *"Saat masuk watchlist (13 Sep 07:00 WIB): dust 0.103% MC —
+ini tambakan ke kolom table saja dengan caption Awal Masuk"*.
+
+Angka yang sehari sebelumnya baru muncul di baris pertama expander 📈
+(`baseline_note()`, entri di bawah) naik ke tabel — terlihat tanpa klik,
+berdiri di sebelah kolom **Hold %MC**. Prinsip yang dijaga: TIDAK ada
+definisi baseline kedua; sel membaca hasil `added_baseline()` yang sama
+persis dengan kolom "Sejak masuk", caption expander, dan patokan notifikasi
+⚡ EARLY DUMP 0,02%.
+
+## Bentuk baru
+
+- `watchlist_detail.baseline_cell(baseline, current_pct=…)` →
+  `{value, sub, note}`: `value` dust % MC **3 desimal** (`"0.103%"`), `sub`
+  waktu titik pembandingnya (`"13 Sep 07:00 WIB"`) + penanda varian fallback
+  (` · titik pertama` bila tanggal `added` tak terbaca, ` · belum ada scan
+  sejak masuk` bila terpaksa memakai titik sebelum tanggal masuk), `note`
+  kalimat lengkap `baseline_note()` untuk atribut `title` sel (hover). Tanpa
+  titik layak → `—` + `belum ada scan layak`.
+- Kolom ke-4 dari **8** di ketiga tabel watchlist —
+  `app._render_lp_row` (🌊 Watchlist Meteora, header `_render_lp_card`),
+  `dashboard_components._render_rh_row` (🦅 Robinhood LP/biasa, varian
+  reguler ikut karena satu renderer), `temp_ui.render_temp` (📋 watchlist
+  Holder; di sana kolomnya di kiri "Sejak masuk"). Aksi 🧮/🔔/📋/✕ (dan
+  🌊/✕ di temp) bergeser satu kolom; lebar grid LP/RH/temp disesuaikan
+  (`[1.62, 0.72, 0.9, 0.8, …]` LP, `[1.62, 0.75, 0.9, 0.8, …]` RH,
+  `[1.5, 0.8, 0.85, 0.8, 0.95, …]` temp).
+- `LP_CARD_TOOLTIP` + `RH_CARD_TOOLTIP`/`RH_REGULAR_CARD_TOOLTIP` menyebut
+  kolom baru ini = angka patokan rule ⚡ (hover sel untuk kalimat lengkap).
+
+## Verifikasi
+
+`python -m unittest discover -s tests -t .` → **Ran 1156 tests, OK**
+(baseline sebelumnya 1150). Tes baru: `BaselineCellTest` (5) di
+`tests/test_watchlist_detail.py` — nilai 3 desimal + waktu, tooltip
+"sekarang …% MC"/"patokan notif ⚡ EARLY DUMP", dua varian fallback, tanpa
+titik layak, input kosong tidak meledak. Assert kolom di AppTest:
+`tests/test_lp_card_ui.py` (`test_detail_menampilkan_dust_saat_masuk_watchlist`
++ `>Awal Masuk</div>`, nilai sel 0,620%/0,300%, `title="📌 Saat masuk
+watchlist…" + "· sekarang 0.610% MC (+0.310 pp)"), `tests/test_rh_card_ui.py`
+(`>Awal Masuk</div>` + `title="📌 Titik pertama yang tercatat` — varian tanpa
+tanggal `added`), tes per token baru di `tests/test_watchlist_row_ui.py`
+(`test_kolom_awal_masuk_menampilkan_dust_saat_ditambahkan`: DRP 0,400% /
+RSE 0,200% / SYN 0,300%, angka baris SYN tetap 0,71%), dan hitungan kolom di
+`tests/test_temp_page.py` (dua tabel temp berkolom "Awal Masuk").
+
+Teks yang ikut disinkronkan: `README.md` (🌊 Watchlist Meteora + Kolom
+"Sejak masuk"), `AGENTS.md` (bulket `watchlist_detail.py` + spec blok baris
+watchlist), entri `docs/PROGRESS.md`.
+
 # Kegiatan — 13 September 2026 (detail watchlist: dust % MC saat token pertama masuk watchlist)
 
 Permintaan user: *"pada detail watchlist, juga tunjukkan pertama kali saya

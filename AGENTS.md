@@ -110,8 +110,9 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   `app.py::_render_lp_row` (scope `lp`), `rh-alert-<0x…>` dan
   `rhreg-alert-<0x…>` di `dashboard_components._render_rh_row` (scope dari
   `_rh_scope`: card LP halaman utama / card biasa halaman temp). Grid baris
-  jadi **7 kolom** (LP `[1.7, 0.75, 0.95, 0.42, 0.42, 0.42, 0.42]`, RH
-  `[1.7, 0.8, 0.95, 0.42, 0.42, 0.42, 0.42]`) dan kepala card menampilkan
+  jadi **7 kolom** — sejak 2026-09-13 **8 kolom** karena kolom ke-4
+  **Awal Masuk** (LP `[1.62, 0.72, 0.9, 0.8, 0.42, 0.42, 0.42, 0.42]`, RH
+  `[1.62, 0.75, 0.9, 0.8, 0.42, 0.42, 0.42, 0.42]`) dan kepala card menampilkan
   pill `🔕 N` (`_muted_pill_html`) bila ada token yang dimatikan. Baris yang
   dimatikan menambah **· 🔕 notif off** di captionnya; pilihan disimpan
   `alert_settings.set_mint_alert_enabled` (pusatnya di bullet
@@ -737,7 +738,18 @@ JSON compact, Contents API base64) di ref `holder-live`:
   layak sama sekali → "belum bisa dihitung". Captionnya dirender di baris
   pertama expander detail `dashboard_components._render_dust_change(…, meta=,
   current_pct=)` — keempat lane (Meteora LP, Robinhood LP/biasa, watchlist
-  biasa Solana) memakai expander itu.
+  biasa Solana) memakai expander itu. **Kolom tabel "Awal Masuk"
+  (2026-09-13)** — permintaan user *"Saat masuk watchlist (13 Sep 07:00
+  WIB): dust 0.103% MC — ini tambakan ke kolom table saja dengan caption
+  Awal Masuk"*: `baseline_cell(baseline, current_pct=…)` →
+  `{value, sub, note}` (`value` dust % MC 3 desimal, `sub` waktu titik
+  pembanding + penanda fallback, `note` = kalimat lengkap `baseline_note()`
+  untuk atribut `title` sel). Selnya jadi **kolom ke-4 dari 8** di ketiga
+  tabel watchlist — `app._render_lp_row`, `dashboard_components._render_rh_row`
+  (varian LP & biasa) dan tabel 📋 watchlist Holder `temp_ui.render_temp`
+  (di situ di kiri "Sejak masuk"). Titik pembandingnya TETAP
+  `added_baseline()`/`anchor_point()` — dilarang membuat definisi baseline
+  kedua; angkanya harus sama dengan caption expander 📈 dan patokan rule ⚡.
   Urutan baris (2026-09-05):
   default `SORT_DROP` — **minus dust terbesar di atas** (`pct_change`
   "Sejak masuk" paling negatif, mis. GPRO −60%; tanpa pembanding di

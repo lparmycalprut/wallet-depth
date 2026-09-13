@@ -129,6 +129,23 @@ class WatchlistRowDetailTest(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertIn("Sejak masuk", self._body(app))
 
+    def test_kolom_awal_masuk_menampilkan_dust_saat_ditambahkan(self):
+        """Kolom **Awal Masuk** (permintaan user 2026-09-13): dust % MC saat
+        token masuk watchlist tampil langsung di tabel, di sebelah kiri
+        "Sejak masuk" — angka yang sama dengan patokan notif ⚡ EARLY DUMP."""
+        body = self._body(self._app())
+        self.assertIn(">Awal Masuk</div>", body)
+        # Titik pembanding tiap token = titik pertama pada/setelah ``added``
+        # (2026-09-01): DRP 0,40%, RSE 0,20%, SYN 0,30%.
+        self.assertIn('watchlist-metric-value">0.400%', body)   # DRP
+        self.assertIn('watchlist-metric-value">0.200%', body)   # RSE
+        self.assertIn('watchlist-metric-value">0.300%', body)  # SYN
+        # Angka baris (Hold %MC) tidak berubah karena kolom baru: SYN tetap
+        # memakai titik history 0,71%, bukan snapshot 0,30%.
+        self.assertIn('watchlist-metric-value">0.71%', body)
+        # Hover sel = kalimat lengkap baseline_note().
+        self.assertIn('title="📌 Saat masuk watchlist', body)
+
     def test_drop_and_rise_use_different_colors(self):
         body = self._body(self._app())
         self.assertIn(GREEN, body)

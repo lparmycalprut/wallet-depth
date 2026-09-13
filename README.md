@@ -90,7 +90,10 @@ atau setelan Telegram. Robinhood LP tetap di halaman utama, bukan di temp.
    0,5% / 1%) di dalam expander per token. **Sejak 2026-09-07 kolom tabel
    `Δ 4 jam` dan `Grafik 4 jam` (sparkline) dihapus dari semua card
    watchlist** — baris tinggal Token · Dust · Hold %MC (+ Sejak masuk di
-   watchlist biasa) dan tombol aksi; grafik hanya di expander. Tersedia juga
+   watchlist biasa) dan tombol aksi; grafik hanya di expander. **Sejak
+   2026-09-13 semua tabel watchlist punya kolom `Awal Masuk`** — dust % MC
+   saat token masuk watchlist, persis angka patokan notifikasi ⚡ EARLY DUMP
+   (lihat bagian kolom "Sejak masuk" di bawah). Tersedia juga
    overlay semua token LP, plus tombol pindah card (📋 ↔ 🌊) dan — sejak
    2026-09-11 — tombol **🔔/🔕 on/off notif Telegram per token** di baris
    Watchlist Meteora & Robinhood. Token LP tidak ditampilkan
@@ -337,10 +340,16 @@ patokan saat token di-add (`app.LP_CARD_TOOLTIP` membangun teksnya dari
   (`watchlist_detail.added_baseline()` / `baseline_note()`). Kalau tanggal
   masuk tidak terbaca atau belum ada scan sejak tanggal itu, teksnya menyebut
   varian yang dipakai — bukan diam-diam memakai titik lain.
+- **Kolom `Awal Masuk` di tabel** (sejak 2026-09-13, permintaan user *"Saat
+  masuk watchlist (13 Sep 07:00 WIB): dust 0.103% MC — ini tambakan ke kolom
+  table saja dengan caption Awal Masuk"*) — angka patokan yang sama kini
+  terlihat tanpa membuka expander: nilai 3 desimal + sub-caption waktu titik
+  pembandingnya (＋ penanda varian fallback), hover selnya menampilkan
+  kalimat lengkap `baseline_note()` (`watchlist_detail.baseline_cell()`).
 - Per baris: MC, jumlah wallet dust, **Hold %MC** + badge
-  (AMAN / HATI-HATI / BAHAYA), **Δ 4 jam** dan Δ total dalam **poin
-  persentase**, sparkline 4 jam, tombol 🧮 Holder Analytic, 📋 pindah ke
-  watchlist holder, ✕ hapus.
+  (AMAN / HATI-HATI / BAHAYA), **Awal Masuk**, **Δ 4 jam** dan Δ total dalam
+  **poin persentase**, sparkline 4 jam, tombol 🧮 Holder Analytic, 📋 pindah
+  ke watchlist holder, ✕ hapus.
 - Urut dari yang paling perlu diwaspadai (BAHAYA → HATI-HATI → AMAN, lalu
   dust % MC terbesar).
 - Token LP **tidak** muncul dua kali di watchlist holder di bawahnya.
@@ -508,6 +517,13 @@ Catatan implementasi yang perlu diketahui:
 Setiap baris 📋 Watchlist Holder menampilkan perubahan dust **sejak token
 ditambahkan** (`added` di `watchlist.json`) **sampai scan terakhir**:
 
+- kolom **Awal Masuk** (tepat di kiri "Sejak masuk", sejak 2026-09-13) =
+  dust % MC di titik yang sama saat token masuk watchlist — angka patokan
+  notif ⚡ EARLY DUMP, 3 desimal, sub-caption waktu titik + penanda varian
+  fallback, tooltip sel = kalimat lengkap `baseline_note()`
+  (`watchlist_detail.baseline_cell()`); kolom yang sama juga ada di tabel
+  🌊 Watchlist Meteora dan 🦅 Watchlist Robinhood (LP + biasa) — ketiga
+  tabel kini 8 kolom, kolom ke-4 adalah **Awal Masuk**;
 - perubahan **relatif** (%) dust % MC — angka besar di kolom **Sejak masuk**,
 - pembandingnya titik pertama **pada/setelah** tanggal masuk; bila belum ada
   titik setelah tanggal itu, dipakai titik pertama dan ditandai di tooltip,

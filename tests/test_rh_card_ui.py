@@ -151,6 +151,12 @@ class RobinhoodCardHolderButtonTest(unittest.TestCase):
         self.assertIn("📌 Titik pertama yang tercatat", captions)
         self.assertIn("dust 0.300% MC", captions)   # titik pertama VLAD
         self.assertIn("patokan notif", captions)
+        # Kolom "Awal Masuk" di tabel (permintaan user 2026-09-13) — tanpa
+        # tanggal ``added`` selnya menandai varian "titik pertama".
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn(">Awal Masuk</div>", body)
+        self.assertIn('watchlist-metric-value">0.300%', body)
+        self.assertIn('title="📌 Titik pertama yang tercatat', body)
         # Dua titik history (2 jam & 6 jam lalu) = ≥ 2 bucket 5 menit →
         # grafik matplotlib ikut ter-render di baris.
         self.assertGreaterEqual(len(app.get("image")), 1)

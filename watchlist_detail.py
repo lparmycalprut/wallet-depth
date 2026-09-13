@@ -504,6 +504,35 @@ def baseline_note(baseline, *, current_pct=None) -> str:
             "dari angka ini).")
 
 
+def baseline_cell(baseline, *, current_pct=None) -> dict:
+    """Isi sel tabel Awal Masuk: dust % MC saat token masuk watchlist.
+
+    Permintaan user 2026-09-13: *\"Saat masuk watchlist (13 Sep 07:00 WIB):
+    dust 0.103% MC — ini tambakan ke kolom table saja dengan caption Awal
+    Masuk\"* — angka yang tadinya cuma tampil di caption expander 📈 naik ke
+    tabel supaya terlihat tanpa klik. Return ``{value, sub, note}`` siap
+    render: ``value`` = dust % MC 3 desimal di titik pembanding
+    (``"0.103%"``), ``sub`` = waktu titik itu + penanda varian fallback,
+    ``note`` = kalimat lengkap :func:`baseline_note` untuk atribut
+    ``title`` sel (hover). Titik pembandingnya TETAP hasil
+    :func:`added_baseline` — tidak ada definisi baseline kedua.
+    """
+    data = baseline if isinstance(baseline, dict) else {}
+    note = baseline_note(data, current_pct=current_pct)
+    pct = _float(data.get("pct"), None)
+    if pct is None:
+        return {"value": "—", "sub": "belum ada scan layak", "note": note}
+    when = format_wib(data.get("ts")) if data.get("ts") else "waktu tidak tercatat"
+    fallback = str(data.get("fallback") or "")
+    if not fallback:
+        sub = when
+    elif fallback == "no_added_date":
+        sub = f"{when} · titik pertama"
+    else:
+        sub = f"{when} · belum ada scan sejak masuk"
+    return {"value": f"{pct:.3f}%", "sub": sub, "note": note}
+
+
 def dust_change_since_added(meta, points, view: dict | None = None, *,
                             now=None,
                             tz_offset_hours: int = WIB_OFFSET_HOURS) -> dict:
