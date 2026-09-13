@@ -24,7 +24,7 @@
         "sent_event_ids": 0,
         "summary": true
       },
-      "analyzed_at": 1789310185,
+      "analyzed_at": 1789321220,
       "chronology": {
         "baseline_wallets": {
           "dust_count": 0,
@@ -83,50 +83,76 @@
           "real_pct_mc": 97.8946,
           "truncated": false,
           "ts": 1789300800
+        },
+        {
+          "buckets": {
+            "$10-$100": 688,
+            "$100-$1k": 622,
+            "$100k-$500k": 0,
+            "$10k-$100k": 59,
+            "$1k-$10k": 291,
+            ">$0-$10": 823,
+            ">$500k": 0
+          },
+          "cohort_cut50_pct": 100.0,
+          "cohort_n": 200,
+          "cohort_token_pct": 0.0,
+          "dust_count": 823,
+          "dust_pct_mc": 0.0685,
+          "dust_value_usd": 2092.97,
+          "holder_count": 2483,
+          "mc": 3056864.0,
+          "mid_count": 913,
+          "mid_pct_mc": 40.4028,
+          "price": 0.003056,
+          "real_count": 1660,
+          "real_pct_mc": 98.3921,
+          "truncated": false,
+          "ts": 1789315200
         }
       ],
       "holders": {
         "depth": {
           "buckets": [
             {
-              "count": 836,
+              "count": 823,
               "label": ">$0-$10",
               "max": 10.0,
               "min": 0.0,
-              "pct_mc": 0.0712,
-              "value_usd": 2191.59
+              "pct_mc": 0.0685,
+              "value_usd": 2092.97
             },
             {
-              "count": 735,
+              "count": 688,
               "label": "$10-$100",
               "max": 100.0,
               "min": 10.0,
-              "pct_mc": 0.9997,
-              "value_usd": 30760.83
+              "pct_mc": 0.9553,
+              "value_usd": 29203.12
             },
             {
-              "count": 653,
+              "count": 622,
               "label": "$100-$1k",
               "max": 1000.0,
               "min": 100.0,
-              "pct_mc": 7.5482,
-              "value_usd": 232249.2
+              "pct_mc": 7.2922,
+              "value_usd": 222912.84
             },
             {
-              "count": 303,
+              "count": 291,
               "label": "$1k-$10k",
               "max": 10000.0,
               "min": 1000.0,
-              "pct_mc": 34.5511,
-              "value_usd": 1063094.98
+              "pct_mc": 33.1106,
+              "value_usd": 1012147.23
             },
             {
-              "count": 55,
+              "count": 59,
               "label": "$10k-$100k",
               "max": 100000.0,
               "min": 10000.0,
-              "pct_mc": 54.7956,
-              "value_usd": 1685994.94
+              "pct_mc": 57.0339,
+              "value_usd": 1743449.67
             },
             {
               "count": 0,
@@ -146,47 +172,47 @@
             }
           ],
           "buckets_include_pools": false,
-          "computed_at": 1789310185,
-          "holders_all": 2586,
-          "holders_wallet": 2582,
-          "market_cap": 3076880.0,
+          "computed_at": 1789321220,
+          "holders_all": 2487,
+          "holders_wallet": 2483,
+          "market_cap": 3056864.0,
           "pool_excluded": 4,
           "tiers": [
             {
-              "count": 1571,
+              "count": 1511,
               "emoji": "\ud83e\udd90",
               "max": 100.0,
               "min": 0.0,
-              "pct_mc": 1.071,
+              "pct_mc": 1.0238,
               "tier": "Shrimp",
-              "value_usd": 32952.42
+              "value_usd": 31296.09
             },
             {
-              "count": 653,
+              "count": 622,
               "emoji": "\ud83e\udd80",
               "max": 1000.0,
               "min": 100.0,
-              "pct_mc": 7.5482,
+              "pct_mc": 7.2922,
               "tier": "Crab",
-              "value_usd": 232249.2
+              "value_usd": 222912.84
             },
             {
-              "count": 303,
+              "count": 291,
               "emoji": "\ud83d\udc1f",
               "max": 10000.0,
               "min": 1000.0,
-              "pct_mc": 34.5511,
+              "pct_mc": 33.1106,
               "tier": "Fish",
-              "value_usd": 1063094.98
+              "value_usd": 1012147.23
             },
             {
-              "count": 55,
+              "count": 59,
               "emoji": "\ud83d\udc2c",
               "max": 100000.0,
               "min": 10000.0,
-              "pct_mc": 54.7956,
+              "pct_mc": 57.0339,
               "tier": "Dolphin",
-              "value_usd": 1685994.94
+              "value_usd": 1743449.67
             },
             {
               "count": 0,
@@ -199,73 +225,73 @@
             }
           ]
         },
-        "dust_count": 836,
+        "dust_count": 823,
         "dust_limit_usd": 10.0,
-        "dust_pct_mc": 0.0712,
+        "dust_pct_mc": 0.0685,
         "dust_pct_supply": 0.0,
-        "dust_value_usd": 2191.59,
+        "dust_value_usd": 2092.97,
         "mid": {
-          "count": 956,
-          "pct_mc": 42.0993,
-          "value_usd": 1295344.18
+          "count": 913,
+          "pct_mc": 40.4028,
+          "value_usd": 1235060.06
         },
         "new_dust": 0,
         "new_real": 0,
         "pages": 4,
-        "real_count": 1746,
-        "real_pct_mc": 97.8946,
+        "real_count": 1660,
+        "real_pct_mc": 98.3921,
         "real_pct_supply": 0.0,
-        "real_value_usd": 3012099.95,
+        "real_value_usd": 3007712.85,
         "source": "helius",
         "suspicious_dust": 0,
-        "total_fetched": 2586,
+        "total_fetched": 2487,
         "truncated": false,
-        "wallets_analyzed": 2582
+        "wallets_analyzed": 2483
       },
-      "marketcap": 3076880.0,
+      "marketcap": 3056864.0,
       "meteora_metrics": {
-        "active_tvl": 60549.418948014325,
+        "active_tvl": 55422.1913839512,
         "alert": {
           "active": false,
-          "baseline_ratio": 28.27009378607231,
+          "baseline_ratio": 23.707900794177302,
           "change_pct": 0.0,
           "condition": "rasio fee/active TVL terhadap volatility turun 0.0% sejak masuk",
-          "current_ratio": 28.27009378607231,
+          "current_ratio": 23.707900794177302,
           "kind": "fee_volatility_ratio_drop",
           "triggered": false,
-          "ts": 1789310181
+          "ts": 1789321216
         },
         "baseline": {
-          "active_tvl": 60549.418948014325,
+          "active_tvl": 55422.1913839512,
           "classification": "SAFE LP",
           "classification_note": "24h: fee_active_tvl_ratio \u2265 5\u00d7 volatility \u2014 SAFE LP",
-          "fee_active_tvl_ratio": 146.92032172671694,
-          "fee_active_tvl_ratio_vs_volatility": 28.27009378607231,
-          "fee_volatility_ratio": 28.27009378607231,
+          "fee_active_tvl_ratio": 92.46796267065464,
+          "fee_active_tvl_ratio_vs_volatility": 23.707900794177302,
+          "fee_volatility_ratio": 23.707900794177302,
           "pool_address": "E76H8HxZMAYES72vm957cwNTqw7rT3Akjp5iXrtUZ675",
           "source": "24h",
           "symbol": "TACZ",
           "timeframe": "24h",
-          "ts": 1789310182,
-          "tvl": 62453.284040121835,
-          "volatility": 5.197022791593973
+          "ts": 1789321217,
+          "tvl": 60148.07519479918,
+          "volatility": 3.900301569228977
         },
         "classification": "SAFE LP",
         "classification_note": "24h: fee_active_tvl_ratio \u2265 5\u00d7 volatility \u2014 SAFE LP",
-        "fee_active_tvl_ratio": 146.92032172671694,
-        "fee_active_tvl_ratio_vs_volatility": 28.27009378607231,
-        "fee_volatility_ratio": 28.27009378607231,
+        "fee_active_tvl_ratio": 92.46796267065464,
+        "fee_active_tvl_ratio_vs_volatility": 23.707900794177302,
+        "fee_volatility_ratio": 23.707900794177302,
         "pool_address": "E76H8HxZMAYES72vm957cwNTqw7rT3Akjp5iXrtUZ675",
         "source": "24h",
         "symbol": "TACZ",
         "timeframe": "24h",
-        "ts": 1789310182,
-        "tvl": 62453.284040121835,
-        "volatility": 5.197022791593973
+        "ts": 1789321217,
+        "tvl": 60148.07519479918,
+        "volatility": 3.900301569228977
       },
-      "price": 0.003076,
+      "price": 0.003056,
       "symbol": "TACZ"
     }
   },
-  "updated_at": 1789310185
+  "updated_at": 1789321220
 }
