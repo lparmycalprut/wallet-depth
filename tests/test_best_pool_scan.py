@@ -84,6 +84,21 @@ def _dust(row, pct):
     return row
 
 
+def _proof(pct, dust_count=5):
+    """``analysis.holders`` satu scan FULL yang **membuktikan** jumlahnya.
+
+    Bentuk persis keluaran ``classify_holders``. Sejak 2026-09-13 baris tanpa
+    bukti (fetch gagal, 0 wallet, terpotong, atau sampel di bawah
+    ``MIN_USABLE_WALLETS``) tidak punya angka dust sama sekali — fixture yang
+    hanya menulis ``dust_pct_mc`` + ``dust_count`` kecil akan dianggap scan
+    pendek dan kehilangan angkanya, jadi fixture UI selalu membawa
+    ``total_fetched`` / ``wallets_analyzed``.
+    """
+    return {"holders": {"dust_pct_mc": pct, "dust_count": dust_count,
+                        "real_count": 1_095, "total_fetched": 1_200,
+                        "wallets_analyzed": 1_100}}
+
+
 class BestFilterQueryTest(unittest.TestCase):
     def test_filter_by_matches_curl(self):
         """Query = persis curl user, angka dibaca dari konstanta."""
@@ -490,6 +505,107 @@ class ScanBestTest(unittest.TestCase):
         self.assertEqual(result["fetched"], 0)
 
 
+class BuktiHolderTest(unittest.TestCase):
+    """Scan holder tanpa bukti tidak boleh jadi "0,000% pool terbersih".
+
+    Permintaan user 2026-09-13: *\"di scan meteora menunjukkan 0.000% baru
+    saya scan, padahal di scan holder hasilnya beda\"*. Dua lapis akar:
+
+    1. pembagi dust = market cap **listing Meteora** (``market_cap or fdv``),
+       bukan market cap DexScreener yang dipakai semua kartu lain —
+       diperbaiki di ``holder_analysis.analyze_token`` (data market terbaru
+       menang, angka pemanggil hanya cadangan) + ``enrich_pools`` menulis
+       balik MC yang benar-benar dipakai ke kolom MC baris;
+    2. ``classify_holders`` dari daftar holder kosong (provider mati, fetch
+       0 wallet, atau hasil terpotong) mengembalikan ``dust_pct_mc = 0.0`` —
+       angka itu lolos saringan dust < 0,05%, menang kunci urut "dust
+       terkecil", dan menyabet chip 🏆 BEST POOL. Sejak 2026-09-13 baris
+       tanpa bukti dianggap TANPA angka (``row_dust_pct`` → ``None``), sama
+       seperti baris yang analisanya gagal total.
+    """
+
+    @staticmethod
+    def _failed(row, *, truncated=False, fetched=0, wallets=0):
+        row = dict(row)
+        row["analysis"] = {"holders": {
+            "dust_pct_mc": 0.0, "dust_count": 0, "real_count": wallets,
+            "total_fetched": fetched, "wallets_analyzed": wallets,
+            "truncated": truncated}}
+        row["dust_pct_mc"] = 0.0
+        row["dust_count"] = 0
+        return row
+
+    def test_gagal_fetch_tanpa_wallet_gugur_dari_saringan(self):
+        row = self._failed(_row())
+        self.assertIsNone(ms.row_dust_pct(row))
+        self.assertFalse(ms.row_dust_ok(row))
+        self.assertFalse(ms.row_best_pool(row))
+        kept, hidden_metric, hidden_dust = ms.filter_best_rows([row])
+        self.assertEqual(kept, [])
+        self.assertEqual((hidden_metric, hidden_dust), (0, 1))
+
+    def test_hasil_terpotong_gugur_walau_wallet_banyak(self):
+        # 9.000 top holder tanpa ekor dust = "0,00%" palsu (kasus PARE
+        # 2026-09-09 di watchlist) — listing ini menjual bukti, jadi gugur.
+        row = self._failed(_row(), truncated=True, fetched=9_000,
+                           wallets=9_000)
+        self.assertIsNone(ms.row_dust_pct(row))
+        self.assertFalse(ms.row_dust_ok(row))
+
+    def test_scan_lengkap_tetap_lolos(self):
+        """Guardnya bukti, bukan nilainya: 0,000% dari scan valid tetap masuk."""
+        row = dict(_row())
+        row["analysis"] = {"holders": {"dust_pct_mc": 0.0, "dust_count": 0,
+                                       "real_count": 1_500,
+                                       "total_fetched": 1_500,
+                                       "wallets_analyzed": 1_500}}
+        row["dust_pct_mc"] = 0.0
+        self.assertEqual(ms.row_dust_pct(row), 0.0)
+        self.assertTrue(ms.row_dust_ok(row))
+        self.assertTrue(ms.row_best_pool(row))
+
+    def test_provider_casual_sample_ditolak(self):
+        row = dict(_row())
+        row["analysis"] = {"holders": {"dust_pct_mc": 0.0, "dust_count": 0,
+                                       "total_fetched": 20,
+                                       "wallets_analyzed": 20}}
+        self.assertIsNone(ms.row_dust_pct(row))
+        self.assertFalse(ms.row_dust_ok(row))
+
+    def test_scan_best_tidak_menampilkan_baris_tanpa_bukti(self):
+        pools = [_pool("P-OK", "MintOK", volume=2_000_000,
+                       volume_change_pct=10.0),
+                 _pool("P-GAGAL", "MintGagal", volume=3_000_000,
+                       volume_change_pct=90.0)]
+
+        def fake_enrich(rows, **_kwargs):
+            out = []
+            for row in rows:
+                if row["ca"] == "MintGagal":
+                    out.append(self._failed(dict(row)))
+                    continue
+                item = dict(row)
+                item["analysis"] = {"holders": {"dust_pct_mc": 0.02,
+                                                 "dust_count": 5,
+                                                 "total_fetched": 1_000,
+                                                 "wallets_analyzed": 900}}
+                item["dust_pct_mc"] = 0.02
+                item["dust_count"] = 5
+                out.append(item)
+            return out
+
+        with mock.patch.object(ms, "fetch_best_pools", return_value=pools), \
+                mock.patch.object(ms, "enrich_pools", side_effect=fake_enrich):
+            result = ms.scan_best_meteora(max_wallets=2000)
+        self.assertEqual([row["pool_address"] for row in result["rows"]],
+                         ["P-OK"])
+        # Δ volume P-GAGAL jauh lebih besar; tanpa bukti dust dia tidak boleh
+        # masuk listing utama MAUPUN listing "disembunyikan".
+        self.assertEqual([row["pool_address"] for row in result["hidden_rows"]],
+                         [])
+        self.assertEqual(result["hidden_dust"], 1)
+
+
 @unittest.skipIf(AppTest is None, "streamlit not installed")
 class BestPoolCardTest(unittest.TestCase):
     """Card 🏆 Scan Best Pool Meteora ada di halaman utama (``app.py``)."""
@@ -580,8 +696,7 @@ class BestPoolCardTest(unittest.TestCase):
         app.session_state["best_pool_scan"] = {
             "rows": [_row(pool_address="PoolBest", ca="MintAAA",
                           symbol="AAA", dust_pct_mc=0.03,
-                          analysis={"holders": {"dust_pct_mc": 0.03,
-                                               "dust_count": 12}})],
+                          analysis=_proof(0.03, 12))],
             "error": "", "fetched": 4, "hidden_metric": 2,
             "hidden_dust": 1,
         }
@@ -607,13 +722,11 @@ class BestPoolCardTest(unittest.TestCase):
         hidden_row = _row(pool_address="PoolHide", ca="MintHide",
                           symbol="HID", dust_pct_mc=0.02, volatility=1.0,
                           volume_change_pct=88.0,
-                          analysis={"holders": {"dust_pct_mc": 0.02,
-                                                "dust_count": 3}})
+                          analysis=_proof(0.02, 3))
         app.session_state["best_pool_scan"] = {
             "rows": [_row(pool_address="PoolBest", ca="MintAAA",
                           symbol="AAA", dust_pct_mc=0.03,
-                          analysis={"holders": {"dust_pct_mc": 0.03,
-                                               "dust_count": 12}})],
+                          analysis=_proof(0.03, 12))],
             "hidden_rows": [hidden_row],
             "error": "", "fetched": 4, "hidden_metric": 2, "hidden_dust": 1,
         }
@@ -640,12 +753,10 @@ class BestPoolCardTest(unittest.TestCase):
             "rows": [
                 _row(pool_address="PoolBest", ca="MintBest", symbol="BST",
                      dust_pct_mc=0.032,
-                     analysis={"holders": {"dust_pct_mc": 0.032,
-                                           "dust_count": 4}}),
+                     analysis=_proof(0.032, 4)),
                 _row(pool_address="PoolOk", ca="MintOkk", symbol="OKP",
                      dust_pct_mc=0.041, volume_change_pct=3.0,
-                     analysis={"holders": {"dust_pct_mc": 0.041,
-                                           "dust_count": 7}}),
+                     analysis=_proof(0.041, 7)),
             ],
             "error": "", "fetched": 2, "hidden_metric": 0, "hidden_dust": 0,
         }
@@ -672,8 +783,7 @@ class BestPoolCardTest(unittest.TestCase):
         app.session_state["best_pool_scan"] = {
             "rows": [_row(pool_address="PoolOk", ca="MintOkk", symbol="OKP",
                           dust_pct_mc=0.041,
-                          analysis={"holders": {"dust_pct_mc": 0.041,
-                                                "dust_count": 7}})],
+                          analysis=_proof(0.041, 7))],
             "error": "", "fetched": 1, "hidden_metric": 0, "hidden_dust": 0,
         }
         app.run()

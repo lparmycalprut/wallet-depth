@@ -78,7 +78,15 @@ def best_pool_tooltip() -> str:
         "tombol kanan "
         "membuka Meteora DLMM + HawkFi. Dust dihitung dari scan FULL holder "
         "Helius (bukan sampel), jadi scan token ber-holder banyak bisa makan "
-        "waktu beberapa menit.")
+        "waktu beberapa menit. Pembagi Dust %MC = market cap dari "
+        "DexScreener — angka yang sama dipakai 🛰 Scan Holder dan Watchlist "
+        "Meteora, jadi dua card selalu bisa dibandingkan (kolom MC di tabel "
+        "adalah angka yang dipakai itu, bukan MC listing Meteora). Pool "
+        "tanpa sisi memecoin (SOL/USDC/USDT) dilewati sebelum holder "
+        "di-fetch: dust-nya terhadap MC SOL selalu terbaca 0,000%. Baris "
+        "yang scan holdernya gagal, 0 wallet, atau terpotong dianggap "
+        "tanpa bukti: gugur dari listing, tidak pernah tampil sebagai "
+        "0,000% + chip 🏆 BEST POOL.")
 
 
 # Lebar kolom listing: Token, MC, A.TVL, Fee/TVL, Vol 24h, Volatilitas,
@@ -197,7 +205,7 @@ def _render_best_table(rows: list, *, key_prefix: str = "best-pool") -> None:
     from lp_watchlist import LP_SOURCE
     from meteora_screener import (BEST_DUST_MARK_PCT, BEST_DUST_MAX_PCT,
                                   BEST_VOLATILITY_MIN, BEST_VOLUME_24H_MIN,
-                                  row_best_pool)
+                                  row_best_pool, row_dust_pct)
     from watchlist import add_to_watchlist
 
     header_cols = st.columns(_COL_SPEC)
@@ -213,7 +221,12 @@ def _render_best_table(rows: list, *, key_prefix: str = "best-pool") -> None:
         ca = str(row.get("ca") or "")
         symbol = str(row.get("symbol") or "?").upper()
         pool = str(row.get("pool_address") or "")
-        dust_pct = row.get("dust_pct_mc")
+        # Satu sumber angka dengan saringan + urutan: ``row_dust_pct`` sudah
+        # mengembalikan ``None`` untuk scan holder tanpa bukti (gagal/terpotong/
+        # sampel pendek) — baris begitu tidak pernah lolos saringan card ini,
+        # jadi angka 0,000% dari provider mati tidak bisa lagi menyamar jadi
+        # pool terbersih.
+        dust_pct = row_dust_pct(row)
         fee = row.get("fee")
         active_tvl = row.get("active_tvl")
         ratio = row.get("fee_active_tvl_ratio")
@@ -231,7 +244,9 @@ def _render_best_table(rows: list, *, key_prefix: str = "best-pool") -> None:
         dust_value = _pct_txt(dust_pct, 3)
         dust_sub = "dust"
         dust_tip = (f"dust holder < {BEST_DUST_MAX_PCT:g}% marketcap — "
-                    "saringan sekaligus kunci urut kedua (terkecil dulu)")
+                    "saringan sekaligus kunci urut kedua (terkecil dulu) · "
+                    "pembaginya market cap DexScreener (kolom MC), sumber "
+                    "yang sama dengan 🛰 Scan Holder")
         if dust_is_best:
             dust_value = (f'<span style="color:#b45309;">{dust_value}'
                           "</span>")
@@ -249,7 +264,8 @@ def _render_best_table(rows: list, *, key_prefix: str = "best-pool") -> None:
             "</div>", unsafe_allow_html=True)
         cells = (
             (_usd_or_dash(row.get("mc")), "",
-             f"market cap {_usd_or_dash(row.get('mc'), compact=False)}"),
+             f"market cap {_usd_or_dash(row.get('mc'), compact=False)} — "
+             "DexScreener, angka yang dipakai sebagai pembagi Dust %MC"),
             (_usd_or_dash(active_tvl), "active tvl",
              f"active TVL {_usd_or_dash(active_tvl, compact=False)} · "
              f"TVL total {_usd_or_dash(row.get('tvl'), compact=False)}"),
@@ -344,6 +360,7 @@ def render_best_pool_scan() -> None:
         hidden = int(result.get("hidden_metric") or 0) + \
             int(result.get("hidden_dust") or 0)
         fetched = int(result.get("fetched") or 0)
+        skipped_quote = int(result.get("skipped_quote") or 0)
         showing_hidden = bool(st.session_state.get(BEST_SHOW_HIDDEN_KEY))
 
         # Tanpa caption ambang: detail karakteristik card sudah jadi tooltip
@@ -370,8 +387,10 @@ def render_best_pool_scan() -> None:
         if error:
             st.warning(f"Meteora API: {error}")
         if fetched:
+            quote_txt = (f" · {skipped_quote} pool quote dilewati"
+                         if skipped_quote else "")
             st.caption(f"{len(rows)} pool lolos · {hidden} disembunyikan "
-                       f"· listing {fetched} pool.")
+                       f"· listing {fetched} pool{quote_txt}.")
         if showing_hidden:
             if not hidden_rows:
                 st.info("Tidak ada pool tersembunyi yang lolos volume "

@@ -580,8 +580,19 @@ def analyze_token(ca: str, symbol: str = "?", market_cap: float = 0.0,
             market = get_market(ca) or {}
         except Exception:
             market = {}
-    mc = float(market_cap or market.get("marketcap") or 0)
-    price = float(price_usd or market.get("price_usd") or 0)
+    # Data market yang baru saja di-fetch = **rujukan** angka persen di seluruh
+    # app. ``market_cap``/``price_usd`` dari pemanggil (mis. listing pool
+    # Meteora) hanya **cadangan** bila DexScreener tidak membalas — bukan
+    # pengganti. Urusannya begini: urutan lama (``market_cap or market...``)
+    # membuat Scan Meteora membagi dust dengan MC dari Meteora sementara
+    # Scan Holder / watchlist / cron / titik history membagi dengan MC
+    # DexScreener, sehingga dua card menampilkan angka dust % MC yang berbeda
+    # untuk token yang sama — dan satu di antaranya (MC listing Meteora =
+    # ``market_cap or fdv``) bisa pembilangnya bukan MC beredar sama sekali.
+    # Satu denominator = angka antar card bisa dibandingkan + titik history
+    # yang ditulis scan pool tetap sebanding dengan titik cron.
+    mc = float(market.get("marketcap") or market_cap or 0)
+    price = float(market.get("price_usd") or price_usd or 0)
 
     extra = set(str(p or "").strip() for p in (extra_pools or []) if p)
     if extra:

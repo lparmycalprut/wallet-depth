@@ -136,6 +136,9 @@ class SortRowsTest(unittest.TestCase):
             _sort_row("BEST3", 0.05, 80_000.0),       # dust seri → TVL menang
         ]
 
+    def _rows_by_symbol(self):
+        return {row["symbol"]: row for row in self._rows()}
+
     def test_best_pool_naik_ke_atas(self):
         out = ms.sort_rows(self._rows())
         flags = [ms.row_flag(row)["best"] for row in out]
@@ -151,7 +154,31 @@ class SortRowsTest(unittest.TestCase):
 
     def test_baris_tanpa_data_dust_paling_bawah(self):
         out = [r["symbol"] for r in ms.sort_rows(self._rows())]
-        self.assertEqual(out[-1], "NODATA")
+        # BOGUS ikut ke bawah sejak 2026-09-13: dust 0,0 dari scan holder
+        # 0 wallet BUKAN "pool bersih", melainkan tidak ada bukti — diperlakukan
+        # sama seperti baris tanpa angka (NODATA). Di dalam kelompok tanpa bukti
+        # TVL terbesar yang lebih dulu, jadi NODATA (90K) di atas BOGUS (50K).
+        self.assertEqual(out[-2:], ["NODATA", "BOGUS"])
+        self.assertIsNone(ms.row_dust_pct(
+            self._rows_by_symbol()["BOGUS"]))
+        self.assertIsNone(ms.row_dust_pct(
+            self._rows_by_symbol()["NODATA"]))
+
+    def test_scan_holder_gagal_bukan_angka_nol(self):
+        """Akar "0,000% di Scan Meteora, beda dengan Scan Holder" (2026-09-13).
+
+        Provider holder mati → 0 wallet → ``classify_holders`` memang
+        mengembalikan ``dust_pct_mc = 0.0`` (nol aritmatik dari daftar kosong).
+        Kartu tidak boleh menampilkannya sebagai angka: tanpa bukti = ``None``,
+        lalu digugurkan saringan / tidak dapat BEST POOL.
+        """
+        bogus = self._rows_by_symbol()["BOGUS"]
+        self.assertFalse(ms.row_dust_ok(bogus))
+        self.assertFalse(ms.row_best_pool(bogus))
+        self.assertFalse(ms.row_flag(bogus)["best"])
+        # Angka dust yang BENAR (scan lengkap) tetap lolos — guardnya bukti,
+        # bukan nilainya.
+        self.assertTrue(ms.row_dust_ok(self._rows_by_symbol()["BEST1"]))
 
     def test_urutan_deterministik(self):
         rows = self._rows()
@@ -197,6 +224,186 @@ class RowFlagTest(unittest.TestCase):
             _sort_row("B", 0.0, 50_000.0, wallets=0, fetched=0))["best"])
         # TVL < 10K → bukan best
         self.assertFalse(ms.row_flag(_sort_row("C", 0.01, 4_000.0))["best"])
+
+
+class DropQuoteRowsTest(unittest.TestCase):
+    """Pool tanpa sisi memecoin tidak di-analisa (2026-09-13).
+
+    ``base_token()`` jatuh ke ``token_x`` bila KEDUA sisi pool adalah token
+    quote, jadi listing USDC-USDT / SOL-USDC "berhak" ikut di-scan: mint yang
+    dianalisa = SOL/USDC, MC pembagi = MC SOL → dust ≈ 0,000% → selalu paling
+    "bersih" di listing dan dapat 🏆 BEST POOL. Barisnya dibuang sebelum
+    fetch holder.
+    """
+
+    def _row(self, mint, **kw):
+        row = {"ca": mint, "symbol": "X", "pool_address": "P1", "mc": 1.0}
+        row.update(kw)
+        return row
+
+    def test_pool_kedua_sisi_quote_dibuang(self):
+        pool = {"pool_address": "P1", "token_x": _token(SOL, "SOL"),
+                "token_y": _token(ms.USDC_MINT, "USDC")}
+        rows = ms.merge_pools([pool], [])
+        self.assertEqual(rows[0]["ca"], SOL)  # fallback token_x
+        kept, dropped = ms.drop_quote_rows(rows)
+        self.assertEqual((kept, dropped), ([], 1))
+
+    def test_mint_kosong_dibuang(self):
+        kept, dropped = ms.drop_quote_rows([self._row("")])
+        self.assertEqual((kept, dropped), ([], 1))
+
+    def test_pool_memecoin_tetap_ikut(self):
+        rows = [self._row("MintMemecoin"),
+                self._row(ms.USDT_MINT, symbol="USDT")]
+        kept, dropped = ms.drop_quote_rows(rows)
+        self.assertEqual([r["ca"] for r in kept], ["MintMemecoin"])
+        self.assertEqual(dropped, 1)
+
+    def test_alasan_ditulis_di_unanalysable_row(self):
+        self.assertIn("quote", ms.unanalysable_row(self._row(SOL)))
+        self.assertEqual(ms.unanalysable_row(self._row("MintAA")), "")
+
+    def test_scan_meteora_melaporkan_pool_quote_dilewati(self):
+        rows = [self._row("MintMemecoin"), self._row(SOL, symbol="SOL")]
+        with mock.patch.object(ms, "fetch_listing", return_value=(rows, "")), \
+                mock.patch.object(ms, "enrich_pools",
+                                  side_effect=lambda r, **k: r) as enrich:
+            result = ms.scan_meteora()
+        self.assertEqual(result["skipped_quote"], 1)
+        self.assertEqual(result["fetched"], 2)      # listing API utuh
+        self.assertEqual([r["ca"] for r in result["rows"]], ["MintMemecoin"])
+        # holder tidak pernah di-fetch untuk mint quote (hemat kuota Helius)
+        self.assertEqual([r["ca"] for r in enrich.call_args[0][0]],
+                         ["MintMemecoin"])
+
+    def test_scan_best_meteora_membuang_pool_quote(self):
+        pools = [{"pool_address": "P1",
+                  "token_x": _token(SOL, "SOL"),
+                  "token_y": _token(ms.USDC_MINT, "USDC"),
+                  "tvl": 1e6, "active_tvl": 1e6, "fee_active_tvl_ratio": 9,
+                  "volume": 5e6, "fee_pct": 5.0, "volatility": 9.0},
+                 {"pool_address": "P2",
+                  "token_x": _token("MintMemecoin", "MEME"),
+                  "token_y": _token(SOL, "SOL"),
+                  "tvl": 1e6, "active_tvl": 1e6, "fee_active_tvl_ratio": 9,
+                  "volume": 5e6, "fee_pct": 5.0, "volatility": 9.0}]
+        with mock.patch.object(ms, "fetch_best_pools", return_value=pools), \
+                mock.patch.object(ms, "enrich_pools",
+                                  side_effect=lambda r, **k: r) as enrich:
+            result = ms.scan_best_meteora()
+        self.assertEqual(result["skipped_quote"], 1)
+        self.assertEqual(result["fetched"], 2)
+        self.assertEqual([r["pool_address"] for r in enrich.call_args[0][0]],
+                         ["P2"])
+
+
+class EnrichPoolsProofTest(unittest.TestCase):
+    """Scan holder tanpa bukti tidak menulis angka dust (2026-09-13)."""
+
+    def _pool_row(self, ca="MintAA", **kw):
+        row = {"ca": ca, "symbol": "AA", "pool_address": "P1",
+               "mc": 50_000_000.0, "price": 0.001, "tvl": 20_000.0,
+               "analysis": None}
+        row.update(kw)
+        return row
+
+    def _run(self, analysis):
+        with mock.patch("holder_analysis.analyze_token",
+                        side_effect=lambda *a, **k: analysis), \
+                mock.patch("holder_history.load_holder_history",
+                           return_value={"tokens": {}}), \
+                mock.patch("holder_history.ingest_many", return_value=None):
+            return ms.enrich_pools([self._pool_row()])
+
+    def test_fetch_gagal_nol_wallet_bukan_angka_nol(self):
+        failed = {"holders": {"dust_pct_mc": 0.0, "dust_count": 0,
+                              "real_count": 0, "total_fetched": 0,
+                              "wallets_analyzed": 0},
+                  "marketcap": 12_000_000.0}
+        row = self._run(failed)[0]
+        self.assertIsNone(row["dust_pct_mc"])
+        self.assertIsNone(row["dust_count"])
+        self.assertFalse(row["holders_proof"])
+        self.assertIn("0 holder", row["holders_note"])
+        self.assertIsNone(ms.row_dust_pct(row))
+
+    def test_scan_terpotong_ditangguhkan(self):
+        cut = {"holders": {"dust_pct_mc": 0.0, "dust_count": 0,
+                           "real_count": 9_000, "total_fetched": 9_000,
+                           "wallets_analyzed": 9_000, "truncated": True},
+               "marketcap": 12_000_000.0}
+        row = self._run(cut)[0]
+        self.assertIsNone(row["dust_pct_mc"])
+        self.assertIn("terpotong", row["holders_note"])
+
+    def test_sampel_pendek_ditolak(self):
+        short = {"holders": {"dust_pct_mc": 0.01, "dust_count": 2,
+                             "real_count": 16, "total_fetched": 18,
+                             "wallets_analyzed": 18},
+                 "marketcap": 12_000_000.0}
+        row = self._run(short)[0]
+        self.assertIsNone(row["dust_pct_mc"])
+        self.assertIn("sampel", row["holders_note"])
+
+    def test_scan_lengkap_mempertahankan_angka(self):
+        good = {"holders": {"dust_pct_mc": 0.021, "dust_count": 640,
+                            "real_count": 1_100, "total_fetched": 1_740,
+                            "wallets_analyzed": 1_740},
+                "marketcap": 12_000_000.0}
+        row = self._run(good)[0]
+        self.assertEqual(row["dust_pct_mc"], 0.021)
+        self.assertEqual(row["dust_count"], 640)
+        self.assertTrue(row["holders_proof"])
+        self.assertEqual(row["holders_note"], "")
+
+    def test_mc_barik_ikut_pembagi_yang_dipakai(self):
+        """Kolom MC = MC yang dipakai menghitung dust, bukan MC listing."""
+        good = {"holders": {"dust_pct_mc": 0.021, "dust_count": 640,
+                            "real_count": 1_100, "total_fetched": 1_740,
+                            "wallets_analyzed": 1_740},
+                "marketcap": 12_000_000.0}
+        row = self._run(good)[0]
+        self.assertEqual(row["mc"], 12_000_000.0)
+        # Tanpa angka market dari analisis, MC listing tetap dipakai.
+        self.assertEqual(self._run({"holders": {}})[0]["mc"],
+                         50_000_000.0)
+
+    def test_ingest_hanya_titik_yang_ada_bukti(self):
+        """Titik 0,00% dari fetch gagal tidak menimpa titik cron yang benar."""
+        failed = {"holders": {"dust_pct_mc": 0.0, "dust_count": 0,
+                               "real_count": 0, "total_fetched": 0,
+                               "wallets_analyzed": 0},
+                  "marketcap": 12_000_000.0}
+        with mock.patch("holder_analysis.analyze_token",
+                        side_effect=lambda *a, **k: failed), \
+                mock.patch("holder_history.load_holder_history",
+                           return_value={"tokens": {}}), \
+                mock.patch("holder_history.ingest_many") as ingest:
+            ms.enrich_pools([self._pool_row()])
+        ingest.assert_not_called()
+
+        good = {"holders": {"dust_pct_mc": 0.021, "dust_count": 640,
+                            "real_count": 1_100, "total_fetched": 1_740,
+                            "wallets_analyzed": 1_740},
+                "marketcap": 12_000_000.0}
+        with mock.patch("holder_analysis.analyze_token",
+                        side_effect=lambda *a, **k: good), \
+                mock.patch("holder_history.load_holder_history",
+                           return_value={"tokens": {}}), \
+                mock.patch("holder_history.ingest_many") as ingest:
+            ms.enrich_pools([self._pool_row()])
+        self.assertEqual(list(ingest.call_args[0][0]), ["MintAA"])
+
+    def test_mint_quote_tidak_dianalisa(self):
+        row = self._pool_row(ca=SOL)
+        with mock.patch("holder_analysis.analyze_token") as analyze, \
+                mock.patch("holder_history.load_holder_history",
+                           return_value={"tokens": {}}), \
+                mock.patch("holder_history.ingest_many", return_value=None):
+            out = ms.enrich_pools([row])[0]
+        analyze.assert_not_called()
+        self.assertIsNone(out["dust_pct_mc"])
 
 
 if __name__ == "__main__":

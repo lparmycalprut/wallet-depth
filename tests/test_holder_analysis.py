@@ -96,6 +96,59 @@ class AnalyzeSnapshotTest(unittest.TestCase):
         self.assertEqual(alert_snapshot["dust"], ["DUST"])
 
 
+class MarketPrecedenceTest(unittest.TestCase):
+    """Pembagi persen = data market yang baru di-fetch, bukan punya pemanggil.
+
+    Akar keluhan user 2026-09-13 ("di scan meteora menunjukkan 0.000% baru
+    saya scan, padahal di scan holder hasilnya beda"): ``analyze_token`` dulu
+    mendahulukan ``market_cap``/``price_usd`` yang dikirim pemanggil, dan satu-
+    satunya pemanggil yang mengirim angka adalah Scan Meteora (MC listing
+    pool = ``market_cap or fdv``). Kartu itupun membagi dust dengan MC lain
+    daripada semua kartu lain — dan klasifikasi wallet (≤ $10 = dust) ikut
+    bergeser karena harganya dari sumber yang beda.
+    """
+
+    snapshot = {"holders": [_holder("dust1", 5.0), _holder("dust2", 5.0)],
+                "source": "gmgn", "truncated": False, "pages": 1}
+
+    def _analyze(self, market, **kw):
+        seen: dict = {}
+
+        def fake_snapshot(ca, source, **kwargs):
+            seen.update(kwargs)
+            return dict(self.snapshot), None
+
+        with mock.patch.object(sa, "get_market", return_value=market), \
+                mock.patch.object(sa, "_fetch_holders_snapshot",
+                                  side_effect=fake_snapshot):
+            result = sa.analyze_token("MINT", "TST", **kw)
+        return result, seen
+
+    def test_market_data_menang_atas_angka_pemanggil(self):
+        result, seen = self._analyze(
+            {"marketcap": 10_000.0, "price_usd": 0.1, "pair_addresses": []},
+            market_cap=99_000_000.0, price_usd=9.9)
+        self.assertEqual(seen["market_cap"], 10_000.0)
+        self.assertEqual(seen["price_usd"], 0.1)
+        self.assertEqual(result["marketcap"], 10_000.0)
+        # dust 10 USD dari MC 10.000 = 0,1% — BUKAN 0,000001% dari MC pemanggil
+        self.assertAlmostEqual(result["holders"]["dust_pct_mc"], 0.10, places=4)
+
+    def test_angka_pemanggil_jadi_cadangan_saat_market_kosong(self):
+        result, seen = self._analyze({}, market_cap=10_000.0, price_usd=0.1)
+        self.assertEqual(seen["market_cap"], 10_000.0)
+        self.assertEqual(seen["price_usd"], 0.1)
+        self.assertEqual(result["marketcap"], 10_000.0)
+        self.assertAlmostEqual(result["holders"]["dust_pct_mc"], 0.10, places=4)
+
+    def test_pemanggil_tanpa_angka_tidak_berubah(self):
+        """Semua jalur lain (watchlist, cron, halaman Holder) tak terpengaruh."""
+        result, seen = self._analyze(
+            {"marketcap": 10_000.0, "price_usd": 0.1, "pair_addresses": []})
+        self.assertEqual(seen["market_cap"], 10_000.0)
+        self.assertEqual(seen["price_usd"], 0.1)
+
+
 class HeliusFallbackTest(unittest.TestCase):
     def setUp(self):
         sa._HOLDER_CACHE.clear()
