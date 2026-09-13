@@ -1,26 +1,45 @@
 # -*- coding: utf-8 -*-
 """Telegram rules and transport for holder-dust scans.
 
-**Satu notifikasi saja** (permintaan user 2026-09-11): **🚨 WAKTUNYA GANTI
-STRATEGI** — menyala selama ``dust % MC`` token watchlist berada di
-**≥ :data:`STRATEGY_SHIFT_PCT`** (0,06%). Sifatnya **level-based**, bukan
-crossing: tiap evaluasi (scan cron LP ±5 menit, atau scan manual) selama
-dust masih di atas ambang mengirim pengingat, dengan dedup per bucket
-:data:`FAST_BUCKET_SEC` + jeda :data:`STRATEGY_SHIFT_RESEND_SEC` supaya run
-ganda (chain dispatch menabrak schedule) tidak mengirim pesan kembar. Turun
-kembali ke ``< 0,06%`` = marker di-``{}``-kan (episode berikutnya mulai lagi
-dari nol), dan marker ``alert_state["strategy_shift"]`` di-merge paling baru
-oleh ``holder_history._merge_alert_state`` + dipertahankan
-``compact_alert_state``.
+**Satu notifikasi saja** (permintaan user 2026-09-13): **⚡ EARLY DUMP
+TERJADI - GANTI WIDE RANGE** — menyala tiap ``dust % MC`` token watchlist
+naik **≥ :data:`EARLY_DUMP_STEP_PCT`** (0,02%) dari **patokan saat token
+masuk watchlist**, lalu berulang untuk tiap kelipatan 0,02% berikutnya.
+Bukan lagi ambang batas (``≥ 0,06% MC`` seperti rule 2026-09-11): patokannya
+delta terhadap titik add, jadi token yang dust-nya sudah tinggi tidak
+otomatis berbunyi dan token yang masih rendah bisa berbunyi.
 
-Rule lama **DIHAPUS** seluruhnya — tidak ada lagi ``⚡ EARLY DUMP`` (> 0,1%
-MC), ``🔔 HIGH DROP`` (turun ≥ 50% dari titik high), ``🚨 WAKTUNYA EXIT /
-CUTLOSS``, ``✅ KEMBALI KE TITIK AMAN``, dump/akumulasi 4 jam (delta
-0,25/0,50 pp), baseline shift, **beserta gerbang konfirmasi
-volume/harga/volatilitas** (``validate_alert_with_volume``/``volume_verdict``)
-yang menyaringnya. Alasan user: banyak rule saling bertumpuk untuk satu fakta
-yang sama — dust naik. Fakta itu kini cukup satu kalimat: ambang
-0,06% MC dilewati → ganti strategi.
+Patokan (``baseline_pct``) dipasang **sekali** per episode:
+
+- idealnya dari titik history pertama setelah tanggal ``added`` watchlist
+  (``add_baseline_for_mint`` — angka dust yang benar-benar terukur saat token
+  dipantau, bukan angka scan pertama yang bisa datang berjam-jam kemudian di
+  lane yang tidak di-scan cron);
+- cadangannya angka dust pada evaluasi pertama setelah token di-add.
+
+Evaluasi yang memasang patokan **tidak** mengirim notifikasi (menghindari
+banjir pesan untuk token lama saat rule baru dipasang); setelah itu tiap
+kenaikan satu langkah 0,02% yang belum pernah dikabarkan mengirim satu pesan.
+Dedup per bucket :data:`FAST_BUCKET_SEC` + jeda
+:data:`EARLY_DUMP_RESEND_SEC` menjaga run ganda (chain dispatch menabrak
+schedule) tidak mengirim pesan kembar, dan langkah yang gagal terkirim
+**tidak dimakan** — ia dicoba lagi di scan berikutnya. Marker
+``alert_state["early_dump"]`` = ``{ts, dust_pct_mc, baseline_pct, baseline_ts,
+step, baseline_src}``; di-merge paling baru oleh
+``holder_history._merge_alert_state`` + dipertahankan ``compact_alert_state``
+dan ``alert_state_summary`` (cron 5 menit yang ephemeral harus bisa
+melanjutkan patokan/langkah dari snapshot status).
+
+Rule lama **DIHAPUS** seluruhnya — tidak ada lagi ``🚨 WAKTUNYA GANTI
+STRATEGI`` (level-based dust ≥ 0,06% MC, 2026-09-11), ``🔔 HIGH DROP``
+(turun ≥ 50% dari titik high), ``🚨 WAKTUNYA EXIT / CUTLOSS``, ``✅ KEMBALI
+KE TITIK AMAN``, dump/akumulasi 4 jam (delta 0,25/0,50 pp), baseline shift,
+**beserta gerbang konfirmasi volume/harga/volatilitas**
+(``validate_alert_with_volume``/``volume_verdict``) yang menyaringnya.
+Alasan user: rule lama memakai **ambang** sehingga hanya berbunyi sekali di
+titik tertentu; yang diinginkan sekarang adalah kabar **berulang** tiap dust
+bertambah 0,02% dari titik add ("jadi sekarang bukan ambang batas, tapi notif
+berulang ketika dust bertambah 0,02% dari pertama add watchlist").
 
 Konteks pasar (``alert_context``) tetap **opsional** dan hanya diminta lewat
 ``context_provider`` **saat notifikasi benar-benar akan dikirim** (lazy — scan
@@ -48,23 +67,27 @@ from holder_history import holders_usable
 from links import hawkfi_meteora_url, meteora_dlmm_url, token_links
 
 # ---------------------------------------------------------------------------
-# 🚨 WAKTUNYA GANTI STRATEGI — satu-satunya notifikasi (2026-09-11).
+# ⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE — satu-satunya notifikasi.
 # ---------------------------------------------------------------------------
-# Ambangnya 0,06% MC: sengaja **di atas** ambang tampil listing scan best
-# (dust < 0,05% MC di `meteora_screener.BEST_DUST_MAX_PCT` /
-# `robinhood_best_scan.RH_SCAN_MAX_DUST_PCT`), jadi token yang baru masuk
-# listing tidak pernah langsung berbunyi. Yang berbunyi hanya token yang sudah
-# di-watchlist dan dust-nya naik melewati ambang.
-STRATEGY_SHIFT_PCT = 0.06
-STRATEGY_SHIFT_KIND = "strategy_shift"
-# Kunci marker di ``alert_state`` (ts + dust % MC terakhir + since_ts episode).
-STRATEGY_SHIFT_MARKER = "strategy_shift"
-STRATEGY_SHIFT_TITLE = "🚨 WAKTUNYA GANTI STRATEGI"
-# Ritme pencatatan LP = ±5 menit; bucket event id + jeda minimum kirim mengikuti
-# ritme itu supaya pengingat tetap ada tiap scan tapi tidak dobel dalam satu
-# bucket.
+# Sejak 2026-09-13 notifikasinya **delta**, bukan ambang: patokannya angka
+# dust token **saat masuk watchlist** (``baseline_pct`` di marker) dan pesan
+# dikirim tiap kali dust naik kelipatan ``EARLY_DUMP_STEP_PCT`` (0,02% MC)
+# dari patokan itu. Permintaan user: "notifikasi telegram akan muncul ketika
+# %dust naik 0,02%, jadi sekarang bukan ambang batas, tapi notif berulang
+# ketika dust bertambah 0,02% dari pertama add watchlist" + judul barunya
+# "EARLY DUMP TERJADI - GANTI WIDE RANGE".
+EARLY_DUMP_STEP_PCT = 0.02
+EARLY_DUMP_KIND = "early_dump"
+# Kunci marker di ``alert_state``:
+# ``{ts, dust_pct_mc, baseline_pct, baseline_ts, step, baseline_src}``.
+EARLY_DUMP_MARKER = "early_dump"
+EARLY_DUMP_TITLE = "⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE"
+# Ritme pencatatan LP = ±5 menit; bucket event id + jeda minimum kirim
+# mengikuti ritme itu supaya run ganda (chain dispatch menabrak schedule)
+# tidak mengirim pesan kembar. Langkah 0,02% sendiri sudah dijaga
+# ``marker["step"]``, jadi jeda ini hanya lapisan kedua.
 FAST_BUCKET_SEC = 5 * 60
-STRATEGY_SHIFT_RESEND_SEC = FAST_BUCKET_SEC
+EARLY_DUMP_RESEND_SEC = FAST_BUCKET_SEC
 EVENT_BUCKET_SEC = FAST_BUCKET_SEC
 MAX_LAST_SENT = 8
 # Anchor wallet (baseline immutable + rolling) TIDAK lagi menjadi bahan
@@ -319,14 +342,14 @@ def dedup_key(event: dict | None) -> str:
 
     Mengikuti bentuk ``_event_id``. Dulu baseline_shift memakai arah
     (``"baseline_shift:up"``/``":down"``) supaya dua kabar tidak saling
-    membungkam; dengan satu rule level-based, arah tidak punya arti — cukup
+    membungkam; dengan satu rule delta, arah tidak punya arti — cukup
     ``kind``.
     """
     return str((event or {}).get("kind") or "")
 
 
 def in_resend_cooldown(key: str, current_ts: int, last_sent=None, *,
-                       min_resend_sec: int = STRATEGY_SHIFT_RESEND_SEC) -> bool:
+                       min_resend_sec: int = EARLY_DUMP_RESEND_SEC) -> bool:
     """True bila kunci itu sudah dikirim kurang dari ``min_resend_sec`` lalu.
 
     Event id memakai bucket (±5 menit), jadi dua run di dua sisi batas bucket
@@ -377,33 +400,107 @@ def _market_brief(context) -> dict:
     }
 
 
-def _strategy_shift_event(previous: dict, current: dict, *, mint: str,
-                          symbol: str, scope: str, minutes_above: int,
-                          market: dict | None = None) -> dict:
-    """Satu event 🚨 WAKTUNYA GANTI STRATEGI (tanpa peta wallet/movement).
+def _steps_from_baseline(pct, baseline, *,
+                         step: float = EARLY_DUMP_STEP_PCT) -> int:
+    """Berapa **kelipatan penuh** ``step`` kenaikan dust dari patokan (≥ 0).
 
-    Marker hanya membawa ``ts`` + ``dust_pct_mc`` (bukan snapshot wallet), jadi
-    event ini sengaja tidak menghitung ``wallet_movements`` di atas ratusan
-    address. Event id memakai **bucket 5 menit** (:data:`FAST_BUCKET_SEC`)
-    karena pengingat dikirim ulang tiap scan LP.
+    Delta dihitung terhadap patokan watchlist, bukan antar-scan: dust yang
+    turun tidak pernah mengurangi langkah (langkah bersifat *high water mark*
+    — naik lagi ke level yang sudah dikabarkan tidak mengirim pesan ulang).
+    Toleransi ``1e-9`` mencegah galat pembulatan float membuat 0,040% persis
+    terbaca 1,999999 langkah.
+    """
+    current = _float(pct, None)
+    base = _float(baseline, None)
+    if current is None or base is None:
+        return 0
+    size = _float(step, None) or EARLY_DUMP_STEP_PCT
+    delta = current - base
+    if delta <= 0 or size <= 0:
+        return 0
+    return int(math.floor(delta / size + 1e-9))
+
+
+def add_baseline_for_mint(history_store: dict | None, mint: str,
+                          meta: dict | None = None):
+    """``(dust_pct_mc, ts, "history")`` titik pertama setelah token di-add.
+
+    Patokan 🚀 == "pertama add watchlist": entri watchlist menyimpan tanggal
+    ``added`` (``watchlist_detail.parse_added_ts``), dan store history sudah
+    memuat titik-titik dust token itu. Yang dipakai = titik **paling awal**
+    yang tidak lebih tua dari tanggal add dan datanya layak
+    (``holder_history.point_usable``: bukan scan yang gagal/terpotong dan
+    jumlah wallet cukup untuk dust %MC).
+
+    ``None`` bila tanggal add tidak terbaca, token belum punya titik history,
+    atau semua titiknya tidak layak — pemanggil lalu jatuh ke angka dust pada
+    evaluasi pertama (:func:`early_dump_marker_next`).
+    """
+    mint = _address(mint)
+    if not mint:
+        return None
+    try:
+        from watchlist_detail import parse_added_ts
+        added = parse_added_ts(meta)
+    except Exception:  # noqa: BLE001 - patokan bersifat pelengkap
+        added = None
+    if not added:
+        return None
+    slot = ((history_store or {}).get("tokens") or {}).get(mint) or {}
+    points = slot.get("points") if isinstance(slot, dict) else None
+    try:
+        from holder_history import point_usable
+    except Exception:  # noqa: BLE001
+        return None
+    candidates = []
+    for point in points or []:
+        if not isinstance(point, dict):
+            continue
+        ts = _int(point.get("ts"))
+        pct = _float(point.get("dust_pct_mc"), None)
+        if pct is None or ts < _int(added):
+            continue
+        if not point_usable(point):
+            continue
+        candidates.append((ts, pct))
+    if not candidates:
+        return None
+    ts, pct = min(candidates, key=lambda item: item[0])
+    return pct, ts, "history"
+
+
+def _early_dump_event(marker: dict, current: dict, *, mint: str, symbol: str,
+                      steps: int, baseline_src: str = "") -> dict:
+    """Satu event ⚡ EARLY DUMP (delta dust terhadap patokan watchlist).
+
+    Marker tidak membawa snapshot wallet (hanya angka dust + patokan), jadi
+    event ini sengaja tidak menghitung ``wallet_movements``. Event id memakai
+    **bucket 5 menit** (:data:`FAST_BUCKET_SEC`) supaya run ganda tidak
+    mengirim pesan yang sama dua kali.
     """
     current_ts = _int((current or {}).get("ts"))
-    old = _float((previous or {}).get("dust_pct_mc"), 0.0) or 0.0
+    baseline = _float((marker or {}).get("baseline_pct"), 0.0) or 0.0
     new = _float((current or {}).get("dust_pct_mc"), 0.0) or 0.0
+    baseline_ts = _int((marker or {}).get("baseline_ts"), 0)
     event = {
-        "id": _event_id(mint, STRATEGY_SHIFT_KIND, current_ts,
+        "id": _event_id(mint, EARLY_DUMP_KIND, current_ts,
                         bucket_sec=FAST_BUCKET_SEC),
-        "kind": STRATEGY_SHIFT_KIND,
-        "scope": scope,
+        "kind": EARLY_DUMP_KIND,
         "direction": "up",
         "mint": _address(mint),
         "symbol": str(symbol or "?").strip().upper() or "?",
-        "previous_dust_pct_mc": old,
+        # ``previous_dust_pct_mc`` = patokan watchlist (bukan angka scan
+        # sebelumnya) — pesannya membaca "patokan → sekarang".
+        "previous_dust_pct_mc": baseline,
         "current_dust_pct_mc": new,
-        "change_pp": round(new - old, 6),
-        "threshold_pct": STRATEGY_SHIFT_PCT,
-        "minutes_above": max(0, int(minutes_above)),
-        "previous_ts": _int((previous or {}).get("ts")),
+        "change_pp": round(new - baseline, 6),
+        "step": max(1, int(steps)),
+        "step_pct": EARLY_DUMP_STEP_PCT,
+        "baseline_ts": baseline_ts,
+        "baseline_src": str(baseline_src or ""),
+        "minutes_since_baseline": (max(0, (current_ts - baseline_ts) // 60)
+                                   if baseline_ts else 0),
+        "previous_ts": _int((marker or {}).get("ts")),
         "current_ts": current_ts,
         "wallet_increases": 0,
         "movements": {},
@@ -414,57 +511,63 @@ def _strategy_shift_event(previous: dict, current: dict, *, mint: str,
         "pool_addresses": [str(p or "").strip()
                            for p in (current.get("pool_addresses") or []) if p],
     }
-    if isinstance(market, dict) and any(value is not None for value in
-                                        market.values()):
-        event["market"] = market
     return event
 
 
-def evaluate_strategy_shift_rule(marker: dict | None, current: dict | None, *,
-                                 mint: str, symbol: str = "?",
-                                 sent_event_ids=(), market_context=None,
-                                 context_provider=None,
-                                 last_sent=None) -> list[dict]:
-    """🚨 WAKTUNYA GANTI STRATEGI: dust % MC **≥ 0,06%** → satu pengingat.
+def evaluate_early_dump_rule(marker: dict | None, current: dict | None, *,
+                             mint: str, symbol: str = "?",
+                             sent_event_ids=(), market_context=None,
+                             context_provider=None,
+                             last_sent=None,
+                             baseline_hint=None) -> list[dict]:
+    """⚡ EARLY DUMP: dust naik ≥ **0,02% MC** dari patokan watchlist → notif.
 
-    Level-based: selama ``dust_pct_mc`` berada di atas :data:`STRATEGY_SHIFT_PCT`
-    SETIAP evaluasi menghasilkan event — naik, turun sedikit, hover, **atau**
-    observasi pertama (menunda ke scan berikutnya membuat token baru diam bila
-    publish/store gagal). Pengingat berhenti saat:
+    Delta, bukan ambang: ``marker["baseline_pct"]`` adalah angka dust saat
+    token masuk watchlist, dan pesan dikirim tiap kali kenaikan melewati
+    langkah 0,02% yang **belum pernah dikabarkan** (``marker["step"]``).
+    Naik 0,02% → 1 pesan, naik lagi 0,02% → pesan berikutnya, dst.
 
-    - dust kembali ``< 0,06%`` MC (reset, tanpa notifikasi turun), atau
-    - token dihapus dari watchlist (cron tidak lagi mengirim analisanya).
+    Marker **kosong** (token baru di-add, atau state lama yang belum punya
+    patokan) = evaluasi ini hanya **memasang patokan**: ``baseline_hint``
+    ``(pct, ts, src)`` dari history dipakai bila ada, kalau tidak angka dust
+    run ini. Tanpa ``baseline_hint`` fungsi ini **tidak** mengirim apa pun —
+    :func:`early_dump_marker_next` yang menulis patokannya, sehingga token
+    yang sudah berjalan lama tidak membanjiri Telegram saat rule dipasang.
 
     Frekuensi dibatasi event id per **bucket 5 menit** + cooldown
-    :data:`STRATEGY_SHIFT_RESEND_SEC`. Tidak ada gerbang volume/harga — konteks
+    :data:`EARLY_DUMP_RESEND_SEC`. Tidak ada gerbang volume/harga — konteks
     pasar hanya melengkapi pesan (lihat :func:`_market_brief`).
     """
     new = _float((current or {}).get("dust_pct_mc"), None)
-    if new is None or new < STRATEGY_SHIFT_PCT:
+    if new is None:
         return []
     current_ts = _int((current or {}).get("ts"))
-    marker = marker if isinstance(marker, dict) else {}
-    old = _float(marker.get("dust_pct_mc"), None)
-    # Marker dari state lama tidak selalu membawa ``since_ts`` — jatuh ke
-    # ``ts`` marker itu sendiri (episode dianggap dimulai di titik itu).
-    since_ts = _int(marker.get("since_ts"), 0) or _int(marker.get("ts"), 0)
-    in_episode = bool(since_ts) and old is not None \
-        and old >= STRATEGY_SHIFT_PCT
-    if in_episode:
-        scope = (f"masih ≥ {STRATEGY_SHIFT_PCT:g}% MC — pengingat berulang "
-                 f"(dibatasi ±{FAST_BUCKET_SEC // 60} menit per token)")
-        previous = marker
-        minutes = max(0, (current_ts - since_ts) // 60)
-    else:
-        scope = f"pertama kali terpantau ≥ {STRATEGY_SHIFT_PCT:g}% MC"
-        previous = {"ts": 0, "dust_pct_mc": 0.0}
-        minutes = 0
-    event = _strategy_shift_event(previous, current, mint=mint, symbol=symbol,
-                                  scope=scope, minutes_above=minutes)
+    marker = dict(marker) if isinstance(marker, dict) else {}
+    baseline = _float(marker.get("baseline_pct"), None)
+    baseline_src = str(marker.get("baseline_src") or "")
+    if baseline is None:
+        # Belum ada patokan: pakai hint history kalau ada (token di-add sebelum
+        # rule ini melihatnya) supaya notifikasi pertama tidak "menghitung dari
+        # sekarang" dan menghapus kenaikan yang sudah terjadi sejak add.
+        hint = baseline_hint if isinstance(baseline_hint, (tuple, list)) \
+            else None
+        if not hint or _float(hint[0], None) is None:
+            return []
+        baseline = _float(hint[0], 0.0) or 0.0
+        baseline_src = str(hint[2] if len(hint) > 2 else "history")
+        marker["baseline_pct"] = baseline
+        marker["baseline_ts"] = _int(hint[1]) if len(hint) > 1 else 0
+        marker["baseline_src"] = baseline_src
+    steps = _steps_from_baseline(new, baseline)
+    notified = _int(marker.get("step"), 0)
+    if steps <= notified:
+        return []
+    event = _early_dump_event(marker, current, mint=mint, symbol=symbol,
+                              steps=steps, baseline_src=baseline_src)
     if event["id"] in set(sent_event_ids or []):
         return []
     if in_resend_cooldown(dedup_key(event), current_ts, last_sent,
-                          min_resend_sec=STRATEGY_SHIFT_RESEND_SEC):
+                          min_resend_sec=EARLY_DUMP_RESEND_SEC):
         return []
     context = market_context if isinstance(market_context, dict) else \
         _resolve_context(context_provider, mint)
@@ -474,32 +577,50 @@ def evaluate_strategy_shift_rule(marker: dict | None, current: dict | None, *,
     return [event]
 
 
-def strategy_shift_marker_next(marker: dict | None, current: dict | None) -> dict:
-    """Marker ``{ts, dust_pct_mc, since_ts}`` untuk run berikutnya.
+def early_dump_marker_next(marker: dict | None, current: dict | None, *,
+                           baseline_hint=None) -> dict:
+    """Marker ``{ts, dust_pct_mc, baseline_pct, baseline_ts, step, …}`` run ini.
 
-    ``ts``/``dust_pct_mc`` = angka run **terakhir** (walau tidak ada event
-    karena cooldown), supaya episode tidak dianggap observasi pertama lagi.
-    ``since_ts`` = awal episode (dipertahankan selama dust masih di atas
-    ambang, dipakai baris ``⏱️ … menit di atas ambang``). Di bawah ambang
-    marker dikosongkan → episode berikutnya mulai dari nol.
+    ``ts``/``dust_pct_mc`` = angka run **terakhir** (walau tidak ada pesan
+    karena langkahnya sudah dikabarkan), ``baseline_pct``/``baseline_ts`` =
+    patokan watchlist yang **tidak pernah bergeser** selama token masih
+    dipantau (inilah "pertama add watchlist"), dan ``step`` = langkah
+    tertinggi yang sudah dianggap selesai (monoton naik, supaya satu langkah
+    0,02% tidak dikabarkan dua kali).
+
+    Marker dikosongkan (``{}``) bila angka dust run ini tidak ada; patokan
+    episode baru dipasang di evaluasi berikutnya.
     """
     pct = _float((current or {}).get("dust_pct_mc"), None)
     ts = _int((current or {}).get("ts"))
-    if pct is None or pct < STRATEGY_SHIFT_PCT:
+    if pct is None:
         return {}
-    marker = marker if isinstance(marker, dict) else {}
-    since_ts = _int(marker.get("since_ts"), 0)
-    old_pct = _float(marker.get("dust_pct_mc"), None)
-    if not since_ts or old_pct is None or old_pct < STRATEGY_SHIFT_PCT:
-        since_ts = ts
-    return {"ts": ts, "dust_pct_mc": pct, "since_ts": since_ts}
+    marker = dict(marker) if isinstance(marker, dict) else {}
+    baseline = _float(marker.get("baseline_pct"), None)
+    baseline_ts = _int(marker.get("baseline_ts"), 0)
+    baseline_src = str(marker.get("baseline_src") or "")
+    if baseline is None:
+        hint = baseline_hint if isinstance(baseline_hint, (tuple, list)) \
+            else None
+        if hint and _float(hint[0], None) is not None:
+            baseline = _float(hint[0], 0.0) or 0.0
+            baseline_ts = _int(hint[1]) if len(hint) > 1 else 0
+            baseline_src = str(hint[2] if len(hint) > 2 else "history")
+        else:
+            baseline, baseline_ts, baseline_src = pct, ts, "first-scan"
+    steps = max(_int(marker.get("step"), 0),
+                _steps_from_baseline(pct, baseline))
+    return {"ts": ts, "dust_pct_mc": pct, "baseline_pct": baseline,
+            "baseline_ts": baseline_ts, "step": steps,
+            "baseline_src": baseline_src}
 
 
 def evaluate_alert_events(mint: str, analysis: dict,
                           state: dict | None = None, *,
                           market_context=None,
                           context_provider=None,
-                          advance_anchors: bool = True) -> tuple[list[dict], dict]:
+                          advance_anchors: bool = True,
+                          baseline_hint=None) -> tuple[list[dict], dict]:
     """Pure state transition: evaluate the one rule, then advance the anchors.
 
     ``market_context`` (dict siap pakai) atau ``context_provider(mint,
@@ -509,7 +630,12 @@ def evaluate_alert_events(mint: str, analysis: dict,
     ``advance_anchors=False`` (scan ad-hoc / lane 5 menit) menjaga peta wallet
     cron tetap utuh — anchor hanya dimajukan oleh scan FULL.
 
-    State lama yang tidak dipakai lagi (``early_dump``/``high_drop``/
+    ``baseline_hint`` = ``(dust %MC, ts, sumber)`` patokan ⚡ EARLY DUMP dari
+    history (lihat :func:`add_baseline_for_mint`) untuk token yang baru
+    pertama kali dievaluasi rule ini — tanpa itu patokannya angka dust run ini
+    dan kenaikan yang sudah terjadi sejak add tidak kabar.
+
+    State lama yang tidak dipakai lagi (``strategy_shift``/``high_drop``/
     ``rejected_signals``) **tidak** dipertahankan: compaction hanya menulis
     marker rule ini, jadi sisa state dari store lama hilang sendiri pada run
     berikutnya.
@@ -529,14 +655,14 @@ def evaluate_alert_events(mint: str, analysis: dict,
     current["dust_pct_mc"] = _float(
         current.get("dust_pct_mc", holders.get("dust_pct_mc")), None)
     symbol = str((analysis or {}).get("symbol") or "?")
-    raw_marker = state.get(STRATEGY_SHIFT_MARKER)
+    raw_marker = state.get(EARLY_DUMP_MARKER)
     marker = dict(raw_marker) if isinstance(raw_marker, dict) else {}
     next_state = {
         "baseline": state.get("baseline") or {},
         "rolling": state.get("rolling") or {},
         "sent_event_ids": sent[-MAX_SENT_EVENT_IDS:],
         "last_sent": last_sent,
-        STRATEGY_SHIFT_MARKER: marker,
+        EARLY_DUMP_MARKER: marker,
     }
     if current["dust_pct_mc"] is None:
         return [], next_state
@@ -562,13 +688,16 @@ def evaluate_alert_events(mint: str, analysis: dict,
 
     lazy = _lazy_context if callable(context_provider) else None
 
-    # 🚨 WAKTUNYA GANTI STRATEGI: dievaluasi terhadap marker LAMA, lalu marker
-    # dimajukan ke angka run ini (nilai terakhir) — bahkan saat tidak ada event.
-    events = evaluate_strategy_shift_rule(
+    # ⚡ EARLY DUMP: dievaluasi terhadap marker LAMA (patokan + langkah yang
+    # sudah dikabarkan), lalu marker dimajukan ke angka run ini — patokan
+    # dipasang di sini kalau belum ada, dan langkah yang sudah lewat ikut
+    # dicatat supaya tidak dikabarkan ulang.
+    events = evaluate_early_dump_rule(
         marker or None, current, mint=mint, symbol=symbol,
         sent_event_ids=sent, market_context=context, context_provider=lazy,
-        last_sent=last_sent)
-    next_state[STRATEGY_SHIFT_MARKER] = strategy_shift_marker_next(marker, current)
+        last_sent=last_sent, baseline_hint=baseline_hint)
+    next_state[EARLY_DUMP_MARKER] = early_dump_marker_next(
+        marker, current, baseline_hint=baseline_hint)
 
     if advance_anchors:
         baseline = state.get("baseline") if isinstance(state.get("baseline"), dict) \
@@ -634,8 +763,8 @@ def delivery_note(summary: dict | None) -> str:
         return "Tidak ada notifikasi dari hasil scan ini."
     bits = []
     if summary.get("sent"):
-        bits.append(f"🚨 {int(summary['sent'])} notifikasi "
-                    "WAKTUNYA GANTI STRATEGI dikirim")
+        bits.append(f"⚡ {int(summary['sent'])} notifikasi EARLY DUMP "
+                    "TERJADI dikirim")
     if summary.get("muted"):
         # Sejak toggle 🔔/🔕 per token (2026-09-11) alasan "dilewati" tidak
         # lagi selalu toggle global watchlist biasa — sebut sebabnya netral.
@@ -655,7 +784,7 @@ def compact_alert_state(state: dict | None) -> dict:
                                                     dict) else {}
     last_sent = {str(key): _int(ts) for key, ts in raw_last.items() if _int(ts)}
     newest_first = sorted(last_sent.items(), key=lambda item: -item[1])
-    raw_marker = state.get(STRATEGY_SHIFT_MARKER)
+    raw_marker = state.get(EARLY_DUMP_MARKER)
     marker = dict(raw_marker) if isinstance(raw_marker, dict) else {}
     marker_ts = _int(marker.get("ts"))
     return {
@@ -665,15 +794,21 @@ def compact_alert_state(state: dict | None) -> dict:
             str(item) for item in (state.get("sent_event_ids") or []) if item
         ))[-MAX_SENT_EVENT_IDS:],
         "last_sent": dict(newest_first[:MAX_LAST_SENT]),
-        # Marker 🚨: ringkas (ts + dust % MC terakhir + awal episode), tanpa
-        # peta wallet — cukup untuk pengingat run berikutnya. Runner cron
-        # ephemeral kehilangan kesinambungan episode tanpa ``since_ts``.
-        STRATEGY_SHIFT_MARKER: ({"ts": marker_ts,
-                                 "dust_pct_mc": (_float(marker.get("dust_pct_mc"),
-                                                        None) if marker_ts
-                                                  else None),
-                                 "since_ts": _int(marker.get("since_ts"), 0)}
-                                if marker_ts else {}),
+        # Marker ⚡: ringkas (ts + dust % MC terakhir + **patokan** + langkah
+        # yang sudah dikabarkan), tanpa peta wallet — cukup untuk melanjutkan
+        # episode run berikutnya. Runner cron ephemeral kehilangan patokan
+        # 0,02% (dan langsung berhenti berbunyi) tanpa field-field ini.
+        EARLY_DUMP_MARKER: ({"ts": marker_ts,
+                             "dust_pct_mc": (_float(marker.get("dust_pct_mc"),
+                                                    None) if marker_ts
+                                              else None),
+                             "baseline_pct": _float(
+                                 marker.get("baseline_pct"), None),
+                             "baseline_ts": _int(marker.get("baseline_ts"), 0),
+                             "step": _int(marker.get("step"), 0),
+                             "baseline_src": str(
+                                 marker.get("baseline_src") or "")}
+                            if marker_ts else {}),
     }
 
 
@@ -712,8 +847,8 @@ def alert_state_summary(state: dict | None) -> dict:
                                                     dict) else {}
     last_sent = sorted(((str(key), _int(ts)) for key, ts in raw_last.items()
                         if _int(ts)), key=lambda item: -item[1])
-    raw_marker = state.get(STRATEGY_SHIFT_MARKER) \
-        if isinstance(state.get(STRATEGY_SHIFT_MARKER), dict) else {}
+    raw_marker = state.get(EARLY_DUMP_MARKER) \
+        if isinstance(state.get(EARLY_DUMP_MARKER), dict) else {}
     marker_ts = _int(raw_marker.get("ts"))
     return {
         "summary": True,
@@ -723,12 +858,18 @@ def alert_state_summary(state: dict | None) -> dict:
         "last_sent": dict(last_sent[:MAX_LAST_SENT]),
         # Marker ringkas (bukan peta wallet) — runner GitHub ephemeral butuh
         # marker ini di snapshot status supaya scan 5 menit berikutnya tidak
-        # kehilangan state bila backup historygzip gagal di-push.
-        STRATEGY_SHIFT_MARKER: ({"ts": marker_ts,
-                                 "dust_pct_mc": _float(raw_marker.get("dust_pct_mc"),
-                                                        None),
-                                 "since_ts": _int(raw_marker.get("since_ts"), 0)}
-                                if marker_ts else {}),
+        # kehilangan patokan/langkah 0,02% bila backup history gzip gagal
+        # di-push.
+        EARLY_DUMP_MARKER: ({"ts": marker_ts,
+                             "dust_pct_mc": _float(raw_marker.get("dust_pct_mc"),
+                                                   None),
+                             "baseline_pct": _float(
+                                 raw_marker.get("baseline_pct"), None),
+                             "baseline_ts": _int(raw_marker.get("baseline_ts"), 0),
+                             "step": _int(raw_marker.get("step"), 0),
+                             "baseline_src": str(
+                                 raw_marker.get("baseline_src") or "")}
+                            if marker_ts else {}),
     }
 
 
@@ -777,29 +918,28 @@ def build_alert_message(event: dict) -> tuple[str, list[dict]]:
 
     Baris link ditulis ``"<emoji> <label>"`` saja dan ``label`` diberi entity
     ``text_link`` (URL tidak muncul di teks; permintaan user 2026-09-09 — URL
-    polos 44+ karakter membuat pesan panjang dan tidak enak dibaca). Judul
-    🚨 diberi entity ``bold``. Semua offset/length dihitung dalam **UTF-16**
+    polos 44+ karakter membuat pesan panjang dan tidak enak dibaca). Judul ⚡
+    diberi entity ``bold``. Semua offset/length dihitung dalam **UTF-16**
     (emoji = dua unit). Teks lain tetap literal tanpa ``parse_mode`` sehingga
     nama token/mint tidak bisa menjadi markup.
+
+    Isi pesan = **delta terhadap patokan watchlist** (⚡ EARLY DUMP): patokan →
+    angka sekarang, perubahan kumulatif, dan langkah 0,02% ke berapa — supaya
+    user tahu ini kenaikan pertama atau lanjutan.
     """
     change = _float(event.get("change_pp"), 0.0) or 0.0
-    previous = float(event.get("previous_dust_pct_mc") or 0)
+    baseline = float(event.get("previous_dust_pct_mc") or 0)
     current = float(event.get("current_dust_pct_mc") or 0)
-    threshold = _float(event.get("threshold_pct"), STRATEGY_SHIFT_PCT)
-    minutes = _int(event.get("minutes_above"))
-    title = str(event.get("title") or STRATEGY_SHIFT_TITLE)
+    step_pct = _float(event.get("step_pct"), EARLY_DUMP_STEP_PCT)
+    step = max(1, _int(event.get("step"), 1))
+    minutes = _int(event.get("minutes_since_baseline"))
+    title = str(event.get("title") or EARLY_DUMP_TITLE)
 
-    # Observasi pertama (marker masih kosong) tidak punya angka pembanding —
-    # menampilkannya sebagai "0.000% → 0.071%" hanya membuat barisnya panjang.
-    if previous:
-        dust_line = (f"📊 Dust: {previous:.3f}% → {current:.3f}% MC "
-                     f"({change:+.3f} pp) · ambang ≥ {threshold:g}%")
-    else:
-        dust_line = (f"📊 Dust: {current:.3f}% MC — baru melewati ambang "
-                     f"≥ {threshold:g}%")
+    dust_line = (f"📊 Dust: {baseline:.3f}% → {current:.3f}% MC "
+                 f"({change:+.3f} pp · langkah {step}× {step_pct:g}%)")
     lines = [title, "", f"🪙 ${event.get('symbol') or '?'}", dust_line]
     if minutes > 0:
-        lines.append(f"⏱️ {minutes} menit di atas ambang")
+        lines.append(f"⏱️ {minutes} menit sejak masuk watchlist")
     lines.extend(_market_line(event))
     lines.extend([
         f"🕒 {_format_wib(event.get('current_ts') or time.time())}",
@@ -973,9 +1113,10 @@ def _reset_markers_on_readd(state: dict | None, meta) -> dict:
     """Buang marker episode bila token di-add **ulang** ke watchlist.
 
     ``meta`` entri watchlist membawa tanggal ``added``; marker
-    (``strategy_shift``) yang lebih tua dari tanggal itu berasal dari periode
-    watchlist sebelumnya dan tidak boleh dipakai (angka dust lama bisa
-    memicu alert palsu begitu token dipantau lagi). State lain tidak disentuh.
+    (``early_dump``) yang lebih tua dari tanggal itu berasal dari periode
+    watchlist sebelumnya dan tidak boleh dipakai — patokan 0,02% harus dihitung
+    dari add yang baru, bukan dari dust lama periode sebelumnya. State lain
+    tidak disentuh.
     """
     state = dict(state or {})
     added = None
@@ -986,9 +1127,9 @@ def _reset_markers_on_readd(state: dict | None, meta) -> dict:
         added = None
     if not added:
         return state
-    marker = state.get(STRATEGY_SHIFT_MARKER)
+    marker = state.get(EARLY_DUMP_MARKER)
     if isinstance(marker, dict) and 0 < _int(marker.get("ts"), 0) < added:
-        state[STRATEGY_SHIFT_MARKER] = {}
+        state[EARLY_DUMP_MARKER] = {}
     return state
 
 
@@ -1017,6 +1158,11 @@ def process_holder_alerts(analyses: dict | None, history_store: dict,
     dievaluasi dan state/marker tetap ditulis — hanya pengirimannya yang
     dilewati — supaya begitu notif dinyalakan lagi user tidak langsung
     dibanjiri marker lama yang sudah basi.
+
+    Patokan ⚡ EARLY DUMP (angka dust saat token **pertama** masuk watchlist)
+    diambil dari history store lewat :func:`add_baseline_for_mint` bila ada —
+    bukan dari scan pertama yang kebetulan melihat token itu, karena lane
+    watchlist biasa baru di-scan saat user menekan tombol scan.
     """
     sender = sender or send_telegram_alert
     contexts = market_contexts if isinstance(market_contexts, dict) else {}
@@ -1043,9 +1189,13 @@ def process_holder_alerts(analyses: dict | None, history_store: dict,
         old_state = _reset_markers_on_readd(old_state, meta_map.get(mint))
         context = contexts.get(mint) if isinstance(contexts.get(mint), dict) \
             else None
+        # Patokan ⚡ EARLY DUMP: angka dust saat token di-add, dari history.
+        baseline_hint = add_baseline_for_mint(history_store, mint,
+                                              meta_map.get(mint))
         events, next_state = evaluate_alert_events(
             mint, analysis, old_state, market_context=context,
-            context_provider=context_provider, advance_anchors=advance_anchors)
+            context_provider=context_provider, advance_anchors=advance_anchors,
+            baseline_hint=baseline_hint)
         sent = list(next_state.get("sent_event_ids") or [])
         last_sent = dict(next_state.get("last_sent") or {})
         if mint in muted:
@@ -1059,6 +1209,7 @@ def process_holder_alerts(analyses: dict | None, history_store: dict,
                                                 "error": "telegram muted"}})
             slot[STATE_KEY] = compact_alert_state(next_state)
             continue
+        delivered = False
         for event in events:
             try:
                 result = sender(event)
@@ -1072,12 +1223,43 @@ def process_holder_alerts(analyses: dict | None, history_store: dict,
                           "error": f"Telegram sender failed: {exc}"}
             deliveries.append({"event": event, "delivery": result})
             if result.get("ok"):
+                delivered = True
                 sent.append(event["id"])
                 last_sent[dedup_key(event)] = _int(event.get("current_ts"))
             elif not result.get("skipped"):
                 print(f"WARN: Telegram alert {event['id']} gagal: "
                       f"{result.get('error') or 'unknown error'}", file=sys.stderr)
+        if events and not delivered:
+            # Semua pengiriman gagal (kredensial mati / Telegram down):
+            # **jangan makan langkah 0,02%** yang jadi pemicu event ini.
+            # Langkah dikembalikan ke posisi sebelum evaluasi supaya scan
+            # berikutnya mencoba lagi dengan pesan yang sama.
+            slot[STATE_KEY] = compact_alert_state(_restore_step(old_state,
+                                                               next_state))
+            continue
         next_state["sent_event_ids"] = sent[-MAX_SENT_EVENT_IDS:]
         next_state["last_sent"] = last_sent
         slot[STATE_KEY] = compact_alert_state(next_state)
     return deliveries
+
+
+def _restore_step(old_state: dict, next_state: dict) -> dict:
+    """Kembalikan penghitung langkah ⚡ ke nilai sebelum evaluasi (retry).
+
+    Dipakai saat **semua** notifikasi satu token gagal dikirim: pesan yang
+    belum sampai ke Telegram tidak boleh menghabiskan langkah 0,02%-nya, kalau
+    tidak user kehilangan kabar kenaikan itu untuk selamanya (langkah hanya
+    naik). State lain (patokan, anchor wallet, event id) tetap dibawa.
+    """
+    merged = dict(next_state or {})
+    marker = merged.get(EARLY_DUMP_MARKER)
+    if not isinstance(marker, dict) or not marker:
+        return merged
+    old_marker = (old_state or {}).get(EARLY_DUMP_MARKER)
+    old_marker = old_marker if isinstance(old_marker, dict) else {}
+    restored = dict(marker)
+    # Patokan tetap dipakai (jangan dipasang ulang dari scan berikutnya),
+    # hanya penghitung langkahnya yang mundur.
+    restored["step"] = _int(old_marker.get("step"), 0)
+    merged[EARLY_DUMP_MARKER] = restored
+    return merged

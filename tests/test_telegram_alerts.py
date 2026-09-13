@@ -1,7 +1,8 @@
 """Unit coverage for holder-dust Telegram rules, state, and transport.
 
-Rule-nya satu: 🚨 WAKTUNYA GANTI STRATEGI (dust ≥ 0,06% MC — lihat
-``tests/test_strategy_shift.py``). File ini menjaga lapisannya yang lain:
+Rule-nya satu: ⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE (dust naik ≥ 0,02% MC
+dari patokan saat token di-add — lihat ``tests/test_early_dump.py``). File ini
+menjaga lapisannya yang lain:
 snapshot wallet (bahan pembanding kronologi), dedup/cooldown, bentuk state yang
 dipersist, format pesan (hyperlink + judul bold), dan transport Telegram.
 """
@@ -33,11 +34,27 @@ def _snapshot(ts, dust_pct, balances=None, dust=None):
     }
 
 
-def _event_state(previous, *, sent=None, baseline=None):
+def _event_state(previous, *, sent=None, baseline=None, step=0,
+                 marker_dust=None):
+    """State dengan anchor wallet **dan** marker ⚡ siap berbunyi.
+
+    Patokan ⚡ = angka dust snapshot ``previous``, jadi analisa berikutnya yang
+    dust-nya naik ≥ 0,02% langsung menghasilkan satu event (``step`` = langkah
+    terakhir yang sudah dikabarkan).
+    """
+    previous = previous or {}
+    dust = previous.get("dust_pct_mc")
+    marker = {"ts": previous.get("ts") or NOW - ta.FAST_BUCKET_SEC,
+              "dust_pct_mc": dust if marker_dust is None else marker_dust,
+              "baseline_pct": dust,
+              "baseline_ts": previous.get("ts") or NOW,
+              "step": step,
+              "baseline_src": "first-scan"}
     return {
         "rolling": previous,
         "baseline": baseline or previous,
         "sent_event_ids": sent or [],
+        ta.EARLY_DUMP_MARKER: marker,
     }
 
 
@@ -52,11 +69,16 @@ def _analysis(current, symbol="TST"):
     }
 
 
-def _shift_event(mint=MINT, *, pct=0.42, previous=0.07):
-    """Event 🚨 nyata dari rule (bukan dict bikinan tangan)."""
-    return ta.evaluate_strategy_shift_rule(
-        {"ts": NOW - ta.FAST_BUCKET_SEC, "dust_pct_mc": previous,
-         "since_ts": NOW - ta.FAST_BUCKET_SEC},
+def _early_dump_event(mint=MINT, *, pct=0.42, baseline=0.07, step=0):
+    """Event ⚡ nyata dari rule (bukan dict bikinan tangan).
+
+    ``step=0`` = belum ada langkah 0,02% yang dikabarkan, jadi kenaikan dari
+    patokan 0,07% ke ``pct`` (default 0,42%) menghasilkan satu event.
+    """
+    return ta.evaluate_early_dump_rule(
+        {"ts": NOW - ta.FAST_BUCKET_SEC, "dust_pct_mc": baseline,
+         "baseline_pct": baseline, "baseline_ts": NOW - FOUR_HOURS,
+         "step": step, "baseline_src": "first-scan"},
         {"ts": NOW, "dust_pct_mc": pct},
         mint=mint, symbol="TST")[0]
 
@@ -103,17 +125,17 @@ class WalletSnapshotTest(unittest.TestCase):
         self.assertTrue(ta.is_valid_4h_snapshot(aged, current))
 
     def test_dedup_key_is_the_kind(self):
-        self.assertEqual(ta.dedup_key({"kind": ta.STRATEGY_SHIFT_KIND,
+        self.assertEqual(ta.dedup_key({"kind": ta.EARLY_DUMP_KIND,
                                        "direction": "up"}),
-                         ta.STRATEGY_SHIFT_KIND)
+                         ta.EARLY_DUMP_KIND)
         self.assertEqual(ta.dedup_key(None), "")
 
     def test_resend_cooldown_window(self):
-        last = {ta.STRATEGY_SHIFT_KIND: NOW}
-        self.assertTrue(ta.in_resend_cooldown(ta.STRATEGY_SHIFT_KIND,
+        last = {ta.EARLY_DUMP_KIND: NOW}
+        self.assertTrue(ta.in_resend_cooldown(ta.EARLY_DUMP_KIND,
                                               NOW + 60, last))
         self.assertFalse(ta.in_resend_cooldown(
-            ta.STRATEGY_SHIFT_KIND, NOW + ta.STRATEGY_SHIFT_RESEND_SEC, last))
+            ta.EARLY_DUMP_KIND, NOW + ta.EARLY_DUMP_RESEND_SEC, last))
 
 
 class AlertStateTest(unittest.TestCase):
@@ -188,25 +210,26 @@ class AlertStateTest(unittest.TestCase):
     def test_compact_bounds_sent_ids_and_last_sent(self):
         state = {"sent_event_ids": [f"id{i}" for i in range(200)],
                  "last_sent": {f"k{i}": NOW + i for i in range(20)},
-                 "early_dump": {"ts": NOW}, "high_drop": {"ts": NOW},
+                 "strategy_shift": {"ts": NOW}, "high_drop": {"ts": NOW},
                  "rejected_signals": [{"kind": "dump"}]}
         compact = ta.compact_alert_state(state)
         self.assertEqual(len(compact["sent_event_ids"]),
                          ta.MAX_SENT_EVENT_IDS)
         self.assertEqual(len(compact["last_sent"]), ta.MAX_LAST_SENT)
-        self.assertNotIn("early_dump", compact)
-        self.assertNotIn("rejected_signals", compact)
+        for stale in ("strategy_shift", "high_drop", "rejected_signals"):
+            self.assertNotIn(stale, compact)
+        self.assertEqual(compact[ta.EARLY_DUMP_MARKER], {})
 
     def test_delivery_note_mentions_failures(self):
         note = ta.delivery_note(ta.summarize_deliveries([
-            {"event": {"kind": ta.STRATEGY_SHIFT_KIND},
+            {"event": {"kind": ta.EARLY_DUMP_KIND},
              "delivery": {"ok": True}},
-            {"event": {"kind": ta.STRATEGY_SHIFT_KIND},
+            {"event": {"kind": ta.EARLY_DUMP_KIND},
              "delivery": {"ok": False, "muted": True}},
-            {"event": {"kind": ta.STRATEGY_SHIFT_KIND},
+            {"event": {"kind": ta.EARLY_DUMP_KIND},
              "delivery": {"ok": False, "error": "Telegram HTTP 500"}},
         ]))
-        self.assertIn("🚨 1 notifikasi WAKTUNYA GANTI STRATEGI dikirim", note)
+        self.assertIn("⚡ 1 notifikasi EARLY DUMP TERJADI dikirim", note)
         self.assertIn("1 notifikasi dilewati", note)
         self.assertIn("Telegram HTTP 500", note)
         self.assertEqual(ta.delivery_note({"total": 0}),
@@ -234,7 +257,7 @@ class AlertMessageLinkTest(unittest.TestCase):
     """
 
     def test_link_gmgn_dan_dexscreener_jadi_hyperlink(self):
-        text, entities = ta.build_alert_message(_shift_event())
+        text, entities = ta.build_alert_message(_early_dump_event())
         self.assertIn("\n🔗 GMGN\n", text)
         self.assertTrue(text.endswith("\n🦆 DexScreener"))
         self.assertEqual(_links(text, entities),
@@ -242,22 +265,22 @@ class AlertMessageLinkTest(unittest.TestCase):
                           ("DexScreener", dexscreener_token_url(MINT))])
 
     def test_url_tidak_ditulis_di_teks(self):
-        text, entities = ta.build_alert_message(_shift_event())
+        text, entities = ta.build_alert_message(_early_dump_event())
         self.assertNotIn("http", text)
         self.assertNotIn("gmgn.ai", text)
         self.assertNotIn("dexscreener.com", text)
-        self.assertEqual(ta.format_alert_message(_shift_event()), text)
+        self.assertEqual(ta.format_alert_message(_early_dump_event()), text)
         # emoji tidak ikut jadi bagian hyperlink, hanya labelnya
         for entity in entities:
             self.assertNotIn("\U0001f517", _utf16_slice(
                 text, entity["offset"], entity["length"]))
 
     def test_link_muncul_setelah_baris_mint(self):
-        text, _ = ta.build_alert_message(_shift_event())
+        text, _ = ta.build_alert_message(_early_dump_event())
         self.assertLess(text.index("Mint:"), text.index("GMGN"))
 
     def test_tanpa_mint_tidak_ada_link_menggantung(self):
-        text, entities = ta.build_alert_message(_shift_event(mint=""))
+        text, entities = ta.build_alert_message(_early_dump_event(mint=""))
         self.assertIn("Mint: -", text)
         self.assertTrue(text.endswith("Mint: -"))
         self.assertNotIn("GMGN", text)
@@ -265,7 +288,7 @@ class AlertMessageLinkTest(unittest.TestCase):
         self.assertEqual([e for e in entities if e["type"] == "text_link"], [])
 
     def test_mint_berbahaya_diencode_di_url_entity(self):
-        text, entities = ta.build_alert_message(_shift_event(mint="a?b&c d#e"))
+        text, entities = ta.build_alert_message(_early_dump_event(mint="a?b&c d#e"))
         for _, url in _links(text, entities):
             self.assertIn("a%3Fb%26c%20d%23e", url)
             self.assertNotIn(" ", url)
@@ -273,14 +296,14 @@ class AlertMessageLinkTest(unittest.TestCase):
         self.assertIn("📋 Mint: a?b&c d#e", text)
 
     def test_offset_utf16_tepat_walau_symbol_dan_mint_beremoji(self):
-        event = dict(_shift_event(mint="M🚀int" + "x" * 20), symbol="TST🚀🚀")
+        event = dict(_early_dump_event(mint="M🚀int" + "x" * 20), symbol="TST🚀🚀")
         text, entities = ta.build_alert_message(event)
         labels = [label for label, _ in _links(text, entities)]
         self.assertEqual(labels, ["GMGN", "DexScreener"])
 
     def test_robinhood_links_dipakai_untuk_ca_evm(self):
         mint = "0x" + "aB" * 20
-        text, entities = ta.build_alert_message(_shift_event(mint))
+        text, entities = ta.build_alert_message(_early_dump_event(mint))
         self.assertIn(f"📋 Mint: {mint}", text)
         self.assertIn("\n🦆 rh-scan\n🦆 DexScreener\n🌏 Blockscout", text)
         self.assertEqual(
@@ -306,7 +329,7 @@ class AlertMessageLinkTest(unittest.TestCase):
 
 class FormatTest(unittest.TestCase):
     def test_pesan_ringkas_tanpa_blok_pergerakan_wallet(self):
-        message = ta.format_alert_message(_shift_event())
+        message = ta.format_alert_message(_early_dump_event())
         self.assertNotIn("Pergerakan sampel wallet dust", message)
         # Tidak ada lagi baris verifikasi volume/gerbang — rule-nya dihapus.
         self.assertNotIn("TIDAK TERVERIFIKASI", message)
@@ -332,15 +355,16 @@ class TelegramFormattingDeliveryTest(unittest.TestCase):
         post.assert_called_once()
         return post.call_args.kwargs["json"]
 
-    def test_judul_ganti_strategi_ditebalkan_utf16(self):
-        event = _shift_event()
+    def test_judul_early_dump_ditebalkan_utf16(self):
+        event = _early_dump_event()
         payload = self._payload(event)
-        title = "🚨 WAKTUNYA GANTI STRATEGI"
-        self.assertEqual(title, ta.STRATEGY_SHIFT_TITLE)
+        title = "⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE"
+        self.assertEqual(title, ta.EARLY_DUMP_TITLE)
         self.assertTrue(payload["text"].startswith(title + "\n\n🪙"))
         self.assertEqual(payload["text"], ta.format_alert_message(event))
         length = len(title.encode("utf-16-le")) // 2
-        self.assertEqual(length, len(title) + 1)  # 🚨 bukan satu unit UTF-16.
+        # ⚡ (U+26A1) masih satu unit UTF-16, jadi panjang entity = len(title).
+        self.assertEqual(length, len(title))
         bold = [e for e in payload["entities"] if e["type"] == "bold"]
         self.assertEqual(bold, [{"type": "bold", "offset": 0, "length": length}])
         marked = (payload["text"].encode("utf-16-le")[:length * 2]
@@ -355,7 +379,7 @@ class TelegramFormattingDeliveryTest(unittest.TestCase):
     def test_untrusted_names_and_mints_remain_literal_not_markup(self):
         mint = 'a<b>&"[_]/?'
         symbol = 'TST<&>_*[]🚀'
-        payload = self._payload(dict(_shift_event(mint), symbol=symbol))
+        payload = self._payload(dict(_early_dump_event(mint), symbol=symbol))
         self.assertIn(f"🪙 ${symbol}", payload["text"])
         self.assertIn(f"📋 Mint: {mint}", payload["text"])
         self.assertIn(("GMGN", gmgn_token_url(mint)),

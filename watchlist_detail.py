@@ -436,6 +436,74 @@ def anchor_point(meta, points, *, tz_offset_hours: int = WIB_OFFSET_HOURS) -> di
             "fallback": "belum ada titik sejak tanggal masuk"}
 
 
+def added_baseline(meta, points, *,
+                   tz_offset_hours: int = WIB_OFFSET_HOURS) -> dict:
+    """Dust % MC **saat token pertama masuk watchlist** (patokan notif ⚡).
+
+    Permintaan user 2026-09-13: *"pada detail watchlist, juga tunjukkan
+    pertama kali saya menambahkan ke watchlist, posisi % dust di berapa %"*.
+
+    Yang dipakai = titik pembanding yang sama dengan kolom "Sejak masuk"
+    (:func:`anchor_point`): titik **pertama pada/setelah** tanggal ``added``
+    yang datanya layak. Definisi itu sama dengan patokan notifikasi delta
+    (``telegram_alerts.add_baseline_for_mint``), jadi angka yang tampil di
+    detail card = angka yang dipakai rule 0,02%.
+
+    Return ``{pct, count, ts, added_ts, fallback}``:
+
+    - ``pct``/``count`` ``None`` = belum ada satu pun titik layak;
+    - ``ts`` = waktu titik itu (bukan tanggal ``added``);
+    - ``fallback`` ``""`` = titiknya memang sejak tanggal masuk;
+      ``"no_added_date"`` = tanggal ``added`` tidak terbaca (dipakai titik
+      paling awal); nilai lain = belum ada titik setelah tanggal masuk
+      sehingga terpaksa memakai titik pertama yang ada.
+    """
+    anchor = anchor_point(meta, points, tz_offset_hours=tz_offset_hours)
+    point = anchor.get("point") or {}
+    count = point.get("dust_count")
+    return {
+        "pct": _float(point.get("dust_pct_mc"), None),
+        "count": _int(count, None) if count is not None else None,
+        "ts": _int(point.get("ts"), 0) or None,
+        "added_ts": anchor.get("added_ts"),
+        "fallback": anchor.get("fallback") or "",
+    }
+
+
+def baseline_note(baseline, *, current_pct=None) -> str:
+    """Baris caption "dust saat masuk watchlist" untuk detail card watchlist.
+
+    Satu baris ringkas: dust % MC saat token masuk (beserta waktu titiknya),
+    angka sekarang + selisih **pp**, dan penanda bahwa angka itulah patokan
+    notifikasi ⚡ EARLY DUMP — supaya user tidak perlu menebak dari titik mana
+    kenaikan 0,02% dihitung. ``baseline`` = hasil :func:`added_baseline`.
+    """
+    data = baseline if isinstance(baseline, dict) else {}
+    pct = _float(data.get("pct"), None)
+    if pct is None:
+        return ("📌 Dust saat masuk watchlist belum bisa dihitung — belum ada "
+                "titik scan yang layak untuk token ini.")
+    when = format_wib(data.get("ts")) if data.get("ts") \
+        else "waktu tidak tercatat"
+    fallback = str(data.get("fallback") or "")
+    if not fallback:
+        head = f"📌 Saat masuk watchlist ({when}): dust {pct:.3f}% MC"
+    elif fallback == "no_added_date":
+        head = (f"📌 Titik pertama yang tercatat ({when}): dust {pct:.3f}% MC "
+                "— tanggal masuk watchlist belum terbaca")
+    else:
+        head = (f"📌 Titik pertama yang tersedia ({when}): dust {pct:.3f}% MC "
+                "— belum ada scan sejak tanggal masuk")
+    now = _float(current_pct, None)
+    if now is not None:
+        head += f" · sekarang {now:.3f}% MC"
+        delta = pp_change(pct, now)
+        if delta is not None:
+            head += f" ({delta:+.3f} pp)"
+    return (head + " — patokan notif ⚡ EARLY DUMP (tiap +0.02% dihitung "
+            "dari angka ini).")
+
+
 def dust_change_since_added(meta, points, view: dict | None = None, *,
                             now=None,
                             tz_offset_hours: int = WIB_OFFSET_HOURS) -> dict:

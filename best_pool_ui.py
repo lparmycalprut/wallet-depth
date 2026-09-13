@@ -11,18 +11,20 @@ Kriteria **diganti total** 2026-09-11 sesuai request user (curl UI Meteora):
   **≥ 2%**, dan **volume 24 jam ≥ 1 juta USD**
   (``meteora_screener.BEST_VOLUME_24H_MIN``, permintaan user 2026-09-12:
   "minimal volume 24 jam adalah 1M, dibawah itu jangan di show");
-- urutan baris: **kenaikan volume 24 jam (``volume_change_pct``) terbesar** →
-  **dust % MC terkecil** → **fee / active TVL terbesar** (sejak 2026-09-11
-  sore; sebelumnya dust → fee/TVL → volume);
+- urutan baris: **volume 24 jam / active TVL (``volume_active_tvl_ratio``)
+  terbesar** → **dust % MC terkecil** (sejak 2026-09-13; sebelumnya kenaikan
+  volume 24 jam → dust → fee/TVL). Rasionya dikirim langsung API Meteora dan
+  ditampilkan di baris kecil kolom **Vol 24h**, jadi kunci urutnya bisa
+  diperiksa;
 - baris dengan dust **<= 0,035% MC** (``meteora_screener.BEST_DUST_MARK_PCT``,
   inklusif; 2026-09-12) ditandai chip **🏆 BEST POOL** di kolom Dust %MC +
   dihitung di pill kepala card — penanda visual, bukan saringan;
 - tabel menampilkan detail fee dan active TVL (kolom **A.TVL**, **Fee/TVL**
   dengan angka fee USD + tier fee di baris kecilnya, **Vol 24h** dengan Δ
-  volume) supaya kunci urutnya bisa diperiksa, bukan cuma
-  dipercaya. Kolom lama ``Fee`` (tier saja) dihapus — tier fee ikut nempel di
-  baris kecil Fee/TVL; kolom ``Vol`` lama (= volatilitas) berganti nama jadi
-  **Volat** karena **Vol 24h** sekarang benar-benar volume.
+  volume + rasio volume/active TVL) supaya kunci urutnya bisa diperiksa, bukan
+  cuma dipercaya. Kolom lama ``Fee`` (tier saja) dihapus — tier fee ikut
+  nempel di baris kecil Fee/TVL; kolom ``Vol`` lama (= volatilitas) berganti
+  nama jadi **Volat** karena **Vol 24h** sekarang benar-benar volume.
 
 Saringan lama (fee/active TVL > 20%, top 10 holder < 30%, total LPs > 20,
 active TVL > 10K) **dihapus** — top 10 holder dan total LPs tetap tampil
@@ -67,11 +69,13 @@ def best_pool_tooltip() -> str:
         f"{BEST_DUST_MAX_PCT:g}% marketcap dan "
         f"volatility >= {BEST_VOLATILITY_MIN:g}%. Baris dengan dust <= "
         f"{BEST_DUST_MARK_PCT:g}% marketcap ditandai chip 🏆 BEST POOL di "
-        "kolom Dust %MC (penanda, bukan saringan). Urutan: kenaikan volume "
-        "24 jam paling besar dulu, lalu dust % marketcap terkecil, lalu "
-        "fee/active TVL paling besar. Di tabel: A.TVL = active TVL "
+        "kolom Dust %MC (penanda, bukan saringan). Urutan: volume 24 jam "
+        "dibagi active TVL (rasio yang dikirim API Meteora — angkanya di "
+        "baris kecil kolom Vol 24h) paling besar dulu, lalu dust % marketcap "
+        "terkecil. Di tabel: A.TVL = active TVL "
         "pool, Fee/TVL = fee 24 jam dibagi active TVL (baris kecilnya angka "
-        "fee + tier fee), Vol 24h = volume 24 jam dengan perubahannya (Δ) — "
+        "fee + tier fee — informasi, bukan kunci urut lagi), Vol 24h = volume "
+        "24 jam dengan perubahannya (Δ) dan rasio volume/active TVL — "
         "angkanya bukti saringan volume di atas — kolom "
         "Top10 dan LPs hanya informasi, keduanya bukan saringan lagi. ⭐ "
         "memasukkan token ke card 🌊 Watchlist Meteora di halaman utama; "
@@ -135,8 +139,10 @@ def _pct_txt(value, digits: int = 2) -> str:
 def _signed_pct(value) -> tuple[str, str]:
     """Persen dengan tanda +/− + warna (hijau naik, merah turun).
 
-    Dipakai untuk **Δ volume** — kenaikan volume 24 jam adalah kunci urut
-    PERTAMA card, jadi tandanya harus terbaca sekali lihat. ``None`` → ``—``.
+    Dipakai untuk **Δ volume** (baris kecil kolom Vol 24h) — sejak
+    2026-09-13 kunci urut pertama card adalah **volume 24 jam / active TVL**,
+    jadi angka volume + arah perubahannya harus terbaca sekali lihat.
+    ``None`` → ``—``.
     """
     if value is None:
         return "—", ""
@@ -205,7 +211,8 @@ def _render_best_table(rows: list, *, key_prefix: str = "best-pool") -> None:
     from lp_watchlist import LP_SOURCE
     from meteora_screener import (BEST_DUST_MARK_PCT, BEST_DUST_MAX_PCT,
                                   BEST_VOLATILITY_MIN, BEST_VOLUME_24H_MIN,
-                                  row_best_pool, row_dust_pct)
+                                  row_best_pool, row_dust_pct,
+                                  row_vol_tvl_ratio)
     from watchlist import add_to_watchlist
 
     header_cols = st.columns(_COL_SPEC)
@@ -240,6 +247,12 @@ def _render_best_table(rows: list, *, key_prefix: str = "best-pool") -> None:
         delta_html = (f'<span style="color:{delta_color};">Δ '
                       f"{delta_txt}</span>" if delta_color
                       else f"<span>Δ {delta_txt}</span>")
+        # Kunci urut pertama (volume 24 jam / active TVL) ditulis di baris
+        # kecil kolom Vol 24h supaya urutannya bisa diperiksa sekali lihat.
+        vol_tvl_ratio = row_vol_tvl_ratio(row)
+        if vol_tvl_ratio is not None:
+            delta_html += (f" · {_num_or_dash(vol_tvl_ratio, ',.0f')}×"
+                           " A.TVL")
         dust_is_best = row_best_pool(row)
         dust_value = _pct_txt(dust_pct, 3)
         dust_sub = "dust"
@@ -273,12 +286,13 @@ def _render_best_table(rows: list, *, key_prefix: str = "best-pool") -> None:
              f"tier fee {_num_or_dash(fee_pct, '.4g')}% · fee 24 jam "
              f"{_usd_or_dash(fee, compact=False)} / active TVL "
              f"{_usd_or_dash(active_tvl, compact=False)} = "
-             f"{_num_or_dash(ratio, ',.2f')}% — kunci urut ketiga "
-             "(terbesar dulu)"),
+             f"{_num_or_dash(ratio, ',.2f')}% — informasi, bukan kunci "
+             "urut lagi sejak 2026-09-13"),
             (_usd_or_dash(volume), delta_html,
              f"volume 24 jam {_usd_or_dash(volume, compact=False)} · "
-             f"perubahan {delta_txt} — kunci urut pertama (terbesar "
-             f"dulu) · saringan layar: minimal "
+             f"perubahan {delta_txt} · rasio volume/active TVL "
+             f"{_num_or_dash(vol_tvl_ratio, ',.2f')}% — kunci urut pertama "
+             "(terbesar dulu) · saringan layar: minimal "
              f"${BEST_VOLUME_24H_MIN:,.0f}"),
             (_pct_or_dash(row.get("volatility")), "volat",
              "volatility pool "
@@ -371,7 +385,7 @@ def render_best_pool_scan() -> None:
         if hidden:
             # HTML pill tidak bisa diklik di Streamlit — tombol di bawah
             # kepala membuka listing pool yang disembunyikan (volume ≥ 1M,
-            # dust < 0,05%, urut kenaikan volume 24 jam).
+            # dust < 0,05%, urut volume/active TVL → dust).
             label = (f"◀ kembali ke {len(rows)} pool lolos"
                      if showing_hidden
                      else f"▶ {hidden} disembunyikan")
@@ -380,7 +394,7 @@ def render_best_pool_scan() -> None:
                                "listing utama, tetap volume 24 jam "
                                f">= ${BEST_VOLUME_24H_MIN:,.0f} dan dust "
                                f"< {BEST_DUST_MAX_PCT:g}% MC, urut "
-                               "kenaikan volume 24 jam."),
+                               "volume/active TVL lalu dust."),
                          use_container_width=True):
                 st.session_state[BEST_SHOW_HIDDEN_KEY] = not showing_hidden
                 st.rerun()
@@ -400,7 +414,8 @@ def render_best_pool_scan() -> None:
             st.caption(
                 f"{len(hidden_rows)} pool disembunyikan ditampilkan "
                 f"(volume ≥ ${BEST_VOLUME_24H_MIN:,.0f}, dust "
-                f"< {BEST_DUST_MAX_PCT:g}% MC, urut Δ volume 24 jam).")
+                f"< {BEST_DUST_MAX_PCT:g}% MC, urut volume/active TVL "
+                "lalu dust).")
             _render_best_table(hidden_rows, key_prefix="best-pool-hidden")
             return
         if not rows:

@@ -139,22 +139,57 @@ class ChartLpCardTest(unittest.TestCase):
         self.assertIn(f"ambang HATI-HATI {hh.DUST_CAUTION_PCT:g}% / BAHAYA "
                       f"{hh.DUST_DANGER_PCT:g}%", captions)
 
+    def test_detail_menampilkan_dust_saat_masuk_watchlist(self):
+        """Permintaan user 2026-09-13: detail tiap token juga menulis posisi
+        dust % MC **saat token pertama masuk watchlist** (patokan notifikasi
+        ⚡ EARLY DUMP), bukan cuma angka terbaru.
+
+        Tanggal ``added`` dibuat lebih tua dari titik pertama supaya jalur
+        "titik pertama sejak tanggal masuk" yang diuji (bukan varian
+        fallback).
+        """
+        watchlist = _watchlist()
+        for meta in watchlist.values():
+            meta["added"] = "1970-01-01"
+        patches = (
+            mock.patch("watchlist.load_watchlist", return_value=watchlist),
+            mock.patch("holder_status.load_holder_status",
+                       side_effect=lambda **_kw: _status()),
+            mock.patch("holder_history.load_holder_history",
+                       side_effect=lambda *a, **kw: _store()),
+            mock.patch("holder_history.pull_holder_history",
+                       return_value=None),
+        )
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        app = AppTest.from_file(APP, default_timeout=60).run()
+        self.assertEqual(len(app.exception), 0)
+        captions = "\n".join(node.value for node in app.caption)
+        self.assertIn("📌 Saat masuk watchlist", captions)
+        # LPRISK: titik pertama 0,62% → sekarang 1,35% (+0,73 pp).
+        self.assertIn("dust 0.620% MC", captions)
+        self.assertIn("sekarang 1.350% MC (+0.730 pp)", captions)
+        self.assertIn("patokan notif ⚡ EARLY DUMP", captions)
+
     def test_card_detail_is_hover_tooltip_on_title(self):
         """Detail karakteristik card = tooltip judul (permintaan 2026-09-10).
 
         Caption panjang di badan card diganti atribut ``title`` pada teks
         judul — hanya muncul saat kursor digeser ke tulisan "Watchlist
-        Meteora". Ambang (0,1 / 0,5 / 1% MC) harus tetap disebut di dalamnya.
+        Meteora". Ambang level dust (0,5 / 1% MC) dan rule notifikasi delta
+        0,02% harus tetap disebut di dalamnya.
         """
         app = self._app()
         body = self._body(app)
         captions = "\n".join(node.value for node in app.caption)
         # Teks detail tidak lagi dirender sebagai caption card.
-        self.assertNotIn("berulang tiap scan", captions)
+        self.assertNotIn("berulang untuk tiap kelipatan", captions)
         self.assertNotIn("perubahan holder langsung kelihatan", captions)
         # ... tapi ada sebagai tooltip (title="…") di span judul card.
         self.assertIn('title="Watchlist terpisah', body)
-        self.assertIn("berulang tiap scan", body)
+        self.assertIn("berulang untuk tiap kelipatan 0.02%", body)
+        self.assertIn("⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE", body)
         self.assertIn("perubahan holder langsung kelihatan", body)
         self.assertIn("per bucket 5 menit", body)
         # Jangan ada lagi janji "Meteora tetap 15 menit" di tooltip ini.

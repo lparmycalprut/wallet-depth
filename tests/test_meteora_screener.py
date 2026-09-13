@@ -105,8 +105,13 @@ class FetchListingTest(unittest.TestCase):
         self.assertTrue(rows[0]["in_24h"] and rows[0]["in_1h"])
 
 
-def _sort_row(symbol, pct, tvl, *, wallets=80, fetched=200):
-    """Baris pool untuk uji urutan; ``wallets=None`` = data holder gagal."""
+def _sort_row(symbol, pct, ratio, *, tvl=20_000.0, wallets=80, fetched=200):
+    """Baris pool untuk uji urutan.
+
+    ``ratio`` = ``volume_active_tvl_ratio`` (angka API Meteora, persen) —
+    kunci urut **pertama** sejak 2026-09-13; ``wallets=None`` = data holder
+    gagal (tanpa angka dust).
+    """
     analysis = None
     if wallets is not None:
         analysis = {"holders": {"total_fetched": fetched,
@@ -115,25 +120,29 @@ def _sort_row(symbol, pct, tvl, *, wallets=80, fetched=200):
                                 "dust_pct_mc": pct}}
     return {"ca": symbol * 4, "symbol": symbol, "pool_address": "P" + symbol,
             "tvl": tvl, "mc": 1_000_000.0, "dust_pct_mc": pct,
+            "volume_active_tvl_ratio": ratio,
             "in_24h": True, "in_1h": False, "analysis": analysis}
 
 
 class SortRowsTest(unittest.TestCase):
-    """Listing Scan Meteora: 🏆 BEST POOL wajib di urutan teratas.
+    """Listing Scan Meteora: 🏆 BEST POOL dulu, lalu rasio volume/active TVL.
 
-    Permintaan user 2026-09-08. Sebelumnya baris tampil apa adanya mengikuti
-    urutan API Meteora sehingga pool terbaik terselip di tengah.
+    Permintaan user 2026-09-13: *"sort pertama adalah dari volume / active tvl
+    yang paling besar dulu, lalu dari %dust yang paling kecil"*. Badge 🏆
+    (permintaan 2026-09-08) tetap di urutan teratas — kunci urut pertama di
+    dalam kelompoknya yang berubah: rasio ``volume_active_tvl_ratio`` (angka
+    API Meteora, bukan hitungan sendiri) menggantikan TVL sebagai tie-break.
     """
 
     def _rows(self):
         # Sengaja diacak seperti urutan mentah API.
         return [
-            _sort_row("THIN", 0.01, 4_000.0),         # TVL < 10K → bukan best
-            _sort_row("BEST2", 0.05, 12_000.0),
-            _sort_row("NODATA", None, 90_000.0, wallets=None),
-            _sort_row("BEST1", 0.01, 20_000.0),       # dust terkecil → juara
-            _sort_row("BOGUS", 0.0, 50_000.0, wallets=0, fetched=0),
-            _sort_row("BEST3", 0.05, 80_000.0),       # dust seri → TVL menang
+            _sort_row("THIN", 0.01, 9.0, tvl=4_000.0),   # TVL < 10K → bukan best
+            _sort_row("BEST2", 0.05, 3.0, tvl=12_000.0),
+            _sort_row("NODATA", None, 2.0, tvl=90_000.0, wallets=None),
+            _sort_row("BEST1", 0.01, 1.5, tvl=20_000.0),  # dust terkecil → juara
+            _sort_row("BOGUS", 0.0, 7.0, tvl=50_000.0, wallets=0, fetched=0),
+            _sort_row("BEST3", 0.05, 5.0, tvl=80_000.0),  # dust seri → rasio menang
         ]
 
     def _rows_by_symbol(self):
@@ -146,23 +155,49 @@ class SortRowsTest(unittest.TestCase):
         self.assertEqual([r["symbol"] for r in out][:3],
                          ["BEST1", "BEST3", "BEST2"])
 
-    def test_dust_terkecil_dulu_lalu_tvl_terbesar(self):
+    def test_dust_terkecil_dulu_lalu_rasio_volume_active_tvl(self):
         out = [r["symbol"] for r in ms.sort_rows(self._rows())]
-        # BEST1 (0,01%) < BEST3/BEST2 (0,05%); BEST3 TVL 80K > BEST2 12K.
+        # BEST1 (0,01%) < BEST3/BEST2 (0,05%); BEST3 rasio 5× > BEST2 3×.
         self.assertLess(out.index("BEST1"), out.index("BEST3"))
         self.assertLess(out.index("BEST3"), out.index("BEST2"))
 
+    def test_rasio_volume_active_tvl_mengalahkan_tvl(self):
+        """TVL besar tidak lagi menang: rasionya yang dilihat (2026-09-13)."""
+        rows = [_sort_row("TEBAL", 0.02, 1.0, tvl=900_000.0),
+                _sort_row("RAMAI", 0.02, 40.0, tvl=15_000.0)]
+        self.assertEqual([r["symbol"] for r in ms.sort_rows(rows)],
+                         ["RAMAI", "TEBAL"])
+
     def test_baris_tanpa_data_dust_paling_bawah(self):
         out = [r["symbol"] for r in ms.sort_rows(self._rows())]
-        # BOGUS ikut ke bawah sejak 2026-09-13: dust 0,0 dari scan holder
-        # 0 wallet BUKAN "pool bersih", melainkan tidak ada bukti — diperlakukan
-        # sama seperti baris tanpa angka (NODATA). Di dalam kelompok tanpa bukti
-        # TVL terbesar yang lebih dulu, jadi NODATA (90K) di atas BOGUS (50K).
-        self.assertEqual(out[-2:], ["NODATA", "BOGUS"])
+        # BOGUS ikut ke bawah: dust 0,0 dari scan holder 0 wallet BUKAN "pool
+        # bersih", melainkan tidak ada bukti — diperlakukan sama seperti baris
+        # tanpa angka (NODATA). Di dalam kelompok tanpa bukti rasio
+        # volume/active TVL terbesar yang lebih dulu, jadi BOGUS (7×) di atas
+        # NODATA (2×) walau TVL-nya lebih kecil.
+        self.assertEqual(out[-2:], ["BOGUS", "NODATA"])
         self.assertIsNone(ms.row_dust_pct(
             self._rows_by_symbol()["BOGUS"]))
         self.assertIsNone(ms.row_dust_pct(
             self._rows_by_symbol()["NODATA"]))
+
+    def test_rasio_dipakai_apa_adanya_dan_ada_fallback(self):
+        self.assertAlmostEqual(
+            ms.row_vol_tvl_ratio({"volume_active_tvl_ratio": 1646.6332}),
+            1646.6332)
+        # Baris lama (hasil scan sebelum field ini ada): hitung ulang.
+        self.assertAlmostEqual(
+            ms.row_vol_tvl_ratio({"volume": 300_000.0,
+                                  "active_tvl": 100_000.0}), 300.0)
+        self.assertIsNone(ms.row_vol_tvl_ratio({"volume": 1.0}))
+        self.assertIsNone(ms.row_vol_tvl_ratio({}))
+
+    def test_row_dari_pool_membawa_rasio_meteora(self):
+        pool = _pool("P1", "M1")
+        pool["volume_active_tvl_ratio"] = 1646.63
+        row = ms.merge_pools([pool], [])[0]
+        self.assertAlmostEqual(row["volume_active_tvl_ratio"], 1646.63)
+        self.assertAlmostEqual(ms.row_vol_tvl_ratio(row), 1646.63)
 
     def test_scan_holder_gagal_bukan_angka_nol(self):
         """Akar "0,000% di Scan Meteora, beda dengan Scan Holder" (2026-09-13).
@@ -218,12 +253,13 @@ class RowFlagTest(unittest.TestCase):
         self.assertIsNone(ms.row_dust_pct(None))
 
     def test_row_flag_butuh_holder_valid_dan_tvl(self):
-        self.assertTrue(ms.row_flag(_sort_row("A", 0.01, 20_000.0))["best"])
+        self.assertTrue(ms.row_flag(_sort_row("A", 0.01, 5.0))["best"])
         # holder gagal (0 wallet) → bukan best walau dust 0
         self.assertFalse(ms.row_flag(
-            _sort_row("B", 0.0, 50_000.0, wallets=0, fetched=0))["best"])
-        # TVL < 10K → bukan best
-        self.assertFalse(ms.row_flag(_sort_row("C", 0.01, 4_000.0))["best"])
+            _sort_row("B", 0.0, 30.0, wallets=0, fetched=0))["best"])
+        # TVL < 10K → bukan best (rasio sebesar apa pun tidak menolong)
+        self.assertFalse(ms.row_flag(
+            _sort_row("C", 0.01, 400.0, tvl=4_000.0))["best"])
 
 
 class DropQuoteRowsTest(unittest.TestCase):

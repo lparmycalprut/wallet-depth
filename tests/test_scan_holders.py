@@ -273,9 +273,10 @@ class MainExitCodeTest(unittest.TestCase):
 
 
 class AlertScopeWiringTest(unittest.TestCase):
-    """Cron meneruskan state watchlist ke rule 🚨 WAKTUNYA GANTI STRATEGI.
+    """Cron meneruskan state watchlist ke rule ⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE.
 
-    Sejak 2026-09-11 notifikasinya satu dan tidak ada lagi **scope flag**
+    Sejak 2026-09-13 notifikasinya satu (delta dust 0,02% dari patokan
+    add-watchlist) dan tidak ada lagi **scope flag**
     (``lp_mints``/``high_mints``/``volume_rules``): tiap token yang di-scan
     run ini dievaluasi. Yang tetap harus diteruskan adalah
     ``watchlist_meta`` — dipakai untuk membuang marker episode lama ketika

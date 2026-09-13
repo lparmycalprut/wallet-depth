@@ -19,11 +19,12 @@ import alert_settings
 import robinhood_holders
 import robinhood_watchlist
 from robinhood_watchlist import RH_LP_SOURCE, RH_REGULAR_SOURCE
-from telegram_alerts import (STRATEGY_SHIFT_PCT, STRATEGY_SHIFT_TITLE,
+from telegram_alerts import (EARLY_DUMP_STEP_PCT, EARLY_DUMP_TITLE,
                              delivery_note, process_holder_alerts,
                              summarize_deliveries)
 from watchlist_detail import (STALE_AFTER_SEC, STALE_REGULAR_AFTER_SEC,
-                              format_wib, previous_pct, resolve_view)
+                              added_baseline, baseline_note, format_wib,
+                              previous_pct, resolve_view)
 
 
 def render_styles() -> None:
@@ -330,7 +331,9 @@ def _dust_change_empty_note(interval: int) -> str:
 
 def _render_dust_change(points, holders: dict, symbol: str, *,
                         interval: int = INTERVAL_SEC,
-                        empty_note: str = "") -> None:
+                        empty_note: str = "",
+                        meta: dict | None = None,
+                        current_pct=None) -> None:
     """Expander **📈 Grafik perubahan dust holder** ala Watchlist Meteora.
 
     Bentuk yang sama persis dengan expander grafik per token di card
@@ -341,10 +344,18 @@ def _render_dust_change(points, holders: dict, symbol: str, *,
     ter-nested di dalamnya bila scan menghasilkan ``depth``. ``interval`` =
     bucket resample (``LP_INTERVAL_SEC`` 5 menit untuk lane LP,
     ``INTERVAL_SEC`` 4 jam untuk watchlist biasa).
+
+    ``meta`` (entri watchlist: ``added``/``symbol``) + ``current_pct``
+    dipakai baris pertama detail: **dust % MC saat token pertama masuk
+    watchlist** — patokan notifikasi ⚡ EARLY DUMP (permintaan user
+    2026-09-13: *"pada detail watchlist, juga tunjukkan pertama kali saya
+    menambahkan ke watchlist, posisi % dust di berapa %"*).
     """
     label = interval_label(interval)
     with st.expander(f"📈 Grafik perubahan dust holder — ${symbol}",
                      expanded=False):
+        st.caption(baseline_note(added_baseline(meta, points),
+                                 current_pct=current_pct))
         figure = lp_chart_figure(points, symbol, interval=interval)
         if figure is None:
             st.info(empty_note or _dust_change_empty_note(interval))
@@ -405,8 +416,9 @@ RH_CARD_TOOLTIP = (
     "Watchlist Robinhood LP (0x…, chain id 4663) — di-scan cron tiap ±5 "
     "menit (sejak 2026-09-06, sama cepatnya dengan Watchlist Meteora) "
     "supaya exit bisa lebih awal. Satu-satunya notifikasi Telegram: "
-    f"{STRATEGY_SHIFT_TITLE} — dikirim berulang tiap scan selama hold % MC "
-    f"dust masih ≥ {STRATEGY_SHIFT_PCT:g}%, berhenti hanya bila token "
+    f"{EARLY_DUMP_TITLE} — dikirim tiap kali dust % MC naik "
+    f"≥ {EARLY_DUMP_STEP_PCT:g}% dari angka saat token masuk watchlist "
+    f"(berulang tiap kelipatan {EARLY_DUMP_STEP_PCT:g}%), berhenti hanya bila token "
     "dihapus (✕) atau dipindah ke watchlist biasa (📋). Notif bisa "
     "dimatikan per token lewat tombol 🔕 di barisnya (token baru selalu "
     "🔔 ON; scan + grafik tetap jalan). Badge level dust "
@@ -420,8 +432,9 @@ RH_REGULAR_CARD_TOOLTIP = (
     "Watchlist Robinhood biasa (0x…, chain id 4663) — TIDAK di-scan cron "
     "(slot 4 jam dimatikan); datanya jalan lewat tombol scan manual di "
     "card ini atau pindah ke card LP. Notifikasinya sama seperti lane LP: "
-    f"{STRATEGY_SHIFT_TITLE} dikirim tiap scan selama hold % MC dust "
-    f"≥ {STRATEGY_SHIFT_PCT:g}% (hanya bila notif watchlist biasa ON di "
+    f"{EARLY_DUMP_TITLE} dikirim tiap kali dust % MC naik "
+    f"≥ {EARLY_DUMP_STEP_PCT:g}% dari angka saat token masuk watchlist "
+    "(hanya bila notif watchlist biasa ON di "
     "bawah card dan tombol 🔔 token itu tidak dimatikan). Badge level dust "
     "di baris: "
     f"≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
@@ -698,7 +711,8 @@ def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
     # Wallet Depth by Threshold ikut ter-nested di dalam expander.
     _render_dust_change(row.get("points"), holders, symbol,
                         interval=(LP_INTERVAL_SEC if variant == "lp"
-                                  else INTERVAL_SEC))
+                                  else INTERVAL_SEC),
+                        meta=row, current_pct=dust_pct)
     st.markdown('<hr style="margin:0.3rem 0;border-color:#cbd5e1;">',
                 unsafe_allow_html=True)
 
@@ -732,6 +746,9 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
             "mint": mint,
             "symbol": str(meta.get("symbol") or token.get("symbol") or "?")
             .upper(),
+            # Tanggal ``added`` ikut dibawa supaya detail baris bisa menulis
+            # dust % MC saat token masuk watchlist (2026-09-13).
+            "added": str(meta.get("added") or ""),
             "holders": token.get("holders") or {},
             "dust_count": view.get("dust_count"),
             "dust_pct": dust_pct,

@@ -267,6 +267,77 @@ class SinceAddedTest(unittest.TestCase):
         self.assertIn("Belum ada titik history", change["alasan"])
 
 
+class AddedBaselineTest(unittest.TestCase):
+    """Dust % MC saat token pertama masuk watchlist (permintaan user 2026-09-13).
+
+    Angka ini ditampilkan di baris pertama detail card watchlist dan
+    sekaligus patokan notifikasi ⚡ EARLY DUMP — harus sama dengan titik
+    pembanding kolom "Sejak masuk" dan aturan kelayakan titik.
+    """
+
+    META = {"symbol": "TST", "added": "2026-09-01"}
+
+    def test_titik_pertama_setelah_tanggal_masuk(self):
+        points = [_point(ADDED_TS - 2 * DAY, 0.90, 400),   # sebelum masuk
+                  _point(ADDED_TS + 2 * HOUR, 0.012, 40),  # patokan
+                  _point(ADDED_TS + DAY, 0.036, 60)]
+        base = wd.added_baseline(self.META, points)
+        self.assertEqual(base["pct"], 0.012)
+        self.assertEqual(base["count"], 40)
+        self.assertEqual(base["ts"], ADDED_TS + 2 * HOUR)
+        self.assertEqual(base["added_ts"], ADDED_TS)
+        self.assertEqual(base["fallback"], "")
+
+    def test_titik_tidak_layak_dilewati(self):
+        short = dict(_point(ADDED_TS + HOUR, 0.01, 3))     # 3 wallet < lantai
+        degraded = dict(_point(ADDED_TS + 2 * HOUR, 0.0, 50))
+        degraded["truncated"] = True
+        points = [short, degraded, _point(ADDED_TS + DAY, 0.02, 80)]
+        base = wd.added_baseline(self.META, points)
+        self.assertEqual(base["pct"], 0.02)
+        self.assertEqual(base["ts"], ADDED_TS + DAY)
+
+    def test_tanpa_tanggal_masuk_memakai_titik_pertama(self):
+        base = wd.added_baseline({}, [_point(ADDED_TS, 0.05, 90)])
+        self.assertEqual(base["pct"], 0.05)
+        self.assertEqual(base["fallback"], "no_added_date")
+        self.assertIsNone(base["added_ts"])
+
+    def test_belum_ada_titik_setelah_tanggal_masuk_ditandai(self):
+        points = [_point(ADDED_TS - 2 * DAY, 0.50, 200),
+                  _point(ADDED_TS - DAY, 0.20, 90)]
+        base = wd.added_baseline({"added": "2026-09-03"}, points)
+        self.assertEqual(base["pct"], 0.50)   # titik pertama yang ada
+        self.assertIn("titik", base["fallback"])
+
+    def test_tanpa_titik_sama_sekali(self):
+        base = wd.added_baseline(self.META, [])
+        self.assertIsNone(base["pct"])
+        self.assertIsNone(base["ts"])
+
+    def test_note_menyebut_patokan_dan_selisih(self):
+        points = [_point(ADDED_TS + HOUR, 0.012, 40),
+                  _point(ADDED_TS + DAY, 0.036, 60)]
+        note = wd.baseline_note(wd.added_baseline(self.META, points),
+                                current_pct=0.036)
+        self.assertIn("📌 Saat masuk watchlist", note)
+        self.assertIn(wd.format_wib(ADDED_TS + HOUR), note)
+        self.assertIn("dust 0.012% MC", note)
+        self.assertIn("sekarang 0.036% MC (+0.024 pp)", note)
+        self.assertIn("patokan notif", note)
+
+    def test_note_tanpa_angka_menjelaskan_kenapa(self):
+        note = wd.baseline_note(wd.added_baseline(self.META, []))
+        self.assertIn("belum bisa dihitung", note)
+        self.assertNotIn("patokan notif", note)
+
+    def test_note_menandai_titik_yang_bukan_sejak_masuk(self):
+        base = wd.added_baseline({}, [_point(ADDED_TS, 0.05, 90)])
+        note = wd.baseline_note(base, current_pct=0.05)
+        self.assertIn("Titik pertama yang tercatat", note)
+        self.assertIn("tanggal masuk watchlist belum terbaca", note)
+
+
 class ChangeHtmlTest(unittest.TestCase):
     def test_drop_uses_green_and_rise_uses_red(self):
         drop = wd.dust_change_since_added(

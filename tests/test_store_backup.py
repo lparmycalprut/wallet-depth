@@ -639,23 +639,29 @@ class SeedFromSlimStatusTest(unittest.TestCase):
         store = hh.seed_from_status(hh.empty_store(), remote)
         self.assertNotIn("alert_state", store["tokens"][MINT])
 
-    def test_alert_state_ringkas_memulihkan_marker_ganti_strategi(self):
+    def test_alert_state_ringkas_memulihkan_marker_early_dump(self):
         remote = {"tokens": {MINT: {
             "symbol": "TST",
             "alert_state": {"summary": True,
                             "baseline": {"ts": 1, "balances": 3, "dust": 1},
                             "rolling": {"ts": 2, "balances": 3, "dust": 0},
                             "sent_event_ids": 2,
-                            "strategy_shift": {"ts": 9, "dust_pct_mc": 0.4,
-                                                "since_ts": 5},
+                            "early_dump": {"ts": 9, "dust_pct_mc": 0.4,
+                                           "baseline_pct": 0.2,
+                                           "baseline_ts": 5, "step": 10,
+                                           "baseline_src": "history"},
                             # marker rule lama TIDAK dipulihkan lagi
+                            "strategy_shift": {"ts": 8, "dust_pct_mc": 0.2},
                             "high_drop": {"ts": 8, "high": 2.0}},
         }}}
         store = hh.seed_from_status(hh.empty_store(), remote)
         state = store["tokens"][MINT]["alert_state"]
-        self.assertEqual(state["strategy_shift"]["ts"], 9)
-        self.assertAlmostEqual(state["strategy_shift"]["dust_pct_mc"], 0.4)
-        self.assertEqual(state["strategy_shift"]["since_ts"], 5)
+        self.assertEqual(state["early_dump"]["ts"], 9)
+        self.assertAlmostEqual(state["early_dump"]["dust_pct_mc"], 0.4)
+        self.assertAlmostEqual(state["early_dump"]["baseline_pct"], 0.2)
+        self.assertEqual(state["early_dump"]["baseline_ts"], 5)
+        self.assertEqual(state["early_dump"]["step"], 10)
+        self.assertNotIn("strategy_shift", state)
         self.assertNotIn("high_drop", state)
         self.assertNotIn("rolling", state)
 

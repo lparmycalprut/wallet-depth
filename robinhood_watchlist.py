@@ -6,8 +6,8 @@ Watchlist ini terpisah dari ``watchlist.json`` (Solana). File-nya:
 - ``watchlist_robinhood.json`` — daftar token ``0x…`` (persisted ke GitHub),
   dipecah dua card lewat field ``source``:
   **Robinhood LP** (default, scan cepat **±5 menit** sejak 2026-09-06 +
-  pengingat 🚨 WAKTUNYA GANTI STRATEGI berulang selama dust ≥ 0,06% MC,
-  dibatasi bucket 5 menit per token) dan
+  notifikasi ⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE tiap dust naik ≥ 0,02%
+  MC dari angka saat token di-add, dibatasi bucket 5 menit per token) dan
   **Robinhood biasa** (``source="regular"``, scan ±4 jam; hanya lewat tombol
   scan manual) — lihat :func:`split_robinhood_watchlist`.
 - ``watchlist_robinhood_pending.json`` — journal add/remove/source
@@ -48,9 +48,10 @@ CHAIN_NAME = robinhood_holders.CHAIN_NAME
 # Watchlist Robinhood dipecah dua card (permintaan user 2026-09-05):
 # - **Robinhood LP**    : scan cepat — **tiap run cron ±5 menit** sejak
 #   2026-09-06 (sebelumnya 15 menit, sama seperti Chart LP Meteora yang kini
-#   ikut 5 menit); pengingat 🚨 WAKTUNYA GANTI STRATEGI berulang selama
-#   dust % MC ≥ 0,06% (lihat ``telegram_alerts.STRATEGY_SHIFT_PCT``),
-#   dibatasi bucket 5 menit/token.
+#   ikut 5 menit); notifikasi ⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE
+#   dikirim tiap dust % MC naik ≥ 0,02% dari patokan saat token di-add
+#   (lihat ``telegram_alerts.EARLY_DUMP_STEP_PCT``), dibatasi bucket 5
+#   menit/token.
 # - **Robinhood** (biasa): scan ±4 jam (praktisnya hanya lewat tombol scan
 #   manual — slot cron 4 jam dimatikan sejak 2026-09-07).
 # Split memakai field ``source`` di file watchlist yang sama, seperti split
