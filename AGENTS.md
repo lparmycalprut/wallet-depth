@@ -1,5 +1,16 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-13 — Best Pool fast prefilter
+
+Rule terbaru mengesampingkan catatan historis "semua saringan layar dihapus":
+`scan_best_meteora` menyaring **24H F/V >= 5×** (`BEST_FV_24H_MIN`) dan
+**30M F > V** sebelum `enrich_pools`, dengan F = fee_active_tvl_ratio dan
+V = volatility dari lane masing-masing. Data hilang/nonfinite/negatif gugur;
+V=0 dengan F>0 lolos. Kandidat gagal tetap tersedia di `hidden_rows` tanpa
+scan holder, dihitung dalam `hidden_metric`. Dust bukan filter; server tetap
+DLMM + active TVL >=50K. Tooltip di `best_pool_ui` mengikuti konstanta.
+Tes terfokus: `python -m unittest tests.test_best_fv_prefilter -v`.
+
 Dashboard token Solana. Fokus: **analisa holder dust** (jumlah + % MC,
 grafik 4 jam, kohort Crab+Fish) dan **Scan Meteora DLMM**, ditambah
 **🚀 Pre-Pump Screener** (4 sinyal on-chain untuk token watchlist
