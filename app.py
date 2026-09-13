@@ -134,12 +134,8 @@ def _lp_head_html(summary: dict) -> str:
     _muted_pill = _muted_pill_html(summary.get("muted"))
     if _muted_pill:
         pills.append(_muted_pill)
-    if summary.get("danger"):
-        pills.append(f'<span class="lp-warn">BAHAYA {summary["danger"]}</span>')
-    if summary.get("caution"):
-        pills.append(f'<span class="lp-warn" style="color:#78350f;'
-                     f'background:#fef3c7;">HATI-HATI {summary["caution"]}'
-                     '</span>')
+    # Pill BAHAYA/HATI-HATI dihapus 2026-09-13 per permintaan user:
+    # "tulisan aman, hati2, bahaya dll terkait % dust hapus juga".
     if summary.get("safe_lp"):
         pills.append(f'<span class="lp-count">SAFE LP {summary["safe_lp"]}</span>')
     if summary.get("high_risk"):

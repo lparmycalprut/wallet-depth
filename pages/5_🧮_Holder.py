@@ -77,19 +77,12 @@ def _points_for(mint: str, status_token: dict | None, store: dict) -> list:
 
 
 def _dust_badge(flag: dict) -> str:
-    level = flag.get("level") or "unknown"
-    label = str(flag.get("label") or "—")
-    if flag.get("rising") and level in ("danger", "caution"):
-        label = f"{label} ↑"
-    colors = {
-        "ok": ("#14532d", "#dcfce7"),
-        "caution": ("#78350f", "#fef3c7"),
-        "danger": ("#7f1d1d", "#fee2e2"),
-    }
-    bg, fg = colors.get(level, ("#e2e8f0", "#000000"))
-    return (f'<span style="display:inline-block;padding:.28rem .58rem;'
-            f'border-radius:8px;font-size:.78rem;font-weight:800;'
-            f'background:{bg};color:{fg};">{label}</span>')
+    """Badge level dust (AMAN/HATI-HATI/BAHAYA) — **dihapus** 2026-09-13.
+
+    Permintaan user: \"tulisan aman, hati2, bahaya dll terkait % dust
+    hapus juga\". Return ``""`` supaya pemanggil tidak perlu diubah.
+    """
+    return ""
 
 
 def _history_charts(points: list[dict]) -> None:
