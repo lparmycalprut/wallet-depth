@@ -10,9 +10,8 @@ import streamlit as st
 
 from helius_holders import depth_bar_chart, scan_token_holders
 from best_pool_ui import render_best_pool_scan
-from holder_history import (DUST_CAUTION_PCT, DUST_DANGER_PCT,
-                            FULL_SCAN_MAX_WALLETS,
-                            LP_INTERVAL_SEC, holders_usable, ingest_many)
+from holder_history import (FULL_SCAN_MAX_WALLETS, LP_INTERVAL_SEC,
+                            holders_usable, ingest_many)
 from links import external_links_html, holder_analytic_link_html
 from lp_watchlist import (LP_SOURCE, lp_card_rows,
                           lp_summary, split_watchlist)
@@ -20,23 +19,22 @@ import page_router
 from alert_settings import mutes_for
 from dashboard_components import (_alert_toggle_button, _ca_error, _compact,
                                   _dust_badge_html, _mint_alert_on,
-                                  _muted_pill_html, _render_alert_note,
-                                  _render_dust_change, _render_rh_card,
-                                  _render_toggle_note, _scan_best_badge_html,
-                                  _store_alert_note,
-                                  _wib, _depth_tables_html, ALERT_NOTE_KEY,
+                                  _muted_pill_html, _render_dust_change,
+                                  _render_rh_card, _render_toggle_note,
+                                  _scan_best_badge_html,
+                                  _wib, _depth_tables_html,
                                   card_head_html, hover_title_html,
                                   SOLANA_CA_RE, load_dashboard_data,
                                   render_styles)
-from telegram_alerts import (EARLY_DUMP_STEP_PCT, EARLY_DUMP_TITLE,
-                             process_holder_alerts)
-from watchlist_detail import added_baseline, baseline_cell
 import activity_log
 import robinhood_holders
 from robinhood_watchlist import (split_robinhood_watchlist)
 from holder_analysis import analyze_token
 from holder_status import (load_holder_status, publish_holder_status)
-from watchlist import (add_to_watchlist, remove_from_watchlist, set_watchlist_source)
+from meteora_screener import fetch_watchlist_metric_snapshots
+from meteora_watchlist import apply_metric_snapshots, send_metric_alerts
+from watchlist import (add_to_watchlist, remove_from_watchlist, save_watchlist,
+                       set_watchlist_source)
 
 st.set_page_config(page_title="Wallet Depth — Holder Analytic",
                    page_icon="🧮", layout="wide",
@@ -109,28 +107,19 @@ LP_CARD_TITLE = "🌊 Watchlist Meteora"
 # Detail karakteristik card (2026-09-10) tidak lagi jadi caption panjang di
 # badan card — pindah ke tooltip judul: hanya muncul saat kursor digeser ke
 # atas teks "Watchlist Meteora" (atribut title native browser). Kalau
-# karakteristiknya berubah nanti, ubah teks di sini; ambang diambil dari
-# konstanta holder_history supaya tooltip tidak pernah beda dengan rule
-# yang benar-benar jalan. Atribut title tidak mengenal markdown (plain text).
+# karakteristiknya berubah nanti, ubah teks di sini; rule metric dipusatkan di
+# meteora_watchlist/meteora_screener supaya tooltip tidak pernah menjelaskan
+# alert dust lama. Atribut title tidak mengenal markdown (plain text).
 LP_CARD_TOOLTIP = (
-    "Watchlist terpisah untuk token yang ditambahkan dari Scan Meteora "
-    "Pool (⭐) atau ditambah manual ke card ini. Di-scan cron tiap ±5 "
-    "menit supaya exit LP lebih awal dan perubahan holder langsung "
-    f"kelihatan: satu-satunya notifikasi Telegram adalah "
-    f"{EARLY_DUMP_TITLE} — dikirim tiap kali dust % MC naik "
-    f"≥ {EARLY_DUMP_STEP_PCT:g}% dari angka saat token masuk watchlist, lalu "
-    "berulang untuk tiap kelipatan "
-    f"{EARLY_DUMP_STEP_PCT:g}% berikutnya (berhenti bila token "
-    "dihapus (✕) atau dipindah ke watchlist biasa (📋)). Notif bisa "
-    "dimatikan per token lewat tombol 🔕 di barisnya — token yang baru "
-    "masuk watchlist selalu 🔔 ON, dan scan + grafik tetap jalan walau "
-    "notifnya mati. Grafik "
-    "menampilkan perubahan dust holder per bucket 5 menit: "
-    f"≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
-    f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA. Kolom Awal Masuk = dust % MC "
-    "saat token masuk watchlist — persis angka patokan yang dipakai rule "
-    "⚡ di atas (hover selnya untuk kalimat lengkap + varian "
-    "fallback-nya).")
+    "Watchlist terpisah untuk pool yang ditambahkan dari Scan Meteora "
+    "(⭐) atau ditambah manual. Source/timeframe 24 jam atau 30 menit dan "
+    "snapshot fee_active_tvl_ratio + volatility ditampilkan di setiap baris. "
+    "Baseline metrik disimpan saat masuk watchlist. Deteksi 24h muncul bila "
+    "perbandingan fee_active_tvl_ratio terhadap volatility turun minimal 30% "
+    "dari baseline; deteksi 30m muncul pada snapshot baru bila volatility > "
+    "fee_active_tvl_ratio. Notifikasi lama berbasis dust holder tidak dipakai "
+    "lagi untuk Watchlist Meteora. Dust holder tetap tersedia sebagai data "
+    "historis, bukan rule alert. Tombol 🔔/🔕 mengatur notif metrik per token.")
 LP_ADD_FORM = "lp-add-token"
 
 
@@ -151,96 +140,133 @@ def _lp_head_html(summary: dict) -> str:
         pills.append(f'<span class="lp-warn" style="color:#78350f;'
                      f'background:#fef3c7;">HATI-HATI {summary["caution"]}'
                      '</span>')
-    if summary.get("rising"):
-        pills.append(f'<span class="lp-count">dust naik {summary["rising"]}'
-                     '</span>')
+    if summary.get("safe_lp"):
+        pills.append(f'<span class="lp-count">SAFE LP {summary["safe_lp"]}</span>')
+    if summary.get("high_risk"):
+        pills.append(f'<span class="lp-warn">HIGH RISK {summary["high_risk"]}</span>')
+    if summary.get("metric_alerts"):
+        pills.append(f'<span class="lp-warn">⚠️ METRIK {summary["metric_alerts"]}</span>')
     return card_head_html(LP_CARD_TITLE, pills, tooltip=LP_CARD_TOOLTIP)
 
 
+
+def _metric_display(value, *, decimals: int = 2, suffix: str = "",
+                    signed: bool = False, infinity: str = "∞") -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    if number != number:
+        return "—"
+    if number == float("inf"):
+        return str(infinity)
+    prefix = "+" if signed and number > 0 else ""
+    return f"{prefix}{number:.{int(decimals)}f}{suffix}"
+
+
 def _render_lp_row(row: dict) -> None:
-    """Satu baris token Chart LP + grafik perubahan dust holder."""
+    """Satu baris Watchlist Meteora dengan snapshot fee/volatility."""
     mint = row.get("mint") or ""
     symbol = row.get("symbol") or "?"
     holders = row.get("holders") or {}
     flag = row.get("flag") or {}
     dust_pct = row.get("dust_pct")
     dust_count = row.get("dust_count")
-    # ``truncated`` mengikuti **sumber angka yang benar-benar ditampilkan**
-    # (snapshot ATAU titik history terbaru — lihat build_lp_row), bukan
-    # selalu snapshot.
-    truncated = bool(row.get("used_truncated",
-                             holders.get("truncated")))
+    truncated = bool(row.get("used_truncated", holders.get("truncated")))
     dust_txt = ("—" if dust_count is None
                 else (f"≥{int(dust_count)}" if truncated
                       else f"{int(dust_count):,}"))
-    # Kolom Hold %MC memakai 3 desimal sejak 2026-09-12 (permintaan user) —
-    # dust watchlist LP sering < 0,1% MC, dua desimal menyembunyikan beda
-    # 0,044% vs 0,037% yang justru penting untuk entri pool.
     pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.3f}%"
 
-    short_note = (" · ⚠️ scan terakhir tidak lengkap"
+    timeframe = str(row.get("timeframe") or "24h")
+    source_label = "24 jam" if timeframe == "24h" else "30 menit"
+    fee_txt = _metric_display(row.get("fee_active_tvl_ratio"))
+    volatility_txt = _metric_display(row.get("volatility"))
+    metric_ratio_txt = _metric_display(row.get("fee_volatility_ratio"),
+                                       decimals=2, infinity="∞")
+    metric_alert = row.get("metric_alert") or {}
+    metric_active = bool(row.get("metric_alert_active")
+                         or metric_alert.get("active"))
+    metric_label = str(row.get("metric_classification") or "")
+    metric_note = str(row.get("metric_note") or "")
+    if metric_active:
+        alert_note = str(metric_alert.get("condition") or
+                          "deteksi perubahan metrik")
+        metric_note = f"⚠️ {alert_note}"
+    elif not metric_note:
+        metric_note = "snapshot metrik belum tersedia"
+
+    short_note = (" · ⚠️ scan holder terakhir tidak lengkap"
                   if row.get("degraded") else "")
     if row.get("drift"):
-        short_note += " · ⚠️ snapshot ≠ history"
+        short_note += " · ⚠️ snapshot holder ≠ history"
     if row.get("truncation_swap"):
-        short_note += " · ⚠️ memakai scan lengkap sebelumnya"
-    # Waktu ANGKA yang ditampilkan (used_ts), bukan selalu waktu snapshot —
-    # dulu label selalu menampilkan analyzed_at snapshot, sehingga label
-    # bisa menunjukkan jam yang beda dari angka yang tampil.
+        short_note += " · ⚠️ memakai scan holder lengkap sebelumnya"
     scan_ts = row.get("used_ts") or row.get("analyzed_at")
     alert_on = _mint_alert_on(mint)
     if not alert_on:
-        short_note += " · 🔕 notif off"
-    # 8 kolom: token · dust · hold %MC · **Awal Masuk** (dust % MC saat masuk
-    # watchlist — permintaan user 2026-09-13) · 🧮 holder · 🔔 toggle alert per
-    # token · 📋 pindah ke watchlist biasa · ✕ hapus (kolom toggle ditambah
-    # 2026-09-11, kolom Awal Masuk 2026-09-13).
-    cols = st.columns([1.62, 0.72, 0.9, 0.8, 0.42, 0.42, 0.42, 0.42])
+        short_note += " · 🔕 metrik notif off"
+
+    # Source + fee/active TVL + volatility tampil langsung; dust hanya tetap
+    # tersedia sebagai data holder, tidak menjadi dasar deteksi LP.
+    cols = st.columns([1.42, 0.7, 0.78, 0.72, 0.62, 0.8, 0.78,
+                       0.35, 0.35, 0.35, 0.35])
     cols[0].markdown(
         f'<div class="watchlist-token">'
         f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
         f'<span class="watchlist-mint">{html.escape(mint[:8])}…</span>'
         f'<span class="watchlist-metric-sub">MC {_compact(row.get("mc"))} · '
         f'scan {_wib(scan_ts)}{short_note}</span>'
+        f'<span class="watchlist-metric-sub">{html.escape(metric_label)} · '
+        f'{html.escape(metric_note)}</span>'
         f'<div class="watchlist-links">{external_links_html(mint)}</div>'
         f"</div>", unsafe_allow_html=True)
     cols[1].markdown(
-        f'<div class="watchlist-metric">'
-        f'<div class="watchlist-metric-value">{dust_txt}</div>'
-        f'<div class="watchlist-metric-sub">wallet dust</div></div>',
+        f'<div class="watchlist-metric"><div '
+        f'class="watchlist-metric-value">{html.escape(source_label)}</div>'
+        f'<div class="watchlist-metric-sub">source</div></div>',
         unsafe_allow_html=True)
     cols[2].markdown(
-        f'<div class="watchlist-metric">'
-        f'<div class="watchlist-metric-value">{pct_txt}</div>'
-        f'{_dust_badge_html(flag)}</div>', unsafe_allow_html=True)
-    # Sel "Awal Masuk" — angka patokan notif ⚡ EARLY DUMP naik ke tabel
-    # (permintaan user 2026-09-13); title sel = kalimat lengkap baseline_note.
-    base = baseline_cell(added_baseline(row, row.get("points") or []),
-                         current_pct=dust_pct)
+        f'<div class="watchlist-metric"><div '
+        f'class="watchlist-metric-value">{fee_txt}</div>'
+        f'<div class="watchlist-metric-sub">fee/active TVL</div></div>',
+        unsafe_allow_html=True)
     cols[3].markdown(
-        f'<div class="watchlist-metric" title="{html.escape(base["note"])}">'
-        f'<div class="watchlist-metric-value">{html.escape(base["value"])}</div>'
-        f'<div class="watchlist-metric-sub">{html.escape(base["sub"])}</div>'
-        f'</div>', unsafe_allow_html=True)
-    cols[4].markdown(holder_analytic_link_html(mint),
-                     unsafe_allow_html=True)
-    # 🔔/🔕: notif Telegram khusus token ini; token baru masuk watchlist
-    # selalu ON (lihat watchlist._reset_alert_toggle_on_add).
-    _alert_toggle_button(cols[5], mint, symbol, scope="lp", alert_on=alert_on)
-    if cols[6].button("📋", key=f"lp-move-{mint}",
+        f'<div class="watchlist-metric"><div '
+        f'class="watchlist-metric-value">{volatility_txt}</div>'
+        f'<div class="watchlist-metric-sub">volatility</div></div>',
+        unsafe_allow_html=True)
+    cols[4].markdown(
+        f'<div class="watchlist-metric"><div '
+        f'class="watchlist-metric-value">{dust_txt}</div>'
+        f'<div class="watchlist-metric-sub">wallet dust</div></div>',
+        unsafe_allow_html=True)
+    cols[5].markdown(
+        f'<div class="watchlist-metric"><div '
+        f'class="watchlist-metric-value">{pct_txt}</div>'
+        f'{_dust_badge_html(flag)}</div>', unsafe_allow_html=True)
+    change = metric_alert.get("change_pct")
+    change_txt = _metric_display(change, suffix="%", signed=True)
+    cols[6].markdown(
+        f'<div class="watchlist-metric" title="{html.escape(metric_note)}">'
+        f'<div class="watchlist-metric-value">{change_txt}</div>'
+        f'<div class="watchlist-metric-sub">rasio vs masuk · {metric_ratio_txt}×'
+        f'</div></div>', unsafe_allow_html=True)
+    cols[7].markdown(holder_analytic_link_html(mint), unsafe_allow_html=True)
+    _alert_toggle_button(cols[8], mint, symbol, scope="lp", alert_on=alert_on)
+    if cols[9].button("📋", key=f"lp-move-{mint}",
                       help="Pindahkan ke Watchlist Holder",
                       use_container_width=True):
         set_watchlist_source(mint, "manual", background=True)
         st.rerun()
-    if cols[7].button("✕", key=f"lp-remove-{mint}",
-                      help="Hapus dari Watchlist Meteora",
-                      use_container_width=True):
+    if cols[10].button("✕", key=f"lp-remove-{mint}",
+                       help="Hapus dari Watchlist Meteora",
+                       use_container_width=True):
         remove_from_watchlist(mint, background=True)
         st.rerun()
 
-    # Grafik perubahan dust holder + tabel Wallet Depth ter-nested —
-    # bentuk rujukan yang kini dipakai semua card watchlist
-    # (dashboard_components._render_dust_change).
+    # Holder dust graph tetap tersedia sebagai data historis, tetapi tidak
+    # dipakai rule/notifikasi Meteora LP baru.
     _render_dust_change(row.get("points"), holders, symbol,
                         interval=LP_INTERVAL_SEC, meta=row,
                         current_pct=dust_pct)
@@ -310,31 +336,51 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
             skipped_short = sorted(set(ok) - set(fresh))
             failed = sorted(mint for mint, item in analyses.items()
                             if not isinstance(item, dict))
+            # Alert Watchlist Meteora hanya berasal dari metrik pool. Scan
+            # holder manual tetap menambah data/chart, tetapi tidak memanggil
+            # process_holder_alerts (rule dust lama sudah dihentikan untuk LP).
+            metric_result = {"watchlist": lp_watch, "metrics": {},
+                             "events": [], "baseline_changed": []}
+            metric_deliveries = []
+            try:
+                metric_snapshots = fetch_watchlist_metric_snapshots(lp_watch)
+                metric_result = apply_metric_snapshots(
+                    lp_watch, metric_snapshots,
+                    previous_tokens=status_tokens, now=int(datetime.now(
+                        timezone.utc).timestamp()))
+                if metric_result.get("baseline_changed"):
+                    full_watchlist = dict(watchlist)
+                    for mint in metric_result["baseline_changed"]:
+                        old = dict(full_watchlist.get(mint) or {})
+                        fresh_meta = metric_result["watchlist"].get(mint) or {}
+                        for key in ("metric_baseline", "metric_baseline_ts",
+                                    "timeframe", "pool_timeframe", "pool_address"):
+                            if fresh_meta.get(key) is not None:
+                                old[key] = fresh_meta[key]
+                        full_watchlist[mint] = old
+                    save_watchlist(full_watchlist,
+                                   "meteora: simpan baseline metrik",
+                                   background=True)
+                metric_deliveries = send_metric_alerts(
+                    metric_result.get("events"),
+                    mute_mints=mutes_for(lp_watch))
+            except Exception as exc:  # noqa: BLE001 - holder scan tetap tampil
+                st.warning(f"Snapshot metrik Meteora gagal: {exc}")
             published = None
             if fresh:
-                # Alert ikut dievaluasi + dikirim dari scan manual (permintaan
-                # user 2026-09-09), bukan hanya dari cron. HARUS sebelum
-                # ingest_many: rule membaca marker lama, lalu state hasil
-                # evaluasi (sent_event_ids/last_sent/marker 🚨) ikut tertulis
-                # saat ingest_many menyimpan store — pola yang sama dengan cron
-                # scripts/scan_holders.py. advance_anchors=False: scan ad-hoc
-                # tidak menggeser anchor peta wallet milik scan FULL cron.
-                # Toggle 🔔/🔕 **per token** dihormati di jalur manual ini
-                # sama seperti cron: rule tetap dievaluasi + marker tetap
-                # tersimpan, hanya pengirimannya yang dilewati.
-                _store_alert_note(process_holder_alerts(
-                    fresh, history_store,
-                    mute_mints=mutes_for(fresh),
-                    watchlist_meta=lp_watch,
-                    advance_anchors=False), f"{ALERT_NOTE_KEY}lp")
                 ingest_many(fresh, store=history_store, detail=False)
+            if fresh or metric_result.get("metrics"):
                 published = publish_holder_status(
                     fresh, watchlist, push=False,
                     history_store=history_store,
-                    merge_status=holder_status)
+                    merge_status=holder_status,
+                    meteora_metrics=metric_result.get("metrics") or {})
             st.session_state["lp_scan_report"] = {
                 "total": total, "updated": len(fresh), "failed": len(failed),
                 "short": len(skipped_short),
+                "metric_alerts": len(metric_result.get("events") or []),
+                "metric_sent": sum(1 for item in metric_deliveries
+                                    if (item.get("delivery") or {}).get("ok")),
                 "snapshot_ts": ((published or holder_status).get("updated_at")),
             }
             st.session_state["status_force_refresh"] = True
@@ -347,11 +393,14 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
             if _lp_report.get("failed"):
                 bits.append(f"{_lp_report['failed']} gagal")
             if _lp_report.get("short"):
-                bits.append(f"{_lp_report['short']} scan tidak lengkap "
+                bits.append(f"{_lp_report['short']} scan holder tidak lengkap "
                             "dilewati")
+            if _lp_report.get("metric_alerts"):
+                bits.append(f"{_lp_report['metric_alerts']} deteksi metrik baru")
+            if _lp_report.get("metric_sent"):
+                bits.append(f"{_lp_report['metric_sent']} notif metrik dikirim")
             st.info("Scan sekarang selesai: " + " · ".join(bits) + ".",
                     icon="✅")
-        _render_alert_note(f"{ALERT_NOTE_KEY}lp")
         _render_toggle_note("lp")
 
         if not rows:
@@ -360,9 +409,11 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
                     "tempel CA di form atas.")
             return
 
-        header = st.columns([1.62, 0.72, 0.9, 0.8, 0.42, 0.42, 0.42, 0.42])
-        style = "font-size:0.72rem;color:#000000;font-weight:700;"
-        titles = ["Token", "Dust", "Hold %MC", "Awal Masuk", "", "", "", ""]
+        header = st.columns([1.42, 0.7, 0.78, 0.72, 0.62, 0.8, 0.78,
+                              0.35, 0.35, 0.35, 0.35])
+        style = "font-size:0.68rem;color:#000000;font-weight:700;"
+        titles = ["Token", "Sumber", "Fee/ATVL", "Volatility", "Dust",
+                  "Hold %MC", "Δ rasio", "", "", "", ""]
         for col, title in zip(header, titles):
             align = "" if title == "Token" else "text-align:center;"
             col.markdown(f'<div style="{style}{align}">{title}</div>',

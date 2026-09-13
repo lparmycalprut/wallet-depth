@@ -11,13 +11,12 @@ Yang dikerjakan tiap run (±5 menit):
    (Solana, holder via Helius DAS, fallback GMGN);
 2. **Robinhood LP** — entri non-``regular`` di ``watchlist_robinhood.json``
    (chain EVM Robinhood id 4663, holder via Blockscout);
-3. hitung holder real vs dust + dust % marketcap + mid-tier Crab/Fish, lalu
-   evaluasi **satu-satunya** notifikasi — ⚡ EARLY DUMP TERJADI - GANTI WIDE
-   RANGE, dikirim tiap dust % MC naik ≥ 0,02% dari angka saat token masuk
-   watchlist (rule ambang 0,06% MC / 🔔 HIGH DROP / eskalasi EXIT-CUTLOSS
-   DIGANTI 2026-09-13). Konteks pasar untuk baris
-   pelengkap pesan ditarik **lazy** — hanya untuk token yang dinotifikasi,
-   jadi run tenang tidak menambah satu pun request);
+3. hitung holder real vs dust + dust % marketcap + mid-tier Crab/Fish untuk
+   data Chart LP. Untuk **Meteora**, notifikasi lama berbasis dust tidak lagi
+   dipakai: snapshot fee_active_tvl_ratio + volatility dievaluasi dengan
+   baseline watchlist (24h turun ≥30% pada quotient fee/volatility; 30m
+   volatility > fee). Notifikasi holder lama tetap hanya untuk lane Robinhood
+   yang belum memakai metric pool;
 4. catat **satu titik** per token ke store history, publish snapshot dashboard
    (``holder_status.json`` / ``holder_status_robinhood.json`` di ref
    ``holder-live``) + backup durable store.
@@ -37,9 +36,10 @@ dashboard):
 Yang **dibaca** cron dari ``alert_settings.json`` (ref ``holder-live``, satu
 request GitHub per run — di-cache modulnya sendiri): ``muted_mints`` = token
 yang toggle alert-nya dimatikan user dari dashboard (tombol 🔔/🔕 per baris
-watchlist Meteora/Robinhood, 2026-09-11). Token itu tetap di-scan + marker
-``early_dump`` tetap dimajukan; hanya pengiriman Telegram-nya dilewati
-(``mute_mints``), jadi cron dan dashboard menghormati pilihan yang sama.
+watchlist Meteora/Robinhood). Token Meteora tetap di-scan + state metric tetap
+disimpan; hanya pengiriman metric Telegram-nya dilewati. Marker
+``early_dump`` masih dipakai oleh lane Robinhood yang menggunakan rule holder
+lama.
 
 Scan FULL (baseline immutable + kronologi wallet antar-scan) tidak
 dijadwalkan cron lagi; jalankan manual bila perlu::
@@ -81,11 +81,13 @@ from holder_analysis import analyze_token
 from holder_status import (last_publish_result, load_holder_status,
                            publish_holder_status)
 from lp_watchlist import split_watchlist
+from meteora_screener import fetch_watchlist_metric_snapshots
+from meteora_watchlist import apply_metric_snapshots, send_metric_alerts
 import robinhood_holders
 import robinhood_watchlist
 from telegram_alerts import (process_holder_alerts, send_test_alert,
                              tracked_wallet_addresses)
-from watchlist import load_watchlist
+from watchlist import load_watchlist, save_watchlist
 
 # --- Kadens: kedua lane LP di-scan tiap run (±5 menit) ----------------------
 RUN_SCAN_INTERVAL_SEC = 5 * 60          # kadens cron/chain dispatch
@@ -304,9 +306,59 @@ def main(argv=None) -> int:
     store = seed_from_status(store, current_status)
     print(f"Store holder: tokens={len(store.get('tokens') or {})} "
           f"backup={'ada' if durable else 'tidak ada'}")
-    # Toggle alert per token (tombol 🔔/🔕 di dashboard, 2026-09-11): satu
-    # bacaan untuk kedua lane. Token yang dimatikan tetap di-scan + marker
-    # 🚨 tetap dimajukan; hanya pengirimannya yang dilewati.
+
+    # Watchlist Meteora sekarang dipantau lewat metrik pool, bukan alert dust
+    # holder lama. Baseline hanya ditulis ketika entri lama belum memilikinya;
+    # snapshot berjalan + state alert masuk ke holder_status agar cron tidak
+    # melakukan commit watchlist setiap lima menit.
+    metric_result = {"watchlist": watchlist, "metrics": {}, "events": [],
+                     "baseline_changed": []}
+    metric_deliveries: list[dict] = []
+    if lp_watch:
+        try:
+            metric_snapshots = fetch_watchlist_metric_snapshots(lp_watch)
+            metric_result = apply_metric_snapshots(
+                watchlist, metric_snapshots,
+                previous_tokens=(current_status.get("tokens") or {}),
+                now=started_wall)
+            baseline_changed = metric_result.get("baseline_changed") or []
+            if baseline_changed:
+                # Persist only the immutable baseline fields; current snapshots
+                # stay in holder_status and do not create a main-branch commit
+                # on every cron run.
+                persisted = dict(watchlist)
+                for mint in baseline_changed:
+                    old = dict(persisted.get(mint) or {})
+                    fresh_meta = metric_result["watchlist"].get(mint) or {}
+                    for key in ("metric_baseline", "metric_baseline_ts",
+                                "timeframe", "pool_timeframe", "pool_address"):
+                        if fresh_meta.get(key) is not None:
+                            old[key] = fresh_meta[key]
+                    persisted[mint] = old
+                save_watchlist(persisted, "meteora: simpan baseline metrik",
+                               background=False)
+                watchlist = persisted
+            else:
+                watchlist = metric_result["watchlist"]
+            lp_watch, _regular_watch = split_watchlist(watchlist)
+            metric_deliveries = send_metric_alerts(
+                metric_result.get("events"),
+                mute_mints=alert_settings.mutes_for(lp_watch))
+            metric_alerts_sent = sum(
+                1 for item in metric_deliveries
+                if (item.get("delivery") or {}).get("ok"))
+            print(f"Meteora metric snapshot: tokens="
+                  f"{len(metric_result.get('metrics') or {})} "
+                  f"events={len(metric_result.get('events') or [])} "
+                  f"sent={metric_alerts_sent}")
+        except Exception as exc:  # noqa: BLE001 - holder lane tetap jalan
+            print(f"WARN: Meteora metric snapshot gagal: {exc}",
+                  file=sys.stderr)
+    metric_snapshots_for_status = metric_result.get("metrics") or {}
+    # Toggle alert per token (tombol 🔔/🔕 di dashboard): satu bacaan untuk
+    # kedua lane. Token Meteora yang dimatikan tetap di-scan + state metric
+    # dimajukan; token Robinhood tetap memajukan marker holder lama; hanya
+    # pengiriman Telegram masing-masing yang dilewati.
     muted_alerts = alert_settings.muted_mints(force_refresh=True)
     print(f"Toggle alert per token: {len(muted_alerts)} dimatikan"
           + (f" ({', '.join(sorted(muted_alerts))[:120]})"
@@ -337,32 +389,24 @@ def main(argv=None) -> int:
 
     exit_code = 0
     if analyses:
-        # The rule reads the old marker first. process_holder_alerts mutates
-        # only alert state; ingest_many writes that state together with the
-        # newest history point afterwards. Konteks pasar (volume/harga) ditarik
-        # lazy — hanya untuk token yang benar-benar akan dinotifikasi — dan
-        # di-memo per token, jadi run yang tenang tidak menambah request.
+        # Watchlist Meteora tidak lagi melewati process_holder_alerts: alert
+        # holder-dust lama digantikan snapshot fee/volatility di atas. Holder
+        # tetap dicatat untuk data/chart LP.
         contexts: dict = {}
-        provider = None
-        if args.full:
-            provider = market_context_provider(cache=contexts,
-                                               daily_loader=load_daily_effort)
-        # ⚡ EARLY DUMP = satu-satunya notifikasi, scope-nya seluruh lane yang
-        # di-scan run ini (patokan 0,02% per token diambil dari history).
-        # advance_anchors: peta wallet (anchor ±4 jam) hanya digeser scan FULL.
-        deliveries = process_holder_alerts(
-            analyses, store, context_provider=provider,
-            mute_mints=alert_settings.mutes_for(analyses),
-            watchlist_meta=lp_watch, advance_anchors=args.full)
+        for mint, analysis in analyses.items():
+            if isinstance(analysis, dict) and mint in metric_snapshots_for_status:
+                analysis["meteora_metrics"] = metric_snapshots_for_status[mint]
         history = ingest_many(analyses, store=store, detail=args.full)
         status = publish_holder_status(
             analyses, lp_watch, push=not args.no_push,
-            history_store=history, contexts=contexts)
+            history_store=history, contexts=contexts,
+            merge_status=current_status,
+            meteora_metrics=metric_snapshots_for_status)
         # Backup durable dibatasi token watchlist LP aktif: token lama yang
         # sudah tidak di-scan tidak perlu di-push ulang tiap 5 menit.
         backup = publish_holder_history(history, push=not args.no_push,
                                        keep_mints=set(lp_watch))
-        sent_alerts = sum(1 for item in deliveries
+        sent_alerts = sum(1 for item in metric_deliveries
                           if (item.get("delivery") or {}).get("ok"))
         if backup.get("pushed"):
             backup_label = f"ok {backup.get('bytes') or 0}B"
@@ -380,7 +424,7 @@ def main(argv=None) -> int:
                   f"{backup.get('error') or 'unknown'}", file=sys.stderr)
         print(f"Meteora scan selesai: analyzed={len(analyses)} "
               f"history={len((history or {}).get('tokens') or {})} "
-              f"alerts={sent_alerts}/{len(deliveries)} "
+              f"alerts={sent_alerts}/{len(metric_deliveries)} "
               f"konteks={len(contexts)} token "
               f"backup={backup_label} "
               f"updated={status.get('updated_at')} "
@@ -402,9 +446,19 @@ def main(argv=None) -> int:
                   "(cek HELIUS_API_KEY / akses GMGN).", file=sys.stderr)
             exit_code = 2
     elif due:
-        publish_holder_status({}, lp_watch, push=not args.no_push)
+        status = publish_holder_status(
+            {}, lp_watch, push=not args.no_push,
+            merge_status=current_status,
+            meteora_metrics=metric_snapshots_for_status)
         print("Meteora scan selesai: tidak ada token yang berhasil dianalisis")
-        return 2
+        if not metric_snapshots_for_status:
+            return 2
+    elif metric_snapshots_for_status:
+        status = publish_holder_status(
+            {}, lp_watch, push=not args.no_push,
+            merge_status=current_status,
+            meteora_metrics=metric_snapshots_for_status)
+        print("Meteora metric snapshot selesai; holder scan belum jatuh tempo.")
     else:
         print("Meteora scan dilewati: tidak ada token LP jatuh tempo run ini.")
     if not args.no_push and due and last_publish_result().get("ok") is False:
