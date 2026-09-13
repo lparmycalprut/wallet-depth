@@ -8,6 +8,7 @@ add/remove is also committed straight to the repo so it truly persists.
 
 import base64
 import json
+import math
 import os
 import re
 import sys
@@ -122,7 +123,10 @@ def _apply_ops(wl: dict, ops: list) -> dict:
             # down_ath/avg_cost) — dropping e.g. `source` here made
             # HRHR adds fall back to the LP Radar's default ("trending").
             for _k in ("symbol", "note", "added", "source", "down_ath",
-                       "avg_cost"):
+                       "avg_cost", "timeframe", "pool_timeframe",
+                       "pool_address", "fee_active_tvl_ratio", "volatility",
+                       "metric_ratio", "metric_baseline_ts", "metric_baseline",
+                       "metric_snapshot", "metric_alert"):
                 if op.get(_k) is not None and _k not in entry:
                     entry[_k] = op[_k]
         elif op.get("op") == "remove":
@@ -979,7 +983,14 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
                      local_path: str | None = None,
                      pending_path: str | None = None,
                      chain_id: str | None = None,
-                     background: bool = False) -> bool:
+                     background: bool = False, *,
+                     timeframe: str | None = None,
+                     pool_timeframe: str | None = None,
+                     pool_address: str | None = None,
+                     fee_active_tvl_ratio: float | None = None,
+                     volatility: float | None = None,
+                     metric_snapshot: dict | None = None,
+                     metric_baseline: dict | None = None) -> bool:
     """Add *ca* to a watchlist file.
 
     *source* tracks where the token came from (``"trending"``,
@@ -1019,6 +1030,101 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
         entry["down_ath"] = float(down_ath)
     if avg_cost is not None:
         entry["avg_cost"] = float(avg_cost)
+    # Meteora star rows carry their source lane and pool metrics. The first
+    # usable snapshot is the immutable watchlist baseline; later snapshots are
+    # status data and must never replace this baseline.
+    selected_timeframe = timeframe or pool_timeframe
+    if selected_timeframe:
+        selected_timeframe = str(selected_timeframe).strip().lower()
+        if selected_timeframe == "1h":
+            selected_timeframe = "30m"
+        if selected_timeframe in ("24h", "30m"):
+            entry["timeframe"] = selected_timeframe
+            entry["pool_timeframe"] = selected_timeframe
+    if pool_address:
+        entry["pool_address"] = str(pool_address).strip()
+    if fee_active_tvl_ratio is not None:
+        try:
+            number = float(fee_active_tvl_ratio)
+            entry["fee_active_tvl_ratio"] = (number
+                                              if math.isfinite(number) else None)
+        except (TypeError, ValueError):
+            pass
+    if volatility is not None:
+        try:
+            number = float(volatility)
+            entry["volatility"] = number if math.isfinite(number) else None
+        except (TypeError, ValueError):
+            pass
+    supplied_snapshot = metric_snapshot if isinstance(metric_snapshot, dict) \
+        else None
+    supplied_baseline = metric_baseline if isinstance(metric_baseline, dict) \
+        else supplied_snapshot
+    if supplied_snapshot:
+        clean_snapshot = dict(supplied_snapshot)
+        for ratio_key in ("fee_volatility_ratio",
+                          "fee_active_tvl_ratio_vs_volatility",
+                          "metric_ratio", "ratio",
+                          "fee_active_tvl_ratio", "volatility"):
+            if ratio_key in clean_snapshot:
+                try:
+                    number = float(clean_snapshot[ratio_key])
+                    clean_snapshot[ratio_key] = (number
+                                                 if math.isfinite(number)
+                                                 else None)
+                except (TypeError, ValueError):
+                    clean_snapshot[ratio_key] = None
+        entry["metric_snapshot"] = clean_snapshot
+        if entry.get("fee_active_tvl_ratio") is None \
+                and clean_snapshot.get("fee_active_tvl_ratio") is not None:
+            try:
+                number = float(clean_snapshot.get("fee_active_tvl_ratio"))
+                if math.isfinite(number):
+                    entry["fee_active_tvl_ratio"] = number
+            except (TypeError, ValueError):
+                pass
+        if entry.get("volatility") is None \
+                and clean_snapshot.get("volatility") is not None:
+            try:
+                number = float(clean_snapshot.get("volatility"))
+                if math.isfinite(number):
+                    entry["volatility"] = number
+            except (TypeError, ValueError):
+                pass
+        if not entry.get("timeframe") and supplied_snapshot.get("timeframe"):
+            snapshot_timeframe = str(supplied_snapshot.get("timeframe")).strip().lower()
+            if snapshot_timeframe == "1h":
+                snapshot_timeframe = "30m"
+            if snapshot_timeframe in ("24h", "30m"):
+                entry["timeframe"] = snapshot_timeframe
+                entry["pool_timeframe"] = snapshot_timeframe
+    if supplied_baseline:
+        clean_baseline = dict(supplied_baseline)
+        for ratio_key in ("fee_volatility_ratio",
+                          "fee_active_tvl_ratio_vs_volatility",
+                          "metric_ratio", "ratio",
+                          "fee_active_tvl_ratio", "volatility"):
+            if ratio_key in clean_baseline:
+                try:
+                    number = float(clean_baseline[ratio_key])
+                    clean_baseline[ratio_key] = (number
+                                                 if math.isfinite(number)
+                                                 else None)
+                except (TypeError, ValueError):
+                    clean_baseline[ratio_key] = None
+        entry["metric_baseline"] = clean_baseline
+        if clean_baseline.get("ts") is not None:
+            entry["metric_baseline_ts"] = clean_baseline.get("ts")
+    if entry.get("fee_active_tvl_ratio") is not None \
+            and entry.get("volatility") is not None:
+        try:
+            fee = float(entry["fee_active_tvl_ratio"])
+            vol = float(entry["volatility"])
+            ratio = (float("inf") if vol == 0 and fee > 0
+                     else (fee / vol if vol else 0.0))
+            entry["metric_ratio"] = ratio if math.isfinite(ratio) else None
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
     # journal FIRST -> the change can never visually revert (stale reads,
     # failed commits, redeploys); journal is cleaned once repo reflects it
     if pending_path is None:

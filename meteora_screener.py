@@ -1,12 +1,21 @@
 # -*- coding: utf-8 -*-
-"""Scan pool Meteora DLMM (24 jam + 1 jam) lalu analisa holder dust.
+"""Scan regular pool Meteora DLMM (24 jam + 30 menit) lalu analisa holder dust.
 
-Endpoint: ``pool-discovery-api.datapi.meteora.ag/pools``
-- 24h: DLMM, active_tvl >= 1000, fee_active_tvl_ratio >= 250
-- 1h : DLMM, active_tvl >= 1000, fee_active_tvl_ratio >= 1
+Endpoint: ``pool-discovery-api.datapi.meteora.ag/pools``. Regular scan
+mengambil dua lane secara berurutan: ``24h`` terlebih dahulu, lalu ``30m``.
+Keduanya memakai ``pool_type=dlmm`` dan ``active_tvl >= 50K``; klasifikasi
+berdasarkan metrik yang dikirim API, bukan threshold fee buatan di client:
 
-Pool 24 jam yang masih muncul di 1 jam **tetap ditampilkan**. Pool 1 jam
-yang belum ada di 24 jam ikut digabung (sama seperti listing Trending).
+- 24h: pool disembunyikan bila ``volatility >= fee_active_tvl_ratio``;
+  pool dengan ``fee_active_tvl_ratio >= 5 × volatility`` diberi label **SAFE LP**
+  dan catatan, sedangkan pool lain yang masih fee-dominant tetap dicatat;
+- 30m: hanya pool dengan ``fee_active_tvl_ratio > volatility`` yang ditampilkan
+  sebagai **HIGH RISK LP (PANTAU)**.
+
+Urutan regular scan tidak memakai dust. Lane 24h tetap berada di atas lane 30m,
+lalu pool di dalam masing-masing lane diurutkan dari perbandingan terbesar
+``fee_active_tvl_ratio / volatility``. Dust holder tetap diperkaya dan dicatat
+sebagai data saja.
 
 **Dust %MC kartu ini memakai pembagi yang sama dengan kartu lain** (2026-09-13):
 market cap dan harga diambil dari **DexScreener** lewat
@@ -49,6 +58,7 @@ Dust %MC — penanda murni visual, bukan saringan (saringan tetap 0,05%).
 """
 from __future__ import annotations
 
+import math
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -57,9 +67,18 @@ from holder_history import (DUST_SCAN_HIDE_PCT, MIN_USABLE_WALLETS, dust_flag,
 
 POOLS_URL = "https://pool-discovery-api.datapi.meteora.ag/pools"
 PAGE_SIZE = 50
-TVL_MIN = 1000.0
-FEE_RATIO_24H = 250.0
-FEE_RATIO_1H = 1.0
+# Regular Scan Meteora mengikuti filter listing yang diminta: active TVL
+# minimal 50K. Nilai fee minimum tidak dipakai sebagai filter server karena
+# keputusan tampil/klasifikasi harus dibuat dari perbandingan fee dan
+# volatility payload untuk setiap lane.
+TVL_MIN = 50_000.0
+FEE_RATIO_24H = 0.0
+FEE_RATIO_30M = 0.0
+# Alias lama dipertahankan agar import/test konsumen lama tidak pecah; regular
+# scan tidak lagi mengambil 1h.
+FEE_RATIO_1H = FEE_RATIO_30M
+REGULAR_TIMEFRAMES = ("24h", "30m")
+SAFE_LP_MULTIPLIER = 5.0
 
 # ---------------------------------------------------------------------------
 # 🏆 Scan Best Pool Meteora — ambang filter (kriteria diganti total
@@ -149,15 +168,22 @@ def _http_get(url: str, params: dict, timeout: int = 25) -> dict:
 
 
 def filter_by(pool_type: str = "dlmm", tvl_min: float = TVL_MIN,
-              fee_ratio_min: float = FEE_RATIO_24H) -> str:
-    """Query ``filter_by`` persis seperti UI Meteora (&&-join)."""
-    return (f"pool_type={pool_type}"
-            f"&&active_tvl>={int(tvl_min) if tvl_min == int(tvl_min) else tvl_min}"
-            f"&&fee_active_tvl_ratio>={fee_ratio_min:g}")
+              fee_ratio_min: float | None = None) -> str:
+    """Query ``filter_by`` persis seperti UI Meteora (&&-join).
+
+    ``fee_ratio_min=None`` sengaja tidak menambahkan filter fee: regular scan
+    harus melihat seluruh payload lalu menerapkan rule fee-versus-volatility
+    yang berbeda untuk lane 24h dan 30m.
+    """
+    text = (f"pool_type={pool_type}"
+            f"&&active_tvl>={int(tvl_min) if tvl_min == int(tvl_min) else tvl_min}")
+    if fee_ratio_min is not None:
+        text += f"&&fee_active_tvl_ratio>={float(fee_ratio_min):g}"
+    return text
 
 
 def fetch_pools(*, timeframe: str = "24h",
-                fee_ratio_min: float = FEE_RATIO_24H,
+                fee_ratio_min: float | None = None,
                 page_size: int = PAGE_SIZE,
                 tvl_min: float = TVL_MIN,
                 timeout: int = 25) -> list[dict]:
@@ -224,9 +250,121 @@ def drop_quote_rows(rows: list[dict] | None) -> tuple[list[dict], int]:
     return kept, dropped
 
 
-def _row_from_pool(pool: dict, *, in_24h: bool, in_1h: bool) -> dict:
+def fee_volatility_ratio(fee_active_tvl_ratio, volatility):
+    """Perbandingan fee/active TVL terhadap volatility.
+
+    Kedua field Meteora sudah berupa persen, jadi yang dibandingkan untuk
+    urutan dan deteksi adalah quotient-nya, bukan nilai dust. ``None`` berarti
+    payload tidak cukup; volatility nol dengan fee positif dianggap tak
+    terbatas karena fee tetap dominan.
+    """
+    fee = _maybe_float(fee_active_tvl_ratio)
+    vol = _maybe_float(volatility)
+    if fee is None or vol is None:
+        return None
+    if vol == 0:
+        return float("inf") if fee > 0 else 0.0
+    return fee / vol
+
+
+def regular_pool_classification(row: dict | None) -> dict:
+    """Classify/filter satu regular row tanpa menyentuh dust.
+
+    Return ``{show, label, note, ratio}``. Rule memakai perbandingan strict
+    untuk filter (``volatility >= fee`` disembunyikan di 24h; ``fee <=
+    volatility`` disembunyikan di 30m) dan ``>= 5×`` untuk SAFE LP 24h.
+    """
+    row = row or {}
+    timeframe = str(row.get("timeframe") or row.get("source") or "24h").lower()
+    if timeframe in ("1h", "30 menit", "30 min"):
+        timeframe = "30m"
+    elif timeframe in ("24 jam", "24 hours"):
+        timeframe = "24h"
+    fee = _maybe_float(row.get("fee_active_tvl_ratio"))
+    volatility = _maybe_float(row.get("volatility"))
+    ratio = fee_volatility_ratio(fee, volatility)
+    if fee is None or volatility is None:
+        return {"show": False, "label": "", "note":
+                "metrik fee_active_tvl_ratio/volatility tidak tersedia",
+                "ratio": ratio, "timeframe": timeframe}
+    if timeframe == "30m":
+        if not fee > volatility:
+            return {"show": False, "label": "", "note":
+                    "30m disembunyikan: volatility ≥ fee_active_tvl_ratio",
+                    "ratio": ratio, "timeframe": timeframe}
+        return {"show": True, "label": "HIGH RISK LP (PANTAU)",
+                "note": "30m: fee_active_tvl_ratio > volatility — pantau risiko",
+                "ratio": ratio, "timeframe": timeframe}
+    if volatility >= fee:
+        return {"show": False, "label": "", "note":
+                "24h disembunyikan: volatility ≥ fee_active_tvl_ratio",
+                "ratio": ratio, "timeframe": "24h"}
+    if fee >= SAFE_LP_MULTIPLIER * volatility:
+        return {"show": True, "label": "SAFE LP",
+                "note": ("24h: fee_active_tvl_ratio ≥ 5× volatility — "
+                         "SAFE LP"),
+                "ratio": ratio, "timeframe": "24h"}
+    return {"show": True, "label": "LP 24H",
+            "note": ("24h: fee_active_tvl_ratio > volatility, tetapi belum "
+                     "5× untuk SAFE LP"),
+            "ratio": ratio, "timeframe": "24h"}
+
+
+def filter_regular_rows(rows: list[dict] | None) -> tuple[list[dict], int]:
+    """Terapkan rule lane regular; return ``(kept, hidden_rule_count)``."""
+    kept, hidden = [], 0
+    for row in rows or []:
+        classification = regular_pool_classification(row)
+        item = dict(row or {})
+        item.update({
+            "classification": classification.get("label") or "",
+            "classification_note": classification.get("note") or "",
+            "fee_volatility_ratio": classification.get("ratio"),
+            "fee_active_tvl_ratio_vs_volatility": classification.get("ratio"),
+        })
+        if not classification.get("show"):
+            hidden += 1
+            continue
+        kept.append(item)
+    return kept, hidden
+
+
+def sort_regular_rows(rows: list[dict] | None) -> list[dict]:
+    """Order regular rows by lane then fee/volatility ratio, never by dust."""
+    def _key(row):
+        row = row or {}
+        timeframe = str(row.get("timeframe") or row.get("source") or "24h").lower()
+        if timeframe == "1h":
+            timeframe = "30m"
+        ratio = fee_volatility_ratio(row.get("fee_active_tvl_ratio"),
+                                     row.get("volatility"))
+        # Keep missing metrics at the bottom of their lane. ``sort_rows`` is
+        # intentionally not used here; dust is only a recorded field.
+        rank = 0 if timeframe == "24h" else 1
+        return (rank, 0 if ratio is not None else 1,
+                -(ratio if ratio is not None else 0.0),
+                str(row.get("symbol") or "").upper(),
+                str(row.get("pool_address") or ""))
+    return sorted(list(rows or []), key=_key)
+
+
+def _row_from_pool(pool: dict, *, timeframe: str = "24h",
+                    in_24h: bool | None = None,
+                    in_1h: bool | None = None) -> dict:
+    """Normalisasi satu payload pool dan bawa metrik regular apa adanya.
+
+    ``in_1h`` tetap diterima sebagai compatibility kwarg untuk konsumen lama;
+    regular scan sekarang menggunakan ``timeframe`` ``24h`` atau ``30m``.
+    """
     token = base_token(pool)
     mint = str(token.get("address") or "").strip()
+    timeframe = str(timeframe or ("24h" if in_24h else "30m")).lower()
+    if timeframe == "1h":
+        timeframe = "30m"
+    is_24h = timeframe == "24h" if in_24h is None else bool(in_24h)
+    is_30m = timeframe == "30m" if in_1h is None else bool(in_1h)
+    fee_ratio = _maybe_float(pool.get("fee_active_tvl_ratio"))
+    volatility = _maybe_float(pool.get("volatility"))
     return {
         "pool_address": str(pool.get("pool_address") or "").strip(),
         "pool_name": str(pool.get("name") or ""),
@@ -235,91 +373,169 @@ def _row_from_pool(pool: dict, *, in_24h: bool, in_1h: bool) -> dict:
         "symbol": str(token.get("symbol") or pool.get("name") or "?").upper(),
         "name": str(token.get("name") or ""),
         # Cadangan pembagi dust saja — angka yang dipakai di layar datang dari
-        # :func:`enrich_pools` (MC DexScreener, sama seperti kartu lain), lihat
-        # komentar di ``holder_analysis.analyze_token``.
+        # :func:`enrich_pools` (MC DexScreener, sama seperti kartu lain).
         "mc": _float(token.get("market_cap") or token.get("fdv")),
         "price": _float(token.get("price")),
         "holders_reported": token.get("holders"),
         "tvl": _float(pool.get("tvl")),
-        "active_tvl": _float(pool.get("active_tvl")),
-        "fee_active_tvl_ratio": _float(pool.get("fee_active_tvl_ratio")),
+        "active_tvl": _maybe_float(pool.get("active_tvl")),
+        "fee_active_tvl_ratio": fee_ratio,
         "volume": _float(pool.get("volume")),
         "fee_pct": _float(pool.get("fee_pct")),
-        # Metrik untuk 🏆 Scan Best Pool Meteora: volatility pool (%), jumlah
-        # LP total, dan konsentrasi 10 holder teratas token base (% supply)
-        # tetap dibawa sebagai informasi baris; ``fee`` (USD 24 jam) dan
-        # ``volume_change_pct`` dipakai card sebagai detail fee/active TVL +
-        # Δ volume (bukan kunci urut lagi — kunci urut pertama = rasio
-        # ``volume_active_tvl_ratio``, lihat :func:`sort_best_rows`).
-        "volatility": _float(pool.get("volatility")),
+        # Metrik pool dipakai regular scan + watchlist. Best Pool tetap
+        # memakai field ini sebagai informasi dan pipeline-nya tidak berubah.
+        "volatility": volatility,
         "total_lps": _float(pool.get("total_lps")),
         "top_holders_pct": _float(token.get("top_holders_pct")),
         "fee": _float(pool.get("fee")),
         "volume_change_pct": _float(pool.get("volume_change_pct")),
-        # Rasio volume 24 jam / active TVL dari API Meteora (persen) — kunci
-        # urut PERTAMA listing best pool sejak 2026-09-13 (permintaan user:
-        # "sort pertama adalah dari volume / active tvl yang paling besar
-        # dulu"). ``_maybe_float`` (bukan ``_float``): field yang TIDAK ada
-        # harus tetap ``None`` supaya :func:`row_vol_tvl_ratio` menghitung
-        # ulang dari ``volume`` + ``active_tvl`` — kalau tidak, rasio 0,0
-        # membuat urutannya kembali ke dust/simbol.
-        "volume_active_tvl_ratio":
-            _maybe_float(pool.get("volume_active_tvl_ratio")),
-        "in_24h": bool(in_24h),
-        "in_1h": bool(in_1h),
+        "volume_active_tvl_ratio": _maybe_float(pool.get("volume_active_tvl_ratio")),
+        # Source/timeframe wajib ikut ke hasil scan dan ke watchlist.
+        "timeframe": timeframe,
+        "source": timeframe,
+        "in_24h": bool(is_24h),
+        "in_30m": bool(is_30m),
+        # Alias lama hanya untuk pembacaan session/test lama; tidak dipakai
+        # sebagai lane baru dan tidak mengubah Scan Best Pool.
+        "in_1h": bool(is_30m),
+        "fee_volatility_ratio": fee_volatility_ratio(fee_ratio, volatility),
+        "fee_active_tvl_ratio_vs_volatility": fee_volatility_ratio(
+            fee_ratio, volatility),
         "analysis": None,
     }
 
 
-def merge_pools(pools_24h, pools_1h) -> list[dict]:
-    """24 jam dulu; yang juga di 1 jam ditandai ``in_1h`` (tetap tampil).
+def _regular_rows_from_lanes(pools_24h, pools_30m) -> list[dict]:
+    """Catat lane 24h lalu 30m tanpa menggabungkan source yang berbeda.
 
-    Pool yang hanya lolos filter 1 jam ditambahkan di belakang.
+    Satu pool yang muncul di dua timeframe sengaja menjadi dua record: rule
+    24h (SAFE/fee-dominant) dan rule 30m (HIGH RISK) punya arti berbeda dan
+    keduanya harus terlihat oleh user.
     """
+    rows: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for timeframe, pools in (("24h", pools_24h), ("30m", pools_30m)):
+        for pool in pools or []:
+            row = _row_from_pool(pool, timeframe=timeframe)
+            address = row["pool_address"]
+            key = (timeframe, address or f"{timeframe}:{len(rows)}")
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(row)
+    return rows
+
+
+def merge_pools(pools_24h, pools_1h, *, preserve_lanes: bool = False) -> list[dict]:
+    """Merge compatibility helper; regular fetch keeps 24h before 30m.
+
+    ``preserve_lanes=True`` is the new regular behavior: rows are not
+    deduplicated across timeframes. The default retains the historical merged
+    shape for external callers that still use ``merge_pools`` directly.
+    """
+    if preserve_lanes:
+        return _regular_rows_from_lanes(pools_24h, pools_1h)
+
+    # Compatibility shape for old callers: one row per pool address, with the
+    # first (24h) payload winning and the second lane marked on that row.
     by_addr: dict[str, dict] = {}
     order: list[str] = []
     for pool in pools_24h or []:
-        row = _row_from_pool(pool, in_24h=True, in_1h=False)
+        row = _row_from_pool(pool, timeframe="24h", in_24h=True,
+                             in_1h=False)
         addr = row["pool_address"]
         if not addr or addr in by_addr:
             continue
         by_addr[addr] = row
         order.append(addr)
-    seen_1h = set()
     for pool in pools_1h or []:
-        row = _row_from_pool(pool, in_24h=False, in_1h=True)
+        row = _row_from_pool(pool, timeframe="30m", in_24h=False,
+                             in_1h=True)
         addr = row["pool_address"]
         if not addr:
             continue
-        seen_1h.add(addr)
         if addr in by_addr:
+            by_addr[addr]["in_30m"] = True
             by_addr[addr]["in_1h"] = True
+            by_addr[addr]["source_timeframes"] = ["24h", "30m"]
             continue
         by_addr[addr] = row
         order.append(addr)
     for addr in order:
-        if addr in seen_1h:
-            by_addr[addr]["in_1h"] = True
+        by_addr[addr].setdefault("source_timeframes", [
+            by_addr[addr].get("timeframe") or ("24h" if by_addr[addr].get("in_24h")
+                                                else "30m")])
     return [by_addr[addr] for addr in order]
 
 
 def fetch_listing(*, timeout: int = 25) -> tuple[list[dict], str]:
-    """(rows, error). error kosong bila 24h atau 1h berhasil."""
+    """Return raw regular rows in lane order: 24h first, then 30m."""
     errors = []
     pools_24: list[dict] = []
-    pools_1h: list[dict] = []
+    pools_30: list[dict] = []
     try:
-        pools_24 = fetch_pools(timeframe="24h", fee_ratio_min=FEE_RATIO_24H,
-                               timeout=timeout)
+        pools_24 = fetch_pools(timeframe="24h", fee_ratio_min=None,
+                               tvl_min=TVL_MIN, timeout=timeout)
     except Exception as exc:  # noqa: BLE001
         errors.append(f"24h: {exc}")
     try:
-        pools_1h = fetch_pools(timeframe="1h", fee_ratio_min=FEE_RATIO_1H,
-                               timeout=timeout)
+        pools_30 = fetch_pools(timeframe="30m", fee_ratio_min=None,
+                               tvl_min=TVL_MIN, timeout=timeout)
     except Exception as exc:  # noqa: BLE001
-        errors.append(f"1h: {exc}")
-    rows = merge_pools(pools_24, pools_1h)
+        errors.append(f"30m: {exc}")
+    rows = _regular_rows_from_lanes(pools_24, pools_30)
     return rows, " · ".join(errors)
+
+
+def fetch_watchlist_metric_snapshots(watchlist: dict | None,
+                                     *, timeout: int = 25) -> dict:
+    """Fetch current fee/volatility snapshots for Meteora watchlist entries.
+
+    Holder scanning and pool-metric scanning are intentionally separate: this
+    helper only calls the lightweight pool-discovery endpoint. A pool address
+    stored when the star was clicked is preferred; mint matching is the
+    fallback for older watchlist entries that predate source metadata.
+    """
+    from meteora_watchlist import (is_meteora_meta, snapshot_from_row,
+                                   timeframe_for_meta)
+
+    targets: dict[str, dict] = {
+        str(mint): meta for mint, meta in (watchlist or {}).items()
+        if mint and is_meteora_meta(meta)
+    }
+    if not targets:
+        return {}
+    requested = {timeframe_for_meta(meta) for meta in targets.values()}
+    requested = [timeframe for timeframe in REGULAR_TIMEFRAMES
+                 if timeframe in requested]
+    pools_by_timeframe: dict[str, list[dict]] = {}
+    for timeframe in requested:
+        try:
+            pools_by_timeframe[timeframe] = fetch_pools(
+                timeframe=timeframe, fee_ratio_min=None,
+                tvl_min=TVL_MIN, timeout=timeout)
+        except Exception:
+            pools_by_timeframe[timeframe] = []
+
+    result: dict[str, dict] = {}
+    for mint, meta in targets.items():
+        timeframe = timeframe_for_meta(meta)
+        candidates = []
+        for pool in pools_by_timeframe.get(timeframe) or []:
+            row = _row_from_pool(pool, timeframe=timeframe)
+            if row.get("ca") == mint:
+                candidates.append(row)
+        pool_address = str(meta.get("pool_address") or "").strip()
+        selected = next((row for row in candidates
+                         if pool_address and row.get("pool_address") == pool_address),
+                        candidates[0] if candidates else None)
+        if selected:
+            classification = regular_pool_classification(selected)
+            selected = dict(selected)
+            selected["classification"] = classification.get("label") or ""
+            selected["classification_note"] = classification.get("note") or ""
+            result[mint] = snapshot_from_row(selected)
+    return result
 
 
 def _mint_pools(rows: list[dict]) -> dict[str, set[str]]:
@@ -496,12 +712,14 @@ def row_flag(row: dict | None) -> dict:
 
 
 def sort_rows(rows: list[dict]) -> list[dict]:
-    """Urutkan listing Scan Meteora: **BEST POOL dulu**, lalu yang lain.
+    """Compatibility sorter untuk konsumen lama, bukan regular scan.
 
-    Permintaan user 2026-09-08: badge 🏆 BEST POOL tidak lagi tersebar acak
-    mengikuti urutan API Meteora — pool terbaik harus tampil paling atas.
+    Regular Scan Meteora memakai :func:`sort_regular_rows`, yang mengurutkan
+    lane 24h/30m dan quotient fee/volatility tanpa dust. Fungsi lama ini tetap
+    tersedia untuk compatibility/test konsumen yang masih membutuhkan urutan
+    BEST POOL berbasis dust; Scan Best Pool memiliki sorter sendiri.
 
-    Kunci urut (kecil = atas):
+    Kunci urut lama (kecil = atas):
 
     1. ``best`` (BEST POOL) di atas non-best;
     2. dust % MC **terkecil** dulu — makin sedikit dust makin bersih;
@@ -544,11 +762,13 @@ def hide_dust_limit(rows: list[dict]) -> tuple[list[dict], int]:
 
 def scan_meteora(*, max_wallets: int | None = None, workers: int = 6,
                  progress=None, timeout: int = 25) -> dict:
-    """Listing + holder + filter dust > 0,1% MC (``DUST_SCAN_HIDE_PCT``)."""
-    # Default FULL (holder_history.FULL_SCAN_MAX_WALLETS): urutan
-    # getTokenAccounts Helius tidak urut saldo → cap kecil menghasilkan
-    # sampel acak yang bias (dust ≤$10 kurang terhitung) dan filter
-    # ``DUST_SCAN_HIDE_PCT`` bisa salah menyembunyikan/menampilkan pool.
+    """Scan regular Meteora lanes 24h → 30m.
+
+    Metrik rule diterapkan sebelum holder enrichment agar pool yang pasti tidak
+    tampil tidak membakar kuota holder. Setelah holder diperkaya, filter dust
+    lama tetap dijalankan; dust bukan kunci urut dan tidak memengaruhi
+    klasifikasi SAFE/HIGH RISK.
+    """
     if max_wallets is None:
         from holder_history import FULL_SCAN_MAX_WALLETS
         max_wallets = FULL_SCAN_MAX_WALLETS
@@ -557,36 +777,42 @@ def scan_meteora(*, max_wallets: int | None = None, workers: int = 6,
     except Exception:  # noqa: BLE001 - log hanya pelengkap
         _alog = None
     if _alog:
-        _alog.info("scan-meteora", "scan mulai: listing pool DLMM Meteora")
+        _alog.info("scan-meteora", "scan mulai: listing pool DLMM Meteora 24h + 30m")
     rows, error = fetch_listing(timeout=timeout)
     if _alog and error:
         _alog.error("scan-meteora", f"listing Meteora gagal: {error[:160]}")
     fetched = len(rows)
-    # Pool tanpa sisi memecoin (SOL/USDC/USDT) dibuang sebelum fetch holder:
-    # dust %-nya dihitung terhadap MC SOL → selalu 0,000% dan selalu "bersih".
+    # Quote-only tidak punya token yang bisa dianalisa; buang lebih dulu agar
+    # penghitung skip tetap akurat walau payload metriknya juga kosong.
     rows, quote_skipped = drop_quote_rows(rows)
+    rows, hidden_rule = filter_regular_rows(rows)
     if rows:
         rows = enrich_pools(rows, max_wallets=max_wallets, workers=workers,
                             progress=progress)
-        rows, hidden = hide_dust_limit(rows)
-        # BEST POOL di urutan teratas (permintaan user 2026-09-08); urutan
-        # mentah dari API Meteora menyebar pool terbaik ke tengah listing.
-        rows = sort_rows(rows)
+        rows, hidden_dust = hide_dust_limit(rows)
+        # Satu-satunya urutan regular: lane 24h/30m lalu quotient
+        # fee_active_tvl_ratio ÷ volatility. Tidak pernah memakai dust.
+        rows = sort_regular_rows(rows)
     else:
-        hidden = 0
+        hidden_dust = 0
+    hidden_total = hidden_rule + hidden_dust
     if _alog:
-        _alog.info("scan-meteora",
-                   f"scan selesai: {len(rows)} pool tampil dari {fetched} "
-                   f"listing ({hidden} disembunyikan dust"
-                   + (f", {quote_skipped} pool quote dilewati"
-                      if quote_skipped else "") + ")")
+        _alog.info(
+            "scan-meteora",
+            f"scan selesai: {len(rows)} pool tampil dari {fetched} listing "
+            f"({hidden_rule} gugur rule metrik, {hidden_dust} disembunyikan dust"
+            + (f", {quote_skipped} pool quote dilewati" if quote_skipped else "")
+            + ")")
     return {
         "rows": rows,
         "error": error,
         "fetched": fetched,
-        "hidden_dust": hidden,
+        "hidden_dust": hidden_dust,
+        "hidden_rule": hidden_rule,
+        "hidden_total": hidden_total,
         "skipped_quote": quote_skipped,
         "hide_pct": float(DUST_SCAN_HIDE_PCT),
+        # Compatibility summary only; sorting does not use this value.
         "best_count": sum(1 for row in rows if row_flag(row).get("best")),
         "analyzed_at": int(time.time()),
     }
@@ -610,7 +836,7 @@ def scan_meteora(*, max_wallets: int | None = None, workers: int = 6,
 # card ini menjual bukti, jadi pool tanpa angka tidak ikut ditampilkan.
 # ---------------------------------------------------------------------------
 def _maybe_float(value):
-    """Float atau ``None`` (NaN/bool/tipe salah → ``None``).
+    """Float atau ``None`` (NaN/Infinity/bool/tipe salah → ``None``).
 
     Berbeda dari :func:`_float` yang menelan ``None`` jadi 0: saringan Best
     Pool harus bisa membedakan "angkanya nol" dari "datanya tidak ada".
@@ -621,7 +847,7 @@ def _maybe_float(value):
         num = float(value)
     except (TypeError, ValueError):
         return None
-    return num if num == num else None
+    return num if math.isfinite(num) else None
 
 
 def best_filter_by(pool_type: str = "dlmm",

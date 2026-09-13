@@ -29,6 +29,8 @@ from holder_history import (DUST_CAUTION_PCT, DUST_DANGER_PCT,
                             history_for_mint, holders_usable, merge_status_history,
                             point_usable, resample_4h, resample_5m, usable_points)
 from watchlist_detail import DRIFT_TOLERANCE_PP
+from meteora_watchlist import (classification_for_snapshot, metric_ratio,
+                                normalize_timeframe)
 
 if TYPE_CHECKING:  # pragma: no cover - hanya untuk anotasi tipe
     from matplotlib.figure import Figure
@@ -66,7 +68,9 @@ def _int(value, default=0) -> int:
 
 def is_lp_source(meta) -> bool:
     """True bila entri watchlist berasal dari Scan Meteora / card LP."""
-    source = str((meta or {}).get("source") or "").strip().lower()
+    if not isinstance(meta, dict):
+        return False
+    source = str(meta.get("source") or "").strip().lower()
     return source in LP_SOURCES
 
 
@@ -91,9 +95,10 @@ def split_watchlist(watchlist: dict | None) -> tuple[dict, dict]:
 def points_for_mint(mint: str, status_tokens: dict | None,
                     store: dict | None) -> list[dict]:
     """Gabung titik history file + salinan ringkas dari holder_status."""
-    token = (status_tokens or {}).get(mint) or {}
+    token = (status_tokens or {}).get(mint)
+    token = token if isinstance(token, dict) else {}
     return merge_status_history(history_for_mint(store, mint),
-                                (token or {}).get("history") or [])
+                                token.get("history") or [])
 
 
 def _delta_pp(before, after):
@@ -116,8 +121,9 @@ def build_lp_row(mint: str, meta: dict | None, status_tokens: dict | None,
     terbaru dan menandai ``degraded`` supaya UI bilang angka itu bukan hasil
     run terakhir.
     """
-    meta = meta or {}
-    token = (status_tokens or {}).get(mint) or {}
+    meta = meta if isinstance(meta, dict) else {}
+    token = (status_tokens or {}).get(mint)
+    token = token if isinstance(token, dict) else {}
     holders = token.get("holders") if isinstance(token.get("holders"), dict) \
         else {}
     points = points_for_mint(mint, status_tokens, store)
@@ -174,10 +180,65 @@ def build_lp_row(mint: str, meta: dict | None, status_tokens: dict | None,
         (bool(holders) and not holders_ok)
         or (bool(last_raw) and not point_usable(last_raw)))
 
+    # Metrik pool Meteora berasal dari snapshot status terbaru; fallback ke
+    # metadata add-time membuat entri lama tetap informatif sebelum cron
+    # pertama selesai. Dust tetap dipertahankan untuk grafik/data, tetapi
+    # status watchlist dan deteksi sekarang berpusat pada dua metrik ini.
+    raw_metric = token.get("meteora_metrics")
+    metric = dict(raw_metric) if isinstance(raw_metric, dict) else {}
+    if not metric:
+        raw_metric = meta.get("metric_snapshot")
+        metric = dict(raw_metric) if isinstance(raw_metric, dict) else {}
+    if not metric:
+        raw_metric = meta.get("metric_baseline")
+        metric = dict(raw_metric) if isinstance(raw_metric, dict) else {}
+    if metric.get("fee_active_tvl_ratio") is None:
+        metric["fee_active_tvl_ratio"] = _float(
+            meta.get("fee_active_tvl_ratio"), None)
+    if metric.get("volatility") is None:
+        metric["volatility"] = _float(meta.get("volatility"), None)
+    metric["timeframe"] = normalize_timeframe(
+        metric.get("timeframe") or meta.get("timeframe")
+        or meta.get("pool_timeframe") or "24h")
+    metric["fee_volatility_ratio"] = metric_ratio(
+        metric.get("fee_active_tvl_ratio"), metric.get("volatility"))
+    baseline = metric.get("baseline")
+    if not isinstance(baseline, dict):
+        baseline = meta.get("metric_baseline")
+    alert = metric.get("alert")
+    if not isinstance(alert, dict):
+        alert = meta.get("metric_alert") if isinstance(
+            meta.get("metric_alert"), dict) else {}
+    metric_class = classification_for_snapshot(metric)
+    metric_label = str(metric.get("classification")
+                        or metric_class.get("label") or "")
+    metric_note = str(metric.get("classification_note")
+                       or metric_class.get("note") or "")
+    if alert.get("active"):
+        metric_note = "⚠️ " + str(alert.get("condition")
+                                  or "deteksi perubahan metrik")
+
     return {
         "mint": str(mint),
         "symbol": str(meta.get("symbol") or token.get("symbol") or "?").upper(),
         "source": str(meta.get("source") or ""),
+        "timeframe": metric.get("timeframe") or normalize_timeframe(
+            meta.get("timeframe") or meta.get("pool_timeframe") or "24h"),
+        "source_label": ("24 jam" if metric.get("timeframe") == "24h"
+                         else "30 menit"),
+        "pool_address": str(metric.get("pool_address")
+                              or meta.get("pool_address") or ""),
+        "fee_active_tvl_ratio": _float(
+            metric.get("fee_active_tvl_ratio"), None),
+        "volatility": _float(metric.get("volatility"), None),
+        "fee_volatility_ratio": metric.get("fee_volatility_ratio"),
+        "metric_baseline": baseline if isinstance(baseline, dict) else {},
+        "metric_snapshot": metric,
+        "metric_alert": alert,
+        "metric_classification": metric_label,
+        "metric_note": metric_note,
+        "metric_alert_active": bool(alert.get("active")),
+        "metric_alert_triggered": bool(alert.get("triggered")),
         "added": str(meta.get("added") or ""),
         "note": str(meta.get("note") or ""),
         "holders": holders,
@@ -235,7 +296,8 @@ def sort_lp_rows(rows) -> list[dict]:
 def lp_summary(rows) -> dict:
     """Rekap jumlah token per level dust (untuk header card)."""
     summary = {"total": 0, "danger": 0, "caution": 0, "ok": 0, "unknown": 0,
-               "rising": 0, "with_chart": 0}
+               "rising": 0, "with_chart": 0, "metric_alerts": 0,
+               "safe_lp": 0, "high_risk": 0}
     for row in rows or []:
         summary["total"] += 1
         level = str((row or {}).get("flag", {}).get("level") or "unknown")
@@ -244,6 +306,12 @@ def lp_summary(rows) -> dict:
             summary["rising"] += 1
         if (row or {}).get("has_chart"):
             summary["with_chart"] += 1
+        if (row or {}).get("metric_alert_active"):
+            summary["metric_alerts"] += 1
+        if (row or {}).get("metric_classification") == "SAFE LP":
+            summary["safe_lp"] += 1
+        if (row or {}).get("metric_classification") == "HIGH RISK LP (PANTAU)":
+            summary["high_risk"] += 1
     return summary
 
 

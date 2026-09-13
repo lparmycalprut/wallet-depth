@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import sys
 import time
@@ -44,6 +45,19 @@ def last_publish_result() -> dict:
 
 def _empty_status() -> dict:
     return {"updated_at": None, "scanner": "holder-dust-v1", "tokens": {}}
+
+
+def _metric_for_status(metric: dict) -> dict:
+    """Copy metric snapshot tanpa nilai float non-finite di payload JSON."""
+    def clean(value):
+        if isinstance(value, float):
+            return value if math.isfinite(value) else None
+        if isinstance(value, dict):
+            return {key: clean(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [clean(item) for item in value]
+        return value
+    return clean(dict(metric))
 
 
 def _holders_for_status(holders: dict | None) -> dict:
@@ -213,7 +227,8 @@ def snapshot_status(analyses: dict | None,
                     watchlist: dict | None = None,
                     history_store: dict | None = None,
                     contexts: dict | None = None,
-                    merge_status: dict | None = None) -> dict:
+                    merge_status: dict | None = None,
+                    meteora_metrics: dict | None = None) -> dict:
     """Bangun payload dashboard dari hasil analisis per token.
 
     ``contexts`` = ``{mint: market_context}`` dari ``alert_context`` (opsional).
@@ -254,6 +269,7 @@ def snapshot_status(analyses: dict | None,
     except Exception:  # noqa: BLE001 - konteks pasar bersifat pelengkap
         compact_signal = lambda *_a, **_k: {}  # noqa: E731
     signals = contexts if isinstance(contexts, dict) else {}
+    metric_signals = meteora_metrics if isinstance(meteora_metrics, dict) else {}
     allowed = {str(key) for key in (watchlist or {})} if watchlist else set()
     tokens: dict = {}
     stamps = []
@@ -275,7 +291,8 @@ def snapshot_status(analyses: dict | None,
     for mint, result in (analyses or {}).items():
         if not mint or not isinstance(result, dict):
             continue
-        meta = (watchlist or {}).get(mint) or {}
+        meta = (watchlist or {}).get(mint)
+        meta = meta if isinstance(meta, dict) else {}
         hist_slot = ((store.get("tokens") or {}).get(mint) or {})
         token = {
             "symbol": str(meta.get("symbol")
@@ -300,9 +317,51 @@ def snapshot_status(analyses: dict | None,
             context = result.get("market_context")
         if isinstance(context, dict):
             token["market_signal"] = compact_signal(context)
+        metric = metric_signals.get(mint)
+        if isinstance(metric, dict):
+            # Metrik pool ringan dan alert state ringkas; peta holder tetap
+            # berada di store lama dan tidak ikut payload ini.
+            token["meteora_metrics"] = _metric_for_status(metric)
+        elif str(meta.get("source") or "").strip().lower() in {
+                "meteora", "lp", "chart_lp"}:
+            # Holder scan boleh berhasil ketika endpoint pool sementara gagal;
+            # jangan menghapus snapshot metric terakhir dari dashboard.
+            previous_token = (((merge_status or {}).get("tokens") or {})
+                              .get(mint))
+            previous_metric = (previous_token.get("meteora_metrics")
+                               if isinstance(previous_token, dict) else None)
+            if isinstance(previous_metric, dict):
+                token["meteora_metrics"] = _metric_for_status(previous_metric)
         tokens[mint] = token
         if token["analyzed_at"]:
             stamps.append(int(token["analyzed_at"]))
+    # Pool-metric fetch can succeed while a holder provider is temporarily
+    # unavailable. Keep the previous holder token but publish the new metric so
+    # the Meteora watchlist still detects the requested change.
+    for mint, metric in metric_signals.items():
+        if not mint or not isinstance(metric, dict):
+            continue
+        if allowed and str(mint) not in allowed:
+            continue
+        if mint in tokens:
+            continue
+        previous = ((merge_status or {}).get("tokens") or {}).get(mint)
+        meta = (watchlist or {}).get(mint)
+        meta = meta if isinstance(meta, dict) else {}
+        token = dict(previous) if isinstance(previous, dict) else {
+            "symbol": str(meta.get("symbol") or mint[:8]),
+            "marketcap": None, "price": None, "analyzed_at": None,
+            "holders": {}, "history": [], "cohort": {"summary": True},
+            "alert_state": {}, "chronology": {},
+        }
+        token["meteora_metrics"] = _metric_for_status(metric)
+        tokens[mint] = token
+        metric_ts = metric.get("ts")
+        if metric_ts:
+            try:
+                stamps.append(int(metric_ts))
+            except (TypeError, ValueError):
+                pass
     return {
         "updated_at": max(stamps) if stamps else None,
         "scanner": "holder-dust-v1",
@@ -581,6 +640,7 @@ def publish_holder_status(analyses: dict,
                           history_store: dict | None = None,
                           contexts: dict | None = None,
                           merge_status: dict | None = None,
+                          meteora_metrics: dict | None = None,
                           repo_path: str | None = None,
                           local_path: str | None = None) -> dict:
     """Tulis status lokal + (opsional) publish ke GitHub.
@@ -593,7 +653,8 @@ def publish_holder_status(analyses: dict,
     repo_path = str(repo_path or STATUS_REPO_PATH).strip().lstrip("/")
     local_path = str(local_path or STATUS_PATH)
     status = snapshot_status(analyses, watchlist, history_store=history_store,
-                             contexts=contexts, merge_status=merge_status)
+                             contexts=contexts, merge_status=merge_status,
+                             meteora_metrics=meteora_metrics)
     atomic_write_json(local_path, status, indent=2)
     _CACHE[repo_path] = {"data": dict(status), "ts": time.time()}
     if push:
