@@ -30,6 +30,7 @@ from dashboard_components import (_alert_toggle_button, _ca_error, _compact,
                                   render_styles)
 from telegram_alerts import (EARLY_DUMP_STEP_PCT, EARLY_DUMP_TITLE,
                              process_holder_alerts)
+from watchlist_detail import added_baseline, baseline_cell
 import activity_log
 import robinhood_holders
 from robinhood_watchlist import (split_robinhood_watchlist)
@@ -126,7 +127,10 @@ LP_CARD_TOOLTIP = (
     "notifnya mati. Grafik "
     "menampilkan perubahan dust holder per bucket 5 menit: "
     f"≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
-    f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA.")
+    f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA. Kolom Awal Masuk = dust % MC "
+    "saat token masuk watchlist — persis angka patokan yang dipakai rule "
+    "⚡ di atas (hover selnya untuk kalimat lengkap + varian "
+    "fallback-nya).")
 LP_ADD_FORM = "lp-add-token"
 
 
@@ -187,10 +191,11 @@ def _render_lp_row(row: dict) -> None:
     alert_on = _mint_alert_on(mint)
     if not alert_on:
         short_note += " · 🔕 notif off"
-    # 7 kolom: token · dust · hold %MC · 🧮 holder · 🔔 toggle alert per
+    # 8 kolom: token · dust · hold %MC · **Awal Masuk** (dust % MC saat masuk
+    # watchlist — permintaan user 2026-09-13) · 🧮 holder · 🔔 toggle alert per
     # token · 📋 pindah ke watchlist biasa · ✕ hapus (kolom toggle ditambah
-    # 2026-09-11, permintaan user).
-    cols = st.columns([1.7, 0.75, 0.95, 0.42, 0.42, 0.42, 0.42])
+    # 2026-09-11, kolom Awal Masuk 2026-09-13).
+    cols = st.columns([1.62, 0.72, 0.9, 0.8, 0.42, 0.42, 0.42, 0.42])
     cols[0].markdown(
         f'<div class="watchlist-token">'
         f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
@@ -208,17 +213,26 @@ def _render_lp_row(row: dict) -> None:
         f'<div class="watchlist-metric">'
         f'<div class="watchlist-metric-value">{pct_txt}</div>'
         f'{_dust_badge_html(flag)}</div>', unsafe_allow_html=True)
-    cols[3].markdown(holder_analytic_link_html(mint),
+    # Sel "Awal Masuk" — angka patokan notif ⚡ EARLY DUMP naik ke tabel
+    # (permintaan user 2026-09-13); title sel = kalimat lengkap baseline_note.
+    base = baseline_cell(added_baseline(row, row.get("points") or []),
+                         current_pct=dust_pct)
+    cols[3].markdown(
+        f'<div class="watchlist-metric" title="{html.escape(base["note"])}">'
+        f'<div class="watchlist-metric-value">{html.escape(base["value"])}</div>'
+        f'<div class="watchlist-metric-sub">{html.escape(base["sub"])}</div>'
+        f'</div>', unsafe_allow_html=True)
+    cols[4].markdown(holder_analytic_link_html(mint),
                      unsafe_allow_html=True)
     # 🔔/🔕: notif Telegram khusus token ini; token baru masuk watchlist
     # selalu ON (lihat watchlist._reset_alert_toggle_on_add).
-    _alert_toggle_button(cols[4], mint, symbol, scope="lp", alert_on=alert_on)
-    if cols[5].button("📋", key=f"lp-move-{mint}",
+    _alert_toggle_button(cols[5], mint, symbol, scope="lp", alert_on=alert_on)
+    if cols[6].button("📋", key=f"lp-move-{mint}",
                       help="Pindahkan ke Watchlist Holder",
                       use_container_width=True):
         set_watchlist_source(mint, "manual", background=True)
         st.rerun()
-    if cols[6].button("✕", key=f"lp-remove-{mint}",
+    if cols[7].button("✕", key=f"lp-remove-{mint}",
                       help="Hapus dari Watchlist Meteora",
                       use_container_width=True):
         remove_from_watchlist(mint, background=True)
@@ -346,9 +360,9 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
                     "tempel CA di form atas.")
             return
 
-        header = st.columns([1.7, 0.75, 0.95, 0.42, 0.42, 0.42, 0.42])
+        header = st.columns([1.62, 0.72, 0.9, 0.8, 0.42, 0.42, 0.42, 0.42])
         style = "font-size:0.72rem;color:#000000;font-weight:700;"
-        titles = ["Token", "Dust", "Hold %MC", "", "", "", ""]
+        titles = ["Token", "Dust", "Hold %MC", "Awal Masuk", "", "", "", ""]
         for col, title in zip(header, titles):
             align = "" if title == "Token" else "text-align:center;"
             col.markdown(f'<div style="{style}{align}">{title}</div>',

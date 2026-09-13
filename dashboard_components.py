@@ -23,8 +23,8 @@ from telegram_alerts import (EARLY_DUMP_STEP_PCT, EARLY_DUMP_TITLE,
                              delivery_note, process_holder_alerts,
                              summarize_deliveries)
 from watchlist_detail import (STALE_AFTER_SEC, STALE_REGULAR_AFTER_SEC,
-                              added_baseline, baseline_note, format_wib,
-                              previous_pct, resolve_view)
+                              added_baseline, baseline_cell, baseline_note,
+                              format_wib, previous_pct, resolve_view)
 
 
 def render_styles() -> None:
@@ -424,7 +424,9 @@ RH_CARD_TOOLTIP = (
     "🔔 ON; scan + grafik tetap jalan). Badge level dust "
     f"tetap di baris: ≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
     f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA. Data holder dari Blockscout, "
-    "harga/marketcap dari DexScreener.")
+    "harga/marketcap dari DexScreener. Kolom Awal Masuk = dust % MC saat "
+    "token masuk watchlist (angka patokan rule ⚡ di atas; hover selnya "
+    "untuk kalimat lengkap).")
 # Card Robinhood **biasa** (halaman temp): detail karakteristik juga tooltip
 # (2026-09-11) — caption panjangnya dihapus karena mengulang isi tooltip dan
 # masih menyebut rule 🔔 titik high yang sudah tidak ada.
@@ -439,7 +441,9 @@ RH_REGULAR_CARD_TOOLTIP = (
     "di baris: "
     f"≥ {DUST_CAUTION_PCT:g}% MC = HATI-HATI, "
     f"≥ {DUST_DANGER_PCT:g}% MC = BAHAYA. Data holder dari Blockscout, "
-    "harga/marketcap dari DexScreener.")
+    "harga/marketcap dari DexScreener. Kolom Awal Masuk = dust % MC saat "
+    "token masuk watchlist (angka patokan rule ⚡ di atas; hover selnya "
+    "untuk kalimat lengkap).")
 
 ALERT_NOTE_KEY = "manual_alert_note_"
 
@@ -633,9 +637,11 @@ def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
     # sama seperti baris 🌊 Watchlist Meteora di app.py).
     pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.3f}%"
 
-    # 7 kolom: token · dust · hold %MC · 🧮 holder · 🔔 toggle alert ·
-    # aksi pindah card · hapus (kolom toggle ditambah 2026-09-11).
-    cols = st.columns([1.7, 0.8, 0.95, 0.42, 0.42, 0.42, 0.42])
+    # 8 kolom: token · dust · hold %MC · **Awal Masuk** (dust % MC saat masuk
+    # watchlist — permintaan user 2026-09-13) · 🧮 holder · 🔔 toggle alert ·
+    # aksi pindah card · hapus (kolom toggle ditambah 2026-09-11, kolom
+    # Awal Masuk 2026-09-13; pola identik dengan app._render_lp_row).
+    cols = st.columns([1.62, 0.75, 0.9, 0.8, 0.42, 0.42, 0.42, 0.42])
     alert_on = _mint_alert_on(mint)
     chain_note = ("LP · scan ±5 menit" if variant == "lp"
                   else "biasa · scan ±4 jam")
@@ -676,13 +682,22 @@ def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
         f'<div class="watchlist-metric">'
         f'<div class="watchlist-metric-value">{pct_txt}</div>'
         f'{_dust_badge_html(flag)}</div>', unsafe_allow_html=True)
-    cols[3].markdown(holder_analytic_link_html(mint),
+    # Sel "Awal Masuk" — angka patokan notif ⚡ EARLY DUMP naik ke tabel
+    # (permintaan user 2026-09-13); title sel = kalimat lengkap baseline_note.
+    base = baseline_cell(added_baseline(row, row.get("points") or []),
+                         current_pct=dust_pct)
+    cols[3].markdown(
+        f'<div class="watchlist-metric" title="{html.escape(base["note"])}">'
+        f'<div class="watchlist-metric-value">{html.escape(base["value"])}</div>'
+        f'<div class="watchlist-metric-sub">{html.escape(base["sub"])}</div>'
+        f'</div>', unsafe_allow_html=True)
+    cols[4].markdown(holder_analytic_link_html(mint),
                      unsafe_allow_html=True)
     # 🔔/🔕: notif Telegram khusus token ini (token baru selalu ON).
-    _alert_toggle_button(cols[4], mint, symbol, scope=prefix,
+    _alert_toggle_button(cols[5], mint, symbol, scope=prefix,
                          alert_on=alert_on)
     if variant == "lp":
-        if cols[5].button("📋", key=f"rh-move-{mint}",
+        if cols[6].button("📋", key=f"rh-move-{mint}",
                           help="Pindahkan ke Watchlist Robinhood (biasa, "
                                "halaman temp) — pengingat 🚨 dust ≥ 0,06% MC "
                                "berhenti",
@@ -690,16 +705,16 @@ def _render_rh_row(row: dict, *, variant: str = "lp") -> None:
             robinhood_watchlist.set_robinhood_watchlist_source(
                 mint, RH_REGULAR_SOURCE, background=True)
             st.rerun()
-        remove_col = cols[6]
+        remove_col = cols[7]
     else:
-        if cols[5].button("⚡", key=f"rhreg-move-{mint}",
+        if cols[6].button("⚡", key=f"rhreg-move-{mint}",
                           help="Pindahkan ke Watchlist Robinhood LP "
                                "(scan cepat ±5 menit)",
                           use_container_width=True):
             robinhood_watchlist.set_robinhood_watchlist_source(
                 mint, RH_LP_SOURCE, background=True)
             st.rerun()
-        remove_col = cols[6]
+        remove_col = cols[7]
     if remove_col.button("✕", key=f"{prefix}-remove-{mint}",
                          help="Hapus dari watchlist Robinhood",
                          use_container_width=True):
@@ -881,9 +896,9 @@ def _render_rh_card(watchlist: dict, status_tokens: dict,
             st.info(empty_text)
             return
 
-        header = st.columns([1.7, 0.8, 0.95, 0.42, 0.42, 0.42, 0.42])
+        header = st.columns([1.62, 0.75, 0.9, 0.8, 0.42, 0.42, 0.42, 0.42])
         style = "font-size:0.72rem;color:#000000;font-weight:700;"
-        titles = ["Token", "Dust", "Hold %MC", "", "", "", ""]
+        titles = ["Token", "Dust", "Hold %MC", "Awal Masuk", "", "", "", ""]
         for col, col_title in zip(header, titles):
             align = "" if col_title == "Token" else "text-align:center;"
             col.markdown(f'<div style="{style}{align}">{col_title}</div>',

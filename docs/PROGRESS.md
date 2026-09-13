@@ -1,5 +1,34 @@
 # Progress
 
+## 2026-09-13: kolom tabel "Awal Masuk" = dust %MC saat token masuk watchlist
+
+**Status: selesai & tes hijau (1156 tests, OK).**
+
+Permintaan user: *"Saat masuk watchlist (13 Sep 07:00 WIB): dust 0.103% MC —
+ini tambakan ke kolom table saja dengan caption Awal Masuk"*.
+
+- `watchlist_detail.baseline_cell(baseline, current_pct=…)` →
+  `{value, sub, note}` — nilai dust % MC 3 desimal di titik pembanding,
+  sub-caption waktu titik + penanda varian fallback, `note` = kalimat
+  lengkap `baseline_note()` untuk `title` sel (hover). Tidak ada definisi
+  baseline kedua: angkanya persis `added_baseline()`/`anchor_point()` yang
+  dipakai kolom "Sejak masuk", caption expander 📈, dan patokan notif
+  ⚡ EARLY DUMP 0,02%.
+- Kolom ke-4 dari 8 di ketiga tabel watchlist: `app._render_lp_row`
+  (🌊 Watchlist Meteora), `dashboard_components._render_rh_row` (🦅 Robinhood
+  LP + biasa), `temp_ui.render_temp` (📋 watchlist Holder — di kiri "Sejak
+  masuk"). Aksi 🧮/🔔/📋|⚡/✕ bergeser; tooltip judul tiap card ikut menyebut
+  kolom baru.
+- Tes: `BaselineCellTest` (5) di `tests/test_watchlist_detail.py`; assert
+  kolom/sel/tooltip di `tests/test_lp_card_ui.py` & `tests/test_rh_card_ui.py`;
+  tes per token `test_kolom_awal_masuk_menampilkan_dust_saat_ditambahkan` di
+  `tests/test_watchlist_row_ui.py`; hitungan `>Awal Masuk</div>` = 2 di
+  `tests/test_temp_page.py`. Suite penuh **Ran 1156 tests … OK** (baseline
+  1150).
+- Dokumen: `README.md`, `AGENTS.md`, `KEGIATAN.md`, `docs/PROGRESS.md`.
+
+Detail: `KEGIATAN.md` 13 September 2026 (blok paling atas).
+
 ## 2026-09-13: detail watchlist — dust % MC saat token pertama masuk watchlist
 
 **Status: selesai & tes hijau (1150 tests, OK).**

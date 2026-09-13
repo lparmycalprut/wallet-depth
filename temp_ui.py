@@ -254,7 +254,7 @@ def render_temp() -> None:
     from watchlist_detail import (SORT_DEFAULT, SORT_DROP, SORT_LABELS,
                                   SORT_NAME, SORT_OPTIONS, SORT_PCT,
                                   SOURCE_HISTORY, SOURCE_SNAPSHOT, STALE_REGULAR_AFTER_SEC,
-                                  change_html,
+                                  added_baseline, baseline_cell, change_html,
                                   dust_change_since_added, format_wib,
                                   previous_pct, resolve_view, row_sort_key,
                                   sync_caption_text, sync_summary)
@@ -548,12 +548,14 @@ def render_temp() -> None:
                 }
                 st.rerun()
 
-        header_cols = st.columns([1.55, 0.85, 0.9, 1.05, 0.4, 0.4, 0.4])
+        header_cols = st.columns([1.5, 0.8, 0.85, 0.8, 0.95, 0.4, 0.4, 0.4])
         header_style = "font-size:0.78rem;color:#000000;font-weight:700;"
         center = "text-align:center;" + header_style
-        header_titles = ["Token", "Dust", "Hold %MC", "Sejak masuk",
-                         "", "", ""]
-        header_css = [header_style] + [center] * 6
+        # Kolom "Awal Masuk" (dust % MC saat token masuk watchlist —
+        # permintaan user 2026-09-13) disisipkan sebelum "Sejak masuk".
+        header_titles = ["Token", "Dust", "Hold %MC", "Awal Masuk",
+                         "Sejak masuk", "", "", ""]
+        header_css = [header_style] + [center] * 7
         for col, style, title in zip(header_cols, header_css, header_titles):
             col.markdown(f'<div style="{style}">{title}</div>',
                          unsafe_allow_html=True)
@@ -561,6 +563,8 @@ def render_temp() -> None:
         st.markdown(
             '<div style="font-size:0.65rem;color:#64748b;margin:0.3rem 0;">'
             "Dust = wallet 0 &lt; value ≤ $10 (bukan LP). "
+            "<b>Awal Masuk</b> = dust % MC saat token masuk watchlist "
+            "(angka patokan notif ⚡; hover selnya untuk kalimat lengkap). "
             "<b>Sejak masuk</b> = perubahan dust % MC dari "
             "titik pertama setelah token ditambahkan sampai scan terakhir "
             "(<span style=\"color:#15803d;font-weight:700;\">hijau</span> turun "
@@ -633,7 +637,7 @@ def render_temp() -> None:
             if view.get("stale"):
                 scan_note += " · basi"
 
-            cols = st.columns([1.55, 0.85, 0.9, 1.05, 0.4, 0.4, 0.4])
+            cols = st.columns([1.5, 0.8, 0.85, 0.8, 0.95, 0.4, 0.4, 0.4])
             cols[0].markdown(
                 f'<div class="watchlist-token">'
                 f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
@@ -651,16 +655,25 @@ def render_temp() -> None:
                 f'<div class="watchlist-metric-value">{pct_txt}</div>'
                 f'{_dust_badge_html(flag)}</div>',
                 unsafe_allow_html=True)
-            cols[3].markdown(change_html(change), unsafe_allow_html=True)
-            cols[4].markdown(holder_analytic_link_html(mint),
+            # Sel "Awal Masuk" (permintaan user 2026-09-13) — angka patokan
+            # notif ⚡ EARLY DUMP; pola identik dengan app._render_lp_row.
+            base = baseline_cell(added_baseline(meta, points),
+                                 current_pct=dust_pct)
+            cols[3].markdown(
+                f'<div class="watchlist-metric" title="{html.escape(base["note"])}">'
+                f'<div class="watchlist-metric-value">{html.escape(base["value"])}</div>'
+                f'<div class="watchlist-metric-sub">{html.escape(base["sub"])}</div>'
+                f'</div>', unsafe_allow_html=True)
+            cols[4].markdown(change_html(change), unsafe_allow_html=True)
+            cols[5].markdown(holder_analytic_link_html(mint),
                              unsafe_allow_html=True)
-            if cols[5].button("🌊", key=f"to-lp-{mint}",
+            if cols[6].button("🌊", key=f"to-lp-{mint}",
                               help="Pindahkan ke Watchlist Meteora "
                                    "(halaman utama)",
                               use_container_width=True):
                 set_watchlist_source(mint, LP_SOURCE, background=True)
                 st.rerun()
-            if cols[6].button("✕", key=f"remove-{mint}", help="Hapus watchlist",
+            if cols[7].button("✕", key=f"remove-{mint}", help="Hapus watchlist",
                               use_container_width=True):
                 remove_from_watchlist(mint, background=True)
                 st.rerun()

@@ -111,6 +111,9 @@ class TempPageTest(unittest.TestCase):
         self.assertIn("$REGSOL", body)
         self.assertNotIn("$RHLP", body)
         self.assertNotIn("$LPSOL", body)
+        # Kolom "Awal Masuk" (permintaan user 2026-09-13) ada di DUA tabel
+        # berbaris di halaman ini: card Robinhood biasa + watchlist Holder.
+        self.assertEqual(body.count(">Awal Masuk</div>"), 2)
         self.assertIn("Kembali ke halaman utama",
                       [node.proto.label for node in app.get("page_link")])
 

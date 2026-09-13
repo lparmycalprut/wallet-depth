@@ -171,6 +171,16 @@ class ChartLpCardTest(unittest.TestCase):
         self.assertIn("dust 0.620% MC", captions)
         self.assertIn("sekarang 1.350% MC (+0.730 pp)", captions)
         self.assertIn("patokan notif ⚡ EARLY DUMP", captions)
+        # Angka yang sama kini juga tampil sebagai KOLOM "Awal Masuk" di
+        # tabel (permintaan user 2026-09-13) — terlihat tanpa membuka
+        # expander; title sel = kalimat lengkap baseline_note().
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn(">Awal Masuk</div>", body)
+        self.assertIn('watchlist-metric-value">0.620%', body)   # LPRISK
+        self.assertIn('watchlist-metric-value">0.300%', body)   # LPSAFE
+        self.assertIn('title="📌 Saat masuk watchlist', body)
+        # Tooltip sel LPSAFE: 0,30% → sekarang 0,61% (+0,31 pp).
+        self.assertIn("· sekarang 0.610% MC (+0.310 pp)", body)
 
     def test_card_detail_is_hover_tooltip_on_title(self):
         """Detail karakteristik card = tooltip judul (permintaan 2026-09-10).

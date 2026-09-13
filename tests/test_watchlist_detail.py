@@ -338,6 +338,57 @@ class AddedBaselineTest(unittest.TestCase):
         self.assertIn("tanggal masuk watchlist belum terbaca", note)
 
 
+class BaselineCellTest(unittest.TestCase):
+    """Sel tabel **Awal Masuk** — angka yang sama dengan caption 📈 naik ke
+    tabel (permintaan user 2026-09-13: *"…ini tambakan ke kolom table saja
+    dengan caption Awal Masuk"*). Nilai 3 desimal, sub-caption waktu titik
+    pembanding + penanda fallback, note = kalimat lengkap untuk hover."""
+
+    META = {"symbol": "TST", "added": "2026-09-01"}
+
+    def test_nilai_tiga_desimal_dan_waktu_titik(self):
+        points = [_point(ADDED_TS - DAY, 0.90, 400),
+                  _point(ADDED_TS + HOUR, 0.0123, 40),
+                  _point(ADDED_TS + DAY, 0.036, 60)]
+        cell = wd.baseline_cell(wd.added_baseline(self.META, points),
+                                current_pct=0.036)
+        self.assertEqual(cell["value"], "0.012%")
+        self.assertEqual(cell["sub"], wd.format_wib(ADDED_TS + HOUR))
+
+    def test_note_memuat_angka_sekarang_dan_patokan_notif(self):
+        points = [_point(ADDED_TS + HOUR, 0.012, 40),
+                  _point(ADDED_TS + DAY, 0.036, 60)]
+        cell = wd.baseline_cell(wd.added_baseline(self.META, points),
+                                current_pct=0.036)
+        self.assertIn("sekarang 0.036% MC", cell["note"])
+        self.assertIn("patokan notif ⚡ EARLY DUMP", cell["note"])
+        self.assertIn("📌 Saat masuk watchlist", cell["note"])
+
+    def test_fallback_no_added_date_disebut_titik_pertama(self):
+        base = wd.added_baseline({}, [_point(ADDED_TS, 0.05, 90)])
+        cell = wd.baseline_cell(base, current_pct=0.05)
+        self.assertEqual(cell["value"], "0.050%")
+        self.assertTrue(cell["sub"].endswith(" · titik pertama"),
+                        f"sub salah: {cell['sub']}")
+
+    def test_fallback_belum_ada_scan_sejak_masuk(self):
+        points = [_point(ADDED_TS - 2 * DAY, 0.50, 200),
+                  _point(ADDED_TS - DAY, 0.20, 90)]
+        base = wd.added_baseline({"added": "2026-09-03"}, points)
+        cell = wd.baseline_cell(base)
+        self.assertEqual(cell["value"], "0.500%")
+        self.assertIn("belum ada scan sejak masuk", cell["sub"])
+
+    def test_tanpa_titik_layak_dan_input_kosong_tidak_meledak(self):
+        cell = wd.baseline_cell(wd.added_baseline(self.META, []))
+        self.assertEqual(cell["value"], "—")
+        self.assertEqual(cell["sub"], "belum ada scan layak")
+        self.assertIn("belum bisa dihitung", cell["note"])
+        for kosong in (None, {}, "x"):   # input aneh tidak boleh raise
+            out = wd.baseline_cell(kosong)
+            self.assertEqual(out["value"], "—")
+
+
 class ChangeHtmlTest(unittest.TestCase):
     def test_drop_uses_green_and_rise_uses_red(self):
         drop = wd.dust_change_since_added(
