@@ -29,7 +29,13 @@ def meteora_scan_tooltip() -> str:
         "Pool 24 jam yang masih muncul di 1 jam tetap ditampilkan. Hanya pool "
         f"dengan dust holder ≤ {holder_history.DUST_SCAN_HIDE_PCT:g}% MC yang "
         "ditampilkan — sisanya disembunyikan (badge AMAN/HATI-HATI/BAHAYA "
-        "tidak dipakai di sini). Dust "
+        "tidak dipakai di sini). Pool tanpa sisi memecoin (SOL/USDC/USDT) "
+        "dilewati sebelum holder di-fetch: dust-nya dihitung terhadap MC "
+        "SOL sehingga selalu 0,000%. Dust %MC memakai market cap "
+        "DexScreener — sama seperti Scan Holder dan Watchlist Meteora — jadi "
+        "angka dua card bisa dibandingkan; baris yang scan holdernya gagal "
+        "atau terpotong tampil tanpa angka (bukan 0,000%) dengan alasan di "
+        "bawahnya. Dust "
         f"< {holder_history.DUST_BEST_PCT:g}% MC + data holder valid "
         f"(≥ {holder_history.DUST_BEST_MIN_HOLDERS:g} wallet) + TVL ≥ "
         f"${holder_history.DUST_BEST_MIN_TVL_USD / 1000:g}K diberi badge 🏆 "
@@ -66,7 +72,7 @@ def render_meteora_scan() -> None:
     from holder_history import FULL_SCAN_MAX_WALLETS
     from links import external_links_html, pool_links_html
     from lp_watchlist import LP_SOURCE
-    from meteora_screener import row_flag, scan_meteora, sort_rows
+    from meteora_screener import row_dust_pct, row_flag, scan_meteora, sort_rows
     from watchlist import add_to_watchlist
 
     with st.container(border=True):
@@ -104,6 +110,7 @@ def render_meteora_scan() -> None:
         rows = sort_rows(result.get("rows") or [])
         hidden = int(result.get("hidden_dust") or 0)
         fetched = int(result.get("fetched") or 0)
+        skipped_quote = int(result.get("skipped_quote") or 0)
         best_count = sum(1 for row in rows if row_flag(row).get("best"))
 
         # Tidak ada caption ambang lagi (2026-09-11): seluruh deskripsi rule
@@ -114,8 +121,10 @@ def render_meteora_scan() -> None:
             st.warning(f"Meteora API: {error}")
         if fetched:
             best_txt = (f" · 🏆 {best_count} BEST POOL" if best_count else "")
+            quote_txt = (f" · {skipped_quote} pool quote dilewati"
+                         if skipped_quote else "")
             st.caption(f"{len(rows)} pool ditampilkan · {hidden} disembunyikan"
-                       f" · listing {fetched}{best_txt}.")
+                       f" · listing {fetched}{best_txt}{quote_txt}.")
         if not rows:
             if result:
                 st.info("Tidak ada pool yang lolos filter dust (atau "
@@ -138,7 +147,10 @@ def render_meteora_scan() -> None:
             symbol = str(row.get("symbol") or "?").upper()
             pool = str(row.get("pool_address") or "")
             dust_count = row.get("dust_count")
-            dust_pct = row.get("dust_pct_mc")
+            # Satu sumber angka dengan saringan + urutan (``row_dust_pct``):
+            # scan holder tanpa bukti sudah jadi ``None`` di situ, jadi kartu
+            # ini tidak pernah menampilkan 0,000% dari provider yang mati.
+            dust_pct = row_dust_pct(row)
             tvl = row.get("tvl")
             # BEST POOL butuh bukti data holder valid (bukan cuma angka) +
             # TVL pool ≥ 10K: guard ada di dust_flag(holders=…, tvl=…),
@@ -175,14 +187,20 @@ def render_meteora_scan() -> None:
                 f'{_number(dust_count, ".0f")}</div>'
                 '<div class="watchlist-metric-sub">wallet</div></div>',
                 unsafe_allow_html=True)
-            pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.2f}%"
+            # 3 desimal (sama seperti kolom Hold %MC Watchlist Meteora,
+            # 2026-09-12): listing ini hanya memuat dust ≤ 0,1% MC, jadi dua
+            # desimal membuat hampir semua baris tampil "0,00%"/"0,01%".
+            pct_txt = "—" if dust_pct is None else f"{float(dust_pct):.3f}%"
             # Badge level (AMAN/HATI-HATI/BAHAYA) sengaja TIDAK dirender di
             # listing ini sejak 2026-09-07: semua baris sudah ≤ 0,1% MC,
-            # jadi hanya chip 🏆 BEST POOL yang informatif.
+            # jadi hanya chip 🏆 BEST POOL + alasan "tanpa angka" yang informatif.
+            note = str(row.get("holders_note") or "").strip()
+            note_html = (f'<div class="watchlist-metric-sub">{html.escape(note)}'
+                         '</div>' if note else "")
             cols[4].markdown(
                 '<div class="watchlist-metric">'
                 '<div class="watchlist-metric-value">'
-                f"{pct_txt}</div>{_dust_best_html(flag)}</div>",
+                f"{pct_txt}</div>{note_html}{_dust_best_html(flag)}</div>",
                 unsafe_allow_html=True)
             cols[5].markdown(
                 '<div class="watchlist-metric">'

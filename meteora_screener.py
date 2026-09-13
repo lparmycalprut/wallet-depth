@@ -7,6 +7,19 @@ Endpoint: ``pool-discovery-api.datapi.meteora.ag/pools``
 
 Pool 24 jam yang masih muncul di 1 jam **tetap ditampilkan**. Pool 1 jam
 yang belum ada di 24 jam ikut digabung (sama seperti listing Trending).
+
+**Dust %MC kartu ini memakai pembagi yang sama dengan kartu lain** (2026-09-13):
+market cap dan harga diambil dari **DexScreener** lewat
+``holder_analysis.analyze_token`` — angka listing Meteora (``market_cap or
+fdv``) hanya cadangan bila DexScreener tidak membalas. Sebelumnya MC Meteora
+yang menang, jadi Scan Meteora dan Scan Holder bisa menampilkan dua angka dust
+%MC berbeda untuk token yang sama (dan titik history yang ditulis scan pool
+tidak sebanding dengan titik cron). **Hasil scan holder tanpa bukti tidak
+pernah tampil sebagai 0,000%**: fetch gagal / 0 wallet / terpotong / sampel
+< 40 wallet → ``dust_pct_mc = None`` (``row_dust_pct``), barisnya diberi
+``holders_note``, dan listing pool **quote-only** (SOL/USDC/USDT, tanpa sisi
+memecoin — dust-nya dihitung terhadap MC SOL, jadi selalu “0,000%”) dibuang
+sebelum fetch holder.
 Setelah fetch holder, pool dengan dust holder **> 0,1% marketcap**
 disembunyikan (sejak 2026-09-07; sebelumnya hanya ≥ 1% = BAHAYA). Badge
 AMAN/HATI-HATI/BAHAYA **tidak lagi dipakai** di listing ini — yang lolos
@@ -39,7 +52,8 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from holder_history import DUST_SCAN_HIDE_PCT, dust_flag, should_hide_dust
+from holder_history import (DUST_SCAN_HIDE_PCT, MIN_USABLE_WALLETS, dust_flag,
+                            holders_usable, should_hide_dust)
 
 POOLS_URL = "https://pool-discovery-api.datapi.meteora.ag/pools"
 PAGE_SIZE = 50
@@ -174,6 +188,41 @@ def base_token(pool: dict | None) -> dict:
     return token_x or token_y
 
 
+def unanalysable_row(row: dict | None) -> str:
+    """Alasan baris **tidak punya token base** yang bisa di-analisa (kosong = bisa).
+
+    ``base_token()`` mengembalikan ``token_x or token_y`` bila kedua sisi pool
+    adalah token quote (SOL / USDC / USDT) — pool semacam ini tidak punya sisi
+    memecoin sama sekali (USDT-USDC, SOL-USDC, SOL-USDT). Holder yang di-scan
+    lalu = holder SOL/USDC dan MC pembaginya = MC SOL (miliaran dolar), jadi
+    dust % MC-nya **selalu** ≈ 0,000% — pool "paling bersih" di listing dan
+    langsung menyabet 🏆 BEST POOL, padahal angkanya tidak pernah berarti apa
+    apa untuk token itu. Baris tanpa mint sama sekali juga dibuang.
+    """
+    row = row or {}
+    mint = str(row.get("ca") or "").strip()
+    if not mint:
+        return "mint token base tidak terbaca"
+    if mint in QUOTE_MINTS:
+        return "pool quote-only (SOL/USDC/USDT, tanpa sisi memecoin)"
+    return ""
+
+
+def drop_quote_rows(rows: list[dict] | None) -> tuple[list[dict], int]:
+    """Buang baris yang tidak punya token base untuk di-analisa.
+
+    Return ``(kept, dropped)``. Dipakai **sebelum** fetch holder supaya kuota
+    Helius tidak terbakar untuk pool yang angkanya pasti tidak bermakna.
+    """
+    kept, dropped = [], 0
+    for row in rows or []:
+        if unanalysable_row(row):
+            dropped += 1
+            continue
+        kept.append(row)
+    return kept, dropped
+
+
 def _row_from_pool(pool: dict, *, in_24h: bool, in_1h: bool) -> dict:
     token = base_token(pool)
     mint = str(token.get("address") or "").strip()
@@ -184,6 +233,9 @@ def _row_from_pool(pool: dict, *, in_24h: bool, in_1h: bool) -> dict:
         "ca": mint,
         "symbol": str(token.get("symbol") or pool.get("name") or "?").upper(),
         "name": str(token.get("name") or ""),
+        # Cadangan pembagi dust saja — angka yang dipakai di layar datang dari
+        # :func:`enrich_pools` (MC DexScreener, sama seperti kartu lain), lihat
+        # komentar di ``holder_analysis.analyze_token``.
         "mc": _float(token.get("market_cap") or token.get("fdv")),
         "price": _float(token.get("price")),
         "holders_reported": token.get("holders"),
@@ -274,7 +326,20 @@ def _mint_pools(rows: list[dict]) -> dict[str, set[str]]:
 
 def enrich_pools(rows: list[dict], *, max_wallets: int = 2000,
                  workers: int = 6, progress=None) -> list[dict]:
-    """Fetch holder per mint unik, tempel ``analysis`` ke setiap baris pool."""
+    """Fetch holder per mint unik, tempel ``analysis`` ke setiap baris pool.
+
+    Angka dust yang ditulis ke baris **hanya** dipakai bila hasil fetch
+    holdernya bisa dipercaya (:func:`holder_history.holders_usable`): scan
+    dengan 0 wallet, terpotong, atau sampel < 40 wallet menghasilkan
+    ``dust_count = 0`` / ``dust_pct_mc = 0.0`` yang di layar terbaca sebagai
+    **0,000% "pool paling bersih"** padahal itu kegagalan provider — angka
+    itu tidak akan pernah cocok dengan hasil Scan Holder token yang sama
+    (kasus nyata: user, 2026-09-13: "di scan meteora menunjukkan 0.000% baru
+    saya scan, padahal di scan holder hasilnya beda"). Baris semacam itu
+    sekarang ``dust_pct_mc = None`` + alasan di ``holders_note``, sehingga
+    saringan Best Pool menggugurkannya (``None`` = tidak ada bukti) dan
+    listing Scan Meteora menampilkannya tanpa angka.
+    """
     if not rows:
         return rows
     from holder_analysis import analyze_token
@@ -282,7 +347,8 @@ def enrich_pools(rows: list[dict], *, max_wallets: int = 2000,
 
     store = load_holder_history()
     mint_pools = _mint_pools(rows)
-    mints = [mint for mint in mint_pools if mint]
+    mints = [mint for mint in mint_pools
+             if mint and mint not in QUOTE_MINTS]
     total = len(mints)
     workers = max(1, min(int(workers), 8))
     analyses: dict[str, dict | None] = {}
@@ -293,6 +359,11 @@ def enrich_pools(rows: list[dict], *, max_wallets: int = 2000,
         addrs = list((cohort.get("balances") or {}).keys())
         symbol = next((str(r.get("symbol") or "?") for r in rows
                        if r.get("ca") == mint), "?")
+        # MC/harga listing Meteora hanya **cadangan**: ``analyze_token``
+        # memakai market cap DexScreener yang baru di-fetch sebagai
+        # pembagi dust, supaya angka Dust %MC kartu ini sebanding dengan
+        # Scan Holder / watchlist / titik history (lihat komentar di
+        # ``holder_analysis.analyze_token``).
         mc = next((_float(r.get("mc")) for r in rows if r.get("ca") == mint), 0.0)
         price = next((_float(r.get("price")) for r in rows if r.get("ca") == mint),
                      0.0)
@@ -319,8 +390,15 @@ def enrich_pools(rows: list[dict], *, max_wallets: int = 2000,
                         pass
         try:
             from holder_history import ingest_many
+            # Hanya scan dengan **bukti** holder yang di-ingest (aturan yang
+            # sama dengan lane Watchlist Meteora / cron): satu titik
+            # ``dust_pct_mc = 0.0`` dari fetch yang gagal bisa menimpa titik
+            # cron yang benar di dalam ``MIN_POINT_GAP_SEC`` (scan dobel =
+            # timpa titik terakhir) sehingga grafik dust token watchlist
+            # terlihat jatuh ke nol.
             ok = {mint: item for mint, item in analyses.items()
-                  if isinstance(item, dict)}
+                  if isinstance(item, dict)
+                  and holders_usable(item.get("holders"))}
             if ok:
                 ingest_many(ok)
         except Exception:
@@ -332,22 +410,63 @@ def enrich_pools(rows: list[dict], *, max_wallets: int = 2000,
         analysis = analyses.get(item.get("ca"))
         item["analysis"] = analysis
         holders = (analysis or {}).get("holders") or {}
-        item["dust_count"] = holders.get("dust_count")
-        item["dust_pct_mc"] = holders.get("dust_pct_mc")
-        item["real_count"] = holders.get("real_count")
+        # MC yang benar-benar dipakai sebagai pembagi dust ditulis balik ke
+        # baris, supaya kolom MC di card tidak pernah terlihat "berantakan"
+        # dengan Dust %MC di sebelahnya (dua angka dari dua sumber berbeda).
+        mc_used = _float((analysis or {}).get("marketcap"), 0.0)
+        if mc_used > 0:
+            item["mc"] = mc_used
+        proof = holders_usable(holders)
+        item["holders_proof"] = bool(proof)
+        item["holders_note"] = "" if proof else _holder_gap(analysis, holders)
+        item["dust_count"] = holders.get("dust_count") if proof else None
+        item["dust_pct_mc"] = holders.get("dust_pct_mc") if proof else None
+        item["real_count"] = holders.get("real_count") if proof else None
         out.append(item)
     return out
+
+
+def _holder_gap(analysis, holders: dict) -> str:
+    """Alasan pendek "angka dust tidak bisa dipercaya" untuk satu baris pool.
+
+    Ditempel ke ``holders_note`` lalu ditampilkan UI di bawah Dust %MC —
+    penggantinya angka **0,000%** palsu hasil scan holder yang gagal.
+    """
+    if not isinstance(analysis, dict):
+        return "⚠️ holder gagal di-scan"
+    error = str(holders.get("error") or holders.get("fetch_error") or "").strip()
+    if holders.get("truncated"):
+        return "⚠️ holder terpotong" + (f": {error[:48]}" if error else "")
+    fetched = int(_float(holders.get("total_fetched"), 0.0))
+    wallets = int(_float(holders.get("wallets_analyzed"), 0.0)) or fetched
+    if fetched <= 0:
+        return ("⚠️ 0 holder"
+                + (f": {error[:48]}" if error else " (provider mati)"))
+    return (f"⚠️ sampel {wallets} wallet — butuh "
+            f"≥ {int(MIN_USABLE_WALLETS)} untuk dust %MC")
 
 
 def row_dust_pct(row: dict | None):
     """Dust % MC satu baris pool: ``analysis`` dulu, fallback field baris.
 
-    Dipakai bersama oleh :func:`hide_dust_limit`, :func:`row_flag`, dan
-    ``app._render_meteora_scan`` supaya angka yang menyaring, mengurutkan,
-    dan yang tampil di layar **selalu** berasal dari sumber yang sama.
+    Dipakai bersama oleh :func:`hide_dust_limit`, :func:`row_flag`,
+    ``best_pool_ui`` dan ``temp_ui.render_meteora_scan`` supaya angka yang
+    menyaring, mengurutkan, dan yang tampil di layar **selalu** berasal dari
+    sumber yang sama.
+
+    Scan holder yang **tidak** bisa dipercaya (0 wallet / terpotong / sampel
+    di bawah :data:`~holder_history.MIN_USABLE_WALLETS`) selalu mengembalikan
+    ``None``, bukan ``0.0`` hasil klasifikasi kosong: tanpa bukti, barisnya
+    dianggap "tanpa angka dust" — digugurkan saringan Best Pool, tidak bisa
+    jadi BEST POOL, dan tidak pernah tampil sebagai **0,000%** yang menipu.
     """
     row = row or {}
-    pct = ((row.get("analysis") or {}).get("holders") or {}).get("dust_pct_mc")
+    analysis = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
+    holders = analysis.get("holders") if isinstance(analysis, dict) else None
+    holders = holders if isinstance(holders, dict) else {}
+    if holders and not holders_usable(holders):
+        return None
+    pct = holders.get("dust_pct_mc")
     if pct is None:
         pct = row.get("dust_pct_mc")
     return pct
@@ -431,6 +550,9 @@ def scan_meteora(*, max_wallets: int | None = None, workers: int = 6,
     if _alog and error:
         _alog.error("scan-meteora", f"listing Meteora gagal: {error[:160]}")
     fetched = len(rows)
+    # Pool tanpa sisi memecoin (SOL/USDC/USDT) dibuang sebelum fetch holder:
+    # dust %-nya dihitung terhadap MC SOL → selalu 0,000% dan selalu "bersih".
+    rows, quote_skipped = drop_quote_rows(rows)
     if rows:
         rows = enrich_pools(rows, max_wallets=max_wallets, workers=workers,
                             progress=progress)
@@ -443,12 +565,15 @@ def scan_meteora(*, max_wallets: int | None = None, workers: int = 6,
     if _alog:
         _alog.info("scan-meteora",
                    f"scan selesai: {len(rows)} pool tampil dari {fetched} "
-                   f"listing ({hidden} disembunyikan dust)")
+                   f"listing ({hidden} disembunyikan dust"
+                   + (f", {quote_skipped} pool quote dilewati"
+                      if quote_skipped else "") + ")")
     return {
         "rows": rows,
         "error": error,
         "fetched": fetched,
         "hidden_dust": hidden,
+        "skipped_quote": quote_skipped,
         "hide_pct": float(DUST_SCAN_HIDE_PCT),
         "best_count": sum(1 for row in rows if row_flag(row).get("best")),
         "analyzed_at": int(time.time()),
@@ -682,6 +807,11 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
             _alog.error("scan-best-pool",
                         f"listing Meteora gagal: {str(exc)[:160]}")
     rows = rows_from_pools(pools)
+    fetched = len(rows)
+    # Pool quote-only (tanpa sisi memecoin) tidak dianalisa dan tidak ikut
+    # listing — dust %-nya terhadap MC SOL/USDC selalu 0,000% (lihat
+    # :func:`unanalysable_row`).
+    rows, quote_skipped = drop_quote_rows(rows)
     # Volume 24 jam >= $1M wajib untuk listing utama **dan** listing
     # disembunyikan (permintaan user 2026-09-12: klik pill "N
     # disembunyikan" tetap kriteria 1M + dust < 0,05%). Pool sepi tidak
@@ -710,13 +840,18 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
         _alog.info("scan-best-pool",
                    f"scan selesai: {len(kept)} pool lolos dari {len(rows)} "
                    f"listing ({hidden_metric} gugur metrik, {hidden_dust} "
-                   "gugur dust)")
+                   "gugur dust"
+                   + (f", {quote_skipped} pool quote dilewati"
+                      if quote_skipped else "") + ")")
     return {
         "rows": kept,
         "hidden_rows": hidden_rows,
         "error": error,
-        "fetched": len(rows),
+        "fetched": fetched,
         "hidden_metric": hidden_metric,
         "hidden_dust": hidden_dust,
+        # Baris tanpa angka dust (holder gagal/terpotong) sudah dihitung di
+        # ``hidden_dust``: tanpa bukti dust tidak ada tempat di card ini.
+        "skipped_quote": quote_skipped,
         "analyzed_at": int(time.time()),
     }

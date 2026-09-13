@@ -1,5 +1,37 @@
 # Progress
 
+## 2026-09-13: 🌊/🏆 Scan Meteora — Dust %MC tidak lagi 0,000% palsu
+
+**Status: selesai.** Permintaan user: *"di scan meteora menunjukkan 0.000%
+baru saya scan padahal di scan holder hasilnya beda, coba kamu perbaiki"*.
+
+Tiga akar diperbaiki sekaligus, semuanya membuat angka Scan Meteora dan Scan
+Holder bicara dengan bahasa berbeda:
+
+1. **satu pembagi** — `holder_analysis.analyze_token` sekarang mendahulukan
+   market cap/harga **DexScreener** hasil fetch terbaru; `market_cap` /
+   `price_usd` dari pemanggil (hanya Scan Meteora yang mengirim: MC listing
+   pool = `market_cap or fdv`) jadi **cadangan**. Kolom MC baris ditulis ulang
+   ke MC yang dipakai, `enrich_pools` → `row["mc"]`.
+2. **tanpa bukti = tanpa angka** — `meteora_screener.row_dust_pct()`
+   mengembalikan `None` (bukan `0.0` dari `classify_holders` daftar kosong)
+   bila `holder_history.holders_usable` False (fetch gagal/0 wallet,
+   `truncated`, sampel < 40); `enrich_pools` memberi `holders_note` +
+   men-null-kan `dust_*`, `ingest_many` hanya menerima scan layak (titik 0,0
+   tidak lagi menimpa titik cron dalam `MIN_POINT_GAP_SEC`).
+3. **pool quote-only dibuang** — `unanalysable_row()` / `drop_quote_rows()`
+   sebelum fetch holder + rekap `skipped_quote` di caption kedua card:
+   `base_token()` jatuh ke `token_x` untuk pool SOL/USDC/USDT sehingga yang
+   di-scan adalah holder SOL dibagi MC SOL → "0,000% + 🏆 BEST POOL" permanen.
+
+UI: listing Scan Meteora menampilkan `—` + alasan dan **3 desimal** di kolom
+Dust %MC (sama seperti Hold %MC Watchlist Meteora, 2026-09-12); rule dibaca di
+tooltip judul kedua card. Tes baru 22 (DropQuoteRowsTest, EnrichPoolsProofTest,
+BuktiHolderTest, MarketPrecedenceTest) + fixture UI `_proof()` di
+`tests/test_best_pool_scan.py`; suite hijau (baseline offline dipertahankan).
+
+Detail: `KEGIATAN.md` 13 September 2026 (blok paling atas).
+
 ## 2026-09-11: 🦅 Scan Best Robinhood Coin → temp · 🏆 Scan Best Pool Meteora keluar grid
 
 **Status: selesai & tes hijau (1049 passed, 21 subtests — sama dengan baseline).**

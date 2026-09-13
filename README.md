@@ -55,7 +55,13 @@ atau setelan Telegram. Robinhood LP tetap di halaman utama, bukan di temp.
 ## Konsep
 
 1. **Dust holder** — wallet murni dengan `0 < nilai ≤ $10`:
-   - **dust % MC** = total nilai dust / marketcap × 100,
+   - **dust % MC** = total nilai dust / marketcap × 100 — **satu sumber angka
+     di semua kartu**: MC dan harga dari DexScreener (yang baru di-fetch),
+     bukan MC listing Meteora/Blockscout (2026-09-13; itu hanya cadangan bila
+     DexScreener tidak membalas),
+   - **tanpa bukti holder = tanpa angka**: scan yang gagal / 0 wallet /
+     terpotong / sampel < 40 wallet menampilkan `—` (bukan `0,00%`),
+     `holder_history.holders_usable` satu-satunya gerbangnya,
    - ≥ **0,5% MC** → **HATI-HATI** (badge kuning, peringatan dini — Chart LP
      / watchlist),
    - ≥ **1% MC** → **BAHAYA** (Chart LP / watchlist),
@@ -399,6 +405,26 @@ Watchlist Meteora di dalam grid). **Kriteria diganti total
   (`DUST_SCAN_HIDE_PCT`, sejak 2026-09-07); dust > 0,1% disembunyikan.
   Badge AMAN/HATI-HATI/BAHAYA **tidak dipakai** di listing ini (semua baris
   sudah ≤ 0,1%). Dust `None` (holder gagal di-fetch) tetap tampil tanpa angka
+- **Dust %MC = nilai dust / MC DexScreener × 100** — pembagi yang sama dengan
+  🛰 Scan Holder, Watchlist Meteora, cron dan titik `holder_history`
+  (sejak 2026-09-13). MC/harga dari listing pool Meteora (`market_cap or
+  fdv`) hanya cadangan bila DexScreener tidak membalas; sebelumnya angka
+  Meteora yang menang sehingga kartu ini bisa menampilkan dust %MC yang beda
+  dari Scan Holder untuk token yang sama. Kolom **MC** di kedua kartu scan
+  Meteora ditulis ulang ke MC yang benar-benar dipakai sebagai pembagi.
+- **Scan holder tanpa bukti tidak pernah tampil sebagai `0,000%`** (2026-09-13):
+  fetch gagal / 0 wallet / hasil `truncated` / sampel < `MIN_USABLE_WALLETS`
+  (40) → `meteora_screener.row_dust_pct()` mengembalikan `None`, barisnya
+  menampilkan `—` + alasan kecil di bawahnya (`holders_note`), tidak bisa jadi
+  BEST POOL, dan digugurkan saringan Best Pool (`None` = tidak ada bukti).
+  Titik `holder_history` juga hanya ditulis untuk scan yang layak, supaya
+  provider yang mati tidak menimpa titik cron yang benar.
+- Pool **tanpa sisi memecoin** (USDC-USDT, SOL-USDC, SOL-USDT) dibuang
+  **sebelum** holder di-fetch (2026-09-13): `base_token()` jatuh ke `token_x`,
+  jadi pool ini "berhak" di-scan dengan holder SOL dan MC $miliaran →
+  dust-nya selalu terbaca **0,000%** dan selalu paling "bersih" di listing.
+  Rekapnya muncul di caption sebagai `N pool quote dilewati`
+  (`scan_meteora()["skipped_quote"]` / `scan_best_meteora()["skipped_quote"]`)
 - Kolom **TVL** (TVL pool dari API Meteora) ikut ditampilkan
 - Dust **< 0,1% MC** + data holder valid (≥ 40 wallet) + **TVL ≥ 10K USD**
   diberi badge **🏆 BEST POOL** di kolom Dust %MC — hanya di listing ini;

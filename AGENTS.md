@@ -403,10 +403,39 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   POOL N`. Penanda **visual, bukan saringan** (saringan tetap 0,05%);
   ambangnya dibaca konstanta di tooltip card dan tooltip sel — jangan
   hard-code angkanya di teks.
+  **Dua rule 2026-09-13 (akar keluhan "di scan meteora menunjukkan 0.000%
+  padahal di scan holder hasilnya beda") — jangan dirotasi balik:**
+  (a) **satu denominator** — `holder_analysis.analyze_token` menghitung
+  `mc`/`price` dari data market yang BARU di-fetch (DexScreener) dan angka
+  listing pemanggil (`enrich_pools` mengirim MC/harga Meteora) hanya jadi
+  **cadangan** (`market.get("marketcap") or market_cap`). MC Meteora =
+  `market_cap or fdv` + harga lain sumber = dua kartu membagi dust dengan
+  angka berbeda, dan titik `holder_history` dari scan pool tidak sebanding
+  dengan titik cron. `enrich_pools` **menulis balik** `row["mc"]` ke MC yang
+  dipakai, jadi kolom MC dan Dust %MC satu sumber. (b) **tanpa bukti = tanpa
+  angka** — `row_dust_pct()` mengembalikan `None` (bukan `0.0` dari
+  `classify_holders` daftar kosong) bila `holder_history.holders_usable(holders)`
+  False (fetch gagal/0 wallet, `truncated`, sampel < `MIN_USABLE_WALLETS`),
+  `enrich_pools` men-null-kan `dust_count`/`dust_pct_mc`/`real_count` +
+  menulis `holders_note`, dan `ingest_many` hanya menerima analisis yang layak.
+  Selain itu `drop_quote_rows()` (dipakai `scan_meteora` dan
+  `scan_best_meteora`, hasil di `skipped_quote`) membuang baris yang
+  `unanalysable_row()`-nya terisi: `ca` kosong atau `ca in QUOTE_MINTS` —
+  `base_token()` jatuh ke `token_x` untuk pool SOL/USDC/USDT, jadi tanpa
+  guard ini holder SOL di-scan lalu dibagi MC SOL = "0,000% + 🏆 BEST POOL"
+  permanen. Rekap + alasan tampil di UI (`temp_ui` caption `N pool quote
+  dilewati` dan sub sel Dust %MC).
 - `holder_analysis.py`: **Helius** sumber holder utama
   (`fetch_holders_helius`, fallback GMGN). `analyze_token` = holder
   real/dust + mid-tier + kohort. `extra_pools` + `cohort_addrs`
-  untuk Meteora / kohort.
+  untuk Meteora / kohort. **Pembagi persen = data market terbaru**
+  (`get_market`/DexScreener), parameter `market_cap`/`price_usd` dari
+  pemanggil **hanya cadangan** sejak 2026-09-13 — urutan lama
+  (`market_cap or market…`) membuat Scan Meteora membagi dust dengan MC
+  listingnya sendiri sementara kartu lain memakai MC DexScreener, sehingga
+  dua kartu menampilkan angka berbeda untuk token yang sama. Jangan dibalik:
+  semua pembanding (`holder_status`, `holder_history`, alert Telegram) dihitung
+  dengan denominator DexScreener.
 - `solscan_holders.py`: hanya kalkulasi `wallet_depth`.
 - `helius_holders.py`: Scan Holder Khusus satu token (Solana/Helius).
   Padanan Robinhood Chain: `robinhood_holders.scan_token_holders`
@@ -790,6 +819,18 @@ dust BAHAYA           : >= 1% marketcap (Chart LP / watchlist)
 hide Scan Meteora     : > 0.1% marketcap (DUST_SCAN_HIDE_PCT, 2026-09-07);
                         listing hanya memuat dust <= 0.1%, badge level
                         AMAN/HATI-HATI/BAHAYA dinonaktifkan di listing itu
+pembagi dust %MC      : market cap DEXSCREENER hasil fetch terbaru di semua
+                        kartu (2026-09-13) — angka yang dikirim pemanggil ke
+                        analyze_token (MC listing Meteora/Blockscout) hanya
+                        cadangan saat DexScreener diam
+bukti dust Meteora    : row_dust_pct() = None bila holders_usable False (fetch
+                        gagal / 0 wallet / truncated / sampel <
+                        MIN_USABLE_WALLETS 40) — bukan 0.0 dari daftar kosong
+                        (2026-09-13). Barisnya tanpa angka + holders_note,
+                        gugur dari Best Pool, tanpa BEST POOL, dan tidak
+                        di-ingest ke holder_history. Pool tanpa sisi memecoin
+                        (ca in QUOTE_MINTS / mint kosong) dibuang sebelum
+                        fetch holder (drop_quote_rows -> skipped_quote)
 badge BEST POOL       : < 0.1% marketcap (DUST_BEST_PCT, aditif) + data
                         holder valid: total_fetched > 0 dan >= 40 wallet
                         (DUST_BEST_MIN_HOLDERS) + TVL pool >= 10K USD

@@ -1,3 +1,126 @@
+# Kegiatan — 13 September 2026 (🌊 Scan Meteora: 0,000% palsu dibersihkan — satu pembagi MC + tanpa angka tanpa bukti holder)
+
+Permintaan user: *\\\"di scan meteora menunjukkan **0.000% baru saya scan** padahal
+di scan holder hasilnya beda, coba kamu perbaiki\\\"*.
+
+Angka **0,000%** di kolom Dust %MC kartu 🏆 Scan Best Pool Meteora / 🌊 Scan
+Meteora Pool punya tiga akar, dan ketiganya bikin kartu itu **tidak** lagi
+membaca hal yang sama dengan 🛰 Scan Holder:
+
+## 1. Dua denominator untuk satu token
+
+`holder_analysis.analyze_token` dulu mendahulukan angka dari pemanggil:
+
+```python
+mc = float(market_cap or market.get("marketcap") or 0)
+price = float(price_usd or market.get("price_usd") or 0)
+```
+
+Semua pemanggil lain (`app.py` Watchlist Meteora, `temp_ui`, `pages/5_🧮_Holder.py`,
+`scripts/scan_holders.py` = cron) memanggil tanpa `market_cap` → pembaginya
+market cap **DexScreener**. Hanya `meteora_screener.enrich_pools` mengirim MC
+listing pool Meteora (`token.market_cap or token.fdv`) — dan angka itulah yang
+menang, sekaligus harganya (pemilah wallet ≤ $10 = dust). Efeknya: dua kartu
+membagi dust dengan MC berbeda (MC listing bisa FDV, 10-an kali lebih besar
+dari MC beredar → dust 0,015% terbaca 0,000%), harga pemilah bucketnya berbeda
+(jumlah wallet dustnya ikut beda), dan titik `holder_history` yang ditulis scan
+pool tidak sebanding dengan titik cron untuk token yang sama.
+
+**Perbaikan:** precedence dibalik — data market yang baru di-fetch adalah
+rujukan, angka pemanggil hanya **cadangan** saat DexScreener tidak membalas
+(`market.get("marketcap") or market_cap`). Tidak ada kartu lain yang berubah
+(mereka tidak pernah mengirim angka), dan `cron/historical_dust_tracker.py`
+(yang memanggil `classify_holders` langsung dengan MC DexScreener) tetap sama.
+`enrich_pools` **menulis balik MC yang dipakai** ke `row["mc"]` supaya kolom MC
+di tabel dan Dust %MC di sebelahnya tidak pernah dari dua sumber berbeda;
+tooltip sel MC + Dust %MC menuliskan sumbernya.
+
+## 2. Scan holder tanpa bukti terbaca seperti \\\"pool paling bersih\\\"
+
+`classify_holders` atas daftar kosong mengembalikan `dust_count: 0` /
+`dust_pct_mc: 0.0` — nol aritmatik, bukan bukti. Di jalur watchlist kasus ini
+sudah disaring `holder_history.holders_usable` sejak 2026-09-06 (\\\"dust turun
+−100%\\\") dan di jalur Robinhood sejak 2026-09-12 (\\\"jangan tampil sebagai
+dust 0,00%\\\"), **jalur Meteora belum pernah dapat guard itu** — padahal
+0,0 persis nilai terbaik untuk saringan `dust < 0,05% MC`, kunci urut kedua,
+dan chip 🏆 BEST POOL (`row_best_pool` hanya membaca angka, bukan buktinya).
+
+- `meteora_screener.row_dust_pct()` sekarang mengembalikan `None` bila
+  `holders_usable(analysis.holders)` False: fetch gagal, 0 wallet, hasil
+  `truncated` (ekor dust tidak ikut terambil), atau sampel <
+  `MIN_USABLE_WALLETS` (40). Satu fungsi itu dipakai saringan, urutan, badge,
+  dan UI, jadi angka yang menyaring = angka yang tampil.
+- `enrich_pools()` men-null-kan `dust_count`/`dust_pct_mc`/`real_count` untuk
+  baris tanpa bukti, menandai `holders_proof: False`, dan menulis alasan
+  pendek di `holders_note` (\\\"⚠️ 0 holder (provider mati)\\\", \\\"⚠️ holder
+  terpotong\\\", \\\"⚠️ sampel 18 wallet — butuh ≥ 40 untuk dust %MC\\\").
+- `ingest_many(ok)` di `enrich_pools` kini hanya menerima analisis yang
+  **layak**: sebelumnya titik 0,0 dari provider mati bisa **menimpa** titik
+  cron yang benar di dalam `MIN_POINT_GAP_SEC` (scan dobel = timpa titik
+  terakhir) dan grafik dust token watchlist terlihat jatuh ke nol.
+- Guardnya **bukti, bukan nilainya**: dust 0,000% dari scan FULL yang lengkap
+  tetap lolos dan tetap dapat 🏆 BEST POOL. Yang gugur hanya baris tanpa bukti
+  (tidak ada angka untuk dibuktikan) — persis rule yang sudah ditulis di
+  docstring Best Pool \\\"`None` selalu menggugurkan baris: card ini menjual
+  bukti\\\". **Konsekuensi yang disengaja:** token yang total walletnya di bawah
+  `MIN_USABLE_WALLETS` (40) — pool baru, holder sedikit — juga tanpa bukti
+  distribusi, jadi angkanya tidak ditampilkan dan poolnya tidak masuk Best
+  Pool. Ini lantai yang sama dengan badge 🏆 BEST POOL
+  (`DUST_BEST_MIN_HOLDERS`) dan dengan lane watchlist/cron sejak
+  2026-09-06; dulu listing ini mengiklankan \\\"dust 0,00%\\\" dari 12 wallet
+  sebagai pool terbersih, dan itu justru angka yang paling sering tidak cocok
+  dengan Scan Holder.
+- UI: listing Scan Meteora menampilkan `—` + catatan kecil alasan di bawah
+  Dust %MC; kartu Best Pool tidak lagi menaruh baris itu di listing utama
+  maupun listing \\\"disembunyikan\\\" (`row_dust_ok` = `False`).
+
+## 3. Pool quote-only \\\"bersih\\\" selamanya
+
+`base_token()` mengambil sisi non-quote dan **jatuh ke `token_x`** bila kedua
+sisi adalah token quote. Untuk pool USDC-USDT / SOL-USDC / SOL-USDT (senantiasa
+ada di listing top DLMM 24 jam, TVL besar, volume puluhan juta) yang diambil
+adalah **SOL**: yang di-scan = holder SOL, pembaginya = MC SOL. Dust %MC-nya
+tidak pernah bukan nol nyata → **0,000%** + 🏆 BEST POOL, dan kuota Helius
+terbakar untuk scan 100k akun yang hasilnya pasti sampah.
+
+`meteora_screener.unanalysable_row()` + `drop_quote_rows()` membuangnya
+**sebelum** fetch holder (juga `mints` di `enrich_pools` — dua lapis, karena
+modul ini dipakai ulang); rekapnya jadi data, bukan rule: caption
+`· N pool quote dilewati` dari `result[\"skipped_quote\"]` di kedua kartu dan
+satu baris di 🧾 Log Aktivitas.
+
+## Verifikasi
+
+`python -m unittest discover -s tests -t .` (suite offline di sandbox: tanpa
+streamlit, 199 tes UI di-skip) → **1086 tes, 0 regresi** dibanding baseline
+(commit sama: 1065 tes, failure/error yang tersisa semua karena `streamlit`
+tidak terpasang di sandbox). Tes baru:
+
+- `tests/test_meteora_screener.py` — `DropQuoteRowsTest` (6: pool dua sisi
+  quote dibuang, mint kosong dibuang, `skipped_quote` di `scan_meteora` dan
+  `scan_best_meteora`, holder quote tidak di-fetch) dan `EnrichPoolsProofTest`
+  (7: fetch gagal / terpotong / sampel pendek → `None` + alasan, scan lengkap
+  tetap utuh, `mc` baris ditulis balik, ingest hanya yang layak, mint quote
+  tidak di-analisa); `test_baris_tanpa_data_dust_paling_bawah` disesuaikan
+  karena baris \\\"0 wallet\\\" kini sekelompok dengan \\\"tanpa angka\\\";
+- `tests/test_best_pool_scan.py` — `BuktiHolderTest` (5): gugur saringan,
+  gugur `hidden_rows`, `hidden_dust` terhitung, scan valid 0,0 tetap lolos;
+- `tests/test_holder_analysis.py` — `MarketPrecedenceTest` (3): data market
+  menang atas angka pemanggil, angka pemanggil jadi cadangan, pemanggil tanpa
+  angka tidak berubah.
+
+Teks yang ikut disinkronkan: rule + ambang dibaca dari konstanta di tooltip
+judul (tidak ada caption rule baru — `TooltipBukanCaptionTest`) —
+`best_pool_ui.best_pool_tooltip()`, `temp_ui.meteora_scan_tooltip()`, tooltip
+sel MC/Dust %MC, docstring modul `meteora_screener`, `README.md` (Konsep +
+bagian 🌊 Scan Meteora Pool), dan `AGENTS.md` (bulket `meteora_screener.py` +
+`holder_analysis.py`).
+
+Satu perubahan tampilan kecil sekalian: kolom **Dust %MC** listing 🌊 Scan
+Meteora Pool ikut **3 desimal** (2026-09-12 kolom Hold %MC Watchlist Meteora
+sudah; listing ini justru hanya memuat dust ≤ 0,1% MC sehingga dua desimal
+membuat hampir semua baris \\\"0,00%\\\").
+
 # Kegiatan — 12 September 2026 (klik pill N disembunyikan → listing pool tersembunyi)
 
 Permintaan user: *\"ketika saya klik disitu, app akan menampilkan pool yang
