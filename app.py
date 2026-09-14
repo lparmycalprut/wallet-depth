@@ -47,10 +47,10 @@ st.set_page_config(page_title="Wallet Depth — Holder Analytic",
 page_router.apply()
 
 render_styles()
-col_nav1, col_nav2, col_nav3 = st.columns([0.22, 0.22, 0.56])
-col_nav1.page_link("pages/6_🦅_Robinhood.py", label="Robinhood", icon="🦅")
-col_nav2.page_link("pages/8_temp.py", label="temp", icon="📦")
-col_nav3.page_link("pages/5_🧮_Holder.py", label="Holder Analytic", icon="🧮")
+
+# Baris navigasi header (🦅 Robinhood · 📦 temp · 🧮 Holder Analytic) DIHAPUS
+# 2026-09-14 per permintaan user ("hilangkan link ke sini pada header") —
+# navigasi antar halaman tetap tersedia lewat sidebar Streamlit.
 
 
 # ---------------------------------------------------------------------------
