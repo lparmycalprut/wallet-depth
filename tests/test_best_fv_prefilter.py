@@ -8,6 +8,8 @@ jika lebih kecil langsung skip"):
 - 24H: ``F/V >= BEST_FV_24H_MIN`` (5×, inklusif);
 - 30M: ``F/V > BEST_FV_30M_MIN`` (1× — fee harus benar-benar lebih besar dari
   volatility);
+- volatility 0 (F/V ∞) **selalu gugur** di kedua lane (2026-09-14) — ∞ bukan
+  kelolosan, pool tanpa volatility tidak bisa membuktikan F > V;
 - tiap tombol hanya mengambil lane-nya sendiri, dan kandidat di bawah ambang
   tidak pernah membuat request holder (``enrich_pools`` tidak dipanggil untuk
   mereka) tapi tetap tercatat di ``hidden_rows`` beserta ``best_gaps``.
@@ -28,7 +30,7 @@ class LaneGateBoundaryTest(unittest.TestCase):
             ('24h', 50.001, 10, True),
             ('30m', 10, 10, False), ('30m', 10.001, 10, True),
             ('30m', 9.999, 10, False),
-            ('24h', 1, 0, True), ('30m', 1, 0, True),
+            ('24h', 1, 0, False), ('30m', 1, 0, False),
             ('24h', 0, 0, False), ('30m', 0, 0, False),
             ('24h', None, 1, False), ('30m', 1, None, False),
             ('24h', float('inf'), 1, False), ('30m', 1, -1, False),
@@ -58,6 +60,17 @@ class LaneGateBoundaryTest(unittest.TestCase):
             self.assertEqual(ms.row_best_gaps(dict(
                 timeframe='30m', fee_active_tvl_ratio=20, volatility=10)),
                 ['30M: F/V ≤ 3×'])
+
+    def test_volatility_nol_selalu_gugur_dengan_alasan(self):
+        """V=0 (F/V ∞) bukan kelolosan di lane mana pun (2026-09-14)."""
+        for lane, label in (('24h', '24H'), ('30m', '30M')):
+            with self.subTest(lane=lane):
+                self.assertEqual(ms.row_best_gaps(dict(
+                    timeframe=lane, fee_active_tvl_ratio=5.0, volatility=0)),
+                    [f"{label}: volatility 0 — F/V tidak terukur"])
+                self.assertEqual(ms.row_best_gaps(dict(
+                    timeframe=lane, fee_active_tvl_ratio=0.0, volatility=0)),
+                    [f"{label}: volatility 0 — F/V tidak terukur"])
 
 
 class LaneEnrichmentTest(unittest.TestCase):
@@ -130,14 +143,18 @@ class LaneEnrichmentTest(unittest.TestCase):
         self.assertEqual(calls, [])
 
     def test_hasil_disortakan_f_v_terbesar(self):
-        """Prioritas = F/V terbesar (permintaan user untuk kedua tombol)."""
+        """Prioritas = F/V terbesar; ∞ (volatility 0) gugur, bukan teratas."""
         pools = [_pool('KECIL', 'MintA', ratio=25, volatility=5),     # 5×
                  _pool('BESAR', 'MintB', ratio=100, volatility=5),    # 20×
-                 _pool('NOL', 'MintC', ratio=50, volatility=0)]       # ∞
+                 _pool('NOL', 'MintC', ratio=50, volatility=0)]       # ∞ → gugur
         calls: list = []
         result = self._scan('24h', pools, calls)
         self.assertEqual([r['pool_address'] for r in result['rows']],
-                         ['NOL', 'BESAR', 'KECIL'])
+                         ['BESAR', 'KECIL'])
+        self.assertEqual([r['pool_address'] for r in result['hidden_rows']],
+                         ['NOL'])
+        self.assertEqual({tuple(r['best_gaps']) for r in result['hidden_rows']},
+                         {('24H: volatility 0 — F/V tidak terukur',)})
 
 
 class LegacyBothLaneTest(unittest.TestCase):
