@@ -28,8 +28,9 @@ pool, kita akan punya 2 tombol 24H dan 30M"*. Yang di-pin di file ini:
   (permintaan user), Volat, Dust %MC, lalu Fee % (fee trading pool), MC,
   A.TVL di depan; kolom Dust (jumlah wallet) dihapus, judul kolom volume
   mengikuti window lane ("Vol 24h"/"Vol 30m", begitu pula tooltip
-  fee/volume), dan sel volatility terbesar + F/V tertinggi tabel utama
-  disorot **hijau menyala** (``TOP_HIGHLIGHT_COLOR``, seri ikut semua, tabel
+  fee/volume), dan sel volatility terbesar + F/V tertinggi + **Fee/TVL
+  tertinggi** tabel utama disorot **hijau tua menyala**
+  (``TOP_HIGHLIGHT_COLOR``, seri ikut semua, tabel
   dilewati tidak ditandai).
 """
 from __future__ import annotations
@@ -933,7 +934,10 @@ class BestPoolCardTest(unittest.TestCase):
         self.assertNotIn("fee 24 jam", body)
 
     def test_sorot_hijau_menyala_volat_dan_fv_tertinggi(self):
-        """24H: sel Volat terbesar & F/V tertinggi = hijau menyala + bold."""
+        """24H: sel Volat terbesar & F/V tertinggi = hijau tua menyala + bold.
+
+        Lanjutan permintaan user 2026-09-14: Fee/TVL tertinggi ikut disorot.
+        """
         neon = bp.TOP_HIGHLIGHT_COLOR
         app = self._app()
         app.session_state["best_pool_scan_24h"] = self._result("24h", [
@@ -945,18 +949,70 @@ class BestPoolCardTest(unittest.TestCase):
         app.run()
         self.assertEqual(len(app.exception), 0)
         body = "\n".join(node.value for node in app.markdown)
-        # Volat terbesar (9,9) dan F/V tertinggi (10,1×) tersorot neon.
+        # Volat terbesar (9,9), F/V tertinggi (10,1×), dan Fee/TVL tertinggi
+        # (100,0%) tersorot neon.
         self.assertIn(
             f'<span style="color:{neon};font-weight:800;">9.9%</span>', body)
         self.assertIn(
             f'<span style="color:{neon};font-weight:800;">10.1×</span>', body)
+        self.assertIn(
+            f'<span style="color:{neon};font-weight:800;">100.0%</span>', body)
         # Yang bukan tertinggi TIDAK ikut menyala.
         self.assertNotIn(
             f'<span style="color:{neon};font-weight:800;">6.2%</span>', body)
         self.assertNotIn(
             f'<span style="color:{neon};font-weight:800;">8.1×</span>', body)
+        self.assertNotIn(
+            f'<span style="color:{neon};font-weight:800;">50.0%</span>', body)
         self.assertIn("volatility terbesar di tabel ini", body)
         self.assertIn("F/V tertinggi di tabel ini", body)
+        self.assertIn("Fee/TVL tertinggi di tabel ini", body)
+
+    def test_sorot_fee_tvl_tertinggi_bisa_baris_lain_dari_fv(self):
+        """Fee/TVL tertinggi disorot walau barisnya bukan pemegang F/V tertinggi.
+
+        Tiap kolom dicari maksimumnya sendiri-sendiri — baris F/V teratas
+        boleh berbeda dari baris Fee/TVL teratas (permintaan user 2026-09-14
+        lanjutan).
+        """
+        neon = bp.TOP_HIGHLIGHT_COLOR
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result("24h", [
+            _row(pool_address="PoolFv", ca="MintFv", symbol="FVTOP",
+                 fee_active_tvl_ratio=50.0, volatility=2.0),   # F/V 25,0×
+            _row(pool_address="PoolFee", ca="MintFe", symbol="FEETOP",
+                 fee_active_tvl_ratio=80.0, volatility=8.0),   # F/V 10,0×
+        ])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        # Fee/TVL tertinggi (80,0%) ada di baris FEETOP → tersorot.
+        self.assertIn(
+            f'<span style="color:{neon};font-weight:800;">80.0%</span>', body)
+        self.assertNotIn(
+            f'<span style="color:{neon};font-weight:800;">50.0%</span>', body)
+        # F/V tertinggi (25,0×) ada di baris FVTOP → tersorot di sel-nya.
+        self.assertIn(
+            f'<span style="color:{neon};font-weight:800;">25.0×</span>', body)
+        self.assertNotIn(
+            f'<span style="color:{neon};font-weight:800;">10.0×</span>', body)
+
+    def test_sorot_fee_tvl_seri_di_puncak_semua_ditandai(self):
+        """Dua baris seri sebagai Fee/TVL tertinggi → dua-duanya menyala."""
+        neon = bp.TOP_HIGHLIGHT_COLOR
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result("24h", [
+            _row(pool_address="PoolA", ca="MintA", symbol="ASAT",
+                 fee_active_tvl_ratio=70.0, volatility=9.9),
+            _row(pool_address="PoolB", ca="MintB", symbol="BDUA",
+                 fee_active_tvl_ratio=70.0, volatility=13.0),
+        ])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertEqual(
+            body.count(
+                f'<span style="color:{neon};font-weight:800;">70.0%</span>'), 2)
 
     def test_sorot_hijau_ok_tertinggi_30m(self):
         """30M: semua OK tetap hijau biasa, hanya F/V tertinggi yang menyala."""
@@ -975,6 +1031,11 @@ class BestPoolCardTest(unittest.TestCase):
         self.assertIn(f'<span style="color:{neon};font-weight:800;">OK</span>',
                       body)
         self.assertIn('<span style="color:#16a34a;">OK</span>', body)
+        # Fee/TVL tertinggi lane 30M (30,0%) ikut disorot; 12,0% tidak.
+        self.assertIn(
+            f'<span style="color:{neon};font-weight:800;">30.0%</span>', body)
+        self.assertNotIn(
+            f'<span style="color:{neon};font-weight:800;">12.0%</span>', body)
 
     def test_seriketika_di_puncak_semuanya_ditandai(self):
         """Dua baris seri sebagai volatility terbesar → dua-duanya menyala."""
@@ -1003,7 +1064,12 @@ class BestPoolCardTest(unittest.TestCase):
         app.button(key="best-pool-toggle-hidden-24h").click().run()
         body = "\n".join(node.value for node in app.markdown)
         self.assertIn("$HID", body)
-        self.assertNotIn(bp.TOP_HIGHLIGHT_COLOR, body)
+        # Tidak ada SATU pun sel yang memakai marker sorotan. (Warna mentahnya
+        # tidak bisa dijadikan asersi ke seluruh body: CSS global halaman ikut
+        # memakai hex yang sama untuk class lain.)
+        self.assertNotIn(
+            f'<span style="color:{bp.TOP_HIGHLIGHT_COLOR};font-weight:800;">',
+            body)
 
     def test_baris_ditampilkan_urut_f_v_dan_siap_dibaca(self):
         """F/V ditampilkan sebagai ``N,N×`` + alasan ambang di sel-nya."""

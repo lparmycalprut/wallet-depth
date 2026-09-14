@@ -19,9 +19,9 @@ Tata letak dan rule-nya **meniru** 🏆 Scan Best Pool Meteora
 - **urutan baris**: F/V terbesar → volume/TVL terbesar → dust %MC terkecil;
 - **4 kolom inti di depan**: Token · **F/V** · **Volat** · **Dust %MC**, lalu
   TVL · Fee/TVL · Vol 24h · APR · Pool (protokol) · ⭐;
-- **sorot hijau menyala** (:data:`TOP_HIGHLIGHT_COLOR`) pada sel F/V tertinggi
-  dan volatility terbesar tabel utama — seri di puncak ikut semua; tabel
-  "dilewati" tidak ditandai;
+- **sorot hijau tua menyala** (:data:`TOP_HIGHLIGHT_COLOR`) pada sel F/V
+  tertinggi, Fee/TVL tertinggi, dan volatility terbesar tabel utama — seri
+  di puncak ikut semua; tabel "dilewati" tidak ditandai;
 - **detail rule ada di tooltip judul** (bukan caption panjang — aturan card
   sejak 2026-09-10); caption hanya angka rekap;
 - **⭐** memasukkan token ke **Watchlist Robinhood LP** di halaman utama;
@@ -47,8 +47,10 @@ KRYSTAL_CACHE_KEY = "krystal_pool_scan_{}"
 # konteks pool (TVL, Fee/TVL, Vol 24h, APR), Pool (protokol), ⭐.
 _COL_SPEC = [1.5, 0.7, 0.6, 0.82, 0.7, 0.8, 0.85, 0.6, 1.05, 0.4]
 
-# Hijau menyala penanda sel tertinggi (salinan ``best_pool_ui``).
-TOP_HIGHLIGHT_COLOR = "#00c853"
+# Hijau tua menyala penanda sel tertinggi (salinan ``best_pool_ui`` —
+# permintaan user 2026-09-14 lanjutan: F/V, Fee/TVL, Volat tertinggi semua
+# memakai satu warna hijau tua menyala).
+TOP_HIGHLIGHT_COLOR = "#15803d"
 
 
 def krystal_lane_session_key(lane="24h") -> str:
@@ -103,7 +105,8 @@ def krystal_pool_tooltip() -> str:
         "terpotong / sampel < 40 wallet) selnya '-', bukan 0,000%. Urutan: "
         "F/V terbesar, lalu volume/TVL terbesar, lalu dust %MC terkecil. "
         "Kolom inti di depan: Token, F/V, Volat, Dust %MC. Sel volatility "
-        "terbesar dan F/V tertinggi disorot hijau menyala (seri ikut semua; "
+        "terbesar, F/V tertinggi, dan Fee/TVL tertinggi disorot hijau tua "
+        "menyala (seri ikut semua; "
         "tabel dilewati tidak ditandai). Hasil scan disimpan ke cache berkas "
         "lokal, jadi refresh browser tidak menghapus tabel. ⭐ memasukkan "
         "token ke Watchlist Robinhood LP."
@@ -111,7 +114,7 @@ def krystal_pool_tooltip() -> str:
 
 
 def _top_span(text: str) -> str:
-    """Bungkus isi sel dengan hijau menyala + bold — penanda tertinggi tabel."""
+    """Bungkus isi sel dengan hijau tua menyala + bold — penanda tertinggi tabel."""
     return (f'<span style="color:{TOP_HIGHLIGHT_COLOR};font-weight:800;">'
             f'{text}</span>')
 
@@ -128,13 +131,16 @@ def _finite_number(value):
 
 
 def _table_tops(rows: list) -> tuple:
-    """``(volatility tertinggi, F/V tertinggi)`` di tabel yang sedang tampil.
+    """``(volatility tertinggi, F/V tertinggi, Fee/TVL tertinggi)`` di tabel.
 
     Seri di puncak: semua barisnya ditandai (tidak ada pemenang acak).
+    Setiap kolom dicari maksimumnya sendiri-sendiri (baris pemegang Fee/TVL
+    tertinggi bisa berbeda dari pemegang F/V tertinggi) — permintaan user
+    2026-09-14 lanjutan: Fee/TVL tertinggi ikut disorot hijau tua menyala.
     """
     from krystal_screener import row_fv_ratio
 
-    top_vol = top_fv = None
+    top_vol = top_fv = top_fee_tvl = None
     for row in rows or []:
         vol = _finite_number((row or {}).get("volatility"))
         if vol is not None:
@@ -142,7 +148,11 @@ def _table_tops(rows: list) -> tuple:
         ratio = row_fv_ratio(row)
         if ratio is not None and _finite_number(ratio) is not None:
             top_fv = ratio if top_fv is None else max(top_fv, ratio)
-    return top_vol, top_fv
+        fee_tvl = _finite_number((row or {}).get("fee_tvl_ratio"))
+        if fee_tvl is not None:
+            top_fee_tvl = (fee_tvl if top_fee_tvl is None
+                           else max(top_fee_tvl, fee_tvl))
+    return top_vol, top_fv, top_fee_tvl
 
 
 def _pct_or_dash(value, pattern: str = ".1f") -> str:
@@ -196,9 +206,9 @@ def _fv_cell(row: dict, *, lane: str = "24h", top: bool = False) -> tuple[str, s
     """Sel **F/V** satu baris + lane (angka, sub syarat, tooltip).
 
     Baris gagal ambang (hanya mungkin di tabel "dilewati") merah + alasan;
-    ``top=True`` (F/V tertinggi tabel utama) mengubahnya jadi **hijau menyala
-    + bold** — permintaan user: "tandai f/v tertinggi tersebut menjadi warna
-    hijau menyala".
+    ``top=True`` (F/V tertinggi tabel utama) mengubahnya jadi **hijau tua
+    menyala + bold** — permintaan user: "tandai f/v tertinggi tersebut menjadi
+    warna hijau menyala" + lanjutan "hijau tua menyala".
     """
     import math as _math
 
@@ -279,7 +289,8 @@ def _render_krystal_table(rows: list, *, lane: str = "24h",
     st.markdown('<hr style="margin:0.4rem 0;border-color:#cbd5e1;">',
                 unsafe_allow_html=True)
 
-    top_vol, top_fv = _table_tops(rows) if mark_tops else (None, None)
+    top_vol, top_fv, top_fee_tvl = (_table_tops(rows) if mark_tops
+                                     else (None, None, None))
 
     for index, row in enumerate(rows):
         ca = str(row.get("ca") or "")
@@ -302,6 +313,18 @@ def _render_krystal_table(rows: list, *, lane: str = "24h",
         if top_vol is not None and vol_here is not None and vol_here == top_vol:
             vol_value = _top_span(vol_value)
             vol_tip += " — volatility terbesar di tabel ini"
+        # Sorot hijau tua menyala: Fee/TVL tertinggi tabel ini (permintaan
+        # user 2026-09-14 lanjutan: "yang paling tinggi nilainya kasih warna
+        # hijau menyala, hijau tua menyala" → Fee/TVL ikut ditandai).
+        fee_tvl_value = _pct_or_dash(row.get("fee_tvl_ratio"))
+        fee_tvl_tip = (f"F = fee 24 jam {_usd_or_dash(row.get('fee'), compact=False)} ÷ "
+                       f"TVL {_usd_or_dash(row.get('tvl'), compact=False)} × 100 = "
+                       f"{_num_or_dash(row.get('fee_tvl_ratio'))}% — pembilang F/V")
+        fee_tvl_here = _finite_number(row.get("fee_tvl_ratio"))
+        if (top_fee_tvl is not None and fee_tvl_here is not None
+                and fee_tvl_here == top_fee_tvl):
+            fee_tvl_value = _top_span(fee_tvl_value)
+            fee_tvl_tip += " — Fee/TVL tertinggi di tabel ini"
         vol_tvl = row_vol_tvl_ratio(row)
         dust_tip = ("dust holder % MC (Blockscout FULL, pembagi = market cap "
                     "DexScreener kolom MC) — informasi, bukan syarat; "
@@ -323,11 +346,9 @@ def _render_krystal_table(rows: list, *, lane: str = "24h",
             (_usd_or_dash(row.get("tvl")), "tvl",
              f"TVL pool {_usd_or_dash(row.get('tvl'), compact=False)} — "
              "penyebut F (fee/TVL) dan kunci urut kedua (volume/TVL)"),
-            (_pct_or_dash(row.get("fee_tvl_ratio")),
+            (fee_tvl_value,
              f"fee {_usd_or_dash(row.get('fee'))}",
-             f"F = fee 24 jam {_usd_or_dash(row.get('fee'), compact=False)} ÷ "
-             f"TVL {_usd_or_dash(row.get('tvl'), compact=False)} × 100 = "
-             f"{_num_or_dash(row.get('fee_tvl_ratio'))}% — pembilang F/V"),
+             fee_tvl_tip),
             (_usd_or_dash(row.get("volume")),
              (f"{_num_or_dash(vol_tvl, ',.0f')}× TVL" if vol_tvl is not None
               else "—"),

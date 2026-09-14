@@ -1,5 +1,33 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-14 (malam ke-4) — F/V · Fee/TVL · Volat: hijau tua menyala
+
+- Permintaan user: *"F/V · Fee/TVL · Volat — yang paling tinggi nilainya
+  kasih warna hijau menyala, hijau tua menyala"*. Dikonfirmasi: **ketiganya
+  memakai satu warna hijau tua menyala**.
+- `best_pool_ui.py` (🏆 Meteora, kedua lane) **dan** `krystal_pool_ui.py`
+  (🦅 Krystal — sebelumnya "Meteora saja", kini ikut demi konsistensi):
+  `TOP_HIGHLIGHT_COLOR` diganti `#00c853` → **`#15803d`** (hijau tua
+  menyala). `_table_tops()` kini mengembalikan 3 nilai `(volatility
+  terbesar, F/V tertinggi, Fee/TVL tertinggi)` — maksimum tiap kolom dicari
+  sendiri-sendiri, jadi baris pemegang Fee/TVL tertinggi boleh berbeda dari
+  pemegang F/V tertinggi. Sel Fee/TVL tertinggi dibungkus `_top_span()` +
+  tooltip "— Fee/TVL tertinggi di tabel ini". Seri di puncak ikut semua;
+  tabel "dilewati" tetap `mark_tops=False`. Tooltip judul kedua card
+  menyebut hijau tua menyala + Fee/TVL.
+- Catatan warna: hex `#15803d` dipakai CSS global halaman untuk class lain
+  (`.lp-delta-down`), jadi tes "tabel dilewati tanpa sorot" mengasertikan
+  **string span marker lengkap** (`<span style="color:{neon};font-weight:
+  800;">`), bukan hex mentah ke seluruh body.
+- Tes: `test_best_pool_scan.py` + `test_krystal_pool_scan.py` 114/114 hijau
+  (+17 subtest) — Fee/TVL tertinggi tersorot & yang bukan tidak; Fee/TVL
+  teratas boleh di baris lain dari F/V teratas; seri Fee/TVL semua ditandai;
+  30M OK + Fee/TVL tersorot. Suite penuh: 1215 lulus, 27 gagal **identik
+  dengan baseline** (diverifikasi via worktree commit dasar `d764232`) —
+  kegagalan lama di `test_scan_holders` / `test_manual_scan_alerts` /
+  `test_meteora_screener` / `test_lp_card_ui` / `test_watchlist_row_ui` /
+  `test_watchlist_clear`.
+
 ## Update 2026-09-14 (malam ke-3) — header tanpa link + Fee/TVL di kanan F/V
 
 - Permintaan user: *\"hilangkan link ke sini pada header\"* → baris navigasi
@@ -57,8 +85,9 @@ Meteora dan **persistensi hasil sejak awal**.
 - **`krystal_pool_ui.py`** (baru) — tiru `best_pool_ui`: border container,
   tooltip judul berisi seluruh rule (bukan caption), **4 kolom inti di depan**
   (Token · F/V · Volat · Dust %MC) lalu TVL · Fee/TVL · Vol 24h · APR · Pool
-  (nama protokol + tautan Blockscout) · ⭐, sorot **hijau menyala**
-  `TOP_HIGHLIGHT_COLOR = #00c853` pada sel F/V tertinggi & volatility terbesar
+  (nama protokol + tautan Blockscout) · ⭐, sorot **hijau tua menyala**
+  `TOP_HIGHLIGHT_COLOR = #15803d` pada sel F/V tertinggi, Fee/TVL tertinggi,
+  & volatility terbesar
   (seri ikut semua; tabel "dilewati" `mark_tops=False`), pill hitungan, tombol
   **▶ N pool dilewati**, ⭐ → `robinhood_watchlist.add_to_robinhood_watchlist(
   ..., source=RH_LP_SOURCE, background=True)`, dan **pesan "pasang
@@ -124,14 +153,18 @@ menyala — lalu tandai f/v tertinggi tersebut menjadi warna hijau menyala"*.
   (`_lane_titles()`: 24H "Vol 24h", 30M **"Vol 30m"**) — sebelumnya tabel
   30M salah menamai "Vol 24h"; tooltip fee/volume ikut window lane-nya
   ("fee 30 menit", "volume 30 menit").
-- **Sorot hijau menyala + bold** (`TOP_HIGHLIGHT_COLOR = #00c853`): sel
-  volatility terbesar dan sel F/V tertinggi di tabel utama tiap lane
-  (dicari `_table_tops()`). Lane 24H menandai sel angkanya; lane 30M menandai
+- **Sorot hijau tua menyala + bold** (`TOP_HIGHLIGHT_COLOR = #15803d` —
+  awalnya `#00c853`, diganti 2026-09-14 lanjutan: user minta Fee/TVL ikut
+  ditandai dan ketiganya "hijau tua menyala"): sel volatility terbesar, sel
+  F/V tertinggi, dan sel **Fee/TVL tertinggi** di tabel utama tiap lane
+  (dicari `_table_tops()` yang kini mengembalikan 3 nilai; maksimum tiap
+  kolom dicari sendiri-sendiri, jadi baris Fee/TVL teratas boleh beda dari
+  baris F/V teratas). Lane 24H menandai sel angkanya; lane 30M menandai
   sel **OK**-nya (OK lain tetap hijau `#16a34a`). Seri di puncak → semuanya
   ditandai; baris tanpa angka valid diabaikan. Tabel "dilewati" 24H **tidak**
   ditandai (`_render_best_table(mark_tops=False)`) supaya tidak berbenturan
   dengan anotasi merah gugur-ambang. Tooltip sel terseorot diberi catatan
-  "— volatility terbesar / F/V tertinggi di tabel ini".
+  "— volatility terbesar / F/V tertinggi / Fee/TVL tertinggi di tabel ini".
 - Urutan baris (F/V → vol/active TVL → dust), saringan lane, pembuangan
   vol-0 (`row_volatility_zero`), dan rule 30M-OK tidak berubah.
 - Tes: `tests/test_best_pool_scan.py` (64 tes + 23 subtest hijau) — urutan
@@ -663,8 +696,9 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   (judul mengikuti lane; baris kecil Δ volume + `N× A.TVL`), Top10, LPs,
   Pool, ⭐; kolom Dust jumlah wallet sudah dihapus; tiap sel ber-`title`
   dengan angka penuh + statusnya sebagai kunci urut. Tabel utama menandai
-  sel volatility terbesar & F/V tertinggi dengan hijau menyala
-  (`best_pool_ui.TOP_HIGHLIGHT_COLOR`). Kolom **Src** dihapus
+  sel volatility terbesar, F/V tertinggi, dan Fee/TVL tertinggi dengan
+  hijau tua menyala
+  (`best_pool_ui.TOP_HIGHLIGHT_COLOR`, kini `#15803d`). Kolom **Src** dihapus
   bersama pemisahan lane — tabel tidak pernah lagi mencampur 24H dan 30M.
   **Tanda 🏆 BEST POOL (2026-09-12):** baris dengan dust **<=
   `BEST_DUST_MARK_PCT` 0,035% MC** (inklusif, `row_best_pool()`) ditandai —

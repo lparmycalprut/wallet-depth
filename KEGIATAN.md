@@ -1,3 +1,39 @@
+# Kegiatan — 14 September 2026 malam lanjutan (F/V · Fee/TVL · Volat: hijau tua menyala)
+
+Permintaan user: *"F/V · Fee/TVL · Volat — yang paling tinggi nilainya kasih
+warna hijau menyala, hijau tua menyala"*. Dikonfirmasi ke user dan
+keputusannya: **ketiganya** — sel F/V tertinggi, Fee/TVL tertinggi, dan
+volatility terbesar — memakai satu warna **hijau tua menyala** di tabel
+utama tiap lane (card 🏆 Meteora 24H/30M dan card 🦅 Krystal).
+
+## Yang diubah
+
+- **`TOP_HIGHLIGHT_COLOR` diganti `#00c853` → `#15803d`** (hijau tua
+  menyala) di `best_pool_ui.py` dan `krystal_pool_ui.py` (salinan).
+- **Kolom Fee/TVL ikut dicari tertingginya**: `_table_tops()` kini
+  mengembalikan 3 nilai `(volatility terbesar, F/V tertinggi, Fee/TVL
+  tertinggi)`; sel Fee/TVL tertinggi dibungkus `_top_span()` + tooltip
+  "— Fee/TVL tertinggi di tabel ini". Tiap kolom dicari maksimumnya
+  sendiri-sendiri, jadi baris pemegang Fee/TVL tertinggi boleh berbeda dari
+  pemegang F/V tertinggi. Seri di puncak ikut ditandai semua; tabel
+  "dilewati" tetap tanpa sorot.
+- Tooltip judul kedua card + docstring menyebut **hijau tua menyala** dan
+  Fee/TVL ikut ditandai.
+- Tes: `test_best_pool_scan.py` + `test_krystal_pool_scan.py` — Fee/TVL
+  tertinggi tersorot & yang bukan tidak; Fee/TVL teratas boleh di baris lain
+  dari F/V teratas; seri Fee/TVL semua ditandai; lane 30M sel OK + Fee/TVL
+  tersorot; tabel dilewati bebas marker sorotan (asersi memakai string span
+  lengkap, bukan hex mentah, karena CSS global halaman sudah memakai hex yang
+  sama untuk class lain).
+
+## Verifikasi
+
+- `python -m pytest tests/test_best_pool_scan.py tests/test_krystal_pool_scan.py -q`
+  → **114 lulus** (+17 subtest).
+- Suite penuh: **1215 lulus, 27 gagal** — file yang gagal identik dengan
+  baseline (dibuktikan lewat worktree commit dasar `d764232`), jadi bukan
+  regresi perubahan ini.
+
 # Kegiatan — 14 September 2026 (🦅 Scan Best Pool Krystal + cache hasil scan)
 
 Permintaan user: *"buat card 🦅 Scan Best Pool Krystal (Robinhood Chain, chain

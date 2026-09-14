@@ -13,7 +13,7 @@ Card ini **menyalin** rule 🏆 Scan Best Pool Meteora, jadi yang di-pin di sini
   hilang/nonfinite/negatif → gugur "metrik tidak tersedia";
 - **urutan baris**: F/V terbesar → volume/TVL terbesar → dust %MC terkecil;
 - **UI**: border container, 4 kolom inti di depan (Token, F/V, Volat,
-  Dust %MC), sorot hijau menyala (F/V tertinggi + volatility terbesar), ⭐ →
+  Dust %MC), sorot hijau tua menyala (F/V + Fee/TVL tertinggi + volatility terbesar), ⭐ →
   Watchlist Robinhood LP, detail rule di **tooltip judul** (bukan caption);
 - **persistensi**: hasil scan tersimpan ke cache berkas
   (``scan_result_cache``) dan dipulihkan saat ``session_state`` kosong, jadi
@@ -692,6 +692,7 @@ class KrystalCardTest(unittest.TestCase):
         self.assertIn("Uniswap V3", body)
 
     def test_sorot_hijau_menyala_fv_dan_volat_tertinggi(self):
+        """24H: F/V + Fee/TVL tertinggi + volat terbesar = hijau tua menyala."""
         neon = kp.TOP_HIGHLIGHT_COLOR
         app = self._app()
         app.session_state["krystal_pool_scan_24h"] = self._result([
@@ -707,8 +708,38 @@ class KrystalCardTest(unittest.TestCase):
             f'<span style="color:{neon};font-weight:800;">9.9%</span>', body)
         self.assertIn(
             f'<span style="color:{neon};font-weight:800;">10.1×</span>', body)
+        # Fee/TVL tertinggi (100,0%) ikut disorot; 30,0% tidak.
+        self.assertIn(
+            f'<span style="color:{neon};font-weight:800;">100.0%</span>', body)
+        self.assertNotIn(
+            f'<span style="color:{neon};font-weight:800;">30.0%</span>', body)
         self.assertIn("F/V tertinggi di tabel ini", body)
         self.assertIn("volatility terbesar di tabel ini", body)
+        self.assertIn("Fee/TVL tertinggi di tabel ini", body)
+
+    def test_sorot_fee_tvl_tertinggi_bisa_baris_lain_dari_fv(self):
+        """Fee/TVL tertinggi disorot walau barisnya bukan pemegang F/V tertinggi."""
+        neon = kp.TOP_HIGHLIGHT_COLOR
+        app = self._app()
+        app.session_state["krystal_pool_scan_24h"] = self._result([
+            _row(pool_address="PoolFv", ca=TOKEN_A, symbol="FVTOP",
+                 **_fv(50.0, 2.0)),    # F/V 25,0×
+            _row(pool_address="PoolFee", ca=TOKEN_B, symbol="FEETOP",
+                 **_fv(80.0, 8.0)),    # F/V 10,0×
+        ])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        # Fee/TVL tertinggi (80,0%) ada di baris FEETOP → tersorot.
+        self.assertIn(
+            f'<span style="color:{neon};font-weight:800;">80.0%</span>', body)
+        self.assertNotIn(
+            f'<span style="color:{neon};font-weight:800;">50.0%</span>', body)
+        # F/V tertinggi (25,0×) ada di baris FVTOP → tersorot di sel-nya.
+        self.assertIn(
+            f'<span style="color:{neon};font-weight:800;">25.0×</span>', body)
+        self.assertNotIn(
+            f'<span style="color:{neon};font-weight:800;">10.0×</span>', body)
 
     def test_tabel_dilewati_tanpa_sorot(self):
         neon = kp.TOP_HIGHLIGHT_COLOR
@@ -723,9 +754,12 @@ class KrystalCardTest(unittest.TestCase):
         body = "\n".join(node.value for node in app.markdown)
         self.assertIn("$LEWAT", body)
         self.assertIn("gugur: F/V < 5×", body)
-        # Tabel dilewati tidak ikut disorot (barisnya sudah dianotasi merah),
-        # jadi warna neon tidak muncul sama sekali di halaman ini.
-        self.assertNotIn(f"color:{neon}", body)
+        # Tabel dilewati tidak ikut disorot (barisnya sudah dianotasi merah):
+        # tidak ada SATU pun sel yang memakai marker sorotan. (Warna mentahnya
+        # tidak bisa dijadikan asersi ke seluruh body — CSS global halaman
+        # bisa saja memakai hex yang sama untuk class lain.)
+        self.assertNotIn(
+            f'<span style="color:{neon};font-weight:800;">', body)
 
     def test_volatility_nol_dibuang_dari_semua_tabel(self):
         """Baris V=0 (hasil scan lama sekalipun) tidak tampil di mana pun."""
