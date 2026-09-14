@@ -913,14 +913,29 @@ def row_fv_ratio(row: dict | None):
     Satu sumber angka untuk saringan, urutan, DAN kolom F/V di card, jadi
     angka yang diprioritaskan tidak pernah beda dengan angka yang tampil.
     Volatility nol dengan fee positif → ``inf`` (sama seperti
-    :func:`fee_volatility_ratio`) — tapi baris seperti itu **gugur** di
-    saringan lane (:func:`row_best_gaps`, sejak 2026-09-14), jadi ∞ hanya
-    bisa muncul di tabel disembunyikan sebagai penjelasan kenapa barisnya
-    dilewati.
+    :func:`fee_volatility_ratio`) — baris seperti itu **gugur** di saringan
+    lane (:func:`row_best_gaps`, sejak 2026-09-14), dan sejak lanjutan hari
+    yang sama juga **dibuang dari listing**: card membuangnya sebelum tabel
+    (:func:`row_volatility_zero`), jadi ∞ praktis tidak pernah tampil.
     """
     row = row or {}
     return fee_volatility_ratio(row.get("fee_active_tvl_ratio"),
                                 row.get("volatility"))
+
+
+def row_volatility_zero(row: dict | None) -> bool:
+    """True bila ``volatility`` baris persis 0 — pool tanpa pergerakan.
+
+    Pool seperti itu gugur saringan lane (:func:`row_best_gaps`) DAN sejak
+    2026-09-14 (lanjutan) **tidak ditampilkan sama sekali** di card Best Pool
+    (permintaan user: *"jika volatility 0 jangan tampilkan, karena tidak ada
+    pergerakan disitu"*): tidak masuk tabel lolos, tidak masuk listing
+    "dilewati" 24H, dan tidak dihitung di pill/caption/hidden_metric.
+    Volatility ``None``/hilang, negatif, atau nonfinite **bukan** nol — baris
+    seperti itu tetap masuk listing dilewati dengan alasan metriknya.
+    """
+    value = _maybe_float((row or {}).get("volatility"))
+    return bool(value is not None and math.isfinite(value) and value == 0)
 
 
 def best_filter_by(pool_type: str = "dlmm",
@@ -1075,8 +1090,10 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
     baris ∞ yang muncul di tabel 30M padahal syaratnya ``F/V > 1×`` tidak
     boleh lolos) — pool tanpa volatility di lane itu tidak bisa membuktikan
     fee lebih besar dari volatility, jadi langsung di-skip sebelum fetch
-    holder. Data hilang, nonfinite, negatif, F <= 0, atau lane tidak dikenal
-    tidak lolos.
+    holder. Lanjutan hari yang sama: baris V nol juga **dibuang dari
+    listing** (:func:`row_volatility_zero`) — tidak ditampilkan di mana pun
+    karena tidak ada pergerakan di pool-nya. Data hilang, nonfinite, negatif,
+    F <= 0, atau lane tidak dikenal tidak lolos.
 
     ``lane`` memaksa satu aturan (dipakai scan per-lane + render ulang hasil
     lama); tanpa itu lane dibaca dari field ``timeframe``/``source`` baris.
@@ -1102,8 +1119,9 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
     if vol == 0:
         # ∞ bukan kelolosan: F/V hanya bisa dibandingkan kalau volatility-nya
         # ada. Sebelum 2026-09-14 V=0 dengan F>0 lolos dan tampil sebagai ∞;
-        # sekarang gugur dengan alasan ini (permintaan user: tabel dengan
-        # syarat F/V > 1× tidak boleh lagi memuat baris ∞).
+        # sejak paginya gugur dengan alasan ini, dan sejak lanjutannya baris
+        # vol-0 juga dibuang dari listing oleh card (lihat
+        # :func:`row_volatility_zero`) — pool tanpa pergerakan tidak ditampilkan.
         return [f"{BEST_LANE_LABELS[normalized]}: volatility 0 — "
                 "F/V tidak terukur"]
     minimum = lane_fv_min(normalized)
@@ -1142,15 +1160,22 @@ def row_best_pool(row: dict | None) -> bool:
 
 def filter_best_rows(rows: list[dict] | None, *,
                      lane=None) -> tuple[list[dict], int, int]:
-    """Return ``(lolos F/V, jumlah gagal metrik, 0)``; dust bukan filter.
+    """Return ``(lolos F/V, jumlah gagal yang TAMPIL dilewati, 0)``.
 
     ``lane`` memaksa satu aturan ambang untuk seluruh baris (dipakai
     :func:`scan_best_lane` saat satu tombol lane ditekan); tanpa itu setiap
-    baris dinilai dari ``timeframe``-nya sendiri.
+    baris dinilai dari ``timeframe``-nya sendiri. Kandidat gagal dengan
+    **volatility 0 tidak ikut dihitung** (2026-09-14 lanjutan): pool tanpa
+    pergerakan dibuang dari listing (:func:`row_volatility_zero`), jadi
+    hitungan kedua selalu cocok dengan ``len(hidden_rows)`` yang dibangun
+    :func:`scan_best_lane`.
     """
     rows = list(rows or [])
     kept = [row for row in rows if not row_best_gaps(row, lane=lane)]
-    return kept, len(rows) - len(kept), 0
+    dropped = sum(1 for row in rows
+                  if row_best_gaps(row, lane=lane)
+                  and row_volatility_zero(row))
+    return kept, len(rows) - len(kept) - dropped, 0
 
 
 def sort_best_rows(rows: list[dict] | None) -> list[dict]:
@@ -1160,10 +1185,11 @@ def sort_best_rows(rows: list[dict] | None) -> list[dict]:
     "tombol scan 30M kita prioritaskan yang fee/v nya lebih besar" — angka
     F/V yang besar memang yang diprioritaskan, bukan cuma syarat lolos):
     :func:`row_fv_ratio` = ``fee_active_tvl_ratio ÷ volatility`` dari lane itu
-    sendiri, persis angka di kolom F/V card. ∞ (volatility 0, fee positif —
-    baris yang gugur gate sejak 2026-09-14, jadi hanya ada di tabel
-    disembunyikan) tetap paling atas bila ada; baris tanpa metrik (``None``)
-    paling bawah.
+    sendiri, persis angka di kolom F/V card. ∞ (volatility 0, fee positif)
+    tetap paling atas **bila** ada yang meneruskannya ke sini — kontrak urut
+    dipertahankan — tapi card sudah tidak pernah meneruskannya ke tabel
+    sejak 2026-09-14 lanjutan (:func:`row_volatility_zero`); baris tanpa
+    metrik (``None``) paling bawah.
 
     Tie-break kedua = :func:`row_vol_tvl_ratio` (rasio ``volume`` /
     ``active_tvl`` dari API Meteora) terbesar, lalu dust % MC terkecil —
@@ -1203,7 +1229,11 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
     2. saringan lane di :func:`row_best_gaps` — 24H ``F/V >= 5×``,
        30M ``F/V > 1×`` — dijalankan **sebelum** holder, jadi pool yang kurang
        dari itu tidak pernah membakar kuota Helius dan tetap tersedia di
-       ``hidden_rows`` (dengan alasan di ``best_gaps``);
+       ``hidden_rows`` (dengan alasan di ``best_gaps``), **kecuali** pool
+       volatility 0: dibuang penuh dari listing sejak 2026-09-14 lanjutan
+       (:func:`row_volatility_zero`, permintaan user *"jika volatility 0
+       jangan tampilkan, karena tidak ada pergerakan disitu"*) dan dihitung
+       terpisah di ``dropped_volatility``;
     3. hanya kandidat lolos yang di-enrich (holder FULL) lalu diurutkan
        :func:`sort_best_rows` (F/V terbesar → volume/active TVL → dust).
 
@@ -1255,8 +1285,13 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
     rows, quote_skipped = drop_quote_rows(rows)
     # Reject sebelum ada fetch holder/market — "langsung skip", bukan cuma
     # disembunyikan saat render.
-    hidden_rows = [dict(row, best_gaps=row_best_gaps(row, lane=normalized))
+    failed_rows = [dict(row, best_gaps=row_best_gaps(row, lane=normalized))
                    for row in rows if row_best_gaps(row, lane=normalized)]
+    # Pool volatility 0 = pool tanpa pergerakan: dibuang penuh dari listing
+    # (2026-09-14 lanjutan, permintaan user) — tidak masuk hidden_rows,
+    # tidak ikut hidden_metric; jumlahnya dicatat di dropped_volatility.
+    hidden_rows = [row for row in failed_rows if not row_volatility_zero(row)]
+    dropped_volatility = len(failed_rows) - len(hidden_rows)
     rows, hidden_metric, hidden_dust = filter_best_rows(rows, lane=normalized)
     if rows:
         rows = enrich_pools(rows, max_wallets=max_wallets,
@@ -1266,6 +1301,8 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
         _alog.info("scan-best-pool",
                    f"scan selesai: {len(kept)} pool tampil dari {fetched} "
                    f"listing {lane_label} ({hidden_metric} gagal F/V tanpa scan holder"
+                   + (f", {dropped_volatility} pool volatility 0 dibuang"
+                      if dropped_volatility else "")
                    + (f", {quote_skipped} pool quote dilewati"
                       if quote_skipped else "") + ")")
     return {
@@ -1276,6 +1313,10 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
         "hidden_metric": hidden_metric,
         "hidden_dust": hidden_dust,
         "skipped_quote": quote_skipped,
+        # Pool gugur-ambang dengan volatility 0 yang dibuang dari listing
+        # (tidak ditampilkan di mana pun). UI membaca hidden_rows saja, tapi
+        # angka ini membuat pembuangannya bisa diaudit.
+        "dropped_volatility": dropped_volatility,
         # Lane hasil scan — UI memakainya untuk judul/pill tabel + memastikan
         # tabel 24H tidak pernah berisi baris 30M.
         "lane": normalized,
