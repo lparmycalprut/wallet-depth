@@ -314,22 +314,29 @@ class DropQuoteRowsTest(unittest.TestCase):
                          ["MintMemecoin"])
 
     def test_scan_best_meteora_membuang_pool_quote(self):
+        """Pool quote-only dibuang sebelum holder, bahkan kalau F/V-nya lolos.
+
+        ``fee_active_tvl_ratio`` 45 vs ``volatility`` 9 = F/V 5× → lolos
+        ambang lane 24H (``BEST_FV_24H_MIN``, default tombol 24H), jadi satu-
+        satunya alasan P1 hilang adalah mint-nya SOL/USDC (tanpa sisi memecoin).
+        """
         pools = [{"pool_address": "P1",
                   "token_x": _token(SOL, "SOL"),
                   "token_y": _token(ms.USDC_MINT, "USDC"),
-                  "tvl": 1e6, "active_tvl": 1e6, "fee_active_tvl_ratio": 9,
+                  "tvl": 1e6, "active_tvl": 1e6, "fee_active_tvl_ratio": 45,
                   "volume": 5e6, "fee_pct": 5.0, "volatility": 9.0},
                  {"pool_address": "P2",
                   "token_x": _token("MintMemecoin", "MEME"),
                   "token_y": _token(SOL, "SOL"),
-                  "tvl": 1e6, "active_tvl": 1e6, "fee_active_tvl_ratio": 9,
+                  "tvl": 1e6, "active_tvl": 1e6, "fee_active_tvl_ratio": 45,
                   "volume": 5e6, "fee_pct": 5.0, "volatility": 9.0}]
         with mock.patch.object(ms, "fetch_best_pools", return_value=pools), \
                 mock.patch.object(ms, "enrich_pools",
                                   side_effect=lambda r, **k: r) as enrich:
-            result = ms.scan_best_meteora()
+            result = ms.scan_best_meteora(timeframe="24h")
         self.assertEqual(result["skipped_quote"], 1)
         self.assertEqual(result["fetched"], 2)
+        self.assertEqual(result["lane"], "24h")
         self.assertEqual([r["pool_address"] for r in enrich.call_args[0][0]],
                          ["P2"])
 

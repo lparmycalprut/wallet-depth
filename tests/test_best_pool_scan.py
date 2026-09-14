@@ -1,22 +1,26 @@
-"""Coverage 🏆 Scan Best Pool Meteora (kriteria 2026-09-11).
+"""Coverage 🏆 Scan Best Pool Meteora (kriteria 2026-09-13: dua tombol 24H / 30M).
 
-Filter yang diminta user 2026-09-11 (kriteria lama **diganti total**):
+Permintaan user 2026-09-13: *"kayaknya untuk timeframe 30m harus kita pisah
+tombol deteksinya dan tabel serta fungsi fee/v lebih besar … di scan meteora
+pool, kita akan punya 2 tombol 24H dan 30M"*. Yang di-pin di file ini:
 
-- query API Meteora ``pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000``
-  (timeframe 24 jam, category ``top``, page_size 50);
-- saringan layar: dust holder **< 0,05% MC**, volatility **>= 2%**, dan
-  **volume 24 jam >= 1 juta USD** (2026-09-12: "minimal volume 24 jam
-  adalah 1M, dibawah itu jangan di show") — saringan lama (active TVL > 10K,
-  fee/active TVL > 20%, top 10 holder < 30%, total LPs > 20) dihapus;
-- urutan: kenaikan volume 24 jam (``volume_change_pct``) terbesar → dust %
-  MC terkecil → fee/active TVL terbesar (sejak 2026-09-11 sore; pagi harinya
-  masih dust → fee/TVL → volume);
-- tabel menampilkan detail fee + active TVL (kolom A.TVL, Fee/TVL dengan
-  angka fee USD, Vol 24h dengan Δ volume);
-- tanda chip **🏆 BEST POOL** (2026-09-12): baris dengan dust <= 0,035% MC
-  (``BEST_DUST_MARK_PCT``, inklusif) ditandai di kolom Dust %MC + dihitung
-  di pill kepala card — penanda visual, bukan saringan (saringan tetap
-  0,05%).
+- **dua tombol card**, satu per timeframe: ``best-pool-scan-24h`` dan
+  ``best-pool-scan-30m``; satu tombol hanya mengambil ``timeframe`` itu di API
+  (bukan lagi satu listing gabungan 24H + 30M);
+- **saringan lane sebelum enrichment**: 24H ``F/V >= BEST_FV_24H_MIN`` (5×,
+  inklusif), 30M ``F/V > BEST_FV_30M_MIN`` (1× = fee harus lebih besar dari
+  volatility). Di bawah ambang → **langsung skip**, ``enrich_pools`` tidak
+  pernah dipanggil (kuota Helius aman), barisnya masuk ``hidden_rows`` dengan
+  alasan di ``best_gaps``;
+- query API: ``pool_type=dlmm&&active_tvl>=50000`` (``fee_pct>=2`` **dihapus**
+  2026-09-13; pool ber-fee rendah seperti EMBER/USDC harus muncul);
+- urutan tiap tabel: **F/V terbesar** → volume/active TVL → dust %MC terkecil;
+- dust, volatility minimal, volume 24 jam, tier fee, top10 dan LPs **bukan**
+  saringan — dan tidak boleh dihidupkan balik;
+- **satu tabel per lane** di ``best_pool_ui``: hasil disimpan di
+  ``best_pool_scan_24h`` / ``best_pool_scan_30m``, kolom ``Src`` dihapus,
+  toggle "disembunyikan" + prefix key ⭐ ikut per-lane, dan hasil sesi lama
+  (gabungan) dipecah sekali saat render.
 """
 from __future__ import annotations
 
@@ -34,7 +38,7 @@ import meteora_screener as ms
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
 SOL = ms.SOL_MINT
-QUERY = "pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000"
+QUERY = "pool_type=dlmm&&active_tvl>=50000"
 
 
 def _token(addr, symbol="TOK", mc=1_000_000, top10=20.0):
@@ -59,15 +63,15 @@ def _pool(addr="P1", mint="MintAAA", *, active_tvl=60_000, ratio=40.0,
 
 
 def _row(**over):
-    # Default-nya lolos semua saringan layar (volatility 6,2% >= 2%, volume
-    # 24 jam $1,2M >= $1M, dust 0,03% < 0,05%) supaya tiap tes hanya perlu
-    # mengubah satu angka untuk menguji satu syarat.
+    # Default = baris 24H yang lolos ambang lane (F/V 40,0 ÷ 6,2 = 6,45× ≥ 5×)
+    # dan punya bukti holder, supaya tiap tes cukup mengubah satu angka.
     row = {
         "pool_address": "P1", "ca": "MintAAA", "symbol": "AAA",
+        "timeframe": "24h", "source": "24h",
         "mc": 1_000_000, "tvl": 66_000, "active_tvl": 60_000,
         "fee_active_tvl_ratio": 40.0, "volume": 1_200_000, "fee": 24_000.0,
         "volume_change_pct": 12.5, "fee_pct": 2.0, "volatility": 6.2,
-        # Rasio volume/active TVL seperti API Meteora (kunci urut pertama):
+        # Rasio volume/active TVL seperti API Meteora (kunci urut kedua):
         # 1,2 juta / 60 ribu × 100 = 2000%.
         "volume_active_tvl_ratio": 2000.0,
         "total_lps": 88, "top_holders_pct": 20.0,
@@ -90,35 +94,39 @@ def _dust(row, pct):
 def _proof(pct, dust_count=5):
     """``analysis.holders`` satu scan FULL yang **membuktikan** jumlahnya.
 
-    Bentuk persis keluaran ``classify_holders``. Sejak 2026-09-13 baris tanpa
-    bukti (fetch gagal, 0 wallet, terpotong, atau sampel di bawah
-    ``MIN_USABLE_WALLETS``) tidak punya angka dust sama sekali — fixture yang
-    hanya menulis ``dust_pct_mc`` + ``dust_count`` kecil akan dianggap scan
-    pendek dan kehilangan angkanya, jadi fixture UI selalu membawa
-    ``total_fetched`` / ``wallets_analyzed``.
+    Bentuk persis keluaran ``classify_holders``. Baris tanpa bukti (fetch gagal,
+    0 wallet, terpotong, sampel < ``MIN_USABLE_WALLETS``) tidak boleh
+    menampilkan ``0,000%`` — fixture UI selalu membawa ``total_fetched`` /
+    ``wallets_analyzed``.
     """
     return {"holders": {"dust_pct_mc": pct, "dust_count": dust_count,
                         "real_count": 1_095, "total_fetched": 1_200,
                         "wallets_analyzed": 1_100}}
 
 
+def _fv(fee, vol):
+    return dict(fee_active_tvl_ratio=fee, volatility=vol)
+
+
 class BestFilterQueryTest(unittest.TestCase):
-    def test_filter_by_matches_curl(self):
-        """Query = persis curl user, angka dibaca dari konstanta."""
+    def test_filter_by_matches_listing(self):
+        """Query server = DLMM + active TVL; fee_pct sudah DIHAPUS."""
         self.assertEqual(ms.best_filter_by(), QUERY)
-        self.assertEqual(ms.BEST_FEE_PCT_MIN, 2.0)
+        self.assertNotIn("fee_pct", ms.best_filter_by())
         self.assertEqual(ms.BEST_ACTIVE_TVL_MIN, 50_000.0)
 
-    def test_fetch_sends_best_params(self):
-        with mock.patch.object(ms, "_http_get",
-                               return_value={"data": []}) as http:
-            ms.fetch_best_pools()
-        args, _kwargs = http.call_args
-        self.assertEqual(args[0], ms.POOLS_URL)
-        self.assertEqual(args[1], {
-            "page_size": 50, "timeframe": "24h", "category": "top",
-            "filter_by": QUERY,
-        })
+    def test_fetch_sends_lane_params(self):
+        for lane in ("24h", "30m"):
+            with self.subTest(lane=lane):
+                with mock.patch.object(ms, "_http_get",
+                                       return_value={"data": []}) as http:
+                    ms.fetch_best_pools(timeframe=lane)
+                args, _kwargs = http.call_args
+                self.assertEqual(args[0], ms.POOLS_URL)
+                self.assertEqual(args[1], {
+                    "page_size": 50, "timeframe": lane, "category": "top",
+                    "filter_by": QUERY,
+                })
 
     def test_payload_rows_only(self):
         with mock.patch.object(ms, "_http_get",
@@ -128,507 +136,364 @@ class BestFilterQueryTest(unittest.TestCase):
         self.assertEqual(pools, [{"pool_address": "P1"}])
 
 
+class LaneRuleTest(unittest.TestCase):
+    """Satu ambang per lane, semua teks UI membaca konstanta yang sama."""
+
+    def test_constants(self):
+        self.assertEqual(ms.BEST_FV_24H_MIN, 5.0)
+        self.assertEqual(ms.BEST_FV_30M_MIN, 1.0)
+        self.assertTrue(ms.lane_fv_inclusive("24h"))
+        self.assertFalse(ms.lane_fv_inclusive("30m"))
+        self.assertEqual(ms.lane_fv_sign("24h"), "≥")
+        self.assertEqual(ms.lane_fv_sign("30m"), ">")
+        self.assertEqual(ms.BEST_LANES, ("24h", "30m"))
+
+    def test_normalize_alias(self):
+        self.assertEqual(ms.normalize_best_lane("24H"), "24h")
+        self.assertEqual(ms.normalize_best_lane("24 jam"), "24h")
+        self.assertEqual(ms.normalize_best_lane("30m"), "30m")
+        self.assertEqual(ms.normalize_best_lane("1h"), "30m")
+        self.assertEqual(ms.normalize_best_lane(None), "24h")
+        self.assertEqual(ms.normalize_best_lane("", default=None), None)
+        self.assertEqual(ms.normalize_best_lane("5m", default=None), None)
+        self.assertEqual(ms.best_lane_lanes("both"), ("24h", "30m"))
+        self.assertEqual(ms.best_lane_lanes("30m"), ("30m",))
+
+    def test_gate_label_ikuti_konstanta(self):
+        self.assertEqual(ms.best_lane_gate_label("24h"), "24H: F/V ≥ 5×")
+        self.assertEqual(ms.best_lane_gate_label("30m"), "30M: F/V > 1×")
+        with mock.patch.object(ms, "BEST_FV_30M_MIN", 3.0):
+            self.assertEqual(ms.best_lane_gate_label("30m"), "30M: F/V > 3×")
+
+
 class RowMetricsTest(unittest.TestCase):
     def test_row_captures_detail_and_sort_metrics(self):
         row = ms.rows_from_pools(
             [_pool(volatility=7.1, total_lps=64, top10=23.5,
-                   fee=97_718.0, volume_change_pct=-34.46)])[0]
+                   fee=97_718.0, volume_change_pct=-34.46)],
+            timeframe="30m")[0]
         self.assertEqual(row["volatility"], 7.1)
         self.assertEqual(row["total_lps"], 64)
         # top 10 holder diambil dari token base, bukan sisi quote (SOL 0,5%).
         self.assertEqual(row["top_holders_pct"], 23.5)
-        # detail fee / active TVL + kunci urut kenaikan volume.
+        # detail fee / active TVL + bahan urut.
         self.assertEqual(row["fee"], 97_718.0)
         self.assertEqual(row["volume_change_pct"], -34.46)
         self.assertEqual(row["active_tvl"], 60_000)
         self.assertEqual(row["ca"], "MintAAA")
-
-    def test_missing_change_defaults_to_zero(self):
-        pool = _pool()
-        pool.pop("volume_change_pct")
-        pool.pop("fee")
-        row = ms.rows_from_pools([pool])[0]
-        self.assertEqual((row["volume_change_pct"], row["fee"]), (0.0, 0.0))
+        self.assertEqual(row["timeframe"], "30m")
+        self.assertTrue(row["in_30m"])
+        self.assertFalse(row["in_24h"])
+        # kolom F/V = quotient yang dipakai saringan + urutan.
+        self.assertAlmostEqual(row["fee_volatility_ratio"], 40.0 / 7.1)
+        self.assertAlmostEqual(ms.row_fv_ratio(row), 40.0 / 7.1)
 
     def test_duplicate_pool_address_dropped(self):
         rows = ms.rows_from_pools([_pool("P1"), _pool("P1"), _pool("P2")])
         self.assertEqual([r["pool_address"] for r in rows], ["P1", "P2"])
 
+    def test_lanes_keep_separate_records(self):
+        """``both``: satu pool di dua timeframe = dua record (compat)."""
+        rows = ms.best_rows_from_lanes([_pool("P1")], [_pool("P1")])
+        self.assertEqual([(r["timeframe"], r["pool_address"]) for r in rows],
+                         [("24h", "P1"), ("30m", "P1")])
+
+    def test_row_fv_ratio_inf_dan_none(self):
+        self.assertIsNone(ms.row_fv_ratio(None))
+        self.assertIsNone(ms.row_fv_ratio(_fv(None, 1.0)))
+        self.assertEqual(ms.row_fv_ratio(_fv(5.0, 0)), float("inf"))
+        self.assertEqual(ms.row_fv_ratio(_fv(0, 0)), 0.0)
+        self.assertAlmostEqual(ms.row_fv_ratio(_fv(40.0, 8.0)), 5.0)
+
+    def test_vol_tvl_ratio_dihitung_ulang_untuk_baris_lama(self):
+        row = _row(volume_active_tvl_ratio=None)
+        self.assertAlmostEqual(ms.row_vol_tvl_ratio(row), 2000.0)
+        self.assertIsNone(ms.row_vol_tvl_ratio({"volume": 10.0,
+                                               "active_tvl": None}))
+
 
 class BestGatesTest(unittest.TestCase):
-    """Layar: volatility >= 2% + volume 24 jam >= $1M (metrik), dust < 0,05%."""
+    """Saringan lane: 24H ``F/V >= 5×``; 30M ``F/V > 1×``."""
 
-    def test_passing_row_has_no_gap(self):
+    def test_passing_rows_have_no_gap(self):
         self.assertEqual(ms.row_best_gaps(_row()), [])
-        self.assertTrue(ms.row_dust_ok(_row()))
+        self.assertEqual(ms.row_best_gaps(_row(timeframe="30m",
+                                               **_fv(12.4, 6.2))), [])
 
-    def test_volatility_minimal_inklusif(self):
-        """Volatility 2,0% = "minimal 2%" → lolos; di bawah itu gugur."""
-        self.assertEqual(ms.row_best_gaps(_row(volatility=2.0)), [])
-        self.assertEqual(ms.row_best_gaps(_row(volatility=1.99)),
-                         ["volatility < 2%"])
+    def test_24h_boundary_inklusif(self):
+        self.assertEqual(ms.row_best_gaps(_row(**_fv(50.0, 10.0))), [])
+        self.assertEqual(ms.row_best_gaps(_row(**_fv(49.999, 10.0))),
+                         ["24H: F/V < 5×"])
 
-    def test_volume_24h_minimal_inklusif(self):
-        """Permintaan user 2026-09-12: "minimal volume 24 jam adalah 1M,
-        dibawah itu jangan di show" — tepat $1M lolos, di bawahnya gugur."""
-        self.assertEqual(ms.BEST_VOLUME_24H_MIN, 1_000_000.0)
-        self.assertEqual(ms.row_best_gaps(_row(volume=1_000_000)), [])
-        self.assertEqual(ms.row_best_gaps(_row(volume=1_500_000)), [])
-        self.assertEqual(ms.row_best_gaps(_row(volume=999_999.99)),
-                         ["volume 24 jam < $1,000,000"])
-        self.assertEqual(ms.row_best_gaps(_row(volume=0)),
-                         ["volume 24 jam < $1,000,000"])
+    def test_30m_boundary_strict(self):
+        """Fee "lebih besar" = strict: F == V (rasio tepat 1×) di-skip."""
+        self.assertEqual(ms.row_best_gaps(_row(timeframe="30m", **_fv(10, 10))),
+                         ["30M: F/V ≤ 1×"])
+        self.assertEqual(ms.row_best_gaps(_row(timeframe="30m",
+                                               **_fv(10.001, 10))), [])
 
-    def test_volume_missing_is_rejected(self):
-        """Volume tidak ada = tidak terbukti ramai → gugur (sama seperti
-        volatility ``None``), bukan diloloskan diam-diam."""
-        self.assertEqual(ms.row_best_gaps(_row(volume=None)),
-                         ["volume 24 jam < $1,000,000"])
+    def test_volatility_nol_dengan_fee_positif_lolos(self):
+        self.assertEqual(ms.row_best_gaps(_row(**_fv(0.5, 0))), [])
+        self.assertEqual(ms.row_best_gaps(_row(timeframe="30m",
+                                               **_fv(0.5, 0))), [])
 
-    def test_ambang_volume_diikuti_teks_gap(self):
-        """Label gap dibaca dari konstanta — ubah ambang, teks ikut."""
-        with mock.patch.object(ms, "BEST_VOLUME_24H_MIN", 2_500_000.0):
-            self.assertEqual(ms.row_best_gaps(_row(volume=1_200_000)),
-                             ["volume 24 jam < $2,500,000"])
+    def test_metrik_hilang_atau_asing_gugur(self):
+        self.assertEqual(len(ms.row_best_gaps(_row(volatility=None))), 1)
+        self.assertEqual(len(ms.row_best_gaps(_row(fee_active_tvl_ratio=None))), 1)
+        self.assertEqual(ms.row_best_gaps(_row(fee_active_tvl_ratio=float("nan"),
+                                               volatility=1.0)),
+                         ["metrik F/V tidak tersedia atau tidak valid"])
+        self.assertEqual(ms.row_best_gaps(_row(timeframe="5m")),
+                         ["timeframe tidak dikenal"])
 
-    def test_old_screens_are_gone(self):
-        """Fee/active TVL, top 10 holder, total LPs, active TVL tidak lagi
-        menyaring (kriteria lama diganti total 2026-09-11)."""
-        row = _row(active_tvl=0, fee_active_tvl_ratio=0.1,
-                   top_holders_pct=99.0, total_lps=0, fee_pct=0.5)
+    def test_teks_gap_ikuti_konstanta(self):
+        with mock.patch.object(ms, "BEST_FV_24H_MIN", 8.0):
+            self.assertEqual(ms.row_best_gaps(_row(**_fv(20.0, 5.0))),
+                             ["24H: F/V < 8×"])
+        with mock.patch.object(ms, "BEST_FV_30M_MIN", 2.0):
+            self.assertEqual(
+                ms.row_best_gaps(_row(timeframe="30m", **_fv(10.0, 5.0))),
+                ["30M: F/V ≤ 2×"])
+
+    def test_saringan_lama_tetap_mati(self):
+        """Dust / volatility / volume / tier fee / top10 / LPs bukan syarat.
+
+        Kriteria 2026-09-13 menghapus saringan-saringan itu (permintaan user:
+        "dust% syaratnya hapus saja", "minimal volume" dicabut, chip BEST
+        POOL dihapus) — angka-angkanya boleh diacak, barisnya tetap lolos.
+        """
+        row = _row(active_tvl=0, top_holders_pct=99.0, total_lps=0,
+                   fee_pct=0.5, volume=0, dust_count=99_999,
+                   analysis=_proof(9.9))
         self.assertEqual(ms.row_best_gaps(row), [])
+        self.assertTrue(ms.row_dust_ok(row))
+        self.assertTrue(ms.row_volume_ok(row))
         for gone in ("BEST_FEE_RATIO_MIN", "BEST_TOP10_MAX_PCT",
                      "BEST_TOTAL_LPS_MIN"):
             self.assertFalse(hasattr(ms, gone), gone)
+        # Ambang lama masih ada sebagai konstanta mati: mengubahnya tidak boleh
+        # mengubah kelolosan siapa pun.
+        with mock.patch.object(ms, "BEST_DUST_MAX_PCT", 0.0), \
+                mock.patch.object(ms, "BEST_VOLATILITY_MIN", 99.0), \
+                mock.patch.object(ms, "BEST_VOLUME_24H_MIN", 1e12):
+            self.assertEqual(ms.row_best_gaps(_row()), [])
+            self.assertTrue(ms.row_dust_ok(_row()))
+            self.assertTrue(ms.row_volume_ok(_row()))
 
-    def test_missing_data_is_rejected(self):
-        self.assertEqual(len(ms.row_best_gaps(_row(volatility=None))), 1)
-        self.assertEqual(len(ms.row_best_gaps(_row(volume=None))), 1)
-        # Keduanya hilang → dua gap dilaporkan (bukan cuma yang pertama).
-        self.assertEqual(
-            ms.row_best_gaps(_row(volatility=None, volume=None)),
-            ["volatility < 2%", "volume 24 jam < $1,000,000"])
-        self.assertFalse(ms.row_dust_ok(_row(analysis=None,
-                                            dust_pct_mc=None)))
-
-    def test_dust_boundary_is_strict_below(self):
-        ok = _row(analysis={"holders": {"dust_pct_mc": 0.0499}})
-        bad = _row(analysis={"holders": {"dust_pct_mc": 0.05}})
-        self.assertTrue(ms.row_dust_ok(ok))
-        self.assertFalse(ms.row_dust_ok(bad))
-        self.assertEqual(ms.BEST_DUST_MAX_PCT, 0.05)
-
-
-class BestPoolMarkTest(unittest.TestCase):
-    """Tanda chip 🏆 BEST POOL: dust **<= 0,035% MC** (inklusif, 2026-09-12)."""
-
-    def test_mark_boundary_is_inclusive(self):
-        self.assertEqual(ms.BEST_DUST_MARK_PCT, 0.035)
-        self.assertTrue(ms.row_best_pool(_dust(_row(), 0.0)))
-        self.assertTrue(ms.row_best_pool(_dust(_row(), 0.035)))
-        self.assertTrue(ms.row_best_pool(_dust(_row(), 0.034999)))
-        self.assertFalse(ms.row_best_pool(_dust(_row(), 0.035001)))
-
-    def test_mark_is_visual_not_a_filter(self):
-        """0,04% tetap lolos listing (saringan 0,05%) — hanya tanpa tanda."""
-        row = _dust(_row(), 0.04)
-        self.assertTrue(ms.row_dust_ok(row))
-        self.assertFalse(ms.row_best_pool(row))
-
-    def test_mark_never_for_missing_dust(self):
-        self.assertFalse(ms.row_best_pool(_row(analysis=None,
-                                               dust_pct_mc=None)))
-        self.assertFalse(ms.row_best_pool({"analysis":
-                                           {"holders": {"dust_pct_mc": None}},
-                                           "dust_pct_mc": None}))
-
-    def test_fallback_to_row_level_dust(self):
-        """Baris session lama (tanpa ``analysis``) dinilai dari field baris."""
-        self.assertTrue(ms.row_best_pool({"dust_pct_mc": 0.02}))
-        self.assertFalse(ms.row_best_pool({"dust_pct_mc": 0.045}))
-
-    def test_tooltip_mentions_the_mark(self):
-        tooltip = bp.best_pool_tooltip()
-        self.assertIn(f"dust <= {ms.BEST_DUST_MARK_PCT:g}% marketcap", tooltip)
-        self.assertIn("🏆 BEST POOL", tooltip)
-
-
-class ScanHolderBestBadgeTest(unittest.TestCase):
-    """Tulisan **BEST** emas kelap-kelip di 🛰 Scan Holder (2026-09-12).
-
-    Permintaan user: "jika kondisi %dust <= 0.035 kasih tulisan BEST yang
-    agak besar, dengan efek kelap kelip, warnanya GOLD". Ambangnya **satu
-    sumber** dengan tanda 🏆 BEST POOL card ini (``BEST_DUST_MARK_PCT``) —
-    jadi bila ambang Best Pool diubah, Scan Holder ikut berubah (diuji lewat
-    ``mock.patch.object``). AppTest-nya (render di section) ada di
-    ``tests/test_rh_card_ui.py``.
-    """
-
-    @staticmethod
-    def _badge(pct):
-        from dashboard_components import _scan_best_badge_html
-
-        return _scan_best_badge_html(pct)
-
-    @staticmethod
-    def _ok(pct):
-        from dashboard_components import _scan_best_mark_ok
-
-        return _scan_best_mark_ok(pct)
-
-    def test_batas_inklusif(self):
-        self.assertTrue(self._ok(0.035))
-        self.assertTrue(self._ok(0.034999))
-        self.assertTrue(self._ok(0.0))
-        self.assertFalse(self._ok(0.035001))
-        self.assertFalse(self._ok(0.041))
-
-    def test_data_hilang_tidak_pernah_ditandai(self):
-        """Dust gagal diambil (``None``/teks) → tanpa badge, tanpa crash."""
-        for value in (None, "", "kosong", {}, []):
-            self.assertFalse(self._ok(value), value)
-            self.assertEqual(self._badge(value), "", value)
-        self.assertTrue(self._ok("0.02"))  # angka sebagai teks tetap dinilai
-
-    def test_html_badge_emas_kelap_kelip(self):
-        html_text = self._badge(0.035)
-        self.assertIn('class="scan-best-gold"', html_text)
-        self.assertIn(">BEST</span>", html_text)
-        self.assertIn("title=", html_text)
-        self.assertIn(f"{ms.BEST_DUST_MARK_PCT:g}% marketcap", html_text)
-        # Gaya (ukuran/warna/animasi) hidup di CSS render_styles, bukan
-        # atribut style inline — st.markdown men-sanitasi style inline.
-        self.assertNotIn("style=", html_text)
-
-    def test_css_di_render_styles(self):
-        """CSS badge: warna emas + animasi kelap-kelip + hormati reduced
-        motion. Diambil dari sumbernya (``render_styles``) supaya tes tidak
-        bergantung pada Streamlit runtime."""
-        import inspect
-
-        import dashboard_components as dc
-
-        source = inspect.getsource(dc.render_styles)
-        self.assertIn(".scan-best-gold", source)
-        self.assertIn("#ffd700", source.lower())
-        self.assertIn("@keyframes scan-best-blink", source)
-        self.assertIn("animation:scan-best-blink", source)
-        self.assertIn("prefers-reduced-motion", source)
-        # Nama class-nya bukan varian `dust-best`: pin regression card Scan
-        # Meteora menghitung kemunculan string class chip emas itu di body.
-        self.assertNotIn('class="dust-badge dust-best"',
-                         dc._scan_best_badge_html(0.01))
-
-    def test_ambang_mengikuti_konstanta_best_pool(self):
-        with mock.patch.object(ms, "BEST_DUST_MARK_PCT", 0.02):
-            self.assertEqual(self._badge(0.03), "")
-            self.assertIn(">BEST</span>", self._badge(0.02))
-
-
-class FilterAndSortTest(unittest.TestCase):
-    def test_filter_splits_metric_and_dust(self):
-        rows = [
-            _row(),
-            _row(pool_address="P2", volatility=1.0),
-            _row(pool_address="P3",
-                 analysis={"holders": {"dust_pct_mc": 0.4}}),
-        ]
+    def test_filter_best_rows_memakai_lane_yang_dipaksa(self):
+        rows = [_row(pool_address="KECIL", **_fv(20.0, 10.0)),
+                _row(pool_address="BESAR", **_fv(60.0, 10.0))]
         kept, hidden_metric, hidden_dust = ms.filter_best_rows(rows)
-        self.assertEqual([r["pool_address"] for r in kept], ["P1"])
-        self.assertEqual((hidden_metric, hidden_dust), (1, 1))
-
-    def test_filter_menyembunyikan_volume_di_bawah_1m(self):
-        """Volume 24 jam < $1M tidak ditampilkan (permintaan user 2026-09-12).
-
-        Masuk hitungan ``hidden_metric`` (bukan ``hidden_dust``) karena
-        volumenya metrik pool dari listing API — tidak butuh scan holder.
-        """
-        rows = [
-            _row(),
-            _row(pool_address="SEPI", volume=250_000),
-            _row(pool_address="PAS", volume=1_000_000),
-        ]
-        kept, hidden_metric, hidden_dust = ms.filter_best_rows(rows)
-        self.assertEqual([r["pool_address"] for r in kept], ["P1", "PAS"])
+        self.assertEqual([r["pool_address"] for r in kept], ["BESAR"])
         self.assertEqual((hidden_metric, hidden_dust), (1, 0))
+        kept, hidden_metric, _ = ms.filter_best_rows(rows, lane="30m")
+        self.assertEqual([r["pool_address"] for r in kept], ["KECIL", "BESAR"])
+        self.assertEqual(hidden_metric, 0)
 
-    def test_sort_volume_active_tvl_then_dust(self):
-        """Urutan 2026-09-13: rasio volume/active TVL → dust %MC terkecil."""
+
+class SortBestRowsTest(unittest.TestCase):
+    """Urutan tiap tabel: F/V terbesar → volume/active TVL → dust terkecil."""
+
+    def test_fv_adalah_kunci_pertama(self):
         rows = [
-            _dust(_row(pool_address="A", symbol="AAA",
-                       volume_active_tvl_ratio=10.0), 0.030),
-            _dust(_row(pool_address="B", symbol="BBB",
-                       volume_active_tvl_ratio=5.0), 0.010),
-            _dust(_row(pool_address="C", symbol="CCC",
-                       volume_active_tvl_ratio=90.0), 0.030),
-            _dust(_row(pool_address="D", symbol="DDD",
-                       volume_active_tvl_ratio=90.0), 0.030),
-            _row(pool_address="E", symbol="EEE",
-                 volume_active_tvl_ratio=9999.0, analysis=None),
+            _row(pool_address="RAMAI_TAPI_KECIL", symbol="AAA",
+                 volume_active_tvl_ratio=9999.0, **_fv(6.0, 6.0)),   # 1×
+            _row(pool_address="FV_BESAR", symbol="BBB",
+                 volume_active_tvl_ratio=1.0, **_fv(60.0, 6.0)),     # 10×
+            _row(pool_address="FV_TENGAH", symbol="CCC",
+                 volume_active_tvl_ratio=50.0, **_fv(30.0, 6.0)),    # 5×
         ]
-        order = [row["pool_address"] for row in ms.sort_best_rows(rows)]
-        # Rasio terbesar dulu (C/D 90% — seri, jadi simbol alfabetis); dust
-        # hanya kunci KEDUA, jadi A (rasio 10%) tetap di atas B (5%) walau
-        # dust B lebih kecil; baris tanpa dust paling bawah meski rasionya
-        # paling gede (E).
-        self.assertEqual(order, ["C", "D", "A", "B", "E"])
+        self.assertEqual([r["pool_address"] for r in ms.sort_best_rows(rows)],
+                         ["FV_BESAR", "FV_TENGAH", "RAMAI_TAPI_KECIL"])
 
-    def test_tie_break_uses_display_precision(self):
-        """0,0301% dan 0,0304% tampil sama (0,030%) → simbol yang menentukan.
+    def test_infinity_paling_atas(self):
+        """Volatility 0 dengan fee positif (F/V ∞) = fee paling dominan."""
+        rows = [_row(pool_address="NORMAL", symbol="AAA", **_fv(500.0, 1.0)),
+                _row(pool_address="NOLVOL", symbol="ZZZ", **_fv(5.0, 0))]
+        self.assertEqual([r["pool_address"] for r in ms.sort_best_rows(rows)],
+                         ["NOLVOL", "NORMAL"])
 
-        Kedua baris rasionya sama (7%); dust dibulatkan ke presisi tampilan
-        (3 desimal) supaya dua pool yang di layar tampak seri tidak diurutkan
-        berdasarkan angka di belakang koma yang tidak terlihat.
+    def test_tie_break_volume_tvl_lalu_dust(self):
+        rows = [
+            _dust(_row(pool_address="A", symbol="AAA", **_fv(20.0, 4.0),
+                       volume_active_tvl_ratio=10.0), 0.030),
+            _dust(_row(pool_address="B", symbol="BBB", **_fv(20.0, 4.0),
+                       volume_active_tvl_ratio=5.0), 0.010),
+            _dust(_row(pool_address="C", symbol="CCC", **_fv(20.0, 4.0),
+                       volume_active_tvl_ratio=90.0), 0.030),
+            _dust(_row(pool_address="D", symbol="DDD", **_fv(20.0, 4.0),
+                       volume_active_tvl_ratio=90.0), 0.030),
+        ]
+        # F/V seri (5×) → rasio volume/active TVL memutuskan (C/D 90 di atas
+        # A 10, B 5 paling bawah meski dust-nya terkecil); C vs D identik →
+        # simbol alfabetis.
+        self.assertEqual([r["pool_address"] for r in ms.sort_best_rows(rows)],
+                         ["C", "D", "A", "B"])
+
+    def test_tanpa_metrik_paling_bawah_tanpa_dust_tie_break(self):
+        """F/V memutuskan lebih dulu; dust hanya tie-break; tanpa metrik akhir.
+
+        TANPA_DUST dan LENGKAP F/V-nya sama (10×) jadi dust yang memilih;
+        TANPA_FV (volatility hilang) tidak bisa dibandingkan dan selalu paling
+        bawah walau dust-nya paling bersih.
         """
         rows = [
-            _row(pool_address="MENTAH", symbol="ZZZ",
+            _row(pool_address="TANPA_FV", symbol="AAA", volatility=None,
+                 analysis=_proof(0.001)),
+            _row(pool_address="TANPA_DUST", symbol="BBB", **_fv(10.0, 1.0),
+                 analysis=None),
+            _dust(_row(pool_address="LENGKAP", symbol="CCC", **_fv(10.0, 1.0)),
+                  0.04),
+            _row(pool_address="FV_BESAR", symbol="DDD", **_fv(900.0, 1.0),
+                 analysis=None),
+        ]
+        order = [r["pool_address"] for r in ms.sort_best_rows(rows)]
+        self.assertEqual(order, ["FV_BESAR", "LENGKAP", "TANPA_DUST",
+                                "TANPA_FV"])
+
+    def test_tie_break_dust_pakai_presisi_tampilan(self):
+        """0,0301% dan 0,0304% tampil sama (0,030%) → simbol yang menentukan."""
+        rows = [
+            _row(pool_address="MENTAH", symbol="ZZZ", **_fv(20.0, 4.0),
                  volume_active_tvl_ratio=7.0,
                  analysis={"holders": {"dust_pct_mc": 0.0301}}),
-            _row(pool_address="TAMPIL", symbol="AAA",
+            _row(pool_address="TAMPIL", symbol="AAA", **_fv(20.0, 4.0),
                  volume_active_tvl_ratio=7.0,
                  analysis={"holders": {"dust_pct_mc": 0.0304}}),
         ]
-        order = [row["pool_address"] for row in ms.sort_best_rows(rows)]
-        self.assertEqual(order, ["TAMPIL", "MENTAH"])
-
-    def test_volume_active_tvl_ratio_is_primary_key(self):
-        """Rasio volume/active TVL memutuskan duluan (kunci urut pertama).
-
-        Dust sama persis (0,02%), fee/active TVL sama, Δ volume justru lebih
-        besar di baris SEPI → rasio 1646,63% (angka TACZ dari respons API
-        user) tetap menang atas 8,5%.
-        """
-        rows = [
-            _row(pool_address="SEPI", symbol="AAA", fee_active_tvl_ratio=50.0,
-                 volume_change_pct=400.0, volume_active_tvl_ratio=8.5,
-                 analysis={"holders": {"dust_pct_mc": 0.02}}),
-            _row(pool_address="RAMAI", symbol="BBB",
-                 fee_active_tvl_ratio=50.0, volume_change_pct=4.0,
-                 volume_active_tvl_ratio=1646.63,
-                 analysis={"holders": {"dust_pct_mc": 0.02}}),
-        ]
-        order = [row["pool_address"] for row in ms.sort_best_rows(rows)]
-        self.assertEqual(order, ["RAMAI", "SEPI"])
-
-    def test_rasio_dihitung_ulang_untuk_baris_lama(self):
-        """Hasil scan lama (tanpa field API) tetap ikut urutan yang sama."""
-        rows = [
-            _dust(_row(pool_address="LAMA", symbol="AAA", volume=300_000,
-                       active_tvl=100_000,
-                       volume_active_tvl_ratio=None), 0.02),
-            _dust(_row(pool_address="BARU", symbol="BBB", volume=1_200_000,
-                       active_tvl=60_000,
-                       volume_active_tvl_ratio=None), 0.02),
-        ]
-        order = [row["pool_address"] for row in ms.sort_best_rows(rows)]
-        # 300K/100K = 300% vs 1,2M/60K = 2000% → BARU dulu.
-        self.assertEqual(order, ["BARU", "LAMA"])
+        self.assertEqual([r["pool_address"] for r in ms.sort_best_rows(rows)],
+                         ["TAMPIL", "MENTAH"])
 
 
-class ScanBestTest(unittest.TestCase):
-    def test_scan_filters_before_holder_and_sorts_result(self):
-        # P2 gugur volatility (1%), P4 gugur volume 24 jam ($400K < $1M) —
-        # keduanya harus tersaring SEBELUM holder di-fetch (hemat kuota
-        # Helius); P1/P3 lolos semua syarat metrik.
-        pools = [_pool("P1", "MintAAA", volume=1_200_000),
-                 _pool("P2", "MintBBB", volatility=1.0, volume=1_500_000),
-                 _pool("P3", "MintCCC", volume=5_000_000, ratio=80.0),
-                 _pool("P4", "MintDDD", volume=400_000)]
-        dusts = {"MintAAA": 0.02, "MintBBB": 0.01, "MintCCC": 0.02}
+class ScanLaneTest(unittest.TestCase):
+    """Satu tombol = satu lane; kandidat gagal tidak menyentuh Helius."""
 
-        def fake_enrich(rows, **_kwargs):
-            out = []
-            for row in rows:
-                item = dict(row)
-                pct = dusts.get(row["ca"])
-                item["analysis"] = {"holders": {
-                    "dust_pct_mc": pct, "dust_count": 5,
-                    "total_fetched": 1000, "wallets_analyzed": 900}}
-                item["dust_pct_mc"] = pct
-                item["dust_count"] = 5
-                out.append(item)
-            return out
+    @staticmethod
+    def _fake_enrich(rows, **_kw):
+        out = []
+        for row in rows:
+            item = dict(row)
+            item["analysis"] = {"holders": {"dust_pct_mc": 0.02,
+                                             "dust_count": 5,
+                                             "total_fetched": 1000,
+                                             "wallets_analyzed": 900}}
+            item["dust_pct_mc"] = 0.02
+            item["dust_count"] = 5
+            out.append(item)
+        return out
 
-        with mock.patch.object(ms, "fetch_best_pools", return_value=pools), \
+    def test_24h_hanya_ambil_lane_dan_saring_5x(self):
+        pools = [_pool("P-OK", "MintOK", ratio=40.0, volatility=6.2),   # 6,45×
+                 _pool("P-KECIL", "MintKcl", ratio=12.4, volatility=6.2),  # 2×
+                 _pool("P-NOL", "MintNol", ratio=0.0, volatility=6.2)]
+        seen: list = []
+
+        with mock.patch.object(ms, "fetch_best_pools",
+                               side_effect=lambda **kw: seen.append(kw["timeframe"]) or pools), \
                 mock.patch.object(ms, "enrich_pools",
-                                  side_effect=fake_enrich) as enrich:
-            result = ms.scan_best_meteora(max_wallets=2000)
-
-        # P4 gugur volume 24 jam → holder tidak di-fetch. P2 gugur
-        # volatility tapi volume ≥ $1M → tetap di-enrich supaya listing
-        # "disembunyikan" bisa menyaring dust < 0,05%.
-        fetched = [row["pool_address"] for row in enrich.call_args.args[0]]
-        self.assertEqual(fetched, ["P1", "P2", "P3"])
-        self.assertEqual(result["fetched"], 4)
+                                  side_effect=self._fake_enrich) as enrich:
+            result = ms.scan_best_lane("24h", max_wallets=2000)
+        self.assertEqual(seen, ["24h"])
+        self.assertEqual([r["pool_address"]
+                          for r in enrich.call_args.args[0]], ["P-OK"])
+        self.assertEqual([r["pool_address"] for r in result["rows"]], ["P-OK"])
+        self.assertEqual([r["pool_address"] for r in result["hidden_rows"]],
+                         ["P-KECIL", "P-NOL"])
         self.assertEqual(result["hidden_metric"], 2)
-        self.assertEqual(result["hidden_dust"], 0)
+        self.assertEqual(result["fetched"], 3)
+        self.assertEqual(result["lane"], "24h")
+        self.assertEqual(result["gate"], "24H: F/V ≥ 5×")
         self.assertEqual(result["error"], "")
-        # Dust sama (0,02%) → rasio volume/active TVL terbesar dulu: P3
-        # (5 juta / 60 ribu = 8333%) di atas P1 (1,2 juta / 60 ribu = 2000%).
-        self.assertEqual([row["pool_address"] for row in result["rows"]],
-                         ["P3", "P1"])
-        self.assertEqual([row["pool_address"] for row in result["hidden_rows"]],
-                         ["P2"])
 
-    def test_hidden_rows_keep_volume_and_dust_gates(self):
-        """Klik pill disembunyikan: volume ≥ 1M + dust < 0,05%, urut Δ vol.
-
-        P-LOWVOL lolos volume+dust tapi gagal volatility → hidden_rows.
-        P-SEPI volume < 1M tidak di-enrich / tidak masuk hidden.
-        P-DUST dust 0,4% tidak masuk hidden meski volume besar.
-        P-OK tetap di listing utama, bukan hidden.
-        """
-        pools = [
-            _pool("P-OK", "MintOK", volume=2_000_000, volume_change_pct=10.0),
-            _pool("P-LOWVOL", "MintLow", volume=3_000_000, volatility=1.0,
-                  volume_change_pct=80.0),
-            _pool("P-LOWVOL2", "MintLow2", volume=1_500_000, volatility=0.5,
-                  volume_change_pct=20.0),
-            _pool("P-SEPI", "MintSepi", volume=400_000, volume_change_pct=999.0),
-            _pool("P-DUST", "MintDust", volume=4_000_000, volatility=1.2,
-                  volume_change_pct=50.0),
-        ]
-        dusts = {"MintOK": 0.02, "MintLow": 0.01, "MintLow2": 0.04,
-                 "MintDust": 0.40}
-
-        def fake_enrich(rows, **_kwargs):
-            out = []
-            for row in rows:
-                item = dict(row)
-                pct = dusts.get(row["ca"])
-                item["analysis"] = {"holders": {
-                    "dust_pct_mc": pct, "dust_count": 5,
-                    "total_fetched": 1000, "wallets_analyzed": 900}}
-                item["dust_pct_mc"] = pct
-                item["dust_count"] = 5
-                out.append(item)
-            return out
-
-        with mock.patch.object(ms, "fetch_best_pools", return_value=pools), \
+    def test_30m_hanya_ambil_lane_dan_saring_strict(self):
+        pools = [_pool("P-SAMA", "MintSma", ratio=10.0, volatility=10.0),  # 1×
+                 _pool("P-DOMINAN", "MintDom", ratio=30.0, volatility=10.0),  # 3×
+                 _pool("P-SEPI", "MintSep", ratio=1.0, volatility=10.0)]
+        seen: list = []
+        with mock.patch.object(ms, "fetch_best_pools",
+                               side_effect=lambda **kw: seen.append(kw["timeframe"]) or pools), \
                 mock.patch.object(ms, "enrich_pools",
-                                  side_effect=fake_enrich) as enrich:
-            result = ms.scan_best_meteora(max_wallets=2000)
+                                  side_effect=self._fake_enrich) as enrich:
+            result = ms.scan_best_lane("30m", max_wallets=2000)
+        self.assertEqual(seen, ["30m"])
+        self.assertEqual([r["pool_address"]
+                          for r in enrich.call_args.args[0]], ["P-DOMINAN"])
+        self.assertEqual([r["pool_address"] for r in result["rows"]],
+                         ["P-DOMINAN"])
+        self.assertEqual({tuple(r["best_gaps"]) for r in result["hidden_rows"]},
+                         {("30M: F/V ≤ 1×",)})
+        self.assertEqual(result["gate"], "30M: F/V > 1×")
 
-        fetched = [row["pool_address"] for row in enrich.call_args.args[0]]
-        self.assertNotIn("P-SEPI", fetched)
-        self.assertEqual([row["pool_address"] for row in result["rows"]],
-                         ["P-OK"])
-        self.assertEqual([row["pool_address"] for row in result["hidden_rows"]],
-                         ["P-LOWVOL", "P-LOWVOL2"])
+    def test_semua_gugur_tanpa_fetch_holder(self):
+        with mock.patch.object(ms, "fetch_best_pools",
+                               return_value=[_pool(ratio=1.0, volatility=2.0)]), \
+                mock.patch.object(ms, "enrich_pools") as enrich:
+            result = ms.scan_best_lane("24h", max_wallets=2000)
+        enrich.assert_not_called()
+        self.assertEqual(result["rows"], [])
+        self.assertEqual(result["hidden_metric"], 1)
+        self.assertEqual(len(result["hidden_rows"]), 1)
 
-    def test_scan_reports_api_error(self):
+    def test_kegagalan_api_jadi_pesan_card(self):
         with mock.patch.object(ms, "fetch_best_pools",
                                side_effect=RuntimeError("Meteora HTTP 503")):
-            result = ms.scan_best_meteora(max_wallets=2000)
-        self.assertIn("Meteora HTTP 503", result["error"])
+            result = ms.scan_best_lane("30m", max_wallets=2000)
+        self.assertIn("30M: Meteora HTTP 503", result["error"])
         self.assertEqual(result["rows"], [])
         self.assertEqual(result["fetched"], 0)
 
+    def test_pool_quote_dibuang_sebelum_holder(self):
+        """USDC/USDT (tanpa sisi memecoin) tidak pernah di-enrich."""
+        quote_pool = _pool("P-QUOTE", ms.USDC_MINT)
+        quote_pool["token_y"] = _token(ms.USDT_MINT, "USDT")
+        pools = [_pool("P-OK", "MintOK"), quote_pool]
+        with mock.patch.object(ms, "fetch_best_pools", return_value=pools), \
+                mock.patch.object(ms, "enrich_pools",
+                                  side_effect=self._fake_enrich) as enrich:
+            result = ms.scan_best_lane("24h", max_wallets=2000)
+        self.assertEqual([r["pool_address"]
+                          for r in enrich.call_args.args[0]], ["P-OK"])
+        self.assertEqual(result["skipped_quote"], 1)
 
-class BuktiHolderTest(unittest.TestCase):
-    """Scan holder tanpa bukti tidak boleh jadi "0,000% pool terbersih".
+    def test_baris_tanpa_bukti_holder_tetap_tampil(self):
+        """Dust bukan saringan: scan holder gagal → barisnya tetap ada (—)."""
+        pools = [_pool("P-GAGAL", "MintGagal"), _pool("P-OK", "MintOK")]
 
-    Permintaan user 2026-09-13: *\"di scan meteora menunjukkan 0.000% baru
-    saya scan, padahal di scan holder hasilnya beda\"*. Dua lapis akar:
-
-    1. pembagi dust = market cap **listing Meteora** (``market_cap or fdv``),
-       bukan market cap DexScreener yang dipakai semua kartu lain —
-       diperbaiki di ``holder_analysis.analyze_token`` (data market terbaru
-       menang, angka pemanggil hanya cadangan) + ``enrich_pools`` menulis
-       balik MC yang benar-benar dipakai ke kolom MC baris;
-    2. ``classify_holders`` dari daftar holder kosong (provider mati, fetch
-       0 wallet, atau hasil terpotong) mengembalikan ``dust_pct_mc = 0.0`` —
-       angka itu lolos saringan dust < 0,05%, menang kunci urut "dust
-       terkecil", dan menyabet chip 🏆 BEST POOL. Sejak 2026-09-13 baris
-       tanpa bukti dianggap TANPA angka (``row_dust_pct`` → ``None``), sama
-       seperti baris yang analisanya gagal total.
-    """
-
-    @staticmethod
-    def _failed(row, *, truncated=False, fetched=0, wallets=0):
-        row = dict(row)
-        row["analysis"] = {"holders": {
-            "dust_pct_mc": 0.0, "dust_count": 0, "real_count": wallets,
-            "total_fetched": fetched, "wallets_analyzed": wallets,
-            "truncated": truncated}}
-        row["dust_pct_mc"] = 0.0
-        row["dust_count"] = 0
-        return row
-
-    def test_gagal_fetch_tanpa_wallet_gugur_dari_saringan(self):
-        row = self._failed(_row())
-        self.assertIsNone(ms.row_dust_pct(row))
-        self.assertFalse(ms.row_dust_ok(row))
-        self.assertFalse(ms.row_best_pool(row))
-        kept, hidden_metric, hidden_dust = ms.filter_best_rows([row])
-        self.assertEqual(kept, [])
-        self.assertEqual((hidden_metric, hidden_dust), (0, 1))
-
-    def test_hasil_terpotong_gugur_walau_wallet_banyak(self):
-        # 9.000 top holder tanpa ekor dust = "0,00%" palsu (kasus PARE
-        # 2026-09-09 di watchlist) — listing ini menjual bukti, jadi gugur.
-        row = self._failed(_row(), truncated=True, fetched=9_000,
-                           wallets=9_000)
-        self.assertIsNone(ms.row_dust_pct(row))
-        self.assertFalse(ms.row_dust_ok(row))
-
-    def test_scan_lengkap_tetap_lolos(self):
-        """Guardnya bukti, bukan nilainya: 0,000% dari scan valid tetap masuk."""
-        row = dict(_row())
-        row["analysis"] = {"holders": {"dust_pct_mc": 0.0, "dust_count": 0,
-                                       "real_count": 1_500,
-                                       "total_fetched": 1_500,
-                                       "wallets_analyzed": 1_500}}
-        row["dust_pct_mc"] = 0.0
-        self.assertEqual(ms.row_dust_pct(row), 0.0)
-        self.assertTrue(ms.row_dust_ok(row))
-        self.assertTrue(ms.row_best_pool(row))
-
-    def test_provider_casual_sample_ditolak(self):
-        row = dict(_row())
-        row["analysis"] = {"holders": {"dust_pct_mc": 0.0, "dust_count": 0,
-                                       "total_fetched": 20,
-                                       "wallets_analyzed": 20}}
-        self.assertIsNone(ms.row_dust_pct(row))
-        self.assertFalse(ms.row_dust_ok(row))
-
-    def test_scan_best_tidak_menampilkan_baris_tanpa_bukti(self):
-        pools = [_pool("P-OK", "MintOK", volume=2_000_000,
-                       volume_change_pct=10.0),
-                 _pool("P-GAGAL", "MintGagal", volume=3_000_000,
-                       volume_change_pct=90.0)]
-
-        def fake_enrich(rows, **_kwargs):
+        def enrich(rows, **_kw):
             out = []
             for row in rows:
-                if row["ca"] == "MintGagal":
-                    out.append(self._failed(dict(row)))
-                    continue
                 item = dict(row)
-                item["analysis"] = {"holders": {"dust_pct_mc": 0.02,
-                                                 "dust_count": 5,
-                                                 "total_fetched": 1_000,
-                                                 "wallets_analyzed": 900}}
-                item["dust_pct_mc"] = 0.02
-                item["dust_count"] = 5
+                if row["ca"] == "MintGagal":
+                    item["analysis"] = {"holders": {
+                        "dust_pct_mc": 0.0, "dust_count": 0, "real_count": 0,
+                        "total_fetched": 0, "wallets_analyzed": 0}}
+                    item["dust_pct_mc"] = None
+                else:
+                    item["analysis"] = _proof(0.02)
+                    item["dust_pct_mc"] = 0.02
                 out.append(item)
             return out
 
         with mock.patch.object(ms, "fetch_best_pools", return_value=pools), \
-                mock.patch.object(ms, "enrich_pools", side_effect=fake_enrich):
-            result = ms.scan_best_meteora(max_wallets=2000)
-        self.assertEqual([row["pool_address"] for row in result["rows"]],
-                         ["P-OK"])
-        # Δ volume P-GAGAL jauh lebih besar; tanpa bukti dust dia tidak boleh
-        # masuk listing utama MAUPUN listing "disembunyikan".
-        self.assertEqual([row["pool_address"] for row in result["hidden_rows"]],
-                         [])
-        self.assertEqual(result["hidden_dust"], 1)
+                mock.patch.object(ms, "enrich_pools", side_effect=enrich):
+            result = ms.scan_best_lane("24h", max_wallets=2000)
+        self.assertEqual([r["pool_address"] for r in result["rows"]],
+                         ["P-OK", "P-GAGAL"])   # P-OK punya dust → tie-break dulu
+        self.assertIsNone(ms.row_dust_pct(result["rows"][1]))
+        self.assertEqual(result["hidden_dust"], 0)
+
+    def test_wrapper_lama_meneruskan_timeframe(self):
+        """``scan_best_meteora(timeframe=...)`` = satu lane (bukan dua lagi)."""
+        seen: list = []
+        with mock.patch.object(ms, "fetch_best_pools",
+                               side_effect=lambda **kw: seen.append(kw["timeframe"]) or []):
+            ms.scan_best_meteora(max_wallets=2000, timeframe="30m")
+        self.assertEqual(seen, ["30m"])
 
 
 @unittest.skipIf(AppTest is None, "streamlit not installed")
 class BestPoolCardTest(unittest.TestCase):
-    """Card 🏆 Scan Best Pool Meteora ada di halaman utama (``app.py``)."""
+    """Card 🏆 Scan Best Pool Meteora: dua tombol + satu tabel per lane."""
 
     def _app(self):
         patches = (
@@ -647,201 +512,197 @@ class BestPoolCardTest(unittest.TestCase):
             self.addCleanup(patch.stop)
         return AppTest.from_file(APP, default_timeout=90).run()
 
-    def test_card_and_button_render_on_main_page(self):
+    @staticmethod
+    def _result(lane, rows, hidden=None, *, fetched=None, error=""):
+        hidden = list(hidden or [])
+        return {"rows": rows, "hidden_rows": hidden, "error": error,
+                "fetched": fetched if fetched is not None else len(rows) + len(hidden),
+                "hidden_metric": len(hidden), "hidden_dust": 0,
+                "skipped_quote": 0, "lane": lane, "gate": ms.best_lane_gate_label(lane),
+                "analyzed_at": 1}
+
+    def test_dua_tombol_lane_dan_judul_card(self):
         app = self._app()
         self.assertEqual(len(app.exception), 0)
         body = "\n".join(node.value for node in app.markdown)
         self.assertIn(ms.BEST_CARD_TITLE, body)
         keys = [button.key or "" for button in app.button]
-        self.assertIn("best-pool-scan-now", keys)
-
-    def test_detail_karakteristik_di_tooltip_bukan_caption(self):
-        """Rule filter card jadi tooltip judul (bukan caption panjang).
-
-        angkanya dibaca dari ``meteora_screener.BEST_*`` sehingga tidak bisa
-        beda dari rule yang jalan. Kriteria lama (fee/active TVL > 20%, top
-        10 < 30%, total LPs > 20, active TVL > 10K) tidak boleh muncul lagi.
-        """
-        import html as _html
-
-        app = self._app()
-        # atribut ``title`` di-escape (``<`` → ``&lt;``) — unescape dulu
-        body = _html.unescape("\n".join(node.value for node in app.markdown))
+        self.assertIn("best-pool-scan-24h", keys)
+        self.assertIn("best-pool-scan-30m", keys)
+        # Tombol lama satu-listing-dua-lane harus hilang, jangan sampai ada
+        # dua jalan masuk yang hasilnya beda.
+        self.assertNotIn("best-pool-scan-now", keys)
+        labels = [button.label for button in app.button
+                  if (button.key or "").startswith("best-pool-scan-")]
+        self.assertIn("🏆 Scan Best Pool 24H + Holder", labels)
+        self.assertIn("🏆 Scan Best Pool 30M + Holder", labels)
+        # Label "belum di-scan" = rekap, bukan deskripsi rule.
         captions = "\n".join(node.value for node in app.caption)
-        self.assertIn("title=\"Listing API Meteora 24 jam", body)
-        for label in (f"pool_type=dlmm&&fee_pct>={ms.BEST_FEE_PCT_MIN:g}"
-                      f"&&active_tvl>={int(ms.BEST_ACTIVE_TVL_MIN)}",
-                      f"dust holder < {ms.BEST_DUST_MAX_PCT:g}% marketcap",
-                      f"volatility >= {ms.BEST_VOLATILITY_MIN:g}%",
-                      # saringan volume 24 jam (2026-09-12) ikut dijelaskan
-                      # di tooltip dengan angka dari konstanta.
-                      f"volume 24 jam >= ${ms.BEST_VOLUME_24H_MIN:,.0f}",
-                      "volume 24 jam dibagi active TVL (rasio yang "
-                      "dikirim API Meteora — angkanya di baris kecil kolom "
-                      "Vol 24h) paling besar dulu, lalu dust % marketcap "
-                      "terkecil"):
-            self.assertIn(label, body)
-        # rule lama sudah diganti total — tidak boleh tersisa di tooltip
-        # card ini (card lain, mis. 🦅 Scan Best Robinhood Coin, memang masih
-        # memakai top 10 holder < 30% — makanya dicek di tooltip Best Pool).
-        tooltip = bp.best_pool_tooltip()
-        self.assertNotIn("top 10 holder", tooltip)
-        self.assertNotIn("total LPs", tooltip)
-        self.assertNotIn("Replika listing", tooltip)
-        # …dan caption deskripsi rule tetap hilang dari badan card.
-        self.assertNotIn("Urutan: **dust % MC terkecil**, lalu", captions)
-        self.assertNotIn("lalu saringan layar: dust holder", captions)
-        # …dan judul card-nya yang membawa tooltip, bukan teks telanjang.
-        self.assertIn("title=\"Listing API Meteora", "\n".join(
-            node.value for node in app.markdown))
+        self.assertIn("belum di-scan", captions)
 
-    def test_tooltip_mengikuti_perubahan_konstanta(self):
-        """Tooltip dibangun dari konstanta — ubah ambang, teks ikut berubah."""
-        tooltip = bp.best_pool_tooltip()
-        self.assertIn(f"{ms.BEST_DUST_MAX_PCT:g}%", tooltip)
-        self.assertIn(f"{int(ms.BEST_ACTIVE_TVL_MIN)}", tooltip)
-        self.assertIn(f"volatility >= {ms.BEST_VOLATILITY_MIN:g}%", tooltip)
-        with mock.patch.object(ms, "BEST_VOLATILITY_MIN", 3.5):
-            self.assertIn("volatility >= 3.5%", bp.best_pool_tooltip())
-        self.assertNotIn("3.5%", bp.best_pool_tooltip())
-        with mock.patch.object(ms, "BEST_ACTIVE_TVL_MIN", 75_000.0):
-            self.assertIn("active_tvl>=75000", bp.best_pool_tooltip())
-        self.assertNotIn("75000", bp.best_pool_tooltip())
-        with mock.patch.object(ms, "BEST_VOLUME_24H_MIN", 2_000_000.0):
-            self.assertIn("volume 24 jam >= $2,000,000",
-                          bp.best_pool_tooltip())
-        self.assertNotIn("$2,000,000", bp.best_pool_tooltip())
-
-    def test_listing_uses_stored_result_without_new_scan(self):
+    def test_tombol_scan_hanya_ambil_lane_yang_ditekan(self):
         app = self._app()
-        app.session_state["best_pool_scan"] = {
-            "rows": [_row(pool_address="PoolBest", ca="MintAAA",
-                          symbol="AAA", dust_pct_mc=0.03,
-                          analysis=_proof(0.03, 12))],
-            "error": "", "fetched": 4, "hidden_metric": 2,
-            "hidden_dust": 1,
-        }
+        calls: list = []
+        result = self._result("30m", [_row(pool_address="P30", ca="M30",
+                                           symbol="THR", timeframe="30m",
+                                           **_fv(30.0, 10.0))])
+
+        def fake_scan(lane, **_kwargs):
+            calls.append(lane)
+            return result
+
+        with mock.patch.object(ms, "scan_best_lane", side_effect=fake_scan):
+            app.button(key="best-pool-scan-30m").click().run()
+        # Tombol 30M = satu scan lane 30M (bukan dua lane seperti dulu).
+        self.assertEqual(calls, ["30m"])
+        self.assertEqual(app.session_state["best_pool_lane"], "30m")
+        stored = app.session_state["best_pool_scan_30m"]
+        self.assertEqual([r["pool_address"] for r in stored["rows"]], ["P30"])
+        # Lane 24H tidak disentuh sama sekali.
+        self.assertNotIn("best_pool_scan_24h", app.session_state)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn("$THR", body)
+        self.assertIn("30M · F/V > 1×", body)   # pill lane aktif
+        self.assertIn("1 pool tersimpan", "\n".join(
+            node.value for node in app.caption))
+
+    def test_tabel_lane_aktif_saja_dan_tanpa_kolom_src(self):
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result(
+            "24h", [_row(pool_address="PoolBest", ca="MintAAA", symbol="AAA")],
+            fetched=4, hidden=[_row(pool_address="PoolHide", ca="MintHid",
+                                    symbol="HID", **_fv(2.0, 10.0))])
+        app.session_state["best_pool_scan_30m"] = self._result(
+            "30m", [_row(pool_address="PoolLain", ca="MintLain", symbol="LN30",
+                         timeframe="30m", **_fv(15.0, 5.0))])
         app.run()
         self.assertEqual(len(app.exception), 0)
         body = "\n".join(node.value for node in app.markdown)
         self.assertIn("$AAA", body)
         self.assertIn("MintAAA", body)
-        self.assertIn("1 pool", body)
-        self.assertIn("3 disembunyikan", body)
+        # Baris lane 30M tidak boleh ikut tampil di tabel 24H.
+        self.assertNotIn("$LN30", body)
+        self.assertNotIn("PoolLain", body)
+        # Kolom Src dihapus bersama pemisahan lane; kolom F/V naik ke depan.
+        self.assertNotIn(">Src<", body)
+        self.assertIn(">F/V<", body)
+        self.assertIn("syarat F/V ≥ 5×", body)
         captions = "\n".join(node.value for node in app.caption)
-        self.assertIn("1 pool lolos · 3 disembunyikan · listing 4 pool.",
+        self.assertIn("1 pool 24H tampil · 1 dilewati · listing 4 pool.",
                       captions)
-        # tombol ⭐ baris (key diikat ke pool address, bukan index)
-        self.assertIn("best-pool-star-PoolBest",
-                      [button.key or "" for button in app.button])
-        self.assertIn("best-pool-toggle-hidden",
-                      [button.key or "" for button in app.button])
+        keys = [button.key or "" for button in app.button]
+        self.assertIn("best-pool-24h-star-PoolBest", keys)
+        self.assertIn("best-pool-view-30m", keys)
+        self.assertIn("best-pool-toggle-hidden-24h", keys)
 
-    def test_klik_disembunyikan_menampilkan_hidden_rows(self):
-        """Tombol N disembunyikan membuka listing volume≥1M + dust<0,05%."""
+    def test_klik_disembunyikan_menampilkan_kandidat_gagal_lane_itu(self):
         app = self._app()
-        hidden_row = _row(pool_address="PoolHide", ca="MintHide",
-                          symbol="HID", dust_pct_mc=0.02, volatility=1.0,
-                          volume_change_pct=88.0,
-                          analysis=_proof(0.02, 3))
-        app.session_state["best_pool_scan"] = {
-            "rows": [_row(pool_address="PoolBest", ca="MintAAA",
-                          symbol="AAA", dust_pct_mc=0.03,
-                          analysis=_proof(0.03, 12))],
-            "hidden_rows": [hidden_row],
-            "error": "", "fetched": 4, "hidden_metric": 2, "hidden_dust": 1,
-        }
+        app.session_state["best_pool_scan_24h"] = self._result(
+            "24h", [_row(pool_address="PoolBest", ca="MintAAA", symbol="AAA")],
+            hidden=[_row(pool_address="PoolHide", ca="MintHid", symbol="HID",
+                         analysis=_proof(0.02, 3), **_fv(2.0, 10.0))])
         app.run()
-        app.button(key="best-pool-toggle-hidden").click().run()
+        app.button(key="best-pool-toggle-hidden-24h").click().run()
         self.assertEqual(len(app.exception), 0)
         body = "\n".join(node.value for node in app.markdown)
         self.assertIn("$HID", body)
-        self.assertIn("MintHide", body)
+        self.assertIn("MintHid", body)
         self.assertNotIn("$AAA", body)
-        self.assertIn("best-pool-hidden-star-PoolHide",
+        # F/V merah + alasan gugur, angka ambang dibaca dari konstanta.
+        self.assertIn("gugur: F/V < 5×", body)
+        self.assertIn("best-pool-hidden-24h-star-PoolHide",
                       [button.key or "" for button in app.button])
         captions = "\n".join(node.value for node in app.caption)
-        self.assertIn("1 pool disembunyikan ditampilkan", captions)
+        # Caption = angka rekap + status barisnya, BUKAN teks rule/ambang
+        # (ambang hanya di tooltip judul + sub sel F/V).
+        self.assertIn("1 pool 24H disembunyikan ditampilkan", captions)
+        self.assertNotIn("F/V ≤", captions)
 
-    def test_baris_dust_0035_ditandai_chip_best_pool(self):
-        """Chip 🏆 BEST POOL (2026-09-12) hanya di baris dust <= 0,035% MC.
-
-        Permintaan user: "tandai jika %dust <= 0.035 menjadi Best Pool" —
-        baris 0,032% dapat chip emas di sel Dust %MC + pill rekap di kepala
-        card; baris 0,041% (lolos saringan 0,05%) tidak."""
+    def test_hasil_lama_gabungan_dipecah_per_lane(self):
+        """Sesi lama cuma punya ``best_pool_scan`` (24H+30M campur) → dipecah."""
         app = self._app()
-        app.session_state["best_pool_scan"] = {
-            "rows": [
-                _row(pool_address="PoolBest", ca="MintBest", symbol="BST",
-                     dust_pct_mc=0.032,
-                     analysis=_proof(0.032, 4)),
-                _row(pool_address="PoolOk", ca="MintOkk", symbol="OKP",
-                     dust_pct_mc=0.041, volume_change_pct=3.0,
-                     analysis=_proof(0.041, 7)),
-            ],
-            "error": "", "fetched": 2, "hidden_metric": 0, "hidden_dust": 0,
-        }
+        app.session_state["best_pool_scan"] = self._result(
+            "both", [_row(pool_address="Pool24", ca="M24", symbol="DUA4",
+                          timeframe="24h"),
+                     _row(pool_address="Pool30", ca="M30", symbol="TIG0",
+                          timeframe="30m", **_fv(15.0, 5.0))])
         app.run()
         self.assertEqual(len(app.exception), 0)
+        self.assertEqual([r["pool_address"] for r in
+                          app.session_state["best_pool_scan_24h"]["rows"]],
+                         ["Pool24"])
+        self.assertEqual([r["pool_address"] for r in
+                          app.session_state["best_pool_scan_30m"]["rows"]],
+                         ["Pool30"])
         body = "\n".join(node.value for node in app.markdown)
-        bst, okp = body.index("$BST"), body.index("$OKP")
-        segment_bst = body[bst:okp]
-        # chip tepat satu, di baris 0,032% (angka emas ditandai span).
-        self.assertEqual(segment_bst.count('class="dust-badge dust-best"'), 1)
-        self.assertIn("🏆 BEST POOL</span>", segment_bst)
-        self.assertEqual(body[okp:].count('class="dust-badge dust-best"'), 0)
-        # pill rekap kepala card menghitung baris bertanda; tooltip sel dan
-        # tooltip card menjelaskan ambang tandanya (angka dari konstanta —
-        # ``<=`` di-escape ``&lt;=`` di atribut title, unescape dulu).
-        self.assertIn("🏆 BEST POOL 1</span>", body)
+        self.assertIn("$DUA4", body)         # lane aktif default: 24H
+        self.assertNotIn("$TIG0", body)
+        app.button(key="best-pool-view-30m").click().run()
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn("$TIG0", body)
+        self.assertNotIn("$DUA4", body)
+
+    def test_error_lama_tetap_terbaca_setelah_migrasi(self):
+        """Hasil lama tanpa baris (listing API gagal) tidak kehilangan pesan."""
+        app = self._app()
+        app.session_state["best_pool_scan"] = self._result(
+            "both", [], fetched=0, error="Meteora HTTP 503")
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        warnings = "\n".join(node.value for node in app.warning)
+        self.assertIn("Meteora API: Meteora HTTP 503", warnings)
+        self.assertEqual(app.session_state["best_pool_scan_24h"]["rows"], [])
+
+    def test_detail_karakteristik_di_tooltip_bukan_caption(self):
+        """Rule dua tombol ada di tooltip judul; caption hanya angka rekap."""
         import html as _html
-        self.assertIn(f"dust <= {ms.BEST_DUST_MARK_PCT:g}% marketcap",
-                      _html.unescape(body))
 
-    def test_tanpa_baris_bertanda_tidak_ada_chip(self):
-        """Semua dust di atas 0,035% → tidak ada chip, tidak ada pill."""
         app = self._app()
-        app.session_state["best_pool_scan"] = {
-            "rows": [_row(pool_address="PoolOk", ca="MintOkk", symbol="OKP",
-                          dust_pct_mc=0.041,
-                          analysis=_proof(0.041, 7))],
-            "error": "", "fetched": 1, "hidden_metric": 0, "hidden_dust": 0,
-        }
-        app.run()
-        self.assertEqual(len(app.exception), 0)
-        body = "\n".join(node.value for node in app.markdown)
-        self.assertNotIn('class="dust-badge dust-best"', body)
-        self.assertNotIn("🏆 BEST POOL</span>", body)   # teks chip
-        self.assertNotIn("🏆 BEST POOL 1</span>", body)  # pill
+        body = _html.unescape("\n".join(node.value for node in app.markdown))
+        self.assertIn("title=\"Dua tombol = dua lane terpisah", body)
+        for label in (f"pool_type=dlmm&&active_tvl>={int(ms.BEST_ACTIVE_TVL_MIN)}",
+                      f"24H: F/V ≥ {ms.BEST_FV_24H_MIN:g}×",
+                      f"30M: F/V > {ms.BEST_FV_30M_MIN:g}×",
+                      "Urutan tiap tabel: F/V terbesar"):
+            self.assertIn(label, body)
+        captions = "\n".join(node.value for node in app.caption)
+        for rule_text in ("Urutan:", "disaring", "SEBELUM scan", "syarat",
+                          "F/V ≥", "F/V >"):
+            self.assertNotIn(rule_text, captions)
+        # saringan yang sudah dicabut tidak boleh balik ke tooltip
+        tooltip = bp.best_pool_tooltip()
+        for gone in ("top 10 holder <", "total LPs >", "volatility >= 2%",
+                     "volume 24 jam >= $1,000,000", "dust holder < 0,05%",
+                     "fee_pct>="):
+            self.assertNotIn(gone, tooltip)
 
-    def test_tabel_memakai_kolom_detail_fee_dan_vol(self):
-        """Detail fee / active TVL + Δ volume + rasio volume/active TVL."""
+    def test_tooltip_ambang_mengikuti_perubahan_konstanta(self):
+        with mock.patch.object(ms, "BEST_FV_30M_MIN", 3.0):
+            self.assertIn("30M: F/V > 3×", bp.best_pool_tooltip())
+            self.assertIn("F/V > 3×", bp.best_lane_gate_text("30m"))
+        with mock.patch.object(ms, "BEST_FV_24H_MIN", 7.0):
+            self.assertIn("24H: F/V ≥ 7×", bp.best_pool_tooltip())
+        with mock.patch.object(ms, "BEST_ACTIVE_TVL_MIN", 75_000.0):
+            self.assertIn("active_tvl>=75000", bp.best_pool_tooltip())
+
+    def test_baris_ditampilkan_urut_f_v_dan_siap_dibaca(self):
+        """F/V ditampilkan sebagai ``N,N×`` + alasan ambang di sel-nya."""
         app = self._app()
-        app.session_state["best_pool_scan"] = {
-            "rows": [_row(pool_address="PoolBest", dust_pct_mc=0.03)],
-            "error": "", "fetched": 1, "hidden_metric": 0, "hidden_dust": 0,
-        }
+        app.session_state["best_pool_scan_24h"] = self._result("24h", [
+            _row(pool_address="PoolKecil", ca="MintKcl", symbol="KCL",
+                 **_fv(20.0, 4.0)),        # 5,0×
+            _row(pool_address="PoolBesar", ca="MintBsr", symbol="BSR",
+                 **_fv(40.0, 4.0)),         # 10,0×
+        ])
         app.run()
         body = "\n".join(node.value for node in app.markdown)
+        self.assertLess(body.index("$BSR"), body.index("$KCL"))
+        self.assertIn("10.0×", body)
+        self.assertIn("5.0×", body)
+        # detail fee/TVL + volume tetap informasi (bukan saringan)
         for title in ("A.TVL", "Fee/TVL", "Vol 24h", "Volat", "Dust %MC"):
             self.assertIn(title, body)
-        # angka fee USD + tier fee + rasio + perubahan volume (Δ) per baris
-        self.assertIn("fee $24.0K·2%", body)
-        self.assertIn("40.0%", body)
-        self.assertIn("+12.5%", body)
-        # kunci urut dijelaskan di tooltip sel (bukan caption): Vol 24h =
-        # pertama (rasio volume/active TVL, 2026-09-13), Dust %MC = kedua,
-        # dan Fee/TVL sudah BUKAN kunci urut lagi.
-        self.assertIn("kunci urut pertama", body)
         self.assertIn("kunci urut kedua", body)
-        self.assertIn("bukan kunci urut lagi sejak 2026-09-13", body)
-        self.assertIn("2,000× A.TVL", body)   # rasio tampil di baris kecil
-        # Sel Vol 24h = bukti saringan volume baru (2026-09-12): angka
-        # ringkas di card, angka penuh + ambang saringan di tooltip sel.
-        self.assertIn("$1.20M", body)
-        self.assertIn("volume 24 jam $1,200,000", body)
-        self.assertIn(f"saringan layar: minimal "
-                      f"${ms.BEST_VOLUME_24H_MIN:,.0f}", body)
 
 
 if __name__ == "__main__":
