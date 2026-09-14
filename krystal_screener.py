@@ -8,8 +8,11 @@ memakai modul ini sebagai satu-satunya sumber listing dan rule. Bentuknya
 apple-to-apple:
 
 - **Listing** — ``GET https://cloud-api.krystal.app/v1/pools`` dengan header
-  ``KC-APIKey`` (10 unit/call). Chain Robinhood ditulis ``robinhood@4663``
-  (format ``nama@id``); empat protokol katalog Krystal untuk chain 4663
+  ``KC-APIKey`` (10 unit/call). Chain Robinhood dikirim sebagai ``chainId``
+  **integer** (``4663``) — sejak 2026-09-14 format lama ``robinhood@4663``
+  ditolak API dengan 400 dan swagger mendeklarasikan ``chainId`` integer;
+  :func:`fetch_pools` tetap retry otomatis dengan format lama bila integer
+  ditolak. Empat protokol katalog Krystal untuk chain 4663
   diambil masing-masing satu request lalu digabung: **ramsescl, uniswapv2,
   uniswapv3, uniswapv4** (daftar diverifikasi publik lewat
   ``GET cloud-api.krystal.app/v1/chains`` — 0 unit — dan
@@ -63,10 +66,17 @@ KRYSTAL_CARD_TITLE = "🦅 Scan Best Pool Krystal"
 # ---------------------------------------------------------------------------
 KRYSTAL_POOLS_URL = "https://cloud-api.krystal.app/v1/pools"
 KRYSTAL_CHAINS_URL = "https://cloud-api.krystal.app/v1/chains"
-# Format chainId Krystal: ``nama@id`` (contoh resmi: ``ethereum@1``).
+# Format chainId Krystal: dulu ``nama@id`` (contoh resmi lama:
+# ``ethereum@1``); sejak 2026-09-14 API menolak format itu dengan **400
+# Bad Request** dan swagger (``cloud-api.krystal.app/swagger/doc.json``)
+# mendeklarasikan ``chainId`` sebagai **integer** (mis. ``4663``).
 KRYSTAL_CHAIN_ID = 4663
 KRYSTAL_CHAIN_SLUG = "robinhood"
+# Format lama ``nama@id`` — hanya tinggal sebagai label baris/tooltip dan
+# cadangan fallback :func:`fetch_pools` bila API kembali menerimanya.
 KRYSTAL_CHAIN_PARAM = f"{KRYSTAL_CHAIN_SLUG}@{KRYSTAL_CHAIN_ID}"
+# Nilai ``chainId`` yang dikirim ke API sekarang: integer polos.
+KRYSTAL_CHAIN_QUERY = KRYSTAL_CHAIN_ID
 # Empat protokol katalog Krystal untuk chain 4663 (verifikasi 2026-09-14 lewat
 # /v1/chains + lp_explorer/configs). Urutan = urutan request.
 KRYSTAL_PROTOCOLS = ("ramsescl", "uniswapv2", "uniswapv3", "uniswapv4")
@@ -226,12 +236,17 @@ def chain_supported(chain_id: int = KRYSTAL_CHAIN_ID, *,
     return False
 
 
-def fetch_pools(*, protocol: str, chain: str = KRYSTAL_CHAIN_PARAM,
+def fetch_pools(*, protocol: str, chain: int | str = KRYSTAL_CHAIN_QUERY,
                 limit: int = KRYSTAL_LIMIT,
                 min_tvl: float | None = KRYSTAL_MIN_TVL,
                 sort_by: int = KRYSTAL_SORT_APR,
                 timeout: int = KRYSTAL_TIMEOUT) -> list[dict]:
     """Satu halaman pool Krystal untuk satu protokol. Gagal → raise.
+
+    ``chainId`` dikirim sebagai **integer** (``4663``) sesuai swagger
+    Krystal 2026-09-14; format lama ``robinhood@4663`` mulai ditolak 400.
+    Bila integer justru ditolak 400 (mis. API berganti lagi), satu retry
+    otomatis memakai format ``nama@id`` — dan sebaliknya.
 
     Biaya 10 unit per call (dokumentasi Krystal), jadi pemanggil
     (:func:`fetch_all_pools`) menjumlahkan protokolnya — jangan memanggil ini
@@ -245,7 +260,19 @@ def fetch_pools(*, protocol: str, chain: str = KRYSTAL_CHAIN_PARAM,
     }
     if min_tvl is not None:
         params["minTvl"] = int(min_tvl)
-    payload = _http_get(KRYSTAL_POOLS_URL, params, timeout=timeout)
+    try:
+        payload = _http_get(KRYSTAL_POOLS_URL, params, timeout=timeout)
+    except requests.HTTPError as exc:
+        if exc.response is None or exc.response.status_code != 400:
+            raise
+        # 400 = parameter ditolak; coba satu kali dengan format chainId
+        # lainnya sebelum menyerah (perubahan format 2026-09-14).
+        fallback = (KRYSTAL_CHAIN_QUERY
+                    if str(chain) == KRYSTAL_CHAIN_PARAM
+                    else KRYSTAL_CHAIN_PARAM)
+        payload = _http_get(KRYSTAL_POOLS_URL, dict(params,
+                                                    chainId=fallback),
+                            timeout=timeout)
     if isinstance(payload, dict):
         rows = payload.get("data")
         rows = rows if isinstance(rows, list) else []

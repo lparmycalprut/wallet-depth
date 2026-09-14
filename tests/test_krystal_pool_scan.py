@@ -237,6 +237,80 @@ class PayloadTest(unittest.TestCase):
         self.assertEqual(ks.protocol_label(""), "?")
 
 
+class ChainIdTransportTest(unittest.TestCase):
+    """``chainId`` dikirim sebagai integer — format ``nama@id`` ditolak 400.
+
+    Kasus produksi 2026-09-14: semua protokol Robinhood 4663 dengan
+    ``chainId=robinhood@4663`` → ``400 Client Error: Bad Request``; swagger
+    Krystal mendeklarasikan ``chainId`` integer. ``fetch_pools`` kini mengirim
+    integer dan retry sekali dengan format lama bila integer justru ditolak.
+    """
+
+    def setUp(self):
+        patch = mock.patch.object(ks, "api_key", return_value="kc-test-key")
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def _response(self, payload=None, status: int = 200):
+        response = mock.Mock()
+        response.status_code = status
+        response.json.return_value = payload if payload is not None else []
+        if status >= 400:
+            import requests as _requests
+
+            error = _requests.HTTPError(f"{status} Client Error")
+            error.response = response
+            response.raise_for_status.side_effect = error
+        else:
+            response.raise_for_status.return_value = None
+        return response
+
+    def test_chain_id_dikirim_integer(self):
+        with mock.patch.object(ks.requests, "get",
+                               return_value=self._response([_pool()])) as get:
+            rows = ks.fetch_pools(protocol="ramsescl")
+        self.assertEqual(len(rows), 1)
+        params = get.call_args.kwargs["params"]
+        self.assertEqual(params["chainId"], ks.KRYSTAL_CHAIN_ID)
+        self.assertNotIn("@", str(params["chainId"]))
+
+    def test_400_retry_dengan_format_lama(self):
+        """Integer ditolak 400 → satu retry otomatis dengan ``robinhood@4663``."""
+        ok = self._response([_pool()])
+        with mock.patch.object(ks.requests, "get",
+                               side_effect=[self._response(status=400), ok]) \
+                as get:
+            rows = ks.fetch_pools(protocol="uniswapv3")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(get.call_args_list[0].kwargs["params"]["chainId"],
+                         ks.KRYSTAL_CHAIN_QUERY)
+        self.assertEqual(get.call_args_list[1].kwargs["params"]["chainId"],
+                         ks.KRYSTAL_CHAIN_PARAM)
+
+    def test_400_dari_format_lama_retry_integer(self):
+        """Pemanggil eksplisit pakai format lama → fallback-nya integer."""
+        ok = self._response([_pool()])
+        with mock.patch.object(ks.requests, "get",
+                               side_effect=[self._response(status=400), ok]) \
+                as get:
+            rows = ks.fetch_pools(protocol="uniswapv3",
+                                  chain=ks.KRYSTAL_CHAIN_PARAM)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(get.call_args_list[1].kwargs["params"]["chainId"],
+                         ks.KRYSTAL_CHAIN_QUERY)
+
+    def test_error_selain_400_tidak_retry(self):
+        import requests as _requests
+
+        error = _requests.HTTPError("503 Server Error")
+        error.response = self._response(status=503)
+        with mock.patch.object(ks.requests, "get", side_effect=error) as get:
+            with self.assertRaises(Exception):
+                ks.fetch_pools(protocol="uniswapv3")
+        self.assertEqual(get.call_count, 1)
+
+
 class GateTest(unittest.TestCase):
     """Gate 24H: F/V ≥ 5× inklusif; V=0 dibuang; metrik hilang gugur."""
 
@@ -245,6 +319,9 @@ class GateTest(unittest.TestCase):
         self.assertEqual(ks.KRYSTAL_LANES, ("24h",))
         self.assertEqual(ks.KRYSTAL_CHAIN_ID, 4663)
         self.assertEqual(ks.KRYSTAL_CHAIN_PARAM, "robinhood@4663")
+        # Sejak 2026-09-14 API menolak format nama@id (400) — yang dikirim
+        # ke query sekarang integer polos.
+        self.assertEqual(ks.KRYSTAL_CHAIN_QUERY, 4663)
         self.assertEqual(ks.KRYSTAL_PROTOCOLS,
                          ("ramsescl", "uniswapv2", "uniswapv3", "uniswapv4"))
         self.assertTrue(ks.lane_fv_inclusive("24h"))
