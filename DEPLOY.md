@@ -17,6 +17,19 @@
   `BLOCKSCOUT_API_KEYS = "proapi_1,proapi_2,…"` — dipakai bergantian,
   key yang kreditnya habis/ditolak diparkir otomatis (lihat langkah di
   bawah).
+- Secret listing pool Krystal (kartu 🦅, hanya dipakai di dashboard, **tidak
+  dipakai workflow Actions**): `KRYSTAL_API_KEY` — key Krystal Cloud
+  (<https://cloud.krystal.app>, header `KC-APIKey`). Isi di **Streamlit
+  Cloud → Settings → Secrets**:
+
+  ```toml
+  KRYSTAL_API_KEY = "kc_…"
+  ```
+
+  Tanpa key kartu 🦅 tidak error — hanya menampilkan
+  "API key Krystal belum dipasang". Jangan pernah menaruh key di file yang
+  di-commit; `config.json` dan `.streamlit/secrets.toml` ada di
+  `.gitignore` hanya untuk pemakaian lokal.
 - Secrets alert Telegram opsional: `TELEGRAM_BOT_TOKEN` dan
   `TELEGRAM_CHAT_ID`. **Secret GitHub ≠ secret Streamlit** — cron
   Actions membaca yang pertama, scan manual di dashboard membaca yang

@@ -46,6 +46,12 @@ tidak relevan lagi, diganti pill lane di kepala card.
   **Fee/TVL** dengan fee USD + tier fee, Vol dengan Δ volume + rasio
   volume/active TVL) sebagai informasi.
 
+**Persistensi (2026-09-14):** hasil scan tiap lane disimpan ke cache berkas
+lokal (``scan_result_cache.save_result``, key = session key lane-nya) dan
+dipulihkan ke ``session_state`` bila sesi kosong, jadi **refresh browser
+(F5) tidak menghilangkan tabel** — sesudah scan holder FULL yang memakan
+menit, user tidak perlu menekan tombol scan lagi dari nol.
+
 **🏆 BEST POOL badge (dust <= 0,035% MC) dihapus** 2026-09-13 sore per
 permintaan user: \"tulisan tentang dust holder BEST POOL aman dll hapus
 juga\". Pill di kepala card juga dihapus. Dust %MC tetap tampil sebagai
@@ -589,6 +595,20 @@ def render_best_pool_scan() -> None:
         if active not in BEST_LANES:
             active = "24h"
 
+        # Pulihkan hasil scan dari cache berkas lokal bila session_state kosong
+        # — Streamlit membuat session baru setiap refresh browser (F5) / tab
+        # baru, sehingga tanpa ini listing + holder FULL yang memakan menit
+        # ikut hilang dan user harus menekan tombol scan lagi. Cache diisi
+        # ``scan_result_cache.save_result`` sesudah scan (lihat bawah).
+        try:
+            import scan_result_cache
+
+            for lane in BEST_LANES:
+                scan_result_cache.restore_into_session(
+                    st, best_lane_session_key(lane), best_lane_session_key(lane))
+        except Exception:  # noqa: BLE001 - cache hanya pelengkap
+            pass
+
         # Migrasi hasil lama (gabungan 24H + 30M) ke key per-lane, sekali saja.
         if not any(st.session_state.get(best_lane_session_key(lane))
                    for lane in BEST_LANES):
@@ -637,6 +657,15 @@ def render_best_pool_scan() -> None:
             st.session_state[best_lane_session_key(pressed)] = result
             st.session_state[best_lane_hidden_key(pressed)] = False
             st.session_state[BEST_ACTIVE_LANE_KEY] = normalize_best_lane(pressed)
+            # Tahan refresh browser: simpan hasil ke cache berkas lokal
+            # (2026-09-14). Gagal tulis tidak boleh membatalkan hasil scan.
+            try:
+                import scan_result_cache
+
+                scan_result_cache.save_result(best_lane_session_key(pressed),
+                                              result)
+            except Exception:  # noqa: BLE001 - cache hanya pelengkap
+                pass
             st.rerun()
 
         # ---- pindah lihat tabel lane lain tanpa scan ulang ----------------

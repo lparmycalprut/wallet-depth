@@ -12,8 +12,13 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
   **🏆 Scan Best Pool Meteora** (sejak 2026-09-10; **full-width** sejak
   2026-09-11 — "jangan dibuat grid lagi", dulu menempel di bawah card
   Meteora di dalam grid; sejak 2026-09-13 sore card ini punya **dua tombol
-  deteksi terpisah — 24H dan 30M — dengan tabel sendiri-sendiri**) dan **🛰 Scan Holder Solana / Robinhood** (dulu
-  "Scan Holder Khusus — Helius / Robinhood") — keduanya full-width.
+  deteksi terpisah — 24H dan 30M — dengan tabel sendiri-sendiri**), lalu
+  **🦅 Scan Best Pool Krystal** (2026-09-14, full-width: listing pool
+  Robinhood Chain 4663 dari Krystal Cloud dengan **rule F/V yang sama
+  persis** — gate 24H `F/V ≥ 5×`; ⭐ memasukkan token ke Watchlist Robinhood
+  LP; butuh `KRYSTAL_API_KEY` di secrets), dan **🛰 Scan Holder Solana /
+  Robinhood** (dulu "Scan Holder Khusus — Helius / Robinhood") — semuanya
+  full-width.
   **🦅 Scan Best Robinhood Coin** (2026-09-10) **diparkir di halaman temp
   (📦) sejak 2026-09-11** — "belum berfungsi": listing GMGN Robinhood Chain
   **volume 6 jam terakhir** → hanya tampilkan **top 10 holder < 30%** dan
@@ -383,6 +388,57 @@ bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
 Tes terfokus: `python -m pytest tests/test_best_pool_scan.py
 tests/test_best_fv_prefilter.py -q`.
 
+## 🦅 Scan Best Pool Krystal (halaman utama, 2026-09-14)
+
+Card **Robinhood Chain** (chain id 4663) yang **menyalin** rule 🏆 Scan Best
+Pool Meteora — bukan mengubahnya — sehingga dua card bisa dibandingkan
+apple-to-apple. Ditaruh **full-width tepat di bawah card Meteora**, sebelum
+🛰 Scan Holder (aturan 2026-09-11: "jangan dibuat grid lagi").
+
+- **Sumber listing**: `GET https://cloud-api.krystal.app/v1/pools
+  ?chainId=robinhood@4663&protocol=<protokol>&sortBy=0&limit=20` dengan header
+  `KC-APIKey` (10 unit/call). Empat protokol katalog Krystal untuk chain 4663
+  diambil satu request each lalu digabung + di-dedup per `poolAddress`:
+  **ramsescl, uniswapv2, uniswapv3, uniswapv4** (nama protokol tampil di kolom
+  Pool). Detail endpoint + field: [`docs/krystal_api.md`](docs/krystal_api.md).
+  Katalog chain diverifikasi gratis lewat `GET /v1/chains` (0 unit).
+- **F = fee 24 jam ÷ TVL × 100** (field `stats24h.fee` / `tvl`) — padanan
+  `fee_active_tvl_ratio` Meteora. **V = (max high − min low) ÷ min low × 100**
+  dari **24 candle hourly** pool di GeckoTerminal network **robinhood**
+  (`core.get_hourly_candles(..., network="robinhood")` — generalisasi 2026-09-14,
+  default tetap `solana`). Pool tanpa candle = *volatility tidak tersedia*.
+- **Gate 24H: `F/V ≥ KRYSTAL_FV_24H_MIN` (5×, inklusif)** — tepat 5× lolos,
+  4,9× gugur. **V persis 0 → gugur dan dibuang total dari listing** (tidak
+  masuk tabel, tidak masuk "dilewati", tidak dihitung — `∞` bukan kelolosan,
+  dan "tidak ada pergerakan disitu"). Metrik hilang/nonfinite/negatif → gugur
+  `metrik tidak tersedia` dan tampil di tabel **▶ N pool dilewati**. Pool di
+  bawah ambang **di-skip sebelum scan holder** (kuota Blockscout aman).
+- **Lane 24H saja** (keputusan user): fee Krystal yang tersedia baru berjendela
+  24 jam; lane 30M menyusul bila Krystal membuka window fee lebih pendek.
+- **Urutan baris**: F/V terbesar → volume/TVL terbesar → dust %MC terkecil →
+  simbol.
+- **Holder**: hanya pool lolos yang di-scan `robinhood_holders.analyze_token`
+  (Blockscout, **FULL 100.000 wallet**); **semua kandidat ditunggu sampai
+  selesai** (tanpa budget waktu — yang lambat justru token ber-holder puluhan
+  ribu). Kolom **Dust %MC** (3 desimal) murni informasi: tanpa bukti holder
+  (0 wallet / terpotong / sampel < 40 wallet) selnya `—`, bukan `0,000%`.
+- **Kolom** (4 inti di depan, pola 2026-09-14): Token · **F/V** · **Volat** ·
+  **Dust %MC** · TVL · Fee/TVL · Vol 24h · APR · Pool (protokol + tautan
+  Blockscout) · ⭐. Sel **F/V tertinggi** dan **volatility terbesar** disorot
+  **hijau menyala** `#00c853` + bold (seri di puncak ikut semua; tabel
+  "dilewati" tidak ditandai). **⭐** → Watchlist **Robinhood LP** halaman utama.
+- **Persistensi**: hasil disimpan ke cache berkas (`.scan_cache/`,
+  git-ignored) sesudah scan dan dipulihkan saat `session_state` kosong, jadi
+  **refresh browser tidak menghilangkan tabel** — modul yang sama
+  (`scan_result_cache`) kini juga dipakai card 🏆 Meteora.
+- **Butuh `KRYSTAL_API_KEY`** di `.streamlit/secrets.toml` **dan** Streamlit
+  Cloud → Settings → Secrets (tidak pernah di-commit). Tanpa key card tetap
+  dirender dengan pesan cara memasangnya. Semua fetch punya timeout dan
+  kegagalan jadi pesan di card, bukan exception.
+
+Tes terfokus: `python -m pytest tests/test_krystal_pool_scan.py
+tests/test_core_candles.py -q`.
+
 ## 🌊 Scan Meteora Pool (halaman temp sejak 2026-09-10)
 
 Regular scan mengambil dua listing pool-discovery secara berurutan:
@@ -599,9 +655,12 @@ akumulasi dan bukan prediksi arah harga.
 | `solscan_holders.py` | Kalkulasi wallet_depth (bucket & tier) |
 | `helius_holders.py` | Scan Holder Solana satu token (Solana/Helius) + bar chart |
 | `holder_status.py` | Snapshot dashboard ramping (ref `holder-live`) + history ringkas + transport GitHub (JSON & byte/gzip) |
-| `core.py` | Config/key Helius (pool round-robin; placeholder `PASTE-API-KEY-…` disaring, Streamlit secrets menang atas `config.json`), pasar DexScreener, candle hourly/harian GeckoTerminal, **status + sisa kredit key Helius** (`helius_key_status` / `helius_usage_summary`) dan hitungan request lokal |
+| `core.py` | Config/key Helius (pool round-robin; placeholder `PASTE-API-KEY-…` disaring, Streamlit secrets menang atas `config.json`), pasar DexScreener, candle hourly/harian GeckoTerminal (**network bisa dipilih** sejak 2026-09-14: `solana` default, `robinhood` untuk chain 4663), **status + sisa kredit key Helius** (`helius_key_status` / `helius_usage_summary`) dan hitungan request lokal |
 | `activity_log.py` | Ring buffer kejadian semua card (400 entri, dedup 60 dtk, level `action` = merah bold) + panel **🧾 Log Aktivitas**: status pool key PRO Blockscout & **sisa kredit Helius** |
-| `best_pool_ui.py` | Card **🏆 Scan Best Pool Meteora** (halaman utama, full-width di bawah grid 2 kolom sejak 2026-09-11) — **dua tombol 24H / 30M** + satu tabel per lane (session key `best_pool_scan_24h` / `_30m`), saringan `meteora_screener.BEST_*`, ⭐ → Watchlist Meteora, detail = tooltip judul |
+| `best_pool_ui.py` | Card **🏆 Scan Best Pool Meteora** (halaman utama, full-width di bawah grid 2 kolom sejak 2026-09-11) — **dua tombol 24H / 30M** + satu tabel per lane (session key `best_pool_scan_24h` / `_30m`), saringan `meteora_screener.BEST_*`, ⭐ → Watchlist Meteora, detail = tooltip judul, hasil ikut tersimpan di cache berkas (2026-09-14) |
+| `krystal_screener.py` | Listing pool **Krystal** Robinhood Chain 4663 (4 protokol, `KC-APIKey`) + normalisasi (F = `stats24h.fee` / `tvl` × 100), V dari 24 candle hourly GeckoTerminal network `robinhood`, gate `row_krystal_gaps` 24H F/V ≥ 5× (V=0 dibuang), urut F/V → vol/TVL → dust, holder FULL Blockscout tanpa budget waktu |
+| `krystal_pool_ui.py` | Card **🦅 Scan Best Pool Krystal** (halaman utama, full-width di bawah card Meteora) — 4 kolom inti di depan, sorot hijau menyala F/V & Volat tertinggi, ⭐ → Watchlist Robinhood LP, rule di tooltip judul, persistensi via `scan_result_cache` |
+| `scan_result_cache.py` | Cache berkas hasil scan (`.scan_cache/`, git-ignored): `save_result` / `load_result` / `restore_into_session` — refresh browser tidak menghilangkan tabel; payload dirampingkan (peta wallet dibuang) dan ditulis atomik |
 | `robinhood_best_scan.py` | Card **🦅 Scan Best Robinhood Coin** (diparkir di halaman temp 2026-09-11, "belum berfungsi") — rank GMGN `swaps/6h` + dust Blockscout, badge 🚀 Dexboost, 📋 copy CA, ⭐ → Watchlist Robinhood LP di halaman utama; semua kandidat ditunggu (tanpa budget waktu) |
 | `scripts/scan_holders.py` | Cron **lane LP saja** (run ±5 menit): snapshot metric Meteora + holder/history tanpa alert dust Meteora, alert holder lama hanya lane Robinhood, publish status + backup |
 | `telegram_alerts.py` | Alert holder-dust untuk lane non-Meteora: ⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE (delta dust ≥ 0,02% MC), marker `alert_state["early_dump"]`, Telegram Bot API |
