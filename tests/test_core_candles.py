@@ -291,5 +291,67 @@ class GetDailyCandlesTest(unittest.TestCase):
         self.assertEqual(token["address"], MINT)
 
 
+class NetworkParamTest(unittest.TestCase):
+    """``get_hourly_candles`` menerima network (generalizing 2026-09-14).
+
+    Card Solana memakai default ``solana`` (perilaku lama tidak berubah),
+    card 🦅 Scan Best Pool Krystal memakai ``robinhood`` (chain 4663).
+    """
+
+    @staticmethod
+    def _fetch(**kwargs):
+        captured = {}
+
+        def _get(url, **inner):
+            captured["url"] = url
+            captured.update(inner)
+            return payload([[ts("2026-08-02T00:00:00+00:00"), 1.0, 1.5, 0.5,
+                             1.2, 100]])
+
+        with mock.patch.object(core.requests, "get", side_effect=_get):
+            core.get_hourly_candles("PairRobinhood1111111111111111111111",
+                                    **kwargs)
+        return captured
+
+    def test_default_tetap_solana(self):
+        """Tanpa argumen → endpoint Solana persis seperti sebelum perubahan."""
+        captured = self._fetch(limit_hours=3)
+        self.assertIn("/networks/solana/pools/", captured["url"])
+        self.assertEqual(captured["params"],
+                         {"aggregate": 1, "limit": 3})
+
+    def test_network_robinhood_dipakai_krystal(self):
+        captured = self._fetch(limit_hours=24, network="robinhood")
+        self.assertIn("/networks/robinhood/pools/", captured["url"])
+        self.assertEqual(captured["params"], {"aggregate": 1, "limit": 24})
+
+    def test_alias_dan_chain_id_dipetakan(self):
+        for value in ("RH", "Robinhood", "4663", "robinhoodchain"):
+            with self.subTest(value=value):
+                captured = self._fetch(network=value)
+                self.assertIn("/networks/robinhood/", captured["url"])
+        for value in ("sol", "SOLANA"):
+            with self.subTest(value=value):
+                captured = self._fetch(network=value)
+                self.assertIn("/networks/solana/", captured["url"])
+
+    def test_network_tidak_dikenal_jatuh_ke_default(self):
+        captured = self._fetch(network="chain-aneh/../../evil")
+        self.assertIn("/networks/solana/", captured["url"])
+        self.assertNotIn("..", captured["url"])
+
+    def test_daily_candles_meneruskan_network(self):
+        captured = {}
+
+        def _get(url, **inner):
+            captured["url"] = url
+            return payload([[ts("2026-08-02T00:00:00+00:00"), 1.0, 1.5, 0.5,
+                             1.2, 100]])
+
+        with mock.patch.object(core.requests, "get", side_effect=_get):
+            core.get_daily_candles(PAIR, limit_days=2, network="robinhood")
+        self.assertIn("/networks/robinhood/pools/", captured["url"])
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

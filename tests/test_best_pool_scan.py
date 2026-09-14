@@ -32,9 +32,13 @@ pool, kita akan punya 2 tombol 24H dan 30M"*. Yang di-pin di file ini:
 """
 from __future__ import annotations
 
+import os
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+
+import scan_result_cache
 
 try:  # optional dev dependency
     from streamlit.testing.v1 import AppTest
@@ -873,7 +877,13 @@ class BestPoolCardTest(unittest.TestCase):
         app.session_state["best_pool_lane"] = "30m"
         app.run()
         self.assertEqual(len(app.exception), 0)
+        # Batasi pembacaan ke card Meteora saja: card 🦅 Scan Best Pool Krystal
+        # di bawahnya memang berjendela 24 jam (tooltip-nya menyebut
+        # "fee 24 jam"), jadi yang di-pin di sini hanya milik tabel 30M.
         body = "\n".join(node.value for node in app.markdown)
+        start = body.find(ms.BEST_CARD_TITLE)
+        end = body.find('title="Listing pool Krystal')
+        body = body[start:end if end > start else len(body)]
         self.assertIn(">Vol 30m<", body)
         self.assertNotIn(">Vol 24h<", body)
         self.assertIn("volume 30 menit", body)
@@ -972,6 +982,97 @@ class BestPoolCardTest(unittest.TestCase):
         for title in ("A.TVL", "Fee/TVL", "Vol 24h", "Volat", "Dust %MC"):
             self.assertIn(title, body)
         self.assertIn("kunci urut kedua", body)
+
+
+@unittest.skipIf(AppTest is None, "streamlit not installed")
+class BestPoolCacheTest(unittest.TestCase):
+    """Persistensi hasil scan 🏆 Best Pool Meteora (cache berkas lokal).
+
+    Streamlit membuat session baru tiap refresh browser (F5), sehingga tanpa
+    cache hasil scan lenyap padahal enrichment holder-nya memakan menit.
+    """
+
+    def setUp(self):
+        # Runner pytest sudah memasang fixture ``_iso_scan_cache``; runner
+        # ``unittest`` mematikan cache (``tests/__init__.py``), jadi tes ini
+        # menyiapkan direktorinya sendiri.
+        tmp = tempfile.TemporaryDirectory(prefix="best-pool-cache-")
+        self.addCleanup(tmp.cleanup)
+        previous = {name: os.environ.get(name)
+                    for name in ("SCAN_CACHE", "SCAN_CACHE_DIR")}
+
+        def _restore():
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+        self.addCleanup(_restore)
+        os.environ["SCAN_CACHE"] = "1"
+        os.environ["SCAN_CACHE_DIR"] = tmp.name
+
+    def _app(self):
+        patches = (
+            mock.patch("watchlist.load_watchlist",
+                       side_effect=lambda **_kw: {}),
+            mock.patch("holder_status.load_holder_status",
+                       side_effect=lambda **_kw: {"updated_at": None,
+                                                  "tokens": {}}),
+            mock.patch("holder_history.load_holder_history",
+                       side_effect=lambda *a, **kw: {"tokens": {}}),
+            mock.patch("holder_history.pull_holder_history",
+                       return_value=None),
+        )
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        return AppTest.from_file(APP, default_timeout=90)
+
+    def test_scan_menyimpan_hasil_ke_cache(self):
+        app = self._app()
+        app.run()
+        with mock.patch.object(ms, "scan_best_lane",
+                               return_value={"rows": [
+                                   _row(pool_address="PoolCache",
+                                        ca="MintCache", symbol="CACHE")],
+                                   "hidden_rows": [], "error": "",
+                                   "fetched": 1, "hidden_metric": 0,
+                                   "hidden_dust": 0, "skipped_quote": 0,
+                                   "dropped_volatility": 0, "lane": "24h",
+                                   "analyzed_at": 1}):
+            app.button(key="best-pool-scan-24h").click().run()
+        self.assertEqual(len(app.exception), 0)
+        key = bp.best_lane_session_key("24h")
+        self.assertTrue(scan_result_cache.cache_path(key).exists())
+        payload = scan_result_cache.load_result(key)
+        self.assertEqual([row["pool_address"] for row in payload["rows"]],
+                         ["PoolCache"])
+
+    def test_refresh_browser_memulihkan_hasil_dari_cache(self):
+        """Sesi baru tetap menampilkan tabel; cache dihapus → kembali kosong."""
+        key = bp.best_lane_session_key("24h")
+        scan_result_cache.save_result(key, {
+            "rows": [_row(pool_address="PoolCache", ca="MintCache",
+                          symbol="CACHE")],
+            "hidden_rows": [], "error": "", "fetched": 3, "hidden_metric": 0,
+            "hidden_dust": 0, "skipped_quote": 0, "dropped_volatility": 0,
+            "lane": "24h", "analyzed_at": 1})
+        fresh = self._app()
+        fresh.run()
+        self.assertEqual(len(fresh.exception), 0)
+        body = "\n".join(node.value for node in fresh.markdown)
+        self.assertIn("$CACHE", body)
+        self.assertEqual(fresh.session_state[key]["fetched"], 3)
+
+        scan_result_cache.clear_result(key)
+        kosong = self._app()
+        kosong.run()
+        self.assertEqual(len(kosong.exception), 0)
+        self.assertNotIn("$CACHE", "\n".join(node.value
+                                             for node in kosong.markdown))
+        self.assertIn("belum di-scan", "\n".join(node.value
+                                                 for node in kosong.caption))
 
 
 if __name__ == "__main__":

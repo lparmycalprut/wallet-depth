@@ -946,8 +946,24 @@ def get_market(ca: str, *, chain_id: str | None = None) -> dict:
     }
 
 
-GECKOTERMINAL_OHLCV_URL = ("https://api.geckoterminal.com/api/v2/networks/"
-                           "solana/pools/{pair}/ohlcv/hour")
+# GeckoTerminal menempatkan network di path URL (``/networks/<slug>/pools/…``).
+# Card Solana memakai ``solana``, card Robinhood/Krystal memakai ``robinhood``
+# (chain id 4663 — GeckoTerminal meng-indeks pool + OHLCV-nya), jadi template
+# URL-nya menerima network, bukan di-hardcode (generalisasi 2026-09-14).
+GECKOTERMINAL_DEFAULT_NETWORK = "solana"
+GECKOTERMINAL_OHLCV_URL_TEMPLATE = (
+    "https://api.geckoterminal.com/api/v2/networks/"
+    "{network}/pools/{pair}/ohlcv/hour")
+# Alias network → slug GeckoTerminal. Chain id mentah (4663) juga dikenali
+# supaya pemanggil yang menyimpan chain id tidak perlu memetakan sendiri.
+GECKOTERMINAL_NETWORK_ALIASES = {
+    "sol": "solana",
+    "solana": "solana",
+    "robinhood": "robinhood",
+    "rh": "robinhood",
+    "4663": "robinhood",
+    "robinhoodchain": "robinhood",
+}
 GECKOTERMINAL_MAX_LIMIT = 1000
 # 1e11 detik = tahun 5138: di atas itu timestamp pasti milidetik.
 MILLISECOND_TS_THRESHOLD = 100_000_000_000
@@ -1008,13 +1024,50 @@ def normalize_hourly_candles(values) -> list[dict]:
     return [rows[ts] for ts in sorted(rows)]
 
 
+def normalize_geckoterminal_network(value,
+                                    *,
+                                    default: str = GECKOTERMINAL_DEFAULT_NETWORK,
+                                    ) -> str:
+    """Slug network GeckoTerminal untuk satu nilai (alias/chain id → slug).
+
+    Nilai yang tidak dikenal jatuh ke ``default`` (**solana**) supaya pemanggil
+    lama tetap menyentuh endpoint yang sama persis seperti sebelum generalisasi
+    2026-09-14 (card Krystal harus menyebut ``network="robinhood"`` secara
+    eksplisit). Karakter di luar ``[a-z0-9_-]`` dibuang: nilai ini masuk ke
+    path URL, jadi tidak boleh dipakai untuk menyisipkan segmen lain.
+    """
+    text = str(value if value is not None else "").strip().lower()
+    text = "".join(char for char in text
+                   if char.isalnum() or char in "-_")
+    return GECKOTERMINAL_NETWORK_ALIASES.get(text, default)
+
+
+def geckoterminal_ohlcv_url(network=GECKOTERMINAL_DEFAULT_NETWORK) -> str:
+    """URL OHLCV hourly GeckoTerminal untuk satu network (``{pair}`` mengambang)."""
+    slug = normalize_geckoterminal_network(network)
+    return GECKOTERMINAL_OHLCV_URL_TEMPLATE.format(network=slug, pair="{pair}")
+
+
+# Konstanta lama dipertahankan: template Solana dengan placeholder ``{pair}``
+# seperti sebelumnya, jadi pemanggil/tes yang merujuk namanya tidak berubah
+# perilaku (hanya kini punya padanan yang menerima network).
+GECKOTERMINAL_OHLCV_URL = geckoterminal_ohlcv_url(GECKOTERMINAL_DEFAULT_NETWORK)
+
+
 def get_hourly_candles(pair_address: str, limit_hours: int = 168, *,
-                       timeout: int = 25) -> list[dict]:
+                       timeout: int = 25,
+                       network: str = GECKOTERMINAL_DEFAULT_NETWORK,
+                       ) -> list[dict]:
     """Fetch hourly GeckoTerminal candles for one pool (oldest -> newest).
 
     ``limit_hours`` defaults to 7 x 24 so one request can serve both a
     four-hour volume window and a seven-day volume average. Transport or
     parse failures return ``[]``: market data must never raise into a scan.
+
+    ``network`` (2026-09-14) memilih chain GeckoTerminal — ``"solana"``
+    (default, perilaku lama) untuk pool Solana dan ``"robinhood"`` untuk pool
+    Robinhood Chain (4663) yang dipakai card **🦅 Scan Best Pool Krystal**;
+    alias tidak dikenal jatuh ke default, jadi pemanggil lama tidak berubah.
     """
     pair = str(pair_address or "").strip()
     if not pair:
@@ -1022,7 +1075,7 @@ def get_hourly_candles(pair_address: str, limit_hours: int = 168, *,
     try:
         limit = max(1, min(GECKOTERMINAL_MAX_LIMIT, int(limit_hours)))
         response = requests.get(
-            GECKOTERMINAL_OHLCV_URL.format(pair=pair),
+            geckoterminal_ohlcv_url(network).format(pair=pair),
             params={"aggregate": 1, "limit": limit},
             headers={"accept": "application/json"}, timeout=timeout)
         response.raise_for_status()
@@ -1086,11 +1139,15 @@ def aggregate_daily_candles(hourly, limit_days: int = 7) -> list[dict]:
     return ordered[-days:]
 
 
-def get_daily_candles(pair_address: str, limit_days: int = 7) -> list[dict]:
+def get_daily_candles(pair_address: str, limit_days: int = 7, *,
+                      network: str = GECKOTERMINAL_DEFAULT_NETWORK,
+                      ) -> list[dict]:
     """Fetch hourly GeckoTerminal candles and aggregate calendar days in UTC.
 
     Hourly candles are aggregated into calendar days using the UTC boundary,
     which matches the crypto-market day used by Helius and Solscan.
+
+    ``network`` diteruskan ke :func:`get_hourly_candles` (default ``solana``).
     """
     try:
         days = int(limit_days)
@@ -1098,5 +1155,6 @@ def get_daily_candles(pair_address: str, limit_days: int = 7) -> list[dict]:
         return []
     if days <= 0:
         return []
-    hourly = get_hourly_candles(pair_address, limit_hours=days * 24 + 24)
+    hourly = get_hourly_candles(pair_address, limit_hours=days * 24 + 24,
+                                network=network)
     return aggregate_daily_candles(hourly, limit_days=days)

@@ -10,6 +10,7 @@ import streamlit as st
 
 from helius_holders import depth_bar_chart, scan_token_holders
 from best_pool_ui import render_best_pool_scan
+from krystal_pool_ui import render_krystal_pool_scan
 from holder_history import (FULL_SCAN_MAX_WALLETS, LP_INTERVAL_SEC,
                             holders_usable, ingest_many)
 from links import external_links_html, holder_analytic_link_html
@@ -718,6 +719,16 @@ with _rh_col:
 # Meteora di atas.
 st.divider()
 render_best_pool_scan()
+
+# ---------------------------------------------------------------------------
+# 🦅 Scan Best Pool Krystal — listing pool Krystal (Robinhood Chain 4663),
+# rule F/V disalin persis dari card 🏆 Meteora di atas (F = fee 24 jam / TVL,
+# V = volatility 24 candle hourly GeckoTerminal network robinhood, gate 24H
+# F/V ≥ 5×). Full-width, **tidak** di dalam grid 2 kolom (aturan 2026-09-11:
+# "jangan dibuat grid lagi").
+# ---------------------------------------------------------------------------
+st.divider()
+render_krystal_pool_scan()
 
 st.divider()
 _render_helius_holder_scan()

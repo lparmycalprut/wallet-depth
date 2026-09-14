@@ -1,5 +1,94 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-14 (malam ke-2) — 🦅 Scan Best Pool Krystal + cache hasil scan
+
+Permintaan user: *"buat card 🦅 Scan Best Pool Krystal (Robinhood Chain, chain
+id 4663)"* — **tepat di bawah card 🏆 Scan Best Pool Meteora** (full-width,
+sebelum 🛰 Scan Holder), dengan **rule F/V yang disalin persis** dari card
+Meteora dan **persistensi hasil sejak awal**.
+
+- **`krystal_screener.py`** (baru) — listing pool Krystal
+  (`GET cloud-api.krystal.app/v1/pools?chainId=robinhood@4663&protocol=…&sortBy=0&limit=20`,
+  header `KC-APIKey`, 10 unit/call) untuk **empat** protokol katalog chain
+  4663: `ramsescl, uniswapv2, uniswapv3, uniswapv4` (verifikasi katalog gratis
+  lewat `GET /v1/chains` — 0 unit — dan `api.krystal.app/all/v1/lp_explorer/configs`;
+  **jalur cadangan publik `lp_explorer/top_pools` menolak chain 4663**:
+  `chain id 4663 not supported`). Detail field + status probe:
+  `docs/krystal_api.md`.
+  - **F = `stats24h.fee ÷ tvl × 100`** (padanan `fee_active_tvl_ratio`; APR
+    Krystal **tidak** dipakai karena sudah ter-annualisasi + ber-insentif);
+  - **V = `(max high − min low) ÷ min low × 100`** dari **24 candle hourly**
+    GeckoTerminal network **robinhood** (`core.get_hourly_candles(...,
+    network="robinhood")`). Pool tanpa candle = *volatility tidak tersedia*
+    (`None`, bukan 0 — 0% adalah klaim yang tidak bisa dibuktikan);
+  - **gate `row_krystal_gaps`**: 24H `F/V ≥ KRYSTAL_FV_24H_MIN` (5×,
+    **inklusif** — tepat 5× lolos, 4,9× gugur). V persis 0 → gugur **dan
+    dibuang total** (`row_volatility_zero`, `dropped_volatility`); metrik
+    hilang/nonfinite/negatif → `metrik tidak tersedia` (masuk tabel
+    "dilewati"). Ambang dibaca dari konstanta **saat dipakai**
+    (`lane_fv_min` / `lane_fv_sign` / `krystal_lane_gate_label`).
+  - **urutan eksekusi (jangan dirotasi balik)**: listing → buang pool
+    quote-only (`drop_quote_rows`) → **V** (murah, 1 req/pool) → **gate** →
+    **holder** (Blockscout FULL 100.000 wallet, `as_completed` **tanpa budget
+    waktu** — pool di bawah ambang tidak pernah menyentuh Blockscout).
+  - **lane 24H saja** (fee Krystal baru berjendela 24 jam); 30M menyusul bila
+    Krystal membuka window lebih pendek.
+- **`krystal_pool_ui.py`** (baru) — tiru `best_pool_ui`: border container,
+  tooltip judul berisi seluruh rule (bukan caption), **4 kolom inti di depan**
+  (Token · F/V · Volat · Dust %MC) lalu TVL · Fee/TVL · Vol 24h · APR · Pool
+  (nama protokol + tautan Blockscout) · ⭐, sorot **hijau menyala**
+  `TOP_HIGHLIGHT_COLOR = #00c853` pada sel F/V tertinggi & volatility terbesar
+  (seri ikut semua; tabel "dilewati" `mark_tops=False`), pill hitungan, tombol
+  **▶ N pool dilewati**, ⭐ → `robinhood_watchlist.add_to_robinhood_watchlist(
+  ..., source=RH_LP_SOURCE, background=True)`, dan **pesan "pasang
+  KRYSTAL_API_KEY"** bila key belum ada (tanpa pernah mencetak nilainya).
+- **`scan_result_cache.py`** (baru — **pengganti commit f9c1ec8 yang hilang**,
+  lihat bawah): `save_result(key, result)` / `load_result(key)` /
+  `restore_into_session(st, key, session_key)`; berkas JSON per key di
+  `.scan_cache/` (**git-ignored**), tulis **atomik** (`os.replace`), NaN →
+  `None`, peta wallet `wallet_snapshot`/`chrono_snapshot` **dibuang** sebelum
+  disimpan, dan **tidak pernah melempar** (cache hanya pelengkap). Dipakai
+  card Krystal **dan** card 🏆 Meteora (`best_pool_ui`: simpan sesudah scan,
+  pulihkan tiap lane saat `session_state` kosong) — jadi **refresh browser
+  (F5) tidak menghilangkan tabel**.
+- **`core.get_hourly_candles(..., network=…)`** (generalisasi 2026-09-14):
+  `GECKOTERMINAL_OHLCV_URL_TEMPLATE` + `normalize_geckoterminal_network()`
+  (alias `rh`/`robinhood`/`4663`/`robinhoodchain` → `robinhood`; `sol`/`solana`
+  → `solana`; nilai asing/berbahaya jatuh ke **default solana** supaya
+  pemanggil lama tidak berubah perilaku). `get_daily_candles` ikut meneruskan
+  `network`. Konstanta lama `GECKOTERMINAL_OHLCV_URL` tetap ada (template
+  Solana dengan placeholder `{pair}`).
+- **`links.py`**: `blockscout_address_url()` + `robinhood_pool_links_html()` —
+  tautan explorer untuk alamat **pool** Robinhood (`pool_links_html` tetap
+  Meteora/HawkFi, jangan dipakai untuk pool Krystal).
+- **Aturan "tanpa bukti = tanpa angka" ikut berlaku** (warisan 2026-09-13):
+  holder gagal/terpotong/sampel < `MIN_USABLE_WALLETS` → `dust_pct_mc = None`
+  + `holders_note`, sel tampil `—` bukan `0,000%`.
+- Tes: `tests/test_krystal_pool_scan.py` (51 tes + 12 subtest) — normalisasi
+  payload Krystal (termasuk variasi nama field + payload rusak), gate (tepat
+  5× lolos / 4,9× gugur / V=0 dibuang / metrik hilang), rumus V dari candle,
+  urutan baris, render tabel (4 kolom inti + sorot neon + tabel dilewati tanpa
+  sorot), ⭐ ke Watchlist Robinhood, dan persistensi (save → sesi baru →
+  restore → cache dihapus → kosong). `tests/test_core_candles.py` (+6 tes
+  network), `tests/test_best_pool_scan.py::BestPoolCacheTest` (+2 tes cache
+  Meteora). Suite penuh: **34 gagal, 1198 lulus** (baseline 34/1140 — 34 merah
+  persis daftar lama).
+- **Catatan tes lama**: `BestPoolCardTest.test_label_vol_dan_tooltip_fee_mengikuti_lane`
+  sekarang membatasi pembacaan body ke card Meteora (tooltip card Krystal
+  memang menyebut "fee 24 jam"), supaya asersi "tabel 30M tidak menulis *fee 24
+  jam*" tetap bermakna tanpa menyentuh rule Meteora.
+
+### ⚠️ Pekerjaan gantung f9c1ec8 — tidak bisa di-recover, dibangun ulang
+
+Commit `f9c1ec8` *"scan: hasil meteora tahan refresh browser (cache file
+lokal)"* **tidak ada di mana pun**: tidak di reflog, tidak di semua branch
+remote (branch `arena/01a09d72-wallet-depth` ada di origin tapi isinya identik
+`main`), tidak di `git fsck --lost-found`, dan GitHub membalas 422 *No commit
+found*. Fitur itu karena itu **ditulis ulang** dari nol sesuai deskripsinya
+(`scan_result_cache` + pemasangan ke card Meteora + tes + fixture isolasi) —
+bukan sekadar dipindah. Kalau kelak diff aslinya muncul, bandingkan dulu
+sebelum menimpa.
+
 ## Update 2026-09-14 (malam) — Best Pool: tata kolom + sorot tertinggi
 
 Permintaan user: *"kita tata kolomnya baik untuk 24jam maupun 30menit —
@@ -1049,6 +1138,29 @@ badge BEST POOL       : < 0.1% marketcap (DUST_BEST_PCT, aditif) + data
                         = DIHAPUS. Urutan tiap tabel (2026-09-13 sore): F/V
                         terbesar -> volume/active TVL (volume_active_tvl_ratio)
                         -> dust % MC terkecil -> simbol.
+🦅 Scan Best Pool Krystal (2026-09-14, Robinhood Chain 4663 — rule disalin
+                        dari card Meteora, konstanta KRYSTAL_*):
+                        listing Krystal /v1/pools chainId=robinhood@4663
+                        (header KC-APIKey, 10 unit/call) untuk ramsescl +
+                        uniswapv2/v3/v4, dedup poolAddress.
+                        F = stats24h.fee / tvl x 100 (bukan APR — APR sudah
+                        ter-annualisasi + ber-insentif).
+                        V = (max high - min low) / min low x 100 dari 24 candle
+                        hourly GeckoTerminal network "robinhood".
+                        Gate 24H: F/V >= KRYSTAL_FV_24H_MIN (5x, INKLUSIF —
+                        tepat 5x lolos, 4,9x gugur). V=0 gugur DAN dibuang
+                        total dari listing (row_volatility_zero +
+                        dropped_volatility: tidak masuk tabel, tidak masuk
+                        "dilewati", tidak dihitung). Metrik hilang/nonfinite/
+                        negatif -> "metrik tidak tersedia" (masuk "dilewati").
+                        Pool tanpa candle = volatility tidak tersedia (None,
+                        BUKAN 0). Pool di bawah ambang di-skip SEBELUM holder.
+                        Urutan: F/V terbesar -> volume/TVL terbesar -> dust
+                        %MC terkecil -> simbol. Holder FULL Blockscout 100.000
+                        wallet, TANPA budget waktu. Lane 24H SAJA (fee Krystal
+                        baru berjendela 24 jam). Dust %MC = informasi, tanpa
+                        bukti holder -> "—". Cache hasil: .scan_cache/ via
+                        scan_result_cache (refresh browser aman).
 grafik lane LP        : bucket 5 menit (resample_5m / LP_INTERVAL_SEC)
 kolom tabel watchlist : Δ 4 jam + sparkline Grafik 4 jam DIHAPUS (2026-09-07)
 grafik / kohort       : bucket 4 jam (resample_4h; titik mentah per run,
@@ -1171,5 +1283,6 @@ python -m py_compile holder_history.py holder_chronology.py meteora_screener.py 
   holder_analysis.py holder_status.py telegram_alerts.py alert_context.py \
   lp_watchlist.py core.py scripts/scan_holders.py trending_ui.py watchlist.py \
   watchlist_detail.py accumulation.py pre_pump_screener.py app.py \
-  best_pool_ui.py page_router.py "pages/5_🧮_Holder.py"
+  best_pool_ui.py page_router.py krystal_screener.py krystal_pool_ui.py \
+  scan_result_cache.py "pages/5_🧮_Holder.py"
 ```

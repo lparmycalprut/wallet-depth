@@ -33,3 +33,10 @@ os.environ["HELIUS_USAGE_PROBE"] = "0"
 _rw.load_watchlist = lambda *args, **kwargs: {}
 _rw.load_status = lambda *args, **kwargs: {"updated_at": None, "tokens": {}}
 _rw.load_history = lambda *args, **kwargs: {"updated_at": None, "tokens": {}}
+
+# Cache berkas hasil scan (``scan_result_cache``) membuat card Best Pool tahan
+# refresh browser, tetapi runner ``unittest`` tidak punya fixture ``tmp_path``
+# seperti pytest — dimatikan di sini supaya ``python -m unittest discover``
+# tidak pernah menulis ke repo. pytest menghidupkannya kembali per-tes lewat
+# fixture ``_iso_scan_cache`` di ``tests/conftest.py`` (direktori sementara).
+os.environ.setdefault("SCAN_CACHE", "0")

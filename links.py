@@ -288,6 +288,30 @@ def external_links_html(ca) -> str:
         f'rel="noopener noreferrer">🦆Dex</a>')
 
 
+def blockscout_address_url(address) -> str:
+    """Return the Blockscout address page URL (Robinhood Chain).
+
+    Dipakai card **🦅 Scan Best Pool Krystal** untuk menautkan alamat **pool**
+    (bukan token) — pool Krystal/Robinhood tidak punya halaman Meteora/HawkFi.
+    """
+    return f"{BLOCKSCOUT_ADDRESS_BASE}{safe_url_part(address)}"
+
+
+def robinhood_pool_links_html(pool) -> str:
+    """New-tab shortcut Blockscout untuk satu **pool** Robinhood (chain 4663).
+
+    ``pool_links_html`` sengaja tidak dipakai: tautannya Meteora DLMM + HawkFi
+    (Solana), sehingga alamat pool Krystal akan mendarat di halaman yang salah.
+    """
+    address = str(pool or "")
+    if not address:
+        return ""
+    explorer = _html.escape(blockscout_address_url(address), quote=True)
+    return (
+        f'<a href="{explorer}" target="_blank" '
+        f'rel="noopener noreferrer">🌐Blockscout</a>')
+
+
 def pool_links_html(pool) -> str:
     """New-tab shortcuts: Meteora DLMM + HawkFi for a pool address."""
     pool = str(pool or "")

@@ -1,3 +1,113 @@
+# Kegiatan — 14 September 2026 (🦅 Scan Best Pool Krystal + cache hasil scan)
+
+Permintaan user: *"buat card 🦅 Scan Best Pool Krystal (Robinhood Chain, chain
+id 4663)"* — ditempatkan **tepat di bawah card 🏆 Scan Best Pool Meteora**,
+dengan **reproduksi rule F/V persis** seperti card Meteora (F = fee 24 jam ÷
+TVL × 100, V = volatility 24 candle hourly, gate 24H `F/V ≥ 5×` inklusif,
+V = 0 dibuang dari listing), lane **24H saja** dulu, ⭐ ke Watchlist Robinhood
+LP, dan **persistensi hasil sejak awal** supaya refresh browser tidak
+menghapus tabel.
+
+## Pekerjaan gantung sesi sebelumnya (commit f9c1ec8)
+
+Commit `f9c1ec8` *"scan: hasil meteora tahan refresh browser (cache file
+lokal)"* **tidak ada di clone ini** — branch `arena/01a09d72-wallet-depth`
+sudah ada di origin tetapi isinya identik dengan `main` (beda 1 baris di
+`watchlist.json`), sha itu tidak ada di reflog, di semua branch remote, di
+`git fsck --lost-found`, maupun di GitHub (`gh api .../commits/f9c1ec8…` →
+422 *No commit found*). Jadi commit itu ikut hilang bersama clone sesi itu.
+**Dibangun ulang** dalam sesi ini sebagai modul `scan_result_cache.py`
+(`save_result` / `load_result` / `restore_into_session`), dipasang ke card 🏆
+Meteora **dan** card Krystal baru, lengkap dengan tes + fixture isolasi
+(`_iso_scan_cache` di `tests/conftest.py`, kill-switch `SCAN_CACHE=0` di
+`tests/__init__.py`) — jadi "refresh browser tidak menghilangkan hasil"
+benar-benar jalan, bukan cuma janji di catatan.
+
+## Yang dikerjakan
+
+### 1. Probe Krystal (langkah wajib #2)
+
+| hal | hasil |
+|---|---|
+| `GET cloud-api.krystal.app/v1/chains` (publik, 0 unit) | ✅ Robinhood `id 4663` ada, protokol `["ramsescl","uniswapv4","uniswapv3","uniswapv2"]` |
+| `GET /v1/pools?chainId=robinhood@4663` tanpa key | ✅ `{"error":"An API Key is required. Checkout https://cloud.krystal.app"}` |
+| `GET /v1/pools` **dengan key** | ⏳ belum bisa dari sandbox: egress hanya mengizinkan PyPI/GitHub, dan `KC-APIKey` wajib di **header** (`securityDefinitions.ApiKeyAuth` = `apiKey` / `in: header`) — tidak ada alat HTTP di sini yang bisa menyetel header. Perintah probe + yang perlu dicek ada di `docs/krystal_api.md`. |
+| jalur cadangan publik `api.krystal.app/all/v1/lp_explorer/configs` | ✅ chain 4663 = Robinhood dengan 4 protokol yang sama |
+| jalur cadangan publik `.../lp_explorer/top_pools?chainId=4663` | ❌ `{"error":"rpc error: code = Unknown desc = chain id 4663 not supported"}` — tidak bisa dipakai |
+
+Karena itu normalisasi ditulis **defensif**: `tvl` / `stats24h.{fee,volume,apr}`
+(pola dokumentasi swagger + contoh landing page) dibaca toleran terhadap
+`stats24h` / `stats_24h` / `24h`, payload diterima baik sebagai list maupun
+`{"data": [...]}`, dan field yang tidak terbaca jadi `None` (gugur "metrik
+tidak tersedia"), bukan `0`.
+
+### 2. Modul baru
+
+- **`krystal_screener.py`** — transport (timeout 25 dtk, error jadi pesan
+  card), katalog chain publik, normalisasi payload, `row_krystal_gaps` (gate
+  24H `F/V ≥ 5×`, V=0 dibuang via `row_volatility_zero`), `volatility_from_candles`
+  (range 24 candle), `enrich_volatility` (sebelum holder — murah),
+  `enrich_holders` (Blockscout FULL 100.000 wallet, **tanpa budget waktu**),
+  `sort_krystal_rows` (F/V → vol/TVL → dust → simbol), `scan_krystal_lane`.
+- **`krystal_pool_ui.py`** — card border container, tooltip judul berisi
+  seluruh rule, 4 kolom inti di depan, sorot hijau menyala `#00c853` untuk F/V
+  tertinggi & volatility terbesar (seri ikut semua, tabel dilewati tidak
+  ditandai), pill hitungan, tombol **▶ N pool dilewati**, ⭐ → Watchlist
+  Robinhood LP (`background=True`), pesan "pasang KRYSTAL_API_KEY" bila key
+  belum ada.
+- **`scan_result_cache.py`** — cache berkas `.scan_cache/<key>.json`
+  (git-ignored, tulis atomik `os.replace`, NaN dinormalkan, peta wallet
+  `wallet_snapshot`/`chrono_snapshot` dibuang, tanpa pernah melempar).
+
+### 3. Perubahan menyilang (umum, bukan rule lintas-fungsi)
+
+- **`core.get_hourly_candles(..., network=…)`** — URL GeckoTerminal tidak lagi
+  hardcode `solana`: `GECKOTERMINAL_OHLCV_URL_TEMPLATE` + `normalize_geckoterminal_network`
+  (alias `rh`/`robinhood`/`4663` → `robinhood`; nilai asing jatuh ke `solana`,
+  karakter berbahaya dibuang). `get_daily_candles` ikut meneruskan network.
+  Konstanta lama `GECKOTERMINAL_OHLCV_URL` dipertahankan (template Solana).
+- **`links.py`** — `blockscout_address_url()` + `robinhood_pool_links_html()`
+  (tautan explorer alamat **pool** Robinhood; `pool_links_html` tetap
+  Meteora/HawkFi karena alamat Krystal tidak punya halaman itu).
+- **`best_pool_ui.py`** — hasil scan tiap lane disimpan/dipulihkan lewat
+  `scan_result_cache` (pengganti commit yang hilang). Rule, urutan, dan
+  saringan Meteora **tidak disentuh**.
+- **`app.py`** — `render_krystal_pool_scan()` dipanggil setelah
+  `render_best_pool_scan()` (full-width, sebelum 🛰 Scan Holder).
+
+## Verifikasi
+
+```
+python -m pytest tests/test_krystal_pool_scan.py tests/test_core_candles.py -q
+  -> 80 tes + 18 subtest lulus
+python -m pytest tests/test_best_pool_scan.py tests/test_best_fv_prefilter.py \
+    tests/test_krystal_pool_scan.py tests/test_core_candles.py -q
+  -> 146 tes + 41 subtest lulus
+python -m pytest tests/ -q
+  -> 34 gagal, 1198 lulus   (baseline 34 gagal / 1140 lulus)
+```
+
+34 merah = **persis** daftar lama (alert toggle per token, lp_card_ui,
+manual_scan_alerts, meteora_screener, rh_card_ui, scan_holders, temp_page,
+watchlist_row_ui) — tidak ada kegagalan baru; yang hijau naik 58.
+
+Satu tes lama ikut disesuaikan karena **halaman utama sekarang memuat card
+kedua**: `test_label_vol_dan_tooltip_fee_mengikuti_lane` menyaring body ke
+card Meteora saja (tooltip card Krystal memang menyebut "fee 24 jam", jadi
+ tanpa pembatasan itu asersi "tabel 30M tidak boleh menulis *fee 24 jam*"
+ akan kena teks card lain).
+
+## Catatan untuk sesi berikutnya
+
+- **Probe live `GET /v1/pools` dengan key masih perlu dilakukan user** (satu
+  `curl` di mesin sendiri, perintahnya ada di `docs/krystal_api.md`). Bila
+  nama field Krystal ternyata berbeda, cukup menyesuaikan `normalize_pool` +
+  fixture `_pool()` di tes.
+- `KRYSTAL_API_KEY` sudah ditaruh di `.streamlit/secrets.toml` (git-ignored)
+  dan diminta juga untuk Streamlit Cloud → Settings → Secrets.
+- Lane **30M** belum ada (menunggu Krystal menyediakan window fee lebih
+  pendek dari 24 jam); `KRYSTAL_LANES` sudah disiapkan tinggal ditambah.
+
 # Kegiatan — 14 September 2026 malam (🏆 Scan Best Pool: tata kolom + sorot tertinggi)
 
 Permintaan user: *"kita tata kolomnya baik untuk 24jam maupun 30menit —

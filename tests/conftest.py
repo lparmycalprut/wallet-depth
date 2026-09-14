@@ -24,6 +24,27 @@ def _alert_settings_offline(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _iso_scan_cache(monkeypatch, tmp_path):
+    """Isolasi cache hasil scan per-tes.
+
+    ``scan_result_cache`` menulis berkas JSON ke ``.scan_cache/`` di root repo
+    supaya hasil scan tahan refresh browser. Tanpa fixture ini setiap
+    AppTest yang memindai akan menulis ke repo dan dua tes bisa saling
+    menimpa hasilnya (lagi pula runner tidak boleh menyentuh repo).
+    ``tests/__init__.py`` mematikan cache untuk runner ``unittest``; di sini
+    cache dihidupkan kembali dengan direktori ``tmp_path`` milik tes sendiri.
+    """
+    import scan_result_cache
+
+    directory = tmp_path / ".scan_cache"
+    directory.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("SCAN_CACHE", "1")
+    monkeypatch.setenv("SCAN_CACHE_DIR", str(directory))
+    monkeypatch.setattr(scan_result_cache, "DEFAULT_CACHE_DIR", directory)
+    return directory
+
+
+@pytest.fixture(autouse=True)
 def _robinhood_offline(monkeypatch):
     monkeypatch.setattr(robinhood_watchlist, "load_watchlist",
                         lambda *args, **kwargs: {})
