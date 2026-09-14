@@ -1,3 +1,78 @@
+# Kegiatan — 13 September 2026 (🏆 Scan Best Pool: tombol 24H & 30M dipisah + tabel sendiri)
+
+Permintaan user: *"kayaknya untuk timeframe 30m harus kita pisah tombol
+deteksinya dan tabel serta fungsi fee/v lebih besar … jadi di scan meteora
+pool, kita akan punya 2 tombol 24H dan 30M. lalu tombol scan 24H kita
+prioritaskan di 24H yang fee/v >= 5x untuk di scan detail lainnya, jika kurang
+dari itu langsung skip. tombol scan 30M kita prioritaskan yang fee/v nya lebih
+besar, jika lebih kecil langsung skip"*.
+
+Sebelumnya satu tombol menarik **dua lane sekaligus** (24H + 30M) lalu
+meleburnya jadi satu tabel dengan kolom **Src**; yang membuat tabel terlihat
+"aneh" adalah kolom F/V yang mencampur quotient dari dua window berbeda —
+angka `∞` (V=0) dan `1178769,2×` (V nyaris nol) muncul di baris yang sama
+dengan baris 24H ber-F/V 6×. Sekarang tiap timeframe punya tombol, saringan,
+tabel, dan session key sendiri.
+
+## Yang diubah
+
+- `meteora_screener.scan_best_lane(lane, ...)` — fungsi baru, **satu lane per
+  panggilan**: `fetch_best_pools(timeframe=lane)` saja → `drop_quote_rows` →
+  saringan lane → **hanya yang lolos** yang masuk `enrich_pools()` →
+  `sort_best_rows`. `scan_best_meteora(timeframe=...)` jadi wrapper tipis yang
+  meneruskan lane (dulu kwarg itu label saja, kedua lane selalu diambil);
+  `timeframe="both"` = perilaku lama, tetap ada untuk compat.
+- Ambang per lane dibaca lewat konstanta: `BEST_FV_24H_MIN = 5.0`
+  (**inklusif**, 5× persis lolos) dan konstanta baru `BEST_FV_30M_MIN = 1.0`
+  (**strict** — "fee/v nya lebih besar": F == V tepat 1× **gugur**).
+  `lane_fv_min()` / `lane_fv_inclusive()` / `lane_fv_sign()` /
+  `best_lane_gate_label()` membacanya **saat dipanggil**, dan
+  `row_fv_ratio()` = quotient yang sama untuk saringan + urutan + kolom F/V
+  card (satu sumber angka, tidak ada lagi "angka filter beda dengan angka card").
+- Urutan tiap tabel: **F/V terbesar** → volume/active TVL → dust %MC terkecil
+  → simbol. `∞` (volatility 0, fee positif) paling atas; baris tanpa metrik
+  F/V paling bawah walau dust-nya nol.
+- `best_pool_ui`: dua tombol `best-pool-scan-24h` / `best-pool-scan-30m`
+  (label **🏆 Scan Best Pool 24H + Holder** / **30M**, ambang di tooltip
+  `help`), hasil di `best_pool_scan_24h` / `best_pool_scan_30m`, toggle
+  disembunyikan per lane (`best-pool-toggle-hidden-24h` / `-30m`,
+  prefix ⭐ `best-pool-24h-star-…`), lane aktif di `best_pool_lane` dengan
+  tombol **◼/◻** untuk berpindah lihat tanpa scan ulang. Kolom **Src**
+  dihapus; **F/V** jadi kolom metrik pertama dengan baris kecil
+  `syarat F/V ≥ 5×` (atau `gugur: F/V < 5×` merah di tabel disembunyikan);
+  pill kepala card = lane aktif + ambangnya.
+- `_split_legacy_result()`: sesi yang masih menyimpan hasil lama
+  (`best_pool_scan`, dua lane campur) dipecah sekali saat render, jadi
+  listing tidak hilang saat update diturunkan.
+
+## Verifikasi
+
+`python -m pytest tests/ -q` → **34 gagal, 1125 lulus, 36 subtest**
+(baseline sebelum perubahan ini: **62 gagal, 1097 lulus** — 28 tes kadaluarsa
+dari kriteria 2026-09-13 pagi diperbaiki, dan **tidak ada satu pun kegagalan
+baru**: `comm -13 sebelum sesudah` pada daftar `FAILED` kosong). 34 yang
+tersisa semuanya sudah merah sebelum perubahan ini dan bukan card Best Pool
+(regular Scan Meteora / temp page / watchlist row / scan_holders / Robinhood). Tes fokus Best Pool semuanya hijau:
+`tests/test_best_pool_scan.py` + `tests/test_best_fv_prefilter.py` =
+**49 tes + 18 subtest lulus**.
+
+`tests/test_best_fv_prefilter.py` ditulis ulang jadi tes batas + lane:
+`LaneGateBoundaryTest` (tabel 14 kasus batas 5×/1×, `lane=` meng-override
+`timeframe` baris, teks gap ikut konstanta), `LaneEnrichmentTest` (tombol 24H
+hanya memperkaya `PASS`; 30M memakai strict `>`; satu tombol = satu
+`timeframe` di API; semua gugur → `enrich_pools` tidak dipanggil sama sekali;
+urutan ∞ → 20× → 5×), `LegacyBothLaneTest` (compat `both` tetap dua record).
+`tests/test_best_pool_scan.py` direstruktur: `LaneRuleTest` (konstanta +
+alias + label), `BestGatesTest` termasuk **`test_saringan_lama_tetap_mati`**
+(dust/volume/volatility/tier fee/Top10/LPs tidak boleh balik),
+`SortBestRowsTest` (F/V kunci pertama, ∞ di atas, tanpa metrik di bawah),
+`ScanLaneTest` (fetch per lane, skip sebelum Helius, error API, pool quote
+dibuang, baris tanpa bukti holder tetap tampil), dan `BestPoolCardTest`
+(AppTest halaman utama: dua tombol + tidak ada `best-pool-scan-now`, tombol
+30M hanya memanggil lane 30m, tabel 24H tidak memuat baris 30M, kolom Src
+hilang, F/V di depan, toggle disembunyikan per lane, migrasi hasil lama,
+rule di tooltip bukan caption, ambang tooltip ikut konstanta).
+
 # Kegiatan — 13 September 2026 (kolom tabel "Awal Masuk" = dust %MC saat token masuk watchlist)
 
 Permintaan user: *"Saat masuk watchlist (13 Sep 07:00 WIB): dust 0.103% MC —

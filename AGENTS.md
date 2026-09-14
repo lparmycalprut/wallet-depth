@@ -1,6 +1,51 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-13 (sore ke-2) — Best Pool: dua tombol 24H / 30M, dua tabel
+
+Permintaan user: *"kayaknya untuk timeframe 30m harus kita pisah tombol
+deteksinya dan tabel serta fungsi fee/v lebih besar … di scan meteora pool,
+kita akan punya 2 tombol 24H dan 30M. lalu tombol scan 24H kita prioritaskan
+di 24H yang fee/v >= 5x untuk di scan detail lainnya, jika kurang dari itu
+langsung skip. tombol scan 30M kita prioritaskan yang fee/v nya lebih besar,
+jika lebih kecil langsung skip"*. Yang berubah:
+
+- **`best_pool_ui`** punya **dua tombol** (`best-pool-scan-24h`,
+  `best-pool-scan-30m`) dan **satu tabel per lane**: hasil di
+  `best_pool_scan_24h` / `best_pool_scan_30m`, toggle disembunyikan
+  `best_pool_show_hidden_24h` / `_30m`, lane aktif di `best_pool_lane`
+  (tombol **◼/◻** berpindah lihat tanpa scan ulang). Key lama `best_pool_scan`
+  tetap dibaca sekali lalu **dipecah per timeframe**
+  (`_split_legacy_result`) supaya sesi yang sudah terbuka tidak kehilangan
+  listing. Kolom **Src** dihapus (satu tabel = satu lane), kolom **F/V** naik
+  ke depan + baris kecil `syarat F/V ≥ 5×` / `syarat F/V > 1×` (baris tabel
+  disembunyikan: `gugur: …` merah), pill kepala card menunjukkan lane aktif.
+- **`meteora_screener.scan_best_lane(lane)`** mengambil **satu** timeframe
+  saja; `scan_best_meteora(timeframe=...)` jadi wrapper yang meneruskan lane
+  (`"both"` = perilaku lama, compat). Ambang per lane: 24H
+  `F/V >= BEST_FV_24H_MIN` (5×, inklusif), 30M `F/V > BEST_FV_30M_MIN`
+  (1×, strict — F == V gugur). `row_best_gaps(row, lane=...)` menolak
+  SEBELUM `enrich_pools()`: di bawah ambang = langsung skip, holder tidak
+  di-fetch, baris masuk `hidden_rows` + `best_gaps`.
+- **Urutan tiap tabel** sekarang **F/V terbesar** (`row_fv_ratio`; ∞ paling
+  atas, tanpa metrik paling bawah) → volume/active TVL → dust terkecil →
+  simbol (sebelumnya volume/active TVL dulu). Jangan dirotasi balik: tombol
+  30M memang "prioritaskan yang fee/v nya lebih besar".
+- Teks UI (pill, tooltip, `help` tombol, sub sel F/V, label gap) dibangun dari
+  `lane_fv_min` / `lane_fv_sign` / `best_lane_gate_label()` yang membaca
+  konstanta **saat dipanggil** — ubah `BEST_FV_30M_MIN`, semua ikut.
+  Caption card tetap hanya angka rekap (aturan 2026-09-10).
+- Tes: `python -m pytest tests/test_best_pool_scan.py
+  tests/test_best_fv_prefilter.py -q` (49 tes + 18 subtest, semua hijau).
+  Catatan: `tests/test_best_pool_scan.py` ditulis ulang mengikuti kriteria ini
+  — saringan lama (volume ≥ $1M, volatility ≥ 2%, dust < 0,05%, chip 🏆
+  BEST POOL) memang sudah dihapus, dan sekarang dipin sebagai **harus tetap
+  mati** (`test_saringan_lama_tetap_mati`).
+
 ## Update 2026-09-13 — Best Pool fast prefilter
+
+Catatan: bagian di atas (sore ke-2) menggantikan sebagian — rule F/V per lane
+tetap, tapi **satu tombol untuk dua lane** sudah jadi **satu tombol satu lane
++ satu tabel**.
 
 Rule terbaru mengesampingkan catatan historis "semua saringan layar dihapus":
 `scan_best_meteora` menyaring **24H F/V >= 5×** (`BEST_FV_24H_MIN`) dan
@@ -358,37 +403,48 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   `best_filter_by()` = `pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000`
   (24 jam, `category=top`, `page_size=50`, `fetch_best_pools()`) sehingga
   tier fee + active TVL tersearing di server. Saringan layar tinggal tiga:
-  `row_best_gaps()` (volatility ≥ `BEST_VOLATILITY_MIN` 2% **dan volume 24
-  jam ≥ `BEST_VOLUME_24H_MIN` $1.000.000** — keduanya inklusif, angka
-  `None` = gugur) + `row_dust_ok()` (dust < `BEST_DUST_MAX_PCT` 0,05% MC;
-  angka `None` = gugur). **Volume 24 jam ≥ 1M ditambah 2026-09-12**
-  (permintaan user: *"minimal volume 24 jam adalah 1M, dibawah itu jangan di
-  show"*) dan ikut masuk `hidden_metric` karena volumenya metrik listing API
-  — tidak butuh scan holder. Saringan fee/active TVL / top 10 holder / total
-  LPs / active TVL yang lama **dihapus** — konstantanya tidak ada lagi,
-  jangan dipakai ulang.
-  `scan_best_meteora()` menjalankan saringan **volume 24 jam ≥ $1M**
-  sebelum `enrich_pools()` (pool sepi tidak membakar kuota Helius). Pool
-  volume ≥ $1M yang gagal volatility tetap di-enrich: hasilnya
-  `hidden_rows` (volume ≥ 1M + dust < 0,05% MC, urut
-  `sort_best_rows`) untuk tombol **N disembunyikan** di
-  `best_pool_ui` (klik = listing itu; klik lagi = kembali ke yang lolos).
-  Lalu `sort_best_rows()`: **volume 24 jam / active TVL
-  (`volume_active_tvl_ratio` — angka persen dari API Meteora; field absen
-  dihitung ulang `volume/active_tvl*100`) terbesar → dust % MC terkecil**
-  (sejak 2026-09-13; kunci
-  dust dibulatkan ke `BEST_DUST_SORT_DECIMALS` = 3 desimal = presisi
-  tampilan card, jadi pool yang di layar sama-sama "0,030%" dianggap seri),
-  baris tanpa dust paling bawah, simbol sebagai tie-break terakhir. Hasil scan:
-  `rows/error/fetched/hidden_metric/hidden_dust/analyzed_at`. UI-nya
+  `row_best_gaps(row, lane=...)` — **satu aturan per lane** sejak 2026-09-13
+  sore: 24H `F/V ≥ BEST_FV_24H_MIN` (5×, inklusif) dan 30M
+  `F/V > BEST_FV_30M_MIN` (1× strict; F == V di-skip), F/V dibaca lewat
+  `row_fv_ratio()` = quotient yang sama dengan kolom F/V card + kunci urut
+  pertama. Ambang + tanda pembanding dibaca dari konstanta **saat memanggil**
+  (`lane_fv_min` / `lane_fv_inclusive` / `lane_fv_sign` +
+  `best_lane_gate_label()`), jangan disalin ke dict/teks. `row_dust_ok()` /
+  `row_volume_ok()` selalu `True` (dust + volume bukan syarat lagi),
+  `BEST_VOLATILITY_MIN` / `BEST_VOLUME_24H_MIN` / `BEST_DUST_MAX_PCT` =
+  konstanta mati. Saringan fee/active TVL / top 10 holder / total LPs /
+  active TVL yang lama **dihapus** — konstantanya tidak ada lagi, jangan
+  dipakai ulang.
+  `scan_best_lane(lane)` = jantung card ini: **satu tombol = satu
+  timeframe** (`fetch_best_pools(timeframe=lane)` saja) → `drop_quote_rows` →
+  saringan lane lewat `row_best_gaps(row, lane=lane)` **sebelum**
+  `enrich_pools()` (pool di bawah ambang tidak pernah menyentuh Helius —
+  "langsung skip"), kandidat gagal tetap masuk `hidden_rows` + `best_gaps`
+  untuk tombol **▶ N pool dilewati** di `best_pool_ui`.
+  `scan_best_meteora(timeframe=...)` = wrapper lama yang sekarang
+  **meneruskan** `timeframe` ke satu lane (`"both"` = perilaku gabungan lama,
+  dipertahankan untuk compat). Lalu `sort_best_rows()`: **F/V terbesar**
+  (`row_fv_ratio`; ∞ = volatility 0 di atas, baris tanpa metrik paling bawah)
+  → **volume 24 jam / active TVL** (`row_vol_tvl_ratio`; field API
+  `volume_active_tvl_ratio`, absen dihitung ulang `volume/active_tvl*100`) →
+  **dust % MC terkecil** → simbol. Kunci dust dibulatkan ke
+  `BEST_DUST_SORT_DECIMALS` = 3 desimal = presisi tampilan card, jadi pool
+  yang di layar sama-sama "0,030%" dianggap seri. Hasil scan:
+  `rows/hidden_rows/error/fetched/hidden_metric/hidden_dust/skipped_quote/`
+  `lane/timeframe/gate/analyzed_at`. UI-nya
   `best_pool_ui.render_best_pool_scan()` (card full-width di bawah grid 2
   kolom watchlist sejak 2026-09-11 — "jangan dibuat grid lagi"; dulu di
-  dalam grid, kolom kiri bawah Watchlist Meteora; tooltip
-  `best_pool_tooltip()`, session key `best_pool_scan`, ⭐ = `source=meteora`
-  → card Watchlist Meteora). Tabel
-  card = detail fee / active TVL: kolom **A.TVL**, **Fee/TVL** (baris kecil
-  angka fee USD), **Vol 24h** (baris kecil Δ volume + `N× A.TVL`), tiap sel
-  ber-`title` dengan angka penuh + statusnya sebagai kunci urut.
+  dalam grid, kolom kiri bawah Watchlist Meteora). Sejak 2026-09-13 sore
+  card ini **berdua tombol** (`best-pool-scan-24h` / `-30m`) dengan **satu
+  tabel per lane** (session key `best_pool_scan_24h` / `best_pool_scan_30m`,
+  lane aktif `best_pool_lane`, hasil lama `best_pool_scan` dipecah sekali),
+  tooltip `best_pool_tooltip()`, ⭐ = `source=meteora` → card Watchlist
+  Meteora. Tabel
+  card = detail fee / active TVL: kolom **F/V** (paling depan, baris kecil =
+  syarat lane), **A.TVL**, **Fee/TVL** (baris kecil angka fee USD),
+  **Vol 24h** (baris kecil Δ volume + `N× A.TVL`); tiap sel ber-`title`
+  dengan angka penuh + statusnya sebagai kunci urut. Kolom **Src** dihapus
+  bersama pemisahan lane — tabel tidak pernah lagi mencampur 24H dan 30M.
   **Tanda 🏆 BEST POOL (2026-09-12):** baris dengan dust **<=
   `BEST_DUST_MARK_PCT` 0,035% MC** (inklusif, `row_best_pool()`) ditandai —
   angka dust diwarnai emas + sub sel kolom Dust %MC diganti chip
@@ -863,18 +919,25 @@ badge BEST POOL       : < 0.1% marketcap (DUST_BEST_PCT, aditif) + data
                         tidak memakai angka ini (pemicunya delta +0.02 dari
                         patokan watchlist).
                         Hanya dirender di listing Scan Meteora.
-🏆 Scan Best Pool     : query API pool_type=dlmm && fee_pct>=2 &&
-                        active_tvl>=50000 (24 jam, category=top, page_size
-                        50) — fee tier + active TVL disaring API, bukan di
-                        layar. Saringan layar (kriteria diganti total
-                        2026-09-11): dust < 0.05% MC (BEST_DUST_MAX_PCT,
-                        ketat <) + volatility >= 2% (BEST_VOLATILITY_MIN,
-                        "minimal 2%" -> 2,0% lolos). Data hilang (None) =
-                        gugur. Saringan lama fee/active TVL > 20%, top 10
-                        holder < 30%, total LPs > 20, active TVL > 10K =
-                        DIHAPUS. Urutan (2026-09-13): volume 24 jam /
-                        active TVL (volume_active_tvl_ratio) terbesar ->
-                        dust % MC terkecil -> simbol.
+🏆 Scan Best Pool     : DUA TOMBOL, DUA TABEL (2026-09-13 sore): tombol
+                        24H -> scan_best_lane("24h"), tombol 30M ->
+                        scan_best_lane("30m"); satu tombol hanya mengambil
+                        timeframe-nya sendiri (timeframe="both" = compat,
+                        tidak dipakai UI). Query API pool_type=dlmm &&
+                        active_tvl>=50000 (category=top, page_size 50) —
+                        fee_pct>=2 DIHAPUS 2026-09-13. Satu-satunya saringan
+                        layar per lane (row_best_gaps): 24H F/V >= 5
+                        (BEST_FV_24H_MIN, inklusif), 30M F/V > 1
+                        (BEST_FV_30M_MIN, strict — F == V gugur). F/V =
+                        fee_active_tvl_ratio / volatility; V=0 dengan F>0
+                        lolos (kolom F/V = ∞); metrik hilang/nonfinite/negatif
+                        gugur. Yang gugur di-skip SEBELUM enrich_pools dan
+                        masuk hidden_rows + best_gaps. Saringan lama dust <
+                        0.05%, volatility >= 2%, volume >= $1M, fee/active TVL
+                        > 20%, top 10 < 30%, total LPs > 20, active TVL > 10K
+                        = DIHAPUS. Urutan tiap tabel (2026-09-13 sore): F/V
+                        terbesar -> volume/active TVL (volume_active_tvl_ratio)
+                        -> dust % MC terkecil -> simbol.
 grafik lane LP        : bucket 5 menit (resample_5m / LP_INTERVAL_SEC)
 kolom tabel watchlist : Δ 4 jam + sparkline Grafik 4 jam DIHAPUS (2026-09-07)
 grafik / kohort       : bucket 4 jam (resample_4h; titik mentah per run,
