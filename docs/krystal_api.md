@@ -10,8 +10,9 @@ Dipakai card **🦅 Scan Best Pool Krystal** (`krystal_screener.py` +
 | hal | status | bukti |
 |---|---|---|
 | `GET /v1/chains` (publik, **0 unit**) | ✅ terverifikasi live | mengembalikan 13 chain; entri `{"name":"Robinhood","id":4663,"explorer":"https://robinhoodchain.blockscout.com","supportedProtocols":["ramsescl","uniswapv4","uniswapv3","uniswapv2"]}` |
-| `GET /v1/pools` tanpa key | ✅ terverifikasi | `{"error":"An API Key is required. Checkout https://cloud.krystal.app"}` |
-| `GET /v1/pools?chainId=robinhood@4663` **dengan key** | ⏳ **belum terverifikasi live** | egress sandbox pengembangan hanya mengizinkan PyPI/GitHub; `KC-APIKey` harus dikirim di **header** (`securityDefinitions.ApiKeyAuth` = `apiKey` / `KC-APIKey` / `in: header`), jadi tidak bisa dipanggil lewat alat HTTP tanpa header. **Jalankan satu probe di mesinmu** (perintah di bawah) lalu tempel hasilnya — bagian "Field respons" akan disesuaikan bila Krystal ternyata mengirim nama yang beda. |
+| `GET /v1/pools` tanpa key | ✅ terverifikasi | `{"error":"An API Key is required. Checkout https://cloud.krystal.app"}` — sama untuk `chainId=4663` maupun `robinhood@4663` (auth dicek sebelum validasi parameter) |
+| `GET /v1/pools?chainId=robinhood@4663` **dengan key** | ❌ **ditolak 400** (2026-09-14) | laporan produksi: semua protokol (`ramsescl`, `uniswapv2`, `uniswapv3`, `uniswapv4`) → `400 Client Error: Bad Request`. Format `nama@id` tidak lagi diterima. |
+| `GET /v1/pools?chainId=4663` (integer) **dengan key** | ⏳ **belum terverifikasi live** | swagger `/swagger/doc.json` mendeklarasikan `chainId` sebagai **integer** ("Chain ID (e.g., 1, 8453, 56)") — ini format yang sekarang dikirim `fetch_pools`. Egress sandbox tidak bisa mengirim header `KC-APIKey`, jadi konfirmasi akhir tetap di mesin produksi (probe di bawah). |
 | `api.krystal.app/all/v1/lp_explorer/configs` (publik) | ✅ terverifikasi | chain `4663` = Robinhood, protokol `ramsescl`, `uniswapv2`, `uniswapv3`, `uniswapv4` — katalog yang sama dengan `/v1/chains` |
 | `api.krystal.app/all/v1/lp_explorer/top_pools?chainId=4663&protocol=uniswapv3&limit=3` (jalur cadangan publik) | ❌ **tidak bisa dipakai** | `{"error":"rpc error: code = Unknown desc = chain id 4663 not supported"}` — endpoint publik lp_explorer menolak chain 4663, jadi satu-satunya sumber listing adalah Krystal Cloud ber-API key |
 
@@ -19,7 +20,7 @@ Dipakai card **🦅 Scan Best Pool Krystal** (`krystal_screener.py` +
 
 ```bash
 curl -s "https://cloud-api.krystal.app/v1/chains"                       # 0 unit
-curl -s "https://cloud-api.krystal.app/v1/pools?chainId=robinhood@4663&protocol=uniswapv3&sortBy=0&limit=2"
+curl -s "https://cloud-api.krystal.app/v1/pools?chainId=4663&protocol=uniswapv3&sortBy=0&limit=2"
 # -> {"error":"An API Key is required. Checkout https://cloud.krystal.app"}
 ```
 
@@ -27,8 +28,14 @@ curl -s "https://cloud-api.krystal.app/v1/pools?chainId=robinhood@4663&protocol=
 
 ```bash
 curl -s -H "KC-APIKey: $KRYSTAL_API_KEY" -H "Content-Type: application/json" \
-  "https://cloud-api.krystal.app/v1/pools?chainId=robinhood@4663&protocol=uniswapv3&sortBy=0&limit=2"
+  "https://cloud-api.krystal.app/v1/pools?chainId=4663&protocol=uniswapv3&sortBy=0&limit=2"
 ```
+
+> ⚠️ **2026-09-14 — ganti format `chainId`.** Format lama `robinhood@4663`
+> (yang dulu dipakai contoh resmi `ethereum@1`) mulai ditolak **400 Bad
+> Request** di produksi; swagger sekarang mendeklarasikan `chainId` integer.
+> `fetch_pools` mengirim integer `4663` dan otomatis retry sekali dengan
+> format lama bila integer ditolak 400 (jaring pengaman bila API berubah lagi).
 
 Yang perlu dicek dari outputnya: apakah `data` berupa **list** (contoh landing
 page) atau objek ber-`data` (pola umum API mereka); nama field `tvl`,
@@ -53,7 +60,7 @@ Kode HTTP: `400` bad request, `401` key tidak valid, `402` kredit habis.
 
 | param | tipe | default | arti |
 |---|---|---|---|
-| `chainId` | int/string | — | id chain (`4663`) atau format `nama@id` (`robinhood@4663`, dipakai contoh resmi) |
+| `chainId` | **int** | — | id chain sebagai integer (`4663`) — swagger mendeklarasikan integer; format `nama@id` (`robinhood@4663`) ditolak 400 sejak 2026-09-14 meski masih muncul di contoh landing page |
 | `protocol` | string | — | kunci protokol (`ramsescl`, `uniswapv2`, `uniswapv3`, `uniswapv4`) |
 | `factoryAddress` | string | — | filter factory / pool manager (V4) |
 | `token` | string | — | filter simbol/alamat token |

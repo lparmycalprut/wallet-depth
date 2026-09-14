@@ -74,7 +74,7 @@ def krystal_cache_key(lane="24h") -> str:
 
 def krystal_pool_tooltip() -> str:
     """Rule card dalam satu tooltip judul (ambang dibaca saat dipanggil)."""
-    from krystal_screener import (KRYSTAL_CHAIN_PARAM, KRYSTAL_PROTOCOLS,
+    from krystal_screener import (KRYSTAL_CHAIN_QUERY, KRYSTAL_PROTOCOLS,
                                   KRYSTAL_VOLATILITY_HOURS,
                                   krystal_lane_gate_label, normalize_krystal_lane,
                                   protocol_label)
@@ -83,10 +83,11 @@ def krystal_pool_tooltip() -> str:
     protocols = ", ".join(protocol_label(item) for item in KRYSTAL_PROTOCOLS)
     return (
         "Listing pool Krystal (Krystal Cloud, 10 unit/call): "
-        f"GET cloud-api.krystal.app/v1/pools?chainId={KRYSTAL_CHAIN_PARAM}"
+        f"GET cloud-api.krystal.app/v1/pools?chainId={KRYSTAL_CHAIN_QUERY}"
         "&protocol=…&sortBy=0&limit=20 dengan header KC-APIKey — satu request "
         f"per protokol untuk {protocols}, hasilnya digabung dan di-dedup per "
-        "alamat pool. F = fee 24 jam / TVL x 100 (field stats24h.fee dan tvl); "
+        "alamat pool. chainId dikirim sebagai integer (4663) — format lama "
+        "robinhood@4663 ditolak API 400 sejak 2026-09-14. F = fee 24 jam / TVL x 100 (field stats24h.fee dan tvl); "
         f"V = (high tertinggi - low terendah) / low terendah x 100 dari "
         f"{KRYSTAL_VOLATILITY_HOURS} candle hourly pool GeckoTerminal network "
         f"robinhood (chain 4663). Gate {krystal_lane_gate_label(lane)} — "
@@ -432,7 +433,7 @@ def render_krystal_pool_scan(lane: str = "24h") -> None:
         if st.button(f"🦅 Scan Best Pool Krystal {label} + Holder",
                      type="primary", key=f"krystal-pool-scan-{active}",
                      use_container_width=True,
-                     help="Listing pool Krystal (chain robinhood@4663) untuk "
+                     help="Listing pool Krystal (chain 4663 / robinhood) untuk "
                           "ramsescl + uniswapv2/v3/v4, disaring F/V ≥ 5× "
                           "SEBELUM scan holder — pool di bawah ambang "
                           "langsung di-skip, holdernya tidak di-fetch."):
