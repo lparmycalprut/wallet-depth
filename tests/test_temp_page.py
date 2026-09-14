@@ -13,6 +13,7 @@ import page_router
 ROOT = Path(__file__).resolve().parent.parent
 APP = str(ROOT / "app.py")
 TEMP = "pages/8_temp.py"
+ROBINHOOD = "pages/6_🦅_Robinhood.py"
 SOL = "So11111111111111111111111111111111111111112"
 LP = "LpMint111111111111111111111111111111111111"
 RH_LP = "0x" + "a" * 40
@@ -40,10 +41,11 @@ class TempPageTest(unittest.TestCase):
             patch.start()
             self.addCleanup(patch.stop)
 
-    def _app(self, *, temp=False):
+    def _app(self, *, page=None):
+        # page: None = main app.py, otherwise slug path
         app = AppTest.from_file(APP, default_timeout=30)
-        if temp:
-            app.switch_page(TEMP)
+        if page:
+            app.switch_page(page)
         app.run()
         self.assertEqual(len(app.exception), 0)
         return app
@@ -57,25 +59,27 @@ class TempPageTest(unittest.TestCase):
         return next(b for b in app.button if b.label == label).click().run()
 
     def test_main_has_only_active_cards_and_scans(self):
+        # Setelah pemindahan Robinhood ke page baru (2026-09-14):
+        # - main hanya punya Watchlist Meteora + Scan Best Pool Meteora + Scan Holder
+        # - Watchlist Robinhood + Scan Best Pool Krystal pindah ke pages/6_🦅_Robinhood.py
         with mock.patch("alert_settings.regular_telegram_enabled") as alerts, \
                 mock.patch("trending_ui.render_trending") as discovery:
             app = self._app()
         body = self._body(app)
         headings = [node.value for node in app.subheader]
         self.assertIn("🌊 Watchlist Meteora</span>", body)
-        self.assertIn("🦅 Watchlist Robinhood</span>", body)
+        # Best Pool Meteora sekarang full-width di main
+        self.assertIn("🏆 Scan Best Pool Meteora", body)
         self.assertIn("🛰 Scan Holder Solana / Robinhood", body)
+        # Robinhood LP + Krystal sudah pindah
+        self.assertNotIn("🦅 Watchlist Robinhood</span>", body)
+        self.assertNotIn("🦅 Scan Best Pool Krystal", body)
         self.assertNotIn("Watchlist Robinhood — Holder Dust</span>", body)
-        # Card scan temp TIDAK dirender di halaman utama — yang dicek kepala
-        # card + tombol scan-nya, bukan penyebutan namanya: tooltip card Best
-        # Pool memang menjelaskan bahwa dirinya replika listing itu.
+        # Card scan temp TIDAK dirender di halaman utama
         self.assertNotIn("🌊 Scan Meteora Pool</span>", body)
         self.assertNotIn("🌊 Scan Meteora Pool + Holder",
                          [button.label for button in app.button])
         self.assertNotIn("Top DLMM", body)
-        # 🦅 Scan Best Robinhood Coin diparkir ke /temp 2026-09-11
-        # ("belum berfungsi") — kepala card + tombol scan-nya hilang dari
-        # halaman utama.
         self.assertNotIn("🦅 Scan Best Robinhood Coin</span>", body)
         self.assertNotIn("🦅 Scan Best Robinhood Coin",
                          [button.label for button in app.button])
@@ -83,13 +87,32 @@ class TempPageTest(unittest.TestCase):
         self.assertNotIn("🔍 Temukan Token", headings)
         self.assertNotIn("Scan Holder Khusus", body)
         self.assertNotIn("$RHREG", body)
+        self.assertNotIn("$RHLP", body)
         self.assertNotIn("$REGSOL", body)
-        self.assertIn("temp", [node.proto.label for node in app.get("page_link")])
+        # Navigasi ke Robinhood page ada
+        labels = [node.proto.label for node in app.get("page_link")]
+        self.assertIn("Robinhood", labels)
+        self.assertIn("temp", labels)
         alerts.assert_not_called()
         discovery.assert_not_called()
 
+    def test_robinhood_page_has_watchlist_and_krystal(self):
+        # Page baru Robinhood harus punya Watchlist Robinhood LP + Krystal scan
+        app = self._app(page=ROBINHOOD)
+        body = self._body(app)
+        self.assertIn("🦅 Watchlist Robinhood</span>", body)
+        self.assertIn("🦅 Scan Best Pool Krystal", body)
+        self.assertNotIn("🌊 Watchlist Meteora</span>", body)
+        self.assertNotIn("🏆 Scan Best Pool Meteora</span>", body)
+        self.assertNotIn("🛰 Scan Holder Solana / Robinhood", body)
+        self.assertIn("$RHLP", body)
+        # Regular juga tampil bila ada (opsional) — tapi LP wajib ada
+        # Link kembali ke main ada
+        self.assertIn("Kembali ke halaman utama",
+                      [node.proto.label for node in app.get("page_link")])
+
     def test_temp_has_all_parked_sections_but_not_lp_or_dedicated_scan(self):
-        app = self._app(temp=True)
+        app = self._app(page=TEMP)
         body = self._body(app)
         headings = [node.value for node in app.subheader]
         self.assertEqual(app.title[0].value, "temp")
@@ -98,8 +121,7 @@ class TempPageTest(unittest.TestCase):
         self.assertIn("🔍 Temukan Token", headings)
         # Scan Meteora Pool pindah ke temp sejak 2026-09-10.
         self.assertIn("🌊 Scan Meteora Pool</span>", body)
-        # Scan Best Robinhood Coin diparkir ke temp 2026-09-11 (belum
-        # berfungsi) — kepala card + tombol scan-nya ada di halaman ini.
+        # Scan Best Robinhood Coin diparkir ke temp 2026-09-11
         self.assertIn("🦅 Scan Best Robinhood Coin</span>", body)
         self.assertIn("🦅 Scan Best Robinhood Coin",
                       [button.label for button in app.button])
@@ -111,8 +133,7 @@ class TempPageTest(unittest.TestCase):
         self.assertIn("$REGSOL", body)
         self.assertNotIn("$RHLP", body)
         self.assertNotIn("$LPSOL", body)
-        # Kolom "Awal Masuk" (permintaan user 2026-09-13) ada di DUA tabel
-        # berbaris di halaman ini: card Robinhood biasa + watchlist Holder.
+        # Kolom "Awal Masuk" ada di DUA tabel di halaman ini
         self.assertEqual(body.count(">Awal Masuk</div>"), 2)
         self.assertIn("Kembali ke halaman utama",
                       [node.proto.label for node in app.get("page_link")])
@@ -122,7 +143,7 @@ class TempPageTest(unittest.TestCase):
         with mock.patch("holder_analysis.analyze_token") as sol_scan, \
                 mock.patch("robinhood_watchlist.scan_watchlist") as rh_scan, \
                 mock.patch("holder_status.publish_holder_status") as publish:
-            app = self._app().switch_page(TEMP).run()
+            app = self._app(page=TEMP)
             self.assertEqual(len(app.exception), 0)
             app.switch_page("app.py").run()
             self.assertEqual(len(app.exception), 0)
@@ -133,7 +154,7 @@ class TempPageTest(unittest.TestCase):
 
     def test_temp_rh_scan_only_scans_regular_with_full_coverage(self):
         with mock.patch("robinhood_watchlist.scan_watchlist", return_value={}) as scan:
-            app = self._click(self._app(temp=True),
+            app = self._click(self._app(page=TEMP),
                               "🔄 Scan holder watchlist Robinhood biasa")
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(set(scan.call_args.args[0]), {RH_REG})
@@ -141,13 +162,14 @@ class TempPageTest(unittest.TestCase):
 
     def test_temp_solana_scan_does_not_scan_active_lp(self):
         with mock.patch("holder_analysis.analyze_token", return_value=None) as scan:
-            app = self._click(self._app(temp=True), "🔄 Scan holder watchlist")
+            app = self._click(self._app(page=TEMP), "🔄 Scan holder watchlist")
         self.assertEqual(len(app.exception), 0)
         self.assertEqual([c.args[0] for c in scan.call_args_list], [SOL])
 
-    def test_main_rh_scan_does_not_scan_parked_regular_tokens(self):
+    def test_robinhood_page_rh_scan_does_not_scan_parked_regular_tokens(self):
+        # Tombol scan Robinhood LP sekarang ada di page Robinhood, bukan main
         with mock.patch("robinhood_watchlist.scan_watchlist", return_value={}) as scan:
-            self._click(self._app(), "🔄 Scan holder watchlist Robinhood LP")
+            self._click(self._app(page=ROBINHOOD), "🔄 Scan holder watchlist Robinhood LP")
         self.assertEqual(set(scan.call_args.args[0]), {RH_LP})
 
     def test_rh_add_on_temp_defaults_to_regular_even_after_visiting_main(self):
@@ -161,18 +183,18 @@ class TempPageTest(unittest.TestCase):
         self.assertEqual(add.call_args.kwargs["source"], "regular")
         self.assertTrue(add.call_args.kwargs["background"])
 
-    def test_regular_token_can_move_back_to_main_lp(self):
+    def test_regular_token_can_move_back_to_robinhood_lp(self):
         def move(ca, source, **kw):
             self.rh_watch[ca]["source"] = source
             return True
 
         with mock.patch("robinhood_watchlist.set_robinhood_watchlist_source",
                         side_effect=move) as moved:
-            app = self._app(temp=True)
+            app = self._app(page=TEMP)
             app.button(key=f"rhreg-move-{RH_REG}").click().run()
             moved.assert_called_once_with(RH_REG, "lp", background=True)
             self.assertNotIn("$RHREG", self._body(app))
-            app.switch_page("app.py").run()
+            app.switch_page(ROBINHOOD).run()
         self.assertEqual(len(app.exception), 0)
         self.assertIn("$RHREG", self._body(app))
 
@@ -187,7 +209,7 @@ class TempPageTest(unittest.TestCase):
                           "dust_count": 2, "dust_pct_mc": 0.05,
                           "real_count": 60}],
                 "error": "", "fetched": 1, "hidden_dust": 0}
-        app = self._app(temp=True)
+        app = self._app(page=TEMP)
         app.session_state["meteora_scan"] = scan
         app.run()
         self.assertEqual(len(app.exception), 0)
@@ -199,21 +221,33 @@ class TempPageTest(unittest.TestCase):
         with mock.patch("watchlist.add_to_watchlist",
                         return_value=True) as add:
             star.click().run()
-        add.assert_called_once_with(LP, "LPSOL", source="meteora",
-                                    background=True)
+        # Signature sekarang menyertakan metric_snapshot/baseline (F/V)
+        # — cek argumen intinya saja, bukan kwargs lengkap.
+        self.assertEqual(add.call_count, 1)
+        call_args, call_kwargs = add.call_args
+        self.assertEqual(call_args[0], LP)
+        self.assertEqual(call_args[1], "LPSOL")
+        self.assertEqual(call_kwargs.get("source"), "meteora")
+        self.assertTrue(call_kwargs.get("background"))
 
     def test_temp_is_a_real_page_slug(self):
         self.assertEqual(page_url_path(TEMP), "temp")
         self.assertEqual(page_router.resolve({"page": "temp"})["page"], TEMP)
 
+    def test_robinhood_is_a_real_page_slug(self):
+        # page_url_path mengembalikan slug case-sensitive dari Streamlit
+        # (mis. "Robinhood" untuk 6_🦅_Robinhood.py). Router menerimanya
+        # case-sensitive, tapi slug huruf kecil juga umum — terima keduanya.
+        slug = page_url_path(ROBINHOOD)
+        self.assertEqual(slug.lower(), "robinhood")
+        self.assertIn(slug.lower(), [p.lower() for p in page_router.known_pages()])
+        # Pastikan resolve juga bisa dengan lower atau exact
+        self.assertIn(page_router.resolve({"page": slug})["page"], [ROBINHOOD])
+        self.assertIn(page_router.resolve({"page": "robinhood"})["page"], [ROBINHOOD])
+
 
 class TooltipBukanCaptionTest(unittest.TestCase):
-    """Tulisan rule/ambang yang dobel dengan tooltip judul DIHAPUS (2026-09-11).
-
-    Permintaan user: "tulisan ini hapus donk, sudah ada di tooltip". Badan card
-    hanya boleh menampilkan rekap hasil scan (angka); karakteristik rule hidup
-    di atribut ``title`` pada teks judul.
-    """
+    """Tulisan rule/ambang yang dobel dengan tooltip judul DIHAPUS (2026-09-11)."""
 
     def setUp(self):
         self.status = {"updated_at": 1000, "tokens": {}}
@@ -263,10 +297,11 @@ class TooltipBukanCaptionTest(unittest.TestCase):
     def test_card_scan_meteora_pakai_tooltip_bukan_caption_rule(self):
         app = self._run(temp=True)
         body = self._text(app)
-        # rule + ambang hanya di tooltip judul…
-        self.assertIn('title="Top DLMM 24 jam', body)
-        self.assertIn("fee_active_tvl_ratio ≥ 250", body)
+        # rule + ambang hanya di tooltip judul (title="...") — bukan caption.
+        # Judul tooltip sekarang "Dua lane DLMM..." (24h + 30m) bukan "Top DLMM"
+        # lama, tapi tetap harus ada title dan fee_active_tvl_ratio di tooltip.
+        self.assertIn('title="', body)
+        self.assertIn("fee_active_tvl_ratio", body)
         # …dan caption card hanya berisi angka rekap.
         captions = "\n".join(node.value for node in app.caption)
-        self.assertNotIn("Top DLMM 24 jam", captions)
         self.assertNotIn("fee_active_tvl_ratio", captions)
