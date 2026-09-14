@@ -215,6 +215,18 @@ def base_token(pool: dict | None) -> dict:
     return token_x or token_y
 
 
+def dlmm_bin_step(pool: dict | None):
+    """``bin_step`` pool DLMM (basis point) dari ``dlmm_params`` API Meteora.
+
+    ``dlmm_params`` bisa ``None`` (pool non-DLMM) atau bukan dict sama
+    sekali — kembalikan ``None`` supaya tidak pernah melempar di tengah scan.
+    """
+    params = (pool or {}).get("dlmm_params")
+    if not isinstance(params, dict):
+        return None
+    return params.get("bin_step")
+
+
 def unanalysable_row(row: dict | None) -> str:
     """Alasan baris **tidak punya token base** yang bisa di-analisa (kosong = bisa).
 
@@ -379,6 +391,15 @@ def _row_from_pool(pool: dict, *, timeframe: str = "24h",
         "holders_reported": token.get("holders"),
         "tvl": _float(pool.get("tvl")),
         "active_tvl": _maybe_float(pool.get("active_tvl")),
+        # 📏 Active Range (2026-09-14): API Meteora mengirim harga bin aktif
+        # (``pool_price``) dan tepi range likuiditas (``min_price`` /
+        # ``max_price``) — ketiganya terbukti harga bin DLMM persis (lihat
+        # :func:`active_range_pct`). ``bin_step`` (basis point) dipakai untuk
+        # menghitung jumlah bin di tooltip.
+        "pool_price": _maybe_float(pool.get("pool_price")),
+        "range_min_price": _maybe_float(pool.get("min_price")),
+        "range_max_price": _maybe_float(pool.get("max_price")),
+        "bin_step": _maybe_float(dlmm_bin_step(pool)),
         "fee_active_tvl_ratio": fee_ratio,
         "volume": _float(pool.get("volume")),
         "fee_pct": _float(pool.get("fee_pct")),
@@ -1063,6 +1084,135 @@ def row_vol_tvl_ratio(row: dict | None):
     if volume is None or tvl is None or tvl <= 0:
         return None
     return volume / tvl * 100.0
+
+
+# ---------------------------------------------------------------------------
+# 📏 Active Range — rentang bin berisi likuiditas (2026-09-14)
+#
+# DLMM Meteora adalah tangga **bin**: satu bin = satu harga, jarak antar bin
+# = ``bin_step`` basis point (rumus resmi ``P_i = (1 + bin_step/10000)^i``,
+# docs.meteora.ag → DLMM Formulas). Yang dipakai trader sehari-hari bukan
+# harga absolutnya melainkan **berapa persen harga boleh bergerak sebelum
+# keluar dari likuiditas**: di luar range itu posisi LP berhenti menghasilkan
+# fee. API listing yang sudah dipakai card ini
+# (``pool-discovery-api.datapi.meteora.ag/pools``) mengirim tiga angka
+# kuncinya per pool:
+#
+# - ``pool_price`` = harga **bin aktif** (harga pool sekarang),
+# - ``min_price`` / ``max_price`` = harga bin terendah / tertinggi yang masih
+#   berisi likuiditas → tepi **active range** pool.
+#
+# Terverifikasi 2026-09-14 pada tiga pool live dengan ``bin_step`` berbeda
+# (biketyson-SOL 100, ROUTER-SOL 250, CATE-USDC 20): ketiganya cocok dengan
+# ``P_i`` sampai 0,000 ppm, jadi ``min_price``/``max_price`` memang tepi bin,
+# **bukan** high/low 24 jam. Kolom **Active Range** di listing menuliskannya
+# sebagai persen saja (permintaan user 2026-09-14: "tambahkan Active Range,
+# tapi % saja, misal -30% +40") — angka harga mentahnya tetap ada di tooltip.
+# ---------------------------------------------------------------------------
+
+
+def _positive(value):
+    """``float`` > 0 atau ``None`` (harga/bin_step tidak boleh 0 atau minus)."""
+    number = _maybe_float(value)
+    if number is None or number <= 0:
+        return None
+    return number
+
+
+def active_range_pct(row: dict | None) -> tuple:
+    """``(turun %, naik %)`` dari harga pool ke tepi active range.
+
+    Angka pertama = berapa persen harga masih boleh **turun** dari harga
+    sekarang sebelum menyentuh ``min_price`` (bin berisi likuiditas paling
+    bawah), angka kedua = berapa persen masih boleh **naik** sebelum menyentuh
+    ``max_price``. Keduanya diukur **dari harga sekarang**, jadi simetris
+    dengan cara user membaca pergerakan harga: harga × (1 − turun/100) = tepi
+    bawah, harga × (1 + naik/100) = tepi atas.
+
+    Contoh pool live 2026-09-14 (angka API Meteora apa adanya):
+
+    - CATE-USDC: harga 0.0743180, tepi 0.0486561 … 0.0884272 → ``(34.5, 19.0)``
+    - biketyson-SOL: 6.4807e-05, tepi 6.0447e-05 … 7.0177e-05 → ``(6.7, 8.3)``
+    - ROUTER-SOL: 1.49369e-05 = tepi bawah persis → ``(0.0, 5.1)`` — harga
+      nempel tepi bawah, sedikit saja turun langsung keluar range.
+
+    Kembalikan ``(None, None)`` bila salah satu harga tidak ada / tidak valid
+    (baris hasil scan lama yang belum menyimpan field ini, atau API tidak
+    mengirimnya) — UI menulis ``—``, bukan ``-0.0% / +0.0%`` palsu.
+    """
+    row = row or {}
+    price = _positive(row.get("pool_price"))
+    low = _positive(row.get("range_min_price"))
+    high = _positive(row.get("range_max_price"))
+    if price is None or low is None or high is None:
+        return None, None
+    if high < low:
+        low, high = high, low
+    return (1.0 - low / price) * 100.0, (high / price - 1.0) * 100.0
+
+
+def active_range_width_pct(row: dict | None):
+    """Lebar seluruh active range (tepi bawah → tepi atas), dalam persen."""
+    row = row or {}
+    low = _positive(row.get("range_min_price"))
+    high = _positive(row.get("range_max_price"))
+    if low is None or high is None:
+        return None
+    low, high = min(low, high), max(low, high)
+    return (high / low - 1.0) * 100.0
+
+
+def active_range_bins(row: dict | None):
+    """``(total bin, bin ke bawah, bin ke atas)`` atau ``None``.
+
+    Dipakai di tooltip saja. Rasio desimal token X/Y tidak diperlukan karena
+    yang dibandingkan harga-harga di pool yang sama (saling menghilangkan),
+    jadi cukup ``bin_step``: jumlah bin = ``log(tepi/harga) / log(1 +
+    bin_step/10000)``. ``None`` bila ``bin_step`` tidak ada / 0 (pool
+    non-DLMM atau data lama).
+    """
+    row = row or {}
+    step = _positive(row.get("bin_step"))
+    price = _positive(row.get("pool_price"))
+    low = _positive(row.get("range_min_price"))
+    high = _positive(row.get("range_max_price"))
+    if step is None or price is None or low is None or high is None:
+        return None
+    low, high = min(low, high), max(low, high)
+    per_bin = math.log(1.0 + step / 10_000.0)
+    if per_bin <= 0:
+        return None
+    down = round(math.log(price / low) / per_bin)
+    up = round(math.log(high / price) / per_bin)
+    return down + up + 1, down, up
+
+
+def _pct_signed(value, digits: int = 1) -> str:
+    """Persen bertanda siap tampil: ``-34.5%`` / ``+19.0%`` / ``0.0%``.
+
+    Nol sengaja ditulis tanpa tanda (bukan ``+0.0%``): itu artinya harga
+    persis di tepi range (contoh nyata ROUTER-SOL 2026-09-14, ``min_price``
+    == ``pool_price``), dan ``-0.0%`` / ``+0.0%`` hanya membingungkan.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    if not math.isfinite(number) or abs(number) < 0.5 * 10.0 ** -digits:
+        return f"{0.0:.{digits}f}%"
+    return f"{number:+.{digits}f}%"
+
+
+def active_range_text(row: dict | None, digits: int = 1) -> str:
+    """Teks Active Range siap tampil: ``-52.7% / +19.0%`` (turun / naik).
+
+    ``None`` (data tidak ada) → ``—``. Hanya persen, sesuai permintaan user
+    2026-09-14; harga mentah + jumlah bin ada di tooltip sel.
+    """
+    down, up = active_range_pct(row)
+    if down is None or up is None:
+        return "—"
+    return f"{_pct_signed(-down, digits)} / {_pct_signed(up, digits)}"
 
 
 def row_volume_ok(row: dict | None) -> bool:

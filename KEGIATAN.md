@@ -1,3 +1,75 @@
+# Kegiatan — 14 September 2026 malam lanjutan 2 (kolom Active Range)
+
+Permintaan user: *"ok tambahkan Active Range, tapi % saja, misal -30% +40 atau
+bagaimana terserah kamu agar gampang saya baca"* — lanjutan dari penjelasan
+cara membaca active range pool DLMM Meteora.
+
+## Apa itu Active Range (dan dari mana angkanya)
+
+DLMM = tangga **bin**; satu bin = satu harga, jarak antar bin = `bin_step`
+basis point (rumus resmi `P_i = (1 + bin_step/10000)^i`, docs.meteora.ag →
+DLMM Formulas). Listing API yang sudah dipakai card ini
+(`pool-discovery-api.datapi.meteora.ag/pools`) mengirim tiga harga kuncinya:
+`pool_price` (**bin aktif** = harga pool sekarang) serta `min_price` /
+`max_price` (bin berisi likuiditas terendah/tertinggi = tepi **active range**).
+
+Terverifikasi 2026-09-14 pada tiga pool live dengan `bin_step` berbeda —
+ketiga harga cocok dengan `P_i` sampai **0,000 ppm**, jadi `min_price` /
+`max_price` memang tepi bin, **bukan** high/low 24 jam:
+
+| Pool | bin_step | pool_price | min_price | max_price | Active Range |
+| --- | --- | --- | --- | --- | --- |
+| CATE-USDC | 20 (0,2%) | 0.0743180 | 0.0486561 | 0.0884272 | `-34.5% / +19.0%` (300 bin) |
+| biketyson-SOL | 100 (1%) | 6.4807e-05 | 6.0447e-05 | 7.0177e-05 | `-6.7% / +8.3%` (16 bin) |
+| ROUTER-SOL | 250 (2,5%) | 1.49369e-05 | 1.49369e-05 | 1.56931e-05 | `0.0% / +5.1%` (3 bin) |
+
+## Yang diubah
+
+- **`meteora_screener.py`** — `_row_from_pool()` menyimpan `pool_price`,
+  `range_min_price`, `range_max_price`, dan `bin_step` (helper baru
+  `dlmm_bin_step()`, aman untuk `dlmm_params` `None` / bukan dict). Helper
+  baru: `active_range_pct()` (turun/naik **diukur dari harga sekarang**:
+  harga × (1 − turun/100) = tepi bawah), `active_range_width_pct()`,
+  `active_range_bins()` (jumlah bin dari `bin_step`, untuk tooltip),
+  `_pct_signed()`, `active_range_text()`.
+- **`best_pool_ui.py`** — kolom **Active Range** di kanan **A.TVL**
+  (`_COL_SPEC` + `_lane_titles` + `_render_best_table`; Pool dan ⭐ geser ke
+  indeks 12/13). Builder sel baru `_active_range_cell()` + `_range_part()`
+  (turun merah, naik hijau, `0.0%` tanpa tanda/warna) + `_price_or_dash()`.
+  Tooltip sel = harga bin mentah, lebar range, jumlah bin, `bin_step`, dan
+  penegas "bukan saringan". Tooltip judul card ikut menjelaskan.
+- **`temp_ui.py`** — card 🌊 Scan Meteora Pool (halaman temp) memakai kolom +
+  builder yang **sama** (di kanan Volatility; MC/TVL/Dust/Dust %MC/Pool/⭐
+  geser satu kolom) supaya satu angka tidak punya dua format di dua card.
+- **README.md** — bullet kolom listing Best Pool + bagian Scan Meteora Pool.
+
+## Kenapa persen, bukan harga
+
+Harga bin memecoin sering 1e-05 dan tidak terbaca sekilas; yang dipakai LP
+untuk mengambil keputusan adalah **berapa persen harga boleh bergerak sebelum
+keluar range** — di luar itu posisi berhenti menghasilkan fee. `0.0%` =
+harga persis di tepi range (kasus nyata ROUTER-SOL: `min_price` ==
+`pool_price`, sedikit turun langsung keluar). Data lama di `session_state`
+yang belum menyimpan field-nya menulis `—`, bukan `-0.0% / +0.0%` palsu.
+
+## Verifikasi
+
+- Tes baru `tests/test_meteora_active_range.py` — **19 lulus**: angka tiga
+  pool live, persen bisa dikembalikan persis ke harga bin, tepi tertukar
+  tetap aman, data hilang → `—`, `bin_step` hilang tidak mengubah persen,
+  format sel (warna + `0.0%`), kolom/judul sinkron (`len(_lane_titles) ==
+  len(_COL_SPEC)`, judul ke-8 = "Active Range"), dan dua render AppTest
+  (tabel 🏆 Best Pool + tabel 🌊 Scan Meteora di /temp) yang membuktikan
+  `-34.5% / +19.0%`, `0.0% / +5.1%`, dan `lebar 81.7%` benar-benar tampil
+  serta tombol ⭐ tidak bergeser kolom.
+- `python -m unittest tests.test_best_pool_scan tests.test_temp_page
+  tests.test_best_fv_prefilter` → **83 lulus** (baseline-nya juga lulus).
+- Suite penuh `python -m unittest discover -s tests -t .` → **1261 tes**
+  (+19 dari tes baru). Daftar tes gagal **identik byte-per-byte** dengan
+  baseline commit `6932c3a1` (md5 `9720d6c6…` sama, 23 FAIL + 7 ERROR
+  keduanya; baseline dijalankan dari salinan bersih `git archive HEAD`), jadi
+  30 kegagalan itu warisan lama, bukan regresi perubahan ini.
+
 # Kegiatan — 14 September 2026 malam lanjutan (F/V · Fee/TVL · Volat: hijau tua menyala)
 
 Permintaan user: *"F/V · Fee/TVL · Volat — yang paling tinggi nilainya kasih
