@@ -32,12 +32,13 @@ tidak relevan lagi, diganti pill lane di kepala card.
 - urutan baris tiap tabel: **F/V terbesar** (``row_fv_ratio``) → **volume /
   active TVL window lane-nya** (``volume_active_tvl_ratio``, dikirim API
   Meteora dan ditulis di baris kecil kolom Vol) → **dust % MC terkecil**;
-- **4 kolom inti di depan** (penataan kolom 2026-09-14): Token, **F/V**
-  (fee_active_tvl_ratio ÷ volatility — kunci urut + syarat lane), **Volat**,
-  **Dust %MC**; lalu **Fee %** (fee trading pool, mis. 0.5% / 2% — ditambah
-  setelah Dust %MC), MC, A.TVL, Fee/TVL, **Vol 24h/30m** (judul mengikuti
-  window lane), Top10, LPs, Pool, ⭐. Kolom **Dust** (jumlah wallet) dihapus
-  hari yang sama;
+- **Fee/TVL tepat di kanan F/V** (penataan kolom 2026-09-14): Token, **F/V**
+  (fee_active_tvl_ratio ÷ volatility — kunci urut + syarat lane), **Fee/TVL**
+  (pembilang F-nya — permintaan user: "kolom Fee/TVL taruh sebelah kanan
+  F/V"), **Volat**, **Dust %MC**; lalu **Fee %** (fee trading pool, mis.
+  0.5% / 2% — ditambah setelah Dust %MC), MC, A.TVL, **Vol 24h/30m** (judul
+  mengikuti window lane), Top10, LPs, Pool, ⭐. Kolom **Dust** (jumlah
+  wallet) dihapus hari yang sama;
 - **sorot hijau menyala** (``TOP_HIGHLIGHT_COLOR``, bold) di tabel utama:
   sel volatility terbesar dan sel F/V tertinggi scan itu — seri di puncak
   ikut ditandai semua; tabel "dilewati" tidak ditandai;
@@ -135,9 +136,10 @@ def best_pool_tooltip() -> str:
         "Helius. Dust, volume, tier fee, Top10 dan LPs bukan syarat "
         "kelolosan. Urutan tiap tabel: F/V terbesar, lalu volume/active TVL "
         "terbesar, lalu dust %MC terkecil. Tiap lane punya tabel + session "
-        "key sendiri, jadi hasil 24H tidak pernah tercampur 30M. Kolom inti "
-        "di paling depan: Token, F/V, Volat, Dust %MC, lalu Fee % (fee "
-        "trading pool, mis. 0.5% / 2%); kolom volume mengikuti "
+        "key sendiri, jadi hasil 24H tidak pernah tercampur 30M. Kolom di "
+        "paling depan: Token, F/V, Fee/TVL (tepat di kanan F/V), Volat, "
+        "Dust %MC, lalu Fee % (fee trading pool, mis. 0.5% / 2%); kolom "
+        "volume mengikuti "
         "window lane (Vol 24h / Vol 30m). Sel volatility terbesar dan F/V "
         "tertinggi di tabel utama disorot hijau menyala (kalau seri, semua "
         "di puncak ikut ditandai; tabel dilewati tidak ditandai). Dust %MC "
@@ -148,15 +150,19 @@ def best_pool_tooltip() -> str:
 
 # Lebar kolom listing (permintaan user 2026-09-14: "kita tata kolomnya baik
 # untuk 24jam maupun 30menit — Dust hapus — Token F/V Volat Dust %MC, 4 kolom
-# ini diletakkan paling awal"): **4 kolom inti di depan** (Token, F/V, Volat,
-# Dust %MC), lalu konteks pasar (MC, A.TVL, Fee/TVL, volume window lane,
-# Top10, LPs), Pool, ⭐. Kolom **Dust** (jumlah wallet) dihapus hari yang
-# sama. Judul kolom volume mengikuti lane-nya (``_lane_titles``: 24H "Vol
-# 24h", 30M "Vol 30m") — kolom Src sudah lama dihapus bersama pemisahan lane.
+# ini diletakkan paling awal"): Token, F/V, Volat, Dust %MC di depan, lalu
+# konteks pasar (MC, A.TVL, Fee/TVL, volume window lane, Top10, LPs), Pool,
+# ⭐. Kolom **Dust** (jumlah wallet) dihapus hari yang sama. Judul kolom
+# volume mengikuti lane-nya (``_lane_titles``: 24H "Vol 24h", 30M "Vol 30m")
+# — kolom Src sudah lama dihapus bersama pemisahan lane.
 # Kolom **Fee %** (fee trading pool, mis. 0.5%, 2%) ditambah 2026-09-14 tepat
 # setelah Dust %MC (permintaan user: "tambahkan detail pool fee % … setelah
 # dust%MC … ini maksudnya fee di pool tersebut, misal 0.5%, 2%, dll").
-_COL_SPEC = [1.5, 0.7, 0.6, 0.82, 0.6, 0.65, 0.78, 0.78, 0.85, 0.62,
+# Kolom **Fee/TVL** dipindah tepat di kanan **F/V** hari yang sama
+# (permintaan user: "kolom Fee/TVL taruh sebelah kanan F/V") — pembilang F
+# menempel pada rasio F/V-nya; Volat, Dust %MC, dan semua kolom di kanannya
+# bergeser satu posisi.
+_COL_SPEC = [1.5, 0.7, 0.78, 0.6, 0.82, 0.6, 0.65, 0.78, 0.85, 0.62,
              0.5, 1.0, 0.4]
 
 
@@ -170,8 +176,8 @@ def _lane_titles(lane) -> list[str]:
     from meteora_screener import normalize_best_lane
 
     volume = "Vol 30m" if normalize_best_lane(lane) == "30m" else "Vol 24h"
-    return ["Token", "F/V", "Volat", "Dust %MC", "Fee %", "MC", "A.TVL",
-            "Fee/TVL", volume, "Top10", "LPs", "Pool", ""]
+    return ["Token", "F/V", "Fee/TVL", "Volat", "Dust %MC", "Fee %", "MC",
+            "A.TVL", volume, "Top10", "LPs", "Pool", ""]
 
 
 # Hijau menyala penanda sel tertinggi di tabel utama (permintaan user
@@ -381,10 +387,11 @@ def _render_best_table(rows: list, *, lane: str,
                        mark_tops: bool = True) -> None:
     """Tabel listing Best Pool untuk **satu** lane (utama atau disembunyikan).
 
-    Susunan kolom 2026-09-14: Token · **F/V · Volat · Dust %MC** (4 kolom inti
-    di depan) · **Fee %** (fee trading pool, mis. 0.5% / 2% — ditambah setelah
-    Dust %MC) · MC · A.TVL · Fee/TVL · Vol (24h/30m mengikuti lane) · Top10 ·
-    LPs · Pool · ⭐ — kolom Dust (jumlah wallet) sudah dihapus. Di tabel
+    Susunan kolom 2026-09-14: Token · **F/V · Fee/TVL** (tepat di kanan F/V,
+    permintaan user) **· Volat · Dust %MC** · **Fee %** (fee trading pool,
+    mis. 0.5% / 2% — ditambah setelah Dust %MC) · MC · A.TVL · Vol (24h/30m
+    mengikuti lane) · Top10 · LPs · Pool · ⭐ — kolom Dust (jumlah wallet)
+    sudah dihapus. Di tabel
     utama (``mark_tops=True``) sel **volatility terbesar** dan sel **F/V
     tertinggi** disorot hijau menyala (``TOP_HIGHLIGHT_COLOR``, seri ikut
     semua); tabel "dilewati" 24H tidak ditandai (``mark_tops=False``).
@@ -468,9 +475,15 @@ def _render_best_table(rows: list, *, lane: str,
             f'<div class="watchlist-links">{external_links_html(ca)}</div>'
             "</div>", unsafe_allow_html=True)
         # Urutan sel = urutan judul di ``_lane_titles`` (tanpa Token di sini;
-        # kolom Dust jumlah wallet sudah dihapus 2026-09-14).
+        # kolom Dust jumlah wallet sudah dihapus 2026-09-14; Fee/TVL tepat di
+        # kanan F/V — permintaan user 2026-09-14).
         cells = (
             (fv_value, fv_sub, fv_tip),
+            (_pct_or_dash(ratio), fee_sub,
+             f"tier fee {_num_or_dash(fee_pct, '.4g')}% · fee {window_txt} "
+             f"{_usd_or_dash(fee, compact=False)} / active TVL "
+             f"{_usd_or_dash(active_tvl, compact=False)} = "
+             f"{_num_or_dash(ratio, ',.2f')}% — informasi, bukan saringan"),
             (vol_value, "volat", vol_tip),
             (dust_value, dust_sub, dust_tip),
             (_num_or_dash(fee_pct, ".4g") + "%" if fee_pct is not None
@@ -484,11 +497,6 @@ def _render_best_table(rows: list, *, lane: str,
             (_usd_or_dash(active_tvl), "active tvl",
              f"active TVL {_usd_or_dash(active_tvl, compact=False)} · "
              f"TVL total {_usd_or_dash(row.get('tvl'), compact=False)}"),
-            (_pct_or_dash(ratio), fee_sub,
-             f"tier fee {_num_or_dash(fee_pct, '.4g')}% · fee {window_txt} "
-             f"{_usd_or_dash(fee, compact=False)} / active TVL "
-             f"{_usd_or_dash(active_tvl, compact=False)} = "
-             f"{_num_or_dash(ratio, ',.2f')}% — informasi, bukan saringan"),
             (_usd_or_dash(volume), delta_html,
              f"volume {window_txt} {_usd_or_dash(volume, compact=False)} · "
              f"perubahan {delta_txt} · rasio volume/active TVL "

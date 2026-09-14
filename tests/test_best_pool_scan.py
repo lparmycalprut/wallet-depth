@@ -24,11 +24,13 @@ pool, kita akan punya 2 tombol 24H dan 30M"*. Yang di-pin di file ini:
   ``best_pool_scan_24h`` / ``best_pool_scan_30m``, kolom ``Src`` dihapus,
   toggle "disembunyikan" + prefix key ⭐ ikut per-lane, dan hasil sesi lama
   (gabungan) dipecah sekali saat render;
-- **tata letak kolom 2026-09-14**: 4 kolom inti di depan (Token, F/V, Volat,
-  Dust %MC), kolom Dust (jumlah wallet) dihapus, judul kolom volume mengikuti
-  window lane ("Vol 24h"/"Vol 30m", begitu pula tooltip fee/volume), dan sel
-  volatility terbesar + F/V tertinggi tabel utama disorot **hijau menyala**
-  (``TOP_HIGHLIGHT_COLOR``, seri ikut semua, tabel dilewati tidak ditandai).
+- **tata letak kolom 2026-09-14**: Token, F/V, **Fee/TVL tepat di kanan F/V**
+  (permintaan user), Volat, Dust %MC, lalu Fee % (fee trading pool), MC,
+  A.TVL di depan; kolom Dust (jumlah wallet) dihapus, judul kolom volume
+  mengikuti window lane ("Vol 24h"/"Vol 30m", begitu pula tooltip
+  fee/volume), dan sel volatility terbesar + F/V tertinggi tabel utama
+  disorot **hijau menyala** (``TOP_HIGHLIGHT_COLOR``, seri ikut semua, tabel
+  dilewati tidak ditandai).
 """
 from __future__ import annotations
 
@@ -848,24 +850,25 @@ class BestPoolCardTest(unittest.TestCase):
             self.assertIn("active_tvl>=75000", bp.best_pool_tooltip())
 
     def test_empat_kolom_inti_di_depan_dan_kolom_dust_dihapus(self):
-        """Urutan header: Token, F/V, Volat, Dust %MC … kolom Dust dihapus."""
+        """Urutan header: Token, F/V, Fee/TVL, Volat, Dust %MC … Dust dihapus."""
         app = self._app()
         app.session_state["best_pool_scan_24h"] = self._result(
             "24h", [_row(pool_address="PoolBest", ca="MintAAA", symbol="AAA")])
         app.run()
         body = "\n".join(node.value for node in app.markdown)
-        for header in (">Token<", ">F/V<", ">Volat<", ">Dust %MC<"):
+        for header in (">Token<", ">F/V<", ">Fee/TVL<", ">Volat<", ">Dust %MC<"):
             self.assertIn(header, body)
         self.assertLess(body.index(">Token<"), body.index(">F/V<"))
-        self.assertLess(body.index(">F/V<"), body.index(">Volat<"))
+        self.assertLess(body.index(">F/V<"), body.index(">Fee/TVL<"))
+        self.assertLess(body.index(">Fee/TVL<"), body.index(">Volat<"))
         self.assertLess(body.index(">Volat<"), body.index(">Dust %MC<"))
-        # Kolom konteks tetap ada SETELAH 4 kolom inti; Fee % (fee trading
+        # Kolom konteks tetap ada SETELAH kolom depan; Fee % (fee trading
         # pool, mis. 0.5%/2%) tepat setelah Dust %MC (permintaan user
         # 2026-09-14).
         self.assertLess(body.index(">Dust %MC<"), body.index(">Fee %<"))
         self.assertLess(body.index(">Fee %<"), body.index(">MC<"))
-        self.assertLess(body.index(">Dust %MC<"), body.index(">A.TVL<"))
-        self.assertLess(body.index(">Dust %MC<"), body.index(">Vol 24h<"))
+        self.assertLess(body.index(">MC<"), body.index(">A.TVL<"))
+        self.assertLess(body.index(">A.TVL<"), body.index(">Vol 24h<"))
         # "Dust hapus": kolom jumlah wallet tidak lagi dirender — header dan
         # sel sub "wallet" hilang dari tabel.
         self.assertNotIn(">Dust<", body)

@@ -1,5 +1,26 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-14 (malam ke-3) — header tanpa link + Fee/TVL di kanan F/V
+
+- Permintaan user: *\"hilangkan link ke sini pada header\"* → baris navigasi
+  header halaman utama (`app.py`: 🦅 Robinhood · 📦 temp · 🧮 Holder
+  Analytic) **dihapus seluruhnya** (konfirmasi user: hapus ketiganya);
+  navigasi antar halaman tetap via sidebar Streamlit. Tes
+  `test_temp_page.py::test_main_has_only_active_cards_and_scans` sekarang
+  mem-pin `page_link == []` di halaman utama.
+- Permintaan user: *\"kolom Fee/TVL taruh sebelah kanan F/V\"* →
+  `best_pool_ui.py` (🏆 Scan Best Pool Meteora, kedua lane 24H/30M):
+  urutan judul/sel/lebar jadi Token · F/V · **Fee/TVL** · Volat · Dust %MC
+  · Fee % · MC · A.TVL · Vol · Top10 · LPs · Pool · ⭐ (tooltip judul +
+  docstring ikut diperbarui). Tabel 🦅 Krystal **tidak** diubah (pilihan
+  user: Meteora saja). Tes urutan header
+  `test_empat_kolom_inti_di_depan_dan_kolom_dust_dihapus` diperbarui.
+- Suite: `test_best_pool_scan` + `test_temp_page` 70/70 hijau; suite penuh
+  27 merah (23 failures + 4 errors) **identik dengan baseline** sebelum
+  perubahan (diverifikasi via `git stash`), semuanya kegagalan lama di
+  `test_scan_holders` / `test_manual_scan_alerts` / `test_meteora_screener` /
+  `test_lp_card_ui` / `test_watchlist_row_ui`.
+
 ## Update 2026-09-14 (malam ke-2) — 🦅 Scan Best Pool Krystal + cache hasil scan
 
 Permintaan user: *"buat card 🦅 Scan Best Pool Krystal (Robinhood Chain, chain

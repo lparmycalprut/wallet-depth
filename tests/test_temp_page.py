@@ -89,10 +89,11 @@ class TempPageTest(unittest.TestCase):
         self.assertNotIn("$RHREG", body)
         self.assertNotIn("$RHLP", body)
         self.assertNotIn("$REGSOL", body)
-        # Navigasi ke Robinhood page ada
+        # Navigasi header (Robinhood/temp/Holder) DIHAPUS 2026-09-14 per
+        # permintaan user ("hilangkan link ke sini pada header") — halaman
+        # utama tidak lagi merender page_link; navigasi via sidebar Streamlit.
         labels = [node.proto.label for node in app.get("page_link")]
-        self.assertIn("Robinhood", labels)
-        self.assertIn("temp", labels)
+        self.assertEqual(labels, [])
         alerts.assert_not_called()
         discovery.assert_not_called()
 
