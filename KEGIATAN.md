@@ -1,3 +1,37 @@
+# Kegiatan — 14 September 2026 (🏆 Scan Best Pool: ∞ gugur + 30M tulis OK, gagal tidak tampil)
+
+Permintaan user: *"syarat F/V > 1× … perbaiki scan meteora pool pada bagian
+tersebut, kok masih ada yang seperti ini?"* dengan contoh **∞** (baris ∞
+masih muncul di tabel 30M padahal syaratnya F/V > 1×), lalu *"kalau di M30,
+jika syarat terpenuhi, tulis OK · jangan tampilkan yang tidak terpenuhi"*.
+
+## Yang diubah
+
+- `meteora_screener.row_best_gaps`: volatility 0 → **gugur di kedua lane**
+  dengan alasan `"24H/30M: volatility 0 — F/V tidak terukur"`. Sebelumnya
+  V=0 dengan F>0 lolos dan tampil sebagai ∞ — ∞ bukan kelolosan, pool tanpa
+  volatility tidak bisa membuktikan F > V. `row_fv_ratio` / `sort_best_rows`
+  tidak diubah: ∞ tetap urut teratas bila muncul di tabel disembunyikan.
+- `best_pool_ui._fv_cell`: lane **30M** baris lolos = **OK** hijau
+  (`#16a34a`, sub `syarat F/V > 1× terpenuhi`); angka quotient tetap di
+  tooltip sel dan tetap kunci urut + saringan. 24H tetap angka `N,N×`.
+- `best_pool_ui.render_best_pool_scan`: lane **30M** tidak menampilkan
+  kandidat gagal sama sekali — `showing_hidden` dipaksa False, toggle
+  `best-pool-toggle-hidden-30m` + pill "N disembunyikan" tidak dirender,
+  caption jadi `"N pool 30M tampil · listing M pool."` (tanpa "dilewati").
+  24H tidak berubah.
+- Tooltip judul + docstring `meteora_screener` / `best_pool_ui` / `README.md`
+  / `AGENTS.md` ikut diperbarui (angka ambang tetap dari konstanta).
+
+## Verifikasi
+
+`python -m pytest tests/test_best_pool_scan.py tests/test_best_fv_prefilter.py -q`
+→ **51 tes + 20 subtest lulus** (streamlit + matplotlib terpasang, AppTest
+jalan). Suite penuh `python -m pytest tests/ -q` → **34 gagal, 1127 lulus** —
+persis baseline sebelum perubahan (34 merah lama di regular Scan Meteora /
+temp page / watchlist row / scan_holders / Robinhood; tidak ada kegagalan
+baru, Best Pool semua hijau).
+
 # Kegiatan — 13 September 2026 (🏆 Scan Best Pool: tombol 24H & 30M dipisah + tabel sendiri)
 
 Permintaan user: *"kayaknya untuk timeframe 30m harus kita pisah tombol

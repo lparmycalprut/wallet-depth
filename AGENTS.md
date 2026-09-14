@@ -1,5 +1,36 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-14 — Best Pool: ∞ (V=0) gugur + 30M "OK" dan gagal tidak tampil
+
+Permintaan user: *"syarat F/V > 1× — perbaiki scan meteora pool pada bagian
+tersebut, kok masih ada yang seperti ini?"* (bukti: tabel 30M masih memuat
+baris `∞`), lalu *"kalau di M30, jika syarat terpenuhi, tulis OK · jangan
+tampilkan yang tidak terpenuhi"*. Yang berubah:
+
+- **`meteora_screener.row_best_gaps`**: volatility 0 (F/V `∞`) **gugur di
+  kedua lane** dengan alasan `"24H: volatility 0 — F/V tidak terukur"` /
+  `"30M: …"`. Sebelumnya V=0 dengan F>0 lolos dan tampil sebagai ∞ — ∞ bukan
+  kelolosan (pool tanpa volatility tidak bisa membuktikan F > V). `row_fv_ratio`
+  / `sort_best_rows` **tidak diubah** (∞ tetap urut teratas bila muncul di
+  tabel disembunyikan).
+- **`best_pool_ui`** lane **30M**: sel F/V baris lolos = **OK** hijau
+  (`#16a34a`, sub `syarat F/V > 1× terpenuhi`; angka quotient tetap di
+  tooltip sel dan kunci urut). Kandidat gagal 30M **tidak ditampilkan sama
+  sekali**: `showing_hidden` dipaksa False, tombol `best-pool-toggle-hidden-30m`
+  dan pill "N disembunyikan" tidak dirender, caption jadi `"N pool 30M tampil
+  · listing M pool."` (tanpa "dilewati"). Lane **24H** tidak berubah (angka
+  `N,N×`, toggle disembunyikan tetap ada).
+- Tooltip judul + docstring modul ikut diperbarui; ambang tetap dibaca dari
+  konstanta (`BEST_FV_24H_MIN` / `BEST_FV_30M_MIN`) saat dipanggil.
+- Tes: `tests/test_best_pool_scan.py` + `tests/test_best_fv_prefilter.py`
+  dipin ke perilaku baru (51 tes + 20 subtest hijau): batas V=0 sekarang
+  `False` di kedua lane, `test_volatility_nol_selalu_gugur*`,
+  `test_hasil_disortakan_f_v_terbesar` (∞ masuk `hidden_rows`),
+  `test_30m_lolos_tampil_ok_dan_kandidat_gagal_tidak_tampil` (OK, tanpa
+  toggle, caption tanpa "dilewati"). Suite penuh tetap **34 gagal** (semua
+  merah sejak sebelum perubahan ini — regular scan / temp page / watchlist
+  row / scan_holders / Robinhood, bukan card Best Pool).
+
 ## Update 2026-09-13 (sore ke-2) — Best Pool: dua tombol 24H / 30M, dua tabel
 
 Permintaan user: *"kayaknya untuk timeframe 30m harus kita pisah tombol
@@ -51,7 +82,8 @@ Rule terbaru mengesampingkan catatan historis "semua saringan layar dihapus":
 `scan_best_meteora` menyaring **24H F/V >= 5×** (`BEST_FV_24H_MIN`) dan
 **30M F > V** sebelum `enrich_pools`, dengan F = fee_active_tvl_ratio dan
 V = volatility dari lane masing-masing. Data hilang/nonfinite/negatif gugur;
-V=0 dengan F>0 lolos. Kandidat gagal tetap tersedia di `hidden_rows` tanpa
+V=0 gugur di kedua lane sejak 2026-09-14 (∞ bukan kelolosan). Kandidat gagal
+tetap tersedia di `hidden_rows` tanpa
 scan holder, dihitung dalam `hidden_metric`. Dust bukan filter; server tetap
 DLMM + active TVL >=50K. Tooltip di `best_pool_ui` mengikuti konstanta.
 Tes terfokus: `python -m unittest tests.test_best_fv_prefilter -v`.

@@ -323,12 +323,17 @@ bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
   | **24H** | `F/V >= BEST_FV_24H_MIN` (**5×**, inklusif) | "prioritaskan 24H yang fee/v >= 5× untuk di scan detail, jika kurang dari itu langsung skip" |
   | **30M** | `F/V > BEST_FV_30M_MIN` (**1×**, strict) | fee harus **lebih besar** dari volatility; F == V (tepat 1×) di-skip |
 
-  V = 0 dengan F > 0 lolos (kolom **F/V** menampilkan `∞`); metrik hilang /
+  V = 0 gugur di kedua lane (2026-09-14: `∞` bukan kelolosan — pool tanpa
+  volatility tidak bisa membuktikan fee lebih besar); metrik hilang /
   nonfinite / negatif gugur. Yang gugur **tidak pernah** membuat request
   holder — `scan_best_lane()` menolak mereka sebelum `enrich_pools()`
   (kuota Helius aman) dan menyimpannya di `hidden_rows` + alasan di
-  `best_gaps`, dibuka lewat tombol **▶ N pool dilewati** (barisnya ditandai
-  merah `gugur: F/V < 5×` di sel F/V).
+  `best_gaps`. Lane **24H**: kandidat gagal dibuka lewat tombol
+  **▶ N pool dilewati** (barisnya ditandai merah `gugur: F/V < 5×` di sel
+  F/V). Lane **30M**: kandidat gagal **tidak ditampilkan sama sekali**
+  (permintaan user 2026-09-14: "jangan tampilkan yang tidak terpenuhi") dan
+  baris yang lolos cukup menampilkan **OK** hijau di sel F/V (angka quotient
+  aslinya tetap di tooltip sel + kunci urut).
 - **Query API Meteora** (`category=top`, `page_size=50`):
   `pool_type=dlmm && active_tvl>=50000`. `fee_pct>=2` **dihapus**
   2026-09-13 (pool ber-fee rendah seperti EMBER/USDC harus muncul). Saringan
@@ -346,8 +351,9 @@ bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
   `best_pool_lane`). Hasil sesi lama yang masih gabung (`best_pool_scan`)
   dipecah otomatis sekali saat render, jadi listing tidak hilang setelah
   update.
-- Kolom listing: Token · **F/V** (baris kecil = `syarat F/V ≥ 5×` /
-  `syarat F/V > 1×`, atau `gugur: …` di tabel disembunyikan) · MC ·
+- Kolom listing: Token · **F/V** (baris kecil 24H = `syarat F/V ≥ 5×` /
+  tabel disembunyikan 24H = `gugur: …` merah; 30M lolos = **OK** hijau
+  dengan `syarat F/V > 1× terpenuhi`) · MC ·
   **A.TVL** · **Fee/TVL** (baris kecil = fee 24 jam USD + tier fee) ·
   **Vol 24h** (baris kecil = Δ volume 24 jam, hijau naik / merah turun, plus
   rasio volume/active TVL) · Volat · Top10 · LPs · Dust (wallet) ·

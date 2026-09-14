@@ -11,6 +11,14 @@ lebih besar … di scan meteora pool, kita akan punya 2 tombol 24H dan 30M"):
 - **🏆 Scan Best Pool 30M + Holder** — listing timeframe 30M saja; syaratnya
   fee/vol **lebih besar** (``F/V > 1×`` = ``fee_active_tvl_ratio >
   volatility``, ``BEST_FV_30M_MIN``), yang lebih kecil langsung di-skip.
+  Volatility 0 **gugur di kedua lane** (2026-09-14): ∞ bukan kelolosan,
+  baris ∞ tidak pernah masuk tabel lolos.
+- Sel F/V lane 30M: baris yang lolos menampilkan **OK** hijau (angka quotient
+  tetap di tooltip sel + kunci urut); kandidat yang tidak memenuhi syarat
+  **tidak ditampilkan sama sekali** di 30M — toggle disembunyikan dan pill
+  jumlah disembunyikan hanya ada untuk 24H (permintaan user 2026-09-14:
+  "kalau di M30, jika syarat terpenuhi, tulis OK · jangan tampilkan yang
+  tidak terpenuhi").
 
 F = fee_active_tvl_ratio, V = volatility. Kedua lane disimpan di session key
 masing-masing (``best_pool_scan_24h`` / ``best_pool_scan_30m``) sehingga tabel
@@ -97,9 +105,13 @@ def best_pool_tooltip() -> str:
         f"pool_type=dlmm&&active_tvl>={int(BEST_ACTIVE_TVL_MIN)}. "
         f"{gates}. F = fee_active_tvl_ratio; V = volatility dari lane itu. "
         "Pool di bawah ambang lane-nya langsung dilewati SEBELUM scan holder "
-        "(kuota Helius tidak terbakar) dan bisa dilihat di tombol "
-        "disembunyikan. V nol dengan F positif lolos; metrik hilang/tidak "
-        "valid dilewati. Hanya pool lolos yang mengambil detail holder FULL "
+        "(kuota Helius tidak terbakar). Lane 24H: kandidat gagal bisa dilihat "
+        "lewat tombol disembunyikan; lane 30M: kandidat gagal TIDAK "
+        "ditampilkan sama sekali, dan baris yang lolos cukup ditandai OK di "
+        "kolom F/V (angka aslinya di tooltip sel). Volatility 0 gugur di "
+        "kedua lane (F/V ∞ bukan kelolosan — pool tanpa volatility tidak "
+        "bisa membuktikan fee lebih besar); metrik hilang/tidak valid "
+        "dilewati. Hanya pool lolos yang mengambil detail holder FULL "
         "Helius. Dust, volume, tier fee, Top10 dan LPs bukan syarat "
         "kelolosan. Urutan tiap tabel: F/V terbesar, lalu volume/active TVL "
         "terbesar, lalu dust %MC terkecil. Tiap lane punya tabel + session "
@@ -129,13 +141,15 @@ def _best_head_html(rows: list, hidden: int, lane: str,
     timeframe, jadi kepala card yang menunjukkan lane mana yang sedang tampil.
     """
     from dashboard_components import card_head_html
-    from meteora_screener import BEST_CARD_TITLE
+    from meteora_screener import BEST_CARD_TITLE, normalize_best_lane
 
     label, color, gate = best_lane_detail(lane)
     pills = [f'<span class="lp-count" style="color:#ffffff;background:{color};">'
              f'{label} · {gate}</span>',
              f'<span class="lp-count">{len(rows)} pool</span>']
-    if hidden:
+    # Lane 30M tidak menampilkan kandidat gagal sama sekali (2026-09-14),
+    # jadi pill jumlah disembunyikan hanya untuk 24H.
+    if hidden and normalize_best_lane(lane) != "30m":
         tone = ("color:#1e3a8a;background:#bfdbfe;" if showing_hidden
                 else "color:#334155;background:#e2e8f0;")
         pills.append(f'<span class="lp-count" style="{tone}">'
@@ -220,26 +234,36 @@ def _cell(value: str, sub: str = "", title: str = "") -> str:
 def _fv_cell(row: dict, lane: str) -> tuple[str, str, str]:
     """Sel **F/V** = ``fee_active_tvl_ratio ÷ volatility`` satu baris + lane.
 
-    Angka quotient sama dengan yang menyaring dan mengurutkan
-    (``meteora_screener.row_fv_ratio``), jadi prioritas di tabel bisa
-    diperiksa dari card. Baris yang gagal ambang (hanya mungkin muncul di
-    listing "disembunyikan") diberi warna merah + alasan, supaya jelas kenapa
-    pool itu tidak ikut di-scan holdernya.
+    Lane **30M** (permintaan user 2026-09-14): baris yang lolos cukup
+    menampilkan **OK** hijau — angka quotient tetap di tooltip sel dan tetap
+    jadi kunci urut + saringan, tapi tidak ditampilkan di sel. Lane **24H**
+    tetap menampilkan angka ``N,N×``. Baris yang gagal ambang (hanya mungkin
+    muncul di listing "disembunyikan" lane 24H) diberi warna merah + alasan,
+    supaya jelas kenapa pool itu tidak ikut di-scan holdernya.
     """
     import math as _math
 
-    from meteora_screener import row_best_gaps, row_fv_ratio
+    from meteora_screener import (normalize_best_lane, row_best_gaps,
+                                  row_fv_ratio)
 
     ratio = row_fv_ratio(row)
-    if ratio is None:
+    label, _, gate = best_lane_detail(lane)
+    fails = row_best_gaps(row, lane=lane)
+    if normalize_best_lane(lane) == "30m" and not fails:
+        # 30M lolos → "OK" saja; angka asli tetap di tooltip supaya urutan
+        # dan syarat masih bisa diverifikasi (permintaan user 2026-09-14:
+        # "kalau di M30, jika syarat terpenuhi, tulis OK").
+        value, color = "OK", "#16a34a"
+        sub = f"syarat {gate} terpenuhi"
+    elif ratio is None:
         value, color = "—", "#dc2626"
+        sub = f"syarat {gate}"
     elif _math.isinf(ratio):
         value, color = "∞", ""
+        sub = f"syarat {gate}"
     else:
         value, color = f"{ratio:.1f}×", ""
-    label, _, gate = best_lane_detail(lane)
-    sub = f"syarat {gate}"
-    fails = row_best_gaps(row, lane=lane)
+        sub = f"syarat {gate}"
     if fails:
         color = "#dc2626"
         sub = f"gugur: {fails[0].split(': ', 1)[-1]}"
@@ -553,14 +577,19 @@ def render_best_pool_scan() -> None:
                   + int(result.get("hidden_dust") or 0) + len(newly_hidden))
         fetched = int(result.get("fetched") or 0)
         skipped_quote = int(result.get("skipped_quote") or 0)
-        showing_hidden = bool(st.session_state.get(best_lane_hidden_key(active)))
+        # Lane 30M tidak menampilkan kandidat gagal sama sekali (permintaan
+        # user 2026-09-14: "jangan tampilkan yang tidak terpenuhi") — toggle
+        # disembunyikan + tabel disembunyikan hanya untuk 24H.
+        showing_hidden = bool(
+            st.session_state.get(best_lane_hidden_key(active))
+            if active != "30m" else False)
 
         # Tanpa caption ambang: detail karakteristik card sudah jadi tooltip
         # judul (``best_pool_tooltip()``) — permintaan user 2026-09-10.
         st.markdown(_best_head_html(rows, hidden, active,
                                     showing_hidden=showing_hidden),
                     unsafe_allow_html=True)
-        if hidden:
+        if hidden and active != "30m":
             # Caption/tombol = angka rekap saja; ambangnya hidup di tooltip
             # (judul card + tooltip sel F/V) — aturan card sejak 2026-09-10.
             view = ("◀ kembali ke tabel yang lolos"
@@ -578,8 +607,14 @@ def render_best_pool_scan() -> None:
         if fetched:
             quote_txt = (f" · {skipped_quote} pool quote dilewati"
                          if skipped_quote else "")
-            st.caption(f"{len(rows)} pool {label} tampil · {hidden} "
-                       f"dilewati · listing {fetched} pool{quote_txt}.")
+            if active == "30m":
+                # 30M: baris yang tidak memenuhi syarat tidak tampil dan
+                # tidak dihitung di caption (permintaan user 2026-09-14).
+                st.caption(f"{len(rows)} pool {label} tampil · "
+                           f"listing {fetched} pool{quote_txt}.")
+            else:
+                st.caption(f"{len(rows)} pool {label} tampil · {hidden} "
+                           f"dilewati · listing {fetched} pool{quote_txt}.")
         if showing_hidden:
             if not hidden_rows:
                 st.info("Tidak ada pool tersembunyi di lane ini.")

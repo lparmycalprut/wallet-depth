@@ -232,10 +232,13 @@ class BestGatesTest(unittest.TestCase):
         self.assertEqual(ms.row_best_gaps(_row(timeframe="30m",
                                                **_fv(10.001, 10))), [])
 
-    def test_volatility_nol_dengan_fee_positif_lolos(self):
-        self.assertEqual(ms.row_best_gaps(_row(**_fv(0.5, 0))), [])
+    def test_volatility_nol_selalu_gugur(self):
+        """V=0 (F/V ∞) bukan kelolosan di lane mana pun (2026-09-14)."""
+        self.assertEqual(ms.row_best_gaps(_row(**_fv(0.5, 0))),
+                         ["24H: volatility 0 — F/V tidak terukur"])
         self.assertEqual(ms.row_best_gaps(_row(timeframe="30m",
-                                               **_fv(0.5, 0))), [])
+                                               **_fv(0.5, 0))),
+                         ["30M: volatility 0 — F/V tidak terukur"])
 
     def test_metrik_hilang_atau_asing_gugur(self):
         self.assertEqual(len(ms.row_best_gaps(_row(volatility=None))), 1)
@@ -307,7 +310,8 @@ class SortBestRowsTest(unittest.TestCase):
                          ["FV_BESAR", "FV_TENGAH", "RAMAI_TAPI_KECIL"])
 
     def test_infinity_paling_atas(self):
-        """Volatility 0 dengan fee positif (F/V ∞) = fee paling dominan."""
+        """∞ tetap urut teratas bila ada — barisnya gugur gate, jadi hanya
+        bisa muncul di tabel disembunyikan (24H), tidak di tabel lolos."""
         rows = [_row(pool_address="NORMAL", symbol="AAA", **_fv(500.0, 1.0)),
                 _row(pool_address="NOLVOL", symbol="ZZZ", **_fv(5.0, 0))]
         self.assertEqual([r["pool_address"] for r in ms.sort_best_rows(rows)],
@@ -594,6 +598,33 @@ class BestPoolCardTest(unittest.TestCase):
         self.assertIn("best-pool-24h-star-PoolBest", keys)
         self.assertIn("best-pool-view-30m", keys)
         self.assertIn("best-pool-toggle-hidden-24h", keys)
+
+    def test_30m_lolos_tampil_ok_dan_kandidat_gagal_tidak_tampil(self):
+        """30M: sel F/V = OK untuk yang lolos; yang gagal tidak tampil sama
+        sekali (tanpa toggle disembunyikan) — permintaan user 2026-09-14."""
+        app = self._app()
+        app.session_state["best_pool_scan_30m"] = self._result(
+            "30m", [_row(pool_address="PoolOk", ca="MintOK", symbol="OKSYM",
+                         timeframe="30m", **_fv(30.0, 10.0))],
+            fetched=3, hidden=[_row(pool_address="PoolGagal", ca="MintFail",
+                                    symbol="FAILSYM", timeframe="30m",
+                                    **_fv(10.0, 10.0))])
+        app.session_state["best_pool_lane"] = "30m"
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn("$OKSYM", body)
+        # Baris lolos 30M: sel F/V menulis OK, bukan angka quotient.
+        self.assertIn("syarat F/V > 1× terpenuhi", body)
+        self.assertNotIn("3.0×", body)
+        # Kandidat gagal 30M tidak ditampilkan dan tidak ada tombol toggle.
+        self.assertNotIn("$FAILSYM", body)
+        self.assertNotIn("MintFail", body)
+        keys = [button.key or "" for button in app.button]
+        self.assertNotIn("best-pool-toggle-hidden-30m", keys)
+        captions = "\n".join(node.value for node in app.caption)
+        self.assertIn("1 pool 30M tampil · listing 3 pool.", captions)
+        self.assertNotIn("dilewati", captions)
 
     def test_klik_disembunyikan_menampilkan_kandidat_gagal_lane_itu(self):
         app = self._app()

@@ -39,7 +39,9 @@ Baris yang di-⭐ masuk watchlist terpisah **Chart LP** di dashboard.
 V = volatility dari lane masing-masing. Satu tombol hanya mengambil lane-nya
 sendiri + hanya men-scan holder pool yang lolos ambang lane itu; pool di bawah
 ambang **langsung di-skip** sebelum enrichment holder (kuota Helius tidak
-terbakar) dan tetap tersedia di ``hidden_rows`` tanpa scan holder. Filter API:
+terbakar) dan tetap tersedia di ``hidden_rows`` tanpa scan holder. Volatility
+0 **gugur di kedua lane** (2026-09-14): F/V ∞ bukan kelolosan, jadi baris ∞
+tidak pernah masuk tabel lolos. Filter API:
 pool_type=dlmm&&active_tvl>=50000. Dust, minimum volatility/volume/tier fee
 bukan syarat. Urutan tiap tabel: **F/V terbesar** → volume/active TVL →
 dust %MC terkecil; badge BEST POOL dihapus. Kedua lane disimpan di session key
@@ -910,8 +912,11 @@ def row_fv_ratio(row: dict | None):
 
     Satu sumber angka untuk saringan, urutan, DAN kolom F/V di card, jadi
     angka yang diprioritaskan tidak pernah beda dengan angka yang tampil.
-    Volatility nol dengan fee positif → ``inf`` (fee tetap dominan), sama
-    seperti :func:`fee_volatility_ratio`.
+    Volatility nol dengan fee positif → ``inf`` (sama seperti
+    :func:`fee_volatility_ratio`) — tapi baris seperti itu **gugur** di
+    saringan lane (:func:`row_best_gaps`, sejak 2026-09-14), jadi ∞ hanya
+    bisa muncul di tabel disembunyikan sebagai penjelasan kenapa barisnya
+    dilewati.
     """
     row = row or {}
     return fee_volatility_ratio(row.get("fee_active_tvl_ratio"),
@@ -1066,9 +1071,12 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
 
     F = ``fee_active_tvl_ratio``, V = ``volatility`` (keduanya persen dari API
     Meteora, jadi ambangnya diperbandingkan sebagai kelipatan, bukan persen
-    absolut). V nol dengan F positif lolos, sesuai :func:`fee_volatility_ratio`
-    (kolom F/V menampilkan ∞ untuk kasus itu). Data hilang, nonfinite, negatif,
-    F <= 0, atau lane tidak dikenal tidak lolos.
+    absolut). **V nol gugur di kedua lane** (2026-09-14, permintaan user:
+    baris ∞ yang muncul di tabel 30M padahal syaratnya ``F/V > 1×`` tidak
+    boleh lolos) — pool tanpa volatility di lane itu tidak bisa membuktikan
+    fee lebih besar dari volatility, jadi langsung di-skip sebelum fetch
+    holder. Data hilang, nonfinite, negatif, F <= 0, atau lane tidak dikenal
+    tidak lolos.
 
     ``lane`` memaksa satu aturan (dipakai scan per-lane + render ulang hasil
     lama); tanpa itu lane dibaca dari field ``timeframe``/``source`` baris.
@@ -1091,6 +1099,13 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
         default=None)
     if normalized not in BEST_LANES:
         return ["timeframe tidak dikenal"]
+    if vol == 0:
+        # ∞ bukan kelolosan: F/V hanya bisa dibandingkan kalau volatility-nya
+        # ada. Sebelum 2026-09-14 V=0 dengan F>0 lolos dan tampil sebagai ∞;
+        # sekarang gugur dengan alasan ini (permintaan user: tabel dengan
+        # syarat F/V > 1× tidak boleh lagi memuat baris ∞).
+        return [f"{BEST_LANE_LABELS[normalized]}: volatility 0 — "
+                "F/V tidak terukur"]
     minimum = lane_fv_min(normalized)
     threshold = minimum * vol
     passed = fee >= threshold if lane_fv_inclusive(normalized) else fee > threshold
@@ -1145,8 +1160,10 @@ def sort_best_rows(rows: list[dict] | None) -> list[dict]:
     "tombol scan 30M kita prioritaskan yang fee/v nya lebih besar" — angka
     F/V yang besar memang yang diprioritaskan, bukan cuma syarat lolos):
     :func:`row_fv_ratio` = ``fee_active_tvl_ratio ÷ volatility`` dari lane itu
-    sendiri, persis angka di kolom F/V card. ∞ (volatility 0, fee positif)
-    jadi paling atas; baris tanpa metrik (``None``) paling bawah.
+    sendiri, persis angka di kolom F/V card. ∞ (volatility 0, fee positif —
+    baris yang gugur gate sejak 2026-09-14, jadi hanya ada di tabel
+    disembunyikan) tetap paling atas bila ada; baris tanpa metrik (``None``)
+    paling bawah.
 
     Tie-break kedua = :func:`row_vol_tvl_ratio` (rasio ``volume`` /
     ``active_tvl`` dari API Meteora) terbesar, lalu dust % MC terkecil —
