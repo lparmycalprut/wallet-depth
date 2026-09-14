@@ -1,18 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Router deep-link ``?mint=`` / ``?page=`` untuk app multipage ``pages/``.
-
-Bagian resolusi murni (tanpa Streamlit) + satu uji AppTest bahwa halaman utama
-memang memantulkan ``?mint=`` ke Holder Analytic lewat ``st.switch_page``.
-"""
+"""Router deep-link ?mint= / ?page= untuk app multipage pages/."""
 from __future__ import annotations
 
 import unittest
 from pathlib import Path
 from unittest import mock
 
-try:  # optional dev dependency
+try:
     from streamlit.testing.v1 import AppTest
-except Exception:  # noqa: BLE001
+except Exception:
     AppTest = None
 
 import page_router as pr
@@ -24,8 +20,9 @@ SOL = "So11111111111111111111111111111111111111112"
 EVM = "0x1a3876a32619cf2668e91ebcd90a596537ec8695"
 HOLDER = "pages/5_🧮_Holder.py"
 # Halaman CVD / Deteksi Akumulasi / Pre-Pump dihapus 2026-09-07.
+# "6" dulunya Pre-Pump, kini dipakai Robinhood (6_🦅_Robinhood.py) — jadi tidak gone lagi.
 GONE = ("cvd", "4", "pages/4_📊_CVD.py", "deteksi_akumulasi",
-        "deteksi-akumulasi", "akumulasi", "6", "pre-pump", "prepump", "7")
+        "deteksi-akumulasi", "akumulasi", "pre-pump", "prepump", "7")
 
 
 class ResolveTest(unittest.TestCase):
@@ -43,14 +40,13 @@ class ResolveTest(unittest.TestCase):
         cases = {
             "holder": HOLDER,
             "5_🧮_holder": HOLDER,
-            "Holder": HOLDER,          # kapital berbeda tetap dikenali
-            "pages/5_🧮_Holder.py": HOLDER,   # tautan lama (path file)
+            "Holder": HOLDER,
+            "pages/5_🧮_Holder.py": HOLDER,
             "dust": HOLDER,
             "analytic": HOLDER,
         }
         for value, expected in cases.items():
-            self.assertEqual(pr.resolve({"page": value}).get("page"), expected,
-                             value)
+            self.assertEqual(pr.resolve({"page": value}).get("page"), expected, value)
 
     def test_page_dan_mint_bersama(self):
         out = pr.resolve({"page": "holder", "mint": SOL})
@@ -58,13 +54,10 @@ class ResolveTest(unittest.TestCase):
         self.assertEqual(out["params"], {"mint": SOL})
 
     def test_halaman_yang_dihapus_tidak_di_router(self):
-        """CVD / Akumulasi / Pre-Pump dihapus: alias lama berhenti di dashboard."""
         for value in GONE:
             self.assertEqual(pr.resolve({"page": value}), {}, value)
-        # Dengan CA valid, fallback tetap Holder (bukan halaman yang hilang).
         for value in GONE:
-            self.assertEqual(pr.resolve({"page": value, "mint": SOL})["page"],
-                             HOLDER, value)
+            self.assertEqual(pr.resolve({"page": value, "mint": SOL})["page"], HOLDER, value)
 
     def test_tanpa_param_tidak_di_router(self):
         for query in ({}, {"mint": ""}, {"page": ""}, {"page": None}):
@@ -72,13 +65,10 @@ class ResolveTest(unittest.TestCase):
 
     def test_halaman_utama_dan_nilai_asing_dibiarkan(self):
         junk = {"page": "tidak-ada", "mint": "nonsense"}
-        for query in ({"page": "main"}, {"page": "dashboard"},
-                      {"page": "index"}, {"mint": "nonsense"},
-                      {"mint": "0x123"}, junk):
+        for query in ({"page": "main"}, {"page": "dashboard"}, {"page": "index"}, {"mint": "nonsense"}, {"mint": "0x123"}, junk):
             self.assertEqual(pr.resolve(query), {}, query)
 
     def test_page_tidak_dikenali_dengan_token_tetap_ke_holder(self):
-        """Target asing + CA valid: jangan diam, pakai default Holder."""
         out = pr.resolve({"page": "entah-apa", "mint": EVM})
         self.assertEqual(out["page"], HOLDER)
         self.assertEqual(out["params"], {"mint": EVM})
@@ -91,12 +81,10 @@ class ResolveTest(unittest.TestCase):
         self.assertTrue(pr.is_valid_ca(SOL))
         self.assertTrue(pr.is_valid_ca(EVM))
         self.assertTrue(pr.is_valid_ca("0x" + "a" * 40))
-        for bad in ("", None, "0x", "0x" + "z" * 40, "hello world",
-                    "l" * 44, "https://example.com/?a=1", "../etc/passwd"):
+        for bad in ("", None, "0x", "0x" + "z" * 40, "hello world", "l" * 44, "https://example.com/?a=1", "../etc/passwd"):
             self.assertFalse(pr.is_valid_ca(bad), bad)
 
     def test_alias_hanya_dari_folder_pages(self):
-        """Registry dibangun dari file nyata — tidak ada path hardcoded basi."""
         aliases = pr.known_pages()
         for name in sorted(p.name for p in (ROOT / "pages").glob("*.py")):
             rel = f"pages/{name}"
@@ -110,16 +98,12 @@ class ApplyTest(unittest.TestCase):
     def _offline_app(self):
         patches = (
             mock.patch("watchlist.load_watchlist", return_value={}),
-            mock.patch("holder_status.load_holder_status",
-                       return_value={"updated_at": None, "tokens": {}}),
-            mock.patch("holder_history.load_holder_history",
-                       return_value={"tokens": {}}),
+            mock.patch("holder_status.load_holder_status", return_value={"updated_at": None, "tokens": {}}),
+            mock.patch("holder_history.load_holder_history", return_value={"tokens": {}}),
             mock.patch("holder_history.pull_holder_history", return_value=None),
             mock.patch("robinhood_watchlist.load_watchlist", return_value={}),
-            mock.patch("robinhood_watchlist.load_status",
-                       return_value={"updated_at": None, "tokens": {}}),
-            mock.patch("robinhood_watchlist.load_history",
-                       return_value={"updated_at": None, "tokens": {}}),
+            mock.patch("robinhood_watchlist.load_status", return_value={"updated_at": None, "tokens": {}}),
+            mock.patch("robinhood_watchlist.load_history", return_value={"updated_at": None, "tokens": {}}),
         )
         for patch in patches:
             patch.start()
@@ -150,5 +134,5 @@ class ApplyTest(unittest.TestCase):
         switch.assert_not_called()
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     unittest.main()

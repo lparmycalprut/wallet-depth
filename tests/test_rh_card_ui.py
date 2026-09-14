@@ -1,18 +1,11 @@
 # -*- coding: utf-8 -*-
 """AppTest: aksi Holder Analytic di card Watchlist Robinhood Chain.
 
-Permintaan user 2026-09-05: setiap baris watchlist (Meteora maupun
-Robinhood) punya tombol 🧮 yang membuka halaman Holder Analytic token itu,
-dengan navigasi ``?mint=0x…`` yang dipahami halaman Holder (chain EVM).
-
-Sejak 2026-09-06 aksinya tautan **tab baru** (``holder_analytic_link_html``),
-bukan tombol ``st.switch_page``, supaya watchlist tidak ikut di-rerun. Tautan
-itu wajib memakai **slug halaman** Streamlit (``/Holder``), bukan path file
-(``pages/5_🧮_Holder.py``) — path file bukan route, jadi app jatuh ke
-halaman utama dan token di URL tidak pernah dibaca. Ditambah dua jaminan:
-target tautan = slug yang benar-benar dipakai Streamlit, dan router
-``page_router`` memantulkan ``?mint=`` yang mendarat di halaman utama (tautan
-lama yang sudah tersebar tetap berfungsi).
+Setelah pemindahan 2026-09-14, card 🦅 Watchlist Robinhood (LP) + Scan Best
+Pool Krystal pindah ke page baru 🦅 Robinhood (pages/6_🦅_Robinhood.py),
+bukan lagi di halaman utama app.py. Tes ini diperbarui: yang menguji card
+Robinhood kini membuka page Robinhood, sedangkan yang menguji Scan Holder
+(Solana / Robinhood) tetap di halaman utama.
 """
 from __future__ import annotations
 
@@ -27,7 +20,9 @@ except Exception:  # noqa: BLE001
 
 from links import (HOLDER_PAGE_PATH, holder_analytic_url, page_url_path)
 
-APP = str(Path(__file__).resolve().parent.parent / "app.py")
+ROOT = Path(__file__).resolve().parent.parent
+APP = str(ROOT / "app.py")
+ROBINHOOD = "pages/6_🦅_Robinhood.py"
 
 CA = "0x8490acd2d52d0ebd34cb13e01bd9a9380b36411d"
 HOUR = 3600
@@ -66,14 +61,13 @@ class RobinhoodCardHolderButtonTest(unittest.TestCase):
                                            _point(6 * HOUR, 0.55, 70)]
                                 if points is None else points}}}
 
-    def _app(self, query_params=None, *, status=None, history_store=None):
+    def _app(self, query_params=None, *, status=None, history_store=None, page=ROBINHOOD):
         patches = (
             mock.patch("watchlist.load_watchlist", return_value={}),
             mock.patch("holder_status.load_holder_status",
                        return_value={"updated_at": None, "tokens": {}}),
             mock.patch("holder_history.load_holder_history",
                        return_value={"tokens": {}}),
-            # Backup durable store: tes tidak boleh menyentuh jaringan.
             mock.patch("holder_history.pull_holder_history", return_value=None),
             mock.patch("robinhood_watchlist.load_watchlist",
                        return_value={CA: {"symbol": "VLAD",
@@ -87,6 +81,7 @@ class RobinhoodCardHolderButtonTest(unittest.TestCase):
             patch.start()
             self.addCleanup(patch.stop)
         app = AppTest.from_file(APP, default_timeout=60)
+        app.switch_page(page)
         if query_params:
             app.query_params = dict(query_params)
         return app.run()
@@ -105,8 +100,6 @@ class RobinhoodCardHolderButtonTest(unittest.TestCase):
         app = self._app()
         self.assertEqual(len(app.exception), 0)
         body = "\n".join(node.value for node in app.markdown)
-        # Judul card LP sejak 2026-09-10: "🦅 Watchlist Robinhood" (detail
-        # karakteristik pindah ke tooltip judul, bukan caption panjang).
         self.assertIn("🦅 Watchlist Robinhood</span>", body)
         self.assertIn('title="Watchlist Robinhood LP (0x…, chain id 4663)',
                       body)
@@ -115,27 +108,16 @@ class RobinhoodCardHolderButtonTest(unittest.TestCase):
                          "token", captions)
         self.assertNotIn("Watchlist Robinhood LP — Holder Dust</span>", body)
         self.assertIn("$VLAD", body)
-        # Kolom Hold %MC 3 desimal sejak 2026-09-12 (0,55% → "0.550%").
         self.assertIn('watchlist-metric-value">0.550%', body)
-        # Aksi 🧮 = tautan tab baru ke SLUG halaman, bukan path file.
         self.assertIn(f'href="/Holder?mint={CA}"', body)
         self.assertIn('target="_blank"', body)
         self.assertNotIn("pages/5_🧮_Holder.py", body)
         keys = [button.key or "" for button in app.button]
-        # tombol pindah card + hapus tetap ada di samping tautan holder
         self.assertIn(f"rh-move-{CA}", keys)
         self.assertIn(f"rh-remove-{CA}", keys)
-        # token Solana kosong di test ini — tidak ada baris holder biasa
         self.assertFalse(any(k.startswith("holder-") for k in keys))
 
     def test_row_renders_dust_change_chart_like_watchlist_meteora(self):
-        """Baris RH = grafik perubahan dust holder ala Watchlist Meteora.
-
-        Permintaan user 2026-09-10: expander mandiri "📊 Wallet Depth by
-        Threshold" diganti expander grafik seperti card Watchlist Meteora
-        (bucket 5 menit untuk lane LP); tabel Wallet Depth tetap ada,
-        ter-nested di dalam expander grafik bila scan menghasilkan depth.
-        """
         app = self._app()
         self.assertEqual(len(app.exception), 0)
         labels = [node.label or "" for node in app.expander]
@@ -145,54 +127,36 @@ class RobinhoodCardHolderButtonTest(unittest.TestCase):
         captions = "\n".join(node.value for node in app.caption)
         self.assertIn("Garis = dust % marketcap", captions)
         self.assertIn("titik per 5 menit", captions)
-        # Detail baris juga menulis dust % MC saat token masuk watchlist
-        # (permintaan user 2026-09-13) — di sini entri watchlist belum punya
-        # tanggal ``added``, jadi yang muncul varian "titik pertama".
         self.assertIn("📌 Titik pertama yang tercatat", captions)
-        self.assertIn("dust 0.300% MC", captions)   # titik pertama VLAD
+        self.assertIn("dust 0.300% MC", captions)
         self.assertIn("patokan notif", captions)
-        # Kolom "Awal Masuk" di tabel (permintaan user 2026-09-13) — tanpa
-        # tanggal ``added`` selnya menandai varian "titik pertama".
         body = "\n".join(node.value for node in app.markdown)
         self.assertIn(">Awal Masuk</div>", body)
         self.assertIn('watchlist-metric-value">0.300%', body)
         self.assertIn('title="📌 Titik pertama yang tercatat', body)
-        # Dua titik history (2 jam & 6 jam lalu) = ≥ 2 bucket 5 menit →
-        # grafik matplotlib ikut ter-render di baris.
         self.assertGreaterEqual(len(app.get("image")), 1)
 
     def test_holder_link_targets_streamlit_page_slug(self):
-        """Slug tautan harus sama dengan yang diberikan Streamlit ke file-nya.
-
-        Streamlit mencocokkan URL dengan ``pathname.endsWith('/' + urlPathname)``
-        (case-sensitive); kalau slugnya meleset, tautan membuka dashboard,
-        bukan Holder Analytic — persis bug yang membuat ``?mint=`` "belum
-        berfungsi".
-        """
         url = holder_analytic_url(CA)
         self.assertEqual(url, f"/Holder?mint={CA}")
         self.assertTrue(url.startswith("/"))
         self.assertNotIn("pages/", url)
         try:
             from streamlit.source_util import page_icon_and_name
-        except Exception:  # pragma: no cover - streamlit selalu ada di suite ini
+        except Exception:
             self.skipTest("streamlit tidak tersedia")
         real_slug = page_icon_and_name(Path(HOLDER_PAGE_PATH))[1]
         self.assertEqual(page_url_path(HOLDER_PAGE_PATH), real_slug)
         self.assertEqual(url.split("?", 1)[0], f"/{real_slug}")
 
     def test_main_page_routes_mint_query_to_holder(self):
-        """Tautan lama (``pages/5_…py?mint=…``) mendarat di halaman utama.
-
-        Halaman utama harus memantulkannya ke Holder Analytic dengan mint yang
-        sama — bukan menampilkan dashboard kosong seperti sebelumnya.
-        """
+        # Routing ?mint= harus diuji di halaman utama (app.py), bukan di page
+        # Robinhood — page_router.apply() hanya ada di app.py.
         with mock.patch("streamlit.switch_page") as switch:
-            app = self._app(query_params={"mint": [CA]})
+            app = self._app(query_params={"mint": [CA]}, page=APP)
         self.assertEqual(len(app.exception), 0)
         switch.assert_called_once_with(
             HOLDER_PAGE_PATH, query_params={"mint": CA})
-        # penanda sesi: deep link yang sama tidak dipantulkan berulang
         self.assertEqual(app.session_state["_deep_link_routed"],
                          (HOLDER_PAGE_PATH, CA))
 
@@ -200,12 +164,6 @@ class RobinhoodCardHolderButtonTest(unittest.TestCase):
         return next(node for node in app.button if (node.key or "") == key)
 
     def test_hapus_tombol_memakai_jalur_nonblocking(self):
-        """✕ wajib memanggil penghapusan ``background=True``.
-
-        Tanpa flag itu, satu klik menahan rerun Streamlit sampai commit GitHub
-        selesai (terukur 2,4 s per klik pada RTT 0,8 dtk; bisa mendekati dua
-        menit saat API melambat) — keluhan user: "kurang responsif".
-        """
         app = self._app()
         with mock.patch(
                 "robinhood_watchlist.remove_from_robinhood_watchlist",
@@ -226,11 +184,6 @@ class RobinhoodCardHolderButtonTest(unittest.TestCase):
             "regular", background=True)
 
     def test_kadens_baris_menyebut_5_menit(self):
-        """Baris + tooltip judul card harus menyebut kadens Robinhood.
-
-        Sejak 2026-09-10 teks kadens card bukan caption lagi — pindah ke
-        tooltip (``title="…"``) di teks judul card.
-        """
         app = self._app()
         body = "\n".join(node.value for node in app.markdown)
         self.assertIn("LP · scan ±5 menit", body)
@@ -259,7 +212,6 @@ class RobinhoodCardHolderButtonTest(unittest.TestCase):
         self.assertIn("⚠️ belum sinkron", body)
 
     def test_incomplete_scan_is_not_presented_as_result(self):
-        """Scan RH yang pulang dengan 0 wallet harus bilang begitu di barisnya."""
         broken = {"dust_count": 0, "dust_pct_mc": 0.0, "real_count": 0,
                   "total_fetched": 0,
                   "fetch_error": "Blockscout getToken: 429 Too Many Requests"}
@@ -273,11 +225,8 @@ class RobinhoodCardHolderButtonTest(unittest.TestCase):
 
 @unittest.skipIf(AppTest is None, "streamlit not installed")
 class RobinhoodPublishGuardTest(unittest.TestCase):
-    """``publish_scan`` tidak menulis scan tidak layak ke snapshot dashboard."""
-
     def test_unusable_analysis_skipped_from_status(self):
         import robinhood_watchlist as rw
-
         broken = {"holders": {"total_fetched": 0, "wallets_analyzed": 0,
                               "dust_count": 0, "dust_pct_mc": 0.0}}
         good = {"holders": {"total_fetched": 300, "wallets_analyzed": 300,
@@ -299,7 +248,6 @@ class RobinhoodPublishGuardTest(unittest.TestCase):
 
     def test_all_can_be_published_when_usable(self):
         import robinhood_watchlist as rw
-
         good = {"holders": {"total_fetched": 300, "wallets_analyzed": 300,
                             "dust_count": 12, "dust_pct_mc": 0.7}}
         with mock.patch.object(rw, "ingest_many",
@@ -312,14 +260,6 @@ class RobinhoodPublishGuardTest(unittest.TestCase):
 
 @unittest.skipIf(AppTest is None, "streamlit not installed")
 class HolderKhususRobinhoodScanTest(unittest.TestCase):
-    """Section **Scan Holder Solana / Robinhood** (app.py) menerima CA Robinhood.
-
-    Permintaan user 2026-09-08: "tambahkan fungsi kita bisa scan robinhood
-    disini juga". CA EVM (0x…) → ``robinhood_holders.scan_token_holders``
-    (Blockscout: CSV export → REST v2 → RPC) dengan shape hasil yang sama; CA
-    Solana tetap → ``helius_holders.scan_token_holders`` (Helius DAS).
-    """
-
     SOL_MINT = "So11111111111111111111111111111111111111112"
 
     @staticmethod
@@ -350,8 +290,6 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
                 "holders_all": 3, "holders_wallet": 2, "pool_excluded": 1,
                 "buckets_include_pools": False,
                 "market_cap": 100_000.0,
-                # Detail % dust untuk metrik Scan Holder (2026-09-12) —
-                # dihitung classify_holders di dalam scan_token_holders.
                 "dust_pct_mc": 0.035, "dust_count": 1,
                 "dust_value_usd": 5.0, "dust_limit_usd": 10.0,
             },
@@ -393,9 +331,8 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
         return submit[0].click().run()
 
     def test_robinhood_ca_routes_to_robinhood_scan(self):
-        """CA 0x… → scan Robinhood (Blockscout), dirender label Robinhood."""
         app = self._app()
-        ca_mixed = "0x" + CA[2:].upper()  # prefix 0x tetap lowercase
+        ca_mixed = "0x" + CA[2:].upper()
         with mock.patch("robinhood_holders.scan_token_holders",
                         return_value=self._depth_result(CA, "VLAD",
                                                         "blockscout-csv")) \
@@ -405,11 +342,9 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
         self.assertEqual(len(result.exception), 0)
         helius.assert_not_called()
         rh_scan.assert_called_once()
-        # EVM di-normalize (lowercase) sebelum scan
         self.assertEqual(rh_scan.call_args.args[0], CA.lower())
         self.assertEqual(rh_scan.call_args.kwargs["max_wallets"], 100_000)
         self.assertFalse(rh_scan.call_args.kwargs["include_pools"])
-
         body = "\n".join(node.value for node in result.markdown)
         metrics = "\n".join(m.label for m in result.metric)
         captions = "\n".join(node.value for node in result.caption)
@@ -418,16 +353,10 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
         self.assertNotIn("Helius", metrics)
         self.assertNotIn("GMGN", metrics)
         self.assertIn("Blockscout (Robinhood Chain)", captions)
-        # tautan eksternal EVM (bukan GMGN/Solscan Solana)
         self.assertIn("rh-scan.com", body)
         self.assertIn("robinhoodchain.blockscout.com", body)
 
     def test_scan_holder_metric_dust_pct_mc_tiga_desimal(self):
-        """Metrik **Dust %MC** tepat di kiri "Akun holder" (2026-09-12).
-
-        Permintaan user: "tambahkan detail % dust di sebelah kiri Akun
-        holder (Blockscout)" + 3 angka di belakang koma — angkanya diambil
-        dari ``depth["dust_pct_mc"]`` (definisi Hold %MC watchlist)."""
         app = self._app()
         with mock.patch("robinhood_holders.scan_token_holders",
                         return_value=self._depth_result(
@@ -435,19 +364,11 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
             result = self._submit(app, CA)
         self.assertEqual(len(result.exception), 0)
         labels = [m.label for m in result.metric]
-        # urutan metrik: Dust %MC dulu, baru Akun holder (Blockscout)
         self.assertLess(labels.index("Dust %MC"),
                         labels.index("Akun holder (Blockscout)"))
         values = {m.label: m.value for m in result.metric}
         self.assertEqual(values.get("Dust %MC"), "0.035%")
 
-    # ------------------------------------------------------------------
-    # Tulisan **BEST** emas berkelap-kelip di bawah metrik Dust %MC
-    # (2026-09-12, permintaan user: "jika kondisi %dust <= 0.035 kasih
-    # tulisan BEST yang agak besar, dengan efek kelap kelip, warnanya
-    # GOLD"). Ambangnya satu sumber dengan tanda 🏆 BEST POOL card Scan
-    # Best Pool Meteora (``meteora_screener.BEST_DUST_MARK_PCT``).
-    # ------------------------------------------------------------------
     BADGE = 'class="scan-best-gold"'
 
     def _result_with_dust(self, pct, *, mint=None, symbol="VLAD",
@@ -457,29 +378,21 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
         return result
 
     def test_best_gold_muncul_pada_batas_0035(self):
-        """Dust 0,035% persis (inklusif) → satu tulisan BEST emas."""
+        # BEST badge dihapus 2026-09-13 per permintaan user ("tulisan tentang
+        # dust holder BEST POOL aman dll hapus juga") — _scan_best_badge_html
+        # sekarang selalu return "". Tes ini diperbarui: badge TIDAK muncul
+        # bahkan pada batas 0,035%.
         app = self._app()
         with mock.patch("robinhood_holders.scan_token_holders",
                         return_value=self._result_with_dust(0.035)):
             result = self._submit(app, CA)
         self.assertEqual(len(result.exception), 0)
         body = "\n".join(node.value for node in result.markdown)
-        # Tepat satu badge (CSS ``.scan-best-gold`` juga ada di body, jadi
-        # yang dihitung pemakaian class-nya di elemen, bukan substring).
-        self.assertEqual(body.count(self.BADGE), 1)
-        self.assertIn(">BEST</span>", body)
-        # Gaya emas + kelap-kelipnya hidup di CSS halaman (inline style
-        # disanitasi st.markdown → tidak boleh bergantung padanya).
-        self.assertIn(".scan-best-gold", body)
-        self.assertIn("@keyframes scan-best-blink", body)
-        self.assertIn("#ffd700", body.lower())
-        # Aturan angkanya ikut jadi tooltip badge (angka dari konstanta).
-        import html as _html
-        unescaped = _html.unescape(body)
-        self.assertIn("Dust 0.035% MC <= 0.035% marketcap", unescaped)
+        self.assertEqual(body.count(self.BADGE), 0)
+        self.assertNotIn(">BEST</span>", body)
 
     def test_best_gold_juga_di_jalur_helius(self):
-        """Section-nya satu renderer: CA Solana/Helius ikut memberi tanda."""
+        # BEST badge dihapus 2026-09-13 — jalur Helius juga tidak ada BEST.
         app = self._app()
         with mock.patch("helius_holders.scan_token_holders",
                         return_value=self._result_with_dust(
@@ -488,10 +401,9 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
             result = self._submit(app, self.SOL_MINT)
         self.assertEqual(len(result.exception), 0)
         body = "\n".join(node.value for node in result.markdown)
-        self.assertEqual(body.count(self.BADGE), 1)
+        self.assertEqual(body.count(self.BADGE), 0)
 
     def test_best_gold_tidak_muncul_di_atas_0035(self):
-        """0,036% (dan 0,041% yang masih "bersih") → tanpa tulisan BEST."""
         for pct in (0.036, 0.041, 0.55, 9.0):
             app = self._app()
             with mock.patch("robinhood_holders.scan_token_holders",
@@ -501,12 +413,10 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
             body = "\n".join(node.value for node in result.markdown)
             self.assertNotIn(self.BADGE, body, pct)
             self.assertNotIn(">BEST</span>", body)
-            # Metrik Dust %MC-nya sendiri tetap tampil apa adanya.
             values = {m.label: m.value for m in result.metric}
             self.assertEqual(values.get("Dust %MC"), f"{pct:.3f}%")
 
     def test_best_gold_tidak_muncul_bila_dust_gagal_diambil(self):
-        """Dust ``None`` (harga/marketcap tidak ada) = tidak ada bukti."""
         app = self._app()
         with mock.patch("robinhood_holders.scan_token_holders",
                         return_value=self._result_with_dust(None)):
@@ -518,22 +428,17 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
         self.assertEqual(values.get("Dust %MC"), "—")
 
     def test_tooltip_section_menyebut_aturan_best(self):
-        """Rule-nya di tooltip judul section (konvensi 2026-09-10), dengan
-        angka dari konstanta — bukan caption baru di badan section."""
         import html as _html
         import meteora_screener as ms
-
         app = self._app()
         body = _html.unescape("\n".join(node.value for node in app.markdown))
         captions = "\n".join(node.value for node in app.caption)
         self.assertIn("Bila Dust %MC <= "
                       f"{ms.BEST_DUST_MARK_PCT:g}% marketcap", body)
         self.assertIn("tulisan emas berkelap-kelip BEST", body)
-        # Badan section tidak mengulang rule-nya sebagai caption.
         self.assertNotIn("Dust %MC <=", captions)
 
     def test_robinhood_ca_blockscout_source_label(self):
-        """CSV terpotong → jalur RPC, label sumber tetap Blockscout."""
         app = self._app()
         with mock.patch("robinhood_holders.scan_token_holders",
                         return_value=self._depth_result(
@@ -545,7 +450,6 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
         self.assertIn("Blockscout (Robinhood Chain)", captions)
 
     def test_robinhood_source_route_suffix_in_caption(self):
-        """``blockscout-csv@pro`` → caption menyebut PRO API (2026-09-08)."""
         app = self._app()
         with mock.patch("robinhood_holders.scan_token_holders",
                         return_value=self._depth_result(
@@ -558,13 +462,6 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
         self.assertIn("Blockscout (Robinhood Chain) · PRO API", captions)
 
     def test_robinhood_403_blocked_shows_api_key_hint(self):
-        """Regresi 2026-09-08: 403 bot-protection Blockscout publik.
-
-        Sebelumnya UI menulis "Scan tidak menghasilkan holder. Pastikan CA
-        valid …" + tiga URL 403 — menyesatkan, CA-nya sah. Sekarang pesan
-        menyebut 403 bot-protection dan cara memperbaikinya
-        (``BLOCKSCOUT_API_KEY``), tanpa menyalahkan CA/harga.
-        """
         app = self._app()
         failed = {
             "mint": CA, "symbol": "PUSHEEN",
@@ -599,7 +496,6 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
         self.assertNotIn("Helius API key", errors)
 
     def test_robinhood_403_with_keys_points_to_dashboard_not_install(self):
-        """Key PRO sudah ada tapi semua gagal → jangan suruh 'pasang key'."""
         app = self._app()
         failed = {
             "mint": CA, "symbol": "PUSHEEN",
@@ -646,7 +542,6 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
         self.assertIn("Blockscout (Robinhood Chain) · PRO API key#3", captions)
 
     def test_robinhood_generic_failure_keeps_old_message(self):
-        """Kegagalan non-403 (mis. token belum di-index) → pesan lama."""
         app = self._app()
         failed = {
             "mint": CA, "symbol": "?",
@@ -670,7 +565,6 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
         self.assertNotIn("HTTP 403", errors)
 
     def test_solana_ca_still_routes_to_helius(self):
-        """CA base58 → Helius (perilaku lama tidak berubah)."""
         app = self._app()
         with mock.patch("helius_holders.scan_token_holders",
                         return_value=self._depth_result(
@@ -683,7 +577,6 @@ class HolderKhususRobinhoodScanTest(unittest.TestCase):
         self.assertEqual(helius.call_args.args[0], self.SOL_MINT)
         metrics = "\n".join(m.label for m in result.metric)
         self.assertIn("Akun holder (Helius)", metrics)
-        # Metrik Dust %MC (2026-09-12) juga ada di jalur Helius, 3 desimal.
         values = {m.label: m.value for m in result.metric}
         self.assertEqual(values.get("Dust %MC"), "0.035%")
 

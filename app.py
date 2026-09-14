@@ -10,7 +10,6 @@ import streamlit as st
 
 from helius_holders import depth_bar_chart, scan_token_holders
 from best_pool_ui import render_best_pool_scan
-from krystal_pool_ui import render_krystal_pool_scan
 from holder_history import (FULL_SCAN_MAX_WALLETS, LP_INTERVAL_SEC,
                             holders_usable, ingest_many)
 from links import external_links_html, holder_analytic_link_html
@@ -21,7 +20,7 @@ from alert_settings import mutes_for
 from dashboard_components import (_alert_toggle_button, _ca_error, _compact,
                                   _dust_badge_html, _mint_alert_on,
                                   _muted_pill_html, _render_dust_change,
-                                  _render_rh_card, _render_toggle_note,
+                                  _render_toggle_note,
                                   _scan_best_badge_html,
                                   _wib, _depth_tables_html,
                                   card_head_html, hover_title_html,
@@ -29,7 +28,6 @@ from dashboard_components import (_alert_toggle_button, _ca_error, _compact,
                                   render_styles)
 import activity_log
 import robinhood_holders
-from robinhood_watchlist import (split_robinhood_watchlist)
 from holder_analysis import analyze_token
 from holder_status import (load_holder_status, publish_holder_status)
 from meteora_screener import fetch_watchlist_metric_snapshots
@@ -49,7 +47,10 @@ st.set_page_config(page_title="Wallet Depth — Holder Analytic",
 page_router.apply()
 
 render_styles()
-st.page_link("pages/8_temp.py", label="temp", icon="📦")
+col_nav1, col_nav2, col_nav3 = st.columns([0.22, 0.22, 0.56])
+col_nav1.page_link("pages/6_🦅_Robinhood.py", label="Robinhood", icon="🦅")
+col_nav2.page_link("pages/8_temp.py", label="temp", icon="📦")
+col_nav3.page_link("pages/5_🧮_Holder.py", label="Holder Analytic", icon="🧮")
 
 
 # ---------------------------------------------------------------------------
@@ -674,73 +675,34 @@ def _render_helius_holder_result(result: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Watchlist Robinhood Chain (EVM, chain id 4663) — dua card sejak 2026-09-05:
-# **Robinhood LP** (scan cepat ±5 menit sejak 2026-09-06) dan **Robinhood
-# biasa** (scan manual). Notifikasinya satu untuk semua lane: ⚡ EARLY DUMP
-# TERJADI - GANTI WIDE RANGE tiap dust naik ≥ 0,02% MC dari angka saat token
-# masuk watchlist (2026-09-13; rule ambang 0,06% MC sudah diganti). Sejak
-# 2026-09-06 KEDUA card LP (Chart LP
-# Meteora + Robinhood LP) ikut di-scan tiap run = ±5 menit; tinggal watchlist
-# biasa yang hanya jalan lewat tombol scan (LP_SCAN_RUN_MULTIPLIER tersedia
-# kalau kuota Helius perlu dihemat).
+# Shared stores — Robinhood sudah pindah ke page sendiri (🦅 Robinhood).
 # ---------------------------------------------------------------------------
-# Shared stores; moving sections does not change watchlist sources or cron.
 data = load_dashboard_data()
 watchlist, holder_status, history_store = data.watchlist, data.status, data.history
 status_tokens = holder_status.get("tokens") or {}
 lp_watch, _ = split_watchlist(watchlist)
 
 # ---------------------------------------------------------------------------
-# Grid 2 kolom watchlist (2026-09-10): **kiri** 🌊 Watchlist Meteora,
-# **kanan** 🦅 Watchlist Robinhood (LP).
-# 🏆 Scan Best Pool Meteora **keluar dari grid** — permintaan user
-# 2026-09-11: "jangan dibuat grid lagi" → full-width di bawah grid (posisi
-# seperti sebelum grid 2 kolom 2026-09-10). 🦅 Scan Best Robinhood Coin
-# diparkir di halaman temp (📦) 2026-09-11 ("belum berfungsi"). Scan Holder
-# tetap full-width di bawah (form + chart-nya lebar). Di layar sempit
-# Streamlit otomatis menumpuk kolomnya.
+# Layout utama setelah Robinhood pindah page (permintaan user):
+# - Watchlist Meteora full-width (grid 2 kolom kiri-kanan dihapus karena
+#   Watchlist Robinhood + Scan Best Pool Krystal sudah pindah ke page baru
+#   🦅 Robinhood);
+# - 🏆 Scan Best Pool Meteora full-width di bawahnya;
+# - 🛰 Scan Holder Solana / Robinhood full-width;
+# - 🧾 Log Aktivitas paling bawah.
+# Format penataan dikembalikan: tidak ada kolom kosong, semua card border
+# container + divider konsisten seperti sebelum grid 2 kolom.
 # ---------------------------------------------------------------------------
-rh_lp_watch, _ = split_robinhood_watchlist(data.rh_watchlist)
-_lp_col, _rh_col = st.columns([1, 1], gap="medium")
-with _lp_col:
-    _render_lp_card(lp_watch, status_tokens, history_store)
-with _rh_col:
-    _render_rh_card(rh_lp_watch, data.rh_status.get("tokens") or {},
-                    data.rh_history,
-                    int(datetime.now(timezone.utc).timestamp()), variant="lp",
-                    merge_status=data.rh_status)
+_render_lp_card(lp_watch, status_tokens, history_store)
 
-# 🏆 Scan Best Pool Meteora — full-width, **tidak** di dalam grid 2 kolom
-# (permintaan user 2026-09-11: "jangan dibuat grid lagi"). Listing API
-# Meteora 24 jam ``pool_type=dlmm&&fee_pct>=2&&active_tvl>=50000``
-# (kriteria 2026-09-11); saringan layar: dust holder < 0,05% MC +
-# volatility >= 2%. Urut: kenaikan volume 24 jam terbesar → dust terkecil →
-# fee/active TVL terbesar. ⭐ memasukkan token ke card Watchlist
-# Meteora di atas.
 st.divider()
 render_best_pool_scan()
-
-# ---------------------------------------------------------------------------
-# 🦅 Scan Best Pool Krystal — listing pool Krystal (Robinhood Chain 4663),
-# rule F/V disalin persis dari card 🏆 Meteora di atas (F = fee 24 jam / TVL,
-# V = volatility 24 candle hourly GeckoTerminal network robinhood, gate 24H
-# F/V ≥ 5×). Full-width, **tidak** di dalam grid 2 kolom (aturan 2026-09-11:
-# "jangan dibuat grid lagi").
-# ---------------------------------------------------------------------------
-st.divider()
-render_krystal_pool_scan()
 
 st.divider()
 _render_helius_holder_scan()
 
 # ---------------------------------------------------------------------------
-# 🧾 Log Aktivitas (2026-09-10, paling bawah) — kejadian penting semua card:
-# scan mulai/selesai (Meteora/Best Pool/Best Robinhood/Scan Holder), rate
-# limit & parkir key PRO Blockscout, fallback instance publik, 403
-# bot-protection, sync watchlist GitHub gagal. Merah bold = perlu perubahan
-# manual user (pasang/ganti API key, kredit habis). Kepala panel menampilkan
-# status pool key PRO (`pro_key_summary`) — jawaban langsung "kena limit di
-# key mana".
+# 🧾 Log Aktivitas (2026-09-10, paling bawah)
 # ---------------------------------------------------------------------------
 st.divider()
 activity_log.render_activity_log()

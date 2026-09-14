@@ -39,7 +39,7 @@ import core
 import krystal_pool_ui as kp
 import krystal_screener as ks
 
-APP = str(Path(__file__).resolve().parent.parent / "app.py")
+APP = str(Path(__file__).resolve().parent.parent / "pages/6_🦅_Robinhood.py")
 WETH = "0x4200000000000000000000000000000000000006"
 USDG = "0x5fc5360d0400a0fd4f2af552add042d716f1d168"
 TOKEN_A = "0xaaaa000000000000000000000000000000000001"
