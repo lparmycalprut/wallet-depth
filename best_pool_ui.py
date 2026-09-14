@@ -39,9 +39,9 @@ tidak relevan lagi, diganti pill lane di kepala card.
   0.5% / 2% — ditambah setelah Dust %MC), MC, A.TVL, **Vol 24h/30m** (judul
   mengikuti window lane), Top10, LPs, Pool, ⭐. Kolom **Dust** (jumlah
   wallet) dihapus hari yang sama;
-- **sorot hijau menyala** (``TOP_HIGHLIGHT_COLOR``, bold) di tabel utama:
-  sel volatility terbesar dan sel F/V tertinggi scan itu — seri di puncak
-  ikut ditandai semua; tabel "dilewati" tidak ditandai;
+- **sorot hijau tua menyala** (``TOP_HIGHLIGHT_COLOR``, bold) di tabel utama:
+  sel volatility terbesar, sel F/V tertinggi, dan sel Fee/TVL tertinggi scan
+  itu — seri di puncak ikut ditandai semua; tabel "dilewati" tidak ditandai;
 - filter API tetap ``pool_type=dlmm&&active_tvl>=50000``; dust, volume,
   volatility minimal, tier fee, top10 dan LPs **bukan** syarat;
 - kolom konteks menampilkan detail fee dan active TVL (**A.TVL**,
@@ -140,8 +140,9 @@ def best_pool_tooltip() -> str:
         "paling depan: Token, F/V, Fee/TVL (tepat di kanan F/V), Volat, "
         "Dust %MC, lalu Fee % (fee trading pool, mis. 0.5% / 2%); kolom "
         "volume mengikuti "
-        "window lane (Vol 24h / Vol 30m). Sel volatility terbesar dan F/V "
-        "tertinggi di tabel utama disorot hijau menyala (kalau seri, semua "
+        "window lane (Vol 24h / Vol 30m). Sel volatility terbesar, F/V "
+        "tertinggi, dan Fee/TVL tertinggi di tabel utama disorot hijau tua "
+        "menyala (kalau seri, semua "
         "di puncak ikut ditandai; tabel dilewati tidak ditandai). Dust %MC "
         "memakai market cap DexScreener; holder gagal tampil —. ⭐ memasukkan "
         "token ke Watchlist Meteora."
@@ -180,14 +181,17 @@ def _lane_titles(lane) -> list[str]:
             "A.TVL", volume, "Top10", "LPs", "Pool", ""]
 
 
-# Hijau menyala penanda sel tertinggi di tabel utama (permintaan user
+# Hijau tua menyala penanda sel tertinggi di tabel utama (permintaan user
 # 2026-09-14: "tandai volatility paling besar …" + "tandai f/v tertinggi …
-# menjadi warna hijau menyala"). Dipakai sel Volat dan sel F/V.
-TOP_HIGHLIGHT_COLOR = "#00c853"
+# menjadi warna hijau menyala" + lanjutan: "yang paling tinggi nilainya kasih
+# warna hijau menyala, hijau tua menyala" → F/V, Fee/TVL, Volat tertinggi
+# semua memakai satu warna hijau tua menyala). Dipakai sel Volat, sel F/V,
+# dan sel Fee/TVL.
+TOP_HIGHLIGHT_COLOR = "#15803d"
 
 
 def _top_span(text: str) -> str:
-    """Bungkus isi sel dengan hijau menyala + bold — penanda tertinggi tabel."""
+    """Bungkus isi sel dengan hijau tua menyala + bold — penanda tertinggi tabel."""
     return (f'<span style="color:{TOP_HIGHLIGHT_COLOR};font-weight:800;">'
             f'{text}</span>')
 
@@ -204,17 +208,20 @@ def _finite_number(value):
 
 
 def _table_tops(rows: list) -> tuple:
-    """``(volatility tertinggi, F/V tertinggi)`` di tabel yang sedang tampil.
+    """``(volatility tertinggi, F/V tertinggi, Fee/TVL tertinggi)`` di tabel.
 
-    Dipakai untuk sorot hijau menyala (permintaan user 2026-09-14). Baris
-    tanpa angka valid diabaikan; bila beberapa baris seri di puncak, SEMUANYA
-    ikut ditandai (tidak ada pemenang acak). Hanya tabel utama yang memanggil
-    ini — tabel "dilewati" 24H sengaja tidak ditandai (barisnya sudah
-    dianotasi merah gugur-ambang).
+    Dipakai untuk sorot hijau tua menyala (permintaan user 2026-09-14 —
+    lanjutan: Fee/TVL tertinggi ikut ditandai). Baris tanpa angka valid
+    diabaikan; bila beberapa baris seri di puncak, SEMUANYA ikut ditandai
+    (tidak ada pemenang acak). Setiap kolom dicari maksimumnya
+    sendiri-sendiri, jadi baris pemegang Fee/TVL tertinggi bisa berbeda dari
+    baris pemegang F/V tertinggi. Hanya tabel utama yang memanggil ini —
+    tabel "dilewati" 24H sengaja tidak ditandai (barisnya sudah dianotasi
+    merah gugur-ambang).
     """
     from meteora_screener import row_fv_ratio
 
-    top_vol = top_fv = None
+    top_vol = top_fv = top_fee_tvl = None
     for row in rows or []:
         vol = _finite_number((row or {}).get("volatility"))
         if vol is not None:
@@ -222,7 +229,11 @@ def _table_tops(rows: list) -> tuple:
         ratio = row_fv_ratio(row)
         if ratio is not None and _finite_number(ratio) is not None:
             top_fv = ratio if top_fv is None else max(top_fv, ratio)
-    return top_vol, top_fv
+        fee_tvl = _finite_number((row or {}).get("fee_active_tvl_ratio"))
+        if fee_tvl is not None:
+            top_fee_tvl = (fee_tvl if top_fee_tvl is None
+                           else max(top_fee_tvl, fee_tvl))
+    return top_vol, top_fv, top_fee_tvl
 
 
 def _best_head_html(rows: list, hidden: int, lane: str,
@@ -334,9 +345,11 @@ def _fv_cell(row: dict, lane: str, *, top: bool = False) -> tuple[str, str, str]
     menampilkan **OK** hijau — angka quotient tetap di tooltip sel dan tetap
     jadi kunci urut + saringan, tapi tidak ditampilkan di sel. Lane **24H**
     tetap menampilkan angka ``N,N×``. ``top=True`` (F/V tertinggi di tabel
-    utama) mengubahnya jadi **hijau menyala + bold**, baik untuk sel angka
+    utama) mengubahnya jadi **hijau tua menyala + bold**, baik untuk sel angka
     24H maupun sel OK 30M (permintaan user: "tandai f/v tertinggi tersebut
-    menjadi warna hijau menyala"). Baris gagal ambang (hanya mungkin muncul
+    menjadi warna hijau menyala" — lanjutan: "yang paling tinggi nilainya
+    kasih warna hijau menyala, hijau tua menyala"). Baris gagal ambang
+    (hanya mungkin muncul
     di listing "disembunyikan" lane 24H, yang tidak pernah diberi tanda)
     tetap merah + alasan, supaya jelas kenapa holdernya tidak ikut di-scan.
     """
@@ -392,8 +405,9 @@ def _render_best_table(rows: list, *, lane: str,
     mis. 0.5% / 2% — ditambah setelah Dust %MC) · MC · A.TVL · Vol (24h/30m
     mengikuti lane) · Top10 · LPs · Pool · ⭐ — kolom Dust (jumlah wallet)
     sudah dihapus. Di tabel
-    utama (``mark_tops=True``) sel **volatility terbesar** dan sel **F/V
-    tertinggi** disorot hijau menyala (``TOP_HIGHLIGHT_COLOR``, seri ikut
+    utama (``mark_tops=True``) sel **volatility terbesar**, sel **F/V
+    tertinggi**, dan sel **Fee/TVL tertinggi** disorot hijau tua menyala
+    (``TOP_HIGHLIGHT_COLOR``, seri ikut
     semua); tabel "dilewati" 24H tidak ditandai (``mark_tops=False``).
     """
     import html
@@ -416,7 +430,8 @@ def _render_best_table(rows: list, *, lane: str,
     st.markdown('<hr style="margin:0.4rem 0;border-color:#cbd5e1;">',
                 unsafe_allow_html=True)
 
-    top_vol, top_fv = _table_tops(rows) if mark_tops else (None, None)
+    top_vol, top_fv, top_fee_tvl = (_table_tops(rows) if mark_tops
+                                     else (None, None, None))
     window_txt = ("30 menit" if normalize_best_lane(lane) == "30m"
                   else "24 jam")
 
@@ -454,7 +469,8 @@ def _render_best_table(rows: list, *, lane: str,
                     "2026-09-13) · tie-break urut terakhir (terkecil dulu) · "
                     "pembaginya market cap DexScreener (kolom MC), sumber "
                     "yang sama dengan 🛰 Scan Holder")
-        # Sorot hijau menyala: F/V tertinggi + volatility terbesar tabel ini.
+        # Sorot hijau tua menyala: F/V tertinggi, volatility terbesar, dan
+        # Fee/TVL tertinggi tabel ini (permintaan user 2026-09-14 lanjutan).
         fv_here = row_fv_ratio(row)
         fv_top = bool(top_fv is not None and fv_here is not None
                       and fv_here == top_fv)
@@ -467,6 +483,17 @@ def _render_best_table(rows: list, *, lane: str,
         if top_vol is not None and vol_here is not None and vol_here == top_vol:
             vol_value = _top_span(vol_value)
             vol_tip += " — volatility terbesar di tabel ini"
+        fee_tvl_value = _pct_or_dash(ratio)
+        fee_tvl_tip = (f"tier fee {_num_or_dash(fee_pct, '.4g')}% · fee "
+                       f"{window_txt} {_usd_or_dash(fee, compact=False)} / "
+                       f"active TVL {_usd_or_dash(active_tvl, compact=False)} "
+                       f"= {_num_or_dash(ratio, ',.2f')}% — informasi, bukan "
+                       "saringan")
+        fee_tvl_here = _finite_number(ratio)
+        if (top_fee_tvl is not None and fee_tvl_here is not None
+                and fee_tvl_here == top_fee_tvl):
+            fee_tvl_value = _top_span(fee_tvl_value)
+            fee_tvl_tip += " — Fee/TVL tertinggi di tabel ini"
         cols = st.columns(_COL_SPEC)
         cols[0].markdown(
             '<div class="watchlist-token">'
@@ -479,11 +506,7 @@ def _render_best_table(rows: list, *, lane: str,
         # kanan F/V — permintaan user 2026-09-14).
         cells = (
             (fv_value, fv_sub, fv_tip),
-            (_pct_or_dash(ratio), fee_sub,
-             f"tier fee {_num_or_dash(fee_pct, '.4g')}% · fee {window_txt} "
-             f"{_usd_or_dash(fee, compact=False)} / active TVL "
-             f"{_usd_or_dash(active_tvl, compact=False)} = "
-             f"{_num_or_dash(ratio, ',.2f')}% — informasi, bukan saringan"),
+            (fee_tvl_value, fee_sub, fee_tvl_tip),
             (vol_value, "volat", vol_tip),
             (dust_value, dust_sub, dust_tip),
             (_num_or_dash(fee_pct, ".4g") + "%" if fee_pct is not None
@@ -796,7 +819,7 @@ def render_best_pool_scan() -> None:
             st.caption(
                 f"{len(hidden_rows)} pool {label} disembunyikan ditampilkan "
                 "· detail holder tidak diambil untuk kandidat ini.")
-            # Sorot hijau menyala khusus tabel utama — listing dilewati
+            # Sorot hijau tua menyala khusus tabel utama — listing dilewati
             # barisnya sudah dianotasi merah gugur-ambang.
             _render_best_table(hidden_rows, lane=active,
                                key_prefix=f"best-pool-hidden-{active}",
