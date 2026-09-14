@@ -1,3 +1,90 @@
+# Kegiatan — 14 September 2026 malam (🏆 Scan Best Pool: tata kolom + sorot tertinggi)
+
+Permintaan user: *"kita tata kolomnya baik untuk 24jam maupun 30menit —
+Dust hapus — Token F/V Volat Dust %MC, 4 kolom ini diletakkan paling awal —
+lalu tandai volatility paling besar di scan tersebut menjadi warna hijau
+menyala — lalu tandai f/v tertinggi tersebut menjadi warna hijau menyala"*.
+
+## Yang diubah
+
+- **Susunan kolom kedua tabel ditata ulang** (`best_pool_ui._COL_SPEC`):
+  Token · **F/V** · **Volat** · **Dust %MC** di paling depan (4 kolom inti),
+  lalu MC · A.TVL · Fee/TVL · Vol · Top10 · LPs · Pool · ⭐. Kolom **Dust**
+  (jumlah wallet dust) **dihapus** — dari tabel utama maupun tabel
+  "dilewati" 24H.
+- **Judul kolom volume mengikuti lane** (`_lane_titles()`): 24H "Vol 24h",
+  30M **"Vol 30m"** — sebelumnya tabel 30M salah memakai "Vol 24h", dan
+  tooltip fee/volume menulis "24 jam" padahal angkanya window 30 menit dari
+  API Meteora. Sekarang tooltip ikut lane ("fee 30 menit", "volume 30
+  menit").
+- **Sorot hijau menyala + bold** (`TOP_HIGHLIGHT_COLOR = #00c853`,
+  `_top_span()`): sel **volatility terbesar** dan sel **F/V tertinggi** di
+  tabel utama tiap lane (dicari `_table_tops()`). Lane 24H menandai sel
+  angkanya (`10,1×`); lane 30M menandai sel **OK**-nya (OK lain tetap hijau
+  `#16a34a`). Kalau seri di puncak, semuanya ikut ditandai — tidak ada
+  pemenang acak; baris tanpa angka valid diabaikan. Tabel "dilewati" 24H
+  **tidak** ditandai (`mark_tops=False`) supaya tidak berbenturan dengan
+  anotasi merah gugur-ambang. Tooltip sel terseorot diberi catatan
+  "— volatility terbesar / F/V tertinggi di tabel ini"; tooltip judul card
+  ikut menjelaskannya.
+- Sengaja **tidak diubah**: urutan baris (F/V → vol/active TVL → dust),
+  saringan lane, pembuangan pool volatility 0, rule 30M-OK, toggle
+  disembunyikan, dan card-card lain.
+
+## Verifikasi
+
+`python -m pytest tests/test_best_pool_scan.py tests/test_best_fv_prefilter.py -q`
+→ **64 tes + 23 subtest lulus** (sebelumnya 58 + 23; +6 tes baru: urutan 4
+kolom inti + kolom Dust hilang, label/tooltip mengikuti lane, sorot neon
+angka 24H, OK tertinggi 30M, seri di puncak semuanya ditandai, tabel
+dilewati tanpa sorot). Suite penuh `python -m pytest tests/ -q` → **34
+gagal, 1140 lulus** — 34 merah persis baseline (regular Scan Meteora / temp
+page / watchlist row / scan_holders / Robinhood), tidak ada kegagalan baru.
+
+# Kegiatan — 14 September 2026 lanjutan (🏆 Scan Best Pool: volatility 0 dihapus dari listing)
+
+Permintaan user: *"kita lanjutkan, jika volatility 0 jangan tampilkan, karena
+tidak ada pergerakan disitu"*. Perubahan paginya baru membuat pool vol-0
+**gugur** saringan (tapi barisnya masih terlihat sebagai ∞ di tabel
+"dilewati" 24H); sekarang pool tanpa pergerakan **hilang total dari card**.
+
+## Yang diubah
+
+- `meteora_screener.row_volatility_zero()` (baru): True hanya untuk
+  volatility **persis 0** (finite). `None`/hilang/negatif/nonfinite BUKAN
+  nol — tetap masuk listing "dilewati" dengan alasan metriknya, jadi data
+  rusak tidak pernah dibuang diam-diam.
+- `meteora_screener.scan_best_lane()`: kandidat gugur ber-volatility-0 tidak
+  lagi masuk `hidden_rows` maupun `hidden_metric`; jumlahnya dicatat di
+  field baru **`dropped_volatility`** (audit) dan disebut di activity log
+  (`"… · N pool volatility 0 dibuang"`). `filter_best_rows()` mengecualikan
+  vol-0 dari hitungan sehingga `hidden_metric == len(hidden_rows)` selalu
+  berlaku. Gate `row_best_gaps` TIDAK berubah — pool vol-0 tetap gugur
+  sebelum fetch holder dengan alasan "volatility 0 — F/V tidak terukur",
+  jadi kuota Helius tetap aman.
+- `best_pool_ui.render_best_pool_scan()`: baris vol-0 disaring ulang di
+  render, dari `rows` **maupun** `hidden_rows`, sehingga hasil scan LAMA di
+  `session_state` — era sebelum ∞ gugur (baris ∞ masih di tabel lolos) atau
+  era hidden yang masih menghitung vol-0 — ikut bersih tanpa scan ulang.
+  `hidden` kini dihitung `len(hidden_rows)` pasca-filter (bukan counter
+  mentah `hidden_metric`), jadi pill "N disembunyikan", tombol ▶, dan
+  caption "N dilewati" selalu cocok dengan isi tabel. Tooltip judul +
+  docstring modul ikut diperbarui.
+- Sengaja **tidak diubah**: `row_best_gaps` (gate), `row_fv_ratio` /
+  `sort_best_rows` (kontrak ∞ dipertahankan walau card tidak pernah lagi
+  meneruskan barisnya), rule 30M lain, Scan Meteora regular (temp page),
+  kolom volatility Watchlist Meteora.
+
+## Verifikasi
+
+`python -m pytest tests/test_best_pool_scan.py tests/test_best_fv_prefilter.py -q`
+→ **58 tes + 23 subtest lulus** (sebelumnya 51 + 20; +7 tes baru: vol-0 hanya
+0 persis, dibuang tanpa `enrich_pools` di kedua lane, tidak tampil & tidak
+dihitung di listing dilewati 24H (AppTest), baris vol-0 warisan sesi lama
+ikut hilang). Suite penuh `python -m pytest tests/ -q` → **34 gagal, 1134
+lulus** — 34 merah persis baseline, diverifikasi dengan `git stash`: daftar
+file FAILED identik sebelum/sesudah perubahan, tidak ada kegagalan baru.
+
 # Kegiatan — 14 September 2026 (🏆 Scan Best Pool: ∞ gugur + 30M tulis OK, gagal tidak tampil)
 
 Permintaan user: *"syarat F/V > 1× … perbaiki scan meteora pool pada bagian

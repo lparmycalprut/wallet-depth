@@ -324,25 +324,31 @@ bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
   | **30M** | `F/V > BEST_FV_30M_MIN` (**1×**, strict) | fee harus **lebih besar** dari volatility; F == V (tepat 1×) di-skip |
 
   V = 0 gugur di kedua lane (2026-09-14: `∞` bukan kelolosan — pool tanpa
-  volatility tidak bisa membuktikan fee lebih besar); metrik hilang /
-  nonfinite / negatif gugur. Yang gugur **tidak pernah** membuat request
-  holder — `scan_best_lane()` menolak mereka sebelum `enrich_pools()`
-  (kuota Helius aman) dan menyimpannya di `hidden_rows` + alasan di
-  `best_gaps`. Lane **24H**: kandidat gagal dibuka lewat tombol
-  **▶ N pool dilewati** (barisnya ditandai merah `gugur: F/V < 5×` di sel
-  F/V). Lane **30M**: kandidat gagal **tidak ditampilkan sama sekali**
-  (permintaan user 2026-09-14: "jangan tampilkan yang tidak terpenuhi") dan
-  baris yang lolos cukup menampilkan **OK** hijau di sel F/V (angka quotient
-  aslinya tetap di tooltip sel + kunci urut).
+  volatility tidak bisa membuktikan fee lebih besar) **dan dibuang dari
+  listing seluruhnya** (lanjutan hari yang sama, permintaan user: *"jika
+  volatility 0 jangan tampilkan, karena tidak ada pergerakan disitu"* —
+  `meteora_screener.row_volatility_zero()`): tidak masuk tabel lolos, tidak
+  masuk listing "dilewati" 24H, tidak dihitung di pill/caption
+  (`hidden_metric`); jumlah pembuangannya hanya tercatat di
+  `dropped_volatility` untuk audit. Metrik hilang / nonfinite / negatif
+  gugur dan tetap terlihat di listing "dilewati" 24H. Kandidat gugur lain
+  **tidak pernah** membuat request holder — `scan_best_lane()` menolak mereka
+  sebelum `enrich_pools()` (kuota Helius aman) dan menyimpannya di
+  `hidden_rows` + alasan di `best_gaps`. Lane **24H**: kandidat gagal dibuka
+  lewat tombol **▶ N pool dilewati** (barisnya ditandai merah `gugur: F/V <
+  5×` di sel F/V). Lane **30M**: kandidat gagal **tidak ditampilkan sama
+  sekali** (permintaan user 2026-09-14: "jangan tampilkan yang tidak
+  terpenuhi") dan baris yang lolos cukup menampilkan **OK** hijau di sel F/V
+  (angka quotient aslinya tetap di tooltip sel + kunci urut).
 - **Query API Meteora** (`category=top`, `page_size=50`):
   `pool_type=dlmm && active_tvl>=50000`. `fee_pct>=2` **dihapus**
   2026-09-13 (pool ber-fee rendah seperti EMBER/USDC harus muncul). Saringan
   layar lama — volume 24 jam ≥ $1M, volatility ≥ 2%, dust < 0,05% MC — ikut
   **dihapus**: dust/volume/tier fee/Top10/LPs/active TVL tetap tampil sebagai
   **informasi**, bukan syarat.
-- **Urutan tiap tabel**: **F/V terbesar** → **volume 24 jam / active TVL**
-  (`volume_active_tvl_ratio`, angka persen dari API; ditulis di baris kecil
-  kolom **Vol 24h** sebagai `… · 1,647× A.TVL`) → **dust % MC terkecil** →
+- **Urutan tiap tabel**: **F/V terbesar** → **volume / active TVL window
+  lane-nya** (`volume_active_tvl_ratio`, angka persen dari API; ditulis di
+  baris kecil kolom Vol sebagai `… · 1,647× A.TVL`) → **dust % MC terkecil** →
   simbol alfabetis. Kunci dust dibulatkan ke presisi tampilan (3 desimal)
   supaya dua pool yang di layar sama-sama "0,030%" dianggap seri; baris tanpa
   angka dust tidak hilang, hanya kalah tie-break dari sesame F/V.
@@ -351,15 +357,18 @@ bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
   `best_pool_lane`). Hasil sesi lama yang masih gabung (`best_pool_scan`)
   dipecah otomatis sekali saat render, jadi listing tidak hilang setelah
   update.
-- Kolom listing: Token · **F/V** (baris kecil 24H = `syarat F/V ≥ 5×` /
-  tabel disembunyikan 24H = `gugur: …` merah; 30M lolos = **OK** hijau
-  dengan `syarat F/V > 1× terpenuhi`) · MC ·
-  **A.TVL** · **Fee/TVL** (baris kecil = fee 24 jam USD + tier fee) ·
-  **Vol 24h** (baris kecil = Δ volume 24 jam, hijau naik / merah turun, plus
-  rasio volume/active TVL) · Volat · Top10 · LPs · Dust (wallet) ·
-  Dust %MC (3 desimal) · Pool (Meteora DLMM + HawkFi) · ⭐ — hover tiap angka
-  memberi angka penuh + keterangan apakah metrik itu kunci urut atau hanya
-  informasi.
+- Kolom listing (ditata 2026-09-14 — 4 kolom inti di depan, kolom **Dust**
+  jumlah wallet dihapus): Token · **F/V** (baris kecil 24H = `syarat F/V ≥
+  5×` / tabel disembunyikan 24H = `gugur: …` merah; 30M lolos = **OK** hijau
+  dengan `syarat F/V > 1× terpenuhi`) · **Volat** · **Dust %MC** (3 desimal)
+  · MC · **A.TVL** · **Fee/TVL** (baris kecil = fee USD window lane + tier
+  fee) · **Vol 24h/30m** (judul mengikuti window lane; baris kecil = Δ
+  volume, hijau naik / merah turun, plus rasio volume/active TVL) · Top10 ·
+  LPs · Pool (Meteora DLMM + HawkFi) · ⭐ — hover tiap angka memberi angka
+  penuh + keterangan apakah metrik itu kunci urut atau hanya informasi. Sel
+  **volatility terbesar** dan sel **F/V tertinggi** tabel utama disorot
+  **hijau menyala** (`#00c853`, bold; seri di puncak ikut ditandai semua;
+  tabel "dilewati" tidak ditandai).
 - Tombol **⭐** memasukkan token ke card **🌊 Watchlist Meteora** di halaman
   utama (`source=meteora`, sama seperti card temp) — token lalu ikut di-scan
   cron ±5 menit lengkap dengan grafik perubahan dust holder.

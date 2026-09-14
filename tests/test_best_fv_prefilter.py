@@ -9,10 +9,15 @@ jika lebih kecil langsung skip"):
 - 30M: ``F/V > BEST_FV_30M_MIN`` (1× — fee harus benar-benar lebih besar dari
   volatility);
 - volatility 0 (F/V ∞) **selalu gugur** di kedua lane (2026-09-14) — ∞ bukan
-  kelolosan, pool tanpa volatility tidak bisa membuktikan F > V;
+  kelolosan, pool tanpa volatility tidak bisa membuktikan F > V — dan sejak
+  lanjutan hari yang sama juga **dibuang dari listing** (permintaan user:
+  *"jika volatility 0 jangan tampilkan, karena tidak ada pergerakan disitu"*):
+  tidak masuk ``hidden_rows``, tidak dihitung ``hidden_metric``, hanya
+  tercatat di counter audit ``dropped_volatility``;
 - tiap tombol hanya mengambil lane-nya sendiri, dan kandidat di bawah ambang
   tidak pernah membuat request holder (``enrich_pools`` tidak dipanggil untuk
-  mereka) tapi tetap tercatat di ``hidden_rows`` beserta ``best_gaps``.
+  mereka) tapi tetap tercatat di ``hidden_rows`` beserta ``best_gaps``
+  (kecuali vol-0 di atas).
 """
 import unittest
 from unittest.mock import patch
@@ -142,19 +147,37 @@ class LaneEnrichmentTest(unittest.TestCase):
         self._scan('24h', [_pool(ratio=1, volatility=2)], calls)
         self.assertEqual(calls, [])
 
+    def test_volatility_nol_dibuang_tanpa_scan_holder(self):
+        """∞ gugur gate DAN dibuang dari hidden_rows (2026-09-14 lanjutan)."""
+        pools = [_pool('DOM', 'MintA', ratio=30, volatility=10),   # 3× lolos
+                 _pool('SAMA', 'MintB', ratio=10, volatility=10),  # 1× gugur
+                 _pool('NOL', 'MintC', ratio=50, volatility=0)]    # ∞ → dibuang
+        calls: list = []
+        result = self._scan('30m', pools, calls)
+        self.assertEqual(calls, [[('30m', 'DOM')]])
+        self.assertEqual([r['pool_address'] for r in result['rows']], ['DOM'])
+        self.assertEqual([r['pool_address'] for r in result['hidden_rows']],
+                         ['SAMA'])
+        self.assertEqual({tuple(r['best_gaps']) for r in result['hidden_rows']},
+                         {('30M: F/V ≤ 1×',)})
+        self.assertEqual(result['hidden_metric'], 1)
+        self.assertEqual(result['dropped_volatility'], 1)
+        self.assertEqual(result['fetched'], 3)
+
     def test_hasil_disortakan_f_v_terbesar(self):
-        """Prioritas = F/V terbesar; ∞ (volatility 0) gugur, bukan teratas."""
+        """Prioritas = F/V terbesar; ∞ (volatility 0) gugur DAN dibuang."""
         pools = [_pool('KECIL', 'MintA', ratio=25, volatility=5),     # 5×
                  _pool('BESAR', 'MintB', ratio=100, volatility=5),    # 20×
-                 _pool('NOL', 'MintC', ratio=50, volatility=0)]       # ∞ → gugur
+                 _pool('NOL', 'MintC', ratio=50, volatility=0)]       # ∞ → dibuang
         calls: list = []
         result = self._scan('24h', pools, calls)
         self.assertEqual([r['pool_address'] for r in result['rows']],
                          ['BESAR', 'KECIL'])
-        self.assertEqual([r['pool_address'] for r in result['hidden_rows']],
-                         ['NOL'])
-        self.assertEqual({tuple(r['best_gaps']) for r in result['hidden_rows']},
-                         {('24H: volatility 0 — F/V tidak terukur',)})
+        # Vol-0 tidak lagi ditampilkan di mana pun — hidden_rows kosong dan
+        # pembuangannya hanya tercatat di counter audit.
+        self.assertEqual(result['hidden_rows'], [])
+        self.assertEqual(result['hidden_metric'], 0)
+        self.assertEqual(result['dropped_volatility'], 1)
 
 
 class LegacyBothLaneTest(unittest.TestCase):

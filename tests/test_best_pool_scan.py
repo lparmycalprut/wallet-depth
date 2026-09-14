@@ -11,7 +11,10 @@ pool, kita akan punya 2 tombol 24H dan 30M"*. Yang di-pin di file ini:
   inklusif), 30M ``F/V > BEST_FV_30M_MIN`` (1× = fee harus lebih besar dari
   volatility). Di bawah ambang → **langsung skip**, ``enrich_pools`` tidak
   pernah dipanggil (kuota Helius aman), barisnya masuk ``hidden_rows`` dengan
-  alasan di ``best_gaps``;
+  alasan di ``best_gaps`` — **kecuali** volatility 0: dibuang penuh dari
+  listing (2026-09-14 lanjutan, permintaan user: *"jika volatility 0 jangan
+  tampilkan, karena tidak ada pergerakan disitu"*), tidak dihitung di
+  ``hidden_metric``, jumlah pembuangannya tercatat di ``dropped_volatility``;
 - query API: ``pool_type=dlmm&&active_tvl>=50000`` (``fee_pct>=2`` **dihapus**
   2026-09-13; pool ber-fee rendah seperti EMBER/USDC harus muncul);
 - urutan tiap tabel: **F/V terbesar** → volume/active TVL → dust %MC terkecil;
@@ -20,7 +23,12 @@ pool, kita akan punya 2 tombol 24H dan 30M"*. Yang di-pin di file ini:
 - **satu tabel per lane** di ``best_pool_ui``: hasil disimpan di
   ``best_pool_scan_24h`` / ``best_pool_scan_30m``, kolom ``Src`` dihapus,
   toggle "disembunyikan" + prefix key ⭐ ikut per-lane, dan hasil sesi lama
-  (gabungan) dipecah sekali saat render.
+  (gabungan) dipecah sekali saat render;
+- **tata letak kolom 2026-09-14**: 4 kolom inti di depan (Token, F/V, Volat,
+  Dust %MC), kolom Dust (jumlah wallet) dihapus, judul kolom volume mengikuti
+  window lane ("Vol 24h"/"Vol 30m", begitu pula tooltip fee/volume), dan sel
+  volatility terbesar + F/V tertinggi tabel utama disorot **hijau menyala**
+  (``TOP_HIGHLIGHT_COLOR``, seri ikut semua, tabel dilewati tidak ditandai).
 """
 from __future__ import annotations
 
@@ -205,6 +213,19 @@ class RowMetricsTest(unittest.TestCase):
         self.assertEqual(ms.row_fv_ratio(_fv(0, 0)), 0.0)
         self.assertAlmostEqual(ms.row_fv_ratio(_fv(40.0, 8.0)), 5.0)
 
+    def test_row_volatility_zero(self):
+        """Hanya 0 persis yang dianggap tanpa pergerakan untuk dibuang."""
+        self.assertTrue(ms.row_volatility_zero(_row(volatility=0)))
+        self.assertTrue(ms.row_volatility_zero(_row(volatility=0.0)))
+        self.assertFalse(ms.row_volatility_zero(_row()))
+        self.assertFalse(ms.row_volatility_zero(None))
+        self.assertFalse(ms.row_volatility_zero(_row(volatility=None)))
+        # Hilang/negatif/nonfinite bukan nol — tetap masuk listing dilewati
+        # dengan alasan metrik, bukan dibuang diam-diam.
+        self.assertFalse(ms.row_volatility_zero(_row(volatility=-0.01)))
+        self.assertFalse(ms.row_volatility_zero(_row(volatility=float("nan"))))
+        self.assertFalse(ms.row_volatility_zero(_row(volatility=float("inf"))))
+
     def test_vol_tvl_ratio_dihitung_ulang_untuk_baris_lama(self):
         row = _row(volume_active_tvl_ratio=None)
         self.assertAlmostEqual(ms.row_vol_tvl_ratio(row), 2000.0)
@@ -293,6 +314,18 @@ class BestGatesTest(unittest.TestCase):
         self.assertEqual([r["pool_address"] for r in kept], ["KECIL", "BESAR"])
         self.assertEqual(hidden_metric, 0)
 
+    def test_filter_best_rows_membuang_volatility_nol_dari_hitungan(self):
+        """Vol 0 gugur gate DAN tidak dihitung hidden (2026-09-14 lanjutan)."""
+        rows = [_row(pool_address="LOLOS"),
+                _row(pool_address="GAGAL", **_fv(2.0, 10.0)),
+                _row(pool_address="NOLVOL", **_fv(50.0, 0))]
+        for lane in (None, "24h", "30m"):
+            with self.subTest(lane=lane):
+                kept, hidden_metric, hidden_dust = ms.filter_best_rows(
+                    rows, lane=lane)
+                self.assertEqual([r["pool_address"] for r in kept], ["LOLOS"])
+                self.assertEqual((hidden_metric, hidden_dust), (1, 0))
+
 
 class SortBestRowsTest(unittest.TestCase):
     """Urutan tiap tabel: F/V terbesar → volume/active TVL → dust terkecil."""
@@ -310,8 +343,9 @@ class SortBestRowsTest(unittest.TestCase):
                          ["FV_BESAR", "FV_TENGAH", "RAMAI_TAPI_KECIL"])
 
     def test_infinity_paling_atas(self):
-        """∞ tetap urut teratas bila ada — barisnya gugur gate, jadi hanya
-        bisa muncul di tabel disembunyikan (24H), tidak di tabel lolos."""
+        """Kontrak urut ∞ dipertahankan bila ada yang meneruskannya ke sini —
+        tapi sejak 2026-09-14 lanjutan baris vol-0 dibuang card sebelum tabel
+        (``row_volatility_zero``), jadi urutan ini tidak pernah kelihatan."""
         rows = [_row(pool_address="NORMAL", symbol="AAA", **_fv(500.0, 1.0)),
                 _row(pool_address="NOLVOL", symbol="ZZZ", **_fv(5.0, 0))]
         self.assertEqual([r["pool_address"] for r in ms.sort_best_rows(rows)],
@@ -428,6 +462,47 @@ class ScanLaneTest(unittest.TestCase):
                          {("30M: F/V ≤ 1×",)})
         self.assertEqual(result["gate"], "30M: F/V > 1×")
 
+    def test_volatility_nol_dibuang_dari_listing_dan_hitungan(self):
+        """Vol 0: gugur gate, TANPA scan holder, dibuang dari hidden_rows.
+
+        2026-09-14 lanjutan — pool tanpa pergerakan tidak ditampilkan di mana
+        pun; sisa jejaknya hanya counter ``dropped_volatility`` untuk audit.
+        """
+        pools = [_pool("P-OK", "MintOK", ratio=40.0, volatility=6.2),   # 6,45×
+                 _pool("P-KECIL", "MintKcl", ratio=12.4, volatility=6.2),  # 2×
+                 _pool("P-NOL", "MintNol", ratio=50.0, volatility=0.0)]  # ∞
+        with mock.patch.object(ms, "fetch_best_pools", return_value=pools), \
+                mock.patch.object(ms, "enrich_pools",
+                                  side_effect=self._fake_enrich) as enrich:
+            result = ms.scan_best_lane("24h", max_wallets=2000)
+        # Vol 0 tidak pernah memicu scan holder (gate tetap jalan).
+        self.assertEqual([r["pool_address"] for r in enrich.call_args.args[0]],
+                         ["P-OK"])
+        self.assertEqual([r["pool_address"] for r in result["rows"]], ["P-OK"])
+        # ...dan tidak masuk hidden_rows/hidden_metric: dibuang penuh.
+        self.assertEqual([r["pool_address"] for r in result["hidden_rows"]],
+                         ["P-KECIL"])
+        self.assertEqual(result["hidden_metric"], 1)
+        self.assertEqual(result["dropped_volatility"], 1)
+        self.assertEqual(result["fetched"], 3)
+
+    def test_volatility_nol_dibuang_di_lane_30m(self):
+        pools = [_pool("P-DOM", "MintDom", ratio=30.0, volatility=10.0),  # 3×
+                 _pool("P-SAMA", "MintSma", ratio=10.0, volatility=10.0),  # 1×
+                 _pool("P-NOL", "MintNol", ratio=1.0, volatility=0.0)]   # ∞
+        with mock.patch.object(ms, "fetch_best_pools", return_value=pools), \
+                mock.patch.object(ms, "enrich_pools",
+                                  side_effect=self._fake_enrich) as enrich:
+            result = ms.scan_best_lane("30m", max_wallets=2000)
+        self.assertEqual([r["pool_address"] for r in enrich.call_args.args[0]],
+                         ["P-DOM"])
+        self.assertEqual([r["pool_address"] for r in result["hidden_rows"]],
+                         ["P-SAMA"])
+        self.assertEqual({tuple(r["best_gaps"]) for r in result["hidden_rows"]},
+                         {("30M: F/V ≤ 1×",)})
+        self.assertEqual(result["hidden_metric"], 1)
+        self.assertEqual(result["dropped_volatility"], 1)
+
     def test_semua_gugur_tanpa_fetch_holder(self):
         with mock.patch.object(ms, "fetch_best_pools",
                                return_value=[_pool(ratio=1.0, volatility=2.0)]), \
@@ -522,8 +597,8 @@ class BestPoolCardTest(unittest.TestCase):
         return {"rows": rows, "hidden_rows": hidden, "error": error,
                 "fetched": fetched if fetched is not None else len(rows) + len(hidden),
                 "hidden_metric": len(hidden), "hidden_dust": 0,
-                "skipped_quote": 0, "lane": lane, "gate": ms.best_lane_gate_label(lane),
-                "analyzed_at": 1}
+                "skipped_quote": 0, "dropped_volatility": 0, "lane": lane,
+                "gate": ms.best_lane_gate_label(lane), "analyzed_at": 1}
 
     def test_dua_tombol_lane_dan_judul_card(self):
         app = self._app()
@@ -649,6 +724,58 @@ class BestPoolCardTest(unittest.TestCase):
         self.assertIn("1 pool 24H disembunyikan ditampilkan", captions)
         self.assertNotIn("F/V ≤", captions)
 
+    def test_volatility_nol_tidak_tampil_di_listing_dilewati_24h(self):
+        """24H: pool vol-0 tidak ikut listing dilewati dan tidak dihitung
+        (permintaan user 2026-09-14 lanjutan) — walau hasil scan lama masih
+        membawanya di ``hidden_rows``."""
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result(
+            "24h", [_row(pool_address="PoolBest", ca="MintAAA", symbol="AAA")],
+            fetched=6,
+            hidden=[_row(pool_address="PoolHide", ca="MintHid", symbol="HID",
+                         **_fv(2.0, 10.0)),
+                    _row(pool_address="PoolNol", ca="MintNol", symbol="NOLSYM",
+                         **_fv(50.0, 0.0))])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        captions = "\n".join(node.value for node in app.caption)
+        # Hitungan "dilewati" hanya kandidat gagal F/V — vol-0 dibuang penuh
+        # (counter hidden_metric lama yang masih 2 tidak boleh bocor ke layar).
+        self.assertIn("1 pool 24H tampil · 1 dilewati · listing 6 pool.",
+                      captions)
+        keys = [button.key or "" for button in app.button]
+        self.assertIn("best-pool-toggle-hidden-24h", keys)
+        app.button(key="best-pool-toggle-hidden-24h").click().run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn("$HID", body)
+        # Vol-0: tidak ada barisnya di tabel disembunyikan.
+        self.assertNotIn("NOLSYM", body)
+        self.assertNotIn("PoolNol", body)
+        self.assertNotIn("MintNol", body)
+        captions = "\n".join(node.value for node in app.caption)
+        self.assertIn("1 pool 24H disembunyikan ditampilkan", captions)
+
+    def test_volatility_nol_di_rows_lama_ikut_hilang(self):
+        """Baris vol-0 warisan sesi sebelum ∞ gugur (dulu teratas) lenyap."""
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result(
+            "24h", [_row(pool_address="PoolBest", ca="MintAAA", symbol="AAA"),
+                    _row(pool_address="PoolLama", ca="MintLama", symbol="LAMA",
+                         **_fv(500.0, 0.0))],   # era lalu: tampil sebagai ∞
+            fetched=2)
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn("$AAA", body)
+        self.assertNotIn("LAMA", body)
+        self.assertNotIn("PoolLama", body)
+        captions = "\n".join(node.value for node in app.caption)
+        self.assertIn("1 pool 24H tampil · 0 dilewati · listing 2 pool.",
+                      captions)
+        keys = [button.key or "" for button in app.button]
+        self.assertNotIn("best-pool-toggle-hidden-24h", keys)
+
     def test_hasil_lama_gabungan_dipecah_per_lane(self):
         """Sesi lama cuma punya ``best_pool_scan`` (24H+30M campur) → dipecah."""
         app = self._app()
@@ -715,6 +842,117 @@ class BestPoolCardTest(unittest.TestCase):
             self.assertIn("24H: F/V ≥ 7×", bp.best_pool_tooltip())
         with mock.patch.object(ms, "BEST_ACTIVE_TVL_MIN", 75_000.0):
             self.assertIn("active_tvl>=75000", bp.best_pool_tooltip())
+
+    def test_empat_kolom_inti_di_depan_dan_kolom_dust_dihapus(self):
+        """Urutan header: Token, F/V, Volat, Dust %MC … kolom Dust dihapus."""
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result(
+            "24h", [_row(pool_address="PoolBest", ca="MintAAA", symbol="AAA")])
+        app.run()
+        body = "\n".join(node.value for node in app.markdown)
+        for header in (">Token<", ">F/V<", ">Volat<", ">Dust %MC<"):
+            self.assertIn(header, body)
+        self.assertLess(body.index(">Token<"), body.index(">F/V<"))
+        self.assertLess(body.index(">F/V<"), body.index(">Volat<"))
+        self.assertLess(body.index(">Volat<"), body.index(">Dust %MC<"))
+        # Kolom konteks tetap ada SETELAH 4 kolom inti.
+        self.assertLess(body.index(">Dust %MC<"), body.index(">MC<"))
+        self.assertLess(body.index(">Dust %MC<"), body.index(">A.TVL<"))
+        self.assertLess(body.index(">Dust %MC<"), body.index(">Vol 24h<"))
+        # "Dust hapus": kolom jumlah wallet tidak lagi dirender — header dan
+        # sel sub "wallet" hilang dari tabel.
+        self.assertNotIn(">Dust<", body)
+        self.assertNotIn("jumlah wallet dust di bawah ambang dust", body)
+
+    def test_label_vol_dan_tooltip_fee_mengikuti_lane(self):
+        """30M tidak boleh memakai label 24 jam — kolom Vol mengikuti lane."""
+        app = self._app()
+        app.session_state["best_pool_scan_30m"] = self._result(
+            "30m", [_row(pool_address="Pool30", ca="Mint30", symbol="T30",
+                         timeframe="30m", **_fv(30.0, 10.0))])
+        app.session_state["best_pool_lane"] = "30m"
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn(">Vol 30m<", body)
+        self.assertNotIn(">Vol 24h<", body)
+        self.assertIn("volume 30 menit", body)
+        self.assertIn("fee 30 menit", body)
+        self.assertNotIn("volume 24 jam", body)
+        self.assertNotIn("fee 24 jam", body)
+
+    def test_sorot_hijau_menyala_volat_dan_fv_tertinggi(self):
+        """24H: sel Volat terbesar & F/V tertinggi = hijau menyala + bold."""
+        neon = bp.TOP_HIGHLIGHT_COLOR
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result("24h", [
+            _row(pool_address="PoolTop", ca="MintTop", symbol="TOP",
+                 fee_active_tvl_ratio=100.0, volatility=9.9),   # 10,1× · vol top
+            _row(pool_address="PoolKedua", ca="MintKd", symbol="KDUA",
+                 fee_active_tvl_ratio=50.0, volatility=6.2),    # 8,1×
+        ])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        # Volat terbesar (9,9) dan F/V tertinggi (10,1×) tersorot neon.
+        self.assertIn(
+            f'<span style="color:{neon};font-weight:800;">9.9%</span>', body)
+        self.assertIn(
+            f'<span style="color:{neon};font-weight:800;">10.1×</span>', body)
+        # Yang bukan tertinggi TIDAK ikut menyala.
+        self.assertNotIn(
+            f'<span style="color:{neon};font-weight:800;">6.2%</span>', body)
+        self.assertNotIn(
+            f'<span style="color:{neon};font-weight:800;">8.1×</span>', body)
+        self.assertIn("volatility terbesar di tabel ini", body)
+        self.assertIn("F/V tertinggi di tabel ini", body)
+
+    def test_sorot_hijau_ok_tertinggi_30m(self):
+        """30M: semua OK tetap hijau biasa, hanya F/V tertinggi yang menyala."""
+        neon = bp.TOP_HIGHLIGHT_COLOR
+        app = self._app()
+        app.session_state["best_pool_scan_30m"] = self._result("30m", [
+            _row(pool_address="PoolTop30", ca="MintT30", symbol="T30",
+                 timeframe="30m", fee_active_tvl_ratio=30.0, volatility=10.0),
+            _row(pool_address="PoolLow30", ca="MintL30", symbol="L30",
+                 timeframe="30m", fee_active_tvl_ratio=12.0, volatility=10.0),
+        ])
+        app.session_state["best_pool_lane"] = "30m"
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn(f'<span style="color:{neon};font-weight:800;">OK</span>',
+                      body)
+        self.assertIn('<span style="color:#16a34a;">OK</span>', body)
+
+    def test_seriketika_di_puncak_semuanya_ditandai(self):
+        """Dua baris seri sebagai volatility terbesar → dua-duanya menyala."""
+        neon = bp.TOP_HIGHLIGHT_COLOR
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result("24h", [
+            _row(pool_address="PoolA", ca="MintA", symbol="ASAT",
+                 fee_active_tvl_ratio=60.0, volatility=9.9),
+            _row(pool_address="PoolB", ca="MintB", symbol="BDUA",
+                 fee_active_tvl_ratio=55.0, volatility=9.9),
+        ])
+        app.run()
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertEqual(
+            body.count(
+                f'<span style="color:{neon};font-weight:800;">9.9%</span>'), 2)
+
+    def test_tabel_dilewati_tidak_diberi_sorot(self):
+        """Listing dilewati 24H: baris tetap merah gugur, tanpa hijau neon."""
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result(
+            "24h", [_row(pool_address="PoolBest", ca="MintAAA", symbol="AAA")],
+            hidden=[_row(pool_address="PoolHide", ca="MintHid", symbol="HID",
+                         **_fv(45.0, 9.9))])   # vol & fee besar tapi gugur
+        app.run()
+        app.button(key="best-pool-toggle-hidden-24h").click().run()
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn("$HID", body)
+        self.assertNotIn(bp.TOP_HIGHLIGHT_COLOR, body)
 
     def test_baris_ditampilkan_urut_f_v_dan_siap_dibaca(self):
         """F/V ditampilkan sebagai ``N,N×`` + alasan ambang di sel-nya."""

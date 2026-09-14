@@ -1,6 +1,73 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-14 (malam) — Best Pool: tata kolom + sorot tertinggi
+
+Permintaan user: *"kita tata kolomnya baik untuk 24jam maupun 30menit —
+Dust hapus — Token F/V Volat Dust %MC, 4 kolom ini diletakkan paling awal —
+lalu tandai volatility paling besar di scan tersebut menjadi warna hijau
+menyala — lalu tandai f/v tertinggi tersebut menjadi warna hijau menyala"*.
+
+- **Susunan kolom ditata ulang** (`_COL_SPEC`): Token · **F/V** · **Volat** ·
+  **Dust %MC** di paling depan, lalu MC · A.TVL · Fee/TVL · Vol · Top10 ·
+  LPs · Pool · ⭐; kolom **Dust** (jumlah wallet dust) **dihapus** dari
+  kedua tabel (utama maupun "dilewati"). Judul kolom volume mengikuti lane
+  (`_lane_titles()`: 24H "Vol 24h", 30M **"Vol 30m"**) — sebelumnya tabel
+  30M salah menamai "Vol 24h"; tooltip fee/volume ikut window lane-nya
+  ("fee 30 menit", "volume 30 menit").
+- **Sorot hijau menyala + bold** (`TOP_HIGHLIGHT_COLOR = #00c853`): sel
+  volatility terbesar dan sel F/V tertinggi di tabel utama tiap lane
+  (dicari `_table_tops()`). Lane 24H menandai sel angkanya; lane 30M menandai
+  sel **OK**-nya (OK lain tetap hijau `#16a34a`). Seri di puncak → semuanya
+  ditandai; baris tanpa angka valid diabaikan. Tabel "dilewati" 24H **tidak**
+  ditandai (`_render_best_table(mark_tops=False)`) supaya tidak berbenturan
+  dengan anotasi merah gugur-ambang. Tooltip sel terseorot diberi catatan
+  "— volatility terbesar / F/V tertinggi di tabel ini".
+- Urutan baris (F/V → vol/active TVL → dust), saringan lane, pembuangan
+  vol-0 (`row_volatility_zero`), dan rule 30M-OK tidak berubah.
+- Tes: `tests/test_best_pool_scan.py` (64 tes + 23 subtest hijau) — urutan
+  4 kolom inti + kolom Dust hilang, label/tooltip per-lane, sorot neon angka
+  24H + OK tertinggi 30M, seri di puncak semuanya ditandai, tabel dilewati
+  tanpa sorot. Suite penuh: **34 gagal, 1140 lulus** — 34 merah persis
+  baseline (file FAILED identik sebelum/sesudah).
+
+## Update 2026-09-14 (lanjutan) — Best Pool: volatility 0 dibuang dari listing
+
+Permintaan user: *"kita lanjutkan, jika volatility 0 jangan tampilkan, karena
+tidak ada pergerakan disitu"*. Pagi harinya vol-0 baru digugurkan dari gate;
+sekarang barisnya **hilang total dari card** (∞ tidak pernah kelihatan).
+
+- **`meteora_screener.row_volatility_zero(row)`** (baru): True hanya untuk
+  volatility **persis 0** (finite). `None`/hilang/negatif/nonfinite BUKAN
+  nol — tetap masuk listing "dilewati" dengan alasan metriknya.
+- **`scan_best_lane()`**: kandidat gugur ber-volatility-0 tidak lagi masuk
+  `hidden_rows` maupun `hidden_metric`; jumlah pembuangannya dicatat di
+  field baru **`dropped_volatility`** (audit) dan disebut di activity log
+  (`"N pool volatility 0 dibuang"`). `filter_best_rows()` ikut mengecualikan
+  vol-0 dari hitungan sehingga `hidden_metric == len(hidden_rows)` selalu
+  berlaku. Gate (`row_best_gaps` → "volatility 0 — F/V tidak terukur") TIDAK
+  berubah — pool vol-0 tetap tidak pernah memicu fetch holder.
+- **`best_pool_ui.render_best_pool_scan()`** menyaring ulang baris vol-0 di
+  render, dari `rows` MAUPUN `hidden_rows`, sehingga hasil scan lama yang
+  tersimpan di `session_state` (era sebelum ∞ gugur, atau era hidden masih
+  menghitung vol-0) ikut bersih tanpa scan ulang; `hidden` kini dihitung ulang
+  `len(hidden_rows)` pasca-filter, bukan counter mentah `hidden_metric`,
+  jadi pill "N disembunyikan", tombol ▶, dan caption "N dilewati" selalu
+  cocok dengan isi tabel. Baris ∞ lama yang terlanjur di tabel lolos lenyap.
+- Tooltip judul + docstring modul diperbarui; `sort_best_rows` dan
+  `row_fv_ratio` sengaja TIDAK diubah (kontrak ∞ dipertahankan — hanya tidak
+  ada lagi caller UI yang meneruskan baris vol-0 ke tabel).
+- Tes: `tests/test_best_pool_scan.py` + `tests/test_best_fv_prefilter.py`
+  (58 tes + 23 subtest hijau): `row_volatility_zero` hanya 0 persis, buang
+  tanpa `enrich_pools` di kedua lane, tidak tampil/tidak dihitung di listing
+  dilewati 24H (AppTest), baris vol-0 warisan sesi lama ikut hilang.
+  Suite penuh: **34 gagal, 1134 lulus** — 34 merah persis baseline (diverifikasi
+  `git stash`: daftar file FAILED identik sebelum/sesudah).
+
 ## Update 2026-09-14 — Best Pool: ∞ (V=0) gugur + 30M "OK" dan gagal tidak tampil
+
+Catatan: keputusan "vol-0 tetap terlihat di tabel disembunyikan 24H" di bagian
+ini **digantikan** oleh update 2026-09-14 (lanjutan) di atas — vol-0 kini
+dibuang dari listing seluruhnya.
 
 Permintaan user: *"syarat F/V > 1× — perbaiki scan meteora pool pada bagian
 tersebut, kok masih ada yang seperti ini?"* (bukti: tabel 30M masih memuat
@@ -11,15 +78,17 @@ tampilkan yang tidak terpenuhi"*. Yang berubah:
   kedua lane** dengan alasan `"24H: volatility 0 — F/V tidak terukur"` /
   `"30M: …"`. Sebelumnya V=0 dengan F>0 lolos dan tampil sebagai ∞ — ∞ bukan
   kelolosan (pool tanpa volatility tidak bisa membuktikan F > V). `row_fv_ratio`
-  / `sort_best_rows` **tidak diubah** (∞ tetap urut teratas bila muncul di
-  tabel disembunyikan).
+  / `sort_best_rows` **tidak diubah** (∞ tetap urut teratas bila ada yang
+  meneruskannya — tapi sejak update lanjutan, card tidak pernah lagi
+  meneruskan baris vol-0 ke tabel mana pun).
 - **`best_pool_ui`** lane **30M**: sel F/V baris lolos = **OK** hijau
   (`#16a34a`, sub `syarat F/V > 1× terpenuhi`; angka quotient tetap di
   tooltip sel dan kunci urut). Kandidat gagal 30M **tidak ditampilkan sama
   sekali**: `showing_hidden` dipaksa False, tombol `best-pool-toggle-hidden-30m`
   dan pill "N disembunyikan" tidak dirender, caption jadi `"N pool 30M tampil
-  · listing M pool."` (tanpa "dilewati"). Lane **24H** tidak berubah (angka
-  `N,N×`, toggle disembunyikan tetap ada).
+  · listing M pool."` (tanpa "dilewati"). Lane **24H** tetap menampilkan angka
+  `N,N×` dan toggle disembunyikan tetap ada — tapi baris vol-0 tidak lagi
+  ikut di dalamnya (dibuang penuh, lihat update 2026-09-14 lanjutan).
 - Tooltip judul + docstring modul ikut diperbarui; ambang tetap dibaca dari
   konstanta (`BEST_FV_24H_MIN` / `BEST_FV_30M_MIN`) saat dipanggil.
 - Tes: `tests/test_best_pool_scan.py` + `tests/test_best_fv_prefilter.py`
@@ -50,6 +119,8 @@ jika lebih kecil langsung skip"*. Yang berubah:
   listing. Kolom **Src** dihapus (satu tabel = satu lane), kolom **F/V** naik
   ke depan + baris kecil `syarat F/V ≥ 5×` / `syarat F/V > 1×` (baris tabel
   disembunyikan: `gugur: …` merah), pill kepala card menunjukkan lane aktif.
+  (Susunan kolom ditata ulang lagi 2026-09-14 malam — 4 kolom inti di depan,
+  lihat Update di atas.)
 - **`meteora_screener.scan_best_lane(lane)`** mengambil **satu** timeframe
   saja; `scan_best_meteora(timeframe=...)` jadi wrapper yang meneruskan lane
   (`"both"` = perilaku lama, compat). Ambang per lane: 24H
@@ -82,9 +153,11 @@ Rule terbaru mengesampingkan catatan historis "semua saringan layar dihapus":
 `scan_best_meteora` menyaring **24H F/V >= 5×** (`BEST_FV_24H_MIN`) dan
 **30M F > V** sebelum `enrich_pools`, dengan F = fee_active_tvl_ratio dan
 V = volatility dari lane masing-masing. Data hilang/nonfinite/negatif gugur;
-V=0 gugur di kedua lane sejak 2026-09-14 (∞ bukan kelolosan). Kandidat gagal
+V=0 gugur di kedua lane sejak 2026-09-14 (∞ bukan kelolosan) — dan sejak
+lanjutannya **dibuang dari listing** (`row_volatility_zero`). Kandidat gagal
 tetap tersedia di `hidden_rows` tanpa
-scan holder, dihitung dalam `hidden_metric`. Dust bukan filter; server tetap
+scan holder, dihitung dalam `hidden_metric` — **kecuali vol-0** yang hanya
+tercatat di `dropped_volatility`. Dust bukan filter; server tetap
 DLMM + active TVL >=50K. Tooltip di `best_pool_ui` mengikuti konstanta.
 Tes terfokus: `python -m unittest tests.test_best_fv_prefilter -v`.
 
@@ -452,7 +525,9 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   saringan lane lewat `row_best_gaps(row, lane=lane)` **sebelum**
   `enrich_pools()` (pool di bawah ambang tidak pernah menyentuh Helius —
   "langsung skip"), kandidat gagal tetap masuk `hidden_rows` + `best_gaps`
-  untuk tombol **▶ N pool dilewati** di `best_pool_ui`.
+  untuk tombol **▶ N pool dilewati** di `best_pool_ui` — **kecuali**
+  volatility 0 yang dibuang penuh (`row_volatility_zero`, dicatat di
+  `dropped_volatility`) sejak 2026-09-14 lanjutan.
   `scan_best_meteora(timeframe=...)` = wrapper lama yang sekarang
   **meneruskan** `timeframe` ke satu lane (`"both"` = perilaku gabungan lama,
   dipertahankan untuk compat). Lalu `sort_best_rows()`: **F/V terbesar**
@@ -463,7 +538,7 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   `BEST_DUST_SORT_DECIMALS` = 3 desimal = presisi tampilan card, jadi pool
   yang di layar sama-sama "0,030%" dianggap seri. Hasil scan:
   `rows/hidden_rows/error/fetched/hidden_metric/hidden_dust/skipped_quote/`
-  `lane/timeframe/gate/analyzed_at`. UI-nya
+  `dropped_volatility/lane/timeframe/gate/analyzed_at`. UI-nya
   `best_pool_ui.render_best_pool_scan()` (card full-width di bawah grid 2
   kolom watchlist sejak 2026-09-11 — "jangan dibuat grid lagi"; dulu di
   dalam grid, kolom kiri bawah Watchlist Meteora). Sejak 2026-09-13 sore
@@ -472,10 +547,14 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   lane aktif `best_pool_lane`, hasil lama `best_pool_scan` dipecah sekali),
   tooltip `best_pool_tooltip()`, ⭐ = `source=meteora` → card Watchlist
   Meteora. Tabel
-  card = detail fee / active TVL: kolom **F/V** (paling depan, baris kecil =
-  syarat lane), **A.TVL**, **Fee/TVL** (baris kecil angka fee USD),
-  **Vol 24h** (baris kecil Δ volume + `N× A.TVL`); tiap sel ber-`title`
-  dengan angka penuh + statusnya sebagai kunci urut. Kolom **Src** dihapus
+  card (tata letak 2026-09-14 malam): 4 kolom inti di depan — Token, **F/V**
+  (baris kecil = syarat lane), **Volat**, **Dust %MC** — lalu MC, **A.TVL**,
+  **Fee/TVL** (baris kecil angka fee USD window lane), **Vol 24h/30m**
+  (judul mengikuti lane; baris kecil Δ volume + `N× A.TVL`), Top10, LPs,
+  Pool, ⭐; kolom Dust jumlah wallet sudah dihapus; tiap sel ber-`title`
+  dengan angka penuh + statusnya sebagai kunci urut. Tabel utama menandai
+  sel volatility terbesar & F/V tertinggi dengan hijau menyala
+  (`best_pool_ui.TOP_HIGHLIGHT_COLOR`). Kolom **Src** dihapus
   bersama pemisahan lane — tabel tidak pernah lagi mencampur 24H dan 30M.
   **Tanda 🏆 BEST POOL (2026-09-12):** baris dengan dust **<=
   `BEST_DUST_MARK_PCT` 0,035% MC** (inklusif, `row_best_pool()`) ditandai —
