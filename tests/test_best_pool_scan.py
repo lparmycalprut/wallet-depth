@@ -859,14 +859,52 @@ class BestPoolCardTest(unittest.TestCase):
         self.assertLess(body.index(">Token<"), body.index(">F/V<"))
         self.assertLess(body.index(">F/V<"), body.index(">Volat<"))
         self.assertLess(body.index(">Volat<"), body.index(">Dust %MC<"))
-        # Kolom konteks tetap ada SETELAH 4 kolom inti.
-        self.assertLess(body.index(">Dust %MC<"), body.index(">MC<"))
+        # Kolom konteks tetap ada SETELAH 4 kolom inti; Fee % (fee trading
+        # pool, mis. 0.5%/2%) tepat setelah Dust %MC (permintaan user
+        # 2026-09-14).
+        self.assertLess(body.index(">Dust %MC<"), body.index(">Fee %<"))
+        self.assertLess(body.index(">Fee %<"), body.index(">MC<"))
         self.assertLess(body.index(">Dust %MC<"), body.index(">A.TVL<"))
         self.assertLess(body.index(">Dust %MC<"), body.index(">Vol 24h<"))
         # "Dust hapus": kolom jumlah wallet tidak lagi dirender — header dan
         # sel sub "wallet" hilang dari tabel.
         self.assertNotIn(">Dust<", body)
         self.assertNotIn("jumlah wallet dust di bawah ambang dust", body)
+
+    def test_kolom_fee_persen_menampilkan_fee_pool(self):
+        """Fee % = fee trading pool (tier fee DLMM), bukan fee USD atau rasio.
+
+        Nilai tampil sebagai persen tepat setelah Dust %MC; baris tanpa
+        ``fee_pct`` (data lama di session_state) menampilkan ``—``.
+        """
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result("24h", [
+            _row(pool_address="PoolFee", ca="MintFee", symbol="FEE",
+                 fee_pct=0.5),
+            _row(pool_address="PolTanpa", ca="MintNo", symbol="NOFE",
+                 fee_pct=None),
+        ])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn(">Fee %<", body)
+        # Sel fee tampil sebagai nilai utama (bukan baris kecil) + sub label.
+        self.assertIn('<div class="watchlist-metric-value">0.5%</div>', body)
+        self.assertIn("pool fee", body)
+        self.assertIn("fee trading pool", body)
+        # Baris tanpa fee_pct → dash, bukan error / 0%.
+        self.assertIn('<div class="watchlist-metric-value">—</div>', body)
+        self.assertNotIn('<div class="watchlist-metric-value">0%</div>', body)
+        # Kolom fee tampil untuk kedua lane (judul tabel 30M ikut dirender
+        # lewat header yang sama, jadi cukup cek di 24H + lane 30M di bawah).
+        app.session_state["best_pool_scan_30m"] = self._result(
+            "30m", [_row(pool_address="PoolFee30", ca="MintF30", symbol="F30",
+                         timeframe="30m", fee_pct=1.0, **_fv(30.0, 10.0))])
+        app.session_state["best_pool_lane"] = "30m"
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn('<div class="watchlist-metric-value">1%</div>', body)
 
     def test_label_vol_dan_tooltip_fee_mengikuti_lane(self):
         """30M tidak boleh memakai label 24 jam — kolom Vol mengikuti lane."""

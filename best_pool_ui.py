@@ -34,7 +34,8 @@ tidak relevan lagi, diganti pill lane di kepala card.
   Meteora dan ditulis di baris kecil kolom Vol) → **dust % MC terkecil**;
 - **4 kolom inti di depan** (penataan kolom 2026-09-14): Token, **F/V**
   (fee_active_tvl_ratio ÷ volatility — kunci urut + syarat lane), **Volat**,
-  **Dust %MC**; lalu MC, A.TVL, Fee/TVL, **Vol 24h/30m** (judul mengikuti
+  **Dust %MC**; lalu **Fee %** (fee trading pool, mis. 0.5% / 2% — ditambah
+  setelah Dust %MC), MC, A.TVL, Fee/TVL, **Vol 24h/30m** (judul mengikuti
   window lane), Top10, LPs, Pool, ⭐. Kolom **Dust** (jumlah wallet) dihapus
   hari yang sama;
 - **sorot hijau menyala** (``TOP_HIGHLIGHT_COLOR``, bold) di tabel utama:
@@ -135,7 +136,8 @@ def best_pool_tooltip() -> str:
         "kelolosan. Urutan tiap tabel: F/V terbesar, lalu volume/active TVL "
         "terbesar, lalu dust %MC terkecil. Tiap lane punya tabel + session "
         "key sendiri, jadi hasil 24H tidak pernah tercampur 30M. Kolom inti "
-        "di paling depan: Token, F/V, Volat, Dust %MC; kolom volume mengikuti "
+        "di paling depan: Token, F/V, Volat, Dust %MC, lalu Fee % (fee "
+        "trading pool, mis. 0.5% / 2%); kolom volume mengikuti "
         "window lane (Vol 24h / Vol 30m). Sel volatility terbesar dan F/V "
         "tertinggi di tabel utama disorot hijau menyala (kalau seri, semua "
         "di puncak ikut ditandai; tabel dilewati tidak ditandai). Dust %MC "
@@ -151,8 +153,11 @@ def best_pool_tooltip() -> str:
 # Top10, LPs), Pool, ⭐. Kolom **Dust** (jumlah wallet) dihapus hari yang
 # sama. Judul kolom volume mengikuti lane-nya (``_lane_titles``: 24H "Vol
 # 24h", 30M "Vol 30m") — kolom Src sudah lama dihapus bersama pemisahan lane.
-_COL_SPEC = [1.5, 0.7, 0.6, 0.82, 0.65, 0.78, 0.78, 0.85, 0.62, 0.5,
-             1.0, 0.4]
+# Kolom **Fee %** (fee trading pool, mis. 0.5%, 2%) ditambah 2026-09-14 tepat
+# setelah Dust %MC (permintaan user: "tambahkan detail pool fee % … setelah
+# dust%MC … ini maksudnya fee di pool tersebut, misal 0.5%, 2%, dll").
+_COL_SPEC = [1.5, 0.7, 0.6, 0.82, 0.6, 0.65, 0.78, 0.78, 0.85, 0.62,
+             0.5, 1.0, 0.4]
 
 
 def _lane_titles(lane) -> list[str]:
@@ -165,8 +170,8 @@ def _lane_titles(lane) -> list[str]:
     from meteora_screener import normalize_best_lane
 
     volume = "Vol 30m" if normalize_best_lane(lane) == "30m" else "Vol 24h"
-    return ["Token", "F/V", "Volat", "Dust %MC", "MC", "A.TVL", "Fee/TVL",
-            volume, "Top10", "LPs", "Pool", ""]
+    return ["Token", "F/V", "Volat", "Dust %MC", "Fee %", "MC", "A.TVL",
+            "Fee/TVL", volume, "Top10", "LPs", "Pool", ""]
 
 
 # Hijau menyala penanda sel tertinggi di tabel utama (permintaan user
@@ -377,7 +382,8 @@ def _render_best_table(rows: list, *, lane: str,
     """Tabel listing Best Pool untuk **satu** lane (utama atau disembunyikan).
 
     Susunan kolom 2026-09-14: Token · **F/V · Volat · Dust %MC** (4 kolom inti
-    di depan) · MC · A.TVL · Fee/TVL · Vol (24h/30m mengikuti lane) · Top10 ·
+    di depan) · **Fee %** (fee trading pool, mis. 0.5% / 2% — ditambah setelah
+    Dust %MC) · MC · A.TVL · Fee/TVL · Vol (24h/30m mengikuti lane) · Top10 ·
     LPs · Pool · ⭐ — kolom Dust (jumlah wallet) sudah dihapus. Di tabel
     utama (``mark_tops=True``) sel **volatility terbesar** dan sel **F/V
     tertinggi** disorot hijau menyala (``TOP_HIGHLIGHT_COLOR``, seri ikut
@@ -467,6 +473,11 @@ def _render_best_table(rows: list, *, lane: str,
             (fv_value, fv_sub, fv_tip),
             (vol_value, "volat", vol_tip),
             (dust_value, dust_sub, dust_tip),
+            (_num_or_dash(fee_pct, ".4g") + "%" if fee_pct is not None
+             else "—", "pool fee",
+             f"fee trading pool ini (tier fee pool DLMM) = "
+             f"{_num_or_dash(fee_pct, '.4g')}% (mis. 0.5%, 2%) — "
+             "hanya informasi, bukan saringan"),
             (_usd_or_dash(row.get("mc")), "",
              f"market cap {_usd_or_dash(row.get('mc'), compact=False)} — "
              "DexScreener, angka yang dipakai sebagai pembagi Dust %MC"),
@@ -494,10 +505,10 @@ def _render_best_table(rows: list, *, lane: str,
             cols[position].markdown(_cell(value, sub, tip),
                                     unsafe_allow_html=True)
         pool_html = pool_links_html(pool) or "<span>—</span>"
-        cols[10].markdown(f'<div class="pool-links">{pool_html}</div>',
+        cols[11].markdown(f'<div class="pool-links">{pool_html}</div>',
                           unsafe_allow_html=True)
         star_key = f"{key_prefix}-star-{pool or ca or index}"
-        if cols[11].button("⭐", key=star_key,
+        if cols[12].button("⭐", key=star_key,
                            help="Tambah ke Watchlist Meteora "
                                 "(halaman utama)",
                            use_container_width=True):
