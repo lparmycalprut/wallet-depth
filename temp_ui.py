@@ -18,6 +18,12 @@ def meteora_scan_tooltip() -> str:
         "fee_active_tvl_ratio > volatility sebagai HIGH RISK LP (PANTAU). "
         "Urutan: perbandingan fee_active_tvl_ratio ÷ volatility terbesar "
         "di dalam tiap lane; dust %MC hanya data, bukan kunci urut. "
+        "Kolom Active Range menulis persen saja: -34.5% / +19.0% artinya "
+        "harga pool masih boleh turun 34,5% atau naik 19,0% sebelum keluar "
+        "dari bin yang berisi likuiditas (min_price … max_price API "
+        "Meteora) — di luar range itu posisi LP berhenti menghasilkan fee; "
+        "0.0% berarti harga persis di tepi range. Harga bin mentah, lebar "
+        "range, dan jumlah bin ada di tooltip selnya. "
         "⭐ menyimpan source/timeframe serta baseline fee/volatility ke "
         "Watchlist Meteora.")
 
@@ -65,6 +71,9 @@ def render_meteora_scan() -> None:
 
     import streamlit as st
 
+    # Builder sel Active Range dipakai bersama dengan card 🏆 Best Pool
+    # (halaman utama) supaya satu angka tidak punya dua format di dua card.
+    from best_pool_ui import _active_range_cell, _cell
     from dashboard_components import (_compact, _dust_best_html, _number)
     from holder_history import FULL_SCAN_MAX_WALLETS
     from links import external_links_html, pool_links_html
@@ -121,10 +130,16 @@ def render_meteora_scan() -> None:
                         "(atau listing kosong).")
             return
 
-        col_spec = [1.45, 0.82, 0.82, 0.72, 0.72, 0.72, 0.65, 0.86, 1.1, 0.42]
+        # Kolom **Active Range** (2026-09-14, permintaan user: "tambahkan
+        # Active Range, tapi % saja, misal -30% +40") duduk di kanan
+        # Volatility: dua-duanya soal pergerakan harga pool. Sel-nya memakai
+        # builder yang sama dengan card 🏆 Best Pool supaya satu angka tidak
+        # punya dua format.
+        col_spec = [1.35, 0.78, 0.78, 0.7, 0.95, 0.7, 0.68, 0.6, 0.82, 1.0,
+                    0.42]
         header_cols = st.columns(col_spec)
-        titles = ["Token", "Sumber", "Fee/ATVL", "Volatility", "MC", "TVL",
-                  "Dust", "Dust %MC", "Pool", ""]
+        titles = ["Token", "Sumber", "Fee/ATVL", "Volatility", "Active Range",
+                  "MC", "TVL", "Dust", "Dust %MC", "Pool", ""]
         style = ("font-size:0.68rem;color:#000000;font-weight:700;"
                  "text-align:center;")
         for col, title in zip(header_cols, titles):
@@ -181,18 +196,21 @@ def render_meteora_scan() -> None:
                 f'{_metric_value(row.get("volatility"))}'
                 '</div><div class="watchlist-metric-sub">volatility</div></div>',
                 unsafe_allow_html=True)
-            cols[4].markdown(
+            range_value, range_sub, range_tip = _active_range_cell(row)
+            cols[4].markdown(_cell(range_value, range_sub, range_tip),
+                             unsafe_allow_html=True)
+            cols[5].markdown(
                 '<div class="watchlist-metric"><div '
                 'class="watchlist-metric-value">'
                 f'{_compact(row.get("mc"))}</div></div>',
                 unsafe_allow_html=True)
             tvl_txt = "—" if row.get("tvl") is None else _compact(row.get("tvl"))
-            cols[5].markdown(
+            cols[6].markdown(
                 '<div class="watchlist-metric"><div '
                 'class="watchlist-metric-value">'
                 f'{tvl_txt}</div><div class="watchlist-metric-sub">tvl</div>'
                 '</div>', unsafe_allow_html=True)
-            cols[6].markdown(
+            cols[7].markdown(
                 '<div class="watchlist-metric"><div '
                 'class="watchlist-metric-value">'
                 f'{_number(dust_count, ".0f")}</div>'
@@ -202,16 +220,16 @@ def render_meteora_scan() -> None:
             note = str(row.get("holders_note") or "").strip()
             note_html = (f'<div class="watchlist-metric-sub">{html.escape(note)}'
                          '</div>' if note else "")
-            cols[7].markdown(
+            cols[8].markdown(
                 '<div class="watchlist-metric"><div '
                 'class="watchlist-metric-value">'
                 f'{pct_txt}</div>{note_html}{_dust_best_html(flag)}</div>',
                 unsafe_allow_html=True)
             pool_html = pool_links_html(pool) or '<span>—</span>'
-            cols[8].markdown(f'<div class="pool-links">{pool_html}</div>',
+            cols[9].markdown(f'<div class="pool-links">{pool_html}</div>',
                              unsafe_allow_html=True)
             star_key = f"meteora-star-{pool or ca or index}-{timeframe}"
-            if cols[9].button("⭐", key=star_key,
+            if cols[10].button("⭐", key=star_key,
                               help="Tambah ke Watchlist Meteora (simpan baseline "
                                    "fee_active_tvl_ratio + volatility)",
                               use_container_width=True):

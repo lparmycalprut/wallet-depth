@@ -366,7 +366,8 @@ bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
   jumlah wallet dihapus): Token · **F/V** (baris kecil 24H = `syarat F/V ≥
   5×` / tabel disembunyikan 24H = `gugur: …` merah; 30M lolos = **OK** hijau
   dengan `syarat F/V > 1× terpenuhi`) · **Volat** · **Dust %MC** (3 desimal)
-  · MC · **A.TVL** · **Fee/TVL** (baris kecil = fee USD window lane + tier
+  · MC · **A.TVL** · **Active Range** (persen saja, mis. `-34.5% / +19.0%` —
+  lihat bullet di bawah) · **Fee/TVL** (baris kecil = fee USD window lane + tier
   fee) · **Vol 24h/30m** (judul mengikuti window lane; baris kecil = Δ
   volume, hijau naik / merah turun, plus rasio volume/active TVL) · Top10 ·
   LPs · Pool (Meteora DLMM + HawkFi) · ⭐ — hover tiap angka memberi angka
@@ -375,6 +376,28 @@ bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
   tertinggi** tabel utama disorot
   **hijau tua menyala** (`#15803d`, bold; seri di puncak ikut ditandai semua;
   tabel "dilewati" tidak ditandai).
+- **Kolom Active Range** (2026-09-14, permintaan user: *"tambahkan Active
+  Range, tapi % saja, misal -30% +40"*) duduk tepat di kanan **A.TVL** dan
+  hanya menulis persen: `-34.5% / +19.0%` = harga pool masih boleh **turun
+  34,5%** atau **naik 19,0%** sebelum keluar dari rentang bin DLMM yang
+  berisi likuiditas — di luar range itu posisi LP berhenti menghasilkan fee.
+  Turun ditulis merah, naik hijau, baris kecil = lebar range seluruhnya.
+  `0.0%` (tanpa tanda) berarti harga **persis di tepi range**. Sumbernya
+  payload listing yang sudah dipakai: `pool_price` (harga bin aktif) +
+  `min_price` / `max_price` (bin berisi likuiditas terendah/tertinggi) dari
+  `pool-discovery-api.datapi.meteora.ag/pools`, disimpan ke baris sebagai
+  `pool_price` / `range_min_price` / `range_max_price` + `bin_step`
+  (`_row_from_pool`) dan dihitung `meteora_screener.active_range_pct()` /
+  `active_range_width_pct()` / `active_range_bins()` / `active_range_text()`.
+  Terverifikasi 2026-09-14 pada tiga pool live dengan `bin_step` berbeda
+  (CATE-USDC 20, biketyson-SOL 100, ROUTER-SOL 250): ketiga harga itu cocok
+  dengan rumus bin DLMM `P_i = (1 + bin_step/10000)^i` sampai 0,000 ppm, jadi
+  `min_price`/`max_price` memang tepi bin — **bukan** high/low 24 jam. Harga
+  bin mentah, lebar range, jumlah bin (`300 bin · 212 bin di bawah harga`),
+  dan `bin_step` ada di tooltip sel. **Bukan saringan** — informasi saja, dan
+  hasil scan lama yang belum menyimpan field-nya menulis `—` (bukan
+  `-0.0% / +0.0%` palsu), jadi tekan tombol scan lagi untuk mengisinya.
+
 - Tombol **⭐** memasukkan token ke card **🌊 Watchlist Meteora** di halaman
   utama (`source=meteora`, sama seperti card temp) — token lalu ikut di-scan
   cron ±5 menit lengkap dengan grafik perubahan dust holder.
@@ -457,7 +480,11 @@ Regular scan mengambil dua listing pool-discovery secara berurutan:
   quotient `fee_active_tvl_ratio ÷ volatility` terbesar lebih dahulu. Dust
   `%MC` tetap dicatat/ditampilkan sebagai data, tetapi tidak pernah menjadi
   kunci urut regular scan. Render UI tidak melakukan sorting kedua.
-- Hasil menampilkan source/timeframe, fee/active TVL, volatility, klasifikasi,
+- Hasil menampilkan source/timeframe, fee/active TVL, volatility,
+  **Active Range** (persen saja, `-34.5% / +19.0%` = harga boleh turun / naik
+  sebelum keluar dari bin berisi likuiditas — kolom + sumber angka sama
+  persis dengan card 🏆 Best Pool Meteora, builder selnya dipakai bersama:
+  `best_pool_ui._active_range_cell`), klasifikasi,
   TVL, dan dust holder. Filter dust lama `DUST_SCAN_HIDE_PCT` tetap berlaku;
   holder tanpa bukti tidak dipalsukan menjadi `0,000%`.
 - Pool tanpa sisi memecoin (SOL/USDC/USDT) tetap dilewati sebelum holder

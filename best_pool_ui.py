@@ -36,7 +36,10 @@ tidak relevan lagi, diganti pill lane di kepala card.
   (fee_active_tvl_ratio ÷ volatility — kunci urut + syarat lane), **Fee/TVL**
   (pembilang F-nya — permintaan user: "kolom Fee/TVL taruh sebelah kanan
   F/V"), **Volat**, **Dust %MC**; lalu **Fee %** (fee trading pool, mis.
-  0.5% / 2% — ditambah setelah Dust %MC), MC, A.TVL, **Vol 24h/30m** (judul
+  0.5% / 2% — ditambah setelah Dust %MC), MC, A.TVL, **Active Range** (persen
+  saja, ``-34.5% / +19.0%`` = harga boleh turun / naik sebelum keluar dari bin
+  berisi likuiditas — permintaan user 2026-09-14: "tambahkan Active Range,
+  tapi % saja, misal -30% +40"), **Vol 24h/30m** (judul
   mengikuti window lane), Top10, LPs, Pool, ⭐. Kolom **Dust** (jumlah
   wallet) dihapus hari yang sama;
 - **sorot hijau tua menyala** (``TOP_HIGHLIGHT_COLOR``, bold) di tabel utama:
@@ -140,7 +143,13 @@ def best_pool_tooltip() -> str:
         "paling depan: Token, F/V, Fee/TVL (tepat di kanan F/V), Volat, "
         "Dust %MC, lalu Fee % (fee trading pool, mis. 0.5% / 2%); kolom "
         "volume mengikuti "
-        "window lane (Vol 24h / Vol 30m). Sel volatility terbesar, F/V "
+        "window lane (Vol 24h / Vol 30m). Kolom Active Range (di kanan "
+        "A.TVL) menulis persen saja: -34.5% / +19.0% artinya harga pool "
+        "masih boleh turun 34,5% atau naik 19,0% sebelum keluar dari bin "
+        "yang berisi likuiditas (min_price … max_price API Meteora) — di "
+        "luar range itu posisi LP berhenti menghasilkan fee; 0.0% berarti "
+        "harga persis di tepi range. Harga bin mentah, lebar range, dan "
+        "jumlah bin ada di tooltip selnya. Sel volatility terbesar, F/V "
         "tertinggi, dan Fee/TVL tertinggi di tabel utama disorot hijau tua "
         "menyala (kalau seri, semua "
         "di puncak ikut ditandai; tabel dilewati tidak ditandai). Dust %MC "
@@ -163,8 +172,14 @@ def best_pool_tooltip() -> str:
 # (permintaan user: "kolom Fee/TVL taruh sebelah kanan F/V") — pembilang F
 # menempel pada rasio F/V-nya; Volat, Dust %MC, dan semua kolom di kanannya
 # bergeser satu posisi.
-_COL_SPEC = [1.5, 0.7, 0.78, 0.6, 0.82, 0.6, 0.65, 0.78, 0.85, 0.62,
-             0.5, 1.0, 0.4]
+# Kolom **Active Range** ditambah 2026-09-14 (permintaan user: "tambahkan
+# Active Range, tapi % saja, misal -30% +40") tepat di kanan **A.TVL**: dua
+# angka itu sama-sama soal bentuk likuiditas pool. Isinya persen saja —
+# berapa harga masih boleh turun / naik sebelum keluar dari bin berisi
+# likuiditas (``meteora_screener.active_range_pct``); harga bin mentah +
+# jumlah bin ada di tooltip sel.
+_COL_SPEC = [1.4, 0.7, 0.78, 0.6, 0.82, 0.6, 0.65, 0.78, 0.95, 0.8, 0.62,
+             0.5, 0.95, 0.4]
 
 
 def _lane_titles(lane) -> list[str]:
@@ -173,12 +188,15 @@ def _lane_titles(lane) -> list[str]:
     API Meteora mengembalikan volume/fee window ``timeframe`` yang diminta,
     jadi tabel 30M tidak boleh menamai kolomnya "Vol 24h" (bagian dari
     penataan kolom 2026-09-14: "baik untuk 24jam maupun 30menit").
+
+    **Active Range** (2026-09-14) duduk di kanan A.TVL: keduanya menjelaskan
+    bentuk likuiditas pool. Isinya persen saja (``-34.5% / +19.0%``).
     """
     from meteora_screener import normalize_best_lane
 
     volume = "Vol 30m" if normalize_best_lane(lane) == "30m" else "Vol 24h"
     return ["Token", "F/V", "Fee/TVL", "Volat", "Dust %MC", "Fee %", "MC",
-            "A.TVL", volume, "Top10", "LPs", "Pool", ""]
+            "A.TVL", "Active Range", volume, "Top10", "LPs", "Pool", ""]
 
 
 # Hijau tua menyala penanda sel tertinggi di tabel utama (permintaan user
@@ -338,6 +356,79 @@ def _cell(value: str, sub: str = "", title: str = "") -> str:
             f'<div class="watchlist-metric-sub"{tip}>{sub}</div></div>')
 
 
+def _price_or_dash(value) -> str:
+    """Harga bin mentah siap tampil (6 angka penting — harga memecoin kecil).
+
+    Harga bin DLMM memecoin sering 1e-05, jadi ``.2f`` akan menulis ``0.00``;
+    ``.6g`` tetap terbaca (``1.49369e-05``).
+    """
+    try:
+        return f"{float(value):.6g}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _range_part(value, *, down: bool) -> str:
+    """Satu sisi **Active Range** dengan warna: turun merah, naik hijau.
+
+    ``0.0%`` sengaja ditulis tanpa tanda dan tanpa warna — artinya harga
+    persis di tepi range likuiditas (contoh nyata ROUTER-SOL 2026-09-14:
+    ``min_price`` == ``pool_price``), dan ``+0.0%``/``-0.0%`` hanya
+    membingungkan.
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "—"
+    signed = -number if down else number
+    if abs(signed) < 0.05:
+        return "0.0%"
+    color = "#dc2626" if signed < 0 else "#16a34a"
+    return f'<span style="color:{color};">{signed:+.1f}%</span>'
+
+
+def _active_range_cell(row) -> tuple[str, str, str]:
+    """Sel **Active Range**: ``-34.5% / +19.0%`` (turun / naik) + lebar range.
+
+    Persen saja sesuai permintaan user 2026-09-14 ("tambahkan Active Range,
+    tapi % saja, misal -30% +40"); harga bin mentah, lebar range, dan jumlah
+    bin yang berisi likuiditas tetap ada di tooltip sel. Baris lama di
+    ``session_state`` (hasil scan sebelum kolom ini ada) atau pool yang
+    payload-nya tanpa ``pool_price``/``min_price``/``max_price`` → ``—``,
+    bukan ``-0.0% / +0.0%`` palsu.
+    """
+    from meteora_screener import (active_range_bins, active_range_pct,
+                                  active_range_width_pct)
+
+    row = row or {}
+    down, up = active_range_pct(row)
+    if down is None or up is None:
+        return ("—", "range",
+                "active range tidak terbaca — hasil scan sebelum kolom ini "
+                "ada (2026-09-14) atau API Meteora tidak mengirim pool_price / "
+                "min_price / max_price untuk pool ini; tekan tombol scan lagi")
+    value = (f"{_range_part(down, down=True)} / "
+             f"{_range_part(up, down=False)}")
+    width = active_range_width_pct(row)
+    sub = f"lebar {_pct_or_dash(width)}" if width is not None else "range"
+    bins = active_range_bins(row)
+    bins_txt = (f"{bins[0]} bin berisi likuiditas ({bins[1]} bin di bawah "
+                f"harga, {bins[2]} bin di atasnya) · bin_step "
+                f"{_num_or_dash(row.get('bin_step'), '.4g')} bp"
+                if bins else "")
+    tip = ("active range = rentang bin DLMM yang masih berisi likuiditas "
+           f"(min_price … max_price API Meteora): harga boleh turun "
+           f"{_pct_or_dash(down)} atau naik {_pct_or_dash(up)} dari harga "
+           f"pool sekarang ({_price_or_dash(row.get('pool_price'))}) sebelum "
+           "keluar range — di luar itu posisi LP berhenti menghasilkan fee · "
+           f"lebar range {_pct_or_dash(width)} · tepi "
+           f"{_price_or_dash(row.get('range_min_price'))} … "
+           f"{_price_or_dash(row.get('range_max_price'))}"
+           + (f" · {bins_txt}" if bins_txt else "")
+           + " — informasi, bukan saringan")
+    return value, sub, tip
+
+
 def _fv_cell(row: dict, lane: str, *, top: bool = False) -> tuple[str, str, str]:
     """Sel **F/V** = ``fee_active_tvl_ratio ÷ volatility`` satu baris + lane.
 
@@ -402,7 +493,9 @@ def _render_best_table(rows: list, *, lane: str,
 
     Susunan kolom 2026-09-14: Token · **F/V · Fee/TVL** (tepat di kanan F/V,
     permintaan user) **· Volat · Dust %MC** · **Fee %** (fee trading pool,
-    mis. 0.5% / 2% — ditambah setelah Dust %MC) · MC · A.TVL · Vol (24h/30m
+    mis. 0.5% / 2% — ditambah setelah Dust %MC) · MC · A.TVL · **Active Range**
+    (persen saja: ``-34.5% / +19.0%`` = harga boleh turun / naik sebelum
+    keluar dari bin berisi likuiditas) · Vol (24h/30m
     mengikuti lane) · Top10 · LPs · Pool · ⭐ — kolom Dust (jumlah wallet)
     sudah dihapus. Di tabel
     utama (``mark_tops=True``) sel **volatility terbesar**, sel **F/V
@@ -503,7 +596,9 @@ def _render_best_table(rows: list, *, lane: str,
             "</div>", unsafe_allow_html=True)
         # Urutan sel = urutan judul di ``_lane_titles`` (tanpa Token di sini;
         # kolom Dust jumlah wallet sudah dihapus 2026-09-14; Fee/TVL tepat di
-        # kanan F/V — permintaan user 2026-09-14).
+        # kanan F/V — permintaan user 2026-09-14; Active Range tepat di kanan
+        # A.TVL — permintaan user hari yang sama: "tambahkan Active Range,
+        # tapi % saja, misal -30% +40").
         cells = (
             (fv_value, fv_sub, fv_tip),
             (fee_tvl_value, fee_sub, fee_tvl_tip),
@@ -520,6 +615,7 @@ def _render_best_table(rows: list, *, lane: str,
             (_usd_or_dash(active_tvl), "active tvl",
              f"active TVL {_usd_or_dash(active_tvl, compact=False)} · "
              f"TVL total {_usd_or_dash(row.get('tvl'), compact=False)}"),
+            _active_range_cell(row),
             (_usd_or_dash(volume), delta_html,
              f"volume {window_txt} {_usd_or_dash(volume, compact=False)} · "
              f"perubahan {delta_txt} · rasio volume/active TVL "
@@ -536,10 +632,10 @@ def _render_best_table(rows: list, *, lane: str,
             cols[position].markdown(_cell(value, sub, tip),
                                     unsafe_allow_html=True)
         pool_html = pool_links_html(pool) or "<span>—</span>"
-        cols[11].markdown(f'<div class="pool-links">{pool_html}</div>',
+        cols[12].markdown(f'<div class="pool-links">{pool_html}</div>',
                           unsafe_allow_html=True)
         star_key = f"{key_prefix}-star-{pool or ca or index}"
-        if cols[12].button("⭐", key=star_key,
+        if cols[13].button("⭐", key=star_key,
                            help="Tambah ke Watchlist Meteora "
                                 "(halaman utama)",
                            use_container_width=True):
