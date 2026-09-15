@@ -7,8 +7,7 @@ Menutup perilaku yang diminta user:
 - tambah manual bisa diarahkan ke Watchlist Meteora (radio) atau lewat form
   di card;
 - tombol 🌊 memindahkan token watchlist biasa ke Watchlist Meteora;
-- detail karakteristik card = tooltip judul (2026-09-10), bukan caption;
-- card **Scan Meteora Pool** pindah ke halaman temp (2026-09-10).
+- detail karakteristik card = tooltip judul (2026-09-10), bukan caption.
 """
 from __future__ import annotations
 
@@ -24,15 +23,12 @@ except Exception:  # noqa: BLE001
 import holder_history as hh
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
-TEMP = "pages/8_temp.py"
 
 LP_MINT = "LpMint11111111111111111111111111111111111"
 LP_SAFE = "LpSafe22222222222222222222222222222222222"
 # base58 valid (tanpa 0/O/I/l) supaya lolos validasi CA di UI
 HOLDER_MINT = "Watch11111111111111111111111111111111111"
 BUCKET = hh.INTERVAL_SEC
-LP_TAB = "🌊 Watchlist Meteora"
-HOLDER_TAB = "📋 Watchlist Holder"
 
 
 def _point(index: int, pct: float, count: int) -> dict:
@@ -219,52 +215,12 @@ class ChartLpCardTest(unittest.TestCase):
         self.assertNotIn(f"to-lp-{LP_MINT}", keys)
         self.assertNotIn(f"remove-{LP_MINT}", keys)
 
-    def test_move_button_sends_token_to_lp_card(self):
-        app = self._app().switch_page("pages/8_temp.py").run()
-        with mock.patch("watchlist.set_watchlist_source",
-                        return_value=True) as move:
-            self._button(app, f"to-lp-{HOLDER_MINT}").click().run()
-        move.assert_called_once_with(HOLDER_MINT, "meteora", background=True)
-
     def test_move_back_button_returns_token_to_holder_watchlist(self):
         app = self._app()
         with mock.patch("watchlist.set_watchlist_source",
                         return_value=True) as move:
             self._button(app, f"lp-move-{LP_MINT}").click().run()
         move.assert_called_once_with(LP_MINT, "manual", background=True)
-
-    def test_manual_add_can_target_the_lp_card(self):
-        app = self._app().switch_page("pages/8_temp.py").run()
-        # Radio form add token Solana (bukan form Robinhood yang juga punya
-        # radio "Masuk ke card") — dibedakan lewat key eksplisit.
-        radios = [node for node in app.radio if node.key == "add-token-target"]
-        self.assertTrue(radios, "radio pilihan card tidak ditemukan")
-        self.assertEqual(list(radios[0].options), [HOLDER_TAB, LP_TAB])
-
-        radios[0].set_value(LP_TAB)
-        inputs = [node for node in app.text_input
-                  if node.key == "add-token-input"]
-        self.assertTrue(inputs)
-        inputs[0].set_value(LP_MINT[:32])
-        submit = [button for button in app.button
-                  if "Tambah ke watchlist" in (button.label or "")]
-        self.assertTrue(submit)
-        with mock.patch("watchlist.add_to_watchlist",
-                        return_value=True) as add:
-            submit[0].click().run()
-        self.assertEqual(add.call_args.kwargs["source"], "meteora")
-
-    def test_manual_add_defaults_to_holder_watchlist(self):
-        app = self._app().switch_page("pages/8_temp.py").run()
-        inputs = [node for node in app.text_input
-                  if node.key == "add-token-input"]
-        inputs[0].set_value(HOLDER_MINT[:32])
-        submit = [button for button in app.button
-                  if "Tambah ke watchlist" in (button.label or "")][0]
-        with mock.patch("watchlist.add_to_watchlist",
-                        return_value=True) as add:
-            submit.click().run()
-        self.assertEqual(add.call_args.kwargs["source"], "manual")
 
     def test_lp_card_form_adds_with_meteora_source(self):
         app = self._app()
@@ -360,146 +316,6 @@ class EmptyChartLpCardTest(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
-
-
-@unittest.skipIf(AppTest is None, "streamlit not installed")
-class MeteoraBestBadgeTest(unittest.TestCase):
-    """Badge 🏆 BEST POOL di listing Scan Meteora (dust < 0,1% + data valid).
-
-    Card **Scan Meteora Pool** dipindah ke halaman temp sejak 2026-09-10 —
-    AppTest dijalankan dari entrypoint ``app.py`` lalu ``switch_page`` ke
-    temp (pola yang sama dengan test_temp_page) supaya registry multipage
-    sama dengan deployment.
-    """
-
-    def _temp_app(self):
-        patches = (
-            mock.patch("watchlist.load_watchlist", return_value={}),
-            mock.patch("holder_status.load_holder_status",
-                       return_value={"tokens": {}}),
-            mock.patch("holder_history.load_holder_history",
-                       return_value={"tokens": {}}),
-            mock.patch("holder_history.pull_holder_history",
-                       return_value=None),
-            # Store Robinhood + setelan notif: tes ini tidak boleh menyentuh
-            # jaringan / file lokal sama sekali.
-            mock.patch("robinhood_watchlist.load_watchlist",
-                       return_value={}),
-            mock.patch("robinhood_watchlist.load_status",
-                       return_value={"updated_at": None, "tokens": {}}),
-            mock.patch("robinhood_watchlist.load_history",
-                       return_value={"updated_at": None, "tokens": {}}),
-            mock.patch("alert_settings.regular_telegram_enabled",
-                       return_value=True),
-        )
-        for patch in patches:
-            patch.start()
-            self.addCleanup(patch.stop)
-        app = AppTest.from_file(APP, default_timeout=60)
-        app.switch_page(TEMP)
-        return app
-
-    CLEAN = "CleanMint1111111111111111111111111111111111"
-    BOGUS = "BogusMint1111111111111111111111111111111111"
-    THIN = "ThinMint11111111111111111111111111111111111"
-
-    def _scan_rows(self):
-        return {
-            "rows": [
-                # Pool bersih: dust 0,02% MC, data holder valid, TVL 25K.
-                {"ca": self.CLEAN, "symbol": "CLN", "pool_address": "P1",
-                 "in_24h": True, "in_1h": False, "mc": 1_000_000.0,
-                 "tvl": 25_000.0,
-                 "dust_count": 3, "dust_pct_mc": 0.02, "real_count": 80,
-                 "analysis": {"holders": {
-                     "total_fetched": 200, "wallets_analyzed": 83,
-                     "real_count": 80, "dust_count": 3,
-                     "dust_pct_mc": 0.02}}},
-                # Data holder gagal (fetch 0) dengan dust 0,00%: TIDAK boleh
-                # dapat BEST POOL (dust 0 juga muncul saat data kosong).
-                {"ca": self.BOGUS, "symbol": "BGS", "pool_address": "P2",
-                 "in_24h": True, "in_1h": True, "mc": 900_000.0,
-                 "tvl": 50_000.0,
-                 "dust_count": 0, "dust_pct_mc": 0.0, "real_count": 0,
-                 "analysis": {"holders": {
-                     "total_fetched": 0, "wallets_analyzed": 0,
-                     "real_count": 0, "dust_count": 0, "dust_pct_mc": 0.0}}},
-                # Dust bersih + holder valid tapi TVL 4K (< 10K): bukan BEST.
-                {"ca": self.THIN, "symbol": "THN", "pool_address": "P3",
-                 "in_24h": False, "in_1h": True, "mc": 300_000.0,
-                 "tvl": 4_000.0,
-                 "dust_count": 1, "dust_pct_mc": 0.01, "real_count": 90,
-                 "analysis": {"holders": {
-                     "total_fetched": 150, "wallets_analyzed": 91,
-                     "real_count": 90, "dust_count": 1,
-                     "dust_pct_mc": 0.01}}},
-            ],
-            "error": "", "fetched": 3, "hidden_dust": 0,
-            "analyzed_at": 1_800_000_000,
-        }
-
-    def test_badge_best_pool_hanya_untuk_data_valid(self):
-        app = self._temp_app()
-        app.session_state["meteora_scan"] = self._scan_rows()
-        app.run()
-        self.assertEqual(len(app.exception), 0)
-        body = "\n".join(node.value for node in app.markdown)
-        self.assertIn("$CLN", body)
-        self.assertIn("$BGS", body)
-        self.assertIn("$THN", body)
-        # Persis satu chip BEST POOL: untuk CLN (0,02% + 83 wallet + TVL
-        # 25K). CSS .dust-best ikut di markdown <style>, jadi yang dihitung
-        # chip-nya. THN (TVL 4K) dan BGS (holder 0) tidak dapat chip.
-        self.assertEqual(body.count("dust-badge dust-best"), 1)
-        self.assertIn("🏆 BEST POOL", body)
-        cln_index = body.find("$CLN")
-        bgs_index = body.find("$BGS")
-        thn_index = body.find("$THN")
-        self.assertIn("dust-best", body[cln_index:bgs_index])
-        self.assertNotIn("dust-best", body[bgs_index:thn_index])
-        self.assertNotIn("dust-best", body[thn_index:])
-        # Kolom TVL ikut dirender.
-        self.assertIn("$25.0K", body[cln_index:bgs_index])
-        self.assertIn("$4.0K", body[thn_index:])
-        # Badge level AMAN/HATI-HATI/BAHAYA sudah dinonaktifkan di listing
-        # Scan Meteora (2026-09-07): tidak ada chip level di baris mana pun.
-        listing = body[cln_index:]
-        for cls in ("dust-badge dust-ok", "dust-badge dust-caution",
-                    "dust-badge dust-danger", "dust-badge dust-none"):
-            self.assertNotIn(cls, listing)
-
-    def test_best_pool_dirender_paling_atas(self):
-        """Permintaan user 2026-09-08: BEST POOL urut pertama di listing.
-
-        Data uji sengaja menaruh CLEAN (satu-satunya BEST POOL) di posisi
-        pertama input, lalu diacak: setelah sort, CLN tetap harus di atas
-        BGS/THN meski aslinya bukan yang teratas dari API.
-        """
-        scan = self._scan_rows()
-        # Acak: BEST POOL (CLN) ditaruh paling BELAKANG oleh "API".
-        scan["rows"] = [scan["rows"][1], scan["rows"][2], scan["rows"][0]]
-        app = self._temp_app()
-        app.session_state["meteora_scan"] = scan
-        app.run()
-        self.assertEqual(len(app.exception), 0)
-        body = "\n".join(node.value for node in app.markdown)
-        cln_index = body.find("$CLN")
-        bgs_index = body.find("$BGS")
-        thn_index = body.find("$THN")
-        self.assertNotEqual(cln_index, -1)
-        # BEST POOL naik ke urutan pertama meski input menaruhnya terakhir.
-        self.assertLess(cln_index, bgs_index)
-        self.assertLess(cln_index, thn_index)
-        # Chip-nya tetap menempel di baris CLN saja.
-        self.assertIn("dust-best", body[cln_index:min(bgs_index, thn_index)])
-        self.assertEqual(body.count("dust-badge dust-best"), 1)
-        # Ringkasan menyebut jumlah BEST POOL — angka saja, tanpa menulis
-        # ulang ambangnya (itu isi tooltip judul; 2026-09-11).
-        caption = "\n".join(node.value for node in app.caption)
-        self.assertIn("🏆 1 BEST POOL", caption)
-        self.assertNotIn("dust > 0.1% MC", caption)
-        self.assertIn('title="Top DLMM 24 jam', "\n".join(
-            node.value for node in app.markdown))
 
 
 @unittest.skipIf(AppTest is None, "streamlit not installed")

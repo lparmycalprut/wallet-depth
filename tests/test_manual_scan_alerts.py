@@ -6,8 +6,7 @@ kirim notif, kirim saja". Sebelumnya hanya cron (:mod:`scripts.scan_holders`)
 yang memanggil :func:`telegram_alerts.process_holder_alerts`, sehingga token
 yang baru dipantau — atau token di lane yang tidak di-scan cron sama sekali
 (watchlist biasa sejak 2026-09-07) — tidak pernah mengirim notif meski
-dashboard sudah menampilkan dust di atas ambang (kasus nyata: MOO
-``0xc103ac…`` 0,11% MC di Robinhood, tidak ada pesan Telegram).
+dashboard sudah menampilkan dust di atas ambang.
 
 Sejak 2026-09-13 notifnya satu: ⚡ **EARLY DUMP TERJADI - GANTI WIDE RANGE**
 (dust naik ≥ 0,02% MC dari patokan saat token di-add) — dan lane mana pun yang
@@ -15,8 +14,9 @@ di-scan boleh mengirimnya, termasuk watchlist biasa lewat tombol scan manual.
 
 Yang dikunci di sini:
 
-1. ketiga tombol scan manual (Chart LP Meteora, Robinhood LP/biasa, watchlist
-   biasa Solana) mengevaluasi + mengirim alert;
+1. tombol scan manual **Chart LP Meteora** mengevaluasi + mengirim alert
+   (card Robinhood LP/biasa dan card watchlist biasa ikut terhapus bersama
+   page 🦅 Robinhood + page temp, 2026-09-15);
 2. evaluasi berjalan **sebelum** ``ingest_many``/``publish_scan`` supaya rule
    membaca anchor lama dan state hasil evaluasi ikut tersimpan;
 3. dust di bawah ambang tidak mengirim apa pun (tidak ada spam);
@@ -43,11 +43,9 @@ except Exception:  # noqa: BLE001
 import telegram_alerts as ta
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
-TEMP_PAGE = "pages/8_temp.py"
 
 LP_MINT = "LpMint11111111111111111111111111111111111"
 SOL_MINT = "SolMint2222222222222222222222222222222222"
-RH_CA = "0xc103ac00a25173870c909223c5676d50bf5728b2"
 NOW = 1_800_000_000
 
 
@@ -398,89 +396,6 @@ class ManualScanAlertTest(unittest.TestCase):
         events, _ = ta.evaluate_alert_events(
             LP_MINT, _analysis("LPRISK", 0.11), state)
         self.assertEqual(events, [], "event kembar lolos dedup bucket 5 menit")
-
-    # -- Robinhood LP (app.py) ---------------------------------------------
-    def _run_rh_scan(self, variant: str, dust_pct: float, *,
-                     telegram_on: bool = True, marker=None):
-        source = "lp" if variant == "lp" else "regular"
-        # Marker ⚡ bersarang di ``alert_state["early_dump"]`` (lihat
-        # telegram_alerts.evaluate_alert_events). Default = episode dengan
-        # patokan 0,05%, jadi dust 0,11% sudah 3 langkah di atasnya.
-        if marker is None:
-            marker = _episode(0.05)[ta.EARLY_DUMP_MARKER]
-        store = {"tokens": {RH_CA: {"symbol": "MOO", "cohort": {},
-                                    "points": [],
-                                    "alert_state": {"early_dump": marker}}}}
-        patches = [
-            mock.patch("watchlist.load_watchlist", return_value={}),
-            mock.patch("holder_status.load_holder_status",
-                       return_value={"updated_at": NOW - 300, "tokens": {}}),
-            mock.patch("holder_history.load_holder_history",
-                       return_value={"tokens": {}}),
-            mock.patch("robinhood_watchlist.load_watchlist",
-                       return_value={RH_CA: {"symbol": "MOO", "source": source,
-                                             "added": "2026-09-09"}}),
-            mock.patch("robinhood_watchlist.load_status",
-                       return_value={"updated_at": NOW - 300, "tokens": {}}),
-            mock.patch("robinhood_watchlist.load_history",
-                       side_effect=lambda *a, **kw: json.loads(json.dumps(store))),
-            mock.patch("robinhood_watchlist.sync_state",
-                       return_value={"state": ""}),
-            mock.patch("robinhood_watchlist.scan_watchlist",
-                       return_value={RH_CA: _analysis("MOO", dust_pct)}),
-            mock.patch("robinhood_watchlist.publish_scan",
-                       return_value={"updated_at": NOW}),
-            mock.patch("alert_settings.regular_telegram_enabled",
-                       return_value=telegram_on),
-        ]
-        for patch in patches:
-            patch.start()
-            self.addCleanup(patch.stop)
-        app = AppTest.from_file(APP, default_timeout=90)
-        if variant == "regular":
-            app = app.switch_page(TEMP_PAGE)
-        app.run()
-        self.assertEqual(len(app.exception), 0)
-        label = ("🔄 Scan holder watchlist Robinhood LP" if variant == "lp"
-                 else "🔄 Scan holder watchlist Robinhood biasa")
-        button = [b for b in app.button if (b.label or "") == label]
-        self.assertTrue(button, f"tombol {label} tidak ditemukan")
-        button[0].click().run()
-        self.assertEqual(len(app.exception), 0)
-        return app
-
-    def test_robinhood_lp_scan_manual_mengirim_notif(self):
-        app = self._run_rh_scan("lp", 0.11)
-        self.assertEqual(len(self.sent), 1, self.sent)
-        self.assertEqual(self.sent[0]["kind"], ta.EARLY_DUMP_KIND)
-        self.assertEqual(self.sent[0]["mint"], RH_CA)
-        self.assertIn("1 notifikasi EARLY DUMP TERJADI dikirim",
-                      self._infos(app))
-
-    def test_robinhood_lp_di_bawah_langkah_tidak_mengirim(self):
-        app = self._run_rh_scan("lp", 0.06)
-        self.assertEqual(self.sent, [])
-        self.assertNotIn("notifikasi", self._infos(app))
-
-    def test_lane_biasa_juga_mengirim_notif_yang_sama(self):
-        """Watchlist biasa tidak di-scan cron: scan manual satu-satunya jalur.
-
-        Dulu lane ini punya rule sendiri (🔔 titik high); sekarang
-        notifikasinya satu untuk semua lane (⚡ delta 0,02%).
-        """
-        app = self._run_rh_scan("regular", 0.20)
-        self.assertEqual(len(self.sent), 1, self.sent)
-        self.assertEqual(self.sent[0]["kind"], ta.EARLY_DUMP_KIND)
-        self.assertIn("1 notifikasi EARLY DUMP TERJADI dikirim",
-                      self._infos(app))
-
-    def test_notif_lane_biasa_dimatikan_user_tetap_dievaluasi(self):
-        """Mute: rule + marker jalan, hanya pengiriman yang dilewati."""
-        app = self._run_rh_scan("regular", 0.20, telegram_on=False)
-        self.assertEqual(self.sent, [], "notif OFF tapi pesan tetap terkirim")
-        note = self._infos(app)
-        self.assertIn("dilewati (notif token itu sedang dimatikan)", note)
-        self.assertNotIn("GAGAL dikirim", note)
 
 
 if __name__ == "__main__":  # pragma: no cover

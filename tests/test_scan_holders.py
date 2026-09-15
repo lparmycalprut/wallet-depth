@@ -8,10 +8,8 @@ from unittest import mock
 
 from scripts.scan_holders import scan_watchlist
 
-# Catatan: seluruh modul ini tetap offline karena ``tests/__init__.py``
-# men-stub ``robinhood_watchlist.load_watchlist/load_status/load_history``
-# (kill-switch suite). Test yang menguji blok Robinhood menimpa stub-nya
-# sendiri lewat ``mock.patch.object`` — termasuk ScanCadenceTest di bawah.
+# Catatan: seluruh modul ini offline — setiap test men-mock lapisan IO
+# (``load_watchlist``/``load_holder_status``/``scan_watchlist``/…) sendiri.
 
 
 class ScanWatchlistTest(unittest.TestCase):
@@ -77,7 +75,9 @@ class DurableStoreBackupTest(unittest.TestCase):
             self.ANALYSES, publish_ok=True, durable=self._durable(),
             capture=captured)
         self.assertEqual(code, 0)
-        store = captured["alerts"].call_args.args[1]
+        # Store yang dipakai cron = hasil merge (lokal + backup durable);
+        # dibaca dari panggilan ``ingest_many``.
+        store = captured["ingest"].call_args.kwargs["store"]
         # token dari backup durable ikut terbawa ke run ini
         self.assertIn("OLD", store.get("tokens") or {})
         self.assertEqual(store["tokens"]["OLD"]["baseline"]["ts"], 100)
@@ -154,20 +154,18 @@ class MainExitCodeTest(unittest.TestCase):
                 mock.patch.object(mod, "scan_watchlist",
                                   return_value=analyses), \
                 mock.patch.object(mod, "ingest_many",
-                                  return_value={"tokens": {}}), \
+                                  return_value={"tokens": {}}) as ingest_mock, \
                 mock.patch.object(mod, "publish_holder_status",
                                   return_value={"updated_at": 1}), \
                 mock.patch.object(mod, "publish_holder_history",
                                   return_value=backup_result) as backup_mock, \
-                mock.patch.object(mod, "process_holder_alerts",
-                                  return_value=[]) as alert_mock, \
                 mock.patch.object(mod, "last_publish_result",
                                   return_value={"ok": publish_ok,
                                                 "error": "x"}):
             code = mod.main(argv if argv is not None else [])
         if isinstance(capture, dict):
             capture["backup"] = backup_mock
-            capture["alerts"] = alert_mock
+            capture["ingest"] = ingest_mock
         return code
 
     def test_ok(self):
@@ -210,107 +208,6 @@ class MainExitCodeTest(unittest.TestCase):
                                   return_value={}):
             self.assertEqual(mod.main(["--no-push"]), 0)
 
-    def test_alert_evaluation_happens_before_latest_snapshot_ingest(self):
-        import scripts.scan_holders as mod
-        store = {"tokens": {}}
-        analyses = {"A": {"symbol": "AA", "analyzed_at": 100,
-                           "holders": {"total_fetched": 1,
-                                       "dust_pct_mc": 0.4}}}
-        order = []
-        seen = {}
-
-        def process(items, supplied_store, **kwargs):
-            # Store yang dipakai aturan alert adalah store hasil merge
-            # (lokal + backup durable), dan objek yang SAMA harus mengalir ke
-            # ingest_many lalu publish_holder_status.
-            self.assertIsNotNone(supplied_store)
-            self.assertIsInstance(supplied_store.get("tokens"), dict)
-            seen["store"] = supplied_store
-            self.assertEqual(items, analyses)
-            # Scan 5 menit LP: tanpa konteks volume (fitur 4 jam dimatikan).
-            self.assertIsNone(kwargs.get("context_provider"))
-            self.assertFalse(kwargs.get("volume_rules"))
-            order.append("alert")
-            supplied_store["alert_evaluated"] = True
-            return []
-
-        def ingest(items, **kwargs):
-            self.assertIs(kwargs["store"], seen["store"])
-            self.assertTrue(kwargs["store"]["alert_evaluated"])
-            order.append("ingest")
-            return kwargs["store"]
-
-        def publish(*_args, **kwargs):
-            self.assertIs(kwargs["history_store"], seen["store"])
-            self.assertTrue(kwargs["history_store"]["alert_evaluated"])
-            # Cache konteks provider diteruskan supaya volatilitas/volume
-            # tersimpan di holder_status berdampingan dust % MC.
-            self.assertIsInstance(kwargs.get("contexts"), dict)
-            order.append("publish")
-            return {"updated_at": 100}
-
-        with mock.patch.object(mod, "load_watchlist",
-                               return_value={"A": {"symbol": "AA", "source": "meteora"}}), \
-                mock.patch.object(mod, "load_holder_status",
-                                  return_value={"tokens": {}}), \
-                mock.patch.object(mod, "load_holder_history",
-                                  return_value=store), \
-                mock.patch.object(mod, "pull_holder_history",
-                                  return_value=None), \
-                mock.patch.object(mod, "publish_holder_history",
-                                  return_value={"pushed": True}), \
-                mock.patch.object(mod, "seed_from_status",
-                                  side_effect=lambda current, _status: current), \
-                mock.patch.object(mod, "scan_watchlist",
-                                  return_value=analyses), \
-                mock.patch.object(mod, "process_holder_alerts",
-                                  side_effect=process), \
-                mock.patch.object(mod, "ingest_many", side_effect=ingest), \
-                mock.patch.object(mod, "publish_holder_status",
-                                  side_effect=publish):
-            self.assertEqual(mod.main(["--no-push"]), 0)
-        self.assertEqual(order, ["alert", "ingest", "publish"])
-
-
-class AlertScopeWiringTest(unittest.TestCase):
-    """Cron meneruskan state watchlist ke rule ⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE.
-
-    Sejak 2026-09-13 notifikasinya satu (delta dust 0,02% dari patokan
-    add-watchlist) dan tidak ada lagi **scope flag**
-    (``lp_mints``/``high_mints``/``volume_rules``): tiap token yang di-scan
-    run ini dievaluasi. Yang tetap harus diteruskan adalah
-    ``watchlist_meta`` — dipakai untuk membuang marker episode lama ketika
-    token di-add ulang ke watchlist.
-    """
-
-    def test_meta_diteruskan_dan_scope_flag_hilang(self):
-        captured = {}
-        watchlist = {
-            "LpMint11111111111111111111111111111111111":
-                {"symbol": "LPT", "source": "meteora"},
-            "RegMint22222222222222222222222222222222222":
-                {"symbol": "REG", "source": "degen"},
-        }
-        analyses = {
-            "LpMint11111111111111111111111111111111111":
-                {"symbol": "LPT", "holders": {"total_fetched": 5}},
-            "RegMint22222222222222222222222222222222222":
-                {"symbol": "REG", "holders": {"total_fetched": 5}},
-        }
-        code = MainExitCodeTest()._run(analyses, publish_ok=True,
-                                       watchlist=watchlist, capture=captured)
-        self.assertEqual(code, 0)
-        kwargs = captured["alerts"].call_args.kwargs
-        self.assertEqual(kwargs.get("watchlist_meta"),
-                         {"LpMint11111111111111111111111111111111111":
-                          {"symbol": "LPT", "source": "meteora"}})
-        # (Scope lane = token LP saja — dijaga ScanLaneScopeTest.)
-        for gone in ("lp_mints", "high_mints", "volume_rules"):
-            self.assertNotIn(gone, kwargs)
-        # Run LP biasa (tanpa --full) tidak menggeser anchor peta wallet.
-        self.assertFalse(kwargs.get("advance_anchors"))
-
-
 class CronFullScanTest(unittest.TestCase):
     """Sejak 2026-09-05 cron scan holder **FULL** + simpan detail.
 
@@ -342,8 +239,6 @@ class CronFullScanTest(unittest.TestCase):
                                   side_effect=lambda *a, **kw:
                                   (seen.update(detail=kw.get("detail")) or
                                    {"tokens": {}})), \
-                mock.patch.object(mod, "process_holder_alerts",
-                                  return_value=[]), \
                 mock.patch.object(mod, "publish_holder_status",
                                   return_value={"updated_at": 1}), \
                 mock.patch.object(mod, "publish_holder_history",
@@ -385,66 +280,8 @@ class CronFullScanTest(unittest.TestCase):
         self.assertFalse(seen.get("detail"))
 
 
-class RobinhoodAlertWiringTest(unittest.TestCase):
-    """Cron juga mengevaluasi notifikasi 🚨 untuk watchlist Robinhood LP.
-
-    Watchlist RH tidak dipecah Chart LP seperti Meteora, jadi seluruh token
-    `0x…` yang di-scan dievaluasi — rule-nya sama persis dengan lane Solana
-    (dust ≥ 0,06% MC, tanpa gerbang volume).
-    """
-
-    def test_rh_watchlist_diteruskan_keproses_alerts(self):
-        import scripts.scan_holders as mod
-        import robinhood_watchlist as rw_mod
-        ca = "0x" + "a" * 40
-        rh_watch = {ca: {"symbol": "VLAD", "source": "manual"}}
-        rh_analyses = {ca: {"symbol": "VLAD", "analyzed_at": 100,
-                            "holders": {"total_fetched": 5,
-                                        "dust_pct_mc": 0.4}}}
-        seen = {}
-
-        def _process(items, store, **kwargs):
-            seen["meta"] = kwargs.get("watchlist_meta")
-            seen["advance"] = kwargs.get("advance_anchors")
-            seen["kwargs"] = kwargs
-            self.assertEqual(items, rh_analyses)
-            return []
-
-        with mock.patch.object(mod, "load_watchlist", return_value={}), \
-                mock.patch.object(mod, "load_holder_status",
-                                  return_value={"tokens": {}}), \
-                mock.patch.object(mod, "load_holder_history",
-                                  return_value={"tokens": {}}), \
-                mock.patch.object(mod, "pull_holder_history",
-                                  return_value=None), \
-                mock.patch.object(mod, "seed_from_status",
-                                  side_effect=lambda s, _st: s), \
-                mock.patch.object(mod, "publish_holder_status",
-                                  return_value={"updated_at": 1}), \
-                mock.patch.object(mod, "last_publish_result",
-                                  return_value={"ok": True, "error": ""}), \
-                mock.patch.object(rw_mod, "load_watchlist",
-                                  return_value=rh_watch), \
-                mock.patch.object(rw_mod, "load_status",
-                                  return_value={"updated_at": None,
-                                                "tokens": {}}), \
-                mock.patch.object(rw_mod, "load_history",
-                                  return_value={"tokens": {}}), \
-                mock.patch.object(rw_mod, "scan_watchlist",
-                                  return_value=rh_analyses), \
-                mock.patch.object(rw_mod, "publish_scan",
-                                  return_value={"updated_at": 2}), \
-                mock.patch.object(mod, "process_holder_alerts",
-                                  side_effect=_process):
-            self.assertEqual(mod.main([]), 0)
-        self.assertEqual(seen.get("meta"), rh_watch)
-        self.assertFalse(seen.get("advance"))
-        for gone in ("lp_mints", "high_mints", "volume_rules"):
-            self.assertNotIn(gone, seen["kwargs"])
-
-
 class ScanLaneScopeTest(unittest.TestCase):
-    """Cron 2026-09-07: **lane LP saja** (Chart LP Meteora + Robinhood LP).
+    """Cron 2026-09-07: **lane LP saja** (Chart LP Meteora).
 
     - token watchlist biasa (non-LP) tidak pernah ikut scan cron;
     - snapshot dipublish **tanpa** ``merge_status`` (tidak ada baris token
@@ -481,8 +318,6 @@ class ScanLaneScopeTest(unittest.TestCase):
                                                 "pruned": [], "over_budget": False,
                                                 "dropped_tokens": 0,
                                                 "error": ""}) as backup_mock, \
-                mock.patch.object(mod, "process_holder_alerts",
-                                  return_value=[]), \
                 mock.patch.object(mod, "last_publish_result",
                                   return_value={"ok": True, "error": ""}):
             code = mod.main(list(argv))
@@ -556,22 +391,18 @@ class ScanLaneScopeTest(unittest.TestCase):
 
 
 class ScanCadenceTest(unittest.TestCase):
-    """Cadens sejak 2026-09-06: KEDUA lane LP di-scan tiap run (±5 menit).
+    """Cadens sejak 2026-09-06: lane LP di-scan tiap run (±5 menit).
 
-    User minta **watchlist Robinhood** di-fetch tiap 5 menit "supaya exit bisa
-    lebih awal", lalu menambah "iya untuk watchlist meteora juga, per 5 menit,
-    biar perubahan holder bisa langsung ketahuan". Jadi tiap run cron menarik
-    kedua chain; yang sengaja TIDAK ikut dipercepat: watchlist biasa (slot 4
-    jam, DIMATIKAN). Pengingat ⚡ Telegram = tiap scan 5 menit. Hemat kuota Helius
-    tetap mungkin lewat ``LP_SCAN_RUN_MULTIPLIER`` (gate :func:`lp_slot_due`).
+    User minta watchlist di-fetch tiap 5 menit "biar perubahan holder bisa
+    langsung ketahuan". Yang sengaja TIDAK ikut dipercepat: watchlist biasa
+    (slot 4 jam, DIMATIKAN). Hemat kuota Helius tetap mungkin lewat
+    ``LP_SCAN_RUN_MULTIPLIER`` (gate :func:`lp_slot_due`).
     """
 
     def test_konstanta_kadens(self):
         import scripts.scan_holders as mod
-        self.assertEqual(mod.RH_FAST_SCAN_INTERVAL_SEC, 5 * 60)
-        self.assertEqual(mod.RUN_SCAN_INTERVAL_SEC,
-                         mod.RH_FAST_SCAN_INTERVAL_SEC)
-        # Chart LP Meteora = laju yang sama dengan Robinhood LP & interval run.
+        self.assertEqual(mod.RUN_SCAN_INTERVAL_SEC, 5 * 60)
+        # Chart LP Meteora = laju yang sama dengan interval run.
         self.assertEqual(mod.METEORA_LP_SCAN_INTERVAL_SEC, 5 * 60)
         self.assertEqual(mod.LP_SCAN_INTERVAL_SEC, mod.RUN_SCAN_INTERVAL_SEC)
         self.assertEqual(mod.lp_slot_sec(), mod.RUN_SCAN_INTERVAL_SEC)
@@ -586,7 +417,7 @@ class ScanCadenceTest(unittest.TestCase):
                      "build_scan_plan"):
             self.assertFalse(hasattr(mod, name), name)
         # Invarian penting: gate run ganda WAJIB lebih kecil dari kadens run,
-        # kalau tidak lane Robinhood 5 menit dibungkam gate-nya sendiri.
+        # kalau tidak lane LP 5 menit dibungkam gate-nya sendiri.
         self.assertLess(mod.MIN_RUN_GAP_SEC, mod.RUN_SCAN_INTERVAL_SEC)
         self.assertEqual(mod.MIN_RUN_GAP_SEC, 4 * 60)
 
@@ -607,7 +438,7 @@ class ScanCadenceTest(unittest.TestCase):
         self.assertFalse(mod.lp_slot_due(boundary, boundary + run))  # jam mundur
 
     def test_lp_slot_due_dibatasi_kalau_hidelius_stres(self):
-        """LP_SCAN_RUN_MULTIPLIER=3 -> scan Solana ±15 menit, Robinhood tetap."""
+        """LP_SCAN_RUN_MULTIPLIER=3 -> scan Solana tiap ±15 menit."""
         import scripts.scan_holders as mod
         run, last = mod.RUN_SCAN_INTERVAL_SEC, 1_789_000_000 - 1_789_000_000 % 900
         with mock.patch.object(mod, "LP_SCAN_RUN_MULTIPLIER", 3):
@@ -637,25 +468,19 @@ class ScanCadenceTest(unittest.TestCase):
                                 lp_mint: {"symbol": "LP", "source": "meteora"},
                                 reg_mint: {"symbol": "REG",
                                            "source": "manual"}},
-                            rh_watch={}, mocks=mocks):
+                            mocks=mocks):
             self.assertEqual(mod.main([]), 0)
         mocks["solana_scan"].assert_called_once()
         self.assertEqual(set(mocks["solana_scan"].call_args.args[0]), {lp_mint})
 
-    def _cron_env(self, *, now_ts, status_ts, solana_watch, rh_watch, mocks):
+    def _cron_env(self, *, now_ts, status_ts, solana_watch, mocks):
         """Panggil ``main()`` dengan jam + IO terkendali (ExitStack + mocks)."""
         import contextlib
         import scripts.scan_holders as mod
-        import robinhood_watchlist as rw_mod
 
         clock = types.SimpleNamespace(time=lambda: float(now_ts),
                                        monotonic=lambda: 0.0,
                                        sleep=lambda _s: None)
-        rh_ok = {ca: {"symbol": "RH", "analyzed_at": now_ts,
-                      "holders": {"total_fetched": 120,
-                                  "wallets_analyzed": 120,
-                                  "dust_count": 3, "dust_pct_mc": 0.2}}
-                 for ca in rh_watch}
         published: dict = {}
         stack = contextlib.ExitStack()
 
@@ -693,79 +518,53 @@ class ScanCadenceTest(unittest.TestCase):
                                                       "bytes": 1, "pruned": [],
                                                       "over_budget": False,
                                                       "error": ""}))
-        add("alerts", mock.patch.object(mod, "process_holder_alerts",
-                                        return_value=[]))
         add("publish_result", mock.patch.object(
             mod, "last_publish_result",
             return_value={"ok": True, "error": ""}))
-        add("rh_watchlist", mock.patch.object(rw_mod, "load_watchlist",
-                                             return_value=rh_watch))
-        add("rh_status", mock.patch.object(
-            rw_mod, "load_status",
-            return_value={"updated_at": status_ts, "tokens": {}}))
-        add("rh_history", mock.patch.object(rw_mod, "load_history",
-                                            return_value={"tokens": {}}))
-        add("rh_scan", mock.patch.object(rw_mod, "scan_watchlist",
-                                         return_value=rh_ok))
-        add("rh_publish", mock.patch.object(
-            rw_mod, "publish_scan",
-            side_effect=lambda *a, **k: published.update(k)
-            or {"updated_at": now_ts}))
         mocks["published"] = published
         return stack
 
-    def test_run_biasa_scan_kedua_lane_lp(self):
-        """Inti perubahan: tiap run = Robinhood LP **dan** Chart LP Meteora."""
+    def test_run_biasa_scan_lane_lp(self):
+        """Tiap run cron = Chart LP Meteora di-scan."""
         import scripts.scan_holders as mod
         run = mod.RUN_SCAN_INTERVAL_SEC
         T = (int(time.time()) // run) * run + run     # run 5 menit berikutnya
         lp_mint = "LpMint111111111111111111111111111111111111"
-        rh_ca = "0x" + "a" * 40
         mocks: dict = {}
         with self._cron_env(now_ts=T, status_ts=T - run,
                             solana_watch={lp_mint: {"symbol": "LP",
                                                     "source": "meteora"}},
-                            rh_watch={rh_ca: {"symbol": "VLAD"}},
                             mocks=mocks):
             self.assertEqual(mod.main([]), 0)
         mocks["solana_scan"].assert_called_once()   # Meteora LP: tiap run
         self.assertEqual(set(mocks["solana_scan"].call_args.args[0]), {lp_mint})
-        mocks["rh_scan"].assert_called_once()       # Robinhood LP: tiap run
-        self.assertEqual(set(mocks["rh_scan"].call_args.args[0]), {rh_ca})
 
-    def test_workflow_small_cap_only_applies_to_solana_not_robinhood(self):
+    def test_max_wallets_workflow_diteruskan_ke_scan_solana(self):
         import scripts.scan_holders as mod
-        import holder_history as hh
         run = mod.RUN_SCAN_INTERVAL_SEC
         now = (int(time.time()) // run) * run + run
         mocks = {}
         with self._cron_env(now_ts=now, status_ts=now - run,
                             solana_watch={"SOL": {"source": "meteora"}},
-                            rh_watch={"0x" + "a" * 40: {"source": "lp"}},
                             mocks=mocks):
             self.assertEqual(mod.main(["--max-wallets", "3000"]), 0)
         self.assertEqual(mocks["solana_scan"].call_args.kwargs["max_wallets"], 3000)
-        self.assertEqual(mocks["rh_scan"].call_args.kwargs["max_wallets"],
-                         hh.FULL_SCAN_MAX_WALLETS)
-        self.assertFalse(mocks["rh_scan"].call_args.kwargs["detail"])
+        self.assertFalse(mocks["solana_scan"].call_args.kwargs["detail"])
 
-    def test_multiplier_menahan_solana_tetapi_tidak_robinhood(self):
+    def test_multiplier_menahan_scan_solana(self):
         """Escape hatch kuota: LP_SCAN_RUN_MULTIPLIER=3 -> Solana tiap 15 mnt."""
         import scripts.scan_holders as mod
         run = mod.RUN_SCAN_INTERVAL_SEC
         T = (int(time.time()) // 900) * 900 + run     # 5 menit ke dalam slot LP
         lp_mint = "LpMint111111111111111111111111111111111111"
-        rh_ca = "0x" + "a" * 40
         mocks: dict = {}
         with mock.patch.object(mod, "LP_SCAN_RUN_MULTIPLIER", 3):
             with self._cron_env(now_ts=T, status_ts=T - run,
                                 solana_watch={lp_mint: {"symbol": "LP",
                                                         "source": "meteora"}},
-                                rh_watch={rh_ca: {"symbol": "VLAD"}},
                                 mocks=mocks):
                 self.assertEqual(mod.main([]), 0)
         mocks["solana_scan"].assert_not_called()   # bukan slot LP (dibatasi)
-        mocks["rh_scan"].assert_called_once()
 
     def test_run_di_slot_lp_tetap_scan_solana(self):
         """Lane Meteora jalan terus meski data LP terlihat masih 'segar'."""
@@ -778,28 +577,25 @@ class ScanCadenceTest(unittest.TestCase):
         with self._cron_env(now_ts=T, status_ts=boundary,
                             solana_watch={lp_mint: {"symbol": "LP",
                                                     "source": "meteora"}},
-                            rh_watch={}, mocks=mocks):
+                            mocks=mocks):
             self.assertEqual(mod.main([]), 0)
         mocks["solana_scan"].assert_called_once()
         self.assertEqual(set(mocks["solana_scan"].call_args.args[0]),
                          {lp_mint})
 
-    def test_gate_run_ganda_tidak_membungkam_lane_robinhood(self):
-        """Snapshot < 4 menit = run ganda (chain + schedule) → semua lane diam."""
+    def test_gate_run_ganda_membungkam_lane_lp(self):
+        """Snapshot < 4 menit = run ganda (chain + schedule) → lane LP diam."""
         import scripts.scan_holders as mod
         lp = mod.lp_slot_sec()
         boundary = (int(time.time()) // lp) * lp
         T = boundary + lp
-        rh_ca = "0x" + "a" * 40
         mocks: dict = {}
         with self._cron_env(now_ts=T, status_ts=T - 60,
                             solana_watch={"Lp11111111111111111111111111111111111111":
                                           {"symbol": "LP", "source": "meteora"}},
-                            rh_watch={rh_ca: {"symbol": "VLAD"}},
                             mocks=mocks):
             self.assertEqual(mod.main([]), 0)
         mocks["solana_scan"].assert_not_called()
-        mocks["rh_scan"].assert_not_called()
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

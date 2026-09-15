@@ -98,43 +98,6 @@ insider/bundler penalty silently never fired**. The real keys are:
 
 All rates are **0-1 fractions**, not percentages.
 
-## Rank listing (GET, publik) — dipakai Scan Best Robinhood Coin
-
-Diverifikasi **live 2026-09-10** (tanpa cookie, tanpa `authorization`):
-
-```
-GET https://gmgn.ai/defi/quotation/v1/rank/<chain>/swaps/<interval>
-    ?orderby=volume&direction=desc&limit=50
-```
-
-- `<chain>` = `robinhood` (chain id 4663); `<interval>` = `1m` / `5m` /
-  `1h` / `6h` / `24h`. Field `volume`, `price_change_percent`, `swaps`,
-  `buys`, `sells` mengikuti `<interval>`.
-- Respons: `{"code":0,"data":{"rank":[…]}}` — token ada di `data.rank[]`
-  (bukan `data[0].tokens` seperti `trending_rank`).
-- Jalan dengan GET polos — tanpa param `device_id`/`fp_did`/`client_id`
-  dan tanpa TLS fingerprint khusus (teruji dari klien HTTP sederhana).
-- Field per token (robinhood) yang dipakai `robinhood_best_scan.py`:
-  `address`, `symbol`, `name`, `price`, `market_cap`, `liquidity`,
-  `volume`, `swaps`, `buys`, `sells`, `holder_count`,
-  `top_10_holder_rate` (**fraksi 0-1**), `price_change_percent[1m|5m|1h]`,
-  `creation_timestamp`, `open_timestamp`, `launchpad_platform`,
-  `is_honeypot`, `is_renounced`, `is_open_source`,
-  **Dexboost: `dexscr_boost_ts`** (timestamp boost terakhir; 0 = belum ada)
-  **+ `dexscr_boost_fee`** (biaya boost, USD) — `dexscr_ad`/`dexscr_ad_ts`
-  adalah iklan DEX Screener, **berbeda** dari boost; `score`, `rank`,
-  `hot_level`, `bundler_rate`, `entrapment_ratio`, `bot_degen_rate`,
-  `dev_team_hold_rate`, `top70_sniper_hold_rate`.
-- Dipakai `robinhood_best_scan.py` (card **Scan Best Robinhood Coin** di
-  halaman utama, 2026-09-10): top volume 6 jam → filter top 10 holder
-  < 30% → dust holder ≤ 0,05% MC (dust dihitung dari Blockscout via
-  `robinhood_holders.analyze_token`) → urut dust % MC terkecil, lalu
-  volume 6 jam terbesar; pernah Dexboost = poin tambah (badge 🚀).
-- ⚠️ Endpoint `follow_token/following_group_tokens/<chain>` (curl tab
-  "Following") **bukan** sumber scan yang layak: butuh `authorization:
-  Bearer` (token user, hidup ±30 menit) dan hanya mengembalikan token yang
-  di-follow user (`all_following`).
-
 ## Per-token stats (richer, one CA at a time)
 
 ```
@@ -206,25 +169,3 @@ Referer: https://gmgn.ai/sol/token/<CA>
 marketcap = Σ(dust usd_value) / marketcap × 100. When the page cap
 (`max_wallets`) truncates the list, `truncated: true` means the number
 is a lower bound over the analyzed top wallets.
-
-## Holder list — Robinhood Chain → **Blockscout** (bukan GMGN)
-
-> **GMGN dilepas 2026-09-08.** Endpoint
-> `https://gmgn.ai/vas/api/v1/token_holders/robinhood/<CA>` **selalu**
-> membalas `{"code":0, "data":{"list":[]}}` — GMGN tidak meng-index chain
-> 4663. Karena dulu ia dipakai sebagai *primary*, tiap scan membuang satu
-> request lalu jatuh ke fallback; itu sumber output holder yang rusak.
-> Sumber resmi sekarang: explorer **Blockscout** chain 4663.
-
-Detail lengkap ada di [`docs/robinhood_holders_api.md`](robinhood_holders_api.md).
-Ringkasnya, `robinhood_holders.fetch_holders` mencoba tiga jalur berurutan:
-
-```
-1. GET https://robinhoodchain.blockscout.com/api/v2/tokens/<CA>/holders/csv
-      -> text/csv "HolderAddress,Balance", SELURUH holder dalam 1 request,
-         balance SUDAH dibagi decimals. Plafon 10.000 baris.
-2. GET .../api/v2/tokens/<CA>/holders?items_count=50   (keyset cursor)
-      -> items[].address{hash,is_contract,name}, next_page_params
-3. GET .../api?module=token&action=getTokenHolders&contractaddress=<CA>
-        &page=<n>&offset=400                            (offset MAKS 400)
-```

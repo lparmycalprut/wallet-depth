@@ -18,9 +18,8 @@ file ini:
 - **format**: persen saja ``-34.5% / +19.0%``; nol ditulis ``0.0%`` tanpa
   tanda (harga nempel tepi range), data hilang → ``—`` — tidak pernah
   ``-0.0% / +0.0%`` palsu;
-- **UI**: kolom Active Range ada di tabel 🏆 Best Pool (kanan A.TVL) dan
-  tabel 🌊 Scan Meteora Pool di /temp (kanan Volatility), memakai builder sel
-  yang sama.
+- **UI**: kolom Active Range ada di tabel 🏆 Best Pool (kanan A.TVL),
+  memakai builder sel yang sama.
 """
 from __future__ import annotations
 
@@ -35,7 +34,6 @@ except Exception:  # noqa: BLE001
 
 import best_pool_ui as bp
 import meteora_screener as ms
-import temp_ui
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
 SOL = ms.SOL_MINT
@@ -215,12 +213,6 @@ class BestPoolColumnsTest(unittest.TestCase):
         self.assertIn("Active Range", tip)
         self.assertIn("-34.5% / +19.0%", tip)
 
-    def test_tooltip_scan_meteora_menjelaskan_kolom_baru(self):
-        tip = temp_ui.meteora_scan_tooltip()
-        self.assertIn("Active Range", tip)
-        self.assertIn("berhenti menghasilkan fee", tip)
-
-
 @unittest.skipIf(AppTest is None, "streamlit not installed")
 class ActiveRangeCardTest(unittest.TestCase):
     """Kolom Active Range benar-benar terender di dua card listing."""
@@ -270,26 +262,6 @@ class ActiveRangeCardTest(unittest.TestCase):
         self.assertIn("lebar 81.7%", body)
         # Bintang ⭐ tidak boleh bergeser ke kolom lain.
         self.assertIn("best-pool-24h-star-" + CATE["pool_address"],
-                      [button.key or "" for button in app.button])
-
-    def test_tabel_scan_meteora_temp_menampilkan_active_range(self):
-        app = AppTest.from_file(APP, default_timeout=90).run()
-        app.switch_page("pages/8_temp.py")
-        app.session_state["meteora_scan"] = {
-            "rows": [dict(ROUTER, ca="MintROUTER", symbol="ROUTER",
-                          timeframe="30m", source="30m", mc=1_508_906.99,
-                          tvl=87_263.07, active_tvl=72_346.43,
-                          fee_active_tvl_ratio=0.077, volatility=0.0,
-                          dust_count=3)],
-            "error": "", "fetched": 1, "hidden_dust": 0}
-        app.run()
-        self.assertEqual(len(app.exception), 0)
-        body = self._body(app)
-        self.assertIn("🌊 Scan Meteora Pool</span>", body)
-        self.assertIn(">Active Range<", body)
-        self.assertIn("0.0%", body)
-        self.assertIn("+5.1%", body)
-        self.assertIn("meteora-star-" + ROUTER["pool_address"] + "-30m",
                       [button.key or "" for button in app.button])
 
 

@@ -1,3 +1,61 @@
+# Kegiatan — 15 September 2026 (hapus total halaman 🦅 Robinhood + 📦 temp)
+
+Permintaan user: *"hapus semua yang ada di page temp dan Robinhood, Total
+hapus — langsung create pr dan merge jika sudah selesai"*, dan ketika diminta
+ketegasan: *"nonaktifkan semua fungsinya, dan juga pagenya, sampai tidak ada
+yang jalan"*. Dua halaman beserta semua yang menyangganya (UI, backend, cron,
+dokumen) dihapus; app tinggal Solana.
+
+## Yang dihapus
+
+**Halaman** — `pages/8_temp.py`, `pages/6_🦅_Robinhood.py`. `pages/` kini hanya
+berisi `5_🧮_Holder.py` (Holder Analytic).
+
+**Card / section** — 🦅 Watchlist Robinhood LP & biasa, 🦅 Scan Best Pool
+Krystal, 🦅 Scan Best Robinhood Coin, 🌊 Scan Meteora Pool, 📋 Watchlist
+Holder, 📋 Watchlist Meteora, 🚀 Trending/Degen, plus deep-link `?page=temp`
+dan `?page=robinhood` (dipantulkan ke dashboard) dan tautan nav di header.
+Sesuai jawaban user, **tidak ada yang dipindah** ke dashboard.
+
+**Modul** — `robinhood_watchlist.py`, `robinhood_holders.py`,
+`robinhood_best_scan.py`, `krystal_screener.py`, `krystal_pool_ui.py`,
+`trending_ui.py`, `temp_ui.py`, `docs/krystal_api.md`, dan 7 file tes
+(`test_temp_page`, `test_rh_card_ui`, `test_robinhood_holders`,
+`test_robinhood_watchlist`, `test_robinhood_best_scan`, `test_krystal_pool_scan`,
+`test_trending_ui`, `test_watchlist_row_ui`).
+
+**Cron** — `scripts/scan_holders.py` tinggal satu lane (Chart LP Meteora):
+`RH_FAST_SCAN_INTERVAL_SEC`, `lp_slot_due`, dan pemanggilan
+`process_holder_alerts` (alert holder lama) dibuang. `RUN_SCAN_INTERVAL_SEC`
+dan `METEORA_LP_SCAN_INTERVAL_SEC` tetap 300 detik; gate run ganda 240 detik
+tidak berubah.
+
+**Transport** — Blockscout (holder + link explorer chain 4663) hilang dari
+`links.py`, `activity_log.py`, `README.md`, `DEPLOY.md`, `docs/gmgn_api.md`,
+dan env `BLOCKSCOUT_API_KEY(S)` di `.github/workflows/daily-effort.yml` +
+`daily-effort-5menit.yml`. `robinhood_pool_links_html` (pool Meteora + HawkFi)
+dipertahankan sebagai `meteora_pool_links_html` karena masih dipakai
+`app.py`.
+
+## Yang dipertahankan (generik / masih dipakai)
+
+`holder_status.MANUAL_SCAN_KEY` (overlay scan manual), `alert_settings.mint_key`
++ `forget_mint_alert` (casefold alamat generik), `watchlist.add_many_to_watchlist`
+/ `remove_many_from_watchlist` (public API, tes tetap), `core.get_daily_candles`
+(`pre_pump_screener`), dan fixture store-isolation di `test_holder_status`,
+`test_store_backup`, `test_watchlist_background_push` yang hanya meminjam nama
+berkas `*_robinhood*` untuk membuktikan pemisahan store.
+
+## Verifikasi
+
+`python -m pytest tests -q` → **953 passed / 19 failed**. Baseline `main`
+(worktree HEAD `c2b97ce`) → **27 failed / 1234 passed**; ke-19 kegagalan
+tersebut persis subset baseline, dan 8 sisanya hilang bersama file tes yang
+dihapus — tidak ada kegagalan baru. `test_pre_pump_screener.DashboardSectionRemovedTest`
+(daftar `pages/*.py`) dan `test_scan_holders.KonstantaTest` ikut disesuaikan.
+
+Detail: `AGENTS.md` (blok paling atas) + `README.md` bagian *Halaman*.
+
 # Kegiatan — 14 September 2026 malam lanjutan 2 (kolom Active Range)
 
 Permintaan user: *"ok tambahkan Active Range, tapi % saja, misal -30% +40 atau

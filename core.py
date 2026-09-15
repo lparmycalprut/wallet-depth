@@ -820,10 +820,9 @@ def _dex_token_address(pair: dict, side: str) -> str:
 def _address_matches_screening(left: str, right: str) -> bool:
     """Compare two token addresses for matching.
 
-    Solana base58 is case-sensitive, while EVM/Robinhood ``0x`` addresses are
-    case-insensitive. Normalizing only EVM addresses keeps existing Solana
-    behavior unchanged while allowing Robinhood's mixed-case DexScreener
-    payload (e.g. ``0x8490ACd2…``) to match a lower-cased watchlist key.
+    Solana base58 is case-sensitive, while ``0x`` EVM addresses are not.
+    Normalizing only ``0x`` addresses keeps existing Solana behavior
+    unchanged while still matching a mixed-case DexScreener payload.
     """
     a = str(left or "").strip()
     b = str(right or "").strip()
@@ -846,9 +845,8 @@ def matching_dexscreener_pairs(pairs, ca: str, *,
     by liquidity. This keeps DexScreener's normal price/FDV semantics while
     still allowing a quote-side-only token to be identified honestly.
 
-    ``chain_id`` (e.g. ``robinhood``) optionally filters the chain so an EVM
-    address reused on another network cannot leak its market data into the
-    Robinhood watchlist.
+    ``chain_id`` optionally filters the chain so an address reused on another
+    network cannot leak its market data into the caller's watchlist.
     """
     target = str(ca or "").strip()
     if not target:
@@ -910,7 +908,7 @@ def get_market(ca: str, *, chain_id: str | None = None) -> dict:
     The endpoint can return cross-pairs where ``ca`` is the quote token.
     Filter and order those responses before reading metadata so a liquid
     unrelated base token cannot replace the requested token in the UI.
-    ``chain_id`` (e.g. ``robinhood``) keeps EVM networks isolated.
+    ``chain_id`` keeps networks isolated.
     """
     r = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{ca}",
                      timeout=20)
@@ -947,22 +945,16 @@ def get_market(ca: str, *, chain_id: str | None = None) -> dict:
 
 
 # GeckoTerminal menempatkan network di path URL (``/networks/<slug>/pools/…``).
-# Card Solana memakai ``solana``, card Robinhood/Krystal memakai ``robinhood``
-# (chain id 4663 — GeckoTerminal meng-indeks pool + OHLCV-nya), jadi template
-# URL-nya menerima network, bukan di-hardcode (generalisasi 2026-09-14).
+# Template URL-nya menerima network, bukan di-hardcode (generalisasi
+# 2026-09-14); app ini hanya memakai ``solana``.
 GECKOTERMINAL_DEFAULT_NETWORK = "solana"
 GECKOTERMINAL_OHLCV_URL_TEMPLATE = (
     "https://api.geckoterminal.com/api/v2/networks/"
     "{network}/pools/{pair}/ohlcv/hour")
-# Alias network → slug GeckoTerminal. Chain id mentah (4663) juga dikenali
-# supaya pemanggil yang menyimpan chain id tidak perlu memetakan sendiri.
+# Alias network → slug GeckoTerminal.
 GECKOTERMINAL_NETWORK_ALIASES = {
     "sol": "solana",
     "solana": "solana",
-    "robinhood": "robinhood",
-    "rh": "robinhood",
-    "4663": "robinhood",
-    "robinhoodchain": "robinhood",
 }
 GECKOTERMINAL_MAX_LIMIT = 1000
 # 1e11 detik = tahun 5138: di atas itu timestamp pasti milidetik.
@@ -1032,8 +1024,7 @@ def normalize_geckoterminal_network(value,
 
     Nilai yang tidak dikenal jatuh ke ``default`` (**solana**) supaya pemanggil
     lama tetap menyentuh endpoint yang sama persis seperti sebelum generalisasi
-    2026-09-14 (card Krystal harus menyebut ``network="robinhood"`` secara
-    eksplisit). Karakter di luar ``[a-z0-9_-]`` dibuang: nilai ini masuk ke
+    2026-09-14. Karakter di luar ``[a-z0-9_-]`` dibuang: nilai ini masuk ke
     path URL, jadi tidak boleh dipakai untuk menyisipkan segmen lain.
     """
     text = str(value if value is not None else "").strip().lower()
@@ -1064,10 +1055,9 @@ def get_hourly_candles(pair_address: str, limit_hours: int = 168, *,
     four-hour volume window and a seven-day volume average. Transport or
     parse failures return ``[]``: market data must never raise into a scan.
 
-    ``network`` (2026-09-14) memilih chain GeckoTerminal — ``"solana"``
-    (default, perilaku lama) untuk pool Solana dan ``"robinhood"`` untuk pool
-    Robinhood Chain (4663) yang dipakai card **🦅 Scan Best Pool Krystal**;
-    alias tidak dikenal jatuh ke default, jadi pemanggil lama tidak berubah.
+    ``network`` (2026-09-14) memilih chain GeckoTerminal — default
+    ``"solana"``; alias tidak dikenal jatuh ke default, jadi pemanggil lama
+    tidak berubah perilaku.
     """
     pair = str(pair_address or "").strip()
     if not pair:

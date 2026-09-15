@@ -21,6 +21,13 @@ dan notifikasi sudah dihapus total:
   test + skrip), tapi tidak ada rute UI ke sana dan alias deep-link lama
   (`?page=cvd`, `?page=akumulasi`, `?page=prepump`) berhenti di dashboard.
 
+- **halaman 🦅 Robinhood + 📦 temp beserta seluruh fungsinya** — dihapus
+  2026-09-15: watchlist Robinhood (`watchlist_robinhood.json`, snapshot &
+  history-nya), card 🦅 Watchlist Robinhood LP/biasa, 🦅 Scan Best Pool
+  Krystal, 🦅 Scan Best Robinhood Coin, 🌊 Scan Meteora Pool, 📋 Watchlist
+  Holder, 📋 Watchlist Meteora, 🚀 Trending/Degen, lane Robinhood di cron,
+  dan transport holder Blockscout. App kini Solana saja.
+
 Modul yang dihapus: `signals.py`, `serok_engine.py`, `reversal_engine.py`,
 `reversal_state.py`, `reversal_status.py`, `price_structure.py`,
 `effort_detector.py`, `scripts/realtime_reversal.py`,

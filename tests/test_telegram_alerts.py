@@ -15,8 +15,7 @@ from unittest import mock
 import requests
 
 import telegram_alerts as ta
-from links import (blockscout_token_url, dexscreener_token_url,
-                   gmgn_token_url, rh_scan_token_url)
+from links import (dexscreener_token_url, gmgn_token_url)
 
 NOW = 2_000_000
 FOUR_HOURS = 4 * 3600
@@ -300,21 +299,6 @@ class AlertMessageLinkTest(unittest.TestCase):
         text, entities = ta.build_alert_message(event)
         labels = [label for label, _ in _links(text, entities)]
         self.assertEqual(labels, ["GMGN", "DexScreener"])
-
-    def test_robinhood_links_dipakai_untuk_ca_evm(self):
-        mint = "0x" + "aB" * 20
-        text, entities = ta.build_alert_message(_early_dump_event(mint))
-        self.assertIn(f"📋 Mint: {mint}", text)
-        self.assertIn("\n🦆 rh-scan\n🦆 DexScreener\n🌏 Blockscout", text)
-        self.assertEqual(
-            _links(text, entities),
-            [("rh-scan", rh_scan_token_url(mint)),
-             ("DexScreener", dexscreener_token_url(mint)),
-             ("Blockscout", blockscout_token_url(mint))])
-        self.assertNotIn("http", text)
-        for _, url in _links(text, entities):
-            self.assertNotIn("gmgn.ai", url)
-            self.assertNotIn("dexscreener.com/solana", url)
 
     def test_alert_test_tetap_tanpa_link_token(self):
         with mock.patch.object(ta, "send_telegram_message",

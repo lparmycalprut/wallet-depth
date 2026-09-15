@@ -13,10 +13,10 @@ berfungsi, begitu pula URL yang salah kapitalisasi atau memakai path file.
 Aturan:
 
 * ``?mint=<ca>`` (atau ``ca`` / ``token`` / ``address``) → halaman Holder
-  Analytic (satu-satunya halaman tersisa sejak 2026-09-07).
+  Analytic (satu-satunya halaman tersisa sejak 2026-09-15).
 * ``?page=<slug|angka|nama file|path>`` tanpa token → pindah halaman saja.
-* Nilai ``mint`` wajib lolos format address (base58 Solana atau ``0x``+40 hex
-  Robinhood Chain). Sampah tidak pernah memicu navigasi, jadi parameter lain
+* Nilai ``mint`` wajib lolos format address base58 Solana. Sampah tidak
+  pernah memicu navigasi, jadi parameter lain
   yang kebetulan bernama sama dari widget/URL pihak luar tidak membajak app.
 * Sekali per (halaman, mint) per sesi — penanda di ``st.session_state``
   mencegah loop ketika user sengaja kembali ke dashboard membawa ``?mint=``.
@@ -60,16 +60,15 @@ EXTRA_ALIASES = {
 }
 
 SOLANA_CA_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
-EVM_CA_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
 #: Penanda sesi: deep link ini sudah pernah diikuti (mencegah loop redirect).
 ROUTED_KEY = "_deep_link_routed"
 
 
 def is_valid_ca(value) -> bool:
-    """True bila string adalah contract address Solana atau Robinhood Chain."""
+    """True bila string adalah contract address Solana (base58)."""
     addr = str(value or "").strip()
-    return bool(SOLANA_CA_RE.fullmatch(addr) or EVM_CA_RE.fullmatch(addr))
+    return bool(SOLANA_CA_RE.fullmatch(addr))
 
 
 def _first_value(query_params, keys) -> str:

@@ -1,5 +1,48 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-15 — 🦅 Robinhood + 📦 temp dihapus total
+
+- Permintaan user: *"hapus semua yang ada di page temp dan Robinhood, Total
+  hapus"*, diperjelas *"nonaktifkan semua fungsinya, dan juga pagenya, sampai
+  tidak ada yang jalan"*. Jadi bukan hanya pagenya — semua yang menyangganya
+  ikut mati (UI + backend + cron).
+- **Halaman dihapus**: `pages/8_temp.py`, `pages/6_🦅_Robinhood.py`.
+  `pages/` kini hanya `5_🧮_Holder.py`.
+- **Card dihapus**: 🦅 Watchlist Robinhood LP/biasa (`_render_rh_row`,
+  `_render_robinhood_watchlist_section`, `_render_robinhood_watchlist_lp_section`),
+  🦅 Scan Best Pool Krystal, 🦅 Scan Best Robinhood Coin, 🌊 Scan Meteora Pool,
+  📋 Watchlist Holder, 📋 Watchlist Meteora, 🚀 Trending/Degen. Sesuai
+  konfirmasi user, **tidak ada yang dipindah** ke dashboard.
+- **Modul dihapus** (11): `robinhood_watchlist.py`, `robinhood_holders.py`,
+  `robinhood_best_scan.py`, `krystal_screener.py`, `krystal_pool_ui.py`,
+  `trending_ui.py`, `temp_ui.py`, `docs/krystal_api.md`,
+  `tests/test_robinhood_holders.py`, `tests/test_robinhood_watchlist.py`,
+  `tests/test_krystal_pool_scan.py` (+ `tests/test_temp_page.py`,
+  `tests/test_rh_card_ui.py`, `tests/test_trending_ui.py`,
+  `tests/test_robinhood_best_scan.py`, `tests/test_watchlist_row_ui.py`).
+- **Backend dirampingkan**: `app.py` (deep-link, header nav, section, scan
+  manual, tabel LP), `page_router.py` (hanya CA Solana; `0x…` =
+  `is_valid_ca` False), `links.py` (Blockscout/HawkFi/EVM dilepas;
+  `robinhood_pool_links_html` → alias `meteora_pool_links_html` yang
+  masih dipakai `app.py`), `core.py` (docstring network), `activity_log.py`
+  (panel kredit Blockscout), `scripts/scan_holders.py` (lane Robinhood +
+  `process_holder_alerts` hilang → satu-satunya lane = Meteora LP),
+  `watchlist.py` + `alert_settings.py` (docstring). Yang dipertahankan
+  karena generik/berpemanggil lain: `holder_status.MANUAL_SCAN_KEY`,
+  `alert_settings.mint_key`/`forget_mint_alert`,
+  `watchlist.add_many_to_watchlist`/`remove_many_from_watchlist` (public API,
+  tes tetap), `core.get_daily_candles` (dipakai `pre_pump_screener`).
+- **Workflow**: env `BLOCKSCOUT_API_KEY(S)` + komentar Robinhood dihapus dari
+  `.github/workflows/daily-effort.yml` (dan salinan `daily-effort-5menit.yml`).
+- **Dok**: `README.md` (Halaman/Modul/kunci config/cadens), `DEPLOY.md`,
+  `DISABLED.md`, `docs/gmgn_api.md`.
+- **Tes**: fixture store-isolation yang hanya meminjam nama berkas
+  `*_robinhood*` tetap (test multi-store generik), sisanya dihapus/disesuaikan.
+  Suite: **953 passed / 19 failed** — ke-19 kegagalan itu persis subset
+  baseline `main` (HEAD `c2b97ce`: 27 failed / 1234 passed, diukur ulang lewat
+  worktree terpisah), 8 sisanya hilang bersama file tes yang dihapus.
+  Tidak ada kegagalan baru.
+
 ## Update 2026-09-14 (malam ke-4) — F/V · Fee/TVL · Volat: hijau tua menyala
 
 - Permintaan user: *"F/V · Fee/TVL · Volat — yang paling tinggi nilainya

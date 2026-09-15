@@ -337,8 +337,7 @@ class PruneStoreTest(unittest.TestCase):
 class KeepMintsBackupTest(unittest.TestCase):
     """``keep_mints`` = backup durable hanya untuk token yang di-scan cron.
 
-    Sejak 2026-09-07 cron holder hanya lane LP (Chart LP Meteora + Robinhood
-    LP). Token watchlist lama yang sudah tidak di-scan tidak perlu di-push
+    Sejak 2026-09-07 cron holder hanya lane LP (Chart LP Meteora). Token watchlist lama yang sudah tidak di-scan tidak perlu di-push
     ulang tiap 5 menit (terukur 81 token = ±2,1 MB per run), jadi scanner
     memanggil ``publish_holder_history(..., keep_mints=watchlist LP)``.
     """

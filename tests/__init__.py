@@ -6,15 +6,10 @@ kill-switch ``HOLDER_STORE_BACKUP``. Tes yang memang menguji transport
 backup mengaktifkannya kembali dengan ``mock.patch.dict`` sendiri
 (lihat ``tests/test_store_backup.py``) dan tetap mem-mock fungsi transportnya.
 
-Watchlist Robinhood juga di-stub kosong di sini supaya runner ``unittest``
-(``python -m unittest discover -s tests -t .``) sama offline-nya dengan
-pytest ``conftest.py``; tes khusus Robinhood mem-mock lapisan network-nya
-sendiri.
 """
 import os
 
 import alert_settings as _as
-import robinhood_watchlist as _rw
 
 os.environ["HOLDER_STORE_BACKUP"] = "0"
 
@@ -29,10 +24,6 @@ _as._write_remote = lambda *args, **kwargs: True
 # Suite tidak boleh menyentuh jaringan sama sekali, jadi probe-nya dimatikan;
 # tes transport kredit (tests/test_helius_usage.py) menyalakannya lagi sendiri.
 os.environ["HELIUS_USAGE_PROBE"] = "0"
-
-_rw.load_watchlist = lambda *args, **kwargs: {}
-_rw.load_status = lambda *args, **kwargs: {"updated_at": None, "tokens": {}}
-_rw.load_history = lambda *args, **kwargs: {"updated_at": None, "tokens": {}}
 
 # Cache berkas hasil scan (``scan_result_cache``) membuat card Best Pool tahan
 # refresh browser, tetapi runner ``unittest`` tidak punya fixture ``tmp_path``

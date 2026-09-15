@@ -4,16 +4,16 @@
 Dua setelan:
 
 1. **on/off notifikasi Telegram untuk watchlist biasa** (watchlist Solana
-   ``source`` manual/degen — bukan Chart LP Meteora, bukan Robinhood).
+   ``source`` manual/degen — bukan Chart LP Meteora).
    Permintaan user 2026-09-06: kadang watchlist biasa hanya ingin dipantau di
    dashboard tanpa dikirimi pesan Telegram.
 2. **on/off notifikasi Telegram per token** (``muted_mints``) untuk token
-   watchlist **Meteora** dan **Robinhood** — permintaan user 2026-09-11:
+   watchlist **Meteora** — permintaan user 2026-09-11:
    *"kasih toggle alert on off per token … jadi misal saya sudah tau ada
    notif, saya bisa nonaktifkan. tapi pas awal memasukkan ke watchlist,
    otomatis on"*. Karena daftar ini **blocklist**, token baru otomatis ON:
-   tidak perlu menulis apa pun saat token di-add, dan ``watchlist`` /
-   ``robinhood_watchlist`` memanggil :func:`forget_mint_alert` supaya token
+   tidak perlu menulis apa pun saat token di-add, dan ``watchlist``
+   memanggil :func:`forget_mint_alert` supaya token
    yang di-add **ulang** tidak mewarisi pilihan OFF periode sebelumnya.
 
 Notifikasinya kini satu: ⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE (dust
@@ -26,8 +26,8 @@ membanjiri user dengan pengingat episode lama.
 
 Kenapa file terpisah dan bukan ``watchlist.json``: setelan ini bukan data
 token, dan ``watchlist.json`` punya jalur journal + merge sendiri yang
-sengaja tidak boleh kemasukan field lain. Satu file dipakai bersama kedua
-jaringan (Solana & Robinhood) supaya cron cukup membaca satu kali.
+sengaja tidak boleh kemasukan field lain. Satu file dipakai bersama supaya
+cron cukup membaca satu kali.
 
 Persistensi memakai transport durable yang sama dengan snapshot holder
 (``holder_status._github_get_bytes`` / ``_github_put_bytes`` di ref
@@ -223,7 +223,7 @@ def set_regular_telegram_enabled(enabled: bool) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Toggle alert per token (watchlist Meteora + Robinhood)
+# Toggle alert per token (watchlist Meteora)
 # ---------------------------------------------------------------------------
 
 def muted_mints(force_refresh: bool = False) -> set[str]:

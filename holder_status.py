@@ -29,9 +29,8 @@ STATUS_REF = "holder-live"
 HISTORY_REPO_PATH = "holder_history.json.gz"
 
 _CACHE_TTL = 15
-# Cache per repo path (Solana ``holder_status.json`` vs Robinhood
-# ``holder_status_robinhood.json``) supaya kedua jaringan tidak saling
-# menimpa dalam satu proses.
+# Cache per repo path supaya dua store berbeda tidak saling menimpa dalam
+# satu proses (app memakai ``holder_status.json``).
 _CACHE: dict[str, dict] = {}
 
 # Hasil publish terakhir (dipakai scanner cron untuk exit code).
@@ -445,9 +444,8 @@ def _github_get_bytes(repo_path: str = STATUS_REPO_PATH) -> bytes | None:
 def _github_pull(repo_path: str | None = None) -> dict | None:
     """Muat file status dari GitHub (durable) sebagai dict.
 
-    ``repo_path`` default ``holder_status.json``; Robinhood memakai
-    ``holder_status_robinhood.json`` supaya status kedua jaringan tidak
-    tercampur.
+    ``repo_path`` default ``holder_status.json`` (bisa ditimpa untuk store
+    lain, misalnya suite tes).
     """
     repo_path = str(repo_path or STATUS_REPO_PATH).strip().lstrip("/")
     body = _github_get_bytes(repo_path)
@@ -463,8 +461,7 @@ def _github_pull(repo_path: str | None = None) -> dict | None:
 def pull_store_backup(repo_path: str | None = None) -> bytes | None:
     """Bytes mentah backup store (gzip) dari ref durable; ``None`` bila gagal.
 
-    ``repo_path`` default ``holder_history.json.gz``; Robinhood memakai
-    ``holder_history_robinhood.json.gz``.
+    ``repo_path`` default ``holder_history.json.gz``.
     """
     repo_path = str(repo_path or HISTORY_REPO_PATH).strip().lstrip("/")
     return _github_get_bytes(repo_path)
@@ -603,8 +600,7 @@ def load_holder_status(force_refresh: bool = False,
                        local_path: str | None = None) -> dict:
     """Muat snapshot: GitHub (durable) → file lokal → kosong.
 
-    ``repo_path``/``local_path`` default Solana; Robinhood memakai
-    ``holder_status_robinhood.json``.
+    ``repo_path``/``local_path`` default ``holder_status.json``.
     """
     repo_path = str(repo_path or STATUS_REPO_PATH).strip().lstrip("/")
     local_path = str(local_path or STATUS_PATH)
@@ -647,8 +643,7 @@ def publish_holder_status(analyses: dict,
 
     ``merge_status`` (snapshot sebelumnya) mewariskan token yang tidak
     ikut dianalisis run ini — lihat :func:`snapshot_status`.
-    ``repo_path``/``local_path`` default Solana; Robinhood memakai
-    ``holder_status_robinhood.json``.
+    ``repo_path``/``local_path`` default ``holder_status.json``.
     """
     repo_path = str(repo_path or STATUS_REPO_PATH).strip().lstrip("/")
     local_path = str(local_path or STATUS_PATH)
@@ -666,8 +661,8 @@ def publish_holder_status(analyses: dict,
             # ``holder_status._github_push`` menulis Contents API langsung —
             # BUKAN ``watchlist._github_push``. Jangan kirim ``merge_journal``
             # (kwarg milik watchlist): TypeError itu menelan seluruh publish
-            # (termasuk Robinhood, yang exception-nya di-best-effort) sehingga
-            # snapshot + marker Telegram tidak pernah sampai ke holder-live.
+            # sehingga snapshot + marker Telegram tidak pernah sampai ke
+            # holder-live.
             ok = _github_push(
                 status, f"holder-status: snapshot {stamp} [skip ci]",
                 repo_path=repo_path)

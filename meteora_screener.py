@@ -697,7 +697,7 @@ def row_dust_pct(row: dict | None):
     """Dust % MC satu baris pool: ``analysis`` dulu, fallback field baris.
 
     Dipakai bersama oleh :func:`hide_dust_limit`, :func:`row_flag`,
-    ``best_pool_ui`` dan ``temp_ui.render_meteora_scan`` supaya angka yang
+    dan ``best_pool_ui`` supaya angka yang
     menyaring, mengurutkan, dan yang tampil di layar **selalu** berasal dari
     sumber yang sama.
 

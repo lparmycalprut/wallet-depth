@@ -58,7 +58,7 @@ def watchlist_address_keys(watchlist: dict | None) -> set[str]:
 # perubahan dari *sesi lain* (browser kedua), itu pun disusul paling lambat 60s.
 _CACHE_TTL = 60  # seconds
 # Cache per repo path: ``{repo_path: {"data": dict, "ts": float,
-# "settled": bool}}`` supaya watchlist Solana dan Robinhood tidak saling
+# "settled": bool}}`` supaya dua file watchlist berbeda tidak saling
 # menimpa dalam satu proses.
 #
 # ``settled`` membedakan dua isi cache:
@@ -198,8 +198,7 @@ def _github_pull(repo_path: str | None = None) -> dict | None:
       2. GitHub API without token (avoids raw CDN, but rate-limited 60/h)
       3. raw.githubusercontent.com with cache-busting + no-cache headers
 
-    ``repo_path`` defaults to ``watchlist.json``; Robinhood uses its own
-    file (``watchlist_robinhood.json``) so the two networks stay separate.
+    ``repo_path`` defaults to ``watchlist.json`` (tests pass their own file).
     """
     repo_path = str(repo_path or "watchlist.json").strip().lstrip("/")
     tok = _github_token()
@@ -284,16 +283,15 @@ def _github_push(wl: dict, action: str, max_retries: int = 3,
                  merge_journal: bool = True) -> bool:
     """Commit a watchlist file to the repo with retry + re-fetch sha on 409.
 
-    ``repo_path`` defaults to ``watchlist.json``; the Robinhood watchlist
-    uses ``watchlist_robinhood.json`` while keeping the same durable
-    journal/merge semantics.
+    ``repo_path`` defaults to ``watchlist.json``; the same durable
+    journal/merge semantics apply to any watchlist file.
 
     On 409 conflict it re-fetches the latest remote, merges pending ops
     (and the original wl) to avoid lost-update, then retries.
 
     ``pending_path`` **wajib** dipakai bersama file watchlist-nya: tanpa itu,
-    jurnal Solana ikut di-merge ke payload Robinhood (dan sebaliknya) sehingga
-    mint dari jaringan lain bisa nyempil di file yang salah.
+    jurnal satu watchlist ikut di-merge ke payload watchlist lain sehingga
+    mint dari store lain bisa nyempil di file yang salah.
     ``merge_journal=False`` menutup merge itu untuk file non-watchlist
     (``holder_status*.json`` memakai fungsi push yang sama tapi tidak punya
     jurnal operasi).
@@ -713,9 +711,9 @@ def _fetch_raw_remote(force_refresh: bool = False,
                       repo_path: str | None = None) -> dict | None:
     """Fetch raw remote with TTL cache, returning a copy or None.
 
-    ``repo_path`` isolates the Robinhood watchlist from the default
-    Solana watchlist while still sharing the short TTL cache. The cache is
-    keyed by file path so separate networks never shadow each other.
+    ``repo_path`` isolates one watchlist file from another while still
+    sharing the short TTL cache. The cache is keyed by file path so separate
+    stores never shadow each other.
     """
     repo_path = str(repo_path or "watchlist.json").strip().lstrip("/")
     now = time.time()
@@ -758,8 +756,8 @@ def _load_and_merge(force_refresh: bool = False,
     """Load raw remote + pending journal merged, without pushing.
 
     This is the non-pushing core used by add/remove to avoid double-push.
-    ``repo_path``/``local_path``/``pending_path`` default to the Solana
-    watchlist files; the Robinhood watchlist passes its own trio.
+    ``repo_path``/``local_path``/``pending_path`` default to the
+    ``watchlist.json`` trio.
 
     ``local_first=True`` (dipakai jalur mutation di UI) sama sekali tidak
     menyentuh jaringan: state = cache remote (umurnya selalu hasil tulis/push
@@ -825,8 +823,8 @@ def load_watchlist(force_refresh: bool = False,
     An add/remove therefore never visually reverts.
 
     Uses a short TTL cache to avoid hammering GitHub on every Streamlit rerun.
-    ``repo_path``/``local_path``/``pending_path`` default to the Solana
-    watchlist files; the Robinhood watchlist passes its own trio.
+    ``repo_path``/``local_path``/``pending_path`` default to the
+    ``watchlist.json`` trio.
     """
     repo_path = str(repo_path or "watchlist.json").strip().lstrip("/")
     local_path = str(local_path or WATCHLIST_PATH)
@@ -940,9 +938,8 @@ def _journal_many_locked(ops: list[dict], pending_path: str | None = None) -> No
 def fetch_token_symbol(ca: str, *, chain_id: str | None = None) -> str:
     """Resolve ticker from DexScreener; return '?' if lookup fails.
 
-    ``chain_id`` (mis. ``robinhood``) memfilter DexScreener supaya address
-    EVM yang kebetulan juga muncul di jaringan lain tidak mengambil simbol
-    dari jaringan salah.
+    ``chain_id`` memfilter DexScreener supaya address yang kebetulan juga
+    muncul di jaringan lain tidak mengambil simbol dari jaringan salah.
     """
     try:
         from core import get_market
@@ -1005,9 +1002,8 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
     how far the current price is above/below the average holder buy
     price. Cards show it as an "avg cost" stat.
 
-    The path trio defaults to the Solana ``watchlist.json``; the
-    Robinhood watchlist passes ``watchlist_robinhood.json`` so both
-    networks can coexist without losing either journal.
+    The path trio defaults to ``watchlist.json``; another store can pass
+    its own trio without losing either journal.
 
     ``background=True`` (jalur UI): tidak ada pull GitHub sebelum menulis,
     commit + dispatch scan dijalankan di thread latar sehingga tombol
@@ -1349,7 +1345,7 @@ def remove_many_from_watchlist(cas, *, note: str = "",
     Scope ditentukan **pemanggil** lewat daftar *cas* — fungsi ini tidak
     menyaring ``source`` (sama seperti :func:`remove_from_watchlist`), jadi
     UI-lah yang memastikan hanya token watchlist biasa yang dikirim, bukan
-    Chart LP Meteora / Robinhood.
+    Chart LP Meteora.
 
     Semantik durabilitas identik dengan hapus satu token, hanya di-batch:
     journal ``remove`` per CA ditulis **lebih dulu** dalam satu tulis atomik
