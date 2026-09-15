@@ -1,10 +1,11 @@
 # AGENTS.md — Wallet Depth
 
-## Update 2026-09-15 — Best Pool: F/V ekstrem + kolom Token = pasangan pool
+## Update 2026-09-15 — Best Pool: F/V ekstrem, Token = pasangan pool, urut Fee/TVL
 
 - Permintaan user: *"coba cek last scan"* → *"gold menunjukkan 6328266.1 F/V"*
   → *"perbaiki"*, lalu *"kolom Token sekarang akan menunjukkan pasangan
-  pairnya, misal ALLINU/SOL"*.
+  pairnya, misal ALLINU/SOL"*, ditutup *"sebentar, kita urutkan fee/TVL paling
+  besar dulu"* + *"baru perkalian f/v"* (urutan tabel, lihat bullet di bawah).
 - **Akar masalah angka**: live pool `GOLD-XAUt0`
   (`C4LZ1YcqVbbCh3WqDuig7zQpG24o4UUDXwdJjhoy7PjR`, 24H, fee_pct 0,1%,
   active TVL 114.004,5) punya `fee_active_tvl_ratio` 0,013025137688422304 ÷
@@ -32,15 +33,35 @@
 - **Bukan** penambahan saringan: rasio jutaan tetap lolos ambang lane
   (`row_best_gaps` tak disentuh) — hanya teksnya yang berubah. Volatility
   hampir nol tetap lolos selama bukan 0 persis (`row_volatility_zero`).
+- **`meteora_screener.sort_best_rows`** (permintaan user lanjutan 2026-09-15:
+  *"sebentar, kita urutkan fee/TVL paling besar dulu, baru perkalian f/v"*):
+  kunci urut jadi **Fee/TVL** (`fee_active_tvl_ratio`) terbesar → **F/V**
+  (`row_fv_ratio`) terbesar → `row_vol_tvl_ratio` terbesar → dust % MC
+  terkecil (3 desimal tampilan) → simbol. Fee/TVL tetap **informasi, bukan
+  saringan** (`row_best_gaps` tak berubah: kelolosan tetap F/V lane). Aturan
+  `None` per kunci: baris tanpa angka di kunci itu turun ke bawah di kunci
+  tersebut (Fee/TVL hilang = paling bawah; F/V hilang = di bawah pemilik F/V
+  di kelompok Fee/TVL yang sama). ∞ (vol-0) tetap urut teratas **di dalam**
+  kelompok Fee/TVL-nya, tapi tidak lagi melompati Fee/TVL yang lebih besar.
+- Teks yang ikut berubah: tooltip sel Fee/TVL ("kunci urut pertama (terbesar
+  dulu, permintaan user 2026-09-15), bukan saringan"), sel F/V ("kunci urut
+  kedua"), sel Vol ("kunci urut ketiga … setelah Fee/TVL & F/V"), docstring
+  sel judul card ("Urutan tiap tabel: Fee/TVL terbesar, lalu F/V terbesar, …")
+  dan komentar/docstring `meteora_screener` di sekitar `sort_best_rows`.
 - **Tes** (`tests/test_best_pool_scan.py`): kelas `FvDisplayTest` (format di
   bawah/atas 100×, `None`/NaN/`inf`, satu sumber dengan `row_fv_ratio`,
   `row_pair_label` + guard "tidak dikarang") dan tiga AppTest
   (`test_f_v_besar_ditulis_bulat_dengan_pemisah_ribuan`,
   `test_kolom_token_menampilkan_pasangan_pool`,
-  `test_tanpa_nama_pool_tidak_ada_baris_pasangan`). Suite penuh:
-  **982 passed / 19 failed** — 19 kegagalan itu persis baseline `main`
-  (worktree HEAD `8df2ca6`, diukur ulang: 973 passed / 19 failed); +9 tes
-  baru hijau, tidak ada kegagalan baru.
+  `test_tanpa_nama_pool_tidak_ada_baris_pasangan`). Urutan baru dipin di
+  `SortBestRowsTest` (`test_fee_tvl_kunci_pertama_baru_fv` — dua kunci
+  sengaja berlawanan arah, `test_fv_kunci_kedua_saat_fee_tvl_seri`,
+  `test_infinity_paling_atas_di_kelompok_fee_tvl_sama`,
+  `test_tanpa_metrik_paling_bawah_di_kunci_nya_sendiri`) +
+  `tests/test_best_fv_prefilter.py::test_hasil_disortakan_fee_tvl_lalu_f_v`.
+  Suite penuh: **983 passed / 19 failed** — 19 kegagalan itu persis baseline
+  `main` (worktree HEAD `8df2ca6`, diukur ulang: 973 passed / 19 failed); +10
+  tes baru hijau (9 F/V-pasangan + 1 urutan), tidak ada kegagalan baru.
 
 ## Update 2026-09-15 — 🦅 Robinhood + 📦 temp dihapus total
 
@@ -252,6 +273,9 @@ menyala — lalu tandai f/v tertinggi tersebut menjadi warna hijau menyala"*.
   "— volatility terbesar / F/V tertinggi / Fee/TVL tertinggi di tabel ini".
 - Urutan baris (F/V → vol/active TVL → dust), saringan lane, pembuangan
   vol-0 (`row_volatility_zero`), dan rule 30M-OK tidak berubah.
+  **Catatan (2026-09-15)**: urutan barisnya **digantikan** — Fee/TVL terbesar
+  jadi kunci pertama, F/V kunci kedua (lihat update teratas); saringan lane,
+  pembuangan vol-0, dan rule 30M-OK memang masih tidak berubah.
 - Tes: `tests/test_best_pool_scan.py` (64 tes + 23 subtest hijau) — urutan
   4 kolom inti + kolom Dust hilang, label/tooltip per-lane, sorot neon angka
   24H + OK tertinggi 30M, seri di puncak semuanya ditandai, tabel dilewati
@@ -360,6 +384,10 @@ jika lebih kecil langsung skip"*. Yang berubah:
   atas, tanpa metrik paling bawah) → volume/active TVL → dust terkecil →
   simbol (sebelumnya volume/active TVL dulu). Jangan dirotasi balik: tombol
   30M memang "prioritaskan yang fee/v nya lebih besar".
+  **Catatan (2026-09-15)**: kunci ini **digantikan** — Fee/TVL terbesar naik
+  jadi kunci pertama dan F/V turun ke kunci kedua (permintaan user, lihat
+  update teratas). Ambang kelolosan lane sama sekali tidak berubah, hanya
+  urutannya.
 - Teks UI (pill, tooltip, `help` tombol, sub sel F/V, label gap) dibangun dari
   `lane_fv_min` / `lane_fv_sign` / `best_lane_gate_label()` yang membaca
   konstanta **saat dipanggil** — ubah `BEST_FV_30M_MIN`, semua ikut.
@@ -740,7 +768,7 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   sore: 24H `F/V ≥ BEST_FV_24H_MIN` (5×, inklusif) dan 30M
   `F/V > BEST_FV_30M_MIN` (1× strict; F == V di-skip), F/V dibaca lewat
   `row_fv_ratio()` = quotient yang sama dengan kolom F/V card + kunci urut
-  pertama. Ambang + tanda pembanding dibaca dari konstanta **saat memanggil**
+  (**kedua** sejak 2026-09-15; Fee/TVL yang pertama). Ambang + tanda pembanding dibaca dari konstanta **saat memanggil**
   (`lane_fv_min` / `lane_fv_inclusive` / `lane_fv_sign` +
   `best_lane_gate_label()`), jangan disalin ke dict/teks. `row_dust_ok()` /
   `row_volume_ok()` selalu `True` (dust + volume bukan syarat lagi),
@@ -758,8 +786,10 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   `dropped_volatility`) sejak 2026-09-14 lanjutan.
   `scan_best_meteora(timeframe=...)` = wrapper lama yang sekarang
   **meneruskan** `timeframe` ke satu lane (`"both"` = perilaku gabungan lama,
-  dipertahankan untuk compat). Lalu `sort_best_rows()`: **F/V terbesar**
-  (`row_fv_ratio`; ∞ = volatility 0 di atas, baris tanpa metrik paling bawah)
+  dipertahankan untuk compat). Lalu `sort_best_rows()`: **Fee/TVL terbesar**
+  (`fee_active_tvl_ratio`, 2026-09-15; urutan saja — bukan saringan) →
+  **F/V terbesar** (`row_fv_ratio`; ∞ = volatility 0 di atas di kelompoknya,
+  baris tanpa angka di sebuah kunci turun di kunci itu)
   → **volume 24 jam / active TVL** (`row_vol_tvl_ratio`; field API
   `volume_active_tvl_ratio`, absen dihitung ulang `volume/active_tvl*100`) →
   **dust % MC terkecil** → simbol. Kunci dust dibulatkan ke
@@ -1275,9 +1305,11 @@ badge BEST POOL       : < 0.1% marketcap (DUST_BEST_PCT, aditif) + data
                         masuk hidden_rows + best_gaps. Saringan lama dust <
                         0.05%, volatility >= 2%, volume >= $1M, fee/active TVL
                         > 20%, top 10 < 30%, total LPs > 20, active TVL > 10K
-                        = DIHAPUS. Urutan tiap tabel (2026-09-13 sore): F/V
+                        = DIHAPUS. Urutan tiap tabel (2026-09-15, permintaan
+                        user): Fee/TVL (fee_active_tvl_ratio) terbesar -> F/V
                         terbesar -> volume/active TVL (volume_active_tvl_ratio)
-                        -> dust % MC terkecil -> simbol.
+                        -> dust % MC terkecil -> simbol; None turun di
+                        kunci-nya sendiri. Fee/TVL urutan saja, bukan saringan.
 🦅 Scan Best Pool Krystal (2026-09-14, Robinhood Chain 4663 — rule disalin
                         dari card Meteora, konstanta KRYSTAL_*):
                         listing Krystal /v1/pools chainId=robinhood@4663

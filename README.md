@@ -290,12 +290,16 @@ bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
   layar lama — volume 24 jam ≥ $1M, volatility ≥ 2%, dust < 0,05% MC — ikut
   **dihapus**: dust/volume/tier fee/Top10/LPs/active TVL tetap tampil sebagai
   **informasi**, bukan syarat.
-- **Urutan tiap tabel**: **F/V terbesar** → **volume / active TVL window
-  lane-nya** (`volume_active_tvl_ratio`, angka persen dari API; ditulis di
-  baris kecil kolom Vol sebagai `… · 1,647× A.TVL`) → **dust % MC terkecil** →
-  simbol alfabetis. Kunci dust dibulatkan ke presisi tampilan (3 desimal)
-  supaya dua pool yang di layar sama-sama "0,030%" dianggap seri; baris tanpa
-  angka dust tidak hilang, hanya kalah tie-break dari sesame F/V.
+- **Urutan tiap tabel** (2026-09-15 lanjutan, permintaan user: *"sebentar, kita
+  urutkan fee/TVL paling besar dulu, baru perkalian f/v"*): **Fee/TVL
+  terbesar** (`fee_active_tvl_ratio`) → **F/V terbesar** → **volume / active
+  TVL window lane-nya** (`volume_active_tvl_ratio`, angka persen dari API;
+  ditulis di baris kecil kolom Vol sebagai `… · 1,647× A.TVL`) → **dust % MC
+  terkecil** → simbol alfabetis. Fee/TVL hanya **urutan**, bukan saringan —
+  kelolosan tetap F/V lane. Kunci dust dibulatkan ke presisi tampilan (3
+  desimal) supaya dua pool yang di layar sama-sama "0,030%" dianggap seri;
+  baris tanpa angka di sebuah kunci turun ke bawah di kunci itu (tidak
+  hilang).
 - **Session key per lane**: `best_pool_scan_24h` / `best_pool_scan_30m`
   (toggle disembunyikan `best_pool_show_hidden_24h` / `_30m`, lane aktif
   `best_pool_lane`). Hasil sesi lama yang masih gabung (`best_pool_scan`)
@@ -549,7 +553,7 @@ akumulasi dan bukan prediksi arah harga.
 | `alert_context.py` | Konteks pasar untuk konfirmasi alert: volume 4 jam, rata-rata 7 hari, buy/sell pressure, volatilitas (ditarik lazy) |
 | `holder_chronology.py` | Snapshot wallet bounded, klasifikasi pergerakan, narasi kronologi |
 | `lp_watchlist.py` | Card **Chart LP**: pisah watchlist Meteora, baris metrik fee/volatility + grafik dust historis |
-| `meteora_screener.py` | Regular listing DLMM 24h lalu 30m, active TVL ≥ 50K, filter/classification fee-versus-volatility, sort quotient tanpa dust, enrich holder; Best Pool terpisah: `scan_best_lane(lane)` satu lane per tombol, saringan `row_best_gaps` 24H F/V ≥ 5× / 30M F/V > 1× sebelum holder, `sort_best_rows` urut F/V → vol/TVL → dust |
+| `meteora_screener.py` | Regular listing DLMM 24h lalu 30m, active TVL ≥ 50K, filter/classification fee-versus-volatility, sort quotient tanpa dust, enrich holder; Best Pool terpisah: `scan_best_lane(lane)` satu lane per tombol, saringan `row_best_gaps` 24H F/V ≥ 5× / 30M F/V > 1× sebelum holder, `sort_best_rows` urut Fee/TVL → F/V → vol/TVL → dust |
 | `holder_analysis.py` | Fetch holder Helius/GMGN, klasifikasi real/dust/mid |
 | `solscan_holders.py` | Kalkulasi wallet_depth (bucket & tier) |
 | `helius_holders.py` | Scan Holder Solana satu token (Solana/Helius) + bar chart |

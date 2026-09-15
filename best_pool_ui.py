@@ -29,9 +29,12 @@ masing-masing (``best_pool_scan_24h`` / ``best_pool_scan_30m``) sehingga tabel
 24H tidak pernah lagi berisi baris 30M — kolom **Src** lama dihapus karena
 tidak relevan lagi, diganti pill lane di kepala card.
 
-- urutan baris tiap tabel: **F/V terbesar** (``row_fv_ratio``) → **volume /
-  active TVL window lane-nya** (``volume_active_tvl_ratio``, dikirim API
-  Meteora dan ditulis di baris kecil kolom Vol) → **dust % MC terkecil**;
+- urutan baris tiap tabel (permintaan user 2026-09-15: *"kita urutkan
+  fee/TVL paling besar dulu, baru perkalian f/v"*): **Fee/TVL terbesar**
+  (``fee_active_tvl_ratio``) → **F/V terbesar** (``row_fv_ratio``) →
+  **volume / active TVL window lane-nya** (``volume_active_tvl_ratio``,
+  dikirim API Meteora dan ditulis di baris kecil kolom Vol) → **dust % MC
+  terkecil**;
 - **Kolom Token menulis pasangan pool-nya** (permintaan user 2026-09-15:
   \"kolom Token sekarang akan menunjukkan pasangan pairnya, misal
   ALLINU/SOL\"): ``$TOKEN`` di baris pertama, pasangan pool DLMM di bawahnya
@@ -148,8 +151,9 @@ def best_pool_tooltip() -> str:
         "hilang/tidak valid dilewati (tetap terlihat di tabel disembunyikan "
         "24H). Hanya pool lolos yang mengambil detail holder FULL "
         "Helius. Dust, volume, tier fee, Top10 dan LPs bukan syarat "
-        "kelolosan. Urutan tiap tabel: F/V terbesar, lalu volume/active TVL "
-        "terbesar, lalu dust %MC terkecil. Tiap lane punya tabel + session "
+        "kelolosan. Urutan tiap tabel: Fee/TVL terbesar, lalu F/V "
+        "terbesar, lalu volume/active TVL terbesar, lalu dust %MC "
+        "terkecil. Tiap lane punya tabel + session "
         "key sendiri, jadi hasil 24H tidak pernah tercampur 30M. Kolom "
         "Token menulis pasangan pool-nya apa adanya dari API Meteora "
         "(mis. ALLINU/SOL, GOLD/XAUt0) — $SIMBOL tetap baris pertama, "
@@ -315,8 +319,9 @@ def _signed_pct(value) -> tuple[str, str]:
     """Persen dengan tanda +/− + warna (hijau naik, merah turun).
 
     Dipakai untuk **Δ volume** (baris kecil kolom Vol 24h) — rasio volume
-    24 jam / active TVL adalah kunci urut KEDUA card (pertama F/V), jadi angka
-    volume + arah perubahannya tetap harus terbaca sekali lihat.
+    24 jam / active TVL adalah kunci urut KETIGA card (Fee/TVL lalu F/V di
+    depannya sejak 2026-09-15), jadi angka volume + arah perubahannya tetap
+    harus terbaca sekali lihat.
     ``None`` → ``—``.
     """
     if value is None:
@@ -510,7 +515,7 @@ def _fv_cell(row: dict, lane: str, *, top: bool = False) -> tuple[str, str, str]
            f" ÷ volatility {_pct_full(row.get('volatility'))} = "
            f"{_num_or_dash(ratio, ',.2f')}× — "
            f"berapa kali fee pool lebih besar dari volatility; kunci urut "
-           f"pertama listing {label} + syarat lane ({gate}); "
+           f"kedua listing {label} + syarat lane ({gate}); "
            "lebih tinggi = fee lebih dominan")
     if fails:
         sub = f"gugur: {fails[0].split(': ', 1)[-1]}"
@@ -620,8 +625,9 @@ def _render_best_table(rows: list, *, lane: str,
         fee_tvl_tip = (f"tier fee {_num_or_dash(fee_pct, '.4g')}% · fee "
                        f"{window_txt} {_usd_or_dash(fee, compact=False)} / "
                        f"active TVL {_usd_or_dash(active_tvl, compact=False)} "
-                       f"= {_num_or_dash(ratio, ',.2f')}% — informasi, bukan "
-                       "saringan")
+                       f"= {_num_or_dash(ratio, ',.2f')}% — kunci urut "
+                       "pertama (terbesar dulu, permintaan user 2026-09-15), "
+                       "bukan saringan")
         fee_tvl_here = _finite_number(ratio)
         if (top_fee_tvl is not None and fee_tvl_here is not None
                 and fee_tvl_here == top_fee_tvl):
@@ -669,8 +675,9 @@ def _render_best_table(rows: list, *, lane: str,
             (_usd_or_dash(volume), delta_html,
              f"volume {window_txt} {_usd_or_dash(volume, compact=False)} · "
              f"perubahan {delta_txt} · rasio volume/active TVL "
-             f"{_num_or_dash(vol_tvl_ratio, ',.2f')}% — kunci urut kedua "
-             "(terbesar dulu), informasi (bukan saringan)"),
+             f"{_num_or_dash(vol_tvl_ratio, ',.2f')}% — kunci urut ketiga "
+             "(terbesar dulu; setelah Fee/TVL & F/V), informasi "
+             "(bukan saringan)"),
             (_pct_or_dash(row.get("top_holders_pct")), "top10",
              "10 holder teratas token base (% supply) — hanya "
              "informasi, bukan saringan lagi sejak 2026-09-11"),
