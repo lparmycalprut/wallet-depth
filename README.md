@@ -301,13 +301,32 @@ bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
   `best_pool_lane`). Hasil sesi lama yang masih gabung (`best_pool_scan`)
   dipecah otomatis sekali saat render, jadi listing tidak hilang setelah
   update.
+- **Kolom Token menulis pasangan pool-nya** (2026-09-15, permintaan user:
+  *"kolom Token sekarang akan menunjukkan pasangan pairnya, misal
+  ALLINU/SOL"*): `$SIMBOL` di baris pertama, pasangan pool DLMM di bawahnya
+  (nama pool dari API Meteora apa adanya — `meteora_screener.row_pair_label`,
+  mis. `ALLINU/SOL`, `GOLD/XAUt0`; pasangannya **tidak** ditebak dari simbol,
+  pool `TOK-USDC` tetap `TOK-USDC`), alamat mint tetap di baris terakhir.
+  Hasil scan lama yang belum menyimpan `pool_name` tidak menampilkan baris
+  pasangan sama sekali (bukan dikarang).
+- **Angka F/V** dibaca dari `meteora_screener.format_fv_ratio`: satu desimal
+  di bawah 100× (`10,1×`, `6,4×`), **bulat + pemisah ribuan** dari 100× ke
+  atas (`6,328,266×`) — permintaan user 2026-09-15 (*"coba cek last scan —
+  gold menunjukkan 6328266.1 F/V — perbaiki"*: rasio pool `GOLD-XAUt0`
+  memang benar 6,33 juta× karena `volatility`-nya 2,06e-09, yang salah cuma
+  formatnya). `∞` (warisan hasil lama) dan `—` (tidak terukur) tetap; angka
+  yang sama tetap dipakai menyaring + mengurutkan (`row_fv_ratio`), jadi
+  format tidak mengubah keputusan. Tooltip sel menulis persen kecil apa
+  adanya (`volatility 2.06e-09%`, bukan `0.00%`).
 - Kolom listing (ditata 2026-09-14 — 4 kolom inti di depan, kolom **Dust**
-  jumlah wallet dihapus): Token · **F/V** (baris kecil 24H = `syarat F/V ≥
+  jumlah wallet dihapus; urutan sesuai `best_pool_ui._lane_titles`): Token
+  (baris pasangan pool, 2026-09-15) · **F/V** (baris kecil 24H = `syarat F/V ≥
   5×` / tabel disembunyikan 24H = `gugur: …` merah; 30M lolos = **OK** hijau
-  dengan `syarat F/V > 1× terpenuhi`) · **Volat** · **Dust %MC** (3 desimal)
-  · MC · **A.TVL** · **Active Range** (persen saja, mis. `-34.5% / +19.0%` —
-  lihat bullet di bawah) · **Fee/TVL** (baris kecil = fee USD window lane + tier
-  fee) · **Vol 24h/30m** (judul mengikuti window lane; baris kecil = Δ
+  dengan `syarat F/V > 1× terpenuhi`) · **Fee/TVL** (baris kecil = fee USD
+  window lane + tier fee) · **Volat** · **Dust %MC** (3 desimal) · **Fee %**
+  (fee trading pool, mis. 0.5% / 2%) · MC · **A.TVL** · **Active Range**
+  (persen saja, mis. `-34.5% / +19.0%` — lihat bullet di bawah) ·
+  **Vol 24h/30m** (judul mengikuti window lane; baris kecil = Δ
   volume, hijau naik / merah turun, plus rasio volume/active TVL) · Top10 ·
   LPs · Pool (Meteora DLMM + HawkFi) · ⭐ — hover tiap angka memberi angka
   penuh + keterangan apakah metrik itu kunci urut atau hanya informasi. Sel

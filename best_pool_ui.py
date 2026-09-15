@@ -32,6 +32,15 @@ tidak relevan lagi, diganti pill lane di kepala card.
 - urutan baris tiap tabel: **F/V terbesar** (``row_fv_ratio``) → **volume /
   active TVL window lane-nya** (``volume_active_tvl_ratio``, dikirim API
   Meteora dan ditulis di baris kecil kolom Vol) → **dust % MC terkecil**;
+- **Kolom Token menulis pasangan pool-nya** (permintaan user 2026-09-15:
+  \"kolom Token sekarang akan menunjukkan pasangan pairnya, misal
+  ALLINU/SOL\"): ``$TOKEN`` di baris pertama, pasangan pool DLMM di bawahnya
+  (``row_pair_label`` — nama pool dari API Meteora, mis. ``ALLINU/SOL``),
+  alamat mint tetap di baris terakhir. Angka **F/V** diformat
+  ``format_fv_ratio``: satu desimal di bawah 100× (``10,1×``), bulat +
+  pemisah ribuan dari 100× ke atas (``6,328,266×``) — rasio ekstrem tidak
+  lagi tampil sebagai ``6328266.1×`` (laporan user 2026-09-15: *\"gold
+  menunjukkan 6328266.1 F/V\"*);
 - **Fee/TVL tepat di kanan F/V** (penataan kolom 2026-09-14): Token, **F/V**
   (fee_active_tvl_ratio ÷ volatility — kunci urut + syarat lane), **Fee/TVL**
   (pembilang F-nya — permintaan user: "kolom Fee/TVL taruh sebelah kanan
@@ -129,7 +138,9 @@ def best_pool_tooltip() -> str:
         "(kuota Helius tidak terbakar). Lane 24H: kandidat gagal F/V bisa "
         "dilihat lewat tombol disembunyikan; lane 30M: kandidat gagal TIDAK "
         "ditampilkan sama sekali, dan baris yang lolos cukup ditandai OK di "
-        "kolom F/V (angka aslinya di tooltip sel). Volatility 0 gugur di "
+        "kolom F/V — angka aslinya + formatnya satu desimal di bawah 100× "
+        "(10,1×) dan bulat berpemisah ribuan dari 100× ke atas (6,328,266×), "
+        "jadi rasio ekstrem tidak pernah tampil mentah. Volatility 0 gugur di "
         "kedua lane (F/V ∞ bukan kelolosan — pool tanpa volatility tidak "
         "bisa membuktikan fee lebih besar) DAN tidak ditampilkan di mana "
         "pun: pool tanpa pergerakan dibuang dari listing, juga tidak masuk "
@@ -139,7 +150,10 @@ def best_pool_tooltip() -> str:
         "Helius. Dust, volume, tier fee, Top10 dan LPs bukan syarat "
         "kelolosan. Urutan tiap tabel: F/V terbesar, lalu volume/active TVL "
         "terbesar, lalu dust %MC terkecil. Tiap lane punya tabel + session "
-        "key sendiri, jadi hasil 24H tidak pernah tercampur 30M. Kolom di "
+        "key sendiri, jadi hasil 24H tidak pernah tercampur 30M. Kolom "
+        "Token menulis pasangan pool-nya apa adanya dari API Meteora "
+        "(mis. ALLINU/SOL, GOLD/XAUt0) — $SIMBOL tetap baris pertama, "
+        "alamat mint di baris terakhir. Kolom di "
         "paling depan: Token, F/V, Fee/TVL (tepat di kanan F/V), Volat, "
         "Dust %MC, lalu Fee % (fee trading pool, mis. 0.5% / 2%); kolom "
         "volume mengikuti "
@@ -178,7 +192,12 @@ def best_pool_tooltip() -> str:
 # berapa harga masih boleh turun / naik sebelum keluar dari bin berisi
 # likuiditas (``meteora_screener.active_range_pct``); harga bin mentah +
 # jumlah bin ada di tooltip sel.
-_COL_SPEC = [1.4, 0.7, 0.78, 0.6, 0.82, 0.6, 0.65, 0.78, 0.95, 0.8, 0.62,
+# Lebar **F/V** dinaikkan 2026-09-15 (0,7 → 1,0): angka rasio kini bulat +
+# pemisah ribuan (``6,328,266×``, lihat ``meteora_screener.format_fv_ratio``)
+# sehingga butuh ruang lebih; Token juga naik tipis (1,4 → 1,45) karena kolom
+# itu sekarang memuat baris pasangan pool (``ALLINU/SOL``). Yang dikurangi
+# kolom informasi (MC, Top10, Fee %) supaya total masih seimbang.
+_COL_SPEC = [1.45, 1.0, 0.75, 0.58, 0.8, 0.58, 0.6, 0.72, 0.95, 0.8, 0.6,
              0.5, 0.95, 0.4]
 
 
@@ -325,6 +344,24 @@ def _num_or_dash(value, pattern: str = ".0f") -> str:
     return "—" if value is None else _number(value, pattern)
 
 
+def _pct_full(value) -> str:
+    """Persen **penuh** untuk tooltip sel F/V (``—`` bila tidak ada).
+
+    Angka normal ditulis 2 desimal seperti sebelumnya (``40.00%``), tetapi
+    persen yang sangat kecil tidak boleh dibulatkan jadi ``0.00%``: pool
+    tenang bisa punya ``volatility`` 2,06e-09% (pool GOLD-XAUt0, dilaporkan
+    user 2026-09-15 — justru angka itulah penyebab F/V-nya jutaan), dan
+    ``0.00%`` di tooltip membuat pembacanya tidak bisa memverifikasi apa pun.
+    Di bawah 0,005% nilainya ditulis 3 angka penting (``2.06e-09%``).
+    """
+    number = _finite_number(value)
+    if number is None:
+        return "—"
+    if number != 0 and abs(number) < 0.005:
+        return f"{number:.3g}%"
+    return f"{number:,.2f}%"
+
+
 def _usd_or_dash(value, compact: bool = True) -> str:
     """USD siap tampil: ringkas (``$24.0K``) atau penuh (``$24,000``).
 
@@ -435,40 +472,42 @@ def _fv_cell(row: dict, lane: str, *, top: bool = False) -> tuple[str, str, str]
     Lane **30M** (permintaan user 2026-09-14): baris yang lolos cukup
     menampilkan **OK** hijau — angka quotient tetap di tooltip sel dan tetap
     jadi kunci urut + saringan, tapi tidak ditampilkan di sel. Lane **24H**
-    tetap menampilkan angka ``N,N×``. ``top=True`` (F/V tertinggi di tabel
-    utama) mengubahnya jadi **hijau tua menyala + bold**, baik untuk sel angka
-    24H maupun sel OK 30M (permintaan user: "tandai f/v tertinggi tersebut
-    menjadi warna hijau menyala" — lanjutan: "yang paling tinggi nilainya
-    kasih warna hijau menyala, hijau tua menyala"). Baris gagal ambang
-    (hanya mungkin muncul
+    tetap menampilkan angka. **Format angkanya** (permintaan user 2026-09-15:
+    *"gold menunjukkan 6328266.1 F/V — perbaiki"*) dibaca dari
+    :func:`meteora_screener.format_fv_ratio` — satu desimal di bawah 100×
+    (``10,1×``), bilangan bulat berpemisah ribuan di atasnya
+    (``6,328,266×``), jadi rasio ekstrem tidak lagi tampil mentah sebagai
+    ``6328266.1×``. ``top=True`` (F/V tertinggi di tabel utama) mengubahnya
+    jadi **hijau tua menyala + bold**, baik untuk sel angka 24H maupun sel OK
+    30M (permintaan user: "tandai f/v tertinggi tersebut menjadi warna hijau
+    menyala" — lanjutan: "yang paling tinggi nilainya kasih warna hijau
+    menyala, hijau tua menyala"). Baris gagal ambang (hanya mungkin muncul
     di listing "disembunyikan" lane 24H, yang tidak pernah diberi tanda)
     tetap merah + alasan, supaya jelas kenapa holdernya tidak ikut di-scan.
     """
-    import math as _math
-
-    from meteora_screener import (normalize_best_lane, row_best_gaps,
-                                  row_fv_ratio)
+    from meteora_screener import (format_fv_ratio, normalize_best_lane,
+                                  row_best_gaps, row_fv_ratio)
 
     ratio = row_fv_ratio(row)
     label, _, gate = best_lane_detail(lane)
     fails = row_best_gaps(row, lane=lane)
+    value = format_fv_ratio(ratio)
     if normalize_best_lane(lane) == "30m" and not fails:
         # 30M lolos → "OK" saja; angka asli tetap di tooltip supaya urutan
         # dan syarat masih bisa diverifikasi (permintaan user 2026-09-14:
         # "kalau di M30, jika syarat terpenuhi, tulis OK").
         value, color = "OK", "#16a34a"
         sub = f"syarat {gate} terpenuhi"
-    elif ratio is None:
+    elif value is None:
         value, color = "—", "#dc2626"
         sub = f"syarat {gate}"
-    elif _math.isinf(ratio):
-        value, color = "∞", ""
-        sub = f"syarat {gate}"
     else:
-        value, color = f"{ratio:.1f}×", ""
+        # Angka (atau ∞ warisan hasil scan lama): tanpa warna khusus —
+        # penanda hijau hanya untuk F/V tertinggi tabel (``top``).
+        color = ""
         sub = f"syarat {gate}"
-    tip = (f"fee_active_tvl_ratio {_num_or_dash(row.get('fee_active_tvl_ratio'), ',.2f')}%"
-           f" ÷ volatility {_num_or_dash(row.get('volatility'), ',.2f')}% = "
+    tip = (f"fee_active_tvl_ratio {_pct_full(row.get('fee_active_tvl_ratio'))}"
+           f" ÷ volatility {_pct_full(row.get('volatility'))} = "
            f"{_num_or_dash(ratio, ',.2f')}× — "
            f"berapa kali fee pool lebih besar dari volatility; kunci urut "
            f"pertama listing {label} + syarat lane ({gate}); "
@@ -497,7 +536,8 @@ def _render_best_table(rows: list, *, lane: str,
     (persen saja: ``-34.5% / +19.0%`` = harga boleh turun / naik sebelum
     keluar dari bin berisi likuiditas) · Vol (24h/30m
     mengikuti lane) · Top10 · LPs · Pool · ⭐ — kolom Dust (jumlah wallet)
-    sudah dihapus. Di tabel
+    sudah dihapus. Sejak 2026-09-15 sel Token menulis pasangan pool-nya
+    (``row_pair_label``) dan sel F/V memakai ``format_fv_ratio``. Di tabel
     utama (``mark_tops=True``) sel **volatility terbesar**, sel **F/V
     tertinggi**, dan sel **Fee/TVL tertinggi** disorot hijau tua menyala
     (``TOP_HIGHLIGHT_COLOR``, seri ikut
@@ -511,7 +551,7 @@ def _render_best_table(rows: list, *, lane: str,
     from links import external_links_html, pool_links_html
     from lp_watchlist import LP_SOURCE
     from meteora_screener import normalize_best_lane, row_dust_pct, row_fv_ratio
-    from meteora_screener import row_vol_tvl_ratio
+    from meteora_screener import row_pair_label, row_vol_tvl_ratio
     from watchlist import add_to_watchlist
 
     header_cols = st.columns(_COL_SPEC)
@@ -588,9 +628,19 @@ def _render_best_table(rows: list, *, lane: str,
             fee_tvl_value = _top_span(fee_tvl_value)
             fee_tvl_tip += " — Fee/TVL tertinggi di tabel ini"
         cols = st.columns(_COL_SPEC)
+        # Kolom **Token** menulis pasangan pool-nya (permintaan user
+        # 2026-09-15: "kolom Token sekarang akan menunjukkan pasangan pairnya,
+        # misal ALLINU/SOL") — simbol `$TOKEN` tetap baris pertama, pasangan
+        # pool DLMM-nya di bawahnya, alamat mint di baris paling bawah.
+        pair = row_pair_label(row)
+        pair_html = (
+            f'<span class="watchlist-pair" title="pasangan pool '
+            f'(nama pool dari API Meteora)">{html.escape(pair)}</span>'
+            if pair else "")
         cols[0].markdown(
             '<div class="watchlist-token">'
             f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
+            f'{pair_html}'
             f'<span class="watchlist-mint">{html.escape(ca[:8])}…</span>'
             f'<div class="watchlist-links">{external_links_html(ca)}</div>'
             "</div>", unsafe_allow_html=True)

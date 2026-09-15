@@ -1,5 +1,47 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-15 — Best Pool: F/V ekstrem + kolom Token = pasangan pool
+
+- Permintaan user: *"coba cek last scan"* → *"gold menunjukkan 6328266.1 F/V"*
+  → *"perbaiki"*, lalu *"kolom Token sekarang akan menunjukkan pasangan
+  pairnya, misal ALLINU/SOL"*.
+- **Akar masalah angka**: live pool `GOLD-XAUt0`
+  (`C4LZ1YcqVbbCh3WqDuig7zQpG24o4UUDXwdJjhoy7PjR`, 24H, fee_pct 0,1%,
+  active TVL 114.004,5) punya `fee_active_tvl_ratio` 0,013025137688422304 ÷
+  `volatility` 2,057951587445997e-09 = **6.329.175,9×** — aritmetikanya benar
+  (volatility pool tenang bisa ~2e-09%), yang salah **formatnya**: `f"{ratio:.1f}×"`
+  dipakai untuk semua besaran sehingga terbaca `6329175.9×`.
+- **`meteora_screener.format_fv_ratio(value, *, decimals=FV_DISPLAY_DECIMALS)`**
+  (baru, satu sumber teks kolom F/V): `None`/NaN/bool → `None` (UI tulis `—`),
+  `inf` → `"∞"`, `abs < FV_PLAIN_MAX` (100×) → `"10.1×"`, ≥ 100× →
+  `"6,328,266×"` (bulat + pemisah ribuan). Konstanta `FV_DISPLAY_DECIMALS = 1`,
+  `FV_PLAIN_MAX = 100.0` (blok komentar panjang di dekat
+  `fee_volatility_ratio`).
+- **`meteora_screener.row_pair_label(row)`** (baru, sebelum
+  `row_volatility_zero`): pasangan pool dari `pool_name` (nama pool API
+  Meteora) apa adanya, uppercase + spasi dirapatkan — `ALLINU/SOL`, `TOK-SOL`
+  tetap apa adanya (tidak dipaksa jadi `TOK/SOL`); fallback `name` token hanya
+  bila mengandung `/` atau `-`; selain itu `""`.
+- **`best_pool_ui`**: `_fv_cell` memakai `format_fv_ratio` (logika OK-30M,
+  merah gugur, dan sorot `_top_span` tidak berubah); sel Token kini menulis
+  `$SIMBOL` + baris pasangan (`.watchlist-pair`, CSS baru di
+  `dashboard_components.render_styles`) + mint; `_pct_full()` baru untuk
+  tooltip F/V supaya `volatility 2,06e-09%` tidak terbaca `0.00%`; lebar
+  kolom `_COL_SPEC` digeser (F/V 0,7 → 1,0; Token 1,4 → 1,45; jaga 14 kolom);
+  tooltip judul card menyebut pasangan pool + aturan format F/V.
+- **Bukan** penambahan saringan: rasio jutaan tetap lolos ambang lane
+  (`row_best_gaps` tak disentuh) — hanya teksnya yang berubah. Volatility
+  hampir nol tetap lolos selama bukan 0 persis (`row_volatility_zero`).
+- **Tes** (`tests/test_best_pool_scan.py`): kelas `FvDisplayTest` (format di
+  bawah/atas 100×, `None`/NaN/`inf`, satu sumber dengan `row_fv_ratio`,
+  `row_pair_label` + guard "tidak dikarang") dan tiga AppTest
+  (`test_f_v_besar_ditulis_bulat_dengan_pemisah_ribuan`,
+  `test_kolom_token_menampilkan_pasangan_pool`,
+  `test_tanpa_nama_pool_tidak_ada_baris_pasangan`). Suite penuh:
+  **982 passed / 19 failed** — 19 kegagalan itu persis baseline `main`
+  (worktree HEAD `8df2ca6`, diukur ulang: 973 passed / 19 failed); +9 tes
+  baru hijau, tidak ada kegagalan baru.
+
 ## Update 2026-09-15 — 🦅 Robinhood + 📦 temp dihapus total
 
 - Permintaan user: *"hapus semua yang ada di page temp dan Robinhood, Total

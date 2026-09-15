@@ -240,6 +240,73 @@ class RowMetricsTest(unittest.TestCase):
                                                "active_tvl": None}))
 
 
+class FvDisplayTest(unittest.TestCase):
+    """Teks kolom F/V + pasangan pool (permintaan user 2026-09-15).
+
+    Laporan user: *"coba cek last scan — gold menunjukkan 6328266.1 F/V —
+    perbaiki"*. Angka aslinya benar (pool GOLD-XAUt0: ``fee_active_tvl_ratio``
+    0,013 ÷ ``volatility`` 2,06e-09 = 6.328.266×), yang salah cuma formatnya:
+    satu desimal untuk semua besaran membuat rasio jutaan tampil ~10 digit
+    tanpa pemisah. Sekaligus kolom **Token** kini menulis pasangan pool-nya.
+    """
+
+    def test_di_bawah_100_tetap_satu_desimal(self):
+        self.assertEqual(ms.format_fv_ratio(10.14), "10.1×")
+        self.assertEqual(ms.format_fv_ratio(6.4516), "6.5×")
+        self.assertEqual(ms.format_fv_ratio(5.0), "5.0×")
+        self.assertEqual(ms.format_fv_ratio(1.0), "1.0×")
+
+    def test_100_ke_atas_bulat_dengan_pemisah_ribuan(self):
+        self.assertEqual(ms.format_fv_ratio(100.0), "100×")
+        self.assertEqual(ms.format_fv_ratio(1234.6), "1,235×")
+        # Angka yang dilaporkan user apa adanya: 6328266.1 → 6,328,266×.
+        self.assertEqual(ms.format_fv_ratio(6328266.1), "6,328,266×")
+        # Lompatan format ada di 100×: di bawahnya masih satu desimal.
+        self.assertEqual(ms.format_fv_ratio(99.9), "99.9×")
+
+    def test_none_nan_inf(self):
+        """Tidak terukur → None (UI menulis —); tak hingga → ∞ (warisan)."""
+        self.assertIsNone(ms.format_fv_ratio(None))
+        self.assertIsNone(ms.format_fv_ratio(""))
+        self.assertIsNone(ms.format_fv_ratio("bukan angka"))
+        self.assertIsNone(ms.format_fv_ratio(float("nan")))
+        self.assertIsNone(ms.format_fv_ratio(True))
+        self.assertEqual(ms.format_fv_ratio(float("inf")), "∞")
+
+    def test_satu_sumber_dengan_angka_yang_disaring(self):
+        """Rasio yang tampil = rasio yang dipakai saringan + urutan."""
+        row = _row(fee_active_tvl_ratio=0.013025137688422304,
+                   volatility=2.057951587445997e-09)
+        self.assertAlmostEqual(ms.row_fv_ratio(row) / 6_329_175.9, 1.0,
+                               places=6)
+        self.assertEqual(ms.format_fv_ratio(ms.row_fv_ratio(row)),
+                         "6,329,176×")
+        # Saringan lane tetap lolos (F/V jauh di atas 5×) — formatnya tidak
+        # mengubah keputusan apa pun.
+        self.assertEqual(ms.row_best_gaps(row, lane="24h"), [])
+
+    def test_pasangan_pool_dari_nama_pool_api(self):
+        self.assertEqual(
+            ms.row_pair_label(_row(pool_name="ALLINU/SOL")), "ALLINU/SOL")
+        self.assertEqual(ms.row_pair_label(_row(pool_name="TOK-SOL")),
+                         "TOK-SOL")
+        # Huruf kecil + spasi ganda dirapikan; namanya tidak ditebak-tebak.
+        self.assertEqual(ms.row_pair_label(_row(pool_name=" allinu/sol ")),
+                         "ALLINU/SOL")
+        self.assertEqual(ms.row_pair_label(_row(pool_name="TOK  -  SOL")),
+                         "TOK - SOL")
+
+    def test_pasangan_pool_kosong_tidak_dikarang(self):
+        """Tanpa nama pool: baris pasangan tidak ditampilkan (bukan tebakan)."""
+        self.assertEqual(ms.row_pair_label(_row()), "")          # name = "AAA"
+        self.assertEqual(ms.row_pair_label(_row(name="Some Token")), "")
+        self.assertEqual(ms.row_pair_label(None), "")
+        # Nama token yang memang terlihat seperti pasangan masih dipakai
+        # sebagai cadangan (hasil scan lama sebelum ``pool_name`` ada).
+        self.assertEqual(ms.row_pair_label(_row(name="allinu/sol")),
+                         "ALLINU/SOL")
+
+
 class BestGatesTest(unittest.TestCase):
     """Saringan lane: 24H ``F/V >= 5×``; 30M ``F/V > 1×``."""
 
@@ -1086,6 +1153,69 @@ class BestPoolCardTest(unittest.TestCase):
         for title in ("A.TVL", "Fee/TVL", "Vol 24h", "Volat", "Dust %MC"):
             self.assertIn(title, body)
         self.assertIn("kunci urut kedua", body)
+
+    def test_f_v_besar_ditulis_bulat_dengan_pemisah_ribuan(self):
+        """Rasio jutaan tidak lagi tampil ``6328266.1×`` (laporan user).
+
+        Pool live GOLD-XAUt0 2026-09-15 (angka API apa adanya):
+        ``fee_active_tvl_ratio`` 0,013025137688422304 ÷ ``volatility``
+        2,057951587445997e-09 = 6.329.175,9×. Angka seperti inilah yang dulu
+        tampil apa adanya sebagai ``6329175.9×`` (laporan user menyebut
+        sampelnya sendiri: *"gold menunjukkan 6328266.1 F/V"*).
+        """
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result("24h", [
+            _row(pool_address="PoolGold", ca="MintGold", symbol="GOLD",
+                 pool_name="GOLD/XAUt0",
+                 fee_active_tvl_ratio=0.013025137688422304,
+                 volatility=2.057951587445997e-09),
+        ])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn("6,329,176×", body)
+        # Format lama (satu desimal, tanpa pemisah ribuan) hilang total —
+        # termasuk dari tooltip & atribut title.
+        self.assertNotIn("6329175.9", body)
+        self.assertNotIn("6329175.95", body)
+        # Volatility sekecil itu tidak boleh tertulis "0.00%" di tooltip:
+        # justru angka itu penyebab rasio F/V-nya jutaan.
+        self.assertIn("volatility 2.06e-09%", body)
+        self.assertNotIn("volatility 0.00%", body)
+
+    def test_kolom_token_menampilkan_pasangan_pool(self):
+        """Kolom Token menulis pasangan pool-nya, mis. ``ALLINU/SOL``.
+
+        Permintaan user 2026-09-15: *"kolom Token sekarang akan menunjukkan
+        pasangan pairnya, misal ALLINU/SOL"* — simbol `$TOKEN` tetap baris
+        pertama, pasangan pool di bawahnya, alamat mint tetap ada.
+        """
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result("24h", [
+            _row(pool_address="PoolAllinu", ca="MintAllinu",
+                 symbol="ALLINU", pool_name="ALLINU/SOL"),
+        ])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn(">Token<", body)          # judul kolom tidak berubah
+        self.assertIn("$ALLINU", body)
+        self.assertIn('<span class="watchlist-pair"', body)
+        self.assertIn(">ALLINU/SOL</span>", body)
+        self.assertIn("MintAlli", body)         # alamat mint tetap tampil
+
+    def test_tanpa_nama_pool_tidak_ada_baris_pasangan(self):
+        """Hasil scan lama (tanpa ``pool_name``) tidak dikarang pasangannya."""
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result("24h", [
+            _row(pool_address="PoolLawas", ca="MintLawas", symbol="LAWAS"),
+        ])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn("$LAWAS", body)
+        # CSS-nya ikut ter-render di body, jadi yang diperiksa elemen sel-nya.
+        self.assertNotIn('<span class="watchlist-pair"', body)
 
 
 @unittest.skipIf(AppTest is None, "streamlit not installed")

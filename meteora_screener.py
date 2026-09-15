@@ -46,7 +46,11 @@ pool_type=dlmm&&active_tvl>=50000. Dust, minimum volatility/volume/tier fee
 bukan syarat. Urutan tiap tabel: **F/V terbesar** → volume/active TVL →
 dust %MC terkecil; badge BEST POOL dihapus. Kedua lane disimpan di session key
 + tabel masing-masing (``best_pool_ui``), jadi hasil 24H tidak pernah lagi
-bercampur 30M di satu listing.
+bercampur 30M di satu listing. Sejak 2026-09-15 kolom **Token** menulis
+pasangan pool-nya (``ALLINU/SOL``, :func:`row_pair_label`) dan sel **F/V**
+memakai :func:`format_fv_ratio` — satu desimal di bawah 100×, bilangan bulat
+berpemisah ribuan di atasnya (``6,328,266×``), jadi rasio ekstrem tidak lagi
+tampil sebagai ``6328266.1×``.
 """
 from __future__ import annotations
 
@@ -277,6 +281,53 @@ def fee_volatility_ratio(fee_active_tvl_ratio, volatility):
     if vol == 0:
         return float("inf") if fee > 0 else 0.0
     return fee / vol
+
+
+# ---------------------------------------------------------------------------
+# Tampilan angka F/V di kolom card (permintaan user 2026-09-15: *"perbaiki"*
+# atas laporan *"gold menunjukkan 6328266.1 F/V"*).
+#
+# `.1f` dulu dipakai untuk SEMUA besaran, jadi rasio besar terbaca sebagai
+# ~10 digit tanpa pemisah (``6328266.1×``): angka aslinya benar (pool live
+# GOLD-XAUt0 punya ``fee_active_tvl_ratio`` 0,013 ÷ ``volatility``
+# 2,06e-09 = 6.328.266×), tetapi satu digit di belakang koma tidak ada
+# artinya di besaran jutaan dan kolomnya jadi meluber. Aturannya sekarang:
+#
+# - di bawah :data:`FV_PLAIN_MAX` (100×) tetap satu desimal — presisi yang
+#   sejak awal dipakai (``10,1×`` / ``6,4×``) dan memang berguna;
+# - 100× ke atas jadi bilangan bulat **dengan pemisah ribuan**
+#   (``6,328,266×``) — besaran langsung terbaca, tidak ada digit palsu;
+# - ``∞`` (volatility 0 di atas fee positif) dan ``—`` (tidak terukur) tetap.
+#
+# Pemformat ini satu-satunya sumber teks kolom F/V: sel card, teks gap, dan
+# bawaan test membacanya, jadi angka di layar tidak pernah beda dari angka
+# yang dipakai menyaring + mengurutkan (:func:`row_fv_ratio`).
+# ---------------------------------------------------------------------------
+FV_DISPLAY_DECIMALS = 1     # digit di belakang koma untuk rasio < 100×
+FV_PLAIN_MAX = 100.0        # >= 100× ditulis bulat + pemisah ribuan
+
+
+def format_fv_ratio(value, *, decimals: int = FV_DISPLAY_DECIMALS):
+    """Angka F/V siap tampil (``None`` bila tidak ada, ``"∞"`` bila tak hingga).
+
+    ``None``/``NaN``/teks kosong → ``None`` supaya pemanggil bisa menulis
+    ``—`` sendiri. ``inf`` → ``"∞"`` (volatility 0, pool tanpa pergerakan —
+    baris seperti itu sudah dibuang card, kontrak teksnya tetap dijaga).
+    ``1,4`` → ``"1.4×"``; ``6_328_266.05`` → ``"6,328,266×"``.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number:                # NaN
+        return None
+    if math.isinf(number):
+        return "∞"
+    if abs(number) < FV_PLAIN_MAX:
+        return f"{number:.{int(decimals)}f}×"
+    return f"{number:,.0f}×"
 
 
 def regular_pool_classification(row: dict | None) -> dict:
@@ -942,6 +993,36 @@ def row_fv_ratio(row: dict | None):
     row = row or {}
     return fee_volatility_ratio(row.get("fee_active_tvl_ratio"),
                                 row.get("volatility"))
+
+
+def row_pair_label(row: dict | None) -> str:
+    """Nama **pasangan pool** siap tampil, mis. ``ALLINU/SOL`` (``""`` bila tidak ada).
+
+    Permintaan user 2026-09-15: *"kolom Token sekarang akan menunjukkan
+    pasangan pairnya, misal ALLINU/SOL"* — pool DLMM selalu punya dua sisi,
+    dan arah fee/likuiditasnya ditentukan pasangan itu, jadi kolom Token tidak
+    cukup menulis simbol token base saja.
+
+    Sumbernya nama pool apa adanya dari API Meteora
+    (``pool-discovery-api.datapi.meteora.ag/pools`` → ``name``, disimpan ke
+    baris sebagai ``pool_name`` oleh :func:`_row_from_pool`): itulah pasangan
+    yang **benar-benar** ada di pool, bukan tebakan dari simbol
+    (``TOK-USDC`` tetap ``TOK-USDC``, tidak dipaksa jadi ``TOK/SOL``).
+    Pemisahnya dibiarkan seperti API (``-``); hanya spasi ganda yang dirapatkan
+    supaya tidak memecah lebar kolom. Nama ditulis apa adanya (huruf besar dari
+    Meteora); kalau kosong, ``name`` token dipakai **hanya bila** memang
+    terlihat seperti pasangan (mengandung ``/`` atau ``-``) — kalau tidak,
+    kembalikan ``""`` dan card tidak menampilkan baris pasangan sama sekali
+    (hasil scan versi lama sebelum kolom ini ada).
+    """
+    row = row or {}
+    pair = " ".join(str(row.get("pool_name") or "").split())
+    if pair:
+        return pair.upper()
+    name = " ".join(str(row.get("name") or "").split())
+    if name and ("/" in name or "-" in name):
+        return name.upper()
+    return ""
 
 
 def row_volatility_zero(row: dict | None) -> bool:

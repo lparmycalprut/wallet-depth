@@ -1,3 +1,52 @@
+# Kegiatan — 15 September 2026 (🏆 Best Pool: F/V ekstrem & kolom Token = pasangan pool)
+
+Permintaan user: *"coba cek last scan"* → *"gold menunjukkan 6328266.1 F/V"* →
+*"perbaiki"*, disusul *"lalu, juga kolom Token sekarang akan menunjukkan
+pasangan pairnya, misal ALLINU/SOL"*.
+
+## 1 · F/V juta-an: angka benar, formatnya yang salah
+
+Pool live yang dimaksud: `GOLD-XAUt0`
+(`C4LZ1YcqVbbCh3WqDuig7zQpG24o4UUDXwdJjhoy7PjR`, lane 24H, fee_pct 0,1%,
+active TVL 114.004,5 USD, MC ~2,47 juta) — `fee_active_tvl_ratio`
+0,013025137688422304 ÷ `volatility` 2,057951587445997e-09 =
+**6.329.175,9×**. Angka user (6.328.266,1) adalah sampel lain dari pool yang
+sama; keduanya sah. Penyebab tampilannya: `best_pool_ui._fv_cell` menulis
+`f"{ratio:.1f}×"` untuk **semua** besaran, jadi rasio jutaan terbaca
+`6329175.9×` — tanpa pemisah ribuan, dan digit di belakang koma tidak berarti.
+
+- `meteora_screener.format_fv_ratio()` (baru) + konstanta
+  `FV_DISPLAY_DECIMALS = 1` / `FV_PLAIN_MAX = 100.0`: `< 100×` → satu desimal
+  (`10.1×`), `>= 100×` → bulat + pemisah ribuan (`6,328,266×`), `inf` → `∞`,
+  `None`/NaN → `None` (UI menulis `—`).
+- Saringan **tidak berubah**: `row_best_gaps` tetap `24H F/V ≥ 5×` /
+  `30M F/V > 1×`; rasio kecil tetap tampil apa adanya, rasio ekstrem hanya
+  dirapikan teksnya.
+- Tooltip sel: helper baru `_pct_full()` supaya persen sangat kecil tidak
+  dibulatkan jadi `0.00%` — sekarang `volatility 2.06e-09%` (3 angka penting
+  di bawah 0,005%), itu justru angka yang menjelaskan rasio jutaan.
+
+## 2 · Kolom Token menulis pasangan pool
+
+`meteora_screener.row_pair_label(row)` mengambil nama pool dari API Meteora
+(`pool_name`, disimpan `_row_from_pool`) **apa adanya** — uppercase, spasi
+ganda dirapatkan, pemisahnya dibiarkan seperti API: `ALLINU/SOL`, `TOK-SOL`.
+Pasangan tidak ditebak dari simbol (pool USDC tetap `TOK-USDC`, bukan dipaksa
+`TOK/SOL`); kalau `pool_name` kosong, baris pasangan tidak ditampilkan sama
+sekali (hasil scan lama) — bukan dikarang. Sel Token kini: `$SIMBOL` → pasangan
+pool (`.watchlist-pair`, CSS baru di `dashboard_components.render_styles`) →
+alamat mint + link GMGN/Dex. Lebar kolom disesuaikan (`_COL_SPEC`: F/V
+0,7 → 1,0; Token 1,4 → 1,45) supaya angka ribuan dan pasangan muat; jumlah
+kolom tetap 14.
+
+## Verifikasi
+
+`python3 -m pytest tests -q` → **982 passed / 19 failed**. Baseline HEAD
+`8df2ca6` (worktree terpisah) → **973 passed / 19 failed** dengan daftar
+kegagalan yang **persis sama**, jadi tidak ada regresi; 9 tes baru
+(`FvDisplayTest` 6 tes + 3 AppTest) semuanya hijau. Detail: `AGENTS.md` (blok
+paling atas) + `README.md` bagian 🏆 Scan Best Pool Meteora.
+
 # Kegiatan — 15 September 2026 (hapus total halaman 🦅 Robinhood + 📦 temp)
 
 Permintaan user: *"hapus semua yang ada di page temp dan Robinhood, Total
