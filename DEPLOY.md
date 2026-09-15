@@ -7,29 +7,6 @@
 - Dependencies: `requirements.txt`
 - Secrets scanner utama: `HELIUS_API_KEY`/`HELIUS_API_KEYS` dan
   `GITHUB_TOKEN`.
-- Secret holder Robinhood Chain: `BLOCKSCOUT_API_KEY` (Blockscout PRO API,
-  key gratis di <https://dev.blockscout.com>). Tanpa key modul memakai
-  instance publik `robinhoodchain.blockscout.com` yang sejak 2026-09-08
-  sering menjawab **HTTP 403 bot-protection** untuk request server
-  (Streamlit Cloud / runner Actions). Di Streamlit Cloud isi di
-  **Secrets** (`BLOCKSCOUT_API_KEY = "proapi_…"`) atau
-  `blockscout_api_key` di `config.json`. Punya lebih dari satu akun?
-  `BLOCKSCOUT_API_KEYS = "proapi_1,proapi_2,…"` — dipakai bergantian,
-  key yang kreditnya habis/ditolak diparkir otomatis (lihat langkah di
-  bawah).
-- Secret listing pool Krystal (kartu 🦅, hanya dipakai di dashboard, **tidak
-  dipakai workflow Actions**): `KRYSTAL_API_KEY` — key Krystal Cloud
-  (<https://cloud.krystal.app>, header `KC-APIKey`). Isi di **Streamlit
-  Cloud → Settings → Secrets**:
-
-  ```toml
-  KRYSTAL_API_KEY = "kc_…"
-  ```
-
-  Tanpa key kartu 🦅 tidak error — hanya menampilkan
-  "API key Krystal belum dipasang". Jangan pernah menaruh key di file yang
-  di-commit; `config.json` dan `.streamlit/secrets.toml` ada di
-  `.gitignore` hanya untuk pemakaian lokal.
 - Secrets alert Telegram opsional: `TELEGRAM_BOT_TOKEN` dan
   `TELEGRAM_CHAT_ID`. **Secret GitHub ≠ secret Streamlit** — cron
   Actions membaca yang pertama, scan manual di dashboard membaca yang
@@ -54,9 +31,8 @@ Workflow `.github/workflows/daily-effort.yml` ("Holder Dust Scanner")
 berjalan **tiap ±5 menit** (`schedule: cron "*/5 * * * *"` + langkah **chain
 dispatch**) dan memanggil `python scripts/scan_holders.py`. Sejak
 **2026-09-07** scanner hanya mengerjakan **lane LP**: Chart LP Meteora
-(Solana/Helius) + Robinhood LP (EVM/Blockscout), keduanya tiap run = ±5 menit.
-Watchlist biasa (Solana non-LP & Robinhood `source=regular`) tidak di-scan cron
-lagu — slot 4 jam, catch-up, bootstrap, pembacaan toggle Telegram-nya, dan
+(Solana/Helius), tiap run = ±5 menit (lane Robinhood dihapus 2026-09-15).
+Watchlist biasa (Solana non-LP) tidak di-scan cron lagi — slot 4 jam, catch-up, bootstrap, pembacaan toggle Telegram-nya, dan
 semua rule lama (🔔 HIGH DROP, ⚡ EARLY DUMP, exit/aman) dilepas dari jalur
 cron (scan manual di dashboard tetap ada; sejak 2026-09-13 kedua jalur memakai
 satu-satunya rule ⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE — dust naik ≥ 0,02%
@@ -67,7 +43,7 @@ dibaca lagi, dan backup durable dibatasi token LP aktif
 (`publish_holder_history(..., keep_mints=…)` — terukur 2.135.084 → 10.050 byte
 gzip pada store live). Kalau kuota Helius mulai ketat: set
 `LP_SCAN_RUN_MULTIPLIER: "3"` di langkah scan (env, tanpa ubah kode) sehingga
-scan Solana kembali ±15 menit sementara Robinhood LP tetap tiap run.
+scan Solana kembali ±15 menit.
 `timeout-minutes` sudah turun 45 → 15 menit di workflow terpasang
 (scan ±1-2 menit + tidur chain ±5 menit) supaya run yang macet tidak menumpuk
 antre di concurrency group `holder-scanner`.
@@ -139,8 +115,7 @@ antre di concurrency group `holder-scanner`.
 >
 > **Cara memperlambat scan Solana saja** (kalau kuota Helius menipis, tanpa
 > menyentuh kode): tambah env `LP_SCAN_RUN_MULTIPLIER: "3"` di langkah
-> "Holder scan" → lane Meteora tiap 3 run (±15 menit), Robinhood LP tetap tiap
-> run.
+> "Holder scan" → lane Meteora tiap 3 run (±15 menit).
 >
 > **Cara mengembalikan SELURUH kadens ke 15 menit** (atau ke berapa pun):
 > angka-angka ini harus bergerak bersamaan —
@@ -184,8 +159,8 @@ antre di concurrency group `holder-scanner`.
 Langkah setiap scan:
 
 1. Analisis per token **lane LP**: holder Helius DAS untuk Chart LP Meteora
-   (fallback GMGN) dan Blockscout untuk Robinhood LP (`--max-wallets 3000`
-   dikirim workflow; default modul 100.000), klasifikasi real (>$10) vs dust,
+   (fallback GMGN; `--max-wallets 3000` dikirim workflow, default modul
+   100.000), klasifikasi real (>$10) vs dust,
    `dust_pct_mc`, mid-tier. Cron memakai `detail=False` (titik holder +
    alert ⚡ saja); baseline immutable + kronologi wallet hanya ditulis scan
    FULL manual (`--full`).
@@ -207,9 +182,8 @@ Langkah setiap scan:
    `WARN` (`backup=GAGAL (...)` di log), exit code tetap dari publish
    snapshot. `--no-push` melewati keduanya.
 
-Cadence (2026-09-04 hourly → 2026-09-05 LP 15 menit → 2026-09-06 run 5 menit:
-pertama khusus lane Robinhood, lalu hari yang kedua untuk KEDUA lane LP) dan
-ukuran ref `holder-live`:
+Cadence (2026-09-04 hourly → 2026-09-05 LP 15 menit → 2026-09-06 run 5 menit)
+dan ukuran ref `holder-live`:
 
 - `MAX_POINTS = 1008` — densitas titik riwayat mengikuti kadens run, jadi
   batasnya ikut dikalibrasi. Sejak kedua lane LP di-scan tiap 5 menit, batas
@@ -278,53 +252,25 @@ env:
   GITHUB_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
   HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
   HELIUS_API_KEYS: ${{ secrets.HELIUS_API_KEYS }}
-  BLOCKSCOUT_API_KEY: ${{ secrets.BLOCKSCOUT_API_KEY }}
-  BLOCKSCOUT_API_KEYS: ${{ secrets.BLOCKSCOUT_API_KEYS }}
   TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
   TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 ```
 
 `HELIUS_API_KEY` wajib untuk hasil holder yang andal di Actions karena GMGN
-sering memblokir runner. `BLOCKSCOUT_API_KEY` sama pentingnya untuk lane
-Robinhood LP: tanpa key, 403 bot-protection instance publik membuat semua
-token Robinhood pulang 0 wallet (log Actions menulis `WARN: Blockscout
-publik menolak scan …`; snapshot lama tidak ditimpa berkat gate
-`holders_usable`). `GH_TOKEN` opsional bila token bawaan tidak memiliki
+sering memblokir runner. `GH_TOKEN` opsional bila token bawaan tidak memiliki
 permission publish. Scanner exit non-zero bila semua token menghasilkan nol
 holder atau publish status gagal.
 
-## Setup key Blockscout PRO API (Robinhood Chain)
-
-Satu key gratis = 100K kredit/hari & 5 RPS **per akun**; ±3 request per
-token per scan (≈60–80 kredit) → 1 key cukup untuk ≤ 3–4 token LP Robinhood
-pada kadens 5 menit. Lebih dari itu, atau token > 10.000 holder (paginasi
-RPC), pasang beberapa key dari **akun berbeda**.
-
-1. Buat key di <https://dev.blockscout.com> (Sign in → **API Keys** →
-   *Create*; key `proapi_…` hanya ditampilkan sekali — salin saat itu juga).
-   Ulangi di akun lain bila perlu lebih dari satu key.
-2. **Streamlit Cloud** → aplikasi → ⋮ **Settings** → **Secrets** → tambahkan
-   (format TOML, satu baris, key dipisah koma, tanpa spasi di dalam tanda
-   kutip tidak masalah karena dibersihkan):
-
-   ```toml
-   BLOCKSCOUT_API_KEYS = "proapi_AAA,proapi_BBB,proapi_CCC,proapi_DDD"
-   ```
-
-   Klik **Save** — aplikasi restart otomatis. Cek: Scan Holder Khusus dengan
-   CA Robinhood → caption *Blockscout (Robinhood Chain) · PRO API key#N*.
-3. **GitHub** → repo → **Settings** → **Secrets and variables** → **Actions**
-   → **New repository secret**: Name `BLOCKSCOUT_API_KEYS`, Secret =
-   daftar key yang sama dipisah koma → **Add secret**.
-4. Pastikan `.github/workflows/daily-effort.yml` meneruskan env
-   `BLOCKSCOUT_API_KEYS: ${{ secrets.BLOCKSCOUT_API_KEYS }}` (sudah ada di
-   `daily-effort-5menit.yml`; salin manual bila push bot ke folder workflow
-   ditolak). Cek log run berikutnya: baris
-   `Rencana scan Robinhood LP: … blockscout_pro_keys=4` dan
-   `Blockscout PRO API: 4 key · key#1 sisa 99,800 kredit …`.
-
-Jangan pernah menaruh key di `config.json` yang di-commit; `config.json`
-ada di `.gitignore` hanya untuk pemakaian lokal.
+> **Sisa env `BLOCKSCOUT_API_KEY(S)` di workflow terpasang.** Bersama
+> penghapusan page 🦅 Robinhood (2026-09-15) env itu tidak lagi dibaca kode
+> mana pun — `robinhood_holders.py` sudah tidak ada, jadi nilainya hanya
+> diteruskan ke proses scanner dan diabaikan (tidak ada efek, tidak ada
+> request Blockscout). Menghapusnya perlu edit manual
+> `.github/workflows/daily-effort.yml`: bot/agent ditolak GitHub
+> (`refusing to allow a GitHub App to create or update workflow … without
+> 'workflows' permission`) kecuali app-nya diberi **Actions Workflows:
+> Read & write**. Salinan siap pakai yang sudah bersih ada di
+> `daily-effort-5menit.yml`.
 
 ## Setup Telegram
 

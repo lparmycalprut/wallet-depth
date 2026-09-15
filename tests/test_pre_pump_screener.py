@@ -822,10 +822,6 @@ class DashboardSectionRemovedTest(unittest.TestCase):
                        return_value={"updated_at": None, "tokens": {}}),
             mock.patch("holder_history.pull_holder_history",
                        return_value=None),
-            mock.patch("trending_ui.screen", return_value=[]),
-            mock.patch("trending_ui.screen_trending_h1", return_value=[]),
-            mock.patch("trending_ui.screen_hrhr", return_value=[]),
-            mock.patch("trending_ui.screen_hrhr_h1", return_value=[]),
         )
         for patch in patches:
             patch.start()
@@ -840,9 +836,14 @@ class DashboardSectionRemovedTest(unittest.TestCase):
                              for button in app.button))
 
     def test_pre_pump_page_file_is_gone(self):
+        """Satu-satunya halaman tersisa: 🧮 Holder Analytic.
+
+        Page 🦅 Robinhood + page temp dihapus total 2026-09-15 (permintaan
+        user), jadi tidak boleh ada file halaman lain yang muncul lagi.
+        """
         pages = Path(__file__).resolve().parent.parent / "pages"
         names = sorted(path.name for path in pages.glob("*.py"))
-        self.assertEqual(names, ["5_🧮_Holder.py", "6_🦅_Robinhood.py", "8_temp.py"])
+        self.assertEqual(names, ["5_🧮_Holder.py"])
 
 
 if __name__ == "__main__":  # pragma: no cover

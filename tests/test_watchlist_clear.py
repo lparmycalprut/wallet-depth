@@ -7,9 +7,9 @@ Dua lapis:
    **satu** tulis journal + **satu** commit (bukan N klik ✕), kontrak
    durabilitas sama dengan hapus satu token: journal dulu → file lokal →
    commit (``background=True`` = thread latar, nol jaringan di jalur klik).
-2. AppTest ``app.py`` — tombol hanya ada di card watchlist biasa, butuh
-   konfirmasi, dan scope-nya **hanya** token non-LP (Chart LP Meteora dan
-   watchlist Robinhood tidak ikut).
+Tombol 🗑️ di card watchlist biasa ikut terhapus bersama page temp
+(2026-09-15); yang tetap di-pin di sini adalah kontrak fungsi
+``remove_many_from_watchlist``-nya.
 """
 from __future__ import annotations
 
@@ -239,81 +239,6 @@ def _store():
             "tokens": {mint: {"symbol": slot["symbol"], "cohort": {},
                               "points": slot.get("history") or []}
                        for mint, slot in _status()["tokens"].items()}}
-
-
-@unittest.skipIf(AppTest is None, "streamlit not installed")
-class ClearRegularWatchlistButtonTest(unittest.TestCase):
-    def _app(self, watchlist=None):
-        data = dict(_watchlist() if watchlist is None else watchlist)
-        patches = (
-            mock.patch("watchlist.load_watchlist",
-                       side_effect=lambda **_kw: dict(data)),
-            mock.patch("holder_status.load_holder_status",
-                       side_effect=lambda **_kw: _status()),
-            mock.patch("holder_history.load_holder_history",
-                       side_effect=lambda *a, **kw: _store()),
-            # Backup durable store: tes tidak boleh menyentuh jaringan.
-            mock.patch("holder_history.pull_holder_history", return_value=None),
-        )
-        for patch in patches:
-            patch.start()
-            self.addCleanup(patch.stop)
-        return AppTest.from_file(APP, default_timeout=60).switch_page("pages/8_temp.py").run()
-
-    def _button(self, app, key):
-        found = [button for button in app.button if button.key == key]
-        self.assertTrue(found, f"tombol {key} tidak ditemukan")
-        return found[0]
-
-    def _body(self, app):
-        return "\n".join(node.value for node in app.markdown)
-
-    def test_tombol_konfirmasi_ada_dan_menyebut_jumlah_token_biasa(self):
-        app = self._app()
-        self.assertEqual(len(app.exception), 0)
-        button = self._button(app, CLEAR_KEY)
-        # 2 token biasa (AAA manual + BBB degen); LPTOK (meteora) tidak dihitung
-        self.assertIn("2 token", button.label)
-        body = self._body(app)
-        self.assertIn("Hapus **2 token** dari watchlist biasa?", body)
-        self.assertIn("Tidak** menyentuh Watchlist Meteora", body)
-
-    def test_klik_konfirmasi_hanya_menghapus_token_non_lp(self):
-        app = self._app()
-        with mock.patch("watchlist.remove_many_from_watchlist",
-                        return_value={"removed": 2, "missing": 0,
-                                      "saved": True,
-                                      "addresses": [CA_A, CA_B]}) as clear:
-            app = self._button(app, CLEAR_KEY).click().run()
-        clear.assert_called_once()
-        cas = clear.call_args.args[0]
-        self.assertEqual(sorted(cas), sorted([CA_A, CA_B]))
-        self.assertNotIn(LP_MINT, cas)
-        self.assertEqual(clear.call_args.kwargs.get("background"), True)
-        self.assertEqual(clear.call_args.kwargs.get("note"),
-                         "watchlist biasa")
-        self.assertEqual(len(app.exception), 0)
-        # laporan hasil ditampilkan setelah rerun
-        notices = "\n".join(node.value for node in app.success)
-        self.assertIn("2 token dihapus dari watchlist biasa", notices)
-
-    def test_tanpa_token_biasa_tombol_tidak_dirender(self):
-        """Card kosong (hanya Chart LP) → tidak ada yang bisa dihapus."""
-        only_lp = {LP_MINT: _watchlist()[LP_MINT]}
-        app = self._app(watchlist=only_lp)
-        self.assertEqual(len(app.exception), 0)
-        keys = [button.key or "" for button in app.button]
-        self.assertNotIn(CLEAR_KEY, keys)
-        # Baris LP tetap di halaman utama, bukan halaman temp.
-        self.assertNotIn(f"lp-move-{LP_MINT}", keys)
-
-    def test_tombol_baris_lama_tetap_ada(self):
-        """Hapus semua melengkapi ✕ per baris, bukan menggantikannya."""
-        app = self._app()
-        keys = [button.key or "" for button in app.button]
-        self.assertIn(f"remove-{CA_A}", keys)
-        self.assertIn(f"remove-{CA_B}", keys)
-        self.assertIn(CLEAR_KEY, keys)
 
 
 if __name__ == "__main__":  # pragma: no cover

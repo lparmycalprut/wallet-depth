@@ -145,8 +145,8 @@ class ParseStatusTest(unittest.TestCase):
 
 
 class PerPathCacheTest(unittest.TestCase):
-    """Cache ``_CACHE`` dikunci per ``repo_path`` supaya watchlist Solana dan
-    Robinhood memakai snapshot masing-masing."""
+    """Cache ``_CACHE`` dikunci per ``repo_path`` supaya dua store berbeda
+    memakai snapshot masing-masing."""
 
     def setUp(self):
         ss.reset_cache()

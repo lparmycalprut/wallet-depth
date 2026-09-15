@@ -20,14 +20,14 @@ import alert_settings
 import watchlist as wl
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
-TEMP = "pages/8_temp.py"
-ROBINHOOD = "pages/6_🦅_Robinhood.py"
 
 LP_MINT = "LpMint11111111111111111111111111111111111"
 LP_SAFE = "LpSafe22222222222222222222222222222222222"
 SOL_MINT = "Watch11111111111111111111111111111111111"
-RH_CA = "0x" + "a" * 40
-RH_CA2 = "0x" + "b" * 40
+# CA kedua untuk menguji store mute (format 0x di-casefold oleh
+# ``alert_settings.mint_key``; Solana case-sensitive).
+OTHER_CA = "0x" + "a" * 40
+OTHER_CA2 = "0x" + "b" * 40
 NOW = 1_770_000_000
 BUCKET = 300
 
@@ -66,11 +66,11 @@ class SettingsMuteStoreTest(unittest.TestCase):
         self.assertEqual(self._payload()[alert_settings.KEY_MUTED_MINTS], [])
 
     def test_toggle_global_dan_mute_per_token_saling_menjaga(self):
-        alert_settings.set_mint_alert_enabled(RH_CA, False)
+        alert_settings.set_mint_alert_enabled(OTHER_CA, False)
         self.assertTrue(alert_settings.set_regular_telegram_enabled(False))
-        self.assertEqual(alert_settings.muted_mints(), {RH_CA})
+        self.assertEqual(alert_settings.muted_mints(), {OTHER_CA})
         self.assertFalse(alert_settings.regular_telegram_enabled(True))
-        alert_settings.set_mint_alert_enabled(RH_CA, True)
+        alert_settings.set_mint_alert_enabled(OTHER_CA, True)
         self.assertTrue(alert_settings.set_regular_telegram_enabled(True))
         payload = self._payload()
         self.assertEqual(payload[alert_settings.KEY_MUTED_MINTS], [])
@@ -81,7 +81,7 @@ class SettingsMuteStoreTest(unittest.TestCase):
         self.assertTrue(alert_settings.set_mint_alert_enabled(upper, False))
         self.assertTrue(alert_settings.is_mint_muted(upper.lower()))
         self.assertTrue(alert_settings.is_mint_muted(upper))
-        self.assertEqual(alert_settings.mutes_for([RH_CA]), {RH_CA})
+        self.assertEqual(alert_settings.mutes_for([OTHER_CA]), {OTHER_CA})
         self.assertTrue(alert_settings.set_mint_alert_enabled("AbC1", False))
         self.assertFalse(alert_settings.is_mint_muted("abc1"))
 
@@ -92,17 +92,17 @@ class SettingsMuteStoreTest(unittest.TestCase):
 
     def test_forget_mint_alert_membuang_pilihan_off(self):
         alert_settings.set_mint_alert_enabled(LP_MINT, False)
-        alert_settings.set_mint_alert_enabled(RH_CA, False)
+        alert_settings.set_mint_alert_enabled(OTHER_CA, False)
         self.remote.reset_mock()
         self.assertTrue(alert_settings.forget_mint_alert(LP_MINT))
         self.assertFalse(alert_settings.is_mint_muted(LP_MINT))
-        self.assertTrue(alert_settings.is_mint_muted(RH_CA))
-        self.assertEqual(self.remote.call_args.args[0]["muted_mints"], [RH_CA])
+        self.assertTrue(alert_settings.is_mint_muted(OTHER_CA))
+        self.assertEqual(self.remote.call_args.args[0]["muted_mints"], [OTHER_CA])
 
     def test_daftar_stabil_dan_toleran_payload_lama(self):
-        alert_settings.set_mint_alert_enabled(RH_CA, False)
+        alert_settings.set_mint_alert_enabled(OTHER_CA, False)
         alert_settings.set_mint_alert_enabled(LP_MINT, False)
-        self.assertEqual(self._payload()[alert_settings.KEY_MUTED_MINTS], sorted([LP_MINT, RH_CA]))
+        self.assertEqual(self._payload()[alert_settings.KEY_MUTED_MINTS], sorted([LP_MINT, OTHER_CA]))
         with open(alert_settings.SETTINGS_PATH, "w", encoding="utf-8") as handle:
             json.dump({"muted_mints": [LP_MINT, "", None, LP_MINT], "telegram_regular_enabled": "off"}, handle)
         alert_settings.reset_cache()
@@ -152,12 +152,12 @@ class AddUlangSelaluOnTest(unittest.TestCase):
 
     def test_add_banyak_token_membersihkan_mute(self):
         alert_settings.set_mint_alert_enabled(LP_MINT, False)
-        alert_settings.set_mint_alert_enabled(RH_CA, False)
+        alert_settings.set_mint_alert_enabled(OTHER_CA, False)
         self.remote.reset_mock()
-        result = wl.add_many_to_watchlist([{"ca": LP_MINT, "symbol": "RAYCAT"}, {"ca": RH_CA, "symbol": "CME"}], source="meteora")
+        result = wl.add_many_to_watchlist([{"ca": LP_MINT, "symbol": "RAYCAT"}, {"ca": OTHER_CA, "symbol": "CME"}], source="meteora")
         self.assertEqual(result.get("added"), 2)
         self.assertFalse(alert_settings.is_mint_muted(LP_MINT))
-        self.assertFalse(alert_settings.is_mint_muted(RH_CA))
+        self.assertFalse(alert_settings.is_mint_muted(OTHER_CA))
 
     def test_token_tanpa_mute_tidak_commit_apa_pun(self):
         self.assertTrue(wl.add_to_watchlist(LP_MINT, "RAYCAT"))
@@ -175,9 +175,6 @@ def _status_token(symbol: str, pct: float) -> dict:
 
 def _store_lp() -> dict:
     return {"updated_at": NOW, "tokens": {LP_MINT: _store_token("RAYCAT", 0.55), LP_SAFE: _store_token("LPSAFE", 0.31), SOL_MINT: {"symbol": "HOLDT", "cohort": {}, "points": [], "alert_state": _episode_marker()}}}
-
-def _store_rh() -> dict:
-    return {"updated_at": NOW, "tokens": {RH_CA: {"symbol": "CME", "cohort": {}, "points": [], "alert_state": _episode_marker()}, RH_CA2: {"symbol": "MOO", "cohort": {}, "points": [], "alert_state": _episode_marker()}}}
 
 def _episode_marker(dust_pct: float = 0.07) -> dict:
     return {"early_dump": {"ts": NOW - BUCKET, "dust_pct_mc": dust_pct, "baseline_pct": dust_pct, "baseline_ts": NOW - 3600, "step": 0, "baseline_src": "history"}}
@@ -203,10 +200,6 @@ class AlertToggleUiTest(unittest.TestCase):
             mock.patch("watchlist.load_watchlist", side_effect=lambda **_kw: self.watchlist()),
             mock.patch("holder_status.load_holder_status", side_effect=lambda **_kw: _status_lp()),
             mock.patch("holder_history.load_holder_history", side_effect=lambda *_a, **_kw: _store_lp()),
-            mock.patch("robinhood_watchlist.load_watchlist", side_effect=lambda **_kw: self.rh_watchlist()),
-            mock.patch("robinhood_watchlist.load_status", return_value={"updated_at": NOW, "tokens": {}}),
-            mock.patch("robinhood_watchlist.load_history", side_effect=lambda *a, **kw: _store_rh()),
-            mock.patch("robinhood_watchlist.sync_state", return_value={"state": ""}),
             mock.patch("alert_settings.muted_mints", side_effect=lambda *a, **kw: set(self.muted)),
             mock.patch("alert_settings.set_mint_alert_enabled", side_effect=self._toggle),
         ]
@@ -219,9 +212,6 @@ class AlertToggleUiTest(unittest.TestCase):
 
     def watchlist(self):
         return {LP_MINT: {"symbol": "RAYCAT", "source": "meteora", "added": "2026-01-05"}, LP_SAFE: {"symbol": "LPSAFE", "source": "meteora", "added": "2026-01-05"}, SOL_MINT: {"symbol": "HOLDT", "source": "manual", "added": "2026-01-05"}}
-
-    def rh_watchlist(self):
-        return {RH_CA: {"symbol": "CME", "source": "lp", "added": "2026-01-05"}, RH_CA2: {"symbol": "MOO", "source": "regular", "added": "2026-01-05"}}
 
     def _write(self, path, payload, **_kw):
         self.written[str(path)] = payload
@@ -320,20 +310,6 @@ class AlertToggleUiTest(unittest.TestCase):
         self._button(app, f"lp-alert-{LP_MINT}").click().run()
         self.assertEqual(self.toggle_calls, [(LP_MINT, True)])
 
-    def test_notif_biasa_robinhood_punya_bell_sendiri(self):
-        app = self._app(page=TEMP)
-        self.assertEqual(self._button(app, f"rhreg-alert-{RH_CA2}").label, "🔔")
-        self._button(app, f"rhreg-alert-{RH_CA2}").click().run()
-        self.assertEqual(self.toggle_calls, [(RH_CA2, False)])
-
-    def test_notif_robinhood_lp_punya_bell_di_halaman_robinhood(self):
-        app = self._app(page=ROBINHOOD)
-        self.assertEqual(self._button(app, f"rh-alert-{RH_CA}").label, "🔔")
-        self.muted = {RH_CA}
-        app = self._app(page=ROBINHOOD)
-        self.assertEqual(self._button(app, f"rh-alert-{RH_CA}").label, "🔕")
-        self.assertIn("🔕 notif off", self._body(app))
-
     def test_gagal_sinkron_github_diperingatkan(self):
         self.toggle_ok = False
         app = self._app(page=APP)
@@ -370,50 +346,16 @@ class AlertToggleUiTest(unittest.TestCase):
             app = self._button(app, "lp-scan-now").click().run()
         self.assertEqual(len(app.exception), 0)
 
-    def test_scan_robinhood_lp_manual_menghormati_bell_off(self):
-        self.muted = {RH_CA}
-        app = self._app(page=ROBINHOOD)
-        with mock.patch("robinhood_watchlist.scan_watchlist", return_value={RH_CA: _analysis("CME", 0.11)}), mock.patch("robinhood_watchlist.publish_scan", return_value={"updated_at": NOW}):
-            app = self._label_button(app, "🔄 Scan holder watchlist Robinhood LP").click().run()
-        self.assertEqual(len(app.exception), 0)
-        self.assertEqual(self.sent, [])
-        self.assertIn("dilewati", self._info(app))
-
-    def test_scan_robinhood_biasa_hormati_bell_walau_toggle_global_on(self):
-        self.muted = {RH_CA2}
-        app = self._app(page=TEMP)
-        with mock.patch("alert_settings.regular_telegram_enabled", return_value=True), mock.patch("robinhood_watchlist.scan_watchlist", return_value={RH_CA2: _analysis("MOO", 0.11)}), mock.patch("robinhood_watchlist.publish_scan", return_value={"updated_at": NOW}):
-            app = self._label_button(app, "🔄 Scan holder watchlist Robinhood biasa").click().run()
-        self.assertEqual(len(app.exception), 0)
-        self.assertEqual(self.sent, [])
-        self.assertIn("dilewati", self._info(app))
-
-    def test_scan_watchlist_biasa_solana_hormati_mute_token_pindahan(self):
-        self.muted = {SOL_MINT}
-        app = self._app(page=TEMP)
-        with mock.patch("alert_settings.regular_telegram_enabled", return_value=True), mock.patch("holder_analysis.analyze_token", return_value=_analysis("HOLDT", 0.11)):
-            app = self._label_button(app, "🔄 Scan holder watchlist").click().run()
-        self.assertEqual(len(app.exception), 0)
-        self.assertEqual(self.sent, [])
-        self.assertIn("dilewati", self._info(app))
-
-    def test_scan_robinhood_biasa_tanpa_bell_tetap_kirim(self):
-        app = self._app(page=TEMP)
-        with mock.patch("alert_settings.regular_telegram_enabled", return_value=True), mock.patch("robinhood_watchlist.scan_watchlist", return_value={RH_CA2: _analysis("MOO", 0.11)}), mock.patch("robinhood_watchlist.publish_scan", return_value={"updated_at": NOW}):
-            app = self._label_button(app, "🔄 Scan holder watchlist Robinhood biasa").click().run()
-        self.assertEqual(len(self.sent), 1, self.sent)
-
-
 class CronMuteWiringTest(unittest.TestCase):
-    def _run(self, mute, *, lp, rh):
-        import scripts.scan_holders as mod
-        import robinhood_watchlist as rw_mod
-        seen_holder = []
-        seen_metric = []
+    """Cron hanya punya lane Meteora sejak lane Robinhood dihapus (2026-09-15).
 
-        def _process(items, store, **kwargs):
-            seen_holder.append(kwargs.get("mute_mints"))
-            return []
+    Yang di-pin: token yang 🔕-nya dimatikan user tetap di-scan, tetapi
+    ``mute_mints`` diteruskan ke pengiriman metric Telegram.
+    """
+
+    def _run(self, mute, *, lp):
+        import scripts.scan_holders as mod
+        seen_metric = []
 
         def _send_metric(events, **kwargs):
             seen_metric.append(kwargs.get("mute_mints") or set())
@@ -436,26 +378,16 @@ class CronMuteWiringTest(unittest.TestCase):
             stack.enter_context(mock.patch.object(mod, "save_watchlist", return_value=True))
             stack.enter_context(mock.patch.object(mod.alert_settings, "muted_mints", side_effect=lambda *a, **kw: set(mute)))
             stack.enter_context(mock.patch.object(mod.alert_settings, "mutes_for", side_effect=lambda mints, **kw: set(mute) & set(mints or [])))
-            stack.enter_context(mock.patch.object(rw_mod, "load_watchlist", return_value=rh))
-            stack.enter_context(mock.patch.object(rw_mod, "load_status", return_value={"tokens": {}}))
-            stack.enter_context(mock.patch.object(rw_mod, "load_history", return_value={"tokens": {}}))
-            stack.enter_context(mock.patch.object(rw_mod, "scan_watchlist", return_value=rh))
-            stack.enter_context(mock.patch.object(rw_mod, "publish_scan", return_value={"updated_at": 2}))
-            stack.enter_context(mock.patch.object(mod, "process_holder_alerts", side_effect=_process))
             self.assertEqual(mod.main(["--no-push"]), 0)
-        return seen_holder, seen_metric
+        return seen_metric
 
-    def test_mute_diteruskan_ke_meteora_dan_robinhood(self):
-        rh_ca = RH_CA2
-        seen_holder, seen_metric = self._run({LP_MINT, rh_ca}, lp={LP_MINT: {"symbol": "RAYCAT", "source": "meteora", "holders": {"total_fetched": 5}}}, rh={rh_ca: {"symbol": "MOO", "source": "lp", "holders": {"total_fetched": 5}}})
-        self.assertEqual(len(seen_holder), 1)
-        self.assertEqual(seen_holder[0], {rh_ca})
+    def test_mute_diteruskan_ke_metric_meteora(self):
+        seen_metric = self._run({LP_MINT}, lp={LP_MINT: {"symbol": "RAYCAT", "source": "meteora", "holders": {"total_fetched": 5}}})
         self.assertEqual(len(seen_metric), 1)
         self.assertEqual(seen_metric[0], {LP_MINT})
 
     def test_tanpa_mute_tidak_ada_yang_dilewati(self):
-        seen_holder, seen_metric = self._run(set(), lp={LP_MINT: {"symbol": "RAYCAT", "source": "meteora", "holders": {"total_fetched": 5}}}, rh={})
-        self.assertEqual(seen_holder, [])
+        seen_metric = self._run(set(), lp={LP_MINT: {"symbol": "RAYCAT", "source": "meteora", "holders": {"total_fetched": 5}}})
         self.assertEqual(seen_metric, [set()])
 
 

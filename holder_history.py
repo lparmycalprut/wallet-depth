@@ -88,7 +88,7 @@ DUST_LIMIT_PCT = DUST_SCAN_HIDE_PCT
 # Urutan keparahan badge (dipakai sorting Chart LP / watchlist).
 DUST_LEVEL_RANK = {"ok": 0, "caution": 1, "danger": 2}
 INTERVAL_SEC = 4 * 3600          # grafik 4 jam sekali (watchlist biasa)
-# Lane LP (Chart LP Meteora + Robinhood LP) di-scan cron tiap ±5 menit dan
+# Lane LP (Chart LP Meteora) di-scan cron tiap ±5 menit dan
 # fokus user adalah pergerakan 5 menitan, jadi grafik/sparkline card LP
 # memakai bucket ini — bukan 4 jam (permintaan user 2026-09-07).
 LP_INTERVAL_SEC = 5 * 60         # grafik 5 menit (lane LP)
@@ -98,7 +98,7 @@ MID_USD_MIN = 100.0              # Crab bawah (wallet_depth: > $100)
 MID_USD_MAX = 10_000.0           # Fish atas (<= $10k)
 # Kalibrasi per kadens scan: 14 hari × 24 titik/jam = 336 (cron hourly,
 # 2026-09-04). Sejak **2026-09-06 kedua lane LP di-scan tiap 5 menit**
-# (Chart LP Meteora + Robinhood LP), dan 336 titik hanya bertahan 28 jam pada
+# (Chart LP Meteora), dan 336 titik hanya bertahan 28 jam pada
 # densitas itu — jendela "Grafik 4 jam" menyusut dari ±21 bucket jadi 7.
 # 1008 titik = 3,5 hari × 288 titik/hari → jendela grafik LP tetap sama seperti
 # pada kadens 15 menit. Watchlist biasa (6 titik/hari) tidak terpengaruh:
@@ -1621,7 +1621,7 @@ def restrict_store_to_mints(store: dict | None, mints) -> dict:
     """Buang token di luar ``mints`` dari store (backup cron lane LP).
 
     Sejak **2026-09-07** cron holder hanya memindai **lane LP** (Chart LP
-    Meteora + Robinhood LP), jadi backup durable tidak perlu lagi menyeret
+    Meteora), jadi backup durable tidak perlu lagi menyeret
     token watchlist lama yang sudah tidak di-scan: 81 token × titik mentah
     membuat payload ±2,1 MB di-push ulang tiap 5 menit (±600 MB/hari riwayat
     git) padahal hanya token LP aktif yang dibaca dashboard. ``mints`` kosong
@@ -1657,9 +1657,8 @@ def publish_holder_history(store: dict | None, *, push: bool = True,
                            keep_mints=None) -> dict:
     """Backup store (gzip) ke ref ``holder-live``.
 
-    ``repo_path`` default ``holder_history.json.gz``; Robinhood memakai
-    ``holder_history_robinhood.json.gz`` supaya store kedua jaringan tidak
-    tercampur.
+    ``repo_path`` default ``holder_history.json.gz`` (bisa ditimpa untuk
+    store lain, misalnya suite tes).
 
     ``keep_mints`` ( iterable address ) membatasi **payload yang di-push** ke
     token-token itu saja (:func:`restrict_store_to_mints`) — dipakai cron lane
@@ -1729,8 +1728,7 @@ def publish_holder_history(store: dict | None, *, push: bool = True,
 def pull_holder_history(repo_path: str | None = None) -> dict | None:
     """Ambil backup store durable dari ref ``holder-live``; ``None`` bila gagal.
 
-    ``repo_path`` default ``holder_history.json.gz``; Robinhood memakai
-    ``holder_history_robinhood.json.gz``.
+    ``repo_path`` default ``holder_history.json.gz``.
     """
     if not backup_enabled():
         return None
@@ -1751,9 +1749,8 @@ def load_durable_holder_history(*, ttl: int = DURABLE_CACHE_TTL,
                                 repo_path: str | None = None) -> dict:
     """Store lokal + backup durable (cache TTL) — dipakai UI dan cron.
 
-    ``path``/``repo_path`` default Solana; Robinhood memakai
-    ``holder_history_robinhood.json`` dan backup
-    ``holder_history_robinhood.json.gz``.
+    ``path``/``repo_path`` default ``holder_history.json`` dan backup
+    ``holder_history.json.gz``.
 
     Lingkungan ephemeral (runner Actions, Streamlit Cloud) mulai dari file
     kosong; backup durable mengembalikan baseline scan FULL, kohort, state

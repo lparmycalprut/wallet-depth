@@ -919,13 +919,10 @@ class BestPoolCardTest(unittest.TestCase):
         app.session_state["best_pool_lane"] = "30m"
         app.run()
         self.assertEqual(len(app.exception), 0)
-        # Batasi pembacaan ke card Meteora saja: card 🦅 Scan Best Pool Krystal
-        # di bawahnya memang berjendela 24 jam (tooltip-nya menyebut
-        # "fee 24 jam"), jadi yang di-pin di sini hanya milik tabel 30M.
+        # Batasi pembacaan ke card 🏆 Scan Best Pool Meteora saja.
         body = "\n".join(node.value for node in app.markdown)
         start = body.find(ms.BEST_CARD_TITLE)
-        end = body.find('title="Listing pool Krystal')
-        body = body[start:end if end > start else len(body)]
+        body = body[start:]
         self.assertIn(">Vol 30m<", body)
         self.assertNotIn(">Vol 24h<", body)
         self.assertIn("volume 30 menit", body)

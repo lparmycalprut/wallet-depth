@@ -1,31 +1,28 @@
 #!/usr/bin/env python3
-"""Scanner holder **lane LP saja**: Chart LP Meteora + Robinhood LP.
+"""Scanner holder **lane LP saja**: Chart LP Meteora (Solana).
 
 Dirampingkan **2026-09-07** (permintaan user: "rampingkan dan fokuskan ke
 holder scan untuk meteora dan robinhood saja agar fungsi berjalan dengan
-normal … semua pencatatan lain tidak usah dilakukan yang tidak perlu").
+normal … semua pencatatan lain tidak usah dilakukan yang tidak perlu");
+lane **Robinhood Chain dihapus total 2026-09-15** bersama page 🦅 Robinhood
+dan page temp.
 
 Yang dikerjakan tiap run (±5 menit):
 
 1. **Chart LP Meteora** — token ``source=meteora`` di ``watchlist.json``
    (Solana, holder via Helius DAS, fallback GMGN);
-2. **Robinhood LP** — entri non-``regular`` di ``watchlist_robinhood.json``
-   (chain EVM Robinhood id 4663, holder via Blockscout);
-3. hitung holder real vs dust + dust % marketcap + mid-tier Crab/Fish untuk
-   data Chart LP. Untuk **Meteora**, notifikasi lama berbasis dust tidak lagi
-   dipakai: snapshot fee_active_tvl_ratio + volatility dievaluasi dengan
-   baseline watchlist (24h turun ≥30% pada quotient fee/volatility; 30m
-   volatility > fee). Notifikasi holder lama tetap hanya untuk lane Robinhood
-   yang belum memakai metric pool;
-4. catat **satu titik** per token ke store history, publish snapshot dashboard
-   (``holder_status.json`` / ``holder_status_robinhood.json`` di ref
-   ``holder-live``) + backup durable store.
+2. hitung holder real vs dust + dust % marketcap + mid-tier Crab/Fish untuk
+   data Chart LP. Notifikasi lama berbasis dust tidak lagi dipakai: snapshot
+   fee_active_tvl_ratio + volatility dievaluasi dengan baseline watchlist
+   (24h turun ≥30% pada quotient fee/volatility; 30m volatility > fee);
+3. catat **satu titik** per token ke store history, publish snapshot dashboard
+   (``holder_status.json`` di ref ``holder-live``) + backup durable store.
 
 Yang **tidak** lagi dikerjakan cron (tetap tersedia sebagai scan manual di
 dashboard):
 
-- **watchlist biasa** (Solana non-LP & Robinhood ``source=regular``): slot
-  4 jam, catch-up run telat, dan bootstrap token baru dihapus dari jalur cron;
+- **watchlist biasa** (Solana non-LP): slot 4 jam, catch-up run telat, dan
+  bootstrap token baru dihapus dari jalur cron;
 - pencatatan yang ikut lane itu: ``merge_status`` (mewariskan baris token
   biasa ke snapshot), pembacaan toggle Telegram watchlist biasa
   (``alert_settings.regular_telegram_enabled``), dan token lama di backup
@@ -36,15 +33,13 @@ dashboard):
 Yang **dibaca** cron dari ``alert_settings.json`` (ref ``holder-live``, satu
 request GitHub per run — di-cache modulnya sendiri): ``muted_mints`` = token
 yang toggle alert-nya dimatikan user dari dashboard (tombol 🔔/🔕 per baris
-watchlist Meteora/Robinhood). Token Meteora tetap di-scan + state metric tetap
-disimpan; hanya pengiriman metric Telegram-nya dilewati. Marker
-``early_dump`` masih dipakai oleh lane Robinhood yang menggunakan rule holder
-lama.
+watchlist Meteora). Token Meteora tetap di-scan + state metric tetap
+disimpan; hanya pengiriman metric Telegram-nya dilewati.
 
 Scan FULL (baseline immutable + kronologi wallet antar-scan) tidak
 dijadwalkan cron lagi; jalankan manual bila perlu::
 
-    python scripts/scan_holders.py --full          # kedua lane LP, detail=True
+    python scripts/scan_holders.py --full          # lane LP, detail=True
 
 Ritme ±5 menit dipegang workflow ``.github/workflows/daily-effort.yml``:
 ``schedule: */5`` (best-effort, GitHub bisa men-throttle) + **chain dispatch**
@@ -53,8 +48,7 @@ mengantre/berjalan, supaya antrean concurrency ``holder-scanner`` tidak
 menumpuk dan saling membatalkan). Run ganda yang lolos (chain menabrak
 schedule) disaring gate :data:`MIN_RUN_GAP_SEC` di :func:`main` — run kedua
 keluar tanpa kerja. Katup hemat kuota Helius: ``LP_SCAN_RUN_MULTIPLIER=2|3``
-(env) menahan lane **Solana** sampai tiap N run; lane Robinhood tidak
-terpengaruh karena chain-nya Blockscout, bukan Helius.
+(env) menahan lane **Solana** sampai tiap N run.
 """
 from __future__ import annotations
 
@@ -71,7 +65,6 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 import alert_settings
-from alert_context import market_context_provider
 from daily_store import load_daily_effort
 from holder_history import (FULL_SCAN_MAX_WALLETS, ingest_many,
                             load_holder_history, merge_stores,
@@ -83,18 +76,15 @@ from holder_status import (last_publish_result, load_holder_status,
 from lp_watchlist import split_watchlist
 from meteora_screener import fetch_watchlist_metric_snapshots
 from meteora_watchlist import apply_metric_snapshots, send_metric_alerts
-import robinhood_holders
-import robinhood_watchlist
-from telegram_alerts import (process_holder_alerts, send_test_alert,
+from telegram_alerts import (send_test_alert,
                              tracked_wallet_addresses)
 from watchlist import load_watchlist, save_watchlist
 
-# --- Kadens: kedua lane LP di-scan tiap run (±5 menit) ----------------------
+# --- Kadens: lane LP di-scan tiap run (±5 menit) ----------------------------
 RUN_SCAN_INTERVAL_SEC = 5 * 60          # kadens cron/chain dispatch
-RH_FAST_SCAN_INTERVAL_SEC = RUN_SCAN_INTERVAL_SEC   # Robinhood LP: tiap run
 METEORA_LP_SCAN_INTERVAL_SEC = RUN_SCAN_INTERVAL_SEC   # Chart LP Meteora
 # Hemat kuota Helius: >1 = scan **Solana** hanya pada tiap N run (gate slot di
-# bawah). Robinhood tidak terpengaruh — chain-nya Blockscout, bukan Helius.
+# bawah).
 LP_SCAN_RUN_MULTIPLIER = max(1, int(os.environ.get("LP_SCAN_RUN_MULTIPLIER",
                                                     "1") or 1))
 
@@ -219,12 +209,11 @@ def scan_watchlist(watchlist: dict, *, dust_limit: float | None = None,
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        description="Holder scan lane LP: Chart LP Meteora + Robinhood LP.")
+        description="Holder scan lane LP: Chart LP Meteora (Solana).")
     parser.add_argument("--dust-limit", type=float, default=None,
                         help="batas value USD dust (default 10)")
     parser.add_argument("--max-wallets", type=int, default=None,
-                        help="maks holder Solana per token (Robinhood selalu FULL; "
-                             "default: "
+                        help="maks holder Solana per token (default: "
                              f"FULL = {FULL_SCAN_MAX_WALLETS:,} — semua "
                              "halaman sampai habis)")
     parser.add_argument("--workers", type=int, default=4)
@@ -355,10 +344,9 @@ def main(argv=None) -> int:
             print(f"WARN: Meteora metric snapshot gagal: {exc}",
                   file=sys.stderr)
     metric_snapshots_for_status = metric_result.get("metrics") or {}
-    # Toggle alert per token (tombol 🔔/🔕 di dashboard): satu bacaan untuk
-    # kedua lane. Token Meteora yang dimatikan tetap di-scan + state metric
-    # dimajukan; token Robinhood tetap memajukan marker holder lama; hanya
-    # pengiriman Telegram masing-masing yang dilewati.
+    # Toggle alert per token (tombol 🔔/🔕 di dashboard). Token Meteora yang
+    # dimatikan tetap di-scan + state metric dimajukan; hanya pengiriman
+    # Telegram-nya yang dilewati.
     muted_alerts = alert_settings.muted_mints(force_refresh=True)
     print(f"Toggle alert per token: {len(muted_alerts)} dimatikan"
           + (f" ({', '.join(sorted(muted_alerts))[:120]})"
@@ -466,110 +454,6 @@ def main(argv=None) -> int:
               f"{last_publish_result().get('error')}", file=sys.stderr)
         return 3
 
-    # --- Robinhood Chain: lane LP watchlist terpisah (EVM, chain id 4663) ----
-    # Scan best-effort: kegagalan jaringan Robinhood tidak boleh membuat cron
-    # Solana mati. Entri ``source=regular`` (slot 4 jam) tidak di-scan cron
-    # sejak 2026-09-07.
-    rh_done = 0
-    rh_due = 0
-    try:
-        rh_watch = robinhood_watchlist.load_watchlist()
-        rh_lp, rh_regular = robinhood_watchlist.split_robinhood_watchlist(
-            rh_watch)
-        if rh_lp:
-            rh_status_now = robinhood_watchlist.load_status(force_refresh=True)
-            rh_store = robinhood_watchlist.load_history()
-            rh_due = len(rh_lp)
-            rh_targets = dict(rh_lp)
-            if not args.ignore_gap \
-                    and recently_published(rh_status_now, started_wall):
-                print(f"Scan Robinhood dilewati: snapshot terbaru < "
-                      f"{MIN_RUN_GAP_SEC // 60} menit lalu (run ganda "
-                      "chain dispatch + schedule).")
-                rh_targets = {}
-            rh_n_keys = len(robinhood_holders.get_pro_api_keys())
-            print(f"Rencana scan Robinhood LP: watchlist={rh_due} "
-                  f"due={len(rh_targets)} "
-                  f"(biasa {len(rh_regular)} token tidak di-scan cron) "
-                  f"blockscout_pro_keys={rh_n_keys}")
-            if rh_targets and not rh_n_keys:
-                print("WARN: BLOCKSCOUT_API_KEY(S) tidak ada — holder "
-                      "Robinhood lewat instance publik yang sering menjawab "
-                      "403 bot-protection di runner Actions. Set secret "
-                      "BLOCKSCOUT_API_KEYS (koma) di repo.", file=sys.stderr)
-            if rh_targets:
-                rh_analyses = robinhood_watchlist.scan_watchlist(
-                    rh_targets, history_store=rh_store,
-                    # Blockscout sorts richest first: a 3k sample can omit
-                    # the entire dust tail. Keep RH at the dedicated scan cap;
-                    # the workflow --max-wallets budget is for Solana only.
-                    max_wallets=FULL_SCAN_MAX_WALLETS, workers=args.workers,
-                    detail=args.full)
-                if rh_analyses:
-                    rh_contexts: dict = {}
-                    rh_provider = None
-                    if args.full:
-                        # Konteks pasar memakai data DexScreener yang sudah
-                        # disuntik analysis["market"]; geckoterminal/networks
-                        # Solana tidak dipakai untuk chain EVM.
-                        rh_provider = market_context_provider(fetch=False,
-                                                              cache=rh_contexts)
-                    process_holder_alerts(
-                        rh_analyses, rh_store,
-                        context_provider=rh_provider,
-                        mute_mints=alert_settings.mutes_for(rh_analyses),
-                        watchlist_meta=rh_watch,
-                        advance_anchors=args.full)
-                    rh_status = robinhood_watchlist.publish_scan(
-                        rh_analyses, rh_watch, history_store=rh_store,
-                        push=not args.no_push, contexts=rh_contexts,
-                        detail=args.full, keep_mints=set(rh_watch))
-                    rh_done = sum(1 for item in rh_analyses.values()
-                                  if (item.get("holders") or {}).get(
-                                      "total_fetched"))
-                    rh_blocked = sum(1 for item in rh_analyses.values()
-                                     if (item.get("holders") or {}).get(
-                                         "blocked"))
-                    rh_routes = sorted({
-                        robinhood_holders.route_label(
-                            str(((item.get("holders") or {}).get("source"))
-                                or "")) or "?"
-                        for item in rh_analyses.values()
-                        if (item.get("holders") or {}).get("total_fetched")})
-                    print(f"Robinhood scan selesai: tokens={len(rh_analyses)} "
-                          f"fetched={rh_done}/{len(rh_analyses)} "
-                          f"updated={rh_status.get('updated_at')}"
-                          + (f" route={'/'.join(rh_routes)}"
-                             if rh_routes else ""))
-                    # Ringkasan pool key PRO (label key#N + sisa kredit dari
-                    # header x-credits-remaining) — key aslinya tidak dicetak.
-                    rh_keys_note = robinhood_holders.pro_key_summary()
-                    if rh_keys_note:
-                        print(rh_keys_note)
-                    if rh_blocked:
-                        # 403 bot-protection instance publik: nyatakan
-                        # terang di log Actions + cara memperbaikinya.
-                        if robinhood_holders.pro_keys_configured():
-                            remedy = ("Semua key PRO API ditolak / kredit "
-                                      "hariannya habis — cek dashboard "
-                                      f"{robinhood_holders.BLOCKSCOUT_KEY_URL}"
-                                      " atau tambah key akun lain ke secret "
-                                      "BLOCKSCOUT_API_KEYS.")
-                        else:
-                            remedy = ("Pasang secret BLOCKSCOUT_API_KEY "
-                                      "(key gratis: "
-                                      f"{robinhood_holders.BLOCKSCOUT_KEY_URL}"
-                                      ") supaya scan lewat PRO API.")
-                        print(f"WARN: Blockscout menolak scan "
-                              f"{rh_blocked}/{len(rh_analyses)} token "
-                              f"(HTTP 403 bot-protection). {remedy}",
-                              file=sys.stderr)
-                else:
-                    print("Robinhood scan selesai: tidak ada token berhasil")
-        else:
-            print("Robinhood scan dilewati: watchlist LP kosong")
-    except Exception as exc:  # noqa: BLE001 - best-effort
-        print(f"WARN: Robinhood scanner gagal: {exc}", file=sys.stderr)
     return exit_code
 
 

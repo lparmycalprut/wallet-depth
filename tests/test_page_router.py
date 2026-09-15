@@ -17,24 +17,24 @@ ROOT = Path(__file__).resolve().parent.parent
 APP = str(ROOT / "app.py")
 
 SOL = "So11111111111111111111111111111111111111112"
-EVM = "0x1a3876a32619cf2668e91ebcd90a596537ec8695"
 HOLDER = "pages/5_🧮_Holder.py"
-# Halaman CVD / Deteksi Akumulasi / Pre-Pump dihapus 2026-09-07.
-# "6" dulunya Pre-Pump, kini dipakai Robinhood (6_🦅_Robinhood.py) — jadi tidak gone lagi.
+# Halaman CVD / Deteksi Akumulasi / Pre-Pump dihapus 2026-09-07; page
+# 🦅 Robinhood + page temp dihapus 2026-09-15.
 GONE = ("cvd", "4", "pages/4_📊_CVD.py", "deteksi_akumulasi",
-        "deteksi-akumulasi", "akumulasi", "pre-pump", "prepump", "7")
+        "deteksi-akumulasi", "akumulasi", "pre-pump", "prepump", "7",
+        "robinhood", "6", "pages/6_🦅_Robinhood.py", "temp", "8",
+        "pages/8_temp.py")
 
 
 class ResolveTest(unittest.TestCase):
     def test_token_saja_ke_holder(self):
-        for mint in (SOL, EVM):
-            out = pr.resolve({"mint": [mint]})
-            self.assertEqual(out["page"], HOLDER)
-            self.assertEqual(out["params"], {"mint": mint})
+        out = pr.resolve({"mint": [SOL]})
+        self.assertEqual(out["page"], HOLDER)
+        self.assertEqual(out["params"], {"mint": SOL})
 
     def test_kunci_address_alternatif(self):
         for key in ("mint", "ca", "token", "address"):
-            self.assertEqual(pr.resolve({key: EVM})["page"], HOLDER, key)
+            self.assertEqual(pr.resolve({key: SOL})["page"], HOLDER, key)
 
     def test_page_memilih_halaman(self):
         cases = {
@@ -69,19 +69,22 @@ class ResolveTest(unittest.TestCase):
             self.assertEqual(pr.resolve(query), {}, query)
 
     def test_page_tidak_dikenali_dengan_token_tetap_ke_holder(self):
-        out = pr.resolve({"page": "entah-apa", "mint": EVM})
+        out = pr.resolve({"page": "entah-apa", "mint": SOL})
         self.assertEqual(out["page"], HOLDER)
-        self.assertEqual(out["params"], {"mint": EVM})
+        self.assertEqual(out["params"], {"mint": SOL})
 
     def test_mint_list_ambil_nilai_terakhir(self):
-        out = pr.resolve({"mint": [SOL, EVM]})
-        self.assertEqual(out["mint"], EVM)
+        other = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+        out = pr.resolve({"mint": [SOL, other]})
+        self.assertEqual(out["mint"], other)
 
     def test_invalid_ca_format(self):
         self.assertTrue(pr.is_valid_ca(SOL))
-        self.assertTrue(pr.is_valid_ca(EVM))
-        self.assertTrue(pr.is_valid_ca("0x" + "a" * 40))
-        for bad in ("", None, "0x", "0x" + "z" * 40, "hello world", "l" * 44, "https://example.com/?a=1", "../etc/passwd"):
+        # Address EVM (0x…) bukan lagi CA yang dikenal: page 🦅 Robinhood dan
+        # seluruh dukungan Robinhood Chain dihapus 2026-09-15.
+        for bad in ("", None, "0x", "0x" + "a" * 40, "0x" + "z" * 40,
+                    "hello world", "l" * 44,
+                    "https://example.com/?a=1", "../etc/passwd"):
             self.assertFalse(pr.is_valid_ca(bad), bad)
 
     def test_alias_hanya_dari_folder_pages(self):
@@ -101,9 +104,6 @@ class ApplyTest(unittest.TestCase):
             mock.patch("holder_status.load_holder_status", return_value={"updated_at": None, "tokens": {}}),
             mock.patch("holder_history.load_holder_history", return_value={"tokens": {}}),
             mock.patch("holder_history.pull_holder_history", return_value=None),
-            mock.patch("robinhood_watchlist.load_watchlist", return_value={}),
-            mock.patch("robinhood_watchlist.load_status", return_value={"updated_at": None, "tokens": {}}),
-            mock.patch("robinhood_watchlist.load_history", return_value={"updated_at": None, "tokens": {}}),
         )
         for patch in patches:
             patch.start()
@@ -119,9 +119,9 @@ class ApplyTest(unittest.TestCase):
         return app, switch
 
     def test_main_page_switch_page_ke_holder(self):
-        app, switch = self._run({"mint": [EVM]})
+        app, switch = self._run({"mint": [SOL]})
         self.assertEqual(len(app.exception), 0)
-        switch.assert_called_once_with(HOLDER, query_params={"mint": EVM})
+        switch.assert_called_once_with(HOLDER, query_params={"mint": SOL})
 
     def test_halaman_tanpa_token_tidak_berpindah(self):
         app, switch = self._run({})

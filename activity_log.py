@@ -58,7 +58,7 @@ _LEVEL_ICON = {LEVEL_INFO: "·", LEVEL_WARN: "⚠️", LEVEL_ERROR: "✖",
 
 def log(level: str, source: str, message: str, *,
         dedup_sec: float = DEFAULT_DEDUP_SEC, echo: bool | None = None) -> None:
-    """Catat satu kejadian. ``source`` = modul/card asal (mis. ``blockscout``).
+    """Catat satu kejadian. ``source`` = modul/card asal (mis. ``helius``).
 
     ``echo`` None = level selain info ikut dicetak ke stderr (kelihatan di
     log terminal/cron); info hanya masuk buffer.
@@ -151,13 +151,11 @@ def entry_html(entry: dict) -> str:
 def render_activity_log() -> None:
     """Panel **🧾 Log Aktivitas** — dipanggil di paling bawah ``app.py``.
 
-    Kepala panel: pill jumlah ❗ action / ✖ error / ⚠️ warn + dua baris
-    status kuota: pool key PRO Blockscout (`pro_key_summary()`, ``key#N sisa
-    kredit / parkir``) dan **sisa kredit Helius**
-    (`core.helius_usage_summary()`) — pertanyaan "apakah kena limit di semua
-    key?" dan "kredit Helius tinggal berapa?" terjawab tanpa buka terminal.
-    Baris Helius dibaca dari cache (probe jalan di thread latar) supaya render
-    halaman tidak pernah menunggu jaringan.
+    Kepala panel: pill jumlah ❗ action / ✖ error / ⚠️ warn + baris status
+    **sisa kredit Helius** (`core.helius_usage_summary()`) — pertanyaan
+    "kredit Helius tinggal berapa?" terjawab tanpa buka terminal. Baris itu
+    dibaca dari cache (probe jalan di thread latar) supaya render halaman
+    tidak pernah menunggu jaringan.
     """
     import streamlit as st
 
@@ -183,29 +181,12 @@ def render_activity_log() -> None:
         st.markdown(card_head_html(
             "🧾 Log Aktivitas", pills,
             tooltip=("Kejadian penting semua card sesi app ini: scan "
-                     "mulai/selesai, rate limit & parkir key PRO Blockscout, "
-                     "fallback instance publik, status kredit/key Helius, "
-                     "listing gagal. Merah bold = perlu perubahan manual "
-                     "(pasang/ganti API key, kredit habis). Log hidup di "
-                     "memori proses app — kosong lagi setelah restart. Baris "
-                     "kuota di bawah dibaca dari cache 5 menit, bukan setiap "
-                     "render.")),
+                     "mulai/selesai, status kredit/key Helius, listing gagal. "
+                     "Merah bold = perlu perubahan manual (pasang/ganti API "
+                     "key, kredit habis). Log hidup di memori proses app — "
+                     "kosong lagi setelah restart. Baris kuota di bawah "
+                     "dibaca dari cache 5 menit, bukan setiap render.")),
             unsafe_allow_html=True)
-
-        # Status pool key PRO Blockscout — jawaban langsung "kena limit di
-        # berapa key?". Gagal import (mis. modul berubah) tidak boleh
-        # mematikan panel log.
-        try:
-            import robinhood_holders
-            summary = robinhood_holders.pro_key_summary()
-            if summary:
-                st.caption(summary)
-            else:
-                st.caption("Blockscout PRO API: belum ada key terpasang — "
-                           "semua request Robinhood lewat instance publik "
-                           "(rate limit ketat).")
-        except Exception:  # noqa: BLE001 - status key hanya pelengkap
-            pass
 
         # Sisa kredit Helius (permintaan user 2026-09-10) — plafon bulanan
         # key yang dipakai semua scan holder Solana. Non-blokir: angka dari

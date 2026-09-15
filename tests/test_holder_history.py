@@ -360,12 +360,12 @@ class DustBestFlagTest(unittest.TestCase):
 
 
 class FiveMinuteCadenceTest(unittest.TestCase):
-    """Kadens 5 menit (Robinhood LP, 2026-09-06) tidak boleh membunuh history.
+    """Kadens 5 menit (lane LP, 2026-09-06) tidak boleh membunuh history.
 
     ``MIN_POINT_GAP_SEC`` adalah ambang "scan dobel": titik yang lebih muda
     dari itu **ditimpa**, bukan ditambahkan. Di kalibrasi lama (8 menit) run
-    tiap 5 menit akan saling menimpa selamanya — store Robinhood berhenti
-    tumbuh dan grafik/Δ 4 jam membeku. Test ini mengunci invarian:
+    tiap 5 menit akan saling menimpa selamanya — store berhenti tumbuh dan
+    grafik/Δ 4 jam membeku. Test ini mengunci invarian:
     ``MIN_POINT_GAP_SEC < kadens run tercepat``.
     """
 

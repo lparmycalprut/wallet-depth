@@ -27,7 +27,6 @@ from dashboard_components import (_alert_toggle_button, _ca_error, _compact,
                                   SOLANA_CA_RE, load_dashboard_data,
                                   render_styles)
 import activity_log
-import robinhood_holders
 from holder_analysis import analyze_token
 from holder_status import (load_holder_status, publish_holder_status)
 from meteora_screener import fetch_watchlist_metric_snapshots
@@ -48,9 +47,9 @@ page_router.apply()
 
 render_styles()
 
-# Baris navigasi header (🦅 Robinhood · 📦 temp · 🧮 Holder Analytic) DIHAPUS
-# 2026-09-14 per permintaan user ("hilangkan link ke sini pada header") —
-# navigasi antar halaman tetap tersedia lewat sidebar Streamlit.
+# Baris navigasi header DIHAPUS 2026-09-14 per permintaan user ("hilangkan
+# link ke sini pada header") — navigasi antar halaman tetap tersedia lewat
+# sidebar Streamlit.
 
 
 # ---------------------------------------------------------------------------
@@ -102,8 +101,8 @@ _autorefresh_col[0].toggle(
 
 
 # ---------------------------------------------------------------------------
-# Watchlist Meteora — watchlist terpisah untuk token dari Scan Meteora Pool
-# (card ⭐ yang memasukkan token ada di halaman temp sejak 2026-09-10).
+# Watchlist Meteora — watchlist terpisah untuk token pool Meteora (token
+# dimasukkan lewat form ➕ di card ini).
 # ---------------------------------------------------------------------------
 LP_CARD_TITLE = "🌊 Watchlist Meteora"
 # Detail karakteristik card (2026-09-10) tidak lagi jadi caption panjang di
@@ -113,8 +112,8 @@ LP_CARD_TITLE = "🌊 Watchlist Meteora"
 # meteora_watchlist/meteora_screener supaya tooltip tidak pernah menjelaskan
 # alert dust lama. Atribut title tidak mengenal markdown (plain text).
 LP_CARD_TOOLTIP = (
-    "Watchlist terpisah untuk pool yang ditambahkan dari Scan Meteora "
-    "(⭐) atau ditambah manual. Source/timeframe 24 jam atau 30 menit dan "
+    "Watchlist terpisah untuk pool yang ditambahkan manual lewat form ➕ di "
+    "card ini. Source/timeframe 24 jam atau 30 menit dan "
     "snapshot fee_active_tvl_ratio + volatility ditampilkan di setiap baris. "
     "Baseline metrik disimpan saat masuk watchlist. Deteksi 24h muncul bila "
     "perbandingan fee_active_tvl_ratio terhadap volatility turun minimal 30% "
@@ -129,8 +128,8 @@ def _lp_head_html(summary: dict) -> str:
     """Header card Watchlist Meteora: jumlah token + rekap level dust.
 
     Kepala card dibuat ``dashboard_components.card_head_html`` (pembuat
-    bersama dengan card Scan Meteora Pool di halaman temp); detail
-    karakteristik card ada di tooltip judul (``LP_CARD_TOOLTIP``).
+    bersama dengan card 🏆 Scan Best Pool Meteora); detail karakteristik card
+    ada di tooltip judul (``LP_CARD_TOOLTIP``).
     """
     pills = [f'<span class="lp-count">{summary.get("total", 0)} token</span>']
     _muted_pill = _muted_pill_html(summary.get("muted"))
@@ -402,9 +401,8 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
         _render_toggle_note("lp")
 
         if not rows:
-            st.info("Watchlist Meteora masih kosong. Tambahkan token dari "
-                    "**⭐ Scan Meteora Pool** di halaman temp (📦) atau "
-                    "tempel CA di form atas.")
+            st.info("Watchlist Meteora masih kosong. Tambahkan token lewat "
+                    "form ➕ di atas (tempel CA pool Meteora).")
             return
 
         header = st.columns([1.42, 0.7, 0.78, 0.72, 0.62, 0.8, 0.78,
@@ -423,11 +421,10 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
 
 
 # ---------------------------------------------------------------------------
-# Scan Holder Solana / Robinhood — satu token (2026-09-10, dulu "Scan Holder
-# Khusus — Helius / Robinhood"). Detail karakteristik section pindah ke
-# tooltip judul (hanya muncul saat kursor digeser ke teksnya), bukan caption.
+# Scan Holder Solana — satu token. Detail karakteristik section ada di tooltip
+# judul (hanya muncul saat kursor digeser ke teksnya), bukan caption.
 # ---------------------------------------------------------------------------
-SCAN_HOLDER_TITLE = "🛰 Scan Holder Solana / Robinhood"
+SCAN_HOLDER_TITLE = "🛰 Scan Holder Solana"
 
 
 def scan_holder_tooltip() -> str:
@@ -443,8 +440,7 @@ def scan_holder_tooltip() -> str:
     return (
         "Tempel contract address (CA) satu token untuk mengambil seluruh "
         "daftar holder: Solana (base58) langsung dari Helius DAS "
-        "(getTokenAccounts), Robinhood Chain (0x…) dari Blockscout (CSV "
-        "export tanpa limit) — lalu menampilkan bar chart distribusi holder "
+        "(getTokenAccounts) — lalu menampilkan bar chart distribusi holder "
         "per range nilai USD (Wallet Depth by Threshold). Default: LP/pool "
         "AMM disingkirkan dari bucket. Metrik Dust %MC (kiri Akun holder) "
         "memakai definisi kolom Hold %MC watchlist: wallet 0 < nilai ≤ $10, "
@@ -462,36 +458,15 @@ def _scan_source_meta(result: dict) -> tuple[str, str, str]:
     """``(label metrik, help metrik, label caption)`` dari sumber holder.
 
     ``result["source"]`` berasal dari ``helius_holders.scan_token_holders``
-    (``"helius"``) atau ``robinhood_holders.scan_token_holders``
-    (``"blockscout-csv"`` / ``"blockscout-rpc"`` / ``"blockscout-v2"`` —
-    ketiganya Blockscout, hanya beda jalur pengambilan; akhiran ``@pro`` /
-    ``@public`` (sejak 2026-09-08) menandai transport: PRO API ber-key
-    atau instance publik).
+    (``"helius"``).
     """
-    source = str(result.get("source") or "").lower()
-    if "blockscout" in source or source in ("", "robinhood"):
-        jalur = {"blockscout-csv": "CSV export",
-                 "blockscout-v2": "REST v2",
-                 "blockscout-rpc": "RPC"}.get(
-                     robinhood_holders.source_base(source), "")
-        detail = f" via {jalur}" if jalur else ""
-        route = robinhood_holders.route_label(source)
-        key_label = str((result.get("snapshot") or {}).get("pro_key") or "")
-        if route and key_label:
-            route = f"{route} {key_label}"
-        transport = f" · {route}" if route else ""
-        return ("Blockscout",
-                f"Akun token yang diambil dari Blockscout{detail}{transport} "
-                "(Robinhood Chain).",
-                f"🦅 Blockscout (Robinhood Chain){transport}")
     return ("Helius",
             "Akun token yang diambil dari Helius DAS getTokenAccounts.",
             "🛰 Helius DAS getTokenAccounts")
 
 
 def _render_helius_holder_scan() -> None:
-    """Section: input CA satu token → scan holder (Solana via Helius,
-    Robinhood Chain via Blockscout) + bar chart."""
+    """Section: input CA satu token Solana → scan holder (Helius) + bar chart."""
     st.divider()
     st.markdown(hover_title_html(SCAN_HOLDER_TITLE, scan_holder_tooltip()),
                 unsafe_allow_html=True)
@@ -500,7 +475,7 @@ def _render_helius_holder_scan() -> None:
         col_ca, col_max, col_pool, col_btn = st.columns([3, 1, 2, 1])
         ca_input = col_ca.text_input(
             "Contract address (CA)", key="helius-ca-input",
-            placeholder="So1111… (Solana) atau 0x… (Robinhood Chain)")
+            placeholder="So1111… (Solana)")
         max_wallets = col_max.number_input(
             "Maks holder", min_value=1000, max_value=100_000,
             value=100_000, step=1_000,
@@ -516,24 +491,16 @@ def _render_helius_holder_scan() -> None:
 
     if run:
         ca = str(ca_input or "").strip()
-        is_evm = robinhood_holders.is_robinhood_address(ca)
         if not ca:
             st.warning("Masukkan contract address terlebih dahulu.")
-        elif not (SOLANA_CA_RE.match(ca) or is_evm):
+        elif not SOLANA_CA_RE.match(ca):
             st.warning("Format CA tidak valid. Solana: base58 sepanjang "
-                       "32–44 karakter · Robinhood Chain: 0x + 40 hex.")
+                       "32–44 karakter.")
         else:
-            if is_evm:
-                ca = robinhood_holders.normalize_address(ca)
-                scan_fn = robinhood_holders.scan_token_holders
-                status_label = "Mengambil holder dari Blockscout " \
-                               "(Robinhood Chain)…"
-            else:
-                scan_fn = scan_token_holders
-                status_label = "Mengambil holder dari Helius…"
-            with st.status(status_label, expanded=False) as box:
+            with st.status("Mengambil holder dari Helius…",
+                           expanded=False) as box:
                 try:
-                    result = scan_fn(
+                    result = scan_token_holders(
                         ca, max_wallets=int(max_wallets),
                         include_pools=bool(include_pools))
                 except Exception as exc:  # noqa: BLE001
@@ -551,8 +518,7 @@ def _render_helius_holder_scan() -> None:
 
 
 def _render_helius_holder_result(result: dict) -> None:
-    """Tampilkan metrik + bar chart + tabel depth hasil scan holder
-    (Solana/Helius atau Robinhood Chain — shape dict sama)."""
+    """Tampilkan metrik + bar chart + tabel depth hasil scan holder Solana."""
     mint = result.get("mint") or ""
     market = result.get("market") or {}
     snapshot = result.get("snapshot") or {}
@@ -575,33 +541,9 @@ def _render_helius_holder_result(result: dict) -> None:
     if result.get("scan_failed"):
         snapshot_err = result.get("snapshot") or {}
         detail = str(snapshot_err.get("error") or "").strip()
-        if snapshot_err.get("blocked"):
-            # 403 bot-protection Blockscout publik: CA & harga tidak
-            # salah. Tanpa key → suruh pasang key; key sudah ada → semua
-            # key ditolak/kreditnya habis, arahkan ke dashboard.
-            n_keys = int(snapshot_err.get("pro_keys") or 0)
-            if n_keys:
-                remedy = (f"{n_keys} key PRO API terpasang tetapi semuanya "
-                          "ditolak / kredit hariannya habis — cek dashboard "
-                          f"{robinhood_holders.BLOCKSCOUT_KEY_URL} "
-                          "(`x-credits-remaining`) atau tambah key dari akun "
-                          "lain ke `BLOCKSCOUT_API_KEYS`.")
-            else:
-                remedy = ("Pasang `BLOCKSCOUT_API_KEY` (key gratis: "
-                          f"{robinhood_holders.BLOCKSCOUT_KEY_URL}; env / "
-                          "`blockscout_api_key` di config.json / Streamlit "
-                          "secrets; beberapa key dipisah koma di "
-                          "`BLOCKSCOUT_API_KEYS`) supaya scan lewat PRO API.")
-            st.error(
-                "Blockscout publik menolak request scan (HTTP 403 "
-                "bot-protection) — bukan karena CA salah. " + remedy
-                + (f" Detail: {detail}" if detail else ""))
-            return
         message = ("Scan tidak menghasilkan holder. Pastikan CA valid dan "
-                   "harga token tersedia (DexScreener)"
-                   + (" serta Helius API key aktif"
-                      if source_short == "Helius" else "")
-                   + ".")
+                   "harga token tersedia (DexScreener) serta Helius API key "
+                   "aktif.")
         if detail:
             message += f" Detail: {detail}"
         st.error(message)
@@ -675,7 +617,7 @@ def _render_helius_holder_result(result: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Shared stores — Robinhood sudah pindah ke page sendiri (🦅 Robinhood).
+# Shared stores (Solana).
 # ---------------------------------------------------------------------------
 data = load_dashboard_data()
 watchlist, holder_status, history_store = data.watchlist, data.status, data.history
@@ -683,15 +625,11 @@ status_tokens = holder_status.get("tokens") or {}
 lp_watch, _ = split_watchlist(watchlist)
 
 # ---------------------------------------------------------------------------
-# Layout utama setelah Robinhood pindah page (permintaan user):
-# - Watchlist Meteora full-width (grid 2 kolom kiri-kanan dihapus karena
-#   Watchlist Robinhood + Scan Best Pool Krystal sudah pindah ke page baru
-#   🦅 Robinhood);
-# - 🏆 Scan Best Pool Meteora full-width di bawahnya;
-# - 🛰 Scan Holder Solana / Robinhood full-width;
+# Layout utama (semua card full-width, border container + divider konsisten):
+# - 🌊 Watchlist Meteora;
+# - 🏆 Scan Best Pool Meteora;
+# - 🛰 Scan Holder Solana;
 # - 🧾 Log Aktivitas paling bawah.
-# Format penataan dikembalikan: tidak ada kolom kosong, semua card border
-# container + divider konsisten seperti sebelum grid 2 kolom.
 # ---------------------------------------------------------------------------
 _render_lp_card(lp_watch, status_tokens, history_store)
 

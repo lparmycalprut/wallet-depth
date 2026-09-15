@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """Cache berkas lokal untuk hasil scan — **refresh browser tidak menghapus hasil**.
 
-Masalah yang dipecahkan: hasil scan card **🏆 Scan Best Pool Meteora** dan
-**🦅 Scan Best Pool Krystal** hidup di ``st.session_state``. Streamlit membuat
-session baru setiap kali browser di-refresh (F5), tab dibuka ulang, atau
-koneksi putus — jadi listing yang sudah dipindai ikut lenyap, padahal enrichment
-holder-nya (scan FULL Helius/Blockscout) bisa memakan belasan menit dan kuota.
+Masalah yang dipecahkan: hasil scan card **🏆 Scan Best Pool Meteora** hidup
+di ``st.session_state``. Streamlit membuat session baru setiap kali browser
+di-refresh (F5), tab dibuka ulang, atau koneksi putus — jadi listing yang sudah
+dipindai ikut lenyap, padahal enrichment holder-nya (scan FULL Helius) bisa
+memakan belasan menit dan kuota.
 
 Modul ini menyimpan **satu berkas JSON per key** di direktori cache (default
 ``.scan_cache/`` di root repo — **git-ignored**, jadi pernah ikut ter-commit)
@@ -24,10 +24,10 @@ Kontrak yang sengaja dijaga:
   di tengah penulisan tidak pernah membaca JSON setengah jadi;
 - **Ramping**: peta wallet hasil scan FULL (``wallet_snapshot`` /
   ``chrono_snapshot``) dibuang sebelum disimpan — tanpa itu satu hasil scan
-  Robinhood bisa puluhan megabita untuk sebaris tabel dust;
+  bisa puluhan megabita untuk sebaris tabel dust;
 - **Key mentah tidak pernah disimpan**: payload cache hanya berisi angka pasar
-  dan alamat publik; API key hidup di ``st.secrets``/env (lihat
-  :mod:`krystal_screener`), tidak pernah di sini.
+  dan alamat publik; API key hidup di ``st.secrets``/env, tidak pernah di
+  sini.
 
 Suite tes mematikan cache lewat env ``SCAN_CACHE=0`` (``tests/__init__.py``) dan
 mengarahkan direktorinya ke ``tmp_path`` lewat fixture ``_iso_scan_cache``

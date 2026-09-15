@@ -136,7 +136,7 @@ def scan_token_holders(ca: str, *, max_wallets: int | None = None,
     # $10, LP/pool disingkirkan lewat pair_addresses) — jadi angka di
     # section ini sinkron dengan card watchlist untuk token yang sama.
     # Ditempel ke ``depth`` (bukan kolom hasil baru) supaya UI tidak perlu
-    # menghitung ulang dan jalur Robinhood berbentuk sama.
+    # menghitung ulang.
     dust = classify_holders(snapshot, mc, pool_addresses=pools)
     depth["dust_pct_mc"] = dust.get("dust_pct_mc")
     depth["dust_count"] = dust.get("dust_count")

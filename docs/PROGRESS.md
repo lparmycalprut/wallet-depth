@@ -1,5 +1,25 @@
 # Progress
 
+## 2026-09-15: halaman 🦅 Robinhood + 📦 temp dihapus total
+
+**Status: selesai; suite 953 passed / 19 failed (semua kegagalan = baseline
+`main` 27 failed, subset-nya).**
+
+Permintaan user: *"hapus semua yang ada di page temp dan Robinhood, Total
+hapus"*, diperjelas *"nonaktifkan semua fungsinya, dan juga pagenya, sampai
+tidak ada yang jalan"*.
+
+- Halaman `pages/8_temp.py` dan `pages/6_🦅_Robinhood.py` dihapus;
+  card 🦅 Watchlist Robinhood LP/biasa, 🦅 Scan Best Pool Krystal, 🦅 Scan
+  Best Robinhood Coin, 🌊 Scan Meteora Pool, 📋 Watchlist Holder,
+  📋 Watchlist Meteora, 🚀 Trending/Degen ikut dihapus (tidak dipindah).
+- Modul mati: `robinhood_watchlist`, `robinhood_holders`, `robinhood_best_scan`,
+  `krystal_screener`, `krystal_pool_ui`, `trending_ui`, `temp_ui`.
+- Cron tinggal lane Chart LP Meteora; transport Blockscout + env workflow-nya
+  dihapus. App kini Solana saja.
+
+Detail: `AGENTS.md` + `KEGIATAN.md` 15 September 2026 (blok paling atas).
+
 ## 2026-09-13: kolom tabel "Awal Masuk" = dust %MC saat token masuk watchlist
 
 **Status: selesai & tes hijau (1156 tests, OK).**

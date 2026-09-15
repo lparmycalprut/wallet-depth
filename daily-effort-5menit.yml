@@ -1,5 +1,4 @@
-# Holder Dust Scanner — BERKAS SIAP PASANG (lane LP saja: Chart LP Meteora +
-# Robinhood LP).
+# Holder Dust Scanner — BERKAS SIAP PASANG (lane LP saja: Chart LP Meteora).
 #
 # ⚠️ INI BUKAN WORKFLOW AKTIF. GitHub hanya membaca folder `.github/workflows`,
 # dan bot tidak bisa menulis ke sana (403 `refusing to allow a GitHub App to
@@ -19,8 +18,7 @@
 #     < 900 detik = schedule sehat → dispatch DILEWATI". Setelah setiap
 #     schedule (telat) itu, dispatch berikutnya pasti dibuang → pipeline mati
 #     sampai schedule berikutnya. Cron #1182 mati 16:40:24 UTC; tidak ada scan
-#     sampai 17:29 UTC ke atas — snapshot basi + ⚡ EARLY DUMP Robinhood tidak
-#     terkirim;
+#     sampai 17:29 UTC ke atas — snapshot basi + alert tidak terkirim;
 #   * Guard 2 baru membandingkan umur run terakhir (event APA PUN) dengan
 #     jendela 240 detik (< kadens), jadi rantai selalu menyambung lagi;
 #   * plus: query API kini retry + FAIL-OPEN. `bash -e` versi lama membuat
@@ -85,21 +83,14 @@ jobs:
       - name: Install dependencies
         run: pip install requests curl_cffi
 
-      - name: Holder scan LP (Meteora + Robinhood, ±5 menit)
+      - name: Holder scan LP (Meteora, ±5 menit)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           HELIUS_API_KEY: ${{ secrets.HELIUS_API_KEY }}
-          # Blockscout PRO API (Robinhood Chain). Sejak 2026-09-08 instance
-          # publik robinhoodchain.blockscout.com menolak request runner
-          # (HTTP 403 bot-protection); key gratis: https://dev.blockscout.com
-          # BLOCKSCOUT_API_KEYS = beberapa key dipisah koma (akun berbeda =
-          # kuota berbeda; dipakai bergantian, key habis/ditolak diparkir).
-          BLOCKSCOUT_API_KEY: ${{ secrets.BLOCKSCOUT_API_KEY }}
-          BLOCKSCOUT_API_KEYS: ${{ secrets.BLOCKSCOUT_API_KEYS }}
           # Hemat Helius bila kuota menipis (tanpa ubah kode): scan Solana
-          # hanya tiap N run — Robinhood tetap tiap 5 menit.
+          # hanya tiap N run.
           # LP_SCAN_RUN_MULTIPLIER: "3"
         run: |
           ARGS=""

@@ -9,7 +9,6 @@ Kohort Crab+Fish di-freeze 4 jam; sisa token (bukan USD) mengukur exit pilar.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-import os
 import re
 
 import matplotlib.pyplot as plt
@@ -35,8 +34,6 @@ from links import external_links_html
 from holder_analysis import analyze_token
 from holder_status import (MANUAL_SCAN_KEY, apply_manual_scan,
                            compact_manual_scan, load_holder_status)
-import robinhood_holders
-import robinhood_watchlist
 from watchlist import add_to_watchlist, load_watchlist
 
 st.set_page_config(page_title="Holder Analytic", page_icon="🧮",
@@ -388,20 +385,14 @@ def _chronology_section(mint: str, store: dict) -> None:
             _movement_dataframe(interval.get("movements") or [])
 
 
-def _is_evm(value) -> bool:
-    """True untuk CA Robinhood Chain (0x + 40 hex) — memakai pemisah chain."""
-    return bool(robinhood_holders.is_robinhood_address(str(value or "").strip()))
-
-
-def _full_scan_section(mint: str, token: dict, store: dict, watchlist: dict,
-                       is_evm: bool) -> None:
+def _full_scan_section(mint: str, token: dict, store: dict,
+                       watchlist: dict) -> None:
     """Tombol scan FULL manual — ditaruh paling atas halaman.
 
     Aksi utama halaman ini, jadi tidak perlu scroll sampai bawah dulu.
     """
-    hist_note = (f"di `{os.path.basename(robinhood_watchlist.HISTORY_LOCAL_PATH)}`"
-                 if is_evm else "di `holder_history.json`")
-    scan_source = "Blockscout (Robinhood Chain)" if is_evm else "Helius"
+    hist_note = "di `holder_history.json`"
+    scan_source = "Helius"
     if st.button("🔄 Scan holder FULL token ini", type="primary",
                  use_container_width=True):
         cohort = ((store.get("tokens") or {}).get(mint) or {}).get("cohort") or {}
@@ -411,18 +402,10 @@ def _full_scan_section(mint: str, token: dict, store: dict, watchlist: dict,
             try:
                 symbol = str((watchlist.get(mint) or {}).get("symbol")
                              or token.get("symbol") or "?")
-                if is_evm:
-                    analysis = robinhood_holders.analyze_token(
-                        mint, symbol, max_wallets=FULL_SCAN_MAX_WALLETS,
-                        fetch_market=True, cohort_addrs=addrs)
-                    ingest_many({mint: analysis}, store=store,
-                                path=robinhood_watchlist.HISTORY_LOCAL_PATH,
-                                detail=True)
-                else:
-                    analysis = analyze_token(
-                        mint, symbol, max_wallets=FULL_SCAN_MAX_WALLETS,
-                        fetch_market=True, cohort_addrs=addrs)
-                    ingest_many({mint: analysis}, detail=True)
+                analysis = analyze_token(
+                    mint, symbol, max_wallets=FULL_SCAN_MAX_WALLETS,
+                    fetch_market=True, cohort_addrs=addrs)
+                ingest_many({mint: analysis}, detail=True)
             except Exception as exc:  # noqa: BLE001
                 analysis = None
                 st.error(f"Gagal: {exc}")
@@ -443,17 +426,10 @@ def _full_scan_section(mint: str, token: dict, store: dict, watchlist: dict,
     st.divider()
 
 
-def _chain_manual_scan(is_evm: bool) -> dict | None:
-    """Overlay scan manual hanya untuk chain yang sedang dibuka.
-
-    ``MANUAL_SCAN_KEY`` dipakai bersama halaman utama Solana. Token hasil
-    scan manual di halaman ini tidak boleh bocor ke chain lain, jadi overlay
-    disaring berdasarkan format address dulu.
-    """
+def _manual_scan_overlay() -> dict | None:
+    """Overlay hasil scan manual (``MANUAL_SCAN_KEY``) bila ada."""
     manual = st.session_state.get(MANUAL_SCAN_KEY)
     if not isinstance(manual, dict):
-        return None
-    if _is_evm(manual.get("mint")) != is_evm:
         return None
     return manual
 
@@ -461,32 +437,19 @@ def _chain_manual_scan(is_evm: bool) -> dict | None:
 query_mint = str(st.query_params.get("mint") or "") if "mint" in st.query_params else ""
 session_mint = st.session_state.get("holder_mint") or ""
 raw_candidate = str(session_mint or query_mint or "").strip()
-is_evm = _is_evm(raw_candidate)
-
-if is_evm:
-    # Robinhood Chain: watchlist/status/history terpisah (EVM, chain 4663),
-    # data holder Blockscout, harga DexScreener — rule dust sama dengan Solana.
-    watchlist = robinhood_watchlist.load_watchlist()
-    mints = list(watchlist)
-    status = apply_manual_scan(robinhood_watchlist.load_status(),
-                               _chain_manual_scan(True))
-    store = seed_from_status(robinhood_watchlist.load_history(), status)
-else:
-    watchlist = load_watchlist()
-    mints = list(watchlist)
-    # Scan manual di halaman ini menulis titik baru ke holder_history.json
-    # (store) tetapi TIDAK mempublish holder_status.json — publish hanya dari
-    # cron/scan watchlist, dan snapshot_status tidak merge token lama. Tanpa
-    # overlay ini kartu metrik menampilkan angka cron terakhir sementara grafik
-    # sudah memuat titik scan manual (dua angka berbeda untuk satu token).
-    status = apply_manual_scan(load_holder_status(), _chain_manual_scan(False))
-    # Store lokal + backup durable: di lingkungan ephemeral (Streamlit Cloud)
-    # baseline scan FULL & kronologi dipulihkan dari holder_history.json.gz.
-    store = seed_from_status(load_durable_holder_history(), status)
+watchlist = load_watchlist()
+mints = list(watchlist)
+# Scan manual di halaman ini menulis titik baru ke holder_history.json
+# (store) tetapi TIDAK mempublish holder_status.json — publish hanya dari
+# cron/scan watchlist, dan snapshot_status tidak merge token lama. Tanpa
+# overlay ini kartu metrik menampilkan angka cron terakhir sementara grafik
+# sudah memuat titik scan manual (dua angka berbeda untuk satu token).
+status = apply_manual_scan(load_holder_status(), _manual_scan_overlay())
+# Store lokal + backup durable: di lingkungan ephemeral (Streamlit Cloud)
+# baseline scan FULL & kronologi dipulihkan dari holder_history.json.gz.
+store = seed_from_status(load_durable_holder_history(), status)
 
 candidate = raw_candidate
-if candidate and is_evm:
-    candidate = robinhood_holders.normalize_address(candidate)
 selected = candidate if candidate in mints else (candidate or (mints[0] if mints else ""))
 
 with st.expander("🔍 Token di luar watchlist — tempel CA",
@@ -494,20 +457,16 @@ with st.expander("🔍 Token di luar watchlist — tempel CA",
     with st.form("holder-ca-form"):
         ca_input = st.text_input(
             "Contract address (CA)",
-            placeholder="So11111111111111111111111111111111111111112 "
-                        "atau 0x… (Robinhood Chain)")
+            placeholder="So11111111111111111111111111111111111111112")
         submitted = st.form_submit_button("Buka analisa", type="primary")
     if submitted:
         manual_ca = _normalize_ca(ca_input)
         if not manual_ca:
             st.warning("Masukkan contract address terlebih dahulu.")
-        elif not (SOLANA_CA_RE.match(manual_ca)
-                  or robinhood_holders.is_robinhood_address(manual_ca)):
-            st.warning("Format CA tidak valid. Gunakan base58 Solana atau "
-                       "0x + 40 hex (Robinhood Chain).")
+        elif not SOLANA_CA_RE.match(manual_ca):
+            st.warning("Format CA tidak valid. Gunakan base58 Solana "
+                       "(32–44 karakter).")
         else:
-            if robinhood_holders.is_robinhood_address(manual_ca):
-                manual_ca = robinhood_holders.normalize_address(manual_ca)
             st.session_state["holder_mint"] = manual_ca
             st.query_params["mint"] = manual_ca
             st.rerun()
@@ -529,25 +488,19 @@ if in_watchlist:
 else:
     mint = selected
     symbol = str((watchlist.get(mint) or {}).get("symbol") or "?")
-    hist_name = (os.path.basename(robinhood_watchlist.HISTORY_LOCAL_PATH)
-                 if is_evm else "holder_history.json")
     st.warning("Token belum ada di watchlist. Scan lokal tetap mencatat "
-               f"history di file {hist_name}.")
+               "history di file holder_history.json.")
     st.markdown(f"**${symbol.upper()}** — `{mint}`")
     st.markdown(external_links_html(mint), unsafe_allow_html=True)
     if st.button("➕ Tambahkan ke watchlist"):
         # background=True: commit ke GitHub + dispatch scan di thread latar,
         # jadi tombol langsung responsif (tidak menunggu API round-trip).
-        if is_evm:
-            robinhood_watchlist.add_to_robinhood_watchlist(
-                mint, symbol, source="manual", background=True)
-        else:
-            add_to_watchlist(mint, symbol, source="manual", background=True)
+        add_to_watchlist(mint, symbol, source="manual", background=True)
         st.rerun()
 
 token = (status.get("tokens") or {}).get(mint) or {}
 # Tombol scan FULL manual naik ke paling atas (sebelum kartu metrik/grafik).
-_full_scan_section(mint, token, store, watchlist, is_evm)
+_full_scan_section(mint, token, store, watchlist)
 raw_holders = token.get("holders") or {}
 # Scan holder bisa pulang dengan sampel pendek tanpa menandai ``truncated``
 # (kasus nyata 2026-09-06: Helius mati → fallback GMGN mengembalikan 20
@@ -586,22 +539,7 @@ c4.metric("Pilar Crab+Fish", _count(mid.get("count")),
           _fmt_pct(mid.get("pct_mc")))
 if short_scan:
     _fetch_error = str(raw_holders.get("fetch_error") or "").strip()
-    if raw_holders.get("blocked") and raw_holders.get("pro_keys"):
-        _blocked_hint = (
-            " Penyebabnya **Blockscout menolak request (HTTP 403)** dan "
-            f"semua {int(raw_holders.get('pro_keys') or 0)} key PRO API "
-            "ditolak / kredit hariannya habis — cek dashboard "
-            f"{robinhood_holders.BLOCKSCOUT_KEY_URL} atau tambah key akun "
-            "lain ke `BLOCKSCOUT_API_KEYS`.")
-    elif raw_holders.get("blocked"):
-        _blocked_hint = (
-            " Penyebabnya **Blockscout publik menolak request (HTTP 403 "
-            "bot-protection)**, bukan token/CA-nya — pasang "
-            f"`BLOCKSCOUT_API_KEY` (key gratis: "
-            f"{robinhood_holders.BLOCKSCOUT_KEY_URL}) supaya scan lewat "
-            "PRO API.")
-    else:
-        _blocked_hint = ""
+    _blocked_hint = ""
     st.warning(
         f"Scan holder terakhir **tidak lengkap**: provider cuma "
         f"mengembalikan {point_wallets(raw_holders):,} wallet (ambang "

@@ -292,10 +292,10 @@ class GetDailyCandlesTest(unittest.TestCase):
 
 
 class NetworkParamTest(unittest.TestCase):
-    """``get_hourly_candles`` menerima network (generalizing 2026-09-14).
+    """``get_hourly_candles`` menerima network (generalisasi 2026-09-14).
 
-    Card Solana memakai default ``solana`` (perilaku lama tidak berubah),
-    card 🦅 Scan Best Pool Krystal memakai ``robinhood`` (chain 4663).
+    App ini hanya memakai Solana; alias network lain (dulu ``robinhood``
+    untuk card Krystal, dihapus 2026-09-15) jatuh ke default ``solana``.
     """
 
     @staticmethod
@@ -309,7 +309,7 @@ class NetworkParamTest(unittest.TestCase):
                              1.2, 100]])
 
         with mock.patch.object(core.requests, "get", side_effect=_get):
-            core.get_hourly_candles("PairRobinhood1111111111111111111111",
+            core.get_hourly_candles("PairAddress1111111111111111111111111",
                                     **kwargs)
         return captured
 
@@ -320,17 +320,14 @@ class NetworkParamTest(unittest.TestCase):
         self.assertEqual(captured["params"],
                          {"aggregate": 1, "limit": 3})
 
-    def test_network_robinhood_dipakai_krystal(self):
-        captured = self._fetch(limit_hours=24, network="robinhood")
-        self.assertIn("/networks/robinhood/pools/", captured["url"])
-        self.assertEqual(captured["params"], {"aggregate": 1, "limit": 24})
-
-    def test_alias_dan_chain_id_dipetakan(self):
-        for value in ("RH", "Robinhood", "4663", "robinhoodchain"):
+    def test_alias_solana_dipetakan(self):
+        for value in ("sol", "SOLANA"):
             with self.subTest(value=value):
                 captured = self._fetch(network=value)
-                self.assertIn("/networks/robinhood/", captured["url"])
-        for value in ("sol", "SOLANA"):
+                self.assertIn("/networks/solana/", captured["url"])
+
+    def test_network_mantan_robinhood_jatuh_ke_solana(self):
+        for value in ("robinhood", "rh", "4663", "robinhoodchain"):
             with self.subTest(value=value):
                 captured = self._fetch(network=value)
                 self.assertIn("/networks/solana/", captured["url"])
@@ -349,8 +346,8 @@ class NetworkParamTest(unittest.TestCase):
                              1.2, 100]])
 
         with mock.patch.object(core.requests, "get", side_effect=_get):
-            core.get_daily_candles(PAIR, limit_days=2, network="robinhood")
-        self.assertIn("/networks/robinhood/pools/", captured["url"])
+            core.get_daily_candles(PAIR, limit_days=2, network="solana")
+        self.assertIn("/networks/solana/pools/", captured["url"])
 
 
 if __name__ == "__main__":  # pragma: no cover

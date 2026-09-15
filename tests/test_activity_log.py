@@ -35,7 +35,7 @@ class LogBufferTest(unittest.TestCase):
 
     def test_dedup_menumpuk_count_bukan_baris(self):
         for _ in range(5):
-            al.warn("blockscout", "PRO API key#1: rate limit RPS (429)",
+            al.warn("helius", "Helius key#1: rate limit RPS (429)",
                     echo=False)
         rows = al.entries()
         self.assertEqual(len(rows), 1)
@@ -81,7 +81,7 @@ class EntryHtmlTest(unittest.TestCase):
 
     def test_action_merah_bold(self):
         html = al.entry_html({"ts": 0, "level": al.LEVEL_ACTION,
-                              "source": "blockscout",
+                              "source": "helius",
                               "message": "kredit habis", "count": 1})
         self.assertIn("font-weight:700", html)
         self.assertIn("#dc2626", html)
@@ -102,46 +102,6 @@ class EntryHtmlTest(unittest.TestCase):
         html = al.entry_html({"ts": 0, "level": al.LEVEL_WARN, "source": "x",
                               "message": "429", "count": 7})
         self.assertIn("×7", html)
-
-
-class InstrumentasiTest(unittest.TestCase):
-    """Titik-titik penting benar-benar menulis ke log."""
-
-    def setUp(self):
-        al.clear()
-        self.addCleanup(al.clear)
-
-    def test_key_parkir_402_masuk_sebagai_action(self):
-        import robinhood_holders as rh
-        rh._log_key_parked("key#2", 402, "")
-        rows = al.entries()
-        self.assertEqual(rows[0]["level"], al.LEVEL_ACTION)
-        self.assertIn("key#2", rows[0]["message"])
-        self.assertIn("402", rows[0]["message"])
-
-    def test_key_parkir_429_hanya_warning(self):
-        import robinhood_holders as rh
-        rh._log_key_parked("key#1", 429, "")
-        self.assertEqual(al.entries()[0]["level"], al.LEVEL_WARN)
-
-    def test_blocked_tanpa_key_menyuruh_pasang_key(self):
-        import robinhood_holders as rh
-        from unittest import mock
-        with mock.patch.object(rh, "get_pro_api_keys", return_value=[]):
-            rh._log_blocked(None)
-        row = al.entries()[0]
-        self.assertEqual(row["level"], al.LEVEL_ACTION)
-        self.assertIn("BLOCKSCOUT_API_KEY", row["message"])
-
-    def test_blocked_dengan_key_menyebut_dashboard(self):
-        import robinhood_holders as rh
-        from unittest import mock
-        with mock.patch.object(rh, "get_pro_api_keys",
-                               return_value=["k1", "k2"]):
-            rh._log_blocked(None)
-        row = al.entries()[0]
-        self.assertEqual(row["level"], al.LEVEL_ACTION)
-        self.assertIn("2 key PRO", row["message"])
 
 
 if __name__ == "__main__":  # pragma: no cover
