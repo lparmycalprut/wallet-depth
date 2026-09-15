@@ -17,7 +17,9 @@ pool, kita akan punya 2 tombol 24H dan 30M"*. Yang di-pin di file ini:
   ``hidden_metric``, jumlah pembuangannya tercatat di ``dropped_volatility``;
 - query API: ``pool_type=dlmm&&active_tvl>=50000`` (``fee_pct>=2`` **dihapus**
   2026-09-13; pool ber-fee rendah seperti EMBER/USDC harus muncul);
-- urutan tiap tabel: **F/V terbesar** → volume/active TVL → dust %MC terkecil;
+- urutan tiap tabel (permintaan user 2026-09-15 lanjutan: *"sebentar, kita
+  urutkan fee/TVL paling besar dulu, baru perkalian f/v"*): **Fee/TVL
+  terbesar** → **F/V terbesar** → volume/active TVL → dust %MC terkecil;
 - dust, volatility minimal, volume 24 jam, tier fee, top10 dan LPs **bukan**
   saringan — dan tidak boleh dihidupkan balik;
 - **satu tabel per lane** di ``best_pool_ui``: hasil disimpan di
@@ -86,7 +88,8 @@ def _row(**over):
         "mc": 1_000_000, "tvl": 66_000, "active_tvl": 60_000,
         "fee_active_tvl_ratio": 40.0, "volume": 1_200_000, "fee": 24_000.0,
         "volume_change_pct": 12.5, "fee_pct": 2.0, "volatility": 6.2,
-        # Rasio volume/active TVL seperti API Meteora (kunci urut kedua):
+        # Rasio volume/active TVL seperti API Meteora (kunci urut ketiga
+        # sejak 2026-09-15; Fee/TVL dan F/V di depannya):
         # 1,2 juta / 60 ribu × 100 = 2000%.
         "volume_active_tvl_ratio": 2000.0,
         "total_lps": 88, "top_holders_pct": 20.0,
@@ -240,6 +243,73 @@ class RowMetricsTest(unittest.TestCase):
                                                "active_tvl": None}))
 
 
+class FvDisplayTest(unittest.TestCase):
+    """Teks kolom F/V + pasangan pool (permintaan user 2026-09-15).
+
+    Laporan user: *"coba cek last scan — gold menunjukkan 6328266.1 F/V —
+    perbaiki"*. Angka aslinya benar (pool GOLD-XAUt0: ``fee_active_tvl_ratio``
+    0,013 ÷ ``volatility`` 2,06e-09 = 6.328.266×), yang salah cuma formatnya:
+    satu desimal untuk semua besaran membuat rasio jutaan tampil ~10 digit
+    tanpa pemisah. Sekaligus kolom **Token** kini menulis pasangan pool-nya.
+    """
+
+    def test_di_bawah_100_tetap_satu_desimal(self):
+        self.assertEqual(ms.format_fv_ratio(10.14), "10.1×")
+        self.assertEqual(ms.format_fv_ratio(6.4516), "6.5×")
+        self.assertEqual(ms.format_fv_ratio(5.0), "5.0×")
+        self.assertEqual(ms.format_fv_ratio(1.0), "1.0×")
+
+    def test_100_ke_atas_bulat_dengan_pemisah_ribuan(self):
+        self.assertEqual(ms.format_fv_ratio(100.0), "100×")
+        self.assertEqual(ms.format_fv_ratio(1234.6), "1,235×")
+        # Angka yang dilaporkan user apa adanya: 6328266.1 → 6,328,266×.
+        self.assertEqual(ms.format_fv_ratio(6328266.1), "6,328,266×")
+        # Lompatan format ada di 100×: di bawahnya masih satu desimal.
+        self.assertEqual(ms.format_fv_ratio(99.9), "99.9×")
+
+    def test_none_nan_inf(self):
+        """Tidak terukur → None (UI menulis —); tak hingga → ∞ (warisan)."""
+        self.assertIsNone(ms.format_fv_ratio(None))
+        self.assertIsNone(ms.format_fv_ratio(""))
+        self.assertIsNone(ms.format_fv_ratio("bukan angka"))
+        self.assertIsNone(ms.format_fv_ratio(float("nan")))
+        self.assertIsNone(ms.format_fv_ratio(True))
+        self.assertEqual(ms.format_fv_ratio(float("inf")), "∞")
+
+    def test_satu_sumber_dengan_angka_yang_disaring(self):
+        """Rasio yang tampil = rasio yang dipakai saringan + urutan."""
+        row = _row(fee_active_tvl_ratio=0.013025137688422304,
+                   volatility=2.057951587445997e-09)
+        self.assertAlmostEqual(ms.row_fv_ratio(row) / 6_329_175.9, 1.0,
+                               places=6)
+        self.assertEqual(ms.format_fv_ratio(ms.row_fv_ratio(row)),
+                         "6,329,176×")
+        # Saringan lane tetap lolos (F/V jauh di atas 5×) — formatnya tidak
+        # mengubah keputusan apa pun.
+        self.assertEqual(ms.row_best_gaps(row, lane="24h"), [])
+
+    def test_pasangan_pool_dari_nama_pool_api(self):
+        self.assertEqual(
+            ms.row_pair_label(_row(pool_name="ALLINU/SOL")), "ALLINU/SOL")
+        self.assertEqual(ms.row_pair_label(_row(pool_name="TOK-SOL")),
+                         "TOK-SOL")
+        # Huruf kecil + spasi ganda dirapikan; namanya tidak ditebak-tebak.
+        self.assertEqual(ms.row_pair_label(_row(pool_name=" allinu/sol ")),
+                         "ALLINU/SOL")
+        self.assertEqual(ms.row_pair_label(_row(pool_name="TOK  -  SOL")),
+                         "TOK - SOL")
+
+    def test_pasangan_pool_kosong_tidak_dikarang(self):
+        """Tanpa nama pool: baris pasangan tidak ditampilkan (bukan tebakan)."""
+        self.assertEqual(ms.row_pair_label(_row()), "")          # name = "AAA"
+        self.assertEqual(ms.row_pair_label(_row(name="Some Token")), "")
+        self.assertEqual(ms.row_pair_label(None), "")
+        # Nama token yang memang terlihat seperti pasangan masih dipakai
+        # sebagai cadangan (hasil scan lama sebelum ``pool_name`` ada).
+        self.assertEqual(ms.row_pair_label(_row(name="allinu/sol")),
+                         "ALLINU/SOL")
+
+
 class BestGatesTest(unittest.TestCase):
     """Saringan lane: 24H ``F/V >= 5×``; 30M ``F/V > 1×``."""
 
@@ -335,28 +405,54 @@ class BestGatesTest(unittest.TestCase):
 
 
 class SortBestRowsTest(unittest.TestCase):
-    """Urutan tiap tabel: F/V terbesar → volume/active TVL → dust terkecil."""
+    """Urutan tiap tabel: **Fee/TVL terbesar** → F/V terbesar → vol/TVL → dust.
 
-    def test_fv_adalah_kunci_pertama(self):
+    Permintaan user 2026-09-15 (lanjutan): *"sebentar, kita urutkan fee/TVL
+    paling besar dulu, baru perkalian f/v"* — Fee/TVL (``fee_active_tvl_ratio``)
+    naik jadi kunci pertama, F/V turun ke kunci kedua.
+    """
+
+    def test_fee_tvl_kunci_pertama_baru_fv(self):
+        """Fee/TVL memimpin sendirian; dua kunci sengaja berlawanan arah.
+
+        FEE_TERBESAR punya Fee/TVL paling besar (60%) tapi F/V-nya paling
+        kecil (5×) — kalau F/V masih kunci pertama dia akan jatuh ke bawah.
+        FV_TERBESAR justru sebaliknya (Fee/TVL 10%, F/V 10×).
+        """
         rows = [
-            _row(pool_address="RAMAI_TAPI_KECIL", symbol="AAA",
-                 volume_active_tvl_ratio=9999.0, **_fv(6.0, 6.0)),   # 1×
-            _row(pool_address="FV_BESAR", symbol="BBB",
-                 volume_active_tvl_ratio=1.0, **_fv(60.0, 6.0)),     # 10×
-            _row(pool_address="FV_TENGAH", symbol="CCC",
-                 volume_active_tvl_ratio=50.0, **_fv(30.0, 6.0)),    # 5×
+            _row(pool_address="FV_TERBESAR", symbol="AAA", **_fv(10.0, 1.0)),
+            _row(pool_address="FEE_TERBESAR", symbol="BBB", **_fv(60.0, 12.0)),
+            _row(pool_address="TENGAH", symbol="CCC", **_fv(30.0, 3.0)),
         ]
         self.assertEqual([r["pool_address"] for r in ms.sort_best_rows(rows)],
-                         ["FV_BESAR", "FV_TENGAH", "RAMAI_TAPI_KECIL"])
+                         ["FEE_TERBESAR", "TENGAH", "FV_TERBESAR"])
 
-    def test_infinity_paling_atas(self):
-        """Kontrak urut ∞ dipertahankan bila ada yang meneruskannya ke sini —
-        tapi sejak 2026-09-14 lanjutan baris vol-0 dibuang card sebelum tabel
-        (``row_volatility_zero``), jadi urutan ini tidak pernah kelihatan."""
+    def test_fv_kunci_kedua_saat_fee_tvl_seri(self):
+        """Fee/TVL sama → baru F/V terbesar yang memutuskan."""
+        rows = [
+            _row(pool_address="FV_KECIL", symbol="AAA", **_fv(20.0, 4.0)),  # 5×
+            _row(pool_address="FV_BESAR", symbol="BBB", **_fv(20.0, 2.0)),  # 10×
+        ]
+        self.assertEqual([r["pool_address"] for r in ms.sort_best_rows(rows)],
+                         ["FV_BESAR", "FV_KECIL"])
+
+    def test_infinity_paling_atas_di_kelompok_fee_tvl_sama(self):
+        """Kontrak urut ∞ dipertahankan **di dalam** kelompok Fee/TVL yang sama.
+
+        ∞ (volatility 0) tetap di atas angka apa pun, tapi tidak lagi melompati
+        Fee/TVL yang lebih besar — Fee/TVL kunci pertama. Baris vol-0 dibuang
+        card sebelum tabel (``row_volatility_zero``, 2026-09-14 lanjutan), jadi
+        urutan ini praktis tidak pernah kelihatan.
+        """
         rows = [_row(pool_address="NORMAL", symbol="AAA", **_fv(500.0, 1.0)),
-                _row(pool_address="NOLVOL", symbol="ZZZ", **_fv(5.0, 0))]
+                _row(pool_address="NOLVOL", symbol="ZZZ", **_fv(500.0, 0))]
         self.assertEqual([r["pool_address"] for r in ms.sort_best_rows(rows)],
                          ["NOLVOL", "NORMAL"])
+        # Fee/TVL 900 > 500 → di atas, walau F/V-nya cuma 900× (bukan ∞).
+        rows.append(_row(pool_address="FEE_LEBIH_BESAR", symbol="BBB",
+                         **_fv(900.0, 1.0)))
+        self.assertEqual([r["pool_address"] for r in ms.sort_best_rows(rows)],
+                         ["FEE_LEBIH_BESAR", "NOLVOL", "NORMAL"])
 
     def test_tie_break_volume_tvl_lalu_dust(self):
         rows = [
@@ -375,26 +471,25 @@ class SortBestRowsTest(unittest.TestCase):
         self.assertEqual([r["pool_address"] for r in ms.sort_best_rows(rows)],
                          ["C", "D", "A", "B"])
 
-    def test_tanpa_metrik_paling_bawah_tanpa_dust_tie_break(self):
-        """F/V memutuskan lebih dulu; dust hanya tie-break; tanpa metrik akhir.
+    def test_tanpa_metrik_paling_bawah_di_kunci_nya_sendiri(self):
+        """Tiap kunci punya aturan None-nya sendiri; Fee/TVL hilang = paling bawah.
 
-        TANPA_DUST dan LENGKAP F/V-nya sama (10×) jadi dust yang memilih;
-        TANPA_FV (volatility hilang) tidak bisa dibandingkan dan selalu paling
-        bawah walau dust-nya paling bersih.
+        TANPA_FV dan LENGKAP Fee/TVL-nya sama (10%) jadi F/V yang memilih —
+        LENGKAP (10×) di atas TANPA_FV (volatility hilang). Yang tidak punya
+        Fee/TVL sama sekali (TANPA_FEE) tidak bisa dibandingkan di kunci
+        pertama dan selalu paling bawah, walau dust-nya paling bersih.
         """
         rows = [
-            _row(pool_address="TANPA_FV", symbol="AAA", volatility=None,
-                 analysis=_proof(0.001)),
-            _row(pool_address="TANPA_DUST", symbol="BBB", **_fv(10.0, 1.0),
-                 analysis=None),
+            _row(pool_address="TANPA_FEE", symbol="AAA", **_fv(None, 1.0)),
+            _row(pool_address="TANPA_FV", symbol="BBB", **_fv(10.0, None)),
             _dust(_row(pool_address="LENGKAP", symbol="CCC", **_fv(10.0, 1.0)),
                   0.04),
-            _row(pool_address="FV_BESAR", symbol="DDD", **_fv(900.0, 1.0),
+            _row(pool_address="FV_BESAR", symbol="DDD", **_fv(90.0, 1.0),
                  analysis=None),
         ]
         order = [r["pool_address"] for r in ms.sort_best_rows(rows)]
-        self.assertEqual(order, ["FV_BESAR", "LENGKAP", "TANPA_DUST",
-                                "TANPA_FV"])
+        self.assertEqual(order, ["FV_BESAR", "LENGKAP", "TANPA_FV",
+                                 "TANPA_FEE"])
 
     def test_tie_break_dust_pakai_presisi_tampilan(self):
         """0,0301% dan 0,0304% tampil sama (0,030%) → simbol yang menentukan."""
@@ -828,7 +923,7 @@ class BestPoolCardTest(unittest.TestCase):
         for label in (f"pool_type=dlmm&&active_tvl>={int(ms.BEST_ACTIVE_TVL_MIN)}",
                       f"24H: F/V ≥ {ms.BEST_FV_24H_MIN:g}×",
                       f"30M: F/V > {ms.BEST_FV_30M_MIN:g}×",
-                      "Urutan tiap tabel: F/V terbesar"):
+                      "Urutan tiap tabel: Fee/TVL terbesar, lalu F/V terbesar"):
             self.assertIn(label, body)
         captions = "\n".join(node.value for node in app.caption)
         for rule_text in ("Urutan:", "disaring", "SEBELUM scan", "syarat",
@@ -1069,13 +1164,13 @@ class BestPoolCardTest(unittest.TestCase):
             body)
 
     def test_baris_ditampilkan_urut_f_v_dan_siap_dibaca(self):
-        """F/V ditampilkan sebagai ``N,N×`` + alasan ambang di sel-nya."""
+        """Fee/TVL seri → F/V terbesar di atas; F/V ditulis ``N,N×``."""
         app = self._app()
         app.session_state["best_pool_scan_24h"] = self._result("24h", [
             _row(pool_address="PoolKecil", ca="MintKcl", symbol="KCL",
-                 **_fv(20.0, 4.0)),        # 5,0×
+                 **_fv(40.0, 8.0)),        # Fee/TVL 40% · F/V 5,0×
             _row(pool_address="PoolBesar", ca="MintBsr", symbol="BSR",
-                 **_fv(40.0, 4.0)),         # 10,0×
+                 **_fv(40.0, 4.0)),         # Fee/TVL 40% · F/V 10,0×
         ])
         app.run()
         body = "\n".join(node.value for node in app.markdown)
@@ -1086,6 +1181,69 @@ class BestPoolCardTest(unittest.TestCase):
         for title in ("A.TVL", "Fee/TVL", "Vol 24h", "Volat", "Dust %MC"):
             self.assertIn(title, body)
         self.assertIn("kunci urut kedua", body)
+
+    def test_f_v_besar_ditulis_bulat_dengan_pemisah_ribuan(self):
+        """Rasio jutaan tidak lagi tampil ``6328266.1×`` (laporan user).
+
+        Pool live GOLD-XAUt0 2026-09-15 (angka API apa adanya):
+        ``fee_active_tvl_ratio`` 0,013025137688422304 ÷ ``volatility``
+        2,057951587445997e-09 = 6.329.175,9×. Angka seperti inilah yang dulu
+        tampil apa adanya sebagai ``6329175.9×`` (laporan user menyebut
+        sampelnya sendiri: *"gold menunjukkan 6328266.1 F/V"*).
+        """
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result("24h", [
+            _row(pool_address="PoolGold", ca="MintGold", symbol="GOLD",
+                 pool_name="GOLD/XAUt0",
+                 fee_active_tvl_ratio=0.013025137688422304,
+                 volatility=2.057951587445997e-09),
+        ])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn("6,329,176×", body)
+        # Format lama (satu desimal, tanpa pemisah ribuan) hilang total —
+        # termasuk dari tooltip & atribut title.
+        self.assertNotIn("6329175.9", body)
+        self.assertNotIn("6329175.95", body)
+        # Volatility sekecil itu tidak boleh tertulis "0.00%" di tooltip:
+        # justru angka itu penyebab rasio F/V-nya jutaan.
+        self.assertIn("volatility 2.06e-09%", body)
+        self.assertNotIn("volatility 0.00%", body)
+
+    def test_kolom_token_menampilkan_pasangan_pool(self):
+        """Kolom Token menulis pasangan pool-nya, mis. ``ALLINU/SOL``.
+
+        Permintaan user 2026-09-15: *"kolom Token sekarang akan menunjukkan
+        pasangan pairnya, misal ALLINU/SOL"* — simbol `$TOKEN` tetap baris
+        pertama, pasangan pool di bawahnya, alamat mint tetap ada.
+        """
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result("24h", [
+            _row(pool_address="PoolAllinu", ca="MintAllinu",
+                 symbol="ALLINU", pool_name="ALLINU/SOL"),
+        ])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn(">Token<", body)          # judul kolom tidak berubah
+        self.assertIn("$ALLINU", body)
+        self.assertIn('<span class="watchlist-pair"', body)
+        self.assertIn(">ALLINU/SOL</span>", body)
+        self.assertIn("MintAlli", body)         # alamat mint tetap tampil
+
+    def test_tanpa_nama_pool_tidak_ada_baris_pasangan(self):
+        """Hasil scan lama (tanpa ``pool_name``) tidak dikarang pasangannya."""
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result("24h", [
+            _row(pool_address="PoolLawas", ca="MintLawas", symbol="LAWAS"),
+        ])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn("$LAWAS", body)
+        # CSS-nya ikut ter-render di body, jadi yang diperiksa elemen sel-nya.
+        self.assertNotIn('<span class="watchlist-pair"', body)
 
 
 @unittest.skipIf(AppTest is None, "streamlit not installed")

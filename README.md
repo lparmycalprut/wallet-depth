@@ -290,24 +290,47 @@ bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
   layar lama — volume 24 jam ≥ $1M, volatility ≥ 2%, dust < 0,05% MC — ikut
   **dihapus**: dust/volume/tier fee/Top10/LPs/active TVL tetap tampil sebagai
   **informasi**, bukan syarat.
-- **Urutan tiap tabel**: **F/V terbesar** → **volume / active TVL window
-  lane-nya** (`volume_active_tvl_ratio`, angka persen dari API; ditulis di
-  baris kecil kolom Vol sebagai `… · 1,647× A.TVL`) → **dust % MC terkecil** →
-  simbol alfabetis. Kunci dust dibulatkan ke presisi tampilan (3 desimal)
-  supaya dua pool yang di layar sama-sama "0,030%" dianggap seri; baris tanpa
-  angka dust tidak hilang, hanya kalah tie-break dari sesame F/V.
+- **Urutan tiap tabel** (2026-09-15 lanjutan, permintaan user: *"sebentar, kita
+  urutkan fee/TVL paling besar dulu, baru perkalian f/v"*): **Fee/TVL
+  terbesar** (`fee_active_tvl_ratio`) → **F/V terbesar** → **volume / active
+  TVL window lane-nya** (`volume_active_tvl_ratio`, angka persen dari API;
+  ditulis di baris kecil kolom Vol sebagai `… · 1,647× A.TVL`) → **dust % MC
+  terkecil** → simbol alfabetis. Fee/TVL hanya **urutan**, bukan saringan —
+  kelolosan tetap F/V lane. Kunci dust dibulatkan ke presisi tampilan (3
+  desimal) supaya dua pool yang di layar sama-sama "0,030%" dianggap seri;
+  baris tanpa angka di sebuah kunci turun ke bawah di kunci itu (tidak
+  hilang).
 - **Session key per lane**: `best_pool_scan_24h` / `best_pool_scan_30m`
   (toggle disembunyikan `best_pool_show_hidden_24h` / `_30m`, lane aktif
   `best_pool_lane`). Hasil sesi lama yang masih gabung (`best_pool_scan`)
   dipecah otomatis sekali saat render, jadi listing tidak hilang setelah
   update.
+- **Kolom Token menulis pasangan pool-nya** (2026-09-15, permintaan user:
+  *"kolom Token sekarang akan menunjukkan pasangan pairnya, misal
+  ALLINU/SOL"*): `$SIMBOL` di baris pertama, pasangan pool DLMM di bawahnya
+  (nama pool dari API Meteora apa adanya — `meteora_screener.row_pair_label`,
+  mis. `ALLINU/SOL`, `GOLD/XAUt0`; pasangannya **tidak** ditebak dari simbol,
+  pool `TOK-USDC` tetap `TOK-USDC`), alamat mint tetap di baris terakhir.
+  Hasil scan lama yang belum menyimpan `pool_name` tidak menampilkan baris
+  pasangan sama sekali (bukan dikarang).
+- **Angka F/V** dibaca dari `meteora_screener.format_fv_ratio`: satu desimal
+  di bawah 100× (`10,1×`, `6,4×`), **bulat + pemisah ribuan** dari 100× ke
+  atas (`6,328,266×`) — permintaan user 2026-09-15 (*"coba cek last scan —
+  gold menunjukkan 6328266.1 F/V — perbaiki"*: rasio pool `GOLD-XAUt0`
+  memang benar 6,33 juta× karena `volatility`-nya 2,06e-09, yang salah cuma
+  formatnya). `∞` (warisan hasil lama) dan `—` (tidak terukur) tetap; angka
+  yang sama tetap dipakai menyaring + mengurutkan (`row_fv_ratio`), jadi
+  format tidak mengubah keputusan. Tooltip sel menulis persen kecil apa
+  adanya (`volatility 2.06e-09%`, bukan `0.00%`).
 - Kolom listing (ditata 2026-09-14 — 4 kolom inti di depan, kolom **Dust**
-  jumlah wallet dihapus): Token · **F/V** (baris kecil 24H = `syarat F/V ≥
+  jumlah wallet dihapus; urutan sesuai `best_pool_ui._lane_titles`): Token
+  (baris pasangan pool, 2026-09-15) · **F/V** (baris kecil 24H = `syarat F/V ≥
   5×` / tabel disembunyikan 24H = `gugur: …` merah; 30M lolos = **OK** hijau
-  dengan `syarat F/V > 1× terpenuhi`) · **Volat** · **Dust %MC** (3 desimal)
-  · MC · **A.TVL** · **Active Range** (persen saja, mis. `-34.5% / +19.0%` —
-  lihat bullet di bawah) · **Fee/TVL** (baris kecil = fee USD window lane + tier
-  fee) · **Vol 24h/30m** (judul mengikuti window lane; baris kecil = Δ
+  dengan `syarat F/V > 1× terpenuhi`) · **Fee/TVL** (baris kecil = fee USD
+  window lane + tier fee) · **Volat** · **Dust %MC** (3 desimal) · **Fee %**
+  (fee trading pool, mis. 0.5% / 2%) · MC · **A.TVL** · **Active Range**
+  (persen saja, mis. `-34.5% / +19.0%` — lihat bullet di bawah) ·
+  **Vol 24h/30m** (judul mengikuti window lane; baris kecil = Δ
   volume, hijau naik / merah turun, plus rasio volume/active TVL) · Top10 ·
   LPs · Pool (Meteora DLMM + HawkFi) · ⭐ — hover tiap angka memberi angka
   penuh + keterangan apakah metrik itu kunci urut atau hanya informasi. Sel
@@ -530,7 +553,7 @@ akumulasi dan bukan prediksi arah harga.
 | `alert_context.py` | Konteks pasar untuk konfirmasi alert: volume 4 jam, rata-rata 7 hari, buy/sell pressure, volatilitas (ditarik lazy) |
 | `holder_chronology.py` | Snapshot wallet bounded, klasifikasi pergerakan, narasi kronologi |
 | `lp_watchlist.py` | Card **Chart LP**: pisah watchlist Meteora, baris metrik fee/volatility + grafik dust historis |
-| `meteora_screener.py` | Regular listing DLMM 24h lalu 30m, active TVL ≥ 50K, filter/classification fee-versus-volatility, sort quotient tanpa dust, enrich holder; Best Pool terpisah: `scan_best_lane(lane)` satu lane per tombol, saringan `row_best_gaps` 24H F/V ≥ 5× / 30M F/V > 1× sebelum holder, `sort_best_rows` urut F/V → vol/TVL → dust |
+| `meteora_screener.py` | Regular listing DLMM 24h lalu 30m, active TVL ≥ 50K, filter/classification fee-versus-volatility, sort quotient tanpa dust, enrich holder; Best Pool terpisah: `scan_best_lane(lane)` satu lane per tombol, saringan `row_best_gaps` 24H F/V ≥ 5× / 30M F/V > 1× sebelum holder, `sort_best_rows` urut Fee/TVL → F/V → vol/TVL → dust |
 | `holder_analysis.py` | Fetch holder Helius/GMGN, klasifikasi real/dust/mid |
 | `solscan_holders.py` | Kalkulasi wallet_depth (bucket & tier) |
 | `helius_holders.py` | Scan Holder Solana satu token (Solana/Helius) + bar chart |

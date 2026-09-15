@@ -95,6 +95,13 @@ def render_styles() -> None:
     .watchlist-holder-link:hover {background:#e0e7ff;border-color:#6366f1;
      color:#000000;text-decoration:none;}
     .watchlist-metric {text-align:center;}
+    /* Pasangan pool di kolom Token listing 🏆 Scan Best Pool Meteora
+       (permintaan user 2026-09-15: "kolom Token sekarang akan menunjukkan
+       pasangan pairnya, misal ALLINU/SOL") — di bawah $SIMBOL, di atas
+       alamat mint. Huruf monospace + agak tebal supaya pasangannya terbaca
+       sebagai satu kesatuan (bukan dua ticker terpisah). */
+    .watchlist-pair {font-size:.78rem;font-weight:800;color:#000000;
+     font-family:monospace;letter-spacing:.01em;}
     .watchlist-metric-label {font-size:.65rem;color:#000000;text-transform:uppercase;
      letter-spacing:.04em;}
     .watchlist-metric-value {font-size:.95rem;font-weight:700;color:#000000;}

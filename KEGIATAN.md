@@ -1,3 +1,74 @@
+# Kegiatan — 15 September 2026 (🏆 Best Pool: F/V ekstrem, Token = pasangan pool, urut Fee/TVL)
+
+Permintaan user: *"coba cek last scan"* → *"gold menunjukkan 6328266.1 F/V"* →
+*"perbaiki"*, disusul *"lalu, juga kolom Token sekarang akan menunjukkan
+pasangan pairnya, misal ALLINU/SOL"*, ditutup *"sebentar, kita urutkan fee/TVL
+paling besar dulu"* + *"baru perkalian f/v"*.
+
+## 1 · F/V juta-an: angka benar, formatnya yang salah
+
+Pool live yang dimaksud: `GOLD-XAUt0`
+(`C4LZ1YcqVbbCh3WqDuig7zQpG24o4UUDXwdJjhoy7PjR`, lane 24H, fee_pct 0,1%,
+active TVL 114.004,5 USD, MC ~2,47 juta) — `fee_active_tvl_ratio`
+0,013025137688422304 ÷ `volatility` 2,057951587445997e-09 =
+**6.329.175,9×**. Angka user (6.328.266,1) adalah sampel lain dari pool yang
+sama; keduanya sah. Penyebab tampilannya: `best_pool_ui._fv_cell` menulis
+`f"{ratio:.1f}×"` untuk **semua** besaran, jadi rasio jutaan terbaca
+`6329175.9×` — tanpa pemisah ribuan, dan digit di belakang koma tidak berarti.
+
+- `meteora_screener.format_fv_ratio()` (baru) + konstanta
+  `FV_DISPLAY_DECIMALS = 1` / `FV_PLAIN_MAX = 100.0`: `< 100×` → satu desimal
+  (`10.1×`), `>= 100×` → bulat + pemisah ribuan (`6,328,266×`), `inf` → `∞`,
+  `None`/NaN → `None` (UI menulis `—`).
+- Saringan **tidak berubah**: `row_best_gaps` tetap `24H F/V ≥ 5×` /
+  `30M F/V > 1×`; rasio kecil tetap tampil apa adanya, rasio ekstrem hanya
+  dirapikan teksnya.
+- Tooltip sel: helper baru `_pct_full()` supaya persen sangat kecil tidak
+  dibulatkan jadi `0.00%` — sekarang `volatility 2.06e-09%` (3 angka penting
+  di bawah 0,005%), itu justru angka yang menjelaskan rasio jutaan.
+
+## 2 · Kolom Token menulis pasangan pool
+
+`meteora_screener.row_pair_label(row)` mengambil nama pool dari API Meteora
+(`pool_name`, disimpan `_row_from_pool`) **apa adanya** — uppercase, spasi
+ganda dirapatkan, pemisahnya dibiarkan seperti API: `ALLINU/SOL`, `TOK-SOL`.
+Pasangan tidak ditebak dari simbol (pool USDC tetap `TOK-USDC`, bukan dipaksa
+`TOK/SOL`); kalau `pool_name` kosong, baris pasangan tidak ditampilkan sama
+sekali (hasil scan lama) — bukan dikarang. Sel Token kini: `$SIMBOL` → pasangan
+pool (`.watchlist-pair`, CSS baru di `dashboard_components.render_styles`) →
+alamat mint + link GMGN/Dex. Lebar kolom disesuaikan (`_COL_SPEC`: F/V
+0,7 → 1,0; Token 1,4 → 1,45) supaya angka ribuan dan pasangan muat; jumlah
+kolom tetap 14.
+
+## 3 · Urutan tabel: Fee/TVL dulu, baru F/V
+
+Permintaan susulan user: *"sebentar, kita urutkan fee/TVL paling besar dulu"*,
+*"baru perkalian f/v"* — kunci urut `meteora_screener.sort_best_rows` jadi
+**Fee/TVL** (`fee_active_tvl_ratio`) terbesar → **F/V** (`row_fv_ratio`)
+terbesar → `row_vol_tvl_ratio` terbesar → dust % MC terkecil (3 desimal
+tampilan) → simbol. Sebelumnya F/V yang memimpin (aturan 2026-09-13).
+
+- Fee/TVL **bukan saringan**: `row_best_gaps` tidak disentuh — kelolosan tetap
+  `24H F/V ≥ 5×` / `30M F/V > 1×`; Fee/TVL hanya menentukan siapa di atas.
+- Baris tanpa angka di sebuah kunci turun ke bawah **di kunci itu** saja:
+  Fee/TVL hilang = paling bawah, F/V hilang = di bawah pemilik F/V di kelompok
+  Fee/TVL yang sama. ∞ (vol-0) tetap teratas di kelompoknya, tapi tidak lagi
+  melompati Fee/TVL yang lebih besar.
+- Teks ikut disesuaikan: tooltip Fee/TVL jadi "kunci urut pertama (terbesar
+  dulu, permintaan user 2026-09-15), bukan saringan", sel F/V "kunci urut
+  kedua", sel Vol "kunci urut ketiga … setelah Fee/TVL & F/V", docstring sel
+  judul card "Urutan tiap tabel: Fee/TVL terbesar, lalu F/V terbesar, …".
+
+## Verifikasi
+
+`python3 -m pytest tests -q` → **983 passed / 19 failed**. Baseline HEAD
+`8df2ca6` (worktree terpisah) → **973 passed / 19 failed** dengan daftar
+kegagalan yang **persis sama**, jadi tidak ada regresi; 10 tes baru
+(`FvDisplayTest` 6 tes + 3 AppTest pasangan/format + 1 tes urutan baru
+`test_fee_tvl_kunci_pertama_baru_fv`, plus `SortBestRowsTest` dirombak supaya
+dua kunci saling berlawanan arah) semuanya hijau. Detail: `AGENTS.md` (blok
+paling atas) + `README.md` bagian 🏆 Scan Best Pool Meteora.
+
 # Kegiatan — 15 September 2026 (hapus total halaman 🦅 Robinhood + 📦 temp)
 
 Permintaan user: *"hapus semua yang ada di page temp dan Robinhood, Total
@@ -305,7 +376,8 @@ menyala — lalu tandai f/v tertinggi tersebut menjadi warna hijau menyala"*.
   ikut menjelaskannya.
 - Sengaja **tidak diubah**: urutan baris (F/V → vol/active TVL → dust),
   saringan lane, pembuangan pool volatility 0, rule 30M-OK, toggle
-  disembunyikan, dan card-card lain.
+  disembunyikan, dan card-card lain. *(Urutan barisnya digantikan 2026-09-15:
+  Fee/TVL jadi kunci pertama, F/V kunci kedua — lihat entri paling atas.)*
 
 ## Verifikasi
 
@@ -428,7 +500,8 @@ tabel, dan session key sendiri.
   card (satu sumber angka, tidak ada lagi "angka filter beda dengan angka card").
 - Urutan tiap tabel: **F/V terbesar** → volume/active TVL → dust %MC terkecil
   → simbol. `∞` (volatility 0, fee positif) paling atas; baris tanpa metrik
-  F/V paling bawah walau dust-nya nol.
+  F/V paling bawah walau dust-nya nol. *(Digantikan 2026-09-15: Fee/TVL
+  terbesar jadi kunci pertama, F/V kunci kedua — lihat entri paling atas.)*
 - `best_pool_ui`: dua tombol `best-pool-scan-24h` / `best-pool-scan-30m`
   (label **🏆 Scan Best Pool 24H + Holder** / **30M**, ambang di tooltip
   `help`), hasil di `best_pool_scan_24h` / `best_pool_scan_30m`, toggle

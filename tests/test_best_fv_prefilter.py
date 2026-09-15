@@ -164,15 +164,20 @@ class LaneEnrichmentTest(unittest.TestCase):
         self.assertEqual(result['dropped_volatility'], 1)
         self.assertEqual(result['fetched'], 3)
 
-    def test_hasil_disortakan_f_v_terbesar(self):
-        """Prioritas = F/V terbesar; ∞ (volatility 0) gugur DAN dibuang."""
-        pools = [_pool('KECIL', 'MintA', ratio=25, volatility=5),     # 5×
-                 _pool('BESAR', 'MintB', ratio=100, volatility=5),    # 20×
-                 _pool('NOL', 'MintC', ratio=50, volatility=0)]       # ∞ → dibuang
+    def test_hasil_disortakan_fee_tvl_lalu_f_v(self):
+        """Prioritas = Fee/TVL terbesar (2026-09-15), baru F/V; ∞ dibuang.
+
+        FEE_RAJIN Fee/TVL-nya paling besar (200%) tapi F/V-nya cuma 20×,
+        FV_TAJAM F/V 50× tapi Fee/TVL 100% — kalau F/V masih kunci pertama,
+        FV_TAJAM yang muncul di atas.
+        """
+        pools = [_pool('FV_TAJAM', 'MintB', ratio=100, volatility=2),   # 50×
+                 _pool('FEE_RAJIN', 'MintA', ratio=200, volatility=10),  # 20×
+                 _pool('NOL', 'MintC', ratio=150, volatility=0)]         # ∞ → dibuang
         calls: list = []
         result = self._scan('24h', pools, calls)
         self.assertEqual([r['pool_address'] for r in result['rows']],
-                         ['BESAR', 'KECIL'])
+                         ['FEE_RAJIN', 'FV_TAJAM'])
         # Vol-0 tidak lagi ditampilkan di mana pun — hidden_rows kosong dan
         # pembuangannya hanya tercatat di counter audit.
         self.assertEqual(result['hidden_rows'], [])

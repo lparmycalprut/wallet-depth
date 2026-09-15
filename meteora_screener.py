@@ -43,10 +43,16 @@ terbakar) dan tetap tersedia di ``hidden_rows`` tanpa scan holder. Volatility
 0 **gugur di kedua lane** (2026-09-14): F/V ∞ bukan kelolosan, jadi baris ∞
 tidak pernah masuk tabel lolos. Filter API:
 pool_type=dlmm&&active_tvl>=50000. Dust, minimum volatility/volume/tier fee
-bukan syarat. Urutan tiap tabel: **F/V terbesar** → volume/active TVL →
-dust %MC terkecil; badge BEST POOL dihapus. Kedua lane disimpan di session key
+bukan syarat. Urutan tiap tabel (2026-09-15, permintaan user: *"kita
+urutkan fee/TVL paling besar dulu, baru perkalian f/v"*): **Fee/TVL terbesar**
+→ **F/V terbesar** → volume/active TVL → dust %MC terkecil; badge BEST POOL
+dihapus. Kedua lane disimpan di session key
 + tabel masing-masing (``best_pool_ui``), jadi hasil 24H tidak pernah lagi
-bercampur 30M di satu listing.
+bercampur 30M di satu listing. Sejak 2026-09-15 kolom **Token** menulis
+pasangan pool-nya (``ALLINU/SOL``, :func:`row_pair_label`) dan sel **F/V**
+memakai :func:`format_fv_ratio` — satu desimal di bawah 100×, bilangan bulat
+berpemisah ribuan di atasnya (``6,328,266×``), jadi rasio ekstrem tidak lagi
+tampil sebagai ``6328266.1×``.
 """
 from __future__ import annotations
 
@@ -111,9 +117,8 @@ BEST_DUST_MARK_PCT = 0.035
 # Presisi kunci urut dust % MC di listing Best Pool — sama dengan angka yang
 # tampil di card, jadi dua pool yang di layar sama-sama "0,041%" benar-benar
 # dianggap seri dan simbol alfabetis yang menentukan (lihat
-# :func:`sort_best_rows`). Dust adalah kunci urut KEDUA (sejak 2026-09-13;
-# kunci pertamanya **volume 24 jam / active TVL** — sebelumnya kenaikan
-# volume 24 jam, dan sebelum itu dust).
+# :func:`sort_best_rows`). Dust kini kunci **keempat** (2026-09-15: Fee/TVL
+# → F/V → volume/active TVL → dust; sebelumnya F/V memimpin sejak 2026-09-13).
 BEST_DUST_SORT_DECIMALS = 3
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
@@ -277,6 +282,53 @@ def fee_volatility_ratio(fee_active_tvl_ratio, volatility):
     if vol == 0:
         return float("inf") if fee > 0 else 0.0
     return fee / vol
+
+
+# ---------------------------------------------------------------------------
+# Tampilan angka F/V di kolom card (permintaan user 2026-09-15: *"perbaiki"*
+# atas laporan *"gold menunjukkan 6328266.1 F/V"*).
+#
+# `.1f` dulu dipakai untuk SEMUA besaran, jadi rasio besar terbaca sebagai
+# ~10 digit tanpa pemisah (``6328266.1×``): angka aslinya benar (pool live
+# GOLD-XAUt0 punya ``fee_active_tvl_ratio`` 0,013 ÷ ``volatility``
+# 2,06e-09 = 6.328.266×), tetapi satu digit di belakang koma tidak ada
+# artinya di besaran jutaan dan kolomnya jadi meluber. Aturannya sekarang:
+#
+# - di bawah :data:`FV_PLAIN_MAX` (100×) tetap satu desimal — presisi yang
+#   sejak awal dipakai (``10,1×`` / ``6,4×``) dan memang berguna;
+# - 100× ke atas jadi bilangan bulat **dengan pemisah ribuan**
+#   (``6,328,266×``) — besaran langsung terbaca, tidak ada digit palsu;
+# - ``∞`` (volatility 0 di atas fee positif) dan ``—`` (tidak terukur) tetap.
+#
+# Pemformat ini satu-satunya sumber teks kolom F/V: sel card, teks gap, dan
+# bawaan test membacanya, jadi angka di layar tidak pernah beda dari angka
+# yang dipakai menyaring + mengurutkan (:func:`row_fv_ratio`).
+# ---------------------------------------------------------------------------
+FV_DISPLAY_DECIMALS = 1     # digit di belakang koma untuk rasio < 100×
+FV_PLAIN_MAX = 100.0        # >= 100× ditulis bulat + pemisah ribuan
+
+
+def format_fv_ratio(value, *, decimals: int = FV_DISPLAY_DECIMALS):
+    """Angka F/V siap tampil (``None`` bila tidak ada, ``"∞"`` bila tak hingga).
+
+    ``None``/``NaN``/teks kosong → ``None`` supaya pemanggil bisa menulis
+    ``—`` sendiri. ``inf`` → ``"∞"`` (volatility 0, pool tanpa pergerakan —
+    baris seperti itu sudah dibuang card, kontrak teksnya tetap dijaga).
+    ``1,4`` → ``"1.4×"``; ``6_328_266.05`` → ``"6,328,266×"``.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number:                # NaN
+        return None
+    if math.isinf(number):
+        return "∞"
+    if abs(number) < FV_PLAIN_MAX:
+        return f"{number:.{int(decimals)}f}×"
+    return f"{number:,.0f}×"
 
 
 def regular_pool_classification(row: dict | None) -> dict:
@@ -854,9 +906,11 @@ def scan_meteora(*, max_wallets: int | None = None, workers: int = 6,
 # menyaring ``F/V > BEST_FV_30M_MIN`` (1× = fee lebih besar dari volatility).
 # Yang di bawah ambang **langsung di-skip** — tanpa fetch holder.
 #
-# Urutan baris tiap tabel: **F/V terbesar** → **volume 24 jam / active TVL**
+# Urutan baris tiap tabel (2026-09-15): **Fee/TVL terbesar** →
+# **F/V terbesar** → **volume 24 jam / active TVL**
 # (``volume_active_tvl_ratio``) → **dust % MC terkecil**. Data yang hilang
-# (``None``) selalu menggugurkan baris dari urutan (tapi tetap tampil).
+# (``None``) menaruh baris paling bawah di kunci yang sama (tapi tetap
+# tampil).
 # ---------------------------------------------------------------------------
 def _maybe_float(value):
     """Float atau ``None`` (NaN/Infinity/bool/tipe salah → ``None``).
@@ -942,6 +996,36 @@ def row_fv_ratio(row: dict | None):
     row = row or {}
     return fee_volatility_ratio(row.get("fee_active_tvl_ratio"),
                                 row.get("volatility"))
+
+
+def row_pair_label(row: dict | None) -> str:
+    """Nama **pasangan pool** siap tampil, mis. ``ALLINU/SOL`` (``""`` bila tidak ada).
+
+    Permintaan user 2026-09-15: *"kolom Token sekarang akan menunjukkan
+    pasangan pairnya, misal ALLINU/SOL"* — pool DLMM selalu punya dua sisi,
+    dan arah fee/likuiditasnya ditentukan pasangan itu, jadi kolom Token tidak
+    cukup menulis simbol token base saja.
+
+    Sumbernya nama pool apa adanya dari API Meteora
+    (``pool-discovery-api.datapi.meteora.ag/pools`` → ``name``, disimpan ke
+    baris sebagai ``pool_name`` oleh :func:`_row_from_pool`): itulah pasangan
+    yang **benar-benar** ada di pool, bukan tebakan dari simbol
+    (``TOK-USDC`` tetap ``TOK-USDC``, tidak dipaksa jadi ``TOK/SOL``).
+    Pemisahnya dibiarkan seperti API (``-``); hanya spasi ganda yang dirapatkan
+    supaya tidak memecah lebar kolom. Nama ditulis apa adanya (huruf besar dari
+    Meteora); kalau kosong, ``name`` token dipakai **hanya bila** memang
+    terlihat seperti pasangan (mengandung ``/`` atau ``-``) — kalau tidak,
+    kembalikan ``""`` dan card tidak menampilkan baris pasangan sama sekali
+    (hasil scan versi lama sebelum kolom ini ada).
+    """
+    row = row or {}
+    pair = " ".join(str(row.get("pool_name") or "").split())
+    if pair:
+        return pair.upper()
+    name = " ".join(str(row.get("name") or "").split())
+    if name and ("/" in name or "-" in name):
+        return name.upper()
+    return ""
 
 
 def row_volatility_zero(row: dict | None) -> bool:
@@ -1072,8 +1156,8 @@ def row_vol_tvl_ratio(row: dict | None):
     ``volume / active_tvl × 100`` supaya kriteria urut tidak berubah hanya
     karena hasil lama masih tersimpan. ``None`` = tidak ada bahan hitung
     (volume/active TVL hilang) → ``-1`` di kunci urut, jadi barisnya paling
-    bawah. Sejak 2026-09-13 kunci pertama adalah **F/V**
-    (:func:`row_fv_ratio`); rasio ini tie-break setelahnya.
+    bawah. Sejak 2026-09-15 kunci urut 1-2 adalah **Fee/TVL** lalu **F/V**
+    (:func:`row_fv_ratio`); rasio ini tie-break ketiga.
     """
     row = row or {}
     ratio = _maybe_float(row.get("volume_active_tvl_ratio"))
@@ -1329,34 +1413,47 @@ def filter_best_rows(rows: list[dict] | None, *,
 
 
 def sort_best_rows(rows: list[dict] | None) -> list[dict]:
-    """Urutan tabel Best Pool: **F/V terbesar** → volume/active TVL → dust.
+    """Urutan tabel Best Pool: **Fee/TVL terbesar** → **F/V terbesar** → vol/TVL
+    → dust.
 
-    Kunci pertama diganti 2026-09-13 sekalian memisah lane (permintaan user:
-    "tombol scan 30M kita prioritaskan yang fee/v nya lebih besar" — angka
-    F/V yang besar memang yang diprioritaskan, bukan cuma syarat lolos):
-    :func:`row_fv_ratio` = ``fee_active_tvl_ratio ÷ volatility`` dari lane itu
-    sendiri, persis angka di kolom F/V card. ∞ (volatility 0, fee positif)
-    tetap paling atas **bila** ada yang meneruskannya ke sini — kontrak urut
-    dipertahankan — tapi card sudah tidak pernah meneruskannya ke tabel
-    sejak 2026-09-14 lanjutan (:func:`row_volatility_zero`); baris tanpa
-    metrik (``None``) paling bawah.
+    Permintaan user 2026-09-15 (lanjutan): *"sebentar, kita urutkan fee/TVL
+    paling besar dulu, baru perkalian f/v"* — kolom **Fee/TVL**
+    (``fee_active_tvl_ratio``, persen fee terhadap active TVL) jadi kunci
+    pertama, baru kelipatan **F/V** (``fee_active_tvl_ratio ÷ volatility``,
+    :func:`row_fv_ratio`) sebagai kunci kedua. Sebelumnya F/V yang memimpin
+    (2026-09-13); pembilangnya F, jadi pool dengan fee/TVL paling produktif
+    sekarang naik ke atas lebih dulu, dan di dalam kelompok Fee/TVL yang sama
+    yang fee-nya berkali-kali lebih besar dari volatilitasnya yang menang.
 
-    Tie-break kedua = :func:`row_vol_tvl_ratio` (rasio ``volume`` /
-    ``active_tvl`` dari API Meteora) terbesar, lalu dust % MC terkecil —
-    urutan 2026-09-13 yang lama dipertahankan sebagai kunci kedua/ketiga.
-    Kunci dust dibulatkan ke presisi tampilan (:data:`BEST_DUST_SORT_DECIMALS`,
-    3 desimal = angka yang muncul di card), jadi pool yang di layar sama-sama
-    "0,041%" dianggap seri; simbol alfabetis jadi tie-break terakhir supaya
-    urutannya deterministik antar scan.
+    Sisa tie-break tidak berubah: :func:`row_vol_tvl_ratio` (rasio ``volume``
+    / ``active_tvl`` dari API Meteora) terbesar, lalu dust % MC terkecil —
+    kunci dust dibulatkan ke presisi tampilan (:data:`BEST_DUST_SORT_DECIMALS`,
+    3 desimal = angka yang muncul di card) sehingga pool yang di layar
+    sama-sama "0,041%" dianggap seri; simbol alfabetis jadi tie-break terakhir
+    supaya urutannya deterministik antar scan.
+
+    Baris tanpa angka (``None``) selalu di bawah baris yang punya angka di
+    kunci yang sama: Fee/TVL hilang → paling bawah (di dalamnya F/V bisa
+    memutuskan), F/V hilang → di bawah pemilik F/V di kelompok Fee/TVL yang
+    sama. ∞ (volatility 0, fee positif) tetap paling atas **bila** ada yang
+    meneruskannya ke sini — kontrak urut dipertahankan — tapi card sudah tidak
+    pernah meneruskannya ke tabel sejak 2026-09-14 lanjutan
+    (:func:`row_volatility_zero`).
     """
     def _key(row):
         row = row or {}
         pct = _maybe_float(row_dust_pct(row))
         ratio = row_vol_tvl_ratio(row)
+        fee_tvl = _maybe_float(row.get("fee_active_tvl_ratio"))
         fv = row_fv_ratio(row)
         return (
+            # 1) Fee/TVL terbesar (permintaan user 2026-09-15).
+            0 if fee_tvl is not None else 1,
+            -(fee_tvl if fee_tvl is not None else 0.0),
+            # 2) baru kelipatan F/V terbesar.
             0 if fv is not None else 1,
             -(fv if fv is not None else 0.0),
+            # 3-5) tie-break lama: volume/active TVL, dust, simbol.
             0 if pct is not None else 1,
             -(ratio if ratio is not None else -1.0),
             round(pct, BEST_DUST_SORT_DECIMALS) if pct is not None else 0.0,
@@ -1385,7 +1482,8 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
        jangan tampilkan, karena tidak ada pergerakan disitu"*) dan dihitung
        terpisah di ``dropped_volatility``;
     3. hanya kandidat lolos yang di-enrich (holder FULL) lalu diurutkan
-       :func:`sort_best_rows` (F/V terbesar → volume/active TVL → dust).
+       :func:`sort_best_rows` (Fee/TVL terbesar → F/V terbesar →
+       volume/active TVL → dust — urutan 2026-09-15).
 
     ``lane="both"`` = perilaku lama satu listing dua lane (compat, tidak lagi
     dipakai tombol card).
