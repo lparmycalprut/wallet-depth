@@ -38,6 +38,11 @@ from watchlist import add_to_watchlist, load_watchlist
 
 st.set_page_config(page_title="Holder Analytic", page_icon="🧮",
                    layout="wide")
+try:
+    from dashboard_components import render_styles
+    render_styles()
+except Exception:
+    pass
 st.title("🧮 Holder Analytic")
 st.caption(
     f"Dust holder (nilai ≤ $10) sebagai jejak dump: **≥ {DUST_CAUTION_PCT:g}% "

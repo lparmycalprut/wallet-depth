@@ -99,8 +99,9 @@ def render_auto_refresh() -> None:
     # Teks penjelas di samping toggle **dihapus** (permintaan user 2026-09-11:
     # "sudah ada di tooltip") — help toggle di bawah ini sudah bilang hal yang
     # sama, jadi tidak ada lagi baris abu-abu di bawahnya.
-    _autorefresh_col = st.columns([0.30, 0.70])
-    _autorefresh_col[0].toggle(
+    # Mobile friendly: toggle full-width, tidak pakai 2 kolom sempit (di HP 50/50 jadi aneh).
+    # Di desktop tetap 1 baris; di mobile otomatis 100% lewat CSS, tapi kita sederhanakan jadi single column.
+    st.toggle(
         "🔄 Auto-refresh ±60 dtk",
         value=st.session_state.get("autorefresh_on", True),
         key="autorefresh_on",
@@ -424,6 +425,8 @@ def _render_lp_card(lp_watch: dict, status_tokens: dict,
                     "form ➕ di atas (tempel CA pool Meteora).")
             return
 
+        # Marker untuk sembunyikan header di mobile (lihat dashboard_components.render_styles).
+        st.markdown('<div class="mobile-hide-next"></div>', unsafe_allow_html=True)
         header = st.columns([1.42, 0.7, 0.78, 0.72, 0.62, 0.8, 0.78,
                               0.35, 0.35, 0.35, 0.35])
         style = "font-size:0.68rem;color:#000000;font-weight:700;"
