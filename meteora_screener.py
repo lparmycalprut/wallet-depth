@@ -41,7 +41,11 @@ sendiri + hanya men-scan holder pool yang lolos ambang lane itu; pool di bawah
 ambang **langsung di-skip** sebelum enrichment holder (kuota Helius tidak
 terbakar) dan tetap tersedia di ``hidden_rows`` tanpa scan holder. Volatility
 0 **gugur di kedua lane** (2026-09-14): F/V ∞ bukan kelolosan, jadi baris ∞
-tidak pernah masuk tabel lolos. Filter API:
+tidak pernah masuk tabel lolos. Saringan layar kedua, berlaku di **kedua**
+lane: **Top10 holder di atas 20% supply tidak ditampilkan lagi**
+(2026-09-16, permintaan user: *"scan meteora, TOP 10 diatas 20% jangan
+ditampilkan lagi"* — :data:`BEST_TOP10_MAX_PCT`, juga dieksekusi sebelum
+enrichment holder). Filter API:
 pool_type=dlmm&&active_tvl>=50000. Dust, minimum volatility/volume/tier fee
 bukan syarat. Urutan tiap tabel (2026-09-15, permintaan user: *"kita
 urutkan fee/TVL paling besar dulu, baru perkalian f/v"*): **Fee/TVL terbesar**
@@ -108,6 +112,19 @@ BEST_VOLATILITY_MIN = 2.0         # layar: volatility >= 2% ("minimal 2%")
 # Dicek di :func:`row_best_gaps`, jadi SEBELUM fetch holder: kuota Helius
 # tidak terbakar untuk pool sepi yang pasti gugur.
 BEST_VOLUME_24H_MIN = 1_000_000.0
+# Layar: **Top 10 holder maksimal 20% supply** (permintaan user 2026-09-16:
+# "scan meteora, TOP 10 diatas 20% jangan ditampilkan lagi"). ``top_holders_pct``
+# dari API Meteora = persen supply token base yang dipegang 10 wallet teratas
+# (35.75 = 35,75%) — di atas batas ini pool dianggap terpusat dan **gugur**
+# lewat :func:`row_best_gaps`, jadi sama seperti ambang lane: dieksekusi
+# SEBELUM fetch holder (kuota Helius tidak terbakar) dan berlaku untuk kedua
+# lane (24H dan 30M), termasuk hasil scan lama yang dirender ulang card.
+# Batas **inklusif** — Top10 tepat 20,0% masih tampil. Angka hilang (``None``)
+# TIDAK gugur: tanpa data tidak ada bukti konsentrasi, barisnya tetap tampil
+# dengan ``—`` di kolom Top10. (Ambang Top10 lama — ``< 30%`` — pernah dicabut
+# 2026-09-11 bersama saringan layar lainnya; yang ini angka BARU atas
+# permintaan user, bukan pengaktifan kembali aturan lama.)
+BEST_TOP10_MAX_PCT = 20.0
 # Tanda 🏆 BEST POOL di kolom Dust %MC (permintaan user 2026-09-12): baris
 # dengan dust **<= 0,035% MC** (inklusif — 0,035 persis ikut ditandai)
 # diberi chip emas di ``best_pool_ui``. Ini BUKAN saringan tambahan: saringan
@@ -898,7 +915,8 @@ def scan_meteora(*, max_wallets: int | None = None, workers: int = 6,
 #    category ``top``, page_size 50 — active TVL disaring di server.
 #    ``fee_pct>=2`` **dihapus** 2026-09-13 sore (permintaan user: pool
 #    ber-fee rendah seperti EMBER/USDC harus muncul);
-# 2. **layar**: satu saringan saja, per lane — ``row_best_gaps()``.
+# 2. **layar**: dua saringan di ``row_best_gaps()`` — ambang F/V per lane +
+#    Top10 holder ``<= BEST_TOP10_MAX_PCT`` (20%, baru 2026-09-16).
 #
 # Dua lane dipisah (permintaan user 2026-09-13: "untuk timeframe 30m harus
 # kita pisah tombol deteksinya dan tabel serta fungsi fee/v lebih besar"):
@@ -1310,8 +1328,45 @@ def row_volume_ok(row: dict | None) -> bool:
     return True
 
 
+def row_top10_pct(row: dict | None):
+    """Persen supply token base di 10 holder teratas (``top_holders_pct``).
+
+    ``None`` bila baris tidak membawa angkanya (payload API tanpa data holder
+    atau hasil scan lama) — tanpa angka tidak ada bukti konsentrasi apa pun.
+    """
+    return _maybe_float((row or {}).get("top_holders_pct"))
+
+
+def row_top10_over(row: dict | None):
+    """Persen Top10 **bila di atas** :data:`BEST_TOP10_MAX_PCT`, selain itu ``None``.
+
+    Satu-satunya pembaca batas: dipakai :func:`row_top10_ok`, teks alasan di
+    :func:`row_best_gaps`, dan tes — jadi angka di tooltip card, teks "gugur"
+    di listing disembunyikan, dan keputusan saringan tidak pernah bisa beda.
+    Batas inklusif: Top10 tepat 20,0% TIDAK dianggap melebihi (masih tampil).
+    """
+    pct = row_top10_pct(row)
+    if pct is None or pct <= float(BEST_TOP10_MAX_PCT):
+        return None
+    return pct
+
+
+def row_top10_ok(row: dict | None) -> bool:
+    """True bila Top10 holder **<= 20% supply** (atau angkanya tidak ada).
+
+    Saringan permintaan user 2026-09-16: *"scan meteora, TOP 10 diatas 20%
+    jangan ditampilkan lagi"*. Yang dibuang hanya pool yang **terbukti**
+    berkonsentrasi di atas batas; baris tanpa angka (``None``) tetap lolos dan
+    tampil dengan ``—`` di kolom Top10. Beda dengan :func:`row_dust_ok` /
+    :func:`row_volume_ok` yang sudah dicabut jadi selalu ``True`` (2026-09-13)
+    — Top10 justru dipasang kembali sebagai saringan, dengan angka baru
+    (20%, bukan "< 30%" lama) dan arah "di atas batas = buang".
+    """
+    return row_top10_over(row) is None
+
+
 def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
-    """Saringan murah SEBELUM enrichment holder — satu aturan per lane.
+    """Saringan murah SEBELUM enrichment holder — ambang F/V per lane + Top10.
 
     Tombol **24H**: ``F/V >= BEST_FV_24H_MIN`` (5×) — "prioritaskan 24H yang
     fee/v >= 5x untuk di scan detail lainnya, jika kurang dari itu langsung
@@ -1328,6 +1383,13 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
     listing** (:func:`row_volatility_zero`) — tidak ditampilkan di mana pun
     karena tidak ada pergerakan di pool-nya. Data hilang, nonfinite, negatif,
     F <= 0, atau lane tidak dikenal tidak lolos.
+
+    Setelah ambang lane **lolos**, baris masih harus lulus saringan Top10
+    (:data:`BEST_TOP10_MAX_PCT`, permintaan user 2026-09-16: *"TOP 10 diatas
+    20% jangan ditampilkan lagi"*) — alasan gugurnya ditulis lengkap supaya
+    muncul di listing "dilewati" 24H. Urutan ini sengaja: pool yang sudah
+    gugur F/V tidak perlu diberi alasan kedua, dan teks gap tetap satu baris
+    seperti sebelumnya.
 
     ``lane`` memaksa satu aturan (dipakai scan per-lane + render ulang hasil
     lama); tanpa itu lane dibaca dari field ``timeframe``/``source`` baris.
@@ -1362,7 +1424,14 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
     threshold = minimum * vol
     passed = fee >= threshold if lane_fv_inclusive(normalized) else fee > threshold
     if fee > 0 and passed:
-        return []
+        # Saringan layar kedua setelah ambang lane: Top10 (2026-09-16).
+        # Label lane ikut di depan supaya teks "gugur" di tabel disembunyikan
+        # 24H konsisten dengan teks F/V.
+        over = row_top10_over(row)
+        if over is None:
+            return []
+        return [f"{BEST_LANE_LABELS[normalized]}: Top10 {over:g}% > "
+                f"{float(BEST_TOP10_MAX_PCT):g}% — holder terpusat"]
     sign = "<" if lane_fv_inclusive(normalized) else "≤"
     return [f"{BEST_LANE_LABELS[normalized]}: F/V {sign} {minimum:g}×"]
 
@@ -1394,11 +1463,14 @@ def row_best_pool(row: dict | None) -> bool:
 
 def filter_best_rows(rows: list[dict] | None, *,
                      lane=None) -> tuple[list[dict], int, int]:
-    """Return ``(lolos F/V, jumlah gagal yang TAMPIL dilewati, 0)``.
+    """Return ``(lolos saringan layar, jumlah gagal yang TAMPIL dilewati, 0)``.
 
     ``lane`` memaksa satu aturan ambang untuk seluruh baris (dipakai
     :func:`scan_best_lane` saat satu tombol lane ditekan); tanpa itu setiap
-    baris dinilai dari ``timeframe``-nya sendiri. Kandidat gagal dengan
+    baris dinilai dari ``timeframe``-nya sendiri. Saringannya dua: ambang F/V
+    lane dan Top10 ``<= BEST_TOP10_MAX_PCT`` (2026-09-16) — keduanya lewat
+    :func:`row_best_gaps`, jadi ``hidden_metric`` menghitung kedua alasan
+    gugur. Kandidat gagal dengan
     **volatility 0 tidak ikut dihitung** (2026-09-14 lanjutan): pool tanpa
     pergerakan dibuang dari listing (:func:`row_volatility_zero`), jadi
     hitungan kedua selalu cocok dengan ``len(hidden_rows)`` yang dibangun
@@ -1474,8 +1546,11 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
     1. listing API Meteora **hanya** ``timeframe`` lane itu
        (``pool_type=dlmm&&active_tvl>=50000``, ``category=top``, page_size 50);
     2. saringan lane di :func:`row_best_gaps` — 24H ``F/V >= 5×``,
-       30M ``F/V > 1×`` — dijalankan **sebelum** holder, jadi pool yang kurang
-       dari itu tidak pernah membakar kuota Helius dan tetap tersedia di
+       30M ``F/V > 1×``, plus **Top10 <= 20% supply**
+       (:data:`BEST_TOP10_MAX_PCT`, permintaan user 2026-09-16: *"TOP 10 diatas
+       20% jangan ditampilkan lagi"*) — dijalankan **sebelum** holder, jadi
+       pool yang kurang dari itu tidak pernah membakar kuota Helius dan tetap
+       tersedia di
        ``hidden_rows`` (dengan alasan di ``best_gaps``), **kecuali** pool
        volatility 0: dibuang penuh dari listing sejak 2026-09-14 lanjutan
        (:func:`row_volatility_zero`, permintaan user *"jika volatility 0
@@ -1548,7 +1623,8 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
     if _alog:
         _alog.info("scan-best-pool",
                    f"scan selesai: {len(kept)} pool tampil dari {fetched} "
-                   f"listing {lane_label} ({hidden_metric} gagal F/V tanpa scan holder"
+                   f"listing {lane_label} ({hidden_metric} gagal saringan "
+                   f"(F/V/Top10) tanpa scan holder"
                    + (f", {dropped_volatility} pool volatility 0 dibuang"
                       if dropped_volatility else "")
                    + (f", {quote_skipped} pool quote dilewati"

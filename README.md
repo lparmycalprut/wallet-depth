@@ -266,6 +266,7 @@ bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
   |---|---|---|
   | **24H** | `F/V >= BEST_FV_24H_MIN` (**5×**, inklusif) | "prioritaskan 24H yang fee/v >= 5× untuk di scan detail, jika kurang dari itu langsung skip" |
   | **30M** | `F/V > BEST_FV_30M_MIN` (**1×**, strict) | fee harus **lebih besar** dari volatility; F == V (tepat 1×) di-skip |
+  | **Top10 — kedua lane** | `top_holders_pct <= BEST_TOP10_MAX_PCT` (**20%**, inklusif) | permintaan user 2026-09-16: *"scan meteora, TOP 10 diatas 20% jangan ditampilkan lagi"* — 10 holder teratas token base memegang lebih dari 20% supply = pool terpusat, **dibuang sebelum scan holder** |
 
   V = 0 gugur di kedua lane (2026-09-14: `∞` bukan kelolosan — pool tanpa
   volatility tidak bisa membuktikan fee lebih besar) **dan dibuang dari
@@ -278,7 +279,14 @@ bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
   gugur dan tetap terlihat di listing "dilewati" 24H. Kandidat gugur lain
   **tidak pernah** membuat request holder — `scan_best_lane()` menolak mereka
   sebelum `enrich_pools()` (kuota Helius aman) dan menyimpannya di
-  `hidden_rows` + alasan di `best_gaps`. Lane **24H**: kandidat gagal dibuka
+  `hidden_rows` + alasan di `best_gaps`. **Top10 memakai jalur yang sama**
+  (2026-09-16): batasnya inklusif — 20,0% persis masih tampil, sedangkan
+  `> 20%` gugur dengan alasan `Top10 …% > 20% — holder terpusat`; baris
+  **tanpa** angka Top10 (`None`, hasil scan lama / payload API tanpa data)
+  tidak ikut dibuang karena tidak ada bukti konsentrasi, dan tampil dengan
+  `—` di kolom Top10. Rule ini hidup di `row_best_gaps`, jadi ia juga
+  membersihkan hasil scan lama yang sudah tersimpan saat card dirender ulang
+  (tanpa scan ulang). Lane **24H**: kandidat gagal dibuka
   lewat tombol **▶ N pool dilewati** (barisnya ditandai merah `gugur: F/V <
   5×` di sel F/V). Lane **30M**: kandidat gagal **tidak ditampilkan sama
   sekali** (permintaan user 2026-09-14: "jangan tampilkan yang tidak
@@ -288,8 +296,10 @@ bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
   `pool_type=dlmm && active_tvl>=50000`. `fee_pct>=2` **dihapus**
   2026-09-13 (pool ber-fee rendah seperti EMBER/USDC harus muncul). Saringan
   layar lama — volume 24 jam ≥ $1M, volatility ≥ 2%, dust < 0,05% MC — ikut
-  **dihapus**: dust/volume/tier fee/Top10/LPs/active TVL tetap tampil sebagai
-  **informasi**, bukan syarat.
+  **dihapus**: dust/volume/tier fee/LPs/active TVL tetap tampil sebagai
+  **informasi**, bukan syarat. **Top10 adalah pengecualian sejak
+  2026-09-16** — ambangnya dihidupkan lagi (20%, bukan 30% yang lama) atas
+  permintaan user di atas.
 - **Urutan tiap tabel** (2026-09-15 lanjutan, permintaan user: *"sebentar, kita
   urutkan fee/TVL paling besar dulu, baru perkalian f/v"*): **Fee/TVL
   terbesar** (`fee_active_tvl_ratio`) → **F/V terbesar** → **volume / active
@@ -553,7 +563,7 @@ akumulasi dan bukan prediksi arah harga.
 | `alert_context.py` | Konteks pasar untuk konfirmasi alert: volume 4 jam, rata-rata 7 hari, buy/sell pressure, volatilitas (ditarik lazy) |
 | `holder_chronology.py` | Snapshot wallet bounded, klasifikasi pergerakan, narasi kronologi |
 | `lp_watchlist.py` | Card **Chart LP**: pisah watchlist Meteora, baris metrik fee/volatility + grafik dust historis |
-| `meteora_screener.py` | Regular listing DLMM 24h lalu 30m, active TVL ≥ 50K, filter/classification fee-versus-volatility, sort quotient tanpa dust, enrich holder; Best Pool terpisah: `scan_best_lane(lane)` satu lane per tombol, saringan `row_best_gaps` 24H F/V ≥ 5× / 30M F/V > 1× sebelum holder, `sort_best_rows` urut Fee/TVL → F/V → vol/TVL → dust |
+| `meteora_screener.py` | Regular listing DLMM 24h lalu 30m, active TVL ≥ 50K, filter/classification fee-versus-volatility, sort quotient tanpa dust, enrich holder; Best Pool terpisah: `scan_best_lane(lane)` satu lane per tombol, saringan `row_best_gaps` 24H F/V ≥ 5× / 30M F/V > 1× + Top10 ≤ 20% sebelum holder, `sort_best_rows` urut Fee/TVL → F/V → vol/TVL → dust |
 | `holder_analysis.py` | Fetch holder Helius/GMGN, klasifikasi real/dust/mid |
 | `solscan_holders.py` | Kalkulasi wallet_depth (bucket & tier) |
 | `helius_holders.py` | Scan Holder Solana satu token (Solana/Helius) + bar chart |
@@ -693,6 +703,7 @@ keseluruhan kadens ke 15 menit.
 | `DUST_BEST_PCT`, `DUST_BEST_MIN_HOLDERS`, `DUST_BEST_MIN_TVL_USD` | 0.1, 40, 10000 — badge BEST POOL (strict `< 0,1%`) + guard data holder minimal + TVL pool minimal |
 | `DUST_SCAN_HIDE_PCT` | 0.1 — Scan Meteora menyembunyikan pool dust `> 0,1%` MC (`should_hide_dust`) |
 | `DUST_BEST_LABEL` | `BEST POOL` — label badge (tampil apa adanya) |
+| `BEST_TOP10_MAX_PCT` | 20.0 — 🏆 Scan Best Pool Meteora (kedua lane): Top10 holder token base `> 20%` supply **tidak ditampilkan** (`row_top10_ok`, inklusif di 20%; `None` = lolos) |
 
 Ambang notifikasi + dedup ada di `telegram_alerts.py`, metrik volatilitas di
 `holder_history.py`, dan pengambilan konteks pasar (baris info +

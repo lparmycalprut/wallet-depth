@@ -1,5 +1,31 @@
 # Progress
 
+## 2026-09-16: 🏆 Scan Best Pool Meteora — Top10 holder di atas 20% tidak ditampilkan
+
+**Status: selesai; suite 1012 tes, 18 failed + 1 error = identik baseline
+`main` HEAD `2b273ed` (1002 tes, kegagalan sama persis; +10 tes baru hijau).**
+
+Permintaan user: *"scan meteora, TOP 10 diatas 20% jangan ditampilkan lagi"*.
+
+- `meteora_screener.BEST_TOP10_MAX_PCT = 20.0` + `row_top10_pct()` /
+  `row_top10_over()` / `row_top10_ok()`; saringannya ditempel di
+  `row_best_gaps()` **setelah** ambang F/V lane lolos — satu jalur dengan
+  saringan lane yang sudah ada: dieksekusi sebelum `enrich_pools()` (_holder
+  pool gugur tidak pernah di-fetch), berlaku di kedua tombol (24H + 30M) dan
+  ikut membersihkan hasil scan lama yang dirender ulang card.
+- Batas **inklusif** (tepat 20,0% masih tampil) dan `None` = **lolos** (tanpa
+  angka tidak ada bukti konsentrasi; kolomnya tampil `—`).
+- Yang gugur tetap auditabel: `hidden_rows` + `best_gaps`
+  (`24H: Top10 45% > 20% — holder terpusat`) di listing "▶ N pool dilewati";
+  lane 30M memang tidak pernah menampilkan kandidat gagal.
+- Teks UI mengikuti konstanta: tooltip judul card, tooltip sel Top10, help
+  tombol disembunyikan, label log aktivitas.
+- Nama konstantanya bukan pengaktifan balik rule lama `top 10 < 30%`
+  (dicabut 2026-09-11) — `BEST_FEE_RATIO_MIN` / `BEST_TOTAL_LPS_MIN` tetap
+  mati dan tetap di-pin hilang oleh tes.
+
+Detail: `AGENTS.md` + `KEGIATAN.md` 16 September 2026 (blok paling atas).
+
 ## 2026-09-15: halaman 🦅 Robinhood + 📦 temp dihapus total
 
 **Status: selesai; suite 953 passed / 19 failed (semua kegagalan = baseline
