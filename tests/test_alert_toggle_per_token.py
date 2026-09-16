@@ -19,7 +19,11 @@ except Exception:
 import alert_settings
 import watchlist as wl
 
-APP = str(Path(__file__).resolve().parent.parent / "app.py")
+ROOT = Path(__file__).resolve().parent.parent
+APP = str(ROOT / "app.py")
+# Toggle 🔔/🔕 duduk di baris card 🌊 Watchlist Meteora — sejak 2026-09-16 card
+# itu dirender di halaman 📦 TEMP, jadi uji UI-nya menarget file halaman itu.
+TEMP = str(ROOT / "pages/6_📦_TEMP.py")
 
 LP_MINT = "LpMint11111111111111111111111111111111111"
 LP_SAFE = "LpSafe22222222222222222222222222222222222"
@@ -234,8 +238,11 @@ class AlertToggleUiTest(unittest.TestCase):
                 self.muted.add(mint)
         return self.toggle_ok
 
-    def _app(self, *, page=APP):
-        app = AppTest.from_file(APP, default_timeout=90)
+    def _app(self, *, page=TEMP):
+        # ``page`` akhirnya benar-benar dipakai (dulu helper ini menerima argumen
+        # lalu mengabaikan dan membuka APP lagi) — TEMP adalah halaman tempat
+        # card Watchlist Meteora duduk sejak 2026-09-16.
+        app = AppTest.from_file(page, default_timeout=90)
         app.switch_page(page)
         app.run()
         self.assertEqual(len(app.exception), 0, app.exception)
@@ -260,7 +267,7 @@ class AlertToggleUiTest(unittest.TestCase):
         return found[0]
 
     def test_baris_lp_punya_bell_on_dan_klik_mematikan(self):
-        app = self._app(page=APP)
+        app = self._app(page=TEMP)
         button = self._button(app, f"lp-alert-{LP_MINT}")
         self.assertEqual(button.label, "🔔")
         self.assertIn("Matikan notif Telegram", button.help or "")
@@ -270,7 +277,7 @@ class AlertToggleUiTest(unittest.TestCase):
 
     def test_baris_lp_muted_tampil_bell_off_rekap_dan_catatan(self):
         self.muted = {LP_MINT}
-        app = self._app(page=APP)
+        app = self._app(page=TEMP)
         self.assertEqual(self._button(app, f"lp-alert-{LP_MINT}").label, "🔕")
         body = self._body(app)
         self.assertIn("🔕", body)
@@ -281,7 +288,7 @@ class AlertToggleUiTest(unittest.TestCase):
 
     def test_bukan_global_hanya_token_yang_dimatikan(self):
         self.muted = {LP_MINT}
-        app = self._app(page=APP)
+        app = self._app(page=TEMP)
         self.assertEqual(self._button(app, f"lp-alert-{LP_MINT}").label, "🔕")
         self.assertEqual(self._button(app, f"lp-alert-{LP_SAFE}").label, "🔔")
         body = self._body(app)
@@ -291,7 +298,7 @@ class AlertToggleUiTest(unittest.TestCase):
 
     def test_scan_hanya_melewati_token_yang_dimatikan(self):
         self.muted = {LP_MINT}
-        app = self._app(page=APP)
+        app = self._app(page=TEMP)
         with ExitStack() as stack:
             stack.enter_context(mock.patch("holder_analysis.analyze_token", side_effect=lambda mint, *a, **kw: _analysis(str(mint)[:6], 0.11)))
             stack.enter_context(mock.patch("meteora_screener.fetch_watchlist_metric_snapshots", return_value={}))
@@ -306,20 +313,20 @@ class AlertToggleUiTest(unittest.TestCase):
 
     def test_klik_bell_off_menyalakan_lagi(self):
         self.muted = {LP_MINT}
-        app = self._app(page=APP)
+        app = self._app(page=TEMP)
         self._button(app, f"lp-alert-{LP_MINT}").click().run()
         self.assertEqual(self.toggle_calls, [(LP_MINT, True)])
 
     def test_gagal_sinkron_github_diperingatkan(self):
         self.toggle_ok = False
-        app = self._app(page=APP)
+        app = self._app(page=TEMP)
         self._button(app, f"lp-alert-{LP_MINT}").click().run()
         warnings = "\n".join(node.value for node in app.warning)
         self.assertIn("sinkronisasi ke GitHub gagal", warnings)
 
     def test_scan_lp_manual_menghormati_bell_off(self):
         self.muted = {LP_MINT}
-        app = self._app(page=APP)
+        app = self._app(page=TEMP)
         with ExitStack() as stack:
             stack.enter_context(mock.patch("holder_analysis.analyze_token", return_value=_analysis("RAYCAT", 0.11)))
             stack.enter_context(mock.patch("meteora_screener.fetch_watchlist_metric_snapshots", return_value={}))
@@ -334,7 +341,7 @@ class AlertToggleUiTest(unittest.TestCase):
         self.assertIn(LP_MINT, mute_arg)
 
     def test_scan_lp_manual_tanpa_bell_off_tetap_kirim(self):
-        app = self._app(page=APP)
+        app = self._app(page=TEMP)
         with ExitStack() as stack:
             stack.enter_context(mock.patch("holder_analysis.analyze_token", side_effect=lambda mint, *a, **kw: _analysis(str(mint)[:6], 0.11)))
             stack.enter_context(mock.patch("meteora_screener.fetch_watchlist_metric_snapshots", return_value={}))

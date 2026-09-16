@@ -1,80 +1,94 @@
 # -*- coding: utf-8 -*-
 """Card **🏆 Scan Best Pool Meteora** untuk halaman utama (``app.py``).
 
-**Dua tombol deteksi, dua tabel** (permintaan user 2026-09-13: "kayaknya untuk
-timeframe 30m harus kita pisah tombol deteksinya dan tabel serta fungsi fee/v
-lebih besar … di scan meteora pool, kita akan punya 2 tombol 24H dan 30M"):
+**Satu tombol deteksi, satu tabel — 24H saja.** Dulu card ini punya dua tombol
++ pemilih lane (permintaan user 2026-09-13: "kayaknya untuk timeframe 30m harus
+kita pisah tombol deteksinya dan tabel serta fungsi fee/v lebih besar … di scan
+meteora pool, kita akan punya 2 tombol 24H dan 30M"); sejak 2026-09-16 lane 30M
+dihapus (permintaan user: *"hapus scan 30 menit, kita sisakan yang 24 jam
+saja"*) sehingga :data:`meteora_screener.BEST_LANES` hanya berisi ``("24h",)``
+dan :func:`meteora_screener.normalize_best_lane` memetakan semua alias lama
+(``30m``/``1h``/``both``) ke 24H:
 
 - **🏆 Scan Best Pool 24H + Holder** — listing timeframe 24H saja; hanya pool
   ``F/V ≥ 5×`` (``BEST_FV_24H_MIN``) yang di-scan detail (holder FULL Helius).
-  Yang di bawah itu **langsung di-skip** dan masuk listing "disembunyikan";
-- **🏆 Scan Best Pool 30M + Holder** — listing timeframe 30M saja; syaratnya
-  fee/vol **lebih besar** (``F/V > 1×`` = ``fee_active_tvl_ratio >
-  volatility``, ``BEST_FV_30M_MIN``), yang lebih kecil langsung di-skip.
-  Volatility 0 **gugur di kedua lane** (2026-09-14): ∞ bukan kelolosan,
-  baris ∞ tidak pernah masuk tabel lolos — dan sejak lanjutan hari yang sama
-  pool volatility 0 **dibuang dari listing seluruhnya** (permintaan user:
-  "jika volatility 0 jangan tampilkan, karena tidak ada pergerakan disitu"):
-  tidak masuk tabel lolos, tidak masuk listing "dilewati" 24H, dan tidak
-  dihitung di pill/caption.
-- Sel F/V lane 30M: baris yang lolos menampilkan **OK** hijau (angka quotient
-  tetap di tooltip sel + kunci urut); kandidat yang tidak memenuhi syarat
-  **tidak ditampilkan sama sekali** di 30M — toggle disembunyikan dan pill
-  jumlah disembunyikan hanya ada untuk 24H (permintaan user 2026-09-14:
-  "kalau di M30, jika syarat terpenuhi, tulis OK · jangan tampilkan yang
-  tidak terpenuhi").
+  Yang di bawah itu **langsung di-skip** dan masuk listing "disembunyikan"
+  (toggle "▶ N pool dilewati" tetap ada — di 24H kandidat gagal justru
+  berguna untuk dibandingkan; aturan 30M "jangan tampilkan yang tidak
+  terpenuhi" + label "OK" hijau di sel F/V dicabut bersama lane-nya);
+- Volatility 0 **gugur dan dibuang total** (2026-09-14): ∞ bukan kelolosan,
+  pool tanpa pergerakan tidak masuk tabel lolos maupun daftar "dilewati"
+  (permintaan user: "jika volatility 0 jangan tampilkan, karena tidak ada
+  pergerakan disitu");
+- **Volatility di luar 1%–10% juga disembunyikan** (2026-09-16, permintaan
+  user: *"volatility kurang dari 1 sembunyikan juga"* + *"volatility > 10
+  sembunyikan juga"*) — :data:`meteora_screener.BEST_VOL_SHOW_MIN` /
+  ``BEST_VOL_SHOW_MAX``, batasnya inklusif jadi 1% dan 10% tetap tampil,
+  alasannya muncul sebagai ``volatility … < 1%`` / ``> 10%`` di sub sel F/V
+  tabel "dilewati";
+- **Top10 holder >= 20% supply tidak ditampilkan lagi**
+  (:data:`meteora_screener.BEST_TOP10_MAX_PCT`, permintaan user 2026-09-16:
+  *"jika ada top 10 >= 20% jangan tampilkan"* — batas inklusif di sisi BUANG,
+  tepat 20% ikut hilang);
+- **Filter API membawa Jupiter safeguard**
+  (:data:`meteora_screener.JUPITER_SAFEGUARD_FILTERS`, permintaan user
+  2026-09-16: *"scan baru saya tambahkan jupiter safeguard untuk filter yang
+  mungkin rug"*) — listing Best Pool saja yang memakai
+  ``base_token_has_critical_warnings=false&&quote_token_has_critical_warnings=false``,
+  jadi token yang diperingati Jupiter tidak pernah sampai ke tabel;
+- **Kolom RugCheck baru** (2026-09-16): tiap mint base diperiksa lewat honeypot
+  checker **rugchecker.cc** (modul :mod:`rugchecker`, tanpa API key) — verdict
+  AMAN/WASPADA/BERISIKO/RUG + bendera keamanan + likuiditas per DEX versi
+  ringkas. Kolom ini **tidak pernah menyaring**: ia informasi, pembuang tetap
+  saringan di atas;
+- **LPs HIJAU bila > 100 LP** (permintaan user 2026-09-16: *"LPs jika lebih
+  dari 100, kasih warna hijau jika tidak, tidak ada perubahan"*),
+  :data:`LP_GREEN_COLOR` / :data:`LP_GREEN_MIN_LP`.
 
-F = fee_active_tvl_ratio, V = volatility. Kedua lane disimpan di session key
-masing-masing (``best_pool_scan_24h`` / ``best_pool_scan_30m``) sehingga tabel
-24H tidak pernah lagi berisi baris 30M — kolom **Src** lama dihapus karena
-tidak relevan lagi, diganti pill lane di kepala card.
+F = fee_active_tvl_ratio, V = volatility. Hasil scan disimpan di session key
+``best_pool_scan_24h`` (+ cache berkas dengan nama yang sama) sehingga hanya
+ada satu tabel dan hasil 30M lama tidak pernah bisa muncul; key gabungan lama
+``best_pool_scan`` tidak dibaca lagi.
 
 - urutan baris tiap tabel (permintaan user 2026-09-15: *"kita urutkan
   fee/TVL paling besar dulu, baru perkalian f/v"*): **Fee/TVL terbesar**
   (``fee_active_tvl_ratio``) → **F/V terbesar** (``row_fv_ratio``) →
-  **volume / active TVL window lane-nya** (``volume_active_tvl_ratio``,
-  dikirim API Meteora dan ditulis di baris kecil kolom Vol) → **dust % MC
-  terkecil**;
+  **volume / active TVL** (``volume_active_tvl_ratio``, dikirim API Meteora
+  dan ditulis di baris kecil kolom Vol) → **dust % MC terkecil**;
 - **Kolom Token menulis pasangan pool-nya** (permintaan user 2026-09-15:
-  \"kolom Token sekarang akan menunjukkan pasangan pairnya, misal
-  ALLINU/SOL\"): ``$TOKEN`` di baris pertama, pasangan pool DLMM di bawahnya
+  "kolom Token sekarang akan menunjukkan pasangan pairnya, misal
+  ALLINU/SOL"): ``$TOKEN`` di baris pertama, pasangan pool DLMM di bawahnya
   (``row_pair_label`` — nama pool dari API Meteora, mis. ``ALLINU/SOL``),
   alamat mint tetap di baris terakhir. Angka **F/V** diformat
   ``format_fv_ratio``: satu desimal di bawah 100× (``10,1×``), bulat +
   pemisah ribuan dari 100× ke atas (``6,328,266×``) — rasio ekstrem tidak
-  lagi tampil sebagai ``6328266.1×`` (laporan user 2026-09-15: *\"gold
-  menunjukkan 6328266.1 F/V\"*);
-- **Fee/TVL tepat di kanan F/V** (penataan kolom 2026-09-14): Token, **F/V**
-  (fee_active_tvl_ratio ÷ volatility — kunci urut + syarat lane), **Fee/TVL**
-  (pembilang F-nya — permintaan user: "kolom Fee/TVL taruh sebelah kanan
-  F/V"), **Volat**, **Dust %MC**; lalu **Fee %** (fee trading pool, mis.
-  0.5% / 2% — ditambah setelah Dust %MC), MC, A.TVL, **Active Range** (persen
-  saja, ``-34.5% / +19.0%`` = harga boleh turun / naik sebelum keluar dari bin
-  berisi likuiditas — permintaan user 2026-09-14: "tambahkan Active Range,
-  tapi % saja, misal -30% +40"), **Vol 24h/30m** (judul
-  mengikuti window lane), Top10, LPs, Pool, ⭐. Kolom **Dust** (jumlah
-  wallet) dihapus hari yang sama;
+  lagi tampil sebagai ``6328266.1×`` (laporan user 2026-09-15: *"gold
+  menunjukkan 6328266.1 F/V"*);
+- **Kolom** (2026-09-16, 15 kolom): Token, **F/V**, **Fee/TVL** (pembilang
+  F-nya — permintaan user 2026-09-14: "kolom Fee/TVL taruh sebelah kanan
+  F/V"), **Volat**, **Active Range**, **LPs**, **Dust %MC**, **Fee %**, **MC**,
+  **A.TVL**, **Vol 24h**, **Top10**, **RugCheck**, **Pool**, ⭐ — permintaan
+  user 2026-09-16: *"Active Range kolom ini pindah ke kanan volat"* dan
+  *"kolom LPs pindah ke kanan active range setelah dipindah"*. **Active
+  Range** menulis persen saja (``-34.5% / +19.0%`` = harga masih boleh turun /
+  naik sebelum keluar dari bin berisi likuiditas); kolom **Dust** (jumlah
+  wallet) tetap dihapus;
 - **sorot hijau tua menyala** (``TOP_HIGHLIGHT_COLOR``, bold) di tabel utama:
   sel volatility terbesar, sel F/V tertinggi, dan sel Fee/TVL tertinggi scan
   itu — seri di puncak ikut ditandai semua; tabel "dilewati" tidak ditandai;
-- filter API tetap ``pool_type=dlmm&&active_tvl>=50000``; dust, volume,
-  volatility minimal, tier fee dan LPs **bukan** syarat — **Top10 ya**:
-  pool dengan 10 holder teratas **di atas 20% supply** dibuang dari listing
-  (``BEST_TOP10_MAX_PCT``, permintaan user 2026-09-16: *"scan meteora,
-  TOP 10 diatas 20% jangan ditampilkan lagi"*), tanpa scan holder;
 - kolom konteks menampilkan detail fee dan active TVL (**A.TVL**,
   **Fee/TVL** dengan fee USD + tier fee, Vol dengan Δ volume + rasio
   volume/active TVL) sebagai informasi.
 
-**Persistensi (2026-09-14):** hasil scan tiap lane disimpan ke cache berkas
-lokal (``scan_result_cache.save_result``, key = session key lane-nya) dan
-dipulihkan ke ``session_state`` bila sesi kosong, jadi **refresh browser
-(F5) tidak menghilangkan tabel** — sesudah scan holder FULL yang memakan
-menit, user tidak perlu menekan tombol scan lagi dari nol.
+**Persistensi (2026-09-14):** hasil scan disimpan ke cache berkas lokal
+(``scan_result_cache.save_result``, key = session key lane-nya) dan dipulihkan
+ke ``session_state`` bila sesi kosong, jadi **refresh browser (F5) tidak
+menghilangkan tabel** — sesudah scan holder FULL yang memakan menit, user tidak
+perlu menekan tombol scan lagi dari nol.
 
 **🏆 BEST POOL badge (dust <= 0,035% MC) dihapus** 2026-09-13 sore per
-permintaan user: \"tulisan tentang dust holder BEST POOL aman dll hapus
-juga\". Pill di kepala card juga dihapus. Dust %MC tetap tampil sebagai
+permintaan user: "tulisan tentang dust holder BEST POOL aman dll hapus
+juga". Pill di kepala card juga dihapus. Dust %MC tetap tampil sebagai
 informasi (angka + tie-break urut) tanpa penanda visual apa pun.
 
 Detail karakteristik = **tooltip judul** — bukan caption panjang. ⭐
@@ -130,69 +144,92 @@ def best_lane_detail(lane) -> tuple[str, str, str]:
 
 
 def best_pool_tooltip() -> str:
-    """Rule ada di tooltip, bukan caption — dua tombol, satu lane per tombol."""
-    from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_LANES,
-                                  BEST_TOP10_MAX_PCT)
+    """Rule ada di tooltip, bukan caption — satu tombol, satu lane (24H)."""
+    from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_TOP10_MAX_PCT,
+                                  BEST_VOL_SHOW_MAX, BEST_VOL_SHOW_MIN,
+                                  JUPITER_SAFEGUARD_FILTERS,
+                                  normalize_best_lane)
 
-    gates = " · ".join(f"{best_lane_detail(lane)[0]}: {best_lane_gate_text(lane)}"
-                       for lane in BEST_LANES)
+    active = normalize_best_lane("24h")
+    label = best_lane_detail(active)[0]
+    gate = best_lane_gate_text(active)
+    volat = (f"{float(BEST_VOL_SHOW_MIN):g}%"
+             f"\u2013{float(BEST_VOL_SHOW_MAX):g}%")
     return (
-        "Dua tombol = dua lane terpisah: setiap tombol mengambil listing "
-        f"API Meteora timeframe-nya sendiri (category top, page_size 50), "
-        f"pool_type=dlmm&&active_tvl>={int(BEST_ACTIVE_TVL_MIN)}. "
-        f"{gates}. F = fee_active_tvl_ratio; V = volatility dari lane itu. "
-        "Pool di bawah ambang lane-nya langsung dilewati SEBELUM scan holder "
-        "(kuota Helius tidak terbakar). Lane 24H: kandidat gagal F/V bisa "
-        "dilihat lewat tombol disembunyikan; lane 30M: kandidat gagal TIDAK "
-        "ditampilkan sama sekali, dan baris yang lolos cukup ditandai OK di "
-        "kolom F/V — angka aslinya + formatnya satu desimal di bawah 100× "
-        "(10,1×) dan bulat berpemisah ribuan dari 100× ke atas (6,328,266×), "
-        "jadi rasio ekstrem tidak pernah tampil mentah. Volatility 0 gugur di "
-        "kedua lane (F/V ∞ bukan kelolosan — pool tanpa volatility tidak "
-        "bisa membuktikan fee lebih besar) DAN tidak ditampilkan di mana "
-        "pun: pool tanpa pergerakan dibuang dari listing, juga tidak masuk "
-        "tabel disembunyikan 24H atau hitungan \"dilewati\". Metrik "
-        "hilang/tidak valid dilewati (tetap terlihat di tabel disembunyikan "
-        "24H). Kolom Top10 ikut jadi saringan (permintaan user 2026-09-16: "
-        "\"TOP 10 diatas 20% jangan ditampilkan lagi\"): pool dengan 10 "
-        "holder teratas token base di atas "
-        f"{BEST_TOP10_MAX_PCT:g}% supply ikut dibuang SEBELUM scan holder "
-        "di kedua lane — batasnya inklusif (tepat 20% masih tampil) dan "
-        "baris tanpa angka Top10 tetap tampil (tidak ada bukti "
-        "konsentrasi). Hanya pool lolos yang mengambil detail holder FULL "
-        "Helius. Dust, volume, tier fee dan LPs bukan syarat "
-        "kelolosan. Urutan tiap tabel: Fee/TVL terbesar, lalu F/V "
-        "terbesar, lalu volume/active TVL terbesar, lalu dust %MC "
-        "terkecil. Tiap lane punya tabel + session "
-        "key sendiri, jadi hasil 24H tidak pernah tercampur 30M. Kolom "
-        "Token menulis pasangan pool-nya apa adanya dari API Meteora "
-        "(mis. ALLINU/SOL, GOLD/XAUt0) — $SIMBOL tetap baris pertama, "
-        "alamat mint di baris terakhir. Kolom di "
-        "paling depan: Token, F/V, Fee/TVL (tepat di kanan F/V), Volat, "
-        "Dust %MC, lalu Fee % (fee trading pool, mis. 0.5% / 2%); kolom "
-        "volume mengikuti "
-        "window lane (Vol 24h / Vol 30m). Kolom Active Range (di kanan "
-        "A.TVL) menulis persen saja: -34.5% / +19.0% artinya harga pool "
-        "masih boleh turun 34,5% atau naik 19,0% sebelum keluar dari bin "
-        "yang berisi likuiditas (min_price … max_price API Meteora) — di "
-        "luar range itu posisi LP berhenti menghasilkan fee; 0.0% berarti "
-        "harga persis di tepi range. Harga bin mentah, lebar range, dan "
-        "jumlah bin ada di tooltip selnya. Sel volatility terbesar, F/V "
-        "tertinggi, dan Fee/TVL tertinggi di tabel utama disorot hijau tua "
-        "menyala (kalau seri, semua "
-        "di puncak ikut ditandai; tabel dilewati tidak ditandai). Dust %MC "
-        "memakai market cap DexScreener; holder gagal tampil —. ⭐ memasukkan "
-        "token ke Watchlist Meteora."
+        f"Satu tombol = satu lane: listing API Meteora timeframe {label} "
+        f"(category top, page_size 50), "
+        + "&&".join(JUPITER_SAFEGUARD_FILTERS)
+        + f"&&pool_type=dlmm&&active_tvl>={int(BEST_ACTIVE_TVL_MIN)}. "
+        f"{label}: {gate}. F = fee_active_tvl_ratio; V = volatility. Scan 30 "
+        "menit dihapus 2026-09-16 (permintaan user: \"hapus scan 30 menit, "
+        "kita sisakan yang 24 jam saja\") — semua alias lane lama "
+        "(30m/1h/both) dipetakan ke 24H, tidak ada lagi dua tabel. "
+        "Saringan layar dieksekusi SEBELUM scan holder (kuota Helius tidak "
+        "terbakar) dan kandidat yang gugur tetap bisa dilihat lewat tombol "
+        "\"dilewati\": (1) F/V di bawah "
+        f"{gate.split(' ', 1)[1]} gugur; (2) volatility di luar {volat} "
+        "gugur — di bawah itu pool nyaris tidak bergerak, di atas itu "
+        "pergerakan lebih besar daripada fee yang dibagi; (3) Top10 "
+        f"{BEST_TOP10_MAX_PCT:g}% atau lebih gugur (permintaan user "
+        "2026-09-16: \"jika ada top 10 >= 20% jangan tampilkan\" — batasnya "
+        "sekarang di sisi BUANG, jadi tepat 20% tidak lagi tampil; tanpa "
+        "angka Top10 = tidak terukur, barisnya tetap tampil). Volatility 0 "
+        "gugur DAN tidak ditampilkan di mana pun: F/V \u221e bukan kelolosan, "
+        "pool tanpa pergerakan dibuang total dari listing, tidak masuk tabel "
+        "dilewati dan tidak dihitung di pill \"dilewati\". Metrik "
+        "hilang/tidak valid dilewati (tetap terlihat di tabel disembunyikan). "
+        "Kolom F/V memakai format satu desimal di bawah 100\u00d7 (10,1\u00d7) "
+        "dan bulat berpemisah ribuan dari 100\u00d7 ke atas (6,328,266\u00d7), "
+        "jadi rasio ekstrem tidak pernah tampil mentah; sel F/V baris gugur "
+        "merah dengan sub \"gugur: <alasan>\". Hanya pool lolos yang "
+        "mengambil detail holder FULL Helius. Dust, volume, dan tier fee "
+        "bukan syarat kelolosan. Urutan tiap tabel: Fee/TVL terbesar, lalu "
+        "F/V terbesar, lalu volume/active TVL terbesar, lalu dust %MC "
+        "terkecil. Kolom Token menulis pasangan pool-nya apa adanya dari API "
+        "Meteora (mis. ALLINU/SOL) \u2014 $SIMBOL tetap baris pertama, alamat "
+        "mint di baris terakhir. Kolom, kiri ke kanan: Token, F/V, Fee/TVL "
+        "(tepat di kanan F/V), Volat, Active Range, LPs, Dust %MC, Fee % "
+        "(tier fee pool, mis. 0,5% / 2%), MC, A.TVL, Vol 24h, Top10, RugCheck, "
+        "Pool, \u2b50 \u2014 penataan 2026-09-16: Active Range digeser ke kanan "
+        "Volat (dua-duanya soal pergerakan) dan LPs tepat di kanannya, lalu "
+        "kolom RugCheck baru. Active Range menulis persen saja: -34.5% / "
+        "+19.0% artinya harga pool masih boleh turun 34,5% atau naik 19,0% "
+        "sebelum keluar dari bin yang berisi likuiditas (min_price \u2026 "
+        "max_price API Meteora) \u2014 di luar range itu posisi LP berhenti "
+        "menghasilkan fee; 0.0% berarti harga persis di tepi range. Harga bin "
+        "mentah, lebar range, dan jumlah bin ada di tooltip selnya. LPs "
+        f"HIJAU bila > {LP_GREEN_MIN_LP:g} liquidity provider (permintaan "
+        "user 2026-09-16), selain itu tampil biasa. Kolom **RugCheck** "
+        "melaporkan tiap mint base lewat honeypot checker rugchecker.cc "
+        "(tanpa API key): verdict AMAN / WASPADA / BERISIKO / RUG + bendera "
+        "keamanan (mintable, freezable, closable, non-transferable, "
+        "transfer-fee, hook) + likuiditas per DEX dalam versi ringkas "
+        "(top beberapa pool + total + share pool ini) dan pasar (MC) \u2014 "
+        "verdict RUG hanya bila honeypot, bendera kritis (mint/freeze/"
+        "non-transferable/hook/transfer-fee) jadi BERISIKO, sisanya minor "
+        "jadi WASPADA; RUGCHECK TIDAK PERNAH MEMBUANG BARIS \u2014 ia kolom "
+        "informasi, saringannya tetap F/V + volat + Top10 + safeguard "
+        "Jupiter di sisi API. Mint yang laporannya tidak didapat menulis "
+        "\u2014 (bukan \"AMAN\": tanpa bukti tidak ada verdict). Sorot "
+        "hijau tua menyala di tabel utama: sel volatility terbesar, sel F/V "
+        "tertinggi, dan sel Fee/TVL tertinggi (kalau seri, semua di puncak "
+        "ikut ditandai; tabel dilewati tidak ditandai). Dust %MC memakai "
+        "market cap DexScreener; holder gagal tampil \u2014. \u2b50 memasukkan "
+        "token ke card \U0001f30a Watchlist Meteora di halaman \U0001f4e6 TEMP."
     )
 
 
 # Lebar kolom listing (permintaan user 2026-09-14: "kita tata kolomnya baik
 # untuk 24jam maupun 30menit — Dust hapus — Token F/V Volat Dust %MC, 4 kolom
-# ini diletakkan paling awal"): Token, F/V, Volat, Dust %MC di depan, lalu
-# konteks pasar (MC, A.TVL, Fee/TVL, volume window lane, Top10, LPs), Pool,
-# ⭐. Kolom **Dust** (jumlah wallet) dihapus hari yang sama. Judul kolom
-# volume mengikuti lane-nya (``_lane_titles``: 24H "Vol 24h", 30M "Vol 30m")
-# — kolom Src sudah lama dihapus bersama pemisahan lane.
+# ini diletakkan paling awal"): Token, F/V, Fee/TVL, Volat di depan, lalu
+# Active Range, LPs, konteks pasar (Dust %MC, Fee %, MC, A.TVL, volume 24 jam,
+# Top10), RugCheck, Pool, ⭐. Kolom **Dust** (jumlah wallet) dihapus hari yang
+# sama. Penataan 2026-09-16 (permintaan user): **Active Range** pindah ke
+# kanan Volat, **LPs** mengikuti tepat di kanannya, dan kolom **RugCheck**
+# ditambah sebelum Pool. Judul kolom volume dulu mengikuti lane-nya
+# (``_lane_titles``: 24H "Vol 24h", 30M "Vol 30m"); sejak lane 30M dihapus
+# judulnya selalu "Vol 24h" — kolom Src sudah lama dihapus bersama pemisahan
+# lane.
 # Kolom **Fee %** (fee trading pool, mis. 0.5%, 2%) ditambah 2026-09-14 tepat
 # setelah Dust %MC (permintaan user: "tambahkan detail pool fee % … setelah
 # dust%MC … ini maksudnya fee di pool tersebut, misal 0.5%, 2%, dll").
@@ -211,25 +248,40 @@ def best_pool_tooltip() -> str:
 # sehingga butuh ruang lebih; Token juga naik tipis (1,4 → 1,45) karena kolom
 # itu sekarang memuat baris pasangan pool (``ALLINU/SOL``). Yang dikurangi
 # kolom informasi (MC, Top10, Fee %) supaya total masih seimbang.
-_COL_SPEC = [1.45, 1.0, 0.75, 0.58, 0.8, 0.58, 0.6, 0.72, 0.95, 0.8, 0.6,
-             0.5, 0.95, 0.4]
+# Bobot 2026-09-16 (kolom ke-15): sama seperti sebelumnya, hanya digeser —
+# Active Range + LPs naik ke kanan Volat, RugCheck dapat bagian dari MC/A.TVL
+# (0,6→0,55 / 0,72→0,68) dan Pool (0,95→0,8); Token 1,45→1,4 karena baris
+# pasangan tetap satu baris pendek.
+_COL_SPEC = [1.4, 1.0, 0.75, 0.58, 0.95, 0.5, 0.8, 0.58, 0.55, 0.68, 0.8,
+             0.6, 1.0, 0.8, 0.4]
 
 
 def _lane_titles(lane) -> list[str]:
     """Judul kolom satu tabel — kolom volume dinamai sesuai window lane-nya.
 
     API Meteora mengembalikan volume/fee window ``timeframe`` yang diminta,
-    jadi tabel 30M tidak boleh menamai kolomnya "Vol 24h" (bagian dari
-    penataan kolom 2026-09-14: "baik untuk 24jam maupun 30menit").
+    jadi judul kolom volume dulu mengikuti lane (penataan kolom 2026-09-14:
+    "baik untuk 24jam maupun 30menit"). Sejak 30M dihapus (2026-09-16) window
+    yang diminta selalu 24 jam, jadi judulnya tetap "Vol 24h" untuk input apa
+    pun — fungsi ini tetap menerima ``lane`` supaya pemanggil lama tidak
+    berubah.
 
-    **Active Range** (2026-09-14) duduk di kanan A.TVL: keduanya menjelaskan
-    bentuk likuiditas pool. Isinya persen saja (``-34.5% / +19.0%``).
+    **Active Range** (ditambah 2026-09-14) duduk di kanan **Volat** dan
+    **LPs** di kanannya (permintaan user 2026-09-16: *"Active Range kolom ini
+    pindah ke kanan volat"* + *"kolom LPs pindah ke kanan active range setelah
+    dipindah"*) — Volat, Active Range dan LPs sama-sama soal bentuk +
+    pergerakan likuiditas, jadi ketiganya dibaca sekali lirikan. Isinya persen
+    saja (``-34.5% / +19.0%``).
     """
     from meteora_screener import normalize_best_lane
 
-    volume = "Vol 30m" if normalize_best_lane(lane) == "30m" else "Vol 24h"
-    return ["Token", "F/V", "Fee/TVL", "Volat", "Dust %MC", "Fee %", "MC",
-            "A.TVL", "Active Range", volume, "Top10", "LPs", "Pool", ""]
+    # Satu judul volume saja: lane 30M dihapus 2026-09-16, window API selalu
+    # 24 jam — ``normalize_best_lane`` masih menerima alias lama (dipetakan ke
+    # 24H) jadi penamaan kolom tidak pernah bisa lagi tertulis "Vol 30m".
+    _ = normalize_best_lane(lane)
+    return ["Token", "F/V", "Fee/TVL", "Volat", "Active Range", "LPs",
+            "Dust %MC", "Fee %", "MC", "A.TVL", "Vol 24h", "Top10",
+            "RugCheck", "Pool", ""]
 
 
 # Hijau tua menyala penanda sel tertinggi di tabel utama (permintaan user
@@ -239,6 +291,15 @@ def _lane_titles(lane) -> list[str]:
 # semua memakai satu warna hijau tua menyala). Dipakai sel Volat, sel F/V,
 # dan sel Fee/TVL.
 TOP_HIGHLIGHT_COLOR = "#15803d"
+
+
+#: Hijau kolom **LPs** (permintaan user 2026-09-16: "LPs jika lebih dari 100,
+#: kasih warna hijau jika tidak, tidak ada perubahan"). Strict: tepat 100 LP
+#: masih hitam. Warna #16a34a = hijau yang sama dengan Δ volume naik / label
+#: "OK" lama — sengaja BUKAN ``TOP_HIGHLIGHT_COLOR`` supaya penanda "tertinggi
+#: di tabel" tetap punya artinya sendiri.
+LP_GREEN_COLOR = "#16a34a"
+LP_GREEN_MIN_LP = 100.0
 
 
 def _top_span(text: str) -> str:
@@ -297,17 +358,16 @@ def _best_head_html(rows: list, hidden: int, lane: str,
     timeframe, jadi kepala card yang menunjukkan lane mana yang sedang tampil.
     """
     from dashboard_components import card_head_html
-    from meteora_screener import BEST_CARD_TITLE, normalize_best_lane
+    from meteora_screener import BEST_CARD_TITLE
 
     label, color, gate = best_lane_detail(lane)
     pills = [f'<span class="lp-count" style="color:#ffffff;background:{color};">'
              f'{label} · {gate}</span>',
              f'<span class="lp-count">{len(rows)} pool</span>']
-    # Lane 30M tidak menampilkan kandidat gagal sama sekali (2026-09-14),
-    # jadi pill jumlah disembunyikan hanya untuk 24H. Pool volatility 0 dibuang
-    # sebelum tabel (permintaan user: tidak ada pergerakan), jadi ``hidden``
-    # yang diterima di sini tidak pernah menghitungnya.
-    if hidden and normalize_best_lane(lane) != "30m":
+    # ``hidden`` = kandidat 24H yang gugur saringan layar; pool volatility 0
+    # dibuang sebelum tabel (permintaan user: tidak ada pergerakan), jadi
+    # jumlahnya tidak pernah ikut di sini.
+    if hidden:
         tone = ("color:#1e3a8a;background:#bfdbfe;" if showing_hidden
                 else "color:#334155;background:#e2e8f0;")
         pills.append(f'<span class="lp-count" style="{tone}">'
@@ -484,10 +544,9 @@ def _active_range_cell(row) -> tuple[str, str, str]:
 def _fv_cell(row: dict, lane: str, *, top: bool = False) -> tuple[str, str, str]:
     """Sel **F/V** = ``fee_active_tvl_ratio ÷ volatility`` satu baris + lane.
 
-    Lane **30M** (permintaan user 2026-09-14): baris yang lolos cukup
-    menampilkan **OK** hijau — angka quotient tetap di tooltip sel dan tetap
-    jadi kunci urut + saringan, tapi tidak ditampilkan di sel. Lane **24H**
-    tetap menampilkan angka. **Format angkanya** (permintaan user 2026-09-15:
+    Hanya ada **satu lane** sejak 2026-09-16 (30M dihapus), jadi sel selalu
+    menulis angkanya — label "OK" hijau khusus 30M (aturan 2026-09-14) ikut
+    dicabut bersama lane itu. **Format angkanya** (permintaan user 2026-09-15:
     *"gold menunjukkan 6328266.1 F/V — perbaiki"*) dibaca dari
     :func:`meteora_screener.format_fv_ratio` — satu desimal di bawah 100×
     (``10,1×``), bilangan bulat berpemisah ribuan di atasnya
@@ -500,27 +559,19 @@ def _fv_cell(row: dict, lane: str, *, top: bool = False) -> tuple[str, str, str]
     di listing "disembunyikan" lane 24H, yang tidak pernah diberi tanda)
     tetap merah + alasan, supaya jelas kenapa holdernya tidak ikut di-scan.
     """
-    from meteora_screener import (format_fv_ratio, normalize_best_lane,
-                                  row_best_gaps, row_fv_ratio)
+    from meteora_screener import format_fv_ratio, row_best_gaps, row_fv_ratio
 
     ratio = row_fv_ratio(row)
     label, _, gate = best_lane_detail(lane)
     fails = row_best_gaps(row, lane=lane)
     value = format_fv_ratio(ratio)
-    if normalize_best_lane(lane) == "30m" and not fails:
-        # 30M lolos → "OK" saja; angka asli tetap di tooltip supaya urutan
-        # dan syarat masih bisa diverifikasi (permintaan user 2026-09-14:
-        # "kalau di M30, jika syarat terpenuhi, tulis OK").
-        value, color = "OK", "#16a34a"
-        sub = f"syarat {gate} terpenuhi"
-    elif value is None:
+    sub = f"syarat {gate}"
+    if value is None:
         value, color = "—", "#dc2626"
-        sub = f"syarat {gate}"
     else:
         # Angka (atau ∞ warisan hasil scan lama): tanpa warna khusus —
         # penanda hijau hanya untuk F/V tertinggi tabel (``top``).
         color = ""
-        sub = f"syarat {gate}"
     tip = (f"fee_active_tvl_ratio {_pct_full(row.get('fee_active_tvl_ratio'))}"
            f" ÷ volatility {_pct_full(row.get('volatility'))} = "
            f"{_num_or_dash(ratio, ',.2f')}× — "
@@ -528,6 +579,9 @@ def _fv_cell(row: dict, lane: str, *, top: bool = False) -> tuple[str, str, str]
            f"kedua listing {label} + syarat lane ({gate}); "
            "lebih tinggi = fee lebih dominan")
     if fails:
+        # Gugur F/V, volatility di luar 1%–10%, atau Top10 >= 20% — semuanya
+        # dibaca dari satu sumber (row_best_gaps) supaya teks sel tidak pernah
+        # ketinggalan aturan baru.
         sub = f"gugur: {fails[0].split(': ', 1)[-1]}"
         shown = f'<span style="color:#dc2626;">{value}</span>'
     elif top:
@@ -565,9 +619,13 @@ def _render_best_table(rows: list, *, lane: str,
     from dashboard_components import _number
     from links import external_links_html, pool_links_html
     from lp_watchlist import LP_SOURCE
-    from meteora_screener import (BEST_TOP10_MAX_PCT, normalize_best_lane,
+    from meteora_screener import (BEST_TOP10_MAX_PCT, BEST_VOL_SHOW_MAX,
+                                  BEST_VOL_SHOW_MIN, normalize_best_lane,
                                   row_dust_pct, row_fv_ratio)
     from meteora_screener import row_pair_label, row_vol_tvl_ratio
+    # RugCheck = kolom baru 2026-09-16; fmt-nya tinggal di modul rugchecker
+    # supaya card tidak pernah menebak struktur laporan API pihak ketiga.
+    from rugchecker import cell_parts as _rug_cell_parts
     from watchlist import add_to_watchlist
 
     header_cols = st.columns(_COL_SPEC)
@@ -627,7 +685,10 @@ def _render_best_table(rows: list, *, lane: str,
         vol_value = _pct_or_dash(row.get("volatility"))
         vol_tip = ("volatility pool "
                    f"{_num_or_dash(row.get('volatility'), ',.2f')}% — "
-                   "informasi, bukan saringan lagi sejak 2026-09-13")
+                   "saringan sejak 2026-09-16: hanya "
+                   f"{float(BEST_VOL_SHOW_MIN):g}%–{float(BEST_VOL_SHOW_MAX):g}%"
+                   " yang ditampilkan (inklusif; 0% dibuang total sejak "
+                   "2026-09-14)")
         vol_here = _finite_number(row.get("volatility"))
         if top_vol is not None and vol_here is not None and vol_here == top_vol:
             vol_value = _top_span(vol_value)
@@ -666,10 +727,34 @@ def _render_best_table(rows: list, *, lane: str,
         # kanan F/V — permintaan user 2026-09-14; Active Range tepat di kanan
         # A.TVL — permintaan user hari yang sama: "tambahkan Active Range,
         # tapi % saja, misal -30% +40").
+        # Sel **LPs** (2026-09-16, permintaan user: "LPs jika lebih dari 100,
+        # kasih warna hijau jika tidak, tidak ada perubahan") — hanya warnanya
+        # yang berubah, angkanya tetap angka pool dari API Meteora.
+        lps_here = _finite_number(row.get("total_lps"))
+        lps_value = _num_or_dash(row.get("total_lps"))
+        if lps_here is not None and lps_here > LP_GREEN_MIN_LP:
+            lps_value = (f'<span style="color:{LP_GREEN_COLOR};'
+                         f'font-weight:700;">{lps_value}</span>')
+        # Kolom **RugCheck** (baru 2026-09-16): verdict + likuiditas ringkas
+        # dari rugchecker.cc, ditempel scan_best_lane lewat modul ``rugchecker``.
+        # Hanya verdict yang diwarnai (hijau→merah) — angka likuiditas tetap
+        # hitam supaya kolom ini informatif, bukan menyeramkan.
+        rug_report = row.get("rugcheck") or {}
+        rug_value, rug_sub, rug_tip = _rug_cell_parts(rug_report)
+        rug_color = str(rug_report.get("color") or "") if isinstance(rug_report, dict) else ""
+        if rug_color and rug_value != "—":
+            rug_value = (f'<span style="color:{rug_color};font-weight:700;">'
+                         f'{rug_value}</span>')
         cells = (
             (fv_value, fv_sub, fv_tip),
             (fee_tvl_value, fee_sub, fee_tvl_tip),
             (vol_value, "volat", vol_tip),
+            _active_range_cell(row),
+            (lps_value, "lps",
+             f"jumlah liquidity provider pool — hanya informasi, bukan "
+             f"saringan; HIJAU bila > {LP_GREEN_MIN_LP:g} LP (permintaan user "
+             "2026-09-16: banyak LP = likuiditas tidak dipegang segelintir "
+             "wallet)"),
             (dust_value, dust_sub, dust_tip),
             (_num_or_dash(fee_pct, ".4g") + "%" if fee_pct is not None
              else "—", "pool fee",
@@ -682,7 +767,6 @@ def _render_best_table(rows: list, *, lane: str,
             (_usd_or_dash(active_tvl), "active tvl",
              f"active TVL {_usd_or_dash(active_tvl, compact=False)} · "
              f"TVL total {_usd_or_dash(row.get('tvl'), compact=False)}"),
-            _active_range_cell(row),
             (_usd_or_dash(volume), delta_html,
              f"volume {window_txt} {_usd_or_dash(volume, compact=False)} · "
              f"perubahan {delta_txt} · rasio volume/active TVL "
@@ -691,23 +775,22 @@ def _render_best_table(rows: list, *, lane: str,
              "(bukan saringan)"),
             (_pct_or_dash(row.get("top_holders_pct")), "top10",
              "10 holder teratas token base (% of supply) — saringan sejak "
-             f"2026-09-16: Top10 di atas {BEST_TOP10_MAX_PCT:g}% tidak "
-             "ditampilkan (batas inklusif; tanpa angka = tidak terukur, "
-             "barisnya tetap tampil)"),
-            (_num_or_dash(row.get("total_lps")), "lps",
-             "jumlah liquidity provider pool — hanya informasi, bukan "
-             "saringan lagi sejak 2026-09-11"),
+             f"2026-09-16: Top10 **{BEST_TOP10_MAX_PCT:g}% atau lebih** tidak "
+             "ditampilkan (permintaan user: \"jika ada top 10 >= 20% jangan "
+             "tampilkan\"; tanpa angka = tidak terukur, barisnya tetap "
+             "tampil)"),
+            (rug_value, rug_sub, rug_tip),
         )
         for position, (value, sub, tip) in enumerate(cells, start=1):
             cols[position].markdown(_cell(value, sub, tip),
                                     unsafe_allow_html=True)
         pool_html = pool_links_html(pool) or "<span>—</span>"
-        cols[12].markdown(f'<div class="pool-links">{pool_html}</div>',
+        cols[13].markdown(f'<div class="pool-links">{pool_html}</div>',
                           unsafe_allow_html=True)
         star_key = f"{key_prefix}-star-{pool or ca or index}"
-        if cols[13].button("⭐", key=star_key,
+        if cols[14].button("⭐", key=star_key,
                            help="Tambah ke Watchlist Meteora "
-                                "(halaman utama)",
+                                "(halaman 📦 TEMP)",
                            use_container_width=True):
             if ca:
                 add_to_watchlist(ca, symbol, source=LP_SOURCE,
@@ -715,48 +798,6 @@ def _render_best_table(rows: list, *, lane: str,
                 st.success(f"${symbol} masuk Watchlist Meteora")
         st.markdown('<hr style="margin:0.25rem 0;border-color:#cbd5e1;">',
                     unsafe_allow_html=True)
-
-
-def _split_legacy_result(result: dict) -> dict:
-    """Pecah hasil scan lama (24H + 30M jadi satu) ke dua lane.
-
-    Sekali jalan per sesi: card kini membaca satu key per lane, sedangkan
-    sesi yang sudah terbuka sebelum perubahan ini hanya punya
-    ``best_pool_scan``. Baris dipilah dari ``timeframe``/``source``-nya, jadi
-    listing terakhir tidak hilang saat tombol baru pertama kali dirender.
-    """
-    from meteora_screener import normalize_best_lane
-
-    out: dict[str, dict] = {}
-    rows = list(result.get("rows") or [])
-    hidden_rows = list(result.get("hidden_rows") or [])
-    for lane in ("24h", "30m"):
-        lane_rows = [row for row in rows
-                     if normalize_best_lane(row.get("timeframe")
-                                            or row.get("source"),
-                                            default="24h") == lane]
-        lane_hidden = [row for row in hidden_rows
-                       if normalize_best_lane(row.get("timeframe")
-                                              or row.get("source"),
-                                              default="24h") == lane]
-        if not lane_rows and not lane_hidden:
-            continue
-        out[lane] = {
-            "rows": lane_rows,
-            "hidden_rows": lane_hidden,
-            "error": result.get("error") or "",
-            "fetched": len(lane_rows) + len(lane_hidden),
-            "hidden_metric": len(lane_hidden),
-            "hidden_dust": 0,
-            "skipped_quote": 0,
-            # Hasil lama tidak membedakan pool vol-0 di hidden_rows — filter
-            # render di ``render_best_pool_scan`` yang membuangnya dari tabel
-            # dan hitungan, jadi 0 di sini hanya artinya "tidak tercatat".
-            "dropped_volatility": 0,
-            "lane": lane,
-            "analyzed_at": result.get("analyzed_at"),
-        }
-    return out
 
 
 def _lane_result(st, lane: str) -> dict:
@@ -769,6 +810,8 @@ def _run_lane_scan(lane: str, *, progress=None) -> dict:
 
     ``progress`` dipanggil ``(index, total, label)``; kegagalan scanner
     menjadi pesan card (``error``), bukan exception yang mematikan halaman.
+    ``rugcheck=False`` dipakai test/offline: kolom RugCheck menulis ``—``
+    tanpa menghubungi rugchecker.cc.
     """
     from holder_history import FULL_SCAN_MAX_WALLETS
     from meteora_screener import scan_best_lane
@@ -781,27 +824,32 @@ def _run_lane_scan(lane: str, *, progress=None) -> dict:
     except Exception as exc:  # noqa: BLE001 - kegagalan = pesan card
         return {"rows": [], "hidden_rows": [], "error": str(exc),
                 "fetched": 0, "hidden_metric": 0, "hidden_dust": 0,
-                "skipped_quote": 0, "dropped_volatility": 0, "lane": lane}
+                "skipped_quote": 0, "dropped_volatility": 0,
+                "rugcheck_failed": 0, "lane": lane}
 
 
 def render_best_pool_scan() -> None:
-    """Card **🏆 Scan Best Pool Meteora** di halaman utama.
+    """Card **🏆 Scan Best Pool Meteora** di halaman utama — satu tombol 24H.
 
-    Dua tombol (24H / 30M) — satu tombol = satu lane listing + satu tabel.
-    Lane yang sedang ditampilkan disimpan di ``best_pool_lane`` supaya hasil
-    scan yang sudah ada bisa dilihat ulang tanpa memindai ulang.
+    Dulu card ini punya dua tombol + pemilih lane (24H dan 30M, aturan
+    2026-09-13). Sejak 2026-09-16 hanya lane **24H** yang tersisa —
+    permintaan user: *"hapus scan 30 menit, kita sisakan yang 24 jam saja"* —
+    jadi satu tombol = satu listing API (``timeframe=24h``) = satu tabel,
+    disimpan di satu session key ``best_pool_scan_24h`` (+ cache berkas dengan
+    nama yang sama, lihat ``scan_result_cache``). Key lama per-lane lain
+    (``best_pool_scan_30m``) dan key gabungan lama (``best_pool_scan``) tidak
+    pernah dibaca lagi, jadi hasil 30M tidak bisa lagi menyusup ke tabel.
     """
     import streamlit as st
 
-    from meteora_screener import (BEST_LANES, normalize_best_lane,
-                                  row_best_gaps, row_volatility_zero,
-                                  sort_best_rows)
+    from meteora_screener import (normalize_best_lane, row_best_gaps,
+                                  row_volatility_zero, sort_best_rows)
 
     with st.container(border=True):
-        active = normalize_best_lane(
-            st.session_state.get(BEST_ACTIVE_LANE_KEY) or "24h")
-        if active not in BEST_LANES:
-            active = "24h"
+        active = normalize_best_lane("24h")
+        # Bersihkan state pemilih lane lama supaya sesi yang masih menyimpan
+        # "30m" tidak bisa memengaruhi apa pun.
+        st.session_state.pop(BEST_ACTIVE_LANE_KEY, None)
 
         # Pulihkan hasil scan dari cache berkas lokal bila session_state kosong
         # — Streamlit membuat session baru setiap refresh browser (F5) / tab
@@ -811,110 +859,58 @@ def render_best_pool_scan() -> None:
         try:
             import scan_result_cache
 
-            for lane in BEST_LANES:
-                scan_result_cache.restore_into_session(
-                    st, best_lane_session_key(lane), best_lane_session_key(lane))
+            scan_result_cache.restore_into_session(
+                st, best_lane_session_key(active), best_lane_session_key(active))
         except Exception:  # noqa: BLE001 - cache hanya pelengkap
             pass
 
-        # Migrasi hasil lama (gabungan 24H + 30M) ke key per-lane, sekali saja.
-        if not any(st.session_state.get(best_lane_session_key(lane))
-                   for lane in BEST_LANES):
-            legacy = st.session_state.get(BEST_SESSION_KEY) or {}
-            if legacy:
-                split = _split_legacy_result(legacy)
-                if not split and str(legacy.get("error") or ""):
-                    # Tidak ada baris untuk dipecah (mis. listing API gagal) —
-                    # minimal pesan error lama tetap tampil, jangan hilang
-                    # bersama key lama.
-                    split = {active: dict(legacy, rows=[], hidden_rows=[],
-                                         fetched=0, hidden_metric=0,
-                                         hidden_dust=0, dropped_volatility=0,
-                                         lane=active)}
-                for lane, part in split.items():
-                    st.session_state[best_lane_session_key(lane)] = part
-
-        # ---- dua tombol deteksi: 24H dan 30M ------------------------------
-        cols = st.columns(len(BEST_LANES))
-        pressed: str | None = None
-        for col, lane in zip(cols, BEST_LANES):
-            label, _color, gate = best_lane_detail(lane)
-            stored = _lane_result(st, lane)
-            count = len(stored.get("rows") or [])
-            if col.button(f"🏆 Scan Best Pool {label} + Holder",
-                          type="primary" if lane == active else "secondary",
-                          key=f"best-pool-scan-{lane}",
-                          use_container_width=True,
-                          help=(f"Listing Meteora timeframe {label}, disaring "
-                                f"{gate} SEBELUM scan holder — pool di bawah "
-                                "ambang langsung di-skip, holdernya tidak "
-                                f"di-fetch. Hasil tampil di tabel {label} "
-                                "sendiri.")):
-                pressed = lane
-            col.caption(f"{count} pool tersimpan" if stored
-                        else "belum di-scan")
-        if pressed:
+        # ---- satu tombol deteksi: 24H -------------------------------------
+        label, _color, gate = best_lane_detail(active)
+        if st.button(f"🏆 Scan Best Pool {label} + Holder", type="primary",
+                     key=f"best-pool-scan-{active}",
+                     use_container_width=True,
+                     help=(f"Listing Meteora timeframe {label}, disaring "
+                           f"{gate} + volatility "
+                           "1%–10% + Top10 < 20% SEBELUM scan holder — pool di "
+                           "bawah syarat langsung di-skip, holdernya tidak "
+                           "di-fetch. Tiap pool yang lolos dilengkapi laporan "
+                           "RugCheck (rugchecker.cc).")):
             bar = st.progress(0.0, text="Listing pool Meteora…")
 
             def _progress(index, total, note):
                 bar.progress(index / max(total, 1),
                              text=f"Holder {index}/{total} · {note}")
 
-            result = _run_lane_scan(pressed, progress=_progress)
+            result = _run_lane_scan(active, progress=_progress)
             bar.empty()
-            st.session_state[best_lane_session_key(pressed)] = result
-            st.session_state[best_lane_hidden_key(pressed)] = False
-            st.session_state[BEST_ACTIVE_LANE_KEY] = normalize_best_lane(pressed)
+            st.session_state[best_lane_session_key(active)] = result
+            st.session_state[best_lane_hidden_key(active)] = False
             # Tahan refresh browser: simpan hasil ke cache berkas lokal
             # (2026-09-14). Gagal tulis tidak boleh membatalkan hasil scan.
             try:
                 import scan_result_cache
 
-                scan_result_cache.save_result(best_lane_session_key(pressed),
+                scan_result_cache.save_result(best_lane_session_key(active),
                                               result)
             except Exception:  # noqa: BLE001 - cache hanya pelengkap
                 pass
             st.rerun()
+        # Rekap hasil tersimpan di bawah tombol (aturan card sejak 2026-09-13:
+        # tombol menunjukkan apa yang sudah ada tanpa memindai ulang) — dengan
+        # satu lane cukup satu baris, tidak lagi per tombol.
+        stored = _lane_result(st, active)
+        st.caption(f"{len(stored.get('rows') or [])} pool tersimpan" if stored
+                   else "belum di-scan")
 
-        # ---- pindah lihat tabel lane lain tanpa scan ulang ----------------
-        others = [lane for lane in BEST_LANES
-                  if lane != active and _lane_result(st, lane)]
-        if others:
-            view_cols = st.columns(len(BEST_LANES) + 1)
-            view_cols[0].markdown(
-                '<div style="font-size:0.72rem;color:#475569;'
-                'font-weight:700;padding-top:.5rem;">Tabel:</div>',
-                unsafe_allow_html=True)
-            for position, lane in enumerate([active] + others, start=1):
-                label, color, _gate = best_lane_detail(lane)
-                count = len(_lane_result(st, lane).get("rows") or [])
-                marker = "◼ " if lane == active else "◻ "
-                weight = "700" if lane == active else "400"
-                if view_cols[position].button(
-                        f"{marker}{label} · {count} pool",
-                        key=f"best-pool-view-{lane}",
-                        use_container_width=True,
-                        help=f"Tampilkan hasil scan lane {label} "
-                             "tanpa memindai ulang."):
-                    st.session_state[BEST_ACTIVE_LANE_KEY] = lane
-                    st.rerun()
-                view_cols[position].markdown(
-                    f'<div style="font-size:0.62rem;color:{color};'
-                    f'font-weight:{weight};">{"aktif" if lane == active else "hasil tersimpan"}</div>',
-                    unsafe_allow_html=True)
-
-        # ---- isi tabel lane aktif ------------------------------------------
-        active = normalize_best_lane(
-            st.session_state.get(BEST_ACTIVE_LANE_KEY) or "24h")
+        # ---- isi tabel ----------------------------------------------------
         result = _lane_result(st, active)
         error = str(result.get("error") or "")
-        label, _color, _gate = best_lane_detail(active)
         if not result:
             st.markdown(_best_head_html([], 0, active),
                         unsafe_allow_html=True)
             st.info(f"Belum ada hasil scan lane {label}. Tekan tombol "
                     f"🏆 Scan Best Pool {label} + Holder untuk memindai "
-                    "lane ini.")
+                    "listing terbaru.")
             return
         # ``scan_best_lane`` sudah mengurutkan, tapi hasil lama di
         # ``session_state`` (dari kriteria versi sebelumnya) belum —
@@ -926,7 +922,9 @@ def render_best_pool_scan() -> None:
         # render supaya hasil scan LAMA yang masih membawa baris vol-0 di
         # ``rows`` (era sebelum ∞ gugur) atau di ``hidden_rows`` ikut bersih
         # tanpa scan ulang (permintaan user 2026-09-14 lanjutan: "jika
-        # volatility 0 jangan tampilkan").
+        # volatility 0 jangan tampilkan"). Baris hasil scan lama juga bisa
+        # membawa volatility < 1% / > 10% atau Top10 >= 20% — row_best_gaps
+        # membacanya ulang, jadi tabel selalu memakai kriteria hari ini.
         stored_rows = [r for r in stored_rows if not row_volatility_zero(r)]
         rows = sort_best_rows([r for r in stored_rows
                               if not row_best_gaps(r, lane=active)])
@@ -940,27 +938,24 @@ def render_best_pool_scan() -> None:
         hidden = len(hidden_rows)
         fetched = int(result.get("fetched") or 0)
         skipped_quote = int(result.get("skipped_quote") or 0)
-        # Lane 30M tidak menampilkan kandidat gagal sama sekali (permintaan
-        # user 2026-09-14: "jangan tampilkan yang tidak terpenuhi") — toggle
-        # disembunyikan + tabel disembunyikan hanya untuk 24H.
+        rug_failed = int(result.get("rugcheck_failed") or 0)
         showing_hidden = bool(
-            st.session_state.get(best_lane_hidden_key(active))
-            if active != "30m" else False)
+            st.session_state.get(best_lane_hidden_key(active)))
 
         # Tanpa caption ambang: detail karakteristik card sudah jadi tooltip
         # judul (``best_pool_tooltip()``) — permintaan user 2026-09-10.
         st.markdown(_best_head_html(rows, hidden, active,
                                     showing_hidden=showing_hidden),
                     unsafe_allow_html=True)
-        if hidden and active != "30m":
+        if hidden:
             # Caption/tombol = angka rekap saja; ambangnya hidup di tooltip
             # (judul card + tooltip sel F/V) — aturan card sejak 2026-09-10.
             view = ("◀ kembali ke tabel yang lolos"
                     if showing_hidden else f"▶ {hidden} pool dilewati")
             if st.button(view, key=f"best-pool-toggle-hidden-{active}",
                          help=f"Tampilkan kandidat {label} yang di-skip karena "
-                              "di bawah ambang F/V lane ini atau Top10 di atas "
-                              "batas; holdernya tidak pernah di-scan.",
+                              "gugur saringan F/V, volatility, atau Top10 "
+                              "lane ini; holdernya tidak pernah di-scan.",
                          use_container_width=True):
                 st.session_state[best_lane_hidden_key(active)] = \
                     not showing_hidden
@@ -970,14 +965,11 @@ def render_best_pool_scan() -> None:
         if fetched:
             quote_txt = (f" · {skipped_quote} pool quote dilewati"
                          if skipped_quote else "")
-            if active == "30m":
-                # 30M: baris yang tidak memenuhi syarat tidak tampil dan
-                # tidak dihitung di caption (permintaan user 2026-09-14).
-                st.caption(f"{len(rows)} pool {label} tampil · "
-                           f"listing {fetched} pool{quote_txt}.")
-            else:
-                st.caption(f"{len(rows)} pool {label} tampil · {hidden} "
-                           f"dilewati · listing {fetched} pool{quote_txt}.")
+            rug_txt = (f" · {rug_failed} mint tanpa laporan RugCheck"
+                       if rug_failed else "")
+            st.caption(f"{len(rows)} pool {label} tampil · {hidden} "
+                       f"dilewati · listing {fetched} pool{quote_txt}"
+                       f"{rug_txt}.")
         if showing_hidden:
             if not hidden_rows:
                 st.info("Tidak ada pool tersembunyi di lane ini.")

@@ -1,5 +1,95 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-16 — 🏆 Best Pool Meteora: satu lane 24H, kolom LPs/Active Range/RugCheck, 🌊 + 🛰 pindah ke 📦 TEMP
+
+- Permintaan user (batch, verbatim): *"🌊 Watchlist Meteora pindah ke page baru
+  TEMP"* · *"hapus scan 30 menit, kita sisakan yang 24 jam saja"* · *"Active
+  Range kolom ini pindah ke kanan volat"* · *"jika ada top 10 >= 20% jangan
+  tampilkan"* · *"kolom LPs pindah ke kanan active range setelah dipindah"* ·
+  *"LPs jika lebih dari 100, kasih warna hijau jika tidak, tidak ada perubahan"*
+  · *"volatility kurang dari 1 sembunyikan juga"* · *"volatility > 10 sembunyikan
+  juga"* · *"🛰 Scan Holder Solana pindah ke page baru TEMP"* · *"scan baru saya
+  tambahkan jupiter safeguard untuk filter yang mungkin rug"* · *"kita tambahkan
+  kolom baru RugCheck dengan metode ini … tapi versi yang lebih ringkas"*.
+- **Halaman.** `app.py` tinggal **🏆 Scan Best Pool Meteora** + **🧾 Log
+  Aktivitas**; 🌊 Watchlist Meteora + 🛰 Scan Holder Solana pindah ke
+  **`pages/6_📦_TEMP.py`** (wrapper tipis) yang seluruh logikanya hidup di
+  modul baru **`temp_ui.py`** (`render_auto_refresh`, `_render_lp_card`,
+  `_render_helius_holder_scan`, `render_temp_page`). Store
+  (`watchlist.json`/`holder_status.json`/`holder_history.json`) tidak berubah,
+  jadi cron + Telegram tidak perlu disentuh. **`page_router`** memantulkan
+  `?page=temp|6|6_📦_temp` ke sana (`TEMP_PAGE`). ⚠️ Konvensi wajib `temp_ui`:
+  fungsi yang bisa di-`mock.patch` dari tes **dipanggil lewat modulnya**
+  (`wl.add_to_watchlist`, `hs.publish_holder_status`, `hh.ingest_many`, …) —
+  `app.py` di-exec ulang tiap run AppTest sehingga from-import ikut melihat
+  mock, tapi `temp_ui` di-cache, jadi binding from-import membekukan fungsi asli
+  dan patch jadi no-op. Dijinakkan
+  `tests/test_temp_page_ui.py::TempUiSourceTest`.
+- **Satu lane 24H.** `best_pool_ui` punya SATU tombol `🏆 Scan Best Pool 24H +
+  Holder` (`key="best-pool-scan-24h"`) + pill `24H · F/V ≥ 5×` + caption
+  per-result (`N pool tersimpan` / `belum di-scan`). Tombol 30M, tombol pindah
+  lihat ◼/◻, kolom **Src**, `best_pool_scan_30m`, `best_pool_lane` dan helper
+  gabung `best_rows_from_lanes()` **dihapus**; hasil lama tidak dibuang —
+  `normalize_best_lane()` memetakan `30m|1h|both|''` → `24h`, dan
+  `row_best_gaps()` menormalkan `timeframe` baris + memberi prefix `24H: `,
+  jadi sesi/cache lama ikut bersih saat dirender ulang. `BEST_FV_30M_MIN`
+  ditinggalkan sebagai konstanta mati.
+- **Saringan** (`meteora_screener.row_best_gaps`, satu jalur sebelum
+  `enrich_pools`): volat di window `BEST_VOL_SHOW_MIN..MAX` (**1%–10%,
+  inklusif** — di bawah "pool nyaris tidak bergerak", di atas "pergerakan lebih
+  besar dari fee") → F/V `>= 5×` → Top10 `< 20%`. Batas Top10 dipindah ke sisi
+  **buang** (`>= 20%` gugur; tepat 20,0% tidak lagi tampil) menggantikan aturan
+  `> 20%` sub-batch sebelumnya, `None` tetap lolos. V = 0 tetap dibuang total
+  (`row_volatility_zero`, counter `dropped_volatility`). Semua teks gap dibaca
+  dari konstanta.
+- **15 kolom** satu sumber (`best_pool_ui._COL_SPEC`, dibaca `_lane_titles()` +
+  builder sel): Token · F/V · Fee/TVL · Volat · **Active Range** · **LPs** ·
+  Dust %MC · Fee % · MC · A.TVL · Vol 24h · Top10 · **RugCheck** · Pool · ⭐
+  (Active Range ke kanan Volat sesuai permintaan; LPs tepat di kanannya; A.TVL
+  turun ke indeks 9 karena RugCheck masuk). **LPs hijau** `#16a34a` bold hanya
+  bila `lps_count > 100` (`LP_GREEN_MIN_LP`, strict — tepat 100 tidak berubah;
+  tidak ada pill/ikon tambahan).
+- **Safeguard Jupiter** (user: *"scan baru saya tambahkan jupiter safeguard
+  untuk filter yang mungkin rug"*): `best_filter_by()` =
+  `base_token_has_critical_warnings=false&&quote_token_has_critical_warnings=false&&pool_type=dlmm&&active_tvl>=50000`
+  — konstanta `JUPITER_SAFEGUARD_FILTERS` (bisa dimatikan `safeguard=False`).
+  `filter_by()` reguler (card 🌊 Watchlist Meteora) sengaja TIDAK ikut berubah:
+  watchlist harus tetap melihat seluruh payload untuk rule metriknya.
+- **Kolom RugCheck** = modul baru `rugchecker.py`. Sumber datanya koreksi kedua
+  user: **`GET https://www.rugchecker.cc/api/honeypot/checker?address=<mint>`**
+  (bukan rugcheck.xyz, **tanpa API key**; hanya header browser — cookie `_ga`
+  analytics sengaja tidak dikirim). Sel menampilkan ringkas `data.is_honeypot`
+  + `data.security` + `data.dex[]` (top `MAX_LIQ_LINES=3` pool + `+N pool`,
+  total likuiditas, jumlah pool); verdict **RUG** (honeypot) / **BERISIKO**
+  (mintable, freezable, non-transferable, transfer-hook, `transfer_fee > 0`) /
+  **WASPADA** (fee-upgradable, balance/metadata mutable, closable) / **AMAN**;
+  tanpa laporan → `—`, **tidak pernah** `AMAN`. `market_cap` diambil dari pool
+  terbesar saja (pool debu melapor MC $1,9 M di likuiditas $0,16). "Metode
+  tambahan" yang diminta user = tiga catatan tanpa request tambahan: kedalaman
+  pool ini vs `POOL_MIN_LIQ_USD` ($10K), share likuiditas pool ini vs
+  `POOL_SHARE_MIN_PCT` (25%), konsentrasi pasar (`BIG_POOL_SHARE_PCT` 10% —
+  kalimat "sisanya debu" hanya ditulis kalau memang ada sisa). RugCheck **tidak
+  pernah membuang baris**. Cache `rugchecker_cache.json` (TTL 1800 s sukses /
+  300 s gagal, LRU 400, tulis atomik) **di-gitignore**. `rugchecker.py` dilarang
+  mengimpor Streamlit/`dashboard_components` (`requests` lazy) supaya bisa
+  dipakai cron + tes.
+- **Tes.** Baru: `tests/test_rugchecker.py` (33) + `tests/test_temp_page_ui.py`
+  (9). Retarget: `tests/test_best_pool_scan.py` (80, semua pin satu-lane/kolom/
+  batas-inklusif/teks-ikuti-konstanta), `tests/test_best_fv_prefilter.py` (13,
+  gate sebelum enrichment + window volat + Top10 sebelum Helius),
+  `tests/test_lp_card_ui.py` + `tests/test_alert_toggle_per_token.py` +
+  `tests/test_manual_scan_alerts.py` (dijalankan lewat
+  `pages/6_📦_TEMP.py`), `tests/test_page_router.py` (TEMP),
+  `tests/test_pre_pump_screener.py` (isi `pages/` = `5_🧮_Holder.py` +
+  `6_📦_TEMP.py`), `tests/test_meteora_active_range.py` (15 kolom, indeks 4/5/9).
+  Dihapus sebagai pin yang sudah usang: dua tombol/`Src`/`both`, `> 20%`, kolom
+  `Dust`/`Src`. Suite penuh: **1059 tes**, `18 failed + 1 error` — **nama
+  kegagalannya identik dengan baseline `main` (`dd644c6`)**; yang tersisa
+  semuanya kegagalan lama `%dust`/`_dust_badge_html` (badge dihapus
+  2026-09-13), bukan regresi batch ini.
+
+## Update 2026-09-16 — 🏆 Best Pool Meteora: Top10 holder di atas 20% dibuang
+
 ## Update 2026-09-16 — 🏆 Best Pool Meteora: Top10 holder di atas 20% dibuang
 
 - Permintaan user: *"scan meteora, TOP 10 diatas 20% jangan ditampilkan lagi"*.

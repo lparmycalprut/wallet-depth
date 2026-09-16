@@ -201,12 +201,23 @@ class ActiveRangeCellTest(unittest.TestCase):
 
 class BestPoolColumnsTest(unittest.TestCase):
     def test_kolom_dan_judul_sinkron(self):
+        """Header, lebar kolom, dan isi sel harus satu jumlah (15 kolom).
+
+        Penataan 2026-09-16: Active Range naik ke kanan Volat (indeks 4) dan
+        LPs tepat di kanannya (5); A.TVL turun ke indeks 9 karena kolom RugCheck
+        (12) ikut masuk sebelum Pool (13).
+        """
         for lane in ("24h", "30m"):
             with self.subTest(lane=lane):
                 titles = bp._lane_titles(lane)
                 self.assertEqual(len(titles), len(bp._COL_SPEC))
-                self.assertEqual(titles[8], "Active Range")
-                self.assertEqual(titles[7], "A.TVL")
+                self.assertEqual(len(titles), 15)
+                self.assertEqual(titles[4], "Active Range")
+                self.assertEqual(titles[5], "LPs")
+                self.assertEqual(titles[9], "A.TVL")
+                self.assertEqual(titles[12], "RugCheck")
+                # "30m" = alias lama, tetap dipetakan ke tabel 24H.
+                self.assertEqual(bp._lane_titles("30m"), titles)
 
     def test_tooltip_card_menjelaskan_kolom_baru(self):
         tip = bp.best_pool_tooltip()

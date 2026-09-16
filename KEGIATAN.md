@@ -1,3 +1,51 @@
+# Kegiatan — 16 September 2026 (🏆 Best Pool Meteora: satu lane 24H + 📦 TEMP + kolom RugCheck)
+
+Batch kedua di hari yang sama, sembilan permintaan user sekaligus: **🌊
+Watchlist Meteora** dan **🛰 Scan Holder Solana** pindah ke halaman baru **📦
+TEMP**; **scan 30 menit dihapus** (sisa 24 jam saja); **Active Range** digeser ke
+kanan **Volat** dan **LPs** ke kanan Active Range; **Top10 `>= 20%` dibuang**
+(batas pindah ke sisi buang, mengoreksi batch pagi yang `> 20%`); **LPs hijau
+bila > 100**; **volat < 1 dan > 10 disembunyikan**; **safeguard Jupiter**
+(`base|quote_token_has_critical_warnings=false`) ditambahkan ke query scan; dan
+kolom baru **RugCheck** dari **`https://www.rugchecker.cc/api/honeypot/checker`**
+(koreksi user: bukan rugcheck.xyz, tanpa API key) **dalam versi yang lebih
+ringkas**, plus "metode tambahan" saya sendiri (kedalaman pool, share
+likuiditas, konsentrasi pasar) sebagai penjelasan ringkas.
+
+## Yang diubah
+
+- **Halaman & pemindahan**: `app.py` jadi 2 card (🏆 Best Pool + 🧾 Log);
+  `temp_ui.py` (baru, 669 baris) + `pages/6_📦_TEMP.py` (wrapper) memuat
+  auto-refresh, card 🌊 Watchlist Meteora, dan section 🛰 Scan Holder Solana;
+  `page_router` mengenal slug `temp`/`6`. Fungsi yang dipatch tes dipanggil
+  lewat modulnya (`wl.`/`hs.`/`hh.`/…) supaya mock suite lama tetap kena.
+- **Satu lane**: `scan_best_lane`/`best_filter_by`/`_lane_titles` hanya 24H;
+  `normalize_best_lane` memetakan alias lama ke `24h` supaya hasil sesi/cache
+  lama dirender ulang dengan aturan baru (bukan dibuang); tombol 30M, kolom
+  **Src**, `best_rows_from_lanes()`, `best_pool_scan_30m`, `best_pool_lane`
+  dihapus.
+- **Saringan** `row_best_gaps` (dieksekusi sebelum `enrich_pools`, kuota Helius
+  aman): volat `1%–10%` inklusif (baru: `BEST_VOL_SHOW_MIN/MAX`) → F/V `>= 5×` →
+  Top10 `>= 20%` **dibuang** (sebelumnya `> 20%`). V=0 tetap dibuang total.
+- **15 kolom** dari satu `_COL_SPEC`: Active Range indeks 4, LPs 5 (hijau
+  `#16a34a` bold bila `> 100`), RugCheck 12 sebelum Pool.
+- **`rugchecker.py`** (baru): `fetch_raw` (1 request publik, header browser,
+  tanpa cookie), `summarize` (RUG/BERISIKO/WASPADA/AMAN/`—` + likuiditas ringkas
+  + 3 catatan metode tambahan, `market_cap` dari pool terbesar saja),
+  `check_tokens` (paralel 6, cache berkas TTL 1800/300 s + LRU 400),
+  `attach_to_rows` (menempel, tidak menyaring), `cell_parts` (angka/sub/tooltip
+  — UI tidak merakit ulang teks). Cache `rugchecker_cache.json` di-gitignore.
+- **Safeguard Jupiter** di `best_filter_by()` saja; `filter_by()` watchlist
+  tetap seperti dulu.
+- **Tes**: baru `tests/test_rugchecker.py` (33) + `tests/test_temp_page_ui.py`
+  (9); `tests/test_best_pool_scan.py` (80) dan `tests/test_best_fv_prefilter.py`
+  (13) diretarget ke satu lane; 4 file tes UI lama dijalankan lewat halaman
+  📦 TEMP; pin usang (dua tombol, `Src`, `> 20%`, 11 kolom) dihapus.
+  `python -m unittest discover -s tests` → **1059 tes**, `18 failed + 1 error`
+  dengan **nama kegagalan identik baseline `dd644c6`** (bukan regresi batch ini).
+
+---
+
 # Kegiatan — 16 September 2026 (🏆 Best Pool Meteora: Top10 di atas 20% dibuang)
 
 Permintaan user: *"scan meteora, TOP 10 diatas 20% jangan ditampilkan lagi"*.

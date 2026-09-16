@@ -7,14 +7,21 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
 
 ## Halaman
 
-- **Halaman utama**: **🌊 Watchlist Meteora** (dulu "Chart LP") full-width,
-  di bawahnya **🏆 Scan Best Pool Meteora** (**full-width** sejak 2026-09-11 —
-  "jangan dibuat grid lagi"; sejak 2026-09-13 card ini punya **dua tombol
-  deteksi terpisah — 24H dan 30M — dengan tabel sendiri-sendiri**), lalu
-  **🛰 Scan Holder Solana**, dan paling bawah **🧾 Log Aktivitas**.
+- **Halaman utama** (`app.py`): **🏆 Scan Best Pool Meteora** (**full-width**
+  sejak 2026-09-11 — "jangan dibuat grid lagi"; sejak 2026-09-16 **satu tombol
+  deteksi 24H saja** dengan satu tabel), lalu paling bawah **🧾 Log Aktivitas**.
   Detail karakteristik tiap card/section bukan caption panjang lagi — jadi
   **tooltip** yang muncul saat kursor digeser ke teks judulnya (sejak
   2026-09-10), jadi badan card hanya berisi rekap angka hasil scan.
+- **📦 TEMP** (`pages/6_📦_TEMP.py` + `temp_ui.py`, sejak 2026-09-16):
+  penampungan card yang dicabut dari halaman utama — **🌊 Watchlist Meteora**
+  (dulu "Chart LP", ±auto-refresh 60 detik) dan **🛰 Scan Holder Solana**.
+  Permintaan user: *"🌊 Watchlist Meteora pindah ke page baru TEMP"* + *"🛰 Scan
+  Holder Solana pindah ke page baru TEMP"*. Isi `app.py` tinggal
+  `render_best_pool_scan()` + log, dan **🏆 Scan Best Pool tidak ikut pindah**.
+  Nomor 6 dipakai lagi setelah halaman Robinhood dihapus (lihat bullet
+  berikutnya); `page_router` memantulkan `?page=temp` / `?page=6` /
+  `?page=6_📦_temp` ke halaman ini.
 - **Holder Analytic** (`pages/5_🧮_Holder.py`): analisa detail satu token dan
   scan FULL/kronologi.
 - Halaman **🦅 Robinhood** dan **temp** (📦) **dihapus total 2026-09-15** atas
@@ -23,7 +30,10 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
   Robinhood LP/biasa, 🦅 Scan Best Pool Krystal, 🦅 Scan Best Robinhood Coin,
   🌊 Scan Meteora Pool, 📋 Watchlist Analisa Holder (Dust), 🔍 Temukan Token
   (Trending/Degen), lane Robinhood di cron, dan transport Blockscout. App kini
-  **Solana saja**.
+  **Solana saja**. Nomor 6 dihidupkan kembali 2026-09-16 sebagai **📦 TEMP** —
+  isinya bukan fungsi Robinhood lama, hanya kedua card yang dicabut dari
+  halaman utama (tes `test_pre_pump_screener.test_pre_pump_page_file_is_gone`
+  mem-pin isi `pages/`: `5_🧮_Holder.py` + `6_📦_TEMP.py`).
 
 ## Konsep
 
@@ -176,7 +186,8 @@ keduanya dengan offset/panjang **UTF-16** (emoji 🚨 / 🔗 = dua unit).
 
 **Helius** = sumber utama holder (DAS `getTokenAccounts`). **GMGN** hanya
 listing Trending/Degen + fallback. **Meteora** pool-discovery API untuk
-Scan Meteora. Harga/MC/volume/`txns` dari DexScreener. Candle hourly & harian
+Scan Meteora + 🏆 Best Pool. **rugchecker.cc** (`/api/honeypot/checker`, publik
+tanpa key) = kolom **RugCheck** 🏆 Best Pool — see **🧿 RugCheck**. Harga/MC/volume/`txns` dari DexScreener. Candle hourly & harian
 (volume + volatilitas) dari GeckoTerminal. Solscan dilepas.
 
 | `holder_source` | Perilaku |
@@ -197,7 +208,8 @@ untuk plan ini" + berapa request yang app ini kirim (hitungan lokal), bukan
 mengarang angka. Key ditolak (401/403) atau kredit habis → entri `action`
 (merah bold). Kill-switch suite tes: `HELIUS_USAGE_PROBE=0`.
 
-Scan Holder Solana (halaman utama; dulu "Scan Holder Khusus") menerima CA
+Scan Holder Solana (**📦 TEMP** sejak 2026-09-16, sebelum itu halaman utama;
+dulu "Scan Holder Khusus") menerima CA
 Solana (base58) → Helius DAS, lalu menampilkan bar chart Wallet Depth + tabel.
 Jalur ini dan cron butuh `HELIUS_API_KEY` (config / env / Streamlit secrets);
 tanpa key dipakai fallback GMGN.
@@ -217,12 +229,19 @@ yang berubah, dan dust yang gagal diambil (`None`) tidak pernah ditandai.
 Nama class-nya sengaja bukan varian `dust-best` karena pin regression card
 Scan Meteora menghitung kemunculan string class chip emas itu di body
 halaman. Rule-nya dijelaskan di **tooltip judul section**
-(`app.scan_holder_tooltip()`), bukan caption.
+(`temp_ui.scan_holder_tooltip()`, dulu di `app.py`), bukan caption.
 
-## 🌊 Watchlist Meteora (watchlist pool terpisah)
+## 🌊 Watchlist Meteora (watchlist pool terpisah — di halaman 📦 TEMP)
 
-Card kiri atas dashboard berisi pool yang ditambahkan dari **Scan Meteora
-Pool** (⭐) atau form manual (`source=meteora`). Setiap entry menyimpan
+Card ini **pindah ke halaman 📦 TEMP 2026-09-16** (permintaan user: *"🌊
+Watchlist Meteora pindah ke page baru TEMP"*); logikanya tinggal di
+`temp_ui.py`, datanya tetap store lama (`watchlist.json`, `holder_status.json`,
+`holder_history.json`) sehingga cron ±5 menit dan alert tidak berubah sedikit
+pun. ⭐ di card 🏆 Scan Best Pool (halaman utama) tetap memasukkan token ke card
+ini — hanya tempat tampilnya yang pindah.
+
+Card ini berisi pool yang ditambahkan dari **Scan Meteora Pool** (⭐) atau form
+manual (`source=meteora`). Setiap entry menyimpan
 `timeframe`/source (`24h` atau `30m`), `pool_address`, dan
 `metric_baseline` saat masuk watchlist. Snapshot terbaru
 `fee_active_tvl_ratio` dan `volatility` ditampilkan langsung di baris bersama
@@ -249,26 +268,39 @@ card dirender **full-width** di bawah grid 2 kolom watchlist — permintaan
 user "jangan dibuat grid lagi" (2026-09-10 dulu menempel di bawah 🌊
 Watchlist Meteora di dalam grid).
 
-**Dua tombol deteksi, dua tabel (2026-09-13 sore)** — permintaan user:
-*"kayaknya untuk timeframe 30m harus kita pisah tombol deteksinya dan tabel
-serta fungsi fee/v lebih besar … di scan meteora pool, kita akan punya 2 tombol
-24H dan 30M"*. Card sekarang punya **🏆 Scan Best Pool 24H + Holder** dan
-**🏆 Scan Best Pool 30M + Holder**; satu tombol hanya mengambil
-`timeframe`-nya sendiri di API (dulu satu tombol menarik 24H + 30M lalu
-meleburnya jadi satu tabel dengan kolom **Src** — kolom itu dihapus
-karena satu tabel kini murni satu timeframe). Tombol kecil **◼ 24H / ◻ 30M** di
-bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
+**Satu tombol, satu tabel 24H (sejak 2026-09-16)** — permintaan user: *"hapus
+scan 30 menit, kita sisakan yang 24 jam saja"*. Kartu ini pernah punya **dua
+tombol** (2026-09-13: *"kayaknya untuk timeframe 30m harus kita pisah tombol
+deteksinya dan tabel serta fungsi fee/v lebih besar … kita akan punya 2 tombol
+24H dan 30M"*) — tombol **🏆 Scan Best Pool 30M + Holder**, aturan `F/V > 1×`,
+tabel-nya, tombol pindah lihat **◼ 24H / ◻ 30M**, dan kolom **Src** semuanya
+**dihapus**. Yang tersisa **🏆 Scan Best Pool 24H + Holder** (`key=
+"best-pool-scan-24h"`) dengan pill `24H · F/V ≥ 5×`; di bawah tombol ada caption
+status hasil per-result (`N pool tersimpan` / `belum di-scan`), bukan lagi
+pengalih lane.
+
+Semua **alias lane lama** (`30m`, `1h`, `both`) dipetakan
+`meteora_screener.normalize_best_lane()` ke `24h`, jadi hasil scan lama di
+session state / `.scan_cache/` dirender ulang dengan aturan 24H (bukan
+dibuang): baris `timeframe="30m"` ikut dinilai `F/V ≥ 5×` dan label gapnya
+`24H: …`. `scan_best_meteora(timeframe="both")` tetap bisa dipanggil (kompat),
+tapi yang dijalankan tetap satu listing 24H.
 
 - **Syarat kelolosan per lane** (`meteora_screener.row_best_gaps`,
   F = `fee_active_tvl_ratio`, V = `volatility` — keduanya persen dari API):
 
-  | Tombol / tabel | Ambang | Arti |
+  | Gate (24H saja) | Ambang | Arti |
   |---|---|---|
-  | **24H** | `F/V >= BEST_FV_24H_MIN` (**5×**, inklusif) | "prioritaskan 24H yang fee/v >= 5× untuk di scan detail, jika kurang dari itu langsung skip" |
-  | **30M** | `F/V > BEST_FV_30M_MIN` (**1×**, strict) | fee harus **lebih besar** dari volatility; F == V (tepat 1×) di-skip |
-  | **Top10 — kedua lane** | `top_holders_pct <= BEST_TOP10_MAX_PCT` (**20%**, inklusif) | permintaan user 2026-09-16: *"scan meteora, TOP 10 diatas 20% jangan ditampilkan lagi"* — 10 holder teratas token base memegang lebih dari 20% supply = pool terpusat, **dibuang sebelum scan holder** |
+  | **Volat di window** | `BEST_VOL_SHOW_MIN <= V <= BEST_VOL_SHOW_MAX` (**1%–10%**, dua-duanya inklusif) | permintaan user 2026-09-16: *"volatility kurang dari 1 sembunyikan juga"* + *"volatility > 10 sembunyikan juga"* — di bawah 1% pool nyaris tidak bergerak (fee-nya tidak berarti), di atas 10% pergerakan lebih besar daripada fee yang dibagi. Tepat 1,0% dan 10,0% **tetap tampil** |
+  | **F/V** | `F/V >= BEST_FV_24H_MIN` (**5×**, inklusif) | "prioritaskan 24H yang fee/v >= 5× untuk di scan detail, jika kurang dari itu langsung skip" |
+  | **Top10** | `top_holders_pct < BEST_TOP10_MAX_PCT` (**< 20%**; `>= 20%` dibuang) | *"scan meteora, TOP 10 diatas 20% jangan ditampilkan lagi"* + koreksi hari yang sama *"jika ada top 10 >= 20% jangan tampilkan"* — **batasnya pindah ke sisi buang**, jadi tepat 20,0% **tidak lagi** tampil. Baris **tanpa** angka (`None`) tetap lolos: tanpa data tidak ada bukti konsentrasi, kolomnya tampil `—` |
 
-  V = 0 gugur di kedua lane (2026-09-14: `∞` bukan kelolosan — pool tanpa
+  Urutan evaluasi = urutan di atas (volat → F/V → Top10) supaya satu baris gugur
+  hanya menulis satu alasan, dan `BEST_FV_30M_MIN` **tidak** dipakai lagi di mana
+  pun (konstanta mati, tetap di-pin "ada tapi tidak dipakai" oleh
+  `tests/test_best_pool_scan.py::test_saringan_lama_tetap_mati`).
+
+  V = 0 gugur (2026-09-14: `∞` bukan kelolosan — pool tanpa
   volatility tidak bisa membuktikan fee lebih besar) **dan dibuang dari
   listing seluruhnya** (lanjutan hari yang sama, permintaan user: *"jika
   volatility 0 jangan tampilkan, karena tidak ada pergerakan disitu"* —
@@ -279,21 +311,32 @@ bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
   gugur dan tetap terlihat di listing "dilewati" 24H. Kandidat gugur lain
   **tidak pernah** membuat request holder — `scan_best_lane()` menolak mereka
   sebelum `enrich_pools()` (kuota Helius aman) dan menyimpannya di
-  `hidden_rows` + alasan di `best_gaps`. **Top10 memakai jalur yang sama**
-  (2026-09-16): batasnya inklusif — 20,0% persis masih tampil, sedangkan
-  `> 20%` gugur dengan alasan `Top10 …% > 20% — holder terpusat`; baris
-  **tanpa** angka Top10 (`None`, hasil scan lama / payload API tanpa data)
-  tidak ikut dibuang karena tidak ada bukti konsentrasi, dan tampil dengan
-  `—` di kolom Top10. Rule ini hidup di `row_best_gaps`, jadi ia juga
-  membersihkan hasil scan lama yang sudah tersimpan saat card dirender ulang
-  (tanpa scan ulang). Lane **24H**: kandidat gagal dibuka
-  lewat tombol **▶ N pool dilewati** (barisnya ditandai merah `gugur: F/V <
-  5×` di sel F/V). Lane **30M**: kandidat gagal **tidak ditampilkan sama
-  sekali** (permintaan user 2026-09-14: "jangan tampilkan yang tidak
-  terpenuhi") dan baris yang lolos cukup menampilkan **OK** hijau di sel F/V
-  (angka quotient aslinya tetap di tooltip sel + kunci urut).
-- **Query API Meteora** (`category=top`, `page_size=50`):
-  `pool_type=dlmm && active_tvl>=50000`. `fee_pct>=2` **dihapus**
+  `hidden_rows` + alasan di `best_gaps`. **Volat dan Top10 memakai jalur yang
+  sama** (2026-09-16): teks gap dibaca dari konstanta
+  (`24H: volatility 0.5% < 1% — pool nyaris tidak bergerak`,
+  `24H: volatility 42% > 10% — pergerakan lebih besar dari fee`,
+  `24H: Top10 20% ≥ 20% — holder terpusat`), jadi mengubah ambang mengubah
+  angka di tooltip/label/log sekaligus. Baris **tanpa** angka Top10 (`None`,
+  hasil scan lama / payload API tanpa data) tidak ikut dibuang karena tidak ada
+  bukti konsentrasi, dan tampil dengan `—` di kolom Top10. Rule ini hidup di
+  `row_best_gaps`, jadi ia juga membersihkan hasil scan lama yang sudah
+  tersimpan saat card dirender ulang (tanpa scan ulang). Kandidat gagal dibuka
+  lewat tombol **▶ N pool dilewati** (barisnya ditandai merah `gugur: …` di sel
+  F/V); baris yang lolos menulis **`<angka>× · lolos ≥ 5×`** di sel yang sama
+  (format satu desimal dari `format_fv_ratio`, jadi `5×` tampil `5,0×`).
+- **Query API Meteora** (`category=top`, `page_size=50`) —
+  `meteora_screener.best_filter_by()`:
+  **`base_token_has_critical_warnings=false&&quote_token_has_critical_warnings=false&&pool_type=dlmm&&active_tvl>=50000`**.
+  Dua filter paling depan adalah **safeguard Jupiter** yang diminta user
+  2026-09-16 (*"scan baru saya tambahkan jupiter safeguard untuk filter yang
+  mungkin rug"*): listing hanya boleh berisi pool yang **bebas critical warning
+  di kedua sisinya** (base DAN quote), jadi token dengan mint/freeze authority
+  aktif, extensions mencurigakan, atau `critical_warnings` dari Jupiter
+  terbuang **sebelum payload diterima** — hemat kuota, bukan hanya hemat
+  render. Guard ini milik jalur Best Pool saja: `filter_by()` reguler (card 🌊
+  Watchlist Meteora) tetap `pool_type=dlmm&&active_tvl>=50000` tanpa safeguard,
+  dan bisa dimatikan per-panggilan lewat `safeguard=False` untuk diagnosis.
+  `fee_pct>=2` **dihapus**
   2026-09-13 (pool ber-fee rendah seperti EMBER/USDC harus muncul). Saringan
   layar lama — volume 24 jam ≥ $1M, volatility ≥ 2%, dust < 0,05% MC — ikut
   **dihapus**: dust/volume/tier fee/LPs/active TVL tetap tampil sebagai
@@ -310,11 +353,13 @@ bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
   desimal) supaya dua pool yang di layar sama-sama "0,030%" dianggap seri;
   baris tanpa angka di sebuah kunci turun ke bawah di kunci itu (tidak
   hilang).
-- **Session key per lane**: `best_pool_scan_24h` / `best_pool_scan_30m`
-  (toggle disembunyikan `best_pool_show_hidden_24h` / `_30m`, lane aktif
-  `best_pool_lane`). Hasil sesi lama yang masih gabung (`best_pool_scan`)
-  dipecah otomatis sekali saat render, jadi listing tidak hilang setelah
-  update.
+- **Session key**: `best_pool_scan_24h` (satu-satunya hasil) +
+  `best-pool-toggle-hidden-24h` (lihat/tabel dilewati) + ⭐ per pool
+  `best-pool-24h-star-<pool_address>`. Kunci lama `best_pool_scan_30m`,
+  lane aktif `best_pool_lane`, dan tombol `best-pool-scan-30m` **dihapus**;
+  hasilnya tidak dibuang — hasil sesi lama yang masih gabung (`best_pool_scan`)
+  dipecah sekali saat render lalu dinilai ulang dengan aturan 24H, jadi listing
+  tidak hilang setelah update.
 - **Kolom Token menulis pasangan pool-nya** (2026-09-15, permintaan user:
   *"kolom Token sekarang akan menunjukkan pasangan pairnya, misal
   ALLINU/SOL"*): `$SIMBOL` di baris pertama, pasangan pool DLMM di bawahnya
@@ -332,25 +377,32 @@ bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
   yang sama tetap dipakai menyaring + mengurutkan (`row_fv_ratio`), jadi
   format tidak mengubah keputusan. Tooltip sel menulis persen kecil apa
   adanya (`volatility 2.06e-09%`, bukan `0.00%`).
-- Kolom listing (ditata 2026-09-14 — 4 kolom inti di depan, kolom **Dust**
-  jumlah wallet dihapus; urutan sesuai `best_pool_ui._lane_titles`): Token
-  (baris pasangan pool, 2026-09-15) · **F/V** (baris kecil 24H = `syarat F/V ≥
-  5×` / tabel disembunyikan 24H = `gugur: …` merah; 30M lolos = **OK** hijau
-  dengan `syarat F/V > 1× terpenuhi`) · **Fee/TVL** (baris kecil = fee USD
-  window lane + tier fee) · **Volat** · **Dust %MC** (3 desimal) · **Fee %**
-  (fee trading pool, mis. 0.5% / 2%) · MC · **A.TVL** · **Active Range**
-  (persen saja, mis. `-34.5% / +19.0%` — lihat bullet di bawah) ·
-  **Vol 24h/30m** (judul mengikuti window lane; baris kecil = Δ
-  volume, hijau naik / merah turun, plus rasio volume/active TVL) · Top10 ·
-  LPs · Pool (Meteora DLMM + HawkFi) · ⭐ — hover tiap angka memberi angka
-  penuh + keterangan apakah metrik itu kunci urut atau hanya informasi. Sel
-  **volatility terbesar**, sel **F/V tertinggi**, dan sel **Fee/TVL
+- Kolom listing (ditata 2026-09-16 — **15 kolom**, satu sumber urutan
+  `best_pool_ui._COL_SPEC` yang dibaca `_lane_titles()` supaya header, lebar,
+  dan isi sel tidak bisa berbeda jumlah; kolom **Src** dan **Dust** (jumlah
+  wallet) sudah dihapus):
+
+  `Token` · `F/V` · `Fee/TVL` · `Volat` · **`Active Range`** · **`LPs`** ·
+  `Dust %MC` · `Fee %` · `MC` · `A.TVL` · `Vol 24h` · `Top10` ·
+  **`RugCheck`** · `Pool` · `⭐`
+
+  Yang berubah hari ini: **Active Range digeser ke kanan Volat** (*"Active Range
+  kolom ini pindah ke kanan volat"*) dan **LPs tepat di kanannya** (*"kolom LPs
+  pindah ke kanan active range setelah dipindah"*), keduanya masuk ke blok
+  "pergerakan + kedalaman"; **kolom RugCheck baru** di antara Top10 dan Pool;
+  dan **LPs menjadi hijau** bila `lps_count > 100` (*"LPs jika lebih dari 100,
+  kasih warna hijau jika tidak, tidak ada perubahan"* — `LP_GREEN_COLOR
+  #16a34a`, `LP_GREEN_MIN_LP = 100.0`, **strict**: tepat 100 tidak hijau, dan
+  tidak ada pill/ikon tambahan). Baris kecil kolom **F/V** = `syarat F/V ≥ 5×`
+  (lolos) / `gugur: <alasan>` merah (tabel dilewati). Hover tiap angka memberi
+  angka penuh + keterangan apakah metrik itu kunci urut atau hanya informasi.
+  Sel **volatility terbesar**, sel **F/V tertinggi**, dan sel **Fee/TVL
   tertinggi** tabel utama disorot
   **hijau tua menyala** (`#15803d`, bold; seri di puncak ikut ditandai semua;
   tabel "dilewati" tidak ditandai).
 - **Kolom Active Range** (2026-09-14, permintaan user: *"tambahkan Active
-  Range, tapi % saja, misal -30% +40"*) duduk tepat di kanan **A.TVL** dan
-  hanya menulis persen: `-34.5% / +19.0%` = harga pool masih boleh **turun
+  Range, tapi % saja, misal -30% +40"*; sejak 2026-09-16 duduk di kanan **Volat**
+  dan di kiri **LPs**, bukan lagi di kanan A.TVL) hanya menulis persen: `-34.5% / +19.0%` = harga pool masih boleh **turun
   34,5%** atau **naik 19,0%** sebelum keluar dari rentang bin DLMM yang
   berisi likuiditas — di luar range itu posisi LP berhenti menghasilkan fee.
   Turun ditulis merah, naik hijau, baris kecil = lebar range seluruhnya.
@@ -371,8 +423,13 @@ bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
   `-0.0% / +0.0%` palsu), jadi tekan tombol scan lagi untuk mengisinya.
 
 - Tombol **⭐** memasukkan token ke card **🌊 Watchlist Meteora** di halaman
-  utama (`source=meteora`) — token lalu ikut di-scan cron ±5 menit lengkap
-  dengan grafik perubahan dust holder.
+  **📦 TEMP** (`source=meteora`) — token lalu ikut di-scan cron ±5 menit lengkap
+  dengan grafik perubahan dust holder. Tombolnya tetap di baris Best Pool
+  (halaman utama); yang pindah hanya card tujuannya.
+- **Kolom RugCheck** (2026-09-16) — lihat section **🧿 RugCheck** di bawah.
+  Kolom ini **informasi saja**: ia tidak pernah membuang baris (saringannya
+  tetap volat + F/V + Top10 + safeguard Jupiter di sisi API), dan verdict tidak
+  pernah ditebak dari ketiadaan data.
 - **Tanpa caption rule di badan card** (2026-09-10): penjelasan dua tombol +
   ambang + urutan hanya tampil sebagai **tooltip judul** (kursor di atas
   tulisan "🏆 Scan Best Pool Meteora") dan tooltip `help` tiap tombol.
@@ -381,8 +438,63 @@ bawahnya hanya berpindah lihat hasil yang sudah tersimpan (tanpa scan ulang).
   angka di tooltip tidak mungkin beda dari rule yang jalan; mengubah ambang =
   tooltip, label sel, dan teks gugur ikut berubah.
 
-Tes terfokus: `python -m pytest tests/test_best_pool_scan.py
-tests/test_best_fv_prefilter.py -q`.
+Tes terfokus: `python -m unittest tests.test_best_pool_scan
+tests.test_best_fv_prefilter tests.test_rugchecker tests.test_temp_page_ui` —
+saringan lane + kolom 15 + aturan RugCheck + halaman TEMP semuanya diuji di
+empat file itu (suite penuh offline: 1059 tes).
+
+## 🧿 RugCheck (kolom di listing 🏆 Scan Best Pool)
+
+Permintaan user 2026-09-16: *"kita tambahkan kolom baru RugCheck dengan metode
+ini"* — sumbernya **`GET https://www.rugchecker.cc/api/honeypot/checker?address=<mint>`**
+(bukan rugcheck.xyz; koreksi user: *"maaf salah, bukan dari rugcheck tapi dari
+sini"*), **tanpa API key** — cukup header browser (`accept`,
+`referer: https://www.rugchecker.cc/`, User-Agent). Cookie `_ga` yang ikut
+terkirim di devtools adalah analytics Google, bukan kredensial, jadi **sengaja
+tidak dikirim** (`rugchecker._HEADERS`).
+
+Yang dibaca dari payload: `data.is_honeypot`, `data.security` (9 bendera),
+`data.dex[]` (likuiditas per pool = blok "Liquidity Information" di UI
+rugchecker.cc) dan `data.symbol` — diminta user **dalam versi yang lebih
+ringkas**, jadi satu sel hanya menulis verdict + total likuiditas + jumlah
+pool, sisanya (baris per DEX, bendera, penjelasan metode tambahan) masuk
+tooltip sel.
+
+| Kelas | Kondisi | Verdict / warna |
+|---|---|---|
+| **RUG** | `is_honeypot` true | `RUG` `#dc2626` |
+| **BERISIKO** | bendera kritis di `security`: `mintable`, `freezable`, `non_transferable`, `transfer_hook_upgradable`, atau `transfer_fee > 0` (angka persen → `transfer fee 5%`) | `BERISIKO` `#b91c1c` |
+| **WASPADA** | bendera minor: `transfer_fee_upgradable`, `balance_mutable`, `metadata_mutable`, `closable` | `WASPADA` `#b45309` |
+| **AMAN** | tidak ada satu pun | `AMAN` `#15803d` |
+| **—** | laporan tidak didapat (HTTP/timeout/JSON rusak/`code != 0`) | `—` (tanpa warna) |
+
+**Metode tambahan** (user: *"jika kamu memiliki metode tambahan untuk check rug,
+bisa kamu tambahkan kolom juga untuk penjelasanmu secara ringkas"*) — tiga
+pemeriksaan tanpa request tambahan, di atas payload yang sama:
+
+1. **kedalaman pool yang dipakai** — `liquidity.usd` pool ini (dicocokkan lewat
+   `pair_address` listing Meteora) vs `POOL_MIN_LIQ_USD` ($10K): di bawah itu
+   `TIPIS — harga mudah digeser`;
+2. **sebaran likuiditas** — share likuiditas token di pool ini vs
+   `POOL_SHARE_MIN_PCT` (25%); di bawah itu harga pool bisa menyimpang dan fee
+   ikut terkuras;
+3. **konsentrasi pasar** — berapa pool yang likuiditasnya ≥
+   `BIG_POOL_SHARE_PCT` (10%) dari total; kalimat "sisanya debu, mudah ditarik
+   keluar" hanya boleh ditulis kalau memang ada sisa (kalau semua pool sama
+   besar, tertulis `tersebar merata`).
+
+Aturan teknis lain: `market_cap` **selalu** diambil dari pool **terbesar**
+(token sampel user melaporkan MC $1,9 M di pool berlikuiditas $0,16 — angka
+per-pool tidak bisa dipakai); baris likuiditas dibatasi `MAX_LIQ_LINES` (3)
+lalu `+N pool`; mint yang laporannya tidak didapat menulis `—`, **bukan**
+`AMAN`; cache berkas `rugchecker_cache.json` (TTL sukses `CACHE_TTL_OK` 1800 s,
+kegagalan `CACHE_TTL_FAIL` 300 s, prune LRU `CACHE_MAX_ENTRIES` 400, tulis
+atomik) menahan request berulang saat rerun Streamlit.
+
+`rugchecker.py` **tidak** mengimpor Streamlit/`dashboard_components` (dipakai
+cron + tes juga), hanya `requests` di-import di dalam fungsi. `attach_to_rows()`
+menempel `row["rugcheck"]` ke baris yang **lolos saringan** saja — baris gugur
+tidak pernah menembak API pihak ketiga.
 
 ## 🚀 Pre-Pump Screener
 
@@ -563,14 +675,16 @@ akumulasi dan bukan prediksi arah harga.
 | `alert_context.py` | Konteks pasar untuk konfirmasi alert: volume 4 jam, rata-rata 7 hari, buy/sell pressure, volatilitas (ditarik lazy) |
 | `holder_chronology.py` | Snapshot wallet bounded, klasifikasi pergerakan, narasi kronologi |
 | `lp_watchlist.py` | Card **Chart LP**: pisah watchlist Meteora, baris metrik fee/volatility + grafik dust historis |
-| `meteora_screener.py` | Regular listing DLMM 24h lalu 30m, active TVL ≥ 50K, filter/classification fee-versus-volatility, sort quotient tanpa dust, enrich holder; Best Pool terpisah: `scan_best_lane(lane)` satu lane per tombol, saringan `row_best_gaps` 24H F/V ≥ 5× / 30M F/V > 1× + Top10 ≤ 20% sebelum holder, `sort_best_rows` urut Fee/TVL → F/V → vol/TVL → dust |
+| `meteora_screener.py` | Regular listing DLMM 24h lalu 30m, active TVL ≥ 50K, filter/classification fee-versus-volatility, sort quotient tanpa dust, enrich holder; Best Pool terpisah: `scan_best_lane(lane)` **satu listing 24H** (alias `30m`/`1h`/`both` → `normalize_best_lane` → `24h`), query `best_filter_by()` = safeguard Jupiter + `pool_type=dlmm&&active_tvl>=50000`, saringan `row_best_gaps` volat 1%–10% → F/V ≥ 5× → Top10 `< 20%` **sebelum** holder, `sort_best_rows` urut Fee/TVL → F/V → vol/TVL → dust, lalu `rugchecker.attach_to_rows` |
+| `rugchecker.py` | Kolom **RugCheck** — honeypot checker **rugchecker.cc** (tanpa API key): `fetch_raw` (1 mint), `summarize` (verdict AMAN/WASPADA/BERISIKO/RUG/`—` + likuiditas ringkas + 3 catatan "metode tambahan"), `check_tokens` (paralel `WORKERS` 6, cache berkas TTL, kegagalan satu mint ≠ scan mati), `attach_to_rows` (menempel, tidak menyaring), `cell_parts` (angka/sub/tooltip — dipakai UI, formatting tidak diulang di card) |
+| `temp_ui.py` | Isi halaman **📦 TEMP**: `render_auto_refresh()` (±60 dtk), card **🌊 Watchlist Meteora** (`_render_lp_card` + head/row), section **🛰 Scan Holder Solana** (form CA → scan Helius FULL → bar chart + tabel), dan `render_temp_page()` sebagai entry point halaman. Fungsi store/scan dipanggil **lewat modulnya** (`wl.add_to_watchlist`, `hs.publish_holder_status`, …) supaya `mock.patch("watchlist.…")` di tes tetap kena (modul ini di-cache antar-run AppTest, `app.py` di-exec ulang) |
 | `holder_analysis.py` | Fetch holder Helius/GMGN, klasifikasi real/dust/mid |
 | `solscan_holders.py` | Kalkulasi wallet_depth (bucket & tier) |
 | `helius_holders.py` | Scan Holder Solana satu token (Solana/Helius) + bar chart |
 | `holder_status.py` | Snapshot dashboard ramping (ref `holder-live`) + history ringkas + transport GitHub (JSON & byte/gzip) |
 | `core.py` | Config/key Helius (pool round-robin; placeholder `PASTE-API-KEY-…` disaring, Streamlit secrets menang atas `config.json`), pasar DexScreener, candle hourly/harian GeckoTerminal (network bisa dipilih; app ini memakai `solana`), **status + sisa kredit key Helius** (`helius_key_status` / `helius_usage_summary`) dan hitungan request lokal |
 | `activity_log.py` | Ring buffer kejadian semua card (400 entri, dedup 60 dtk, level `action` = merah bold) + panel **🧾 Log Aktivitas**: **sisa kredit Helius** |
-| `best_pool_ui.py` | Card **🏆 Scan Best Pool Meteora** (halaman utama, full-width di bawah grid 2 kolom sejak 2026-09-11) — **dua tombol 24H / 30M** + satu tabel per lane (session key `best_pool_scan_24h` / `_30m`), saringan `meteora_screener.BEST_*`, ⭐ → Watchlist Meteora, detail = tooltip judul, hasil ikut tersimpan di cache berkas (2026-09-14) |
+| `best_pool_ui.py` | Card **🏆 Scan Best Pool Meteora** (halaman utama, full-width sejak 2026-09-11) — **satu tombol 24H** + satu tabel 15 kolom (`_COL_SPEC` + `_lane_titles`), saringan `meteora_screener.BEST_*` + sel RugCheck dari `rugchecker.cell_parts`, LPs hijau > 100, ⭐ → Watchlist Meteora di 📦 TEMP, detail = tooltip judul, hasil ikut tersimpan di cache berkas (2026-09-14) |
 | `scan_result_cache.py` | Cache berkas hasil scan (`.scan_cache/`, git-ignored): `save_result` / `load_result` / `restore_into_session` — refresh browser tidak menghilangkan tabel; payload dirampingkan (peta wallet dibuang) dan ditulis atomik |
 | `scripts/scan_holders.py` | Cron **lane LP saja** (run ±5 menit): snapshot metric Meteora + holder/history, publish status + backup |
 | `telegram_alerts.py` | Alert holder-dust untuk lane non-Meteora: ⚡ EARLY DUMP TERJADI - GANTI WIDE RANGE (delta dust ≥ 0,02% MC), marker `alert_state["early_dump"]`, Telegram Bot API |
@@ -578,7 +692,8 @@ akumulasi dan bukan prediksi arah harga.
 | `page_router.py` | Router deep link: `?mint=`/`?page=` yang jatuh ke halaman utama dipantulkan ke halaman yang dituju (`st.switch_page`) |
 | `pre_pump_screener.py` | 🚀 Pre-Pump Screener: 4 sinyal on-chain (gelombang add likuiditas + journal, konsolidasi holder, volume calm-before-storm, TX velocity), PUMP SCORE 0–10, kartu token, auto-refresh `st.fragment(run_every=300)` |
 | `pages/4_📊_CVD.py` | Chart CVD harian |
-| `pages/5_🧮_Holder.py` | Holder Analytic: dust, grafik 4 jam, kohort, kronologi FULL (satu-satunya halaman sejak 2026-09-15) |
+| `pages/5_🧮_Holder.py` | Holder Analytic: dust, grafik 4 jam, kohort, kronologi FULL |
+| `pages/6_📦_TEMP.py` | Halaman **📦 TEMP** (sejak 2026-09-16): wrapper tipis yang memanggil `temp_ui.render_temp_page()` — 🌊 Watchlist Meteora + 🛰 Scan Holder Solana. Tanpa `page_router.apply()` (router hanya untuk halaman utama) |
 
 | `watchlist_detail.py` | Baris watchlist: delta dust **sejak masuk watchlist** (relatif % + pp + jumlah wallet), warna ambang −50%/+100%, dan penyatuan angka baris ↔ scan terakhir |
 | `accumulation.py` | 8 heuristik deteksi akumulasi (murni kalkulasi, tanpa Helius) + skor 0–100 + store snapshot `accumulation_history.json` |
@@ -703,7 +818,13 @@ keseluruhan kadens ke 15 menit.
 | `DUST_BEST_PCT`, `DUST_BEST_MIN_HOLDERS`, `DUST_BEST_MIN_TVL_USD` | 0.1, 40, 10000 — badge BEST POOL (strict `< 0,1%`) + guard data holder minimal + TVL pool minimal |
 | `DUST_SCAN_HIDE_PCT` | 0.1 — Scan Meteora menyembunyikan pool dust `> 0,1%` MC (`should_hide_dust`) |
 | `DUST_BEST_LABEL` | `BEST POOL` — label badge (tampil apa adanya) |
-| `BEST_TOP10_MAX_PCT` | 20.0 — 🏆 Scan Best Pool Meteora (kedua lane): Top10 holder token base `> 20%` supply **tidak ditampilkan** (`row_top10_ok`, inklusif di 20%; `None` = lolos) |
+| `BEST_TOP10_MAX_PCT` | 20.0 — 🏆 Scan Best Pool Meteora: Top10 holder token base **`>= 20%` tidak ditampilkan** (`row_top10_over`, batas di sisi buang sesuai *"jika ada top 10 >= 20% jangan tampilkan"*; `None` = lolos, tampil `—`) |
+| `BEST_VOL_SHOW_MIN` / `MAX` | 1.0 / 10.0 — 🏆 Scan Best Pool Meteora: volatility **di luar** window ini gugur, dua-duanya inklusif (`row_volatility_gap`; V = 0 tetap punya alasan sendiri = dibuang total) |
+| `BEST_FV_30M_MIN` | 1.0 — **mati** sejak 2026-09-16 (scan 30M dihapus); konstanta dibiarkan ada supaya percobaan menghidupkan lane lama lewat konstanta tetap gagal — di-pin `test_saringan_lama_tetap_mati` |
+| `JUPITER_SAFEGUARD_FILTERS` | `base_token_has_critical_warnings=false&&quote_token_has_critical_warnings=false` — prepend di `best_filter_by()` saja (`safeguard=False` untuk mematikan) |
+| `POOL_MIN_LIQ_USD`, `POOL_SHARE_MIN_PCT`, `BIG_POOL_SHARE_PCT` | 10000, 25.0, 10.0 — tiga catatan "metode tambahan" `rugchecker.py` (kedalaman pool, share likuiditas, konsentrasi pasar) |
+| `CACHE_TTL_OK`, `CACHE_TTL_FAIL`, `CACHE_MAX_ENTRIES`, `WORKERS` | 1800, 300, 400, 6 — cache berkas `rugchecker.py` + paralelisme |
+| `LP_GREEN_MIN_LP`, `LP_GREEN_COLOR` | 100.0 (strict `>`), `#16a34a` — kolom **LPs** hijau di 🏆 Scan Best Pool |
 
 Ambang notifikasi + dedup ada di `telegram_alerts.py`, metrik volatilitas di
 `holder_history.py`, dan pengambilan konteks pasar (baris info +

@@ -42,7 +42,11 @@ except Exception:  # noqa: BLE001
 
 import telegram_alerts as ta
 
-APP = str(Path(__file__).resolve().parent.parent / "app.py")
+ROOT = Path(__file__).resolve().parent.parent
+APP = str(ROOT / "app.py")
+# 🔄 Scan sekarang Chart LP duduk di card 🌊 Watchlist Meteora yang pindah ke
+# halaman 📦 TEMP (2026-09-16) — uji tombolnya ikut ke sana.
+TEMP = str(ROOT / "pages/6_📦_TEMP.py")
 
 LP_MINT = "LpMint11111111111111111111111111111111111"
 SOL_MINT = "SolMint2222222222222222222222222222222222"
@@ -276,7 +280,7 @@ class ManualScanAlertTest(unittest.TestCase):
     def _infos(self, app):
         return "\n".join(node.value for node in app.info)
 
-    # -- Chart LP Meteora (app.py) -----------------------------------------
+    # -- Chart LP Meteora (halaman 📦 TEMP) --------------------------------
     def _run_lp_scan(self, dust_pct: float, *, alert_state=None):
         """Scan manual Chart LP; ``alert_state`` = state alert tersimpan.
 
@@ -302,7 +306,7 @@ class ManualScanAlertTest(unittest.TestCase):
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
-        app = AppTest.from_file(APP, default_timeout=90).run()
+        app = AppTest.from_file(TEMP, default_timeout=90).run()
         self.assertEqual(len(app.exception), 0)
         button = [b for b in app.button if b.key == "lp-scan-now"]
         self.assertTrue(button, "tombol scan Chart LP tidak ditemukan")
