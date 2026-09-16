@@ -22,7 +22,13 @@ except Exception:  # noqa: BLE001
 
 import holder_history as hh
 
-APP = str(Path(__file__).resolve().parent.parent / "app.py")
+ROOT = Path(__file__).resolve().parent.parent
+# Card 🌊 Watchlist Meteora pindah ke halaman **📦 TEMP** (2026-09-16, permintaan
+# user) — seluruh uji AppTest di file ini jadi menjalankan file halaman itu,
+# bukan app.py lagi. Widget key + isi card tidak berubah, jadi yang berubah di
+# sini hanya alamat file.
+APP = str(ROOT / "app.py")
+TEMP = str(ROOT / "pages/6_📦_TEMP.py")
 
 LP_MINT = "LpMint11111111111111111111111111111111111"
 LP_SAFE = "LpSafe22222222222222222222222222222222222"
@@ -100,7 +106,7 @@ class ChartLpCardTest(unittest.TestCase):
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
-        return AppTest.from_file(APP, default_timeout=60).run()
+        return AppTest.from_file(TEMP, default_timeout=60).run()
 
     def _body(self, app):
         return "\n".join(node.value for node in app.markdown)
@@ -159,7 +165,7 @@ class ChartLpCardTest(unittest.TestCase):
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
-        app = AppTest.from_file(APP, default_timeout=60).run()
+        app = AppTest.from_file(TEMP, default_timeout=60).run()
         self.assertEqual(len(app.exception), 0)
         captions = "\n".join(node.value for node in app.caption)
         self.assertIn("📌 Saat masuk watchlist", captions)
@@ -306,7 +312,7 @@ class EmptyChartLpCardTest(unittest.TestCase):
         for patch in patches:
             patch.start()
             self.addCleanup(patch.stop)
-        app = AppTest.from_file(APP, default_timeout=60).run()
+        app = AppTest.from_file(TEMP, default_timeout=60).run()
         self.assertEqual(len(app.exception), 0)
         body = "\n".join(node.value for node in app.markdown)
         self.assertIn("🌊 Watchlist Meteora</span>", body)

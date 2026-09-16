@@ -1,5 +1,92 @@
 # Progress
 
+## 2026-09-16 (batch 2): 🏆 Best Pool Meteora — satu lane 24H, 📦 TEMP, kolom RugCheck
+
+**Status: selesai; suite 1059 tes, `18 failed + 1 error` = nama kegagalan
+identik baseline `main` HEAD `dd644c6` (1012 tes, kegagalan sama persis; +47
+tes baru hijau).**
+
+Permintaan user (sembilan bullet, verbatim di AGENTS.md): pindahkan **🌊
+Watchlist Meteora** dan **🛰 Scan Holder Solana** ke **halaman baru 📦 TEMP**,
+**hapus scan 30 menit**, geser **Active Range** ke kanan **Volat** dan **LPs**
+ke kanannya, buang **Top10 >= 20%**, **LPs hijau > 100**, sembunyikan **volat
+< 1** dan **volat > 10**, tambahkan **safeguard Jupiter** ke query scan, dan
+kolom baru **RugCheck** dari `rugchecker.cc` dalam **versi lebih ringkas** +
+"metode tambahan" sendiri (kedalaman pool, share likuiditas, konsentrasi
+pasar).
+
+- **Halaman**: `app.py` = 🏆 Best Pool + 🧾 Log saja; `temp_ui.py` +
+  `pages/6_📦_TEMP.py` = kedua card yang pindah (store/cron/Telegram tidak
+  berubah). `page_router` mengenal `?page=temp|6|6_📦_temp`. Konvensi penting:
+  fungsi target patch dipanggil **lewat modulnya** (`wl.add_to_watchlist`,
+  `hs.publish_holder_status`, …) karena `temp_ui` di-cache antar-run AppTest
+  sementara `app.py` di-exec ulang — kalau tidak,
+  `mock.patch("watchlist.add_to_watchlist")` jadi no-op dan tes kartu LP gagal
+  (dijinakkan `tests/test_temp_page_ui.py::TempUiSourceTest`).
+- **Satu lane 24H** (`normalize_best_lane` memetakan `30m|1h|both` → `24h`,
+  jadi hasil sesi/cache lama **dirender ulang dengan aturan baru**, tidak
+  dibuang); tombol 30M + kolom **Src** + `best_rows_from_lanes()` + session key
+  `best_pool_scan_30m`/`best_pool_lane` dihapus; `BEST_FV_30M_MIN` dibiarkan
+  mati dan di-pin "mati".
+- **Saringan** `row_best_gaps` sebelum `enrich_pools` (kuota Helius aman):
+  volat **1%–10% inklusif** (`BEST_VOL_SHOW_MIN/MAX`) → F/V **>= 5×** → Top10
+  **>= 20% dibuang** (`BEST_TOP10_MAX_PCT`; batas pindah ke sisi buang
+  mengoreksi batch pagi `> 20%`, `None` tetap lolos dan tampil `—`). V=0 tetap
+  dibuang total (`dropped_volatility`). Semua teks gap dibangun dari konstanta.
+- **15 kolom** satu sumber (`best_pool_ui._COL_SPEC` = `_lane_titles` = sel):
+  Token · F/V · Fee/TVL · Volat · **Active Range** (4) · **LPs** (5) · Dust %MC ·
+  Fee % · MC · A.TVL (9) · Vol 24h · Top10 · **RugCheck** (12) · Pool · ⭐.
+  LPs **hijau** `#16a34a` bold hanya bila `> 100` (`LP_GREEN_MIN_LP`, strict;
+  tepat 100 tidak berubah, tanpa pill tambahan).
+- **`rugchecker.py`** (baru): honeypot checker publik **rugchecker.cc**
+  (`/api/honeypot/checker?address=<mint>`, tanpa API key; header browser saja,
+  cookie `_ga` analytics tidak dikirim) → verdict **RUG** (honeypot) /
+  **BERISIKO** (mintable, freezable, non-transferable, transfer-hook,
+  transfer-fee > 0) / **WASPADA** (fee-upgradable, balance/metadata mutable,
+  closable) / **AMAN** / **`—`** (tanpa laporan — tidak pernah `AMAN`) +
+  likuiditas per DEX ringkas (maks 3 baris + `+N pool`, total, jumlah pool) dan
+  `market_cap` dari pool **terbesar** saja (pool debu di sampel melapor MC $1,9 M
+  di likuiditas $0,16). **Tidak pernah membuang baris.** Cache
+  `rugchecker_cache.json` (TTL 1800 s sukses / 300 s gagal, LRU 400, atomik)
+  di-gitignore; modul dilarang mengimpor Streamlit/UI (di-pin tes).
+- **Safeguard Jupiter**: `best_filter_by()` =
+  `base_token_has_critical_warnings=false&&quote_token_has_critical_warnings=false&&pool_type=dlmm&&active_tvl>=50000`
+  (`JUPITER_SAFEGUARD_FILTERS`, mati lewat `safeguard=False`); `filter_by()`
+  reguler (🌊 Watchlist Meteora) sengaja tidak ikut berubah.
+- **Tes**: baru `tests/test_rugchecker.py` (33) dan `tests/test_temp_page_ui.py`
+  (9); `tests/test_best_pool_scan.py` (80) + `tests/test_best_fv_prefilter.py`
+  (13) diretarget ke satu lane/batas baru; `test_lp_card_ui`,
+  `test_alert_toggle_per_token`, `test_manual_scan_alerts` dijalankan lewat
+  halaman 📦 TEMP; `test_page_router` (+TEMP), `test_pre_pump_screener` (isi
+  `pages/`), `test_meteora_active_range` (15 kolom, indeks 4/5/9). Pin usang
+  (dua tombol, `Src`, `> 20%`, 11 kolom) dihapus, bukan dibiarkan mati.
+
+## 2026-09-16: 🏆 Scan Best Pool Meteora — Top10 holder di atas 20% tidak ditampilkan
+
+**Status: selesai; suite 1012 tes, 18 failed + 1 error = identik baseline
+`main` HEAD `2b273ed` (1002 tes, kegagalan sama persis; +10 tes baru hijau).**
+
+Permintaan user: *"scan meteora, TOP 10 diatas 20% jangan ditampilkan lagi"*.
+
+- `meteora_screener.BEST_TOP10_MAX_PCT = 20.0` + `row_top10_pct()` /
+  `row_top10_over()` / `row_top10_ok()`; saringannya ditempel di
+  `row_best_gaps()` **setelah** ambang F/V lane lolos — satu jalur dengan
+  saringan lane yang sudah ada: dieksekusi sebelum `enrich_pools()` (_holder
+  pool gugur tidak pernah di-fetch), berlaku di kedua tombol (24H + 30M) dan
+  ikut membersihkan hasil scan lama yang dirender ulang card.
+- Batas **inklusif** (tepat 20,0% masih tampil) dan `None` = **lolos** (tanpa
+  angka tidak ada bukti konsentrasi; kolomnya tampil `—`).
+- Yang gugur tetap auditabel: `hidden_rows` + `best_gaps`
+  (`24H: Top10 45% > 20% — holder terpusat`) di listing "▶ N pool dilewati";
+  lane 30M memang tidak pernah menampilkan kandidat gagal.
+- Teks UI mengikuti konstanta: tooltip judul card, tooltip sel Top10, help
+  tombol disembunyikan, label log aktivitas.
+- Nama konstantanya bukan pengaktifan balik rule lama `top 10 < 30%`
+  (dicabut 2026-09-11) — `BEST_FEE_RATIO_MIN` / `BEST_TOTAL_LPS_MIN` tetap
+  mati dan tetap di-pin hilang oleh tes.
+
+Detail: `AGENTS.md` + `KEGIATAN.md` 16 September 2026 (blok paling atas).
+
 ## 2026-09-15: halaman 🦅 Robinhood + 📦 temp dihapus total
 
 **Status: selesai; suite 953 passed / 19 failed (semua kegagalan = baseline

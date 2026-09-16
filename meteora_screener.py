@@ -33,25 +33,32 @@ Badge 🏆 BEST POOL menambah syarat data holder valid (≥ 40 wallet)
 **dan TVL pool ≥ 10K USD**.
 Baris yang di-⭐ masuk watchlist terpisah **Chart LP** di dashboard.
 
-**🏆 Scan Best Pool Meteora** — dua tombol deteksi terpisah per timeframe:
-**24H** (syarat ``F/V >= 5×``) dan **30M** (syarat ``F/V > 1×``, yaitu
-``fee_active_tvl_ratio > volatility``). F = fee_active_tvl_ratio,
-V = volatility dari lane masing-masing. Satu tombol hanya mengambil lane-nya
-sendiri + hanya men-scan holder pool yang lolos ambang lane itu; pool di bawah
-ambang **langsung di-skip** sebelum enrichment holder (kuota Helius tidak
-terbakar) dan tetap tersedia di ``hidden_rows`` tanpa scan holder. Volatility
-0 **gugur di kedua lane** (2026-09-14): F/V ∞ bukan kelolosan, jadi baris ∞
-tidak pernah masuk tabel lolos. Filter API:
-pool_type=dlmm&&active_tvl>=50000. Dust, minimum volatility/volume/tier fee
-bukan syarat. Urutan tiap tabel (2026-09-15, permintaan user: *"kita
-urutkan fee/TVL paling besar dulu, baru perkalian f/v"*): **Fee/TVL terbesar**
-→ **F/V terbesar** → volume/active TVL → dust %MC terkecil; badge BEST POOL
-dihapus. Kedua lane disimpan di session key
-+ tabel masing-masing (``best_pool_ui``), jadi hasil 24H tidak pernah lagi
-bercampur 30M di satu listing. Sejak 2026-09-15 kolom **Token** menulis
-pasangan pool-nya (``ALLINU/SOL``, :func:`row_pair_label`) dan sel **F/V**
-memakai :func:`format_fv_ratio` — satu desimal di bawah 100×, bilangan bulat
-berpemisah ribuan di atasnya (``6,328,266×``), jadi rasio ekstrem tidak lagi
+**🏆 Scan Best Pool Meteora** — **satu tombol, satu tabel: 24H saja**
+(sejak 2026-09-16; lane 30M dihapus per permintaan user *"hapus scan 30 menit,
+kita sisakan yang 24 jam saja"*). Syaratnya ``F/V >= 5×`` dengan F =
+``fee_active_tvl_ratio`` dan V = ``volatility``. Hanya pool yang lolos ambang
+yang di-scan holdernya; pool di bawah ambang **langsung di-skip** sebelum
+enrichment holder (kuota Helius tidak terbakar) dan tetap tersedia di
+``hidden_rows`` tanpa scan holder. Tiga saringan layar, semuanya di
+:func:`row_best_gaps` dan semuanya sebelum enrichment: volatility 0 **gugur
+dan dibuang total** (aturan 2026-09-14), volatility di luar **1%–10%**
+(:data:`BEST_VOL_SHOW_MIN`/:data:`BEST_VOL_SHOW_MAX`, 2026-09-16) gugur, dan
+**Top10 holder >= 20% supply tidak ditampilkan lagi**
+(:data:`BEST_TOP10_MAX_PCT`, 2026-09-16). Filter API membawa **Jupiter
+safeguard**: ``base_token_has_critical_warnings=false&&
+quote_token_has_critical_warnings=false&&pool_type=dlmm&&active_tvl>=50000``
+(:data:`JUPITER_SAFEGUARD_FILTERS`) — token yang diperingati Jupiter tidak
+pernah masuk listing. Dust, volume dan tier fee bukan syarat. Urutan tiap
+tabel (2026-09-15, permintaan user: *"kita urutkan fee/TVL paling besar dulu,
+baru perkalian f/v"*): **Fee/TVL terbesar** → **F/V terbesar** → volume/active
+TVL → dust %MC terkecil; badge BEST POOL dihapus. Baris yang tampil dilengkapi
+laporan **RugCheck** dari rugchecker.cc (:mod:`rugchecker`) — honeypot,
+bendera keamanan token, dan likuiditas per DEX dalam versi ringkas. Sejak
+2026-09-15 kolom **Token** menulis pasangan pool-nya (``ALLINU/SOL``,
+:func:`row_pair_label`) dan sel **F/V** memakai :func:`format_fv_ratio` —
+satu desimal di bawah 100×, bilangan bulat berpemisah ribuan di atasnya
+(``6,328,266×``), jadi rasio ekstrem tidak lagi tampil sebagai
+``6328266.1×``.
 tampil sebagai ``6328266.1×``.
 """
 from __future__ import annotations
@@ -89,14 +96,22 @@ SAFE_LP_MULTIPLIER = 5.0
 # ``top_holders_pct`` 35.75 = 35,75% supply di 10 holder teratas token base).
 # ---------------------------------------------------------------------------
 BEST_FV_24H_MIN = 5.0           # 24H: F/V >= 5,0 (inklusif)
-BEST_FV_30M_MIN = 1.0           # 30M: F/V > 1,0 (strict — F harus > V)
 BEST_CARD_TITLE = "🏆 Scan Best Pool Meteora"
-# Dua lane Best Pool dipisah sejak 2026-09-13 (permintaan user: "untuk
-# timeframe 30m harus kita pisah tombol deteksinya dan tabel serta fungsi
-# fee/v lebih besar"): satu tombol per lane, satu tabel per lane. Urutan
-# tuple ini = urutan tombol di card.
-BEST_LANES = ("24h", "30m")
+# **Satu lane sejak 2026-09-16** (permintaan user: "hapus scan 30 menit, kita
+# sisakan yang 24 jam saja"). Sejak 2026-09-13 card ini punya DUA tombol
+# (24H + 30M, dua tabel, dua session key); yang 30M dicabut seluruhnya: tidak
+# ada tombol, tidak ada tabel, tidak ada fetch ``timeframe=30m``, dan
+# ``normalize_best_lane`` memetakan ulang alias lama ("30m", "1h", "both") ke
+# 24H supaya hasil/cache lama tetap terbaca tanpa cabang mati di mana-mana.
+BEST_LANES = ("24h",)
+# Label "30m" sengaja dipertahankan: hasil/cache lama masih menyimpan
+# timeframe itu dan teks rekap tidak boleh berubah jadi "30M".upper() yang
+# aneh kalau suatu saat dibaca.
 BEST_LANE_LABELS = {"24h": "24H", "30m": "30M"}
+# Konstanta mati lane 30M — JANGAN dipakai lagi (lihat BEST_LANES di atas).
+# Dibiarkan ada supaya import lama tidak pecah, sama seperti
+# ``BEST_DUST_MAX_PCT`` / ``BEST_VOLUME_24H_MIN``.
+BEST_FV_30M_MIN = 1.0
 BEST_FEE_PCT_MIN = 2.0            # query API: fee_pct >= 2 (tier fee pool)
 BEST_ACTIVE_TVL_MIN = 50_000.0    # query API: active TVL >= 50K USD
 BEST_DUST_MAX_PCT = 0.05          # layar: dust holder < 0,05% MC
@@ -108,6 +123,36 @@ BEST_VOLATILITY_MIN = 2.0         # layar: volatility >= 2% ("minimal 2%")
 # Dicek di :func:`row_best_gaps`, jadi SEBELUM fetch holder: kuota Helius
 # tidak terbakar untuk pool sepi yang pasti gugur.
 BEST_VOLUME_24H_MIN = 1_000_000.0
+# Layar: **Top 10 holder 20% supply atau lebih = jangan tampilkan**
+# (permintaan user 2026-09-16: "TOP 10 diatas 20% jangan ditampilkan lagi",
+# dipertegas di sesi yang sama: "jika ada top 10 >= 20% jangan tampilkan").
+# ``top_holders_pct`` dari API Meteora = persen supply token base yang dipegang
+# 10 wallet teratas (35.75 = 35,75%) — mulai 20% ke atas pool dianggap terpusat
+# dan **gugur** lewat :func:`row_best_gaps`, jadi sama seperti ambang lane:
+# dieksekusi SEBELUM fetch holder (kuota Helius tidak terbakar) dan ikut
+# menyaring hasil scan lama yang dirender ulang card.
+# Batas **eksklusif di sisi tampil** — Top10 tepat 20,0% ikut dibuang. Angka hilang (``None``)
+# TIDAK gugur: tanpa data tidak ada bukti konsentrasi, barisnya tetap tampil
+# dengan ``—`` di kolom Top10. (Saringan Top10 LAMA — ``< 30%`` — pernah
+# dicabut 2026-09-11; yang ini aturan BARU dari user, bukan pengaktifan balik
+# aturan lama. Dust tetap informasi: ``row_dust_ok`` selalu True.)
+BEST_TOP10_MAX_PCT = 20.0
+# Tanda 🏆 BEST POOL di kolom Dust %MC (permintaan user 2026-09-12): baris
+# dengan dust **<= 0,035% MC** (inklusif — 0,035 persis ikut ditandai)
+# diberi chip emas di ``best_pool_ui``. Ini BUKAN saringan tambahan: saringan
+# layar tetap ``BEST_DUST_MAX_PCT`` (0,05%, lebih longgar); tanda hanya
+# memudahkan melihat pool yang benar-benar bersih di dalam listing.
+# Layar: **volatility hanya boleh 1%–10%** (permintaan user 2026-09-16:
+# "volatility kurang dari 1 sembunyikan juga" + "volatility > 10 sembunyikan
+# juga"). Di bawah 1% pool terlalu mati (fee sekecil apa pun terlihat besar
+# dibandingkan pergerakan → F/V menipu); di atas 10% pergerakan pool lebih
+# besar dari fee yang didapat LP, jadi listing "best" bukan tempatnya. Batas
+# inklusif di DUA sisi: tepat 1,0% dan tepat 10,0% masih tampil. Volatility
+# hilang/nonfinite sudah gugur lebih dulu lewat cabang metrik F/V, dan
+# volatility 0 persis tetap DIBUANG TOTAL dari listing (row_volatility_zero —
+# aturan 2026-09-14), jadi ia tidak muncul di tabel "dilewati".
+BEST_VOL_SHOW_MIN = 1.0
+BEST_VOL_SHOW_MAX = 10.0
 # Tanda 🏆 BEST POOL di kolom Dust %MC (permintaan user 2026-09-12): baris
 # dengan dust **<= 0,035% MC** (inklusif — 0,035 persis ikut ditandai)
 # diberi chip emas di ``best_pool_ui``. Ini BUKAN saringan tambahan: saringan
@@ -898,7 +943,8 @@ def scan_meteora(*, max_wallets: int | None = None, workers: int = 6,
 #    category ``top``, page_size 50 — active TVL disaring di server.
 #    ``fee_pct>=2`` **dihapus** 2026-09-13 sore (permintaan user: pool
 #    ber-fee rendah seperti EMBER/USDC harus muncul);
-# 2. **layar**: satu saringan saja, per lane — ``row_best_gaps()``.
+# 2. **layar**: dua saringan di ``row_best_gaps()`` — ambang F/V per lane +
+#    Top10 holder ``<= BEST_TOP10_MAX_PCT`` (20%, baru 2026-09-16).
 #
 # Dua lane dipisah (permintaan user 2026-09-13: "untuk timeframe 30m harus
 # kita pisah tombol deteksinya dan tabel serta fungsi fee/v lebih besar"):
@@ -927,45 +973,51 @@ def _maybe_float(value):
     return num if math.isfinite(num) else None
 
 
-def normalize_best_lane(value, *, default: str | None = "24h") -> str | None:
-    """Normalisasi nama lane Best Pool → ``"24h"`` / ``"30m"`` / ``"both"``.
+#: Alias lama yang DULU berarti lane 30M / gabungan — dipetakan ke 24H sejak
+#: 2026-09-16 (permintaan user: "hapus scan 30 menit, kita sisakan yang 24 jam
+#: saja"). Jadi sesi/cache/URL lama tidak pernah lagi memicu cabang mati.
+RETIRED_LANE_ALIASES = ("30m", "1h", "30 menit", "30 min", "30menit",
+                        "both", "all", "24h+30m", "24jam+30menit", "gabungan")
 
-    Penerima alias lama (``1h`` = lane pendek, teks UI ``30 menit`` /
-    ``24 jam``) supaya baris lama di ``session_state`` dan caller lama tetap
-    terarah ke lane yang benar. ``both`` dipertahankan untuk pemanggil yang
-    masih ingin satu listing gabungan dua lane (UI card sudah tidak begitu).
-    ``default=None`` membuat nama yang tidak dikenal mengembalikan ``None``
-    — dipakai :func:`row_best_gaps` untuk menolak lane asing.
+
+def normalize_best_lane(value, *, default: str | None = "24h") -> str | None:
+    """Normalisasi nama lane Best Pool → **selalu ``"24h"``** untuk yang dikenal.
+
+    Lane 30M (dan mode gabungan ``both``) dihapus 2026-09-16, tetapi aliasnya
+    sengaja TETAP dikenali dan dipetakan ke 24H: session key lama, hasil scan
+    lama di ``session_state``/cache berkas, dan URL ``?timeframe=30m`` masih
+    bisa muncul, dan tidak ada satu pun dari itu yang boleh menghasilkan
+    tabel/tombol 30M lagi. Nama yang sama sekali tidak dikenal tetap
+    :data:`default` (``None`` dengan ``default=None``) — dipakai
+    :func:`row_best_gaps` untuk menolak baris rusak.
     """
     text = str(value if value is not None else "").strip().lower()
-    if text in ("both", "all", "24h+30m", "24jam+30menit", "gabungan"):
-        return "both"
-    if text in ("30m", "1h", "30 menit", "30 min", "30menit"):
-        return "30m"
     if text in ("24h", "24 jam", "24hours", "24 hours", "1d"):
+        return "24h"
+    if text in RETIRED_LANE_ALIASES:
         return "24h"
     return default
 
 
 def lane_fv_min(lane) -> float:
-    """Ambang F/V satu lane — dibaca dari konstanta **saat dipanggil**.
+    """Ambang F/V lane 24H — dibaca dari konstanta **saat dipanggil**.
 
-    24H → :data:`BEST_FV_24H_MIN` (inklusif: tepat 5× lolos).
-    30M → :data:`BEST_FV_30M_MIN` (strict: F/V harus > 1×, jadi F == V gugur).
-    Angka tidak pernah disalin ke konstanta lain: tombol card, tooltip, label
-    sel F/V, teks gap, dan saringan scan semuanya membaca fungsi ini.
+    :data:`BEST_FV_24H_MIN` (inklusif: tepat 5× lolos). Argumen ``lane`` dibiarkan
+    ada dipanggilan lama (tombol card, tooltip, label sel F/V, teks gap,
+    saringan scan semuanya membaca fungsi ini) tetapi tidak mengubah apa pun
+    sejak 30M dihapus 2026-09-16 — :func:`normalize_best_lane` memetakan semua
+    alias lama ke 24H, jadi tidak ada cabang ``30m`` lagi di sini.
     """
-    return float(BEST_FV_30M_MIN if normalize_best_lane(lane) == "30m"
-                 else BEST_FV_24H_MIN)
+    return float(BEST_FV_24H_MIN)
 
 
 def lane_fv_inclusive(lane) -> bool:
-    """True bila ambang lane bersifat inklusif (``>=``); False = strict (``>``)."""
-    return normalize_best_lane(lane) != "30m"
+    """Selalu ``True``: satu-satunya ambang lane (24H) bersifat ``>=``."""
+    return True
 
 
 def lane_fv_sign(lane) -> str:
-    """Tanda pembanding ambang satu lane (``≥`` / ``>``) untuk teks UI."""
+    """Tanda pembanding ambang lane untuk teks UI (``≥``)."""
     return "≥" if lane_fv_inclusive(lane) else ">"
 
 
@@ -977,9 +1029,12 @@ def best_lane_gate_label(lane) -> str:
 
 
 def best_lane_lanes(lane) -> tuple[str, ...]:
-    """Lane yang benar-benar diambil untuk satu tombol (``both`` = dua-duanya)."""
-    normalized = normalize_best_lane(lane)
-    return tuple(BEST_LANES) if normalized == "both" else (normalized,)
+    """Lane yang benar-benar diambil — **selama-lamanya ``(24h,)``** (30M dihapus).
+
+    ``lane`` tetap diterima supaya pemanggil lama tidak pecah; nilai apa pun
+    yang dikenali :func:`normalize_best_lane` menghasilkan satu lane 24H.
+    """
+    return tuple(BEST_LANES)
 
 
 def row_fv_ratio(row: dict | None):
@@ -1043,22 +1098,40 @@ def row_volatility_zero(row: dict | None) -> bool:
     return bool(value is not None and math.isfinite(value) and value == 0)
 
 
+#: Saringan server "Jupiter safeguard" (permintaan user 2026-09-16: *"scan
+#: baru saya tambahkan jupiter safeguard untuk filter yang mungkin rug"*).
+#: Kedua kunci adalah flag listing Meteora yang meneruskan **Jupiter Token
+#: Portal / critical warnings** untuk token di sisi base dan quote: pool yang
+#: salah satu tokennya diperingatkan Jupiter (freeze/hook/transfer-fee/
+#: non-transferable dll.) tidak pernah masuk listing, jadi tidak ikut di-scan
+#: dan tidak pernah tampil. Urutan stringnya disamakan dengan URL yang dipakai
+#: user di UI Meteora supaya permintaan identik dengan yang dia verifikasi.
+JUPITER_SAFEGUARD_FILTERS = ("base_token_has_critical_warnings=false",
+                             "quote_token_has_critical_warnings=false")
+
+
 def best_filter_by(pool_type: str = "dlmm",
                    fee_pct_min: float | None = None,
-                   active_tvl_min: float = BEST_ACTIVE_TVL_MIN) -> str:
+                   active_tvl_min: float = BEST_ACTIVE_TVL_MIN,
+                   *, safeguard: bool = True) -> str:
     """Query ``filter_by`` Scan Best Pool Meteora (&&-join ala UI Meteora).
 
     Sejak 2026-09-13 filter ``fee_pct>=2`` **dihapus** (permintaan user:
-    pool dengan fee tier rendah seperti EMBER/USDC harus muncul). Satu-
-    satunya filter server yang tersisa: ``pool_type=dlmm&&active_tvl>=
-    50000``. Kwarg ``fee_pct_min`` dipertahankan untuk kompatibilitas
-    caller lama (``None`` = tidak menambah filter fee_pct).
+    pool dengan fee tier rendah seperti EMBER/USDC harus muncul). Sejak
+    2026-09-16 listing dibawa ke saringan server Jupiter safeguard
+    (:data:`JUPITER_SAFEGUARD_FILTERS`) — token dengan critical warning di
+    sisi base ATAU quote sudah terbuang sebelum payload diterima. Yang
+    tersisa sesudah itu: ``pool_type=dlmm&&active_tvl>=50000``. Kwarg
+    ``fee_pct_min`` dipertahankan untuk kompatibilitas caller lama (``None``
+    = tidak menambah filter fee_pct); ``safeguard=False`` hanya untuk tes.
     """
     def _num(value: float) -> str:
         number = float(value)
         return str(int(number)) if number == int(number) else f"{number:g}"
 
-    text = (f"pool_type={pool_type}"
+    prefix = "".join(f"{flag}&&" for flag in JUPITER_SAFEGUARD_FILTERS) \
+        if safeguard else ""
+    text = (f"{prefix}pool_type={pool_type}"
             f"&&active_tvl>={_num(active_tvl_min)}")
     if fee_pct_min is not None:
         text += f"&&fee_pct>={_num(fee_pct_min)}"
@@ -1074,10 +1147,15 @@ def fetch_best_pools(*, timeframe: str = "24h", page_size: int = PAGE_SIZE,
     Sejak 2026-09-13 filter ``fee_pct`` dihapus (default ``None``): semua
     pool DLMM dengan ``active_tvl >= 50K`` dari API ditampilkan, termasuk
     pool ber-fee rendah (EMBER/USDC, SOL/USDC, dll).
+
+    ``timeframe`` dinormalisasi lewat :func:`normalize_best_lane` — sejak
+    30M dihapus (2026-09-16) permintaan ``30m``/``1h``/``both`` dari pemanggil
+    lama tetap mendarat di window 24 jam, jadi tidak ada jalur tersisa yang
+    bisa menarik listing 30 menit.
     """
     params = {
         "page_size": max(1, min(int(page_size), 50)),
-        "timeframe": str(timeframe or "24h"),
+        "timeframe": normalize_best_lane(timeframe) or "24h",
         "category": "top",
         "filter_by": best_filter_by(fee_pct_min=fee_pct_min,
                                     active_tvl_min=active_tvl_min),
@@ -1093,10 +1171,9 @@ def rows_from_pools(pools: list[dict] | None, *,
                     timeframe: str = "24h") -> list[dict]:
     """Baris listing (dedup ``pool_address``) dari payload pool-discovery.
 
-    ``timeframe`` dipakai sejak 2026-09-13 supaya Scan Best Pool Meteora
-    bisa mengambil **dua lane** (24H + 30M) dan menandai source masing-masing
-    pool. Pool yang sama di dua timeframe menjadi dua record terpisah
-    (lihat :func:`best_rows_from_lanes`).
+    ``timeframe`` menandai source baris (``24h``/``30m``) supaya hasil lama
+    masih bisa dikenali. Scan Best Pool hanya mengambil 24H sejak
+    2026-09-16 — argumennya tetap ada karena ``_row_from_pool`` membacanya.
     """
     rows: list[dict] = []
     seen: set[str] = set()
@@ -1112,36 +1189,6 @@ def rows_from_pools(pools: list[dict] | None, *,
                 continue
             seen.add(addr)
         rows.append(row)
-    return rows
-
-
-def best_rows_from_lanes(pools_24h: list[dict] | None,
-                         pools_30m: list[dict] | None) -> list[dict]:
-    """Gabung pool Best Pool dari dua timeframe (24H lalu 30M).
-
-    Satu pool yang muncul di kedua timeframe **sengaja menjadi dua record**:
-    metrik fee/volatility berbeda antar timeframe dan tiap lane punya
-    ambangnya sendiri (24H F/V ≥ 5×, 30M F/V > 1× — permintaan user 2026-09-13
-    "dan pool tersebut berasal dari 24H atau 30M"). Dedup dilakukan di dalam
-    masing-masing timeframe (berdasarkan ``pool_address``). Hanya dipakai
-    ``scan_best_meteora(timeframe="both")`` (compat); tombol card mengambil
-    satu lane saja lewat :func:`rows_from_pools`.
-    """
-    rows: list[dict] = []
-    seen: set[tuple[str, str]] = set()
-    for timeframe, pools in (("24h", pools_24h), ("30m", pools_30m)):
-        for pool in pools or []:
-            if not isinstance(pool, dict):
-                continue
-            row = _row_from_pool(pool, timeframe=timeframe,
-                                 in_24h=(timeframe == "24h"),
-                                 in_1h=(timeframe == "30m"))
-            address = row["pool_address"]
-            key = (timeframe, address or f"{timeframe}:{len(rows)}")
-            if key in seen:
-                continue
-            seen.add(key)
-            rows.append(row)
     return rows
 
 
@@ -1310,13 +1357,83 @@ def row_volume_ok(row: dict | None) -> bool:
     return True
 
 
-def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
-    """Saringan murah SEBELUM enrichment holder — satu aturan per lane.
+def row_top10_pct(row: dict | None):
+    """Persen supply token base di 10 holder teratas (``top_holders_pct``).
 
-    Tombol **24H**: ``F/V >= BEST_FV_24H_MIN`` (5×) — "prioritaskan 24H yang
-    fee/v >= 5x untuk di scan detail lainnya, jika kurang dari itu langsung
-    skip". Tombol **30M**: ``F/V > BEST_FV_30M_MIN`` (1×, yaitu F harus lebih
-    besar dari V; F == V tepat di-skip).
+    ``None`` bila baris tidak membawa angkanya (payload API tanpa data holder
+    atau hasil scan lama) — tanpa angka tidak ada bukti konsentrasi apa pun.
+    """
+    return _maybe_float((row or {}).get("top_holders_pct"))
+
+
+def row_top10_over(row: dict | None):
+    """Persen Top10 **bila >= :data:`BEST_TOP10_MAX_PCT`**, selain itu ``None``.
+
+    Satu-satunya pembaca batas: dipakai :func:`row_top10_ok`, teks alasan di
+    :func:`row_best_gaps`, dan tes — jadi angka di tooltip card, teks "gugur"
+    di listing disembunyikan, dan keputusan saringan tidak pernah bisa beda.
+    Batas diarahkan seperti permintaan user ("jika ada top 10 >= 20% jangan
+    tampilkan"): Top10 tepat 20,0% **ikut dibuang**.
+    """
+    pct = row_top10_pct(row)
+    if pct is None or pct < float(BEST_TOP10_MAX_PCT):
+        return None
+    return pct
+
+
+def row_volatility_gap(volatility) -> str:
+    """Alasan gugur bila volatility **di luar** 1%–10%, selain itu ``""``.
+
+    Permintaan user 2026-09-16: "volatility kurang dari 1 sembunyikan juga" +
+    "volatility > 10 sembunyikan juga". Batas inklusif di kedua sisi (1,0% dan
+    10,0% persis masih tampil) — "kurang dari" dan "lebih dari" dibaca apa
+    adanya. ``None``/bukan-angka TIDAK diurus di sini: itu sudah gugur lebih
+    dulu di :func:`row_best_gaps` lewat cabang "metrik F/V tidak tersedia".
+    Volatility 0 persis juga tidak lewat sini — ia dibuang total dari listing
+    oleh :func:`row_volatility_zero` (aturan 2026-09-14), sebelum gap.
+    """
+    value = _maybe_float(volatility)
+    if value is None:
+        return ""
+    if value < float(BEST_VOL_SHOW_MIN):
+        return (f"volatility {value:g}% < {float(BEST_VOL_SHOW_MIN):g}% — "
+                "pool nyaris tidak bergerak")
+    if value > float(BEST_VOL_SHOW_MAX):
+        return (f"volatility {value:g}% > {float(BEST_VOL_SHOW_MAX):g}% — "
+                "pergerakan lebih besar dari fee")
+    return ""
+
+
+def row_top10_ok(row: dict | None) -> bool:
+    """True bila Top10 holder **<= 20% supply** (atau angkanya tidak ada).
+
+    Saringan permintaan user 2026-09-16: *"scan meteora, TOP 10 diatas 20%
+    jangan ditampilkan lagi"*. Yang dibuang hanya pool yang **terbukti**
+    berkonsentrasi di batas atau di atasnya; baris tanpa angka (``None``)
+    tetap lolos dan
+    tampil dengan ``—`` di kolom Top10. Beda dengan :func:`row_dust_ok` /
+    :func:`row_volume_ok` yang sudah dicabut jadi selalu ``True`` (2026-09-13)
+    — Top10 justru dipasang kembali sebagai saringan, dengan angka baru
+    (20%, bukan "< 30%" lama) dan arah "di atas batas = buang".
+    """
+    return row_top10_over(row) is None
+
+
+def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
+    """Saringan murah SEBELUM enrichment holder — F/V 24H + volatilitas + Top10.
+
+    **Satu lane sejak 2026-09-16** (30M dicabut): tombol **24H** minta
+    ``F/V >= BEST_FV_24H_MIN`` (5×) — "prioritaskan 24H yang fee/v >= 5x untuk
+    di scan detail lainnya, jika kurang dari itu langsung skip".
+
+    Di atas itu ada dua saringan yang sama di semua timeframe (permintaan user
+    2026-09-16): volatility harus di rentang :data:`BEST_VOL_SHOW_MIN`–
+    :data:`BEST_VOL_SHOW_MAX` (1%–10%, inklusif; :func:`row_volatility_gap`)
+    dan Top10 holder harus di **bawah** :data:`BEST_TOP10_MAX_PCT` (20% —
+    ``>= 20%`` dibuang; :func:`row_top10_over`). Urutan cek sengaja: vol-0
+    dibuang total lebih dulu (``row_volatility_zero``), lalu volatilitas di
+    luar rentang, baru F/V, lalu Top10 — satu alasan gugur per baris supaya
+    teksnya tetap satu baris, dengan alasan paling keras lebih dulu.
 
     F = ``fee_active_tvl_ratio``, V = ``volatility`` (keduanya persen dari API
     Meteora, jadi ambangnya diperbandingkan sebagai kelipatan, bukan persen
@@ -1329,8 +1446,14 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
     karena tidak ada pergerakan di pool-nya. Data hilang, nonfinite, negatif,
     F <= 0, atau lane tidak dikenal tidak lolos.
 
-    ``lane`` memaksa satu aturan (dipakai scan per-lane + render ulang hasil
-    lama); tanpa itu lane dibaca dari field ``timeframe``/``source`` baris.
+    Top10 dijalankan **setelah** sisanya lolos, jadi pool yang sudah gugur
+    F/V/volatilitas tidak diberi alasan kedua; alasan Top10 ditulis lengkap
+    supaya terbaca di listing "dilewati".
+
+    ``lane`` tetap diterima (dipakai render ulang hasil lama): sejak 30M
+    dihapus semua alias lane dipetakan :func:`normalize_best_lane` ke 24H,
+    jadi nilainya tidak mengubah aturan yang dipakai — hanya nama yang sama
+    sekali tidak dikenal (``"5m"``) yang gugur dengan "timeframe tidak dikenal".
     """
     row = row or {}
     fee = _maybe_float(row.get("fee_active_tvl_ratio"))
@@ -1342,8 +1465,6 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
         wanted = normalize_best_lane(lane, default=None)
         if wanted is None:
             return ["timeframe tidak dikenal"]
-        if wanted == "both":   # gabungan: tiap baris dinilai dari lane-nya
-            wanted = None
     normalized = normalize_best_lane(
         wanted if wanted is not None
         else (row.get("timeframe") or row.get("source") or "24h"),
@@ -1358,11 +1479,21 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
         # :func:`row_volatility_zero`) — pool tanpa pergerakan tidak ditampilkan.
         return [f"{BEST_LANE_LABELS[normalized]}: volatility 0 — "
                 "F/V tidak terukur"]
+    rentang = row_volatility_gap(vol)
+    if rentang:
+        return [f"{BEST_LANE_LABELS[normalized]}: {rentang}"]
     minimum = lane_fv_min(normalized)
     threshold = minimum * vol
     passed = fee >= threshold if lane_fv_inclusive(normalized) else fee > threshold
     if fee > 0 and passed:
-        return []
+        # Saringan terakhir setelah ambang lane: Top10 >= 20% (2026-09-16).
+        # Label lane ikut di depan supaya teks "gugur" di tabel disembunyikan
+        # konsisten dengan teks F/V.
+        over = row_top10_over(row)
+        if over is None:
+            return []
+        return [f"{BEST_LANE_LABELS[normalized]}: Top10 {over:g}% ≥ "
+                f"{float(BEST_TOP10_MAX_PCT):g}% — holder terpusat"]
     sign = "<" if lane_fv_inclusive(normalized) else "≤"
     return [f"{BEST_LANE_LABELS[normalized]}: F/V {sign} {minimum:g}×"]
 
@@ -1394,11 +1525,15 @@ def row_best_pool(row: dict | None) -> bool:
 
 def filter_best_rows(rows: list[dict] | None, *,
                      lane=None) -> tuple[list[dict], int, int]:
-    """Return ``(lolos F/V, jumlah gagal yang TAMPIL dilewati, 0)``.
+    """Return ``(lolos saringan layar, jumlah gagal yang TAMPIL dilewati, 0)``.
 
     ``lane`` memaksa satu aturan ambang untuk seluruh baris (dipakai
     :func:`scan_best_lane` saat satu tombol lane ditekan); tanpa itu setiap
-    baris dinilai dari ``timeframe``-nya sendiri. Kandidat gagal dengan
+    baris dinilai dari ``timeframe``-nya sendiri. Saringannya tiga: ambang F/V
+    lane, rentang volatility 1%–10% dan Top10 ``< BEST_TOP10_MAX_PCT``
+    (2026-09-16) — semuanya lewat
+    :func:`row_best_gaps`, jadi ``hidden_metric`` menghitung kedua alasan
+    gugur. Kandidat gagal dengan
     **volatility 0 tidak ikut dihitung** (2026-09-14 lanjutan): pool tanpa
     pergerakan dibuang dari listing (:func:`row_volatility_zero`), jadi
     hitungan kedua selalu cocok dengan ``len(hidden_rows)`` yang dibangun
@@ -1465,31 +1600,38 @@ def sort_best_rows(rows: list[dict] | None) -> list[dict]:
 
 def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
                    workers: int = 6, progress=None, timeout: int = 25,
-                   page_size: int = PAGE_SIZE) -> dict:
-    """Scan **satu** lane Best Pool — satu tombol card = satu lane.
+                   page_size: int = PAGE_SIZE, rugcheck: bool = True) -> dict:
+    """Scan Best Pool **24H saja** — satu tombol card, satu tabel.
 
-    Permintaan user 2026-09-13: "di scan meteora pool, kita akan punya 2 tombol
-    24H dan 30M … yang fee/v-nya di bawah ambang langsung skip". Alurnya:
+    Lane 30M dihapus 2026-09-16 (permintaan user: *"hapus scan 30 menit, kita
+    sisakan yang 24 jam saja"*); ``lane`` tetap diterima tapi hanya dipakai
+    untuk menandai baris + membaca label — :func:`normalize_best_lane`
+    memetakan semua alias lama (termasuk ``"30m"``/``"both"``) ke 24H.
+    Alurnya:
 
-    1. listing API Meteora **hanya** ``timeframe`` lane itu
-       (``pool_type=dlmm&&active_tvl>=50000``, ``category=top``, page_size 50);
-    2. saringan lane di :func:`row_best_gaps` — 24H ``F/V >= 5×``,
-       30M ``F/V > 1×`` — dijalankan **sebelum** holder, jadi pool yang kurang
-       dari itu tidak pernah membakar kuota Helius dan tetap tersedia di
+    1. listing API Meteora timeframe **24h** dengan saringan server
+       ``base_token_has_critical_warnings=false&&quote_token_has_critical_warnings=false``
+       (Jupiter safeguard — token yang diperingati Jupiter tidak pernah masuk
+       listing) ``&&pool_type=dlmm&&active_tvl>=50000`` (``category=top``,
+       page_size 50);
+    2. saringan layar di :func:`row_best_gaps` — ``F/V >= 5×``, volatility
+       1%–10%, Top10 < 20% supply — dijalankan **sebelum** holder, jadi pool
+       yang gugur tidak pernah membakar kuota Helius dan tetap tersedia di
        ``hidden_rows`` (dengan alasan di ``best_gaps``), **kecuali** pool
        volatility 0: dibuang penuh dari listing sejak 2026-09-14 lanjutan
        (:func:`row_volatility_zero`, permintaan user *"jika volatility 0
        jangan tampilkan, karena tidak ada pergerakan disitu"*) dan dihitung
        terpisah di ``dropped_volatility``;
-    3. hanya kandidat lolos yang di-enrich (holder FULL) lalu diurutkan
-       :func:`sort_best_rows` (Fee/TVL terbesar → F/V terbesar →
-       volume/active TVL → dust — urutan 2026-09-15).
-
-    ``lane="both"`` = perilaku lama satu listing dua lane (compat, tidak lagi
-    dipakai tombol card).
+    3. hanya kandidat lolos yang di-enrich (holder FULL), lalu — bila
+       ``rugcheck=True`` — dilengkapi laporan **RugCheck** rugchecker.cc
+       (:mod:`rugchecker`: honeypot + bendera keamanan + likuiditas per DEX,
+       paralel + cache berkas). Kegagalan laporan per mint tidak menjatuhkan
+       scan: kolomnya menulis ``—`` dan jumlahnya dilaporkan di
+       ``rugcheck_failed``;
+    4. baris diurutkan :func:`sort_best_rows` (Fee/TVL terbesar → F/V terbesar
+       → volume/active TVL → dust — urutan 2026-09-15).
     """
     normalized = normalize_best_lane(lane)
-    lanes = best_lane_lanes(normalized)
     # Default FULL seperti ``scan_meteora``: urutan getTokenAccounts Helius
     # tidak urut saldo, jadi cap kecil menghasilkan sampel bias dan angka
     # dust < 0,05% MC tidak bisa dipercaya.
@@ -1500,35 +1642,23 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
         import activity_log as _alog
     except Exception:  # noqa: BLE001 - log hanya pelengkap
         _alog = None
-    lane_label = ("24H + 30M" if normalized == "both"
-                  else BEST_LANE_LABELS.get(normalized, normalized.upper()))
-    gate = ("" if normalized == "both"
-            else f" ({best_lane_gate_label(normalized)})")
+    lane_label = BEST_LANE_LABELS.get(normalized, str(normalized).upper())
+    gate = f" ({best_lane_gate_label(normalized)})"
     if _alog:
         _alog.info("scan-best-pool",
                    f"scan mulai: listing Best Pool Meteora {lane_label}{gate}")
     errors: list[str] = []
-    pools_by_lane: dict[str, list[dict]] = {}
-    for timeframe in lanes:
-        try:
-            pools_by_lane[timeframe] = fetch_best_pools(
-                timeframe=timeframe, page_size=page_size, timeout=timeout)
-        except Exception as exc:  # noqa: BLE001 - kegagalan API jadi pesan card
-            errors.append(f"{BEST_LANE_LABELS[timeframe]}: {exc}")
-            pools_by_lane[timeframe] = []
-            if _alog:
-                _alog.error("scan-best-pool",
-                            f"listing Meteora {BEST_LANE_LABELS[timeframe]} "
-                            f"gagal: {str(exc)[:160]}")
+    try:
+        pools = fetch_best_pools(timeframe=normalized, page_size=page_size,
+                                 timeout=timeout)
+    except Exception as exc:  # noqa: BLE001 - kegagalan API jadi pesan card
+        errors.append(f"{lane_label}: {exc}")
+        pools = []
+        if _alog:
+            _alog.error("scan-best-pool",
+                        f"listing Meteora {lane_label} gagal: {str(exc)[:160]}")
     error = " · ".join(errors)
-    if normalized == "both":
-        # Compat: satu listing gabungan, pool sama jadi dua record (satu per
-        # lane) supaya rule tiap lane tetap punya arti sendiri.
-        rows = best_rows_from_lanes(pools_by_lane.get("24h"),
-                                    pools_by_lane.get("30m"))
-    else:
-        rows = rows_from_pools(pools_by_lane.get(normalized, []),
-                               timeframe=normalized)
+    rows = rows_from_pools(pools, timeframe=normalized)
     fetched = len(rows)
     rows, quote_skipped = drop_quote_rows(rows)
     # Reject sebelum ada fetch holder/market — "langsung skip", bukan cuma
@@ -1544,15 +1674,31 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
     if rows:
         rows = enrich_pools(rows, max_wallets=max_wallets,
                             workers=workers, progress=progress)
+    rug_failed = 0
+    if rows and rugcheck:
+        try:
+            from rugchecker import attach_to_rows
+
+            rows = attach_to_rows(rows, workers=workers)
+            rug_failed = sum(1 for row in rows
+                             if not (row.get("rugcheck") or {}).get("ok"))
+        except Exception as exc:  # noqa: BLE001 - kolom opsional, scan tetap jalan
+            error = " · ".join(part for part in (error, f"RugCheck: {exc}") if part)
+            if _alog:
+                _alog.error("scan-best-pool",
+                            f"RugCheck gagal: {str(exc)[:160]}")
     kept = sort_best_rows(rows)
     if _alog:
         _alog.info("scan-best-pool",
                    f"scan selesai: {len(kept)} pool tampil dari {fetched} "
-                   f"listing {lane_label} ({hidden_metric} gagal F/V tanpa scan holder"
+                   f"listing {lane_label} ({hidden_metric} gagal saringan "
+                   f"(F/V/volat/Top10) tanpa scan holder"
                    + (f", {dropped_volatility} pool volatility 0 dibuang"
                       if dropped_volatility else "")
                    + (f", {quote_skipped} pool quote dilewati"
-                      if quote_skipped else "") + ")")
+                      if quote_skipped else "")
+                   + (f", {rug_failed} laporan RugCheck gagal"
+                      if rug_failed else "") + ")")
     return {
         "rows": kept,
         "hidden_rows": hidden_rows,
@@ -1565,8 +1711,12 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
         # (tidak ditampilkan di mana pun). UI membaca hidden_rows saja, tapi
         # angka ini membuat pembuangannya bisa diaudit.
         "dropped_volatility": dropped_volatility,
-        # Lane hasil scan — UI memakainya untuk judul/pill tabel + memastikan
-        # tabel 24H tidak pernah berisi baris 30M.
+        # Mint yang tidak mendapat laporan rugchecker.cc (HTTP gagal / kode
+        # bukan 0) — kolom RugCheck menulis — untuk mereka; angka ini supaya
+        # caption bisa membedakan "semua AMAN" dari "belum teriksa".
+        "rugcheck_failed": rug_failed,
+        # Lane hasil scan — UI memakainya untuk judul/pill tabel. Sejak 30M
+        # dihapus (2026-09-16) ini selalu "24h".
         "lane": normalized,
         "timeframe": normalized,
         "gate": gate.strip(" ()"),
@@ -1577,14 +1727,16 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
 def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
                       progress=None, timeout: int = 25,
                       timeframe: str = "24h",
-                      page_size: int = PAGE_SIZE) -> dict:
-    """Scan Best Pool satu lane: ``timeframe`` menentukan lane yang diambil.
+                      page_size: int = PAGE_SIZE,
+                      rugcheck: bool = True) -> dict:
+    """Wrapper lama :func:`scan_best_lane` (satu-satunya lane: 24H).
 
-    Sejak 2026-09-13 kwarg ``timeframe`` **membatasi fetch** (dulu hanya
-    label, kedua lane selalu diambil) — tiap tombol card memanggil
-    :func:`scan_best_lane` untuk lane-nya sendiri. Pemanggil lama yang butuh
-    satu listing 24H + 30M mengirim ``timeframe="both"``.
+    Sejak 2026-09-13 kwarg ``timeframe`` **membatasi fetch**; sejak 2026-09-16
+    hanya 24H yang ada, dan ``timeframe`` apa pun yang pernah dikenali
+    (termasuk ``"30m"``/``"both"``) dipetakan ke 24H oleh
+    :func:`normalize_best_lane`. ``rugcheck`` diteruskan apa adanya.
     """
     return scan_best_lane(timeframe, max_wallets=max_wallets,
                           workers=workers, progress=progress,
-                          timeout=timeout, page_size=page_size)
+                          timeout=timeout, page_size=page_size,
+                          rugcheck=rugcheck)

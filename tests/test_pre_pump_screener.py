@@ -836,14 +836,17 @@ class DashboardSectionRemovedTest(unittest.TestCase):
                              for button in app.button))
 
     def test_pre_pump_page_file_is_gone(self):
-        """Satu-satunya halaman tersisa: 🧮 Holder Analytic.
+        """Daftar halaman ``pages/`` terkunci: 🧮 Holder + 📦 TEMP.
 
-        Page 🦅 Robinhood + page temp dihapus total 2026-09-15 (permintaan
-        user), jadi tidak boleh ada file halaman lain yang muncul lagi.
+        Page 🦅 Robinhood + page temp lama dihapus total 2026-09-15
+        (permintaan user), jadi tidak boleh ada file halaman lain yang muncul
+        lagi. 2026-09-16 hanya nomor 6 yang dihidupan kembali — sebagai
+        **📦 TEMP** (🌊 Watchlist Meteora + 🛰 Scan Holder Solana pindah ke sana),
+        itu pun atas permintaan user, bukan halaman baru yang nyasar.
         """
         pages = Path(__file__).resolve().parent.parent / "pages"
         names = sorted(path.name for path in pages.glob("*.py"))
-        self.assertEqual(names, ["5_🧮_Holder.py"])
+        self.assertEqual(names, ["5_🧮_Holder.py", "6_📦_TEMP.py"])
 
 
 if __name__ == "__main__":  # pragma: no cover

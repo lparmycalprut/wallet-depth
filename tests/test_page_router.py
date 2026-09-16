@@ -15,14 +15,19 @@ import page_router as pr
 
 ROOT = Path(__file__).resolve().parent.parent
 APP = str(ROOT / "app.py")
+TEMP_PAGE = "pages/6_📦_TEMP.py"
 
 SOL = "So11111111111111111111111111111111111111112"
 HOLDER = "pages/5_🧮_Holder.py"
 # Halaman CVD / Deteksi Akumulasi / Pre-Pump dihapus 2026-09-07; page
-# 🦅 Robinhood + page temp dihapus 2026-09-15.
+# 🦅 Robinhood dihapus 2026-09-15 bersamasama page 📦 temp lama
+# (``pages/8_temp.py``). Nomor 6 + slug "temp" DIHIDUPKAN KEMBALI 2026-09-16
+# untuk halaman 📦 TEMP (🌊 Watchlist Meteora + 🛰 Scan Holder Solana pindah ke
+# sana), jadi keduanya tidak lagi masuk GONE — yang diuji di
+# ``test_temp_page_hidup_lagi``.
 GONE = ("cvd", "4", "pages/4_📊_CVD.py", "deteksi_akumulasi",
         "deteksi-akumulasi", "akumulasi", "pre-pump", "prepump", "7",
-        "robinhood", "6", "pages/6_🦅_Robinhood.py", "temp", "8",
+        "robinhood", "pages/6_🦅_Robinhood.py", "8",
         "pages/8_temp.py")
 
 
@@ -47,6 +52,22 @@ class ResolveTest(unittest.TestCase):
         }
         for value, expected in cases.items():
             self.assertEqual(pr.resolve({"page": value}).get("page"), expected, value)
+
+    def test_temp_page_hidup_lagi(self):
+        """?page=temp / ?page=6 → halaman 📦 TEMP (2026-09-16).
+
+        Alias diturunkan otomatis dari berkas ``pages/*.py`` (slug, nama
+        berkas, dan nomor awalan), jadi tidak ada daftar manual yang bisa basi.
+        """
+        for value in ("temp", "TEMP", "6", "6_📦_temp",
+                      "pages/6_📦_TEMP.py"):
+            with self.subTest(value=value):
+                out = pr.resolve({"page": value})
+                self.assertEqual(out["page"], TEMP_PAGE, value)
+        # mint + page temp → tetap ke TEMP (page menang atas aturan default)
+        out = pr.resolve({"page": "temp", "mint": SOL})
+        self.assertEqual(out["page"], TEMP_PAGE)
+        self.assertEqual(out["params"], {"mint": SOL})
 
     def test_page_dan_mint_bersama(self):
         out = pr.resolve({"page": "holder", "mint": SOL})

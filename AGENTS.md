@@ -1,5 +1,145 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-16 — 🏆 Best Pool Meteora: satu lane 24H, kolom LPs/Active Range/RugCheck, 🌊 + 🛰 pindah ke 📦 TEMP
+
+- Permintaan user (batch, verbatim): *"🌊 Watchlist Meteora pindah ke page baru
+  TEMP"* · *"hapus scan 30 menit, kita sisakan yang 24 jam saja"* · *"Active
+  Range kolom ini pindah ke kanan volat"* · *"jika ada top 10 >= 20% jangan
+  tampilkan"* · *"kolom LPs pindah ke kanan active range setelah dipindah"* ·
+  *"LPs jika lebih dari 100, kasih warna hijau jika tidak, tidak ada perubahan"*
+  · *"volatility kurang dari 1 sembunyikan juga"* · *"volatility > 10 sembunyikan
+  juga"* · *"🛰 Scan Holder Solana pindah ke page baru TEMP"* · *"scan baru saya
+  tambahkan jupiter safeguard untuk filter yang mungkin rug"* · *"kita tambahkan
+  kolom baru RugCheck dengan metode ini … tapi versi yang lebih ringkas"*.
+- **Halaman.** `app.py` tinggal **🏆 Scan Best Pool Meteora** + **🧾 Log
+  Aktivitas**; 🌊 Watchlist Meteora + 🛰 Scan Holder Solana pindah ke
+  **`pages/6_📦_TEMP.py`** (wrapper tipis) yang seluruh logikanya hidup di
+  modul baru **`temp_ui.py`** (`render_auto_refresh`, `_render_lp_card`,
+  `_render_helius_holder_scan`, `render_temp_page`). Store
+  (`watchlist.json`/`holder_status.json`/`holder_history.json`) tidak berubah,
+  jadi cron + Telegram tidak perlu disentuh. **`page_router`** memantulkan
+  `?page=temp|6|6_📦_temp` ke sana (`TEMP_PAGE`). ⚠️ Konvensi wajib `temp_ui`:
+  fungsi yang bisa di-`mock.patch` dari tes **dipanggil lewat modulnya**
+  (`wl.add_to_watchlist`, `hs.publish_holder_status`, `hh.ingest_many`, …) —
+  `app.py` di-exec ulang tiap run AppTest sehingga from-import ikut melihat
+  mock, tapi `temp_ui` di-cache, jadi binding from-import membekukan fungsi asli
+  dan patch jadi no-op. Dijinakkan
+  `tests/test_temp_page_ui.py::TempUiSourceTest`.
+- **Satu lane 24H.** `best_pool_ui` punya SATU tombol `🏆 Scan Best Pool 24H +
+  Holder` (`key="best-pool-scan-24h"`) + pill `24H · F/V ≥ 5×` + caption
+  per-result (`N pool tersimpan` / `belum di-scan`). Tombol 30M, tombol pindah
+  lihat ◼/◻, kolom **Src**, `best_pool_scan_30m`, `best_pool_lane` dan helper
+  gabung `best_rows_from_lanes()` **dihapus**; hasil lama tidak dibuang —
+  `normalize_best_lane()` memetakan `30m|1h|both|''` → `24h`, dan
+  `row_best_gaps()` menormalkan `timeframe` baris + memberi prefix `24H: `,
+  jadi sesi/cache lama ikut bersih saat dirender ulang. `BEST_FV_30M_MIN`
+  ditinggalkan sebagai konstanta mati.
+- **Saringan** (`meteora_screener.row_best_gaps`, satu jalur sebelum
+  `enrich_pools`): volat di window `BEST_VOL_SHOW_MIN..MAX` (**1%–10%,
+  inklusif** — di bawah "pool nyaris tidak bergerak", di atas "pergerakan lebih
+  besar dari fee") → F/V `>= 5×` → Top10 `< 20%`. Batas Top10 dipindah ke sisi
+  **buang** (`>= 20%` gugur; tepat 20,0% tidak lagi tampil) menggantikan aturan
+  `> 20%` sub-batch sebelumnya, `None` tetap lolos. V = 0 tetap dibuang total
+  (`row_volatility_zero`, counter `dropped_volatility`). Semua teks gap dibaca
+  dari konstanta.
+- **15 kolom** satu sumber (`best_pool_ui._COL_SPEC`, dibaca `_lane_titles()` +
+  builder sel): Token · F/V · Fee/TVL · Volat · **Active Range** · **LPs** ·
+  Dust %MC · Fee % · MC · A.TVL · Vol 24h · Top10 · **RugCheck** · Pool · ⭐
+  (Active Range ke kanan Volat sesuai permintaan; LPs tepat di kanannya; A.TVL
+  turun ke indeks 9 karena RugCheck masuk). **LPs hijau** `#16a34a` bold hanya
+  bila `lps_count > 100` (`LP_GREEN_MIN_LP`, strict — tepat 100 tidak berubah;
+  tidak ada pill/ikon tambahan).
+- **Safeguard Jupiter** (user: *"scan baru saya tambahkan jupiter safeguard
+  untuk filter yang mungkin rug"*): `best_filter_by()` =
+  `base_token_has_critical_warnings=false&&quote_token_has_critical_warnings=false&&pool_type=dlmm&&active_tvl>=50000`
+  — konstanta `JUPITER_SAFEGUARD_FILTERS` (bisa dimatikan `safeguard=False`).
+  `filter_by()` reguler (card 🌊 Watchlist Meteora) sengaja TIDAK ikut berubah:
+  watchlist harus tetap melihat seluruh payload untuk rule metriknya.
+- **Kolom RugCheck** = modul baru `rugchecker.py`. Sumber datanya koreksi kedua
+  user: **`GET https://www.rugchecker.cc/api/honeypot/checker?address=<mint>`**
+  (bukan rugcheck.xyz, **tanpa API key**; hanya header browser — cookie `_ga`
+  analytics sengaja tidak dikirim). Sel menampilkan ringkas `data.is_honeypot`
+  + `data.security` + `data.dex[]` (top `MAX_LIQ_LINES=3` pool + `+N pool`,
+  total likuiditas, jumlah pool); verdict **RUG** (honeypot) / **BERISIKO**
+  (mintable, freezable, non-transferable, transfer-hook, `transfer_fee > 0`) /
+  **WASPADA** (fee-upgradable, balance/metadata mutable, closable) / **AMAN**;
+  tanpa laporan → `—`, **tidak pernah** `AMAN`. `market_cap` diambil dari pool
+  terbesar saja (pool debu melapor MC $1,9 M di likuiditas $0,16). "Metode
+  tambahan" yang diminta user = tiga catatan tanpa request tambahan: kedalaman
+  pool ini vs `POOL_MIN_LIQ_USD` ($10K), share likuiditas pool ini vs
+  `POOL_SHARE_MIN_PCT` (25%), konsentrasi pasar (`BIG_POOL_SHARE_PCT` 10% —
+  kalimat "sisanya debu" hanya ditulis kalau memang ada sisa). RugCheck **tidak
+  pernah membuang baris**. Cache `rugchecker_cache.json` (TTL 1800 s sukses /
+  300 s gagal, LRU 400, tulis atomik) **di-gitignore**. `rugchecker.py` dilarang
+  mengimpor Streamlit/`dashboard_components` (`requests` lazy) supaya bisa
+  dipakai cron + tes.
+- **Tes.** Baru: `tests/test_rugchecker.py` (33) + `tests/test_temp_page_ui.py`
+  (9). Retarget: `tests/test_best_pool_scan.py` (80, semua pin satu-lane/kolom/
+  batas-inklusif/teks-ikuti-konstanta), `tests/test_best_fv_prefilter.py` (13,
+  gate sebelum enrichment + window volat + Top10 sebelum Helius),
+  `tests/test_lp_card_ui.py` + `tests/test_alert_toggle_per_token.py` +
+  `tests/test_manual_scan_alerts.py` (dijalankan lewat
+  `pages/6_📦_TEMP.py`), `tests/test_page_router.py` (TEMP),
+  `tests/test_pre_pump_screener.py` (isi `pages/` = `5_🧮_Holder.py` +
+  `6_📦_TEMP.py`), `tests/test_meteora_active_range.py` (15 kolom, indeks 4/5/9).
+  Dihapus sebagai pin yang sudah usang: dua tombol/`Src`/`both`, `> 20%`, kolom
+  `Dust`/`Src`. Suite penuh: **1059 tes**, `18 failed + 1 error` — **nama
+  kegagalannya identik dengan baseline `main` (`dd644c6`)**; yang tersisa
+  semuanya kegagalan lama `%dust`/`_dust_badge_html` (badge dihapus
+  2026-09-13), bukan regresi batch ini.
+
+## Update 2026-09-16 — 🏆 Best Pool Meteora: Top10 holder di atas 20% dibuang
+
+## Update 2026-09-16 — 🏆 Best Pool Meteora: Top10 holder di atas 20% dibuang
+
+- Permintaan user: *"scan meteora, TOP 10 diatas 20% jangan ditampilkan lagi"*.
+  Card Scan Best Pool Meteora adalah satu-satunya scanner Meteora yang tersisa
+  (🌊 Scan Meteora Pool dihapus 2026-09-15), dan kolom **Top10** di listingnya
+  adalah angka `top_holders_pct` API Meteora (persen supply token **base** di
+  10 wallet teratas) — jadi permintaannya dibaca sebagai saringan listing, bukan
+  pengubahan kolomnya.
+- **`meteora_screener.BEST_TOP10_MAX_PCT = 20.0`** (baru) +
+  `row_top10_pct()` / `row_top10_over()` / `row_top10_ok()`. Aturan dipatok di
+  **`row_best_gaps()`** — fungsi saringan yang sudah ada — supaya: (a) pool
+  gugur **sebelum** `enrich_pools()`, kuota Helius tidak terbakar; (b) berlaku
+  otomatis di **kedua** lane (24H dan 30M) dan di kedua jalur (scan baru lewat
+  `scan_best_lane` + render ulang hasil lama/cache — card memanggil
+  `row_best_gaps` lagi saat render, jadi sesi lama ikut bersih tanpa scan
+  ulang); (c) kandidat gugur tetap auditabel di listing **"▶ N pool dilewati"**
+  24H dengan alasan `Top10 45% > 20% — holder terpusat` (30M: kandidat gagal
+  memang tidak pernah ditampilkan, aturan lama card).
+- **Batas inklusif** (`> 20%` gugur, tepat `20,0%` masih tampil) mengikuti
+  bacaan "diatas 20%"; **`None`/bukan-angka lolos** — tanpa data tidak ada
+  bukti konsentrasi, barisnya tetap tampil dengan `—` di kolom Top10 (sengaja
+  beda dari metrik F/V yang justru gugur bila angkanya hilang: di sana angka
+  hilang membuat syarat TIDAK terbukti terpenuhi, di sini angka hilang membuat
+  larangan TIDAK terbukti kena). Cek Top10 dijalankan **setelah** ambang lane
+  lolos supaya teks gap tetap satu baris seperti sebelumnya.
+- Nama konstantanya **bukan** pengaktifan balik rule lama "top 10 < 30%"
+  (dicabut 2026-09-11) — angka, arah dan maknanya baru; `BEST_FEE_RATIO_MIN` /
+  `BEST_TOTAL_LPS_MIN` tetap mati dan tetap di-pin hilang oleh tes.
+- Teks yang ikut berubah: `best_pool_tooltip()` (aturan card — Top10 tidak lagi
+  disebut "bukan syarat", kini menyebut batas + angka dari konstanta), tooltip
+  sel Top10 (`hanya informasi, bukan saringan lagi sejak 2026-09-11` → saringan
+  sejak 2026-09-16), help tombol disembunyikan, docstring modul
+  `meteora_screener` / `best_pool_ui`, label log aktivitas
+  (`N gagal F/V …` → `N gagal saringan (F/V/Top10) …`), README (baris tabel
+  syarat kelolosan + tabel ambang) dan blok **Ambang** di file ini.
+- **Tes** (`tests/test_best_pool_scan.py`, +10): kelas gate Top10
+  (`test_row_top10_dan_boundary_inklusif` — 19,999/20,0 lolos, 20,01/45/100
+  gugur; `test_top10_hilang_tidak_gugur`; `test_top10_gugur_di_kedua_lane_dengan_alasan`;
+  `test_top10_hanya_dicek_setelah_ambang_lane_lolos`;
+  `test_teks_dan_keputusan_top10_ikuti_konstanta` — mock konstanta mengubah
+  angka DAN kelolosan; `test_filter_best_rows_menghitung_top10_sebagai_dilewati`),
+  dua tes pipeline (`enrich_pools` tidak pernah dipanggil untuk pool > 20%,
+  gugur juga di lane 30M) dan dua AppTest card (baris 45% hilang dari tabel
+  lolos + muncul di listing dilewati dengan teks "gugur", 30M tidak menampilkan
+  apa pun tentangnya). `test_saringan_lama_tetap_mati` disesuaikan: Top10
+  dicabut dari daftar "saringan mati".
+  Suite penuh: **1012 tes** (= 1002 baseline + 10 baru, semuanya hijau);
+  kegagalannya **18 failed + 1 error — identik baseline `main` HEAD
+  `2b273ed`** (diff daftar nama tes gagal kosong: tidak ada regresi baru).
+
 ## Update 2026-09-15 — Best Pool: F/V ekstrem, Token = pasangan pool, urut Fee/TVL
 
 - Permintaan user: *"coba cek last scan"* → *"gold menunjukkan 6328266.1 F/V"*
@@ -768,14 +908,21 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   sore: 24H `F/V ≥ BEST_FV_24H_MIN` (5×, inklusif) dan 30M
   `F/V > BEST_FV_30M_MIN` (1× strict; F == V di-skip), F/V dibaca lewat
   `row_fv_ratio()` = quotient yang sama dengan kolom F/V card + kunci urut
-  (**kedua** sejak 2026-09-15; Fee/TVL yang pertama). Ambang + tanda pembanding dibaca dari konstanta **saat memanggil**
+  (**kedua** sejak 2026-09-15; Fee/TVL yang pertama). Sejak 2026-09-16 ada
+  saringan KEDUA di `row_best_gaps` yang sama di kedua lane: **Top10
+  `> BEST_TOP10_MAX_PCT` (20%) gugur** (`row_top10_ok()` /
+  `row_top10_over()`; hanya dicek bila ambang lane lolos, jadi teks gap tetap
+  satu baris). Ambang + tanda pembanding dibaca dari konstanta **saat memanggil**
   (`lane_fv_min` / `lane_fv_inclusive` / `lane_fv_sign` +
   `best_lane_gate_label()`), jangan disalin ke dict/teks. `row_dust_ok()` /
   `row_volume_ok()` selalu `True` (dust + volume bukan syarat lagi),
   `BEST_VOLATILITY_MIN` / `BEST_VOLUME_24H_MIN` / `BEST_DUST_MAX_PCT` =
   konstanta mati. Saringan fee/active TVL / top 10 holder / total LPs /
   active TVL yang lama **dihapus** — konstantanya tidak ada lagi, jangan
-  dipakai ulang.
+  dipakai ulang. **Kecuali Top10**: `BEST_TOP10_MAX_PCT` yang sekarang adalah
+  nama BARU untuk aturan BARU (buang `> 20%` supply, `None` lolos) — **bukan**
+  rule lama "top 10 holder < 30%" yang dicabut 2026-09-11; jangan dibaca
+  sebagai pengaktifan balik aturan lama itu.
   `scan_best_lane(lane)` = jantung card ini: **satu tombol = satu
   timeframe** (`fetch_best_pools(timeframe=lane)` saja) → `drop_quote_rows` →
   saringan lane lewat `row_best_gaps(row, lane=lane)` **sebelum**
@@ -1302,10 +1449,17 @@ badge BEST POOL       : < 0.1% marketcap (DUST_BEST_PCT, aditif) + data
                         fee_active_tvl_ratio / volatility; V=0 dengan F>0
                         lolos (kolom F/V = ∞); metrik hilang/nonfinite/negatif
                         gugur. Yang gugur di-skip SEBELUM enrich_pools dan
-                        masuk hidden_rows + best_gaps. Saringan lama dust <
+                        masuk hidden_rows + best_gaps. Saringan KEDUA di fungsi
+                        yang sama, baru 2026-09-16 dan sama di kedua lane:
+                        Top10 holder token base (top_holders_pct) >
+                        BEST_TOP10_MAX_PCT (20%, INKLUSIF -> tepat 20% masih
+                        tampil) gugur dengan alasan "Top10 x% > 20% — holder
+                        terpusat"; None (tidak terukur) TIDAK gugur dan tetap
+                        tampil dengan — di kolom Top10. Saringan lama dust <
                         0.05%, volatility >= 2%, volume >= $1M, fee/active TVL
-                        > 20%, top 10 < 30%, total LPs > 20, active TVL > 10K
-                        = DIHAPUS. Urutan tiap tabel (2026-09-15, permintaan
+                        > 20%, top 10 < 30% (aturan lama, angka & arah beda dari
+                        saringan baru di atas), total LPs > 20, active TVL >
+                        10K = TETAP DIHAPUS. Urutan tiap tabel (2026-09-15, permintaan
                         user): Fee/TVL (fee_active_tvl_ratio) terbesar -> F/V
                         terbesar -> volume/active TVL (volume_active_tvl_ratio)
                         -> dust % MC terkecil -> simbol; None turun di

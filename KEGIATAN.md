@@ -1,3 +1,116 @@
+# Kegiatan — 16 September 2026 (🏆 Best Pool Meteora: satu lane 24H + 📦 TEMP + kolom RugCheck)
+
+Batch kedua di hari yang sama, sembilan permintaan user sekaligus: **🌊
+Watchlist Meteora** dan **🛰 Scan Holder Solana** pindah ke halaman baru **📦
+TEMP**; **scan 30 menit dihapus** (sisa 24 jam saja); **Active Range** digeser ke
+kanan **Volat** dan **LPs** ke kanan Active Range; **Top10 `>= 20%` dibuang**
+(batas pindah ke sisi buang, mengoreksi batch pagi yang `> 20%`); **LPs hijau
+bila > 100**; **volat < 1 dan > 10 disembunyikan**; **safeguard Jupiter**
+(`base|quote_token_has_critical_warnings=false`) ditambahkan ke query scan; dan
+kolom baru **RugCheck** dari **`https://www.rugchecker.cc/api/honeypot/checker`**
+(koreksi user: bukan rugcheck.xyz, tanpa API key) **dalam versi yang lebih
+ringkas**, plus "metode tambahan" saya sendiri (kedalaman pool, share
+likuiditas, konsentrasi pasar) sebagai penjelasan ringkas.
+
+## Yang diubah
+
+- **Halaman & pemindahan**: `app.py` jadi 2 card (🏆 Best Pool + 🧾 Log);
+  `temp_ui.py` (baru, 669 baris) + `pages/6_📦_TEMP.py` (wrapper) memuat
+  auto-refresh, card 🌊 Watchlist Meteora, dan section 🛰 Scan Holder Solana;
+  `page_router` mengenal slug `temp`/`6`. Fungsi yang dipatch tes dipanggil
+  lewat modulnya (`wl.`/`hs.`/`hh.`/…) supaya mock suite lama tetap kena.
+- **Satu lane**: `scan_best_lane`/`best_filter_by`/`_lane_titles` hanya 24H;
+  `normalize_best_lane` memetakan alias lama ke `24h` supaya hasil sesi/cache
+  lama dirender ulang dengan aturan baru (bukan dibuang); tombol 30M, kolom
+  **Src**, `best_rows_from_lanes()`, `best_pool_scan_30m`, `best_pool_lane`
+  dihapus.
+- **Saringan** `row_best_gaps` (dieksekusi sebelum `enrich_pools`, kuota Helius
+  aman): volat `1%–10%` inklusif (baru: `BEST_VOL_SHOW_MIN/MAX`) → F/V `>= 5×` →
+  Top10 `>= 20%` **dibuang** (sebelumnya `> 20%`). V=0 tetap dibuang total.
+- **15 kolom** dari satu `_COL_SPEC`: Active Range indeks 4, LPs 5 (hijau
+  `#16a34a` bold bila `> 100`), RugCheck 12 sebelum Pool.
+- **`rugchecker.py`** (baru): `fetch_raw` (1 request publik, header browser,
+  tanpa cookie), `summarize` (RUG/BERISIKO/WASPADA/AMAN/`—` + likuiditas ringkas
+  + 3 catatan metode tambahan, `market_cap` dari pool terbesar saja),
+  `check_tokens` (paralel 6, cache berkas TTL 1800/300 s + LRU 400),
+  `attach_to_rows` (menempel, tidak menyaring), `cell_parts` (angka/sub/tooltip
+  — UI tidak merakit ulang teks). Cache `rugchecker_cache.json` di-gitignore.
+- **Safeguard Jupiter** di `best_filter_by()` saja; `filter_by()` watchlist
+  tetap seperti dulu.
+- **Tes**: baru `tests/test_rugchecker.py` (33) + `tests/test_temp_page_ui.py`
+  (9); `tests/test_best_pool_scan.py` (80) dan `tests/test_best_fv_prefilter.py`
+  (13) diretarget ke satu lane; 4 file tes UI lama dijalankan lewat halaman
+  📦 TEMP; pin usang (dua tombol, `Src`, `> 20%`, 11 kolom) dihapus.
+  `python -m unittest discover -s tests` → **1059 tes**, `18 failed + 1 error`
+  dengan **nama kegagalan identik baseline `dd644c6`** (bukan regresi batch ini).
+
+---
+
+# Kegiatan — 16 September 2026 (🏆 Best Pool Meteora: Top10 di atas 20% dibuang)
+
+Permintaan user: *"scan meteora, TOP 10 diatas 20% jangan ditampilkan lagi"*.
+Top10 = kolom **Top10** di card 🏆 Scan Best Pool Meteora, angkanya
+`top_holders_pct` dari API Meteora (persen supply token base di 10 wallet
+teratas). Sejak hari ini pool yang **terbukti** berkonsentrasi di atas 20%
+tidak masuk listing lagi — di kedua tombol (24H dan 30M).
+
+## Yang diubah
+
+- `meteora_screener.py`: konstanta **`BEST_TOP10_MAX_PCT = 20.0`** + helper
+  `row_top10_pct()` / `row_top10_over()` / `row_top10_ok()`. Saringannya
+  ditempel di **`row_best_gaps()`**, tepat setelah ambang F/V lane lolos, jadi
+  ia ikut jalur saringan yang sudah ada: jalan **sebelum** `enrich_pools()`
+  (holder pool gugur tidak pernah di-fetch — kuota Helius aman), berlaku untuk
+  scan per-lane (`scan_best_lane`) **dan** untuk hasil lama/cache yang
+  dirender ulang card, dan kandidat gugur masuk `hidden_rows` dengan alasan
+  `"24H: Top10 45% > 20% — holder terpusat"`.
+- Keputusan batas: **inklusif** — tepat 20,0% masih tampil (yang dibuang hanya
+  yang *di atas* 20%, sesuai kalimat user). Baris **tanpa angka** Top10
+  (`None`, hasil scan lama) tetap lolos dan tampil `—`: tanpa data tidak ada
+  bukti konsentrasi. (Ini beda dari metrik F/V, yang justru gugur bila angkanya
+  hilang — di sana syarat tidak terbukti terpenuhi, di sini larangan tidak
+  terbukti kena.)
+- `best_pool_ui.py`: tooltip judul card tidak lagi menulis "Top10 bukan syarat
+  kelolosan" — sekarang menyebut batas 20% **dari konstanta**
+  (`BEST_TOP10_MAX_PCT`), plus status `None`; tooltip sel Top10 berubah dari
+  "hanya informasi, bukan saringan lagi sejak 2026-09-11" menjadi saringan
+  sejak 2026-09-16; help tombol "▶ N pool dilewati" menyebut dua alasan skip.
+  Kolom Top10 itu sendiri tetap ada — yang hilang cuma barisnya.
+- Log aktivitas (`scan-best-pool`): angka rekap kini "N gagal saringan
+  (F/V/Top10) tanpa scan holder".
+- Nama `BEST_TOP10_MAX_PCT` **bukan** rule lama yang dihidupkan balik: saringan
+  lama "top 10 holder < 30%" tetap dicabut (2026-09-11) dan `BEST_FEE_RATIO_MIN`
+  / `BEST_TOTAL_LPS_MIN` tetap mati — hanya namanya yang dipakai ulang dengan
+  angka + arah baru, dan itu dijelaskan di docstring + AGENTS.md.
+- Dok: `README.md` (baris tabel syarat kelolosan per lane + penjelasan sebelum
+  `enrich_pools` + tabel ambang), `AGENTS.md` (blok "Sumber kebenaran" +
+  **Ambang** + blok update paling atas).
+
+## Verifikasi
+
+`python3 -m unittest discover tests` → **1012 tes, 18 failed + 1 error**.
+Baseline HEAD `2b273ed` (worktree terpisah) → **1002 tes, 18 failed + 1 error**
+dengan **daftar nama kegagalan yang identik** (diff kosong), jadi tidak ada
+regresi; 10 tes baru semuanya hijau:
+
+- `BestGatesTest`: batas inklusif 19,999/20,0 lolos vs 20,01/45/100 gugur,
+  `None`/`NaN`/string lolos, alasan gap di 24H **dan** 30M, gap Top10 hanya
+  muncul kalau F/V sudah lolos, mock `BEST_TOP10_MAX_PCT` mengubah angka teks
+  sekaligus kelolosan, dan `filter_best_rows` menghitung gugur Top10 sebagai
+  "dilewati" (vol-0 tetap tidak dihitung);
+- `ScanLaneTest`: `enrich_pools` tidak pernah menerima pool > 20% (dan yang
+  tepat 20% tetap lolos), gugur juga di lane 30M;
+- `BestPoolCardTest` (AppTest): baris Top10 45% hilang dari tabel 24H tapi
+  muncul di listing "dilewati" dengan teks `gugur: Top10 45% > 20%`, tabel 30M
+  tidak menampilkannya sama sekali + caption jumlah ikut berubah.
+  `test_saringan_lama_tetap_mati` disesuaikan (Top10 dicabut dari daftar
+  saringan mati).
+
+Catatan sesi: sandbox tidak punya egress ke `pool-discovery-api.datapi.meteora.ag`
+(TLS dipotong), jadi scan live tidak bisa dijalankan dari sini — filter diverifikasi
+dengan payload API yang di-mock, dan akan langsung berlaku saat scan berikutnya di
+deployment.
+
 # Kegiatan — 15 September 2026 (🏆 Best Pool: F/V ekstrem, Token = pasangan pool, urut Fee/TVL)
 
 Permintaan user: *"coba cek last scan"* → *"gold menunjukkan 6328266.1 F/V"* →
