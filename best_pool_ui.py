@@ -58,7 +58,10 @@ tidak relevan lagi, diganti pill lane di kepala card.
   sel volatility terbesar, sel F/V tertinggi, dan sel Fee/TVL tertinggi scan
   itu — seri di puncak ikut ditandai semua; tabel "dilewati" tidak ditandai;
 - filter API tetap ``pool_type=dlmm&&active_tvl>=50000``; dust, volume,
-  volatility minimal, tier fee, top10 dan LPs **bukan** syarat;
+  volatility minimal, tier fee dan LPs **bukan** syarat — **Top10 ya**:
+  pool dengan 10 holder teratas **di atas 20% supply** dibuang dari listing
+  (``BEST_TOP10_MAX_PCT``, permintaan user 2026-09-16: *"scan meteora,
+  TOP 10 diatas 20% jangan ditampilkan lagi"*), tanpa scan holder;
 - kolom konteks menampilkan detail fee dan active TVL (**A.TVL**,
   **Fee/TVL** dengan fee USD + tier fee, Vol dengan Δ volume + rasio
   volume/active TVL) sebagai informasi.
@@ -128,7 +131,8 @@ def best_lane_detail(lane) -> tuple[str, str, str]:
 
 def best_pool_tooltip() -> str:
     """Rule ada di tooltip, bukan caption — dua tombol, satu lane per tombol."""
-    from meteora_screener import BEST_ACTIVE_TVL_MIN, BEST_LANES
+    from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_LANES,
+                                  BEST_TOP10_MAX_PCT)
 
     gates = " · ".join(f"{best_lane_detail(lane)[0]}: {best_lane_gate_text(lane)}"
                        for lane in BEST_LANES)
@@ -149,8 +153,14 @@ def best_pool_tooltip() -> str:
         "pun: pool tanpa pergerakan dibuang dari listing, juga tidak masuk "
         "tabel disembunyikan 24H atau hitungan \"dilewati\". Metrik "
         "hilang/tidak valid dilewati (tetap terlihat di tabel disembunyikan "
-        "24H). Hanya pool lolos yang mengambil detail holder FULL "
-        "Helius. Dust, volume, tier fee, Top10 dan LPs bukan syarat "
+        "24H). Kolom Top10 ikut jadi saringan (permintaan user 2026-09-16: "
+        "\"TOP 10 diatas 20% jangan ditampilkan lagi\"): pool dengan 10 "
+        "holder teratas token base di atas "
+        f"{BEST_TOP10_MAX_PCT:g}% supply ikut dibuang SEBELUM scan holder "
+        "di kedua lane — batasnya inklusif (tepat 20% masih tampil) dan "
+        "baris tanpa angka Top10 tetap tampil (tidak ada bukti "
+        "konsentrasi). Hanya pool lolos yang mengambil detail holder FULL "
+        "Helius. Dust, volume, tier fee dan LPs bukan syarat "
         "kelolosan. Urutan tiap tabel: Fee/TVL terbesar, lalu F/V "
         "terbesar, lalu volume/active TVL terbesar, lalu dust %MC "
         "terkecil. Tiap lane punya tabel + session "
@@ -555,7 +565,8 @@ def _render_best_table(rows: list, *, lane: str,
     from dashboard_components import _number
     from links import external_links_html, pool_links_html
     from lp_watchlist import LP_SOURCE
-    from meteora_screener import normalize_best_lane, row_dust_pct, row_fv_ratio
+    from meteora_screener import (BEST_TOP10_MAX_PCT, normalize_best_lane,
+                                  row_dust_pct, row_fv_ratio)
     from meteora_screener import row_pair_label, row_vol_tvl_ratio
     from watchlist import add_to_watchlist
 
@@ -679,8 +690,10 @@ def _render_best_table(rows: list, *, lane: str,
              "(terbesar dulu; setelah Fee/TVL & F/V), informasi "
              "(bukan saringan)"),
             (_pct_or_dash(row.get("top_holders_pct")), "top10",
-             "10 holder teratas token base (% supply) — hanya "
-             "informasi, bukan saringan lagi sejak 2026-09-11"),
+             "10 holder teratas token base (% of supply) — saringan sejak "
+             f"2026-09-16: Top10 di atas {BEST_TOP10_MAX_PCT:g}% tidak "
+             "ditampilkan (batas inklusif; tanpa angka = tidak terukur, "
+             "barisnya tetap tampil)"),
             (_num_or_dash(row.get("total_lps")), "lps",
              "jumlah liquidity provider pool — hanya informasi, bukan "
              "saringan lagi sejak 2026-09-11"),
@@ -946,8 +959,8 @@ def render_best_pool_scan() -> None:
                     if showing_hidden else f"▶ {hidden} pool dilewati")
             if st.button(view, key=f"best-pool-toggle-hidden-{active}",
                          help=f"Tampilkan kandidat {label} yang di-skip karena "
-                              "di bawah ambang F/V lane ini; holdernya tidak "
-                              "pernah di-scan.",
+                              "di bawah ambang F/V lane ini atau Top10 di atas "
+                              "batas; holdernya tidak pernah di-scan.",
                          use_container_width=True):
                 st.session_state[best_lane_hidden_key(active)] = \
                     not showing_hidden

@@ -20,8 +20,13 @@ pool, kita akan punya 2 tombol 24H dan 30M"*. Yang di-pin di file ini:
 - urutan tiap tabel (permintaan user 2026-09-15 lanjutan: *"sebentar, kita
   urutkan fee/TVL paling besar dulu, baru perkalian f/v"*): **Fee/TVL
   terbesar** → **F/V terbesar** → volume/active TVL → dust %MC terkecil;
-- dust, volatility minimal, volume 24 jam, tier fee, top10 dan LPs **bukan**
+- dust, volatility minimal, volume 24 jam, tier fee dan LPs **bukan**
   saringan — dan tidak boleh dihidupkan balik;
+- **Top10 holder di atas 20% supply dibuang** (``BEST_TOP10_MAX_PCT``,
+  permintaan user 2026-09-16: *"scan meteora, TOP 10 diatas 20% jangan
+  ditampilkan lagi"*) — saringan kedua di :func:`row_best_gaps` setelah ambang
+  F/V lane, ikut **sebelum** fetch holder, di kedua lane; batas inklusif
+  (20,0% persis masih tampil) dan ``None`` (tidak terukur) tidak gugur;
 - **satu tabel per lane** di ``best_pool_ui``: hasil disimpan di
   ``best_pool_scan_24h`` / ``best_pool_scan_30m``, kolom ``Src`` dihapus,
   toggle "disembunyikan" + prefix key ⭐ ikut per-lane, dan hasil sesi lama
@@ -357,20 +362,23 @@ class BestGatesTest(unittest.TestCase):
                 ["30M: F/V ≤ 2×"])
 
     def test_saringan_lama_tetap_mati(self):
-        """Dust / volatility / volume / tier fee / top10 / LPs bukan syarat.
+        """Dust / volatility / volume / tier fee / LPs bukan syarat — Top10 ya.
 
         Kriteria 2026-09-13 menghapus saringan-saringan itu (permintaan user:
         "dust% syaratnya hapus saja", "minimal volume" dicabut, chip BEST
         POOL dihapus) — angka-angkanya boleh diacak, barisnya tetap lolos.
+        **Top10 dikecualikan sejak 2026-09-16**: ambangnya dihidupkan lagi
+        dengan angka baru (20%, bukan 30% lama) atas permintaan user
+        "TOP 10 diatas 20% jangan ditampilkan lagi" — jadi baris ini tetap
+        lolos karena `_row()` membawa Top10 20,0% (batas inklusif).
         """
-        row = _row(active_tvl=0, top_holders_pct=99.0, total_lps=0,
-                   fee_pct=0.5, volume=0, dust_count=99_999,
-                   analysis=_proof(9.9))
+        row = _row(active_tvl=0, total_lps=0, fee_pct=0.5, volume=0,
+                   dust_count=99_999, analysis=_proof(9.9))
         self.assertEqual(ms.row_best_gaps(row), [])
         self.assertTrue(ms.row_dust_ok(row))
         self.assertTrue(ms.row_volume_ok(row))
-        for gone in ("BEST_FEE_RATIO_MIN", "BEST_TOP10_MAX_PCT",
-                     "BEST_TOTAL_LPS_MIN"):
+        self.assertTrue(ms.row_top10_ok(row))
+        for gone in ("BEST_FEE_RATIO_MIN", "BEST_TOTAL_LPS_MIN"):
             self.assertFalse(hasattr(ms, gone), gone)
         # Ambang lama masih ada sebagai konstanta mati: mengubahnya tidak boleh
         # mengubah kelolosan siapa pun.
@@ -402,6 +410,68 @@ class BestGatesTest(unittest.TestCase):
                     rows, lane=lane)
                 self.assertEqual([r["pool_address"] for r in kept], ["LOLOS"])
                 self.assertEqual((hidden_metric, hidden_dust), (1, 0))
+
+    # ---- Top10 holder: saringan layar kedua (permintaan user 2026-09-16) ----
+
+    def test_row_top10_dan_boundary_inklusif(self):
+        """Batas "di atas 20%" = > 20 gugur; tepat 20,0% masih tampil."""
+        self.assertEqual(ms.BEST_TOP10_MAX_PCT, 20.0)
+        self.assertEqual(ms.row_top10_pct(_row(top_holders_pct=23.5)), 23.5)
+        self.assertIsNone(ms.row_top10_pct(_row(top_holders_pct=None)))
+        self.assertIsNone(ms.row_top10_pct(None))
+        for pct, ok in ((0.0, True), (19.999, True), (20.0, True),
+                        (20.01, False), (45.0, False), (100.0, False)):
+            with self.subTest(pct=pct):
+                row = _row(top_holders_pct=pct)
+                self.assertEqual(ms.row_top10_ok(row), ok)
+                self.assertEqual(not ms.row_best_gaps(row), ok)
+                if ok:
+                    self.assertIsNone(ms.row_top10_over(row))
+                else:
+                    self.assertEqual(ms.row_top10_over(row), pct)
+
+    def test_top10_hilang_tidak_gugur(self):
+        """Tanpa angka Top10 tidak ada bukti konsentrasi — barisnya tetap lolos."""
+        for missing in (None, "", "bukan angka", True, float("nan")):
+            with self.subTest(top10=missing):
+                row = _row(top_holders_pct=missing)
+                self.assertIsNone(ms.row_top10_pct(row))
+                self.assertTrue(ms.row_top10_ok(row))
+                self.assertEqual(ms.row_best_gaps(row), [])
+
+    def test_top10_gugur_di_kedua_lane_dengan_alasan(self):
+        """Satu aturan untuk 24H dan 30M; teks gap menyebut lane + angkanya."""
+        self.assertEqual(
+            ms.row_best_gaps(_row(top_holders_pct=45.0)),
+            ["24H: Top10 45% > 20% — holder terpusat"])
+        self.assertEqual(
+            ms.row_best_gaps(_row(timeframe="30m", top_holders_pct=20.5,
+                                  **_fv(30.0, 10.0))),
+            ["30M: Top10 20.5% > 20% — holder terpusat"])
+
+    def test_top10_hanya_dicek_setelah_ambang_lane_lolos(self):
+        """Gugur F/V sudah cukup jadi alasan — tidak ada gap kedua."""
+        row = _row(top_holders_pct=99.0, **_fv(2.0, 10.0))
+        self.assertEqual(ms.row_best_gaps(row), ["24H: F/V < 5×"])
+
+    def test_teks_dan_keputusan_top10_ikuti_konstanta(self):
+        with mock.patch.object(ms, "BEST_TOP10_MAX_PCT", 12.0):
+            self.assertEqual(ms.row_best_gaps(_row(top_holders_pct=15.0)),
+                             ["24H: Top10 15% > 12% — holder terpusat"])
+            self.assertFalse(ms.row_top10_ok(_row(top_holders_pct=15.0)))
+        with mock.patch.object(ms, "BEST_TOP10_MAX_PCT", 90.0):
+            self.assertEqual(ms.row_best_gaps(_row(top_holders_pct=45.0)), [])
+            self.assertTrue(ms.row_top10_ok(_row(top_holders_pct=45.0)))
+
+    def test_filter_best_rows_menghitung_top10_sebagai_dilewati(self):
+        """Gugur Top10 dihitung sama seperti gugur F/V (tetap auditabel 24H)."""
+        rows = [_row(pool_address="BERSIH", top_holders_pct=12.0),
+                _row(pool_address="PUSAT", top_holders_pct=88.0),
+                _row(pool_address="NOLVOL", top_holders_pct=88.0,
+                     **_fv(50.0, 0))]
+        kept, hidden_metric, hidden_dust = ms.filter_best_rows(rows)
+        self.assertEqual([r["pool_address"] for r in kept], ["BERSIH"])
+        self.assertEqual((hidden_metric, hidden_dust), (1, 0))
 
 
 class SortBestRowsTest(unittest.TestCase):
@@ -604,6 +674,53 @@ class ScanLaneTest(unittest.TestCase):
                          {("30M: F/V ≤ 1×",)})
         self.assertEqual(result["hidden_metric"], 1)
         self.assertEqual(result["dropped_volatility"], 1)
+
+    def test_top10_di_atas_20_dibuang_sebelum_fetch_holder(self):
+        """Saringan Top10 sejalur dengan ambang F/V: holder tidak pernah di-fetch.
+
+        Permintaan user 2026-09-16: *"scan meteora, TOP 10 diatas 20% jangan
+        ditampilkan lagi"*. Yang di atas batas gugur sebelum ``enrich_pools``
+        (kuota Helius aman) dan masuk ``hidden_rows`` dengan alasannya; yang
+        tepat 20% dan yang tanpa angka tetap lolos.
+        """
+        pools = [_pool("P-BERSIH", "MintBersih", ratio=40.0, volatility=6.2,
+                       top10=12.0),
+                 _pool("P-PAS", "MintPas", ratio=30.0, volatility=6.0,
+                       top10=20.0),
+                 _pool("P-PUSAT", "MintPusat", ratio=60.0, volatility=6.0,
+                       top10=45.0)]
+        with mock.patch.object(ms, "fetch_best_pools", return_value=pools), \
+                mock.patch.object(ms, "enrich_pools",
+                                  side_effect=self._fake_enrich) as enrich:
+            result = ms.scan_best_lane("24h", max_wallets=2000)
+        self.assertEqual(sorted(r["pool_address"] for r in enrich.call_args.args[0]),
+                         ["P-BERSIH", "P-PAS"])
+        self.assertEqual(sorted(r["pool_address"] for r in result["rows"]),
+                         ["P-BERSIH", "P-PAS"])
+        self.assertEqual([r["pool_address"] for r in result["hidden_rows"]],
+                         ["P-PUSAT"])
+        self.assertEqual({tuple(r["best_gaps"]) for r in result["hidden_rows"]},
+                         {("24H: Top10 45% > 20% — holder terpusat",)})
+        self.assertEqual(result["hidden_metric"], 1)
+        # Baris yang dibuang tidak pernah sampai ke layar tabel utama.
+        self.assertNotIn("P-PUSAT", [r["pool_address"] for r in result["rows"]])
+
+    def test_top10_gugur_di_lane_30m_pula(self):
+        """Satu aturan untuk kedua tombol — 30M juga membuang Top10 > 20%."""
+        pools = [_pool("P-PUSAT", "MintPusat", ratio=30.0, volatility=10.0,
+                       top10=21.0),
+                 _pool("P-DOMINAN", "MintDom", ratio=30.0, volatility=10.0,
+                       top10=5.0)]
+        with mock.patch.object(ms, "fetch_best_pools", return_value=pools), \
+                mock.patch.object(ms, "enrich_pools",
+                                  side_effect=self._fake_enrich) as enrich:
+            result = ms.scan_best_lane("30m", max_wallets=2000)
+        self.assertEqual([r["pool_address"] for r in enrich.call_args.args[0]],
+                         ["P-DOMINAN"])
+        self.assertEqual([r["pool_address"] for r in result["rows"]],
+                         ["P-DOMINAN"])
+        self.assertEqual([r["pool_address"] for r in result["hidden_rows"]],
+                         ["P-PUSAT"])
 
     def test_semua_gugur_tanpa_fetch_holder(self):
         with mock.patch.object(ms, "fetch_best_pools",
@@ -825,6 +942,58 @@ class BestPoolCardTest(unittest.TestCase):
         # (ambang hanya di tooltip judul + sub sel F/V).
         self.assertIn("1 pool 24H disembunyikan ditampilkan", captions)
         self.assertNotIn("F/V ≤", captions)
+
+    def test_top10_di_atas_20_tidak_tampil_di_tabel(self):
+        """24H: baris Top10 45% hilang dari tabel lolos, muncul sebagai "dilewati".
+
+        Sekaligus pin bahwa **hasil scan lama** yang sudah tersimpan di
+        session_state dibersihkan ulang saat render — user tidak perlu scan
+        lagi supaya pool berkonsentrasi tinggi hilang dari layar.
+        """
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result(
+            "24h", [_row(pool_address="PoolBersih", ca="MintBersih",
+                         symbol="BERSIH", top_holders_pct=12.0),
+                    _row(pool_address="PoolPusat", ca="MintPusat",
+                         symbol="PUSAT", top_holders_pct=45.0)],
+            fetched=2)
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn("$BERSIH", body)
+        self.assertNotIn("$PUSAT", body)
+        self.assertNotIn("MintPusat", body)
+        captions = "\n".join(node.value for node in app.caption)
+        self.assertIn("1 pool 24H tampil · 1 dilewati · listing 2 pool.",
+                      captions)
+        # Kandidat Top10 tetap bisa diaudit lewat listing disembunyikan 24H.
+        app.button(key="best-pool-toggle-hidden-24h").click().run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn("$PUSAT", body)
+        self.assertIn("gugur: Top10 45% > 20% — holder terpusat", body)
+
+    def test_top10_di_atas_20_tidak_tampil_sama_sekali_di_30m(self):
+        """30M: kandidat gugur (F/V atau Top10) memang tidak pernah ditampilkan."""
+        app = self._app()
+        app.session_state["best_pool_scan_30m"] = self._result(
+            "30m", [_row(pool_address="PoolPusat", ca="MintPusat",
+                         symbol="PUSAT30", timeframe="30m",
+                         top_holders_pct=45.0, **_fv(30.0, 10.0))],
+            fetched=2,
+            hidden=[_row(pool_address="PoolKecil", ca="MintKecil",
+                         symbol="KECIL30", timeframe="30m",
+                         **_fv(10.0, 10.0))])
+        app.session_state["best_pool_lane"] = "30m"
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertNotIn("$PUSAT30", body)
+        self.assertNotIn("MintPusat", body)
+        keys = [button.key or "" for button in app.button]
+        self.assertNotIn("best-pool-toggle-hidden-30m", keys)
+        captions = "\n".join(node.value for node in app.caption)
+        self.assertIn("0 pool 30M tampil · listing 2 pool.", captions)
 
     def test_volatility_nol_tidak_tampil_di_listing_dilewati_24h(self):
         """24H: pool vol-0 tidak ikut listing dilewati dan tidak dihitung
