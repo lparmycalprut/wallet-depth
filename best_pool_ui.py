@@ -628,6 +628,10 @@ def _render_best_table(rows: list, *, lane: str,
     from rugchecker import cell_parts as _rug_cell_parts
     from watchlist import add_to_watchlist
 
+    # Marker untuk sembunyikan header di mobile (CSS :has, lihat dashboard_components.render_styles).
+    # Header tabel desktop tidak diperlukan di HP karena tiap sel sudah punya sub-label (volat, dust, dll)
+    # dan header yang ikut menjadi card 2-kolom justru bikin bingung.
+    st.markdown('<div class="mobile-hide-next"></div>', unsafe_allow_html=True)
     header_cols = st.columns(_COL_SPEC)
     style = ("font-size:0.72rem;color:#000000;font-weight:700;"
              "text-align:center;")

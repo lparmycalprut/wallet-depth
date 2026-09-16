@@ -110,6 +110,219 @@ def render_styles() -> None:
     .pool-links a {font-size:.75rem;color:#1d4ed8;font-weight:700;
      text-decoration:none;}
     .pool-links a:hover {color:#000000;text-decoration:underline;}
+    /* Helper untuk menyembunyikan header tabel di mobile (dipakai best_pool_ui
+       + temp_ui). Elemen marker .mobile-hide-next disisipkan sebelum header
+       stHorizontalBlock, lalu header itu disembunyikan pada layar kecil. */
+    .mobile-hide-next {display:none;}
+    .desktop-only {display:block;}
+    .mobile-only {display:none;}
+    /* Cegah zoom gestur iOS yang aneh dan pastikan box-sizing rapi */
+    html { -webkit-text-size-adjust: 100%; }
+    *, *::before, *::after { box-sizing: border-box; }
+    /* Pastikan chart/canvas/image tidak meluber di mobile */
+    [data-testid="stImage"] img, canvas { max-width: 100% !important; height: auto !important; }
+    /* Dataframe/table: scroll horizontal halus di mobile */
+    [data-testid="stDataFrame"] > div, [data-testid="stTable"] { overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
+    /* Depth tables wrapper jadi scroll di layar kecil */
+    /* Semua tabel depth yang dirender via _depth_tables_html sudah flex-wrap, tapi tambahkan scroll bila masih sempit */
+    /* ===== Mobile Friendly Overrides ===== */
+    @media (max-width: 768px) {
+      .main .block-container {
+        max-width: 100% !important;
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+        padding-top: 0.85rem !important;
+        padding-bottom: 1rem !important;
+      }
+      /* Typography responsif — clamp agar tidak terlalu besar di tablet */
+      h1 { font-size: clamp(1.35rem, 5vw, 1.7rem) !important; line-height: 1.2 !important; word-break: break-word; }
+      h2 { font-size: clamp(1.15rem, 4vw, 1.4rem) !important; line-height: 1.25 !important; }
+      h3 { font-size: clamp(1.02rem, 3.6vw, 1.2rem) !important; }
+      /* Marker header: sembunyikan header tabel di mobile.
+         Marker dirender sebagai <div class="mobile-hide-next"> di dalam
+         stMarkdownContainer; container markdown itu sendiri disembunyikan (0 tinggi),
+         lalu horizontalBlock header setelahnya disembunyikan. :has() dipakai karena
+         marker bersarang di dalam container. */
+      div[data-testid="stMarkdownContainer"]:has(.mobile-hide-next) {
+        display: none !important;
+        height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+      }
+      div[data-testid="stMarkdownContainer"]:has(.mobile-hide-next) + div[data-testid="stHorizontalBlock"] {
+        display: none !important;
+      }
+      /* Fallback untuk browser/dirender tanpa :has — marker sendiri punya class, jadi header tetap tersembunyi lewat sibling generic */
+      .mobile-hide-next { display: none !important; }
+      .desktop-only { display: none !important; }
+      .mobile-only { display: block !important; }
+      /* Gap antar blok vertikal lebih lega di mobile untuk tap */
+      [data-testid="stVerticalBlock"] { gap: 0.85rem !important; }
+      [data-testid="stVerticalBlock"] > div { width: 100%; }
+      /* Horizontal block default: wrap jadi 2 kolom (grid) — card style */
+      [data-testid="stHorizontalBlock"] {
+        flex-wrap: wrap !important;
+        gap: 0.55rem !important;
+        align-items: stretch !important;
+      }
+      [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+        flex: 1 1 calc(50% - 0.55rem) !important;
+        min-width: calc(50% - 0.55rem) !important;
+        width: auto !important;
+        max-width: none !important;
+      }
+      /* Form (CA input + tombol) harus vertikal penuh — bukan 2 kolom */
+      [data-testid="stForm"] [data-testid="stHorizontalBlock"] {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 0.6rem !important;
+      }
+      [data-testid="stForm"] [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+        flex: 1 1 100% !important;
+        min-width: 100% !important;
+        width: 100% !important;
+      }
+      /* Metric KPI (Holder Analytic 4 kolom): tetap 2 kolom biar ringkas */
+      [data-testid="stMetric"] {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 0.55rem 0.6rem !important;
+      }
+      [data-testid="stMetricLabel"] p { font-size: 0.72rem !important; white-space: normal !important; }
+      [data-testid="stMetricValue"] { font-size: 1.05rem !important; }
+      [data-testid="stMetricDelta"] { font-size: 0.72rem !important; }
+      /* Header card pills wrap rapi */
+      .lp-head { gap: 0.4rem !important; padding: 0.35rem 0 0.15rem !important; }
+      .lp-title { font-size: 1.02rem !important; }
+      .lp-count, .lp-warn { font-size: 0.68rem !important; padding: 0.18rem 0.44rem !important; }
+      /* Watchlist token: alamat panjang wrap */
+      .watchlist-symbol { font-size: 0.98rem !important; }
+      .watchlist-mint { font-size: 0.66rem !important; word-break: break-all !important; }
+      .watchlist-pair { font-size: 0.72rem !important; }
+      .watchlist-metric-value { font-size: 0.88rem !important; }
+      .watchlist-metric-sub { font-size: 0.6rem !important; }
+      .watchlist-links a, .pool-links a { font-size: 0.7rem !important; }
+      /* Pool links di mobile rata kiri biar tidak mengambang */
+      .pool-links { justify-content: flex-start !important; gap: 0.35rem !important; }
+      /* Setiap baris dengan banyak kolom (Best Pool 15 kolom & LP 11 kolom)
+         jadikan card ber-border agar tiap token terpisah jelas saat wrap 2 kolom */
+      [data-testid="stHorizontalBlock"]:has(> [data-testid="column"]:nth-child(n+6)) {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 0.7rem 0.55rem !important;
+        box-shadow: 0 1px 4px rgba(15,23,42,0.06);
+      }
+      /* Kolom pertama (Token: symbol + pair + mint + links) bentang penuh di dalam card */
+      [data-testid="stHorizontalBlock"]:has(> [data-testid="column"]:nth-child(n+6)) > [data-testid="column"]:first-child {
+        flex: 1 1 100% !important;
+        min-width: 100% !important;
+        border-bottom: 1px solid #f1f5f9;
+        padding-bottom: 0.45rem !important;
+        margin-bottom: 0.15rem;
+      }
+      /* Kolom metric di dalam card sebaiknya tetap center tapi label lebih kecil */
+      [data-testid="stHorizontalBlock"]:has(> [data-testid="column"]:nth-child(n+6)) .watchlist-metric {
+        padding: 0.1rem 0;
+      }
+      /* Tombol aksi (⭐, 🔔/🔕, ✕, 📋, 🧮) lebih besar untuk jempol */
+      .stButton > button, [data-testid="stFormSubmitButton"] > button {
+        min-height: 44px !important;
+        padding: 0.55rem 0.9rem !important;
+        font-size: 0.9rem !important;
+        border-radius: 10px !important;
+      }
+      /* Tombol kecil di baris watchlist (ikon) tetap tap-friendly */
+      [data-testid="stHorizontalBlock"] .stButton > button {
+        min-height: 42px !important;
+        min-width: 42px !important;
+      }
+      /* Link holder 🧮 sebagai kotak juga lebih besar di mobile */
+      .watchlist-holder-link {
+        width: 2.6rem !important;
+        height: 2.6rem !important;
+        font-size: 1.15rem !important;
+        border-radius: 0.5rem !important;
+      }
+      /* Expander & container border lebih tipis di mobile */
+      [data-testid="stExpander"] { border-radius: 10px !important; }
+      div[data-testid="stVerticalBlockBorderWrapper"] {
+        padding: 0.7rem !important;
+      }
+      /* Caption lebih kecil agar tidak mendominasi */
+      [data-testid="stCaptionContainer"] p {
+        font-size: 0.76rem !important;
+        line-height: 1.45 !important;
+      }
+      /* Plot matplotlib: kurangi margin & pastikan responsif */
+      [data-testid="stPyplot"] { overflow-x: auto; }
+      /* Tabs: bisa discroll horizontal di mobile */
+      [data-testid="stTabs"] [role="tablist"] {
+        overflow-x: auto !important;
+        -webkit-overflow-scrolling: touch;
+        flex-wrap: nowrap !important;
+        gap: 0.25rem;
+      }
+      /* Depth tables: dari flex row jadi column di mobile */
+      /* Tabel yang dibungkus div flex-wrap: paksa column & scroll */
+      /* Semua tabel depth HTML: buat wrapper bisa scroll horizontal */
+      /* Selector umum untuk tabel di dalam markdown */
+      div[data-testid="stMarkdownContainer"] table {
+        display: block;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        max-width: 100%;
+      }
+      /* Pastikan blok markdown tidak membuat overflow horizontal */
+      [data-testid="stMarkdownContainer"] { overflow-wrap: break-word; word-break: break-word; }
+      /* Input & select: font 16px mencegah zoom otomatis iOS */
+      input, select, textarea { font-size: 16px !important; }
+      /* Sidebar di mobile: pastikan overlay penuh & tidak gepeng */
+      [data-testid="stSidebar"] { width: 85vw !important; max-width: 320px !important; }
+    }
+    @media (max-width: 480px) {
+      .main .block-container {
+        padding-left: 0.75rem !important;
+        padding-right: 0.75rem !important;
+      }
+      /* Pada layar sangat kecil, kebanyakan kolom jadi 1 kolom penuh, kecuali KPI metrics tetap 2 kolom */
+      [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+        flex: 1 1 100% !important;
+        min-width: 100% !important;
+      }
+      /* KPI metrics (berisi stMetric) pertahankan 2 kolom agar 4 metric jadi 2x2 grid, bukan 4 baris tinggi */
+      [data-testid="stHorizontalBlock"]:has([data-testid="stMetric"]) > [data-testid="column"] {
+        flex: 1 1 calc(50% - 0.55rem) !important;
+        min-width: calc(50% - 0.55rem) !important;
+      }
+      /* Header card: font lebih kecil lagi */
+      .lp-title { font-size: 0.98rem !important; }
+      /* Watchlist card di 480px: metric 2 kolom tadi sudah, tapi card dengan banyak kolom tetap 2 kolom biar tidak terlalu panjang */
+      [data-testid="stHorizontalBlock"]:has(> [data-testid="column"]:nth-child(n+6)) > [data-testid="column"] {
+        flex: 1 1 calc(50% - 0.55rem) !important;
+        min-width: calc(50% - 0.55rem) !important;
+      }
+      [data-testid="stHorizontalBlock"]:has(> [data-testid="column"]:nth-child(n+6)) > [data-testid="column"]:first-child,
+      [data-testid="stHorizontalBlock"]:has(> [data-testid="column"]:nth-child(n+6)) > [data-testid="column"]:last-child {
+        flex: 1 1 100% !important;
+        min-width: 100% !important;
+      }
+      /* Tombol di baris LP yang banyak (11 kolom) terakhir 4 ikon: buat 2+2 grid di 480px */
+    }
+    /* Fallback untuk browser tanpa :has() — pastikan tetap wrap walau card styling tidak aktif */
+    @supports not selector(:has(*)) {
+      @media (max-width: 768px) {
+        [data-testid="stHorizontalBlock"] {
+          flex-wrap: wrap !important;
+        }
+      }
+    }
+    /* Print-friendly: jangan potong card */
+    @media print {
+      .main .block-container { max-width: none !important; }
+    }
     </style>
     """, unsafe_allow_html=True)
 
