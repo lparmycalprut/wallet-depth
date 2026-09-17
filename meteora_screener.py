@@ -1457,7 +1457,9 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
     ``gmgn_liquidity.MIN_TOTAL_LIQ_USD`` — satu alasan gugur per baris supaya
     teksnya tetap satu baris, dengan alasan paling keras lebih dulu.
 
-    Saringan TERAKHIR (2026-09-17, permintaan user: *"jika grand total
+    (DIHAPUS 2026-09-17 malam — permintaan user *"filter likuiditas hapus
+    coba"*; angka GMGN kini hanya pewarna kolom RugCheck, > $500K hijau.)
+    Dulu saringan TERAKHIR (2026-09-17, permintaan user: *"jika grand total
     liquiditas kurang dari 1M, jangan tampilkan di hasil scan"* — ambangnya
     $500K sejak sore harinya, lihat :data:`gmgn_liquidity.MIN_TOTAL_LIQ_USD`):
     likuiditas **total GMGN di bawah ambang** gugur
@@ -1524,21 +1526,19 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
         if over is not None:
             return [f"{BEST_LANE_LABELS[normalized]}: Top10 {over:g}% ≥ "
                     f"{float(BEST_TOP10_MAX_PCT):g}% — holder terpusat"]
-        # Lalu likuiditas total GMGN < ambang (2026-09-17) — key ``gmgn_liq``
-        # hanya ada di baris hasil scan baru; tanpa key/alasan → lolos.
-        from gmgn_liquidity import row_gmgn_gap
-        gap = row_gmgn_gap(row)
-        if gap:
-            return [f"{BEST_LANE_LABELS[normalized]}: {gap}"]
+        # Saringan likuiditas total GMGN (< $500K) DIHAPUS 2026-09-17 malam
+        # (permintaan user: "filter likuiditas hapus coba") — angkanya tetap
+        # ditempel ke row["gmgn_liq"] untuk kolom RugCheck (hijau > $500K).
         return []
     sign = "<" if lane_fv_inclusive(normalized) else "≤"
     return [f"{BEST_LANE_LABELS[normalized]}: F/V {sign} {minimum:g}×"]
 
 
 def gmgn_min_label() -> str:
-    """Label ambang likuiditas GMGN (``$500K``) untuk teks log/UI.
+    """Label ambang WARNA likuiditas GMGN (``$500K``) untuk teks log/UI.
 
-    Dibaca dari :mod:`gmgn_liquidity` tiap dipanggil supaya teks tidak pernah
+    Sejak 2026-09-17 malam bukan lagi ambang saringan — hanya batas hijau
+    angka likuiditas di kolom RugCheck. Dibaca dari :mod:`gmgn_liquidity` tiap dipanggil supaya teks tidak pernah
     tertinggal bila :data:`gmgn_liquidity.MIN_TOTAL_LIQ_USD` diubah lagi; modul
     tidak terbaca → ``"?"`` (bukan angka lama yang salah).
     """
@@ -1837,7 +1837,7 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
         _alog.info("scan-best-pool",
                    f"scan selesai: {len(kept)} pool tampil dari {fetched} "
                    f"listing {lane_label} ({hidden_metric} gagal saringan "
-                   f"(F/V/volat/Top10/liq GMGN < {gmgn_min_label()}) tanpa "
+                   f"(F/V/volat/Top10) tanpa "
                    f"scan holder"
                    + (f", {dropped_volatility} pool volatility 0 dibuang"
                       if dropped_volatility else "")

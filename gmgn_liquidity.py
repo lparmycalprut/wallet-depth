@@ -39,7 +39,10 @@ endpoint rank terbukti menjawab GET polos, endpoint POST kadang menuntut
 sidik jari TLS yang cocok dengan user-agent — karena itu POST mencoba
 several identitas impersonate sebelum menyerah ke ``requests``.
 
-Aturan saring (lihat :func:`row_gmgn_gap`):
+**Update 2026-09-17 malam:** saringan di bawah ini DIHAPUS (permintaan user
+*"filter likuiditas hapus coba"*); angka GMGN sekarang hanya diwarnai di kolom
+RugCheck — **> $500K hijau, selain itu hitam** (:func:`liq_is_green`).
+:func:`row_gmgn_gap` selalu ``None``. Aturan lama (arsip):
 
 * likuiditas diketahui dan **< :data:`MIN_TOTAL_LIQ_USD`** ($500K) → gugur;
   tepat $500K atau lebih → lolos (permintaan user: "**kurang dari** ambang
@@ -72,8 +75,16 @@ from pathlib import Path
 #: PAID dan praktis seluruh listing (pill $153.496, ELON $149.542; pool DLMM
 #: teratas Meteora hampir tidak ada yang berlikuiditas ≥ $1M). $500K tetap
 #: menyaring pool tipis ±$150K tetapi membiarkan kandidat seperti PAID lewat.
-#: Baris dengan likuiditas total **di bawah** nilai ini tidak ditampilkan.
+#: **2026-09-17 malam — saringannya DIHAPUS** (permintaan user: *"filter
+#: likuiditas hapus coba, lalu jika likuiditas di angka > 500K kasih warna
+#: hijau, kalau tidak warna hitam saja"*). Angka ini sekarang hanya ambang
+#: WARNA: likuiditas total GMGN **> 500K** ditulis hijau di kolom RugCheck,
+#: selain itu hitam. Tidak ada baris yang dibuang karena likuiditas lagi.
 MIN_TOTAL_LIQ_USD = 500_000.0
+#: Alias yang lebih jujur untuk pemakaian baru (ambang warna, bukan filter).
+LIQ_GREEN_MIN_USD = MIN_TOTAL_LIQ_USD
+#: Hijau angka likuiditas (sama dengan hijau kolom LPs di card Best Pool).
+LIQ_GREEN_COLOR = "#16a34a"
 
 
 def _label_usd(value) -> str:
@@ -462,16 +473,28 @@ def _gap_amount(usd) -> str:
     return f"${_float(usd):,.2f}"
 
 
-def row_gmgn_gap(row: dict | None) -> str | None:
-    """Alasan gugur bila likuiditas total GMGN **< :data:`MIN_TOTAL_LIQ_USD`**
-    ($500K sejak 2026-09-17 sore; sebelumnya $1M yang ternyata mengosongkan
-    seluruh tabel — PAID sendiri $884.912); ``None`` bila lolos/tak terbaca.
+def liq_is_green(usd) -> bool:
+    """``True`` bila likuiditas total **> :data:`LIQ_GREEN_MIN_USD`** ($500K).
 
-    Dipakai :func:`meteora_screener.row_best_gaps` sebagai saringan TERAKHIR
-    (setelah volat 0 → volat 1–10% → F/V → Top10), jadi baris yang sudah
-    gugur dengan alasan lebih keras tidak diberi alasan kedua. Tanpa bukti
-    (``gmgn_liq`` absen/``ok: False``) tidak pernah menyaring.
+    Strict: tepat $500K masih hitam (permintaan user: *"jika likuiditas di
+    angka > 500K kasih warna hijau, kalau tidak warna hitam saja"*).
     """
+    value = _float_or_none(usd)
+    return value is not None and value > LIQ_GREEN_MIN_USD
+
+
+def row_gmgn_gap(row: dict | None) -> str | None:
+    """Selalu ``None`` — saringan likuiditas GMGN **dihapus** 2026-09-17 malam
+    (permintaan user: *"filter likuiditas hapus coba"*). Fungsi dipertahankan
+    supaya pemanggil lama/tes tidak pecah; teks alasan lama dipindah ke
+    :func:`_legacy_gmgn_gap` (tidak dipakai lagi oleh
+    :func:`meteora_screener.row_best_gaps`).
+    """
+    return None
+
+
+def _legacy_gmgn_gap(row: dict | None) -> str | None:
+    """Teks alasan gugur lama (< ambang) — hanya arsip, bukan saringan."""
     row = row or {}
     item = row.get("gmgn_liq")
     if not isinstance(item, dict) or not item.get("ok"):

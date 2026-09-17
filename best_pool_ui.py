@@ -190,13 +190,10 @@ def best_pool_tooltip() -> str:
         f"{BEST_TOP10_MAX_PCT:g}% atau lebih gugur (permintaan user "
         "2026-09-16: \"jika ada top 10 >= 20% jangan tampilkan\" — batasnya "
         "sekarang di sisi BUANG, jadi tepat 20% tidak lagi tampil; tanpa "
-        "angka Top10 = tidak terukur, barisnya tetap tampil); (4) likuiditas "
-        f"total GMGN di bawah {gmgn_min_label()} gugur (permintaan user "
-        "2026-09-17: \"jika grand total liquiditas kurang dari 1M, jangan "
-        "tampilkan di hasil scan\" — ambangnya $500K sejak sore harinya "
-        "karena $1M membuang seluruh listing: PAID saja hanya $884.912. "
-        "Angkanya likuiditas total per token dari gmgn.ai, tepat ambang "
-        "LOLOS, dan token yang likuiditasnya tak terbaca TIDAK disaring). "
+        "angka Top10 = tidak terukur, barisnya tetap tampil). Likuiditas "
+        "total GMGN TIDAK lagi menyaring (2026-09-17 malam, permintaan user "
+        "\"filter likuiditas hapus coba\") — angkanya tampil di kolom "
+        f"RugCheck, HIJAU bila > {gmgn_min_label()}, selain itu hitam. "
         "Volatility 0 "
         "gugur DAN tidak ditampilkan di mana pun: F/V \u221e bukan kelolosan, "
         "pool tanpa pergerakan dibuang total dari listing, tidak masuk tabel "
@@ -232,8 +229,9 @@ def best_pool_tooltip() -> str:
         "verdict RUG hanya bila honeypot, bendera kritis (mint/freeze/"
         "non-transferable/hook/transfer-fee) jadi BERISIKO, sisanya minor "
         "jadi WASPADA; RUGCHECK TIDAK PERNAH MEMBUANG BARIS \u2014 ia kolom "
-        "informasi, saringannya tetap F/V + volat + Top10 + likuiditas "
-        f"GMGN \u2265 {gmgn_min_label()} (bendera safeguard Jupiter "
+        "informasi, saringannya tetap F/V + volat + Top10; angka likuiditas "
+        f"GMGN di baris kecilnya HIJAU bila > {gmgn_min_label()}, selain "
+        "itu hitam (bendera safeguard Jupiter "
         "disajikan lewat kolom RugCheck, bukan filter server, supaya token "
         "seperti PAID tidak hilang diam-diam dari listing). Mint yang "
         "laporannya tidak didapat menulis "
@@ -905,8 +903,7 @@ def render_best_pool_scan() -> None:
                      use_container_width=True,
                      help=(f"Listing Meteora timeframe {label}, disaring "
                            f"{gate} + volatility "
-                           "1%–10% + Top10 < 20% + likuiditas total GMGN ≥ "
-                           f"{gmgn_min_label()} "
+                           "1%–10% + Top10 < 20% "
                            "SEBELUM scan holder — pool di bawah syarat "
                            "langsung di-skip, holdernya tidak di-fetch. Tiap "
                            "pool yang lolos dilengkapi laporan RugCheck "
@@ -991,8 +988,8 @@ def render_best_pool_scan() -> None:
                     if showing_hidden else f"▶ {hidden} pool dilewati")
             if st.button(view, key=f"best-pool-toggle-hidden-{active}",
                          help=f"Tampilkan kandidat {label} yang di-skip karena "
-                              "gugur saringan F/V, volatility, Top10, atau "
-                              f"likuiditas GMGN < {gmgn_min_label()} lane ini; "
+                              "gugur saringan F/V, volatility, atau Top10 "
+                              "lane ini; "
                               "holdernya tidak pernah di-scan.",
                          use_container_width=True):
                 st.session_state[best_lane_hidden_key(active)] = \
