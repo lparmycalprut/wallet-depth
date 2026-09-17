@@ -678,6 +678,18 @@ class ScanLaneTest(unittest.TestCase):
                                              for row in rows])
         self._offline.start()
         self.addCleanup(self._offline.stop)
+        # Likuiditas GMGN (2026-09-17): attach offline — likuiditas tak
+        # terbaca (ok: False) = TIDAK menyaring, jadi isi hidden_rows/rows
+        # tetap sama persis seperti sebelum saringan GMGN ada.
+        def _fake_gmgn_attach(rows, **_kw):
+            for row in rows:
+                row["gmgn_liq"] = {"ok": False}
+            return rows
+
+        self._gmgn = mock.patch("gmgn_liquidity.attach_total_liquidity",
+                                side_effect=_fake_gmgn_attach)
+        self._gmgn.start()
+        self.addCleanup(self._gmgn.stop)
 
     @staticmethod
     def _fake_enrich(rows, **_kw):
@@ -909,6 +921,18 @@ class ScanRugCheckTest(unittest.TestCase):
     :func:`rugchecker.attach_to_rows` setelah enrichment; kolomnya tidak pernah
     menyaring dan kegagalan HTTP tidak boleh menjatuhkan scan.
     """
+
+    def setUp(self):
+        # Likuiditas GMGN (2026-09-17) offline — lihat ScanLaneTest.setUp.
+        def _fake_gmgn_attach(rows, **_kw):
+            for row in rows:
+                row["gmgn_liq"] = {"ok": False}
+            return rows
+
+        self._gmgn = mock.patch("gmgn_liquidity.attach_total_liquidity",
+                                side_effect=_fake_gmgn_attach)
+        self._gmgn.start()
+        self.addCleanup(self._gmgn.stop)
 
     @staticmethod
     def _fake_enrich(rows, **_kw):

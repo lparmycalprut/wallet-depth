@@ -30,17 +30,25 @@ dan :func:`meteora_screener.normalize_best_lane` memetakan semua alias lama
   (:data:`meteora_screener.BEST_TOP10_MAX_PCT`, permintaan user 2026-09-16:
   *"jika ada top 10 >= 20% jangan tampilkan"* — batas inklusif di sisi BUANG,
   tepat 20% ikut hilang);
+- **Likuiditas total GMGN < $1M tidak ditampilkan** (2026-09-17, permintaan
+  user: *"jika grand total liquiditas kurang dari 1M, jangan tampilkan di
+  hasil scan"*) — angka per token diambil dari GMGN (:mod:`gmgn_liquidity`,
+  satu request batch untuk semua kandidat) dan baris yang terbukti di bawah
+  ambang masuk daftar "dilewati" dengan alasannya di sub sel F/V;
 - **Filter API membawa Jupiter safeguard**
   (:data:`meteora_screener.JUPITER_SAFEGUARD_FILTERS`, permintaan user
   2026-09-16: *"scan baru saya tambahkan jupiter safeguard untuk filter yang
   mungkin rug"*) — listing Best Pool saja yang memakai
   ``base_token_has_critical_warnings=false&&quote_token_has_critical_warnings=false``,
   jadi token yang diperingati Jupiter tidak pernah sampai ke tabel;
-- **Kolom RugCheck baru** (2026-09-16): tiap mint base diperiksa lewat honeypot
-  checker **rugchecker.cc** (modul :mod:`rugchecker`, tanpa API key) — verdict
-  AMAN/WASPADA/BERISIKO/RUG + bendera keamanan + likuiditas per DEX versi
-  ringkas. Kolom ini **tidak pernah menyaring**: ia informasi, pembuang tetap
-  saringan di atas;
+- **Kolom RugCheck baru** (2026-09-16; angka likuiditas beralih ke **GMGN**
+  2026-09-17): tiap mint base diperiksa lewat honeypot checker
+  **rugchecker.cc** (modul :mod:`rugchecker`, tanpa API key) — verdict
+  AMAN/WASPADA/BERISIKO/RUG + bendera keamanan, dengan **angka likuiditas
+  total dari GMGN** (modul :mod:`gmgn_liquidity`; permintaan user *"ubah
+  info liquidititas dari rugchecker.cc ke gmgn saja"*) — rincian per-DEX
+  rugchecker.cc tidak lagi ditampilkan. Saringan "likuiditas < $1M" di atas
+  adalah satu-satunya yang membuang berdasarkan angka ini;
 - **LPs HIJAU bila > 100 LP** (permintaan user 2026-09-16: *"LPs jika lebih
   dari 100, kasih warna hijau jika tidak, tidak ada perubahan"*),
   :data:`LP_GREEN_COLOR` / :data:`LP_GREEN_MIN_LP`.
@@ -739,8 +747,10 @@ def _render_best_table(rows: list, *, lane: str,
         if lps_here is not None and lps_here > LP_GREEN_MIN_LP:
             lps_value = (f'<span style="color:{LP_GREEN_COLOR};'
                          f'font-weight:700;">{lps_value}</span>')
-        # Kolom **RugCheck** (baru 2026-09-16): verdict + likuiditas ringkas
-        # dari rugchecker.cc, ditempel scan_best_lane lewat modul ``rugchecker``.
+        # Kolom **RugCheck** (baru 2026-09-16): verdict dari rugchecker.cc +
+        # likuiditas **total GMGN** (sejak 2026-09-17 — sumber angkanya
+        # dipindah ke gmgn.ai, permintaan user), ditempel scan_best_lane
+        # lewat modul ``rugchecker`` (angka GMGN-nya: modul ``gmgn_liquidity``).
         # Hanya verdict yang diwarnai (hijau→merah) — angka likuiditas tetap
         # hitam supaya kolom ini informatif, bukan menyeramkan.
         rug_report = row.get("rugcheck") or {}
@@ -875,10 +885,12 @@ def render_best_pool_scan() -> None:
                      use_container_width=True,
                      help=(f"Listing Meteora timeframe {label}, disaring "
                            f"{gate} + volatility "
-                           "1%–10% + Top10 < 20% SEBELUM scan holder — pool di "
-                           "bawah syarat langsung di-skip, holdernya tidak "
-                           "di-fetch. Tiap pool yang lolos dilengkapi laporan "
-                           "RugCheck (rugchecker.cc).")):
+                           "1%–10% + Top10 < 20% + likuiditas total GMGN ≥ $1M "
+                           "SEBELUM scan holder — pool di bawah syarat "
+                           "langsung di-skip, holdernya tidak di-fetch. Tiap "
+                           "pool yang lolos dilengkapi laporan RugCheck "
+                           "(verdict rugchecker.cc, angka likuiditas GMGN — "
+                           "sejak 2026-09-17).")):
             bar = st.progress(0.0, text="Listing pool Meteora…")
 
             def _progress(index, total, note):
@@ -958,8 +970,9 @@ def render_best_pool_scan() -> None:
                     if showing_hidden else f"▶ {hidden} pool dilewati")
             if st.button(view, key=f"best-pool-toggle-hidden-{active}",
                          help=f"Tampilkan kandidat {label} yang di-skip karena "
-                              "gugur saringan F/V, volatility, atau Top10 "
-                              "lane ini; holdernya tidak pernah di-scan.",
+                              "gugur saringan F/V, volatility, Top10, atau "
+                              "likuiditas GMGN < $1M lane ini; holdernya "
+                              "tidak pernah di-scan.",
                          use_container_width=True):
                 st.session_state[best_lane_hidden_key(active)] = \
                     not showing_hidden

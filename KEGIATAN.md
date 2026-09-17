@@ -1,3 +1,63 @@
+# Kegiatan — 17 September 2026 (🏆 Best Pool: likuiditas dari GMGN + saringan < $1M)
+
+Permintaan user (lanjutan riset token PAID dari gmgn.ai): *"kita rubah info
+liquidititas dari rugchecker.cc ke gmgn saja"* + *"jika grand total liquiditas
+kurang dari 1M, jangan tampilkan di hasil scan"*. Riset di hulu: endpoint
+públik GMGN tanpa API key yang membawa **likuiditas total** (angka yang sama
+dengan halaman token gmgn.ai) adalah `POST /api/v1/mutil_window_token_info`
+(sumber data halaman token — batch banyak mint dalam satu request); field
+`liquidity` di endpoint rank (`/defi/quotation/v1/rank/sol/swaps/24h`) adalah
+angka lain (likuiditas DEX utama, mis. PAID $860K di rank vs ~$1.9M di
+halaman) sehingga dipakai **hanya sebagai fallback** — dan karena rank itu
+cap 100 entri dengan cutoff ~$15K, mint yang tidak masuk daftar pasti
+berlikuiditas di bawah cutoff → aman dianggap < $1M.
+
+## Yang diubah
+
+- **`gmgn_liquidity.py`** (baru): `fetch_total_liquidity` (POST batch 10 mint
+  per request via curl_cffi impersonate → fallback `requests`; kegagalan satu
+  batch hanya batch itu yang turun ke rank; cache berkas per-mint TTL 300/120
+  s), `attach_total_liquidity` (menempel `row["gmgn_liq"]`, mutasi di tempat),
+  `row_gmgn_gap` (alasan gugur bila total **< $1M** — tepat $1M lolos; tanpa
+  bukti tidak pernah menyaring). `MIN_TOTAL_LIQ_USD = 1_000_000`.
+- **`meteora_screener.py`**: `scan_best_lane` (+ kwarg `gmgn=True`, diteruskan
+  `scan_best_meteora`) menempel likuiditas GMGN **sebelum** alasan gugur
+  dihitung, hanya pada kandidat yang sudah lolos F/V/volat/Top10 (baris gugur
+  lain tidak membakar request); `row_best_gaps` menambah saringan TERAKHIR
+  "likuiditas GMGN < $1M" (urutan: vol-0 → volat 1–10% → F/V → Top10 → GMGN),
+  jadi baris < $1M masuk `hidden_rows`/tabel "dilewati" dengan alasan di
+  `best_gaps` dan **tidak pernah** membakar kuota Helius; hasil scan kini
+  membawa `gmgn_failed` (kandidat tak terbaca — tidak disaring) + entri log
+  aktivitas.
+- **`rugchecker.py`**: `summarize` (+ `gmgn_total_usd`), `check_tokens`
+  (+ `gmgn_by_mint`), `attach_to_rows` (membaca `row["gmgn_liq"]`) — angka
+  likuiditas kolom RugCheck kini **total GMGN** (`liquidity_source: "gmgn"`,
+  sub-line `$1.90M liq` tanpa penghitung pool, tooltip "likuiditas total
+  (sumber: gmgn.ai)"); rincian per-DEX rugchecker.cc tidak lagi ditampilkan,
+  share pool di catatan metode tambahan dihitung terhadap total GMGN. Fallback
+  ke total per-DEX rugchecker.cc bila angka GMGN tak terbaca. Verdict +
+  bendera tetap milik rugchecker.cc.
+- **`best_pool_ui.py`**: help tombol + toggle "dilewati" + docstring menyebut
+  saringan likuiditas GMGN ≥ $1M; kolom RugCheck tidak berubah strukturnya
+  (satu sumber angka kini di summary).
+- **`.gitignore`**: `gmgn_liquidity_cache.json`.
+- **Tes**: baru `tests/test_gmgn_liquidity.py` (34 tes: parse kedua endpoint,
+  batch + fallback rank + cutoff, cache, ambang persis $1M, alasan gugur,
+  integrasi `row_best_gaps`, format kolom GMGN/fallback, alur scan offline);
+  `ScanLaneTest`/`ScanRugCheckTest` (test_best_pool_scan), `LaneEnrichmentTest`
+  (test_best_fv_prefilter), `test_meteora_screener` di-patch offline untuk
+  `gmgn_liquidity.attach_total_liquidity`. `python -m unittest discover -s
+  tests` → **1093 tes** (1059 baseline + 34 baru), `18 failed + 1 error` —
+  **nama kegagalan identik baseline** (diverifikasi via worktree HEAD: 19/19
+  sama; bukan regresi).
+
+Catatan operasional: PAID (`98kf…pump`) saat riset = **rank #10 likuiditas**
+GMGN; angkanya bergerak cepat (ada transaksi Remove LP), dan field `liquidity`
+rank ≠ angka halaman — untuk "grand total" yang user lihat di gmgn.ai sumber
+resminya `mutil_window_token_info` (yang dipakai modul ini).
+
+---
+
 # Kegiatan — 16 September 2026 (🏆 Best Pool Meteora: satu lane 24H + 📦 TEMP + kolom RugCheck)
 
 Batch kedua di hari yang sama, sembilan permintaan user sekaligus: **🌊

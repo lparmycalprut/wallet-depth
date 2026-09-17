@@ -39,12 +39,15 @@ kita sisakan yang 24 jam saja"*). Syaratnya ``F/V >= 5×`` dengan F =
 ``fee_active_tvl_ratio`` dan V = ``volatility``. Hanya pool yang lolos ambang
 yang di-scan holdernya; pool di bawah ambang **langsung di-skip** sebelum
 enrichment holder (kuota Helius tidak terbakar) dan tetap tersedia di
-``hidden_rows`` tanpa scan holder. Tiga saringan layar, semuanya di
+``hidden_rows`` tanpa scan holder. Empat saringan layar, semuanya di
 :func:`row_best_gaps` dan semuanya sebelum enrichment: volatility 0 **gugur
 dan dibuang total** (aturan 2026-09-14), volatility di luar **1%–10%**
-(:data:`BEST_VOL_SHOW_MIN`/:data:`BEST_VOL_SHOW_MAX`, 2026-09-16) gugur, dan
+(:data:`BEST_VOL_SHOW_MIN`/:data:`BEST_VOL_SHOW_MAX`, 2026-09-16) gugur,
 **Top10 holder >= 20% supply tidak ditampilkan lagi**
-(:data:`BEST_TOP10_MAX_PCT`, 2026-09-16). Filter API membawa **Jupiter
+(:data:`BEST_TOP10_MAX_PCT`, 2026-09-16), dan **likuiditas total GMGN < $1M
+tidak ditampilkan** (:mod:`gmgn_liquidity`, permintaan user 2026-09-17 —
+angkanya ditempel ``row["gmgn_liq"]`` sebelum alasan gugur dihitung). Filter
+API membawa **Jupiter
 safeguard**: ``base_token_has_critical_warnings=false&&
 quote_token_has_critical_warnings=false&&pool_type=dlmm&&active_tvl>=50000``
 (:data:`JUPITER_SAFEGUARD_FILTERS`) — token yang diperingati Jupiter tidak
@@ -52,8 +55,11 @@ pernah masuk listing. Dust, volume dan tier fee bukan syarat. Urutan tiap
 tabel (2026-09-15, permintaan user: *"kita urutkan fee/TVL paling besar dulu,
 baru perkalian f/v"*): **Fee/TVL terbesar** → **F/V terbesar** → volume/active
 TVL → dust %MC terkecil; badge BEST POOL dihapus. Baris yang tampil dilengkapi
-laporan **RugCheck** dari rugchecker.cc (:mod:`rugchecker`) — honeypot,
-bendera keamanan token, dan likuiditas per DEX dalam versi ringkas. Sejak
+laporan **RugCheck** dari rugchecker.cc (:mod:`rugchecker`) — honeypot +
+bendera keamanan token, dengan **angka likuiditas total dari GMGN**
+(:mod:`gmgn_liquidity`, sejak 2026-09-17 menggantikan total per-DEX
+rugchecker.cc — permintaan user *"ubah info liquidititas dari rugchecker.cc
+ke gmgn saja"*). Sejak
 2026-09-15 kolom **Token** menulis pasangan pool-nya (``ALLINU/SOL``,
 :func:`row_pair_label`) dan sel **F/V** memakai :func:`format_fv_ratio` —
 satu desimal di bawah 100×, bilangan bulat berpemisah ribuan di atasnya
@@ -1432,8 +1438,16 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
     dan Top10 holder harus di **bawah** :data:`BEST_TOP10_MAX_PCT` (20% —
     ``>= 20%`` dibuang; :func:`row_top10_over`). Urutan cek sengaja: vol-0
     dibuang total lebih dulu (``row_volatility_zero``), lalu volatilitas di
-    luar rentang, baru F/V, lalu Top10 — satu alasan gugur per baris supaya
-    teksnya tetap satu baris, dengan alasan paling keras lebih dulu.
+    luar rentang, baru F/V, lalu Top10, lalu likuiditas GMGN < $1M — satu
+    alasan gugur per baris supaya teksnya tetap satu baris, dengan alasan
+    paling keras lebih dulu.
+
+    Saringan TERAKHIR (2026-09-17, permintaan user: *"jika grand total
+    liquiditas kurang dari 1M, jangan tampilkan di hasil scan"*): likuiditas
+    **total GMGN < $1M** gugur (:func:`gmgn_liquidity.row_gmgn_gap`) — key
+    ``gmgn_liq`` ditempel :func:`scan_best_lane` pada kandidat yang sudah
+    lolos saringan metrik di atas; baris tanpa key (scan lama / ``gmgn=False``
+    di test/offline) tidak terpengaruh. Tanpa bukti GMGN baris TIDAK disaring.
 
     F = ``fee_active_tvl_ratio``, V = ``volatility`` (keduanya persen dari API
     Meteora, jadi ambangnya diperbandingkan sebagai kelipatan, bukan persen
@@ -1490,10 +1504,16 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
         # Label lane ikut di depan supaya teks "gugur" di tabel disembunyikan
         # konsisten dengan teks F/V.
         over = row_top10_over(row)
-        if over is None:
-            return []
-        return [f"{BEST_LANE_LABELS[normalized]}: Top10 {over:g}% ≥ "
-                f"{float(BEST_TOP10_MAX_PCT):g}% — holder terpusat"]
+        if over is not None:
+            return [f"{BEST_LANE_LABELS[normalized]}: Top10 {over:g}% ≥ "
+                    f"{float(BEST_TOP10_MAX_PCT):g}% — holder terpusat"]
+        # Lalu likuiditas total GMGN < $1M (2026-09-17) — key ``gmgn_liq``
+        # hanya ada di baris hasil scan baru; tanpa key/alasan → lolos.
+        from gmgn_liquidity import row_gmgn_gap
+        gap = row_gmgn_gap(row)
+        if gap:
+            return [f"{BEST_LANE_LABELS[normalized]}: {gap}"]
+        return []
     sign = "<" if lane_fv_inclusive(normalized) else "≤"
     return [f"{BEST_LANE_LABELS[normalized]}: F/V {sign} {minimum:g}×"]
 
@@ -1600,7 +1620,8 @@ def sort_best_rows(rows: list[dict] | None) -> list[dict]:
 
 def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
                    workers: int = 6, progress=None, timeout: int = 25,
-                   page_size: int = PAGE_SIZE, rugcheck: bool = True) -> dict:
+                   page_size: int = PAGE_SIZE, rugcheck: bool = True,
+                   gmgn: bool = True) -> dict:
     """Scan Best Pool **24H saja** — satu tombol card, satu tabel.
 
     Lane 30M dihapus 2026-09-16 (permintaan user: *"hapus scan 30 menit, kita
@@ -1615,8 +1636,11 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
        listing) ``&&pool_type=dlmm&&active_tvl>=50000`` (``category=top``,
        page_size 50);
     2. saringan layar di :func:`row_best_gaps` — ``F/V >= 5×``, volatility
-       1%–10%, Top10 < 20% supply — dijalankan **sebelum** holder, jadi pool
-       yang gugur tidak pernah membakar kuota Helius dan tetap tersedia di
+       1%–10%, Top10 < 20% supply, lalu **likuiditas total GMGN < $1M**
+       (2026-09-17: :mod:`gmgn_liquidity` menempel ``row["gmgn_liq"]`` pada
+       kandidat yang lolos tiga saringan pertama, **sebelum** alasan gugur
+       dihitung) — semua dijalankan **sebelum** holder, jadi pool yang gugur
+       tidak pernah membakar kuota Helius dan tetap tersedia di
        ``hidden_rows`` (dengan alasan di ``best_gaps``), **kecuali** pool
        volatility 0: dibuang penuh dari listing sejak 2026-09-14 lanjutan
        (:func:`row_volatility_zero`, permintaan user *"jika volatility 0
@@ -1661,6 +1685,39 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
     rows = rows_from_pools(pools, timeframe=normalized)
     fetched = len(rows)
     rows, quote_skipped = drop_quote_rows(rows)
+    # Likuiditas total GMGN (2026-09-17, permintaan user: "ubah info
+    # likuiditas ke gmgn saja" + "jika grand total liquiditas < 1M jangan
+    # tampilkan") — ditempel **sebelum** alasan gugur dihitung, hanya pada
+    # kandidat yang sudah lolos saringan metrik (baris yang gugur F/V/volat/
+    # Top10 tidak butuh angka GMGN — hemat request pihak ketiga). Baris
+    # < $1M lalu gugur lewat :func:`row_best_gaps` (satu jalur dengan saringan
+    # lain, alasan di ``best_gaps``). ``gmgn=False`` (test/offline) melewatkan
+    # step ini total; kegagalan HTTP tidak menjatuhkan scan (baris tak
+    # terbaca tidak disaring — tanpa bukti tidak ada verdict).
+    gmgn_failed = 0
+    if rows and gmgn:
+        try:
+            from gmgn_liquidity import attach_total_liquidity
+
+            candidates = [row for row in rows
+                          if not row_best_gaps(row, lane=normalized)]
+            if candidates:
+                attach_total_liquidity(candidates, timeout=timeout)
+                gmgn_failed = sum(1 for row in candidates
+                                  if not (row.get("gmgn_liq") or {})
+                                  .get("ok"))
+        except Exception as exc:  # noqa: BLE001 - kolom opsional, scan tetap jalan
+            error = " · ".join(
+                part for part in (error, f"Likuiditas GMGN: {exc}") if part)
+            if _alog:
+                _alog.error("scan-best-pool",
+                            f"Likuiditas GMGN gagal: {str(exc)[:160]}")
+            for row in rows:
+                row.setdefault("gmgn_liq",
+                               {"ok": False, "usd": None,
+                                "below_cutoff": False, "source": None,
+                                "cutoff_usd": None,
+                                "error": str(exc)[:160]})
     # Reject sebelum ada fetch holder/market — "langsung skip", bukan cuma
     # disembunyikan saat render.
     failed_rows = [dict(row, best_gaps=row_best_gaps(row, lane=normalized))
@@ -1692,13 +1749,15 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
         _alog.info("scan-best-pool",
                    f"scan selesai: {len(kept)} pool tampil dari {fetched} "
                    f"listing {lane_label} ({hidden_metric} gagal saringan "
-                   f"(F/V/volat/Top10) tanpa scan holder"
+                   f"(F/V/volat/Top10/liq GMGN < $1M) tanpa scan holder"
                    + (f", {dropped_volatility} pool volatility 0 dibuang"
                       if dropped_volatility else "")
                    + (f", {quote_skipped} pool quote dilewati"
                       if quote_skipped else "")
                    + (f", {rug_failed} laporan RugCheck gagal"
-                      if rug_failed else "") + ")")
+                      if rug_failed else "")
+                   + (f", {gmgn_failed} likuiditas GMGN tak terbaca"
+                      if gmgn_failed else "") + ")")
     return {
         "rows": kept,
         "hidden_rows": hidden_rows,
@@ -1715,6 +1774,10 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
         # bukan 0) — kolom RugCheck menulis — untuk mereka; angka ini supaya
         # caption bisa membedakan "semua AMAN" dari "belum teriksa".
         "rugcheck_failed": rug_failed,
+        # Kandidat yang likuiditas GMGN-nya tak terbaca (GMGN mati / token
+        # tak terlacak) — TIDAK disaring (tanpa bukti tidak ada verdict),
+        # kolom RugCheck menulis — untuk mereka (2026-09-17).
+        "gmgn_failed": gmgn_failed,
         # Lane hasil scan — UI memakainya untuk judul/pill tabel. Sejak 30M
         # dihapus (2026-09-16) ini selalu "24h".
         "lane": normalized,
@@ -1728,15 +1791,17 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
                       progress=None, timeout: int = 25,
                       timeframe: str = "24h",
                       page_size: int = PAGE_SIZE,
-                      rugcheck: bool = True) -> dict:
+                      rugcheck: bool = True,
+                      gmgn: bool = True) -> dict:
     """Wrapper lama :func:`scan_best_lane` (satu-satunya lane: 24H).
 
     Sejak 2026-09-13 kwarg ``timeframe`` **membatasi fetch**; sejak 2026-09-16
     hanya 24H yang ada, dan ``timeframe`` apa pun yang pernah dikenali
     (termasuk ``"30m"``/``"both"``) dipetakan ke 24H oleh
-    :func:`normalize_best_lane`. ``rugcheck`` diteruskan apa adanya.
+    :func:`normalize_best_lane`. ``rugcheck`` dan ``gmgn`` diteruskan apa
+    adanya.
     """
     return scan_best_lane(timeframe, max_wallets=max_wallets,
                           workers=workers, progress=progress,
                           timeout=timeout, page_size=page_size,
-                          rugcheck=rugcheck)
+                          rugcheck=rugcheck, gmgn=gmgn)

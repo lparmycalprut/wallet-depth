@@ -127,10 +127,20 @@ class LaneEnrichmentTest(unittest.TestCase):
             return pools
 
         # ``rugcheck=False``: kolom RugCheck menghubungi rugchecker.cc dan tidak
-        # ada hubungannya dengan pre-filter; uji ini harus tetap offline.
+        # ada hubungannya dengan pre-filter; attach GMGN (2026-09-17) di-patch
+        # offline (likuiditas tak terbaca = tidak menyaring) supaya uji ini
+        # tetap tidak menyentuh jaringan.
         self.fetched_timeframes = []
+
+        def _fake_gmgn_attach(rows, **_kw):
+            for row in rows:
+                row['gmgn_liq'] = {'ok': False}
+            return rows
+
         with patch.object(ms, 'fetch_best_pools', side_effect=fake_fetch), \
-                patch.object(ms, 'enrich_pools', side_effect=fake_enrich):
+                patch.object(ms, 'enrich_pools', side_effect=fake_enrich), \
+                patch('gmgn_liquidity.attach_total_liquidity',
+                      side_effect=_fake_gmgn_attach):
             result = ms.scan_best_lane(lane, max_wallets=2000,
                                        rugcheck=False)
         result['fetched_timeframes'] = list(self.fetched_timeframes)

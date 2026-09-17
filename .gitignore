@@ -35,3 +35,7 @@ alert_settings.json
 # Cache laporan RugCheck (rugchecker.cc) — hasil HTTP per mint, bukan sumber
 # kebenaran; ditulis oleh modul rugchecker.py (permintaan user 2026-09-16).
 rugchecker_cache.json
+
+# Cache likuiditas total GMGN per mint — hasil HTTP, bukan sumber kebenaran;
+# ditulis oleh modul gmgn_liquidity.py (permintaan user 2026-09-17).
+gmgn_liquidity_cache.json
