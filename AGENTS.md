@@ -1,5 +1,17 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-17 (terbaru) — 🚨 background STOP DEGEN merah, tulisan tetap biru
+
+- Permintaan user (verbatim): *"background nya ganti warna merah, tulisan
+  tetap biru"* untuk header 🚨 **STOP DEGEN** di paling atas halaman utama.
+- **Implementasi.** Background `.degen-stop-header` dikembalikan ke panel merah
+  gelap lama (`#450a0a → #7f1d1d → #450a0a`). Teks
+  `.degen-stop-line` tetap biru royal `#3b82f6`; border, text-shadow,
+  box-shadow, animasi 1 detik, ukuran huruf, serta reduced-motion juga tidak
+  berubah dari versi biru sebelumnya.
+- **Tes.** `tests/test_degen_header.py` kini mem-pin kombinasi background merah
+  + teks/glow biru dan memastikan background biru lama tidak digunakan lagi.
+
 ## Update 2026-09-17 (lanjutan 2, malam) — 🚨 header STOP DEGEN jadi BIRU + likuiditas < $500K ditulis MERAH
 
 - Permintaan user #1 (verbatim): *"ganti tulisan warna warning kita menjadi
