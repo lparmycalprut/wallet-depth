@@ -552,15 +552,28 @@ def cell_parts(summary) -> tuple[str, str, str]:
                 "menulis —, bukan \"AMAN\" (tanpa bukti tidak ada verdict)")
 
     lines = list(item.get("liquidity_lines") or [])
-    total = compact_usd(item.get("liquidity_total_usd"))
+    total_usd = item.get("liquidity_total_usd")
+    total = compact_usd(total_usd)
     source = str(item.get("liquidity_source") or "rugchecker")
     # Baris kecil: angka likuiditas total — sumber GMGN (2026-09-17) tidak
     # punya rincian per-DEX, jadi tanpa penghitung pool; sumber rugchecker
-    # (fallback) tetap menulis "N pool" seperti dulu.
+    # (fallback) tetap menulis "N pool" seperti dulu. Warna (2026-09-17
+    # malam, permintaan user: "jika likuiditas di angka > 500K kasih warna
+    # hijau, kalau tidak warna hitam saja"): > $500K hijau, selain itu
+    # tanpa span (hitam bawaan sel). Filter likuiditasnya sendiri dihapus.
+    shown_total = total
+    try:
+        from gmgn_liquidity import LIQ_GREEN_COLOR, liq_is_green
+
+        if liq_is_green(total_usd):
+            shown_total = (f'<span style="color:{LIQ_GREEN_COLOR};'
+                           f'font-weight:700;">{total}</span>')
+    except Exception:  # noqa: BLE001 - warna = hiasan, jangan jatuhkan sel
+        pass
     if lines:
-        sub = f"{total} liq · {int(item.get('market_count') or 0)} pool"
+        sub = f"{shown_total} liq · {int(item.get('market_count') or 0)} pool"
     elif source == "gmgn":
-        sub = f"{total} liq"
+        sub = f"{shown_total} liq"
     else:
         sub = "tanpa pool"
     head = (f"verdict {item.get('verdict')} — rugchecker.cc honeypot checker "

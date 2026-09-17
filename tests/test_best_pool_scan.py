@@ -587,16 +587,17 @@ class BestGapSummaryTest(unittest.TestCase):
                 "source": "gmgn_token_info"}
 
     def test_kategori_dan_urutan(self):
+        # Likuiditas GMGN rendah TIDAK lagi jadi alasan gugur (filter dihapus
+        # 2026-09-17 malam) — L1/L2 lolos dan tidak masuk rekap.
         rows = [_row(pool_address="L1", gmgn_liq=self._liq(153_496.33)),
                 _row(pool_address="L2", gmgn_liq=self._liq(149_542.09)),
                 _row(pool_address="T1", top_holders_pct=22.2),
                 _row(pool_address="F1", **_fv(2.0, 6.2)),
                 _row(pool_address="V1", **_fv(50.0, 42.0))]
         self.assertEqual(ms.best_gap_counts(rows),
-                         [("likuiditas GMGN", 2), ("F/V", 1), ("Top10", 1),
-                          ("volatility", 1)])
+                         [("F/V", 1), ("Top10", 1), ("volatility", 1)])
         self.assertEqual(ms.best_gap_summary(rows),
-                         "2 likuiditas GMGN · 1 F/V · 1 Top10 · 1 volatility")
+                         "1 F/V · 1 Top10 · 1 volatility")
 
     def test_alasan_tersimpan_dipakai_tanpa_hitung_ulang(self):
         """Baris hasil scan membawa ``best_gaps`` — rekap membaca itu."""
@@ -605,10 +606,10 @@ class BestGapSummaryTest(unittest.TestCase):
                    gmgn_liq=self._liq(9_000_000.0))
         self.assertEqual(ms.row_best_gap_label(row), "likuiditas GMGN")
 
-    def test_cutoff_rank_masuk_kategori_likuiditas(self):
+    def test_cutoff_rank_tidak_lagi_menggugurkan(self):
         row = _row(gmgn_liq={"ok": True, "usd": None, "below_cutoff": True,
                              "source": "gmgn_rank", "cutoff_usd": 15_000.0})
-        self.assertEqual(ms.row_best_gap_label(row), "likuiditas GMGN")
+        self.assertEqual(ms.row_best_gap_label(row), "")
 
     def test_baris_lolos_dan_daftar_kosong(self):
         self.assertEqual(ms.row_best_gap_label(_row()), "")
@@ -1228,23 +1229,19 @@ class BestPoolCardTest(unittest.TestCase):
         app.session_state["best_pool_scan_24h"] = self._result(
             "24h", [],
             fetched=3,
-            hidden=[_row(pool_address="PoolTipis", ca="MintTipis",
-                         symbol="TIPIS",
-                         gmgn_liq={"ok": True, "usd": 153_496.33,
-                                   "below_cutoff": False,
-                                   "source": "gmgn_token_info"}),
-                    _row(pool_address="PoolTipis2", ca="MintTipis2",
-                         symbol="TIPS2",
-                         gmgn_liq={"ok": True, "usd": 149_542.09,
-                                   "below_cutoff": False,
-                                   "source": "gmgn_token_info"}),
+            # Saringan likuiditas GMGN dihapus 2026-09-17 malam — alasan
+            # gugur yang tersisa: F/V, volatility, Top10.
+            hidden=[_row(pool_address="PoolFV", ca="MintFV",
+                         symbol="FV", **_fv(2.0, 6.2)),
+                    _row(pool_address="PoolFV2", ca="MintFV2",
+                         symbol="FV2", **_fv(1.5, 6.2)),
                     _row(pool_address="PoolPusat", ca="MintPusat",
                          symbol="PUSAT", top_holders_pct=45.0)])
         app.run()
         self.assertEqual(len(app.exception), 0)
         infos = "\n".join(node.body for node in app.info)
         self.assertIn("Tidak ada pool 24H yang lolos filter Best Pool", infos)
-        self.assertIn("3 pool dilewati: 2 likuiditas GMGN · 1 Top10", infos)
+        self.assertIn("3 pool dilewati: 2 F/V · 1 Top10", infos)
         self.assertIn("▶ 3 pool dilewati", infos)
 
     def test_top10_di_atas_20_tidak_tampil_di_tabel(self):
@@ -1409,15 +1406,14 @@ class BestPoolCardTest(unittest.TestCase):
         with mock.patch.object(ms, "BEST_VOL_SHOW_MIN", 2.0), \
                 mock.patch.object(ms, "BEST_VOL_SHOW_MAX", 8.0):
             self.assertIn("2%\u20138%", bp.best_pool_tooltip())
-        # Ambang likuiditas GMGN juga dibaca dari konstanta (bukan "$500K"
-        # yang ditulis tangan di dua tempat).
+        # Ambang WARNA likuiditas GMGN (bukan filter lagi sejak 2026-09-17
+        # malam) juga dibaca dari konstanta, bukan "$500K" tulisan tangan.
         import gmgn_liquidity as gl
 
         with mock.patch.object(gl, "MIN_LABEL", "$250K"):
-            self.assertIn("(4) likuiditas total GMGN di bawah $250K",
-                          bp.best_pool_tooltip())
-            self.assertIn("likuiditas GMGN \u2265 $250K",
-                          bp.best_pool_tooltip())
+            tip = bp.best_pool_tooltip()
+            self.assertIn("HIJAU bila > $250K", tip)
+            self.assertNotIn("likuiditas total GMGN di bawah", tip)
 
     def test_urutan_kolom_2026_09_16(self):
         """Urutan header: Token, F/V, Fee/TVL, Volat, Active Range, LPs, Dust %MC…

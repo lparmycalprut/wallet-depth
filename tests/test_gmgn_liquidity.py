@@ -280,14 +280,19 @@ class AmbangTest(unittest.TestCase):
                            "below_cutoff": False, "source": "gmgn_token_info"}
         self.assertIsNone(gl.row_gmgn_gap(row))
 
-    def test_pool_tipis_gugur(self):
+    def test_pool_tipis_tidak_gugur_hanya_hitam(self):
+        """2026-09-17 malam: filter likuiditas DIHAPUS (permintaan user
+        *"filter likuiditas hapus coba"*) — pool tipis tetap tampil, angkanya
+        hitam (tidak hijau) karena tidak > $500K."""
         for liq in (self.LIQ_PILL, self.LIQ_ELON):
             row = _row(MINT_B)
             row["gmgn_liq"] = {"ok": True, "usd": liq, "below_cutoff": False,
                                "source": "gmgn_token_info"}
-            gap = gl.row_gmgn_gap(row)
-            self.assertIsNotNone(gap, liq)
-            self.assertIn("< $500K", gap)
+            self.assertIsNone(gl.row_gmgn_gap(row), liq)
+            self.assertFalse(gl.liq_is_green(liq), liq)
+
+    def test_paid_hijau(self):
+        self.assertTrue(gl.liq_is_green(self.LIQ_PAID))
 
     def test_ambang_1m_lama_akan_membuang_paid(self):
         """Pin alasan penurunan ambang: $1M membuang PAID."""
@@ -296,50 +301,21 @@ class AmbangTest(unittest.TestCase):
 
 
 class GapTest(unittest.TestCase):
-    def test_dibawah_ambang_gugur(self):
+    """Filter likuiditas GMGN dihapus (2026-09-17 malam): ``row_gmgn_gap``
+    selalu ``None`` apa pun angkanya; yang tersisa hanya aturan WARNA
+    :func:`gl.liq_is_green` (> $500K hijau, selain itu hitam)."""
+
+    def test_dibawah_ambang_tidak_gugur(self):
         row = _row()
         row["gmgn_liq"] = {"ok": True, "usd": 153_496.33,
                            "below_cutoff": False, "source": "gmgn_token_info"}
-        gap = gl.row_gmgn_gap(row)
-        self.assertIn("$153.5K", gap)
-        self.assertIn(f"< {gl.MIN_LABEL}", gap)
-
-    def test_tepat_ambang_lolos(self):
-        """Permintaan user: "KURANG dari ambang" — tepat ambang tidak dibuang."""
-        row = _row()
-        row["gmgn_liq"] = {"ok": True, "usd": gl.MIN_TOTAL_LIQ_USD,
-                           "below_cutoff": False, "source": "gmgn_token_info"}
         self.assertIsNone(gl.row_gmgn_gap(row))
 
-    def test_nilai_mepet_ambang_tidak_terbaca_sama_dengan_ambang(self):
-        """$499.999,99 tidak boleh tertulis "$500.0K < $500K" (kontradiktif).
-
-        ``compact_usd`` membulatkan ke satu desimal, jadi nilai yang mepet
-        ambang punya bentuk ringkas yang sama dengan ambangnya — di situ teks
-        alasan memakai angka persis.
-        """
-        row = _row()
-        row["gmgn_liq"] = {"ok": True, "usd": 499_999.99,
-                           "below_cutoff": False, "source": "gmgn_token_info"}
-        gap = gl.row_gmgn_gap(row)
-        self.assertIn("$499,999.99 < $500K", gap)
-        # Di luar kasus mepet: tetap ringkas.
-        row["gmgn_liq"]["usd"] = 495_000.0
-        self.assertIn("$495.0K < $500K", gl.row_gmgn_gap(row))
-
-    def test_di_atas_ambang_lolos(self):
-        row = _row()
-        row["gmgn_liq"] = {"ok": True, "usd": 1_900_000.0,
-                           "below_cutoff": False, "source": "gmgn_token_info"}
-        self.assertIsNone(gl.row_gmgn_gap(row))
-
-    def test_below_cutoff_gugur(self):
+    def test_below_cutoff_tidak_gugur(self):
         row = _row()
         row["gmgn_liq"] = {"ok": True, "usd": None, "below_cutoff": True,
                            "source": "gmgn_rank", "cutoff_usd": 15_000}
-        gap = gl.row_gmgn_gap(row)
-        self.assertIn("cutoff peringkat", gap)
-        self.assertIn("$15.0K", gap)
+        self.assertIsNone(gl.row_gmgn_gap(row))
 
     def test_tanpa_bukti_tidak_menyaring(self):
         for gm in (None, {"ok": False}, {"ok": False, "usd": 10.0}):
@@ -348,17 +324,34 @@ class GapTest(unittest.TestCase):
                 row["gmgn_liq"] = gm
             self.assertIsNone(gl.row_gmgn_gap(row))
 
+    def test_warna_hijau_strict_di_atas_500k(self):
+        """Permintaan user: "> 500K hijau, kalau tidak hitam" — tepat $500K
+        dan di bawahnya hitam; None/teks aneh juga hitam."""
+        self.assertTrue(gl.liq_is_green(500_000.01))
+        self.assertTrue(gl.liq_is_green(884_912.39))
+        self.assertTrue(gl.liq_is_green("1900000"))
+        self.assertFalse(gl.liq_is_green(gl.LIQ_GREEN_MIN_USD))
+        self.assertFalse(gl.liq_is_green(499_999.99))
+        self.assertFalse(gl.liq_is_green(None))
+        self.assertFalse(gl.liq_is_green("abc"))
+        self.assertEqual(gl.LIQ_GREEN_MIN_USD, 500_000.0)
+
+    def test_teks_alasan_lama_masih_ada_sebagai_arsip(self):
+        row = _row()
+        row["gmgn_liq"] = {"ok": True, "usd": 499_999.99,
+                           "below_cutoff": False, "source": "gmgn_token_info"}
+        self.assertIn("$499,999.99 < $500K", gl._legacy_gmgn_gap(row))
+
 
 class RowBestGapsIntegrationTest(unittest.TestCase):
     """GMGN = saringan TERAKHIR: alasan metrik lebih keras tetap menang."""
 
-    def test_gmgn_gap_terakhir(self):
+    def test_gmgn_rendah_tidak_lagi_gugur(self):
+        """Filter likuiditas dihapus 2026-09-17 malam — $250K tetap lolos."""
         row = _row()
         row["gmgn_liq"] = {"ok": True, "usd": 250_000.0,
                            "below_cutoff": False, "source": "gmgn_token_info"}
-        gaps = ms.row_best_gaps(row, lane="24h")
-        self.assertEqual(len(gaps), 1)
-        self.assertIn("Likuiditas GMGN", gaps[0])
+        self.assertEqual(ms.row_best_gaps(row, lane="24h"), [])
 
     def test_gmgn_lolos_tanpa_alasan(self):
         row = _row()
@@ -413,7 +406,11 @@ class CellPartsGmgnTest(unittest.TestCase):
         self.assertEqual(summary["liquidity_lines"], [])
         value, sub, tip = rc.cell_parts(summary)
         self.assertEqual(value, "AMAN")
-        self.assertEqual(sub, "$1.90M liq")  # tanpa "N pool" (GMGN tak kirim)
+        # tanpa "N pool" (GMGN tak kirim); > $500K → angka HIJAU (2026-09-17
+        # malam: "jika likuiditas > 500K kasih warna hijau").
+        self.assertEqual(sub, '<span style="color:#16a34a;font-weight:700;">'
+                              '$1.90M</span> liq')
+        self.assertIn("$1.90M", sub)
         self.assertIn("likuiditas total (sumber: gmgn.ai): $1.90M", tip)
         self.assertNotIn("likuiditas (ringkas):", tip)
 
@@ -518,19 +515,19 @@ class ScanLaneGmgnTest(unittest.TestCase):
             return ms.scan_best_lane("24h", max_wallets=2000,
                                      rugcheck=True)
 
-    def test_dibawah_ambang_dilewati(self):
+    def test_dibawah_ambang_tetap_tampil(self):
+        """Filter likuiditas dihapus (2026-09-17 malam) — pool tipis tetap
+        di ``rows``; angkanya tetap ditempel untuk warna kolom RugCheck."""
         pools = [_best_pool("P-BIG", MINT_A, ),
                  _best_pool("P-SMALL", MINT_B)]
         result = self._scan(pools, {MINT_A: 884_912.3982565559,   # PAID
                                     MINT_B: 153_496.33041956509})  # pill
-        self.assertEqual([r["pool_address"] for r in result["rows"]],
-                         ["P-BIG"])
-        self.assertEqual([r["pool_address"] for r in result["hidden_rows"]],
-                         ["P-SMALL"])
-        reason = result["hidden_rows"][0]["best_gaps"][0]
-        self.assertIn("Likuiditas GMGN", reason)
-        self.assertIn("$153.5K", reason)
-        self.assertIn("< $500K", reason)
+        self.assertEqual(sorted(r["pool_address"] for r in result["rows"]),
+                         ["P-BIG", "P-SMALL"])
+        self.assertEqual(result["hidden_rows"], [])
+        by_pool = {r["pool_address"]: r for r in result["rows"]}
+        self.assertAlmostEqual(by_pool["P-SMALL"]["gmgn_liq"]["usd"],
+                               153_496.33041956509)
 
     def test_paid_tidak_ikut_terbuang(self):
         """Regresi laporan user 2026-09-17: *"poolnya kok jadi kosong,
