@@ -1,5 +1,40 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-17 (malam) — 🚨 Header "STOP DEGEN" merah menyala berkedip di halaman utama
+
+- Permintaan user (verbatim): *"tambahkan header di page app"* dengan teks
+  **"STOP DEGEN, GAK BISA"** · **"SUDAH KALAH BERTUBI2 AKUI KALAU KAMU GAK
+  BISA"** dan gaya *"merah menyala berkedip, tulisan besar, ada emoticon
+  warning"*.
+- **Komponen.** `dashboard_components.render_degen_stop_header()` (konstanta
+  `DEGEN_STOP_LINES` / `DEGEN_STOP_EMOJI`) merender satu
+  `<div class="degen-stop-header" role="alert">` berisi dua
+  `<span class="degen-stop-line">` — tiap baris diapit emoticon warning
+  (🚨 baris 1, ⚠️ baris 2). Teksnya **verbatim** (termasuk "BERTUBI2", jangan
+  dirapikan) dan lewat `html.escape`.
+- **Gaya** hidup di `render_styles()` (CSS, bukan inline style — `st.markdown`
+  men-sanitasi atribut `style`): panel merah gelap (`#450a0a`→`#7f1d1d`) +
+  teks `#ff2d2d` dengan `text-shadow` glow berlapis; **huruf besar**
+  `font-size:clamp(1.4rem,3.6vw,2.6rem)` (±22–42 px, mengecil di layar
+  sempit); **berkedip** lewat `@keyframes degen-stop-blink` (opacity + glow
+  turun di 50%) + `degen-stop-glow` (border glow) — pola yang sama dengan
+  `.scan-best-gold` (kelip emas 2026-09-12), tapi warnanya alarm merah.
+  `prefers-reduced-motion` mematikan animasinya (tetap merah menyala). Nama
+  class **bukan** turunan `scan-best-gold`/`dust-best` supaya tidak
+  mengganggu tes yang menghitung kemunculan class chip emas di body halaman.
+- **Posisi.** `app.py` memanggil `render_degen_stop_header()` **setelah**
+  `render_styles()` (CSS harus sudah ada) dan **sebelum** card 🏆 Scan Best
+  Pool — jadi blok ini elemen paling atas halaman utama. Halaman lain
+  (🧮 Holder, 📦 TEMP) **tidak** ikut menampilkannya (permintaan user: "di page
+  app"); menambahkannya cukup satu baris panggilan per halaman.
+- **Tes:** file baru `tests/test_degen_header.py` (4 tes): header ada di atas
+  card 🏆 + `role="alert"`; dua kalimat verbatim + emoticon 🚨/⚠️ + konstanta
+  `DEGEN_STOP_LINES` di-pin; pin CSS (warna merah, `animation:degen-stop-blink`,
+  kedua keyframes, `clamp(…)`, `opacity:.3`, `prefers-reduced-motion`); halaman
+  lain tidak memanggil fungsi/HTML-nya. Suite `python -m unittest discover -s
+  tests` → **1112 tes**, 19 failed + 1 error — **nama kegagalan identik
+  baseline** (bukan regresi).
+
 ## Update 2026-09-17 (lanjutan) — 🏆 Best Pool: Jupiter safeguard server dimatikan default (PAID tidak dibuang diam-diam)
 
 - Laporan user (verbatim): *"kok token PAID tetap tidak muncul di hasil scan
@@ -853,7 +888,9 @@ yang sudah dikonfirmasi volume + harga + volatilitas.
   (Trending/Degen), termasuk semua kontrol.
   Tautan `st.page_link` main ↔ temp; bukan salinan watchlist baru.
 - `dashboard_components.py`: CSS/helper presentasi, card Robinhood bersama
-  (`variant="lp"|"regular"`, snapshot merge diberikan eksplisit), dan
+  (`variant="lp"|"regular"`, snapshot merge diberikan eksplisit),
+  `render_degen_stop_header()` (**🚨 header "STOP DEGEN" halaman utama**, teks
+  + gaya `degen-stop-*` di `render_styles()`, 2026-09-17), dan
   `load_dashboard_data()` (store Solana & Robinhood terpisah, overlay scan
   manual tetap berlaku). Import modul tidak merender UI atau memuat store.
 - Scan manual hanya lane card yang sedang dibuka: Solana biasa di temp

@@ -7,7 +7,10 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
 
 ## Halaman
 
-- **Halaman utama** (`app.py`): **🏆 Scan Best Pool Meteora** (**full-width**
+- **Halaman utama** (`app.py`): paling atas **🚨 header "STOP DEGEN, GAK BISA"**
+  (2026-09-17 — *"merah menyala berkedip, tulisan besar, ada emoticon warning"*;
+  `dashboard_components.render_degen_stop_header()`, gaya + animasi di
+  `render_styles()`), lalu **🏆 Scan Best Pool Meteora** (**full-width**
   sejak 2026-09-11 — "jangan dibuat grid lagi"; sejak 2026-09-16 **satu tombol
   deteksi 24H saja** dengan satu tabel), lalu paling bawah **🧾 Log Aktivitas**.
   Detail karakteristik tiap card/section bukan caption panjang lagi — jadi
