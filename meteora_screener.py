@@ -48,12 +48,16 @@ dan dibuang total** (aturan 2026-09-14), volatility di luar **1%–10%**
 ``gmgn_liquidity.MIN_TOTAL_LIQ_USD`` ($500K) tidak ditampilkan**
 (:mod:`gmgn_liquidity`, permintaan user 2026-09-17 — angkanya ditempel
 ``row["gmgn_liq"]`` sebelum alasan gugur dihitung; ambangnya sempat $1M
-tetapi mengosongkan seluruh tabel, jadi diturunkan sore harinya). Filter
-API membawa **Jupiter
-safeguard**: ``base_token_has_critical_warnings=false&&
-quote_token_has_critical_warnings=false&&pool_type=dlmm&&active_tvl>=50000``
-(:data:`JUPITER_SAFEGUARD_FILTERS`) — token yang diperingati Jupiter tidak
-pernah masuk listing. Dust, volume dan tier fee bukan syarat. Urutan tiap
+tetapi mengosongkan seluruh tabel, jadi diturunkan sore harinya). Saringan
+server Jupiter safeguard yang sempat dipasang 2026-09-16 **dimatikan
+default-nya** 2026-09-17 (filter ``base/quote_token_has_critical_warnings=false``
+menjatuhkan token seperti PAID sebelum listing sampai ke client — token
+pump.fun yang baru launch sering masih punya freeze/metadata mutable yang
+Jupiter anggap "critical", padahal bendera yang sama sudah dilaporkan kolom
+RugCheck sebagai **informasi** tanpa membuang baris). Query API sekarang:
+``pool_type=dlmm&&active_tvl>=50000`` (lihat :func:`best_filter_by`,
+``safeguard=True`` masih bisa dipakai untuk menyalakan kembali kalau
+dibutuhkan). Dust, volume dan tier fee bukan syarat. Urutan tiap
 tabel (2026-09-15, permintaan user: *"kita urutkan fee/TVL paling besar dulu,
 baru perkalian f/v"*): **Fee/TVL terbesar** → **F/V terbesar** → volume/active
 TVL → dust %MC terkecil; badge BEST POOL dihapus. Baris yang tampil dilengkapi
@@ -1106,14 +1110,20 @@ def row_volatility_zero(row: dict | None) -> bool:
     return bool(value is not None and math.isfinite(value) and value == 0)
 
 
-#: Saringan server "Jupiter safeguard" (permintaan user 2026-09-16: *"scan
-#: baru saya tambahkan jupiter safeguard untuk filter yang mungkin rug"*).
-#: Kedua kunci adalah flag listing Meteora yang meneruskan **Jupiter Token
-#: Portal / critical warnings** untuk token di sisi base dan quote: pool yang
-#: salah satu tokennya diperingatkan Jupiter (freeze/hook/transfer-fee/
-#: non-transferable dll.) tidak pernah masuk listing, jadi tidak ikut di-scan
-#: dan tidak pernah tampil. Urutan stringnya disamakan dengan URL yang dipakai
-#: user di UI Meteora supaya permintaan identik dengan yang dia verifikasi.
+#: Filter server Jupiter safeguard **dimatikan 2026-09-17** setelah laporan
+#: user *"token PAID tetap tidak muncul di hasil scan — tidak ada di daftar
+#: disembunyikan juga"*. Akar masalah: filter server Meteora
+#: ``base_token_has_critical_warnings=false&&quote_token_has_critical_warnings=false``
+#: membuang token (termasuk PAID ``98kf…pump``) **sebelum** payload sampai ke
+#: kode — jadi mereka tidak pernah masuk ``hidden_rows`` dan user tidak punya
+#: jejak kenapa hilang. Token pump.fun yang baru launch sering masih punya
+#: freeze/metadata mutable yang Jupiter anggap "critical", walau kolom
+#: RugCheck (:mod:`rugchecker`) sudah melaporkan bendera itu sebagai
+#: **informasi** (filosofi repo: "RugCheck tidak pernah membuang baris").
+#: Bendera tetap tersedia supaya caller/tes yang membutuhkan bisa memasangnya
+#: lewat kwarg ``safeguard=True``, tapi default-nya sekarang ``False`` agar
+#: token seperti PAID masuk listing, ikut saringan F/V/volat/Top10/GMGN
+#: bersama kandidat lain, dan warning-nya tetap terlihat di kolom RugCheck.
 JUPITER_SAFEGUARD_FILTERS = ("base_token_has_critical_warnings=false",
                              "quote_token_has_critical_warnings=false")
 
@@ -1121,17 +1131,20 @@ JUPITER_SAFEGUARD_FILTERS = ("base_token_has_critical_warnings=false",
 def best_filter_by(pool_type: str = "dlmm",
                    fee_pct_min: float | None = None,
                    active_tvl_min: float = BEST_ACTIVE_TVL_MIN,
-                   *, safeguard: bool = True) -> str:
+                   *, safeguard: bool = False) -> str:
     """Query ``filter_by`` Scan Best Pool Meteora (&&-join ala UI Meteora).
 
     Sejak 2026-09-13 filter ``fee_pct>=2`` **dihapus** (permintaan user:
-    pool dengan fee tier rendah seperti EMBER/USDC harus muncul). Sejak
-    2026-09-16 listing dibawa ke saringan server Jupiter safeguard
-    (:data:`JUPITER_SAFEGUARD_FILTERS`) — token dengan critical warning di
-    sisi base ATAU quote sudah terbuang sebelum payload diterima. Yang
-    tersisa sesudah itu: ``pool_type=dlmm&&active_tvl>=50000``. Kwarg
-    ``fee_pct_min`` dipertahankan untuk kompatibilitas caller lama (``None``
-    = tidak menambah filter fee_pct); ``safeguard=False`` hanya untuk tes.
+    pool dengan fee tier rendah seperti EMBER/USDC harus muncul). Filter
+    server Jupiter safeguard (:data:`JUPITER_SAFEGUARD_FILTERS`) yang
+    sempat dipasang 2026-09-16 **dimatikan default-nya** sehari kemudian
+    (kwarg ``safeguard=False``) — terbukti membuang token seperti PAID
+    sebelum listing sampai ke client, padahal bendera yang sama sudah
+    dilaporkan kolom RugCheck tanpa membuang baris. Query default sekarang:
+    ``pool_type=dlmm&&active_tvl>=50000``. Kwarg ``fee_pct_min``
+    dipertahankan untuk kompatibilitas caller lama (``None`` = tidak
+    menambah filter fee_pct); ``safeguard=True`` masih bisa dipakai caller
+    yang memang ingin menyaring di sisi server (tes / tooling terpisah).
     """
     def _num(value: float) -> str:
         number = float(value)
@@ -1704,9 +1717,9 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
     Alurnya:
 
     1. listing API Meteora timeframe **24h** dengan saringan server
-       ``base_token_has_critical_warnings=false&&quote_token_has_critical_warnings=false``
-       (Jupiter safeguard — token yang diperingati Jupiter tidak pernah masuk
-       listing) ``&&pool_type=dlmm&&active_tvl>=50000`` (``category=top``,
+       (Jupiter safeguard dimatikan default-nya 2026-09-17 — lihat
+       :func:`best_filter_by`; bendera token kritis tetap dilaporkan kolom
+       RugCheck tanpa membuang baris) ``&&pool_type=dlmm&&active_tvl>=50000`` (``category=top``,
        page_size 50);
     2. saringan layar di :func:`row_best_gaps` — ``F/V >= 5×``, volatility
        1%–10%, Top10 < 20% supply, lalu **likuiditas total GMGN <

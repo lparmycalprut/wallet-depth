@@ -1,5 +1,36 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-17 (lanjutan) — 🏆 Best Pool: Jupiter safeguard server dimatikan default (PAID tidak dibuang diam-diam)
+
+- Laporan user (verbatim): *"kok token PAID tetap tidak muncul di hasil scan
+  ya?"* — *"tidak ada di daftar disembunyikan juga."*
+- **Diagnosa.** PAID tidak muncul di tabel lolos **maupun** di daftar
+  "dilewati" — artinya PAID dibuang **sebelum** sempat masuk client.
+  Tersangka: filter server Meteora
+  ``base_token_has_critical_warnings=false&&quote_token_has_critical_warnings=false``
+  yang dipasang 2026-09-16 (Jupiter safeguard). Token pump.fun yang baru
+  launch sering masih punya freeze/metadata mutable yang Jupiter tandai
+  "critical", walau bendera itu sudah dilaporkan kolom RugCheck sebagai
+  informasi (filosofi repo: *RugCheck tidak pernah membuang baris*). Filter
+  server-nya bertentangan dengan filosofi itu dan sekarang membuang PAID
+  (dan token sejenis) sebelum listing terlihat kode kita.
+- **Perbaikan.** ``meteora_screener.best_filter_by`` kwarg ``safeguard``
+  default ``True`` → **``False``**. Konstanta ``JUPITER_SAFEGUARD_FILTERS``
+  dan kwarg-nya tetap ada (caller/tooling/tes bisa menyalakan lagi dengan
+  ``safeguard=True``) — cuma tidak dipasang lagi di query default. Query
+  default Best Pool kini kembali ke ``pool_type=dlmm&&active_tvl>=50000``,
+  sama dengan regular scan. Kolom RugCheck tetap melaporkan bendera kritis
+  (freeze/hook/transfer-fee/non-transferable dll.) — jadi warning Jupiter
+  itu **masih terlihat**, cuma tidak lagi diam-diam membuang baris. Teks
+  tooltip card + docstring modul diperbarui supaya menjelaskan kenapa
+  safeguard tidak dipasang di server.
+- **Tes:** 3 baru di `SafeguardDefaultOffTest` (query default tanpa
+  critical_warnings, kwarg safeguard=True masih menyalakan dan prefix-nya
+  benar di depan, fetch_best_pools default mengirim query tanpa flag).
+  `BestFilterQueryTest` + `UiContractTest.test_skrining_rug_bukan_saringan_baris`
+  + assertion tooltip di-update. Suites Best Pool + GMGN + RugCheck
+  (131+ tes) lulus; 8 fail + 9 error baseline identik (bukan regresi).
+
 ## Update 2026-09-17 (sore) — 🏆 Best Pool: ambang likuiditas GMGN $1M → **$500K** + pesan tabel kosong menyebut penyebabnya
 
 - Laporan user (verbatim): *"Tidak ada pool 24H yang lolos filter Best Pool

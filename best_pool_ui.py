@@ -40,12 +40,16 @@ dan :func:`meteora_screener.normalize_best_lane` memetakan semua alias lama
   (:mod:`gmgn_liquidity`, satu request batch untuk semua kandidat) dan baris
   yang terbukti di bawah ambang masuk daftar "dilewati" dengan alasannya di
   sub sel F/V;
-- **Filter API membawa Jupiter safeguard**
-  (:data:`meteora_screener.JUPITER_SAFEGUARD_FILTERS`, permintaan user
-  2026-09-16: *"scan baru saya tambahkan jupiter safeguard untuk filter yang
-  mungkin rug"*) — listing Best Pool saja yang memakai
-  ``base_token_has_critical_warnings=false&&quote_token_has_critical_warnings=false``,
-  jadi token yang diperingati Jupiter tidak pernah sampai ke tabel;
+- **Filter server Jupiter safeguard dimatikan default-nya**
+  (2026-09-17, :data:`meteora_screener.JUPITER_SAFEGUARD_FILTERS` masih
+  tersedia dengan kwarg ``safeguard=True``) — filter server
+  ``base_token_has_critical_warnings=false&&quote_token_has_critical_warnings=false``
+  yang dipasang 2026-09-16 (permintaan user *"scan baru saya tambahkan
+  jupiter safeguard untuk filter yang mungkin rug"*) ternyata membuang
+  token seperti PAID sebelum listing sampai ke client (tidak tampil di
+  tabel lolos maupun daftar "dilewati"). Bendera token kritis
+  (freeze/hook/transfer-fee/non-transferable dll.) **tetap dilaporkan** di
+  kolom RugCheck sebagai informasi — kolom itu tidak pernah membuang baris;
 - **Kolom RugCheck baru** (2026-09-16; angka likuiditas beralih ke **GMGN**
   2026-09-17): tiap mint base diperiksa lewat honeypot checker
   **rugchecker.cc** (modul :mod:`rugchecker`, tanpa API key) — verdict
@@ -229,8 +233,10 @@ def best_pool_tooltip() -> str:
         "non-transferable/hook/transfer-fee) jadi BERISIKO, sisanya minor "
         "jadi WASPADA; RUGCHECK TIDAK PERNAH MEMBUANG BARIS \u2014 ia kolom "
         "informasi, saringannya tetap F/V + volat + Top10 + likuiditas "
-        f"GMGN \u2265 {gmgn_min_label()} + safeguard "
-        "Jupiter di sisi API. Mint yang laporannya tidak didapat menulis "
+        f"GMGN \u2265 {gmgn_min_label()} (bendera safeguard Jupiter "
+        "disajikan lewat kolom RugCheck, bukan filter server, supaya token "
+        "seperti PAID tidak hilang diam-diam dari listing). Mint yang "
+        "laporannya tidak didapat menulis "
         "\u2014 (bukan \"AMAN\": tanpa bukti tidak ada verdict). Sorot "
         "hijau tua menyala di tabel utama: sel volatility terbesar, sel F/V "
         "tertinggi, dan sel Fee/TVL tertinggi (kalau seri, semua di puncak "

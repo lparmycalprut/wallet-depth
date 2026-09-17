@@ -12,10 +12,11 @@ dari 100, kasih warna hijau"*. Yang di-pin di file ini:
   :func:`meteora_screener.normalize_best_lane` memetakan SEMUA alias lama
   (``30m``/``1h``/``both``) ke 24H, juga di :func:`fetch_best_pools` sehingga
   tidak ada jalur yang masih bisa menarik window 30 menit;
-- **query API Best Pool** = Jupiter safeguard + ``pool_type=dlmm&&
-  active_tvl>=50000`` (``fee_pct>=2`` tetap DIHAPUS 2026-09-13) — safeguard
-  hanya untuk listing Best Pool, ``filter_by()`` regular scan/watchlist tidak
-  boleh ikut berubah;
+- **query API Best Pool** = ``pool_type=dlmm&&active_tvl>=50000``
+  (``fee_pct>=2`` tetap DIHAPUS 2026-09-13). Filter server Jupiter safeguard
+  yang dipasang 2026-09-16 **dimatikan default-nya** 2026-09-17 (membuang
+  PAID diam-diam) — masih bisa diaktifkan dengan kwarg ``safeguard=True``.
+  ``filter_by()`` regular scan/watchlist **tidak** ikut berubah;
 - **saringan layar sebelum enrichment** (:func:`meteora_screener.row_best_gaps`):
   ``F/V >= BEST_FV_24H_MIN`` (5×, inklusif), volatility **1%–10%**
   (:data:`BEST_VOL_SHOW_MIN`/``BEST_VOL_SHOW_MAX``, inklusif di dua sisi), dan
@@ -60,12 +61,19 @@ import meteora_screener as ms
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
 SOL = ms.SOL_MINT
 QUERY = "pool_type=dlmm&&active_tvl>=50000"
-# Jupiter safeguard (permintaan user 2026-09-16) hanya menempel di listing
-# Best Pool — query reguler (fetch_listing / snapshot metrik watchlist) harus
-# tetap seperti dulu.
+# Jupiter safeguard (permintaan user 2026-09-16) — **dimatikan default-nya**
+# 2026-09-17 karena filter server ini ternyata membuang token seperti PAID
+# sebelum payload sampai ke client (lihat BEST_QUERY di bawah). Kwarg
+# ``safeguard=True`` masih bisa dipakai caller yang ingin menyalakannya;
+# stringnya di-pin supaya bila dipakai query tetap konsisten.
 SAFEGUARD = ("base_token_has_critical_warnings=false&&"
              "quote_token_has_critical_warnings=false")
-BEST_QUERY = SAFEGUARD + "&&" + QUERY
+# Best query **default**: sama dengan regular scan — safeguard server tidak
+# dipasang (bendera kritis sudah dilaporkan kolom RugCheck tanpa membuang
+# baris; safeguard server membuang PAID diam-diam).
+BEST_QUERY = QUERY
+# Query dengan safeguard dihidupkan — masih tersedia lewat kwarg.
+SAFEGUARD_QUERY = SAFEGUARD + "&&" + QUERY
 
 
 def _token(addr, symbol="TOK", mc=1_000_000, top10=12.0):
@@ -138,23 +146,28 @@ def _fv(fee, vol):
 
 class BestFilterQueryTest(unittest.TestCase):
     def test_filter_by_matches_listing(self):
-        """Query server = safeguard Jupiter + DLMM + active TVL; fee_pct dihapus.
+        """Query server = DLMM + active TVL (tanpa safeguard server); fee_pct
+        dihapus.
 
-        Permintaan user 2026-09-16: *"scan baru saya tambahkan jupiter safeguard
-        untuk filter yang mungkin rug"* — token dengan critical warning di sisi
-        base ATAU quote dibuang API sebelum payload diterima. Urutan bagian
-        query juga di-pin: safeguard **di depan**, supaya cache key / diff
-        query selalu sama.
+        Permintaan user 2026-09-16 sempat menambahkan Jupiter safeguard di
+        sisi server, tapi dimatikan default-nya 2026-09-17 (laporan user
+        *"token PAID tetap tidak muncul di hasil scan"*) — filter server
+        ``*_has_critical_warnings=false`` membuang token pump.fun yang baru
+        launch (seperti PAID) sebelum payload sampai ke client; bendera
+        kritis yang sama sudah dilaporkan kolom RugCheck tanpa membuang
+        baris. Kwarg ``safeguard=True`` masih bisa dipakai untuk menyalakan
+        kembali filter server.
         """
         self.assertEqual(ms.best_filter_by(), BEST_QUERY)
+        self.assertEqual(ms.best_filter_by(safeguard=True), SAFEGUARD_QUERY)
         self.assertEqual(ms.JUPITER_SAFEGUARD_FILTERS,
                          ("base_token_has_critical_warnings=false",
                           "quote_token_has_critical_warnings=false"))
         self.assertNotIn("fee_pct", ms.best_filter_by())
         self.assertEqual(ms.BEST_ACTIVE_TVL_MIN, 50_000.0)
-        # Safeguard HANYA untuk Best Pool: regular scan + snapshot metrik
-        # watchlist memakai filter_by() lama (mengubahnya = menghapus pool yang
-        # selama ini tampil di 🌊 Watchlist Meteora / cron).
+        # Regular scan + snapshot metrik watchlist memakai filter_by() lama
+        # (mengubahnya = menghapus pool yang selama ini tampil di 🌊 Watchlist
+        # Meteora / cron).
         self.assertEqual(ms.filter_by(), QUERY)
         self.assertEqual(ms.best_filter_by(safeguard=False), QUERY)
 
@@ -609,6 +622,38 @@ class BestGapSummaryTest(unittest.TestCase):
         self.assertEqual(ms.gmgn_min_label(), gl.MIN_LABEL)
         with mock.patch.object(gl, "MIN_LABEL", "$2M"):
             self.assertEqual(ms.gmgn_min_label(), "$2M")
+
+
+class SafeguardDefaultOffTest(unittest.TestCase):
+    """Filter server Jupiter safeguard DIMATIKAN default-nya (2026-09-17).
+
+    Laporan user *"token PAID tetap tidak muncul di hasil scan — tidak ada di
+    daftar disembunyikan juga"*: ``base_token_has_critical_warnings=false &&
+    quote_token_has_critical_warnings=false`` membuang token PAID di sisi
+    server Meteora, sehingga token itu tidak pernah sampai ke client dan
+    ``hidden_rows`` pun kosong. Fix: safeguard tidak lagi dipasang di query
+    default; bila caller ingin, kwarg ``safeguard=True`` masih menyalakannya.
+    """
+
+    def test_default_query_tanpa_safeguard(self):
+        query = ms.best_filter_by()
+        self.assertNotIn("critical_warnings", query)
+        self.assertEqual(query, f"pool_type=dlmm&&active_tvl>={int(ms.BEST_ACTIVE_TVL_MIN)}")
+
+    def test_safeguard_kwarg_masih_tersedia(self):
+        query = ms.best_filter_by(safeguard=True)
+        self.assertIn("base_token_has_critical_warnings=false", query)
+        self.assertIn("quote_token_has_critical_warnings=false", query)
+        # safeguard di DEPAN pool_type (cache key konsisten).
+        self.assertLess(query.index("base_token_has_critical_warnings"),
+                        query.index("pool_type=dlmm"))
+
+    def test_fetch_best_pools_default_tanpa_safeguard(self):
+        with mock.patch.object(ms, "_http_get",
+                               return_value={"data": []}) as http:
+            ms.fetch_best_pools(timeframe="24h")
+        _url, params = http.call_args.args
+        self.assertNotIn("critical_warnings", params["filter_by"])
 
 
 class SortBestRowsTest(unittest.TestCase):
@@ -1320,13 +1365,21 @@ class BestPoolCardTest(unittest.TestCase):
         for label in (f"pool_type=dlmm&&active_tvl>={int(ms.BEST_ACTIVE_TVL_MIN)}",
                       f"24H: F/V \u2265 {ms.BEST_FV_24H_MIN:g}\u00d7",
                       "Urutan tiap tabel: Fee/TVL terbesar, lalu F/V terbesar",
-                      "base_token_has_critical_warnings=false",
-                      "quote_token_has_critical_warnings=false",
                       # Saringan likuiditas GMGN (2026-09-17) ikut tertulis di
                       # tooltip — dialah yang mengosongkan tabel saat masih $1M.
-                      f"(4) likuiditas total GMGN di bawah {ms.gmgn_min_label()}",
-                      "RugCheck"):
+                      f"likuiditas total GMGN di bawah {ms.gmgn_min_label()}",
+                      "RugCheck",
+                      # Safeguard Jupiter dimatikan di server (2026-09-17) —
+                      # tooltip harus menjelaskan itu, agar user tahu kenapa
+                      # token seperti PAID kini lolos.
+                      "bendera safeguard Jupiter",
+                      "bukan filter server"):
             self.assertIn(label, body)
+        # Dua flag safeguard server TIDAK boleh lagi nongol di tooltip — ia
+        # sudah tidak dipakai di query default (PAID dibuang diam-diam olehnya).
+        for gone_flag in ("base_token_has_critical_warnings=false",
+                          "quote_token_has_critical_warnings=false"):
+            self.assertNotIn(gone_flag, body)
         # Teks dua-lane lama tidak boleh balik.
         for gone in ("Dua tombol = dua lane", "30M: F/V >", "Vol 30m",
                      "OK hijau"):

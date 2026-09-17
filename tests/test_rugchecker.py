@@ -507,14 +507,27 @@ class UiContractTest(unittest.TestCase):
                            f"UI menyentuh payload mentah ({raw})")
 
     def test_skrining_rug_bukan_saringan_baris(self):
-        """Safeguard Jupiter ada di query API; rugcheck tidak menyaring."""
+        """Safeguard Jupiter default-nya DIMATIKAN (2026-09-17); rugcheck tidak
+        menyaring.
+
+        Konstanta ``JUPITER_SAFEGUARD_FILTERS`` tetap ada di source (bisa
+        diaktifkan via ``safeguard=True``) dan bendera kritis tetap
+        dilaporkan kolom RugCheck — tetapi filter server tidak lagi dipasang
+        di query default (membuang PAID diam-diam), dan RugCheck tidak
+        pernah membuang baris.
+        """
+        # Konstanta tetap ada di source (kwarg safeguard=True masih hidup).
         self.assertIn("base_token_has_critical_warnings=false", self.screener)
         self.assertIn("quote_token_has_critical_warnings=false", self.screener)
+        # Tapi query DEFAULT tidak lagi memuat flag itu (safeguard=False).
         query = self.ms.best_filter_by()
-        self.assertLess(query.index("base_token_has_critical_warnings"),
-                        query.index("pool_type=dlmm"))
-        self.assertLess(query.index("quote_token_has_critical_warnings"),
-                        query.index("pool_type=dlmm"))
+        self.assertNotIn("base_token_has_critical_warnings", query)
+        self.assertNotIn("quote_token_has_critical_warnings", query)
+        self.assertIn("pool_type=dlmm", query)
+        # Kalau caller minta, safeguard masih bisa dipasang (di depan pool_type).
+        sg_query = self.ms.best_filter_by(safeguard=True)
+        self.assertLess(sg_query.index("base_token_has_critical_warnings"),
+                        sg_query.index("pool_type=dlmm"))
         self.assertIn("def attach_to_rows", (ROOT / "rugchecker.py").read_text())
         self.assertNotIn("rugcheck", self.screener.split("def row_best_gaps")[1]
                          .split("\ndef ")[0],
