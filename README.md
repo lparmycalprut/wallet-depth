@@ -9,9 +9,10 @@ accumulation 12 jam dan reversal tetap tidak digunakan.
 
 - **Halaman utama** (`app.py`): paling atas **🚨 header "STOP DEGEN, GAK BISA"**
   (2026-09-17 — *"merah menyala berkedip, tulisan besar, ada emoticon warning"*;
-  warna alarmnya sejak permintaan berikutnya di hari yang sama **BIRU royal**
-  — *"ganti tulisan warna warning kita menjadi warna biru, efek tetap"* —
-  animasi kelip + glow-nya tidak berubah)
+  tulisannya tetap **BIRU royal** sesuai permintaan *"ganti tulisan warna
+  warning kita menjadi warna biru, efek tetap"*, sedangkan permintaan terbaru
+  *"background nya ganti warna merah, tulisan tetap biru"* membuat panelnya
+  **merah gelap** tanpa mengubah animasi kelip + glow)
   `dashboard_components.render_degen_stop_header()`, gaya + animasi di
   `render_styles()`), lalu **🏆 Scan Best Pool Meteora** (**full-width**
   sejak 2026-09-11 — "jangan dibuat grid lagi"; sejak 2026-09-16 **satu tombol

@@ -70,22 +70,22 @@ def render_styles() -> None:
     }
     /* Header peringatan 🚨 STOP DEGEN di halaman utama (2026-09-17, permintaan
        user: "tambahkan header di page app" — "merah menyala berkedip, tulisan
-       besar, ada emoticon warning"). Paletnya lalu diganti BIRU royal pada
-       permintaan berikutnya (2026-09-17: "ganti tulisan warna warning kita
-       menjadi warna biru, efek tetap") — kutipan "merah" dibiarkan apa adanya
-       sebagai riwayat, dan yang berubah hanya warnanya: animasi, glow, dan
-       ukurannya identik dengan versi merah. Kelap-kelipnya pola yang sama
-       dengan `.scan-best-gold` di atas (opacity + glow yang memudar), tapi
-       warnanya BIRU royal menyala di atas panel biru gelap sebagai alarm,
-       bukan pujian. Nama class-nya sengaja bukan turunan `scan-best-gold`/
-       `dust-best`: tes card 🏆 Scan Best Pool menghitung kemunculan string
-       class chip emas itu di seluruh body halaman (tests/test_best_pool_scan.py,
-       tests/test_lp_card_ui.py). Semua gaya hidup di sini karena st.markdown
-       men-sanitasi atribut style inline. */
+       besar, ada emoticon warning"). Tulisannya lalu diganti BIRU royal pada
+       permintaan berikutnya ("ganti tulisan warna warning kita menjadi warna
+       biru, efek tetap"). Permintaan terbaru mengembalikan LATAR panel ke
+       merah, tetapi tulisan wajib tetap biru. Karena itu hanya background
+       memakai palet merah gelap; teks, border, glow, animasi, dan ukuran tetap
+       memakai spesifikasi biru sebelumnya. Kelap-kelipnya berpola sama dengan
+       `.scan-best-gold` di atas (opacity + glow yang memudar), tapi tampil
+       sebagai alarm, bukan pujian. Nama class-nya sengaja bukan turunan
+       `scan-best-gold`/`dust-best`: tes card 🏆 Scan Best Pool menghitung
+       kemunculan string class chip emas itu di seluruh body halaman
+       (tests/test_best_pool_scan.py, tests/test_lp_card_ui.py). Semua gaya
+       hidup di sini karena st.markdown men-sanitasi atribut style inline. */
     .degen-stop-header {margin:.1rem 0 .9rem;padding:.75rem .9rem;
      border:3px solid #2563eb;border-radius:14px;
-     background:#0a1e45;background-image:linear-gradient(180deg,#0a1e45 0%,
-      #1e3a8a 55%,#0a1e45 100%);
+     background:#450a0a;background-image:linear-gradient(180deg,#450a0a 0%,
+      #7f1d1d 55%,#450a0a 100%);
      box-shadow:0 0 14px rgba(37,99,235,.6),0 0 34px rgba(29,78,216,.4);
      animation:degen-stop-glow 1s ease-in-out infinite;}
     .degen-stop-line {display:block;font-size:clamp(1.4rem,3.6vw,2.6rem);
@@ -407,19 +407,20 @@ DEGEN_STOP_LINES = (
 
 
 def render_degen_stop_header() -> None:
-    """Header alarm BIRU menyala berkedip di paling atas halaman utama.
+    """Header alarm berlatar MERAH dengan tulisan BIRU di halaman utama.
 
     Permintaan user (verbatim, 2026-09-17): *"tambahkan header di page app"* —
     *"merah menyala berkedip, tulisan besar, ada emoticon warning"*, lalu
-    *"ganti tulisan warna warning kita menjadi warna biru, efek tetap"* — jadi
-    warnanya sekarang biru, animasi/glow/ukurannya tidak berubah.
+    *"ganti tulisan warna warning kita menjadi warna biru, efek tetap"*, dan
+    terakhir *"background nya ganti warna merah, tulisan tetap biru"*.
 
-    Warnanya BIRU royal menyala (``.degen-stop-line``, ``#3b82f6`` + glow biru) di
-    atas panel biru gelap, hurufnya besar (``clamp(1.4rem, 3.6vw, 2.6rem)`` =
-    ±22–42 px, ikut mengecil di layar sempit) dan **berkedip** lewat animasi
-    CSS ``degen-stop-blink``/``degen-stop-glow`` yang didefinisikan di
-    :func:`render_styles` — jadi halaman **wajib** memanggil ``render_styles()``
-    lebih dulu (``app.py`` sudah begitu).
+    Tulisannya tetap BIRU royal (``.degen-stop-line``, ``#3b82f6`` + glow biru)
+    di atas panel merah gelap (``#450a0a`` → ``#7f1d1d``), hurufnya besar
+    (``clamp(1.4rem, 3.6vw, 2.6rem)`` = ±22–42 px, ikut mengecil di layar
+    sempit) dan **berkedip** lewat animasi CSS ``degen-stop-blink``/
+    ``degen-stop-glow`` yang didefinisikan di :func:`render_styles` — jadi
+    halaman **wajib** memanggil ``render_styles()`` lebih dulu (``app.py``
+    sudah begitu).
 
     Teksnya sengaja ditulis apa adanya (termasuk "BERTUBI2") karena itu kalimat
     user sendiri, dan ``html.escape`` dipakai agar aman dirender sebagai HTML.

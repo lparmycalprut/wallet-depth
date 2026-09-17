@@ -1,3 +1,11 @@
+# Kegiatan — 17 September 2026 (🚨 background STOP DEGEN merah, tulisan tetap biru)
+
+Permintaan terbaru: *"background nya ganti warna merah, tulisan tetap biru"*.
+Panel `.degen-stop-header` di halaman utama sekarang memakai gradien merah gelap
+`#450a0a → #7f1d1d → #450a0a`. Tulisan tetap biru royal `#3b82f6`, dan border,
+glow biru, animasi berkedip, ukuran besar, serta perilaku reduced-motion tidak
+diubah. Tes regresi header diperbarui untuk mem-pin kombinasi warna tersebut.
+
 # Kegiatan — 17 September 2026 (🚨 header STOP DEGEN jadi biru + likuiditas < $500K ditulis merah)
 
 Dua permintaan lanjutan di hari yang sama, keduanya **hanya soal warna**:

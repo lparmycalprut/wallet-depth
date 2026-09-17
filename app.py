@@ -38,11 +38,12 @@ render_styles()
 # ---------------------------------------------------------------------------
 # Header 🚨 STOP DEGEN (2026-09-17) — paling atas halaman utama, sebelum card.
 # Permintaan user: "tambahkan header di page app" ("merah menyala berkedip,
-# tulisan besar, ada emoticon warning"); paletnya sudah jadi BIRU sejak
-# permintaan "ganti tulisan warna warning kita menjadi warna biru, efek tetap"
-# (2026-09-17). Gaya + animasi berkedipnya hidup di
-# render_styles() (dashboard_components.degen-stop-*), jadi panggilan ini harus
-# SETELAH render_styles().
+# tulisan besar, ada emoticon warning"); tulisannya sudah jadi BIRU sejak
+# permintaan "ganti tulisan warna warning kita menjadi warna biru, efek tetap",
+# lalu latar panelnya dikembalikan ke MERAH lewat permintaan "background nya
+# ganti warna merah, tulisan tetap biru" (2026-09-17). Gaya + animasi
+# berkedipnya hidup di render_styles() (dashboard_components.degen-stop-*),
+# jadi panggilan ini harus SETELAH render_styles().
 # ---------------------------------------------------------------------------
 render_degen_stop_header()
 
