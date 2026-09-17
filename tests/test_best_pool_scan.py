@@ -1322,6 +1322,9 @@ class BestPoolCardTest(unittest.TestCase):
                       "Urutan tiap tabel: Fee/TVL terbesar, lalu F/V terbesar",
                       "base_token_has_critical_warnings=false",
                       "quote_token_has_critical_warnings=false",
+                      # Saringan likuiditas GMGN (2026-09-17) ikut tertulis di
+                      # tooltip — dialah yang mengosongkan tabel saat masih $1M.
+                      f"(4) likuiditas total GMGN di bawah {ms.gmgn_min_label()}",
                       "RugCheck"):
             self.assertIn(label, body)
         # Teks dua-lane lama tidak boleh balik.
@@ -1353,6 +1356,15 @@ class BestPoolCardTest(unittest.TestCase):
         with mock.patch.object(ms, "BEST_VOL_SHOW_MIN", 2.0), \
                 mock.patch.object(ms, "BEST_VOL_SHOW_MAX", 8.0):
             self.assertIn("2%\u20138%", bp.best_pool_tooltip())
+        # Ambang likuiditas GMGN juga dibaca dari konstanta (bukan "$500K"
+        # yang ditulis tangan di dua tempat).
+        import gmgn_liquidity as gl
+
+        with mock.patch.object(gl, "MIN_LABEL", "$250K"):
+            self.assertIn("(4) likuiditas total GMGN di bawah $250K",
+                          bp.best_pool_tooltip())
+            self.assertIn("likuiditas GMGN \u2265 $250K",
+                          bp.best_pool_tooltip())
 
     def test_urutan_kolom_2026_09_16(self):
         """Urutan header: Token, F/V, Fee/TVL, Volat, Active Range, LPs, Dust %MC…

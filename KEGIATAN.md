@@ -48,6 +48,13 @@ masuk"* + mint `98kfF7rmsg1QDUEoCqNE7g7M1FdrTt92TEp2CLzypump`.
   membaca ambang dari `gmgn_min_label()`.
 - **`rugchecker.py`**: docstring menyebut ambang lewat
   `gmgn_liquidity.MIN_TOTAL_LIQ_USD` (bukan "$1M").
+- **Tooltip judul card ikut menyebut saringan keempat.** `best_pool_tooltip()`
+  selama ini hanya menulis (1) F/V, (2) volatility, (3) Top10 — saringan
+  likuiditas GMGN (yang justru mengosongkan tabel) tidak tertulis, dan kalimat
+  penutup kolom RugCheck masih mengklaim *"saringannya tetap F/V + volat +
+  Top10 + safeguard Jupiter"*. Keduanya dilengkapi: poin **(4) likuiditas
+  total GMGN di bawah `$500K` gugur** (label dibaca `gmgn_min_label()`) +
+  daftar saringan penutup ikut menyebut `likuiditas GMGN ≥ $500K`.
 - **Teks alasan mepet ambang** (konfirmasi user *"ok, kita buat minimal 500K
   likuiditas saja, biar pool lebih longgar"*): `compact_usd` membulatkan ke
   satu desimal, jadi $499.999,99 terbaca `$500.0K` dan alasannya jadi
@@ -60,7 +67,8 @@ masuk"* + mint `98kfF7rmsg1QDUEoCqNE7g7M1FdrTt92TEp2CLzypump`.
   PAID dengan metrik aslinya harus ada di `rows`, `hidden_rows` kosong),
   `GapTest` diarahkan ke ambang baru; `tests/test_best_pool_scan.py` —
   `BestGapSummaryTest` (5) + `test_tabel_kosong_menyebut_alasan_gugurnya`
-  (AppTest: pesan info memuat rekap alasan).
+  (AppTest: pesan info memuat rekap alasan) + pin tooltip (poin (4) + ambang
+  ikut `MIN_LABEL` bila di-patch).
   `python -m unittest discover -s tests` → **1105 tes**, `18 failed + 1 error`
   — **nama kegagalan identik baseline** (diverifikasi dua arah: runner
   kanonik maupun runner pembanding; bukan regresi).

@@ -160,7 +160,7 @@ def best_pool_tooltip() -> str:
     """Rule ada di tooltip, bukan caption — satu tombol, satu lane (24H)."""
     from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_TOP10_MAX_PCT,
                                   BEST_VOL_SHOW_MAX, BEST_VOL_SHOW_MIN,
-                                  JUPITER_SAFEGUARD_FILTERS,
+                                  JUPITER_SAFEGUARD_FILTERS, gmgn_min_label,
                                   normalize_best_lane)
 
     active = normalize_best_lane("24h")
@@ -186,7 +186,14 @@ def best_pool_tooltip() -> str:
         f"{BEST_TOP10_MAX_PCT:g}% atau lebih gugur (permintaan user "
         "2026-09-16: \"jika ada top 10 >= 20% jangan tampilkan\" — batasnya "
         "sekarang di sisi BUANG, jadi tepat 20% tidak lagi tampil; tanpa "
-        "angka Top10 = tidak terukur, barisnya tetap tampil). Volatility 0 "
+        "angka Top10 = tidak terukur, barisnya tetap tampil); (4) likuiditas "
+        f"total GMGN di bawah {gmgn_min_label()} gugur (permintaan user "
+        "2026-09-17: \"jika grand total liquiditas kurang dari 1M, jangan "
+        "tampilkan di hasil scan\" — ambangnya $500K sejak sore harinya "
+        "karena $1M membuang seluruh listing: PAID saja hanya $884.912. "
+        "Angkanya likuiditas total per token dari gmgn.ai, tepat ambang "
+        "LOLOS, dan token yang likuiditasnya tak terbaca TIDAK disaring). "
+        "Volatility 0 "
         "gugur DAN tidak ditampilkan di mana pun: F/V \u221e bukan kelolosan, "
         "pool tanpa pergerakan dibuang total dari listing, tidak masuk tabel "
         "dilewati dan tidak dihitung di pill \"dilewati\". Metrik "
@@ -221,7 +228,8 @@ def best_pool_tooltip() -> str:
         "verdict RUG hanya bila honeypot, bendera kritis (mint/freeze/"
         "non-transferable/hook/transfer-fee) jadi BERISIKO, sisanya minor "
         "jadi WASPADA; RUGCHECK TIDAK PERNAH MEMBUANG BARIS \u2014 ia kolom "
-        "informasi, saringannya tetap F/V + volat + Top10 + safeguard "
+        "informasi, saringannya tetap F/V + volat + Top10 + likuiditas "
+        f"GMGN \u2265 {gmgn_min_label()} + safeguard "
         "Jupiter di sisi API. Mint yang laporannya tidak didapat menulis "
         "\u2014 (bukan \"AMAN\": tanpa bukti tidak ada verdict). Sorot "
         "hijau tua menyala di tabel utama: sel volatility terbesar, sel F/V "
