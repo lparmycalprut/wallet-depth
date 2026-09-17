@@ -48,7 +48,12 @@ masuk"* + mint `98kfF7rmsg1QDUEoCqNE7g7M1FdrTt92TEp2CLzypump`.
   membaca ambang dari `gmgn_min_label()`.
 - **`rugchecker.py`**: docstring menyebut ambang lewat
   `gmgn_liquidity.MIN_TOTAL_LIQ_USD` (bukan "$1M").
-- **Tes** (+11 → 1104): `tests/test_gmgn_liquidity.py` — `AmbangTest` (pin
+- **Teks alasan mepet ambang** (konfirmasi user *"ok, kita buat minimal 500K
+  likuiditas saja, biar pool lebih longgar"*): `compact_usd` membulatkan ke
+  satu desimal, jadi $499.999,99 terbaca `$500.0K` dan alasannya jadi
+  "$500.0K < $500K" — helper `_gap_amount` menulis angka persis
+  (`$499,999.99`) hanya bila pembulatannya menabrak label ambang.
+- **Tes** (+12 → 1105): `tests/test_gmgn_liquidity.py` — `AmbangTest` (pin
   $500K + angka terukur PAID $884.912,398 / pill $153.496,33 / ELON
   $149.542,09 + pin bahwa $1M memang akan membuang PAID),
   `ScanLaneGmgnTest.test_paid_tidak_ikut_terbuang` (regresi end-to-end: pool
@@ -56,7 +61,7 @@ masuk"* + mint `98kfF7rmsg1QDUEoCqNE7g7M1FdrTt92TEp2CLzypump`.
   `GapTest` diarahkan ke ambang baru; `tests/test_best_pool_scan.py` —
   `BestGapSummaryTest` (5) + `test_tabel_kosong_menyebut_alasan_gugurnya`
   (AppTest: pesan info memuat rekap alasan).
-  `python -m unittest discover -s tests` → **1104 tes**, `18 failed + 1 error`
+  `python -m unittest discover -s tests` → **1105 tes**, `18 failed + 1 error`
   — **nama kegagalan identik baseline** (diverifikasi dua arah: runner
   kanonik maupun runner pembanding; bukan regresi).
 

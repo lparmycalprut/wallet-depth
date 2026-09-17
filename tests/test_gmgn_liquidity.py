@@ -311,6 +311,22 @@ class GapTest(unittest.TestCase):
                            "below_cutoff": False, "source": "gmgn_token_info"}
         self.assertIsNone(gl.row_gmgn_gap(row))
 
+    def test_nilai_mepet_ambang_tidak_terbaca_sama_dengan_ambang(self):
+        """$499.999,99 tidak boleh tertulis "$500.0K < $500K" (kontradiktif).
+
+        ``compact_usd`` membulatkan ke satu desimal, jadi nilai yang mepet
+        ambang punya bentuk ringkas yang sama dengan ambangnya — di situ teks
+        alasan memakai angka persis.
+        """
+        row = _row()
+        row["gmgn_liq"] = {"ok": True, "usd": 499_999.99,
+                           "below_cutoff": False, "source": "gmgn_token_info"}
+        gap = gl.row_gmgn_gap(row)
+        self.assertIn("$499,999.99 < $500K", gap)
+        # Di luar kasus mepet: tetap ringkas.
+        row["gmgn_liq"]["usd"] = 495_000.0
+        self.assertIn("$495.0K < $500K", gl.row_gmgn_gap(row))
+
     def test_di_atas_ambang_lolos(self):
         row = _row()
         row["gmgn_liq"] = {"ok": True, "usd": 1_900_000.0,

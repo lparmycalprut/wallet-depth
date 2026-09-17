@@ -447,6 +447,21 @@ def attach_total_liquidity(rows, *, timeout: int = REQUEST_TIMEOUT,
     return rows
 
 
+def _gap_amount(usd) -> str:
+    """Angka likuiditas untuk teks alasan gugur.
+
+    :func:`compact_usd` membulatkan ke satu desimal (``$499.999,99`` →
+    ``$500.0K``), jadi nilai yang hanya sedikit di bawah ambang terbaca sama
+    persis dengan ambangnya — ``"Likuiditas GMGN $500.0K < $500K"`` terlihat
+    kontradiktif. Bila pembulatannya menabrak angka ambang, tulis nilai
+    persisnya (``$499,999.99``); di luar kasus sempit itu tetap ringkas.
+    """
+    text = compact_usd(usd)
+    if text != compact_usd(MIN_TOTAL_LIQ_USD):
+        return text
+    return f"${_float(usd):,.2f}"
+
+
 def row_gmgn_gap(row: dict | None) -> str | None:
     """Alasan gugur bila likuiditas total GMGN **< :data:`MIN_TOTAL_LIQ_USD`**
     ($500K sejak 2026-09-17 sore; sebelumnya $1M yang ternyata mengosongkan
@@ -464,7 +479,7 @@ def row_gmgn_gap(row: dict | None) -> str | None:
     usd = _float_or_none(item.get("usd"))
     if usd is not None:
         if usd < MIN_TOTAL_LIQ_USD:
-            return (f"Likuiditas GMGN {compact_usd(usd)} < "
+            return (f"Likuiditas GMGN {_gap_amount(usd)} < "
                     f"{MIN_LABEL} — tidak ditampilkan")
         return None
     if item.get("below_cutoff"):
