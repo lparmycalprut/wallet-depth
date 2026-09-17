@@ -81,15 +81,25 @@ ada satu tabel dan hasil 30M lama tidak pernah bisa muncul; key gabungan lama
   pemisah ribuan dari 100× ke atas (``6,328,266×``) — rasio ekstrem tidak
   lagi tampil sebagai ``6328266.1×`` (laporan user 2026-09-15: *"gold
   menunjukkan 6328266.1 F/V"*);
-- **Kolom** (2026-09-16, 15 kolom): Token, **F/V**, **Fee/TVL** (pembilang
+- **Kolom** (2026-09-17, 13 kolom): Token, **F/V**, **Fee/TVL** (pembilang
   F-nya — permintaan user 2026-09-14: "kolom Fee/TVL taruh sebelah kanan
-  F/V"), **Volat**, **Active Range**, **LPs**, **Dust %MC**, **Fee %**, **MC**,
-  **A.TVL**, **Vol 24h**, **Top10**, **RugCheck**, **Pool**, ⭐ — permintaan
-  user 2026-09-16: *"Active Range kolom ini pindah ke kanan volat"* dan
+  F/V"), **Volat**, **Active Range**, **LPs**, **Fee %**, **MC**, **A.TVL**,
+  **Vol 24h**, **Top10**, **RugCheck**, **Pool** — permintaan user
+  2026-09-16: *"Active Range kolom ini pindah ke kanan volat"* dan
   *"kolom LPs pindah ke kanan active range setelah dipindah"*. **Active
   Range** menulis persen saja (``-34.5% / +19.0%`` = harga masih boleh turun /
   naik sebelum keluar dari bin berisi likuiditas); kolom **Dust** (jumlah
-  wallet) tetap dihapus;
+  wallet) tetap dihapus. **Penataan 2026-09-17** (permintaan user):
+  kolom **Dust %MC dihapus** (*"hapus kolom dust %"*) — dust %MC masih
+  dihitung sebagai tie-break urutan terakhir, hanya tidak lagi tampil
+  sebagai kolom; **tombol ⭐ favorit/watchlist dihapus** (*"hapus tombol
+  favorit / watchlist"*) — token watchlist kini dikelola dari halaman
+  📦 TEMP; kolom **Pool** kini memuat tombol 📋 **copy link HawkFi** di
+  samping tautan 🌊Meteora/🦅HawkFi (*"tambahkan copy link hawkfi dibagian
+  scan"*) — clipboard murni JS, tanpa rerun; dan **tiap kolom dibatasi
+  garis vertikal** (*"batasi per kolom dengan garis naik turun"*) lewat
+  marker ``.bp-cols-next`` + CSS di ``dashboard_components.render_styles``
+  (hanya layar > 768px);
 - **sorot hijau tua menyala** (``TOP_HIGHLIGHT_COLOR``, bold) di tabel utama:
   sel volatility terbesar, sel F/V tertinggi, dan sel Fee/TVL tertinggi scan
   itu — seri di puncak ikut ditandai semua; tabel "dilewati" tidak ditandai;
@@ -105,11 +115,14 @@ perlu menekan tombol scan lagi dari nol.
 
 **🏆 BEST POOL badge (dust <= 0,035% MC) dihapus** 2026-09-13 sore per
 permintaan user: "tulisan tentang dust holder BEST POOL aman dll hapus
-juga". Pill di kepala card juga dihapus. Dust %MC tetap tampil sebagai
-informasi (angka + tie-break urut) tanpa penanda visual apa pun.
+juga". Pill di kepala card juga dihapus. Sejak 2026-09-17 kolom Dust %MC
+sendiri ikut dihapus (permintaan user: *"hapus kolom dust %"*) — angkanya
+tetap dipakai backend sebagai tie-break urut tanpa tampil di layar.
 
-Detail karakteristik = **tooltip judul** — bukan caption panjang. ⭐
-memasukkan token ke card **Watchlist Meteora** di halaman utama.
+Detail karakteristik = **tooltip judul** — bukan caption panjang. Tombol ⭐
+watchlist dihapus 2026-09-17 (permintaan user: *"hapus tombol favorit /
+watchlist"*); kolom Pool kini punya tombol 📋 copy link HawkFi
+(*"tambahkan copy link hawkfi dibagian scan"*).
 """
 from __future__ import annotations
 
@@ -164,8 +177,7 @@ def best_pool_tooltip() -> str:
     """Rule ada di tooltip, bukan caption — satu tombol, satu lane (24H)."""
     from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_TOP10_MAX_PCT,
                                   BEST_VOL_SHOW_MAX, BEST_VOL_SHOW_MIN,
-                                  JUPITER_SAFEGUARD_FILTERS, gmgn_min_label,
-                                  normalize_best_lane)
+                                  gmgn_min_label, normalize_best_lane)
 
     active = normalize_best_lane("24h")
     label = best_lane_detail(active)[0]
@@ -175,8 +187,10 @@ def best_pool_tooltip() -> str:
     return (
         f"Satu tombol = satu lane: listing API Meteora timeframe {label} "
         f"(category top, page_size 50), "
-        + "&&".join(JUPITER_SAFEGUARD_FILTERS)
-        + f"&&pool_type=dlmm&&active_tvl>={int(BEST_ACTIVE_TVL_MIN)}. "
+        f"pool_type=dlmm&&active_tvl>={int(BEST_ACTIVE_TVL_MIN)} "
+        "(filter server Jupiter safeguard dimatikan default-nya sejak "
+        "2026-09-17 — membuang token seperti PAID diam-diam; tersedia "
+        "dengan kwarg safeguard=True). "
         f"{label}: {gate}. F = fee_active_tvl_ratio; V = volatility. Scan 30 "
         "menit dihapus 2026-09-16 (permintaan user: \"hapus scan 30 menit, "
         "kita sisakan yang 24 jam saja\") — semua alias lane lama "
@@ -209,11 +223,21 @@ def best_pool_tooltip() -> str:
         "terkecil. Kolom Token menulis pasangan pool-nya apa adanya dari API "
         "Meteora (mis. ALLINU/SOL) \u2014 $SIMBOL tetap baris pertama, alamat "
         "mint di baris terakhir. Kolom, kiri ke kanan: Token, F/V, Fee/TVL "
-        "(tepat di kanan F/V), Volat, Active Range, LPs, Dust %MC, Fee % "
+        "(tepat di kanan F/V), Volat, Active Range, LPs, Fee % "
         "(tier fee pool, mis. 0,5% / 2%), MC, A.TVL, Vol 24h, Top10, RugCheck, "
-        "Pool, \u2b50 \u2014 penataan 2026-09-16: Active Range digeser ke kanan "
+        "Pool \u2014 penataan 2026-09-16: Active Range digeser ke kanan "
         "Volat (dua-duanya soal pergerakan) dan LPs tepat di kanannya, lalu "
-        "kolom RugCheck baru. Active Range menulis persen saja: -34.5% / "
+        "kolom RugCheck baru; penataan 2026-09-17 (permintaan user): kolom "
+        "Dust %MC dihapus (\u0022hapus kolom dust %\u0022 \u2014 dust tetap jadi "
+        "tie-break urutan terakhir, hanya tidak tampil sebagai kolom), "
+        "tombol \u2b50 favorit/watchlist dihapus (\u0022hapus tombol favorit / "
+        "watchlist\u0022), kolom Pool kini memuat tombol \U0001f4cb copy link "
+        "HawkFi di samping tautan \U0001f30aMeteora/\U0001f985HawkFi "
+        "(\u0022tambahkan copy link hawkfi dibagian scan\u0022 \u2014 salin URL "
+        "pool HawkFi ke clipboard murni lewat JS, tanpa rerun), dan tiap "
+        "kolom dibatasi garis vertikal (\u0022batasi per kolom dengan garis "
+        "naik turun\u0022, hanya di layar lebar). Active Range menulis persen "
+        "saja: -34.5% / "
         "+19.0% artinya harga pool masih boleh turun 34,5% atau naik 19,0% "
         "sebelum keluar dari bin yang berisi likuiditas (min_price \u2026 "
         "max_price API Meteora) \u2014 di luar range itu posisi LP berhenti "
@@ -238,18 +262,21 @@ def best_pool_tooltip() -> str:
         "\u2014 (bukan \"AMAN\": tanpa bukti tidak ada verdict). Sorot "
         "hijau tua menyala di tabel utama: sel volatility terbesar, sel F/V "
         "tertinggi, dan sel Fee/TVL tertinggi (kalau seri, semua di puncak "
-        "ikut ditandai; tabel dilewati tidak ditandai). Dust %MC memakai "
-        "market cap DexScreener; holder gagal tampil \u2014. \u2b50 memasukkan "
-        "token ke card \U0001f30a Watchlist Meteora di halaman \U0001f4e6 TEMP."
+        "ikut ditandai; tabel dilewati tidak ditandai)."
     )
 
 
 # Lebar kolom listing (permintaan user 2026-09-14: "kita tata kolomnya baik
 # untuk 24jam maupun 30menit — Dust hapus — Token F/V Volat Dust %MC, 4 kolom
 # ini diletakkan paling awal"): Token, F/V, Fee/TVL, Volat di depan, lalu
-# Active Range, LPs, konteks pasar (Dust %MC, Fee %, MC, A.TVL, volume 24 jam,
-# Top10), RugCheck, Pool, ⭐. Kolom **Dust** (jumlah wallet) dihapus hari yang
-# sama. Penataan 2026-09-16 (permintaan user): **Active Range** pindah ke
+# Active Range, LPs, konteks pasar (Fee %, MC, A.TVL, volume 24 jam, Top10),
+# RugCheck, Pool. Kolom **Dust** (jumlah wallet) dihapus hari yang sama;
+# kolom **Dust %MC** dan **tombol ⭐ watchlist** dihapus 2026-09-17
+# (permintaan user: "hapus kolom dust %" + "hapus tombol favorit /
+# watchlist") — kolom Pool juga menyerap tombol 📋 copy link HawkFi
+# ("tambahkan copy link hawkfi dibagian scan") jadi bobotnya dinaikkan
+# 0,8 → 1,05 supaya tiga ikon muat; total turun dari 15 ke 13 kolom.
+# Penataan 2026-09-16 (permintaan user): **Active Range** pindah ke
 # kanan Volat, **LPs** mengikuti tepat di kanannya, dan kolom **RugCheck**
 # ditambah sebelum Pool. Judul kolom volume dulu mengikuti lane-nya
 # (``_lane_titles``: 24H "Vol 24h", 30M "Vol 30m"); sejak lane 30M dihapus
@@ -277,8 +304,12 @@ def best_pool_tooltip() -> str:
 # Active Range + LPs naik ke kanan Volat, RugCheck dapat bagian dari MC/A.TVL
 # (0,6→0,55 / 0,72→0,68) dan Pool (0,95→0,8); Token 1,45→1,4 karena baris
 # pasangan tetap satu baris pendek.
-_COL_SPEC = [1.4, 1.0, 0.75, 0.58, 0.95, 0.5, 0.8, 0.58, 0.55, 0.68, 0.8,
-             0.6, 1.0, 0.8, 0.4]
+# Bobot 2026-09-17 (15 → 13 kolom): Dust %MC (0,8) dan ⭐ (0,4) dicabut;
+# Pool 0,8 → 1,05 karena kini memuat tautan 🌊Meteora + 🦅HawkFi + tombol 📋
+# copy link HawkFi (permintaan user: "tambahkan copy link hawkfi dibagian
+# scan", "hapus kolom dust %", "hapus tombol favorit / watchlist").
+_COL_SPEC = [1.4, 1.0, 0.75, 0.58, 0.95, 0.5, 0.58, 0.55, 0.68, 0.8,
+             0.6, 1.0, 1.05]
 
 
 def _lane_titles(lane) -> list[str]:
@@ -297,6 +328,11 @@ def _lane_titles(lane) -> list[str]:
     dipindah"*) — Volat, Active Range dan LPs sama-sama soal bentuk +
     pergerakan likuiditas, jadi ketiganya dibaca sekali lirikan. Isinya persen
     saja (``-34.5% / +19.0%``).
+
+    **Dust %MC** dan kolom **⭐** watchlist tidak lagi ada sejak 2026-09-17
+    (permintaan user: *"hapus kolom dust %"* + *"hapus tombol favorit /
+    watchlist"*) — tabel 13 kolom, kolom terakhirnya **Pool** (tautan
+    🌊Meteora/🦅HawkFi + tombol 📋 copy link HawkFi).
     """
     from meteora_screener import normalize_best_lane
 
@@ -305,8 +341,8 @@ def _lane_titles(lane) -> list[str]:
     # 24H) jadi penamaan kolom tidak pernah bisa lagi tertulis "Vol 30m".
     _ = normalize_best_lane(lane)
     return ["Token", "F/V", "Fee/TVL", "Volat", "Active Range", "LPs",
-            "Dust %MC", "Fee %", "MC", "A.TVL", "Vol 24h", "Top10",
-            "RugCheck", "Pool", ""]
+            "Fee %", "MC", "A.TVL", "Vol 24h", "Top10",
+            "RugCheck", "Pool"]
 
 
 # Hijau tua menyala penanda sel tertinggi di tabel utama (permintaan user
@@ -398,16 +434,6 @@ def _best_head_html(rows: list, hidden: int, lane: str,
         pills.append(f'<span class="lp-count" style="{tone}">'
                      f"{hidden} disembunyikan</span>")
     return card_head_html(BEST_CARD_TITLE, pills, tooltip=best_pool_tooltip())
-
-
-def _pct_txt(value, digits: int = 2) -> str:
-    """Angka persen siap tampil (``None`` → ``—``)."""
-    if value is None:
-        return "—"
-    try:
-        return f"{float(value):.{digits}f}%"
-    except (TypeError, ValueError):
-        return "—"
 
 
 def _signed_pct(value) -> tuple[str, str]:
@@ -624,13 +650,22 @@ def _render_best_table(rows: list, *, lane: str,
                        mark_tops: bool = True) -> None:
     """Tabel listing Best Pool untuk **satu** lane (utama atau disembunyikan).
 
-    Susunan kolom 2026-09-14: Token · **F/V · Fee/TVL** (tepat di kanan F/V,
-    permintaan user) **· Volat · Dust %MC** · **Fee %** (fee trading pool,
-    mis. 0.5% / 2% — ditambah setelah Dust %MC) · MC · A.TVL · **Active Range**
-    (persen saja: ``-34.5% / +19.0%`` = harga boleh turun / naik sebelum
-    keluar dari bin berisi likuiditas) · Vol (24h/30m
-    mengikuti lane) · Top10 · LPs · Pool · ⭐ — kolom Dust (jumlah wallet)
-    sudah dihapus. Sejak 2026-09-15 sel Token menulis pasangan pool-nya
+    Susunan kolom 2026-09-17 (13 kolom): Token · **F/V · Fee/TVL** (tepat
+    di kanan F/V, permintaan user) · **Volat** · **Active Range** (persen
+    saja: ``-34.5% / +19.0%`` = harga boleh turun / naik sebelum keluar dari
+    bin berisi likuiditas) · **LPs** ·
+    **Fee %** (fee trading pool, mis. 0.5% / 2%) · MC · A.TVL · Vol 24h ·
+    Top10 · **RugCheck** ·
+    **Pool** — kolom Dust (jumlah wallet) lebih dulu dihapus 2026-09-14;
+    **kolom Dust %MC dihapus 2026-09-17** (permintaan user: *"hapus kolom
+    dust %"*) dan **tombol ⭐ watchlist dihapus** hari yang sama
+    (*"hapus tombol favorit / watchlist"*). Kolom Pool kini memuat tautan
+    🌊Meteora/🦅HawkFi **plus tombol 📋 copy link HawkFi** (*"tambahkan
+    copy link hawkfi dibagian scan"*) dan tiap kolom dibatasi **garis
+    vertikal** (*"batasi per kolom dengan garis naik turun"* — marker
+    ``.bp-cols-next`` sebelum header + tiap baris data, CSS-nya di
+    ``dashboard_components.render_styles``, hanya layar > 768px).
+    Sejak 2026-09-15 sel Token menulis pasangan pool-nya
     (``row_pair_label``) dan sel F/V memakai ``format_fv_ratio``. Di tabel
     utama (``mark_tops=True``) sel **volatility terbesar**, sel **F/V
     tertinggi**, dan sel **Fee/TVL tertinggi** disorot hijau tua menyala
@@ -642,21 +677,26 @@ def _render_best_table(rows: list, *, lane: str,
     import streamlit as st
 
     from dashboard_components import _number
-    from links import external_links_html, pool_links_html
-    from lp_watchlist import LP_SOURCE
+    from links import (external_links_html, hawkfi_copy_html,
+                       pool_links_html)
     from meteora_screener import (BEST_TOP10_MAX_PCT, BEST_VOL_SHOW_MAX,
                                   BEST_VOL_SHOW_MIN, normalize_best_lane,
-                                  row_dust_pct, row_fv_ratio)
+                                  row_fv_ratio)
     from meteora_screener import row_pair_label, row_vol_tvl_ratio
     # RugCheck = kolom baru 2026-09-16; fmt-nya tinggal di modul rugchecker
     # supaya card tidak pernah menebak struktur laporan API pihak ketiga.
     from rugchecker import cell_parts as _rug_cell_parts
-    from watchlist import add_to_watchlist
 
-    # Marker untuk sembunyikan header di mobile (CSS :has, lihat dashboard_components.render_styles).
-    # Header tabel desktop tidak diperlukan di HP karena tiap sel sudah punya sub-label (volat, dust, dll)
-    # dan header yang ikut menjadi card 2-kolom justru bikin bingung.
-    st.markdown('<div class="mobile-hide-next"></div>', unsafe_allow_html=True)
+    # Dua marker sekaligus (CSS :has, lihat dashboard_components.render_styles):
+    # ``mobile-hide-next`` menyembunyikan header tabel di HP (tiap sel sudah
+    # punya sub-label — volat, fee, dll — dan header yang ikut menjadi card
+    # 2-kolom justru bikin bingung), dan ``bp-cols-next`` menandai horizontal
+    # block ini bagian dari tabel sehingga tiap kolomnya mendapat garis
+    # vertikal pembatas (permintaan user 2026-09-17: "batasi per kolom dengan
+    # garis naik turun"; marker yang sama disisipkan sebelum tiap baris data
+    # di bawah).
+    st.markdown('<div class="mobile-hide-next bp-cols-next"></div>',
+                unsafe_allow_html=True)
     header_cols = st.columns(_COL_SPEC)
     style = ("font-size:0.72rem;color:#000000;font-weight:700;"
              "text-align:center;")
@@ -675,11 +715,9 @@ def _render_best_table(rows: list, *, lane: str,
         ca = str(row.get("ca") or "")
         symbol = str(row.get("symbol") or "?").upper()
         pool = str(row.get("pool_address") or "")
-        # Satu sumber angka dengan saringan + urutan: ``row_dust_pct`` sudah
-        # mengembalikan ``None`` untuk scan holder tanpa bukti — dust tetap
-        # tampil sebagai informasi (—) bukan 0,000% palsu. Filter dust
-        # dinonaktifkan 2026-09-13.
-        dust_pct = row_dust_pct(row)
+        # Dust %MC tidak lagi dibaca di sini — kolomnya dihapus 2026-09-17
+        # (permintaan user: "hapus kolom dust %"); angkanya tetap dipakai
+        # ``sort_best_rows`` di backend sebagai tie-break urutan terakhir.
         fee = row.get("fee")
         active_tvl = row.get("active_tvl")
         ratio = row.get("fee_active_tvl_ratio")
@@ -699,12 +737,6 @@ def _render_best_table(rows: list, *, lane: str,
         if vol_tvl_ratio is not None:
             delta_html += (f" · {_num_or_dash(vol_tvl_ratio, ',.0f')}×"
                            " A.TVL")
-        dust_value = _pct_txt(dust_pct, 3)
-        dust_sub = "dust"
-        dust_tip = ("dust holder — informasi (filter dust dinonaktifkan "
-                    "2026-09-13) · tie-break urut terakhir (terkecil dulu) · "
-                    "pembaginya market cap DexScreener (kolom MC), sumber "
-                    "yang sama dengan 🛰 Scan Holder")
         # Sorot hijau tua menyala: F/V tertinggi, volatility terbesar, dan
         # Fee/TVL tertinggi tabel ini (permintaan user 2026-09-14 lanjutan).
         fv_here = row_fv_ratio(row)
@@ -734,6 +766,11 @@ def _render_best_table(rows: list, *, lane: str,
                 and fee_tvl_here == top_fee_tvl):
             fee_tvl_value = _top_span(fee_tvl_value)
             fee_tvl_tip += " — Fee/TVL tertinggi di tabel ini"
+        # Marker pembatas kolom vertikal (permintaan user 2026-09-17:
+        # "batasi per kolom dengan garis naik turun") — tepat sebelum
+        # horizontal block baris data, pola yang sama dengan header di atas.
+        st.markdown('<div class="bp-cols-next"></div>',
+                    unsafe_allow_html=True)
         cols = st.columns(_COL_SPEC)
         # Kolom **Token** menulis pasangan pool-nya (permintaan user
         # 2026-09-15: "kolom Token sekarang akan menunjukkan pasangan pairnya,
@@ -752,10 +789,9 @@ def _render_best_table(rows: list, *, lane: str,
             f'<div class="watchlist-links">{external_links_html(ca)}</div>'
             "</div>", unsafe_allow_html=True)
         # Urutan sel = urutan judul di ``_lane_titles`` (tanpa Token di sini;
-        # kolom Dust jumlah wallet sudah dihapus 2026-09-14; Fee/TVL tepat di
-        # kanan F/V — permintaan user 2026-09-14; Active Range tepat di kanan
-        # A.TVL — permintaan user hari yang sama: "tambahkan Active Range,
-        # tapi % saja, misal -30% +40").
+        # kolom Dust jumlah wallet sudah dihapus 2026-09-14 dan kolom Dust
+        # %MC menyusul 2026-09-17 — permintaan user: "hapus kolom dust %";
+        # Fee/TVL tepat di kanan F/V — permintaan user 2026-09-14).
         # Sel **LPs** (2026-09-16, permintaan user: "LPs jika lebih dari 100,
         # kasih warna hijau jika tidak, tidak ada perubahan") — hanya warnanya
         # yang berubah, angkanya tetap angka pool dari API Meteora.
@@ -786,7 +822,6 @@ def _render_best_table(rows: list, *, lane: str,
              f"saringan; HIJAU bila > {LP_GREEN_MIN_LP:g} LP (permintaan user "
              "2026-09-16: banyak LP = likuiditas tidak dipegang segelintir "
              "wallet)"),
-            (dust_value, dust_sub, dust_tip),
             (_num_or_dash(fee_pct, ".4g") + "%" if fee_pct is not None
              else "—", "pool fee",
              f"fee trading pool ini (tier fee pool DLMM) = "
@@ -815,18 +850,19 @@ def _render_best_table(rows: list, *, lane: str,
         for position, (value, sub, tip) in enumerate(cells, start=1):
             cols[position].markdown(_cell(value, sub, tip),
                                     unsafe_allow_html=True)
-        pool_html = pool_links_html(pool) or "<span>—</span>"
-        cols[13].markdown(f'<div class="pool-links">{pool_html}</div>',
+        # Kolom Pool: tautan 🌊Meteora/🦅HawkFi + tombol 📋 copy link HawkFi
+        # (permintaan user 2026-09-17: "tambahkan copy link hawkfi dibagian
+        # scan") — tombolnya ``<button>`` HTML dengan JS clipboard, jadi
+        # klik tidak memicu rerun Streamlit. Tombol ⭐ favorit/watchlist
+        # yang dulu menempati kolom terakhir dihapus hari yang sama
+        # (permintaan user: "hapus tombol favorit / watchlist").
+        pool_html = pool_links_html(pool)
+        if pool_html:
+            pool_html += f" {hawkfi_copy_html(pool)}"
+        else:
+            pool_html = "<span>—</span>"
+        cols[12].markdown(f'<div class="pool-links">{pool_html}</div>',
                           unsafe_allow_html=True)
-        star_key = f"{key_prefix}-star-{pool or ca or index}"
-        if cols[14].button("⭐", key=star_key,
-                           help="Tambah ke Watchlist Meteora "
-                                "(halaman 📦 TEMP)",
-                           use_container_width=True):
-            if ca:
-                add_to_watchlist(ca, symbol, source=LP_SOURCE,
-                                 background=True)
-                st.success(f"${symbol} masuk Watchlist Meteora")
         st.markdown('<hr style="margin:0.25rem 0;border-color:#cbd5e1;">',
                     unsafe_allow_html=True)
 

@@ -242,6 +242,48 @@ def external_links_html(ca) -> str:
         f'rel="noopener noreferrer">🦆Dex</a>')
 
 
+def hawkfi_copy_html(pool) -> str:
+    """Small 📋 button that copies the pool's HawkFi link to the clipboard.
+
+    Permintaan user 2026-09-17: *"tambahkan copy link hawkfi dibagian scan"*
+    — kolom **Pool** tabel 🏆 Scan Best Pool menampilkan tautan 🦅HawkFi
+    PLUS tombol ini, jadi URL HawkFi pool bisa ditempel ke pesan/forum
+    tanpa membuka halamannya dulu.
+
+    Ditulis sebagai ``<button>`` HTML biasa (bukan ``st.button``) supaya
+    klik **tidak memicu rerun** Streamlit — pola yang sama dengan anchor
+    di modul ini (inline ``onclick`` tetap jalan di dalam
+    ``st.markdown(unsafe_allow_html=True)``, seperti ``onclick`` di
+    :func:`holder_analytic_link_html`). ``navigator.clipboard`` hanya ada di
+    konteks aman (https/localhost), jadi disediakan fallback
+    ``execCommand("copy")`` dengan textarea tersembunyi; ikonnya berubah
+    jadi ✓ sebentar sebagai umpan balik bahwa link sudah tersalin.
+    """
+    pool = str(pool or "")
+    if not pool:
+        return ""
+    url = hawkfi_meteora_url(pool)
+    # JS di onclick hanya memakai kutip tunggal; seluruh string lolos
+    # escape atribut HTML seperti anchor lain di modul ini.
+    js_url = url.replace("\\", "\\\\").replace("'", "\\'")
+    onclick = (
+        f"var u='{js_url}',b=this;"
+        "var ok=function(){b.innerHTML='✓';"
+        "setTimeout(function(){b.innerHTML='📋'},1200);};"
+        "var fb=function(){var t=document.createElement('textarea');"
+        "t.value=u;t.style.position='fixed';t.style.opacity='0';"
+        "document.body.appendChild(t);t.select();"
+        "try{document.execCommand('copy');}catch(e){}"
+        "document.body.removeChild(t);ok();};"
+        "if(navigator.clipboard&&navigator.clipboard.writeText){"
+        "navigator.clipboard.writeText(u).then(ok,fb);}else{fb();}"
+        "return false;"
+    )
+    return (f'<button type="button" class="hawkfi-copy-btn" '
+            f'title="Copy link HawkFi: {_html.escape(url, quote=True)}" '
+            f'onclick="{_html.escape(onclick, quote=True)}">📋</button>')
+
+
 def pool_links_html(pool) -> str:
     """New-tab shortcuts: Meteora DLMM + HawkFi for a pool address."""
     pool = str(pool or "")

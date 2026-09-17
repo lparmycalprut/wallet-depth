@@ -32,10 +32,15 @@ dari 100, kasih warna hijau"*. Yang di-pin di file ini:
 - urutan tiap tabel (2026-09-15): **Fee/TVL terbesar** → **F/V terbesar** →
   volume/active TVL → dust %MC terkecil; dust, volume 24 jam, tier fee dan LPs
   **bukan** saringan — dan tidak boleh dihidupkan balik;
-- **tata letak kolom 2026-09-16** (15 kolom): Token, F/V, **Fee/TVL**, Volat,
+- **tata letak kolom 2026-09-17** (13 kolom): Token, F/V, **Fee/TVL**, Volat,
   **Active Range**, **LPs** (permintaan user: *"Active Range kolom ini pindah ke
   kanan volat"* + *"kolom LPs pindah ke kanan active range setelah dipindah"*),
-  Dust %MC, Fee %, MC, A.TVL, Vol 24h, Top10, **RugCheck**, Pool, ⭐; **LPs
+  Fee %, MC, A.TVL, Vol 24h, Top10, **RugCheck**, Pool — kolom **Dust %MC**
+  dan **tombol ⭐ watchlist** dihapus 2026-09-17 (permintaan user: *"hapus
+  kolom dust %"* + *"hapus tombol favorit / watchlist"*); kolom Pool kini
+  memuat tombol 📋 **copy link HawkFi** (*"tambahkan copy link hawkfi
+  dibagian scan"*), dan tiap kolom dibatasi **garis vertikal** lewat marker
+  ``.bp-cols-next`` (*"batasi per kolom dengan garis naik turun"*); **LPs
   HIJAU** bila > 100 LP; sel volatility terbesar + F/V tertinggi + Fee/TVL
   tertinggi tabel utama tetap disorot **hijau tua menyala**
   (``TOP_HIGHLIGHT_COLOR``, seri ikut semua, tabel dilewati tidak ditandai).
@@ -1187,7 +1192,9 @@ class BestPoolCardTest(unittest.TestCase):
         self.assertIn("1 pool 24H tampil \u00b7 1 dilewati \u00b7 listing 4 pool.",
                       captions)
         keys = [button.key or "" for button in app.button]
-        self.assertIn("best-pool-24h-star-PoolBest", keys)
+        # Tombol ⭐ favorit/watchlist dihapus 2026-09-17 (permintaan user:
+        # "hapus tombol favorit / watchlist") — tidak ada key "-star-" lagi.
+        self.assertFalse(any("-star-" in key for key in keys), keys)
         # Pemilih lane/view tombol 30M sudah tidak ada.
         self.assertNotIn("best-pool-view-30m", keys)
         self.assertNotIn("best-pool-view-24h", keys)
@@ -1208,8 +1215,11 @@ class BestPoolCardTest(unittest.TestCase):
         self.assertNotIn("$AAA", body)
         # F/V merah + alasan gugur, angka ambang dibaca dari konstanta.
         self.assertIn("gugur: F/V < 5×", body)
-        self.assertIn("best-pool-hidden-24h-star-PoolHide",
-                      [button.key or "" for button in app.button])
+        # Tombol ⭐ watchlist dihapus 2026-09-17 — tabel "dilewati" juga tidak
+        # lagi punya key "-star-".
+        self.assertNotIn("-star-",
+                         [key for button in app.button
+                          for key in [button.key or ""] if "-star-" in key])
         captions = "\n".join(node.value for node in app.caption)
         # Caption = angka rekap + status barisnya, BUKAN teks rule/ambang
         # (ambang hanya di tooltip judul + sub sel F/V).
@@ -1362,9 +1372,13 @@ class BestPoolCardTest(unittest.TestCase):
         for label in (f"pool_type=dlmm&&active_tvl>={int(ms.BEST_ACTIVE_TVL_MIN)}",
                       f"24H: F/V \u2265 {ms.BEST_FV_24H_MIN:g}\u00d7",
                       "Urutan tiap tabel: Fee/TVL terbesar, lalu F/V terbesar",
-                      # Saringan likuiditas GMGN (2026-09-17) ikut tertulis di
-                      # tooltip — dialah yang mengosongkan tabel saat masih $1M.
-                      f"likuiditas total GMGN di bawah {ms.gmgn_min_label()}",
+                      # Saringan likuiditas GMGN dicabut 2026-09-17 malam
+                      # (permintaan user: "filter likuiditas hapus coba") —
+                      # tooltip harus menjelaskannya (dulu frasa "likuiditas
+                      # total GMGN di bawah $500K" yang di-pin di sini, frasa
+                      # itu tidak boleh balik: lihat test_tooltip_ambang).
+                      "Likuiditas total GMGN TIDAK lagi menyaring",
+                      f"HIJAU bila > {ms.gmgn_min_label()}",
                       "RugCheck",
                       # Safeguard Jupiter dimatikan di server (2026-09-17) —
                       # tooltip harus menjelaskan itu, agar user tahu kenapa
@@ -1415,43 +1429,76 @@ class BestPoolCardTest(unittest.TestCase):
             self.assertIn("HIJAU bila > $250K", tip)
             self.assertNotIn("likuiditas total GMGN di bawah", tip)
 
-    def test_urutan_kolom_2026_09_16(self):
-        """Urutan header: Token, F/V, Fee/TVL, Volat, Active Range, LPs, Dust %MC…
+    def test_urutan_kolom_2026_09_17(self):
+        """Urutan header: Token, F/V, Fee/TVL, Volat, Active Range, LPs, Fee %…
 
-        Permintaan user 2026-09-16: *"Active Range kolom ini pindah ke kanan
-        volat"* + *"kolom LPs pindah ke kanan active range setelah dipindah"* +
-        *"kita tambahkan kolom baru RugCheck"*. Kolom Dust (jumlah wallet)
-        tetap dihapus; **RugCheck** duduk sebelum Pool; total 15 kolom.
+        Permintaan user 2026-09-17: *"hapus kolom dust %"*, *"hapus tombol
+        favorit / watchlist"*, *"tambahkan copy link hawkfi dibagian scan"*,
+        dan *"batasi per kolom dengan garis naik turun"*. Kolom **Dust %MC**
+        dihapus (kolom jumlah wallet sudah lebih dulu dihapus 2026-09-14),
+        tombol ⭐ hilang, kolom **Pool** kini memuat tombol 📋 copy link
+        HawkFi, dan tiap baris tabel didahului marker ``.bp-cols-next`` untuk
+        garis vertikal pembatas kolom; **RugCheck** tetap sebelum Pool;
+        total **13 kolom**.
         """
         app = self._app()
         app.session_state["best_pool_scan_24h"] = self._result(
             "24h", [_row(pool_address="PoolBest", ca="MintAAA", symbol="AAA")])
         app.run()
         body = "\n".join(node.value for node in app.markdown)
-        for header in (">Token<", ">F/V<", ">Fee/TVL<", ">Volat<",
-                       ">Active Range<", ">LPs<", ">Dust %MC<", ">Fee %<",
-                       ">MC<", ">A.TVL<", ">Vol 24h<", ">Top10<", ">RugCheck<"):
+        headers = [">Token<", ">F/V<", ">Fee/TVL<", ">Volat<", ">Active Range<",
+                   ">LPs<", ">Fee %<", ">MC<", ">A.TVL<", ">Vol 24h<",
+                   ">Top10<", ">RugCheck<", ">Pool<"]
+        for header in headers:
             self.assertIn(header, body)
-        urutan = [">Token<", ">F/V<", ">Fee/TVL<", ">Volat<", ">Active Range<",
-                  ">LPs<", ">Dust %MC<", ">Fee %<", ">MC<", ">A.TVL<",
-                  ">Vol 24h<", ">Top10<", ">RugCheck<", ">Pool<"]
-        for kiri, kanan in zip(urutan, urutan[1:]):
+        for kiri, kanan in zip(headers, headers[1:]):
             self.assertLess(body.index(kiri), body.index(kanan),
                             f"{kiri} harus di kiri {kanan}")
         self.assertLess(body.index(">Top10<"), body.index(">RugCheck<"))
         self.assertLess(body.index(">RugCheck<"), body.index(">Pool<"))
-        # "Dust hapus": kolom jumlah wallet tidak lagi dirender.
+        # "hapus kolom dust %": kolom Dust %MC (dan kolom jumlah wallet lama)
+        # tidak lagi dirender — header maupun sel/sub/tooltip-nya.
+        self.assertNotIn(">Dust %MC<", body)
         self.assertNotIn(">Dust<", body)
+        self.assertNotIn(">dust<", body)
+        self.assertNotIn("dust holder — informasi", body)
         self.assertNotIn("jumlah wallet dust di bawah ambang dust", body)
-        # Satu baris = 15 kolom (header), dan ``_COL_SPEC`` tidak boleh meleset.
+        # "hapus tombol favorit / watchlist": tombol ⭐ hilang dari tabel.
+        keys = [button.key or "" for button in app.button]
+        self.assertFalse(any("-star-" in key for key in keys), keys)
+        self.assertNotIn("Tambah ke Watchlist Meteora", body)
+        # "tambahkan copy link hawkfi": tombol 📋 per baris, memuat URL
+        # HawkFi pool di title + clipboard JS — bukan st.button (tanpa rerun).
+        self.assertIn("hawkfi-copy-btn", body)
+        self.assertIn("Copy link HawkFi: "
+                      "https://www.hawkfi.ag/meteora/PoolBest", body)
+        self.assertIn("navigator.clipboard", body)
+        # "batasi per kolom dengan garis naik turun": marker pembatas kolom
+        # ada sebelum header (bersama marker mobile) dan sebelum baris data;
+        # CSS garis vertikalnya hidup di dashboard_components.render_styles.
+        self.assertIn('class="mobile-hide-next bp-cols-next"', body)
+        self.assertIn('<div class="bp-cols-next"></div>', body)
+        styles_src = (Path(__file__).resolve().parent.parent
+                      / "dashboard_components.py").read_text(encoding="utf-8")
+        self.assertIn(".bp-cols-next", styles_src)
+        self.assertIn("border-right", styles_src)
+        # Selector-nya harus cocok dengan DOM Streamlit 1.61.1: marker
+        # markdown di dalam stElementContainer, horizontal block kolom
+        # sebagai saudara langsungnya, kolom ber-testid stColumn.
+        self.assertIn('div[data-testid="stElementContainer"]:has(.bp-cols-next)',
+                      styles_src)
+        self.assertIn('div[data-testid="stHorizontalBlock"]', styles_src)
+        self.assertIn('div[data-testid="stColumn"]', styles_src)
+        # Satu baris = 13 kolom (header), dan ``_COL_SPEC`` tidak boleh meleset.
         self.assertEqual(len(bp._lane_titles("24h")), len(bp._COL_SPEC))
-        self.assertEqual(len(bp._lane_titles("24h")), 15)
+        self.assertEqual(len(bp._lane_titles("24h")), 13)
 
     def test_kolom_fee_persen_menampilkan_fee_pool(self):
         """Fee % = fee trading pool (tier fee DLMM), bukan fee USD atau rasio.
 
-        Nilai tampil sebagai persen setelah Dust %MC; baris tanpa ``fee_pct``
-        (data lama di session_state) menampilkan ``—``, bukan 0% palsu.
+        Nilai tampil sebagai persen di kanan LPs (dulu setelah Dust %MC,
+        sebelum kolom itu dihapus 2026-09-17); baris tanpa ``fee_pct`` (data
+        lama di session_state) menampilkan ``—``, bukan 0% palsu.
         """
         app = self._app()
         app.session_state["best_pool_scan_24h"] = self._result("24h", [

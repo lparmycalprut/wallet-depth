@@ -110,6 +110,35 @@ def render_styles() -> None:
     .pool-links a {font-size:.75rem;color:#1d4ed8;font-weight:700;
      text-decoration:none;}
     .pool-links a:hover {color:#000000;text-decoration:underline;}
+    /* Tombol 📋 copy link HawkFi di kolom Pool tabel 🏆 Scan Best Pool
+       (permintaan user 2026-09-17: "tambahkan copy link hawkfi dibagian
+       scan") — tampil sejajar tautan 🌊/🦅, tanpa bingkai tombol, dan
+       kliknya murni JS clipboard (tidak memicu rerun Streamlit). */
+    .pool-links .hawkfi-copy-btn {background:transparent;border:none;
+     padding:0;margin:0;font-size:.8rem;line-height:1;cursor:pointer;}
+    .pool-links .hawkfi-copy-btn:hover {transform:scale(1.15);}
+    /* Garis vertikal pembatas antar kolom tabel 🏆 Scan Best Pool
+       (permintaan user 2026-09-17: "batasi per kolom dengan garis naik
+       turun"). Marker tak-kasatmata .bp-cols-next disisipkan tepat SEBELUM
+       tiap st.columns tabel (header + baris data), lalu :has() menandai
+       horizontal block milik tabelnya supaya hanya kolom tabel scan yang
+       diberi border kanan. DOM Streamlit 1.61.1 (diverifikasi dari bundle
+       frontend): markdown dibungkus div[data-testid="stElementContainer"],
+       dan blok kolom div[data-testid="stHorizontalBlock"] adalah SAUDARA
+       LANGSUNG-nya di dalam stVerticalBlock (blok TIDAK dibungkus
+       stElementContainer); kolom di dalamnya ber-data-testid "stColumn"
+       ("column" dicantumkan sebagai varian kedua untuk toleransi bila
+       Streamlit di-upgrade/downgrade).
+       Hanya layar > 768px: di mobile kolom tabel wrap menjadi card 2
+       kolom, garis tegaknya menjadi acak-acakan. */
+    .bp-cols-next {display:none;}
+    @media (min-width: 769px) {
+      div[data-testid="stElementContainer"]:has(.bp-cols-next) + div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:not(:last-child),
+      div[data-testid="stElementContainer"]:has(.bp-cols-next) + div[data-testid="stHorizontalBlock"] > div[data-testid="column"]:not(:last-child) {
+        border-right: 1px solid #cbd5e1;
+        padding-right: 0.45rem;
+      }
+    }
     /* Helper untuk menyembunyikan header tabel di mobile (dipakai best_pool_ui
        + temp_ui). Elemen marker .mobile-hide-next disisipkan sebelum header
        stHorizontalBlock, lalu header itu disembunyikan pada layar kecil. */

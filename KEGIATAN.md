@@ -1,3 +1,61 @@
+# Kegiatan — 17 September 2026 (🏆 Scan: copy link HawkFi, ⭐ & kolom Dust %MC dihapus, garis vertikal antar kolom)
+
+Empat permintaan user sekaligus untuk tabel **🏆 Scan Best Pool Meteora** di
+halaman utama:
+
+1. *"tambahkan copy link hawkfi dibagian scan"* — kolom **Pool** kini memuat
+   tombol **📋 copy link HawkFi** di samping tautan 🌊Meteora/🦅HawkFi.
+   Helper baru `links.hawkfi_copy_html()`: `<button>` HTML murni dengan
+   `navigator.clipboard.writeText` (+ fallback `execCommand("copy")` untuk
+   konteks non-https) dan umpan balik ikon ✓ 1,2 detik — **bukan**
+   `st.button`, jadi klik tidak memicu rerun (pola `onclick` inline yang
+   sudah dipakai `holder_analytic_link_html`). Gaya tombol hidup di
+   `dashboard_components.render_styles()` (`.pool-links .hawkfi-copy-btn`).
+2. *"hapus tombol favorit / watchlist"* — kolom **⭐** (tombol yang
+   memasukkan token ke Watchlist Meteora) dicabut dari tabel utama maupun
+   tabel "dilewati"; impor `add_to_watchlist`/`LP_SOURCE` ikut hilang dari
+   `best_pool_ui.py`. Watchlist tetap dikelola dari halaman 📦 TEMP.
+3. *"batasi per kolom dengan garis naik turun"* — tiap kolom tabel kini
+   dibatasi **garis vertikal**: marker tak-kasatmata `.bp-cols-next`
+   disisipkan tepat sebelum header `st.columns` dan sebelum tiap baris
+   data (pola yang sama dengan `.mobile-hide-next`), lalu CSS
+   `:has()` + adjacent-sibling memberi `border-right` ke semua kolom
+   kecuali yang terakhir. Selector diverifikasi langsung dari bundle
+   frontend **Streamlit 1.61.1**: markdown dibungkus
+   `div[data-testid="stElementContainer"]`, blok kolom
+   `div[data-testid="stHorizontalBlock"]` adalah saudara langsungnya di
+   dalam `stVerticalBlock` (blok tidak dibungkus element-container), dan
+   kolomnya ber-`data-testid="stColumn"`. Garis hanya aktif di layar
+   > 768 px — di mobile kolom tabel wrap menjadi kartu 2 kolom.
+4. *"hapus kolom dust %"* — kolom **Dust %MC** (sel + header + tooltip-nya)
+   dicabut dari tabel. Angkanya tetap dihitung backend
+   (`sort_best_rows`) sebagai tie-break urutan terakhir; filter dust sudah
+   lama nonaktif. Helper `_pct_txt` yang hanya dipakai sel ini ikut
+   dihapus.
+
+Dampak susunan: 15 → **13 kolom** — Token, F/V, Fee/TVL, Volat, Active
+Range, LPs, Fee %, MC, A.TVL, Vol 24h, Top10, RugCheck, Pool (bobot Pool
+0,8 → 1,05 untuk tiga ikon). Tooltip judul card dan semua docstring kolom
+diperbarui.
+
+**Perbaikan sampingan**: saat menjalankan suite ditemukan
+`test_detail_karakteristik_di_tooltip_bukan_caption` sudah merah sebelum
+perubahan ini — tooltip card masih menulis query server dengan flag
+`base_token_has_critical_warnings=false&&quote_token_has_critical_warnings=false`
+(ikut di-`"&&".join(JUPITER_SAFEGUARD_FILTERS)`), padahal filter server itu
+sudah dimatikan default-nya pagi harinya. Tooltip dikoreksi ke
+`pool_type=dlmm&&active_tvl>=50000` + catatan safeguard nonaktif default
+(kwarg `safeguard=True` tetap tersedia), dan pin test-nya disesuaikan —
+tidak ada lagi frasa "likuiditas total GMGN di bawah $500K" yang sudah
+dicabut malam sebelumnya.
+
+Tes: tiga pin layout di `test_best_pool_scan.py` + dua di
+`test_meteora_active_range.py` ditulis ulang ke spesifikasi 17 kolom-baru;
+tiga kasus `hawkfi_copy_html` ditambah ke `test_links.py`. Suite penuh:
+**tidak ada kegagalan baru** (19 gagal pra-eksisting di
+`lp_card_ui`/`manual_scan_alerts`/`meteora_screener`/`scan_holders` tidak
+berubah) dan satu gagal pra-eksisting ikut sembuh.
+
 # Kegiatan — 17 September 2026 (🏆 Best Pool: tabel kosong → ambang likuiditas GMGN $1M diturunkan ke $500K)
 
 Laporan user: *"Tidak ada pool 24H yang lolos filter Best Pool (atau listing
