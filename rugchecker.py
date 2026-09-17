@@ -33,6 +33,17 @@ di 🏆 Scan Best Pool Meteora menampilkan verdict + likuiditas ringkas;
 penjelasan lengkap (bendera mana yang nyala, apakah pool yang discan ini
 cukup dalam) ada di tooltip sel.
 
+**Sejak 2026-09-17 angka likuiditas kolom ini bersumber dari GMGN**
+(:mod:`gmgn_liquidity`, permintaan user: *"ubah info liquidititas dari
+rugchecker.cc ke gmgn saja"*): total likuiditas token di halaman gmgn.ai
+(``row["gmgn_liq"]``), bukan lagi total per-DEX dari ``data.dex[]``.
+Rincian per-DEX hanya dipakai internal (metode tambahan: kedalaman + share
+pool; share-nya dihitung terhadap total GMGN) dan tidak lagi ditampilkan.
+Bila nilai GMGN tak terbaca, kolom jatuh ke total per-DEX rugchecker.cc
+(``liquidity_source`` = ``"rugchecker"``) — dan saringan "likuiditas < $1M
+tidak ditampilkan" (lihat :mod:`gmgn_liquidity`) tidak pernah menyaring
+baris tanpa bukti.
+
 **Metode tambahan** (penjelasan ringkas yang diminta user: *"jika kamu
 memiliki metode tambahan untuk check rug, bisa kamu tambahkan kolom juga
 untuk penjelasanmu secara ringkas"*) — tiga pemeriksaan sendiri di atas payload
@@ -342,13 +353,23 @@ def _notes(data: dict, markets: list[dict], *, pool: str,
     return notes
 
 
-def summarize(payload, *, pool_address: str = "") -> dict:
+def summarize(payload, *, pool_address: str = "",
+              gmgn_total_usd=None) -> dict:
     """Ringkasan satu laporan untuk kolom **RugCheck** (selalu dict).
 
     ``pool_address`` (alamat pool Meteora yang discan) dipakai metode
     tambahan untuk menilai kedalaman pool itu sendiri. Kegagalan API =
     ``{"ok": False, "error": …}`` → kolom menulis ``—`` (tidak pernah
     mengarang verdict untuk data yang tidak ada).
+
+    ``gmgn_total_usd`` (sejak 2026-09-17, permintaan user *"ubah info
+    liquidititas dari rugchecker.cc ke gmgn saja"*): bila ada (angka > 0),
+    **angka likuiditas yang ditampilkan** = likuiditas total GMGN — baris
+    per-DEX rugchecker.cc tidak lagi ditampilkan (``liquidity_lines`` kosong,
+    ``liquidity_source`` ``"gmgn"``) dan share pool di catatan dihitung
+    terhadap total GMGN; verdict + bendera tetap milik rugchecker.cc. Tanpa
+    nilai GMGN → perilaku lama (total per-DEX, ``liquidity_source``
+    ``"rugchecker"``).
     """
     data = _extract_data(payload if isinstance(payload, dict) else {})
     if data is None:
@@ -375,7 +396,16 @@ def summarize(payload, *, pool_address: str = "") -> dict:
         critical.append(f"transfer fee {fee:g}%")
 
     markets = _markets(data)
-    lines, total_liq = liquidity_lines(markets)
+    lines, rc_total = liquidity_lines(markets)
+    # Angka likuiditas yang ditampilkan (2026-09-17): total GMGN bila ada —
+    # rincian per-DEX rugchecker.cc tidak lagi tampil; share pool di catatan
+    # ikut dihitung terhadap total GMGN. (Nama variabel jangan sama dengan
+    # fungsi :func:`liquidity_lines` — akan jadi UnboundLocalError.)
+    gmgn_usd = _float(gmgn_total_usd) if gmgn_total_usd is not None else 0.0
+    if gmgn_usd > 0:
+        total_liq, liq_lines, liquidity_source = gmgn_usd, [], "gmgn"
+    else:
+        total_liq, liq_lines, liquidity_source = rc_total, lines, "rugchecker"
     if honeypot:
         label, color = VERDICT_RUG
     elif critical:
@@ -397,8 +427,12 @@ def summarize(payload, *, pool_address: str = "") -> dict:
         "flag_count": len(critical) + len(flags),
         "markets": markets,
         "market_count": len(markets),
-        "liquidity_lines": lines,
+        "liquidity_lines": liq_lines,
         "liquidity_total_usd": total_liq,
+        # Sumber angka likuiditas yang ditampilkan: "gmgn" (likuiditas total
+        # GMGN, 2026-09-17) atau "rugchecker" (total per-DEX — fallback bila
+        # nilai GMGN tidak terbaca).
+        "liquidity_source": liquidity_source,
         "market_cap": _float(markets[0]["mcap"]) if markets else 0.0,
         "notes": notes,
         "symbol": str(data.get("symbol") or "").upper(),
@@ -407,14 +441,20 @@ def summarize(payload, *, pool_address: str = "") -> dict:
 
 
 def check_tokens(mints, *, pool_by_mint: dict | None = None,
+                 gmgn_by_mint: dict | None = None,
                  workers: int = WORKERS, timeout: int = REQUEST_TIMEOUT,
                  use_cache: bool = True) -> dict[str, dict]:
     """``{mint: summary}`` — paralel, cache berkas, kegagalan jadi ``—``.
 
     Satu mint gagal tidak pernah menjatuhkan scan: ``summarize`` untuk mint itu
     mengembalikan ``{"ok": False, "error": …}`` dan kolomnya menulis ``—``.
+
+    ``gmgn_by_mint`` (``{mint: likuiditas_total_usd}``, 2026-09-17) diteruskan
+    ke :func:`summarize` supaya angka likuiditas yang ditampilkan memakai
+    total GMGN; mint yang tidak ada di dict tetap memakai total rugchecker.cc.
     """
     pool_by_mint = pool_by_mint or {}
+    gmgn_by_mint = gmgn_by_mint or {}
     wanted = [str(mint).strip() for mint in (mints or []) if str(mint).strip()]
     ordered = list(dict.fromkeys(wanted))
     out: dict[str, dict] = {}
@@ -422,7 +462,8 @@ def check_tokens(mints, *, pool_by_mint: dict | None = None,
     for mint in ordered:
         fresh, cached = (_cache_get(mint) if use_cache else (False, None))
         if fresh:
-            out[mint] = summarize(cached, pool_address=pool_by_mint.get(mint, ""))
+            out[mint] = summarize(cached, pool_address=pool_by_mint.get(mint, ""),
+                                  gmgn_total_usd=gmgn_by_mint.get(mint))
         else:
             todo.append(mint)
     if not todo:
@@ -450,7 +491,8 @@ def check_tokens(mints, *, pool_by_mint: dict | None = None,
         if mint in out:
             continue
         out[mint] = summarize(payloads.get(mint) or {"error": "tanpa respons"},
-                              pool_address=pool_by_mint.get(mint, ""))
+                              pool_address=pool_by_mint.get(mint, ""),
+                              gmgn_total_usd=gmgn_by_mint.get(mint))
     return out
 
 
@@ -462,19 +504,31 @@ def attach_to_rows(rows, *, workers: int = WORKERS,
     Hanya baris **lolos saringan** yang diperiksa (baris gugur tidak sampai ke
     layar, jadi tidak perlu menembak API pihak ketiga untuk mereka). Baris
     tanpa ``ca`` (mint) tetap dikembalikan dengan ``rugcheck`` = ``—``.
+
+    Angka likuiditas kolom ini (sejak 2026-09-17) dibaca dari
+    ``row["gmgn_liq"]`` — ditempel :mod:`gmgn_liquidity` oleh
+    :func:`meteora_screener.scan_best_lane` **sebelum** step ini; bila baris
+    tidak punya angka GMGN (``gmgn=False`` di test/offline, atau GMGN tak
+    menjawab), kolom jatuh ke total per-DEX rugchecker.cc seperti dulu.
     """
     rows = [dict(row or {}) for row in (rows or [])]
     if not rows:
         return rows
     pool_by_mint: dict[str, str] = {}
+    gmgn_by_mint: dict[str, float] = {}
     for row in rows:
         mint = str(row.get("ca") or "").strip()
         pool = str(row.get("pool_address") or "").strip()
         if mint and pool and mint not in pool_by_mint:
             pool_by_mint[mint] = pool
+        gm = row.get("gmgn_liq") or {}
+        if mint and gm.get("ok"):
+            usd = _float(gm.get("usd"))
+            if usd > 0 and mint not in gmgn_by_mint:
+                gmgn_by_mint[mint] = usd
     reports = check_tokens([str(row.get("ca") or "").strip() for row in rows],
-                           pool_by_mint=pool_by_mint, workers=workers,
-                           timeout=timeout, use_cache=use_cache)
+                           pool_by_mint=pool_by_mint, gmgn_by_mint=gmgn_by_mint,
+                           workers=workers, timeout=timeout, use_cache=use_cache)
     for row in rows:
         row["rugcheck"] = reports.get(str(row.get("ca") or "").strip()) or {
             "ok": False, "error": "mint tidak terbawa", "verdict": "—",
@@ -499,8 +553,16 @@ def cell_parts(summary) -> tuple[str, str, str]:
 
     lines = list(item.get("liquidity_lines") or [])
     total = compact_usd(item.get("liquidity_total_usd"))
-    sub = (f"{total} liq · {int(item.get('market_count') or 0)} pool"
-           if lines else "tanpa pool")
+    source = str(item.get("liquidity_source") or "rugchecker")
+    # Baris kecil: angka likuiditas total — sumber GMGN (2026-09-17) tidak
+    # punya rincian per-DEX, jadi tanpa penghitung pool; sumber rugchecker
+    # (fallback) tetap menulis "N pool" seperti dulu.
+    if lines:
+        sub = f"{total} liq · {int(item.get('market_count') or 0)} pool"
+    elif source == "gmgn":
+        sub = f"{total} liq"
+    else:
+        sub = "tanpa pool"
     head = (f"verdict {item.get('verdict')} — rugchecker.cc honeypot checker "
             f"(pemeriksaan {time.strftime('%H:%M', time.gmtime(item.get('checked_at') or 0))} UTC)")
     bits: list[str] = []
@@ -513,6 +575,13 @@ def cell_parts(summary) -> tuple[str, str, str]:
     if lines:
         bits.append("likuiditas (ringkas): " + " · ".join(lines)
                     + f" — total {total}"
+                    + (f" · MC {compact_usd(item.get('market_cap'))}"
+                       if item.get("market_cap") else ""))
+    elif source == "gmgn":
+        # Sumber angka likuiditas sudah GMGN (2026-09-17: permintaan user
+        # "ubah info liquidititas dari rugchecker.cc ke gmgn saja") — rincian
+        # per-DEX rugchecker.cc tidak lagi ditampilkan di tooltip.
+        bits.append(f"likuiditas total (sumber: gmgn.ai): {total}"
                     + (f" · MC {compact_usd(item.get('market_cap'))}"
                        if item.get("market_cap") else ""))
     bits.extend(str(note) for note in (item.get("notes") or []))

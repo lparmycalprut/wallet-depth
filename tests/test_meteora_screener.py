@@ -330,9 +330,16 @@ class DropQuoteRowsTest(unittest.TestCase):
                   "token_y": _token(SOL, "SOL"),
                   "tvl": 1e6, "active_tvl": 1e6, "fee_active_tvl_ratio": 45,
                   "volume": 5e6, "fee_pct": 5.0, "volatility": 9.0}]
+        def _fake_gmgn_attach(rows, **_kw):
+            for row in rows:
+                row["gmgn_liq"] = {"ok": False}
+            return rows
+
         with mock.patch.object(ms, "fetch_best_pools", return_value=pools), \
                 mock.patch.object(ms, "enrich_pools",
-                                  side_effect=lambda r, **k: r) as enrich:
+                                  side_effect=lambda r, **k: r) as enrich, \
+                mock.patch("gmgn_liquidity.attach_total_liquidity",
+                           side_effect=_fake_gmgn_attach):
             result = ms.scan_best_meteora(timeframe="24h")
         self.assertEqual(result["skipped_quote"], 1)
         self.assertEqual(result["fetched"], 2)
