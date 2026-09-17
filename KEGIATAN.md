@@ -1,3 +1,72 @@
+# Kegiatan — 17 September 2026 (🏆 Best Pool: tabel kosong → ambang likuiditas GMGN $1M diturunkan ke $500K)
+
+Laporan user: *"Tidak ada pool 24H yang lolos filter Best Pool (atau listing
+kosong)."* lalu *"lah, poolnya kok jadi kosong, padahal token PAID harusnya
+masuk"* + mint `98kfF7rmsg1QDUEoCqNE7g7M1FdrTt92TEp2CLzypump`.
+
+## Diagnosa (bukan dugaan — diukur dari endpoint yang dipakai app)
+
+1. **Listing-nya ada, bukan kosong.** `pool-discovery-api.datapi.meteora.ag/pools`
+   dengan filter server app (Jupiter safeguard + `pool_type=dlmm` +
+   `active_tvl>=50000`, `timeframe=24h`, `category=top`) mengembalikan
+   `total: 203`; dipersempit `volatility>=1&&volatility<=10` → `total: 70`.
+2. **Pool PAID lolos tiga saringan metrik.** Query
+   `filter_by=…&&pool_address=Gc5hVCBydc6k3Z7oc2cQEW4GThFQi2Fqk5HfKABqa2q8`
+   → `total: 1`, dengan `fee_active_tvl_ratio` 23,394 / `volatility` 2,989
+   (**F/V 7,8×** ≥ 5×), volatility 2,99% (dalam 1–10%), `top_holders_pct`
+   **15,18%** (< 20%), `active_tvl` $494.560.
+3. **Yang membuang PAID hanya saringan likuiditas GMGN** yang dipasang pagi
+   harinya: `GET gmgn.ai/api/v1/token_info/sol/98kf…pump` →
+   `liquidity = 884.912,398` USD → `< MIN_TOTAL_LIQ_USD (1.000.000)` →
+   `row_gmgn_gap` memberi alasan → baris masuk `hidden_rows`, tidak pernah
+   sampai ke tabel. Kandidat lain juga jauh di bawah $1M: pill
+   (`Dvdm…pump`) $153.496, ELON (`GY9m…pump`) $149.542 — karena itu tabelnya
+   kosong total, bukan cuma kehilangan PAID.
+4. Catatan pagi *"PAID ~$1,9M di halaman gmgn.ai"* **sudah basi**: ada Remove
+   LP (pool PAID `net_deposits` −$229.608, withdraw > deposit) sehingga angka
+   GMGN-nya turun ke ±$885K. Angka $885K itu juga cocok dengan jumlah tiga
+   pool Meteora PAID versi DexScreener ($510.271 + $282.887 + $92.438 =
+   $885.596), jadi sumbernya benar — yang terlalu tinggi ambangnya.
+
+## Yang diubah
+
+- **`gmgn_liquidity.py`**: `MIN_TOTAL_LIQ_USD` `1_000_000` → **`500_000`**;
+  helper `_label_usd` (label `$500K`, bukan `$0.5M`) → `MIN_LABEL`; docstring
+  + komentar konstanta mencatat pengukuran PAID/pill/ELON sebagai alasan
+  kalibrasi. Aturan tidak berubah bentuk: **di bawah** ambang gugur, tepat
+  ambang lolos, tanpa bukti GMGN tidak pernah menyaring.
+- **`meteora_screener.py`**: `gmgn_min_label()` (baca `MIN_LABEL` tiap
+  dipanggil — teks log/UI tidak bisa tertinggal bila ambang diubah lagi) +
+  `BEST_GAP_CATEGORIES` / `row_best_gap_label` / `best_gap_counts` /
+  `best_gap_summary` untuk merekap alasan gugur per kategori; docstring
+  `row_best_gaps`/`scan_best_lane` dan teks log aktivitas tidak lagi menulis
+  "$1M" hardcoded.
+- **`best_pool_ui.py`**: pesan tabel kosong kini menyebut penyebabnya —
+  *"Tidak ada pool 24H yang lolos filter Best Pool (atau listing kosong). 3
+  pool dilewati: 2 likuiditas GMGN · 1 Top10 — buka '▶ 3 pool dilewati' di
+  atas untuk alasan tiap baris."*; help tombol scan + tombol "dilewati"
+  membaca ambang dari `gmgn_min_label()`.
+- **`rugchecker.py`**: docstring menyebut ambang lewat
+  `gmgn_liquidity.MIN_TOTAL_LIQ_USD` (bukan "$1M").
+- **Tes** (+11 → 1104): `tests/test_gmgn_liquidity.py` — `AmbangTest` (pin
+  $500K + angka terukur PAID $884.912,398 / pill $153.496,33 / ELON
+  $149.542,09 + pin bahwa $1M memang akan membuang PAID),
+  `ScanLaneGmgnTest.test_paid_tidak_ikut_terbuang` (regresi end-to-end: pool
+  PAID dengan metrik aslinya harus ada di `rows`, `hidden_rows` kosong),
+  `GapTest` diarahkan ke ambang baru; `tests/test_best_pool_scan.py` —
+  `BestGapSummaryTest` (5) + `test_tabel_kosong_menyebut_alasan_gugurnya`
+  (AppTest: pesan info memuat rekap alasan).
+  `python -m unittest discover -s tests` → **1104 tes**, `18 failed + 1 error`
+  — **nama kegagalan identik baseline** (diverifikasi dua arah: runner
+  kanonik maupun runner pembanding; bukan regresi).
+
+Catatan operasional: angka GMGN bergerak cepat (menit). Bila user menaikkan
+ambang lagi, ubah **satu** konstanta `MIN_TOTAL_LIQ_USD` — label, teks UI, log
+dan alasan gugur mengikutinya; `AmbangTest` akan mengingatkan bahwa PAID
+($885K saat diukur) ikut terbuang di atas angka itu.
+
+---
+
 # Kegiatan — 17 September 2026 (🏆 Best Pool: likuiditas dari GMGN + saringan < $1M)
 
 Permintaan user (lanjutan riset token PAID dari gmgn.ai): *"kita rubah info

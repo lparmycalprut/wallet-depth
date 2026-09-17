@@ -294,9 +294,10 @@ tapi yang dijalankan tetap satu listing 24H.
   | **Volat di window** | `BEST_VOL_SHOW_MIN <= V <= BEST_VOL_SHOW_MAX` (**1%–10%**, dua-duanya inklusif) | permintaan user 2026-09-16: *"volatility kurang dari 1 sembunyikan juga"* + *"volatility > 10 sembunyikan juga"* — di bawah 1% pool nyaris tidak bergerak (fee-nya tidak berarti), di atas 10% pergerakan lebih besar daripada fee yang dibagi. Tepat 1,0% dan 10,0% **tetap tampil** |
   | **F/V** | `F/V >= BEST_FV_24H_MIN` (**5×**, inklusif) | "prioritaskan 24H yang fee/v >= 5× untuk di scan detail, jika kurang dari itu langsung skip" |
   | **Top10** | `top_holders_pct < BEST_TOP10_MAX_PCT` (**< 20%**; `>= 20%` dibuang) | *"scan meteora, TOP 10 diatas 20% jangan ditampilkan lagi"* + koreksi hari yang sama *"jika ada top 10 >= 20% jangan tampilkan"* — **batasnya pindah ke sisi buang**, jadi tepat 20,0% **tidak lagi** tampil. Baris **tanpa** angka (`None`) tetap lolos: tanpa data tidak ada bukti konsentrasi, kolomnya tampil `—` |
+  | **Likuiditas GMGN** | `gmgn_liq.usd >= gmgn_liquidity.MIN_TOTAL_LIQ_USD` (**≥ $500K**; di bawahnya dibuang, tepat $500K lolos) | *"jika grand total liquiditas kurang dari 1M, jangan tampilkan di hasil scan"* (2026-09-17) — ambangnya **$500K**, bukan $1M: diukur dari `gmgn.ai/api/v1/token_info`, PAID = $884.912 / pill = $153.496 / ELON = $149.542, jadi $1M mengosongkan seluruh tabel (*"poolnya kok jadi kosong, padahal token PAID harusnya masuk"*). Baris **tanpa bukti** GMGN (API mati / token tak terlacak) **tidak** disaring |
 
-  Urutan evaluasi = urutan di atas (volat → F/V → Top10) supaya satu baris gugur
-  hanya menulis satu alasan, dan `BEST_FV_30M_MIN` **tidak** dipakai lagi di mana
+  Urutan evaluasi = urutan di atas (volat → F/V → Top10 → likuiditas GMGN) supaya
+  satu baris gugur hanya menulis satu alasan, dan `BEST_FV_30M_MIN` **tidak** dipakai lagi di mana
   pun (konstanta mati, tetap di-pin "ada tapi tidak dipakai" oleh
   `tests/test_best_pool_scan.py::test_saringan_lama_tetap_mati`).
 
@@ -821,6 +822,7 @@ keseluruhan kadens ke 15 menit.
 | `BEST_TOP10_MAX_PCT` | 20.0 — 🏆 Scan Best Pool Meteora: Top10 holder token base **`>= 20%` tidak ditampilkan** (`row_top10_over`, batas di sisi buang sesuai *"jika ada top 10 >= 20% jangan tampilkan"*; `None` = lolos, tampil `—`) |
 | `BEST_VOL_SHOW_MIN` / `MAX` | 1.0 / 10.0 — 🏆 Scan Best Pool Meteora: volatility **di luar** window ini gugur, dua-duanya inklusif (`row_volatility_gap`; V = 0 tetap punya alasan sendiri = dibuang total) |
 | `BEST_FV_30M_MIN` | 1.0 — **mati** sejak 2026-09-16 (scan 30M dihapus); konstanta dibiarkan ada supaya percobaan menghidupkan lane lama lewat konstanta tetap gagal — di-pin `test_saringan_lama_tetap_mati` |
+| `MIN_TOTAL_LIQ_USD`, `MIN_LABEL` (`gmgn_liquidity.py`) | 500000.0, `$500K` — 🏆 Scan Best Pool Meteora: likuiditas **total** token dari GMGN di bawah ambang tidak ditampilkan (`row_gmgn_gap`, saringan terakhir `row_best_gaps`). **Dulu $1M** (2026-09-17 pagi) → mengosongkan tabel karena PAID saja hanya $884.912; angka terukur itu di-pin `tests/test_gmgn_liquidity.py::AmbangTest`. Teks UI/log membaca `meteora_screener.gmgn_min_label()`, jadi satu konstanta ini saja yang perlu diubah |
 | `JUPITER_SAFEGUARD_FILTERS` | `base_token_has_critical_warnings=false&&quote_token_has_critical_warnings=false` — prepend di `best_filter_by()` saja (`safeguard=False` untuk mematikan) |
 | `POOL_MIN_LIQ_USD`, `POOL_SHARE_MIN_PCT`, `BIG_POOL_SHARE_PCT` | 10000, 25.0, 10.0 — tiga catatan "metode tambahan" `rugchecker.py` (kedalaman pool, share likuiditas, konsentrasi pasar) |
 | `CACHE_TTL_OK`, `CACHE_TTL_FAIL`, `CACHE_MAX_ENTRIES`, `WORKERS` | 1800, 300, 400, 6 — cache berkas `rugchecker.py` + paralelisme |

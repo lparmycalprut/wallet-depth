@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
-"""``gmgn_liquidity.py`` — likuiditas total GMGN: sumber angka + saringan $1M.
+"""``gmgn_liquidity.py`` — likuiditas total GMGN: sumber angka + saringan.
 
 Permintaan user 2026-09-17: *"kita rubah info liquidititas dari rugchecker.cc
 ke gmgn saja"* + *"jika grand total liquiditas kurang dari 1M, jangan
-tampilkan di hasil scan"*. Yang di-pin di file ini (semua offline —
+tampilkan di hasil scan"*, disusul *"poolnya kok jadi kosong, padahal token
+PAID harusnya masuk"* → ambangnya **$500K** (``MIN_TOTAL_LIQ_USD``); $1M
+ternyata membuang seluruh listing (lihat ``AmbangTest``). Yang di-pin di file ini (semua offline —
 :func:`gmgn_liquidity._post_json` / :func:`gmgn_liquidity._get_json` selalu
 di-mock):
 
@@ -11,13 +13,13 @@ di-mock):
   ``{code, data}``; ``liquidity`` string/angka; hilang → ``None`` = unknown,
   BUKAN 0);
 - parse fallback rank 100 teratas + inferensi *bawah cutoff* (mint yang tidak
-  ada di daftar pasti di bawah cutoff → aman dianggap < $1M);
+  ada di daftar pasti di bawah cutoff → aman dianggap < ambang);
 - ``fetch_total_liquidity``: batch POST (BATCH_SIZE per request), kegagalan
   satu batch → hanya batch itu yang turun ke rank, kegagalan total → source
   ``None`` (caller tidak boleh menyaring);
 - cache berkas per-mint (TTL, ``use_cache=False``);
-- ``row_gmgn_gap``: < $1M gugur, tepat $1M lolos (permintaan user: "kurang
-  dari 1M"), tanpa bukti tidak pernah menyaring;
+- ``row_gmgn_gap``: < ambang gugur, tepat ambang lolos (permintaan user:
+  "kurang dari …"), tanpa bukti tidak pernah menyaring;
 - integrasi: ``row_best_gaps`` memberi alasan GMGN sebagai saringan TERAKHIR
   (F/V/volat/Top10 tetap lebih keras), dan ``rugchecker.summarize`` /
   ``cell_parts`` menampilkan total GMGN (sumber "gmgn") — rincian per-DEX
@@ -253,23 +255,63 @@ class AttachTest(unittest.TestCase):
         self.assertTrue(rows[0]["gmgn_liq"]["below_cutoff"])
 
 
+class AmbangTest(unittest.TestCase):
+    """Ambang $500K — dikalibrasi pakai angka GMGN yang benar-benar terukur.
+
+    Laporan user 2026-09-17 (*"poolnya kok jadi kosong, padahal token PAID
+    harusnya masuk"*): dengan ambang $1M, PAID (likuiditas GMGN
+    ``/api/v1/token_info/sol/98kf…pump`` = **$884.912,398**) ikut terbuang
+    bersama praktis seluruh listing (pill $153.496, ELON $149.542). Angka-angka
+    itu di-pin di sini supaya ambang tidak bisa naik lagi tanpa tes ini
+    diberitahu.
+    """
+
+    LIQ_PAID = 884_912.3982565559    # PAID 98kf…pump — harus TAMPIL
+    LIQ_PILL = 153_496.33041956509   # pill — pool tipis, harus terbuang
+    LIQ_ELON = 149_542.0879392728    # ELON — pool tipis, harus terbuang
+
+    def test_ambang_500k(self):
+        self.assertEqual(gl.MIN_TOTAL_LIQ_USD, 500_000.0)
+        self.assertEqual(gl.MIN_LABEL, "$500K")
+
+    def test_paid_di_atas_ambang_lolos(self):
+        row = _row(MINT_A)
+        row["gmgn_liq"] = {"ok": True, "usd": self.LIQ_PAID,
+                           "below_cutoff": False, "source": "gmgn_token_info"}
+        self.assertIsNone(gl.row_gmgn_gap(row))
+
+    def test_pool_tipis_gugur(self):
+        for liq in (self.LIQ_PILL, self.LIQ_ELON):
+            row = _row(MINT_B)
+            row["gmgn_liq"] = {"ok": True, "usd": liq, "below_cutoff": False,
+                               "source": "gmgn_token_info"}
+            gap = gl.row_gmgn_gap(row)
+            self.assertIsNotNone(gap, liq)
+            self.assertIn("< $500K", gap)
+
+    def test_ambang_1m_lama_akan_membuang_paid(self):
+        """Pin alasan penurunan ambang: $1M membuang PAID."""
+        self.assertLess(self.LIQ_PAID, 1_000_000.0)
+        self.assertGreater(self.LIQ_PAID, gl.MIN_TOTAL_LIQ_USD)
+
+
 class GapTest(unittest.TestCase):
-    def test_dibawah_1m_gugur(self):
+    def test_dibawah_ambang_gugur(self):
         row = _row()
-        row["gmgn_liq"] = {"ok": True, "usd": 860_179.0,
+        row["gmgn_liq"] = {"ok": True, "usd": 153_496.33,
                            "below_cutoff": False, "source": "gmgn_token_info"}
         gap = gl.row_gmgn_gap(row)
-        self.assertIn("$860.2K", gap)
-        self.assertIn("< $1M", gap)
+        self.assertIn("$153.5K", gap)
+        self.assertIn(f"< {gl.MIN_LABEL}", gap)
 
-    def test_tepat_1m_lolos(self):
-        """Permintaan user: "KURANG dari 1M" — tepat $1M tidak dibuang."""
+    def test_tepat_ambang_lolos(self):
+        """Permintaan user: "KURANG dari ambang" — tepat ambang tidak dibuang."""
         row = _row()
         row["gmgn_liq"] = {"ok": True, "usd": gl.MIN_TOTAL_LIQ_USD,
                            "below_cutoff": False, "source": "gmgn_token_info"}
         self.assertIsNone(gl.row_gmgn_gap(row))
 
-    def test_di_atas_1m_lolos(self):
+    def test_di_atas_ambang_lolos(self):
         row = _row()
         row["gmgn_liq"] = {"ok": True, "usd": 1_900_000.0,
                            "below_cutoff": False, "source": "gmgn_token_info"}
@@ -296,7 +338,7 @@ class RowBestGapsIntegrationTest(unittest.TestCase):
 
     def test_gmgn_gap_terakhir(self):
         row = _row()
-        row["gmgn_liq"] = {"ok": True, "usd": 500_000.0,
+        row["gmgn_liq"] = {"ok": True, "usd": 250_000.0,
                            "below_cutoff": False, "source": "gmgn_token_info"}
         gaps = ms.row_best_gaps(row, lane="24h")
         self.assertEqual(len(gaps), 1)
@@ -421,8 +463,9 @@ def _best_pool(pool="P1", mint=MINT_A, *, ratio=40.0, volatility=6.2,
 
 
 class ScanLaneGmgnTest(unittest.TestCase):
-    """``scan_best_lane``: baris < $1M masuk hidden_rows + alasan best_gaps;
-    ≥ $1M tampil; GMGN mati → tidak ada yang dibuang (tanpa bukti)."""
+    """``scan_best_lane``: baris di bawah ambang likuiditas GMGN masuk
+    ``hidden_rows`` + alasan ``best_gaps``; di atas ambang tampil; GMGN mati →
+    tidak ada yang dibuang (tanpa bukti)."""
 
     @staticmethod
     def _enrich(rows, **_kw):
@@ -459,18 +502,35 @@ class ScanLaneGmgnTest(unittest.TestCase):
             return ms.scan_best_lane("24h", max_wallets=2000,
                                      rugcheck=True)
 
-    def test_dibawah_1m_dilewati(self):
+    def test_dibawah_ambang_dilewati(self):
         pools = [_best_pool("P-BIG", MINT_A, ),
                  _best_pool("P-SMALL", MINT_B)]
-        result = self._scan(pools, {MINT_A: 2_500_000.0,
-                                    MINT_B: 800_000.0})
+        result = self._scan(pools, {MINT_A: 884_912.3982565559,   # PAID
+                                    MINT_B: 153_496.33041956509})  # pill
         self.assertEqual([r["pool_address"] for r in result["rows"]],
                          ["P-BIG"])
         self.assertEqual([r["pool_address"] for r in result["hidden_rows"]],
                          ["P-SMALL"])
         reason = result["hidden_rows"][0]["best_gaps"][0]
         self.assertIn("Likuiditas GMGN", reason)
-        self.assertIn("$800.0K", reason)
+        self.assertIn("$153.5K", reason)
+        self.assertIn("< $500K", reason)
+
+    def test_paid_tidak_ikut_terbuang(self):
+        """Regresi laporan user 2026-09-17: *"poolnya kok jadi kosong,
+        padahal token PAID harusnya masuk"*.
+
+        PAID lolos tiga saringan metrik (F/V 7,8×, volatility 3,0%, Top10
+        15,18%) dan likuiditas GMGN-nya $884.912 — di atas ambang $500K, jadi
+        barisnya harus ada di ``rows``, bukan ``hidden_rows``.
+        """
+        pools = [_best_pool("Gc5hVCBydc6k3Z7oc2cQEW4GThFQi2Fqk5HfKABqa2q8",
+                            MINT_A, ratio=23.39434274894063,
+                            volatility=2.9886436516396744, top10=15.177147896949576)]
+        result = self._scan(pools, {MINT_A: 884_912.3982565559})
+        self.assertEqual(result["hidden_rows"], [])
+        self.assertEqual([r["pool_address"] for r in result["rows"]],
+                         ["Gc5hVCBydc6k3Z7oc2cQEW4GThFQi2Fqk5HfKABqa2q8"])
 
     def test_gmgn_mati_tidak_membuang(self):
         pools = [_best_pool("P-BIG", MINT_A),

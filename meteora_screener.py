@@ -44,9 +44,11 @@ enrichment holder (kuota Helius tidak terbakar) dan tetap tersedia di
 dan dibuang total** (aturan 2026-09-14), volatility di luar **1%–10%**
 (:data:`BEST_VOL_SHOW_MIN`/:data:`BEST_VOL_SHOW_MAX`, 2026-09-16) gugur,
 **Top10 holder >= 20% supply tidak ditampilkan lagi**
-(:data:`BEST_TOP10_MAX_PCT`, 2026-09-16), dan **likuiditas total GMGN < $1M
-tidak ditampilkan** (:mod:`gmgn_liquidity`, permintaan user 2026-09-17 —
-angkanya ditempel ``row["gmgn_liq"]`` sebelum alasan gugur dihitung). Filter
+(:data:`BEST_TOP10_MAX_PCT`, 2026-09-16), dan **likuiditas total GMGN <
+``gmgn_liquidity.MIN_TOTAL_LIQ_USD`` ($500K) tidak ditampilkan**
+(:mod:`gmgn_liquidity`, permintaan user 2026-09-17 — angkanya ditempel
+``row["gmgn_liq"]`` sebelum alasan gugur dihitung; ambangnya sempat $1M
+tetapi mengosongkan seluruh tabel, jadi diturunkan sore harinya). Filter
 API membawa **Jupiter
 safeguard**: ``base_token_has_critical_warnings=false&&
 quote_token_has_critical_warnings=false&&pool_type=dlmm&&active_tvl>=50000``
@@ -1438,13 +1440,15 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
     dan Top10 holder harus di **bawah** :data:`BEST_TOP10_MAX_PCT` (20% —
     ``>= 20%`` dibuang; :func:`row_top10_over`). Urutan cek sengaja: vol-0
     dibuang total lebih dulu (``row_volatility_zero``), lalu volatilitas di
-    luar rentang, baru F/V, lalu Top10, lalu likuiditas GMGN < $1M — satu
-    alasan gugur per baris supaya teksnya tetap satu baris, dengan alasan
-    paling keras lebih dulu.
+    luar rentang, baru F/V, lalu Top10, lalu likuiditas GMGN <
+    ``gmgn_liquidity.MIN_TOTAL_LIQ_USD`` — satu alasan gugur per baris supaya
+    teksnya tetap satu baris, dengan alasan paling keras lebih dulu.
 
     Saringan TERAKHIR (2026-09-17, permintaan user: *"jika grand total
-    liquiditas kurang dari 1M, jangan tampilkan di hasil scan"*): likuiditas
-    **total GMGN < $1M** gugur (:func:`gmgn_liquidity.row_gmgn_gap`) — key
+    liquiditas kurang dari 1M, jangan tampilkan di hasil scan"* — ambangnya
+    $500K sejak sore harinya, lihat :data:`gmgn_liquidity.MIN_TOTAL_LIQ_USD`):
+    likuiditas **total GMGN di bawah ambang** gugur
+    (:func:`gmgn_liquidity.row_gmgn_gap`) — key
     ``gmgn_liq`` ditempel :func:`scan_best_lane` pada kandidat yang sudah
     lolos saringan metrik di atas; baris tanpa key (scan lama / ``gmgn=False``
     di test/offline) tidak terpengaruh. Tanpa bukti GMGN baris TIDAK disaring.
@@ -1507,7 +1511,7 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
         if over is not None:
             return [f"{BEST_LANE_LABELS[normalized]}: Top10 {over:g}% ≥ "
                     f"{float(BEST_TOP10_MAX_PCT):g}% — holder terpusat"]
-        # Lalu likuiditas total GMGN < $1M (2026-09-17) — key ``gmgn_liq``
+        # Lalu likuiditas total GMGN < ambang (2026-09-17) — key ``gmgn_liq``
         # hanya ada di baris hasil scan baru; tanpa key/alasan → lolos.
         from gmgn_liquidity import row_gmgn_gap
         gap = row_gmgn_gap(row)
@@ -1516,6 +1520,75 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
         return []
     sign = "<" if lane_fv_inclusive(normalized) else "≤"
     return [f"{BEST_LANE_LABELS[normalized]}: F/V {sign} {minimum:g}×"]
+
+
+def gmgn_min_label() -> str:
+    """Label ambang likuiditas GMGN (``$500K``) untuk teks log/UI.
+
+    Dibaca dari :mod:`gmgn_liquidity` tiap dipanggil supaya teks tidak pernah
+    tertinggal bila :data:`gmgn_liquidity.MIN_TOTAL_LIQ_USD` diubah lagi; modul
+    tidak terbaca → ``"?"`` (bukan angka lama yang salah).
+    """
+    try:
+        from gmgn_liquidity import MIN_LABEL
+
+        return str(MIN_LABEL)
+    except Exception:  # noqa: BLE001 - teks pelengkap, jangan menjatuhkan scan
+        return "?"
+
+
+#: Jarum → label kategori alasan gugur :func:`row_best_gaps`. Urutan menentukan
+#: prioritas bila satu teks memuat lebih dari satu jarum (tidak terjadi saat
+#: ini — satu alasan per baris — tetapi rekapnya harus tetap deterministik).
+BEST_GAP_CATEGORIES = (("Likuiditas GMGN", "likuiditas GMGN"),
+                       ("cutoff peringkat", "likuiditas GMGN"),
+                       ("Top10", "Top10"),
+                       ("volatility", "volatility"),
+                       ("F/V", "F/V"))
+
+
+def row_best_gap_label(row: dict | None) -> str:
+    """Kategori alasan gugur satu baris (``"likuiditas GMGN"``/``"Top10"``/…).
+
+    Alasan yang sudah dihitung scan (``row["best_gaps"]``) dipakai apa adanya;
+    baris hasil lama tanpa key itu dihitung ulang lewat
+    :func:`row_best_gaps`. ``""`` bila barisnya tidak gugur.
+    """
+    row = row or {}
+    gaps = row.get("best_gaps")
+    if not isinstance(gaps, list) or not gaps:
+        gaps = row_best_gaps(row)
+    text = str(gaps[0] or "") if gaps else ""
+    if not text:
+        return ""
+    for needle, label in BEST_GAP_CATEGORIES:
+        if needle in text:
+            return label
+    return "metrik tidak valid"
+
+
+def best_gap_counts(rows: list | None) -> list[tuple[str, int]]:
+    """``[(label, jumlah)]`` alasan gugur, terbanyak dulu (seri: abjad).
+
+    Dipakai card 🏆 Best Pool untuk menjelaskan tabel kosong — permintaan user
+    2026-09-17 (*"poolnya kok jadi kosong"*) sesudah ambang likuiditas GMGN
+    membuang seluruh listing tanpa pesan yang menyebut penyebabnya.
+    """
+    counts: dict[str, int] = {}
+    for row in rows or []:
+        label = row_best_gap_label(row)
+        if label:
+            counts[label] = counts.get(label, 0) + 1
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+
+
+def best_gap_summary(rows: list | None) -> str:
+    """Rekap satu baris alasan gugur: ``"8 likuiditas GMGN · 3 Top10"``.
+
+    ``""`` bila tidak ada baris gugur yang bisa dikategorikan.
+    """
+    return " · ".join(f"{count} {label}"
+                      for label, count in best_gap_counts(rows))
 
 
 def row_dust_ok(row: dict | None) -> bool:
@@ -1636,7 +1709,8 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
        listing) ``&&pool_type=dlmm&&active_tvl>=50000`` (``category=top``,
        page_size 50);
     2. saringan layar di :func:`row_best_gaps` — ``F/V >= 5×``, volatility
-       1%–10%, Top10 < 20% supply, lalu **likuiditas total GMGN < $1M**
+       1%–10%, Top10 < 20% supply, lalu **likuiditas total GMGN <
+       ``gmgn_liquidity.MIN_TOTAL_LIQ_USD`` ($500K)**
        (2026-09-17: :mod:`gmgn_liquidity` menempel ``row["gmgn_liq"]`` pada
        kandidat yang lolos tiga saringan pertama, **sebelum** alasan gugur
        dihitung) — semua dijalankan **sebelum** holder, jadi pool yang gugur
@@ -1690,7 +1764,8 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
     # tampilkan") — ditempel **sebelum** alasan gugur dihitung, hanya pada
     # kandidat yang sudah lolos saringan metrik (baris yang gugur F/V/volat/
     # Top10 tidak butuh angka GMGN — hemat request pihak ketiga). Baris
-    # < $1M lalu gugur lewat :func:`row_best_gaps` (satu jalur dengan saringan
+    # di bawah ambang lalu gugur lewat :func:`row_best_gaps` (satu jalur
+    # dengan saringan
     # lain, alasan di ``best_gaps``). ``gmgn=False`` (test/offline) melewatkan
     # step ini total; kegagalan HTTP tidak menjatuhkan scan (baris tak
     # terbaca tidak disaring — tanpa bukti tidak ada verdict).
@@ -1749,7 +1824,8 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
         _alog.info("scan-best-pool",
                    f"scan selesai: {len(kept)} pool tampil dari {fetched} "
                    f"listing {lane_label} ({hidden_metric} gagal saringan "
-                   f"(F/V/volat/Top10/liq GMGN < $1M) tanpa scan holder"
+                   f"(F/V/volat/Top10/liq GMGN < {gmgn_min_label()}) tanpa "
+                   f"scan holder"
                    + (f", {dropped_volatility} pool volatility 0 dibuang"
                       if dropped_volatility else "")
                    + (f", {quote_skipped} pool quote dilewati"

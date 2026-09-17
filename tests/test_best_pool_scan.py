@@ -560,6 +560,57 @@ class BestGatesTest(unittest.TestCase):
         self.assertEqual((hidden_metric, hidden_dust), (1, 0))
 
 
+class BestGapSummaryTest(unittest.TestCase):
+    """Rekap alasan gugur — dipakai pesan "tabel kosong" card 🏆 Best Pool.
+
+    Laporan user 2026-09-17: *"poolnya kok jadi kosong, padahal token PAID
+    harusnya masuk"* — pesan kosong lama tidak menyebut saringan mana yang
+    membuang listing, jadi user harus membuka daftar "dilewati" satu-satu.
+    """
+
+    @staticmethod
+    def _liq(usd):
+        return {"ok": True, "usd": usd, "below_cutoff": False,
+                "source": "gmgn_token_info"}
+
+    def test_kategori_dan_urutan(self):
+        rows = [_row(pool_address="L1", gmgn_liq=self._liq(153_496.33)),
+                _row(pool_address="L2", gmgn_liq=self._liq(149_542.09)),
+                _row(pool_address="T1", top_holders_pct=22.2),
+                _row(pool_address="F1", **_fv(2.0, 6.2)),
+                _row(pool_address="V1", **_fv(50.0, 42.0))]
+        self.assertEqual(ms.best_gap_counts(rows),
+                         [("likuiditas GMGN", 2), ("F/V", 1), ("Top10", 1),
+                          ("volatility", 1)])
+        self.assertEqual(ms.best_gap_summary(rows),
+                         "2 likuiditas GMGN · 1 F/V · 1 Top10 · 1 volatility")
+
+    def test_alasan_tersimpan_dipakai_tanpa_hitung_ulang(self):
+        """Baris hasil scan membawa ``best_gaps`` — rekap membaca itu."""
+        row = _row(best_gaps=["24H: Likuiditas GMGN $153.50K < $500K — "
+                              "tidak ditampilkan"],
+                   gmgn_liq=self._liq(9_000_000.0))
+        self.assertEqual(ms.row_best_gap_label(row), "likuiditas GMGN")
+
+    def test_cutoff_rank_masuk_kategori_likuiditas(self):
+        row = _row(gmgn_liq={"ok": True, "usd": None, "below_cutoff": True,
+                             "source": "gmgn_rank", "cutoff_usd": 15_000.0})
+        self.assertEqual(ms.row_best_gap_label(row), "likuiditas GMGN")
+
+    def test_baris_lolos_dan_daftar_kosong(self):
+        self.assertEqual(ms.row_best_gap_label(_row()), "")
+        self.assertEqual(ms.best_gap_summary([]), "")
+        self.assertEqual(ms.best_gap_summary([_row()]), "")
+
+    def test_label_ambang_dibaca_dari_gmgn_liquidity(self):
+        """Teks ambang ikut konstanta — tidak boleh tertinggal bila diubah."""
+        import gmgn_liquidity as gl
+
+        self.assertEqual(ms.gmgn_min_label(), gl.MIN_LABEL)
+        with mock.patch.object(gl, "MIN_LABEL", "$2M"):
+            self.assertEqual(ms.gmgn_min_label(), "$2M")
+
+
 class SortBestRowsTest(unittest.TestCase):
     """Urutan tiap tabel: **Fee/TVL terbesar** → F/V terbesar → vol/TVL → dust.
 
@@ -1118,6 +1169,38 @@ class BestPoolCardTest(unittest.TestCase):
         # (ambang hanya di tooltip judul + sub sel F/V).
         self.assertIn("1 pool 24H disembunyikan ditampilkan", captions)
         self.assertNotIn("F/V ≤", captions)
+
+    def test_tabel_kosong_menyebut_alasan_gugurnya(self):
+        """Pesan "tidak ada pool lolos" harus menyebut PENYEBABNYA.
+
+        Laporan user 2026-09-17: *"poolnya kok jadi kosong, padahal token PAID
+        harusnya masuk"* — waktu itu seluruh listing terbuang saringan
+        likuiditas GMGN ($1M) dan card hanya menulis "Tidak ada pool 24H yang
+        lolos filter Best Pool (atau listing kosong)." tanpa petunjuk. Sekarang
+        rekap alasannya ikut tertulis + ajakan membuka daftar "dilewati".
+        """
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result(
+            "24h", [],
+            fetched=3,
+            hidden=[_row(pool_address="PoolTipis", ca="MintTipis",
+                         symbol="TIPIS",
+                         gmgn_liq={"ok": True, "usd": 153_496.33,
+                                   "below_cutoff": False,
+                                   "source": "gmgn_token_info"}),
+                    _row(pool_address="PoolTipis2", ca="MintTipis2",
+                         symbol="TIPS2",
+                         gmgn_liq={"ok": True, "usd": 149_542.09,
+                                   "below_cutoff": False,
+                                   "source": "gmgn_token_info"}),
+                    _row(pool_address="PoolPusat", ca="MintPusat",
+                         symbol="PUSAT", top_holders_pct=45.0)])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        infos = "\n".join(node.body for node in app.info)
+        self.assertIn("Tidak ada pool 24H yang lolos filter Best Pool", infos)
+        self.assertIn("3 pool dilewati: 2 likuiditas GMGN · 1 Top10", infos)
+        self.assertIn("▶ 3 pool dilewati", infos)
 
     def test_top10_di_atas_20_tidak_tampil_di_tabel(self):
         """24H: baris Top10 >= 20% hilang dari tabel lolos, muncul sebagai "dilewati".

@@ -3,15 +3,19 @@
 
 Permintaan user 2026-09-17: *"kita rubah info liquidititas dari rugchecker.cc
 ke gmgn saja"* + *"jika grand total liquiditas kurang dari 1M, jangan tampilkan
-di hasil scan"*. Jadi mulai hari ini:
+di hasil scan"*, lalu pada hari yang sama *"poolnya kok jadi kosong, padahal
+token PAID harusnya masuk"* → ambangnya **$500K**
+(:data:`MIN_TOTAL_LIQ_USD`; $1M ternyata membuang praktis seluruh listing —
+lihat catatan di konstanta). Jadi:
 
 1. **angka likuiditas** yang ditampilkan (sub-line kolom RugCheck) adalah
    likuiditas total GMGN, bukan lagi total per-DEX dari rugchecker.cc
    (rincian per-DEX di tooltip ikut diganti — sumber: *gmgn.ai*);
-2. pool yang **terbukti** berlikuiditas total **< $1M** tidak lagi ditampilkan
-   di hasil scan 🏆 Best Pool — barisnya masuk listing "dilewati" dengan alasan
-   di ``best_gaps`` (satu jalur dengan saringan F/V/volat/Top10, lewat
-   :func:`meteora_screener.row_best_gaps` → :func:`row_gmgn_gap`).
+2. pool yang **terbukti** berlikuiditas total **< $500K** tidak lagi
+   ditampilkan di hasil scan 🏆 Best Pool — barisnya masuk listing "dilewati"
+   dengan alasan di ``best_gaps`` (satu jalur dengan saringan
+   F/V/volat/Top10, lewat :func:`meteora_screener.row_best_gaps` →
+   :func:`row_gmgn_gap`).
 
 Sumber data (satu request untuk SEMUA mint dalam scan, bukan per token):
 
@@ -25,7 +29,7 @@ GET ``/defi/quotation/v1/    **fallback** — peringkat 100 token teratas Solana
 rank/sol/swaps/24h?          per likuiditas 24 jam (cap server 100 entri, cutoff
 orderby=liquidity``          ≈ likuiditas terkecil di daftar). Mint yang
                            **tidak ada** di daftar pasti di bawah cutoff →
-                           aman dianggap < $1M (baris ikut disaring, alasan
+                           aman dianggap < ambang (baris ikut disaring, alasan
                            "di bawah cutoff").
 ===========================  ====================================================
 
@@ -37,10 +41,11 @@ several identitas impersonate sebelum menyerah ke ``requests``.
 
 Aturan saring (lihat :func:`row_gmgn_gap`):
 
-* likuiditas diketahui dan **< :data:`MIN_TOTAL_LIQ_USD`** ($1M) → gugur;
-  tepat $1M atau lebih → lolos (permintaan user: "kurang dari 1M");
-* mint tak ada di fallback rank dan cutoff rank **< $1M** → gugur
-  (likuiditasnya pasti di bawah cutoff);
+* likuiditas diketahui dan **< :data:`MIN_TOTAL_LIQ_USD`** ($500K) → gugur;
+  tepat $500K atau lebih → lolos (permintaan user: "**kurang dari** ambang
+  jangan ditampilkan" — batasnya inklusif di sisi lolos);
+* mint tak ada di fallback rank dan cutoff rank **< :data:`MIN_TOTAL_LIQ_USD`**
+  → gugur (likuiditasnya pasti di bawah cutoff);
 * sumber GMGN gagal total / mint tak terbaca → **tidak disaring**
   (tanpa bukti tidak ada verdict — filosofi repo: kolom menulis ``—``,
   baris tetap tampil).
@@ -59,13 +64,35 @@ import threading
 import time
 from pathlib import Path
 
-#: Ambang "grand total liquiditas" (permintaan user 2026-09-17): baris dengan
-#: likuiditas total GMGN **di bawah** nilai ini tidak ditampilkan di hasil scan.
-MIN_TOTAL_LIQ_USD = 1_000_000.0
+#: Ambang "grand total liquiditas" (permintaan user 2026-09-17: *"< 1M jangan
+#: tampilkan"*, **diturunkan ke $500K** pada hari yang sama setelah user
+#: melaporkan *"poolnya kok jadi kosong, padahal token PAID harusnya masuk"*).
+#: Pengukuran langsung endpoint GMGN ``/api/v1/token_info/sol/<mint>`` saat itu:
+#: PAID (``98kf…pump``) = **$884.912** — di bawah $1M, jadi ambang lama membuang
+#: PAID dan praktis seluruh listing (pill $153.496, ELON $149.542; pool DLMM
+#: teratas Meteora hampir tidak ada yang berlikuiditas ≥ $1M). $500K tetap
+#: menyaring pool tipis ±$150K tetapi membiarkan kandidat seperti PAID lewat.
+#: Baris dengan likuiditas total **di bawah** nilai ini tidak ditampilkan.
+MIN_TOTAL_LIQ_USD = 500_000.0
 
-#: Label ambang untuk teks alasan (``$1M`` — lebih rapi daripada
-#: ``compact_usd(1_000_000)`` = ``$1.00M``).
-MIN_LABEL = f"${MIN_TOTAL_LIQ_USD / 1_000_000:g}M"
+
+def _label_usd(value) -> str:
+    """Label ambang ringkas (``$500K`` / ``$1M``) untuk teks alasan.
+
+    Dipakai alih-alih :func:`compact_usd` supaya teksnya tetap pendek
+    (``compact_usd(500_000)`` = ``$500.00K``) dan tidak berubah sendiri bila
+    :data:`MIN_TOTAL_LIQ_USD` dinaikkan/diturunkan lagi. Sengaja tidak memakai
+    helper ``_float`` di bawah: label ini dihitung saat import, jadi harus
+    berdiri sendiri.
+    """
+    number = float(value)
+    if number >= 1_000_000:
+        return f"${number / 1_000_000:g}M"
+    return f"${number / 1_000:g}K"
+
+
+#: Label ambang untuk teks alasan (``$500K``).
+MIN_LABEL = _label_usd(MIN_TOTAL_LIQ_USD)
 
 #: Sumber data halaman token GMGN (batch: ``{"chain": "sol", "addresses": […]}``).
 TOKEN_INFO_URL = "https://gmgn.ai/api/v1/mutil_window_token_info"
@@ -299,7 +326,7 @@ def fetch_total_liquidity(mints, *, timeout: int = REQUEST_TIMEOUT,
       caller TIDAK boleh menyaring berdasarkan mint ini);
     * ``usd`` = likuiditas total USD; ``None`` bila GMGN menjawab tapi tidak
       memuat mint itu (token tak terlacak) — hanya di fallback rank yang
-      ``None`` ini pasti di bawah :data:`below_cutoff` (cutoff < $1M);
+      ``None`` ini pasti di bawah :data:`below_cutoff` (cutoff < ambang);
     * kegagalan satu batch POST tidak menggugurkan batch lain; mint batch
       yang gagal dialihkan ke fallback rank.
 
@@ -369,10 +396,11 @@ def fetch_total_liquidity(mints, *, timeout: int = REQUEST_TIMEOUT,
                 out[mint] = {"usd": rank_map[mint], "below_cutoff": False,
                              "source": "gmgn_rank"}
             elif cutoff is not None and cutoff < MIN_TOTAL_LIQ_USD:
-                # tidak ada di 100 teratas → pasti di bawah cutoff (< $1M).
+                # tidak ada di 100 teratas → pasti di bawah cutoff
+                # (< MIN_TOTAL_LIQ_USD) → ikut disaring.
                 out[mint] = {"usd": None, "below_cutoff": True,
                              "source": "gmgn_rank", "cutoff_usd": cutoff}
-            # cutoff >= $1M (mustahil, tapi jaga-jaga): tak bisa
+            # cutoff >= ambang (jarang, tapi bisa): tak bisa
             # mengimplikasikan apa pun → mint tetap unknown (source None).
             if use_cache and out[mint]["source"] is not None:
                 # Jawaban tegas dari rank dicache sebagai ok — selama outage
@@ -420,8 +448,9 @@ def attach_total_liquidity(rows, *, timeout: int = REQUEST_TIMEOUT,
 
 
 def row_gmgn_gap(row: dict | None) -> str | None:
-    """Alasan gugur bila likuiditas total GMGN **< $1M**; ``None`` bila lolos
-    atau tak terbaca.
+    """Alasan gugur bila likuiditas total GMGN **< :data:`MIN_TOTAL_LIQ_USD`**
+    ($500K sejak 2026-09-17 sore; sebelumnya $1M yang ternyata mengosongkan
+    seluruh tabel — PAID sendiri $884.912); ``None`` bila lolos/tak terbaca.
 
     Dipakai :func:`meteora_screener.row_best_gaps` sebagai saringan TERAKHIR
     (setelah volat 0 → volat 1–10% → F/V → Top10), jadi baris yang sudah
