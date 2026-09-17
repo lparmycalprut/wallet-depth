@@ -201,21 +201,28 @@ class ActiveRangeCellTest(unittest.TestCase):
 
 class BestPoolColumnsTest(unittest.TestCase):
     def test_kolom_dan_judul_sinkron(self):
-        """Header, lebar kolom, dan isi sel harus satu jumlah (15 kolom).
+        """Header, lebar kolom, dan isi sel harus satu jumlah (13 kolom).
 
         Penataan 2026-09-16: Active Range naik ke kanan Volat (indeks 4) dan
-        LPs tepat di kanannya (5); A.TVL turun ke indeks 9 karena kolom RugCheck
-        (12) ikut masuk sebelum Pool (13).
+        LPs tepat di kanannya (5). Penataan 2026-09-17 (permintaan user:
+        *"hapus kolom dust %"* + *"hapus tombol favorit / watchlist"*):
+        kolom **Dust %MC** dan kolom **⭐** dicabut — A.TVL berada di indeks
+        8, RugCheck (11) tetap sebelum Pool (12, kini memuat tombol 📋 copy
+        link HawkFi).
         """
         for lane in ("24h", "30m"):
             with self.subTest(lane=lane):
                 titles = bp._lane_titles(lane)
                 self.assertEqual(len(titles), len(bp._COL_SPEC))
-                self.assertEqual(len(titles), 15)
+                self.assertEqual(len(titles), 13)
                 self.assertEqual(titles[4], "Active Range")
                 self.assertEqual(titles[5], "LPs")
-                self.assertEqual(titles[9], "A.TVL")
-                self.assertEqual(titles[12], "RugCheck")
+                self.assertEqual(titles[8], "A.TVL")
+                self.assertEqual(titles[11], "RugCheck")
+                self.assertEqual(titles[12], "Pool")
+                # Dust %MC + kolom ⭐ benar-benar hilang dari judul.
+                self.assertNotIn("Dust %MC", titles)
+                self.assertNotIn("", titles)
                 # "30m" = alias lama, tetap dipetakan ke tabel 24H.
                 self.assertEqual(bp._lane_titles("30m"), titles)
 
@@ -271,9 +278,15 @@ class ActiveRangeCardTest(unittest.TestCase):
         self.assertIn("-34.5%", body)
         self.assertIn("+19.0%", body)
         self.assertIn("lebar 81.7%", body)
-        # Bintang ⭐ tidak boleh bergeser ke kolom lain.
-        self.assertIn("best-pool-24h-star-" + CATE["pool_address"],
-                      [button.key or "" for button in app.button])
+        # Tombol ⭐ watchlist DIHAPUS 2026-09-17 (permintaan user: "hapus
+        # tombol favorit / watchlist"); kolom terakhir kini memuat tombol 📋
+        # copy link HawkFi milik pool baris ini (bukan st.button → tanpa
+        # rerun) di samping tautan Meteora/HawkFi.
+        self.assertFalse(any("-star-" in (button.key or "")
+                             for button in app.button))
+        self.assertIn('class="hawkfi-copy-btn"', body)
+        self.assertIn("https://www.hawkfi.ag/meteora/" + CATE["pool_address"],
+                      body)
 
 
 if __name__ == "__main__":

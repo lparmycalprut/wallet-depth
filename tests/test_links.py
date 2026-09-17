@@ -5,7 +5,8 @@ from unittest import mock
 import links
 from links import (cvd_shortcut_query,
                    dexscreener_token_url, external_links_html,
-                   gmgn_token_url, hawkfi_meteora_url, holder_analytic_url,
+                   gmgn_token_url, hawkfi_copy_html, hawkfi_meteora_url,
+                   holder_analytic_url,
                    holder_analytic_link_html, meteora_dlmm_url, page_url,
                    page_url_path, pool_links_html,
                    safe_url_part, solscan_account_html, solscan_account_url,
@@ -77,6 +78,36 @@ class LinksTest(unittest.TestCase):
         html_out = pool_links_html("abc&def")
         self.assertIn("https://app.meteora.ag/dlmm/abc%26def", html_out)
         self.assertIn("https://www.hawkfi.ag/meteora/abc%26def", html_out)
+
+    def test_hawkfi_copy_html(self):
+        """📋 copy link HawkFi (permintaan user 2026-09-17: "tambahkan copy
+        link hawkfi dibagian scan") — <button> HTML murni (tanpa rerun
+        Streamlit) dengan URL pool HawkFi di title + clipboard JS."""
+        pool = "D49w4CQmXvbNpBikcpha3XKFbP5HtQjnMTKTqY1tXFLh"
+        html_out = hawkfi_copy_html(pool)
+        self.assertIn('type="button"', html_out)
+        self.assertIn('class="hawkfi-copy-btn"', html_out)
+        self.assertIn("navigator.clipboard", html_out)
+        self.assertIn("execCommand", html_out)   # fallback konteks non-https
+        self.assertIn("onclick=", html_out)
+        # URL pool HawkFi tampil di title (HTML-escaped) DAN di JS onclick
+        # (entity &#x27; menggantikan kutip tunggal setelah escape atribut).
+        self.assertIn(f"Copy link HawkFi: https://www.hawkfi.ag/meteora/{pool}",
+                      html_out)
+        self.assertIn(f"&#x27;https://www.hawkfi.ag/meteora/{pool}&#x27;",
+                      html_out)
+        self.assertIn("📋", html_out)
+        # Bukan tirai JS mentah: tidak ada `<script>`, tidak ada href pool.
+        self.assertNotIn("<script", html_out)
+        self.assertNotIn("href=", html_out)
+
+    def test_hawkfi_copy_html_empty_pool(self):
+        self.assertEqual(hawkfi_copy_html(""), "")
+
+    def test_hawkfi_copy_html_encodes_unsafe_pool(self):
+        html_out = hawkfi_copy_html("abc&def")
+        self.assertIn("https://www.hawkfi.ag/meteora/abc%26def", html_out)
+        self.assertNotIn("abc&def'", html_out)
 
     def test_solscan_account_url_uses_full_address(self):
         self.assertEqual(
