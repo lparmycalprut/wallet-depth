@@ -30,11 +30,16 @@ dan :func:`meteora_screener.normalize_best_lane` memetakan semua alias lama
   (:data:`meteora_screener.BEST_TOP10_MAX_PCT`, permintaan user 2026-09-16:
   *"jika ada top 10 >= 20% jangan tampilkan"* — batas inklusif di sisi BUANG,
   tepat 20% ikut hilang);
-- **Likuiditas total GMGN < $1M tidak ditampilkan** (2026-09-17, permintaan
-  user: *"jika grand total liquiditas kurang dari 1M, jangan tampilkan di
-  hasil scan"*) — angka per token diambil dari GMGN (:mod:`gmgn_liquidity`,
-  satu request batch untuk semua kandidat) dan baris yang terbukti di bawah
-  ambang masuk daftar "dilewati" dengan alasannya di sub sel F/V;
+- **Likuiditas total GMGN di bawah ambang tidak ditampilkan** (2026-09-17,
+  permintaan user: *"jika grand total liquiditas kurang dari 1M, jangan
+  tampilkan di hasil scan"*; ambangnya **$500K** —
+  :data:`gmgn_liquidity.MIN_TOTAL_LIQ_USD`, diturunkan dari $1M sore harinya
+  sesudah user melaporkan *"poolnya kok jadi kosong, padahal token PAID
+  harusnya masuk"*: likuiditas GMGN PAID terukur $884.912, jadi $1M membuang
+  dia dan praktis seluruh listing) — angka per token diambil dari GMGN
+  (:mod:`gmgn_liquidity`, satu request batch untuk semua kandidat) dan baris
+  yang terbukti di bawah ambang masuk daftar "dilewati" dengan alasannya di
+  sub sel F/V;
 - **Filter API membawa Jupiter safeguard**
   (:data:`meteora_screener.JUPITER_SAFEGUARD_FILTERS`, permintaan user
   2026-09-16: *"scan baru saya tambahkan jupiter safeguard untuk filter yang
@@ -47,8 +52,8 @@ dan :func:`meteora_screener.normalize_best_lane` memetakan semua alias lama
   AMAN/WASPADA/BERISIKO/RUG + bendera keamanan, dengan **angka likuiditas
   total dari GMGN** (modul :mod:`gmgn_liquidity`; permintaan user *"ubah
   info liquidititas dari rugchecker.cc ke gmgn saja"*) — rincian per-DEX
-  rugchecker.cc tidak lagi ditampilkan. Saringan "likuiditas < $1M" di atas
-  adalah satu-satunya yang membuang berdasarkan angka ini;
+  rugchecker.cc tidak lagi ditampilkan. Saringan "likuiditas < ambang" di
+  atas adalah satu-satunya yang membuang berdasarkan angka ini;
 - **LPs HIJAU bila > 100 LP** (permintaan user 2026-09-16: *"LPs jika lebih
   dari 100, kasih warna hijau jika tidak, tidak ada perubahan"*),
   :data:`LP_GREEN_COLOR` / :data:`LP_GREEN_MIN_LP`.
@@ -155,7 +160,7 @@ def best_pool_tooltip() -> str:
     """Rule ada di tooltip, bukan caption — satu tombol, satu lane (24H)."""
     from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_TOP10_MAX_PCT,
                                   BEST_VOL_SHOW_MAX, BEST_VOL_SHOW_MIN,
-                                  JUPITER_SAFEGUARD_FILTERS,
+                                  JUPITER_SAFEGUARD_FILTERS, gmgn_min_label,
                                   normalize_best_lane)
 
     active = normalize_best_lane("24h")
@@ -181,7 +186,14 @@ def best_pool_tooltip() -> str:
         f"{BEST_TOP10_MAX_PCT:g}% atau lebih gugur (permintaan user "
         "2026-09-16: \"jika ada top 10 >= 20% jangan tampilkan\" — batasnya "
         "sekarang di sisi BUANG, jadi tepat 20% tidak lagi tampil; tanpa "
-        "angka Top10 = tidak terukur, barisnya tetap tampil). Volatility 0 "
+        "angka Top10 = tidak terukur, barisnya tetap tampil); (4) likuiditas "
+        f"total GMGN di bawah {gmgn_min_label()} gugur (permintaan user "
+        "2026-09-17: \"jika grand total liquiditas kurang dari 1M, jangan "
+        "tampilkan di hasil scan\" — ambangnya $500K sejak sore harinya "
+        "karena $1M membuang seluruh listing: PAID saja hanya $884.912. "
+        "Angkanya likuiditas total per token dari gmgn.ai, tepat ambang "
+        "LOLOS, dan token yang likuiditasnya tak terbaca TIDAK disaring). "
+        "Volatility 0 "
         "gugur DAN tidak ditampilkan di mana pun: F/V \u221e bukan kelolosan, "
         "pool tanpa pergerakan dibuang total dari listing, tidak masuk tabel "
         "dilewati dan tidak dihitung di pill \"dilewati\". Metrik "
@@ -216,7 +228,8 @@ def best_pool_tooltip() -> str:
         "verdict RUG hanya bila honeypot, bendera kritis (mint/freeze/"
         "non-transferable/hook/transfer-fee) jadi BERISIKO, sisanya minor "
         "jadi WASPADA; RUGCHECK TIDAK PERNAH MEMBUANG BARIS \u2014 ia kolom "
-        "informasi, saringannya tetap F/V + volat + Top10 + safeguard "
+        "informasi, saringannya tetap F/V + volat + Top10 + likuiditas "
+        f"GMGN \u2265 {gmgn_min_label()} + safeguard "
         "Jupiter di sisi API. Mint yang laporannya tidak didapat menulis "
         "\u2014 (bukan \"AMAN\": tanpa bukti tidak ada verdict). Sorot "
         "hijau tua menyala di tabel utama: sel volatility terbesar, sel F/V "
@@ -856,7 +869,8 @@ def render_best_pool_scan() -> None:
     """
     import streamlit as st
 
-    from meteora_screener import (normalize_best_lane, row_best_gaps,
+    from meteora_screener import (best_gap_summary, gmgn_min_label,
+                                  normalize_best_lane, row_best_gaps,
                                   row_volatility_zero, sort_best_rows)
 
     with st.container(border=True):
@@ -885,7 +899,8 @@ def render_best_pool_scan() -> None:
                      use_container_width=True,
                      help=(f"Listing Meteora timeframe {label}, disaring "
                            f"{gate} + volatility "
-                           "1%–10% + Top10 < 20% + likuiditas total GMGN ≥ $1M "
+                           "1%–10% + Top10 < 20% + likuiditas total GMGN ≥ "
+                           f"{gmgn_min_label()} "
                            "SEBELUM scan holder — pool di bawah syarat "
                            "langsung di-skip, holdernya tidak di-fetch. Tiap "
                            "pool yang lolos dilengkapi laporan RugCheck "
@@ -971,8 +986,8 @@ def render_best_pool_scan() -> None:
             if st.button(view, key=f"best-pool-toggle-hidden-{active}",
                          help=f"Tampilkan kandidat {label} yang di-skip karena "
                               "gugur saringan F/V, volatility, Top10, atau "
-                              "likuiditas GMGN < $1M lane ini; holdernya "
-                              "tidak pernah di-scan.",
+                              f"likuiditas GMGN < {gmgn_min_label()} lane ini; "
+                              "holdernya tidak pernah di-scan.",
                          use_container_width=True):
                 st.session_state[best_lane_hidden_key(active)] = \
                     not showing_hidden
@@ -1001,8 +1016,16 @@ def render_best_pool_scan() -> None:
                                mark_tops=False)
             return
         if not rows:
+            # Pesan kosong menyebut PENYEBABNYA (2026-09-17, laporan user
+            # "poolnya kok jadi kosong"): rekap alasan gugur per kategori
+            # + ajakan membuka daftar "dilewati" — user tidak perlu menebak
+            # saringan mana yang membuang listing-nya.
+            reason = best_gap_summary(hidden_rows)
             st.info(f"Tidak ada pool {label} yang lolos filter Best Pool "
-                    "(atau listing kosong).")
+                    "(atau listing kosong)."
+                    + (f" {hidden} pool dilewati: {reason} — buka "
+                       f"'▶ {hidden} pool dilewati' di atas untuk alasan "
+                       "tiap baris." if reason else ""))
             return
         _render_best_table(rows, lane=active,
                            key_prefix=f"best-pool-{active}")

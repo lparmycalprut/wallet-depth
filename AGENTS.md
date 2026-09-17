@@ -1,5 +1,42 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-17 (sore) — 🏆 Best Pool: ambang likuiditas GMGN $1M → **$500K** + pesan tabel kosong menyebut penyebabnya
+
+- Laporan user (verbatim): *"Tidak ada pool 24H yang lolos filter Best Pool
+  (atau listing kosong)."* · *"lah, poolnya kok jadi kosong, padahal token
+  PAID harusnya masuk"* (`98kfF7rmsg1QDUEoCqNE7g7M1FdrTt92TEp2CLzypump`).
+- **Diagnosa (diukur langsung dari dua endpoint yang dipakai app).** Pool PAID
+  `Gc5hVCBydc6k3Z7oc2cQEW4GThFQi2Fqk5HfKABqa2q8` **ada** di listing
+  pool-discovery dengan filter server app (Jupiter safeguard + `pool_type=dlmm`
+  + `active_tvl>=50000`) dan **lolos tiga saringan metrik**: F/V = 23,39 ÷ 2,99
+  = **7,8×** (≥ 5×), volatility **2,99%** (1–10%), Top10 **15,18%** (< 20%).
+  Yang membuangnya hanya saringan likuiditas GMGN:
+  `GET https://gmgn.ai/api/v1/token_info/sol/98kf…pump` →
+  `liquidity = 884.912,398` — **di bawah ambang $1M** yang dipasang pagi
+  harinya. Kandidat lain juga jauh di bawah $1M (pill `Dvdm…pump` = $153.496,
+  ELON `GY9m…pump` = $149.542), jadi tabelnya kosong total. Catatan pagi
+  *"PAID ~$1,9M"* sudah basi: ada Remove LP (net deposits −$229K) sehingga
+  angka GMGN turun ke ±$885K.
+- **Perbaikan 1 — ambang.** `gmgn_liquidity.MIN_TOTAL_LIQ_USD`
+  `1_000_000` → **`500_000`** (label alasan `$500K`, helper baru
+  `_label_usd`; teks UI/log membaca `meteora_screener.gmgn_min_label()`
+  → `gmgn_liquidity.MIN_LABEL`, jadi tidak ada lagi "$1M" hardcoded yang bisa
+  tertinggal). Aturan tetap: **di bawah** ambang gugur, tepat ambang lolos,
+  tanpa bukti tidak menyaring. $500K dipilih karena PAID ($885K) lolos
+  sedangkan pool tipis ±$150K tetap tersaring — angka-angka terukur itu
+  di-pin di `tests/test_gmgn_liquidity.py::AmbangTest` +
+  `ScanLaneGmgnTest.test_paid_tidak_ikut_terbuang`.
+- **Perbaikan 2 — pesan kosong.** `meteora_screener.best_gap_counts` /
+  `best_gap_summary` / `row_best_gap_label` (kategori: likuiditas GMGN, Top10,
+  volatility, F/V, metrik tidak valid) dipakai `best_pool_ui` sehingga pesan
+  "Tidak ada pool 24H yang lolos…" kini menulis rekap penyebab +
+  ajakan membuka tombol "▶ N pool dilewati".
+- **Tes:** +11 (39 di `test_gmgn_liquidity.py`, 5 di antaranya baru;
+  `BestGapSummaryTest` 5; 1 tes UI pesan kosong). Suite
+  `python -m unittest discover -s tests` → **1104 tes**, 18 failed + 1 error —
+  **nama kegagalan identik baseline** (bukan regresi).
+
+
 ## Update 2026-09-17 — 🏆 Best Pool: likuiditas kolom RugCheck dari GMGN + saringan "total < $1M tidak ditampilkan"
 
 - Permintaan user (verbatim): *"kita rubah info liquidititas dari

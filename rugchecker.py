@@ -40,9 +40,9 @@ rugchecker.cc ke gmgn saja"*): total likuiditas token di halaman gmgn.ai
 Rincian per-DEX hanya dipakai internal (metode tambahan: kedalaman + share
 pool; share-nya dihitung terhadap total GMGN) dan tidak lagi ditampilkan.
 Bila nilai GMGN tak terbaca, kolom jatuh ke total per-DEX rugchecker.cc
-(``liquidity_source`` = ``"rugchecker"``) — dan saringan "likuiditas < $1M
-tidak ditampilkan" (lihat :mod:`gmgn_liquidity`) tidak pernah menyaring
-baris tanpa bukti.
+(``liquidity_source`` = ``"rugchecker"``) — dan saringan "likuiditas total
+GMGN di bawah ambang tidak ditampilkan" (:data:`gmgn_liquidity.MIN_TOTAL_LIQ_USD`,
+$500K sejak 2026-09-17 sore) tidak pernah menyaring baris tanpa bukti.
 
 **Metode tambahan** (penjelasan ringkas yang diminta user: *"jika kamu
 memiliki metode tambahan untuk check rug, bisa kamu tambahkan kolom juga
