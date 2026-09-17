@@ -20,6 +20,11 @@ di-mock):
 - cache berkas per-mint (TTL, ``use_cache=False``);
 - ``row_gmgn_gap``: < ambang gugur, tepat ambang lolos (permintaan user:
   "kurang dari …"), tanpa bukti tidak pernah menyaring;
+- aturan WARNA angka likuiditas di kolom RugCheck (:func:`liq_color`):
+  ``> $500K`` hijau, ``< $500K`` MERAH (permintaan user 2026-09-17:
+  *"tambahkan jika total likuiditas dibawah 500K, kasih warna merah
+  bagian tulisan likuiditasnya"*), tepat di ambang / tak terukur tanpa
+  span (hitam);
 - integrasi: ``row_best_gaps`` memberi alasan GMGN sebagai saringan TERAKHIR
   (F/V/volat/Top10 tetap lebih keras), dan ``rugchecker.summarize`` /
   ``cell_parts`` menampilkan total GMGN (sumber "gmgn") — rincian per-DEX
@@ -280,16 +285,19 @@ class AmbangTest(unittest.TestCase):
                            "below_cutoff": False, "source": "gmgn_token_info"}
         self.assertIsNone(gl.row_gmgn_gap(row))
 
-    def test_pool_tipis_tidak_gugur_hanya_hitam(self):
+    def test_pool_tipis_tidak_gugur_hanya_merah(self):
         """2026-09-17 malam: filter likuiditas DIHAPUS (permintaan user
-        *"filter likuiditas hapus coba"*) — pool tipis tetap tampil, angkanya
-        hitam (tidak hijau) karena tidak > $500K."""
+        *"filter likuiditas hapus coba"*) — pool tipis tetap tampil; angkanya
+        tidak hijau (tidak > $500K) dan sejak permintaan berikutnya MERAH
+        karena < $500K."""
         for liq in (self.LIQ_PILL, self.LIQ_ELON):
             row = _row(MINT_B)
             row["gmgn_liq"] = {"ok": True, "usd": liq, "below_cutoff": False,
                                "source": "gmgn_token_info"}
             self.assertIsNone(gl.row_gmgn_gap(row), liq)
             self.assertFalse(gl.liq_is_green(liq), liq)
+            self.assertTrue(gl.liq_is_red(liq), liq)
+            self.assertEqual(gl.liq_color(liq), gl.LIQ_RED_COLOR, liq)
 
     def test_paid_hijau(self):
         self.assertTrue(gl.liq_is_green(self.LIQ_PAID))
@@ -303,7 +311,7 @@ class AmbangTest(unittest.TestCase):
 class GapTest(unittest.TestCase):
     """Filter likuiditas GMGN dihapus (2026-09-17 malam): ``row_gmgn_gap``
     selalu ``None`` apa pun angkanya; yang tersisa hanya aturan WARNA
-    :func:`gl.liq_is_green` (> $500K hijau, selain itu hitam)."""
+    :func:`gl.liq_color` (> $500K hijau, < $500K MERAH, sisanya hitam)."""
 
     def test_dibawah_ambang_tidak_gugur(self):
         row = _row()
@@ -326,7 +334,7 @@ class GapTest(unittest.TestCase):
 
     def test_warna_hijau_strict_di_atas_500k(self):
         """Permintaan user: "> 500K hijau, kalau tidak hitam" — tepat $500K
-        dan di bawahnya hitam; None/teks aneh juga hitam."""
+        masih tanpa warna hijau; None/teks aneh juga tidak hijau."""
         self.assertTrue(gl.liq_is_green(500_000.01))
         self.assertTrue(gl.liq_is_green(884_912.39))
         self.assertTrue(gl.liq_is_green("1900000"))
@@ -335,6 +343,31 @@ class GapTest(unittest.TestCase):
         self.assertFalse(gl.liq_is_green(None))
         self.assertFalse(gl.liq_is_green("abc"))
         self.assertEqual(gl.LIQ_GREEN_MIN_USD, 500_000.0)
+
+    def test_warna_merah_strict_di_bawah_500k(self):
+        """Permintaan user: "total likuiditas dibawah 500K kasih warna
+        merah" — ketat di sisi bawah: tepat $500K TIDAK merah (dan tidak
+        hijau), angka tak terukur juga tidak."""
+        self.assertTrue(gl.liq_is_red(499_999.99))
+        self.assertTrue(gl.liq_is_red(0))
+        self.assertTrue(gl.liq_is_red("153496.33"))
+        self.assertFalse(gl.liq_is_red(gl.LIQ_RED_MAX_USD))
+        self.assertFalse(gl.liq_is_red(500_000.01))
+        self.assertFalse(gl.liq_is_red(None))
+        self.assertFalse(gl.liq_is_red("abc"))
+        self.assertEqual(gl.LIQ_RED_MAX_USD, gl.LIQ_GREEN_MIN_USD)
+        self.assertNotEqual(gl.LIQ_RED_COLOR, gl.LIQ_GREEN_COLOR)
+
+    def test_liq_color_satu_sumber_aturan(self):
+        """liq_color = hijau / merah / kosong — tidak ada nilai dua warna."""
+        self.assertEqual(gl.liq_color(1_900_000.0), gl.LIQ_GREEN_COLOR)
+        self.assertEqual(gl.liq_color(153_496.33), gl.LIQ_RED_COLOR)
+        for neutral in (gl.LIQ_RED_MAX_USD, None, "", "abc", float("nan")):
+            self.assertEqual(gl.liq_color(neutral), "", neutral)
+        for usd in (1.0, 499_999.99, 500_000.0, 500_000.01, 9e9, None):
+            colors = [c for c in (gl.liq_is_green(usd), gl.liq_is_red(usd))
+                        if c]
+            self.assertLessEqual(len(colors), 1, usd)
 
     def test_teks_alasan_lama_masih_ada_sebagai_arsip(self):
         row = _row()
@@ -413,6 +446,35 @@ class CellPartsGmgnTest(unittest.TestCase):
         self.assertIn("$1.90M", sub)
         self.assertIn("likuiditas total (sumber: gmgn.ai): $1.90M", tip)
         self.assertNotIn("likuiditas (ringkas):", tip)
+
+    def test_angka_gmgn_dibawah_ambang_merah(self):
+        """< $500K → tulisan likuiditas MERAH (permintaan user
+        *"tambahkan jika total likuiditas dibawah 500K, kasih warna merah
+        bagian tulisan likuiditasnya"*) — barisnya tetap tampil.
+
+        Sisi ambang: tepat $500K tanpa warna, $500.000,01 hijau.
+        """
+        cases = ((153_496.33, "merah"), (0.0, "merah"),
+                 (gl.LIQ_RED_MAX_USD, "polos"), (500_000.01, "hijau"))
+        merah_span = '<span style="color:#dc2626;font-weight:700;">'
+        hijau_span = '<span style="color:#16a34a;font-weight:700;">'
+        for usd, warna in cases:
+            summary = rc.summarize(_rc_payload(), pool_address="METEORA1",
+                                   gmgn_total_usd=usd)
+            sub = rc.cell_parts(summary)[1]
+            if warna == "merah":
+                self.assertIn(merah_span, sub)
+                self.assertNotIn(hijau_span, sub)
+            elif warna == "hijau":
+                self.assertIn(hijau_span, sub)
+                self.assertNotIn(merah_span, sub)
+            else:  # tepat di ambang = tanpa span sama sekali
+                self.assertNotIn("<span", sub)
+        # tooltip menulis ANGKA POLOS (tanpa span) — warna = hiasan sel,
+        # bukan teks yang boleh membawa markup.
+        summary = rc.summarize(_rc_payload(), pool_address="METEORA1",
+                               gmgn_total_usd=153_496.33)
+        self.assertNotIn("<span", rc.cell_parts(summary)[2])
 
     def test_fallback_rugchecker_tetap_berlaku(self):
         summary = rc.summarize(_rc_payload(), pool_address="METEORA1")

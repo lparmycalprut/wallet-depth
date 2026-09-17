@@ -11,10 +11,13 @@ Yang di-pin di sini:
   🏆 Scan Best Pool (posisi "header");
 - kedua kalimat tampil **verbatim** (termasuk "BERTUBI2") + emoticon warning
   🚨/⚠️ di kiri-kanan tiap baris;
-- gayanya = merah menyala (``#ff2d2d`` + glow) yang **berkedip** (animasi
-  ``degen-stop-blink``/``degen-stop-glow`` + keyframes-nya ada di body) dan
-  hurufnya **besar** (``clamp(…)``) — semuanya lewat CSS, bukan inline style,
-  karena ``st.markdown`` men-sanitasi atribut ``style``;
+- gayanya = **biru** menyala (``#3b82f6`` + glow biru di panel biru gelap) yang
+  **berkedip** (animasi ``degen-stop-blink``/``degen-stop-glow`` +
+  keyframes-nya ada di body) dan hurufnya **besar** (``clamp(…)``) — semuanya
+  lewat CSS, bukan inline style, karena ``st.markdown`` men-sanitasi atribut
+  ``style``; palet merahnya hilang total, animasinya tetap (permintaan user
+  berikutnya 2026-09-17: *"ganti tulisan warna warning kita menjadi warna
+  biru, efek tetap"*);
 - halaman lain (📦 TEMP) tidak ikut menampilkan header ini — user minta
   "di page app".
 """
@@ -92,12 +95,14 @@ class DegenHeaderPageTest(unittest.TestCase):
         # Penanda kedua baris = satu class yang sama (gaya besar/berkedip).
         self.assertEqual(body.count('class="degen-stop-line"'), 2)
 
-    def test_merah_menyala_berkedip_dan_besar(self):
+    def test_biru_menyala_berkedip_dan_besar(self):
         """Gaya 100% dari CSS `render_styles()` (bukan inline style)."""
         body = _body(self._app())
         for pin in ('class="degen-stop-line"', 'class="degen-stop-emoji"',
                     ".degen-stop-header", ".degen-stop-line",
-                    "color:#ff2d2d",
+                    "color:#3b82f6",
+                    "border:3px solid #2563eb",
+                    "background:#0a1e45",
                     "animation:degen-stop-blink 1s ease-in-out infinite",
                     "@keyframes degen-stop-blink",
                     "@keyframes degen-stop-glow",
@@ -107,6 +112,21 @@ class DegenHeaderPageTest(unittest.TestCase):
         # Berkedipnya lewat opacity + glow, bukan cuma warna statis.
         self.assertIn("opacity:.3", body)
         self.assertIn("prefers-reduced-motion", body)
+
+    def test_palet_merah_hilang_tapi_efek_tetap(self):
+        """Warna = diganti biru; efek (blink + glow) = tetap seperti dulu."""
+        body = _body(self._app())
+        for red in ("#ff2d2d", "#450a0a", "rgba(255,45,45", "rgba(239,68,68",
+                    "rgba(220,38,38"):
+            self.assertNotIn(red, body,
+                             f"palet merah lama masih tersisa: {red}")
+        # "efek tetap": durasi + pola animasi sama persis dengan versi merah.
+        for anim in ("degen-stop-blink", "degen-stop-glow"):
+            self.assertEqual(body.count(f"{anim} 1s ease-in-out infinite"), 1,
+                             f"animasi {anim} harus tetap 1s ease-in-out")
+        glow_redup = ("50% {opacity:.3;text-shadow:0 0 4px "
+                      "rgba(37,99,235,.45);}}")
+        self.assertIn(glow_redup, body)
 
     def test_hanya_halaman_utama(self):
         """📦 TEMP (dan halaman lain) tidak ikut menampilkan header ini."""

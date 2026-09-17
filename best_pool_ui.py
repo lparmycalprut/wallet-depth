@@ -207,7 +207,9 @@ def best_pool_tooltip() -> str:
         "angka Top10 = tidak terukur, barisnya tetap tampil). Likuiditas "
         "total GMGN TIDAK lagi menyaring (2026-09-17 malam, permintaan user "
         "\"filter likuiditas hapus coba\") — angkanya tampil di kolom "
-        f"RugCheck, HIJAU bila > {gmgn_min_label()}, selain itu hitam. "
+        f"RugCheck, HIJAU bila > {gmgn_min_label()}, MERAH bila < "
+        f"{gmgn_min_label()} (permintaan user 2026-09-17), tepat di ambang "
+        "tetap hitam. "
         "Volatility 0 "
         "gugur DAN tidak ditampilkan di mana pun: F/V \u221e bukan kelolosan, "
         "pool tanpa pergerakan dibuang total dari listing, tidak masuk tabel "
@@ -254,8 +256,9 @@ def best_pool_tooltip() -> str:
         "non-transferable/hook/transfer-fee) jadi BERISIKO, sisanya minor "
         "jadi WASPADA; RUGCHECK TIDAK PERNAH MEMBUANG BARIS \u2014 ia kolom "
         "informasi, saringannya tetap F/V + volat + Top10; angka likuiditas "
-        f"GMGN di baris kecilnya HIJAU bila > {gmgn_min_label()}, selain "
-        "itu hitam (bendera safeguard Jupiter "
+        f"GMGN di baris kecilnya HIJAU bila > {gmgn_min_label()}, MERAH bila "
+        f"< {gmgn_min_label()}, selain itu tetap hitam (bendera safeguard "
+        "Jupiter "
         "disajikan lewat kolom RugCheck, bukan filter server, supaya token "
         "seperti PAID tidak hilang diam-diam dari listing). Mint yang "
         "laporannya tidak didapat menulis "
@@ -804,8 +807,10 @@ def _render_best_table(rows: list, *, lane: str,
         # likuiditas **total GMGN** (sejak 2026-09-17 — sumber angkanya
         # dipindah ke gmgn.ai, permintaan user), ditempel scan_best_lane
         # lewat modul ``rugchecker`` (angka GMGN-nya: modul ``gmgn_liquidity``).
-        # Hanya verdict yang diwarnai (hijau→merah) — angka likuiditas tetap
-        # hitam supaya kolom ini informatif, bukan menyeramkan.
+        # Hanya verdict yang diwarnai (hijau→merah) — angka likuiditas ikut
+        # diwarnai sejak 2026-09-17: HIJAU di atas ambang $500K, MERAH di
+        # bawahnya (permintaan user), hitam bila tidak terukur. Warnanya
+        # dihitung rugchecker.cell_parts lewat gmgn_liquidity.liq_color.
         rug_report = row.get("rugcheck") or {}
         rug_value, rug_sub, rug_tip = _rug_cell_parts(rug_report)
         rug_color = str(rug_report.get("color") or "") if isinstance(rug_report, dict) else ""

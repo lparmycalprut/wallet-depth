@@ -70,37 +70,41 @@ def render_styles() -> None:
     }
     /* Header peringatan 🚨 STOP DEGEN di halaman utama (2026-09-17, permintaan
        user: "tambahkan header di page app" — "merah menyala berkedip, tulisan
-       besar, ada emoticon warning"). Kelap-kelipnya pola yang sama dengan
-       `.scan-best-gold` di atas (opacity + glow yang memudar), tapi warnanya
-       merah menyala di atas panel merah gelap supaya terlihat sebagai alarm,
+       besar, ada emoticon warning"). Paletnya lalu diganti BIRU royal pada
+       permintaan berikutnya (2026-09-17: "ganti tulisan warna warning kita
+       menjadi warna biru, efek tetap") — kutipan "merah" dibiarkan apa adanya
+       sebagai riwayat, dan yang berubah hanya warnanya: animasi, glow, dan
+       ukurannya identik dengan versi merah. Kelap-kelipnya pola yang sama
+       dengan `.scan-best-gold` di atas (opacity + glow yang memudar), tapi
+       warnanya BIRU royal menyala di atas panel biru gelap sebagai alarm,
        bukan pujian. Nama class-nya sengaja bukan turunan `scan-best-gold`/
        `dust-best`: tes card 🏆 Scan Best Pool menghitung kemunculan string
        class chip emas itu di seluruh body halaman (tests/test_best_pool_scan.py,
        tests/test_lp_card_ui.py). Semua gaya hidup di sini karena st.markdown
        men-sanitasi atribut style inline. */
     .degen-stop-header {margin:.1rem 0 .9rem;padding:.75rem .9rem;
-     border:3px solid #dc2626;border-radius:14px;
-     background:#450a0a;background-image:linear-gradient(180deg,#450a0a 0%,
-      #7f1d1d 55%,#450a0a 100%);
-     box-shadow:0 0 14px rgba(220,38,38,.6),0 0 34px rgba(220,38,38,.4);
+     border:3px solid #2563eb;border-radius:14px;
+     background:#0a1e45;background-image:linear-gradient(180deg,#0a1e45 0%,
+      #1e3a8a 55%,#0a1e45 100%);
+     box-shadow:0 0 14px rgba(37,99,235,.6),0 0 34px rgba(29,78,216,.4);
      animation:degen-stop-glow 1s ease-in-out infinite;}
     .degen-stop-line {display:block;font-size:clamp(1.4rem,3.6vw,2.6rem);
      font-weight:900;letter-spacing:.045em;line-height:1.18;
-     color:#ff2d2d;text-shadow:0 0 8px rgba(255,45,45,.95),
-      0 0 20px rgba(239,68,68,.75),0 0 42px rgba(220,38,38,.55);
+     color:#3b82f6;text-shadow:0 0 8px rgba(59,130,246,.95),
+      0 0 20px rgba(37,99,235,.75),0 0 42px rgba(29,78,216,.55);
      animation:degen-stop-blink 1s ease-in-out infinite;}
     .degen-stop-line + .degen-stop-line {margin-top:.4rem;}
     .degen-stop-emoji {margin:0 .45rem;}
     /* Kelap-kelip: opacity + glow ikut turun (bukan cuma teksnya) supaya
        benar-benar terlihat berkedip menyala. */
     @keyframes degen-stop-blink {
-     0%,100% {opacity:1;text-shadow:0 0 8px rgba(255,45,45,.95),
-      0 0 20px rgba(239,68,68,.75),0 0 42px rgba(220,38,38,.55);}
-     50% {opacity:.3;text-shadow:0 0 4px rgba(220,38,38,.45);}}
+     0%,100% {opacity:1;text-shadow:0 0 8px rgba(59,130,246,.95),
+      0 0 20px rgba(37,99,235,.75),0 0 42px rgba(29,78,216,.55);}
+     50% {opacity:.3;text-shadow:0 0 4px rgba(37,99,235,.45);}}
     @keyframes degen-stop-glow {
-     0%,100% {box-shadow:0 0 14px rgba(220,38,38,.6),
-      0 0 34px rgba(220,38,38,.4);}
-     50% {box-shadow:0 0 4px rgba(220,38,38,.2);}}
+     0%,100% {box-shadow:0 0 14px rgba(37,99,235,.6),
+      0 0 34px rgba(29,78,216,.4);}
+     50% {box-shadow:0 0 4px rgba(37,99,235,.2);}}
     @media (prefers-reduced-motion: reduce) {
      .degen-stop-header, .degen-stop-line {animation:none;opacity:1}
     }
@@ -403,13 +407,15 @@ DEGEN_STOP_LINES = (
 
 
 def render_degen_stop_header() -> None:
-    """Header alarm merah menyala berkedip di paling atas halaman utama.
+    """Header alarm BIRU menyala berkedip di paling atas halaman utama.
 
     Permintaan user (verbatim, 2026-09-17): *"tambahkan header di page app"* —
-    *"merah menyala berkedip, tulisan besar, ada emoticon warning"*.
+    *"merah menyala berkedip, tulisan besar, ada emoticon warning"*, lalu
+    *"ganti tulisan warna warning kita menjadi warna biru, efek tetap"* — jadi
+    warnanya sekarang biru, animasi/glow/ukurannya tidak berubah.
 
-    Warnanya merah menyala (``.degen-stop-line``, ``#ff2d2d`` + glow merah) di
-    atas panel merah gelap, hurufnya besar (``clamp(1.4rem, 3.6vw, 2.6rem)`` =
+    Warnanya BIRU royal menyala (``.degen-stop-line``, ``#3b82f6`` + glow biru) di
+    atas panel biru gelap, hurufnya besar (``clamp(1.4rem, 3.6vw, 2.6rem)`` =
     ±22–42 px, ikut mengecil di layar sempit) dan **berkedip** lewat animasi
     CSS ``degen-stop-blink``/``degen-stop-glow`` yang didefinisikan di
     :func:`render_styles` — jadi halaman **wajib** memanggil ``render_styles()``

@@ -41,8 +41,12 @@ several identitas impersonate sebelum menyerah ke ``requests``.
 
 **Update 2026-09-17 malam:** saringan di bawah ini DIHAPUS (permintaan user
 *"filter likuiditas hapus coba"*); angka GMGN sekarang hanya diwarnai di kolom
-RugCheck — **> $500K hijau, selain itu hitam** (:func:`liq_is_green`).
-:func:`row_gmgn_gap` selalu ``None``. Aturan lama (arsip):
+RugCheck — **> $500K hijau** (:func:`liq_is_green`) dan, sejak permintaan
+berikutnya di hari yang sama (*"tambahkan jika total likuiditas dibawah 500K,
+kasih warna merah bagian tulisan likuiditasnya"*), **< $500K merah**
+(:func:`liq_is_red`). Nilai tepat di ambang dan angka yang tidak terukur tetap
+hitam. Satu sumber aturan: :func:`liq_color`. :func:`row_gmgn_gap` selalu
+``None``. Aturan lama (arsip):
 
 * likuiditas diketahui dan **< :data:`MIN_TOTAL_LIQ_USD`** ($500K) → gugur;
   tepat $500K atau lebih → lolos (permintaan user: "**kurang dari** ambang
@@ -78,13 +82,22 @@ from pathlib import Path
 #: **2026-09-17 malam — saringannya DIHAPUS** (permintaan user: *"filter
 #: likuiditas hapus coba, lalu jika likuiditas di angka > 500K kasih warna
 #: hijau, kalau tidak warna hitam saja"*). Angka ini sekarang hanya ambang
-#: WARNA: likuiditas total GMGN **> 500K** ditulis hijau di kolom RugCheck,
-#: selain itu hitam. Tidak ada baris yang dibuang karena likuiditas lagi.
+#: WARNA: likuiditas total GMGN **> 500K** ditulis hijau di kolom RugCheck
+#: dan (permintaan user 2026-09-17 berikutnya) **< 500K** ditulis merah;
+#: nilai tepat di ambang + angka tak terukur tetap hitam. Tidak ada baris
+#: yang dibuang karena likuiditas lagi.
 MIN_TOTAL_LIQ_USD = 500_000.0
 #: Alias yang lebih jujur untuk pemakaian baru (ambang warna, bukan filter).
 LIQ_GREEN_MIN_USD = MIN_TOTAL_LIQ_USD
 #: Hijau angka likuiditas (sama dengan hijau kolom LPs di card Best Pool).
 LIQ_GREEN_COLOR = "#16a34a"
+#: Ambang sisi MERAH — angka yang sama dengan sisi hijau, jadi tidak ada
+#: nilai yang bisa hijau dan merah sekaligus (tepat $500K = tanpa warna).
+LIQ_RED_MAX_USD = MIN_TOTAL_LIQ_USD
+#: Merah angka likuiditas di bawah ambang — warna merah standar repo (delta
+#: negatif, verdict RUG, pill "perlu tindakan") supaya satu arti di
+#: seluruh UI.
+LIQ_RED_COLOR = "#dc2626"
 
 
 def _label_usd(value) -> str:
@@ -481,6 +494,36 @@ def liq_is_green(usd) -> bool:
     """
     value = _float_or_none(usd)
     return value is not None and value > LIQ_GREEN_MIN_USD
+
+
+def liq_is_red(usd) -> bool:
+    """``True`` bila likuiditas total **< :data:`LIQ_RED_MAX_USD`** ($500K).
+
+    Permintaan user (verbatim, 2026-09-17): *"tambahkan jika total likuiditas
+    dibawah 500K, kasih warna merah bagian tulisan likuiditasnya"*. Sama
+    ketatnya dengan :func:`liq_is_green` di sisi atas: tepat $500K **tidak**
+    merah (dan tidak hijau), dan angka yang tidak terukur (`None`/teks rusak)
+    juga tidak — tanpa bukti tidak ada warna. Hanya tulisan yang berubah;
+    barisnya tetap tampil (filter likuiditas sudah dicabut).
+    """
+    value = _float_or_none(usd)
+    return value is not None and value < LIQ_RED_MAX_USD
+
+
+def liq_color(usd) -> str:
+    """Warna teks angka likuiditas: hijau di atas ambang, merah di bawahnya.
+
+    Satu sumber aturan supaya UI dan tes tidak menyalin ambangnya dua kali:
+    ``> :data:`LIQ_GREEN_MIN_USD``` → :data:`LIQ_GREEN_COLOR`,
+    ``< :data:`LIQ_RED_MAX_USD``` → :data:`LIQ_RED_COLOR`, sisanya (tepat di
+    ambang, tidak terukur, nilai rusak) → string kosong yang berarti
+    **tanpa span** — angkanya ikut warna teks sel (hitam).
+    """
+    if liq_is_green(usd):
+        return LIQ_GREEN_COLOR
+    if liq_is_red(usd):
+        return LIQ_RED_COLOR
+    return ""
 
 
 def row_gmgn_gap(row: dict | None) -> str | None:

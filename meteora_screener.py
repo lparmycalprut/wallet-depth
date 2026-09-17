@@ -1528,7 +1528,8 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
                     f"{float(BEST_TOP10_MAX_PCT):g}% — holder terpusat"]
         # Saringan likuiditas total GMGN (< $500K) DIHAPUS 2026-09-17 malam
         # (permintaan user: "filter likuiditas hapus coba") — angkanya tetap
-        # ditempel ke row["gmgn_liq"] untuk kolom RugCheck (hijau > $500K).
+        # ditempel ke row["gmgn_liq"] untuk kolom RugCheck (hijau > $500K,
+        # merah di bawahnya — lihat gmgn_liquidity.liq_color).
         return []
     sign = "<" if lane_fv_inclusive(normalized) else "≤"
     return [f"{BEST_LANE_LABELS[normalized]}: F/V {sign} {minimum:g}×"]
@@ -1537,8 +1538,10 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
 def gmgn_min_label() -> str:
     """Label ambang WARNA likuiditas GMGN (``$500K``) untuk teks log/UI.
 
-    Sejak 2026-09-17 malam bukan lagi ambang saringan — hanya batas hijau
-    angka likuiditas di kolom RugCheck. Dibaca dari :mod:`gmgn_liquidity` tiap dipanggil supaya teks tidak pernah
+    Sejak 2026-09-17 malam bukan lagi ambang saringan — hanya batas WARNA
+    angka likuiditas di kolom RugCheck (hijau di atasnya, merah di bawahnya;
+    :func:`gmgn_liquidity.liq_color`). Dibaca dari :mod:`gmgn_liquidity` tiap
+    dipanggil supaya teks tidak pernah
     tertinggal bila :data:`gmgn_liquidity.MIN_TOTAL_LIQ_USD` diubah lagi; modul
     tidak terbaca → ``"?"`` (bukan angka lama yang salah).
     """
