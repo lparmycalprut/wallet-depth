@@ -1736,7 +1736,10 @@ class BestPoolCardTest(unittest.TestCase):
         self.assertIn(">RugCheck<", body)
         self.assertIn('<span style="color:#dc2626;font-weight:700;">RUG'
                       "</span>", body)
-        self.assertIn("103.3K liq \u00b7 2 pool", body)
+        # $103.3K < ambang $500K → tulisan likuiditas MERAH (permintaan user
+        # 2026-09-17); barisnya tetap tampil — kolom ini informasi.
+        self.assertIn('<span style="color:#dc2626;font-weight:700;">$103.3K'
+                      '</span> liq \u00b7 2 pool', body)
         self.assertIn("honeypot checker", body)
         # Baris tanpa laporan tetap tampil dengan — (bukan disaring keluar).
         self.assertIn("$BERSIH", body)

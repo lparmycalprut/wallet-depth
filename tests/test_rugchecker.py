@@ -187,7 +187,11 @@ class LiquidityTest(unittest.TestCase):
         self.assertEqual(summary["market_count"], 2)
         angka, sub, tooltip = rc.cell_parts(summary)
         self.assertEqual(angka, "AMAN")
-        self.assertEqual(sub, "$219.2K liq · 2 pool")
+        # $219.2K < ambang $500K → angka likuiditas MERAH (permintaan user
+        # 2026-09-17: "tambahkan jika total likuiditas dibawah 500K, kasih
+        # warna merah bagian tulisan likuiditasnya").
+        self.assertEqual(sub, '<span style="color:#dc2626;font-weight:700;">'
+                             '$219.2K</span> liq · 2 pool')
         self.assertIn("likuiditas (ringkas): PUMPSWAP·SOL $116.7K · "
                       "METEORA·SOL $102.5K — total $219.2K", tooltip)
 
@@ -225,7 +229,9 @@ class LiquidityTest(unittest.TestCase):
         summary = rc.summarize(_payload(dex=dex))
         self.assertEqual(summary["market_count"], 1)
         self.assertEqual(summary["liquidity_lines"], ["METEORA $500"])
-        self.assertEqual(rc.cell_parts(summary)[1], "$500 liq · 1 pool")
+        self.assertEqual(rc.cell_parts(summary)[1],
+                         '<span style="color:#dc2626;font-weight:700;">$500'
+                         '</span> liq · 1 pool')
 
     def test_tanpa_pool_sama_sekali(self):
         summary = rc.summarize(_payload(dex=[]))

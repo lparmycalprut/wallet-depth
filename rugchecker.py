@@ -559,14 +559,20 @@ def cell_parts(summary) -> tuple[str, str, str]:
     # punya rincian per-DEX, jadi tanpa penghitung pool; sumber rugchecker
     # (fallback) tetap menulis "N pool" seperti dulu. Warna (2026-09-17
     # malam, permintaan user: "jika likuiditas di angka > 500K kasih warna
-    # hijau, kalau tidak warna hitam saja"): > $500K hijau, selain itu
-    # tanpa span (hitam bawaan sel). Filter likuiditasnya sendiri dihapus.
+    # hijau, kalau tidak warna hitam saja", lalu di hari yang sama
+    # "tambahkan jika total likuiditas dibawah 500K, kasih warna merah
+    # bagian tulisan likuiditasnya"): > $500K HIJAU, < $500K MERAH, sisanya
+    # (tepat di ambang / tak terukur) tanpa span = hitam bawaan sel. Ambangnya
+    # tidak disalin di sini — semuanya lewat gmgn_liquidity.liq_color.
+    # Barisnya sendiri tetap tampil: filter likuiditas sudah dicabut, yang
+    # berubah hanya warnanya.
     shown_total = total
     try:
-        from gmgn_liquidity import LIQ_GREEN_COLOR, liq_is_green
+        from gmgn_liquidity import liq_color
 
-        if liq_is_green(total_usd):
-            shown_total = (f'<span style="color:{LIQ_GREEN_COLOR};'
+        liq_color_hex = liq_color(total_usd)
+        if liq_color_hex:
+            shown_total = (f'<span style="color:{liq_color_hex};'
                            f'font-weight:700;">{total}</span>')
     except Exception:  # noqa: BLE001 - warna = hiasan, jangan jatuhkan sel
         pass

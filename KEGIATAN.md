@@ -1,3 +1,68 @@
+# Kegiatan — 17 September 2026 (🚨 header STOP DEGEN jadi biru + likuiditas < $500K ditulis merah)
+
+Dua permintaan lanjutan di hari yang sama, keduanya **hanya soal warna**:
+
+1. *"ganti tulisan warna warning kita menjadi warna biru, efek tetap"* — header
+   alarm 🚨 STOP DEGEN yang baru dibuat sore harinya (merah menyala berkedip)
+   dipindah ke palet **biru royal**; animasi kelip + glow, ukuran huruf, dan
+   posisinya tidak disentuh.
+2. *"lalu, tambahkan jika total likuiditas dibawah 500K, kasih warna merah
+   bagian tulisan likuiditasnya"* — angka likuiditas total GMGN di kolom
+   **RugCheck** (🏆 Scan Best Pool) yang tadi hanya duastatus (hijau di atas
+   $500K, hitam sisanya) jadi tiga sisi: **hijau > $500K**, **merah < $500K**,
+   **hitam** tepat di ambang / bila angkanya tidak terukur.
+
+## Yang berubah
+
+- **`dashboard_components.render_styles()`** — blok CSS `degen-stop-*`:
+  teks `#ff2d2d` → `#3b82f6`, panel `#450a0a→#7f1d1d` → `#0a1e45→#1e3a8a`,
+  border `#dc2626` → `#2563eb`, ketiga lapis `text-shadow` dan `box-shadow`
+  `@keyframes degen-stop-glow` ikut ke biru (rgba 59,130,246 / 37,99,235 /
+  29,78,216). **Angka geraknya identik**: `1s ease-in-out infinite`,
+  `opacity:.3` di tengah siklus, `clamp(1.4rem,3.6vw,2.6rem)`, dan
+  `prefers-reduced-motion` yang mematikan animasi (teks tetap biru menyala).
+  Nama class tidak diganti — ada tes yang menghitung kemunculan string class
+  chip emas di seluruh body halaman.
+- **`gmgn_liquidity.py`** — ambang $500K yang sudah jadi ambang warna
+  (`MIN_TOTAL_LIQ_USD`) dapat pasangan barunya: `LIQ_RED_MAX_USD`,
+  `LIQ_RED_COLOR = "#dc2626"` (merah standar repo: delta negatif, verdict RUG,
+  pill "perlu tindakan"), `liq_is_red()` (strict di sisi bawah, jadi tepat
+  $500K tidak merah dan tidak hijau) dan `liq_color()` sebagai **satu sumber
+  aturan** yang mengembalikan hex atau string kosong.
+- **`rugchecker.cell_parts()`** — baris kecil kolom RugCheck tidak lagi
+  mengimpor `liq_is_green` + merangkai span sendiri; ia tanya `liq_color` dan
+  memakai hex itu untuk angka likuiditas (span hijaunya byte-per-byte sama
+  dengan sebelumnya). `gmgn_liquidity` tidak terbaca → tanpa warna. Warna hanya
+  di sel; tooltip tetap menulis angka polos tanpa markup.
+- **Teks** — `best_pool_ui.best_pool_tooltip()` (dua tempat) sekarang menyebut
+  "HIJAU bila > $500K, MERAH bila < $500K, tepat di ambang tetap hitam",
+  ambangnya dibaca dari `meteora_screener.gmgn_min_label()`; komentar
+  `app.py`, docstring `render_degen_stop_header()`, README (bagian halaman +
+  tabel gate + tabel konstanta) ikut dikoreksi — tabel gate README juga
+  mencatat bahwa saringan likuiditas sudah dicabut, bukan lagi "dibuang".
+
+## Tes
+
+- `tests/test_degen_header.py`: pin warna → `color:#3b82f6`,
+  `border:3px solid #2563eb`, `background:#0a1e45`; kasus baru
+  `test_palet_merah_hilang_tapi_efek_tetap` memastikan token merah lama
+  (`#ff2d2d`, `#450a0a`, `rgba(255,45,45`, `rgba(239,68,68`, `rgba(220,38,38`)
+  tidak ada lagi di body halaman **dan** tiap animasi masih muncul tepat sekali
+  dengan `1s ease-in-out infinite` + `opacity:.3` di `50%`.
+- `tests/test_gmgn_liquidity.py`: `test_warna_merah_strict_di_bawah_500k`,
+  `test_liq_color_satu_sumber_aturan` (tidak ada nilai yang hijau+merah
+  sekaligus), `test_angka_gmgn_dibawah_ambang_merah` (sumber gmgn & rugchecker,
+  plus sisi ambang: 153K/0 → span merah, $500K persis → tanpa span, $500K+0,01
+  → span hijau), dan `test_pool_tipis_tidak_gugur_hanya_hitam` →
+  `…_hanya_merah`.
+- Pin sub-line ditulis ulang ke span merah: `tests/test_rugchecker.py`
+  ($219.2K dan $500) dan `tests/test_best_pool_scan.py` ($103.3K di kolom
+  RugCheck tabel utama).
+
+`python -m unittest discover -s tests` → **1119 tes**, 18 failed + 1 error;
+daftar nama kegagalannya **identik dengan baseline** di HEAD sebelum perubahan
+ini (1115 tes, 18 + 1 — semuanya tes store/network), jadi tidak ada regresi.
+
 # Kegiatan — 17 September 2026 (🏆 Scan: copy link HawkFi, ⭐ & kolom Dust %MC dihapus, garis vertikal antar kolom)
 
 Empat permintaan user sekaligus untuk tabel **🏆 Scan Best Pool Meteora** di

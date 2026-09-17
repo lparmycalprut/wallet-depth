@@ -1,5 +1,52 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-17 (lanjutan 2, malam) — 🚨 header STOP DEGEN jadi BIRU + likuiditas < $500K ditulis MERAH
+
+- Permintaan user #1 (verbatim): *"ganti tulisan warna warning kita menjadi
+  warna biru, efek tetap"* — yang dimaksud adalah tulisan warna-warning =
+  header 🚨 **STOP DEGEN** di halaman utama (alarm merah sejak permintaan
+  sebelumnya di hari yang sama). Paletnya pindah ke **BIRU royal** (warna
+  dipilih user dari tiga opsi: `#3b82f6`, bukan cyan/neon) — teks
+  `color:#3b82f6`, panel `#0a1e45 → #1e3a8a → #0a1e45`, border `#2563eb`,
+  glow `rgba(59,130,246,.95)` / `rgba(37,99,235,.75)` /
+  `rgba(29,78,216,.55)`. **"efek tetap" = tidak ada satu pun angka animasi
+  yang berubah**: `degen-stop-blink`/`degen-stop-glow` 1s ease-in-out infinite,
+  `opacity:.3` di tengah siklus, `font-size:clamp(1.4rem,3.6vw,2.6rem)`,
+  `prefers-reduced-motion`. Nama class sengaja tidak diganti, karena ada tes
+  yang menghitung kemunculan string class chip emas di seluruh body halaman.
+- Permintaan user #2 (verbatim): *"lalu, tambahkan jika total likuiditas dibawah
+  500K, kasih warna merah bagian tulisan likuiditasnya"*. Aturan warna angka
+  likuiditas GMGN (baris kecil kolom **RugCheck** di 🏆 Scan Best Pool) jadi
+  tiga sisi: **> $500K hijau**, **< $500K MERAH**, sisanya (tepat $500K atau
+  angka tidak terukur) tetap hitam. Barisnya TIDAK disaring — saringan
+  likuiditas sudah dicabut 2026-09-17 malam; yang berubah hanya tulisannya.
+- **Implementasi.** `gmgn_liquidity.py`: `LIQ_RED_COLOR = "#dc2626"` (merah
+  standar repo — delta negatif, verdict RUG, pill "perlu tindakan"),
+  `LIQ_RED_MAX_USD = MIN_TOTAL_LIQ_USD`, `liq_is_red()` (strict di sisi bawah,
+  simetris dengan `liq_is_green()`) dan `liq_color()` = **satu sumber aturan**
+  yang mengembalikan hex atau string kosong. `rugchecker.cell_parts()` tidak
+  lagi merangkai span hijaunya sendiri, tapi memanggil `liq_color(total_usd)`
+  — ambang 500K tidak disalin dua kali, dan keluaran span hijau identik byte
+  dengan sebelumnya (pin lama tetap lulus). Import `gmgn_liquidity` gagal →
+  sel ditulis tanpa warna (warna = hiasan, jangan menjatuhkan kolom).
+- **Teks UI ikut berubah.** Dua tempat di `best_pool_ui.best_pool_tooltip()`
+  sekarang menulis "HIJAU bila > $500K, MERAH bila < $500K … tepat di ambang
+  tetap hitam"; ambangnya tetap dibaca dari
+  `meteora_screener.gmgn_min_label()` sehingga label ikut berubah bila
+  konstantanya digeser. Komentar `app.py`, docstring
+  `render_degen_stop_header()` dan blok CSS di `render_styles()` mencatat
+  permintaan biru (kutipan "merah" yang lama dibiarkan apa adanya sebagai
+  riwayat permintaan user).
+- **Tes.** `tests/test_degen_header.py` dipin ulang ke warna biru + kasus baru
+  `test_palet_merah_hilang_tapi_efek_tetap` (palet merah lama hilang total di
+  seluruh body; durasi + pola animasi tetap satu-satunya seperti dulu);
+  `tests/test_gmgn_liquidity.py` +3 (`liq_is_red`, `liq_color`, `cell_parts`
+  merah + sisi ambang untuk sumber gmgn dan rugchecker); pin sub-line di
+  `tests/test_rugchecker.py` dan `tests/test_best_pool_scan.py` ditulis ulang
+  ke span merah. Suite `python -m unittest discover -s tests` → **1119 tes**,
+  18 failed + 1 error — **nama kegagalan identik baseline** (1115 tes, 18 + 1
+  pada HEAD sebelum perubahan ini), jadi bukan regresi.
+
 ## Update 2026-09-17 (malam) — 🚨 Header "STOP DEGEN" merah menyala berkedip di halaman utama
 
 - Permintaan user (verbatim): *"tambahkan header di page app"* dengan teks
