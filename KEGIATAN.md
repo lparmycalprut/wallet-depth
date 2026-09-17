@@ -55,6 +55,61 @@ tiga kasus `hawkfi_copy_html` ditambah ke `test_links.py`. Suite penuh:
 **tidak ada kegagalan baru** (19 gagal pra-eksisting di
 `lp_card_ui`/`manual_scan_alerts`/`meteora_screener`/`scan_holders` tidak
 berubah) dan satu gagal pra-eksisting ikut sembuh.
+# Kegiatan — 17 September 2026 (🚨 Header "STOP DEGEN" merah menyala berkedip di halaman utama)
+
+Permintaan user (verbatim): *"tambahkan header di page app"* — teksnya:
+
+> **STOP DEGEN, GAK BISA**
+>
+> **SUDAH KALAH BERTUBI2 AKUI KALAU KAMU GAK BISA**
+
+dengan gaya *"merah menyala berkedip, tulisan besar, ada emoticon warning"*.
+
+## Yang berubah
+
+- **`dashboard_components.py`** — fungsi baru `render_degen_stop_header()` +
+  konstanta `DEGEN_STOP_LINES` / `DEGEN_STOP_EMOJI`. Outputnya satu blok
+  `<div class="degen-stop-header" role="alert">` berisi dua
+  `<span class="degen-stop-line">`; tiap baris diapit emoticon warning — 🚨 di
+  "STOP DEGEN, GAK BISA" dan ⚠️ di "SUDAH KALAH BERTUBI2 AKUI KALAU KAMU GAK
+  BISA". Teks dipin **verbatim** (termasuk "BERTUBI2": itu kalimat user, bukan
+  salah tulis yang perlu diperbaiki) dan dilewatkan `html.escape` supaya aman
+  dirender sebagai HTML.
+- **CSS di `render_styles()`** (`degen-stop-*`; gaya tidak bisa inline karena
+  `st.markdown` men-sanitasi atribut `style`):
+  - *merah menyala*: panel merah gelap `#450a0a → #7f1d1d → #450a0a`, border
+    `#dc2626`, teks `#ff2d2d` + `text-shadow` glow merah tiga lapis;
+  - *tulisan besar*: `font-size: clamp(1.4rem, 3.6vw, 2.6rem)` (±22–42 px,
+    otomatis mengecil di layar sempit) dan `font-weight: 900`;
+  - *berkedip*: `@keyframes degen-stop-blink` (opacity + glow turun di tengah
+    siklus, 1 detik, `infinite`) + `@keyframes degen-stop-glow` untuk kilau
+    panelnya — pola yang sama dengan kelip `.scan-best-gold`, tapi ini alarm
+    merah, bukan pujian emas;
+  - `@media (prefers-reduced-motion: reduce)` mematikan animasinya (teks tetap
+    merah menyala). Nama class sengaja bukan turunan `scan-best-gold`/
+    `dust-best`, karena ada tes yang menghitung kemunculan string class chip
+    emas itu di seluruh body halaman.
+- **`app.py`** — memanggil `render_degen_stop_header()` **setelah**
+  `render_styles()` dan **sebelum** card 🏆 Scan Best Pool, jadi header ini
+  elemen paling atas halaman utama. Halaman 🧮 Holder dan 📦 TEMP **tidak** ikut
+  menampilkannya (user minta "di page app"); kalau nanti mau ikut, cukup satu
+  baris panggilan di halaman itu.
+
+## Tes
+
+File baru **`tests/test_degen_header.py`** (4 tes, AppTest di `app.py`):
+
+1. header terpasang & posisinya di **atas** card 🏆 Scan Best Pool
+   (`role="alert"` ikut di-pin);
+2. dua baris **verbatim** + emoticon 🚨/⚠️ + konstanta `DEGEN_STOP_LINES`;
+3. pin gaya: `color:#ff2d2d`, `animation:degen-stop-blink … infinite`, kedua
+   `@keyframes`, `font-size:clamp(1.4rem,3.6vw,2.6rem)`, `opacity:.3`
+   (berkedip, bukan warna statis) dan `prefers-reduced-motion`;
+4. halaman lain tidak memanggil fungsi/HTML-nya (📦 TEMP tetap bersih).
+
+`python -m unittest discover -s tests` → **1112 tes**, 19 failed + 1 error —
+daftar nama kegagalan **identik dengan baseline sebelum perubahan** (1108 tes,
+19 failed + 1 error), jadi bukan regresi.
 
 # Kegiatan — 17 September 2026 (🏆 Best Pool: tabel kosong → ambang likuiditas GMGN $1M diturunkan ke $500K)
 

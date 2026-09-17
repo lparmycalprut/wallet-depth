@@ -18,7 +18,7 @@ import streamlit as st
 # yang tidak pernah dirender.
 from best_pool_ui import render_best_pool_scan
 import page_router
-from dashboard_components import render_styles
+from dashboard_components import render_styles, render_degen_stop_header
 import activity_log
 
 
@@ -34,6 +34,15 @@ st.set_page_config(page_title="Wallet Depth — Holder Analytic",
 page_router.apply()
 
 render_styles()
+
+# ---------------------------------------------------------------------------
+# Header 🚨 STOP DEGEN (2026-09-17) — paling atas halaman utama, sebelum card.
+# Permintaan user: "tambahkan header di page app" ("merah menyala berkedip,
+# tulisan besar, ada emoticon warning"). Gaya + animasi berkedipnya hidup di
+# render_styles() (dashboard_components.degen-stop-*), jadi panggilan ini harus
+# SETELAH render_styles().
+# ---------------------------------------------------------------------------
+render_degen_stop_header()
 
 # Baris navigasi header DIHAPUS 2026-09-14 per permintaan user ("hilangkan
 # link ke sini pada header") — navigasi antar halaman tetap tersedia lewat
