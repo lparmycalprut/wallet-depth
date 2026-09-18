@@ -1710,7 +1710,7 @@ def sort_best_rows(rows: list[dict] | None) -> list[dict]:
 def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
                    workers: int = 6, progress=None, timeout: int = 25,
                    page_size: int = PAGE_SIZE, rugcheck: bool = True,
-                   gmgn: bool = True) -> dict:
+                   gmgn: bool = True, bubblemap: bool = True) -> dict:
     """Scan Best Pool **24H saja** — satu tombol card, satu tabel.
 
     Lane 30M dihapus 2026-09-16 (permintaan user: *"hapus scan 30 menit, kita
@@ -1835,6 +1835,19 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
             if _alog:
                 _alog.error("scan-best-pool",
                             f"RugCheck gagal: {str(exc)[:160]}")
+    # Bubble Map — status cluster & holder terbesar (permintaan user 2026-09-18)
+    bubblemap_failed = 0
+    if rows and bubblemap:
+        try:
+            from bubblemaps import attach_to_rows as _bubble_attach
+            rows = _bubble_attach(rows, workers=workers, timeout=timeout)
+            bubblemap_failed = sum(1 for row in rows
+                                   if not (row.get("bubblemap") or {}).get("ok"))
+        except Exception as exc:  # noqa: BLE001 - kolom opsional
+            error = " · ".join(part for part in (error, f"BubbleMap: {exc}") if part)
+            if _alog:
+                _alog.error("scan-best-pool",
+                            f"BubbleMap gagal: {str(exc)[:160]}")
     kept = sort_best_rows(rows)
     if _alog:
         _alog.info("scan-best-pool",
@@ -1849,7 +1862,9 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
                    + (f", {rug_failed} laporan RugCheck gagal"
                       if rug_failed else "")
                    + (f", {gmgn_failed} likuiditas GMGN tak terbaca"
-                      if gmgn_failed else "") + ")")
+                      if gmgn_failed else "")
+                   + (f", {bubblemap_failed} BubbleMap tak terbaca"
+                      if bubblemap_failed else "") + ")")
     return {
         "rows": kept,
         "hidden_rows": hidden_rows,
@@ -1870,6 +1885,8 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
         # tak terlacak) — TIDAK disaring (tanpa bukti tidak ada verdict),
         # kolom RugCheck menulis — untuk mereka (2026-09-17).
         "gmgn_failed": gmgn_failed,
+        # BubbleMap tak terbaca (2026-09-18) — kolom Bubble Map menulis —.
+        "bubblemap_failed": bubblemap_failed,
         # Lane hasil scan — UI memakainya untuk judul/pill tabel. Sejak 30M
         # dihapus (2026-09-16) ini selalu "24h".
         "lane": normalized,
@@ -1884,16 +1901,17 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
                       timeframe: str = "24h",
                       page_size: int = PAGE_SIZE,
                       rugcheck: bool = True,
-                      gmgn: bool = True) -> dict:
+                      gmgn: bool = True,
+                      bubblemap: bool = True) -> dict:
     """Wrapper lama :func:`scan_best_lane` (satu-satunya lane: 24H).
 
     Sejak 2026-09-13 kwarg ``timeframe`` **membatasi fetch**; sejak 2026-09-16
     hanya 24H yang ada, dan ``timeframe`` apa pun yang pernah dikenali
     (termasuk ``"30m"``/``"both"``) dipetakan ke 24H oleh
-    :func:`normalize_best_lane`. ``rugcheck`` dan ``gmgn`` diteruskan apa
-    adanya.
+    :func:`normalize_best_lane`. ``rugcheck``, ``gmgn`` dan ``bubblemap``
+    diteruskan apa adanya.
     """
     return scan_best_lane(timeframe, max_wallets=max_wallets,
                           workers=workers, progress=progress,
                           timeout=timeout, page_size=page_size,
-                          rugcheck=rugcheck, gmgn=gmgn)
+                          rugcheck=rugcheck, gmgn=gmgn, bubblemap=bubblemap)

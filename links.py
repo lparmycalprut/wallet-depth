@@ -20,6 +20,8 @@ DEXSCREENER_TOKEN_BASE = "https://dexscreener.com/solana/"
 METEORA_DLMM_BASE = "https://app.meteora.ag/dlmm/"
 HAWKFI_METEORA_BASE = "https://www.hawkfi.ag/meteora/"
 SOLSCAN_ACCOUNT_BASE = "https://solscan.io/account/"
+BUBBLEMAPS_V2_BASE = "https://v2.bubblemaps.io/map"
+BUBBLEMAPS_APP_BASE = "https://app.bubblemaps.io/sol/token/"
 
 
 def safe_url_part(value) -> str:
@@ -221,6 +223,37 @@ def meteora_dlmm_url(pool) -> str:
 def hawkfi_meteora_url(pool) -> str:
     """Return the HawkFi Meteora pool URL."""
     return f"{HAWKFI_METEORA_BASE}{safe_url_part(pool)}"
+
+
+
+def bubblemaps_v2_url(ca, *, chain: str = "solana") -> str:
+    """Return the Bubblemaps v2 map URL for a Solana mint.
+
+    Referensi UI yang diminta user: https://v2.bubblemaps.io/map?address=...&chain=solana
+    — dipakai sebagai tautan di kolom Bubble Map.
+    """
+    addr = str(ca or "").strip()
+    if not addr:
+        return ""
+    return f"{BUBBLEMAPS_V2_BASE}?address={safe_url_part(addr)}&chain={safe_url_part(chain)}"
+
+
+def bubblemaps_app_url(ca) -> str:
+    """Return the Bubblemaps app token URL (iframe style)."""
+    addr = str(ca or "").strip()
+    if not addr:
+        return ""
+    return f"{BUBBLEMAPS_APP_BASE}{safe_url_part(addr)}"
+
+
+def bubblemaps_links_html(ca) -> str:
+    """Small Bubble Map anchor (🫧) linking to v2.bubblemaps.io."""
+    url = bubblemaps_v2_url(ca)
+    if not url:
+        return ""
+    import html as _html
+    href = _html.escape(url, quote=True)
+    return f'<a href="{href}" target="_blank" rel="noopener noreferrer" title="Buka Bubble Map di v2.bubblemaps.io">🫧 Bubble</a>'
 
 
 def external_links_html(ca) -> str:

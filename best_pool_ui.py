@@ -227,7 +227,7 @@ def best_pool_tooltip() -> str:
         "mint di baris terakhir. Kolom, kiri ke kanan: Token, F/V, Fee/TVL "
         "(tepat di kanan F/V), Volat, Active Range, LPs, Fee % "
         "(tier fee pool, mis. 0,5% / 2%), MC, A.TVL, Vol 24h, Top10, RugCheck, "
-        "Pool \u2014 penataan 2026-09-16: Active Range digeser ke kanan "
+        "Bubble Map, Pool \u2014 penataan 2026-09-16: Active Range digeser ke kanan "
         "Volat (dua-duanya soal pergerakan) dan LPs tepat di kanannya, lalu "
         "kolom RugCheck baru; penataan 2026-09-17 (permintaan user): kolom "
         "Dust %MC dihapus (\u0022hapus kolom dust %\u0022 \u2014 dust tetap jadi "
@@ -236,7 +236,13 @@ def best_pool_tooltip() -> str:
         "watchlist\u0022), kolom Pool kini memuat tombol \U0001f4cb copy link "
         "HawkFi di samping tautan \U0001f30aMeteora/\U0001f985HawkFi "
         "(\u0022tambahkan copy link hawkfi dibagian scan\u0022 \u2014 salin URL "
-        "pool HawkFi ke clipboard murni lewat JS, tanpa rerun), dan tiap "
+        "pool HawkFi ke clipboard murni lewat JS, tanpa rerun), penataan "
+        "2026-09-18: kolom **Bubble Map** baru (\u0022bisa gak kamu tambahkan "
+        "status bubble map? untuk hasil scan token meteora cluster berapa, "
+        "dan holder terbesar berapa jika dikira terlalu besar, kasih warning\u0022) "
+        "\u2014 cluster berapa + holder terbesar berapa % + warning bila Top "
+        "\u22655% atau cluster terbesar \u22658% (\u226510% / \u226515% jadi BERISIKO); "
+        "link \U0001f9e7 ke v2.bubblemaps.io ada di sub sel, dan tiap "
         "kolom dibatasi garis vertikal (\u0022batasi per kolom dengan garis "
         "naik turun\u0022, hanya di layar lebar). Active Range menulis persen "
         "saja: -34.5% / "
@@ -260,7 +266,12 @@ def best_pool_tooltip() -> str:
         f"< {gmgn_min_label()}, selain itu tetap hitam (bendera safeguard "
         "Jupiter "
         "disajikan lewat kolom RugCheck, bukan filter server, supaya token "
-        "seperti PAID tidak hilang diam-diam dari listing). Mint yang "
+        "seperti PAID tidak hilang diam-diam dari listing). Kolom "
+        "**Bubble Map** menampilkan status Bubblemaps (v2.bubblemaps.io): "
+        "jumlah cluster, % holder terbesar, % cluster terbesar + warning bila "
+        "terlalu terkonsentrasi (Top \u22655% WASPADA, \u226510% BERISIKO; cluster "
+        "terbesar \u22658% WASPADA, \u226515% BERISIKO; total cluster \u226520% BERISIKO) \u2014 "
+        "juga hanya informasi, tidak pernah membuang baris. Mint yang "
         "laporannya tidak didapat menulis "
         "\u2014 (bukan \"AMAN\": tanpa bukti tidak ada verdict). Sorot "
         "hijau tua menyala di tabel utama: sel volatility terbesar, sel F/V "
@@ -269,16 +280,18 @@ def best_pool_tooltip() -> str:
     )
 
 
+
 # Lebar kolom listing (permintaan user 2026-09-14: "kita tata kolomnya baik
 # untuk 24jam maupun 30menit — Dust hapus — Token F/V Volat Dust %MC, 4 kolom
 # ini diletakkan paling awal"): Token, F/V, Fee/TVL, Volat di depan, lalu
 # Active Range, LPs, konteks pasar (Fee %, MC, A.TVL, volume 24 jam, Top10),
-# RugCheck, Pool. Kolom **Dust** (jumlah wallet) dihapus hari yang sama;
+# RugCheck, Bubble Map, Pool. Kolom **Dust** (jumlah wallet) dihapus hari yang sama;
 # kolom **Dust %MC** dan **tombol ⭐ watchlist** dihapus 2026-09-17
 # (permintaan user: "hapus kolom dust %" + "hapus tombol favorit /
 # watchlist") — kolom Pool juga menyerap tombol 📋 copy link HawkFi
 # ("tambahkan copy link hawkfi dibagian scan") jadi bobotnya dinaikkan
-# 0,8 → 1,05 supaya tiga ikon muat; total turun dari 15 ke 13 kolom.
+# 0,8 → 1,05 supaya tiga ikon muat; total turun dari 15 ke 13 kolom lalu naik
+# ke 14 kolom 2026-09-18 dengan **Bubble Map** (cluster + top holder + warning).
 # Penataan 2026-09-16 (permintaan user): **Active Range** pindah ke
 # kanan Volat, **LPs** mengikuti tepat di kanannya, dan kolom **RugCheck**
 # ditambah sebelum Pool. Judul kolom volume dulu mengikuti lane-nya
@@ -312,7 +325,7 @@ def best_pool_tooltip() -> str:
 # copy link HawkFi (permintaan user: "tambahkan copy link hawkfi dibagian
 # scan", "hapus kolom dust %", "hapus tombol favorit / watchlist").
 _COL_SPEC = [1.4, 1.0, 0.75, 0.58, 0.95, 0.5, 0.58, 0.55, 0.68, 0.8,
-             0.6, 1.0, 1.05]
+             0.6, 1.0, 1.0, 1.05]
 
 
 def _lane_titles(lane) -> list[str]:
@@ -335,7 +348,8 @@ def _lane_titles(lane) -> list[str]:
     **Dust %MC** dan kolom **⭐** watchlist tidak lagi ada sejak 2026-09-17
     (permintaan user: *"hapus kolom dust %"* + *"hapus tombol favorit /
     watchlist"*) — tabel 13 kolom, kolom terakhirnya **Pool** (tautan
-    🌊Meteora/🦅HawkFi + tombol 📋 copy link HawkFi).
+    🌊Meteora/🦅HawkFi + tombol 📋 copy link HawkFi), naik jadi 14 kolom
+    2026-09-18 dengan **Bubble Map** (cluster + top holder + warning).
     """
     from meteora_screener import normalize_best_lane
 
@@ -345,7 +359,7 @@ def _lane_titles(lane) -> list[str]:
     _ = normalize_best_lane(lane)
     return ["Token", "F/V", "Fee/TVL", "Volat", "Active Range", "LPs",
             "Fee %", "MC", "A.TVL", "Vol 24h", "Top10",
-            "RugCheck", "Pool"]
+            "RugCheck", "Bubble Map", "Pool"]
 
 
 # Hijau tua menyala penanda sel tertinggi di tabel utama (permintaan user
@@ -653,16 +667,20 @@ def _render_best_table(rows: list, *, lane: str,
                        mark_tops: bool = True) -> None:
     """Tabel listing Best Pool untuk **satu** lane (utama atau disembunyikan).
 
-    Susunan kolom 2026-09-17 (13 kolom): Token · **F/V · Fee/TVL** (tepat
+    Susunan kolom 2026-09-18 (14 kolom): Token · **F/V · Fee/TVL** (tepat
     di kanan F/V, permintaan user) · **Volat** · **Active Range** (persen
     saja: ``-34.5% / +19.0%`` = harga boleh turun / naik sebelum keluar dari
     bin berisi likuiditas) · **LPs** ·
     **Fee %** (fee trading pool, mis. 0.5% / 2%) · MC · A.TVL · Vol 24h ·
-    Top10 · **RugCheck** ·
+    Top10 · **RugCheck** · **Bubble Map** ·
     **Pool** — kolom Dust (jumlah wallet) lebih dulu dihapus 2026-09-14;
     **kolom Dust %MC dihapus 2026-09-17** (permintaan user: *"hapus kolom
     dust %"*) dan **tombol ⭐ watchlist dihapus** hari yang sama
-    (*"hapus tombol favorit / watchlist"*). Kolom Pool kini memuat tautan
+    (*"hapus tombol favorit / watchlist"*). Kolom **Bubble Map** baru
+    2026-09-18 (permintaan user: *"bisa gak kamu tambahkan status bubble
+    map? untuk hasil scan token meteora cluster berapa, dan holder terbesar
+    berapa jika dikira terlalu besar, kasih warning"* — cluster + top holder
+    + warning bila terlalu besar). Kolom Pool kini memuat tautan
     🌊Meteora/🦅HawkFi **plus tombol 📋 copy link HawkFi** (*"tambahkan
     copy link hawkfi dibagian scan"*) dan tiap kolom dibatasi **garis
     vertikal** (*"batasi per kolom dengan garis naik turun"* — marker
@@ -689,6 +707,8 @@ def _render_best_table(rows: list, *, lane: str,
     # RugCheck = kolom baru 2026-09-16; fmt-nya tinggal di modul rugchecker
     # supaya card tidak pernah menebak struktur laporan API pihak ketiga.
     from rugchecker import cell_parts as _rug_cell_parts
+    # Bubble Map = kolom baru 2026-09-18 — cluster + holder terbesar + warning
+    from bubblemaps import cell_parts as _bubble_cell_parts, bubblemap_url as _bubble_url
 
     # Dua marker sekaligus (CSS :has, lihat dashboard_components.render_styles):
     # ``mobile-hide-next`` menyembunyikan header tabel di HP (tiap sel sudah
@@ -817,6 +837,23 @@ def _render_best_table(rows: list, *, lane: str,
         if rug_color and rug_value != "—":
             rug_value = (f'<span style="color:{rug_color};font-weight:700;">'
                          f'{rug_value}</span>')
+        # Bubble Map (2026-09-18) — cluster + holder terbesar + warning
+        bubble_report = row.get("bubblemap") or {}
+        bubble_value, bubble_sub, bubble_tip = _bubble_cell_parts(bubble_report)
+        bubble_color = str(bubble_report.get("color") or "") if isinstance(bubble_report, dict) else ""
+        if bubble_color and bubble_value != "—":
+            bubble_value = (f'<span style="color:{bubble_color};font-weight:700;">'
+                            f'{bubble_value}</span>')
+        # tambah link ke bubblemaps.io di sub bila ada url
+        bubble_link = ""
+        try:
+            _b_url = bubble_report.get("url") or _bubble_url(ca)
+            import html as _html2
+            bubble_link = f' <a href="{_html2.escape(_b_url, quote=True)}" target="_blank" rel="noopener noreferrer" title="{_html2.escape(_b_url, quote=True)}">🫧</a>'
+        except Exception:
+            bubble_link = ""
+        bubble_sub_html = f"{bubble_sub}{bubble_link}" if bubble_sub else bubble_sub
+
         cells = (
             (fv_value, fv_sub, fv_tip),
             (fee_tvl_value, fee_sub, fee_tvl_tip),
@@ -851,6 +888,7 @@ def _render_best_table(rows: list, *, lane: str,
              "tampilkan\"; tanpa angka = tidak terukur, barisnya tetap "
              "tampil)"),
             (rug_value, rug_sub, rug_tip),
+            (bubble_value, bubble_sub_html, bubble_tip),
         )
         for position, (value, sub, tip) in enumerate(cells, start=1):
             cols[position].markdown(_cell(value, sub, tip),
@@ -866,7 +904,7 @@ def _render_best_table(rows: list, *, lane: str,
             pool_html += f" {hawkfi_copy_html(pool)}"
         else:
             pool_html = "<span>—</span>"
-        cols[12].markdown(f'<div class="pool-links">{pool_html}</div>',
+        cols[13].markdown(f'<div class="pool-links">{pool_html}</div>',
                           unsafe_allow_html=True)
         st.markdown('<hr style="margin:0.25rem 0;border-color:#cbd5e1;">',
                     unsafe_allow_html=True)
@@ -897,7 +935,7 @@ def _run_lane_scan(lane: str, *, progress=None) -> dict:
         return {"rows": [], "hidden_rows": [], "error": str(exc),
                 "fetched": 0, "hidden_metric": 0, "hidden_dust": 0,
                 "skipped_quote": 0, "dropped_volatility": 0,
-                "rugcheck_failed": 0, "lane": lane}
+                "rugcheck_failed": 0, "bubblemap_failed": 0, "lane": lane}
 
 
 def render_best_pool_scan() -> None:
@@ -1038,14 +1076,20 @@ def render_best_pool_scan() -> None:
                 st.rerun()
         if error:
             st.warning(f"Meteora API: {error}")
+        bubblemap_failed = int(result.get("bubblemap_failed") or 0)
+        gmgn_failed = int(result.get("gmgn_failed") or 0)
         if fetched:
             quote_txt = (f" · {skipped_quote} pool quote dilewati"
                          if skipped_quote else "")
             rug_txt = (f" · {rug_failed} mint tanpa laporan RugCheck"
                        if rug_failed else "")
+            bubble_txt = (f" · {bubblemap_failed} tanpa Bubble Map"
+                          if bubblemap_failed else "")
+            gmgn_txt = (f" · {gmgn_failed} likuiditas GMGN tak terbaca"
+                        if gmgn_failed else "")
             st.caption(f"{len(rows)} pool {label} tampil · {hidden} "
                        f"dilewati · listing {fetched} pool{quote_txt}"
-                       f"{rug_txt}.")
+                       f"{rug_txt}{bubble_txt}{gmgn_txt}.")
         if showing_hidden:
             if not hidden_rows:
                 st.info("Tidak ada pool tersembunyi di lane ini.")

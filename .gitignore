@@ -39,3 +39,7 @@ rugchecker_cache.json
 # Cache likuiditas total GMGN per mint — hasil HTTP, bukan sumber kebenaran;
 # ditulis oleh modul gmgn_liquidity.py (permintaan user 2026-09-17).
 gmgn_liquidity_cache.json
+
+# Cache Bubble Map (bubblemaps.io) — hasil HTTP per mint, bukan sumber
+# kebenaran; ditulis oleh modul bubblemaps.py (2026-09-18).
+bubblemaps_cache.json
