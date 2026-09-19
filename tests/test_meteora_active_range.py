@@ -201,7 +201,7 @@ class ActiveRangeCellTest(unittest.TestCase):
 
 class BestPoolColumnsTest(unittest.TestCase):
     def test_kolom_dan_judul_sinkron(self):
-        """Header, lebar kolom, dan isi sel harus satu jumlah (13 kolom).
+        """Header, lebar kolom, dan isi sel harus satu jumlah (13/14 kolom).
 
         Penataan 2026-09-16: Active Range naik ke kanan Volat (indeks 4) dan
         LPs tepat di kanannya (5). Penataan 2026-09-17 (permintaan user:
@@ -209,20 +209,36 @@ class BestPoolColumnsTest(unittest.TestCase):
         kolom **Dust %MC** dan kolom **⭐** dicabut — A.TVL berada di indeks
         8, RugCheck (11) tetap sebelum Pool (12, kini memuat tombol 📋 copy
         link HawkFi).
+
+        Penataan 2026-09-19 (permintaan user: *"hapus tentang bubblemap,
+        sisakan hyperlink ke bubblemapnya saja"* + *"Kasih kolom baru dipaling
+        kanan STRATEGY"*): kolom **Bubble Map** dicabut sehingga kolom
+        dasarnya kembali **13** dengan Pool di indeks 12 (tautan 🫧 pindah ke
+        dalamnya), dan tabel utama menambah **STRATEGY** di indeks 13 → 14
+        kolom. Tabel "▶ N pool dilewati" memakai ``show_strategy=False`` →
+        tetap 13 kolom.
         """
         for lane in ("24h", "30m"):
             with self.subTest(lane=lane):
                 titles = bp._lane_titles(lane)
-                self.assertEqual(len(titles), len(bp._COL_SPEC))
-                self.assertEqual(len(titles), 13)
+                self.assertEqual(len(titles),
+                                 len(bp._col_spec(show_strategy=True)))
+                self.assertEqual(len(titles), 14)
                 self.assertEqual(titles[4], "Active Range")
                 self.assertEqual(titles[5], "LPs")
                 self.assertEqual(titles[8], "A.TVL")
                 self.assertEqual(titles[11], "RugCheck")
                 self.assertEqual(titles[12], "Pool")
-                # Dust %MC + kolom ⭐ benar-benar hilang dari judul.
-                self.assertNotIn("Dust %MC", titles)
-                self.assertNotIn("", titles)
+                self.assertEqual(titles[13], "STRATEGY")
+                tanpa_strategy = bp._lane_titles(lane, show_strategy=False)
+                self.assertEqual(len(tanpa_strategy),
+                                 len(bp._col_spec(show_strategy=False)))
+                self.assertEqual(len(tanpa_strategy), 13)
+                self.assertEqual(tanpa_strategy[-1], "Pool")
+                # Dust %MC, kolom ⭐, dan Bubble Map benar-benar hilang.
+                for hilang in ("Dust %MC", "Bubble Map", ""):
+                    self.assertNotIn(hilang, titles)
+                    self.assertNotIn(hilang, tanpa_strategy)
                 # "30m" = alias lama, tetap dipetakan ke tabel 24H.
                 self.assertEqual(bp._lane_titles("30m"), titles)
 

@@ -3,7 +3,8 @@ from pathlib import Path
 from unittest import mock
 
 import links
-from links import (cvd_shortcut_query,
+from links import (bubblemap_icon_link_html, bubblemaps_v2_url,
+                   cvd_shortcut_query,
                    dexscreener_token_url, external_links_html,
                    gmgn_token_url, hawkfi_copy_html, hawkfi_meteora_url,
                    holder_analytic_url,
@@ -103,6 +104,44 @@ class LinksTest(unittest.TestCase):
 
     def test_hawkfi_copy_html_empty_pool(self):
         self.assertEqual(hawkfi_copy_html(""), "")
+
+    def test_bubblemap_icon_link_html(self):
+        """🫧 tautan Bubblemaps (permintaan user 2026-09-19: *"hapus tentang
+        bubblemap, sisakan hyperlink ke bubblemapnya saja"*).
+
+        Kolom Bubble Map dihapus; yang tersisa hanya anchor ikon ini, dipakai
+        kolom **Pool** tabel 🏆 Scan Best Pool. URL-nya URL v2 yang sama dengan
+        :func:`bubblemaps_v2_url`, atribut ``href`` di-escape sekali.
+        """
+        ca = "MintBub"
+        html_out = bubblemap_icon_link_html(ca)
+        self.assertEqual(
+            html_out,
+            '<a class="bubblemap-link" href="'
+            'https://v2.bubblemaps.io/map?address=MintBub&amp;chain=solana" '
+            'target="_blank" rel="noopener noreferrer" '
+            'title="Buka Bubble Map di v2.bubblemaps.io">\U0001fae7</a>')
+        # Tanpa mint tidak ada tautan (bukan anchor kosong).
+        self.assertEqual(bubblemap_icon_link_html(""), "")
+
+    def test_bubblemap_icon_link_html_pakai_url_tersimpan(self):
+        """URL laporan bubblemaps yang tersimpan di baris scan lama dipakai.
+
+        Hasil scan 2026-09-18 menyimpan ``row["bubblemap"]["url"]`` — tautan
+        baris lama harus tetap mengarah ke map yang sama, bukan dihitung ulang
+        dari mint. ``&`` di URL di-escape sekali saat masuk atribut.
+        """
+        stored = "https://v2.bubblemaps.io/map?address=MintBub&chain=solana"
+        html_out = bubblemap_icon_link_html("MintLain", url=stored)
+        self.assertIn("address=MintBub&amp;chain=solana", html_out)
+        self.assertNotIn("MintLain", html_out)
+        # Aman walau URL-nya mengandung karakter yang bisa keluar atribut.
+        nakal = bubblemap_icon_link_html("Mint", url='x" onclick="alert(1)')
+        self.assertNotIn('onclick="alert(1)"', nakal)
+
+    def test_bubblemap_icon_link_html_mint_aman(self):
+        html_out = bubblemap_icon_link_html("abc&def")
+        self.assertIn("address=abc%26def", html_out)
 
     def test_hawkfi_copy_html_encodes_unsafe_pool(self):
         html_out = hawkfi_copy_html("abc&def")

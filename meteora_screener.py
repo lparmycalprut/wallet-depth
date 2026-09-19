@@ -1710,7 +1710,7 @@ def sort_best_rows(rows: list[dict] | None) -> list[dict]:
 def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
                    workers: int = 6, progress=None, timeout: int = 25,
                    page_size: int = PAGE_SIZE, rugcheck: bool = True,
-                   gmgn: bool = True, bubblemap: bool = True) -> dict:
+                   gmgn: bool = True, bubblemap: bool = False) -> dict:
     """Scan Best Pool **24H saja** — satu tombol card, satu tabel.
 
     Lane 30M dihapus 2026-09-16 (permintaan user: *"hapus scan 30 menit, kita
@@ -1742,7 +1742,11 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
        paralel + cache berkas). Kegagalan laporan per mint tidak menjatuhkan
        scan: kolomnya menulis ``—`` dan jumlahnya dilaporkan di
        ``rugcheck_failed``;
-    4. baris diurutkan :func:`sort_best_rows` (Fee/TVL terbesar → F/V terbesar
+    4. **Bubblemaps dilewati** sejak 2026-09-19 (``bubblemap=False`` default —
+       kolom Bubble Map dihapus, permintaan user *"hapus tentang bubblemap,
+       sisakan hyperlink ke bubblemapnya saja"*; tautan 🫧-nya dibuat UI dari
+       mint tanpa laporan apa pun);
+    5. baris diurutkan :func:`sort_best_rows` (Fee/TVL terbesar → F/V terbesar
        → volume/active TVL → dust — urutan 2026-09-15).
     """
     normalized = normalize_best_lane(lane)
@@ -1835,7 +1839,16 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
             if _alog:
                 _alog.error("scan-best-pool",
                             f"RugCheck gagal: {str(exc)[:160]}")
-    # Bubble Map — status cluster & holder terbesar (permintaan user 2026-09-18)
+    # Bubble Map — status cluster & holder terbesar (permintaan user 2026-09-18).
+    # **Default-nya OFF sejak 2026-09-19** (permintaan user: *"hapus tentang
+    # bubblemap, sisakan hyperlink ke bubblemapnya saja"*): kolom Bubble Map
+    # dihapus dari tabel 🏆 Scan Best Pool sehingga laporan cluster/holder
+    # tidak dibaca lagi, dan tautan 🫧 yang tersisa dihitung UI langsung dari
+    # mint (``links.bubblemap_icon_link_html``) tanpa fetch apa pun. Kwarg-nya
+    # tetap ada (pola ``JUPITER_SAFEGUARD_FILTERS``/``safeguard=True``) supaya
+    # pemanggil/tooling yang masih butuh laporannya bisa menyalakannya lagi;
+    # ``best_pool_ui._run_lane_scan`` mengirim ``bubblemap=False`` secara
+    # eksplisit.
     bubblemap_failed = 0
     if rows and bubblemap:
         try:
@@ -1886,6 +1899,9 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
         # kolom RugCheck menulis — untuk mereka (2026-09-17).
         "gmgn_failed": gmgn_failed,
         # BubbleMap tak terbaca (2026-09-18) — kolom Bubble Map menulis —.
+        # Sejak 2026-09-19 kolomnya dihapus dan enrichment-nya OFF default,
+        # jadi angka ini praktis selalu 0; key-nya tetap dikirim supaya
+        # pembaca hasil scan lama (cache/session) tidak KeyError.
         "bubblemap_failed": bubblemap_failed,
         # Lane hasil scan — UI memakainya untuk judul/pill tabel. Sejak 30M
         # dihapus (2026-09-16) ini selalu "24h".
@@ -1902,14 +1918,15 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
                       page_size: int = PAGE_SIZE,
                       rugcheck: bool = True,
                       gmgn: bool = True,
-                      bubblemap: bool = True) -> dict:
+                      bubblemap: bool = False) -> dict:
     """Wrapper lama :func:`scan_best_lane` (satu-satunya lane: 24H).
 
     Sejak 2026-09-13 kwarg ``timeframe`` **membatasi fetch**; sejak 2026-09-16
     hanya 24H yang ada, dan ``timeframe`` apa pun yang pernah dikenali
     (termasuk ``"30m"``/``"both"``) dipetakan ke 24H oleh
     :func:`normalize_best_lane`. ``rugcheck``, ``gmgn`` dan ``bubblemap``
-    diteruskan apa adanya.
+    diteruskan apa adanya (``bubblemap`` default-nya ``False`` sejak
+    2026-09-19 — kolom Bubble Map dihapus, lihat :func:`scan_best_lane`).
     """
     return scan_best_lane(timeframe, max_wallets=max_wallets,
                           workers=workers, progress=progress,
