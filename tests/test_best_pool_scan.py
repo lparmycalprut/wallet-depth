@@ -43,7 +43,18 @@ dari 100, kasih warna hijau"*. Yang di-pin di file ini:
   ``.bp-cols-next`` (*"batasi per kolom dengan garis naik turun"*); **LPs
   HIJAU** bila > 100 LP; sel volatility terbesar + F/V tertinggi + Fee/TVL
   tertinggi tabel utama tetap disorot **hijau tua menyala**
-  (``TOP_HIGHLIGHT_COLOR``, seri ikut semua, tabel dilewati tidak ditandai).
+  (``TOP_HIGHLIGHT_COLOR``, seri ikut semua, tabel dilewati tidak ditandai);
+- **penataan 2026-09-19** (permintaan user: *"hapus tentang bubblemap,
+  sisakan hyperlink ke bubblemapnya saja"* + *"Kasih kolom baru dipaling kanan
+  STRATEGY"* + *"agak perbesar tulisan table semuanya ya, tapi tidak
+  mempengaruhi tampilan"*): kolom **Bubble Map** dihapus (tabel kembali 13
+  kolom, enrichment Bubblemaps OFF default) dan yang tersisa hanya tautan 🫧
+  ke ``v2.bubblemaps.io`` di kolom **Pool**; kolom **STRATEGY** baru di
+  **paling kanan tabel utama saja** (tabel "▶ N pool dilewati" tetap 13
+  kolom) dengan teks verbatim dari ambang likuiditas GMGN — > $500K
+  ``hybird 7030, bidask 3070 - full range``, selain itu ``hybird 5050,
+  bidask - full range``; ukuran huruf tabel (judul kolom + isi sel)
+  diperbesar tanpa mengubah lebar kolom/tata letak.
 """
 from __future__ import annotations
 
@@ -61,6 +72,9 @@ except Exception:  # noqa: BLE001
     AppTest = None
 
 import best_pool_ui as bp
+# Aturan teks kolom STRATEGY (2026-09-19) satu sumber di gmgn_liquidity, jadi
+# tes UI + tes aturannya mengimpor modul yang sama.
+import gmgn_liquidity as gl
 import meteora_screener as ms
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
@@ -1438,8 +1452,16 @@ class BestPoolCardTest(unittest.TestCase):
         dihapus (kolom jumlah wallet sudah lebih dulu dihapus 2026-09-14),
         tombol ⭐ hilang, kolom **Pool** kini memuat tombol 📋 copy link
         HawkFi, dan tiap baris tabel didahului marker ``.bp-cols-next`` untuk
-        garis vertikal pembatas kolom; **RugCheck** tetap sebelum Pool;
-        total **13 kolom**.
+        garis vertikal pembatas kolom; **RugCheck** tetap sebelum Pool.
+
+        **Update 2026-09-19** (permintaan user: *"hapus tentang bubblemap,
+        sisakan hyperlink ke bubblemapnya saja"* + *"Kasih kolom baru dipaling
+        kanan STRATEGY"*): kolom **Bubble Map** (sempat ditambah 2026-09-18)
+        dihapus dan kolom **STRATEGY** duduk di paling kanan — tapi HANYA di
+        tabel utama, jadi tabel ini 14 kolom (13 kolom dasar + STRATEGY) dan
+        tabel "▶ N pool dilewati" tetap 13 kolom (lihat
+        :class:`BubbleMapColumnRemovedTest` +
+        :class:`StrategyColumnTest`).
         """
         app = self._app()
         app.session_state["best_pool_scan_24h"] = self._result(
@@ -1448,7 +1470,7 @@ class BestPoolCardTest(unittest.TestCase):
         body = "\n".join(node.value for node in app.markdown)
         headers = [">Token<", ">F/V<", ">Fee/TVL<", ">Volat<", ">Active Range<",
                    ">LPs<", ">Fee %<", ">MC<", ">A.TVL<", ">Vol 24h<",
-                   ">Top10<", ">RugCheck<", ">Pool<"]
+                   ">Top10<", ">RugCheck<", ">Pool<", ">STRATEGY<"]
         for header in headers:
             self.assertIn(header, body)
         for kiri, kanan in zip(headers, headers[1:]):
@@ -1489,9 +1511,18 @@ class BestPoolCardTest(unittest.TestCase):
                       styles_src)
         self.assertIn('div[data-testid="stHorizontalBlock"]', styles_src)
         self.assertIn('div[data-testid="stColumn"]', styles_src)
-        # Satu baris = 13 kolom (header), dan ``_COL_SPEC`` tidak boleh meleset.
-        self.assertEqual(len(bp._lane_titles("24h")), len(bp._COL_SPEC))
-        self.assertEqual(len(bp._lane_titles("24h")), 13)
+        # Judul, lebar kolom, dan sel harus selalu satu jumlah: 14 di tabel
+        # utama (13 kolom dasar + STRATEGY) dan 13 di tabel "dilewati"
+        # (penataan 2026-09-19).
+        self.assertEqual(len(bp._lane_titles("24h")),
+                         len(bp._col_spec(show_strategy=True)))
+        self.assertEqual(len(bp._lane_titles("24h")), 14)
+        self.assertEqual(len(bp._lane_titles("24h", show_strategy=False)),
+                         len(bp._col_spec(show_strategy=False)))
+        self.assertEqual(len(bp._lane_titles("24h", show_strategy=False)), 13)
+        self.assertEqual(bp._lane_titles("24h")[-1], "STRATEGY")
+        self.assertEqual(bp._lane_titles("24h", show_strategy=False)[-1],
+                         "Pool")
 
     def test_kolom_fee_persen_menampilkan_fee_pool(self):
         """Fee % = fee trading pool (tier fee DLMM), bukan fee USD atau rasio.
@@ -1844,6 +1875,410 @@ class BestPoolCardTest(unittest.TestCase):
         self.assertIn("$LAWAS", body)
         # CSS-nya ikut ter-render di body, jadi yang diperiksa elemen sel-nya.
         self.assertNotIn('<span class="watchlist-pair"', body)
+
+
+@unittest.skipIf(AppTest is None, "streamlit not installed")
+class StrategyColumnTest(BestPoolCardTest):
+    """Kolom **STRATEGY** paling kanan (permintaan user 2026-09-19).
+
+    Permintaan user (verbatim): *"Kasih kolom baru dipaling kanan STRATEGY —
+    jika total likuiditas >500K, dikolom strategy ditulis, hybird 7030,
+    bidask 3070 - full range — jika total likuiditas <500K, dikolom strategy
+    ditulis, hybird 5050, bidask - full range"*. Teksnya **verbatim**
+    (termasuk "hybird"), aturannya satu sumber di :mod:`gmgn_liquidity`, dan
+    kolomnya hanya ada di tabel utama — tabel "▶ N pool dilewati" tetap 13
+    kolom (konfirmasi user 2026-09-19).
+    """
+
+    LIQ_TINGGI = 884_912.0     # > ambang $500K → hybird 7030, bidask 3070
+    LIQ_RENDAH = 103_300.0     # < ambang $500K → hybird 5050, bidask
+
+    def _laporan(self, usd):
+        """Laporan RugCheck berisi likuiditas total GMGN (sumber angka STRATEGY)."""
+        return {"ok": True, "verdict": "AMAN", "color": "#16a34a",
+                "honeypot": False, "critical": [], "minor": [],
+                "market_count": 1, "market_cap": 1_295_891.0,
+                "liquidity_total_usd": usd, "liquidity_source": "gmgn",
+                "liquidity_lines": [], "notes": []}
+
+    def test_strategy_7030_bila_likuiditas_di_ambang(self):
+        """> $500K → ``hybird 7030, bidask 3070 - full range``."""
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result("24h", [
+            _row(pool_address="PoolGede", ca="MintGede", symbol="GEDE",
+                 rugcheck=self._laporan(self.LIQ_TINGGI)),
+        ])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        # Judul kolomnya ada di paling kanan (setelah Pool).
+        self.assertIn(">STRATEGY<", body)
+        self.assertLess(body.index(">Pool<"), body.index(">STRATEGY<"))
+        # Teks verbatim — "- full range" dibungkus span nowrap supaya frasanya
+        # tidak terpenggal (``best_pool_ui._strategy_cell_html``).
+        self.assertIn("hybird 7030, bidask 3070", body)
+        self.assertIn('<span class="bp-strategy-range"> - full range</span>',
+                      body)
+        # Baris kecil menulis bukti angkanya + ambang yang dipakai.
+        self.assertIn("liq $884.9K \u00b7 $500K", body)
+        # Sel tabelnya cuma satu dan memakai cabang ATAS. (Tooltip card +
+        # komentar CSS di ``render_styles`` ikut ter-render di body, jadi
+        # pemeriksaan cabang dilakukan pada elemen sel-nya.)
+        sel = ('<div class="watchlist-metric-value">hybird 7030, bidask 3070'
+               '<span class="bp-strategy-range"> - full range</span></div>')
+        self.assertEqual(body.count(sel), 1)
+        self.assertNotIn("hybird 5050, bidask<span", body)
+
+    def test_strategy_5050_bila_likuiditas_di_bawah_ambang(self):
+        """< $500K → ``hybird 5050, bidask - full range`` (tanpa angka 3070)."""
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result("24h", [
+            _row(pool_address="PoolTipis", ca="MintTipis", symbol="TIPIS",
+                 rugcheck=self._laporan(self.LIQ_RENDAH)),
+        ])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        # Sel tabelnya memakai cabang BAWAH, verbatim dan tanpa angka 3070
+        # (permintaan user menulis "bidask - full range").
+        sel = ('<div class="watchlist-metric-value">hybird 5050, bidask'
+               '<span class="bp-strategy-range"> - full range</span></div>')
+        self.assertEqual(body.count(sel), 1)
+        # Tooltip card + komentar CSS juga memuat teks cabang ATAS sebagai
+        # riwayat permintaan user, jadi yang membuktikan baris ini dapat
+        # cabang bawah adalah bentuk selnya di atas (bukan pencarian string
+        # "7030" di seluruh body).
+        # Barisnya tetap tampil — kolom STRATEGY tidak pernah menyaring.
+        self.assertIn("$TIPIS", body)
+
+    def test_strategy_tak_terukur_pakai_cabang_rendah_dengan_alasan(self):
+        """Likuiditas tak terbaca → teks tetap ada + alasannya di tooltip."""
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result("24h", [
+            _row(pool_address="PoolButa", ca="MintButa", symbol="BUTA"),
+        ])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn("hybird 5050, bidask", body)
+        self.assertIn("liq \u2014 \u00b7 $500K", body)
+        self.assertIn("likuiditas total tidak terbaca", body)
+
+    def test_tabel_dilewati_tanpa_kolom_strategy(self):
+        """Tabel "▶ N pool dilewati" tetap 13 kolom (konfirmasi user)."""
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result(
+            "24h",
+            [_row(pool_address="PoolBest", ca="MintAAA", symbol="AAA",
+                  rugcheck=self._laporan(self.LIQ_TINGGI))],
+            fetched=3,
+            hidden=[_row(pool_address="PoolSepi", ca="MintSepi", symbol="SEPI",
+                         **_fv(60.0, 0.5))])
+        app.run()
+        app.button(key="best-pool-toggle-hidden-24h").click().run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn("$SEPI", body)
+        self.assertIn(">Pool<", body)
+        self.assertNotIn(">STRATEGY<", body)
+        # Tidak ada SEL strategi (CSS ``render_styles`` ikut ter-render di
+        # body, jadi yang dihitung elemen sel-nya).
+        self.assertNotIn('<span class="bp-strategy-range">', body)
+        self.assertNotIn("hybird 5050, bidask <", body)
+
+    def test_ukuran_huruf_tabel_diperbesar_tanpa_ubah_tata_letak(self):
+        """Tulisan tabel diperbesar, lebar kolom & tata letak tidak berubah.
+
+        Permintaan user 2026-09-19: *"agak perbesar tulisan table semuanya ya,
+        tapi tidak mempengaruhi tampilan"*. Judul kolom memakai
+        :data:`best_pool_ui.HEADER_FONT_SIZE` (dulu 0.72rem inline), isi sel
+        lewat class ``.watchlist-*``/``.pool-links`` di
+        ``dashboard_components.render_styles``, dan **lebar kolom**
+        (``_COL_SPEC`` / ``_col_spec``) tidak ikut berubah.
+        """
+        styles_src = (Path(__file__).resolve().parent.parent
+                      / "dashboard_components.py").read_text(encoding="utf-8")
+        self.assertEqual(bp.HEADER_FONT_SIZE, "0.82rem")
+        self.assertIn(f".bp-col-title {{font-size:{bp.HEADER_FONT_SIZE};",
+                      styles_src)
+        # nowrap: judul tetap satu baris walau hurufnya lebih besar, jadi
+        # tinggi header (dan tinggi tiap baris tabel) tidak bertambah.
+        self.assertIn("white-space:nowrap", styles_src)
+        # Ukuran huruf isi sel yang dipakai tabel listing ikut naik dari
+        # nilai lamanya (0.95/0.65/0.75rem).
+        for naik in (".watchlist-metric-value {font-size:1.05rem;",
+                     ".watchlist-metric-sub {font-size:.74rem;",
+                     ".watchlist-symbol {font-size:1.2rem;",
+                     ".pool-links a {font-size:.84rem;"):
+            self.assertIn(naik, styles_src)
+        for lama in (".watchlist-metric-value {font-size:.95rem;}",
+                     ".watchlist-metric-sub {font-size:.65rem;}",
+                     ".pool-links a {font-size:.75rem;"):
+            self.assertNotIn(lama, styles_src)
+        # Override mobile ikut naik dengan perbandingan yang sama.
+        self.assertIn(".watchlist-metric-value { font-size: 0.98rem !important; }",
+                      styles_src)
+        self.assertNotIn(".watchlist-metric-value { font-size: 0.88rem !important; }",
+                         styles_src)
+        # Tata letak TIDAK boleh ikut berubah: bobot kolom tetap sama persis
+        # seperti sebelum STRATEGY (13 kolom dasar) + satu kolom STRATEGY.
+        self.assertEqual(bp._COL_SPEC,
+                         [1.4, 1.0, 0.75, 0.58, 0.95, 0.5, 0.58, 0.55, 0.68,
+                          0.8, 0.6, 1.0, 1.05])
+        self.assertEqual(bp._col_spec(show_strategy=True)[-1],
+                         bp.STRATEGY_COL_WIDTH)
+        self.assertEqual(len(bp._col_spec(show_strategy=True)),
+                         len(bp._col_spec(show_strategy=False)) + 1)
+
+    def test_tooltip_card_menjelaskan_aturan_strategy(self):
+        tip = bp.best_pool_tooltip()
+        self.assertIn("STRATEGY", tip)
+        self.assertIn("hybird 7030, bidask 3070 - full range", tip)
+        self.assertIn("hybird 5050, bidask - full range", tip)
+        # Ambangnya tidak disalin di UI — dibaca dari konstanta GMGN.
+        self.assertIn("$500K", tip)
+
+
+class StrategyRuleTest(unittest.TestCase):
+    """Aturan teks STRATEGY satu sumber di :mod:`gmgn_liquidity`.
+
+    Ambangnya ambang yang sama dengan warna angka likuiditas kolom RugCheck
+    (:data:`gmgn_liquidity.MIN_TOTAL_LIQ_USD`), jadi tidak ada dua angka 500K
+    yang bisa lari sendiri-sendiri.
+    """
+
+    def test_teks_verbatim_permintaan_user(self):
+        self.assertEqual(gl.STRATEGY_LIQ_HIGH,
+                         "hybird 7030, bidask 3070 - full range")
+        self.assertEqual(gl.STRATEGY_LIQ_LOW, "hybird 5050, bidask - full range")
+
+    def test_strategy_for_liquidity_ikuti_ambang(self):
+        tinggi, rendah = gl.STRATEGY_LIQ_HIGH, gl.STRATEGY_LIQ_LOW
+        self.assertEqual(gl.strategy_for_liquidity(500_000.01), tinggi)
+        self.assertEqual(gl.strategy_for_liquidity(884_912.0), tinggi)
+        self.assertEqual(gl.strategy_for_liquidity(499_999.99), rendah)
+        self.assertEqual(gl.strategy_for_liquidity(0), rendah)
+        # Tepat di ambang + tak terukur → cabang rendah (user hanya memberi
+        # dua cabang; tiap baris harus punya saran, tidak boleh sel kosong).
+        self.assertEqual(gl.strategy_for_liquidity(gl.MIN_TOTAL_LIQ_USD), rendah)
+        self.assertEqual(gl.strategy_for_liquidity(None), rendah)
+        self.assertEqual(gl.strategy_for_liquidity("bukan angka"), rendah)
+
+    def test_row_total_liquidity_pakai_laporan_rugcheck_dulu(self):
+        row = {"rugcheck": {"ok": True, "liquidity_total_usd": 750_000.0,
+                            "liquidity_source": "gmgn"},
+               "gmgn_liq": {"ok": True, "usd": 120_000.0, "source": "gmgn"}}
+        usd, source = gl.row_total_liquidity_usd(row)
+        self.assertEqual(usd, 750_000.0)
+        self.assertIn("RugCheck", source)
+        # Laporan rugcheck gagal → fallback ke tempelan gmgn_liq.
+        usd, source = gl.row_total_liquidity_usd(
+            {"rugcheck": {"ok": False}, "gmgn_liq": {"ok": True,
+                                                     "usd": 120_000.0,
+                                                     "source": "gmgn"}})
+        self.assertEqual(usd, 120_000.0)
+        self.assertIn("GMGN", source)
+
+    def test_row_strategy_menulis_bukti_untuk_tooltip(self):
+        info = gl.row_strategy({"rugcheck": {"ok": True,
+                                             "liquidity_total_usd": 884_912.0,
+                                             "liquidity_source": "gmgn"}})
+        self.assertEqual(info["text"], gl.STRATEGY_LIQ_HIGH)
+        self.assertTrue(info["measured"])
+        self.assertIn("$884.9K", info["reason"])
+        self.assertIn("> $500K", info["reason"])
+
+        buta = gl.row_strategy({})
+        self.assertEqual(buta["text"], gl.STRATEGY_LIQ_LOW)
+        self.assertFalse(buta["measured"])
+        self.assertIn("tidak terukur", buta["reason"])
+
+    def test_di_bawah_cutoff_peringkat_dihitung_cabang_rendah(self):
+        """GMGN tanpa angka tapi mint terbukti di bawah cutoff → rendah."""
+        row = {"gmgn_liq": {"ok": True, "usd": None, "below_cutoff": True,
+                            "cutoff_usd": 149_000.0, "source": "gmgn_rank"}}
+        usd, source = gl.row_total_liquidity_usd(row)
+        self.assertIsNone(usd)
+        self.assertIn("cutoff", source)
+        info = gl.row_strategy(row)
+        self.assertEqual(info["text"], gl.STRATEGY_LIQ_LOW)
+        self.assertFalse(info["measured"])
+
+    def test_sel_strategy_ui_memakai_aturan_yang_sama(self):
+        """``best_pool_ui._strategy_cell`` tidak menyalin ambangnya sendiri."""
+        nilai, sub, tip = bp._strategy_cell(
+            {"rugcheck": {"ok": True, "liquidity_total_usd": 103_300.0,
+                          "liquidity_source": "gmgn"}})
+        self.assertIn("hybird 5050, bidask", nilai)
+        self.assertIn('<span class="bp-strategy-range"> - full range</span>',
+                      nilai)
+        self.assertIn("liq $103.3K \u00b7 $500K", sub)
+        self.assertIn("STRATEGY dari likuiditas total", tip)
+
+        # Ambang digeser → teks UI ikut (bukti tidak ada angka hardcoded).
+        with mock.patch.object(gl, "MIN_TOTAL_LIQ_USD", 50_000.0), \
+                mock.patch.object(gl, "LIQ_GREEN_MIN_USD", 50_000.0), \
+                mock.patch.object(gl, "MIN_LABEL", "$50K"):
+            nilai2, sub2, _tip2 = bp._strategy_cell(
+                {"rugcheck": {"ok": True, "liquidity_total_usd": 103_300.0,
+                              "liquidity_source": "gmgn"}})
+        self.assertIn("hybird 7030, bidask 3070", nilai2)
+        self.assertIn("$50K", sub2)
+
+
+@unittest.skipIf(AppTest is None, "streamlit not installed")
+class BubbleMapColumnRemovedTest(BestPoolCardTest):
+    """Kolom Bubble Map dihapus, tautan 🫧-nya pindah ke kolom Pool.
+
+    Permintaan user 2026-09-19 (verbatim): *"hapus tentang bubblemap, sisakan
+    hyperlink ke bubblemapnya saja"*. Status cluster/top holder/warning tidak
+    ditampilkan lagi, enrichment Bubblemaps tidak dijalankan saat scan, dan
+    satu-satunya yang tersisa adalah tautan ke ``v2.bubblemaps.io``.
+    """
+
+    # ``row["bubblemap"]["url"]`` baris hasil scan 2026-09-18 berisi URL
+    # BERSIH (``bubblemaps.bubblemap_url`` tidak pernah meng-escape HTML);
+    # ``links`` yang meng-escape-nya sekali saat menulis atribut ``href`` —
+    # jadi yang muncul di body adalah bentuk ``&amp;``.
+    URL_MINT_RAW = ("https://v2.bubblemaps.io/map?address=MintBub"
+                    "&chain=solana")
+    URL_MINT = URL_MINT_RAW.replace("&", "&amp;")
+
+    def test_tidak_ada_kolom_bubble_map_hanya_tautan(self):
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result("24h", [
+            _row(pool_address="PoolBub", ca="MintBub", symbol="BUBY",
+                 # Hasil scan 2026-09-18 masih membawa laporan Bubblemaps —
+                 # isinya tidak boleh tampil lagi, tapi URL-nya tetap dipakai
+                 # supaya tautan baris lama tidak berubah tujuan.
+                 bubblemap={"ok": True, "clusters": 4, "top_holder_pct": 7.2,
+                            "largest_cluster_pct": 9.1, "level": "WASPADA",
+                            "color": "#a16207", "warning": "Top holder 7.2%",
+                            "url": self.URL_MINT_RAW}),
+        ])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        # Kolomnya hilang total: judul, angka cluster, holder terbesar,
+        # warning. (Body ikut memuat CSS ``render_styles``, jadi yang di-pin
+        # teks SEL-nya, bukan kata "cluster" mentah.)
+        self.assertNotIn(">Bubble Map<", body)
+        self.assertNotIn("Top holder 7.2%", body)
+        self.assertNotIn("largest", body)
+        self.assertNotIn("bubblemap_failed", body)
+        # Tooltip card boleh menyebut penghapusannya (riwayat permintaan user),
+        # tapi SEL kolomnya tidak boleh dirender lagi — modul ``bubblemaps``
+        # bahkan tidak diimpor ``best_pool_ui`` sama sekali sejak 2026-09-19.
+        ui_src = (Path(__file__).resolve().parent.parent
+                  / "best_pool_ui.py").read_text(encoding="utf-8")
+        self.assertNotIn("from bubblemaps import", ui_src)
+        self.assertNotIn("_bubble_cell_parts", ui_src)
+        # Yang tersisa: tautan 🫧 di kolom Pool (bareng 🌊/🦅/📋).
+        self.assertIn('class="bubblemap-link"', body)
+        self.assertIn(self.URL_MINT, body)
+        self.assertIn("\U0001f9e7", body)
+        self.assertIn("Copy link HawkFi: "
+                      "https://www.hawkfi.ag/meteora/PoolBub", body)
+        # Caption rekap tidak lagi menyebut "N tanpa Bubble Map".
+        captions = "\n".join(node.value for node in app.caption)
+        self.assertNotIn("Bubble Map", captions)
+
+    def test_tautan_dihitung_dari_mint_bila_laporan_tidak_ada(self):
+        """Baris baru (tanpa ``row["bubblemap"]``) tetap punya tautan 🫧."""
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result("24h", [
+            _row(pool_address="PoolBaru", ca="MintBub", symbol="BARU"),
+        ])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        self.assertIn(self.URL_MINT, body)
+        self.assertIn('class="bubblemap-link"', body)
+
+    def test_scan_tidak_menjalankan_enrichment_bubblemaps(self):
+        """``_run_lane_scan`` mengirim ``bubblemap=False`` secara eksplisit."""
+        app = self._app()
+        kwargs_seen: list = []
+
+        def fake_scan(lane, **kwargs):
+            kwargs_seen.append(kwargs)
+            return self._result("24h", [_row(pool_address="P24", ca="M24",
+                                             symbol="THR")])
+
+        with mock.patch.object(ms, "scan_best_lane", side_effect=fake_scan):
+            app.button(key="best-pool-scan-24h").click().run()
+        self.assertEqual(len(kwargs_seen), 1)
+        self.assertIs(kwargs_seen[0].get("bubblemap"), False)
+
+    def test_tooltip_card_tidak_menjelaskan_kolom_bubble_map(self):
+        """Tooltip tidak lagi menjelaskan ISI kolom Bubble Map.
+
+        Kutipan permintaan user (*"hapus tentang bubblemap …"*) sengaja tetap
+        ada di tooltip sebagai riwayat — konvensi repo: permintaan user
+        dikutip apa adanya. Yang harus hilang adalah penjelasan kolomnya
+        (cluster, holder terbesar, ambang warning Bubblemaps).
+        """
+        tip = bp.best_pool_tooltip()
+        for lama in ("menampilkan status Bubblemaps",
+                     "jumlah cluster, % holder terbesar",
+                     "cluster terbesar \u22658% WASPADA",
+                     "Bubble Map, Pool"):
+            self.assertNotIn(lama, tip)
+        # Penjelasannya diganti: tautan 🫧 di kolom Pool + alasan penghapusan.
+        self.assertIn("v2.bubblemaps.io", tip)
+        self.assertIn("hapus tentang bubblemap", tip)
+
+
+class BubbleMapScanDefaultTest(unittest.TestCase):
+    """``scan_best_lane`` tidak lagi memanggil Bubblemaps secara default."""
+
+    def setUp(self):
+        def _fake_gmgn_attach(rows, **_kw):
+            for row in rows:
+                row["gmgn_liq"] = {"ok": False}
+            return rows
+
+        for patch in (
+                mock.patch("gmgn_liquidity.attach_total_liquidity",
+                           side_effect=_fake_gmgn_attach),
+                mock.patch("rugchecker.attach_to_rows",
+                           side_effect=lambda rows, **_kw: [
+                               dict(row, rugcheck={"ok": False})
+                               for row in rows])):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    @staticmethod
+    def _fake_enrich(rows, **_kw):
+        return [dict(row, analysis={"holders": {"dust_pct_mc": 0.02,
+                                                "dust_count": 5,
+                                                "total_fetched": 1000,
+                                                "wallets_analyzed": 900}},
+                     dust_pct_mc=0.02, dust_count=5) for row in rows]
+
+    def _scan(self, **kwargs):
+        with mock.patch.object(ms, "fetch_best_pools",
+                               return_value=[_pool("P-OK", "MintOK")]), \
+                mock.patch.object(ms, "enrich_pools",
+                                  side_effect=self._fake_enrich), \
+                mock.patch("bubblemaps.attach_to_rows") as attach:
+            attach.side_effect = lambda rows, **_kw: [
+                dict(row, bubblemap={"ok": True, "clusters": 2})
+                for row in rows]
+            result = ms.scan_best_lane("24h", max_wallets=2000, **kwargs)
+        return result, attach
+
+    def test_default_tidak_memanggil_bubblemaps(self):
+        result, attach = self._scan()
+        attach.assert_not_called()
+        self.assertNotIn("bubblemap", result["rows"][0])
+        self.assertEqual(result["bubblemap_failed"], 0)
+
+    def test_kwarg_true_masih_bisa_menyalakan(self):
+        """Kwarg-nya tetap ada (pola ``safeguard=True``) untuk tooling."""
+        result, attach = self._scan(bubblemap=True)
+        self.assertEqual(attach.call_count, 1)
+        self.assertEqual(result["rows"][0]["bubblemap"]["clusters"], 2)
 
 
 @unittest.skipIf(AppTest is None, "streamlit not installed")

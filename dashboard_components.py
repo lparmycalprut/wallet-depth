@@ -122,10 +122,18 @@ def render_styles() -> None:
     .watchlist-row {display:flex;align-items:center;padding:.75rem 0;
      border-bottom:1px solid #cbd5e1;}
     .watchlist-token {display:flex;flex-direction:column;gap:.25rem;}
-    .watchlist-symbol {font-size:1.1rem;font-weight:800;color:#000000;}
-    .watchlist-mint {font-size:.75rem;color:#000000;font-family:monospace;}
+    /* Ukuran huruf sel tabel listing (🏆 Scan Best Pool, 📦 TEMP, chart LP)
+       dinaikkan 2026-09-19 — permintaan user: "agak perbesar tulisan table
+       semuanya ya, tapi tidak mempengaruhi tampilan". Yang berubah HANYA
+       ukuran huruf (±+0.08…0.10rem di tiap class); lebar kolom
+       (best_pool_ui._COL_SPEC), jumlah kolom, garis pembatas, padding, dan
+       tinggi baris tidak disentuh, jadi tata letaknya tetap seperti semula.
+       Nilai judul kolom tabel dibaca dari best_pool_ui.HEADER_FONT_SIZE
+       (lihat .bp-col-title di bawah) supaya satu angka mengatur semuanya. */
+    .watchlist-symbol {font-size:1.2rem;font-weight:800;color:#000000;}
+    .watchlist-mint {font-size:.84rem;color:#000000;font-family:monospace;}
     .watchlist-links {display:flex;gap:.5rem;margin-top:.25rem;}
-    .watchlist-links a {font-size:.75rem;color:#1d4ed8;font-weight:600;
+    .watchlist-links a {font-size:.84rem;color:#1d4ed8;font-weight:600;
      text-decoration:none;}
     .watchlist-links a:hover {color:#000000;text-decoration:underline;}
     .watchlist-holder-link {display:flex;align-items:center;justify-content:center;
@@ -140,14 +148,15 @@ def render_styles() -> None:
        pasangan pairnya, misal ALLINU/SOL") — di bawah $SIMBOL, di atas
        alamat mint. Huruf monospace + agak tebal supaya pasangannya terbaca
        sebagai satu kesatuan (bukan dua ticker terpisah). */
-    .watchlist-pair {font-size:.78rem;font-weight:800;color:#000000;
+    .watchlist-pair {font-size:.86rem;font-weight:800;color:#000000;
      font-family:monospace;letter-spacing:.01em;}
-    .watchlist-metric-label {font-size:.65rem;color:#000000;text-transform:uppercase;
+    .watchlist-metric-label {font-size:.72rem;color:#000000;text-transform:uppercase;
      letter-spacing:.04em;}
-    .watchlist-metric-value {font-size:.95rem;font-weight:700;color:#000000;}
-    .watchlist-metric-sub {font-size:.65rem;color:#000000;}
+    .watchlist-metric-value {font-size:1.05rem;font-weight:700;color:#000000;
+     line-height:1.25;}
+    .watchlist-metric-sub {font-size:.74rem;color:#000000;line-height:1.3;}
     .pool-links {display:flex;gap:.5rem;flex-wrap:wrap;justify-content:center;}
-    .pool-links a {font-size:.75rem;color:#1d4ed8;font-weight:700;
+    .pool-links a {font-size:.84rem;color:#1d4ed8;font-weight:700;
      text-decoration:none;}
     .pool-links a:hover {color:#000000;text-decoration:underline;}
     /* Tombol 📋 copy link HawkFi di kolom Pool tabel 🏆 Scan Best Pool
@@ -155,8 +164,24 @@ def render_styles() -> None:
        scan") — tampil sejajar tautan 🌊/🦅, tanpa bingkai tombol, dan
        kliknya murni JS clipboard (tidak memicu rerun Streamlit). */
     .pool-links .hawkfi-copy-btn {background:transparent;border:none;
-     padding:0;margin:0;font-size:.8rem;line-height:1;cursor:pointer;}
+     padding:0;margin:0;font-size:.9rem;line-height:1;cursor:pointer;}
     .pool-links .hawkfi-copy-btn:hover {transform:scale(1.15);}
+    /* Judul kolom tabel 🏆 Scan Best Pool (2026-09-19, permintaan user:
+       "agak perbesar tulisan table semuanya ya, tapi tidak mempengaruhi
+       tampilan"). Ukuran hurufnya dulu ditulis inline (font-size:0.72rem) di
+       best_pool_ui._render_best_table; sekarang jadi class supaya satu angka
+       (best_pool_ui.HEADER_FONT_SIZE) mengatur seluruh judul kolom dan
+       tidak ada style inline yang bisa disanitasi Streamlit. nowrap menjaga
+       judul tetap SATU baris walau hurufnya lebih besar — tinggi header (dan
+       jadi tinggi tiap baris) tidak berubah. */
+    .bp-col-title {font-size:0.82rem;color:#000000;font-weight:700;
+     text-align:center;white-space:nowrap;line-height:1.3;}
+    /* Kolom STRATEGY (paling kanan tabel utama, 2026-09-19): teksnya
+       verbatim permintaan user ("hybird 7030, bidask 3070 - full range") dan
+       panjang untuk satu kolom, jadi frasa "- full range" dijaga utuh
+       (nowrap) sementara bagian depannya boleh melipat — kolomnya tidak perlu
+       dilebarkan. */
+    .bp-strategy-range {white-space:nowrap;}
     /* Garis vertikal pembatas antar kolom tabel 🏆 Scan Best Pool
        (permintaan user 2026-09-17: "batasi per kolom dengan garis naik
        turun"). Marker tak-kasatmata .bp-cols-next disisipkan tepat SEBELUM
@@ -267,12 +292,19 @@ def render_styles() -> None:
       .lp-title { font-size: 1.02rem !important; }
       .lp-count, .lp-warn { font-size: 0.68rem !important; padding: 0.18rem 0.44rem !important; }
       /* Watchlist token: alamat panjang wrap */
-      .watchlist-symbol { font-size: 0.98rem !important; }
-      .watchlist-mint { font-size: 0.66rem !important; word-break: break-all !important; }
-      .watchlist-pair { font-size: 0.72rem !important; }
-      .watchlist-metric-value { font-size: 0.88rem !important; }
-      .watchlist-metric-sub { font-size: 0.6rem !important; }
-      .watchlist-links a, .pool-links a { font-size: 0.7rem !important; }
+      /* Ukuran huruf sel tabel di mobile ikut dinaikkan 2026-09-19 dengan
+         perbandingan yang sama seperti desktop (±+0.08…0.10rem) — permintaan
+         user: "agak perbesar tulisan table semuanya ya, tapi tidak
+         mempengaruhi tampilan". Di HP tiap baris tabel sudah jadi card 2
+         kolom (aturan di atas), jadi huruf yang sedikit lebih besar tidak
+         mengubah jumlah kolom per baris. Judul kolom tetap nowrap lewat
+         .bp-col-title (header tabel sendiri disembunyikan di mobile). */
+      .watchlist-symbol { font-size: 1.08rem !important; }
+      .watchlist-mint { font-size: 0.76rem !important; word-break: break-all !important; }
+      .watchlist-pair { font-size: 0.82rem !important; }
+      .watchlist-metric-value { font-size: 0.98rem !important; }
+      .watchlist-metric-sub { font-size: 0.7rem !important; }
+      .watchlist-links a, .pool-links a { font-size: 0.8rem !important; }
       /* Pool links di mobile rata kiri biar tidak mengambang */
       .pool-links { justify-content: flex-start !important; gap: 0.35rem !important; }
       /* Setiap baris dengan banyak kolom (Best Pool 15 kolom & LP 11 kolom)

@@ -46,13 +46,23 @@ Risk logic (konservatif, bisa di-tune):
 
 Verdict akhir = level terburuk dari semua rule. Warning text = gabungan alasan.
 
-Kolom **Bubble Map** di 🏆 Scan Best Pool menampilkan:
+Kolom **Bubble Map** di 🏆 Scan Best Pool dulu menampilkan:
 
 - Baris utama: ``X cluster · Top Y%``
 - Baris kecil: ``largest Z% (N wallet)`` atau ``score S``
 - Tooltip: rincian semua cluster + top holders + link v2 + alasan warning
 
 Tidak pernah membuang baris — hanya informasi, seperti RugCheck.
+
+**Update 2026-09-19 — kolomnya DIHAPUS** (permintaan user: *"hapus tentang
+bubblemap, sisakan hyperlink ke bubblemapnya saja"*). Yang tersisa di UI
+hanya tautan 🫧 ke ``v2.bubblemaps.io`` di kolom **Pool**
+(:func:`links.bubblemap_icon_link_html`), dan
+:func:`meteora_screener.scan_best_lane` tidak lagi memanggil
+:func:`attach_to_rows` (kwarg ``bubblemap`` default ``False``). Modul ini
+**tidak dihapus**: fungsinya tetap utuh dan bisa dinyalakan lagi dengan
+``scan_best_lane(..., bubblemap=True)`` — laporan cluster/holder-nya masih
+bisa dipakai tooling/skrip di luar tabel, hanya tidak ditampilkan lagi.
 """
 
 from __future__ import annotations

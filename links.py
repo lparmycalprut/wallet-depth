@@ -251,9 +251,32 @@ def bubblemaps_links_html(ca) -> str:
     url = bubblemaps_v2_url(ca)
     if not url:
         return ""
-    import html as _html
     href = _html.escape(url, quote=True)
-    return f'<a href="{href}" target="_blank" rel="noopener noreferrer" title="Buka Bubble Map di v2.bubblemaps.io">🫧 Bubble</a>'
+    return (f'<a href="{href}" target="_blank" rel="noopener noreferrer" '
+            f'title="Buka Bubble Map di v2.bubblemaps.io">🫧 Bubble</a>')
+
+
+def bubblemap_icon_link_html(ca, *, url: str = "") -> str:
+    """Anchor 🫧 **saja** (ikon, tanpa teks) ke v2.bubblemaps.io.
+
+    Permintaan user 2026-09-19: *"hapus tentang bubblemap, sisakan hyperlink
+    ke bubblemapnya saja"* — kolom **Bubble Map** di 🏆 Scan Best Pool
+    (cluster + holder terbesar + warning, dipasang 2026-09-18) dihapus, dan
+    yang tersisa hanya tautan ini, sekarang duduk di kolom **Pool** bersama
+    🌊Meteora / 🦅HawkFi / 📋 copy link HawkFi.
+
+    ``url`` boleh diisi URL dari laporan bubblemaps yang sudah tersimpan di
+    baris hasil scan lama (``row["bubblemap"]["url"]``); bila kosong URL-nya
+    dihitung dari mint lewat :func:`bubblemaps_v2_url`. Mint kosong → string
+    kosong (tidak ada tautan yang bisa dibuat).
+    """
+    target = str(url or "").strip() or bubblemaps_v2_url(ca)
+    if not target:
+        return ""
+    href = _html.escape(target, quote=True)
+    return (f'<a class="bubblemap-link" href="{href}" target="_blank" '
+            f'rel="noopener noreferrer" '
+            f'title="Buka Bubble Map di v2.bubblemaps.io">🫧</a>')
 
 
 def external_links_html(ca) -> str:

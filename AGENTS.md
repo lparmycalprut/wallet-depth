@@ -1,5 +1,57 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-19 (terbaru) — 🏆 Best Pool: kolom Bubble Map dihapus (tinggal tautan 🫧), kolom **STRATEGY** paling kanan, tulisan tabel diperbesar
+
+- Permintaan user (verbatim, 3 dalam satu batch): *"hapus tentang bubblemap,
+  sisakan hyperlink ke bubblemapnya saja"* · *"Kasih kolom baru dipaling kanan
+  STRATEGY — jika total likuiditas >500K, dikolom strategy ditulis, hybird
+  7030, bidask 3070 - full range — jika total likuiditas <500K, dikolom
+  strategy ditulis, hybird 5050, bidask - full range"* · *"agak perbesar
+  tulisan table semuanya ya, tapi tidak mempengaruhi tampilan"*.
+- **Klarifikasi ke user (3 pertanyaan, dijawab)** — (1) tautan 🫧 ditaruh di
+  kolom **Pool** (kolom Bubble Map tidak dipertahankan sebagai kolom tipis);
+  (2) teks sisi `< $500K` **verbatim** `hybird 5050, bidask - full range`
+  (tanpa angka `3070`, sesuai tulisan user); (3) kolom STRATEGY **hanya di
+  tabel utama** (pool lolos) — tabel "▶ N pool dilewati" tetap 13 kolom.
+- **Perubahan.** `best_pool_ui._render_best_table` kehilangan kolom Bubble Map
+  (sel cluster/top holder/warning + impor `bubblemaps` dihapus dari modul UI)
+  dan mendapat kwarg baru ``show_strategy``; judul/lebar kolom dibaca dari
+  ``_lane_titles(lane, show_strategy=…)`` + ``_col_spec(show_strategy=…)``
+  (13 kolom dasar + ``STRATEGY_COL_WIDTH`` 1,35; ``POOL_COL_INDEX`` 12
+  menggantikan ``cols[13]`` hardcoded). `links.bubblemap_icon_link_html(ca,
+  url=…)` = satu-satunya tautan yang tersisa (URL laporan baris scan lama
+  dipakai ulang bila ada). `gmgn_liquidity` memegang aturan STRATEGY
+  (``STRATEGY_LIQ_HIGH``/``STRATEGY_LIQ_LOW``, ``row_total_liquidity_usd``,
+  ``strategy_for_liquidity``, ``row_strategy``) — angkanya angka yang sama
+  dengan kolom RugCheck, ambangnya ``MIN_TOTAL_LIQ_USD``; ``> ambang`` ambil
+  70/30, sisanya (di bawah, **tepat** ambang, tak terukur) 50/50 — batas
+  "tepat ambang" mengikuti ``liq_is_green`` (strict) supaya tiap baris pasti
+  dapat saran, bukan sel kosong. ``meteora_screener.scan_best_lane``
+  (dan wrapper ``scan_best_meteora``) kini ``bubblemap=False`` default-nya —
+  kwarg-nya masih bisa dinyalakan (pola ``safeguard=True``). Perbesar tulisan:
+  ``best_pool_ui.HEADER_FONT_SIZE`` 0,72 → **0,82rem** (dipakai class
+  ``.bp-col-title`` di ``dashboard_components.render_styles``, sekarang
+  nowrap) + nilai sel 0,95 → 1,05rem, baris kecil 0,65 → 0,74rem,
+  simbol/pair/mint/tautan ikut naik, override mobile ikut naik (0,88 → 0,98 /
+  0,6 → 0,7rem) — **lebar kolom dan tata letak tidak disentuh** (``_COL_SPEC``
+  tetap 13 bobot lama).
+- **Teks UI.** Tooltip card kini menulis aturan generik ("split hybird 70/30
+  (bidask 30/70)" / "50/50") supaya body halaman tidak lagi memuat teks kedua
+  cabang — kalau keduanya ikut ter-render di tooltip, tes sel tidak bisa
+  membuktikan baris mana dapat cabang mana. Rekap caption "N tanpa Bubble Map"
+  dihapus bersama kolomnya; tombol scan menyebut kolom STRATEGY.
+- **Tes.** `tests/test_best_pool_scan.py`: kelas baru
+  ``StrategyColumnTest`` (5 tes + 1 tes CSS/tata letak), ``StrategyRuleTest``
+  (6), ``BubbleMapColumnRemovedTest`` (4), ``BubbleMapScanDefaultTest`` (2);
+  ``test_urutan_kolom_2026_09_17`` diperbarui ke 14 kolom utama / 13 kolom
+  tabel dilewati; ``tests/test_meteora_active_range.py::BestPoolColumnsTest``
+  ikut 14/13 dengan STRATEGY di indeks 13; `tests/test_links.py` +3 tes untuk
+  ``bubblemap_icon_link_html`` (URL bersih disimpan, escape sekali di href).
+  Suite ``python -m unittest discover -s tests`` → **1192 tes, 18 failed +
+  1 error** — 3 tes kolom yang gagal di HEAD (13 vs 14) kini hijau, sisanya
+  **nama kegagalan identik baseline** (1119 tes, 21 failed + 1 error), jadi
+  bukan regresi.
+
 ## Update 2026-09-17 (terbaru) — 🚨 background STOP DEGEN merah, tulisan tetap biru
 
 - Permintaan user (verbatim): *"background nya ganti warna merah, tulisan
