@@ -54,7 +54,16 @@ dari 100, kasih warna hijau"*. Yang di-pin di file ini:
   kolom) dengan teks verbatim dari ambang likuiditas GMGN — > $500K
   ``hybird 7030, bidask 3070 - full range``, selain itu ``hybird 5050,
   bidask - full range``; ukuran huruf tabel (judul kolom + isi sel)
-  diperbesar tanpa mengubah lebar kolom/tata letak.
+  diperbesar tanpa mengubah lebar kolom/tata letak;
+- **penempatan sel 2026-09-21** (permintaan user: *"hybird 5050, bidask -
+  full range — ini taruh di kolom strategy, bukan di pool"*): sel
+  **STRATEGY** ditulis ke indeks kolomnya sendiri
+  (``best_pool_ui.STRATEGY_COL_INDEX``, tepat di kanan ``POOL_COL_INDEX``) —
+  versi awal mengirimnya lewat daftar ``cells`` yang dirender
+  ``enumerate(cells, start=1)`` sampai ``POOL_COL_INDEX`` saja, sehingga teks
+  strategi menumpuk di kolom **Pool** dan kolom **STRATEGY** kosong
+  (:class:`StrategyColumnPlacementTest` memeriksa penempatan per indeks
+  kolom lewat ``streamlit`` palsu).
 """
 from __future__ import annotations
 
@@ -1964,6 +1973,33 @@ class StrategyColumnTest(BestPoolCardTest):
         self.assertIn("liq \u2014 \u00b7 $500K", body)
         self.assertIn("likuiditas total tidak terbaca", body)
 
+    def test_sel_strategy_di_kolom_strategy_bukan_di_kolom_pool(self):
+        """Penempatan sel 2026-09-21: *"ini taruh di kolom strategy, bukan di
+        pool"*.
+
+        ``app.markdown`` mengumpulkan elemen per kolom kiri→kanan, jadi urutan
+        di body = urutan visual: tautan kolom **Pool** harus muncul SEBELUM
+        sel **STRATEGY**. Versi awal (2026-09-19) menaruh selnya menumpuk di
+        kolom Pool (dua markdown dalam satu kolom) sehingga selnya justru
+        muncul sebelum ``pool-links`` dan kolom STRATEGY kosong.
+        """
+        app = self._app()
+        app.session_state["best_pool_scan_24h"] = self._result("24h", [
+            _row(pool_address="PoolTipis", ca="MintTipis", symbol="TIPIS",
+                 rugcheck=self._laporan(self.LIQ_RENDAH)),
+        ])
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        sel = ('<div class="watchlist-metric-value">hybird 5050, bidask'
+               '<span class="bp-strategy-range"> - full range</span></div>')
+        self.assertEqual(body.count(sel), 1)
+        pool_idx = body.index('<div class="pool-links">')
+        strategy_idx = body.index(sel)
+        self.assertLess(pool_idx, strategy_idx,
+                        "sel STRATEGY harus di kanan kolom Pool, bukan "
+                        "menumpuk di dalamnya")
+
     def test_tabel_dilewati_tanpa_kolom_strategy(self):
         """Tabel "▶ N pool dilewati" tetap 13 kolom (konfirmasi user)."""
         app = self._app()
@@ -2037,6 +2073,120 @@ class StrategyColumnTest(BestPoolCardTest):
         self.assertIn("hybird 5050, bidask - full range", tip)
         # Ambangnya tidak disalin di UI — dibaca dari konstanta GMGN.
         self.assertIn("$500K", tip)
+
+
+class StrategyColumnPlacementTest(unittest.TestCase):
+    """Sel STRATEGY harus ditulis ke kolom STRATEGY — bukan menumpuk di Pool.
+
+    Permintaan user 2026-09-21 (verbatim): *"hybird 5050, bidask - full range
+    — ini taruh di kolom strategy, bukan di pool"*. Versi awal kolom
+    (2026-09-19) mengirim selnya lewat daftar ``cells`` yang dirender
+    ``enumerate(cells, start=1)`` — daftar itu hanya sampai
+    ``POOL_COL_INDEX``, jadi teks strategi menumpuk di kolom **Pool** (dua
+    elemen dalam satu kolom) sementara kolom **STRATEGY** kosong.
+
+    Tes ini memasang ``streamlit`` palsu yang merekam markdown per indeks
+    kolom — penempatannya jadi diuji persis per kolom, tanpa AppTest dan
+    tanpa runtime Streamlit.
+    """
+
+    def _render(self, rows, **kw):
+        """``_render_best_table`` dengan streamlit palsu.
+
+        Return: daftar per pemanggilan ``st.columns`` — ``[0]`` baris judul,
+        ``[1..]`` baris data; tiap baris = list objek kolom ber-``.html``.
+        """
+        import types
+
+        panggilan = []
+
+        class _Kolom:
+            def __init__(self, indeks):
+                self.indeks = indeks
+                self.html = []
+
+            def markdown(self, html, **_kw):
+                self.html.append(html)
+
+        def _columns(spec):
+            baris = [_Kolom(i) for i in range(len(spec))]
+            panggilan.append(baris)
+            return baris
+
+        st_palsu = types.ModuleType("streamlit")
+        st_palsu.columns = _columns
+        st_palsu.markdown = lambda *a, **k: None
+        args = {"lane": "24h", "mark_tops": False}
+        args.update(kw)
+        with mock.patch.dict("sys.modules", {"streamlit": st_palsu}):
+            bp._render_best_table(rows, **args)
+        return panggilan
+
+    def test_index_kolom_strategy_tepat_di_kanan_pool(self):
+        """``STRATEGY_COL_INDEX`` = kolom ke-14, tepat di kanan kolom Pool."""
+        self.assertEqual(bp.POOL_COL_INDEX, 12)
+        self.assertEqual(bp.STRATEGY_COL_INDEX, bp.POOL_COL_INDEX + 1)
+        titles = bp._lane_titles("24h")
+        self.assertEqual(titles[bp.POOL_COL_INDEX], "Pool")
+        self.assertEqual(titles[bp.STRATEGY_COL_INDEX], "STRATEGY")
+        self.assertEqual(bp.STRATEGY_COL_TITLE, titles[bp.STRATEGY_COL_INDEX])
+
+    def test_sel_strategy_hanya_di_kolom_strategy(self):
+        """Kolom Pool berisi tautan pool saja; kolom STRATEGY berisi selnya."""
+        rows = [_row(pool_address="PoolTipis", ca="MintTipis", symbol="TIPIS")]
+        header, baris = self._render(rows)[:2]
+        # Judul kolom masing-masing di kolomnya sendiri.
+        self.assertIn(">Pool<", header[bp.POOL_COL_INDEX].html[0])
+        self.assertIn(">STRATEGY<", header[bp.STRATEGY_COL_INDEX].html[0])
+        # Kolom Pool: SATU elemen (tautan pool) — bug lama menumpuk sel
+        # strategi di sini sehingga kolomnya punya dua elemen.
+        isi_pool = "".join(baris[bp.POOL_COL_INDEX].html)
+        self.assertEqual(len(baris[bp.POOL_COL_INDEX].html), 1)
+        self.assertIn('<div class="pool-links">', isi_pool)
+        self.assertNotIn("hybird", isi_pool)
+        self.assertNotIn("bp-strategy-range", isi_pool)
+        # Kolom STRATEGY: SATU elemen, teks verbatim cabang rendah (baris
+        # tanpa laporan likuiditas = tak terukur → cabang < $500K).
+        isi_strategy = "".join(baris[bp.STRATEGY_COL_INDEX].html)
+        self.assertEqual(len(baris[bp.STRATEGY_COL_INDEX].html), 1)
+        self.assertIn('<div class="watchlist-metric-value">hybird 5050, bidask'
+                      '<span class="bp-strategy-range"> - full range</span>'
+                      '</div>', isi_strategy)
+        self.assertNotIn("pool-links", isi_strategy)
+        # Tidak ada kolom lain yang boleh memuat teks strategi.
+        for indeks, kolom in enumerate(baris):
+            if indeks != bp.STRATEGY_COL_INDEX:
+                self.assertNotIn("hybird", "".join(kolom.html),
+                                 f"kolom {indeks} tidak boleh memuat teks "
+                                 "strategi")
+
+    def test_sel_strategy_cabang_tinggi_juga_di_kolom_strategy(self):
+        """Cabang > $500K juga di kolom STRATEGY, bukan di kolom Pool."""
+        rows = [_row(pool_address="PoolGede", ca="MintGede", symbol="GEDE",
+                     rugcheck={"ok": True, "verdict": "AMAN",
+                               "liquidity_total_usd": 884_912.0,
+                               "liquidity_source": "gmgn"})]
+        _header, baris = self._render(rows)[:2]
+        isi_pool = "".join(baris[bp.POOL_COL_INDEX].html)
+        isi_strategy = "".join(baris[bp.STRATEGY_COL_INDEX].html)
+        self.assertNotIn("hybird", isi_pool)
+        self.assertIn('<div class="watchlist-metric-value">hybird 7030, '
+                      'bidask 3070<span class="bp-strategy-range"> '
+                      '- full range</span></div>', isi_strategy)
+
+    def test_tabel_dilewati_tanpa_sel_strategy_sama_sekali(self):
+        """``show_strategy=False`` (tabel dilewati): 13 kolom, teks strategi
+        tidak muncul di kolom mana pun — termasuk bukan di kolom Pool."""
+        rows = [_row(pool_address="PoolSepi", ca="MintSepi", symbol="SEPI")]
+        panggilan = self._render(rows, show_strategy=False)
+        self.assertEqual(len(panggilan), 2)  # header + satu baris data
+        for baris in panggilan:
+            self.assertEqual(len(baris), 13)
+            isi_semua = "".join("".join(kol.html) for kol in baris)
+            self.assertNotIn("hybird", isi_semua)
+            self.assertNotIn("bp-strategy-range", isi_semua)
+        isi_pool = "".join(panggilan[1][bp.POOL_COL_INDEX].html)
+        self.assertIn('<div class="pool-links">', isi_pool)
 
 
 class StrategyRuleTest(unittest.TestCase):

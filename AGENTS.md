@@ -1,6 +1,43 @@
 # AGENTS.md — Wallet Depth
 
-## Update 2026-09-19 (terbaru) — 🏆 Best Pool: kolom Bubble Map dihapus (tinggal tautan 🫧), kolom **STRATEGY** paling kanan, tulisan tabel diperbesar
+## Update 2026-09-21 (terbaru) — 🏆 Best Pool: sel STRATEGY pindah ke kolom **STRATEGY** (tidak lagi menumpuk di kolom Pool)
+
+- Permintaan user (verbatim): *"hybird 5050, bidask - full range — ini taruh
+  di kolom strategy, bukan di pool"*.
+- **Akar masalah (bug penempatan sejak 2026-09-19).** Header kolom
+  **STRATEGY** memang sudah ada di paling kanan, tapi selnya dikirim lewat
+  daftar ``cells`` yang dirender ``enumerate(cells, start=1)`` — daftar itu
+  berisi 11 sel metrik (F/V … RugCheck) sehingga sel strategi jatuh ke
+  ``cols[12]`` = kolom **Pool** dan menumpuk dengan tautan
+  🌊Meteora/🦅HawkFi/📋/🫧 (Streamlit menumpuk elemen dalam satu kolom, bukan
+  menimpa), sementara kolom STRATEGY (``cols[13]``) kosong sama sekali.
+  Itulah yang dilihat user: teks `hybird 5050, bidask - full range` berdiri
+  di dalam kolom **Pool**.
+- **Perbaikan.** Konstanta baru ``best_pool_ui.STRATEGY_COL_INDEX``
+  (= ``POOL_COL_INDEX + 1`` = 13); sel :func:`best_pool_ui._strategy_cell`
+  kini **ditulis eksplisit** ke ``cols[STRATEGY_COL_INDEX]`` setelah sel Pool
+  (bukan lewat daftar ``cells``), hanya bila ``show_strategy=True`` — tabel
+  utama 14 kolom, tabel "▶ N pool dilewati" tetap 13 kolom tanpa sel
+  strategi. Kolom Pool kembali memuat **satu** elemen (tautan saja). Teks
+  verbatim, aturan ambang $500K, jumlah/lebar kolom, dan urutan header tidak
+  berubah sama sekali — yang diperbaiki hanya penempatan sel.
+- **Tes.** `tests/test_best_pool_scan.py`: kelas baru
+  ``StrategyColumnPlacementTest`` (4 tes) memasang ``streamlit`` palsu yang
+  merekam markdown **per indeks kolom** — penempatan diuji persis per kolom
+  tanpa AppTest/runtime: kolom Pool harus berisi `pool-links` saja (tanpa
+  "hybird"), kolom STRATEGY harus memuat sel verbatimnya
+  (`hybird 5050, bidask` maupun cabang `hybird 7030, bidask 3070`), dan
+  tabel ``show_strategy=False`` tidak memuat teks strategi di kolom mana
+  pun; + 1 tes AppTest baru di ``StrategyColumnTest``
+  (``test_sel_strategy_di_kolom_strategy_bukan_di_kolom_pool`` — urutan
+  kiri→kanan body: ``pool-links`` harus sebelum sel strategi). Diverifikasi
+  3 dari 5 tes baru **gagal pada kode lama** (bug-nya benar-benar tertangkap,
+  bukan tes hiasan). Suite ``python -m unittest discover -s tests`` →
+  **1197 tes, 18 failed + 1 error** — jumlah & nama kegagalan identik
+  baseline 2026-09-19 (1192 tes, 18 failed + 1 error; semua di luar
+  `test_best_pool_scan`), jadi bukan regresi.
+
+## Update 2026-09-19 — 🏆 Best Pool: kolom Bubble Map dihapus (tinggal tautan 🫧), kolom **STRATEGY** paling kanan, tulisan tabel diperbesar
 
 - Permintaan user (verbatim, 3 dalam satu batch): *"hapus tentang bubblemap,
   sisakan hyperlink ke bubblemapnya saja"* · *"Kasih kolom baru dipaling kanan

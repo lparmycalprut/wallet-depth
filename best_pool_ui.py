@@ -115,8 +115,14 @@ ada satu tabel dan hasil 30M lama tidak pernah bisa muncul; key gabungan lama
   (teks verbatim permintaan user). Kolom STRATEGY **hanya ada di tabel
   utama** — tabel "▶ N pool dilewati" tetap 13 kolom tanpa STRATEGY
   (konfirmasi user 2026-09-19) — dan seperti kolom informasi lain tidak
-  pernah membuang baris; **tulisan tabel diperbesar** (*"agak perbesar
-  tulisan table semuanya ya, tapi tidak mempengaruhi tampilan"*):
+  pernah membuang baris. **Penempatan sel-nya diperbaiki 2026-09-21**
+  (permintaan user: *"hybird 5050, bidask - full range — ini taruh di kolom
+  strategy, bukan di pool"*): sel STRATEGY kini ditulis eksplisit ke
+  :data:`STRATEGY_COL_INDEX` (di kanan kolom Pool); versi awal 2026-09-19
+  menaruhnya lewat ``enumerate(cells)`` yang berhenti di ``POOL_COL_INDEX``
+  sehingga teksnya menumpuk di kolom **Pool** dan kolom STRATEGY kosong;
+  **tulisan tabel diperbesar** (*"agak perbesar tulisan table semuanya ya,
+  tapi tidak mempengaruhi tampilan"*):
   :data:`HEADER_FONT_SIZE` 0.72rem → 0.82rem + class CSS ``.bp-*`` di
   ``dashboard_components.render_styles`` (nilai sel 0.95 → 1.05rem, baris
   kecil 0.65 → 0.74rem, simbol/pair/mint/tautan ikut naik) — hanya ukuran
@@ -375,6 +381,13 @@ _COL_SPEC = [1.4, 1.0, 0.75, 0.58, 0.95, 0.5, 0.58, 0.55, 0.68, 0.8,
 
 #: Indeks kolom **Pool** di ``_COL_SPEC`` (kolom terakhir tabel "dilewati").
 POOL_COL_INDEX = 12
+
+#: Indeks kolom **STRATEGY** (paling kanan, hanya tabel utama) — tepat di
+#: kanan ``POOL_COL_INDEX``. Sel strategi DITULIS langsung ke indeks ini,
+#: bukan lewat ``enumerate(cells, start=1)`` yang hanya sampai kolom Pool
+#: (permintaan user 2026-09-21: *"hybird 5050, bidask - full range — ini
+#: taruh di kolom strategy, bukan di pool"*).
+STRATEGY_COL_INDEX = POOL_COL_INDEX + 1
 
 #: Bobot kolom **STRATEGY** (paling kanan, hanya tabel utama — 2026-09-19).
 STRATEGY_COL_WIDTH = 1.35
@@ -856,7 +869,11 @@ def _render_best_table(rows: list, *, lane: str,
     (:func:`_strategy_cell`) dibaca dari :func:`gmgn_liquidity.row_strategy`:
     likuiditas total > $500K → ``hybird 7030, bidask 3070 - full range``,
     selain itu → ``hybird 5050, bidask - full range`` (verbatim permintaan
-    user). Ukuran huruf seluruh tabel **diperbesar** hari yang sama
+    user). Sel-nya ditulis ke :data:`STRATEGY_COL_INDEX` (paling kanan, di
+    kanan kolom Pool) secara eksplisit — permintaan user 2026-09-21: *"ini
+    taruh di kolom strategy, bukan di pool"* (dulu ikut daftar ``cells`` dan
+    menumpuk di kolom Pool). Ukuran huruf seluruh tabel **diperbesar** hari
+    yang sama
     (*"agak perbesar tulisan table semuanya ya, tapi tidak mempengaruhi
     tampilan"*) — judul kolom lewat :data:`HEADER_FONT_SIZE`, isi sel lewat
     class ``.bp-*`` di ``dashboard_components.render_styles``; lebar kolom
@@ -1071,13 +1088,6 @@ def _render_best_table(rows: list, *, lane: str,
              "tampil)"),
             (rug_value, rug_sub, rug_tip),
         )
-        if show_strategy:
-            # Kolom paling kanan (permintaan user 2026-09-19: "Kasih kolom
-            # baru dipaling kanan STRATEGY") — hanya di tabel utama; tabel
-            # "▶ N pool dilewati" merender tanpa kolom ini
-            # (``show_strategy=False``) sehingga jumlah selnya selalu sama
-            # dengan jumlah judul/lebar kolom di atas.
-            cells = cells + (_strategy_cell(row),)
         for position, (value, sub, tip) in enumerate(cells, start=1):
             cols[position].markdown(_cell(value, sub, tip),
                                     unsafe_allow_html=True)
@@ -1102,6 +1112,20 @@ def _render_best_table(rows: list, *, lane: str,
         cols[POOL_COL_INDEX].markdown(
             f'<div class="pool-links">{pool_html}</div>',
             unsafe_allow_html=True)
+        if show_strategy:
+            # Kolom **STRATEGY** paling kanan (permintaan user 2026-09-19:
+            # "Kasih kolom baru dipaling kanan STRATEGY") — hanya di tabel
+            # utama; tabel "▶ N pool dilewati" (``show_strategy=False``)
+            # dirender tanpa kolom ini. Sel-nya DITULIS eksplisit ke
+            # ``STRATEGY_COL_INDEX`` (di kanan kolom Pool), JANGAN lewat
+            # daftar ``cells`` — ``enumerate(cells, start=1)`` hanya sampai
+            # ``POOL_COL_INDEX``, jadi sel yang dilewatkan lewat daftar itu
+            # menumpuk di kolom Pool dan kolom STRATEGY-nya kosong
+            # (permintaan user 2026-09-21: *"hybird 5050, bidask - full
+            # range — ini taruh di kolom strategy, bukan di pool"*).
+            value, sub, tip = _strategy_cell(row)
+            cols[STRATEGY_COL_INDEX].markdown(_cell(value, sub, tip),
+                                              unsafe_allow_html=True)
         st.markdown('<hr style="margin:0.25rem 0;border-color:#cbd5e1;">',
                     unsafe_allow_html=True)
 
