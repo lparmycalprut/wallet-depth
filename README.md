@@ -312,26 +312,21 @@ tapi yang dijalankan tetap satu listing 24H.
   volatility tidak bisa membuktikan fee lebih besar) **dan dibuang dari
   listing seluruhnya** (lanjutan hari yang sama, permintaan user: *"jika
   volatility 0 jangan tampilkan, karena tidak ada pergerakan disitu"* —
-  `meteora_screener.row_volatility_zero()`): tidak masuk tabel lolos, tidak
-  masuk listing "dilewati" 24H, tidak dihitung di pill/caption
-  (`hidden_metric`); jumlah pembuangannya hanya tercatat di
-  `dropped_volatility` untuk audit. Metrik hilang / nonfinite / negatif
-  gugur dan tetap terlihat di listing "dilewati" 24H. Kandidat gugur lain
-  **tidak pernah** membuat request holder — `scan_best_lane()` menolak mereka
-  sebelum `enrich_pools()` (kuota Helius aman) dan menyimpannya di
-  `hidden_rows` + alasan di `best_gaps`. **Volat dan Top10 memakai jalur yang
-  sama** (2026-09-16): teks gap dibaca dari konstanta
-  (`24H: volatility 0.5% < 1% — pool nyaris tidak bergerak`,
-  `24H: volatility 42% > 10% — pergerakan lebih besar dari fee`,
-  `24H: Top10 20% ≥ 20% — holder terpusat`), jadi mengubah ambang mengubah
-  angka di tooltip/label/log sekaligus. Baris **tanpa** angka Top10 (`None`,
-  hasil scan lama / payload API tanpa data) tidak ikut dibuang karena tidak ada
-  bukti konsentrasi, dan tampil dengan `—` di kolom Top10. Rule ini hidup di
-  `row_best_gaps`, jadi ia juga membersihkan hasil scan lama yang sudah
-  tersimpan saat card dirender ulang (tanpa scan ulang). Kandidat gagal dibuka
-  lewat tombol **▶ N pool dilewati** (barisnya ditandai merah `gugur: …` di sel
-  F/V); baris yang lolos menulis **`<angka>× · lolos ≥ 5×`** di sel yang sama
-  (format satu desimal dari `format_fv_ratio`, jadi `5×` tampil `5,0×`).
+  `meteora_screener.row_volatility_zero()`). **Update 2026-09-22**: hasil yang
+  gugur karena **Top10** (`Top10 >= 20%`) atau **volatility** (0, < 1%, > 10%)
+  **langsung disembunyikan total, tidak ditampilkan di mana pun**
+  (`meteora_screener.row_best_dropped()`) — tidak masuk tabel lolos, tidak
+  masuk listing "dilewati" 24H, dan tidak dihitung di pill/caption
+  (`hidden_metric`). Hanya kandidat gagal F/V (dan metrik tidak valid) yang
+  masuk listing "dilewati". **Di hasil pool yang disembunyikan, baris
+  diurutkan menurut: (1) F/V terbesar, (2) Fee/TVL terbesar**
+  (`meteora_screener.sort_hidden_best_rows()`), sementara tabel utama tetap
+  mendahulukan Fee/TVL terbesar baru kelipatan F/V (`sort_best_rows()`).
+  Kandidat gugur lain **tidak pernah** membuat request holder —
+  `scan_best_lane()` menolak mereka sebelum `enrich_pools()` (kuota Helius aman).
+  Kandidat gagal F/V dibuka lewat tombol **▶ N pool dilewati** (barisnya ditandai
+  merah `gugur: F/V < 5×` di sel F/V); baris yang lolos menulis **`<angka>× · lolos ≥ 5×`**
+  di sel yang sama (format satu desimal dari `format_fv_ratio`, jadi `5×` tampil `5,0×`).
 - **Query API Meteora** (`category=top`, `page_size=50`) —
   `meteora_screener.best_filter_by()`:
   **`base_token_has_critical_warnings=false&&quote_token_has_critical_warnings=false&&pool_type=dlmm&&active_tvl>=50000`**.

@@ -174,14 +174,10 @@ class LaneEnrichmentTest(unittest.TestCase):
         result = self._scan('24h', pools, calls)
         self.assertEqual(calls, [[('24h', 'BATAS')]])
         self.assertEqual([r['pool_address'] for r in result['rows']], ['BATAS'])
-        self.assertEqual(sorted(r['pool_address'] for r in result['hidden_rows']),
-                         ['GEBUDEG', 'SEPI'])
-        self.assertEqual({tuple(r['best_gaps']) for r in result['hidden_rows']},
-                         {('24H: volatility 0.5% < 1% — pool nyaris tidak '
-                           'bergerak',),
-                          ('24H: volatility 42% > 10% — pergerakan lebih besar '
-                           'dari fee',)})
-        self.assertEqual(result['hidden_metric'], 2)
+        # Gugur volatility langsung disembunyikan total (tidak masuk hidden_rows)
+        self.assertEqual(result['hidden_rows'], [])
+        self.assertEqual(result['hidden_metric'], 0)
+        self.assertEqual(result['dropped_volatility'], 2)
 
     def test_top10_20_ke_atas_tanpa_scan_holder(self):
         pools = [_pool('BERSIH', 'MintA', ratio=60, volatility=6.0, top10=4.0),
@@ -190,9 +186,10 @@ class LaneEnrichmentTest(unittest.TestCase):
         calls: list = []
         result = self._scan('24h', pools, calls)
         self.assertEqual(calls, [[('24h', 'BERSIH')]])
-        self.assertEqual(sorted(r['pool_address'] for r in result['hidden_rows']),
-                         ['PAS', 'PUSAT'])
-        self.assertEqual(result['hidden_metric'], 2)
+        # Gugur Top10 langsung disembunyikan total (tidak masuk hidden_rows)
+        self.assertEqual(result['hidden_rows'], [])
+        self.assertEqual(result['hidden_metric'], 0)
+        self.assertEqual(result['dropped_top10'], 2)
 
     def test_satu_tombol_hanya_ambil_satu_timeframe(self):
         """Apa pun alias yang dikirim, fetch-nya SATU kali dan window 24h."""

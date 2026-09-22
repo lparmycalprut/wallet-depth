@@ -1,6 +1,27 @@
 # AGENTS.md — Wallet Depth
 
-## Update 2026-09-21 (terbaru) — 🏆 Best Pool: sel STRATEGY pindah ke kolom **STRATEGY** (tidak lagi menumpuk di kolom Pool)
+## Update 2026-09-22 (terbaru) — 🏆 Best Pool: gugur Top10 & volatility disembunyikan total + tabel disembunyikan urut F/V terbesar lalu Fee/TVL terbesar
+
+- **Permintaan user (verbatim):**
+  1. *"hasil yang gugur karena gugur: Top10, gugur: volatility langsung sembunyikan total, tidak ditampilkana dimanapun"*
+  2. *"di hasil pool yang disembunyikan, urutkan menurut F/V terbesar, Fee/TVL terbesar"*
+- **Penyembunyian Total Top10 & Volatility:**
+  - Pool yang gugur karena `Top10` (`Top10 >= 20%`) atau `volatility` (`volatility == 0`, `< 1%`, atau `> 10%`) tidak lagi masuk ke listing `hidden_rows` ("dilewati") dan tidak dihitung pada counter pill/caption `hidden_metric`.
+  - Fungsi `meteora_screener.row_best_dropped(row, *, lane=None)` mendeteksi pool yang gugur akibat alasan tersebut.
+  - Saringan ini diterapkan di `scan_best_lane()` (saat scan berjalan), `filter_best_rows()` (perhitungan counter), dan `best_pool_ui.render_best_pool_scan()` (memastikan data hasil scan lama di session state langsung bersih tanpa perlu scan ulang).
+- **Pengurutan Pool yang Disembunyikan:**
+  - Fungsi baru `meteora_screener.sort_hidden_best_rows(rows)` mengurutkan pool disembunyikan dengan prioritas:
+    1. **F/V terbesar** (tertinggi di atas)
+    2. **Fee/TVL terbesar** (tertinggi di atas)
+    3. Tie-breakers: volume/active TVL terbesar, dust %MC terkecil, simbol A-Z.
+  - Tabel utama yang lolos seleksi tetap memakai `sort_best_rows()` (Fee/TVL terbesar → F/V terbesar).
+- **Tes & Verifikasi:**
+  - Unit test baru di `BestSortOrderTest`: `test_sort_hidden_best_rows_fv_terbesar_lalu_fee_tvl`, `test_sort_hidden_best_rows_none_fv_paling_bawah`.
+  - Unit test baru di `BestGatesTest`: `test_row_best_dropped_top10_dan_volatility`.
+  - UI integration test baru di `BestPoolCardTest`: `test_tabel_disembunyikan_urut_fv_lalu_fee_tvl_dan_top10_volat_lenyap`.
+  - 183 tes di `tests/test_best_pool_scan.py` dan `tests/test_best_fv_prefilter.py` lolos 100%.
+
+## Update 2026-09-21 — 🏆 Best Pool: sel STRATEGY pindah ke kolom **STRATEGY** (tidak lagi menumpuk di kolom Pool)
 
 - Permintaan user (verbatim): *"hybird 5050, bidask - full range — ini taruh
   di kolom strategy, bukan di pool"*.
