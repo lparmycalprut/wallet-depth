@@ -481,26 +481,31 @@ class BestGatesTest(unittest.TestCase):
                 ["24H: volatility 2% < 3% \u2014 pool nyaris tidak bergerak"])
 
     def test_saringan_lama_tetap_mati(self):
-        """Dust / volume / tier fee / LPs bukan syarat — volat + Top10 ya.
+        """Dust / volume / tier fee bukan syarat — volat + Top10 + LPs ya.
 
-        Kriteria 2026-09-13 menghapus saringan-saringan itu (permintaan user:
-        "dust% syaratnya hapus saja", "minimal volume" dicabut, chip BEST POOL
-        dihapus) — angka-angkanya boleh diacak, barisnya tetap lolos. Yang
+        Kriteria 2026-09-13 menghapus saringan dust% (permintaan user:
+        "dust% syaratnya hapus saja"), minimal volume, dan chip BEST POOL
+        — angka-angkanya boleh diacak, barisnya tetap lolos. Yang
         **jadi** saringan setelahnya: Top10 (2026-09-16,
         *"jika ada top 10 >= 20% jangan tampilkan"* — batas di sisi BUANG, jadi
-        fixture memakai 12%) dan rentang volatility 1%\u201310% (hari yang sama).
+        fixture memakai 12%), rentang volatility 1%\u201310% (hari yang sama),
+        dan LPs < 50 (baru — ``BEST_LPS_MIN`` 50, tepat 50 masih tampil).
         """
-        row = _row(active_tvl=0, total_lps=0, fee_pct=0.5, volume=0,
+        row = _row(active_tvl=0, total_lps=55, fee_pct=0.5, volume=0,
                    dust_count=99_999, analysis=_proof(9.9))
         self.assertEqual(ms.row_best_gaps(row), [])
         self.assertTrue(ms.row_dust_ok(row))
         self.assertTrue(ms.row_volume_ok(row))
         self.assertTrue(ms.row_top10_ok(row))
-        for gone in ("BEST_FEE_RATIO_MIN", "BEST_TOTAL_LPS_MIN"):
+        self.assertTrue(ms.row_lps_ok(row))
+        for gone in ("BEST_FEE_RATIO_MIN",):
             self.assertFalse(hasattr(ms, gone), gone)
+        self.assertTrue(hasattr(ms, "BEST_LPS_MIN"))
+        self.assertEqual(ms.BEST_LPS_MIN, 50.0)
         # Ambang lama masih ada sebagai konstanta mati: mengubahnya tidak boleh
         # mengubah kelolosan siapa pun. BEST_VOLATILITY_MIN LAMA tetap mati —
         # penyaringan volatilitas memakai BEST_VOL_SHOW_MIN/MAX yang baru.
+        # LPs 0 memang gugur sekarang — itu saringan baru, bukan lama.
         with mock.patch.object(ms, "BEST_DUST_MAX_PCT", 0.0), \
                 mock.patch.object(ms, "BEST_VOLATILITY_MIN", 99.0), \
                 mock.patch.object(ms, "BEST_VOLUME_24H_MIN", 1e12):
@@ -1794,8 +1799,13 @@ class BestPoolCardTest(unittest.TestCase):
 
         Permintaan user 2026-09-16: *"LPs jika lebih dari 100, kasih warna
         hijau jika tidak, tidak ada perubahan"*. Hijau ini **bukan**
-        ``TOP_HIGHLIGHT_COLOR`` (penanda tertinggi tabel) dan bukan saringan:
-        baris 12 LP tetap tampil.
+        ``TOP_HIGHLIGHT_COLOR`` (penanda tertinggi tabel) dan bukan saringan
+        hijau saja — saringan LPs < 50 (baru) tetap berlaku: baris < 50
+        **tidak ditampilkan** di mana pun (disembunyikan total), bukan
+        ditampilkan dengan angka merah. Row dengan 12 LP dulunya tampil;
+        sekarang gugur ``LPs 12 < 50`` dan dibuang total, jadi fixture
+        memakai 60 LP (di atas ambang saringan 50, di bawah ambang hijau 100)
+        untuk baris "tidak hijau".
         """
         app = self._app()
         app.session_state["best_pool_scan_24h"] = self._result("24h", [
@@ -1804,7 +1814,7 @@ class BestPoolCardTest(unittest.TestCase):
             _row(pool_address="PoolPas", ca="MintPas", symbol="TEPAT",
                  total_lps=100),
             _row(pool_address="PoolSepi", ca="MintSepi", symbol="SEPI",
-                 total_lps=12),
+                 total_lps=60),
             _row(pool_address="PoolTanpa", ca="MintTanpa", symbol="TANPA",
                  total_lps=None),
         ])
@@ -1816,9 +1826,9 @@ class BestPoolCardTest(unittest.TestCase):
         # hanya warnanya, angkanya tetap seperti sebelum batch ini.
         self.assertIn(hijau + "1234</span>", body)
         self.assertNotIn(hijau + "100</span>", body)
-        self.assertNotIn(hijau + "12</span>", body)
+        self.assertNotIn(hijau + "60</span>", body)
         self.assertIn('>100</div>', body)
-        self.assertIn(">12</div>", body)
+        self.assertIn(">60</div>", body)
         # tanpa angka tetap dash, tidak hijau, tidak error
         self.assertIn("lps", body)
 
@@ -2583,3 +2593,179 @@ class BestPoolCacheTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class LpsFilterTest(unittest.TestCase):
+    """Saringan baru LPs < 50 — disembunyikan total (baru)."""
+
+    def test_konstanta_dan_helper(self):
+        self.assertTrue(hasattr(ms, "BEST_LPS_MIN"))
+        self.assertEqual(float(ms.BEST_LPS_MIN), 50.0)
+        # Helpers ada dan berperilaku sesuai spec
+        self.assertTrue(hasattr(ms, "row_lps_count"))
+        self.assertTrue(hasattr(ms, "row_lps_under"))
+        self.assertTrue(hasattr(ms, "row_lps_ok"))
+        # None / hilang -> tidak dibuang
+        self.assertIsNone(ms.row_lps_count(None))
+        self.assertIsNone(ms.row_lps_count({}))
+        self.assertIsNone(ms.row_lps_under({}))
+        self.assertIsNone(ms.row_lps_under({"total_lps": None}))
+        self.assertIsNone(ms.row_lps_under({"total_lps": 50}))
+        self.assertIsNone(ms.row_lps_under({"total_lps": 50.0}))
+        self.assertIsNone(ms.row_lps_under({"total_lps": 1234}))
+        self.assertTrue(ms.row_lps_ok({"total_lps": 50}))
+        self.assertTrue(ms.row_lps_ok({"total_lps": None}))
+        self.assertTrue(ms.row_lps_ok({}))
+        # Di bawah ambang -> under mengembalikan nilainya
+        self.assertEqual(ms.row_lps_under({"total_lps": 49.9}), 49.9)
+        self.assertEqual(ms.row_lps_under({"total_lps": 0}), 0.0)
+        self.assertEqual(ms.row_lps_under({"total_lps": 12}), 12.0)
+        self.assertFalse(ms.row_lps_ok({"total_lps": 49.9}))
+        self.assertFalse(ms.row_lps_ok({"total_lps": 12}))
+
+    def test_row_best_gaps_lps(self):
+        # Tepat 50 masih tampil, 49 gugur
+        self.assertEqual(ms.row_best_gaps(_row(total_lps=50)), [])
+        self.assertEqual(ms.row_best_gaps(_row(total_lps=50.0)), [])
+        self.assertEqual(ms.row_best_gaps(_row(total_lps=51)), [])
+        self.assertEqual(
+            ms.row_best_gaps(_row(total_lps=49)),
+            ["24H: LPs 49 < 50 — LP terlalu sedikit"],
+        )
+        self.assertEqual(
+            ms.row_best_gaps(_row(total_lps=12, fee_active_tvl_ratio=40.0, volatility=6.2)),
+            ["24H: LPs 12 < 50 — LP terlalu sedikit"],
+        )
+        # None / hilang -> tidak gugur karena LPs
+        self.assertEqual(ms.row_best_gaps(_row(total_lps=None)), [])
+        self.assertEqual(ms.row_best_gaps(_row(total_lps=float("nan"))), [])  # _maybe_float -> None, jadi tidak LPs
+        # Format memakai float(BEST_LPS_MIN):g -> 50
+        with mock.patch.object(ms, "BEST_LPS_MIN", 30.0):
+            self.assertEqual(
+                ms.row_best_gaps(_row(total_lps=12)),
+                ["24H: LPs 12 < 30 — LP terlalu sedikit"],
+            )
+
+    def test_best_gap_categories_memuat_lps(self):
+        self.assertIn(("LPs", "LPs"), ms.BEST_GAP_CATEGORIES)
+        self.assertIn(("LP", "LPs"), ms.BEST_GAP_CATEGORIES)
+
+    def test_row_best_dropped_lps(self):
+        # Pool dengan LPs < 50 gugur dan row_best_dropped == True
+        self.assertTrue(ms.row_best_dropped(_row(total_lps=12)))
+        self.assertTrue(ms.row_best_dropped(_row(total_lps=49.9)))
+        self.assertTrue(ms.row_best_dropped(_row(total_lps=0)))
+        # Tepat 50 dan di atas -> tidak dropped karena LPs
+        self.assertFalse(ms.row_best_dropped(_row(total_lps=50)))
+        self.assertFalse(ms.row_best_dropped(_row(total_lps=88)))
+        # None -> tidak dropped
+        self.assertFalse(ms.row_best_dropped(_row(total_lps=None)))
+        self.assertFalse(ms.row_best_dropped(_row(total_lps=float("nan"))))
+        # Label kategori LPs juga menghasilkan dropped
+        row = _row(total_lps=12, best_gaps=["24H: LPs 12 < 50 — LP terlalu sedikit"])
+        self.assertEqual(ms.row_best_gap_label(row), "LPs")
+        self.assertTrue(ms.row_best_dropped(row))
+        row2 = _row(total_lps=12, best_gaps=["24H: LP 12 < 50 — LP terlalu sedikit"])
+        self.assertEqual(ms.row_best_gap_label(row2), "LPs")
+        self.assertTrue(ms.row_best_dropped(row2))
+
+    def test_filter_best_rows_menghitung_dropped_lps(self):
+        rows = [
+            _row(pool_address="LOLOS", total_lps=88),
+            _row(pool_address="LPS_TIPIS", total_lps=12),
+            _row(pool_address="GAGAL_FV", total_lps=88, fee_active_tvl_ratio=2.0, volatility=6.2),
+        ]
+        kept, hidden_metric, hidden_dust = ms.filter_best_rows(rows, lane="24h")
+        self.assertEqual([r["pool_address"] for r in kept], ["LOLOS"])
+        # hidden_metric hanya menghitung yang benar-benar ditampilkan di tabel disembunyikan (F/V)
+        # LPS_TIPIS dibuang total -> tidak dihitung
+        self.assertEqual(hidden_metric, 1)
+        self.assertEqual(hidden_dust, 0)
+
+    def test_scan_lane_membuang_lps_sebelum_holder(self):
+        # Pool dengan LPs <50 dibuang sebelum fetch holder dan tidak masuk hidden_rows
+        pools = [
+            _pool("P-OK", "MintOK", ratio=40.0, volatility=6.2, total_lps=88),
+            _pool("P-TIPIS", "MintTipis", ratio=40.0, volatility=6.2, total_lps=12),
+            _pool("P-PAS", "MintPas", ratio=40.0, volatility=6.2, total_lps=50),
+        ]
+        enrich_calls = []
+
+        def fake_enrich(rows, **kw):
+            enrich_calls.append([r["pool_address"] for r in rows])
+            return rows
+
+        def fake_fetch(**kw):
+            return pools
+
+        with mock.patch.object(ms, "fetch_best_pools", side_effect=fake_fetch), \
+             mock.patch.object(ms, "enrich_pools", side_effect=fake_enrich), \
+             mock.patch("gmgn_liquidity.attach_total_liquidity", side_effect=lambda rows, **kw: rows):
+            with mock.patch("rugchecker.attach_to_rows", side_effect=lambda rows, **kw: [dict(r, rugcheck={"ok": False}) for r in rows]):
+                result = ms.scan_best_lane("24h", max_wallets=2000)
+
+        # Hanya P-OK dan P-PAS (50) yang di-enrich, P-TIPIS (12) dibuang
+        self.assertEqual(enrich_calls, [["P-OK", "P-PAS"]])
+        self.assertEqual([r["pool_address"] for r in result["rows"]], ["P-OK", "P-PAS"])
+        self.assertEqual(result["hidden_rows"], [])
+        self.assertEqual(result["hidden_metric"], 0)
+        self.assertEqual(result["dropped_lps"], 1)
+        self.assertEqual(result["dropped_total"], 1)
+
+    def test_tooltip_menyebut_lps(self):
+        tip = bp.best_pool_tooltip()
+        self.assertIn("LPs < 50", tip)
+        self.assertIn("gugur", tip)
+        self.assertIn("disembunyikan total", tip)
+
+    def test_ui_tidak_menampilkan_lps_tipis(self):
+        # Tampilan tabel UI tidak memunculkan pool dengan LPs < 50 baik di tabel utama maupun di tabel dilewati.
+        # Simulate stored_rows containing old scan with LPs <50
+        if AppTest is None:
+            self.skipTest("streamlit not installed")
+        patches = (
+            mock.patch("watchlist.load_watchlist", side_effect=lambda **_kw: {}),
+            mock.patch("holder_status.load_holder_status", side_effect=lambda **_kw: {"updated_at": None, "tokens": {}}),
+            mock.patch("holder_history.load_holder_history", side_effect=lambda *a, **kw: {"tokens": {}}),
+            mock.patch("holder_history.pull_holder_history", return_value=None),
+        )
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        app = AppTest.from_file(APP, default_timeout=90).run()
+        app.session_state["best_pool_scan_24h"] = {
+            "rows": [
+                _row(pool_address="PoolOK", ca="MintOK", symbol="OK", total_lps=88),
+                _row(pool_address="PoolTipis", ca="MintTipis", symbol="TIPIS", total_lps=12),
+            ],
+            "hidden_rows": [
+                _row(pool_address="PoolHideOK", ca="MintHideOK", symbol="HIDEOK", total_lps=88, fee_active_tvl_ratio=2.0, volatility=6.2),
+                _row(pool_address="PoolHideTipis", ca="MintHideTipis", symbol="HIDETIPIS", total_lps=12, fee_active_tvl_ratio=2.0, volatility=6.2),
+            ],
+            "error": "",
+            "fetched": 4,
+            "hidden_metric": 2,
+            "hidden_dust": 0,
+            "skipped_quote": 0,
+            "dropped_volatility": 0,
+            "lane": "24h",
+            "gate": ms.best_lane_gate_label("24h"),
+            "analyzed_at": 1,
+        }
+        app.run()
+        body = "\n".join(node.value for node in app.markdown)
+        # PoolTipis (LPs 12) tidak boleh muncul di mana pun
+        self.assertNotIn("TIPIS", body)
+        self.assertNotIn("MintTipis", body)
+        self.assertNotIn("HIDETIPIS", body)
+        # Pool OK tetap tampil
+        self.assertIn("OK", body)
+        # Buka tabel dilewati -> PoolHideTipis juga tidak muncul
+        # Karena hanya 1 dilewati yang valid (HideOK), tombol toggle harus ada
+        # dan setelah klik, Tipis tetap tidak muncul
+        if "best-pool-toggle-hidden-24h" in [b.key for b in app.button]:
+            app.button(key="best-pool-toggle-hidden-24h").click().run()
+            body2 = "\n".join(node.value for node in app.markdown)
+            self.assertNotIn("TIPIS", body2)
+            self.assertNotIn("HIDETIPIS", body2)
+            self.assertIn("HIDEOK", body2)
+

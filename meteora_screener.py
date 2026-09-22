@@ -165,6 +165,7 @@ BEST_TOP10_MAX_PCT = 20.0
 # aturan 2026-09-14), jadi ia tidak muncul di tabel "dilewati".
 BEST_VOL_SHOW_MIN = 1.0
 BEST_VOL_SHOW_MAX = 10.0
+BEST_LPS_MIN = 50.0
 # Tanda 🏆 BEST POOL di kolom Dust %MC (permintaan user 2026-09-12): baris
 # dengan dust **<= 0,035% MC** (inklusif — 0,035 persis ikut ditandai)
 # diberi chip emas di ``best_pool_ui``. Ini BUKAN saringan tambahan: saringan
@@ -515,7 +516,7 @@ def _row_from_pool(pool: dict, *, timeframe: str = "24h",
         # Metrik pool dipakai regular scan + watchlist. Best Pool tetap
         # memakai field ini sebagai informasi dan pipeline-nya tidak berubah.
         "volatility": volatility,
-        "total_lps": _float(pool.get("total_lps")),
+        "total_lps": _maybe_float(pool.get("total_lps")),
         "top_holders_pct": _float(token.get("top_holders_pct")),
         "fee": _float(pool.get("fee")),
         "volume_change_pct": _float(pool.get("volume_change_pct")),
@@ -1440,6 +1441,30 @@ def row_top10_ok(row: dict | None) -> bool:
     return row_top10_over(row) is None
 
 
+def row_lps_count(row: dict | None):
+    """Jumlah LP pool (``total_lps``) — ``None`` bila tidak ada."""
+    return _maybe_float((row or {}).get("total_lps"))
+
+
+def row_lps_under(row: dict | None):
+    """Nilai LPs bila ``< BEST_LPS_MIN`` (``None`` = tidak dibuang).
+
+    Batas inklusif di sisi tampil: tepat 50 masih tampil; ``None``/hilang
+    (tidak ada bukti) tidak pernah dibuang — sama seperti Top10 tanpa angka.
+    """
+    count = row_lps_count(row)
+    if count is None:
+        return None
+    if count < float(BEST_LPS_MIN):
+        return count
+    return None
+
+
+def row_lps_ok(row: dict | None) -> bool:
+    """True bila LPs **>= BEST_LPS_MIN** (atau angkanya tidak ada)."""
+    return row_lps_under(row) is None
+
+
 def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
     """Saringan murah SEBELUM enrichment holder — F/V 24H + volatilitas + Top10.
 
@@ -1512,6 +1537,9 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
         # :func:`row_volatility_zero`) — pool tanpa pergerakan tidak ditampilkan.
         return [f"{BEST_LANE_LABELS[normalized]}: volatility 0 — "
                 "F/V tidak terukur"]
+    under = row_lps_under(row)
+    if under is not None:
+        return [f"{BEST_LANE_LABELS[normalized]}: LPs {under:g} < {float(BEST_LPS_MIN):g} — LP terlalu sedikit"]
     rentang = row_volatility_gap(vol)
     if rentang:
         return [f"{BEST_LANE_LABELS[normalized]}: {rentang}"]
@@ -1556,7 +1584,9 @@ def gmgn_min_label() -> str:
 #: Jarum → label kategori alasan gugur :func:`row_best_gaps`. Urutan menentukan
 #: prioritas bila satu teks memuat lebih dari satu jarum (tidak terjadi saat
 #: ini — satu alasan per baris — tetapi rekapnya harus tetap deterministik).
-BEST_GAP_CATEGORIES = (("Likuiditas GMGN", "likuiditas GMGN"),
+BEST_GAP_CATEGORIES = (("LPs", "LPs"),
+                       ("LP", "LPs"),
+                       ("Likuiditas GMGN", "likuiditas GMGN"),
                        ("cutoff peringkat", "likuiditas GMGN"),
                        ("Top10", "Top10"),
                        ("volatility", "volatility"),
@@ -1584,7 +1614,7 @@ def row_best_gap_label(row: dict | None, *, lane=None) -> str:
 
 
 def row_best_dropped(row: dict | None, *, lane=None) -> bool:
-    """True bila pool gugur karena Top10 atau volatility.
+    """True bila pool gugur karena Top10, volatility, atau LPs < 50.
 
     Baris seperti ini langsung disembunyikan total, tidak ditampilkan
     di mana pun (baik di tabel utama yang lolos maupun di listing
@@ -1594,6 +1624,7 @@ def row_best_dropped(row: dict | None, *, lane=None) -> bool:
     "hasil yang gugur karena
     gugur: Top10
     gugur: volatility
+    gugur: LPs
     langsung sembunyikan total, tidak ditampilkana dimanapun"
     """
     row = row or {}
@@ -1603,7 +1634,9 @@ def row_best_dropped(row: dict | None, *, lane=None) -> bool:
     if not gaps:
         return False
     label = row_best_gap_label(dict(row, best_gaps=gaps), lane=lane)
-    if label in ("Top10", "volatility"):
+    if label in ("Top10", "volatility", "LPs"):
+        return True
+    if row_lps_under(row) is not None:
         return True
     if row_volatility_zero(row):
         return True
@@ -1891,6 +1924,9 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
     dropped_top10 = sum(1 for row in failed_rows
                         if row_best_gap_label(row, lane=normalized) == "Top10"
                         or row_top10_over(row) is not None)
+    dropped_lps = sum(1 for row in failed_rows
+                      if row_best_gap_label(row, lane=normalized) == "LPs"
+                      or row_lps_under(row) is not None)
     dropped_total = len(failed_rows) - len(hidden_rows)
     rows, hidden_metric, hidden_dust = filter_best_rows(rows, lane=normalized)
     if rows:
@@ -1943,6 +1979,8 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
                       if dropped_volatility else "")
                    + (f", {dropped_top10} pool Top10 dibuang"
                       if dropped_top10 else "")
+                   + (f", {dropped_lps} pool LPs dibuang"
+                      if dropped_lps else "")
                    + (f", {quote_skipped} pool quote dilewati"
                       if quote_skipped else "")
                    + (f", {rug_failed} laporan RugCheck gagal"
@@ -1959,9 +1997,10 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
         "hidden_metric": hidden_metric,
         "hidden_dust": hidden_dust,
         "skipped_quote": quote_skipped,
-        # Pool gugur Top10 / volatility yang dibuang dari listing (tidak ditampilkan di mana pun).
+        # Pool gugur Top10 / volatility / LPs yang dibuang dari listing (tidak ditampilkan di mana pun).
         "dropped_volatility": dropped_volatility,
         "dropped_top10": dropped_top10,
+        "dropped_lps": dropped_lps,
         "dropped_total": dropped_total,
         # Mint yang tidak mendapat laporan rugchecker.cc (HTTP gagal / kode
         # bukan 0) — kolom RugCheck menulis — untuk mereka; angka ini supaya
