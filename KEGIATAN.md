@@ -1,3 +1,22 @@
+# Kegiatan — 22 September 2026 (🏆 Best Pool: gugur Top10 & volatility lenyap total + tabel disembunyikan urut F/V lalu Fee/TVL)
+
+Dua permintaan user untuk halaman 🏆 Best Pool:
+1. *"hasil yang gugur karena gugur: Top10, gugur: volatility langsung sembunyikan total, tidak ditampilkana dimanapun"*
+2. *"di hasil pool yang disembunyikan, urutkan menurut F/V terbesar, Fee/TVL terbesar"*
+
+## Yang berubah
+- **`meteora_screener.py`**:
+  - `row_best_dropped(row, *, lane=None)`: mengembalikan True jika pool gugur karena Top10 atau volatility.
+  - `scan_best_lane`: pool yang gugur Top10 / volatility tidak dimasukkan ke `hidden_rows` (dibuang total).
+  - `sort_hidden_best_rows`: sorting khusus tabel disembunyikan dengan urutan F/V terbesar lalu Fee/TVL terbesar.
+  - `filter_best_rows`: menghitung `row_best_dropped` sebagai `dropped`, sehingga counter `hidden_metric` hanya mencatat pool yang benar-benar tampil di tabel dilewati.
+- **`best_pool_ui.py`**:
+  - `render_best_pool_scan`: memfilter `stored_rows` dan `hidden_rows` dengan `not row_best_dropped(...)` agar data scan lama di session langsung bersih tanpa perlu scan ulang.
+  - Menggunakan `sort_hidden_best_rows` untuk merender tabel disembunyikan ("▶ N pool dilewati").
+  - Menyesuaikan tooltip card dan help button.
+- **`tests/test_best_pool_scan.py` & `tests/test_best_fv_prefilter.py`**:
+  - Ditambahkan unit test untuk `row_best_dropped`, `sort_hidden_best_rows`, dan integrasi UI `test_tabel_disembunyikan_urut_fv_lalu_fee_tvl_dan_top10_volat_lenyap`.
+
 # Kegiatan — 17 September 2026 (🚨 background STOP DEGEN merah, tulisan tetap biru)
 
 Permintaan terbaru: *"background nya ganti warna merah, tulisan tetap biru"*.

@@ -1563,7 +1563,7 @@ BEST_GAP_CATEGORIES = (("Likuiditas GMGN", "likuiditas GMGN"),
                        ("F/V", "F/V"))
 
 
-def row_best_gap_label(row: dict | None) -> str:
+def row_best_gap_label(row: dict | None, *, lane=None) -> str:
     """Kategori alasan gugur satu baris (``"likuiditas GMGN"``/``"Top10"``/…).
 
     Alasan yang sudah dihitung scan (``row["best_gaps"]``) dipakai apa adanya;
@@ -1573,7 +1573,7 @@ def row_best_gap_label(row: dict | None) -> str:
     row = row or {}
     gaps = row.get("best_gaps")
     if not isinstance(gaps, list) or not gaps:
-        gaps = row_best_gaps(row)
+        gaps = row_best_gaps(row, lane=lane)
     text = str(gaps[0] or "") if gaps else ""
     if not text:
         return ""
@@ -1581,6 +1581,38 @@ def row_best_gap_label(row: dict | None) -> str:
         if needle in text:
             return label
     return "metrik tidak valid"
+
+
+def row_best_dropped(row: dict | None, *, lane=None) -> bool:
+    """True bila pool gugur karena Top10 atau volatility.
+
+    Baris seperti ini langsung disembunyikan total, tidak ditampilkan
+    di mana pun (baik di tabel utama yang lolos maupun di listing
+    disembunyikan/dilewati).
+
+    Permintaan user:
+    "hasil yang gugur karena
+    gugur: Top10
+    gugur: volatility
+    langsung sembunyikan total, tidak ditampilkana dimanapun"
+    """
+    row = row or {}
+    gaps = row.get("best_gaps")
+    if gaps is None:
+        gaps = row_best_gaps(row, lane=lane)
+    if not gaps:
+        return False
+    label = row_best_gap_label(dict(row, best_gaps=gaps), lane=lane)
+    if label in ("Top10", "volatility"):
+        return True
+    if row_volatility_zero(row):
+        return True
+    vol = _maybe_float(row.get("volatility"))
+    if vol is not None and bool(row_volatility_gap(vol)):
+        return True
+    if row_top10_over(row) is not None:
+        return True
+    return False
 
 
 def best_gap_counts(rows: list | None) -> list[tuple[str, int]]:
@@ -1652,7 +1684,7 @@ def filter_best_rows(rows: list[dict] | None, *,
     kept = [row for row in rows if not row_best_gaps(row, lane=lane)]
     dropped = sum(1 for row in rows
                   if row_best_gaps(row, lane=lane)
-                  and row_volatility_zero(row))
+                  and row_best_dropped(row, lane=lane))
     return kept, len(rows) - len(kept) - dropped, 0
 
 
@@ -1698,6 +1730,38 @@ def sort_best_rows(rows: list[dict] | None) -> list[dict]:
             0 if fv is not None else 1,
             -(fv if fv is not None else 0.0),
             # 3-5) tie-break lama: volume/active TVL, dust, simbol.
+            0 if pct is not None else 1,
+            -(ratio if ratio is not None else -1.0),
+            round(pct, BEST_DUST_SORT_DECIMALS) if pct is not None else 0.0,
+            str(row.get("symbol") or "").upper(),
+        )
+
+    return sorted(list(rows or []), key=_key)
+
+
+def sort_hidden_best_rows(rows: list[dict] | None) -> list[dict]:
+    """Urutan tabel pool disembunyikan: **F/V terbesar** → **Fee/TVL terbesar**
+    → vol/TVL → dust → simbol.
+
+    Permintaan user:
+    "di hasil pool yang disembunyikan, urutkan menurut
+    **F/V terbesar**
+    **Fee/TVL terbesar**"
+    """
+    def _key(row):
+        row = row or {}
+        pct = _maybe_float(row_dust_pct(row))
+        ratio = row_vol_tvl_ratio(row)
+        fee_tvl = _maybe_float(row.get("fee_active_tvl_ratio"))
+        fv = row_fv_ratio(row)
+        return (
+            # 1) F/V terbesar
+            0 if fv is not None else 1,
+            -(fv if fv is not None else 0.0),
+            # 2) baru kelipatan Fee/TVL terbesar
+            0 if fee_tvl is not None else 1,
+            -(fee_tvl if fee_tvl is not None else 0.0),
+            # 3-5) tie-break: volume/active TVL, dust, simbol
             0 if pct is not None else 1,
             -(ratio if ratio is not None else -1.0),
             round(pct, BEST_DUST_SORT_DECIMALS) if pct is not None else 0.0,
@@ -1817,11 +1881,17 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
     # disembunyikan saat render.
     failed_rows = [dict(row, best_gaps=row_best_gaps(row, lane=normalized))
                    for row in rows if row_best_gaps(row, lane=normalized)]
-    # Pool volatility 0 = pool tanpa pergerakan: dibuang penuh dari listing
-    # (2026-09-14 lanjutan, permintaan user) — tidak masuk hidden_rows,
-    # tidak ikut hidden_metric; jumlahnya dicatat di dropped_volatility.
-    hidden_rows = [row for row in failed_rows if not row_volatility_zero(row)]
-    dropped_volatility = len(failed_rows) - len(hidden_rows)
+    # Pool gugur Top10 atau volatility langsung disembunyikan total
+    # (tidak masuk hidden_rows, tidak ditampilkan di mana pun — permintaan user).
+    hidden_rows = [row for row in failed_rows
+                   if not row_best_dropped(row, lane=normalized)]
+    dropped_volatility = sum(1 for row in failed_rows
+                             if row_best_gap_label(row, lane=normalized) == "volatility"
+                             or row_volatility_zero(row))
+    dropped_top10 = sum(1 for row in failed_rows
+                        if row_best_gap_label(row, lane=normalized) == "Top10"
+                        or row_top10_over(row) is not None)
+    dropped_total = len(failed_rows) - len(hidden_rows)
     rows, hidden_metric, hidden_dust = filter_best_rows(rows, lane=normalized)
     if rows:
         rows = enrich_pools(rows, max_wallets=max_wallets,
@@ -1862,14 +1932,17 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
                 _alog.error("scan-best-pool",
                             f"BubbleMap gagal: {str(exc)[:160]}")
     kept = sort_best_rows(rows)
+    hidden_rows = sort_hidden_best_rows(hidden_rows)
     if _alog:
         _alog.info("scan-best-pool",
                    f"scan selesai: {len(kept)} pool tampil dari {fetched} "
                    f"listing {lane_label} ({hidden_metric} gagal saringan "
-                   f"(F/V/volat/Top10) tanpa "
+                   f"(F/V) tanpa "
                    f"scan holder"
-                   + (f", {dropped_volatility} pool volatility 0 dibuang"
+                   + (f", {dropped_volatility} pool volatility dibuang"
                       if dropped_volatility else "")
+                   + (f", {dropped_top10} pool Top10 dibuang"
+                      if dropped_top10 else "")
                    + (f", {quote_skipped} pool quote dilewati"
                       if quote_skipped else "")
                    + (f", {rug_failed} laporan RugCheck gagal"
@@ -1886,10 +1959,10 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
         "hidden_metric": hidden_metric,
         "hidden_dust": hidden_dust,
         "skipped_quote": quote_skipped,
-        # Pool gugur-ambang dengan volatility 0 yang dibuang dari listing
-        # (tidak ditampilkan di mana pun). UI membaca hidden_rows saja, tapi
-        # angka ini membuat pembuangannya bisa diaudit.
+        # Pool gugur Top10 / volatility yang dibuang dari listing (tidak ditampilkan di mana pun).
         "dropped_volatility": dropped_volatility,
+        "dropped_top10": dropped_top10,
+        "dropped_total": dropped_total,
         # Mint yang tidak mendapat laporan rugchecker.cc (HTTP gagal / kode
         # bukan 0) — kolom RugCheck menulis — untuk mereka; angka ini supaya
         # caption bisa membedakan "semua AMAN" dari "belum teriksa".

@@ -223,8 +223,7 @@ def best_pool_tooltip() -> str:
         "kita sisakan yang 24 jam saja\") — semua alias lane lama "
         "(30m/1h/both) dipetakan ke 24H, tidak ada lagi dua tabel. "
         "Saringan layar dieksekusi SEBELUM scan holder (kuota Helius tidak "
-        "terbakar) dan kandidat yang gugur tetap bisa dilihat lewat tombol "
-        "\"dilewati\": (1) F/V di bawah "
+        "terbakar): (1) F/V di bawah "
         f"{gate.split(' ', 1)[1]} gugur; (2) volatility di luar {volat} "
         "gugur — di bawah itu pool nyaris tidak bergerak, di atas itu "
         "pergerakan lebih besar daripada fee yang dibagi; (3) Top10 "
@@ -237,10 +236,11 @@ def best_pool_tooltip() -> str:
         f"RugCheck, HIJAU bila > {gmgn_min_label()}, MERAH bila < "
         f"{gmgn_min_label()} (permintaan user 2026-09-17), tepat di ambang "
         "tetap hitam. "
-        "Volatility 0 "
-        "gugur DAN tidak ditampilkan di mana pun: F/V \u221e bukan kelolosan, "
-        "pool tanpa pergerakan dibuang total dari listing, tidak masuk tabel "
-        "dilewati dan tidak dihitung di pill \"dilewati\". Metrik "
+        "Hasil yang gugur karena Top10 atau volatility langsung disembunyikan "
+        "total, tidak ditampilkan di mana pun: pool tanpa pergerakan atau "
+        "berkonsentrasi tinggi dibuang total dari listing, tidak masuk tabel "
+        "dilewati dan tidak dihitung di pill \"dilewati\". Kandidat gagal F/V "
+        "tetap bisa dilihat lewat tombol \"dilewati\". Metrik "
         "hilang/tidak valid dilewati (tetap terlihat di tabel disembunyikan). "
         "Kolom F/V memakai format satu desimal di bawah 100\u00d7 (10,1\u00d7) "
         "dan bulat berpemisah ribuan dari 100\u00d7 ke atas (6,328,266\u00d7), "
@@ -248,8 +248,8 @@ def best_pool_tooltip() -> str:
         "merah dengan sub \"gugur: <alasan>\". Hanya pool lolos yang "
         "mengambil detail holder FULL Helius. Dust, volume, dan tier fee "
         "bukan syarat kelolosan. Urutan tiap tabel: Fee/TVL terbesar, lalu "
-        "F/V terbesar, lalu volume/active TVL terbesar, lalu dust %MC "
-        "terkecil. Kolom Token menulis pasangan pool-nya apa adanya dari API "
+        "F/V terbesar (tabel pool disembunyikan: F/V terbesar, lalu Fee/TVL terbesar). "
+        "Kolom Token menulis pasangan pool-nya apa adanya dari API "
         "Meteora (mis. ALLINU/SOL) \u2014 $SIMBOL tetap baris pertama, alamat "
         "mint di baris terakhir. Kolom, kiri ke kanan: Token, F/V, Fee/TVL "
         "(tepat di kanan F/V), Volat, Active Range, LPs, Fee % "
@@ -1180,8 +1180,9 @@ def render_best_pool_scan() -> None:
     import streamlit as st
 
     from meteora_screener import (best_gap_summary, gmgn_min_label,
-                                  normalize_best_lane, row_best_gaps,
-                                  row_volatility_zero, sort_best_rows)
+                                  normalize_best_lane, row_best_dropped,
+                                  row_best_gaps, row_volatility_zero,
+                                  sort_best_rows, sort_hidden_best_rows)
 
     with st.container(border=True):
         active = normalize_best_lane("24h")
@@ -1260,23 +1261,22 @@ def render_best_pool_scan() -> None:
         # scan ulang (kolom yang dibutuhkan sort ada di baris lama juga).
         stored_rows = result.get("rows") or []
         newly_hidden = [r for r in stored_rows if row_best_gaps(r, lane=active)]
-        # Pool volatility 0 (tanpa pergerakan) juga dibuang di sini — filter
-        # render supaya hasil scan LAMA yang masih membawa baris vol-0 di
-        # ``rows`` (era sebelum ∞ gugur) atau di ``hidden_rows`` ikut bersih
-        # tanpa scan ulang (permintaan user 2026-09-14 lanjutan: "jika
-        # volatility 0 jangan tampilkan"). Baris hasil scan lama juga bisa
-        # membawa volatility < 1% / > 10% atau Top10 >= 20% — row_best_gaps
-        # membacanya ulang, jadi tabel selalu memakai kriteria hari ini.
-        stored_rows = [r for r in stored_rows if not row_volatility_zero(r)]
+        # Pool yang gugur karena Top10 atau volatility dibuang total di sini
+        # (permintaan user: "hasil yang gugur karena gugur: Top10, gugur:
+        # volatility langsung sembunyikan total, tidak ditampilkana dimanapun")
+        # — filter render supaya hasil scan LAMA yang masih membawanya di
+        # ``rows`` atau di ``hidden_rows`` ikut bersih tanpa scan ulang.
+        stored_rows = [r for r in stored_rows
+                       if not row_best_dropped(r, lane=active)]
         rows = sort_best_rows([r for r in stored_rows
                               if not row_best_gaps(r, lane=active)])
-        hidden_rows = sort_best_rows(
+        hidden_rows = sort_hidden_best_rows(
             [r for r in (result.get("hidden_rows") or []) + newly_hidden
-             if not row_volatility_zero(r)])
+             if not row_best_dropped(r, lane=active)])
         # ``hidden`` dihitung dari listing yang benar-benar bisa dilihat
         # (bukan counter mentah ``hidden_metric`` dari scan lama, yang masih
-        # bisa menghitung pool vol-0), jadi pill/tombol/caption selalu cocok
-        # dengan isi tabel disembunyikan.
+        # bisa menghitung pool vol/Top10 gugur), jadi pill/tombol/caption selalu
+        # cocok dengan isi tabel disembunyikan.
         hidden = len(hidden_rows)
         fetched = int(result.get("fetched") or 0)
         skipped_quote = int(result.get("skipped_quote") or 0)
@@ -1296,7 +1296,7 @@ def render_best_pool_scan() -> None:
                     if showing_hidden else f"▶ {hidden} pool dilewati")
             if st.button(view, key=f"best-pool-toggle-hidden-{active}",
                          help=f"Tampilkan kandidat {label} yang di-skip karena "
-                              "gugur saringan F/V, volatility, atau Top10 "
+                              "gugur saringan F/V "
                               "lane ini; "
                               "holdernya tidak pernah di-scan.",
                          use_container_width=True):
