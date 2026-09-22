@@ -286,3 +286,59 @@ class LegacyBothLaneTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class LpsPrefilterTest(unittest.TestCase):
+    """LPs < 50 disembunyikan total sebelum holder (kuota aman)."""
+
+    def _scan(self, pools):
+        enrich_calls = []
+        def fake_enrich(rows, **_kw):
+            enrich_calls.append([r["pool_address"] for r in rows])
+            return rows
+        def fake_fetch(*, timeframe, **_kw):
+            return pools
+        def _fake_gmgn(rows, **_kw):
+            for r in rows:
+                r["gmgn_liq"] = {"ok": False}
+            return rows
+        with patch.object(ms, 'fetch_best_pools', side_effect=fake_fetch), \
+             patch.object(ms, 'enrich_pools', side_effect=fake_enrich), \
+             patch('gmgn_liquidity.attach_total_liquidity', side_effect=_fake_gmgn):
+            result = ms.scan_best_lane("24h", max_wallets=2000, rugcheck=False)
+        result["enrich_calls"] = enrich_calls
+        return result
+
+    def test_lps_di_bawah_50_dibuang_total(self):
+        pools = [
+            _pool('OK', 'MintOK', ratio=40, volatility=6.2, total_lps=88),
+            _pool('TIPIS', 'MintTipis', ratio=40, volatility=6.2, total_lps=12),
+            _pool('PAS', 'MintPas', ratio=40, volatility=6.2, total_lps=50),
+            _pool('TIPIS2', 'MintTipis2', ratio=40, volatility=6.2, total_lps=49.9),
+        ]
+        result = self._scan(pools)
+        # Hanya OK dan PAS yang di-enrich
+        self.assertEqual(result["enrich_calls"], [["OK", "PAS"]])
+        self.assertEqual(sorted(r["pool_address"] for r in result["rows"]), ["OK", "PAS"])
+        self.assertEqual(result["hidden_rows"], [])
+        self.assertEqual(result["hidden_metric"], 0)
+        self.assertEqual(result["dropped_lps"], 2)
+        self.assertEqual(result["fetched"], 4)
+
+    def test_lps_none_tidak_dibuang(self):
+        pools = [
+            _pool('NONONE', 'MintNone', ratio=40, volatility=6.2, total_lps=88),
+            _pool('NONE', 'MintNone2', ratio=40, volatility=6.2, total_lps=None),
+        ]
+        result = self._scan(pools)
+        self.assertEqual(sorted(r["pool_address"] for r in result["rows"]), ["NONE", "NONONE"])
+        self.assertEqual(result["dropped_lps"], 0)
+
+    def test_row_lps_helpers(self):
+        self.assertEqual(ms.BEST_LPS_MIN, 50.0)
+        self.assertIsNone(ms.row_lps_under({"total_lps": 50}))
+        self.assertIsNone(ms.row_lps_under({"total_lps": None}))
+        self.assertIsNone(ms.row_lps_under({}))
+        self.assertEqual(ms.row_lps_under({"total_lps": 49}), 49.0)
+        self.assertTrue(ms.row_best_dropped({"total_lps": 12, "fee_active_tvl_ratio": 40.0, "volatility": 6.2}))
+        self.assertFalse(ms.row_best_dropped({"total_lps": 50, "fee_active_tvl_ratio": 40.0, "volatility": 6.2}))
+

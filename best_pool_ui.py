@@ -202,9 +202,10 @@ def best_lane_detail(lane) -> tuple[str, str, str]:
 
 def best_pool_tooltip() -> str:
     """Rule ada di tooltip, bukan caption — satu tombol, satu lane (24H)."""
-    from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_TOP10_MAX_PCT,
-                                  BEST_VOL_SHOW_MAX, BEST_VOL_SHOW_MIN,
-                                  gmgn_min_label, normalize_best_lane)
+    from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_LPS_MIN,
+                                  BEST_TOP10_MAX_PCT, BEST_VOL_SHOW_MAX,
+                                  BEST_VOL_SHOW_MIN, gmgn_min_label,
+                                  normalize_best_lane)
 
     active = normalize_best_lane("24h")
     label = best_lane_detail(active)[0]
@@ -230,16 +231,17 @@ def best_pool_tooltip() -> str:
         f"{BEST_TOP10_MAX_PCT:g}% atau lebih gugur (permintaan user "
         "2026-09-16: \"jika ada top 10 >= 20% jangan tampilkan\" — batasnya "
         "sekarang di sisi BUANG, jadi tepat 20% tidak lagi tampil; tanpa "
-        "angka Top10 = tidak terukur, barisnya tetap tampil). Likuiditas "
+        "angka Top10 = tidak terukur, barisnya tetap tampil); (4) LPs < "
+        f"{float(BEST_LPS_MIN):g} gugur dan disembunyikan total (permintaan baru: LP terlalu sedikit — tepat {float(BEST_LPS_MIN):g} masih tampil, tanpa angka LPs tidak dibuang). Likuiditas "
         "total GMGN TIDAK lagi menyaring (2026-09-17 malam, permintaan user "
         "\"filter likuiditas hapus coba\") — angkanya tampil di kolom "
         f"RugCheck, HIJAU bila > {gmgn_min_label()}, MERAH bila < "
         f"{gmgn_min_label()} (permintaan user 2026-09-17), tepat di ambang "
         "tetap hitam. "
-        "Hasil yang gugur karena Top10 atau volatility langsung disembunyikan "
-        "total, tidak ditampilkan di mana pun: pool tanpa pergerakan atau "
-        "berkonsentrasi tinggi dibuang total dari listing, tidak masuk tabel "
-        "dilewati dan tidak dihitung di pill \"dilewati\". Kandidat gagal F/V "
+        f"Hasil yang gugur karena Top10, volatility, atau LPs < {float(BEST_LPS_MIN):g} langsung disembunyikan "
+        "total, tidak ditampilkan di mana pun: pool tanpa pergerakan, "
+        "berkonsentrasi tinggi, atau LP terlalu sedikit (< 50) dibuang total dari listing, tidak masuk tabel "
+        "dilewati dan tidak dihitung di pill \"dilewati\". Kandidat gagal F/V " 
         "tetap bisa dilihat lewat tombol \"dilewati\". Metrik "
         "hilang/tidak valid dilewati (tetap terlihat di tabel disembunyikan). "
         "Kolom F/V memakai format satu desimal di bawah 100\u00d7 (10,1\u00d7) "
@@ -293,7 +295,7 @@ def best_pool_tooltip() -> str:
         "verdict RUG hanya bila honeypot, bendera kritis (mint/freeze/"
         "non-transferable/hook/transfer-fee) jadi BERISIKO, sisanya minor "
         "jadi WASPADA; RUGCHECK TIDAK PERNAH MEMBUANG BARIS \u2014 ia kolom "
-        "informasi, saringannya tetap F/V + volat + Top10; angka likuiditas "
+        "informasi, saringannya tetap F/V + volat + Top10 + LPs; angka likuiditas "
         f"GMGN di baris kecilnya HIJAU bila > {gmgn_min_label()}, MERAH bila "
         f"< {gmgn_min_label()}, selain itu tetap hitam (bendera safeguard "
         "Jupiter "
