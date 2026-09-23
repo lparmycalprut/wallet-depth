@@ -39,16 +39,21 @@ kita sisakan yang 24 jam saja"*). Syaratnya ``F/V >= 5×`` dengan F =
 ``fee_active_tvl_ratio`` dan V = ``volatility``. Hanya pool yang lolos ambang
 yang di-scan holdernya; pool di bawah ambang **langsung di-skip** sebelum
 enrichment holder (kuota Helius tidak terbakar) dan tetap tersedia di
-``hidden_rows`` tanpa scan holder. Empat saringan layar, semuanya di
+``hidden_rows`` tanpa scan holder. Lima saringan layar, semuanya di
 :func:`row_best_gaps` dan semuanya sebelum enrichment: volatility 0 **gugur
 dan dibuang total** (aturan 2026-09-14), volatility di luar **1%–10%**
-(:data:`BEST_VOL_SHOW_MIN`/:data:`BEST_VOL_SHOW_MAX`, 2026-09-16) gugur,
-**Top10 holder >= 20% supply tidak ditampilkan lagi**
-(:data:`BEST_TOP10_MAX_PCT`, 2026-09-16), dan **likuiditas total GMGN <
-``gmgn_liquidity.MIN_TOTAL_LIQ_USD`` ($500K) tidak ditampilkan**
-(:mod:`gmgn_liquidity`, permintaan user 2026-09-17 — angkanya ditempel
-``row["gmgn_liq"]`` sebelum alasan gugur dihitung; ambangnya sempat $1M
-tetapi mengosongkan seluruh tabel, jadi diturunkan sore harinya). Saringan
+(:data:`BEST_VOL_SHOW_MIN`/:data:`BEST_VOL_SHOW_MAX`, 2026-09-16) gugur dan
+dibuang total, **LPs < 50** (:data:`BEST_LPS_MIN`) gugur dan dibuang total,
+**Fee/TVL < 30%** (:data:`BEST_FEE_TVL_MIN`, permintaan user 2026-09-23
+*"kita perketat filter yang boleh di show di hasil"* + *"Fee/TVL minimal
+30%"* + *"dibawah itu jangan show"*) gugur — tapi tidak dibuang total, ia
+tetap terbaca di listing "▶ N pool dilewati" — dan **Top10 holder >= 20%
+supply tidak ditampilkan lagi** (:data:`BEST_TOP10_MAX_PCT`, 2026-09-16).
+Likuiditas total GMGN **tidak menyaring lagi** (dicabut 2026-09-17 malam,
+permintaan user *"filter likuiditas hapus coba"*): :mod:`gmgn_liquidity`
+hanya menempel ``row["gmgn_liq"]`` sebagai pewarna kolom RugCheck + bahan
+kolom STRATEGY, dengan ambang $500K (sempat $1M tetapi mengosongkan seluruh
+tabel, jadi diturunkan sore harinya) yang kini murni batas warna. Saringan
 server Jupiter safeguard yang sempat dipasang 2026-09-16 **dimatikan
 default-nya** 2026-09-17 (filter ``base/quote_token_has_critical_warnings=false``
 menjatuhkan token seperti PAID sebelum listing sampai ke client — token
@@ -108,6 +113,22 @@ SAFE_LP_MULTIPLIER = 5.0
 # ``top_holders_pct`` 35.75 = 35,75% supply di 10 holder teratas token base).
 # ---------------------------------------------------------------------------
 BEST_FV_24H_MIN = 5.0           # 24H: F/V >= 5,0 (inklusif)
+# Layar: **Fee/TVL minimal 30%** (permintaan user 2026-09-23: *"kita perketat
+# filter yang boleh di show di hasil"* + *"Fee/TVL minimal 30%"* + *"dibawah itu
+# jangan show"*). ``fee_active_tvl_ratio`` API Meteora sudah dalam satuan persen
+# (88.56 = 88,56%), jadi ambangnya dibandingkan langsung sebagai persen: pool
+# yang fee-nya kurang dari 30% terhadap active TVL dianggap kurang produktif
+# untuk masuk tabel hasil — F/V setinggi apa pun tidak menolong, karena
+# pembilangnya (fee) memang kecil. Batas **inklusif di sisi tampil**: tepat
+# 30,0% lolos. Fee hilang/negatif/nonfinite sudah gugur lebih dulu di cabang
+# "metrik F/V tidak tersedia" (:func:`row_best_gaps`), jadi saringan ini tidak
+# pernah menghadapi kasus "tanpa bukti". Berbeda dari Top10 / volatility / LPs,
+# baris yang gugur di sini **TIDAK dibuang total** (konfirmasi user 2026-09-23):
+# ia masuk listing "▶ N pool dilewati" dengan alasan
+# ``gugur: Fee/TVL … < 30%`` supaya tetap bisa dibandingkan, hanya tidak tampil
+# di tabel hasil. Saringan ini hanya untuk card 🏆 Best Pool — regular scan
+# (:func:`filter_regular_rows`) tidak ikut berubah.
+BEST_FEE_TVL_MIN = 30.0
 BEST_CARD_TITLE = "🏆 Scan Best Pool Meteora"
 # **Satu lane sejak 2026-09-16** (permintaan user: "hapus scan 30 menit, kita
 # sisakan yang 24 jam saja"). Sejak 2026-09-13 card ini punya DUA tombol
@@ -1441,6 +1462,40 @@ def row_top10_ok(row: dict | None) -> bool:
     return row_top10_over(row) is None
 
 
+def row_fee_tvl_pct(row: dict | None):
+    """**Fee/TVL** satu baris (``fee_active_tvl_ratio``, persen) — ``None`` bila tidak ada.
+
+    Satu sumber angka untuk saringan (:func:`row_fee_tvl_under`), urutan
+    (:func:`sort_best_rows`) dan kolom **Fee/TVL** di card, jadi angka yang
+    menyaring tidak pernah beda dengan angka yang tampil. API Meteora mengirim
+    angka ini sudah dalam persen (88.56 = 88,56% fee terhadap active TVL).
+    """
+    return _maybe_float((row or {}).get("fee_active_tvl_ratio"))
+
+
+def row_fee_tvl_under(row: dict | None):
+    """Nilai Fee/TVL bila ``< BEST_FEE_TVL_MIN``, selain itu ``None``.
+
+    Satu-satunya pembaca batas (dipakai :func:`row_best_gaps` + tes) supaya
+    teks alasan, angka di tooltip dan keputusan saringan tidak pernah bisa
+    beda. Batas inklusif di sisi tampil: Fee/TVL tepat 30,0% **lolos**.
+    ``None``/hilang dikembalikan sebagai ``None`` juga — bukan karena lolos,
+    tetapi karena kasus itu sudah ditolak lebih dulu oleh cabang
+    "metrik F/V tidak tersedia" di :func:`row_best_gaps`.
+    """
+    pct = row_fee_tvl_pct(row)
+    if pct is None:
+        return None
+    if pct < float(BEST_FEE_TVL_MIN):
+        return pct
+    return None
+
+
+def row_fee_tvl_ok(row: dict | None) -> bool:
+    """True bila Fee/TVL **>= 30%** (atau angkanya tidak ada)."""
+    return row_fee_tvl_under(row) is None
+
+
 def row_lps_count(row: dict | None):
     """Jumlah LP pool (``total_lps``) — ``None`` bila tidak ada."""
     return _maybe_float((row or {}).get("total_lps"))
@@ -1466,21 +1521,26 @@ def row_lps_ok(row: dict | None) -> bool:
 
 
 def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
-    """Saringan murah SEBELUM enrichment holder — F/V 24H + volatilitas + Top10.
+    """Saringan murah SEBELUM enrichment holder — F/V 24H + Fee/TVL + volatilitas + Top10.
 
     **Satu lane sejak 2026-09-16** (30M dicabut): tombol **24H** minta
     ``F/V >= BEST_FV_24H_MIN`` (5×) — "prioritaskan 24H yang fee/v >= 5x untuk
     di scan detail lainnya, jika kurang dari itu langsung skip".
 
-    Di atas itu ada dua saringan yang sama di semua timeframe (permintaan user
-    2026-09-16): volatility harus di rentang :data:`BEST_VOL_SHOW_MIN`–
-    :data:`BEST_VOL_SHOW_MAX` (1%–10%, inklusif; :func:`row_volatility_gap`)
-    dan Top10 holder harus di **bawah** :data:`BEST_TOP10_MAX_PCT` (20% —
-    ``>= 20%`` dibuang; :func:`row_top10_over`). Urutan cek sengaja: vol-0
-    dibuang total lebih dulu (``row_volatility_zero``), lalu volatilitas di
-    luar rentang, baru F/V, lalu Top10, lalu likuiditas GMGN <
-    ``gmgn_liquidity.MIN_TOTAL_LIQ_USD`` — satu alasan gugur per baris supaya
-    teksnya tetap satu baris, dengan alasan paling keras lebih dulu.
+    Di atas itu ada tiga saringan yang sama di semua timeframe: volatility
+    harus di rentang :data:`BEST_VOL_SHOW_MIN`–:data:`BEST_VOL_SHOW_MAX`
+    (1%–10%, inklusif; :func:`row_volatility_gap`) dan Top10 holder harus di
+    **bawah** :data:`BEST_TOP10_MAX_PCT` (20% — ``>= 20%`` dibuang;
+    :func:`row_top10_over`) sejak 2026-09-16, lalu **Fee/TVL minimal
+    :data:`BEST_FEE_TVL_MIN` (30%)** sejak 2026-09-23 (permintaan user:
+    *"kita perketat filter yang boleh di show di hasil — Fee/TVL minimal 30%,
+    dibawah itu jangan show"*; :func:`row_fee_tvl_under`). Urutan cek sengaja:
+    metrik F/V tidak valid, vol-0 (dibuang total, ``row_volatility_zero``),
+    LPs < :data:`BEST_LPS_MIN` (dibuang total), volatilitas di luar rentang
+    (dibuang total), F/V, **Fee/TVL**, baru Top10 (dibuang total) — satu
+    alasan gugur per baris supaya teksnya tetap satu baris, dengan alasan yang
+    membuang total lebih dulu kecuali F/V yang dibiarkan memimpin di depan
+    Fee/TVL agar teks "gugur" yang sudah dikenal user tidak berubah arti.
 
     (DIHAPUS 2026-09-17 malam — permintaan user *"filter likuiditas hapus
     coba"*; angka GMGN kini hanya pewarna kolom RugCheck, > $500K hijau.)
@@ -1547,6 +1607,15 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
     threshold = minimum * vol
     passed = fee >= threshold if lane_fv_inclusive(normalized) else fee > threshold
     if fee > 0 and passed:
+        # Fee/TVL < 30% (2026-09-23) — dicek SETELAH ambang F/V supaya baris
+        # yang memang gagal F/V tetap melaporkan "F/V < 5×" (alasan yang lebih
+        # dikenal user), dan sebelum Top10 karena Top10 satu-satunya alasan
+        # yang membuang baris total dari listing. Baris gugur di sini TIDAK
+        # dibuang total (:func:`row_best_dropped`): ia masuk tabel "dilewati".
+        tipis = row_fee_tvl_under(row)
+        if tipis is not None:
+            return [f"{BEST_LANE_LABELS[normalized]}: Fee/TVL {tipis:g}% < "
+                    f"{float(BEST_FEE_TVL_MIN):g}% — fee pool terlalu kecil"]
         # Saringan terakhir setelah ambang lane: Top10 >= 20% (2026-09-16).
         # Label lane ikut di depan supaya teks "gugur" di tabel disembunyikan
         # konsisten dengan teks F/V.
@@ -1584,12 +1653,17 @@ def gmgn_min_label() -> str:
 #: Jarum → label kategori alasan gugur :func:`row_best_gaps`. Urutan menentukan
 #: prioritas bila satu teks memuat lebih dari satu jarum (tidak terjadi saat
 #: ini — satu alasan per baris — tetapi rekapnya harus tetap deterministik).
+#: ``Fee/TVL`` ditulis sebelum ``F/V``: teksnya (``Fee/TVL 20% < 30% …``) memang
+#: tidak memuat jarum ``F/V``, tapi urutan ini membuat rekap tabel kosong
+#: (:func:`best_gap_summary`) menyebut Fee/TVL apa adanya bila suatu saat teks
+#: alasan berubah.
 BEST_GAP_CATEGORIES = (("LPs", "LPs"),
                        ("LP", "LPs"),
                        ("Likuiditas GMGN", "likuiditas GMGN"),
                        ("cutoff peringkat", "likuiditas GMGN"),
                        ("Top10", "Top10"),
                        ("volatility", "volatility"),
+                       ("Fee/TVL", "Fee/TVL"),
                        ("F/V", "F/V"))
 
 
@@ -1626,6 +1700,13 @@ def row_best_dropped(row: dict | None, *, lane=None) -> bool:
     gugur: volatility
     gugur: LPs
     langsung sembunyikan total, tidak ditampilkana dimanapun"
+
+    **Gugur Fee/TVL < 30% (2026-09-23) SENGAJA tidak ikut dibuang total**
+    (konfirmasi user: baris di bawah ambang masuk daftar "▶ N pool dilewati",
+    bukan hilang) — pool seperti itu tetap tercatat di ``hidden_rows`` dengan
+    alasan ``gugur: Fee/TVL … < 30%``, hanya tidak tampil di tabel hasil.
+    Karena itu label ``"Fee/TVL"`` tidak ada di daftar label di bawah, dan
+    tidak ada fallback ``row_fee_tvl_under`` di sini.
     """
     row = row or {}
     gaps = row.get("best_gaps")
@@ -1703,11 +1784,13 @@ def filter_best_rows(rows: list[dict] | None, *,
 
     ``lane`` memaksa satu aturan ambang untuk seluruh baris (dipakai
     :func:`scan_best_lane` saat satu tombol lane ditekan); tanpa itu setiap
-    baris dinilai dari ``timeframe``-nya sendiri. Saringannya tiga: ambang F/V
-    lane, rentang volatility 1%–10% dan Top10 ``< BEST_TOP10_MAX_PCT``
-    (2026-09-16) — semuanya lewat
-    :func:`row_best_gaps`, jadi ``hidden_metric`` menghitung kedua alasan
-    gugur. Kandidat gagal dengan
+    baris dinilai dari ``timeframe``-nya sendiri. Saringannya lima: ambang F/V
+    lane, rentang volatility 1%–10%, LPs ``>= BEST_LPS_MIN``, **Fee/TVL ``>=
+    BEST_FEE_TVL_MIN`` (30%, permintaan user 2026-09-23)** dan Top10 ``<
+    BEST_TOP10_MAX_PCT`` — semuanya lewat
+    :func:`row_best_gaps`. Hitungan kedua hanya memuat baris yang masih bisa
+    dilihat di listing "dilewati", yaitu gugur **F/V atau Fee/TVL**; yang
+    dibuang total (volatility / LPs / Top10) tidak dihitung. Kandidat gagal dengan
     **volatility 0 tidak ikut dihitung** (2026-09-14 lanjutan): pool tanpa
     pergerakan dibuang dari listing (:func:`row_volatility_zero`), jadi
     hitungan kedua selalu cocok dengan ``len(hidden_rows)`` yang dibangun
@@ -1821,14 +1904,19 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
        :func:`best_filter_by`; bendera token kritis tetap dilaporkan kolom
        RugCheck tanpa membuang baris) ``&&pool_type=dlmm&&active_tvl>=50000`` (``category=top``,
        page_size 50);
-    2. saringan layar di :func:`row_best_gaps` — ``F/V >= 5×``, volatility
-       1%–10%, Top10 < 20% supply, lalu **likuiditas total GMGN <
-       ``gmgn_liquidity.MIN_TOTAL_LIQ_USD`` ($500K)**
-       (2026-09-17: :mod:`gmgn_liquidity` menempel ``row["gmgn_liq"]`` pada
-       kandidat yang lolos tiga saringan pertama, **sebelum** alasan gugur
-       dihitung) — semua dijalankan **sebelum** holder, jadi pool yang gugur
-       tidak pernah membakar kuota Helius dan tetap tersedia di
-       ``hidden_rows`` (dengan alasan di ``best_gaps``), **kecuali** pool
+    2. saringan layar di :func:`row_best_gaps` — volatility 1%–10%, LPs
+       ``>= 50``, ``F/V >= 5×``, **``Fee/TVL >= 30%``**
+       (:data:`BEST_FEE_TVL_MIN`, permintaan user 2026-09-23: *"kita perketat
+       filter yang boleh di show di hasil — Fee/TVL minimal 30%, dibawah itu
+       jangan show"*) dan Top10 < 20% supply. Likuiditas total GMGN **tidak**
+       ikut menyaring sejak 2026-09-17 malam: :mod:`gmgn_liquidity` hanya
+       menempel ``row["gmgn_liq"]`` pada kandidat yang lolos saringan metrik
+       (untuk pewarna kolom RugCheck + kolom STRATEGY). Semua saringan
+       dijalankan **sebelum** holder, jadi pool yang gugur tidak pernah
+       membakar kuota Helius; yang gugur F/V atau Fee/TVL tetap tersedia di
+       ``hidden_rows`` (dengan alasan di ``best_gaps``) lewat tombol "▶ N
+       pool dilewati", **kecuali** yang dibuang total (volatility 0 / di luar
+       1%–10%, LPs < 50, Top10 >= 20%) — contohnya
        volatility 0: dibuang penuh dari listing sejak 2026-09-14 lanjutan
        (:func:`row_volatility_zero`, permintaan user *"jika volatility 0
        jangan tampilkan, karena tidak ada pergerakan disitu"*) dan dihitung

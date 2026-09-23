@@ -1768,7 +1768,21 @@ badge BEST POOL       : < 0.1% marketcap (DUST_BEST_PCT, aditif) + data
                         BEST_TOP10_MAX_PCT (20%, INKLUSIF -> tepat 20% masih
                         tampil) gugur dengan alasan "Top10 x% > 20% — holder
                         terpusat"; None (tidak terukur) TIDAK gugur dan tetap
-                        tampil dengan — di kolom Top10. Saringan lama dust <
+                        tampil dengan — di kolom Top10. Saringan FEE/TVL (baru 2026-09-23,
+                        permintaan user "kita perketat filter yang boleh di
+                        show di hasil" + "Fee/TVL minimal 30%" + "dibawah itu
+                        jangan show"): fee_active_tvl_ratio <
+                        BEST_FEE_TVL_MIN (30%, INKLUSIF di sisi tampil ->
+                        tepat 30,0% lolos) gugur dengan alasan "Fee/TVL x% <
+                        30% — fee pool terlalu kecil" (row_fee_tvl_under).
+                        Dicek SESUDAH ambang F/V (baris yang gagal keduanya
+                        tetap beralasan F/V) dan SEBELUM Top10; BEDA dari
+                        Top10/volat/LPs, hasilnya TIDAK dibuang total -> masuk
+                        hidden_rows + tombol "N pool dilewati"
+                        (row_best_dropped sengaja tidak mengenal label ini).
+                        Hanya card Best Pool: filter_regular_rows Scan Meteora
+                        regular tidak ikut disaring.
+                        Saringan lama dust <
                         0.05%, volatility >= 2%, volume >= $1M, fee/active TVL
                         > 20%, top 10 < 30% (aturan lama, angka & arah beda dari
                         saringan baru di atas), total LPs > 20, active TVL >

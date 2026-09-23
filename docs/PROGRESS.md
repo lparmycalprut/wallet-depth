@@ -1,5 +1,37 @@
 # Progress
 
+## 2026-09-23: 🏆 Best Pool Meteora — Fee/TVL minimal 30% (di bawah itu tidak tampil di hasil)
+
+**Status: selesai; suite 1228 tes, `18 failed + 1 error` = nama kegagalan
+identik baseline sebelum perubahan (1214 tes, kegagalan sama persis; +14 tes
+baru hijau).**
+
+Permintaan user (verbatim): *"ok, kita perketat filter yang boleh di show di
+hasil"* + *"**Fee/TVL minimal 30%**"* + *"dibawah itu jangan show"*. Klarifikasi
+yang dijawab user: baris di bawah ambang **masuk listing "▶ N pool dilewati"**
+(bukan hilang total seperti Top10 / volatility / LPs), dan aturannya **hanya**
+untuk card 🏆 Best Pool — 🌊 Scan Meteora regular tidak ikut berubah.
+
+- `meteora_screener.BEST_FEE_TVL_MIN = 30.0` + `row_fee_tvl_pct()` /
+  `row_fee_tvl_under()` / `row_fee_tvl_ok()`.
+- `row_best_gaps()` mengeceknya **sesudah** ambang F/V dan **sebelum** Top10,
+  jadi baris yang gagal keduanya tetap beralasan `24H: F/V < 5×`; pool
+  ber-Fee/TVL tipis dengan F/V lolos menulis
+  `24H: Fee/TVL 20% < 30% — fee pool terlalu kecil`. Batas inklusif di sisi
+  tampil (tepat 30,0% lolos); fee hilang/nonfinite sudah gugur di cabang metrik.
+- `BEST_GAP_CATEGORIES` dapat jarum `Fee/TVL`; `row_best_dropped()` **tidak**
+  ikut membuang total alasan ini (keputusan user), jadi `hidden_metric` dan
+  tombol "dilewati" tetap menghitungnya. Tetap dieksekusi **sebelum**
+  `enrich_pools` — kuota Helius aman.
+- UI: tooltip card aturan "(5)", help tombol scan `+ Fee/TVL ≥ 30%`, help
+  tombol dilewati `F/V atau Fee/TVL`; hasil scan lama di `session_state`/cache
+  ikut tersaring saat render (jalurnya memang `row_best_gaps`).
+- Dua fixture tes lama dinaikkan Fee/TVL-nya karena angka live-nya kini di
+  bawah ambang (PAID 23,39% → `ratio` 30,0 di tes regresi GMGN + snapshot
+  live-nya di-pin di tes baru; CATE-USDC 19,54% → 39,54% di tes Active Range).
+- 4 dari 5 tes baru `FeeTvlPrefilterTest` diverifikasi **gagal pada kode lama**
+  (snapshot `git archive HEAD` + file tes baru).
+
 ## 2026-09-16 (batch 2): 🏆 Best Pool Meteora — satu lane 24H, 📦 TEMP, kolom RugCheck
 
 **Status: selesai; suite 1059 tes, `18 failed + 1 error` = nama kegagalan

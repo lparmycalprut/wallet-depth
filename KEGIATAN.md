@@ -1,3 +1,61 @@
+# Kegiatan — 23 September 2026 (🏆 Best Pool: Fee/TVL minimal 30% — di bawah itu tidak ditampilkan di hasil)
+
+Permintaan user (verbatim, tiga pesan berurutan): *"ok, kita perketat filter
+yang boleh di show di hasil"* · *"**Fee/TVL minimal 30%**"* · *"dibawah itu
+jangan show"*. Klarifikasi di sesi yang sama (dijawab user): baris di bawah
+ambang **masuk listing "▶ N pool dilewati"** (bukan hilang total seperti
+Top10 / volatility / LPs), dan aturannya **hanya** untuk card 🏆 Scan Best
+Pool Meteora — 🌊 Scan Meteora regular tidak ikut berubah.
+
+## Yang berubah
+- **`meteora_screener.py`**:
+  - Konstanta baru `BEST_FEE_TVL_MIN = 30.0` + helper `row_fee_tvl_pct()` /
+    `row_fee_tvl_under()` / `row_fee_tvl_ok()` (satu sumber angka untuk
+    saringan, teks alasan, dan kolom **Fee/TVL**).
+  - `row_best_gaps()`: saringan baru dieksekusi **sesudah** ambang F/V dan
+    **sebelum** Top10 — jadi baris yang gagal keduanya tetap beralasan
+    `24H: F/V < 5×` (teks lama tidak berubah arti), sedangkan pool ber-Fee/TVL
+    tipis dengan F/V lolos menulis `24H: Fee/TVL 20% < 30% — fee pool terlalu
+    kecil`. Batas inklusif di sisi tampil: tepat 30,0% lolos. Fee hilang /
+    negatif / nonfinite sudah gugur lebih dulu di cabang "metrik F/V tidak
+    tersedia".
+  - `BEST_GAP_CATEGORIES` dapat jarum `"Fee/TVL"` (rekap tabel kosong menyebut
+    `1 Fee/TVL`, bukan `1 F/V`), dan `row_best_dropped()` **sengaja tidak**
+    ikut membuang total alasan ini — docstringnya mencatat keputusan user.
+  - Semua saringan tetap jalan **sebelum** `enrich_pools`, jadi pool di bawah
+    30% tidak membakar kuota Helius; docstring modul + `filter_best_rows` +
+    `scan_best_lane` diperbarui (sekalian mengoreksi kalimat basi yang masih
+    menyebut likuiditas GMGN sebagai saringan).
+- **`best_pool_ui.py`**: tooltip card dapat aturan "(5) Fee/TVL di bawah 30%
+  gugur" (angkanya dibaca dari konstanta, jadi tooltip tidak bisa basi), help
+  tombol scan menulis `+ Fee/TVL ≥ 30%`, help tombol "▶ N pool dilewati"
+  menyebut `F/V atau Fee/TVL`, docstring modul dapat bullet sendiri. Render
+  ulang hasil scan **lama** di `session_state`/cache ikut tersaring karena
+  jalurnya memang `row_best_gaps` + `row_best_dropped` (tanpa scan ulang).
+- **`tests/`**: `FeeTvlPrefilterTest` (5 tes, urutan eksekusi + tidak ada
+  fetch holder + bukan pembuangan total + ambang dibaca dari konstanta) di
+  `tests/test_best_fv_prefilter.py`; `FeeTvlFilterTest` (7 tes: helper, batas
+  30% inklusif, teks ikut konstanta, `hidden_metric`, `scan_best_lane`,
+  tooltip, scope regular scan) + `FeeTvlUiTest` (1 tes AppTest: pool tipis
+  hilang dari tabel hasil, muncul di "dilewati" dengan alasannya) di
+  `tests/test_best_pool_scan.py`. Dua fixture tes lama disesuaikan karena
+  angka live-nya kini di bawah ambang (bukan karena bug): PAID
+  (`tests/test_gmgn_liquidity.py`, Fee/TVL 23,39% → `ratio` 30,0 untuk tes
+  regresi GMGN, dan snapshot live-nya di-pin di tes baru
+  `test_paid_snapshot_live_kena_ambang_fee_tvl`) dan CATE-USDC
+  (`tests/test_meteora_active_range.py`, 19,54% → 39,54% supaya tes tetap
+  menguji render **Active Range**).
+
+## Tes
+- `python -m unittest discover -s tests` → **1228 tes, 18 failed + 1 error** —
+  jumlah & nama kegagalan **identik baseline** sebelum perubahan (1214 tes,
+  18 failed + 1 error; semuanya di `test_lp_card_ui`, `test_manual_scan_alerts`,
+  `test_meteora_screener`, `test_scan_holders` dan sudah gagal di HEAD bersih).
+  +14 tes baru hijau, **tidak ada regresi**.
+- 4 dari 5 tes baru `FeeTvlPrefilterTest` **gagal pada kode lama** (diverifikasi
+  dengan snapshot `git archive HEAD` + file tes baru), jadi tesnya benar-benar
+  menangkap aturan baru, bukan hiasan.
+
 # Kegiatan — 22 September 2026 (🏆 Best Pool: gugur Top10 & volatility lenyap total + tabel disembunyikan urut F/V lalu Fee/TVL)
 
 Dua permintaan user untuk halaman 🏆 Best Pool:
