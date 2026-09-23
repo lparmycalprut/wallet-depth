@@ -592,6 +592,21 @@ def _depth_tables_html(depth: dict) -> str:
     user — sama seperti Hold %MC watchlist dan grafik Scan Holder); bucket
     dust sering jauh di bawah 0,01% MC sehingga dua desimal selalu tampil
     ``0.00%``.
+
+    Perapihan 2026-09-23 (permintaan user: *"rapikan tabel agar bisa
+    dibaca dengan mudah, sesuaikan ukuran per kolom dengan ukuran
+    tulisannya, kasih garis grid putus2 setiap kolom dan row"*):
+
+    - **Lebar kolom mengikuti tulisan** — ``table-layout:auto`` +
+      ``width:auto`` + ``white-space:nowrap`` di setiap sel, jadi kolom
+      menyusut pas dengan kontennya tanpa ruang kosong berlebih
+      (``max-width:100%`` + wrapper flex-wrap tetap menjaga layar kecil).
+    - **Grid putus-putus tiap kolom & baris** — semua sel memakai
+      ``border:1px dashed`` (dengan ``border-collapse:collapse`` garis
+      dalam dan luar tabel seragam).
+    - **Lebih mudah dibaca** — zebra striping tipis per baris, padding
+      dirapikan, dan alignment header mengikuti isi kolom (label kiri,
+      jumlah holder tengah, angka kanan).
     """
     def _pct(item):
         pct = item.get("pct_mc")
@@ -600,32 +615,49 @@ def _depth_tables_html(depth: dict) -> str:
     def _count(item):
         return "—" if item.get("count") is None else f"{int(item['count']):,}"
 
-    bucket_rows = "".join(
-        f"<tr><td>{html.escape(str(b.get('label') or ''))}</td>"
-        f"<td style='text-align:center'>{_count(b)}</td>"
-        f"<td style='text-align:right'>{_compact(b.get('value_usd'))}</td>"
-        f"<td style='text-align:right'>{_pct(b)}</td></tr>"
-        for b in (depth.get("buckets") or []))
-    tier_rows = "".join(
-        f"<tr><td>{html.escape(str(t.get('emoji') or ''))} "
-        f"{html.escape(str(t.get('tier') or ''))}</td>"
-        f"<td style='text-align:center'>{_count(t)}</td>"
-        f"<td style='text-align:right'>{_compact(t.get('value_usd'))}</td>"
-        f"<td style='text-align:right'>{_pct(t)}</td></tr>"
-        for t in (depth.get("tiers") or []))
-    style = ("border-collapse:collapse;font-size:.8rem;color:#000000;"
+    # Style dipakai builder baris di bawah — harus didefinisikan duluan.
+    style = ("border-collapse:collapse;table-layout:auto;width:auto;"
+             "max-width:100%;font-size:.82rem;color:#000000;"
              "margin:0 .6rem .4rem 0;")
-    th = "border:1px solid #cbd5e1;padding:.3rem .6rem;background:#f1f5f9;"
-    td = "border:1px solid #cbd5e1;padding:.25rem .6rem;"
+    grid = "border:1px dashed #94a3b8;white-space:nowrap;"
+    td_base = grid + "padding:.28rem .7rem;"
+    td_l = td_base + "text-align:left;"
+    td_c = td_base + "text-align:center;"
+    td_r = td_base + "text-align:right;"
+    th_base = grid + "padding:.32rem .7rem;background:#f1f5f9;"
+    th_l = th_base + "text-align:left;"
+    th_c = th_base + "text-align:center;"
+    th_r = th_base + "text-align:right;"
+
+    def _rows(items, label_html):
+        out = []
+        for i, item in enumerate(items):
+            # Zebra striping tipis supaya mata mudah mengikuti satu baris.
+            bg = ' style="background:#f8fafc;"' if i % 2 else ""
+            out.append(
+                f"<tr{bg}>"
+                f'<td style="{td_l}">{label_html(item)}</td>'
+                f'<td style="{td_c}">{_count(item)}</td>'
+                f'<td style="{td_r}">{_compact(item.get("value_usd"))}</td>'
+                f'<td style="{td_r}">{_pct(item)}</td></tr>')
+        return "".join(out)
+
+    bucket_rows = _rows(
+        depth.get("buckets") or [],
+        lambda b: html.escape(str(b.get("label") or "")))
+    tier_rows = _rows(
+        depth.get("tiers") or [],
+        lambda t: (html.escape(str(t.get("emoji") or "")) + " "
+                   + html.escape(str(t.get("tier") or ""))))
     return f"""
 <div style="display:flex;flex-wrap:wrap;gap:1rem;">
 <table style="{style}">
-<thead><tr><th style="{th}">Range</th><th style="{th}">Holder</th>
-<th style="{th}">Total Value</th><th style="{th}">% Market Cap</th>
+<thead><tr><th style="{th_l}">Range</th><th style="{th_c}">Holder</th>
+<th style="{th_r}">Total Value</th><th style="{th_r}">% Market Cap</th>
 </tr></thead><tbody>{bucket_rows}</tbody></table>
 <table style="{style}">
-<thead><tr><th style="{th}">Tier</th><th style="{th}">Holder</th>
-<th style="{th}">Total Value</th><th style="{th}">% Market Cap</th>
+<thead><tr><th style="{th_l}">Tier</th><th style="{th_c}">Holder</th>
+<th style="{th_r}">Total Value</th><th style="{th_r}">% Market Cap</th>
 </tr></thead><tbody>{tier_rows}</tbody></table>
 </div>"""
 
