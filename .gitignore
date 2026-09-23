@@ -43,3 +43,7 @@ gmgn_liquidity_cache.json
 # Cache Bubble Map (bubblemaps.io) — hasil HTTP per mint, bukan sumber
 # kebenaran; ditulis oleh modul bubblemaps.py (2026-09-18).
 bubblemaps_cache.json
+
+# Cache pajak/dividend (StonkFun + pump.fun) — hasil HTTP per mint, bukan
+# sumber kebenaran; ditulis oleh modul token_tax.py (2026-09-23).
+token_tax_cache.json

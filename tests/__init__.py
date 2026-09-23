@@ -31,3 +31,9 @@ os.environ["HELIUS_USAGE_PROBE"] = "0"
 # tidak pernah menulis ke repo. pytest menghidupkannya kembali per-tes lewat
 # fixture ``_iso_scan_cache`` di ``tests/conftest.py`` (direktori sementara).
 os.environ.setdefault("SCAN_CACHE", "0")
+
+# Pajak/dividend Best Pool (``token_tax``) memanggil StonkFun + pump.fun.
+# Suite tidak boleh menyentuh jaringan: fetch dimatikan di sini (bukan hanya
+# di conftest — runner ``unittest`` tidak memuat fixture pytest). Tes parser
+# memakai payload lokal; tes fetch mem-mock HTTP sendiri.
+os.environ["TOKEN_TAX_FETCH"] = "0"

@@ -437,6 +437,9 @@ def summarize(payload, *, pool_address: str = "",
         "notes": notes,
         "symbol": str(data.get("symbol") or "").upper(),
         "checked_at": int(time.time()),
+        # Persen pajak transfer Token-2022 (0 = tidak ada). Kolom
+        # TAX/DIVIDEND membacanya sebagai pajak saja — bukan dividend.
+        "transfer_fee": fee if fee > 0 else 0.0,
     }
 
 

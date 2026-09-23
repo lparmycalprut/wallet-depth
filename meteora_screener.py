@@ -491,6 +491,17 @@ def sort_regular_rows(rows: list[dict] | None) -> list[dict]:
     return sorted(list(rows or []), key=_key)
 
 
+def _transfer_fee_pct(token) -> float | None:
+    """Persen pajak transfer dari peringatan Jupiter di token base, atau None.
+
+    Bukan penanda dividend. Import di dalam fungsi supaya modul pajak tidak
+    ikut termuat saat screener diimpor.
+    """
+    from token_tax import transfer_fee_pct_from_token
+
+    return transfer_fee_pct_from_token(token)
+
+
 def _row_from_pool(pool: dict, *, timeframe: str = "24h",
                     in_24h: bool | None = None,
                     in_1h: bool | None = None) -> dict:
@@ -554,6 +565,9 @@ def _row_from_pool(pool: dict, *, timeframe: str = "24h",
         "fee_active_tvl_ratio_vs_volatility": fee_volatility_ratio(
             fee_ratio, volatility),
         "analysis": None,
+        # Pajak transfer dari peringatan Jupiter di token base (bukan dividend).
+        # Hasil scan lama tidak punya field ini → kolom menulis — sampai rescan.
+        "transfer_fee_pct": _transfer_fee_pct(token),
     }
 
 
@@ -1890,7 +1904,8 @@ def sort_hidden_best_rows(rows: list[dict] | None) -> list[dict]:
 def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
                    workers: int = 6, progress=None, timeout: int = 25,
                    page_size: int = PAGE_SIZE, rugcheck: bool = True,
-                   gmgn: bool = True, bubblemap: bool = False) -> dict:
+                   gmgn: bool = True, bubblemap: bool = False,
+                   tax: bool = True) -> dict:
     """Scan Best Pool **24H saja** — satu tombol card, satu tabel.
 
     Lane 30M dihapus 2026-09-16 (permintaan user: *"hapus scan 30 menit, kita
@@ -2055,6 +2070,30 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
             if _alog:
                 _alog.error("scan-best-pool",
                             f"BubbleMap gagal: {str(exc)[:160]}")
+    # Pajak + dividend (2026-09-23) — hanya baris yang lolos, setelah RugCheck
+    # supaya ``transfer_fee`` rugchecker.cc ikut jadi cadangan pajak. Kolomnya
+    # informasi: kegagalan HTTP tidak membuang baris dan tidak mengubah
+    # strategi (dividend belum terbaca ≠ bukan dividend). ``tax=False``
+    # (test/offline) melewatkan step ini; suite juga mematikan HTTP lewat
+    # ``TOKEN_TAX_FETCH=0``.
+    tax_failed = 0
+    if rows and tax:
+        try:
+            from token_tax import attach_to_rows as _tax_attach
+
+            rows = _tax_attach(rows, workers=workers,
+                               timeout=min(int(timeout), 12))
+            tax_failed = sum(
+                1 for row in rows
+                if (row.get("tax_dividend") or {}).get("fetched")
+                and not (row.get("tax_dividend") or {}).get("dividend")
+                and not (row.get("tax_dividend") or {}).get("dividend_known"))
+        except Exception as exc:  # noqa: BLE001 - kolom opsional, scan tetap jalan
+            error = " · ".join(
+                part for part in (error, f"Tax/dividend: {exc}") if part)
+            if _alog:
+                _alog.error("scan-best-pool",
+                            f"Tax/dividend gagal: {str(exc)[:160]}")
     kept = sort_best_rows(rows)
     hidden_rows = sort_hidden_best_rows(hidden_rows)
     if _alog:
@@ -2076,7 +2115,9 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
                    + (f", {gmgn_failed} likuiditas GMGN tak terbaca"
                       if gmgn_failed else "")
                    + (f", {bubblemap_failed} BubbleMap tak terbaca"
-                      if bubblemap_failed else "") + ")")
+                      if bubblemap_failed else "")
+                   + (f", {tax_failed} tax/dividend tak terbaca"
+                      if tax_failed else "") + ")")
     return {
         "rows": kept,
         "hidden_rows": hidden_rows,
@@ -2103,6 +2144,10 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
         # jadi angka ini praktis selalu 0; key-nya tetap dikirim supaya
         # pembaca hasil scan lama (cache/session) tidak KeyError.
         "bubblemap_failed": bubblemap_failed,
+        # Mint yang dividend-nya tidak terjawab (kedua sumber gagal). Pajak
+        # lokal tetap bisa tampil; strategi tidak diubah. 0 bila fetch
+        # dimatikan atau ``tax=False``.
+        "tax_failed": tax_failed,
         # Lane hasil scan — UI memakainya untuk judul/pill tabel. Sejak 30M
         # dihapus (2026-09-16) ini selalu "24h".
         "lane": normalized,
@@ -2118,17 +2163,20 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
                       page_size: int = PAGE_SIZE,
                       rugcheck: bool = True,
                       gmgn: bool = True,
-                      bubblemap: bool = False) -> dict:
+                      bubblemap: bool = False,
+                      tax: bool = True) -> dict:
     """Wrapper lama :func:`scan_best_lane` (satu-satunya lane: 24H).
 
     Sejak 2026-09-13 kwarg ``timeframe`` **membatasi fetch**; sejak 2026-09-16
     hanya 24H yang ada, dan ``timeframe`` apa pun yang pernah dikenali
     (termasuk ``"30m"``/``"both"``) dipetakan ke 24H oleh
-    :func:`normalize_best_lane`. ``rugcheck``, ``gmgn`` dan ``bubblemap``
-    diteruskan apa adanya (``bubblemap`` default-nya ``False`` sejak
+    :func:`normalize_best_lane`. ``rugcheck``, ``gmgn``, ``bubblemap`` dan
+    ``tax`` diteruskan apa adanya (``bubblemap`` default-nya ``False`` sejak
     2026-09-19 — kolom Bubble Map dihapus, lihat :func:`scan_best_lane`).
+    ``tax=False`` melewatkan tempelan pajak/dividend (test/offline).
     """
     return scan_best_lane(timeframe, max_wallets=max_wallets,
                           workers=workers, progress=progress,
                           timeout=timeout, page_size=page_size,
-                          rugcheck=rugcheck, gmgn=gmgn, bubblemap=bubblemap)
+                          rugcheck=rugcheck, gmgn=gmgn, bubblemap=bubblemap,
+                          tax=tax)

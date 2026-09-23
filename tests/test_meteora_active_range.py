@@ -223,13 +223,14 @@ class BestPoolColumnsTest(unittest.TestCase):
                 titles = bp._lane_titles(lane)
                 self.assertEqual(len(titles),
                                  len(bp._col_spec(show_strategy=True)))
-                self.assertEqual(len(titles), 14)
+                self.assertEqual(len(titles), 15)
                 self.assertEqual(titles[4], "Active Range")
                 self.assertEqual(titles[5], "LPs")
                 self.assertEqual(titles[8], "A.TVL")
                 self.assertEqual(titles[11], "RugCheck")
                 self.assertEqual(titles[12], "Pool")
-                self.assertEqual(titles[13], "STRATEGY")
+                self.assertEqual(titles[13], "TAX/DIVIDEND")
+                self.assertEqual(titles[14], "STRATEGY")
                 tanpa_strategy = bp._lane_titles(lane, show_strategy=False)
                 self.assertEqual(len(tanpa_strategy),
                                  len(bp._col_spec(show_strategy=False)))

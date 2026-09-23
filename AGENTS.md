@@ -1,5 +1,11 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-23 — 🏆 Best Pool: kolom TAX/DIVIDEND di kiri STRATEGY
+
+- Permintaan user: kolom **tax/dividend**; bila token **punya dividend**, sel STRATEGY persis `30 70 spotbidask full range`. Pajak saja tidak mengubah strategi. Cabang likuiditas lama tetap: `hybird 7030, bidask 3070 - full range` bila total likuiditas > $500K, selain itu `hybird 5050, bidask - full range`.
+- **Dividend** = StonkFun `mode=reward` atau pump.fun `is_holder_reward is True` (`token_tax.py`). Cashback, `creator_reward`, dan peringatan `TRANSFER_FEE_CONFIGURED` hanya pajak, bukan override.
+- Tabel utama 15 kolom (TAX/DIVIDEND indeks 13, STRATEGY indeks 14). Tabel "▶ N pool dilewati" tetap 13 kolom, berakhir di Pool. HTTP suite dimatikan lewat `TOKEN_TAX_FETCH=0` di `tests/__init__.py`. Cache `token_tax_cache.json` di-ignore.
+
 ## Update 2026-09-22 (terbaru) — 🏆 Best Pool: gugur Top10 & volatility disembunyikan total + tabel disembunyikan urut F/V terbesar lalu Fee/TVL terbesar
 
 - **Permintaan user (verbatim):**
