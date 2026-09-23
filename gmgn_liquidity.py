@@ -566,6 +566,12 @@ STRATEGY_LIQ_HIGH = "hybird 7030, bidask 3070 - full range"
 #: Teks STRATEGY bila likuiditas total **< $500K** (verbatim permintaan user —
 #: "bidask" tanpa angka memang begitu adanya, dikonfirmasi ulang 2026-09-19).
 STRATEGY_LIQ_LOW = "hybird 5050, bidask - full range"
+#: Teks STRATEGY bila token **punya dividend** (verbatim permintaan user
+#: 2026-09-23: *\"30 70 spotbidask full range\"*). Menggantikan kedua cabang
+#: likuiditas — jangan dirapikan jadi frasa ``hybird …``. Pajak transfer saja
+#: tidak memakai teks ini; hanya dividend terkonfirmasi
+#: (:func:`token_tax.row_has_dividend`).
+STRATEGY_DIVIDEND = "30 70 spotbidask full range"
 
 
 def row_total_liquidity_usd(row: dict | None):
@@ -616,16 +622,45 @@ def strategy_for_liquidity(usd) -> str:
     return STRATEGY_LIQ_LOW
 
 
+def _confirmed_dividend(row: dict | None) -> bool:
+    """Dividend terkonfirmasi — satu-satunya pemicu teks STRATEGY khusus.
+
+    Dibaca dari :func:`token_tax.row_has_dividend` (bukan disalin di sini)
+    supaya pajak, cashback, dan ``creator_reward`` tidak pernah lolos.
+    Import di dalam fungsi: modul pajak tidak boleh ikut termuat saat
+    likuiditas GMGN diimpor (dan sebaliknya).
+    """
+    from token_tax import row_has_dividend
+
+    return row_has_dividend(row)
+
+
 def row_strategy(row: dict | None) -> dict:
     """Rangkuman kolom **STRATEGY** satu baris: teks + bukti untuk tooltip.
 
     ``{"text": str, "usd": float|None, "measured": bool, "source": str,
-    "reason": str}`` — ``measured`` False berarti likuiditasnya tidak
-    terbaca (strategi tetap ditulis, alasannya ada di ``reason`` sehingga UI
-    bisa menaruhnya di tooltip sel dan tidak pernah menyiratkan sel kosong
-    = aman).
+    "reason": str, "dividend": bool}`` — ``measured`` False berarti
+    likuiditasnya tidak terbaca (strategi tetap ditulis, alasannya ada di
+    ``reason`` sehingga UI bisa menaruhnya di tooltip sel dan tidak pernah
+    menyiratkan sel kosong = aman).
+
+    **Dividend menang** (2026-09-23): bila :func:`_confirmed_dividend` True,
+    teksnya :data:`STRATEGY_DIVIDEND` apa pun angka likuiditasnya. Pajak
+    transfer saja tidak masuk cabang ini. Dividend belum terbaca juga tidak
+    — tetap cabang likuiditas, baris tidak dibuang.
     """
     usd, source = row_total_liquidity_usd(row)
+    if _confirmed_dividend(row):
+        return {
+            "text": STRATEGY_DIVIDEND,
+            "usd": usd,
+            "measured": usd is not None,
+            "source": source,
+            "reason": ("token punya dividend (holder reward) → "
+                       f"\"{STRATEGY_DIVIDEND}\" — aturan likuiditas "
+                       f"({MIN_LABEL}) tidak dipakai"),
+            "dividend": True,
+        }
     text = strategy_for_liquidity(usd)
     if usd is None:
         reason = (f"likuiditas total {source} → tidak ada angka pembanding, "
@@ -635,7 +670,7 @@ def row_strategy(row: dict | None) -> dict:
                 else f"<= {MIN_LABEL}")
         reason = f"likuiditas total {compact_usd(usd)} ({source}) {side}"
     return {"text": text, "usd": usd, "measured": usd is not None,
-            "source": source, "reason": reason}
+            "source": source, "reason": reason, "dividend": False}
 
 
 def row_gmgn_gap(row: dict | None) -> str | None:

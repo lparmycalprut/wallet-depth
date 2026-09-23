@@ -182,6 +182,11 @@ def render_styles() -> None:
        (nowrap) sementara bagian depannya boleh melipat — kolomnya tidak perlu
        dilebarkan. */
     .bp-strategy-range {white-space:nowrap;}
+    /* Kolom TAX/DIVIDEND (kiri STRATEGY, 2026-09-23): "tax 1% · dividend"
+       tetap satu baris. Kata dividend diwarnai hijau supaya beda dari
+       pajak transfer yang tidak mengubah STRATEGY. */
+    .bp-tax-dividend {white-space:nowrap;}
+    .bp-dividend {color:#15803d;font-weight:700;}
     /* Garis vertikal pembatas antar kolom tabel 🏆 Scan Best Pool
        (permintaan user 2026-09-17: "batasi per kolom dengan garis naik
        turun"). Marker tak-kasatmata .bp-cols-next disisipkan tepat SEBELUM

@@ -1562,7 +1562,8 @@ class BestPoolCardTest(unittest.TestCase):
         body = "\n".join(node.value for node in app.markdown)
         headers = [">Token<", ">F/V<", ">Fee/TVL<", ">Volat<", ">Active Range<",
                    ">LPs<", ">Fee %<", ">MC<", ">A.TVL<", ">Vol 24h<",
-                   ">Top10<", ">RugCheck<", ">Pool<", ">STRATEGY<"]
+                   ">Top10<", ">RugCheck<", ">Pool<", ">TAX/DIVIDEND<",
+                   ">STRATEGY<"]
         for header in headers:
             self.assertIn(header, body)
         for kiri, kanan in zip(headers, headers[1:]):
@@ -1608,7 +1609,7 @@ class BestPoolCardTest(unittest.TestCase):
         # (penataan 2026-09-19).
         self.assertEqual(len(bp._lane_titles("24h")),
                          len(bp._col_spec(show_strategy=True)))
-        self.assertEqual(len(bp._lane_titles("24h")), 14)
+        self.assertEqual(len(bp._lane_titles("24h")), 15)
         self.assertEqual(len(bp._lane_titles("24h", show_strategy=False)),
                          len(bp._col_spec(show_strategy=False)))
         self.assertEqual(len(bp._lane_titles("24h", show_strategy=False)), 13)
@@ -2090,6 +2091,7 @@ class StrategyColumnTest(BestPoolCardTest):
         self.assertIn("$SEPI", body)
         self.assertIn(">Pool<", body)
         self.assertNotIn(">STRATEGY<", body)
+        self.assertNotIn(">TAX/DIVIDEND<", body)
         # Tidak ada SEL strategi (CSS ``render_styles`` ikut ter-render di
         # body, jadi yang dihitung elemen sel-nya).
         self.assertNotIn('<span class="bp-strategy-range">', body)
@@ -2137,7 +2139,7 @@ class StrategyColumnTest(BestPoolCardTest):
         self.assertEqual(bp._col_spec(show_strategy=True)[-1],
                          bp.STRATEGY_COL_WIDTH)
         self.assertEqual(len(bp._col_spec(show_strategy=True)),
-                         len(bp._col_spec(show_strategy=False)) + 1)
+                         len(bp._col_spec(show_strategy=False)) + 2)
 
     def test_tooltip_card_menjelaskan_aturan_strategy(self):
         tip = bp.best_pool_tooltip()
@@ -2198,9 +2200,12 @@ class StrategyColumnPlacementTest(unittest.TestCase):
     def test_index_kolom_strategy_tepat_di_kanan_pool(self):
         """``STRATEGY_COL_INDEX`` = kolom ke-14, tepat di kanan kolom Pool."""
         self.assertEqual(bp.POOL_COL_INDEX, 12)
-        self.assertEqual(bp.STRATEGY_COL_INDEX, bp.POOL_COL_INDEX + 1)
+        self.assertEqual(bp.TAX_DIVIDEND_COL_INDEX, bp.POOL_COL_INDEX + 1)
+        self.assertEqual(bp.STRATEGY_COL_INDEX, bp.TAX_DIVIDEND_COL_INDEX + 1)
+        self.assertEqual(bp.STRATEGY_COL_INDEX, bp.POOL_COL_INDEX + 2)
         titles = bp._lane_titles("24h")
         self.assertEqual(titles[bp.POOL_COL_INDEX], "Pool")
+        self.assertEqual(titles[bp.TAX_DIVIDEND_COL_INDEX], "TAX/DIVIDEND")
         self.assertEqual(titles[bp.STRATEGY_COL_INDEX], "STRATEGY")
         self.assertEqual(bp.STRATEGY_COL_TITLE, titles[bp.STRATEGY_COL_INDEX])
 
