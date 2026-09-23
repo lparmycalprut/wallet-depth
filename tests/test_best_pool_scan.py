@@ -21,7 +21,11 @@ dari 100, kasih warna hijau"*. Yang di-pin di file ini:
   ``F/V >= BEST_FV_24H_MIN`` (5×, inklusif), volatility **1%–10%**
   (:data:`BEST_VOL_SHOW_MIN`/``BEST_VOL_SHOW_MAX``, inklusif di dua sisi), dan
   **Top10 < BEST_TOP10_MAX_PCT** (20%; tepat 20,0% ikut dibuang — batasnya di
-  sisi buang). Di bawah itu → **langsung skip**, ``enrich_pools`` tidak pernah
+  sisi buang), dan — permintaan user 2026-09-23 *"kita perketat filter yang
+  boleh di show di hasil"* + *"Fee/TVL minimal 30%"* + *"dibawah itu jangan
+  show"* — **Fee/TVL >= BEST_FEE_TVL_MIN** (30%, inklusif di sisi tampil;
+  gugurnya masuk listing "▶ N pool dilewati", BUKAN dibuang total seperti
+  Top10/volatility/LPs). Di bawah itu → **langsung skip**, ``enrich_pools`` tidak pernah
   dipanggil (kuota Helius aman), barisnya masuk ``hidden_rows`` dengan alasan di
   ``best_gaps`` — **kecuali** volatility 0: dibuang penuh dari listing
   (2026-09-14 lanjutan), tidak dihitung di ``hidden_metric``, jumlahnya di
@@ -2769,3 +2773,162 @@ class LpsFilterTest(unittest.TestCase):
             self.assertNotIn("HIDETIPIS", body2)
             self.assertIn("HIDEOK", body2)
 
+
+
+class FeeTvlFilterTest(unittest.TestCase):
+    """**Fee/TVL minimal 30%** di card 🏆 Best Pool (permintaan user 2026-09-23).
+
+    Verbatim: *"kita perketat filter yang boleh di show di hasil"* +
+    *"Fee/TVL minimal 30%"* + *"dibawah itu jangan show"*; klarifikasi di sesi
+    yang sama: baris di bawah ambang **masuk daftar "▶ N pool dilewati"**
+    (bukan hilang total), dan aturannya **hanya** untuk card Best Pool —
+    Scan Meteora regular tidak ikut berubah.
+    """
+
+    def test_helper_fee_tvl(self):
+        self.assertEqual(ms.BEST_FEE_TVL_MIN, 30.0)
+        self.assertEqual(ms.row_fee_tvl_pct({"fee_active_tvl_ratio": 42.5}), 42.5)
+        self.assertIsNone(ms.row_fee_tvl_pct({}))
+        self.assertEqual(ms.row_fee_tvl_under({"fee_active_tvl_ratio": 29.9}), 29.9)
+        self.assertIsNone(ms.row_fee_tvl_under({"fee_active_tvl_ratio": 30.0}))
+        self.assertIsNone(ms.row_fee_tvl_under({}))
+        self.assertTrue(ms.row_fee_tvl_ok({"fee_active_tvl_ratio": 30.0}))
+        self.assertFalse(ms.row_fee_tvl_ok({"fee_active_tvl_ratio": 29.9}))
+
+    def test_batas_30_persen_inklusif_di_sisi_tampil(self):
+        """Tepat 30% lolos; 29,999% gugur walau F/V-nya jauh di atas 5×."""
+        self.assertEqual(ms.row_best_gaps(_row(fee_active_tvl_ratio=30.0,
+                                               volatility=5.0)), [])
+        self.assertEqual(ms.row_best_gaps(_row(fee_active_tvl_ratio=30.001,
+                                               volatility=5.0)), [])
+        self.assertEqual(
+            ms.row_best_gaps(_row(fee_active_tvl_ratio=29.999, volatility=5.0)),
+            ["24H: Fee/TVL 29.999% < 30% — fee pool terlalu kecil"])
+
+    def test_teks_alasan_ikut_konstanta(self):
+        with mock.patch.object(ms, "BEST_FEE_TVL_MIN", 50.0):
+            self.assertEqual(
+                ms.row_best_gaps(_row(fee_active_tvl_ratio=40.0, volatility=5.0)),
+                ["24H: Fee/TVL 40% < 50% — fee pool terlalu kecil"])
+            self.assertEqual(ms.row_best_gap_label(
+                _row(fee_active_tvl_ratio=40.0, volatility=5.0)), "Fee/TVL")
+        with mock.patch.object(ms, "BEST_FEE_TVL_MIN", 10.0):
+            self.assertEqual(
+                ms.row_best_gaps(_row(fee_active_tvl_ratio=40.0, volatility=5.0)),
+                [])
+
+    def test_gugur_fee_tvl_tetap_ada_di_dilewati(self):
+        """Beda dari Top10/LPs/volatility: tidak dibuang total."""
+        tipis = _row(fee_active_tvl_ratio=20.0, volatility=2.5)
+        kept, hidden_metric, hidden_dust = ms.filter_best_rows(
+            [_row(), tipis], lane="24h")
+        self.assertEqual([r["pool_address"] for r in kept], ["P1"])
+        self.assertEqual(hidden_metric, 1)     # terlihat di tabel "dilewati"
+        self.assertEqual(hidden_dust, 0)
+        self.assertFalse(ms.row_best_dropped(tipis, lane="24h"))
+        self.assertEqual(ms.best_gap_summary([dict(tipis, best_gaps=ms.row_best_gaps(tipis))]),
+                         "1 Fee/TVL")
+        # Top10 >= 20% tetap membuang total walau alasan yang tertulis Fee/TVL.
+        pusat = _row(fee_active_tvl_ratio=20.0, volatility=2.5,
+                     top_holders_pct=25.0)
+        self.assertTrue(ms.row_best_dropped(pusat, lane="24h"))
+
+    def test_scan_lane_fee_tvl_tipis_tanpa_holder(self):
+        pools = [
+            _pool("P-OK", "MintOK", ratio=60.0, volatility=6.2, total_lps=88),
+            # F/V 20 ÷ 3,0 = 6,67× lolos; Fee/TVL 20% < 30% → gugur.
+            _pool("P-TIPIS", "MintTipis", ratio=20.0, volatility=3.0, total_lps=88),
+            _pool("P-PAS", "MintPas", ratio=30.0, volatility=5.0, total_lps=88),
+        ]
+        enrich_calls = []
+
+        def fake_enrich(rows, **kw):
+            enrich_calls.append([r["pool_address"] for r in rows])
+            return rows
+
+        with mock.patch.object(ms, "fetch_best_pools", side_effect=lambda **kw: pools), \
+             mock.patch.object(ms, "enrich_pools", side_effect=fake_enrich), \
+             mock.patch("gmgn_liquidity.attach_total_liquidity", side_effect=lambda rows, **kw: rows), \
+             mock.patch("rugchecker.attach_to_rows", side_effect=lambda rows, **kw: [dict(r, rugcheck={"ok": False}) for r in rows]):
+            result = ms.scan_best_lane("24h", max_wallets=2000)
+
+        self.assertEqual(enrich_calls, [["P-OK", "P-PAS"]])
+        self.assertEqual([r["pool_address"] for r in result["rows"]],
+                         ["P-OK", "P-PAS"])
+        self.assertEqual([r["pool_address"] for r in result["hidden_rows"]],
+                         ["P-TIPIS"])
+        self.assertEqual(result["hidden_metric"], 1)
+        self.assertEqual(result["dropped_total"], 0)
+        self.assertEqual(result["hidden_rows"][0]["best_gaps"],
+                         ["24H: Fee/TVL 20% < 30% — fee pool terlalu kecil"])
+
+    def test_tooltip_menyebut_fee_tvl(self):
+        tip = bp.best_pool_tooltip()
+        self.assertIn("(5) Fee/TVL di bawah 30% gugur", tip)
+        self.assertIn("Fee/TVL minimal 30%, dibawah itu jangan show", tip)
+        self.assertIn("saringannya tetap F/V + Fee/TVL + volat + Top10 + LPs", tip)
+        with mock.patch.object(ms, "BEST_FEE_TVL_MIN", 45.0):
+            self.assertIn("(5) Fee/TVL di bawah 45% gugur", bp.best_pool_tooltip())
+
+    def test_regular_scan_tidak_ikut_disaring(self):
+        """Kartu Scan Meteora regular tetap longgar (scope: Best Pool saja)."""
+        rows, hidden = ms.filter_regular_rows(
+            [{"pool_address": "REG", "fee_active_tvl_ratio": 10.0,
+              "volatility": 5.0, "timeframe": "24h"}])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(hidden, 0)
+        self.assertEqual(rows[0]["classification"], "LP 24H")
+
+
+@unittest.skipIf(AppTest is None, "streamlit not installed")
+class FeeTvlUiTest(unittest.TestCase):
+    """Pool Fee/TVL < 30% hilang dari tabel hasil, tapi muncul di "dilewati"."""
+
+    def test_fee_tvl_tipis_hanya_di_tabel_dilewati(self):
+        patches = (
+            mock.patch("watchlist.load_watchlist", side_effect=lambda **_kw: {}),
+            mock.patch("holder_status.load_holder_status", side_effect=lambda **_kw: {"updated_at": None, "tokens": {}}),
+            mock.patch("holder_history.load_holder_history", side_effect=lambda *a, **kw: {"tokens": {}}),
+            mock.patch("holder_history.pull_holder_history", return_value=None),
+        )
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        app = AppTest.from_file(APP, default_timeout=90).run()
+        app.session_state["best_pool_scan_24h"] = {
+            "rows": [
+                _row(pool_address="PoolOK", ca="MintOK", symbol="OKFEE"),
+                # F/V 10× (lolos) tapi Fee/TVL 20% → tidak boleh tampil.
+                _row(pool_address="PoolFeeTipis", ca="MintFeeTipis",
+                     symbol="FEETIPIS", fee_active_tvl_ratio=20.0,
+                     volatility=2.0),
+            ],
+            "hidden_rows": [
+                _row(pool_address="PoolHideFV", ca="MintHideFV",
+                     symbol="HIDEFV", fee_active_tvl_ratio=2.0,
+                     volatility=6.2),
+            ],
+            "error": "",
+            "fetched": 3,
+            "hidden_metric": 1,
+            "hidden_dust": 0,
+            "skipped_quote": 0,
+            "dropped_volatility": 0,
+            "lane": "24h",
+            "gate": ms.best_lane_gate_label("24h"),
+            "analyzed_at": 1,
+        }
+        app.run()
+        body = "\n".join(node.value for node in app.markdown)
+        captions = "\n".join(node.value for node in app.caption)
+        # Tabel hasil: hanya pool dengan Fee/TVL >= 30%.
+        self.assertIn("OKFEE", body)
+        self.assertNotIn("FEETIPIS", body)
+        # Hasil scan LAMA ikut tersaring saat render (tanpa scan ulang).
+        self.assertIn("2 dilewati", captions)
+        # Buka "▶ N pool dilewati" → barisnya ada beserta alasannya.
+        app.button(key="best-pool-toggle-hidden-24h").click().run()
+        body2 = "\n".join(node.value for node in app.markdown)
+        self.assertIn("FEETIPIS", body2)
+        self.assertIn("gugur: Fee/TVL 20% < 30%", body2)
+        self.assertIn("HIDEFV", body2)

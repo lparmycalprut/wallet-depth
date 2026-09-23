@@ -271,9 +271,14 @@ class ActiveRangeCardTest(unittest.TestCase):
         return "\n".join(node.value for node in app.markdown)
 
     def test_tabel_best_pool_menampilkan_active_range(self):
+        # Fee/TVL snapshot live CATE-USDC 19,54% di bawah ambang baru 30%
+        # (aturan 2026-09-23: "Fee/TVL minimal 30%, dibawah itu jangan show"),
+        # jadi dinaikkan ke 39,54% supaya tes ini menguji render Active Range,
+        # bukan saringan layar — angka range-nya datang dari pool_price /
+        # min_price / max_price / bin_step dan tidak tersentuh perubahan ini.
         rows = [dict(CATE, ca="MintCATE", symbol="CATE", timeframe="24h",
                      source="24h", mc=71_798_695.7, tvl=66_679.22,
-                     active_tvl=65_315.94, fee_active_tvl_ratio=19.54,
+                     active_tvl=65_315.94, fee_active_tvl_ratio=39.54,
                      volatility=1.11, volume=4_872_478.48, fee=12_763.44,
                      volume_change_pct=1022.69, fee_pct=0.2, total_lps=56,
                      top_holders_pct=14.4,

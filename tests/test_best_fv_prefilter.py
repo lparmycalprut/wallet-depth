@@ -19,7 +19,13 @@ mem-pin urutan eksekusinya, bukan angkanya (angka + teks ambang diuji di
   di counter audit ``dropped_volatility``;
 - kandidat yang gugur tidak pernah membuat request holder (``enrich_pools``
   tidak dipanggil untuk mereka) tapi tetap tercatat di ``hidden_rows`` beserta
-  ``best_gaps`` (kecuali vol-0 di atas).
+  ``best_gaps`` (kecuali vol-0 di atas);
+- **Fee/TVL >= 30%** (``BEST_FEE_TVL_MIN``, permintaan user 2026-09-23:
+  *"Fee/TVL minimal 30%, dibawah itu jangan show"*) ikut dieksekusi di
+  saringan yang sama dan **sebelum** holder — tapi dicek SESUDAH F/V supaya
+  baris yang gagal keduanya tetap beralasan ``F/V < 5×``; berbeda dari
+  LPs/Top10/volatility, barisnya **tidak dibuang total** (konfirmasi user:
+  masuk listing "▶ N pool dilewati").
 """
 import unittest
 from unittest.mock import patch
@@ -342,3 +348,101 @@ class LpsPrefilterTest(unittest.TestCase):
         self.assertTrue(ms.row_best_dropped({"total_lps": 12, "fee_active_tvl_ratio": 40.0, "volatility": 6.2}))
         self.assertFalse(ms.row_best_dropped({"total_lps": 50, "fee_active_tvl_ratio": 40.0, "volatility": 6.2}))
 
+
+
+class FeeTvlPrefilterTest(unittest.TestCase):
+    """**Fee/TVL < 30% gugur SEBELUM holder, tapi tidak dibuang total** (2026-09-23).
+
+    Permintaan user: *"kita perketat filter yang boleh di show di hasil"* +
+    *"Fee/TVL minimal 30%"* + *"dibawah itu jangan show"*; konfirmasi user di
+    sesi yang sama: baris di bawah ambang **masuk listing "▶ N pool dilewati"**,
+    bukan hilang — jadi berbeda dari LPs / Top10 / volatility yang dibuang
+    total (:data:`meteora_screener.BEST_FEE_TVL_MIN`).
+    """
+
+    def _scan(self, pools):
+        enrich_calls = []
+
+        def fake_enrich(rows, **_kw):
+            enrich_calls.append([r["pool_address"] for r in rows])
+            return rows
+
+        def fake_fetch(*, timeframe, **_kw):
+            return pools
+
+        def _fake_gmgn(rows, **_kw):
+            for r in rows:
+                r["gmgn_liq"] = {"ok": False}
+            return rows
+
+        with patch.object(ms, 'fetch_best_pools', side_effect=fake_fetch), \
+             patch.object(ms, 'enrich_pools', side_effect=fake_enrich), \
+             patch('gmgn_liquidity.attach_total_liquidity', side_effect=_fake_gmgn):
+            result = ms.scan_best_lane("24h", max_wallets=2000, rugcheck=False)
+        result["enrich_calls"] = enrich_calls
+        return result
+
+    def test_fee_tvl_di_bawah_30_tanpa_scan_holder(self):
+        pools = [
+            _pool('OK', 'MintOK', ratio=60, volatility=6.2, total_lps=88),
+            # F/V 6,67× (lolos ambang 5×) tapi fee/TVL cuma 20% → gugur.
+            _pool('TIPIS', 'MintTipis', ratio=20, volatility=3.0, total_lps=88),
+            # Tepat 30% lolos (batas inklusif di sisi tampil).
+            _pool('PAS', 'MintPas', ratio=30, volatility=5.0, total_lps=88),
+        ]
+        result = self._scan(pools)
+        # Holder hanya di-fetch untuk yang lolos: kuota Helius tidak terbakar.
+        self.assertEqual(result["enrich_calls"], [["OK", "PAS"]])
+        self.assertEqual(sorted(r["pool_address"] for r in result["rows"]),
+                         ["OK", "PAS"])
+        # Beda dari LPs/Top10/volatility: barisnya TETAP tercatat dan bisa
+        # dibuka lewat tombol "▶ N pool dilewati".
+        self.assertEqual([r["pool_address"] for r in result["hidden_rows"]],
+                         ["TIPIS"])
+        self.assertEqual(result["hidden_metric"], 1)
+        self.assertEqual(result["dropped_total"], 0)
+        self.assertEqual(result["fetched"], 3)
+        self.assertEqual(
+            result["hidden_rows"][0]["best_gaps"],
+            ["24H: Fee/TVL 20% < 30% \u2014 fee pool terlalu kecil"])
+
+    def test_urutan_alasan_f_v_dulu_baru_fee_tvl(self):
+        """F/V tetap alasan utama bila dua-duanya gagal (teks lama tak berubah)."""
+        # F/V 2× + Fee/TVL 20% → yang dilaporkan F/V (alasan yang lebih dulu).
+        self.assertEqual(ms.row_best_gaps(_gate_row(20, 10)),
+                         ['24H: F/V < 5\u00d7'])
+        # F/V 8× lolos, jadi yang mengikat Fee/TVL.
+        self.assertEqual(
+            ms.row_best_gaps(_gate_row(20, 2.5)),
+            ['24H: Fee/TVL 20% < 30% \u2014 fee pool terlalu kecil'])
+
+    def test_gugur_fee_tvl_tidak_ikut_dibuang_total(self):
+        """Hanya Top10/volatility/LPs yang hilang total — Fee/TVL tidak."""
+        tipis = _gate_row(20, 2.5)
+        gaps = ms.row_best_gaps(tipis)
+        self.assertEqual(ms.row_best_gap_label(dict(tipis, best_gaps=gaps)),
+                         'Fee/TVL')
+        self.assertFalse(ms.row_best_dropped(tipis))
+        # Tapi Top10 >= 20% tetap membuang total walau alasannya Fee/TVL.
+        pusat = _gate_row(20, 2.5, top10=25.0)
+        self.assertEqual(
+            ms.row_best_gap_label(dict(pusat,
+                                       best_gaps=ms.row_best_gaps(pusat))),
+            'Fee/TVL')
+        self.assertTrue(ms.row_best_dropped(pusat))
+
+    def test_ambang_dibaca_dari_konstanta(self):
+        with patch.object(ms, 'BEST_FEE_TVL_MIN', 15.0):
+            self.assertEqual(ms.row_best_gaps(_gate_row(20, 2.5)), [])
+        with patch.object(ms, 'BEST_FEE_TVL_MIN', 45.0):
+            self.assertEqual(
+                ms.row_best_gaps(_gate_row(40, 5.0)),
+                ['24H: Fee/TVL 40% < 45% \u2014 fee pool terlalu kecil'])
+
+    def test_lp_tipis_mendahului_fee_tvl(self):
+        """LPs < 50 (dibuang total) dicek lebih dulu daripada Fee/TVL."""
+        row = _gate_row(20, 2.5)
+        row["total_lps"] = 12.0
+        self.assertEqual(ms.row_best_gaps(row),
+                         ['24H: LPs 12 < 50 — LP terlalu sedikit'])
+        self.assertTrue(ms.row_best_dropped(row))

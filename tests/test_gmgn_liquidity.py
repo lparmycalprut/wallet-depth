@@ -595,17 +595,39 @@ class ScanLaneGmgnTest(unittest.TestCase):
         """Regresi laporan user 2026-09-17: *"poolnya kok jadi kosong,
         padahal token PAID harusnya masuk"*.
 
-        PAID lolos tiga saringan metrik (F/V 7,8×, volatility 3,0%, Top10
-        15,18%) dan likuiditas GMGN-nya $884.912 — di atas ambang $500K, jadi
+        PAID lolos saringan metrik (F/V 10,0×, volatility 3,0%, Top10 15,18%)
+        dan likuiditas GMGN-nya $884.912 — di atas ambang warna $500K, jadi
         barisnya harus ada di ``rows``, bukan ``hidden_rows``.
+
+        ``ratio`` dinaikkan ke 30,0 (Fee/TVL snapshot live PAID 23,39% kini di
+        bawah ambang Fee/TVL 30% — aturan 2026-09-23) supaya tes ini tetap
+        menguji **GMGN tidak pernah membuang baris**, bukan saringan Fee/TVL;
+        perilaku snapshot live-nya di-pin di
+        :meth:`test_paid_snapshot_live_kena_ambang_fee_tvl`.
         """
         pools = [_best_pool("Gc5hVCBydc6k3Z7oc2cQEW4GThFQi2Fqk5HfKABqa2q8",
-                            MINT_A, ratio=23.39434274894063,
+                            MINT_A, ratio=30.0,
                             volatility=2.9886436516396744, top10=15.177147896949576)]
         result = self._scan(pools, {MINT_A: 884_912.3982565559})
         self.assertEqual(result["hidden_rows"], [])
         self.assertEqual([r["pool_address"] for r in result["rows"]],
                          ["Gc5hVCBydc6k3Z7oc2cQEW4GThFQi2Fqk5HfKABqa2q8"])
+
+    def test_paid_snapshot_live_kena_ambang_fee_tvl(self):
+        """Snapshot PAID apa adanya (Fee/TVL 23,39%) kini gugur Fee/TVL < 30%.
+
+        Permintaan user 2026-09-23: *"Fee/TVL minimal 30%, dibawah itu jangan
+        show"*. Barisnya pindah ke ``hidden_rows`` (masih bisa dibuka lewat
+        tombol "▶ N pool dilewati"), **bukan** dibuang total — dan likuiditas
+        GMGN $884.912 tetap tidak berpengaruh pada keputusan itu.
+        """
+        pools = [_best_pool("Gc5hVCBydc6k3Z7oc2cQEW4GThFQi2Fqk5HfKABqa2q8",
+                            MINT_A, ratio=23.39434274894063,
+                            volatility=2.9886436516396744, top10=15.177147896949576)]
+        result = self._scan(pools, {MINT_A: 884_912.3982565559})
+        self.assertEqual(result["rows"], [])
+        self.assertEqual(len(result["hidden_rows"]), 1)
+        self.assertIn("Fee/TVL", result["hidden_rows"][0]["best_gaps"][0])
 
     def test_gmgn_mati_tidak_membuang(self):
         pools = [_best_pool("P-BIG", MINT_A),
