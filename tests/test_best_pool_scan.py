@@ -25,7 +25,12 @@ dari 100, kasih warna hijau"*. Yang di-pin di file ini:
   boleh di show di hasil"* + *"Fee/TVL minimal 30%"* + *"dibawah itu jangan
   show"* — **Fee/TVL >= BEST_FEE_TVL_MIN** (30%, inklusif di sisi tampil;
   gugurnya masuk listing "▶ N pool dilewati", BUKAN dibuang total seperti
-  Top10/volatility/LPs). Di bawah itu → **langsung skip**, ``enrich_pools`` tidak pernah
+  Top10/volatility/LPs), plus — permintaan user 2026-09-24 *"jangan tampilkan
+  sama sekali pool yang F/V nya kurang dari 2 di pool yang dilewati atau
+  dimanapun"* — **F/V < BEST_FV_HIDE_MIN** (``row_fv_under_hide``; 2×, buang
+  total: tidak masuk ``hidden_rows``/``hidden_metric``, jejaknya cuma counter
+  ``dropped_fv``; tepat 2,0× masih boleh tampil di "dilewati"; tanpa angka
+  F/V bukan urusan lantai ini — lihat :class:`FvHideFloorTest`). Di bawah itu → **langsung skip**, ``enrich_pools`` tidak pernah
   dipanggil (kuota Helius aman), barisnya masuk ``hidden_rows`` dengan alasan di
   ``best_gaps`` — **kecuali** volatility 0: dibuang penuh dari listing
   (2026-09-14 lanjutan), tidak dihitung di ``hidden_metric``, jumlahnya di
@@ -531,7 +536,7 @@ class BestGatesTest(unittest.TestCase):
     def test_filter_best_rows_membuang_volatility_nol_dari_hitungan(self):
         """Vol 0 gugur gate DAN tidak dihitung hidden (2026-09-14 lanjutan)."""
         rows = [_row(pool_address="LOLOS"),
-                _row(pool_address="GAGAL", **_fv(2.0, 10.0)),
+                _row(pool_address="GAGAL", **_fv(30.0, 10.0)),
                 _row(pool_address="NOLVOL", **_fv(50.0, 0))]
         for lane in (None, "24h", "30m"):
             with self.subTest(lane=lane):
@@ -606,13 +611,13 @@ class BestGatesTest(unittest.TestCase):
                 _row(pool_address="NOLVOL", top_holders_pct=88.0,
                      **_fv(50.0, 0)),
                 _row(pool_address="FAIL_FV", top_holders_pct=12.0,
-                     **_fv(2.0, 6.0))]
+                     **_fv(20.0, 6.0))]                 # F/V 3,33× → tetap dilewati
         kept, hidden_metric, hidden_dust = ms.filter_best_rows(rows)
         self.assertEqual([r["pool_address"] for r in kept], ["BERSIH"])
         self.assertEqual((hidden_metric, hidden_dust), (1, 0))
 
     def test_row_best_dropped_top10_dan_volatility(self):
-        """Top10 >= 20% dan volatility (0, <1%, >10%) disembunyikan total."""
+        """Top10 >= 20%, volatility (0, <1%, >10%), dan F/V < 2× disembunyikan total."""
         # Top10 >= 20% gugur -> dropped True
         self.assertTrue(ms.row_best_dropped(_row(top_holders_pct=45.0, **_fv(30.0, 6.0))))
         self.assertTrue(ms.row_best_dropped(_row(top_holders_pct=20.0, **_fv(30.0, 6.0))))
@@ -622,8 +627,10 @@ class BestGatesTest(unittest.TestCase):
         self.assertTrue(ms.row_best_dropped(_row(**_fv(60.0, 0.5))))
         # Volatility > 10% -> dropped True
         self.assertTrue(ms.row_best_dropped(_row(**_fv(600.0, 42.0))))
-        # F/V < 5x (volat normal 6.0%, top10 normal 10%) -> dropped False (masuk hidden_rows)
-        self.assertFalse(ms.row_best_dropped(_row(top_holders_pct=10.0, **_fv(2.0, 6.0))))
+        # F/V < 2× (2026-09-24) -> dibuang total: tidak masuk hidden_rows.
+        self.assertTrue(ms.row_best_dropped(_row(top_holders_pct=10.0, **_fv(2.0, 6.0))))
+        # F/V 2×–5× (volat normal 6.0%, top10 normal 10%) -> dropped False (masuk hidden_rows)
+        self.assertFalse(ms.row_best_dropped(_row(top_holders_pct=10.0, **_fv(20.0, 6.0))))
         # Lolos semua saringan -> dropped False (masuk rows)
         self.assertFalse(ms.row_best_dropped(_row(top_holders_pct=10.0, **_fv(30.0, 5.0))))
 
@@ -889,7 +896,7 @@ class ScanLaneTest(unittest.TestCase):
     def test_24h_hanya_ambil_lane_dan_saring_5x(self):
         pools = [_pool("P-OK", "MintOK", ratio=40.0, volatility=6.2),   # 6,45\u00d7
                  _pool("P-KECIL", "MintKcl", ratio=12.4, volatility=6.2),  # 2\u00d7
-                 _pool("P-NOL", "MintNol", ratio=0.0, volatility=6.2)]
+                 _pool("P-NOL", "MintNol", ratio=0.0, volatility=6.2)]  # 0\u00d7
         seen: list = []
 
         def fake_fetch(**kw):
@@ -905,9 +912,12 @@ class ScanLaneTest(unittest.TestCase):
         self.assertEqual([r["pool_address"]
                           for r in enrich.call_args.args[0]], ["P-OK"])
         self.assertEqual([r["pool_address"] for r in result["rows"]], ["P-OK"])
+        # F/V 2× (P-KECIL) masih boleh tampil di "dilewati"; F/V 0× (P-NOL)
+        # dibuang total sejak 2026-09-24 — bukan bagian listing mana pun.
         self.assertEqual([r["pool_address"] for r in result["hidden_rows"]],
-                         ["P-KECIL", "P-NOL"])
-        self.assertEqual(result["hidden_metric"], 2)
+                         ["P-KECIL"])
+        self.assertEqual(result["hidden_metric"], 1)
+        self.assertEqual(result["dropped_fv"], 1)
         self.assertEqual(result["fetched"], 3)
         self.assertEqual(result["lane"], "24h")
         self.assertEqual(result["gate"], "24H: F/V \u2265 5\u00d7")
@@ -1014,7 +1024,7 @@ class ScanLaneTest(unittest.TestCase):
 
     def test_semua_gugur_tanpa_fetch_holder(self):
         with mock.patch.object(ms, "fetch_best_pools",
-                               return_value=[_pool(ratio=1.0, volatility=2.0)]), \
+                               return_value=[_pool(ratio=6.0, volatility=2.0)]), \
                 mock.patch.object(ms, "enrich_pools") as enrich:
             result = ms.scan_best_lane("24h", max_wallets=2000)
         enrich.assert_not_called()
@@ -1114,7 +1124,9 @@ class ScanRugCheckTest(unittest.TestCase):
 
     def test_hanya_baris_lolos_yang_ditempel(self):
         pools = [_pool("P-OK", "MintOK"),
-                 _pool("P-GUGUR", "MintGugur", ratio=1.0)]
+                 # F/V 3,23× → gugur ambang 5× tapi tetap masuk "dilewati"
+                 # (di bawah 2× barisnya dibuang total sejak 2026-09-24).
+                 _pool("P-GUGUR", "MintGugur", ratio=20.0)]
         with mock.patch.object(ms, "fetch_best_pools", return_value=pools), \
                 mock.patch.object(ms, "enrich_pools",
                                   side_effect=self._fake_enrich), \
@@ -1242,7 +1254,7 @@ class BestPoolCardTest(unittest.TestCase):
         app.session_state["best_pool_scan_24h"] = self._result(
             "24h", [_row(pool_address="PoolBest", ca="MintAAA", symbol="AAA")],
             fetched=4, hidden=[_row(pool_address="PoolHide", ca="MintHid",
-                                    symbol="HID", **_fv(2.0, 10.0))])
+                                    symbol="HID", **_fv(30.0, 10.0))])
         app.session_state["best_pool_scan_30m"] = self._result(
             "30m", [_row(pool_address="PoolLain", ca="MintLain", symbol="LN30",
                          timeframe="30m", **_fv(15.0, 5.0))])
@@ -1273,7 +1285,7 @@ class BestPoolCardTest(unittest.TestCase):
         app.session_state["best_pool_scan_24h"] = self._result(
             "24h", [_row(pool_address="PoolBest", ca="MintAAA", symbol="AAA")],
             hidden=[_row(pool_address="PoolHide", ca="MintHid", symbol="HID",
-                         analysis=_proof(0.02, 3), **_fv(2.0, 10.0))])
+                         analysis=_proof(0.02, 3), **_fv(30.0, 10.0))])
         app.run()
         app.button(key="best-pool-toggle-hidden-24h").click().run()
         self.assertEqual(len(app.exception), 0)
@@ -1310,9 +1322,9 @@ class BestPoolCardTest(unittest.TestCase):
             # Saringan likuiditas GMGN dihapus 2026-09-17 malam — alasan
             # gugur yang tersisa: F/V, volatility, Top10.
             hidden=[_row(pool_address="PoolFV", ca="MintFV",
-                         symbol="FV", **_fv(2.0, 6.2)),
+                         symbol="FV", **_fv(20.0, 6.2)),
                     _row(pool_address="PoolFV2", ca="MintFV2",
-                         symbol="FV2", **_fv(1.5, 6.2)),
+                         symbol="FV2", **_fv(15.0, 6.2)),
                     _row(pool_address="PoolPusat", ca="MintPusat",
                          symbol="PUSAT", top_holders_pct=45.0)])
         app.run()
@@ -1362,7 +1374,7 @@ class BestPoolCardTest(unittest.TestCase):
             "24h", [_row(pool_address="PoolBest", ca="MintAAA", symbol="AAA")],
             fetched=6,
             hidden=[_row(pool_address="PoolHide", ca="MintHid", symbol="HID",
-                         **_fv(2.0, 10.0)),
+                         **_fv(30.0, 10.0)),
                     _row(pool_address="PoolNol", ca="MintNol", symbol="NOLSYM",
                          **_fv(50.0, 0.0))])
         app.run()
@@ -2083,7 +2095,7 @@ class StrategyColumnTest(BestPoolCardTest):
                   rugcheck=self._laporan(self.LIQ_TINGGI))],
             fetched=3,
             hidden=[_row(pool_address="PoolSepi", ca="MintSepi", symbol="SEPI",
-                         **_fv(2.0, 6.0))])
+                         **_fv(20.0, 6.0))])
         app.run()
         app.button(key="best-pool-toggle-hidden-24h").click().run()
         self.assertEqual(len(app.exception), 0)
@@ -2681,7 +2693,7 @@ class LpsFilterTest(unittest.TestCase):
         rows = [
             _row(pool_address="LOLOS", total_lps=88),
             _row(pool_address="LPS_TIPIS", total_lps=12),
-            _row(pool_address="GAGAL_FV", total_lps=88, fee_active_tvl_ratio=2.0, volatility=6.2),
+            _row(pool_address="GAGAL_FV", total_lps=88, fee_active_tvl_ratio=20.0, volatility=6.2),
         ]
         kept, hidden_metric, hidden_dust = ms.filter_best_rows(rows, lane="24h")
         self.assertEqual([r["pool_address"] for r in kept], ["LOLOS"])
@@ -2747,8 +2759,8 @@ class LpsFilterTest(unittest.TestCase):
                 _row(pool_address="PoolTipis", ca="MintTipis", symbol="TIPIS", total_lps=12),
             ],
             "hidden_rows": [
-                _row(pool_address="PoolHideOK", ca="MintHideOK", symbol="HIDEOK", total_lps=88, fee_active_tvl_ratio=2.0, volatility=6.2),
-                _row(pool_address="PoolHideTipis", ca="MintHideTipis", symbol="HIDETIPIS", total_lps=12, fee_active_tvl_ratio=2.0, volatility=6.2),
+                _row(pool_address="PoolHideOK", ca="MintHideOK", symbol="HIDEOK", total_lps=88, fee_active_tvl_ratio=20.0, volatility=6.2),
+                _row(pool_address="PoolHideTipis", ca="MintHideTipis", symbol="HIDETIPIS", total_lps=12, fee_active_tvl_ratio=20.0, volatility=6.2),
             ],
             "error": "",
             "fetched": 4,
@@ -2910,7 +2922,7 @@ class FeeTvlUiTest(unittest.TestCase):
             ],
             "hidden_rows": [
                 _row(pool_address="PoolHideFV", ca="MintHideFV",
-                     symbol="HIDEFV", fee_active_tvl_ratio=2.0,
+                     symbol="HIDEFV", fee_active_tvl_ratio=20.0,
                      volatility=6.2),
             ],
             "error": "",
@@ -2937,3 +2949,166 @@ class FeeTvlUiTest(unittest.TestCase):
         self.assertIn("FEETIPIS", body2)
         self.assertIn("gugur: Fee/TVL 20% < 30%", body2)
         self.assertIn("HIDEFV", body2)
+
+
+class FvHideFloorTest(unittest.TestCase):
+    """**F/V < 2× dibuang total** dari card 🏆 Best Pool (permintaan user 2026-09-24).
+
+    Verbatim: *"jangan tampilkan sama sekali pool yang F/V nya kurang dari 2 di
+    pool yang dilewati atau dimanapun"*. Beda dari ambang lane (5×) yang hanya
+    memindahkan baris ke listing "▶ N pool dilewati": di bawah lantai ini baris
+    **lenyap** dari tabel hasil, dari daftar "dilewati", dari pill/caption
+    ``dilewati``, dan dari rekap alasan tabel kosong. Batas eksklusif di sisi
+    buang (tepat 2,0× masih boleh tampil di "dilewati"); angka F/V tanpa bukti
+    (metrik hilang/nonfinite, volatility 0) bukan "kurang dari 2".
+    """
+
+    def test_konstanta_dan_helper(self):
+        self.assertEqual(ms.BEST_FV_HIDE_MIN, 2.0)
+        self.assertEqual(ms.fv_hide_label(), "F/V < 2×")
+        # F/V kecil → nilai rasionya (dibuang); sisanya None.
+        self.assertAlmostEqual(ms.row_fv_under_hide(_row(**_fv(2.0, 6.2))),
+                               2.0 / 6.2)
+        self.assertEqual(ms.row_fv_under_hide(_row(**_fv(0.0, 6.2))), 0.0)
+        self.assertIsNone(ms.row_fv_under_hide(_row(**_fv(12.4, 6.2))))  # 2,0×
+        self.assertIsNone(ms.row_fv_under_hide(_row(**_fv(40.0, 6.2))))  # 6,45×
+        # Tanpa bukti BUKAN "kurang dari 2".
+        self.assertIsNone(ms.row_fv_under_hide(_row(volatility=None)))
+        self.assertIsNone(ms.row_fv_under_hide(
+            _row(fee_active_tvl_ratio=float("nan"), volatility=6.2)))
+        self.assertIsNone(ms.row_fv_under_hide(_row(**_fv(50.0, 0.0))))  # ∞
+        self.assertIsNone(ms.row_fv_under_hide(None))
+        self.assertIsNone(ms.row_fv_under_hide({}))
+
+    def test_batas_2x_eksklusif_di_sisi_buang(self):
+        """1,999× dibuang; tepat 2,0× masih boleh tampil di "dilewati"."""
+        self.assertTrue(ms.row_best_dropped(
+            _row(**_fv(1.999 * 6.2, 6.2))))
+        self.assertFalse(ms.row_best_dropped(_row(**_fv(12.4, 6.2))))
+        self.assertFalse(ms.row_best_dropped(_row(**_fv(2.0, 1.0))))
+        # Angka dibaca dari konstanta: naikkan lantai → baris 3× ikut dibuang.
+        with mock.patch.object(ms, "BEST_FV_HIDE_MIN", 4.0):
+            self.assertTrue(ms.row_best_dropped(_row(**_fv(20.0, 6.2))))
+            self.assertIn("F/V < 4×", ms.fv_hide_label())
+
+    def test_alasan_gap_tidak_berubah(self):
+        """Teks alasan tetap "F/V < 5×" — lantai hanya memutuskan pembuangan."""
+        row = _row(**_fv(6.2, 6.2))                     # 1,0×
+        self.assertEqual(ms.row_best_gaps(row), ["24H: F/V < 5×"])
+        self.assertEqual(ms.row_best_gap_label(row), "F/V")
+
+    def test_filter_best_rows_tidak_menghitung_fv_kecil(self):
+        rows = [_row(pool_address="LOLOS"),
+                _row(pool_address="HID", **_fv(20.0, 6.2)),    # 3,23× → dilewati
+                _row(pool_address="MINI", **_fv(2.0, 6.2))]     # 0,32× → dibuang
+        kept, hidden_metric, hidden_dust = ms.filter_best_rows(rows, lane="24h")
+        self.assertEqual([r["pool_address"] for r in kept], ["LOLOS"])
+        self.assertEqual((hidden_metric, hidden_dust), (1, 0))
+
+    def test_metrik_tidak_valid_tetap_di_dilewati(self):
+        """Tanpa angka F/V tidak ada bukti rasio kecil — barisnya tetap terlihat."""
+        rows = [_row(pool_address="LOLOS"),
+                _row(pool_address="TANPA", volatility=None)]
+        kept, hidden_metric, _ = ms.filter_best_rows(rows, lane="24h")
+        self.assertEqual([r["pool_address"] for r in kept], ["LOLOS"])
+        self.assertEqual(hidden_metric, 1)
+        self.assertFalse(ms.row_best_dropped(_row(volatility=None)))
+
+    def test_scan_lane_membuang_fv_kecil_sebelum_holder(self):
+        pools = [
+            _pool("P-OK", "MintOK", ratio=40.0, volatility=6.2),      # 6,45× lolos
+            _pool("P-HID", "MintHid", ratio=20.0, volatility=6.2),    # 3,23× dilewati
+            _pool("P-MINI", "MintMini", ratio=2.0, volatility=6.2),   # 0,32× dibuang
+        ]
+        enrich_calls = []
+
+        def fake_enrich(rows, **_kw):
+            enrich_calls.append([r["pool_address"] for r in rows])
+            return rows
+
+        with mock.patch.object(ms, "fetch_best_pools",
+                               side_effect=lambda **kw: pools), \
+                mock.patch.object(ms, "enrich_pools", side_effect=fake_enrich), \
+                mock.patch("gmgn_liquidity.attach_total_liquidity",
+                           side_effect=lambda rows, **kw: rows), \
+                mock.patch("rugchecker.attach_to_rows",
+                           side_effect=lambda rows, **kw: [
+                               dict(r, rugcheck={"ok": False}) for r in rows]):
+            result = ms.scan_best_lane("24h", max_wallets=2000)
+
+        self.assertEqual(enrich_calls, [["P-OK"]])
+        self.assertEqual([r["pool_address"] for r in result["rows"]], ["P-OK"])
+        self.assertEqual([r["pool_address"] for r in result["hidden_rows"]],
+                         ["P-HID"])
+        self.assertEqual(result["hidden_metric"], 1)
+        self.assertEqual(result["dropped_fv"], 1)
+        self.assertEqual(result["dropped_total"], 1)
+        self.assertNotIn("P-MINI", [r["pool_address"] for r in result["rows"]])
+        self.assertNotIn("P-MINI",
+                         [r["pool_address"] for r in result["hidden_rows"]])
+
+    def test_tooltip_menyebut_lantai_fv(self):
+        tip = bp.best_pool_tooltip()
+        self.assertIn("F/V < 2×", tip)
+        self.assertIn("jangan tampilkan sama sekali pool yang F/V nya kurang "
+                      "dari 2", tip)
+        self.assertIn("tepat 2,0× masih boleh tampil", tip)
+        with mock.patch.object(ms, "BEST_FV_HIDE_MIN", 3.0):
+            self.assertIn("F/V < 3×", bp.best_pool_tooltip())
+
+
+@unittest.skipIf(AppTest is None, "streamlit not installed")
+class FvHideFloorUiTest(unittest.TestCase):
+    """Hasil scan LAMA pun dibersihkan saat render (tanpa scan ulang)."""
+
+    def test_fv_kecil_lenyap_dari_dilewati_dan_tidak_dihitung(self):
+        patches = (
+            mock.patch("watchlist.load_watchlist", side_effect=lambda **_kw: {}),
+            mock.patch("holder_status.load_holder_status",
+                       side_effect=lambda **_kw: {"updated_at": None,
+                                                  "tokens": {}}),
+            mock.patch("holder_history.load_holder_history",
+                       side_effect=lambda *a, **kw: {"tokens": {}}),
+            mock.patch("holder_history.pull_holder_history", return_value=None),
+        )
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        app = AppTest.from_file(APP, default_timeout=90).run()
+        app.session_state["best_pool_scan_24h"] = {
+            "rows": [_row(pool_address="PoolOK", ca="MintOK", symbol="OKFV")],
+            "hidden_rows": [
+                # F/V 3,23× → tetap boleh dibuka lewat "dilewati".
+                _row(pool_address="PoolHideFV", ca="MintHideFV",
+                     symbol="HIDEFV", fee_active_tvl_ratio=20.0, volatility=6.2),
+                # F/V 0,32× → dibuang total sejak 2026-09-24.
+                _row(pool_address="PoolMini", ca="MintMini",
+                     symbol="MINIFV", fee_active_tvl_ratio=2.0, volatility=6.2),
+            ],
+            "error": "",
+            "fetched": 3,
+            "hidden_metric": 2,
+            "hidden_dust": 0,
+            "skipped_quote": 0,
+            "dropped_volatility": 0,
+            "lane": "24h",
+            "gate": ms.best_lane_gate_label("24h"),
+            "analyzed_at": 1,
+        }
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        body = "\n".join(node.value for node in app.markdown)
+        captions = "\n".join(node.value for node in app.caption)
+        # Tabel hasil: hanya pool lolos; F/V kecil tidak dihitung "dilewati".
+        self.assertIn("OKFV", body)
+        self.assertNotIn("MINIFV", body)
+        self.assertNotIn("MintMini", body)
+        self.assertIn("1 pool 24H tampil · 1 dilewati · listing 3 pool.",
+                      captions)
+        app.button(key="best-pool-toggle-hidden-24h").click().run()
+        self.assertEqual(len(app.exception), 0)
+        body2 = "\n".join(node.value for node in app.markdown)
+        self.assertIn("HIDEFV", body2)
+        self.assertIn("gugur: F/V < 5×", body2)
+        self.assertNotIn("MINIFV", body2)
+        self.assertNotIn("MintMini", body2)

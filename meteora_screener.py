@@ -39,7 +39,12 @@ kita sisakan yang 24 jam saja"*). Syaratnya ``F/V >= 5×`` dengan F =
 ``fee_active_tvl_ratio`` dan V = ``volatility``. Hanya pool yang lolos ambang
 yang di-scan holdernya; pool di bawah ambang **langsung di-skip** sebelum
 enrichment holder (kuota Helius tidak terbakar) dan tetap tersedia di
-``hidden_rows`` tanpa scan holder. Lima saringan layar, semuanya di
+``hidden_rows`` tanpa scan holder — **kecuali F/V di bawah 2×**
+(:data:`BEST_FV_HIDE_MIN`, permintaan user 2026-09-24 *"jangan tampilkan sama
+sekali pool yang F/V nya kurang dari 2 di pool yang dilewati atau dimanapun"*):
+baris seperti itu **dibuang total** dari listing, jadi "▶ N pool dilewati"
+hanya memuat F/V ``>= 2×`` dan baris Fee/TVL tipis. Lima saringan layar,
+semuanya di
 :func:`row_best_gaps` dan semuanya sebelum enrichment: volatility 0 **gugur
 dan dibuang total** (aturan 2026-09-14), volatility di luar **1%–10%**
 (:data:`BEST_VOL_SHOW_MIN`/:data:`BEST_VOL_SHOW_MAX`, 2026-09-16) gugur dan
@@ -129,6 +134,25 @@ BEST_FV_24H_MIN = 5.0           # 24H: F/V >= 5,0 (inklusif)
 # di tabel hasil. Saringan ini hanya untuk card 🏆 Best Pool — regular scan
 # (:func:`filter_regular_rows`) tidak ikut berubah.
 BEST_FEE_TVL_MIN = 30.0
+# Layar: **F/V di bawah 2× tidak ditampilkan sama sekali** (permintaan user
+# 2026-09-24: *"jangan tampilkan sama sekali pool yang F/V nya kurang dari 2 di
+# pool yang dilewati atau dimanapun"*). Beda dari ambang lane
+# (:data:`BEST_FV_24H_MIN` 5×) yang hanya memindahkan baris ke listing
+# "▶ N pool dilewati": di bawah lantai ini baris **dibuang total** — tidak
+# masuk tabel hasil, tidak masuk ``hidden_rows``, tidak dihitung pill/caption
+# "dilewati", dan tidak ikut rekap alasan tabel kosong. Jadi listing
+# "dilewati" hanya memuat F/V ``>= 2×`` (yang tetap gugur ambang 5×) atau
+# baris yang gugur Fee/TVL; baris F/V 0–2× lenyap sepenuhnya, selebar apa pun
+# tabelnya. Batas **eksklusif di sisi buang** — kurang dari 2,0× dibuang,
+# tepat 2,0× masih boleh tampil di "dilewati" (aturan repo: angka yang
+# disebut user dibaca sebagai batas tampil). Angka F/V tanpa bukti
+# (metrik hilang/nonfinite/volatility 0) **bukan** "kurang dari 2" — vol-0
+# sudah dibuang lebih dulu (:func:`row_volatility_zero`) dan metrik tidak
+# valid tetap terlihat di "dilewati" dengan alasannya sendiri. Saringan ini
+# juga jalan saat render hasil scan LAMA (lewat :func:`row_best_dropped` di
+# ``best_pool_ui``) tanpa perlu scan ulang. Hanya card 🏆 Best Pool —
+# ``filter_regular_rows`` Scan Meteora regular tidak ikut berubah.
+BEST_FV_HIDE_MIN = 2.0
 BEST_CARD_TITLE = "🏆 Scan Best Pool Meteora"
 # **Satu lane sejak 2026-09-16** (permintaan user: "hapus scan 30 menit, kita
 # sisakan yang 24 jam saja"). Sejak 2026-09-13 card ini punya DUA tombol
@@ -1101,6 +1125,41 @@ def row_fv_ratio(row: dict | None):
                                 row.get("volatility"))
 
 
+def row_fv_under_hide(row: dict | None):
+    """Nilai F/V bila **< BEST_FV_HIDE_MIN** (2×) → dibuang total; selain itu ``None``.
+
+    Permintaan user 2026-09-24: *"jangan tampilkan sama sekali pool yang F/V nya
+    kurang dari 2 di pool yang dilewati atau dimanapun"*. Satu-satunya pembaca
+    lantai :data:`BEST_FV_HIDE_MIN` supaya keputusan "dibuang total" dan
+    hitungan audit ``dropped_fv`` tidak pernah bisa beda.
+
+    Angka dibaca lewat :func:`row_fv_ratio` — sumber yang sama dengan kolom
+    F/V dan urutan tabel — jadi rasio yang dibuang persis rasio yang akan
+    tampil. ``None`` (metrik hilang/nonfinite, volatility nol, atau F/V tidak
+    bisa dihitung) berarti **bukan** "kurang dari 2": tanpa angka tidak ada
+    bukti rasio kecil (vol-0 sudah dibuang lebih dulu lewat
+    :func:`row_volatility_zero`, metrik tidak valid tetap masuk listing
+    "dilewati" dengan alasannya sendiri). Batas **eksklusif di sisi buang** —
+    F/V tepat 2,0× **tidak** dibuang (masih boleh tampil di "dilewati" selama
+    masih di bawah ambang lane 5×).
+    """
+    ratio = row_fv_ratio(row)
+    if ratio is None:
+        return None
+    if not math.isfinite(ratio):
+        # ∞ (volatility 0, fee positif) bukan "kurang dari 2" — baris seperti
+        # itu ditangani saringan sendiri (row_volatility_zero).
+        return None
+    if ratio < float(BEST_FV_HIDE_MIN):
+        return ratio
+    return None
+
+
+def fv_hide_label() -> str:
+    """Teks lantai F/V untuk UI/tooltip: ``F/V < 2×`` (angka dari konstanta)."""
+    return f"F/V < {float(BEST_FV_HIDE_MIN):g}×"
+
+
 def row_pair_label(row: dict | None) -> str:
     """Nama **pasangan pool** siap tampil, mis. ``ALLINU/SOL`` (``""`` bila tidak ada).
 
@@ -1702,7 +1761,7 @@ def row_best_gap_label(row: dict | None, *, lane=None) -> str:
 
 
 def row_best_dropped(row: dict | None, *, lane=None) -> bool:
-    """True bila pool gugur karena Top10, volatility, atau LPs < 50.
+    """True bila pool gugur karena Top10, volatility, LPs < 50, atau F/V < 2×.
 
     Baris seperti ini langsung disembunyikan total, tidak ditampilkan
     di mana pun (baik di tabel utama yang lolos maupun di listing
@@ -1714,6 +1773,13 @@ def row_best_dropped(row: dict | None, *, lane=None) -> bool:
     gugur: volatility
     gugur: LPs
     langsung sembunyikan total, tidak ditampilkana dimanapun"
+
+    Permintaan user 2026-09-24 (lanjutan aturan yang sama): *"jangan tampilkan
+    sama sekali pool yang F/V nya kurang dari 2 di pool yang dilewati atau
+    dimanapun"* — F/V di bawah :data:`BEST_FV_HIDE_MIN` (2×) ikut dibuang
+    total lewat :func:`row_fv_under_hide`, jadi listing "▶ N pool dilewati"
+    hanya berisi F/V ``>= 2×`` (yang masih di bawah ambang lane) atau baris
+    Fee/TVL tipis.
 
     **Gugur Fee/TVL < 30% (2026-09-23) SENGAJA tidak ikut dibuang total**
     (konfirmasi user: baris di bawah ambang masuk daftar "▶ N pool dilewati",
@@ -1739,6 +1805,9 @@ def row_best_dropped(row: dict | None, *, lane=None) -> bool:
     if vol is not None and bool(row_volatility_gap(vol)):
         return True
     if row_top10_over(row) is not None:
+        return True
+    # Lantai F/V (2026-09-24): di bawah 2× lenyap dari listing mana pun.
+    if row_fv_under_hide(row) is not None:
         return True
     return False
 
@@ -1803,8 +1872,9 @@ def filter_best_rows(rows: list[dict] | None, *,
     BEST_FEE_TVL_MIN`` (30%, permintaan user 2026-09-23)** dan Top10 ``<
     BEST_TOP10_MAX_PCT`` — semuanya lewat
     :func:`row_best_gaps`. Hitungan kedua hanya memuat baris yang masih bisa
-    dilihat di listing "dilewati", yaitu gugur **F/V atau Fee/TVL**; yang
-    dibuang total (volatility / LPs / Top10) tidak dihitung. Kandidat gagal dengan
+    dilihat di listing "dilewati", yaitu gugur **F/V (>= 2×) atau Fee/TVL**;
+    yang dibuang total (F/V < 2× — aturan 2026-09-24 —, volatility / LPs /
+    Top10) tidak dihitung. Kandidat gagal dengan
     **volatility 0 tidak ikut dihitung** (2026-09-14 lanjutan): pool tanpa
     pergerakan dibuang dari listing (:func:`row_volatility_zero`), jadi
     hitungan kedua selalu cocok dengan ``len(hidden_rows)`` yang dibangun
@@ -1928,9 +1998,11 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
        menempel ``row["gmgn_liq"]`` pada kandidat yang lolos saringan metrik
        (untuk pewarna kolom RugCheck + kolom STRATEGY). Semua saringan
        dijalankan **sebelum** holder, jadi pool yang gugur tidak pernah
-       membakar kuota Helius; yang gugur F/V atau Fee/TVL tetap tersedia di
+       membakar kuota Helius; yang gugur Fee/TVL — dan F/V yang masih ``>= 2×``
+       walau di bawah ambang lane — tetap tersedia di
        ``hidden_rows`` (dengan alasan di ``best_gaps``) lewat tombol "▶ N
-       pool dilewati", **kecuali** yang dibuang total (volatility 0 / di luar
+       pool dilewati", **kecuali** yang dibuang total (F/V < 2× sejak
+       2026-09-24, volatility 0 / di luar
        1%–10%, LPs < 50, Top10 >= 20%) — contohnya
        volatility 0: dibuang penuh dari listing sejak 2026-09-14 lanjutan
        (:func:`row_volatility_zero`, permintaan user *"jika volatility 0
@@ -2017,8 +2089,9 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
     # disembunyikan saat render.
     failed_rows = [dict(row, best_gaps=row_best_gaps(row, lane=normalized))
                    for row in rows if row_best_gaps(row, lane=normalized)]
-    # Pool gugur Top10 atau volatility langsung disembunyikan total
-    # (tidak masuk hidden_rows, tidak ditampilkan di mana pun — permintaan user).
+    # Pool gugur Top10, volatility, LPs, atau F/V < 2× langsung disembunyikan
+    # total (tidak masuk hidden_rows, tidak ditampilkan di mana pun —
+    # permintaan user).
     hidden_rows = [row for row in failed_rows
                    if not row_best_dropped(row, lane=normalized)]
     dropped_volatility = sum(1 for row in failed_rows
@@ -2030,6 +2103,11 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
     dropped_lps = sum(1 for row in failed_rows
                       if row_best_gap_label(row, lane=normalized) == "LPs"
                       or row_lps_under(row) is not None)
+    # Lantai F/V (2026-09-24) — dihitung dari angkanya, BUKAN dari label
+    # "F/V": label itu juga dipakai baris F/V 2×–5× yang justru tetap tampil
+    # di "dilewati". Hanya untuk audit; barisnya sudah tidak ada di mana pun.
+    dropped_fv = sum(1 for row in failed_rows
+                     if row_fv_under_hide(row) is not None)
     dropped_total = len(failed_rows) - len(hidden_rows)
     rows, hidden_metric, hidden_dust = filter_best_rows(rows, lane=normalized)
     if rows:
@@ -2108,6 +2186,9 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
                       if dropped_top10 else "")
                    + (f", {dropped_lps} pool LPs dibuang"
                       if dropped_lps else "")
+                   + (f", {dropped_fv} pool F/V < "
+                      f"{float(BEST_FV_HIDE_MIN):g}× dibuang"
+                      if dropped_fv else "")
                    + (f", {quote_skipped} pool quote dilewati"
                       if quote_skipped else "")
                    + (f", {rug_failed} laporan RugCheck gagal"
@@ -2126,10 +2207,13 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
         "hidden_metric": hidden_metric,
         "hidden_dust": hidden_dust,
         "skipped_quote": quote_skipped,
-        # Pool gugur Top10 / volatility / LPs yang dibuang dari listing (tidak ditampilkan di mana pun).
+        # Pool gugur Top10 / volatility / LPs / F/V < 2× yang dibuang dari
+        # listing (tidak ditampilkan di mana pun).
         "dropped_volatility": dropped_volatility,
         "dropped_top10": dropped_top10,
         "dropped_lps": dropped_lps,
+        # F/V di bawah lantai BEST_FV_HIDE_MIN (2×) — 2026-09-24.
+        "dropped_fv": dropped_fv,
         "dropped_total": dropped_total,
         # Mint yang tidak mendapat laporan rugchecker.cc (HTTP gagal / kode
         # bukan 0) — kolom RugCheck menulis — untuk mereka; angka ini supaya

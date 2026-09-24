@@ -1,5 +1,57 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-24 — 🏆 Best Pool: F/V < 2× dibuang total (tidak muncul di "dilewati" maupun di mana pun)
+
+- Permintaan user (verbatim): *"jangan tampilkan sama sekali pool yang F/V nya
+  kurang dari 2 di pool yang dilewati atau dimanapun"*.
+- **Aturan.** Konstanta baru `meteora_screener.BEST_FV_HIDE_MIN = 2.0` +
+  helper `row_fv_under_hide(row)` (mengembalikan rasio bila **< 2×**, selain
+  itu `None`) dan `fv_hide_label()` (`"F/V < 2×"` untuk teks UI, dibaca dari
+  konstanta). Lantai ini **bukan** ambang lane (5×) yang hanya memindahkan
+  baris ke tombol "dilewati": di bawah 2× baris **dibuang total** — tidak
+  masuk tabel hasil, tidak masuk `hidden_rows`/`hidden_metric`/pill/caption
+  `dilewati`, dan tidak ikut rekap alasan tabel kosong. Jadi listing
+  "dilewati" hanya memuat F/V **2×–5×**, baris **Fee/TVL** tipis, dan baris
+  ber-metrik tidak valid.
+- **Batas.** Eksklusif di sisi buang: tepat 2,0× **masih boleh** tampil di
+  "dilewati" (aturan repo: angka yang disebut user = batas tampil). Angka F/V
+  tanpa bukti (metrik hilang/nonfinite, volatility 0/∞) **bukan** "kurang dari
+  2": vol-0 sudah dibuang sendiri lewat `row_volatility_zero`, metrik tidak
+  valid tetap muncul dengan alasannya. Karena itu `row_fv_under_hide`
+  mengembalikan `None` untuk `None`/`inf`, bukan 0.
+- **Satu jalur.** `row_best_dropped()` memanggil helper ini paling akhir
+  (setelah Top10/volatility/LPs), jadi seluruh pembaca ikut bersih tanpa kode
+  baru: `scan_best_lane()` saat membangun `hidden_rows` + `filter_best_rows()`
+  (hitungan pill/caption) + render-time filter `best_pool_ui`
+  (`render_best_pool_scan` menyaring `rows` dan `hidden_rows` hasil scan LAMA
+  di `session_state`/cache lokal — tanpa perlu scan ulang). Counter audit baru
+  `dropped_fv` di hasil `scan_best_lane()` + pesan Log Aktivitas
+  (`N pool F/V < 2× dibuang`). Teks alasan gugur tidak berubah (`24H: F/V <
+  5×`) — lantai hanya memutuskan pembuangan, bukan menulis alasan kedua.
+- **UI.** Tooltip judul card menyebut lantai + kutipan verbatim permintaan
+  user (angka dari konstanta via `fv_hide_label()`, jadi tooltip tidak bisa
+  basi); help tombol scan menulis "F/V di bawah 2× dibuang total"; help tombol
+  "▶ N pool dilewati" menegaskan isinya `F/V (2×–5×) atau Fee/TVL` — F/V < 2×
+  tidak ikut di sana. Fallback error `_run_lane_scan` membawa
+  `dropped_fv`/`dropped_lps`/`dropped_top10`/`dropped_total` = 0.
+- **Tes.** `FvHideFloorTest` (7 tes: konstanta/helper, batas eksklusif 2,0×,
+  teks gap tidak berubah, `filter_best_rows`, metrik tidak valid tetap di
+  "dilewati", `scan_best_lane` tanpa fetch holder + `dropped_fv`, tooltip) +
+  `FvHideFloorUiTest` (1 AppTest: baris F/V 3,23× masih bisa dibuka di
+  "dilewati", baris F/V 0,32× lenyap dari body & hitungan) di
+  `tests/test_best_pool_scan.py`, dan
+  `LaneEnrichmentTest.test_fv_di_bawah_2_dibuang_total_tanpa_scan_holder` di
+  `tests/test_best_fv_prefilter.py`. **7 dari 9 tes baru diverifikasi gagal
+  pada kode lama** (`git archive HEAD` di `/tmp/baseline`; 2 sisanya penjaga:
+  teks alasan & baris metrik-tidak-valid yang memang tidak berubah). Fixture
+  tes lama yang dulu memakai F/V < 2 sebagai contoh "gugur F/V tapi tampil di
+  dilewati" dinaikkan ke 2×–5× (`_fv(2.0, 6.0)` → `_fv(20.0, 6.0)`,
+  `ratio=1.0` → `ratio=20.0`, dst.) karena contoh lamanya kini justru lenyap.
+  Suite `python -m unittest discover -s tests` → **1252 tes**, 18 failed +
+  1 error — **nama kegagalan identik baseline** `/tmp/baseline` (1243 tes,
+  18 failed + 1 error; +9 tes baru hijau). Dua berkas fokus
+  (`test_best_pool_scan` + `test_best_fv_prefilter`) 216 tes hijau.
+
 ## Update 2026-09-23 — 🏆 Best Pool: kolom TAX/DIVIDEND di kiri STRATEGY
 
 - Permintaan user: kolom **tax/dividend**; bila token **punya dividend**, sel STRATEGY persis `30 70 spotbidask full range`. Pajak saja tidak mengubah strategi. Cabang likuiditas lama tetap: `hybird 7030, bidask 3070 - full range` bila total likuiditas > $500K, selain itu `hybird 5050, bidask - full range`.
@@ -1786,6 +1838,18 @@ badge BEST POOL       : < 0.1% marketcap (DUST_BEST_PCT, aditif) + data
                         Top10/volat/LPs, hasilnya TIDAK dibuang total -> masuk
                         hidden_rows + tombol "N pool dilewati"
                         (row_best_dropped sengaja tidak mengenal label ini).
+                        Lantai buang F/V (2026-09-24, permintaan user "jangan
+                        tampilkan sama sekali pool yang F/V nya kurang dari 2
+                        di pool yang dilewati atau dimanapun"):
+                        row_fv_under_hide(row) = rasio F/V bila < BEST_FV_HIDE_MIN
+                        (2.0; eksklusif -> tepat 2,0x MASIH boleh tampil di
+                        "dilewati"; None/inf bukan urusan lantai ini) dan
+                        row_best_dropped memanggilnya paling akhir -> baris
+                        F/V 0-2x DIBUANG TOTAL (tanpa hidden_rows, tanpa
+                        hidden_metric, tanpa rekap alasan; jejak audit
+                        dropped_fv). Jadi listing "N pool dilewati" hanya
+                        memuat F/V 2x-5x, baris Fee/TVL tipis, dan metrik
+                        tidak valid; teks alasan tetap "24H: F/V < 5x".
                         Hanya card Best Pool: filter_regular_rows Scan Meteora
                         regular tidak ikut disaring.
                         Saringan lama dust <

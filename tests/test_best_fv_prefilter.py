@@ -26,6 +26,13 @@ mem-pin urutan eksekusinya, bukan angkanya (angka + teks ambang diuji di
   baris yang gagal keduanya tetap beralasan ``F/V < 5×``; berbeda dari
   LPs/Top10/volatility, barisnya **tidak dibuang total** (konfirmasi user:
   masuk listing "▶ N pool dilewati").
+- **F/V < 2× dibuang total** (``BEST_FV_HIDE_MIN``, permintaan user 2026-09-24:
+  *"jangan tampilkan sama sekali pool yang F/V nya kurang dari 2 di pool yang
+  dilewati atau dimanapun"*) — di bawah lantai itu baris tidak masuk
+  ``hidden_rows``/``hidden_metric`` sama sekali (bukan sekadar di-skip dari
+  fetch holder), jadi listing "dilewati" hanya memuat F/V 2×–5× dan baris
+  Fee/TVL tipis; jejaknya cuma counter audit ``dropped_fv``. Tepat 2,0× masih
+  boleh tampil di "dilewati"; tanpa angka F/V bukan urusan lantai ini.
 """
 import unittest
 from unittest.mock import patch
@@ -155,19 +162,25 @@ class LaneEnrichmentTest(unittest.TestCase):
     def test_24h_hanya_yang_lolos_5x(self):
         pools = [_pool('SAME', 'MintA', ratio=20, volatility=10),
                  _pool('PASS', 'MintB', ratio=50, volatility=10),
-                 _pool('FAIL', 'MintC', ratio=10, volatility=10)]
+                 _pool('MINI', 'MintC', ratio=10, volatility=10)]
         calls: list = []
         result = self._scan('24h', pools, calls)
-        # SAME 2,0× dan FAIL 1,0× DILEWATI sebelum fetch holder; PASS 5,0× lolos.
+        # SAME 2,0× DILEWATI (F/V >= 2×) sebelum fetch holder; PASS 5,0× lolos;
+        # MINI 1,0× dibuang total dari listing (lantai F/V < 2×, 2026-09-24).
         self.assertEqual(result['fetched_timeframes'], ['24h'])
         self.assertEqual(calls, [[('24h', 'PASS')]])
         self.assertEqual([r['pool_address'] for r in result['rows']], ['PASS'])
         self.assertEqual(result['fetched'], 3)
-        self.assertEqual(result['hidden_metric'], 2)
-        self.assertEqual(sorted(r['pool_address'] for r in result['hidden_rows']),
-                         ['FAIL', 'SAME'])
+        self.assertEqual(result['hidden_metric'], 1)
+        self.assertEqual([r['pool_address'] for r in result['hidden_rows']],
+                         ['SAME'])
         self.assertEqual({tuple(r['best_gaps']) for r in result['hidden_rows']},
                          {('24H: F/V < 5×',)})
+        # MINI tidak muncul di mana pun — jejaknya hanya counter audit.
+        self.assertNotIn('MINI', [r['pool_address'] for r in result['rows']])
+        self.assertNotIn('MINI', [r['pool_address']
+                                  for r in result['hidden_rows']])
+        self.assertEqual(result['dropped_fv'], 1)
         self.assertEqual(result['lane'], '24h')
         self.assertEqual(result['gate'], '24H: F/V ≥ 5×')
 
@@ -221,14 +234,32 @@ class LaneEnrichmentTest(unittest.TestCase):
         self._scan('24h', [_pool(ratio=1, volatility=2)], calls)
         self.assertEqual(calls, [])
 
+    def test_fv_di_bawah_2_dibuang_total_tanpa_scan_holder(self):
+        """F/V < 2× lenyap dari listing; 2×–5× tetap di "dilewati" (2026-09-24)."""
+        pools = [_pool('LOLOS', 'MintA', ratio=40, volatility=6.2),   # 6,45×
+                 _pool('HID', 'MintB', ratio=15, volatility=6.2),     # 2,42×
+                 _pool('MINI', 'MintC', ratio=2, volatility=6.2)]     # 0,32×
+        calls: list = []
+        result = self._scan('24h', pools, calls)
+        self.assertEqual(calls, [[('24h', 'LOLOS')]])
+        self.assertEqual([r['pool_address'] for r in result['rows']], ['LOLOS'])
+        self.assertEqual([r['pool_address'] for r in result['hidden_rows']],
+                         ['HID'])
+        self.assertEqual(result['hidden_metric'], 1)
+        self.assertEqual(result['dropped_fv'], 1)
+        self.assertNotIn('MINI', [r['pool_address'] for r in result['rows']])
+        self.assertNotIn('MINI', [r['pool_address']
+                                  for r in result['hidden_rows']])
+
     def test_volatility_nol_dibuang_tanpa_scan_holder(self):
         """∞ gugur gate DAN dibuang dari hidden_rows (2026-09-14 lanjutan)."""
         pools = [_pool('DOM', 'MintA', ratio=60, volatility=6),     # 10× lolos
-                 _pool('SAMA', 'MintB', ratio=10, volatility=10),   # 1× gugur
+                 _pool('SAMA', 'MintB', ratio=30, volatility=10),   # 3× gugur
                  _pool('NOL', 'MintC', ratio=50, volatility=0)]     # ∞ → dibuang
         calls: list = []
         result = self._scan('30m', pools, calls)
-        # Alias 30m = scan 24H: DOM lolos (10×), SAMA gugur, NOL dibuang total.
+        # Alias 30m = scan 24H: DOM lolos (10×), SAMA gugur (3×, tetap di
+        # "dilewati"), NOL dibuang total.
         self.assertEqual(calls, [[('24h', 'DOM')]])
         self.assertEqual([r['pool_address'] for r in result['rows']], ['DOM'])
         self.assertEqual([r['pool_address'] for r in result['hidden_rows']],
@@ -264,9 +295,9 @@ class LegacyBothLaneTest(unittest.TestCase):
     """``timeframe="both"`` lama TIDAK lagi berarti dua listing."""
 
     def test_both_ditarik_ke_satu_listing_24h(self):
-        pools = [_pool('SAME', 'MintA', ratio=20, volatility=10),
-                 _pool('PASS', 'MintB', ratio=50, volatility=10),
-                 _pool('FAIL', 'MintC', ratio=10, volatility=10)]
+        pools = [_pool('SAME', 'MintA', ratio=20, volatility=10),   # 2× → "dilewati"
+                 _pool('PASS', 'MintB', ratio=50, volatility=10),   # 5× → lolos
+                 _pool('FAIL', 'MintC', ratio=30, volatility=10)]   # 3× → "dilewati"
         seen: list = []
 
         def fake_fetch(*, timeframe, **_kw):
