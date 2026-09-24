@@ -1,5 +1,13 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-24 (lanjutan) — 🏆 Best Pool: deteksi 🆕 POOL BARU
+
+- Permintaan user (verbatim): *"tambahkan syarat ke filter, ini deteksi baru untuk pool baru — pool age < 12 jam, active TVL > 75K, fee/active TVL > 20%, volatility < 15%, top holders < 20%"* + *"seharusnya token familiars nanti muncul dihasil scan kita"* + *"kasih tanda di kolom token, setelah nama token, kasih tulisan "POOL BARU" warna biru menyala"* + *"untuk kolom strategy pool baru ini adalah "50 50 spotba, bidask""*.
+- **Aturan.** `meteora_screener.NEW_POOL_*` (12 jam / 75K / 20% / 15% / 20%, semua eksklusif) + `row_pool_age_hours`, `row_new_pool_gaps`, `row_new_pool`, `new_pool_rule_text`. `row_best_gaps` memanggil `row_new_pool` tepat setelah validasi metrik/lane: pool baru → `[]` (lolos), mengalahkan saringan reguler (F/V 5×, Fee/TVL 30%, volatility 1–10%, LPs 50, lantai F/V 2×). Volatility wajib > 0 (vol-0 tetap dibuang). Angka hilang = tidak memenuhi.
+- **Umur.** `_row_from_pool` menyimpan `pool_created_at` (ms API); `rows_from_pools` menempel `fetched_at` (detik) — umur dihitung terhadap `fetched_at`, jadi render ulang hasil scan lama tidak membuat pool "menua" keluar tabel. Baris lama tanpa `fetched_at` memakai `time.time()`; tanpa `pool_created_at` tidak pernah pool baru.
+- **UI.** Kolom Token: `<span class="bp-new-pool">POOL BARU</span>` biru menyala (`#00B7FF` + glow) setelah `$SYMBOL`. STRATEGY: `gmgn_liquidity.STRATEGY_NEW_POOL = "50 50 spotba, bidask"` (verbatim, jangan dirapikan) — menang atas dividend & likuiditas; `row_strategy` mengembalikan `new_pool: True`, baris kecil sel menulis `pool baru`.
+- **Tes.** `tests/test_new_pool_detection.py` (7 tes, fixture = payload familiars-SOL asli dari user). Suite penuh: daftar kegagalan identik baseline `git archive HEAD` (22 FAIL/ERROR yang sama).
+
 ## Update 2026-09-24 — 🏆 Best Pool: F/V < 2× dibuang total (tidak muncul di "dilewati" maupun di mana pun)
 
 - Permintaan user (verbatim): *"jangan tampilkan sama sekali pool yang F/V nya

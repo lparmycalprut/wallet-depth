@@ -633,6 +633,11 @@ def _strategy_cell(row) -> tuple[str, str, str]:
     info = row_strategy(row)
     value = _strategy_cell_html(info.get("text"))
     usd = info.get("usd")
+    if info.get("new_pool"):
+        sub = "pool baru"
+        tip = (f"STRATEGY POOL BARU: \"{info.get('text')}\" (teks verbatim "
+               "permintaan user 2026-09-24) — hanya saran, baris tidak dibuang")
+        return value, sub, tip
     if info.get("dividend"):
         # Dividend mengalahkan cabang likuiditas. Baris kecil menulis
         # "dividend" supaya teks "30 70 spotbidask full range" tidak terlihat
@@ -993,7 +998,9 @@ def _render_best_table(rows: list, *, lane: str,
     from meteora_screener import (BEST_TOP10_MAX_PCT, BEST_VOL_SHOW_MAX,
                                   BEST_VOL_SHOW_MIN, normalize_best_lane,
                                   row_fv_ratio)
-    from meteora_screener import row_pair_label, row_vol_tvl_ratio
+    from meteora_screener import (NEW_POOL_LABEL, new_pool_rule_text,
+                                  row_new_pool, row_pair_label,
+                                  row_vol_tvl_ratio)
     # RugCheck = kolom baru 2026-09-16; fmt-nya tinggal di modul rugchecker
     # supaya card tidak pernah menebak struktur laporan API pihak ketiga.
     from rugchecker import cell_parts as _rug_cell_parts
@@ -1101,13 +1108,24 @@ def _render_best_table(rows: list, *, lane: str,
         # misal ALLINU/SOL") — simbol `$TOKEN` tetap baris pertama, pasangan
         # pool DLMM-nya di bawahnya, alamat mint di baris paling bawah.
         pair = row_pair_label(row)
+        # 🆕 Tanda "POOL BARU" biru menyala setelah simbol token (permintaan
+        # user 2026-09-24) — baris yang lolos lewat deteksi pool baru.
+        new_pool_html = ""
+        if row_new_pool(row):
+            new_pool_html = (
+                f' <span class="bp-new-pool" title="deteksi pool baru: '
+                f'{html.escape(new_pool_rule_text())}" style="color:#00B7FF;'
+                'font-weight:800;text-shadow:0 0 6px rgba(0,183,255,.85);'
+                'white-space:nowrap;">'
+                f'{html.escape(NEW_POOL_LABEL)}</span>')
         pair_html = (
             f'<span class="watchlist-pair" title="pasangan pool '
             f'(nama pool dari API Meteora)">{html.escape(pair)}</span>'
             if pair else "")
         cols[0].markdown(
             '<div class="watchlist-token">'
-            f'<span class="watchlist-symbol">${html.escape(symbol)}</span>'
+            f'<span class="watchlist-symbol">${html.escape(symbol)}'
+            f'{new_pool_html}</span>'
             f'{pair_html}'
             f'<span class="watchlist-mint">{html.escape(ca[:8])}…</span>'
             f'<div class="watchlist-links">{external_links_html(ca)}</div>'
