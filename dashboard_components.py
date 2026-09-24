@@ -176,6 +176,15 @@ def render_styles() -> None:
        jadi tinggi tiap baris) tidak berubah. */
     .bp-col-title {font-size:0.82rem;color:#000000;font-weight:700;
      text-align:center;white-space:nowrap;line-height:1.3;}
+    /* 🆕 Tanda "pool baru" di kolom Token tabel 🏆 Scan Best Pool
+       (2026-09-24, permintaan user: tanda harus terlihat jelas — biru
+       menyala — tepat setelah $SYMBOL). Style di class — bukan inline —
+       supaya tidak bisa disanitasi Streamlit, dan !important memastikan
+       warna tidak tertimpa ``.watchlist-symbol`` (color:#000) yang
+       membungkusnya. */
+    .bp-new-pool {color:#00B7FF !important;font-weight:800 !important;
+     text-shadow:0 0 6px rgba(0,183,255,.85) !important;
+     white-space:nowrap !important;}
     /* Kolom STRATEGY (paling kanan tabel utama, 2026-09-19): teksnya
        verbatim permintaan user ("hybird 7030, bidask 3070 - full range") dan
        panjang untuk satu kolom, jadi frasa "- full range" dijaga utuh

@@ -579,7 +579,16 @@ STRATEGY_NEW_POOL = "50 50 spotba, bidask"
 
 
 def _is_new_pool(row: dict | None) -> bool:
-    """True bila baris lolos deteksi POOL BARU (:mod:`meteora_screener`)."""
+    """True bila baris lolos deteksi POOL BARU (:mod:`meteora_screener`).
+
+    Flag ``row["new_pool"]`` (ditempel ``scan_best_lane`` saat scan) menang
+    atas hitungan ulang — keputusan scan dan kolom STRATEGY tidak bisa
+    berbeda walau hasil scan lama tidak punya ``pool_created_at`` /
+    ``fetched_at`` atau konstanta NEW_POOL_* berubah.
+    """
+    row = row or {}
+    if row.get("new_pool"):
+        return True
     try:
         from meteora_screener import row_new_pool
 

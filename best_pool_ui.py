@@ -1110,13 +1110,23 @@ def _render_best_table(rows: list, *, lane: str,
         pair = row_pair_label(row)
         # 🆕 Tanda "POOL BARU" biru menyala setelah simbol token (permintaan
         # user 2026-09-24) — baris yang lolos lewat deteksi pool baru.
+        # Keputusannya dibaca dari flag ``row["new_pool"]`` yang ditempel
+        # ``scan_best_lane`` SAAT SCAN, dengan cadangan :func:`row_new_pool`
+        # (dihitung ulang terhadap ``fetched_at`` baris) — sehingga label
+        # tidak bisa berbeda dari keputusan scan walau hasil scan lama di
+        # session_state/cache tidak punya ``pool_created_at``/``fetched_at``
+        # atau konstanta NEW_POOL_* berubah. Hanya tabel utama
+        # (``show_strategy=True``) yang menandainya: baris "dilewati"
+        # memang gugur, jadi tidak memakai tanda lolos pool baru. Warnanya
+        # (biru menyala) hidup di class ``.bp-new-pool`` pada
+        # ``dashboard_components.render_styles`` — tidak inline, supaya
+        # tidak bisa disanitasi Streamlit dan tidak tertimpa warna
+        # ``.watchlist-symbol``.
         new_pool_html = ""
-        if row_new_pool(row):
+        if show_strategy and (row.get("new_pool") or row_new_pool(row)):
             new_pool_html = (
                 f' <span class="bp-new-pool" title="deteksi pool baru: '
-                f'{html.escape(new_pool_rule_text())}" style="color:#00B7FF;'
-                'font-weight:800;text-shadow:0 0 6px rgba(0,183,255,.85);'
-                'white-space:nowrap;">'
+                f'{html.escape(new_pool_rule_text())}">'
                 f'{html.escape(NEW_POOL_LABEL)}</span>')
         pair_html = (
             f'<span class="watchlist-pair" title="pasangan pool '

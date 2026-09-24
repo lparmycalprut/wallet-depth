@@ -155,24 +155,34 @@ BEST_FEE_TVL_MIN = 30.0
 BEST_FV_HIDE_MIN = 2.0
 # 🆕 **Deteksi POOL BARU** (permintaan user 2026-09-24: *"tambahkan syarat ke
 # filter, ini deteksi baru untuk pool baru — pool age < 12 jam, active TVL >
-# 75K, fee/active TVL > 20%, volatility < 15%, top holders < 20%"*). Jalur
-# kelolosan KEDUA di :func:`row_best_gaps`: pool yang memenuhi kelima syarat
-# ini langsung lolos ke tabel hasil walau gugur saringan reguler (F/V < 5×,
-# Fee/TVL < 30%, volatility > 10%, LPs < 50, F/V < 2×) — pool yang baru lahir
-# belum punya riwayat volatility/LP yang "rapi" (contoh acuan user:
-# familiars-SOL, umur < 1 jam, fee/TVL 34%, volatility 10,37%, F/V 3,3×).
-# Semua batas **eksklusif** persis seperti kalimat user (``<``/``>``).
+# 75K, fee/active TVL > 20%, volatility < 15%, top holders < 20%"* +
+# lanjutan hari yang sama: *"tambah syarat LPs minimal 100"*). Jalur
+# kelolosan KEDUA di :func:`row_best_gaps`: pool yang memenuhi **enam**
+# syarat ini langsung lolos ke tabel hasil walau gugur saringan reguler
+# (F/V < 5×, Fee/TVL < 30%, volatility > 10%, LPs < 50, F/V < 2×) — pool yang
+# baru lahir belum punya riwayat volatility/LP yang "rapi" (contoh acuan
+# user: familiars-SOL, umur < 1 jam, fee/TVL 34%, volatility 10,37%, F/V 3,3×,
+# 230 LPs). Batas umur/TVL/fee/volatility/Top10 **eksklusif** persis seperti
+# kalimat user (``<``/``>``); batas LPs **inklusif** (tepat 100 lolos) dan
+# HANYA berlaku di jalur pool baru — saringan reguler tetap
+# :data:`BEST_LPS_MIN` (50) yang tidak berubah. Pool yang gagal salah satu
+# syarat ini kembali dinilai saringan reguler biasa.
 # Volatility wajib > 0 (vol-0 tetap dibuang total — tidak ada pergerakan) dan
 # umur dihitung dari ``pool_created_at`` API (ms) terhadap waktu listing
 # diambil (``fetched_at``), jadi render ulang hasil scan lama tidak membuat
-# pool "menua" keluar dari tabel. Baris lolos lewat jalur ini ditandai
-# "POOL BARU" (biru menyala) di kolom Token dan STRATEGY-nya
-# :data:`gmgn_liquidity.STRATEGY_NEW_POOL`.
+# pool "menua" keluar dari tabel. Keputusan deteksi dibuat **sekali, saat
+# scan**: :func:`scan_best_lane` menandai ``row["new_pool"]`` pada baris yang
+# lolos, dan render (label "POOL BARU" biru menyala di kolom Token + STRATEGY
+# :data:`gmgn_liquidity.STRATEGY_NEW_POOL`) memakai flag itu ATAU
+# :func:`row_new_pool` — sehingga hasil scan lama di session_state/
+# scan_result_cache (tanpa ``pool_created_at``/``fetched_at``) tidak pernah
+# membuat keputusan scan dan render berbeda.
 NEW_POOL_MAX_AGE_HOURS = 12.0
 NEW_POOL_ACTIVE_TVL_MIN = 75_000.0
 NEW_POOL_FEE_TVL_MIN = 20.0
 NEW_POOL_VOL_MAX = 15.0
 NEW_POOL_TOP10_MAX = 20.0
+NEW_POOL_LPS_MIN = 100.0
 NEW_POOL_LABEL = "POOL BARU"
 BEST_CARD_TITLE = "🏆 Scan Best Pool Meteora"
 # **Satu lane sejak 2026-09-16** (permintaan user: "hapus scan 30 menit, kita
@@ -1642,9 +1652,12 @@ def row_pool_age_hours(row: dict | None, *, now: float | None = None):
 def row_new_pool_gaps(row: dict | None, *, now: float | None = None) -> list[str]:
     """Syarat POOL BARU yang TIDAK terpenuhi (``[]`` = pool baru).
 
-    Lima syarat user 2026-09-24 (semua eksklusif): umur < 12 jam, active TVL
-    > 75K, fee/active TVL > 20%, 0 < volatility < 15%, Top10 < 20%. Angka
-    hilang = tidak terbukti → tidak memenuhi.
+    Enam syarat user 2026-09-24: umur < 12 jam, active TVL > 75K,
+    fee/active TVL > 20%, 0 < volatility < 15%, **LPs >= 100 (inklusif —
+    tepat 100 lolos)** dan Top10 < 20%. Selain LPs, semua batas eksklusif.
+    Angka hilang = tidak terbukti → tidak memenuhi. Syarat LPs hanya untuk
+    jalur pool baru — saringan reguler tetap :data:`BEST_LPS_MIN` (50);
+    pool yang gagal LPs di sini kembali dinilai saringan reguler biasa.
     """
     row = row or {}
     gaps: list[str] = []
@@ -1661,6 +1674,9 @@ def row_new_pool_gaps(row: dict | None, *, now: float | None = None) -> list[str
     if (vol is None or not math.isfinite(vol) or vol <= 0
             or not vol < NEW_POOL_VOL_MAX):
         gaps.append("volatility")
+    lps = row_lps_count(row)
+    if lps is None or not math.isfinite(lps) or lps < float(NEW_POOL_LPS_MIN):
+        gaps.append("LPs")
     top = row_top10_pct(row)
     if top is None or not math.isfinite(top) or not top < NEW_POOL_TOP10_MAX:
         gaps.append("top holders")
@@ -1677,6 +1693,7 @@ def new_pool_rule_text() -> str:
     return (f"umur < {NEW_POOL_MAX_AGE_HOURS:g} jam · active TVL > "
             f"${NEW_POOL_ACTIVE_TVL_MIN / 1000:g}K · fee/active TVL > "
             f"{NEW_POOL_FEE_TVL_MIN:g}% · volatility < {NEW_POOL_VOL_MAX:g}% · "
+            f"LPs >= {NEW_POOL_LPS_MIN:g} · "
             f"top holders < {NEW_POOL_TOP10_MAX:g}%")
 
 
@@ -2264,6 +2281,17 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
                 _alog.error("scan-best-pool",
                             f"Tax/dividend gagal: {str(exc)[:160]}")
     kept = sort_best_rows(rows)
+    # 🆕 POOL BARU — lanjutan 2026-09-24: keputusan deteksi dibuat SEKALI,
+    # saat scan, lalu ditempel baris (``row["new_pool"]``). Render (label
+    # kolom Token + kolom STRATEGY) memakai flag ini ATAU :func:`row_new_pool`
+    # sehingga keputusan saat scan dan saat render tidak bisa berbeda —
+    # termasuk hasil scan lama di session_state/scan_result_cache (tanpa
+    # ``pool_created_at``/``fetched_at``) dan bila konstanta NEW_POOL_*
+    # berubah di deploy berikutnya. Baris ``hidden_rows`` tidak perlu flag:
+    # baris yang lolos :func:`row_new_pool` tidak mungkin masuk daftar ini
+    # (:func:`row_best_gaps` mengembalikan ``[]`` di atas saringan reguler).
+    for row in kept:
+        row["new_pool"] = row_new_pool(row)
     hidden_rows = sort_hidden_best_rows(hidden_rows)
     if _alog:
         _alog.info("scan-best-pool",

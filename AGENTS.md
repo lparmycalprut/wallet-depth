@@ -1,5 +1,53 @@
 # AGENTS.md — Wallet Depth
 
+## Update 2026-09-24 (lanjutan 2) — 🏆 Best Pool: perbaikan tanda POOL BARU + syarat LPs pool baru
+
+- Permintaan user: tulisan "POOL BARU" biru menyala BELUM ada di samping
+  `$SYMBOL` di app live (contoh $FAMILIARS, pool familiars-SOL
+  `ET9QEc18XnEXNyz8ZuGkJfgSuDDqLDiA1U8bEpyuyLKC`) + *"tambah syarat LPs
+  minimal 100"* untuk deteksi pool baru (tepat 100 lolos, inklusif;
+  `BEST_LPS_MIN` 50 saringan reguler TIDAK berubah).
+- **Penyebab label hilang (diterbukan, bukan ditebak).** Verifikasi
+  AppTest: scan KODE BARU → `scan_result_cache` → refresh browser → render
+  = label MUNCUL (cache membawa `pool_created_at` + `fetched_at`). Penyebab
+  sebenarnya = hasil scan **LAMA** di `session_state`/`scan_result_cache`
+  (dibuat sebelum PR #212) **tanpa** `pool_created_at`/`fetched_at` →
+  `row_pool_age_hours` `None` → `row_new_pool` False saat render; baris yang
+  lolos saringan reguler tetap tampil TANPA tanda. Umur ms/detik sudah
+  benar (ms > 1e11 → /1000, `fetched_at` detik), CSS `.watchlist-symbol`
+  (`color:#000`) tidak menimpa span — jadi yang rusak adalah keputusan
+  scan-vs-render, bukan hitungan umur.
+- **Perbaikan: keputusan sekali, saat scan.** `scan_best_lane` menandai
+  `row["new_pool"] = row_new_pool(row)` pada baris yang lolos (setelah
+  `sort_best_rows`; `hidden_rows` tidak perlu — baris lolos pool baru tidak
+  mungkin masuk daftar itu). Render label Token memakai
+  `row.get("new_pool") or row_new_pool(row)` (cadangan hitungan ulang
+  terhadap `fetched_at`), hanya tabel utama (`show_strategy=True`);
+  `gmgn_liquidity._is_new_pool` (kolom STRATEGY) juga menghormati flag.
+  Hasil scan lama tanpa field/flag = tidak ada bukti pool baru → tanpa
+  tanda (jujur, bukan bug).
+- **UI.** Style label dipindah dari inline ke class `.bp-new-pool` di
+  `dashboard_components.render_styles` dengan `!important` (biru `#00B7FF`
+  + glow) — tidak bisa disanitasi Streamlit dan tidak tertimpa
+  `.watchlist-symbol`; span di `best_pool_ui` tinggal
+  `class` + `title` (tooltip tetap `new_pool_rule_text()`). Catatan: komentar
+  CSS sengaja TIDAK menulis string "POOL BARU" — CSS ikut ter-render ke
+  body dan tes menghitung substring di seluruh body.
+- **Syarat keenam.** `meteora_screener.NEW_POOL_LPS_MIN = 100.0`;
+  `row_new_pool_gaps` menambah gap `"LPs"` (angka hilang = tidak memenuhi);
+  `new_pool_rule_text` menambah `LPs >= 100`. Hanya jalur pool baru — pool
+  gagal LPs kembali dinilai saringan reguler biasa (ambang reguler tetap
+  `BEST_LPS_MIN` = 50, tidak berubah).
+- **Tes.** `tests/test_new_pool_detection.py`: 14 tes (+7) — LPs 99 gagal /
+  100 lolos (inklusif) / hilang gagal, fallback reguler tanpa flag + STRATEGY
+  bukan teks pool baru, `scan_best_lane` menandai flag (True familiars /
+  False pool lama 48 jam), 3 AppTest render (label di kolom Token, cadangan
+  hitungan ulang tanpa flag, hasil scan lama tanpa field = tampil TANPA
+  tanda). Suite `python -m unittest discover -s tests` → **1266 tes**,
+  18 failed + 1 error — **nama kegagalan identik baseline**
+  `git archive HEAD` (`/tmp/baseline`; 1259 tes, 18 failed + 1 error;
+  +7 tes baru hijau). pytest juga identik (19 failed yang sama, +7 passed).
+
 ## Update 2026-09-24 (lanjutan) — 🏆 Best Pool: deteksi 🆕 POOL BARU
 
 - Permintaan user (verbatim): *"tambahkan syarat ke filter, ini deteksi baru untuk pool baru — pool age < 12 jam, active TVL > 75K, fee/active TVL > 20%, volatility < 15%, top holders < 20%"* + *"seharusnya token familiars nanti muncul dihasil scan kita"* + *"kasih tanda di kolom token, setelah nama token, kasih tulisan "POOL BARU" warna biru menyala"* + *"untuk kolom strategy pool baru ini adalah "50 50 spotba, bidask""*.
