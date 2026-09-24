@@ -15,7 +15,10 @@ dan :func:`meteora_screener.normalize_best_lane` memetakan semua alias lama
   Yang di bawah itu **langsung di-skip** dan masuk listing "disembunyikan"
   (toggle "▶ N pool dilewati" tetap ada — di 24H kandidat gagal justru
   berguna untuk dibandingkan; aturan 30M "jangan tampilkan yang tidak
-  terpenuhi" + label "OK" hijau di sel F/V dicabut bersama lane-nya);
+  terpenuhi" + label "OK" hijau di sel F/V dicabut bersama lane-nya).
+  **Pengecualian penting sejak 2026-09-24**: F/V di bawah **2×**
+  (``BEST_FV_HIDE_MIN``) tidak masuk listing mana pun — barisnya dibuang
+  total, lihat bullet khusus di bawah;
 - Volatility 0 **gugur dan dibuang total** (2026-09-14): ∞ bukan kelolosan,
   pool tanpa pergerakan tidak masuk tabel lolos maupun daftar "dilewati"
   (permintaan user: "jika volatility 0 jangan tampilkan, karena tidak ada
@@ -40,6 +43,20 @@ dan :func:`meteora_screener.normalize_best_lane` memetakan semua alias lama
   ``gugur: Fee/TVL … < 30%`` (konfirmasi user 2026-09-23). Saringan ini
   dieksekusi di :func:`meteora_screener.row_best_gaps`, jadi sebelum fetch
   holder; kartu **Scan Meteora** regular tidak ikut berubah;
+- **F/V di bawah 2× tidak ditampilkan sama sekali** (2026-09-24,
+  :data:`meteora_screener.BEST_FV_HIDE_MIN`, permintaan user: *"jangan
+  tampilkan sama sekali pool yang F/V nya kurang dari 2 di pool yang dilewati
+  atau dimanapun"*) — baris F/V 0–2× **dibuang total** dari card ini: tidak
+  masuk tabel lolos, tidak masuk daftar "▶ N pool dilewati", tidak dihitung
+  pill/caption ``dilewati``, dan tidak ikut rekap alasan tabel kosong. Jadi
+  daftar "dilewati" hanya memuat F/V ``>= 2×`` (yang tetap gugur ambang 5×)
+  plus baris Fee/TVL tipis. Batas eksklusif di sisi buang (tepat 2,0× masih
+  boleh tampil di "dilewati"); angka F/V tanpa bukti (metrik hilang /
+  volatility 0) **bukan** "kurang dari 2". Ditegakkan
+  :func:`meteora_screener.row_fv_under_hide` lewat
+  :func:`meteora_screener.row_best_dropped`, jadi hasil scan LAMA di
+  ``session_state``/cache lokal juga langsung bersih saat render tanpa perlu
+  scan ulang;
 - **Likuiditas total GMGN di bawah ambang tidak ditampilkan** (2026-09-17,
   permintaan user: *"jika grand total liquiditas kurang dari 1M, jangan
   tampilkan di hasil scan"*; ambangnya **$500K** —
@@ -215,7 +232,8 @@ def best_pool_tooltip() -> str:
     from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_FEE_TVL_MIN,
                                   BEST_LPS_MIN, BEST_TOP10_MAX_PCT,
                                   BEST_VOL_SHOW_MAX, BEST_VOL_SHOW_MIN,
-                                  gmgn_min_label, normalize_best_lane)
+                                  fv_hide_label, gmgn_min_label,
+                                  normalize_best_lane)
 
     active = normalize_best_lane("24h")
     label = best_lane_detail(active)[0]
@@ -257,10 +275,16 @@ def best_pool_tooltip() -> str:
         f"RugCheck, HIJAU bila > {gmgn_min_label()}, MERAH bila < "
         f"{gmgn_min_label()} (permintaan user 2026-09-17), tepat di ambang "
         "tetap hitam. "
-        f"Hasil yang gugur karena Top10, volatility, atau LPs < {float(BEST_LPS_MIN):g} langsung disembunyikan "
+        f"Hasil yang gugur karena Top10, volatility, LPs < {float(BEST_LPS_MIN):g}, atau "
+        f"{fv_hide_label()} (permintaan user 2026-09-24: \"jangan tampilkan "
+        "sama sekali pool yang F/V nya kurang dari 2 di pool yang dilewati "
+        "atau dimanapun\" — tepat 2,0× masih boleh tampil di \"dilewati\", "
+        "baris tanpa angka F/V bukan urusan lantai ini) langsung disembunyikan "
         "total, tidak ditampilkan di mana pun: pool tanpa pergerakan, "
-        "berkonsentrasi tinggi, atau LP terlalu sedikit (< 50) dibuang total dari listing, tidak masuk tabel "
-        "dilewati dan tidak dihitung di pill \"dilewati\". Kandidat gagal F/V " 
+        "berkonsentrasi tinggi, LP terlalu sedikit (< 50), atau F/V di bawah "
+        "2× dibuang total dari listing, tidak masuk tabel "
+        "dilewati dan tidak dihitung di pill \"dilewati\". Kandidat gagal F/V "
+        "(2×–5×) "
         "atau Fee/TVL tetap bisa dilihat lewat tombol \"dilewati\". Metrik "
         "hilang/tidak valid dilewati (tetap terlihat di tabel disembunyikan). "
         "Kolom F/V memakai format satu desimal di bawah 100\u00d7 (10,1\u00d7) "
@@ -1239,6 +1263,8 @@ def _run_lane_scan(lane: str, *, progress=None) -> dict:
         return {"rows": [], "hidden_rows": [], "error": str(exc),
                 "fetched": 0, "hidden_metric": 0, "hidden_dust": 0,
                 "skipped_quote": 0, "dropped_volatility": 0,
+                "dropped_top10": 0, "dropped_lps": 0, "dropped_fv": 0,
+                "dropped_total": 0,
                 "rugcheck_failed": 0, "bubblemap_failed": 0, "lane": lane}
 
 
@@ -1291,7 +1317,9 @@ def render_best_pool_scan() -> None:
                            "1%–10% + Top10 < 20% "
                            f"+ Fee/TVL ≥ {BEST_FEE_TVL_MIN:g}% "
                            "SEBELUM scan holder — pool di bawah syarat "
-                           "langsung di-skip, holdernya tidak di-fetch. Tiap "
+                           "langsung di-skip, holdernya tidak di-fetch. F/V "
+                           "di bawah 2× dibuang total (tidak muncul di "
+                           "'dilewati' maupun di mana pun). Tiap "
                            "pool yang lolos dilengkapi laporan RugCheck "
                            "(verdict rugchecker.cc, angka likuiditas GMGN — "
                            "sejak 2026-09-17) dan kolom STRATEGY di paling "
@@ -1378,9 +1406,10 @@ def render_best_pool_scan() -> None:
                     if showing_hidden else f"▶ {hidden} pool dilewati")
             if st.button(view, key=f"best-pool-toggle-hidden-{active}",
                          help=f"Tampilkan kandidat {label} yang di-skip karena "
-                              "gugur saringan F/V atau Fee/TVL "
+                              "gugur saringan F/V (2×–5×) atau Fee/TVL "
                               "lane ini; "
-                              "holdernya tidak pernah di-scan.",
+                              "holdernya tidak pernah di-scan. F/V di bawah "
+                              "2× tidak ikut di sini — barisnya dibuang total.",
                          use_container_width=True):
                 st.session_state[best_lane_hidden_key(active)] = \
                     not showing_hidden

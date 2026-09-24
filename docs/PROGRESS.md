@@ -1,5 +1,41 @@
 # Progress
 
+## 2026-09-24: 🏆 Best Pool Meteora — F/V < 2× dibuang total (tidak muncul di "dilewati" maupun di mana pun)
+
+**Status: selesai; suite 1252 tes, `18 failed + 1 error` = nama kegagalan
+identik baseline `/tmp/baseline` HEAD `7788539` (1243 tes, 18 failed +
+1 error; +9 tes baru hijau).**
+
+Permintaan user (verbatim): *"jangan tampilkan sama sekali pool yang F/V nya
+kurang dari 2 di pool yang dilewati atau dimanapun"*.
+
+- `meteora_screener.BEST_FV_HIDE_MIN = 2.0` + `row_fv_under_hide()` (rasio bila
+  `< 2×`, selain itu `None`) + `fv_hide_label()` (`"F/V < 2×"` untuk teks UI).
+  Lantai **bukan** ambang lane 5×: di bawah 2× baris **dibuang total** — tidak
+  masuk tabel hasil, `hidden_rows`, `hidden_metric`, pill/caption "dilewati",
+  maupun rekap alasan tabel kosong.
+- Batas **eksklusif di sisi buang**: tepat 2,0× masih boleh tampil di
+  "dilewati". Angka F/V tanpa bukti (metrik hilang/nonfinite, volatility 0/∞)
+  bukan "kurang dari 2" — vol-0 dibuang lewat `row_volatility_zero`, metrik
+  tidak valid tetap muncul dengan alasannya.
+- Satu jalur: `row_best_dropped()` memanggilnya paling akhir, jadi
+  `scan_best_lane()` (`hidden_rows`), `filter_best_rows()` (hitungan), dan
+  render ulang hasil scan **lama** di `best_pool_ui` (`session_state`/cache)
+  ikut bersih tanpa scan ulang. Counter audit baru `dropped_fv` + pesan Log
+  Aktivitas (`N pool F/V < 2× dibuang`). Teks alasan tetap `24H: F/V < 5×`.
+- UI: tooltip card menyebut lantai + kutipan verbatim permintaan user (angka
+  dibaca dari konstanta), help tombol scan "F/V di bawah 2× dibuang total",
+  help tombol "▶ N pool dilewati" menegaskan isinya `F/V (2×–5×) atau
+  Fee/TVL`; fallback error `_run_lane_scan` membawa key `dropped_*` = 0.
+- Tes baru: `FvHideFloorTest` (7) + `FvHideFloorUiTest` (1 AppTest) di
+  `tests/test_best_pool_scan.py`, `test_fv_di_bawah_2_dibuang_total_tanpa_scan_holder`
+  di `tests/test_best_fv_prefilter.py`. **7 dari 9 diverifikasi gagal pada
+  kode lama** (2 sisanya penjaga perilaku yang memang tidak berubah).
+- Fixture tes lama yang memakai F/V < 2 sebagai contoh "gugur F/V tapi tampil
+  di dilewati" dinaikkan ke 2×–5× (`_fv(2.0, 6.0)` → `_fv(20.0, 6.0)`,
+  `ratio=1.0` → `ratio=20.0`, `_pool(ratio=1.0, volatility=2.0)` →
+  `ratio=6.0`) — bukan karena bug, contoh lamanya memang kini lenyap.
+
 ## 2026-09-23: 🏆 Best Pool Meteora — Fee/TVL minimal 30% (di bawah itu tidak tampil di hasil)
 
 **Status: selesai; suite 1228 tes, `18 failed + 1 error` = nama kegagalan

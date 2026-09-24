@@ -1,3 +1,50 @@
+# Kegiatan — 24 September 2026 (🏆 Best Pool: F/V di bawah 2× lenyap total — tidak muncul di "dilewati" maupun di mana pun)
+
+Permintaan user (verbatim, satu pesan): *"jangan tampilkan sama sekali pool
+yang F/V nya kurang dari 2 di pool yang dilewati atau dimanapun"*.
+
+## Yang berubah
+- **`meteora_screener.py`**:
+  - Konstanta baru `BEST_FV_HIDE_MIN = 2.0` + helper `row_fv_under_hide()`
+    (mengembalikan rasio bila `< 2×`, selain itu `None`) dan `fv_hide_label()`
+    (`"F/V < 2×"`, dipakai teks UI supaya tidak bisa basi).
+  - `row_best_dropped()` memanggil lantai ini **paling akhir** (sesudah
+    Top10/volatility/LPs) — baris F/V 0–2× langsung **dibuang total**, bukan
+    sekadar di-skip dari fetch holder. Jadi listing "▶ N pool dilewati" hanya
+    memuat F/V **2×–5×**, baris **Fee/TVL** tipis, dan metrik tidak valid.
+  - Batas eksklusif di sisi buang: **tepat 2,0× masih tampil** di "dilewati".
+    Angka F/V tanpa bukti (metrik hilang/nonfinite, volatility 0/∞) bukan
+    "kurang dari 2" — vol-0 dibuang lewat `row_volatility_zero`, metrik tidak
+    valid tetap muncul dengan alasannya sendiri.
+  - Counter audit baru `dropped_fv` di hasil `scan_best_lane()` + pesan Log
+    Aktivitas (`N pool F/V < 2× dibuang`). Teks alasan gugur tidak berubah
+    (`24H: F/V < 5×`) — lantai hanya memutuskan pembuangan.
+  - Semua pembaca ikut bersih tanpa kode baru: `scan_best_lane()`
+    (`hidden_rows`), `filter_best_rows()` (hitungan pill/caption), dan
+    render ulang hasil scan **lama** di `best_pool_ui` (session/cache) —
+    jadi hasil lama pun langsung bersih saat halaman dibuka, tanpa scan ulang.
+- **`best_pool_ui.py`**: tooltip judul card menyebut lantai + kutipan verbatim
+  permintaan user, help tombol scan menulis "F/V di bawah 2× dibuang total",
+  help tombol "▶ N pool dilewati" menegaskan isinya `F/V (2×–5×) atau
+  Fee/TVL`; bullet aturan baru di docstring modul. Fallback error
+  `_run_lane_scan` membawa `dropped_fv`/`dropped_lps`/`dropped_top10`/
+  `dropped_total` = 0.
+- **`tests/`**: `FvHideFloorTest` (7 tes) + `FvHideFloorUiTest` (1 tes AppTest)
+  di `tests/test_best_pool_scan.py`;
+  `LaneEnrichmentTest.test_fv_di_bawah_2_dibuang_total_tanpa_scan_holder` di
+  `tests/test_best_fv_prefilter.py`. **7 dari 9 tes baru diverifikasi gagal
+  pada kode lama** (`git archive HEAD` → `/tmp/baseline`); 2 sisanya penjaga
+  perilaku yang memang tidak berubah. Fixture tes lama yang dulu memakai
+  F/V < 2 sebagai contoh "gugur F/V tapi tampil di dilewati" dinaikkan ke
+  2×–5× (`_fv(2.0, 6.0)` → `_fv(20.0, 6.0)`, `ratio=1.0` → `ratio=20.0`,
+  `_pool(ratio=1.0, volatility=2.0)` → `ratio=6.0`).
+- **Suite**: `python -m unittest discover -s tests` → **1252 tes**, 18 failed
+  + 1 error — nama kegagalan **identik baseline** `/tmp/baseline` HEAD
+  `7788539` (1243 tes, 18 failed + 1 error), jadi bukan regresi.
+- **Dokumentasi**: README (tabel gate + tabel ambang `BEST_FV_HIDE_MIN` +
+  ringkasan modul), AGENTS.md (entri ini + blok "🏆 Scan Best Pool" di
+  bagian Ambang), dan `docs/PROGRESS.md` ikut diperbarui.
+
 # Kegiatan — 23 September 2026 (🏆 Best Pool: Fee/TVL minimal 30% — di bawah itu tidak ditampilkan di hasil)
 
 Permintaan user (verbatim, tiga pesan berurutan): *"ok, kita perketat filter
