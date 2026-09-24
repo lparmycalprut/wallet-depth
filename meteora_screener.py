@@ -153,6 +153,27 @@ BEST_FEE_TVL_MIN = 30.0
 # ``best_pool_ui``) tanpa perlu scan ulang. Hanya card 🏆 Best Pool —
 # ``filter_regular_rows`` Scan Meteora regular tidak ikut berubah.
 BEST_FV_HIDE_MIN = 2.0
+# 🆕 **Deteksi POOL BARU** (permintaan user 2026-09-24: *"tambahkan syarat ke
+# filter, ini deteksi baru untuk pool baru — pool age < 12 jam, active TVL >
+# 75K, fee/active TVL > 20%, volatility < 15%, top holders < 20%"*). Jalur
+# kelolosan KEDUA di :func:`row_best_gaps`: pool yang memenuhi kelima syarat
+# ini langsung lolos ke tabel hasil walau gugur saringan reguler (F/V < 5×,
+# Fee/TVL < 30%, volatility > 10%, LPs < 50, F/V < 2×) — pool yang baru lahir
+# belum punya riwayat volatility/LP yang "rapi" (contoh acuan user:
+# familiars-SOL, umur < 1 jam, fee/TVL 34%, volatility 10,37%, F/V 3,3×).
+# Semua batas **eksklusif** persis seperti kalimat user (``<``/``>``).
+# Volatility wajib > 0 (vol-0 tetap dibuang total — tidak ada pergerakan) dan
+# umur dihitung dari ``pool_created_at`` API (ms) terhadap waktu listing
+# diambil (``fetched_at``), jadi render ulang hasil scan lama tidak membuat
+# pool "menua" keluar dari tabel. Baris lolos lewat jalur ini ditandai
+# "POOL BARU" (biru menyala) di kolom Token dan STRATEGY-nya
+# :data:`gmgn_liquidity.STRATEGY_NEW_POOL`.
+NEW_POOL_MAX_AGE_HOURS = 12.0
+NEW_POOL_ACTIVE_TVL_MIN = 75_000.0
+NEW_POOL_FEE_TVL_MIN = 20.0
+NEW_POOL_VOL_MAX = 15.0
+NEW_POOL_TOP10_MAX = 20.0
+NEW_POOL_LABEL = "POOL BARU"
 BEST_CARD_TITLE = "🏆 Scan Best Pool Meteora"
 # **Satu lane sejak 2026-09-16** (permintaan user: "hapus scan 30 menit, kita
 # sisakan yang 24 jam saja"). Sejak 2026-09-13 card ini punya DUA tombol
@@ -557,6 +578,8 @@ def _row_from_pool(pool: dict, *, timeframe: str = "24h",
         "holders_reported": token.get("holders"),
         "tvl": _float(pool.get("tvl")),
         "active_tvl": _maybe_float(pool.get("active_tvl")),
+        # Umur pool (ms epoch dari API) — dipakai deteksi POOL BARU.
+        "pool_created_at": _maybe_float(pool.get("pool_created_at")),
         # 📏 Active Range (2026-09-14): API Meteora mengirim harga bin aktif
         # (``pool_price``) dan tepi range likuiditas (``min_price`` /
         # ``max_price``) — ketiganya terbukti harga bin DLMM persis (lihat
@@ -1294,11 +1317,14 @@ def rows_from_pools(pools: list[dict] | None, *,
     rows: list[dict] = []
     seen: set[str] = set()
     is_24h = timeframe == "24h"
+    fetched_at = int(time.time())
     for pool in pools or []:
         if not isinstance(pool, dict):
             continue
         row = _row_from_pool(pool, timeframe=timeframe,
                              in_24h=is_24h, in_1h=not is_24h)
+        # Titik acuan umur pool (deteksi POOL BARU) = saat listing diambil.
+        row["fetched_at"] = fetched_at
         addr = row["pool_address"]
         if addr:
             if addr in seen:
@@ -1593,6 +1619,67 @@ def row_lps_ok(row: dict | None) -> bool:
     return row_lps_under(row) is None
 
 
+def row_pool_age_hours(row: dict | None, *, now: float | None = None):
+    """Umur pool dalam jam dari ``pool_created_at`` (ms) — ``None`` bila tidak ada.
+
+    Acuan waktunya ``now`` → ``row["fetched_at"]`` (saat listing diambil) →
+    ``time.time()``. Umur negatif (jam tidak sinkron) dianggap 0.
+    """
+    row = row or {}
+    created = _maybe_float(row.get("pool_created_at"))
+    if created is None or not math.isfinite(created) or created <= 0:
+        return None
+    if created > 1e11:  # milidetik (API Meteora) → detik
+        created /= 1000.0
+    ref = _maybe_float(now) if now is not None else None
+    if ref is None:
+        ref = _maybe_float(row.get("fetched_at"))
+    if ref is None or ref <= 0:
+        ref = time.time()
+    return max(0.0, (ref - created) / 3600.0)
+
+
+def row_new_pool_gaps(row: dict | None, *, now: float | None = None) -> list[str]:
+    """Syarat POOL BARU yang TIDAK terpenuhi (``[]`` = pool baru).
+
+    Lima syarat user 2026-09-24 (semua eksklusif): umur < 12 jam, active TVL
+    > 75K, fee/active TVL > 20%, 0 < volatility < 15%, Top10 < 20%. Angka
+    hilang = tidak terbukti → tidak memenuhi.
+    """
+    row = row or {}
+    gaps: list[str] = []
+    age = row_pool_age_hours(row, now=now)
+    if age is None or not age < NEW_POOL_MAX_AGE_HOURS:
+        gaps.append("umur")
+    tvl = _maybe_float(row.get("active_tvl"))
+    if tvl is None or not math.isfinite(tvl) or not tvl > NEW_POOL_ACTIVE_TVL_MIN:
+        gaps.append("active TVL")
+    fee = _maybe_float(row.get("fee_active_tvl_ratio"))
+    if fee is None or not math.isfinite(fee) or not fee > NEW_POOL_FEE_TVL_MIN:
+        gaps.append("fee/active TVL")
+    vol = _maybe_float(row.get("volatility"))
+    if (vol is None or not math.isfinite(vol) or vol <= 0
+            or not vol < NEW_POOL_VOL_MAX):
+        gaps.append("volatility")
+    top = row_top10_pct(row)
+    if top is None or not math.isfinite(top) or not top < NEW_POOL_TOP10_MAX:
+        gaps.append("top holders")
+    return gaps
+
+
+def row_new_pool(row: dict | None, *, now: float | None = None) -> bool:
+    """True bila baris lolos deteksi **POOL BARU** (lihat :data:`NEW_POOL_LABEL`)."""
+    return not row_new_pool_gaps(row, now=now)
+
+
+def new_pool_rule_text() -> str:
+    """Teks aturan POOL BARU untuk tooltip/help (dibaca dari konstanta)."""
+    return (f"umur < {NEW_POOL_MAX_AGE_HOURS:g} jam · active TVL > "
+            f"${NEW_POOL_ACTIVE_TVL_MIN / 1000:g}K · fee/active TVL > "
+            f"{NEW_POOL_FEE_TVL_MIN:g}% · volatility < {NEW_POOL_VOL_MAX:g}% · "
+            f"top holders < {NEW_POOL_TOP10_MAX:g}%")
+
+
 def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
     """Saringan murah SEBELUM enrichment holder — F/V 24H + Fee/TVL + volatilitas + Top10.
 
@@ -1662,6 +1749,10 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
         default=None)
     if normalized not in BEST_LANES:
         return ["timeframe tidak dikenal"]
+    # 🆕 POOL BARU (2026-09-24) — jalur lolos kedua, mengalahkan saringan
+    # reguler di bawah (lihat NEW_POOL_* di atas).
+    if row_new_pool(row):
+        return []
     if vol == 0:
         # ∞ bukan kelolosan: F/V hanya bisa dibandingkan kalau volatility-nya
         # ada. Sebelum 2026-09-14 V=0 dengan F>0 lolos dan tampil sebagai ∞;
