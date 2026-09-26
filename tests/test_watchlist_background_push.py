@@ -251,7 +251,7 @@ class GithubPushJournalIsolationTest(unittest.TestCase):
 
     Jurnal lama selalu dibaca dari ``watchlist_pending.json`` (Solana), padahal
     fungsi yang sama dipakai untuk ``watchlist_robinhood.json`` **dan**
-    ``holder_status*.json``: op add yang tertunda di satu jaringan bisa
+    non-watchlist JSON: op add yang tertunda di satu jaringan bisa
     nyempil ke payload jaringan lain. Sekarang ``pending_path`` /
     ``merge_journal`` menentukan isinya.
     """
@@ -320,7 +320,7 @@ class GithubPushJournalIsolationTest(unittest.TestCase):
         self.assertNotIn(CA_B, pushed)
 
     def test_merge_journal_false_untuk_file_tanpa_jurnal(self):
-        """``holder_status*.json``: tidak ada jurnal sama sekali."""
+        """non-watchlist JSON: tidak ada jurnal sama sekali."""
         pushed = self._push({CA_A: {"symbol": "AAA"}},
                             pending_path=self.sol_pending,
                             merge_journal=False)

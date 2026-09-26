@@ -252,21 +252,6 @@ class BestPoolColumnsTest(unittest.TestCase):
 class ActiveRangeCardTest(unittest.TestCase):
     """Kolom Active Range benar-benar terender di dua card listing."""
 
-    def setUp(self):
-        patches = (
-            mock.patch("watchlist.load_watchlist", side_effect=lambda **_kw: {}),
-            mock.patch("holder_status.load_holder_status",
-                       side_effect=lambda **_kw: {"updated_at": None,
-                                                  "tokens": {}}),
-            mock.patch("holder_history.load_holder_history",
-                       side_effect=lambda *a, **kw: {"tokens": {}}),
-            mock.patch("holder_history.pull_holder_history",
-                       return_value=None),
-        )
-        for patch in patches:
-            patch.start()
-            self.addCleanup(patch.stop)
-
     @staticmethod
     def _body(app):
         return "\n".join(node.value for node in app.markdown)
@@ -281,16 +266,17 @@ class ActiveRangeCardTest(unittest.TestCase):
                      source="24h", mc=71_798_695.7, tvl=66_679.22,
                      active_tvl=65_315.94, fee_active_tvl_ratio=39.54,
                      volatility=1.11, volume=4_872_478.48, fee=12_763.44,
-                     volume_change_pct=1022.69, fee_pct=0.2, total_lps=56,
+                     volume_change_pct=1022.69, fee_pct=0.2, total_lps=188,
                      top_holders_pct=14.4,
-                     analysis={"holders": {"dust_pct_mc": 0.03,
-                                           "dust_count": 5,
-                                           "total_fetched": 1200,
-                                           "wallets_analyzed": 1100}})]
+                     liquidity_distribution={
+                         "checked": True, "ok": True,
+                         "token_value_usd": 5_000.0,
+                         "sol_value_usd": 50_000.0,
+                         "token_to_sol_ratio": 0.1, "error": ""})]
         app = AppTest.from_file(APP, default_timeout=90).run()
         app.session_state["best_pool_scan_24h"] = {
             "rows": rows, "hidden_rows": [], "error": "", "fetched": 1,
-            "hidden_metric": 0, "hidden_dust": 0, "skipped_quote": 0,
+            "hidden_metric": 0, "skipped_quote": 0,
             "dropped_volatility": 0, "lane": "24h",
             "gate": ms.best_lane_gate_label("24h"), "analyzed_at": 1}
         app.run()

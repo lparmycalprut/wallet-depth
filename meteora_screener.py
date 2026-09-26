@@ -1,96 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Scan regular pool Meteora DLMM (24 jam + 30 menit) lalu analisa holder dust.
+"""Meteora DLMM listing helpers and the Best Pool scanner.
 
-Endpoint: ``pool-discovery-api.datapi.meteora.ag/pools``. Regular scan
-mengambil dua lane secara berurutan: ``24h`` terlebih dahulu, lalu ``30m``.
-Keduanya memakai ``pool_type=dlmm`` dan ``active_tvl >= 50K``; klasifikasi
-berdasarkan metrik yang dikirim API, bukan threshold fee buatan di client:
+Best Pool fetches the 24-hour listing with active TVL of at least $100K, then
+applies the cheap F/V, Fee/TVL, volatility, LP-count, and Top-10 concentration
+gates.  The final cheap gate fetches official Meteora pool details and requires
+SOL-side USD liquidity to be at least five times token-side USD liquidity.
+Only passing rows continue to optional GMGN, RugCheck, and tax enrichment.
 
-- 24h: pool disembunyikan bila ``volatility >= fee_active_tvl_ratio``;
-  pool dengan ``fee_active_tvl_ratio >= 5 × volatility`` diberi label **SAFE LP**
-  dan catatan, sedangkan pool lain yang masih fee-dominant tetap dicatat;
-- 30m: hanya pool dengan ``fee_active_tvl_ratio > volatility`` yang ditampilkan
-  sebagai **HIGH RISK LP (PANTAU)**.
-
-Urutan regular scan tidak memakai dust. Lane 24h tetap berada di atas lane 30m,
-lalu pool di dalam masing-masing lane diurutkan dari perbandingan terbesar
-``fee_active_tvl_ratio / volatility``. Dust holder tetap diperkaya dan dicatat
-sebagai data saja (filter dust **dinonaktifkan** 2026-09-13 per request user
-\"dust% syaratnya hapus saja\").
-
-**Dust %MC kartu ini memakai pembagi yang sama dengan kartu lain** (2026-09-13):
-market cap dan harga diambil dari **DexScreener** lewat
-``holder_analysis.analyze_token`` — angka listing Meteora (``market_cap or
-fdv``) hanya cadangan bila DexScreener tidak membalas. **Hasil scan holder
-tanpa bukti tidak pernah tampil sebagai 0,000%**: fetch gagal / 0 wallet /
-terpotong / sampel < 40 wallet → ``dust_pct_mc = None`` (``row_dust_pct``),
-barisnya diberi ``holders_note``, dan listing pool **quote-only**
-(SOL/USDC/USDT, tanpa sisi memecoin — dust-nya dihitung terhadap MC SOL,
-jadi selalu “0,000%”) dibuang sebelum fetch holder. Sejak 2026-09-13 filter
-dust >0,1% MC **dihapus** — semua pool yang lolos rule fee/volatility
-ditampilkan, badge AMAN/HATI-HATI/BAHAYA tetap tidak dipakai di listing ini.
-Badge 🏆 BEST POOL menambah syarat data holder valid (≥ 40 wallet)
-**dan TVL pool ≥ 10K USD**.
-Baris yang di-⭐ masuk watchlist terpisah **Chart LP** di dashboard.
-
-**🏆 Scan Best Pool Meteora** — **satu tombol, satu tabel: 24H saja**
-(sejak 2026-09-16; lane 30M dihapus per permintaan user *"hapus scan 30 menit,
-kita sisakan yang 24 jam saja"*). Syaratnya ``F/V >= 5×`` dengan F =
-``fee_active_tvl_ratio`` dan V = ``volatility``. Hanya pool yang lolos ambang
-yang di-scan holdernya; pool di bawah ambang **langsung di-skip** sebelum
-enrichment holder (kuota Helius tidak terbakar) dan tetap tersedia di
-``hidden_rows`` tanpa scan holder — **kecuali F/V di bawah 2×**
-(:data:`BEST_FV_HIDE_MIN`, permintaan user 2026-09-24 *"jangan tampilkan sama
-sekali pool yang F/V nya kurang dari 2 di pool yang dilewati atau dimanapun"*):
-baris seperti itu **dibuang total** dari listing, jadi "▶ N pool dilewati"
-hanya memuat F/V ``>= 2×`` dan baris Fee/TVL tipis. Lima saringan layar,
-semuanya di
-:func:`row_best_gaps` dan semuanya sebelum enrichment: volatility 0 **gugur
-dan dibuang total** (aturan 2026-09-14), volatility di luar **1%–10%**
-(:data:`BEST_VOL_SHOW_MIN`/:data:`BEST_VOL_SHOW_MAX`, 2026-09-16) gugur dan
-dibuang total, **LPs < 50** (:data:`BEST_LPS_MIN`) gugur dan dibuang total,
-**Fee/TVL < 30%** (:data:`BEST_FEE_TVL_MIN`, permintaan user 2026-09-23
-*"kita perketat filter yang boleh di show di hasil"* + *"Fee/TVL minimal
-30%"* + *"dibawah itu jangan show"*) gugur — tapi tidak dibuang total, ia
-tetap terbaca di listing "▶ N pool dilewati" — dan **Top10 holder >= 20%
-supply tidak ditampilkan lagi** (:data:`BEST_TOP10_MAX_PCT`, 2026-09-16).
-Likuiditas total GMGN **tidak menyaring lagi** (dicabut 2026-09-17 malam,
-permintaan user *"filter likuiditas hapus coba"*): :mod:`gmgn_liquidity`
-hanya menempel ``row["gmgn_liq"]`` sebagai pewarna kolom RugCheck + bahan
-kolom STRATEGY, dengan ambang $500K (sempat $1M tetapi mengosongkan seluruh
-tabel, jadi diturunkan sore harinya) yang kini murni batas warna. Saringan
-server Jupiter safeguard yang sempat dipasang 2026-09-16 **dimatikan
-default-nya** 2026-09-17 (filter ``base/quote_token_has_critical_warnings=false``
-menjatuhkan token seperti PAID sebelum listing sampai ke client — token
-pump.fun yang baru launch sering masih punya freeze/metadata mutable yang
-Jupiter anggap "critical", padahal bendera yang sama sudah dilaporkan kolom
-RugCheck sebagai **informasi** tanpa membuang baris). Query API sekarang:
-``pool_type=dlmm&&active_tvl>=50000`` (lihat :func:`best_filter_by`,
-``safeguard=True`` masih bisa dipakai untuk menyalakan kembali kalau
-dibutuhkan). Dust, volume dan tier fee bukan syarat. Urutan tiap
-tabel (2026-09-15, permintaan user: *"kita urutkan fee/TVL paling besar dulu,
-baru perkalian f/v"*): **Fee/TVL terbesar** → **F/V terbesar** → volume/active
-TVL → dust %MC terkecil; badge BEST POOL dihapus. Baris yang tampil dilengkapi
-laporan **RugCheck** dari rugchecker.cc (:mod:`rugchecker`) — honeypot +
-bendera keamanan token, dengan **angka likuiditas total dari GMGN**
-(:mod:`gmgn_liquidity`, sejak 2026-09-17 menggantikan total per-DEX
-rugchecker.cc — permintaan user *"ubah info liquidititas dari rugchecker.cc
-ke gmgn saja"*). Sejak
-2026-09-15 kolom **Token** menulis pasangan pool-nya (``ALLINU/SOL``,
-:func:`row_pair_label`) dan sel **F/V** memakai :func:`format_fv_ratio` —
-satu desimal di bawah 100×, bilangan bulat berpemisah ribuan di atasnya
-(``6,328,266×``), jadi rasio ekstrem tidak lagi tampil sebagai
-``6328266.1×``.
-tampil sebagai ``6328266.1×``.
 """
 from __future__ import annotations
 
 import math
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
-from holder_history import (DUST_SCAN_HIDE_PCT, MIN_USABLE_WALLETS, dust_flag,
-                            holders_usable, should_hide_dust)
 
 POOLS_URL = "https://pool-discovery-api.datapi.meteora.ag/pools"
 PAGE_SIZE = 50
@@ -106,6 +28,7 @@ FEE_RATIO_30M = 0.0
 FEE_RATIO_1H = FEE_RATIO_30M
 REGULAR_TIMEFRAMES = ("24h", "30m")
 SAFE_LP_MULTIPLIER = 5.0
+
 
 # ---------------------------------------------------------------------------
 # 🏆 Scan Best Pool Meteora — ambang filter (kriteria diganti total
@@ -153,37 +76,6 @@ BEST_FEE_TVL_MIN = 30.0
 # ``best_pool_ui``) tanpa perlu scan ulang. Hanya card 🏆 Best Pool —
 # ``filter_regular_rows`` Scan Meteora regular tidak ikut berubah.
 BEST_FV_HIDE_MIN = 2.0
-# 🆕 **Deteksi POOL BARU** (permintaan user 2026-09-24: *"tambahkan syarat ke
-# filter, ini deteksi baru untuk pool baru — pool age < 12 jam, active TVL >
-# 75K, fee/active TVL > 20%, volatility < 15%, top holders < 20%"* +
-# lanjutan hari yang sama: *"tambah syarat LPs minimal 100"*). Jalur
-# kelolosan KEDUA di :func:`row_best_gaps`: pool yang memenuhi **enam**
-# syarat ini langsung lolos ke tabel hasil walau gugur saringan reguler
-# (F/V < 5×, Fee/TVL < 30%, volatility > 10%, LPs < 50, F/V < 2×) — pool yang
-# baru lahir belum punya riwayat volatility/LP yang "rapi" (contoh acuan
-# user: familiars-SOL, umur < 1 jam, fee/TVL 34%, volatility 10,37%, F/V 3,3×,
-# 230 LPs). Batas umur/TVL/fee/volatility/Top10 **eksklusif** persis seperti
-# kalimat user (``<``/``>``); batas LPs **inklusif** (tepat 100 lolos) dan
-# HANYA berlaku di jalur pool baru — saringan reguler tetap
-# :data:`BEST_LPS_MIN` (50) yang tidak berubah. Pool yang gagal salah satu
-# syarat ini kembali dinilai saringan reguler biasa.
-# Volatility wajib > 0 (vol-0 tetap dibuang total — tidak ada pergerakan) dan
-# umur dihitung dari ``pool_created_at`` API (ms) terhadap waktu listing
-# diambil (``fetched_at``), jadi render ulang hasil scan lama tidak membuat
-# pool "menua" keluar dari tabel. Keputusan deteksi dibuat **sekali, saat
-# scan**: :func:`scan_best_lane` menandai ``row["new_pool"]`` pada baris yang
-# lolos, dan render (label "POOL BARU" biru menyala di kolom Token + STRATEGY
-# :data:`gmgn_liquidity.STRATEGY_NEW_POOL`) memakai flag itu ATAU
-# :func:`row_new_pool` — sehingga hasil scan lama di session_state/
-# scan_result_cache (tanpa ``pool_created_at``/``fetched_at``) tidak pernah
-# membuat keputusan scan dan render berbeda.
-NEW_POOL_MAX_AGE_HOURS = 12.0
-NEW_POOL_ACTIVE_TVL_MIN = 75_000.0
-NEW_POOL_FEE_TVL_MIN = 20.0
-NEW_POOL_VOL_MAX = 15.0
-NEW_POOL_TOP10_MAX = 20.0
-NEW_POOL_LPS_MIN = 100.0
-NEW_POOL_LABEL = "POOL BARU"
 BEST_CARD_TITLE = "🏆 Scan Best Pool Meteora"
 # **Satu lane sejak 2026-09-16** (permintaan user: "hapus scan 30 menit, kita
 # sisakan yang 24 jam saja"). Sejak 2026-09-13 card ini punya DUA tombol
@@ -196,64 +88,23 @@ BEST_LANES = ("24h",)
 # timeframe itu dan teks rekap tidak boleh berubah jadi "30M".upper() yang
 # aneh kalau suatu saat dibaca.
 BEST_LANE_LABELS = {"24h": "24H", "30m": "30M"}
-# Konstanta mati lane 30M — JANGAN dipakai lagi (lihat BEST_LANES di atas).
-# Dibiarkan ada supaya import lama tidak pecah, sama seperti
-# ``BEST_DUST_MAX_PCT`` / ``BEST_VOLUME_24H_MIN``.
-BEST_FV_30M_MIN = 1.0
-BEST_FEE_PCT_MIN = 2.0            # query API: fee_pct >= 2 (tier fee pool)
-BEST_ACTIVE_TVL_MIN = 50_000.0    # query API: active TVL >= 50K USD
-BEST_DUST_MAX_PCT = 0.05          # layar: dust holder < 0,05% MC
-BEST_VOLATILITY_MIN = 2.0         # layar: volatility >= 2% ("minimal 2%")
-# Layar: **volume 24 jam minimal 1 juta USD** (permintaan user 2026-09-12:
-# "minimal volume 24 jam adalah 1M, dibawah itu jangan di show"). Batas
-# inklusif (tepat $1.000.000 lolos); angka hilang (``None``) = gugur, sama
-# seperti volatility — pool tanpa data volume tidak bisa dibuktikan ramai.
-# Dicek di :func:`row_best_gaps`, jadi SEBELUM fetch holder: kuota Helius
-# tidak terbakar untuk pool sepi yang pasti gugur.
+BEST_FV_30M_MIN = 1.0            # compatibility for cached lane labels
+BEST_FEE_PCT_MIN = 2.0            # server-side pool fee tier
+BEST_ACTIVE_TVL_MIN = 100_000.0
+BEST_VOLATILITY_MIN = 2.0
 BEST_VOLUME_24H_MIN = 1_000_000.0
-# Layar: **Top 10 holder 20% supply atau lebih = jangan tampilkan**
-# (permintaan user 2026-09-16: "TOP 10 diatas 20% jangan ditampilkan lagi",
-# dipertegas di sesi yang sama: "jika ada top 10 >= 20% jangan tampilkan").
-# ``top_holders_pct`` dari API Meteora = persen supply token base yang dipegang
-# 10 wallet teratas (35.75 = 35,75%) — mulai 20% ke atas pool dianggap terpusat
-# dan **gugur** lewat :func:`row_best_gaps`, jadi sama seperti ambang lane:
-# dieksekusi SEBELUM fetch holder (kuota Helius tidak terbakar) dan ikut
-# menyaring hasil scan lama yang dirender ulang card.
-# Batas **eksklusif di sisi tampil** — Top10 tepat 20,0% ikut dibuang. Angka hilang (``None``)
-# TIDAK gugur: tanpa data tidak ada bukti konsentrasi, barisnya tetap tampil
-# dengan ``—`` di kolom Top10. (Saringan Top10 LAMA — ``< 30%`` — pernah
-# dicabut 2026-09-11; yang ini aturan BARU dari user, bukan pengaktifan balik
-# aturan lama. Dust tetap informasi: ``row_dust_ok`` selalu True.)
+# Independent concentration metric supplied by Meteora; this is not the
+# removed wallet-depth analysis subsystem.
 BEST_TOP10_MAX_PCT = 20.0
-# Tanda 🏆 BEST POOL di kolom Dust %MC (permintaan user 2026-09-12): baris
-# dengan dust **<= 0,035% MC** (inklusif — 0,035 persis ikut ditandai)
-# diberi chip emas di ``best_pool_ui``. Ini BUKAN saringan tambahan: saringan
-# layar tetap ``BEST_DUST_MAX_PCT`` (0,05%, lebih longgar); tanda hanya
-# memudahkan melihat pool yang benar-benar bersih di dalam listing.
-# Layar: **volatility hanya boleh 1%–10%** (permintaan user 2026-09-16:
-# "volatility kurang dari 1 sembunyikan juga" + "volatility > 10 sembunyikan
-# juga"). Di bawah 1% pool terlalu mati (fee sekecil apa pun terlihat besar
-# dibandingkan pergerakan → F/V menipu); di atas 10% pergerakan pool lebih
-# besar dari fee yang didapat LP, jadi listing "best" bukan tempatnya. Batas
-# inklusif di DUA sisi: tepat 1,0% dan tepat 10,0% masih tampil. Volatility
-# hilang/nonfinite sudah gugur lebih dulu lewat cabang metrik F/V, dan
-# volatility 0 persis tetap DIBUANG TOTAL dari listing (row_volatility_zero —
-# aturan 2026-09-14), jadi ia tidak muncul di tabel "dilewati".
 BEST_VOL_SHOW_MIN = 1.0
 BEST_VOL_SHOW_MAX = 10.0
-BEST_LPS_MIN = 50.0
-# Tanda 🏆 BEST POOL di kolom Dust %MC (permintaan user 2026-09-12): baris
-# dengan dust **<= 0,035% MC** (inklusif — 0,035 persis ikut ditandai)
-# diberi chip emas di ``best_pool_ui``. Ini BUKAN saringan tambahan: saringan
-# layar tetap ``BEST_DUST_MAX_PCT`` (0,05%, lebih longgar); tanda hanya
-# memudahkan melihat pool yang benar-benar bersih di dalam listing.
-BEST_DUST_MARK_PCT = 0.035
-# Presisi kunci urut dust % MC di listing Best Pool — sama dengan angka yang
-# tampil di card, jadi dua pool yang di layar sama-sama "0,041%" benar-benar
-# dianggap seri dan simbol alfabetis yang menentukan (lihat
-# :func:`sort_best_rows`). Dust kini kunci **keempat** (2026-09-15: Fee/TVL
-# → F/V → volume/active TVL → dust; sebelumnya F/V memimpin sejak 2026-09-13).
-BEST_DUST_SORT_DECIMALS = 3
+BEST_LPS_MIN = 100.0
+# SOL USD liquidity must be at least 5× token USD liquidity.  Equivalently,
+# token:SOL is at most 1:5; a more SOL-heavy ratio (for example 1:6.52) passes.
+BEST_SOL_TOKEN_MIN_RATIO = 5.0
+BEST_TOKEN_SOL_MAX_RATIO = 1.0 / BEST_SOL_TOKEN_MIN_RATIO
+BEST_TOKEN_SOL_RATIO_LABEL = "1:5"
+DLMM_POOLS_URL = "https://dlmm.datapi.meteora.ag/pools"
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
@@ -367,16 +218,7 @@ def dlmm_bin_step(pool: dict | None):
 
 
 def unanalysable_row(row: dict | None) -> str:
-    """Alasan baris **tidak punya token base** yang bisa di-analisa (kosong = bisa).
-
-    ``base_token()`` mengembalikan ``token_x or token_y`` bila kedua sisi pool
-    adalah token quote (SOL / USDC / USDT) — pool semacam ini tidak punya sisi
-    memecoin sama sekali (USDT-USDC, SOL-USDC, SOL-USDT). Holder yang di-scan
-    lalu = holder SOL/USDC dan MC pembaginya = MC SOL (miliaran dolar), jadi
-    dust % MC-nya **selalu** ≈ 0,000% — pool "paling bersih" di listing dan
-    langsung menyabet 🏆 BEST POOL, padahal angkanya tidak pernah berarti apa
-    apa untuk token itu. Baris tanpa mint sama sekali juga dibuang.
-    """
+    """Explain why a quote-only pair cannot represent a meme-token pool."""
     row = row or {}
     mint = str(row.get("ca") or "").strip()
     if not mint:
@@ -387,11 +229,7 @@ def unanalysable_row(row: dict | None) -> str:
 
 
 def drop_quote_rows(rows: list[dict] | None) -> tuple[list[dict], int]:
-    """Buang baris yang tidak punya token base untuk di-analisa.
-
-    Return ``(kept, dropped)``. Dipakai **sebelum** fetch holder supaya kuota
-    Helius tidak terbakar untuk pool yang angkanya pasti tidak bermakna.
-    """
+    """Drop quote-only rows before any pool-detail or market enrichment."""
     kept, dropped = [], 0
     for row in rows or []:
         if unanalysable_row(row):
@@ -402,13 +240,7 @@ def drop_quote_rows(rows: list[dict] | None) -> tuple[list[dict], int]:
 
 
 def fee_volatility_ratio(fee_active_tvl_ratio, volatility):
-    """Perbandingan fee/active TVL terhadap volatility.
-
-    Kedua field Meteora sudah berupa persen, jadi yang dibandingkan untuk
-    urutan dan deteksi adalah quotient-nya, bukan nilai dust. ``None`` berarti
-    payload tidak cukup; volatility nol dengan fee positif dianggap tak
-    terbatas karena fee tetap dominan.
-    """
+    """Return Fee/TVL divided by volatility, or ``None`` when invalid."""
     fee = _maybe_float(fee_active_tvl_ratio)
     vol = _maybe_float(volatility)
     if fee is None or vol is None:
@@ -466,12 +298,7 @@ def format_fv_ratio(value, *, decimals: int = FV_DISPLAY_DECIMALS):
 
 
 def regular_pool_classification(row: dict | None) -> dict:
-    """Classify/filter satu regular row tanpa menyentuh dust.
-
-    Return ``{show, label, note, ratio}``. Rule memakai perbandingan strict
-    untuk filter (``volatility >= fee`` disembunyikan di 24h; ``fee <=
-    volatility`` disembunyikan di 30m) dan ``>= 5×`` untuk SAFE LP 24h.
-    """
+    """Classify one legacy regular-listing row from pool metrics."""
     row = row or {}
     timeframe = str(row.get("timeframe") or row.get("source") or "24h").lower()
     if timeframe in ("1h", "30 menit", "30 min"):
@@ -528,7 +355,7 @@ def filter_regular_rows(rows: list[dict] | None) -> tuple[list[dict], int]:
 
 
 def sort_regular_rows(rows: list[dict] | None) -> list[dict]:
-    """Order regular rows by lane then fee/volatility ratio, never by dust."""
+    """Order legacy regular rows by lane and fee/volatility ratio."""
     def _key(row):
         row = row or {}
         timeframe = str(row.get("timeframe") or row.get("source") or "24h").lower()
@@ -537,7 +364,6 @@ def sort_regular_rows(rows: list[dict] | None) -> list[dict]:
         ratio = fee_volatility_ratio(row.get("fee_active_tvl_ratio"),
                                      row.get("volatility"))
         # Keep missing metrics at the bottom of their lane. ``sort_rows`` is
-        # intentionally not used here; dust is only a recorded field.
         rank = 0 if timeframe == "24h" else 1
         return (rank, 0 if ratio is not None else 1,
                 -(ratio if ratio is not None else 0.0),
@@ -581,15 +407,10 @@ def _row_from_pool(pool: dict, *, timeframe: str = "24h",
         "ca": mint,
         "symbol": str(token.get("symbol") or pool.get("name") or "?").upper(),
         "name": str(token.get("name") or ""),
-        # Cadangan pembagi dust saja — angka yang dipakai di layar datang dari
-        # :func:`enrich_pools` (MC DexScreener, sama seperti kartu lain).
         "mc": _float(token.get("market_cap") or token.get("fdv")),
         "price": _float(token.get("price")),
-        "holders_reported": token.get("holders"),
         "tvl": _float(pool.get("tvl")),
         "active_tvl": _maybe_float(pool.get("active_tvl")),
-        # Umur pool (ms epoch dari API) — dipakai deteksi POOL BARU.
-        "pool_created_at": _maybe_float(pool.get("pool_created_at")),
         # 📏 Active Range (2026-09-14): API Meteora mengirim harga bin aktif
         # (``pool_price``) dan tepi range likuiditas (``min_price`` /
         # ``max_price``) — ketiganya terbukti harga bin DLMM persis (lihat
@@ -602,8 +423,7 @@ def _row_from_pool(pool: dict, *, timeframe: str = "24h",
         "fee_active_tvl_ratio": fee_ratio,
         "volume": _float(pool.get("volume")),
         "fee_pct": _float(pool.get("fee_pct")),
-        # Metrik pool dipakai regular scan + watchlist. Best Pool tetap
-        # memakai field ini sebagai informasi dan pipeline-nya tidak berubah.
+        # Pool metrics used by the Best Pool filters and table.
         "volatility": volatility,
         "total_lps": _maybe_float(pool.get("total_lps")),
         "top_holders_pct": _float(token.get("top_holders_pct")),
@@ -710,359 +530,6 @@ def fetch_listing(*, timeout: int = 25) -> tuple[list[dict], str]:
     return rows, " · ".join(errors)
 
 
-def fetch_watchlist_metric_snapshots(watchlist: dict | None,
-                                     *, timeout: int = 25) -> dict:
-    """Fetch current fee/volatility snapshots for Meteora watchlist entries.
-
-    Holder scanning and pool-metric scanning are intentionally separate: this
-    helper only calls the lightweight pool-discovery endpoint. A pool address
-    stored when the star was clicked is preferred; mint matching is the
-    fallback for older watchlist entries that predate source metadata.
-    """
-    from meteora_watchlist import (is_meteora_meta, snapshot_from_row,
-                                   timeframe_for_meta)
-
-    targets: dict[str, dict] = {
-        str(mint): meta for mint, meta in (watchlist or {}).items()
-        if mint and is_meteora_meta(meta)
-    }
-    if not targets:
-        return {}
-    requested = {timeframe_for_meta(meta) for meta in targets.values()}
-    requested = [timeframe for timeframe in REGULAR_TIMEFRAMES
-                 if timeframe in requested]
-    pools_by_timeframe: dict[str, list[dict]] = {}
-    for timeframe in requested:
-        try:
-            pools_by_timeframe[timeframe] = fetch_pools(
-                timeframe=timeframe, fee_ratio_min=None,
-                tvl_min=TVL_MIN, timeout=timeout)
-        except Exception:
-            pools_by_timeframe[timeframe] = []
-
-    result: dict[str, dict] = {}
-    for mint, meta in targets.items():
-        timeframe = timeframe_for_meta(meta)
-        candidates = []
-        for pool in pools_by_timeframe.get(timeframe) or []:
-            row = _row_from_pool(pool, timeframe=timeframe)
-            if row.get("ca") == mint:
-                candidates.append(row)
-        pool_address = str(meta.get("pool_address") or "").strip()
-        selected = next((row for row in candidates
-                         if pool_address and row.get("pool_address") == pool_address),
-                        candidates[0] if candidates else None)
-        if selected:
-            classification = regular_pool_classification(selected)
-            selected = dict(selected)
-            selected["classification"] = classification.get("label") or ""
-            selected["classification_note"] = classification.get("note") or ""
-            result[mint] = snapshot_from_row(selected)
-    return result
-
-
-def _mint_pools(rows: list[dict]) -> dict[str, set[str]]:
-    mapping: dict[str, set[str]] = {}
-    for row in rows:
-        mint = str(row.get("ca") or "").strip()
-        pool = str(row.get("pool_address") or "").strip()
-        if mint:
-            mapping.setdefault(mint, set())
-            if pool:
-                mapping[mint].add(pool)
-    return mapping
-
-
-def enrich_pools(rows: list[dict], *, max_wallets: int = 2000,
-                 workers: int = 6, progress=None) -> list[dict]:
-    """Fetch holder per mint unik, tempel ``analysis`` ke setiap baris pool.
-
-    Angka dust yang ditulis ke baris **hanya** dipakai bila hasil fetch
-    holdernya bisa dipercaya (:func:`holder_history.holders_usable`): scan
-    dengan 0 wallet, terpotong, atau sampel < 40 wallet menghasilkan
-    ``dust_count = 0`` / ``dust_pct_mc = 0.0`` yang di layar terbaca sebagai
-    **0,000% "pool paling bersih"** padahal itu kegagalan provider — angka
-    itu tidak akan pernah cocok dengan hasil Scan Holder token yang sama
-    (kasus nyata: user, 2026-09-13: "di scan meteora menunjukkan 0.000% baru
-    saya scan, padahal di scan holder hasilnya beda"). Baris semacam itu
-    sekarang ``dust_pct_mc = None`` + alasan di ``holders_note``, sehingga
-    saringan Best Pool menggugurkannya (``None`` = tidak ada bukti) dan
-    listing Scan Meteora menampilkannya tanpa angka.
-    """
-    if not rows:
-        return rows
-    from holder_analysis import analyze_token
-    from holder_history import load_holder_history
-
-    store = load_holder_history()
-    mint_pools = _mint_pools(rows)
-    mints = [mint for mint in mint_pools
-             if mint and mint not in QUOTE_MINTS]
-    total = len(mints)
-    workers = max(1, min(int(workers), 8))
-    analyses: dict[str, dict | None] = {}
-
-    def _job(mint: str):
-        meta = ((store.get("tokens") or {}).get(mint) or {})
-        cohort = meta.get("cohort") if isinstance(meta.get("cohort"), dict) else {}
-        addrs = list((cohort.get("balances") or {}).keys())
-        symbol = next((str(r.get("symbol") or "?") for r in rows
-                       if r.get("ca") == mint), "?")
-        # MC/harga listing Meteora hanya **cadangan**: ``analyze_token``
-        # memakai market cap DexScreener yang baru di-fetch sebagai
-        # pembagi dust, supaya angka Dust %MC kartu ini sebanding dengan
-        # Scan Holder / watchlist / titik history (lihat komentar di
-        # ``holder_analysis.analyze_token``).
-        mc = next((_float(r.get("mc")) for r in rows if r.get("ca") == mint), 0.0)
-        price = next((_float(r.get("price")) for r in rows if r.get("ca") == mint),
-                     0.0)
-        try:
-            return mint, analyze_token(
-                mint, symbol, mc, max_wallets=max_wallets,
-                fetch_market=True, price_usd=price, cohort_addrs=addrs,
-                extra_pools=mint_pools.get(mint) or []), None
-        except Exception as exc:  # noqa: BLE001
-            return mint, None, str(exc)
-
-    if mints:
-        done = 0
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_job, mint): mint for mint in mints}
-            for future in as_completed(futures):
-                mint, analysis, _error = future.result()
-                analyses[mint] = analysis
-                done += 1
-                if progress:
-                    try:
-                        progress(done, total, mint[:8])
-                    except Exception:
-                        pass
-        try:
-            from holder_history import ingest_many
-            # Hanya scan dengan **bukti** holder yang di-ingest (aturan yang
-            # sama dengan lane Watchlist Meteora / cron): satu titik
-            # ``dust_pct_mc = 0.0`` dari fetch yang gagal bisa menimpa titik
-            # cron yang benar di dalam ``MIN_POINT_GAP_SEC`` (scan dobel =
-            # timpa titik terakhir) sehingga grafik dust token watchlist
-            # terlihat jatuh ke nol.
-            ok = {mint: item for mint, item in analyses.items()
-                  if isinstance(item, dict)
-                  and holders_usable(item.get("holders"))}
-            if ok:
-                ingest_many(ok)
-        except Exception:
-            pass
-
-    out = []
-    for row in rows:
-        item = dict(row)
-        analysis = analyses.get(item.get("ca"))
-        item["analysis"] = analysis
-        holders = (analysis or {}).get("holders") or {}
-        # MC yang benar-benar dipakai sebagai pembagi dust ditulis balik ke
-        # baris, supaya kolom MC di card tidak pernah terlihat "berantakan"
-        # dengan Dust %MC di sebelahnya (dua angka dari dua sumber berbeda).
-        mc_used = _float((analysis or {}).get("marketcap"), 0.0)
-        if mc_used > 0:
-            item["mc"] = mc_used
-        proof = holders_usable(holders)
-        item["holders_proof"] = bool(proof)
-        item["holders_note"] = "" if proof else _holder_gap(analysis, holders)
-        item["dust_count"] = holders.get("dust_count") if proof else None
-        item["dust_pct_mc"] = holders.get("dust_pct_mc") if proof else None
-        item["real_count"] = holders.get("real_count") if proof else None
-        out.append(item)
-    return out
-
-
-def _holder_gap(analysis, holders: dict) -> str:
-    """Alasan pendek "angka dust tidak bisa dipercaya" untuk satu baris pool.
-
-    Ditempel ke ``holders_note`` lalu ditampilkan UI di bawah Dust %MC —
-    penggantinya angka **0,000%** palsu hasil scan holder yang gagal.
-    """
-    if not isinstance(analysis, dict):
-        return "⚠️ holder gagal di-scan"
-    error = str(holders.get("error") or holders.get("fetch_error") or "").strip()
-    if holders.get("truncated"):
-        return "⚠️ holder terpotong" + (f": {error[:48]}" if error else "")
-    fetched = int(_float(holders.get("total_fetched"), 0.0))
-    wallets = int(_float(holders.get("wallets_analyzed"), 0.0)) or fetched
-    if fetched <= 0:
-        return ("⚠️ 0 holder"
-                + (f": {error[:48]}" if error else " (provider mati)"))
-    return (f"⚠️ sampel {wallets} wallet — butuh "
-            f"≥ {int(MIN_USABLE_WALLETS)} untuk dust %MC")
-
-
-def row_dust_pct(row: dict | None):
-    """Dust % MC satu baris pool: ``analysis`` dulu, fallback field baris.
-
-    Dipakai bersama oleh :func:`hide_dust_limit`, :func:`row_flag`,
-    dan ``best_pool_ui`` supaya angka yang
-    menyaring, mengurutkan, dan yang tampil di layar **selalu** berasal dari
-    sumber yang sama.
-
-    Scan holder yang **tidak** bisa dipercaya (0 wallet / terpotong / sampel
-    di bawah :data:`~holder_history.MIN_USABLE_WALLETS`) selalu mengembalikan
-    ``None``, bukan ``0.0`` hasil klasifikasi kosong: tanpa bukti, barisnya
-    dianggap "tanpa angka dust" — digugurkan saringan Best Pool, tidak bisa
-    jadi BEST POOL, dan tidak pernah tampil sebagai **0,000%** yang menipu.
-    """
-    row = row or {}
-    analysis = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
-    holders = analysis.get("holders") if isinstance(analysis, dict) else None
-    holders = holders if isinstance(holders, dict) else {}
-    if holders and not holders_usable(holders):
-        return None
-    pct = holders.get("dust_pct_mc")
-    if pct is None:
-        pct = row.get("dust_pct_mc")
-    return pct
-
-
-def row_flag(row: dict | None) -> dict:
-    """``dust_flag`` satu baris pool lengkap dengan guard holder + TVL.
-
-    ``best`` hanya True bila dust < 0,1% MC, data holder valid (≥ 40 wallet),
-    dan TVL pool ≥ 10K USD — persis syarat badge 🏆 BEST POOL di UI.
-    """
-    row = row or {}
-    analysis = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
-    holders = (analysis.get("holders")
-               if isinstance(analysis.get("holders"), dict) else None)
-    return dust_flag(row_dust_pct(row), holders=holders, tvl=row.get("tvl"))
-
-
-def sort_rows(rows: list[dict]) -> list[dict]:
-    """Compatibility sorter untuk konsumen lama, bukan regular scan.
-
-    Regular Scan Meteora memakai :func:`sort_regular_rows`, yang mengurutkan
-    lane 24h/30m dan quotient fee/volatility tanpa dust. Fungsi lama ini tetap
-    tersedia untuk compatibility/test konsumen yang masih membutuhkan urutan
-    BEST POOL berbasis dust; Scan Best Pool memiliki sorter sendiri.
-
-    Kunci urut lama (kecil = atas):
-
-    1. ``best`` (BEST POOL) di atas non-best;
-    2. dust % MC **terkecil** dulu — makin sedikit dust makin bersih;
-       baris tanpa angka dust (holder gagal) ditaruh paling bawah karena
-       tidak ada bukti dan tidak pernah bisa jadi BEST POOL;
-    3. **volume 24 jam / active TVL** terbesar (:func:`row_vol_tvl_ratio`,
-       permintaan user 2026-09-13 — sebelumnya TVL terbesar) sebagai
-       tie-break: pool yang ramai relatif terhadap likuiditas aktifnya naik;
-    4. simbol alfabetis supaya urutannya deterministik (stabil antar scan).
-    """
-    def _key(row):
-        row = row or {}
-        pct = _float(row_dust_pct(row), None)
-        ratio = row_vol_tvl_ratio(row)
-        return (
-            0 if row_flag(row).get("best") else 1,
-            0 if pct is not None else 1,
-            pct if pct is not None else 0.0,
-            -(ratio if ratio is not None else -1.0),
-            str(row.get("symbol") or "").upper(),
-        )
-
-    return sorted(list(rows or []), key=_key)
-
-
-def hide_dust_limit(rows: list[dict]) -> tuple[list[dict], int]:
-    """Dust filter **dinonaktifkan** per permintaan user 2026-09-13.
-
-    Sebelumnya: buang pool dust > ``DUST_SCAN_HIDE_PCT`` (0,1% MC).
-    Sekarang: semua baris ditampilkan apa adanya — dust %MC tetap
-    diperkaya sebagai **informasi** di kolom, bukan saringan.
-    Return ``(kept, 0)`` agar caller lama tetap jalan.
-    """
-    # Permintaan: \"scan pool meteora, dust% syaratnya hapus saja, ini malah
-    # tidak menampilkan apa2\" — filter dust membuat listing kosong.
-    return list(rows or []), 0
-
-
-def scan_meteora(*, max_wallets: int | None = None, workers: int = 6,
-                 progress=None, timeout: int = 25) -> dict:
-    """Scan regular Meteora lanes 24h → 30m.
-
-    Metrik rule diterapkan sebelum holder enrichment agar pool yang pasti tidak
-    tampil tidak membakar kuota holder. Filter dust **dinonaktifkan**
-    per permintaan user 2026-09-13: dust %MC tetap diperkaya sebagai
-    informasi, bukan saringan — semua pool yang lolos rule fee/volatility
-    ditampilkan.
-    """
-    if max_wallets is None:
-        from holder_history import FULL_SCAN_MAX_WALLETS
-        max_wallets = FULL_SCAN_MAX_WALLETS
-    try:
-        import activity_log as _alog
-    except Exception:  # noqa: BLE001 - log hanya pelengkap
-        _alog = None
-    if _alog:
-        _alog.info("scan-meteora", "scan mulai: listing pool DLMM Meteora 24h + 30m")
-    rows, error = fetch_listing(timeout=timeout)
-    if _alog and error:
-        _alog.error("scan-meteora", f"listing Meteora gagal: {error[:160]}")
-    fetched = len(rows)
-    # Quote-only tidak punya token yang bisa dianalisa; buang lebih dulu agar
-    # penghitung skip tetap akurat walau payload metriknya juga kosong.
-    rows, quote_skipped = drop_quote_rows(rows)
-    rows, hidden_rule = filter_regular_rows(rows)
-    if rows:
-        rows = enrich_pools(rows, max_wallets=max_wallets, workers=workers,
-                            progress=progress)
-        rows, hidden_dust = hide_dust_limit(rows)
-        # Satu-satunya urutan regular: lane 24h/30m lalu quotient
-        # fee_active_tvl_ratio ÷ volatility. Tidak pernah memakai dust.
-        rows = sort_regular_rows(rows)
-    else:
-        hidden_dust = 0
-    hidden_total = hidden_rule + hidden_dust
-    if _alog:
-        _alog.info(
-            "scan-meteora",
-            f"scan selesai: {len(rows)} pool tampil dari {fetched} listing "
-            f"({hidden_rule} gugur rule metrik, {hidden_dust} disembunyikan dust"
-            + (f", {quote_skipped} pool quote dilewati" if quote_skipped else "")
-            + ")")
-    return {
-        "rows": rows,
-        "error": error,
-        "fetched": fetched,
-        "hidden_dust": hidden_dust,
-        "hidden_rule": hidden_rule,
-        "hidden_total": hidden_total,
-        "skipped_quote": quote_skipped,
-        "hide_pct": float(DUST_SCAN_HIDE_PCT),
-        # Compatibility summary only; sorting does not use this value.
-        "best_count": sum(1 for row in rows if row_flag(row).get("best")),
-        "analyzed_at": int(time.time()),
-    }
-
-
-# ---------------------------------------------------------------------------
-# 🏆 Scan Best Pool Meteora — listing khusus halaman utama ``app.py``.
-# Kriteria 2026-09-13 (semua saringan layar + fee_pct dihapus):
-#
-# 1. **server** (query API Meteora): ``pool_type=dlmm&&active_tvl>=50000``,
-#    category ``top``, page_size 50 — active TVL disaring di server.
-#    ``fee_pct>=2`` **dihapus** 2026-09-13 sore (permintaan user: pool
-#    ber-fee rendah seperti EMBER/USDC harus muncul);
-# 2. **layar**: dua saringan di ``row_best_gaps()`` — ambang F/V per lane +
-#    Top10 holder ``<= BEST_TOP10_MAX_PCT`` (20%, baru 2026-09-16).
-#
-# Dua lane dipisah (permintaan user 2026-09-13: "untuk timeframe 30m harus
-# kita pisah tombol deteksinya dan tabel serta fungsi fee/v lebih besar"):
-# tombol **24H** menyaring ``F/V >= BEST_FV_24H_MIN`` (5×), tombol **30M**
-# menyaring ``F/V > BEST_FV_30M_MIN`` (1× = fee lebih besar dari volatility).
-# Yang di bawah ambang **langsung di-skip** — tanpa fetch holder.
-#
-# Urutan baris tiap tabel (2026-09-15): **Fee/TVL terbesar** →
-# **F/V terbesar** → **volume 24 jam / active TVL**
-# (``volume_active_tvl_ratio``) → **dust % MC terkecil**. Data yang hilang
-# (``None``) menaruh baris paling bawah di kunci yang sama (tapi tetap
-# tampil).
-# ---------------------------------------------------------------------------
 def _maybe_float(value):
     """Float atau ``None`` (NaN/Infinity/bool/tipe salah → ``None``).
 
@@ -1269,7 +736,7 @@ def best_filter_by(pool_type: str = "dlmm",
     (kwarg ``safeguard=False``) — terbukti membuang token seperti PAID
     sebelum listing sampai ke client, padahal bendera yang sama sudah
     dilaporkan kolom RugCheck tanpa membuang baris. Query default sekarang:
-    ``pool_type=dlmm&&active_tvl>=50000``. Kwarg ``fee_pct_min``
+    ``pool_type=dlmm&&active_tvl>=100000``. Kwarg ``fee_pct_min``
     dipertahankan untuk kompatibilitas caller lama (``None`` = tidak
     menambah filter fee_pct); ``safeguard=True`` masih bisa dipakai caller
     yang memang ingin menyaring di sisi server (tes / tooling terpisah).
@@ -1293,8 +760,8 @@ def fetch_best_pools(*, timeframe: str = "24h", page_size: int = PAGE_SIZE,
                      timeout: int = 25) -> list[dict]:
     """Top pool untuk Scan Best Pool Meteora. Gagal → raise.
 
-    Sejak 2026-09-13 filter ``fee_pct`` dihapus (default ``None``): semua
-    pool DLMM dengan ``active_tvl >= 50K`` dari API ditampilkan, termasuk
+    Filter ``fee_pct`` tetap dihapus (default ``None``): semua pool DLMM
+    dengan ``active_tvl >= 100K`` dari API Best Pool ditampilkan, termasuk
     pool ber-fee rendah (EMBER/USDC, SOL/USDC, dll).
 
     ``timeframe`` dinormalisasi lewat :func:`normalize_best_lane` — sejak
@@ -1327,14 +794,11 @@ def rows_from_pools(pools: list[dict] | None, *,
     rows: list[dict] = []
     seen: set[str] = set()
     is_24h = timeframe == "24h"
-    fetched_at = int(time.time())
     for pool in pools or []:
         if not isinstance(pool, dict):
             continue
         row = _row_from_pool(pool, timeframe=timeframe,
                              in_24h=is_24h, in_1h=not is_24h)
-        # Titik acuan umur pool (deteksi POOL BARU) = saat listing diambil.
-        row["fetched_at"] = fetched_at
         addr = row["pool_address"]
         if addr:
             if addr in seen:
@@ -1342,6 +806,190 @@ def rows_from_pools(pools: list[dict] | None, *,
             seen.add(addr)
         rows.append(row)
     return rows
+
+
+def _liquidity_distribution_report(payload: dict | None, *,
+                                   base_mint: str = "") -> dict:
+    """Normalisasi detail pool resmi Meteora menjadi nilai USD token dan SOL.
+
+    Endpoint ``dlmm.datapi.meteora.ag/pools/{address}`` memberi
+    ``token_x_amount``/``token_y_amount`` beserta harga USD masing-masing token.
+    Rasio wajib dihitung dari **nilai USD** (amount × price), bukan jumlah koin
+    mentah. ``base_mint`` adalah token non-quote yang ditampilkan card.
+    """
+    payload = payload if isinstance(payload, dict) else {}
+    sides: list[dict] = []
+    for side in ("x", "y"):
+        token = payload.get(f"token_{side}")
+        token = token if isinstance(token, dict) else {}
+        amount = _maybe_float(payload.get(f"token_{side}_amount"))
+        price = _maybe_float(token.get("price"))
+        value = (amount * price if amount is not None and price is not None
+                 and math.isfinite(amount) and math.isfinite(price)
+                 and amount >= 0 and price >= 0 else None)
+        sides.append({
+            "mint": str(token.get("address") or "").strip(),
+            "symbol": str(token.get("symbol") or "?").strip(),
+            "amount": amount,
+            "price_usd": price,
+            "value_usd": value,
+        })
+
+    sol = next((side for side in sides if side["mint"] == SOL_MINT), None)
+    token = next((side for side in sides
+                  if base_mint and side["mint"] == str(base_mint).strip()), None)
+    if token is None:
+        token = next((side for side in sides if side["mint"] != SOL_MINT), None)
+
+    base = {
+        "checked": True,
+        "ok": False,
+        "source": "meteora_dlmm_pool",
+        "pool_address": str(payload.get("address") or "").strip(),
+    }
+    if sol is None or token is None or token.get("mint") == SOL_MINT:
+        base["error"] = "pool bukan pasangan token-SOL"
+        return base
+
+    token_usd = _maybe_float(token.get("value_usd"))
+    sol_usd = _maybe_float(sol.get("value_usd"))
+    if (token_usd is None or sol_usd is None or token_usd <= 0
+            or sol_usd <= 0):
+        base.update({"token": token, "sol": sol,
+                     "error": "nilai USD distribusi token/SOL tidak tersedia"})
+        return base
+
+    ratio = token_usd / sol_usd
+    base.update({
+        "ok": True,
+        "token": token,
+        "sol": sol,
+        "token_value_usd": token_usd,
+        "sol_value_usd": sol_usd,
+        "token_to_sol_ratio": ratio,
+        "error": "",
+    })
+    return base
+
+
+def fetch_pool_liquidity_distribution(pool_address: str, *,
+                                      base_mint: str = "",
+                                      timeout: int = 25) -> dict:
+    """Ambil distribusi nilai USD satu pool dari API detail DLMM resmi."""
+    address = str(pool_address or "").strip()
+    if not address or not address.isalnum():
+        return {"checked": True, "ok": False,
+                "source": "meteora_dlmm_pool",
+                "pool_address": address, "error": "alamat pool tidak valid"}
+    try:
+        payload = _http_get(f"{DLMM_POOLS_URL}/{address}", {}, timeout=timeout)
+        report = _liquidity_distribution_report(payload, base_mint=base_mint)
+        report["pool_address"] = address
+        return report
+    except Exception as exc:  # noqa: BLE001 - kegagalan per-pool jadi gap
+        return {"checked": True, "ok": False,
+                "source": "meteora_dlmm_pool",
+                "pool_address": address, "error": str(exc)[:160]}
+
+
+def attach_liquidity_distribution(rows: list[dict] | None, *, workers: int = 6,
+                                  timeout: int = 25) -> list[dict]:
+    """Tempel ``liquidity_distribution`` secara paralel ke kandidat terakhir.
+
+    Fungsi ini dipanggil **setelah** F/V dan seluruh prefilter murah lolos,
+    tetapi **sebelum** RugCheck/GMGN/tax, sehingga enrichment pihak ketiga
+    hanya dipakai kandidat yang relevan.
+    """
+    rows = list(rows or [])
+    if not rows:
+        return rows
+
+    def _fetch(row):
+        return fetch_pool_liquidity_distribution(
+            row.get("pool_address"), base_mint=str(row.get("ca") or ""),
+            timeout=timeout)
+
+    with ThreadPoolExecutor(max_workers=max(1, min(int(workers or 1), 8))) as executor:
+        jobs = {executor.submit(_fetch, row): row for row in rows}
+        for future in as_completed(jobs):
+            row = jobs[future]
+            try:
+                row["liquidity_distribution"] = future.result()
+            except Exception as exc:  # noqa: BLE001 - satu pool tidak jatuhkan scan
+                row["liquidity_distribution"] = {
+                    "checked": True, "ok": False,
+                    "source": "meteora_dlmm_pool", "error": str(exc)[:160]}
+    return rows
+
+
+def row_token_sol_ratio(row: dict | None):
+    """Rasio nilai USD ``token ÷ SOL`` atau ``None`` bila belum terukur."""
+    report = (row or {}).get("liquidity_distribution")
+    if not isinstance(report, dict) or not report.get("ok"):
+        return None
+    ratio = _maybe_float(report.get("token_to_sol_ratio"))
+    if ratio is None or not math.isfinite(ratio) or ratio <= 0:
+        return None
+    return ratio
+
+
+def liquidity_distribution_label(row: dict | None) -> str:
+    """Label rasio mudah dibaca, mis. ``1:6.52`` atau ``2.3:1``."""
+    ratio = row_token_sol_ratio(row)
+    if ratio is None:
+        return "—"
+    left, right = (1.0, 1.0 / ratio) if ratio < 1.0 else (ratio, 1.0)
+
+    def _part(value: float) -> str:
+        # Empat desimal mencegah nilai sedikit di bawah boundary (mis. rasio
+        # 0,1999 = 1:5,0025) dibulatkan menjadi "1:5" lalu tampak kontradiktif.
+        return f"{value:.4f}".rstrip("0").rstrip(".")
+
+    return f"{_part(left)}:{_part(right)}"
+
+
+def row_liquidity_distribution_gap(row: dict | None, *, lane=None) -> str:
+    """Alasan gagal bila SOL < 5× token; ``""`` bila gate akhir lolos.
+
+    Dalam notasi token:SOL, nilai token tidak boleh melebihi 1:5 terhadap SOL.
+    Distribusi hilang/error dan pasangan non-SOL gagal tertutup: syarat akhir
+    wajib **terbukti**, bukan diasumsikan lolos saat API detail bermasalah.
+    """
+    normalized = normalize_best_lane(
+        lane if lane is not None else
+        ((row or {}).get("timeframe") or (row or {}).get("source") or "24h"),
+        default="24h")
+    prefix = f"{BEST_LANE_LABELS.get(normalized, '24H')}: "
+    report = (row or {}).get("liquidity_distribution")
+    if not isinstance(report, dict) or not report.get("checked"):
+        return (prefix + "distribusi likuiditas token:SOL belum diperiksa — "
+                "scan ulang")
+    if not report.get("ok"):
+        reason = str(report.get("error") or "tidak tersedia")
+        return prefix + f"distribusi likuiditas token:SOL gagal — {reason}"
+    ratio = row_token_sol_ratio(row)
+    if ratio is None:
+        return prefix + "distribusi likuiditas token:SOL tidak valid"
+    maximum = float(BEST_TOKEN_SOL_MAX_RATIO)
+    # Boundary token:SOL 1:5 inklusif. Rasio lebih kecil berarti sisi SOL
+    # semakin besar (mis. 1:6,52) dan harus lolos. Toleransi hanya menyerap
+    # noise floating-point dari dua perkalian amount×price.
+    if ratio > maximum and not math.isclose(
+            ratio, maximum, rel_tol=1e-12, abs_tol=1e-12):
+        sol_multiple = 1.0 / ratio
+        return (prefix + f"likuiditas SOL hanya {sol_multiple:.4g}× token < "
+                f"minimum {BEST_SOL_TOKEN_MIN_RATIO:g}× "
+                f"(token:SOL {liquidity_distribution_label(row)})")
+    return ""
+
+
+def row_best_final_gaps(row: dict | None, *, lane=None) -> list[str]:
+    """Seluruh filter Best Pool, dengan rasio distribusi wajib di tahap akhir."""
+    gaps = row_best_gaps(row, lane=lane)
+    if gaps:
+        return gaps
+    gap = row_liquidity_distribution_gap(row, lane=lane)
+    return [gap] if gap else []
 
 
 def row_vol_tvl_ratio(row: dict | None):
@@ -1510,11 +1158,7 @@ def row_volume_ok(row: dict | None) -> bool:
 
 
 def row_top10_pct(row: dict | None):
-    """Persen supply token base di 10 holder teratas (``top_holders_pct``).
-
-    ``None`` bila baris tidak membawa angkanya (payload API tanpa data holder
-    atau hasil scan lama) — tanpa angka tidak ada bukti konsentrasi apa pun.
-    """
+    """Meteora Top-10 account supply percentage, or ``None``."""
     return _maybe_float((row or {}).get("top_holders_pct"))
 
 
@@ -1557,17 +1201,7 @@ def row_volatility_gap(volatility) -> str:
 
 
 def row_top10_ok(row: dict | None) -> bool:
-    """True bila Top10 holder **<= 20% supply** (atau angkanya tidak ada).
-
-    Saringan permintaan user 2026-09-16: *"scan meteora, TOP 10 diatas 20%
-    jangan ditampilkan lagi"*. Yang dibuang hanya pool yang **terbukti**
-    berkonsentrasi di batas atau di atasnya; baris tanpa angka (``None``)
-    tetap lolos dan
-    tampil dengan ``—`` di kolom Top10. Beda dengan :func:`row_dust_ok` /
-    :func:`row_volume_ok` yang sudah dicabut jadi selalu ``True`` (2026-09-13)
-    — Top10 justru dipasang kembali sebagai saringan, dengan angka baru
-    (20%, bukan "< 30%" lama) dan arah "di atas batas = buang".
-    """
+    """Return true unless Meteora reports Top-10 concentration >= 20%."""
     return row_top10_over(row) is None
 
 
@@ -1611,10 +1245,11 @@ def row_lps_count(row: dict | None):
 
 
 def row_lps_under(row: dict | None):
-    """Nilai LPs bila ``< BEST_LPS_MIN`` (``None`` = tidak dibuang).
+    """Nilai LPs bila ``< BEST_LPS_MIN``; selain itu ``None``.
 
-    Batas inklusif di sisi tampil: tepat 50 masih tampil; ``None``/hilang
-    (tidak ada bukti) tidak pernah dibuang — sama seperti Top10 tanpa angka.
+    Batas inklusif di sisi tampil: tepat 100 lolos. Angka hilang juga tidak
+    dikarang menjadi nol; :func:`row_lps_ok` dan :func:`row_best_gaps`
+    menolaknya secara eksplisit karena minimal LP wajib terbukti.
     """
     count = row_lps_count(row)
     if count is None:
@@ -1625,130 +1260,18 @@ def row_lps_under(row: dict | None):
 
 
 def row_lps_ok(row: dict | None) -> bool:
-    """True bila LPs **>= BEST_LPS_MIN** (atau angkanya tidak ada)."""
-    return row_lps_under(row) is None
-
-
-def row_pool_age_hours(row: dict | None, *, now: float | None = None):
-    """Umur pool dalam jam dari ``pool_created_at`` (ms) — ``None`` bila tidak ada.
-
-    Acuan waktunya ``now`` → ``row["fetched_at"]`` (saat listing diambil) →
-    ``time.time()``. Umur negatif (jam tidak sinkron) dianggap 0.
-    """
-    row = row or {}
-    created = _maybe_float(row.get("pool_created_at"))
-    if created is None or not math.isfinite(created) or created <= 0:
-        return None
-    if created > 1e11:  # milidetik (API Meteora) → detik
-        created /= 1000.0
-    ref = _maybe_float(now) if now is not None else None
-    if ref is None:
-        ref = _maybe_float(row.get("fetched_at"))
-    if ref is None or ref <= 0:
-        ref = time.time()
-    return max(0.0, (ref - created) / 3600.0)
-
-
-def row_new_pool_gaps(row: dict | None, *, now: float | None = None) -> list[str]:
-    """Syarat POOL BARU yang TIDAK terpenuhi (``[]`` = pool baru).
-
-    Enam syarat user 2026-09-24: umur < 12 jam, active TVL > 75K,
-    fee/active TVL > 20%, 0 < volatility < 15%, **LPs >= 100 (inklusif —
-    tepat 100 lolos)** dan Top10 < 20%. Selain LPs, semua batas eksklusif.
-    Angka hilang = tidak terbukti → tidak memenuhi. Syarat LPs hanya untuk
-    jalur pool baru — saringan reguler tetap :data:`BEST_LPS_MIN` (50);
-    pool yang gagal LPs di sini kembali dinilai saringan reguler biasa.
-    """
-    row = row or {}
-    gaps: list[str] = []
-    age = row_pool_age_hours(row, now=now)
-    if age is None or not age < NEW_POOL_MAX_AGE_HOURS:
-        gaps.append("umur")
-    tvl = _maybe_float(row.get("active_tvl"))
-    if tvl is None or not math.isfinite(tvl) or not tvl > NEW_POOL_ACTIVE_TVL_MIN:
-        gaps.append("active TVL")
-    fee = _maybe_float(row.get("fee_active_tvl_ratio"))
-    if fee is None or not math.isfinite(fee) or not fee > NEW_POOL_FEE_TVL_MIN:
-        gaps.append("fee/active TVL")
-    vol = _maybe_float(row.get("volatility"))
-    if (vol is None or not math.isfinite(vol) or vol <= 0
-            or not vol < NEW_POOL_VOL_MAX):
-        gaps.append("volatility")
-    lps = row_lps_count(row)
-    if lps is None or not math.isfinite(lps) or lps < float(NEW_POOL_LPS_MIN):
-        gaps.append("LPs")
-    top = row_top10_pct(row)
-    if top is None or not math.isfinite(top) or not top < NEW_POOL_TOP10_MAX:
-        gaps.append("top holders")
-    return gaps
-
-
-def row_new_pool(row: dict | None, *, now: float | None = None) -> bool:
-    """True bila baris lolos deteksi **POOL BARU** (lihat :data:`NEW_POOL_LABEL`)."""
-    return not row_new_pool_gaps(row, now=now)
-
-
-def new_pool_rule_text() -> str:
-    """Teks aturan POOL BARU untuk tooltip/help (dibaca dari konstanta)."""
-    return (f"umur < {NEW_POOL_MAX_AGE_HOURS:g} jam · active TVL > "
-            f"${NEW_POOL_ACTIVE_TVL_MIN / 1000:g}K · fee/active TVL > "
-            f"{NEW_POOL_FEE_TVL_MIN:g}% · volatility < {NEW_POOL_VOL_MAX:g}% · "
-            f"LPs >= {NEW_POOL_LPS_MIN:g} · "
-            f"top holders < {NEW_POOL_TOP10_MAX:g}%")
+    """True hanya bila LPs terukur dan **>= BEST_LPS_MIN**."""
+    count = row_lps_count(row)
+    return bool(count is not None and math.isfinite(count)
+                and count >= float(BEST_LPS_MIN))
 
 
 def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
-    """Saringan murah SEBELUM enrichment holder — F/V 24H + Fee/TVL + volatilitas + Top10.
+    """Return the first failed cheap Best Pool gate.
 
-    **Satu lane sejak 2026-09-16** (30M dicabut): tombol **24H** minta
-    ``F/V >= BEST_FV_24H_MIN`` (5×) — "prioritaskan 24H yang fee/v >= 5x untuk
-    di scan detail lainnya, jika kurang dari itu langsung skip".
-
-    Di atas itu ada tiga saringan yang sama di semua timeframe: volatility
-    harus di rentang :data:`BEST_VOL_SHOW_MIN`–:data:`BEST_VOL_SHOW_MAX`
-    (1%–10%, inklusif; :func:`row_volatility_gap`) dan Top10 holder harus di
-    **bawah** :data:`BEST_TOP10_MAX_PCT` (20% — ``>= 20%`` dibuang;
-    :func:`row_top10_over`) sejak 2026-09-16, lalu **Fee/TVL minimal
-    :data:`BEST_FEE_TVL_MIN` (30%)** sejak 2026-09-23 (permintaan user:
-    *"kita perketat filter yang boleh di show di hasil — Fee/TVL minimal 30%,
-    dibawah itu jangan show"*; :func:`row_fee_tvl_under`). Urutan cek sengaja:
-    metrik F/V tidak valid, vol-0 (dibuang total, ``row_volatility_zero``),
-    LPs < :data:`BEST_LPS_MIN` (dibuang total), volatilitas di luar rentang
-    (dibuang total), F/V, **Fee/TVL**, baru Top10 (dibuang total) — satu
-    alasan gugur per baris supaya teksnya tetap satu baris, dengan alasan yang
-    membuang total lebih dulu kecuali F/V yang dibiarkan memimpin di depan
-    Fee/TVL agar teks "gugur" yang sudah dikenal user tidak berubah arti.
-
-    (DIHAPUS 2026-09-17 malam — permintaan user *"filter likuiditas hapus
-    coba"*; angka GMGN kini hanya pewarna kolom RugCheck, > $500K hijau.)
-    Dulu saringan TERAKHIR (2026-09-17, permintaan user: *"jika grand total
-    liquiditas kurang dari 1M, jangan tampilkan di hasil scan"* — ambangnya
-    $500K sejak sore harinya, lihat :data:`gmgn_liquidity.MIN_TOTAL_LIQ_USD`):
-    likuiditas **total GMGN di bawah ambang** gugur
-    (:func:`gmgn_liquidity.row_gmgn_gap`) — key
-    ``gmgn_liq`` ditempel :func:`scan_best_lane` pada kandidat yang sudah
-    lolos saringan metrik di atas; baris tanpa key (scan lama / ``gmgn=False``
-    di test/offline) tidak terpengaruh. Tanpa bukti GMGN baris TIDAK disaring.
-
-    F = ``fee_active_tvl_ratio``, V = ``volatility`` (keduanya persen dari API
-    Meteora, jadi ambangnya diperbandingkan sebagai kelipatan, bukan persen
-    absolut). **V nol gugur di kedua lane** (2026-09-14, permintaan user:
-    baris ∞ yang muncul di tabel 30M padahal syaratnya ``F/V > 1×`` tidak
-    boleh lolos) — pool tanpa volatility di lane itu tidak bisa membuktikan
-    fee lebih besar dari volatility, jadi langsung di-skip sebelum fetch
-    holder. Lanjutan hari yang sama: baris V nol juga **dibuang dari
-    listing** (:func:`row_volatility_zero`) — tidak ditampilkan di mana pun
-    karena tidak ada pergerakan di pool-nya. Data hilang, nonfinite, negatif,
-    F <= 0, atau lane tidak dikenal tidak lolos.
-
-    Top10 dijalankan **setelah** sisanya lolos, jadi pool yang sudah gugur
-    F/V/volatilitas tidak diberi alasan kedua; alasan Top10 ditulis lengkap
-    supaya terbaca di listing "dilewati".
-
-    ``lane`` tetap diterima (dipakai render ulang hasil lama): sejak 30M
-    dihapus semua alias lane dipetakan :func:`normalize_best_lane` ke 24H,
-    jadi nilainya tidak mengubah aturan yang dipakai — hanya nama yang sama
-    sekali tidak dikenal (``"5m"``) yang gugur dengan "timeframe tidak dikenal".
+    Gates are validated in this order: finite F/V inputs, non-zero volatility,
+    LP count >= 100, volatility range, F/V >= 5, Fee/TVL >= 30%, then Meteora's
+    independent Top-10 supply concentration metric below 20%.
     """
     row = row or {}
     fee = _maybe_float(row.get("fee_active_tvl_ratio"))
@@ -1766,10 +1289,6 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
         default=None)
     if normalized not in BEST_LANES:
         return ["timeframe tidak dikenal"]
-    # 🆕 POOL BARU (2026-09-24) — jalur lolos kedua, mengalahkan saringan
-    # reguler di bawah (lihat NEW_POOL_* di atas).
-    if row_new_pool(row):
-        return []
     if vol == 0:
         # ∞ bukan kelolosan: F/V hanya bisa dibandingkan kalau volatility-nya
         # ada. Sebelum 2026-09-14 V=0 dengan F>0 lolos dan tampil sebagai ∞;
@@ -1778,9 +1297,14 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
         # :func:`row_volatility_zero`) — pool tanpa pergerakan tidak ditampilkan.
         return [f"{BEST_LANE_LABELS[normalized]}: volatility 0 — "
                 "F/V tidak terukur"]
+    lps = row_lps_count(row)
+    if lps is None or not math.isfinite(lps):
+        return [f"{BEST_LANE_LABELS[normalized]}: LPs tidak tersedia — "
+                f"minimal {float(BEST_LPS_MIN):g} wajib terbukti"]
     under = row_lps_under(row)
     if under is not None:
-        return [f"{BEST_LANE_LABELS[normalized]}: LPs {under:g} < {float(BEST_LPS_MIN):g} — LP terlalu sedikit"]
+        return [f"{BEST_LANE_LABELS[normalized]}: LPs {under:g} < "
+                f"{float(BEST_LPS_MIN):g} — LP terlalu sedikit"]
     rentang = row_volatility_gap(vol)
     if rentang:
         return [f"{BEST_LANE_LABELS[normalized]}: {rentang}"]
@@ -1803,7 +1327,7 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
         over = row_top10_over(row)
         if over is not None:
             return [f"{BEST_LANE_LABELS[normalized]}: Top10 {over:g}% ≥ "
-                    f"{float(BEST_TOP10_MAX_PCT):g}% — holder terpusat"]
+                    f"{float(BEST_TOP10_MAX_PCT):g}% — supply terpusat"]
         # Saringan likuiditas total GMGN (< $500K) DIHAPUS 2026-09-17 malam
         # (permintaan user: "filter likuiditas hapus coba") — angkanya tetap
         # ditempel ke row["gmgn_liq"] untuk kolom RugCheck (hijau > $500K,
@@ -1840,6 +1364,8 @@ def gmgn_min_label() -> str:
 #: alasan berubah.
 BEST_GAP_CATEGORIES = (("LPs", "LPs"),
                        ("LP", "LPs"),
+                       ("likuiditas token:SOL", "likuiditas token:SOL"),
+                       ("distribusi likuiditas", "likuiditas token:SOL"),
                        ("Likuiditas GMGN", "likuiditas GMGN"),
                        ("cutoff peringkat", "likuiditas GMGN"),
                        ("Top10", "Top10"),
@@ -1869,7 +1395,7 @@ def row_best_gap_label(row: dict | None, *, lane=None) -> str:
 
 
 def row_best_dropped(row: dict | None, *, lane=None) -> bool:
-    """True bila pool gugur karena Top10, volatility, LPs < 50, atau F/V < 2×.
+    """True bila pool gugur karena Top10, volatility, LPs < 100/tidak terukur, atau F/V < 2×.
 
     Baris seperti ini langsung disembunyikan total, tidak ditampilkan
     di mana pun (baik di tabel utama yang lolos maupun di listing
@@ -1944,33 +1470,8 @@ def best_gap_summary(rows: list | None) -> str:
                       for label, count in best_gap_counts(rows))
 
 
-def row_dust_ok(row: dict | None) -> bool:
-    """Dust filter **dinonaktifkan** per permintaan user 2026-09-13.
-
-    Sebelumnya: True bila dust holder **< 0,05% MC** (angka wajib ada).
-    Sekarang: selalu True — dust %MC tetap ditampilkan sebagai informasi
-    di kolom, bukan saringan. Baris tanpa bukti holder (dust ``None``)
-    tetap ditampilkan dengan tanda ``—``.
-    """
-    # Dust syarat dihapus supaya scan tidak kosong.
-    return True
-
-
-def row_best_pool(row: dict | None) -> bool:
-    """True bila dust holder **<= 0,035% MC** → baris ditandai 🏆 BEST POOL.
-
-    Penanda visual (2026-09-12, permintaan user: "tandai jika %dust <=
-    0.035 menjadi Best Pool"), bukan saringan: saringan listing tetap
-    :func:`row_dust_ok` (``BEST_DUST_MAX_PCT`` 0,05%, lebih longgar). Batas
-    **inklusif** (dust 0,035 persis ikut ditandai); dust ``None`` (holder
-    gagal di-fetch) tidak pernah ditandai — tidak ada bukti.
-    """
-    pct = _maybe_float(row_dust_pct(row))
-    return bool(pct is not None and pct <= BEST_DUST_MARK_PCT)
-
-
-def filter_best_rows(rows: list[dict] | None, *,
-                     lane=None) -> tuple[list[dict], int, int]:
+def filter_best_rows(rows: list[dict] | None, *, lane=None,
+                     require_distribution: bool = False) -> tuple[list[dict], int, int]:
     """Return ``(lolos saringan layar, jumlah gagal yang TAMPIL dilewati, 0)``.
 
     ``lane`` memaksa satu aturan ambang untuk seluruh baris (dipakai
@@ -1989,58 +1490,30 @@ def filter_best_rows(rows: list[dict] | None, *,
     :func:`scan_best_lane`.
     """
     rows = list(rows or [])
-    kept = [row for row in rows if not row_best_gaps(row, lane=lane)]
+
+    def _gaps(row):
+        return (row_best_final_gaps(row, lane=lane) if require_distribution
+                else row_best_gaps(row, lane=lane))
+
+    kept = [row for row in rows if not _gaps(row)]
     dropped = sum(1 for row in rows
-                  if row_best_gaps(row, lane=lane)
-                  and row_best_dropped(row, lane=lane))
+                  if _gaps(row) and row_best_dropped(row, lane=lane))
     return kept, len(rows) - len(kept) - dropped, 0
 
 
 def sort_best_rows(rows: list[dict] | None) -> list[dict]:
-    """Urutan tabel Best Pool: **Fee/TVL terbesar** → **F/V terbesar** → vol/TVL
-    → dust.
-
-    Permintaan user 2026-09-15 (lanjutan): *"sebentar, kita urutkan fee/TVL
-    paling besar dulu, baru perkalian f/v"* — kolom **Fee/TVL**
-    (``fee_active_tvl_ratio``, persen fee terhadap active TVL) jadi kunci
-    pertama, baru kelipatan **F/V** (``fee_active_tvl_ratio ÷ volatility``,
-    :func:`row_fv_ratio`) sebagai kunci kedua. Sebelumnya F/V yang memimpin
-    (2026-09-13); pembilangnya F, jadi pool dengan fee/TVL paling produktif
-    sekarang naik ke atas lebih dulu, dan di dalam kelompok Fee/TVL yang sama
-    yang fee-nya berkali-kali lebih besar dari volatilitasnya yang menang.
-
-    Sisa tie-break tidak berubah: :func:`row_vol_tvl_ratio` (rasio ``volume``
-    / ``active_tvl`` dari API Meteora) terbesar, lalu dust % MC terkecil —
-    kunci dust dibulatkan ke presisi tampilan (:data:`BEST_DUST_SORT_DECIMALS`,
-    3 desimal = angka yang muncul di card) sehingga pool yang di layar
-    sama-sama "0,041%" dianggap seri; simbol alfabetis jadi tie-break terakhir
-    supaya urutannya deterministik antar scan.
-
-    Baris tanpa angka (``None``) selalu di bawah baris yang punya angka di
-    kunci yang sama: Fee/TVL hilang → paling bawah (di dalamnya F/V bisa
-    memutuskan), F/V hilang → di bawah pemilik F/V di kelompok Fee/TVL yang
-    sama. ∞ (volatility 0, fee positif) tetap paling atas **bila** ada yang
-    meneruskannya ke sini — kontrak urut dipertahankan — tapi card sudah tidak
-    pernah meneruskannya ke tabel sejak 2026-09-14 lanjutan
-    (:func:`row_volatility_zero`).
-    """
+    """Sort visible pools by Fee/TVL, F/V, volume/TVL, then symbol."""
     def _key(row):
         row = row or {}
-        pct = _maybe_float(row_dust_pct(row))
         ratio = row_vol_tvl_ratio(row)
         fee_tvl = _maybe_float(row.get("fee_active_tvl_ratio"))
         fv = row_fv_ratio(row)
         return (
-            # 1) Fee/TVL terbesar (permintaan user 2026-09-15).
             0 if fee_tvl is not None else 1,
             -(fee_tvl if fee_tvl is not None else 0.0),
-            # 2) baru kelipatan F/V terbesar.
             0 if fv is not None else 1,
             -(fv if fv is not None else 0.0),
-            # 3-5) tie-break lama: volume/active TVL, dust, simbol.
-            0 if pct is not None else 1,
             -(ratio if ratio is not None else -1.0),
-            round(pct, BEST_DUST_SORT_DECIMALS) if pct is not None else 0.0,
             str(row.get("symbol") or "").upper(),
         )
 
@@ -2048,94 +1521,36 @@ def sort_best_rows(rows: list[dict] | None) -> list[dict]:
 
 
 def sort_hidden_best_rows(rows: list[dict] | None) -> list[dict]:
-    """Urutan tabel pool disembunyikan: **F/V terbesar** → **Fee/TVL terbesar**
-    → vol/TVL → dust → simbol.
-
-    Permintaan user:
-    "di hasil pool yang disembunyikan, urutkan menurut
-    **F/V terbesar**
-    **Fee/TVL terbesar**"
-    """
+    """Sort skipped pools by F/V, Fee/TVL, volume/TVL, then symbol."""
     def _key(row):
         row = row or {}
-        pct = _maybe_float(row_dust_pct(row))
         ratio = row_vol_tvl_ratio(row)
         fee_tvl = _maybe_float(row.get("fee_active_tvl_ratio"))
         fv = row_fv_ratio(row)
         return (
-            # 1) F/V terbesar
             0 if fv is not None else 1,
             -(fv if fv is not None else 0.0),
-            # 2) baru kelipatan Fee/TVL terbesar
             0 if fee_tvl is not None else 1,
             -(fee_tvl if fee_tvl is not None else 0.0),
-            # 3-5) tie-break: volume/active TVL, dust, simbol
-            0 if pct is not None else 1,
             -(ratio if ratio is not None else -1.0),
-            round(pct, BEST_DUST_SORT_DECIMALS) if pct is not None else 0.0,
             str(row.get("symbol") or "").upper(),
         )
 
     return sorted(list(rows or []), key=_key)
 
 
-def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
-                   workers: int = 6, progress=None, timeout: int = 25,
-                   page_size: int = PAGE_SIZE, rugcheck: bool = True,
+def scan_best_lane(lane: str = "24h", *, workers: int = 6,
+                   timeout: int = 25, page_size: int = PAGE_SIZE,
+                   rugcheck: bool = True,
                    gmgn: bool = True, bubblemap: bool = False,
                    tax: bool = True) -> dict:
-    """Scan Best Pool **24H saja** — satu tombol card, satu tabel.
+    """Scan the single 24H Best Pool lane.
 
-    Lane 30M dihapus 2026-09-16 (permintaan user: *"hapus scan 30 menit, kita
-    sisakan yang 24 jam saja"*); ``lane`` tetap diterima tapi hanya dipakai
-    untuk menandai baris + membaca label — :func:`normalize_best_lane`
-    memetakan semua alias lama (termasuk ``"30m"``/``"both"``) ke 24H.
-    Alurnya:
-
-    1. listing API Meteora timeframe **24h** dengan saringan server
-       (Jupiter safeguard dimatikan default-nya 2026-09-17 — lihat
-       :func:`best_filter_by`; bendera token kritis tetap dilaporkan kolom
-       RugCheck tanpa membuang baris) ``&&pool_type=dlmm&&active_tvl>=50000`` (``category=top``,
-       page_size 50);
-    2. saringan layar di :func:`row_best_gaps` — volatility 1%–10%, LPs
-       ``>= 50``, ``F/V >= 5×``, **``Fee/TVL >= 30%``**
-       (:data:`BEST_FEE_TVL_MIN`, permintaan user 2026-09-23: *"kita perketat
-       filter yang boleh di show di hasil — Fee/TVL minimal 30%, dibawah itu
-       jangan show"*) dan Top10 < 20% supply. Likuiditas total GMGN **tidak**
-       ikut menyaring sejak 2026-09-17 malam: :mod:`gmgn_liquidity` hanya
-       menempel ``row["gmgn_liq"]`` pada kandidat yang lolos saringan metrik
-       (untuk pewarna kolom RugCheck + kolom STRATEGY). Semua saringan
-       dijalankan **sebelum** holder, jadi pool yang gugur tidak pernah
-       membakar kuota Helius; yang gugur Fee/TVL — dan F/V yang masih ``>= 2×``
-       walau di bawah ambang lane — tetap tersedia di
-       ``hidden_rows`` (dengan alasan di ``best_gaps``) lewat tombol "▶ N
-       pool dilewati", **kecuali** yang dibuang total (F/V < 2× sejak
-       2026-09-24, volatility 0 / di luar
-       1%–10%, LPs < 50, Top10 >= 20%) — contohnya
-       volatility 0: dibuang penuh dari listing sejak 2026-09-14 lanjutan
-       (:func:`row_volatility_zero`, permintaan user *"jika volatility 0
-       jangan tampilkan, karena tidak ada pergerakan disitu"*) dan dihitung
-       terpisah di ``dropped_volatility``;
-    3. hanya kandidat lolos yang di-enrich (holder FULL), lalu — bila
-       ``rugcheck=True`` — dilengkapi laporan **RugCheck** rugchecker.cc
-       (:mod:`rugchecker`: honeypot + bendera keamanan + likuiditas per DEX,
-       paralel + cache berkas). Kegagalan laporan per mint tidak menjatuhkan
-       scan: kolomnya menulis ``—`` dan jumlahnya dilaporkan di
-       ``rugcheck_failed``;
-    4. **Bubblemaps dilewati** sejak 2026-09-19 (``bubblemap=False`` default —
-       kolom Bubble Map dihapus, permintaan user *"hapus tentang bubblemap,
-       sisakan hyperlink ke bubblemapnya saja"*; tautan 🫧-nya dibuat UI dari
-       mint tanpa laporan apa pun);
-    5. baris diurutkan :func:`sort_best_rows` (Fee/TVL terbesar → F/V terbesar
-       → volume/active TVL → dust — urutan 2026-09-15).
+    The pipeline is listing → cheap metric gates → official Meteora side-value
+    distribution gate → optional GMGN/RugCheck/tax information.  Every row must
+    satisfy SOL USD liquidity >= 5 × token USD liquidity; failures are closed.
     """
     normalized = normalize_best_lane(lane)
-    # Default FULL seperti ``scan_meteora``: urutan getTokenAccounts Helius
-    # tidak urut saldo, jadi cap kecil menghasilkan sampel bias dan angka
-    # dust < 0,05% MC tidak bisa dipercaya.
-    if max_wallets is None:
-        from holder_history import FULL_SCAN_MAX_WALLETS
-        max_wallets = FULL_SCAN_MAX_WALLETS
     try:
         import activity_log as _alog
     except Exception:  # noqa: BLE001 - log hanya pelengkap
@@ -2159,28 +1574,80 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
     rows = rows_from_pools(pools, timeframe=normalized)
     fetched = len(rows)
     rows, quote_skipped = drop_quote_rows(rows)
-    # Likuiditas total GMGN (2026-09-17, permintaan user: "ubah info
-    # likuiditas ke gmgn saja" + "jika grand total liquiditas < 1M jangan
-    # tampilkan") — ditempel **sebelum** alasan gugur dihitung, hanya pada
-    # kandidat yang sudah lolos saringan metrik (baris yang gugur F/V/volat/
-    # Top10 tidak butuh angka GMGN — hemat request pihak ketiga). Baris
-    # di bawah ambang lalu gugur lewat :func:`row_best_gaps` (satu jalur
-    # dengan saringan
-    # lain, alasan di ``best_gaps``). ``gmgn=False`` (test/offline) melewatkan
-    # step ini total; kegagalan HTTP tidak menjatuhkan scan (baris tak
-    # terbaca tidak disaring — tanpa bukti tidak ada verdict).
+
+    # Tahap murah lebih dulu (F/V, Fee/TVL, volatility, LPs, Top10). Tidak ada
+    # jalur bypass: semua kandidat harus membuktikan seluruh syarat reguler.
+    preliminary_failed = [
+        dict(row, best_gaps=row_best_gaps(row, lane=normalized))
+        for row in rows if row_best_gaps(row, lane=normalized)
+    ]
+    candidates = [row for row in rows
+                  if not row_best_gaps(row, lane=normalized)]
+
+    # FILTER TERAKHIR: nilai USD SOL minimal 5× token (token:SOL maksimal 1:5).
+    # Detail resmi Meteora hanya diambil untuk kandidat yang lolos semua tahap
+    # murah. Gagal API/non-SOL/tanpa angka = gagal tertutup dan masuk listing
+    # "dilewati"; enrichment GMGN, RugCheck, dan tax tidak dipanggil.
+    distribution_failed = 0
+    if candidates:
+        try:
+            attach_liquidity_distribution(candidates, workers=workers,
+                                          timeout=timeout)
+        except Exception as exc:  # noqa: BLE001 - tandai semua, jangan lolos terbuka
+            if _alog:
+                _alog.error("scan-best-pool",
+                            f"distribusi likuiditas gagal: {str(exc)[:160]}")
+            for row in candidates:
+                row["liquidity_distribution"] = {
+                    "checked": True, "ok": False,
+                    "source": "meteora_dlmm_pool", "error": str(exc)[:160]}
+        distribution_failed = sum(
+            1 for row in candidates
+            if not (row.get("liquidity_distribution") or {}).get("ok"))
+
+    final_failed = [
+        dict(row, best_gaps=row_best_final_gaps(
+            row, lane=normalized))
+        for row in candidates
+        if row_best_final_gaps(
+            row, lane=normalized)
+    ]
+    rows = [row for row in candidates
+            if not row_best_final_gaps(
+                row, lane=normalized)]
+
+    failed_rows = preliminary_failed + final_failed
+    hidden_rows = [row for row in failed_rows
+                   if not row_best_dropped(row, lane=normalized)]
+    dropped_volatility = sum(1 for row in failed_rows
+                             if row_best_gap_label(row, lane=normalized) == "volatility"
+                             or row_volatility_zero(row))
+    dropped_top10 = sum(1 for row in failed_rows
+                        if row_best_gap_label(row, lane=normalized) == "Top10"
+                        or row_top10_over(row) is not None)
+    dropped_lps = sum(1 for row in failed_rows
+                      if row_best_gap_label(row, lane=normalized) == "LPs"
+                      or row_lps_under(row) is not None
+                      or row_lps_count(row) is None)
+    dropped_fv = sum(1 for row in failed_rows
+                     if row_fv_under_hide(row) is not None)
+    failed_liquidity_ratio = sum(
+        1 for row in final_failed
+        if (row.get("liquidity_distribution") or {}).get("ok")
+        and (row_token_sol_ratio(row) or 0.0)
+            > float(BEST_TOKEN_SOL_MAX_RATIO))
+    dropped_total = len(failed_rows) - len(hidden_rows)
+    hidden_metric = len(hidden_rows)
+
+    # GMGN bukan filter. Tempel hanya ke baris yang sudah lolos rasio akhir.
     gmgn_failed = 0
     if rows and gmgn:
         try:
             from gmgn_liquidity import attach_total_liquidity
 
-            candidates = [row for row in rows
-                          if not row_best_gaps(row, lane=normalized)]
-            if candidates:
-                attach_total_liquidity(candidates, timeout=timeout)
-                gmgn_failed = sum(1 for row in candidates
-                                  if not (row.get("gmgn_liq") or {})
-                                  .get("ok"))
+            attach_total_liquidity(rows, timeout=timeout)
+            gmgn_failed = sum(1 for row in rows
+                              if not (row.get("gmgn_liq") or {}).get("ok"))
         except Exception as exc:  # noqa: BLE001 - kolom opsional, scan tetap jalan
             error = " · ".join(
                 part for part in (error, f"Likuiditas GMGN: {exc}") if part)
@@ -2193,34 +1660,6 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
                                 "below_cutoff": False, "source": None,
                                 "cutoff_usd": None,
                                 "error": str(exc)[:160]})
-    # Reject sebelum ada fetch holder/market — "langsung skip", bukan cuma
-    # disembunyikan saat render.
-    failed_rows = [dict(row, best_gaps=row_best_gaps(row, lane=normalized))
-                   for row in rows if row_best_gaps(row, lane=normalized)]
-    # Pool gugur Top10, volatility, LPs, atau F/V < 2× langsung disembunyikan
-    # total (tidak masuk hidden_rows, tidak ditampilkan di mana pun —
-    # permintaan user).
-    hidden_rows = [row for row in failed_rows
-                   if not row_best_dropped(row, lane=normalized)]
-    dropped_volatility = sum(1 for row in failed_rows
-                             if row_best_gap_label(row, lane=normalized) == "volatility"
-                             or row_volatility_zero(row))
-    dropped_top10 = sum(1 for row in failed_rows
-                        if row_best_gap_label(row, lane=normalized) == "Top10"
-                        or row_top10_over(row) is not None)
-    dropped_lps = sum(1 for row in failed_rows
-                      if row_best_gap_label(row, lane=normalized) == "LPs"
-                      or row_lps_under(row) is not None)
-    # Lantai F/V (2026-09-24) — dihitung dari angkanya, BUKAN dari label
-    # "F/V": label itu juga dipakai baris F/V 2×–5× yang justru tetap tampil
-    # di "dilewati". Hanya untuk audit; barisnya sudah tidak ada di mana pun.
-    dropped_fv = sum(1 for row in failed_rows
-                     if row_fv_under_hide(row) is not None)
-    dropped_total = len(failed_rows) - len(hidden_rows)
-    rows, hidden_metric, hidden_dust = filter_best_rows(rows, lane=normalized)
-    if rows:
-        rows = enrich_pools(rows, max_wallets=max_wallets,
-                            workers=workers, progress=progress)
     rug_failed = 0
     if rows and rugcheck:
         try:
@@ -2239,7 +1678,7 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
     # bubblemap, sisakan hyperlink ke bubblemapnya saja"*): kolom Bubble Map
     # dihapus dari tabel 🏆 Scan Best Pool sehingga laporan cluster/holder
     # tidak dibaca lagi, dan tautan 🫧 yang tersisa dihitung UI langsung dari
-    # mint (``links.bubblemap_icon_link_html``) tanpa fetch apa pun. Kwarg-nya
+    # mint tanpa fetch laporan apa pun. Kwarg-nya
     # tetap ada (pola ``JUPITER_SAFEGUARD_FILTERS``/``safeguard=True``) supaya
     # pemanggil/tooling yang masih butuh laporannya bisa menyalakannya lagi;
     # ``best_pool_ui._run_lane_scan`` mengirim ``bubblemap=False`` secara
@@ -2281,24 +1720,11 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
                 _alog.error("scan-best-pool",
                             f"Tax/dividend gagal: {str(exc)[:160]}")
     kept = sort_best_rows(rows)
-    # 🆕 POOL BARU — lanjutan 2026-09-24: keputusan deteksi dibuat SEKALI,
-    # saat scan, lalu ditempel baris (``row["new_pool"]``). Render (label
-    # kolom Token + kolom STRATEGY) memakai flag ini ATAU :func:`row_new_pool`
-    # sehingga keputusan saat scan dan saat render tidak bisa berbeda —
-    # termasuk hasil scan lama di session_state/scan_result_cache (tanpa
-    # ``pool_created_at``/``fetched_at``) dan bila konstanta NEW_POOL_*
-    # berubah di deploy berikutnya. Baris ``hidden_rows`` tidak perlu flag:
-    # baris yang lolos :func:`row_new_pool` tidak mungkin masuk daftar ini
-    # (:func:`row_best_gaps` mengembalikan ``[]`` di atas saringan reguler).
-    for row in kept:
-        row["new_pool"] = row_new_pool(row)
     hidden_rows = sort_hidden_best_rows(hidden_rows)
     if _alog:
         _alog.info("scan-best-pool",
                    f"scan selesai: {len(kept)} pool tampil dari {fetched} "
-                   f"listing {lane_label} ({hidden_metric} gagal saringan "
-                   f"(F/V) tanpa "
-                   f"scan holder"
+                   f"listing {lane_label} ({hidden_metric} kandidat dilewati"
                    + (f", {dropped_volatility} pool volatility dibuang"
                       if dropped_volatility else "")
                    + (f", {dropped_top10} pool Top10 dibuang"
@@ -2308,6 +1734,11 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
                    + (f", {dropped_fv} pool F/V < "
                       f"{float(BEST_FV_HIDE_MIN):g}× dibuang"
                       if dropped_fv else "")
+                   + (f", {failed_liquidity_ratio} pool dengan SOL < "
+                      f"{BEST_SOL_TOKEN_MIN_RATIO:g}× token"
+                      if failed_liquidity_ratio else "")
+                   + (f", {distribution_failed} distribusi tak terbaca/non-SOL"
+                      if distribution_failed else "")
                    + (f", {quote_skipped} pool quote dilewati"
                       if quote_skipped else "")
                    + (f", {rug_failed} laporan RugCheck gagal"
@@ -2324,7 +1755,6 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
         "error": error,
         "fetched": fetched,
         "hidden_metric": hidden_metric,
-        "hidden_dust": hidden_dust,
         "skipped_quote": quote_skipped,
         # Pool gugur Top10 / volatility / LPs / F/V < 2× yang dibuang dari
         # listing (tidak ditampilkan di mana pun).
@@ -2334,6 +1764,10 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
         # F/V di bawah lantai BEST_FV_HIDE_MIN (2×) — 2026-09-24.
         "dropped_fv": dropped_fv,
         "dropped_total": dropped_total,
+        # Filter akhir: nilai USD SOL minimal 5× token (token:SOL maks. 1:5).
+        "failed_liquidity_ratio": failed_liquidity_ratio,
+        "liquidity_distribution_failed": distribution_failed,
+        "liquidity_distribution_filter": True,
         # Mint yang tidak mendapat laporan rugchecker.cc (HTTP gagal / kode
         # bukan 0) — kolom RugCheck menulis — untuk mereka; angka ini supaya
         # caption bisa membedakan "semua AMAN" dari "belum teriksa".
@@ -2360,8 +1794,7 @@ def scan_best_lane(lane: str = "24h", *, max_wallets: int | None = None,
     }
 
 
-def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
-                      progress=None, timeout: int = 25,
+def scan_best_meteora(*, workers: int = 6, timeout: int = 25,
                       timeframe: str = "24h",
                       page_size: int = PAGE_SIZE,
                       rugcheck: bool = True,
@@ -2378,8 +1811,7 @@ def scan_best_meteora(*, max_wallets: int | None = None, workers: int = 6,
     2026-09-19 — kolom Bubble Map dihapus, lihat :func:`scan_best_lane`).
     ``tax=False`` melewatkan tempelan pajak/dividend (test/offline).
     """
-    return scan_best_lane(timeframe, max_wallets=max_wallets,
-                          workers=workers, progress=progress,
+    return scan_best_lane(timeframe, workers=workers,
                           timeout=timeout, page_size=page_size,
                           rugcheck=rugcheck, gmgn=gmgn, bubblemap=bubblemap,
                           tax=tax)

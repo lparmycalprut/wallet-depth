@@ -42,6 +42,24 @@ if str(ROOT) not in sys.path:
 
 import gmgn_liquidity as gl
 import meteora_screener as ms
+
+
+def _valid_distribution(*_args, **_kwargs):
+    return {"checked": True, "ok": True, "source": "test",
+            "token_value_usd": 20_000.0, "sol_value_usd": 200_000.0,
+            "token_to_sol_ratio": 0.1, "error": ""}
+
+
+def setUpModule():
+    global _distribution_patcher
+    _distribution_patcher = patch.object(
+        ms, "fetch_pool_liquidity_distribution",
+        side_effect=_valid_distribution)
+    _distribution_patcher.start()
+
+
+def tearDownModule():
+    _distribution_patcher.stop()
 import rugchecker as rc
 
 MINT_A = "98kfF7rmsg1QDUEoCqNE7g7M1FdrTt92TEp2CLzypump"
@@ -231,7 +249,7 @@ class FetchTest(unittest.TestCase):
 def _row(mint="MINTX", **extra):
     row = {"ca": mint, "pool_address": "POOLX", "fee_active_tvl_ratio": 40.0,
            "volatility": 6.0, "top_holders_pct": 10.0,
-           "timeframe": "24h"}
+           "total_lps": 188, "timeframe": "24h"}
     row.update(extra)
     return row
 
@@ -532,7 +550,7 @@ def _best_pool(pool="P1", mint=MINT_A, *, ratio=40.0, volatility=6.2,
             "token_y": {"address": ms.SOL_MINT, "symbol": "SOL",
                         "name": "Solana", "market_cap": 0, "fdv": 0,
                         "price": 100.0, "holders": 0, "top_holders_pct": 0},
-            "tvl": 1_000_000, "active_tvl": 60_000,
+            "tvl": 1_000_000, "active_tvl": 60_000, "total_lps": 188,
             "fee_active_tvl_ratio": ratio, "volume": 1_200_000,
             "fee_pct": 2.0, "volatility": volatility}
 
@@ -543,12 +561,14 @@ class ScanLaneGmgnTest(unittest.TestCase):
     tidak ada yang dibuang (tanpa bukti)."""
 
     @staticmethod
-    def _enrich(rows, **_kw):
-        return [dict(r, analysis={"holders": {"dust_pct_mc": 0.02,
-                                              "dust_count": 5,
-                                              "total_fetched": 1000,
-                                              "wallets_analyzed": 900}},
-                     dust_pct_mc=0.02, dust_count=5) for r in rows]
+    def _distribution(rows, **_kw):
+        for item in rows:
+            item["liquidity_distribution"] = {
+                "checked": True, "ok": True,
+                "token_value_usd": 10_000.0,
+                "sol_value_usd": 100_000.0,
+                "token_to_sol_ratio": 0.1, "error": ""}
+        return rows
 
     def _scan(self, pools, gmgn_map):
         def fake_fetch(*, timeframe, **_kw):
@@ -567,15 +587,15 @@ class ScanLaneGmgnTest(unittest.TestCase):
             return rows
 
         with patch.object(ms, "fetch_best_pools", side_effect=fake_fetch), \
-                patch.object(ms, "enrich_pools", side_effect=self._enrich), \
+                patch.object(ms, "attach_liquidity_distribution",
+                             side_effect=self._distribution), \
                 patch("rugchecker.attach_to_rows",
                       side_effect=lambda rows, **_kw: [
                           dict(row, rugcheck={"ok": False})
                           for row in rows]), \
                 patch("gmgn_liquidity.attach_total_liquidity",
                       side_effect=fake_gmgn):
-            return ms.scan_best_lane("24h", max_wallets=2000,
-                                     rugcheck=True)
+            return ms.scan_best_lane("24h", rugcheck=True)
 
     def test_dibawah_ambang_tetap_tampil(self):
         """Filter likuiditas dihapus (2026-09-17 malam) — pool tipis tetap
@@ -642,14 +662,15 @@ class ScanLaneGmgnTest(unittest.TestCase):
             return pools
 
         with patch.object(ms, "fetch_best_pools", side_effect=fake_fetch), \
-                patch.object(ms, "enrich_pools", side_effect=self._enrich), \
+                patch.object(ms, "attach_liquidity_distribution",
+                             side_effect=self._distribution), \
                 patch("rugchecker.attach_to_rows",
                       side_effect=lambda rows, **_kw: [
                           dict(row, rugcheck={"ok": False})
                           for row in rows]), \
                 patch("gmgn_liquidity.attach_total_liquidity",
                       side_effect=fake_gmgn_dead):
-            result = ms.scan_best_lane("24h", max_wallets=2000)
+            result = ms.scan_best_lane("24h")
         self.assertEqual([r["pool_address"] for r in result["rows"]],
                          ["P-BIG", "P-SMALL"])
         self.assertEqual(result["hidden_rows"], [])
@@ -658,12 +679,12 @@ class ScanLaneGmgnTest(unittest.TestCase):
     def test_gmgn_false_step_dilewati_total(self):
         pools = [_best_pool("P-BIG", MINT_A)]
         with patch.object(ms, "fetch_best_pools", return_value=pools), \
-                patch.object(ms, "enrich_pools", side_effect=self._enrich), \
+                patch.object(ms, "attach_liquidity_distribution",
+                             side_effect=self._distribution), \
                 patch("rugchecker.attach_to_rows",
                       side_effect=lambda rows, **_kw: rows), \
                 patch("gmgn_liquidity.attach_total_liquidity") as attach:
-            result = ms.scan_best_lane("24h", max_wallets=2000,
-                                       rugcheck=True, gmgn=False)
+            result = ms.scan_best_lane("24h", rugcheck=True, gmgn=False)
         attach.assert_not_called()
         self.assertEqual([r["pool_address"] for r in result["rows"]],
                          ["P-BIG"])

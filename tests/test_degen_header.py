@@ -19,14 +19,11 @@ Yang di-pin di sini:
   tetap biru, sedangkan background dikembalikan ke merah (permintaan user
   terbaru 2026-09-17: *"background nya ganti warna merah, tulisan tetap
   biru"*);
-- halaman lain (📦 TEMP) tidak ikut menampilkan header ini — user minta
-  "di page app".
 """
 from __future__ import annotations
 
 import unittest
 from pathlib import Path
-from unittest import mock
 
 try:  # optional dev dependency
     from streamlit.testing.v1 import AppTest
@@ -35,7 +32,6 @@ except Exception:  # noqa: BLE001
 
 ROOT = Path(__file__).resolve().parent.parent
 APP = str(ROOT / "app.py")
-TEMP = str(ROOT / "pages" / "6_📦_TEMP.py")
 
 import best_pool_ui as bp
 import dashboard_components as dc
@@ -58,20 +54,6 @@ def _body(at) -> str:
 @unittest.skipIf(AppTest is None, "streamlit belum terpasang")
 class DegenHeaderPageTest(unittest.TestCase):
     def _app(self):
-        patches = (
-            mock.patch("watchlist.load_watchlist",
-                       side_effect=lambda **_kw: {}),
-            mock.patch("holder_status.load_holder_status",
-                       side_effect=lambda **_kw: {"updated_at": None,
-                                                  "tokens": {}}),
-            mock.patch("holder_history.load_holder_history",
-                       side_effect=lambda *a, **kw: {"tokens": {}}),
-            mock.patch("holder_history.pull_holder_history",
-                       return_value=None),
-        )
-        for patch in patches:
-            patch.start()
-            self.addCleanup(patch.stop)
         app = AppTest.from_file(APP, default_timeout=90).run()
         self.assertEqual(app.exception, [], "halaman utama gagal render")
         return app
@@ -136,14 +118,6 @@ class DegenHeaderPageTest(unittest.TestCase):
                       "rgba(37,99,235,.45);}}")
         self.assertIn(glow_redup, body)
 
-    def test_hanya_halaman_utama(self):
-        """📦 TEMP (dan halaman lain) tidak ikut menampilkan header ini."""
-        for page in ("pages/6_📦_TEMP.py", "pages/5_🧮_Holder.py"):
-            self.assertNotIn("render_degen_stop_header",
-                             (ROOT / page).read_text(encoding="utf-8"),
-                             f"{page} tidak boleh memanggil header STOP DEGEN")
-        temp = AppTest.from_file(TEMP, default_timeout=60).run()
-        self.assertNotIn(HEADER_HTML, _body(temp))
 
 
 if __name__ == "__main__":  # pragma: no cover

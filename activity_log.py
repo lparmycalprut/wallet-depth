@@ -1,25 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Log aktivitas app — panel 🧾 di paling bawah halaman utama (2026-09-10).
+"""Thread-safe in-memory activity log rendered below the Best Pool scanner.
 
-Permintaan user: *"buatkan log yang mencatat hal-hal penting … semua yang
-terjadi di app masuk ke log; jika hal tersebut perlu perubahan manual dari
-saya, maka warna tulisannya merah bold."*
-
-Ring buffer **in-memory + thread-safe** (scan berjalan di ThreadPool, cron
-dan Streamlit sama-sama boleh menulis). Empat level:
-
-- ``info``   — kejadian normal (scan mulai/selesai, sumber data terpakai);
-- ``warn``   — anomali yang pulih sendiri (429 rate limit, retry, fallback
-  ke instance publik, kredit Helius menipis);
-- ``error``  — kegagalan satu operasi (listing gagal, scan exception);
-- ``action`` — **butuh perubahan manual user** (key ditolak/kredit habis,
-  API key belum terpasang) → dirender **merah bold**.
-
-Entri identik (level+source+message) dalam jendela ``dedup_sec`` tidak
-ditumpuk ulang, hanya di-bump ``count``-nya — worker paralel yang menabrak
-rate limit bersamaan tidak membanjiri panel. State per proses: log Streamlit
-berisi kejadian proses app itu; cron punya buffernya sendiri (ikut tercetak
-ke stderr lewat ``echo=True`` default untuk level non-info).
+Levels are ``info``, ``warn``, ``error``, and ``action``; action entries use
+bold red text because they require manual intervention. Identical entries are
+deduplicated within a short window and increment a counter instead of flooding
+the panel. State lasts for the current application process only.
 """
 from __future__ import annotations
 
@@ -151,11 +136,8 @@ def entry_html(entry: dict) -> str:
 def render_activity_log() -> None:
     """Panel **🧾 Log Aktivitas** — dipanggil di paling bawah ``app.py``.
 
-    Kepala panel: pill jumlah ❗ action / ✖ error / ⚠️ warn + baris status
-    **sisa kredit Helius** (`core.helius_usage_summary()`) — pertanyaan
-    "kredit Helius tinggal berapa?" terjawab tanpa buka terminal. Baris itu
-    dibaca dari cache (probe jalan di thread latar) supaya render halaman
-    tidak pernah menunggu jaringan.
+    Kepala panel menampilkan pill jumlah ❗ action / ✖ error / ⚠️ warning.
+    Sistem Holder dan status kuota Helius telah dihapus dari aplikasi.
     """
     import streamlit as st
 
@@ -180,24 +162,11 @@ def render_activity_log() -> None:
     with st.container(border=True):
         st.markdown(card_head_html(
             "🧾 Log Aktivitas", pills,
-            tooltip=("Kejadian penting semua card sesi app ini: scan "
-                     "mulai/selesai, status kredit/key Helius, listing gagal. "
-                     "Merah bold = perlu perubahan manual (pasang/ganti API "
-                     "key, kredit habis). Log hidup di memori proses app — "
-                     "kosong lagi setelah restart. Baris kuota di bawah "
-                     "dibaca dari cache 5 menit, bukan setiap render.")),
+            tooltip=("Kejadian penting sesi aplikasi ini: scan mulai/selesai "
+                     "dan kegagalan listing/enrichment. Merah bold menandakan "
+                     "masalah yang perlu tindakan manual. Log hidup di memori "
+                     "proses dan kosong kembali setelah restart.")),
             unsafe_allow_html=True)
-
-        # Sisa kredit Helius (permintaan user 2026-09-10) — plafon bulanan
-        # key yang dipakai semua scan holder Solana. Non-blokir: angka dari
-        # cache, probe pertama/berusia > 5 mnt dijalankan di thread latar.
-        try:
-            import core
-            helius = core.helius_usage_summary()
-            if helius:
-                st.caption(helius)
-        except Exception:  # noqa: BLE001 - status kredit hanya pelengkap
-            pass
 
         rows = entries(RENDER_LIMIT)
         if not rows:

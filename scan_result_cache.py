@@ -1,37 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Cache berkas lokal untuk hasil scan — **refresh browser tidak menghapus hasil**.
+"""Local file cache that preserves completed Best Pool results across refreshes.
 
-Masalah yang dipecahkan: hasil scan card **🏆 Scan Best Pool Meteora** hidup
-di ``st.session_state``. Streamlit membuat session baru setiap kali browser
-di-refresh (F5), tab dibuka ulang, atau koneksi putus — jadi listing yang sudah
-dipindai ikut lenyap, padahal enrichment holder-nya (scan FULL Helius) bisa
-memakan belasan menit dan kuota.
-
-Modul ini menyimpan **satu berkas JSON per key** di direktori cache (default
-``.scan_cache/`` di root repo — **git-ignored**, jadi pernah ikut ter-commit)
-dan memulihkannya ke ``session_state`` bila sesi sedang kosong:
-
-- :func:`save_result(key, result)` — dipanggil **sesudah** scan selesai;
-- :func:`restore_into_session(st, key, session_key)` — dipanggil saat render
-  bila ``session_state[session_key]`` kosong.
-
-Kontrak yang sengaja dijaga:
-
-- **Tidak pernah melempar.** Kegagalan baca/tulis (direktori tidak bisa ditulis,
-  disk penuh, JSON rusak, payload aneh) mengembalikan ``None``/``False`` — cache
-  adalah pelengkap, sumber kebenarannya tetap hasil scan di memori;
-- **Tulis atomik**: berkas ditulis ke ``*.tmp`` lalu ``os.replace``, jadi refresh
-  di tengah penulisan tidak pernah membaca JSON setengah jadi;
-- **Ramping**: peta wallet hasil scan FULL (``wallet_snapshot`` /
-  ``chrono_snapshot``) dibuang sebelum disimpan — tanpa itu satu hasil scan
-  bisa puluhan megabita untuk sebaris tabel dust;
-- **Key mentah tidak pernah disimpan**: payload cache hanya berisi angka pasar
-  dan alamat publik; API key hidup di ``st.secrets``/env, tidak pernah di
-  sini.
-
-Suite tes mematikan cache lewat env ``SCAN_CACHE=0`` (``tests/__init__.py``) dan
-mengarahkan direktorinya ke ``tmp_path`` lewat fixture ``_iso_scan_cache``
-(``tests/conftest.py``), jadi tidak ada tes yang menulis ke repo.
+Each session key is stored as a bounded, atomically-written JSON file in the
+ignored ``.scan_cache`` directory. Cache failures never interrupt rendering;
+the in-memory scan result remains authoritative. Tests isolate the cache in a
+temporary directory.
 """
 from __future__ import annotations
 
@@ -44,8 +17,7 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 
-# Kill-switch + lokasi cache. Env dipakai supaya tes (dan cron yang tidak
-# pernah merender UI) bisa mengarahkannya ke direktori sementara tanpa monkeypatch.
+# Kill switch and location override used by tests/deployments.
 SCAN_CACHE_ENV = "SCAN_CACHE"
 SCAN_CACHE_DIR_ENV = "SCAN_CACHE_DIR"
 DEFAULT_CACHE_DIR = BASE_DIR / ".scan_cache"
@@ -57,8 +29,7 @@ MAX_HIDDEN_ROWS = 300
 MAX_BYTES = 2_000_000
 KEEP_LIST_ITEMS = 50
 
-# Peta/daftar hasil scan FULL yang tidak dipakai ulang oleh kartu mana pun
-# (hanya alert/kronologi yang butuh) — dibuang sebelum payload ditulis.
+# Defensive pruning for legacy oversized cached payloads.
 HEAVY_KEYS = frozenset({"wallet_snapshot", "chrono_snapshot", "cohort",
                         "wallet_balances", "movements"})
 

@@ -19,7 +19,6 @@ from datetime import datetime
 import requests
 
 from core import atomic_write_json
-import alert_settings
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WATCHLIST_PATH = os.path.join(BASE_DIR, "watchlist.json")
@@ -131,13 +130,7 @@ def _apply_ops(wl: dict, ops: list) -> dict:
                     entry[_k] = op[_k]
         elif op.get("op") == "remove":
             wl.pop(op["ca"], None)
-        elif op.get("op") == "source":
-            # Pindah card (Watchlist Holder <-> Chart LP): source terakhir
-            # menang, field lain tidak disentuh. Entri disalin supaya dict
-            # yang di-cache remote tidak ikut termutasi.
-            entry = wl.get(op["ca"])
-            if isinstance(entry, dict) and op.get("source"):
-                wl[op["ca"]] = {**entry, "source": str(op["source"])}
+
     return wl
 
 
@@ -152,10 +145,6 @@ def _op_is_applied(op: dict, wl: dict) -> bool:
         return entry is not None
     if kind == "remove":
         return entry is None
-    if kind == "source":
-        return (isinstance(entry, dict)
-                and str(entry.get("source") or "")
-                == str(op.get("source") or ""))
     return True
 
 
@@ -292,9 +281,8 @@ def _github_push(wl: dict, action: str, max_retries: int = 3,
     ``pending_path`` **wajib** dipakai bersama file watchlist-nya: tanpa itu,
     jurnal satu watchlist ikut di-merge ke payload watchlist lain sehingga
     mint dari store lain bisa nyempil di file yang salah.
-    ``merge_journal=False`` menutup merge itu untuk file non-watchlist
-    (``holder_status*.json`` memakai fungsi push yang sama tapi tidak punya
-    jurnal operasi).
+    ``merge_journal=False`` disables that merge for callers managing a
+    non-watchlist JSON file.
     """
     repo_path = str(repo_path or "watchlist.json").strip().lstrip("/")
     tok = _github_token()
@@ -953,26 +941,6 @@ def fetch_token_symbol(ca: str, *, chain_id: str | None = None) -> str:
     return "?"
 
 
-def _reset_alert_toggle_on_add(ca: str) -> None:
-    """Token yang baru masuk watchlist selalu **ON** (toggle alert per token).
-
-    ``alert_settings.muted_mints`` menyimpan token yang notif Telegram-nya
-    dimatikan user (permintaan user 2026-09-11). Membuang entri itu saat add
-    membuat aturan "awal memasukkan ke watchlist = otomatis ON" tetap benar
-    untuk token yang pernah dimatikan, dihapus, lalu di-add ulang — tanpa ini
-    token itu mewarisi pilihan OFF periode sebelumnya.
-
-    Mint yang memang tidak pernah dimatikan tidak menulis/meng-commit apa pun
-    (jalur add normal tetap cepat), dan kegagalan apa pun tidak boleh
-    menggagalkan penambahan token.
-    """
-    try:
-        alert_settings.forget_mint_alert(ca)
-    except Exception as exc:  # noqa: BLE001 - reset bersifat pelengkap
-        print(f"WARN: reset toggle alert {str(ca)[:10]} gagal: {exc}",
-              file=sys.stderr)
-
-
 def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
                      source: str = "", down_ath: float = None,
                      avg_cost: float = None,
@@ -1013,7 +981,6 @@ def add_to_watchlist(ca: str, symbol: str = "?", note: str = "",
     if not ca:
         return False
     # Token baru = notif ON (buang sisa pilihan OFF periode watchlist lama).
-    _reset_alert_toggle_on_add(ca)
     if not symbol or symbol == "?":
         # Symbol tidak diketahui (manual add / pindah card) → ambil dari
         # DexScreener supaya card tidak menampilkan "$?".
@@ -1230,10 +1197,6 @@ def add_many_to_watchlist(rows, *, source: str = "",
         _journal_many(operations)
     else:
         _journal_many(operations, pending_path=pending_path)
-    # Toggle alert per token: token baru selalu ON (lihat
-    # _reset_alert_toggle_on_add) — sama seperti add satu-per-satu.
-    for ca in added_addresses:
-        _reset_alert_toggle_on_add(ca)
     try:
         import streamlit as st
         pending = st.session_state.setdefault("watchlist_auto_refresh_cas", set())
@@ -1399,45 +1362,6 @@ def remove_many_from_watchlist(cas, *, note: str = "",
                            background=background)
     return {"removed": len(removed), "missing": len(targets) - len(removed),
             "saved": bool(saved), "addresses": removed}
-
-
-def set_watchlist_source(ca: str, source: str, *,
-                         repo_path: str | None = None,
-                         local_path: str | None = None,
-                         pending_path: str | None = None,
-                         background: bool = False) -> bool:
-    """Pindahkan token antar card watchlist dengan mengubah ``source``.
-
-    ``source="meteora"`` → masuk card **Chart LP** (watchlist Meteora di
-    bagian atas dashboard); ``source="manual"`` → kembali ke watchlist
-    holder biasa. Entri yang belum ada di watchlist tidak dibuat.
-
-    ``background=True`` = sama seperti tambah/hapus: state dibaca lokal,
-    commit ke GitHub di thread latar (tombol 📋/⚡ di baris tidak menunggu).
-    """
-    ca = normalize_address(ca)
-    source = str(source or "").strip().lower()
-    if not ca or not source:
-        return False
-    wl = _load_and_merge(force_refresh=False, repo_path=repo_path,
-                         local_path=local_path, pending_path=pending_path,
-                         local_first=background)
-    entry = wl.get(ca)
-    if not isinstance(entry, dict):
-        # Tidak membuat entri baru: hanya token yang sudah ada yang dipindah.
-        return False
-    if str(entry.get("source") or "").strip().lower() == source:
-        return True
-    if pending_path is None:
-        _journal({"op": "source", "ca": ca, "source": source})
-    else:
-        _journal({"op": "source", "ca": ca, "source": source},
-                 pending_path=pending_path)
-    wl[ca] = {**entry, "source": source}
-    symbol = entry.get("symbol") or "?"
-    return save_watchlist(wl, f"move {symbol} ({ca[:8]}…) → {source}",
-                          repo_path=repo_path, local_path=local_path,
-                          pending_path=pending_path, background=background)
 
 
 def update_local_meta(ca, fields):

@@ -572,29 +572,6 @@ STRATEGY_LIQ_LOW = "hybird 5050, bidask - full range"
 #: tidak memakai teks ini; hanya dividend terkonfirmasi
 #: (:func:`token_tax.row_has_dividend`).
 STRATEGY_DIVIDEND = "30 70 spotbidask full range"
-#: Teks STRATEGY untuk baris **POOL BARU** (verbatim permintaan user
-#: 2026-09-24: *"untuk kolom strategy pool baru ini adalah 50 50 spotba,
-#: bidask"*). Mengalahkan cabang dividend & likuiditas — jangan dirapikan.
-STRATEGY_NEW_POOL = "50 50 spotba, bidask"
-
-
-def _is_new_pool(row: dict | None) -> bool:
-    """True bila baris lolos deteksi POOL BARU (:mod:`meteora_screener`).
-
-    Flag ``row["new_pool"]`` (ditempel ``scan_best_lane`` saat scan) menang
-    atas hitungan ulang — keputusan scan dan kolom STRATEGY tidak bisa
-    berbeda walau hasil scan lama tidak punya ``pool_created_at`` /
-    ``fetched_at`` atau konstanta NEW_POOL_* berubah.
-    """
-    row = row or {}
-    if row.get("new_pool"):
-        return True
-    try:
-        from meteora_screener import row_new_pool
-
-        return bool(row_new_pool(row))
-    except Exception:  # noqa: BLE001 - kolom informasi
-        return False
 
 
 def row_total_liquidity_usd(row: dict | None):
@@ -673,17 +650,6 @@ def row_strategy(row: dict | None) -> dict:
     — tetap cabang likuiditas, baris tidak dibuang.
     """
     usd, source = row_total_liquidity_usd(row)
-    if _is_new_pool(row):
-        return {
-            "text": STRATEGY_NEW_POOL,
-            "usd": usd,
-            "measured": usd is not None,
-            "source": source,
-            "reason": ("POOL BARU → \"" + STRATEGY_NEW_POOL + "\" — aturan "
-                       "dividend/likuiditas tidak dipakai"),
-            "dividend": False,
-            "new_pool": True,
-        }
     if _confirmed_dividend(row):
         return {
             "text": STRATEGY_DIVIDEND,
