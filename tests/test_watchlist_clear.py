@@ -18,18 +18,10 @@ import os
 import shutil
 import tempfile
 import unittest
-from pathlib import Path
 from unittest import mock
 
-try:  # optional dev dependency
-    from streamlit.testing.v1 import AppTest
-except Exception:  # noqa: BLE001
-    AppTest = None
-
-import holder_history as hh
 import watchlist as wl
 
-APP = str(Path(__file__).resolve().parent.parent / "app.py")
 
 CA_A = "RegularA111111111111111111111111111111111"
 CA_B = "RegularB222222222222222222222222222222222"
@@ -197,49 +189,7 @@ class RemoveManyTest(_Sandbox):
         self.assertEqual(self._journal(), [])
 
 
-# ---------------------------------------------------------------------------
-# Lapis 2: tombol di app.py (AppTest)
-# ---------------------------------------------------------------------------
-BUCKET = hh.INTERVAL_SEC
-CLEAR_KEY = "clear-regular-watchlist"
 
 
-def _point(index: int, pct: float, count: int) -> dict:
-    return {"ts": (index + 1) * BUCKET, "price": 0.01, "mc": 100_000.0,
-            "dust_count": count, "dust_pct_mc": pct,
-            "dust_value_usd": count * 5.0, "real_count": 40,
-            "real_pct_mc": 20.0, "mid_count": 6, "mid_pct_mc": 4.0,
-            "cohort_token_pct": 90.0, "cohort_cut50_pct": 10.0,
-            "cohort_n": 6, "holder_count": count + 40,
-            "buckets": {">$0-$10": count}}
-
-
-def _watchlist():
-    return {
-        LP_MINT: {"symbol": "LPTOK", "source": "meteora",
-                  "added": "2026-09-03"},
-        CA_A: {"symbol": "AAA", "source": "manual", "added": "2026-09-02"},
-        CA_B: {"symbol": "BBB", "source": "degen", "added": "2026-09-02"},
-    }
-
-
-def _status():
-    tokens = {}
-    for mint, meta in _watchlist().items():
-        tokens[mint] = {"symbol": meta["symbol"], "marketcap": 100_000.0,
-                        "price": 0.01, "analyzed_at": 2 * BUCKET,
-                        "holders": {"dust_count": 20, "dust_pct_mc": 0.20,
-                                    "real_count": 80, "total_fetched": 100},
-                        "history": [_point(0, 0.10, 10), _point(1, 0.20, 20)]}
-    return {"updated_at": 2 * BUCKET, "tokens": tokens}
-
-
-def _store():
-    return {"updated_at": 2 * BUCKET,
-            "tokens": {mint: {"symbol": slot["symbol"], "cohort": {},
-                              "points": slot.get("history") or []}
-                       for mint, slot in _status()["tokens"].items()}}
-
-
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     unittest.main()

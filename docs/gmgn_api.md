@@ -137,35 +137,3 @@ python gmgn_screener.py          # prints the scored table
 `fetch_trending(debug=True)` prints the exact reason a fetch came back empty
 (HTTP status, API `code`, or "200 OK but 0 tokens" when the filters match
 nothing) instead of failing silently.
-
-## Holder list (dipakai holder_analysis.py)
-
-```
-GET https://gmgn.ai/vas/api/v1/token_holders/sol/<CA>
-    ?limit=1000&cost=20&orderby=amount_percentage&direction=desc
-    + device_id / fp_did / client_id / app_ver / from_app / tz_name /
-      tz_offset / app_lang / os / worker
-Referer: https://gmgn.ai/sol/token/<CA>
-```
-
-### Verified notes (capture 2026-08-30)
-
-- `limit` accepts up to **1000 rows per page**; pagination uses the
-  `next` cursor (base64) — pass it back as the `next` query param.
-- `direction` only supports `DESC` (ascending is rejected with code
-  `40000301`); `period`/`duration` params are ignored.
-- Pool/AMM rows appear at the top when ordered by `amount_percentage`
-  (`addr_type != 0`, e.g. `pump_amm`); they are excluded from holder
-  depth counts (wallet-only).
-- Key per-row fields: `usd_value`, `balance`, `amount_percentage`
-  (fraction 0-1 of supply), `is_new`, `is_suspicious`,
-  `last_active_timestamp`, `current_buy_amount` / `current_sell_amount`,
-  `netflow_usd`, `addr_type`, `exchange`.
-
-### Real vs dust
-
-`holder_analysis.classify_holders` splits wallet rows by
-`usd_value`: real holder > $10; dust 0 < value <= $10. Dust % of
-marketcap = Σ(dust usd_value) / marketcap × 100. When the page cap
-(`max_wallets`) truncates the list, `truncated: true` means the number
-is a lower bound over the analyzed top wallets.

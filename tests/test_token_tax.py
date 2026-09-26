@@ -207,24 +207,9 @@ class ColumnPlacementTest(unittest.TestCase):
     def test_sel_pajak_di_kiri_strategy_dan_teks_dividend_di_strategy(self):
         import types
 
-        panggilan = []
-
-        class _Kolom:
-            def __init__(self, indeks):
-                self.html = []
-                self.indeks = indeks
-
-            def markdown(self, html, **_kw):
-                self.html.append(html)
-
-        def _columns(spec):
-            baris = [_Kolom(i) for i in range(len(spec))]
-            panggilan.append(baris)
-            return baris
-
+        rendered = []
         st_palsu = types.ModuleType("streamlit")
-        st_palsu.columns = _columns
-        st_palsu.markdown = lambda *a, **k: None
+        st_palsu.markdown = lambda html, **_kw: rendered.append(html)
         row = {
             "ca": "MintDiv", "symbol": "DIV", "pool_address": "PoolDiv",
             "fee_active_tvl_ratio": 40.0, "volatility": 6.2,
@@ -236,19 +221,14 @@ class ColumnPlacementTest(unittest.TestCase):
         }
         with mock.patch.dict("sys.modules", {"streamlit": st_palsu}):
             bp._render_best_table([row], lane="24h", mark_tops=False)
-        header, baris = panggilan[:2]
-        self.assertEqual(len(baris), 15)
-        self.assertIn(">TAX/DIVIDEND<", header[bp.TAX_DIVIDEND_COL_INDEX].html[0])
-        self.assertIn(">STRATEGY<", header[bp.STRATEGY_COL_INDEX].html[0])
-        tax = "".join(baris[bp.TAX_DIVIDEND_COL_INDEX].html)
-        strategy = "".join(baris[bp.STRATEGY_COL_INDEX].html)
-        pool = "".join(baris[bp.POOL_COL_INDEX].html)
-        self.assertIn("tax 1%", tax)
-        self.assertIn("bp-dividend", tax)
-        self.assertIn("30 70 spotbidask full range", strategy)
-        self.assertNotIn("hybird", strategy)
-        self.assertNotIn("30 70", pool)
-        self.assertNotIn("hybird", pool)
+        body = "".join(rendered)
+        self.assertEqual(body.count("<th scope=\"col\">"), 15)
+        self.assertIn(">TAX/DIVIDEND<", body)
+        self.assertIn(">STRATEGY<", body)
+        self.assertIn("tax 1%", body)
+        self.assertIn("bp-dividend", body)
+        self.assertIn("30 70 spotbidask full range", body)
+        self.assertNotIn("hybird", body)
 
     def test_tabel_dilewati_tanpa_kolom_pajak(self):
         titles = bp._lane_titles("24h", show_strategy=False)

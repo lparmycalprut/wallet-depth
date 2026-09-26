@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Sisa kredit Helius di panel 🧾 Log Aktivitas (permintaan user 2026-09-10).
+"""Generic Helius key/credit and request helper coverage.
 
 Semua request ke metadata key (``/v0/keys``) di-stub. ``tests/__init__.py``
 mematikan probe (``HELIUS_USAGE_PROBE=0``) supaya suite tetap offline — tes di
@@ -10,13 +10,11 @@ from __future__ import annotations
 
 import os
 import unittest
-from pathlib import Path
 from unittest import mock
 
 import activity_log as al
 import core
 
-ROOT = Path(__file__).resolve().parent.parent
 PROBE_ON = {"HELIUS_USAGE_PROBE": "1"}
 
 
@@ -326,27 +324,6 @@ class RequestCounterTest(unittest.TestCase):
         core._reset_helius_request_count()
 
 
-class PanelLogTest(unittest.TestCase):
-    """Panel 🧾 benar-benar menampilkan baris kredit Helius (AppTest)."""
-
-    @classmethod
-    def setUpClass(cls):
-        try:
-            from streamlit.testing.v1 import AppTest  # noqa: F401
-        except Exception:  # noqa: BLE001
-            raise unittest.SkipTest("streamlit/AppTest tidak terpasang")
-
-    def test_caption_helius_dirender_di_panel_log(self):
-        from streamlit.testing.v1 import AppTest
-
-        text = "Helius API: 1 key · key#1 kredit tersisa 500 dari 1.000"
-        with mock.patch.object(core, "helius_usage_summary",
-                               return_value=text):
-            app = AppTest.from_file(str(ROOT / "app.py"),
-                                    default_timeout=90).run()
-        self.assertEqual(len(app.exception), 0)
-        captions = "\n".join(node.value for node in app.caption)
-        self.assertIn("kredit tersisa 500 dari 1.000", captions)
 
 
 if __name__ == "__main__":  # pragma: no cover

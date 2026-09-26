@@ -49,9 +49,8 @@ def atomic_write_json(path: str, data, **dump_kwargs) -> None:
 
 # Nilai placeholder yang hidup di config.example.json / template README. Kalau
 # tidak disaring, key "PASTE-API-KEY-KAMU-DISINI" menang atas secrets asli
-# (sumber pertama yang menang di pool) dan SEMUA request Helius — scan holder,
-# watchlist, cron — gagal 401 padahal kuncinya sudah dipasang (bug nyata yang
-# bikin sisa kredit terbaca tidak tersedia).
+# (sumber pertama yang menang di pool), sehingga request Helius gagal 401
+# padahal kuncinya sudah dipasang.
 _KEY_PLACEHOLDER_RE = re.compile(
     r"(paste|your[-_ ]?api|your[-_ ]?key|dummy|example|changeme|replace|xxx+)",
     re.IGNORECASE)
@@ -129,28 +128,6 @@ def get_helius_keys(*, primary=None, extras=None, config=None) -> list[str]:
         os.environ.get("HELIUS_API_KEYS"),
         disk.get("helius_api_key"), disk.get("helius_extra_keys"),
     )
-
-
-def get_holder_source(default: str = "auto") -> str:
-    """Preferensi sumber holder: ``gmgn`` / ``helius`` / ``auto``.
-
-    Dibaca dari config.json ``holder_source`` lalu env ``HOLDER_SOURCE``.
-    ``auto`` = Helius dulu untuk watchlist, fallback GMGN. Nilai lama
-    ``solscan`` (sudah dilepas) dianggap tidak valid → jatuh ke ``auto``.
-    """
-    value = str(default or "auto").strip().lower()
-    try:
-        cfg = str(_config_file().get("holder_source") or "").strip().lower()
-        if cfg:
-            value = cfg
-    except Exception:
-        pass
-    env_value = str(os.environ.get("HOLDER_SOURCE") or "").strip().lower()
-    if env_value:
-        value = env_value
-    if value not in ("gmgn", "helius", "auto"):
-        value = "auto"
-    return value
 
 
 def _reset_helius_rotation() -> None:
@@ -574,8 +551,8 @@ def _log_helius_usage(rows: list[dict]) -> None:
                 "helius",
                 f"{label} ditolak Helius ({error or 'HTTP 401'}) — periksa / "
                 "ganti `HELIUS_API_KEY` (config.json / env / Streamlit "
-                "secrets); scan holder Solana tidak bisa jalan tanpa key "
-                "yang valid", dedup_sec=1800.0)
+                "secrets); fitur data Helius memerlukan key yang valid",
+                dedup_sec=1800.0)
         elif status in ("unreachable", "error"):
             activity_log.warn(
                 "helius", f"sisa kredit {label} tidak bisa dibaca: "
@@ -587,8 +564,8 @@ def _log_helius_usage(rows: list[dict]) -> None:
                 "helius",
                 f"{label} kredit Helius HABIS (0"
                 + (f" / {int(total):,}" if total else "")
-                + ") — scan holder Solana akan gagal; tunggu reset bulanan, "
-                  "tambah kredit, atau taruh key lain di `HELIUS_API_KEYS`",
+                + ") — tunggu reset bulanan, tambah kredit, atau taruh key "
+                  "lain di `HELIUS_API_KEYS`",
                 dedup_sec=1800.0)
         elif (row.get("percent_used") is not None
                 and float(row["percent_used"]) >= HELIUS_CREDIT_WARN_PCT):
@@ -631,11 +608,9 @@ def helius_usage_summary(*, background: bool = True) -> str:
     rows = status.get("rows") or []
     if not rows:
         if not status.get("total_keys"):
-            return ("Helius API: belum ada key terpasang — tanpa key, dust "
-                    "holder Solana (🛰 Scan Holder, 🌊 Watchlist Meteora, "
-                    "🏆 Scan Best Pool) tidak bisa dihitung. Isi "
-                    "`helius_api_key` di config.json / env `HELIUS_API_KEY` "
-                    "/ Streamlit secrets.")
+            return ("Helius API: belum ada key terpasang. Isi `helius_api_key` "
+                    "di config.json / env `HELIUS_API_KEY` / Streamlit secrets "
+                    "untuk fitur data yang memakai Helius.")
         # Key ada, cache masih kosong (probe pertama sedang jalan).
         return (f"Helius API: {int(status.get('total_keys') or 0)} key · "
                 "sisa kredit sedang dicek (probe jalan di latar, angka "
@@ -776,9 +751,7 @@ def helius_api_get(url: str, *, params=None, headers=None, helius_keys=None,
 
 
 def load_config() -> dict:
-    cfg = {"helius_api_key": "", "helius_extra_keys": "",
-           "custom_rpc": "", "dust_limit_usd": 5,
-           "cluster_warn_pct": 5, "cluster_scan_top_n": 50, "exclude_lp": True}
+    cfg = {"helius_api_key": "", "helius_extra_keys": ""}
     try:
         with open(CONFIG_PATH, "r", encoding="utf-8") as f:
             cfg.update(json.load(f) or {})
