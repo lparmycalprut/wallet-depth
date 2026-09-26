@@ -21,6 +21,9 @@ class LinkTest(unittest.TestCase):
         self.assertIn("https://app.meteora.ag/dlmm/Pool%20A", body)
         self.assertIn("https://www.hawkfi.ag/meteora/Pool%20A", body)
         self.assertIn('class="hawkfi-copy-btn"', body)
+        self.assertIn('data-copy-url="https://www.hawkfi.ag/meteora/Pool%20A"', body)
+        self.assertIn("navigator.clipboard.writeText", body)
+        self.assertIn("document.execCommand(&#x27;copy&#x27;)", body)
         self.assertIn("v2.bubblemaps.io/map?address=Mint%26B", body)
         self.assertIn('target="_blank"', body)
 

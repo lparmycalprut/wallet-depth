@@ -112,16 +112,22 @@ def hawkfi_copy_html(pool) -> str:
     url = hawkfi_meteora_url(pool)
     js_url = url.replace("\\", "\\\\").replace("'", "\\'")
     onclick = (
+        "if(event){event.preventDefault();event.stopPropagation();}"
         f"var u='{js_url}',b=this;"
-        "var ok=function(){b.innerHTML='✓';setTimeout(function(){b.innerHTML='📋'},1200);};"
+        "var ok=function(){b.textContent='✓';b.setAttribute('aria-label','HawkFi link copied');"
+        "setTimeout(function(){b.textContent='📋';b.setAttribute('aria-label','Copy HawkFi link');},1400);};"
+        "var fail=function(){b.textContent='!';setTimeout(function(){b.textContent='📋';},1400);};"
         "var fb=function(){var t=document.createElement('textarea');t.value=u;"
-        "t.style.position='fixed';t.style.opacity='0';document.body.appendChild(t);"
-        "t.select();try{document.execCommand('copy');}catch(e){}"
-        "document.body.removeChild(t);ok();};"
-        "if(navigator.clipboard&&navigator.clipboard.writeText){"
+        "t.setAttribute('readonly','');t.style.position='fixed';t.style.left='-9999px';"
+        "t.style.top='0';document.body.appendChild(t);t.focus();t.select();"
+        "var copied=false;try{copied=document.execCommand('copy');}catch(e){}"
+        "document.body.removeChild(t);copied?ok():fail();};"
+        "if(window.isSecureContext&&navigator.clipboard&&navigator.clipboard.writeText){"
         "navigator.clipboard.writeText(u).then(ok,fb);}else{fb();}return false;"
     )
     return (f'<button type="button" class="hawkfi-copy-btn" '
+            f'data-copy-url="{_html.escape(url, quote=True)}" '
+            f'aria-label="Copy HawkFi link" '
             f'title="Copy link HawkFi: {_html.escape(url, quote=True)}" '
             f'onclick="{_html.escape(onclick, quote=True)}">📋</button>')
 

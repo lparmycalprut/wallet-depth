@@ -91,11 +91,12 @@ def render_styles() -> None:
     .bp-table th:nth-child(6),.bp-table td:nth-child(6) {width:60px;min-width:60px;}
     .bp-table th:nth-child(8),.bp-table td:nth-child(8) {width:68px;min-width:68px;}
     .bp-table th:nth-child(9),.bp-table td:nth-child(9) {width:82px;min-width:82px;}
-    .bp-table th:nth-child(10),.bp-table td:nth-child(10) {width:92px;min-width:92px;}
-    .bp-table th:nth-child(12),.bp-table td:nth-child(12) {width:110px;min-width:110px;}
-    .bp-table th:nth-child(13),.bp-table td:nth-child(13) {width:104px;min-width:104px;}
-    .bp-table th:nth-child(14),.bp-table td:nth-child(14) {width:122px;min-width:122px;}
-    .bp-table th:nth-child(15),.bp-table td:nth-child(15) {width:150px;min-width:150px;}
+    .bp-table th:nth-child(10),.bp-table td:nth-child(10) {width:96px;min-width:96px;}
+    .bp-table th:nth-child(11),.bp-table td:nth-child(11) {width:92px;min-width:92px;}
+    .bp-table th:nth-child(13),.bp-table td:nth-child(13) {width:110px;min-width:110px;}
+    .bp-table th:nth-child(14),.bp-table td:nth-child(14) {width:104px;min-width:104px;}
+    .bp-table th:nth-child(15),.bp-table td:nth-child(15) {width:122px;min-width:122px;}
+    .bp-table th:nth-child(16),.bp-table td:nth-child(16) {width:150px;min-width:150px;}
 
     @media (max-width:768px) {
       .main .block-container {max-width:100% !important;padding:.8rem .65rem 1rem !important;}
