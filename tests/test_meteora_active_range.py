@@ -223,7 +223,7 @@ class BestPoolColumnsTest(unittest.TestCase):
                 titles = bp._lane_titles(lane)
                 self.assertEqual(len(titles),
                                  len(bp._col_spec(show_strategy=True)))
-                self.assertEqual(len(titles), 15)
+                self.assertEqual(len(titles), 16)
                 self.assertEqual(titles[4], "Active Range")
                 self.assertEqual(titles[5], "LPs")
                 self.assertEqual(titles[8], "A.TVL")

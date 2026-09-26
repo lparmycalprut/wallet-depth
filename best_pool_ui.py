@@ -83,9 +83,9 @@ def best_pool_tooltip() -> str:
 
 
 
-# Relative desktop widths for the thirteen base columns.
-_COL_SPEC = [1.4, 1.0, 0.75, 0.58, 0.95, 0.5, 0.58, 0.55, 0.68, 0.8,
-             0.6, 1.0, 1.05]
+# Relative desktop widths for the fourteen base columns (including Token:SOL).
+_COL_SPEC = [1.4, 1.0, 0.75, 0.58, 0.95, 0.5, 0.58, 0.55, 0.68,
+             0.72, 0.8, 0.6, 1.0, 1.05]
 
 #: Indeks kolom **Pool** di ``_COL_SPEC`` (kolom terakhir tabel "dilewati").
 POOL_COL_INDEX = 12
@@ -122,7 +122,7 @@ def _lane_titles(lane, *, show_strategy: bool = True) -> list[str]:
     # 24H) jadi penamaan kolom tidak pernah bisa lagi tertulis "Vol 30m".
     _ = normalize_best_lane(lane)
     titles = ["Token", "F/V", "Fee/TVL", "Volat", "Active Range", "LPs",
-              "Fee %", "MC", "A.TVL", "Vol 24h", "Top10",
+              "Fee %", "MC", "A.TVL", "Token:SOL", "Vol 24h", "Top10",
               "RugCheck", "Pool"]
     if show_strategy:
         titles.append(TAX_DIVIDEND_COL_TITLE)
@@ -540,7 +540,7 @@ def _render_best_table(rows: list, *, lane: str,
                        show_strategy: bool = True) -> None:
     """Render the complete Best Pool table.
 
-    The visible table has all fifteen columns; the skipped table omits the two
+    The visible table has all sixteen columns; the skipped table omits the two
     final informational columns. One ``.bp-table-scroll`` wrapper keeps its
     header and rows aligned while mobile users scroll horizontally.
     """
@@ -696,6 +696,11 @@ def _render_best_table(rows: list, *, lane: str,
              f"active TVL {_usd_or_dash(active_tvl, compact=False)} · "
              f"TVL total {_usd_or_dash(row.get('tvl'), compact=False)}"
              f"{distribution_tip}"),
+            (distribution_ratio, "token:SOL",
+             f"rasio perbandingan nilai USD token terhadap SOL: "
+             f"{distribution_ratio}. Filter akhir: nilai SOL minimal "
+             f"{BEST_SOL_TOKEN_MIN_RATIO:g}x nilai token; 1:2 dan 1:6.52 "
+             "lolos, 1:1.5 gagal."),
             (_usd_or_dash(volume), delta_html,
              f"volume {window_txt} {_usd_or_dash(volume, compact=False)} · "
              f"perubahan {delta_txt} · rasio volume/active TVL "
