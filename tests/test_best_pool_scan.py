@@ -41,8 +41,8 @@ class BestPoolGateTest(unittest.TestCase):
     def test_threshold_constants(self):
         self.assertEqual(ms.BEST_ACTIVE_TVL_MIN, 100_000.0)
         self.assertEqual(ms.BEST_LPS_MIN, 100.0)
-        self.assertEqual(ms.BEST_SOL_TOKEN_MIN_RATIO, 5.0)
-        self.assertEqual(ms.BEST_TOKEN_SOL_MAX_RATIO, 0.2)
+        self.assertEqual(ms.BEST_SOL_TOKEN_MIN_RATIO, 2.0)
+        self.assertEqual(ms.BEST_TOKEN_SOL_MAX_RATIO, 0.5)
 
     def test_cheap_gate_boundaries(self):
         self.assertEqual(ms.row_best_gaps(row()), [])
@@ -59,12 +59,12 @@ class BestPoolGateTest(unittest.TestCase):
         self.assertEqual(ms.row_best_final_gaps(row()), [])
         failed = row(liquidity_distribution={
             "checked": True, "ok": True,
-            "token_value_usd": 25_000.0,
+            "token_value_usd": 60_000.0,
             "sol_value_usd": 100_000.0,
-            "token_to_sol_ratio": 0.25,
+            "token_to_sol_ratio": 0.6,
             "error": "",
         })
-        self.assertIn("SOL hanya 4× token", ms.row_best_final_gaps(failed)[0])
+        self.assertIn("SOL hanya 1.667× token", ms.row_best_final_gaps(failed)[0])
         missing = row(liquidity_distribution={
             "checked": True, "ok": False, "error": "timeout"})
         self.assertIn("timeout", ms.row_best_final_gaps(missing)[0])
@@ -107,9 +107,9 @@ class BestPoolTableTest(unittest.TestCase):
         tip = bp.best_pool_tooltip()
         self.assertIn("$100,000", tip)
         self.assertIn("LPs at least 100", tip)
-        self.assertIn("Exact 1:5", tip)
+        self.assertIn("Exact 1:2", tip)
         self.assertIn("1:6.52 pass", tip)
-        self.assertIn("1:4 fails", tip)
+        self.assertIn("1:1.5 fails", tip)
         self.assertIn("horizontal scrolling", tip)
 
     def test_run_lane_scan_calls_pool_only_scanner(self):

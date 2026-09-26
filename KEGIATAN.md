@@ -22,6 +22,6 @@
 - LP minimum: **100**.
 - Tidak ada POOL BARU atau jalur lolos alternatif.
 - Gate distribusi adalah filter terakhir setelah semua cheap checks.
-- Nilai USD SOL harus **≥ 5×** nilai USD token.
-- token:SOL **1:5 lolos**, **1:6.52 lolos**, **1:4 gagal**.
+- Nilai USD SOL harus **≥ 2×** nilai USD token.
+- token:SOL **1:2 lolos**, **1:6.52 lolos**, **1:1.5 gagal**.
 - Nilai berasal dari official Meteora pool details: amount × USD price.

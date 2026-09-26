@@ -25,10 +25,10 @@ side USD value = token amount × token USD price
 The pool passes only when:
 
 ```text
-SOL USD value / token USD value >= 5
+SOL USD value / token USD value >= 2
 ```
 
-Equivalently, token:SOL must be at most **1:5**. Exact **1:5** and a more SOL-heavy ratio such as **1:6.52** pass; **1:4** fails. Missing details, API errors, non-SOL pairs, non-finite values, and non-positive side values fail closed.
+Equivalently, token:SOL must be at most **1:2**. Exact **1:2** and a more SOL-heavy ratio such as **1:6.52** pass; **1:1.5** fails. Missing details, API errors, non-SOL pairs, non-finite values, and non-positive side values fail closed.
 
 Only passing rows continue to optional GMGN liquidity, RugCheck, and tax/dividend enrichment. There is no new-pool detection or alternate bypass path.
 
