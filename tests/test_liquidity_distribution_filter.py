@@ -55,9 +55,9 @@ class ThresholdTest(unittest.TestCase):
     def test_thresholds_diperketat_dan_pool_baru_dihapus(self):
         self.assertEqual(ms.BEST_ACTIVE_TVL_MIN, 100_000.0)
         self.assertEqual(ms.BEST_LPS_MIN, 100.0)
-        self.assertEqual(ms.BEST_SOL_TOKEN_MIN_RATIO, 5.0)
-        self.assertEqual(ms.BEST_TOKEN_SOL_MAX_RATIO, 0.2)
-        self.assertEqual(ms.BEST_TOKEN_SOL_RATIO_LABEL, "1:5")
+        self.assertEqual(ms.BEST_SOL_TOKEN_MIN_RATIO, 2.0)
+        self.assertEqual(ms.BEST_TOKEN_SOL_MAX_RATIO, 0.5)
+        self.assertEqual(ms.BEST_TOKEN_SOL_RATIO_LABEL, "1:2")
         for name in ("NEW_POOL_MAX_AGE_HOURS", "NEW_POOL_LABEL",
                      "row_new_pool", "row_new_pool_gaps", "new_pool_rule_text"):
             self.assertFalse(hasattr(ms, name), name)
@@ -74,19 +74,19 @@ class ThresholdTest(unittest.TestCase):
         self.assertEqual(ms.filter_by(),
                          "pool_type=dlmm&&active_tvl>=50000")
 
-    def test_boundary_satu_banding_lima_inklusif(self):
+    def test_boundary_satu_banding_dua_inklusif(self):
         base = {"timeframe": "24h", "fee_active_tvl_ratio": 40.0,
                 "volatility": 6.0, "total_lps": 100,
                 "top_holders_pct": 10.0}
-        exact = dict(base, liquidity_distribution=_report(0.2))
-        more_sol = dict(base, liquidity_distribution=_report(0.1999))
-        less_sol = dict(base, liquidity_distribution=_report(0.2001))
-        self.assertEqual(ms.liquidity_distribution_label(exact), "1:5")
+        exact = dict(base, liquidity_distribution=_report(0.5))
+        more_sol = dict(base, liquidity_distribution=_report(0.4999))
+        less_sol = dict(base, liquidity_distribution=_report(0.5001))
+        self.assertEqual(ms.liquidity_distribution_label(exact), "1:2")
         self.assertEqual(ms.row_best_final_gaps(exact), [])
-        self.assertEqual(ms.liquidity_distribution_label(more_sol), "1:5.0025")
+        self.assertEqual(ms.liquidity_distribution_label(more_sol), "1:2.0004")
         self.assertEqual(ms.row_best_final_gaps(more_sol), [])
-        self.assertEqual(ms.liquidity_distribution_label(less_sol), "1:4.9975")
-        self.assertIn("minimum 5×", ms.row_best_final_gaps(less_sol)[0])
+        self.assertEqual(ms.liquidity_distribution_label(less_sol), "1:1.9996")
+        self.assertIn("minimum 2×", ms.row_best_final_gaps(less_sol)[0])
 
     def test_hilang_error_dan_non_sol_gagal_tertutup(self):
         row = {"timeframe": "24h", "fee_active_tvl_ratio": 40.0,
@@ -146,8 +146,8 @@ class PipelineTest(unittest.TestCase):
 
         def fake_distribution(rows, **_kwargs):
             seen_distribution.extend(row["pool_address"] for row in rows)
-            ratios = {"PASS": _report(0.1), "BOUNDARY": _report(0.2),
-                      "RATIOFAIL": _report(0.25),
+            ratios = {"PASS": _report(0.1), "BOUNDARY": _report(0.5),
+                      "RATIOFAIL": _report(0.6),
                       "APIERROR": _report(0, ok=False, error="timeout")}
             for row in rows:
                 row["liquidity_distribution"] = ratios[row["pool_address"]]
@@ -175,7 +175,7 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(result["liquidity_distribution_failed"], 1)
         self.assertTrue(result["liquidity_distribution_filter"])
         by_pool = {row["pool_address"]: row for row in result["hidden_rows"]}
-        self.assertIn("SOL hanya 4× token < minimum 5×",
+        self.assertIn("SOL hanya 1.667× token < minimum 2×",
                       by_pool["RATIOFAIL"]["best_gaps"][0])
         self.assertIn("timeout", by_pool["APIERROR"]["best_gaps"][0])
 
