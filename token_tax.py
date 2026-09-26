@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """Pajak transfer + dividend holder untuk kolom **TAX/DIVIDEND**.
 
-Permintaan user 2026-09-23: kolom **tax/dividend** di tabel 🏆 Best Pool, tepat
-di kiri **STRATEGY**. Bila token **punya dividend**, sel STRATEGY ditulis
-persis ``30 70 spotbidask full range`` (verbatim, bukan frasa ``hybird …``
-yang dipakai aturan likuiditas). Pajak saja tidak boleh mengubah strategi.
+Permintaan user 2026-09-23: kolom **tax/dividend** di tabel 🏆 Best Pool.
+Sejak 2026-09-26 kolom ini adalah kolom **paling kanan** dan murni informasi —
+kolom STRATEGY beserta seluruh logika deteksinya dihapus (permintaan user:
+*"hapus juga kolom strategy dan logika deteksi strategy apa yang dipakai"*),
+jadi dividend tidak lagi memilih teks saran apa pun; ia hanya diwarnai di
+sel ini.
 
 **Dividend** (satu-satunya pemicu override) = konfirmasi positif dari salah
 satu sumber ini:
@@ -16,14 +18,14 @@ satu sumber ini:
   ``is_cashback_enabled`` dan ``creator_reward`` / ``bonus_category`` bukan
   dividend.
 
-**Pajak** (informasi saja, tidak pernah mengubah STRATEGY):
+**Pajak** (informasi saja):
 
 * ``transferFee.bps`` StonkFun (100 bps = 1%);
 * peringatan Jupiter/Meteora ``TRANSFER_FEE_CONFIGURED`` (persen di pesan);
 * ``security.transfer_fee`` rugchecker.cc (sudah persen).
 
 Tidak terbaca (jaringan gagal, fetch dimatikan, hasil scan lama) → sel ``—``,
-strategi likuiditas tetap, **baris tidak dibuang**. Suite tes mematikan HTTP
+**baris tidak dibuang**. Suite tes mematikan HTTP
 lewat ``TOKEN_TAX_FETCH=0`` (``tests/__init__.py``).
 """
 from __future__ import annotations
@@ -299,7 +301,7 @@ def combine(stonk: dict | None, pump: dict | None) -> dict:
 
     ``dividend_known`` True bila ada konfirmasi positif, atau kedua sumber
     menjawab dan tidak ada yang reward/holder-reward. Satu sumber gagal dan
-    yang lain tidak mengonfirmasi → belum diketahui (jangan override STRATEGY).
+    yang lain tidak mengonfirmasi → belum diketahui (sel ditulis ``—``).
     """
     stonk = stonk or _blank_parse()
     pump = pump or _blank_parse()
@@ -377,20 +379,17 @@ def row_tax_dividend(row: dict | None) -> dict:
     label = label_for(tax, dividend)
     if dividend:
         sub = "holder reward"
-        reason = ("dividend terkonfirmasi (holder reward) — STRATEGY memakai "
-                  "\"30 70 spotbidask full range\"")
+        reason = "dividend terkonfirmasi (holder reward)"
     elif known:
         sub = "transfer fee" if tax is not None else "—"
         reason = ("bukan dividend (bukan StonkFun reward dan bukan pump "
                   "holder reward)")
     else:
         sub = "transfer fee" if tax is not None else "—"
-        reason = ("dividend belum terbaca — STRATEGY tidak diubah; hasil scan "
-                  "sebelum kolom ini perlu di-scan ulang")
+        reason = ("dividend belum terbaca — hasil scan sebelum kolom ini "
+                  "perlu di-scan ulang")
     if tax is not None:
         reason += f" · pajak transfer {format_tax_pct(tax)}"
-        if not dividend:
-            reason += " · pajak saja tidak mengubah STRATEGY"
     reason += " · kolom informasi, baris tidak dibuang"
     if source:
         reason += f" · sumber {source}"

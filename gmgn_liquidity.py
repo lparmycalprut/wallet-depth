@@ -57,15 +57,14 @@ hitam. Satu sumber aturan: :func:`liq_color`. :func:`row_gmgn_gap` selalu
   (tanpa bukti tidak ada verdict — filosofi repo: kolom menulis ``—``,
   baris tetap tampil).
 
-**Update 2026-09-19:** ambang $500K yang sama kini juga memilih **teks kolom
-STRATEGY** di 🏆 Scan Best Pool (permintaan user: *\"Kasih kolom baru dipaling
-kanan STRATEGY … jika total likuiditas >500K … hybird 7030, bidask 3070 - full
-range … jika total likuiditas <500K … hybird 5050, bidask - full range\"*) —
-lihat :data:`STRATEGY_LIQ_HIGH` / :data:`STRATEGY_LIQ_LOW`,
-:func:`strategy_for_liquidity` dan :func:`row_strategy`. Angkanya dibaca dari
-laporan yang sama dengan kolom RugCheck (:func:`row_total_liquidity_usd`),
-jadi tidak ada dua sumber likuiditas. Kolom STRATEGY juga hanya informasi:
-tidak ada baris yang dibuang karenanya.
+**Update 2026-09-26:** kolom **STRATEGY** di 🏆 Scan Best Pool DIHAPUS
+(permintaan user: *\"hapus juga kolom strategy dan logika deteksi strategy apa
+yang dipakai\"*) bersama seluruh logika pemilih teksnya (``STRATEGY_LIQ_HIGH`` /
+``STRATEGY_LIQ_LOW`` / ``STRATEGY_DIVIDEND``, ``strategy_for_liquidity``,
+``row_strategy``, dan ``row_total_liquidity_usd``). Ambang $500K di modul ini
+kembali hanya mengatur **warna** angka likuiditas kolom RugCheck
+(:func:`liq_color`) — jangan mengembalikan saran strategi tanpa permintaan
+baru.
 
 Cache berkas (``gmgn_liquidity_cache.json``, TTL :data:`CACHE_TTL_OK`) menahan
 hasil per-mint supaya rerun Streamlit (setiap interaksi) tidak menembak
@@ -534,143 +533,6 @@ def liq_color(usd) -> str:
     if liq_is_red(usd):
         return LIQ_RED_COLOR
     return ""
-
-
-# ---------------------------------------------------------------------------
-# kolom STRATEGY (2026-09-19) — saran penempatan likuiditas per pool
-# ---------------------------------------------------------------------------
-# Permintaan user (verbatim, 2026-09-19): *"Kasih kolom baru dipaling kanan
-# STRATEGY — jika total likuiditas >500K, dikolom strategy ditulis, hybird
-# 7030, bidask 3070 - full range — jika total likuiditas <500K, dikolom
-# strategy ditulis, hybird 5050, bidask - full range"*.
-#
-# Tulisannya **verbatim** — termasuk "hybird" (typo user untuk "hybrid") dan
-# "bidask" tanpa angka di sisi < $500K (dikonfirmasi ulang ke user 2026-09-19:
-# memang tanpa angka, jangan "dirapikan" jadi 3070). Aturan satu baris:
-#
-# * likuiditas total **> :data:`LIQ_GREEN_MIN_USD`** ($500K) →
-#   :data:`STRATEGY_LIQ_HIGH`;
-# * sisanya (**< $500K**, **tepat $500K**, dan **tidak terukur**) →
-#   :data:`STRATEGY_LIQ_LOW`.
-#
-# Sisi "< ambang" sengaja memakai komplemen ``liq_is_green`` (bukan
-# ``liq_is_red``) supaya **tepat $500K** juga dapat teks strategi: user hanya
-# memberi dua cabang (>500K / <500K) dan setiap baris harus punya saran, tidak
-# boleh ada sel strategi kosong. Angka yang tidak terukur ikut cabang rendah
-# (konservatif: tanpa bukti likuiditas besar, pakai split 50/50) dan
-# alasannya ditulis di tooltip sel. Ambangnya TIDAK disalin di
-# ``best_pool_ui`` — satu sumber aturan di modul ini, sama seperti aturan
-# warna likuiditas (:func:`liq_color`).
-#: Teks STRATEGY bila likuiditas total **> $500K** (verbatim permintaan user).
-STRATEGY_LIQ_HIGH = "hybird 7030, bidask 3070 - full range"
-#: Teks STRATEGY bila likuiditas total **< $500K** (verbatim permintaan user —
-#: "bidask" tanpa angka memang begitu adanya, dikonfirmasi ulang 2026-09-19).
-STRATEGY_LIQ_LOW = "hybird 5050, bidask - full range"
-#: Teks STRATEGY bila token **punya dividend** (verbatim permintaan user
-#: 2026-09-23: *\"30 70 spotbidask full range\"*). Menggantikan kedua cabang
-#: likuiditas — jangan dirapikan jadi frasa ``hybird …``. Pajak transfer saja
-#: tidak memakai teks ini; hanya dividend terkonfirmasi
-#: (:func:`token_tax.row_has_dividend`).
-STRATEGY_DIVIDEND = "30 70 spotbidask full range"
-
-
-def row_total_liquidity_usd(row: dict | None):
-    """``(usd, keterangan sumber)`` likuiditas total satu baris scan.
-
-    Sumbernya sama dengan angka yang ditulis kolom **RugCheck** supaya kolom
-    STRATEGY tidak pernah memakai angka lain dari yang dilihat user:
-
-    1. ``row["rugcheck"]["liquidity_total_usd"]`` — laporan rugchecker.cc
-       yang sejak 2026-09-17 diisi angka GMGN (``liquidity_source="gmgn"``);
-    2. ``row["gmgn_liq"]["usd"]`` — tempelan :func:`attach_total_liquidity`
-       (dipakai bila laporan rugcheck tidak ada / gagal);
-    3. ``row["gmgn_liq"]["below_cutoff"]`` — GMGN tidak memberi angka, tapi
-       mint-nya terbukti **di bawah cutoff** peringkat 100 token (cutoff-nya
-       sendiri di bawah $500K) → ``usd`` tetap ``None``, namun keterangannya
-       menandai bukti "di bawah cutoff" sehingga strateginya cabang rendah.
-
-    ``usd`` = ``None`` berarti tidak terukur.
-    """
-    row = row or {}
-    report = row.get("rugcheck")
-    if isinstance(report, dict) and report.get("ok"):
-        usd = _float_or_none(report.get("liquidity_total_usd"))
-        if usd is not None:
-            source = str(report.get("liquidity_source") or "gmgn")
-            return usd, f"laporan RugCheck (sumber {source})"
-    item = row.get("gmgn_liq")
-    if isinstance(item, dict):
-        usd = _float_or_none(item.get("usd"))
-        if usd is not None:
-            source = str(item.get("source") or "gmgn")
-            return usd, f"GMGN ({source})"
-        if item.get("below_cutoff"):
-            return None, ("GMGN di bawah cutoff peringkat 100 token "
-                          f"({compact_usd(item.get('cutoff_usd'))})")
-    return None, "tidak terukur"
-
-
-def strategy_for_liquidity(usd) -> str:
-    """Teks kolom **STRATEGY** untuk satu angka likuiditas total (USD).
-
-    ``> :data:`LIQ_GREEN_MIN_USD`` → :data:`STRATEGY_LIQ_HIGH`; selain itu
-    (di bawah ambang, **tepat** di ambang, ``None``/tidak terukur) →
-    :data:`STRATEGY_LIQ_LOW`. Lihat komentar blok di atas konstantanya.
-    """
-    if liq_is_green(usd):
-        return STRATEGY_LIQ_HIGH
-    return STRATEGY_LIQ_LOW
-
-
-def _confirmed_dividend(row: dict | None) -> bool:
-    """Dividend terkonfirmasi — satu-satunya pemicu teks STRATEGY khusus.
-
-    Dibaca dari :func:`token_tax.row_has_dividend` (bukan disalin di sini)
-    supaya pajak, cashback, dan ``creator_reward`` tidak pernah lolos.
-    Import di dalam fungsi: modul pajak tidak boleh ikut termuat saat
-    likuiditas GMGN diimpor (dan sebaliknya).
-    """
-    from token_tax import row_has_dividend
-
-    return row_has_dividend(row)
-
-
-def row_strategy(row: dict | None) -> dict:
-    """Rangkuman kolom **STRATEGY** satu baris: teks + bukti untuk tooltip.
-
-    ``{"text": str, "usd": float|None, "measured": bool, "source": str,
-    "reason": str, "dividend": bool}`` — ``measured`` False berarti
-    likuiditasnya tidak terbaca (strategi tetap ditulis, alasannya ada di
-    ``reason`` sehingga UI bisa menaruhnya di tooltip sel dan tidak pernah
-    menyiratkan sel kosong = aman).
-
-    **Dividend menang** (2026-09-23): bila :func:`_confirmed_dividend` True,
-    teksnya :data:`STRATEGY_DIVIDEND` apa pun angka likuiditasnya. Pajak
-    transfer saja tidak masuk cabang ini. Dividend belum terbaca juga tidak
-    — tetap cabang likuiditas, baris tidak dibuang.
-    """
-    usd, source = row_total_liquidity_usd(row)
-    if _confirmed_dividend(row):
-        return {
-            "text": STRATEGY_DIVIDEND,
-            "usd": usd,
-            "measured": usd is not None,
-            "source": source,
-            "reason": ("token punya dividend (holder reward) → "
-                       f"\"{STRATEGY_DIVIDEND}\" — aturan likuiditas "
-                       f"({MIN_LABEL}) tidak dipakai"),
-            "dividend": True,
-        }
-    text = strategy_for_liquidity(usd)
-    if usd is None:
-        reason = (f"likuiditas total {source} → tidak ada angka pembanding, "
-                  f"pakai cabang < {MIN_LABEL}")
-    else:
-        side = (f"> {MIN_LABEL}" if text == STRATEGY_LIQ_HIGH
-                else f"<= {MIN_LABEL}")
-        reason = f"likuiditas total {compact_usd(usd)} ({source}) {side}"
-    return {"text": text, "usd": usd, "measured": usd is not None,
-            "source": source, "reason": reason, "dividend": False}
 
 
 def row_gmgn_gap(row: dict | None) -> str | None:

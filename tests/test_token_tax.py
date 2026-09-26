@@ -1,8 +1,9 @@
 """Pajak transfer + dividend untuk kolom TAX/DIVIDEND (2026-09-23).
 
-Dividend yang mengubah STRATEGY hanya StonkFun ``mode=reward`` atau pump.fun
-``is_holder_reward is True``. Pajak, cashback, dan ``creator_reward`` tidak
-pernah memakai teks ``30 70 spotbidask full range``.
+Dividend hanya StonkFun ``mode=reward`` atau pump.fun ``is_holder_reward is
+True``; pajak, cashback, dan ``creator_reward`` tidak pernah dihitung sebagai
+dividend. Kolom STRATEGY (dan seluruh logika deteksinya) DIHAPUS 2026-09-26,
+jadi dividend kini hanya mewarnai kata "dividend" di kolom TAX/DIVIDEND.
 """
 from __future__ import annotations
 
@@ -101,8 +102,25 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(tt.label_for(None, False), "—")
 
 
-class StrategyOverrideTest(unittest.TestCase):
-    def test_dividend_mengalahkan_likuiditas_di_atas_500k(self):
+class StrategyRemovedTest(unittest.TestCase):
+    """Kolom + logika deteksi STRATEGY dihapus 2026-09-26 (permintaan user).
+
+    Yang tersisa hanya kolom informasi TAX/DIVIDEND: dividend mewarnai
+    katanya, pajak transfer tampil apa adanya, dan TIDAK ada lagi teks saran
+    strategi (``hybird …`` / ``30 70 spotbidask full range``) di mana pun.
+    """
+
+    def test_helper_strategy_benar_benar_hilang(self):
+        for nama in ("row_strategy", "strategy_for_liquidity",
+                     "row_total_liquidity_usd", "STRATEGY_LIQ_HIGH",
+                     "STRATEGY_LIQ_LOW", "STRATEGY_DIVIDEND"):
+            self.assertFalse(hasattr(gl, nama), nama)
+        for nama in ("_strategy_cell", "_strategy_cell_html",
+                     "STRATEGY_COL_INDEX", "STRATEGY_COL_WIDTH",
+                     "STRATEGY_COL_TITLE"):
+            self.assertFalse(hasattr(bp, nama), nama)
+
+    def test_dividend_hanya_mewarnai_sel_tax_dividend(self):
         row = {
             "rugcheck": {"ok": True, "liquidity_total_usd": 884_912.0,
                          "liquidity_source": "gmgn"},
@@ -110,21 +128,15 @@ class StrategyOverrideTest(unittest.TestCase):
                              "source": "stonkfun", "mode": "reward",
                              "tax_pct": 1.0},
         }
-        info = gl.row_strategy(row)
-        self.assertEqual(info["text"], "30 70 spotbidask full range")
-        self.assertEqual(info["text"], gl.STRATEGY_DIVIDEND)
-        self.assertTrue(info["dividend"])
-        self.assertNotIn("hybird", info["text"])
-        value, sub, tip = bp._strategy_cell(row)
-        self.assertIn(
-            '<div class="watchlist-metric-value">30 70 spotbidask full range'
-            '</div>',
-            bp._cell(value, sub, tip))
-        self.assertEqual(sub, "dividend")
-        self.assertIn("30 70 spotbidask full range", tip)
-        self.assertIn("$500K", tip)
+        cell = tt.row_tax_dividend(row)
+        self.assertTrue(cell["dividend"])
+        html = bp._tax_dividend_cell_html(cell)
+        self.assertIn("tax 1%", html)
+        self.assertIn("bp-dividend", html)
+        self.assertNotIn("spotbidask", html)
+        self.assertNotIn("hybird", html)
 
-    def test_pajak_saja_tidak_mengubah_strategi(self):
+    def test_pajak_saja_tidak_diwarnai_dividend(self):
         row = {
             "rugcheck": {"ok": True, "liquidity_total_usd": 884_912.0,
                          "liquidity_source": "gmgn", "transfer_fee": 1.0},
@@ -133,9 +145,6 @@ class StrategyOverrideTest(unittest.TestCase):
                              "source": "stonkfun", "mode": "standard",
                              "tax_pct": 1.0},
         }
-        info = gl.row_strategy(row)
-        self.assertEqual(info["text"], gl.STRATEGY_LIQ_HIGH)
-        self.assertFalse(info["dividend"])
         cell = tt.row_tax_dividend(row)
         self.assertEqual(cell["label"], "tax 1%")
         self.assertFalse(cell["dividend"])
@@ -144,22 +153,17 @@ class StrategyOverrideTest(unittest.TestCase):
         self.assertNotIn("bp-dividend", html)
         self.assertIn("bp-tax-dividend", html)
 
-    def test_belum_terbaca_tetap_cabang_likuiditas_dan_strip(self):
+    def test_belum_terbaca_menulis_strip(self):
         row = {"rugcheck": {"ok": True, "liquidity_total_usd": 103_300.0,
                             "liquidity_source": "gmgn"}}
-        info = gl.row_strategy(row)
-        self.assertEqual(info["text"], gl.STRATEGY_LIQ_LOW)
-        self.assertFalse(info["dividend"])
         self.assertFalse(tt.row_has_dividend(row))
-        label = tt.row_tax_dividend(row)["label"]
-        self.assertEqual(label, "—")
+        self.assertEqual(tt.row_tax_dividend(row)["label"], "—")
 
-    def test_pajak_lokal_tampil_tanpa_override(self):
+    def test_pajak_lokal_tampil_apa_adanya(self):
         row = {"transfer_fee_pct": 2.5}
         cell = tt.row_tax_dividend(row)
         self.assertEqual(cell["label"], "tax 2.5%")
         self.assertFalse(cell["dividend"])
-        self.assertEqual(gl.row_strategy(row)["text"], gl.STRATEGY_LIQ_LOW)
 
 
 class FetchGuardTest(unittest.TestCase):
@@ -204,7 +208,7 @@ class FetchGuardTest(unittest.TestCase):
 
 
 class ColumnPlacementTest(unittest.TestCase):
-    def test_sel_pajak_di_kiri_strategy_dan_teks_dividend_di_strategy(self):
+    def test_tax_dividend_kolom_terakhir_tanpa_teks_strategy(self):
         import types
 
         rendered = []
@@ -222,20 +226,22 @@ class ColumnPlacementTest(unittest.TestCase):
         with mock.patch.dict("sys.modules", {"streamlit": st_palsu}):
             bp._render_best_table([row], lane="24h", mark_tops=False)
         body = "".join(rendered)
-        self.assertEqual(body.count("<th scope=\"col\">"), 16)
+        self.assertEqual(body.count("<th scope=\"col\">"), 15)
         self.assertIn(">TAX/DIVIDEND<", body)
-        self.assertIn(">STRATEGY<", body)
+        self.assertNotIn(">STRATEGY<", body)
         self.assertIn("tax 1%", body)
         self.assertIn("bp-dividend", body)
-        self.assertIn("30 70 spotbidask full range", body)
+        self.assertNotIn("spotbidask", body)
         self.assertNotIn("hybird", body)
+        # Tombol copy link HawkFi juga sudah tidak ikut dirender.
+        self.assertNotIn("hawkfi-copy-btn", body)
 
     def test_tabel_dilewati_tanpa_kolom_pajak(self):
-        titles = bp._lane_titles("24h", show_strategy=False)
+        titles = bp._lane_titles("24h", show_tax_dividend=False)
         self.assertEqual(titles[-1], "Pool")
         self.assertNotIn("TAX/DIVIDEND", titles)
-        self.assertEqual(len(bp._col_spec(show_strategy=True)),
-                         len(bp._col_spec(show_strategy=False)) + 2)
+        self.assertEqual(len(bp._col_spec(show_tax_dividend=True)),
+                         len(bp._col_spec(show_tax_dividend=False)) + 1)
 
 
 if __name__ == "__main__":

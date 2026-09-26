@@ -105,35 +105,14 @@ def external_links_html(ca) -> str:
             '🦆Dex</a>')
 
 
-def hawkfi_copy_html(pool) -> str:
-    pool = str(pool or "")
-    if not pool:
-        return ""
-    url = hawkfi_meteora_url(pool)
-    js_url = url.replace("\\", "\\\\").replace("'", "\\'")
-    onclick = (
-        "if(event){event.preventDefault();event.stopPropagation();}"
-        f"var u='{js_url}',b=this;"
-        "var ok=function(){b.textContent='✓';b.setAttribute('aria-label','HawkFi link copied');"
-        "setTimeout(function(){b.textContent='📋';b.setAttribute('aria-label','Copy HawkFi link');},1400);};"
-        "var fail=function(){b.textContent='!';setTimeout(function(){b.textContent='📋';},1400);};"
-        "var fb=function(){var t=document.createElement('textarea');t.value=u;"
-        "t.setAttribute('readonly','');t.style.position='fixed';t.style.left='-9999px';"
-        "t.style.top='0';document.body.appendChild(t);t.focus();t.select();"
-        "var copied=false;try{copied=document.execCommand('copy');}catch(e){}"
-        "document.body.removeChild(t);copied?ok():fail();};"
-        "if(window.isSecureContext&&navigator.clipboard&&navigator.clipboard.writeText){"
-        "navigator.clipboard.writeText(u).then(ok,fb);}else{fb();}return false;"
-    )
-    return (f'<button type="button" class="hawkfi-copy-btn" '
-            f'data-copy-url="{_html.escape(url, quote=True)}" '
-            f'aria-label="Copy HawkFi link" '
-            f'title="Copy link HawkFi: {_html.escape(url, quote=True)}" '
-            f'onclick="{_html.escape(onclick, quote=True)}">📋</button>')
-
-
 def pool_links_html(pool, *, mint: str = "") -> str:
-    """Meteora, HawkFi, copy-HawkFi, and optional Bubblemaps shortcuts."""
+    """Meteora, HawkFi, and optional Bubblemaps shortcuts.
+
+    Tombol 📋 *copy link HawkFi* DIHAPUS 2026-09-26 (permintaan user:
+    *"hapus saja tombol copy hawkfi link dari kolom"*) — yang tersisa hanya
+    tautan biasa, jadi kolom Pool tidak lagi menyuntikkan ``onclick``
+    clipboard apa pun. Jangan dikembalikan tanpa permintaan baru.
+    """
     pool = str(pool or "")
     if not pool:
         return ""
@@ -143,5 +122,5 @@ def pool_links_html(pool, *, mint: str = "") -> str:
     return (
         f'<a href="{meteora}" target="_blank" rel="noopener noreferrer">🌊Meteora</a> &nbsp; '
         f'<a href="{hawkfi}" target="_blank" rel="noopener noreferrer">🦅HawkFi</a> '
-        f'{hawkfi_copy_html(pool)} {bubble}'
+        f'{bubble}'
     ).strip()

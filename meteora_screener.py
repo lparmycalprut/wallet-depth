@@ -933,17 +933,25 @@ def row_token_sol_ratio(row: dict | None):
     return ratio
 
 
-def liquidity_distribution_label(row: dict | None) -> str:
-    """Label rasio mudah dibaca, mis. ``1:6.52`` atau ``2.3:1``."""
+def liquidity_distribution_label(row: dict | None, *, decimals: int = 1) -> str:
+    """Label rasio mudah dibaca, mis. ``1:6.5`` atau ``2.3:1``.
+
+    ``decimals`` = banyak angka di belakang koma (**1** sejak 2026-09-26 —
+    permintaan user: *"Token:SOL kolom ini … pakai 1 angka aja dibelakang
+    koma"*; angka nol di ekor tetap dipangkas sehingga rasio bulat ditulis
+    ``1:2``). Teks alasan gugur dan tooltip sel memakai ``decimals=4`` supaya
+    nilai yang hanya sedikit di bawah/di atas boundary (mis. 1:1.9996) tidak
+    dibulatkan menjadi ``1:2`` lalu tampak kontradiktif dengan verdict-nya.
+    """
     ratio = row_token_sol_ratio(row)
     if ratio is None:
         return "—"
     left, right = (1.0, 1.0 / ratio) if ratio < 1.0 else (ratio, 1.0)
+    places = max(0, int(decimals))
 
     def _part(value: float) -> str:
-        # Empat desimal mencegah nilai sedikit di bawah boundary (mis. rasio
-        # 0,4999 = 1:2,0004) dibulatkan menjadi "1:2" lalu tampak kontradiktif.
-        return f"{value:.4f}".rstrip("0").rstrip(".")
+        text = f"{value:.{places}f}"
+        return text.rstrip("0").rstrip(".") if "." in text else text
 
     return f"{_part(left)}:{_part(right)}"
 
@@ -979,7 +987,7 @@ def row_liquidity_distribution_gap(row: dict | None, *, lane=None) -> str:
         sol_multiple = 1.0 / ratio
         return (prefix + f"likuiditas SOL hanya {sol_multiple:.4g}× token < "
                 f"minimum {BEST_SOL_TOKEN_MIN_RATIO:g}× "
-                f"(token:SOL {liquidity_distribution_label(row)})")
+                f"(token:SOL {liquidity_distribution_label(row, decimals=4)})")
     return ""
 
 
