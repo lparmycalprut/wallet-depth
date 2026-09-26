@@ -83,10 +83,37 @@ class ThresholdTest(unittest.TestCase):
         less_sol = dict(base, liquidity_distribution=_report(0.5001))
         self.assertEqual(ms.liquidity_distribution_label(exact), "1:2")
         self.assertEqual(ms.row_best_final_gaps(exact), [])
-        self.assertEqual(ms.liquidity_distribution_label(more_sol), "1:2.0004")
+        self.assertEqual(ms.liquidity_distribution_label(more_sol), "1:2")
         self.assertEqual(ms.row_best_final_gaps(more_sol), [])
-        self.assertEqual(ms.liquidity_distribution_label(less_sol), "1:1.9996")
+        self.assertEqual(ms.liquidity_distribution_label(less_sol), "1:2")
         self.assertIn("minimum 2×", ms.row_best_final_gaps(less_sol)[0])
+        # Label kolom = 1 angka di belakang koma (permintaan user
+        # 2026-09-26); teks alasan gugur tetap presisi penuh supaya rasio
+        # dekat boundary tidak terbaca kontradiktif.
+        self.assertEqual(
+            ms.liquidity_distribution_label(more_sol, decimals=4), "1:2.0004")
+        self.assertEqual(
+            ms.liquidity_distribution_label(less_sol, decimals=4), "1:1.9996")
+        self.assertIn("token:SOL 1:1.9996",
+                      ms.row_best_final_gaps(less_sol)[0])
+
+    def test_label_kolom_satu_angka_di_belakang_koma(self):
+        base = {"timeframe": "24h"}
+        self.assertEqual(
+            ms.liquidity_distribution_label(
+                dict(base, liquidity_distribution=_report(0.15341))),
+            "1:6.5")
+        # Token lebih berat (hanya muncul di tabel "dilewati").
+        self.assertEqual(
+            ms.liquidity_distribution_label(
+                dict(base, liquidity_distribution=_report(2.345))),
+            "2.3:1")
+        # Rasio bulat tidak menulis nol di ekor, dan tanpa data tetap "—".
+        self.assertEqual(
+            ms.liquidity_distribution_label(
+                dict(base, liquidity_distribution=_report(0.1))),
+            "1:10")
+        self.assertEqual(ms.liquidity_distribution_label(base), "—")
 
     def test_hilang_error_dan_non_sol_gagal_tertutup(self):
         row = {"timeframe": "24h", "fee_active_tvl_ratio": 40.0,

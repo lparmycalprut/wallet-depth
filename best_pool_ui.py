@@ -83,37 +83,35 @@ def best_pool_tooltip() -> str:
 
 
 
-# Relative desktop widths for the fourteen base columns (including Token:SOL).
-_COL_SPEC = [1.4, 1.0, 0.75, 0.58, 0.95, 0.5, 0.58, 0.55, 0.68,
-             0.72, 0.8, 0.6, 1.0, 1.05]
+# Relative desktop widths for the fourteen base columns (including Token:SOL,
+# yang sejak 2026-09-26 duduk tepat di kanan LPs — permintaan user:
+# *"Token:SOL kolom ini taruh dikanan LPs"*). Urutannya WAJIB sama dengan
+# :func:`_lane_titles` dan urutan sel di :func:`_render_best_table`.
+_COL_SPEC = [1.4, 1.0, 0.75, 0.58, 0.95, 0.5, 0.72, 0.58, 0.55,
+             0.68, 0.8, 0.6, 1.0, 1.05]
 
 #: Indeks kolom **Pool** di ``_COL_SPEC`` (kolom terakhir tabel "dilewati").
-POOL_COL_INDEX = 12
+POOL_COL_INDEX = 13
 
-#: Indeks kolom **STRATEGY** (paling kanan, hanya tabel utama) — tepat di
-#: kanan ``POOL_COL_INDEX``. Sel strategi DITULIS langsung ke indeks ini,
-#: bukan lewat ``enumerate(cells, start=1)`` yang hanya sampai kolom Pool
-#: (permintaan user 2026-09-21: *"hybird 5050, bidask - full range — ini
-#: taruh di kolom strategy, bukan di pool"*).
+#: Indeks kolom **TAX/DIVIDEND** — satu-satunya kolom tambahan tabel utama
+#: (tepat di kanan ``POOL_COL_INDEX``). Kolom **STRATEGY** yang dulu berada
+#: di kanannya DIHAPUS 2026-09-26 bersama seluruh logika deteksinya
+#: (permintaan user: *"hapus juga kolom strategy dan logika deteksi strategy
+#: apa yang dipakai"*) — jangan dikembalikan tanpa permintaan baru.
 TAX_DIVIDEND_COL_INDEX = POOL_COL_INDEX + 1
 TAX_DIVIDEND_COL_WIDTH = 1.15
 TAX_DIVIDEND_COL_TITLE = "TAX/DIVIDEND"
-STRATEGY_COL_INDEX = TAX_DIVIDEND_COL_INDEX + 1
-
-#: Bobot kolom **STRATEGY** (paling kanan, hanya tabel utama — 2026-09-19).
-STRATEGY_COL_WIDTH = 1.35
 
 
-def _col_spec(*, show_strategy: bool = True) -> list[float]:
-    """Return 13 base widths plus tax/dividend and strategy when shown."""
+def _col_spec(*, show_tax_dividend: bool = True) -> list[float]:
+    """Return the 14 base widths plus TAX/DIVIDEND when it is shown."""
     spec = list(_COL_SPEC)
-    if show_strategy:
+    if show_tax_dividend:
         spec.append(TAX_DIVIDEND_COL_WIDTH)
-        spec.append(STRATEGY_COL_WIDTH)
     return spec
 
 
-def _lane_titles(lane, *, show_strategy: bool = True) -> list[str]:
+def _lane_titles(lane, *, show_tax_dividend: bool = True) -> list[str]:
     """Return headers in exactly the same order as the rendered cells."""
     from meteora_screener import normalize_best_lane
 
@@ -121,12 +119,14 @@ def _lane_titles(lane, *, show_strategy: bool = True) -> list[str]:
     # 24 jam — ``normalize_best_lane`` masih menerima alias lama (dipetakan ke
     # 24H) jadi penamaan kolom tidak pernah bisa lagi tertulis "Vol 30m".
     _ = normalize_best_lane(lane)
+    # Token:SOL tepat di kanan LPs (2026-09-26) — angkanya sekarang ditulis
+    # satu angka di belakang koma (lihat
+    # ``meteora_screener.liquidity_distribution_label``).
     titles = ["Token", "F/V", "Fee/TVL", "Volat", "Active Range", "LPs",
-              "Fee %", "MC", "A.TVL", "Token:SOL", "Vol 24h", "Top10",
+              "Token:SOL", "Fee %", "MC", "A.TVL", "Vol 24h", "Top10",
               "RugCheck", "Pool"]
-    if show_strategy:
+    if show_tax_dividend:
         titles.append(TAX_DIVIDEND_COL_TITLE)
-        titles.append("STRATEGY")
     return titles
 
 
@@ -168,43 +168,12 @@ def _top_span(text: str) -> str:
             f'{text}</span>')
 
 
-#: Judul kolom STRATEGY (permintaan user 2026-09-19, huruf besar semua).
-STRATEGY_COL_TITLE = "STRATEGY"
-
-
-def _strategy_cell_html(text: str) -> str:
-    """Isi sel **STRATEGY**: teks verbatim user, dipenggal sebelum ``- full``.
-
-    Teksnya panjang untuk satu kolom (``hybird 7030, bidask 3070 - full
-    range``), jadi frasa ``- full range`` dijaga tetap utuh (``nowrap`` lewat
-    class ``.bp-strategy-range`` di ``dashboard_components.render_styles``)
-    sementara bagian depannya boleh melipat — supaya kolomnya tidak perlu
-    dilebarkan (permintaan user 2026-09-19: *"agak perbesar tulisan table
-    semuanya ya, tapi tidak mempengaruhi tampilan"*: tampilan/lebar kolom
-    tetap, hanya ukuran huruf yang naik). Tanpa pemisah `` - `` teksnya
-    ditulis apa adanya.
-    """
-    import html as _html
-
-    body = str(text or "")
-    if not body:
-        return "—"
-    head, sep, tail = body.rpartition(" - ")
-    if not sep:
-        return _html.escape(body)
-    # ``rpartition`` memisahkan " - " sehingga ``head`` berakhir tanpa spasi
-    # dan ``sep`` memuat spasinya: spasi tunggal di dalam span nowrap supaya
-    # frasa "- full range" tidak pernah terpenggal di tengah.
-    return (f'{_html.escape(head)}<span class="bp-strategy-range">'
-            f'{_html.escape(sep + tail)}</span>')
-
-
 def _tax_dividend_cell_html(info: dict) -> str:
     """Isi sel **TAX/DIVIDEND**. Kata ``dividend`` diwarnai; sisanya di-escape.
 
     Tanpa data → ``—`` (bukan sel kosong). Pajak saja tidak memakai class
     ``bp-dividend``, supaya tes bisa membedakan \"ada pajak\" dari \"ada
-    dividend yang mengubah STRATEGY\".
+    dividend\".
     """
     import html as _html
 
@@ -218,65 +187,18 @@ def _tax_dividend_cell_html(info: dict) -> str:
 
 
 def _tax_dividend_cell(row) -> tuple[str, str, str]:
-    """Sel **TAX/DIVIDEND** (kiri STRATEGY, tabel utama saja).
+    """Sel **TAX/DIVIDEND** (paling kanan, tabel utama saja).
 
-    Angka dan flag-nya satu sumber di :func:`token_tax.row_tax_dividend`.
-    Pajak transfer tidak mengubah STRATEGY; hanya ``dividend is True`` yang
-    memakai teks ``30 70 spotbidask full range``. Belum terbaca → ``—``,
-    baris tetap tampil.
+    Angka dan flag-nya satu sumber di :func:`token_tax.row_tax_dividend` —
+    kolom informasi saja (tidak pernah membuang baris, dan sejak kolom
+    STRATEGY dihapus 2026-09-26 tidak lagi memicu saran strategi apa pun).
+    Belum terbaca → ``—``, baris tetap tampil.
     """
     from token_tax import row_tax_dividend
 
     info = row_tax_dividend(row)
     return _tax_dividend_cell_html(info), str(info.get("sub") or "—"), str(
         info.get("reason") or "")
-
-
-def _strategy_cell(row) -> tuple[str, str, str]:
-    """Sel **STRATEGY** (paling kanan, tabel utama) + bukti di baris kecil.
-
-    Permintaan user (verbatim, 2026-09-19): *"Kasih kolom baru dipaling kanan
-    STRATEGY — jika total likuiditas >500K, dikolom strategy ditulis, hybird
-    7030, bidask 3070 - full range — jika total likuiditas <500K, dikolom
-    strategy ditulis, hybird 5050, bidask - full range"*.
-
-    Aturannya tidak disalin di sini: teks + ambangnya tinggal dibaca dari
-    :func:`gmgn_liquidity.row_strategy` (satu sumber dengan warna likuiditas
-    kolom RugCheck), dan angka pembandingnya pun angka yang sama dengan yang
-    ditulis kolom RugCheck (:func:`gmgn_liquidity.row_total_liquidity_usd`) —
-    jadi STRATEGY tidak pernah menyarankan 70/30 untuk baris yang angka
-    likuiditasnya tampil merah. Baris kecil menulis angka likuiditas +
-    ambangnya (``$884.9K > $500K``) supaya sarannya bisa diverifikasi sekali
-    lihat; likuiditas tak terukur menulis ``liq —`` dan alasannya ada di
-    tooltip (kolom informasi: tidak pernah membuang baris, tidak pernah
-    menulis sel kosong).
-    """
-    from gmgn_liquidity import MIN_LABEL, compact_usd, row_strategy
-
-    info = row_strategy(row)
-    value = _strategy_cell_html(info.get("text"))
-    usd = info.get("usd")
-    if info.get("dividend"):
-        # Dividend mengalahkan cabang likuiditas. Baris kecil menulis
-        # "dividend" supaya teks "30 70 spotbidask full range" tidak terlihat
-        # seperti saran dari angka likuiditas.
-        sub = "dividend"
-        tip = (f"STRATEGY dari dividend: \"{info.get('text')}\" (teks verbatim). "
-               f"{info.get('reason')}. Pajak transfer saja tidak memakai teks "
-               "ini — hanya saran, baris tidak dibuang")
-        return value, sub, tip
-    sub = (f"liq {compact_usd(usd)} · {MIN_LABEL}" if usd is not None
-           else f"liq — · {MIN_LABEL}")
-    tip = (f"STRATEGY dari likuiditas total: {info.get('reason')} → "
-           f"\"{info.get('text')}\" (teks verbatim permintaan user 2026-09-19; "
-           f"saldo > {MIN_LABEL} ambil cabang 70/30, < {MIN_LABEL} ambil "
-           "cabang 50/50; ambangnya sama dengan warna angka likuiditas kolom "
-           "RugCheck) — hanya saran penempatan likuiditas, bukan saringan: "
-           "barisnya tidak pernah dibuang karena kolom ini")
-    if usd is None:
-        tip += (" · likuiditas total tidak terbaca (GMGN/rugchecker.cc tidak "
-                "menjawab) sehingga dipakai cabang di bawah ambang")
-    return value, sub, tip
 
 
 def _finite_number(value):
@@ -537,12 +459,12 @@ def _fv_cell(row: dict, lane: str, *, top: bool = False) -> tuple[str, str, str]
 def _render_best_table(rows: list, *, lane: str,
                        key_prefix: str = "best-pool",
                        mark_tops: bool = True,
-                       show_strategy: bool = True) -> None:
+                       show_tax_dividend: bool = True) -> None:
     """Render the complete Best Pool table.
 
-    The visible table has all sixteen columns; the skipped table omits the two
-    final informational columns. One ``.bp-table-scroll`` wrapper keeps its
-    header and rows aligned while mobile users scroll horizontally.
+    The visible table has all fifteen columns; the skipped table omits the
+    final informational TAX/DIVIDEND column. One ``.bp-table-scroll`` wrapper
+    keeps its header and rows aligned while mobile users scroll horizontally.
     """
     import html
 
@@ -566,7 +488,7 @@ def _render_best_table(rows: list, *, lane: str,
     # ke URL yang tersimpan di hasil scan lama (``row["bubblemap"]["url"]``)
     # supaya baris hasil scan 2026-09-18 tetap mengarah ke map yang sama.
 
-    titles = _lane_titles(lane, show_strategy=show_strategy)
+    titles = _lane_titles(lane, show_tax_dividend=show_tax_dividend)
     table_rows: list[str] = []
     top_vol, top_fv, top_fee_tvl = (_table_tops(rows) if mark_tops
                                      else (None, None, None))
@@ -684,6 +606,15 @@ def _render_best_table(rows: list, *, lane: str,
              f"jumlah liquidity provider pool — saringan minimal "
              f"{BEST_LPS_MIN:g} LP (tepat {BEST_LPS_MIN:g} lolos); HIJAU bila "
              f"> {LP_GREEN_MIN_LP:g} LP"),
+            # Token:SOL tepat di kanan LPs (permintaan user 2026-09-26);
+            # labelnya satu angka di belakang koma, angka presisi penuh tetap
+            # ada di tooltip supaya rasio dekat batas 1:2 tidak menyesatkan.
+            (distribution_ratio, "token:SOL",
+             f"rasio perbandingan nilai USD token terhadap SOL: "
+             f"{distribution_ratio} (presisi penuh "
+             f"{liquidity_distribution_label(row, decimals=4)}). Filter "
+             f"akhir: nilai SOL minimal {BEST_SOL_TOKEN_MIN_RATIO:g}x nilai "
+             "token; 1:2 dan 1:6.52 lolos, 1:1.5 gagal."),
             (_num_or_dash(fee_pct, ".4g") + "%" if fee_pct is not None
              else "—", "pool fee",
              f"fee trading pool ini (tier fee pool DLMM) = "
@@ -696,11 +627,6 @@ def _render_best_table(rows: list, *, lane: str,
              f"active TVL {_usd_or_dash(active_tvl, compact=False)} · "
              f"TVL total {_usd_or_dash(row.get('tvl'), compact=False)}"
              f"{distribution_tip}"),
-            (distribution_ratio, "token:SOL",
-             f"rasio perbandingan nilai USD token terhadap SOL: "
-             f"{distribution_ratio}. Filter akhir: nilai SOL minimal "
-             f"{BEST_SOL_TOKEN_MIN_RATIO:g}x nilai token; 1:2 dan 1:6.52 "
-             "lolos, 1:1.5 gagal."),
             (_usd_or_dash(volume), delta_html,
              f"volume {window_txt} {_usd_or_dash(volume, compact=False)} · "
              f"perubahan {delta_txt} · rasio volume/active TVL "
@@ -719,11 +645,9 @@ def _render_best_table(rows: list, *, lane: str,
         rendered.extend(_cell(value, sub, tip) for value, sub, tip in cells)
         pool_html = pool_links_html(pool, mint=ca) or "<span>—</span>"
         rendered.append(f'<div class="pool-links">{pool_html}</div>')
-        if show_strategy:
+        if show_tax_dividend:
             tax_value, tax_sub, tax_tip = _tax_dividend_cell(row)
             rendered.append(_cell(tax_value, tax_sub, tax_tip))
-            value, sub, tip = _strategy_cell(row)
-            rendered.append(_cell(value, sub, tip))
         table_rows.append("<tr>" + "".join(
             f'<td data-label="{html.escape(title, quote=True)}">{body}</td>'
             for title, body in zip(titles, rendered)) + "</tr>")
@@ -780,7 +704,6 @@ def render_best_pool_scan() -> None:
     from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_FEE_TVL_MIN,
                                   BEST_LPS_MIN, BEST_SOL_TOKEN_MIN_RATIO,
                                   BEST_TOKEN_SOL_RATIO_LABEL, best_gap_summary,
-                                  gmgn_min_label,
                                   normalize_best_lane, row_best_dropped,
                                   row_best_final_gaps, row_volatility_zero,
                                   sort_best_rows, sort_hidden_best_rows)
@@ -823,12 +746,8 @@ def render_best_pool_scan() -> None:
                            "'dilewati' maupun di mana pun). Tiap "
                            "pool yang lolos dilengkapi laporan RugCheck "
                            "(verdict rugchecker.cc, angka likuiditas GMGN — "
-                           "sejak 2026-09-17) dan kolom STRATEGY di paling "
-                           "kanan (saran penempatan likuiditas dari ambang "
-                           f"{gmgn_min_label()} — sejak 2026-09-19) plus "
-                           "kolom TAX/DIVIDEND di kirinya (pajak transfer + "
-                           "mode reward; dividend menulis "
-                           "30 70 spotbidask full range).")):
+                           "sejak 2026-09-17) dan kolom TAX/DIVIDEND di "
+                           "paling kanan (pajak transfer + mode reward).")):
             with st.spinner("Memindai listing dan detail pool Meteora…"):
                 result = _run_lane_scan(active)
             st.session_state[best_lane_session_key(active)] = result
@@ -957,12 +876,11 @@ def render_best_pool_scan() -> None:
                 f"{len(hidden_rows)} pool {label} yang dilewati ditampilkan.")
             # Sorot hijau tua menyala khusus tabel utama — listing dilewati
             # barisnya sudah dianotasi merah gugur-ambang.
-            # Tabel "dilewati" tanpa kolom STRATEGY (konfirmasi user
-            # 2026-09-19: kolom baru itu hanya untuk tabel utama) — 13 kolom,
-            # sama seperti sebelum STRATEGY ada.
+            # Tabel "dilewati" tanpa kolom TAX/DIVIDEND (kolom informasi itu
+            # hanya untuk tabel utama) — 14 kolom dasar saja.
             _render_best_table(hidden_rows, lane=active,
                                key_prefix=f"best-pool-hidden-{active}",
-                               mark_tops=False, show_strategy=False)
+                               mark_tops=False, show_tax_dividend=False)
             return
         if not rows:
             # Pesan kosong menyebut PENYEBABNYA (2026-09-17, laporan user

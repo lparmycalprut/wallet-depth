@@ -20,12 +20,19 @@ class LinkTest(unittest.TestCase):
         body = links.pool_links_html("Pool A", mint="Mint&B")
         self.assertIn("https://app.meteora.ag/dlmm/Pool%20A", body)
         self.assertIn("https://www.hawkfi.ag/meteora/Pool%20A", body)
-        self.assertIn('class="hawkfi-copy-btn"', body)
-        self.assertIn('data-copy-url="https://www.hawkfi.ag/meteora/Pool%20A"', body)
-        self.assertIn("navigator.clipboard.writeText", body)
-        self.assertIn("document.execCommand(&#x27;copy&#x27;)", body)
         self.assertIn("v2.bubblemaps.io/map?address=Mint%26B", body)
         self.assertIn('target="_blank"', body)
+
+    def test_copy_hawkfi_button_is_removed(self):
+        """Tombol 📋 copy link HawkFi dihapus 2026-09-26 (permintaan user)."""
+        body = links.pool_links_html("Pool A", mint="Mint&B")
+        self.assertNotIn("hawkfi-copy-btn", body)
+        self.assertNotIn("data-copy-url", body)
+        self.assertNotIn("clipboard", body)
+        self.assertNotIn("execCommand", body)
+        self.assertNotIn("<button", body)
+        self.assertNotIn("📋", body)
+        self.assertFalse(hasattr(links, "hawkfi_copy_html"))
 
     def test_empty_inputs_do_not_make_dangling_links(self):
         self.assertEqual(links.external_links_html(""), "")

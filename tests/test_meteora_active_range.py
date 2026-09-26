@@ -201,45 +201,44 @@ class ActiveRangeCellTest(unittest.TestCase):
 
 class BestPoolColumnsTest(unittest.TestCase):
     def test_kolom_dan_judul_sinkron(self):
-        """Header, lebar kolom, dan isi sel harus satu jumlah (13/14 kolom).
+        """Header, lebar kolom, dan isi sel harus satu jumlah (14/15 kolom).
 
         Penataan 2026-09-16: Active Range naik ke kanan Volat (indeks 4) dan
         LPs tepat di kanannya (5). Penataan 2026-09-17 (permintaan user:
         *"hapus kolom dust %"* + *"hapus tombol favorit / watchlist"*):
-        kolom **Dust %MC** dan kolom **⭐** dicabut — A.TVL berada di indeks
-        8, RugCheck (11) tetap sebelum Pool (12, kini memuat tombol 📋 copy
-        link HawkFi).
+        kolom **Dust %MC** dan kolom **⭐** dicabut.
 
-        Penataan 2026-09-19 (permintaan user: *"hapus tentang bubblemap,
-        sisakan hyperlink ke bubblemapnya saja"* + *"Kasih kolom baru dipaling
-        kanan STRATEGY"*): kolom **Bubble Map** dicabut sehingga kolom
-        dasarnya kembali **13** dengan Pool di indeks 12 (tautan 🫧 pindah ke
-        dalamnya), dan tabel utama menambah **STRATEGY** di indeks 13 → 14
-        kolom. Tabel "▶ N pool dilewati" memakai ``show_strategy=False`` →
-        tetap 13 kolom.
+        Penataan 2026-09-26 (permintaan user: *"hapus juga kolom strategy dan
+        logika deteksi strategy apa yang dipakai"* + *"Token:SOL kolom ini
+        taruh dikanan LPs"*): kolom **STRATEGY** dicabut dan **Token:SOL**
+        pindah ke indeks 6 (tepat di kanan LPs) sehingga kolom dasarnya
+        **14** dengan Pool di indeks 13; tabel utama hanya menambah
+        **TAX/DIVIDEND** di indeks 14 → 15 kolom. Tabel "▶ N pool dilewati"
+        memakai ``show_tax_dividend=False`` → tetap 14 kolom.
         """
         for lane in ("24h", "30m"):
             with self.subTest(lane=lane):
                 titles = bp._lane_titles(lane)
                 self.assertEqual(len(titles),
-                                 len(bp._col_spec(show_strategy=True)))
-                self.assertEqual(len(titles), 16)
+                                 len(bp._col_spec(show_tax_dividend=True)))
+                self.assertEqual(len(titles), 15)
                 self.assertEqual(titles[4], "Active Range")
                 self.assertEqual(titles[5], "LPs")
-                self.assertEqual(titles[8], "A.TVL")
-                self.assertEqual(titles[11], "RugCheck")
-                self.assertEqual(titles[12], "Pool")
-                self.assertEqual(titles[13], "TAX/DIVIDEND")
-                self.assertEqual(titles[14], "STRATEGY")
-                tanpa_strategy = bp._lane_titles(lane, show_strategy=False)
-                self.assertEqual(len(tanpa_strategy),
-                                 len(bp._col_spec(show_strategy=False)))
-                self.assertEqual(len(tanpa_strategy), 13)
-                self.assertEqual(tanpa_strategy[-1], "Pool")
-                # Dust %MC, kolom ⭐, dan Bubble Map benar-benar hilang.
-                for hilang in ("Dust %MC", "Bubble Map", ""):
+                self.assertEqual(titles[6], "Token:SOL")
+                self.assertEqual(titles[9], "A.TVL")
+                self.assertEqual(titles[12], "RugCheck")
+                self.assertEqual(titles[13], "Pool")
+                self.assertEqual(titles[14], "TAX/DIVIDEND")
+                tanpa_tax = bp._lane_titles(lane, show_tax_dividend=False)
+                self.assertEqual(len(tanpa_tax),
+                                 len(bp._col_spec(show_tax_dividend=False)))
+                self.assertEqual(len(tanpa_tax), 14)
+                self.assertEqual(tanpa_tax[-1], "Pool")
+                # Dust %MC, kolom ⭐, Bubble Map, dan STRATEGY benar-benar
+                # hilang.
+                for hilang in ("Dust %MC", "Bubble Map", "STRATEGY", ""):
                     self.assertNotIn(hilang, titles)
-                    self.assertNotIn(hilang, tanpa_strategy)
+                    self.assertNotIn(hilang, tanpa_tax)
                 # "30m" = alias lama, tetap dipetakan ke tabel 24H.
                 self.assertEqual(bp._lane_titles("30m"), titles)
 
@@ -287,14 +286,18 @@ class ActiveRangeCardTest(unittest.TestCase):
         self.assertIn("+19.0%", body)
         self.assertIn("lebar 81.7%", body)
         # Tombol ⭐ watchlist DIHAPUS 2026-09-17 (permintaan user: "hapus
-        # tombol favorit / watchlist"); kolom terakhir kini memuat tombol 📋
-        # copy link HawkFi milik pool baris ini (bukan st.button → tanpa
-        # rerun) di samping tautan Meteora/HawkFi.
+        # tombol favorit / watchlist") dan tombol 📋 copy link HawkFi DIHAPUS
+        # 2026-09-26 — kolom Pool kini hanya berisi tautan Meteora/HawkFi
+        # (+ 🫧 Bubble Map).
         self.assertFalse(any("-star-" in (button.key or "")
                              for button in app.button))
-        self.assertIn('class="hawkfi-copy-btn"', body)
+        self.assertNotIn("hawkfi-copy-btn", body)
         self.assertIn("https://www.hawkfi.ag/meteora/" + CATE["pool_address"],
                       body)
+        # Token:SOL tepat di kanan LPs, satu angka di belakang koma.
+        self.assertIn(">Token:SOL<", body)
+        self.assertIn(">1:10<", body)
+        self.assertNotIn(">STRATEGY<", body)
 
 
 if __name__ == "__main__":

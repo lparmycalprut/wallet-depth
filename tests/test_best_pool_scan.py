@@ -80,15 +80,16 @@ class BestPoolGateTest(unittest.TestCase):
 
 class BestPoolTableTest(unittest.TestCase):
     def test_all_columns_and_headers_are_preserved(self):
-        titles = bp._lane_titles("24h", show_strategy=True)
+        titles = bp._lane_titles("24h", show_tax_dividend=True)
         self.assertEqual(titles, [
             "Token", "F/V", "Fee/TVL", "Volat", "Active Range", "LPs",
-            "Fee %", "MC", "A.TVL", "Token:SOL", "Vol 24h", "Top10",
-            "RugCheck", "Pool", "TAX/DIVIDEND", "STRATEGY",
+            "Token:SOL", "Fee %", "MC", "A.TVL", "Vol 24h", "Top10",
+            "RugCheck", "Pool", "TAX/DIVIDEND",
         ])
-        self.assertEqual(len(titles), len(bp._col_spec(show_strategy=True)))
-        self.assertEqual(bp._lane_titles("24h", show_strategy=False)[-1],
+        self.assertEqual(len(titles), len(bp._col_spec(show_tax_dividend=True)))
+        self.assertEqual(bp._lane_titles("24h", show_tax_dividend=False)[-1],
                          "Pool")
+        self.assertNotIn("STRATEGY", titles)
 
     def test_mobile_css_uses_horizontal_scroll_not_cards_or_hidden_columns(self):
         css = (ROOT / "dashboard_components.py").read_text(encoding="utf-8")
@@ -96,6 +97,10 @@ class BestPoolTableTest(unittest.TestCase):
         self.assertIn("overflow-x:auto !important", css)
         self.assertIn("min-width:1320px", css)
         self.assertIn(".bp-table th:nth-child(15)", css)
+        # Kolom ke-16 (STRATEGY) dihapus 2026-09-26 — lebarnya ikut dicabut.
+        self.assertNotIn(".bp-table th:nth-child(16)", css)
+        self.assertNotIn("hawkfi-copy-btn", css)
+        self.assertNotIn("bp-strategy-range", css)
         self.assertNotIn("mobile-hide-next", css)
         self.assertNotIn("nth-child(n+6)", css)
         ui = (ROOT / "best_pool_ui.py").read_text(encoding="utf-8")
