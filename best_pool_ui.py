@@ -57,8 +57,6 @@ def best_pool_tooltip() -> str:
     """Return the concise rule summary shown on the Best Pool title."""
     from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_FEE_TVL_MIN,
                                   BEST_FV_24H_MIN, BEST_LPS_MIN,
-                                  BEST_SOL_TOKEN_MAX_RATIO,
-                                  BEST_TOKEN_SOL_RATIO_LIMIT_LABEL,
                                   BEST_TOP10_MAX_PCT, BEST_VOL_SHOW_MAX,
                                   BEST_VOL_SHOW_MIN)
 
@@ -68,14 +66,12 @@ def best_pool_tooltip() -> str:
         f"F/V at least {BEST_FV_24H_MIN:g}×; Fee/TVL at least "
         f"{BEST_FEE_TVL_MIN:g}%; volatility {BEST_VOL_SHOW_MIN:g}%–"
         f"{BEST_VOL_SHOW_MAX:g}%; and Top10 below {BEST_TOP10_MAX_PCT:g}%. "
-        "After all cheap listing checks, the final distribution gate uses "
-        "official Meteora pool-detail USD side values: SOL liquidity may be "
-        f"at most {BEST_SOL_TOKEN_MAX_RATIO:g}× token liquidity "
-        f"(boundary token:SOL {BEST_TOKEN_SOL_RATIO_LIMIT_LABEL}). Exact 1:2 "
-        "and 1:1.5 pass; a more SOL-heavy ratio such as 1:6.52 fails. "
-        "Missing, invalid, non-SOL, or non-positive side data fails closed. "
-        "Passing rows then receive optional GMGN, RugCheck, and tax/dividend "
-        "information. Columns include Active Range (for example -34.5% / +19.0%). "
+        "Token:SOL from official Meteora pool details is informational only "
+        "and no longer filters a pool. The final gate uses GMGN token stats: "
+        "bundler plus phishing/entrapment must be at most 25% (exactly 25% "
+        "passes); unavailable risk data fails closed into the skipped table. "
+        "Passing rows then receive RugCheck and tax/dividend information. "
+        "Columns include Active Range (for example -34.5% / +19.0%). "
         "On mobile the full table and all headers remain available by "
         "horizontal scrolling."
     )
@@ -83,15 +79,14 @@ def best_pool_tooltip() -> str:
 
 
 
-# Relative desktop widths for the fourteen base columns (including Token:SOL,
-# yang sejak 2026-09-26 duduk tepat di kanan LPs — permintaan user:
-# *"Token:SOL kolom ini taruh dikanan LPs"*). Urutannya WAJIB sama dengan
+# Relative desktop widths for the fifteen base columns (including Token:SOL
+# and the informational Bundler metric). Urutannya WAJIB sama dengan
 # :func:`_lane_titles` dan urutan sel di :func:`_render_best_table`.
 _COL_SPEC = [1.4, 1.0, 0.75, 0.58, 0.95, 0.5, 0.72, 0.58, 0.55,
-             0.68, 0.8, 0.6, 1.0, 1.05]
+             0.68, 0.8, 0.6, 0.9, 1.0, 1.05]
 
 #: Indeks kolom **Pool** di ``_COL_SPEC`` (kolom terakhir tabel "dilewati").
-POOL_COL_INDEX = 13
+POOL_COL_INDEX = 14
 
 #: Indeks kolom **TAX/DIVIDEND** — satu-satunya kolom tambahan tabel utama
 #: (tepat di kanan ``POOL_COL_INDEX``). Kolom **STRATEGY** yang dulu berada
@@ -124,7 +119,7 @@ def _lane_titles(lane, *, show_tax_dividend: bool = True) -> list[str]:
     # ``meteora_screener.liquidity_distribution_label``).
     titles = ["Token", "F/V", "Fee/TVL", "Volat", "Active Range", "LPs",
               "Token:SOL", "Fee %", "MC", "A.TVL", "Vol 24h", "Top10",
-              "RugCheck", "Pool"]
+              "Bundler+Phishing", "RugCheck", "Pool"]
     if show_tax_dividend:
         titles.append(TAX_DIVIDEND_COL_TITLE)
     return titles
@@ -462,7 +457,7 @@ def _render_best_table(rows: list, *, lane: str,
                        show_tax_dividend: bool = True) -> None:
     """Render the complete Best Pool table.
 
-    The visible table has all fifteen columns; the skipped table omits the
+    The visible table has all sixteen columns; the skipped table omits the
     final informational TAX/DIVIDEND column. One ``.bp-table-scroll`` wrapper
     keeps its header and rows aligned while mobile users scroll horizontally.
     """
@@ -472,8 +467,8 @@ def _render_best_table(rows: list, *, lane: str,
 
     from dashboard_components import _number
     from links import external_links_html, pool_links_html
-    from meteora_screener import (BEST_LPS_MIN, BEST_SOL_TOKEN_MAX_RATIO,
-                                  BEST_TOP10_MAX_PCT, BEST_VOL_SHOW_MAX,
+    from meteora_screener import (BEST_LPS_MIN, BEST_TOP10_MAX_PCT,
+                                  BEST_VOL_SHOW_MAX,
                                   BEST_VOL_SHOW_MIN,
                                   liquidity_distribution_label,
                                   normalize_best_lane, row_fv_ratio,
@@ -481,6 +476,7 @@ def _render_best_table(rows: list, *, lane: str,
     # RugCheck = kolom baru 2026-09-16; fmt-nya tinggal di modul rugchecker
     # supaya card tidak pernah menebak struktur laporan API pihak ketiga.
     from rugchecker import cell_parts as _rug_cell_parts
+    from gmgn_bundler import cell_parts as _bundler_cell_parts
     # Modul ``bubblemaps`` TIDAK diimpor lagi di sini (2026-09-19): kolom
     # Bubble Map dihapus, yang tersisa hanya tautan 🫧 dari ``links``
     # (permintaan user: "hapus tentang bubblemap, sisakan hyperlink ke
@@ -513,8 +509,7 @@ def _render_best_table(rows: list, *, lane: str,
         distribution_tip = (
             f" · distribusi nilai USD token {_usd_or_dash(token_liq_usd, compact=False)} "
             f": SOL {_usd_or_dash(sol_liq_usd, compact=False)} = "
-            f"{distribution_ratio} (filter akhir: SOL maksimal "
-            f"{BEST_SOL_TOKEN_MAX_RATIO:g}× token)"
+            f"{distribution_ratio} (informasi; bukan filter)"
             if distribution_ratio != "—" else
             " · distribusi token:SOL tidak tersedia")
         volume = row.get("volume")
@@ -591,6 +586,14 @@ def _render_best_table(rows: list, *, lane: str,
         # diwarnai sejak 2026-09-17: HIJAU di atas ambang $500K, MERAH di
         # bawahnya (permintaan user), hitam bila tidak terukur. Warnanya
         # dihitung rugchecker.cell_parts lewat gmgn_liquidity.liq_color.
+        bundler_report = row.get("bundler") or {}
+        bundler_value, bundler_sub, bundler_tip = _bundler_cell_parts(
+            bundler_report)
+        bundler_color = (str(bundler_report.get("color") or "")
+                         if isinstance(bundler_report, dict) else "")
+        if bundler_color and bundler_value != "—":
+            bundler_value = (f'<span style="color:{bundler_color};'
+                             f'font-weight:700;">{bundler_value}</span>')
         rug_report = row.get("rugcheck") or {}
         rug_value, rug_sub, rug_tip = _rug_cell_parts(rug_report)
         rug_color = str(rug_report.get("color") or "") if isinstance(rug_report, dict) else ""
@@ -612,9 +615,8 @@ def _render_best_table(rows: list, *, lane: str,
             (distribution_ratio, "token:SOL",
              f"rasio perbandingan nilai USD token terhadap SOL: "
              f"{distribution_ratio} (presisi penuh "
-             f"{liquidity_distribution_label(row, decimals=4)}). Filter "
-             f"akhir: nilai SOL maksimal {BEST_SOL_TOKEN_MAX_RATIO:g}x nilai "
-             "token; 1:2 dan 1:1.5 lolos, 1:6.52 gagal."),
+             f"{liquidity_distribution_label(row, decimals=4)}). Hanya "
+             "informasi; rasio Token:SOL tidak lagi menyaring pool."),
             (_num_or_dash(fee_pct, ".4g") + "%" if fee_pct is not None
              else "—", "pool fee",
              f"fee trading pool ini (tier fee pool DLMM) = "
@@ -639,6 +641,7 @@ def _render_best_table(rows: list, *, lane: str,
              "ditampilkan (permintaan user: \"jika ada top 10 >= 20% jangan "
              "tampilkan\"; tanpa angka = tidak terukur, barisnya tetap "
              "tampil)"),
+            (bundler_value, bundler_sub, bundler_tip),
             (rug_value, rug_sub, rug_tip),
         )
         rendered = [token_html]
@@ -682,8 +685,11 @@ def _run_lane_scan(lane: str) -> dict:
                 "dropped_lps": 0, "dropped_fv": 0, "dropped_total": 0,
                 "failed_liquidity_ratio": 0,
                 "liquidity_distribution_failed": 0,
-                "liquidity_distribution_filter": True,
-                "rugcheck_failed": 0, "bubblemap_failed": 0, "lane": lane}
+                "hidden_distribution_failed": 0,
+                "liquidity_distribution_filter": False,
+                "rugcheck_failed": 0, "bundler_failed": 0,
+                "bundler_filter_failed": 0,
+                "bubblemap_failed": 0, "lane": lane}
 
 
 
@@ -702,8 +708,7 @@ def render_best_pool_scan() -> None:
     import streamlit as st
 
     from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_FEE_TVL_MIN,
-                                  BEST_LPS_MIN, BEST_SOL_TOKEN_MAX_RATIO,
-                                  BEST_TOKEN_SOL_RATIO_LIMIT_LABEL, best_gap_summary,
+                                  BEST_LPS_MIN, best_gap_summary,
                                   normalize_best_lane, row_best_dropped,
                                   row_best_final_gaps, row_volatility_zero,
                                   sort_best_rows, sort_hidden_best_rows)
@@ -736,17 +741,15 @@ def render_best_pool_scan() -> None:
                            f"{gate} + active TVL ≥ "
                            f"${BEST_ACTIVE_TVL_MIN / 1000:g}K + LPs ≥ "
                            f"{BEST_LPS_MIN:g} + volatility 1%–10% + Top10 < 20% "
-                           f"+ Fee/TVL ≥ {BEST_FEE_TVL_MIN:g}%. Filter terakhir "
-                           f"membatasi nilai USD SOL maksimal "
-                           f"{BEST_SOL_TOKEN_MAX_RATIO:g}× token (batas token:SOL "
-                           f"{BEST_TOKEN_SOL_RATIO_LIMIT_LABEL}). Semua dijalankan "
-                           "sebagai tahap akhir setelah filter murah. Kandidat "
-                           "yang gagal langsung dilewati. F/V "
-                           "di bawah 2× dibuang total (tidak muncul di "
-                           "'dilewati' maupun di mana pun). Tiap "
-                           "pool yang lolos dilengkapi laporan RugCheck "
-                           "(verdict rugchecker.cc, angka likuiditas GMGN — "
-                           "sejak 2026-09-17) dan kolom TAX/DIVIDEND di "
+                           f"+ Fee/TVL ≥ {BEST_FEE_TVL_MIN:g}%. Token:SOL hanya "
+                           "informasi. Filter terakhir: Bundler + Phishing GMGN "
+                           "maksimal 25% (tepat 25% lolos); data risiko yang "
+                           "tidak terbaca masuk pool dilewati. F/V di bawah "
+                           "2× dibuang total (tidak muncul di 'dilewati' maupun "
+                           "di mana pun). Tiap pool yang lolos dilengkapi "
+                           "deteksi Bundler+Phishing GMGN, "
+                           "laporan RugCheck (verdict rugchecker.cc, angka "
+                           "likuiditas GMGN) dan kolom TAX/DIVIDEND di "
                            "paling kanan (pajak transfer + mode reward).")):
             with st.spinner("Memindai listing dan detail pool Meteora…"):
                 result = _run_lane_scan(active)
@@ -828,10 +831,10 @@ def render_best_pool_scan() -> None:
                     if showing_hidden else f"▶ {hidden} pool dilewati")
             if st.button(view, key=f"best-pool-toggle-hidden-{active}",
                          help=f"Tampilkan kandidat {label} yang di-skip karena "
-                              "gugur F/V (2×–5×), Fee/TVL, atau filter akhir "
-                              f"SOL > {BEST_SOL_TOKEN_MAX_RATIO:g}× token "
-                              f"(batas token:SOL {BEST_TOKEN_SOL_RATIO_LIMIT_LABEL}). "
-                              "F/V di bawah 2× tidak ikut di sini — barisnya "
+                              "gugur F/V (2×–3×), Fee/TVL, atau filter akhir "
+                              "Bundler + Phishing GMGN > 25%/tak terbaca. "
+                              "Token:SOL hanya informasi. F/V di bawah 2× "
+                              "tidak ikut di sini — barisnya "
                               "dibuang total.",
                          use_container_width=True):
                 st.session_state[best_lane_hidden_key(active)] = \
@@ -840,9 +843,12 @@ def render_best_pool_scan() -> None:
         if error:
             st.warning(f"Meteora API: {error}")
         gmgn_failed = int(result.get("gmgn_failed") or 0)
-        ratio_failed = int(result.get("failed_liquidity_ratio") or 0)
+        bundler_failed = int(result.get("bundler_failed") or 0)
+        bundler_filter_failed = int(result.get("bundler_filter_failed") or 0)
         distribution_failed = int(
             result.get("liquidity_distribution_failed") or 0)
+        hidden_distribution_failed = int(
+            result.get("hidden_distribution_failed") or 0)
         tax_failed = int(result.get("tax_failed") or 0)
         if fetched:
             quote_txt = (f" · {skipped_quote} pool quote dilewati"
@@ -851,13 +857,17 @@ def render_best_pool_scan() -> None:
                        if rug_failed else "")
             gmgn_txt = (f" · {gmgn_failed} likuiditas GMGN tak terbaca"
                         if gmgn_failed else "")
-            ratio_txt = (
-                f" · {ratio_failed} pool dengan SOL > "
-                f"{BEST_SOL_TOKEN_MAX_RATIO:g}× token"
-                if ratio_failed else "")
+            bundler_txt = (f" · {bundler_failed} Bundler+Phishing GMGN tak terbaca"
+                           if bundler_failed else "")
+            bundler_filter_txt = (
+                f" · {bundler_filter_failed} pool gagal filter Bundler+Phishing"
+                if bundler_filter_failed else "")
             distribution_txt = (
                 f" · {distribution_failed} distribusi token:SOL tak terbaca/non-SOL"
                 if distribution_failed else "")
+            hidden_distribution_txt = (
+                f" · {hidden_distribution_failed} Token:SOL pool dilewati tak terbaca"
+                if hidden_distribution_failed else "")
             tax_txt = (f" · {tax_failed} tax/dividend tak terbaca"
                        if tax_failed else "")
             # Rekap "N tanpa Bubble Map" dihapus 2026-09-19 bersama kolomnya
@@ -867,7 +877,8 @@ def render_best_pool_scan() -> None:
             # caption tidak menyebut kolom yang sudah tidak ada.
             st.caption(f"{len(rows)} pool {label} tampil · {hidden} "
                        f"dilewati · listing {fetched} pool{quote_txt}"
-                       f"{rug_txt}{gmgn_txt}{ratio_txt}{distribution_txt}{tax_txt}.")
+                       f"{rug_txt}{gmgn_txt}{bundler_txt}{bundler_filter_txt}"
+                       f"{distribution_txt}{hidden_distribution_txt}{tax_txt}.")
         if showing_hidden:
             if not hidden_rows:
                 st.info("Tidak ada pool tersembunyi di lane ini.")

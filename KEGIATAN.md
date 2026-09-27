@@ -1,5 +1,38 @@
 # Kegiatan
 
+## 2026-09-27 — F/V 3× dan gate Bundler+Phishing
+
+- Menurunkan minimum F/V Best Pool dari **5× menjadi 3×** (inklusif).
+- Menghapus Token:SOL sebagai filter; kolom dan nilai USD resminya tetap
+  ditampilkan sebagai informasi pada pool lolos maupun pool dilewati.
+- Mengganti filter terakhir menjadi statistik GMGN **Bundler +
+  Phishing/Entrapment ≤ 25%**. Tepat 25% lolos; di atas 25% atau data wajib
+  tidak terbaca masuk tabel pool dilewati.
+- RugCheck dan tax/dividend hanya dijalankan setelah gate risiko GMGN lolos.
+
+## 2026-09-27 — Token:SOL pada pool dilewati
+
+- Baris yang masih tersedia lewat tombol **pool dilewati** sekarang ikut
+  mengambil detail resmi Meteora dan menampilkan nilai **Token:SOL**.
+- Fetch tambahan hanya untuk baris dilewati yang belum memiliki laporan
+  distribusi; hasilnya murni informasi dan tidak menjadi jalur lolos alternatif.
+- Jika detail gagal, sel tetap `—` dan pool tetap berada di tabel dilewati.
+
+## 2026-09-27 — deteksi bundler token
+
+Permintaan user: *"bisakah kamu deteksi bundler untuk token yang kita scan?"*
+
+- Menambahkan kolom **Bundler** untuk pool yang lolos scan.
+- Sumbernya statistik per-token GMGN
+  `top_bundler_trader_percentage` (porsi supply yang diperdagangkan wallet
+  yang diklasifikasikan GMGN sebagai bundler), dilengkapi konteks dev dan
+  sniper bila tersedia.
+- Klasifikasi informasi: `< 5%` rendah, `5%–<15%` waspada, dan `≥ 15%`
+  berisiko. Data gagal/hilang ditulis `—`, tidak ditebak dan tidak menyaring
+  pool.
+- Request berjalan paralel dan memakai cache 15 menit; tabel utama kini 16
+  kolom dan tetap dapat digeser horizontal di ponsel.
+
 ## 2026-09-27 — klarifikasi batas distribusi SOL
 
 Permintaan user: *"maksimal SOL-nya adalah 2× token."*

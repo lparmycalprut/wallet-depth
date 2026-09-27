@@ -415,7 +415,7 @@ class RowBestGapsIntegrationTest(unittest.TestCase):
         self.assertEqual(ms.row_best_gaps(_row(), lane="24h"), [])
 
     def test_alasan_fv_tetap_lebih_keras(self):
-        row = _row(fee_active_tvl_ratio=2.0)  # F/V = 0,33× < 5×
+        row = _row(fee_active_tvl_ratio=2.0)  # F/V = 0,33× < 3×
         row["gmgn_liq"] = {"ok": True, "usd": 10_000.0,
                            "below_cutoff": False, "source": "gmgn_token_info"}
         gaps = ms.row_best_gaps(row, lane="24h")
@@ -595,7 +595,7 @@ class ScanLaneGmgnTest(unittest.TestCase):
                           for row in rows]), \
                 patch("gmgn_liquidity.attach_total_liquidity",
                       side_effect=fake_gmgn):
-            return ms.scan_best_lane("24h", rugcheck=True)
+            return ms.scan_best_lane("24h", rugcheck=True, bundler=False)
 
     def test_dibawah_ambang_tetap_tampil(self):
         """Filter likuiditas dihapus (2026-09-17 malam) — pool tipis tetap
@@ -670,7 +670,7 @@ class ScanLaneGmgnTest(unittest.TestCase):
                           for row in rows]), \
                 patch("gmgn_liquidity.attach_total_liquidity",
                       side_effect=fake_gmgn_dead):
-            result = ms.scan_best_lane("24h")
+            result = ms.scan_best_lane("24h", bundler=False)
         self.assertEqual([r["pool_address"] for r in result["rows"]],
                          ["P-BIG", "P-SMALL"])
         self.assertEqual(result["hidden_rows"], [])
@@ -684,7 +684,7 @@ class ScanLaneGmgnTest(unittest.TestCase):
                 patch("rugchecker.attach_to_rows",
                       side_effect=lambda rows, **_kw: rows), \
                 patch("gmgn_liquidity.attach_total_liquidity") as attach:
-            result = ms.scan_best_lane("24h", rugcheck=True, gmgn=False)
+            result = ms.scan_best_lane("24h", rugcheck=True, gmgn=False, bundler=False)
         attach.assert_not_called()
         self.assertEqual([r["pool_address"] for r in result["rows"]],
                          ["P-BIG"])

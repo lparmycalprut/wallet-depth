@@ -1,4 +1,4 @@
-"""Filter akhir distribusi likuiditas USD token:SOL pada Best Pool."""
+"""Token:SOL is retained as information but no longer filters Best Pool."""
 import inspect
 import unittest
 from unittest import mock
@@ -74,7 +74,7 @@ class ThresholdTest(unittest.TestCase):
         self.assertEqual(ms.filter_by(),
                          "pool_type=dlmm&&active_tvl>=50000")
 
-    def test_boundary_satu_banding_dua_inklusif(self):
+    def test_semua_rasio_hanya_informasi(self):
         base = {"timeframe": "24h", "fee_active_tvl_ratio": 40.0,
                 "volatility": 6.0, "total_lps": 100,
                 "top_holders_pct": 10.0}
@@ -84,19 +84,15 @@ class ThresholdTest(unittest.TestCase):
         self.assertEqual(ms.liquidity_distribution_label(exact), "1:2")
         self.assertEqual(ms.row_best_final_gaps(exact), [])
         self.assertEqual(ms.liquidity_distribution_label(over_sol_cap), "1:2")
-        self.assertIn("maksimum 2×",
-                      ms.row_best_final_gaps(over_sol_cap)[0])
+        self.assertEqual(ms.row_best_final_gaps(over_sol_cap), [])
         self.assertEqual(ms.liquidity_distribution_label(under_sol_cap), "1:2")
         self.assertEqual(ms.row_best_final_gaps(under_sol_cap), [])
-        # Label kolom = 1 angka di belakang koma (permintaan user
-        # 2026-09-26); teks alasan gugur tetap presisi penuh supaya rasio
-        # dekat boundary tidak terbaca kontradiktif.
+        # Label kolom tetap satu angka di belakang koma; presisi penuh masih
+        # tersedia untuk tooltip walaupun tidak lagi menjadi alasan gugur.
         self.assertEqual(
             ms.liquidity_distribution_label(over_sol_cap, decimals=4), "1:2.0004")
         self.assertEqual(
             ms.liquidity_distribution_label(under_sol_cap, decimals=4), "1:1.9996")
-        self.assertIn("token:SOL 1:2.0004",
-                      ms.row_best_final_gaps(over_sol_cap)[0])
 
     def test_label_kolom_satu_angka_di_belakang_koma(self):
         base = {"timeframe": "24h"}
@@ -116,15 +112,14 @@ class ThresholdTest(unittest.TestCase):
             "1:10")
         self.assertEqual(ms.liquidity_distribution_label(base), "—")
 
-    def test_hilang_error_dan_non_sol_gagal_tertutup(self):
+    def test_hilang_error_dan_non_sol_tidak_menggugurkan(self):
         row = {"timeframe": "24h", "fee_active_tvl_ratio": 40.0,
                "volatility": 6.0, "total_lps": 100,
                "top_holders_pct": 10.0}
-        self.assertIn("belum diperiksa", ms.row_best_final_gaps(row)[0])
-        row["liquidity_distribution"] = _report(0, ok=False,
-                                                  error="pool bukan pasangan token-SOL")
-        self.assertIn("bukan pasangan token-SOL",
-                      ms.row_best_final_gaps(row)[0])
+        self.assertEqual(ms.row_best_final_gaps(row), [])
+        row["liquidity_distribution"] = _report(
+            0, ok=False, error="pool bukan pasangan token-SOL")
+        self.assertEqual(ms.row_best_final_gaps(row), [])
 
 
 class OfficialPoolDetailTest(unittest.TestCase):
@@ -162,7 +157,7 @@ class OfficialPoolDetailTest(unittest.TestCase):
 
 
 class PipelineTest(unittest.TestCase):
-    def test_rasio_adalah_filter_terakhir_sebelum_enrichment(self):
+    def test_rasio_tidak_menyaring_sebelum_enrichment(self):
         pools = [
             _pool("PASS"),
             _pool("BOUNDARY"),
@@ -177,7 +172,10 @@ class PipelineTest(unittest.TestCase):
             seen_distribution.extend(row["pool_address"] for row in rows)
             ratios = {"PASS": _report(1.0), "BOUNDARY": _report(0.5),
                       "RATIOFAIL": _report(0.1),
-                      "APIERROR": _report(0, ok=False, error="timeout")}
+                      "APIERROR": _report(0, ok=False, error="timeout"),
+                      # Gagal cheap gate, tetapi tetap butuh Token:SOL untuk
+                      # tabel "pool dilewati".
+                      "FVFAIL": _report(0.75)}
             for row in rows:
                 row["liquidity_distribution"] = ratios[row["pool_address"]]
             return rows
@@ -191,22 +189,24 @@ class PipelineTest(unittest.TestCase):
                                   side_effect=fake_distribution), \
                 mock.patch("gmgn_liquidity.attach_total_liquidity",
                            side_effect=fake_market):
-            result = ms.scan_best_lane(rugcheck=False, gmgn=True, tax=False)
+            result = ms.scan_best_lane(rugcheck=False, gmgn=True, bundler=False, tax=False)
 
         self.assertEqual(seen_distribution,
+                         ["PASS", "BOUNDARY", "RATIOFAIL", "APIERROR",
+                          "FVFAIL"])
+        self.assertEqual(seen_market_enrichment,
                          ["PASS", "BOUNDARY", "RATIOFAIL", "APIERROR"])
-        self.assertEqual(seen_market_enrichment, ["PASS", "BOUNDARY"])
-        self.assertEqual([row["pool_address"] for row in result["rows"]],
-                         ["BOUNDARY", "PASS"])
+        self.assertEqual({row["pool_address"] for row in result["rows"]},
+                         {"PASS", "BOUNDARY", "RATIOFAIL", "APIERROR"})
         self.assertEqual({row["pool_address"] for row in result["hidden_rows"]},
-                         {"RATIOFAIL", "APIERROR", "FVFAIL"})
-        self.assertEqual(result["failed_liquidity_ratio"], 1)
+                         {"FVFAIL"})
+        self.assertEqual(result["failed_liquidity_ratio"], 0)
         self.assertEqual(result["liquidity_distribution_failed"], 1)
-        self.assertTrue(result["liquidity_distribution_filter"])
+        self.assertFalse(result["liquidity_distribution_filter"])
         by_pool = {row["pool_address"]: row for row in result["hidden_rows"]}
-        self.assertIn("SOL 10× token > maksimum 2×",
-                      by_pool["RATIOFAIL"]["best_gaps"][0])
-        self.assertIn("timeout", by_pool["APIERROR"]["best_gaps"][0])
+        self.assertEqual(ms.liquidity_distribution_label(by_pool["FVFAIL"]),
+                         "1:1.3")
+        self.assertEqual(result["hidden_distribution_failed"], 0)
 
 
 if __name__ == "__main__":

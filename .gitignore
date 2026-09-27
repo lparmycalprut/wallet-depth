@@ -36,9 +36,10 @@ alert_settings.json
 # kebenaran; ditulis oleh modul rugchecker.py (permintaan user 2026-09-16).
 rugchecker_cache.json
 
-# Cache likuiditas total GMGN per mint — hasil HTTP, bukan sumber kebenaran;
-# ditulis oleh modul gmgn_liquidity.py (permintaan user 2026-09-17).
+# Cache likuiditas total + statistik bundler GMGN per mint — hasil HTTP,
+# bukan sumber kebenaran.
 gmgn_liquidity_cache.json
+gmgn_bundler_cache.json
 
 # Cache Bubble Map (bubblemaps.io) — hasil HTTP per mint, bukan sumber
 # kebenaran; ditulis oleh modul bubblemaps.py (2026-09-18).

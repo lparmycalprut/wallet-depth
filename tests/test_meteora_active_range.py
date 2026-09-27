@@ -201,7 +201,7 @@ class ActiveRangeCellTest(unittest.TestCase):
 
 class BestPoolColumnsTest(unittest.TestCase):
     def test_kolom_dan_judul_sinkron(self):
-        """Header, lebar kolom, dan isi sel harus satu jumlah (14/15 kolom).
+        """Header, lebar kolom, dan isi sel harus satu jumlah (15/16 kolom).
 
         Penataan 2026-09-16: Active Range naik ke kanan Volat (indeks 4) dan
         LPs tepat di kanannya (5). Penataan 2026-09-17 (permintaan user:
@@ -211,28 +211,30 @@ class BestPoolColumnsTest(unittest.TestCase):
         Penataan 2026-09-26 (permintaan user: *"hapus juga kolom strategy dan
         logika deteksi strategy apa yang dipakai"* + *"Token:SOL kolom ini
         taruh dikanan LPs"*): kolom **STRATEGY** dicabut dan **Token:SOL**
-        pindah ke indeks 6 (tepat di kanan LPs) sehingga kolom dasarnya
-        **14** dengan Pool di indeks 13; tabel utama hanya menambah
-        **TAX/DIVIDEND** di indeks 14 → 15 kolom. Tabel "▶ N pool dilewati"
-        memakai ``show_tax_dividend=False`` → tetap 14 kolom.
+        pindah ke indeks 6 (tepat di kanan LPs). Kolom Bundler ditambahkan
+        sebagai informasi di indeks 12, sehingga kolom dasarnya **15** dengan
+        Pool di indeks 14; tabel utama menambah **TAX/DIVIDEND** di indeks 15
+        → 16 kolom. Tabel "▶ N pool dilewati" memakai
+        ``show_tax_dividend=False`` → tetap 15 kolom.
         """
         for lane in ("24h", "30m"):
             with self.subTest(lane=lane):
                 titles = bp._lane_titles(lane)
                 self.assertEqual(len(titles),
                                  len(bp._col_spec(show_tax_dividend=True)))
-                self.assertEqual(len(titles), 15)
+                self.assertEqual(len(titles), 16)
                 self.assertEqual(titles[4], "Active Range")
                 self.assertEqual(titles[5], "LPs")
                 self.assertEqual(titles[6], "Token:SOL")
                 self.assertEqual(titles[9], "A.TVL")
-                self.assertEqual(titles[12], "RugCheck")
-                self.assertEqual(titles[13], "Pool")
-                self.assertEqual(titles[14], "TAX/DIVIDEND")
+                self.assertEqual(titles[12], "Bundler+Phishing")
+                self.assertEqual(titles[13], "RugCheck")
+                self.assertEqual(titles[14], "Pool")
+                self.assertEqual(titles[15], "TAX/DIVIDEND")
                 tanpa_tax = bp._lane_titles(lane, show_tax_dividend=False)
                 self.assertEqual(len(tanpa_tax),
                                  len(bp._col_spec(show_tax_dividend=False)))
-                self.assertEqual(len(tanpa_tax), 14)
+                self.assertEqual(len(tanpa_tax), 15)
                 self.assertEqual(tanpa_tax[-1], "Pool")
                 # Dust %MC, kolom ⭐, Bubble Map, dan STRATEGY benar-benar
                 # hilang.

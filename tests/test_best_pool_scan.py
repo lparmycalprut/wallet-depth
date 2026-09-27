@@ -40,6 +40,7 @@ def row(**overrides):
 class BestPoolGateTest(unittest.TestCase):
     def test_threshold_constants(self):
         self.assertEqual(ms.BEST_ACTIVE_TVL_MIN, 100_000.0)
+        self.assertEqual(ms.BEST_FV_24H_MIN, 3.0)
         self.assertEqual(ms.BEST_LPS_MIN, 100.0)
         self.assertEqual(ms.BEST_SOL_TOKEN_MAX_RATIO, 2.0)
         self.assertEqual(ms.BEST_TOKEN_SOL_MIN_RATIO, 0.5)
@@ -48,27 +49,24 @@ class BestPoolGateTest(unittest.TestCase):
         self.assertEqual(ms.row_best_gaps(row()), [])
         self.assertEqual(ms.row_best_gaps(row(total_lps=99))[0],
                          "24H: LPs 99 < 100 — LP terlalu sedikit")
-        self.assertIn("F/V < 5×", ms.row_best_gaps(
-            row(fee_active_tvl_ratio=29.9, volatility=6.0))[0])
+        self.assertIn("F/V < 3×", ms.row_best_gaps(
+            row(fee_active_tvl_ratio=17.9, volatility=6.0))[0])
         self.assertIn("Fee/TVL 29.9% < 30%", ms.row_best_gaps(
             row(fee_active_tvl_ratio=29.9, volatility=5.0))[0])
         self.assertIn("Top10 20%", ms.row_best_gaps(
             row(top_holders_pct=20.0))[0])
 
-    def test_distribution_gate_is_additional_and_fail_closed(self):
-        self.assertEqual(ms.row_best_final_gaps(row()), [])
-        failed = row(liquidity_distribution={
+    def test_distribution_is_information_and_security_is_final_gate(self):
+        extreme = row(liquidity_distribution={
             "checked": True, "ok": True,
-            "token_value_usd": 40_000.0,
-            "sol_value_usd": 100_000.0,
-            "token_to_sol_ratio": 0.4,
-            "error": "",
-        })
-        self.assertIn("SOL 2.5× token > maksimum 2×",
-                      ms.row_best_final_gaps(failed)[0])
-        missing = row(liquidity_distribution={
-            "checked": True, "ok": False, "error": "timeout"})
-        self.assertIn("timeout", ms.row_best_final_gaps(missing)[0])
+            "token_value_usd": 10_000.0, "sol_value_usd": 100_000.0,
+            "token_to_sol_ratio": 0.1, "error": ""})
+        self.assertEqual(ms.row_best_final_gaps(extreme), [])
+        risky = row(bundler={
+            "ok": True, "bundler_rate": 0.20, "phishing_rate": 0.06,
+            "combined_rate": 0.26})
+        self.assertIn("Bundler+Phishing 26.00%",
+                      ms.row_best_final_gaps(risky)[0])
 
     def test_scanner_has_no_wallet_analysis_parameters_or_imports(self):
         params = inspect.signature(ms.scan_best_lane).parameters
@@ -85,7 +83,7 @@ class BestPoolTableTest(unittest.TestCase):
         self.assertEqual(titles, [
             "Token", "F/V", "Fee/TVL", "Volat", "Active Range", "LPs",
             "Token:SOL", "Fee %", "MC", "A.TVL", "Vol 24h", "Top10",
-            "RugCheck", "Pool", "TAX/DIVIDEND",
+            "Bundler+Phishing", "RugCheck", "Pool", "TAX/DIVIDEND",
         ])
         self.assertEqual(len(titles), len(bp._col_spec(show_tax_dividend=True)))
         self.assertEqual(bp._lane_titles("24h", show_tax_dividend=False)[-1],
@@ -96,10 +94,10 @@ class BestPoolTableTest(unittest.TestCase):
         css = (ROOT / "dashboard_components.py").read_text(encoding="utf-8")
         self.assertIn(".bp-table-scroll", css)
         self.assertIn("overflow-x:auto !important", css)
-        self.assertIn("min-width:1320px", css)
-        self.assertIn(".bp-table th:nth-child(15)", css)
-        # Kolom ke-16 (STRATEGY) dihapus 2026-09-26 — lebarnya ikut dicabut.
-        self.assertNotIn(".bp-table th:nth-child(16)", css)
+        self.assertIn("min-width:1458px", css)
+        self.assertIn(".bp-table th:nth-child(16)", css)
+        # Bundler ditambahkan tanpa menghidupkan kembali kolom STRATEGY.
+        self.assertNotIn(".bp-table th:nth-child(17)", css)
         self.assertNotIn("hawkfi-copy-btn", css)
         self.assertNotIn("bp-strategy-range", css)
         self.assertNotIn("mobile-hide-next", css)
@@ -113,9 +111,10 @@ class BestPoolTableTest(unittest.TestCase):
         tip = bp.best_pool_tooltip()
         self.assertIn("$100,000", tip)
         self.assertIn("LPs at least 100", tip)
-        self.assertIn("Exact 1:2", tip)
-        self.assertIn("1:1.5 pass", tip)
-        self.assertIn("1:6.52 fails", tip)
+        self.assertIn("F/V at least 3×", tip)
+        self.assertIn("Token:SOL", tip)
+        self.assertIn("informational only", tip)
+        self.assertIn("at most 25%", tip)
         self.assertIn("horizontal scrolling", tip)
 
     def test_run_lane_scan_calls_pool_only_scanner(self):
