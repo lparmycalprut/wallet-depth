@@ -96,7 +96,7 @@ BEST_VOLATILITY_MIN = 2.0
 BEST_VOLUME_24H_MIN = 1_000_000.0
 # Independent concentration metric supplied by Meteora; this is not the
 # removed wallet-depth analysis subsystem.
-BEST_TOP10_MAX_PCT = 20.0
+BEST_TOP10_MAX_PCT = 25.0
 BEST_VOL_SHOW_MIN = 1.0
 BEST_VOL_SHOW_MAX = 10.0
 BEST_LPS_MIN = 100.0
@@ -1216,8 +1216,8 @@ def row_top10_over(row: dict | None):
     Satu-satunya pembaca batas: dipakai :func:`row_top10_ok`, teks alasan di
     :func:`row_best_gaps`, dan tes — jadi angka di tooltip card, teks "gugur"
     di listing disembunyikan, dan keputusan saringan tidak pernah bisa beda.
-    Batas diarahkan seperti permintaan user ("jika ada top 10 >= 20% jangan
-    tampilkan"): Top10 tepat 20,0% **ikut dibuang**.
+    Batas diarahkan seperti aturan layar: Top10 >= 25% jangan ditampilkan.
+    Top10 tepat 25,0% **ikut dibuang**.
     """
     pct = row_top10_pct(row)
     if pct is None or pct < float(BEST_TOP10_MAX_PCT):
@@ -1249,7 +1249,7 @@ def row_volatility_gap(volatility) -> str:
 
 
 def row_top10_ok(row: dict | None) -> bool:
-    """Return true unless Meteora reports Top-10 concentration >= 20%."""
+    """Return true unless Meteora reports Top-10 concentration >= 25%."""
     return row_top10_over(row) is None
 
 
@@ -1319,7 +1319,7 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
 
     Gates are validated in this order: finite F/V inputs, non-zero volatility,
     LP count >= 100, volatility range, F/V >= 3, then Meteora's independent
-    Top-10 supply concentration metric below 20%. Fee/TVL is informational.
+    Top-10 supply concentration metric below 25%. Fee/TVL is informational.
     """
     row = row or {}
     fee = _maybe_float(row.get("fee_active_tvl_ratio"))
@@ -1363,7 +1363,7 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
         # Fee/TVL hanya informasi (filter dinonaktifkan): angka tetap tampil
         # di kolom dan tetap dipakai untuk pengurutan, tetapi tidak boleh
         # menggugurkan pool. Saringan terakhir setelah ambang lane adalah
-        # Top10 >= 20% (2026-09-16).
+        # Top10 >= 25%.
         # Label lane ikut di depan supaya teks "gugur" di tabel disembunyikan
         # konsisten dengan teks F/V.
         over = row_top10_over(row)

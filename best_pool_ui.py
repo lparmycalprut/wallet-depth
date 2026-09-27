@@ -435,7 +435,7 @@ def _fv_cell(row: dict, lane: str, *, top: bool = False) -> tuple[str, str, str]
            f"kedua listing {label} + syarat lane ({gate}); "
            "lebih tinggi = fee lebih dominan")
     if fails:
-        # Gugur F/V, volatility di luar 1%–10%, atau Top10 >= 20% — semuanya
+        # Gugur F/V, volatility di luar 1%–10%, atau Top10 >= 25% — semuanya
         # dibaca dari satu sumber (row_best_gaps) supaya teks sel tidak pernah
         # ketinggalan aturan baru.
         sub = f"gugur: {fails[0].split(': ', 1)[-1]}"
@@ -637,7 +637,7 @@ def _render_best_table(rows: list, *, lane: str,
             (_pct_or_dash(row.get("top_holders_pct")), "top10",
              "10 akun teratas token base (% of supply) — saringan sejak "
              f"2026-09-16: Top10 **{BEST_TOP10_MAX_PCT:g}% atau lebih** tidak "
-             "ditampilkan (permintaan user: \"jika ada top 10 >= 20% jangan "
+             "ditampilkan (permintaan user: \"jika ada top 10 >= 25% jangan "
              "tampilkan\"; tanpa angka = tidak terukur, barisnya tetap "
              "tampil)"),
             (bundler_value, bundler_sub, bundler_tip),
@@ -739,7 +739,7 @@ def render_best_pool_scan() -> None:
                      help=(f"Listing Meteora timeframe {label}, disaring "
                            f"{gate} + active TVL ≥ "
                            f"${BEST_ACTIVE_TVL_MIN / 1000:g}K + LPs ≥ "
-                           f"{BEST_LPS_MIN:g} + volatility 1%–10% + Top10 < 20% "
+                           f"{BEST_LPS_MIN:g} + volatility 1%–10% + Top10 < 25% "
                            "+ Fee/TVL hanya informasi. Token:SOL hanya "
                            "informasi. Filter terakhir: Bundler + Phishing GMGN "
                            "maksimal 25% (tepat 25% lolos); data risiko yang "

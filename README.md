@@ -14,7 +14,7 @@ A pool must satisfy all listing checks:
 - F/V **≥ 3×**
 - Fee/TVL is shown for comparison, but is **not a filter**
 - volatility between **1% and 10%**, inclusive
-- Meteora Top-10 supply concentration below **20%**
+- Meteora Top-10 supply concentration below **25%**
 
 After those cheap checks, official Meteora pool details still provide the **Token:SOL** USD-value ratio, but the ratio is informational and no longer filters pools.
 
