@@ -51,10 +51,11 @@ class BestPoolGateTest(unittest.TestCase):
                          "24H: LPs 99 < 100 — LP terlalu sedikit")
         self.assertIn("F/V < 3×", ms.row_best_gaps(
             row(fee_active_tvl_ratio=17.9, volatility=6.0))[0])
-        self.assertIn("Fee/TVL 29.9% < 30%", ms.row_best_gaps(
-            row(fee_active_tvl_ratio=29.9, volatility=5.0))[0])
-        self.assertIn("Top10 20%", ms.row_best_gaps(
-            row(top_holders_pct=20.0))[0])
+        # Fee/TVL dinonaktifkan sebagai filter; angka tetap informasional.
+        self.assertEqual(ms.row_best_gaps(
+            row(fee_active_tvl_ratio=29.9, volatility=5.0)), [])
+        self.assertIn("Top10 25%", ms.row_best_gaps(
+            row(top_holders_pct=25.0))[0])
 
     def test_distribution_is_information_and_security_is_final_gate(self):
         extreme = row(liquidity_distribution={

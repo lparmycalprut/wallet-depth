@@ -2,8 +2,9 @@
 """Meteora DLMM listing helpers and the Best Pool scanner.
 
 Best Pool fetches the 24-hour listing with active TVL of at least $50K, then
-applies the cheap F/V, Fee/TVL, volatility, LP-count, and Top-10 concentration
-gates. Official Meteora Token:SOL side values are informational. The final
+applies the cheap F/V, volatility, LP-count, and Top-10 concentration gates.
+Fee/TVL is informational only. Official Meteora Token:SOL side values are
+informational. The final
 gate requires GMGN bundler + phishing/entrapment to be at most 25 percent.
 Only passing rows continue to RugCheck and tax enrichment.
 
@@ -95,7 +96,7 @@ BEST_VOLATILITY_MIN = 2.0
 BEST_VOLUME_24H_MIN = 1_000_000.0
 # Independent concentration metric supplied by Meteora; this is not the
 # removed wallet-depth analysis subsystem.
-BEST_TOP10_MAX_PCT = 20.0
+BEST_TOP10_MAX_PCT = 25.0
 BEST_VOL_SHOW_MIN = 1.0
 BEST_VOL_SHOW_MAX = 10.0
 BEST_LPS_MIN = 100.0
@@ -1215,8 +1216,8 @@ def row_top10_over(row: dict | None):
     Satu-satunya pembaca batas: dipakai :func:`row_top10_ok`, teks alasan di
     :func:`row_best_gaps`, dan tes — jadi angka di tooltip card, teks "gugur"
     di listing disembunyikan, dan keputusan saringan tidak pernah bisa beda.
-    Batas diarahkan seperti permintaan user ("jika ada top 10 >= 20% jangan
-    tampilkan"): Top10 tepat 20,0% **ikut dibuang**.
+    Batas diarahkan seperti aturan layar: Top10 >= 25% jangan ditampilkan.
+    Top10 tepat 25,0% **ikut dibuang**.
     """
     pct = row_top10_pct(row)
     if pct is None or pct < float(BEST_TOP10_MAX_PCT):
@@ -1248,7 +1249,7 @@ def row_volatility_gap(volatility) -> str:
 
 
 def row_top10_ok(row: dict | None) -> bool:
-    """Return true unless Meteora reports Top-10 concentration >= 20%."""
+    """Return true unless Meteora reports Top-10 concentration >= 25%."""
     return row_top10_over(row) is None
 
 
@@ -1317,8 +1318,8 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
     """Return the first failed cheap Best Pool gate.
 
     Gates are validated in this order: finite F/V inputs, non-zero volatility,
-    LP count >= 100, volatility range, F/V >= 3, Fee/TVL >= 30%, then Meteora's
-    independent Top-10 supply concentration metric below 20%.
+    LP count >= 100, volatility range, F/V >= 3, then Meteora's independent
+    Top-10 supply concentration metric below 25%. Fee/TVL is informational.
     """
     row = row or {}
     fee = _maybe_float(row.get("fee_active_tvl_ratio"))
@@ -1359,16 +1360,10 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
     threshold = minimum * vol
     passed = fee >= threshold if lane_fv_inclusive(normalized) else fee > threshold
     if fee > 0 and passed:
-        # Fee/TVL < 30% (2026-09-23) — dicek SETELAH ambang F/V supaya baris
-        # yang memang gagal F/V tetap melaporkan "F/V < 3×" (alasan yang lebih
-        # dikenal user), dan sebelum Top10 karena Top10 satu-satunya alasan
-        # yang membuang baris total dari listing. Baris gugur di sini TIDAK
-        # dibuang total (:func:`row_best_dropped`): ia masuk tabel "dilewati".
-        tipis = row_fee_tvl_under(row)
-        if tipis is not None:
-            return [f"{BEST_LANE_LABELS[normalized]}: Fee/TVL {tipis:g}% < "
-                    f"{float(BEST_FEE_TVL_MIN):g}% — fee pool terlalu kecil"]
-        # Saringan terakhir setelah ambang lane: Top10 >= 20% (2026-09-16).
+        # Fee/TVL hanya informasi (filter dinonaktifkan): angka tetap tampil
+        # di kolom dan tetap dipakai untuk pengurutan, tetapi tidak boleh
+        # menggugurkan pool. Saringan terakhir setelah ambang lane adalah
+        # Top10 >= 25%.
         # Label lane ikut di depan supaya teks "gugur" di tabel disembunyikan
         # konsisten dengan teks F/V.
         over = row_top10_over(row)
@@ -1463,12 +1458,8 @@ def row_best_dropped(row: dict | None, *, lane=None) -> bool:
     hanya berisi F/V ``>= 2×`` (yang masih di bawah ambang lane) atau baris
     Fee/TVL tipis.
 
-    **Gugur Fee/TVL < 30% (2026-09-23) SENGAJA tidak ikut dibuang total**
-    (konfirmasi user: baris di bawah ambang masuk daftar "▶ N pool dilewati",
-    bukan hilang) — pool seperti itu tetap tercatat di ``hidden_rows`` dengan
-    alasan ``gugur: Fee/TVL … < 30%``, hanya tidak tampil di tabel hasil.
-    Karena itu label ``"Fee/TVL"`` tidak ada di daftar label di bawah, dan
-    tidak ada fallback ``row_fee_tvl_under`` di sini.
+    Fee/TVL tidak termasuk alasan ``row_best_dropped`` karena filter tersebut
+    dinonaktifkan; nilainya tetap boleh tampil dan dipakai untuk pengurutan.
     """
     row = row or {}
     gaps = row.get("best_gaps")

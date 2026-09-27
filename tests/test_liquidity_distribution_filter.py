@@ -173,8 +173,6 @@ class PipelineTest(unittest.TestCase):
             ratios = {"PASS": _report(1.0), "BOUNDARY": _report(0.5),
                       "RATIOFAIL": _report(0.1),
                       "APIERROR": _report(0, ok=False, error="timeout"),
-                      # Gagal cheap gate, tetapi tetap butuh Token:SOL untuk
-                      # tabel "pool dilewati".
                       "FVFAIL": _report(0.75)}
             for row in rows:
                 row["liquidity_distribution"] = ratios[row["pool_address"]]
@@ -195,15 +193,15 @@ class PipelineTest(unittest.TestCase):
                          ["PASS", "BOUNDARY", "RATIOFAIL", "APIERROR",
                           "FVFAIL"])
         self.assertEqual(seen_market_enrichment,
-                         ["PASS", "BOUNDARY", "RATIOFAIL", "APIERROR"])
+                         ["PASS", "BOUNDARY", "RATIOFAIL", "APIERROR",
+                          "FVFAIL"])
         self.assertEqual({row["pool_address"] for row in result["rows"]},
-                         {"PASS", "BOUNDARY", "RATIOFAIL", "APIERROR"})
-        self.assertEqual({row["pool_address"] for row in result["hidden_rows"]},
-                         {"FVFAIL"})
+                         {"PASS", "BOUNDARY", "RATIOFAIL", "APIERROR", "FVFAIL"})
+        self.assertEqual(result["hidden_rows"], [])
         self.assertEqual(result["failed_liquidity_ratio"], 0)
         self.assertEqual(result["liquidity_distribution_failed"], 1)
         self.assertFalse(result["liquidity_distribution_filter"])
-        by_pool = {row["pool_address"]: row for row in result["hidden_rows"]}
+        by_pool = {row["pool_address"]: row for row in result["rows"]}
         self.assertEqual(ms.liquidity_distribution_label(by_pool["FVFAIL"]),
                          "1:1.3")
         self.assertEqual(result["hidden_distribution_failed"], 0)
