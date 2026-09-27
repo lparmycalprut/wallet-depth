@@ -55,17 +55,16 @@ def best_lane_detail(lane) -> tuple[str, str, str]:
 
 def best_pool_tooltip() -> str:
     """Return the concise rule summary shown on the Best Pool title."""
-    from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_FEE_TVL_MIN,
-                                  BEST_FV_24H_MIN, BEST_LPS_MIN,
-                                  BEST_TOP10_MAX_PCT, BEST_VOL_SHOW_MAX,
-                                  BEST_VOL_SHOW_MIN)
+    from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_FV_24H_MIN,
+                                  BEST_LPS_MIN, BEST_TOP10_MAX_PCT,
+                                  BEST_VOL_SHOW_MAX, BEST_VOL_SHOW_MIN)
 
     return (
         "Meteora DLMM 24H only. Active TVL must be at least "
         f"${BEST_ACTIVE_TVL_MIN:,.0f}; LPs at least {BEST_LPS_MIN:g}; "
-        f"F/V at least {BEST_FV_24H_MIN:g}×; Fee/TVL at least "
-        f"{BEST_FEE_TVL_MIN:g}%; volatility {BEST_VOL_SHOW_MIN:g}%–"
-        f"{BEST_VOL_SHOW_MAX:g}%; and Top10 below {BEST_TOP10_MAX_PCT:g}%. "
+        f"F/V at least {BEST_FV_24H_MIN:g}×; volatility "
+        f"{BEST_VOL_SHOW_MIN:g}%–{BEST_VOL_SHOW_MAX:g}%; and Top10 "
+        f"below {BEST_TOP10_MAX_PCT:g}%. Fee/TVL is informational only. "
         "Token:SOL from official Meteora pool details is informational only "
         "and no longer filters a pool. The final gate uses GMGN token stats: "
         "bundler plus phishing/entrapment must be at most 25% (exactly 25% "
@@ -741,7 +740,7 @@ def render_best_pool_scan() -> None:
                            f"{gate} + active TVL ≥ "
                            f"${BEST_ACTIVE_TVL_MIN / 1000:g}K + LPs ≥ "
                            f"{BEST_LPS_MIN:g} + volatility 1%–10% + Top10 < 20% "
-                           f"+ Fee/TVL ≥ {BEST_FEE_TVL_MIN:g}%. Token:SOL hanya "
+                           "+ Fee/TVL hanya informasi. Token:SOL hanya "
                            "informasi. Filter terakhir: Bundler + Phishing GMGN "
                            "maksimal 25% (tepat 25% lolos); data risiko yang "
                            "tidak terbaca masuk pool dilewati. F/V di bawah "
@@ -831,7 +830,7 @@ def render_best_pool_scan() -> None:
                     if showing_hidden else f"▶ {hidden} pool dilewati")
             if st.button(view, key=f"best-pool-toggle-hidden-{active}",
                          help=f"Tampilkan kandidat {label} yang di-skip karena "
-                              "gugur F/V (2×–3×), Fee/TVL, atau filter akhir "
+                              "gugur F/V (2×–3×), atau filter akhir "
                               "Bundler + Phishing GMGN > 25%/tak terbaca. "
                               "Token:SOL hanya informasi. F/V di bawah 2× "
                               "tidak ikut di sini — barisnya "

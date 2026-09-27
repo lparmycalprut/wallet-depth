@@ -12,7 +12,7 @@ A pool must satisfy all listing checks:
 - active TVL **≥ $50,000**
 - liquidity providers **≥ 100**
 - F/V **≥ 3×**
-- Fee/TVL **≥ 30%**
+- Fee/TVL is shown for comparison, but is **not a filter**
 - volatility between **1% and 10%**, inclusive
 - Meteora Top-10 supply concentration below **20%**
 

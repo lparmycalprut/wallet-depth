@@ -633,21 +633,20 @@ class ScanLaneGmgnTest(unittest.TestCase):
         self.assertEqual([r["pool_address"] for r in result["rows"]],
                          ["Gc5hVCBydc6k3Z7oc2cQEW4GThFQi2Fqk5HfKABqa2q8"])
 
-    def test_paid_snapshot_live_kena_ambang_fee_tvl(self):
-        """Snapshot PAID apa adanya (Fee/TVL 23,39%) kini gugur Fee/TVL < 30%.
+    def test_paid_snapshot_live_fee_tvl_tidak_menggugurkan(self):
+        """Snapshot PAID dengan Fee/TVL 23,39% tetap masuk setelah filter dimatikan.
 
-        Permintaan user 2026-09-23: *"Fee/TVL minimal 30%, dibawah itu jangan
-        show"*. Barisnya pindah ke ``hidden_rows`` (masih bisa dibuka lewat
-        tombol "▶ N pool dilewati"), **bukan** dibuang total — dan likuiditas
-        GMGN $884.912 tetap tidak berpengaruh pada keputusan itu.
+        Fee/TVL masih dicatat di baris, tetapi tidak lagi memindahkan pool ke
+        ``hidden_rows`` dan tidak memengaruhi keputusan scan.
         """
         pools = [_best_pool("Gc5hVCBydc6k3Z7oc2cQEW4GThFQi2Fqk5HfKABqa2q8",
                             MINT_A, ratio=23.39434274894063,
                             volatility=2.9886436516396744, top10=15.177147896949576)]
         result = self._scan(pools, {MINT_A: 884_912.3982565559})
-        self.assertEqual(result["rows"], [])
-        self.assertEqual(len(result["hidden_rows"]), 1)
-        self.assertIn("Fee/TVL", result["hidden_rows"][0]["best_gaps"][0])
+        self.assertEqual(len(result["rows"]), 1)
+        self.assertEqual(result["hidden_rows"], [])
+        self.assertEqual(result["rows"][0]["fee_active_tvl_ratio"],
+                         23.39434274894063)
 
     def test_gmgn_mati_tidak_membuang(self):
         pools = [_best_pool("P-BIG", MINT_A),
