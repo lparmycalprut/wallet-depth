@@ -6,9 +6,9 @@ GMGN exposes ``top_bundler_trader_percentage`` as a fraction (0-1) at
 traded by wallets GMGN classifies as bundlers; it is not a count of Jito
 bundles and must not be inferred when the field is absent.
 
-This module is informational only: an unavailable endpoint never removes a
-Best Pool row. Results are cached briefly because the endpoint is unofficial
-and one request is needed per mint.
+Best Pool uses the sum of bundler and GMGN's entrapment/phishing trader rate
+as its final risk gate. Results are cached briefly because the endpoint is
+unofficial and one request is needed per mint.
 """
 from __future__ import annotations
 
@@ -28,9 +28,9 @@ CACHE_MAX_ENTRIES = 400
 REQUEST_TIMEOUT = 10
 WORKERS = 6
 
-# GMGN itself uses max_bundler_rate=0.15 in its public trending filter.
-WARN_RATE = 0.05
-RISK_RATE = 0.15
+# Final gate requested for Best Pool: bundler + phishing may be at most 25%.
+MAX_COMBINED_RATE = 0.25
+WARN_COMBINED_RATE = 0.15
 SAFE_COLOR = "#15803d"
 WARN_COLOR = "#b45309"
 RISK_COLOR = "#dc2626"
@@ -96,7 +96,12 @@ def _cached(mint: str) -> dict | None:
     if time.time() - timestamp > ttl:
         return None
     report = entry.get("report")
-    return dict(report) if isinstance(report, dict) else None
+    if not isinstance(report, dict):
+        return None
+    # Invalidate cache schema from the bundler-only implementation.
+    if "phishing_rate" not in report or "combined_rate" not in report:
+        return None
+    return dict(report)
 
 
 def _get_json(url: str, *, timeout: int) -> object:
@@ -142,24 +147,35 @@ def _data_object(payload) -> dict:
 
 
 def summarize(payload, *, mint: str = "") -> dict:
-    """Build a stable report. Missing bundler evidence remains unknown."""
+    """Build a stable bundler + phishing report from GMGN fractions."""
     data = _data_object(payload)
     bundler = _rate(data.get("top_bundler_trader_percentage"))
-    if bundler is None:
-        return {"ok": False, "mint": mint, "bundler_rate": None,
+    phishing = _rate(data.get("top_entrapment_trader_percentage"))
+    if bundler is None or phishing is None:
+        missing = []
+        if bundler is None:
+            missing.append("bundler")
+        if phishing is None:
+            missing.append("phishing")
+        return {"ok": False, "mint": mint, "bundler_rate": bundler,
+                "phishing_rate": phishing, "combined_rate": None,
                 "dev_rate": _rate(data.get("dev_team_hold_rate")),
                 "sniper_rate": _rate(data.get("top70_sniper_hold_rate")),
-                "error": "field bundler tidak tersedia", "source": "gmgn"}
-    if bundler >= RISK_RATE:
-        verdict, color = "BERISIKO", RISK_COLOR
-    elif bundler >= WARN_RATE:
+                "error": f"field {' + '.join(missing)} tidak tersedia",
+                "source": "gmgn"}
+    combined = bundler + phishing
+    if combined > MAX_COMBINED_RATE:
+        verdict, color = "GAGAL", RISK_COLOR
+    elif combined >= WARN_COMBINED_RATE:
         verdict, color = "WASPADA", WARN_COLOR
     else:
-        verdict, color = "RENDAH", SAFE_COLOR
+        verdict, color = "LOLOS", SAFE_COLOR
     return {
         "ok": True,
         "mint": mint,
         "bundler_rate": bundler,
+        "phishing_rate": phishing,
+        "combined_rate": combined,
         "dev_rate": _rate(data.get("dev_team_hold_rate")),
         "creator_rate": _rate(data.get("creator_hold_rate")),
         "sniper_rate": _rate(data.get("top70_sniper_hold_rate")),
@@ -176,6 +192,7 @@ def fetch_report(mint: str, *, timeout: int = REQUEST_TIMEOUT,
     mint = str(mint or "").strip()
     if not mint:
         return {"ok": False, "bundler_rate": None,
+                "phishing_rate": None, "combined_rate": None,
                 "error": "mint kosong", "source": "gmgn"}
     if use_cache:
         with _lock:
@@ -188,6 +205,7 @@ def fetch_report(mint: str, *, timeout: int = REQUEST_TIMEOUT,
         report = summarize(payload, mint=mint)
     except Exception as exc:  # noqa: BLE001 - optional enrichment
         report = {"ok": False, "mint": mint, "bundler_rate": None,
+                  "phishing_rate": None, "combined_rate": None,
                   "error": str(exc)[:160], "source": "gmgn"}
     if use_cache:
         with _lock:
@@ -217,39 +235,44 @@ def attach_to_rows(rows, *, workers: int = WORKERS,
                 except Exception as exc:  # pragma: no cover - fetch catches
                     reports[mint] = {"ok": False, "mint": mint,
                                      "bundler_rate": None,
+                                     "phishing_rate": None,
+                                     "combined_rate": None,
                                      "error": str(exc)[:160], "source": "gmgn"}
     for row in rows:
         mint = str(row.get("ca") or "").strip()
         row["bundler"] = reports.get(mint, {
             "ok": False, "mint": mint, "bundler_rate": None,
+            "phishing_rate": None, "combined_rate": None,
             "error": "mint kosong" if not mint else "tidak terbaca",
             "source": "gmgn"})
     return rows
 
 
 def _pct(rate) -> str:
-    number = _rate(rate)
-    return "—" if number is None else f"{number * 100:.1f}%"
+    number = _number(rate)
+    return "—" if number is None or number < 0 else f"{number * 100:.1f}%"
 
 
 def cell_parts(report: dict | None) -> tuple[str, str, str]:
-    """Return ``(value, subline, tooltip)`` for the Best Pool table."""
+    """Return ``(combined value, components, tooltip)`` for Best Pool."""
     item = report if isinstance(report, dict) else {}
     if not item.get("ok"):
         error = str(item.get("error") or "data GMGN tidak tersedia")
-        return "—", "GMGN", f"Bundler tidak terukur: {error}"
+        return "—", "GMGN", f"Bundler + phishing tidak terukur: {error}"
+    combined = _pct(item.get("combined_rate"))
     bundler = _pct(item.get("bundler_rate"))
+    phishing = _pct(item.get("phishing_rate"))
+    sub = f"B {bundler} · P {phishing}"
     extras = []
     if _rate(item.get("dev_rate")) is not None:
         extras.append(f"dev {_pct(item.get('dev_rate'))}")
     if _rate(item.get("sniper_rate")) is not None:
         extras.append(f"sniper {_pct(item.get('sniper_rate'))}")
-    sub = " · ".join(extras) or str(item.get("verdict") or "GMGN")
-    tip = (f"GMGN: supply yang diperdagangkan top bundler {bundler}. "
-           f"Klasifikasi lokal: < {WARN_RATE * 100:g}% rendah, "
-           f"{WARN_RATE * 100:g}%–<{RISK_RATE * 100:g}% waspada, "
-           f"≥ {RISK_RATE * 100:g}% berisiko. Ini deteksi statistik wallet, "
-           "bukan bukti pasti manipulasi atau hitungan transaksi Jito.")
+    tip = (f"GMGN: bundler {bundler} + phishing/entrapment {phishing} = "
+           f"{combined}. Filter terakhir: gabungan maksimal "
+           f"{MAX_COMBINED_RATE * 100:g}% (tepat 25% lolos, di atasnya gagal). "
+           "Angka ini statistik wallet GMGN, bukan bukti pasti manipulasi "
+           "atau hitungan transaksi Jito.")
     if extras:
         tip += " · " + " · ".join(extras)
-    return bundler, sub, tip
+    return combined, sub, tip

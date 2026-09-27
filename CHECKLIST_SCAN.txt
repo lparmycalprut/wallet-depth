@@ -2,7 +2,7 @@ CHECKLIST URUTAN FILTER SCAN BEST POOL METEORA 24H
 ==================================================
 
 Gunakan urutan ini untuk setiap pool. Jika satu filter gagal, pool
-langsung gugur dan tidak lanjut ke filter berikutnya.
+langsung gugur dan tidak lanjut ke enrichment berikutnya.
 
 FILTER AWAL (sumber listing)
 ----------------------------
@@ -10,36 +10,38 @@ FILTER AWAL (sumber listing)
 [ ] 2. Timeframe yang dipakai adalah 24H.
 [ ] 3. Active TVL >= $100,000.
 
-FILTER PER POOL (urut sampai kandidat lolos)
---------------------------------------------
+FILTER PER POOL
+---------------
 [ ] 4. Data fee dan volatility tersedia, finite, dan tidak negatif.
 [ ] 5. Volatility bukan 0.
 [ ] 6. Jumlah LPs >= 100.
 [ ] 7. Volatility berada pada rentang 1% sampai 10% (inklusif).
-[ ] 8. F/V >= 5x.
+[ ] 8. F/V >= 3x.
 [ ] 9. Fee/TVL >= 30%.
 [ ] 10. Top-10 supply concentration < 20%.
 
-FILTER TERAKHIR: DISTRIBUSI LIKUIDITAS
---------------------------------------
-[ ] 11. Ambil detail pool dari API resmi Meteora.
-[ ] 12. Pastikan pasangan pool adalah token/SOL.
-[ ] 13. Hitung nilai USD masing-masing sisi:
-        nilai sisi = jumlah token x harga USD
-[ ] 14. Pastikan nilai USD token dan SOL tersedia, finite, dan > 0.
-[ ] 15. Cek rasio nilai:
-        nilai SOL / nilai token <= 2
+INFORMASI TOKEN:SOL (BUKAN FILTER)
+----------------------------------
+[ ] 11. Ambil detail pool dari API resmi Meteora bila tersedia.
+[ ] 12. Hitung nilai USD masing-masing sisi: jumlah token x harga USD.
+[ ] 13. Tampilkan rasio Token:SOL pada pool lolos dan pool dilewati.
+
+Rasio apa pun tidak menggugurkan pool. API detail gagal/non-SOL/tidak valid
+hanya membuat kolom Token:SOL menampilkan tanda —.
+
+FILTER TERAKHIR: RISIKO GMGN
+----------------------------
+[ ] 14. Baca top_bundler_trader_percentage.
+[ ] 15. Baca top_entrapment_trader_percentage (phishing/entrapment).
+[ ] 16. Hitung Bundler + Phishing.
+[ ] 17. Pastikan hasil gabungan <= 25%.
 
 HASIL AKHIR
 -----------
-[ ] LOLOS jika pool melewati filter 1 sampai 15.
-[ ] GAGAL jika data detail hilang, API error, pasangan bukan SOL,
-    nilai tidak valid, atau nilai SOL lebih dari 2x nilai token.
-
-Catatan rasio distribusi:
-- Token:SOL tepat 1:2 = LOLOS.
-- Token:SOL 1:1.5 = LOLOS.
-- Token:SOL 1:6.52 = GAGAL.
+[ ] LOLOS jika pool melewati filter listing dan Bundler+Phishing <= 25%.
+[ ] Tepat 25% = LOLOS.
+[ ] GAGAL/DILEWATI jika gabungan > 25% atau salah satu field risiko GMGN
+    tidak tersedia/tidak valid.
 
 RINGKASAN PER POOL
 ------------------

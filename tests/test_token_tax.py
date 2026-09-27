@@ -227,7 +227,7 @@ class ColumnPlacementTest(unittest.TestCase):
             bp._render_best_table([row], lane="24h", mark_tops=False)
         body = "".join(rendered)
         self.assertEqual(body.count("<th scope=\"col\">"), 16)
-        self.assertIn(">Bundler<", body)
+        self.assertIn(">Bundler+Phishing<", body)
         self.assertIn(">TAX/DIVIDEND<", body)
         self.assertNotIn(">STRATEGY<", body)
         self.assertIn("tax 1%", body)

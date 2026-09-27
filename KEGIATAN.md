@@ -1,5 +1,15 @@
 # Kegiatan
 
+## 2026-09-27 — F/V 3× dan gate Bundler+Phishing
+
+- Menurunkan minimum F/V Best Pool dari **5× menjadi 3×** (inklusif).
+- Menghapus Token:SOL sebagai filter; kolom dan nilai USD resminya tetap
+  ditampilkan sebagai informasi pada pool lolos maupun pool dilewati.
+- Mengganti filter terakhir menjadi statistik GMGN **Bundler +
+  Phishing/Entrapment ≤ 25%**. Tepat 25% lolos; di atas 25% atau data wajib
+  tidak terbaca masuk tabel pool dilewati.
+- RugCheck dan tax/dividend hanya dijalankan setelah gate risiko GMGN lolos.
+
 ## 2026-09-27 — Token:SOL pada pool dilewati
 
 - Baris yang masih tersedia lewat tombol **pool dilewati** sekarang ikut

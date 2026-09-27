@@ -83,7 +83,7 @@ def render_styles() -> None:
     .bp-table th {position:sticky;top:0;z-index:1;background:#f8fafc;}
     /* Urutan kolom: 1 Token · 2 F/V · 3 Fee/TVL · 4 Volat · 5 Active Range ·
        6 LPs · 7 Token:SOL · 8 Fee % · 9 MC · 10 A.TVL · 11 Vol 24h ·
-       12 Top10 · 13 Bundler · 14 RugCheck · 15 Pool · 16 TAX/DIVIDEND. */
+       12 Top10 · 13 Bundler+Phishing · 14 RugCheck · 15 Pool · 16 TAX/DIVIDEND. */
     .bp-table th:nth-child(1),.bp-table td:nth-child(1) {width:145px;min-width:145px;}
     .bp-table th:nth-child(2),.bp-table td:nth-child(2) {width:104px;min-width:104px;}
     .bp-table th:nth-child(3),.bp-table td:nth-child(3) {width:88px;min-width:88px;}
@@ -93,7 +93,7 @@ def render_styles() -> None:
     .bp-table th:nth-child(9),.bp-table td:nth-child(9) {width:68px;min-width:68px;}
     .bp-table th:nth-child(10),.bp-table td:nth-child(10) {width:82px;min-width:82px;}
     .bp-table th:nth-child(11),.bp-table td:nth-child(11) {width:92px;min-width:92px;}
-    .bp-table th:nth-child(13),.bp-table td:nth-child(13) {width:104px;min-width:104px;}
+    .bp-table th:nth-child(13),.bp-table td:nth-child(13) {width:138px;min-width:138px;}
     .bp-table th:nth-child(14),.bp-table td:nth-child(14) {width:110px;min-width:110px;}
     .bp-table th:nth-child(15),.bp-table td:nth-child(15) {width:104px;min-width:104px;}
     .bp-table th:nth-child(16),.bp-table td:nth-child(16) {width:122px;min-width:122px;}
@@ -121,7 +121,7 @@ def render_styles() -> None:
          row remain aligned while every column stays available. */
       .bp-table-scroll {overflow-x:auto !important;max-width:100% !important;
         -webkit-overflow-scrolling:touch;scrollbar-width:thin;}
-      .bp-table {width:max-content !important;min-width:1424px !important;}
+      .bp-table {width:max-content !important;min-width:1458px !important;}
       .bp-table th,.bp-table td {padding:.28rem .22rem;}
       .watchlist-symbol {font-size:1rem;}
       .watchlist-pair {font-size:.74rem;}

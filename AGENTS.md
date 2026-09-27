@@ -11,14 +11,13 @@ Independent market-risk fields such as Meteora's `top_holders_pct`, GMGN metrics
 - `BEST_ACTIVE_TVL_MIN = 100_000.0`
 - `BEST_LPS_MIN = 100.0`
 - no POOL BARU/new-pool route or bypass
+- `BEST_FV_24H_MIN = 3.0`
 - all cheap listing filters run before pool-detail or third-party enrichment
-- the official Meteora pool-detail distribution check is the final gate before GMGN liquidity/bundler, RugCheck, and tax enrichment
-- bundler detection is informational and uses GMGN's per-token `top_bundler_trader_percentage`; missing data must display unknown rather than be inferred
-- SOL-side USD liquidity may be at most 2× token-side USD liquidity
-- the token:SOL 1:2 boundary is inclusive
-- exact 1:2 and 1:1.5 pass; a more SOL-heavy 1:6.52 fails
-- calculate side values as amount × USD price, never from raw token counts
-- missing/invalid/non-SOL/non-positive distribution data fails closed
+- Token:SOL is informational only; official Meteora values are still calculated as amount × USD price
+- the final gate is GMGN bundler + phishing/entrapment `<= 25%`; exactly 25% passes
+- final risk data uses `top_bundler_trader_percentage` plus `top_entrapment_trader_percentage`
+- missing/invalid GMGN final-risk data fails closed into the skipped table
+- only rows passing the final GMGN risk gate receive RugCheck/tax enrichment
 
 Relevant implementation: `meteora_screener.py`. Relevant UI: `best_pool_ui.py`.
 

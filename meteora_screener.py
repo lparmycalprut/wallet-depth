@@ -3,10 +3,9 @@
 
 Best Pool fetches the 24-hour listing with active TVL of at least $100K, then
 applies the cheap F/V, Fee/TVL, volatility, LP-count, and Top-10 concentration
-gates. The final gate fetches official Meteora pool details and requires
-SOL-side USD liquidity to be no more than two times token-side USD liquidity.
-Only passing rows continue to optional GMGN liquidity/bundler, RugCheck, and
-tax enrichment.
+gates. Official Meteora Token:SOL side values are informational. The final
+gate requires GMGN bundler + phishing/entrapment to be at most 25 percent.
+Only passing rows continue to RugCheck and tax enrichment.
 
 """
 from __future__ import annotations
@@ -41,7 +40,7 @@ SAFE_LP_MULTIPLIER = 5.0
 # 88,56%; ``volatility`` 6.2 = 6,2%; ``volume_change_pct`` 13.24 = +13,24%;
 # ``top_holders_pct`` 35.75 = 35,75% supply di 10 holder teratas token base).
 # ---------------------------------------------------------------------------
-BEST_FV_24H_MIN = 5.0           # 24H: F/V >= 5,0 (inklusif)
+BEST_FV_24H_MIN = 3.0           # 24H: F/V >= 3,0 (inklusif)
 # Layar: **Fee/TVL minimal 30%** (permintaan user 2026-09-23: *"kita perketat
 # filter yang boleh di show di hasil"* + *"Fee/TVL minimal 30%"* + *"dibawah itu
 # jangan show"*). ``fee_active_tvl_ratio`` API Meteora sudah dalam satuan persen
@@ -61,11 +60,11 @@ BEST_FEE_TVL_MIN = 30.0
 # Layar: **F/V di bawah 2× tidak ditampilkan sama sekali** (permintaan user
 # 2026-09-24: *"jangan tampilkan sama sekali pool yang F/V nya kurang dari 2 di
 # pool yang dilewati atau dimanapun"*). Beda dari ambang lane
-# (:data:`BEST_FV_24H_MIN` 5×) yang hanya memindahkan baris ke listing
+# (:data:`BEST_FV_24H_MIN` 3×) yang hanya memindahkan baris ke listing
 # "▶ N pool dilewati": di bawah lantai ini baris **dibuang total** — tidak
 # masuk tabel hasil, tidak masuk ``hidden_rows``, tidak dihitung pill/caption
 # "dilewati", dan tidak ikut rekap alasan tabel kosong. Jadi listing
-# "dilewati" hanya memuat F/V ``>= 2×`` (yang tetap gugur ambang 5×) atau
+# "dilewati" hanya memuat F/V ``>= 2×`` (yang tetap gugur ambang 3×) atau
 # baris yang gugur Fee/TVL; baris F/V 0–2× lenyap sepenuhnya, selebar apa pun
 # tabelnya. Batas **eksklusif di sisi buang** — kurang dari 2,0× dibuang,
 # tepat 2,0× masih boleh tampil di "dilewati" (aturan repo: angka yang
@@ -577,7 +576,7 @@ def normalize_best_lane(value, *, default: str | None = "24h") -> str | None:
 def lane_fv_min(lane) -> float:
     """Ambang F/V lane 24H — dibaca dari konstanta **saat dipanggil**.
 
-    :data:`BEST_FV_24H_MIN` (inklusif: tepat 5× lolos). Argumen ``lane`` dibiarkan
+    :data:`BEST_FV_24H_MIN` (inklusif: tepat 3× lolos). Argumen ``lane`` dibiarkan
     ada dipanggilan lama (tombol card, tooltip, label sel F/V, teks gap,
     saringan scan semuanya membaca fungsi ini) tetapi tidak mengubah apa pun
     sejak 30M dihapus 2026-09-16 — :func:`normalize_best_lane` memetakan semua
@@ -644,7 +643,7 @@ def row_fv_under_hide(row: dict | None):
     :func:`row_volatility_zero`, metrik tidak valid tetap masuk listing
     "dilewati" dengan alasannya sendiri). Batas **eksklusif di sisi buang** —
     F/V tepat 2,0× **tidak** dibuang (masih boleh tampil di "dilewati" selama
-    masih di bawah ambang lane 5×).
+    masih di bawah ambang lane 3×).
     """
     ratio = row_fv_ratio(row)
     if ratio is None:
@@ -960,9 +959,10 @@ def liquidity_distribution_label(row: dict | None, *, decimals: int = 1) -> str:
 
 
 def row_liquidity_distribution_gap(row: dict | None, *, lane=None) -> str:
-    """Alasan gagal bila SOL > 2× token; ``""`` bila gate akhir lolos.
+    """Helper aturan Token:SOL lama; tidak dipakai lagi sebagai filter scan.
 
-    Dalam nilai USD, sisi SOL tidak boleh melebihi dua kali sisi token. Batas
+    Dipertahankan untuk compatibility/report historis. Dalam aturan lama,
+    sisi SOL tidak boleh melebihi dua kali sisi token. Batas
     token:SOL 1:2 bersifat inklusif; saldo yang lebih SOL-heavy gagal, sementara
     saldo yang token-heavy tetap memenuhi batas maksimum SOL ini. Distribusi
     hilang/error dan pasangan non-SOL gagal tertutup: syarat akhir wajib
@@ -997,12 +997,45 @@ def row_liquidity_distribution_gap(row: dict | None, *, lane=None) -> str:
     return ""
 
 
+def row_bundler_phishing_gap(row: dict | None, *, lane=None) -> str:
+    """Final gate GMGN: bundler + phishing maksimal 25%.
+
+    Baris lama yang belum memiliki key ``bundler`` tidak difilter agar cache
+    lama tetap dapat dirender. Namun, saat scan baru sudah mencoba endpoint
+    dan menghasilkan report gagal, gate bersifat fail-closed: pool masuk tabel
+    dilewati dengan alasan data risiko tidak tersedia.
+    """
+    report = (row or {}).get("bundler")
+    if not isinstance(report, dict):
+        return ""
+    normalized = normalize_best_lane(
+        lane if lane is not None else
+        ((row or {}).get("timeframe") or (row or {}).get("source") or "24h"),
+        default="24h")
+    prefix = f"{BEST_LANE_LABELS.get(normalized, '24H')}: "
+    if not report.get("ok"):
+        reason = str(report.get("error") or "tidak tersedia")
+        return prefix + f"Bundler+Phishing GMGN gagal — {reason}"
+    combined = _maybe_float(report.get("combined_rate"))
+    if combined is None or not math.isfinite(combined) or combined < 0:
+        return prefix + "Bundler+Phishing GMGN tidak valid"
+    from gmgn_bundler import MAX_COMBINED_RATE
+    if combined > float(MAX_COMBINED_RATE) and not math.isclose(
+            combined, float(MAX_COMBINED_RATE), rel_tol=1e-12, abs_tol=1e-12):
+        bundler_rate = _maybe_float(report.get("bundler_rate")) or 0.0
+        phishing_rate = _maybe_float(report.get("phishing_rate")) or 0.0
+        return (prefix + f"Bundler+Phishing {combined * 100:.2f}% > "
+                f"maksimum {float(MAX_COMBINED_RATE) * 100:g}% "
+                f"(B {bundler_rate * 100:.2f}% + P {phishing_rate * 100:.2f}%)")
+    return ""
+
+
 def row_best_final_gaps(row: dict | None, *, lane=None) -> list[str]:
-    """Seluruh filter Best Pool, dengan rasio distribusi wajib di tahap akhir."""
+    """Seluruh filter Best Pool; Bundler+Phishing GMGN adalah gate terakhir."""
     gaps = row_best_gaps(row, lane=lane)
     if gaps:
         return gaps
-    gap = row_liquidity_distribution_gap(row, lane=lane)
+    gap = row_bundler_phishing_gap(row, lane=lane)
     return [gap] if gap else []
 
 
@@ -1284,7 +1317,7 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
     """Return the first failed cheap Best Pool gate.
 
     Gates are validated in this order: finite F/V inputs, non-zero volatility,
-    LP count >= 100, volatility range, F/V >= 5, Fee/TVL >= 30%, then Meteora's
+    LP count >= 100, volatility range, F/V >= 3, Fee/TVL >= 30%, then Meteora's
     independent Top-10 supply concentration metric below 20%.
     """
     row = row or {}
@@ -1327,7 +1360,7 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
     passed = fee >= threshold if lane_fv_inclusive(normalized) else fee > threshold
     if fee > 0 and passed:
         # Fee/TVL < 30% (2026-09-23) — dicek SETELAH ambang F/V supaya baris
-        # yang memang gagal F/V tetap melaporkan "F/V < 5×" (alasan yang lebih
+        # yang memang gagal F/V tetap melaporkan "F/V < 3×" (alasan yang lebih
         # dikenal user), dan sebelum Top10 karena Top10 satu-satunya alasan
         # yang membuang baris total dari listing. Baris gugur di sini TIDAK
         # dibuang total (:func:`row_best_dropped`): ia masuk tabel "dilewati".
@@ -1376,7 +1409,8 @@ def gmgn_min_label() -> str:
 #: tidak memuat jarum ``F/V``, tapi urutan ini membuat rekap tabel kosong
 #: (:func:`best_gap_summary`) menyebut Fee/TVL apa adanya bila suatu saat teks
 #: alasan berubah.
-BEST_GAP_CATEGORIES = (("LPs", "LPs"),
+BEST_GAP_CATEGORIES = (("Bundler+Phishing", "Bundler+Phishing"),
+                       ("LPs", "LPs"),
                        ("LP", "LPs"),
                        ("likuiditas token:SOL", "likuiditas token:SOL"),
                        ("distribusi likuiditas", "likuiditas token:SOL"),
@@ -1561,9 +1595,8 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
                    tax: bool = True) -> dict:
     """Scan the single 24H Best Pool lane.
 
-    The pipeline is listing → cheap metric gates → official Meteora side-value
-    distribution gate → optional GMGN/RugCheck/tax information. Every row must
-    keep SOL USD liquidity <= 2 × token USD liquidity; failures are closed.
+    Pipeline: listing → cheap metric gates → informational Meteora Token:SOL →
+    final GMGN bundler+phishing gate (<=25%) → RugCheck/tax information.
     """
     normalized = normalize_best_lane(lane)
     try:
@@ -1599,16 +1632,15 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
     candidates = [row for row in rows
                   if not row_best_gaps(row, lane=normalized)]
 
-    # FILTER TERAKHIR: nilai USD SOL maksimal 2× token (batas token:SOL 1:2).
-    # Detail resmi Meteora hanya diambil untuk kandidat yang lolos semua tahap
-    # murah. Gagal API/non-SOL/tanpa angka = gagal tertutup dan masuk listing
-    # "dilewati"; enrichment GMGN, RugCheck, dan tax tidak dipanggil.
+    # Token:SOL tetap diambil dari detail resmi Meteora untuk informasi kolom,
+    # tetapi sejak 2026-09-27 BUKAN filter. API gagal/non-SOL hanya menghasilkan
+    # tanda — dan tidak menggugurkan kandidat.
     distribution_failed = 0
     if candidates:
         try:
             attach_liquidity_distribution(candidates, workers=workers,
                                           timeout=timeout)
-        except Exception as exc:  # noqa: BLE001 - tandai semua, jangan lolos terbuka
+        except Exception as exc:  # noqa: BLE001 - informasi opsional
             if _alog:
                 _alog.error("scan-best-pool",
                             f"distribusi likuiditas gagal: {str(exc)[:160]}")
@@ -1620,18 +1652,8 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
             1 for row in candidates
             if not (row.get("liquidity_distribution") or {}).get("ok"))
 
-    final_failed = [
-        dict(row, best_gaps=row_best_final_gaps(
-            row, lane=normalized))
-        for row in candidates
-        if row_best_final_gaps(
-            row, lane=normalized)
-    ]
-    rows = [row for row in candidates
-            if not row_best_final_gaps(
-                row, lane=normalized)]
-
-    failed_rows = preliminary_failed + final_failed
+    rows = list(candidates)
+    failed_rows = list(preliminary_failed)
     hidden_rows = [row for row in failed_rows
                    if not row_best_dropped(row, lane=normalized)]
 
@@ -1639,7 +1661,6 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
     # menampilkan Token:SOL. Kandidat yang gagal cheap gate F/V/Fee belum ikut
     # fetch detail di atas, jadi ambil official Meteora pool detail sekarang
     # khusus untuk tampilan (bukan gate dan bukan jalur lolos alternatif).
-    # Baris final_failed sudah membawa laporan sehingga tidak di-fetch ulang.
     hidden_distribution_rows = [
         row for row in hidden_rows
         if not isinstance(row.get("liquidity_distribution"), dict)
@@ -1673,15 +1694,13 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
                       or row_lps_count(row) is None)
     dropped_fv = sum(1 for row in failed_rows
                      if row_fv_under_hide(row) is not None)
-    failed_liquidity_ratio = sum(
-        1 for row in final_failed
-        if (row.get("liquidity_distribution") or {}).get("ok")
-        and (row_token_sol_ratio(row) or 0.0)
-            < float(BEST_TOKEN_SOL_MIN_RATIO))
+    # Compatibility counter untuk pembaca cache lama; filter rasio dihapus.
+    failed_liquidity_ratio = 0
     dropped_total = len(failed_rows) - len(hidden_rows)
     hidden_metric = len(hidden_rows)
 
-    # GMGN bukan filter. Tempel hanya ke baris yang sudah lolos rasio akhir.
+    # Likuiditas GMGN tetap informasi. Tempel setelah cheap gates dan sebelum
+    # gate risiko Bundler+Phishing.
     gmgn_failed = 0
     if rows and gmgn:
         try:
@@ -1702,10 +1721,9 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
                                 "below_cutoff": False, "source": None,
                                 "cutoff_usd": None,
                                 "error": str(exc)[:160]})
-    # Bundler GMGN adalah enrichment informasional, bukan filter. Field utama
-    # ``top_bundler_trader_percentage`` menunjukkan porsi supply yang
-    # diperdagangkan wallet yang diklasifikasikan sebagai bundler. Endpoint
-    # gagal/field hilang => tanda —; baris tidak pernah dibuang.
+    # FILTER TERAKHIR: GMGN bundler + phishing/entrapment maksimal 25%.
+    # Kedua field wajib terbaca pada scan baru; kegagalan endpoint bersifat
+    # fail-closed dan masuk tabel "pool dilewati".
     bundler_failed = 0
     if rows and bundler:
         try:
@@ -1724,7 +1742,25 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
             for row in rows:
                 row.setdefault("bundler", {"ok": False,
                                            "bundler_rate": None,
+                                           "phishing_rate": None,
+                                           "combined_rate": None,
                                            "error": str(exc)[:160]})
+
+    bundler_filter_failed = 0
+    if bundler:
+        security_failed = [
+            dict(row, best_gaps=[row_bundler_phishing_gap(
+                row, lane=normalized)])
+            for row in rows if row_bundler_phishing_gap(row, lane=normalized)
+        ]
+        rows = [row for row in rows
+                if not row_bundler_phishing_gap(row, lane=normalized)]
+        bundler_filter_failed = len(security_failed)
+        failed_rows.extend(security_failed)
+        hidden_rows.extend(security_failed)
+        hidden_metric = len(hidden_rows)
+        dropped_total = len(failed_rows) - len(hidden_rows)
+
     rug_failed = 0
     if rows and rugcheck:
         try:
@@ -1799,9 +1835,8 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
                    + (f", {dropped_fv} pool F/V < "
                       f"{float(BEST_FV_HIDE_MIN):g}× dibuang"
                       if dropped_fv else "")
-                   + (f", {failed_liquidity_ratio} pool dengan SOL > "
-                      f"{BEST_SOL_TOKEN_MAX_RATIO:g}× token"
-                      if failed_liquidity_ratio else "")
+                   + (f", {bundler_filter_failed} pool Bundler+Phishing > 25%/tak terbaca"
+                      if bundler_filter_failed else "")
                    + (f", {distribution_failed} distribusi tak terbaca/non-SOL"
                       if distribution_failed else "")
                    + (f", {hidden_distribution_failed} Token:SOL pool dilewati "
@@ -1834,13 +1869,13 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
         # F/V di bawah lantai BEST_FV_HIDE_MIN (2×) — 2026-09-24.
         "dropped_fv": dropped_fv,
         "dropped_total": dropped_total,
-        # Filter akhir: nilai USD SOL maksimal 2× token (batas token:SOL 1:2).
+        # Compatibility key lama: filter Token:SOL sudah dihapus.
         "failed_liquidity_ratio": failed_liquidity_ratio,
         "liquidity_distribution_failed": distribution_failed,
         # Detail display-only untuk baris "pool dilewati" yang gagal cheap
         # gate. Tidak termasuk hitungan gate di atas.
         "hidden_distribution_failed": hidden_distribution_failed,
-        "liquidity_distribution_filter": True,
+        "liquidity_distribution_filter": False,
         # Mint yang tidak mendapat laporan rugchecker.cc (HTTP gagal / kode
         # bukan 0) — kolom RugCheck menulis — untuk mereka; angka ini supaya
         # caption bisa membedakan "semua AMAN" dari "belum teriksa".
@@ -1849,9 +1884,10 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
         # tak terlacak) — TIDAK disaring (tanpa bukti tidak ada verdict),
         # kolom RugCheck menulis — untuk mereka (2026-09-17).
         "gmgn_failed": gmgn_failed,
-        # Statistik per-token GMGN tidak memuat bundler / endpoint gagal.
-        # Informasional saja: tidak pernah memengaruhi ``rows``.
+        # Statistik per-token GMGN + jumlah yang gagal gate final 25%.
         "bundler_failed": bundler_failed,
+        "bundler_filter_failed": bundler_filter_failed,
+        "bundler_phishing_filter": bool(bundler),
         # BubbleMap tak terbaca (2026-09-18) — kolom Bubble Map menulis —.
         # Sejak 2026-09-19 kolomnya dihapus dan enrichment-nya OFF default,
         # jadi angka ini praktis selalu 0; key-nya tetap dikirim supaya

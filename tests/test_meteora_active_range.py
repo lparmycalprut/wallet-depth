@@ -227,7 +227,7 @@ class BestPoolColumnsTest(unittest.TestCase):
                 self.assertEqual(titles[5], "LPs")
                 self.assertEqual(titles[6], "Token:SOL")
                 self.assertEqual(titles[9], "A.TVL")
-                self.assertEqual(titles[12], "Bundler")
+                self.assertEqual(titles[12], "Bundler+Phishing")
                 self.assertEqual(titles[13], "RugCheck")
                 self.assertEqual(titles[14], "Pool")
                 self.assertEqual(titles[15], "TAX/DIVIDEND")

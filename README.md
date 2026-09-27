@@ -11,26 +11,20 @@ A pool must satisfy all listing checks:
 - DLMM, 24-hour timeframe
 - active TVL **≥ $100,000**
 - liquidity providers **≥ 100**
-- F/V **≥ 5×**
+- F/V **≥ 3×**
 - Fee/TVL **≥ 30%**
 - volatility between **1% and 10%**, inclusive
 - Meteora Top-10 supply concentration below **20%**
 
-After those cheap checks, the final distribution gate fetches the official Meteora pool-detail response and calculates each side in USD:
+After those cheap checks, official Meteora pool details still provide the **Token:SOL** USD-value ratio, but the ratio is informational and no longer filters pools.
+
+The final gate uses GMGN per-token risk statistics:
 
 ```text
-side USD value = token amount × token USD price
+bundler percentage + phishing/entrapment percentage <= 25%
 ```
 
-The pool passes only when:
-
-```text
-SOL USD value / token USD value <= 2
-```
-
-In other words, SOL may be at most **2×** the token-side value. The **1:2** token:SOL boundary passes; **1:1.5** and token-heavy balances also pass, while a more SOL-heavy ratio such as **1:6.52** fails. Missing details, API errors, non-SOL pairs, non-finite values, and non-positive side values fail closed.
-
-Only passing rows continue to optional GMGN liquidity, **GMGN bundler detection**, RugCheck, and tax/dividend enrichment. The Bundler column reports the supply share traded by wallets GMGN classifies as bundlers; it is informational, shows `—` when unavailable, and never removes a row. There is no new-pool detection or alternate bypass path.
+Exactly **25% passes**; a larger combined rate is moved to **pool dilewati**. If either required GMGN field cannot be read, the final gate fails closed into the skipped table. Only passing rows continue to RugCheck and tax/dividend enrichment. There is no new-pool detection or alternate bypass path.
 
 ## Mobile layout
 
