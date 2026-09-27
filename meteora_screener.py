@@ -1634,6 +1634,33 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
     failed_rows = preliminary_failed + final_failed
     hidden_rows = [row for row in failed_rows
                    if not row_best_dropped(row, lane=normalized)]
+
+    # Pool yang masih boleh dilihat lewat "▶ N pool dilewati" juga harus
+    # menampilkan Token:SOL. Kandidat yang gagal cheap gate F/V/Fee belum ikut
+    # fetch detail di atas, jadi ambil official Meteora pool detail sekarang
+    # khusus untuk tampilan (bukan gate dan bukan jalur lolos alternatif).
+    # Baris final_failed sudah membawa laporan sehingga tidak di-fetch ulang.
+    hidden_distribution_rows = [
+        row for row in hidden_rows
+        if not isinstance(row.get("liquidity_distribution"), dict)
+    ]
+    hidden_distribution_failed = 0
+    if hidden_distribution_rows:
+        try:
+            attach_liquidity_distribution(hidden_distribution_rows,
+                                          workers=workers, timeout=timeout)
+        except Exception as exc:  # noqa: BLE001 - tampilan gagal tetap dilewati
+            if _alog:
+                _alog.error("scan-best-pool",
+                            f"distribusi pool dilewati gagal: {str(exc)[:160]}")
+            for row in hidden_distribution_rows:
+                row["liquidity_distribution"] = {
+                    "checked": True, "ok": False,
+                    "source": "meteora_dlmm_pool", "error": str(exc)[:160]}
+        hidden_distribution_failed = sum(
+            1 for row in hidden_distribution_rows
+            if not (row.get("liquidity_distribution") or {}).get("ok"))
+
     dropped_volatility = sum(1 for row in failed_rows
                              if row_best_gap_label(row, lane=normalized) == "volatility"
                              or row_volatility_zero(row))
@@ -1777,6 +1804,9 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
                       if failed_liquidity_ratio else "")
                    + (f", {distribution_failed} distribusi tak terbaca/non-SOL"
                       if distribution_failed else "")
+                   + (f", {hidden_distribution_failed} Token:SOL pool dilewati "
+                      "tak terbaca"
+                      if hidden_distribution_failed else "")
                    + (f", {quote_skipped} pool quote dilewati"
                       if quote_skipped else "")
                    + (f", {rug_failed} laporan RugCheck gagal"
@@ -1807,6 +1837,9 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
         # Filter akhir: nilai USD SOL maksimal 2× token (batas token:SOL 1:2).
         "failed_liquidity_ratio": failed_liquidity_ratio,
         "liquidity_distribution_failed": distribution_failed,
+        # Detail display-only untuk baris "pool dilewati" yang gagal cheap
+        # gate. Tidak termasuk hitungan gate di atas.
+        "hidden_distribution_failed": hidden_distribution_failed,
         "liquidity_distribution_filter": True,
         # Mint yang tidak mendapat laporan rugchecker.cc (HTTP gagal / kode
         # bukan 0) — kolom RugCheck menulis — untuk mereka; angka ini supaya

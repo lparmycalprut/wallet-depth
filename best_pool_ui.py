@@ -692,6 +692,7 @@ def _run_lane_scan(lane: str) -> dict:
                 "dropped_lps": 0, "dropped_fv": 0, "dropped_total": 0,
                 "failed_liquidity_ratio": 0,
                 "liquidity_distribution_failed": 0,
+                "hidden_distribution_failed": 0,
                 "liquidity_distribution_filter": True,
                 "rugcheck_failed": 0, "bundler_failed": 0,
                 "bubblemap_failed": 0, "lane": lane}
@@ -855,6 +856,8 @@ def render_best_pool_scan() -> None:
         ratio_failed = int(result.get("failed_liquidity_ratio") or 0)
         distribution_failed = int(
             result.get("liquidity_distribution_failed") or 0)
+        hidden_distribution_failed = int(
+            result.get("hidden_distribution_failed") or 0)
         tax_failed = int(result.get("tax_failed") or 0)
         if fetched:
             quote_txt = (f" · {skipped_quote} pool quote dilewati"
@@ -872,6 +875,9 @@ def render_best_pool_scan() -> None:
             distribution_txt = (
                 f" · {distribution_failed} distribusi token:SOL tak terbaca/non-SOL"
                 if distribution_failed else "")
+            hidden_distribution_txt = (
+                f" · {hidden_distribution_failed} Token:SOL pool dilewati tak terbaca"
+                if hidden_distribution_failed else "")
             tax_txt = (f" · {tax_failed} tax/dividend tak terbaca"
                        if tax_failed else "")
             # Rekap "N tanpa Bubble Map" dihapus 2026-09-19 bersama kolomnya
@@ -882,7 +888,7 @@ def render_best_pool_scan() -> None:
             st.caption(f"{len(rows)} pool {label} tampil · {hidden} "
                        f"dilewati · listing {fetched} pool{quote_txt}"
                        f"{rug_txt}{gmgn_txt}{bundler_txt}{ratio_txt}"
-                       f"{distribution_txt}{tax_txt}.")
+                       f"{distribution_txt}{hidden_distribution_txt}{tax_txt}.")
         if showing_hidden:
             if not hidden_rows:
                 st.info("Tidak ada pool tersembunyi di lane ini.")

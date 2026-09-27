@@ -177,7 +177,10 @@ class PipelineTest(unittest.TestCase):
             seen_distribution.extend(row["pool_address"] for row in rows)
             ratios = {"PASS": _report(1.0), "BOUNDARY": _report(0.5),
                       "RATIOFAIL": _report(0.1),
-                      "APIERROR": _report(0, ok=False, error="timeout")}
+                      "APIERROR": _report(0, ok=False, error="timeout"),
+                      # Gagal cheap gate, tetapi tetap butuh Token:SOL untuk
+                      # tabel "pool dilewati".
+                      "FVFAIL": _report(0.75)}
             for row in rows:
                 row["liquidity_distribution"] = ratios[row["pool_address"]]
             return rows
@@ -194,7 +197,8 @@ class PipelineTest(unittest.TestCase):
             result = ms.scan_best_lane(rugcheck=False, gmgn=True, bundler=False, tax=False)
 
         self.assertEqual(seen_distribution,
-                         ["PASS", "BOUNDARY", "RATIOFAIL", "APIERROR"])
+                         ["PASS", "BOUNDARY", "RATIOFAIL", "APIERROR",
+                          "FVFAIL"])
         self.assertEqual(seen_market_enrichment, ["PASS", "BOUNDARY"])
         self.assertEqual([row["pool_address"] for row in result["rows"]],
                          ["BOUNDARY", "PASS"])
@@ -207,6 +211,9 @@ class PipelineTest(unittest.TestCase):
         self.assertIn("SOL 10× token > maksimum 2×",
                       by_pool["RATIOFAIL"]["best_gaps"][0])
         self.assertIn("timeout", by_pool["APIERROR"]["best_gaps"][0])
+        self.assertEqual(ms.liquidity_distribution_label(by_pool["FVFAIL"]),
+                         "1:1.3")
+        self.assertEqual(result["hidden_distribution_failed"], 0)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,13 @@
 # Kegiatan
 
+## 2026-09-27 — Token:SOL pada pool dilewati
+
+- Baris yang masih tersedia lewat tombol **pool dilewati** sekarang ikut
+  mengambil detail resmi Meteora dan menampilkan nilai **Token:SOL**.
+- Fetch tambahan hanya untuk baris dilewati yang belum memiliki laporan
+  distribusi; hasilnya murni informasi dan tidak menjadi jalur lolos alternatif.
+- Jika detail gagal, sel tetap `—` dan pool tetap berada di tabel dilewati.
+
 ## 2026-09-27 — deteksi bundler token
 
 Permintaan user: *"bisakah kamu deteksi bundler untuk token yang kita scan?"*
