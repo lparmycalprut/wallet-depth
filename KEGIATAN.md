@@ -1,5 +1,15 @@
 # Kegiatan
 
+## 2026-09-27 — klarifikasi batas distribusi SOL
+
+Permintaan user: *"maksimal SOL-nya adalah 2× token."*
+
+- Membalik gate distribusi akhir menjadi **nilai USD SOL ≤ 2× nilai USD token**.
+- Batas **token:SOL 1:2** tetap inklusif; **1:1.5** dan saldo yang lebih
+  token-heavy lolos, sedangkan **1:6.52** gagal karena sisi SOL melebihi 2×.
+- Menyelaraskan tooltip, teks tabel, ringkasan hasil, checklist, README, dan
+  regression test dengan arti batas maksimum tersebut.
+
 ## 2026-09-26 — perapihan kolom tabel Best Pool
 
 Permintaan user:
@@ -51,6 +61,7 @@ Yang dikerjakan:
 - LP minimum: **100**.
 - Tidak ada POOL BARU atau jalur lolos alternatif.
 - Gate distribusi adalah filter terakhir setelah semua cheap checks.
-- Nilai USD SOL harus **≥ 2×** nilai USD token.
-- token:SOL **1:2 lolos**, **1:6.52 lolos**, **1:1.5 gagal**.
+- Aturan ini digantikan pada 2026-09-27: nilai USD SOL sekarang harus
+  **≤ 2×** nilai USD token.
+- token:SOL **1:2 lolos**, **1:1.5 lolos**, dan **1:6.52 gagal**.
 - Nilai berasal dari official Meteora pool details: amount × USD price.

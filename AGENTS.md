@@ -13,9 +13,9 @@ Independent market-risk fields such as Meteora's `top_holders_pct`, GMGN metrics
 - no POOL BARU/new-pool route or bypass
 - all cheap listing filters run before pool-detail or third-party enrichment
 - the official Meteora pool-detail distribution check is the final gate before GMGN/RugCheck/tax enrichment
-- SOL-side USD liquidity must be at least 2× token-side USD liquidity
-- equivalent token:SOL maximum is 1:2
-- exact 1:2 passes; 1:6.52 passes; 1:1.5 fails
+- SOL-side USD liquidity may be at most 2× token-side USD liquidity
+- the token:SOL 1:2 boundary is inclusive
+- exact 1:2 and 1:1.5 pass; a more SOL-heavy 1:6.52 fails
 - calculate side values as amount × USD price, never from raw token counts
 - missing/invalid/non-SOL/non-positive distribution data fails closed
 

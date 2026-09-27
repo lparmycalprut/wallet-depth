@@ -269,9 +269,9 @@ class ActiveRangeCardTest(unittest.TestCase):
                      top_holders_pct=14.4,
                      liquidity_distribution={
                          "checked": True, "ok": True,
-                         "token_value_usd": 5_000.0,
+                         "token_value_usd": 50_000.0,
                          "sol_value_usd": 50_000.0,
-                         "token_to_sol_ratio": 0.1, "error": ""})]
+                         "token_to_sol_ratio": 1.0, "error": ""})]
         app = AppTest.from_file(APP, default_timeout=90).run()
         app.session_state["best_pool_scan_24h"] = {
             "rows": rows, "hidden_rows": [], "error": "", "fetched": 1,
@@ -281,7 +281,7 @@ class ActiveRangeCardTest(unittest.TestCase):
         app.run()
         self.assertEqual(len(app.exception), 0)
         body = self._body(app)
-        self.assertIn(">Active Range<", body)
+        self.assertIn("Active Range", body)
         self.assertIn("-34.5%", body)
         self.assertIn("+19.0%", body)
         self.assertIn("lebar 81.7%", body)
@@ -296,7 +296,7 @@ class ActiveRangeCardTest(unittest.TestCase):
                       body)
         # Token:SOL tepat di kanan LPs, satu angka di belakang koma.
         self.assertIn(">Token:SOL<", body)
-        self.assertIn(">1:10<", body)
+        self.assertIn(">1:1<", body)
         self.assertNotIn(">STRATEGY<", body)
 
 
