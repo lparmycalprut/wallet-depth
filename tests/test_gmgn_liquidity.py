@@ -415,7 +415,7 @@ class RowBestGapsIntegrationTest(unittest.TestCase):
         self.assertEqual(ms.row_best_gaps(_row(), lane="24h"), [])
 
     def test_alasan_fv_tetap_lebih_keras(self):
-        row = _row(fee_active_tvl_ratio=2.0)  # F/V = 0,33× < 3×
+        row = _row(fee_active_tvl_ratio=2.0)  # F/V = 0,33× < 2×
         row["gmgn_liq"] = {"ok": True, "usd": 10_000.0,
                            "below_cutoff": False, "source": "gmgn_token_info"}
         gaps = ms.row_best_gaps(row, lane="24h")

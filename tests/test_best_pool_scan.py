@@ -40,7 +40,7 @@ def row(**overrides):
 class BestPoolGateTest(unittest.TestCase):
     def test_threshold_constants(self):
         self.assertEqual(ms.BEST_ACTIVE_TVL_MIN, 50_000.0)
-        self.assertEqual(ms.BEST_FV_24H_MIN, 3.0)
+        self.assertEqual(ms.BEST_FV_24H_MIN, 2.0)
         self.assertEqual(ms.BEST_LPS_MIN, 100.0)
         self.assertEqual(ms.BEST_SOL_TOKEN_MAX_RATIO, 2.0)
         self.assertEqual(ms.BEST_TOKEN_SOL_MIN_RATIO, 0.5)
@@ -49,8 +49,12 @@ class BestPoolGateTest(unittest.TestCase):
         self.assertEqual(ms.row_best_gaps(row()), [])
         self.assertEqual(ms.row_best_gaps(row(total_lps=99))[0],
                          "24H: LPs 99 < 100 — LP terlalu sedikit")
-        self.assertIn("F/V < 3×", ms.row_best_gaps(
-            row(fee_active_tvl_ratio=17.9, volatility=6.0))[0])
+        # F/V = 11.9/6.0 = 1,98× < 2× → gugur ambang lane (baru: 2×).
+        self.assertIn("F/V < 2×", ms.row_best_gaps(
+            row(fee_active_tvl_ratio=11.9, volatility=6.0))[0])
+        # Tepat/di atas 2× lolos: F/V = 12.0/6.0 = 2,00×.
+        self.assertEqual(ms.row_best_gaps(
+            row(fee_active_tvl_ratio=12.0, volatility=6.0)), [])
         # Fee/TVL dinonaktifkan sebagai filter; angka tetap informasional.
         self.assertEqual(ms.row_best_gaps(
             row(fee_active_tvl_ratio=29.9, volatility=5.0)), [])
@@ -112,7 +116,7 @@ class BestPoolTableTest(unittest.TestCase):
         tip = bp.best_pool_tooltip()
         self.assertIn("$50,000", tip)
         self.assertIn("LPs at least 100", tip)
-        self.assertIn("F/V at least 3×", tip)
+        self.assertIn("F/V at least 2×", tip)
         self.assertIn("Token:SOL", tip)
         self.assertIn("informational only", tip)
         self.assertIn("at most 25%", tip)

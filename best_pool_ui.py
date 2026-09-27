@@ -832,7 +832,7 @@ def render_best_pool_scan() -> None:
                     if showing_hidden else f"▶ {hidden} pool dilewati")
             if st.button(view, key=f"best-pool-toggle-hidden-{active}",
                          help=f"Tampilkan kandidat {label} yang di-skip karena "
-                              "gugur F/V (2×–3×), atau filter akhir "
+                              "filter akhir "
                               "Bundler + Phishing GMGN > 25%/tak terbaca. "
                               "Token:SOL hanya informasi. F/V di bawah 2× "
                               "tidak ikut di sini — barisnya "
