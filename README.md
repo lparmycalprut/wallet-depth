@@ -9,7 +9,7 @@ The wallet-depth Holder subsystem and TEMP page have been removed, including the
 A pool must satisfy all listing checks:
 
 - DLMM, 24-hour timeframe
-- active TVL **≥ $100,000**
+- active TVL **≥ $50,000**
 - liquidity providers **≥ 100**
 - F/V **≥ 3×**
 - Fee/TVL **≥ 30%**

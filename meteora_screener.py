@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Meteora DLMM listing helpers and the Best Pool scanner.
 
-Best Pool fetches the 24-hour listing with active TVL of at least $100K, then
+Best Pool fetches the 24-hour listing with active TVL of at least $50K, then
 applies the cheap F/V, Fee/TVL, volatility, LP-count, and Top-10 concentration
 gates. Official Meteora Token:SOL side values are informational. The final
 gate requires GMGN bundler + phishing/entrapment to be at most 25 percent.
@@ -90,7 +90,7 @@ BEST_LANES = ("24h",)
 BEST_LANE_LABELS = {"24h": "24H", "30m": "30M"}
 BEST_FV_30M_MIN = 1.0            # compatibility for cached lane labels
 BEST_FEE_PCT_MIN = 2.0            # server-side pool fee tier
-BEST_ACTIVE_TVL_MIN = 100_000.0
+BEST_ACTIVE_TVL_MIN = 50_000.0
 BEST_VOLATILITY_MIN = 2.0
 BEST_VOLUME_24H_MIN = 1_000_000.0
 # Independent concentration metric supplied by Meteora; this is not the
@@ -738,7 +738,7 @@ def best_filter_by(pool_type: str = "dlmm",
     (kwarg ``safeguard=False``) — terbukti membuang token seperti PAID
     sebelum listing sampai ke client, padahal bendera yang sama sudah
     dilaporkan kolom RugCheck tanpa membuang baris. Query default sekarang:
-    ``pool_type=dlmm&&active_tvl>=100000``. Kwarg ``fee_pct_min``
+    ``pool_type=dlmm&&active_tvl>=50000``. Kwarg ``fee_pct_min``
     dipertahankan untuk kompatibilitas caller lama (``None`` = tidak
     menambah filter fee_pct); ``safeguard=True`` masih bisa dipakai caller
     yang memang ingin menyaring di sisi server (tes / tooling terpisah).

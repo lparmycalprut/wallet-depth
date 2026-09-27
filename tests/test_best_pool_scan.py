@@ -39,7 +39,7 @@ def row(**overrides):
 
 class BestPoolGateTest(unittest.TestCase):
     def test_threshold_constants(self):
-        self.assertEqual(ms.BEST_ACTIVE_TVL_MIN, 100_000.0)
+        self.assertEqual(ms.BEST_ACTIVE_TVL_MIN, 50_000.0)
         self.assertEqual(ms.BEST_FV_24H_MIN, 3.0)
         self.assertEqual(ms.BEST_LPS_MIN, 100.0)
         self.assertEqual(ms.BEST_SOL_TOKEN_MAX_RATIO, 2.0)
@@ -109,7 +109,7 @@ class BestPoolTableTest(unittest.TestCase):
 
     def test_tooltip_states_correct_ratio_examples(self):
         tip = bp.best_pool_tooltip()
-        self.assertIn("$100,000", tip)
+        self.assertIn("$50,000", tip)
         self.assertIn("LPs at least 100", tip)
         self.assertIn("F/V at least 3×", tip)
         self.assertIn("Token:SOL", tip)
