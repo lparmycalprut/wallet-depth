@@ -85,7 +85,7 @@ class BestPoolTableTest(unittest.TestCase):
         self.assertEqual(titles, [
             "Token", "F/V", "Fee/TVL", "Volat", "Active Range", "LPs",
             "Token:SOL", "Fee %", "MC", "A.TVL", "Vol 24h", "Top10",
-            "RugCheck", "Pool", "TAX/DIVIDEND",
+            "Bundler", "RugCheck", "Pool", "TAX/DIVIDEND",
         ])
         self.assertEqual(len(titles), len(bp._col_spec(show_tax_dividend=True)))
         self.assertEqual(bp._lane_titles("24h", show_tax_dividend=False)[-1],
@@ -96,10 +96,10 @@ class BestPoolTableTest(unittest.TestCase):
         css = (ROOT / "dashboard_components.py").read_text(encoding="utf-8")
         self.assertIn(".bp-table-scroll", css)
         self.assertIn("overflow-x:auto !important", css)
-        self.assertIn("min-width:1320px", css)
-        self.assertIn(".bp-table th:nth-child(15)", css)
-        # Kolom ke-16 (STRATEGY) dihapus 2026-09-26 — lebarnya ikut dicabut.
-        self.assertNotIn(".bp-table th:nth-child(16)", css)
+        self.assertIn("min-width:1424px", css)
+        self.assertIn(".bp-table th:nth-child(16)", css)
+        # Bundler ditambahkan tanpa menghidupkan kembali kolom STRATEGY.
+        self.assertNotIn(".bp-table th:nth-child(17)", css)
         self.assertNotIn("hawkfi-copy-btn", css)
         self.assertNotIn("bp-strategy-range", css)
         self.assertNotIn("mobile-hide-next", css)

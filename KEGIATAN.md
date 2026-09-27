@@ -1,5 +1,20 @@
 # Kegiatan
 
+## 2026-09-27 — deteksi bundler token
+
+Permintaan user: *"bisakah kamu deteksi bundler untuk token yang kita scan?"*
+
+- Menambahkan kolom **Bundler** untuk pool yang lolos scan.
+- Sumbernya statistik per-token GMGN
+  `top_bundler_trader_percentage` (porsi supply yang diperdagangkan wallet
+  yang diklasifikasikan GMGN sebagai bundler), dilengkapi konteks dev dan
+  sniper bila tersedia.
+- Klasifikasi informasi: `< 5%` rendah, `5%–<15%` waspada, dan `≥ 15%`
+  berisiko. Data gagal/hilang ditulis `—`, tidak ditebak dan tidak menyaring
+  pool.
+- Request berjalan paralel dan memakai cache 15 menit; tabel utama kini 16
+  kolom dan tetap dapat digeser horizontal di ponsel.
+
 ## 2026-09-27 — klarifikasi batas distribusi SOL
 
 Permintaan user: *"maksimal SOL-nya adalah 2× token."*

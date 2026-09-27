@@ -12,7 +12,8 @@ Independent market-risk fields such as Meteora's `top_holders_pct`, GMGN metrics
 - `BEST_LPS_MIN = 100.0`
 - no POOL BARU/new-pool route or bypass
 - all cheap listing filters run before pool-detail or third-party enrichment
-- the official Meteora pool-detail distribution check is the final gate before GMGN/RugCheck/tax enrichment
+- the official Meteora pool-detail distribution check is the final gate before GMGN liquidity/bundler, RugCheck, and tax enrichment
+- bundler detection is informational and uses GMGN's per-token `top_bundler_trader_percentage`; missing data must display unknown rather than be inferred
 - SOL-side USD liquidity may be at most 2× token-side USD liquidity
 - the token:SOL 1:2 boundary is inclusive
 - exact 1:2 and 1:1.5 pass; a more SOL-heavy 1:6.52 fails

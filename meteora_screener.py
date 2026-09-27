@@ -3,9 +3,10 @@
 
 Best Pool fetches the 24-hour listing with active TVL of at least $100K, then
 applies the cheap F/V, Fee/TVL, volatility, LP-count, and Top-10 concentration
-gates.  The final cheap gate fetches official Meteora pool details and requires
-SOL-side USD liquidity to be at least two times token-side USD liquidity.
-Only passing rows continue to optional GMGN, RugCheck, and tax enrichment.
+gates. The final gate fetches official Meteora pool details and requires
+SOL-side USD liquidity to be no more than two times token-side USD liquidity.
+Only passing rows continue to optional GMGN liquidity/bundler, RugCheck, and
+tax enrichment.
 
 """
 from __future__ import annotations
@@ -1555,7 +1556,8 @@ def sort_hidden_best_rows(rows: list[dict] | None) -> list[dict]:
 def scan_best_lane(lane: str = "24h", *, workers: int = 6,
                    timeout: int = 25, page_size: int = PAGE_SIZE,
                    rugcheck: bool = True,
-                   gmgn: bool = True, bubblemap: bool = False,
+                   gmgn: bool = True, bundler: bool = True,
+                   bubblemap: bool = False,
                    tax: bool = True) -> dict:
     """Scan the single 24H Best Pool lane.
 
@@ -1673,6 +1675,29 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
                                 "below_cutoff": False, "source": None,
                                 "cutoff_usd": None,
                                 "error": str(exc)[:160]})
+    # Bundler GMGN adalah enrichment informasional, bukan filter. Field utama
+    # ``top_bundler_trader_percentage`` menunjukkan porsi supply yang
+    # diperdagangkan wallet yang diklasifikasikan sebagai bundler. Endpoint
+    # gagal/field hilang => tanda —; baris tidak pernah dibuang.
+    bundler_failed = 0
+    if rows and bundler:
+        try:
+            from gmgn_bundler import attach_to_rows as _bundler_attach
+
+            rows = _bundler_attach(rows, workers=workers,
+                                   timeout=min(int(timeout), 10))
+            bundler_failed = sum(1 for row in rows
+                                 if not (row.get("bundler") or {}).get("ok"))
+        except Exception as exc:  # noqa: BLE001 - enrichment opsional
+            error = " · ".join(
+                part for part in (error, f"Bundler GMGN: {exc}") if part)
+            if _alog:
+                _alog.error("scan-best-pool",
+                            f"Bundler GMGN gagal: {str(exc)[:160]}")
+            for row in rows:
+                row.setdefault("bundler", {"ok": False,
+                                           "bundler_rate": None,
+                                           "error": str(exc)[:160]})
     rug_failed = 0
     if rows and rugcheck:
         try:
@@ -1758,6 +1783,8 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
                       if rug_failed else "")
                    + (f", {gmgn_failed} likuiditas GMGN tak terbaca"
                       if gmgn_failed else "")
+                   + (f", {bundler_failed} statistik bundler tak terbaca"
+                      if bundler_failed else "")
                    + (f", {bubblemap_failed} BubbleMap tak terbaca"
                       if bubblemap_failed else "")
                    + (f", {tax_failed} tax/dividend tak terbaca"
@@ -1789,6 +1816,9 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
         # tak terlacak) — TIDAK disaring (tanpa bukti tidak ada verdict),
         # kolom RugCheck menulis — untuk mereka (2026-09-17).
         "gmgn_failed": gmgn_failed,
+        # Statistik per-token GMGN tidak memuat bundler / endpoint gagal.
+        # Informasional saja: tidak pernah memengaruhi ``rows``.
+        "bundler_failed": bundler_failed,
         # BubbleMap tak terbaca (2026-09-18) — kolom Bubble Map menulis —.
         # Sejak 2026-09-19 kolomnya dihapus dan enrichment-nya OFF default,
         # jadi angka ini praktis selalu 0; key-nya tetap dikirim supaya
@@ -1812,6 +1842,7 @@ def scan_best_meteora(*, workers: int = 6, timeout: int = 25,
                       page_size: int = PAGE_SIZE,
                       rugcheck: bool = True,
                       gmgn: bool = True,
+                      bundler: bool = True,
                       bubblemap: bool = False,
                       tax: bool = True) -> dict:
     """Wrapper lama :func:`scan_best_lane` (satu-satunya lane: 24H).
@@ -1819,12 +1850,12 @@ def scan_best_meteora(*, workers: int = 6, timeout: int = 25,
     Sejak 2026-09-13 kwarg ``timeframe`` **membatasi fetch**; sejak 2026-09-16
     hanya 24H yang ada, dan ``timeframe`` apa pun yang pernah dikenali
     (termasuk ``"30m"``/``"both"``) dipetakan ke 24H oleh
-    :func:`normalize_best_lane`. ``rugcheck``, ``gmgn``, ``bubblemap`` dan
-    ``tax`` diteruskan apa adanya (``bubblemap`` default-nya ``False`` sejak
+    :func:`normalize_best_lane`. ``rugcheck``, ``gmgn``, ``bundler``,
+    ``bubblemap`` dan ``tax`` diteruskan apa adanya (``bubblemap`` default-nya ``False`` sejak
     2026-09-19 — kolom Bubble Map dihapus, lihat :func:`scan_best_lane`).
     ``tax=False`` melewatkan tempelan pajak/dividend (test/offline).
     """
     return scan_best_lane(timeframe, workers=workers,
                           timeout=timeout, page_size=page_size,
-                          rugcheck=rugcheck, gmgn=gmgn, bubblemap=bubblemap,
-                          tax=tax)
+                          rugcheck=rugcheck, gmgn=gmgn, bundler=bundler,
+                          bubblemap=bubblemap, tax=tax)

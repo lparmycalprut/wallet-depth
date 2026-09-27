@@ -30,7 +30,7 @@ SOL USD value / token USD value <= 2
 
 In other words, SOL may be at most **2×** the token-side value. The **1:2** token:SOL boundary passes; **1:1.5** and token-heavy balances also pass, while a more SOL-heavy ratio such as **1:6.52** fails. Missing details, API errors, non-SOL pairs, non-finite values, and non-positive side values fail closed.
 
-Only passing rows continue to optional GMGN liquidity, RugCheck, and tax/dividend enrichment. There is no new-pool detection or alternate bypass path.
+Only passing rows continue to optional GMGN liquidity, **GMGN bundler detection**, RugCheck, and tax/dividend enrichment. The Bundler column reports the supply share traded by wallets GMGN classifies as bundlers; it is informational, shows `—` when unavailable, and never removes a row. There is no new-pool detection or alternate bypass path.
 
 ## Mobile layout
 

@@ -74,8 +74,9 @@ def best_pool_tooltip() -> str:
         f"(boundary token:SOL {BEST_TOKEN_SOL_RATIO_LIMIT_LABEL}). Exact 1:2 "
         "and 1:1.5 pass; a more SOL-heavy ratio such as 1:6.52 fails. "
         "Missing, invalid, non-SOL, or non-positive side data fails closed. "
-        "Passing rows then receive optional GMGN, RugCheck, and tax/dividend "
-        "information. Columns include Active Range (for example -34.5% / +19.0%). "
+        "Passing rows then receive optional GMGN bundler detection, RugCheck, "
+        "and tax/dividend information. Bundler is informational and never "
+        "filters a row. Columns include Active Range (for example -34.5% / +19.0%). "
         "On mobile the full table and all headers remain available by "
         "horizontal scrolling."
     )
@@ -83,15 +84,14 @@ def best_pool_tooltip() -> str:
 
 
 
-# Relative desktop widths for the fourteen base columns (including Token:SOL,
-# yang sejak 2026-09-26 duduk tepat di kanan LPs — permintaan user:
-# *"Token:SOL kolom ini taruh dikanan LPs"*). Urutannya WAJIB sama dengan
+# Relative desktop widths for the fifteen base columns (including Token:SOL
+# and the informational Bundler metric). Urutannya WAJIB sama dengan
 # :func:`_lane_titles` dan urutan sel di :func:`_render_best_table`.
 _COL_SPEC = [1.4, 1.0, 0.75, 0.58, 0.95, 0.5, 0.72, 0.58, 0.55,
-             0.68, 0.8, 0.6, 1.0, 1.05]
+             0.68, 0.8, 0.6, 0.9, 1.0, 1.05]
 
 #: Indeks kolom **Pool** di ``_COL_SPEC`` (kolom terakhir tabel "dilewati").
-POOL_COL_INDEX = 13
+POOL_COL_INDEX = 14
 
 #: Indeks kolom **TAX/DIVIDEND** — satu-satunya kolom tambahan tabel utama
 #: (tepat di kanan ``POOL_COL_INDEX``). Kolom **STRATEGY** yang dulu berada
@@ -124,7 +124,7 @@ def _lane_titles(lane, *, show_tax_dividend: bool = True) -> list[str]:
     # ``meteora_screener.liquidity_distribution_label``).
     titles = ["Token", "F/V", "Fee/TVL", "Volat", "Active Range", "LPs",
               "Token:SOL", "Fee %", "MC", "A.TVL", "Vol 24h", "Top10",
-              "RugCheck", "Pool"]
+              "Bundler", "RugCheck", "Pool"]
     if show_tax_dividend:
         titles.append(TAX_DIVIDEND_COL_TITLE)
     return titles
@@ -462,7 +462,7 @@ def _render_best_table(rows: list, *, lane: str,
                        show_tax_dividend: bool = True) -> None:
     """Render the complete Best Pool table.
 
-    The visible table has all fifteen columns; the skipped table omits the
+    The visible table has all sixteen columns; the skipped table omits the
     final informational TAX/DIVIDEND column. One ``.bp-table-scroll`` wrapper
     keeps its header and rows aligned while mobile users scroll horizontally.
     """
@@ -481,6 +481,7 @@ def _render_best_table(rows: list, *, lane: str,
     # RugCheck = kolom baru 2026-09-16; fmt-nya tinggal di modul rugchecker
     # supaya card tidak pernah menebak struktur laporan API pihak ketiga.
     from rugchecker import cell_parts as _rug_cell_parts
+    from gmgn_bundler import cell_parts as _bundler_cell_parts
     # Modul ``bubblemaps`` TIDAK diimpor lagi di sini (2026-09-19): kolom
     # Bubble Map dihapus, yang tersisa hanya tautan 🫧 dari ``links``
     # (permintaan user: "hapus tentang bubblemap, sisakan hyperlink ke
@@ -591,6 +592,14 @@ def _render_best_table(rows: list, *, lane: str,
         # diwarnai sejak 2026-09-17: HIJAU di atas ambang $500K, MERAH di
         # bawahnya (permintaan user), hitam bila tidak terukur. Warnanya
         # dihitung rugchecker.cell_parts lewat gmgn_liquidity.liq_color.
+        bundler_report = row.get("bundler") or {}
+        bundler_value, bundler_sub, bundler_tip = _bundler_cell_parts(
+            bundler_report)
+        bundler_color = (str(bundler_report.get("color") or "")
+                         if isinstance(bundler_report, dict) else "")
+        if bundler_color and bundler_value != "—":
+            bundler_value = (f'<span style="color:{bundler_color};'
+                             f'font-weight:700;">{bundler_value}</span>')
         rug_report = row.get("rugcheck") or {}
         rug_value, rug_sub, rug_tip = _rug_cell_parts(rug_report)
         rug_color = str(rug_report.get("color") or "") if isinstance(rug_report, dict) else ""
@@ -639,6 +648,7 @@ def _render_best_table(rows: list, *, lane: str,
              "ditampilkan (permintaan user: \"jika ada top 10 >= 20% jangan "
              "tampilkan\"; tanpa angka = tidak terukur, barisnya tetap "
              "tampil)"),
+            (bundler_value, bundler_sub, bundler_tip),
             (rug_value, rug_sub, rug_tip),
         )
         rendered = [token_html]
@@ -683,7 +693,8 @@ def _run_lane_scan(lane: str) -> dict:
                 "failed_liquidity_ratio": 0,
                 "liquidity_distribution_failed": 0,
                 "liquidity_distribution_filter": True,
-                "rugcheck_failed": 0, "bubblemap_failed": 0, "lane": lane}
+                "rugcheck_failed": 0, "bundler_failed": 0,
+                "bubblemap_failed": 0, "lane": lane}
 
 
 
@@ -744,9 +755,9 @@ def render_best_pool_scan() -> None:
                            "yang gagal langsung dilewati. F/V "
                            "di bawah 2× dibuang total (tidak muncul di "
                            "'dilewati' maupun di mana pun). Tiap "
-                           "pool yang lolos dilengkapi laporan RugCheck "
-                           "(verdict rugchecker.cc, angka likuiditas GMGN — "
-                           "sejak 2026-09-17) dan kolom TAX/DIVIDEND di "
+                           "pool yang lolos dilengkapi deteksi Bundler GMGN, "
+                           "laporan RugCheck (verdict rugchecker.cc, angka "
+                           "likuiditas GMGN) dan kolom TAX/DIVIDEND di "
                            "paling kanan (pajak transfer + mode reward).")):
             with st.spinner("Memindai listing dan detail pool Meteora…"):
                 result = _run_lane_scan(active)
@@ -840,6 +851,7 @@ def render_best_pool_scan() -> None:
         if error:
             st.warning(f"Meteora API: {error}")
         gmgn_failed = int(result.get("gmgn_failed") or 0)
+        bundler_failed = int(result.get("bundler_failed") or 0)
         ratio_failed = int(result.get("failed_liquidity_ratio") or 0)
         distribution_failed = int(
             result.get("liquidity_distribution_failed") or 0)
@@ -851,6 +863,8 @@ def render_best_pool_scan() -> None:
                        if rug_failed else "")
             gmgn_txt = (f" · {gmgn_failed} likuiditas GMGN tak terbaca"
                         if gmgn_failed else "")
+            bundler_txt = (f" · {bundler_failed} bundler GMGN tak terbaca"
+                           if bundler_failed else "")
             ratio_txt = (
                 f" · {ratio_failed} pool dengan SOL > "
                 f"{BEST_SOL_TOKEN_MAX_RATIO:g}× token"
@@ -867,7 +881,8 @@ def render_best_pool_scan() -> None:
             # caption tidak menyebut kolom yang sudah tidak ada.
             st.caption(f"{len(rows)} pool {label} tampil · {hidden} "
                        f"dilewati · listing {fetched} pool{quote_txt}"
-                       f"{rug_txt}{gmgn_txt}{ratio_txt}{distribution_txt}{tax_txt}.")
+                       f"{rug_txt}{gmgn_txt}{bundler_txt}{ratio_txt}"
+                       f"{distribution_txt}{tax_txt}.")
         if showing_hidden:
             if not hidden_rows:
                 st.info("Tidak ada pool tersembunyi di lane ini.")

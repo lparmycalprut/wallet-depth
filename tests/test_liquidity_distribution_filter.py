@@ -191,7 +191,7 @@ class PipelineTest(unittest.TestCase):
                                   side_effect=fake_distribution), \
                 mock.patch("gmgn_liquidity.attach_total_liquidity",
                            side_effect=fake_market):
-            result = ms.scan_best_lane(rugcheck=False, gmgn=True, tax=False)
+            result = ms.scan_best_lane(rugcheck=False, gmgn=True, bundler=False, tax=False)
 
         self.assertEqual(seen_distribution,
                          ["PASS", "BOUNDARY", "RATIOFAIL", "APIERROR"])
