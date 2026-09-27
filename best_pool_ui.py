@@ -81,8 +81,8 @@ def best_pool_tooltip() -> str:
 # Relative desktop widths for the fifteen base columns (including Token:SOL
 # and the informational Bundler metric). Urutannya WAJIB sama dengan
 # :func:`_lane_titles` dan urutan sel di :func:`_render_best_table`.
-_COL_SPEC = [1.4, 1.0, 0.75, 0.58, 0.95, 0.5, 0.72, 0.58, 0.55,
-             0.68, 0.8, 0.6, 0.9, 1.0, 1.05]
+_COL_SPEC = [1.4, 1.0, 0.75, 0.58, 0.95, 0.5, 0.72, 0.9, 0.58,
+             0.55, 0.68, 0.8, 0.6, 1.0, 1.05]
 
 #: Indeks kolom **Pool** di ``_COL_SPEC`` (kolom terakhir tabel "dilewati").
 POOL_COL_INDEX = 14
@@ -117,8 +117,8 @@ def _lane_titles(lane, *, show_tax_dividend: bool = True) -> list[str]:
     # satu angka di belakang koma (lihat
     # ``meteora_screener.liquidity_distribution_label``).
     titles = ["Token", "F/V", "Fee/TVL", "Volat", "Active Range", "LPs",
-              "Token:SOL", "Fee %", "MC", "A.TVL", "Vol 24h", "Top10",
-              "Bundler+Phishing", "RugCheck", "Pool"]
+              "Token:SOL", "Bundler+Phishing", "Fee %", "MC", "A.TVL",
+              "Vol 24h", "Top10", "RugCheck", "Pool"]
     if show_tax_dividend:
         titles.append(TAX_DIVIDEND_COL_TITLE)
     return titles
@@ -616,6 +616,9 @@ def _render_best_table(rows: list, *, lane: str,
              f"{distribution_ratio} (presisi penuh "
              f"{liquidity_distribution_label(row, decimals=4)}). Hanya "
              "informasi; rasio Token:SOL tidak lagi menyaring pool."),
+            # Bundler+Phishing tepat di kanan Token:SOL (permintaan user
+            # 2026-09-27) — sebelumnya berada di kanan Top10.
+            (bundler_value, bundler_sub, bundler_tip),
             (_num_or_dash(fee_pct, ".4g") + "%" if fee_pct is not None
              else "—", "pool fee",
              f"fee trading pool ini (tier fee pool DLMM) = "
@@ -639,8 +642,7 @@ def _render_best_table(rows: list, *, lane: str,
              f"2026-09-16: Top10 **{BEST_TOP10_MAX_PCT:g}% atau lebih** tidak "
              "ditampilkan (permintaan user: \"jika ada top 10 >= 25% jangan "
              "tampilkan\"; tanpa angka = tidak terukur, barisnya tetap "
-             "tampil)"),
-            (bundler_value, bundler_sub, bundler_tip),
+                       "tampil)"),
             (rug_value, rug_sub, rug_tip),
         )
         rendered = [token_html]
