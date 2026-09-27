@@ -83,8 +83,8 @@ class BestPoolTableTest(unittest.TestCase):
         titles = bp._lane_titles("24h", show_tax_dividend=True)
         self.assertEqual(titles, [
             "Token", "F/V", "Fee/TVL", "Volat", "Active Range", "LPs",
-            "Token:SOL", "Fee %", "MC", "A.TVL", "Vol 24h", "Top10",
-            "Bundler+Phishing", "RugCheck", "Pool", "TAX/DIVIDEND",
+            "Token:SOL", "Bundler+Phishing", "Fee %", "MC", "A.TVL",
+            "Vol 24h", "Top10", "RugCheck", "Pool", "TAX/DIVIDEND",
         ])
         self.assertEqual(len(titles), len(bp._col_spec(show_tax_dividend=True)))
         self.assertEqual(bp._lane_titles("24h", show_tax_dividend=False)[-1],

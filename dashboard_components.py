@@ -82,18 +82,18 @@ def render_styles() -> None:
     .bp-table th:last-child,.bp-table td:last-child {border-right:none;}
     .bp-table th {position:sticky;top:0;z-index:1;background:#f8fafc;}
     /* Urutan kolom: 1 Token · 2 F/V · 3 Fee/TVL · 4 Volat · 5 Active Range ·
-       6 LPs · 7 Token:SOL · 8 Fee % · 9 MC · 10 A.TVL · 11 Vol 24h ·
-       12 Top10 · 13 Bundler+Phishing · 14 RugCheck · 15 Pool · 16 TAX/DIVIDEND. */
+       6 LPs · 7 Token:SOL · 8 Bundler+Phishing · 9 Fee % · 10 MC · 11 A.TVL ·
+       12 Vol 24h · 13 Top10 · 14 RugCheck · 15 Pool · 16 TAX/DIVIDEND. */
     .bp-table th:nth-child(1),.bp-table td:nth-child(1) {width:145px;min-width:145px;}
     .bp-table th:nth-child(2),.bp-table td:nth-child(2) {width:104px;min-width:104px;}
     .bp-table th:nth-child(3),.bp-table td:nth-child(3) {width:88px;min-width:88px;}
     .bp-table th:nth-child(5),.bp-table td:nth-child(5) {width:104px;min-width:104px;}
     .bp-table th:nth-child(6),.bp-table td:nth-child(6) {width:60px;min-width:60px;}
     .bp-table th:nth-child(7),.bp-table td:nth-child(7) {width:96px;min-width:96px;}
-    .bp-table th:nth-child(9),.bp-table td:nth-child(9) {width:68px;min-width:68px;}
-    .bp-table th:nth-child(10),.bp-table td:nth-child(10) {width:82px;min-width:82px;}
-    .bp-table th:nth-child(11),.bp-table td:nth-child(11) {width:92px;min-width:92px;}
-    .bp-table th:nth-child(13),.bp-table td:nth-child(13) {width:138px;min-width:138px;}
+    .bp-table th:nth-child(8),.bp-table td:nth-child(8) {width:138px;min-width:138px;}
+    .bp-table th:nth-child(10),.bp-table td:nth-child(10) {width:68px;min-width:68px;}
+    .bp-table th:nth-child(11),.bp-table td:nth-child(11) {width:82px;min-width:82px;}
+    .bp-table th:nth-child(12),.bp-table td:nth-child(12) {width:92px;min-width:92px;}
     .bp-table th:nth-child(14),.bp-table td:nth-child(14) {width:110px;min-width:110px;}
     .bp-table th:nth-child(15),.bp-table td:nth-child(15) {width:104px;min-width:104px;}
     .bp-table th:nth-child(16),.bp-table td:nth-child(16) {width:122px;min-width:122px;}

@@ -211,8 +211,10 @@ class BestPoolColumnsTest(unittest.TestCase):
         Penataan 2026-09-26 (permintaan user: *"hapus juga kolom strategy dan
         logika deteksi strategy apa yang dipakai"* + *"Token:SOL kolom ini
         taruh dikanan LPs"*): kolom **STRATEGY** dicabut dan **Token:SOL**
-        pindah ke indeks 6 (tepat di kanan LPs). Kolom Bundler ditambahkan
-        sebagai informasi di indeks 12, sehingga kolom dasarnya **15** dengan
+        pindah ke indeks 6 (tepat di kanan LPs). Penataan 2026-09-27
+        (permintaan user: *"kolom Bundler+Phishing taruh dikanan token:sol"*):
+        kolom **Bundler+Phishing** pindah ke indeks 7 (tepat di kanan
+        Token:SOL), sehingga kolom dasarnya **15** dengan
         Pool di indeks 14; tabel utama menambah **TAX/DIVIDEND** di indeks 15
         → 16 kolom. Tabel "▶ N pool dilewati" memakai
         ``show_tax_dividend=False`` → tetap 15 kolom.
@@ -226,8 +228,9 @@ class BestPoolColumnsTest(unittest.TestCase):
                 self.assertEqual(titles[4], "Active Range")
                 self.assertEqual(titles[5], "LPs")
                 self.assertEqual(titles[6], "Token:SOL")
-                self.assertEqual(titles[9], "A.TVL")
-                self.assertEqual(titles[12], "Bundler+Phishing")
+                self.assertEqual(titles[7], "Bundler+Phishing")
+                self.assertEqual(titles[10], "A.TVL")
+                self.assertEqual(titles[12], "Top10")
                 self.assertEqual(titles[13], "RugCheck")
                 self.assertEqual(titles[14], "Pool")
                 self.assertEqual(titles[15], "TAX/DIVIDEND")
