@@ -53,7 +53,7 @@ def _report(ratio, *, ok=True, error=""):
 
 class ThresholdTest(unittest.TestCase):
     def test_thresholds_diperketat_dan_pool_baru_dihapus(self):
-        self.assertEqual(ms.BEST_ACTIVE_TVL_MIN, 100_000.0)
+        self.assertEqual(ms.BEST_ACTIVE_TVL_MIN, 50_000.0)
         self.assertEqual(ms.BEST_LPS_MIN, 100.0)
         self.assertEqual(ms.BEST_SOL_TOKEN_MAX_RATIO, 2.0)
         self.assertEqual(ms.BEST_TOKEN_SOL_MIN_RATIO, 0.5)
@@ -68,9 +68,9 @@ class ThresholdTest(unittest.TestCase):
         self.assertNotIn(
             "distribution", inspect.signature(ms.scan_best_meteora).parameters)
 
-    def test_query_best_pool_100k_regular_tetap_50k(self):
+    def test_query_best_pool_dan_regular_sama_sama_50k(self):
         self.assertEqual(ms.best_filter_by(),
-                         "pool_type=dlmm&&active_tvl>=100000")
+                         "pool_type=dlmm&&active_tvl>=50000")
         self.assertEqual(ms.filter_by(),
                          "pool_type=dlmm&&active_tvl>=50000")
 
