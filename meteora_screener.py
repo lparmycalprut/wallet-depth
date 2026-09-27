@@ -41,7 +41,14 @@ SAFE_LP_MULTIPLIER = 5.0
 # 88,56%; ``volatility`` 6.2 = 6,2%; ``volume_change_pct`` 13.24 = +13,24%;
 # ``top_holders_pct`` 35.75 = 35,75% supply di 10 holder teratas token base).
 # ---------------------------------------------------------------------------
-BEST_FV_24H_MIN = 3.0           # 24H: F/V >= 3,0 (inklusif)
+BEST_FV_24H_MIN = 2.0           # 24H: F/V >= 2,0 (inklusif)
+# Permintaan user 2026-09-27: *"turunkan ambang lolos F/V jadi 2×"* (dulu 3×).
+# Karena ambang lolos ini kini **sama** dengan lantai buang
+# :data:`BEST_FV_HIDE_MIN` (2×), praktis tidak ada lagi band "dilewati karena
+# F/V": pool F/V < 2× dibuang total, F/V >= 2× langsung lolos ke tabel. Batas
+# lolos tetap **inklusif** (tepat 2,0× lolos), sedangkan lantai buang tetap
+# **eksklusif** (tepat 2,0× tidak dibuang) — jadi 2,0× tetap tampil, tidak ada
+# celah maupun tumpang-tindih.
 # Layar: **Fee/TVL minimal 30%** (permintaan user 2026-09-23: *"kita perketat
 # filter yang boleh di show di hasil"* + *"Fee/TVL minimal 30%"* + *"dibawah itu
 # jangan show"*). ``fee_active_tvl_ratio`` API Meteora sudah dalam satuan persen
@@ -61,12 +68,15 @@ BEST_FEE_TVL_MIN = 30.0
 # Layar: **F/V di bawah 2× tidak ditampilkan sama sekali** (permintaan user
 # 2026-09-24: *"jangan tampilkan sama sekali pool yang F/V nya kurang dari 2 di
 # pool yang dilewati atau dimanapun"*). Beda dari ambang lane
-# (:data:`BEST_FV_24H_MIN` 3×) yang hanya memindahkan baris ke listing
+# (:data:`BEST_FV_24H_MIN`) yang memindahkan baris ke listing
 # "▶ N pool dilewati": di bawah lantai ini baris **dibuang total** — tidak
 # masuk tabel hasil, tidak masuk ``hidden_rows``, tidak dihitung pill/caption
-# "dilewati", dan tidak ikut rekap alasan tabel kosong. Jadi listing
-# "dilewati" hanya memuat F/V ``>= 2×`` (yang tetap gugur ambang 3×) atau
-# baris yang gugur Fee/TVL; baris F/V 0–2× lenyap sepenuhnya, selebar apa pun
+# "dilewati", dan tidak ikut rekap alasan tabel kosong. Sejak 2026-09-27 ambang
+# lane juga 2× (turun dari 3×), jadi lantai buang dan ambang lolos berimpit:
+# F/V < 2× dibuang total, F/V >= 2× langsung lolos, dan tidak ada lagi baris
+# F/V yang mendarat di "dilewati" — listing itu kini hanya diisi baris yang
+# gugur filter akhir (mis. Bundler+Phishing) atau data risiko tak terbaca.
+# Baris F/V 0–2× lenyap sepenuhnya, selebar apa pun
 # tabelnya. Batas **eksklusif di sisi buang** — kurang dari 2,0× dibuang,
 # tepat 2,0× masih boleh tampil di "dilewati" (aturan repo: angka yang
 # disebut user dibaca sebagai batas tampil). Angka F/V tanpa bukti
@@ -577,7 +587,7 @@ def normalize_best_lane(value, *, default: str | None = "24h") -> str | None:
 def lane_fv_min(lane) -> float:
     """Ambang F/V lane 24H — dibaca dari konstanta **saat dipanggil**.
 
-    :data:`BEST_FV_24H_MIN` (inklusif: tepat 3× lolos). Argumen ``lane`` dibiarkan
+    :data:`BEST_FV_24H_MIN` (inklusif: tepat 2× lolos). Argumen ``lane`` dibiarkan
     ada dipanggilan lama (tombol card, tooltip, label sel F/V, teks gap,
     saringan scan semuanya membaca fungsi ini) tetapi tidak mengubah apa pun
     sejak 30M dihapus 2026-09-16 — :func:`normalize_best_lane` memetakan semua
@@ -644,7 +654,7 @@ def row_fv_under_hide(row: dict | None):
     :func:`row_volatility_zero`, metrik tidak valid tetap masuk listing
     "dilewati" dengan alasannya sendiri). Batas **eksklusif di sisi buang** —
     F/V tepat 2,0× **tidak** dibuang (masih boleh tampil di "dilewati" selama
-    masih di bawah ambang lane 3×).
+    masih di bawah ambang lane 2×).
     """
     ratio = row_fv_ratio(row)
     if ratio is None:
@@ -1318,7 +1328,7 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
     """Return the first failed cheap Best Pool gate.
 
     Gates are validated in this order: finite F/V inputs, non-zero volatility,
-    LP count >= 100, volatility range, F/V >= 3, then Meteora's independent
+    LP count >= 100, volatility range, F/V >= 2, then Meteora's independent
     Top-10 supply concentration metric below 25%. Fee/TVL is informational.
     """
     row = row or {}
