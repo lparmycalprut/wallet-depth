@@ -99,11 +99,13 @@ BEST_TOP10_MAX_PCT = 20.0
 BEST_VOL_SHOW_MIN = 1.0
 BEST_VOL_SHOW_MAX = 10.0
 BEST_LPS_MIN = 100.0
-# SOL USD liquidity must be at least 2× token USD liquidity.  Equivalently,
-# token:SOL is at most 1:2; a more SOL-heavy ratio (for example 1:6.52) passes.
-BEST_SOL_TOKEN_MIN_RATIO = 2.0
-BEST_TOKEN_SOL_MAX_RATIO = 1.0 / BEST_SOL_TOKEN_MIN_RATIO
-BEST_TOKEN_SOL_RATIO_LABEL = "1:2"
+# SOL USD liquidity may be at most 2× token USD liquidity.  Equivalently,
+# token USD / SOL USD must be at least 1:2.  The boundary 1:2 passes, while
+# a more SOL-heavy balance such as 1:6.52 fails.  A token-heavy balance also
+# passes this gate because it does not exceed the SOL cap.
+BEST_SOL_TOKEN_MAX_RATIO = 2.0
+BEST_TOKEN_SOL_MIN_RATIO = 1.0 / BEST_SOL_TOKEN_MAX_RATIO
+BEST_TOKEN_SOL_RATIO_LIMIT_LABEL = "1:2"
 DLMM_POOLS_URL = "https://dlmm.datapi.meteora.ag/pools"
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
@@ -957,11 +959,13 @@ def liquidity_distribution_label(row: dict | None, *, decimals: int = 1) -> str:
 
 
 def row_liquidity_distribution_gap(row: dict | None, *, lane=None) -> str:
-    """Alasan gagal bila SOL < 2× token; ``""`` bila gate akhir lolos.
+    """Alasan gagal bila SOL > 2× token; ``""`` bila gate akhir lolos.
 
-    Dalam notasi token:SOL, nilai token tidak boleh melebihi 1:2 terhadap SOL.
-    Distribusi hilang/error dan pasangan non-SOL gagal tertutup: syarat akhir
-    wajib **terbukti**, bukan diasumsikan lolos saat API detail bermasalah.
+    Dalam nilai USD, sisi SOL tidak boleh melebihi dua kali sisi token. Batas
+    token:SOL 1:2 bersifat inklusif; saldo yang lebih SOL-heavy gagal, sementara
+    saldo yang token-heavy tetap memenuhi batas maksimum SOL ini. Distribusi
+    hilang/error dan pasangan non-SOL gagal tertutup: syarat akhir wajib
+    **terbukti**, bukan diasumsikan lolos saat API detail bermasalah.
     """
     normalized = normalize_best_lane(
         lane if lane is not None else
@@ -978,15 +982,16 @@ def row_liquidity_distribution_gap(row: dict | None, *, lane=None) -> str:
     ratio = row_token_sol_ratio(row)
     if ratio is None:
         return prefix + "distribusi likuiditas token:SOL tidak valid"
-    maximum = float(BEST_TOKEN_SOL_MAX_RATIO)
+    minimum = float(BEST_TOKEN_SOL_MIN_RATIO)
     # Boundary token:SOL 1:2 inklusif. Rasio lebih kecil berarti sisi SOL
-    # semakin besar (mis. 1:6,52) dan harus lolos. Toleransi hanya menyerap
-    # noise floating-point dari dua perkalian amount×price.
-    if ratio > maximum and not math.isclose(
-            ratio, maximum, rel_tol=1e-12, abs_tol=1e-12):
+    # semakin besar (mis. 1:6,52) dan harus gagal karena melampaui batas.
+    # Toleransi hanya menyerap noise floating-point dari dua perkalian
+    # amount×price.
+    if ratio < minimum and not math.isclose(
+            ratio, minimum, rel_tol=1e-12, abs_tol=1e-12):
         sol_multiple = 1.0 / ratio
-        return (prefix + f"likuiditas SOL hanya {sol_multiple:.4g}× token < "
-                f"minimum {BEST_SOL_TOKEN_MIN_RATIO:g}× "
+        return (prefix + f"likuiditas SOL {sol_multiple:.4g}× token > "
+                f"maksimum {BEST_SOL_TOKEN_MAX_RATIO:g}× "
                 f"(token:SOL {liquidity_distribution_label(row, decimals=4)})")
     return ""
 
@@ -1555,8 +1560,8 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
     """Scan the single 24H Best Pool lane.
 
     The pipeline is listing → cheap metric gates → official Meteora side-value
-    distribution gate → optional GMGN/RugCheck/tax information.  Every row must
-    satisfy SOL USD liquidity >= 2 × token USD liquidity; failures are closed.
+    distribution gate → optional GMGN/RugCheck/tax information. Every row must
+    keep SOL USD liquidity <= 2 × token USD liquidity; failures are closed.
     """
     normalized = normalize_best_lane(lane)
     try:
@@ -1592,7 +1597,7 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
     candidates = [row for row in rows
                   if not row_best_gaps(row, lane=normalized)]
 
-    # FILTER TERAKHIR: nilai USD SOL minimal 2× token (token:SOL maksimal 1:2).
+    # FILTER TERAKHIR: nilai USD SOL maksimal 2× token (batas token:SOL 1:2).
     # Detail resmi Meteora hanya diambil untuk kandidat yang lolos semua tahap
     # murah. Gagal API/non-SOL/tanpa angka = gagal tertutup dan masuk listing
     # "dilewati"; enrichment GMGN, RugCheck, dan tax tidak dipanggil.
@@ -1643,7 +1648,7 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
         1 for row in final_failed
         if (row.get("liquidity_distribution") or {}).get("ok")
         and (row_token_sol_ratio(row) or 0.0)
-            > float(BEST_TOKEN_SOL_MAX_RATIO))
+            < float(BEST_TOKEN_SOL_MIN_RATIO))
     dropped_total = len(failed_rows) - len(hidden_rows)
     hidden_metric = len(hidden_rows)
 
@@ -1742,8 +1747,8 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
                    + (f", {dropped_fv} pool F/V < "
                       f"{float(BEST_FV_HIDE_MIN):g}× dibuang"
                       if dropped_fv else "")
-                   + (f", {failed_liquidity_ratio} pool dengan SOL < "
-                      f"{BEST_SOL_TOKEN_MIN_RATIO:g}× token"
+                   + (f", {failed_liquidity_ratio} pool dengan SOL > "
+                      f"{BEST_SOL_TOKEN_MAX_RATIO:g}× token"
                       if failed_liquidity_ratio else "")
                    + (f", {distribution_failed} distribusi tak terbaca/non-SOL"
                       if distribution_failed else "")
@@ -1772,7 +1777,7 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
         # F/V di bawah lantai BEST_FV_HIDE_MIN (2×) — 2026-09-24.
         "dropped_fv": dropped_fv,
         "dropped_total": dropped_total,
-        # Filter akhir: nilai USD SOL minimal 2× token (token:SOL maks. 1:2).
+        # Filter akhir: nilai USD SOL maksimal 2× token (batas token:SOL 1:2).
         "failed_liquidity_ratio": failed_liquidity_ratio,
         "liquidity_distribution_failed": distribution_failed,
         "liquidity_distribution_filter": True,

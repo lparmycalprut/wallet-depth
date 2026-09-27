@@ -28,18 +28,18 @@ FILTER TERAKHIR: DISTRIBUSI LIKUIDITAS
         nilai sisi = jumlah token x harga USD
 [ ] 14. Pastikan nilai USD token dan SOL tersedia, finite, dan > 0.
 [ ] 15. Cek rasio nilai:
-        nilai SOL / nilai token >= 2
+        nilai SOL / nilai token <= 2
 
 HASIL AKHIR
 -----------
 [ ] LOLOS jika pool melewati filter 1 sampai 15.
 [ ] GAGAL jika data detail hilang, API error, pasangan bukan SOL,
-    nilai tidak valid, atau nilai SOL kurang dari 2x nilai token.
+    nilai tidak valid, atau nilai SOL lebih dari 2x nilai token.
 
 Catatan rasio distribusi:
 - Token:SOL tepat 1:2 = LOLOS.
-- Token:SOL 1:6.52 = LOLOS.
-- Token:SOL 1:1.5 = GAGAL.
+- Token:SOL 1:1.5 = LOLOS.
+- Token:SOL 1:6.52 = GAGAL.
 
 RINGKASAN PER POOL
 ------------------

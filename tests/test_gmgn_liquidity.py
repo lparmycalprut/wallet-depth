@@ -46,8 +46,8 @@ import meteora_screener as ms
 
 def _valid_distribution(*_args, **_kwargs):
     return {"checked": True, "ok": True, "source": "test",
-            "token_value_usd": 20_000.0, "sol_value_usd": 200_000.0,
-            "token_to_sol_ratio": 0.1, "error": ""}
+            "token_value_usd": 100_000.0, "sol_value_usd": 100_000.0,
+            "token_to_sol_ratio": 1.0, "error": ""}
 
 
 def setUpModule():
@@ -565,9 +565,9 @@ class ScanLaneGmgnTest(unittest.TestCase):
         for item in rows:
             item["liquidity_distribution"] = {
                 "checked": True, "ok": True,
-                "token_value_usd": 10_000.0,
+                "token_value_usd": 100_000.0,
                 "sol_value_usd": 100_000.0,
-                "token_to_sol_ratio": 0.1, "error": ""}
+                "token_to_sol_ratio": 1.0, "error": ""}
         return rows
 
     def _scan(self, pools, gmgn_map):

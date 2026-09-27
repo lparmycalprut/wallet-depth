@@ -57,8 +57,8 @@ def best_pool_tooltip() -> str:
     """Return the concise rule summary shown on the Best Pool title."""
     from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_FEE_TVL_MIN,
                                   BEST_FV_24H_MIN, BEST_LPS_MIN,
-                                  BEST_SOL_TOKEN_MIN_RATIO,
-                                  BEST_TOKEN_SOL_RATIO_LABEL,
+                                  BEST_SOL_TOKEN_MAX_RATIO,
+                                  BEST_TOKEN_SOL_RATIO_LIMIT_LABEL,
                                   BEST_TOP10_MAX_PCT, BEST_VOL_SHOW_MAX,
                                   BEST_VOL_SHOW_MIN)
 
@@ -69,13 +69,13 @@ def best_pool_tooltip() -> str:
         f"{BEST_FEE_TVL_MIN:g}%; volatility {BEST_VOL_SHOW_MIN:g}%–"
         f"{BEST_VOL_SHOW_MAX:g}%; and Top10 below {BEST_TOP10_MAX_PCT:g}%. "
         "After all cheap listing checks, the final distribution gate uses "
-        "official Meteora pool-detail USD side values: SOL liquidity must be "
-        f"at least {BEST_SOL_TOKEN_MIN_RATIO:g}× token liquidity "
-        f"(token:SOL maximum {BEST_TOKEN_SOL_RATIO_LABEL}). Exact 1:2 and a "
-        "more SOL-heavy ratio such as 1:6.52 pass; 1:1.5 fails. Missing, invalid, "
-        "non-SOL, or non-positive side data fails closed. Passing rows then "
-        "receive optional GMGN, RugCheck, and tax/dividend information. "
-        "Columns include Active Range (for example -34.5% / +19.0%). "
+        "official Meteora pool-detail USD side values: SOL liquidity may be "
+        f"at most {BEST_SOL_TOKEN_MAX_RATIO:g}× token liquidity "
+        f"(boundary token:SOL {BEST_TOKEN_SOL_RATIO_LIMIT_LABEL}). Exact 1:2 "
+        "and 1:1.5 pass; a more SOL-heavy ratio such as 1:6.52 fails. "
+        "Missing, invalid, non-SOL, or non-positive side data fails closed. "
+        "Passing rows then receive optional GMGN, RugCheck, and tax/dividend "
+        "information. Columns include Active Range (for example -34.5% / +19.0%). "
         "On mobile the full table and all headers remain available by "
         "horizontal scrolling."
     )
@@ -472,7 +472,7 @@ def _render_best_table(rows: list, *, lane: str,
 
     from dashboard_components import _number
     from links import external_links_html, pool_links_html
-    from meteora_screener import (BEST_LPS_MIN, BEST_SOL_TOKEN_MIN_RATIO,
+    from meteora_screener import (BEST_LPS_MIN, BEST_SOL_TOKEN_MAX_RATIO,
                                   BEST_TOP10_MAX_PCT, BEST_VOL_SHOW_MAX,
                                   BEST_VOL_SHOW_MIN,
                                   liquidity_distribution_label,
@@ -513,8 +513,8 @@ def _render_best_table(rows: list, *, lane: str,
         distribution_tip = (
             f" · distribusi nilai USD token {_usd_or_dash(token_liq_usd, compact=False)} "
             f": SOL {_usd_or_dash(sol_liq_usd, compact=False)} = "
-            f"{distribution_ratio} (filter akhir: SOL minimal "
-            f"{BEST_SOL_TOKEN_MIN_RATIO:g}× token)"
+            f"{distribution_ratio} (filter akhir: SOL maksimal "
+            f"{BEST_SOL_TOKEN_MAX_RATIO:g}× token)"
             if distribution_ratio != "—" else
             " · distribusi token:SOL tidak tersedia")
         volume = row.get("volume")
@@ -613,8 +613,8 @@ def _render_best_table(rows: list, *, lane: str,
              f"rasio perbandingan nilai USD token terhadap SOL: "
              f"{distribution_ratio} (presisi penuh "
              f"{liquidity_distribution_label(row, decimals=4)}). Filter "
-             f"akhir: nilai SOL minimal {BEST_SOL_TOKEN_MIN_RATIO:g}x nilai "
-             "token; 1:2 dan 1:6.52 lolos, 1:1.5 gagal."),
+             f"akhir: nilai SOL maksimal {BEST_SOL_TOKEN_MAX_RATIO:g}x nilai "
+             "token; 1:2 dan 1:1.5 lolos, 1:6.52 gagal."),
             (_num_or_dash(fee_pct, ".4g") + "%" if fee_pct is not None
              else "—", "pool fee",
              f"fee trading pool ini (tier fee pool DLMM) = "
@@ -702,8 +702,8 @@ def render_best_pool_scan() -> None:
     import streamlit as st
 
     from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_FEE_TVL_MIN,
-                                  BEST_LPS_MIN, BEST_SOL_TOKEN_MIN_RATIO,
-                                  BEST_TOKEN_SOL_RATIO_LABEL, best_gap_summary,
+                                  BEST_LPS_MIN, BEST_SOL_TOKEN_MAX_RATIO,
+                                  BEST_TOKEN_SOL_RATIO_LIMIT_LABEL, best_gap_summary,
                                   normalize_best_lane, row_best_dropped,
                                   row_best_final_gaps, row_volatility_zero,
                                   sort_best_rows, sort_hidden_best_rows)
@@ -737,9 +737,9 @@ def render_best_pool_scan() -> None:
                            f"${BEST_ACTIVE_TVL_MIN / 1000:g}K + LPs ≥ "
                            f"{BEST_LPS_MIN:g} + volatility 1%–10% + Top10 < 20% "
                            f"+ Fee/TVL ≥ {BEST_FEE_TVL_MIN:g}%. Filter terakhir "
-                           f"wajib nilai USD SOL minimal "
-                           f"{BEST_SOL_TOKEN_MIN_RATIO:g}× token (token:SOL "
-                           f"maksimal {BEST_TOKEN_SOL_RATIO_LABEL}). Semua dijalankan "
+                           f"membatasi nilai USD SOL maksimal "
+                           f"{BEST_SOL_TOKEN_MAX_RATIO:g}× token (batas token:SOL "
+                           f"{BEST_TOKEN_SOL_RATIO_LIMIT_LABEL}). Semua dijalankan "
                            "sebagai tahap akhir setelah filter murah. Kandidat "
                            "yang gagal langsung dilewati. F/V "
                            "di bawah 2× dibuang total (tidak muncul di "
@@ -829,8 +829,8 @@ def render_best_pool_scan() -> None:
             if st.button(view, key=f"best-pool-toggle-hidden-{active}",
                          help=f"Tampilkan kandidat {label} yang di-skip karena "
                               "gugur F/V (2×–5×), Fee/TVL, atau filter akhir "
-                              f"SOL < {BEST_SOL_TOKEN_MIN_RATIO:g}× token "
-                              f"(batas token:SOL {BEST_TOKEN_SOL_RATIO_LABEL}). "
+                              f"SOL > {BEST_SOL_TOKEN_MAX_RATIO:g}× token "
+                              f"(batas token:SOL {BEST_TOKEN_SOL_RATIO_LIMIT_LABEL}). "
                               "F/V di bawah 2× tidak ikut di sini — barisnya "
                               "dibuang total.",
                          use_container_width=True):
@@ -852,8 +852,8 @@ def render_best_pool_scan() -> None:
             gmgn_txt = (f" · {gmgn_failed} likuiditas GMGN tak terbaca"
                         if gmgn_failed else "")
             ratio_txt = (
-                f" · {ratio_failed} pool dengan SOL < "
-                f"{BEST_SOL_TOKEN_MIN_RATIO:g}× token"
+                f" · {ratio_failed} pool dengan SOL > "
+                f"{BEST_SOL_TOKEN_MAX_RATIO:g}× token"
                 if ratio_failed else "")
             distribution_txt = (
                 f" · {distribution_failed} distribusi token:SOL tak terbaca/non-SOL"
