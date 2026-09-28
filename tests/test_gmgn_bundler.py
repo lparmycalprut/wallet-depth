@@ -10,28 +10,31 @@ MINT = "Token11111111111111111111111111111111111"
 
 
 class BundlerSummaryTest(unittest.TestCase):
-    def test_combined_boundary_exactly_25_percent_passes(self):
+    def test_combined_boundary_exactly_40_percent_passes(self):
         report = gb.summarize({"data": {
-            "top_bundler_trader_percentage": "0.15",
-            "top_entrapment_trader_percentage": "0.10",
+            "top_bundler_trader_percentage": "0.25",
+            "top_entrapment_trader_percentage": "0.15",
             "dev_team_hold_rate": "0.0125",
             "top70_sniper_hold_rate": "0.03",
         }}, mint=MINT)
         self.assertTrue(report["ok"])
-        self.assertEqual(report["combined_rate"], 0.25)
+        self.assertEqual(report["combined_rate"], 0.40)
         self.assertEqual(report["verdict"], "WASPADA")
         self.assertEqual(ms.row_bundler_phishing_gap({"bundler": report}), "")
 
-    def test_above_25_percent_verdict_but_no_longer_filters(self):
+    def test_above_40_percent_is_final_gate_failure(self):
         report = gb.summarize({
-            "top_bundler_trader_percentage": 0.18,
-            "top_entrapment_trader_percentage": 0.08,
+            "top_bundler_trader_percentage": 0.25,
+            "top_entrapment_trader_percentage": 0.16,
         })
-        self.assertEqual(report["combined_rate"], 0.26)
+        self.assertAlmostEqual(report["combined_rate"], 0.41)
         self.assertEqual(report["verdict"], "GAGAL")
-        # Filter Bundler+Phishing dihapus 2026-09-28: verdict tetap dihitung
-        # untuk kolom info, tapi tidak lagi menggugurkan pool.
-        self.assertEqual(ms.row_bundler_phishing_gap({"bundler": report}), "")
+        value, sub, tip = gb.cell_parts(report)
+        self.assertEqual(value, "41.0%")
+        self.assertIn("⚠️ GAGAL > 40%", sub)
+        self.assertIn("merah berkedip", tip)
+        self.assertIn("> 40%", ms.row_bundler_phishing_gap(
+            {"bundler": report}))
 
     def test_zero_is_measured_not_missing(self):
         report = gb.summarize({
@@ -44,7 +47,7 @@ class BundlerSummaryTest(unittest.TestCase):
         value, sub, tip = gb.cell_parts(report)
         self.assertEqual(value, "0.0%")
         self.assertIn("B 0.0% · P 0.0%", sub)
-        self.assertIn("maksimal 25%", tip)
+        self.assertIn("maksimal 40%", tip)
 
     def test_missing_either_field_stays_unknown_and_fails_closed(self):
         report = gb.summarize({
@@ -52,8 +55,9 @@ class BundlerSummaryTest(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIsNone(report["combined_rate"])
         self.assertEqual(gb.cell_parts(report)[0], "—")
-        # Filter dihapus: data tak terbaca tidak lagi fail-closed ke "dilewati".
-        self.assertEqual(ms.row_bundler_phishing_gap({"bundler": report}), "")
+        # Laporan wajib terbaca karena Bundler+Phishing adalah gate final.
+        self.assertIn("data GMGN tidak terbaca",
+                      ms.row_bundler_phishing_gap({"bundler": report}))
 
 
 class BundlerAttachTest(unittest.TestCase):
@@ -114,14 +118,21 @@ class BundlerPipelineTest(unittest.TestCase):
         self.assertEqual(result["failed_liquidity_ratio"], 0)
         self.assertEqual(result["bundler_filter_failed"], 0)
 
-    def test_combined_above_25_no_longer_filters(self):
-        # Filter Bundler+Phishing dihapus 2026-09-28: pool dengan combined 26%
-        # tetap lolos ke tabel utama; datanya hanya ditempel untuk kolom info.
+    def test_combined_under_40_still_passes_final_gate(self):
+        # Combined 26% masih di bawah batas baru 40% dan tetap masuk tabel utama.
         result = self._scan(0.18, 0.08)
         self.assertEqual(len(result["rows"]), 1)
         self.assertEqual(result["hidden_rows"], [])
         self.assertEqual(result["bundler_filter_failed"], 0)
         self.assertEqual(result["rows"][0]["bundler"]["combined_rate"], 0.26)
+
+    def test_combined_above_40_moves_to_skipped_rows(self):
+        result = self._scan(0.25, 0.16)
+        self.assertEqual(result["rows"], [])
+        self.assertEqual(len(result["hidden_rows"]), 1)
+        self.assertEqual(result["bundler_filter_failed"], 1)
+        self.assertAlmostEqual(
+            result["hidden_rows"][0]["bundler"]["combined_rate"], 0.41)
 
     def test_hidden_fv_candidates_also_fetch_bundler(self):
         visible = self._pool("VISIBLE", mint=MINT, fee=80.0, volatility=6.0)

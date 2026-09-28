@@ -15,7 +15,8 @@ Independent market-risk fields such as Meteora's `top_holders_pct`, GMGN metrics
 - `BEST_FV_HIDE_MIN = 5.0`: F/V 5× to <10× remains visible in `hidden_rows`; F/V <5× is dropped
 - cheap listing filters run before pool-detail or third-party enrichment; only displayable rows (main + skipped) are enriched
 - Token:SOL is informational only; official Meteora values are still calculated as amount × USD price
-- GMGN bundler + phishing/entrapment is informational only, not a gate, and must be fetched for main rows plus displayable skipped rows
+- GMGN bundler + phishing/entrapment is the final risk gate: combined rate must be `<= 40%`; rows above it (or with an unreadable mandatory report) stay out of the main table but remain displayable as skipped warning rows
+- the report must be fetched for main rows plus displayable skipped rows
 - risk data uses `top_bundler_trader_percentage` plus `top_entrapment_trader_percentage`
 - only main-table rows receive RugCheck/tax enrichment
 

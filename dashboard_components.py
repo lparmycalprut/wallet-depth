@@ -45,7 +45,9 @@ def render_styles() -> None:
       0%,100% {box-shadow:0 0 14px rgba(37,99,235,.6),0 0 34px rgba(29,78,216,.4)}
       50% {box-shadow:0 0 4px rgba(37,99,235,.2)}}
     @media (prefers-reduced-motion:reduce) {
-      .degen-stop-header,.degen-stop-line {animation:none;opacity:1}}
+      .degen-stop-header,.degen-stop-line,.bp-bundler-danger {
+        animation:none;opacity:1}}
+
 
     .lp-head {display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;padding:.5rem 0 .1rem;}
     .lp-title {font-size:1.15rem;font-weight:800;color:#000000;}
@@ -68,6 +70,20 @@ def render_styles() -> None:
     .watchlist-metric-value {font-size:1.05rem;font-weight:700;color:#000000;
       line-height:1.25;white-space:nowrap;}
     .watchlist-metric-sub {font-size:.74rem;color:#000000;line-height:1.3;white-space:nowrap;}
+    /* Above the combined Bundler+Phishing limit is a final-gate danger:
+       keep the value and its detail line bold, bright red, and visibly
+       blinking so it cannot be mistaken for an ordinary skipped row. */
+    .bp-bundler-danger,
+    .bp-bundler-danger * {color:#ff0000 !important;font-weight:900 !important;}
+    .bp-bundler-danger {
+      animation:bp-bundler-danger-blink .72s steps(2,start) infinite;
+      text-shadow:0 0 5px rgba(255,0,0,.9),0 0 13px rgba(255,0,0,.65);
+    }
+    @keyframes bp-bundler-danger-blink {
+      0%,44% {opacity:1;text-shadow:0 0 5px rgba(255,0,0,.9),
+        0 0 13px rgba(255,0,0,.65);}
+      45%,100% {opacity:.22;text-shadow:none;}
+    }
     .pool-links {display:flex;gap:.45rem;flex-wrap:nowrap;justify-content:center;}
     .bp-col-title {font-size:.82rem;color:#000000;font-weight:700;text-align:center;
       white-space:nowrap;line-height:1.3;}

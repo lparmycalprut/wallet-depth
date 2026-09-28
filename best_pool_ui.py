@@ -59,6 +59,7 @@ def best_pool_tooltip() -> str:
                                   BEST_FV_HIDE_MIN, BEST_LPS_MIN,
                                   BEST_TOP10_MAX_PCT, BEST_VOL_SHOW_MAX,
                                   BEST_VOL_SHOW_MIN)
+    from gmgn_bundler import MAX_COMBINED_RATE
 
     return (
         "Meteora DLMM 24H only. Active TVL must be at least "
@@ -68,8 +69,9 @@ def best_pool_tooltip() -> str:
         f"below {BEST_TOP10_MAX_PCT:g}%. Fee/TVL is informational only. "
         "Token:SOL from official Meteora pool details is informational only "
         "and no longer filters a pool. GMGN bundler plus phishing/entrapment "
-        "stats are shown in their column as information only and no longer "
-        "filter a pool; they are fetched for both visible and skipped rows. "
+        f"is the final risk gate at {MAX_COMBINED_RATE * 100:g}% maximum; "
+        "values above it move to pool dilewati and blink bright red in the "
+        "column. Reports are fetched for both visible and skipped rows. "
         f"Pools with F/V at least {BEST_FV_HIDE_MIN:g}× but below "
         f"{BEST_FV_24H_MIN:g}× move to the skipped list; below "
         f"{BEST_FV_HIDE_MIN:g}× they are dropped. Passing rows then receive "
@@ -83,7 +85,7 @@ def best_pool_tooltip() -> str:
 
 
 # Relative desktop widths for the fifteen base columns (including Token:SOL
-# and the informational Bundler metric). Urutannya WAJIB sama dengan
+# and the final-gate Bundler metric). Urutannya WAJIB sama dengan
 # :func:`_lane_titles` dan urutan sel di :func:`_render_best_table`.
 _COL_SPEC = [1.4, 1.0, 0.75, 0.58, 0.95, 0.5, 0.72, 0.9, 0.58,
              0.55, 0.68, 0.8, 0.6, 1.0, 1.05]
@@ -329,16 +331,24 @@ def _usd_or_dash(value, compact: bool = True) -> str:
     return f"${_number(value, ',.0f')}"
 
 
-def _cell(value: str, sub: str = "", title: str = "") -> str:
+def _cell(value: str, sub: str = "", title: str = "",
+          css_class: str = "") -> str:
     """Satu sel metrik listing: angka + baris kecil (boleh HTML, mis. warna).
 
     ``title`` = tooltip browser dengan angka penuh (persen/USD mentah dari
     API Meteora) supaya angka ringkas di card tetap bisa diverifikasi.
+    ``css_class`` dipakai untuk state visual yang memang harus menempel pada
+    seluruh sel, misalnya peringatan Bundler+Phishing di atas batas.
     """
     import html as _html
 
     tip = f' title="{_html.escape(str(title))}"' if title else ""
-    return ('<div class="watchlist-metric">'
+    class_name = "watchlist-metric"
+    if css_class:
+        class_name += " " + " ".join(
+            _html.escape(part, quote=True)
+            for part in str(css_class).split() if part)
+    return (f'<div class="{class_name}">'
             f'<div class="watchlist-metric-value">{value}</div>'
             f'<div class="watchlist-metric-sub"{tip}>{sub}</div></div>')
 
@@ -439,9 +449,9 @@ def _fv_cell(row: dict, lane: str, *, top: bool = False) -> tuple[str, str, str]
            f"kedua listing {label} + syarat lane ({gate}); "
            "lebih tinggi = fee lebih dominan")
     if fails:
-        # Gugur F/V, volatility di luar 1%–10%, atau Top10 >= 25% — semuanya
-        # dibaca dari satu sumber (row_best_gaps) supaya teks sel tidak pernah
-        # ketinggalan aturan baru.
+        # Gugur F/V, volatility di luar 1%–10%, Top10 >= 25%, atau gate
+        # Bundler+Phishing — semuanya dibaca dari satu sumber
+        # (row_best_final_gaps) supaya teks sel tidak pernah ketinggalan aturan.
         sub = f"gugur: {fails[0].split(': ', 1)[-1]}"
         shown = f'<span style="color:#dc2626;">{value}</span>'
     elif top:
@@ -479,7 +489,8 @@ def _render_best_table(rows: list, *, lane: str,
     # RugCheck = kolom baru 2026-09-16; fmt-nya tinggal di modul rugchecker
     # supaya card tidak pernah menebak struktur laporan API pihak ketiga.
     from rugchecker import cell_parts as _rug_cell_parts
-    from gmgn_bundler import cell_parts as _bundler_cell_parts
+    from gmgn_bundler import (cell_parts as _bundler_cell_parts,
+                              exceeds_limit as _bundler_exceeds_limit)
     # Modul ``bubblemaps`` TIDAK diimpor lagi di sini (2026-09-19): kolom
     # Bubble Map dihapus, yang tersisa hanya tautan 🫧 dari ``links``
     # (permintaan user: "hapus tentang bubblemap, sisakan hyperlink ke
@@ -592,11 +603,13 @@ def _render_best_table(rows: list, *, lane: str,
         bundler_report = row.get("bundler") or {}
         bundler_value, bundler_sub, bundler_tip = _bundler_cell_parts(
             bundler_report)
+        bundler_danger = _bundler_exceeds_limit(bundler_report)
         bundler_color = (str(bundler_report.get("color") or "")
                          if isinstance(bundler_report, dict) else "")
         if bundler_color and bundler_value != "—":
             bundler_value = (f'<span style="color:{bundler_color};'
                              f'font-weight:700;">{bundler_value}</span>')
+        bundler_cell_class = ("bp-bundler-danger" if bundler_danger else "")
         rug_report = row.get("rugcheck") or {}
         rug_value, rug_sub, rug_tip = _rug_cell_parts(rug_report)
         rug_color = str(rug_report.get("color") or "") if isinstance(rug_report, dict) else ""
@@ -622,7 +635,7 @@ def _render_best_table(rows: list, *, lane: str,
              "informasi; rasio Token:SOL tidak lagi menyaring pool."),
             # Bundler+Phishing tepat di kanan Token:SOL (permintaan user
             # 2026-09-27) — sebelumnya berada di kanan Top10.
-            (bundler_value, bundler_sub, bundler_tip),
+            (bundler_value, bundler_sub, bundler_tip, bundler_cell_class),
             (_num_or_dash(fee_pct, ".4g") + "%" if fee_pct is not None
              else "—", "pool fee",
              f"fee trading pool ini (tier fee pool DLMM) = "
@@ -650,7 +663,11 @@ def _render_best_table(rows: list, *, lane: str,
             (rug_value, rug_sub, rug_tip),
         )
         rendered = [token_html]
-        rendered.extend(_cell(value, sub, tip) for value, sub, tip in cells)
+        rendered.extend(
+            _cell(cell[0], cell[1], cell[2],
+                  css_class=cell[3] if len(cell) > 3 else "")
+            for cell in cells
+        )
         pool_html = pool_links_html(pool, mint=ca) or "<span>—</span>"
         rendered.append(f'<div class="pool-links">{pool_html}</div>')
         if show_tax_dividend:
@@ -718,6 +735,7 @@ def render_best_pool_scan() -> None:
                                   normalize_best_lane, row_best_dropped,
                                   row_best_final_gaps, row_volatility_zero,
                                   sort_best_rows, sort_hidden_best_rows)
+    from gmgn_bundler import MAX_COMBINED_RATE
 
     with st.container(border=True):
         active = normalize_best_lane("24h")
@@ -748,9 +766,10 @@ def render_best_pool_scan() -> None:
                            f"${BEST_ACTIVE_TVL_MIN / 1000:g}K + LPs ≥ "
                            f"{BEST_LPS_MIN:g} + volatility 1%–10% + Top10 < 25% "
                            "+ Fee/TVL hanya informasi. Token:SOL hanya "
-                           "informasi. Bundler+Phishing GMGN hanya informasi "
-                           "kolom (filternya dihapus, tidak menggugurkan pool) "
-                           "dan ikut di-fetch untuk pool dilewati. F/V "
+                           "informasi. Bundler+Phishing GMGN adalah filter "
+                           f"kelolosan terakhir, maksimal {MAX_COMBINED_RATE * 100:g}% "
+                           "(di atasnya masuk pool dilewati dan berkedip merah) "
+                           "serta ikut di-fetch untuk pool dilewati. F/V "
                            f"{BEST_FV_HIDE_MIN:g}× sampai <{BEST_FV_24H_MIN:g}× "
                            "masuk ke 'pool dilewati'; F/V di bawah lantai itu "
                            "dibuang. Tiap pool yang lolos dilengkapi "
@@ -838,10 +857,11 @@ def render_best_pool_scan() -> None:
             if st.button(view, key=f"best-pool-toggle-hidden-{active}",
                          help=f"Tampilkan kandidat {label} yang di-skip karena "
                               f"F/V minimal {BEST_FV_HIDE_MIN:g}× tetapi masih "
-                              f"di bawah {BEST_FV_24H_MIN:g}× (atau gap non-hard "
-                              "lain). Token:SOL & Bundler+Phishing hanya "
-                              "informasi kolom, tidak lagi menggugurkan pool, "
-                              "dan keduanya ikut di-fetch untuk tabel dilewati.",
+                              f"di bawah {BEST_FV_24H_MIN:g}×, atau karena "
+                              f"Bundler+Phishing > {MAX_COMBINED_RATE * 100:g}% "
+                              "(atau gap non-hard lain). Token:SOL hanya "
+                              "informasi; Bundler+Phishing adalah filter final "
+                              "dan ikut di-fetch untuk tabel dilewati.",
                          use_container_width=True):
                 st.session_state[best_lane_hidden_key(active)] = \
                     not showing_hidden
@@ -866,7 +886,8 @@ def render_best_pool_scan() -> None:
             bundler_txt = (f" · {bundler_failed} Bundler+Phishing GMGN tak terbaca"
                            if bundler_failed else "")
             bundler_filter_txt = (
-                f" · {bundler_filter_failed} pool Bundler+Phishing terarsip sebagai filter lama"
+                f" · {bundler_filter_failed} pool Bundler+Phishing > "
+                f"batas {MAX_COMBINED_RATE * 100:g}%/tak terbaca"
                 if bundler_filter_failed else "")
             distribution_txt = (
                 f" · {distribution_failed} distribusi token:SOL tak terbaca/non-SOL"
