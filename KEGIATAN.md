@@ -1,5 +1,17 @@
 # Kegiatan
 
+## 2026-09-28 — Bundler+Phishing menjadi gate final dengan batas 40%
+
+Permintaan user: *"kita perbesar batas bundler + phising menjadi 40% maksimal"* dan *"filter terakhir kelolosan adalah di f/v dan di bundler"*.
+
+- Mengubah batas gabungan Bundler+Phishing GMGN menjadi **40% maksimal**;
+  tepat 40% lolos, sedangkan di atas 40% tidak masuk tabel utama.
+- Mengembalikan Bundler+Phishing sebagai filter final setelah F/V. Laporan
+  yang tidak terbaca juga fail-closed agar tidak dianggap aman tanpa data.
+- Pool yang gagal gate final tetap masuk **pool dilewati** untuk transparansi,
+  dan kolom Bundler+Phishing-nya menjadi **bold merah menyala berkedip**.
+- Cache laporan lama yang masih memakai batas 25% diinvalidasi otomatis.
+
 ## 2026-09-28 — Bundler+Phishing untuk pool dilewati dan lantai F/V 5×
 
 Permintaan user: *"Bundler+Phishing yang ada di pool disembunyikan juga harus di fetch datanya"* dan *"syarat pool yang masuk kriteria ... minimal 5x F/V"*.

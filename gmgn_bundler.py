@@ -7,9 +7,9 @@ traded by wallets GMGN classifies as bundlers; it is not a count of Jito
 bundles and must not be inferred when the field is absent.
 
 Best Pool shows the sum of bundler and GMGN's entrapment/phishing trader rate
-as an informational risk column for visible pools and displayable skipped
-pools. Results are cached briefly because the endpoint is unofficial and one
-request is needed per mint.
+as the final risk gate and as a warning column for visible pools and
+displayable skipped pools. Results are cached briefly because the endpoint is
+unofficial and one request is needed per mint.
 """
 from __future__ import annotations
 
@@ -29,13 +29,16 @@ CACHE_MAX_ENTRIES = 400
 REQUEST_TIMEOUT = 10
 WORKERS = 6
 
-# Informational risk boundary for coloring Best Pool's Bundler+Phishing cell.
-# It no longer filters rows; values above 25% are colored as GAGAL only.
-MAX_COMBINED_RATE = 0.25
+# Final Best Pool eligibility boundary for the combined Bundler+Phishing
+# statistic. A pool at exactly 40% is still accepted; a value above 40% is
+# moved out of the main table and shown as a skipped/high-risk row.
+MAX_COMBINED_RATE = 0.40
 WARN_COMBINED_RATE = 0.15
 SAFE_COLOR = "#15803d"
 WARN_COLOR = "#b45309"
-RISK_COLOR = "#dc2626"
+# This is intentionally bright red: the UI adds a blinking danger treatment
+# to the whole Bundler+Phishing cell when this verdict is returned.
+RISK_COLOR = "#ff0000"
 
 _HEADERS = {
     "accept": "application/json, text/plain, */*",
@@ -100,8 +103,11 @@ def _cached(mint: str) -> dict | None:
     report = entry.get("report")
     if not isinstance(report, dict):
         return None
-    # Invalidate cache schema from the bundler-only implementation.
-    if "phishing_rate" not in report or "combined_rate" not in report:
+    # Invalidate cache schema from the bundler-only implementation and from
+    # an older risk boundary. This prevents a cached 26% report, for example,
+    # from retaining the old 25% verdict after the limit is changed to 40%.
+    if ("phishing_rate" not in report or "combined_rate" not in report
+            or report.get("max_combined_rate") != MAX_COMBINED_RATE):
         return None
     return dict(report)
 
@@ -148,6 +154,13 @@ def _data_object(payload) -> dict:
     return current if isinstance(current, dict) else {}
 
 
+def _over_limit(value) -> bool:
+    """Compare with a tiny tolerance so an exact decimal 40% still passes."""
+    number = _number(value)
+    return bool(number is not None
+                and number > MAX_COMBINED_RATE + 1e-12)
+
+
 def summarize(payload, *, mint: str = "") -> dict:
     """Build a stable bundler + phishing report from GMGN fractions."""
     data = _data_object(payload)
@@ -161,12 +174,13 @@ def summarize(payload, *, mint: str = "") -> dict:
             missing.append("phishing")
         return {"ok": False, "mint": mint, "bundler_rate": bundler,
                 "phishing_rate": phishing, "combined_rate": None,
+                "max_combined_rate": MAX_COMBINED_RATE,
                 "dev_rate": _rate(data.get("dev_team_hold_rate")),
                 "sniper_rate": _rate(data.get("top70_sniper_hold_rate")),
                 "error": f"field {' + '.join(missing)} tidak tersedia",
                 "source": "gmgn"}
     combined = bundler + phishing
-    if combined > MAX_COMBINED_RATE:
+    if _over_limit(combined):
         verdict, color = "GAGAL", RISK_COLOR
     elif combined >= WARN_COMBINED_RATE:
         verdict, color = "WASPADA", WARN_COLOR
@@ -178,6 +192,7 @@ def summarize(payload, *, mint: str = "") -> dict:
         "bundler_rate": bundler,
         "phishing_rate": phishing,
         "combined_rate": combined,
+        "max_combined_rate": MAX_COMBINED_RATE,
         "dev_rate": _rate(data.get("dev_team_hold_rate")),
         "creator_rate": _rate(data.get("creator_hold_rate")),
         "sniper_rate": _rate(data.get("top70_sniper_hold_rate")),
@@ -195,6 +210,7 @@ def fetch_report(mint: str, *, timeout: int = REQUEST_TIMEOUT,
     if not mint:
         return {"ok": False, "bundler_rate": None,
                 "phishing_rate": None, "combined_rate": None,
+                "max_combined_rate": MAX_COMBINED_RATE,
                 "error": "mint kosong", "source": "gmgn"}
     if use_cache:
         with _lock:
@@ -239,15 +255,25 @@ def attach_to_rows(rows, *, workers: int = WORKERS,
                                      "bundler_rate": None,
                                      "phishing_rate": None,
                                      "combined_rate": None,
+                                     "max_combined_rate": MAX_COMBINED_RATE,
                                      "error": str(exc)[:160], "source": "gmgn"}
     for row in rows:
         mint = str(row.get("ca") or "").strip()
         row["bundler"] = reports.get(mint, {
             "ok": False, "mint": mint, "bundler_rate": None,
             "phishing_rate": None, "combined_rate": None,
+            "max_combined_rate": MAX_COMBINED_RATE,
             "error": "mint kosong" if not mint else "tidak terbaca",
             "source": "gmgn"})
     return rows
+
+
+def exceeds_limit(report: dict | None) -> bool:
+    """True only for a measured combined rate strictly above the 40% gate."""
+    item = report if isinstance(report, dict) else {}
+    if not item.get("ok"):
+        return False
+    return _over_limit(item.get("combined_rate"))
 
 
 def _pct(rate) -> str:
@@ -265,15 +291,23 @@ def cell_parts(report: dict | None) -> tuple[str, str, str]:
     bundler = _pct(item.get("bundler_rate"))
     phishing = _pct(item.get("phishing_rate"))
     sub = f"B {bundler} · P {phishing}"
+    critical = exceeds_limit(item)
+    if critical:
+        sub = f"⚠️ GAGAL > {MAX_COMBINED_RATE * 100:g}% · {sub}"
     extras = []
     if _rate(item.get("dev_rate")) is not None:
         extras.append(f"dev {_pct(item.get('dev_rate'))}")
     if _rate(item.get("sniper_rate")) is not None:
         extras.append(f"sniper {_pct(item.get('sniper_rate'))}")
+    verdict_note = (f"di atas {MAX_COMBINED_RATE * 100:g}% ditandai GAGAL "
+                    "dan tidak masuk tabel utama"
+                    if critical else
+                    f"tepat {MAX_COMBINED_RATE * 100:g}% masih LOLOS")
     tip = (f"GMGN: bundler {bundler} + phishing/entrapment {phishing} = "
-           f"{combined}. Batas warna risiko: gabungan maksimal "
-           f"{MAX_COMBINED_RATE * 100:g}% (tepat 25% masih WASPADA, di atasnya "
-           "ditandai GAGAL), tetapi ini informasi kolom dan bukan filter. "
+           f"{combined}. Batas kelolosan: gabungan maksimal "
+           f"{MAX_COMBINED_RATE * 100:g}% ({verdict_note}); "
+           "nilai di atas batas dipindahkan ke pool dilewati dan ditandai "
+           "merah berkedip di kolom. "
            "Angka ini statistik wallet GMGN, bukan bukti pasti manipulasi "
            "atau hitungan transaksi Jito.")
     if extras:

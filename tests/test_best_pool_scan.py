@@ -32,6 +32,12 @@ def row(**overrides):
             "token_to_sol_ratio": 0.8,
             "error": "",
         },
+        "bundler": {
+            "ok": True,
+            "bundler_rate": 0.20,
+            "phishing_rate": 0.10,
+            "combined_rate": 0.30,
+        },
     }
     data.update(overrides)
     return data
@@ -62,20 +68,25 @@ class BestPoolGateTest(unittest.TestCase):
         self.assertIn("Top10 25%", ms.row_best_gaps(
             row(top_holders_pct=25.0))[0])
 
-    def test_distribution_and_bundler_are_information_only(self):
+    def test_distribution_is_information_but_bundler_is_final_gate(self):
         # Token:SOL tidak pernah menggugurkan pool (hanya informasi kolom).
         extreme = row(liquidity_distribution={
             "checked": True, "ok": True,
             "token_value_usd": 10_000.0, "sol_value_usd": 100_000.0,
             "token_to_sol_ratio": 0.1, "error": ""})
         self.assertEqual(ms.row_best_final_gaps(extreme), [])
-        # Filter Bundler+Phishing dihapus 2026-09-28: bundler+phishing 26% tetap
-        # lolos (datanya hanya informasi kolom, tidak menggugurkan pool).
+        # Combined 26% masih aman di bawah batas baru 40%.
         risky = row(bundler={
             "ok": True, "bundler_rate": 0.20, "phishing_rate": 0.06,
             "combined_rate": 0.26})
         self.assertEqual(ms.row_bundler_phishing_gap(risky), "")
         self.assertEqual(ms.row_best_final_gaps(risky), [])
+        # Di atas 40% gagal pada gate terakhir dan masuk pool dilewati.
+        danger = row(bundler={
+            "ok": True, "bundler_rate": 0.25, "phishing_rate": 0.16,
+            "combined_rate": 0.41})
+        self.assertIn("> 40%", ms.row_bundler_phishing_gap(danger))
+        self.assertIn("Bundler+Phishing", ms.row_best_final_gaps(danger)[0])
 
     def test_candidate_fv_floor_controls_skipped_rows(self):
         # F/V 5× sampai <10× tetap tampil di listing "pool dilewati".
@@ -114,6 +125,9 @@ class BestPoolTableTest(unittest.TestCase):
     def test_mobile_css_uses_horizontal_scroll_not_cards_or_hidden_columns(self):
         css = (ROOT / "dashboard_components.py").read_text(encoding="utf-8")
         self.assertIn(".bp-table-scroll", css)
+        self.assertIn(".bp-bundler-danger", css)
+        self.assertIn("bp-bundler-danger-blink", css)
+        self.assertIn("#ff0000", css)
         self.assertIn("overflow-x:auto !important", css)
         self.assertIn("min-width:1458px", css)
         self.assertIn(".bp-table th:nth-child(16)", css)
@@ -136,9 +150,10 @@ class BestPoolTableTest(unittest.TestCase):
         self.assertIn("at least 5× but below 10×", tip)
         self.assertIn("Token:SOL", tip)
         self.assertIn("informational only", tip)
-        # Filter Bundler+Phishing dihapus: tooltip menyebut kolom info saja.
+        self.assertIn("40% maximum", tip)
+        self.assertIn("blink bright red", tip)
         self.assertNotIn("at most 25%", tip)
-        self.assertIn("no longer filter a pool", tip)
+        self.assertIn("no longer filters a pool", tip)
         self.assertIn("horizontal scrolling", tip)
 
     def test_run_lane_scan_calls_pool_only_scanner(self):

@@ -4,9 +4,10 @@
 Best Pool fetches the 24-hour listing with active TVL of at least $50K, then
 applies the cheap F/V, volatility, LP-count, and Top-10 concentration gates.
 Fee/TVL is informational only. Official Meteora Token:SOL side values are
-informational. GMGN Bundler+Phishing stats are informational too, and are
-fetched for both visible rows and the displayable skipped rows. Only passing
-rows continue to RugCheck and tax enrichment.
+informational. GMGN Bundler+Phishing is the final risk gate after F/V: the
+combined value must be at most 40%. Reports are fetched for both visible rows
+and the displayable skipped rows; only rows passing that gate continue to
+RugCheck and tax enrichment.
 
 """
 from __future__ import annotations
@@ -951,25 +952,36 @@ def row_liquidity_distribution_gap(row: dict | None, *, lane=None) -> str:
 
 
 def row_bundler_phishing_gap(row: dict | None, *, lane=None) -> str:
-    """Stub compatibility: filter Bundler+Phishing GMGN sudah **dihapus**.
+    """Return the final Bundler+Phishing eligibility failure, if any.
 
-    Permintaan user 2026-09-28: *"untuk filter bundler kita hapus saja. tapi
-    tetap menyertakan data tabelnya"*. Dulu ini gate terakhir (bundler +
-    phishing maksimal 25%; fail-closed saat report gagal). Sekarang selalu
-    mengembalikan string kosong sehingga **tidak pernah menggugurkan pool** —
-    statistik Bundler+Phishing tetap ditempel ke ``row["bundler"]`` dan tampil
-    di kolomnya, hanya tidak lagi memindahkan baris ke "pool dilewati".
+    The combined GMGN statistic is the last gate after F/V and the other
+    cheap pool checks. Exactly 40% is accepted; a measured value above 40%,
+    or a missing/invalid report, is kept out of the main table and shown in
+    ``pool dilewati`` so the user can inspect its red warning cell.
     """
+    from gmgn_bundler import (MAX_COMBINED_RATE, _number,
+                              exceeds_limit as _bundler_exceeds_limit)
+
+    report = (row or {}).get("bundler")
+    if not isinstance(report, dict) or not report.get("ok"):
+        error = str((report or {}).get("error") or "data GMGN tidak tersedia")
+        return ("Bundler+Phishing: data GMGN tidak terbaca — "
+                f"{error}")
+    combined = _number(report.get("combined_rate"))
+    if combined is None or combined < 0:
+        return ("Bundler+Phishing: persentase gabungan tidak valid — "
+                "wajib terbaca")
+    if _bundler_exceeds_limit(report):
+        return (f"Bundler+Phishing {combined * 100:g}% > "
+                f"{MAX_COMBINED_RATE * 100:g}% — risiko terlalu tinggi")
     return ""
 
 
 def row_best_final_gaps(row: dict | None, *, lane=None) -> list[str]:
-    """Seluruh filter Best Pool (cheap gates saja; filter Bundler dihapus).
+    """Return the cheap-gate and final Bundler+Phishing failures.
 
-    Sejak 2026-09-28 filter Bundler+Phishing dihapus
-    (:func:`row_bundler_phishing_gap` = stub), jadi ini praktis identik dengan
-    :func:`row_best_gaps`. Dipertahankan supaya pemanggil lama
-    (``best_pool_ui``, ``filter_best_rows``) tidak perlu diubah.
+    The main table therefore requires all existing cheap checks (including
+    F/V >= 10x) plus a measured combined Bundler+Phishing value <= 40%.
     """
     gaps = row_best_gaps(row, lane=lane)
     if gaps:
@@ -1358,12 +1370,12 @@ def row_best_gap_label(row: dict | None, *, lane=None) -> str:
 
     Alasan yang sudah dihitung scan (``row["best_gaps"]``) dipakai apa adanya;
     baris hasil lama tanpa key itu dihitung ulang lewat
-    :func:`row_best_gaps`. ``""`` bila barisnya tidak gugur.
+    :func:`row_best_final_gaps`. ``""`` bila barisnya tidak gugur.
     """
     row = row or {}
     gaps = row.get("best_gaps")
     if not isinstance(gaps, list) or not gaps:
-        gaps = row_best_gaps(row, lane=lane)
+        gaps = row_best_final_gaps(row, lane=lane)
     text = str(gaps[0] or "") if gaps else ""
     if not text:
         return ""
@@ -1446,18 +1458,20 @@ def filter_best_rows(rows: list[dict] | None, *, lane=None,
     ``< BEST_TOP10_MAX_PCT`` — semuanya lewat :func:`row_best_gaps`.
     Fee/TVL sudah menjadi informasi saja. Hitungan kedua hanya memuat baris
     yang masih bisa dilihat di listing "dilewati", yaitu F/V minimal 5× tetapi
-    masih < 10× (atau alasan non-hard lain bila ada). Yang dibuang total
-    (F/V < 5×/tidak valid, volatility / LPs / Top10) tidak dihitung. Kandidat
-    gagal dengan **volatility 0 tidak ikut dihitung** (2026-09-14 lanjutan):
-    pool tanpa pergerakan dibuang dari listing (:func:`row_volatility_zero`),
-    jadi hitungan kedua selalu cocok dengan ``len(hidden_rows)`` yang dibangun
-    :func:`scan_best_lane`.
+    masih < 10×, Bundler+Phishing di atas 40%, laporan Bundler wajib yang tidak
+    terbaca, atau alasan non-hard lain bila ada. Yang dibuang total (F/V < 5×/
+    tidak valid, volatility / LPs / Top10) tidak dihitung. Kandidat gagal dengan
+    **volatility 0 tidak ikut dihitung** (2026-09-14 lanjutan): pool tanpa
+    pergerakan dibuang dari listing (:func:`row_volatility_zero`), jadi hitungan
+    kedua selalu cocok dengan ``len(hidden_rows)`` yang dibangun
+    :func:`scan_best_lane`. ``require_distribution`` dipertahankan hanya untuk
+    kompatibilitas caller lama; Token:SOL tetap bukan filter, sedangkan gate
+    Bundler selalu dinilai.
     """
     rows = list(rows or [])
 
     def _gaps(row):
-        return (row_best_final_gaps(row, lane=lane) if require_distribution
-                else row_best_gaps(row, lane=lane))
+        return row_best_final_gaps(row, lane=lane)
 
     kept = [row for row in rows if not _gaps(row)]
     dropped = sum(1 for row in rows
@@ -1511,9 +1525,10 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
                    tax: bool = True) -> dict:
     """Scan the single 24H Best Pool lane.
 
-    Pipeline: listing → cheap metric gates → informational Meteora Token:SOL →
-    informational GMGN Bundler+Phishing for visible + displayable skipped rows
-    → RugCheck/tax information for visible rows only.
+    Pipeline: listing → cheap metric gates including F/V → informational
+    Meteora Token:SOL → mandatory GMGN Bundler+Phishing gate (maximum 40%) for
+    visible + displayable skipped rows → RugCheck/tax information for rows
+    that pass the final gate.
     """
     normalized = normalize_best_lane(lane)
     try:
@@ -1639,17 +1654,14 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
                                 "below_cutoff": False, "source": None,
                                 "cutoff_usd": None,
                                 "error": str(exc)[:160]})
-    # Statistik GMGN bundler + phishing/entrapment. Sejak 2026-09-28 ini
-    # **hanya informasi kolom** (permintaan user: *"untuk filter bundler kita
-    # hapus saja. tapi tetap menyertakan data tabelnya"*): datanya tetap
-    # ditempel ke ``row["bundler"]`` untuk kolom Bundler+Phishing, tetapi tidak
-    # lagi menggugurkan pool ke tabel "dilewati". Lanjutan user 2026-09-28:
-    # pool yang masuk tabel "dilewati" juga wajib fetch Bundler+Phishing. Agar
-    # mint duplikat tetap satu request, baris utama + baris dilewati dikirim ke
-    # ``gmgn_bundler.attach_to_rows`` dalam satu batch; pool yang sudah dibuang
-    # total (mis. F/V < 5×, LP/volatility/Top10 gagal keras) tidak ikut.
+    # Statistik GMGN Bundler + Phishing/Entrapment adalah gate terakhir
+    # setelah F/V. Data tetap ditempel ke tabel utama dan pool dilewati; agar
+    # mint duplikat hanya satu request, keduanya dikirim dalam satu batch.
+    # Pool yang sudah dibuang total (mis. F/V < 5×, LP/volatility/Top10 gagal
+    # keras) tidak ikut diperkaya.
     bundler_failed = 0
     hidden_bundler_failed = 0
+    bundler_filter_failed = 0
     bundler_targets = list(rows) + list(hidden_rows)
     if bundler_targets and bundler:
         visible_count = len(rows)
@@ -1663,32 +1675,53 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
                 if len(enriched) == len(bundler_targets):
                     rows = enriched[:visible_count]
                     hidden_rows = enriched[visible_count:]
+            all_enriched = list(rows) + list(hidden_rows)
             bundler_failed = sum(
-                1 for row in list(rows) + list(hidden_rows)
+                1 for row in all_enriched
                 if not (row.get("bundler") or {}).get("ok"))
             hidden_bundler_failed = sum(
                 1 for row in hidden_rows
                 if not (row.get("bundler") or {}).get("ok"))
-        except Exception as exc:  # noqa: BLE001 - enrichment opsional
+
+            # A candidate that fails only this final gate remains inspectable
+            # in the skipped table, where its Bundler+Phishing cell blinks red.
+            bundler_rejected = []
+            for row in rows:
+                gap = row_bundler_phishing_gap(row, lane=normalized)
+                if gap:
+                    row["best_gaps"] = [gap]
+                    bundler_rejected.append(row)
+            if bundler_rejected:
+                rows = [row for row in rows if row not in bundler_rejected]
+                hidden_rows.extend(bundler_rejected)
+                bundler_filter_failed = len(bundler_rejected)
+        except Exception as exc:  # noqa: BLE001 - the final gate is fail-closed
             error = " · ".join(
                 part for part in (error, f"Bundler GMGN: {exc}") if part)
             if _alog:
                 _alog.error("scan-best-pool",
                             f"Bundler GMGN gagal: {str(exc)[:160]}")
             for row in bundler_targets:
-                row.setdefault("bundler", {"ok": False,
-                                           "bundler_rate": None,
-                                           "phishing_rate": None,
-                                           "combined_rate": None,
-                                           "error": str(exc)[:160]})
+                row["bundler"] = {"ok": False,
+                                  "bundler_rate": None,
+                                  "phishing_rate": None,
+                                  "combined_rate": None,
+                                  "error": str(exc)[:160]}
+            # Failure to obtain the mandatory final-gate report keeps candidate
+            # rows out of the main table but does not erase their evidence.
+            bundler_rejected = list(rows)
+            for row in bundler_rejected:
+                row["best_gaps"] = [row_bundler_phishing_gap(
+                    row, lane=normalized)]
+            rows = []
+            hidden_rows.extend(bundler_rejected)
             bundler_failed = len(bundler_targets)
             hidden_bundler_failed = len(hidden_rows)
+            bundler_filter_failed = len(bundler_rejected)
 
-    # Filter Bundler+Phishing DIHAPUS 2026-09-28 (permintaan user). Tidak ada
-    # lagi baris yang dipindahkan ke "pool dilewati" karena risiko bundler;
-    # counter dipertahankan (selalu 0) untuk kompatibilitas caption/cache lama.
-    bundler_filter_failed = 0
-
+    # If the caller deliberately disables bundler enrichment (used by some
+    # offline tooling), preserve the optional-scanner behavior and do not
+    # manufacture a risk gate without a report.
     rug_failed = 0
     if rows and rugcheck:
         try:
@@ -1750,6 +1783,9 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
                             f"Tax/dividend gagal: {str(exc)[:160]}")
     kept = sort_best_rows(rows)
     hidden_rows = sort_hidden_best_rows(hidden_rows)
+    # Bundler failures are added to the displayable skipped list after the
+    # initial cheap-gate count above; keep the summary counter synchronized.
+    hidden_metric = len(hidden_rows)
     if _alog:
         _alog.info("scan-best-pool",
                    f"scan selesai: {len(kept)} pool tampil dari {fetched} "
@@ -1763,7 +1799,7 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
                    + (f", {dropped_fv} pool F/V < "
                       f"{float(BEST_FV_HIDE_MIN):g}× dibuang"
                       if dropped_fv else "")
-                   + (f", {bundler_filter_failed} pool Bundler+Phishing > 25%/tak terbaca"
+                   + (f", {bundler_filter_failed} pool Bundler+Phishing > 40%/tak terbaca"
                       if bundler_filter_failed else "")
                    + (f", {distribution_failed} distribusi tak terbaca/non-SOL"
                       if distribution_failed else "")
@@ -1816,7 +1852,8 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
         # Statistik per-token GMGN untuk tabel utama + tabel dilewati.
         "bundler_failed": bundler_failed,
         "hidden_bundler_failed": hidden_bundler_failed,
-        # Compatibility counter/key lama: filter Bundler+Phishing sudah dihapus.
+        # Pool yang gagal gate final Bundler+Phishing (atau report wajib
+        # tidak terbaca) dan dipindahkan ke tabel dilewati.
         "bundler_filter_failed": bundler_filter_failed,
         "bundler_phishing_filter": bool(bundler),
         # BubbleMap tak terbaca (2026-09-18) — kolom Bubble Map menulis —.

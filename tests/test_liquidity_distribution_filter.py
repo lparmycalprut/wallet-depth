@@ -77,7 +77,8 @@ class ThresholdTest(unittest.TestCase):
     def test_semua_rasio_hanya_informasi(self):
         base = {"timeframe": "24h", "fee_active_tvl_ratio": 80.0,
                 "volatility": 6.0, "total_lps": 100,
-                "top_holders_pct": 10.0}
+                "top_holders_pct": 10.0,
+                "bundler": {"ok": True, "combined_rate": 0.30}}
         exact = dict(base, liquidity_distribution=_report(0.5))
         over_sol_cap = dict(base, liquidity_distribution=_report(0.4999))
         under_sol_cap = dict(base, liquidity_distribution=_report(0.5001))
@@ -115,7 +116,8 @@ class ThresholdTest(unittest.TestCase):
     def test_hilang_error_dan_non_sol_tidak_menggugurkan(self):
         row = {"timeframe": "24h", "fee_active_tvl_ratio": 80.0,
                "volatility": 6.0, "total_lps": 100,
-               "top_holders_pct": 10.0}
+               "top_holders_pct": 10.0,
+               "bundler": {"ok": True, "combined_rate": 0.30}}
         self.assertEqual(ms.row_best_final_gaps(row), [])
         row["liquidity_distribution"] = _report(
             0, ok=False, error="pool bukan pasangan token-SOL")
