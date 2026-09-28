@@ -1,8 +1,9 @@
 CHECKLIST URUTAN FILTER SCAN BEST POOL METEORA 24H
 ==================================================
 
-Gunakan urutan ini untuk setiap pool. Jika satu filter gagal, pool
-langsung gugur dan tidak lanjut ke enrichment berikutnya.
+Gunakan urutan ini untuk setiap pool. Pool yang gagal keras dibuang total;
+pool yang hanya gagal ambang tampil F/V (tetapi masih F/V >= 5x) masuk tabel
+"pool dilewati" dan tetap mendapat data informasi yang relevan.
 
 FILTER AWAL (sumber listing)
 ----------------------------
@@ -16,36 +17,40 @@ FILTER PER POOL
 [ ] 5. Volatility bukan 0.
 [ ] 6. Jumlah LPs >= 100.
 [ ] 7. Volatility berada pada rentang 1% sampai 10% (inklusif).
-[ ] 8. F/V >= 10x.
-[ ] 9. Tampilkan Fee/TVL sebagai informasi (bukan filter).
-[ ] 10. Top-10 supply concentration < 25%.
+[ ] 8. F/V >= 5x untuk masuk kandidat Best Pool.
+[ ] 9. F/V >= 10x untuk tampil di tabel utama; F/V 5x sampai <10x masuk
+       "pool dilewati".
+[ ] 10. Tampilkan Fee/TVL sebagai informasi (bukan filter).
+[ ] 11. Top-10 supply concentration < 25%.
 
 INFORMASI TOKEN:SOL (BUKAN FILTER)
 ----------------------------------
-[ ] 11. Ambil detail pool dari API resmi Meteora bila tersedia.
-[ ] 12. Hitung nilai USD masing-masing sisi: jumlah token x harga USD.
-[ ] 13. Tampilkan rasio Token:SOL pada pool lolos dan pool dilewati.
+[ ] 12. Ambil detail pool dari API resmi Meteora bila tersedia.
+[ ] 13. Hitung nilai USD masing-masing sisi: jumlah token x harga USD.
+[ ] 14. Tampilkan rasio Token:SOL pada pool lolos dan pool dilewati.
 
 Rasio apa pun tidak menggugurkan pool. API detail gagal/non-SOL/tidak valid
 hanya membuat kolom Token:SOL menampilkan tanda —.
 
-FILTER TERAKHIR: RISIKO GMGN
-----------------------------
-[ ] 14. Baca top_bundler_trader_percentage.
-[ ] 15. Baca top_entrapment_trader_percentage (phishing/entrapment).
-[ ] 16. Hitung Bundler + Phishing.
-[ ] 17. Pastikan hasil gabungan <= 25%.
+INFORMASI RISIKO GMGN (BUKAN FILTER)
+------------------------------------
+[ ] 15. Untuk pool lolos dan pool dilewati yang masih memenuhi F/V >= 5x,
+       baca top_bundler_trader_percentage.
+[ ] 16. Baca top_entrapment_trader_percentage (phishing/entrapment).
+[ ] 17. Hitung Bundler + Phishing dan tampilkan di kolom.
+[ ] 18. Gunakan batas 25% hanya sebagai warna/verdict kolom, bukan syarat lolos.
 
 HASIL AKHIR
 -----------
-[ ] LOLOS jika pool melewati filter listing dan Bundler+Phishing <= 25%.
-[ ] Tepat 25% = LOLOS.
-[ ] GAGAL/DILEWATI jika gabungan > 25% atau salah satu field risiko GMGN
-    tidak tersedia/tidak valid.
+[ ] LOLOS jika pool melewati filter listing utama termasuk F/V >= 10x.
+[ ] DILEWATI jika F/V 5x sampai <10x (atau gap non-hard lain) dan tidak gagal
+    keras.
+[ ] DIBUANG TOTAL jika F/V < 5x/tidak valid, LPs gagal, volatility gagal,
+    atau Top10 >= 25%.
 
 RINGKASAN PER POOL
 ------------------
 Pool/token : ______________________________
 Filter gagal pertama : ____________________
-Hasil      : [ ] LOLOS   [ ] GAGAL
+Hasil      : [ ] LOLOS   [ ] DILEWATI   [ ] DIBUANG
 Catatan    : ______________________________

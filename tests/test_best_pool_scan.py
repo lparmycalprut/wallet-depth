@@ -41,7 +41,7 @@ class BestPoolGateTest(unittest.TestCase):
     def test_threshold_constants(self):
         self.assertEqual(ms.BEST_ACTIVE_TVL_MIN, 50_000.0)
         self.assertEqual(ms.BEST_FV_24H_MIN, 10.0)
-        self.assertEqual(ms.BEST_FV_HIDE_MIN, 10.0)
+        self.assertEqual(ms.BEST_FV_HIDE_MIN, 5.0)
         self.assertEqual(ms.BEST_LPS_MIN, 100.0)
         self.assertFalse(hasattr(ms, "BEST_SOL_TOKEN_MAX_RATIO"))
         self.assertFalse(hasattr(ms, "BEST_TOKEN_SOL_MIN_RATIO"))
@@ -77,13 +77,17 @@ class BestPoolGateTest(unittest.TestCase):
         self.assertEqual(ms.row_bundler_phishing_gap(risky), "")
         self.assertEqual(ms.row_best_final_gaps(risky), [])
 
-    def test_low_fv_goes_to_skipped_not_dropped(self):
-        # F/V di bawah 10× tidak lagi dibuang total — ia gugur ambang lane dan
-        # tetap tampil di listing "pool dilewati" (permintaan user 2026-09-28).
+    def test_candidate_fv_floor_controls_skipped_rows(self):
+        # F/V 5× sampai <10× tetap tampil di listing "pool dilewati".
         low = row(fee_active_tvl_ratio=30.0, volatility=6.0)  # F/V = 5×
         self.assertIn("F/V < 10×", ms.row_best_gaps(low)[0])
         self.assertIsNone(ms.row_fv_under_hide(low))
         self.assertFalse(ms.row_best_dropped(low))
+        # Di bawah 5× bukan kandidat Best Pool lagi: dibuang total.
+        too_low = row(fee_active_tvl_ratio=29.9, volatility=6.0)  # F/V < 5×
+        self.assertIn("F/V < 10×", ms.row_best_gaps(too_low)[0])
+        self.assertAlmostEqual(ms.row_fv_under_hide(too_low), 29.9 / 6.0)
+        self.assertTrue(ms.row_best_dropped(too_low))
 
     def test_scanner_has_no_wallet_analysis_parameters_or_imports(self):
         params = inspect.signature(ms.scan_best_lane).parameters
@@ -129,6 +133,7 @@ class BestPoolTableTest(unittest.TestCase):
         self.assertIn("$50,000", tip)
         self.assertIn("LPs at least 100", tip)
         self.assertIn("F/V at least 10×", tip)
+        self.assertIn("at least 5× but below 10×", tip)
         self.assertIn("Token:SOL", tip)
         self.assertIn("informational only", tip)
         # Filter Bundler+Phishing dihapus: tooltip menyebut kolom info saja.

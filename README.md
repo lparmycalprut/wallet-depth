@@ -11,20 +11,15 @@ A pool must satisfy all listing checks:
 - DLMM, 24-hour timeframe
 - active TVL **≥ $50,000**
 - liquidity providers **≥ 100**
-- F/V **≥ 10×**
+- F/V **≥ 10×** to appear in the main result table
+- F/V **≥ 5×** to remain a Best Pool candidate; **5× to <10×** appears in **pool dilewati**, while **<5×** is dropped
 - Fee/TVL is shown for comparison, but is **not a filter**
 - volatility between **1% and 10%**, inclusive
 - Meteora Top-10 supply concentration below **25%**
 
 After those cheap checks, official Meteora pool details still provide the **Token:SOL** USD-value ratio, but the ratio is informational and no longer filters pools.
 
-The final gate uses GMGN per-token risk statistics:
-
-```text
-bundler percentage + phishing/entrapment percentage <= 25%
-```
-
-Exactly **25% passes**; a larger combined rate is moved to **pool dilewati**. If either required GMGN field cannot be read, the final gate fails closed into the skipped table. Only passing rows continue to RugCheck and tax/dividend enrichment. There is no new-pool detection or alternate bypass path.
+GMGN per-token **Bundler+Phishing** statistics are also informational. They are fetched for both main-table rows and the displayable **pool dilewati** rows, so candidates with **F/V 5× to <10×** still show their Bundler+Phishing data. The 25% boundary remains a color/verdict hint in the column, not a gate. Only passing main-table rows continue to RugCheck and tax/dividend enrichment. There is no new-pool detection or alternate bypass path.
 
 ## Mobile layout
 

@@ -1,13 +1,22 @@
 # Kegiatan
 
+## 2026-09-28 — Bundler+Phishing untuk pool dilewati dan lantai F/V 5×
+
+Permintaan user: *"Bundler+Phishing yang ada di pool disembunyikan juga harus di fetch datanya"* dan *"syarat pool yang masuk kriteria ... minimal 5x F/V"*.
+
+- Tabel utama tetap mensyaratkan **F/V ≥ 10×**.
+- Pool dengan **F/V 5× sampai <10×** tetap masuk listing **pool dilewati** dan sekarang ikut mengambil data **Bundler+Phishing GMGN**.
+- Pool dengan **F/V < 5×** dibuang total dari card (tidak masuk tabel utama maupun pool dilewati) agar hanya kandidat minimal yang diperkaya data pihak ketiga.
+- Fetch Bundler+Phishing dibatch untuk baris utama + baris dilewati supaya mint duplikat tetap satu request.
+
 ## 2026-09-28 — F/V minimal 10× dan batas Token:SOL dihapus total
 
 Permintaan user: *"filter batasan perbandingan token : sol hilangkan lagi"* dan
 *"ganti minimal f/v ke 10x minimal"*.
 
 - Menaikkan ambang F/V Best Pool dari **2× menjadi 10×** (inklusif) untuk
-  ambang lane maupun lantai buang, jadi pool dengan F/V < 10× tidak muncul di
-  tabel hasil maupun di listing "pool dilewati".
+  tabel utama. Catatan: lanjutan pada hari yang sama menetapkan lantai kandidat
+  **5×**, sehingga F/V 5× sampai <10× masuk listing "pool dilewati".
 - Menghapus seluruh sisa batas perbandingan Token:SOL: konstanta
   `BEST_SOL_TOKEN_MAX_RATIO`, `BEST_TOKEN_SOL_MIN_RATIO`,
   `BEST_TOKEN_SOL_RATIO_LIMIT_LABEL`, isi `row_liquidity_distribution_gap`

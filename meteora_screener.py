@@ -4,9 +4,9 @@
 Best Pool fetches the 24-hour listing with active TVL of at least $50K, then
 applies the cheap F/V, volatility, LP-count, and Top-10 concentration gates.
 Fee/TVL is informational only. Official Meteora Token:SOL side values are
-informational. The final
-gate requires GMGN bundler + phishing/entrapment to be at most 25 percent.
-Only passing rows continue to RugCheck and tax enrichment.
+informational. GMGN Bundler+Phishing stats are informational too, and are
+fetched for both visible rows and the displayable skipped rows. Only passing
+rows continue to RugCheck and tax enrichment.
 
 """
 from __future__ import annotations
@@ -42,12 +42,13 @@ SAFE_LP_MULTIPLIER = 5.0
 # ``top_holders_pct`` 35.75 = 35,75% supply di 10 holder teratas token base).
 # ---------------------------------------------------------------------------
 BEST_FV_24H_MIN = 10.0          # 24H: F/V >= 10,0 (inklusif)
-# Permintaan user 2026-09-28: *"ganti minimal f/v ke 10x minimal"* (dulu 2×) +
-# *"jika tidak 10x ya masuk di pool disembunyikan"*. Ambang lolos **inklusif**
-# (tepat 10,0× lolos ke tabel). Pool F/V < 10× **TIDAK** lagi dibuang total:
-# ia gugur ambang lane (``"F/V < 10×"``) dan mendarat di listing "▶ N pool
-# dilewati" — lantai buang :data:`BEST_FV_HIDE_MIN` sudah dinonaktifkan
-# (lihat :func:`row_fv_under_hide`).
+# Permintaan user 2026-09-28: *"ganti minimal f/v ke 10x minimal"* +
+# lanjutan *"syarat pool yang masuk kriteria ... minimal 5x F/V"*. Ambang
+# tampil utama **inklusif** (tepat 10,0× lolos ke tabel). Pool dengan F/V
+# minimal 5× tetapi masih < 10× tetap masuk kandidat yang bisa dilihat di
+# listing "▶ N pool dilewati". Pool F/V < 5× bukan kandidat Best Pool lagi dan
+# dibuang total supaya enrichment pihak ketiga tidak dihabiskan untuk sinyal
+# yang terlalu lemah.
 # Layar: **Fee/TVL minimal 30%** (permintaan user 2026-09-23: *"kita perketat
 # filter yang boleh di show di hasil"* + *"Fee/TVL minimal 30%"* + *"dibawah itu
 # jangan show"*). ``fee_active_tvl_ratio`` API Meteora sudah dalam satuan persen
@@ -64,17 +65,12 @@ BEST_FV_24H_MIN = 10.0          # 24H: F/V >= 10,0 (inklusif)
 # di tabel hasil. Saringan ini hanya untuk card 🏆 Best Pool — regular scan
 # (:func:`filter_regular_rows`) tidak ikut berubah.
 BEST_FEE_TVL_MIN = 30.0
-# Lantai "buang total" F/V **DINONAKTIFKAN 2026-09-28** (permintaan user:
-# *"jika tidak 10x ya masuk di pool disembunyikan"*). Dulu (2026-09-24) pool
-# F/V di bawah lantai ini dibuang total — tidak masuk tabel, tidak masuk
-# ``hidden_rows``, tidak dihitung pill/caption. Sekarang tidak ada lagi baris
-# yang dibuang karena F/V: pool F/V < ambang lane (:data:`BEST_FV_24H_MIN`)
-# hanya gugur ambang biasa (``"F/V < 10×"``) dan **tetap tampil** di listing
-# "▶ N pool dilewati". Konstanta dipertahankan (dan tetap 10×) hanya untuk
-# label/teks lama; pembacanya :func:`row_fv_under_hide` sekarang selalu
-# mengembalikan ``None`` sehingga tidak pernah menggugurkan baris. Hanya card
-# 🏆 Best Pool — ``filter_regular_rows`` Scan Meteora regular tidak berubah.
-BEST_FV_HIDE_MIN = 10.0
+# Lantai "masuk kriteria" F/V. Pool F/V 5× sampai <10× masih ditampilkan di
+# listing "▶ N pool dilewati" (dan tetap mendapat Token:SOL +
+# Bundler+Phishing); pool F/V < 5× dibuang total dari card karena tidak memenuhi
+# syarat kandidat minimum. Hanya card 🏆 Best Pool — ``filter_regular_rows``
+# Scan Meteora regular tidak berubah.
+BEST_FV_HIDE_MIN = 5.0
 BEST_CARD_TITLE = "🏆 Scan Best Pool Meteora"
 # **Satu lane sejak 2026-09-16** (permintaan user: "hapus scan 30 menit, kita
 # sisakan yang 24 jam saja"). Sejak 2026-09-13 card ini punya DUA tombol
@@ -623,25 +619,29 @@ def row_fv_ratio(row: dict | None):
 
 
 def row_fv_under_hide(row: dict | None):
-    """Stub compatibility: lantai "buang total" F/V **dinonaktifkan**.
+    """Return the F/V value when it is below the displayable candidate floor.
 
-    Permintaan user 2026-09-28: *"jika tidak 10x ya masuk di pool
-    disembunyikan"*. Sebelumnya pool dengan F/V ``< BEST_FV_HIDE_MIN`` (10×)
-    dibuang total (tidak muncul di mana pun). Sekarang pool F/V di bawah ambang
-    lane **tidak dibuang** — ia gugur ambang lane biasa
-    (:func:`row_best_gaps` → ``"F/V < 10×"``) dan mendarat di listing
-    "▶ N pool dilewati" bersama kandidat gugur lainnya.
+    Main table still requires :data:`BEST_FV_24H_MIN` (10×). The skipped table
+    keeps only pools that at least satisfy this minimum candidate floor
+    (:data:`BEST_FV_HIDE_MIN`, 5×):
 
-    Fungsi ini dipertahankan (selalu ``None``) supaya pemanggil/tes lama
-    (mis. ``row_best_dropped``, hitungan ``dropped_fv`` di
-    :func:`scan_best_lane`) tetap jalan tanpa cabang mati; hasilnya kini tidak
-    pernah menggugurkan/menghilangkan baris.
+    - F/V >= 10× → visible table (if other gates pass);
+    - 5× <= F/V < 10× → ``pool dilewati`` with its metrics/enrichments;
+    - F/V < 5× → dropped from the card entirely.
+
+    Missing/non-finite F/V is handled as invalid by :func:`row_best_dropped`,
+    so this helper only returns a numeric under-floor ratio.
     """
+    ratio = row_fv_ratio(row)
+    if ratio is None or not math.isfinite(ratio):
+        return None
+    if ratio < float(BEST_FV_HIDE_MIN):
+        return ratio
     return None
 
 
 def fv_hide_label() -> str:
-    """Teks lantai F/V untuk UI/tooltip: ``F/V < 10×`` (angka dari konstanta)."""
+    """Teks lantai F/V untuk UI/tooltip: ``F/V < 5×`` (angka dari konstanta)."""
     return f"F/V < {float(BEST_FV_HIDE_MIN):g}×"
 
 
@@ -1256,7 +1256,7 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
     """Return the first failed cheap Best Pool gate.
 
     Gates are validated in this order: finite F/V inputs, non-zero volatility,
-    LP count >= 100, volatility range, F/V >= 2, then Meteora's independent
+    LP count >= 100, volatility range, F/V >= 10, then Meteora's independent
     Top-10 supply concentration metric below 25%. Fee/TVL is informational.
     """
     row = row or {}
@@ -1374,25 +1374,12 @@ def row_best_gap_label(row: dict | None, *, lane=None) -> str:
 
 
 def row_best_dropped(row: dict | None, *, lane=None) -> bool:
-    """True bila pool gugur karena Top10, volatility, LPs < 100/tidak terukur, atau F/V < 10×.
+    """True bila pool gagal keras dan tidak boleh muncul di tabel mana pun.
 
-    Baris seperti ini langsung disembunyikan total, tidak ditampilkan
-    di mana pun (baik di tabel utama yang lolos maupun di listing
-    disembunyikan/dilewati).
-
-    Permintaan user:
-    "hasil yang gugur karena
-    gugur: Top10
-    gugur: volatility
-    gugur: LPs
-    langsung sembunyikan total, tidak ditampilkana dimanapun"
-
-    Permintaan user 2026-09-24 (lanjutan aturan yang sama): *"jangan tampilkan
-    sama sekali pool yang F/V nya kurang dari 2 di pool yang dilewati atau
-    dimanapun"* — F/V di bawah :data:`BEST_FV_HIDE_MIN` (10×) ikut dibuang
-    total lewat :func:`row_fv_under_hide`, jadi listing "▶ N pool dilewati"
-    hanya berisi F/V ``>= 10×`` (yang masih di bawah ambang lane) atau baris
-    Fee/TVL tipis.
+    Gagal keras tetap mencakup Top10, volatility, dan LPs sesuai aturan lama.
+    Untuk F/V, aturan terbaru membedakan ambang tampil dan ambang kandidat:
+    F/V >= 10× tampil utama, 5× <= F/V < 10× masuk "pool dilewati", sedangkan
+    F/V < 5× (atau F/V tidak terbukti valid) dibuang total.
 
     Fee/TVL tidak termasuk alasan ``row_best_dropped`` karena filter tersebut
     dinonaktifkan; nilainya tetap boleh tampil dan dipakai untuk pengurutan.
@@ -1415,7 +1402,10 @@ def row_best_dropped(row: dict | None, *, lane=None) -> bool:
         return True
     if row_top10_over(row) is not None:
         return True
-    # Lantai F/V: di bawah 10× lenyap dari listing mana pun.
+    fv = row_fv_ratio(row)
+    if fv is None or not math.isfinite(fv):
+        return True
+    # Lantai kandidat F/V: di bawah 5× lenyap dari listing mana pun.
     if row_fv_under_hide(row) is not None:
         return True
     return False
@@ -1451,17 +1441,16 @@ def filter_best_rows(rows: list[dict] | None, *, lane=None,
 
     ``lane`` memaksa satu aturan ambang untuk seluruh baris (dipakai
     :func:`scan_best_lane` saat satu tombol lane ditekan); tanpa itu setiap
-    baris dinilai dari ``timeframe``-nya sendiri. Saringannya lima: ambang F/V
-    lane, rentang volatility 1%–10%, LPs ``>= BEST_LPS_MIN``, **Fee/TVL ``>=
-    BEST_FEE_TVL_MIN`` (30%, permintaan user 2026-09-23)** dan Top10 ``<
-    BEST_TOP10_MAX_PCT`` — semuanya lewat
-    :func:`row_best_gaps`. Hitungan kedua hanya memuat baris yang masih bisa
-    dilihat di listing "dilewati", yaitu gugur **F/V (>= 10×) atau Fee/TVL**;
-    yang dibuang total (F/V < 10×, volatility / LPs /
-    Top10) tidak dihitung. Kandidat gagal dengan
-    **volatility 0 tidak ikut dihitung** (2026-09-14 lanjutan): pool tanpa
-    pergerakan dibuang dari listing (:func:`row_volatility_zero`), jadi
-    hitungan kedua selalu cocok dengan ``len(hidden_rows)`` yang dibangun
+    baris dinilai dari ``timeframe``-nya sendiri. Saringannya: ambang F/V
+    tampil 10×, rentang volatility 1%–10%, LPs ``>= BEST_LPS_MIN`` dan Top10
+    ``< BEST_TOP10_MAX_PCT`` — semuanya lewat :func:`row_best_gaps`.
+    Fee/TVL sudah menjadi informasi saja. Hitungan kedua hanya memuat baris
+    yang masih bisa dilihat di listing "dilewati", yaitu F/V minimal 5× tetapi
+    masih < 10× (atau alasan non-hard lain bila ada). Yang dibuang total
+    (F/V < 5×/tidak valid, volatility / LPs / Top10) tidak dihitung. Kandidat
+    gagal dengan **volatility 0 tidak ikut dihitung** (2026-09-14 lanjutan):
+    pool tanpa pergerakan dibuang dari listing (:func:`row_volatility_zero`),
+    jadi hitungan kedua selalu cocok dengan ``len(hidden_rows)`` yang dibangun
     :func:`scan_best_lane`.
     """
     rows = list(rows or [])
@@ -1523,7 +1512,8 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
     """Scan the single 24H Best Pool lane.
 
     Pipeline: listing → cheap metric gates → informational Meteora Token:SOL →
-    final GMGN bundler+phishing gate (<=25%) → RugCheck/tax information.
+    informational GMGN Bundler+Phishing for visible + displayable skipped rows
+    → RugCheck/tax information for visible rows only.
     """
     normalized = normalize_best_lane(lane)
     try:
@@ -1626,8 +1616,9 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
     dropped_total = len(failed_rows) - len(hidden_rows)
     hidden_metric = len(hidden_rows)
 
-    # Likuiditas GMGN tetap informasi. Tempel setelah cheap gates dan sebelum
-    # gate risiko Bundler+Phishing.
+    # Likuiditas GMGN tetap informasi untuk tabel utama saja. Pool dilewati
+    # tidak mendapat RugCheck/tax, tetapi Bundler+Phishing diminta tetap
+    # tersedia di tabel dilewati (lihat blok bundler di bawah).
     gmgn_failed = 0
     if rows and gmgn:
         try:
@@ -1652,28 +1643,46 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
     # **hanya informasi kolom** (permintaan user: *"untuk filter bundler kita
     # hapus saja. tapi tetap menyertakan data tabelnya"*): datanya tetap
     # ditempel ke ``row["bundler"]`` untuk kolom Bundler+Phishing, tetapi tidak
-    # lagi menggugurkan pool ke tabel "dilewati".
+    # lagi menggugurkan pool ke tabel "dilewati". Lanjutan user 2026-09-28:
+    # pool yang masuk tabel "dilewati" juga wajib fetch Bundler+Phishing. Agar
+    # mint duplikat tetap satu request, baris utama + baris dilewati dikirim ke
+    # ``gmgn_bundler.attach_to_rows`` dalam satu batch; pool yang sudah dibuang
+    # total (mis. F/V < 5×, LP/volatility/Top10 gagal keras) tidak ikut.
     bundler_failed = 0
-    if rows and bundler:
+    hidden_bundler_failed = 0
+    bundler_targets = list(rows) + list(hidden_rows)
+    if bundler_targets and bundler:
+        visible_count = len(rows)
         try:
             from gmgn_bundler import attach_to_rows as _bundler_attach
 
-            rows = _bundler_attach(rows, workers=workers,
-                                   timeout=min(int(timeout), 10))
-            bundler_failed = sum(1 for row in rows
-                                 if not (row.get("bundler") or {}).get("ok"))
+            enriched = _bundler_attach(bundler_targets, workers=workers,
+                                       timeout=min(int(timeout), 10))
+            if enriched is not None:
+                enriched = list(enriched)
+                if len(enriched) == len(bundler_targets):
+                    rows = enriched[:visible_count]
+                    hidden_rows = enriched[visible_count:]
+            bundler_failed = sum(
+                1 for row in list(rows) + list(hidden_rows)
+                if not (row.get("bundler") or {}).get("ok"))
+            hidden_bundler_failed = sum(
+                1 for row in hidden_rows
+                if not (row.get("bundler") or {}).get("ok"))
         except Exception as exc:  # noqa: BLE001 - enrichment opsional
             error = " · ".join(
                 part for part in (error, f"Bundler GMGN: {exc}") if part)
             if _alog:
                 _alog.error("scan-best-pool",
                             f"Bundler GMGN gagal: {str(exc)[:160]}")
-            for row in rows:
+            for row in bundler_targets:
                 row.setdefault("bundler", {"ok": False,
                                            "bundler_rate": None,
                                            "phishing_rate": None,
                                            "combined_rate": None,
                                            "error": str(exc)[:160]})
+            bundler_failed = len(bundler_targets)
+            hidden_bundler_failed = len(hidden_rows)
 
     # Filter Bundler+Phishing DIHAPUS 2026-09-28 (permintaan user). Tidak ada
     # lagi baris yang dipindahkan ke "pool dilewati" karena risiko bundler;
@@ -1780,12 +1789,13 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
         "fetched": fetched,
         "hidden_metric": hidden_metric,
         "skipped_quote": quote_skipped,
-        # Pool gugur Top10 / volatility / LPs / F/V < 10× yang dibuang dari
-        # listing (tidak ditampilkan di mana pun).
+        # Pool gugur Top10 / volatility / LPs / F/V < 5× yang dibuang dari
+        # listing (tidak ditampilkan di mana pun). F/V 5×–<10× tetap masuk
+        # ``hidden_rows``.
         "dropped_volatility": dropped_volatility,
         "dropped_top10": dropped_top10,
         "dropped_lps": dropped_lps,
-        # F/V di bawah lantai BEST_FV_HIDE_MIN (10×).
+        # F/V di bawah lantai BEST_FV_HIDE_MIN (5×).
         "dropped_fv": dropped_fv,
         "dropped_total": dropped_total,
         # Compatibility key lama: filter Token:SOL sudah dihapus.
@@ -1803,8 +1813,10 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
         # tak terlacak) — TIDAK disaring (tanpa bukti tidak ada verdict),
         # kolom RugCheck menulis — untuk mereka (2026-09-17).
         "gmgn_failed": gmgn_failed,
-        # Statistik per-token GMGN + jumlah yang gagal gate final 25%.
+        # Statistik per-token GMGN untuk tabel utama + tabel dilewati.
         "bundler_failed": bundler_failed,
+        "hidden_bundler_failed": hidden_bundler_failed,
+        # Compatibility counter/key lama: filter Bundler+Phishing sudah dihapus.
         "bundler_filter_failed": bundler_filter_failed,
         "bundler_phishing_filter": bool(bundler),
         # BubbleMap tak terbaca (2026-09-18) — kolom Bubble Map menulis —.
