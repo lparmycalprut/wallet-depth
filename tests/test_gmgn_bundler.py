@@ -75,15 +75,15 @@ class BundlerAttachTest(unittest.TestCase):
 
 class BundlerPipelineTest(unittest.TestCase):
     @staticmethod
-    def _pool():
+    def _pool(address="PoolA", *, mint=MINT, fee=80.0, volatility=6.0):
         return {
-            "pool_address": "PoolA",
-            "token_x": {"address": MINT, "symbol": "TOK",
+            "pool_address": address,
+            "token_x": {"address": mint, "symbol": "TOK",
                         "market_cap": 1_000_000, "price": 0.01,
                         "top_holders_pct": 10.0},
             "token_y": {"address": ms.SOL_MINT, "symbol": "SOL", "price": 100.0},
             "active_tvl": 100_000.0, "tvl": 120_000.0, "total_lps": 100,
-            "fee_active_tvl_ratio": 80.0, "volatility": 6.0,
+            "fee_active_tvl_ratio": fee, "volatility": volatility,
             "volume": 1_000_000.0, "fee_pct": 2.0,
         }
 
@@ -122,6 +122,55 @@ class BundlerPipelineTest(unittest.TestCase):
         self.assertEqual(result["hidden_rows"], [])
         self.assertEqual(result["bundler_filter_failed"], 0)
         self.assertEqual(result["rows"][0]["bundler"]["combined_rate"], 0.26)
+
+    def test_hidden_fv_candidates_also_fetch_bundler(self):
+        visible = self._pool("VISIBLE", mint=MINT, fee=80.0, volatility=6.0)
+        hidden = self._pool(
+            "HIDDEN", mint="Hidden111111111111111111111111111111111",
+            fee=30.0, volatility=6.0)  # F/V = 5×, masuk pool dilewati.
+        dropped = self._pool(
+            "DROPPED", mint="Dropped1111111111111111111111111111111",
+            fee=24.0, volatility=6.0)  # F/V = 4×, dibuang total.
+        seen_batches = []
+
+        def distribution(rows, **_kwargs):
+            for row in rows:
+                row["liquidity_distribution"] = {
+                    "checked": True, "ok": True,
+                    "token_value_usd": 10_000.0,
+                    "sol_value_usd": 100_000.0,
+                    "token_to_sol_ratio": 0.1,
+                    "error": ""}
+            return rows
+
+        def attach(rows, **_kwargs):
+            seen_batches.append([row["pool_address"] for row in rows])
+            for row in rows:
+                row["bundler"] = gb.summarize({
+                    "top_bundler_trader_percentage": 0.04,
+                    "top_entrapment_trader_percentage": 0.03,
+                }, mint=row.get("ca") or "")
+            return rows
+
+        with mock.patch.object(ms, "fetch_best_pools",
+                               return_value=[visible, hidden, dropped]), \
+                mock.patch.object(ms, "attach_liquidity_distribution",
+                                  side_effect=distribution), \
+                mock.patch.object(gb, "attach_to_rows", side_effect=attach):
+            result = ms.scan_best_lane(gmgn=False, bundler=True,
+                                       rugcheck=False, tax=False)
+
+        self.assertEqual(seen_batches, [["VISIBLE", "HIDDEN"]])
+        self.assertEqual([row["pool_address"] for row in result["rows"]],
+                         ["VISIBLE"])
+        self.assertEqual([row["pool_address"] for row in result["hidden_rows"]],
+                         ["HIDDEN"])
+        self.assertEqual(result["dropped_fv"], 1)
+        self.assertEqual(result["dropped_total"], 1)
+        self.assertEqual(result["hidden_rows"][0]["bundler"]["combined_rate"],
+                         0.07)
+        self.assertNotIn("DROPPED", [row["pool_address"]
+                                      for row in result["rows"] + result["hidden_rows"]])
 
 
 if __name__ == "__main__":

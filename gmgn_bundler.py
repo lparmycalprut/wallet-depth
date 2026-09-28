@@ -6,9 +6,10 @@ GMGN exposes ``top_bundler_trader_percentage`` as a fraction (0-1) at
 traded by wallets GMGN classifies as bundlers; it is not a count of Jito
 bundles and must not be inferred when the field is absent.
 
-Best Pool uses the sum of bundler and GMGN's entrapment/phishing trader rate
-as its final risk gate. Results are cached briefly because the endpoint is
-unofficial and one request is needed per mint.
+Best Pool shows the sum of bundler and GMGN's entrapment/phishing trader rate
+as an informational risk column for visible pools and displayable skipped
+pools. Results are cached briefly because the endpoint is unofficial and one
+request is needed per mint.
 """
 from __future__ import annotations
 
@@ -28,7 +29,8 @@ CACHE_MAX_ENTRIES = 400
 REQUEST_TIMEOUT = 10
 WORKERS = 6
 
-# Final gate requested for Best Pool: bundler + phishing may be at most 25%.
+# Informational risk boundary for coloring Best Pool's Bundler+Phishing cell.
+# It no longer filters rows; values above 25% are colored as GAGAL only.
 MAX_COMBINED_RATE = 0.25
 WARN_COMBINED_RATE = 0.15
 SAFE_COLOR = "#15803d"
@@ -269,8 +271,9 @@ def cell_parts(report: dict | None) -> tuple[str, str, str]:
     if _rate(item.get("sniper_rate")) is not None:
         extras.append(f"sniper {_pct(item.get('sniper_rate'))}")
     tip = (f"GMGN: bundler {bundler} + phishing/entrapment {phishing} = "
-           f"{combined}. Filter terakhir: gabungan maksimal "
-           f"{MAX_COMBINED_RATE * 100:g}% (tepat 25% lolos, di atasnya gagal). "
+           f"{combined}. Batas warna risiko: gabungan maksimal "
+           f"{MAX_COMBINED_RATE * 100:g}% (tepat 25% masih WASPADA, di atasnya "
+           "ditandai GAGAL), tetapi ini informasi kolom dan bukan filter. "
            "Angka ini statistik wallet GMGN, bukan bukti pasti manipulasi "
            "atau hitungan transaksi Jito.")
     if extras:

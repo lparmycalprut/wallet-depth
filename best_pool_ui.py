@@ -56,8 +56,9 @@ def best_lane_detail(lane) -> tuple[str, str, str]:
 def best_pool_tooltip() -> str:
     """Return the concise rule summary shown on the Best Pool title."""
     from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_FV_24H_MIN,
-                                  BEST_LPS_MIN, BEST_TOP10_MAX_PCT,
-                                  BEST_VOL_SHOW_MAX, BEST_VOL_SHOW_MIN)
+                                  BEST_FV_HIDE_MIN, BEST_LPS_MIN,
+                                  BEST_TOP10_MAX_PCT, BEST_VOL_SHOW_MAX,
+                                  BEST_VOL_SHOW_MIN)
 
     return (
         "Meteora DLMM 24H only. Active TVL must be at least "
@@ -68,9 +69,11 @@ def best_pool_tooltip() -> str:
         "Token:SOL from official Meteora pool details is informational only "
         "and no longer filters a pool. GMGN bundler plus phishing/entrapment "
         "stats are shown in their column as information only and no longer "
-        "filter a pool. Pools below the F/V threshold are not dropped; they "
-        "move to the skipped list. Passing rows then receive RugCheck and "
-        "tax/dividend information. "
+        "filter a pool; they are fetched for both visible and skipped rows. "
+        f"Pools with F/V at least {BEST_FV_HIDE_MIN:g}× but below "
+        f"{BEST_FV_24H_MIN:g}× move to the skipped list; below "
+        f"{BEST_FV_HIDE_MIN:g}× they are dropped. Passing rows then receive "
+        "RugCheck and tax/dividend information. "
         "Columns include Active Range (for example -34.5% / +19.0%). "
         "On mobile the full table and all headers remain available by "
         "horizontal scrolling."
@@ -690,7 +693,7 @@ def _run_lane_scan(lane: str) -> dict:
                 "hidden_distribution_failed": 0,
                 "liquidity_distribution_filter": False,
                 "rugcheck_failed": 0, "bundler_failed": 0,
-                "bundler_filter_failed": 0,
+                "hidden_bundler_failed": 0, "bundler_filter_failed": 0,
                 "bubblemap_failed": 0, "lane": lane}
 
 
@@ -709,7 +712,8 @@ def render_best_pool_scan() -> None:
     """
     import streamlit as st
 
-    from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_FEE_TVL_MIN,
+    from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_FV_HIDE_MIN,
+                                  BEST_FV_24H_MIN,
                                   BEST_LPS_MIN, best_gap_summary,
                                   normalize_best_lane, row_best_dropped,
                                   row_best_final_gaps, row_volatility_zero,
@@ -745,10 +749,11 @@ def render_best_pool_scan() -> None:
                            f"{BEST_LPS_MIN:g} + volatility 1%–10% + Top10 < 25% "
                            "+ Fee/TVL hanya informasi. Token:SOL hanya "
                            "informasi. Bundler+Phishing GMGN hanya informasi "
-                           "kolom (filternya dihapus, tidak menggugurkan pool). "
-                           "F/V di bawah 10× tidak dibuang — masuk ke 'pool "
-                           "dilewati'. Tiap pool yang lolos dilengkapi "
-                           "deteksi Bundler+Phishing GMGN, "
+                           "kolom (filternya dihapus, tidak menggugurkan pool) "
+                           "dan ikut di-fetch untuk pool dilewati. F/V "
+                           f"{BEST_FV_HIDE_MIN:g}× sampai <{BEST_FV_24H_MIN:g}× "
+                           "masuk ke 'pool dilewati'; F/V di bawah lantai itu "
+                           "dibuang. Tiap pool yang lolos dilengkapi "
                            "laporan RugCheck (verdict rugchecker.cc, angka "
                            "likuiditas GMGN) dan kolom TAX/DIVIDEND di "
                            "paling kanan (pajak transfer + mode reward).")):
@@ -832,10 +837,11 @@ def render_best_pool_scan() -> None:
                     if showing_hidden else f"▶ {hidden} pool dilewati")
             if st.button(view, key=f"best-pool-toggle-hidden-{active}",
                          help=f"Tampilkan kandidat {label} yang di-skip karena "
-                              "gugur ambang (mis. F/V < 10×, Fee/TVL, atau "
-                              "volatility di luar rentang). Token:SOL & "
-                              "Bundler+Phishing hanya informasi kolom, tidak "
-                              "lagi menggugurkan pool.",
+                              f"F/V minimal {BEST_FV_HIDE_MIN:g}× tetapi masih "
+                              f"di bawah {BEST_FV_24H_MIN:g}× (atau gap non-hard "
+                              "lain). Token:SOL & Bundler+Phishing hanya "
+                              "informasi kolom, tidak lagi menggugurkan pool, "
+                              "dan keduanya ikut di-fetch untuk tabel dilewati.",
                          use_container_width=True):
                 st.session_state[best_lane_hidden_key(active)] = \
                     not showing_hidden
@@ -860,7 +866,7 @@ def render_best_pool_scan() -> None:
             bundler_txt = (f" · {bundler_failed} Bundler+Phishing GMGN tak terbaca"
                            if bundler_failed else "")
             bundler_filter_txt = (
-                f" · {bundler_filter_failed} pool gagal filter Bundler+Phishing"
+                f" · {bundler_filter_failed} pool Bundler+Phishing terarsip sebagai filter lama"
                 if bundler_filter_failed else "")
             distribution_txt = (
                 f" · {distribution_failed} distribusi token:SOL tak terbaca/non-SOL"
