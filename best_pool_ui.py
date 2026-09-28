@@ -610,7 +610,7 @@ def _render_best_table(rows: list, *, lane: str,
              f"> {LP_GREEN_MIN_LP:g} LP"),
             # Token:SOL tepat di kanan LPs (permintaan user 2026-09-26);
             # labelnya satu angka di belakang koma, angka presisi penuh tetap
-            # ada di tooltip supaya rasio dekat batas 1:2 tidak menyesatkan.
+            # ada di tooltip. Murni informasi — tidak ada batas rasio lagi.
             (distribution_ratio, "token:SOL",
              f"rasio perbandingan nilai USD token terhadap SOL: "
              f"{distribution_ratio} (presisi penuh "
@@ -746,7 +746,7 @@ def render_best_pool_scan() -> None:
                            "informasi. Filter terakhir: Bundler + Phishing GMGN "
                            "maksimal 25% (tepat 25% lolos); data risiko yang "
                            "tidak terbaca masuk pool dilewati. F/V di bawah "
-                           "2× dibuang total (tidak muncul di 'dilewati' maupun "
+                           "10× dibuang total (tidak muncul di 'dilewati' maupun "
                            "di mana pun). Tiap pool yang lolos dilengkapi "
                            "deteksi Bundler+Phishing GMGN, "
                            "laporan RugCheck (verdict rugchecker.cc, angka "
@@ -834,7 +834,7 @@ def render_best_pool_scan() -> None:
                          help=f"Tampilkan kandidat {label} yang di-skip karena "
                               "filter akhir "
                               "Bundler + Phishing GMGN > 25%/tak terbaca. "
-                              "Token:SOL hanya informasi. F/V di bawah 2× "
+                              "Token:SOL hanya informasi. F/V di bawah 10× "
                               "tidak ikut di sini — barisnya "
                               "dibuang total.",
                          use_container_width=True):

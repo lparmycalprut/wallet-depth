@@ -247,7 +247,7 @@ class FetchTest(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 def _row(mint="MINTX", **extra):
-    row = {"ca": mint, "pool_address": "POOLX", "fee_active_tvl_ratio": 40.0,
+    row = {"ca": mint, "pool_address": "POOLX", "fee_active_tvl_ratio": 80.0,
            "volatility": 6.0, "top_holders_pct": 10.0,
            "total_lps": 188, "timeframe": "24h"}
     row.update(extra)
@@ -415,7 +415,7 @@ class RowBestGapsIntegrationTest(unittest.TestCase):
         self.assertEqual(ms.row_best_gaps(_row(), lane="24h"), [])
 
     def test_alasan_fv_tetap_lebih_keras(self):
-        row = _row(fee_active_tvl_ratio=2.0)  # F/V = 0,33× < 2×
+        row = _row(fee_active_tvl_ratio=2.0)  # F/V = 0,33× < 10×
         row["gmgn_liq"] = {"ok": True, "usd": 10_000.0,
                            "below_cutoff": False, "source": "gmgn_token_info"}
         gaps = ms.row_best_gaps(row, lane="24h")
@@ -540,7 +540,7 @@ def _patch_rc_cache(tmp: Path):
 # alur scan end-to-end (offline)
 # ---------------------------------------------------------------------------
 
-def _best_pool(pool="P1", mint=MINT_A, *, ratio=40.0, volatility=6.2,
+def _best_pool(pool="P1", mint=MINT_A, *, ratio=80.0, volatility=6.2,
                top10=10.0):
     return {"pool_address": pool,
             "token_x": {"address": mint, "symbol": "PAID", "name": "Paid",
@@ -637,11 +637,13 @@ class ScanLaneGmgnTest(unittest.TestCase):
         """Snapshot PAID dengan Fee/TVL 23,39% tetap masuk setelah filter dimatikan.
 
         Fee/TVL masih dicatat di baris, tetapi tidak lagi memindahkan pool ke
-        ``hidden_rows`` dan tidak memengaruhi keputusan scan.
+        ``hidden_rows`` dan tidak memengaruhi keputusan scan. Volatility
+        dipakai 2,0% supaya F/V tetap di atas ambang 10× (2026-09-28) dan yang
+        diuji murni Fee/TVL.
         """
         pools = [_best_pool("Gc5hVCBydc6k3Z7oc2cQEW4GThFQi2Fqk5HfKABqa2q8",
                             MINT_A, ratio=23.39434274894063,
-                            volatility=2.9886436516396744, top10=15.177147896949576)]
+                            volatility=2.0, top10=15.177147896949576)]
         result = self._scan(pools, {MINT_A: 884_912.3982565559})
         self.assertEqual(len(result["rows"]), 1)
         self.assertEqual(result["hidden_rows"], [])

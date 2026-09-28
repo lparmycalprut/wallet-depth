@@ -1,5 +1,21 @@
 # Kegiatan
 
+## 2026-09-28 — F/V minimal 10× dan batas Token:SOL dihapus total
+
+Permintaan user: *"filter batasan perbandingan token : sol hilangkan lagi"* dan
+*"ganti minimal f/v ke 10x minimal"*.
+
+- Menaikkan ambang F/V Best Pool dari **2× menjadi 10×** (inklusif) untuk
+  ambang lane maupun lantai buang, jadi pool dengan F/V < 10× tidak muncul di
+  tabel hasil maupun di listing "pool dilewati".
+- Menghapus seluruh sisa batas perbandingan Token:SOL: konstanta
+  `BEST_SOL_TOKEN_MAX_RATIO`, `BEST_TOKEN_SOL_MIN_RATIO`,
+  `BEST_TOKEN_SOL_RATIO_LIMIT_LABEL`, isi `row_liquidity_distribution_gap`
+  (kini stub yang selalu kosong), dan kategori alasan gugur token:SOL.
+- Kolom **Token:SOL** tetap ada sebagai informasi (label + tooltip presisi
+  penuh), tanpa ambang apa pun.
+- Tooltip/caption UI diselaraskan ke angka 10×.
+
 ## 2026-09-27 — F/V 3× dan gate Bundler+Phishing
 
 - Menurunkan minimum F/V Best Pool dari **5× menjadi 3×** (inklusif).
@@ -94,7 +110,6 @@ Yang dikerjakan:
 - LP minimum: **100**.
 - Tidak ada POOL BARU atau jalur lolos alternatif.
 - Gate distribusi adalah filter terakhir setelah semua cheap checks.
-- Aturan ini digantikan pada 2026-09-27: nilai USD SOL sekarang harus
-  **≤ 2×** nilai USD token.
-- token:SOL **1:2 lolos**, **1:1.5 lolos**, dan **1:6.52 gagal**.
+- Aturan batas rasio ini **dihapus total pada 2026-09-28**: token:SOL kini
+  murni informasi, berapa pun rasionya tidak pernah menggugurkan pool.
 - Nilai berasal dari official Meteora pool details: amount × USD price.

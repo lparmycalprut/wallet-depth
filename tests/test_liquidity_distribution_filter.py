@@ -20,7 +20,7 @@ def _detail(*, token_amount=3_309_152.809654, token_price=0.0185571483206408,
     }
 
 
-def _pool(address, *, fee=40.0, volatility=6.0, lps=150.0):
+def _pool(address, *, fee=80.0, volatility=6.0, lps=150.0):
     return {
         "pool_address": address,
         "name": "TOK-SOL",
@@ -55,9 +55,9 @@ class ThresholdTest(unittest.TestCase):
     def test_thresholds_diperketat_dan_pool_baru_dihapus(self):
         self.assertEqual(ms.BEST_ACTIVE_TVL_MIN, 50_000.0)
         self.assertEqual(ms.BEST_LPS_MIN, 100.0)
-        self.assertEqual(ms.BEST_SOL_TOKEN_MAX_RATIO, 2.0)
-        self.assertEqual(ms.BEST_TOKEN_SOL_MIN_RATIO, 0.5)
-        self.assertEqual(ms.BEST_TOKEN_SOL_RATIO_LIMIT_LABEL, "1:2")
+        for name in ("BEST_SOL_TOKEN_MAX_RATIO", "BEST_TOKEN_SOL_MIN_RATIO",
+                     "BEST_TOKEN_SOL_RATIO_LIMIT_LABEL"):
+            self.assertFalse(hasattr(ms, name), name)
         for name in ("NEW_POOL_MAX_AGE_HOURS", "NEW_POOL_LABEL",
                      "row_new_pool", "row_new_pool_gaps", "new_pool_rule_text"):
             self.assertFalse(hasattr(ms, name), name)
@@ -75,7 +75,7 @@ class ThresholdTest(unittest.TestCase):
                          "pool_type=dlmm&&active_tvl>=50000")
 
     def test_semua_rasio_hanya_informasi(self):
-        base = {"timeframe": "24h", "fee_active_tvl_ratio": 40.0,
+        base = {"timeframe": "24h", "fee_active_tvl_ratio": 80.0,
                 "volatility": 6.0, "total_lps": 100,
                 "top_holders_pct": 10.0}
         exact = dict(base, liquidity_distribution=_report(0.5))
@@ -113,7 +113,7 @@ class ThresholdTest(unittest.TestCase):
         self.assertEqual(ms.liquidity_distribution_label(base), "—")
 
     def test_hilang_error_dan_non_sol_tidak_menggugurkan(self):
-        row = {"timeframe": "24h", "fee_active_tvl_ratio": 40.0,
+        row = {"timeframe": "24h", "fee_active_tvl_ratio": 80.0,
                "volatility": 6.0, "total_lps": 100,
                "top_holders_pct": 10.0}
         self.assertEqual(ms.row_best_final_gaps(row), [])
@@ -131,8 +131,8 @@ class OfficialPoolDetailTest(unittest.TestCase):
         self.assertAlmostEqual(report["token_to_sol_ratio"], 0.15341, places=4)
         row = {"liquidity_distribution": report}
         self.assertTrue(ms.liquidity_distribution_label(row).startswith("1:6.5"))
-        self.assertIn("SOL 6.518× token > maksimum 2×",
-                      ms.row_liquidity_distribution_gap(row))
+        # Rasio hanya informasi: tidak pernah menghasilkan alasan gugur.
+        self.assertEqual(ms.row_liquidity_distribution_gap(row), "")
 
     def test_token_boleh_berada_di_sisi_y(self):
         payload = _detail()
@@ -163,7 +163,7 @@ class PipelineTest(unittest.TestCase):
             _pool("BOUNDARY"),
             _pool("RATIOFAIL"),
             _pool("APIERROR"),
-            _pool("FVFAIL", fee=20.0, volatility=6.0),
+            _pool("FVFAIL", fee=70.0, volatility=6.0),
         ]
         seen_distribution = []
         seen_market_enrichment = []
