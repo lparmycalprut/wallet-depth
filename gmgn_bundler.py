@@ -6,10 +6,13 @@ GMGN exposes ``top_bundler_trader_percentage`` as a fraction (0-1) at
 traded by wallets GMGN classifies as bundlers; it is not a count of Jito
 bundles and must not be inferred when the field is absent.
 
-Best Pool shows the sum of bundler and GMGN's entrapment/phishing trader rate
-as the final risk gate and as a warning column for visible pools and
-displayable skipped pools. Results are cached briefly because the endpoint is
-unofficial and one request is needed per mint.
+Best Pool shows the sum of bundler and GMGN's entrapment/phishing *trader*
+rate as the final risk gate and as a warning column for visible pools and
+displayable skipped pools. These two rates are token-stat metrics, not the
+same thing as the ``Owned`` total shown by GMGN's paginated Holders tabs.
+In particular, ``is_suspicious`` on a holder row is not a substitute for
+``top_entrapment_trader_percentage``. Results are cached briefly because the
+endpoint is unofficial and one request is needed per mint.
 """
 from __future__ import annotations
 
@@ -303,8 +306,11 @@ def cell_parts(report: dict | None) -> tuple[str, str, str]:
                     "dan tidak masuk tabel utama"
                     if critical else
                     f"tepat {MAX_COMBINED_RATE * 100:g}% masih LOLOS")
-    tip = (f"GMGN: bundler {bundler} + phishing/entrapment {phishing} = "
-           f"{combined}. Batas kelolosan: gabungan maksimal "
+    tip = (f"GMGN token_stat: bundler-trader {bundler} + "
+           f"entrapment/phishing-trader {phishing} = {combined}. "
+           "Ini bukan penjumlahan Owned dari tab Holders TOP100 dan "
+           "bukan jumlah holder dengan is_suspicious=true. "
+           f"Batas kelolosan: gabungan maksimal "
            f"{MAX_COMBINED_RATE * 100:g}% ({verdict_note}); "
            "nilai di atas batas dipindahkan ke pool dilewati dan ditandai "
            "merah berkedip di kolom. "
