@@ -62,17 +62,28 @@ class BestPoolGateTest(unittest.TestCase):
         self.assertIn("Top10 25%", ms.row_best_gaps(
             row(top_holders_pct=25.0))[0])
 
-    def test_distribution_is_information_and_security_is_final_gate(self):
+    def test_distribution_and_bundler_are_information_only(self):
+        # Token:SOL tidak pernah menggugurkan pool (hanya informasi kolom).
         extreme = row(liquidity_distribution={
             "checked": True, "ok": True,
             "token_value_usd": 10_000.0, "sol_value_usd": 100_000.0,
             "token_to_sol_ratio": 0.1, "error": ""})
         self.assertEqual(ms.row_best_final_gaps(extreme), [])
+        # Filter Bundler+Phishing dihapus 2026-09-28: bundler+phishing 26% tetap
+        # lolos (datanya hanya informasi kolom, tidak menggugurkan pool).
         risky = row(bundler={
             "ok": True, "bundler_rate": 0.20, "phishing_rate": 0.06,
             "combined_rate": 0.26})
-        self.assertIn("Bundler+Phishing 26.00%",
-                      ms.row_best_final_gaps(risky)[0])
+        self.assertEqual(ms.row_bundler_phishing_gap(risky), "")
+        self.assertEqual(ms.row_best_final_gaps(risky), [])
+
+    def test_low_fv_goes_to_skipped_not_dropped(self):
+        # F/V di bawah 10× tidak lagi dibuang total — ia gugur ambang lane dan
+        # tetap tampil di listing "pool dilewati" (permintaan user 2026-09-28).
+        low = row(fee_active_tvl_ratio=30.0, volatility=6.0)  # F/V = 5×
+        self.assertIn("F/V < 10×", ms.row_best_gaps(low)[0])
+        self.assertIsNone(ms.row_fv_under_hide(low))
+        self.assertFalse(ms.row_best_dropped(low))
 
     def test_scanner_has_no_wallet_analysis_parameters_or_imports(self):
         params = inspect.signature(ms.scan_best_lane).parameters
@@ -120,7 +131,9 @@ class BestPoolTableTest(unittest.TestCase):
         self.assertIn("F/V at least 10×", tip)
         self.assertIn("Token:SOL", tip)
         self.assertIn("informational only", tip)
-        self.assertIn("at most 25%", tip)
+        # Filter Bundler+Phishing dihapus: tooltip menyebut kolom info saja.
+        self.assertNotIn("at most 25%", tip)
+        self.assertIn("no longer filter a pool", tip)
         self.assertIn("horizontal scrolling", tip)
 
     def test_run_lane_scan_calls_pool_only_scanner(self):

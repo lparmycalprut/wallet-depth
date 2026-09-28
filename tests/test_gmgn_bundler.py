@@ -22,15 +22,16 @@ class BundlerSummaryTest(unittest.TestCase):
         self.assertEqual(report["verdict"], "WASPADA")
         self.assertEqual(ms.row_bundler_phishing_gap({"bundler": report}), "")
 
-    def test_above_25_percent_fails(self):
+    def test_above_25_percent_verdict_but_no_longer_filters(self):
         report = gb.summarize({
             "top_bundler_trader_percentage": 0.18,
             "top_entrapment_trader_percentage": 0.08,
         })
         self.assertEqual(report["combined_rate"], 0.26)
         self.assertEqual(report["verdict"], "GAGAL")
-        self.assertIn("26.00% > maksimum 25%",
-                      ms.row_bundler_phishing_gap({"bundler": report}))
+        # Filter Bundler+Phishing dihapus 2026-09-28: verdict tetap dihitung
+        # untuk kolom info, tapi tidak lagi menggugurkan pool.
+        self.assertEqual(ms.row_bundler_phishing_gap({"bundler": report}), "")
 
     def test_zero_is_measured_not_missing(self):
         report = gb.summarize({
@@ -51,8 +52,8 @@ class BundlerSummaryTest(unittest.TestCase):
         self.assertFalse(report["ok"])
         self.assertIsNone(report["combined_rate"])
         self.assertEqual(gb.cell_parts(report)[0], "—")
-        self.assertIn("GMGN gagal",
-                      ms.row_bundler_phishing_gap({"bundler": report}))
+        # Filter dihapus: data tak terbaca tidak lagi fail-closed ke "dilewati".
+        self.assertEqual(ms.row_bundler_phishing_gap({"bundler": report}), "")
 
 
 class BundlerAttachTest(unittest.TestCase):
@@ -113,13 +114,14 @@ class BundlerPipelineTest(unittest.TestCase):
         self.assertEqual(result["failed_liquidity_ratio"], 0)
         self.assertEqual(result["bundler_filter_failed"], 0)
 
-    def test_combined_above_25_moves_to_skipped(self):
+    def test_combined_above_25_no_longer_filters(self):
+        # Filter Bundler+Phishing dihapus 2026-09-28: pool dengan combined 26%
+        # tetap lolos ke tabel utama; datanya hanya ditempel untuk kolom info.
         result = self._scan(0.18, 0.08)
-        self.assertEqual(result["rows"], [])
-        self.assertEqual(len(result["hidden_rows"]), 1)
-        self.assertEqual(result["bundler_filter_failed"], 1)
-        self.assertIn("Bundler+Phishing 26.00%",
-                      result["hidden_rows"][0]["best_gaps"][0])
+        self.assertEqual(len(result["rows"]), 1)
+        self.assertEqual(result["hidden_rows"], [])
+        self.assertEqual(result["bundler_filter_failed"], 0)
+        self.assertEqual(result["rows"][0]["bundler"]["combined_rate"], 0.26)
 
 
 if __name__ == "__main__":
