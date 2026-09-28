@@ -42,13 +42,12 @@ SAFE_LP_MULTIPLIER = 5.0
 # ``top_holders_pct`` 35.75 = 35,75% supply di 10 holder teratas token base).
 # ---------------------------------------------------------------------------
 BEST_FV_24H_MIN = 10.0          # 24H: F/V >= 10,0 (inklusif)
-# Permintaan user 2026-09-28: *"ganti minimal f/v ke 10x minimal"* (dulu 2×).
-# Karena ambang lolos ini kini **sama** dengan lantai buang
-# :data:`BEST_FV_HIDE_MIN` (10×), praktis tidak ada lagi band "dilewati karena
-# F/V": pool F/V < 10× dibuang total, F/V >= 10× langsung lolos ke tabel. Batas
-# lolos tetap **inklusif** (tepat 10,0× lolos), sedangkan lantai buang tetap
-# **eksklusif** (tepat 10,0× tidak dibuang) — jadi 10,0× tetap tampil, tidak ada
-# celah maupun tumpang-tindih.
+# Permintaan user 2026-09-28: *"ganti minimal f/v ke 10x minimal"* (dulu 2×) +
+# *"jika tidak 10x ya masuk di pool disembunyikan"*. Ambang lolos **inklusif**
+# (tepat 10,0× lolos ke tabel). Pool F/V < 10× **TIDAK** lagi dibuang total:
+# ia gugur ambang lane (``"F/V < 10×"``) dan mendarat di listing "▶ N pool
+# dilewati" — lantai buang :data:`BEST_FV_HIDE_MIN` sudah dinonaktifkan
+# (lihat :func:`row_fv_under_hide`).
 # Layar: **Fee/TVL minimal 30%** (permintaan user 2026-09-23: *"kita perketat
 # filter yang boleh di show di hasil"* + *"Fee/TVL minimal 30%"* + *"dibawah itu
 # jangan show"*). ``fee_active_tvl_ratio`` API Meteora sudah dalam satuan persen
@@ -65,27 +64,16 @@ BEST_FV_24H_MIN = 10.0          # 24H: F/V >= 10,0 (inklusif)
 # di tabel hasil. Saringan ini hanya untuk card 🏆 Best Pool — regular scan
 # (:func:`filter_regular_rows`) tidak ikut berubah.
 BEST_FEE_TVL_MIN = 30.0
-# Layar: **F/V di bawah 10× tidak ditampilkan sama sekali** (permintaan user
-# 2026-09-24: *"jangan tampilkan sama sekali pool yang F/V nya kurang dari 2 di
-# pool yang dilewati atau dimanapun"*). Beda dari ambang lane
-# (:data:`BEST_FV_24H_MIN`) yang memindahkan baris ke listing
-# "▶ N pool dilewati": di bawah lantai ini baris **dibuang total** — tidak
-# masuk tabel hasil, tidak masuk ``hidden_rows``, tidak dihitung pill/caption
-# "dilewati", dan tidak ikut rekap alasan tabel kosong. Sejak 2026-09-27 ambang
-# lane juga 10× (naik dari 2×), jadi lantai buang dan ambang lolos berimpit:
-# F/V < 10× dibuang total, F/V >= 10× langsung lolos, dan tidak ada lagi baris
-# F/V yang mendarat di "dilewati" — listing itu kini hanya diisi baris yang
-# gugur filter akhir (mis. Bundler+Phishing) atau data risiko tak terbaca.
-# Baris F/V 0–10× lenyap sepenuhnya, selebar apa pun
-# tabelnya. Batas **eksklusif di sisi buang** — kurang dari 10,0× dibuang,
-# tepat 10,0× masih boleh tampil di "dilewati" (aturan repo: angka yang
-# disebut user dibaca sebagai batas tampil). Angka F/V tanpa bukti
-# (metrik hilang/nonfinite/volatility 0) **bukan** "kurang dari 10" — vol-0
-# sudah dibuang lebih dulu (:func:`row_volatility_zero`) dan metrik tidak
-# valid tetap terlihat di "dilewati" dengan alasannya sendiri. Saringan ini
-# juga jalan saat render hasil scan LAMA (lewat :func:`row_best_dropped` di
-# ``best_pool_ui``) tanpa perlu scan ulang. Hanya card 🏆 Best Pool —
-# ``filter_regular_rows`` Scan Meteora regular tidak ikut berubah.
+# Lantai "buang total" F/V **DINONAKTIFKAN 2026-09-28** (permintaan user:
+# *"jika tidak 10x ya masuk di pool disembunyikan"*). Dulu (2026-09-24) pool
+# F/V di bawah lantai ini dibuang total — tidak masuk tabel, tidak masuk
+# ``hidden_rows``, tidak dihitung pill/caption. Sekarang tidak ada lagi baris
+# yang dibuang karena F/V: pool F/V < ambang lane (:data:`BEST_FV_24H_MIN`)
+# hanya gugur ambang biasa (``"F/V < 10×"``) dan **tetap tampil** di listing
+# "▶ N pool dilewati". Konstanta dipertahankan (dan tetap 10×) hanya untuk
+# label/teks lama; pembacanya :func:`row_fv_under_hide` sekarang selalu
+# mengembalikan ``None`` sehingga tidak pernah menggugurkan baris. Hanya card
+# 🏆 Best Pool — ``filter_regular_rows`` Scan Meteora regular tidak berubah.
 BEST_FV_HIDE_MIN = 10.0
 BEST_CARD_TITLE = "🏆 Scan Best Pool Meteora"
 # **Satu lane sejak 2026-09-16** (permintaan user: "hapus scan 30 menit, kita
@@ -635,32 +623,20 @@ def row_fv_ratio(row: dict | None):
 
 
 def row_fv_under_hide(row: dict | None):
-    """Nilai F/V bila **< BEST_FV_HIDE_MIN** (10×) → dibuang total; selain itu ``None``.
+    """Stub compatibility: lantai "buang total" F/V **dinonaktifkan**.
 
-    Permintaan user 2026-09-24: *"jangan tampilkan sama sekali pool yang F/V nya
-    kurang dari 2 di pool yang dilewati atau dimanapun"*. Satu-satunya pembaca
-    lantai :data:`BEST_FV_HIDE_MIN` supaya keputusan "dibuang total" dan
-    hitungan audit ``dropped_fv`` tidak pernah bisa beda.
+    Permintaan user 2026-09-28: *"jika tidak 10x ya masuk di pool
+    disembunyikan"*. Sebelumnya pool dengan F/V ``< BEST_FV_HIDE_MIN`` (10×)
+    dibuang total (tidak muncul di mana pun). Sekarang pool F/V di bawah ambang
+    lane **tidak dibuang** — ia gugur ambang lane biasa
+    (:func:`row_best_gaps` → ``"F/V < 10×"``) dan mendarat di listing
+    "▶ N pool dilewati" bersama kandidat gugur lainnya.
 
-    Angka dibaca lewat :func:`row_fv_ratio` — sumber yang sama dengan kolom
-    F/V dan urutan tabel — jadi rasio yang dibuang persis rasio yang akan
-    tampil. ``None`` (metrik hilang/nonfinite, volatility nol, atau F/V tidak
-    bisa dihitung) berarti **bukan** "kurang dari 2": tanpa angka tidak ada
-    bukti rasio kecil (vol-0 sudah dibuang lebih dulu lewat
-    :func:`row_volatility_zero`, metrik tidak valid tetap masuk listing
-    "dilewati" dengan alasannya sendiri). Batas **eksklusif di sisi buang** —
-    F/V tepat 2,0× **tidak** dibuang (masih boleh tampil di "dilewati" selama
-    masih di bawah ambang lane 10×).
+    Fungsi ini dipertahankan (selalu ``None``) supaya pemanggil/tes lama
+    (mis. ``row_best_dropped``, hitungan ``dropped_fv`` di
+    :func:`scan_best_lane`) tetap jalan tanpa cabang mati; hasilnya kini tidak
+    pernah menggugurkan/menghilangkan baris.
     """
-    ratio = row_fv_ratio(row)
-    if ratio is None:
-        return None
-    if not math.isfinite(ratio):
-        # ∞ (volatility 0, fee positif) bukan "kurang dari 2" — baris seperti
-        # itu ditangani saringan sendiri (row_volatility_zero).
-        return None
-    if ratio < float(BEST_FV_HIDE_MIN):
-        return ratio
     return None
 
 
@@ -975,40 +951,26 @@ def row_liquidity_distribution_gap(row: dict | None, *, lane=None) -> str:
 
 
 def row_bundler_phishing_gap(row: dict | None, *, lane=None) -> str:
-    """Final gate GMGN: bundler + phishing maksimal 25%.
+    """Stub compatibility: filter Bundler+Phishing GMGN sudah **dihapus**.
 
-    Baris lama yang belum memiliki key ``bundler`` tidak difilter agar cache
-    lama tetap dapat dirender. Namun, saat scan baru sudah mencoba endpoint
-    dan menghasilkan report gagal, gate bersifat fail-closed: pool masuk tabel
-    dilewati dengan alasan data risiko tidak tersedia.
+    Permintaan user 2026-09-28: *"untuk filter bundler kita hapus saja. tapi
+    tetap menyertakan data tabelnya"*. Dulu ini gate terakhir (bundler +
+    phishing maksimal 25%; fail-closed saat report gagal). Sekarang selalu
+    mengembalikan string kosong sehingga **tidak pernah menggugurkan pool** —
+    statistik Bundler+Phishing tetap ditempel ke ``row["bundler"]`` dan tampil
+    di kolomnya, hanya tidak lagi memindahkan baris ke "pool dilewati".
     """
-    report = (row or {}).get("bundler")
-    if not isinstance(report, dict):
-        return ""
-    normalized = normalize_best_lane(
-        lane if lane is not None else
-        ((row or {}).get("timeframe") or (row or {}).get("source") or "24h"),
-        default="24h")
-    prefix = f"{BEST_LANE_LABELS.get(normalized, '24H')}: "
-    if not report.get("ok"):
-        reason = str(report.get("error") or "tidak tersedia")
-        return prefix + f"Bundler+Phishing GMGN gagal — {reason}"
-    combined = _maybe_float(report.get("combined_rate"))
-    if combined is None or not math.isfinite(combined) or combined < 0:
-        return prefix + "Bundler+Phishing GMGN tidak valid"
-    from gmgn_bundler import MAX_COMBINED_RATE
-    if combined > float(MAX_COMBINED_RATE) and not math.isclose(
-            combined, float(MAX_COMBINED_RATE), rel_tol=1e-12, abs_tol=1e-12):
-        bundler_rate = _maybe_float(report.get("bundler_rate")) or 0.0
-        phishing_rate = _maybe_float(report.get("phishing_rate")) or 0.0
-        return (prefix + f"Bundler+Phishing {combined * 100:.2f}% > "
-                f"maksimum {float(MAX_COMBINED_RATE) * 100:g}% "
-                f"(B {bundler_rate * 100:.2f}% + P {phishing_rate * 100:.2f}%)")
     return ""
 
 
 def row_best_final_gaps(row: dict | None, *, lane=None) -> list[str]:
-    """Seluruh filter Best Pool; Bundler+Phishing GMGN adalah gate terakhir."""
+    """Seluruh filter Best Pool (cheap gates saja; filter Bundler dihapus).
+
+    Sejak 2026-09-28 filter Bundler+Phishing dihapus
+    (:func:`row_bundler_phishing_gap` = stub), jadi ini praktis identik dengan
+    :func:`row_best_gaps`. Dipertahankan supaya pemanggil lama
+    (``best_pool_ui``, ``filter_best_rows``) tidak perlu diubah.
+    """
     gaps = row_best_gaps(row, lane=lane)
     if gaps:
         return gaps
@@ -1686,9 +1648,11 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
                                 "below_cutoff": False, "source": None,
                                 "cutoff_usd": None,
                                 "error": str(exc)[:160]})
-    # FILTER TERAKHIR: GMGN bundler + phishing/entrapment maksimal 25%.
-    # Kedua field wajib terbaca pada scan baru; kegagalan endpoint bersifat
-    # fail-closed dan masuk tabel "pool dilewati".
+    # Statistik GMGN bundler + phishing/entrapment. Sejak 2026-09-28 ini
+    # **hanya informasi kolom** (permintaan user: *"untuk filter bundler kita
+    # hapus saja. tapi tetap menyertakan data tabelnya"*): datanya tetap
+    # ditempel ke ``row["bundler"]`` untuk kolom Bundler+Phishing, tetapi tidak
+    # lagi menggugurkan pool ke tabel "dilewati".
     bundler_failed = 0
     if rows and bundler:
         try:
@@ -1711,20 +1675,10 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
                                            "combined_rate": None,
                                            "error": str(exc)[:160]})
 
+    # Filter Bundler+Phishing DIHAPUS 2026-09-28 (permintaan user). Tidak ada
+    # lagi baris yang dipindahkan ke "pool dilewati" karena risiko bundler;
+    # counter dipertahankan (selalu 0) untuk kompatibilitas caption/cache lama.
     bundler_filter_failed = 0
-    if bundler:
-        security_failed = [
-            dict(row, best_gaps=[row_bundler_phishing_gap(
-                row, lane=normalized)])
-            for row in rows if row_bundler_phishing_gap(row, lane=normalized)
-        ]
-        rows = [row for row in rows
-                if not row_bundler_phishing_gap(row, lane=normalized)]
-        bundler_filter_failed = len(security_failed)
-        failed_rows.extend(security_failed)
-        hidden_rows.extend(security_failed)
-        hidden_metric = len(hidden_rows)
-        dropped_total = len(failed_rows) - len(hidden_rows)
 
     rug_failed = 0
     if rows and rugcheck:

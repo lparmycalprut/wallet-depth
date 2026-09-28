@@ -66,10 +66,11 @@ def best_pool_tooltip() -> str:
         f"{BEST_VOL_SHOW_MIN:g}%–{BEST_VOL_SHOW_MAX:g}%; and Top10 "
         f"below {BEST_TOP10_MAX_PCT:g}%. Fee/TVL is informational only. "
         "Token:SOL from official Meteora pool details is informational only "
-        "and no longer filters a pool. The final gate uses GMGN token stats: "
-        "bundler plus phishing/entrapment must be at most 25% (exactly 25% "
-        "passes); unavailable risk data fails closed into the skipped table. "
-        "Passing rows then receive RugCheck and tax/dividend information. "
+        "and no longer filters a pool. GMGN bundler plus phishing/entrapment "
+        "stats are shown in their column as information only and no longer "
+        "filter a pool. Pools below the F/V threshold are not dropped; they "
+        "move to the skipped list. Passing rows then receive RugCheck and "
+        "tax/dividend information. "
         "Columns include Active Range (for example -34.5% / +19.0%). "
         "On mobile the full table and all headers remain available by "
         "horizontal scrolling."
@@ -743,11 +744,10 @@ def render_best_pool_scan() -> None:
                            f"${BEST_ACTIVE_TVL_MIN / 1000:g}K + LPs ≥ "
                            f"{BEST_LPS_MIN:g} + volatility 1%–10% + Top10 < 25% "
                            "+ Fee/TVL hanya informasi. Token:SOL hanya "
-                           "informasi. Filter terakhir: Bundler + Phishing GMGN "
-                           "maksimal 25% (tepat 25% lolos); data risiko yang "
-                           "tidak terbaca masuk pool dilewati. F/V di bawah "
-                           "10× dibuang total (tidak muncul di 'dilewati' maupun "
-                           "di mana pun). Tiap pool yang lolos dilengkapi "
+                           "informasi. Bundler+Phishing GMGN hanya informasi "
+                           "kolom (filternya dihapus, tidak menggugurkan pool). "
+                           "F/V di bawah 10× tidak dibuang — masuk ke 'pool "
+                           "dilewati'. Tiap pool yang lolos dilengkapi "
                            "deteksi Bundler+Phishing GMGN, "
                            "laporan RugCheck (verdict rugchecker.cc, angka "
                            "likuiditas GMGN) dan kolom TAX/DIVIDEND di "
@@ -832,11 +832,10 @@ def render_best_pool_scan() -> None:
                     if showing_hidden else f"▶ {hidden} pool dilewati")
             if st.button(view, key=f"best-pool-toggle-hidden-{active}",
                          help=f"Tampilkan kandidat {label} yang di-skip karena "
-                              "filter akhir "
-                              "Bundler + Phishing GMGN > 25%/tak terbaca. "
-                              "Token:SOL hanya informasi. F/V di bawah 10× "
-                              "tidak ikut di sini — barisnya "
-                              "dibuang total.",
+                              "gugur ambang (mis. F/V < 10×, Fee/TVL, atau "
+                              "volatility di luar rentang). Token:SOL & "
+                              "Bundler+Phishing hanya informasi kolom, tidak "
+                              "lagi menggugurkan pool.",
                          use_container_width=True):
                 st.session_state[best_lane_hidden_key(active)] = \
                     not showing_hidden
