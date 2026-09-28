@@ -19,7 +19,7 @@ def row(**overrides):
         "symbol": "TOK",
         "pool_name": "TOK-SOL",
         "timeframe": "24h",
-        "fee_active_tvl_ratio": 30.0,
+        "fee_active_tvl_ratio": 80.0,
         "volatility": 6.0,
         "total_lps": 100,
         "top_holders_pct": 10.0,
@@ -40,24 +40,25 @@ def row(**overrides):
 class BestPoolGateTest(unittest.TestCase):
     def test_threshold_constants(self):
         self.assertEqual(ms.BEST_ACTIVE_TVL_MIN, 50_000.0)
-        self.assertEqual(ms.BEST_FV_24H_MIN, 2.0)
+        self.assertEqual(ms.BEST_FV_24H_MIN, 10.0)
+        self.assertEqual(ms.BEST_FV_HIDE_MIN, 10.0)
         self.assertEqual(ms.BEST_LPS_MIN, 100.0)
-        self.assertEqual(ms.BEST_SOL_TOKEN_MAX_RATIO, 2.0)
-        self.assertEqual(ms.BEST_TOKEN_SOL_MIN_RATIO, 0.5)
+        self.assertFalse(hasattr(ms, "BEST_SOL_TOKEN_MAX_RATIO"))
+        self.assertFalse(hasattr(ms, "BEST_TOKEN_SOL_MIN_RATIO"))
 
     def test_cheap_gate_boundaries(self):
         self.assertEqual(ms.row_best_gaps(row()), [])
         self.assertEqual(ms.row_best_gaps(row(total_lps=99))[0],
                          "24H: LPs 99 < 100 — LP terlalu sedikit")
-        # F/V = 11.9/6.0 = 1,98× < 2× → gugur ambang lane (baru: 2×).
-        self.assertIn("F/V < 2×", ms.row_best_gaps(
-            row(fee_active_tvl_ratio=11.9, volatility=6.0))[0])
-        # Tepat/di atas 2× lolos: F/V = 12.0/6.0 = 2,00×.
+        # F/V = 59.9/6.0 = 9,98× < 10× → gugur ambang lane (baru: 10×).
+        self.assertIn("F/V < 10×", ms.row_best_gaps(
+            row(fee_active_tvl_ratio=59.9, volatility=6.0))[0])
+        # Tepat/di atas 10× lolos: F/V = 60.0/6.0 = 10,00×.
         self.assertEqual(ms.row_best_gaps(
-            row(fee_active_tvl_ratio=12.0, volatility=6.0)), [])
+            row(fee_active_tvl_ratio=60.0, volatility=6.0)), [])
         # Fee/TVL dinonaktifkan sebagai filter; angka tetap informasional.
         self.assertEqual(ms.row_best_gaps(
-            row(fee_active_tvl_ratio=29.9, volatility=5.0)), [])
+            row(fee_active_tvl_ratio=29.9, volatility=2.5)), [])
         self.assertIn("Top10 25%", ms.row_best_gaps(
             row(top_holders_pct=25.0))[0])
 
@@ -116,7 +117,7 @@ class BestPoolTableTest(unittest.TestCase):
         tip = bp.best_pool_tooltip()
         self.assertIn("$50,000", tip)
         self.assertIn("LPs at least 100", tip)
-        self.assertIn("F/V at least 2×", tip)
+        self.assertIn("F/V at least 10×", tip)
         self.assertIn("Token:SOL", tip)
         self.assertIn("informational only", tip)
         self.assertIn("at most 25%", tip)

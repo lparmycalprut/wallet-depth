@@ -82,7 +82,7 @@ class BundlerPipelineTest(unittest.TestCase):
                         "top_holders_pct": 10.0},
             "token_y": {"address": ms.SOL_MINT, "symbol": "SOL", "price": 100.0},
             "active_tvl": 100_000.0, "tvl": 120_000.0, "total_lps": 100,
-            "fee_active_tvl_ratio": 30.0, "volatility": 6.0,
+            "fee_active_tvl_ratio": 80.0, "volatility": 6.0,
             "volume": 1_000_000.0, "fee_pct": 2.0,
         }
 

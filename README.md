@@ -11,7 +11,7 @@ A pool must satisfy all listing checks:
 - DLMM, 24-hour timeframe
 - active TVL **≥ $50,000**
 - liquidity providers **≥ 100**
-- F/V **≥ 3×**
+- F/V **≥ 10×**
 - Fee/TVL is shown for comparison, but is **not a filter**
 - volatility between **1% and 10%**, inclusive
 - Meteora Top-10 supply concentration below **25%**

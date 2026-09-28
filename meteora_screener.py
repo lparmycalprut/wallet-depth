@@ -41,13 +41,13 @@ SAFE_LP_MULTIPLIER = 5.0
 # 88,56%; ``volatility`` 6.2 = 6,2%; ``volume_change_pct`` 13.24 = +13,24%;
 # ``top_holders_pct`` 35.75 = 35,75% supply di 10 holder teratas token base).
 # ---------------------------------------------------------------------------
-BEST_FV_24H_MIN = 2.0           # 24H: F/V >= 2,0 (inklusif)
-# Permintaan user 2026-09-27: *"turunkan ambang lolos F/V jadi 2×"* (dulu 3×).
+BEST_FV_24H_MIN = 10.0          # 24H: F/V >= 10,0 (inklusif)
+# Permintaan user 2026-09-28: *"ganti minimal f/v ke 10x minimal"* (dulu 2×).
 # Karena ambang lolos ini kini **sama** dengan lantai buang
-# :data:`BEST_FV_HIDE_MIN` (2×), praktis tidak ada lagi band "dilewati karena
-# F/V": pool F/V < 2× dibuang total, F/V >= 2× langsung lolos ke tabel. Batas
-# lolos tetap **inklusif** (tepat 2,0× lolos), sedangkan lantai buang tetap
-# **eksklusif** (tepat 2,0× tidak dibuang) — jadi 2,0× tetap tampil, tidak ada
+# :data:`BEST_FV_HIDE_MIN` (10×), praktis tidak ada lagi band "dilewati karena
+# F/V": pool F/V < 10× dibuang total, F/V >= 10× langsung lolos ke tabel. Batas
+# lolos tetap **inklusif** (tepat 10,0× lolos), sedangkan lantai buang tetap
+# **eksklusif** (tepat 10,0× tidak dibuang) — jadi 10,0× tetap tampil, tidak ada
 # celah maupun tumpang-tindih.
 # Layar: **Fee/TVL minimal 30%** (permintaan user 2026-09-23: *"kita perketat
 # filter yang boleh di show di hasil"* + *"Fee/TVL minimal 30%"* + *"dibawah itu
@@ -65,28 +65,28 @@ BEST_FV_24H_MIN = 2.0           # 24H: F/V >= 2,0 (inklusif)
 # di tabel hasil. Saringan ini hanya untuk card 🏆 Best Pool — regular scan
 # (:func:`filter_regular_rows`) tidak ikut berubah.
 BEST_FEE_TVL_MIN = 30.0
-# Layar: **F/V di bawah 2× tidak ditampilkan sama sekali** (permintaan user
+# Layar: **F/V di bawah 10× tidak ditampilkan sama sekali** (permintaan user
 # 2026-09-24: *"jangan tampilkan sama sekali pool yang F/V nya kurang dari 2 di
 # pool yang dilewati atau dimanapun"*). Beda dari ambang lane
 # (:data:`BEST_FV_24H_MIN`) yang memindahkan baris ke listing
 # "▶ N pool dilewati": di bawah lantai ini baris **dibuang total** — tidak
 # masuk tabel hasil, tidak masuk ``hidden_rows``, tidak dihitung pill/caption
 # "dilewati", dan tidak ikut rekap alasan tabel kosong. Sejak 2026-09-27 ambang
-# lane juga 2× (turun dari 3×), jadi lantai buang dan ambang lolos berimpit:
-# F/V < 2× dibuang total, F/V >= 2× langsung lolos, dan tidak ada lagi baris
+# lane juga 10× (naik dari 2×), jadi lantai buang dan ambang lolos berimpit:
+# F/V < 10× dibuang total, F/V >= 10× langsung lolos, dan tidak ada lagi baris
 # F/V yang mendarat di "dilewati" — listing itu kini hanya diisi baris yang
 # gugur filter akhir (mis. Bundler+Phishing) atau data risiko tak terbaca.
-# Baris F/V 0–2× lenyap sepenuhnya, selebar apa pun
-# tabelnya. Batas **eksklusif di sisi buang** — kurang dari 2,0× dibuang,
-# tepat 2,0× masih boleh tampil di "dilewati" (aturan repo: angka yang
+# Baris F/V 0–10× lenyap sepenuhnya, selebar apa pun
+# tabelnya. Batas **eksklusif di sisi buang** — kurang dari 10,0× dibuang,
+# tepat 10,0× masih boleh tampil di "dilewati" (aturan repo: angka yang
 # disebut user dibaca sebagai batas tampil). Angka F/V tanpa bukti
-# (metrik hilang/nonfinite/volatility 0) **bukan** "kurang dari 2" — vol-0
+# (metrik hilang/nonfinite/volatility 0) **bukan** "kurang dari 10" — vol-0
 # sudah dibuang lebih dulu (:func:`row_volatility_zero`) dan metrik tidak
 # valid tetap terlihat di "dilewati" dengan alasannya sendiri. Saringan ini
 # juga jalan saat render hasil scan LAMA (lewat :func:`row_best_dropped` di
 # ``best_pool_ui``) tanpa perlu scan ulang. Hanya card 🏆 Best Pool —
 # ``filter_regular_rows`` Scan Meteora regular tidak ikut berubah.
-BEST_FV_HIDE_MIN = 2.0
+BEST_FV_HIDE_MIN = 10.0
 BEST_CARD_TITLE = "🏆 Scan Best Pool Meteora"
 # **Satu lane sejak 2026-09-16** (permintaan user: "hapus scan 30 menit, kita
 # sisakan yang 24 jam saja"). Sejak 2026-09-13 card ini punya DUA tombol
@@ -110,13 +110,9 @@ BEST_TOP10_MAX_PCT = 25.0
 BEST_VOL_SHOW_MIN = 1.0
 BEST_VOL_SHOW_MAX = 10.0
 BEST_LPS_MIN = 100.0
-# SOL USD liquidity may be at most 2× token USD liquidity.  Equivalently,
-# token USD / SOL USD must be at least 1:2.  The boundary 1:2 passes, while
-# a more SOL-heavy balance such as 1:6.52 fails.  A token-heavy balance also
-# passes this gate because it does not exceed the SOL cap.
-BEST_SOL_TOKEN_MAX_RATIO = 2.0
-BEST_TOKEN_SOL_MIN_RATIO = 1.0 / BEST_SOL_TOKEN_MAX_RATIO
-BEST_TOKEN_SOL_RATIO_LIMIT_LABEL = "1:2"
+# Batas perbandingan token:SOL DIHAPUS (permintaan user 2026-09-28: "filter
+# batasan perbandingan token : sol hilangkan lagi"). Rasio token:SOL hanya
+# ditampilkan sebagai informasi; tidak ada ambang, tidak ada gate.
 DLMM_POOLS_URL = "https://dlmm.datapi.meteora.ag/pools"
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
@@ -587,7 +583,7 @@ def normalize_best_lane(value, *, default: str | None = "24h") -> str | None:
 def lane_fv_min(lane) -> float:
     """Ambang F/V lane 24H — dibaca dari konstanta **saat dipanggil**.
 
-    :data:`BEST_FV_24H_MIN` (inklusif: tepat 2× lolos). Argumen ``lane`` dibiarkan
+    :data:`BEST_FV_24H_MIN` (inklusif: tepat 10× lolos). Argumen ``lane`` dibiarkan
     ada dipanggilan lama (tombol card, tooltip, label sel F/V, teks gap,
     saringan scan semuanya membaca fungsi ini) tetapi tidak mengubah apa pun
     sejak 30M dihapus 2026-09-16 — :func:`normalize_best_lane` memetakan semua
@@ -639,7 +635,7 @@ def row_fv_ratio(row: dict | None):
 
 
 def row_fv_under_hide(row: dict | None):
-    """Nilai F/V bila **< BEST_FV_HIDE_MIN** (2×) → dibuang total; selain itu ``None``.
+    """Nilai F/V bila **< BEST_FV_HIDE_MIN** (10×) → dibuang total; selain itu ``None``.
 
     Permintaan user 2026-09-24: *"jangan tampilkan sama sekali pool yang F/V nya
     kurang dari 2 di pool yang dilewati atau dimanapun"*. Satu-satunya pembaca
@@ -654,7 +650,7 @@ def row_fv_under_hide(row: dict | None):
     :func:`row_volatility_zero`, metrik tidak valid tetap masuk listing
     "dilewati" dengan alasannya sendiri). Batas **eksklusif di sisi buang** —
     F/V tepat 2,0× **tidak** dibuang (masih boleh tampil di "dilewati" selama
-    masih di bawah ambang lane 2×).
+    masih di bawah ambang lane 10×).
     """
     ratio = row_fv_ratio(row)
     if ratio is None:
@@ -669,7 +665,7 @@ def row_fv_under_hide(row: dict | None):
 
 
 def fv_hide_label() -> str:
-    """Teks lantai F/V untuk UI/tooltip: ``F/V < 2×`` (angka dari konstanta)."""
+    """Teks lantai F/V untuk UI/tooltip: ``F/V < 10×`` (angka dari konstanta)."""
     return f"F/V < {float(BEST_FV_HIDE_MIN):g}×"
 
 
@@ -970,41 +966,11 @@ def liquidity_distribution_label(row: dict | None, *, decimals: int = 1) -> str:
 
 
 def row_liquidity_distribution_gap(row: dict | None, *, lane=None) -> str:
-    """Helper aturan Token:SOL lama; tidak dipakai lagi sebagai filter scan.
+    """Stub compatibility: filter rasio token:SOL sudah dihapus.
 
-    Dipertahankan untuk compatibility/report historis. Dalam aturan lama,
-    sisi SOL tidak boleh melebihi dua kali sisi token. Batas
-    token:SOL 1:2 bersifat inklusif; saldo yang lebih SOL-heavy gagal, sementara
-    saldo yang token-heavy tetap memenuhi batas maksimum SOL ini. Distribusi
-    hilang/error dan pasangan non-SOL gagal tertutup: syarat akhir wajib
-    **terbukti**, bukan diasumsikan lolos saat API detail bermasalah.
+    Selalu mengembalikan string kosong (tidak pernah menggugurkan pool).
+    Rasio token:SOL tetap dihitung untuk kolom informasi saja.
     """
-    normalized = normalize_best_lane(
-        lane if lane is not None else
-        ((row or {}).get("timeframe") or (row or {}).get("source") or "24h"),
-        default="24h")
-    prefix = f"{BEST_LANE_LABELS.get(normalized, '24H')}: "
-    report = (row or {}).get("liquidity_distribution")
-    if not isinstance(report, dict) or not report.get("checked"):
-        return (prefix + "distribusi likuiditas token:SOL belum diperiksa — "
-                "scan ulang")
-    if not report.get("ok"):
-        reason = str(report.get("error") or "tidak tersedia")
-        return prefix + f"distribusi likuiditas token:SOL gagal — {reason}"
-    ratio = row_token_sol_ratio(row)
-    if ratio is None:
-        return prefix + "distribusi likuiditas token:SOL tidak valid"
-    minimum = float(BEST_TOKEN_SOL_MIN_RATIO)
-    # Boundary token:SOL 1:2 inklusif. Rasio lebih kecil berarti sisi SOL
-    # semakin besar (mis. 1:6,52) dan harus gagal karena melampaui batas.
-    # Toleransi hanya menyerap noise floating-point dari dua perkalian
-    # amount×price.
-    if ratio < minimum and not math.isclose(
-            ratio, minimum, rel_tol=1e-12, abs_tol=1e-12):
-        sol_multiple = 1.0 / ratio
-        return (prefix + f"likuiditas SOL {sol_multiple:.4g}× token > "
-                f"maksimum {BEST_SOL_TOKEN_MAX_RATIO:g}× "
-                f"(token:SOL {liquidity_distribution_label(row, decimals=4)})")
     return ""
 
 
@@ -1417,8 +1383,6 @@ def gmgn_min_label() -> str:
 BEST_GAP_CATEGORIES = (("Bundler+Phishing", "Bundler+Phishing"),
                        ("LPs", "LPs"),
                        ("LP", "LPs"),
-                       ("likuiditas token:SOL", "likuiditas token:SOL"),
-                       ("distribusi likuiditas", "likuiditas token:SOL"),
                        ("Likuiditas GMGN", "likuiditas GMGN"),
                        ("cutoff peringkat", "likuiditas GMGN"),
                        ("Top10", "Top10"),
@@ -1448,7 +1412,7 @@ def row_best_gap_label(row: dict | None, *, lane=None) -> str:
 
 
 def row_best_dropped(row: dict | None, *, lane=None) -> bool:
-    """True bila pool gugur karena Top10, volatility, LPs < 100/tidak terukur, atau F/V < 2×.
+    """True bila pool gugur karena Top10, volatility, LPs < 100/tidak terukur, atau F/V < 10×.
 
     Baris seperti ini langsung disembunyikan total, tidak ditampilkan
     di mana pun (baik di tabel utama yang lolos maupun di listing
@@ -1463,9 +1427,9 @@ def row_best_dropped(row: dict | None, *, lane=None) -> bool:
 
     Permintaan user 2026-09-24 (lanjutan aturan yang sama): *"jangan tampilkan
     sama sekali pool yang F/V nya kurang dari 2 di pool yang dilewati atau
-    dimanapun"* — F/V di bawah :data:`BEST_FV_HIDE_MIN` (2×) ikut dibuang
+    dimanapun"* — F/V di bawah :data:`BEST_FV_HIDE_MIN` (10×) ikut dibuang
     total lewat :func:`row_fv_under_hide`, jadi listing "▶ N pool dilewati"
-    hanya berisi F/V ``>= 2×`` (yang masih di bawah ambang lane) atau baris
+    hanya berisi F/V ``>= 10×`` (yang masih di bawah ambang lane) atau baris
     Fee/TVL tipis.
 
     Fee/TVL tidak termasuk alasan ``row_best_dropped`` karena filter tersebut
@@ -1489,7 +1453,7 @@ def row_best_dropped(row: dict | None, *, lane=None) -> bool:
         return True
     if row_top10_over(row) is not None:
         return True
-    # Lantai F/V (2026-09-24): di bawah 2× lenyap dari listing mana pun.
+    # Lantai F/V: di bawah 10× lenyap dari listing mana pun.
     if row_fv_under_hide(row) is not None:
         return True
     return False
@@ -1530,8 +1494,8 @@ def filter_best_rows(rows: list[dict] | None, *, lane=None,
     BEST_FEE_TVL_MIN`` (30%, permintaan user 2026-09-23)** dan Top10 ``<
     BEST_TOP10_MAX_PCT`` — semuanya lewat
     :func:`row_best_gaps`. Hitungan kedua hanya memuat baris yang masih bisa
-    dilihat di listing "dilewati", yaitu gugur **F/V (>= 2×) atau Fee/TVL**;
-    yang dibuang total (F/V < 2× — aturan 2026-09-24 —, volatility / LPs /
+    dilihat di listing "dilewati", yaitu gugur **F/V (>= 10×) atau Fee/TVL**;
+    yang dibuang total (F/V < 10×, volatility / LPs /
     Top10) tidak dihitung. Kandidat gagal dengan
     **volatility 0 tidak ikut dihitung** (2026-09-14 lanjutan): pool tanpa
     pergerakan dibuang dari listing (:func:`row_volatility_zero`), jadi
@@ -1862,12 +1826,12 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
         "fetched": fetched,
         "hidden_metric": hidden_metric,
         "skipped_quote": quote_skipped,
-        # Pool gugur Top10 / volatility / LPs / F/V < 2× yang dibuang dari
+        # Pool gugur Top10 / volatility / LPs / F/V < 10× yang dibuang dari
         # listing (tidak ditampilkan di mana pun).
         "dropped_volatility": dropped_volatility,
         "dropped_top10": dropped_top10,
         "dropped_lps": dropped_lps,
-        # F/V di bawah lantai BEST_FV_HIDE_MIN (2×) — 2026-09-24.
+        # F/V di bawah lantai BEST_FV_HIDE_MIN (10×).
         "dropped_fv": dropped_fv,
         "dropped_total": dropped_total,
         # Compatibility key lama: filter Token:SOL sudah dihapus.
