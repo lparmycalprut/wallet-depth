@@ -32,22 +32,21 @@ INFORMASI TOKEN:SOL (BUKAN FILTER)
 Rasio apa pun tidak menggugurkan pool. API detail gagal/non-SOL/tidak valid
 hanya membuat kolom Token:SOL menampilkan tanda —.
 
-RISIKO GMGN — FILTER FINAL KELULUSAN
-----------------------------------
+INFORMASI RISIKO GMGN — BUKAN FILTER
+-----------------------------------
 [ ] 15. Untuk pool lolos dan pool dilewati yang masih memenuhi F/V >= 5x,
-       baca top_bundler_trader_percentage.
-[ ] 16. Baca top_entrapment_trader_percentage (phishing/entrapment).
-[ ] 17. Hitung Bundler + Phishing dan tampilkan di kolom.
-[ ] 18. Gunakan Bundler+Phishing sebagai filter final: gabungan <= 40% lolos;
-       di atas 40% atau data wajib tidak terbaca masuk "pool dilewati".
-       Kolom yang di atas 40% harus bold merah menyala dan berkedip.
+       ambil top_bundler_trader_percentage bila tersedia.
+[ ] 16. Ambil top_entrapment_trader_percentage (phishing/entrapment) bila tersedia.
+[ ] 17. Hitung dan tampilkan Bundler + Phishing sebagai informasi; laporan
+       gagal dibaca cukup menampilkan —.
+[ ] 18. Nilai Bundler+Phishing tinggi boleh diberi penanda visual risiko,
+       tetapi tidak pernah memindahkan atau menggugurkan pool.
 
 HASIL AKHIR
 -----------
-[ ] LOLOS jika pool melewati filter listing utama termasuk F/V >= 10x dan
-    Bundler+Phishing <= 40%.
-[ ] DILEWATI jika F/V 5x sampai <10x, Bundler+Phishing > 40%, laporan GMGN
-    wajib tidak terbaca, atau gap non-hard lain; tetap tampilkan warning.
+[ ] LOLOS jika pool melewati filter listing utama termasuk F/V >= 10x;
+    nilai Bundler+Phishing tinggi atau tidak terbaca tidak mengubah hasil.
+[ ] DILEWATI jika F/V 5x sampai <10x atau ada gap pool non-hard lain.
 [ ] DIBUANG TOTAL jika F/V < 5x/tidak valid, LPs gagal, volatility gagal,
     atau Top10 >= 25%.
 

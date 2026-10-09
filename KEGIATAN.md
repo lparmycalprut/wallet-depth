@@ -1,5 +1,20 @@
 # Kegiatan
 
+## 2026-10-09 — Bundler+Phishing tidak lagi menyaring pool
+
+Permintaan user: *"filter untuk bundler dan phising hapus saja, jadi tetap lolos meskipun bundler dan phising besar"*.
+
+- Menghapus Bundler+Phishing GMGN dari seluruh keputusan kelolosan. Persentase
+  tinggi, data tidak valid, maupun report GMGN yang gagal dibaca tidak lagi
+  mengeluarkan kandidat dari tabel utama.
+- Mempertahankan kolom Bundler+Phishing sebagai informasi; nilai tinggi hanya
+  diberi penanda risiko merah statis, bukan status gagal atau animasi berkedip.
+- Memastikan baris yang dulu tersimpan di `pool dilewati` hanya karena gate
+  Bundler+Phishing kembali ke tabel utama dari cache, selama memenuhi filter
+  pool lainnya.
+- RugCheck dan tax/dividend tetap berjalan untuk semua baris yang memenuhi
+  filter pool, tanpa bergantung pada hasil Bundler+Phishing.
+
 ## 2026-09-28 — Bundler+Phishing menjadi gate final dengan batas 40%
 
 Permintaan user: *"kita perbesar batas bundler + phising menjadi 40% maksimal"* dan *"filter terakhir kelolosan adalah di f/v dan di bundler"*.

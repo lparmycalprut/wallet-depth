@@ -59,8 +59,6 @@ def best_pool_tooltip() -> str:
                                   BEST_FV_HIDE_MIN, BEST_LPS_MIN,
                                   BEST_TOP10_MAX_PCT, BEST_VOL_SHOW_MAX,
                                   BEST_VOL_SHOW_MIN)
-    from gmgn_bundler import MAX_COMBINED_RATE
-
     return (
         "Meteora DLMM 24H only. Active TVL must be at least "
         f"${BEST_ACTIVE_TVL_MIN:,.0f}; LPs at least {BEST_LPS_MIN:g}; "
@@ -69,9 +67,10 @@ def best_pool_tooltip() -> str:
         f"below {BEST_TOP10_MAX_PCT:g}%. Fee/TVL is informational only. "
         "Token:SOL from official Meteora pool details is informational only "
         "and no longer filters a pool. GMGN bundler plus phishing/entrapment "
-        f"is the final risk gate at {MAX_COMBINED_RATE * 100:g}% maximum; "
-        "values above it move to pool dilewati and blink bright red in the "
-        "column. Reports are fetched for both visible and skipped rows. "
+        "is informational only: it never filters a pool, even when the rate "
+        "is high or its report is unreadable. High values are marked as a "
+        "static risk warning in the column. Reports are fetched for both "
+        "visible and skipped rows. "
         f"Pools with F/V at least {BEST_FV_HIDE_MIN:g}× but below "
         f"{BEST_FV_24H_MIN:g}× move to the skipped list; below "
         f"{BEST_FV_HIDE_MIN:g}× they are dropped. Passing rows then receive "
@@ -85,7 +84,7 @@ def best_pool_tooltip() -> str:
 
 
 # Relative desktop widths for the fifteen base columns (including Token:SOL
-# and the final-gate Bundler metric). Urutannya WAJIB sama dengan
+# and the informational Bundler metric). Urutannya WAJIB sama dengan
 # :func:`_lane_titles` dan urutan sel di :func:`_render_best_table`.
 _COL_SPEC = [1.4, 1.0, 0.75, 0.58, 0.95, 0.5, 0.72, 0.9, 0.58,
              0.55, 0.68, 0.8, 0.6, 1.0, 1.05]
@@ -338,7 +337,7 @@ def _cell(value: str, sub: str = "", title: str = "",
     ``title`` = tooltip browser dengan angka penuh (persen/USD mentah dari
     API Meteora) supaya angka ringkas di card tetap bisa diverifikasi.
     ``css_class`` dipakai untuk state visual yang memang harus menempel pada
-    seluruh sel, misalnya peringatan Bundler+Phishing di atas batas.
+    seluruh sel, misalnya penanda informasional risiko Bundler+Phishing.
     """
     import html as _html
 
@@ -449,9 +448,8 @@ def _fv_cell(row: dict, lane: str, *, top: bool = False) -> tuple[str, str, str]
            f"kedua listing {label} + syarat lane ({gate}); "
            "lebih tinggi = fee lebih dominan")
     if fails:
-        # Gugur F/V, volatility di luar 1%–10%, Top10 >= 25%, atau gate
-        # Bundler+Phishing — semuanya dibaca dari satu sumber
-        # (row_best_final_gaps) supaya teks sel tidak pernah ketinggalan aturan.
+        # Gugur F/V, volatility di luar 1%–10%, Top10 >= 25%, dan gap pool
+        # lain dibaca dari row_best_final_gaps; Bundler+Phishing bukan filter.
         sub = f"gugur: {fails[0].split(': ', 1)[-1]}"
         shown = f'<span style="color:#dc2626;">{value}</span>'
     elif top:
@@ -490,7 +488,7 @@ def _render_best_table(rows: list, *, lane: str,
     # supaya card tidak pernah menebak struktur laporan API pihak ketiga.
     from rugchecker import cell_parts as _rug_cell_parts
     from gmgn_bundler import (cell_parts as _bundler_cell_parts,
-                              exceeds_limit as _bundler_exceeds_limit)
+                              is_high_risk as _bundler_is_high_risk)
     # Modul ``bubblemaps`` TIDAK diimpor lagi di sini (2026-09-19): kolom
     # Bubble Map dihapus, yang tersisa hanya tautan 🫧 dari ``links``
     # (permintaan user: "hapus tentang bubblemap, sisakan hyperlink ke
@@ -603,13 +601,13 @@ def _render_best_table(rows: list, *, lane: str,
         bundler_report = row.get("bundler") or {}
         bundler_value, bundler_sub, bundler_tip = _bundler_cell_parts(
             bundler_report)
-        bundler_danger = _bundler_exceeds_limit(bundler_report)
+        bundler_high_risk = _bundler_is_high_risk(bundler_report)
         bundler_color = (str(bundler_report.get("color") or "")
                          if isinstance(bundler_report, dict) else "")
         if bundler_color and bundler_value != "—":
             bundler_value = (f'<span style="color:{bundler_color};'
                              f'font-weight:700;">{bundler_value}</span>')
-        bundler_cell_class = ("bp-bundler-danger" if bundler_danger else "")
+        bundler_cell_class = ("bp-bundler-high-risk" if bundler_high_risk else "")
         rug_report = row.get("rugcheck") or {}
         rug_value, rug_sub, rug_tip = _rug_cell_parts(rug_report)
         rug_color = str(rug_report.get("color") or "") if isinstance(rug_report, dict) else ""
@@ -694,6 +692,33 @@ def _lane_result(st, lane: str) -> dict:
     return st.session_state.get(best_lane_session_key(lane)) or {}
 
 
+def _reclassify_cached_rows(result: dict, lane: str) -> tuple[list[dict], list[dict]]:
+    """Reapply current pool gates to saved visible + skipped rows.
+
+    Older cached scans may have hidden rows only because Bundler+Phishing was
+    previously a gate. Reclassifying both lists with today's pool-only rules
+    restores those rows to the main table without forcing a rescan.
+    """
+    from meteora_screener import (row_best_dropped, row_best_final_gaps,
+                                  sort_best_rows, sort_hidden_best_rows)
+
+    visible: list[dict] = []
+    skipped: list[dict] = []
+    cached = list(result.get("rows") or []) + list(result.get("hidden_rows") or [])
+    for original in cached:
+        if not isinstance(original, dict):
+            continue
+        gaps = row_best_final_gaps(original, lane=lane)
+        row = dict(original, best_gaps=gaps)
+        if row_best_dropped(row, lane=lane):
+            continue
+        if gaps:
+            skipped.append(row)
+        else:
+            visible.append(row)
+    return sort_best_rows(visible), sort_hidden_best_rows(skipped)
+
+
 def _run_lane_scan(lane: str) -> dict:
     """Run one Best Pool scan and convert an unexpected error to card data."""
     from meteora_screener import scan_best_lane
@@ -732,10 +757,7 @@ def render_best_pool_scan() -> None:
     from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_FV_HIDE_MIN,
                                   BEST_FV_24H_MIN,
                                   BEST_LPS_MIN, best_gap_summary,
-                                  normalize_best_lane, row_best_dropped,
-                                  row_best_final_gaps, row_volatility_zero,
-                                  sort_best_rows, sort_hidden_best_rows)
-    from gmgn_bundler import MAX_COMBINED_RATE
+                                  normalize_best_lane)
 
     with st.container(border=True):
         active = normalize_best_lane("24h")
@@ -765,11 +787,11 @@ def render_best_pool_scan() -> None:
                            f"{gate} + active TVL ≥ "
                            f"${BEST_ACTIVE_TVL_MIN / 1000:g}K + LPs ≥ "
                            f"{BEST_LPS_MIN:g} + volatility 1%–10% + Top10 < 25% "
-                           "+ Fee/TVL hanya informasi. Token:SOL hanya "
-                           "informasi. Bundler+Phishing GMGN adalah filter "
-                           f"kelolosan terakhir, maksimal {MAX_COMBINED_RATE * 100:g}% "
-                           "(di atasnya masuk pool dilewati dan berkedip merah) "
-                           "serta ikut di-fetch untuk pool dilewati. F/V "
+                           "+ Fee/TVL dan Token:SOL hanya informasi. "
+                           "Bundler+Phishing GMGN juga hanya informasi: nilai "
+                           "tinggi atau laporan yang gagal dibaca tidak "
+                           "menyaring pool; nilai tinggi diberi penanda risiko. "
+                           "Laporan ikut di-fetch untuk pool dilewati. F/V "
                            f"{BEST_FV_HIDE_MIN:g}× sampai <{BEST_FV_24H_MIN:g}× "
                            "masuk ke 'pool dilewati'; F/V di bawah lantai itu "
                            "dibuang. Tiap pool yang lolos dilengkapi "
@@ -807,32 +829,9 @@ def render_best_pool_scan() -> None:
                     f"🏆 Scan Best Pool {label} untuk memindai "
                     "listing terbaru.")
             return
-        # ``scan_best_lane`` sudah mengurutkan, tapi hasil lama di
-        # ``session_state`` (dari kriteria versi sebelumnya) belum —
-        # diurutkan lagi dengan rule baru agar listing konsisten tanpa perlu
-        # scan ulang (kolom yang dibutuhkan sort ada di baris lama juga).
-        stored_rows = result.get("rows") or []
-        newly_hidden = [
-            dict(r, best_gaps=row_best_final_gaps(
-                r, lane=active))
-            for r in stored_rows
-            if row_best_final_gaps(r, lane=active)
-        ]
-        # Pool yang gugur karena Top10 atau volatility dibuang total di sini
-        # (permintaan user: "hasil yang gugur karena gugur: Top10, gugur:
-        # volatility langsung sembunyikan total, tidak ditampilkana dimanapun")
-        # — filter render supaya hasil scan LAMA yang masih membawanya di
-        # ``rows`` atau di ``hidden_rows`` ikut bersih tanpa scan ulang.
-        stored_rows = [r for r in stored_rows
-                       if not row_best_dropped(r, lane=active)]
-        rows = sort_best_rows([
-            r for r in stored_rows
-            if not row_best_final_gaps(
-                r, lane=active)
-        ])
-        hidden_rows = sort_hidden_best_rows(
-            [r for r in (result.get("hidden_rows") or []) + newly_hidden
-             if not row_best_dropped(r, lane=active)])
+        # Reapply today's pool-only gates to both cached lists. This also
+        # restores rows hidden by the former Bundler+Phishing gate.
+        rows, hidden_rows = _reclassify_cached_rows(result, active)
         # ``hidden`` dihitung dari listing yang benar-benar bisa dilihat
         # (bukan counter mentah ``hidden_metric`` dari scan lama, yang masih
         # bisa menghitung pool vol/Top10 gugur), jadi pill/tombol/caption selalu
@@ -858,10 +857,9 @@ def render_best_pool_scan() -> None:
                          help=f"Tampilkan kandidat {label} yang di-skip karena "
                               f"F/V minimal {BEST_FV_HIDE_MIN:g}× tetapi masih "
                               f"di bawah {BEST_FV_24H_MIN:g}×, atau karena "
-                              f"Bundler+Phishing > {MAX_COMBINED_RATE * 100:g}% "
-                              "(atau gap non-hard lain). Token:SOL hanya "
-                              "informasi; Bundler+Phishing adalah filter final "
-                              "dan ikut di-fetch untuk tabel dilewati.",
+                              "gap pool lainnya. Token:SOL dan "
+                              "Bundler+Phishing hanya informasi; keduanya "
+                              "tidak menyaring pool.",
                          use_container_width=True):
                 st.session_state[best_lane_hidden_key(active)] = \
                     not showing_hidden
@@ -870,7 +868,6 @@ def render_best_pool_scan() -> None:
             st.warning(f"Meteora API: {error}")
         gmgn_failed = int(result.get("gmgn_failed") or 0)
         bundler_failed = int(result.get("bundler_failed") or 0)
-        bundler_filter_failed = int(result.get("bundler_filter_failed") or 0)
         distribution_failed = int(
             result.get("liquidity_distribution_failed") or 0)
         hidden_distribution_failed = int(
@@ -883,12 +880,9 @@ def render_best_pool_scan() -> None:
                        if rug_failed else "")
             gmgn_txt = (f" · {gmgn_failed} likuiditas GMGN tak terbaca"
                         if gmgn_failed else "")
-            bundler_txt = (f" · {bundler_failed} Bundler+Phishing GMGN tak terbaca"
-                           if bundler_failed else "")
-            bundler_filter_txt = (
-                f" · {bundler_filter_failed} pool Bundler+Phishing > "
-                f"batas {MAX_COMBINED_RATE * 100:g}%/tak terbaca"
-                if bundler_filter_failed else "")
+            bundler_txt = (
+                f" · {bundler_failed} Bundler+Phishing GMGN tak terbaca "
+                "(informasi saja; tidak menyaring)" if bundler_failed else "")
             distribution_txt = (
                 f" · {distribution_failed} distribusi token:SOL tak terbaca/non-SOL"
                 if distribution_failed else "")
@@ -904,7 +898,7 @@ def render_best_pool_scan() -> None:
             # caption tidak menyebut kolom yang sudah tidak ada.
             st.caption(f"{len(rows)} pool {label} tampil · {hidden} "
                        f"dilewati · listing {fetched} pool{quote_txt}"
-                       f"{rug_txt}{gmgn_txt}{bundler_txt}{bundler_filter_txt}"
+                       f"{rug_txt}{gmgn_txt}{bundler_txt}"
                        f"{distribution_txt}{hidden_distribution_txt}{tax_txt}.")
         if showing_hidden:
             if not hidden_rows:
@@ -912,8 +906,8 @@ def render_best_pool_scan() -> None:
                 return
             st.caption(
                 f"{len(hidden_rows)} pool {label} yang dilewati ditampilkan.")
-            # Sorot hijau tua menyala khusus tabel utama — listing dilewati
-            # barisnya sudah dianotasi merah gugur-ambang.
+            # Sorot hijau tua menyala khusus tabel utama — baris di tabel
+            # dilewati tetap membawa alasan gagal pool di sel F/V.
             # Tabel "dilewati" tanpa kolom TAX/DIVIDEND (kolom informasi itu
             # hanya untuk tabel utama) — 14 kolom dasar saja.
             _render_best_table(hidden_rows, lane=active,
