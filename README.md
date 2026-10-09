@@ -19,7 +19,7 @@ A pool must satisfy all listing checks:
 
 After those cheap checks, official Meteora pool details still provide the **Token:SOL** USD-value ratio, but the ratio is informational and no longer filters pools.
 
-GMGN per-token **Bundler+Phishing** is the final risk gate after F/V. It is fetched for both main-table rows and the displayable **pool dilewati** rows, so candidates with **F/V 5× to <10×** still show their Bundler+Phishing data. A combined rate of **40% or less** passes; above **40%** (or an unreadable mandatory report) is kept out of the main table and shown as a skipped warning row. Its Bundler+Phishing cell becomes bold, bright red, and blinking. Only rows passing this final gate continue to RugCheck and tax/dividend enrichment. There is no new-pool detection or alternate bypass path.
+GMGN per-token **Bundler+Phishing** is informational only—not an eligibility filter. The metric is fetched for main-table rows and displayable **pool dilewati** rows, so candidates with **F/V 5× to <10×** can also show it. Pools remain eligible even when the combined rate is high or the GMGN report cannot be read; high values may receive a static red risk warning, but are never moved out of the main table for that reason. Main-table rows that pass the pool checks continue to RugCheck and tax/dividend enrichment. There is no new-pool detection or alternate bypass path.
 
 ## Mobile layout
 

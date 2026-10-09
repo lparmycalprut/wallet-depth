@@ -7,9 +7,10 @@ traded by wallets GMGN classifies as bundlers; it is not a count of Jito
 bundles and must not be inferred when the field is absent.
 
 Best Pool shows the sum of bundler and GMGN's entrapment/phishing *trader*
-rate as the final risk gate and as a warning column for visible pools and
-displayable skipped pools. These two rates are token-stat metrics, not the
-same thing as the ``Owned`` total shown by GMGN's paginated Holders tabs.
+rate as informational context for visible pools and displayable skipped pools.
+It never filters a pool, including when the combined rate is high or the report
+cannot be read. These two rates are token-stat metrics, not the same thing as
+the ``Owned`` total shown by GMGN's paginated Holders tabs.
 In particular, ``is_suspicious`` on a holder row is not a substitute for
 ``top_entrapment_trader_percentage``. Results are cached briefly because the
 endpoint is unofficial and one request is needed per mint.
@@ -32,15 +33,15 @@ CACHE_MAX_ENTRIES = 400
 REQUEST_TIMEOUT = 10
 WORKERS = 6
 
-# Final Best Pool eligibility boundary for the combined Bundler+Phishing
-# statistic. A pool at exactly 40% is still accepted; a value above 40% is
-# moved out of the main table and shown as a skipped/high-risk row.
-MAX_COMBINED_RATE = 0.40
+# Informational high-risk marker for the combined Bundler+Phishing statistic.
+# It affects only the report color/text, never whether a pool is shown.
+HIGH_RISK_COMBINED_RATE = 0.40
+# Backward-compatible alias for cached reports and older callers. This is not
+# an eligibility maximum or a pool filter.
+MAX_COMBINED_RATE = HIGH_RISK_COMBINED_RATE
 WARN_COMBINED_RATE = 0.15
 SAFE_COLOR = "#15803d"
 WARN_COLOR = "#b45309"
-# This is intentionally bright red: the UI adds a blinking danger treatment
-# to the whole Bundler+Phishing cell when this verdict is returned.
 RISK_COLOR = "#ff0000"
 
 _HEADERS = {
@@ -106,9 +107,8 @@ def _cached(mint: str) -> dict | None:
     report = entry.get("report")
     if not isinstance(report, dict):
         return None
-    # Invalidate cache schema from the bundler-only implementation and from
-    # an older risk boundary. This prevents a cached 26% report, for example,
-    # from retaining the old 25% verdict after the limit is changed to 40%.
+    # Invalidate old bundler-only reports and reports classified under an
+    # older informational high-risk marker.
     if ("phishing_rate" not in report or "combined_rate" not in report
             or report.get("max_combined_rate") != MAX_COMBINED_RATE):
         return None
@@ -158,10 +158,10 @@ def _data_object(payload) -> dict:
 
 
 def _over_limit(value) -> bool:
-    """Compare with a tiny tolerance so an exact decimal 40% still passes."""
+    """True above the informational high-risk marker, with decimal tolerance."""
     number = _number(value)
     return bool(number is not None
-                and number > MAX_COMBINED_RATE + 1e-12)
+                and number > HIGH_RISK_COMBINED_RATE + 1e-12)
 
 
 def summarize(payload, *, mint: str = "") -> dict:
@@ -184,11 +184,11 @@ def summarize(payload, *, mint: str = "") -> dict:
                 "source": "gmgn"}
     combined = bundler + phishing
     if _over_limit(combined):
-        verdict, color = "GAGAL", RISK_COLOR
+        verdict, color = "RISIKO TINGGI", RISK_COLOR
     elif combined >= WARN_COMBINED_RATE:
         verdict, color = "WASPADA", WARN_COLOR
     else:
-        verdict, color = "LOLOS", SAFE_COLOR
+        verdict, color = "RISIKO RENDAH", SAFE_COLOR
     return {
         "ok": True,
         "mint": mint,
@@ -271,12 +271,17 @@ def attach_to_rows(rows, *, workers: int = WORKERS,
     return rows
 
 
-def exceeds_limit(report: dict | None) -> bool:
-    """True only for a measured combined rate strictly above the 40% gate."""
+def is_high_risk(report: dict | None) -> bool:
+    """Whether a readable report exceeds the informational high-risk marker."""
     item = report if isinstance(report, dict) else {}
     if not item.get("ok"):
         return False
     return _over_limit(item.get("combined_rate"))
+
+
+def exceeds_limit(report: dict | None) -> bool:
+    """Backward-compatible alias; this threshold does not filter pool rows."""
+    return is_high_risk(report)
 
 
 def _pct(rate) -> str:
@@ -294,26 +299,23 @@ def cell_parts(report: dict | None) -> tuple[str, str, str]:
     bundler = _pct(item.get("bundler_rate"))
     phishing = _pct(item.get("phishing_rate"))
     sub = f"B {bundler} · P {phishing}"
-    critical = exceeds_limit(item)
-    if critical:
-        sub = f"⚠️ GAGAL > {MAX_COMBINED_RATE * 100:g}% · {sub}"
+    high_risk = is_high_risk(item)
+    if high_risk:
+        sub = f"⚠️ RISIKO TINGGI · {sub}"
     extras = []
     if _rate(item.get("dev_rate")) is not None:
         extras.append(f"dev {_pct(item.get('dev_rate'))}")
     if _rate(item.get("sniper_rate")) is not None:
         extras.append(f"sniper {_pct(item.get('sniper_rate'))}")
-    verdict_note = (f"di atas {MAX_COMBINED_RATE * 100:g}% ditandai GAGAL "
-                    "dan tidak masuk tabel utama"
-                    if critical else
-                    f"tepat {MAX_COMBINED_RATE * 100:g}% masih LOLOS")
+    risk_note = (f"gabungan di atas {HIGH_RISK_COMBINED_RATE * 100:g}% "
+                 "ditandai Risiko Tinggi"
+                 if high_risk else "angka hanya sebagai informasi")
     tip = (f"GMGN token_stat: bundler-trader {bundler} + "
            f"entrapment/phishing-trader {phishing} = {combined}. "
            "Ini bukan penjumlahan Owned dari tab Holders TOP100 dan "
            "bukan jumlah holder dengan is_suspicious=true. "
-           f"Batas kelolosan: gabungan maksimal "
-           f"{MAX_COMBINED_RATE * 100:g}% ({verdict_note}); "
-           "nilai di atas batas dipindahkan ke pool dilewati dan ditandai "
-           "merah berkedip di kolom. "
+           f"{risk_note}; indikator ini hanya peringatan informasi, "
+           "bukan filter dan tidak mengeluarkan pool dari hasil. "
            "Angka ini statistik wallet GMGN, bukan bukti pasti manipulasi "
            "atau hitungan transaksi Jito.")
     if extras:
