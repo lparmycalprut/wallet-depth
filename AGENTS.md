@@ -2,9 +2,19 @@
 
 ## Product scope
 
-The Streamlit application is a focused **Meteora Best Pool 24H** dashboard. Do not restore the removed wallet-depth Holder system, TEMP page, scheduled Holder workflows, Telegram alerts, Holder stores, or Holder links without a new explicit product decision.
+The Streamlit application is a focused **Meteora Best Pool 24H** dashboard. Do not restore the removed wallet-depth Holder system, TEMP page, scheduled Holder workflows, Holder stores, or Holder links without a new explicit product decision.
+
+**Telegram alerts are sanctioned again — but only for the 🌊 Sweep page** (explicit product decision, 2026-10-12). The Holder-era alert machinery is *not* restored: the sweep feature has its own modules (`sweep_alert.py`, `sweep_store.py`, `sweep_scan.py`, `sweep_ui.py`, `pages/8_🌊_Sweep.py`, `scripts/scan_sweep.py`, `.github/workflows/sweep-scan.yml`). Keep them separate from Best Pool, do not resurrect `telegram_alerts.py` or any Holder store, and keep `app.py` free of sweep imports.
 
 Independent market-risk fields such as Meteora's `top_holders_pct`, GMGN metrics, RugCheck, and the Bubblemaps external link are not part of the removed subsystem.
+
+## Sweep page invariants
+
+- the page is a **separate multipage entry** (`pages/8_🌊_Sweep.py`); `app.py` must not import sweep modules
+- the watchlist is **manual** — never auto-populate it from Best Pool, GMGN, or any scanner
+- alerts fire on **state transitions only** (eligibility transition, sweep cooldown), never on every scan
+- theoretical and measured numbers must stay labelled as such: `est_cost_usd` is the formula `(sqrt(m)-1) * liq`, `net_inflow_usd` is a measurement (Δ liquidity between snapshots) and is `None` when unavailable — do not let the UI or alerts present the reference estimate as a measurement
+- the stats table is the deliverable: every alert must leave a signal row with `max_up_pct` / `max_down_pct` so hit rate can be reviewed instead of guessed
 
 ## Best Pool invariants
 

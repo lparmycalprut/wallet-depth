@@ -7,7 +7,14 @@
 - Install dependencies from `requirements.txt`
 - The application requires outbound HTTPS access to Meteora and its optional market/risk enrichment providers.
 
-No GitHub Actions scanner, Holder store branch, cron chain, or Telegram credentials are required. Those systems were removed.
+Best Pool itself still requires no GitHub Actions scanner, Holder store branch, cron chain, or Telegram credentials.
+
+The **🌊 Sweep** page does need two things when you want 24/7 alerts (they are optional — without them the page still screens and records statistics):
+
+1. **Telegram** — `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`, resolved in layers: `st.secrets` → environment → `config.json`. In GitHub Actions, add them as repository secrets (same names as the retained Pre-Pump tooling).
+2. **GitHub commit access** — `github_token` (fine-grained PAT, contents: write) so the sweep watchlist, snapshots, and signal history survive Streamlit Cloud restarts. Without it the list is kept in the ephemeral filesystem plus a local `config.json` backup.
+
+`.github/workflows/sweep-scan.yml` runs the same scan every 5 minutes and commits only when `sweep_state.json` actually changed (`store.fingerprint()`), so a 5-minute cadence does not create ~288 commits/day.
 
 ## Optional CVD configuration
 
@@ -29,4 +36,6 @@ After deployment, confirm:
 1. the main page renders **🏆 Scan Best Pool Meteora**;
 2. no Holder or TEMP page appears in navigation;
 3. a scan can fetch the Meteora 24H listing;
-4. on a phone-sized viewport, table headers and all columns remain available through horizontal scrolling.
+4. on a phone-sized viewport, table headers and all columns remain available through horizontal scrolling;
+5. **🌊 Sweep** appears in navigation and renders the watchlist editor, the eligibility table, and the signal statistics section;
+6. the Sweep page's Telegram line reports either *siap* (with the credential source) or the exact list of places to fill in credentials.
