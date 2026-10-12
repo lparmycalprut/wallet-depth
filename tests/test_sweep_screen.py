@@ -104,14 +104,34 @@ class CriteriaTest(unittest.TestCase):
         self.assertFalse(low["passed"])
 
     def test_float_spread_uses_percent_input(self):
-        # 18,92% top-10 + holder terbesar 3,00% → tidak lulus (harus < 3,00)
-        self.assertFalse(
+        # 18,92% top-10 + holder terbesar 3,00% → LULUS (batas default 5%)
+        self.assertTrue(
             ss.criterion_float_spread(18.92, [3.0, 2.7, 2.11])["passed"])
+        # holder terbesar 2,99% → tetap LULUS
         self.assertTrue(
             ss.criterion_float_spread(18.92, [2.99, 2.7, 2.11])["passed"])
-        # Terkonsentrasi → gagal
+        # Terkonsentrasi (holder 12%) → gagal
         self.assertFalse(ss.criterion_float_spread(40.0, [12.0])["passed"])
+        # holder 5,5% → gagal (di atas batas 5%)
+        self.assertFalse(ss.criterion_float_spread(18.0, [5.5])["passed"])
         self.assertIsNone(ss.criterion_float_spread(None, [])["passed"])
+
+    def test_team_human_data_5_percent_vs_3_percent(self):
+        """Data nyata Team Human: holder 3,94% → LULUS di 5%, GAGAL di 3%."""
+        # Team Human: top-10 18,97%, holder terbesar 3,94%
+        # Default 5%: kriteria 3 LULUS
+        self.assertTrue(
+            ss.criterion_float_spread(18.97, [3.94, 2.5, 2.0])["passed"])
+        # Custom 3%: kriteria 3 GAGAL
+        result_3pct = ss.criterion_float_spread(18.97, [3.94, 2.5, 2.0],
+                                                max_holder_pct=0.03)
+        self.assertFalse(result_3pct["passed"])
+        self.assertIn("batas 3%", result_3pct["detail"])
+        # Custom 5% (eksplisit): kriteria 3 LULUS
+        result_5pct = ss.criterion_float_spread(18.97, [3.94, 2.5, 2.0],
+                                                max_holder_pct=0.05)
+        self.assertTrue(result_5pct["passed"])
+        self.assertIn("lolos batas holder 5%", result_5pct["detail"])
 
     def test_absorption_needs_history_then_scores(self):
         self.assertIsNone(ss.criterion_absorption([])["passed"])
@@ -192,21 +212,32 @@ class CriteriaTest(unittest.TestCase):
 
 
 class SettingsTest(unittest.TestCase):
-    """Ambang liq/MC bisa diatur — tapi tidak boleh keluar dari rentang aman."""
+    """Ambang liq/MC dan holder bisa diatur — tapi tidak boleh keluar dari rentang aman."""
 
-    def test_default_is_15_percent(self):
-        self.assertEqual(ss.normalize_settings(None),
-                         {"liq_mc_max": ss.LIQ_MC_MAX})
-        self.assertEqual(ss.normalize_settings("bukan dict"),
-                         {"liq_mc_max": ss.LIQ_MC_MAX})
+    def test_default_is_15_percent_liq_5_percent_holder(self):
+        defaults = ss.normalize_settings(None)
+        self.assertEqual(defaults["liq_mc_max"], ss.LIQ_MC_MAX)
+        self.assertEqual(defaults["holder_max_pct"], ss.HOLDER_MAX_PCT)
+        defaults2 = ss.normalize_settings("bukan dict")
+        self.assertEqual(defaults2["liq_mc_max"], ss.LIQ_MC_MAX)
+        self.assertEqual(defaults2["holder_max_pct"], ss.HOLDER_MAX_PCT)
 
     def test_clamped_to_safe_range(self):
-        self.assertEqual(ss.normalize_settings({"liq_mc_max": 0.01}),
-                         {"liq_mc_max": ss.SETTINGS_MIN_LIQ_MC})
-        self.assertEqual(ss.normalize_settings({"liq_mc_max": 5.0}),
-                         {"liq_mc_max": ss.SETTINGS_MAX_LIQ_MC})
-        self.assertEqual(ss.normalize_settings({"liq_mc_max": "rusak"}),
-                         {"liq_mc_max": ss.LIQ_MC_MAX})
+        result = ss.normalize_settings({"liq_mc_max": 0.01})
+        self.assertEqual(result["liq_mc_max"], ss.SETTINGS_MIN_LIQ_MC)
+        self.assertIn("holder_max_pct", result)
+        result = ss.normalize_settings({"liq_mc_max": 5.0})
+        self.assertEqual(result["liq_mc_max"], ss.SETTINGS_MAX_LIQ_MC)
+        result = ss.normalize_settings({"liq_mc_max": "rusak"})
+        self.assertEqual(result["liq_mc_max"], ss.LIQ_MC_MAX)
+
+    def test_holder_clamped_to_safe_range(self):
+        result = ss.normalize_settings({"holder_max_pct": 0.5})
+        self.assertEqual(result["holder_max_pct"], ss.SETTINGS_MIN_HOLDER_PCT)
+        result = ss.normalize_settings({"holder_max_pct": 25.0})
+        self.assertEqual(result["holder_max_pct"], ss.SETTINGS_MAX_HOLDER_PCT)
+        result = ss.normalize_settings({"holder_max_pct": "rusak"})
+        self.assertEqual(result["holder_max_pct"], ss.HOLDER_MAX_PCT)
 
     def test_criterion_honours_custom_threshold(self):
         # ratio 20%: lolos di ambang 25%, gagal di ambang 15%.

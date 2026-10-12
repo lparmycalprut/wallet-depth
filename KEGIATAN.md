@@ -1,5 +1,36 @@
 # Kegiatan
 
+## 2026-10-12 — Batas holder per-wallet jadi setelan, default 3% → 5%
+
+Permintaan verifikasi data riil: *"batas holder per-wallet harus jadi setelan, bukan angka mati 3%"*.
+
+Berdasarkan data nyata Team Human (diverifikasi lewat AppTest dengan jaringan di-stub):
+- Token dengan top-10 18,97% (sehat) tapi satu holder 3,94% → kandidat yang
+  strukturnya paling mendekati pola dicari malah gugur di batas 3%.
+- Dengan batas 5%: LAYAK SWEEP 4/4.
+- Dengan batas 3% (lama): KANDIDAT 3/4 (kriteria 3 gagal).
+
+**Perubahan:**
+
+1. **`sweep_screen.py`:**
+   - `HOLDER_MAX_PCT = 3.0` → `5.0` (default baru)
+   - `SETTINGS_DEFAULTS` tambah `holder_max_pct`
+   - `SETTINGS_MIN_HOLDER_PCT = 1.0`, `SETTINGS_MAX_HOLDER_PCT = 20.0`
+   - `normalize_settings()` menangani `holder_max_pct` (dijepit 1%–20%)
+   - `criterion_float_spread(..., max_holder_pct=None)` pakai setelan, detail
+     selalu menyebut batas yang dipakai
+
+2. **`sweep_ui.py`:** slider kedua "batas holder per-wallet (%)" 1–20 di halaman
+
+3. **`scripts/scan_sweep.py`:** `--holder-max-pct` di cron (tidak mengembalikan
+   liq_mc_max ke default)
+
+4. **Test:** 373 → 377 OK; data nyata Team Human dikunci
+
+5. **Dokumentasi:** `docs/sweep.md`, `KEGIATAN.md`
+
+---
+
 ## 2026-10-12 — Perbaikan biaya sweep: ukur ke PUNCAK candle, bukan close
 
 Permintaan verifikasi data riil: *"biaya dorong sweep harus diukur ke PUNCAK candle, bukan ke harga close, dan pembilang leverage harus memakai kenaikan MC, bukan MC di close"*.

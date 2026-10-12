@@ -100,8 +100,22 @@ biaya dorong, dan churn.
 | `leverage` | `paper_gain ÷ est_cost` = `(akar(peak_mult)+1) / (liq/MC)` | 30,5× |
 
 Kalau snapshot pembanding belum ada, inflow nyata `None` dan yang dipakai adalah
-**acuan berlabel** (`REF_NET_COST_MULT = 2,44` dari satu event terukur) — UI dan
+**acuan berlabel** (`REF_NET_COST_MULT = 1,0` dari satu event terukur) — UI dan
 alert selalu menyebutnya "acuan 1 event", tidak pernah sebagai pengukuran.
+
+### Ambang holder per-wallet (bisa diatur, default 5%)
+
+Batas holder per-wallet sekarang **bisa diatur** dari UI/cron dan disimpan di
+`sweep_state.json` (`settings.holder_max_pct`). Default **5%** (bukan 3%) karena:
+
+- Data nyata Team Human: token dengan top-10 18,97% (sehat) tapi satu holder
+  3,94% akan gugur di batas lama 3% padahal strukturnya paling mendekati pola
+  yang dicari.
+- Dengan 5%: kriteria 3 LULUS → LAYAK SWEEP 4/4.
+- Dengan 3%: kriteria 3 GAGAL → KANDIDAT 3/4.
+
+Rentang dijepit 1%–20%: di bawah 1% terlalu ketat (hampir semua token gagal),
+di atas 20% terlalu longgar (kehilangan arti sebagai filter concentration).
 
 ## Statistik
 

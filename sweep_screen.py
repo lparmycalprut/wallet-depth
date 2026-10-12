@@ -31,7 +31,7 @@ LIQ_MC_MAX = 0.15          # kriteria 1: liq/MC < 15%
 # yang bisa ditarik menarik harga.
 LP_LOCKED_MIN_PCT = 85.0
 TOP10_MAX = 0.25           # kriteria 3: top-10 (tanpa pool) < 25% supply
-HOLDER_MAX_PCT = 3.0       # kriteria 3: tiap holder < 3%
+HOLDER_MAX_PCT = 5.0       # kriteria 3: tiap holder < 5% (default, bisanya 1-20)
 ABSORPTION_MAX_DRIFT = 0.25  # kriteria 4: harga sideways (< 25%) selama akumulasi
 MIN_SNAPSHOTS_ABSORPTION = 3  # kriteria 4/5: minimal snapshot sebelum dinilai
 VOL_EXPANSION_MIN_X = 3.0  # kriteria 5: ekspansi volume >= 3x titik tersepi
@@ -65,9 +65,11 @@ SWEEP_BASELINE_BARS = 24   # baseline = 24 candle sebelum kandidat
 #:
 #: Di bawah 5% likuiditas terlalu tipis untuk masuk/keluar posisi; di atas 60%
 #: kriterianya kehilangan arti (naik 2x pun sudah perlu 21% MC).
-SETTINGS_DEFAULTS = {"liq_mc_max": LIQ_MC_MAX}
+SETTINGS_DEFAULTS = {"liq_mc_max": LIQ_MC_MAX, "holder_max_pct": HOLDER_MAX_PCT}
 SETTINGS_MIN_LIQ_MC = 0.05
 SETTINGS_MAX_LIQ_MC = 0.60
+SETTINGS_MIN_HOLDER_PCT = 1.0
+SETTINGS_MAX_HOLDER_PCT = 20.0
 
 #: Minimal kriteria lulus untuk vonis LAYAK — tapi ambangnya menyesuaikan
 #: berapa kriteria yang **sudah punya data**: di deploy baru hanya trio
@@ -157,7 +159,8 @@ def normalize_settings(raw) -> dict:
 
     Nilai aneh (teks, negatif, di luar rentang) tidak pernah dipakai apa adanya:
     ambang liq/MC yang salah bisa membuat halaman menolak semua token atau
-    meloloskan semuanya tanpa jejak.
+    meloloskan semuanya tanpa jejak. Hal yang sama berlaku untuk
+    holder_max_pct.
     """
     raw = raw if isinstance(raw, dict) else {}
     out = dict(SETTINGS_DEFAULTS)
@@ -166,6 +169,11 @@ def normalize_settings(raw) -> dict:
         value = out["liq_mc_max"]
     out["liq_mc_max"] = min(max(value, SETTINGS_MIN_LIQ_MC),
                            SETTINGS_MAX_LIQ_MC)
+    value = _num(raw.get("holder_max_pct"))
+    if value is None:
+        value = out["holder_max_pct"]
+    out["holder_max_pct"] = min(max(value, SETTINGS_MIN_HOLDER_PCT),
+                                SETTINGS_MAX_HOLDER_PCT)
     return out
 
 
@@ -220,14 +228,20 @@ def criterion_lp_locked(lp_locked_pct, mint_authority=None,
     return _check("lp_locked", "LP locked", ok, " | ".join(bits))
 
 
-def criterion_float_spread(top10_pct, holder_pcts):
-    """Kriteria 3 — float tersebar: top-10 < 25% dan tiap holder < 3%.
+def criterion_float_spread(top10_pct, holder_pcts, max_holder_pct=None):
+    """Kriteria 3 — float tersebar: top-10 < 25% dan tiap holder < batas.
 
     ``top10_pct`` **selalu persen** (0-100), bukan fraksi — ambiguitas
     persen-vs-fraksi pernah membuat penilaian salah, jadi kontraknya eksplisit:
     :func:`sweep_data.collect_metrics` mengisi ``top10_holder_pct`` sebagai
     persen. ``holder_pcts`` = daftar persen **tanpa** akun pool AMM (lihat
     :func:`sweep_data.rugcheck_snapshot`).
+
+    ``max_holder_pct`` default ke :data:`HOLDER_MAX_PCT` (5, bukan 0,05) —
+    ini sekarang setelan user yang disimpan di ``sweep_state.json`` dalam
+    fraksi (0,05 = 5%). Fungsi ini mengonversi ke skala persen untuk
+    dibandingkan dengan ``holder_pcts``. Detail selalu menyebut batas yang
+    dipakai supaya alert bisa diaudit.
     """
     top10 = _num(top10_pct)
     pcts = [p for p in (_num(x) for x in (holder_pcts or [])) if p is not None]
@@ -235,8 +249,14 @@ def criterion_float_spread(top10_pct, holder_pcts):
         return _check("float_spread", "Float tersebar", None,
                       "top-10 / holder tidak tersedia")
     worst = max(pcts) if pcts else None
+    if max_holder_pct is not None:
+        # Konversi dari fraksi (0,05) ke persen (5) untuk konsisten dengan
+        # holder_pcts yang dalam skala persen.
+        limit = _num(max_holder_pct) * 100 if _num(max_holder_pct) is not None else None
+    else:
+        limit = HOLDER_MAX_PCT
     ok = ((top10 is None or top10 < TOP10_MAX * 100.0)
-          and (worst is None or worst < HOLDER_MAX_PCT))
+          and (worst is None or worst < limit))
     bits = []
     if top10 is not None:
         bits.append(f"top-10 {top10:.1f}%")
@@ -246,7 +266,10 @@ def criterion_float_spread(top10_pct, holder_pcts):
     if n:
         bits.append(f"{n} holder dicek")
     if not ok:
-        bits.append("→ terkonsentrasi, tidak perlu akumulasi panjang")
+        bits.append(f"→ terkonsentrasi (batas {limit:.0f}%)")
+    else:
+        bits.append(f"→ lolos batas holder {limit:.0f}%")
+    return _check("float_spread", "Float tersebar", ok, " | ".join(bits))
     return _check("float_spread", "Float tersebar", ok, " | ".join(bits))
 
 
@@ -397,7 +420,8 @@ def evaluate(metrics, *, snapshots=None, candles=None, settings=None):
                             metrics.get("mint_authority"),
                             metrics.get("freeze_authority")),
         criterion_float_spread(metrics.get("top10_holder_pct"),
-                               metrics.get("holder_pcts")),
+                               metrics.get("holder_pcts"),
+                               config.get("holder_max_pct")),
         criterion_absorption(snapshots),
         criterion_vol_expansion(snapshots),
         criterion_shakeout(candles),

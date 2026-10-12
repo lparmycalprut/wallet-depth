@@ -397,24 +397,48 @@ def _run_and_render(watchlist, *, persist: bool, settings=None) -> None:
 
 
 def _render_threshold(state) -> tuple:
-    """Slider ambang liq/MC + tabel biaya sweep. → (settings, berubah?)."""
+    """Slider ambang liq/MC + holder + tabel biaya sweep. → (settings, berubah?)."""
     config = store.load_settings(state)
-    key = "sweep_liq_mc_pct"
-    st.session_state.setdefault(key, int(round(config["liq_mc_max"] * 100)))
+    changed = False
+
     st.markdown("### ⚙️ Ambang kelayakan")
-    pct = st.slider(
-        "liq/MC maksimum (%)", min_value=5, max_value=60, step=1, key=key,
-        help="Bukan batas alam: yang menentukan biaya sweep adalah "
-             "(akar(m) − 1) × (liq/MC). Menurunkan ambang = lebih sedikit "
-             "kandidat tapi lebih murah digerakkan; menaikkan = lebih banyak "
-             "kandidat tapi biaya sweep naik.")
+
+    # Slider liq/MC
+    key_liq = "sweep_liq_mc_pct"
+    st.session_state.setdefault(key_liq, int(round(config["liq_mc_max"] * 100)))
+    col1, col2 = st.columns(2)
+    with col1:
+        pct = st.slider(
+            "liq/MC maksimum (%)", min_value=5, max_value=60, step=1, key=key_liq,
+            help="Bukan batas alam: yang menentukan biaya sweep adalah "
+                 "(akar(m) − 1) × (liq/MC). Menurunkan ambang = lebih sedikit "
+                 "kandidat tapi lebih murah digerakkan; menaikkan = lebih banyak "
+                 "kandidat tapi biaya sweep naik.")
     ratio = pct / 100.0
     st.caption("Pada ambang " + f"{pct}%: " + " · ".join(
         f"naik {t['mult']:.0f}x = {t['cost_pct']:.0f}% MC "
         f"(leverage {t['leverage']:.0f}x)"
         for t in screen.target_costs(ratio, mults=(2.0, 3.0, 5.0, 10.0))))
-    settings = screen.normalize_settings({"liq_mc_max": ratio})
-    changed = abs(settings["liq_mc_max"] - config["liq_mc_max"]) > 1e-9
+
+    # Slider holder_max_pct
+    key_holder = "sweep_holder_max_pct"
+    st.session_state.setdefault(key_holder, int(config.get("holder_max_pct", 5.0)))
+    with col2:
+        holder_pct = st.slider(
+            "batas holder per-wallet (%)", min_value=1, max_value=20, step=1,
+            key=key_holder,
+            help="Kriteria 3: tiap holder tidak boleh lebih dari batas ini. "
+                 "Default 5% (bukan 3%) karena kasus Team Human yang memiliki "
+                 "3,94% akan gugur di batas lama 3% padahal strukturnya paling "
+                 "mendekati pola yang dicari.")
+    holder_ratio = holder_pct / 100.0
+
+    settings = screen.normalize_settings({
+        "liq_mc_max": ratio,
+        "holder_max_pct": holder_ratio,
+    })
+    changed = (abs(settings["liq_mc_max"] - config["liq_mc_max"]) > 1e-9
+               or abs(settings.get("holder_max_pct", 0) - config.get("holder_max_pct", 0)) > 1e-9)
     return settings, changed
 
 
