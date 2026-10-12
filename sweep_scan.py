@@ -75,19 +75,47 @@ def _scan_one(mint: str, *, use_cache: bool = True) -> dict:
                 "candles_hour": [], "candles_min5": []}
 
 
+def rescore_rows(rows, state=None, settings=None) -> list:
+    """Nilai ulang baris yang sudah ada dengan ambang baru — **tanpa jaringan**.
+
+    Dipakai saat user menggeser ambang liq/MC: tabel dan statistik langsung
+    ikut berubah tanpa memanggil DexScreener/RugCheck/GMGN lagi.
+    """
+    state = store.load_state() if state is None else state
+    config = store.load_settings(state) if settings is None else settings
+    out = []
+    for row in rows or []:
+        mint = row.get("mint") or ""
+        enriched = screen.evaluate(
+            row.get("metrics") or {},
+            snapshots=store.mint_history(state, mint),
+            candles=row.get("candles_hour") or [],
+            settings=config)
+        out.append(dict(row, result=enriched))
+    return sorted(out, key=lambda r: (r["result"].get("score") is None,
+                                      -(r["result"].get("score") or 0)))
+
+
 def run_scan(mints, *, state: dict | None = None,
              use_cache: bool = True, send_alerts: bool = True,
              workers: int = DEFAULT_WORKERS, now: int | None = None,
-             persist: bool = False) -> dict:
+             persist: bool = False, settings=None) -> dict:
     """Jalankan satu putaran scan untuk semua ``mints``.
 
     Mengembalikan ``{"rows": [...], "state": {...}, "alerts": [...],
     "elapsed": float}``. ``rows`` urut menurun berdasarkan skor kelayakan supaya
     tabel UI langsung terbaca.
+
+    ``settings`` = pengaturan user (ambang liq/MC). Kalau ``None``, diambil dari
+    state sehingga halaman dan cron memakai ambang yang sama; nilai yang dikirim
+    eksplisit akan disimpan kembali ke state.
     """
     started = time.time()
     seen = store.parse_mints(mints)
     state = store.load_state() if state is None else state
+    if settings is not None:
+        store.save_settings(state, settings)
+    config = store.load_settings(state)
     alerts_sent = []
     results = []
 
@@ -105,7 +133,8 @@ def run_scan(mints, *, state: dict | None = None,
         # Skrining dinilai ulang dengan riwayat lengkap: kriteria 4 dan 5 hanya
         # bisa dijawab setelah ada snapshot (termasuk snapshot mint ini).
         enriched = screen.evaluate(metrics, snapshots=history,
-                                   candles=item.get("candles_hour") or [])
+                                   candles=item.get("candles_hour") or [],
+                                   settings=config)
         item["result"] = enriched
         if item.get("sweep"):
             # Inflow nyata = Δ likuiditas antar snapshot. Kalau snapshot
@@ -190,7 +219,10 @@ def run_scan(mints, *, state: dict | None = None,
     rows = sorted(
         [{"mint": item["mint"], "metrics": item["metrics"],
           "result": item["result"], "sweep": item["sweep"],
-          "sweep_context": item["sweep_context"]} for item in results],
+          "sweep_context": item["sweep_context"],
+          # Candle ikut dibawa di memori (tidak dipersist) supaya ambang bisa
+          # diubah dari UI tanpa memanggil jaringan lagi.
+          "candles_hour": item.get("candles_hour") or []} for item in results],
         key=lambda row: (row["result"].get("score") is None,
                          -(row["result"].get("score") or 0)),
     )

@@ -1,5 +1,33 @@
 # Kegiatan
 
+## 2026-10-12 — Ambang liq/MC page 🌊 Sweep jadi setelan, bukan angka mati
+
+Pertanyaan user: *"minimum Liquidity/MC ini 15% memang harus apa bisa diperlonggar?"*
+
+- **15% bukan batas alam.** Yang menentukan biaya sweep adalah
+  `biaya/MC = (akar(m) − 1) × (liq/MC)`, jadi "mahal/murah" selalu relatif
+  terhadap target kelipatan harga. Batas fisiknya: naik 10x melewati 100% MC di
+  liq/MC **46,2%**, naik 5x di **80,9%**.
+- Ambang dipindah dari konstanta menjadi **setelan user**: slider 5%–60%
+  (default 15%) di halaman, opsi `--liq-mc-max` di runner cron, disimpan di
+  `sweep_state.json` (`settings.liq_mc_max`) supaya halaman dan cron memakai
+  angka yang sama, dan ikut masuk `store.fingerprint()` agar perubahannya
+  ter-commit.
+- Rentangnya dijepit: di bawah 5% likuiditas terlalu tipis untuk masuk/keluar
+  posisi, di atas 60% kriterianya kehilangan arti (naik 2x pun perlu 21% MC).
+- Di bawah slider ada tabel biaya untuk ambang yang sedang dipakai
+  (`naik 2x = 6% MC`, `naik 3x = 11% MC`, dst) supaya longgar-sempitnya bisa
+  dinilai langsung, bukan ditebak.
+- Detail kriteria 1 sekarang selalu menyebut ambang yang berlaku **dan** biaya
+  naik 3x, jadi alert lama tetap bisa diaudit: batas mana yang dipakai saat itu
+  tersimpan di `result.settings` dan di riwayat sinyal.
+- Menggeser slider **tidak** memanggil jaringan lagi — baris yang sudah ada
+  dinilai ulang dari data di memori (`sweep_scan.rescore_rows`), jadi mencoba
+  beberapa ambang tidak menambah beban API.
+- Diperbaiki: `save_settings` sempat menyalin dict sehingga state pemanggil
+  tidak ikut berubah (setelan tidak pernah tersimpan dari `run_scan`).
+
+
 ## 2026-10-12 — Page baru 🌊 Sweep: skrining kelayakan sweep + alert Telegram
 
 Permintaan user: *"bisa kamu buatkan di wallet-depth? bisa memasukkan daftar mint manual ke dalam sistem, jadi ada telegram alert ke saya, dan juga di streamlit. alert ketika ada token di watchlist saya yang potensial akan terjadi sweep, dan alert ketika sweep mulai terjadi. detailnya semua bisa masuk ke tabel statistik yang bisa saya lihat"* dan *"jangan taruh di main app, tapi buat page baru"*.

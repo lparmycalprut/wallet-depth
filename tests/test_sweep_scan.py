@@ -214,6 +214,47 @@ class RunScanTest(_Sandbox):
         self.assertEqual(scores, sorted(scores, reverse=True))
 
 
+class RescoreTest(_Sandbox):
+    """Menggeser ambang tidak boleh memanggil jaringan lagi."""
+
+    def _rows(self):
+        bundle = dict(BUNDLE["metrics"], liq_usd=200.0, fdv_usd=1000.0)
+        return [{
+            "mint": MINT, "metrics": bundle,
+            "result": scan.screen.evaluate(bundle, snapshots=[], candles=[]),
+            "sweep": None, "sweep_context": None,
+            "candles_hour": BUNDLE["candles_hour"],
+        }]
+
+    def test_rescore_changes_verdict_without_network(self):
+        state = store.empty_state()
+        rows = self._rows()
+        self.assertFalse(rows[0]["result"]["eligible"])   # liq/MC 20% gagal
+        strict = scan.rescore_rows(rows, state, {"liq_mc_max": 0.15})
+        lenient = scan.rescore_rows(rows, state, {"liq_mc_max": 0.30})
+        self.assertFalse(strict[0]["result"]["eligible"])
+        self.assertTrue(lenient[0]["result"]["eligible"])
+        # Data pasar aslinya tidak diubah, hanya hasil skriningnya.
+        self.assertEqual(lenient[0]["metrics"], strict[0]["metrics"])
+
+    def test_run_scan_stores_settings_in_state(self):
+        state = store.empty_state()
+        outcome = scan.run_scan([MINT], state=state, send_alerts=False,
+                                settings={"liq_mc_max": 0.3}, now=1000)
+        self.assertEqual(outcome["state"]["settings"]["liq_mc_max"], 0.3)
+        self.assertEqual(
+            outcome["rows"][0]["result"]["settings"]["liq_mc_max"], 0.3)
+        self.assertFalse(outcome["rows"][0]["result"]["eligible"] is None)
+
+    def test_run_scan_reads_settings_back_from_state(self):
+        state = store.empty_state()
+        store.save_settings(state, {"liq_mc_max": 0.05})
+        outcome = scan.run_scan([MINT], state=state, send_alerts=False,
+                                now=1000)
+        self.assertEqual(
+            outcome["rows"][0]["result"]["settings"]["liq_mc_max"], 0.05)
+
+
 class DetectSweepIntegrationTest(_Sandbox):
     def test_analyze_detects_sweep_and_builds_context(self):
         item = self.analyze(BUNDLE)

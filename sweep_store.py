@@ -157,7 +157,7 @@ def save_watchlist(mints, *, persist: bool = True) -> list:
 # ---------------------------------------------------------------------------
 def empty_state() -> dict:
     return {"version": STATE_VERSION, "snapshots": {}, "signals": [],
-            "alerts": {}, "updated": 0}
+            "alerts": {}, "settings": {}, "updated": 0}
 
 
 def load_state() -> dict:
@@ -170,11 +170,33 @@ def load_state() -> dict:
     if not isinstance(data, dict):
         return empty_state()
     state = empty_state()
-    for key in ("snapshots", "signals", "alerts"):
+    for key in ("snapshots", "signals", "alerts", "settings"):
         if isinstance(data.get(key), dict) or isinstance(data.get(key), list):
             state[key] = data[key]
     state["updated"] = int(data.get("updated") or 0)
     return state
+
+
+def load_settings(state: dict) -> dict:
+    """Pengaturan user dari state (ambang liq/MC), sudah dinormalisasi."""
+    import sweep_screen as screen
+    return screen.normalize_settings((state or {}).get("settings"))
+
+
+def save_settings(state: dict, settings) -> dict:
+    """Simpan pengaturan user ke state (ikut ter-commit bersama state).
+
+    Disimpan di ``sweep_state.json`` supaya halaman dan cron memakai ambang yang
+    sama — kalau hanya disimpan di sesi Streamlit, alert cron akan memakai
+    default dan tabel statistik jadi tidak konsisten dengan yang dilihat user.
+    """
+    import sweep_screen as screen
+    if not isinstance(state, dict):
+        return screen.normalize_settings(settings)
+    # Ditulis **di tempat** (tanpa menyalin): pemanggil seperti run_scan harus
+    # melihat perubahannya di state yang sama, bukan di salinan yang dibuang.
+    state["settings"] = screen.normalize_settings(settings)
+    return state["settings"]
 
 
 def push_state(state: dict, reason: str = "") -> bool:
@@ -195,12 +217,13 @@ def save_state(state: dict, *, persist: bool = False, reason: str = "") -> dict:
 
 
 def fingerprint(state: dict) -> str:
-    """Sidik jari bagian state yang **layak di-commit** (snapshot + sinyal).
+    """Sidik jari bagian state yang **layak di-commit**.
 
-    State juga memuat ``alerts`` dan ``updated`` yang berubah tiap 5 menit;
-    kalau ikut dihitung, workflow cron akan membuat ~288 commit/hari. Dengan
-    sidik jari ini, commit hanya terjadi saat ada snapshot jam baru atau sinyal
-    baru.
+    Isinya: snapshot per jam, id sinyal, dan **pengaturan user**. Yang tidak
+    dihitung adalah ``alerts`` dan ``updated`` yang berubah tiap 5 menit — kalau
+    ikut dihitung, workflow cron akan membuat ~288 commit/hari. Pengaturan ikut
+    dihitung karena mengubah ambang liq/MC harus ter-commit (halaman dan cron
+    wajib memakai ambang yang sama).
     """
     import hashlib
 
@@ -208,6 +231,7 @@ def fingerprint(state: dict) -> str:
         "snapshots": (state or {}).get("snapshots") or {},
         "signals": [(row or {}).get("id") for row in ((state or {}).get("signals") or [])
                     if isinstance(row, dict)],
+        "settings": (state or {}).get("settings") or {},
     }, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 

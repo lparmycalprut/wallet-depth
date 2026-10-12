@@ -351,23 +351,61 @@ def _render_stats(state) -> None:
 # ---------------------------------------------------------------------------
 # Body
 # ---------------------------------------------------------------------------
-def _run_and_render(watchlist, *, persist: bool) -> None:
+def _run_and_render(watchlist, *, persist: bool, settings=None) -> None:
     with st.spinner(f"Memindai {len(watchlist)} mint…"):
-        outcome = scan.run_scan(watchlist, persist=persist)
+        outcome = scan.run_scan(watchlist, persist=persist, settings=settings)
     st.session_state["sweep_rows"] = outcome["rows"]
     st.session_state["sweep_state"] = outcome["state"]
     st.session_state["sweep_alerts"] = outcome["alerts"]
     st.session_state["sweep_elapsed"] = outcome["elapsed"]
 
 
+def _render_threshold(state) -> tuple:
+    """Slider ambang liq/MC + tabel biaya sweep. → (settings, berubah?)."""
+    config = store.load_settings(state)
+    key = "sweep_liq_mc_pct"
+    st.session_state.setdefault(key, int(round(config["liq_mc_max"] * 100)))
+    st.markdown("### ⚙️ Ambang kelayakan")
+    pct = st.slider(
+        "liq/MC maksimum (%)", min_value=5, max_value=60, step=1, key=key,
+        help="Bukan batas alam: yang menentukan biaya sweep adalah "
+             "(akar(m) − 1) × (liq/MC). Menurunkan ambang = lebih sedikit "
+             "kandidat tapi lebih murah digerakkan; menaikkan = lebih banyak "
+             "kandidat tapi biaya sweep naik.")
+    ratio = pct / 100.0
+    st.caption("Pada ambang " + f"{pct}%: " + " · ".join(
+        f"naik {t['mult']:.0f}x = {t['cost_pct']:.0f}% MC "
+        f"(leverage {t['leverage']:.0f}x)"
+        for t in screen.target_costs(ratio, mults=(2.0, 3.0, 5.0, 10.0))))
+    settings = screen.normalize_settings({"liq_mc_max": ratio})
+    changed = abs(settings["liq_mc_max"] - config["liq_mc_max"]) > 1e-9
+    return settings, changed
+
+
 def _render_body(*, persisting: bool) -> None:
     watchlist = store.load_watchlist()
     state = st.session_state.get("sweep_state") or store.load_state()
 
+    settings, threshold_changed = _render_threshold(state)
+    if threshold_changed:
+        # Dinilai ulang dari data yang sudah ada di memori — tidak ada
+        # panggilan jaringan hanya karena ambang digeser.
+        store.save_settings(state, settings)
+        rows = st.session_state.get("sweep_rows")
+        if rows:
+            st.session_state["sweep_rows"] = scan.rescore_rows(
+                rows, state, settings)
+        if persisting:
+            store.save_state(state, persist=True, reason="ambang liq/MC")
+        # Pesan ditampilkan langsung (bukan lewat antrean flash): jalur ini
+        # tidak memanggil st.rerun, jadi tidak ada yang menghapusnya.
+        st.success(f"Ambang liq/MC {settings['liq_mc_max']*100:.0f}% diterapkan "
+                   "ke data yang sudah ada — tanpa scan ulang.")
+
     col_scan, col_auto = st.columns([1, 2])
     if col_scan.button("🔍 Scan sekarang", type="primary",
                        use_container_width=True, disabled=not watchlist):
-        _run_and_render(watchlist, persist=persisting)
+        _run_and_render(watchlist, persist=persisting, settings=settings)
         _flash("success", f"Scan selesai: {len(watchlist)} mint dipindai.")
         st.rerun()
     auto = col_auto.toggle(
@@ -376,7 +414,7 @@ def _render_body(*, persisting: bool) -> None:
 
     rows = st.session_state.get("sweep_rows")
     if rows is None and watchlist:
-        _run_and_render(watchlist, persist=persisting)
+        _run_and_render(watchlist, persist=persisting, settings=settings)
         rows = st.session_state.get("sweep_rows")
     rows = rows or []
     state = st.session_state.get("sweep_state") or state
@@ -423,7 +461,10 @@ def _attach_autorefresh(watchlist) -> None:
     def _tick() -> None:
         if not watchlist:
             return
-        outcome = scan.run_scan(watchlist, persist=False)
+        outcome = scan.run_scan(
+            watchlist, persist=False,
+            settings=store.load_settings(st.session_state.get("sweep_state")
+                                         or store.load_state()))
         fingerprint = store.fingerprint(outcome["state"])
         last = st.session_state.get("sweep_fingerprint")
         st.session_state["sweep_fingerprint"] = fingerprint

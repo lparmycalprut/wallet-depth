@@ -39,6 +39,8 @@ def main(argv=None) -> int:
     parser.add_argument("--no-cache", action="store_true",
                         help="abaikan cache HTTP (paksa ambil ulang)")
     parser.add_argument("--workers", type=int, default=scan.DEFAULT_WORKERS)
+    parser.add_argument("--liq-mc-max", type=float, default=None,
+                        help="override ambang liq/MC dalam persen (mis. 25)")
     args = parser.parse_args(argv)
 
     state_before = store.load_state()
@@ -50,8 +52,14 @@ def main(argv=None) -> int:
         print("SWEEP_STATE_CHANGED=0")
         return 0
 
-    print(f"Memindai {len(mints)} mint watchlist sweep…")
-    outcome = scan.run_scan(mints, state=state_before,
+    settings = None
+    if args.liq_mc_max is not None:
+        # Disimpan ke state supaya halaman memakai ambang yang sama dengan cron.
+        settings = {"liq_mc_max": args.liq_mc_max / 100.0}
+    active = store.load_settings(state_before) if settings is None else settings
+    print(f"Memindai {len(mints)} mint watchlist sweep "
+          f"(ambang liq/MC {active['liq_mc_max']*100:.0f}%)…")
+    outcome = scan.run_scan(mints, state=state_before, settings=settings,
                             use_cache=not args.no_cache,
                             send_alerts=not args.no_alerts,
                             workers=args.workers)

@@ -52,6 +52,22 @@ SWEEP_PRICE_MULT = 1.5     # harga naik >= 1,5x dari harga dasar
 SWEEP_BASELINE_BARS = 24   # baseline = 24 candle sebelum kandidat
 
 # --- ambang sinyal kelayakan ---
+#: Ambang liq/MC **bisa diubah** dari UI/cron dan disimpan di
+#: ``sweep_state.json``. 15% bukan batas alam — yang menentukan biaya sweep
+#: adalah ``biaya/MC = (akar(m) - 1) x (liq/MC)``. Batas fisiknya: biaya naik
+#: 10x melewati 100% MC di liq/MC 46,2%, sedangkan naik 5x baru melewati 100%
+#: MC di 80,9%. Jadi rentang longgar-sempit di antara itu murni selera risiko:
+#:
+#:   liq/MC  15%  → naik 3x = 11,0% MC, leverage 18,2x
+#:   liq/MC  25%  → naik 3x = 18,3% MC, leverage 10,9x
+#:   liq/MC  40%  → naik 3x = 29,3% MC, leverage  6,8x
+#:
+#: Di bawah 5% likuiditas terlalu tipis untuk masuk/keluar posisi; di atas 60%
+#: kriterianya kehilangan arti (naik 2x pun sudah perlu 21% MC).
+SETTINGS_DEFAULTS = {"liq_mc_max": LIQ_MC_MAX}
+SETTINGS_MIN_LIQ_MC = 0.05
+SETTINGS_MAX_LIQ_MC = 0.60
+
 #: Minimal kriteria lulus untuk vonis LAYAK — tapi ambangnya menyesuaikan
 #: berapa kriteria yang **sudah punya data**: di deploy baru hanya trio
 #: struktural (1+2+3) yang bisa dinilai, dan menuntut 4 dari 3 mustahil.
@@ -135,22 +151,50 @@ def target_costs(liq_mc, mults=(2.0, 5.0, 10.0, 50.0)):
 # ---------------------------------------------------------------------------
 # Kriteria
 # ---------------------------------------------------------------------------
+def normalize_settings(raw) -> dict:
+    """Gabungkan setting user dengan default, lalu jepit ke rentang aman.
+
+    Nilai aneh (teks, negatif, di luar rentang) tidak pernah dipakai apa adanya:
+    ambang liq/MC yang salah bisa membuat halaman menolak semua token atau
+    meloloskan semuanya tanpa jejak.
+    """
+    raw = raw if isinstance(raw, dict) else {}
+    out = dict(SETTINGS_DEFAULTS)
+    value = _num(raw.get("liq_mc_max"))
+    if value is None:
+        value = out["liq_mc_max"]
+    out["liq_mc_max"] = min(max(value, SETTINGS_MIN_LIQ_MC),
+                           SETTINGS_MAX_LIQ_MC)
+    return out
+
+
 def _check(key, label, passed, detail):
     return {"key": key, "label": label, "passed": passed, "detail": detail,
             "has_data": passed is not None}
 
 
-def criterion_liq_mc(liq_usd, fdv_usd):
-    """Kriteria 1 — liq/MC < 15% (murah di-sweep)."""
+def criterion_liq_mc(liq_usd, fdv_usd, max_ratio: float | None = None):
+    """Kriteria 1 — liq/MC di bawah ambang (murah di-sweep).
+
+    ``max_ratio`` default ke :data:`SETTINGS_DEFAULTS`; halaman mengirim nilai
+    dari pengaturan user. Detailnya selalu menyebut angka ambang yang dipakai
+    supaya tabel dan alert tidak pernah ambigu soal batas mana yang berlaku.
+    """
+    limit = _num(max_ratio)
+    if limit is None:
+        limit = SETTINGS_DEFAULTS["liq_mc_max"]
     liq, fdv = _num(liq_usd), _num(fdv_usd)
     if not liq or not fdv or fdv <= 0:
         return _check("liq_mc", "liq/MC", None, "liq/FDV tidak tersedia")
     ratio = liq / fdv
-    if ratio < LIQ_MC_MAX:
-        detail = f"liq/MC {ratio*100:.1f}% < {LIQ_MC_MAX*100:.0f}% — murah di-sweep"
+    cost3 = leverage_cost(3.0, ratio)
+    tail = (f" — naik 3x perlu {cost3*100:.1f}% MC" if cost3 is not None else "")
+    if ratio < limit:
+        detail = (f"liq/MC {ratio*100:.1f}% < {limit*100:.0f}%{tail}")
     else:
-        detail = f"liq/MC {ratio*100:.1f}% >= {LIQ_MC_MAX*100:.0f}% — sweep mahal"
-    return _check("liq_mc", "liq/MC", ratio < LIQ_MC_MAX, detail)
+        detail = (f"liq/MC {ratio*100:.1f}% >= {limit*100:.0f}% — sweep mahal"
+                  f"{tail}")
+    return _check("liq_mc", "liq/MC", ratio < limit, detail)
 
 
 def criterion_lp_locked(lp_locked_pct, mint_authority=None,
@@ -335,15 +379,19 @@ def criterion_shakeout(candles, *, lookback: int = 48):
     return _check("shakeout", "Shakeout + higher low", True, detail)
 
 
-def evaluate(metrics, *, snapshots=None, candles=None):
+def evaluate(metrics, *, snapshots=None, candles=None, settings=None):
     """Jalankan 6 kriteria → dict hasil lengkap dengan skor + vonis.
 
     ``metrics`` = dict dari :func:`sweep_data.collect_metrics` (atau dict
-    sederhana di test).
+    sederhana di test). ``settings`` = dict pengaturan user (lihat
+    :func:`normalize_settings`); hasilnya selalu memuat ``settings`` yang
+    benar-benar dipakai supaya tabel, alert, dan riwayat bisa diaudit.
     """
     metrics = metrics or {}
+    config = normalize_settings(settings)
     checks = [
-        criterion_liq_mc(metrics.get("liq_usd"), metrics.get("fdv_usd")),
+        criterion_liq_mc(metrics.get("liq_usd"), metrics.get("fdv_usd"),
+                         config["liq_mc_max"]),
         criterion_lp_locked(metrics.get("lp_locked_pct"),
                             metrics.get("mint_authority"),
                             metrics.get("freeze_authority")),
@@ -379,6 +427,7 @@ def evaluate(metrics, *, snapshots=None, candles=None):
         liq_mc = liq / fdv
     return {
         "checks": checks,
+        "settings": config,
         "passed_count": len(passed),
         "scored_count": len(with_data),
         "required_count": required,

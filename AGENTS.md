@@ -12,6 +12,7 @@ Independent market-risk fields such as Meteora's `top_holders_pct`, GMGN metrics
 
 - the page is a **separate multipage entry** (`pages/8_🌊_Sweep.py`); `app.py` must not import sweep modules
 - the watchlist is **manual** — never auto-populate it from Best Pool, GMGN, or any scanner
+- the liq/MC threshold is a **user setting**, not a constant: it lives in `sweep_state.json` (`settings.liq_mc_max`, clamped to 5%–60%) so the page, the cron, and the alert history always agree. Never hard-code 15% back into the criterion, and never let a UI-only change diverge from what the cron uses
 - alerts fire on **state transitions only** (eligibility transition, sweep cooldown), never on every scan
 - theoretical and measured numbers must stay labelled as such: `est_cost_usd` is the formula `(sqrt(m)-1) * liq`, `net_inflow_usd` is a measurement (Δ liquidity between snapshots) and is `None` when unavailable — do not let the UI or alerts present the reference estimate as a measurement
 - the stats table is the deliverable: every alert must leave a signal row with `max_up_pct` / `max_down_pct` so hit rate can be reviewed instead of guessed

@@ -172,6 +172,51 @@ class CriteriaTest(unittest.TestCase):
         self.assertIsNone(ss.criterion_shakeout([[1, 1, 1, 1, 1, 1]])["passed"])
 
 
+class SettingsTest(unittest.TestCase):
+    """Ambang liq/MC bisa diatur — tapi tidak boleh keluar dari rentang aman."""
+
+    def test_default_is_15_percent(self):
+        self.assertEqual(ss.normalize_settings(None),
+                         {"liq_mc_max": ss.LIQ_MC_MAX})
+        self.assertEqual(ss.normalize_settings("bukan dict"),
+                         {"liq_mc_max": ss.LIQ_MC_MAX})
+
+    def test_clamped_to_safe_range(self):
+        self.assertEqual(ss.normalize_settings({"liq_mc_max": 0.01}),
+                         {"liq_mc_max": ss.SETTINGS_MIN_LIQ_MC})
+        self.assertEqual(ss.normalize_settings({"liq_mc_max": 5.0}),
+                         {"liq_mc_max": ss.SETTINGS_MAX_LIQ_MC})
+        self.assertEqual(ss.normalize_settings({"liq_mc_max": "rusak"}),
+                         {"liq_mc_max": ss.LIQ_MC_MAX})
+
+    def test_criterion_honours_custom_threshold(self):
+        # ratio 20%: lolos di ambang 25%, gagal di ambang 15%.
+        lenient = ss.criterion_liq_mc(200.0, 1000.0, 0.25)
+        strict = ss.criterion_liq_mc(200.0, 1000.0, 0.15)
+        self.assertTrue(lenient["passed"])
+        self.assertFalse(strict["passed"])
+        self.assertIn("25%", lenient["detail"])
+        self.assertIn("15%", strict["detail"])
+        # Detail selalu menyebut biaya sweep pada ambang mana pun.
+        self.assertIn("naik 3x perlu", strict["detail"])
+
+
+class EvaluateSettingsTest(unittest.TestCase):
+    def _metrics(self):
+        return {"liq_usd": 200.0, "fdv_usd": 1000.0, "lp_locked_pct": 95.0,
+                "mint_authority": None, "freeze_authority": None,
+                "top10_holder_pct": 18.0, "holder_pcts": [2.0, 1.5]}
+
+    def test_settings_change_the_verdict(self):
+        strict = ss.evaluate(self._metrics(), settings={"liq_mc_max": 0.15})
+        lenient = ss.evaluate(self._metrics(), settings={"liq_mc_max": 0.25})
+        self.assertFalse(strict["eligible"])
+        self.assertTrue(lenient["eligible"])
+        # Settings yang benar-benar dipakai ikut dilaporkan (untuk audit).
+        self.assertEqual(strict["settings"]["liq_mc_max"], 0.15)
+        self.assertEqual(lenient["settings"]["liq_mc_max"], 0.25)
+
+
 class EvaluateTest(unittest.TestCase):
     def _metrics(self, **over):
         metrics = {
