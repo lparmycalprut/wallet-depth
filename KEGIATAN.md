@@ -1,5 +1,94 @@
 # Kegiatan
 
+## 2026-10-12 — Ambang liq/MC page 🌊 Sweep jadi setelan, bukan angka mati
+
+Pertanyaan user: *"minimum Liquidity/MC ini 15% memang harus apa bisa diperlonggar?"*
+
+- **15% bukan batas alam.** Yang menentukan biaya sweep adalah
+  `biaya/MC = (akar(m) − 1) × (liq/MC)`, jadi "mahal/murah" selalu relatif
+  terhadap target kelipatan harga. Batas fisiknya: naik 10x melewati 100% MC di
+  liq/MC **46,2%**, naik 5x di **80,9%**.
+- Ambang dipindah dari konstanta menjadi **setelan user**: slider 5%–60%
+  (default 15%) di halaman, opsi `--liq-mc-max` di runner cron, disimpan di
+  `sweep_state.json` (`settings.liq_mc_max`) supaya halaman dan cron memakai
+  angka yang sama, dan ikut masuk `store.fingerprint()` agar perubahannya
+  ter-commit.
+- Rentangnya dijepit: di bawah 5% likuiditas terlalu tipis untuk masuk/keluar
+  posisi, di atas 60% kriterianya kehilangan arti (naik 2x pun perlu 21% MC).
+- Di bawah slider ada tabel biaya untuk ambang yang sedang dipakai
+  (`naik 2x = 6% MC`, `naik 3x = 11% MC`, dst) supaya longgar-sempitnya bisa
+  dinilai langsung, bukan ditebak.
+- Detail kriteria 1 sekarang selalu menyebut ambang yang berlaku **dan** biaya
+  naik 3x, jadi alert lama tetap bisa diaudit: batas mana yang dipakai saat itu
+  tersimpan di `result.settings` dan di riwayat sinyal.
+- Menggeser slider **tidak** memanggil jaringan lagi — baris yang sudah ada
+  dinilai ulang dari data di memori (`sweep_scan.rescore_rows`), jadi mencoba
+  beberapa ambang tidak menambah beban API.
+- Diperbaiki: `save_settings` sempat menyalin dict sehingga state pemanggil
+  tidak ikut berubah (setelan tidak pernah tersimpan dari `run_scan`).
+
+
+## 2026-10-12 — Page baru 🌊 Sweep: skrining kelayakan sweep + alert Telegram
+
+Permintaan user: *"bisa kamu buatkan di wallet-depth? bisa memasukkan daftar mint manual ke dalam sistem, jadi ada telegram alert ke saya, dan juga di streamlit. alert ketika ada token di watchlist saya yang potensial akan terjadi sweep, dan alert ketika sweep mulai terjadi. detailnya semua bisa masuk ke tabel statistik yang bisa saya lihat"* dan *"jangan taruh di main app, tapi buat page baru"*.
+
+- **Halaman terpisah** `pages/8_🌊_Sweep.py` (multipage Streamlit). `app.py`
+  tidak disentuh sama sekali — Best Pool tetap satu-satunya isi halaman utama.
+- **Watchlist manual**: user menempel mint (satu per baris; koma/spasi/komentar
+  `#` juga diterima). Tidak ada pengisian otomatis dari scanner mana pun.
+- **Enam kriteria kelayakan** dari analisis COCKROACH 1 Okt 2026 menjadi skor
+  bertiga-status (lulus / gagal / belum ada data):
+  1. `liq/MC < 15%` — murah digerakkan;
+  2. LP terkunci ≥ 85% + authority dicabut — ambang 85% (bukan 90%) karena
+     token acuan sendiri hanya 89,8%;
+  3. float tersebar: top-10 < 25% dan tiap holder < 3% (akun pool dikecualikan);
+  4. akumulasi **proxy** (net beli > 0, harga sideways) — bukan CVD level
+     wallet, itu butuh Helius;
+  5. volume dari titik tersepi lalu ekspansi ≥ 3x, harga belum lari < 3x;
+  6. shakeout ≥ 30% dengan higher low.
+  Vonis `LAYAK SWEEP` = trio struktural (1+2+3) lulus **dan** minimal
+  `min(4, jumlah kriteria yang sudah ada datanya)` lulus. Ambangnya
+  menyesuaikan karena di deploy baru hanya trio struktural yang bisa dinilai —
+  menuntut 4 dari 3 akan membuat halaman tidak pernah memberi alert kelayakan.
+  Begitu riwayat akumulasi/volume/shakeout terkumpul, syaratnya otomatis naik
+  menjadi "struktural + minimal satu bukti".
+- **Alert Telegram, hanya saat transisi status** (bukan tiap scan): kelayakan
+  muncul/menghilang (cooldown 6 jam) dan sweep mulai terjadi (cooldown 30
+  menit). Kredensial dibaca berlapis: `st.secrets` → environment →
+  `config.json`; nama variabelnya sama dengan `handsoff/prepump_cron_detector.py`
+  (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`). Ada tombol **Kirim test alert**.
+- **Deteksi sweep**: volume candle 5-menit ≥ 20x median 24 candle sebelumnya
+  **dan** harga ≥ 1,5x. Barisnya memuat `vol_x`, `price_mult`, `bars_ago`, dan
+  `liq/MC`.
+- **Angka teoretis dipisah dari angka terukur** — ini yang paling mudah salah:
+  - `est_cost_usd` = `(akar(m) − 1) × liq` = **biaya dorong minimum**
+    (COCKROACH 1 Okt: $24.067);
+  - `net_inflow_usd` = selisih likuiditas antar snapshot = **inflow nyata**
+    (COCKROACH: $58.778 = 2,44x biaya dorong);
+  - `churn_x` = volume ÷ biaya teoretis (51,6x) dan `churn_net_x` = volume ÷
+    inflow nyata (21,1x, angka yang dipakai di analisis awal).
+    Kalau belum ada snapshot pembanding, acuan 2,44x dipakai **dan diberi
+    label "acuan 1 event"** — tidak pernah ditampilkan sebagai pengukuran.
+  - `paper_mcap_usd` diperbaiki menjadi MC di **close** candle (`m × MC`),
+    sebelumnya memakai `(m − 1) × MC` sehingga MC-nya kurang satu satuan.
+- **Tabel statistik**: tiap alert meninggalkan baris sinyal berisi harga
+  entry, `max_up_pct` / `max_down_pct` (dilacak 72 jam), `from_base_up_pct`,
+  churn, dan status. Ringkasannya: jumlah sinyal, hit ≥100% / ≥300%, median
+  naik/turun, plus break-even hit rate 13,0% (menang +200% / kalah −30%).
+- **Dua runtime**: cron GitHub Actions `*/5 * * * *`
+  (`.github/workflows/sweep-scan.yml`) dan auto-refresh halaman tiap 5 menit
+  selama tab terbuka. Commit cron dibatasi `store.fingerprint()` sehingga
+  hanya snapshot jam baru / sinyal baru yang di-commit — tanpa itu cron 5
+  menitan akan membuat ~288 commit/hari.
+- **Penyimpanan** `sweep_watchlist.json` + `sweep_state.json` (di-commit lewat
+  GitHub Contents API supaya selamat dari restart Streamlit Cloud);
+  `sweep_cache.json` masuk `.gitignore`. Kalau token GitHub belum ada, UI
+  memberi tahu bahwa daftarnya baru tersimpan lokal **dan** menulis cadangan
+  ke `config.json` (`sweep_watchlist`).
+- `AGENTS.md` dan `DEPLOY.md` diperbarui: alert Telegram kembali **sah khusus
+  untuk page 🌊 Sweep** (keputusan produk eksplisit user), sementara mesin
+  alert era Holder tetap tidak dihidupkan kembali.
+
 ## 2026-10-09 — Bundler+Phishing tidak lagi menyaring pool
 
 Permintaan user: *"filter untuk bundler dan phising hapus saja, jadi tetap lolos meskipun bundler dan phising besar"*.

@@ -1,0 +1,67 @@
+name: Sweep Screener Scan
+
+# Cron 5 menit untuk page 🌊 Sweep (permintaan user 2026-10-12:
+# "nanti ada telegram alert … alert juga ketika sweep mulai terjadi").
+#
+# Catatan: jadwal GitHub Actions hanya berjalan dari **default branch**, jadi
+# workflow ini baru aktif setelah perubahan ini di-merge ke `main`.
+# Runner gratis sering terlambat beberapa menit pada jam sibuk — threshold
+# sweep (20x median candle) dan cooldown alert sengaja dipilih agar tidak
+# bergantung pada ketepatan detik.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sweep-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests curl_cffi
+
+      - name: Scan sweep watchlist
+        id: scan
+        env:
+          # Nama secret sama dengan repo handsoff/prepump_cron_detector.py,
+          # jadi tidak perlu kode kedua.
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -o pipefail
+          python scripts/scan_sweep.py | tee /tmp/sweep.log
+          echo "changed=$(grep -o 'SWEEP_STATE_CHANGED=[01]' /tmp/sweep.log \
+            | tail -1 | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Commit state when it changed
+        # Tanpa gate ini, cron 5 menitan akan membuat ~288 commit/hari.
+        if: steps.scan.outputs.changed == '1'
+        run: |
+          git config --global user.name 'Sweep-Bot'
+          git config --global user.email 'bot@noreply.github.com'
+          git add sweep_state.json sweep_watchlist.json || true
+          if git diff --cached --quiet; then
+            echo "Hanya field volatile yang berubah — tidak commit."
+          else
+            git commit -m "sweep: update state [skip ci]"
+            git push
+          fi
