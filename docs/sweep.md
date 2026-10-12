@@ -90,10 +90,14 @@ biaya dorong, dan churn.
 
 | Nama | Arti | COCKROACH 1 Okt |
 | --- | --- | --- |
-| `est_cost_usd` | biaya dorong **minimum** `(akar(m)−1) × liq` | $24.067 |
+| `est_cost_usd` | biaya dorong ke **PUNCAK** `(akar(peak_mult)−1) × liq` | $58.778 |
+| `est_cost_close_usd` | biaya dorong ke **CLOSE** `(akar(price_mult)−1) × liq` (angka lama yang sebelah) | $24.067 |
+| `paper_gain_usd` | kenaikan MC kertas sampai **puncak** `supply × (peak − base)` | $1.790.194 |
+| `paper_mcap_usd` | MC kertas di **CLOSE** `supply × close` (besaran berbeda, bukan pembilang leverage) | $752.939 |
 | `net_inflow_usd` | **terukur**: Δ likuiditas antar snapshot | $58.778 |
-| `churn_x` | volume ÷ biaya teoretis | 51,6× |
+| `churn_x` | volume ÷ biaya ke puncak | 21,1× |
 | `churn_net_x` | volume ÷ inflow terukur | 21,1× |
+| `leverage` | `paper_gain ÷ est_cost` = `(akar(peak_mult)+1) / (liq/MC)` | 30,5× |
 
 Kalau snapshot pembanding belum ada, inflow nyata `None` dan yang dipakai adalah
 **acuan berlabel** (`REF_NET_COST_MULT = 2,44` dari satu event terukur) — UI dan

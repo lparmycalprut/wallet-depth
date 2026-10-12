@@ -178,24 +178,35 @@ class MessageFormatTest(unittest.TestCase):
         self.assertIn("absorption", text)
 
     def test_sweep_message_separates_theory_from_measurement(self):
+        # Context dengan angka PEAK-based (bukan close-based)
+        base_price = 0.00023768309790897773
+        mc_base = 233451.0  # MC di harga dasar (untuk %MC calculation)
         context = {
             "vol_x": 1189.6, "vol": 1242746.0,
-            "base_price": 0.00023768309790897773,
-            "close": 0.0007667356548390803, "price_mult": 3.2256,
-            "liq_mc": 0.1295, "leverage": 38.0,
-            "est_cost_usd": 24067.0, "paper_mcap_usd": 1790194.0,
-            "net_inflow_usd": 58778.0, "churn_x": 51.6,
+            "base_price": base_price,
+            "peak": 0.0020603307226025585,
+            "close": 0.0007667356548390803,
+            "price_mult": 3.2256, "peak_mult": 8.669,
+            "liq_mc": 0.1295, "leverage": 30.5,
+            "est_cost_usd": 58778.0, "est_cost_close_usd": 24067.0,
+            "paper_gain_usd": 1790194.0, "paper_mcap_usd": 752939.0,
+            "base_mcap_usd": mc_base,  # untuk %MC calculation
+            "net_inflow_usd": 58778.0, "churn_x": 21.1,
             "churn_net_x": 21.1, "bars_ago": 0,
         }
         text = alert.format_sweep("MINT123", self._metrics(), context)
         self.assertIn("SWEEP TERDETEKSI", text)
         self.assertIn("1189.6x median", text)
-        self.assertIn("Biaya dorong min (akar m − 1) × liq: $24,067", text)
-        self.assertIn("Paper MC di close sweep: $1,790,194", text)
+        self.assertIn("Biaya dorong ke puncak (akar m − 1) × liq: $58,778", text)
+        self.assertIn("25.2% dari MC", text)
+        self.assertIn("MC kertas yang naik: $1,790,194", text)
+        self.assertIn("leverage 30.5x", text)
+        self.assertIn("Paper MC di close (besaran lain, bukan pembilang leverage): $752,939", text)
         self.assertIn("Inflow nyata (Δ likuiditas): $58,778", text)
-        self.assertIn("2.4x biaya dorong", text)
-        self.assertIn("Churn 51.6x", text)
+        self.assertIn("1.0x biaya dorong ke puncak", text)
+        self.assertIn("Churn 21.1x", text)
         self.assertIn("Churn nyata 21.1x", text)
+        self.assertIn("tidak ada pembeli luar bersih", text)
         self.assertIn("retrace 11/12 kali", text)
         self.assertIn("https://gmgn.ai/sol/token/MINT123", text)
 
@@ -204,11 +215,13 @@ class MessageFormatTest(unittest.TestCase):
         # 1 event, bukan dipresentasikan sebagai pengukuran.
         context = {"vol_x": 25.0, "vol": 1000.0, "base_price": 1.0,
                    "close": 1.6, "price_mult": 1.6, "est_cost_usd": 100.0,
-                   "net_inflow_ref_usd": 244.0, "net_inflow_usd": None,
+                   "net_inflow_ref_usd": 100.0, "net_inflow_usd": None,
                    "churn_x": 10.0, "churn_net_x": None}
         text = alert.format_sweep("MINT123", self._metrics(), context)
-        self.assertIn("Acuan 1 event", text)
-        self.assertIn("$244", text)
+        self.assertIn("Perkiraan inflow", text)
+        self.assertIn("belum ada snapshot pembanding", text)
+        self.assertIn("acuan kalibrasi 1 event", text)
+        self.assertIn("$100", text)
         self.assertNotIn("Inflow nyata", text)
 
     def test_sweep_message_without_liq_mc_omits_formula(self):
@@ -217,9 +230,9 @@ class MessageFormatTest(unittest.TestCase):
                                    "base_price": 1.0, "close": 1.6,
                                    "price_mult": 1.6})
         self.assertIn("SWEEP TERDETEKSI", text)
-        self.assertNotIn("Biaya dorong min", text)
-        self.assertNotIn("Paper MC", text)
-        self.assertNotIn("Churn", text)
+        self.assertNotIn("Biaya dorong ke puncak", text)
+        self.assertNotIn("paper_mcap_usd", text)
+        self.assertNotIn("churn_x", text)
 
     def test_test_message(self):
         self.assertIn("Test alert", alert.format_test())

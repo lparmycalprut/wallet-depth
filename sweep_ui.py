@@ -276,20 +276,51 @@ def _render_details(rows) -> None:
                 bars_ago = context.get("bars_ago") or 0
                 kapan = ("di candle 5-menit terakhir" if bars_ago == 0
                          else f"{bars_ago} candle 5-menit lalu")
-                noise = (f"Churn {_fmt_mult(context.get('churn_net_x'))} nyata "
-                         if context.get("churn_net_x") else
-                         f"Churn {_fmt_mult(context.get('churn_x'))} "
-                         "(volume ÷ biaya dorong teoretis) ")
+                base = _fmt_price(context.get("base_price"))
+                peak = _fmt_price(context.get("peak"))
+                close = _fmt_price(context.get("close"))
+                peak_mult = _fmt_mult(context.get("peak_mult"))
+                price_mult = _fmt_mult(context.get("price_mult"))
+                est_cost = _fmt_usd(context.get("est_cost_usd"))
+                est_cost_close = _fmt_usd(context.get("est_cost_close_usd"))
+                paper_gain = _fmt_usd(context.get("paper_gain_usd"))
+                leverage = _fmt_mult(context.get("leverage"))
+                churn = _fmt_mult(context.get("churn_x"))
+                churn_net = _fmt_mult(context.get("churn_net_x"))
+                inflow = context.get("net_inflow_usd")
+
+                # Hitung %MC untuk biaya ke puncak
+                base_mcap = context.get("base_mcap_usd")
+                cost_pct_mc = (
+                    f"{context['est_cost_usd'] / base_mcap * 100:.1f}% dari MC"
+                    if (base_mcap and base_mcap > 0 and context.get("est_cost_usd"))
+                    else ""
+                )
+
+                # Catatan pembeli luar
+                noise_parts = []
+                if context.get("churn_net_x"):
+                    noise_parts.append(f"Churn nyata {churn_net} (volume ÷ inflow terukur)")
+                if context.get("churn_x"):
+                    noise_parts.append(f"Churn {churn} (volume ÷ biaya dorong ke puncak)")
+                if context.get("net_inflow_ref_usd"):
+                    noise_parts.append(
+                        f"Perkiraan inflow { _fmt_usd(context['net_inflow_ref_usd']) } "
+                        f"(belum ada snapshot pembanding — acuan 1 event)"
+                    )
+                noise = " | ".join(noise_parts) if noise_parts else ""
+
                 st.error(
                     f"⚡ Sweep terdeteksi {kapan}: volume "
                     f"{_fmt_mult(context.get('vol_x'))} median, "
-                    f"harga {_fmt_price(context.get('base_price'))} → "
-                    f"{_fmt_price(context.get('close'))} "
-                    f"({_fmt_mult(context.get('price_mult'))}). "
-                    f"Biaya dorong min {_fmt_usd(context.get('est_cost_usd'))}"
-                    + (f", inflow nyata "
-                       f"{_fmt_usd(context['net_inflow_usd'])}"
-                       if context.get("net_inflow_usd") else "")
+                    f"harga {base} → puncak {peak} ({peak_mult}), "
+                    f"tutup di {close} ({price_mult}). "
+                    f"Biaya dorong ke puncak {est_cost}"
+                    + (f" ({cost_pct_mc})" if cost_pct_mc else "")
+                    + (f", ΔMC kertas {paper_gain} → leverage {leverage}"
+                       if paper_gain else "")
+                    + (f", inflow nyata { _fmt_usd(inflow) }"
+                       if inflow else "")
                     + f". {noise}.")
                 st.caption("Ingat: candle vertikal retrace >50% dalam 6 jam "
                            "pada 11 dari 12 kejadian di token acuan — tunggu "
@@ -336,12 +367,17 @@ def _render_stats(state) -> None:
                       else "🌊 kelayakan"),
             "Entry": _fmt_price(signal.get("entry_price")),
             "Base": _fmt_price(signal.get("base_price")),
+            "Puncak": _fmt_price(signal.get("peak_price")),
+            "Peak mult": _fmt_mult(signal.get("peak_mult")),
             "Maks naik": _fmt_pct100(signal.get("max_up_pct"), 0),
             "Maks turun": _fmt_pct100(signal.get("max_down_pct"), 0),
             "Dari base": _fmt_pct100(signal.get("from_base_up_pct"), 0),
+            "Biaya ke puncak": _fmt_usd(signal.get("est_cost_usd")),
+            "Biaya ke close": _fmt_usd(signal.get("est_cost_close_usd")),
+            "ΔMC kertas": _fmt_usd(signal.get("paper_gain_usd")),
+            "Leverage": _fmt_mult(signal.get("leverage")),
             "Churn": _fmt_mult(signal.get("churn_x")),
             "Churn nyata": _fmt_mult(signal.get("churn_net_x")),
-            "Biaya dorong": _fmt_usd(signal.get("est_cost_usd")),
             "Inflow nyata": _fmt_usd(signal.get("net_inflow_usd")),
             "Status": signal.get("status") or "—",
         })

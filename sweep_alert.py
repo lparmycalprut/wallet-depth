@@ -198,7 +198,7 @@ def format_eligibility(mint: str, metrics: dict, result: dict) -> str:
 
 
 def format_sweep(mint: str, metrics: dict, context: dict) -> str:
-    """Pesan alert **sweep mulai terjadi** — termasuk rumus net vs churn."""
+    """Pesan alert **sweep mulai terjadi** — termasuk biaya ke puncak dan paper gain."""
     metrics = metrics or {}
     context = context or {}
     symbol = metrics.get("symbol") or mint[:8]
@@ -207,33 +207,76 @@ def format_sweep(mint: str, metrics: dict, context: dict) -> str:
         f"Volume {_mult(context.get('vol_x'), 1)} median candle "
         f"({_usd(context.get('vol'))})",
         f"Harga {_price(context.get('base_price'))} → "
+        f"puncak {_price(context.get('peak'))} "
+        f"({_mult(context.get('peak_mult'))}), tutup di "
         f"{_price(context.get('close'))} ({_mult(context.get('price_mult'))})",
         f"liq/MC: {_pct(context.get('liq_mc'))}"
         + (f" | leverage {_mult(context.get('leverage'), 0)}"
            if context.get("leverage") else ""),
     ]
     if context.get("est_cost_usd"):
-        lines.append(f"Biaya dorong min (akar m − 1) × liq: "
-                     f"{_usd(context['est_cost_usd'])}")
+        cost = context["est_cost_usd"]
+        mc = context.get("base_mcap_usd")
+        pct_mc = (cost / mc * 100) if (mc and mc > 0) else None
+        lines.append(
+            f"Biaya dorong ke puncak (akar m − 1) × liq: "
+            f"{_usd(cost)}"
+            + (f" = {pct_mc:.1f}% dari MC" if pct_mc is not None else "")
+        )
+    if context.get("est_cost_close_usd"):
+        lines.append(
+            f"Biaya dorong ke close (akar price_mult − 1) × liq: "
+            f"{_usd(context['est_cost_close_usd'])}"
+            + (" (>2x lebih kecil — angka lama yang sebelah)" if False else "")
+        )
+    if context.get("paper_gain_usd"):
+        gain = context["paper_gain_usd"]
+        leverage = context.get("leverage")
+        lines.append(
+            f"MC kertas yang naik: {_usd(gain)}"
+            + (f" → leverage {_mult(leverage, 1)}" if leverage else "")
+        )
     if context.get("paper_mcap_usd"):
-        lines.append(f"Paper MC di close sweep: "
-                     f"{_usd(context['paper_mcap_usd'])}")
+        lines.append(
+            f"Paper MC di close (besaran lain, bukan pembilang leverage): "
+            f"{_usd(context['paper_mcap_usd'])}"
+        )
     inflow = context.get("net_inflow_usd")
     if inflow:
+        cost = context.get("est_cost_usd")
+        ratio = (inflow / cost) if (cost and cost > 0) else None
         lines.append(f"Inflow nyata (Δ likuiditas): {_usd(inflow)}"
-                     + (f" → {inflow / context['est_cost_usd']:.1f}x biaya "
-                        "dorong (pembeli luar ikut masuk)"
-                        if context.get("est_cost_usd") else ""))
-    if context.get("churn_x"):
-        lines.append(f"Churn {context['churn_x']:.1f}x (volume ÷ biaya dorong "
-                     "teoretis; makin besar = makin tidak efisien)")
+                     + (f" → {ratio:.1f}x biaya dorong ke puncak"
+                        if ratio is not None else ""))
+        churn = context.get("churn_x")
+        churn_net = context.get("churn_net_x")
+        if churn and churn_net:
+            # Catatan "ada pembeli luar" hanya jika churn_net < churn × 0,9
+            if churn_net < churn * 0.9:
+                lines.append(
+                    f"Pembeli luar ikut masuk: churn nyata "
+                    f"{churn_net:.1f}x < churn teoretis {churn:.1f}x"
+                )
+            else:
+                lines.append(
+                    f"Churn {churn:.1f}x = churn nyata {churn_net:.1f}x "
+                    f"(tidak ada pembeli luar bersih)"
+                )
+    elif context.get("churn_x"):
+        lines.append(
+            f"Churn {context['churn_x']:.1f}x (volume ÷ biaya dorong ke puncak; "
+            f"makin besar = makin tidak efisien)"
+        )
     if context.get("churn_net_x"):
         lines.append(f"Churn nyata {context['churn_net_x']:.1f}x "
                      "(volume ÷ inflow terukur)")
     elif context.get("net_inflow_ref_usd"):
-        lines.append(f"Acuan 1 event (COCKROACH 1 Okt): inflow nyata "
-                     f"≈{_usd(context['net_inflow_ref_usd'])} = 2,4x biaya "
-                     "dorong → churn ≈21x")
+        lines.append(
+            f"Perkiraan inflow (belum ada snapshot pembanding) "
+            f"≈{_usd(context['net_inflow_ref_usd'])} — "
+            f"acuan kalibrasi 1 event (COCKROACH 1 Okt: inflow $58.778 ÷ "
+            f"biaya ke puncak $58.774 ≈ 1,0x)"
+        )
     if context.get("bars_ago"):
         lines.append(f"Terjadi {context['bars_ago']} candle lalu")
     lines.append("⚠️ Candle vertikal = retrace 11/12 kali. Tunggu retest "

@@ -1,5 +1,57 @@
 # Kegiatan
 
+## 2026-10-12 — Perbaikan biaya sweep: ukur ke PUNCAK candle, bukan close
+
+Permintaan verifikasi data riil: *"biaya dorong sweep harus diukur ke PUNCAK candle, bukan ke harga close, dan pembilang leverage harus memakai kenaikan MC, bukan MC di close"*.
+
+Berdasarkan rekonstruksi reserve COCKROACH 1 Okt 2026:
+- reserve quote naik **$30.232 → $89.010** (rasio 2,9442), dan ``akar(8,669) = 2,9442``.
+- Artinya uang yang masuk ke pool dipakai membeli **seluruh ekskursi sampai puncak**, bukan berhenti di harga close.
+
+**Perubahan:**
+
+1. **`sweep_screen.py` — `sweep_context()`:**
+   - `peak_mult = peak / base_price` (fallback ke `price_mult` kalau peak tidak ada)
+   - `est_cost_usd` pakai `peak_mult` → $58.778 (bukan $24.067 dari close)
+   - `est_cost_close_usd` baru: biaya ke close = $24.067 (untuk dokumentasi perbandingan)
+   - `paper_gain_usd = supply × (peak − base_price)` → $1.790.194 (bukan paper_mcap di close)
+   - `leverage` pakai `peak_mult` → 30,5× (bukan ≤21× dari close)
+   - `leverage_net = paper_gain ÷ net_inflow` (bukan paper_mcap ÷ net_inflow)
+   - `churn_x = vol ÷ est_cost` (sudah benar, tetap 21,1×)
+   - Konstanta `REF_NET_COST_MULT`: **2,44 → 1,0** (inflow $58.778 ≈ biaya ke puncak $58.774)
+
+2. **`sweep_alert.py` — `format_sweep()`:**
+   - Baris baru: `Biaya dorong ke puncak (akar m − 1) × liq: $58,778 = 25.2% dari MC`
+   - `Biaya dorong ke close (akar price_mult − 1) × liq: $24,067` (angka lama yang sebelah)
+   - `MC kertas yang naik: $1,790,194 → leverage 30.5x`
+   - `Paper MC di close (besaran lain, bukan pembilang leverage): $752,939`
+   - `Inflow nyata (Δ likuiditas): $58,778 → 1.0x biaya dorong ke puncak`
+   - Catatan "ada pembeli luar" **hanya jika** `churn_net_x < churn_x × 0,9`
+   - Kalau belum terukur: `Perkiraan inflow (belum ada snapshot pembanding) … acuan kalibrasi 1 event`
+
+3. **`sweep_scan.py`:** tambah `peak_mult`, `est_cost_close_usd`, `paper_gain_usd`, `leverage_net` ke sinyal `kind == "sweep"`.
+
+4. **`sweep_ui.py`:**
+   - Banner: `harga $0.00023768 → puncak $0.00206033 (8.7x), tutup di $0.00076674`
+   - `Biaya dorong ke puncak $58,778 = 25.2% dari MC`
+   - `ΔMC kertas $1,790,194 → leverage 30.5x`
+   - Tabel statistik tambah kolom: `Puncak`, `Peak mult`, `Biaya ke puncak`, `Biaya ke close`, `ΔMC kertas`, `Leverage`
+
+5. **Test:** kunci semua angka dengan basis supply `982_000_000`:
+   - `est_cost_usd ≈ 58.778` dan = `(akar(peak_mult) − 1) × 30.232`
+   - `est_cost_close_usd ≈ 24.067` dan beda > 2×
+   - `est_cost_frac ≈ 0,252`
+   - `paper_gain_usd ≈ 1.790.194` dan `paper_mcap_usd ≈ 752.600` (dua besaran berbeda)
+   - `leverage ≈ 30,5` di tiga jalur
+   - `churn_x ≈ churn_net_x ≈ 21,1` saat inflow 58.778
+   - candle tanpa `peak` tidak menghasilkan `None`
+
+6. **Dokumentasi:** `docs/sweep.md` tabel angka diganti versi puncak.
+
+**Alasan (jangan diubah):** Sweep COCKROACH 1 Okt 2026 membuktikan bahwa inflow $58.778 ≈ biaya ke puncak $58.774 (selisih <$4, dalam boltjang). Menggunakan close sebagai referensi menghasilkan biaya $24.067 yang sebelah 2,44× dan leverage yang underestimate.
+
+---
+
 ## 2026-10-12 — Ambang liq/MC page 🌊 Sweep jadi setelan, bukan angka mati
 
 Pertanyaan user: *"minimum Liquidity/MC ini 15% memang harus apa bisa diperlonggar?"*
