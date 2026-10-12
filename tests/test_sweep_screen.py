@@ -22,10 +22,20 @@ import sweep_screen as ss
 # --- angka nyata COCKROACH, 1 Okt 2026 (WIB = UTC+7) ---
 BASE_PRICE = 0.00023768309790897773   # harga tenang sebelum sweep (22:41)
 PEAK = 0.0020603307226025585          # puncak candle sweep (22:49)
+CLOSE = 0.0007667356548390803         # harga penutupan candle sweep (22:42)
 LIQ_USD = 30232.0                     # reserve quote sebelum sweep
 MC_USD = 233451.0                     # market cap sebelum sweep
 NET_INFLOW = 58778.0                  # net inflow hasil rekonstruksi reserve
-PAPER_MCAP = 1790194.0                # paper mcap yang diciptakan
+PAPER_GAIN = 1790194.0                # kenaikan MC kertas sampai puncak
+PAPER_MCAP_CLOSE = 752939.0           # paper MC di close (besaran berbeda)
+SUPPLY = 982_000_000                  # supply token (standar pump.fun)
+
+# Turunan dari angka di atas
+PEAK_MULT = PEAK / BASE_PRICE          # 8,669x
+PRICE_MULT = CLOSE / BASE_PRICE        # 3,226x
+EST_COST_PEAK = (PEAK_MULT ** 0.5 - 1.0) * LIQ_USD   # ≈ 58.778
+EST_COST_CLOSE = (PRICE_MULT ** 0.5 - 1.0) * LIQ_USD  # ≈ 24.067
+LEVERAGE = (PEAK_MULT ** 0.5 + 1.0) / (LIQ_USD / MC_USD)  # ≈ 30,5x
 
 
 def _candles(rows):
@@ -34,18 +44,27 @@ def _candles(rows):
 
 
 class LeverageFormulaTest(unittest.TestCase):
-    def test_cost_matches_cockroach_actual(self):
-        mult = PEAK / BASE_PRICE
+    def test_cost_matches_cockroach_actual_peak(self):
+        """Biaya dorong ke PUNCAK harus ≈ $58.778 (bukan $24.067 dari close)."""
         liq_mc = LIQ_USD / MC_USD
-        frac = ss.leverage_cost(mult, liq_mc)
+        frac = ss.leverage_cost(PEAK_MULT, liq_mc)
         self.assertAlmostEqual(frac, NET_INFLOW / MC_USD, places=3)
         self.assertAlmostEqual(frac * MC_USD, NET_INFLOW, delta=60.0)
 
+    def test_cost_matches_cockroach_actual_formula(self):
+        """est_cost_usd = (akar(peak_mult) - 1) × liq ≈ $58.778."""
+        self.assertAlmostEqual(EST_COST_PEAK, NET_INFLOW, delta=100.0)
+
     def test_ratio_matches_cockroach_actual(self):
-        mult = PEAK / BASE_PRICE
+        """leverage = (akar(peak_mult) + 1) / (liq/MC) ≈ 30,5x."""
         liq_mc = LIQ_USD / MC_USD
-        ratio = ss.leverage_ratio(mult, liq_mc)
-        self.assertAlmostEqual(ratio, PAPER_MCAP / NET_INFLOW, places=1)
+        ratio = ss.leverage_ratio(PEAK_MULT, liq_mc)
+        self.assertAlmostEqual(ratio, PAPER_GAIN / NET_INFLOW, places=1)
+
+    def test_cost_to_close_is_less_than_cost_to_peak(self):
+        """est_cost_close_usd ≈ $24.067, beda > 2× dari biaya ke puncak."""
+        self.assertGreater(EST_COST_PEAK / EST_COST_CLOSE, 2.0)
+        self.assertAlmostEqual(EST_COST_CLOSE, 24067.0, delta=24067.0 * 0.001)
 
     def test_smaller_liq_mc_is_cheaper(self):
         cheap = ss.leverage_cost(10.0, 0.02)
@@ -85,14 +104,34 @@ class CriteriaTest(unittest.TestCase):
         self.assertFalse(low["passed"])
 
     def test_float_spread_uses_percent_input(self):
-        # 18,92% top-10 + holder terbesar 3,00% → tidak lulus (harus < 3,00)
-        self.assertFalse(
+        # 18,92% top-10 + holder terbesar 3,00% → LULUS (batas default 5%)
+        self.assertTrue(
             ss.criterion_float_spread(18.92, [3.0, 2.7, 2.11])["passed"])
+        # holder terbesar 2,99% → tetap LULUS
         self.assertTrue(
             ss.criterion_float_spread(18.92, [2.99, 2.7, 2.11])["passed"])
-        # Terkonsentrasi → gagal
+        # Terkonsentrasi (holder 12%) → gagal
         self.assertFalse(ss.criterion_float_spread(40.0, [12.0])["passed"])
+        # holder 5,5% → gagal (di atas batas 5%)
+        self.assertFalse(ss.criterion_float_spread(18.0, [5.5])["passed"])
         self.assertIsNone(ss.criterion_float_spread(None, [])["passed"])
+
+    def test_team_human_data_5_percent_vs_3_percent(self):
+        """Data nyata Team Human: holder 3,94% → LULUS di 5%, GAGAL di 3%."""
+        # Team Human: top-10 18,97%, holder terbesar 3,94%
+        # Default 5%: kriteria 3 LULUS
+        self.assertTrue(
+            ss.criterion_float_spread(18.97, [3.94, 2.5, 2.0])["passed"])
+        # Custom 3%: kriteria 3 GAGAL
+        result_3pct = ss.criterion_float_spread(18.97, [3.94, 2.5, 2.0],
+                                                max_holder_pct=0.03)
+        self.assertFalse(result_3pct["passed"])
+        self.assertIn("batas 3%", result_3pct["detail"])
+        # Custom 5% (eksplisit): kriteria 3 LULUS
+        result_5pct = ss.criterion_float_spread(18.97, [3.94, 2.5, 2.0],
+                                                max_holder_pct=0.05)
+        self.assertTrue(result_5pct["passed"])
+        self.assertIn("lolos batas holder 5%", result_5pct["detail"])
 
     def test_absorption_needs_history_then_scores(self):
         self.assertIsNone(ss.criterion_absorption([])["passed"])
@@ -173,21 +212,32 @@ class CriteriaTest(unittest.TestCase):
 
 
 class SettingsTest(unittest.TestCase):
-    """Ambang liq/MC bisa diatur — tapi tidak boleh keluar dari rentang aman."""
+    """Ambang liq/MC dan holder bisa diatur — tapi tidak boleh keluar dari rentang aman."""
 
-    def test_default_is_15_percent(self):
-        self.assertEqual(ss.normalize_settings(None),
-                         {"liq_mc_max": ss.LIQ_MC_MAX})
-        self.assertEqual(ss.normalize_settings("bukan dict"),
-                         {"liq_mc_max": ss.LIQ_MC_MAX})
+    def test_default_is_15_percent_liq_5_percent_holder(self):
+        defaults = ss.normalize_settings(None)
+        self.assertEqual(defaults["liq_mc_max"], ss.LIQ_MC_MAX)
+        self.assertEqual(defaults["holder_max_pct"], ss.HOLDER_MAX_PCT)
+        defaults2 = ss.normalize_settings("bukan dict")
+        self.assertEqual(defaults2["liq_mc_max"], ss.LIQ_MC_MAX)
+        self.assertEqual(defaults2["holder_max_pct"], ss.HOLDER_MAX_PCT)
 
     def test_clamped_to_safe_range(self):
-        self.assertEqual(ss.normalize_settings({"liq_mc_max": 0.01}),
-                         {"liq_mc_max": ss.SETTINGS_MIN_LIQ_MC})
-        self.assertEqual(ss.normalize_settings({"liq_mc_max": 5.0}),
-                         {"liq_mc_max": ss.SETTINGS_MAX_LIQ_MC})
-        self.assertEqual(ss.normalize_settings({"liq_mc_max": "rusak"}),
-                         {"liq_mc_max": ss.LIQ_MC_MAX})
+        result = ss.normalize_settings({"liq_mc_max": 0.01})
+        self.assertEqual(result["liq_mc_max"], ss.SETTINGS_MIN_LIQ_MC)
+        self.assertIn("holder_max_pct", result)
+        result = ss.normalize_settings({"liq_mc_max": 5.0})
+        self.assertEqual(result["liq_mc_max"], ss.SETTINGS_MAX_LIQ_MC)
+        result = ss.normalize_settings({"liq_mc_max": "rusak"})
+        self.assertEqual(result["liq_mc_max"], ss.LIQ_MC_MAX)
+
+    def test_holder_clamped_to_safe_range(self):
+        result = ss.normalize_settings({"holder_max_pct": 0.5})
+        self.assertEqual(result["holder_max_pct"], ss.SETTINGS_MIN_HOLDER_PCT)
+        result = ss.normalize_settings({"holder_max_pct": 25.0})
+        self.assertEqual(result["holder_max_pct"], ss.SETTINGS_MAX_HOLDER_PCT)
+        result = ss.normalize_settings({"holder_max_pct": "rusak"})
+        self.assertEqual(result["holder_max_pct"], ss.HOLDER_MAX_PCT)
 
     def test_criterion_honours_custom_threshold(self):
         # ratio 20%: lolos di ambang 25%, gagal di ambang 15%.
@@ -311,63 +361,187 @@ class DetectSweepTest(unittest.TestCase):
         self.assertIsNone(ss.detect_sweep([]))
         self.assertIsNone(ss.detect_sweep([[1, 1, 1, 1, 1, 1]]))
 
-    def test_sweep_context_applies_formula(self):
-        event = ss.detect_sweep(self._series())
-        context = ss.sweep_context(event, LIQ_USD / MC_USD, MC_USD,
-                                   market_cap_usd=MC_USD)
-        self.assertAlmostEqual(context["liq_mc"], LIQ_USD / MC_USD, places=5)
-        self.assertGreater(context["churn_x"], 0)
-        # Tanpa price_usd, MC diperlakukan sebagai MC di titik terendah →
-        # paper MC = m x MC0 (bukan (m-1) x MC0 — itu bahan bakar hitung 2x).
-        self.assertAlmostEqual(context["paper_mcap_usd"],
-                               event["price_mult"] * MC_USD, places=1)
-        self.assertAlmostEqual(context["base_mcap_usd"], MC_USD, places=1)
-        # Biaya dorong minimum = (akar(m) - 1) x liq.
+    def test_sweep_context_uses_peak_not_close(self):
+        """Biaya ke puncak pakai peak_mult, bukan price_mult."""
+        # Gunakan synthetic event dengan peak riil (bukan dari detect_sweep
+        # yang menggunakan high dari test series = 0.00115625)
+        event = {
+            "vol": 1242746.0, "base_price": BASE_PRICE,
+            "close": CLOSE, "peak": PEAK,
+            "price_mult": PRICE_MULT, "vol_x": 1190.0,
+            "bars_ago": 0,
+        }
+        # MC di harga dasar = supply × base_price = 982jt × 0.00023768 ≈ 233.451
+        mc_base = SUPPLY * BASE_PRICE
+        context = ss.sweep_context(event, LIQ_USD / mc_base, None,
+                                   market_cap_usd=mc_base)
+        # peak_mult harus ≈ 8,669 (bukan 3,226 dari price_mult)
+        self.assertAlmostEqual(context["peak_mult"], PEAK_MULT, places=1)
+        # est_cost_usd pakai peak_mult → ≈ $58.778
         self.assertAlmostEqual(
             context["est_cost_usd"],
-            ((event["price_mult"] ** 0.5) - 1.0) * LIQ_USD, places=0)
+            EST_COST_PEAK,
+            delta=100.0)
+        # est_cost_close_usd pakai price_mult → ≈ $24.067
+        self.assertAlmostEqual(
+            context["est_cost_close_usd"],
+            EST_COST_CLOSE,
+            delta=100.0)
+        # Beda harus > 2×
+        self.assertGreater(
+            context["est_cost_usd"] / context["est_cost_close_usd"], 2.0)
 
-    def test_biaya_dorong_cockroach_sesuai_angka_terkirim(self):
-        # Angka riil 1 Okt: m = 3,2256, liq sebelum sweep $30.232 →
-        # biaya dorong $24.067 (bukan net inflow $58.778 — itu inflow nyata).
-        event = {"vol": 1242746.0, "base_price": 0.00023768,
-                 "close": 0.00076673, "price_mult": 3.2256, "vol_x": 1190.0,
-                 "bars_ago": 0, "peak": 0.00206033}
+    def test_paper_gain_vs_paper_mcap_are_different(self):
+        """paper_gain_usd ≈ $1.79 juta, paper_mcap_usd ≈ $752rb (berbeda)."""
+        event = {"vol": 1242746.0, "base_price": BASE_PRICE,
+                 "close": CLOSE, "peak": PEAK,
+                 "price_mult": PRICE_MULT, "vol_x": 1190.0,
+                 "bars_ago": 0}
+        # supply = 982jt → market_cap di close = 982jt × close ≈ 752.939
+        mc_at_close = SUPPLY * CLOSE
+        context = ss.sweep_context(event, LIQ_USD / mc_at_close, None,
+                                   market_cap_usd=mc_at_close,
+                                   price_usd=CLOSE, liq_usd=LIQ_USD)
+        # paper_gain = supply × (peak - base) ≈ $1.79 juta
+        self.assertAlmostEqual(context["paper_gain_usd"], PAPER_GAIN, delta=PAPER_GAIN * 0.01)
+        # paper_mcap = supply × close ≈ $752.939
+        self.assertAlmostEqual(context["paper_mcap_usd"], PAPER_MCAP_CLOSE, delta=PAPER_MCAP_CLOSE * 0.01)
+        # Dua besaran harus berbeda (bukan sama)
+        self.assertNotAlmostEqual(context["paper_gain_usd"],
+                                  context["paper_mcap_usd"],
+                                  places=0)
+
+    def test_leverage_uses_peak_mult(self):
+        """leverage ≈ 30,5x di tiga jalur: leverage(), leverage_net, dan manual."""
+        event = {"vol": 1242746.0, "base_price": BASE_PRICE,
+                 "close": CLOSE, "peak": PEAK,
+                 "price_mult": PRICE_MULT, "vol_x": 1190.0,
+                 "bars_ago": 0}
+        # supply = 982jt → market_cap di close = 982jt × close ≈ 752.939
+        mc_at_close = SUPPLY * CLOSE
+        # liq/MC = 12.95% (nilai COCKROACH riil), bukan liq_usd/mc_at_close
+        # karena mc_at_close berbeda dari mc_base
+        liq_mc = LIQ_USD / (SUPPLY * BASE_PRICE)  # 30232 / 233451 ≈ 0.1295
+        context = ss.sweep_context(event, liq_mc, None,
+                                   market_cap_usd=mc_at_close,
+                                   price_usd=CLOSE, liq_usd=LIQ_USD,
+                                   net_inflow_usd=NET_INFLOW)
+
+        # Jalur 1: leverage() dengan peak_mult
+        self.assertAlmostEqual(context["leverage"], LEVERAGE, places=1)
+
+        # Jalur 2: leverage_net = paper_gain / net_inflow
+        self.assertAlmostEqual(context["leverage_net"],
+                               PAPER_GAIN / NET_INFLOW, places=1)
+
+        # Jalur 3: manual dari angka
+        self.assertAlmostEqual(context["leverage_net"],
+                               context["paper_gain_usd"] / context["net_inflow_usd"],
+                               places=1)
+
+    def test_churn_uses_peak_cost(self):
+        """churn_x = vol / est_cost_usd (peak-based) ≈ 21,1x."""
+        event = {"vol": 1242746.0, "base_price": BASE_PRICE,
+                 "close": CLOSE, "peak": PEAK,
+                 "price_mult": PRICE_MULT, "vol_x": 1190.0,
+                 "bars_ago": 0}
+        # supply = 982jt → market_cap di close = 982jt × close ≈ 752.939
+        mc_at_close = SUPPLY * CLOSE
+        # liq/MC = 12.95% (nilai COCKROACH riil)
+        liq_mc = LIQ_USD / (SUPPLY * BASE_PRICE)
+        context = ss.sweep_context(event, liq_mc, None,
+                                   market_cap_usd=mc_at_close,
+                                   price_usd=CLOSE, liq_usd=LIQ_USD,
+                                   net_inflow_usd=NET_INFLOW)
+        self.assertAlmostEqual(context["churn_x"],
+                               1242746.0 / EST_COST_PEAK, places=1)
+        self.assertAlmostEqual(context["churn_net_x"],
+                               1242746.0 / NET_INFLOW, places=1)
+        # Saat inflow ≈ biaya ke puncak, churn_x ≈ churn_net_x
+        self.assertAlmostEqual(context["churn_x"], context["churn_net_x"], places=0)
+
+    def test_event_without_peak_falls_back_to_price_mult(self):
+        """Kalau peak tidak ada, pakai price_mult (bukan None)."""
+        event = {"vol": 1000.0, "base_price": 1.0, "close": 1.6,
+                 "price_mult": 1.6, "vol_x": 25.0, "bars_ago": 0}
+        # Tanpa peak → fallback ke price_mult
+        context = ss.sweep_context(event, None, None,
+                                   market_cap_usd=100000.0,
+                                   price_usd=1.6, liq_usd=1000.0)
+        self.assertIsNotNone(context["peak_mult"])
+        self.assertAlmostEqual(context["peak_mult"], 1.6, places=1)
+        self.assertIsNotNone(context["est_cost_usd"])
+
+    def test_candle_without_peak_field_still_works(self):
+        """Kalau event tidak ada 'peak' sama sekali, fungsi tidak error."""
+        event = {"vol": 1000.0, "base_price": 1.0, "close": 1.6,
+                 "price_mult": 1.6, "vol_x": 25.0, "bars_ago": 0}
+        context = ss.sweep_context(event, None, None)
+        self.assertIsNotNone(context)
+        self.assertIsNone(context["paper_gain_usd"])  # perlu peak + base_price
+
+
+class SweepContextTest(unittest.TestCase):
+    """Test khusus untuk sweep_context dengan angka COCKROACH riil."""
+
+    def test_biaya_dorong_peak_sesuai_angka_terkirim(self):
+        """est_cost_usd = (akar(peak_mult) - 1) × liq = $58.778."""
+        event = {"vol": 1242746.0, "base_price": BASE_PRICE,
+                 "close": CLOSE, "peak": PEAK,
+                 "price_mult": PRICE_MULT, "vol_x": 1190.0,
+                 "bars_ago": 0}
         context = ss.sweep_context(event, LIQ_USD / MC_USD, MC_USD,
                                    market_cap_usd=MC_USD, liq_usd=LIQ_USD)
-        self.assertAlmostEqual(context["est_cost_usd"], 24067.0,
-                               delta=24067.0 * 0.001)
+        self.assertAlmostEqual(context["est_cost_usd"], EST_COST_PEAK,
+                               delta=EST_COST_PEAK * 0.001)
+        # est_cost_frac ≈ 25,2% (fraksi MC)
+        self.assertAlmostEqual(context["est_cost_frac"],
+                               NET_INFLOW / MC_USD, places=3)
 
-    def test_paper_mcap_pakai_supply_dari_harga(self):
-        # Snapshot post-sweep: harga sekarang = close candle → paper MC harus
-        # ≈ MC snapshot, dan MC di titik terendah = MC/m.
-        event = {"vol": 1242746.0, "base_price": 0.00023768,
-                 "close": 0.00076673, "price_mult": 3.2256, "vol_x": 1190.0,
-                 "bars_ago": 0, "peak": 0.00206033}
-        mc_now, price_now, liq = 1790194.0, 0.00076673, 30232.0
-        context = ss.sweep_context(event, liq / mc_now, None,
-                                   market_cap_usd=mc_now, price_usd=price_now,
-                                   liq_usd=liq)
-        self.assertAlmostEqual(context["paper_mcap_usd"], mc_now,
-                               delta=mc_now * 0.001)
-        self.assertAlmostEqual(context["base_mcap_usd"], mc_now / 3.2256,
-                               delta=mc_now * 0.001)
+    def test_biaya_dorong_close_legacy_value(self):
+        """est_cost_close_usd = (akar(price_mult) - 1) × liq = $24.067."""
+        event = {"vol": 1242746.0, "base_price": BASE_PRICE,
+                 "close": CLOSE, "peak": PEAK,
+                 "price_mult": PRICE_MULT, "vol_x": 1190.0,
+                 "bars_ago": 0}
+        context = ss.sweep_context(event, LIQ_USD / MC_USD, MC_USD,
+                                   market_cap_usd=MC_USD, liq_usd=LIQ_USD)
+        self.assertAlmostEqual(context["est_cost_close_usd"], EST_COST_CLOSE,
+                               delta=EST_COST_CLOSE * 0.001)
+
+    def test_paper_gain_formula(self):
+        """paper_gain_usd = supply × (peak - base_price) ≈ $1.79 juta."""
+        event = {"vol": 1242746.0, "base_price": BASE_PRICE,
+                 "close": CLOSE, "peak": PEAK,
+                 "price_mult": PRICE_MULT, "vol_x": 1190.0,
+                 "bars_ago": 0}
+        # supply = MC / price_now (gunakan close sebagai harga sekarang)
+        supply_calc = MC_USD / CLOSE
+        expected = supply_calc * (PEAK - BASE_PRICE)
+        context = ss.sweep_context(event, LIQ_USD / MC_USD, None,
+                                   market_cap_usd=MC_USD,
+                                   price_usd=CLOSE, liq_usd=LIQ_USD)
+        self.assertAlmostEqual(context["paper_gain_usd"], expected,
+                               delta=expected * 0.01)
 
     def test_inflow_terukur_menang_atas_acuan(self):
-        # Inflow nyata COCKROACH 1 Okt = $58.778 (2,44x biaya dorong) →
-        # churn nyata 21,1x dan leverage 30,5x, persis angka yang terkirim.
-        event = {"vol": 1242746.0, "base_price": 0.00023768,
-                 "close": 0.00076673, "price_mult": 3.2256, "vol_x": 1190.0,
+        # Inflow nyata COCKROACH 1 Okt = $58.778 → churn nyata 21,1x dan
+        # leverage_net 30,5x, persis angka yang terkirim.
+        event = {"vol": 1242746.0, "base_price": BASE_PRICE,
+                 "close": CLOSE, "peak": PEAK,
+                 "price_mult": PRICE_MULT, "vol_x": 1190.0,
                  "bars_ago": 0}
+        # supply = 982jt → market_cap di close = 982jt × close ≈ 752.939
+        mc_at_close = SUPPLY * CLOSE
         context = ss.sweep_context(event, 0.0, None,
-                                   market_cap_usd=1790194.0,
-                                   price_usd=0.00076673, liq_usd=30232.0,
-                                   net_inflow_usd=58778.0)
-        self.assertEqual(context["net_inflow_usd"], 58778.0)
+                                   market_cap_usd=mc_at_close,
+                                   price_usd=CLOSE, liq_usd=LIQ_USD,
+                                   net_inflow_usd=NET_INFLOW)
+        self.assertEqual(context["net_inflow_usd"], NET_INFLOW)
         self.assertIsNone(context["net_inflow_ref_usd"])
         self.assertAlmostEqual(context["churn_net_x"],
-                               1242746.0 / 58778.0, places=1)
-        self.assertAlmostEqual(context["leverage_net"], 30.46, places=1)
+                               1242746.0 / NET_INFLOW, places=1)
+        self.assertAlmostEqual(context["leverage_net"], LEVERAGE, places=1)
         self.assertNotEqual(context["churn_x"], context["churn_net_x"])
 
     def test_acuan_dipakai_hanya_saat_belum_terukur(self):
@@ -377,9 +551,11 @@ class DetectSweepTest(unittest.TestCase):
                                    price_usd=1.6, liq_usd=1000.0)
         self.assertIsNone(context["net_inflow_usd"])
         self.assertIsNone(context["churn_net_x"])
+        # REF_NET_COST_MULT sekarang 1,0 (bukan 2,44)
         self.assertAlmostEqual(context["net_inflow_ref_usd"],
                                context["est_cost_usd"] * ss.REF_NET_COST_MULT,
                                places=2)
+        self.assertEqual(ss.REF_NET_COST_MULT, 1.0)
 
     def test_inflow_nol_atau_negatif_tidak_dipakai(self):
         event = {"vol": 1000.0, "base_price": 1.0, "close": 1.6,

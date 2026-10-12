@@ -90,14 +90,32 @@ biaya dorong, dan churn.
 
 | Nama | Arti | COCKROACH 1 Okt |
 | --- | --- | --- |
-| `est_cost_usd` | biaya dorong **minimum** `(akar(m)−1) × liq` | $24.067 |
+| `est_cost_usd` | biaya dorong ke **PUNCAK** `(akar(peak_mult)−1) × liq` | $58.778 |
+| `est_cost_close_usd` | biaya dorong ke **CLOSE** `(akar(price_mult)−1) × liq` (angka lama yang sebelah) | $24.067 |
+| `paper_gain_usd` | kenaikan MC kertas sampai **puncak** `supply × (peak − base)` | $1.790.194 |
+| `paper_mcap_usd` | MC kertas di **CLOSE** `supply × close` (besaran berbeda, bukan pembilang leverage) | $752.939 |
 | `net_inflow_usd` | **terukur**: Δ likuiditas antar snapshot | $58.778 |
-| `churn_x` | volume ÷ biaya teoretis | 51,6× |
+| `churn_x` | volume ÷ biaya ke puncak | 21,1× |
 | `churn_net_x` | volume ÷ inflow terukur | 21,1× |
+| `leverage` | `paper_gain ÷ est_cost` = `(akar(peak_mult)+1) / (liq/MC)` | 30,5× |
 
 Kalau snapshot pembanding belum ada, inflow nyata `None` dan yang dipakai adalah
-**acuan berlabel** (`REF_NET_COST_MULT = 2,44` dari satu event terukur) — UI dan
+**acuan berlabel** (`REF_NET_COST_MULT = 1,0` dari satu event terukur) — UI dan
 alert selalu menyebutnya "acuan 1 event", tidak pernah sebagai pengukuran.
+
+### Ambang holder per-wallet (bisa diatur, default 5%)
+
+Batas holder per-wallet sekarang **bisa diatur** dari UI/cron dan disimpan di
+`sweep_state.json` (`settings.holder_max_pct`). Default **5%** (bukan 3%) karena:
+
+- Data nyata Team Human: token dengan top-10 18,97% (sehat) tapi satu holder
+  3,94% akan gugur di batas lama 3% padahal strukturnya paling mendekati pola
+  yang dicari.
+- Dengan 5%: kriteria 3 LULUS → LAYAK SWEEP 4/4.
+- Dengan 3%: kriteria 3 GAGAL → KANDIDAT 3/4.
+
+Rentang dijepit 1%–20%: di bawah 1% terlalu ketat (hampir semua token gagal),
+di atas 20% terlalu longgar (kehilangan arti sebagai filter concentration).
 
 ## Statistik
 

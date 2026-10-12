@@ -31,7 +31,7 @@ LIQ_MC_MAX = 0.15          # kriteria 1: liq/MC < 15%
 # yang bisa ditarik menarik harga.
 LP_LOCKED_MIN_PCT = 85.0
 TOP10_MAX = 0.25           # kriteria 3: top-10 (tanpa pool) < 25% supply
-HOLDER_MAX_PCT = 3.0       # kriteria 3: tiap holder < 3%
+HOLDER_MAX_PCT = 5.0       # kriteria 3: tiap holder < 5% (default, bisanya 1-20)
 ABSORPTION_MAX_DRIFT = 0.25  # kriteria 4: harga sideways (< 25%) selama akumulasi
 MIN_SNAPSHOTS_ABSORPTION = 3  # kriteria 4/5: minimal snapshot sebelum dinilai
 VOL_EXPANSION_MIN_X = 3.0  # kriteria 5: ekspansi volume >= 3x titik tersepi
@@ -39,12 +39,13 @@ VOL_VERTICAL_MAX = 3.0     # kriteria 5: harga belum lari (< 3x dari titik terse
 SHAKEOUT_MIN_DROP = 0.30   # kriteria 6: satu bar turun >= 30%
 HIGHER_LOW_MIN = 1.0       # kriteria 6: low berikutnya harus >= low shakeout
 
-#: Acuan kalibrasi inflow nyata vs biaya dorong teoretis, dari satu event
-#: terukur: COCKROACH 1 Okt 2026 — inflow nyata $58.778 ÷ biaya dorong
-#: teoretis $24.067 = 2,44x. Hanya dipakai sebagai **estimasi berlabel** saat
-#: selisih likuiditas antar snapshot belum tersedia; begitu ada pengukuran
-#: nyata, angka nyata yang dipakai (jangan mencampur keduanya).
-REF_NET_COST_MULT = 2.44
+#: Acuan kalibrasi inflow nyata vs biaya dorong ke puncak, dari satu event
+#: terukur: COCKROACH 1 Okt 2026 — inflow nyata $58.778 ÷ biaya dorong ke
+#: puncak $58.774 = 1,0x (selisih < $4, dalam boltjang). Konstanta ini dipakai
+#: hanya sebagai **estimasi berlabel** saat selisih likuiditas antar snapshot
+#: belum tersedia; begitu ada pengukuran nyata, angka nyata yang dipakai
+#: (jangan mencampur keduanya).
+REF_NET_COST_MULT = 1.0
 
 # --- ambang deteksi sweep ---
 SWEEP_VOL_MULT = 20.0      # volume candle sweep >= 20x median baseline
@@ -64,9 +65,11 @@ SWEEP_BASELINE_BARS = 24   # baseline = 24 candle sebelum kandidat
 #:
 #: Di bawah 5% likuiditas terlalu tipis untuk masuk/keluar posisi; di atas 60%
 #: kriterianya kehilangan arti (naik 2x pun sudah perlu 21% MC).
-SETTINGS_DEFAULTS = {"liq_mc_max": LIQ_MC_MAX}
+SETTINGS_DEFAULTS = {"liq_mc_max": LIQ_MC_MAX, "holder_max_pct": HOLDER_MAX_PCT}
 SETTINGS_MIN_LIQ_MC = 0.05
 SETTINGS_MAX_LIQ_MC = 0.60
+SETTINGS_MIN_HOLDER_PCT = 1.0
+SETTINGS_MAX_HOLDER_PCT = 20.0
 
 #: Minimal kriteria lulus untuk vonis LAYAK — tapi ambangnya menyesuaikan
 #: berapa kriteria yang **sudah punya data**: di deploy baru hanya trio
@@ -156,7 +159,8 @@ def normalize_settings(raw) -> dict:
 
     Nilai aneh (teks, negatif, di luar rentang) tidak pernah dipakai apa adanya:
     ambang liq/MC yang salah bisa membuat halaman menolak semua token atau
-    meloloskan semuanya tanpa jejak.
+    meloloskan semuanya tanpa jejak. Hal yang sama berlaku untuk
+    holder_max_pct.
     """
     raw = raw if isinstance(raw, dict) else {}
     out = dict(SETTINGS_DEFAULTS)
@@ -165,6 +169,11 @@ def normalize_settings(raw) -> dict:
         value = out["liq_mc_max"]
     out["liq_mc_max"] = min(max(value, SETTINGS_MIN_LIQ_MC),
                            SETTINGS_MAX_LIQ_MC)
+    value = _num(raw.get("holder_max_pct"))
+    if value is None:
+        value = out["holder_max_pct"]
+    out["holder_max_pct"] = min(max(value, SETTINGS_MIN_HOLDER_PCT),
+                                SETTINGS_MAX_HOLDER_PCT)
     return out
 
 
@@ -219,14 +228,20 @@ def criterion_lp_locked(lp_locked_pct, mint_authority=None,
     return _check("lp_locked", "LP locked", ok, " | ".join(bits))
 
 
-def criterion_float_spread(top10_pct, holder_pcts):
-    """Kriteria 3 — float tersebar: top-10 < 25% dan tiap holder < 3%.
+def criterion_float_spread(top10_pct, holder_pcts, max_holder_pct=None):
+    """Kriteria 3 — float tersebar: top-10 < 25% dan tiap holder < batas.
 
     ``top10_pct`` **selalu persen** (0-100), bukan fraksi — ambiguitas
     persen-vs-fraksi pernah membuat penilaian salah, jadi kontraknya eksplisit:
     :func:`sweep_data.collect_metrics` mengisi ``top10_holder_pct`` sebagai
     persen. ``holder_pcts`` = daftar persen **tanpa** akun pool AMM (lihat
     :func:`sweep_data.rugcheck_snapshot`).
+
+    ``max_holder_pct`` default ke :data:`HOLDER_MAX_PCT` (5, bukan 0,05) —
+    ini sekarang setelan user yang disimpan di ``sweep_state.json`` dalam
+    fraksi (0,05 = 5%). Fungsi ini mengonversi ke skala persen untuk
+    dibandingkan dengan ``holder_pcts``. Detail selalu menyebut batas yang
+    dipakai supaya alert bisa diaudit.
     """
     top10 = _num(top10_pct)
     pcts = [p for p in (_num(x) for x in (holder_pcts or [])) if p is not None]
@@ -234,8 +249,14 @@ def criterion_float_spread(top10_pct, holder_pcts):
         return _check("float_spread", "Float tersebar", None,
                       "top-10 / holder tidak tersedia")
     worst = max(pcts) if pcts else None
+    if max_holder_pct is not None:
+        # Konversi dari fraksi (0,05) ke persen (5) untuk konsisten dengan
+        # holder_pcts yang dalam skala persen.
+        limit = _num(max_holder_pct) * 100 if _num(max_holder_pct) is not None else None
+    else:
+        limit = HOLDER_MAX_PCT
     ok = ((top10 is None or top10 < TOP10_MAX * 100.0)
-          and (worst is None or worst < HOLDER_MAX_PCT))
+          and (worst is None or worst < limit))
     bits = []
     if top10 is not None:
         bits.append(f"top-10 {top10:.1f}%")
@@ -245,7 +266,10 @@ def criterion_float_spread(top10_pct, holder_pcts):
     if n:
         bits.append(f"{n} holder dicek")
     if not ok:
-        bits.append("→ terkonsentrasi, tidak perlu akumulasi panjang")
+        bits.append(f"→ terkonsentrasi (batas {limit:.0f}%)")
+    else:
+        bits.append(f"→ lolos batas holder {limit:.0f}%")
+    return _check("float_spread", "Float tersebar", ok, " | ".join(bits))
     return _check("float_spread", "Float tersebar", ok, " | ".join(bits))
 
 
@@ -396,7 +420,8 @@ def evaluate(metrics, *, snapshots=None, candles=None, settings=None):
                             metrics.get("mint_authority"),
                             metrics.get("freeze_authority")),
         criterion_float_spread(metrics.get("top10_holder_pct"),
-                               metrics.get("holder_pcts")),
+                               metrics.get("holder_pcts"),
+                               config.get("holder_max_pct")),
         criterion_absorption(snapshots),
         criterion_vol_expansion(snapshots),
         criterion_shakeout(candles),
@@ -513,37 +538,75 @@ def detect_sweep(candles, *, spike_mult: float = SWEEP_VOL_MULT,
 
 def sweep_context(event, liq_mc, fdv_usd, *, market_cap_usd=None,
                   price_usd=None, liq_usd=None, net_inflow_usd=None):
-    """Perkaya event sweep dengan rumus biaya dorong, paper MC, dan churn.
+    """Perkaya event sweep dengan rumus biaya dorong ke puncak, paper gain, dan churn.
 
-    Tiga angka yang harus dibedakan (jangan dicampur — ini yang bikin salah
-    baca sweep):
+    Berdasarkan rekonstrusi reserve COCKROACH 1 Okt 2026: likuiditas naik dari
+    $30.232 → $89.010 (Δ $58.778), dan ``akar(8,669) = 2,9442`` sama dengan
+    rasio likuiditas 89.010/30.232 = 2,9442. Artinya uang yang masuk ke pool
+    dipakai membeli **seluruh ekskursi sampai puncak**, bukan berhenti di harga
+    close.
+
+    Tiga harga dalam satu candle sweep harus dibedakan (jangan dicampur):
+
+    ``peak`` (harga tertinggi dalam candle)
+        Puncak candle sweep COCKROACH = 0,00206033 → **8,669×** dari harga
+        dasar 0,00023768. Inflow $58.778 ≈ biaya dorong ke puncak
+        ``(akar(8,669) - 1) × $30.232 = $58.774``.
+    ``close`` (harga penutupan candle)
+        Close COCKROACH = 0,00076674 → hanya 3,226× dari dasar. Biaya dorong
+        ke close = ``(akar(3,226) - 1) × $30.232 = $24.067`` — angka lama yang
+        sebelah karena penggunaan close sebagai referensi berlebih 2,44×.
+    ``base_price`` (harga sebelum candle sweep)
+        Harga tenang 22:41 WIB = 0,00023768.
+
+    Enam angka yang harus dibedakan (dua besaran "paper" pun berbeda):
 
     ``est_cost_usd``
-        **Biaya dorong minimum (teoretis)**: ``(akar(m) - 1) * liq``. Jumlah
-        quote yang harus disedot AMM supaya harga naik ``m`` kali, kalau tidak
-        ada pembeli lain. Untuk COCKROACH 1 Okt = $24.067.
+        **Biaya dorong ke PUNCAK**: ``(akar(peak_mult) - 1) × liq``. Jumlah
+        quote yang harus disedot AMM supaya harga sampai ke puncak candle,
+        kalau tidak ada pembeli lain. COCKROACH 1 Okt = $58.778 (= 25,2% MC).
+    ``est_cost_close_usd``
+        **Biaya dorong ke CLOSE**: ``(akar(price_mult) - 1) × liq``. Angka
+        yang salah dipakai sebelumnya karena menggunakan close sebagai referensi.
+        COCKROACH 1 Okt = $24.067 (bedanya > 2× dari biaya ke puncak).
+    ``paper_gain_usd``
+        **Kenaikan MC kertas sampai puncak**: ``supply × (peak - base_price)``.
+        Nilai riil COCKROACH 1 Okt = $1.790.194 (dari supply ≈ 982jt × (0,00206033
+        - 0,00023768)).
+    ``paper_mcap_usd``
+        **MC kertas di CLOSE**: ``supply × close``. Besaran **berbeda** dari
+        paper_gain — COCKROACH = $752.939. Jangan dipakai sebagai pembilang
+        leverage (itu salah karena underestimate).
     ``net_inflow_usd``
         **Uang yang benar-benar tinggal di pool**: selisih likuiditas antar
-        snapshot. COCKROACH 1 Okt = $58.778 — 2,44x biaya dorong teoretis,
-        artinya sweep itu menarik ~$34,7k pembeli luar. Kalau tidak ada data
-        snapshot, diisi ``None`` (jangan menebak).
+        snapshot. COCKROACH 1 Okt = $58.778 — ≈ biaya dorong ke puncak ($58.774),
+        artinya sweep itu tidak menarik pembeli luar (semua uang yang masuk
+        dipakai ke puncak). Kalau tidak ada data snapshot, diisi ``None``
+        (jangan menebak).
     ``churn_x`` / ``churn_net_x``
-        volume candle sweep ÷ biaya teoretis (**teoretis**, 51,6x di
-        COCKROACH) versus ÷ inflow nyata (**nyata**, 21,1x). Dua-duanya
-        dilaporkan terpisah karena artinya beda: yang pertama mengukur seberapa
-        tidak efisien harga digerakkan, yang kedua seberapa besar uang berputar
-        dibanding uang yang masuk.
+        volume candle sweep ÷ biaya ke puncak (**teoretis**) versus ÷ inflow
+        nyata (**nyata**). COCKROACH: keduanya ≈ 21,1× karena inflow ≈ biaya
+        ke puncak. Kalau ``churn_net_x < churn_x × 0,9`` → ada pembeli luar
+        ikut masuk.
 
-    ``paper_mcap_usd`` = MC pada **close** candle sweep (``m x`` MC di titik
-    terendah) — angka $1.790.194 di COCKROACH. Kalau ``price_usd`` (harga
-    sekarang) ikut dikirim, supply dihitung dari sana sehingga MC dihitung
-    tepat; kalau tidak, ``mc`` diperlakukan sebagai MC di titik terendah.
+    ``leverage`` = ``paper_gain ÷ est_cost`` = ``(akar(peak_mult) + 1) / (liq/MC)``
+        COCKROACH: ``(akar(8,669) + 1) / 12,95% = 3,944 / 0,1295 = 30,5×``,
+        cocok dengan ``$1.790.194 / $58.778 = 30,5×``.
+
+    페르세타:
+    Semua angka "paper" (paper_gain, paper_mcap) adalah **teoretis** — nilai
+    yang akan ada jika harga bertahan. Angka "terukur" hanya ``est_cost_usd``
+    (teoretis tapi deterministik dari reserve) dan ``net_inflow_usd`` (Δ
+    likuiditas aktual).
     """
     if not event:
         return None
     enriched = dict(event)
     mc = _num(market_cap_usd) or _num(fdv_usd)
-    mult = _num(event.get("price_mult"))
+    price_mult = _num(event.get("price_mult"))
+    peak = _num(event.get("peak"))
+    base_price = _num(event.get("base_price"))
+    close = _num(event.get("close"))
     price_now = _num(price_usd)
     liq = _num(liq_usd)
     if liq is None and mc and _num(liq_mc) is not None:
@@ -552,35 +615,61 @@ def sweep_context(event, liq_mc, fdv_usd, *, market_cap_usd=None,
     # Supply (jumlah token beredar) stabil di dalam satu candle, jadi MC di
     # titik mana pun bisa dihitung dari supply x harga.
     supply = (mc / price_now) if (mc and price_now) else None
-    base_price = _num(event.get("base_price"))
-    close = _num(event.get("close"))
     if supply is not None and base_price:
         base_mcap = supply * base_price
     else:
         base_mcap = mc
     if supply is not None and close:
         paper_mcap = supply * close
-    elif mc and mult:
-        paper_mcap = mult * mc
+    elif mc and price_mult:
+        paper_mcap = price_mult * mc
     else:
         paper_mcap = None
 
-    cost_frac = leverage_cost(mult, liq_mc)
+    # peak_mult = puncak / harga dasar. Fallback ke price_mult kalau peak tidak
+    # tersedia (candle tanpa high yang terekam — tidak seharusnya terjadi).
+    if peak and base_price:
+        peak_mult = peak / base_price
+    elif price_mult:
+        peak_mult = price_mult
+        # Kalau fallback dipakai, peak diisi ulang supaya konsisten.
+        if base_price:
+            peak = peak_mult * base_price
+    else:
+        peak_mult = None
+
+    # --- Biaya dorong ke PUNCAK (bukan ke close) ---
+    cost_frac = leverage_cost(peak_mult, liq_mc)
     enriched["liq_mc"] = _num(liq_mc)
     enriched["liq_usd"] = liq
     enriched["est_cost_frac"] = cost_frac
-    enriched["est_cost_usd"] = ((_sqrt(mult) - 1.0) * liq
-                                if (mult and mult > 0 and liq) else None)
-    enriched["leverage"] = leverage_ratio(mult, liq_mc)
+    enriched["est_cost_usd"] = ((_sqrt(peak_mult) - 1.0) * liq
+                                if (peak_mult and peak_mult > 0 and liq) else None)
+    enriched["leverage"] = leverage_ratio(peak_mult, liq_mc)
     enriched["base_mcap_usd"] = base_mcap
     enriched["paper_mcap_usd"] = paper_mcap
+
+    # --- Biaya dorong ke CLOSE (untuk perbandingan, bukan penggunaan utama) ---
+    if price_mult and price_mult > 0 and liq:
+        enriched["est_cost_close_usd"] = (_sqrt(price_mult) - 1.0) * liq
+    else:
+        enriched["est_cost_close_usd"] = None
+
+    # --- Kenaikan MC kertas sampai puncak (bukan MC di close) ---
+    if supply is not None and peak and base_price:
+        enriched["paper_gain_usd"] = supply * (peak - base_price)
+    else:
+        enriched["paper_gain_usd"] = None
+
+    # --- peak_mult untuk sinyal ---
+    enriched["peak_mult"] = peak_mult
 
     # Inflow nyata hanya dari pengukuran (selisih liq snapshot) — bukan tebakan.
     inflow = _num(net_inflow_usd)
     enriched["net_inflow_usd"] = inflow
     enriched["net_inflow_is_estimate"] = inflow is None
     if inflow is None and enriched["est_cost_usd"]:
-        # Acuan kalibrasi 1 event (COCKROACH 1 Okt: $58.778 / $24.067 = 2,44x)
+        # Acuan kalibrasi 1 event (COCKROACH 1 Okt: $58.778 / $58.774 ≈ 1,0x)
         # ditandai jelas sebagai estimasi, bukan angka terukur.
         enriched["net_inflow_ref_usd"] = enriched["est_cost_usd"] * REF_NET_COST_MULT
     else:
@@ -591,9 +680,10 @@ def sweep_context(event, liq_mc, fdv_usd, *, market_cap_usd=None,
                            if (vol and enriched["est_cost_usd"]) else None)
     enriched["churn_net_x"] = (vol / inflow if (vol and inflow and inflow > 0)
                                else None)
-    enriched["leverage_net"] = (paper_mcap / inflow
-                                if (paper_mcap and inflow and inflow > 0)
-                                else None)
+    # leverage_net pakai paper_gain (bukan paper_mcap di close).
+    enriched["leverage_net"] = (enriched["paper_gain_usd"] / inflow
+                                if (enriched["paper_gain_usd"] and inflow
+                                    and inflow > 0) else None)
     return enriched
 
 

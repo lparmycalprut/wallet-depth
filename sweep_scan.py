@@ -198,7 +198,9 @@ def run_scan(mints, *, state: dict | None = None,
                         "liq_mc": context.get("liq_mc"),
                         "vol_x": context.get("vol_x"),
                         "price_mult": context.get("price_mult"),
+                        "peak_mult": context.get("peak_mult"),
                         "est_cost_usd": context.get("est_cost_usd"),
+                        "est_cost_close_usd": context.get("est_cost_close_usd"),
                         "churn_x": context.get("churn_x"),
                         # Angka nyata (kalau ada) disimpan berdampingan dengan
                         # angka teoretis — tabel statistik tidak boleh
@@ -206,7 +208,9 @@ def run_scan(mints, *, state: dict | None = None,
                         "net_inflow_usd": context.get("net_inflow_usd"),
                         "churn_net_x": context.get("churn_net_x"),
                         "paper_mcap_usd": context.get("paper_mcap_usd"),
+                        "paper_gain_usd": context.get("paper_gain_usd"),
                         "leverage": context.get("leverage"),
+                        "leverage_net": context.get("leverage_net"),
                     })
                     sent, error = alert.send_message(
                         alert.format_sweep(mint, metrics, context), config=cfg)
