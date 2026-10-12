@@ -47,6 +47,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
+          set -o pipefail
           python scripts/scan_sweep.py | tee /tmp/sweep.log
           echo "changed=$(grep -o 'SWEEP_STATE_CHANGED=[01]' /tmp/sweep.log \
             | tail -1 | cut -d= -f2)" >> "$GITHUB_OUTPUT"
