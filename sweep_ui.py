@@ -252,10 +252,40 @@ def _flagged_mints(rows, flags) -> set:
             if flag and i < len(rows)}
 
 
+def _placeholder_row(mint: str) -> dict:
+    """Baris untuk mint watchlist yang belum punya snapshot sama sekali."""
+    return {"mint": mint, "ts": None, "metrics": {"mint": mint},
+            "result": {"verdict": "MENUNGGU SNAPSHOT",
+                       "cohort_gate_status": "MENUNGGU SNAPSHOT",
+                       "checks": [], "passed_count": None,
+                       "scored_count": None, "score": None},
+            "sweep_context": None, "turnover_x": None}
+
+
+def _refresh_token(mint: str) -> None:
+    """Pindai ulang satu mint sekarang juga dan ambil snapshot-nya."""
+    with st.spinner(f"Memindai {mint[:8]}…"):
+        outcome = scan.run_scan([mint], state=_working_state(), persist=True)
+    _remember_outcome(outcome)
+    row = next((r for r in outcome["rows"] if r.get("mint") == mint), None)
+    metrics = (row or {}).get("metrics") or {}
+    if metrics.get("ok"):
+        _flash("success", f"{mint[:8]} diperbarui dari live scan.")
+    else:
+        _flash("warning", f"{mint[:8]} belum bisa dipindai: "
+               f"{metrics.get('error') or 'sumber data tidak merespons'}")
+    st.rerun()
+
+
+def _refresh_button(mint: str) -> None:
+    if st.button(f"🔄 Refresh {mint[:8]}", key=f"refresh_{mint}"):
+        _refresh_token(mint)
+
+
 def _render_table(rows, watchlist) -> None:
     """Tabel kelayakan dengan kolom **Hapus** untuk mengeluarkan mint dari watchlist."""
     if not rows:
-        st.info("Belum ada snapshot. Tambahkan mint ke watchlist lalu tekan "
+        st.info("Belum ada mint di watchlist. Tambahkan mint, lalu tekan "
                 "**Refresh & ambil snapshot**.")
         return
     frame = pd.DataFrame(_eligibility_rows(rows))
@@ -266,6 +296,7 @@ def _render_table(rows, watchlist) -> None:
         column_config={
             "Hapus": st.column_config.CheckboxColumn(
                 "Hapus", help="Centang lalu tekan tombol di bawah tabel"),
+            "Kohort": st.column_config.TextColumn("Kohort", width=320),
             "GMGN": st.column_config.LinkColumn("GMGN", display_text="buka"),
         })
     flags = edited["Hapus"].tolist() if "Hapus" in edited else []
@@ -341,6 +372,12 @@ def _render_details(rows) -> None:
         metrics = row.get("metrics") or {}
         result = row.get("result") or {}
         symbol = metrics.get("symbol") or row.get("mint", "")[:8]
+        if row.get("ts") is None:
+            with st.expander(f"⏳ {symbol} — menunggu snapshot", expanded=False):
+                st.caption("Belum ada data untuk mint ini. Tekan refresh "
+                           "untuk memindai sekarang.")
+                _refresh_button(row.get("mint") or "")
+            continue
         context = row.get("sweep_context") or {}
         missing = result.get("missing") or []
         title = (f"{symbol} — {result.get('verdict') or '—'} "
@@ -348,6 +385,7 @@ def _render_details(rows) -> None:
                  + (f", {len(missing)} kriteria belum ada data" if missing else "")
                  + ")")
         with st.expander(title, expanded=bool(result.get("eligible"))):
+            _refresh_button(row.get("mint") or "")
             if metrics.get("error"):
                 st.warning(f"Sumber data: {metrics['error']}")
             st.caption(
@@ -550,12 +588,9 @@ def _render_threshold() -> None:
 def _render_results(watchlist, state) -> None:
     """Tabel + detail + statistik dari snapshot terakhir tiap mint watchlist."""
     views, missing = store.watchlist_views(state, watchlist)
-    rows = sorted(views, key=lambda row: screen.display_sort_key(row.get("result")))
+    rows = sorted(views + [_placeholder_row(m) for m in missing],
+                  key=lambda row: screen.display_sort_key(row.get("result")))
     st.markdown("### 🧭 Kelayakan sweep")
-    if missing:
-        st.caption("Belum ada snapshot valid untuk: "
-                   + ", ".join(mint[:8] for mint in missing)
-                   + " — tekan **Refresh & ambil snapshot** untuk mencoba lagi.")
     _render_table(rows, watchlist)
     if rows:
         _render_details(rows)

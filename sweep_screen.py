@@ -282,14 +282,19 @@ _DISPLAY_GROUP_SKIP = 9
 def display_sort_key(result) -> tuple:
     """Kunci urut tabel Sweep (kecil = lebih atas).
 
-    Urutan: kelompok vonis dulu, lalu jumlah kriteria lolos (desc), lalu untuk
-    kelompok TUNGGU: jarak status kohort ke ambang minus (makin dekat makin
-    atas). Kohort PLUS selalu di paling bawah.
+    Urutan (berdasarkan skor, sesuai permintaan user 2026-10-13):
+    1. kohort PLUS (SKIP) selalu paling bawah;
+    2. baris tanpa skor (belum ada data / belum ada snapshot) sebelum PLUS;
+    3. skor kriteria tertinggi (``passed/scored``) di atas;
+    4. jika skor sama: jumlah kriteria lolos lebih banyak di atas;
+    5. jika masih sama: kelompok vonis (LAYAK > KANDIDAT > gate lolos > TUNGGU
+       > TANPA DATA), lalu untuk TUNGGU: status kohort makin dekat −50% di atas.
     """
     result = result or {}
     status = str(result.get("cohort_gate_status") or "")
     avg = _num((result.get("cohort") or {}).get("status_avg_cost"))
     passed = _num(result.get("passed_count")) or 0
+    score = _num(result.get("score"))
     verdict = str(result.get("verdict") or "")
     distance = 0.0
     if status.startswith("SKIP"):
@@ -304,7 +309,8 @@ def display_sort_key(result) -> tuple:
         group = {VERDICT_LAYAK[0]: 0, VERDICT_KANDIDAT[0]: 1}.get(verdict, 2)
     else:
         group = 4
-    return (group, -passed, distance)
+    return (group == _DISPLAY_GROUP_SKIP, score is None,
+            -(score or 0.0), -passed, group, distance)
 
 
 # ---------------------------------------------------------------------------

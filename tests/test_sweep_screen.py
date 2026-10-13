@@ -327,19 +327,28 @@ class EvaluateTest(unittest.TestCase):
                     "passed_count": passed, "cohort_gate_passed": gate,
                     "cohort": {"status_avg_cost": avg}}
 
+        def scored(status, passed, scored_n, **kw):
+            item = row(status, passed=passed, **kw)
+            item["score"] = passed / scored_n
+            return item
+
         rows = {
-            "plus": row("SKIP — kohort plus", passed=6, avg=0.2),
-            "nodata": row("TANPA DATA — kohort", passed=5),
-            "far": row("TUNGGU — kohort belum minus 50%", passed=3, avg=-0.10),
-            "near": row("TUNGGU — kohort belum minus 50%", passed=3, avg=-0.45),
-            "layak": row("LOLOS", verdict="LAYAK SWEEP", passed=4, avg=-0.6,
-                         gate=True),
-            "kandidat": row("LOLOS", verdict="KANDIDAT", passed=2, avg=-0.6,
+            "plus": scored("SKIP — kohort plus", 6, 6, avg=0.2),
+            "missing": {"cohort_gate_status": "MENUNGGU SNAPSHOT",
+                        "passed_count": None, "score": None},
+            "far": scored("TUNGGU — kohort belum minus 50%", 3, 6, avg=-0.10),
+            "near": scored("TUNGGU — kohort belum minus 50%", 3, 6, avg=-0.45),
+            "kandidat": scored("LOLOS", 2, 3, verdict="KANDIDAT", avg=-0.6,
+                               gate=True),
+            "nodata": scored("TANPA DATA — kohort", 5, 6),
+            "layak": scored("LOLOS", 4, 4, verdict="LAYAK SWEEP", avg=-0.6,
                             gate=True),
         }
         order = sorted(rows, key=lambda k: ss.display_sort_key(rows[k]))
-        self.assertEqual(order, ["layak", "kandidat", "near", "far",
-                                 "nodata", "plus"])
+        # skor tertinggi dulu: 4/4=1,00 > 5/6=0,83 > 2/3=0,67 > 3/6 (dekat −50%
+        # dulu) > 3/6 (lebih jauh); lalu baris tanpa skor; PLUS paling bawah.
+        self.assertEqual(order, ["layak", "nodata", "kandidat", "near", "far",
+                                 "missing", "plus"])
 
     def test_cohort_no_data_never_passes_gate_and_partial_window_is_labeled(self):
         no_data = ss.evaluate(self._metrics(), cohort_candles=[])
