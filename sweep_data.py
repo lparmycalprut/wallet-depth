@@ -457,7 +457,14 @@ _FRAMES = {
 
 #: Jeda antar percobaan ulang OHLCV saat GeckoTerminal membatasi request
 #: (429), error server (5xx), atau koneksi putus. Total percobaan = len + 1.
-OHLCV_RETRY_DELAYS = (2.0, 4.0)
+OHLCV_RETRY_DELAYS = (5.0, 12.0)
+
+#: Jarak minimum antar request GeckoTerminal lintas semua thread (≈24 req/menit).
+#: Scan memakai beberapa worker; tanpa jarak ini mereka menembak bersamaan dan
+#: kena HTTP 429 dari limit publik GeckoTerminal.
+GECKO_MIN_INTERVAL = 2.5
+_gecko_gate = threading.Lock()
+_gecko_next_at = [0.0]
 
 
 def _retryable(exc: Exception) -> bool:
@@ -465,6 +472,17 @@ def _retryable(exc: Exception) -> bool:
     if status is None:
         return True  # tanpa respons (timeout/koneksi) → coba lagi
     return status == 429 or 500 <= int(status) <= 599
+
+
+def _gecko_throttle() -> None:
+    """Tunggu sampai jarak :data:`GECKO_MIN_INTERVAL` sejak request sebelumnya."""
+    with _gecko_gate:
+        now = time.monotonic()
+        wait = _gecko_next_at[0] - now
+        if wait > 0:
+            time.sleep(wait)
+            now = time.monotonic()
+        _gecko_next_at[0] = now + GECKO_MIN_INTERVAL
 
 
 def _fetch_ohlcv(pool: str, frame: str = "hour", *, limit: int = 200,
@@ -485,6 +503,7 @@ def _fetch_ohlcv(pool: str, frame: str = "hour", *, limit: int = 200,
     error = ""
     for attempt in range(attempts):
         try:
+            _gecko_throttle()
             payload = _get_json(url)
             raw = (((payload or {}).get("data") or {}).get("attributes") or {}
                    ).get("ohlcv_list")
