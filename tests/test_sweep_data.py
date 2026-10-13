@@ -93,12 +93,62 @@ class CohortOhlcvTest(unittest.TestCase):
             [created + 47 * 3600, 3, 3, 3, 3, 3],
             [created + 48 * 3600, 4, 4, 4, 4, 4],
         ]
-        with mock.patch.object(data, "ohlcv", return_value=rows) as fetch:
+        with mock.patch.object(data, "ohlcv_detail",
+                               return_value={"rows": rows, "error": ""}) as fetch:
             result = data.cohort_ohlcv("POOL", created, use_cache=False)
         self.assertEqual(result, rows[1:3])
         self.assertEqual(fetch.call_args.kwargs["before"],
                          created + 48 * 3600)
-        self.assertEqual(fetch.call_args.kwargs["limit"], 50)
+
+
+class OhlcvRetryTest(unittest.TestCase):
+    def setUp(self):
+        self._delays = data.OHLCV_RETRY_DELAYS
+        data.OHLCV_RETRY_DELAYS = (0.0, 0.0)
+
+    def tearDown(self):
+        data.OHLCV_RETRY_DELAYS = self._delays
+
+    @staticmethod
+    def _ok(rows):
+        return {"data": {"attributes": {"ohlcv_list": rows}}}
+
+    def test_retries_rate_limit_then_succeeds(self):
+        responses = [data.HttpError("GET gagal: HTTP 429", status=429),
+                     data.HttpError("GET gagal: HTTP 503", status=503),
+                     self._ok([[100, 1, 1, 1, 1, 1]])]
+        with mock.patch.object(data, "_get_json", side_effect=responses) as fetch:
+            detail = data.ohlcv_detail("POOL", "hour", use_cache=False)
+        self.assertEqual(fetch.call_count, 3)
+        self.assertEqual(detail, {"rows": [[100, 1, 1, 1, 1, 1]], "error": ""})
+
+    def test_gives_up_after_retries_and_reports_status(self):
+        err = data.HttpError("GET gagal: HTTP 429", status=429)
+        with mock.patch.object(data, "_get_json", side_effect=err) as fetch:
+            detail = data.ohlcv_detail("POOL", "hour", use_cache=False)
+        self.assertEqual(fetch.call_count, len(data.OHLCV_RETRY_DELAYS) + 1)
+        self.assertEqual(detail, {"rows": [], "error": "GeckoTerminal HTTP 429"})
+
+    def test_client_error_is_not_retried(self):
+        err = data.HttpError("GET gagal: HTTP 404", status=404)
+        with mock.patch.object(data, "_get_json", side_effect=err) as fetch:
+            detail = data.ohlcv_detail("POOL", "hour", use_cache=False)
+        self.assertEqual(fetch.call_count, 1)
+        self.assertEqual(detail["error"], "GeckoTerminal HTTP 404")
+
+    def test_cohort_reports_missing_inputs_without_fetching(self):
+        with mock.patch.object(data, "_get_json") as fetch:
+            no_pool = data.cohort_ohlcv_detail("", 1_790_866_800, use_cache=False)
+            no_time = data.cohort_ohlcv_detail("POOL", None, use_cache=False)
+        fetch.assert_not_called()
+        self.assertIn("pairAddress", no_pool["error"])
+        self.assertEqual(no_time["error"], "pairCreatedAt tidak tersedia")
+
+    def test_empty_candles_are_explained_not_silent(self):
+        with mock.patch.object(data, "_get_json", return_value=self._ok([])):
+            detail = data.cohort_ohlcv_detail("POOL", 1_790_866_800, use_cache=False)
+        self.assertEqual(detail["rows"], [])
+        self.assertIn("48 jam", detail["error"])
 
     def test_normalizes_pair_created_at_milliseconds(self):
         self.assertEqual(data._timestamp_seconds(1_790_866_800_000),

@@ -175,7 +175,8 @@ def _timestamp_seconds(value):
     return timestamp / 1000.0 if timestamp > 1e12 else timestamp
 
 
-def cohort_profile(candles, pair_created_at, price_now, *, now=None) -> dict:
+def cohort_profile(candles, pair_created_at, price_now, *, now=None,
+                   fetch_error=None) -> dict:
     """VWAP, rentang harga, status avg cost, dan dinding impas cohort kelahiran.
 
     OHLCV harus berasal dari pool utama dan hanya jendela 48 jam pertama yang
@@ -225,7 +226,10 @@ def cohort_profile(candles, pair_created_at, price_now, *, now=None) -> dict:
     result["partial_window"] = (age < window_seconds or len(valid) < COHORT_WINDOW_HOURS)
     result["error"] = ""
     if not valid:
-        result["error"] = "OHLCV 48 jam pertama tidak tersedia"
+        # Alasan dari pengambil data (mis. "GeckoTerminal HTTP 429") lebih
+        # berguna daripada pesan umum; gate tetap menahan (TANPA DATA).
+        result["error"] = (str(fetch_error).strip() if fetch_error
+                           else "OHLCV 48 jam pertama tidak tersedia")
         return result
 
     low = min(row[3] for row in valid)
@@ -484,7 +488,7 @@ def _latched_shakeout_check(check, latched_at):
 
 
 def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
-             state=None, mint=None, now=None):
+             state=None, mint=None, now=None, cohort_error=None):
     """Jalankan enam kriteria dan gate kohort sebelum vonis LAYAK.
 
     Ambang struktural fixed. Kohort memakai VWAP 48 jam pertama dari pool
@@ -522,7 +526,8 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
     required = min(ELIGIBLE_MIN_PASSED, len(with_data))
 
     cohort = cohort_profile(cohort_candles, metrics.get("pair_created_at"),
-                            metrics.get("price_usd"), now=now)
+                            metrics.get("price_usd"), now=now,
+                            fetch_error=cohort_error)
     gate = cohort_gate(cohort)
     score_ok = (score is not None and len(passed) >= required and structural_ok)
     eligible = bool(gate["passed"] and score_ok)

@@ -38,12 +38,12 @@ def _fetch_bundle(mint: str, *, use_cache: bool = True) -> dict:
                                use_cache=use_cache) if pool else [])
     candles_min5 = (data.ohlcv(pool, "min5", limit=MIN5_LIMIT,
                                use_cache=use_cache) if pool else [])
-    cohort_candles = (data.cohort_ohlcv(
+    cohort = data.cohort_ohlcv_detail(
         pool, metrics.get("pair_created_at"), use_cache=use_cache)
-        if pool else [])
     return {"mint": mint, "metrics": metrics,
             "candles_hour": candles_hour, "candles_min5": candles_min5,
-            "cohort_candles": cohort_candles}
+            "cohort_candles": cohort["rows"],
+            "cohort_error": cohort["error"]}
 
 
 def analyze(bundle: dict, snapshots=None, *, state=None, now=None) -> dict:
@@ -55,6 +55,7 @@ def analyze(bundle: dict, snapshots=None, *, state=None, now=None) -> dict:
     result = screen.evaluate(
         metrics, snapshots=snapshots, candles=bundle.get("candles_hour") or [],
         cohort_candles=bundle.get("cohort_candles") or [],
+        cohort_error=bundle.get("cohort_error"),
         state=state, mint=mint, now=now)
     event = screen.detect_sweep(bundle.get("candles_min5") or [])
     context = screen.sweep_context(
@@ -72,6 +73,7 @@ def _scan_one(mint: str, *, use_cache: bool = True) -> dict:
         # kohort setelah snapshot putaran ini tersimpan.
         for field in ("candles_hour", "candles_min5", "cohort_candles"):
             item[field] = bundle.get(field) or []
+        item["cohort_error"] = bundle.get("cohort_error") or ""
         return item
     except Exception as exc:  # noqa: BLE001 - satu mint gagal ≠ scan gagal
         return {"mint": mint, "metrics": {"mint": mint, "ok": False,
@@ -79,7 +81,7 @@ def _scan_one(mint: str, *, use_cache: bool = True) -> dict:
                 "result": screen.evaluate({}, snapshots=[], candles=[]),
                 "sweep": None, "sweep_context": None,
                 "candles_hour": [], "candles_min5": [],
-                "cohort_candles": []}
+                "cohort_candles": [], "cohort_error": ""}
 
 
 def run_scan(mints, *, state: dict | None = None,
@@ -127,6 +129,7 @@ def run_scan(mints, *, state: dict | None = None,
             metrics, snapshots=history,
             candles=item.get("candles_hour") or [],
             cohort_candles=item.get("cohort_candles") or [],
+            cohort_error=item.get("cohort_error"),
             state=state, mint=mint, now=now)
         item["result"] = enriched
         if item.get("sweep"):

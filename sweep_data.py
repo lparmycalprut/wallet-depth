@@ -125,11 +125,20 @@ def reset_cache() -> None:
 # ---------------------------------------------------------------------------
 # HTTP
 # ---------------------------------------------------------------------------
+class HttpError(RuntimeError):
+    """Kegagalan GET dengan kode HTTP (``None`` bila tidak ada respons)."""
+
+    def __init__(self, message: str, status=None):
+        super().__init__(message)
+        self.status = status
+
+
 def _get_json(url: str, *, timeout: int = REQUEST_TIMEOUT,
               headers: dict | None = None) -> object:
     """GET JSON dengan TLS-impersonation, lalu fallback ``requests``."""
     head = headers or _HEADERS
     last = ""
+    status = None
     try:
         from curl_cffi import requests as client
         for identity in _IMPERSONATIONS:
@@ -138,6 +147,7 @@ def _get_json(url: str, *, timeout: int = REQUEST_TIMEOUT,
                                       impersonate=identity)
                 if response.status_code == 200:
                     return response.json()
+                status = response.status_code
                 last = f"HTTP {response.status_code}"
             except Exception as exc:  # noqa: BLE001
                 last = str(exc)[:160]
@@ -148,10 +158,11 @@ def _get_json(url: str, *, timeout: int = REQUEST_TIMEOUT,
         response = requests.get(url, headers=head, timeout=timeout)
         if response.status_code == 200:
             return response.json()
+        status = response.status_code
         last = f"HTTP {response.status_code}"
     except Exception as exc:  # noqa: BLE001
         last = str(exc)[:160]
-    raise RuntimeError(f"GET gagal: {last or 'tanpa respons'}")
+    raise HttpError(f"GET gagal: {last or 'tanpa respons'}", status=status)
 
 
 # ---------------------------------------------------------------------------
@@ -444,51 +455,106 @@ _FRAMES = {
 }
 
 
+#: Jeda antar percobaan ulang OHLCV saat GeckoTerminal membatasi request
+#: (429), error server (5xx), atau koneksi putus. Total percobaan = len + 1.
+OHLCV_RETRY_DELAYS = (2.0, 4.0)
+
+
+def _retryable(exc: Exception) -> bool:
+    status = getattr(exc, "status", None)
+    if status is None:
+        return True  # tanpa respons (timeout/koneksi) → coba lagi
+    return status == 429 or 500 <= int(status) <= 599
+
+
+def _fetch_ohlcv(pool: str, frame: str = "hour", *, limit: int = 200,
+                 before: int | None = None) -> tuple:
+    """Ambil candle dari GeckoTerminal. Mengembalikan ``(rows, error)``.
+
+    ``error`` berisi alasan terakhir (mis. ``HTTP 429``) bila gagal setelah
+    percobaan ulang, atau ``""`` bila berhasil (termasuk ketika pool memang
+    belum punya candle).
+    """
+    name, aggregate = _FRAMES.get(frame, _FRAMES["hour"])
+    url = (GECKO_OHLCV_URL.format(pool=quote(pool, safe=""), frame=name)
+           + f"?aggregate={aggregate}&limit={int(limit)}&currency=usd"
+             "&token=base")
+    if before:
+        url += f"&before_timestamp={int(before)}"
+    attempts = len(OHLCV_RETRY_DELAYS) + 1
+    error = ""
+    for attempt in range(attempts):
+        try:
+            payload = _get_json(url)
+            raw = (((payload or {}).get("data") or {}).get("attributes") or {}
+                   ).get("ohlcv_list")
+            rows = []
+            for row in raw or []:
+                if isinstance(row, (list, tuple)) and len(row) >= 6:
+                    rows.append([int(row[0])] + [_num(v) for v in row[1:6]])
+            rows.sort(key=lambda r: r[0])
+            return rows, ""
+        except Exception as exc:  # noqa: BLE001 - candle opsional untuk skrining
+            status = getattr(exc, "status", None)
+            error = (f"GeckoTerminal HTTP {status}" if status
+                     else f"GeckoTerminal: {str(exc)[:120]}")
+            if attempt + 1 >= attempts or not _retryable(exc):
+                break
+            time.sleep(OHLCV_RETRY_DELAYS[attempt])
+    return [], error
+
+
 def ohlcv(pool: str, frame: str = "hour", *, limit: int = 200,
           before: int | None = None, use_cache: bool = True) -> list:
     """Candle ``[[ts, o, h, l, c, v], …]`` menaik dari GeckoTerminal."""
+    return ohlcv_detail(pool, frame, limit=limit, before=before,
+                        use_cache=use_cache)["rows"]
+
+
+def ohlcv_detail(pool: str, frame: str = "hour", *, limit: int = 200,
+                 before: int | None = None, use_cache: bool = True) -> dict:
+    """Seperti :func:`ohlcv`, tetapi juga mengembalikan ``error`` (kosong bila OK)."""
     pool = str(pool or "").strip()
     if not pool:
-        return []
-    name, aggregate = _FRAMES.get(frame, _FRAMES["hour"])
+        return {"rows": [], "error": "pool utama tidak ditemukan (pairAddress kosong)"}
+    name, _aggregate = _FRAMES.get(frame, _FRAMES["hour"])
     key = f"ohlcv:{pool}:{frame}:{limit}:{before or ''}"
     if use_cache:
         cached = _cache_get(key)
         if cached is not None:
-            return cached
-    rows: list = []
-    try:
-        url = (GECKO_OHLCV_URL.format(pool=quote(pool, safe=""), frame=name)
-               + f"?aggregate={aggregate}&limit={int(limit)}&currency=usd"
-                 "&token=base")
-        if before:
-            url += f"&before_timestamp={int(before)}"
-        payload = _get_json(url)
-        raw = (((payload or {}).get("data") or {}).get("attributes") or {}).get("ohlcv_list")
-        for row in raw or []:
-            if isinstance(row, (list, tuple)) and len(row) >= 6:
-                rows.append([int(row[0])] + [_num(v) for v in row[1:6]])
-        rows.sort(key=lambda r: r[0])
-    except Exception:  # noqa: BLE001 - candle opsional untuk skrining
-        rows = []
+            return {"rows": cached, "error": ""}
+    rows, error = _fetch_ohlcv(pool, frame, limit=limit, before=before)
     if use_cache and rows:
         _cache_put(key, rows, ok=True)
-    return rows
+    return {"rows": rows, "error": error}
+
+
+def cohort_ohlcv_detail(pool: str, pair_created_at, *,
+                        use_cache: bool = True) -> dict:
+    """Candle 48 jam pertama beserta alasan bila gagal: ``{rows, error}``."""
+    created = _timestamp_seconds(pair_created_at)
+    if not pool:
+        return {"rows": [], "error": "pool utama tidak ditemukan (pairAddress kosong)"}
+    if created is None:
+        return {"rows": [], "error": "pairCreatedAt tidak tersedia"}
+    window_end = int(math.ceil(created + COHORT_WINDOW_HOURS * 3600))
+    # An overlapping first-hour candle plus 48 following hours can require 49
+    # bars; request 50 to leave room for Gecko's hour-boundary alignment.
+    detail = ohlcv_detail(pool, "hour", limit=50, before=window_end,
+                          use_cache=use_cache)
+    rows = [row for row in detail["rows"]
+            if row[0] + 3600 > created
+            and row[0] < created + COHORT_WINDOW_HOURS * 3600]
+    error = detail["error"]
+    if not rows and not error:
+        error = "GeckoTerminal tidak mengembalikan candle untuk jendela 48 jam"
+    return {"rows": rows, "error": error}
 
 
 def cohort_ohlcv(pool: str, pair_created_at, *, use_cache: bool = True) -> list:
     """Fetch hourly candles covering the pool's first 48 hours, not its latest."""
-    created = _timestamp_seconds(pair_created_at)
-    if not pool or created is None:
-        return []
-    window_end = int(math.ceil(created + COHORT_WINDOW_HOURS * 3600))
-    # An overlapping first-hour candle plus 48 following hours can require 49
-    # bars; request 50 to leave room for Gecko's hour-boundary alignment.
-    rows = ohlcv(pool, "hour", limit=50, before=window_end,
-                 use_cache=use_cache)
-    return [row for row in rows
-            if row[0] + 3600 > created
-            and row[0] < created + COHORT_WINDOW_HOURS * 3600]
+    return cohort_ohlcv_detail(pool, pair_created_at,
+                               use_cache=use_cache)["rows"]
 
 
 # ---------------------------------------------------------------------------
