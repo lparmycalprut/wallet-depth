@@ -108,13 +108,14 @@ kohort `LOLOS`, gate biaya 10x `LOLOS`, trio struktural lulus, dan skor cukup.
 
 | Status biaya | Aturan |
 | --- | --- |
-| `TUNGGU — biaya 10x X% MC (batas 75%)` | `(√10 − 1) × liq/MC > 0,75` |
+| `TUNGGU — biaya 10x X% MC (batas 80%)` | `(√10 − 1) × liq/MC > 0,80` |
 | `TUNGGU — biaya 10x belum ada data` | liq/MC atau MC kosong; gate belum lolos |
-| `LOLOS` | `(√10 − 1) × liq/MC ≤ 0,75` |
+| `LOLOS` | `(√10 − 1) × liq/MC ≤ 0,80` |
 
 Gate ini diuji setelah gate kohort. Jika kohort belum lolos, status kohort yang
-tampil. Dengan batas `liq/MC ≤ 35%` yang sudah ada, gate biaya 10x hanya
-berbeda pada rentang liq/MC sekitar 34,7–35%.
+tampil. Dengan batas `liq/MC ≤ 35%` yang sudah ada, biaya 10x maksimum ≈ 75,7%
+MC, sehingga gate biaya 10x (batas 80%) baru menahan vonis pada liq/MC di atas
+≈ 37,0%. Pada rentang itu mint juga sudah gagal kriteria liq/MC.
 
 ### Gate avg buy holder (2026-10-13)
 

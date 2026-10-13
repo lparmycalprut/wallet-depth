@@ -52,10 +52,10 @@ COHORT_WINDOW_HOURS = 48
 COHORT_MINUS_THRESHOLD = -0.50
 
 #: Gate biaya (2026-10-13, permintaan user): biaya sweep untuk naik
-#: ``COST_GATE_MULT`` kali harus ≤ 75% market cap. Di atas itu, atau bila belum
+#: ``COST_GATE_MULT`` kali harus ≤ 80% market cap. Di atas itu, atau bila belum
 #: ada data, vonis = TUNGGU. Ambang tetap, tidak dapat diubah dari UI/cron.
 COST_GATE_MULT = 10.0
-COST_GATE_MAX_FRAC = 0.75
+COST_GATE_MAX_FRAC = 0.80
 
 #: Acuan kalibrasi inflow nyata vs biaya dorong ke puncak, dari satu event
 #: terukur: COCKROACH 1 Okt 2026 — inflow nyata $58.778 ÷ biaya dorong ke
@@ -174,7 +174,7 @@ def target_costs(liq_mc, mults=(2.0, 5.0, 10.0, 50.0), liq_usd=None):
 
 
 def cost_gate(cost_frac) -> dict:
-    """Gate biaya 10x: biaya ≤ 75% MC lolos; > 75% atau tanpa data = TUNGGU."""
+    """Gate biaya 10x: biaya ≤ 80% MC lolos; > 80% atau tanpa data = TUNGGU."""
     value = _num(cost_frac)
     label = f"biaya {COST_GATE_MULT:.0f}x"
     if value is None:
