@@ -22,22 +22,34 @@ from __future__ import annotations
 
 import math
 import statistics
+import time
 
-# --- ambang kriteria (satu tempat, biar UI & test tidak menyimpang) ---
-LIQ_MC_MAX = 0.15          # kriteria 1: liq/MC < 15%
+# --- ambang tetap kriteria (satu tempat, biar mesin, UI & test tidak menyimpang) ---
+LIQ_MC_MAX = 0.35          # kriteria 1: liq/MC maksimum 35%, tetap
 # Kriteria 2: LP terkunci/burned. Ambang 85% (bukan 90%) karena kasus acuan
 # COCKROACH sendiri hanya 89,82% — ambang 90% akan menolak token yang justru
 # jadi dasar seluruh kriteria ini. Di atas 85% praktis tidak ada likuiditas
 # yang bisa ditarik menarik harga.
 LP_LOCKED_MIN_PCT = 85.0
 TOP10_MAX = 0.25           # kriteria 3: top-10 (tanpa pool) < 25% supply
-HOLDER_MAX_PCT = 5.0       # kriteria 3: tiap holder < 5% (default, bisanya 1-20)
+HOLDER_MAX_PCT = 5.0       # kriteria 3: tiap holder maksimum 5%, tetap
 ABSORPTION_MAX_DRIFT = 0.25  # kriteria 4: harga sideways (< 25%) selama akumulasi
 MIN_SNAPSHOTS_ABSORPTION = 3  # kriteria 4/5: minimal snapshot sebelum dinilai
 VOL_EXPANSION_MIN_X = 3.0  # kriteria 5: ekspansi volume >= 3x titik tersepi
 VOL_VERTICAL_MAX = 3.0     # kriteria 5: harga belum lari (< 3x dari titik tersepi)
 SHAKEOUT_MIN_DROP = 0.30   # kriteria 6: satu bar turun >= 30%
 HIGHER_LOW_MIN = 1.0       # kriteria 6: low berikutnya harus >= low shakeout
+
+# Acuan cohort pra-pump COCKROACH, 1 Okt 2026 22:42 WIB: MC $233.451,
+# TVL dua sisi $30.232, cash satu sisi $15.116, biaya dorong 3x $11.066
+# (=4,74% MC). Toleransi 3x dana acuan = $33.198 (~14,2% MC).
+COCK_REFERENCE_MC_USD = 233_451.0
+COCK_REFERENCE_CASH_USD = 15_116.0
+COCK_REFERENCE_COST_3X_USD = 11_066.0
+COCK_REFERENCE_COST_3X_MC_FRAC = (COCK_REFERENCE_COST_3X_USD /
+                                  COCK_REFERENCE_MC_USD)
+COHORT_WINDOW_HOURS = 48
+COHORT_MINUS_THRESHOLD = -0.70
 
 #: Acuan kalibrasi inflow nyata vs biaya dorong ke puncak, dari satu event
 #: terukur: COCKROACH 1 Okt 2026 — inflow nyata $58.778 ÷ biaya dorong ke
@@ -52,24 +64,11 @@ SWEEP_VOL_MULT = 20.0      # volume candle sweep >= 20x median baseline
 SWEEP_PRICE_MULT = 1.5     # harga naik >= 1,5x dari harga dasar
 SWEEP_BASELINE_BARS = 24   # baseline = 24 candle sebelum kandidat
 
-# --- ambang sinyal kelayakan ---
-#: Ambang liq/MC **bisa diubah** dari UI/cron dan disimpan di
-#: ``sweep_state.json``. 15% bukan batas alam — yang menentukan biaya sweep
-#: adalah ``biaya/MC = (akar(m) - 1) x (liq/MC)``. Batas fisiknya: biaya naik
-#: 10x melewati 100% MC di liq/MC 46,2%, sedangkan naik 5x baru melewati 100%
-#: MC di 80,9%. Jadi rentang longgar-sempit di antara itu murni selera risiko:
-#:
-#:   liq/MC  15%  → naik 3x = 11,0% MC, leverage 18,2x
-#:   liq/MC  25%  → naik 3x = 18,3% MC, leverage 10,9x
-#:   liq/MC  40%  → naik 3x = 29,3% MC, leverage  6,8x
-#:
-#: Di bawah 5% likuiditas terlalu tipis untuk masuk/keluar posisi; di atas 60%
-#: kriterianya kehilangan arti (naik 2x pun sudah perlu 21% MC).
-SETTINGS_DEFAULTS = {"liq_mc_max": LIQ_MC_MAX, "holder_max_pct": HOLDER_MAX_PCT}
-SETTINGS_MIN_LIQ_MC = 0.05
-SETTINGS_MAX_LIQ_MC = 0.60
-SETTINGS_MIN_HOLDER_PCT = 1.0
-SETTINGS_MAX_HOLDER_PCT = 20.0
+# --- standar struktural tetap ---
+# Basis cash-side untuk pembanding acuan: (√3−1)×(35%÷2) = 12,8% MC,
+# di bawah toleransi COCK 3×$11.066 / $233.451 = 14,2% MC. Estimator biaya
+# aktual est_cost/leverage tetap memakai liq dua sisi; hasilnya 25,6% MC di
+# rasio 35% dan sengaja tidak di-rebase. Holder per-wallet maksimum 5%.
 
 #: Minimal kriteria lulus untuk vonis LAYAK — tapi ambangnya menyesuaikan
 #: berapa kriteria yang **sudah punya data**: di deploy baru hanya trio
@@ -151,59 +150,143 @@ def target_costs(liq_mc, mults=(2.0, 5.0, 10.0, 50.0)):
     return out
 
 
+def reference_fund_multiple(liq_mc):
+    """Biaya 3x sebagai kelipatan dana acuan COCK pra-pump.
+
+    COCK's measured reference ($11,066 = 4.74% MC) uses cash-side reserves
+    ($15,116), so this comparison uses half of the two-sided liq/MC. Existing
+    ``est_cost_usd`` and ``leverage`` deliberately continue to use full, two-
+    sided ``liq_usd``. At COCK's liq/MC 12.95%, this returns about 1.0x.
+    """
+    ratio = _num(liq_mc)
+    if ratio is None or ratio <= 0:
+        return None
+    cost_frac = leverage_cost(3.0, ratio / 2.0)
+    if cost_frac is None or COCK_REFERENCE_COST_3X_MC_FRAC <= 0:
+        return None
+    return cost_frac / COCK_REFERENCE_COST_3X_MC_FRAC
+
+
+def _timestamp_seconds(value):
+    """Normalize epoch seconds/milliseconds (DexScreener may send milliseconds)."""
+    timestamp = _num(value)
+    if timestamp is None or timestamp <= 0:
+        return None
+    return timestamp / 1000.0 if timestamp > 1e12 else timestamp
+
+
+def cohort_profile(candles, pair_created_at, price_now, *, now=None) -> dict:
+    """VWAP, rentang harga, status avg cost, dan dinding impas cohort kelahiran.
+
+    OHLCV harus berasal dari pool utama dan hanya jendela 48 jam pertama yang
+    dipakai. VWAP memakai harga tipikal OHLC berbobot volume GeckoTerminal.
+    """
+    created = _timestamp_seconds(pair_created_at)
+    current = _num(price_now)
+    result = {
+        "available": False,
+        "pair_created_at": created,
+        "window_hours": COHORT_WINDOW_HOURS,
+        "window_candles": 0,
+        "partial_window": None,
+        "vwap_48h": None,
+        "price_min": None,
+        "price_max": None,
+        "status_avg_cost": None,
+        "breakeven_wall_vwap_x": None,
+        "breakeven_wall_high_x": None,
+    }
+    if created is None:
+        result["error"] = "pairCreatedAt tidak tersedia"
+        return result
+
+    now_seconds = _timestamp_seconds(now) if now is not None else time.time()
+    if now_seconds is None:
+        now_seconds = time.time()
+    age = max(0.0, now_seconds - created)
+    window_seconds = COHORT_WINDOW_HOURS * 3600
+    window_end = created + window_seconds
+    # Include the hourly candle overlapping pairCreatedAt, whose timestamp is
+    # the start of its hour, but exclude candles starting at/after hour 48.
+    valid = []
+    for candle in candles or []:
+        if not isinstance(candle, (list, tuple)) or len(candle) < 6:
+            continue
+        ts = _timestamp_seconds(candle[0])
+        if ts is None or ts + 3600 <= created or ts >= window_end:
+            continue
+        open_, high, low, close, volume = (_num(v) for v in candle[1:6])
+        if (open_ is None or high is None or low is None or close is None
+                or high <= 0 or low <= 0 or high < low):
+            continue
+        valid.append((ts, open_, high, low, close, volume))
+
+    result["window_candles"] = len(valid)
+    result["partial_window"] = (age < window_seconds or len(valid) < COHORT_WINDOW_HOURS)
+    result["error"] = ""
+    if not valid:
+        result["error"] = "OHLCV 48 jam pertama tidak tersedia"
+        return result
+
+    low = min(row[3] for row in valid)
+    high = max(row[2] for row in valid)
+    weighted = [(sum(row[1:5]) / 4.0, row[5])
+                for row in valid if row[5] is not None and row[5] > 0]
+    volume_total = sum(volume for _, volume in weighted)
+    if volume_total <= 0:
+        result.update({"price_min": low, "price_max": high,
+                       "error": "volume OHLCV 48 jam pertama tidak tersedia"})
+        return result
+
+    vwap = sum(price * volume for price, volume in weighted) / volume_total
+    result.update({"available": True, "vwap_48h": vwap,
+                   "price_min": low, "price_max": high})
+    if current is not None and current > 0:
+        result["status_avg_cost"] = current / vwap - 1.0
+        result["breakeven_wall_vwap_x"] = vwap / current
+        result["breakeven_wall_high_x"] = high / current
+    return result
+
+
+def cohort_gate(profile) -> dict:
+    """Gate pra-penilaian: PLUS skip, tunggu sampai minus 70%, no-data tunggu."""
+    status = _num((profile or {}).get("status_avg_cost"))
+    if status is None:
+        return {"passed": False, "status": "TANPA DATA — kohort",
+                "detail": "VWAP/jendela kelahiran tidak tersedia; gate belum lolos"}
+    if status >= 0:
+        return {"passed": False, "status": "SKIP — kohort plus",
+                "detail": f"kohort PLUS {status*100:.1f}% terhadap VWAP kelahiran"}
+    if status <= COHORT_MINUS_THRESHOLD:
+        return {"passed": True, "status": "LOLOS",
+                "detail": f"kohort MINUS {abs(status)*100:.1f}% (ambang minus 70%)"}
+    return {"passed": False, "status": "TUNGGU — kohort belum minus 70%",
+            "detail": f"kohort MINUS {abs(status)*100:.1f}% (butuh 70%)"}
+
+
 # ---------------------------------------------------------------------------
 # Kriteria
 # ---------------------------------------------------------------------------
-def normalize_settings(raw) -> dict:
-    """Gabungkan setting user dengan default, lalu jepit ke rentang aman.
-
-    Nilai aneh (teks, negatif, di luar rentang) tidak pernah dipakai apa adanya:
-    ambang liq/MC yang salah bisa membuat halaman menolak semua token atau
-    meloloskan semuanya tanpa jejak. Hal yang sama berlaku untuk
-    holder_max_pct.
-    """
-    raw = raw if isinstance(raw, dict) else {}
-    out = dict(SETTINGS_DEFAULTS)
-    value = _num(raw.get("liq_mc_max"))
-    if value is None:
-        value = out["liq_mc_max"]
-    out["liq_mc_max"] = min(max(value, SETTINGS_MIN_LIQ_MC),
-                           SETTINGS_MAX_LIQ_MC)
-    value = _num(raw.get("holder_max_pct"))
-    if value is None:
-        value = out["holder_max_pct"]
-    out["holder_max_pct"] = min(max(value, SETTINGS_MIN_HOLDER_PCT),
-                                SETTINGS_MAX_HOLDER_PCT)
-    return out
-
 
 def _check(key, label, passed, detail):
     return {"key": key, "label": label, "passed": passed, "detail": detail,
             "has_data": passed is not None}
 
 
-def criterion_liq_mc(liq_usd, fdv_usd, max_ratio: float | None = None):
-    """Kriteria 1 — liq/MC di bawah ambang (murah di-sweep).
-
-    ``max_ratio`` default ke :data:`SETTINGS_DEFAULTS`; halaman mengirim nilai
-    dari pengaturan user. Detailnya selalu menyebut angka ambang yang dipakai
-    supaya tabel dan alert tidak pernah ambigu soal batas mana yang berlaku.
-    """
-    limit = _num(max_ratio)
-    if limit is None:
-        limit = SETTINGS_DEFAULTS["liq_mc_max"]
+def criterion_liq_mc(liq_usd, fdv_usd):
+    """Kriteria 1 — liq/MC maksimum tetap 35% (murah di-sweep)."""
     liq, fdv = _num(liq_usd), _num(fdv_usd)
     if not liq or not fdv or fdv <= 0:
         return _check("liq_mc", "liq/MC", None, "liq/FDV tidak tersedia")
     ratio = liq / fdv
     cost3 = leverage_cost(3.0, ratio)
     tail = (f" — naik 3x perlu {cost3*100:.1f}% MC" if cost3 is not None else "")
-    if ratio < limit:
-        detail = (f"liq/MC {ratio*100:.1f}% < {limit*100:.0f}%{tail}")
+    if ratio <= LIQ_MC_MAX:
+        detail = (f"liq/MC {ratio*100:.1f}% <= {LIQ_MC_MAX*100:.0f}%{tail}")
     else:
-        detail = (f"liq/MC {ratio*100:.1f}% >= {limit*100:.0f}% — sweep mahal"
+        detail = (f"liq/MC {ratio*100:.1f}% > {LIQ_MC_MAX*100:.0f}% — sweep mahal"
                   f"{tail}")
-    return _check("liq_mc", "liq/MC", ratio < limit, detail)
+    return _check("liq_mc", "liq/MC", ratio <= LIQ_MC_MAX, detail)
 
 
 def criterion_lp_locked(lp_locked_pct, mint_authority=None,
@@ -228,20 +311,11 @@ def criterion_lp_locked(lp_locked_pct, mint_authority=None,
     return _check("lp_locked", "LP locked", ok, " | ".join(bits))
 
 
-def criterion_float_spread(top10_pct, holder_pcts, max_holder_pct=None):
-    """Kriteria 3 — float tersebar: top-10 < 25% dan tiap holder < batas.
+def criterion_float_spread(top10_pct, holder_pcts):
+    """Kriteria 3 — top-10 < 25% dan holder per-wallet maksimum tetap 5%.
 
-    ``top10_pct`` **selalu persen** (0-100), bukan fraksi — ambiguitas
-    persen-vs-fraksi pernah membuat penilaian salah, jadi kontraknya eksplisit:
-    :func:`sweep_data.collect_metrics` mengisi ``top10_holder_pct`` sebagai
-    persen. ``holder_pcts`` = daftar persen **tanpa** akun pool AMM (lihat
-    :func:`sweep_data.rugcheck_snapshot`).
-
-    ``max_holder_pct`` default ke :data:`HOLDER_MAX_PCT` (5, bukan 0,05) —
-    ini sekarang setelan user yang disimpan di ``sweep_state.json`` dalam
-    fraksi (0,05 = 5%). Fungsi ini mengonversi ke skala persen untuk
-    dibandingkan dengan ``holder_pcts``. Detail selalu menyebut batas yang
-    dipakai supaya alert bisa diaudit.
+    ``top10_pct`` dan ``holder_pcts`` selalu dalam skala persen (0-100);
+    daftar holder tidak memasukkan akun pool AMM.
     """
     top10 = _num(top10_pct)
     pcts = [p for p in (_num(x) for x in (holder_pcts or [])) if p is not None]
@@ -249,14 +323,8 @@ def criterion_float_spread(top10_pct, holder_pcts, max_holder_pct=None):
         return _check("float_spread", "Float tersebar", None,
                       "top-10 / holder tidak tersedia")
     worst = max(pcts) if pcts else None
-    if max_holder_pct is not None:
-        # Konversi dari fraksi (0,05) ke persen (5) untuk konsisten dengan
-        # holder_pcts yang dalam skala persen.
-        limit = _num(max_holder_pct) * 100 if _num(max_holder_pct) is not None else None
-    else:
-        limit = HOLDER_MAX_PCT
     ok = ((top10 is None or top10 < TOP10_MAX * 100.0)
-          and (worst is None or worst < limit))
+          and (worst is None or worst <= HOLDER_MAX_PCT))
     bits = []
     if top10 is not None:
         bits.append(f"top-10 {top10:.1f}%")
@@ -266,10 +334,9 @@ def criterion_float_spread(top10_pct, holder_pcts, max_holder_pct=None):
     if n:
         bits.append(f"{n} holder dicek")
     if not ok:
-        bits.append(f"→ terkonsentrasi (batas {limit:.0f}%)")
+        bits.append(f"→ terkonsentrasi (batas {HOLDER_MAX_PCT:.0f}%)")
     else:
-        bits.append(f"→ lolos batas holder {limit:.0f}%")
-    return _check("float_spread", "Float tersebar", ok, " | ".join(bits))
+        bits.append(f"→ lolos batas holder {HOLDER_MAX_PCT:.0f}%")
     return _check("float_spread", "Float tersebar", ok, " | ".join(bits))
 
 
@@ -357,17 +424,15 @@ def criterion_vol_expansion(snapshots):
 
 
 def criterion_shakeout(candles, *, lookback: int = 48):
-    """Kriteria 6 — ada shakeout, lalu low berikutnya **lebih tinggi**.
+    """Kriteria 6 — shakeout + higher low; expose timestamp for permanent latch.
 
-    ``candles`` = ``[[ts, o, h, l, c, v], …]`` menaik. Bentuk COCKROACH
-    1 Okt: 20:00 WIB turun 47% (H 0,00049506 → L 0,00026020), 21:00 WIB low
-    naik ke 0,00030340 (+17%) — sweep 2,7 jam kemudian.
+    Candle sequence stays the source of initial detection. A previously stored
+    latch is applied by :func:`evaluate`, so a later sweep below the old low
+    does not erase an already-confirmed pattern.
     """
     rows = [c for c in (candles or []) if isinstance(c, (list, tuple))
             and len(c) >= 5]
-    # Minimum 3 bar: satu bar shakeout + minimal satu bar konfirmasi low yang
-    # lebih tinggi. (Bar terakhir tidak pernah dinilai sebagai shakeout, karena
-    # butuh bar setelahnya untuk membuktikan low-nya tidak dilanjutkan.)
+    # Minimum 3 bar: one shakeout bar + at least one higher-low confirmation.
     if len(rows) < 3:
         return _check("shakeout", "Shakeout + higher low", None,
                       "candle belum cukup")
@@ -380,7 +445,7 @@ def criterion_shakeout(candles, *, lookback: int = 48):
         drop = (high - low) / high
         if drop < SHAKEOUT_MIN_DROP:
             continue
-        after = [x for x in rows[idx + 1:]]
+        after = rows[idx + 1:]
         later_lows = [v for v in (_num(x[3]) for x in after) if v is not None]
         if not later_lows:
             continue
@@ -400,31 +465,52 @@ def criterion_shakeout(candles, *, lookback: int = 48):
                       "dengan low lebih tinggi")
     detail = (f"shakeout {best['drop_pct']:.0f}% → low naik "
               f"{best['lift_pct']:+.1f}% ({best['bars_since']} bar lalu)")
-    return _check("shakeout", "Shakeout + higher low", True, detail)
+    check = _check("shakeout", "Shakeout + higher low", True, detail)
+    check["detection_ts"] = best["ts"]
+    check["shakeout_low"] = best["low"]
+    return check
 
 
-def evaluate(metrics, *, snapshots=None, candles=None, settings=None):
-    """Jalankan 6 kriteria → dict hasil lengkap dengan skor + vonis.
+def _latched_shakeout_check(check, latched_at):
+    """A stored timestamp makes shakeout permanently passed for that mint."""
+    if latched_at is None:
+        return check
+    latched_ts = _timestamp_seconds(latched_at)
+    timestamp = int(latched_ts) if latched_ts is not None else str(latched_at)
+    result = _check("shakeout", "Shakeout + higher low", True,
+                    f"latch permanen sejak {timestamp}")
+    result["latched_at"] = latched_at
+    return result
 
-    ``metrics`` = dict dari :func:`sweep_data.collect_metrics` (atau dict
-    sederhana di test). ``settings`` = dict pengaturan user (lihat
-    :func:`normalize_settings`); hasilnya selalu memuat ``settings`` yang
-    benar-benar dipakai supaya tabel, alert, dan riwayat bisa diaudit.
+
+def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
+             state=None, mint=None, now=None):
+    """Jalankan enam kriteria dan gate kohort sebelum vonis LAYAK.
+
+    Ambang struktural fixed. Kohort memakai VWAP 48 jam pertama dari pool
+    utama; shakeout yang sudah tersimpan di ``state.shakeout_latched_at`` tetap
+    LOLOS walau candle terbaru menyapu low lamanya.
     """
     metrics = metrics or {}
-    config = normalize_settings(settings)
+    mint = mint or metrics.get("mint") or ""
+    liq, fdv = _num(metrics.get("liq_usd")), _num(metrics.get("fdv_usd"))
+    liq_mc = liq / fdv if liq is not None and fdv is not None and fdv > 0 else None
+
+    shakeout = criterion_shakeout(candles)
+    latches = (state or {}).get("shakeout_latched_at") or {}
+    latched_at = latches.get(mint) if isinstance(latches, dict) else None
+    shakeout = _latched_shakeout_check(shakeout, latched_at)
+
     checks = [
-        criterion_liq_mc(metrics.get("liq_usd"), metrics.get("fdv_usd"),
-                         config["liq_mc_max"]),
+        criterion_liq_mc(metrics.get("liq_usd"), metrics.get("fdv_usd")),
         criterion_lp_locked(metrics.get("lp_locked_pct"),
                             metrics.get("mint_authority"),
                             metrics.get("freeze_authority")),
         criterion_float_spread(metrics.get("top10_holder_pct"),
-                               metrics.get("holder_pcts"),
-                               config.get("holder_max_pct")),
+                               metrics.get("holder_pcts")),
         criterion_absorption(snapshots),
         criterion_vol_expansion(snapshots),
-        criterion_shakeout(candles),
+        shakeout,
     ]
     with_data = [c for c in checks if c["has_data"]]
     passed = [c for c in with_data if c["passed"]]
@@ -434,25 +520,35 @@ def evaluate(metrics, *, snapshots=None, candles=None, settings=None):
         for key in ELIGIBLE_STRUCTURAL
     )
     required = min(ELIGIBLE_MIN_PASSED, len(with_data))
-    if score is None:
+
+    cohort = cohort_profile(cohort_candles, metrics.get("pair_created_at"),
+                            metrics.get("price_usd"), now=now)
+    gate = cohort_gate(cohort)
+    score_ok = (score is not None and len(passed) >= required and structural_ok)
+    eligible = bool(gate["passed"] and score_ok)
+    if not gate["passed"]:
+        verdict, color = gate["status"], (
+            "#64748b" if gate["status"].startswith("TANPA DATA") else "#b45309")
+    elif score is None:
         verdict, color = VERDICT_DATA
-        eligible = False
-    elif len(passed) >= required and structural_ok:
+    elif score_ok:
         verdict, color = VERDICT_LAYAK
-        eligible = True
     elif len(passed) >= 2:
         verdict, color = VERDICT_KANDIDAT
-        eligible = False
     else:
         verdict, color = VERDICT_TIDAK
-        eligible = False
-    liq_mc = None
-    liq, fdv = _num(metrics.get("liq_usd")), _num(metrics.get("fdv_usd"))
-    if liq and fdv and fdv > 0:
-        liq_mc = liq / fdv
+
+    vol24 = _num(metrics.get("vol24_usd"))
+    if vol24 is None:
+        vol24 = _num(metrics.get("vol_24h"))
+    turnover_x = (vol24 / liq if vol24 is not None and liq is not None and liq > 0
+                  else None)
+    cost_3x_mc_frac = leverage_cost(3.0, liq_mc)
+    # UI column "× dana acuan" = ((√3−1)×(liq/MC÷2)) ÷ 4.74%, where
+    # 4.74% = COCK's $11,066 / $233,451; its one-sided cash basis makes COCK 1.0×.
+    reference_fund_x = reference_fund_multiple(liq_mc)
     return {
         "checks": checks,
-        "settings": config,
         "passed_count": len(passed),
         "scored_count": len(with_data),
         "required_count": required,
@@ -463,6 +559,13 @@ def evaluate(metrics, *, snapshots=None, candles=None, settings=None):
         "color": color,
         "liq_mc": liq_mc,
         "targets": target_costs(liq_mc) if liq_mc else [],
+        "cost_3x_mc_frac": cost_3x_mc_frac,
+        "reference_fund_x": reference_fund_x,
+        "turnover_x": turnover_x,
+        "cohort": cohort,
+        "cohort_gate_status": gate["status"],
+        "cohort_gate_passed": gate["passed"],
+        "cohort_gate_detail": gate["detail"],
         "missing": [c["key"] for c in checks if not c["has_data"]],
     }
 

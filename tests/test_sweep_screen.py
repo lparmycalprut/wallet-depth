@@ -43,6 +43,12 @@ def _candles(rows):
     return [list(r) for r in rows]
 
 
+def _birth_candles(created=1000, *, low=0.9, high=1.1, price=1.0):
+    """48 hourly bars with unit volume and VWAP 1.0 for cohort-gate tests."""
+    return [[created + hour * 3600, price, high, low, price, 100.0]
+            for hour in range(48)]
+
+
 class LeverageFormulaTest(unittest.TestCase):
     def test_cost_matches_cockroach_actual_peak(self):
         """Biaya dorong ke PUNCAK harus ≈ $58.778 (bukan $24.067 dari close)."""
@@ -88,9 +94,11 @@ class LeverageFormulaTest(unittest.TestCase):
 
 
 class CriteriaTest(unittest.TestCase):
-    def test_liq_mc_threshold(self):
+    def test_liq_mc_threshold_is_fixed_at_35_percent_inclusive(self):
+        self.assertEqual(ss.LIQ_MC_MAX, 0.35)
         self.assertTrue(ss.criterion_liq_mc(100.0, 1000.0)["passed"])
-        self.assertFalse(ss.criterion_liq_mc(200.0, 1000.0)["passed"])
+        self.assertTrue(ss.criterion_liq_mc(350.0, 1000.0)["passed"])
+        self.assertFalse(ss.criterion_liq_mc(351.0, 1000.0)["passed"])
         self.assertIsNone(ss.criterion_liq_mc(None, 1000.0)["passed"])
 
     def test_lp_locked_requires_closed_authority(self):
@@ -112,26 +120,15 @@ class CriteriaTest(unittest.TestCase):
             ss.criterion_float_spread(18.92, [2.99, 2.7, 2.11])["passed"])
         # Terkonsentrasi (holder 12%) → gagal
         self.assertFalse(ss.criterion_float_spread(40.0, [12.0])["passed"])
-        # holder 5,5% → gagal (di atas batas 5%)
+        # Holder/wallet maksimum tetap 5%, dan tepat 5% masih diterima.
+        self.assertTrue(ss.criterion_float_spread(18.0, [5.0])["passed"])
         self.assertFalse(ss.criterion_float_spread(18.0, [5.5])["passed"])
         self.assertIsNone(ss.criterion_float_spread(None, [])["passed"])
 
-    def test_team_human_data_5_percent_vs_3_percent(self):
-        """Data nyata Team Human: holder 3,94% → LULUS di 5%, GAGAL di 3%."""
-        # Team Human: top-10 18,97%, holder terbesar 3,94%
-        # Default 5%: kriteria 3 LULUS
-        self.assertTrue(
-            ss.criterion_float_spread(18.97, [3.94, 2.5, 2.0])["passed"])
-        # Custom 3%: kriteria 3 GAGAL
-        result_3pct = ss.criterion_float_spread(18.97, [3.94, 2.5, 2.0],
-                                                max_holder_pct=0.03)
-        self.assertFalse(result_3pct["passed"])
-        self.assertIn("batas 3%", result_3pct["detail"])
-        # Custom 5% (eksplisit): kriteria 3 LULUS
-        result_5pct = ss.criterion_float_spread(18.97, [3.94, 2.5, 2.0],
-                                                max_holder_pct=0.05)
-        self.assertTrue(result_5pct["passed"])
-        self.assertIn("lolos batas holder 5%", result_5pct["detail"])
+    def test_holder_threshold_is_fixed_at_five_percent(self):
+        self.assertEqual(ss.HOLDER_MAX_PCT, 5.0)
+        self.assertIn("lolos batas holder 5%",
+                      ss.criterion_float_spread(18.97, [3.94])["detail"])
 
     def test_absorption_needs_history_then_scores(self):
         self.assertIsNone(ss.criterion_absorption([])["passed"])
@@ -211,65 +208,27 @@ class CriteriaTest(unittest.TestCase):
         self.assertIsNone(ss.criterion_shakeout([[1, 1, 1, 1, 1, 1]])["passed"])
 
 
-class SettingsTest(unittest.TestCase):
-    """Ambang liq/MC dan holder bisa diatur — tapi tidak boleh keluar dari rentang aman."""
-
-    def test_default_is_15_percent_liq_5_percent_holder(self):
-        defaults = ss.normalize_settings(None)
-        self.assertEqual(defaults["liq_mc_max"], ss.LIQ_MC_MAX)
-        self.assertEqual(defaults["holder_max_pct"], ss.HOLDER_MAX_PCT)
-        defaults2 = ss.normalize_settings("bukan dict")
-        self.assertEqual(defaults2["liq_mc_max"], ss.LIQ_MC_MAX)
-        self.assertEqual(defaults2["holder_max_pct"], ss.HOLDER_MAX_PCT)
-
-    def test_clamped_to_safe_range(self):
-        result = ss.normalize_settings({"liq_mc_max": 0.01})
-        self.assertEqual(result["liq_mc_max"], ss.SETTINGS_MIN_LIQ_MC)
-        self.assertIn("holder_max_pct", result)
-        result = ss.normalize_settings({"liq_mc_max": 5.0})
-        self.assertEqual(result["liq_mc_max"], ss.SETTINGS_MAX_LIQ_MC)
-        result = ss.normalize_settings({"liq_mc_max": "rusak"})
-        self.assertEqual(result["liq_mc_max"], ss.LIQ_MC_MAX)
-
-    def test_holder_clamped_to_safe_range(self):
-        result = ss.normalize_settings({"holder_max_pct": 0.5})
-        self.assertEqual(result["holder_max_pct"], ss.SETTINGS_MIN_HOLDER_PCT)
-        result = ss.normalize_settings({"holder_max_pct": 25.0})
-        self.assertEqual(result["holder_max_pct"], ss.SETTINGS_MAX_HOLDER_PCT)
-        result = ss.normalize_settings({"holder_max_pct": "rusak"})
-        self.assertEqual(result["holder_max_pct"], ss.HOLDER_MAX_PCT)
-
-    def test_criterion_honours_custom_threshold(self):
-        # ratio 20%: lolos di ambang 25%, gagal di ambang 15%.
-        lenient = ss.criterion_liq_mc(200.0, 1000.0, 0.25)
-        strict = ss.criterion_liq_mc(200.0, 1000.0, 0.15)
-        self.assertTrue(lenient["passed"])
-        self.assertFalse(strict["passed"])
-        self.assertIn("25%", lenient["detail"])
-        self.assertIn("15%", strict["detail"])
-        # Detail selalu menyebut biaya sweep pada ambang mana pun.
-        self.assertIn("naik 3x perlu", strict["detail"])
-
-
-class EvaluateSettingsTest(unittest.TestCase):
-    def _metrics(self):
-        return {"liq_usd": 200.0, "fdv_usd": 1000.0, "lp_locked_pct": 95.0,
-                "mint_authority": None, "freeze_authority": None,
-                "top10_holder_pct": 18.0, "holder_pcts": [2.0, 1.5]}
-
-    def test_settings_change_the_verdict(self):
-        strict = ss.evaluate(self._metrics(), settings={"liq_mc_max": 0.15})
-        lenient = ss.evaluate(self._metrics(), settings={"liq_mc_max": 0.25})
-        self.assertFalse(strict["eligible"])
-        self.assertTrue(lenient["eligible"])
-        # Settings yang benar-benar dipakai ikut dilaporkan (untuk audit).
-        self.assertEqual(strict["settings"]["liq_mc_max"], 0.15)
-        self.assertEqual(lenient["settings"]["liq_mc_max"], 0.25)
-
+class FixedThresholdTest(unittest.TestCase):
+    def test_evaluate_uses_fixed_thresholds_without_overrides(self):
+        self.assertEqual(ss.LIQ_MC_MAX, 0.35)
+        self.assertEqual(ss.HOLDER_MAX_PCT, 5.0)
+        metrics = {
+            "liq_usd": 350.0, "fdv_usd": 1000.0, "lp_locked_pct": 95.0,
+            "mint_authority": None, "freeze_authority": None,
+            "top10_holder_pct": 18.0, "holder_pcts": [5.0],
+        }
+        result = ss.evaluate(metrics)
+        checks = {row["key"]: row for row in result["checks"]}
+        self.assertTrue(checks["liq_mc"]["passed"])
+        self.assertTrue(checks["float_spread"]["passed"])
+        metrics["liq_usd"] = 351.0
+        self.assertFalse({row["key"]: row for row in
+                          ss.evaluate(metrics)["checks"]}["liq_mc"]["passed"])
 
 class EvaluateTest(unittest.TestCase):
     def _metrics(self, **over):
         metrics = {
+            "mint": "M", "price_usd": 0.29, "pair_created_at": 1000,
             "liq_usd": LIQ_USD, "fdv_usd": MC_USD,
             "lp_locked_pct": 89.82, "mint_authority": None,
             "freeze_authority": None, "top10_holder_pct": 18.92,
@@ -293,7 +252,8 @@ class EvaluateTest(unittest.TestCase):
             (3, 0.000318, 0.000375, 0.000303, 0.000343, 18699),
         ])
         result = ss.evaluate(self._metrics(), snapshots=snapshots,
-                             candles=candles)
+                             candles=candles, cohort_candles=_birth_candles(),
+                             now=1000 + 49 * 3600)
         self.assertTrue(result["eligible"])
         self.assertEqual(result["verdict"], ss.VERDICT_LAYAK[0])
         self.assertEqual(result["passed_count"], 6)
@@ -317,10 +277,64 @@ class EvaluateTest(unittest.TestCase):
         self.assertEqual(result["scored_count"], 3)
         self.assertEqual(result["passed_count"], 3)
         self.assertAlmostEqual(result["score"], 1.0)
-        # Ambangnya menyesuaikan: 4 dari 3 mustahil, jadi cukup trio struktural
-        # (tanpa ini, deploy baru tidak akan pernah memberi alert kelayakan).
+        # Trio struktural cukup untuk skor, tetapi tanpa OHLCV kelahiran gate
+        # kohort tetap menahan kandidat.
         self.assertEqual(result["required_count"], 3)
-        self.assertTrue(result["eligible"])
+        self.assertFalse(result["eligible"])
+        self.assertEqual(result["verdict"], "TANPA DATA — kohort")
+        self.assertEqual(result["cohort_gate_status"], "TANPA DATA — kohort")
+
+    def test_evaluate_preserves_shakeout_latch_after_sweep_breaks_low(self):
+        candles = _candles([
+            (1, 0.00040, 0.00048, 0.000395, 0.000482, 22781),
+            (2, 0.000482, 0.000495, 0.000260, 0.000318, 30539),
+            (3, 0.000318, 0.000375, 0.000303, 0.000343, 18699),
+            (4, 0.000343, 0.002060, 0.000216, 0.001826, 1536017),
+        ])
+        # Tanpa latch, pola dinilai gagal kembali di candle yang menyapu low.
+        self.assertFalse(ss.criterion_shakeout(candles)["passed"])
+        result = ss.evaluate(self._metrics(), candles=candles,
+                             state={"shakeout_latched_at": {"M": 2}}, mint="M")
+        shakeout = next(c for c in result["checks"] if c["key"] == "shakeout")
+        self.assertTrue(shakeout["passed"])
+        self.assertIn("latch permanen", shakeout["detail"])
+
+    def test_cohort_gate_plus_wait_and_minus_70(self):
+        candles = _birth_candles()
+        now = 1000 + 49 * 3600
+
+        plus = ss.evaluate(self._metrics(price_usd=1.05),
+                           cohort_candles=candles, now=now)
+        self.assertEqual(plus["cohort_gate_status"], "SKIP — kohort plus")
+        self.assertFalse(plus["eligible"])
+
+        minus_69 = ss.evaluate(self._metrics(price_usd=0.31),
+                               cohort_candles=candles, now=now)
+        self.assertEqual(minus_69["cohort_gate_status"],
+                         "TUNGGU — kohort belum minus 70%")
+        self.assertFalse(minus_69["eligible"])
+
+        minus_71 = ss.evaluate(self._metrics(price_usd=0.29),
+                               cohort_candles=candles, now=now)
+        self.assertEqual(minus_71["cohort_gate_status"], "LOLOS")
+        self.assertTrue(minus_71["eligible"])
+
+    def test_cohort_no_data_never_passes_gate_and_partial_window_is_labeled(self):
+        no_data = ss.evaluate(self._metrics(), cohort_candles=[])
+        self.assertEqual(no_data["cohort_gate_status"], "TANPA DATA — kohort")
+        self.assertFalse(no_data["eligible"])
+        partial = ss.cohort_profile(_birth_candles()[:12], 1000, 0.29,
+                                    now=1000 + 12 * 3600)
+        self.assertTrue(partial["available"])
+        self.assertTrue(partial["partial_window"])
+        self.assertLessEqual(partial["status_avg_cost"], -0.70)
+
+    def test_turnover_and_cock_reference_multiple(self):
+        metrics = self._metrics(vol24_usd=30232.0 * 3.35)
+        result = ss.evaluate(metrics, cohort_candles=_birth_candles(),
+                             now=1000 + 49 * 3600)
+        self.assertAlmostEqual(result["turnover_x"], 3.35, places=6)
+        self.assertAlmostEqual(result["reference_fund_x"], 1.0, places=2)
 
     def test_targets_only_when_liq_mc_known(self):
         with_targets = ss.evaluate(self._metrics(), snapshots=[], candles=[])

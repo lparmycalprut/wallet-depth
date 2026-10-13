@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
 """Pengambil data untuk page **🌊 Sweep** (DexScreener, RugCheck, GMGN, GeckoTerminal).
 
-Empat sumber, semuanya publik dan **tanpa API key**:
+Empat provider (lima endpoint), semuanya publik dan **tanpa API key**:
 
-===================  ==========================================================
-Sumber               Dipakai untuk
-===================  ==========================================================
-DexScreener          harga, liq, FDV/MC, volume, buys/sells → kriteria 1
-RugCheck             ``lpLockedPct``, authority, top holder → kriteria 2 & 3
-GMGN ``token_stat``  bundler, bot degen, entrapment, top-10 → konteks kriteria 3
-GeckoTerminal OHLCV  candle 1 jam & 5 menit → kriteria 5, 6 + deteksi sweep
-===================  ==========================================================
+===========================  ===========================================================
+Sumber                       Dipakai untuk
+===========================  ===========================================================
+DexScreener                  harga, liq, FDV/MC, volume, buys/sells, pool utama
+RugCheck                     ``lpLockedPct``, authority, top holder → kriteria 2 & 3
+GMGN ``token_stat``          bundler, bot degen, fresh, entrapment, top-10
+GMGN ``tokens/top_buyers``   ``holding_rate`` + ringkasan ``statusNow``
+GeckoTerminal OHLCV          candle hourly/5m + jendela cohort 48 jam pertama
+===========================  ===========================================================
 
 Semua hasil di-cache ke ``sweep_cache.json`` (TTL sukses 90 detik, gagal 120
 detik) supaya rerun Streamlit — yang terjadi tiap interaksi — tidak menembak
@@ -32,8 +33,10 @@ from urllib.parse import quote
 DEX_URL = "https://api.dexscreener.com/latest/dex/tokens/{mint}"
 RUGCHECK_URL = "https://api.rugcheck.xyz/v1/tokens/{mint}/report"
 GMGN_STAT_URL = "https://gmgn.ai/api/v1/token_stat/sol/{mint}"
+GMGN_TOP_BUYERS_URL = "https://gmgn.ai/api/v1/tokens/top_buyers/sol/{mint}"
 GECKO_OHLCV_URL = ("https://api.geckoterminal.com/api/v2/networks/solana/pools/"
                    "{pool}/ohlcv/{frame}")
+COHORT_WINDOW_HOURS = 48
 
 CACHE_PATH = Path(__file__).resolve().parent / "sweep_cache.json"
 CACHE_TTL_OK = 90
@@ -62,6 +65,14 @@ def _num(value):
     except (TypeError, ValueError):
         return None
     return result if math.isfinite(result) else None
+
+
+def _timestamp_seconds(value):
+    """DexScreener pairCreatedAt may be milliseconds; Gecko uses seconds."""
+    timestamp = _num(value)
+    if timestamp is None or timestamp <= 0:
+        return None
+    return timestamp / 1000.0 if timestamp > 1e12 else timestamp
 
 
 # ---------------------------------------------------------------------------
@@ -322,10 +333,12 @@ def gmgn_stat(mint: str, *, use_cache: bool = True) -> dict:
             data = data.get("data") if isinstance(data.get("data"), dict) else {}
         if not isinstance(data, dict) or not data:
             raise RuntimeError("field statistik tidak ditemukan")
+        bundler_rate = _rate(data.get("top_bundler_trader_percentage"))
         result.update({
             "ok": True,
             "holder_count": _num(data.get("holder_count")),
-            "bundler_rate": _rate(data.get("top_bundler_trader_percentage")),
+            "top_bundler_trader_percentage": bundler_rate,
+            "bundler_rate": bundler_rate,
             "entrapment_rate": _rate(data.get("top_entrapment_trader_percentage")),
             "bot_degen_rate": _rate(data.get("bot_degen_rate")),
             "bot_degen_count": _num(data.get("bot_degen_count")),
@@ -337,6 +350,84 @@ def gmgn_stat(mint: str, *, use_cache: bool = True) -> dict:
             "creator_created_count": _num(data.get("creator_created_count")),
         })
     except Exception as exc:  # noqa: BLE001
+        result["error"] = str(exc)[:160]
+    if use_cache:
+        _cache_put(key, result, ok=result.get("ok"))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# GMGN top_buyers — holding_rate and current holder status summary
+# ---------------------------------------------------------------------------
+def _status_number(value):
+    """Read a count/rate from a scalar or a small status summary object."""
+    if isinstance(value, dict):
+        for key in ("count", "total", "value", "rate", "num"):
+            number = _num(value.get(key))
+            if number is not None:
+                return number
+        return None
+    if isinstance(value, (list, tuple)):
+        return float(len(value))
+    return _num(value)
+
+
+def gmgn_top_buyers(mint: str, *, use_cache: bool = True) -> dict:
+    """Fetch GMGN holder ``holding_rate`` and ``statusNow`` (same TTL as stats).
+
+    This endpoint is optional enrichment: errors become an empty metrics dict
+    with ``ok: False`` and never interrupt a scan.
+    """
+    mint = str(mint or "").strip()
+    key = f"gmgn_top_buyers:{mint}"
+    if use_cache:
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+    result = {"ok": False, "mint": mint, "holding_rate": None,
+              "status_now": {}, "error": "", "source": "gmgn_top_buyers"}
+    try:
+        payload = _get_json(
+            GMGN_TOP_BUYERS_URL.format(mint=quote(mint, safe="")),
+            headers=_GMGN_HEADERS)
+        current = payload
+        for _ in range(4):
+            if not isinstance(current, dict):
+                current = {}
+                break
+            if isinstance(current.get("holders"), dict):
+                break
+            nested = current.get("data")
+            if isinstance(nested, dict):
+                current = nested
+            else:
+                break
+        holders = current.get("holders") if isinstance(current, dict) else None
+        holders = holders if isinstance(holders, dict) else {}
+        status = (holders.get("statusNow") or holders.get("status_now")
+                  or current.get("statusNow") or current.get("status_now")
+                  or {})
+        if not isinstance(status, dict):
+            raise RuntimeError("field data.holders.statusNow tidak ditemukan")
+        rate = status.get("holding_rate")
+        if rate is None:
+            rate = status.get("holdingRate")
+        holding_rate = _rate(rate)
+        aliases = {
+            "hold": ("hold", "holding", "hold_count", "holding_count"),
+            "sold_part": ("sold_part", "soldPart", "sold_part_count"),
+            "sold": ("sold", "sold_count"),
+        }
+        summary = {}
+        for output_key, keys in aliases.items():
+            value = next((status[name] for name in keys if name in status), None)
+            summary[output_key] = _status_number(value)
+        if holding_rate is None and not any(value is not None
+                                            for value in summary.values()):
+            raise RuntimeError("field holding_rate/statusNow tidak ditemukan")
+        result.update({"ok": True, "holding_rate": holding_rate,
+                       "status_now": summary})
+    except Exception as exc:  # noqa: BLE001 - GMGN enrichment is optional
         result["error"] = str(exc)[:160]
     if use_cache:
         _cache_put(key, result, ok=result.get("ok"))
@@ -385,14 +476,30 @@ def ohlcv(pool: str, frame: str = "hour", *, limit: int = 200,
     return rows
 
 
+def cohort_ohlcv(pool: str, pair_created_at, *, use_cache: bool = True) -> list:
+    """Fetch hourly candles covering the pool's first 48 hours, not its latest."""
+    created = _timestamp_seconds(pair_created_at)
+    if not pool or created is None:
+        return []
+    window_end = int(math.ceil(created + COHORT_WINDOW_HOURS * 3600))
+    # An overlapping first-hour candle plus 48 following hours can require 49
+    # bars; request 50 to leave room for Gecko's hour-boundary alignment.
+    rows = ohlcv(pool, "hour", limit=50, before=window_end,
+                 use_cache=use_cache)
+    return [row for row in rows
+            if row[0] + 3600 > created
+            and row[0] < created + COHORT_WINDOW_HOURS * 3600]
+
+
 # ---------------------------------------------------------------------------
 # Gabungan
 # ---------------------------------------------------------------------------
 def collect_metrics(mint: str, *, use_cache: bool = True) -> dict:
-    """Gabungkan DexScreener + RugCheck + GMGN menjadi satu dict metrik."""
+    """Combine market/risk snapshots and GMGN stat/top-buyer fields per mint."""
     dex = dex_snapshot(mint, use_cache=use_cache)
     rug = rugcheck_snapshot(mint, use_cache=use_cache)
     stat = gmgn_stat(mint, use_cache=use_cache)
+    buyers = gmgn_top_buyers(mint, use_cache=use_cache)
     top10 = rug.get("top10_holder_pct")
     if top10 is None and stat.get("top10_holder_rate") is not None:
         top10 = (stat["top10_holder_rate"] or 0) * 100.0
@@ -409,6 +516,7 @@ def collect_metrics(mint: str, *, use_cache: bool = True) -> dict:
         "market_cap_usd": dex.get("market_cap_usd"),
         "liq_mc": dex.get("liq_mc"),
         "vol_24h": dex.get("vol_24h"),
+        "vol24_usd": dex.get("vol_24h"),
         "vol_6h": dex.get("vol_6h"),
         "vol_1h": dex.get("vol_1h"),
         "buys_1h": dex.get("buys_1h"),
@@ -416,6 +524,7 @@ def collect_metrics(mint: str, *, use_cache: bool = True) -> dict:
         "change_1h": dex.get("change_1h"),
         "change_24h": dex.get("change_24h"),
         "pair_address": dex.get("pair_address") or "",
+        "pair_created_at": _timestamp_seconds(dex.get("pair_created_at")),
         "dex_id": dex.get("dex_id") or "",
         "pool_count": rug.get("pool_count"),
         "lp_locked_pct": rug.get("lp_locked_pct"),
@@ -426,14 +535,18 @@ def collect_metrics(mint: str, *, use_cache: bool = True) -> dict:
         # Persen (0-100) — kontrak skrining; lihat criterion_float_spread.
         "top10_holder_pct": top10,
         "holder_count": stat.get("holder_count"),
+        "top_bundler_trader_percentage": stat.get("top_bundler_trader_percentage"),
         "bundler_rate": stat.get("bundler_rate"),
         "entrapment_rate": stat.get("entrapment_rate"),
         "bot_degen_rate": stat.get("bot_degen_rate"),
         "bot_degen_count": stat.get("bot_degen_count"),
         "fresh_wallet_rate": stat.get("fresh_wallet_rate"),
+        "holding_rate": buyers.get("holding_rate"),
+        "status_now": buyers.get("status_now") or {},
         "dev_team_hold_rate": stat.get("dev_team_hold_rate"),
         "sniper_rate": stat.get("sniper_rate"),
         "creator_created_count": stat.get("creator_created_count"),
         "sources": {"dex": bool(dex.get("ok")), "rugcheck": bool(rug.get("ok")),
-                    "gmgn": bool(stat.get("ok"))},
+                    "gmgn": bool(stat.get("ok")),
+                    "gmgn_top_buyers": bool(buyers.get("ok"))},
     }

@@ -9,7 +9,7 @@
 
 Best Pool itself still requires no GitHub Actions scanner, Holder store branch, cron chain, or Telegram credentials.
 
-The **🌊 Sweep** page exposes its own settings; the main one is the liq/MC threshold (5%-60%, default 15%), shown as a slider and stored in `sweep_state.json` so the page and the cron always screen with the same number.
+The **🌊 Sweep** page uses fixed screening thresholds: liq/MC ≤35% and holder/wallet ≤5%. The 48-hour birth-cohort VWAP gate must pass before any token can be eligible; thresholds are not UI/cron settings.
 
 The **🌊 Sweep** page does need two things when you want 24/7 alerts (they are optional — without them the page still screens and records statistics):
 
@@ -41,4 +41,4 @@ After deployment, confirm:
 4. on a phone-sized viewport, table headers and all columns remain available through horizontal scrolling;
 5. **🌊 Sweep** appears in navigation and renders the watchlist editor, the eligibility table, and the signal statistics section;
 6. the Sweep page's Telegram line reports either *siap* (with the credential source) or the exact list of places to fill in credentials;
-7. the liq/MC slider reports the cost table for the value you pick, and moving it re-scores the visible table **without** a new network scan.
+7. the Sweep page shows the fixed threshold text, the `Turnover (×/hari)` column, and a per-token **Kohort lahir** panel with its proxy label and cohort-gate state.

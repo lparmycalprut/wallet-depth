@@ -157,7 +157,7 @@ def save_watchlist(mints, *, persist: bool = True) -> list:
 # ---------------------------------------------------------------------------
 def empty_state() -> dict:
     return {"version": STATE_VERSION, "snapshots": {}, "signals": [],
-            "alerts": {}, "settings": {}, "updated": 0}
+            "alerts": {}, "shakeout_latched_at": {}, "updated": 0}
 
 
 def load_state() -> dict:
@@ -170,33 +170,13 @@ def load_state() -> dict:
     if not isinstance(data, dict):
         return empty_state()
     state = empty_state()
-    for key in ("snapshots", "signals", "alerts", "settings"):
+    for key in ("snapshots", "signals", "alerts"):
         if isinstance(data.get(key), dict) or isinstance(data.get(key), list):
             state[key] = data[key]
+    if isinstance(data.get("shakeout_latched_at"), dict):
+        state["shakeout_latched_at"] = data["shakeout_latched_at"]
     state["updated"] = int(data.get("updated") or 0)
     return state
-
-
-def load_settings(state: dict) -> dict:
-    """Pengaturan user dari state (ambang liq/MC), sudah dinormalisasi."""
-    import sweep_screen as screen
-    return screen.normalize_settings((state or {}).get("settings"))
-
-
-def save_settings(state: dict, settings) -> dict:
-    """Simpan pengaturan user ke state (ikut ter-commit bersama state).
-
-    Disimpan di ``sweep_state.json`` supaya halaman dan cron memakai ambang yang
-    sama — kalau hanya disimpan di sesi Streamlit, alert cron akan memakai
-    default dan tabel statistik jadi tidak konsisten dengan yang dilihat user.
-    """
-    import sweep_screen as screen
-    if not isinstance(state, dict):
-        return screen.normalize_settings(settings)
-    # Ditulis **di tempat** (tanpa menyalin): pemanggil seperti run_scan harus
-    # melihat perubahannya di state yang sama, bukan di salinan yang dibuang.
-    state["settings"] = screen.normalize_settings(settings)
-    return state["settings"]
 
 
 def push_state(state: dict, reason: str = "") -> bool:
@@ -208,6 +188,10 @@ def push_state(state: dict, reason: str = "") -> bool:
 def save_state(state: dict, *, persist: bool = False, reason: str = "") -> dict:
     """Tulis state lokal (atomik) + opsional commit ke GitHub."""
     state = dict(state or {})
+    # Drop legacy UI settings on the next write; thresholds are fixed in
+    # sweep_screen and no longer belong to persisted state.
+    state.pop("settings", None)
+    state.setdefault("shakeout_latched_at", {})
     state["version"] = STATE_VERSION
     state["updated"] = _now()
     atomic_write_json(STATE_PATH, state, separators=(",", ":"))
@@ -217,13 +201,11 @@ def save_state(state: dict, *, persist: bool = False, reason: str = "") -> dict:
 
 
 def fingerprint(state: dict) -> str:
-    """Sidik jari bagian state yang **layak di-commit**.
+    """Fingerprint committed snapshots, signal ids, and permanent shakeout latches.
 
-    Isinya: snapshot per jam, id sinyal, dan **pengaturan user**. Yang tidak
-    dihitung adalah ``alerts`` dan ``updated`` yang berubah tiap 5 menit — kalau
-    ikut dihitung, workflow cron akan membuat ~288 commit/hari. Pengaturan ikut
-    dihitung karena mengubah ambang liq/MC harus ter-commit (halaman dan cron
-    wajib memakai ambang yang sama).
+    Volatile ``alerts`` and ``updated`` are excluded: otherwise the 5-minute
+    cron would create ~288 commits/day. Legacy settings are intentionally
+    ignored because the thresholds are fixed in ``sweep_screen``.
     """
     import hashlib
 
@@ -231,7 +213,7 @@ def fingerprint(state: dict) -> str:
         "snapshots": (state or {}).get("snapshots") or {},
         "signals": [(row or {}).get("id") for row in ((state or {}).get("signals") or [])
                     if isinstance(row, dict)],
-        "settings": (state or {}).get("settings") or {},
+        "shakeout_latched_at": (state or {}).get("shakeout_latched_at") or {},
     }, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
