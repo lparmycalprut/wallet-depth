@@ -255,6 +255,31 @@ def _pool_owners(report: dict) -> set:
     return owners
 
 
+def _lp_locked_pct(report: dict):
+    """LP terkunci (0–100) dari pool AMM terbesar yang punya LP token.
+
+    RugCheck ``/report`` **tidak** punya ``lpLockedPct`` di level atas (dicek
+    langsung 2026-10-13); angkanya ada di ``markets[].lp.lpLockedPct``. Pool
+    tanpa LP token (DLMM, Orca: ``lpTotalSupply`` = 0) dilewati karena
+    angkanya tidak bermakna. Kalau tidak ada pool ber-LP, hasilnya ``None``
+    (tampil "—"), bukan 0.
+    """
+    best, best_liquidity = None, -1.0
+    for market in (report.get("markets") or []):
+        lp = market.get("lp") if isinstance(market, dict) else None
+        if not isinstance(lp, dict):
+            continue
+        if (_num(lp.get("lpTotalSupply")) or 0) <= 0:
+            continue
+        pct = _num(lp.get("lpLockedPct"))
+        if pct is None:
+            continue
+        liquidity = (_num(lp.get("quoteUSD")) or 0) + (_num(lp.get("baseUSD")) or 0)
+        if liquidity > best_liquidity:
+            best, best_liquidity = pct, liquidity
+    return best
+
+
 def rugcheck_snapshot(mint: str, *, use_cache: bool = True) -> dict:
     """Snapshot RugCheck: LP locked, authority, dan holder **tanpa pool AMM**.
 
@@ -292,7 +317,7 @@ def rugcheck_snapshot(mint: str, *, use_cache: bool = True) -> dict:
         top10 = sum(sorted(pcts, reverse=True)[:10]) if pcts else None
         result.update({
             "ok": True,
-            "lp_locked_pct": _num(report.get("lpLockedPct")),
+            "lp_locked_pct": _lp_locked_pct(report),
             "score_normalised": _num(report.get("score_normalised")),
             "risks": [str(r.get("name") or r.get("description") or r)[:80]
                       for r in (report.get("risks") or [])][:4],
