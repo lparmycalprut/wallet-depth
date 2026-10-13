@@ -58,10 +58,6 @@ jobs:
         run: |
           git config --global user.name 'Sweep-Bot'
           git config --global user.email 'bot@noreply.github.com'
-          git add sweep_state.json sweep_watchlist.json || true
-          if git diff --cached --quiet; then
-            echo "Hanya field volatile yang berubah — tidak commit."
-          else
-            git commit -m "sweep: update state [skip ci]"
-            git push
-          fi
+          # Push bisa ditolak bila app/run lain sudah push lebih dulu. Skrip ini
+          # mengambil main terbaru, menggabung state, lalu push ulang (retry).
+          bash scripts/commit_sweep_state.sh

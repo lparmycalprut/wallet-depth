@@ -101,15 +101,13 @@ class CriteriaTest(unittest.TestCase):
         self.assertFalse(ss.criterion_liq_mc(351.0, 1000.0)["passed"])
         self.assertIsNone(ss.criterion_liq_mc(None, 1000.0)["passed"])
 
-    def test_lp_locked_requires_closed_authority(self):
-        ok = ss.criterion_lp_locked(95.0, None, None)
+    def test_authority_gate_requires_closed_authority_and_is_not_scored(self):
+        ok = ss.criterion_authority(None, None)
         self.assertTrue(ok["passed"])
-        bad = ss.criterion_lp_locked(95.0, "SomeAuthority111", None)
-        self.assertFalse(bad["passed"])
-        # 89,82% (nilai COCKROACH nyata) harus LOLOS di ambang 85%.
-        self.assertTrue(ss.criterion_lp_locked(89.81783209657127, None, None)["passed"])
-        low = ss.criterion_lp_locked(50.0, None, None)
-        self.assertFalse(low["passed"])
+        self.assertFalse(ok["scored"])
+        self.assertFalse(ss.criterion_authority("SomeAuthority111", None)["passed"])
+        self.assertFalse(ss.criterion_authority(None, "FreezeAuth111")["passed"])
+        self.assertIsNone(ss.criterion_authority(None, None, known=False)["passed"])
 
     def test_float_spread_uses_percent_input(self):
         # 18,92% top-10 + holder terbesar 3,00% → LULUS (batas default 5%)
@@ -213,7 +211,7 @@ class FixedThresholdTest(unittest.TestCase):
         self.assertEqual(ss.LIQ_MC_MAX, 0.35)
         self.assertEqual(ss.HOLDER_MAX_PCT, 5.0)
         metrics = {
-            "liq_usd": 350.0, "fdv_usd": 1000.0, "lp_locked_pct": 95.0,
+            "liq_usd": 350.0, "fdv_usd": 1000.0,
             "mint_authority": None, "freeze_authority": None,
             "top10_holder_pct": 18.0, "holder_pcts": [5.0],
         }
@@ -230,12 +228,29 @@ class EvaluateTest(unittest.TestCase):
         metrics = {
             "mint": "M", "price_usd": 0.29, "pair_created_at": 1000,
             "liq_usd": LIQ_USD, "fdv_usd": MC_USD,
-            "lp_locked_pct": 89.82, "mint_authority": None,
+            "mint_authority": None,
             "freeze_authority": None, "top10_holder_pct": 18.92,
             "holder_pcts": [2.99, 2.7, 2.11],
         }
         metrics.update(over)
         return metrics
+
+    def test_lp_locked_is_not_checked_or_scored(self):
+        result = ss.evaluate(self._metrics(), snapshots=[], candles=[])
+        keys = [c["key"] for c in result["checks"]]
+        self.assertNotIn("lp_locked", keys)
+        self.assertNotIn("lp_locked", result["missing"])
+        self.assertIn("authority", keys)
+        self.assertEqual(result["scored_count"], 2)
+        self.assertTrue(result["structural_ok"])
+
+    def test_open_or_unknown_authority_blocks_structure(self):
+        open_mint = ss.evaluate(self._metrics(mint_authority="MintAuth111"),
+                                snapshots=[], candles=[])
+        self.assertFalse(open_mint["structural_ok"])
+        unknown = ss.evaluate(self._metrics(rugcheck_ok=False),
+                              snapshots=[], candles=[])
+        self.assertFalse(unknown["structural_ok"])
 
     def test_eligible_when_structure_and_score_pass(self):
         snapshots = [
@@ -256,7 +271,7 @@ class EvaluateTest(unittest.TestCase):
                              now=1000 + 49 * 3600)
         self.assertTrue(result["eligible"])
         self.assertEqual(result["verdict"], ss.VERDICT_LAYAK[0])
-        self.assertEqual(result["passed_count"], 6)
+        self.assertEqual(result["passed_count"], 5)
         self.assertTrue(result["structural_ok"])
         self.assertFalse(result["missing"])
         # Dengan data lengkap ambangnya kembali ke 4 dari 6.
@@ -273,13 +288,13 @@ class EvaluateTest(unittest.TestCase):
         self.assertIn("absorption", result["missing"])
         self.assertIn("vol_expansion", result["missing"])
         self.assertIn("shakeout", result["missing"])
-        # 3 kriteria struktural lulus → skor 100% dari yang punya data
-        self.assertEqual(result["scored_count"], 3)
-        self.assertEqual(result["passed_count"], 3)
+        # 2 kriteria skor yang punya data (liq/MC, float) lulus → skor 100%
+        # (authority adalah gate, tidak dihitung skor).
+        self.assertEqual(result["scored_count"], 2)
+        self.assertEqual(result["passed_count"], 2)
         self.assertAlmostEqual(result["score"], 1.0)
-        # Trio struktural cukup untuk skor, tetapi tanpa OHLCV kelahiran gate
-        # kohort tetap menahan kandidat.
-        self.assertEqual(result["required_count"], 3)
+        # Tanpa OHLCV kelahiran gate kohort tetap menahan kandidat.
+        self.assertEqual(result["required_count"], 2)
         self.assertFalse(result["eligible"])
         self.assertEqual(result["verdict"], "TANPA DATA — kohort")
         self.assertEqual(result["cohort_gate_status"], "TANPA DATA — kohort")

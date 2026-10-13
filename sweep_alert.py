@@ -173,7 +173,6 @@ def format_eligibility(mint: str, metrics: dict, result: dict) -> str:
         f"({result.get('passed_count')}/{result.get('scored_count')} kriteria)",
         f"liq/MC: {_pct(result.get('liq_mc'))} | "
         f"liq {_usd(metrics.get('liq_usd'))} | MC {_usd(metrics.get('fdv_usd'))}",
-        f"LP locked {_pct100(metrics.get('lp_locked_pct'))} | "
         f"top-10 {_pct100(metrics.get('top10_holder_pct'))} | "
         f"holder {metrics.get('holder_count') or '—'}",
         f"Bundler {_pct(metrics.get('bundler_rate'))} | "

@@ -7,7 +7,7 @@ Halaman terpisah dari **🏆 Scan Best Pool Meteora**. Entrinya
 
 | Berkas | Isi |
 | --- | --- |
-| `sweep_screen.py` | mesin skrining murni: enam kriteria, gate kohort, latch shakeout, deteksi sweep, rumus biaya |
+| `sweep_screen.py` | mesin skrining murni: lima kriteria skor + gate authority, gate kohort, latch shakeout, deteksi sweep, rumus biaya |
 | `sweep_data.py` | DexScreener + RugCheck + GMGN `token_stat`/`top_buyers` + GeckoTerminal OHLCV; cache 90/120 detik |
 | `sweep_store.py` | watchlist manual, snapshot per jam, sinyal, gate alert, latch shakeout, push GitHub |
 | `sweep_alert.py` | Telegram berlapis `st.secrets` → env → `config.json` |
@@ -23,8 +23,9 @@ pemindai lain.
 1. **liq/MC ≤ 35%** — ambang tetap. Dengan basis cash-side pembanding,
    `(√3 − 1) × (35%÷2) = 12,8% MC`; estimator biaya penuh dua sisi yang tetap
    dipakai `est_cost_usd`/`leverage_cost` menghasilkan 25,6% MC pada batas itu.
-2. **LP terkunci** ≥ 85% + authority mint/freeze sudah dilepas. Ambangnya 85%
-   (bukan 90%) karena COCKROACH sendiri hanya 89,82%.
+2. **Authority mint/freeze sudah dilepas** — gate struktural, tidak masuk skor.
+   Kriteria LP terkunci dihapus (2026-10-13): likuiditas token pump.fun sudah
+   pasti terkunci, jadi tidak dicek maupun dihitung.
 3. **Float tersebar**: top-10 < 25% dan setiap holder/wallet ≤ 5%; akun pool
    AMM dikecualikan. Persentase holder berasal dari RugCheck dan ditulis dalam
    skala 0–100.
@@ -167,6 +168,13 @@ snapshot per jam (bukan isinya), id sinyal, dan latch shakeout permanen. Jadi
 commit hanya terjadi saat jam baru muncul; harga/view di jam berjalan ditimpa
 tiap 5 menit tanpa commit. Field `alerts`/`updated` yang volatil juga tidak
 memicu commit. Watchlist tetap manual.
+
+**Penulisan bersama (cron + app).** Cron (`scripts/commit_sweep_state.sh`) dan app
+(`save_state(persist=True)`) sama-sama menulis `sweep_state.json` ke `main`. Sebelum
+menimpa, keduanya menggabung dengan versi GitHub lewat `sweep_store.merge_states`
+(snapshot di-union per mint dan jam), dan push cron di-retry bila ditolak. Bila versi
+GitHub tidak bisa dibaca, app menulis lokal saja dan tidak push. Penjadwalan cron
+GitHub tetap best-effort: GitHub boleh melewatkan atau menunda run `schedule`.
 
 | Berkas | Status |
 | --- | --- |

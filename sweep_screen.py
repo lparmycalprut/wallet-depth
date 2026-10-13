@@ -26,11 +26,8 @@ import time
 
 # --- ambang tetap kriteria (satu tempat, biar mesin, UI & test tidak menyimpang) ---
 LIQ_MC_MAX = 0.35          # kriteria 1: liq/MC maksimum 35%, tetap
-# Kriteria 2: LP terkunci/burned. Ambang 85% (bukan 90%) karena kasus acuan
-# COCKROACH sendiri hanya 89,82% — ambang 90% akan menolak token yang justru
-# jadi dasar seluruh kriteria ini. Di atas 85% praktis tidak ada likuiditas
-# yang bisa ditarik menarik harga.
-LP_LOCKED_MIN_PCT = 85.0
+# Kriteria LP locked dihapus: likuiditas token pump.fun sudah pasti terkunci,
+# jadi tidak lagi dicek maupun dihitung sebagai skor.
 TOP10_MAX = 0.25           # kriteria 3: top-10 (tanpa pool) < 25% supply
 HOLDER_MAX_PCT = 5.0       # kriteria 3: tiap holder maksimum 5%, tetap
 ABSORPTION_MAX_DRIFT = 0.25  # kriteria 4: harga sideways (< 25%) selama akumulasi
@@ -80,11 +77,10 @@ SWEEP_BASELINE_BARS = 24   # baseline = 24 candle sebelum kandidat
 #: kriteria lulus. Artinya begitu riwayat akumulasi/volume/shakeout tersedia,
 #: syaratnya otomatis naik menjadi "struktural + minimal satu bukti".
 ELIGIBLE_MIN_PASSED = 4
-ELIGIBLE_STRUCTURAL = ("liq_mc", "lp_locked", "float_spread")  # wajib lulus
+ELIGIBLE_STRUCTURAL = ("liq_mc", "float_spread", "authority")  # wajib lulus; authority tidak masuk skor
 
 CRITERIA_KEYS = (
     ("liq_mc", "liq/MC"),
-    ("lp_locked", "LP locked"),
     ("float_spread", "Float tersebar"),
     ("absorption", "Akumulasi (proxy)"),
     ("vol_expansion", "Ekspansi volume"),
@@ -317,9 +313,9 @@ def display_sort_key(result) -> tuple:
 # Kriteria
 # ---------------------------------------------------------------------------
 
-def _check(key, label, passed, detail):
+def _check(key, label, passed, detail, *, scored=True):
     return {"key": key, "label": label, "passed": passed, "detail": detail,
-            "has_data": passed is not None}
+            "has_data": passed is not None, "scored": scored}
 
 
 def criterion_liq_mc(liq_usd, fdv_usd):
@@ -338,26 +334,27 @@ def criterion_liq_mc(liq_usd, fdv_usd):
     return _check("liq_mc", "liq/MC", ratio <= LIQ_MC_MAX, detail)
 
 
-def criterion_lp_locked(lp_locked_pct, mint_authority=None,
-                        freeze_authority=None):
-    """Kriteria 2 — LP terkunci/burned + authority sudah dilepas."""
-    pct = _num(lp_locked_pct)
-    if pct is None:
-        return _check("lp_locked", "LP locked", None, "lpLockedPct tidak tersedia")
-    open_authority = None
-    if mint_authority is not None or freeze_authority is not None:
-        open_authority = []
-        if mint_authority not in (None, "", "null"):
-            open_authority.append("mint")
-        if freeze_authority not in (None, "", "null"):
-            open_authority.append("freeze")
-    ok = pct >= LP_LOCKED_MIN_PCT and not open_authority
-    bits = [f"LP locked {pct:.1f}%"]
+def criterion_authority(mint_authority=None, freeze_authority=None, *,
+                        known=True):
+    """Gate struktural — mint dan freeze authority sudah dilepas.
+
+    Tidak masuk skor. ``known=False`` berarti data RugCheck tidak tersedia,
+    sehingga gate tidak bisa dinilai (struktural gagal, bukan lolos diam-diam).
+    """
+    label = "Authority dilepas"
+    if not known:
+        return _check("authority", label, None,
+                      "data authority tidak tersedia", scored=False)
+    open_authority = []
+    if mint_authority not in (None, "", "null"):
+        open_authority.append("mint")
+    if freeze_authority not in (None, "", "null"):
+        open_authority.append("freeze")
     if open_authority:
-        bits.append("authority masih terbuka: " + ", ".join(open_authority))
-    elif open_authority is not None:
-        bits.append("authority dilepas")
-    return _check("lp_locked", "LP locked", ok, " | ".join(bits))
+        return _check("authority", label, False,
+                      "authority masih terbuka: " + ", ".join(open_authority),
+                      scored=False)
+    return _check("authority", label, True, "authority dilepas", scored=False)
 
 
 def criterion_float_spread(top10_pct, holder_pcts):
@@ -534,7 +531,7 @@ def _latched_shakeout_check(check, latched_at):
 
 def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
              state=None, mint=None, now=None, cohort_error=None):
-    """Jalankan enam kriteria dan gate kohort sebelum vonis LAYAK.
+    """Jalankan lima kriteria skor, gate authority, dan gate kohort sebelum vonis LAYAK.
 
     Ambang struktural fixed. Kohort memakai VWAP 48 jam pertama dari pool
     utama; shakeout yang sudah tersimpan di ``state.shakeout_latched_at`` tetap
@@ -552,16 +549,17 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
 
     checks = [
         criterion_liq_mc(metrics.get("liq_usd"), metrics.get("fdv_usd")),
-        criterion_lp_locked(metrics.get("lp_locked_pct"),
-                            metrics.get("mint_authority"),
-                            metrics.get("freeze_authority")),
+        criterion_authority(metrics.get("mint_authority"),
+                            metrics.get("freeze_authority"),
+                            known=metrics.get("rugcheck_ok", True)),
         criterion_float_spread(metrics.get("top10_holder_pct"),
                                metrics.get("holder_pcts")),
         criterion_absorption(snapshots),
         criterion_vol_expansion(snapshots),
         shakeout,
     ]
-    with_data = [c for c in checks if c["has_data"]]
+    scored = [c for c in checks if c.get("scored", True)]
+    with_data = [c for c in scored if c["has_data"]]
     passed = [c for c in with_data if c["passed"]]
     score = (len(passed) / len(with_data)) if with_data else None
     structural_ok = all(

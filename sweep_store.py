@@ -185,8 +185,135 @@ def push_state(state: dict, reason: str = "") -> bool:
                      f"sweep: state {reason}".strip())
 
 
+def _newer_row(current, incoming):
+    """Baris bucket yang ts-nya lebih baru; seri → ``incoming``."""
+    if not isinstance(current, dict):
+        return incoming
+    if not isinstance(incoming, dict):
+        return current
+    return incoming if int(incoming.get("ts") or 0) >= int(current.get("ts") or 0) \
+        else current
+
+
+def _is_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def merge_states(local: dict, remote: dict) -> dict:
+    """Gabung state lokal dengan versi GitHub tanpa kehilangan snapshot.
+
+    Cron (GitHub Actions) dan app (auto-refresh) sama-sama menulis
+    ``sweep_state.json``. Tanpa merge, penulis yang terakhir menimpa snapshot
+    jam yang sudah ditulis penulis lain.
+
+    - ``snapshots``: union mint dan bucket jam; bucket yang sama memakai baris
+      dengan ``ts`` terbaru.
+    - ``signals``: union berdasarkan ``id`` (versi lokal menang), urut ``ts``.
+    - ``shakeout_latched_at``: union; bila beda, latch paling awal yang dipakai
+      (latch bersifat permanen).
+    - ``alerts``: per mint, nilai numerik diambil maksimum (cooldown tidak
+      mundur); field lain versi lokal.
+    - ``updated``: maksimum. Field lain: versi lokal.
+    """
+    local = dict(local or {})
+    remote = dict(remote or {})
+    merged = dict(local)
+
+    snapshots: dict = {}
+    for source in (remote.get("snapshots"), local.get("snapshots")):
+        if not isinstance(source, dict):
+            continue
+        for mint, buckets in source.items():
+            target = snapshots.setdefault(mint, {})
+            if not isinstance(buckets, dict):
+                continue
+            for key, row in buckets.items():
+                target[key] = _newer_row(target.get(key), row)
+    merged["snapshots"] = snapshots
+
+    seen: dict = {}
+    for row in list(remote.get("signals") or []) + list(local.get("signals") or []):
+        if not isinstance(row, dict):
+            continue
+        key = row.get("id")
+        if key is None:
+            key = json.dumps(row, sort_keys=True, default=str)
+        seen[key] = row
+    signals = sorted(seen.values(), key=lambda row: float(row.get("ts") or 0))
+    merged["signals"] = signals[-MAX_SIGNALS:]
+
+    latches: dict = {}
+    for source in (remote.get("shakeout_latched_at"), local.get("shakeout_latched_at")):
+        if not isinstance(source, dict):
+            continue
+        for mint, ts in source.items():
+            if ts is None:
+                continue
+            current = latches.get(mint)
+            latches[mint] = ts if current is None else min(current, ts)
+    merged["shakeout_latched_at"] = latches
+
+    alerts: dict = {}
+    for source in (remote.get("alerts"), local.get("alerts")):
+        if not isinstance(source, dict):
+            continue
+        for mint, entry in source.items():
+            current = alerts.get(mint)
+            if not (isinstance(current, dict) and isinstance(entry, dict)):
+                alerts[mint] = entry
+                continue
+            combined = dict(current)
+            for key, value in entry.items():
+                old = combined.get(key)
+                if _is_number(value) and _is_number(old):
+                    combined[key] = max(old, value)
+                else:
+                    combined[key] = value
+            alerts[mint] = combined
+    merged["alerts"] = alerts
+
+    merged["updated"] = max(int(local.get("updated") or 0),
+                            int(remote.get("updated") or 0))
+    merged["version"] = STATE_VERSION
+    return merged
+
+
+def fetch_remote_state(timeout: int = 15):
+    """State di GitHub: ``dict``; ``{}`` bila berkas belum ada; ``None`` bila gagal dibaca.
+
+    ``None`` berarti jangan menimpa GitHub — lebih baik tidak commit daripada
+    menghapus snapshot yang tidak terbaca.
+    """
+    import requests
+
+    token = _github_token()
+    if not token:
+        return None
+    url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/sweep_state.json"
+    headers = {"Authorization": f"Bearer {token}",
+               "Accept": "application/vnd.github.raw"}
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout)
+    except Exception:  # noqa: BLE001 - offline ≠ crash aplikasi
+        return None
+    if response.status_code == 404:
+        return {}
+    if response.status_code != 200:
+        return None
+    try:
+        data = response.json()
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def save_state(state: dict, *, persist: bool = False, reason: str = "") -> dict:
-    """Tulis state lokal (atomik) + opsional commit ke GitHub."""
+    """Tulis state lokal (atomik) + opsional commit ke GitHub.
+
+    Dengan ``persist`` state digabung dulu dengan versi GitHub (lihat
+    :func:`merge_states`). Bila versi GitHub tidak bisa dibaca, state hanya
+    ditulis lokal dan tidak di-push.
+    """
     state = dict(state or {})
     # Drop legacy UI settings on the next write; thresholds are fixed in
     # sweep_screen and no longer belong to persisted state.
@@ -194,8 +321,14 @@ def save_state(state: dict, *, persist: bool = False, reason: str = "") -> dict:
     state.setdefault("shakeout_latched_at", {})
     state["version"] = STATE_VERSION
     state["updated"] = _now()
-    atomic_write_json(STATE_PATH, state, separators=(",", ":"))
+    pushable = False
     if persist:
+        remote = fetch_remote_state()
+        if remote is not None:
+            state = prune(merge_states(state, remote))
+            pushable = True
+    atomic_write_json(STATE_PATH, state, separators=(",", ":"))
+    if pushable:
         push_state(state, reason)
     return state
 
@@ -291,7 +424,7 @@ def add_snapshot(state: dict, mint: str, metrics: dict,
 VIEW_METRIC_KEYS = (
     "mint", "ok", "error", "symbol", "name", "price_usd", "liq_usd", "fdv_usd",
     "market_cap_usd", "vol_1h", "vol_24h", "buys_1h", "sells_1h", "pair_address",
-    "dex_id", "pool_count", "url", "pair_created_at", "lp_locked_pct",
+    "dex_id", "pool_count", "url", "pair_created_at", "rugcheck_ok",
     "mint_authority", "freeze_authority", "top10_holder_pct", "holder_count",
     "top_bundler_trader_percentage", "bundler_rate", "bot_degen_rate",
     "fresh_wallet_rate", "status_now", "holding_rate",

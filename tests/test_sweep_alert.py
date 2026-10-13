@@ -146,7 +146,7 @@ class MessageFormatTest(unittest.TestCase):
         return {
             "symbol": "COCKROACH", "price_usd": 0.00023768309790897773,
             "liq_usd": 30232.0, "fdv_usd": 233451.0,
-            "lp_locked_pct": 89.8178, "top10_holder_pct": 18.92,
+            "top10_holder_pct": 18.92,
             "holder_count": 3609, "bundler_rate": 0.1764,
             "bot_degen_rate": 0.4551, "entrapment_rate": 0.3222,
         }
@@ -159,7 +159,7 @@ class MessageFormatTest(unittest.TestCase):
         self.assertIn("KELAYAKAN SWEEP", text)
         self.assertIn("COCKROACH", text)
         self.assertIn("liq/MC: 13.0%", text)
-        self.assertIn("LP locked 89.8%", text)
+        self.assertNotIn("LP locked", text)
         self.assertIn("top-10 18.9%", text)
         self.assertIn("Bundler 17.6%", text)
         self.assertIn("bot degen 45.5%", text)
