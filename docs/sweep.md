@@ -169,6 +169,13 @@ commit hanya terjadi saat jam baru muncul; harga/view di jam berjalan ditimpa
 tiap 5 menit tanpa commit. Field `alerts`/`updated` yang volatil juga tidak
 memicu commit. Watchlist tetap manual.
 
+**Penulisan bersama (cron + app).** Cron (`scripts/commit_sweep_state.sh`) dan app
+(`save_state(persist=True)`) sama-sama menulis `sweep_state.json` ke `main`. Sebelum
+menimpa, keduanya menggabung dengan versi GitHub lewat `sweep_store.merge_states`
+(snapshot di-union per mint dan jam), dan push cron di-retry bila ditolak. Bila versi
+GitHub tidak bisa dibaca, app menulis lokal saja dan tidak push. Penjadwalan cron
+GitHub tetap best-effort: GitHub boleh melewatkan atau menunda run `schedule`.
+
 | Berkas | Status |
 | --- | --- |
 | `sweep_watchlist.json` | di-commit |
