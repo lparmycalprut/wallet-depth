@@ -162,9 +162,11 @@ tombol hapus). Snapshot dan sinyal mint tersebut tetap di state; hanya tampilan
 dan pemindaian oleh cron yang berhenti.
 
 Cron GitHub Actions tetap berjalan tiap 5 menit (`.github/workflows/sweep-scan.yml`)
-dan auto-refresh halaman juga 5 menit. `store.fingerprint()` mencakup snapshot
-per jam, id sinyal, dan latch shakeout permanen; field `alerts`/`updated` yang
-volatil tidak memicu commit. Watchlist tetap manual.
+dan auto-refresh halaman juga 5 menit. `store.fingerprint()` mencakup **kunci bucket**
+snapshot per jam (bukan isinya), id sinyal, dan latch shakeout permanen. Jadi
+commit hanya terjadi saat jam baru muncul; harga/view di jam berjalan ditimpa
+tiap 5 menit tanpa commit. Field `alerts`/`updated` yang volatil juga tidak
+memicu commit. Watchlist tetap manual.
 
 | Berkas | Status |
 | --- | --- |

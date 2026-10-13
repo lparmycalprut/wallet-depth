@@ -201,16 +201,24 @@ def save_state(state: dict, *, persist: bool = False, reason: str = "") -> dict:
 
 
 def fingerprint(state: dict) -> str:
-    """Fingerprint committed snapshots, signal ids, and permanent shakeout latches.
+    """Fingerprint kunci bucket snapshot, signal ids, dan latch shakeout permanen.
 
-    Volatile ``alerts`` and ``updated`` are excluded: otherwise the 5-minute
-    cron would create ~288 commits/day. Legacy settings are intentionally
-    ignored because the thresholds are fixed in ``sweep_screen``.
+    Hanya **kunci bucket** (jam) yang masuk, bukan isinya: bucket jam berjalan
+    ditimpa tiap 5 menit (harga, likuiditas, view), dan kalau isinya ikut,
+    cron 5 menitan membuat ~288 commit/hari. Jadi commit hanya terjadi saat
+    snapshot jam baru muncul (atau bucket lama dipangkas), sesuai
+    ``docs/sweep.md``. Field ``alerts``/``updated`` yang volatil juga dikecualikan.
+    Legacy settings sengaja diabaikan karena ambang dikunci di ``sweep_screen``.
     """
     import hashlib
 
+    snapshots = (state or {}).get("snapshots") or {}
+    hour_keys = {
+        mint: sorted(buckets.keys()) if isinstance(buckets, dict) else None
+        for mint, buckets in snapshots.items()
+    }
     payload = json.dumps({
-        "snapshots": (state or {}).get("snapshots") or {},
+        "snapshots": hour_keys,
         "signals": [(row or {}).get("id") for row in ((state or {}).get("signals") or [])
                     if isinstance(row, dict)],
         "shakeout_latched_at": (state or {}).get("shakeout_latched_at") or {},

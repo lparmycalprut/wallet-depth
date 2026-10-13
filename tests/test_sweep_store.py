@@ -185,6 +185,22 @@ class FixedStateTest(_Sandbox):
         store.save_state(state)
         self.assertNotIn("settings", store.load_state())
 
+    def test_fingerprint_ignores_price_churn_inside_same_hour(self):
+        """Cron 5 menitan menimpa bucket jam berjalan: tidak boleh memicu commit."""
+        state = store.empty_state()
+        store.add_snapshot(state, "M", {"price_usd": 1.0, "ts": 3600 + 10})
+        before = store.fingerprint(state)
+        store.add_snapshot(state, "M", {"price_usd": 1.7, "ts": 3600 + 310})
+        store.add_snapshot(state, "M", {"price_usd": 2.2, "ts": 3600 + 610})
+        self.assertEqual(store.fingerprint(state), before)
+
+    def test_fingerprint_changes_when_new_hour_bucket_appears(self):
+        state = store.empty_state()
+        store.add_snapshot(state, "M", {"price_usd": 1.0, "ts": 3600 + 10})
+        before = store.fingerprint(state)
+        store.add_snapshot(state, "M", {"price_usd": 1.0, "ts": 7200 + 10})
+        self.assertNotEqual(store.fingerprint(state), before)
+
     def test_shakeout_latch_is_fingerprinted(self):
         state = store.empty_state()
         before = store.fingerprint(state)
