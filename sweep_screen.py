@@ -657,9 +657,13 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
     score_ok = (score is not None and len(passed) >= required and structural_ok)
     eligible = bool(gate["passed"] and cost_gate_result["passed"]
                     and holder_gate["passed"] and score_ok)
-    if not gate["passed"]:
+    # Gate holder yang sudah terhitung (TUNGGU, bukan "belum ada data") tetap
+    # tampil walau kohort TANPA DATA: data holder tidak bergantung pada candle.
+    cohort_missing = str(gate["status"]).startswith("TANPA DATA")
+    holder_wait = not holder_gate["passed"] and holder_gate["gap"] is not None
+    if not gate["passed"] and not (cohort_missing and holder_wait):
         verdict, color = gate["status"], (
-            "#64748b" if gate["status"].startswith("TANPA DATA") else "#b45309")
+            "#64748b" if cohort_missing else "#b45309")
     elif not cost_gate_result["passed"]:
         verdict, color = cost_gate_result["status"], "#b45309"
     elif not holder_gate["passed"]:

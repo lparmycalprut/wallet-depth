@@ -552,6 +552,22 @@ class HolderCostGateEvaluateTest(unittest.TestCase):
         self.assertFalse(result["eligible"])
         self.assertTrue(result["verdict"].startswith("TUNGGU — avg buy holder belum"))
 
+    def test_holder_wait_shows_even_when_cohort_data_missing(self):
+        result = ss.evaluate(self._metrics(holder_min_avg_cost=0.1),
+                             snapshots=[], candles=[], cohort_candles=None,
+                             now=1000 + 49 * 3600)
+        self.assertEqual(result["cohort_gate_status"], "TANPA DATA — kohort")
+        self.assertFalse(result["holder_gate_passed"])
+        self.assertFalse(result["eligible"])
+        self.assertTrue(result["verdict"].startswith("TUNGGU — avg buy holder"))
+        self.assertEqual(result["color"], "#b45309")
+
+    def test_missing_holder_data_keeps_cohort_tanpa_data_verdict(self):
+        result = ss.evaluate(self._metrics(), snapshots=[], candles=[],
+                             cohort_candles=None, now=1000 + 49 * 3600)
+        self.assertEqual(result["verdict"], "TANPA DATA — kohort")
+        self.assertEqual(result["color"], "#64748b")
+
     def test_cost_gate_still_wins_over_holder_gate(self):
         result = ss.evaluate(self._metrics(liq_usd=MC_USD * 0.35,
                                            holder_min_avg_cost=0.1),
