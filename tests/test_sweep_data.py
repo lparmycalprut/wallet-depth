@@ -55,6 +55,35 @@ class GmgnTopBuyersTest(unittest.TestCase):
         self.assertEqual(result["fresh_wallet_rate"], 0.025)
 
 
+class RugcheckLpLockedTest(unittest.TestCase):
+    def _snapshot(self, report):
+        with mock.patch.object(data, "_get_json", return_value=report):
+            return data.rugcheck_snapshot("MINT", use_cache=False)
+
+    def test_reads_lp_locked_from_main_amm_pool_not_top_level(self):
+        report = {"topHolders": [], "markets": [
+            {"marketType": "meteoraDlmm",  # tanpa LP token → dilewati
+             "lp": {"lpTotalSupply": 0, "lpLockedPct": 0,
+                    "quoteUSD": 900000.0, "baseUSD": 900000.0}},
+            {"marketType": "raydium",
+             "lp": {"lpTotalSupply": 479225563282069, "lpLockedPct": 95.5,
+                    "quoteUSD": 254444.0, "baseUSD": 103873.0}},
+            {"marketType": "raydium",  # pool kecil, tidak dipakai
+             "lp": {"lpTotalSupply": 100, "lpLockedPct": 10.0,
+                    "quoteUSD": 100.0, "baseUSD": 100.0}},
+        ]}
+        self.assertEqual(self._snapshot(report)["lp_locked_pct"], 95.5)
+
+    def test_no_lp_token_pool_gives_none_not_zero(self):
+        report = {"topHolders": [], "markets": [
+            {"marketType": "orca", "lp": {"lpTotalSupply": 0, "lpLockedPct": 0}}]}
+        self.assertIsNone(self._snapshot(report)["lp_locked_pct"])
+
+    def test_top_level_field_is_ignored(self):
+        report = {"topHolders": [], "lpLockedPct": 0, "markets": []}
+        self.assertIsNone(self._snapshot(report)["lp_locked_pct"])
+
+
 class CollectMetricsTest(unittest.TestCase):
     def test_row_metrics_include_gmgn_and_birth_pool_fields(self):
         dex = {
