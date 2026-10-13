@@ -321,6 +321,8 @@ def _render_table(rows, watchlist) -> None:
                 "Refresh", help="Pindai ulang mint ini sekarang juga",
                 pinned=True, on_click=_request_refresh, args=(mints,),
                 key=REFRESH_CLICK_KEY),
+            # Token ikut dipin (urutan kolom: Hapus, Refresh, Token).
+            "Token": st.column_config.TextColumn("Token", pinned=True),
             "Kohort": st.column_config.TextColumn("Kohort", width=320),
             "GMGN": st.column_config.LinkColumn("GMGN", display_text="buka"),
         })
