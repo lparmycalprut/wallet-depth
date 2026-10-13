@@ -228,6 +228,8 @@ def _eligibility_rows(rows) -> list:
             "liq/MC": _fmt_pct(result.get("liq_mc")),
             # Cost 3x MC divided by COCK 4.74% MC ($11,066 / $233,451).
             "× dana acuan": _fmt_times(result.get("reference_fund_x")),
+            # Nominal $ untuk 3x pada basis kas satu sisi (= × dana acuan).
+            "Dana acuan": _fmt_usd(result.get("reference_fund_usd")),
             "Turnover (×/hari)": _fmt_times(row.get("turnover_x",
                                                        result.get("turnover_x")), 2),
             "Liq": _fmt_usd(metrics.get("liq_usd")),
@@ -446,6 +448,7 @@ def _render_details(rows) -> None:
                     [{"Target": _fmt_mult(t["mult"], 0),
                       "Biaya (% MC)": (f"{t['cost_pct']:.1f}%"
                                        if t.get("cost_pct") is not None else "—"),
+                      "Biaya ($)": _fmt_usd(t.get("cost_usd")),
                       "Leverage": _fmt_mult(t.get("leverage"), 0),
                       "Realistis": "ya" if t.get("feasible") else "berat"}
                      for t in targets],

@@ -14,6 +14,7 @@ Independent market-risk fields such as Meteora's `top_holders_pct`, GMGN metrics
 - the watchlist is **manual** — never auto-populate it from Best Pool, GMGN, or any scanner
 - Sweep structural thresholds are fixed in `sweep_screen.py`: `LIQ_MC_MAX = 0.35` and `HOLDER_MAX_PCT = 5.0`. Do not add UI/cron overrides or persist threshold settings.
 - Sweep eligibility requires the cohort gate: only a measured OHLCV-derived 48-hour birth-window VWAP with `status_avg_cost ≤ -0.50` (current price at least 50% below cohort VWAP; threshold lowered from -0.70 on 2026-10-13) may pass; PLUS, shallow-minus, or missing cohort data must not be eligible.
+- Sweep eligibility also requires the **cost gate** (2026-10-13): the sweep cost to 10x, `(sqrt(10)-1) x liq/MC`, must be ≤ 75% of market cap (`COST_GATE_MAX_FRAC = 0.75`, `COST_GATE_MULT = 10`). Above 75%, or when the value is missing, the verdict is `TUNGGU — biaya 10x …` and the mint is not eligible. The gate is evaluated after the cohort gate.
 - A detected shakeout is latched per mint in `sweep_state.json` and must never be cleared just because later candles break the old low.
 - alerts fire on **state transitions only** (eligibility transition, sweep cooldown), never on every scan
 - theoretical and measured numbers must stay labelled as such: `est_cost_usd` is the formula `(sqrt(m)-1) * liq`, `net_inflow_usd` is a measurement (Δ liquidity between snapshots) and is `None` when unavailable — do not let the UI or alerts present the reference estimate as a measurement

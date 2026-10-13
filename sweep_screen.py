@@ -51,6 +51,12 @@ COHORT_WINDOW_HOURS = 48
 #: 2026-10-13.
 COHORT_MINUS_THRESHOLD = -0.50
 
+#: Gate biaya (2026-10-13, permintaan user): biaya sweep untuk naik
+#: ``COST_GATE_MULT`` kali harus ≤ 75% market cap. Di atas itu, atau bila belum
+#: ada data, vonis = TUNGGU. Ambang tetap, tidak dapat diubah dari UI/cron.
+COST_GATE_MULT = 10.0
+COST_GATE_MAX_FRAC = 0.75
+
 #: Acuan kalibrasi inflow nyata vs biaya dorong ke puncak, dari satu event
 #: terukur: COCKROACH 1 Okt 2026 — inflow nyata $58.778 ÷ biaya dorong ke
 #: puncak $58.774 = 1,0x (selisih < $4, dalam boltjang). Konstanta ini dipakai
@@ -134,8 +140,25 @@ def leverage_ratio(mult, liq_mc):
     return (math.sqrt(m) + 1.0) / lm
 
 
-def target_costs(liq_mc, mults=(2.0, 5.0, 10.0, 50.0)):
-    """Tabel biaya sweep + leverage untuk beberapa target kelipatan."""
+def cost_usd(mult, liq_usd):
+    """Nominal USD yang dibutuhkan untuk naik ``mult`` kali.
+
+    ``(akar(m) - 1) x liq_usd``. Sama dengan ``cost_frac x MC`` karena
+    ``liq/MC = liq_usd / MC``; dihitung langsung dari likuiditas agar tidak
+    ada pembulatan ganda.
+    """
+    m = _num(mult)
+    lu = _num(liq_usd)
+    if m is None or lu is None or m <= 0 or lu <= 0:
+        return None
+    return (math.sqrt(m) - 1.0) * lu
+
+
+def target_costs(liq_mc, mults=(2.0, 5.0, 10.0, 50.0), liq_usd=None):
+    """Tabel biaya sweep + leverage untuk beberapa target kelipatan.
+
+    ``usd`` hanya diisi bila ``liq_usd`` diberikan (nominal dolar biaya).
+    """
     out = []
     for mult in mults:
         cost = leverage_cost(mult, liq_mc)
@@ -143,10 +166,30 @@ def target_costs(liq_mc, mults=(2.0, 5.0, 10.0, 50.0)):
             "mult": float(mult),
             "cost_frac": cost,
             "cost_pct": (cost * 100.0) if cost is not None else None,
+            "cost_usd": cost_usd(mult, liq_usd),
             "leverage": leverage_ratio(mult, liq_mc),
             "feasible": (cost is not None and cost <= 1.0),
         })
     return out
+
+
+def cost_gate(cost_frac) -> dict:
+    """Gate biaya 10x: biaya ≤ 75% MC lolos; > 75% atau tanpa data = TUNGGU."""
+    value = _num(cost_frac)
+    label = f"biaya {COST_GATE_MULT:.0f}x"
+    if value is None:
+        return {"passed": False,
+                "status": f"TUNGGU — {label} belum ada data",
+                "detail": f"{label} belum bisa dihitung (liq/MC atau MC kosong); "
+                          "gate belum lolos"}
+    limit_pct = COST_GATE_MAX_FRAC * 100
+    if value > COST_GATE_MAX_FRAC:
+        return {"passed": False,
+                "status": f"TUNGGU — {label} {value * 100:.1f}% MC (batas {limit_pct:.0f}%)",
+                "detail": f"{label} {value * 100:.1f}% MC melebihi batas {limit_pct:.0f}%"}
+    return {"passed": True,
+            "status": "LOLOS",
+            "detail": f"{label} {value * 100:.1f}% MC (batas {limit_pct:.0f}%)"}
 
 
 def reference_fund_multiple(liq_mc):
@@ -302,6 +345,7 @@ def display_sort_key(result) -> tuple:
         if avg is not None:
             distance = abs(avg - COHORT_MINUS_THRESHOLD)
     elif result.get("cohort_gate_passed"):
+        # Termasuk TUNGGU gate biaya 10x: kohort sudah lolos, tapi biaya belum.
         group = {VERDICT_LAYAK[0]: 0, VERDICT_KANDIDAT[0]: 1}.get(verdict, 2)
     else:
         group = 4
@@ -572,11 +616,17 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
                             metrics.get("price_usd"), now=now,
                             fetch_error=cohort_error)
     gate = cohort_gate(cohort)
+    # Gate biaya 10x diuji setelah gate kohort; keduanya harus lolos sebelum
+    # skor menentukan LAYAK/KANDIDAT.
+    cost_10x_mc_frac = leverage_cost(COST_GATE_MULT, liq_mc)
+    cost_gate_result = cost_gate(cost_10x_mc_frac)
     score_ok = (score is not None and len(passed) >= required and structural_ok)
-    eligible = bool(gate["passed"] and score_ok)
+    eligible = bool(gate["passed"] and cost_gate_result["passed"] and score_ok)
     if not gate["passed"]:
         verdict, color = gate["status"], (
             "#64748b" if gate["status"].startswith("TANPA DATA") else "#b45309")
+    elif not cost_gate_result["passed"]:
+        verdict, color = cost_gate_result["status"], "#b45309"
     elif score is None:
         verdict, color = VERDICT_DATA
     elif score_ok:
@@ -595,6 +645,9 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
     # UI column "× dana acuan" = ((√3−1)×(liq/MC÷2)) ÷ 4.74%, where
     # 4.74% = COCK's $11,066 / $233,451; its one-sided cash basis makes COCK 1.0×.
     reference_fund_x = reference_fund_multiple(liq_mc)
+    # Nominal $ untuk "× dana acuan": (√3−1) x (liq/2), sama dengan
+    # reference_fund_x x 4,74% MC (basis kas satu sisi seperti di atas).
+    reference_fund_usd = cost_usd(3.0, liq / 2.0) if liq is not None else None
     return {
         "checks": checks,
         "passed_count": len(passed),
@@ -606,9 +659,14 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
         "verdict": verdict,
         "color": color,
         "liq_mc": liq_mc,
-        "targets": target_costs(liq_mc) if liq_mc else [],
+        "targets": target_costs(liq_mc, liq_usd=liq) if liq_mc else [],
         "cost_3x_mc_frac": cost_3x_mc_frac,
+        "cost_10x_mc_frac": cost_10x_mc_frac,
+        "cost_gate_status": cost_gate_result["status"],
+        "cost_gate_passed": cost_gate_result["passed"],
+        "cost_gate_detail": cost_gate_result["detail"],
         "reference_fund_x": reference_fund_x,
+        "reference_fund_usd": reference_fund_usd,
         "turnover_x": turnover_x,
         "cohort": cohort,
         "cohort_gate_status": gate["status"],
