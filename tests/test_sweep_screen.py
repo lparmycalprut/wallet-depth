@@ -617,3 +617,17 @@ class StatisticsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CohortFetchErrorTest(unittest.TestCase):
+    def test_fetch_error_reason_is_surfaced_and_gate_holds(self):
+        profile = ss.cohort_profile([], 1_000, 1.0, now=1_000 + 3600,
+                                        fetch_error="GeckoTerminal HTTP 429")
+        self.assertEqual(profile["error"], "GeckoTerminal HTTP 429")
+        gate = ss.cohort_gate(profile)
+        self.assertFalse(gate["passed"])
+        self.assertEqual(gate["status"], "TANPA DATA — kohort")
+
+    def test_generic_message_kept_without_fetch_error(self):
+        profile = ss.cohort_profile([], 1_000, 1.0, now=1_000 + 3600)
+        self.assertEqual(profile["error"], "OHLCV 48 jam pertama tidak tersedia")
