@@ -31,29 +31,36 @@ MIN5_LIMIT = 120
 
 
 def _fetch_bundle(mint: str, *, use_cache: bool = True) -> dict:
-    """Metrik + dua deret candle untuk satu mint."""
+    """Metrik + candle terbaru + jendela kelahiran pool utama untuk satu mint."""
     metrics = data.collect_metrics(mint, use_cache=use_cache)
     pool = metrics.get("pair_address") or ""
     candles_hour = (data.ohlcv(pool, "hour", limit=HOUR_LIMIT,
                                use_cache=use_cache) if pool else [])
     candles_min5 = (data.ohlcv(pool, "min5", limit=MIN5_LIMIT,
                                use_cache=use_cache) if pool else [])
+    cohort_candles = (data.cohort_ohlcv(
+        pool, metrics.get("pair_created_at"), use_cache=use_cache)
+        if pool else [])
     return {"mint": mint, "metrics": metrics,
-            "candles_hour": candles_hour, "candles_min5": candles_min5}
+            "candles_hour": candles_hour, "candles_min5": candles_min5,
+            "cohort_candles": cohort_candles}
 
 
-def analyze(bundle: dict, snapshots=None) -> dict:
+def analyze(bundle: dict, snapshots=None, *, state=None, now=None) -> dict:
     """Skrining + deteksi sweep untuk satu mint (tanpa jaringan)."""
-    metrics = (bundle or {}).get("metrics") or {}
+    bundle = bundle or {}
+    metrics = bundle.get("metrics") or {}
     snapshots = snapshots if snapshots is not None else []
-    result = screen.evaluate(metrics, snapshots=snapshots,
-                             candles=(bundle or {}).get("candles_hour") or [])
-    event = screen.detect_sweep((bundle or {}).get("candles_min5") or [])
+    mint = bundle.get("mint") or metrics.get("mint") or ""
+    result = screen.evaluate(
+        metrics, snapshots=snapshots, candles=bundle.get("candles_hour") or [],
+        cohort_candles=bundle.get("cohort_candles") or [],
+        state=state, mint=mint, now=now)
+    event = screen.detect_sweep(bundle.get("candles_min5") or [])
     context = screen.sweep_context(
         event, result.get("liq_mc"), metrics.get("fdv_usd"),
         market_cap_usd=metrics.get("market_cap_usd")) if event else None
-    return {"mint": (bundle or {}).get("mint") or metrics.get("mint") or "",
-            "metrics": metrics, "result": result,
+    return {"mint": mint, "metrics": metrics, "result": result,
             "sweep": event, "sweep_context": context}
 
 
@@ -61,61 +68,36 @@ def _scan_one(mint: str, *, use_cache: bool = True) -> dict:
     try:
         bundle = _fetch_bundle(mint, use_cache=use_cache)
         item = analyze(bundle)
-        # Candle ikut dibawa supaya run_scan bisa menilai ulang kriteria 4/5
-        # setelah snapshot mint ini tersimpan (putaran pertama belum punya
-        # riwayat, jadi kriteria 4/5 masih None).
-        item["candles_hour"] = bundle.get("candles_hour") or []
-        item["candles_min5"] = bundle.get("candles_min5") or []
+        # Candle mentah tetap di memori untuk memperbarui kriteria dan profil
+        # kohort setelah snapshot putaran ini tersimpan.
+        for field in ("candles_hour", "candles_min5", "cohort_candles"):
+            item[field] = bundle.get(field) or []
         return item
     except Exception as exc:  # noqa: BLE001 - satu mint gagal ≠ scan gagal
         return {"mint": mint, "metrics": {"mint": mint, "ok": False,
                                           "error": str(exc)[:160]},
                 "result": screen.evaluate({}, snapshots=[], candles=[]),
                 "sweep": None, "sweep_context": None,
-                "candles_hour": [], "candles_min5": []}
-
-
-def rescore_rows(rows, state=None, settings=None) -> list:
-    """Nilai ulang baris yang sudah ada dengan ambang baru — **tanpa jaringan**.
-
-    Dipakai saat user menggeser ambang liq/MC: tabel dan statistik langsung
-    ikut berubah tanpa memanggil DexScreener/RugCheck/GMGN lagi.
-    """
-    state = store.load_state() if state is None else state
-    config = store.load_settings(state) if settings is None else settings
-    out = []
-    for row in rows or []:
-        mint = row.get("mint") or ""
-        enriched = screen.evaluate(
-            row.get("metrics") or {},
-            snapshots=store.mint_history(state, mint),
-            candles=row.get("candles_hour") or [],
-            settings=config)
-        out.append(dict(row, result=enriched))
-    return sorted(out, key=lambda r: (r["result"].get("score") is None,
-                                      -(r["result"].get("score") or 0)))
+                "candles_hour": [], "candles_min5": [],
+                "cohort_candles": []}
 
 
 def run_scan(mints, *, state: dict | None = None,
              use_cache: bool = True, send_alerts: bool = True,
              workers: int = DEFAULT_WORKERS, now: int | None = None,
-             persist: bool = False, settings=None) -> dict:
+             persist: bool = False) -> dict:
     """Jalankan satu putaran scan untuk semua ``mints``.
 
     Mengembalikan ``{"rows": [...], "state": {...}, "alerts": [...],
     "elapsed": float}``. ``rows`` urut menurun berdasarkan skor kelayakan supaya
-    tabel UI langsung terbaca.
-
-    ``settings`` = pengaturan user (ambang liq/MC). Kalau ``None``, diambil dari
-    state sehingga halaman dan cron memakai ambang yang sama; nilai yang dikirim
-    eksplisit akan disimpan kembali ke state.
+    tabel UI langsung terbaca. Ambang kriteria ditetapkan di :mod:`sweep_screen`.
     """
     started = time.time()
     seen = store.parse_mints(mints)
     state = store.load_state() if state is None else state
-    if settings is not None:
-        store.save_settings(state, settings)
-    config = store.load_settings(state)
+    latches = state.setdefault("shakeout_latched_at", {})
+    if not isinstance(latches, dict):
+        latches = state["shakeout_latched_at"] = {}
     alerts_sent = []
     results = []
 
@@ -129,12 +111,23 @@ def run_scan(mints, *, state: dict | None = None,
         metrics = item["metrics"] or {}
         if metrics.get("ok"):
             store.add_snapshot(state, mint, metrics, ts=now)
+
+        # First successful shakeout + higher-low detection is latched forever.
+        # Later candles (including a sweep under the former low) never clear it.
+        if latches.get(mint) is None:
+            detected = screen.criterion_shakeout(item.get("candles_hour") or [])
+            if detected.get("passed") is True:
+                detected_at = screen._num(detected.get("detection_ts"))
+                latches[mint] = int(detected_at if detected_at is not None
+                                    else (now if now is not None else time.time()))
+
         history = store.mint_history(state, mint)
-        # Skrining dinilai ulang dengan riwayat lengkap: kriteria 4 dan 5 hanya
-        # bisa dijawab setelah ada snapshot (termasuk snapshot mint ini).
-        enriched = screen.evaluate(metrics, snapshots=history,
-                                   candles=item.get("candles_hour") or [],
-                                   settings=config)
+        # Score with complete hourly history and the stored per-mint latch.
+        enriched = screen.evaluate(
+            metrics, snapshots=history,
+            candles=item.get("candles_hour") or [],
+            cohort_candles=item.get("cohort_candles") or [],
+            state=state, mint=mint, now=now)
         item["result"] = enriched
         if item.get("sweep"):
             # Inflow nyata = Δ likuiditas antar snapshot. Kalau snapshot
@@ -224,8 +217,10 @@ def run_scan(mints, *, state: dict | None = None,
         [{"mint": item["mint"], "metrics": item["metrics"],
           "result": item["result"], "sweep": item["sweep"],
           "sweep_context": item["sweep_context"],
-          # Candle ikut dibawa di memori (tidak dipersist) supaya ambang bisa
-          # diubah dari UI tanpa memanggil jaringan lagi.
+          "turnover_x": (item.get("result") or {}).get("turnover_x"),
+          "cohort": (item.get("result") or {}).get("cohort"),
+          "cohort_gate_status": (item.get("result") or {}).get("cohort_gate_status"),
+          # Hourly candles stay in memory for display/debug; they are not state.
           "candles_hour": item.get("candles_hour") or []} for item in results],
         key=lambda row: (row["result"].get("score") is None,
                          -(row["result"].get("score") or 0)),

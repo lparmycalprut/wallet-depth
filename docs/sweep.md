@@ -1,158 +1,163 @@
 # Page 🌊 Sweep — kelayakan sweep, alert, dan tabel statistik
 
-Halaman terpisah dari **🏆 Scan Best Pool Meteora** (permintaan user 2026-10-12).
-`app.py` tidak disentuh; entri halamannya `pages/8_🌊_Sweep.py`.
+Halaman terpisah dari **🏆 Scan Best Pool Meteora**. Entrinya
+`pages/8_🌊_Sweep.py`; `app.py` tidak mengimpor modul Sweep.
 
 ## Alur
 
 | Berkas | Isi |
 | --- | --- |
-| `sweep_screen.py` | mesin skrining murni (tanpa jaringan): 6 kriteria, deteksi sweep, rumus biaya, ringkasan statistik |
-| `sweep_data.py` | DexScreener + RugCheck + GMGN `token_stat` + GeckoTerminal OHLCV, cache 90/120 detik |
-| `sweep_store.py` | watchlist manual, state (snapshot per jam, sinyal, hasil 72 jam), gate alert, push GitHub |
+| `sweep_screen.py` | mesin skrining murni: enam kriteria, gate kohort, latch shakeout, deteksi sweep, rumus biaya |
+| `sweep_data.py` | DexScreener + RugCheck + GMGN `token_stat`/`top_buyers` + GeckoTerminal OHLCV; cache 90/120 detik |
+| `sweep_store.py` | watchlist manual, snapshot per jam, sinyal, gate alert, latch shakeout, push GitHub |
 | `sweep_alert.py` | Telegram berlapis `st.secrets` → env → `config.json` |
-| `sweep_scan.py` | satu putaran scan: ambil → snapshot → skrining → alert → prune |
-| `sweep_ui.py` | badan halaman Streamlit |
+| `sweep_scan.py` | satu putaran scan: ambil → snapshot → latch → gate/s skor → alert → prune |
+| `sweep_ui.py` | badan halaman Streamlit, tabel dan panel Kohort lahir |
 | `scripts/scan_sweep.py` | runner cron, mencetak `SWEEP_STATE_CHANGED=0\|1` |
 
-## Enam kriteria
+Watchlist tetap **manual**. Tidak ada pengisian otomatis dari Best Pool atau
+pemindai lain.
 
-1. **liq/MC** di bawah ambang (lihat bagian Ambang di bawah).
+## Kriteria struktural dan skor
+
+1. **liq/MC ≤ 35%** — ambang tetap. Dengan basis cash-side pembanding,
+   `(√3 − 1) × (35%÷2) = 12,8% MC`; estimator biaya penuh dua sisi yang tetap
+   dipakai `est_cost_usd`/`leverage_cost` menghasilkan 25,6% MC pada batas itu.
 2. **LP terkunci** ≥ 85% + authority mint/freeze sudah dilepas. Ambangnya 85%
-   (bukan 90%) karena token acuan COCKROACH sendiri hanya 89,8%.
-3. **Float tersebar**: top-10 < 25% **dan** tiap holder < 3%, akun pool AMM
-   dikecualikan. Kontrak: `top10_holder_pct` **selalu persen** — GMGN mengirim
-   `top_10_holder_rate` sebagai fraksi 0-1 dan `sweep_data` yang mengonversi.
+   (bukan 90%) karena COCKROACH sendiri hanya 89,82%.
+3. **Float tersebar**: top-10 < 25% dan setiap holder/wallet ≤ 5%; akun pool
+   AMM dikecualikan. Persentase holder berasal dari RugCheck dan ditulis dalam
+   skala 0–100.
 4. **Akumulasi (proxy)**: net tekanan beli > 0 dengan harga sideways (< 25%),
-   dari snapshot. Ini **proxy**, bukan CVD level wallet — CVD sebenarnya butuh
-   Helius dan tidak diklaim di sini.
+   dari snapshot. Ini proxy, bukan CVD level wallet.
 5. **Ekspansi volume**: volume naik ≥ 3× dari titik tersepi, sementara harga
    belum lari (< 3× dari titik tersepi).
-6. **Shakeout + higher low**: satu bar turun ≥ 30%, lalu low berikutnya lebih
-   tinggi. Perlu ≥ 3 bar; bar terakhir tidak pernah dinilai sebagai shakeout
-   karena butuh bar setelahnya sebagai bukti.
+6. **Shakeout + higher low**: satu candle turun ≥ 30%, lalu low berikutnya
+   tidak lebih rendah. Begitu terdeteksi, status kriteria 6 di-latch permanen
+   per mint di `sweep_state.json` (`shakeout_latched_at`). Harga yang kemudian
+   menembus low lama—termasuk candle sweep—tidak menghapus latch. Sebelum pola
+   pernah terdeteksi, perilaku kriteria pada candle yang sama tetap seperti
+   sebelumnya.
 
-Kriteria yang belum bisa dinilai berstatus **▫️ belum ada data** dan tidak
-dihukum (tidak dihitung gagal).
+Kriteria yang belum punya data ditandai belum ada data dan tidak dihukum dalam
+skor. Trio struktural (1+2+3) wajib lulus; lalu perlu minimal
+`min(4, jumlah kriteria yang ada datanya)` kriteria lolos.
 
-## Vonis
+## Ambang tetap dan dana acuan COCKROACH
 
-`LAYAK SWEEP` = trio struktural (1+2+3) lulus **dan** minimal
-`min(4, jumlah kriteria yang ada datanya)` lulus. Ambangnya menyesuaikan karena
-di deploy baru hanya trio struktural yang punya data — menuntut 4 dari 3 akan
-membuat halaman tidak pernah memberi alert. Begitu riwayat terkumpul, syaratnya
-otomatis naik menjadi "struktural + minimal satu bukti".
+Ambang UI/cron tidak dapat diubah dan tidak disimpan sebagai setting:
 
-## Ambang liq/MC (bisa diatur, default 15%)
+> Ambang fix: liq/MC ≤ 35% · holder/wallet ≤ 5% · standar pra-pump COCKROACH
+> (toleransi 3× dana)
 
-15% **bukan batas alam**. Yang menentukan biaya sweep adalah
+Acuan COCKROACH pra-pump, 1 Okt 2026 22:42 WIB: harga $0,00023768, MC
+$233.451, TVL/liquidity dua sisi $30.232, cash satu sisi $15.116, B/S 6,48%,
+liq/MC 12,95%, biaya dorong 2× $6.261 / 3× $11.066 (4,74% MC) / 5× $18.684,
+turnover 3,35×/hari, LP 89,82%. Toleransi biaya dorong 3× token pada basis cash-side pembanding adalah maksimal
+3× dana acuan: **$33.198 ≈ 14,2% MC**. Pada batas struktural 35%, perbandingan
+cash-side `(√3−1) × (35%÷2)` memberi 12,8% MC, jadi kolom acuan masih di dalam
+toleransi. Estimator biaya aktual `est_cost_usd`/`leverage_cost` tetap memakai
+likuiditas dua sisi dan menghasilkan 25,6% MC di rasio 35%; basis itu sengaja
+tidak diubah. Karena itu angka teoretis dua sisi dan kolom cash-side acuan jangan
+dicampur.
 
-```
-biaya/MC = (akar(m) − 1) × (liq/MC)      m = target kelipatan harga
-leverage = (akar(m) + 1) / (liq/MC)      paper MC per $1 net masuk
-```
+Kolom **× dana acuan** menampilkan biaya dorong 3× dalam kelipatan acuan
+4,74% MC: `biaya 3× (% MC) ÷ 4,74%`. Karena $11.066 acuan COCK dihitung dari
+cash satu sisi $15.116, normalisasi kolom ini juga memakai setengah `liq/MC`
+untuk perbandingan satu-banding-satu (COCK ≈ 1,0×). Ini hanya basis kolom
+informatif; rumus `est_cost_usd`, biaya target, dan `leverage` tetap memakai
+`liq_usd` dua sisi seperti semula.
 
-| liq/MC | naik 2× | naik 3× | naik 5× | naik 10× | leverage @3× |
-| --- | --- | --- | --- | --- | --- |
-| 5% | 2,1% MC | 3,7% MC | 6,2% MC | 10,8% MC | 54,6× |
-| 10% | 4,1% | 7,3% | 12,4% | 21,6% | 27,3× |
-| **15%** | 6,2% | 11,0% | 18,5% | 32,4% | 18,2× |
-| 20% | 8,3% | 14,6% | 24,7% | 43,2% | 13,7× |
-| 25% | 10,4% | 18,3% | 30,9% | 54,1% | 10,9× |
-| 30% | 12,4% | 22,0% | 37,1% | 64,9% | 9,1× |
-| 40% | 16,6% | 29,3% | 49,4% | 86,5% | 6,8× |
-| 50% | 20,7% | 36,6% | 61,8% | **108,1%** | 5,5× |
+Turnover di tabel utama adalah **`vol24_usd / liq_usd`**, dengan `liq_usd`
+dua sisi. Angka pembanding: COCK 3,35×/hari, TH 1,39×/hari, Paws 2,12×/hari.
+Biaya 3× COCK $11.066 dan turnover ini acuan informasi, bukan pengganti gate.
 
-Batas **fisik**: naik 10× melewati 100% MC di liq/MC **46,2%**, naik 5× di
-**80,9%**. Di atas 50% biaya sweep sudah melebihi kapitalisasi pasarnya sendiri.
-Karena itu slider dibatasi 5%–60%:
+## Gate kohort kelahiran
 
-- di bawah **5%** likuiditas terlalu tipis untuk masuk/keluar posisi;
-- di atas **60%** kriterianya kehilangan arti (naik 2× pun perlu 21% MC).
+Sebelum vonis layak, token harus lolos gate kohort. Pool utama adalah pool
+DexScreener dengan likuiditas terbesar. Dari OHLCV GeckoTerminal per jam,
+mesin mengambil **48 jam pertama sejak `pairCreatedAt`** dan menghitung proksi
+VWAP berbobot volume (harga tipikal OHLC). Rentang low–high jendela itu
+ditampilkan sebagai **biaya kohort**. Pilihan jendela awal berfokus pada cohort
+launch: bundler, bot-degen, dan fresh-wallet rate GMGN terlihat sebagai angka
+ukur di panel yang sama; `bot_degen_rate` yang tinggi (misalnya 44,6%) menjadi
+indikator terukur konsentrasi aktivitas bot pada cohort awal.
 
-Nilai disimpan di `sweep_state.json` (`settings.liq_mc_max`) supaya halaman,
-cron, dan riwayat alert memakai ambang yang sama. Menggeser slider **tidak**
-memanggil jaringan lagi: baris yang sudah ada dinilai ulang dari data di memori
-(`sweep_scan.rescore_rows`).
+`status_avg_cost = harga_sekarang / VWAP_48h_lahir − 1`. Nilainya fraksi di
+mesin dan ditampilkan sebagai PLUS/MINUS persen. Dinding impas adalah dua jarak
+`VWAP / harga_sekarang` dan `harga_tertinggi_jendela / harga_sekarang`.
+Label wajib UI: **perkiraan (proksi VWAP 48 jam)** — bukan harga rata-rata
+wallet yang diamati langsung. GMGN `holding_rate` dan ringkasan `statusNow`
+(`hold / sold_part / sold`) adalah data provider terpisah dan tetap ditampilkan
+apa adanya sebagai konteks cohort.
 
-## Alert
+| Status kohort | Aturan |
+| --- | --- |
+| `SKIP — kohort plus` | `status_avg_cost ≥ 0`; cohort rata-rata sedang PLUS |
+| `TUNGGU — kohort belum minus 70%` | `−0,70 < status_avg_cost < 0` |
+| `LOLOS` | `status_avg_cost ≤ −0,70` (minus minimal 70%) |
+| `TANPA DATA — kohort` | OHLCV/VWAP/harga tidak tersedia; jangan klaim lolos |
 
-Hanya saat **transisi status**, bukan tiap scan:
+Pool berumur kurang dari 48 jam memakai seluruh jendela yang ada dan diberi
+label **jendela parsial**. OHLCV kosong atau VWAP tidak bisa dihitung selalu
+menahan gate, bukan dianggap minus. `LAYAK SWEEP` hanya mungkin jika gate
+kohort `LOLOS`, trio struktural lulus, dan skor cukup.
+
+## Mengapa gate kohort minus besar
+
+> Kohort **minus besar = loss aversion** → tidak mau jual di harga bawah → tekanan jual
+> **habis**. Gejalanya: tape sepi (turnover rendah) dan float sudah terserap ke pool.
+> Harga impas mereka masih jauh di atas harga kini → tidak ada dinding jual sampai target
+> 2–5× tercapai. Ruang bebas untuk operator. Sebaliknya kohort yang sedang **PLUS** akan
+> merealisasikan profit ke pump kita → token semacam itu di-skip. Contoh acuan: COCK
+> pra-pump (1 Okt) — kohort lahir minus besar (−45% s/d −82%), tape sepi 3,35×/hari, float
+> 6,48% → layak disweep.
+
+## Alert dan angka teoretis vs terukur
+
+Alert dikirim hanya saat **transisi status**, bukan setiap scan:
 
 - kelayakan muncul (cooldown 6 jam);
 - sweep mulai terjadi (cooldown 30 menit).
 
-Isi alert memuat angka yang membuatnya bisa ditinjau: liq/MC + biaya sweep,
-tabel biaya beberapa target, untuk alert sweep juga `vol_x`, `price_mult`,
-biaya dorong, dan churn.
-
-### Angka teoretis vs terukur — jangan dicampur
+`est_cost_usd` tetap biaya dorong teoretis ke puncak:
+`(√peak_mult − 1) × liq_usd`, menggunakan likuiditas dua sisi. `leverage` juga
+memakai basis dua sisi. `net_inflow_usd` hanya pengukuran Δ likuiditas antar
+snapshot, dan tetap `None` jika tidak tersedia; referensi dari
+daftar `REF_NET_COST_MULT = 1,0` berlabel estimasi, bukan pengukuran.
 
 | Nama | Arti | COCKROACH 1 Okt |
 | --- | --- | --- |
-| `est_cost_usd` | biaya dorong ke **PUNCAK** `(akar(peak_mult)−1) × liq` | $58.778 |
-| `est_cost_close_usd` | biaya dorong ke **CLOSE** `(akar(price_mult)−1) × liq` (angka lama yang sebelah) | $24.067 |
-| `paper_gain_usd` | kenaikan MC kertas sampai **puncak** `supply × (peak − base)` | $1.790.194 |
-| `paper_mcap_usd` | MC kertas di **CLOSE** `supply × close` (besaran berbeda, bukan pembilang leverage) | $752.939 |
+| `est_cost_usd` | biaya teoretis dorong ke **puncak** `(√peak_mult−1) × liq` | $58.778 |
+| `est_cost_close_usd` | biaya ke **close** `(√price_mult−1) × liq` | $24.067 |
+| `paper_gain_usd` | kenaikan MC kertas sampai puncak | $1.790.194 |
+| `paper_mcap_usd` | MC kertas di close; bukan pembilang leverage | $752.939 |
 | `net_inflow_usd` | **terukur**: Δ likuiditas antar snapshot | $58.778 |
-| `churn_x` | volume ÷ biaya ke puncak | 21,1× |
-| `churn_net_x` | volume ÷ inflow terukur | 21,1× |
-| `leverage` | `paper_gain ÷ est_cost` = `(akar(peak_mult)+1) / (liq/MC)` | 30,5× |
+| `churn_x` / `churn_net_x` | volume ÷ biaya teoretis / inflow terukur | 21,1× / 21,1× |
+| `leverage` | paper gain ÷ biaya dorong (basis dua sisi) | 30,5× |
 
-Kalau snapshot pembanding belum ada, inflow nyata `None` dan yang dipakai adalah
-**acuan berlabel** (`REF_NET_COST_MULT = 1,0` dari satu event terukur) — UI dan
-alert selalu menyebutnya "acuan 1 event", tidak pernah sebagai pengukuran.
+## Statistik dan runtime
 
-### Ambang holder per-wallet (bisa diatur, default 5%)
+Tiap alert meninggalkan baris sinyal dengan harga entry, base, `max_up_pct` /
+`max_down_pct` (dilacak 72 jam), churn, biaya dorong, dan status. Ringkasan
+mencakup hit ≥100% / ≥300%, median naik/turun, dan break-even hit rate.
 
-Batas holder per-wallet sekarang **bisa diatur** dari UI/cron dan disimpan di
-`sweep_state.json` (`settings.holder_max_pct`). Default **5%** (bukan 3%) karena:
-
-- Data nyata Team Human: token dengan top-10 18,97% (sehat) tapi satu holder
-  3,94% akan gugur di batas lama 3% padahal strukturnya paling mendekati pola
-  yang dicari.
-- Dengan 5%: kriteria 3 LULUS → LAYAK SWEEP 4/4.
-- Dengan 3%: kriteria 3 GAGAL → KANDIDAT 3/4.
-
-Rentang dijepit 1%–20%: di bawah 1% terlalu ketat (hampir semua token gagal),
-di atas 20% terlalu longgar (kehilangan arti sebagai filter concentration).
-
-## Statistik
-
-Tiap alert meninggalkan baris sinyal: harga entry, `base_price`,
-`max_up_pct` / `max_down_pct` (dilacak 72 jam), `from_base_up_pct`, churn,
-biaya dorong, dan status. Ringkasannya: jumlah sinyal, hit ≥100% / ≥300%,
-median naik/turun, dan break-even hit rate 13,0% (menang +200% / kalah −30%).
-
-## Runtime
-
-Keduanya aktif:
-
-- **cron GitHub Actions** `.github/workflows/sweep-scan.yml`, `*/5 * * * *`,
-  memakai secrets `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`. Commit hanya saat
-  `store.fingerprint()` berubah (snapshot jam baru / sinyal baru / pengaturan
-  baru) — tanpa gate itu cron 5 menitan membuat ~288 commit/hari.
-  Jadwal GitHub Actions hanya berjalan dari **default branch**.
-- **auto-refresh halaman** 5 menit selama tab terbuka (`st.fragment(run_every)`).
-
-## Penyimpanan
+Cron GitHub Actions tetap berjalan tiap 5 menit (`.github/workflows/sweep-scan.yml`)
+dan auto-refresh halaman juga 5 menit. `store.fingerprint()` mencakup snapshot
+per jam, id sinyal, dan latch shakeout permanen; field `alerts`/`updated` yang
+volatil tidak memicu commit. Watchlist tetap manual.
 
 | Berkas | Status |
 | --- | --- |
 | `sweep_watchlist.json` | di-commit |
-| `sweep_state.json` | di-commit (snapshot, sinyal, pengaturan) |
-| `sweep_cache.json` | `.gitignore` (TTL 90-120 detik) |
-
-Kalau commit GitHub gagal, UI memberi tahu bahwa daftar baru tersimpan lokal dan
-menulis cadangan ke `config.json` (`sweep_watchlist`) — filesystem Streamlit
-Cloud ephemeral, jadi daftar yang tidak di-commit akan hilang saat restart.
+| `sweep_state.json` | di-commit (snapshot, sinyal, latch shakeout) |
+| `sweep_cache.json` | `.gitignore` (TTL 90–120 detik) |
 
 ## Test
 
 ```bash
-python -m unittest tests.test_sweep_screen tests.test_sweep_store \
-                   tests.test_sweep_alert tests.test_sweep_scan
+python -m unittest tests.test_sweep_screen tests.test_sweep_data \
+                   tests.test_sweep_store tests.test_sweep_alert tests.test_sweep_scan
 ```
 
-Semuanya offline. `tests/test_sweep_scan.py` memakai data COCKROACH asli
-(1 Okt 2026) sebagai fixture.
+Semuanya offline; fixture COCKROACH untuk biaya sweep tidak berubah.

@@ -28,17 +28,26 @@ BUNDLE = {
         "price_usd": 0.0007667356548390803,
         "liq_usd": 30232.0, "fdv_usd": 233451.0, "market_cap_usd": 233451.0,
         "liq_mc": 30232.0 / 233451.0,
+        "vol24_usd": 30232.0 * 3.35,
         "vol_1h": 180744.30, "buys_1h": 70, "sells_1h": 30,
         "lp_locked_pct": 89.8178, "mint_authority": None,
         "freeze_authority": None, "top10_holder_pct": 18.92,
         "holder_pcts": [2.99, 2.7, 2.11], "holder_count": 3609,
-        "bundler_rate": 0.1764, "bot_degen_rate": 0.4551,
+        "top_bundler_trader_percentage": 0.1764, "bundler_rate": 0.1764,
+        "bot_degen_rate": 0.4551, "fresh_wallet_rate": 0.025,
+        "holding_rate": 0.0,
+        "status_now": {"hold": 12, "sold_part": 4, "sold": 8},
         "entrapment_rate": 0.3222, "pair_address": "POOL1",
+        "pair_created_at": 1_790_866_800,
     },
     "candles_hour": [
         [1, 0.00040, 0.00048, 0.000395, 0.000482, 22781.0],
         [2, 0.000482, 0.000495, 0.000260, 0.000318, 30539.0],
         [3, 0.000318, 0.000375, 0.000303, 0.000343, 18699.0],
+    ],
+    "cohort_candles": [
+        [1_790_866_800 + hour * 3600, 0.00265, 0.0029, 0.0023, 0.00265, 100.0]
+        for hour in range(48)
     ],
     # 24 candle tenang lalu candle sweep 22:42 WIB.
     "candles_min5": (
@@ -75,6 +84,7 @@ class _Sandbox(unittest.TestCase):
                                        scan.analyze(BUNDLE),
                                        candles_hour=BUNDLE["candles_hour"],
                                        candles_min5=BUNDLE["candles_min5"],
+                                       cohort_candles=BUNDLE["cohort_candles"],
                                    )), None)):
             patcher, _ = target, value
             patcher.start()
@@ -85,6 +95,18 @@ class _Sandbox(unittest.TestCase):
 
 
 class RunScanTest(_Sandbox):
+    def test_rows_include_cohort_provider_fields(self):
+        row = scan.run_scan([MINT], state=store.empty_state(),
+                            send_alerts=False, now=1000)["rows"][0]
+        metrics = row["metrics"]
+        self.assertEqual(metrics["top_bundler_trader_percentage"], 0.1764)
+        self.assertEqual(metrics["bot_degen_rate"], 0.4551)
+        self.assertEqual(metrics["fresh_wallet_rate"], 0.025)
+        self.assertEqual(metrics["holding_rate"], 0.0)
+        self.assertEqual(metrics["status_now"]["sold"], 8)
+        self.assertIn("status_avg_cost", row["cohort"])
+        self.assertIn("cohort_gate_status", row)
+
     def test_records_snapshot_and_signal(self):
         outcome = scan.run_scan([MINT], state=store.empty_state(), now=1000)
         state = outcome["state"]
@@ -130,6 +152,7 @@ class RunScanTest(_Sandbox):
                                    scan.analyze(BUNDLE, snapshots=None),
                                    candles_hour=BUNDLE["candles_hour"],
                                    candles_min5=BUNDLE["candles_min5"],
+                                   cohort_candles=BUNDLE["cohort_candles"],
                                    metrics=dict(BUNDLE["metrics"],
                                                 liq_usd=89010.0))):
             second = scan.run_scan([MINT], state=first["state"],
@@ -150,6 +173,7 @@ class RunScanTest(_Sandbox):
                                    scan.analyze(BUNDLE),
                                    candles_hour=BUNDLE["candles_hour"],
                                    candles_min5=BUNDLE["candles_min5"],
+                                   cohort_candles=BUNDLE["cohort_candles"],
                                    metrics=dict(BUNDLE["metrics"],
                                                 liq_usd=89010.0))):
             scan.run_scan([MINT], state=state, now=1000 + 3600)
@@ -199,7 +223,8 @@ class RunScanTest(_Sandbox):
             outcome = scan.run_scan(["BROKEN"], state=store.empty_state(), now=1000)
         self.assertEqual(len(outcome["rows"]), 1)
         self.assertFalse(outcome["rows"][0]["metrics"]["ok"])
-        self.assertEqual(outcome["rows"][0]["result"]["verdict"], "DATA KURANG")
+        self.assertEqual(outcome["rows"][0]["result"]["verdict"],
+                         "TANPA DATA — kohort")
 
     def test_empty_watchlist(self):
         outcome = scan.run_scan([], state=store.empty_state(), now=1000)
@@ -214,45 +239,44 @@ class RunScanTest(_Sandbox):
         self.assertEqual(scores, sorted(scores, reverse=True))
 
 
-class RescoreTest(_Sandbox):
-    """Menggeser ambang tidak boleh memanggil jaringan lagi."""
+class ScanPayloadAndLatchTest(_Sandbox):
+    def test_turnover_x_is_computed_by_screen_and_copied_to_row(self):
+        row = scan.run_scan([MINT], state=store.empty_state(),
+                            send_alerts=False, now=1000)["rows"][0]
+        expected = BUNDLE["metrics"]["vol24_usd"] / BUNDLE["metrics"]["liq_usd"]
+        self.assertAlmostEqual(row["turnover_x"], expected, places=8)
+        self.assertAlmostEqual(row["result"]["turnover_x"], expected, places=8)
 
-    def _rows(self):
-        bundle = dict(BUNDLE["metrics"], liq_usd=200.0, fdv_usd=1000.0)
-        return [{
-            "mint": MINT, "metrics": bundle,
-            "result": scan.screen.evaluate(bundle, snapshots=[], candles=[]),
-            "sweep": None, "sweep_context": None,
-            "candles_hour": BUNDLE["candles_hour"],
-        }]
+    def test_detected_shakeout_is_latched_and_survives_low_break(self):
+        first = scan.run_scan([MINT], state=store.empty_state(),
+                              send_alerts=False, now=1000)
+        state = first["state"]
+        self.assertEqual(state["shakeout_latched_at"][MINT], 2)
 
-    def test_rescore_changes_verdict_without_network(self):
-        state = store.empty_state()
-        rows = self._rows()
-        self.assertFalse(rows[0]["result"]["eligible"])   # liq/MC 20% gagal
-        strict = scan.rescore_rows(rows, state, {"liq_mc_max": 0.15})
-        lenient = scan.rescore_rows(rows, state, {"liq_mc_max": 0.30})
-        self.assertFalse(strict[0]["result"]["eligible"])
-        self.assertTrue(lenient[0]["result"]["eligible"])
-        # Data pasar aslinya tidak diubah, hanya hasil skriningnya.
-        self.assertEqual(lenient[0]["metrics"], strict[0]["metrics"])
+        bundle = dict(BUNDLE)
+        candles = list(BUNDLE["candles_hour"]) + [
+            [4, 0.000343, 0.002060, 0.000216, 0.001826, 1536017.0]
+        ]
+        bundle["candles_hour"] = candles
+        with mock.patch.object(
+                scan, "_scan_one",
+                side_effect=lambda mint, use_cache=True: dict(
+                    scan.analyze(bundle), candles_hour=candles,
+                    candles_min5=BUNDLE["candles_min5"],
+                    cohort_candles=BUNDLE["cohort_candles"])):
+            second = scan.run_scan([MINT], state=state, send_alerts=False,
+                                   now=1000 + 3600)
+        check = next(c for c in second["rows"][0]["result"]["checks"]
+                     if c["key"] == "shakeout")
+        self.assertTrue(check["passed"])
+        self.assertIn("latch permanen", check["detail"])
+        self.assertEqual(second["state"]["shakeout_latched_at"][MINT], 2)
 
-    def test_run_scan_stores_settings_in_state(self):
-        state = store.empty_state()
-        outcome = scan.run_scan([MINT], state=state, send_alerts=False,
-                                settings={"liq_mc_max": 0.3}, now=1000)
-        self.assertEqual(outcome["state"]["settings"]["liq_mc_max"], 0.3)
-        self.assertEqual(
-            outcome["rows"][0]["result"]["settings"]["liq_mc_max"], 0.3)
-        self.assertFalse(outcome["rows"][0]["result"]["eligible"] is None)
-
-    def test_run_scan_reads_settings_back_from_state(self):
-        state = store.empty_state()
-        store.save_settings(state, {"liq_mc_max": 0.05})
-        outcome = scan.run_scan([MINT], state=state, send_alerts=False,
-                                now=1000)
-        self.assertEqual(
-            outcome["rows"][0]["result"]["settings"]["liq_mc_max"], 0.05)
+    def test_cli_and_result_have_no_saved_threshold_settings(self):
+        outcome = scan.run_scan([MINT], state=store.empty_state(),
+                                send_alerts=False, now=1000)
+        self.assertNotIn("settings", outcome["state"])
+        self.assertNotIn("settings", outcome["rows"][0]["result"])
 
 
 class DetectSweepIntegrationTest(_Sandbox):
@@ -293,6 +317,16 @@ class SurfaceTest(unittest.TestCase):
         text = workflow.read_text(encoding="utf-8")
         self.assertIn("SWEEP_STATE_CHANGED", text)
         self.assertIn("*/5 * * * *", text)
+        runner_source = runner.read_text(encoding="utf-8")
+        self.assertNotIn("--liq-mc-max", runner_source)
+        self.assertNotIn("--holder-max-pct", runner_source)
+
+    def test_ui_shows_fixed_threshold_turnover_and_cohort_without_sliders(self):
+        source = (ROOT / "sweep_ui.py").read_text(encoding="utf-8")
+        self.assertNotIn("st.slider(", source)
+        self.assertIn("liq/MC ≤ 35% · holder/wallet ≤ 5%", source)
+        self.assertIn("Turnover (×/hari)", source)
+        self.assertIn("perkiraan (proksi VWAP 48 jam)", source)
 
 
 if __name__ == "__main__":

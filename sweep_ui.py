@@ -57,6 +57,11 @@ def _fmt_mult(value, digits: int = 1) -> str:
     return f"{number:.{digits}f}x" if number is not None else "—"
 
 
+def _fmt_times(value, digits: int = 1) -> str:
+    number = screen._num(value)
+    return f"{number:.{digits}f}×" if number is not None else "—"
+
+
 def _fmt_price(value) -> str:
     number = screen._num(value)
     if number is None:
@@ -198,14 +203,20 @@ def _eligibility_rows(rows) -> list:
             "Skor": (f"{result.get('passed_count')}/{result.get('scored_count')}"
                      if result.get("scored_count") else "—"),
             "Kriteria": passed or "—",
+            "Kohort": result.get("cohort_gate_status") or "TANPA DATA — kohort",
             "Harga": _fmt_price(metrics.get("price_usd")),
             "liq/MC": _fmt_pct(result.get("liq_mc")),
+            # Cost 3x MC divided by COCK 4.74% MC ($11,066 / $233,451).
+            "× dana acuan": _fmt_times(result.get("reference_fund_x")),
+            "Turnover (×/hari)": _fmt_times(row.get("turnover_x",
+                                                       result.get("turnover_x")), 2),
             "Liq": _fmt_usd(metrics.get("liq_usd")),
             "MC": _fmt_usd(metrics.get("fdv_usd")),
             "LP locked": _fmt_pct100(metrics.get("lp_locked_pct")),
             "Top-10": _fmt_pct100(metrics.get("top10_holder_pct")),
             "Holder": metrics.get("holder_count"),
-            "Bundler": _fmt_pct(metrics.get("bundler_rate")),
+            "Bundler": _fmt_pct(metrics.get("top_bundler_trader_percentage",
+                                             metrics.get("bundler_rate"))),
             "Bot degen": _fmt_pct(metrics.get("bot_degen_rate")),
             "Vol 1h": _fmt_usd(metrics.get("vol_1h")),
             "Sweep": (f"⚡ {_fmt_mult(context.get('vol_x'))} vol"
@@ -224,6 +235,64 @@ def _render_table(rows) -> None:
                  hide_index=True, column_config={
                      "GMGN": st.column_config.LinkColumn(
                          "GMGN", display_text="buka")})
+
+
+def _status_count(value) -> str:
+    number = screen._num(value)
+    if number is None:
+        return "—"
+    return f"{number:,.0f}" if number.is_integer() else f"{number:,.1f}"
+
+
+def _render_cohort(metrics, result) -> None:
+    """Show measured GMGN cohort fields and the labeled VWAP proxy."""
+    metrics = metrics or {}
+    result = result or {}
+    cohort = result.get("cohort") or {}
+    label = "**Kohort lahir — perkiraan (proksi VWAP 48 jam)"
+    if cohort.get("partial_window"):
+        label += " · jendela parsial"
+    label += "**"
+    st.markdown(label)
+
+    status_now = metrics.get("status_now") or {}
+    statuses = " / ".join(
+        f"{key} {_status_count(status_now.get(key))}"
+        for key in ("hold", "sold_part", "sold"))
+    details = [
+        f"bundler {_fmt_pct(metrics.get('top_bundler_trader_percentage', metrics.get('bundler_rate')))}",
+        f"bot degen {_fmt_pct(metrics.get('bot_degen_rate'))}",
+        f"fresh {_fmt_pct(metrics.get('fresh_wallet_rate'))}",
+        f"holding_rate {_fmt_pct(metrics.get('holding_rate'))}",
+        f"statusNow {statuses}",
+    ]
+    low, high = cohort.get("price_min"), cohort.get("price_max")
+    if low is not None and high is not None:
+        details.append(f"biaya kohort {_fmt_price(low)}–{_fmt_price(high)}")
+    else:
+        details.append("biaya kohort —")
+
+    average_cost = screen._num(cohort.get("status_avg_cost"))
+    if average_cost is None:
+        avg_status = "TANPA DATA — kohort"
+    elif average_cost >= 0:
+        avg_status = f"PLUS {average_cost*100:.1f}%"
+    else:
+        avg_status = f"MINUS {abs(average_cost)*100:.1f}%"
+    details.append(f"status avg cost: {avg_status}")
+
+    wall_vwap = cohort.get("breakeven_wall_vwap_x")
+    wall_high = cohort.get("breakeven_wall_high_x")
+    if wall_vwap is not None and wall_high is not None:
+        walls = f"{_fmt_times(wall_vwap)}–{_fmt_times(wall_high)} harga kini"
+    else:
+        walls = "—"
+    details.append(f"dinding impas: {walls}")
+    st.caption(" · ".join(details))
+    if cohort.get("error"):
+        st.caption(f"Data proksi kohort: {cohort['error']}")
+    st.caption(f"Gate kohort: **{result.get('cohort_gate_status') or 'TANPA DATA — kohort'}** — "
+               f"{result.get('cohort_gate_detail') or 'data belum tersedia'}")
 
 
 def _render_details(rows) -> None:
@@ -246,6 +315,7 @@ def _render_details(rows) -> None:
                 f"liq/MC {_fmt_pct(result.get('liq_mc'))} · "
                 f"{metrics.get('dex_id') or '—'} · "
                 f"{metrics.get('pool_count') or 0} pool")
+            _render_cohort(metrics, result)
             if missing:
                 st.caption(
                     "Belum bisa dinilai: "
@@ -387,85 +457,32 @@ def _render_stats(state) -> None:
 # ---------------------------------------------------------------------------
 # Body
 # ---------------------------------------------------------------------------
-def _run_and_render(watchlist, *, persist: bool, settings=None) -> None:
+def _run_and_render(watchlist, *, persist: bool) -> None:
     with st.spinner(f"Memindai {len(watchlist)} mint…"):
-        outcome = scan.run_scan(watchlist, persist=persist, settings=settings)
+        outcome = scan.run_scan(watchlist, persist=persist)
     st.session_state["sweep_rows"] = outcome["rows"]
     st.session_state["sweep_state"] = outcome["state"]
     st.session_state["sweep_alerts"] = outcome["alerts"]
     st.session_state["sweep_elapsed"] = outcome["elapsed"]
 
 
-def _render_threshold(state) -> tuple:
-    """Slider ambang liq/MC + holder + tabel biaya sweep. → (settings, berubah?)."""
-    config = store.load_settings(state)
-    changed = False
-
+def _render_threshold() -> None:
+    """Ambang struktural permanen: tidak ada knob UI/cron atau rescore."""
     st.markdown("### ⚙️ Ambang kelayakan")
-
-    # Slider liq/MC
-    key_liq = "sweep_liq_mc_pct"
-    st.session_state.setdefault(key_liq, int(round(config["liq_mc_max"] * 100)))
-    col1, col2 = st.columns(2)
-    with col1:
-        pct = st.slider(
-            "liq/MC maksimum (%)", min_value=5, max_value=60, step=1, key=key_liq,
-            help="Bukan batas alam: yang menentukan biaya sweep adalah "
-                 "(akar(m) − 1) × (liq/MC). Menurunkan ambang = lebih sedikit "
-                 "kandidat tapi lebih murah digerakkan; menaikkan = lebih banyak "
-                 "kandidat tapi biaya sweep naik.")
-    ratio = pct / 100.0
-    st.caption("Pada ambang " + f"{pct}%: " + " · ".join(
-        f"naik {t['mult']:.0f}x = {t['cost_pct']:.0f}% MC "
-        f"(leverage {t['leverage']:.0f}x)"
-        for t in screen.target_costs(ratio, mults=(2.0, 3.0, 5.0, 10.0))))
-
-    # Slider holder_max_pct
-    key_holder = "sweep_holder_max_pct"
-    st.session_state.setdefault(key_holder, int(config.get("holder_max_pct", 5.0)))
-    with col2:
-        holder_pct = st.slider(
-            "batas holder per-wallet (%)", min_value=1, max_value=20, step=1,
-            key=key_holder,
-            help="Kriteria 3: tiap holder tidak boleh lebih dari batas ini. "
-                 "Default 5% (bukan 3%) karena kasus Team Human yang memiliki "
-                 "3,94% akan gugur di batas lama 3% padahal strukturnya paling "
-                 "mendekati pola yang dicari.")
-    holder_ratio = holder_pct / 100.0
-
-    settings = screen.normalize_settings({
-        "liq_mc_max": ratio,
-        "holder_max_pct": holder_ratio,
-    })
-    changed = (abs(settings["liq_mc_max"] - config["liq_mc_max"]) > 1e-9
-               or abs(settings.get("holder_max_pct", 0) - config.get("holder_max_pct", 0)) > 1e-9)
-    return settings, changed
+    st.caption("Ambang fix: liq/MC ≤ 35% · holder/wallet ≤ 5% · "
+               "standar pra-pump COCKROACH (toleransi 3× dana)")
 
 
 def _render_body(*, persisting: bool) -> None:
     watchlist = store.load_watchlist()
     state = st.session_state.get("sweep_state") or store.load_state()
 
-    settings, threshold_changed = _render_threshold(state)
-    if threshold_changed:
-        # Dinilai ulang dari data yang sudah ada di memori — tidak ada
-        # panggilan jaringan hanya karena ambang digeser.
-        store.save_settings(state, settings)
-        rows = st.session_state.get("sweep_rows")
-        if rows:
-            st.session_state["sweep_rows"] = scan.rescore_rows(
-                rows, state, settings)
-        if persisting:
-            store.save_state(state, persist=True, reason="ambang liq/MC")
-        # Pesan ditampilkan langsung (bukan lewat antrean flash): jalur ini
-        # tidak memanggil st.rerun, jadi tidak ada yang menghapusnya.
-        st.success(f"Ambang liq/MC {settings['liq_mc_max']*100:.0f}% diterapkan "
-                   "ke data yang sudah ada — tanpa scan ulang.")
+    _render_threshold()
 
     col_scan, col_auto = st.columns([1, 2])
     if col_scan.button("🔍 Scan sekarang", type="primary",
                        use_container_width=True, disabled=not watchlist):
-        _run_and_render(watchlist, persist=persisting, settings=settings)
+        _run_and_render(watchlist, persist=persisting)
         _flash("success", f"Scan selesai: {len(watchlist)} mint dipindai.")
         st.rerun()
     auto = col_auto.toggle(
@@ -474,7 +491,7 @@ def _render_body(*, persisting: bool) -> None:
 
     rows = st.session_state.get("sweep_rows")
     if rows is None and watchlist:
-        _run_and_render(watchlist, persist=persisting, settings=settings)
+        _run_and_render(watchlist, persist=persisting)
         rows = st.session_state.get("sweep_rows")
     rows = rows or []
     state = st.session_state.get("sweep_state") or state
@@ -521,10 +538,7 @@ def _attach_autorefresh(watchlist) -> None:
     def _tick() -> None:
         if not watchlist:
             return
-        outcome = scan.run_scan(
-            watchlist, persist=False,
-            settings=store.load_settings(st.session_state.get("sweep_state")
-                                         or store.load_state()))
+        outcome = scan.run_scan(watchlist, persist=False)
         fingerprint = store.fingerprint(outcome["state"])
         last = st.session_state.get("sweep_fingerprint")
         st.session_state["sweep_fingerprint"] = fingerprint

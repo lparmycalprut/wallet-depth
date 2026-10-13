@@ -175,29 +175,21 @@ class NetInflowTest(_Sandbox):
         self.assertIsNone(store.net_inflow(state, "M", None, 7300))
 
 
-class SettingsTest(_Sandbox):
-    def test_roundtrip_through_state(self):
+class FixedStateTest(_Sandbox):
+    def test_legacy_settings_are_ignored_and_removed_on_save(self):
         state = store.empty_state()
-        self.assertEqual(store.load_settings(state)["liq_mc_max"], 0.15)
-        store.save_settings(state, {"liq_mc_max": 0.3})
-        # Ditulis di tempat: state yang sama harus ikut berubah.
-        self.assertEqual(state["settings"]["liq_mc_max"], 0.3)
-        self.assertEqual(store.load_settings(state)["liq_mc_max"], 0.3)
-
-    def test_persisted_in_state_file(self):
-        state = store.empty_state()
-        store.save_settings(state, {"liq_mc_max": 0.4})
+        state["settings"] = {"liq_mc_max": 0.25, "holder_max_pct": 1.0}
+        before = store.fingerprint(state)
+        state["settings"]["liq_mc_max"] = 0.60
+        self.assertEqual(store.fingerprint(state), before)
         store.save_state(state)
-        self.assertEqual(store.load_settings(store.load_state())["liq_mc_max"],
-                         0.4)
+        self.assertNotIn("settings", store.load_state())
 
-    def test_settings_are_part_of_commit_fingerprint(self):
+    def test_shakeout_latch_is_fingerprinted(self):
         state = store.empty_state()
         before = store.fingerprint(state)
-        store.save_settings(state, {"liq_mc_max": 0.25})
+        state["shakeout_latched_at"]["M"] = 12345
         self.assertNotEqual(store.fingerprint(state), before)
-
-
 class SignalTest(_Sandbox):
     def test_record_signal_gets_id(self):
         state = store.empty_state()
