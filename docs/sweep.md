@@ -102,7 +102,28 @@ apa adanya sebagai konteks cohort.
 Pool berumur kurang dari 48 jam memakai seluruh jendela yang ada dan diberi
 label **jendela parsial**. OHLCV kosong atau VWAP tidak bisa dihitung selalu
 menahan gate, bukan dianggap minus. `LAYAK SWEEP` hanya mungkin jika gate
-kohort `LOLOS`, trio struktural lulus, dan skor cukup.
+kohort `LOLOS`, gate biaya 10x `LOLOS`, trio struktural lulus, dan skor cukup.
+
+### Gate biaya 10x (2026-10-13)
+
+| Status biaya | Aturan |
+| --- | --- |
+| `TUNGGU — biaya 10x X% MC (batas 75%)` | `(√10 − 1) × liq/MC > 0,75` |
+| `TUNGGU — biaya 10x belum ada data` | liq/MC atau MC kosong; gate belum lolos |
+| `LOLOS` | `(√10 − 1) × liq/MC ≤ 0,75` |
+
+Gate ini diuji setelah gate kohort. Jika kohort belum lolos, status kohort yang
+tampil. Dengan batas `liq/MC ≤ 35%` yang sudah ada, gate biaya 10x hanya
+berbeda pada rentang liq/MC sekitar 34,7–35%.
+
+### Nominal dolar (tabel utama dan detail biaya)
+
+- Kolom **Dana acuan** di tabel utama = `(√3 − 1) × liq/2`, basis kas satu sisi
+  seperti `× dana acuan` (COCK ≈ $11.066). Setara dengan `× dana acuan` × 4,74%
+  × MC; untuk COCK hasilnya ≈ $11.066.
+- Tabel **Biaya sweep** di detail menambah kolom **Biaya ($)** per target
+  = `(√m − 1) × liq`. Setara dengan `% MC × MC` (proksi, bukan nilai terukur).
+- Snapshot lama yang belum punya field ini tampil `—` sampai dipindai ulang.
 
 ## Mengapa gate kohort minus besar
 

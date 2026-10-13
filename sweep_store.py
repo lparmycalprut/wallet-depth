@@ -432,8 +432,10 @@ VIEW_METRIC_KEYS = (
 VIEW_RESULT_KEYS = (
     "checks", "passed_count", "scored_count", "required_count", "score",
     "structural_ok", "eligible", "verdict", "color", "liq_mc", "targets",
-    "reference_fund_x", "turnover_x", "cohort", "cohort_gate_status",
-    "cohort_gate_passed", "cohort_gate_detail", "missing",
+    "reference_fund_x", "reference_fund_usd", "turnover_x", "cohort",
+    "cohort_gate_status", "cohort_gate_passed", "cohort_gate_detail",
+    "cost_10x_mc_frac", "cost_gate_status", "cost_gate_passed",
+    "cost_gate_detail", "missing",
 )
 
 
