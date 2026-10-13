@@ -20,9 +20,9 @@ pemindai lain.
 
 ## Kriteria struktural dan skor
 
-1. **liq/MC ≤ 35%** — ambang tetap. Dengan basis cash-side pembanding,
-   `(√3 − 1) × (35%÷2) = 12,8% MC`; estimator biaya penuh dua sisi yang tetap
-   dipakai `est_cost_usd`/`leverage_cost` menghasilkan 25,6% MC pada batas itu.
+1. **liq/MC ≤ 35%** — ambang tetap. Biaya dorong dihitung sebagai uang quote yang
+   masuk ke pool, `(√m − 1) × liq/2` (liq = TVL dua sisi, sisi quote = setengah).
+   Pada batas 35%: naik 3x = `(√3 − 1) × 17,5% = 6,4% MC`.
 2. **Authority mint/freeze sudah dilepas** — gate struktural, tidak masuk skor.
    Kriteria LP terkunci dihapus (2026-10-13): likuiditas token pump.fun sudah
    pasti terkunci, jadi tidak dicek maupun dihitung.
@@ -54,20 +54,14 @@ Ambang UI/cron tidak dapat diubah dan tidak disimpan sebagai setting:
 Acuan COCKROACH pra-pump, 1 Okt 2026 22:42 WIB: harga $0,00023768, MC
 $233.451, TVL/liquidity dua sisi $30.232, cash satu sisi $15.116, B/S 6,48%,
 liq/MC 12,95%, biaya dorong 2× $6.261 / 3× $11.066 (4,74% MC) / 5× $18.684,
-turnover 3,35×/hari, LP 89,82%. Toleransi biaya dorong 3× token pada basis cash-side pembanding adalah maksimal
-3× dana acuan: **$33.198 ≈ 14,2% MC**. Pada batas struktural 35%, perbandingan
-cash-side `(√3−1) × (35%÷2)` memberi 12,8% MC, jadi kolom acuan masih di dalam
-toleransi. Estimator biaya aktual `est_cost_usd`/`leverage_cost` tetap memakai
-likuiditas dua sisi dan menghasilkan 25,6% MC di rasio 35%; basis itu sengaja
-tidak diubah. Karena itu angka teoretis dua sisi dan kolom cash-side acuan jangan
-dicampur.
+turnover 3,35×/hari, LP 89,82%. Biaya dorong = uang quote masuk
+`(√m − 1) × liq/2`; angka 2×/3×/5× di atas cocok persis dengan basis ini.
+Toleransi biaya dorong 3× token adalah maksimal 3× dana acuan:
+**$33.198 ≈ 14,2% MC**. Pada batas struktural 35%, biaya 3× = 6,4% MC, jadi
+kolom acuan berada jauh di dalam toleransi.
 
 Kolom **× dana acuan** menampilkan biaya dorong 3× dalam kelipatan acuan
-4,74% MC: `biaya 3× (% MC) ÷ 4,74%`. Karena $11.066 acuan COCK dihitung dari
-cash satu sisi $15.116, normalisasi kolom ini juga memakai setengah `liq/MC`
-untuk perbandingan satu-banding-satu (COCK ≈ 1,0×). Ini hanya basis kolom
-informatif; rumus `est_cost_usd`, biaya target, dan `leverage` tetap memakai
-`liq_usd` dua sisi seperti semula.
+4,74% MC: `biaya 3× (% MC) ÷ 4,74%`. COCK = 1,0×.
 
 Turnover di tabel utama adalah **`vol24_usd / liq_usd`**, dengan `liq_usd`
 dua sisi. Angka pembanding: COCK 3,35×/hari, TH 1,39×/hari, Paws 2,12×/hari.
@@ -118,14 +112,14 @@ kohort `LOLOS`, gate biaya 10x `LOLOS`, trio struktural lulus, dan skor cukup.
 
 | Status biaya | Aturan |
 | --- | --- |
-| `TUNGGU — biaya 10x X% MC (batas 80%)` | `(√10 − 1) × liq/MC > 0,80` |
+| `TUNGGU — biaya 10x X% MC (batas 80%)` | `(√10 − 1) × liq/MC ÷ 2 > 0,80` |
 | `TUNGGU — biaya 10x belum ada data` | liq/MC atau MC kosong; gate belum lolos |
-| `LOLOS` | `(√10 − 1) × liq/MC ≤ 0,80` |
+| `LOLOS` | `(√10 − 1) × liq/MC ÷ 2 ≤ 0,80` |
 
 Gate ini diuji setelah gate kohort. Jika kohort belum lolos, status kohort yang
-tampil. Dengan batas `liq/MC ≤ 35%` yang sudah ada, biaya 10x maksimum ≈ 75,7%
+tampil. Dengan batas `liq/MC ≤ 35%` yang sudah ada, biaya 10x maksimum ≈ 37,8%
 MC, sehingga gate biaya 10x (batas 80%) baru menahan vonis pada liq/MC di atas
-≈ 37,0%. Pada rentang itu mint juga sudah gagal kriteria liq/MC.
+≈ 74%. Gate ini praktis tidak aktif di bawah batas struktural.
 
 ### Gate avg buy holder (2026-10-13)
 
@@ -149,7 +143,7 @@ interpretasi dari "maks 50% dari harga sekarang" dan perlu dikonfirmasi user.
   seperti `× dana acuan` (COCK ≈ $11.066). Setara dengan `× dana acuan` × 4,74%
   × MC; untuk COCK hasilnya ≈ $11.066.
 - Tabel **Biaya sweep** di detail menambah kolom **Biaya ($)** per target
-  = `(√m − 1) × liq`. Setara dengan `% MC × MC` (proksi, bukan nilai terukur).
+  = `(√m − 1) × liq / 2`, uang quote masuk ke pool. Setara dengan `% MC × MC`.
 - Snapshot lama yang belum punya field ini tampil `—` sampai dipindai ulang.
 
 ## Mengapa gate kohort minus besar
@@ -169,21 +163,22 @@ Alert dikirim hanya saat **transisi status**, bukan setiap scan:
 - kelayakan muncul (cooldown 6 jam);
 - sweep mulai terjadi (cooldown 30 menit).
 
-`est_cost_usd` tetap biaya dorong teoretis ke puncak:
-`(√peak_mult − 1) × liq_usd`, menggunakan likuiditas dua sisi. `leverage` juga
-memakai basis dua sisi. `net_inflow_usd` hanya pengukuran Δ likuiditas antar
-snapshot, dan tetap `None` jika tidak tersedia; referensi dari
-daftar `REF_NET_COST_MULT = 1,0` berlabel estimasi, bukan pengukuran.
+`est_cost_usd` adalah biaya dorong teoretis ke **puncak**:
+`(√peak_mult − 1) × liq_usd / 2`, yaitu uang quote masuk ke pool. `leverage`
+memakai basis yang sama. `net_inflow_usd` adalah Δ likuiditas (TVL dua sisi)
+antar snapshot dibagi dua, sehingga satuannya sama dengan biaya. Tetap `None`
+jika tidak tersedia. Referensi dari `REF_NET_COST_MULT = 1,0` berlabel estimasi,
+bukan pengukuran.
 
 | Nama | Arti | COCKROACH 1 Okt |
 | --- | --- | --- |
-| `est_cost_usd` | biaya teoretis dorong ke **puncak** `(√peak_mult−1) × liq` | $58.778 |
-| `est_cost_close_usd` | biaya ke **close** `(√price_mult−1) × liq` | $24.067 |
+| `est_cost_usd` | biaya teoretis dorong ke **puncak** `(√peak_mult−1) × liq / 2` | $29.389 |
+| `est_cost_close_usd` | biaya ke **close** `(√price_mult−1) × liq / 2` | $12.033 |
 | `paper_gain_usd` | kenaikan MC kertas sampai puncak | $1.790.194 |
 | `paper_mcap_usd` | MC kertas di close; bukan pembilang leverage | $752.939 |
-| `net_inflow_usd` | **terukur**: Δ likuiditas antar snapshot | $58.778 |
-| `churn_x` / `churn_net_x` | volume ÷ biaya teoretis / inflow terukur | 21,1× / 21,1× |
-| `leverage` | paper gain ÷ biaya dorong (basis dua sisi) | 30,5× |
+| `net_inflow_usd` | **terukur**: Δ likuiditas antar snapshot ÷ 2 (uang masuk) | $29.389 |
+| `churn_x` / `churn_net_x` | volume ÷ biaya teoretis / inflow terukur | 42,3× / 42,3× |
+| `leverage` | paper gain ÷ biaya dorong (basis uang masuk) | 60,9× |
 
 ## Statistik dan runtime
 

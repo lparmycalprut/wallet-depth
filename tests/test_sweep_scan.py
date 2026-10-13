@@ -162,10 +162,10 @@ class RunScanTest(_Sandbox):
             second = scan.run_scan([MINT], state=first["state"],
                                    send_alerts=False, now=1000 + 3600)
         ctx = second["rows"][0]["sweep_context"]
-        self.assertEqual(ctx["net_inflow_usd"], 89010.0 - 30232.0)
+        self.assertEqual(ctx["net_inflow_usd"], (89010.0 - 30232.0) / 2)
         self.assertIsNone(ctx["net_inflow_ref_usd"])
         self.assertAlmostEqual(ctx["churn_net_x"],
-                               ctx["vol"] / (89010.0 - 30232.0), places=2)
+                               ctx["vol"] / ((89010.0 - 30232.0) / 2), places=2)
 
     def test_signal_stores_both_churn_numbers(self):
         state = store.empty_state()
@@ -186,7 +186,7 @@ class RunScanTest(_Sandbox):
         self.assertIsNotNone(sweeps[0]["churn_x"])
         self.assertIsNone(sweeps[0]["net_inflow_usd"])
         self.assertIsNone(sweeps[0]["churn_net_x"])
-        self.assertEqual(sweeps[1]["net_inflow_usd"], 89010.0 - 30232.0)
+        self.assertEqual(sweeps[1]["net_inflow_usd"], (89010.0 - 30232.0) / 2)
         self.assertIsNotNone(sweeps[1]["churn_net_x"])
         self.assertIsNotNone(sweeps[1]["paper_mcap_usd"])
 

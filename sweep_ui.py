@@ -9,7 +9,7 @@ Isi halaman:
 1. **Watchlist manual** — tempel mint, satu per baris.
 2. **Tabel kelayakan** — 5 kriteria menjadi skor + vonis, plus kolom pasar.
 3. **Detail per mint** — alasan tiap kriteria + tabel biaya sweep (rumus
-   ``(akar(m)-1) x liq/MC``).
+   ``(akar(m)-1) x liq/MC / 2``).
 4. **Statistik** — riwayat sinyal beserta ``max_up`` / ``max_down`` sehingga
    hit rate bisa dilihat, bukan ditebak.
 
@@ -451,7 +451,7 @@ def _render_details(rows) -> None:
                             f"{check.get('detail')}")
             targets = result.get("targets") or []
             if targets:
-                st.markdown("**Biaya sweep** (`(akar(m)-1) x liq/MC`):")
+                st.markdown("**Biaya sweep** (`(akar(m)-1) x liq/MC / 2`, uang quote masuk):")
                 st.dataframe(
                     [{"Target": _fmt_mult(t["mult"], 0),
                       "Biaya (% MC)": (f"{t['cost_pct']:.1f}%"

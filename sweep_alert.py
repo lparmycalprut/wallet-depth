@@ -218,13 +218,13 @@ def format_sweep(mint: str, metrics: dict, context: dict) -> str:
         mc = context.get("base_mcap_usd")
         pct_mc = (cost / mc * 100) if (mc and mc > 0) else None
         lines.append(
-            f"Biaya dorong ke puncak (akar m − 1) × liq: "
+            f"Biaya dorong ke puncak (akar m − 1) × liq/2 (uang quote masuk): "
             f"{_usd(cost)}"
             + (f" = {pct_mc:.1f}% dari MC" if pct_mc is not None else "")
         )
     if context.get("est_cost_close_usd"):
         lines.append(
-            f"Biaya dorong ke close (akar price_mult − 1) × liq: "
+            f"Biaya dorong ke close (akar price_mult − 1) × liq/2: "
             f"{_usd(context['est_cost_close_usd'])}"
             + (" (>2x lebih kecil — angka lama yang sebelah)" if False else "")
         )
@@ -244,7 +244,7 @@ def format_sweep(mint: str, metrics: dict, context: dict) -> str:
     if inflow:
         cost = context.get("est_cost_usd")
         ratio = (inflow / cost) if (cost and cost > 0) else None
-        lines.append(f"Inflow nyata (Δ likuiditas): {_usd(inflow)}"
+        lines.append(f"Inflow nyata (Δ likuiditas ÷ 2): {_usd(inflow)}"
                      + (f" → {ratio:.1f}x biaya dorong ke puncak"
                         if ratio is not None else ""))
         churn = context.get("churn_x")
@@ -273,8 +273,8 @@ def format_sweep(mint: str, metrics: dict, context: dict) -> str:
         lines.append(
             f"Perkiraan inflow (belum ada snapshot pembanding) "
             f"≈{_usd(context['net_inflow_ref_usd'])} — "
-            f"acuan kalibrasi 1 event (COCKROACH 1 Okt: inflow $58.778 ÷ "
-            f"biaya ke puncak $58.774 ≈ 1,0x)"
+            f"acuan kalibrasi 1 event (COCKROACH 1 Okt: Δ TVL $58.778 ÷ 2 = "
+            f"$29.389 uang masuk ≈ biaya ke puncak $29.389, 1,0x)"
         )
     if context.get("bars_ago"):
         lines.append(f"Terjadi {context['bars_ago']} candle lalu")

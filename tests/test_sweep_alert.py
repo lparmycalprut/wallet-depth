@@ -166,7 +166,7 @@ class MessageFormatTest(unittest.TestCase):
         # Tabel biaya sweep ikut dikirim karena liq/MC diketahui.
         self.assertIn("Biaya sweep:", text)
                 # (akar(10)-1) x 12,95% = 27,99% → 28%
-        self.assertIn("10x≈28%MC", text)
+        self.assertIn("10x≈14%MC", text)
         self.assertIn("https://gmgn.ai/sol/token/MINT123", text)
 
     def test_eligibility_message_lists_missing_data(self):
@@ -187,25 +187,25 @@ class MessageFormatTest(unittest.TestCase):
             "peak": 0.0020603307226025585,
             "close": 0.0007667356548390803,
             "price_mult": 3.2256, "peak_mult": 8.669,
-            "liq_mc": 0.1295, "leverage": 30.5,
-            "est_cost_usd": 58778.0, "est_cost_close_usd": 24067.0,
+            "liq_mc": 0.1295, "leverage": 60.9,
+            "est_cost_usd": 29389.0, "est_cost_close_usd": 12033.5,
             "paper_gain_usd": 1790194.0, "paper_mcap_usd": 752939.0,
             "base_mcap_usd": mc_base,  # untuk %MC calculation
-            "net_inflow_usd": 58778.0, "churn_x": 21.1,
-            "churn_net_x": 21.1, "bars_ago": 0,
+            "net_inflow_usd": 29389.0, "churn_x": 42.3,
+            "churn_net_x": 42.3, "bars_ago": 0,
         }
         text = alert.format_sweep("MINT123", self._metrics(), context)
         self.assertIn("SWEEP TERDETEKSI", text)
         self.assertIn("1189.6x median", text)
-        self.assertIn("Biaya dorong ke puncak (akar m − 1) × liq: $58,778", text)
-        self.assertIn("25.2% dari MC", text)
-        self.assertIn("MC kertas yang naik: $1,790,194", text)
-        self.assertIn("leverage 30.5x", text)
+        self.assertIn("Biaya dorong ke puncak (akar m − 1) × liq/2 (uang quote masuk): $29,389", text)
+        self.assertIn("12.6% dari MC", text)
+        self.assertIn("MC kertas yang naik: $1,790,194 → leverage 60.9x", text)
+        self.assertIn("leverage 60.9x", text)
         self.assertIn("Paper MC di close (besaran lain, bukan pembilang leverage): $752,939", text)
-        self.assertIn("Inflow nyata (Δ likuiditas): $58,778", text)
+        self.assertIn("Inflow nyata (Δ likuiditas ÷ 2): $29,389", text)
         self.assertIn("1.0x biaya dorong ke puncak", text)
-        self.assertIn("Churn 21.1x", text)
-        self.assertIn("Churn nyata 21.1x", text)
+        self.assertIn("Churn 42.3x", text)
+        self.assertIn("Churn nyata 42.3x", text)
         self.assertIn("tidak ada pembeli luar bersih", text)
         self.assertIn("retrace 11/12 kali", text)
         self.assertIn("https://gmgn.ai/sol/token/MINT123", text)

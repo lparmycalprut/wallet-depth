@@ -58,8 +58,8 @@ COST_GATE_MULT = 10.0
 COST_GATE_MAX_FRAC = 0.80
 
 #: Acuan kalibrasi inflow nyata vs biaya dorong ke puncak, dari satu event
-#: terukur: COCKROACH 1 Okt 2026 — inflow nyata $58.778 ÷ biaya dorong ke
-#: puncak $58.774 = 1,0x (selisih < $4, dalam boltjang). Konstanta ini dipakai
+#: terukur: COCKROACH 1 Okt 2026 — Δ TVL $58.778 ÷ 2 = uang quote masuk
+#: $29.389 ÷ biaya dorong ke puncak $29.389 = 1,0x. Konstanta ini dipakai
 #: hanya sebagai **estimasi berlabel** saat selisih likuiditas antar snapshot
 #: belum tersedia; begitu ada pengukuran nyata, angka nyata yang dipakai
 #: (jangan mencampur keduanya).
@@ -71,10 +71,10 @@ SWEEP_PRICE_MULT = 1.5     # harga naik >= 1,5x dari harga dasar
 SWEEP_BASELINE_BARS = 24   # baseline = 24 candle sebelum kandidat
 
 # --- standar struktural tetap ---
-# Basis cash-side untuk pembanding acuan: (√3−1)×(35%÷2) = 12,8% MC,
-# di bawah toleransi COCK 3×$11.066 / $233.451 = 14,2% MC. Estimator biaya
-# aktual est_cost/leverage tetap memakai liq dua sisi; hasilnya 25,6% MC di
-# rasio 35% dan sengaja tidak di-rebase. Holder per-wallet maksimum 5%.
+# Biaya dorong = uang quote yang masuk ke pool = (√m−1) × liq/2 (liq = TVL dua
+# sisi, sisi quote = setengah). Di rasio 35%: (√3−1)×17,5% = 6,4% MC; acuan
+# COCK 3× $11.066 = 4,74% MC cocok persis dengan basis ini. Holder per-wallet
+# maksimum 5%.
 
 #: Minimal kriteria lulus untuk vonis LAYAK — tapi ambangnya menyesuaikan
 #: berapa kriteria yang **sudah punya data**: di deploy baru hanya trio
@@ -116,42 +116,41 @@ def _num(value):
 def leverage_cost(mult, liq_mc):
     """Biaya net sweep sebagai **fraksi market cap** untuk naik ``mult`` kali.
 
-    ``(akar(m) - 1) x (liq / MC)`` — turunan dari ``P/P0 = (1 + X/Q0)^2`` pada
-    AMM constant-product. Diverifikasi pada COCKROACH: ``(akar(8,67)-1) x
-    12,95% = 25,2%`` dan ``$58.778 / $233.451 = 25,2%``.
+    ``(akar(m) - 1) x (liq / MC) / 2`` — uang quote yang benar-benar masuk ke
+    pool untuk menaikkan harga ``m`` kali pada AMM constant-product. Liq adalah
+    TVL dua sisi, sisi quote = liq/2. Diverifikasi pada COCKROACH: 2x $6.261,
+    3x $11.066 (4,74% MC), 5x $18.684 — persis angka acuan di docs.
     """
     m = _num(mult)
     lm = _num(liq_mc)
     if m is None or lm is None or m <= 0 or lm <= 0:
         return None
-    return (math.sqrt(m) - 1.0) * lm
+    return (math.sqrt(m) - 1.0) * lm / 2.0
 
 
 def leverage_ratio(mult, liq_mc):
-    """Paper market cap yang diciptakan per $1 net masuk.
+    """Paper market cap yang diciptakan per $1 uang quote masuk.
 
-    ``(akar(m) + 1) / (liq / MC)`` — COCKROACH: ``3,944 / 0,1295 = 30,5x``,
-    cocok dengan aktual ``$1.790.194 / $58.778 = 30,5x``.
+    ``(akar(m) + 1) / (liq / MC / 2)`` — uang masuk = ``(akar(m)-1) x liq/2``.
     """
     m = _num(mult)
     lm = _num(liq_mc)
     if m is None or lm is None or m <= 0 or lm <= 0:
         return None
-    return (math.sqrt(m) + 1.0) / lm
+    return (math.sqrt(m) + 1.0) / (lm / 2.0)
 
 
 def cost_usd(mult, liq_usd):
     """Nominal USD yang dibutuhkan untuk naik ``mult`` kali.
 
-    ``(akar(m) - 1) x liq_usd``. Sama dengan ``cost_frac x MC`` karena
-    ``liq/MC = liq_usd / MC``; dihitung langsung dari likuiditas agar tidak
-    ada pembulatan ganda.
+    ``(akar(m) - 1) x liq_usd / 2`` — uang quote masuk ke pool (sisi quote =
+    setengah TVL dua sisi). Sama dengan ``cost_frac x MC``.
     """
     m = _num(mult)
     lu = _num(liq_usd)
     if m is None or lu is None or m <= 0 or lu <= 0:
         return None
-    return (math.sqrt(m) - 1.0) * lu
+    return (math.sqrt(m) - 1.0) * lu / 2.0
 
 
 def target_costs(liq_mc, mults=(2.0, 5.0, 10.0, 50.0), liq_usd=None):
@@ -226,15 +225,14 @@ def holder_cost_gate(min_avg_cost, price_usd) -> dict:
 def reference_fund_multiple(liq_mc):
     """Biaya 3x sebagai kelipatan dana acuan COCK pra-pump.
 
-    COCK's measured reference ($11,066 = 4.74% MC) uses cash-side reserves
-    ($15,116), so this comparison uses half of the two-sided liq/MC. Existing
-    ``est_cost_usd`` and ``leverage`` deliberately continue to use full, two-
-    sided ``liq_usd``. At COCK's liq/MC 12.95%, this returns about 1.0x.
+    COCK's measured reference ($11,066 = 4.74% MC) is the quote cash that enters
+    the pool (cash-side $15,116), which is now what ``leverage_cost`` returns.
+    At COCK's liq/MC 12.95%, this returns about 1.0x.
     """
     ratio = _num(liq_mc)
     if ratio is None or ratio <= 0:
         return None
-    cost_frac = leverage_cost(3.0, ratio / 2.0)
+    cost_frac = leverage_cost(3.0, ratio)
     if cost_frac is None or COCK_REFERENCE_COST_3X_MC_FRAC <= 0:
         return None
     return cost_frac / COCK_REFERENCE_COST_3X_MC_FRAC
@@ -727,7 +725,7 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
     reference_fund_x = reference_fund_multiple(liq_mc)
     # Nominal $ untuk "× dana acuan": (√3−1) x (liq/2), sama dengan
     # reference_fund_x x 4,74% MC (basis kas satu sisi seperti di atas).
-    reference_fund_usd = cost_usd(3.0, liq / 2.0) if liq is not None else None
+    reference_fund_usd = cost_usd(3.0, liq) if liq is not None else None
     return {
         "checks": checks,
         "passed_count": len(passed),
@@ -845,11 +843,11 @@ def sweep_context(event, liq_mc, fdv_usd, *, market_cap_usd=None,
 
     ``peak`` (harga tertinggi dalam candle)
         Puncak candle sweep COCKROACH = 0,00206033 → **8,669×** dari harga
-        dasar 0,00023768. Inflow $58.778 ≈ biaya dorong ke puncak
-        ``(akar(8,669) - 1) × $30.232 = $58.774``.
+        dasar 0,00023768. Uang masuk $29.389 ≈ biaya dorong ke puncak
+        ``(akar(8,669) - 1) × $30.232 / 2 = $29.388``.
     ``close`` (harga penutupan candle)
         Close COCKROACH = 0,00076674 → hanya 3,226× dari dasar. Biaya dorong
-        ke close = ``(akar(3,226) - 1) × $30.232 = $24.067`` — angka lama yang
+        ke close = ``(akar(3,226) - 1) × $30.232 / 2 = $12.033`` — angka lama yang
         sebelah karena penggunaan close sebagai referensi berlebih 2,44×.
     ``base_price`` (harga sebelum candle sweep)
         Harga tenang 22:41 WIB = 0,00023768.
@@ -857,13 +855,13 @@ def sweep_context(event, liq_mc, fdv_usd, *, market_cap_usd=None,
     Enam angka yang harus dibedakan (dua besaran "paper" pun berbeda):
 
     ``est_cost_usd``
-        **Biaya dorong ke PUNCAK**: ``(akar(peak_mult) - 1) × liq``. Jumlah
-        quote yang harus disedot AMM supaya harga sampai ke puncak candle,
-        kalau tidak ada pembeli lain. COCKROACH 1 Okt = $58.778 (= 25,2% MC).
+        **Biaya dorong ke PUNCAK**: ``(akar(peak_mult) - 1) × liq / 2``. Uang
+        quote yang masuk ke pool supaya harga sampai ke puncak candle, kalau
+        tidak ada pembeli lain. COCKROACH 1 Okt = $29.389 (= 12,6% MC).
     ``est_cost_close_usd``
-        **Biaya dorong ke CLOSE**: ``(akar(price_mult) - 1) × liq``. Angka
+        **Biaya dorong ke CLOSE**: ``(akar(price_mult) - 1) × liq / 2``. Angka
         yang salah dipakai sebelumnya karena menggunakan close sebagai referensi.
-        COCKROACH 1 Okt = $24.067 (bedanya > 2× dari biaya ke puncak).
+        COCKROACH 1 Okt = $12.033 (bedanya > 2× dari biaya ke puncak).
     ``paper_gain_usd``
         **Kenaikan MC kertas sampai puncak**: ``supply × (peak - base_price)``.
         Nilai riil COCKROACH 1 Okt = $1.790.194 (dari supply ≈ 982jt × (0,00206033
@@ -873,20 +871,21 @@ def sweep_context(event, liq_mc, fdv_usd, *, market_cap_usd=None,
         paper_gain — COCKROACH = $752.939. Jangan dipakai sebagai pembilang
         leverage (itu salah karena underestimate).
     ``net_inflow_usd``
-        **Uang yang benar-benar tinggal di pool**: selisih likuiditas antar
-        snapshot. COCKROACH 1 Okt = $58.778 — ≈ biaya dorong ke puncak ($58.774),
+        **Uang quote yang masuk ke pool**: selisih likuiditas (TVL dua sisi)
+        antar snapshot dibagi dua. COCKROACH 1 Okt = Δ TVL $58.778 ÷ 2 =
+        $29.389 — ≈ biaya dorong ke puncak ($29.388),
         artinya sweep itu tidak menarik pembeli luar (semua uang yang masuk
         dipakai ke puncak). Kalau tidak ada data snapshot, diisi ``None``
         (jangan menebak).
     ``churn_x`` / ``churn_net_x``
         volume candle sweep ÷ biaya ke puncak (**teoretis**) versus ÷ inflow
-        nyata (**nyata**). COCKROACH: keduanya ≈ 21,1× karena inflow ≈ biaya
+        nyata (**nyata**). COCKROACH: keduanya ≈ 42,3× karena inflow ≈ biaya
         ke puncak. Kalau ``churn_net_x < churn_x × 0,9`` → ada pembeli luar
         ikut masuk.
 
-    ``leverage`` = ``paper_gain ÷ est_cost`` = ``(akar(peak_mult) + 1) / (liq/MC)``
-        COCKROACH: ``(akar(8,669) + 1) / 12,95% = 3,944 / 0,1295 = 30,5×``,
-        cocok dengan ``$1.790.194 / $58.778 = 30,5×``.
+    ``leverage`` = ``paper_gain ÷ est_cost`` = ``(akar(peak_mult) + 1) / (liq/MC/2)``
+        COCKROACH: ``(akar(8,669) + 1) / 6,475% = 3,944 / 0,06475 = 60,9×``,
+        cocok dengan ``$1.790.194 / $29.389 = 60,9×``.
 
     페르세타:
     Semua angka "paper" (paper_gain, paper_mcap) adalah **teoretis** — nilai
@@ -938,7 +937,7 @@ def sweep_context(event, liq_mc, fdv_usd, *, market_cap_usd=None,
     enriched["liq_mc"] = _num(liq_mc)
     enriched["liq_usd"] = liq
     enriched["est_cost_frac"] = cost_frac
-    enriched["est_cost_usd"] = ((_sqrt(peak_mult) - 1.0) * liq
+    enriched["est_cost_usd"] = ((_sqrt(peak_mult) - 1.0) * liq / 2.0
                                 if (peak_mult and peak_mult > 0 and liq) else None)
     enriched["leverage"] = leverage_ratio(peak_mult, liq_mc)
     enriched["base_mcap_usd"] = base_mcap
@@ -946,7 +945,7 @@ def sweep_context(event, liq_mc, fdv_usd, *, market_cap_usd=None,
 
     # --- Biaya dorong ke CLOSE (untuk perbandingan, bukan penggunaan utama) ---
     if price_mult and price_mult > 0 and liq:
-        enriched["est_cost_close_usd"] = (_sqrt(price_mult) - 1.0) * liq
+        enriched["est_cost_close_usd"] = (_sqrt(price_mult) - 1.0) * liq / 2.0
     else:
         enriched["est_cost_close_usd"] = None
 
@@ -960,7 +959,10 @@ def sweep_context(event, liq_mc, fdv_usd, *, market_cap_usd=None,
     enriched["peak_mult"] = peak_mult
 
     # Inflow nyata hanya dari pengukuran (selisih liq snapshot) — bukan tebakan.
-    inflow = _num(net_inflow_usd)
+    # Δ likuiditas adalah TVL dua sisi; uang quote yang masuk = Δ TVL / 2
+    # (dalam CPMM TVL = 2y, jadi ΔTVL = 2Δy). Satuannya disamakan dengan biaya.
+    inflow_tvl = _num(net_inflow_usd)
+    inflow = inflow_tvl / 2.0 if inflow_tvl is not None else None
     enriched["net_inflow_usd"] = inflow
     enriched["net_inflow_is_estimate"] = inflow is None
     if inflow is None and enriched["est_cost_usd"]:
