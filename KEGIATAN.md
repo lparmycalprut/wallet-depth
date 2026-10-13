@@ -1,5 +1,30 @@
 # Kegiatan
 
+## 2026-10-13 — Sweep: snapshot terakhir saat dibuka, kohort PLUS di bawah, ambang kohort minus 50%, hapus dari tabel
+
+Permintaan user: *halaman dibuka langsung menampilkan snapshot terakhir, diurutkan
+dari yang paling mendekati kelayakan; kohort PLUS di paling bawah; ambang kohort
+diturunkan ke minus 50%; refresh manual tetap ada; hapus mint dari tabel.*
+
+- **Ambang kohort** `COHORT_MINUS_THRESHOLD` −0,70 → **−0,50** (`sweep_screen.py`).
+  Label gate memakai ambang ini (`TUNGGU — kohort belum minus 50%`). AGENTS.md
+  dan `docs/sweep.md` ikut diperbarui.
+- **View snapshot:** setiap snapshot terbaru menyimpan `view` (metrik + vonis +
+  konteks sweep, daftar field eksplisit). Hanya satu view per mint yang disimpan,
+  jadi `sweep_state.json` tidak membengkak. Halaman dibuka membaca view ini tanpa
+  scan jaringan; mint tanpa view dipindai sekali.
+- **Urutan tabel:** `display_sort_key` — vonis, lalu jumlah kriteria lolos, lalu
+  jarak kohort ke −50% untuk kelompok TUNGGU. Kohort PLUS selalu paling bawah.
+- **Tombol** `🔄 Refresh & ambil snapshot` (sebelumnya "Scan sekarang") memindai
+  live semua mint watchlist dan menyimpan snapshot. Auto-refresh tetap ada.
+- **Hapus dari tabel:** kolom *Hapus* (checkbox) + tombol; memperbarui
+  `sweep_watchlist.json` dan di-commit ke GitHub. Snapshot/sinyal mint tetap
+  tersimpan di state.
+- Verifikasi: 138 test sweep lolos; halaman diuji dengan `AppTest` (jaringan
+  di-stub, berkas state dialihkan ke folder sementara). Klik centang di data editor
+  tidak bisa disimulasikan oleh AppTest, jadi logika pemilihan diuji sebagai fungsi
+  murni (`_flagged_mints`).
+
 ## 2026-10-12 — Batas holder per-wallet jadi setelan, default 3% → 5%
 
 Permintaan verifikasi data riil: *"batas holder per-wallet harus jadi setelan, bukan angka mati 3%"*.

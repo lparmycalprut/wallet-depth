@@ -278,6 +278,79 @@ def add_snapshot(state: dict, mint: str, metrics: dict,
     return row
 
 
+#: Field metrik yang ikut disimpan di "view" (tampilan halaman tanpa scan ulang).
+#: Sengaja daftar eksplisit: holder list / risks / candles tidak masuk state.
+VIEW_METRIC_KEYS = (
+    "mint", "ok", "error", "symbol", "name", "price_usd", "liq_usd", "fdv_usd",
+    "market_cap_usd", "vol_1h", "vol_24h", "buys_1h", "sells_1h", "pair_address",
+    "dex_id", "pool_count", "url", "pair_created_at", "lp_locked_pct",
+    "mint_authority", "freeze_authority", "top10_holder_pct", "holder_count",
+    "top_bundler_trader_percentage", "bundler_rate", "bot_degen_rate",
+    "fresh_wallet_rate", "status_now", "holding_rate",
+)
+VIEW_RESULT_KEYS = (
+    "checks", "passed_count", "scored_count", "required_count", "score",
+    "structural_ok", "eligible", "verdict", "color", "liq_mc", "targets",
+    "reference_fund_x", "turnover_x", "cohort", "cohort_gate_status",
+    "cohort_gate_passed", "cohort_gate_detail", "missing",
+)
+
+
+def make_view(mint: str, metrics: dict, result: dict, sweep_context=None,
+              *, ts: int) -> dict:
+    """Bentuk tampilan satu mint yang disimpan bersama snapshot terbaru."""
+    metrics = metrics or {}
+    result = result or {}
+    return {
+        "ts": int(ts),
+        "mint": mint,
+        "metrics": {k: metrics[k] for k in VIEW_METRIC_KEYS if k in metrics},
+        "result": {k: result[k] for k in VIEW_RESULT_KEYS if k in result},
+        "sweep_context": sweep_context or None,
+        "turnover_x": result.get("turnover_x"),
+    }
+
+
+def set_view(state: dict, mint: str, snapshot_row: dict, view: dict) -> None:
+    """Pasang ``view`` di snapshot terbaru mint; view snapshot lama dibuang.
+
+    Hanya satu view per mint yang disimpan, supaya berkas state tetap kecil.
+    """
+    buckets = (state.get("snapshots") or {}).get(mint)
+    if not isinstance(buckets, dict) or not isinstance(snapshot_row, dict):
+        return
+    for row in buckets.values():
+        if isinstance(row, dict) and row is not snapshot_row:
+            row.pop("view", None)
+    snapshot_row["view"] = view
+
+
+def latest_view(state: dict, mint: str) -> dict | None:
+    """View terbaru yang tersimpan untuk mint (``None`` kalau belum ada)."""
+    buckets = (state.get("snapshots") or {}).get(mint) or {}
+    views = [row["view"] for row in buckets.values()
+             if isinstance(row, dict) and isinstance(row.get("view"), dict)]
+    if not views:
+        return None
+    return max(views, key=lambda view: int(view.get("ts") or 0))
+
+
+def watchlist_views(state: dict, mints) -> tuple:
+    """(views, missing): view per mint watchlist yang ada + daftar yang belum.
+
+    Urutan ``views`` mengikuti urutan watchlist; penyusunan urut tampilan
+    dilakukan di UI (``sweep_screen.display_sort_key``).
+    """
+    views, missing = [], []
+    for mint in parse_mints(mints):
+        view = latest_view(state, mint)
+        if view is None:
+            missing.append(mint)
+        else:
+            views.append(view)
+    return views, missing
+
+
 def mint_history(state: dict, mint: str, *, limit: int = 48) -> list:
     """Snapshot mint urut menaik (paling lama dulu), maksimum ``limit`` baris."""
     buckets = (state.get("snapshots") or {}).get(mint) or {}

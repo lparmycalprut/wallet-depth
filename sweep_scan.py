@@ -91,8 +91,9 @@ def run_scan(mints, *, state: dict | None = None,
     """Jalankan satu putaran scan untuk semua ``mints``.
 
     Mengembalikan ``{"rows": [...], "state": {...}, "alerts": [...],
-    "elapsed": float}``. ``rows`` urut menurun berdasarkan skor kelayakan supaya
-    tabel UI langsung terbaca. Ambang kriteria ditetapkan di :mod:`sweep_screen`.
+    "elapsed": float}``. ``rows`` urut menurut kedekatan ke kelayakan supaya
+    tabel UI langsung terbaca (lihat :func:`sweep_screen.display_sort_key`).
+    Ambang kriteria ditetapkan di :mod:`sweep_screen`.
     """
     started = time.time()
     seen = store.parse_mints(mints)
@@ -111,8 +112,9 @@ def run_scan(mints, *, state: dict | None = None,
     for item in results:
         mint = item["mint"]
         metrics = item["metrics"] or {}
+        item["_snapshot_row"] = None
         if metrics.get("ok"):
-            store.add_snapshot(state, mint, metrics, ts=now)
+            item["_snapshot_row"] = store.add_snapshot(state, mint, metrics, ts=now)
 
         # First successful shakeout + higher-low detection is latched forever.
         # Later candles (including a sweep under the former low) never clear it.
@@ -143,6 +145,12 @@ def run_scan(mints, *, state: dict | None = None,
                 price_usd=metrics.get("price_usd"),
                 liq_usd=metrics.get("liq_usd"),
                 net_inflow_usd=inflow)
+        # Tampilan halaman disimpan di snapshot terbaru: saat halaman dibuka,
+        # data terakhir bisa ditampilkan tanpa scan ulang.
+        if item.get("_snapshot_row") is not None:
+            store.set_view(state, mint, item["_snapshot_row"], store.make_view(
+                mint, metrics, enriched, item.get("sweep_context"),
+                ts=item["_snapshot_row"]["ts"]))
 
     prices = {item["mint"]: (item["metrics"] or {}).get("price_usd")
               for item in results if (item["metrics"] or {}).get("price_usd")}
@@ -225,8 +233,7 @@ def run_scan(mints, *, state: dict | None = None,
           "cohort_gate_status": (item.get("result") or {}).get("cohort_gate_status"),
           # Hourly candles stay in memory for display/debug; they are not state.
           "candles_hour": item.get("candles_hour") or []} for item in results],
-        key=lambda row: (row["result"].get("score") is None,
-                         -(row["result"].get("score") or 0)),
+        key=lambda row: screen.display_sort_key(row["result"]),
     )
     return {"rows": rows, "state": state, "alerts": alerts_sent,
             "elapsed": time.time() - started}

@@ -299,7 +299,7 @@ class EvaluateTest(unittest.TestCase):
         self.assertTrue(shakeout["passed"])
         self.assertIn("latch permanen", shakeout["detail"])
 
-    def test_cohort_gate_plus_wait_and_minus_70(self):
+    def test_cohort_gate_plus_wait_and_minus_50(self):
         candles = _birth_candles()
         now = 1000 + 49 * 3600
 
@@ -308,16 +308,38 @@ class EvaluateTest(unittest.TestCase):
         self.assertEqual(plus["cohort_gate_status"], "SKIP — kohort plus")
         self.assertFalse(plus["eligible"])
 
-        minus_69 = ss.evaluate(self._metrics(price_usd=0.31),
+        # VWAP kelahiran ≈ 1,0: harga 0,52 = minus ~48% → belum lolos.
+        minus_48 = ss.evaluate(self._metrics(price_usd=0.52),
                                cohort_candles=candles, now=now)
-        self.assertEqual(minus_69["cohort_gate_status"],
-                         "TUNGGU — kohort belum minus 70%")
-        self.assertFalse(minus_69["eligible"])
+        self.assertEqual(minus_48["cohort_gate_status"],
+                         "TUNGGU — kohort belum minus 50%")
+        self.assertFalse(minus_48["eligible"])
 
-        minus_71 = ss.evaluate(self._metrics(price_usd=0.29),
+        # harga 0,49 = minus ~51% → lolos gate kohort.
+        minus_51 = ss.evaluate(self._metrics(price_usd=0.49),
                                cohort_candles=candles, now=now)
-        self.assertEqual(minus_71["cohort_gate_status"], "LOLOS")
-        self.assertTrue(minus_71["eligible"])
+        self.assertEqual(minus_51["cohort_gate_status"], "LOLOS")
+        self.assertTrue(minus_51["cohort_gate_passed"])
+
+    def test_display_sort_plus_last_and_closest_to_eligible_first(self):
+        def row(status, verdict="TIDAK LAYAK", passed=1, avg=None, gate=False):
+            return {"cohort_gate_status": status, "verdict": verdict,
+                    "passed_count": passed, "cohort_gate_passed": gate,
+                    "cohort": {"status_avg_cost": avg}}
+
+        rows = {
+            "plus": row("SKIP — kohort plus", passed=6, avg=0.2),
+            "nodata": row("TANPA DATA — kohort", passed=5),
+            "far": row("TUNGGU — kohort belum minus 50%", passed=3, avg=-0.10),
+            "near": row("TUNGGU — kohort belum minus 50%", passed=3, avg=-0.45),
+            "layak": row("LOLOS", verdict="LAYAK SWEEP", passed=4, avg=-0.6,
+                         gate=True),
+            "kandidat": row("LOLOS", verdict="KANDIDAT", passed=2, avg=-0.6,
+                            gate=True),
+        }
+        order = sorted(rows, key=lambda k: ss.display_sort_key(rows[k]))
+        self.assertEqual(order, ["layak", "kandidat", "near", "far",
+                                 "nodata", "plus"])
 
     def test_cohort_no_data_never_passes_gate_and_partial_window_is_labeled(self):
         no_data = ss.evaluate(self._metrics(), cohort_candles=[])
@@ -327,7 +349,7 @@ class EvaluateTest(unittest.TestCase):
                                     now=1000 + 12 * 3600)
         self.assertTrue(partial["available"])
         self.assertTrue(partial["partial_window"])
-        self.assertLessEqual(partial["status_avg_cost"], -0.70)
+        self.assertLessEqual(partial["status_avg_cost"], -0.50)
 
     def test_turnover_and_cock_reference_multiple(self):
         metrics = self._metrics(vol24_usd=30232.0 * 3.35)
