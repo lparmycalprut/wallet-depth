@@ -282,6 +282,22 @@ def _refresh_button(mint: str) -> None:
         _refresh_token(mint)
 
 
+REFRESH_CLICK_KEY = "sweep_refresh_click"
+PENDING_REFRESH_KEY = "sweep_pending_refresh"
+
+
+def _request_refresh(mints) -> None:
+    """Callback tombol Refresh di tabel: catat mint baris yang diklik.
+
+    Pemindaian dijalankan setelah tabel selesai dirender (bukan di callback),
+    karena ``st.rerun`` tidak boleh dipanggil dari dalam callback.
+    """
+    click = st.session_state.get(REFRESH_CLICK_KEY)
+    row = click.get("row") if click else None
+    if isinstance(row, int) and 0 <= row < len(mints) and mints[row]:
+        st.session_state[PENDING_REFRESH_KEY] = mints[row]
+
+
 def _render_table(rows, watchlist) -> None:
     """Tabel kelayakan dengan kolom **Hapus** untuk mengeluarkan mint dari watchlist."""
     if not rows:
@@ -289,7 +305,10 @@ def _render_table(rows, watchlist) -> None:
                 "**Refresh & ambil snapshot**.")
         return
     frame = pd.DataFrame(_eligibility_rows(rows))
+    mints = [row.get("mint") or "" for row in rows]
     frame.insert(0, "Hapus", False)
+    # Hapus dan Refresh sama-sama pinned: tetap terlihat saat tabel digeser.
+    frame.insert(1, "Refresh", "🔄 Refresh")
     edited = st.data_editor(
         frame, key="sweep_table", use_container_width=True, hide_index=True,
         disabled=[column for column in frame.columns if column != "Hapus"],
@@ -298,9 +317,16 @@ def _render_table(rows, watchlist) -> None:
             "Hapus": st.column_config.CheckboxColumn(
                 "Hapus", help="Centang lalu tekan tombol di bawah tabel",
                 pinned=True),
+            "Refresh": st.column_config.ButtonColumn(
+                "Refresh", help="Pindai ulang mint ini sekarang juga",
+                pinned=True, on_click=_request_refresh, args=(mints,),
+                key=REFRESH_CLICK_KEY),
             "Kohort": st.column_config.TextColumn("Kohort", width=320),
             "GMGN": st.column_config.LinkColumn("GMGN", display_text="buka"),
         })
+    pending = st.session_state.pop(PENDING_REFRESH_KEY, None)
+    if pending:
+        _refresh_token(pending)  # memanggil st.rerun() di akhir
     flags = edited["Hapus"].tolist() if "Hapus" in edited else []
     picked = _flagged_mints(rows, flags)
     if st.button(f"🗑️ Hapus {len(picked)} mint tercentang dari watchlist",
