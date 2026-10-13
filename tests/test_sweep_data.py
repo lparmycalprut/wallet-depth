@@ -2,6 +2,7 @@
 """Offline tests for Sweep's GMGN cohort data and early-pool OHLCV fetch."""
 from __future__ import annotations
 
+import time
 import unittest
 from unittest import mock
 
@@ -104,10 +105,21 @@ class CohortOhlcvTest(unittest.TestCase):
 class OhlcvRetryTest(unittest.TestCase):
     def setUp(self):
         self._delays = data.OHLCV_RETRY_DELAYS
+        self._interval = data.GECKO_MIN_INTERVAL
         data.OHLCV_RETRY_DELAYS = (0.0, 0.0)
+        data.GECKO_MIN_INTERVAL = 0.0
 
     def tearDown(self):
         data.OHLCV_RETRY_DELAYS = self._delays
+        data.GECKO_MIN_INTERVAL = self._interval
+
+    def test_requests_are_spaced_by_min_interval(self):
+        data.GECKO_MIN_INTERVAL = 0.05
+        data._gecko_next_at[0] = 0.0
+        started = time.monotonic()
+        for _ in range(3):
+            data._gecko_throttle()
+        self.assertGreaterEqual(time.monotonic() - started, 0.09)
 
     @staticmethod
     def _ok(rows):
