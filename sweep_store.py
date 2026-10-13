@@ -291,7 +291,7 @@ def add_snapshot(state: dict, mint: str, metrics: dict,
 VIEW_METRIC_KEYS = (
     "mint", "ok", "error", "symbol", "name", "price_usd", "liq_usd", "fdv_usd",
     "market_cap_usd", "vol_1h", "vol_24h", "buys_1h", "sells_1h", "pair_address",
-    "dex_id", "pool_count", "url", "pair_created_at", "lp_locked_pct",
+    "dex_id", "pool_count", "url", "pair_created_at", "rugcheck_ok",
     "mint_authority", "freeze_authority", "top10_holder_pct", "holder_count",
     "top_bundler_trader_percentage", "bundler_rate", "bot_degen_rate",
     "fresh_wallet_rate", "status_now", "holding_rate",

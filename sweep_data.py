@@ -7,7 +7,7 @@ Empat provider (lima endpoint), semuanya publik dan **tanpa API key**:
 Sumber                       Dipakai untuk
 ===========================  ===========================================================
 DexScreener                  harga, liq, FDV/MC, volume, buys/sells, pool utama
-RugCheck                     ``lpLockedPct``, authority, top holder → kriteria 2 & 3
+RugCheck                     authority, top holder → gate authority & kriteria 3
 GMGN ``token_stat``          bundler, bot degen, fresh, entrapment, top-10
 GMGN ``tokens/top_buyers``   ``holding_rate`` + ringkasan ``statusNow``
 GeckoTerminal OHLCV          candle hourly/5m + jendela cohort 48 jam pertama
@@ -241,7 +241,7 @@ def dex_snapshot(mint: str, *, use_cache: bool = True) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# RugCheck — LP locked / authority / top holder
+# RugCheck — authority / top holder
 # ---------------------------------------------------------------------------
 def _pool_owners(report: dict) -> set:
     owners = set()
@@ -255,33 +255,8 @@ def _pool_owners(report: dict) -> set:
     return owners
 
 
-def _lp_locked_pct(report: dict):
-    """LP terkunci (0–100) dari pool AMM terbesar yang punya LP token.
-
-    RugCheck ``/report`` **tidak** punya ``lpLockedPct`` di level atas (dicek
-    langsung 2026-10-13); angkanya ada di ``markets[].lp.lpLockedPct``. Pool
-    tanpa LP token (DLMM, Orca: ``lpTotalSupply`` = 0) dilewati karena
-    angkanya tidak bermakna. Kalau tidak ada pool ber-LP, hasilnya ``None``
-    (tampil "—"), bukan 0.
-    """
-    best, best_liquidity = None, -1.0
-    for market in (report.get("markets") or []):
-        lp = market.get("lp") if isinstance(market, dict) else None
-        if not isinstance(lp, dict):
-            continue
-        if (_num(lp.get("lpTotalSupply")) or 0) <= 0:
-            continue
-        pct = _num(lp.get("lpLockedPct"))
-        if pct is None:
-            continue
-        liquidity = (_num(lp.get("quoteUSD")) or 0) + (_num(lp.get("baseUSD")) or 0)
-        if liquidity > best_liquidity:
-            best, best_liquidity = pct, liquidity
-    return best
-
-
 def rugcheck_snapshot(mint: str, *, use_cache: bool = True) -> dict:
-    """Snapshot RugCheck: LP locked, authority, dan holder **tanpa pool AMM**.
+    """Snapshot RugCheck: authority dan holder **tanpa pool AMM**.
 
     Rank #1 daftar holder RugCheck hampir selalu akun pool itu sendiri
     (COCKROACH: 8,26% supply, ``owner`` = ``markets[].pubkey``). Kalau pool ikut
@@ -317,7 +292,6 @@ def rugcheck_snapshot(mint: str, *, use_cache: bool = True) -> dict:
         top10 = sum(sorted(pcts, reverse=True)[:10]) if pcts else None
         result.update({
             "ok": True,
-            "lp_locked_pct": _lp_locked_pct(report),
             "score_normalised": _num(report.get("score_normalised")),
             "risks": [str(r.get("name") or r.get("description") or r)[:80]
                       for r in (report.get("risks") or [])][:4],
@@ -637,7 +611,7 @@ def collect_metrics(mint: str, *, use_cache: bool = True) -> dict:
         "pair_created_at": _timestamp_seconds(dex.get("pair_created_at")),
         "dex_id": dex.get("dex_id") or "",
         "pool_count": rug.get("pool_count"),
-        "lp_locked_pct": rug.get("lp_locked_pct"),
+        "rugcheck_ok": bool(rug.get("ok")),
         "mint_authority": rug.get("mint_authority"),
         "freeze_authority": rug.get("freeze_authority"),
         "risks": rug.get("risks") or [],

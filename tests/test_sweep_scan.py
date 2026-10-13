@@ -30,7 +30,7 @@ BUNDLE = {
         "liq_mc": 30232.0 / 233451.0,
         "vol24_usd": 30232.0 * 3.35,
         "vol_1h": 180744.30, "buys_1h": 70, "sells_1h": 30,
-        "lp_locked_pct": 89.8178, "mint_authority": None,
+        "mint_authority": None,
         "freeze_authority": None, "top10_holder_pct": 18.92,
         "holder_pcts": [2.99, 2.7, 2.11], "holder_count": 3609,
         "top_bundler_trader_percentage": 0.1764, "bundler_rate": 0.1764,

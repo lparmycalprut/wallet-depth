@@ -5,7 +5,7 @@ Satu putaran :func:`run_scan`:
 
 1. ambil metrik tiap mint (DexScreener + RugCheck + GMGN) — paralel;
 2. simpan snapshot per jam ke state;
-3. jalankan 6 kriteria (:mod:`sweep_screen`);
+3. jalankan 5 kriteria skor + gate authority (:mod:`sweep_screen`);
 4. deteksi sweep dari candle GeckoTerminal (1 jam untuk kriteria 6, 5 menit
    untuk deteksi sweep);
 5. perbarui hasil sinyal lama (``max_up_pct`` / ``max_down_pct``);

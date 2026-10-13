@@ -7,7 +7,7 @@ entri-nya ada di ``pages/8_🌊_Sweep.py`` (multipage bawaan Streamlit).
 Isi halaman:
 
 1. **Watchlist manual** — tempel mint, satu per baris.
-2. **Tabel kelayakan** — 6 kriteria menjadi skor + vonis, plus kolom pasar.
+2. **Tabel kelayakan** — 5 kriteria menjadi skor + vonis, plus kolom pasar.
 3. **Detail per mint** — alasan tiap kriteria + tabel biaya sweep (rumus
    ``(akar(m)-1) x liq/MC``).
 4. **Statistik** — riwayat sinyal beserta ``max_up`` / ``max_down`` sehingga
@@ -122,7 +122,7 @@ def _render_header() -> None:
     st.markdown("## 🌊 Sweep Screener")
     st.caption(
         "Skrining **kelayakan sweep** untuk token yang sudah retrace dalam: "
-        "murah di-sweep (liq/MC kecil) + LP terkunci + float tersebar + ada "
+        "murah di-sweep (liq/MC kecil) + authority dilepas + float tersebar + ada "
         "jejak akumulasi. Alert Telegram dikirim saat kelayakan muncul dan "
         "saat sweep mulai terjadi. Halaman dibuka dengan **snapshot terakhir** "
         "tiap mint di watchlist; tekan **Refresh & ambil snapshot** untuk "
@@ -232,7 +232,6 @@ def _eligibility_rows(rows) -> list:
                                                        result.get("turnover_x")), 2),
             "Liq": _fmt_usd(metrics.get("liq_usd")),
             "MC": _fmt_usd(metrics.get("fdv_usd")),
-            "LP locked": _fmt_pct100(metrics.get("lp_locked_pct")),
             "Top-10": _fmt_pct100(metrics.get("top10_holder_pct")),
             "Holder": metrics.get("holder_count"),
             "Bundler": _fmt_pct(metrics.get("top_bundler_trader_percentage",
