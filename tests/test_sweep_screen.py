@@ -6,7 +6,8 @@ Semua angka di sini berasal dari kasus nyata COCKROACH (``H4KUxs…nyJc``)
 fungsi:
 
 - rumus ``(akar(m)-1) x liq/MC`` direproduksi pada angka aktual
-  (``(akar(8,67)-1) x 12,95% = 25,2%`` dan ``$58.778/$233.451 = 25,2%``);
+  (``(akar(8,67)-1) x 12,95% / 2 = 12,6%`` = uang quote masuk, cocok dengan
+  biaya acuan COCKROACH; Δ TVL dua sisi ``$58.778`` = 2× uang masuk);
 - deteksi sweep harus menangkap candle 22:42 WIB (volume $180.744 vs $152
   menit sebelumnya, close +222,6%);
 - kriteria shakeout harus menangkap pola 20:00/21:00 WIB (turun 47%, lalu low
@@ -25,7 +26,8 @@ PEAK = 0.0020603307226025585          # puncak candle sweep (22:49)
 CLOSE = 0.0007667356548390803         # harga penutupan candle sweep (22:42)
 LIQ_USD = 30232.0                     # reserve quote sebelum sweep
 MC_USD = 233451.0                     # market cap sebelum sweep
-NET_INFLOW = 58778.0                  # net inflow hasil rekonstruksi reserve
+NET_INFLOW = 58778.0                  # Δ TVL dua sisi hasil rekonstruksi reserve
+NET_INFLOW_MONEY = NET_INFLOW / 2.0    # uang quote yang benar-benar masuk (Δ TVL / 2)
 PAPER_GAIN = 1790194.0                # kenaikan MC kertas sampai puncak
 PAPER_MCAP_CLOSE = 752939.0           # paper MC di close (besaran berbeda)
 SUPPLY = 982_000_000                  # supply token (standar pump.fun)
@@ -33,9 +35,9 @@ SUPPLY = 982_000_000                  # supply token (standar pump.fun)
 # Turunan dari angka di atas
 PEAK_MULT = PEAK / BASE_PRICE          # 8,669x
 PRICE_MULT = CLOSE / BASE_PRICE        # 3,226x
-EST_COST_PEAK = (PEAK_MULT ** 0.5 - 1.0) * LIQ_USD   # ≈ 58.778
-EST_COST_CLOSE = (PRICE_MULT ** 0.5 - 1.0) * LIQ_USD  # ≈ 24.067
-LEVERAGE = (PEAK_MULT ** 0.5 + 1.0) / (LIQ_USD / MC_USD)  # ≈ 30,5x
+EST_COST_PEAK = (PEAK_MULT ** 0.5 - 1.0) * LIQ_USD / 2.0   # ≈ 29.389 (uang masuk)
+EST_COST_CLOSE = (PRICE_MULT ** 0.5 - 1.0) * LIQ_USD / 2.0  # ≈ 12.033
+LEVERAGE = (PEAK_MULT ** 0.5 + 1.0) / (LIQ_USD / MC_USD / 2.0)  # ≈ 60,9x
 
 
 def _candles(rows):
@@ -51,34 +53,34 @@ def _birth_candles(created=1000, *, low=0.9, high=1.1, price=1.0):
 
 class LeverageFormulaTest(unittest.TestCase):
     def test_cost_matches_cockroach_actual_peak(self):
-        """Biaya dorong ke PUNCAK harus ≈ $58.778 (bukan $24.067 dari close)."""
+        """Biaya dorong ke PUNCAK = uang quote masuk ≈ $29.389 (Δ TVL / 2)."""
         liq_mc = LIQ_USD / MC_USD
         frac = ss.leverage_cost(PEAK_MULT, liq_mc)
-        self.assertAlmostEqual(frac, NET_INFLOW / MC_USD, places=3)
-        self.assertAlmostEqual(frac * MC_USD, NET_INFLOW, delta=60.0)
+        self.assertAlmostEqual(frac, NET_INFLOW_MONEY / MC_USD, places=3)
+        self.assertAlmostEqual(frac * MC_USD, NET_INFLOW_MONEY, delta=60.0)
 
     def test_cost_matches_cockroach_actual_formula(self):
-        """est_cost_usd = (akar(peak_mult) - 1) × liq ≈ $58.778."""
-        self.assertAlmostEqual(EST_COST_PEAK, NET_INFLOW, delta=100.0)
+        """est_cost_usd = (akar(peak_mult) - 1) × liq / 2 ≈ $29.389."""
+        self.assertAlmostEqual(EST_COST_PEAK, NET_INFLOW_MONEY, delta=100.0)
 
     def test_ratio_matches_cockroach_actual(self):
-        """leverage = (akar(peak_mult) + 1) / (liq/MC) ≈ 30,5x."""
+        """leverage = paper gain / uang quote masuk ≈ 60,9x (basis setengah)."""
         liq_mc = LIQ_USD / MC_USD
         ratio = ss.leverage_ratio(PEAK_MULT, liq_mc)
-        self.assertAlmostEqual(ratio, PAPER_GAIN / NET_INFLOW, places=1)
+        self.assertAlmostEqual(ratio, PAPER_GAIN / NET_INFLOW_MONEY, places=1)
 
     def test_cost_to_close_is_less_than_cost_to_peak(self):
-        """est_cost_close_usd ≈ $24.067, beda > 2× dari biaya ke puncak."""
+        """est_cost_close_usd ≈ $12.033, beda > 2× dari biaya ke puncak."""
         self.assertGreater(EST_COST_PEAK / EST_COST_CLOSE, 2.0)
-        self.assertAlmostEqual(EST_COST_CLOSE, 24067.0, delta=24067.0 * 0.001)
+        self.assertAlmostEqual(EST_COST_CLOSE, 12033.5, delta=12033.5 * 0.001)
 
     def test_smaller_liq_mc_is_cheaper(self):
         cheap = ss.leverage_cost(10.0, 0.02)
         pricey = ss.leverage_cost(10.0, 0.30)
         self.assertLess(cheap, pricey)
-        # liq/MC 5% → 10,81% MC untuk naik 10x; 30% → 64,87% MC.
-        self.assertAlmostEqual(ss.leverage_cost(10.0, 0.05) * 100, 10.81, places=2)
-        self.assertAlmostEqual(ss.leverage_cost(10.0, 0.30) * 100, 64.87, places=2)
+        # liq/MC 5% → 5,41% MC untuk naik 10x; 30% → 32,43% MC (basis setengah).
+        self.assertAlmostEqual(ss.leverage_cost(10.0, 0.05) * 100, 5.41, places=2)
+        self.assertAlmostEqual(ss.leverage_cost(10.0, 0.30) * 100, 32.43, places=2)
 
     def test_invalid_input_returns_none(self):
         self.assertIsNone(ss.leverage_cost(None, 0.1))
@@ -89,7 +91,8 @@ class LeverageFormulaTest(unittest.TestCase):
     def test_target_costs_feasibility(self):
         rows = ss.target_costs(0.02, mults=(10.0,))
         self.assertTrue(rows[0]["feasible"])
-        rows = ss.target_costs(0.30, mults=(50.0,))
+        # 50x di liq/MC 60% → (√50−1) × 30% = 182% MC > 100%: tidak feasible.
+        rows = ss.target_costs(0.60, mults=(50.0,))
         self.assertFalse(rows[0]["feasible"])
 
 
@@ -442,10 +445,10 @@ class CostGateTest(unittest.TestCase):
         self.assertEqual(ss.COST_GATE_MULT, 10.0)
         self.assertEqual(ss.COST_GATE_MAX_FRAC, 0.80)
 
-    def test_boundary_uses_liq_mc_near_37_percent(self):
-        # (√10 − 1) = 2,1623 → batas 80% dicapai di liq/MC ≈ 36,99%.
-        self.assertTrue(ss.cost_gate(ss.leverage_cost(10.0, 0.3699))["passed"])
-        self.assertFalse(ss.cost_gate(ss.leverage_cost(10.0, 0.3701))["passed"])
+    def test_boundary_uses_liq_mc_near_74_percent(self):
+        # (√10 − 1)/2 = 1,0811 → batas 80% dicapai di liq/MC ≈ 73,99%.
+        self.assertTrue(ss.cost_gate(ss.leverage_cost(10.0, 0.7398))["passed"])
+        self.assertFalse(ss.cost_gate(ss.leverage_cost(10.0, 0.7402))["passed"])
         self.assertTrue(ss.cost_gate(0.80)["passed"])  # tepat 80% lolos
 
     def test_missing_cost_is_not_passed(self):
@@ -466,7 +469,7 @@ class CostUsdTest(unittest.TestCase):
         liq, mc = 30232.0, 233451.0
         targets = ss.target_costs(liq / mc, liq_usd=liq)
         ten_x = next(t for t in targets if t["mult"] == 10.0)
-        self.assertAlmostEqual(ten_x["cost_usd"], (10 ** 0.5 - 1) * liq, places=6)
+        self.assertAlmostEqual(ten_x["cost_usd"], (10 ** 0.5 - 1) * liq / 2, places=6)
         self.assertAlmostEqual(ten_x["cost_usd"], ten_x["cost_frac"] * mc, places=4)
 
     def test_usd_absent_without_liq_usd(self):
@@ -492,8 +495,8 @@ class CostGateEvaluateTest(unittest.TestCase):
         return metrics
 
     def test_cost_over_80_percent_turns_verdict_to_tunggu_even_if_cohort_passes(self):
-        # liq/MC 40% → biaya 10x ≈ 86,5% MC > 80%.
-        result = ss.evaluate(self._metrics(liq_usd=MC_USD * 0.40), snapshots=[], candles=[],
+        # liq/MC 80% → biaya 10x ≈ 86,5% MC > 80%.
+        result = ss.evaluate(self._metrics(liq_usd=MC_USD * 0.80), snapshots=[], candles=[],
                              cohort_candles=_birth_candles(),
                              now=1000 + 49 * 3600)
         self.assertTrue(result["cohort_gate_passed"])
@@ -504,7 +507,7 @@ class CostGateEvaluateTest(unittest.TestCase):
         self.assertGreater(result["cost_10x_mc_frac"], 0.80)
 
     def test_liq_mc_at_structural_max_still_passes_cost_gate(self):
-        # liq/MC 35% (batas struktural) → biaya 10x ≈ 75,7% MC ≤ 80%.
+        # liq/MC 35% (batas struktural) → biaya 10x ≈ 37,8% MC ≤ 80%.
         result = ss.evaluate(self._metrics(), snapshots=[], candles=[],
                              cohort_candles=_birth_candles(),
                              now=1000 + 49 * 3600)
@@ -625,7 +628,7 @@ class HolderCostGateEvaluateTest(unittest.TestCase):
         self.assertEqual(result["color"], "#64748b")
 
     def test_cost_gate_still_wins_over_holder_gate(self):
-        result = ss.evaluate(self._metrics(liq_usd=MC_USD * 0.40,
+        result = ss.evaluate(self._metrics(liq_usd=MC_USD * 0.80,
                                            holder_min_avg_cost=0.1),
                              snapshots=[], candles=[],
                              cohort_candles=_birth_candles(),
@@ -681,7 +684,7 @@ class DetectSweepTest(unittest.TestCase):
                                    market_cap_usd=mc_base)
         # peak_mult harus ≈ 8,669 (bukan 3,226 dari price_mult)
         self.assertAlmostEqual(context["peak_mult"], PEAK_MULT, places=1)
-        # est_cost_usd pakai peak_mult → ≈ $58.778
+        # est_cost_usd pakai peak_mult → ≈ $29.389 (uang masuk)
         self.assertAlmostEqual(
             context["est_cost_usd"],
             EST_COST_PEAK,
@@ -736,7 +739,7 @@ class DetectSweepTest(unittest.TestCase):
 
         # Jalur 2: leverage_net = paper_gain / net_inflow
         self.assertAlmostEqual(context["leverage_net"],
-                               PAPER_GAIN / NET_INFLOW, places=1)
+                               PAPER_GAIN / NET_INFLOW_MONEY, places=1)
 
         # Jalur 3: manual dari angka
         self.assertAlmostEqual(context["leverage_net"],
@@ -760,7 +763,7 @@ class DetectSweepTest(unittest.TestCase):
         self.assertAlmostEqual(context["churn_x"],
                                1242746.0 / EST_COST_PEAK, places=1)
         self.assertAlmostEqual(context["churn_net_x"],
-                               1242746.0 / NET_INFLOW, places=1)
+                               1242746.0 / NET_INFLOW_MONEY, places=1)
         # Saat inflow ≈ biaya ke puncak, churn_x ≈ churn_net_x
         self.assertAlmostEqual(context["churn_x"], context["churn_net_x"], places=0)
 
@@ -798,12 +801,12 @@ class SweepContextTest(unittest.TestCase):
                                    market_cap_usd=MC_USD, liq_usd=LIQ_USD)
         self.assertAlmostEqual(context["est_cost_usd"], EST_COST_PEAK,
                                delta=EST_COST_PEAK * 0.001)
-        # est_cost_frac ≈ 25,2% (fraksi MC)
+        # est_cost_frac ≈ 12,6% (fraksi MC, uang masuk)
         self.assertAlmostEqual(context["est_cost_frac"],
-                               NET_INFLOW / MC_USD, places=3)
+                               NET_INFLOW_MONEY / MC_USD, places=3)
 
     def test_biaya_dorong_close_legacy_value(self):
-        """est_cost_close_usd = (akar(price_mult) - 1) × liq = $24.067."""
+        """est_cost_close_usd = (akar(price_mult) - 1) × liq / 2 = $12.033."""
         event = {"vol": 1242746.0, "base_price": BASE_PRICE,
                  "close": CLOSE, "peak": PEAK,
                  "price_mult": PRICE_MULT, "vol_x": 1190.0,
@@ -829,8 +832,8 @@ class SweepContextTest(unittest.TestCase):
                                delta=expected * 0.01)
 
     def test_inflow_terukur_menang_atas_acuan(self):
-        # Inflow nyata COCKROACH 1 Okt = $58.778 → churn nyata 21,1x dan
-        # leverage_net 30,5x, persis angka yang terkirim.
+        # Inflow nyata COCKROACH 1 Okt: Δ TVL $58.778 = uang masuk $29.389 →
+        # churn nyata 42,3x dan leverage_net 60,9x.
         event = {"vol": 1242746.0, "base_price": BASE_PRICE,
                  "close": CLOSE, "peak": PEAK,
                  "price_mult": PRICE_MULT, "vol_x": 1190.0,
@@ -841,10 +844,10 @@ class SweepContextTest(unittest.TestCase):
                                    market_cap_usd=mc_at_close,
                                    price_usd=CLOSE, liq_usd=LIQ_USD,
                                    net_inflow_usd=NET_INFLOW)
-        self.assertEqual(context["net_inflow_usd"], NET_INFLOW)
+        self.assertEqual(context["net_inflow_usd"], NET_INFLOW_MONEY)
         self.assertIsNone(context["net_inflow_ref_usd"])
         self.assertAlmostEqual(context["churn_net_x"],
-                               1242746.0 / NET_INFLOW, places=1)
+                               1242746.0 / NET_INFLOW_MONEY, places=1)
         self.assertAlmostEqual(context["leverage_net"], LEVERAGE, places=1)
         self.assertNotEqual(context["churn_x"], context["churn_net_x"])
 
