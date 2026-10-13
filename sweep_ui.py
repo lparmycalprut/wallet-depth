@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime, timedelta, timezone
 
+import pandas as pd
 import streamlit as st
 
 import sweep_alert as alert
@@ -31,6 +33,7 @@ import sweep_screen as screen
 import sweep_store as store
 
 AUTO_REFRESH_SEC = 300  # 5 menit — sama dengan jadwal cron
+WIB = timezone(timedelta(hours=7))  # waktu tampilan: Asia/Jakarta
 
 
 def _fmt_usd(value, digits: int = 0) -> str:
@@ -121,7 +124,9 @@ def _render_header() -> None:
         "Skrining **kelayakan sweep** untuk token yang sudah retrace dalam: "
         "murah di-sweep (liq/MC kecil) + LP terkunci + float tersebar + ada "
         "jejak akumulasi. Alert Telegram dikirim saat kelayakan muncul dan "
-        "saat sweep mulai terjadi."
+        "saat sweep mulai terjadi. Halaman dibuka dengan **snapshot terakhir** "
+        "tiap mint di watchlist; tekan **Refresh & ambil snapshot** untuk "
+        "pindai live."
     )
     cfg = alert.telegram_config()
     left, right = st.columns([3, 2])
@@ -147,6 +152,25 @@ def _render_header() -> None:
 # ---------------------------------------------------------------------------
 # Watchlist
 # ---------------------------------------------------------------------------
+def _commit_watchlist(mints, label: str) -> list:
+    """Simpan watchlist lokal + commit GitHub, dengan pesan yang jujur.
+
+    Di Streamlit Cloud sistem berkasnya sementara: kalau tidak di-commit, daftar
+    ini hilang saat container restart, jadi kegagalan commit harus terlihat.
+    """
+    saved = store.save_watchlist(mints, persist=False)
+    if store.push_watchlist(saved):
+        _flash("success", f"{label}: {len(saved)} mint di-commit ke GitHub.")
+    else:
+        _stash_watchlist_in_config(saved)
+        _flash("warning",
+               f"{label}: {len(saved)} mint tersimpan **lokal + cadangan "
+               "`config.json`**. Commit ke GitHub gagal (token belum "
+               "diisi?) — isi token GitHub supaya daftar ikut "
+               "tersimpan permanen di repo.")
+    return saved
+
+
 def _render_watchlist() -> list:
     watchlist = store.load_watchlist()
     with st.expander(f"📝 Watchlist manual ({len(watchlist)} mint)",
@@ -159,19 +183,7 @@ def _render_watchlist() -> list:
         )
         col_a, col_b, col_c = st.columns([1, 1, 1])
         if col_a.button("💾 Simpan watchlist", use_container_width=True):
-            saved = store.save_watchlist(text, persist=False)
-            if store.push_watchlist(saved):
-                _flash("success",
-                       f"{len(saved)} mint disimpan + di-commit ke GitHub.")
-            else:
-                # Streamlit Cloud sistem berkasnya sementara: kalau tidak
-                # di-commit, daftar ini hilang saat container restart.
-                _stash_watchlist_in_config(saved)
-                _flash("warning",
-                       f"{len(saved)} mint tersimpan **lokal + cadangan "
-                       "`config.json`**. Commit ke GitHub gagal (token belum "
-                       "diisi?) — isi token GitHub supaya daftar ikut "
-                       "tersimpan permanen di repo.")
+            _commit_watchlist(text, "Watchlist disimpan")
             st.rerun()
         if col_b.button("♻️ Buang cache HTTP", use_container_width=True):
             data.reset_cache()
@@ -188,6 +200,13 @@ def _render_watchlist() -> list:
 # ---------------------------------------------------------------------------
 # Tabel kelayakan
 # ---------------------------------------------------------------------------
+def _fmt_snapshot_time(ts) -> str:
+    number = screen._num(ts)
+    if not number:
+        return "—"
+    return datetime.fromtimestamp(number, WIB).strftime("%d %b %H:%M WIB")
+
+
 def _eligibility_rows(rows) -> list:
     out = []
     for row in rows or []:
@@ -199,6 +218,7 @@ def _eligibility_rows(rows) -> list:
             for c in (result.get("checks") or []))
         out.append({
             "Token": metrics.get("symbol") or row.get("mint", "")[:8],
+            "Snapshot": _fmt_snapshot_time(row.get("ts")),
             "Vonis": result.get("verdict") or "—",
             "Skor": (f"{result.get('passed_count')}/{result.get('scored_count')}"
                      if result.get("scored_count") else "—"),
@@ -226,15 +246,36 @@ def _eligibility_rows(rows) -> list:
     return out
 
 
-def _render_table(rows) -> None:
+def _flagged_mints(rows, flags) -> set:
+    """Mint dari baris yang kolom *Hapus*-nya dicentang (urutan = tabel)."""
+    return {rows[i]["mint"] for i, flag in enumerate(flags or [])
+            if flag and i < len(rows)}
+
+
+def _render_table(rows, watchlist) -> None:
+    """Tabel kelayakan dengan kolom **Hapus** untuk mengeluarkan mint dari watchlist."""
     if not rows:
-        st.info("Belum ada hasil. Tambahkan mint ke watchlist lalu tekan "
-                "**Scan sekarang**.")
+        st.info("Belum ada snapshot. Tambahkan mint ke watchlist lalu tekan "
+                "**Refresh & ambil snapshot**.")
         return
-    st.dataframe(_eligibility_rows(rows), use_container_width=True,
-                 hide_index=True, column_config={
-                     "GMGN": st.column_config.LinkColumn(
-                         "GMGN", display_text="buka")})
+    frame = pd.DataFrame(_eligibility_rows(rows))
+    frame.insert(0, "Hapus", False)
+    edited = st.data_editor(
+        frame, key="sweep_table", use_container_width=True, hide_index=True,
+        disabled=[column for column in frame.columns if column != "Hapus"],
+        column_config={
+            "Hapus": st.column_config.CheckboxColumn(
+                "Hapus", help="Centang lalu tekan tombol di bawah tabel"),
+            "GMGN": st.column_config.LinkColumn("GMGN", display_text="buka"),
+        })
+    flags = edited["Hapus"].tolist() if "Hapus" in edited else []
+    picked = _flagged_mints(rows, flags)
+    if st.button(f"🗑️ Hapus {len(picked)} mint tercentang dari watchlist",
+                 disabled=not picked):
+        remaining = [mint for mint in watchlist if mint not in picked]
+        st.session_state.pop("sweep_watchlist_text", None)
+        _commit_watchlist(remaining, f"{len(picked)} mint dihapus")
+        st.rerun()
 
 
 def _status_count(value) -> str:
@@ -457,44 +498,85 @@ def _render_stats(state) -> None:
 # ---------------------------------------------------------------------------
 # Body
 # ---------------------------------------------------------------------------
-def _run_and_render(watchlist, *, persist: bool) -> None:
-    with st.spinner(f"Memindai {len(watchlist)} mint…"):
-        outcome = scan.run_scan(watchlist, persist=persist)
-    st.session_state["sweep_rows"] = outcome["rows"]
+def _working_state() -> dict:
+    """State kerja sesi; pertama kali dibuka dibaca dari berkas lokal."""
+    state = st.session_state.get("sweep_state")
+    if state is None:
+        state = store.load_state()
+        st.session_state["sweep_state"] = state
+    return state
+
+
+def _remember_outcome(outcome) -> None:
     st.session_state["sweep_state"] = outcome["state"]
     st.session_state["sweep_alerts"] = outcome["alerts"]
     st.session_state["sweep_elapsed"] = outcome["elapsed"]
+
+
+def _snapshot_all(watchlist, *, persist: bool) -> dict:
+    """Pindai live semua mint watchlist dan ambil snapshot (refresh manual)."""
+    with st.spinner(f"Memindai {len(watchlist)} mint…"):
+        outcome = scan.run_scan(watchlist, state=_working_state(),
+                                persist=persist)
+    _remember_outcome(outcome)
+    return outcome
+
+
+def _fill_missing_views(watchlist) -> None:
+    """Mint yang belum punya snapshot (baru ditambahkan) dipindai sekali saja.
+
+    Mint yang gagal dipindai tidak diulang di setiap rerun; tekan Refresh
+    untuk mencoba lagi.
+    """
+    _, missing = store.watchlist_views(_working_state(), watchlist)
+    attempted = st.session_state.setdefault("sweep_attempted", set())
+    todo = [mint for mint in missing if mint not in attempted]
+    if not todo:
+        return
+    attempted.update(todo)
+    with st.spinner(f"Mengambil snapshot awal {len(todo)} mint baru…"):
+        outcome = scan.run_scan(todo, state=_working_state(), persist=True)
+    _remember_outcome(outcome)
 
 
 def _render_threshold() -> None:
     """Ambang struktural permanen: tidak ada knob UI/cron atau rescore."""
     st.markdown("### ⚙️ Ambang kelayakan")
     st.caption("Ambang fix: liq/MC ≤ 35% · holder/wallet ≤ 5% · "
+               "kohort minimal minus 50% (VWAP kelahiran 48 jam) · "
                "standar pra-pump COCKROACH (toleransi 3× dana)")
 
 
-def _render_body(*, persisting: bool) -> None:
-    watchlist = store.load_watchlist()
-    state = st.session_state.get("sweep_state") or store.load_state()
+def _render_results(watchlist, state) -> None:
+    """Tabel + detail + statistik dari snapshot terakhir tiap mint watchlist."""
+    views, missing = store.watchlist_views(state, watchlist)
+    rows = sorted(views, key=lambda row: screen.display_sort_key(row.get("result")))
+    st.markdown("### 🧭 Kelayakan sweep")
+    if missing:
+        st.caption("Belum ada snapshot valid untuk: "
+                   + ", ".join(mint[:8] for mint in missing)
+                   + " — tekan **Refresh & ambil snapshot** untuk mencoba lagi.")
+    _render_table(rows, watchlist)
+    if rows:
+        _render_details(rows)
+    st.divider()
+    _render_stats(state)
 
+
+def _render_body(watchlist) -> None:
     _render_threshold()
 
     col_scan, col_auto = st.columns([1, 2])
-    if col_scan.button("🔍 Scan sekarang", type="primary",
+    if col_scan.button("🔄 Refresh & ambil snapshot", type="primary",
                        use_container_width=True, disabled=not watchlist):
-        _run_and_render(watchlist, persist=persisting)
-        _flash("success", f"Scan selesai: {len(watchlist)} mint dipindai.")
-        st.rerun()
+        outcome = _snapshot_all(watchlist, persist=True)
+        st.success(f"Snapshot diambil: {len(watchlist)} mint dipindai live "
+                   f"({outcome['elapsed']:.1f}s).")
     auto = col_auto.toggle(
         f"Auto-refresh tiap {AUTO_REFRESH_SEC // 60} menit (selama tab terbuka)",
         value=st.session_state.get("sweep_auto", False), key="sweep_auto")
 
-    rows = st.session_state.get("sweep_rows")
-    if rows is None and watchlist:
-        _run_and_render(watchlist, persist=persisting)
-        rows = st.session_state.get("sweep_rows")
-    rows = rows or []
-    state = st.session_state.get("sweep_state") or state
+    _fill_missing_views(watchlist)
 
     sent = [a for a in (st.session_state.get("sweep_alerts") or [])
             if a.get("sent")]
@@ -502,13 +584,10 @@ def _render_body(*, persisting: bool) -> None:
         st.success("Alert terkirim: " + ", ".join(
             f"{a['kind']} {a['mint'][:8]}" for a in sent))
 
-    st.markdown("### 🧭 Kelayakan sweep")
-    _render_table(rows)
-    if rows:
-        _render_details(rows)
-    st.divider()
-    _render_stats(state)
-    return auto
+    if auto:
+        _attach_autorefresh(watchlist)
+    else:
+        _render_results(watchlist, _working_state())
 
 
 def render_sweep_page() -> None:
@@ -518,17 +597,7 @@ def render_sweep_page() -> None:
     st.divider()
     watchlist = _render_watchlist()
     st.divider()
-
-    # Persistensi GitHub hanya saat memang ada perubahan layak-commit, supaya
-    # halaman tidak membuat commit tiap rerun Streamlit.
-    persisting = _should_persist()
-    auto = _render_body(persisting=persisting)
-    if auto:
-        _attach_autorefresh(watchlist)
-
-
-def _should_persist() -> bool:
-    return bool(alert.telegram_config().get("ok") or store._github_token())
+    _render_body(watchlist)
 
 
 def _attach_autorefresh(watchlist) -> None:
@@ -538,15 +607,15 @@ def _attach_autorefresh(watchlist) -> None:
     def _tick() -> None:
         if not watchlist:
             return
-        outcome = scan.run_scan(watchlist, persist=False)
+        outcome = scan.run_scan(watchlist, state=_working_state(), persist=False)
         fingerprint = store.fingerprint(outcome["state"])
         last = st.session_state.get("sweep_fingerprint")
         st.session_state["sweep_fingerprint"] = fingerprint
-        st.session_state["sweep_rows"] = outcome["rows"]
-        st.session_state["sweep_state"] = outcome["state"]
+        _remember_outcome(outcome)
         if last is not None and fingerprint != last:
             store.save_state(outcome["state"], persist=True, reason="auto-refresh")
         st.caption(f"Terakhir dipindai {time.strftime('%H:%M:%S')} — "
                    f"{len(outcome['rows'])} mint, {outcome['elapsed']:.1f}s.")
+        _render_results(watchlist, outcome["state"])
 
     _tick()

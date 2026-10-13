@@ -94,8 +94,8 @@ apa adanya sebagai konteks cohort.
 | Status kohort | Aturan |
 | --- | --- |
 | `SKIP — kohort plus` | `status_avg_cost ≥ 0`; cohort rata-rata sedang PLUS |
-| `TUNGGU — kohort belum minus 70%` | `−0,70 < status_avg_cost < 0` |
-| `LOLOS` | `status_avg_cost ≤ −0,70` (minus minimal 70%) |
+| `TUNGGU — kohort belum minus 50%` | `−0,50 < status_avg_cost < 0` |
+| `LOLOS` | `status_avg_cost ≤ −0,50` (minus minimal 50%) |
 | `TANPA DATA — kohort` | OHLCV/VWAP/harga tidak tersedia; jangan klaim lolos |
 
 Pool berumur kurang dari 48 jam memakai seluruh jendela yang ada dan diberi
@@ -141,6 +141,21 @@ daftar `REF_NET_COST_MULT = 1,0` berlabel estimasi, bukan pengukuran.
 Tiap alert meninggalkan baris sinyal dengan harga entry, base, `max_up_pct` /
 `max_down_pct` (dilacak 72 jam), churn, biaya dorong, dan status. Ringkasan
 mencakup hit ≥100% / ≥300%, median naik/turun, dan break-even hit rate.
+
+**Saat halaman dibuka** tabel memakai *snapshot terakhir* tiap mint watchlist
+(`store.latest_view`, disimpan di bucket snapshot terbaru), tanpa memindai ulang.
+Hanya mint yang belum punya snapshot (baru ditambahkan) dipindai sekali. Tombol
+**🔄 Refresh & ambil snapshot** memindai live semua mint dan mengambil snapshot;
+**auto-refresh** melakukannya tiap 5 menit selama tab terbuka.
+
+Urutan tabel (`sweep_screen.display_sort_key`), paling dekat ke kelayakan di atas:
+LAYAK SWEEP → KANDIDAT → gate kohort lolos tapi kriteria kurang → `TUNGGU` kohort
+(makin dekat ke −50% makin atas) → `TANPA DATA` kohort. **Kohort PLUS selalu di
+paling bawah.** Di dalam kelompok, jumlah kriteria lolos menurun.
+
+Kolom **Hapus** di tabel mengeluarkan mint dari watchlist (centang, lalu tekan
+tombol hapus). Snapshot dan sinyal mint tersebut tetap di state; hanya tampilan
+dan pemindaian oleh cron yang berhenti.
 
 Cron GitHub Actions tetap berjalan tiap 5 menit (`.github/workflows/sweep-scan.yml`)
 dan auto-refresh halaman juga 5 menit. `store.fingerprint()` mencakup snapshot

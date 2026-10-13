@@ -49,7 +49,10 @@ COCK_REFERENCE_COST_3X_USD = 11_066.0
 COCK_REFERENCE_COST_3X_MC_FRAC = (COCK_REFERENCE_COST_3X_USD /
                                   COCK_REFERENCE_MC_USD)
 COHORT_WINDOW_HOURS = 48
-COHORT_MINUS_THRESHOLD = -0.70
+#: Ambang minimum kohort: VWAP kelahiran harus minus minimal 50% dari harga
+#: kini (status_avg_cost ≤ -0,50). Diturunkan dari -70% atas permintaan user
+#: 2026-10-13.
+COHORT_MINUS_THRESHOLD = -0.50
 
 #: Acuan kalibrasi inflow nyata vs biaya dorong ke puncak, dari satu event
 #: terukur: COCKROACH 1 Okt 2026 — inflow nyata $58.778 ÷ biaya dorong ke
@@ -253,7 +256,7 @@ def cohort_profile(candles, pair_created_at, price_now, *, now=None,
 
 
 def cohort_gate(profile) -> dict:
-    """Gate pra-penilaian: PLUS skip, tunggu sampai minus 70%, no-data tunggu."""
+    """Gate pra-penilaian: PLUS skip, tunggu sampai minus 50%, no-data tunggu."""
     status = _num((profile or {}).get("status_avg_cost"))
     if status is None:
         return {"passed": False, "status": "TANPA DATA — kohort",
@@ -261,11 +264,47 @@ def cohort_gate(profile) -> dict:
     if status >= 0:
         return {"passed": False, "status": "SKIP — kohort plus",
                 "detail": f"kohort PLUS {status*100:.1f}% terhadap VWAP kelahiran"}
+    threshold_pct = abs(COHORT_MINUS_THRESHOLD) * 100
     if status <= COHORT_MINUS_THRESHOLD:
         return {"passed": True, "status": "LOLOS",
-                "detail": f"kohort MINUS {abs(status)*100:.1f}% (ambang minus 70%)"}
-    return {"passed": False, "status": "TUNGGU — kohort belum minus 70%",
-            "detail": f"kohort MINUS {abs(status)*100:.1f}% (butuh 70%)"}
+                "detail": f"kohort MINUS {abs(status)*100:.1f}% (ambang minus {threshold_pct:.0f}%)"}
+    return {"passed": False,
+            "status": f"TUNGGU — kohort belum minus {threshold_pct:.0f}%",
+            "detail": f"kohort MINUS {abs(status)*100:.1f}% (butuh {threshold_pct:.0f}%)"}
+
+
+#: Urutan tampilan tabel: yang paling dekat ke kelayakan di atas.
+#: 0 LAYAK · 1 KANDIDAT · 2 gate lolos tapi kriteria kurang · 3 TUNGGU kohort
+#: · 4 TANPA DATA kohort · 9 SKIP kohort PLUS (selalu paling bawah).
+_DISPLAY_GROUP_SKIP = 9
+
+
+def display_sort_key(result) -> tuple:
+    """Kunci urut tabel Sweep (kecil = lebih atas).
+
+    Urutan: kelompok vonis dulu, lalu jumlah kriteria lolos (desc), lalu untuk
+    kelompok TUNGGU: jarak status kohort ke ambang minus (makin dekat makin
+    atas). Kohort PLUS selalu di paling bawah.
+    """
+    result = result or {}
+    status = str(result.get("cohort_gate_status") or "")
+    avg = _num((result.get("cohort") or {}).get("status_avg_cost"))
+    passed = _num(result.get("passed_count")) or 0
+    verdict = str(result.get("verdict") or "")
+    distance = 0.0
+    if status.startswith("SKIP"):
+        group = _DISPLAY_GROUP_SKIP
+    elif status.startswith("TANPA DATA"):
+        group = 4
+    elif status.startswith("TUNGGU"):
+        group = 3
+        if avg is not None:
+            distance = abs(avg - COHORT_MINUS_THRESHOLD)
+    elif result.get("cohort_gate_passed"):
+        group = {VERDICT_LAYAK[0]: 0, VERDICT_KANDIDAT[0]: 1}.get(verdict, 2)
+    else:
+        group = 4
+    return (group, -passed, distance)
 
 
 # ---------------------------------------------------------------------------

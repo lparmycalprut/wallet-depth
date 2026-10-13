@@ -13,12 +13,14 @@ Independent market-risk fields such as Meteora's `top_holders_pct`, GMGN metrics
 - the page is a **separate multipage entry** (`pages/8_🌊_Sweep.py`); `app.py` must not import sweep modules
 - the watchlist is **manual** — never auto-populate it from Best Pool, GMGN, or any scanner
 - Sweep structural thresholds are fixed in `sweep_screen.py`: `LIQ_MC_MAX = 0.35` and `HOLDER_MAX_PCT = 5.0`. Do not add UI/cron overrides or persist threshold settings.
-- Sweep eligibility requires the cohort gate: only a measured OHLCV-derived 48-hour birth-window VWAP with `status_avg_cost ≤ -0.70` (current price at least 70% below cohort VWAP) may pass; PLUS, shallow-minus, or missing cohort data must not be eligible.
+- Sweep eligibility requires the cohort gate: only a measured OHLCV-derived 48-hour birth-window VWAP with `status_avg_cost ≤ -0.50` (current price at least 50% below cohort VWAP; threshold lowered from -0.70 on 2026-10-13) may pass; PLUS, shallow-minus, or missing cohort data must not be eligible.
 - A detected shakeout is latched per mint in `sweep_state.json` and must never be cleared just because later candles break the old low.
 - alerts fire on **state transitions only** (eligibility transition, sweep cooldown), never on every scan
 - theoretical and measured numbers must stay labelled as such: `est_cost_usd` is the formula `(sqrt(m)-1) * liq`, `net_inflow_usd` is a measurement (Δ liquidity between snapshots) and is `None` when unavailable — do not let the UI or alerts present the reference estimate as a measurement
 - cohort average-cost status must be labeled **“perkiraan (proksi VWAP 48 jam)”**; it is derived from hourly pool OHLCV, not directly observed wallet cost basis
 - the stats table is the deliverable: every alert must leave a signal row with `max_up_pct` / `max_down_pct` so hit rate can be reviewed instead of guessed
+- opening the page shows the **last stored snapshot view** (`latest_view`) of each watchlist mint without a live scan; only mints with no view yet are scanned once. Live scans happen on the explicit Refresh button or auto-refresh. The table is ordered by `sweep_screen.display_sort_key`, and PLUS-cohort rows always sit at the bottom
+- the watchlist can be edited from the table (remove checked rows); removal only drops the mint from the watchlist, while its snapshots, signals, and shakeout latch stay in `sweep_state.json`
 
 ## Best Pool invariants
 
