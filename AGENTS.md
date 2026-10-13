@@ -21,6 +21,7 @@ Independent market-risk fields such as Meteora's `top_holders_pct`, GMGN metrics
 - cohort average-cost status must be labeled **“perkiraan (proksi VWAP 48 jam)”**; it is derived from hourly pool OHLCV, not directly observed wallet cost basis
 - the stats table is the deliverable: every alert must leave a signal row with `max_up_pct` / `max_down_pct` so hit rate can be reviewed instead of guessed
 - opening the page shows the **last stored snapshot view** (`latest_view`) of each watchlist mint without a live scan; only mints with no view yet are scanned once. Live scans happen on the explicit Refresh button or auto-refresh. The table is ordered by `sweep_screen.display_sort_key`, and PLUS-cohort rows always sit at the bottom
+- the table is split in two: the left table (Hapus, Refresh, Token) is a separate `data_editor` and stays put, the right table (other columns) is a read-only `st.dataframe` that scrolls. Both use the same height so rows line up. Do not go back to `pinned=True`, which still moved in the live app
 - the watchlist can be edited from the table (remove checked rows); removal only drops the mint from the watchlist, while its snapshots, signals, and shakeout latch stay in `sweep_state.json`
 
 ## Best Pool invariants
