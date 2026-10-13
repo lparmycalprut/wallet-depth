@@ -294,8 +294,10 @@ def _render_table(rows, watchlist) -> None:
         frame, key="sweep_table", use_container_width=True, hide_index=True,
         disabled=[column for column in frame.columns if column != "Hapus"],
         column_config={
+            # pinned: kolom tetap terlihat saat tabel digeser ke kanan.
             "Hapus": st.column_config.CheckboxColumn(
-                "Hapus", help="Centang lalu tekan tombol di bawah tabel"),
+                "Hapus", help="Centang lalu tekan tombol di bawah tabel",
+                pinned=True),
             "Kohort": st.column_config.TextColumn("Kohort", width=320),
             "GMGN": st.column_config.LinkColumn("GMGN", display_text="buka"),
         })
