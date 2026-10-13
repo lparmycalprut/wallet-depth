@@ -428,6 +428,8 @@ VIEW_METRIC_KEYS = (
     "mint_authority", "freeze_authority", "top10_holder_pct", "holder_count",
     "top_bundler_trader_percentage", "bundler_rate", "bot_degen_rate",
     "fresh_wallet_rate", "status_now", "holding_rate",
+    "holder_min_avg_cost", "holder_cost_count", "holder_cost_basis",
+    "holder_cost_balance",
 )
 VIEW_RESULT_KEYS = (
     "checks", "passed_count", "scored_count", "required_count", "score",
@@ -435,7 +437,9 @@ VIEW_RESULT_KEYS = (
     "reference_fund_x", "reference_fund_usd", "turnover_x", "cohort",
     "cohort_gate_status", "cohort_gate_passed", "cohort_gate_detail",
     "cost_10x_mc_frac", "cost_gate_status", "cost_gate_passed",
-    "cost_gate_detail", "missing",
+    "cost_gate_detail", "gmgn_status_avg_cost", "holder_min_avg_cost", "holder_gap",
+    "holder_gate_status", "holder_gate_passed", "holder_gate_detail",
+    "missing",
 )
 
 

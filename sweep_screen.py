@@ -52,10 +52,10 @@ COHORT_WINDOW_HOURS = 48
 COHORT_MINUS_THRESHOLD = -0.50
 
 #: Gate biaya (2026-10-13, permintaan user): biaya sweep untuk naik
-#: ``COST_GATE_MULT`` kali harus ≤ 75% market cap. Di atas itu, atau bila belum
+#: ``COST_GATE_MULT`` kali harus ≤ 80% market cap. Di atas itu, atau bila belum
 #: ada data, vonis = TUNGGU. Ambang tetap, tidak dapat diubah dari UI/cron.
 COST_GATE_MULT = 10.0
-COST_GATE_MAX_FRAC = 0.75
+COST_GATE_MAX_FRAC = 0.80
 
 #: Acuan kalibrasi inflow nyata vs biaya dorong ke puncak, dari satu event
 #: terukur: COCKROACH 1 Okt 2026 — inflow nyata $58.778 ÷ biaya dorong ke
@@ -174,7 +174,7 @@ def target_costs(liq_mc, mults=(2.0, 5.0, 10.0, 50.0), liq_usd=None):
 
 
 def cost_gate(cost_frac) -> dict:
-    """Gate biaya 10x: biaya ≤ 75% MC lolos; > 75% atau tanpa data = TUNGGU."""
+    """Gate biaya 10x: biaya ≤ 80% MC lolos; > 80% atau tanpa data = TUNGGU."""
     value = _num(cost_frac)
     label = f"biaya {COST_GATE_MULT:.0f}x"
     if value is None:
@@ -190,6 +190,37 @@ def cost_gate(cost_frac) -> dict:
     return {"passed": True,
             "status": "LOLOS",
             "detail": f"{label} {value * 100:.1f}% MC (batas {limit_pct:.0f}%)"}
+
+
+#: Gate avg buy holder (permintaan user 2026-10-13): avg buy terendah di antara
+#: holder yang masih memegang token tidak boleh lebih dari 50% di bawah harga
+#: sekarang. Di bawah itu ada holder yang sudah profit besar dan siap dump →
+#: TUNGGU. Tanpa data = TUNGGU juga (sama seperti gate lain).
+HOLDER_COST_MAX_GAP = 0.50
+
+
+def holder_cost_gate(min_avg_cost, price_usd) -> dict:
+    """Gate avg buy holder: jarak harga ke avg buy terendah ≤ 50% → LOLOS.
+
+    ``gap = 1 − min_avg_cost / price``; gap > 50% (equivalently
+    min_avg_cost < 0.5 × price) → TUNGGU. Input kosong/nol → TUNGGU tanpa data.
+    """
+    avg = _num(min_avg_cost)
+    price = _num(price_usd)
+    limit_pct = HOLDER_COST_MAX_GAP * 100
+    if avg is None or avg <= 0 or price is None or price <= 0:
+        return {"passed": False, "gap": None,
+                "status": "TUNGGU — avg buy holder belum ada data",
+                "detail": "avg buy holder terendah atau harga belum tersedia; "
+                          "gate belum lolos"}
+    gap = 1.0 - avg / price
+    detail = (f"avg buy holder terendah ${avg:.8g}, harga ${price:.8g}: "
+              f"jarak {gap * 100:.1f}% (batas {limit_pct:.0f}%)")
+    if gap > HOLDER_COST_MAX_GAP:
+        return {"passed": False, "gap": gap,
+                "status": f"TUNGGU — avg buy holder {gap * 100:.0f}% di bawah harga",
+                "detail": detail + "; holder sudah profit besar"}
+    return {"passed": True, "gap": gap, "status": "LOLOS", "detail": detail}
 
 
 def reference_fund_multiple(liq_mc):
@@ -294,22 +325,57 @@ def cohort_profile(candles, pair_created_at, price_now, *, now=None,
     return result
 
 
+def gmgn_cohort_status(cost_basis, balance_total, price_usd):
+    """Status avg cost GMGN kohort = harga ÷ avg buy tertimbang saldo − 1.
+
+    ``cost_basis`` = Σ(avg_cost × saldo) dan ``balance_total`` = Σ saldo dari
+    holder GMGN yang memegang token dan punya avg cost. Tanpa data → None.
+    """
+    basis = _num(cost_basis)
+    balance = _num(balance_total)
+    price = _num(price_usd)
+    if basis is None or balance is None or price is None:
+        return None
+    if basis <= 0 or balance <= 0 or price <= 0:
+        return None
+    return price * balance / basis - 1.0
+
+
 def cohort_gate(profile) -> dict:
-    """Gate pra-penilaian: PLUS skip, tunggu sampai minus 50%, no-data tunggu."""
+    """Gate kohort (Kohort C, 2026-10-13): VWAP proksi DAN avg cost GMGN keduanya
+    harus minus ≥ 50%. PLUS skip, belum minus tunggu, tanpa data tunggu.
+    """
     status = _num((profile or {}).get("status_avg_cost"))
+    threshold_pct = abs(COHORT_MINUS_THRESHOLD) * 100
     if status is None:
         return {"passed": False, "status": "TANPA DATA — kohort",
                 "detail": "VWAP/jendela kelahiran tidak tersedia; gate belum lolos"}
     if status >= 0:
         return {"passed": False, "status": "SKIP — kohort plus",
                 "detail": f"kohort PLUS {status*100:.1f}% terhadap VWAP kelahiran"}
-    threshold_pct = abs(COHORT_MINUS_THRESHOLD) * 100
-    if status <= COHORT_MINUS_THRESHOLD:
-        return {"passed": True, "status": "LOLOS",
-                "detail": f"kohort MINUS {abs(status)*100:.1f}% (ambang minus {threshold_pct:.0f}%)"}
-    return {"passed": False,
-            "status": f"TUNGGU — kohort belum minus {threshold_pct:.0f}%",
-            "detail": f"kohort MINUS {abs(status)*100:.1f}% (butuh {threshold_pct:.0f}%)"}
+    if status > COHORT_MINUS_THRESHOLD:
+        return {"passed": False,
+                "status": f"TUNGGU — kohort belum minus {threshold_pct:.0f}%",
+                "detail": f"kohort MINUS {abs(status)*100:.1f}% (butuh {threshold_pct:.0f}%)"}
+    gmgn = _num((profile or {}).get("gmgn_status_avg_cost"))
+    if gmgn is None:
+        return {"passed": False, "status": "TANPA DATA — kohort GMGN",
+                "detail": f"VWAP minus {abs(status)*100:.1f}% lolos, tetapi avg cost "
+                          "GMGN holder belum tersedia; gate belum lolos"}
+    if gmgn >= 0:
+        return {"passed": False,
+                "status": "TUNGGU — kohort GMGN plus",
+                "detail": f"VWAP minus {abs(status)*100:.1f}%, avg cost GMGN "
+                          f"PLUS {gmgn*100:.1f}%"}
+    if gmgn > COHORT_MINUS_THRESHOLD:
+        return {"passed": False,
+                "status": f"TUNGGU — kohort GMGN belum minus {threshold_pct:.0f}%",
+                "detail": f"VWAP minus {abs(status)*100:.1f}%, avg cost GMGN minus "
+                          f"{abs(gmgn)*100:.1f}% (butuh {threshold_pct:.0f}%)"}
+    return {"passed": True, "status": "LOLOS",
+            "detail": f"kohort MINUS {abs(status)*100:.1f}% terhadap VWAP dan "
+                      f"{abs(gmgn)*100:.1f}% terhadap avg cost GMGN "
+                      f"(ambang minus {threshold_pct:.0f}%)"}
 
 
 #: Urutan tampilan tabel: yang paling dekat ke kelayakan di atas.
@@ -615,18 +681,32 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
     cohort = cohort_profile(cohort_candles, metrics.get("pair_created_at"),
                             metrics.get("price_usd"), now=now,
                             fetch_error=cohort_error)
+    gmgn_status = gmgn_cohort_status(metrics.get("holder_cost_basis"),
+                                     metrics.get("holder_cost_balance"),
+                                     metrics.get("price_usd"))
+    cohort["gmgn_status_avg_cost"] = gmgn_status
     gate = cohort_gate(cohort)
     # Gate biaya 10x diuji setelah gate kohort; keduanya harus lolos sebelum
     # skor menentukan LAYAK/KANDIDAT.
     cost_10x_mc_frac = leverage_cost(COST_GATE_MULT, liq_mc)
     cost_gate_result = cost_gate(cost_10x_mc_frac)
+    # Gate avg buy holder: dicek setelah gate biaya; ketiganya harus lolos.
+    holder_gate = holder_cost_gate(metrics.get("holder_min_avg_cost"),
+                                   metrics.get("price_usd"))
     score_ok = (score is not None and len(passed) >= required and structural_ok)
-    eligible = bool(gate["passed"] and cost_gate_result["passed"] and score_ok)
-    if not gate["passed"]:
+    eligible = bool(gate["passed"] and cost_gate_result["passed"]
+                    and holder_gate["passed"] and score_ok)
+    # Gate holder yang sudah terhitung (TUNGGU, bukan "belum ada data") tetap
+    # tampil walau kohort TANPA DATA: data holder tidak bergantung pada candle.
+    cohort_missing = str(gate["status"]).startswith("TANPA DATA")
+    holder_wait = not holder_gate["passed"] and holder_gate["gap"] is not None
+    if not gate["passed"] and not (cohort_missing and holder_wait):
         verdict, color = gate["status"], (
-            "#64748b" if gate["status"].startswith("TANPA DATA") else "#b45309")
+            "#64748b" if cohort_missing else "#b45309")
     elif not cost_gate_result["passed"]:
         verdict, color = cost_gate_result["status"], "#b45309"
+    elif not holder_gate["passed"]:
+        verdict, color = holder_gate["status"], "#b45309"
     elif score is None:
         verdict, color = VERDICT_DATA
     elif score_ok:
@@ -665,10 +745,16 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
         "cost_gate_status": cost_gate_result["status"],
         "cost_gate_passed": cost_gate_result["passed"],
         "cost_gate_detail": cost_gate_result["detail"],
+        "holder_min_avg_cost": _num(metrics.get("holder_min_avg_cost")),
+        "holder_gap": holder_gate["gap"],
+        "holder_gate_status": holder_gate["status"],
+        "holder_gate_passed": holder_gate["passed"],
+        "holder_gate_detail": holder_gate["detail"],
         "reference_fund_x": reference_fund_x,
         "reference_fund_usd": reference_fund_usd,
         "turnover_x": turnover_x,
         "cohort": cohort,
+        "gmgn_status_avg_cost": gmgn_status,
         "cohort_gate_status": gate["status"],
         "cohort_gate_passed": gate["passed"],
         "cohort_gate_detail": gate["detail"],

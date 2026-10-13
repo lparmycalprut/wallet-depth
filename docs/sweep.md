@@ -96,8 +96,18 @@ apa adanya sebagai konteks cohort.
 | --- | --- |
 | `SKIP — kohort plus` | `status_avg_cost ≥ 0`; cohort rata-rata sedang PLUS |
 | `TUNGGU — kohort belum minus 50%` | `−0,50 < status_avg_cost < 0` |
-| `LOLOS` | `status_avg_cost ≤ −0,50` (minus minimal 50%) |
+| `TUNGGU — kohort GMGN belum minus 50%` | VWAP lolos, tetapi `status_gmgn ∈ (−0,50, 0)` |
+| `TUNGGU — kohort GMGN plus` | VWAP lolos, tetapi `status_gmgn ≥ 0` |
+| `LOLOS` | `status_avg_cost ≤ −0,50` **dan** `status_gmgn ≤ −0,50` (Kohort C, 2026-10-13) |
 | `TANPA DATA — kohort` | OHLCV/VWAP/harga tidak tersedia; jangan klaim lolos |
+| `TANPA DATA — kohort GMGN` | VWAP lolos, tetapi data holder GMGN (avg cost) tidak tersedia; jangan klaim lolos |
+
+**Status GMGN** (`status_gmgn`) = harga sekarang ÷ avg buy tertimbang saldo − 1.
+Avg buy tertimbang = Σ(`avg_cost` × `balance`) ÷ Σ`balance`, dari holder GMGN
+`token_holders` (100 teratas menurut porsi) yang masih memegang token dan punya
+`avg_cost`. Ini **perkiraan**: `avg_cost` GMGN adalah biaya per total pembelian,
+sehingga untuk holder yang sudah menjual bagian basisnya tidak persis. Holder di
+luar 100 teratas tidak dihitung.
 
 Pool berumur kurang dari 48 jam memakai seluruh jendela yang ada dan diberi
 label **jendela parsial**. OHLCV kosong atau VWAP tidak bisa dihitung selalu
@@ -108,13 +118,30 @@ kohort `LOLOS`, gate biaya 10x `LOLOS`, trio struktural lulus, dan skor cukup.
 
 | Status biaya | Aturan |
 | --- | --- |
-| `TUNGGU — biaya 10x X% MC (batas 75%)` | `(√10 − 1) × liq/MC > 0,75` |
+| `TUNGGU — biaya 10x X% MC (batas 80%)` | `(√10 − 1) × liq/MC > 0,80` |
 | `TUNGGU — biaya 10x belum ada data` | liq/MC atau MC kosong; gate belum lolos |
-| `LOLOS` | `(√10 − 1) × liq/MC ≤ 0,75` |
+| `LOLOS` | `(√10 − 1) × liq/MC ≤ 0,80` |
 
 Gate ini diuji setelah gate kohort. Jika kohort belum lolos, status kohort yang
-tampil. Dengan batas `liq/MC ≤ 35%` yang sudah ada, gate biaya 10x hanya
-berbeda pada rentang liq/MC sekitar 34,7–35%.
+tampil. Dengan batas `liq/MC ≤ 35%` yang sudah ada, biaya 10x maksimum ≈ 75,7%
+MC, sehingga gate biaya 10x (batas 80%) baru menahan vonis pada liq/MC di atas
+≈ 37,0%. Pada rentang itu mint juga sudah gagal kriteria liq/MC.
+
+### Gate avg buy holder (2026-10-13)
+
+Sumber: GMGN `token_holders` (100 teratas menurut porsi). Hanya holder dengan
+`balance > 0` dan `avg_cost` terisi yang dihitung; `min_avg` = avg buy terendah
+di antara mereka. Holder dengan avg buy jauh di bawah harga sudah profit besar
+dan bisa dump kapan saja.
+
+| Status holder | Aturan |
+| --- | --- |
+| `TUNGGU — avg buy holder X% di bawah harga` | `1 − min_avg / harga > 0,50` (min_avg < 0,5 × harga) |
+| `TUNGGU — avg buy holder belum ada data` | min_avg atau harga kosong; gate belum lolos |
+| `LOLOS` | `1 − min_avg / harga ≤ 0,50` |
+
+Gate ini diuji setelah gate biaya 10x, sebelum skor. Batas 50% adalah
+interpretasi dari "maks 50% dari harga sekarang" dan perlu dikonfirmasi user.
 
 ### Nominal dolar (tabel utama dan detail biaya)
 

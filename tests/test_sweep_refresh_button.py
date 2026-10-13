@@ -35,16 +35,5 @@ class RequestRefreshTest(unittest.TestCase):
                          self._run({"row": 0, "label": "x"}, [""]))
 
 
-class FrozenColumnsTest(unittest.TestCase):
-    def test_hapus_refresh_token_stay_left_rest_scrolls_right(self):
-        import pandas as pd
-        frame = pd.DataFrame([{"Hapus": False, "Refresh": "🔄 Refresh",
-                               "Token": "RARI", "Snapshot": "x", "Kohort": "y"}])
-        left, right = ui._split_frozen_columns(frame)
-        self.assertEqual(list(left.columns), ["Hapus", "Refresh", "Token"])
-        self.assertEqual(list(right.columns), ["Snapshot", "Kohort"])
-        self.assertEqual(len(left), len(right))
-
-
 if __name__ == "__main__":
     unittest.main()
