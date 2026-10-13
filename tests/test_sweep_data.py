@@ -55,6 +55,40 @@ class GmgnTopBuyersTest(unittest.TestCase):
         self.assertEqual(result["fresh_wallet_rate"], 0.025)
 
 
+class GmgnTokenHoldersTest(unittest.TestCase):
+    def test_min_avg_cost_counts_only_holders_still_holding(self):
+        payload = {"code": 0, "data": {"list": [
+            {"avg_cost": "0.00099", "balance": "100"},
+            {"avg_cost": None, "balance": "50"},          # tanpa avg → diabaikan
+            {"avg_cost": "0.00002", "balance": "0"},      # sudah jual habis
+            {"avg_cost": "0.0000707", "balance": "5870000"},
+            {"avg_cost": "0.00015", "balance": "9"},
+        ]}}
+        with mock.patch.object(data, "_get_json", return_value=payload) as fetch:
+            result = data.gmgn_token_holders("MINT", use_cache=False)
+        self.assertTrue(result["ok"])
+        self.assertAlmostEqual(result["holder_min_avg_cost"], 0.0000707)
+        self.assertEqual(result["holder_cost_count"], 3)
+        url = fetch.call_args.args[0]
+        self.assertIn("/vas/api/v1/token_holders/sol/MINT", url)
+        self.assertIn("limit=100", url)
+
+    def test_no_usable_holder_gives_none_but_ok(self):
+        payload = {"data": {"list": [{"avg_cost": None, "balance": "1"}]}}
+        with mock.patch.object(data, "_get_json", return_value=payload):
+            result = data.gmgn_token_holders("MINT", use_cache=False)
+        self.assertTrue(result["ok"])
+        self.assertIsNone(result["holder_min_avg_cost"])
+        self.assertEqual(result["holder_cost_count"], 0)
+
+    def test_failure_is_non_raising(self):
+        with mock.patch.object(data, "_get_json", side_effect=RuntimeError("403")):
+            result = data.gmgn_token_holders("MINT", use_cache=False)
+        self.assertFalse(result["ok"])
+        self.assertIsNone(result["holder_min_avg_cost"])
+        self.assertIn("403", result["error"])
+
+
 class CollectMetricsTest(unittest.TestCase):
     def test_row_metrics_include_gmgn_and_birth_pool_fields(self):
         dex = {
@@ -74,8 +108,14 @@ class CollectMetricsTest(unittest.TestCase):
         with (mock.patch.object(data, "dex_snapshot", return_value=dex),
               mock.patch.object(data, "rugcheck_snapshot", return_value=rug),
               mock.patch.object(data, "gmgn_stat", return_value=stat),
-              mock.patch.object(data, "gmgn_top_buyers", return_value=buyers)):
+              mock.patch.object(data, "gmgn_top_buyers", return_value=buyers),
+              mock.patch.object(data, "gmgn_token_holders", return_value={
+                  "ok": True, "holder_min_avg_cost": 0.00007,
+                  "holder_cost_count": 42})):
             row = data.collect_metrics("M", use_cache=False)
+        self.assertEqual(row["holder_min_avg_cost"], 0.00007)
+        self.assertEqual(row["holder_cost_count"], 42)
+        self.assertTrue(row["sources"]["gmgn_token_holders"])
         self.assertEqual(row["top_bundler_trader_percentage"], 0.18)
         self.assertEqual(row["bot_degen_rate"], 0.446)
         self.assertEqual(row["fresh_wallet_rate"], 0.025)

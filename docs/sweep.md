@@ -116,6 +116,22 @@ Gate ini diuji setelah gate kohort. Jika kohort belum lolos, status kohort yang
 tampil. Dengan batas `liq/MC ≤ 35%` yang sudah ada, gate biaya 10x hanya
 berbeda pada rentang liq/MC sekitar 34,7–35%.
 
+### Gate avg buy holder (2026-10-13)
+
+Sumber: GMGN `token_holders` (100 teratas menurut porsi). Hanya holder dengan
+`balance > 0` dan `avg_cost` terisi yang dihitung; `min_avg` = avg buy terendah
+di antara mereka. Holder dengan avg buy jauh di bawah harga sudah profit besar
+dan bisa dump kapan saja.
+
+| Status holder | Aturan |
+| --- | --- |
+| `TUNGGU — avg buy holder X% di bawah harga` | `1 − min_avg / harga > 0,50` (min_avg < 0,5 × harga) |
+| `TUNGGU — avg buy holder belum ada data` | min_avg atau harga kosong; gate belum lolos |
+| `LOLOS` | `1 − min_avg / harga ≤ 0,50` |
+
+Gate ini diuji setelah gate biaya 10x, sebelum skor. Batas 50% adalah
+interpretasi dari "maks 50% dari harga sekarang" dan perlu dikonfirmasi user.
+
 ### Nominal dolar (tabel utama dan detail biaya)
 
 - Kolom **Dana acuan** di tabel utama = `(√3 − 1) × liq/2`, basis kas satu sisi

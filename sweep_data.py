@@ -34,6 +34,8 @@ DEX_URL = "https://api.dexscreener.com/latest/dex/tokens/{mint}"
 RUGCHECK_URL = "https://api.rugcheck.xyz/v1/tokens/{mint}/report"
 GMGN_STAT_URL = "https://gmgn.ai/api/v1/token_stat/sol/{mint}"
 GMGN_TOP_BUYERS_URL = "https://gmgn.ai/api/v1/tokens/top_buyers/sol/{mint}"
+GMGN_HOLDERS_URL = ("https://gmgn.ai/vas/api/v1/token_holders/sol/{mint}"
+                    "?limit=100&orderby=amount_percentage&direction=desc")
 GECKO_OHLCV_URL = ("https://api.geckoterminal.com/api/v2/networks/solana/pools/"
                    "{pool}/ohlcv/{frame}")
 COHORT_WINDOW_HOURS = 48
@@ -576,6 +578,53 @@ def cohort_ohlcv(pool: str, pair_created_at, *, use_cache: bool = True) -> list:
 
 
 # ---------------------------------------------------------------------------
+# GMGN token_holders — avg buy per holder (gate avg buy holder)
+# ---------------------------------------------------------------------------
+def gmgn_token_holders(mint: str, *, use_cache: bool = True) -> dict:
+    """Ambil avg buy (``avg_cost``) holder GMGN, 100 teratas menurut porsi.
+
+    Hanya holder yang masih memegang token (``balance`` > 0) dan punya
+    ``avg_cost`` > 0 yang dihitung. ``holder_min_avg_cost`` = avg buy terendah
+    di antara mereka; ``None`` bila tidak ada. Enrichment opsional: error
+    menjadi ``ok: False`` dan tidak menghentikan scan.
+    """
+    mint = str(mint or "").strip()
+    key = f"gmgn_token_holders:{mint}"
+    if use_cache:
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+    result = {"ok": False, "mint": mint, "holder_min_avg_cost": None,
+              "holder_cost_count": 0, "error": "",
+              "source": "gmgn_token_holders"}
+    try:
+        payload = _get_json(
+            GMGN_HOLDERS_URL.format(mint=quote(mint, safe="")),
+            headers=_GMGN_HEADERS)
+        data = payload.get("data") if isinstance(payload, dict) else None
+        rows = data.get("list") if isinstance(data, dict) else None
+        if not isinstance(rows, list):
+            raise RuntimeError("field data.list tidak ditemukan")
+        costs = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            avg = _num(row.get("avg_cost"))
+            balance = _num(row.get("balance"))
+            if avg is None or avg <= 0 or balance is None or balance <= 0:
+                continue
+            costs.append(avg)
+        result.update({"ok": True,
+                       "holder_min_avg_cost": min(costs) if costs else None,
+                       "holder_cost_count": len(costs)})
+    except Exception as exc:  # noqa: BLE001 - GMGN enrichment is optional
+        result["error"] = str(exc)[:160]
+    if use_cache:
+        _cache_put(key, result, ok=result.get("ok"))
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Gabungan
 # ---------------------------------------------------------------------------
 def collect_metrics(mint: str, *, use_cache: bool = True) -> dict:
@@ -584,6 +633,7 @@ def collect_metrics(mint: str, *, use_cache: bool = True) -> dict:
     rug = rugcheck_snapshot(mint, use_cache=use_cache)
     stat = gmgn_stat(mint, use_cache=use_cache)
     buyers = gmgn_top_buyers(mint, use_cache=use_cache)
+    holders = gmgn_token_holders(mint, use_cache=use_cache)
     top10 = rug.get("top10_holder_pct")
     if top10 is None and stat.get("top10_holder_rate") is not None:
         top10 = (stat["top10_holder_rate"] or 0) * 100.0
@@ -627,10 +677,13 @@ def collect_metrics(mint: str, *, use_cache: bool = True) -> dict:
         "fresh_wallet_rate": stat.get("fresh_wallet_rate"),
         "holding_rate": buyers.get("holding_rate"),
         "status_now": buyers.get("status_now") or {},
+        "holder_min_avg_cost": holders.get("holder_min_avg_cost"),
+        "holder_cost_count": holders.get("holder_cost_count"),
         "dev_team_hold_rate": stat.get("dev_team_hold_rate"),
         "sniper_rate": stat.get("sniper_rate"),
         "creator_created_count": stat.get("creator_created_count"),
         "sources": {"dex": bool(dex.get("ok")), "rugcheck": bool(rug.get("ok")),
                     "gmgn": bool(stat.get("ok")),
-                    "gmgn_top_buyers": bool(buyers.get("ok"))},
+                    "gmgn_top_buyers": bool(buyers.get("ok")),
+                    "gmgn_token_holders": bool(holders.get("ok"))},
     }

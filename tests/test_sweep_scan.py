@@ -37,6 +37,8 @@ BUNDLE = {
         "bot_degen_rate": 0.4551, "fresh_wallet_rate": 0.025,
         "holding_rate": 0.0,
         "status_now": {"hold": 12, "sold_part": 4, "sold": 8},
+        # avg buy holder terendah 35% di bawah harga → lolos gate ≤ 50%.
+        "holder_min_avg_cost": 0.0005, "holder_cost_count": 40,
         "entrapment_rate": 0.3222, "pair_address": "POOL1",
         "pair_created_at": 1_790_866_800,
     },

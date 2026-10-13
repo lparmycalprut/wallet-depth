@@ -192,6 +192,37 @@ def cost_gate(cost_frac) -> dict:
             "detail": f"{label} {value * 100:.1f}% MC (batas {limit_pct:.0f}%)"}
 
 
+#: Gate avg buy holder (permintaan user 2026-10-13): avg buy terendah di antara
+#: holder yang masih memegang token tidak boleh lebih dari 50% di bawah harga
+#: sekarang. Di bawah itu ada holder yang sudah profit besar dan siap dump →
+#: TUNGGU. Tanpa data = TUNGGU juga (sama seperti gate lain).
+HOLDER_COST_MAX_GAP = 0.50
+
+
+def holder_cost_gate(min_avg_cost, price_usd) -> dict:
+    """Gate avg buy holder: jarak harga ke avg buy terendah ≤ 50% → LOLOS.
+
+    ``gap = 1 − min_avg_cost / price``; gap > 50% (equivalently
+    min_avg_cost < 0.5 × price) → TUNGGU. Input kosong/nol → TUNGGU tanpa data.
+    """
+    avg = _num(min_avg_cost)
+    price = _num(price_usd)
+    limit_pct = HOLDER_COST_MAX_GAP * 100
+    if avg is None or avg <= 0 or price is None or price <= 0:
+        return {"passed": False, "gap": None,
+                "status": "TUNGGU — avg buy holder belum ada data",
+                "detail": "avg buy holder terendah atau harga belum tersedia; "
+                          "gate belum lolos"}
+    gap = 1.0 - avg / price
+    detail = (f"avg buy holder terendah ${avg:.8g}, harga ${price:.8g}: "
+              f"jarak {gap * 100:.1f}% (batas {limit_pct:.0f}%)")
+    if gap > HOLDER_COST_MAX_GAP:
+        return {"passed": False, "gap": gap,
+                "status": f"TUNGGU — avg buy holder {gap * 100:.0f}% di bawah harga",
+                "detail": detail + "; holder sudah profit besar"}
+    return {"passed": True, "gap": gap, "status": "LOLOS", "detail": detail}
+
+
 def reference_fund_multiple(liq_mc):
     """Biaya 3x sebagai kelipatan dana acuan COCK pra-pump.
 
@@ -620,13 +651,19 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
     # skor menentukan LAYAK/KANDIDAT.
     cost_10x_mc_frac = leverage_cost(COST_GATE_MULT, liq_mc)
     cost_gate_result = cost_gate(cost_10x_mc_frac)
+    # Gate avg buy holder: dicek setelah gate biaya; ketiganya harus lolos.
+    holder_gate = holder_cost_gate(metrics.get("holder_min_avg_cost"),
+                                   metrics.get("price_usd"))
     score_ok = (score is not None and len(passed) >= required and structural_ok)
-    eligible = bool(gate["passed"] and cost_gate_result["passed"] and score_ok)
+    eligible = bool(gate["passed"] and cost_gate_result["passed"]
+                    and holder_gate["passed"] and score_ok)
     if not gate["passed"]:
         verdict, color = gate["status"], (
             "#64748b" if gate["status"].startswith("TANPA DATA") else "#b45309")
     elif not cost_gate_result["passed"]:
         verdict, color = cost_gate_result["status"], "#b45309"
+    elif not holder_gate["passed"]:
+        verdict, color = holder_gate["status"], "#b45309"
     elif score is None:
         verdict, color = VERDICT_DATA
     elif score_ok:
@@ -665,6 +702,11 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
         "cost_gate_status": cost_gate_result["status"],
         "cost_gate_passed": cost_gate_result["passed"],
         "cost_gate_detail": cost_gate_result["detail"],
+        "holder_min_avg_cost": _num(metrics.get("holder_min_avg_cost")),
+        "holder_gap": holder_gate["gap"],
+        "holder_gate_status": holder_gate["status"],
+        "holder_gate_passed": holder_gate["passed"],
+        "holder_gate_detail": holder_gate["detail"],
         "reference_fund_x": reference_fund_x,
         "reference_fund_usd": reference_fund_usd,
         "turnover_x": turnover_x,
