@@ -69,6 +69,9 @@ class GmgnTokenHoldersTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertAlmostEqual(result["holder_min_avg_cost"], 0.0000707)
         self.assertEqual(result["holder_cost_count"], 3)
+        self.assertAlmostEqual(result["holder_cost_balance"], 5870109.0)
+        self.assertAlmostEqual(result["holder_cost_basis"],
+                               0.00099 * 100 + 0.0000707 * 5870000 + 0.00015 * 9)
         url = fetch.call_args.args[0]
         self.assertIn("/vas/api/v1/token_holders/sol/MINT", url)
         self.assertIn("limit=100", url)

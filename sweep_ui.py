@@ -383,6 +383,14 @@ def _render_cohort(metrics, result) -> None:
     else:
         avg_status = f"MINUS {abs(average_cost)*100:.1f}%"
     details.append(f"status avg cost: {avg_status}")
+    gmgn_avg = screen._num(cohort.get("gmgn_status_avg_cost"))
+    if gmgn_avg is None:
+        gmgn_status = "TANPA DATA"
+    elif gmgn_avg >= 0:
+        gmgn_status = f"PLUS {gmgn_avg*100:.1f}%"
+    else:
+        gmgn_status = f"MINUS {abs(gmgn_avg)*100:.1f}%"
+    details.append(f"avg cost GMGN: {gmgn_status}")
 
     wall_vwap = cohort.get("breakeven_wall_vwap_x")
     wall_high = cohort.get("breakeven_wall_high_x")

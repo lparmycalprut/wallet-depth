@@ -595,7 +595,8 @@ def gmgn_token_holders(mint: str, *, use_cache: bool = True) -> dict:
         if cached is not None:
             return cached
     result = {"ok": False, "mint": mint, "holder_min_avg_cost": None,
-              "holder_cost_count": 0, "error": "",
+              "holder_cost_count": 0, "holder_cost_basis": None,
+              "holder_cost_balance": None, "error": "",
               "source": "gmgn_token_holders"}
     try:
         payload = _get_json(
@@ -606,6 +607,7 @@ def gmgn_token_holders(mint: str, *, use_cache: bool = True) -> dict:
         if not isinstance(rows, list):
             raise RuntimeError("field data.list tidak ditemukan")
         costs = []
+        basis = balance_total = 0.0
         for row in rows:
             if not isinstance(row, dict):
                 continue
@@ -614,9 +616,17 @@ def gmgn_token_holders(mint: str, *, use_cache: bool = True) -> dict:
             if avg is None or avg <= 0 or balance is None or balance <= 0:
                 continue
             costs.append(avg)
-        result.update({"ok": True,
-                       "holder_min_avg_cost": min(costs) if costs else None,
-                       "holder_cost_count": len(costs)})
+            basis += avg * balance
+            balance_total += balance
+        result.update({
+            "ok": True,
+            "holder_min_avg_cost": min(costs) if costs else None,
+            "holder_cost_count": len(costs),
+            # Avg buy tertimbang saldo = basis / balance_total (dihitung di
+            # sweep_screen bersama harga sekarang).
+            "holder_cost_basis": basis if costs else None,
+            "holder_cost_balance": balance_total if costs else None,
+        })
     except Exception as exc:  # noqa: BLE001 - GMGN enrichment is optional
         result["error"] = str(exc)[:160]
     if use_cache:
@@ -679,6 +689,8 @@ def collect_metrics(mint: str, *, use_cache: bool = True) -> dict:
         "status_now": buyers.get("status_now") or {},
         "holder_min_avg_cost": holders.get("holder_min_avg_cost"),
         "holder_cost_count": holders.get("holder_cost_count"),
+        "holder_cost_basis": holders.get("holder_cost_basis"),
+        "holder_cost_balance": holders.get("holder_cost_balance"),
         "dev_team_hold_rate": stat.get("dev_team_hold_rate"),
         "sniper_rate": stat.get("sniper_rate"),
         "creator_created_count": stat.get("creator_created_count"),

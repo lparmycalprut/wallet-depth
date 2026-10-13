@@ -39,6 +39,8 @@ BUNDLE = {
         "status_now": {"hold": 12, "sold_part": 4, "sold": 8},
         # avg buy holder terendah 35% di bawah harga → lolos gate ≤ 50%.
         "holder_min_avg_cost": 0.0005, "holder_cost_count": 40,
+        # avg buy GMGN tertimbang 0,002 → harga minus ~62% (kohort C lolos).
+        "holder_cost_basis": 0.002, "holder_cost_balance": 1.0,
         "entrapment_rate": 0.3222, "pair_address": "POOL1",
         "pair_created_at": 1_790_866_800,
     },

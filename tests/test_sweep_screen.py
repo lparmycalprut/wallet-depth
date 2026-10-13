@@ -228,6 +228,8 @@ class EvaluateTest(unittest.TestCase):
         metrics = {
             "mint": "M", "price_usd": 0.29, "pair_created_at": 1000,
             "holder_min_avg_cost": 0.2,  # jarak 31% < 50% → gate holder lolos
+            # avg buy GMGN tertimbang 2,0 → status GMGN ≈ −85% (kohort C lolos)
+            "holder_cost_basis": 2.0, "holder_cost_balance": 1.0,
             "liq_usd": LIQ_USD, "fdv_usd": MC_USD,
             "mint_authority": None,
             "freeze_authority": None, "top10_holder_pct": 18.92,
@@ -337,6 +339,48 @@ class EvaluateTest(unittest.TestCase):
         self.assertEqual(minus_51["cohort_gate_status"], "LOLOS")
         self.assertTrue(minus_51["cohort_gate_passed"])
 
+    def test_gmgn_avg_cost_must_also_be_minus_50(self):
+        candles = _birth_candles()
+        now = 1000 + 49 * 3600
+        # VWAP minus 51% lolos; avg buy GMGN 0,8 → harga 0,49 = minus ~39%.
+        below = ss.evaluate(self._metrics(price_usd=0.49, holder_cost_basis=0.8,
+                                          holder_cost_balance=1.0),
+                            cohort_candles=candles, now=now)
+        self.assertEqual(below["cohort_gate_status"],
+                         "TUNGGU — kohort GMGN belum minus 50%")
+        self.assertFalse(below["cohort_gate_passed"])
+        self.assertFalse(below["eligible"])
+        self.assertTrue(below["verdict"].startswith("TUNGGU — kohort GMGN"))
+        self.assertAlmostEqual(below["gmgn_status_avg_cost"], 0.49 / 0.8 - 1)
+
+    def test_gmgn_avg_cost_plus_waits(self):
+        result = ss.evaluate(self._metrics(price_usd=0.49, holder_cost_basis=0.3,
+                                           holder_cost_balance=1.0),
+                             cohort_candles=_birth_candles(),
+                             now=1000 + 49 * 3600)
+        self.assertEqual(result["cohort_gate_status"], "TUNGGU — kohort GMGN plus")
+        self.assertFalse(result["eligible"])
+
+    def test_missing_gmgn_holder_data_is_tanpa_data_kohort_gmgn(self):
+        # avg buy holder terendah 0,4 → jarak 18% < 50%, gate holder lolos.
+        result = ss.evaluate(self._metrics(price_usd=0.49, holder_cost_basis=None,
+                                           holder_cost_balance=None,
+                                           holder_min_avg_cost=0.4),
+                             cohort_candles=_birth_candles(),
+                             now=1000 + 49 * 3600)
+        self.assertTrue(result["cohort"]["available"])
+        self.assertEqual(result["cohort_gate_status"], "TANPA DATA — kohort GMGN")
+        self.assertIsNone(result["gmgn_status_avg_cost"])
+        self.assertFalse(result["eligible"])
+        self.assertEqual(result["color"], "#64748b")
+
+    def test_gmgn_status_formula(self):
+        # 1.000 saldo @ avg 0,5 → harga 0,25 = minus 50% tepat.
+        self.assertAlmostEqual(ss.gmgn_cohort_status(500.0, 1000.0, 0.25), -0.5)
+        self.assertIsNone(ss.gmgn_cohort_status(None, 1000.0, 0.25))
+        self.assertIsNone(ss.gmgn_cohort_status(0.0, 0.0, 0.25))
+        self.assertIsNone(ss.gmgn_cohort_status(500.0, 1000.0, None))
+
     def test_display_sort_plus_last_and_closest_to_eligible_first(self):
         def row(status, verdict="TIDAK LAYAK", passed=1, avg=None, gate=False):
             return {"cohort_gate_status": status, "verdict": verdict,
@@ -440,6 +484,7 @@ class CostUsdTest(unittest.TestCase):
 class CostGateEvaluateTest(unittest.TestCase):
     def _metrics(self, **over):
         metrics = {"mint": "M", "price_usd": 0.49, "pair_created_at": 1000,
+                   "holder_cost_basis": 2.0, "holder_cost_balance": 1.0,
                    "liq_usd": MC_USD * 0.35, "fdv_usd": MC_USD,
                    "mint_authority": None, "freeze_authority": None,
                    "top10_holder_pct": 18.92, "holder_pcts": [2.99, 2.7]}
@@ -467,7 +512,9 @@ class CostGateEvaluateTest(unittest.TestCase):
 
     def test_missing_liq_mc_is_tunggu_not_eligible(self):
         result = ss.evaluate({"liq_usd": None, "fdv_usd": None,
-                              "price_usd": 0.49, "pair_created_at": 1000},
+                              "price_usd": 0.49, "pair_created_at": 1000,
+                              "holder_cost_basis": 2.0,
+                              "holder_cost_balance": 1.0},
                              snapshots=[], candles=[],
                              cohort_candles=_birth_candles(),
                              now=1000 + 49 * 3600)
@@ -528,6 +575,7 @@ class HolderCostGateEvaluateTest(unittest.TestCase):
     def _metrics(self, **over):
         # liq/MC 10% → biaya 10x ≈ 21,6% MC, jadi gate biaya tidak ikut kalah.
         metrics = {"mint": "M", "price_usd": 0.49, "pair_created_at": 1000,
+                   "holder_cost_basis": 2.0, "holder_cost_balance": 1.0,
                    "liq_usd": MC_USD * 0.1, "fdv_usd": MC_USD,
                    "mint_authority": None, "freeze_authority": None,
                    "top10_holder_pct": 18.92, "holder_pcts": [2.99, 2.7]}

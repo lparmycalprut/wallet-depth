@@ -325,22 +325,57 @@ def cohort_profile(candles, pair_created_at, price_now, *, now=None,
     return result
 
 
+def gmgn_cohort_status(cost_basis, balance_total, price_usd):
+    """Status avg cost GMGN kohort = harga ÷ avg buy tertimbang saldo − 1.
+
+    ``cost_basis`` = Σ(avg_cost × saldo) dan ``balance_total`` = Σ saldo dari
+    holder GMGN yang memegang token dan punya avg cost. Tanpa data → None.
+    """
+    basis = _num(cost_basis)
+    balance = _num(balance_total)
+    price = _num(price_usd)
+    if basis is None or balance is None or price is None:
+        return None
+    if basis <= 0 or balance <= 0 or price <= 0:
+        return None
+    return price * balance / basis - 1.0
+
+
 def cohort_gate(profile) -> dict:
-    """Gate pra-penilaian: PLUS skip, tunggu sampai minus 50%, no-data tunggu."""
+    """Gate kohort (Kohort C, 2026-10-13): VWAP proksi DAN avg cost GMGN keduanya
+    harus minus ≥ 50%. PLUS skip, belum minus tunggu, tanpa data tunggu.
+    """
     status = _num((profile or {}).get("status_avg_cost"))
+    threshold_pct = abs(COHORT_MINUS_THRESHOLD) * 100
     if status is None:
         return {"passed": False, "status": "TANPA DATA — kohort",
                 "detail": "VWAP/jendela kelahiran tidak tersedia; gate belum lolos"}
     if status >= 0:
         return {"passed": False, "status": "SKIP — kohort plus",
                 "detail": f"kohort PLUS {status*100:.1f}% terhadap VWAP kelahiran"}
-    threshold_pct = abs(COHORT_MINUS_THRESHOLD) * 100
-    if status <= COHORT_MINUS_THRESHOLD:
-        return {"passed": True, "status": "LOLOS",
-                "detail": f"kohort MINUS {abs(status)*100:.1f}% (ambang minus {threshold_pct:.0f}%)"}
-    return {"passed": False,
-            "status": f"TUNGGU — kohort belum minus {threshold_pct:.0f}%",
-            "detail": f"kohort MINUS {abs(status)*100:.1f}% (butuh {threshold_pct:.0f}%)"}
+    if status > COHORT_MINUS_THRESHOLD:
+        return {"passed": False,
+                "status": f"TUNGGU — kohort belum minus {threshold_pct:.0f}%",
+                "detail": f"kohort MINUS {abs(status)*100:.1f}% (butuh {threshold_pct:.0f}%)"}
+    gmgn = _num((profile or {}).get("gmgn_status_avg_cost"))
+    if gmgn is None:
+        return {"passed": False, "status": "TANPA DATA — kohort GMGN",
+                "detail": f"VWAP minus {abs(status)*100:.1f}% lolos, tetapi avg cost "
+                          "GMGN holder belum tersedia; gate belum lolos"}
+    if gmgn >= 0:
+        return {"passed": False,
+                "status": "TUNGGU — kohort GMGN plus",
+                "detail": f"VWAP minus {abs(status)*100:.1f}%, avg cost GMGN "
+                          f"PLUS {gmgn*100:.1f}%"}
+    if gmgn > COHORT_MINUS_THRESHOLD:
+        return {"passed": False,
+                "status": f"TUNGGU — kohort GMGN belum minus {threshold_pct:.0f}%",
+                "detail": f"VWAP minus {abs(status)*100:.1f}%, avg cost GMGN minus "
+                          f"{abs(gmgn)*100:.1f}% (butuh {threshold_pct:.0f}%)"}
+    return {"passed": True, "status": "LOLOS",
+            "detail": f"kohort MINUS {abs(status)*100:.1f}% terhadap VWAP dan "
+                      f"{abs(gmgn)*100:.1f}% terhadap avg cost GMGN "
+                      f"(ambang minus {threshold_pct:.0f}%)"}
 
 
 #: Urutan tampilan tabel: yang paling dekat ke kelayakan di atas.
@@ -646,6 +681,10 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
     cohort = cohort_profile(cohort_candles, metrics.get("pair_created_at"),
                             metrics.get("price_usd"), now=now,
                             fetch_error=cohort_error)
+    gmgn_status = gmgn_cohort_status(metrics.get("holder_cost_basis"),
+                                     metrics.get("holder_cost_balance"),
+                                     metrics.get("price_usd"))
+    cohort["gmgn_status_avg_cost"] = gmgn_status
     gate = cohort_gate(cohort)
     # Gate biaya 10x diuji setelah gate kohort; keduanya harus lolos sebelum
     # skor menentukan LAYAK/KANDIDAT.
@@ -715,6 +754,7 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
         "reference_fund_usd": reference_fund_usd,
         "turnover_x": turnover_x,
         "cohort": cohort,
+        "gmgn_status_avg_cost": gmgn_status,
         "cohort_gate_status": gate["status"],
         "cohort_gate_passed": gate["passed"],
         "cohort_gate_detail": gate["detail"],

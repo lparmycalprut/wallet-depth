@@ -96,8 +96,18 @@ apa adanya sebagai konteks cohort.
 | --- | --- |
 | `SKIP — kohort plus` | `status_avg_cost ≥ 0`; cohort rata-rata sedang PLUS |
 | `TUNGGU — kohort belum minus 50%` | `−0,50 < status_avg_cost < 0` |
-| `LOLOS` | `status_avg_cost ≤ −0,50` (minus minimal 50%) |
+| `TUNGGU — kohort GMGN belum minus 50%` | VWAP lolos, tetapi `status_gmgn ∈ (−0,50, 0)` |
+| `TUNGGU — kohort GMGN plus` | VWAP lolos, tetapi `status_gmgn ≥ 0` |
+| `LOLOS` | `status_avg_cost ≤ −0,50` **dan** `status_gmgn ≤ −0,50` (Kohort C, 2026-10-13) |
 | `TANPA DATA — kohort` | OHLCV/VWAP/harga tidak tersedia; jangan klaim lolos |
+| `TANPA DATA — kohort GMGN` | VWAP lolos, tetapi data holder GMGN (avg cost) tidak tersedia; jangan klaim lolos |
+
+**Status GMGN** (`status_gmgn`) = harga sekarang ÷ avg buy tertimbang saldo − 1.
+Avg buy tertimbang = Σ(`avg_cost` × `balance`) ÷ Σ`balance`, dari holder GMGN
+`token_holders` (100 teratas menurut porsi) yang masih memegang token dan punya
+`avg_cost`. Ini **perkiraan**: `avg_cost` GMGN adalah biaya per total pembelian,
+sehingga untuk holder yang sudah menjual bagian basisnya tidak persis. Holder di
+luar 100 teratas tidak dihitung.
 
 Pool berumur kurang dari 48 jam memakai seluruh jendela yang ada dan diberi
 label **jendela parsial**. OHLCV kosong atau VWAP tidak bisa dihitung selalu
