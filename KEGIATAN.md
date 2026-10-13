@@ -1,5 +1,17 @@
 # Kegiatan
 
+## 2026-10-13 — Sweep: urut menurut skor, kolom Kohort dilebarkan, refresh per token
+
+- **Urutan tabel** sekarang menurut skor `lolos/punya data` tertinggi (permintaan
+  user). Kohort PLUS tetap paling bawah; mint tanpa snapshot tampil sebagai
+  `MENUNGGU SNAPSHOT` di atasnya.
+- **Kolom Kohort** dilebarkan (320 px) supaya status seperti `TUNGGU — kohort belum minus 50%` terbaca.
+- **Refresh per token:** setiap mint punya tombol `🔄 Refresh <mint>` di detailnya
+  (dan di baris menunggu snapshot). Tombol ini memindai satu mint saja dan langsung
+  menyimpan snapshot.
+- Diverifikasi dengan `AppTest`: placeholder tampil, refresh per token mengisi
+  snapshot tanpa exception; 138 test sweep lolos.
+
 ## 2026-10-13 — Sweep: snapshot terakhir saat dibuka, kohort PLUS di bawah, ambang kohort minus 50%, hapus dari tabel
 
 Permintaan user: *halaman dibuka langsung menampilkan snapshot terakhir, diurutkan

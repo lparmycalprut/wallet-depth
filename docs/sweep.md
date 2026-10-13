@@ -148,10 +148,14 @@ Hanya mint yang belum punya snapshot (baru ditambahkan) dipindai sekali. Tombol
 **🔄 Refresh & ambil snapshot** memindai live semua mint dan mengambil snapshot;
 **auto-refresh** melakukannya tiap 5 menit selama tab terbuka.
 
-Urutan tabel (`sweep_screen.display_sort_key`), paling dekat ke kelayakan di atas:
-LAYAK SWEEP → KANDIDAT → gate kohort lolos tapi kriteria kurang → `TUNGGU` kohort
-(makin dekat ke −50% makin atas) → `TANPA DATA` kohort. **Kohort PLUS selalu di
-paling bawah.** Di dalam kelompok, jumlah kriteria lolos menurun.
+Urutan tabel (`sweep_screen.display_sort_key`) berdasarkan **skor** (`lolos/punya
+data`) tertinggi di atas. Jika skor sama, jumlah kriteria lolos yang lebih banyak
+di atas, lalu vonis (LAYAK → KANDIDAT → gate lolos → TUNGGU → TANPA DATA), lalu
+status kohort yang makin dekat ke −50%. Mint tanpa snapshot tampil sebagai
+`MENUNGGU SNAPSHOT` di atas kohort PLUS. **Kohort PLUS selalu di paling bawah.**
+
+Setiap mint punya tombol **🔄 Refresh <mint>** di bagian detailnya untuk pindai
+ulang satu token saja (berguna saat data kriteria masih kosong).
 
 Kolom **Hapus** di tabel mengeluarkan mint dari watchlist (centang, lalu tekan
 tombol hapus). Snapshot dan sinyal mint tersebut tetap di state; hanya tampilan
