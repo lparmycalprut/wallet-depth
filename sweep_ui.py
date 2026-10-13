@@ -299,8 +299,26 @@ def _request_refresh(mints) -> None:
         st.session_state[PENDING_REFRESH_KEY] = mints[row]
 
 
+#: Kolom yang selalu tampil di sisi kiri (tidak ikut digeser). Dipisah ke
+#: tabel sendiri, bukan lewat ``pinned``, karena fitur pin tetap bergerak
+#: di beberapa versi/peramban Streamlit.
+FROZEN_COLUMNS = ("Hapus", "Refresh", "Token")
+TABLE_ROW_PX = 35
+
+
+def _split_frozen_columns(frame):
+    """Pisahkan kolom beku (kiri) dari kolom yang boleh digeser (kanan)."""
+    left = frame[[c for c in FROZEN_COLUMNS if c in frame.columns]]
+    right = frame[[c for c in frame.columns if c not in FROZEN_COLUMNS]]
+    return left, right
+
+
 def _render_table(rows, watchlist) -> None:
-    """Tabel kelayakan dengan kolom **Hapus** untuk mengeluarkan mint dari watchlist."""
+    """Tabel kelayakan: kolom beku (Hapus, Refresh, Token) di kiri, sisanya di kanan.
+
+    Kedua tabel memakai tinggi yang sama dan tanpa scroll vertikal internal,
+    sehingga baris tetap sejajar saat kolom kanan digeser ke kanan.
+    """
     if not rows:
         st.info("Belum ada mint di watchlist. Tambahkan mint, lalu tekan "
                 "**Refresh & ambil snapshot**.")
@@ -308,25 +326,33 @@ def _render_table(rows, watchlist) -> None:
     frame = pd.DataFrame(_eligibility_rows(rows))
     mints = [row.get("mint") or "" for row in rows]
     frame.insert(0, "Hapus", False)
-    # Hapus dan Refresh sama-sama pinned: tetap terlihat saat tabel digeser.
     frame.insert(1, "Refresh", "🔄 Refresh")
-    edited = st.data_editor(
-        frame, key="sweep_table", use_container_width=True, hide_index=True,
-        disabled=[column for column in frame.columns if column != "Hapus"],
-        column_config={
-            # pinned: kolom tetap terlihat saat tabel digeser ke kanan.
-            "Hapus": st.column_config.CheckboxColumn(
-                "Hapus", help="Centang lalu tekan tombol di bawah tabel",
-                pinned=True),
-            "Refresh": st.column_config.ButtonColumn(
-                "Refresh", help="Pindai ulang mint ini sekarang juga",
-                pinned=True, on_click=_request_refresh, args=(mints,),
-                key=REFRESH_CLICK_KEY),
-            # Token ikut dipin (urutan kolom: Hapus, Refresh, Token).
-            "Token": st.column_config.TextColumn("Token", pinned=True),
-            "Kohort": st.column_config.TextColumn("Kohort", width=320),
-            "GMGN": st.column_config.LinkColumn("GMGN", display_text="buka"),
-        })
+    left, right = _split_frozen_columns(frame)
+    height = TABLE_ROW_PX * (len(frame) + 1) + 4
+
+    col_left, col_right = st.columns([2, 3], gap="small")
+    with col_left:
+        edited = st.data_editor(
+            left, key="sweep_table", use_container_width=True, hide_index=True,
+            height=height,
+            disabled=[column for column in left.columns if column != "Hapus"],
+            column_config={
+                "Hapus": st.column_config.CheckboxColumn(
+                    "Hapus", help="Centang lalu tekan tombol di bawah tabel"),
+                "Refresh": st.column_config.ButtonColumn(
+                    "Refresh", help="Pindai ulang mint ini sekarang juga",
+                    on_click=_request_refresh, args=(mints,),
+                    key=REFRESH_CLICK_KEY),
+                "Token": st.column_config.TextColumn("Token"),
+            })
+    with col_right:
+        st.dataframe(
+            right, use_container_width=True, hide_index=True, height=height,
+            column_config={
+                "Kohort": st.column_config.TextColumn("Kohort", width=320),
+                "GMGN": st.column_config.LinkColumn("GMGN", display_text="buka"),
+            })
+
     pending = st.session_state.pop(PENDING_REFRESH_KEY, None)
     if pending:
         _refresh_token(pending)  # memanggil st.rerun() di akhir
@@ -338,7 +364,6 @@ def _render_table(rows, watchlist) -> None:
         st.session_state.pop("sweep_watchlist_text", None)
         _commit_watchlist(remaining, f"{len(picked)} mint dihapus")
         st.rerun()
-
 
 def _status_count(value) -> str:
     number = screen._num(value)
