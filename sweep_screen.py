@@ -508,7 +508,9 @@ def view_hidden(row) -> bool:
 def display_sort_key(result) -> tuple:
     """Kunci urut tabel Sweep (kecil = lebih atas).
 
-    Urutan (permintaan user 2026-10-14: dimulai dari yang paling dekat acuan):
+    Urutan (permintaan user 2026-10-14):
+    0. blok kandidat: vonis LAYAK SWEEP dan KANDIDAT selalu paling atas, di dalam
+       blok diurutkan dengan aturan 2–6 di bawah (jarak terdekat ke acuan dulu);
     1. kohort PLUS (SKIP) selalu paling bawah;
     2. baris tanpa acuan dana (tanpa liq/MC) sebelum PLUS;
     3. jarak ``|x dana acuan 10x − 1|`` paling kecil di atas (1,0× = acuan COCK);
@@ -545,7 +547,10 @@ def display_sort_key(result) -> tuple:
         ref_x = reference_fund_multiple(result.get("liq_mc"))
     no_ref = ref_x is None
     ref_gap = abs(ref_x - 1.0) if ref_x is not None else 0.0
-    return (group == _DISPLAY_GROUP_SKIP, no_ref, ref_gap,
+    # Blok kandidat (LAYAK SWEEP / KANDIDAT) di atas; grup 0/1 hanya terisi
+    # bila kohort lolos dan vonisnya kandidat, jadi PLUS tidak pernah masuk blok.
+    is_candidate = group in (0, 1)
+    return (not is_candidate, group == _DISPLAY_GROUP_SKIP, no_ref, ref_gap,
             score is None, -(score or 0.0), -passed, group, distance)
 
 
