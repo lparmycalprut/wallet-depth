@@ -222,6 +222,18 @@ def holder_cost_gate(min_avg_cost, price_usd) -> dict:
     return {"passed": True, "gap": gap, "status": "LOLOS", "detail": detail}
 
 
+def pool_token_mc_frac(pool_base_usd, mc_usd):
+    """Nilai token di sisi pool sebagai fraksi MC (mis. 0,078 = 7,8% MC).
+
+    Sama dengan liq/MC tetapi hanya sisi token (base) pool. Tanpa data = None.
+    """
+    value = _num(pool_base_usd)
+    mc = _num(mc_usd)
+    if value is None or value < 0 or mc is None or mc <= 0:
+        return None
+    return value / mc
+
+
 def reference_fund_multiple(liq_mc):
     """Biaya 3x sebagai kelipatan dana acuan COCK pra-pump.
 

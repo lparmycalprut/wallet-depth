@@ -67,6 +67,20 @@ def _fmt_times(value, digits: int = 1) -> str:
     return f"{number:.{digits}f}×" if number is not None else "—"
 
 
+def _fmt_amount(value) -> str:
+    """Jumlah token ringkas: 77,02M, 1,5K, 812."""
+    number = screen._num(value)
+    if number is None:
+        return "—"
+    if abs(number) >= 1e9:
+        return f"{number / 1e9:.2f}B"
+    if abs(number) >= 1e6:
+        return f"{number / 1e6:.2f}M"
+    if abs(number) >= 1e3:
+        return f"{number / 1e3:.1f}K"
+    return f"{number:,.0f}"
+
+
 def _fmt_price(value) -> str:
     number = screen._num(value)
     if number is None:
@@ -228,6 +242,11 @@ def _eligibility_rows(rows) -> list:
             "Kohort": result.get("cohort_gate_status") or "TANPA DATA — kohort",
             "Harga": _fmt_price(metrics.get("price_usd")),
             "liq/MC": _fmt_pct(result.get("liq_mc")),
+            # Sisi token di pool: jumlah, nilai USD, dan % terhadap MC.
+            "Token pool": _fmt_amount(metrics.get("pool_base_amount")),
+            "Token pool $": _fmt_usd(metrics.get("pool_base_usd")),
+            "Token/MC": _fmt_pct(screen.pool_token_mc_frac(
+                metrics.get("pool_base_usd"), metrics.get("fdv_usd"))),
             # Cost 3x MC divided by COCK 4.74% MC ($11,066 / $233,451).
             "× dana acuan": _fmt_times(result.get("reference_fund_x")),
             # Nominal $ untuk 3x pada basis kas satu sisi (= × dana acuan).

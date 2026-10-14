@@ -197,6 +197,8 @@ def dex_snapshot(mint: str, *, use_cache: bool = True) -> dict:
         if not pair:
             raise RuntimeError("tidak ada pasangan terdaftar")
         liq = _num((pair.get("liquidity") or {}).get("usd"))
+        # Jumlah token (sisi base) di pool; nilai USD = jumlah × harga.
+        pool_base = _num((pair.get("liquidity") or {}).get("base"))
         fdv = _num(pair.get("fdv")) or _num(pair.get("marketCap"))
         price = _num(pair.get("priceUsd"))
         txns = pair.get("txns") or {}
@@ -233,6 +235,10 @@ def dex_snapshot(mint: str, *, use_cache: bool = True) -> dict:
             "pair_created_at": _num(pair.get("pairCreatedAt")),
             "url": pair.get("url") or "",
         })
+        result["pool_base_amount"] = pool_base
+        result["pool_base_usd"] = (pool_base * price
+                                   if pool_base is not None and price is not None
+                                   else None)
         if liq and fdv and fdv > 0:
             result["liq_mc"] = liq / fdv
     except Exception as exc:  # noqa: BLE001 - satu mint gagal ≠ scan gagal
@@ -659,6 +665,8 @@ def collect_metrics(mint: str, *, use_cache: bool = True) -> dict:
         "fdv_usd": dex.get("fdv_usd"),
         "market_cap_usd": dex.get("market_cap_usd"),
         "liq_mc": dex.get("liq_mc"),
+        "pool_base_amount": dex.get("pool_base_amount"),
+        "pool_base_usd": dex.get("pool_base_usd"),
         "vol_24h": dex.get("vol_24h"),
         "vol24_usd": dex.get("vol_24h"),
         "vol_6h": dex.get("vol_6h"),

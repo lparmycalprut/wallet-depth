@@ -192,6 +192,10 @@ Hanya mint yang belum punya snapshot (baru ditambahkan) dipindai sekali. Tombol
 **🔄 Refresh & ambil snapshot** memindai live semua mint dan mengambil snapshot;
 **auto-refresh** melakukannya tiap 5 menit selama tab terbuka.
 
+Kolom **Token pool / Token pool $ / Token/MC** (di samping liq/MC) = sisi token pool
+(`liquidity.base` DexScreener, jumlah token), nilainya `jumlah × priceUsd`, dan
+persentasenya terhadap MC (`fdv`). Snapshot lama belum punya data ini sampai di-refresh.
+
 **Retry otomatis kohort tanpa data**: bila auto-refresh mati dan ada mint yang
 gate kohort-nya `TANPA DATA — kohort` (OHLCV/VWAP atau avg cost GMGN belum ada,
 mis. GeckoTerminal 429), hanya mint itu yang dipindai ulang tiap
