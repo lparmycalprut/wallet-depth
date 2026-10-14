@@ -434,6 +434,10 @@ def nodata_retry_targets(views, attempts,
     return out
 
 
+#: Awalan status TUNGGU dari gate kohort (dipakai latch kohort).
+COHORT_WAIT_PREFIX = "TUNGGU — kohort"
+
+
 def cohort_gate(profile) -> dict:
     """Gate kohort (Kohort C, 2026-10-13): VWAP proksi DAN avg cost GMGN keduanya
     harus minus ≥ 50%. PLUS skip, belum minus tunggu, tanpa data tunggu.
@@ -826,8 +830,10 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
     cohort["gmgn_status_avg_cost"] = gmgn_status
     gate = cohort_gate(cohort)
     # Latch kohort (2026-10-14): kohort yang pernah ≤ −50% tetap lolos walau harga
-    # kini naik. Hanya menggantikan "belum minus 50%"; PLUS/TANPA DATA tidak berubah.
-    if cohort_latch and not gate["passed"] and "belum minus" in str(gate["status"]):
+    # kini naik. Menggantikan semua status TUNGGU kohort (belum minus 50% VWAP/GMGN,
+    # dan GMGN plus); SKIP kohort PLUS dan TANPA DATA tidak berubah.
+    if (cohort_latch and not gate["passed"]
+            and str(gate["status"]).startswith(COHORT_WAIT_PREFIX)):
         when = screen_time_wib(cohort_latch.get("ts"))
         gate = {"passed": True,
                 "status": "LOLOS — pernah ≤ −50% (latch)",

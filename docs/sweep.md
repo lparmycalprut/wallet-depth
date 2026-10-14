@@ -99,7 +99,7 @@ apa adanya sebagai konteks cohort.
 | `TUNGGU — kohort GMGN belum minus 50%` | VWAP lolos, tetapi `status_gmgn ∈ (−0,50, 0)` |
 | `TUNGGU — kohort GMGN plus` | VWAP lolos, tetapi `status_gmgn ≥ 0` |
 | `LOLOS` | `status_avg_cost ≤ −0,50` **dan** `status_gmgn ≤ −0,50` (Kohort C, 2026-10-13) |
-| `LOLOS — pernah ≤ −50% (latch)` | Latch kohort (2026-10-14): status di atas pernah tercapai (live, atau dari riwayat snapshot per jam pada harga yang sama). Latch hanya menggantikan status `TUNGGU — … belum minus 50%` — `SKIP` dan `TANPA DATA` tidak berubah. Tersimpan di `state.cohort_latched` dan permanen |
+| `LOLOS — pernah ≤ −50% (latch)` | Latch kohort (2026-10-14): status di atas pernah tercapai (live, atau dari riwayat snapshot per jam pada harga yang sama). Latch menggantikan semua status `TUNGGU — kohort …` (belum minus 50% VWAP/GMGN dan GMGN plus, 2026-10-14) — `SKIP` dan `TANPA DATA` tidak berubah. Tersimpan di `state.cohort_latched` dan permanen |
 | `TANPA DATA — kohort` | OHLCV/VWAP/harga tidak tersedia; jangan klaim lolos |
 | `TANPA DATA — kohort GMGN` | VWAP lolos, tetapi data holder GMGN (avg cost) tidak tersedia; jangan klaim lolos |
 
