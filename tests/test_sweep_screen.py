@@ -400,23 +400,32 @@ class EvaluateTest(unittest.TestCase):
             item["score"] = passed / scored_n
             return item
 
+        def with_ref(item, x):
+            item["reference_fund_x"] = x
+            return item
+
         rows = {
-            "plus": scored("SKIP — kohort plus", 6, 6, avg=0.2),
+            "plus": with_ref(scored("SKIP — kohort plus", 6, 6, avg=0.2), 1.0),
             "missing": {"cohort_gate_status": "MENUNGGU SNAPSHOT",
                         "passed_count": None, "score": None},
-            "far": scored("TUNGGU — kohort belum minus 50%", 3, 6, avg=-0.10),
-            "near": scored("TUNGGU — kohort belum minus 50%", 3, 6, avg=-0.45),
-            "kandidat": scored("LOLOS", 2, 3, verdict="KANDIDAT", avg=-0.6,
-                               gate=True),
-            "nodata": scored("TANPA DATA — kohort", 5, 6),
-            "layak": scored("LOLOS", 4, 4, verdict="LAYAK SWEEP", avg=-0.6,
-                            gate=True),
+            "far": with_ref(scored("TUNGGU — kohort belum minus 50%", 3, 6,
+                                   avg=-0.10), 2.0),
+            "near": with_ref(scored("TUNGGU — kohort belum minus 50%", 3, 6,
+                                    avg=-0.45), 0.9),
+            "kandidat": with_ref(scored("LOLOS", 2, 3, verdict="KANDIDAT",
+                                        avg=-0.6, gate=True), 1.2),
+            "nodata": with_ref(scored("TANPA DATA — kohort", 5, 6), 1.15),
+            "layak": with_ref(scored("LOLOS", 4, 4, verdict="LAYAK SWEEP",
+                                     avg=-0.6, gate=True), 0.5),
+            # Tanpa reference_fund_x: dihitung ulang dari liq/MC COCK (≈1,0×).
+            "cock": {**scored("TUNGGU — kohort belum minus 50%", 1, 6, avg=-0.2),
+                     "liq_mc": 30232.0 / 233451.0},
         }
         order = sorted(rows, key=lambda k: ss.display_sort_key(rows[k]))
-        # skor tertinggi dulu: 4/4=1,00 > 5/6=0,83 > 2/3=0,67 > 3/6 (dekat −50%
-        # dulu) > 3/6 (lebih jauh); lalu baris tanpa skor; PLUS paling bawah.
-        self.assertEqual(order, ["layak", "nodata", "kandidat", "near", "far",
-                                 "missing", "plus"])
+        # Jarak ke acuan dana 10x (1,0×) dulu: cock ≈0 > near 0,1 > nodata 0,15 >
+        # kandidat 0,2 > layak 0,5 > far 1,0; baris tanpa acuan; PLUS paling bawah.
+        self.assertEqual(order, ["cock", "near", "nodata", "kandidat", "layak",
+                                 "far", "missing", "plus"])
 
     def test_cohort_no_data_never_passes_gate_and_partial_window_is_labeled(self):
         no_data = ss.evaluate(self._metrics(), cohort_candles=[])
