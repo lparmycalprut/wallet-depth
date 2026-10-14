@@ -72,6 +72,19 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
+
+#: Waktu tampilan selalu WIB (Asia/Jakarta), bukan zona server/UTC.
+_WIB = timezone(timedelta(hours=7))
+
+
+def _fmt_wib_hm(ts) -> str:
+    """Jam:menit WIB dari epoch detik (kosong/0 -> 00:00)."""
+    try:
+        number = float(ts or 0)
+    except (TypeError, ValueError):
+        number = 0.0
+    return datetime.fromtimestamp(number, _WIB).strftime("%H:%M")
 
 CHECK_URL = "https://www.rugchecker.cc/api/honeypot/checker"
 
@@ -586,7 +599,7 @@ def cell_parts(summary) -> tuple[str, str, str]:
     else:
         sub = "tanpa pool"
     head = (f"verdict {item.get('verdict')} — rugchecker.cc honeypot checker "
-            f"(pemeriksaan {time.strftime('%H:%M', time.gmtime(item.get('checked_at') or 0))} UTC)")
+            f"(pemeriksaan {_fmt_wib_hm(item.get('checked_at'))} WIB)")
     bits: list[str] = []
     if item.get("honeypot"):
         bits.append("HONEYPOT: token tidak bisa dijual kembali")

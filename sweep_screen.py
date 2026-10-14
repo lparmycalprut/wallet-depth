@@ -25,7 +25,11 @@ import statistics
 import time
 
 # --- ambang tetap kriteria (satu tempat, biar mesin, UI & test tidak menyimpang) ---
-LIQ_MC_MAX = 0.35          # kriteria 1: liq/MC maksimum 35%, tetap
+# Kriteria 1 (2026-10-14, keputusan user): float tipis diukur dari sisi TOKEN
+# pool = pool_base_usd ÷ FDV. Ambang 17,5% = setara liq/MC 35% dibagi dua, dengan
+# asumsi sisi quote kira-kira separuh likuiditas. Liq/MC tetap dipakai untuk
+# biaya sweep, bukan untuk kriteria ini.
+TOKEN_MC_MAX = 0.175       # kriteria 1: token/MC maksimum 17,5%, tetap
 # Kriteria LP locked dihapus: likuiditas token pump.fun sudah pasti terkunci,
 # jadi tidak lagi dicek maupun dihitung sebagai skor.
 TOP10_MAX = 0.25           # kriteria 3: top-10 (tanpa pool) < 25% supply
@@ -79,9 +83,9 @@ SWEEP_BASELINE_BARS = 24   # baseline = 24 candle sebelum kandidat
 
 # --- standar struktural tetap ---
 # Biaya dorong = uang quote yang masuk ke pool = (√m−1) × liq/2 (liq = TVL dua
-# sisi, sisi quote = setengah). Di rasio 35%: (√3−1)×17,5% = 6,4% MC; acuan
-# COCK 3× $11.066 = 4,74% MC cocok persis dengan basis ini. Holder per-wallet
-# maksimum 5%.
+# sisi, sisi quote = setengah). Kriteria float memakai token/MC ≤ 17,5%; biaya
+# 3x pada batas itu ≈ (√3−1)×35%/2 = 6,4% MC. Acuan COCK 3× $11.066 = 4,74% MC
+# cocok dengan basis biaya ini. Holder per-wallet maksimum 5%.
 
 #: Minimal kriteria lulus untuk vonis LAYAK — tapi ambangnya menyesuaikan
 #: berapa kriteria yang **sudah punya data**: di deploy baru hanya trio
@@ -90,10 +94,10 @@ SWEEP_BASELINE_BARS = 24   # baseline = 24 candle sebelum kandidat
 #: kriteria lulus. Artinya begitu riwayat akumulasi/volume/shakeout tersedia,
 #: syaratnya otomatis naik menjadi "struktural + minimal satu bukti".
 ELIGIBLE_MIN_PASSED = 4
-ELIGIBLE_STRUCTURAL = ("liq_mc", "float_spread", "authority")  # wajib lulus; authority tidak masuk skor
+ELIGIBLE_STRUCTURAL = ("token_mc", "float_spread", "authority")  # wajib lulus; authority tidak masuk skor
 
 CRITERIA_KEYS = (
-    ("liq_mc", "liq/MC"),
+    ("token_mc", "Token/MC"),
     ("float_spread", "Float tersebar"),
     ("absorption", "Akumulasi (proxy)"),
     ("vol_expansion", "Ekspansi volume"),
@@ -478,20 +482,23 @@ def _check(key, label, passed, detail, *, scored=True):
             "has_data": passed is not None, "scored": scored}
 
 
-def criterion_liq_mc(liq_usd, fdv_usd):
-    """Kriteria 1 — liq/MC maksimum tetap 35% (murah di-sweep)."""
-    liq, fdv = _num(liq_usd), _num(fdv_usd)
-    if not liq or not fdv or fdv <= 0:
-        return _check("liq_mc", "liq/MC", None, "liq/FDV tidak tersedia")
-    ratio = liq / fdv
-    cost3 = leverage_cost(3.0, ratio)
-    tail = (f" — naik 3x perlu {cost3*100:.1f}% MC" if cost3 is not None else "")
-    if ratio <= LIQ_MC_MAX:
-        detail = (f"liq/MC {ratio*100:.1f}% <= {LIQ_MC_MAX*100:.0f}%{tail}")
+def criterion_token_mc(pool_base_usd, fdv_usd):
+    """Kriteria 1 — token/MC maksimum 17,5%: float tipis di sisi token pool.
+
+    Tanpa ``pool_base_usd`` (snapshot lama sebelum kolom ini ada) hasilnya
+    ``None`` = belum ada data, bukan tebakan dari liq/MC.
+    """
+    ratio = pool_token_mc_frac(pool_base_usd, fdv_usd)
+    if ratio is None:
+        return _check("token_mc", "Token/MC", None,
+                      "token pool/FDV belum tersedia (snapshot lama)")
+    if ratio <= TOKEN_MC_MAX:
+        detail = (f"token/MC {ratio*100:.1f}% <= {TOKEN_MC_MAX*100:.1f}% "
+                  "(float tipis)")
     else:
-        detail = (f"liq/MC {ratio*100:.1f}% > {LIQ_MC_MAX*100:.0f}% — sweep mahal"
-                  f"{tail}")
-    return _check("liq_mc", "liq/MC", ratio <= LIQ_MC_MAX, detail)
+        detail = (f"token/MC {ratio*100:.1f}% > {TOKEN_MC_MAX*100:.1f}% — "
+                  "float terlalu tebal")
+    return _check("token_mc", "Token/MC", ratio <= TOKEN_MC_MAX, detail)
 
 
 def criterion_authority(mint_authority=None, freeze_authority=None, *,
@@ -708,7 +715,7 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
     shakeout = _latched_shakeout_check(shakeout, latched_at)
 
     checks = [
-        criterion_liq_mc(metrics.get("liq_usd"), metrics.get("fdv_usd")),
+        criterion_token_mc(metrics.get("pool_base_usd"), metrics.get("fdv_usd")),
         criterion_authority(metrics.get("mint_authority"),
                             metrics.get("freeze_authority"),
                             known=metrics.get("rugcheck_ok", True)),
@@ -935,12 +942,12 @@ def sweep_context(event, liq_mc, fdv_usd, *, market_cap_usd=None,
         ke puncak. Kalau ``churn_net_x < churn_x × 0,9`` → ada pembeli luar
         ikut masuk.
 
-    ``leverage`` = ``paper_gain ÷ est_cost`` = ``(akar(peak_mult) + 1) / (liq/MC/2)``
+    ``leverage`` = ``paper_gain ÷ est_cost`` = ``(akar(peak_mult) + 1) / (liq/MC_dasar/2)``
+        (MC dasar, bukan MC sekarang — sama dengan paper_gain yang juga dari MC dasar)
         COCKROACH: ``(akar(8,669) + 1) / 6,475% = 3,944 / 0,06475 = 60,9×``,
         cocok dengan ``$1.790.194 / $29.389 = 60,9×``.
 
-    페르세타:
-    Semua angka "paper" (paper_gain, paper_mcap) adalah **teoretis** — nilai
+    Catatan: semua angka "paper" (paper_gain, paper_mcap) adalah **teoretis** — nilai
     yang akan ada jika harga bertahan. Angka "terukur" hanya ``est_cost_usd``
     (teoretis tapi deterministik dari reserve) dan ``net_inflow_usd`` (Δ
     likuiditas aktual).
@@ -991,7 +998,6 @@ def sweep_context(event, liq_mc, fdv_usd, *, market_cap_usd=None,
     enriched["est_cost_frac"] = cost_frac
     enriched["est_cost_usd"] = ((_sqrt(peak_mult) - 1.0) * liq / 2.0
                                 if (peak_mult and peak_mult > 0 and liq) else None)
-    enriched["leverage"] = leverage_ratio(peak_mult, liq_mc)
     enriched["base_mcap_usd"] = base_mcap
     enriched["paper_mcap_usd"] = paper_mcap
 
@@ -1006,6 +1012,16 @@ def sweep_context(event, liq_mc, fdv_usd, *, market_cap_usd=None,
         enriched["paper_gain_usd"] = supply * (peak - base_price)
     else:
         enriched["paper_gain_usd"] = None
+
+    # Leverage = kenaikan MC kertas (dari MC DASAR) ÷ biaya dorong ke puncak.
+    # Sebelumnya memakai liq/MC SEKARANG (MC kini), padahal kenaikan kertas
+    # diukur dari MC dasar — hasilnya bias. Sekarang kedua sisi memakai basis
+    # yang sama; tanpa salah satunya = None (bukan tebakan).
+    gain, cost = enriched["paper_gain_usd"], enriched["est_cost_usd"]
+    enriched["leverage"] = (gain / cost
+                            if (gain and cost and gain > 0 and cost > 0)
+                            else None)
+    enriched["sweep_ts"] = _num(event.get("ts"))
 
     # --- peak_mult untuk sinyal ---
     enriched["peak_mult"] = peak_mult

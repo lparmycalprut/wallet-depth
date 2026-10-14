@@ -27,6 +27,8 @@ BUNDLE = {
         "ts": 1_790_866_800,
         "price_usd": 0.0007667356548390803,
         "liq_usd": 30232.0, "fdv_usd": 233451.0, "market_cap_usd": 233451.0,
+        # Sisi token pool ≈ setengah likuiditas → token/MC ≈ 6,5% (≤ 17,5%).
+        "pool_base_usd": 30232.0 / 2,
         "liq_mc": 30232.0 / 233451.0,
         "vol24_usd": 30232.0 * 3.35,
         "vol_1h": 180744.30, "buys_1h": 70, "sells_1h": 30,
@@ -140,7 +142,10 @@ class RunScanTest(_Sandbox):
         # Setelah cooldown sweep, alert sweep boleh lagi (masih ada sweep).
         third = scan.run_scan([MINT], state=second["state"],
                               now=1000 + store.SWEEP_COOLDOWN + 60)
-        self.assertEqual([a["kind"] for a in third["alerts"]], ["sweep"])
+        # Candle sweep yang sama sudah tercatat → tidak ada sinyal/alert baru.
+        self.assertEqual(third["alerts"], [])
+        self.assertEqual(len([s for s in third["state"]["signals"]
+                              if s["kind"] == "sweep"]), 1)
 
     def test_net_inflow_measured_from_previous_snapshot(self):
         # Putaran 1 (liq $30.232) tidak punya pembanding → estimasi berlabel.
@@ -171,7 +176,8 @@ class RunScanTest(_Sandbox):
         state = store.empty_state()
         scan.run_scan([MINT], state=state, now=1000)
         # Putaran berikutnya harus di **bucket jam baru** (snapshot dibucket per
-        # jam) supaya ada pembanding likuiditas.
+        # jam) supaya ada pembanding likuiditas. Candle sweep yang sama hanya
+        # dicatat sekali; inflow nyata diisi ulang ke sinyal itu.
         with mock.patch.object(scan, "_scan_one",
                                side_effect=lambda mint, use_cache=True: dict(
                                    scan.analyze(BUNDLE),
@@ -182,13 +188,11 @@ class RunScanTest(_Sandbox):
                                                 liq_usd=89010.0))):
             scan.run_scan([MINT], state=state, now=1000 + 3600)
         sweeps = [s for s in state["signals"] if s["kind"] == "sweep"]
-        self.assertEqual(len(sweeps), 2)
+        self.assertEqual(len(sweeps), 1)
         self.assertIsNotNone(sweeps[0]["churn_x"])
-        self.assertIsNone(sweeps[0]["net_inflow_usd"])
-        self.assertIsNone(sweeps[0]["churn_net_x"])
-        self.assertEqual(sweeps[1]["net_inflow_usd"], (89010.0 - 30232.0) / 2)
-        self.assertIsNotNone(sweeps[1]["churn_net_x"])
-        self.assertIsNotNone(sweeps[1]["paper_mcap_usd"])
+        self.assertEqual(sweeps[0]["net_inflow_usd"], (89010.0 - 30232.0) / 2)
+        self.assertIsNotNone(sweeps[0]["churn_net_x"])
+        self.assertIsNotNone(sweeps[0]["paper_mcap_usd"])
 
     def test_criteria_4_and_5_fill_in_after_history(self):
         state = store.empty_state()
@@ -328,7 +332,7 @@ class SurfaceTest(unittest.TestCase):
     def test_ui_shows_fixed_threshold_turnover_and_cohort_without_sliders(self):
         source = (ROOT / "sweep_ui.py").read_text(encoding="utf-8")
         self.assertNotIn("st.slider(", source)
-        self.assertIn("liq/MC ≤ 35% · holder/wallet ≤ 5%", source)
+        self.assertIn("token/MC ≤ 17,5% · holder/wallet ≤ 5%", source)
         self.assertIn("Turnover (×/hari)", source)
         self.assertIn("perkiraan (proksi VWAP 48 jam)", source)
 

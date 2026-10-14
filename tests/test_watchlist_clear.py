@@ -107,9 +107,17 @@ class RemoveManyTest(_Sandbox):
         with mock.patch.object(wl, "_save_pending",
                                wraps=wl._save_pending) as save_pending:
             self._clear([CA_A, CA_B, CA_C])
-        # satu tulis journal untuk tiga op (bukan tiga tulis)
-        self.assertEqual(save_pending.call_count, 1)
-        ops = self._journal()
+            # Worker push latar juga memangkas jurnal setelah sukses (tulis
+            # kedua dengan jurnal kosong). Tunggu dulu supaya hitungannya
+            # deterministik, lalu bedakan tulis-tiga-op dari tulis pemangkasan.
+            self._wait()
+        writes = [len(c.args[0]) for c in save_pending.call_args_list]
+        # satu tulis journal untuk tiga op (bukan tiga tulis per op)
+        self.assertEqual(writes.count(3), 1)
+        self.assertEqual([n for n in writes if n in (1, 2)], [])
+        # isi tulisan tiga-op itu sendiri (jurnal sudah dipangkas worker)
+        ops = next(c.args[0] for c in save_pending.call_args_list
+                   if len(c.args[0]) == 3)
         self.assertEqual([op["op"] for op in ops], ["remove"] * 3)
         self.assertEqual(sorted(op["ca"] for op in ops),
                          sorted([CA_A, CA_B, CA_C]))

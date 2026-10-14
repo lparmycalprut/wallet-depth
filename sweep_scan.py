@@ -156,70 +156,92 @@ def run_scan(mints, *, state: dict | None = None,
               for item in results if (item["metrics"] or {}).get("price_usd")}
     store.update_outcomes(state, prices, now=now)
 
-    if send_alerts:
-        cfg = alert.telegram_config()
-        muted = alert.muted_mints()
-        for item in results:
-            mint = item["mint"]
-            metrics = item["metrics"] or {}
-            result = item["result"] or {}
-            if not metrics.get("ok") or mint in muted:
-                continue
-            if result.get("eligible"):
-                if store.alert_gate(state, mint, "eligibility", now=now):
-                    store.record_signal(state, {
-                        "ts": int(now if now is not None else time.time()),
-                        "mint": mint, "kind": "eligibility",
-                        "symbol": metrics.get("symbol") or "",
-                        "price_usd": metrics.get("price_usd"),
-                        "base_price": metrics.get("price_usd"),
-                        "entry_price": metrics.get("price_usd"),
-                        "liq_mc": result.get("liq_mc"),
-                        "verdict": result.get("verdict"),
-                        "passed_count": result.get("passed_count"),
-                        "scored_count": result.get("scored_count"),
-                    })
-                    if cfg.get("ok"):
-                        sent, error = alert.send_message(
-                            alert.format_eligibility(mint, metrics, result),
-                            config=cfg)
-                        alerts_sent.append({"mint": mint, "kind": "eligibility",
-                                            "sent": sent, "error": error})
-            else:
-                store.clear_eligibility(state, mint)
-
-            context = item.get("sweep_context")
-            if context:
-                if store.alert_gate(state, mint, "sweep", now=now):
-                    signal = store.record_signal(state, {
-                        "ts": int(now if now is not None else time.time()),
-                        "mint": mint, "kind": "sweep",
-                        "symbol": metrics.get("symbol") or "",
-                        "price_usd": metrics.get("price_usd"),
-                        "base_price": context.get("base_price"),
-                        "entry_price": context.get("close"),
-                        "peak_price": context.get("peak"),
-                        "liq_mc": context.get("liq_mc"),
-                        "vol_x": context.get("vol_x"),
-                        "price_mult": context.get("price_mult"),
-                        "peak_mult": context.get("peak_mult"),
-                        "est_cost_usd": context.get("est_cost_usd"),
-                        "est_cost_close_usd": context.get("est_cost_close_usd"),
-                        "churn_x": context.get("churn_x"),
-                        # Angka nyata (kalau ada) disimpan berdampingan dengan
-                        # angka teoretis — tabel statistik tidak boleh
-                        # menampilkan tebakan sebagai pengukuran.
-                        "net_inflow_usd": context.get("net_inflow_usd"),
-                        "churn_net_x": context.get("churn_net_x"),
-                        "paper_mcap_usd": context.get("paper_mcap_usd"),
-                        "paper_gain_usd": context.get("paper_gain_usd"),
-                        "leverage": context.get("leverage"),
-                        "leverage_net": context.get("leverage_net"),
-                    })
+    # Sinyal SELALU dicatat (cron/tanpa alert pun); hanya pengiriman Telegram
+    # yang dijaga send_alerts. Sebelumnya seluruh blok ini di balik send_alerts,
+    # sehingga putaran tanpa alert tidak menyimpan sinyal sama sekali.
+    cfg = alert.telegram_config()  # dibaca selalu; pengiriman dijaga send_alerts
+    muted = alert.muted_mints()
+    for item in results:
+        mint = item["mint"]
+        metrics = item["metrics"] or {}
+        result = item["result"] or {}
+        if not metrics.get("ok") or mint in muted:
+            continue
+        if result.get("eligible"):
+            if store.alert_gate(state, mint, "eligibility", now=now):
+                store.record_signal(state, {
+                    "ts": int(now if now is not None else time.time()),
+                    "mint": mint, "kind": "eligibility",
+                    "symbol": metrics.get("symbol") or "",
+                    "price_usd": metrics.get("price_usd"),
+                    "base_price": metrics.get("price_usd"),
+                    "entry_price": metrics.get("price_usd"),
+                    "liq_mc": result.get("liq_mc"),
+                    "verdict": result.get("verdict"),
+                    "passed_count": result.get("passed_count"),
+                    "scored_count": result.get("scored_count"),
+                })
+                if send_alerts and cfg.get("ok"):
                     sent, error = alert.send_message(
-                        alert.format_sweep(mint, metrics, context), config=cfg)
-                    alerts_sent.append({"mint": mint, "kind": "sweep",
+                        alert.format_eligibility(mint, metrics, result),
+                        config=cfg)
+                    alerts_sent.append({"mint": mint, "kind": "eligibility",
                                         "sent": sent, "error": error})
+        else:
+            store.clear_eligibility(state, mint)
+
+        context = item.get("sweep_context")
+        candle_ts = (context or {}).get("sweep_ts")
+        existing = (store.find_sweep_signal(state, mint, context)
+                    if context and candle_ts is not None else None)
+        if existing is not None:
+            # Candle sudah tercatat: hanya isi inflow nyata bila baru tersedia.
+            store.backfill_sweep_inflow(
+                existing, context,
+                measured_at=int(now if now is not None else time.time()))
+        elif context and candle_ts is not None:
+            # Waktu sinyal = waktu candle sweep (bukan waktu scan), supaya
+            # riwayat & outcome sejajar dengan pasar. Waktu deteksi disimpan
+            # terpisah. Satu candle hanya dicatat sekali (lihat find_sweep_signal).
+            scan_ts = int(now if now is not None else time.time())
+            fresh = (scan_ts - (int(candle_ts) + store.SWEEP_CANDLE_SEC)
+                     <= store.SWEEP_ALERT_MAX_AGE)
+            signal = store.record_signal(state, {
+                "ts": int(candle_ts),
+                "detected_ts": scan_ts,
+                "sweep_ts": int(candle_ts),
+                "mint": mint, "kind": "sweep",
+                "symbol": metrics.get("symbol") or "",
+                "price_usd": metrics.get("price_usd"),
+                "base_price": context.get("base_price"),
+                "entry_price": context.get("close"),
+                "peak_price": context.get("peak"),
+                "liq_mc": context.get("liq_mc"),
+                "vol_x": context.get("vol_x"),
+                "price_mult": context.get("price_mult"),
+                "peak_mult": context.get("peak_mult"),
+                "est_cost_usd": context.get("est_cost_usd"),
+                "est_cost_close_usd": context.get("est_cost_close_usd"),
+                "churn_x": context.get("churn_x"),
+                # Angka nyata (kalau ada) disimpan berdampingan dengan
+                # angka teoretis — tabel statistik tidak boleh
+                # menampilkan tebakan sebagai pengukuran.
+                "net_inflow_usd": context.get("net_inflow_usd"),
+                "churn_net_x": context.get("churn_net_x"),
+                "paper_mcap_usd": context.get("paper_mcap_usd"),
+                "paper_gain_usd": context.get("paper_gain_usd"),
+                "leverage": context.get("leverage"),
+                "leverage_net": context.get("leverage_net"),
+            })
+            if not send_alerts:
+                signal["alert_skipped"] = "alert_nonaktif"
+            elif fresh:
+                sent, error = alert.send_message(
+                    alert.format_sweep(mint, metrics, context), config=cfg)
+                alerts_sent.append({"mint": mint, "kind": "sweep",
+                                    "sent": sent, "error": error})
+            else:
+                signal["alert_skipped"] = "candle_terlalu_tua"
 
     store.prune(state)
     if persist:
