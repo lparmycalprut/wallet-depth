@@ -21,7 +21,7 @@ Independent market-risk fields such as Meteora's `top_holders_pct`, GMGN metrics
 - theoretical and measured numbers must stay labelled as such: `est_cost_usd` is the formula `(sqrt(m)-1) * liq`, `net_inflow_usd` is a measurement (Δ liquidity between snapshots) and is `None` when unavailable — do not let the UI or alerts present the reference estimate as a measurement
 - cohort average-cost status must be labeled **“perkiraan (proksi VWAP 48 jam)”**; it is derived from hourly pool OHLCV, not directly observed wallet cost basis
 - the stats table is the deliverable: every alert must leave a signal row with `max_up_pct` / `max_down_pct` so hit rate can be reviewed instead of guessed
-- opening the page shows the **last stored snapshot view** (`latest_view`) of each watchlist mint without a live scan; only mints with no view yet are scanned once. Live scans happen on the explicit Refresh button or auto-refresh. The table is ordered by `sweep_screen.display_sort_key`, and PLUS-cohort rows always sit at the bottom
+- opening the page shows the **last stored snapshot view** (`latest_view`) of each watchlist mint without a live scan; only mints with no view yet are scanned once. Live scans happen on the explicit Refresh button, auto-refresh, or the no-data retry (only mints whose cohort gate is `TANPA DATA — kohort`, 60 s apart, max 5 attempts, off while auto-refresh is on). The table is ordered by `sweep_screen.display_sort_key`, and PLUS-cohort rows always sit at the bottom
 - the watchlist can be edited from the table (remove checked rows); removal only drops the mint from the watchlist, while its snapshots, signals, and shakeout latch stay in `sweep_state.json`
 
 ## Best Pool invariants

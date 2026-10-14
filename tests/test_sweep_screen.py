@@ -476,12 +476,21 @@ class CostUsdTest(unittest.TestCase):
         targets = ss.target_costs(0.1295)
         self.assertTrue(all(t["cost_usd"] is None for t in targets))
 
-    def test_reference_fund_usd_matches_cockroach_11066(self):
+    def test_reference_fund_usd_matches_cockroach_10x(self):
+        # Acuan dana = biaya 10x COCK = (√10−1) × cash $15.116 ≈ $32.684 (14,0% MC).
         metrics = {"liq_usd": 30232.0, "fdv_usd": 233451.0}
         result = ss.evaluate(metrics, snapshots=[], candles=[])
-        self.assertAlmostEqual(result["reference_fund_usd"], 11066, delta=1)
+        self.assertAlmostEqual(result["reference_fund_usd"], 32684, delta=1)
         self.assertAlmostEqual(result["reference_fund_usd"],
-                               result["reference_fund_x"] * 11066, delta=1)
+                               result["reference_fund_x"] * 32684, delta=1)
+
+    def test_cockroach_10x_reference_constants(self):
+        self.assertEqual(ss.REFERENCE_MULT, 10.0)
+        self.assertAlmostEqual(ss.COCK_REFERENCE_COST_10X_USD, 32684, delta=1)
+        self.assertAlmostEqual(ss.COCK_REFERENCE_COST_10X_MC_FRAC, 0.1400, places=4)
+        # Biaya 10x pada liq/MC COCK 12,95% = acuan persis (1,0×).
+        self.assertAlmostEqual(ss.reference_fund_multiple(30232.0 / 233451.0), 1.0,
+                               places=3)
 
 
 class CostGateEvaluateTest(unittest.TestCase):

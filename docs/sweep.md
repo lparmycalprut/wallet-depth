@@ -49,19 +49,21 @@ skor. Trio struktural (1+2+3) wajib lulus; lalu perlu minimal
 Ambang UI/cron tidak dapat diubah dan tidak disimpan sebagai setting:
 
 > Ambang fix: liq/MC ≤ 35% · holder/wallet ≤ 5% · standar pra-pump COCKROACH
-> (toleransi 3× dana)
+> (acuan dana 10×)
 
 Acuan COCKROACH pra-pump, 1 Okt 2026 22:42 WIB: harga $0,00023768, MC
 $233.451, TVL/liquidity dua sisi $30.232, cash satu sisi $15.116, B/S 6,48%,
 liq/MC 12,95%, biaya dorong 2× $6.261 / 3× $11.066 (4,74% MC) / 5× $18.684,
 turnover 3,35×/hari, LP 89,82%. Biaya dorong = uang quote masuk
 `(√m − 1) × liq/2`; angka 2×/3×/5× di atas cocok persis dengan basis ini.
-Toleransi biaya dorong 3× token adalah maksimal 3× dana acuan:
-**$33.198 ≈ 14,2% MC**. Pada batas struktural 35%, biaya 3× = 6,4% MC, jadi
-kolom acuan berada jauh di dalam toleransi.
 
-Kolom **× dana acuan** menampilkan biaya dorong 3× dalam kelipatan acuan
-4,74% MC: `biaya 3× (% MC) ÷ 4,74%`. COCK = 1,0×.
+**Acuan dana (sejak 2026-10-14) = biaya dorong 10× COCK: $32.684 ≈ 14,0% MC.**
+Angka ini turunan dari rumus yang sama: `(√10 − 1) × cash satu sisi $15.116`,
+bukan pengukuran langsung. Pada batas struktural liq/MC 35%, biaya 10× = 37,8%
+MC ≈ 2,7× acuan.
+
+Kolom **× dana acuan 10x** menampilkan biaya dorong 10× dalam kelipatan acuan
+14,0% MC: `biaya 10× (% MC) ÷ 14,0%`. COCK = 1,0×.
 
 Turnover di tabel utama adalah **`vol24_usd / liq_usd`**, dengan `liq_usd`
 dua sisi. Angka pembanding: COCK 3,35×/hari, TH 1,39×/hari, Paws 2,12×/hari.
@@ -139,9 +141,9 @@ interpretasi dari "maks 50% dari harga sekarang" dan perlu dikonfirmasi user.
 
 ### Nominal dolar (tabel utama dan detail biaya)
 
-- Kolom **Dana acuan** di tabel utama = `(√3 − 1) × liq/2`, basis kas satu sisi
-  seperti `× dana acuan` (COCK ≈ $11.066). Setara dengan `× dana acuan` × 4,74%
-  × MC; untuk COCK hasilnya ≈ $11.066.
+- Kolom **Dana acuan 10x** di tabel utama = `(√10 − 1) × liq/2`, basis kas satu sisi
+  seperti `× dana acuan` (COCK ≈ $32.684). Setara dengan `× dana acuan` × 14,0%
+  × MC; untuk COCK hasilnya ≈ $32.684.
 - Tabel **Biaya sweep** di detail menambah kolom **Biaya ($)** per target
   = `(√m − 1) × liq / 2`, uang quote masuk ke pool. Setara dengan `% MC × MC`.
 - Snapshot lama yang belum punya field ini tampil `—` sampai dipindai ulang.
@@ -191,6 +193,19 @@ mencakup hit ≥100% / ≥300%, median naik/turun, dan break-even hit rate.
 Hanya mint yang belum punya snapshot (baru ditambahkan) dipindai sekali. Tombol
 **🔄 Refresh & ambil snapshot** memindai live semua mint dan mengambil snapshot;
 **auto-refresh** melakukannya tiap 5 menit selama tab terbuka.
+
+Kolom **Token pool / Token pool $ / Token/MC** (di samping liq/MC) = sisi token pool
+(`liquidity.base` DexScreener, jumlah token), nilainya `jumlah × priceUsd`, dan
+persentasenya terhadap MC (`fdv`). Snapshot lama belum punya data ini sampai di-refresh.
+
+**Retry otomatis kohort tanpa data**: bila auto-refresh mati dan ada mint yang
+gate kohort-nya `TANPA DATA — kohort` (OHLCV/VWAP atau avg cost GMGN belum ada,
+mis. GeckoTerminal 429), hanya mint itu yang dipindai ulang tiap
+`NODATA_RETRY_DELAY_SEC` = 60 detik (`use_cache=False`), maksimal
+`NODATA_RETRY_MAX_ATTEMPTS` = 5 percobaan per mint. Mint yang sudah berdata tidak
+ikut dipindai. Tombol Refresh (dan Refresh per mint) mereset jatah percobaan. Saat
+auto-refresh menyala, retry ini tidak aktif karena auto-refresh 5 menit sudah
+memindai semua mint.
 
 Urutan tabel (`sweep_screen.display_sort_key`) berdasarkan **skor** (`lolos/punya
 data`) tertinggi di atas. Jika skor sama, jumlah kriteria lolos yang lebih banyak

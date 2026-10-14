@@ -33,6 +33,8 @@ import sweep_screen as screen
 import sweep_store as store
 
 AUTO_REFRESH_SEC = 300  # 5 menit — sama dengan jadwal cron
+ATTEMPTS_KEY = "sweep_nodata_attempts"  # {mint: jumlah retry kohort tanpa data}
+READY_KEY = "sweep_nodata_ready_at"     # kapan retry berikutnya boleh jalan
 WIB = timezone(timedelta(hours=7))  # waktu tampilan: Asia/Jakarta
 
 
@@ -63,6 +65,20 @@ def _fmt_mult(value, digits: int = 1) -> str:
 def _fmt_times(value, digits: int = 1) -> str:
     number = screen._num(value)
     return f"{number:.{digits}f}×" if number is not None else "—"
+
+
+def _fmt_amount(value) -> str:
+    """Jumlah token ringkas: 77,02M, 1,5K, 812."""
+    number = screen._num(value)
+    if number is None:
+        return "—"
+    if abs(number) >= 1e9:
+        return f"{number / 1e9:.2f}B"
+    if abs(number) >= 1e6:
+        return f"{number / 1e6:.2f}M"
+    if abs(number) >= 1e3:
+        return f"{number / 1e3:.1f}K"
+    return f"{number:,.0f}"
 
 
 def _fmt_price(value) -> str:
@@ -226,10 +242,15 @@ def _eligibility_rows(rows) -> list:
             "Kohort": result.get("cohort_gate_status") or "TANPA DATA — kohort",
             "Harga": _fmt_price(metrics.get("price_usd")),
             "liq/MC": _fmt_pct(result.get("liq_mc")),
-            # Cost 3x MC divided by COCK 4.74% MC ($11,066 / $233,451).
-            "× dana acuan": _fmt_times(result.get("reference_fund_x")),
-            # Nominal $ untuk 3x pada basis kas satu sisi (= × dana acuan).
-            "Dana acuan": _fmt_usd(result.get("reference_fund_usd")),
+            # Sisi token di pool: jumlah, nilai USD, dan % terhadap MC.
+            "Token pool": _fmt_amount(metrics.get("pool_base_amount")),
+            "Token pool $": _fmt_usd(metrics.get("pool_base_usd")),
+            "Token/MC": _fmt_pct(screen.pool_token_mc_frac(
+                metrics.get("pool_base_usd"), metrics.get("fdv_usd"))),
+            # Cost 10x MC divided by COCK 10x MC ($32,684 / $233,451 = 14,0%).
+            "× dana acuan 10x": _fmt_times(result.get("reference_fund_x")),
+            # Nominal $ untuk 10x pada basis kas satu sisi (= × dana acuan).
+            "Dana acuan 10x": _fmt_usd(result.get("reference_fund_usd")),
             "Turnover (×/hari)": _fmt_times(row.get("turnover_x",
                                                        result.get("turnover_x")), 2),
             "Liq": _fmt_usd(metrics.get("liq_usd")),
@@ -265,6 +286,9 @@ def _placeholder_row(mint: str) -> dict:
 
 def _refresh_token(mint: str) -> None:
     """Pindai ulang satu mint sekarang juga dan ambil snapshot-nya."""
+    attempts = st.session_state.get(ATTEMPTS_KEY)
+    if isinstance(attempts, dict):
+        attempts.pop(mint, None)  # refresh manual memberi jatah retry baru
     with st.spinner(f"Memindai {mint[:8]}…"):
         outcome = scan.run_scan([mint], state=_working_state(), persist=True)
     _remember_outcome(outcome)
@@ -622,7 +646,7 @@ def _render_threshold() -> None:
     st.markdown("### ⚙️ Ambang kelayakan")
     st.caption("Ambang fix: liq/MC ≤ 35% · holder/wallet ≤ 5% · "
                "kohort minimal minus 50% (VWAP kelahiran 48 jam) · "
-               "standar pra-pump COCKROACH (toleransi 3× dana)")
+               "standar pra-pump COCKROACH (acuan dana 10×)")
 
 
 def _render_results(watchlist, state) -> None:
@@ -638,12 +662,70 @@ def _render_results(watchlist, state) -> None:
     _render_stats(state)
 
 
+def _nodata_targets(watchlist, state) -> list:
+    """Mint watchlist yang kohortnya tanpa data dan masih punya jatah retry."""
+    views, _ = store.watchlist_views(state, watchlist)
+    return screen.nodata_retry_targets(views, st.session_state.get(ATTEMPTS_KEY))
+
+
+def _nodata_exhausted(watchlist, state) -> list:
+    """Mint yang kohortnya masih tanpa data setelah habis jatah retry."""
+    views, _ = store.watchlist_views(state, watchlist)
+    attempts = st.session_state.get(ATTEMPTS_KEY) or {}
+    return [view["mint"] for view in views
+            if screen.is_cohort_nodata(view.get("result"))
+            and attempts.get(view.get("mint"), 0) >= screen.NODATA_RETRY_MAX_ATTEMPTS]
+
+
+def _attach_nodata_retry(watchlist) -> None:
+    """Retry otomatis: hanya mint tanpa data kohort yang dipindai ulang.
+
+    Jeda ``NODATA_RETRY_DELAY_SEC`` antar percobaan, maksimum
+    ``NODATA_RETRY_MAX_ATTEMPTS`` per mint. Mint yang sudah berdata tidak
+    ikut dipindai. Saat tidak ada lagi yang tertahan, fragment dihentikan
+    lewat rerun penuh supaya tabel kembali normal.
+    """
+    delay = screen.NODATA_RETRY_DELAY_SEC
+    st.session_state.setdefault(READY_KEY, time.time() + delay)
+
+    @st.fragment(run_every=delay)
+    def _retry_tick() -> None:
+        todo = _nodata_targets(watchlist, _working_state())
+        if todo and time.time() >= st.session_state.get(READY_KEY, 0):
+            attempts = st.session_state.setdefault(ATTEMPTS_KEY, {})
+            for mint in todo:
+                attempts[mint] = attempts.get(mint, 0) + 1
+            outcome = scan.run_scan(todo, state=_working_state(), persist=True,
+                                    use_cache=False)
+            _remember_outcome(outcome)
+            st.session_state[READY_KEY] = time.time() + delay
+        pending = _nodata_targets(watchlist, _working_state())
+        if not pending:
+            st.session_state.pop(READY_KEY, None)
+            st.rerun(scope="app")
+        attempts = st.session_state.get(ATTEMPTS_KEY) or {}
+        round_no = max(attempts.get(mint, 0) for mint in pending)
+        wait = max(0, int(st.session_state.get(READY_KEY, 0) - time.time()))
+        progress = (f"percobaan {round_no}/{screen.NODATA_RETRY_MAX_ATTEMPTS}"
+                    if round_no else "menunggu percobaan pertama")
+        st.caption(
+            f"🔁 Retry otomatis: {len(pending)} mint tanpa data kohort "
+            f"({progress}, berikutnya ±{wait} dtk). "
+            "Mint yang sudah berdata tidak dipindai ulang.")
+        _render_results(watchlist, _working_state())
+
+    _retry_tick()
+
+
 def _render_body(watchlist) -> None:
     _render_threshold()
 
     col_scan, col_auto = st.columns([1, 2])
     if col_scan.button("🔄 Refresh & ambil snapshot", type="primary",
                        use_container_width=True, disabled=not watchlist):
+        # Refresh manual memberi jatah retry baru untuk semua mint.
+        st.session_state.pop(ATTEMPTS_KEY, None)
+        st.session_state.pop(READY_KEY, None)
         outcome = _snapshot_all(watchlist, persist=True)
         st.success(f"Snapshot diambil: {len(watchlist)} mint dipindai live "
                    f"({outcome['elapsed']:.1f}s).")
@@ -660,9 +742,18 @@ def _render_body(watchlist) -> None:
             f"{a['kind']} {a['mint'][:8]}" for a in sent))
 
     if auto:
+        # Auto-refresh 5 menit sudah memindai ulang semua mint.
         _attach_autorefresh(watchlist)
+    elif _nodata_targets(watchlist, _working_state()):
+        _attach_nodata_retry(watchlist)
     else:
         _render_results(watchlist, _working_state())
+        exhausted = _nodata_exhausted(watchlist, _working_state())
+        if exhausted:
+            st.caption(
+                f"⚠️ {len(exhausted)} mint masih tanpa data kohort setelah "
+                f"{screen.NODATA_RETRY_MAX_ATTEMPTS} percobaan retry. "
+                "Tekan Refresh untuk mencoba lagi.")
 
 
 def render_sweep_page() -> None:
