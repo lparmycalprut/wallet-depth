@@ -138,7 +138,7 @@ def _render_header() -> None:
     st.markdown("## 🌊 Sweep Screener")
     st.caption(
         "Skrining **kelayakan sweep** untuk token yang sudah retrace dalam: "
-        "murah di-sweep (liq/MC kecil) + authority dilepas + float tersebar + ada "
+        "float tipis (token/MC kecil) + authority dilepas + float tersebar + ada "
         "jejak akumulasi. Alert Telegram dikirim saat kelayakan muncul dan "
         "saat sweep mulai terjadi. Halaman dibuka dengan **snapshot terakhir** "
         "tiap mint di watchlist; tekan **Refresh & ambil snapshot** untuk "
@@ -221,6 +221,14 @@ def _fmt_snapshot_time(ts) -> str:
     if not number:
         return "—"
     return datetime.fromtimestamp(number, WIB).strftime("%d %b %H:%M WIB")
+
+
+def _fmt_wib(ts, fmt: str) -> str:
+    """Format epoch detik sebagai waktu WIB (Asia/Jakarta), bukan zona server."""
+    number = screen._num(ts)
+    if not number:
+        return "—"
+    return datetime.fromtimestamp(number, WIB).strftime(fmt)
 
 
 def _eligibility_rows(rows) -> list:
@@ -573,8 +581,7 @@ def _render_stats(state) -> None:
     for signal in sorted((s for s in signals if isinstance(s, dict)),
                          key=lambda s: s.get("ts") or 0, reverse=True)[:200]:
         table.append({
-            "Waktu": time.strftime("%m-%d %H:%M",
-                                   time.localtime(signal.get("ts") or 0)),
+            "Waktu": _fmt_wib(signal.get("ts"), "%m-%d %H:%M"),
             "Token": signal.get("symbol") or (signal.get("mint") or "")[:8],
             "Jenis": ("⚡ sweep" if signal.get("kind") == "sweep"
                       else "🌊 kelayakan"),
@@ -644,7 +651,7 @@ def _fill_missing_views(watchlist) -> None:
 def _render_threshold() -> None:
     """Ambang struktural permanen: tidak ada knob UI/cron atau rescore."""
     st.markdown("### ⚙️ Ambang kelayakan")
-    st.caption("Ambang fix: liq/MC ≤ 35% · holder/wallet ≤ 5% · "
+    st.caption("Ambang fix: token/MC ≤ 17,5% · holder/wallet ≤ 5% · "
                "kohort minimal minus 50% (VWAP kelahiran 48 jam) · "
                "standar pra-pump COCKROACH (acuan dana 10×)")
 
@@ -780,7 +787,7 @@ def _attach_autorefresh(watchlist) -> None:
         _remember_outcome(outcome)
         if last is not None and fingerprint != last:
             store.save_state(outcome["state"], persist=True, reason="auto-refresh")
-        st.caption(f"Terakhir dipindai {time.strftime('%H:%M:%S')} — "
+        st.caption(f"Terakhir dipindai {_fmt_wib(time.time(), '%H:%M:%S')} WIB — "
                    f"{len(outcome['rows'])} mint, {outcome['elapsed']:.1f}s.")
         _render_results(watchlist, outcome["state"])
 

@@ -9,7 +9,7 @@
 
 Best Pool itself still requires no GitHub Actions scanner, Holder store branch, cron chain, or Telegram credentials.
 
-The **🌊 Sweep** page uses fixed screening thresholds: liq/MC ≤35% and holder/wallet ≤5%. The 48-hour birth-cohort VWAP gate must pass before any token can be eligible; thresholds are not UI/cron settings.
+The **🌊 Sweep** page uses fixed screening thresholds: token/MC ≤17.5% and holder/wallet ≤5%. The 48-hour birth-cohort VWAP gate must pass before any token can be eligible; thresholds are not UI/cron settings.
 
 The **🌊 Sweep** page does need two things when you want 24/7 alerts (they are optional — without them the page still screens and records statistics):
 

@@ -21,8 +21,11 @@ from __future__ import annotations
 import json
 import os
 import urllib.request
+from datetime import datetime, timedelta, timezone
 
 import sweep_screen as screen
+
+WIB = timezone(timedelta(hours=7))  # waktu tampilan: Asia/Jakarta
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
@@ -171,6 +174,7 @@ def format_eligibility(mint: str, metrics: dict, result: dict) -> str:
         f"🌊 KELAYAKAN SWEEP — ${symbol}",
         f"Vonis: {result.get('verdict') or '—'} "
         f"({result.get('passed_count')}/{result.get('scored_count')} kriteria)",
+        f"Token/MC: {_pct(screen.pool_token_mc_frac(metrics.get('pool_base_usd'), metrics.get('fdv_usd')))} | "
         f"liq/MC: {_pct(result.get('liq_mc'))} | "
         f"liq {_usd(metrics.get('liq_usd'))} | MC {_usd(metrics.get('fdv_usd'))}",
         f"top-10 {_pct100(metrics.get('top10_holder_pct'))} | "
@@ -201,8 +205,12 @@ def format_sweep(mint: str, metrics: dict, context: dict) -> str:
     metrics = metrics or {}
     context = context or {}
     symbol = metrics.get("symbol") or mint[:8]
+    candle_ts = context.get("sweep_ts") or context.get("ts")
+    candle_text = (datetime.fromtimestamp(float(candle_ts), WIB).strftime("%H:%M")
+                   + " WIB" if candle_ts else "—")
     lines = [
         f"⚡ SWEEP TERDETEKSI — ${symbol}",
+        f"Candle 5 menit {candle_text}",
         f"Volume {_mult(context.get('vol_x'), 1)} median candle "
         f"({_usd(context.get('vol'))})",
         f"Harga {_price(context.get('base_price'))} → "

@@ -20,9 +20,14 @@ pemindai lain.
 
 ## Kriteria struktural dan skor
 
-1. **liq/MC ≤ 35%** — ambang tetap. Biaya dorong dihitung sebagai uang quote yang
-   masuk ke pool, `(√m − 1) × liq/2` (liq = TVL dua sisi, sisi quote = setengah).
-   Pada batas 35%: naik 3x = `(√3 − 1) × 17,5% = 6,4% MC`.
+1. **token/MC ≤ 17,5%** — ambang tetap (keputusan 2026-10-14). Float tipis
+   diukur dari sisi **token** pool: `pool_base_usd ÷ FDV` (kolom Token/MC). Angka
+   17,5% setara liq/MC 35% dibagi dua, dengan asumsi sisi quote kira-kira separuh
+   likuiditas. Tanpa `pool_base_usd` (snapshot lama) kriteria = belum ada data,
+   bukan tebakan dari liq/MC. Biaya dorong tetap dihitung dari liq/MC sebagai uang
+   quote yang masuk ke pool, `(√m − 1) × liq/2` (liq = TVL dua sisi). Karena sisi
+   quote tidak dibatasi kriteria ini, liq/MC bisa lebih besar; yang membatasi biaya
+   adalah gate biaya 10x (≤ 80% MC).
 2. **Authority mint/freeze sudah dilepas** — gate struktural, tidak masuk skor.
    Kriteria LP terkunci dihapus (2026-10-13): likuiditas token pump.fun sudah
    pasti terkunci, jadi tidak dicek maupun dihitung.
@@ -48,7 +53,7 @@ skor. Trio struktural (1+2+3) wajib lulus; lalu perlu minimal
 
 Ambang UI/cron tidak dapat diubah dan tidak disimpan sebagai setting:
 
-> Ambang fix: liq/MC ≤ 35% · holder/wallet ≤ 5% · standar pra-pump COCKROACH
+> Ambang fix: token/MC ≤ 17,5% · holder/wallet ≤ 5% · standar pra-pump COCKROACH
 > (acuan dana 10×)
 
 Acuan COCKROACH pra-pump, 1 Okt 2026 22:42 WIB: harga $0,00023768, MC
@@ -59,8 +64,7 @@ turnover 3,35×/hari, LP 89,82%. Biaya dorong = uang quote masuk
 
 **Acuan dana (sejak 2026-10-14) = biaya dorong 10× COCK: $32.684 ≈ 14,0% MC.**
 Angka ini turunan dari rumus yang sama: `(√10 − 1) × cash satu sisi $15.116`,
-bukan pengukuran langsung. Pada batas struktural liq/MC 35%, biaya 10× = 37,8%
-MC ≈ 2,7× acuan.
+bukan pengukuran langsung. Biaya 10× pada liq/MC 12,95% (COCK) = 14,0% MC = 1,0× acuan.
 
 Kolom **× dana acuan 10x** menampilkan biaya dorong 10× dalam kelipatan acuan
 14,0% MC: `biaya 10× (% MC) ÷ 14,0%`. COCK = 1,0×.
@@ -119,9 +123,9 @@ kohort `LOLOS`, gate biaya 10x `LOLOS`, trio struktural lulus, dan skor cukup.
 | `LOLOS` | `(√10 − 1) × liq/MC ÷ 2 ≤ 0,80` |
 
 Gate ini diuji setelah gate kohort. Jika kohort belum lolos, status kohort yang
-tampil. Dengan batas `liq/MC ≤ 35%` yang sudah ada, biaya 10x maksimum ≈ 37,8%
-MC, sehingga gate biaya 10x (batas 80%) baru menahan vonis pada liq/MC di atas
-≈ 74%. Gate ini praktis tidak aktif di bawah batas struktural.
+tampil. Sejak kriteria float memakai token/MC, liq/MC tidak lagi dibatasi langsung,
+sehingga gate biaya 10x (batas 80%) menjadi penahan biaya yang sebenarnya: vonis
+tertahan pada liq/MC di atas ≈ 74%.
 
 ### Gate avg buy holder (2026-10-13)
 
@@ -163,11 +167,25 @@ interpretasi dari "maks 50% dari harga sekarang" dan perlu dikonfirmasi user.
 Alert dikirim hanya saat **transisi status**, bukan setiap scan:
 
 - kelayakan muncul (cooldown 6 jam);
-- sweep mulai terjadi (cooldown 30 menit).
+- sweep mulai terjadi — **sekali per candle 5 menit**. Waktu sinyal = waktu candle
+  sweep (kolom `ts`, `sweep_ts`), bukan waktu scan (`detected_ts`). Alert hanya
+  dikirim bila candle tidak lebih dari 60 menit lalu; sweep yang lebih tua tetap
+  tercatat dengan `alert_skipped = candle_terlalu_tua`.
+
+Saat candle yang sama terlihat lagi di scan berikutnya, sinyal tidak dibuat ulang.
+Bila inflow nyata baru tersedia dari snapshot berikutnya, angka itu diisi ke sinyal
+yang sudah ada (`net_inflow_usd`, `churn_net_x`, `leverage_net`, `net_measured_at`).
+Putaran tanpa alert (`--no-alerts`, hanya dipakai manual; cron tidak memakai flag ini)
+tetap mencatat sinyal dengan `alert_skipped = alert_nonaktif`. Candle yang dicatat
+dari putaran itu dianggap sudah tercatat, jadi tidak dikirim ulang oleh putaran berikutnya.
 
 `est_cost_usd` adalah biaya dorong teoretis ke **puncak**:
 `(√peak_mult − 1) × liq_usd / 2`, yaitu uang quote masuk ke pool. `leverage`
-memakai basis yang sama. `net_inflow_usd` adalah Δ likuiditas (TVL dua sisi)
+= `paper_gain_usd ÷ est_cost_usd` (keduanya dari MC dasar, sejak 2026-10-14; sebelumnya
+memakai liq/MC sekarang sehingga angkanya bias).
+
+Semua tampilan waktu di app memakai **WIB** (Asia/Jakarta). Batas hari UTC di modul
+CVD/core tetap dipakai untuk data GMGN/Helius dan bukan untuk tampilan. `net_inflow_usd` adalah Δ likuiditas (TVL dua sisi)
 antar snapshot dibagi dua, sehingga satuannya sama dengan biaya. Tetap `None`
 jika tidak tersedia. Referensi dari `REF_NET_COST_MULT = 1,0` berlabel estimasi,
 bukan pengukuran.
@@ -180,7 +198,7 @@ bukan pengukuran.
 | `paper_mcap_usd` | MC kertas di close; bukan pembilang leverage | $752.939 |
 | `net_inflow_usd` | **terukur**: Δ likuiditas antar snapshot ÷ 2 (uang masuk) | $29.389 |
 | `churn_x` / `churn_net_x` | volume ÷ biaya teoretis / inflow terukur | 42,3× / 42,3× |
-| `leverage` | paper gain ÷ biaya dorong (basis uang masuk) | 60,9× |
+| `leverage` | paper gain ÷ biaya dorong, keduanya dari MC dasar | 60,9× |
 
 ## Statistik dan runtime
 

@@ -46,6 +46,11 @@ SIGNAL_TRACK_SEC = 72 * HOUR
 #: Cooldown alert (detik): kelayakan jarang berubah, sweep cepat.
 ELIG_COOLDOWN = 6 * HOUR
 SWEEP_COOLDOWN = 30 * 60
+#: Sinyal sweep hanya dicatat sekali per candle 5 menit (kunci = mint + ts candle).
+#: Alert Telegram hanya dikirim bila candle belum terlalu tua saat terdeteksi;
+#: sweep lama yang baru terlihat (mis. setelah jeda cron) tetap tercatat, tanpa notif.
+SWEEP_CANDLE_SEC = 5 * 60
+SWEEP_ALERT_MAX_AGE = 60 * 60
 #: Snapshot pembanding untuk mengukur inflow nyata (Δ likuiditas) tidak boleh
 #: lebih tua dari ini — di luar itu selisihnya bukan lagi "inflow sweep".
 NET_INFLOW_MAX_AGE = 3 * HOUR
@@ -558,6 +563,49 @@ def record_signal(state: dict, signal: dict) -> dict:
     signal.setdefault("status", "open")
     state.setdefault("signals", []).append(signal)
     return signal
+
+
+def find_sweep_signal(state: dict, mint: str, context: dict):
+    """Sinyal sweep yang sudah mencatat candle ``context`` untuk ``mint``, atau None.
+
+    Sinyal baru dikunci dengan ``sweep_ts`` (ts candle). Sinyal lama (sebelum
+    field itu ada) dicocokkan lewat ``entry_price`` = close candle, yang memang
+    disimpan sejak awal. Tanpa dedupe ini, candle sweep yang sama dicatat ulang
+    setiap cron berjalan setelah cooldown dan statistik menghitung satu kejadian
+    berkali-kali.
+    """
+    sweep_ts = (context or {}).get("sweep_ts")
+    close = (context or {}).get("close")
+    for signal in state.get("signals") or []:
+        if not isinstance(signal, dict) or signal.get("kind") != "sweep":
+            continue
+        if signal.get("mint") != mint:
+            continue
+        if signal.get("sweep_ts") is not None:
+            if sweep_ts is not None and int(signal["sweep_ts"]) == int(sweep_ts):
+                return signal
+        elif close is not None and signal.get("entry_price") == close:
+            return signal
+    return None
+
+
+def backfill_sweep_inflow(signal: dict, context: dict, *, measured_at: int) -> bool:
+    """Isi inflow NYATA ke sinyal yang sudah ada, bila snapshot berikutnya punya.
+
+    Churn nyata butuh pembanding likuiditas dari snapshot SETELAH sweep. Karena
+    satu candle hanya dicatat sekali, angka itu diisi ulang ke sinyal lama
+    (bukan dicatat sebagai sinyal baru). Angka yang sudah terukur tidak ditimpa.
+    """
+    if not isinstance(signal, dict) or signal.get("net_inflow_usd") is not None:
+        return False
+    net = (context or {}).get("net_inflow_usd")
+    if net is None:
+        return False
+    signal["net_inflow_usd"] = net
+    signal["churn_net_x"] = context.get("churn_net_x")
+    signal["leverage_net"] = context.get("leverage_net")
+    signal["net_measured_at"] = int(measured_at)
+    return True
 
 
 def has_signal(state: dict, signal_id: str) -> bool:

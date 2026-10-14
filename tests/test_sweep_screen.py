@@ -97,12 +97,15 @@ class LeverageFormulaTest(unittest.TestCase):
 
 
 class CriteriaTest(unittest.TestCase):
-    def test_liq_mc_threshold_is_fixed_at_35_percent_inclusive(self):
-        self.assertEqual(ss.LIQ_MC_MAX, 0.35)
-        self.assertTrue(ss.criterion_liq_mc(100.0, 1000.0)["passed"])
-        self.assertTrue(ss.criterion_liq_mc(350.0, 1000.0)["passed"])
-        self.assertFalse(ss.criterion_liq_mc(351.0, 1000.0)["passed"])
-        self.assertIsNone(ss.criterion_liq_mc(None, 1000.0)["passed"])
+    def test_token_mc_threshold_is_fixed_at_17_5_percent_inclusive(self):
+        # Keputusan 2026-10-14: float tipis diukur dari sisi token pool.
+        self.assertEqual(ss.TOKEN_MC_MAX, 0.175)
+        self.assertTrue(ss.criterion_token_mc(100.0, 1000.0)["passed"])
+        self.assertTrue(ss.criterion_token_mc(175.0, 1000.0)["passed"])
+        self.assertFalse(ss.criterion_token_mc(176.0, 1000.0)["passed"])
+        # Snapshot lama tanpa pool_base_usd = belum ada data, bukan tebakan.
+        self.assertIsNone(ss.criterion_token_mc(None, 1000.0)["passed"])
+        self.assertIsNone(ss.criterion_token_mc(100.0, None)["passed"])
 
     def test_authority_gate_requires_closed_authority_and_is_not_scored(self):
         ok = ss.criterion_authority(None, None)
@@ -211,20 +214,20 @@ class CriteriaTest(unittest.TestCase):
 
 class FixedThresholdTest(unittest.TestCase):
     def test_evaluate_uses_fixed_thresholds_without_overrides(self):
-        self.assertEqual(ss.LIQ_MC_MAX, 0.35)
+        self.assertEqual(ss.TOKEN_MC_MAX, 0.175)
         self.assertEqual(ss.HOLDER_MAX_PCT, 5.0)
         metrics = {
-            "liq_usd": 350.0, "fdv_usd": 1000.0,
+            "liq_usd": 350.0, "fdv_usd": 1000.0, "pool_base_usd": 175.0,
             "mint_authority": None, "freeze_authority": None,
             "top10_holder_pct": 18.0, "holder_pcts": [5.0],
         }
         result = ss.evaluate(metrics)
         checks = {row["key"]: row for row in result["checks"]}
-        self.assertTrue(checks["liq_mc"]["passed"])
+        self.assertTrue(checks["token_mc"]["passed"])
         self.assertTrue(checks["float_spread"]["passed"])
-        metrics["liq_usd"] = 351.0
+        metrics["pool_base_usd"] = 176.0
         self.assertFalse({row["key"]: row for row in
-                          ss.evaluate(metrics)["checks"]}["liq_mc"]["passed"])
+                          ss.evaluate(metrics)["checks"]}["token_mc"]["passed"])
 
 class EvaluateTest(unittest.TestCase):
     def _metrics(self, **over):
@@ -234,6 +237,8 @@ class EvaluateTest(unittest.TestCase):
             # avg buy GMGN tertimbang 2,0 → status GMGN ≈ −85% (kohort C lolos)
             "holder_cost_basis": 2.0, "holder_cost_balance": 1.0,
             "liq_usd": LIQ_USD, "fdv_usd": MC_USD,
+            # Token pool 10% MC (di bawah batas 17,5%).
+            "pool_base_usd": MC_USD * 0.10,
             "mint_authority": None,
             "freeze_authority": None, "top10_holder_pct": 18.92,
             "holder_pcts": [2.99, 2.7, 2.11],
@@ -283,8 +288,8 @@ class EvaluateTest(unittest.TestCase):
         # Dengan data lengkap ambangnya kembali ke 4 dari 6.
         self.assertEqual(result["required_count"], 4)
 
-    def test_not_eligible_when_liq_mc_too_high(self):
-        result = ss.evaluate(self._metrics(liq_usd=MC_USD * 0.5),
+    def test_not_eligible_when_token_mc_too_high(self):
+        result = ss.evaluate(self._metrics(pool_base_usd=MC_USD * 0.25),
                              snapshots=[], candles=[])
         self.assertFalse(result["eligible"])
         self.assertFalse(result["structural_ok"])
@@ -294,7 +299,7 @@ class EvaluateTest(unittest.TestCase):
         self.assertIn("absorption", result["missing"])
         self.assertIn("vol_expansion", result["missing"])
         self.assertIn("shakeout", result["missing"])
-        # 2 kriteria skor yang punya data (liq/MC, float) lulus → skor 100%
+        # 2 kriteria skor yang punya data (token/MC, float) lulus → skor 100%
         # (authority adalah gate, tidak dihitung skor).
         self.assertEqual(result["scored_count"], 2)
         self.assertEqual(result["passed_count"], 2)

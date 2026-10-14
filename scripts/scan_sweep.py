@@ -51,7 +51,7 @@ def main(argv=None) -> int:
         return 0
 
     print(f"Memindai {len(mints)} mint watchlist sweep "
-          f"(ambang fix liq/MC {scan.screen.LIQ_MC_MAX*100:.0f}%, "
+          f"(ambang fix token/MC {scan.screen.TOKEN_MC_MAX*100:.1f}%, "
           f"holder/wallet {scan.screen.HOLDER_MAX_PCT:.0f}%)…")
     outcome = scan.run_scan(mints, state=state_before,
                             use_cache=not args.no_cache,
