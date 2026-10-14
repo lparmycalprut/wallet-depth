@@ -101,6 +101,9 @@ def run_scan(mints, *, state: dict | None = None,
     latches = state.setdefault("shakeout_latched_at", {})
     if not isinstance(latches, dict):
         latches = state["shakeout_latched_at"] = {}
+    cohort_latches = state.setdefault("cohort_latched", {})
+    if not isinstance(cohort_latches, dict):
+        cohort_latches = state["cohort_latched"] = {}
     alerts_sent = []
     results = []
 
@@ -126,13 +129,31 @@ def run_scan(mints, *, state: dict | None = None,
                                     else (now if now is not None else time.time()))
 
         history = store.mint_history(state, mint)
-        # Score with complete hourly history and the stored per-mint latch.
+        # Latch kohort: sekali kohort ≤ −50% (VWAP dan GMGN) tercatat, baik live
+        # maupun di riwayat harga snapshot, kelayakan kohort tidak gugur lagi.
+        if cohort_latches.get(mint) is None:
+            pre = item.get("result") or {}
+            if pre.get("cohort_gate_passed"):
+                cohort_latches[mint] = {
+                    "ts": int(now if now is not None else time.time()),
+                    "source": "live"}
+            else:
+                cohort = pre.get("cohort") or {}
+                found = screen.cohort_latch_from_history(
+                    store.mint_history(state, mint, limit=10_000),
+                    cohort.get("vwap_48h"),
+                    metrics.get("holder_cost_basis"),
+                    metrics.get("holder_cost_balance"))
+                if found:
+                    cohort_latches[mint] = found
+        # Score with complete hourly history and the stored per-mint latches.
         enriched = screen.evaluate(
             metrics, snapshots=history,
             candles=item.get("candles_hour") or [],
             cohort_candles=item.get("cohort_candles") or [],
             cohort_error=item.get("cohort_error"),
-            state=state, mint=mint, now=now)
+            state=state, mint=mint, now=now,
+            cohort_latch=cohort_latches.get(mint))
         item["result"] = enriched
         if item.get("sweep"):
             # Inflow nyata = Δ likuiditas antar snapshot. Kalau snapshot

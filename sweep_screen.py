@@ -23,6 +23,7 @@ from __future__ import annotations
 import math
 import statistics
 import time
+from datetime import datetime, timedelta, timezone
 
 # --- ambang tetap kriteria (satu tempat, biar mesin, UI & test tidak menyimpang) ---
 # Kriteria 1 (2026-10-14, keputusan user): float tipis diukur dari sisi TOKEN
@@ -346,6 +347,42 @@ def cohort_profile(candles, pair_created_at, price_now, *, now=None,
         result["breakeven_wall_vwap_x"] = vwap / current
         result["breakeven_wall_high_x"] = high / current
     return result
+
+
+def screen_time_wib(ts) -> str:
+    """Waktu tampilan dalam WIB (Asia/Jakarta) dari epoch detik."""
+    number = _num(ts)
+    if not number:
+        return "—"
+    wib = datetime.fromtimestamp(number, timezone(timedelta(hours=7)))
+    return wib.strftime("%d %b %H:%M WIB")
+
+
+def cohort_latch_from_history(history, cohort_vwap, cost_basis, balance_total):
+    """Latch kohort dari riwayat harga snapshot (per jam).
+
+    Kohort dianggap pernah lolos bila ada snapshot dengan harga yang, pada
+    saat yang sama, membuat VWAP proksi DAN avg cost GMGN minus ≥ 50%. Harga
+    snapshot dibandingkan terhadap VWAP 48 jam (tetap) dan avg buy GMGN
+    tertimbang. Tanpa data GMGN atau VWAP tidak ada latch (konservatif).
+    Mengembalikan ``{"ts", "price", "source": "riwayat"}`` atau ``None``.
+    """
+    vwap = _num(cohort_vwap)
+    if vwap is None or vwap <= 0:
+        return None
+    for row in sorted((r for r in (history or []) if isinstance(r, dict)),
+                      key=lambda r: r.get("ts") or 0):
+        price = _num(row.get("price"))
+        if price is None or price <= 0:
+            continue
+        gmgn = gmgn_cohort_status(cost_basis, balance_total, price)
+        if gmgn is None:
+            return None
+        if (price / vwap - 1.0 <= COHORT_MINUS_THRESHOLD
+                and gmgn <= COHORT_MINUS_THRESHOLD):
+            return {"ts": int(row.get("ts") or 0), "price": price,
+                    "source": "riwayat"}
+    return None
 
 
 def gmgn_cohort_status(cost_basis, balance_total, price_usd):
@@ -736,7 +773,8 @@ def _latched_shakeout_check(check, latched_at):
 
 
 def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
-             state=None, mint=None, now=None, cohort_error=None):
+             state=None, mint=None, now=None, cohort_error=None,
+             cohort_latch=None):
     """Jalankan lima kriteria skor, gate authority, dan gate kohort sebelum vonis LAYAK.
 
     Ambang struktural fixed. Kohort memakai VWAP 48 jam pertama dari pool
@@ -782,6 +820,14 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
                                      metrics.get("price_usd"))
     cohort["gmgn_status_avg_cost"] = gmgn_status
     gate = cohort_gate(cohort)
+    # Latch kohort (2026-10-14): kohort yang pernah ≤ −50% tetap lolos walau harga
+    # kini naik. Hanya menggantikan "belum minus 50%"; PLUS/TANPA DATA tidak berubah.
+    if cohort_latch and not gate["passed"] and "belum minus" in str(gate["status"]):
+        when = screen_time_wib(cohort_latch.get("ts"))
+        gate = {"passed": True,
+                "status": "LOLOS — pernah ≤ −50% (latch)",
+                "detail": (f"kohort pernah ≤ −50% ({cohort_latch.get('source') or '—'}"
+                           f", {when}); kini {gate['status']}")}
     # Gate biaya 10x diuji setelah gate kohort; keduanya harus lolos sebelum
     # skor menentukan LAYAK/KANDIDAT.
     cost_10x_mc_frac = leverage_cost(COST_GATE_MULT, liq_mc)
