@@ -44,6 +44,13 @@ pemindai lain.
    menembus low lama—termasuk candle sweep—tidak menghapus latch. Sebelum pola
    pernah terdeteksi, perilaku kriteria pada candle yang sama tetap seperti
    sebelumnya.
+   **Peringatan pelanggaran (2026-10-14, opsi 3):** kriteria tetap LOLOS, tetapi
+   bila candle sesudah latch punya low lebih rendah dari low shakeout, hasil
+   diberi `breached` dan keterangan ⚠ di detail mint, serta jumlahnya di atas
+   tabel. Low shakeout dibaca dari candle dengan `ts` = waktu latch, jadi latch
+   yang sudah keluar dari jendela candle tidak bisa dicek dan tidak diberi tanda.
+   Contoh COCKROACH 1 Okt: latch 20:00 WIB (low 0,00026020), low 22:00 WIB
+   0,00021623 → ditandai.
 
 Kriteria yang belum punya data ditandai belum ada data dan tidak dihukum dalam
 skor. Trio struktural (1+2+3) wajib lulus; lalu perlu minimal
