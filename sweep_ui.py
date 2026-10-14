@@ -475,6 +475,11 @@ def _render_details(rows) -> None:
                 st.warning(
                     f"Scan terakhir gagal ({screen.screen_time_wib(failure.get('ts'))}): "
                     f"{failure.get('error') or 'sumber data tidak merespons'}")
+            shakeout = next((c for c in (result.get("checks") or [])
+                             if c.get("key") == "shakeout"), {})
+            if shakeout.get("breached"):
+                st.warning("⚠️ Kriteria 6 tetap lolos (latch permanen), tetapi low "
+                           f"shakeout sudah dilanggar: {shakeout.get('detail') or ''}")
             if metrics.get("error"):
                 st.warning(f"Sumber data: {metrics['error']}")
             st.caption(
@@ -693,7 +698,13 @@ def _render_results(watchlist, state) -> None:
     hidden_rows = [row for row in all_rows if screen.view_hidden(row)]
     hidden = len(hidden_rows)
     failed = sum(1 for row in all_rows if row.get("scan_error"))
+    breached = sum(1 for row in all_rows
+                   if any(c.get("key") == "shakeout" and c.get("breached")
+                          for c in ((row.get("result") or {}).get("checks") or [])))
     st.markdown("### 🧭 Kelayakan sweep")
+    if breached:
+        st.caption(f"⚠️ {breached} mint: kriteria 6 lolos (latch), tetapi low "
+                   "shakeout-nya sudah dilanggar. Lihat detail tiap mint.")
     if failed:
         st.warning(f"⚠️ {failed} mint scan terakhirnya gagal (fetch data error). "
                    "Baris ini tetap ditampilkan; data di dalamnya dari scan "

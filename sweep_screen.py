@@ -773,15 +773,56 @@ def criterion_shakeout(candles, *, lookback: int = 48):
     return check
 
 
-def _latched_shakeout_check(check, latched_at):
-    """A stored timestamp makes shakeout permanently passed for that mint."""
+def shakeout_breach(candles, latched_at):
+    """Low shakeout yang sudah dilatch lalu dilanggar candle sesudahnya.
+
+    Low shakeout = low candle dengan ``ts == latched_at``. Pelanggaran = candle
+    sesudahnya dengan low lebih rendah. Latch tetap berlaku (permanen); ini hanya
+    tanda peringatan (permintaan user 2026-10-14, opsi 3). Mengembalikan
+    ``{"low", "base_low", "ts"}`` atau ``None`` bila tidak dilanggar / low tidak
+    ada di jendela candle.
+    """
+    latched_ts = _timestamp_seconds(latched_at)
+    if latched_ts is None:
+        return None
+    rows = [c for c in (candles or []) if isinstance(c, (list, tuple)) and len(c) >= 4]
+    base_low = None
+    for row in rows:
+        if _timestamp_seconds(row[0]) == latched_ts:
+            base_low = _num(row[3])
+            break
+    if base_low is None or base_low <= 0:
+        return None
+    breach = None
+    for row in rows:
+        ts, low = _timestamp_seconds(row[0]), _num(row[3])
+        if ts is None or low is None or ts <= latched_ts:
+            continue
+        if low < base_low and (breach is None or low < breach["low"]):
+            breach = {"low": low, "base_low": base_low, "ts": int(ts)}
+    return breach
+
+
+def _latched_shakeout_check(check, latched_at, candles=None):
+    """A stored timestamp makes shakeout permanently passed for that mint.
+
+    Bila low shakeout kemudian dilanggar (lihat :func:`shakeout_breach`), kriteria
+    tetap LOLOS tetapi ``breached`` = True dan keterangan memuat peringatan.
+    """
     if latched_at is None:
         return check
     latched_ts = _timestamp_seconds(latched_at)
     timestamp = int(latched_ts) if latched_ts is not None else str(latched_at)
-    result = _check("shakeout", "Shakeout + higher low", True,
-                    f"latch permanen sejak {timestamp}")
+    detail = f"latch permanen sejak {timestamp}"
+    breach = shakeout_breach(candles, latched_at)
+    if breach is not None:
+        detail += (f" · ⚠ low shakeout {breach['base_low']:.8g} dilanggar "
+                   f"(low {breach['low']:.8g} pada {screen_time_wib(breach['ts'])})")
+    result = _check("shakeout", "Shakeout + higher low", True, detail)
     result["latched_at"] = latched_at
+    result["breached"] = breach is not None
+    if breach is not None:
+        result["breach"] = breach
     return result
 
 
@@ -802,7 +843,7 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
     shakeout = criterion_shakeout(candles)
     latches = (state or {}).get("shakeout_latched_at") or {}
     latched_at = latches.get(mint) if isinstance(latches, dict) else None
-    shakeout = _latched_shakeout_check(shakeout, latched_at)
+    shakeout = _latched_shakeout_check(shakeout, latched_at, candles)
 
     checks = [
         criterion_token_mc(metrics.get("pool_base_usd"), metrics.get("fdv_usd")),
