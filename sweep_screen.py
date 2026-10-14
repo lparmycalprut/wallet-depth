@@ -440,6 +440,34 @@ def cohort_gate(profile) -> dict:
 _DISPLAY_GROUP_SKIP = 9
 
 
+#: Filter tampilan hasil (permintaan user 2026-10-14): baris disembunyikan bila
+#: ``x dana acuan 10x`` > 3× atau bundler < 10%. Hanya tampilan; data tetap ada.
+VIEW_HIDE_REF_X_ABOVE = 3.0
+VIEW_HIDE_BUNDLER_BELOW = 0.10  # fraksi 0-1 (10%)
+
+
+def view_hidden(row) -> bool:
+    """True bila baris disembunyikan dari tabel hasil.
+
+    Nilai yang belum ada (None) tidak disembunyikan: filter hanya berlaku
+    saat data untuk kriteria itu sudah terukur.
+    """
+    row = row or {}
+    result = row.get("result") or {}
+    metrics = row.get("metrics") or {}
+    ref_x = _num(result.get("reference_fund_x"))
+    if ref_x is None:
+        ref_x = reference_fund_multiple(result.get("liq_mc"))
+    bundler = _num(metrics.get("top_bundler_trader_percentage"))
+    if bundler is None:
+        bundler = _num(metrics.get("bundler_rate"))
+    if ref_x is not None and ref_x > VIEW_HIDE_REF_X_ABOVE:
+        return True
+    if bundler is not None and bundler < VIEW_HIDE_BUNDLER_BELOW:
+        return True
+    return False
+
+
 def display_sort_key(result) -> tuple:
     """Kunci urut tabel Sweep (kecil = lebih atas).
 

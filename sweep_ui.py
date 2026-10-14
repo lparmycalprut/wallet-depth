@@ -667,9 +667,18 @@ def _render_threshold() -> None:
 def _render_results(watchlist, state) -> None:
     """Tabel + detail + statistik dari snapshot terakhir tiap mint watchlist."""
     views, missing = store.watchlist_views(state, watchlist)
-    rows = sorted(views + [_placeholder_row(m) for m in missing],
-                  key=lambda row: screen.display_sort_key(row.get("result")))
+    all_rows = sorted(views + [_placeholder_row(m) for m in missing],
+                      key=lambda row: screen.display_sort_key(row.get("result")))
+    # Filter tampilan: x dana acuan 10x > 3× atau bundler < 10% disembunyikan.
+    rows = [row for row in all_rows if not screen.view_hidden(row)]
+    hidden = len(all_rows) - len(rows)
     st.markdown("### 🧭 Kelayakan sweep")
+    if hidden:
+        st.caption(f"🙈 {hidden} mint disembunyikan filter tampilan "
+                   f"(× dana acuan 10x > {screen.VIEW_HIDE_REF_X_ABOVE:.0f}× "
+                   f"atau bundler < {screen.VIEW_HIDE_BUNDLER_BELOW*100:.0f}%).")
+    if all_rows and not rows:
+        st.info("Semua mint di watchlist tersembunyi oleh filter tampilan.")
     _render_table(rows, watchlist)
     if rows:
         _render_details(rows)
