@@ -319,20 +319,25 @@ REFRESH_CLICK_KEY = "sweep_refresh_click"
 PENDING_REFRESH_KEY = "sweep_pending_refresh"
 
 
-def _request_refresh(mints) -> None:
+def _request_refresh(mints, click_key=REFRESH_CLICK_KEY) -> None:
     """Callback tombol Refresh di tabel: catat mint baris yang diklik.
 
     Pemindaian dijalankan setelah tabel selesai dirender (bukan di callback),
     karena ``st.rerun`` tidak boleh dipanggil dari dalam callback.
     """
-    click = st.session_state.get(REFRESH_CLICK_KEY)
+    click = st.session_state.get(click_key)
     row = click.get("row") if click else None
     if isinstance(row, int) and 0 <= row < len(mints) and mints[row]:
         st.session_state[PENDING_REFRESH_KEY] = mints[row]
 
 
-def _render_table(rows, watchlist) -> None:
-    """Tabel kelayakan dengan kolom **Hapus** untuk mengeluarkan mint dari watchlist."""
+def _render_table(rows, watchlist, *, suffix: str = "") -> None:
+    """Tabel kelayakan dengan kolom **Hapus** untuk mengeluarkan mint dari watchlist.
+
+    ``suffix`` memisahkan key widget bila tabel dirender lebih dari sekali
+    (tabel utama dan tabel mint tersembunyi).
+    """
+    refresh_key = f"{REFRESH_CLICK_KEY}{suffix}"
     if not rows:
         st.info("Belum ada mint di watchlist. Tambahkan mint, lalu tekan "
                 "**Refresh & ambil snapshot**.")
@@ -349,7 +354,7 @@ def _render_table(rows, watchlist) -> None:
         order.insert(order.index("Token") + 1, "GMGN")
         frame = frame[order]
     edited = st.data_editor(
-        frame, key="sweep_table", use_container_width=True, hide_index=True,
+        frame, key=f"sweep_table{suffix}", use_container_width=True, hide_index=True,
         disabled=[column for column in frame.columns if column != "Hapus"],
         column_config={
             # pinned: kolom tetap terlihat saat tabel digeser ke kanan.
@@ -358,8 +363,8 @@ def _render_table(rows, watchlist) -> None:
                 pinned=True),
             "Refresh": st.column_config.ButtonColumn(
                 "Refresh", help="Pindai ulang mint ini sekarang juga",
-                pinned=True, on_click=_request_refresh, args=(mints,),
-                key=REFRESH_CLICK_KEY),
+                pinned=True, on_click=_request_refresh,
+                args=(mints, refresh_key), key=refresh_key),
             # Token ikut dipin (urutan kolom: Hapus, Refresh, Token).
             "Token": st.column_config.TextColumn("Token", pinned=True),
             "Kohort": st.column_config.TextColumn("Kohort", width=320),
@@ -373,7 +378,7 @@ def _render_table(rows, watchlist) -> None:
     flags = edited["Hapus"].tolist() if "Hapus" in edited else []
     picked = _flagged_mints(rows, flags)
     if st.button(f"🗑️ Hapus {len(picked)} mint tercentang dari watchlist",
-                 disabled=not picked):
+                 disabled=not picked, key=f"sweep_delete{suffix}"):
         remaining = [mint for mint in watchlist if mint not in picked]
         st.session_state.pop("sweep_watchlist_text", None)
         _commit_watchlist(remaining, f"{len(picked)} mint dihapus")
@@ -669,9 +674,11 @@ def _render_results(watchlist, state) -> None:
     views, missing = store.watchlist_views(state, watchlist)
     all_rows = sorted(views + [_placeholder_row(m) for m in missing],
                       key=lambda row: screen.display_sort_key(row.get("result")))
-    # Filter tampilan: x dana acuan 10x > 3× atau bundler < 10% disembunyikan.
+    # Filter tampilan: x dana acuan 10x > 3× atau bundler < 10% disembunyikan
+    # dari tabel utama; tabel terpisah di bawah bisa menampilkannya.
     rows = [row for row in all_rows if not screen.view_hidden(row)]
-    hidden = len(all_rows) - len(rows)
+    hidden_rows = [row for row in all_rows if screen.view_hidden(row)]
+    hidden = len(hidden_rows)
     st.markdown("### 🧭 Kelayakan sweep")
     if hidden:
         st.caption(f"🙈 {hidden} mint disembunyikan filter tampilan "
@@ -682,6 +689,14 @@ def _render_results(watchlist, state) -> None:
     _render_table(rows, watchlist)
     if rows:
         _render_details(rows)
+    if hidden:
+        # Tabel terpisah di bawah hasil utama; mati secara default.
+        show_hidden = st.toggle(
+            f"👁️ Tampilkan {hidden} mint yang disembunyikan", value=False,
+            key="sweep_show_hidden")
+        if show_hidden:
+            st.markdown("#### 🙈 Mint tersembunyi (filter tampilan)")
+            _render_table(hidden_rows, watchlist, suffix="_hidden")
     st.divider()
     _render_stats(state)
 

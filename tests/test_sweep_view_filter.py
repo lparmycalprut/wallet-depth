@@ -6,9 +6,12 @@ Nilai yang belum ada tidak pernah menyembunyikan baris.
 """
 from __future__ import annotations
 
+import pathlib
 import unittest
 
 import sweep_screen as ss
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 COCK_LIQ_MC = 30232.0 / 233451.0  # ≈1,0× acuan
 
@@ -57,6 +60,16 @@ class ViewHiddenTest(unittest.TestCase):
         self.assertFalse(ss.view_hidden(self._row(liq_mc=COCK_LIQ_MC, bundler=0.5)))
         # liq/MC 80% → biaya 10x ≈ 86% MC → x ≈ 6,2 → disembunyikan.
         self.assertTrue(ss.view_hidden(self._row(liq_mc=0.80, bundler=0.5)))
+
+
+class HiddenTableToggleTest(unittest.TestCase):
+    def test_toggle_is_off_by_default_and_hidden_table_has_own_keys(self):
+        source = (ROOT / "sweep_ui.py").read_text(encoding="utf-8")
+        self.assertIn('key="sweep_show_hidden"', source)
+        self.assertIn("value=False", source)
+        # Tabel tersembunyi memakai key widget sendiri (tidak bentrok dengan tabel utama).
+        self.assertIn('suffix="_hidden"', source)
+        self.assertIn('key=f"sweep_table{suffix}"', source)
 
 
 if __name__ == "__main__":
