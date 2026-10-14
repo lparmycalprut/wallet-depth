@@ -444,17 +444,19 @@ class EvaluateTest(unittest.TestCase):
 
 
 class CostGateTest(unittest.TestCase):
-    """Gate biaya 10x: biaya ≤ 80% MC; di atas itu atau tanpa data = TUNGGU."""
+    """Gate biaya 10x: biaya ≤ 28% MC; di atas itu atau tanpa data = TUNGGU."""
 
-    def test_limit_is_fixed_at_80_percent_of_mc_for_10x(self):
+    def test_limit_is_fixed_at_28_percent_of_mc_for_10x(self):
+        # 2× acuan dana COCK 10x (14,0% MC), keputusan user 2026-10-14.
         self.assertEqual(ss.COST_GATE_MULT, 10.0)
-        self.assertEqual(ss.COST_GATE_MAX_FRAC, 0.80)
+        self.assertEqual(ss.COST_GATE_MAX_FRAC, 0.28)
 
-    def test_boundary_uses_liq_mc_near_74_percent(self):
-        # (√10 − 1)/2 = 1,0811 → batas 80% dicapai di liq/MC ≈ 73,99%.
-        self.assertTrue(ss.cost_gate(ss.leverage_cost(10.0, 0.7398))["passed"])
-        self.assertFalse(ss.cost_gate(ss.leverage_cost(10.0, 0.7402))["passed"])
-        self.assertTrue(ss.cost_gate(0.80)["passed"])  # tepat 80% lolos
+    def test_boundary_uses_liq_mc_near_25_9_percent(self):
+        # (√10 − 1)/2 = 1,0811 → batas 28% dicapai di liq/MC ≈ 25,90%.
+        self.assertTrue(ss.cost_gate(ss.leverage_cost(10.0, 0.2589))["passed"])
+        self.assertFalse(ss.cost_gate(ss.leverage_cost(10.0, 0.2591))["passed"])
+        self.assertTrue(ss.cost_gate(0.28)["passed"])  # tepat 28% lolos
+        self.assertFalse(ss.cost_gate(0.2801)["passed"])
 
     def test_missing_cost_is_not_passed(self):
         gate = ss.cost_gate(None)
@@ -463,7 +465,7 @@ class CostGateTest(unittest.TestCase):
         self.assertIn("belum ada data", gate["status"])
 
     def test_cockroach_reference_passes(self):
-        # COCK liq/MC 12,95% → biaya 10x ≈ 28% MC, jauh di bawah 80%.
+        # COCK liq/MC 12,95% → biaya 10x = 14,0% MC, di bawah batas 28% (2× acuan).
         gate = ss.cost_gate(ss.leverage_cost(10.0, 0.1295))
         self.assertTrue(gate["passed"])
         self.assertEqual(gate["status"], "LOLOS")
@@ -508,8 +510,8 @@ class CostGateEvaluateTest(unittest.TestCase):
         metrics.update(over)
         return metrics
 
-    def test_cost_over_80_percent_turns_verdict_to_tunggu_even_if_cohort_passes(self):
-        # liq/MC 80% → biaya 10x ≈ 86,5% MC > 80%.
+    def test_cost_over_28_percent_turns_verdict_to_tunggu_even_if_cohort_passes(self):
+        # liq/MC 80% → biaya 10x ≈ 86,5% MC > 28%.
         result = ss.evaluate(self._metrics(liq_usd=MC_USD * 0.80), snapshots=[], candles=[],
                              cohort_candles=_birth_candles(),
                              now=1000 + 49 * 3600)
@@ -517,12 +519,21 @@ class CostGateEvaluateTest(unittest.TestCase):
         self.assertFalse(result["cost_gate_passed"])
         self.assertFalse(result["eligible"])
         self.assertTrue(result["verdict"].startswith("TUNGGU — biaya 10x"))
-        self.assertIn("batas 80%", result["verdict"])
-        self.assertGreater(result["cost_10x_mc_frac"], 0.80)
+        self.assertIn("batas 28%", result["verdict"])
+        self.assertGreater(result["cost_10x_mc_frac"], 0.28)
 
-    def test_liq_mc_at_structural_max_still_passes_cost_gate(self):
-        # liq/MC 35% (batas struktural) → biaya 10x ≈ 37,8% MC ≤ 80%.
+    def test_liq_mc_at_old_structural_max_now_fails_cost_gate(self):
+        # liq/MC 35% → biaya 10x ≈ 37,8% MC > 28%: kriteria token/MC tidak
+        # membatasi sisi quote, jadi gate biaya yang menahan.
         result = ss.evaluate(self._metrics(), snapshots=[], candles=[],
+                             cohort_candles=_birth_candles(),
+                             now=1000 + 49 * 3600)
+        self.assertFalse(result["cost_gate_passed"])
+        self.assertTrue(result["verdict"].startswith("TUNGGU — biaya 10x"))
+
+    def test_liq_mc_at_cockroach_reference_passes_cost_gate(self):
+        # liq/MC COCK 12,95% → biaya 10x 14,0% MC ≤ 28%.
+        result = ss.evaluate(self._metrics(liq_usd=30232.0), snapshots=[], candles=[],
                              cohort_candles=_birth_candles(),
                              now=1000 + 49 * 3600)
         self.assertTrue(result["cost_gate_passed"])

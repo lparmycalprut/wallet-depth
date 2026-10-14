@@ -27,7 +27,7 @@ pemindai lain.
    bukan tebakan dari liq/MC. Biaya dorong tetap dihitung dari liq/MC sebagai uang
    quote yang masuk ke pool, `(√m − 1) × liq/2` (liq = TVL dua sisi). Karena sisi
    quote tidak dibatasi kriteria ini, liq/MC bisa lebih besar; yang membatasi biaya
-   adalah gate biaya 10x (≤ 80% MC).
+   adalah gate biaya 10x (≤ 28% MC, lihat di bawah).
 2. **Authority mint/freeze sudah dilepas** — gate struktural, tidak masuk skor.
    Kriteria LP terkunci dihapus (2026-10-13): likuiditas token pump.fun sudah
    pasti terkunci, jadi tidak dicek maupun dihitung.
@@ -118,14 +118,17 @@ kohort `LOLOS`, gate biaya 10x `LOLOS`, trio struktural lulus, dan skor cukup.
 
 | Status biaya | Aturan |
 | --- | --- |
-| `TUNGGU — biaya 10x X% MC (batas 80%)` | `(√10 − 1) × liq/MC ÷ 2 > 0,80` |
+| `TUNGGU — biaya 10x X% MC (batas 28%)` | `(√10 − 1) × liq/MC ÷ 2 > 0,28` |
 | `TUNGGU — biaya 10x belum ada data` | liq/MC atau MC kosong; gate belum lolos |
-| `LOLOS` | `(√10 − 1) × liq/MC ÷ 2 ≤ 0,80` |
+| `LOLOS` | `(√10 − 1) × liq/MC ÷ 2 ≤ 0,28` |
+
+Batas 28% = 2× acuan dana COCK 10x (14,0% MC), diperketat 2026-10-14 dari 80%.
+Setara liq/MC ≈ 25,9%. Liq/MC COCK 12,95% lolos dengan biaya 14,0% MC.
 
 Gate ini diuji setelah gate kohort. Jika kohort belum lolos, status kohort yang
 tampil. Sejak kriteria float memakai token/MC, liq/MC tidak lagi dibatasi langsung,
-sehingga gate biaya 10x (batas 80%) menjadi penahan biaya yang sebenarnya: vonis
-tertahan pada liq/MC di atas ≈ 74%.
+sehingga gate biaya 10x (batas 28%) menjadi penahan biaya yang sebenarnya: vonis
+tertahan pada liq/MC di atas ≈ 25,9%.
 
 ### Gate avg buy holder (2026-10-13)
 
