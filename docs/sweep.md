@@ -192,6 +192,15 @@ Hanya mint yang belum punya snapshot (baru ditambahkan) dipindai sekali. Tombol
 **🔄 Refresh & ambil snapshot** memindai live semua mint dan mengambil snapshot;
 **auto-refresh** melakukannya tiap 5 menit selama tab terbuka.
 
+**Retry otomatis kohort tanpa data**: bila auto-refresh mati dan ada mint yang
+gate kohort-nya `TANPA DATA — kohort` (OHLCV/VWAP atau avg cost GMGN belum ada,
+mis. GeckoTerminal 429), hanya mint itu yang dipindai ulang tiap
+`NODATA_RETRY_DELAY_SEC` = 60 detik (`use_cache=False`), maksimal
+`NODATA_RETRY_MAX_ATTEMPTS` = 5 percobaan per mint. Mint yang sudah berdata tidak
+ikut dipindai. Tombol Refresh (dan Refresh per mint) mereset jatah percobaan. Saat
+auto-refresh menyala, retry ini tidak aktif karena auto-refresh 5 menit sudah
+memindai semua mint.
+
 Urutan tabel (`sweep_screen.display_sort_key`) berdasarkan **skor** (`lolos/punya
 data`) tertinggi di atas. Jika skor sama, jumlah kriteria lolos yang lebih banyak
 di atas, lalu vonis (LAYAK → KANDIDAT → gate lolos → TUNGGU → TANPA DATA), lalu

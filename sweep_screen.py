@@ -339,6 +339,39 @@ def gmgn_cohort_status(cost_basis, balance_total, price_usd):
     return price * balance / basis - 1.0
 
 
+#: Retry otomatis untuk mint yang kohortnya tanpa data (OHLCV/VWAP atau avg cost
+#: GMGN belum tersedia): dipindai ulang hanya mint itu, berjeda, dan dibatasi.
+NODATA_RETRY_DELAY_SEC = 60
+NODATA_RETRY_MAX_ATTEMPTS = 5
+NODATA_COHORT_PREFIX = "TANPA DATA — kohort"
+
+
+def is_cohort_nodata(result) -> bool:
+    """True bila gate kohort belum punya data (termasuk varian ``kohort GMGN``)."""
+    status = str((result or {}).get("cohort_gate_status") or "")
+    return status.startswith(NODATA_COHORT_PREFIX)
+
+
+def nodata_retry_targets(views, attempts,
+                         max_attempts: int = NODATA_RETRY_MAX_ATTEMPTS) -> list:
+    """Mint tanpa data kohort yang masih punya jatah percobaan, urut sesuai views.
+
+    ``attempts`` = {mint: jumlah percobaan retry yang sudah dijalankan}.
+    """
+    attempts = attempts or {}
+    out = []
+    for view in views or []:
+        if not isinstance(view, dict):
+            continue
+        mint = view.get("mint")
+        if not mint or not is_cohort_nodata(view.get("result")):
+            continue
+        if attempts.get(mint, 0) >= max_attempts:
+            continue
+        out.append(mint)
+    return out
+
+
 def cohort_gate(profile) -> dict:
     """Gate kohort (Kohort C, 2026-10-13): VWAP proksi DAN avg cost GMGN keduanya
     harus minus ≥ 50%. PLUS skip, belum minus tunggu, tanpa data tunggu.
