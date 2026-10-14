@@ -162,7 +162,8 @@ def save_watchlist(mints, *, persist: bool = True) -> list:
 # ---------------------------------------------------------------------------
 def empty_state() -> dict:
     return {"version": STATE_VERSION, "snapshots": {}, "signals": [],
-            "alerts": {}, "shakeout_latched_at": {}, "updated": 0}
+            "alerts": {}, "shakeout_latched_at": {}, "cohort_latched": {},
+            "scan_status": {}, "updated": 0}
 
 
 def load_state() -> dict:
@@ -178,8 +179,9 @@ def load_state() -> dict:
     for key in ("snapshots", "signals", "alerts"):
         if isinstance(data.get(key), dict) or isinstance(data.get(key), list):
             state[key] = data[key]
-    if isinstance(data.get("shakeout_latched_at"), dict):
-        state["shakeout_latched_at"] = data["shakeout_latched_at"]
+    for key in ("shakeout_latched_at", "cohort_latched", "scan_status"):
+        if isinstance(data.get(key), dict):
+            state[key] = data[key]
     state["updated"] = int(data.get("updated") or 0)
     return state
 
@@ -258,6 +260,33 @@ def merge_states(local: dict, remote: dict) -> dict:
             latches[mint] = ts if current is None else min(current, ts)
     merged["shakeout_latched_at"] = latches
 
+    # Latch kohort (2026-10-14): permanen seperti shakeout — union, yang paling awal.
+    cohort_latches: dict = {}
+    for source in (remote.get("cohort_latched"), local.get("cohort_latched")):
+        if not isinstance(source, dict):
+            continue
+        for mint, entry in source.items():
+            if not isinstance(entry, dict):
+                continue
+            current = cohort_latches.get(mint)
+            if current is None or float(entry.get("ts") or 0) < float(current.get("ts") or 0):
+                cohort_latches[mint] = entry
+    merged["cohort_latched"] = cohort_latches
+
+    # Status scan terakhir per mint: entri dengan ts terbaru menang (sukses maupun
+    # gagal), sehingga scan sukses menghapus tanda gagal yang lebih lama.
+    scan_status: dict = {}
+    for source in (remote.get("scan_status"), local.get("scan_status")):
+        if not isinstance(source, dict):
+            continue
+        for mint, entry in source.items():
+            if not isinstance(entry, dict):
+                continue
+            current = scan_status.get(mint)
+            if current is None or float(entry.get("ts") or 0) >= float(current.get("ts") or 0):
+                scan_status[mint] = entry
+    merged["scan_status"] = scan_status
+
     alerts: dict = {}
     for source in (remote.get("alerts"), local.get("alerts")):
         if not isinstance(source, dict):
@@ -324,6 +353,8 @@ def save_state(state: dict, *, persist: bool = False, reason: str = "") -> dict:
     # sweep_screen and no longer belong to persisted state.
     state.pop("settings", None)
     state.setdefault("shakeout_latched_at", {})
+    state.setdefault("cohort_latched", {})
+    state.setdefault("scan_status", {})
     state["version"] = STATE_VERSION
     state["updated"] = _now()
     pushable = False
@@ -360,6 +391,7 @@ def fingerprint(state: dict) -> str:
         "signals": [(row or {}).get("id") for row in ((state or {}).get("signals") or [])
                     if isinstance(row, dict)],
         "shakeout_latched_at": (state or {}).get("shakeout_latched_at") or {},
+        "cohort_latched": (state or {}).get("cohort_latched") or {},
     }, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
@@ -488,11 +520,35 @@ def latest_view(state: dict, mint: str) -> dict | None:
     return max(views, key=lambda view: int(view.get("ts") or 0))
 
 
+def record_scan_status(state: dict, mint: str, *, ok: bool, error: str = "",
+                       ts: int | None = None) -> None:
+    """Catat hasil scan terakhir mint (sukses atau gagal) di ``state.scan_status``.
+
+    Scan yang gagal tidak menimpa view lama, jadi tanpa catatan ini baris lama
+    (yang mungkin sudah memenuhi filter tampilan) tampil seolah tidak ada error.
+    """
+    status = state.setdefault("scan_status", {})
+    if not isinstance(status, dict):
+        status = state["scan_status"] = {}
+    status[mint] = {"ts": int(ts if ts is not None else _now()), "ok": bool(ok),
+                    "error": "" if ok else str(error or "sumber data tidak merespons")[:160]}
+
+
+def scan_failure(state: dict, mint: str) -> dict | None:
+    """Catatan scan terakhir bila scan itu GAGAL (``None`` bila sukses/belum ada)."""
+    entry = ((state or {}).get("scan_status") or {}).get(mint)
+    if isinstance(entry, dict) and entry.get("ok") is False:
+        return entry
+    return None
+
+
 def watchlist_views(state: dict, mints) -> tuple:
     """(views, missing): view per mint watchlist yang ada + daftar yang belum.
 
-    Urutan ``views`` mengikuti urutan watchlist; penyusunan urut tampilan
-    dilakukan di UI (``sweep_screen.display_sort_key``).
+    Bila scan terakhir mint gagal, salinan view diberi kunci ``scan_error``
+    (catatan kegagalan). View di state tidak diubah. Urutan ``views`` mengikuti
+    urutan watchlist; penyusunan urut tampilan dilakukan di UI
+    (``sweep_screen.display_sort_key``).
     """
     views, missing = [], []
     for mint in parse_mints(mints):
@@ -500,6 +556,10 @@ def watchlist_views(state: dict, mints) -> tuple:
         if view is None:
             missing.append(mint)
         else:
+            view = dict(view)
+            failure = scan_failure(state, mint)
+            if failure is not None:
+                view["scan_error"] = failure
             views.append(view)
     return views, missing
 

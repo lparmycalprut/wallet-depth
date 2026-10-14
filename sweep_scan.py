@@ -116,6 +116,12 @@ def run_scan(mints, *, state: dict | None = None,
         mint = item["mint"]
         metrics = item["metrics"] or {}
         item["_snapshot_row"] = None
+        # Status scan terakhir (sukses/gagal) selalu dicatat: scan gagal tidak
+        # boleh tampil seolah data lama masih segar atau tersembunyi oleh filter.
+        store.record_scan_status(
+            state, mint, ok=bool(metrics.get("ok")),
+            error=metrics.get("error") or "",
+            ts=int(now if now is not None else time.time()))
         if metrics.get("ok"):
             item["_snapshot_row"] = store.add_snapshot(state, mint, metrics, ts=now)
 

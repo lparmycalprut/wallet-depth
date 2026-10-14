@@ -239,6 +239,12 @@ dekat ke −50%. Mint tanpa acuan dana (tanpa liq/MC) dan mint tanpa snapshot
 (`MENUNGGU SNAPSHOT`) berada di bawah baris yang punya acuan. **Kohort PLUS selalu di
 paling bawah.**
 
+**Scan yang gagal** (fetch data error, permintaan user 2026-10-14): status scan terakhir
+tiap mint disimpan di `state.scan_status` (`ts`, `ok`, `error`). Mint yang scan
+terakhirnya gagal **tidak pernah disembunyikan** oleh filter tampilan, dan diberi
+peringatan di atas tabel serta di detailnya. Datanya tetap dari scan sukses terakhir
+(atau belum ada). Scan sukses berikutnya menghapus tanda gagal.
+
 Setiap mint punya tombol **🔄 Refresh <mint>** di bagian detailnya untuk pindai
 ulang satu token saja (berguna saat data kriteria masih kosong).
 

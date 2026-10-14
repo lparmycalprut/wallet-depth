@@ -470,6 +470,11 @@ def _render_details(rows) -> None:
                  + ")")
         with st.expander(title, expanded=bool(result.get("eligible"))):
             _refresh_button(row.get("mint") or "")
+            if row.get("scan_error"):
+                failure = row["scan_error"]
+                st.warning(
+                    f"Scan terakhir gagal ({screen.screen_time_wib(failure.get('ts'))}): "
+                    f"{failure.get('error') or 'sumber data tidak merespons'}")
             if metrics.get("error"):
                 st.warning(f"Sumber data: {metrics['error']}")
             st.caption(
@@ -672,14 +677,27 @@ def _render_threshold() -> None:
 def _render_results(watchlist, state) -> None:
     """Tabel + detail + statistik dari snapshot terakhir tiap mint watchlist."""
     views, missing = store.watchlist_views(state, watchlist)
-    all_rows = sorted(views + [_placeholder_row(m) for m in missing],
+    placeholders = []
+    for mint in missing:
+        placeholder = _placeholder_row(mint)
+        failure = store.scan_failure(state, mint)
+        if failure is not None:
+            placeholder["scan_error"] = failure
+        placeholders.append(placeholder)
+    all_rows = sorted(views + placeholders,
                       key=lambda row: screen.display_sort_key(row.get("result")))
     # Filter tampilan: x dana acuan 10x > 3× atau bundler < 10% disembunyikan
     # dari tabel utama; tabel terpisah di bawah bisa menampilkannya.
+    # Baris dengan scan terakhir gagal tidak pernah disembunyikan.
     rows = [row for row in all_rows if not screen.view_hidden(row)]
     hidden_rows = [row for row in all_rows if screen.view_hidden(row)]
     hidden = len(hidden_rows)
+    failed = sum(1 for row in all_rows if row.get("scan_error"))
     st.markdown("### 🧭 Kelayakan sweep")
+    if failed:
+        st.warning(f"⚠️ {failed} mint scan terakhirnya gagal (fetch data error). "
+                   "Baris ini tetap ditampilkan; data di dalamnya dari scan "
+                   "sukses terakhir, atau belum ada.")
     if hidden:
         st.caption(f"🙈 {hidden} mint disembunyikan filter tampilan "
                    f"(× dana acuan 10x > {screen.VIEW_HIDE_REF_X_ABOVE:.0f}× "

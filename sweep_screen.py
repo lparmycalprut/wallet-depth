@@ -494,6 +494,10 @@ def view_hidden(row) -> bool:
     saat data untuk kriteria itu sudah terukur.
     """
     row = row or {}
+    # Scan terakhir gagal (fetch data error): baris selalu tampil di tabel utama,
+    # tidak pernah disembunyikan oleh filter (permintaan user 2026-10-14).
+    if row.get("scan_error"):
+        return False
     result = row.get("result") or {}
     metrics = row.get("metrics") or {}
     ref_x = _num(result.get("reference_fund_x"))
