@@ -99,7 +99,7 @@ apa adanya sebagai konteks cohort.
 | `TUNGGU — kohort GMGN belum minus 50%` | VWAP lolos, tetapi `status_gmgn ∈ (−0,50, 0)` |
 | `TUNGGU — kohort GMGN plus` | VWAP lolos, tetapi `status_gmgn ≥ 0` |
 | `LOLOS` | `status_avg_cost ≤ −0,50` **dan** `status_gmgn ≤ −0,50` (Kohort C, 2026-10-13) |
-| `LOLOS — pernah ≤ −50% (latch)` | Latch kohort (2026-10-14): status di atas pernah tercapai (live, atau dari riwayat snapshot per jam pada harga yang sama). Latch hanya menggantikan status `TUNGGU — … belum minus 50%` — `SKIP` dan `TANPA DATA` tidak berubah. Tersimpan di `state.cohort_latched` dan permanen |
+| `LOLOS — pernah ≤ −50% (latch)` | Latch kohort (2026-10-14): status di atas pernah tercapai (live, atau dari riwayat snapshot per jam pada harga yang sama). Latch menggantikan semua status `TUNGGU — kohort …` (belum minus 50% VWAP/GMGN dan GMGN plus, 2026-10-14) — `SKIP` dan `TANPA DATA` tidak berubah. Tersimpan di `state.cohort_latched` dan permanen |
 | `TANPA DATA — kohort` | OHLCV/VWAP/harga tidak tersedia; jangan klaim lolos |
 | `TANPA DATA — kohort GMGN` | VWAP lolos, tetapi data holder GMGN (avg cost) tidak tersedia; jangan klaim lolos |
 
@@ -229,8 +229,9 @@ ikut dipindai. Tombol Refresh (dan Refresh per mint) mereset jatah percobaan. Sa
 auto-refresh menyala, retry ini tidak aktif karena auto-refresh 5 menit sudah
 memindai semua mint.
 
-Urutan tabel (`sweep_screen.display_sort_key`) dimulai dari yang **paling dekat ke
-acuan dana 10x** (`x dana acuan` = 1,0× = biaya 10x COCKROACH): jarak
+Urutan tabel (`sweep_screen.display_sort_key`): vonis **LAYAK SWEEP** dan **KANDIDAT**
+selalu di atas (permintaan user 2026-10-14), diurutkan menurut jarak di bawah. Sisanya
+dimulai dari yang **paling dekat ke acuan dana 10x** (`x dana acuan` = 1,0× = biaya 10x COCKROACH): jarak
 `|x − 1|` paling kecil di atas (permintaan user 2026-10-14). Jika jaraknya sama,
 skor (`lolos/punya data`) tertinggi di atas, lalu jumlah kriteria lolos, lalu vonis
 (LAYAK → KANDIDAT → gate lolos → TUNGGU → TANPA DATA), lalu status kohort yang makin

@@ -422,9 +422,10 @@ class EvaluateTest(unittest.TestCase):
                      "liq_mc": 30232.0 / 233451.0},
         }
         order = sorted(rows, key=lambda k: ss.display_sort_key(rows[k]))
-        # Jarak ke acuan dana 10x (1,0×) dulu: cock ≈0 > near 0,1 > nodata 0,15 >
-        # kandidat 0,2 > layak 0,5 > far 1,0; baris tanpa acuan; PLUS paling bawah.
-        self.assertEqual(order, ["cock", "near", "nodata", "kandidat", "layak",
+        # Blok kandidat dulu (KANDIDAT 0,2 > LAYAK 0,5 menurut jarak ke acuan 1,0×),
+        # lalu jarak ke acuan dana 10x: cock ≈0 > near 0,1 > nodata 0,15 > far 1,0;
+        # baris tanpa acuan; PLUS paling bawah.
+        self.assertEqual(order, ["kandidat", "layak", "cock", "near", "nodata",
                                  "far", "missing", "plus"])
 
     def test_cohort_no_data_never_passes_gate_and_partial_window_is_labeled(self):

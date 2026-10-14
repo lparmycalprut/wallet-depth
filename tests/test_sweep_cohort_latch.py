@@ -45,6 +45,24 @@ class CohortLatchEvaluateTest(unittest.TestCase):
         self.assertFalse(result["cohort_gate_passed"])
         self.assertTrue(result["cohort_gate_status"].startswith("SKIP"))
 
+    def test_latch_turns_gmgn_plus_into_lolos(self):
+        # VWAP 1,0 -> harga 0,4 = VWAP minus 60%, tapi avg buy GMGN 0,3 -> GMGN plus.
+        metrics = _metrics(0.4, basis=0.3, balance=1.0)
+        now_only = ss.evaluate(metrics, cohort_candles=_birth_candles(), now=NOW)
+        self.assertEqual(now_only["cohort_gate_status"], "TUNGGU — kohort GMGN plus")
+        self.assertFalse(now_only["cohort_gate_passed"])
+        latched = ss.evaluate(metrics, cohort_candles=_birth_candles(), now=NOW,
+                              cohort_latch={"ts": 1000, "source": "live"})
+        self.assertTrue(latched["cohort_gate_passed"])
+        self.assertIn("pernah ≤ −50%", latched["cohort_gate_status"])
+
+    def test_latch_leaves_tanpa_data_untouched(self):
+        # Tanpa candle kohort: TANPA DATA tetap, walau ada latch.
+        result = ss.evaluate(_metrics(0.7), cohort_candles=[], now=NOW,
+                             cohort_latch={"ts": 1000, "source": "riwayat"})
+        self.assertFalse(result["cohort_gate_passed"])
+        self.assertTrue(result["cohort_gate_status"].startswith("TANPA DATA"))
+
     def test_no_latch_keeps_old_behaviour(self):
         result = ss.evaluate(_metrics(0.7), cohort_candles=_birth_candles(), now=NOW)
         self.assertFalse(result["cohort_gate_passed"])
