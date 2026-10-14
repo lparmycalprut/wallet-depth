@@ -62,7 +62,7 @@ Angka ini turunan dari rumus yang sama: `(√10 − 1) × cash satu sisi $15.116
 bukan pengukuran langsung. Pada batas struktural liq/MC 35%, biaya 10× = 37,8%
 MC ≈ 2,7× acuan.
 
-Kolom **× dana acuan** menampilkan biaya dorong 10× dalam kelipatan acuan
+Kolom **× dana acuan 10x** menampilkan biaya dorong 10× dalam kelipatan acuan
 14,0% MC: `biaya 10× (% MC) ÷ 14,0%`. COCK = 1,0×.
 
 Turnover di tabel utama adalah **`vol24_usd / liq_usd`**, dengan `liq_usd`
@@ -141,7 +141,7 @@ interpretasi dari "maks 50% dari harga sekarang" dan perlu dikonfirmasi user.
 
 ### Nominal dolar (tabel utama dan detail biaya)
 
-- Kolom **Dana acuan** di tabel utama = `(√10 − 1) × liq/2`, basis kas satu sisi
+- Kolom **Dana acuan 10x** di tabel utama = `(√10 − 1) × liq/2`, basis kas satu sisi
   seperti `× dana acuan` (COCK ≈ $32.684). Setara dengan `× dana acuan` × 14,0%
   × MC; untuk COCK hasilnya ≈ $32.684.
 - Tabel **Biaya sweep** di detail menambah kolom **Biaya ($)** per target

@@ -248,9 +248,9 @@ def _eligibility_rows(rows) -> list:
             "Token/MC": _fmt_pct(screen.pool_token_mc_frac(
                 metrics.get("pool_base_usd"), metrics.get("fdv_usd"))),
             # Cost 10x MC divided by COCK 10x MC ($32,684 / $233,451 = 14,0%).
-            "× dana acuan": _fmt_times(result.get("reference_fund_x")),
+            "× dana acuan 10x": _fmt_times(result.get("reference_fund_x")),
             # Nominal $ untuk 10x pada basis kas satu sisi (= × dana acuan).
-            "Dana acuan": _fmt_usd(result.get("reference_fund_usd")),
+            "Dana acuan 10x": _fmt_usd(result.get("reference_fund_usd")),
             "Turnover (×/hari)": _fmt_times(row.get("turnover_x",
                                                        result.get("turnover_x")), 2),
             "Liq": _fmt_usd(metrics.get("liq_usd")),
