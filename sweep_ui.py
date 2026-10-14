@@ -342,6 +342,12 @@ def _render_table(rows, watchlist) -> None:
     frame.insert(0, "Hapus", False)
     # Hapus dan Refresh sama-sama pinned: tetap terlihat saat tabel digeser.
     frame.insert(1, "Refresh", "🔄 Refresh")
+    # Kolom pinned harus berurutan dari kiri: GMGN dipindah tepat setelah Token
+    # (Hapus, Refresh, Token, GMGN) lalu ikut di-pin.
+    if "GMGN" in frame.columns and "Token" in frame.columns:
+        order = [c for c in frame.columns if c != "GMGN"]
+        order.insert(order.index("Token") + 1, "GMGN")
+        frame = frame[order]
     edited = st.data_editor(
         frame, key="sweep_table", use_container_width=True, hide_index=True,
         disabled=[column for column in frame.columns if column != "Hapus"],
@@ -357,7 +363,9 @@ def _render_table(rows, watchlist) -> None:
             # Token ikut dipin (urutan kolom: Hapus, Refresh, Token).
             "Token": st.column_config.TextColumn("Token", pinned=True),
             "Kohort": st.column_config.TextColumn("Kohort", width=320),
-            "GMGN": st.column_config.LinkColumn("GMGN", display_text="buka"),
+            # pinned: link GMGN ikut tetap terlihat saat tabel digeser.
+            "GMGN": st.column_config.LinkColumn("GMGN", display_text="buka",
+                                                pinned=True),
         })
     pending = st.session_state.pop(PENDING_REFRESH_KEY, None)
     if pending:
