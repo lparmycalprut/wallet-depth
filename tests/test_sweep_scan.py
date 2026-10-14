@@ -15,6 +15,7 @@ import unittest
 from unittest import mock
 
 import sweep_scan as scan
+import sweep_screen as screen
 import sweep_store as store
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -239,12 +240,15 @@ class RunScanTest(_Sandbox):
         self.assertEqual(outcome["rows"], [])
         self.assertEqual(outcome["alerts"], [])
 
-    def test_rows_sorted_by_score_desc(self):
+    def test_rows_sorted_by_reference_fund_distance(self):
         state = store.empty_state()
         outcome = scan.run_scan([MINT], state=state, now=1000)
-        scores = [r["result"]["score"] for r in outcome["rows"]
-                  if r["result"]["score"] is not None]
-        self.assertEqual(scores, sorted(scores, reverse=True))
+        keys = [screen.display_sort_key(r["result"]) for r in outcome["rows"]]
+        self.assertEqual(keys, sorted(keys))
+        # Baris yang punya acuan dana didahulukan; jaraknya ke 1,0× kecil dulu.
+        gaps = [abs(r["result"]["reference_fund_x"] - 1.0) for r in outcome["rows"]
+                if r["result"].get("reference_fund_x") is not None]
+        self.assertEqual(gaps, sorted(gaps))
 
 
 class ScanPayloadAndLatchTest(_Sandbox):

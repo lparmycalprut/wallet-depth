@@ -228,11 +228,14 @@ ikut dipindai. Tombol Refresh (dan Refresh per mint) mereset jatah percobaan. Sa
 auto-refresh menyala, retry ini tidak aktif karena auto-refresh 5 menit sudah
 memindai semua mint.
 
-Urutan tabel (`sweep_screen.display_sort_key`) berdasarkan **skor** (`lolos/punya
-data`) tertinggi di atas. Jika skor sama, jumlah kriteria lolos yang lebih banyak
-di atas, lalu vonis (LAYAK → KANDIDAT → gate lolos → TUNGGU → TANPA DATA), lalu
-status kohort yang makin dekat ke −50%. Mint tanpa snapshot tampil sebagai
-`MENUNGGU SNAPSHOT` di atas kohort PLUS. **Kohort PLUS selalu di paling bawah.**
+Urutan tabel (`sweep_screen.display_sort_key`) dimulai dari yang **paling dekat ke
+acuan dana 10x** (`x dana acuan` = 1,0× = biaya 10x COCKROACH): jarak
+`|x − 1|` paling kecil di atas (permintaan user 2026-10-14). Jika jaraknya sama,
+skor (`lolos/punya data`) tertinggi di atas, lalu jumlah kriteria lolos, lalu vonis
+(LAYAK → KANDIDAT → gate lolos → TUNGGU → TANPA DATA), lalu status kohort yang makin
+dekat ke −50%. Mint tanpa acuan dana (tanpa liq/MC) dan mint tanpa snapshot
+(`MENUNGGU SNAPSHOT`) berada di bawah baris yang punya acuan. **Kohort PLUS selalu di
+paling bawah.**
 
 Setiap mint punya tombol **🔄 Refresh <mint>** di bagian detailnya untuk pindai
 ulang satu token saja (berguna saat data kriteria masih kosong).

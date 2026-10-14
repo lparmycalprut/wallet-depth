@@ -434,7 +434,7 @@ def cohort_gate(profile) -> dict:
                       f"(ambang minus {threshold_pct:.0f}%)"}
 
 
-#: Urutan tampilan tabel: yang paling dekat ke kelayakan di atas.
+#: Grup vonis (urutan kedua setelah jarak ke acuan dana, lihat display_sort_key).
 #: 0 LAYAK · 1 KANDIDAT · 2 gate lolos tapi kriteria kurang · 3 TUNGGU kohort
 #: · 4 TANPA DATA kohort · 9 SKIP kohort PLUS (selalu paling bawah).
 _DISPLAY_GROUP_SKIP = 9
@@ -443,13 +443,17 @@ _DISPLAY_GROUP_SKIP = 9
 def display_sort_key(result) -> tuple:
     """Kunci urut tabel Sweep (kecil = lebih atas).
 
-    Urutan (berdasarkan skor, sesuai permintaan user 2026-10-13):
+    Urutan (permintaan user 2026-10-14: dimulai dari yang paling dekat acuan):
     1. kohort PLUS (SKIP) selalu paling bawah;
-    2. baris tanpa skor (belum ada data / belum ada snapshot) sebelum PLUS;
-    3. skor kriteria tertinggi (``passed/scored``) di atas;
-    4. jika skor sama: jumlah kriteria lolos lebih banyak di atas;
-    5. jika masih sama: kelompok vonis (LAYAK > KANDIDAT > gate lolos > TUNGGU
+    2. baris tanpa acuan dana (tanpa liq/MC) sebelum PLUS;
+    3. jarak ``|x dana acuan 10x − 1|`` paling kecil di atas (1,0× = acuan COCK);
+    4. jika jarak sama: skor kriteria tertinggi (``passed/scored``) di atas;
+    5. jika skor sama: jumlah kriteria lolos lebih banyak di atas;
+    6. jika masih sama: kelompok vonis (LAYAK > KANDIDAT > gate lolos > TUNGGU
        > TANPA DATA), lalu untuk TUNGGU: status kohort makin dekat −50% di atas.
+
+    ``x dana acuan`` = ``reference_fund_x`` dari :func:`evaluate`; snapshot lama
+    yang belum menyimpannya dihitung ulang dari ``liq_mc``.
     """
     result = result or {}
     status = str(result.get("cohort_gate_status") or "")
@@ -471,8 +475,13 @@ def display_sort_key(result) -> tuple:
         group = {VERDICT_LAYAK[0]: 0, VERDICT_KANDIDAT[0]: 1}.get(verdict, 2)
     else:
         group = 4
-    return (group == _DISPLAY_GROUP_SKIP, score is None,
-            -(score or 0.0), -passed, group, distance)
+    ref_x = _num(result.get("reference_fund_x"))
+    if ref_x is None:
+        ref_x = reference_fund_multiple(result.get("liq_mc"))
+    no_ref = ref_x is None
+    ref_gap = abs(ref_x - 1.0) if ref_x is not None else 0.0
+    return (group == _DISPLAY_GROUP_SKIP, no_ref, ref_gap,
+            score is None, -(score or 0.0), -passed, group, distance)
 
 
 # ---------------------------------------------------------------------------
