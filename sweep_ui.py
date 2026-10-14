@@ -247,9 +247,9 @@ def _eligibility_rows(rows) -> list:
             "Token pool $": _fmt_usd(metrics.get("pool_base_usd")),
             "Token/MC": _fmt_pct(screen.pool_token_mc_frac(
                 metrics.get("pool_base_usd"), metrics.get("fdv_usd"))),
-            # Cost 3x MC divided by COCK 4.74% MC ($11,066 / $233,451).
+            # Cost 10x MC divided by COCK 10x MC ($32,684 / $233,451 = 14,0%).
             "× dana acuan": _fmt_times(result.get("reference_fund_x")),
-            # Nominal $ untuk 3x pada basis kas satu sisi (= × dana acuan).
+            # Nominal $ untuk 10x pada basis kas satu sisi (= × dana acuan).
             "Dana acuan": _fmt_usd(result.get("reference_fund_usd")),
             "Turnover (×/hari)": _fmt_times(row.get("turnover_x",
                                                        result.get("turnover_x")), 2),
@@ -646,7 +646,7 @@ def _render_threshold() -> None:
     st.markdown("### ⚙️ Ambang kelayakan")
     st.caption("Ambang fix: liq/MC ≤ 35% · holder/wallet ≤ 5% · "
                "kohort minimal minus 50% (VWAP kelahiran 48 jam) · "
-               "standar pra-pump COCKROACH (toleransi 3× dana)")
+               "standar pra-pump COCKROACH (acuan dana 10×)")
 
 
 def _render_results(watchlist, state) -> None:

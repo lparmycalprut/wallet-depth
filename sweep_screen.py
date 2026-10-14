@@ -39,12 +39,19 @@ HIGHER_LOW_MIN = 1.0       # kriteria 6: low berikutnya harus >= low shakeout
 
 # Acuan cohort pra-pump COCKROACH, 1 Okt 2026 22:42 WIB: MC $233.451,
 # TVL dua sisi $30.232, cash satu sisi $15.116, biaya dorong 3x $11.066
-# (=4,74% MC). Toleransi 3x dana acuan = $33.198 (~14,2% MC).
+# (=4,74% MC). Sejak 2026-10-14 (permintaan user) acuan dana memakai 10x:
+# biaya 10x COCK = (√10 − 1) × cash $15.116 = $32.684 (≈14,0% MC). Angka 10x
+# ini turunan dari rumus yang sama dengan angka 3x terukur, bukan pengukuran.
+REFERENCE_MULT = 10.0
 COCK_REFERENCE_MC_USD = 233_451.0
 COCK_REFERENCE_CASH_USD = 15_116.0
 COCK_REFERENCE_COST_3X_USD = 11_066.0
 COCK_REFERENCE_COST_3X_MC_FRAC = (COCK_REFERENCE_COST_3X_USD /
                                   COCK_REFERENCE_MC_USD)
+COCK_REFERENCE_COST_10X_USD = ((math.sqrt(REFERENCE_MULT) - 1.0)
+                               * COCK_REFERENCE_CASH_USD)
+COCK_REFERENCE_COST_10X_MC_FRAC = (COCK_REFERENCE_COST_10X_USD /
+                                   COCK_REFERENCE_MC_USD)
 COHORT_WINDOW_HOURS = 48
 #: Ambang minimum kohort: VWAP kelahiran harus minus minimal 50% dari harga
 #: kini (status_avg_cost ≤ -0,50). Diturunkan dari -70% atas permintaan user
@@ -235,19 +242,19 @@ def pool_token_mc_frac(pool_base_usd, mc_usd):
 
 
 def reference_fund_multiple(liq_mc):
-    """Biaya 3x sebagai kelipatan dana acuan COCK pra-pump.
+    """Biaya 10x sebagai kelipatan dana acuan COCK pra-pump.
 
-    COCK's measured reference ($11,066 = 4.74% MC) is the quote cash that enters
-    the pool (cash-side $15,116), which is now what ``leverage_cost`` returns.
-    At COCK's liq/MC 12.95%, this returns about 1.0x.
+    Acuan = biaya 10x COCK = (√10 − 1) × cash satu sisi $15.116 = $32.684
+    (14,0% MC). Dengan basis yang sama, biaya 10x pada liq/MC COCK 12,95%
+    menghasilkan tepat 1,0×.
     """
     ratio = _num(liq_mc)
     if ratio is None or ratio <= 0:
         return None
-    cost_frac = leverage_cost(3.0, ratio)
-    if cost_frac is None or COCK_REFERENCE_COST_3X_MC_FRAC <= 0:
+    cost_frac = leverage_cost(REFERENCE_MULT, ratio)
+    if cost_frac is None or COCK_REFERENCE_COST_10X_MC_FRAC <= 0:
         return None
-    return cost_frac / COCK_REFERENCE_COST_3X_MC_FRAC
+    return cost_frac / COCK_REFERENCE_COST_10X_MC_FRAC
 
 
 def _timestamp_seconds(value):
@@ -765,12 +772,12 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
     turnover_x = (vol24 / liq if vol24 is not None and liq is not None and liq > 0
                   else None)
     cost_3x_mc_frac = leverage_cost(3.0, liq_mc)
-    # UI column "× dana acuan" = ((√3−1)×(liq/MC÷2)) ÷ 4.74%, where
-    # 4.74% = COCK's $11,066 / $233,451; its one-sided cash basis makes COCK 1.0×.
+    # UI column "× dana acuan" = ((√10−1)×(liq/MC÷2)) ÷ 14,0%, where
+    # 14,0% = COCK's 10x cost $32,684 / $233,451; its one-sided cash basis makes COCK 1.0×.
     reference_fund_x = reference_fund_multiple(liq_mc)
-    # Nominal $ untuk "× dana acuan": (√3−1) x (liq/2), sama dengan
-    # reference_fund_x x 4,74% MC (basis kas satu sisi seperti di atas).
-    reference_fund_usd = cost_usd(3.0, liq) if liq is not None else None
+    # Nominal $ untuk "× dana acuan": (√10−1) x (liq/2), sama dengan
+    # reference_fund_x x 14,0% MC (basis kas satu sisi seperti di atas).
+    reference_fund_usd = cost_usd(REFERENCE_MULT, liq) if liq is not None else None
     return {
         "checks": checks,
         "passed_count": len(passed),
