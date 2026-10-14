@@ -62,11 +62,13 @@ COHORT_WINDOW_HOURS = 48
 #: 2026-10-13.
 COHORT_MINUS_THRESHOLD = -0.50
 
-#: Gate biaya (2026-10-13, permintaan user): biaya sweep untuk naik
-#: ``COST_GATE_MULT`` kali harus ≤ 80% market cap. Di atas itu, atau bila belum
-#: ada data, vonis = TUNGGU. Ambang tetap, tidak dapat diubah dari UI/cron.
+#: Gate biaya (2026-10-13, diperketat 2026-10-14): biaya sweep untuk naik
+#: ``COST_GATE_MULT`` kali harus ≤ 28% market cap. Angka ini 2× acuan dana COCK
+#: 10x (14,0% MC), sehingga token dengan biaya dorong jauh di atas COCK di-TUNGGU.
+#: Setara liq/MC ≈ 25,9%. Di atas itu, atau bila belum ada data, vonis = TUNGGU.
+#: Ambang tetap, tidak dapat diubah dari UI/cron.
 COST_GATE_MULT = 10.0
-COST_GATE_MAX_FRAC = 0.80
+COST_GATE_MAX_FRAC = 0.28
 
 #: Acuan kalibrasi inflow nyata vs biaya dorong ke puncak, dari satu event
 #: terukur: COCKROACH 1 Okt 2026 — Δ TVL $58.778 ÷ 2 = uang quote masuk
@@ -184,7 +186,7 @@ def target_costs(liq_mc, mults=(2.0, 5.0, 10.0, 50.0), liq_usd=None):
 
 
 def cost_gate(cost_frac) -> dict:
-    """Gate biaya 10x: biaya ≤ 80% MC lolos; > 80% atau tanpa data = TUNGGU."""
+    """Gate biaya 10x: biaya ≤ 28% MC lolos; > 28% atau tanpa data = TUNGGU."""
     value = _num(cost_frac)
     label = f"biaya {COST_GATE_MULT:.0f}x"
     if value is None:
