@@ -263,10 +263,9 @@ def _eligibility_rows(rows) -> list:
                                                        result.get("turnover_x")), 2),
             "Liq": _fmt_usd(metrics.get("liq_usd")),
             "MC": _fmt_usd(metrics.get("fdv_usd")),
-            # Avg buy holder (saldo-tertimbang, GMGN) dinyatakan sebagai MC.
-            "Avg buy holder (MC)": _fmt_usd(screen.holder_avg_buy_mc(
-                metrics.get("holder_cost_basis"),
-                metrics.get("holder_cost_balance"),
+            # Lowest buy holder (avg buy terendah, GMGN) dinyatakan sebagai MC.
+            "Lowest buy (MC)": _fmt_usd(screen.holder_lowest_buy_mc(
+                metrics.get("holder_min_avg_cost"),
                 metrics.get("price_usd"),
                 metrics.get("fdv_usd"))),
             "Top-10": _fmt_pct100(metrics.get("top10_holder_pct")),

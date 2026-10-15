@@ -646,28 +646,26 @@ class HolderCostGateEvaluateTest(unittest.TestCase):
         self.assertTrue(result["verdict"].startswith("TUNGGU — avg buy holder"))
 
 
-class HolderAvgBuyMcTest(unittest.TestCase):
-    """Avg buy holder tertimbang dalam MC: basis ÷ saldo × MC ÷ harga."""
+class HolderLowestBuyMcTest(unittest.TestCase):
+    """Lowest buy holder dalam MC: avg buy terendah × MC ÷ harga."""
 
-    def test_weighted_avg_buy_converted_to_market_cap(self):
-        # avg buy USD = 2,0 ÷ 1,0 = 2,0; MC ÷ harga = 1.000.000 ÷ 0,5 → 4.000.000 MC.
-        value = ss.holder_avg_buy_mc(2.0, 1.0, 0.5, 1_000_000.0)
+    def test_lowest_buy_converted_to_market_cap(self):
+        # MC ÷ harga = 1.000.000 ÷ 0,5 = 2.000.000 supply; × 2,0 → 4.000.000 MC.
+        value = ss.holder_lowest_buy_mc(2.0, 0.5, 1_000_000.0)
         self.assertAlmostEqual(value, 4_000_000.0, places=4)
 
-    def test_equals_avg_buy_times_supply(self):
-        # MC = harga × supply, jadi avg buy MC = avg buy USD × supply.
-        price, mc = 0.00023, 233_451.0
-        supply = mc / price
-        avg_usd = 0.00019
-        value = ss.holder_avg_buy_mc(avg_usd * 1000.0, 1000.0, price, mc)
-        self.assertAlmostEqual(value, avg_usd * supply, places=2)
+    def test_uses_lowest_not_weighted_average(self):
+        # Holder terendah 0,00014612… (Human); tertimbang akan berbeda.
+        price, mc = 0.0002133, 207_453.0
+        value = ss.holder_lowest_buy_mc(0.00014612677607271226, price, mc)
+        self.assertAlmostEqual(value, 0.00014612677607271226 * mc / price, places=2)
 
     def test_missing_or_invalid_inputs_return_none(self):
-        self.assertIsNone(ss.holder_avg_buy_mc(None, 1.0, 0.5, 1e6))
-        self.assertIsNone(ss.holder_avg_buy_mc(2.0, 0, 0.5, 1e6))
-        self.assertIsNone(ss.holder_avg_buy_mc(2.0, 1.0, 0, 1e6))
-        self.assertIsNone(ss.holder_avg_buy_mc(2.0, 1.0, 0.5, None))
-        self.assertIsNone(ss.holder_avg_buy_mc(-1.0, 1.0, 0.5, 1e6))
+        self.assertIsNone(ss.holder_lowest_buy_mc(None, 0.5, 1e6))
+        self.assertIsNone(ss.holder_lowest_buy_mc(2.0, 0, 1e6))
+        self.assertIsNone(ss.holder_lowest_buy_mc(2.0, 0.5, None))
+        self.assertIsNone(ss.holder_lowest_buy_mc(0, 0.5, 1e6))
+        self.assertIsNone(ss.holder_lowest_buy_mc(-1.0, 0.5, 1e6))
 
 
 class DetectSweepTest(unittest.TestCase):

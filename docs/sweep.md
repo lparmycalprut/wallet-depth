@@ -27,7 +27,7 @@ pemindai lain.
    bukan tebakan dari liq/MC. Biaya dorong tetap dihitung dari liq/MC sebagai uang
    quote yang masuk ke pool, `(√m − 1) × liq/2` (liq = TVL dua sisi). Karena sisi
    quote tidak dibatasi kriteria ini, liq/MC bisa lebih besar; yang membatasi biaya
-   adalah gate biaya 10x (≤ 28% MC, lihat di bawah).
+   tidak lagi dibatasi gate; biaya 10x hanya informasi (lihat di bawah).
 2. **Authority mint/freeze sudah dilepas** — gate struktural, tidak masuk skor.
    Kriteria LP terkunci dihapus (2026-10-13): likuiditas token pump.fun sudah
    pasti terkunci, jadi tidak dicek maupun dihitung.
@@ -120,23 +120,15 @@ luar 100 teratas tidak dihitung.
 Pool berumur kurang dari 48 jam memakai seluruh jendela yang ada dan diberi
 label **jendela parsial**. OHLCV kosong atau VWAP tidak bisa dihitung selalu
 menahan gate, bukan dianggap minus. `LAYAK SWEEP` hanya mungkin jika gate
-kohort `LOLOS`, gate biaya 10x `LOLOS`, trio struktural lulus, dan skor cukup.
+kohort `LOLOS`, gate avg buy holder `LOLOS`, trio struktural lulus, dan skor cukup.
 
-### Gate biaya 10x (2026-10-13)
+### Biaya 10x (informasi saja, 2026-10-15)
 
-| Status biaya | Aturan |
-| --- | --- |
-| `TUNGGU — biaya 10x X% MC (batas 28%)` | `(√10 − 1) × liq/MC ÷ 2 > 0,28` |
-| `TUNGGU — biaya 10x belum ada data` | liq/MC atau MC kosong; gate belum lolos |
-| `LOLOS` | `(√10 − 1) × liq/MC ÷ 2 ≤ 0,28` |
+Biaya untuk naik 10x, `(√10 − 1) × liq/MC ÷ 2`, ditampilkan sebagai informasi
+(`cost_10x_mc_frac`, kolom `× dana acuan 10x`). **Tidak ada gate batas 28% MC**:
+biaya tidak memengaruhi vonis maupun `eligible`, dan tidak ada status
+`TUNGGU — biaya 10x`. Gate ini dihapus atas permintaan user (2026-10-15).
 
-Batas 28% = 2× acuan dana COCK 10x (14,0% MC), diperketat 2026-10-14 dari 80%.
-Setara liq/MC ≈ 25,9%. Liq/MC COCK 12,95% lolos dengan biaya 14,0% MC.
-
-Gate ini diuji setelah gate kohort. Jika kohort belum lolos, status kohort yang
-tampil. Sejak kriteria float memakai token/MC, liq/MC tidak lagi dibatasi langsung,
-sehingga gate biaya 10x (batas 28%) menjadi penahan biaya yang sebenarnya: vonis
-tertahan pada liq/MC di atas ≈ 25,9%.
 
 ### Gate avg buy holder (2026-10-13)
 
@@ -149,9 +141,13 @@ dan bisa dump kapan saja.
 | --- | --- |
 | `TUNGGU — avg buy holder X% di bawah harga` | `1 − min_avg / harga > 0,50` (min_avg < 0,5 × harga) |
 | `TUNGGU — avg buy holder belum ada data` | min_avg atau harga kosong; gate belum lolos |
+
+Kolom **Lowest buy (MC)** di tabel utama = `min_avg × MC ÷ harga`, yaitu avg buy
+terendah dinyatakan dalam market cap (`screen.holder_lowest_buy_mc`). Kolom ini
+hanya tampilan dan tidak mengubah vonis; nilainya sama dengan yang dipakai gate.
 | `LOLOS` | `1 − min_avg / harga ≤ 0,50` |
 
-Gate ini diuji setelah gate biaya 10x, sebelum skor. Batas 50% adalah
+Gate ini diuji setelah gate kohort, sebelum skor. Batas 50% adalah
 interpretasi dari "maks 50% dari harga sekarang" dan perlu dikonfirmasi user.
 
 ### Nominal dolar (tabel utama dan detail biaya)

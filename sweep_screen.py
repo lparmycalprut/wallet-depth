@@ -64,9 +64,8 @@ COHORT_WINDOW_HOURS = 48
 COHORT_MINUS_THRESHOLD = -0.50
 
 #: Biaya sweep untuk naik ``COST_GATE_MULT`` kali (fraksi MC) hanya ditampilkan
-#: sebagai informasi. Gate batas 28% MC (2026-10-13, diperketat 2026-10-14)
-#: DIHAPUS 2026-10-15 atas permintaan user: biaya 10x tidak lagi menentukan
-#: vonis, sehingga tidak ada lagi status ``TUNGGU — biaya 10x``.
+#: sebagai informasi. Gate batas 28% MC DIHAPUS 2026-10-15 atas permintaan user:
+#: biaya 10x tidak menentukan vonis, sehingga tidak ada status ``TUNGGU — biaya 10x``.
 COST_GATE_MULT = 10.0
 
 #: Acuan kalibrasi inflow nyata vs biaya dorong ke puncak, dari satu event
@@ -215,22 +214,20 @@ def holder_cost_gate(min_avg_cost, price_usd) -> dict:
     return {"passed": True, "gap": gap, "status": "LOLOS", "detail": detail}
 
 
-def holder_avg_buy_mc(cost_basis, balance_total, price_usd, mc_usd):
-    """Avg buy holder (rata-rata tertimbang saldo) dinyatakan dalam market cap.
+def holder_lowest_buy_mc(min_avg_cost, price_usd, mc_usd):
+    """Lowest buy holder (avg buy terendah) dinyatakan dalam market cap.
 
-    ``avg buy USD = basis ÷ saldo`` (holder GMGN yang memegang token saja).
-    Konversi ke MC memakai rasio MC ÷ harga = total supply:
-    ``avg buy MC = avg buy USD × MC ÷ harga``. Tanpa data = None.
+    ``lowest buy MC = min_avg_cost × MC ÷ harga`` (MC ÷ harga = total supply).
+    Nilai yang sama dipakai gate avg buy holder. Tanpa data = None.
     """
-    basis = _num(cost_basis)
-    balance = _num(balance_total)
+    low = _num(min_avg_cost)
     price = _num(price_usd)
     mc = _num(mc_usd)
-    if basis is None or balance is None or price is None or mc is None:
+    if low is None or price is None or mc is None:
         return None
-    if basis <= 0 or balance <= 0 or price <= 0 or mc <= 0:
+    if low <= 0 or price <= 0 or mc <= 0:
         return None
-    return (basis / balance) * (mc / price)
+    return low * (mc / price)
 
 
 def decide_verdict(cohort_gate, holder_gate, *, score, passed_count, score_ok):
