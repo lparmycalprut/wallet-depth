@@ -214,6 +214,20 @@ def holder_cost_gate(min_avg_cost, price_usd) -> dict:
     return {"passed": True, "gap": gap, "status": "LOLOS", "detail": detail}
 
 
+def holder_lowest_buy_vs_mc(min_avg_cost, price_usd):
+    """Selisih lowest buy terhadap MC saat ini: ``min_avg ÷ harga − 1``.
+
+    Karena MC ÷ harga = supply yang sama untuk kedua sisi, ini sama dengan
+    ``lowest buy MC ÷ MC − 1``. Positif = avg buy terendah di atas harga sekarang,
+    negatif = di bawah harga. Tanpa data = None.
+    """
+    low = _num(min_avg_cost)
+    price = _num(price_usd)
+    if low is None or price is None or low <= 0 or price <= 0:
+        return None
+    return low / price - 1.0
+
+
 def holder_lowest_buy_mc(min_avg_cost, price_usd, mc_usd):
     """Lowest buy holder (avg buy terendah) dinyatakan dalam market cap.
 
@@ -529,6 +543,11 @@ VIEW_HIDE_REF_X_ABOVE = 3.0
 VIEW_HIDE_BUNDLER_BELOW = 0.10  # fraksi 0-1 (10%)
 
 
+def is_tidak_layak(result) -> bool:
+    """True bila vonis baris adalah TIDAK LAYAK."""
+    return str((result or {}).get("verdict") or "") == VERDICT_TIDAK[0]
+
+
 def view_hidden(row) -> bool:
     """True bila baris disembunyikan dari tabel hasil.
 
@@ -542,6 +561,10 @@ def view_hidden(row) -> bool:
         return False
     result = row.get("result") or {}
     metrics = row.get("metrics") or {}
+    # TIDAK LAYAK disembunyikan (permintaan user 2026-10-15) dan tampil di tabel
+    # terpisah, sama seperti baris yang kena filter tampilan.
+    if is_tidak_layak(result):
+        return True
     ref_x = _num(result.get("reference_fund_x"))
     if ref_x is None:
         ref_x = reference_fund_multiple(result.get("liq_mc"))
@@ -587,6 +610,10 @@ def display_sort_key(result) -> tuple:
         group = 3
         if avg is not None:
             distance = abs(avg - COHORT_MINUS_THRESHOLD)
+    elif verdict == VERDICT_TIDAK[0]:
+        # TIDAK LAYAK diperlakukan seperti SKIP kohort plus (permintaan user
+        # 2026-10-15): paling bawah dan disembunyikan dari tabel utama.
+        group = _DISPLAY_GROUP_SKIP
     elif result.get("cohort_gate_passed"):
         # Termasuk TUNGGU gate avg buy holder: kohort sudah lolos, tapi holder belum.
         group = {VERDICT_LAYAK[0]: 0, VERDICT_KANDIDAT[0]: 1}.get(verdict, 2)

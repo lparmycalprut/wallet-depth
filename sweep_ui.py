@@ -52,6 +52,15 @@ def _fmt_pct(value, digits: int = 1) -> str:
     return f"{number*100:.{digits}f}%" if number is not None else "—"
 
 
+def _fmt_signed_pct(value, digits: int = 1) -> str:
+    """Persen dengan tanda eksplisit: +12,3% / −31,5% (fraksi, bukan persen)."""
+    number = screen._num(value)
+    if number is None:
+        return "—"
+    sign = "+" if number >= 0 else "−"
+    return f"{sign}{abs(number) * 100:.{digits}f}%"
+
+
 def _fmt_pct100(value, digits: int = 1) -> str:
     number = screen._num(value)
     return f"{number:.{digits}f}%" if number is not None else "—"
@@ -231,6 +240,18 @@ def _fmt_wib(ts, fmt: str) -> str:
     return datetime.fromtimestamp(number, WIB).strftime(fmt)
 
 
+def _lowest_buy_cell(metrics) -> str:
+    """``$X (+/−Y%)``: lowest buy MC dan selisihnya terhadap MC saat ini."""
+    low_mc = screen.holder_lowest_buy_mc(
+        metrics.get("holder_min_avg_cost"), metrics.get("price_usd"),
+        metrics.get("fdv_usd"))
+    if low_mc is None:
+        return "—"
+    diff = screen.holder_lowest_buy_vs_mc(
+        metrics.get("holder_min_avg_cost"), metrics.get("price_usd"))
+    return f"{_fmt_usd(low_mc)} ({_fmt_signed_pct(diff)} vs MC)"
+
+
 def _eligibility_rows(rows) -> list:
     out = []
     for row in rows or []:
@@ -263,11 +284,9 @@ def _eligibility_rows(rows) -> list:
                                                        result.get("turnover_x")), 2),
             "Liq": _fmt_usd(metrics.get("liq_usd")),
             "MC": _fmt_usd(metrics.get("fdv_usd")),
-            # Lowest buy holder (avg buy terendah, GMGN) dinyatakan sebagai MC.
-            "Lowest buy (MC)": _fmt_usd(screen.holder_lowest_buy_mc(
-                metrics.get("holder_min_avg_cost"),
-                metrics.get("price_usd"),
-                metrics.get("fdv_usd"))),
+            # Lowest buy holder (avg buy terendah, GMGN) dinyatakan sebagai MC,
+            # disertai selisihnya terhadap MC saat ini (+ di atas, − di bawah).
+            "Lowest buy (MC)": _lowest_buy_cell(metrics),
             "Top-10": _fmt_pct100(metrics.get("top10_holder_pct")),
             "Holder": metrics.get("holder_count"),
             "Bundler": _fmt_pct(metrics.get("top_bundler_trader_percentage",
@@ -719,9 +738,16 @@ def _render_results(watchlist, state) -> None:
                    "Baris ini tetap ditampilkan; data di dalamnya dari scan "
                    "sukses terakhir, atau belum ada.")
     if hidden:
-        st.caption(f"🙈 {hidden} mint disembunyikan filter tampilan "
-                   f"(× dana acuan 10x > {screen.VIEW_HIDE_REF_X_ABOVE:.0f}× "
-                   f"atau bundler < {screen.VIEW_HIDE_BUNDLER_BELOW*100:.0f}%).")
+        tidak = sum(1 for row in hidden_rows
+                    if screen.is_tidak_layak(row.get("result")))
+        filtered = hidden - tidak
+        if filtered:
+            st.caption(f"🙈 {filtered} mint disembunyikan filter tampilan "
+                       f"(× dana acuan 10x > {screen.VIEW_HIDE_REF_X_ABOVE:.0f}× "
+                       f"atau bundler < {screen.VIEW_HIDE_BUNDLER_BELOW*100:.0f}%).")
+        if tidak:
+            st.caption(f"🙈 {tidak} mint TIDAK LAYAK disembunyikan "
+                       "(diperlakukan sebagai SKIP kohort plus).")
     if all_rows and not rows:
         st.info("Semua mint di watchlist tersembunyi oleh filter tampilan.")
     _render_table(rows, watchlist)
@@ -733,7 +759,7 @@ def _render_results(watchlist, state) -> None:
             f"👁️ Tampilkan {hidden} mint yang disembunyikan", value=False,
             key="sweep_show_hidden")
         if show_hidden:
-            st.markdown("#### 🙈 Mint tersembunyi (filter tampilan)")
+            st.markdown("#### 🙈 Mint tersembunyi (filter tampilan & TIDAK LAYAK)")
             _render_table(hidden_rows, watchlist, suffix="_hidden")
     st.divider()
     _render_stats(state)
