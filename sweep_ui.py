@@ -52,13 +52,19 @@ def _fmt_pct(value, digits: int = 1) -> str:
     return f"{number*100:.{digits}f}%" if number is not None else "—"
 
 
-def _fmt_signed_pct(value, digits: int = 1) -> str:
-    """Persen dengan tanda eksplisit: +12,3% / −31,5% (fraksi, bukan persen)."""
+def _fmt_price_move(value, digits: int = 1) -> str:
+    """Pergerakan harga sejak lowest buy: ``naik 38,1%`` / ``turun 5,8%``.
+
+    ``value`` adalah fraksi (0,381 = naik 38,1%). Nol = ``tetap``.
+    """
     number = screen._num(value)
     if number is None:
         return "—"
-    sign = "+" if number >= 0 else "−"
-    return f"{sign}{abs(number) * 100:.{digits}f}%"
+    pct = abs(number) * 100
+    if round(pct, digits) == 0:
+        return "tetap"
+    word = "naik" if number > 0 else "turun"
+    return f"{word} {pct:.{digits}f}%"
 
 
 def _fmt_pct100(value, digits: int = 1) -> str:
@@ -241,15 +247,15 @@ def _fmt_wib(ts, fmt: str) -> str:
 
 
 def _lowest_buy_cell(metrics) -> str:
-    """``$X (+/−Y%)``: lowest buy MC dan selisihnya terhadap MC saat ini."""
+    """``$X (harga naik/turun Y%)``: lowest buy MC dan pergerakan harga sejak itu."""
     low_mc = screen.holder_lowest_buy_mc(
         metrics.get("holder_min_avg_cost"), metrics.get("price_usd"),
         metrics.get("fdv_usd"))
     if low_mc is None:
         return "—"
-    diff = screen.holder_lowest_buy_vs_mc(
+    move = screen.holder_price_change_vs_lowest_buy(
         metrics.get("holder_min_avg_cost"), metrics.get("price_usd"))
-    return f"{_fmt_usd(low_mc)} ({_fmt_signed_pct(diff)} vs MC)"
+    return f"{_fmt_usd(low_mc)} (harga {_fmt_price_move(move)})"
 
 
 def _eligibility_rows(rows) -> list:
@@ -285,7 +291,7 @@ def _eligibility_rows(rows) -> list:
             "Liq": _fmt_usd(metrics.get("liq_usd")),
             "MC": _fmt_usd(metrics.get("fdv_usd")),
             # Lowest buy holder (avg buy terendah, GMGN) dinyatakan sebagai MC,
-            # disertai selisihnya terhadap MC saat ini (+ di atas, − di bawah).
+            # disertai pergerakan harga sekarang sejak lowest buy (naik/turun %).
             "Lowest buy (MC)": _lowest_buy_cell(metrics),
             "Top-10": _fmt_pct100(metrics.get("top10_holder_pct")),
             "Holder": metrics.get("holder_count"),

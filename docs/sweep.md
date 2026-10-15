@@ -144,8 +144,9 @@ dan bisa dump kapan saja.
 
 Kolom **Lowest buy (MC)** di tabel utama = `min_avg × MC ÷ harga`, yaitu avg buy
 terendah dinyatakan dalam market cap (`screen.holder_lowest_buy_mc`). Di sampingnya
-ditampilkan selisih terhadap MC saat ini, `min_avg ÷ harga − 1` (`+` = di atas MC,
-`−` = di bawah MC), misalnya `$30K (−31.5% vs MC)`. Kolom ini hanya tampilan dan
+ditampilkan pergerakan harga sekarang sejak avg buy terendah, `harga ÷ min_avg − 1`
+(`naik X%` jika harga di atas lowest buy, `turun X%` jika di bawahnya), misalnya
+`$30K (harga naik 46.0%)`. Kolom ini hanya tampilan dan
 tidak mengubah vonis; nilainya sama dengan yang dipakai gate.
 
 ### TIDAK LAYAK disembunyikan (2026-10-15)
