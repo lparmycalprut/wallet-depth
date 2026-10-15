@@ -263,10 +263,9 @@ def _eligibility_rows(rows) -> list:
                                                        result.get("turnover_x")), 2),
             "Liq": _fmt_usd(metrics.get("liq_usd")),
             "MC": _fmt_usd(metrics.get("fdv_usd")),
-            # Avg buy holder (saldo-tertimbang, GMGN) dinyatakan sebagai MC.
-            "Avg buy holder (MC)": _fmt_usd(screen.holder_avg_buy_mc(
-                metrics.get("holder_cost_basis"),
-                metrics.get("holder_cost_balance"),
+            # Lowest buy holder (avg buy terendah, GMGN) dinyatakan sebagai MC.
+            "Lowest buy (MC)": _fmt_usd(screen.holder_lowest_buy_mc(
+                metrics.get("holder_min_avg_cost"),
                 metrics.get("price_usd"),
                 metrics.get("fdv_usd"))),
             "Top-10": _fmt_pct100(metrics.get("top10_holder_pct")),
@@ -688,6 +687,10 @@ def _render_threshold() -> None:
 def _render_results(watchlist, state) -> None:
     """Tabel + detail + statistik dari snapshot terakhir tiap mint watchlist."""
     views, missing = store.watchlist_views(state, watchlist)
+    # Vonis tersimpan dihitung ulang dari gate yang sudah ada (tanpa gate biaya),
+    # supaya snapshot lama tidak lagi menampilkan "TUNGGU — biaya 10x …".
+    views = [{**view, "result": screen.current_verdict(view.get("result"))}
+             for view in views]
     placeholders = []
     for mint in missing:
         placeholder = _placeholder_row(mint)

@@ -646,28 +646,26 @@ class HolderCostGateEvaluateTest(unittest.TestCase):
         self.assertTrue(result["verdict"].startswith("TUNGGU — avg buy holder"))
 
 
-class HolderAvgBuyMcTest(unittest.TestCase):
-    """Avg buy holder tertimbang dalam MC: basis ÷ saldo × MC ÷ harga."""
+class HolderLowestBuyMcTest(unittest.TestCase):
+    """Lowest buy holder dalam MC: avg buy terendah × MC ÷ harga."""
 
-    def test_weighted_avg_buy_converted_to_market_cap(self):
-        # avg buy USD = 2,0 ÷ 1,0 = 2,0; MC ÷ harga = 1.000.000 ÷ 0,5 → 4.000.000 MC.
-        value = ss.holder_avg_buy_mc(2.0, 1.0, 0.5, 1_000_000.0)
+    def test_lowest_buy_converted_to_market_cap(self):
+        # MC ÷ harga = 1.000.000 ÷ 0,5 = 2.000.000 supply; × 2,0 → 4.000.000 MC.
+        value = ss.holder_lowest_buy_mc(2.0, 0.5, 1_000_000.0)
         self.assertAlmostEqual(value, 4_000_000.0, places=4)
 
-    def test_equals_avg_buy_times_supply(self):
-        # MC = harga × supply, jadi avg buy MC = avg buy USD × supply.
-        price, mc = 0.00023, 233_451.0
-        supply = mc / price
-        avg_usd = 0.00019
-        value = ss.holder_avg_buy_mc(avg_usd * 1000.0, 1000.0, price, mc)
-        self.assertAlmostEqual(value, avg_usd * supply, places=2)
+    def test_uses_lowest_not_weighted_average(self):
+        # Holder terendah 0,00014612… (Human); tertimbang akan berbeda.
+        price, mc = 0.0002133, 207_453.0
+        value = ss.holder_lowest_buy_mc(0.00014612677607271226, price, mc)
+        self.assertAlmostEqual(value, 0.00014612677607271226 * mc / price, places=2)
 
     def test_missing_or_invalid_inputs_return_none(self):
-        self.assertIsNone(ss.holder_avg_buy_mc(None, 1.0, 0.5, 1e6))
-        self.assertIsNone(ss.holder_avg_buy_mc(2.0, 0, 0.5, 1e6))
-        self.assertIsNone(ss.holder_avg_buy_mc(2.0, 1.0, 0, 1e6))
-        self.assertIsNone(ss.holder_avg_buy_mc(2.0, 1.0, 0.5, None))
-        self.assertIsNone(ss.holder_avg_buy_mc(-1.0, 1.0, 0.5, 1e6))
+        self.assertIsNone(ss.holder_lowest_buy_mc(None, 0.5, 1e6))
+        self.assertIsNone(ss.holder_lowest_buy_mc(2.0, 0, 1e6))
+        self.assertIsNone(ss.holder_lowest_buy_mc(2.0, 0.5, None))
+        self.assertIsNone(ss.holder_lowest_buy_mc(0, 0.5, 1e6))
+        self.assertIsNone(ss.holder_lowest_buy_mc(-1.0, 0.5, 1e6))
 
 
 class DetectSweepTest(unittest.TestCase):
@@ -957,3 +955,106 @@ class CohortFetchErrorTest(unittest.TestCase):
     def test_generic_message_kept_without_fetch_error(self):
         profile = ss.cohort_profile([], 1_000, 1.0, now=1_000 + 3600)
         self.assertEqual(profile["error"], "OHLCV 48 jam pertama tidak tersedia")
+
+
+class DecideVerdictTest(unittest.TestCase):
+    """Rantai vonis tanpa gate biaya (2026-10-15)."""
+
+    COHORT_OK = {"passed": True, "status": "LOLOS"}
+    HOLDER_OK = {"passed": True, "gap": 0.10, "status": "LOLOS"}
+
+    def test_passing_gates_and_score_is_layak(self):
+        verdict, _ = ss.decide_verdict(self.COHORT_OK, self.HOLDER_OK,
+                                       score=0.8, passed_count=4, score_ok=True)
+        self.assertEqual(verdict, ss.VERDICT_LAYAK[0])
+
+    def test_high_cost_does_not_block_layak(self):
+        # Biaya 10x sudah tidak masuk argumen; gap holder 31% (< 50%) tetap lolos.
+        holder = {"passed": True, "gap": 0.315, "status": "LOLOS"}
+        verdict, _ = ss.decide_verdict(self.COHORT_OK, holder,
+                                       score=0.8, passed_count=4, score_ok=True)
+        self.assertEqual(verdict, "LAYAK SWEEP")
+
+    def test_holder_wait_shows_holder_status(self):
+        holder = {"passed": False, "gap": 0.8, "status": "TUNGGU — avg buy holder 80% di bawah harga"}
+        verdict, color = ss.decide_verdict(self.COHORT_OK, holder,
+                                           score=0.8, passed_count=4, score_ok=True)
+        self.assertEqual(verdict, holder["status"])
+        self.assertEqual(color, "#b45309")
+
+    def test_cohort_wait_shows_cohort_status(self):
+        cohort = {"passed": False, "status": "TUNGGU — kohort"}
+        verdict, _ = ss.decide_verdict(cohort, self.HOLDER_OK,
+                                       score=0.8, passed_count=4, score_ok=True)
+        self.assertEqual(verdict, "TUNGGU — kohort")
+
+    def test_no_score_is_data_kurang(self):
+        verdict, _ = ss.decide_verdict(self.COHORT_OK, self.HOLDER_OK,
+                                       score=None, passed_count=0, score_ok=False)
+        self.assertEqual(verdict, ss.VERDICT_DATA[0])
+
+    def test_kandidat_and_tidak_layak_by_passed_count(self):
+        kandidat, _ = ss.decide_verdict(self.COHORT_OK, self.HOLDER_OK,
+                                        score=0.5, passed_count=2, score_ok=False)
+        tidak, _ = ss.decide_verdict(self.COHORT_OK, self.HOLDER_OK,
+                                     score=0.2, passed_count=1, score_ok=False)
+        self.assertEqual(kandidat, ss.VERDICT_KANDIDAT[0])
+        self.assertEqual(tidak, ss.VERDICT_TIDAK[0])
+
+
+class CurrentVerdictTest(unittest.TestCase):
+    """Snapshot lama dihitung ulang dari gate tersimpan, tanpa 'biaya 10x'."""
+
+    def stored_human(self):
+        # Field nyata dari snapshot Human 8nPoBHiB (vonis lama 31.2%).
+        return {
+            "verdict": "TUNGGU — biaya 10x 31.2% MC (batas 28%)",
+            "color": "#b45309",
+            "eligible": False,
+            "cohort_gate_passed": True,
+            "cohort_gate_status": "LOLOS",
+            "holder_gate_passed": True,
+            "holder_gate_status": "LOLOS",
+            "holder_gap": 0.3149,
+            "passed_count": 4,
+            "required_count": 4,
+            "score": 0.8,
+            "structural_ok": True,
+        }
+
+    def test_old_cost_verdict_is_replaced(self):
+        new = ss.current_verdict(self.stored_human())
+        self.assertEqual(new["verdict"], "LAYAK SWEEP")
+        self.assertTrue(new["eligible"])
+        self.assertNotIn("biaya", new["verdict"])
+        self.assertNotIn("28%", new["verdict"])
+
+    def test_holder_wait_recomputed_from_stored_gap(self):
+        result = self.stored_human()
+        result.update(holder_gate_passed=False, holder_gap=0.52,
+                      holder_gate_status="TUNGGU — avg buy holder 52% di bawah harga")
+        new = ss.current_verdict(result)
+        self.assertEqual(new["verdict"], "TUNGGU — avg buy holder 52% di bawah harga")
+        self.assertFalse(new["eligible"])
+
+    def test_structural_failure_blocks_eligible(self):
+        result = self.stored_human()
+        result["structural_ok"] = False
+        new = ss.current_verdict(result)
+        self.assertFalse(new["eligible"])
+        self.assertNotEqual(new["verdict"], "LAYAK SWEEP")
+
+    def test_snapshot_without_gate_fields_returned_unchanged(self):
+        old = {"verdict": "TIDAK LAYAK", "eligible": False}
+        self.assertIs(ss.current_verdict(old), old)
+        self.assertIsNone(ss.current_verdict(None))
+
+    def test_input_not_mutated(self):
+        result = self.stored_human()
+        before = dict(result)
+        ss.current_verdict(result)
+        self.assertEqual(result, before)
+
+
+if __name__ == "__main__":
+    unittest.main()
