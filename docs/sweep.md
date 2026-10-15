@@ -143,8 +143,17 @@ dan bisa dump kapan saja.
 | `TUNGGU — avg buy holder belum ada data` | min_avg atau harga kosong; gate belum lolos |
 
 Kolom **Lowest buy (MC)** di tabel utama = `min_avg × MC ÷ harga`, yaitu avg buy
-terendah dinyatakan dalam market cap (`screen.holder_lowest_buy_mc`). Kolom ini
-hanya tampilan dan tidak mengubah vonis; nilainya sama dengan yang dipakai gate.
+terendah dinyatakan dalam market cap (`screen.holder_lowest_buy_mc`). Di sampingnya
+ditampilkan selisih terhadap MC saat ini, `min_avg ÷ harga − 1` (`+` = di atas MC,
+`−` = di bawah MC), misalnya `$30K (−31.5% vs MC)`. Kolom ini hanya tampilan dan
+tidak mengubah vonis; nilainya sama dengan yang dipakai gate.
+
+### TIDAK LAYAK disembunyikan (2026-10-15)
+
+Baris dengan vonis `TIDAK LAYAK` diperlakukan seperti `SKIP — kohort plus`: diurutkan
+paling bawah dan tidak tampil di tabel utama. Baris tersebut muncul di tabel
+terpisah ("Tampilkan N mint yang disembunyikan"). Baris dengan scan terakhir gagal
+tidak pernah disembunyikan. Baris `SKIP — kohort plus` sendiri tetap tampil di bawah.
 | `LOLOS` | `1 − min_avg / harga ≤ 0,50` |
 
 Gate ini diuji setelah gate kohort, sebelum skor. Batas 50% adalah
