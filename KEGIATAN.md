@@ -1,5 +1,63 @@
 # Kegiatan
 
+## 2026-10-14 — Analisis wallet COCK 1 Okt 2026 (sampel parsial)
+
+Permintaan: cari wallet yang melakukan pump, churn, atau berperan dalam sweep
+COCK 1 Okt 2026, sekitar 20:00–23:00 WIB. Token `H4KUxsEgCp2yDpFvyDuGM5k6XevSKKrrKUxZ3Zr6nyJc`.
+
+**Sumber:**
+- GeckoTerminal `/trades` hanya menyimpan ±300 trade terakhir. Tidak menjangkau 1 Okt.
+- GMGN `vas/api/v1/token_trades/sol/{ca}` dengan parameter `from` dan `to` (unix detik)
+  mengembalikan trade historis per wallet. Paging memakai `cursor` (nilai `next`).
+  Satu halaman berisi maksimal 100 trade dan dikirim dalam 7 chunk.
+- GMGN `api/v1/tokens/top_buyers/sol/{ca}`: 70 holder awal (sniper). Saat ini 69 sudah
+  jual penuh, 1 jual sebagian, 0 hold.
+
+**Cakupan yang sudah dibaca (WIB):**
+- 22.40.00–22.41.30: sepi, ±6 trade kecil (±$0,05). Harga ±0,00023.
+- 22.41.31–22.42.56: halaman terakhir terbaca, 100 trade dalam ±2 detik. Harga naik dari
+  ±0,00023 ke ±0,00082–0,00084.
+- 22.42.58–22.44.00: halaman pertama terbaca.
+- 22.44.59–22.45.00: halaman pertama terbaca.
+- 22.45.00–23.00: belum dibaca.
+
+Perkiraan awal bahwa 3–5 halaman cukup untuk jendela pump **keliru**. Trade pada
+22.42–22.45 sangat padat (±50 trade/detik saat puncak). Cakupan penuh membutuhkan
+ratusan panggilan `fetch_page`. Hasil di bawah adalah sampel, bukan daftar lengkap.
+
+**Wallet dari sampel (bukan kesimpulan final):**
+
+Batch 22.42.56 (harga 0,00082–0,00084):
+- `AYZryL5JYFhAJ7PtA9uvebDqcFrifcPTucvDyjbd7xzN`: jual 595.571 token ($510). Tag axiom, padre. Realized $3.463.
+- `GGc5VqHic9ieUXbmWa2PWWNenGALbFHPWGChgsZNk3K7`: beli 310.963 token ($271). Tag gmgn, axiom, launchpad_smart, bundler.
+- `2NXXPvBR6LVBrE2d3HVDenc6xXvMP6UF23Wz3FhKfVm4`: beli 271.765 token ($235). Tag axiom, padre, bundler.
+- `HmVaXWrATTGQmKzbDHuwcdMgvwBoFCjJRX9mTvCHYEvf`: beli 98.607 token ($85). Tag axiom, paper_hands, bundler. 74 trade, realized $1.665.
+- `25ZcRco9VbttzHwwuZ13198zkXmBshtRYmaQzba1Efgv`: jual 387.121 token ($318). Tag smart_degen, axiom. Realized $294.
+- `67AtLpewju66U9vAmUE46SDib35v6fQeB2aTcbcxSpVv`: beli 135.141 token ($113). Tag fresh_wallet, axiom, bundler.
+- `mango2yYw5iHjW2zBoiKLGicQDKj8JTAAqsEceq6b6o`: jual 287.222 token ($237). Tag axiom, padre.
+- `5bnmvJXGFNPY3HYvUcsKaMhW7iRPoMYP1BJhqKbr9BWx`: jual 581.907 token ($487). Tag axiom, padre.
+
+Batch 22.44.00 (harga ±0,0011):
+- `6gRofZ46MG1WagtRLUr8S9LkP9HFYo894KrMwkLkzjLj`: beli 1.020.459 token ($1.127). Tag gmgn, paper_hands, axiom, gmgn_go, bundler. Pembeli terbesar yang terlihat.
+- `EraSoBvgn8jmhesKbrsjkLrJ5QZvH5gmZuHe6pqBEc9a`: jual 302.904 token ($326). Tag padre, bundler. 87 trade, realized $5.302.
+- `4emG3Uud1nYFjTHFx3xymxwDtrjjPgHaCcZjNX2odR9z`: beli 206.320 token ($225). Tag gmgn, gmgn_go, padre, axiom, bundler.
+- `a9Cct2wpjn4vWSR4rsytxm1URyk6vTXo4RTqXFpjyvD`: dua beli ±30–31k token ($34 tiap transaksi) dalam detik yang sama. Tag axiom.
+- `8eLeSuhPcHNVMhXPxM4cVGMDxQXtAuuutvJqRv9phkT5`: beli 30.064 token ($34). Tag axiom, bundler. Jumlah SOL identik dengan `a9Cct2` (6.235,928764). Pola bundle.
+- `DoBEQpfrZ3xed65wHSKeAHcuqeGtKTA1UtXECzyJXt5f`: beli 7.234 token ($8). Tag gmgn_go, padre, fomo, axiom.
+
+Batch 22.45.00 (sampel dari halaman pertama):
+- `AyqWZUPkP9J6oRXwJ3upfizXCsAN1Hr3KfTqQEhykWJr`, `AHw86gCwPmWsofoocEwguKJbQCykXR3NEhxUKx6wv4SD`, `5M79F1cMpoNc5mFzx39EpycfzM2ixETVLYnZkh2CH4wk`: tag axiom, padre, bundler. Jual ±$100–115 tiap transaksi. Riwayat hampir identik: 31 trade, beli 5,01–5,11 juta token, realized $621–652. Kemungkinan satu operator.
+- `8oSD5a9EG933qyuL8YdnSy6YPF7peNiXm7PAx19R1phB`: tanpa tag. 328 trade, beli 25,0 juta, jual 24,8 juta, realized $1.007. Pola churn.
+- `FnnW7bZdCG7Jd6mqqAxMx1Wd6fT8N5nkC6SdSZBxhccn`: beli 321k token ($511). Tag gmgn, axiom, paper_hands.
+- `4AgdaCf3XvAydGJiqC3QTDrsQVeCPB1mZXSrFsm4euUd`: jual 181.631 token ($282). Tag axiom. Realized $15.
+- `MeskxyRYaBhYERcNP2zLVTqFVR43TMX4MihyH7AU4XN`: jual 129.591 token ($179). Tag axiom.
+
+Wallet sandwich bot (bukan pelaku pump besar): `78Bo7xxGWBEvqbh3VMKvkFG4Z63cXKSJ2LCEXAanhN7a` dan `8pY1AukbuPgUE3EetyLa59rFLMimJGT94ZzbMEZcQF4w`.
+
+**Belum terjawab:** siapa yang memulai pump di 22.41–22.42, dan kontribusi penuh 22.45–23.00. Keduanya membutuhkan paging penuh atau `cvd.py` di mesin lokal.
+
+---
+
 ## 2026-10-13 — Sweep: urut menurut skor, kolom Kohort dilebarkan, refresh per token
 
 - **Urutan tabel** sekarang menurut skor `lolos/punya data` tertinggi (permintaan

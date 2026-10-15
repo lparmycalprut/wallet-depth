@@ -453,32 +453,17 @@ class EvaluateTest(unittest.TestCase):
         self.assertEqual(without["targets"], [])
 
 
-class CostGateTest(unittest.TestCase):
-    """Gate biaya 10x: biaya ≤ 28% MC; di atas itu atau tanpa data = TUNGGU."""
+class CostGateRemovedTest(unittest.TestCase):
+    """Gate biaya 28% dihapus 2026-10-15: biaya 10x hanya informasi."""
 
-    def test_limit_is_fixed_at_28_percent_of_mc_for_10x(self):
-        # 2× acuan dana COCK 10x (14,0% MC), keputusan user 2026-10-14.
+    def test_cost_gate_constants_and_function_removed(self):
         self.assertEqual(ss.COST_GATE_MULT, 10.0)
-        self.assertEqual(ss.COST_GATE_MAX_FRAC, 0.28)
+        self.assertFalse(hasattr(ss, "COST_GATE_MAX_FRAC"))
+        self.assertFalse(hasattr(ss, "cost_gate"))
 
-    def test_boundary_uses_liq_mc_near_25_9_percent(self):
-        # (√10 − 1)/2 = 1,0811 → batas 28% dicapai di liq/MC ≈ 25,90%.
-        self.assertTrue(ss.cost_gate(ss.leverage_cost(10.0, 0.2589))["passed"])
-        self.assertFalse(ss.cost_gate(ss.leverage_cost(10.0, 0.2591))["passed"])
-        self.assertTrue(ss.cost_gate(0.28)["passed"])  # tepat 28% lolos
-        self.assertFalse(ss.cost_gate(0.2801)["passed"])
-
-    def test_missing_cost_is_not_passed(self):
-        gate = ss.cost_gate(None)
-        self.assertFalse(gate["passed"])
-        self.assertTrue(gate["status"].startswith("TUNGGU"))
-        self.assertIn("belum ada data", gate["status"])
-
-    def test_cockroach_reference_passes(self):
-        # COCK liq/MC 12,95% → biaya 10x = 14,0% MC, di bawah batas 28% (2× acuan).
-        gate = ss.cost_gate(ss.leverage_cost(10.0, 0.1295))
-        self.assertTrue(gate["passed"])
-        self.assertEqual(gate["status"], "LOLOS")
+    def test_leverage_cost_still_computed_for_display(self):
+        # Angka informasi tetap benar: COCK liq/MC 12,95% → biaya 10x 14,0% MC.
+        self.assertAlmostEqual(ss.leverage_cost(10.0, 0.1295), 0.1400, places=4)
 
 
 class CostUsdTest(unittest.TestCase):
@@ -520,35 +505,27 @@ class CostGateEvaluateTest(unittest.TestCase):
         metrics.update(over)
         return metrics
 
-    def test_cost_over_28_percent_turns_verdict_to_tunggu_even_if_cohort_passes(self):
-        # liq/MC 80% → biaya 10x ≈ 86,5% MC > 28%.
+    def test_cost_over_28_percent_no_longer_blocks_verdict(self):
+        # liq/MC 80% → biaya 10x ≈ 86,5% MC: tetap informasi, bukan TUNGGU.
         result = ss.evaluate(self._metrics(liq_usd=MC_USD * 0.80), snapshots=[], candles=[],
                              cohort_candles=_birth_candles(),
                              now=1000 + 49 * 3600)
         self.assertTrue(result["cohort_gate_passed"])
-        self.assertFalse(result["cost_gate_passed"])
-        self.assertFalse(result["eligible"])
-        self.assertTrue(result["verdict"].startswith("TUNGGU — biaya 10x"))
-        self.assertIn("batas 28%", result["verdict"])
         self.assertGreater(result["cost_10x_mc_frac"], 0.28)
+        self.assertNotIn("cost_gate_passed", result)
+        self.assertNotIn("biaya 10x", result["verdict"])
 
-    def test_liq_mc_at_old_structural_max_now_fails_cost_gate(self):
-        # liq/MC 35% → biaya 10x ≈ 37,8% MC > 28%: kriteria token/MC tidak
-        # membatasi sisi quote, jadi gate biaya yang menahan.
+    def test_liq_mc_at_old_structural_max_no_longer_tunggu(self):
+        # liq/MC 35% → biaya 10x ≈ 37,8% MC: sebelumnya TUNGGU, kini tidak.
         result = ss.evaluate(self._metrics(), snapshots=[], candles=[],
                              cohort_candles=_birth_candles(),
                              now=1000 + 49 * 3600)
-        self.assertFalse(result["cost_gate_passed"])
-        self.assertTrue(result["verdict"].startswith("TUNGGU — biaya 10x"))
+        self.assertNotIn("biaya 10x", result["verdict"])
+        self.assertAlmostEqual(result["cost_10x_mc_frac"],
+                               ss.leverage_cost(10.0, 0.35))
 
-    def test_liq_mc_at_cockroach_reference_passes_cost_gate(self):
-        # liq/MC COCK 12,95% → biaya 10x 14,0% MC ≤ 28%.
-        result = ss.evaluate(self._metrics(liq_usd=30232.0), snapshots=[], candles=[],
-                             cohort_candles=_birth_candles(),
-                             now=1000 + 49 * 3600)
-        self.assertTrue(result["cost_gate_passed"])
-
-    def test_missing_liq_mc_is_tunggu_not_eligible(self):
+    def test_missing_liq_mc_leaves_cost_unknown_and_not_eligible(self):
+        # Tanpa liq/MC biaya 10x = None; kriteria token/MC tanpa data menahan LAYAK.
         result = ss.evaluate({"liq_usd": None, "fdv_usd": None,
                               "price_usd": 0.49, "pair_created_at": 1000,
                               "holder_cost_basis": 2.0,
@@ -556,9 +533,8 @@ class CostGateEvaluateTest(unittest.TestCase):
                              snapshots=[], candles=[],
                              cohort_candles=_birth_candles(),
                              now=1000 + 49 * 3600)
-        self.assertFalse(result["cost_gate_passed"])
+        self.assertIsNone(result["cost_10x_mc_frac"])
         self.assertFalse(result["eligible"])
-        self.assertTrue(result["verdict"].startswith("TUNGGU"))
 
     def test_cohort_gate_still_wins_when_it_fails(self):
         # harga 0,52 = minus ~48% → kohort belum lolos, biaya tidak relevan.
@@ -569,10 +545,9 @@ class CostGateEvaluateTest(unittest.TestCase):
                          "TUNGGU — kohort belum minus 50%")
         self.assertEqual(result["verdict"], result["cohort_gate_status"])
 
-    def test_cost_gate_does_not_break_stored_view_keys(self):
+    def test_cost_fields_still_stored_in_view(self):
         import sweep_store
-        for key in ("cost_10x_mc_frac", "cost_gate_status", "cost_gate_passed",
-                    "cost_gate_detail", "reference_fund_usd"):
+        for key in ("cost_10x_mc_frac", "reference_fund_usd"):
             self.assertIn(key, sweep_store.VIEW_RESULT_KEYS)
 
 
@@ -611,7 +586,7 @@ class HolderCostGateTest(unittest.TestCase):
 
 class HolderCostGateEvaluateTest(unittest.TestCase):
     def _metrics(self, **over):
-        # liq/MC 10% → biaya 10x ≈ 21,6% MC, jadi gate biaya tidak ikut kalah.
+        # liq/MC 10% → biaya 10x ≈ 21,6% MC (informasi saja, tidak menahan vonis).
         metrics = {"mint": "M", "price_usd": 0.49, "pair_created_at": 1000,
                    "holder_cost_basis": 2.0, "holder_cost_balance": 1.0,
                    "liq_usd": MC_USD * 0.1, "fdv_usd": MC_USD,
@@ -628,7 +603,6 @@ class HolderCostGateEvaluateTest(unittest.TestCase):
     def test_low_holder_avg_cost_turns_verdict_to_tunggu(self):
         result = self._run(holder_min_avg_cost=0.1)
         self.assertTrue(result["cohort_gate_passed"])
-        self.assertTrue(result["cost_gate_passed"])
         self.assertFalse(result["holder_gate_passed"])
         self.assertFalse(result["eligible"])
         self.assertTrue(result["verdict"].startswith("TUNGGU — avg buy holder"))
@@ -662,14 +636,38 @@ class HolderCostGateEvaluateTest(unittest.TestCase):
         self.assertEqual(result["verdict"], "TANPA DATA — kohort")
         self.assertEqual(result["color"], "#64748b")
 
-    def test_cost_gate_still_wins_over_holder_gate(self):
+    def test_holder_gate_decides_when_cost_is_high(self):
+        # Biaya 10x tinggi tidak lagi mendahului gate holder.
         result = ss.evaluate(self._metrics(liq_usd=MC_USD * 0.80,
                                            holder_min_avg_cost=0.1),
                              snapshots=[], candles=[],
                              cohort_candles=_birth_candles(),
                              now=1000 + 49 * 3600)
-        self.assertFalse(result["cost_gate_passed"])
-        self.assertTrue(result["verdict"].startswith("TUNGGU — biaya 10x"))
+        self.assertTrue(result["verdict"].startswith("TUNGGU — avg buy holder"))
+
+
+class HolderAvgBuyMcTest(unittest.TestCase):
+    """Avg buy holder tertimbang dalam MC: basis ÷ saldo × MC ÷ harga."""
+
+    def test_weighted_avg_buy_converted_to_market_cap(self):
+        # avg buy USD = 2,0 ÷ 1,0 = 2,0; MC ÷ harga = 1.000.000 ÷ 0,5 → 4.000.000 MC.
+        value = ss.holder_avg_buy_mc(2.0, 1.0, 0.5, 1_000_000.0)
+        self.assertAlmostEqual(value, 4_000_000.0, places=4)
+
+    def test_equals_avg_buy_times_supply(self):
+        # MC = harga × supply, jadi avg buy MC = avg buy USD × supply.
+        price, mc = 0.00023, 233_451.0
+        supply = mc / price
+        avg_usd = 0.00019
+        value = ss.holder_avg_buy_mc(avg_usd * 1000.0, 1000.0, price, mc)
+        self.assertAlmostEqual(value, avg_usd * supply, places=2)
+
+    def test_missing_or_invalid_inputs_return_none(self):
+        self.assertIsNone(ss.holder_avg_buy_mc(None, 1.0, 0.5, 1e6))
+        self.assertIsNone(ss.holder_avg_buy_mc(2.0, 0, 0.5, 1e6))
+        self.assertIsNone(ss.holder_avg_buy_mc(2.0, 1.0, 0, 1e6))
+        self.assertIsNone(ss.holder_avg_buy_mc(2.0, 1.0, 0.5, None))
+        self.assertIsNone(ss.holder_avg_buy_mc(-1.0, 1.0, 0.5, 1e6))
 
 
 class DetectSweepTest(unittest.TestCase):
