@@ -957,3 +957,106 @@ class CohortFetchErrorTest(unittest.TestCase):
     def test_generic_message_kept_without_fetch_error(self):
         profile = ss.cohort_profile([], 1_000, 1.0, now=1_000 + 3600)
         self.assertEqual(profile["error"], "OHLCV 48 jam pertama tidak tersedia")
+
+
+class DecideVerdictTest(unittest.TestCase):
+    """Rantai vonis tanpa gate biaya (2026-10-15)."""
+
+    COHORT_OK = {"passed": True, "status": "LOLOS"}
+    HOLDER_OK = {"passed": True, "gap": 0.10, "status": "LOLOS"}
+
+    def test_passing_gates_and_score_is_layak(self):
+        verdict, _ = ss.decide_verdict(self.COHORT_OK, self.HOLDER_OK,
+                                       score=0.8, passed_count=4, score_ok=True)
+        self.assertEqual(verdict, ss.VERDICT_LAYAK[0])
+
+    def test_high_cost_does_not_block_layak(self):
+        # Biaya 10x sudah tidak masuk argumen; gap holder 31% (< 50%) tetap lolos.
+        holder = {"passed": True, "gap": 0.315, "status": "LOLOS"}
+        verdict, _ = ss.decide_verdict(self.COHORT_OK, holder,
+                                       score=0.8, passed_count=4, score_ok=True)
+        self.assertEqual(verdict, "LAYAK SWEEP")
+
+    def test_holder_wait_shows_holder_status(self):
+        holder = {"passed": False, "gap": 0.8, "status": "TUNGGU — avg buy holder 80% di bawah harga"}
+        verdict, color = ss.decide_verdict(self.COHORT_OK, holder,
+                                           score=0.8, passed_count=4, score_ok=True)
+        self.assertEqual(verdict, holder["status"])
+        self.assertEqual(color, "#b45309")
+
+    def test_cohort_wait_shows_cohort_status(self):
+        cohort = {"passed": False, "status": "TUNGGU — kohort"}
+        verdict, _ = ss.decide_verdict(cohort, self.HOLDER_OK,
+                                       score=0.8, passed_count=4, score_ok=True)
+        self.assertEqual(verdict, "TUNGGU — kohort")
+
+    def test_no_score_is_data_kurang(self):
+        verdict, _ = ss.decide_verdict(self.COHORT_OK, self.HOLDER_OK,
+                                       score=None, passed_count=0, score_ok=False)
+        self.assertEqual(verdict, ss.VERDICT_DATA[0])
+
+    def test_kandidat_and_tidak_layak_by_passed_count(self):
+        kandidat, _ = ss.decide_verdict(self.COHORT_OK, self.HOLDER_OK,
+                                        score=0.5, passed_count=2, score_ok=False)
+        tidak, _ = ss.decide_verdict(self.COHORT_OK, self.HOLDER_OK,
+                                     score=0.2, passed_count=1, score_ok=False)
+        self.assertEqual(kandidat, ss.VERDICT_KANDIDAT[0])
+        self.assertEqual(tidak, ss.VERDICT_TIDAK[0])
+
+
+class CurrentVerdictTest(unittest.TestCase):
+    """Snapshot lama dihitung ulang dari gate tersimpan, tanpa 'biaya 10x'."""
+
+    def stored_human(self):
+        # Field nyata dari snapshot Human 8nPoBHiB (vonis lama 31.2%).
+        return {
+            "verdict": "TUNGGU — biaya 10x 31.2% MC (batas 28%)",
+            "color": "#b45309",
+            "eligible": False,
+            "cohort_gate_passed": True,
+            "cohort_gate_status": "LOLOS",
+            "holder_gate_passed": True,
+            "holder_gate_status": "LOLOS",
+            "holder_gap": 0.3149,
+            "passed_count": 4,
+            "required_count": 4,
+            "score": 0.8,
+            "structural_ok": True,
+        }
+
+    def test_old_cost_verdict_is_replaced(self):
+        new = ss.current_verdict(self.stored_human())
+        self.assertEqual(new["verdict"], "LAYAK SWEEP")
+        self.assertTrue(new["eligible"])
+        self.assertNotIn("biaya", new["verdict"])
+        self.assertNotIn("28%", new["verdict"])
+
+    def test_holder_wait_recomputed_from_stored_gap(self):
+        result = self.stored_human()
+        result.update(holder_gate_passed=False, holder_gap=0.52,
+                      holder_gate_status="TUNGGU — avg buy holder 52% di bawah harga")
+        new = ss.current_verdict(result)
+        self.assertEqual(new["verdict"], "TUNGGU — avg buy holder 52% di bawah harga")
+        self.assertFalse(new["eligible"])
+
+    def test_structural_failure_blocks_eligible(self):
+        result = self.stored_human()
+        result["structural_ok"] = False
+        new = ss.current_verdict(result)
+        self.assertFalse(new["eligible"])
+        self.assertNotEqual(new["verdict"], "LAYAK SWEEP")
+
+    def test_snapshot_without_gate_fields_returned_unchanged(self):
+        old = {"verdict": "TIDAK LAYAK", "eligible": False}
+        self.assertIs(ss.current_verdict(old), old)
+        self.assertIsNone(ss.current_verdict(None))
+
+    def test_input_not_mutated(self):
+        result = self.stored_human()
+        before = dict(result)
+        ss.current_verdict(result)
+        self.assertEqual(result, before)
+
+
+if __name__ == "__main__":
+    unittest.main()

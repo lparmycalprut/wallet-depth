@@ -688,6 +688,10 @@ def _render_threshold() -> None:
 def _render_results(watchlist, state) -> None:
     """Tabel + detail + statistik dari snapshot terakhir tiap mint watchlist."""
     views, missing = store.watchlist_views(state, watchlist)
+    # Vonis tersimpan dihitung ulang dari gate yang sudah ada (tanpa gate biaya),
+    # supaya snapshot lama tidak lagi menampilkan "TUNGGU — biaya 10x …".
+    views = [{**view, "result": screen.current_verdict(view.get("result"))}
+             for view in views]
     placeholders = []
     for mint in missing:
         placeholder = _placeholder_row(mint)

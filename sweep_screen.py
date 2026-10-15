@@ -233,6 +233,54 @@ def holder_avg_buy_mc(cost_basis, balance_total, price_usd, mc_usd):
     return (basis / balance) * (mc / price)
 
 
+def decide_verdict(cohort_gate, holder_gate, *, score, passed_count, score_ok):
+    """Rantai vonis: kohort → holder → data → LAYAK / KANDIDAT / TIDAK LAYAK.
+
+    Gate biaya 10x tidak ada di sini (dihapus 2026-10-15). Mengembalikan
+    ``(vonis, warna)``.
+    """
+    cohort_missing = str(cohort_gate["status"]).startswith("TANPA DATA")
+    holder_wait = not holder_gate["passed"] and holder_gate.get("gap") is not None
+    if not cohort_gate["passed"] and not (cohort_missing and holder_wait):
+        return cohort_gate["status"], ("#64748b" if cohort_missing else "#b45309")
+    if not holder_gate["passed"]:
+        return holder_gate["status"], "#b45309"
+    if score is None:
+        return VERDICT_DATA
+    if score_ok:
+        return VERDICT_LAYAK
+    if passed_count >= 2:
+        return VERDICT_KANDIDAT
+    return VERDICT_TIDAK
+
+
+def current_verdict(result):
+    """Vonis dan ``eligible`` kini dari gate yang **sudah tersimpan** di snapshot.
+
+    Snapshot lama (sebelum gate biaya 28% dihapus) masih memuat vonis
+    ``TUNGGU — biaya 10x …``. Kriteria dan gate kohort/holder tidak bergantung
+    pada biaya, jadi vonis dihitung ulang dari field yang tersimpan tanpa
+    mengambil data baru. Snapshot tanpa field gate dikembalikan apa adanya.
+    """
+    if (not isinstance(result, dict) or "cohort_gate_status" not in result
+            or "holder_gate_status" not in result):
+        return result
+    required = _num(result.get("required_count"))
+    passed = _num(result.get("passed_count")) or 0
+    score = _num(result.get("score"))
+    score_ok = bool(score is not None and required is not None
+                    and passed >= required and result.get("structural_ok"))
+    cohort_gate = {"passed": bool(result.get("cohort_gate_passed")),
+                   "status": str(result.get("cohort_gate_status") or "")}
+    holder_gate = {"passed": bool(result.get("holder_gate_passed")),
+                   "gap": _num(result.get("holder_gap")),
+                   "status": str(result.get("holder_gate_status") or "")}
+    verdict, color = decide_verdict(cohort_gate, holder_gate, score=score,
+                                    passed_count=int(passed), score_ok=score_ok)
+    eligible = bool(cohort_gate["passed"] and holder_gate["passed"] and score_ok)
+    return {**result, "verdict": verdict, "color": color, "eligible": eligible}
+
+
 def pool_token_mc_frac(pool_base_usd, mc_usd):
     """Nilai token di sisi pool sebagai fraksi MC (mis. 0,078 = 7,8% MC).
 
@@ -890,21 +938,8 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
     eligible = bool(gate["passed"] and holder_gate["passed"] and score_ok)
     # Gate holder yang sudah terhitung (TUNGGU, bukan "belum ada data") tetap
     # tampil walau kohort TANPA DATA: data holder tidak bergantung pada candle.
-    cohort_missing = str(gate["status"]).startswith("TANPA DATA")
-    holder_wait = not holder_gate["passed"] and holder_gate["gap"] is not None
-    if not gate["passed"] and not (cohort_missing and holder_wait):
-        verdict, color = gate["status"], (
-            "#64748b" if cohort_missing else "#b45309")
-    elif not holder_gate["passed"]:
-        verdict, color = holder_gate["status"], "#b45309"
-    elif score is None:
-        verdict, color = VERDICT_DATA
-    elif score_ok:
-        verdict, color = VERDICT_LAYAK
-    elif len(passed) >= 2:
-        verdict, color = VERDICT_KANDIDAT
-    else:
-        verdict, color = VERDICT_TIDAK
+    verdict, color = decide_verdict(gate, holder_gate, score=score,
+                                    passed_count=len(passed), score_ok=score_ok)
 
     vol24 = _num(metrics.get("vol24_usd"))
     if vol24 is None:
