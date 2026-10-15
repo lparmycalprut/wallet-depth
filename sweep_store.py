@@ -474,8 +474,7 @@ VIEW_RESULT_KEYS = (
     "structural_ok", "eligible", "verdict", "color", "liq_mc", "targets",
     "reference_fund_x", "reference_fund_usd", "turnover_x", "cohort",
     "cohort_gate_status", "cohort_gate_passed", "cohort_gate_detail",
-    "cost_10x_mc_frac", "cost_gate_status", "cost_gate_passed",
-    "cost_gate_detail", "gmgn_status_avg_cost", "holder_min_avg_cost", "holder_gap",
+    "cost_10x_mc_frac", "gmgn_status_avg_cost", "holder_min_avg_cost", "holder_gap",
     "holder_gate_status", "holder_gate_passed", "holder_gate_detail",
     "missing",
 )
