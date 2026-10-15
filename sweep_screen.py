@@ -214,18 +214,17 @@ def holder_cost_gate(min_avg_cost, price_usd) -> dict:
     return {"passed": True, "gap": gap, "status": "LOLOS", "detail": detail}
 
 
-def holder_lowest_buy_vs_mc(min_avg_cost, price_usd):
-    """Selisih lowest buy terhadap MC saat ini: ``min_avg ÷ harga − 1``.
+def holder_price_change_vs_lowest_buy(min_avg_cost, price_usd):
+    """Perubahan harga sekarang terhadap lowest buy: ``harga ÷ min_avg − 1``.
 
-    Karena MC ÷ harga = supply yang sama untuk kedua sisi, ini sama dengan
-    ``lowest buy MC ÷ MC − 1``. Positif = avg buy terendah di atas harga sekarang,
-    negatif = di bawah harga. Tanpa data = None.
+    Positif = harga sudah naik dari avg buy terendah, negatif = sudah turun.
+    Tanpa data = None.
     """
     low = _num(min_avg_cost)
     price = _num(price_usd)
     if low is None or price is None or low <= 0 or price <= 0:
         return None
-    return low / price - 1.0
+    return price / low - 1.0
 
 
 def holder_lowest_buy_mc(min_avg_cost, price_usd, mc_usd):

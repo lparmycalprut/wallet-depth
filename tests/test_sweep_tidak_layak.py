@@ -24,37 +24,33 @@ def _row(verdict, *, cohort_status="LOLOS", cohort_passed=True, scan_error=None)
     return row
 
 
-class LowestBuyVsMcTest(unittest.TestCase):
-    def test_negative_when_lowest_buy_below_price(self):
-        diff = ss.holder_lowest_buy_vs_mc(HUMAN_MIN_AVG, HUMAN_PRICE)
-        self.assertAlmostEqual(diff, HUMAN_MIN_AVG / HUMAN_PRICE - 1.0)
-        self.assertLess(diff, 0)
-        self.assertAlmostEqual(diff, -0.3149, places=3)
+class LowestBuyPriceMoveTest(unittest.TestCase):
+    def test_price_risen_since_lowest_buy(self):
+        # Human: harga 0,0002133 ÷ lowest buy 0,000146 − 1 ≈ +46% (naik)
+        move = ss.holder_price_change_vs_lowest_buy(HUMAN_MIN_AVG, HUMAN_PRICE)
+        self.assertAlmostEqual(move, HUMAN_PRICE / HUMAN_MIN_AVG - 1.0)
+        self.assertGreater(move, 0)
 
-    def test_equals_lowest_buy_mc_over_mc_minus_one(self):
-        low_mc = ss.holder_lowest_buy_mc(HUMAN_MIN_AVG, HUMAN_PRICE, HUMAN_MC)
-        diff = ss.holder_lowest_buy_vs_mc(HUMAN_MIN_AVG, HUMAN_PRICE)
-        self.assertAlmostEqual(diff, low_mc / HUMAN_MC - 1.0, places=9)
-
-    def test_positive_when_lowest_buy_above_price(self):
-        self.assertAlmostEqual(ss.holder_lowest_buy_vs_mc(0.3, 0.2), 0.5)
+    def test_price_fallen_below_lowest_buy(self):
+        self.assertAlmostEqual(ss.holder_price_change_vs_lowest_buy(0.2, 0.15), -0.25)
 
     def test_missing_inputs_return_none(self):
-        self.assertIsNone(ss.holder_lowest_buy_vs_mc(None, HUMAN_PRICE))
-        self.assertIsNone(ss.holder_lowest_buy_vs_mc(HUMAN_MIN_AVG, 0))
-        self.assertIsNone(ss.holder_lowest_buy_vs_mc(-1.0, HUMAN_PRICE))
+        self.assertIsNone(ss.holder_price_change_vs_lowest_buy(None, HUMAN_PRICE))
+        self.assertIsNone(ss.holder_price_change_vs_lowest_buy(HUMAN_MIN_AVG, 0))
+        self.assertIsNone(ss.holder_price_change_vs_lowest_buy(-1.0, HUMAN_PRICE))
 
-    def test_signed_percent_formatting(self):
-        self.assertEqual(ui._fmt_signed_pct(-0.3149), "−31.5%")
-        self.assertEqual(ui._fmt_signed_pct(0.5), "+50.0%")
-        self.assertEqual(ui._fmt_signed_pct(0.0), "+0.0%")
-        self.assertEqual(ui._fmt_signed_pct(None), "—")
+    def test_price_move_formatting(self):
+        self.assertEqual(ui._fmt_price_move(0.381), "naik 38.1%")
+        self.assertEqual(ui._fmt_price_move(-0.058), "turun 5.8%")
+        self.assertEqual(ui._fmt_price_move(0.0), "tetap")
+        self.assertEqual(ui._fmt_price_move(None), "—")
 
-    def test_cell_shows_value_and_signed_diff(self):
+    def test_cell_shows_value_and_price_move(self):
         cell = ui._lowest_buy_cell({"holder_min_avg_cost": HUMAN_MIN_AVG,
                                     "price_usd": HUMAN_PRICE,
                                     "fdv_usd": HUMAN_MC})
-        self.assertIn("(−31.5% vs MC)", cell)
+        move_pct = (HUMAN_PRICE / HUMAN_MIN_AVG - 1.0) * 100
+        self.assertIn(f"(harga naik {move_pct:.1f}%)", cell)
         self.assertTrue(cell.startswith("$"))
 
     def test_cell_without_data_is_dash(self):
