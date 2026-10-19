@@ -481,6 +481,21 @@ def _render_cohort(metrics, result) -> None:
                f"{result.get('cohort_gate_detail') or 'data belum tersedia'}")
 
 
+def _render_order_flow(result) -> None:
+    """Order flow dari candle jam: info saja, tidak memengaruhi vonis."""
+    flow = result.get("order_flow") or {}
+    if not flow.get("available"):
+        st.caption(f"🔎 Order flow: {flow.get('reason') or 'belum ada data'}")
+        return
+    labels = flow.get("labels") or []
+    st.caption("🔎 Order flow (info, tidak memengaruhi vonis): "
+               + ("; ".join(labels) if labels else "tidak ada pola struktur terbaru"))
+    poc, dist = flow.get("poc_price"), flow.get("poc_dist")
+    if poc is not None and dist is not None:
+        st.caption(f"Volume node {flow.get('poc_bars')} jam (POC): ${poc:.8g} · "
+                   f"harga {dist * 100:+.1f}% dari POC")
+
+
 def _render_details(rows) -> None:
     for row in rows or []:
         metrics = row.get("metrics") or {}
@@ -510,6 +525,7 @@ def _render_details(rows) -> None:
             if shakeout.get("breached"):
                 st.warning("⚠️ Kriteria 6 tetap lolos (latch permanen), tetapi low "
                            f"shakeout sudah dilanggar: {shakeout.get('detail') or ''}")
+            _render_order_flow(result)
             if metrics.get("error"):
                 st.warning(f"Sumber data: {metrics['error']}")
             st.caption(

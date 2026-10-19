@@ -476,7 +476,7 @@ VIEW_RESULT_KEYS = (
     "cohort_gate_status", "cohort_gate_passed", "cohort_gate_detail",
     "cost_10x_mc_frac", "gmgn_status_avg_cost", "holder_min_avg_cost", "holder_gap",
     "holder_gate_status", "holder_gate_passed", "holder_gate_detail",
-    "missing",
+    "missing", "order_flow",
 )
 
 
