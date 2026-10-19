@@ -155,6 +155,21 @@ Baris dengan vonis `TIDAK LAYAK` diperlakukan seperti `SKIP — kohort plus`: di
 paling bawah dan tidak tampil di tabel utama. Baris tersebut muncul di tabel
 terpisah ("Tampilkan N mint yang disembunyikan"). Baris dengan scan terakhir gagal
 tidak pernah disembunyikan. Baris `SKIP — kohort plus` sendiri tetap tampil di bawah.
+
+### Order flow (info saja, 2026-10-15)
+
+Dibaca dari candle jam yang sudah ada (`screen.order_flow_info`). Hasilnya disimpan
+di `result["order_flow"]` dan ditampilkan di panel detail. **Tidak memengaruhi**
+kriteria, skor, vonis, `eligible`, urutan, maupun filter tampilan.
+
+| Pola | Aturan |
+| --- | --- |
+| BOS naik | close candle terakhir > high 20 jam sebelumnya |
+| Sweep low lalu reclaim | low candle terakhir < low 20 jam sebelumnya, tetapi close di atasnya |
+| Penolakan ekor bawah | ekor bawah ≥ 50% range dan close di separuh atas |
+| Volume node (POC) | level harga dengan volume terbanyak pada 48 jam terakhir; volume tiap candle dialokasikan ke level close-nya (24 level) |
+
+Delta per candle dari trade (GMGN) belum diimplementasikan.
 | `LOLOS` | `1 − min_avg / harga ≤ 0,50` |
 
 Gate ini diuji setelah gate kohort, sebelum skor. Batas 50% adalah

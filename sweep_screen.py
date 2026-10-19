@@ -1004,6 +1004,8 @@ def evaluate(metrics, *, snapshots=None, candles=None, cohort_candles=None,
         "cohort_gate_passed": gate["passed"],
         "cohort_gate_detail": gate["detail"],
         "missing": [c["key"] for c in checks if not c["has_data"]],
+        # Info saja: tidak dipakai untuk vonis, eligible, urutan, atau filter.
+        "order_flow": order_flow_info(candles),
     }
 
 
@@ -1074,6 +1076,87 @@ def detect_sweep(candles, *, spike_mult: float = SWEEP_VOL_MULT,
             "bars_ago": len(rows) - 1 - idx,
         }
     return None
+
+
+#: Order flow (info saja, 2026-10-15): dibaca dari candle jam yang sudah ada.
+#: Tidak memengaruhi kriteria, skor, vonis, ``eligible``, urutan, maupun filter.
+ORDER_FLOW_LOOKBACK = 20   # jam: jendela struktur untuk BOS dan sweep low
+ORDER_FLOW_POC_BARS = 48   # jam: jendela volume profile
+ORDER_FLOW_BINS = 24       # jumlah level harga pada volume profile
+ORDER_FLOW_WICK_MIN = 0.5  # ekor bawah minimal 50% dari range candle
+ORDER_FLOW_LABELS = {
+    "bos_up": "BOS naik (close di atas high {n} jam sebelumnya)",
+    "sweep_reclaim": "sweep low lalu reclaim (low menembus {n} jam, close kembali di atas)",
+    "wick_rejection": "ekor bawah panjang, close di separuh atas (penolakan harga bawah)",
+}
+
+
+def _order_flow_rows(candles):
+    rows = []
+    for c in candles or []:
+        if not isinstance(c, (list, tuple)) or len(c) < 6:
+            continue
+        vals = [_num(x) for x in c[:6]]
+        if any(v is None for v in vals[:5]):
+            continue
+        ts, o, h, low, close, vol = vals[0], vals[1], vals[2], vals[3], vals[4], vals[5] or 0.0
+        if h < low or low <= 0:
+            continue
+        rows.append((ts, o, h, low, close, vol))
+    return sorted(rows, key=lambda r: r[0])
+
+
+def order_flow_info(candles, *, lookback: int = ORDER_FLOW_LOOKBACK,
+                    poc_bars: int = ORDER_FLOW_POC_BARS,
+                    bins: int = ORDER_FLOW_BINS):
+    """Pola order flow dari candle jam (info saja, tidak masuk vonis).
+
+    - ``bos_up``: close candle terakhir di atas high ``lookback`` jam sebelumnya.
+    - ``sweep_reclaim``: low candle terakhir menembus low ``lookback`` jam
+      sebelumnya, tetapi close kembali di atasnya.
+    - ``wick_rejection``: ekor bawah ≥ 50% range dan close di separuh atas.
+    - Volume node: POC = pusat level harga dengan volume terbanyak pada
+      ``poc_bars`` jam terakhir (volume tiap candle dialokasikan ke level close-nya).
+    """
+    rows = _order_flow_rows(candles)
+    need = lookback + 1
+    if len(rows) < need:
+        return {"available": False, "flags": [], "labels": [],
+                "poc_price": None, "poc_dist": None,
+                "reason": f"butuh {need} candle jam, baru {len(rows)}"}
+    _ts, o, h, low, close, _vol = rows[-1]
+    prior = rows[-1 - lookback:-1]
+    prior_high = max(r[2] for r in prior)
+    prior_low = min(r[3] for r in prior)
+    flags = []
+    if close > prior_high:
+        flags.append("bos_up")
+    if low < prior_low and close > prior_low:
+        flags.append("sweep_reclaim")
+    rng = h - low
+    if rng > 0:
+        lower_wick = (min(o, close) - low) / rng
+        if lower_wick >= ORDER_FLOW_WICK_MIN and close >= (h + low) / 2:
+            flags.append("wick_rejection")
+    poc_price = poc_dist = None
+    window = rows[-poc_bars:] if poc_bars > 0 else []
+    lo = min((r[3] for r in window), default=None)
+    hi = max((r[2] for r in window), default=None)
+    total_vol = sum(r[5] for r in window)
+    if lo is not None and hi is not None and hi > lo and total_vol > 0 and bins > 0:
+        width = (hi - lo) / bins
+        buckets = [0.0] * bins
+        for r in window:
+            idx = min(bins - 1, max(0, int((r[4] - lo) / width)))
+            buckets[idx] += r[5]
+        top = max(range(bins), key=lambda i: buckets[i])
+        poc_price = lo + (top + 0.5) * width
+        if poc_price > 0:
+            poc_dist = close / poc_price - 1.0
+    labels = [ORDER_FLOW_LABELS[f].format(n=lookback) for f in flags]
+    return {"available": True, "flags": flags, "labels": labels,
+            "poc_price": poc_price, "poc_dist": poc_dist,
+            "bars": len(rows), "lookback": lookback, "poc_bars": poc_bars}
 
 
 def sweep_context(event, liq_mc, fdv_usd, *, market_cap_usd=None,
