@@ -28,6 +28,20 @@ def _stale_hidden_state(mint="M"):
     return state
 
 
+_DELTA_PATCH = None
+
+
+def setUpModule():
+    global _DELTA_PATCH
+    import _offline_delta
+    _DELTA_PATCH = _offline_delta.start()
+
+
+def tearDownModule():
+    if _DELTA_PATCH is not None:
+        _DELTA_PATCH.stop()
+
+
 class ScanFailureNotHiddenTest(unittest.TestCase):
     def test_stale_view_is_hidden_without_failure_flag(self):
         # Baseline: view lama yang memenuhi filter memang disembunyikan.

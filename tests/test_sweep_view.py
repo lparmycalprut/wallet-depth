@@ -19,6 +19,20 @@ from tests.test_sweep_scan import MINT, _Sandbox
 OTHER = "EcZndAERfzNhLirHwfsy44dAyPSZazjDU83pa6RApump"
 
 
+_DELTA_PATCH = None
+
+
+def setUpModule():
+    global _DELTA_PATCH
+    import _offline_delta
+    _DELTA_PATCH = _offline_delta.start()
+
+
+def tearDownModule():
+    if _DELTA_PATCH is not None:
+        _DELTA_PATCH.stop()
+
+
 class ViewPersistenceTest(_Sandbox):
     def test_scan_attaches_view_to_latest_snapshot(self):
         state = store.empty_state()

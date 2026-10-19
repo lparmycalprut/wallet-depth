@@ -1159,6 +1159,107 @@ def order_flow_info(candles, *, lookback: int = ORDER_FLOW_LOOKBACK,
             "bars": len(rows), "lookback": lookback, "poc_bars": poc_bars}
 
 
+#: Delta dari trade (info saja, 2026-10-15). Trade GMGN per jam: delta = beli − jual
+#: (USD), CVD = jumlah delta dalam jendela. Tidak memengaruhi vonis atau urutan.
+DELTA_WINDOW_HOURS = 6        # jendela CVD
+DELTA_MAX_PAGES = 10          # batas halaman GMGN per mint (100 trade/halaman)
+DELTA_BUCKET_SEC = 3600       # satu bucket = satu jam (sama dengan candle jam)
+DELTA_ABSORB_PCT = 0.20       # delta ≥ +20% dari volume jam, harga tidak naik
+DELTA_SPIKE_PCT = 0.50        # |delta| ≥ 50% dari volume jam ...
+DELTA_FLAT_PRICE = 0.02       # ... tetapi harga bergerak < 2%
+DELTA_LABELS = {
+    "div_bearish": "divergensi bearish: harga high baru, CVD lebih rendah dari high sebelumnya",
+    "absorb": "penyerapan: delta beli kuat, harga tidak naik",
+    "spike_no_progress": "delta ekstrem tanpa kemajuan harga (liquidity grab, bukan breakout)",
+}
+
+
+def delta_candidate(result) -> bool:
+    """Mint yang layak diambil trade-nya: kohort minus/tunggu, bukan SKIP/TANPA DATA/TIDAK LAYAK."""
+    result = result or {}
+    if is_tidak_layak(result):
+        return False
+    status = str(result.get("cohort_gate_status") or "")
+    return status.startswith(("TUNGGU", "LOLOS"))
+
+
+def delta_info(trades, candles, *, now, complete: bool = True,
+               window_hours: int = DELTA_WINDOW_HOURS,
+               bucket_sec: int = DELTA_BUCKET_SEC):
+    """Delta dan CVD per jam dari trade ter-normalisasi (info saja).
+
+    ``trades`` = iterable tuple ``(side, usd, ts)`` dengan side ``buy``/``sell``.
+    ``candles`` = candle jam ``[ts, o, h, l, c, v]`` untuk harga per bucket.
+    Jam tanpa trade dihitung delta 0. CVD dimulai dari awal jendela.
+    """
+    now = int(now)
+    end = (now // bucket_sec) * bucket_sec
+    start = end - (window_hours - 1) * bucket_sec
+    buckets = {}
+    count = 0
+    for trade in trades or []:
+        try:
+            side, usd, ts = trade[0], float(trade[1]), int(trade[2])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if side not in ("buy", "sell") or usd <= 0 or ts < start or ts > now:
+            continue
+        key = (ts // bucket_sec) * bucket_sec
+        item = buckets.setdefault(key, {"buy": 0.0, "sell": 0.0})
+        item[side] += usd
+        count += 1
+    if count == 0:
+        reason = ("data trade tidak lengkap" if not complete
+                  else f"tidak ada trade dalam {window_hours} jam")
+        return {"available": False, "complete": bool(complete), "reason": reason,
+                "trades": 0, "flags": [], "labels": []}
+    prices = {}
+    for row in _order_flow_rows(candles):
+        prices[int(row[0])] = row[4]
+    rows, cvd = [], 0.0
+    for key in range(start, end + 1, bucket_sec):
+        item = buckets.get(key, {"buy": 0.0, "sell": 0.0})
+        delta = item["buy"] - item["sell"]
+        total = item["buy"] + item["sell"]
+        cvd += delta
+        rows.append({"ts": key, "buy": item["buy"], "sell": item["sell"],
+                     "delta": delta,
+                     "delta_pct": (delta / total) if total > 0 else 0.0,
+                     "cvd": cvd, "price": prices.get(key)})
+    # Harga dan delta jam terakhir dibandingkan dengan jam sebelumnya yang punya harga.
+    last = rows[-1]
+    prior_priced = [r for r in rows[:-1] if r["price"]]
+    price_chg = None
+    if last["price"] and prior_priced:
+        price_chg = last["price"] / prior_priced[-1]["price"] - 1.0
+    flags = []
+    if last["price"] and prior_priced:
+        high = max(r["price"] for r in prior_priced)
+        if last["price"] > high:
+            at_high = [r for r in prior_priced if r["price"] == high][-1]
+            if last["cvd"] < at_high["cvd"]:
+                flags.append("div_bearish")
+    total_last = last["buy"] + last["sell"]
+    if total_last > 0 and price_chg is not None:
+        if last["delta_pct"] >= DELTA_ABSORB_PCT and price_chg <= 0:
+            flags.append("absorb")
+        if (abs(last["delta_pct"]) >= DELTA_SPIKE_PCT
+                and abs(price_chg) < DELTA_FLAT_PRICE):
+            flags.append("spike_no_progress")
+    return {
+        "available": True, "complete": bool(complete), "trades": count,
+        "window_hours": window_hours,
+        "buy_usd": sum(v["buy"] for v in buckets.values()),
+        "sell_usd": sum(v["sell"] for v in buckets.values()),
+        "cvd_usd": cvd,
+        "last": {k: last[k] for k in ("ts", "buy", "sell", "delta", "delta_pct", "price")}
+                | {"price_chg": price_chg},
+        "flags": flags,
+        "labels": [DELTA_LABELS[f] for f in flags],
+        "buckets": [{k: r[k] for k in ("ts", "delta", "cvd")} for r in rows[-window_hours:]],
+    }
+
+
 def sweep_context(event, liq_mc, fdv_usd, *, market_cap_usd=None,
                   price_usd=None, liq_usd=None, net_inflow_usd=None):
     """Perkaya event sweep dengan rumus biaya dorong ke puncak, paper gain, dan churn.

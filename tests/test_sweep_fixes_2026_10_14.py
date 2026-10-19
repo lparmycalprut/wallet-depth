@@ -21,6 +21,20 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 WIB = timezone(timedelta(hours=7))
 
 
+_DELTA_PATCH = None
+
+
+def setUpModule():
+    global _DELTA_PATCH
+    import _offline_delta
+    _DELTA_PATCH = _offline_delta.start()
+
+
+def tearDownModule():
+    if _DELTA_PATCH is not None:
+        _DELTA_PATCH.stop()
+
+
 class LeverageFromBaseMcTest(unittest.TestCase):
     def test_leverage_equals_paper_gain_over_cost(self):
         # Base MC 233.451, supply tetap, harga naik 4x sampai puncak.

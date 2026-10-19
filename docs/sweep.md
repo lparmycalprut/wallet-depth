@@ -170,6 +170,28 @@ kriteria, skor, vonis, `eligible`, urutan, maupun filter tampilan.
 | Volume node (POC) | level harga dengan volume terbanyak pada 48 jam terakhir; volume tiap candle dialokasikan ke level close-nya (24 level) |
 
 Delta per candle dari trade (GMGN) belum diimplementasikan.
+
+### Delta dari trade (info saja, 2026-10-15)
+
+Diambil hanya untuk kandidat (`delta_candidate`: kohort `TUNGGU` atau `LOLOS`,
+bukan `TIDAK LAYAK`). Sumber: GMGN token trades, jendela 6 jam, maksimal 10 halaman
+(100 trade per halaman). Trade dengan nilai USD kosong dibuang.
+
+| Istilah | Rumus |
+| --- | --- |
+| Delta jam | beli USD − jual USD |
+| Delta % | delta ÷ (beli + jual) |
+| CVD | jumlah delta sejak awal jendela (jam tanpa trade = 0) |
+
+| Flag | Aturan (jam terakhir vs jam sebelumnya) |
+| --- | --- |
+| `div_bearish` | harga lebih tinggi dari semua jam sebelumnya di jendela, tetapi CVD lebih rendah dari CVD pada harga tertinggi sebelumnya |
+| `absorb` | delta % ≥ +20% dan harga tidak naik |
+| `spike_no_progress` | \|delta %\| ≥ 50% tetapi \|perubahan harga\| < 2% |
+
+Jika fetch gagal atau data tidak lengkap (batas halaman tercapai), panel menampilkan
+peringatan. `MIN_SOL = 0.05` di `cvd.py` ikut membuang trade kecil. Hasil tidak
+memengaruhi kriteria, skor, vonis, `eligible`, urutan, atau filter tampilan.
 | `LOLOS` | `1 − min_avg / harga ≤ 0,50` |
 
 Gate ini diuji setelah gate kohort, sebelum skor. Batas 50% adalah
