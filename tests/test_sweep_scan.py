@@ -66,6 +66,20 @@ BUNDLE = {
 }
 
 
+_DELTA_PATCH = None
+
+
+def setUpModule():
+    global _DELTA_PATCH
+    import _offline_delta
+    _DELTA_PATCH = _offline_delta.start()
+
+
+def tearDownModule():
+    if _DELTA_PATCH is not None:
+        _DELTA_PATCH.stop()
+
+
 class _Sandbox(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="sweep-scan-")

@@ -481,6 +481,40 @@ def _render_cohort(metrics, result) -> None:
                f"{result.get('cohort_gate_detail') or 'data belum tersedia'}")
 
 
+def _fmt_usd_plain(value, signed: bool = False) -> str:
+    """USD dengan tanda minus di depan: −$1,500 / +$300 / $0."""
+    number = screen._num(value)
+    if number is None:
+        return "—"
+    sign = ("−" if number < 0 else "+") if signed else ("−" if number < 0 else "")
+    return f"{sign}${abs(number):,.0f}"
+
+
+def _render_delta(result) -> None:
+    """Delta dari trade GMGN: info saja, tidak memengaruhi vonis."""
+    delta = result.get("delta")
+    if delta is None:
+        st.caption("⚖️ Delta: tidak diambil (kohort SKIP/TANPA DATA atau TIDAK LAYAK).")
+        return
+    if not delta.get("available"):
+        st.caption(f"⚖️ Delta: {delta.get('reason') or 'belum ada data'}")
+        return
+    last = delta.get("last") or {}
+    chg = last.get("price_chg")
+    chg_txt = f"{chg * 100:+.1f}%" if chg is not None else "—"
+    head = (f"⚖️ Delta {delta.get('window_hours')} jam (info, tidak memengaruhi vonis): "
+            f"beli {_fmt_usd_plain(delta.get('buy_usd'))} · "
+            f"jual {_fmt_usd_plain(delta.get('sell_usd'))} · "
+            f"CVD {_fmt_usd_plain(delta.get('cvd_usd'), signed=True)}")
+    st.caption(head)
+    st.caption(f"Jam terakhir: delta {_fmt_usd_plain(last.get('delta'), signed=True)} "
+               f"({(last.get('delta_pct') or 0) * 100:+.0f}% dari volume jam) · harga {chg_txt}"
+               + ("" if delta.get("complete") else " · ⚠️ data trade tidak lengkap"))
+    labels = delta.get("labels") or []
+    if labels:
+        st.caption("Pola delta: " + "; ".join(labels))
+
+
 def _render_order_flow(result) -> None:
     """Order flow dari candle jam: info saja, tidak memengaruhi vonis."""
     flow = result.get("order_flow") or {}
@@ -526,6 +560,7 @@ def _render_details(rows) -> None:
                 st.warning("⚠️ Kriteria 6 tetap lolos (latch permanen), tetapi low "
                            f"shakeout sudah dilanggar: {shakeout.get('detail') or ''}")
             _render_order_flow(result)
+            _render_delta(result)
             if metrics.get("error"):
                 st.warning(f"Sumber data: {metrics['error']}")
             st.caption(

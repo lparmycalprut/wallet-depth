@@ -19,6 +19,7 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+import cvd
 import sweep_alert as alert
 import sweep_data as data
 import sweep_screen as screen
@@ -63,6 +64,42 @@ def analyze(bundle: dict, snapshots=None, *, state=None, now=None) -> dict:
         market_cap_usd=metrics.get("market_cap_usd")) if event else None
     return {"mint": mint, "metrics": metrics, "result": result,
             "sweep": event, "sweep_context": context}
+
+
+def _gmgn_trades_for_delta(mint: str, from_ts: int, to_ts: int):
+    """Trade GMGN dalam jendela waktu: ``(trades, complete)``.
+
+    Dipanggil secara berurutan (bukan paralel) karena ``cvd`` menyimpan status
+    fetch GMGN secara global.
+    """
+    swaps, *_ = cvd.fetch_gmgn_swaps(
+        mint, from_ts=from_ts, to_ts=to_ts,
+        max_pages=screen.DELTA_MAX_PAGES)
+    complete = bool((cvd.get_gmgn_fetch_status() or {}).get("complete"))
+    trades = [(s[0], s[5], s[2]) for s in swaps or []
+              if isinstance(s, (list, tuple)) and len(s) >= 6
+              and s[5] is not None]
+    return trades, complete
+
+
+def delta_for_result(mint: str, result: dict, *, candles, now: int,
+                     fetch=None):
+    """Delta info untuk satu mint, atau None bila bukan kandidat.
+
+    ``fetch(mint, from_ts, to_ts) -> (trades, complete)`` bisa diganti di tes.
+    Gagal fetch tidak menggagalkan scan: hasilnya ``available = False``.
+    """
+    if not screen.delta_candidate(result):
+        return None
+    fetch = fetch or _gmgn_trades_for_delta
+    window = screen.DELTA_WINDOW_HOURS * 3600
+    try:
+        trades, complete = fetch(mint, now - window, now)
+    except Exception as exc:  # noqa: BLE001 - delta hanya info
+        return {"available": False, "complete": False,
+                "reason": f"fetch trade gagal: {str(exc)[:120]}",
+                "trades": 0, "flags": [], "labels": []}
+    return screen.delta_info(trades, candles, now=now, complete=complete)
 
 
 def _scan_one(mint: str, *, use_cache: bool = True) -> dict:
@@ -160,6 +197,12 @@ def run_scan(mints, *, state: dict | None = None,
             cohort_error=item.get("cohort_error"),
             state=state, mint=mint, now=now,
             cohort_latch=cohort_latches.get(mint))
+        # Delta dari trade: hanya kandidat, info saja (tidak masuk vonis).
+        delta = delta_for_result(
+            mint, enriched, candles=item.get("candles_hour") or [],
+            now=int(now if now is not None else time.time()))
+        if delta is not None:
+            enriched["delta"] = delta
         item["result"] = enriched
         if item.get("sweep"):
             # Inflow nyata = Δ likuiditas antar snapshot. Kalau snapshot

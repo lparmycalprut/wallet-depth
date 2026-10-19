@@ -23,6 +23,20 @@ def _metrics(price, basis=1.0, balance=1.0):
             "top10_holder_pct": 18.0, "holder_pcts": [2.0]}
 
 
+_DELTA_PATCH = None
+
+
+def setUpModule():
+    global _DELTA_PATCH
+    import _offline_delta
+    _DELTA_PATCH = _offline_delta.start()
+
+
+def tearDownModule():
+    if _DELTA_PATCH is not None:
+        _DELTA_PATCH.stop()
+
+
 class CohortLatchEvaluateTest(unittest.TestCase):
     def test_latch_turns_belum_minus_into_lolos(self):
         # VWAP 1,0; harga kini 0,7 -> minus 30% (belum 50%).
