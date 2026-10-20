@@ -14,7 +14,7 @@ Isi halaman:
    hit rate bisa dilihat, bukan ditebak.
 
 Auto-refresh memakai ``st.fragment(run_every=…)`` (Streamlit 1.61): kalau
-diaktifkan, halaman memindai ulang tiap 5 menit selama tab terbuka. Cron GitHub
+diaktifkan, halaman memindai ulang tiap 30 menit selama tab terbuka. Cron GitHub
 Actions menangani sisanya saat tab ditutup.
 """
 from __future__ import annotations
@@ -27,6 +27,7 @@ import pandas as pd
 import streamlit as st
 
 import sweep_alert as alert
+import sweep_check as check
 import sweep_data as data
 import sweep_scan as scan
 import sweep_screen as screen
@@ -530,7 +531,9 @@ def _render_order_flow(result) -> None:
                    f"harga {dist * 100:+.1f}% dari POC")
 
 
-def _render_details(rows) -> None:
+def _render_details(rows, *, refresh: bool = True) -> None:
+    """Panel detail per mint. ``refresh=False`` menyembunyikan tombol Refresh
+    (dipakai halaman cek manual, yang tidak boleh menulis ke watchlist)."""
     for row in rows or []:
         metrics = row.get("metrics") or {}
         result = row.get("result") or {}
@@ -539,7 +542,8 @@ def _render_details(rows) -> None:
             with st.expander(f"⏳ {symbol} — menunggu snapshot", expanded=False):
                 st.caption("Belum ada data untuk mint ini. Tekan refresh "
                            "untuk memindai sekarang.")
-                _refresh_button(row.get("mint") or "")
+                if refresh:
+                    _refresh_button(row.get("mint") or "")
             continue
         context = row.get("sweep_context") or {}
         missing = result.get("missing") or []
@@ -548,7 +552,8 @@ def _render_details(rows) -> None:
                  + (f", {len(missing)} kriteria belum ada data" if missing else "")
                  + ")")
         with st.expander(title, expanded=bool(result.get("eligible"))):
-            _refresh_button(row.get("mint") or "")
+            if refresh:
+                _refresh_button(row.get("mint") or "")
             if row.get("scan_error"):
                 failure = row["scan_error"]
                 st.warning(
@@ -945,3 +950,55 @@ def _attach_autorefresh(watchlist) -> None:
         _render_results(watchlist, outcome["state"])
 
     _tick()
+
+
+# ---------------------------------------------------------------------------
+# Cek manual satu CA (halaman terpisah, permintaan user 2026-10-20)
+# ---------------------------------------------------------------------------
+CHECK_RESULT_KEY = "sweep_check_result"  # hasil cek terakhir (tetap saat rerun)
+
+
+def render_check_page() -> None:
+    """Halaman **🔍 Cek CA Sweep**: periksa satu token secara manual.
+
+    Hasil tidak masuk watchlist, tidak disimpan ke snapshot, dan tidak memicu
+    alert Telegram (lihat :mod:`sweep_check`).
+    """
+    st.markdown("## 🔍 Cek CA Sweep (manual)")
+    st.caption(
+        "Tempel satu CA token Solana lalu tekan **Cek sekarang**. Token dipindai "
+        "live sekali dan dinilai dengan kriteria yang sama seperti 🌊 Sweep. "
+        "Hasilnya **tidak** ditambahkan ke watchlist, **tidak** disimpan ke "
+        "snapshot, dan **tidak** mengirim alert Telegram. Riwayat tersimpan "
+        "(latch shakeout, latch kohort) dibaca bila token sudah pernah dipindai.")
+
+    with st.form("sweep_check_form", clear_on_submit=False):
+        raw = st.text_input("Contract address (CA) Solana",
+                            key="sweep_check_input",
+                            placeholder="contoh: 8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC")
+        submitted = st.form_submit_button("🔍 Cek sekarang", type="primary")
+
+    if submitted:
+        mint, error = check.parse_single_ca(raw)
+        if error:
+            st.session_state[CHECK_RESULT_KEY] = {"ok": False, "error": error,
+                                                  "row": None, "ts": None}
+        else:
+            with st.spinner(f"Memindai {mint[:8]}… (live)"):
+                st.session_state[CHECK_RESULT_KEY] = check.check_mint(mint)
+
+    result = st.session_state.get(CHECK_RESULT_KEY)
+    if not result:
+        st.info("Belum ada hasil. Masukkan CA lalu tekan **Cek sekarang**.")
+        return
+
+    if result.get("ts"):
+        st.caption(f"Dipindai {_fmt_wib(result['ts'], '%d %b %Y %H:%M:%S')} WIB "
+                   "(hasil sekali jalan, tidak disimpan).")
+    if result.get("in_watchlist"):
+        st.info("CA ini sudah ada di watchlist 🌊 Sweep.")
+    row = result.get("row")
+    if not result.get("ok") or row is None:
+        st.error(f"Cek gagal: {result.get('error') or 'sumber data tidak merespons'}")
+        return
+    _render_details([row], refresh=False)
