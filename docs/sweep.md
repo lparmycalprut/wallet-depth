@@ -264,7 +264,7 @@ mencakup hit ≥100% / ≥300%, median naik/turun, dan break-even hit rate.
 (`store.latest_view`, disimpan di bucket snapshot terbaru), tanpa memindai ulang.
 Hanya mint yang belum punya snapshot (baru ditambahkan) dipindai sekali. Tombol
 **🔄 Refresh & ambil snapshot** memindai live semua mint dan mengambil snapshot;
-**auto-refresh** melakukannya tiap 5 menit selama tab terbuka.
+**auto-refresh** melakukannya tiap 30 menit selama tab terbuka (`AUTO_REFRESH_SEC` = 1800).
 
 Kolom **Token pool / Token pool $ / Token/MC** (di samping liq/MC) = sisi token pool
 (`liquidity.base` DexScreener, jumlah token), nilainya `jumlah × priceUsd`, dan
@@ -276,7 +276,7 @@ mis. GeckoTerminal 429), hanya mint itu yang dipindai ulang tiap
 `NODATA_RETRY_DELAY_SEC` = 60 detik (`use_cache=False`), maksimal
 `NODATA_RETRY_MAX_ATTEMPTS` = 5 percobaan per mint. Mint yang sudah berdata tidak
 ikut dipindai. Tombol Refresh (dan Refresh per mint) mereset jatah percobaan. Saat
-auto-refresh menyala, retry ini tidak aktif karena auto-refresh 5 menit sudah
+auto-refresh menyala, retry ini tidak aktif karena auto-refresh 30 menit sudah
 memindai semua mint.
 
 Urutan tabel (`sweep_screen.display_sort_key`): vonis **LAYAK SWEEP** dan **KANDIDAT**
@@ -303,7 +303,7 @@ tombol hapus). Snapshot dan sinyal mint tersebut tetap di state; hanya tampilan
 dan pemindaian oleh cron yang berhenti.
 
 Cron GitHub Actions tetap berjalan tiap 5 menit (`.github/workflows/sweep-scan.yml`)
-dan auto-refresh halaman juga 5 menit. `store.fingerprint()` mencakup **kunci bucket**
+dan auto-refresh halaman 30 menit. `store.fingerprint()` mencakup **kunci bucket**
 snapshot per jam (bukan isinya), id sinyal, dan latch shakeout permanen. Jadi
 commit hanya terjadi saat jam baru muncul; harga/view di jam berjalan ditimpa
 tiap 5 menit tanpa commit. Field `alerts`/`updated` yang volatil juga tidak
