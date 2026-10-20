@@ -330,3 +330,24 @@ python -m unittest tests.test_sweep_screen tests.test_sweep_data \
 ```
 
 Semuanya offline; fixture COCKROACH untuk biaya sweep tidak berubah.
+
+## Cek manual satu CA (2026-10-20)
+
+Halaman **🔍 Cek CA Sweep** (`pages/9_🔍_Cek_CA_Sweep.py`) memeriksa satu token
+secara manual. Tempel satu CA Solana (base58, 32–44 karakter), lalu tekan
+**Cek sekarang**.
+
+- Input harus tepat satu CA. Kosong, lebih dari satu, atau format salah ditolak
+  dengan pesan.
+- Token dipindai live sekali (`sweep_scan.run_scan`, `use_cache=False`) dengan
+  kriteria, vonis, dan filter yang sama seperti 🌊 Sweep.
+- Hasil **tidak** masuk watchlist, **tidak** disimpan ke `sweep_state.json`, dan
+  **tidak** mengirim alert Telegram. Delta GMGN tetap dihitung untuk kandidat
+  (info saja).
+- Riwayat tersimpan dibaca dari salinan state (latch shakeout dan latch kohort
+  ikut berlaku). Salinan itu tidak pernah ditulis balik.
+- Tombol Refresh per mint tidak ditampilkan di halaman ini.
+- Bila CA sudah ada di watchlist, halaman menampilkan keterangan itu.
+- Pemindaian gagal (mis. sumber data tidak merespons) ditampilkan sebagai error,
+  tanpa vonis.
+
