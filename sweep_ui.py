@@ -32,7 +32,7 @@ import sweep_scan as scan
 import sweep_screen as screen
 import sweep_store as store
 
-AUTO_REFRESH_SEC = 300  # 5 menit — sama dengan jadwal cron
+AUTO_REFRESH_SEC = 1800  # 30 menit (permintaan user 2026-10-19); cron tetap 5 menit
 ATTEMPTS_KEY = "sweep_nodata_attempts"  # {mint: jumlah retry kohort tanpa data}
 READY_KEY = "sweep_nodata_ready_at"     # kapan retry berikutnya boleh jalan
 WIB = timezone(timedelta(hours=7))  # waktu tampilan: Asia/Jakarta
@@ -902,7 +902,7 @@ def _render_body(watchlist) -> None:
             f"{a['kind']} {a['mint'][:8]}" for a in sent))
 
     if auto:
-        # Auto-refresh 5 menit sudah memindai ulang semua mint.
+        # Auto-refresh 30 menit sudah memindai ulang semua mint.
         _attach_autorefresh(watchlist)
     elif _nodata_targets(watchlist, _working_state()):
         _attach_nodata_retry(watchlist)
@@ -927,7 +927,7 @@ def render_sweep_page() -> None:
 
 
 def _attach_autorefresh(watchlist) -> None:
-    """Pindai ulang tiap 5 menit selama tab terbuka (cron menutup sisanya)."""
+    """Pindai ulang tiap 30 menit selama tab terbuka (cron menutup sisanya)."""
 
     @st.fragment(run_every=AUTO_REFRESH_SEC)
     def _tick() -> None:
