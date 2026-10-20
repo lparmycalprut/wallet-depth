@@ -351,3 +351,29 @@ secara manual. Tempel satu CA Solana (base58, 32–44 karakter), lalu tekan
 - Pemindaian gagal (mis. sumber data tidak merespons) ditampilkan sebagai error,
   tanpa vonis.
 
+## CVD & delta sejak di bawah lowest avg buy (2026-10-20)
+
+Tabel **📉 CVD & delta sejak di bawah lowest avg buy** di bawah hasil utama.
+Info saja: tidak memengaruhi vonis, `eligible`, urutan, atau filter.
+
+- **Yang dihitung:** hanya mint yang *lolos* (tampil di tabel utama dan kandidat
+  delta, jadi tidak TIDAK LAYAK dan tidak tersembunyi filter) dan sedang berada
+  di bawah lowest avg buy (`price ≤ holder_min_avg_cost`).
+- **Mulai episode:** scan pertama ketika mint lolos dan harga ≤ lowest avg buy.
+  Bila episode baru dimulai, awalnya diambil dari riwayat snapshot (bucket
+  berurutan terakhir yang ≤ lowest buy). Label kolom *Sumber mulai* menunjukkan
+  `riwayat snapshot (perkiraan)` atau `scan live`. Perkiraan ini memakai lowest
+  buy saat ini, karena riwayat lowest buy tidak disimpan. Riwayat keterlihatan
+  mint juga tidak disimpan, jadi diasumsikan lolos.
+- **Berhenti:** episode selesai saat harga kembali di atas lowest avg buy. Riwayat
+  selesai disimpan di `flow_episodes[mint].past` (10 terakhir).
+- **Jeda:** saat mint tersembunyi, tidak ada trade yang diambil dan episode tetap
+  terbuka. Saat lolos lagi dan masih di bawah, hitungan lanjut dari awal episode.
+- **Angka:** trade GMGN dari mulai episode (maksimum 24 jam, `FLOW_MAX_PAGES` = 20
+  halaman). Buy dan sell dalam USD, CVD = akumulasi buy − sell sejak mulai.
+  *Data* menjadi `sebagian` bila batas halaman tercapai atau jendela tidak
+  mencakup mulai episode.
+- **Rekaman:** satu entri per jam di `flow_episodes[mint].active.hourly`
+  (maksimum 168 jam). Fingerprint state ikut berubah saat jam baru tercatat, jadi
+  cron akan commit per jam.
+

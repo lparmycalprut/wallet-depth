@@ -66,7 +66,8 @@ def analyze(bundle: dict, snapshots=None, *, state=None, now=None) -> dict:
             "sweep": event, "sweep_context": context}
 
 
-def _gmgn_trades_for_delta(mint: str, from_ts: int, to_ts: int):
+def _gmgn_trades_for_delta(mint: str, from_ts: int, to_ts: int,
+                           max_pages: int | None = None):
     """Trade GMGN dalam jendela waktu: ``(trades, complete)``.
 
     Dipanggil secara berurutan (bukan paralel) karena ``cvd`` menyimpan status
@@ -74,7 +75,7 @@ def _gmgn_trades_for_delta(mint: str, from_ts: int, to_ts: int):
     """
     swaps, *_ = cvd.fetch_gmgn_swaps(
         mint, from_ts=from_ts, to_ts=to_ts,
-        max_pages=screen.DELTA_MAX_PAGES)
+        max_pages=max_pages or screen.DELTA_MAX_PAGES)
     complete = bool((cvd.get_gmgn_fetch_status() or {}).get("complete"))
     trades = [(s[0], s[5], s[2]) for s in swaps or []
               if isinstance(s, (list, tuple)) and len(s) >= 6
@@ -100,6 +101,54 @@ def delta_for_result(mint: str, result: dict, *, candles, now: int,
                 "reason": f"fetch trade gagal: {str(exc)[:120]}",
                 "trades": 0, "flags": [], "labels": []}
     return screen.delta_info(trades, candles, now=now, complete=complete)
+
+
+def _flow_trades(mint: str, from_ts: int, to_ts: int):
+    """Trade GMGN untuk CVD sejak lowest buy (batas halaman lebih besar)."""
+    return _gmgn_trades_for_delta(mint, from_ts, to_ts,
+                                  max_pages=screen.FLOW_MAX_PAGES)
+
+
+def lowest_buy_flow_for_mint(mint: str, metrics: dict, result: dict, *,
+                             candles, now: int, flows: dict,
+                             history=None, fetch=None):
+    """Perbarui episode lowest buy satu mint dan ambil CVD/delta sejak mulai.
+
+    ``flows`` = ``state["flow_episodes"]`` (diubah di tempat). Mengembalikan
+    ringkasan pengukuran (dicatat per jam) atau ``None`` bila tidak dihitung.
+    Mint tersembunyi dan mint di atas lowest buy tidak diambil tradenya.
+    Info saja: tidak masuk vonis, skor, eligible, urutan, atau filter.
+    """
+    eligible = screen.flow_eligible(result, metrics)
+    price = metrics.get("price_usd")
+    low = result.get("holder_min_avg_cost")
+    hint = None
+    if (flows.get(mint) or {}).get("active") is None and eligible \
+            and screen.below_lowest_buy(price, low):
+        hint = screen.flow_backfill_start(history, low)
+    entry = screen.flow_episode_step(
+        flows.get(mint), price=price, min_avg_cost=low,
+        eligible=eligible, now=now, start_hint=hint)
+    flows[mint] = entry
+    active = entry.get("active")
+    if not active or not eligible:
+        return None
+    fetch = fetch or _flow_trades
+    since = max(int(active["start_ts"]), int(now) - screen.FLOW_MAX_HOURS * 3600)
+    try:
+        trades, complete = fetch(mint, since, int(now))
+    except Exception as exc:  # noqa: BLE001 - info saja, jangan gagalkan scan
+        info = {"available": False, "complete": False, "covers_start": False,
+                "reason": f"fetch trade gagal: {str(exc)[:120]}", "trades": 0,
+                "flags": [], "labels": []}
+    else:
+        info = screen.flow_info(trades, candles, now=int(now),
+                                start_ts=int(active["start_ts"]),
+                                complete=complete)
+    record = screen.flow_record(info, price=metrics.get("price_usd"), now=int(now))
+    active.setdefault("hourly", {})[str(int(now) // 3600 * 3600)] = record
+    active["last"] = record
+    return record
 
 
 def _scan_one(mint: str, *, use_cache: bool = True) -> dict:
@@ -141,6 +190,9 @@ def run_scan(mints, *, state: dict | None = None,
     cohort_latches = state.setdefault("cohort_latched", {})
     if not isinstance(cohort_latches, dict):
         cohort_latches = state["cohort_latched"] = {}
+    flows = state.setdefault("flow_episodes", {})
+    if not isinstance(flows, dict):
+        flows = state["flow_episodes"] = {}
     alerts_sent = []
     results = []
 
@@ -204,6 +256,12 @@ def run_scan(mints, *, state: dict | None = None,
         if delta is not None:
             enriched["delta"] = delta
         item["result"] = enriched
+        # CVD sejak harga di bawah lowest avg buy (info saja, hanya mint lolos).
+        if metrics.get("ok"):
+            lowest_buy_flow_for_mint(
+                mint, metrics, enriched, candles=item.get("candles_hour") or [],
+                now=int(now if now is not None else time.time()), flows=flows,
+                history=history)
         if item.get("sweep"):
             # Inflow nyata = Δ likuiditas antar snapshot. Kalau snapshot
             # pembanding belum ada, sweep_context memakai estimasi berlabel.

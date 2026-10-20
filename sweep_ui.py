@@ -765,6 +765,64 @@ def _render_threshold() -> None:
                "standar pra-pump COCKROACH (acuan dana 10×)")
 
 
+def _fmt_signed_pct(value, digits: int = 1) -> str:
+    number = screen._num(value)
+    return f"{number*100:+.{digits}f}%" if number is not None else "—"
+
+
+def _fmt_signed_usd(value) -> str:
+    number = screen._num(value)
+    return f"{number:+,.0f} USD" if number is not None else "—"
+
+
+def _flow_data_status(row) -> str:
+    if not row.get("available"):
+        return f"belum ada trade ({row.get('reason') or 'kosong'})"
+    if not row.get("complete"):
+        return "sebagian (batas halaman GMGN)"
+    if not row.get("covers_start"):
+        return f"sebagian ({screen.FLOW_MAX_HOURS} jam terakhir)"
+    return "lengkap"
+
+
+def _render_flow(rows, state) -> None:
+    """Tabel CVD & delta sejak harga pertama di bawah lowest avg buy (info saja).
+
+    Hanya mint lolos (tidak tersembunyi, kandidat delta) yang sedang di bawah
+    lowest avg buy. Yang di atas lowest buy tidak dihitung dan tidak ditampilkan.
+    """
+    flows = (state or {}).get("flow_episodes") or {}
+    table = screen.flow_rows(rows, flows)
+    st.markdown("### 📉 CVD & delta sejak di bawah lowest avg buy")
+    st.caption(
+        "Info saja: tidak memengaruhi vonis, urutan, atau filter. Dihitung hanya "
+        "untuk koin yang lolos dan sedang di bawah lowest avg buy. Mulai saat "
+        "harga pertama kali ≤ lowest avg buy pada scan yang lolos; berhenti saat "
+        "harga kembali di atas. CVD = akumulasi beli − jual (USD) sejak mulai; "
+        f"jendela maksimum {screen.FLOW_MAX_HOURS} jam.")
+    if not table:
+        st.info("Tidak ada koin lolos yang sedang di bawah lowest avg buy.")
+        return
+    st.dataframe(
+        [{"Token": r["symbol"],
+          "Mulai (WIB)": _fmt_wib(r.get("start_ts"), "%d %b %H:%M"),
+          "Sumber mulai": r.get("start_source") or "—",
+          "Jam sejak mulai": f"{r['hours']:.1f}",
+          "Harga mulai": _fmt_price(r.get("start_price")),
+          "Harga sekarang": _fmt_price(r.get("price")),
+          "Δ harga sejak mulai": _fmt_signed_pct(r.get("price_move")),
+          "Lowest buy": _fmt_price(r.get("lowest_buy")),
+          "Harga vs lowest buy": _fmt_signed_pct(r.get("vs_lowest")),
+          "Beli (USD)": _fmt_usd(r.get("buy_usd")),
+          "Jual (USD)": _fmt_usd(r.get("sell_usd")),
+          "CVD sejak mulai": _fmt_signed_usd(r.get("cvd_usd")),
+          "Delta jam terakhir": _fmt_signed_usd(r.get("delta_last_usd")),
+          "Data": _flow_data_status(r),
+          "Flag": "; ".join(r.get("labels") or []) or "—"}
+         for r in table],
+        use_container_width=True, hide_index=True)
+
+
 def _render_results(watchlist, state) -> None:
     """Tabel + detail + statistik dari snapshot terakhir tiap mint watchlist."""
     views, missing = store.watchlist_views(state, watchlist)
@@ -815,6 +873,7 @@ def _render_results(watchlist, state) -> None:
     _render_table(rows, watchlist)
     if rows:
         _render_details(rows)
+        _render_flow(rows, state)
     if hidden:
         # Tabel terpisah di bawah hasil utama; mati secara default.
         show_hidden = st.toggle(

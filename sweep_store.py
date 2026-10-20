@@ -41,6 +41,10 @@ HOUR = 3600
 MAX_BUCKETS_PER_MINT = 168
 #: Batas riwayat sinyal yang disimpan.
 MAX_SIGNALS = 1500
+# CVD sejak lowest buy (2026-10-20): batas penyimpanan per mint.
+FLOW_HOURLY_KEEP = 168  # bucket jam per episode (7 hari)
+FLOW_PAST_KEEP = 10     # episode selesai per mint
+
 #: Sinyal lebih tua dari ini tidak lagi diperbarui hasilnya.
 SIGNAL_TRACK_SEC = 72 * HOUR
 #: Cooldown alert (detik): kelayakan jarang berubah, sweep cepat.
@@ -163,7 +167,7 @@ def save_watchlist(mints, *, persist: bool = True) -> list:
 def empty_state() -> dict:
     return {"version": STATE_VERSION, "snapshots": {}, "signals": [],
             "alerts": {}, "shakeout_latched_at": {}, "cohort_latched": {},
-            "scan_status": {}, "updated": 0}
+            "scan_status": {}, "flow_episodes": {}, "updated": 0}
 
 
 def load_state() -> dict:
@@ -179,7 +183,8 @@ def load_state() -> dict:
     for key in ("snapshots", "signals", "alerts"):
         if isinstance(data.get(key), dict) or isinstance(data.get(key), list):
             state[key] = data[key]
-    for key in ("shakeout_latched_at", "cohort_latched", "scan_status"):
+    for key in ("shakeout_latched_at", "cohort_latched", "scan_status",
+                "flow_episodes"):
         if isinstance(data.get(key), dict):
             state[key] = data[key]
     state["updated"] = int(data.get("updated") or 0)
@@ -204,6 +209,55 @@ def _newer_row(current, incoming):
 
 def _is_number(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _merge_flow_episodes(remote, local) -> dict:
+    """CVD sejak lowest buy (2026-10-20), digabung per mint.
+
+    - Episode aktif dengan ``start_ts`` sama: bucket jam di-union; bila jam yang
+      sama ada di keduanya, baris dengan ``ts`` lebih baru yang dipakai.
+    - Episode aktif dengan ``start_ts`` berbeda: yang ``start_ts``-nya lebih awal.
+    - Riwayat selesai: union berdasarkan ``start_ts``.
+    """
+    out: dict = {}
+    for source in (remote, local):
+        if not isinstance(source, dict):
+            continue
+        for mint, entry in source.items():
+            if not isinstance(entry, dict):
+                continue
+            current = out.get(mint)
+            if current is None:
+                out[mint] = {"active": entry.get("active"),
+                             "past": list(entry.get("past") or [])}
+                continue
+            a_cur, a_new = current.get("active"), entry.get("active")
+            if isinstance(a_cur, dict) and isinstance(a_new, dict):
+                if int(a_cur.get("start_ts") or 0) == int(a_new.get("start_ts") or 0):
+                    hourly = dict(a_cur.get("hourly") or {})
+                    for key, row in (a_new.get("hourly") or {}).items():
+                        old = hourly.get(key)
+                        if not isinstance(old, dict) or (
+                                int((row or {}).get("ts") or 0) >= int(old.get("ts") or 0)):
+                            hourly[key] = row
+                    merged_active = dict(a_cur)
+                    merged_active["hourly"] = hourly
+                    newest = max(hourly.values(),
+                                 key=lambda r: int((r or {}).get("ts") or 0),
+                                 default=None)
+                    merged_active["last"] = newest or a_cur.get("last")
+                    current["active"] = merged_active
+                elif int(a_new.get("start_ts") or 0) < int(a_cur.get("start_ts") or 0):
+                    current["active"] = a_new
+            elif current.get("active") is None and isinstance(a_new, dict):
+                current["active"] = a_new
+            seen = {int(p.get("start_ts") or 0): p for p in current.get("past") or []
+                    if isinstance(p, dict)}
+            for p in entry.get("past") or []:
+                if isinstance(p, dict):
+                    seen.setdefault(int(p.get("start_ts") or 0), p)
+            current["past"] = [seen[k] for k in sorted(seen, reverse=True)]
+    return out
 
 
 def merge_states(local: dict, remote: dict) -> dict:
@@ -306,6 +360,9 @@ def merge_states(local: dict, remote: dict) -> dict:
             alerts[mint] = combined
     merged["alerts"] = alerts
 
+    merged["flow_episodes"] = _merge_flow_episodes(
+        remote.get("flow_episodes"), local.get("flow_episodes"))
+
     merged["updated"] = max(int(local.get("updated") or 0),
                             int(remote.get("updated") or 0))
     merged["version"] = STATE_VERSION
@@ -355,6 +412,7 @@ def save_state(state: dict, *, persist: bool = False, reason: str = "") -> dict:
     state.setdefault("shakeout_latched_at", {})
     state.setdefault("cohort_latched", {})
     state.setdefault("scan_status", {})
+    state.setdefault("flow_episodes", {})
     state["version"] = STATE_VERSION
     state["updated"] = _now()
     pushable = False
@@ -386,7 +444,15 @@ def fingerprint(state: dict) -> str:
         mint: sorted(buckets.keys()) if isinstance(buckets, dict) else None
         for mint, buckets in snapshots.items()
     }
+    flows = (state or {}).get("flow_episodes") or {}
+    flow_hours = {
+        mint: sorted(((entry.get("active") or {}).get("hourly") or {}).keys())
+        for mint, entry in flows.items()
+        if isinstance(entry, dict) and (entry.get("active") or {}).get("hourly")
+    }
+    extra = {"flow_hours": flow_hours} if flow_hours else {}
     payload = json.dumps({
+        **extra,
         "snapshots": hour_keys,
         "signals": [(row or {}).get("id") for row in ((state or {}).get("signals") or [])
                     if isinstance(row, dict)],
@@ -411,6 +477,19 @@ def prune(state: dict) -> dict:
     signals = state.get("signals")
     if isinstance(signals, list) and len(signals) > MAX_SIGNALS:
         state["signals"] = signals[-MAX_SIGNALS:]
+    flows = state.get("flow_episodes")
+    if isinstance(flows, dict):
+        for mint, entry in list(flows.items()):
+            if not isinstance(entry, dict):
+                flows.pop(mint, None)
+                continue
+            active = entry.get("active")
+            if isinstance(active, dict):
+                hourly = active.get("hourly") or {}
+                if len(hourly) > FLOW_HOURLY_KEEP:
+                    keep = sorted(hourly, key=lambda k: float(k or 0))[-FLOW_HOURLY_KEEP:]
+                    active["hourly"] = {k: hourly[k] for k in keep}
+            entry["past"] = list(entry.get("past") or [])[:FLOW_PAST_KEEP]
     return state
 
 
