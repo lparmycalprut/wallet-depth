@@ -1460,3 +1460,200 @@ def breakeven_hit_rate(win_pct, loss_pct):
     if win is None or loss is None or win <= 0 or loss <= 0:
         return None
     return loss / (win + loss)
+
+
+# ---------------------------------------------------------------------------
+# CVD & delta sejak harga di bawah lowest avg buy (info saja, 2026-10-20)
+# ---------------------------------------------------------------------------
+# Episode dimulai pada scan pertama ketika harga ≤ lowest avg buy (holder
+# termurah) DAN mint lolos (tidak tersembunyi oleh filter/TIDAK LAYAK, dan
+# kandidat delta). Episode berakhir saat harga kembali di atas lowest avg buy.
+# Mint yang tersembunyi tidak dihitung; episode yang sudah terbuka tetap
+# terbuka (dijeda) dan lanjut bila mint lolos lagi dalam keadaan di bawah.
+# Tidak memengaruhi vonis, skor, eligible, urutan, atau filter.
+FLOW_MAX_HOURS = 24  # jendela maksimum; trade sebelum 24 jam lalu tidak diambil
+FLOW_MAX_PAGES = 20  # batas halaman GMGN per mint per scan (100 trade/halaman)
+
+
+def flow_eligible(result, metrics) -> bool:
+    """Mint lolos untuk perhitungan episode: tampil di tabel utama dan kandidat delta."""
+    result = result or {}
+    if not delta_candidate(result):
+        return False
+    return not view_hidden({"result": result, "metrics": metrics or {}})
+
+
+def below_lowest_buy(price, min_avg_cost):
+    """True bila harga ≤ lowest avg buy. None bila data belum lengkap."""
+    price = _num(price)
+    low = _num(min_avg_cost)
+    if price is None or low is None or price <= 0 or low <= 0:
+        return None
+    return price <= low
+
+
+def flow_backfill_start(history, min_avg_cost):
+    """Perkiraan awal episode dari riwayat snapshot.
+
+    Bucket terakhir yang harganya ≤ lowest avg buy, ditarik mundur selama
+    bucket sebelumnya juga ≤ lowest buy. Dipakai hanya bila episode baru akan
+    dimulai, supaya CVD tidak mulai dari nol setelah scan pertama. Lowest buy
+    yang dipakai adalah nilai SAAT INI (riwayat lowest buy tidak tersimpan).
+    Mengembalikan ``{"ts", "price"}`` atau ``None``.
+    """
+    low = _num(min_avg_cost)
+    if low is None or low <= 0:
+        return None
+    rows = []
+    for row in history or []:
+        if not isinstance(row, dict):
+            continue
+        ts, price = _num(row.get("ts")), _num(row.get("price"))
+        if ts is not None and price is not None and price > 0:
+            rows.append((ts, price))
+    if not rows:
+        return None
+    rows.sort()
+    if rows[-1][1] > low:
+        return None
+    start = rows[-1]
+    for ts, price in reversed(rows[:-1]):
+        if price > low:
+            break
+        start = (ts, price)
+    return {"ts": int(start[0]), "price": start[1]}
+
+
+def flow_episode_step(entry, *, price, min_avg_cost, eligible: bool, now: int,
+                      start_hint=None) -> dict:
+    """Perbarui episode satu mint. Mengembalikan entri baru ``{active, past}``.
+
+    - Data harga/lowest buy belum ada → entri tidak berubah.
+    - Tidak ada episode aktif, harga ≤ lowest buy, dan mint lolos → mulai episode.
+    - Episode aktif dan harga kembali di atas lowest buy → episode selesai
+      (masuk ``past``), apa pun status tampilannya.
+    """
+    entry = dict(entry or {})
+    active = entry.get("active")
+    past = list(entry.get("past") or [])
+    below = below_lowest_buy(price, min_avg_cost)
+    if below is None:
+        return {"active": active, "past": past}
+    now = int(now)
+    if active is None:
+        if below and eligible:
+            if start_hint:
+                start_ts = int(start_hint["ts"])
+                start_price = _num(start_hint.get("price"))
+                source = "riwayat snapshot (perkiraan)"
+            else:
+                start_ts, start_price = now, _num(price)
+                source = "scan live"
+            active = {"start_ts": start_ts, "start_price": start_price,
+                      "start_source": source,
+                      "min_avg_start": _num(min_avg_cost),
+                      "hourly": {}, "last": None}
+    elif not below:
+        closed = dict(active)
+        closed.update({"end_ts": now, "end_price": _num(price)})
+        past = [closed] + past
+        active = None
+    return {"active": active, "past": past}
+
+
+def flow_info(trades, candles, *, now: int, start_ts: int, complete: bool = True,
+              max_hours: int = FLOW_MAX_HOURS) -> dict:
+    """CVD dan delta sejak ``start_ts`` (dibatasi ``max_hours`` terakhir).
+
+    ``trades`` = tuple ``(side, usd, ts)``. Trade sebelum jendela dibuang.
+    Mengembalikan hasil :func:`delta_info` ditambah penanda jendela.
+    """
+    now = int(now)
+    start_ts = int(start_ts)
+    since = max(start_ts, now - int(max_hours) * 3600)
+    # delta_info memakai bucket jam penuh dan mundur dari jam sekarang. Agar
+    # bucket pertama memuat ``since``, jumlahnya dihitung dari jam awal ``since``.
+    end_bucket = (now // 3600) * 3600
+    start_bucket = (since // 3600) * 3600
+    hours = max(1, (end_bucket - start_bucket) // 3600 + 1)
+    inside = []
+    for trade in trades or []:
+        try:
+            if int(trade[2]) >= since:
+                inside.append(trade)
+        except (TypeError, ValueError, IndexError):
+            continue
+    info = delta_info(inside, candles, now=now, complete=complete,
+                      window_hours=hours)
+    info["start_ts"] = start_ts
+    info["since_ts"] = since
+    info["covers_start"] = since == start_ts
+    return info
+
+
+def flow_record(info, *, price, now: int) -> dict:
+    """Ringkasan satu pengukuran (disimpan per jam di episode)."""
+    info = info or {}
+    last = info.get("last") or {}
+    return {
+        "ts": int(now),
+        "price": _num(price),
+        "available": bool(info.get("available")),
+        "complete": bool(info.get("complete")),
+        "covers_start": bool(info.get("covers_start")),
+        "reason": info.get("reason") or "",
+        "trades": int(info.get("trades") or 0),
+        "buy_usd": info.get("buy_usd"),
+        "sell_usd": info.get("sell_usd"),
+        "cvd_usd": info.get("cvd_usd"),
+        "delta_last_usd": last.get("delta"),
+        "flags": list(info.get("flags") or []),
+        "labels": list(info.get("labels") or []),
+    }
+
+
+def flow_rows(rows, flows) -> list:
+    """Baris tabel CVD/delta: hanya mint lolos yang sedang di bawah lowest avg buy.
+
+    ``rows`` = baris tabel utama (sudah tanpa yang tersembunyi). Baris di atas
+    lowest avg buy dan baris tanpa episode aktif tidak dimasukkan.
+    """
+    out = []
+    for row in rows or []:
+        mint = row.get("mint")
+        result = row.get("result") or {}
+        metrics = row.get("metrics") or {}
+        entry = (flows or {}).get(mint) or {}
+        active = entry.get("active")
+        if not active or not active.get("last"):
+            continue
+        if not delta_candidate(result):
+            continue
+        low = _num(result.get("holder_min_avg_cost"))
+        price = _num(metrics.get("price_usd"))
+        if not below_lowest_buy(price, low):
+            continue
+        last = active["last"]
+        start_price = _num(active.get("start_price"))
+        out.append({
+            "mint": mint,
+            "symbol": metrics.get("symbol") or (mint or "")[:8],
+            "start_ts": active.get("start_ts"),
+            "hours": round((int(last.get("ts") or 0) - int(active.get("start_ts") or 0)) / 3600, 2),
+            "start_price": start_price,
+            "start_source": active.get("start_source") or "",
+            "price": price,
+            "price_move": (price / start_price - 1.0) if start_price and price else None,
+            "lowest_buy": low,
+            "vs_lowest": (price / low - 1.0) if low and price else None,
+            "buy_usd": last.get("buy_usd"),
+            "sell_usd": last.get("sell_usd"),
+            "cvd_usd": last.get("cvd_usd"),
+            "delta_last_usd": last.get("delta_last_usd"),
+            "available": bool(last.get("available")),
+            "complete": bool(last.get("complete")),
+            "covers_start": bool(last.get("covers_start")),
+            "reason": last.get("reason") or "",
+            "labels": list(last.get("labels") or []),
+        })
+    return out
