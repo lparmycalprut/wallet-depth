@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Runner cron page **🌊 Sweep** (GitHub Actions, tiap 5 menit).
+"""Runner cron page **🌊 Sweep** (GitHub Actions, tiap 30 menit).
 
 Alur yang sama dengan tombol "Scan sekarang" di UI, tapi tanpa Streamlit:
 
@@ -8,7 +8,7 @@ Alur yang sama dengan tombol "Scan sekarang" di UI, tapi tanpa Streamlit:
 
 Berkas state ditulis **selalu**, tapi baris terakhir mencetak
 ``SWEEP_STATE_CHANGED=0|1``. Workflow memakai penanda itu untuk memutuskan
-perlu tidaknya commit — tanpa itu, cron 5 menitan akan membuat ~288 commit/hari
+perlu tidaknya commit — tanpa itu, cron akan membuat commit di setiap run
 hanya karena field ``updated``.
 
 Kredensial Telegram dibaca berlapis oleh :mod:`sweep_alert`

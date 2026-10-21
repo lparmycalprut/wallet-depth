@@ -186,7 +186,7 @@ class FixedStateTest(_Sandbox):
         self.assertNotIn("settings", store.load_state())
 
     def test_fingerprint_ignores_price_churn_inside_same_hour(self):
-        """Cron 5 menitan menimpa bucket jam berjalan: tidak boleh memicu commit."""
+        """Run cron yang menimpa bucket jam berjalan tidak boleh memicu commit."""
         state = store.empty_state()
         store.add_snapshot(state, "M", {"price_usd": 1.0, "ts": 3600 + 10})
         before = store.fingerprint(state)

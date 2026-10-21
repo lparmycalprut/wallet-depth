@@ -16,7 +16,7 @@ The **🌊 Sweep** page does need two things when you want 24/7 alerts (they are
 1. **Telegram** — `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`, resolved in layers: `st.secrets` → environment → `config.json`. In GitHub Actions, add them as repository secrets (same names as the retained Pre-Pump tooling).
 2. **GitHub commit access** — `github_token` (fine-grained PAT, contents: write) so the sweep watchlist, snapshots, and signal history survive Streamlit Cloud restarts. Without it the list is kept in the ephemeral filesystem plus a local `config.json` backup.
 
-`.github/workflows/sweep-scan.yml` runs the same scan every 5 minutes and commits only when `sweep_state.json` actually changed (`store.fingerprint()`), so a 5-minute cadence does not create ~288 commits/day.
+`.github/workflows/sweep-scan.yml` runs the same scan every 30 minutes and commits only when `sweep_state.json` actually changed (`store.fingerprint()`), so a 30-minute cadence does not create a commit per run.
 
 ## Optional CVD configuration
 

@@ -342,7 +342,7 @@ class SurfaceTest(unittest.TestCase):
         self.assertTrue(workflow.exists(), workflow)
         text = workflow.read_text(encoding="utf-8")
         self.assertIn("SWEEP_STATE_CHANGED", text)
-        self.assertIn("*/5 * * * *", text)
+        self.assertIn("*/30 * * * *", text)
         runner_source = runner.read_text(encoding="utf-8")
         self.assertNotIn("--liq-mc-max", runner_source)
         self.assertNotIn("--holder-max-pct", runner_source)

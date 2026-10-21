@@ -1,7 +1,8 @@
 name: Sweep Screener Scan
 
-# Cron 5 menit untuk page 🌊 Sweep (permintaan user 2026-10-12:
-# "nanti ada telegram alert … alert juga ketika sweep mulai terjadi").
+# Cron 30 menit untuk page 🌊 Sweep (permintaan user 2026-10-21; sebelumnya 5 menit).
+# Awalnya dibuat permintaan user 2026-10-12:
+# "nanti ada telegram alert … alert juga ketika sweep mulai terjadi".
 #
 # Catatan: jadwal GitHub Actions hanya berjalan dari **default branch**, jadi
 # workflow ini baru aktif setelah perubahan ini di-merge ke `main`.
@@ -11,7 +12,7 @@ name: Sweep Screener Scan
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -53,7 +54,7 @@ jobs:
             | tail -1 | cut -d= -f2)" >> "$GITHUB_OUTPUT"
 
       - name: Commit state when it changed
-        # Tanpa gate ini, cron 5 menitan akan membuat ~288 commit/hari.
+        # Tanpa gate ini, cron tiap 30 menit tetap membuat ~48 commit/hari.
         if: steps.scan.outputs.changed == '1'
         run: |
           git config --global user.name 'Sweep-Bot'

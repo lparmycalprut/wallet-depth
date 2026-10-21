@@ -431,8 +431,8 @@ def fingerprint(state: dict) -> str:
     """Fingerprint kunci bucket snapshot, signal ids, dan latch shakeout permanen.
 
     Hanya **kunci bucket** (jam) yang masuk, bukan isinya: bucket jam berjalan
-    ditimpa tiap 5 menit (harga, likuiditas, view), dan kalau isinya ikut,
-    cron 5 menitan membuat ~288 commit/hari. Jadi commit hanya terjadi saat
+    ditimpa tiap run cron (harga, likuiditas, view), dan kalau isinya ikut,
+    setiap run cron akan membuat commit. Jadi commit hanya terjadi saat
     snapshot jam baru muncul (atau bucket lama dipangkas), sesuai
     ``docs/sweep.md``. Field ``alerts``/``updated`` yang volatil juga dikecualikan.
     Legacy settings sengaja diabaikan karena ambang dikunci di ``sweep_screen``.
@@ -521,8 +521,8 @@ def add_snapshot(state: dict, mint: str, metrics: dict,
                  *, ts: int | None = None) -> dict:
     """Simpan snapshot mint ke bucket **per jam** dan kembalikan barisnya.
 
-    Bucket per jam (bukan per 5 menit) disengaja: cron berjalan tiap 5 menit
-    sehingga snapshot 5-menit akan menulis ~288 baris/hari/mint ke dalam berkas
+    Bucket per jam (bukan per 5 menit) disengaja: cron berjalan tiap 30 menit
+    dan snapshot 5-menit akan menulis ~288 baris/hari/mint ke dalam berkas
     yang di-commit. Bucket per jam menjaga riwayat 7 hari tetap kecil, sementara
     deteksi sweep tetap 5-menitan karena dihitung dari candle GeckoTerminal
     (bukan dari state).
