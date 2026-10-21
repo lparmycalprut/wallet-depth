@@ -33,7 +33,7 @@ import sweep_scan as scan
 import sweep_screen as screen
 import sweep_store as store
 
-AUTO_REFRESH_SEC = 1800  # 30 menit (permintaan user 2026-10-19); cron tetap 5 menit
+AUTO_REFRESH_SEC = 1800  # 30 menit (permintaan user 2026-10-19); cron juga 30 menit (2026-10-21)
 ATTEMPTS_KEY = "sweep_nodata_attempts"  # {mint: jumlah retry kohort tanpa data}
 READY_KEY = "sweep_nodata_ready_at"     # kapan retry berikutnya boleh jalan
 WIB = timezone(timedelta(hours=7))  # waktu tampilan: Asia/Jakarta
