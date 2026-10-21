@@ -1017,6 +1017,18 @@ def _attach_autorefresh(watchlist) -> None:
 CHECK_RESULT_KEY = "sweep_check_result"  # hasil cek terakhir (tetap saat rerun)
 
 
+def _vertical_rows(record: dict) -> pd.DataFrame:
+    """Ubah satu baris tabel menjadi dua kolom (Kolom, Nilai) untuk halaman cek.
+
+    Nilai dibuat string supaya kolom campuran (angka, teks, URL) tetap bisa
+    dirender tanpa error tipe.
+    """
+    return pd.DataFrame(
+        [{"Kolom": str(key), "Nilai": "" if value is None else str(value)}
+         for key, value in record.items()],
+        columns=["Kolom", "Nilai"])
+
+
 def render_check_page() -> None:
     """Halaman **🔍 Cek CA Sweep**: periksa satu token secara manual.
 
@@ -1063,12 +1075,12 @@ def render_check_page() -> None:
     # Tabel kelayakan yang sama dengan 🌊 Sweep, tetapi baca-saja: tanpa kolom
     # Hapus/Refresh, karena halaman cek tidak boleh mengubah watchlist.
     st.markdown("### 🧭 Kelayakan sweep")
+    # Satu mint: tampilkan vertikal (dua kolom Kolom | Nilai, baris ke bawah).
     st.dataframe(
-        pd.DataFrame(_eligibility_rows([row])),
+        _vertical_rows(_eligibility_rows([row])[0]),
         use_container_width=True, hide_index=True,
         column_config={
-            "Token": st.column_config.TextColumn("Token", pinned=True),
-            "GMGN": st.column_config.LinkColumn("GMGN", display_text="buka",
-                                                pinned=True),
+            "Kolom": st.column_config.TextColumn("Kolom", width="small"),
+            "Nilai": st.column_config.TextColumn("Nilai", width="large"),
         })
     _render_details([row], refresh=False)
