@@ -1060,4 +1060,15 @@ def render_check_page() -> None:
     if not result.get("ok") or row is None:
         st.error(f"Cek gagal: {result.get('error') or 'sumber data tidak merespons'}")
         return
+    # Tabel kelayakan yang sama dengan 🌊 Sweep, tetapi baca-saja: tanpa kolom
+    # Hapus/Refresh, karena halaman cek tidak boleh mengubah watchlist.
+    st.markdown("### 🧭 Kelayakan sweep")
+    st.dataframe(
+        pd.DataFrame(_eligibility_rows([row])),
+        use_container_width=True, hide_index=True,
+        column_config={
+            "Token": st.column_config.TextColumn("Token", pinned=True),
+            "GMGN": st.column_config.LinkColumn("GMGN", display_text="buka",
+                                                pinned=True),
+        })
     _render_details([row], refresh=False)
