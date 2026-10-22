@@ -377,3 +377,22 @@ Info saja: tidak memengaruhi vonis, `eligible`, urutan, atau filter.
   (maksimum 168 jam). Fingerprint state ikut berubah saat jam baru tercatat, jadi
   cron akan commit per jam.
 
+
+## Catatan kondisi sebelum sweep (2026-10-21)
+
+Sweep bisa terjadi di mint yang **tersembunyi** dari tabel (filter tampilan atau
+TIDAK LAYAK). Karena itu:
+
+- Setiap scan yang berhasil menyimpan **catatan kompak** (`state.scan_log`) untuk
+  semua mint, termasuk yang tersembunyi: vonis, skor, kriteria lolos/gagal,
+  harga, liq/MC, holder, top-10, bundler, bot degen, volume, dan lowest buy.
+  Hanya 6 scan terakhir per mint (cron 30 menit ≈ 3 jam).
+- Saat sinyal sweep baru dicatat, sinyal menyimpan `pre_sweep` (hingga 3 scan
+  sebelum candle sweep, plus scan yang mendeteksi), `pre_candles` (12 candle 5
+  menit yang berakhir di candle sweep), dan `hidden_at_detect` (tersembunyi atau
+  tidak saat terdeteksi).
+- Sinyal sweep lama tidak punya `pre_sweep`. Halaman Statistik lalu menampilkan
+  snapshot per jam sebelum sweep sebagai gantinya, dengan keterangan.
+- Scan GMGN dan kriteria untuk mint tersembunyi tetap jalan seperti biasa. CVD dan
+  delta tetap mengikuti aturan lama (mint tersembunyi tidak dihitung).
+- Catatan scan ikut digabung saat state dari cron dan app di-merge.

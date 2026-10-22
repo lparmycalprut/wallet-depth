@@ -709,8 +709,125 @@ def _render_stats(state) -> None:
             "Churn nyata": _fmt_mult(signal.get("churn_net_x")),
             "Inflow nyata": _fmt_usd(signal.get("net_inflow_usd")),
             "Status": signal.get("status") or "—",
+            "Tampil saat terdeteksi": (
+                "tersembunyi" if signal.get("hidden_at_detect") is True
+                else "tampil" if signal.get("hidden_at_detect") is False
+                else "—"),
         })
     st.dataframe(table, use_container_width=True, hide_index=True)
+    _render_pre_sweep(state, signals)
+
+
+def _fmt_count(value) -> str:
+    number = screen._num(value)
+    return f"{int(number):,}" if number is not None else "—"
+
+
+def _pre_sweep_scan_rows(scans, sweep_ts) -> list:
+    """Baris tabel untuk catatan scan sebelum sweep (kondisi per scan)."""
+    rows = []
+    for scan_row in scans:
+        metrics = scan_row.get("metrics") or {}
+        result = scan_row.get("result") or {}
+        criteria = scan_row.get("criteria") or {}
+        icons = {"lolos": "✅", "gagal": "❌", "n/a": "▫️"}
+        is_after = (sweep_ts is not None and scan_row.get("ts") is not None
+                    and int(scan_row["ts"]) >= int(sweep_ts))
+        rows.append({
+            "Posisi": "⚡ deteksi" if is_after else "sebelum candle",
+            "Waktu": _fmt_wib(scan_row.get("ts"), "%m-%d %H:%M"),
+            "Tampil": "tersembunyi" if scan_row.get("hidden") else "tampil",
+            "Vonis": result.get("verdict") or "—",
+            "Skor": (f"{result.get('passed_count')}/{result.get('scored_count')}"
+                     if result.get("scored_count") else "—"),
+            "Kriteria": " ".join(icons.get(v, "▫️") for v in criteria.values()) or "—",
+            "Harga": _fmt_price(metrics.get("price_usd")),
+            "Liq/MC": _fmt_pct(result.get("liq_mc")),
+            "Lowest buy (MC)": _lowest_buy_cell(metrics),
+            "Holder": _fmt_count(metrics.get("holder_count")),
+            "Top-10": _fmt_pct100(metrics.get("top10_holder_pct")),
+            "Bundler": _fmt_pct(metrics.get("top_bundler_trader_percentage",
+                                            metrics.get("bundler_rate"))),
+            "Bot degen": _fmt_pct(metrics.get("bot_degen_rate")),
+            "Vol 1h": _fmt_usd(metrics.get("vol_1h")),
+            "Buys/Sells 1h": f"{metrics.get('buys_1h') or 0} / {metrics.get('sells_1h') or 0}",
+        })
+    return rows
+
+
+def _pre_sweep_snapshot_rows(history, sweep_ts) -> list:
+    """Fallback untuk sinyal lama: snapshot per jam sebelum candle sweep."""
+    rows = []
+    for snap in history[-3:]:
+        rows.append({
+            "Posisi": "snapshot per jam",
+            "Waktu": _fmt_wib(snap.get("ts"), "%m-%d %H:%M"),
+            "Harga": _fmt_price(snap.get("price")),
+            "Liq/MC": _fmt_pct(snap.get("liq_mc")),
+            "Holder": _fmt_count(snap.get("holders")),
+            "Top-10": _fmt_pct100(snap.get("top10_pct")),
+            "Bundler": _fmt_pct(snap.get("bundler")),
+            "Bot degen": _fmt_pct(snap.get("bot_degen")),
+            "Vol 1h": _fmt_usd(snap.get("vol_1h")),
+        })
+    return rows
+
+
+def _render_pre_sweep(state, signals) -> None:
+    """Pilih satu sinyal sweep: kondisi token sebelum sweep + candle 5 menit."""
+    sweeps = sorted((s for s in signals if isinstance(s, dict)
+                     and s.get("kind") == "sweep" and s.get("id")),
+                    key=lambda s: s.get("ts") or 0, reverse=True)[:200]
+    if not sweeps:
+        return
+    st.markdown("#### 🔎 Detail token sebelum sweep")
+    by_id = {s["id"]: s for s in sweeps}
+
+    def _label(sid: str) -> str:
+        sig = by_id[sid]
+        flag = " · tersembunyi" if sig.get("hidden_at_detect") else ""
+        name = sig.get("symbol") or (sig.get("mint") or "")[:8]
+        return f"{_fmt_wib(sig.get('ts'), '%m-%d %H:%M')} · {name}{flag}"
+
+    pick = st.selectbox("Pilih sinyal sweep", options=list(by_id),
+                        format_func=_label, key="sweep_pre_pick")
+    signal = by_id[pick]
+    mint = signal.get("mint") or ""
+    sweep_ts = signal.get("sweep_ts") or signal.get("ts")
+    hidden = signal.get("hidden_at_detect")
+    st.caption(
+        f"Candle sweep {_fmt_wib(sweep_ts, '%d %b %Y %H:%M')} WIB · "
+        + ("tersembunyi dari tabel saat terdeteksi" if hidden is True
+           else "tampil di tabel saat terdeteksi" if hidden is False
+           else "status tampilan tidak tercatat (sinyal lama)"))
+
+    scans = [s for s in (signal.get("pre_sweep") or []) if isinstance(s, dict)]
+    if scans:
+        st.dataframe(_pre_sweep_scan_rows(scans, sweep_ts),
+                     use_container_width=True, hide_index=True)
+    else:
+        history = [row for row in store.mint_history(state, mint, limit=168)
+                   if isinstance(row, dict)
+                   and int(row.get("ts") or 0) < int(sweep_ts or 0)]
+        st.caption("Belum ada catatan scan untuk sinyal ini (dicatat sebelum "
+                   "fitur ini ada). Yang tampil: snapshot per jam sebelum sweep.")
+        if history:
+            st.dataframe(_pre_sweep_snapshot_rows(history, sweep_ts),
+                         use_container_width=True, hide_index=True)
+        else:
+            st.info("Tidak ada snapshot sebelum sweep untuk mint ini.")
+
+    candles = signal.get("pre_candles") or []
+    if candles:
+        st.markdown("**Candle 5 menit di sekitar sweep**")
+        st.dataframe([
+            {"Waktu": _fmt_wib(c[0], "%H:%M"),
+             "Open": _fmt_price(c[1]), "High": _fmt_price(c[2]),
+             "Low": _fmt_price(c[3]), "Close": _fmt_price(c[4]),
+             "Volume": _fmt_usd(c[5]),
+             "Sweep": "⚡" if int(c[0]) == int(sweep_ts or 0) else ""}
+            for c in candles if isinstance(c, (list, tuple)) and len(c) >= 6
+        ], use_container_width=True, hide_index=True)
 
 
 # ---------------------------------------------------------------------------

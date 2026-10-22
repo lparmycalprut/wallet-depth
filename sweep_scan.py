@@ -279,6 +279,14 @@ def run_scan(mints, *, state: dict | None = None,
             store.set_view(state, mint, item["_snapshot_row"], store.make_view(
                 mint, metrics, enriched, item.get("sweep_context"),
                 ts=item["_snapshot_row"]["ts"]))
+        # Catatan kompak per scan untuk SEMUA mint, termasuk yang disembunyikan
+        # dari tabel: sweep bisa terjadi di mint tersembunyi, dan kondisinya
+        # sebelum sweep harus tetap bisa dilihat (permintaan user 2026-10-21).
+        if metrics.get("ok") and item.get("_snapshot_row") is not None:
+            store.scan_log_add(state, mint, store.scan_log_entry(
+                metrics, enriched, ts=item["_snapshot_row"]["ts"],
+                hidden=screen.view_hidden({"metrics": metrics,
+                                           "result": enriched})))
 
     prices = {item["mint"]: (item["metrics"] or {}).get("price_usd")
               for item in results if (item["metrics"] or {}).get("price_usd")}
@@ -361,6 +369,13 @@ def run_scan(mints, *, state: dict | None = None,
                 "leverage": context.get("leverage"),
                 "leverage_net": context.get("leverage_net"),
             })
+            # Detail sebelum sweep: scan sebelum candle, scan yang mendeteksi,
+            # dan candle 5 menit di sekitar candle sweep.
+            detail = store.sweep_detail(state, mint, int(candle_ts),
+                                        item.get("candles_min5") or [])
+            signal["pre_sweep"] = detail["scans"]
+            signal["pre_candles"] = detail["candles"]
+            signal["hidden_at_detect"] = detail["hidden"]
             if not send_alerts:
                 signal["alert_skipped"] = "alert_nonaktif"
             elif fresh:
