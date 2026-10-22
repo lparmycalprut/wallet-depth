@@ -35,7 +35,7 @@ ROUND_TRIP_MIN_SPREAD = 0.02
 ROUND_TRIP_MAX_SPREAD = 0.50
 LEG_MIN_USD = 0.10
 WINDOW_SEC = 60
-ACTIVE_MIN_TRADES = 5
+ACTIVE_MIN_TRADES = 4         # diturunkan dari 5 (2026-10-22): klaster 5ubru 21:25 = 4 putaran / 3 wallet
 ACTIVE_MIN_WALLETS = 3
 QUIET_SEC = 600
 COOLDOWN_SEC = 1800
@@ -44,7 +44,7 @@ POLL_INTERVAL_SEC = 120
 # Kriteria dump sebelum aktif (permintaan user 2026-10-22). Angka ini usulan dari
 # COCK 22:42:32 WIB: satu jual $1,43K (≈6,6 juta token) dalam satu order.
 DUMP_MIN_USD = 1000.0
-DUMP_LOOKBACK_SEC = 300      # dump harus ada dalam 5 menit sebelum awal aktivitas
+DUMP_LOOKBACK_SEC = 600      # dinaikkan dari 300 (2026-10-22): dump 9-10 menit sebelum awal tetap dihitung
 DUMP_KEEP_SEC = 900          # dump disimpan 15 menit di state antar poll
 DUMP_KEEP_MAX = 50
 MAX_PAGES = 7
