@@ -24,6 +24,7 @@ import sweep_alert as alert
 import sweep_data as data
 import sweep_screen as screen
 import sweep_store as store
+import sweep_wallets as wallets
 
 DEFAULT_WORKERS = 4
 #: Candle 1 jam untuk kriteria 5/6 dan candle 5 menit untuk deteksi sweep.
@@ -64,6 +65,24 @@ def analyze(bundle: dict, snapshots=None, *, state=None, now=None) -> dict:
         market_cap_usd=metrics.get("market_cap_usd")) if event else None
     return {"mint": mint, "metrics": metrics, "result": result,
             "sweep": event, "sweep_context": context}
+
+
+#: Batas halaman GMGN per jendela wallet (100 trade/halaman; 3 jam bisa banyak).
+WALLET_MAX_PAGES = 10
+
+
+def _gmgn_wallet_swaps(mint: str, from_ts: int, to_ts: int):
+    """Swap GMGN dalam jendela untuk fitur wallet: ``(swaps, complete)``.
+
+    Gagal jaringan menghasilkan ``([], False)``; scan tidak boleh gagal karena ini.
+    """
+    try:
+        swaps, *_ = cvd.fetch_gmgn_swaps(mint, from_ts=from_ts, to_ts=to_ts,
+                                         max_pages=WALLET_MAX_PAGES)
+    except Exception:  # noqa: BLE001 - fitur tambahan, bukan syarat scan
+        return [], False
+    complete = bool((cvd.get_gmgn_fetch_status() or {}).get("complete"))
+    return swaps or [], complete
 
 
 def _gmgn_trades_for_delta(mint: str, from_ts: int, to_ts: int,
@@ -287,6 +306,20 @@ def run_scan(mints, *, state: dict | None = None,
                 metrics, enriched, ts=item["_snapshot_row"]["ts"],
                 hidden=screen.view_hidden({"metrics": metrics,
                                            "result": enriched})))
+            # Pembanding wallet: mint yang sedang lonjakan volume 5m dicatat
+            # fitur 3 jam terakhir (dengan atau tanpa sweep).
+            spike = wallets.vol_spike_x(item.get("candles_min5") or [])
+            if spike is not None and spike >= wallets.SPIKE_VOL_X:
+                now_ts = int(item["_snapshot_row"]["ts"])
+                swaps, complete = _gmgn_wallet_swaps(
+                    mint, now_ts - wallets.WINDOW_SEC, now_ts)
+                store.wallet_flow_add(state, mint, {
+                    "ts": now_ts, "kind": "spike", "spike_x": spike,
+                    "complete": complete,
+                    "hidden": screen.view_hidden({"metrics": metrics,
+                                                  "result": enriched}),
+                    "features": wallets.wallet_features(
+                        swaps, start=now_ts - wallets.WINDOW_SEC, end=now_ts)})
 
     prices = {item["mint"]: (item["metrics"] or {}).get("price_usd")
               for item in results if (item["metrics"] or {}).get("price_usd")}
@@ -376,6 +409,16 @@ def run_scan(mints, *, state: dict | None = None,
             signal["pre_sweep"] = detail["scans"]
             signal["pre_candles"] = detail["candles"]
             signal["hidden_at_detect"] = detail["hidden"]
+            # Fitur wallet 3 jam sebelum candle sweep (jendela yang sama dengan pembanding).
+            cts = int(candle_ts)
+            swaps, complete = _gmgn_wallet_swaps(mint, cts - wallets.WINDOW_SEC, cts)
+            pre_features = wallets.wallet_features(
+                swaps, start=cts - wallets.WINDOW_SEC, end=cts)
+            signal["wallet_pre"] = {"features": pre_features, "complete": complete,
+                                    "window_sec": wallets.WINDOW_SEC}
+            store.wallet_flow_add(state, mint, {
+                "ts": cts, "kind": "sweep", "complete": complete,
+                "features": pre_features})
             if not send_alerts:
                 signal["alert_skipped"] = "alert_nonaktif"
             elif fresh:

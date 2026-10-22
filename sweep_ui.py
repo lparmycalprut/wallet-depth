@@ -773,6 +773,53 @@ def _pre_sweep_snapshot_rows(history, sweep_ts) -> list:
     return rows
 
 
+def _render_wallet_compare(state, signal, sweep_ts) -> None:
+    """Fitur wallet 3 jam sebelum sweep vs. jendela pembanding (lonjakan volume)."""
+    mint = signal.get("mint") or ""
+    wallet_pre = signal.get("wallet_pre") or {}
+    feats = wallet_pre.get("features")
+    rows = []
+    for entry in (state or {}).get("wallet_flow", {}).get(mint, []) or []:
+        if not isinstance(entry, dict):
+            continue
+        f = entry.get("features") or {}
+        rows.append({
+            "Jenis": "⚡ sweep" if entry.get("kind") == "sweep" else "lonjakan",
+            "Waktu": _fmt_wib(entry.get("ts"), "%m-%d %H:%M"),
+            "Vol x": _fmt_mult(entry.get("spike_x")) if entry.get("spike_x") is not None else "—",
+            "Buy $": _fmt_usd(f.get("buy_usd")),
+            "Sell $": _fmt_usd(f.get("sell_usd")),
+            "Buy/Sell": _fmt_mult(f.get("buy_sell_ratio")) if f.get("buy_sell_ratio") is not None else "—",
+            "Wallet buy": _fmt_count(f.get("buy_wallets")),
+            "Fresh % buy": _fmt_pct(f.get("fresh_buy_share")),
+            "Bundler % buy": _fmt_pct(f.get("bundler_buy_share")),
+            "Top wallet $": _fmt_usd(f.get("top_buy_wallet_usd")),
+            "Rangkaian fresh/bundler": f"{f.get('run_len') or 0} trade, {f.get('run_wallets') or 0} wallet, {_fmt_usd(f.get('run_usd'))}",
+            "Lengkap": "ya" if entry.get("complete") else "tidak",
+        })
+    if not feats and not rows:
+        return
+    st.markdown("**Wallet (GMGN) sebelum sweep vs. lonjakan volume**")
+    if feats:
+        st.caption("Jendela 3 jam sebelum candle sweep. "
+                   + ("Data lengkap." if wallet_pre.get("complete")
+                      else "Data GMGN tidak lengkap, angka bisa kurang."))
+        st.dataframe([
+            {"Ukuran": "Trade / buy / sell", "Nilai": f"{feats.get('trades')} / {feats.get('buys')} / {feats.get('sells')}"},
+            {"Ukuran": "Buy $ / sell $", "Nilai": f"{_fmt_usd(feats.get('buy_usd'))} / {_fmt_usd(feats.get('sell_usd'))}"},
+            {"Ukuran": "Wallet pembeli", "Nilai": _fmt_count(feats.get("buy_wallets"))},
+            {"Ukuran": "Median buy per wallet", "Nilai": _fmt_usd(feats.get("median_buy_wallet_usd"))},
+            {"Ukuran": "Wallet terbesar", "Nilai": f"{_fmt_usd(feats.get('top_buy_wallet_usd'))} ({_fmt_pct(feats.get('top_buy_share'))} dari buy)"},
+            {"Ukuran": "Fresh wallet (wallet / % buy)", "Nilai": f"{_fmt_count(feats.get('fresh_buy_wallets'))} / {_fmt_pct(feats.get('fresh_buy_share'))}"},
+            {"Ukuran": "Bundler (wallet / % buy)", "Nilai": f"{_fmt_count(feats.get('bundler_buy_wallets'))} / {_fmt_pct(feats.get('bundler_buy_share'))}"},
+            {"Ukuran": "Sandwich (% volume)", "Nilai": _fmt_pct(feats.get("sandwich_share"))},
+            {"Ukuran": "Rangkaian fresh/bundler terpanjang", "Nilai": f"{feats.get('run_len') or 0} trade, {feats.get('run_wallets') or 0} wallet, {_fmt_usd(feats.get('run_usd'))}"},
+        ], use_container_width=True, hide_index=True)
+    if rows:
+        st.caption("Riwayat fitur wallet mint ini (jendela pembanding dicatat saat volume 5m melonjak ≥ 5×).")
+        st.dataframe(rows[-10:], use_container_width=True, hide_index=True)
+
+
 def _render_pre_sweep(state, signals) -> None:
     """Pilih satu sinyal sweep: kondisi token sebelum sweep + candle 5 menit."""
     sweeps = sorted((s for s in signals if isinstance(s, dict)
@@ -816,6 +863,8 @@ def _render_pre_sweep(state, signals) -> None:
                          use_container_width=True, hide_index=True)
         else:
             st.info("Tidak ada snapshot sebelum sweep untuk mint ini.")
+
+    _render_wallet_compare(state, signal, sweep_ts)
 
     candles = signal.get("pre_candles") or []
     if candles:

@@ -184,7 +184,7 @@ def load_state() -> dict:
         if isinstance(data.get(key), dict) or isinstance(data.get(key), list):
             state[key] = data[key]
     for key in ("shakeout_latched_at", "cohort_latched", "scan_status",
-                "flow_episodes", "scan_log"):
+                "flow_episodes", "scan_log", "wallet_flow"):
         if isinstance(data.get(key), dict):
             state[key] = data[key]
     state["updated"] = int(data.get("updated") or 0)
@@ -303,6 +303,7 @@ def merge_states(local: dict, remote: dict) -> dict:
     signals = sorted(seen.values(), key=lambda row: float(row.get("ts") or 0))
     merged["signals"] = signals[-MAX_SIGNALS:]
     merged["scan_log"] = _merge_scan_log(remote.get("scan_log"), local.get("scan_log"))
+    merged["wallet_flow"] = _merge_wallet_flow(remote.get("wallet_flow"), local.get("wallet_flow"))
 
     latches: dict = {}
     for source in (remote.get("shakeout_latched_at"), local.get("shakeout_latched_at")):
@@ -748,6 +749,22 @@ def scan_log_add(state: dict, mint: str, entry: dict) -> None:
     log[mint] = rows[-SCAN_LOG_KEEP:]
 
 
+#: Berapa catatan fitur wallet per mint (jendela pembanding + sweep).
+WALLET_FLOW_KEEP = 48
+
+
+def wallet_flow_add(state: dict, mint: str, entry: dict) -> None:
+    """Tambahkan catatan fitur wallet untuk ``mint``; ts sama menimpa."""
+    log = state.setdefault("wallet_flow", {})
+    if not isinstance(log, dict):
+        log = state["wallet_flow"] = {}
+    rows = [row for row in (log.get(mint) or []) if isinstance(row, dict)]
+    rows = [row for row in rows if row.get("ts") != entry.get("ts")]
+    rows.append(entry)
+    rows.sort(key=lambda row: int(row.get("ts") or 0))
+    log[mint] = rows[-WALLET_FLOW_KEEP:]
+
+
 def sweep_detail(state: dict, mint: str, candle_ts: int, candles_min5,
                  ) -> dict:
     """Detail sebelum sweep: scan sebelum candle, scan yang mendeteksi, dan candle.
@@ -778,8 +795,8 @@ def sweep_detail(state: dict, mint: str, candle_ts: int, candles_min5,
     return {"scans": scans, "candles": candles, "hidden": hidden}
 
 
-def _merge_scan_log(*sources) -> dict:
-    """Gabung ``scan_log`` beberapa state: per mint, ts unik, paling baru ``SCAN_LOG_KEEP``."""
+def _merge_ts_logs(keep: int, *sources) -> dict:
+    """Gabung log per mint (``{mint: [entri ber-ts]}``): ts unik, paling baru ``keep``."""
     merged: dict = {}
     for source in sources:
         if not isinstance(source, dict):
@@ -791,8 +808,18 @@ def _merge_scan_log(*sources) -> dict:
             for row in rows:
                 if isinstance(row, dict) and row.get("ts") is not None:
                     target[int(row["ts"])] = row
-    return {mint: [rows[ts] for ts in sorted(rows)][-SCAN_LOG_KEEP:]
+    return {mint: [rows[ts] for ts in sorted(rows)][-keep:]
             for mint, rows in merged.items()}
+
+
+def _merge_scan_log(*sources) -> dict:
+    """Gabung ``scan_log`` beberapa state (lihat :func:`_merge_ts_logs`)."""
+    return _merge_ts_logs(SCAN_LOG_KEEP, *sources)
+
+
+def _merge_wallet_flow(*sources) -> dict:
+    """Gabung ``wallet_flow`` beberapa state (lihat :func:`_merge_ts_logs`)."""
+    return _merge_ts_logs(WALLET_FLOW_KEEP, *sources)
 
 
 # ---------------------------------------------------------------------------
