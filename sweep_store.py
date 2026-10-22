@@ -184,7 +184,7 @@ def load_state() -> dict:
         if isinstance(data.get(key), dict) or isinstance(data.get(key), list):
             state[key] = data[key]
     for key in ("shakeout_latched_at", "cohort_latched", "scan_status",
-                "flow_episodes"):
+                "flow_episodes", "scan_log"):
         if isinstance(data.get(key), dict):
             state[key] = data[key]
     state["updated"] = int(data.get("updated") or 0)
@@ -302,6 +302,7 @@ def merge_states(local: dict, remote: dict) -> dict:
         seen[key] = row
     signals = sorted(seen.values(), key=lambda row: float(row.get("ts") or 0))
     merged["signals"] = signals[-MAX_SIGNALS:]
+    merged["scan_log"] = _merge_scan_log(remote.get("scan_log"), local.get("scan_log"))
 
     latches: dict = {}
     for source in (remote.get("shakeout_latched_at"), local.get("shakeout_latched_at")):
@@ -684,6 +685,114 @@ def net_inflow(state: dict, mint: str, liq_now, now=None, *,
         return None
     delta = now_liq - _f(prev.get("liq_usd"))
     return delta if delta > 0 else None
+
+
+# ---------------------------------------------------------------------------
+# Catatan per scan (termasuk mint tersembunyi) dan detail sebelum sweep
+# ---------------------------------------------------------------------------
+#: Berapa scan terakhir per mint yang disimpan (cron 30 menit → 6 scan ≈ 3 jam).
+SCAN_LOG_KEEP = 6
+#: Berapa scan sebelum candle sweep yang ikut disimpan di sinyal sweep.
+SWEEP_PRE_SCANS = 3
+#: Berapa candle 5 menit (termasuk candle sweep) yang ikut disimpan (12 ≈ 1 jam).
+SWEEP_PRE_CANDLES = 12
+
+#: Field metrik kompak per scan. Sengaja kecil: catatan ini ditulis untuk setiap
+#: mint di setiap scan, termasuk yang disembunyikan dari tabel.
+SCAN_LOG_METRIC_KEYS = (
+    "symbol", "price_usd", "liq_usd", "fdv_usd", "pool_base_usd", "vol_1h",
+    "buys_1h", "sells_1h", "holder_count", "top10_holder_pct",
+    "top_bundler_trader_percentage", "bundler_rate", "bot_degen_rate",
+    "fresh_wallet_rate", "holder_min_avg_cost", "holder_cost_count",
+)
+SCAN_LOG_RESULT_KEYS = (
+    "verdict", "eligible", "passed_count", "scored_count", "required_count",
+    "liq_mc", "cohort_gate_status", "holder_gate_status", "holder_gap",
+    "reference_fund_x", "turnover_x",
+)
+
+
+def scan_log_entry(metrics: dict, result: dict, *, ts: int, hidden: bool) -> dict:
+    """Ringkasan kondisi satu mint pada satu scan (kompak, untuk riwayat)."""
+    metrics = metrics or {}
+    result = result or {}
+    criteria = {}
+    for check in result.get("checks") or []:
+        if not isinstance(check, dict) or not check.get("key"):
+            continue
+        if not check.get("has_data"):
+            criteria[check["key"]] = "n/a"
+        else:
+            criteria[check["key"]] = "lolos" if check.get("passed") else "gagal"
+    return {
+        "ts": int(ts),
+        "hidden": bool(hidden),
+        "metrics": {k: metrics[k] for k in SCAN_LOG_METRIC_KEYS if k in metrics},
+        "result": {k: result[k] for k in SCAN_LOG_RESULT_KEYS if k in result},
+        "criteria": criteria,
+    }
+
+
+def scan_log_add(state: dict, mint: str, entry: dict) -> None:
+    """Tambahkan catatan scan untuk ``mint``; scan dengan ts sama menimpa.
+
+    Hanya ``SCAN_LOG_KEEP`` entri terbaru per mint yang disimpan.
+    """
+    log = state.setdefault("scan_log", {})
+    if not isinstance(log, dict):
+        log = state["scan_log"] = {}
+    rows = [row for row in (log.get(mint) or []) if isinstance(row, dict)]
+    rows = [row for row in rows if row.get("ts") != entry.get("ts")]
+    rows.append(entry)
+    rows.sort(key=lambda row: int(row.get("ts") or 0))
+    log[mint] = rows[-SCAN_LOG_KEEP:]
+
+
+def sweep_detail(state: dict, mint: str, candle_ts: int, candles_min5,
+                 ) -> dict:
+    """Detail sebelum sweep: scan sebelum candle, scan yang mendeteksi, dan candle.
+
+    ``scans`` berisi hingga ``SWEEP_PRE_SCANS`` catatan dengan ts < candle sweep,
+    lalu catatan scan yang mendeteksi (ts >= candle). ``candles`` berisi candle
+    5 menit dalam jendela ``SWEEP_PRE_CANDLES`` yang berakhir di candle sweep.
+    """
+    cts = int(candle_ts)
+    log = [row for row in ((state.get("scan_log") or {}).get(mint) or [])
+           if isinstance(row, dict)]
+    before = [row for row in log if int(row.get("ts") or 0) < cts]
+    detected = [row for row in log if int(row.get("ts") or 0) >= cts]
+    scans = before[-SWEEP_PRE_SCANS:] + detected[:1]
+    window_start = cts - SWEEP_PRE_CANDLES * SWEEP_CANDLE_SEC
+    candles = []
+    for row in candles_min5 or []:
+        if not isinstance(row, (list, tuple)) or len(row) < 6:
+            continue
+        try:
+            ts = int(row[0])
+        except (TypeError, ValueError):
+            continue
+        if window_start < ts <= cts:
+            candles.append([ts, row[1], row[2], row[3], row[4], row[5]])
+    candles.sort(key=lambda row: row[0])
+    hidden = bool(detected[0].get("hidden")) if detected else None
+    return {"scans": scans, "candles": candles, "hidden": hidden}
+
+
+def _merge_scan_log(*sources) -> dict:
+    """Gabung ``scan_log`` beberapa state: per mint, ts unik, paling baru ``SCAN_LOG_KEEP``."""
+    merged: dict = {}
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for mint, rows in source.items():
+            if not isinstance(rows, list):
+                continue
+            target = merged.setdefault(mint, {})
+            for row in rows:
+                if isinstance(row, dict) and row.get("ts") is not None:
+                    target[int(row["ts"])] = row
+    return {mint: [rows[ts] for ts in sorted(rows)][-SCAN_LOG_KEEP:]
+            for mint, rows in merged.items()}
 
 
 # ---------------------------------------------------------------------------
