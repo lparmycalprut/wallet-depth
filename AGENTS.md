@@ -4,7 +4,7 @@
 
 The Streamlit application is a focused **Meteora Best Pool 24H** dashboard. Do not restore the removed wallet-depth Holder system, TEMP page, scheduled Holder workflows, Holder stores, or Holder links without a new explicit product decision.
 
-**Telegram alerts are sanctioned again — but only for the 🌊 Sweep page** (explicit product decision, 2026-10-12). The Holder-era alert machinery is *not* restored: the sweep feature has its own modules (`sweep_alert.py`, `sweep_store.py`, `sweep_scan.py`, `sweep_ui.py`, `pages/8_🌊_Sweep.py`, `scripts/scan_sweep.py`, `.github/workflows/sweep-scan.yml`). Keep them separate from Best Pool, do not resurrect `telegram_alerts.py` or any Holder store, and keep `app.py` free of sweep imports.
+**Telegram alerts are sanctioned again — but only for the 🌊 Sweep page** (explicit product decision, 2026-10-12). **Exception (2026-10-22):** ⚡ Early Watcher (`early_watch.py`, `scripts/early_watch.py`, `.github/workflows/early-watch.yml`) sends alerts too, because the user asked for them; it is separate from Sweep and does not change Sweep verdicts. The Holder-era alert machinery is *not* restored: the sweep feature has its own modules (`sweep_alert.py`, `sweep_store.py`, `sweep_scan.py`, `sweep_ui.py`, `pages/8_🌊_Sweep.py`, `scripts/scan_sweep.py`, `.github/workflows/sweep-scan.yml`). Keep them separate from Best Pool, do not resurrect `telegram_alerts.py` or any Holder store, and keep `app.py` free of sweep imports.
 
 Independent market-risk fields such as Meteora's `top_holders_pct`, GMGN metrics, RugCheck, and the Bubblemaps external link are not part of the removed subsystem.
 
@@ -71,3 +71,17 @@ git diff --check
 ```
 
 For distribution changes, always run `tests/test_liquidity_distribution_filter.py` explicitly.
+
+## Early Watcher invariants (2026-10-22)
+
+- Separate feature: `early_watch.py` (pure logic), `scripts/early_watch.py` (runner, poll every 120 s inside one ~25-minute job), `.github/workflows/early-watch.yml`, `early_ui.py` and `pages/10_⚡_Early_Watcher.py` (read-only). State is `early_watch_state.json`; the watchlist is `early_watch_watchlist.json` (5 mints only, requested by the user).
+- Info only. It never changes Sweep verdict, score, `eligible`, filters, or `sweep_state.json`. It does not import from `sweep_screen`, `sweep_scan`, or `sweep_state.json`.
+- Every watchlist mint is polled, even if muted or hidden in Sweep. Nothing is hidden.
+- Round trip = same tx and maker with a buy leg and a sell leg in different quote markets, spread 2%–50%, leg ≥ $0.10. Active = ≥ 5 round trips from ≥ 3 wallets in 60 s.
+- **Big sell before active (2026-10-22):** an alert needs one sell ≥ `DUMP_MIN_USD` ($1,000, usulan) that is not a round-trip leg, within `DUMP_LOOKBACK_SEC` (300 s) before the start of the active window. Activity without that dump is recorded as `AKTIF (tanpa dump)` and sends no alert.
+- Alert only on the transition to active, plus a 30-minute cooldown. Dumps are kept 15 minutes in state so a dump seen in an earlier poll still counts.
+- Fetch failure = status `GAGAL`. It does not change activity state, does not alert, and does not hide the mint. `partial=True` when the page cap is reached.
+- Commit state only when `decision_fingerprint` changes (alerts, status, cooldown, `last_active_ts`, `burst_ok`, dumps). Log-only changes are not committed.
+- Known blind spot: the 30-min cron with a ~25-min job leaves a ~5-min gap between jobs. Trades in that gap are never fetched. The 180 s lookback does not cover it.
+- Workflow runs only from the default branch, so it is inactive until merged to `main`.
+

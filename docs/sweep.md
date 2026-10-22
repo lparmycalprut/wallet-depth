@@ -396,3 +396,26 @@ TIDAK LAYAK). Karena itu:
 - Scan GMGN dan kriteria untuk mint tersembunyi tetap jalan seperti biasa. CVD dan
   delta tetap mengikuti aturan lama (mint tersembunyi tidak dihitung).
 - Catatan scan ikut digabung saat state dari cron dan app di-merge.
+
+## Fitur wallet sebelum sweep (2026-10-22)
+
+Tujuan: membandingkan pola per wallet (fresh wallet dan bundler yang beli beruntun,
+nominal buy per wallet) antara jendela sebelum sweep dan jendela pembanding.
+
+- Sumber: trade GMGN (`cvd.fetch_gmgn_swaps`) dengan tag `fresh_wallet`, `bundler`,
+  dan `sandwich_bot`. Trade di bawah `MIN_SOL` (≈ $10) tidak ikut, sama seperti di
+  pemindaian CVD.
+- **Jendela pembanding** (`wallet_flow` kind `spike`): setiap scan, untuk mint yang
+  volume bar 5 menit terakhirnya ≥ 5× median 24 bar sebelumnya, fitur 3 jam terakhir
+  dicatat. Mint itu bisa punya sweep atau tidak. Ini pembanding dari kondisi yang
+  mirip, tetapi belum tentu tanpa sweep sama sekali.
+- **Sweep baru** (`wallet_pre` di sinyal, kind `sweep`): fitur 3 jam sebelum candle
+  sweep, dengan jendela yang sama.
+- Fitur (angka mentah, tanpa ambang): jumlah trade, buy/sell USD, rasio buy/sell,
+  jumlah wallet pembeli, median dan terbesar buy per wallet, porsi buy dari fresh
+  dan bundler, porsi sandwich dari volume, dan **rangkaian fresh/bundler terpanjang**
+  (buy beruntun dengan jarak ≤ 120 detik antar buy fresh/bundler).
+- Batas: `WALLET_MAX_PAGES = 10` (≈ 1.000 trade per jendela). Jika GMGN gagal atau
+  halaman habis sebelum jendela selesai, `complete = false` dan angkanya bisa kurang.
+- Tes: `tests/test_sweep_wallets.py` memakai contoh kecil dengan angka dihitung manual.
+  Jalur GMGN wallet dimatikan di `tests/_offline_delta.py` supaya tes tetap offline.
