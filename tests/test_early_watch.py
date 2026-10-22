@@ -80,12 +80,13 @@ class RoundTripTests(unittest.TestCase):
 
 
 class ActivityTests(unittest.TestCase):
-    def test_active_needs_five_trips_from_three_wallets(self):
-        rts = ew.round_trips(burst(1000, 5, WALLETS))
+    def test_active_needs_four_trips_from_three_wallets(self):
+        # ACTIVE_MIN_TRADES diturunkan ke 4 (2026-10-22) agar klaster 5ubru 21:25 lolos.
+        rts = ew.round_trips(burst(1000, ew.ACTIVE_MIN_TRADES, WALLETS))
         self.assertTrue(ew.active_ends(ew.window_stats(rts)))
 
-    def test_four_trips_not_active(self):
-        rts = ew.round_trips(burst(1000, 4, WALLETS))
+    def test_three_trips_not_active(self):
+        rts = ew.round_trips(burst(1000, ew.ACTIVE_MIN_TRADES - 1, WALLETS))
         self.assertEqual(ew.active_ends(ew.window_stats(rts)), [])
 
     def test_two_wallets_not_active(self):
@@ -122,10 +123,11 @@ class DumpTests(unittest.TestCase):
 
     def test_find_dump_window(self):
         dumps = [{"tx": "a", "maker": "D", "ts": 10_000, "usd": 1500, "base": 1}]
-        # Awal aktivitas 10_300: jendela = [10_300-60-300, 10_300] = [9_940, 10_300].
-        self.assertIsNotNone(ew.find_dump(dumps, 10_300))
-        # 10_000 terlalu jauh dari awal 10_400 (jendela mulai 10_040).
-        self.assertIsNone(ew.find_dump(dumps, 10_400))
+        lb = ew.DUMP_LOOKBACK_SEC + ew.WINDOW_SEC
+        # Dump di 10_000 masih dalam jendela untuk awal = 10_000 + lb (batas bawah inklusif).
+        self.assertIsNotNone(ew.find_dump(dumps, 10_000 + lb))
+        # Satu detik lebih jauh dari batas: di luar jendela.
+        self.assertIsNone(ew.find_dump(dumps, 10_000 + lb + 1))
         # Dump sesudah awal tidak dihitung.
         self.assertIsNone(ew.find_dump(dumps, 9_900))
 
@@ -146,6 +148,16 @@ class EvaluateTests(unittest.TestCase):
         self.assertEqual(alert["dump"]["usd"], 1430.0)
         self.assertEqual(rec["alerts"], 1)
         self.assertEqual(rec["cooldown_until"], 10_060 + ew.COOLDOWN_SEC)
+
+    def test_5ubru_case_four_trips_with_dump_9_min_before_alerts(self):
+        # Kasus 5ubruMYp 2026-10-22: dump F78f $1.589 pukul 21:16:06, klaster 4 putaran
+        # dari 3 wallet mulai 21:25:24 dan jendela aktif berakhir 21:26:23 (≈617 s kemudian).
+        trades = [dump_trade(9_398, usd=1589.0)] + burst(10_000, 4, ["W1", "W2", "W3"])
+        rec, alert, status = ew.evaluate_mint({}, trades, 10_060, partial=False)
+        self.assertEqual(status, "AWAL AKTIF")
+        self.assertIsNotNone(alert)
+        self.assertEqual(alert["count"], 4)
+        self.assertEqual(alert["wallets"], 3)
 
     def test_burst_without_dump_no_alert(self):
         rec, alert, status = ew.evaluate_mint({}, burst(10_000, 6, WALLETS), 10_060,
