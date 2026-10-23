@@ -74,7 +74,7 @@ For distribution changes, always run `tests/test_liquidity_distribution_filter.p
 
 ## Early Watcher invariants (2026-10-22)
 
-- Separate feature: `early_watch.py` (pure logic), `scripts/early_watch.py` (runner, poll every 120 s inside one ~25-minute job), `.github/workflows/early-watch.yml`, `early_ui.py` and `pages/10_⚡_Early_Watcher.py` (read-only). State is `early_watch_state.json`; the watchlist is `early_watch_watchlist.json` (5 mints only, requested by the user).
+- Separate feature: `early_watch.py` (pure logic), `scripts/early_watch.py` (runner, poll every 120 s; the workflow runs 10 segments of 30 min per job, committing state after each changed segment), `.github/workflows/early-watch.yml`, `early_ui.py` and `pages/10_⚡_Early_Watcher.py` (read-only). State is `early_watch_state.json`; the watchlist is `early_watch_watchlist.json` (5 mints only, requested by the user).
 - Info only. It never changes Sweep verdict, score, `eligible`, filters, or `sweep_state.json`. It does not import from `sweep_screen`, `sweep_scan`, or `sweep_state.json`.
 - Every watchlist mint is polled, even if muted or hidden in Sweep. Nothing is hidden.
 - Round trip = same tx and maker with a buy leg and a sell leg in different quote markets, spread 2%–50%, leg ≥ $0.10. Active = ≥ 4 round trips from ≥ 3 wallets in 60 s (turun dari 5 pada 2026-10-22).
@@ -82,6 +82,7 @@ For distribution changes, always run `tests/test_liquidity_distribution_filter.p
 - Alert only on the transition to active, plus a 30-minute cooldown. Dumps are kept 15 minutes in state so a dump seen in an earlier poll still counts.
 - Fetch failure = status `GAGAL`. It does not change activity state, does not alert, and does not hide the mint. `partial=True` when the page cap is reached.
 - Commit state only when `decision_fingerprint` changes (alerts, status, cooldown, `last_active_ts`, `burst_ok`, dumps). Log-only changes are not committed.
-- Known blind spot: the 30-min cron with a ~25-min job leaves a ~5-min gap between jobs. Trades in that gap are never fetched. The 180 s lookback does not cover it.
+- Gap handling: when the last successful poll (`last_ok`) is more than 180 s old (first poll, or a missed run), the runner backfills dumps from `[now-660, now-180]` in 180 s chunks (dumps only; no activity, no alerts). A failed backfill is recorded in `rec["backfill"]` and the normal poll still runs.
+- Cron runs are sparse in practice (2 scheduled runs in the first day after merge), so each job is ~5 h long to cover more time.
 - Workflow runs only from the default branch, so it is inactive until merged to `main`.
 

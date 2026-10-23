@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Runner Early Watcher (GitHub Actions, satu job ≈ 25 menit, poll tiap 2 menit).
+"""Runner Early Watcher (GitHub Actions, satu segmen ≈ 30 menit, poll tiap 2 menit).
 
-    python scripts/early_watch.py [--duration 1500] [--interval 120] [--no-alerts]
+    python scripts/early_watch.py [--duration 1800] [--interval 120] [--no-alerts]
 
 Dengan ``--duration 0`` (default) hanya satu poll. Di workflow, durasi diisi
 supaya satu job mencakup beberapa poll. Cron GitHub tidak cukup rapat untuk

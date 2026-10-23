@@ -84,6 +84,37 @@ def empty_state(now: int = 0) -> dict:
     return {"version": 1, "updated": int(now), "mints": {}, "log": []}
 
 
+def load_coin_labels(path: str = WATCHLIST_PATH) -> dict:
+    """Label tampilan per mint dari ``coins`` di watchlist (dicatat manual).
+
+    Label: ``symbol`` saja, atau ``symbol (name)`` bila nama berbeda. Mint tanpa
+    entri tidak dihilangkan; pemanggil memakai :func:`coin_label` sebagai fallback.
+    Berkas ``sweep_state.json`` sengaja tidak dibaca di sini (invariant AGENTS.md).
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    coins = data.get("coins", {}) if isinstance(data, dict) else {}
+    out = {}
+    for mint, info in (coins or {}).items():
+        if not isinstance(info, dict):
+            continue
+        symbol = str(info.get("symbol") or "").strip()
+        name = str(info.get("name") or "").strip()
+        if not symbol:
+            continue
+        out[str(mint).strip()] = (f"{symbol} ({name})"
+                                  if name and name != symbol else symbol)
+    return out
+
+
+def coin_label(labels: dict, mint: str) -> str:
+    """Nama koin untuk tampilan; fallback ringkas bila mint belum punya nama."""
+    return labels.get(mint) or f"{str(mint)[:6]}…"
+
+
 def load_state(path: str = STATE_PATH) -> dict:
     try:
         with open(path, encoding="utf-8") as fh:
@@ -276,7 +307,7 @@ def evaluate_mint(rec: dict, trades, now: int, *, partial: bool) -> tuple:
         status = "TENANG"
 
     rec.update({"status": status, "last_poll": int(now), "trades": len(trades),
-                "partial": bool(partial), "error": "", **peak})
+                "partial": bool(partial), "error": "", "last_ok": int(now), **peak})
     return rec, alert, status
 
 
@@ -351,6 +382,47 @@ def decision_fingerprint(state: dict) -> str:
     return json.dumps(rows, sort_keys=True)
 
 
+# Jendela yang dipakai ``find_dump`` sebelum awal aktivitas.
+BACKFILL_SEC = WINDOW_SEC + DUMP_LOOKBACK_SEC
+
+
+def needs_backfill(rec: dict, now: int) -> bool:
+    """True bila ada celah lebih dari satu lookback sejak poll sukses terakhir.
+
+    Berlaku untuk poll pertama (state kosong) dan setelah job berhenti. Tanpa
+    backfill, jual besar 10 menit sebelum poll pertama tidak pernah terlihat.
+    """
+    last_ok = (rec or {}).get("last_ok")
+    return last_ok is None or int(now) - int(last_ok) > LOOKBACK_SEC
+
+
+def backfill_dumps(rec: dict, mint: str, now: int, fetcher) -> dict:
+    """Isi ``dumps`` dari jendela sebelum poll normal (hanya jual besar).
+
+    Ditarik per ``LOOKBACK_SEC`` agar batas halaman tidak memotong bagian terlama
+    (halaman GMGN berurutan terbaru dulu). Tidak mengubah status, putaran, atau
+    alert. Gagal ditulis di ``rec["backfill"]``, dan poll tetap jalan.
+    """
+    now = int(now)
+    lo, hi = now - BACKFILL_SEC, now - LOOKBACK_SEC
+    dumps = list(rec.get("dumps") or [])
+    partial_any, error = False, ""
+    try:
+        a = lo
+        while a < hi:
+            b = min(a + LOOKBACK_SEC, hi)
+            trades, partial = fetcher(mint, a, b)
+            partial_any = partial_any or bool(partial)
+            rt_keys = {(r["tx"], r["maker"]) for r in round_trips(trades)}
+            dumps = _merge_dumps(dumps, big_sells(trades, rt_keys), now)
+            a = b
+    except Exception as exc:  # noqa: BLE001 — dicatat, poll tetap jalan
+        error = str(exc)[:160]
+    rec["dumps"] = dumps
+    rec["backfill"] = {"t": now, "partial": partial_any, "error": error}
+    return rec
+
+
 def run_poll(state: dict, mints: list, now: int, *, fetcher=None, sender=None) -> dict:
     """Satu poll untuk semua mint. Mengubah ``state`` di tempat dan mengembalikannya.
 
@@ -366,6 +438,8 @@ def run_poll(state: dict, mints: list, now: int, *, fetcher=None, sender=None) -
     alerts = []
     for mint in mints:
         prev = dict(state["mints"].get(mint) or {})
+        if needs_backfill(prev, now):
+            backfill_dumps(prev, mint, now, fetcher)
         try:
             trades, partial = fetcher(mint, now - LOOKBACK_SEC, now)
         except Exception as exc:  # noqa: BLE001 — dicatat, bukan disembunyikan

@@ -20,15 +20,16 @@ Field jumlah token di GMGN adalah `base_amount`. Jumlah USD adalah `amount_usd`.
 ## Komponen
 
 - `early_watch.py`: logika murni. `round_trips`, `window_stats`, `big_sells`, `find_dump`, `evaluate_mint`, `run_poll`, `decision_fingerprint`, `format_alert`, `fetch_window`.
-- `scripts/early_watch.py`: runner. `--duration 1500 --interval 120`. Baris terakhir `EARLY_WATCH_CHANGED=0|1`. `--no-alerts` untuk uji lokal.
-- `.github/workflows/early-watch.yml`: cron `*/30`, grup concurrency `early-watch` (tidak dibatalkan), commit hanya bila fingerprint berubah lewat `scripts/commit_early_state.sh`.
+- `scripts/early_watch.py`: runner. Satu segmen `--duration 1800 --interval 120`. Baris terakhir `EARLY_WATCH_CHANGED=0|1`. `--no-alerts` untuk uji lokal.
+- `.github/workflows/early-watch.yml`: cron `*/30`, grup concurrency `early-watch` (tidak dibatalkan). Satu job = 10 segmen × 30 menit (timeout 360 menit). Setelah tiap segmen yang fingerprint-nya berubah, state di-commit lewat `scripts/commit_early_state.sh`. Halaman tertinggal paling lama ~30 menit.
 - `early_ui.py`, `pages/10_⚡_Early_Watcher.py`: halaman read-only dari `early_watch_state.json`.
 - `early_watch_watchlist.json`: 5 mint. Semua dipantau, termasuk yang di-mute atau tersembunyi di Sweep.
+- Tabel dan log di page menampilkan nama koin (`coins` di watchlist, dicatat manual; contoh `Gato (El Gato)`), bukan mint. Mint tanpa entri `coins` tampil sebagai 6 karakter pertama + `…`. Early Watcher tidak membaca `sweep_state.json`.
 
 ## Batasan yang diketahui
 
-1. **Celah antar job.** Cron 30 menit dengan job ~25 menit menyisakan ~5 menit tanpa poll. Trade di celah itu tidak pernah diambil, termasuk jual besar. Perbaikan yang mungkin: lookback dinamis dari `updated` terakhir, atau job 29 menit.
-2. **Frekuensi.** Workflow hanya jalan dari default branch, jadi aktif setelah merge ke `main`. Cron GitHub minimal 5 menit dan sering terlambat, sehingga loop 2 menit ada di dalam job.
+1. **Celah antar poll.** Celah lebih dari 180 detik antar poll (poll pertama job, atau job yang terlewat) memicu backfill jual besar: jendela `[now-660, now-180]` ditarik per 180 detik, hanya untuk `dumps`. Backfill tidak menambah putaran dan tidak mengirim alert. Status aktivitas di celah itu tetap tidak diketahui. Jika backfill gagal, dicatat di `rec["backfill"]` dan poll normal tetap jalan.
+2. **Frekuensi.** Workflow hanya jalan dari default branch, jadi aktif setelah merge ke `main`. Cron GitHub minimal 5 menit dan sering terlambat. Pada 2026-10-23 hanya 2 run terjadwal (18:44Z dan 22:13Z, 22 Okt), sehingga cakupan poll jarang. Karena itu job dibuat ~5 jam. Cron tetap `*/30` agar job berikutnya mengantre dan jalan begitu job sebelumnya selesai.
 3. **Deteksi terlambat.** Pada COCK 22:42:46, standar ini baru menghasilkan `AWAL AKTIF` sekitar 22:43:01, sekitar 15 detik setelah lonjakan. Harga sudah ~3x. Ini konfirmasi, bukan sinyal paling awal.
 4. **Jual besar dari wallet yang sama dengan putaran.** Kaki jual putaran bot dikecualikan. Jual besar dari wallet yang juga berputar pada tx lain tetap dihitung.
 
