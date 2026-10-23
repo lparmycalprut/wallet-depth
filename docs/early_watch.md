@@ -24,6 +24,7 @@ Field jumlah token di GMGN adalah `base_amount`. Jumlah USD adalah `amount_usd`.
 - `.github/workflows/early-watch.yml`: cron `*/30`, grup concurrency `early-watch` (tidak dibatalkan), commit hanya bila fingerprint berubah lewat `scripts/commit_early_state.sh`.
 - `early_ui.py`, `pages/10_⚡_Early_Watcher.py`: halaman read-only dari `early_watch_state.json`.
 - `early_watch_watchlist.json`: 5 mint. Semua dipantau, termasuk yang di-mute atau tersembunyi di Sweep.
+- Tabel dan log di page menampilkan nama koin (`coins` di watchlist, dicatat manual; contoh `Gato (El Gato)`), bukan mint. Mint tanpa entri `coins` tampil sebagai 6 karakter pertama + `…`. Early Watcher tidak membaca `sweep_state.json`.
 
 ## Batasan yang diketahui
 

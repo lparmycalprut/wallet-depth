@@ -84,6 +84,37 @@ def empty_state(now: int = 0) -> dict:
     return {"version": 1, "updated": int(now), "mints": {}, "log": []}
 
 
+def load_coin_labels(path: str = WATCHLIST_PATH) -> dict:
+    """Label tampilan per mint dari ``coins`` di watchlist (dicatat manual).
+
+    Label: ``symbol`` saja, atau ``symbol (name)`` bila nama berbeda. Mint tanpa
+    entri tidak dihilangkan; pemanggil memakai :func:`coin_label` sebagai fallback.
+    Berkas ``sweep_state.json`` sengaja tidak dibaca di sini (invariant AGENTS.md).
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    coins = data.get("coins", {}) if isinstance(data, dict) else {}
+    out = {}
+    for mint, info in (coins or {}).items():
+        if not isinstance(info, dict):
+            continue
+        symbol = str(info.get("symbol") or "").strip()
+        name = str(info.get("name") or "").strip()
+        if not symbol:
+            continue
+        out[str(mint).strip()] = (f"{symbol} ({name})"
+                                  if name and name != symbol else symbol)
+    return out
+
+
+def coin_label(labels: dict, mint: str) -> str:
+    """Nama koin untuk tampilan; fallback ringkas bila mint belum punya nama."""
+    return labels.get(mint) or f"{str(mint)[:6]}…"
+
+
 def load_state(path: str = STATE_PATH) -> dict:
     try:
         with open(path, encoding="utf-8") as fh:

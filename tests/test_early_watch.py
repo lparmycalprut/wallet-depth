@@ -364,5 +364,47 @@ class WatchlistTests(unittest.TestCase):
         self.assertIn("55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump", mints)
 
 
+class CoinLabelTests(unittest.TestCase):
+    def _write(self, data):
+        fh = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+        json.dump(data, fh)
+        fh.close()
+        return fh.name
+
+    def test_symbol_only_when_name_equal_or_missing(self):
+        path = self._write({"mints": ["A"], "coins": {
+            "A": {"symbol": "dev/null", "name": "dev/null"},
+            "B": {"symbol": "Human"}}})
+        self.assertEqual(ew.load_coin_labels(path), {"A": "dev/null", "B": "Human"})
+
+    def test_symbol_and_name_when_different(self):
+        path = self._write({"mints": ["A"], "coins": {"A": {"symbol": "Gato", "name": "El Gato"}}})
+        self.assertEqual(ew.load_coin_labels(path), {"A": "Gato (El Gato)"})
+
+    def test_missing_or_bad_file_is_empty(self):
+        self.assertEqual(ew.load_coin_labels("/nonexistent/x.json"), {})
+        self.assertEqual(ew.load_coin_labels(self._write({"mints": ["A"]})), {})
+
+    def test_fallback_when_mint_has_no_label(self):
+        self.assertEqual(ew.coin_label({}, "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump"),
+                         "5ubruM…")
+        self.assertEqual(ew.coin_label({"A": "Gato"}, "A"), "Gato")
+
+    def test_repo_watchlist_labels_cover_every_mint(self):
+        mints = ew.load_watchlist()
+        labels = ew.load_coin_labels()
+        self.assertEqual(set(labels), set(mints))
+        self.assertEqual(labels["55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump"], "Gato (El Gato)")
+
+    def test_table_shows_coin_not_mint(self):
+        import early_ui
+        mints = ew.load_watchlist()
+        rows = early_ui._mint_rows({"mints": {}}, mints, ew.load_coin_labels())
+        self.assertTrue(all("Mint" not in r for r in rows))
+        self.assertEqual([r["Koin"] for r in rows],
+                         [ew.coin_label(ew.load_coin_labels(), m) for m in mints])
+        self.assertNotIn(mints[0], [str(v) for r in rows for v in r.values()])
+
+
 if __name__ == "__main__":
     unittest.main()
