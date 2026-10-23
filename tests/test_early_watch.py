@@ -284,10 +284,11 @@ class PollTests(unittest.TestCase):
 
     def test_every_watchlist_mint_is_polled(self):
         mints = ["A1", "B2", "C3"]
-        seen = []
+        calls = []
         state = ew.run_poll(ew.empty_state(), mints, 10_000,
-                            fetcher=lambda m, a, b: (seen.append(m) or ([], False)))
-        self.assertEqual(seen, mints)
+                            fetcher=lambda m, a, b: (calls.append((m, a, b)) or ([], False)))
+        # Poll normal: jendela berakhir di `now`. Selebihnya backfill (poll pertama).
+        self.assertEqual([m for m, a, b in calls if b == 10_000], mints)
         self.assertEqual(set(state["mints"]), set(mints))
 
     def test_log_is_bounded(self):
@@ -295,6 +296,72 @@ class PollTests(unittest.TestCase):
         for i in range(ew.LOG_KEEP + 50):
             ew.run_poll(state, [MINT], 10_000 + i, fetcher=lambda m, a, b: ([], False))
         self.assertEqual(len(state["log"]), ew.LOG_KEEP)
+
+
+class BackfillTests(unittest.TestCase):
+    def _fetch_from(self, trades):
+        """Fetcher palsu: hanya mengembalikan trade yang berada dalam jendela."""
+        def fetch(mint, a, b):
+            return [t for t in trades if a <= int(t["timestamp"]) <= b], False
+        return fetch
+
+    def test_backfill_windows_cover_pre_window_in_chunks(self):
+        calls = []
+
+        def fetch(mint, a, b):
+            calls.append((a, b))
+            return [], False
+
+        ew.run_poll(ew.empty_state(), [MINT], 10_000, fetcher=fetch)
+        normal = [c for c in calls if c[1] == 10_000]
+        back = sorted(c for c in calls if c[1] != 10_000)
+        self.assertEqual(normal, [(10_000 - ew.LOOKBACK_SEC, 10_000)])
+        self.assertEqual(back[0][0], 10_000 - ew.BACKFILL_SEC)
+        self.assertEqual(back[-1][1], 10_000 - ew.LOOKBACK_SEC)
+        for (a1, b1), (a2, _) in zip(back, back[1:]):
+            self.assertEqual(b1, a2)  # kontigu, tanpa celah
+        self.assertTrue(all(b - a <= ew.LOOKBACK_SEC for a, b in back))
+
+    def test_dump_before_first_poll_alerts_after_backfill(self):
+        # Jual besar 500 detik sebelum burst; poll pertama job baru.
+        # Tanpa backfill, dump ini tidak pernah terlihat dan tidak ada alert.
+        trades = [dump_trade(9_500)] + burst(10_000, 6, WALLETS)
+        state = ew.run_poll(ew.empty_state(), [MINT], 10_060,
+                            fetcher=self._fetch_from(trades))
+        rec = state["mints"][MINT]
+        self.assertEqual(rec["status"], "AWAL AKTIF")
+        self.assertEqual(len(rec["dumps"]), 1)
+        self.assertEqual(rec["backfill"]["error"], "")
+
+    def test_no_backfill_on_regular_cadence(self):
+        state = ew.run_poll(ew.empty_state(), [MINT], 10_000, fetcher=self._fetch_from([]))
+        calls = []
+
+        def fetch(mint, a, b):
+            calls.append((a, b))
+            return [], False
+
+        ew.run_poll(state, [MINT], 10_120, fetcher=fetch)  # celah 120 dtk < lookback
+        self.assertEqual(calls, [(10_120 - ew.LOOKBACK_SEC, 10_120)])
+        self.assertFalse(ew.needs_backfill(state["mints"][MINT], 10_120))
+
+    def test_gap_triggers_backfill_again(self):
+        state = ew.run_poll(ew.empty_state(), [MINT], 10_000, fetcher=self._fetch_from([]))
+        self.assertTrue(ew.needs_backfill(state["mints"][MINT], 10_000 + ew.LOOKBACK_SEC + 1))
+
+    def test_backfill_failure_recorded_and_poll_still_runs(self):
+        trades = burst(10_000, 6, WALLETS)
+
+        def fetch(mint, a, b):
+            if b != 10_060:
+                raise RuntimeError("gmgn backfill down")
+            return [t for t in trades if a <= int(t["timestamp"]) <= b], False
+
+        state = ew.run_poll(ew.empty_state(), [MINT], 10_060, fetcher=fetch)
+        rec = state["mints"][MINT]
+        self.assertIn("gmgn backfill down", rec["backfill"]["error"])
+        self.assertEqual(rec["trades"], len(trades))  # poll normal tetap tercatat
+        self.assertEqual(rec["status"], "AKTIF (tanpa dump)")  # tanpa dump, tanpa alert
 
 
 class FingerprintAndRunnerTests(unittest.TestCase):

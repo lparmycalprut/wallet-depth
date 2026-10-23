@@ -2,9 +2,11 @@ name: Early Watcher
 
 # Early Watcher (permintaan user 2026-10-22): poll tiap 2 menit untuk 5 mint
 # watchlist, alert Telegram + page. Cron GitHub minimal 5 menit dan sering
-# terlambat, jadi satu job berjalan ~25 menit dan poll di dalamnya.
-# Job dijadwalkan tiap 30 menit; grup concurrency membuat job berurutan, sehingga
-# dua job tidak menulis state bersamaan. Jadwal hanya aktif dari default branch.
+# terlambat, dan dalam praktik hanya terpicu beberapa kali per hari (2026-10-23:
+# 2 run dalam ±9 jam). Karena itu satu job berjalan ~5 jam (10 segmen × 30
+# menit). Setiap segmen poll tiap 2 menit lalu meng-commit state bila keputusan
+# berubah, sehingga halaman paling lama tertinggal ~30 menit. Job berikutnya
+# yang terjadwal mengantre di grup concurrency dan jalan setelah job ini selesai.
 
 on:
   schedule:
@@ -21,7 +23,7 @@ concurrency:
 jobs:
   watch:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 360
 
     steps:
       - name: Checkout repository
@@ -37,22 +39,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests curl_cffi
 
-      - name: Watch early activity (≈25 menit, poll 2 menit)
-        id: watch
+      - name: Watch early activity (10 segmen × 30 menit, poll 2 menit, commit per segmen)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          set -o pipefail
-          python scripts/early_watch.py --duration 1500 --interval 120 | tee /tmp/early.log
-          echo "changed=$(grep -o 'EARLY_WATCH_CHANGED=[01]' /tmp/early.log \
-            | tail -1 | cut -d= -f2)" >> "$GITHUB_OUTPUT"
-
-      - name: Commit state when decisions changed
-        # Commit hanya bila fingerprint keputusan berubah (alert, status, cooldown,
-        # last_active). Tanpa gate ini, setiap job membuat commit.
-        if: steps.watch.outputs.changed == '1'
-        run: |
           git config --global user.name 'Early-Bot'
           git config --global user.email 'bot@noreply.github.com'
-          bash scripts/commit_early_state.sh
+          for seg in 1 2 3 4 5 6 7 8 9 10; do
+            echo "== segmen $seg $(date -u +%H:%M:%S)Z"
+            python scripts/early_watch.py --duration 1800 --interval 120 > /tmp/early_seg.log
+            cat /tmp/early_seg.log
+            # Commit hanya bila fingerprint keputusan berubah (alert, status,
+            # cooldown, last_active, jual besar). Log poll tidak memicu commit.
+            if grep -q 'EARLY_WATCH_CHANGED=1' /tmp/early_seg.log; then
+              bash scripts/commit_early_state.sh
+            fi
+          done

@@ -307,7 +307,7 @@ def evaluate_mint(rec: dict, trades, now: int, *, partial: bool) -> tuple:
         status = "TENANG"
 
     rec.update({"status": status, "last_poll": int(now), "trades": len(trades),
-                "partial": bool(partial), "error": "", **peak})
+                "partial": bool(partial), "error": "", "last_ok": int(now), **peak})
     return rec, alert, status
 
 
@@ -382,6 +382,47 @@ def decision_fingerprint(state: dict) -> str:
     return json.dumps(rows, sort_keys=True)
 
 
+# Jendela yang dipakai ``find_dump`` sebelum awal aktivitas.
+BACKFILL_SEC = WINDOW_SEC + DUMP_LOOKBACK_SEC
+
+
+def needs_backfill(rec: dict, now: int) -> bool:
+    """True bila ada celah lebih dari satu lookback sejak poll sukses terakhir.
+
+    Berlaku untuk poll pertama (state kosong) dan setelah job berhenti. Tanpa
+    backfill, jual besar 10 menit sebelum poll pertama tidak pernah terlihat.
+    """
+    last_ok = (rec or {}).get("last_ok")
+    return last_ok is None or int(now) - int(last_ok) > LOOKBACK_SEC
+
+
+def backfill_dumps(rec: dict, mint: str, now: int, fetcher) -> dict:
+    """Isi ``dumps`` dari jendela sebelum poll normal (hanya jual besar).
+
+    Ditarik per ``LOOKBACK_SEC`` agar batas halaman tidak memotong bagian terlama
+    (halaman GMGN berurutan terbaru dulu). Tidak mengubah status, putaran, atau
+    alert. Gagal ditulis di ``rec["backfill"]``, dan poll tetap jalan.
+    """
+    now = int(now)
+    lo, hi = now - BACKFILL_SEC, now - LOOKBACK_SEC
+    dumps = list(rec.get("dumps") or [])
+    partial_any, error = False, ""
+    try:
+        a = lo
+        while a < hi:
+            b = min(a + LOOKBACK_SEC, hi)
+            trades, partial = fetcher(mint, a, b)
+            partial_any = partial_any or bool(partial)
+            rt_keys = {(r["tx"], r["maker"]) for r in round_trips(trades)}
+            dumps = _merge_dumps(dumps, big_sells(trades, rt_keys), now)
+            a = b
+    except Exception as exc:  # noqa: BLE001 — dicatat, poll tetap jalan
+        error = str(exc)[:160]
+    rec["dumps"] = dumps
+    rec["backfill"] = {"t": now, "partial": partial_any, "error": error}
+    return rec
+
+
 def run_poll(state: dict, mints: list, now: int, *, fetcher=None, sender=None) -> dict:
     """Satu poll untuk semua mint. Mengubah ``state`` di tempat dan mengembalikannya.
 
@@ -397,6 +438,8 @@ def run_poll(state: dict, mints: list, now: int, *, fetcher=None, sender=None) -
     alerts = []
     for mint in mints:
         prev = dict(state["mints"].get(mint) or {})
+        if needs_backfill(prev, now):
+            backfill_dumps(prev, mint, now, fetcher)
         try:
             trades, partial = fetcher(mint, now - LOOKBACK_SEC, now)
         except Exception as exc:  # noqa: BLE001 — dicatat, bukan disembunyikan
