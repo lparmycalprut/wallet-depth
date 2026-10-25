@@ -6,756 +6,6 @@
    "partial": false,
    "rt": 0,
    "status": "TENANG",
-   "t": 1792925738,
-   "trades": 1,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792925738,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792925738,
-   "trades": 9,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
-   "partial": false,
-   "rt": 4,
-   "status": "AKTIF (tanpa dump)",
-   "t": 1792925738,
-   "trades": 15,
-   "wallets": 4
-  },
-  {
-   "error": "",
-   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792925738,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792925858,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792925858,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792925858,
-   "trades": 6,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
-   "partial": false,
-   "rt": 2,
-   "status": "AKTIF (tanpa dump)",
-   "t": 1792925858,
-   "trades": 6,
-   "wallets": 2
-  },
-  {
-   "error": "",
-   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792925858,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792925978,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792925978,
-   "trades": 1,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792925978,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
-   "partial": false,
-   "rt": 1,
-   "status": "AKTIF (tanpa dump)",
-   "t": 1792925978,
-   "trades": 7,
-   "wallets": 1
-  },
-  {
-   "error": "",
-   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792925978,
-   "trades": 5,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926098,
-   "trades": 1,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926098,
-   "trades": 2,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926098,
-   "trades": 5,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
-   "partial": false,
-   "rt": 1,
-   "status": "AKTIF (tanpa dump)",
-   "t": 1792926098,
-   "trades": 4,
-   "wallets": 1
-  },
-  {
-   "error": "",
-   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926098,
-   "trades": 5,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926218,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926218,
-   "trades": 1,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926218,
-   "trades": 11,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "AKTIF (tanpa dump)",
-   "t": 1792926218,
-   "trades": 1,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926218,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926220,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926220,
-   "trades": 1,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926220,
-   "trades": 11,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "AKTIF (tanpa dump)",
-   "t": 1792926220,
-   "trades": 1,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926220,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926340,
-   "trades": 3,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926340,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926340,
-   "trades": 4,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926340,
-   "trades": 1,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926340,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926460,
-   "trades": 3,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926460,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926460,
-   "trades": 3,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926460,
-   "trades": 1,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926460,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926580,
-   "trades": 1,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926580,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
-   "partial": false,
-   "rt": 2,
-   "status": "TENANG",
-   "t": 1792926580,
-   "trades": 15,
-   "wallets": 2
-  },
-  {
-   "error": "",
-   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926580,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926580,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926700,
-   "trades": 3,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926700,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
-   "partial": false,
-   "rt": 2,
-   "status": "TENANG",
-   "t": 1792926700,
-   "trades": 18,
-   "wallets": 2
-  },
-  {
-   "error": "",
-   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
-   "partial": false,
-   "rt": 1,
-   "status": "TENANG",
-   "t": 1792926700,
-   "trades": 3,
-   "wallets": 1
-  },
-  {
-   "error": "",
-   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926700,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926820,
-   "trades": 4,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926820,
-   "trades": 1,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926820,
-   "trades": 17,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
-   "partial": false,
-   "rt": 1,
-   "status": "TENANG",
-   "t": 1792926820,
-   "trades": 7,
-   "wallets": 1
-  },
-  {
-   "error": "",
-   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926820,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926940,
-   "trades": 1,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926940,
-   "trades": 2,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926940,
-   "trades": 9,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
-   "partial": false,
-   "rt": 1,
-   "status": "TENANG",
-   "t": 1792926940,
-   "trades": 12,
-   "wallets": 1
-  },
-  {
-   "error": "",
-   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792926940,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792927060,
-   "trades": 1,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792927060,
-   "trades": 1,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792927060,
-   "trades": 7,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792927060,
-   "trades": 6,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792927060,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792927180,
-   "trades": 2,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792927180,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792927180,
-   "trades": 3,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792927180,
-   "trades": 4,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792927180,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792927300,
-   "trades": 1,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792927300,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792927300,
-   "trades": 1,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792927300,
-   "trades": 4,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
-   "t": 1792927300,
-   "trades": 0,
-   "wallets": 0
-  },
-  {
-   "error": "",
-   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
-   "partial": false,
-   "rt": 0,
-   "status": "TENANG",
    "t": 1792927420,
    "trades": 0,
    "wallets": 0
@@ -3999,6 +3249,756 @@
    "t": 1792934628,
    "trades": 0,
    "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792934630,
+   "trades": 1,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792934630,
+   "trades": 5,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792934630,
+   "trades": 0,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792934630,
+   "trades": 3,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792934630,
+   "trades": 0,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792934750,
+   "trades": 2,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792934750,
+   "trades": 2,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792934750,
+   "trades": 4,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
+   "partial": false,
+   "rt": 4,
+   "status": "AKTIF (tanpa dump)",
+   "t": 1792934750,
+   "trades": 11,
+   "wallets": 4
+  },
+  {
+   "error": "",
+   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792934750,
+   "trades": 1,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
+   "partial": false,
+   "rt": 2,
+   "status": "TENANG",
+   "t": 1792934870,
+   "trades": 12,
+   "wallets": 2
+  },
+  {
+   "error": "",
+   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792934870,
+   "trades": 1,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792934870,
+   "trades": 3,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "AKTIF (tanpa dump)",
+   "t": 1792934870,
+   "trades": 6,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792934870,
+   "trades": 0,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
+   "partial": false,
+   "rt": 2,
+   "status": "TENANG",
+   "t": 1792934990,
+   "trades": 16,
+   "wallets": 2
+  },
+  {
+   "error": "",
+   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792934990,
+   "trades": 7,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792934990,
+   "trades": 13,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "AKTIF (tanpa dump)",
+   "t": 1792934990,
+   "trades": 4,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792934990,
+   "trades": 0,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935110,
+   "trades": 8,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935110,
+   "trades": 2,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935110,
+   "trades": 8,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "AKTIF (tanpa dump)",
+   "t": 1792935110,
+   "trades": 4,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935110,
+   "trades": 0,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935230,
+   "trades": 3,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935230,
+   "trades": 2,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935230,
+   "trades": 9,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "AKTIF (tanpa dump)",
+   "t": 1792935230,
+   "trades": 2,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935230,
+   "trades": 0,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935350,
+   "trades": 1,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935350,
+   "trades": 0,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935350,
+   "trades": 3,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
+   "partial": false,
+   "rt": 5,
+   "status": "AKTIF (tanpa dump)",
+   "t": 1792935350,
+   "trades": 25,
+   "wallets": 5
+  },
+  {
+   "error": "",
+   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935350,
+   "trades": 0,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935470,
+   "trades": 3,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935470,
+   "trades": 0,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935470,
+   "trades": 1,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
+   "partial": false,
+   "rt": 3,
+   "status": "AKTIF (tanpa dump)",
+   "t": 1792935470,
+   "trades": 18,
+   "wallets": 3
+  },
+  {
+   "error": "",
+   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935470,
+   "trades": 0,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935590,
+   "trades": 2,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935590,
+   "trades": 2,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935590,
+   "trades": 8,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "AKTIF (tanpa dump)",
+   "t": 1792935590,
+   "trades": 2,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935590,
+   "trades": 0,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935710,
+   "trades": 2,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935710,
+   "trades": 2,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935710,
+   "trades": 7,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
+   "partial": false,
+   "rt": 4,
+   "status": "AKTIF (tanpa dump)",
+   "t": 1792935710,
+   "trades": 28,
+   "wallets": 4
+  },
+  {
+   "error": "",
+   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935710,
+   "trades": 0,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935830,
+   "trades": 3,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935830,
+   "trades": 2,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935830,
+   "trades": 8,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
+   "partial": false,
+   "rt": 4,
+   "status": "AKTIF (tanpa dump)",
+   "t": 1792935830,
+   "trades": 30,
+   "wallets": 4
+  },
+  {
+   "error": "",
+   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935830,
+   "trades": 0,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935950,
+   "trades": 0,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935950,
+   "trades": 1,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935950,
+   "trades": 2,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "AKTIF (tanpa dump)",
+   "t": 1792935950,
+   "trades": 4,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792935950,
+   "trades": 0,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792936070,
+   "trades": 2,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792936070,
+   "trades": 1,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792936070,
+   "trades": 4,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
+   "partial": false,
+   "rt": 1,
+   "status": "AKTIF (tanpa dump)",
+   "t": 1792936070,
+   "trades": 5,
+   "wallets": 1
+  },
+  {
+   "error": "",
+   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792936070,
+   "trades": 0,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
+   "partial": false,
+   "rt": 4,
+   "status": "TENANG",
+   "t": 1792936190,
+   "trades": 18,
+   "wallets": 2
+  },
+  {
+   "error": "",
+   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792936190,
+   "trades": 0,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792936190,
+   "trades": 1,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "AKTIF (tanpa dump)",
+   "t": 1792936190,
+   "trades": 5,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792936190,
+   "trades": 0,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump",
+   "partial": false,
+   "rt": 4,
+   "status": "TENANG",
+   "t": 1792936310,
+   "trades": 17,
+   "wallets": 2
+  },
+  {
+   "error": "",
+   "mint": "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792936310,
+   "trades": 2,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792936310,
+   "trades": 10,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "55A3VxMBfzw6uSe64zms5iMPw9k6kx9WzzusbCU6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792936310,
+   "trades": 4,
+   "wallets": 0
+  },
+  {
+   "error": "",
+   "mint": "2kuY5DHqRvYKfytfLfrey1oB1Z1J3voq343FWMp6pump",
+   "partial": false,
+   "rt": 0,
+   "status": "TENANG",
+   "t": 1792936310,
+   "trades": 0,
+   "wallets": 0
   }
  ],
  "mints": {
@@ -4010,9 +4010,9 @@
    },
    "dumps": [],
    "error": "",
-   "last_ok": 1792934628,
-   "last_poll": 1792934628,
-   "last_price": 1.042006942117788e-05,
+   "last_ok": 1792936310,
+   "last_poll": 1792936310,
+   "last_price": 1.0239131468220253e-05,
    "max_spread": 0.0,
    "partial": false,
    "rt_peak": 0,
@@ -4031,20 +4031,20 @@
    "cooldown_until": 1792912633,
    "dumps": [],
    "error": "",
-   "last_active_ts": 1792925692,
+   "last_active_ts": 1792935688,
    "last_alert": {
     "error": "",
     "sent": true,
     "t": 1792910833
    },
-   "last_ok": 1792934628,
-   "last_poll": 1792934628,
-   "last_price": 0.00011618857748768524,
+   "last_ok": 1792936310,
+   "last_poll": 1792936310,
+   "last_price": 0.00010730939638744515,
    "max_spread": 0.0,
    "partial": false,
    "rt_peak": 0,
    "status": "TENANG",
-   "trades": 3,
+   "trades": 4,
    "wallets_peak": 0
   },
   "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump": {
@@ -4064,15 +4064,15 @@
     "sent": true,
     "t": 1792850495
    },
-   "last_ok": 1792934628,
-   "last_poll": 1792934628,
-   "last_price": 8.220732947006388e-05,
-   "max_spread": 0.0,
+   "last_ok": 1792936310,
+   "last_poll": 1792936310,
+   "last_price": 8.311790468349343e-05,
+   "max_spread": 0.03918142671524305,
    "partial": false,
-   "rt_peak": 0,
+   "rt_peak": 4,
    "status": "TENANG",
-   "trades": 1,
-   "wallets_peak": 0
+   "trades": 17,
+   "wallets_peak": 2
   },
   "8nPoBHiBM6pybxMws9PA2JRb9BjkppBfqcZGmot4DMBC": {
    "backfill": {
@@ -4082,14 +4082,14 @@
    },
    "dumps": [],
    "error": "",
-   "last_ok": 1792934628,
-   "last_poll": 1792934628,
-   "last_price": 8.094725094506128e-05,
+   "last_ok": 1792936310,
+   "last_poll": 1792936310,
+   "last_price": 7.671477787826824e-05,
    "max_spread": 0.0,
    "partial": false,
    "rt_peak": 0,
    "status": "TENANG",
-   "trades": 5,
+   "trades": 2,
    "wallets_peak": 0
   },
   "EFn88CiiFHhihqdr1Y11XBDxbbYarBf1ij92DsrigYwR": {
@@ -4109,17 +4109,17 @@
     "sent": true,
     "t": 1792928622
    },
-   "last_ok": 1792934628,
-   "last_poll": 1792934628,
-   "last_price": 0.0005817573142929843,
+   "last_ok": 1792936310,
+   "last_poll": 1792936310,
+   "last_price": 0.0006170109483259161,
    "max_spread": 0.0,
    "partial": false,
    "rt_peak": 0,
    "status": "TENANG",
-   "trades": 0,
+   "trades": 10,
    "wallets_peak": 0
   }
  },
- "updated": 1792934628,
+ "updated": 1792936310,
  "version": 1
 }
