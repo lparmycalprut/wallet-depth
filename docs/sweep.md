@@ -280,6 +280,16 @@ Kolom **Token pool / Token pool $ / Token/MC** (di samping liq/MC) = sisi token 
 (`liquidity.base` DexScreener, jumlah token), nilainya `jumlah × priceUsd`, dan
 persentasenya terhadap MC (`fdv`). Snapshot lama belum punya data ini sampai di-refresh.
 
+**Tren token/MC (grafik kecil, 2026-10-27)**: kolom **Tren token/MC** di tabel utama
+menggambar grafik token/MC (%) per snapshot per jam, paling lama dulu, maksimal 48
+titik terakhir (`store.mint_history`). Setiap snapshot baru menyimpan
+`pool_base_usd` dan `token_mc` (= `pool_base_usd ÷ fdv_usd`); `store.token_mc_of`
+memakai `view` sebagai cadangan untuk baris lama. Data sebelum 27 Okt 2026 tidak
+tercatat, jadi grafik mulai dari titik yang baru dicatat (sebagian mint hanya
+punya satu titik). Alasan: analisis akumulasi memakai token/MC karena TVL USD ikut
+harga. Kolom ini tidak dipakai dalam kriteria, skor, vonis, atau filter, dan
+tidak muncul di halaman Cek CA.
+
 **Retry otomatis kohort tanpa data**: bila auto-refresh mati dan ada mint yang
 gate kohort-nya `TANPA DATA — kohort` (OHLCV/VWAP atau avg cost GMGN belum ada,
 mis. GeckoTerminal 429), hanya mint itu yang dipindai ulang tiap
@@ -336,7 +346,8 @@ GitHub tetap best-effort: GitHub boleh melewatkan atau menunda run `schedule`.
 
 ```bash
 python -m unittest tests.test_sweep_screen tests.test_sweep_data \
-                   tests.test_sweep_store tests.test_sweep_alert tests.test_sweep_scan
+                   tests.test_sweep_store tests.test_sweep_alert tests.test_sweep_scan \
+                   tests.test_sweep_token_mc_trend
 ```
 
 Semuanya offline; fixture COCKROACH untuk biaya sweep tidak berubah.
