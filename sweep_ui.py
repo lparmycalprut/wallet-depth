@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -1136,6 +1137,90 @@ def _split_rows(all_rows) -> tuple:
     return rows, hidden_rows
 
 
+# ---------------------------------------------------------------------------
+# Filter tabel utama (permintaan user 2026-10-27): hanya tampilan, pilihan
+# user. Tidak mengubah vonis, skor, atau urutan. Default = semua mint tampil.
+# Ujung atas di posisi maksimum berarti "tanpa batas atas".
+# ---------------------------------------------------------------------------
+TMC_FILTER_KEY = "sweep_filter_tmc"
+TURN_FILTER_KEY = "sweep_filter_turnover"
+TMC_FILTER_BOUNDS = (0.0, 100.0)     # Token/MC dalam persen MC
+TURN_FILTER_BOUNDS = (0.0, 20.0)     # Turnover dalam ×/hari
+
+
+def row_token_mc_pct(row) -> float | None:
+    """Token/MC baris dalam persen MC, atau None bila tanpa data."""
+    metrics = row.get("metrics") or {}
+    frac = screen.pool_token_mc_frac(metrics.get("pool_base_usd"),
+                                     metrics.get("fdv_usd"))
+    return None if frac is None else frac * 100.0
+
+
+def row_turnover(row) -> float | None:
+    """Turnover (×/hari) baris, sama dengan kolom tabel; None bila tanpa data."""
+    result = row.get("result") or {}
+    return screen._num(row.get("turnover_x", result.get("turnover_x")))
+
+
+def _in_filter(value, rng, bounds) -> bool:
+    """True bila nilai lolos rentang. Rentang penuh = tanpa filter."""
+    lo, hi = rng
+    if lo <= bounds[0] and hi >= bounds[1]:
+        return True
+    if value is None:
+        return False
+    if lo > bounds[0] and value < lo:
+        return False
+    if hi < bounds[1] and value > hi:
+        return False
+    return True
+
+
+def filter_rows(rows, tmc_range=TMC_FILTER_BOUNDS,
+                turn_range=TURN_FILTER_BOUNDS) -> list:
+    """Saring baris menurut rentang Token/MC (%) dan turnover (×/hari)."""
+    return [row for row in rows or []
+            if _in_filter(row_token_mc_pct(row), tmc_range, TMC_FILTER_BOUNDS)
+            and _in_filter(row_turnover(row), turn_range, TURN_FILTER_BOUNDS)]
+
+
+def _reset_table_filters() -> None:
+    st.session_state.pop(TMC_FILTER_KEY, None)
+    st.session_state.pop(TURN_FILTER_KEY, None)
+
+
+def _render_table_filters(rows) -> list:
+    """Kontrol filter di atas tabel; mengembalikan baris yang lolos filter."""
+    tmc_active = st.session_state.get(TMC_FILTER_KEY, TMC_FILTER_BOUNDS)
+    turn_active = st.session_state.get(TURN_FILTER_KEY, TURN_FILTER_BOUNDS)
+    tmc_on = tuple(tmc_active) != TMC_FILTER_BOUNDS
+    turn_on = tuple(turn_active) != TURN_FILTER_BOUNDS
+    label = "🔎 Filter tabel" + (" (aktif)" if tmc_on or turn_on else "")
+    with st.expander(label, expanded=tmc_on or turn_on):
+        col_tmc, col_turn, col_reset = st.columns([3, 3, 1])
+        with col_tmc:
+            st.slider("Token/MC (%)", min_value=TMC_FILTER_BOUNDS[0],
+                      max_value=TMC_FILTER_BOUNDS[1], value=TMC_FILTER_BOUNDS,
+                      step=1.0, key=TMC_FILTER_KEY,
+                      help="Token di pool ÷ MC. Ujung kanan 100 = tanpa batas. "
+                           "Mint tanpa data hanya tampil bila filter ini penuh.")
+        with col_turn:
+            st.slider("Turnover (×/hari)", min_value=TURN_FILTER_BOUNDS[0],
+                      max_value=TURN_FILTER_BOUNDS[1], value=TURN_FILTER_BOUNDS,
+                      step=0.1, key=TURN_FILTER_KEY,
+                      help="Volume 24 jam ÷ liquidity. Ujung kanan 20× = tanpa "
+                           "batas. Mint tanpa data hanya tampil bila filter ini penuh.")
+        with col_reset:
+            st.write("")
+            st.button("Reset", key="sweep_filter_reset",
+                      on_click=_reset_table_filters, disabled=not (tmc_on or turn_on))
+    kept = filter_rows(rows, tuple(st.session_state.get(TMC_FILTER_KEY, TMC_FILTER_BOUNDS)),
+                       tuple(st.session_state.get(TURN_FILTER_KEY, TURN_FILTER_BOUNDS)))
+    if len(kept) != len(rows):
+        st.caption(f"🔎 Menampilkan {len(kept)} dari {len(rows)} mint sesuai filter.")
+    return kept
+
+
 def _render_results(watchlist, state) -> None:
     """Tabel + detail + statistik dari snapshot terakhir tiap mint watchlist."""
     views, missing = store.watchlist_views(state, watchlist)
@@ -1190,6 +1275,11 @@ def _render_results(watchlist, state) -> None:
                        "(diperlakukan sebagai SKIP kohort plus).")
     if all_rows and not rows:
         st.info("Semua mint di watchlist tersembunyi oleh filter tampilan.")
+    if rows:
+        rows = _render_table_filters(rows)
+        if not rows:
+            st.info("Tidak ada mint yang cocok dengan filter. Tekan Reset untuk "
+                    "menampilkan semua.")
     _render_table(rows, watchlist)
     if rows:
         _render_details(rows)

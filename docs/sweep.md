@@ -290,6 +290,14 @@ punya satu titik). Alasan: analisis akumulasi memakai token/MC karena TVL USD ik
 harga. Kolom ini tidak dipakai dalam kriteria, skor, vonis, atau filter, dan
 tidak muncul di halaman Cek CA.
 
+**Filter tabel (2026-10-27)**: expander **🔎 Filter tabel** di atas tabel utama berisi
+dua slider, Token/MC (0–100%) dan Turnover (0–20×/hari). Default penuh, jadi semua
+mint tampil. Ujung kanan = tanpa batas atas, ujung kiri = tanpa batas bawah. Mint
+tanpa data hanya tampil saat filter tersebut penuh. Filter hanya mengatur tampilan
+tabel, detail, dan alur order flow di bawahnya. Tidak mengubah vonis, skor, urutan,
+atau alert. Tombol **Reset** mengembalikan semua filter. Ambang kriteria tetap tidak
+bisa diatur lewat slider.
+
 **Retry otomatis kohort tanpa data**: bila auto-refresh mati dan ada mint yang
 gate kohort-nya `TANPA DATA — kohort` (OHLCV/VWAP atau avg cost GMGN belum ada,
 mis. GeckoTerminal 429), hanya mint itu yang dipindai ulang tiap
@@ -347,7 +355,7 @@ GitHub tetap best-effort: GitHub boleh melewatkan atau menunda run `schedule`.
 ```bash
 python -m unittest tests.test_sweep_screen tests.test_sweep_data \
                    tests.test_sweep_store tests.test_sweep_alert tests.test_sweep_scan \
-                   tests.test_sweep_token_mc_trend
+                   tests.test_sweep_token_mc_trend tests.test_sweep_table_filter
 ```
 
 Semuanya offline; fixture COCKROACH untuk biaya sweep tidak berubah.

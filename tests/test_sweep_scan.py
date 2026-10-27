@@ -349,7 +349,11 @@ class SurfaceTest(unittest.TestCase):
 
     def test_ui_shows_fixed_threshold_turnover_and_cohort_without_sliders(self):
         source = (ROOT / "sweep_ui.py").read_text(encoding="utf-8")
-        self.assertNotIn("st.slider(", source)
+        # Ambang kriteria tetap (tanpa slider). Satu-satunya slider adalah filter
+        # tampilan tabel (permintaan user 2026-10-27), di _render_table_filters.
+        self.assertEqual(source.count("st.slider("), 2)
+        filter_def = source.index("def _render_table_filters")
+        self.assertGreater(source.index("st.slider("), filter_def)
         self.assertIn("token/MC ≤ 17,5% · holder/wallet ≤ 5%", source)
         self.assertIn("Turnover (×/hari)", source)
         self.assertIn("perkiraan (proksi VWAP 48 jam)", source)
