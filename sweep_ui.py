@@ -40,6 +40,10 @@ import sweep_scan as scan
 import sweep_screen as screen
 import sweep_store as store
 
+# Sementara (permintaan user 2026-10-27): semua mint tampil di tabel utama, tanpa
+# filter tampilan dan tanpa pemisahan TIDAK LAYAK. Data scan, sinyal, dan alert
+# tidak berubah. Set False untuk mengembalikan penyembunyian di tabel.
+SHOW_ALL_TOKENS = True
 AUTO_REFRESH_SEC = 1800  # 30 menit (permintaan user 2026-10-19); cron juga 30 menit (2026-10-21)
 ATTEMPTS_KEY = "sweep_nodata_attempts"  # {mint: jumlah retry kohort tanpa data}
 READY_KEY = "sweep_nodata_ready_at"     # kapan retry berikutnya boleh jalan
@@ -1099,6 +1103,19 @@ def _render_flow(rows, state) -> None:
         use_container_width=True, hide_index=True)
 
 
+def _split_rows(all_rows) -> tuple:
+    """Pisahkan baris tabel utama dan baris tersembunyi.
+
+    Dengan ``SHOW_ALL_TOKENS`` tidak ada yang disembunyikan. Filter tampilan
+    (``screen.view_hidden``) hanya berlaku bila konstanta itu False.
+    """
+    if SHOW_ALL_TOKENS:
+        return list(all_rows), []
+    rows = [row for row in all_rows if not screen.view_hidden(row)]
+    hidden_rows = [row for row in all_rows if screen.view_hidden(row)]
+    return rows, hidden_rows
+
+
 def _render_results(watchlist, state) -> None:
     """Tabel + detail + statistik dari snapshot terakhir tiap mint watchlist."""
     views, missing = store.watchlist_views(state, watchlist)
@@ -1118,9 +1135,9 @@ def _render_results(watchlist, state) -> None:
     # Filter tampilan: x dana acuan 10x > 3× atau bundler < 10% disembunyikan
     # dari tabel utama; tabel terpisah di bawah bisa menampilkannya.
     # Baris dengan scan terakhir gagal tidak pernah disembunyikan.
-    rows = [row for row in all_rows if not screen.view_hidden(row)]
-    hidden_rows = [row for row in all_rows if screen.view_hidden(row)]
+    rows, hidden_rows = _split_rows(all_rows)
     hidden = len(hidden_rows)
+    would_hide = sum(1 for row in all_rows if screen.view_hidden(row))
     failed = sum(1 for row in all_rows if row.get("scan_error"))
     breached = sum(1 for row in all_rows
                    if any(c.get("key") == "shakeout" and c.get("breached")
@@ -1133,6 +1150,9 @@ def _render_results(watchlist, state) -> None:
         st.warning(f"⚠️ {failed} mint scan terakhirnya gagal (fetch data error). "
                    "Baris ini tetap ditampilkan; data di dalamnya dari scan "
                    "sukses terakhir, atau belum ada.")
+    if SHOW_ALL_TOKENS and would_hide:
+        st.caption(f"👁️ Semua mint ditampilkan sementara: {would_hide} mint "
+                   "seharusnya disembunyikan oleh filter tampilan atau TIDAK LAYAK.")
     if hidden:
         tidak = sum(1 for row in hidden_rows
                     if screen.is_tidak_layak(row.get("result")))

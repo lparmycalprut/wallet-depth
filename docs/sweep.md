@@ -151,6 +151,8 @@ tidak mengubah vonis; nilainya sama dengan yang dipakai gate.
 
 ### TIDAK LAYAK disembunyikan (2026-10-15)
 
+> **Sementara (2026-10-27):** `sweep_ui.SHOW_ALL_TOKENS = True` menampilkan semua mint di tabel utama, termasuk TIDAK LAYAK dan baris yang kena filter tampilan. Tabel tersembunyi tidak dirender. Jumlah yang seharusnya disembunyikan tetap ditulis sebagai keterangan. Data scan, sinyal, dan alert tidak berubah. Set `False` untuk mengembalikan penyembunyian.
+
 Baris dengan vonis `TIDAK LAYAK` diperlakukan seperti `SKIP — kohort plus`: diurutkan
 paling bawah dan tidak tampil di tabel utama. Baris tersebut muncul di tabel
 terpisah ("Tampilkan N mint yang disembunyikan"). Baris dengan scan terakhir gagal
