@@ -13,13 +13,20 @@ Isi halaman:
 4. **Statistik** — riwayat sinyal beserta ``max_up`` / ``max_down`` sehingga
    hit rate bisa dilihat, bukan ditebak.
 
-Auto-refresh memakai ``st.fragment(run_every=…)`` (Streamlit 1.61): kalau
-diaktifkan, halaman memindai ulang tiap 30 menit selama tab terbuka. Cron GitHub
-Actions menangani sisanya saat tab ditutup.
+Semua pemindaian (Refresh, Refresh per baris, auto-refresh, retry kohort, dan
+mint baru) berjalan di **thread latar** (lihat :class:`_ScanJob`). Run Streamlit
+hanya memulai job dan merender snapshot yang sudah ada, sehingga halaman tidak
+blur (Streamlit meredupkan elemen yang belum dirender ulang setelah 0,5 detik).
+Fragment kecil (``BG_POLL_SEC``) memeriksa status job, lalu menerapkan hasilnya
+dan memicu satu rerun penuh yang cepat. Auto-refresh memulai job tiap
+``AUTO_REFRESH_SEC`` selama tab terbuka. Cron GitHub Actions menangani sisanya
+saat tab ditutup.
 """
 from __future__ import annotations
 
+import copy
 import json
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -36,6 +43,11 @@ import sweep_store as store
 AUTO_REFRESH_SEC = 1800  # 30 menit (permintaan user 2026-10-19); cron juga 30 menit (2026-10-21)
 ATTEMPTS_KEY = "sweep_nodata_attempts"  # {mint: jumlah retry kohort tanpa data}
 READY_KEY = "sweep_nodata_ready_at"     # kapan retry berikutnya boleh jalan
+BG_JOB_KEY = "sweep_bg_job"             # pemindaian background yang sedang berjalan / baru selesai
+AUTO_LAST_KEY = "sweep_auto_last"       # kapan auto-refresh terakhir dimulai
+SCAN_META_KEY = "sweep_scan_meta"       # pemindaian terakhir yang diterapkan ke tampilan
+FINGERPRINT_KEY = "sweep_fingerprint"   # fingerprint state setelah auto-refresh terakhir
+BG_POLL_SEC = 2                         # interval cek job background (fragment kecil)
 WIB = timezone(timedelta(hours=7))  # waktu tampilan: Asia/Jakarta
 
 
@@ -324,21 +336,12 @@ def _placeholder_row(mint: str) -> dict:
 
 
 def _refresh_token(mint: str) -> None:
-    """Pindai ulang satu mint sekarang juga dan ambil snapshot-nya."""
+    """Pindai ulang satu mint di background; hasilnya diterapkan saat selesai."""
     attempts = st.session_state.get(ATTEMPTS_KEY)
     if isinstance(attempts, dict):
         attempts.pop(mint, None)  # refresh manual memberi jatah retry baru
-    with st.spinner(f"Memindai {mint[:8]}…"):
-        outcome = scan.run_scan([mint], state=_working_state(), persist=True)
-    _remember_outcome(outcome)
-    row = next((r for r in outcome["rows"] if r.get("mint") == mint), None)
-    metrics = (row or {}).get("metrics") or {}
-    if metrics.get("ok"):
-        _flash("success", f"{mint[:8]} diperbarui dari live scan.")
-    else:
-        _flash("warning", f"{mint[:8]} belum bisa dipindai: "
-               f"{metrics.get('error') or 'sumber data tidak merespons'}")
-    st.rerun()
+    if not _start_scan_job([mint], kind="row", label=mint[:8]):
+        st.warning("Pemindaian lain masih berjalan di background. Coba lagi sebentar lagi.")
 
 
 def _refresh_button(mint: str) -> None:
@@ -405,7 +408,7 @@ def _render_table(rows, watchlist, *, suffix: str = "") -> None:
         })
     pending = st.session_state.pop(PENDING_REFRESH_KEY, None)
     if pending:
-        _refresh_token(pending)  # memanggil st.rerun() di akhir
+        _refresh_token(pending)  # hanya memulai job background
     flags = edited["Hapus"].tolist() if "Hapus" in edited else []
     picked = _flagged_mints(rows, flags)
     if st.button(f"🗑️ Hapus {len(picked)} mint tercentang dari watchlist",
@@ -897,30 +900,137 @@ def _remember_outcome(outcome) -> None:
     st.session_state["sweep_elapsed"] = outcome["elapsed"]
 
 
-def _snapshot_all(watchlist, *, persist: bool) -> dict:
-    """Pindai live semua mint watchlist dan ambil snapshot (refresh manual)."""
-    with st.spinner(f"Memindai {len(watchlist)} mint…"):
-        outcome = scan.run_scan(watchlist, state=_working_state(),
-                                persist=persist)
-    _remember_outcome(outcome)
-    return outcome
+class _ScanJob:
+    """Satu pemindaian yang berjalan di thread latar.
 
-
-def _fill_missing_views(watchlist) -> None:
-    """Mint yang belum punya snapshot (baru ditambahkan) dipindai sekali saja.
-
-    Mint yang gagal dipindai tidak diulang di setiap rerun; tekan Refresh
-    untuk mencoba lagi.
+    Thread hanya menjalankan ``scan.run_scan`` dan menulis hasil ke objek ini.
+    Thread tidak boleh menyentuh ``st.session_state``; run Streamlit yang
+    mengambil hasilnya lewat :func:`_apply_finished_job`.
     """
+
+    def __init__(self, kind: str, mints, label: str) -> None:
+        self.kind = kind            # manual | row | auto | retry | fill
+        self.mints = list(mints)
+        self.label = label
+        self.started = time.time()
+        self.done = threading.Event()
+        self.outcome = None
+        self.error = ""
+        self.fingerprint = None
+
+
+def _job_running() -> bool:
+    job = st.session_state.get(BG_JOB_KEY)
+    return job is not None and not job.done.is_set()
+
+
+def _start_scan_job(mints, *, kind: str, label: str = "", persist: bool = True,
+                    use_cache: bool = True) -> bool:
+    """Mulai pemindaian di background. ``False`` bila sudah ada yang berjalan.
+
+    State dicopy di run utama, jadi thread tidak membaca ``st.session_state``.
+    Auto-refresh tidak langsung menyimpan; thread menyimpan hanya bila
+    fingerprint berubah (perilaku sama seperti sebelumnya).
+    """
+    mints = [m for m in mints if m]
+    if not mints or _job_running():
+        return False
+    job = _ScanJob(kind, mints, label or kind)
+    state = copy.deepcopy(_working_state())
+    prev_fp = st.session_state.get(FINGERPRINT_KEY) if kind == "auto" else None
+
+    def _work() -> None:
+        try:
+            job.outcome = scan.run_scan(list(mints), state=state,
+                                        persist=persist, use_cache=use_cache)
+            if kind == "auto":
+                job.fingerprint = store.fingerprint(job.outcome["state"])
+                if prev_fp is not None and job.fingerprint != prev_fp:
+                    store.save_state(job.outcome["state"], persist=True,
+                                     reason="auto-refresh")
+        except Exception as exc:  # noqa: BLE001 — dilaporkan ke UI, bukan ditelan
+            job.error = str(exc)[:200] or exc.__class__.__name__
+        finally:
+            job.done.set()
+
+    threading.Thread(target=_work, name=f"sweep-{kind}", daemon=True).start()
+    st.session_state[BG_JOB_KEY] = job
+    return True
+
+
+_KIND_LABEL = {"manual": "manual", "row": "baris", "auto": "auto-refresh",
+               "retry": "retry kohort", "fill": "mint baru"}
+
+
+def _apply_finished_job() -> bool:
+    """Terapkan hasil job yang sudah selesai. ``True`` bila ada yang diterapkan."""
+    job = st.session_state.get(BG_JOB_KEY)
+    if job is None or not job.done.is_set():
+        return False
+    st.session_state.pop(BG_JOB_KEY, None)
+    if job.error or job.outcome is None:
+        _flash("warning", f"Pemindaian {job.label} gagal: "
+               f"{job.error or 'tidak ada hasil'}. Snapshot lama tetap dipakai.")
+        return True
+    outcome = job.outcome
+    _remember_outcome(outcome)
+    st.session_state[SCAN_META_KEY] = {
+        "ts": time.time(), "n": len(job.mints),
+        "elapsed": float(outcome.get("elapsed") or 0.0), "kind": job.kind}
+    if job.kind == "auto" and job.fingerprint is not None:
+        st.session_state[FINGERPRINT_KEY] = job.fingerprint
+    if job.kind == "manual":
+        _flash("success", f"Snapshot diambil: {len(job.mints)} mint dipindai live "
+               f"({outcome['elapsed']:.1f}s).")
+    elif job.kind == "row":
+        mint = job.mints[0]
+        row = next((r for r in outcome["rows"] if r.get("mint") == mint), None)
+        metrics = (row or {}).get("metrics") or {}
+        if metrics.get("ok"):
+            _flash("success", f"{mint[:8]} diperbarui dari live scan.")
+        else:
+            _flash("warning", f"{mint[:8]} belum bisa dipindai: "
+                   f"{metrics.get('error') or 'sumber data tidak merespons'}")
+    return True
+
+
+def _schedule(watchlist, auto: bool) -> None:
+    """Mulai paling banyak satu pemindaian background, sesuai prioritas.
+
+    1. Mint yang belum punya snapshot (sekali per mint, lewat ``attempted``).
+    2. Auto-refresh bila sudah waktunya (saat auto aktif).
+    3. Retry kohort tanpa data bila jedanya sudah lewat (saat auto mati).
+    """
+    if _job_running():
+        return
     _, missing = store.watchlist_views(_working_state(), watchlist)
     attempted = st.session_state.setdefault("sweep_attempted", set())
     todo = [mint for mint in missing if mint not in attempted]
-    if not todo:
+    if todo:
+        attempted.update(todo)
+        _start_scan_job(todo, kind="fill", label=f"{len(todo)} mint baru")
         return
-    attempted.update(todo)
-    with st.spinner(f"Mengambil snapshot awal {len(todo)} mint baru…"):
-        outcome = scan.run_scan(todo, state=_working_state(), persist=True)
-    _remember_outcome(outcome)
+    if auto:
+        last = st.session_state.get(AUTO_LAST_KEY)
+        now = time.time()
+        if last is None or now - last >= AUTO_REFRESH_SEC:
+            if _start_scan_job(watchlist, kind="auto", persist=False,
+                               label="auto-refresh"):
+                st.session_state[AUTO_LAST_KEY] = now
+        return
+    targets = _nodata_targets(watchlist, _working_state())
+    if not targets:
+        st.session_state.pop(READY_KEY, None)
+        return
+    delay = screen.NODATA_RETRY_DELAY_SEC
+    ready = st.session_state.setdefault(READY_KEY, time.time() + delay)
+    if time.time() >= ready:
+        attempts = st.session_state.setdefault(ATTEMPTS_KEY, {})
+        for mint in targets:
+            attempts[mint] = attempts.get(mint, 0) + 1
+        if _start_scan_job(targets, kind="retry", use_cache=False,
+                           label="retry kohort"):
+            st.session_state[READY_KEY] = time.time() + delay
 
 
 def _render_threshold() -> None:
@@ -1067,33 +1177,30 @@ def _nodata_exhausted(watchlist, state) -> list:
             and attempts.get(view.get("mint"), 0) >= screen.NODATA_RETRY_MAX_ATTEMPTS]
 
 
-def _attach_nodata_retry(watchlist) -> None:
-    """Retry otomatis: hanya mint tanpa data kohort yang dipindai ulang.
+def _render_scan_meta() -> None:
+    meta = st.session_state.get(SCAN_META_KEY)
+    if not meta:
+        return
+    st.caption(f"Terakhir dipindai {_fmt_wib(meta['ts'], '%H:%M:%S')} WIB — "
+               f"{meta['n']} mint, {meta['elapsed']:.1f}s "
+               f"({_KIND_LABEL.get(meta['kind'], meta['kind'])}).")
 
-    Jeda ``NODATA_RETRY_DELAY_SEC`` antar percobaan, maksimum
-    ``NODATA_RETRY_MAX_ATTEMPTS`` per mint. Mint yang sudah berdata tidak
-    ikut dipindai. Saat tidak ada lagi yang tertahan, fragment dihentikan
-    lewat rerun penuh supaya tabel kembali normal.
-    """
-    delay = screen.NODATA_RETRY_DELAY_SEC
-    st.session_state.setdefault(READY_KEY, time.time() + delay)
 
-    @st.fragment(run_every=delay)
-    def _retry_tick() -> None:
-        todo = _nodata_targets(watchlist, _working_state())
-        if todo and time.time() >= st.session_state.get(READY_KEY, 0):
-            attempts = st.session_state.setdefault(ATTEMPTS_KEY, {})
-            for mint in todo:
-                attempts[mint] = attempts.get(mint, 0) + 1
-            outcome = scan.run_scan(todo, state=_working_state(), persist=True,
-                                    use_cache=False)
-            _remember_outcome(outcome)
-            st.session_state[READY_KEY] = time.time() + delay
-        pending = _nodata_targets(watchlist, _working_state())
-        if not pending:
-            st.session_state.pop(READY_KEY, None)
-            st.rerun(scope="app")
+def _render_bg_caption(watchlist, auto: bool) -> None:
+    job = st.session_state.get(BG_JOB_KEY)
+    if job is not None and not job.done.is_set():
+        st.caption(f"⏳ Memindai {len(job.mints)} mint di background "
+                   f"({_KIND_LABEL.get(job.kind, job.kind)}, "
+                   f"{time.time() - job.started:.0f} dtk). "
+                   "Tabel tetap menampilkan snapshot terakhir sampai selesai.")
+    elif auto:
+        last = st.session_state.get(AUTO_LAST_KEY) or time.time()
+        left = max(0, int(last + AUTO_REFRESH_SEC - time.time()))
+        st.caption(f"Auto-refresh aktif: pemindaian berikutnya ±{left // 60} mnt "
+                   f"{left % 60} dtk.")
+    elif _nodata_targets(watchlist, _working_state()):
         attempts = st.session_state.get(ATTEMPTS_KEY) or {}
+        pending = _nodata_targets(watchlist, _working_state())
         round_no = max(attempts.get(mint, 0) for mint in pending)
         wait = max(0, int(st.session_state.get(READY_KEY, 0) - time.time()))
         progress = (f"percobaan {round_no}/{screen.NODATA_RETRY_MAX_ATTEMPTS}"
@@ -1102,9 +1209,28 @@ def _attach_nodata_retry(watchlist) -> None:
             f"🔁 Retry otomatis: {len(pending)} mint tanpa data kohort "
             f"({progress}, berikutnya ±{wait} dtk). "
             "Mint yang sudah berdata tidak dipindai ulang.")
-        _render_results(watchlist, _working_state())
+    _render_scan_meta()
 
-    _retry_tick()
+
+def _render_status(watchlist, auto: bool) -> None:
+    """Status pemindaian. Fragment kecil hanya saat ada yang perlu dipantau.
+
+    Fragment ini tidak memindai sendiri: ia memeriksa job, menerapkan hasil
+    yang sudah selesai (lalu rerun penuh yang cepat), dan memulai job berikutnya.
+    """
+    retry = (not auto) and bool(_nodata_targets(watchlist, _working_state()))
+    if not (auto or retry or st.session_state.get(BG_JOB_KEY) is not None):
+        _render_scan_meta()
+        return
+
+    @st.fragment(run_every=BG_POLL_SEC)
+    def _tick() -> None:
+        if _apply_finished_job():
+            st.rerun(scope="app")
+        _schedule(watchlist, auto)
+        _render_bg_caption(watchlist, auto)
+
+    _tick()
 
 
 def _render_body(watchlist) -> None:
@@ -1116,14 +1242,17 @@ def _render_body(watchlist) -> None:
         # Refresh manual memberi jatah retry baru untuk semua mint.
         st.session_state.pop(ATTEMPTS_KEY, None)
         st.session_state.pop(READY_KEY, None)
-        outcome = _snapshot_all(watchlist, persist=True)
-        st.success(f"Snapshot diambil: {len(watchlist)} mint dipindai live "
-                   f"({outcome['elapsed']:.1f}s).")
+        if not _start_scan_job(watchlist, kind="manual", label="manual"):
+            st.warning("Pemindaian lain masih berjalan di background. "
+                       "Coba lagi sebentar lagi.")
     auto = col_auto.toggle(
         f"Auto-refresh tiap {AUTO_REFRESH_SEC // 60} menit (selama tab terbuka)",
         value=st.session_state.get("sweep_auto", False), key="sweep_auto")
+    if not auto:
+        st.session_state.pop(AUTO_LAST_KEY, None)
 
-    _fill_missing_views(watchlist)
+    # Mulai job bila perlu (mint baru, auto-refresh, atau retry), lalu pantau.
+    _schedule(watchlist, auto)
 
     sent = [a for a in (st.session_state.get("sweep_alerts") or [])
             if a.get("sent")]
@@ -1131,13 +1260,9 @@ def _render_body(watchlist) -> None:
         st.success("Alert terkirim: " + ", ".join(
             f"{a['kind']} {a['mint'][:8]}" for a in sent))
 
-    if auto:
-        # Auto-refresh 30 menit sudah memindai ulang semua mint.
-        _attach_autorefresh(watchlist)
-    elif _nodata_targets(watchlist, _working_state()):
-        _attach_nodata_retry(watchlist)
-    else:
-        _render_results(watchlist, _working_state())
+    _render_status(watchlist, auto)
+    _render_results(watchlist, _working_state())
+    if not auto:
         exhausted = _nodata_exhausted(watchlist, _working_state())
         if exhausted:
             st.caption(
@@ -1154,27 +1279,6 @@ def render_sweep_page() -> None:
     watchlist = _render_watchlist()
     st.divider()
     _render_body(watchlist)
-
-
-def _attach_autorefresh(watchlist) -> None:
-    """Pindai ulang tiap 30 menit selama tab terbuka (cron menutup sisanya)."""
-
-    @st.fragment(run_every=AUTO_REFRESH_SEC)
-    def _tick() -> None:
-        if not watchlist:
-            return
-        outcome = scan.run_scan(watchlist, state=_working_state(), persist=False)
-        fingerprint = store.fingerprint(outcome["state"])
-        last = st.session_state.get("sweep_fingerprint")
-        st.session_state["sweep_fingerprint"] = fingerprint
-        _remember_outcome(outcome)
-        if last is not None and fingerprint != last:
-            store.save_state(outcome["state"], persist=True, reason="auto-refresh")
-        st.caption(f"Terakhir dipindai {_fmt_wib(time.time(), '%H:%M:%S')} WIB — "
-                   f"{len(outcome['rows'])} mint, {outcome['elapsed']:.1f}s.")
-        _render_results(watchlist, outcome["state"])
-
-    _tick()
 
 
 # ---------------------------------------------------------------------------

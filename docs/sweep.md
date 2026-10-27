@@ -266,6 +266,14 @@ Hanya mint yang belum punya snapshot (baru ditambahkan) dipindai sekali. Tombol
 **🔄 Refresh & ambil snapshot** memindai live semua mint dan mengambil snapshot;
 **auto-refresh** melakukannya tiap 30 menit selama tab terbuka (`AUTO_REFRESH_SEC` = 1800).
 
+**Semua pemindaian berjalan di background** (2026-10-27): Refresh, Refresh per mint,
+auto-refresh, retry kohort, dan mint baru dijalankan di thread latar (`_ScanJob`).
+Tabel tetap menampilkan snapshot terakhir dan tidak blur selama pemindaian; caption
+"⏳ Memindai … di background" muncul di atas tabel. Saat selesai, hasil diterapkan dan
+tabel dirender ulang. Hanya satu pemindaian background per sesi. Tombol Refresh
+yang ditekan saat pemindaian lain berjalan menampilkan peringatan dan tidak
+menumpuk job.
+
 Kolom **Token pool / Token pool $ / Token/MC** (di samping liq/MC) = sisi token pool
 (`liquidity.base` DexScreener, jumlah token), nilainya `jumlah × priceUsd`, dan
 persentasenya terhadap MC (`fdv`). Snapshot lama belum punya data ini sampai di-refresh.
