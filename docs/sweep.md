@@ -151,6 +151,8 @@ tidak mengubah vonis; nilainya sama dengan yang dipakai gate.
 
 ### TIDAK LAYAK disembunyikan (2026-10-15)
 
+> **Sementara (2026-10-27):** `sweep_ui.SHOW_ALL_TOKENS = True` menampilkan semua mint di tabel utama, termasuk TIDAK LAYAK dan baris yang kena filter tampilan. Tabel tersembunyi tidak dirender. Jumlah yang seharusnya disembunyikan tetap ditulis sebagai keterangan. Data scan, sinyal, dan alert tidak berubah. Set `False` untuk mengembalikan penyembunyian.
+
 Baris dengan vonis `TIDAK LAYAK` diperlakukan seperti `SKIP — kohort plus`: diurutkan
 paling bawah dan tidak tampil di tabel utama. Baris tersebut muncul di tabel
 terpisah ("Tampilkan N mint yang disembunyikan"). Baris dengan scan terakhir gagal
@@ -265,6 +267,14 @@ mencakup hit ≥100% / ≥300%, median naik/turun, dan break-even hit rate.
 Hanya mint yang belum punya snapshot (baru ditambahkan) dipindai sekali. Tombol
 **🔄 Refresh & ambil snapshot** memindai live semua mint dan mengambil snapshot;
 **auto-refresh** melakukannya tiap 30 menit selama tab terbuka (`AUTO_REFRESH_SEC` = 1800).
+
+**Semua pemindaian berjalan di background** (2026-10-27): Refresh, Refresh per mint,
+auto-refresh, retry kohort, dan mint baru dijalankan di thread latar (`_ScanJob`).
+Tabel tetap menampilkan snapshot terakhir dan tidak blur selama pemindaian; caption
+"⏳ Memindai … di background" muncul di atas tabel. Saat selesai, hasil diterapkan dan
+tabel dirender ulang. Hanya satu pemindaian background per sesi. Tombol Refresh
+yang ditekan saat pemindaian lain berjalan menampilkan peringatan dan tidak
+menumpuk job.
 
 Kolom **Token pool / Token pool $ / Token/MC** (di samping liq/MC) = sisi token pool
 (`liquidity.base` DexScreener, jumlah token), nilainya `jumlah × priceUsd`, dan
