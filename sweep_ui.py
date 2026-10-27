@@ -275,6 +275,21 @@ def _lowest_buy_cell(metrics) -> str:
     return f"{_fmt_usd(low_mc)} (harga {_fmt_price_move(move)})"
 
 
+TOKEN_MC_TREND_HELP = (
+    "Token/MC (% MC) per snapshot per jam. Dicatat sejak 27 Okt 2026; "
+    "data sebelum itu belum tersimpan.")
+
+
+def _token_mc_series(state, mint: str, limit: int = 48) -> list:
+    """Token/MC (persen) per snapshot, paling lama dulu, untuk grafik tren."""
+    series = []
+    for row in store.mint_history(state, mint, limit=limit):
+        value = store.token_mc_of(row)
+        if value is not None:
+            series.append(round(value * 100, 2))
+    return series
+
+
 def _eligibility_rows(rows) -> list:
     out = []
     for row in rows or []:
@@ -299,6 +314,9 @@ def _eligibility_rows(rows) -> list:
             "Token pool $": _fmt_usd(metrics.get("pool_base_usd")),
             "Token/MC": _fmt_pct(screen.pool_token_mc_frac(
                 metrics.get("pool_base_usd"), metrics.get("fdv_usd"))),
+            # Tren token/MC: hanya untuk tabel utama (kunci ``token_mc_hist``).
+            **({"Tren token/MC": row["token_mc_hist"]}
+               if "token_mc_hist" in row else {}),
             # Cost 10x MC divided by COCK 10x MC ($32,684 / $233,451 = 14,0%).
             "× dana acuan 10x": _fmt_times(result.get("reference_fund_x")),
             # Nominal $ untuk 10x pada basis kas satu sisi (= × dana acuan).
@@ -406,6 +424,8 @@ def _render_table(rows, watchlist, *, suffix: str = "") -> None:
             # Token ikut dipin (urutan kolom: Hapus, Refresh, Token).
             "Token": st.column_config.TextColumn("Token", pinned=True),
             "Kohort": st.column_config.TextColumn("Kohort", width=320),
+            "Tren token/MC": st.column_config.LineChartColumn(
+                "Tren token/MC", help=TOKEN_MC_TREND_HELP, width="medium"),
             # pinned: link GMGN ikut tetap terlihat saat tabel digeser.
             "GMGN": st.column_config.LinkColumn("GMGN", display_text="buka",
                                                 pinned=True),
@@ -1130,6 +1150,10 @@ def _render_results(watchlist, state) -> None:
         if failure is not None:
             placeholder["scan_error"] = failure
         placeholders.append(placeholder)
+    for row in views:
+        row["token_mc_hist"] = _token_mc_series(state, row.get("mint") or "")
+    for row in placeholders:
+        row["token_mc_hist"] = []
     all_rows = sorted(views + placeholders,
                       key=lambda row: screen.display_sort_key(row.get("result")))
     # Filter tampilan: x dana acuan 10x > 3× atau bundler < 10% disembunyikan

@@ -498,6 +498,32 @@ def prune(state: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Snapshot
 # ---------------------------------------------------------------------------
+def _ratio(value, base):
+    try:
+        v, b = float(value), float(base)
+    except (TypeError, ValueError):
+        return None
+    if v < 0 or b <= 0:
+        return None
+    return v / b
+
+
+def token_mc_of(row) -> float | None:
+    """Token/MC satu baris snapshot (fraksi): nilai token di pool ÷ FDV.
+
+    Baris yang disimpan sejak 2026-10-27 punya ``token_mc``. Baris lama hanya
+    bisa dihitung bila masih membawa ``view`` (satu baris terbaru per mint).
+    """
+    row = row or {}
+    if row.get("token_mc") is not None:
+        try:
+            return float(row["token_mc"])
+        except (TypeError, ValueError):
+            return None
+    metrics = (row.get("view") or {}).get("metrics") or {}
+    return _ratio(metrics.get("pool_base_usd"), metrics.get("fdv_usd"))
+
+
 def snapshot_row(metrics: dict, *, ts: int | None = None) -> dict:
     """Ringkas metrik → satu baris snapshot (field yang dipakai kriteria 4/5)."""
     metrics = metrics or {}
@@ -506,6 +532,9 @@ def snapshot_row(metrics: dict, *, ts: int | None = None) -> dict:
         "price": metrics.get("price_usd"),
         "liq_usd": metrics.get("liq_usd"),
         "fdv_usd": metrics.get("fdv_usd"),
+        # Token/MC disimpan per snapshot untuk grafik tren (permintaan user 2026-10-27).
+        "pool_base_usd": metrics.get("pool_base_usd"),
+        "token_mc": _ratio(metrics.get("pool_base_usd"), metrics.get("fdv_usd")),
         "vol_1h": metrics.get("vol_1h"),
         "buys_1h": metrics.get("buys_1h"),
         "sells_1h": metrics.get("sells_1h"),
