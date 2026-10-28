@@ -199,7 +199,34 @@ memengaruhi kriteria, skor, vonis, `eligible`, urutan, atau filter tampilan.
 Gate ini diuji setelah gate kohort, sebelum skor. Batas 50% adalah
 interpretasi dari "maks 50% dari harga sekarang" dan perlu dikonfirmasi user.
 
-### Nominal dolar (tabel utama dan detail biaya)
+#### Sinyal bottom (info saja, 2026-10-28)
+
+Kolom **Sinyal bottom** di tabel dan panel **🔎 Sinyal bottom** di detail tiap mint
+(`sweep_bottom.py`, murni). Empat indikator, hanya membaca data yang sudah ada:
+
+| Indikator | Data | Aktif bila |
+|---|---|---|
+| `CVD↗` Divergensi CVD bullish | bucket jam delta (6 jam, kini membawa `price`) | harga jam terakhir ≤ low sebelumnya **dan** CVD sekarang > CVD saat low itu |
+| `Token/MC⏸` Token/MC berhenti naik | snapshot per jam, 4 titik (≈3 jam) | token/MC naik ≤ 0,5 poin persen **dan** harga turun ≥ 5% |
+| `Pool tahan` Sisi quote tahan | `liq_usd − pool_base_usd` per snapshot, 7 titik (≈6 jam) | sisi quote turun ≤ 5% **dan** harga turun ≥ 10% (proksi, bukan bukti LP ditarik) |
+| `Low bertahan` Di atas low shakeout | `shakeout_low` (low candle saat latch) dan harga sekarang | harga ≥ low shakeout dan tidak ada pelanggaran |
+
+Kolom tabel berisi `aktif/terukur` dan label indikator yang aktif, misalnya `1/2 · CVD↗`.
+`—` berarti tidak ada yang terukur. Panel detail menampilkan data tiap indikator
+(jam, harga, nilai) dan penjelasan, termasuk penjelasan lengkap divergensi CVD.
+
+Batasan yang harus dibaca bersama hasilnya:
+- Divergensi CVD hanya dihitung untuk kandidat delta (kohort `TUNGGU`/`LOLOS`) dan
+  hanya memakai 6 jam, sehingga dua low harus berada di dalam jendela itu.
+- Delta yang tersimpan sebelum 28 Okt 2026 tidak punya harga per jam. Indikator
+  itu baru terisi setelah scan berikutnya. Hal yang sama berlaku untuk
+  `shakeout_low` pada latch yang sudah ada: nilainya disimpan saat scan berikutnya.
+- Sisi quote dan token/MC memakai riwayat snapshot yang dicatat sejak 27 Okt 2026.
+
+Tidak memengaruhi kriteria, skor, vonis, `eligible`, urutan, atau filter. Tes:
+`tests/test_sweep_bottom.py`.
+
+## Nominal dolar (tabel utama dan detail biaya)
 
 - Kolom **Dana acuan 10x** di tabel utama = `(√10 − 1) × liq/2`, basis kas satu sisi
   seperti `× dana acuan` (COCK ≈ $32.684). Setara dengan `× dana acuan` × 14,0%

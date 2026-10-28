@@ -36,6 +36,7 @@ import streamlit as st
 
 import sweep_alert as alert
 import sweep_check as check
+import sweep_bottom as bottom
 import sweep_data as data
 import sweep_scan as scan
 import sweep_screen as screen
@@ -318,6 +319,8 @@ def _eligibility_rows(rows) -> list:
             # Tren token/MC: hanya untuk tabel utama (kunci ``token_mc_hist``).
             **({"Tren token/MC": row["token_mc_hist"]}
                if "token_mc_hist" in row else {}),
+            # Sinyal bottom (info saja, 2026-10-28): ringkasan indikator aktif.
+            "Sinyal bottom": (row.get("bottom") or {}).get("summary") or "—",
             # Cost 10x MC divided by COCK 10x MC ($32,684 / $233,451 = 14,0%).
             "× dana acuan 10x": _fmt_times(result.get("reference_fund_x")),
             # Nominal $ untuk 10x pada basis kas satu sisi (= × dana acuan).
@@ -427,6 +430,8 @@ def _render_table(rows, watchlist, *, suffix: str = "") -> None:
             "Kohort": st.column_config.TextColumn("Kohort", width=320),
             "Tren token/MC": st.column_config.LineChartColumn(
                 "Tren token/MC", help=TOKEN_MC_TREND_HELP, width="medium"),
+            "Sinyal bottom": st.column_config.TextColumn(
+                "Sinyal bottom", help=BOTTOM_HELP, width="medium"),
             # pinned: link GMGN ikut tetap terlihat saat tabel digeser.
             "GMGN": st.column_config.LinkColumn("GMGN", display_text="buka",
                                                 pinned=True),
@@ -559,6 +564,28 @@ def _render_order_flow(result) -> None:
                    f"harga {dist * 100:+.1f}% dari POC")
 
 
+def _render_bottom(row) -> None:
+    """Panel sinyal bottom: data tiap indikator + penjelasan (info saja)."""
+    bottom_info = row.get("bottom") or bottom.bottom_signals(
+        result=row.get("result"), metrics=row.get("metrics"), history=[])
+    items = bottom_info.get("items") or []
+    st.markdown(
+        f"**🔎 Sinyal bottom** — info saja, tidak memengaruhi vonis: "
+        f"{bottom_info.get('active', 0)} aktif dari "
+        f"{bottom_info.get('available', 0)} terukur dari {bottom_info.get('total', 0)}.")
+    for item in items:
+        if item.get("available") and item.get("active"):
+            head = f"✅ **{item['title']}** — aktif"
+        elif item.get("available"):
+            head = f"▫️ **{item['title']}** — {item.get('reason') or 'belum'}"
+        else:
+            head = f"⚪ **{item['title']}** — {item.get('reason') or 'belum terukur'}"
+        st.markdown(head)
+        for line in item.get("lines") or []:
+            st.caption(line)
+        st.caption(item.get("explain") or "")
+
+
 def _render_details(rows, *, refresh: bool = True) -> None:
     """Panel detail per mint. ``refresh=False`` menyembunyikan tombol Refresh
     (dipakai halaman cek manual, yang tidak boleh menulis ke watchlist)."""
@@ -594,6 +621,7 @@ def _render_details(rows, *, refresh: bool = True) -> None:
                            f"shakeout sudah dilanggar: {shakeout.get('detail') or ''}")
             _render_order_flow(result)
             _render_delta(result)
+            _render_bottom(row)
             if metrics.get("error"):
                 st.warning(f"Sumber data: {metrics['error']}")
             st.caption(
@@ -1221,6 +1249,22 @@ def _render_table_filters(rows) -> list:
     return kept
 
 
+def _attach_bottom(row, state, latches) -> None:
+    """Sinyal bottom (info saja) per baris, dari riwayat snapshot mint."""
+    mint = row.get("mint") or ""
+    history = store.mint_history(state, mint, limit=48) if mint else []
+    row["bottom"] = bottom.bottom_signals(
+        result=row.get("result"), metrics=row.get("metrics"),
+        history=history, latched_at=latches.get(mint))
+
+
+BOTTOM_HELP = (
+    "Info saja, tidak memengaruhi vonis, urutan, atau filter. Angka = indikator "
+    "aktif dari yang terukur. CVD↗ = divergensi CVD bullish; Token/MC⏸ = token/MC "
+    "tidak naik saat harga turun; Pool tahan = sisi quote pool tidak terkuras; "
+    "Low bertahan = harga di atas low shakeout. Detail di panel tiap mint.")
+
+
 def _render_results(watchlist, state) -> None:
     """Tabel + detail + statistik dari snapshot terakhir tiap mint watchlist."""
     views, missing = store.watchlist_views(state, watchlist)
@@ -1235,10 +1279,13 @@ def _render_results(watchlist, state) -> None:
         if failure is not None:
             placeholder["scan_error"] = failure
         placeholders.append(placeholder)
+    latches = state.get("shakeout_latched_at") or {}
     for row in views:
         row["token_mc_hist"] = _token_mc_series(state, row.get("mint") or "")
+        _attach_bottom(row, state, latches)
     for row in placeholders:
         row["token_mc_hist"] = []
+        _attach_bottom(row, state, latches)
     all_rows = sorted(views + placeholders,
                       key=lambda row: screen.display_sort_key(row.get("result")))
     # Filter tampilan: x dana acuan 10x > 3× atau bundler < 10% disembunyikan

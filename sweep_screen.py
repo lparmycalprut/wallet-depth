@@ -841,6 +841,19 @@ def criterion_shakeout(candles, *, lookback: int = 48):
     return check
 
 
+def _shakeout_base_low(candles, latched_at):
+    """Low candle dengan ``ts == latched_at`` (low shakeout), atau None."""
+    latched_ts = _timestamp_seconds(latched_at)
+    if latched_ts is None:
+        return None
+    for row in candles or []:
+        if isinstance(row, (list, tuple)) and len(row) >= 4 \
+                and _timestamp_seconds(row[0]) == latched_ts:
+            low = _num(row[3])
+            return low if low is not None and low > 0 else None
+    return None
+
+
 def shakeout_breach(candles, latched_at):
     """Low shakeout yang sudah dilatch lalu dilanggar candle sesudahnya.
 
@@ -888,6 +901,8 @@ def _latched_shakeout_check(check, latched_at, candles=None):
                    f"(low {breach['low']:.8g} pada {screen_time_wib(breach['ts'])})")
     result = _check("shakeout", "Shakeout + higher low", True, detail)
     result["latched_at"] = latched_at
+    # Low shakeout disimpan untuk indikator info "low bertahan" (2026-10-28).
+    result["shakeout_low"] = _shakeout_base_low(candles, latched_at)
     result["breached"] = breach is not None
     if breach is not None:
         result["breach"] = breach
@@ -1256,7 +1271,8 @@ def delta_info(trades, candles, *, now, complete: bool = True,
                 | {"price_chg": price_chg},
         "flags": flags,
         "labels": [DELTA_LABELS[f] for f in flags],
-        "buckets": [{k: r[k] for k in ("ts", "delta", "cvd")} for r in rows[-window_hours:]],
+        "buckets": [{k: r[k] for k in ("ts", "delta", "cvd", "price")}
+                    for r in rows[-window_hours:]],
     }
 
 
