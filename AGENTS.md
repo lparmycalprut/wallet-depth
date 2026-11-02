@@ -36,8 +36,8 @@ Independent market-risk fields such as Meteora's `top_holders_pct`, GMGN metrics
 - `BEST_ACTIVE_TVL_MIN = 50_000.0`
 - `BEST_LPS_MIN = 100.0`
 - no POOL BARU/new-pool route or bypass
-- `BEST_FV_24H_MIN = 10.0` for the main table
-- `BEST_FV_HIDE_MIN = 5.0`: F/V 5× to <10× remains visible in `hidden_rows`; F/V <5× is dropped
+- `BEST_FV_24H_MIN = 5.0` for the main table (since 2026-11-02, explicit user request; was 10× from 2026-09-28)
+- `BEST_FV_HIDE_MIN = 5.0`: F/V <5× is dropped; no F/V range is left for `hidden_rows`
 - `BEST_FEE_TVL_MIN = 5.0` (percent, `fee_active_tvl_ratio`) and `BEST_FEE_MINUS_IL_MIN = 5.0` (points): since 2026-11-02 (explicit user request) a row is shown only when Fee/TVL ≥ 5% AND Fee-IL ≥ +5. Fee-IL = Fee/TVL + IL, where IL = `2√r/(1+r) − 1`, `r = 1 + pool_price_change_pct/100` (50/50 CPMM). A zero price change on a pool younger than 24 h, or a missing change, is "not measurable" and drops the row. Dropped rows are removed before cheap gates, so they appear neither in the main table nor in the skipped list (`dropped_fee_il`). This replaces the former "Fee/TVL is not a filter" invariant.
 - cheap listing filters run before pool-detail or third-party enrichment; only displayable rows (main + skipped) are enriched
 - Token:SOL is informational only; official Meteora values are still calculated as amount × USD price

@@ -11,8 +11,8 @@ A pool must satisfy all listing checks:
 - DLMM, 24-hour timeframe
 - active TVL **≥ $50,000**
 - liquidity providers **≥ 100**
-- F/V **≥ 10×** to appear in the main result table
-- F/V **≥ 5×** to remain a Best Pool candidate; **5× to <10×** appears in **pool dilewati**, while **<5×** is dropped
+- F/V **≥ 5×** to appear in the main result table (since 2026-11-02; was 10× from 2026-09-28)
+- F/V **<5×** is dropped
 - Fee/TVL **≥ 5%** (active TVL basis, the Fee/TVL column) — this is a filter since 2026-11-02
 - **Fee-IL ≥ +5 points**: Fee/TVL plus the impermanent loss (IL) of a 50/50 pool over the 24-hour price change (`IL = 2√r/(1+r) − 1`, `r = 1 + price change`). IL is ≤ 0, so this also guarantees Fee/TVL ≥ 5%. A pool whose price change cannot be measured (missing, or 0% while younger than 24 h) is hidden. Hidden pools do not appear in the skipped list either; the caption reports how many were hidden.
 - volatility between **1% and 10%**, inclusive
@@ -20,7 +20,7 @@ A pool must satisfy all listing checks:
 
 After those cheap checks, official Meteora pool details still provide the **Token:SOL** USD-value ratio, but the ratio is informational and no longer filters pools.
 
-GMGN per-token **Bundler+Phishing** is informational only—not an eligibility filter. The metric is fetched for main-table rows and displayable **pool dilewati** rows, so candidates with **F/V 5× to <10×** can also show it. Pools remain eligible even when the combined rate is high or the GMGN report cannot be read; high values may receive a static red risk warning, but are never moved out of the main table for that reason. Main-table rows that pass the pool checks continue to RugCheck and tax/dividend enrichment. There is no new-pool detection or alternate bypass path.
+GMGN per-token **Bundler+Phishing** is informational only—not an eligibility filter. The metric is fetched for main-table rows and displayable **pool dilewati** rows, so candidates in **pool dilewati** (for reasons other than F/V) can also show it. Pools remain eligible even when the combined rate is high or the GMGN report cannot be read; high values may receive a static red risk warning, but are never moved out of the main table for that reason. Main-table rows that pass the pool checks continue to RugCheck and tax/dividend enrichment. There is no new-pool detection or alternate bypass path.
 
 ## Mobile layout
 

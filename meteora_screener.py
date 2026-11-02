@@ -45,14 +45,12 @@ SAFE_LP_MULTIPLIER = 5.0
 # 88,56%; ``volatility`` 6.2 = 6,2%; ``volume_change_pct`` 13.24 = +13,24%;
 # ``top_holders_pct`` 35.75 = 35,75% supply di 10 holder teratas token base).
 # ---------------------------------------------------------------------------
-BEST_FV_24H_MIN = 10.0          # 24H: F/V >= 10,0 (inklusif)
-# Permintaan user 2026-09-28: *"ganti minimal f/v ke 10x minimal"* +
-# lanjutan *"syarat pool yang masuk kriteria ... minimal 5x F/V"*. Ambang
-# tampil utama **inklusif** (tepat 10,0× lolos ke tabel). Pool dengan F/V
-# minimal 5× tetapi masih < 10× tetap masuk kandidat yang bisa dilihat di
-# listing "▶ N pool dilewati". Pool F/V < 5× bukan kandidat Best Pool lagi dan
-# dibuang total supaya enrichment pihak ketiga tidak dihabiskan untuk sinyal
-# yang terlalu lemah.
+BEST_FV_24H_MIN = 5.0           # 24H: F/V >= 5,0 (inklusif)
+# Permintaan user 2026-11-02: *"kita kan rubah ke 5x minimal"* — ambang tampil
+# utama turun dari 10× ke 5× (dikonfirmasi user). Pool F/V >= 5× langsung masuk
+# tabel utama; alasan "F/V" tidak lagi membuat pool masuk "dilewati". F/V < 5×
+# tetap dibuang total supaya enrichment pihak ketiga tidak dihabiskan untuk
+# sinyal yang terlalu lemah. (Sebelumnya 2026-09-28: utama 10×, 5×–<10× dilewati.)
 # Layar: **Fee/TVL minimal 30%** (permintaan user 2026-09-23: *"kita perketat
 # filter yang boleh di show di hasil"* + *"Fee/TVL minimal 30%"* + *"dibawah itu
 # jangan show"*). ``fee_active_tvl_ratio`` API Meteora sudah dalam satuan persen
@@ -80,9 +78,8 @@ BEST_FEE_MINUS_IL_MIN = 5.0
 # Pool yang dibuat kurang dari 24 jam lalu punya ``pool_price_change_pct``
 # 0 karena belum ada harga pembanding 24 jam; IL-nya tidak bisa diukur.
 POOL_WINDOW_MS = 24 * 3600 * 1000
-# Lantai "masuk kriteria" F/V. Pool F/V 5× sampai <10× masih ditampilkan di
-# listing "▶ N pool dilewati"; pool F/V < 5× dibuang total dari card karena
-# tidak memenuhi syarat kandidat minimum. Hanya card 🏆 Best Pool — ``filter_regular_rows``
+# Lantai "masuk kriteria" F/V: F/V < 5× dibuang total dari card. Sejak
+# 2026-11-02 tidak ada lagi rentang F/V "dilewati" (ambang utama = 5×). Hanya card 🏆 Best Pool — ``filter_regular_rows``
 # Scan Meteora regular tidak berubah.
 BEST_FV_HIDE_MIN = 5.0
 BEST_CARD_TITLE = "🏆 Scan Best Pool Meteora"
@@ -585,7 +582,7 @@ def normalize_best_lane(value, *, default: str | None = "24h") -> str | None:
 def lane_fv_min(lane) -> float:
     """Ambang F/V lane 24H — dibaca dari konstanta **saat dipanggil**.
 
-    :data:`BEST_FV_24H_MIN` (inklusif: tepat 10× lolos). Argumen ``lane`` dibiarkan
+    :data:`BEST_FV_24H_MIN` (inklusif: tepat 5× lolos). Argumen ``lane`` dibiarkan
     ada dipanggilan lama (tombol card, tooltip, label sel F/V, teks gap,
     saringan scan semuanya membaca fungsi ini) tetapi tidak mengubah apa pun
     sejak 30M dihapus 2026-09-16 — :func:`normalize_best_lane` memetakan semua
@@ -639,12 +636,11 @@ def row_fv_ratio(row: dict | None):
 def row_fv_under_hide(row: dict | None):
     """Return the F/V value when it is below the displayable candidate floor.
 
-    Main table still requires :data:`BEST_FV_24H_MIN` (10×). The skipped table
-    keeps only pools that at least satisfy this minimum candidate floor
-    (:data:`BEST_FV_HIDE_MIN`, 5×):
+    Main table requires :data:`BEST_FV_24H_MIN` (5× since 2026-11-02).
+    Only pools below the candidate floor (:data:`BEST_FV_HIDE_MIN`, 5×) are
+    dropped; there is no F/V range left for the skipped table:
 
-    - F/V >= 10× → visible table (if other gates pass);
-    - 5× <= F/V < 10× → ``pool dilewati`` with its metrics/enrichments;
+    - F/V >= 5× → visible table (if other gates pass);
     - F/V < 5× → dropped from the card entirely.
 
     Missing/non-finite F/V is handled as invalid by :func:`row_best_dropped`,
@@ -1455,8 +1451,8 @@ def row_best_dropped(row: dict | None, *, lane=None) -> bool:
 
     Gagal keras tetap mencakup Top10, volatility, dan LPs sesuai aturan lama.
     Untuk F/V, aturan terbaru membedakan ambang tampil dan ambang kandidat:
-    F/V >= 10× tampil utama, 5× <= F/V < 10× masuk "pool dilewati", sedangkan
-    F/V < 5× (atau F/V tidak terbukti valid) dibuang total.
+    Sejak 2026-11-02 F/V >= 5× tampil utama; F/V < 5× (atau F/V tidak
+    terbukti valid) dibuang total.
 
     Fee/TVL tidak termasuk alasan ``row_best_dropped`` karena filter tersebut
     dinonaktifkan; nilainya tetap boleh tampil dan dipakai untuk pengurutan.
@@ -1519,12 +1515,12 @@ def filter_best_rows(rows: list[dict] | None, *, lane=None,
     ``lane`` memaksa satu aturan ambang untuk seluruh baris (dipakai
     :func:`scan_best_lane` saat satu tombol lane ditekan); tanpa itu setiap
     baris dinilai dari ``timeframe``-nya sendiri. Saringannya: ambang F/V
-    tampil 10×, rentang volatility 1%–10%, LPs ``>= BEST_LPS_MIN`` dan Top10
+    tampil 5×, rentang volatility 1%–10%, LPs ``>= BEST_LPS_MIN`` dan Top10
     ``< BEST_TOP10_MAX_PCT`` — semuanya lewat :func:`row_best_gaps`.
     Fee/TVL dan Fee-IL disaring lebih dulu di scan_best_lane (2026-11-02) dan
     tidak pernah masuk hitungan ini. Hitungan kedua hanya memuat baris
-    yang masih bisa dilihat di listing "dilewati", yaitu F/V minimal 5× tetapi
-    masih < 10×, atau alasan non-hard lain bila ada. Bundler+Phishing tidak
+    yang masih bisa dilihat di listing "dilewati", yaitu alasan non-hard
+    lain bila ada (F/V < 5× dibuang total). Bundler+Phishing tidak
     pernah menggugurkan baris, termasuk bila angkanya tinggi/tidak terbaca.
     Yang dibuang total (F/V < 5×/tidak valid, volatility / LPs / Top10) tidak
     dihitung. Kandidat gagal dengan **volatility 0 tidak ikut dihitung**
@@ -1878,8 +1874,7 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
         "hidden_metric": hidden_metric,
         "skipped_quote": quote_skipped,
         # Pool gugur Top10 / volatility / LPs / F/V < 5× yang dibuang dari
-        # listing (tidak ditampilkan di mana pun). F/V 5×–<10× tetap masuk
-        # ``hidden_rows``.
+        # listing (tidak ditampilkan di mana pun).
         "dropped_volatility": dropped_volatility,
         "dropped_top10": dropped_top10,
         "dropped_lps": dropped_lps,

@@ -176,11 +176,12 @@ class BundlerPipelineTest(unittest.TestCase):
         self.assertEqual(len(rug_rows), 1)
         self.assertEqual(len(tax_rows), 1)
 
-    def test_hidden_fv_candidates_also_fetch_bundler(self):
+    def test_fv_5x_masuk_tabel_utama_dan_ikut_bundler(self):
+        # 2026-11-02: ambang F/V utama 5×, jadi F/V = 5× langsung tampil utama.
         visible = self._pool("VISIBLE", mint=MINT, fee=80.0, volatility=6.0)
         hidden = self._pool(
             "HIDDEN", mint="Hidden111111111111111111111111111111111",
-            fee=30.0, volatility=6.0)  # F/V = 5×, masuk pool dilewati.
+            fee=30.0, volatility=6.0)  # F/V = 5×, tampil utama.
         dropped = self._pool(
             "DROPPED", mint="Dropped1111111111111111111111111111111",
             fee=24.0, volatility=6.0)  # F/V = 4×, dibuang total.
@@ -215,12 +216,11 @@ class BundlerPipelineTest(unittest.TestCase):
 
         self.assertEqual(seen_batches, [["VISIBLE", "HIDDEN"]])
         self.assertEqual([row["pool_address"] for row in result["rows"]],
-                         ["VISIBLE"])
-        self.assertEqual([row["pool_address"] for row in result["hidden_rows"]],
-                         ["HIDDEN"])
+                         ["VISIBLE", "HIDDEN"])
+        self.assertEqual(result["hidden_rows"], [])
         self.assertEqual(result["dropped_fv"], 1)
         self.assertEqual(result["dropped_total"], 1)
-        self.assertEqual(result["hidden_rows"][0]["bundler"]["combined_rate"],
+        self.assertEqual(result["rows"][1]["bundler"]["combined_rate"],
                          0.07)
         self.assertNotIn("DROPPED", [row["pool_address"]
                                       for row in result["rows"] + result["hidden_rows"]])
