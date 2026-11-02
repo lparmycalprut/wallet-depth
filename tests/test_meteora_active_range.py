@@ -145,6 +145,7 @@ class RowFromPoolTest(unittest.TestCase):
                         "holders": 5_248_202},
             "tvl": 66_679.22, "active_tvl": 65_315.94,
             "fee_active_tvl_ratio": 19.54, "volume": 4_872_478.48,
+            "pool_price_change_pct": 0.0, "pool_created_at": 1_700_000_000_000,
             "fee_pct": 0.2, "volatility": 1.11,
             "dlmm_params": {"bin_step": 20, "collect_fee_mode": "both"},
             "pool_price": 0.07431804692125288,
@@ -201,7 +202,11 @@ class ActiveRangeCellTest(unittest.TestCase):
 
 class BestPoolColumnsTest(unittest.TestCase):
     def test_kolom_dan_judul_sinkron(self):
-        """Header, lebar kolom, dan isi sel harus satu jumlah (15/16 kolom).
+        """Header, lebar kolom, dan isi sel harus satu jumlah (16/17 kolom).
+
+        Penataan 2026-11-02 (permintaan user: *"terapkan juga detail di tabel"*):
+        kolom **Fee-IL** disisipkan tepat di kanan Fee/TVL (indeks 3), sehingga
+        kolom dasar menjadi **16** dan tabel utama **17** dengan TAX/DIVIDEND.
 
         Penataan 2026-09-16: Active Range naik ke kanan Volat (indeks 4) dan
         LPs tepat di kanannya (5). Penataan 2026-09-17 (permintaan user:
@@ -224,20 +229,22 @@ class BestPoolColumnsTest(unittest.TestCase):
                 titles = bp._lane_titles(lane)
                 self.assertEqual(len(titles),
                                  len(bp._col_spec(show_tax_dividend=True)))
-                self.assertEqual(len(titles), 16)
-                self.assertEqual(titles[4], "Active Range")
-                self.assertEqual(titles[5], "LPs")
-                self.assertEqual(titles[6], "Token:SOL")
-                self.assertEqual(titles[7], "Bundler+Phishing")
-                self.assertEqual(titles[10], "A.TVL")
-                self.assertEqual(titles[12], "Top10")
-                self.assertEqual(titles[13], "RugCheck")
-                self.assertEqual(titles[14], "Pool")
-                self.assertEqual(titles[15], "TAX/DIVIDEND")
+                self.assertEqual(len(titles), 17)
+                self.assertEqual(titles[2], "Fee/TVL")
+                self.assertEqual(titles[3], "Fee-IL")
+                self.assertEqual(titles[5], "Active Range")
+                self.assertEqual(titles[6], "LPs")
+                self.assertEqual(titles[7], "Token:SOL")
+                self.assertEqual(titles[8], "Bundler+Phishing")
+                self.assertEqual(titles[11], "A.TVL")
+                self.assertEqual(titles[13], "Top10")
+                self.assertEqual(titles[14], "RugCheck")
+                self.assertEqual(titles[15], "Pool")
+                self.assertEqual(titles[16], "TAX/DIVIDEND")
                 tanpa_tax = bp._lane_titles(lane, show_tax_dividend=False)
                 self.assertEqual(len(tanpa_tax),
                                  len(bp._col_spec(show_tax_dividend=False)))
-                self.assertEqual(len(tanpa_tax), 15)
+                self.assertEqual(len(tanpa_tax), 16)
                 self.assertEqual(tanpa_tax[-1], "Pool")
                 # Dust %MC, kolom ⭐, Bubble Map, dan STRATEGY benar-benar
                 # hilang.
@@ -272,6 +279,7 @@ class ActiveRangeCardTest(unittest.TestCase):
                      volatility=1.11, volume=4_872_478.48, fee=12_763.44,
                      volume_change_pct=1022.69, fee_pct=0.2, total_lps=188,
                      top_holders_pct=14.4,
+                     price_change_pct=0.0, pool_created_at=1_700_000_000_000,
                      liquidity_distribution={
                          "checked": True, "ok": True,
                          "token_value_usd": 50_000.0,

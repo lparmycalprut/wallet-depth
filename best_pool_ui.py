@@ -55,7 +55,8 @@ def best_lane_detail(lane) -> tuple[str, str, str]:
 
 def best_pool_tooltip() -> str:
     """Return the concise rule summary shown on the Best Pool title."""
-    from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_FV_24H_MIN,
+    from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_FEE_MINUS_IL_MIN,
+                                  BEST_FEE_TVL_MIN, BEST_FV_24H_MIN,
                                   BEST_FV_HIDE_MIN, BEST_LPS_MIN,
                                   BEST_TOP10_MAX_PCT, BEST_VOL_SHOW_MAX,
                                   BEST_VOL_SHOW_MIN)
@@ -64,7 +65,10 @@ def best_pool_tooltip() -> str:
         f"${BEST_ACTIVE_TVL_MIN:,.0f}; LPs at least {BEST_LPS_MIN:g}; "
         f"F/V at least {BEST_FV_24H_MIN:g}×; volatility "
         f"{BEST_VOL_SHOW_MIN:g}%–{BEST_VOL_SHOW_MAX:g}%; and Top10 "
-        f"below {BEST_TOP10_MAX_PCT:g}%. Fee/TVL is informational only. "
+        f"below {BEST_TOP10_MAX_PCT:g}%. Fee/TVL must be at least "
+        f"{BEST_FEE_TVL_MIN:g}% and Fee-IL (Fee/TVL minus 50/50 impermanent "
+        "loss over the 24-hour price change) at least "
+        f"+{BEST_FEE_MINUS_IL_MIN:g} points; other pools are dropped. "
         "Token:SOL from official Meteora pool details is informational only "
         "and no longer filters a pool. GMGN bundler plus phishing/entrapment "
         "is informational only: it never filters a pool, even when the rate "
@@ -83,14 +87,14 @@ def best_pool_tooltip() -> str:
 
 
 
-# Relative desktop widths for the fifteen base columns (including Token:SOL
-# and the informational Bundler metric). Urutannya WAJIB sama dengan
+# Relative desktop widths for the sixteen base columns (including Fee-IL,
+# Token:SOL and the informational Bundler metric). Urutannya WAJIB sama dengan
 # :func:`_lane_titles` dan urutan sel di :func:`_render_best_table`.
-_COL_SPEC = [1.4, 1.0, 0.75, 0.58, 0.95, 0.5, 0.72, 0.9, 0.58,
+_COL_SPEC = [1.4, 1.0, 0.75, 0.7, 0.58, 0.95, 0.5, 0.72, 0.9, 0.58,
              0.55, 0.68, 0.8, 0.6, 1.0, 1.05]
 
 #: Indeks kolom **Pool** di ``_COL_SPEC`` (kolom terakhir tabel "dilewati").
-POOL_COL_INDEX = 14
+POOL_COL_INDEX = 15
 
 #: Indeks kolom **TAX/DIVIDEND** — satu-satunya kolom tambahan tabel utama
 #: (tepat di kanan ``POOL_COL_INDEX``). Kolom **STRATEGY** yang dulu berada
@@ -103,7 +107,7 @@ TAX_DIVIDEND_COL_TITLE = "TAX/DIVIDEND"
 
 
 def _col_spec(*, show_tax_dividend: bool = True) -> list[float]:
-    """Return the 14 base widths plus TAX/DIVIDEND when it is shown."""
+    """Return the 16 base widths plus TAX/DIVIDEND when it is shown."""
     spec = list(_COL_SPEC)
     if show_tax_dividend:
         spec.append(TAX_DIVIDEND_COL_WIDTH)
@@ -121,7 +125,7 @@ def _lane_titles(lane, *, show_tax_dividend: bool = True) -> list[str]:
     # Token:SOL tepat di kanan LPs (2026-09-26) — angkanya sekarang ditulis
     # satu angka di belakang koma (lihat
     # ``meteora_screener.liquidity_distribution_label``).
-    titles = ["Token", "F/V", "Fee/TVL", "Volat", "Active Range", "LPs",
+    titles = ["Token", "F/V", "Fee/TVL", "Fee-IL", "Volat", "Active Range", "LPs",
               "Token:SOL", "Bundler+Phishing", "Fee %", "MC", "A.TVL",
               "Vol 24h", "Top10", "RugCheck", "Pool"]
     if show_tax_dividend:
@@ -468,7 +472,7 @@ def _render_best_table(rows: list, *, lane: str,
                        show_tax_dividend: bool = True) -> None:
     """Render the complete Best Pool table.
 
-    The visible table has all sixteen columns; the skipped table omits the
+    The visible table has all seventeen columns; the skipped table omits the
     final informational TAX/DIVIDEND column. One ``.bp-table-scroll`` wrapper
     keeps its header and rows aligned while mobile users scroll horizontally.
     """
@@ -478,11 +482,13 @@ def _render_best_table(rows: list, *, lane: str,
 
     from dashboard_components import _number
     from links import external_links_html, pool_links_html
-    from meteora_screener import (BEST_LPS_MIN, BEST_TOP10_MAX_PCT,
+    from meteora_screener import (BEST_FEE_MINUS_IL_MIN, BEST_FEE_TVL_MIN,
+                                  BEST_LPS_MIN, BEST_TOP10_MAX_PCT,
                                   BEST_VOL_SHOW_MAX,
                                   BEST_VOL_SHOW_MIN,
                                   liquidity_distribution_label,
-                                  normalize_best_lane, row_fv_ratio,
+                                  normalize_best_lane, row_fee_minus_il,
+                                  row_fv_ratio, row_il_pct,
                                   row_pair_label, row_vol_tvl_ratio)
     # RugCheck = kolom baru 2026-09-16; fmt-nya tinggal di modul rugchecker
     # supaya card tidak pernah menebak struktur laporan API pihak ketiga.
@@ -562,13 +568,31 @@ def _render_best_table(rows: list, *, lane: str,
                        f"{window_txt} {_usd_or_dash(fee, compact=False)} / "
                        f"active TVL {_usd_or_dash(active_tvl, compact=False)} "
                        f"= {_num_or_dash(ratio, ',.2f')}% — kunci urut "
-                       "pertama (terbesar dulu, permintaan user 2026-09-15), "
-                       "bukan saringan")
+                       "pertama (terbesar dulu, permintaan user 2026-09-15); "
+                       f"tampil hanya bila ≥ {float(BEST_FEE_TVL_MIN):g}% "
+                       "(permintaan user 2026-11-02)")
         fee_tvl_here = _finite_number(ratio)
         if (top_fee_tvl is not None and fee_tvl_here is not None
                 and fee_tvl_here == top_fee_tvl):
             fee_tvl_value = _top_span(fee_tvl_value)
             fee_tvl_tip += " — Fee/TVL tertinggi di tabel ini"
+        # Fee-IL (permintaan user 2026-11-02): Fee/TVL dikurangi IL pool 50/50
+        # atas perubahan harga 24 jam. Baris sub: harga 24 jam dan IL.
+        fee_il = row_fee_minus_il(row)
+        il_value = row_il_pct(row)
+        change_txt, _change_color = _signed_pct(row.get("price_change_pct"))
+        fee_il_txt, fee_il_color = _signed_pct(fee_il)
+        fee_il_value = (f'<span style="color:{fee_il_color};font-weight:700;">'
+                        f"{fee_il_txt}</span>" if fee_il_color
+                        else fee_il_txt)
+        fee_il_sub = (f"harga {change_txt} · IL "
+                      f"{_num_or_dash(il_value, '.1f')}%")
+        fee_il_tip = (
+            f"Fee-IL = Fee/TVL {_num_or_dash(ratio, ',.2f')}% + IL "
+            f"{_num_or_dash(il_value, ',.2f')}% (pool 50/50 atas perubahan "
+            f"harga 24 jam {change_txt}). Tampil hanya bila Fee-IL ≥ "
+            f"+{float(BEST_FEE_MINUS_IL_MIN):g} poin (permintaan user "
+            "2026-11-02). IL selalu ≤ 0.")
         pair = row_pair_label(row)
         pair_html = (
             f'<span class="watchlist-pair" title="pasangan pool '
@@ -617,6 +641,7 @@ def _render_best_table(rows: list, *, lane: str,
         cells = (
             (fv_value, fv_sub, fv_tip),
             (fee_tvl_value, fee_sub, fee_tvl_tip),
+            (fee_il_value, fee_il_sub, fee_il_tip),
             (vol_value, "volat", vol_tip),
             _active_range_cell(row),
             (lps_value, "lps",
@@ -700,7 +725,8 @@ def _reclassify_cached_rows(result: dict, lane: str) -> tuple[list[dict], list[d
     restores those rows to the main table without forcing a rescan.
     """
     from meteora_screener import (row_best_dropped, row_best_final_gaps,
-                                  sort_best_rows, sort_hidden_best_rows)
+                                  row_fee_il_gap, sort_best_rows,
+                                  sort_hidden_best_rows)
 
     visible: list[dict] = []
     skipped: list[dict] = []
@@ -711,6 +737,10 @@ def _reclassify_cached_rows(result: dict, lane: str) -> tuple[list[dict], list[d
         gaps = row_best_final_gaps(original, lane=lane)
         row = dict(original, best_gaps=gaps)
         if row_best_dropped(row, lane=lane):
+            continue
+        # Fee/TVL & Fee-IL (2026-11-02) juga berlaku untuk hasil cache lama;
+        # baris tanpa data perubahan harga gugur sampai user scan ulang.
+        if row_fee_il_gap(original) is not None:
             continue
         if gaps:
             skipped.append(row)
@@ -730,6 +760,7 @@ def _run_lane_scan(lane: str) -> dict:
                 "fetched": 0, "hidden_metric": 0, "skipped_quote": 0,
                 "dropped_volatility": 0, "dropped_top10": 0,
                 "dropped_lps": 0, "dropped_fv": 0, "dropped_total": 0,
+                "dropped_fee_il": 0,
                 "failed_liquidity_ratio": 0,
                 "liquidity_distribution_failed": 0,
                 "hidden_distribution_failed": 0,
@@ -754,7 +785,8 @@ def render_best_pool_scan() -> None:
     """
     import streamlit as st
 
-    from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_FV_HIDE_MIN,
+    from meteora_screener import (BEST_ACTIVE_TVL_MIN, BEST_FEE_MINUS_IL_MIN,
+                                  BEST_FEE_TVL_MIN, BEST_FV_HIDE_MIN,
                                   BEST_FV_24H_MIN,
                                   BEST_LPS_MIN, best_gap_summary,
                                   normalize_best_lane)
@@ -787,7 +819,10 @@ def render_best_pool_scan() -> None:
                            f"{gate} + active TVL ≥ "
                            f"${BEST_ACTIVE_TVL_MIN / 1000:g}K + LPs ≥ "
                            f"{BEST_LPS_MIN:g} + volatility 1%–10% + Top10 < 25% "
-                           "+ Fee/TVL dan Token:SOL hanya informasi. "
+                           f"+ Fee/TVL ≥ {BEST_FEE_TVL_MIN:g}% + Fee-IL ≥ "
+                           f"+{BEST_FEE_MINUS_IL_MIN:g} poin (IL pool 50/50 "
+                           "atas perubahan harga 24 jam) + Token:SOL hanya "
+                           "informasi. "
                            "Bundler+Phishing GMGN juga hanya informasi: nilai "
                            "tinggi atau laporan yang gagal dibaca tidak "
                            "menyaring pool; nilai tinggi diberi penanda risiko. "
@@ -840,6 +875,7 @@ def render_best_pool_scan() -> None:
         fetched = int(result.get("fetched") or 0)
         skipped_quote = int(result.get("skipped_quote") or 0)
         rug_failed = int(result.get("rugcheck_failed") or 0)
+        fee_il_dropped = int(result.get("dropped_fee_il") or 0)
         showing_hidden = bool(
             st.session_state.get(best_lane_hidden_key(active)))
 
@@ -896,8 +932,12 @@ def render_best_pool_scan() -> None:
             # bubblemapnya saja") — ``bubblemap_failed`` hasil scan lama
             # (session/cache 2026-09-18) sengaja tidak dibaca lagi supaya
             # caption tidak menyebut kolom yang sudah tidak ada.
+            fee_il_txt = (
+                f" · {fee_il_dropped} pool disembunyikan (Fee/TVL < "
+                f"{BEST_FEE_TVL_MIN:g}% atau Fee-IL < +{BEST_FEE_MINUS_IL_MIN:g})"
+                if fee_il_dropped else "")
             st.caption(f"{len(rows)} pool {label} tampil · {hidden} "
-                       f"dilewati · listing {fetched} pool{quote_txt}"
+                       f"dilewati{fee_il_txt} · listing {fetched} pool{quote_txt}"
                        f"{rug_txt}{gmgn_txt}{bundler_txt}"
                        f"{distribution_txt}{hidden_distribution_txt}{tax_txt}.")
         if showing_hidden:
@@ -909,7 +949,7 @@ def render_best_pool_scan() -> None:
             # Sorot hijau tua menyala khusus tabel utama — baris di tabel
             # dilewati tetap membawa alasan gagal pool di sel F/V.
             # Tabel "dilewati" tanpa kolom TAX/DIVIDEND (kolom informasi itu
-            # hanya untuk tabel utama) — 14 kolom dasar saja.
+            # hanya untuk tabel utama) — 16 kolom dasar saja.
             _render_best_table(hidden_rows, lane=active,
                                key_prefix=f"best-pool-hidden-{active}",
                                mark_tops=False, show_tax_dividend=False)

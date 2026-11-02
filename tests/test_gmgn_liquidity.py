@@ -248,6 +248,7 @@ class FetchTest(unittest.TestCase):
 
 def _row(mint="MINTX", **extra):
     row = {"ca": mint, "pool_address": "POOLX", "fee_active_tvl_ratio": 80.0,
+           "price_change_pct": 0.0, "pool_created_at": 1_700_000_000_000,
            "volatility": 6.0, "top_holders_pct": 10.0,
            "total_lps": 188, "timeframe": "24h"}
     row.update(extra)
@@ -552,7 +553,8 @@ def _best_pool(pool="P1", mint=MINT_A, *, ratio=80.0, volatility=6.2,
                         "price": 100.0, "holders": 0, "top_holders_pct": 0},
             "tvl": 1_000_000, "active_tvl": 60_000, "total_lps": 188,
             "fee_active_tvl_ratio": ratio, "volume": 1_200_000,
-            "fee_pct": 2.0, "volatility": volatility}
+            "fee_pct": 2.0, "volatility": volatility,
+            "pool_price_change_pct": 0.0, "pool_created_at": 1_700_000_000_000}
 
 
 class ScanLaneGmgnTest(unittest.TestCase):

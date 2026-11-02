@@ -90,6 +90,9 @@ class BundlerPipelineTest(unittest.TestCase):
             "active_tvl": 100_000.0, "tvl": 120_000.0, "total_lps": 100,
             "fee_active_tvl_ratio": fee, "volatility": volatility,
             "volume": 1_000_000.0, "fee_pct": 2.0,
+            # Fee-IL (2026-11-02): pool lama tanpa perubahan harga → IL 0.
+            "pool_price_change_pct": 0.0,
+            "pool_created_at": 1_700_000_000_000,
         }
 
     @staticmethod

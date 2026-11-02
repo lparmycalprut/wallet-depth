@@ -20,6 +20,8 @@ def row(**overrides):
         "pool_name": "TOK-SOL",
         "timeframe": "24h",
         "fee_active_tvl_ratio": 80.0,
+        "price_change_pct": 0.0,
+        "pool_created_at": 1_700_000_000_000,
         "volatility": 6.0,
         "total_lps": 100,
         "top_holders_pct": 10.0,
@@ -62,7 +64,8 @@ class BestPoolGateTest(unittest.TestCase):
         # Tepat/di atas 10× lolos: F/V = 60.0/6.0 = 10,00×.
         self.assertEqual(ms.row_best_gaps(
             row(fee_active_tvl_ratio=60.0, volatility=6.0)), [])
-        # Fee/TVL dinonaktifkan sebagai filter; angka tetap informasional.
+        # row_best_gaps tidak memuat Fee/TVL; saringan Fee/TVL & Fee-IL (2026-11-02)
+        # ada di ``filter_fee_il_rows`` (tes: tests/test_best_pool_fee_il.py).
         self.assertEqual(ms.row_best_gaps(
             row(fee_active_tvl_ratio=29.9, volatility=2.5)), [])
         self.assertIn("Top10 25%", ms.row_best_gaps(
@@ -114,7 +117,7 @@ class BestPoolTableTest(unittest.TestCase):
     def test_all_columns_and_headers_are_preserved(self):
         titles = bp._lane_titles("24h", show_tax_dividend=True)
         self.assertEqual(titles, [
-            "Token", "F/V", "Fee/TVL", "Volat", "Active Range", "LPs",
+            "Token", "F/V", "Fee/TVL", "Fee-IL", "Volat", "Active Range", "LPs",
             "Token:SOL", "Bundler+Phishing", "Fee %", "MC", "A.TVL",
             "Vol 24h", "Top10", "RugCheck", "Pool", "TAX/DIVIDEND",
         ])
@@ -142,9 +145,9 @@ class BestPoolTableTest(unittest.TestCase):
         self.assertIn("#ff0000", css)
         self.assertIn("overflow-x:auto !important", css)
         self.assertIn("min-width:1458px", css)
-        self.assertIn(".bp-table th:nth-child(16)", css)
+        self.assertIn(".bp-table th:nth-child(17)", css)
         # Bundler ditambahkan tanpa menghidupkan kembali kolom STRATEGY.
-        self.assertNotIn(".bp-table th:nth-child(17)", css)
+        self.assertNotIn(".bp-table th:nth-child(18)", css)
         self.assertNotIn("hawkfi-copy-btn", css)
         self.assertNotIn("bp-strategy-range", css)
         self.assertNotIn("mobile-hide-next", css)

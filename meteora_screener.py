@@ -3,8 +3,10 @@
 
 Best Pool fetches the 24-hour listing with active TVL of at least $50K, then
 applies the cheap F/V, volatility, LP-count, and Top-10 concentration gates.
-Fee/TVL is informational only. Official Meteora Token:SOL side values are
-informational. GMGN Bundler+Phishing is also informational only and never
+Since 2026-11-02 a row is shown only when Fee/TVL is at least 5% and
+Fee-IL (Fee/TVL minus the impermanent loss of a 50/50 pool over the 24-hour
+price change) is at least +5 percentage points; see :func:`row_fee_il_gap`.
+Official Meteora Token:SOL side values are informational. GMGN Bundler+Phishing is also informational only and never
 filters a pool, regardless of how high the combined value is or whether the
 report can be read. Reports are fetched for visible rows and displayable
 skipped rows; all rows passing the pool checks continue to RugCheck and tax
@@ -66,7 +68,18 @@ BEST_FV_24H_MIN = 10.0          # 24H: F/V >= 10,0 (inklusif)
 # ``gugur: Fee/TVL … < 30%`` supaya tetap bisa dibandingkan, hanya tidak tampil
 # di tabel hasil. Saringan ini hanya untuk card 🏆 Best Pool — regular scan
 # (:func:`filter_regular_rows`) tidak ikut berubah.
-BEST_FEE_TVL_MIN = 30.0
+# Permintaan user 2026-11-02: Fee/TVL minimal 5 (satuan persen, sama dengan
+# kolom Fee/TVL). Batas ini sekarang benar-benar menyaring tampilan
+# (:func:`row_fee_il_gap`), bukan sekadar informasi.
+BEST_FEE_TVL_MIN = 5.0
+# Permintaan user 2026-11-02: hanya tampil bila Fee-IL >= +5 poin persen,
+# yaitu Fee/TVL dikurangi impermanent loss (IL) pool 50/50 pada perubahan
+# harga 24 jam. Karena IL selalu <= 0, syarat ini sudah menjamin Fee/TVL
+# >= 5 juga; keduanya tetap dicek supaya alasan gugurnya jelas.
+BEST_FEE_MINUS_IL_MIN = 5.0
+# Pool yang dibuat kurang dari 24 jam lalu punya ``pool_price_change_pct``
+# 0 karena belum ada harga pembanding 24 jam; IL-nya tidak bisa diukur.
+POOL_WINDOW_MS = 24 * 3600 * 1000
 # Lantai "masuk kriteria" F/V. Pool F/V 5× sampai <10× masih ditampilkan di
 # listing "▶ N pool dilewati"; pool F/V < 5× dibuang total dari card karena
 # tidak memenuhi syarat kandidat minimum. Hanya card 🏆 Best Pool — ``filter_regular_rows``
@@ -424,6 +437,10 @@ def _row_from_pool(pool: dict, *, timeframe: str = "24h",
         "fee": _float(pool.get("fee")),
         "volume_change_pct": _float(pool.get("volume_change_pct")),
         "volume_active_tvl_ratio": _maybe_float(pool.get("volume_active_tvl_ratio")),
+        # Perubahan harga pool 24 jam (persen) dan waktu pembuatan pool (ms)
+        # untuk Fee-IL. Data scan lama tidak punya field ini → Fee-IL tak terukur.
+        "price_change_pct": _maybe_float(pool.get("pool_price_change_pct")),
+        "pool_created_at": _maybe_float(pool.get("pool_created_at")),
         # Source/timeframe wajib ikut ke hasil scan dan ke watchlist.
         "timeframe": timeframe,
         "source": timeframe,
@@ -1188,7 +1205,7 @@ def row_fee_tvl_pct(row: dict | None):
 def row_fee_tvl_under(row: dict | None):
     """Nilai Fee/TVL bila ``< BEST_FEE_TVL_MIN``, selain itu ``None``.
 
-    Satu-satunya pembaca batas (dipakai :func:`row_best_gaps` + tes) supaya
+    Pembaca batas Fee/TVL (dipakai :func:`row_fee_il_gap` + tes) supaya
     teks alasan, angka di tooltip dan keputusan saringan tidak pernah bisa
     beda. Batas inklusif di sisi tampil: Fee/TVL tepat 30,0% **lolos**.
     ``None``/hilang dikembalikan sebagai ``None`` juga — bukan karena lolos,
@@ -1204,8 +1221,86 @@ def row_fee_tvl_under(row: dict | None):
 
 
 def row_fee_tvl_ok(row: dict | None) -> bool:
-    """True bila Fee/TVL **>= 30%** (atau angkanya tidak ada)."""
+    """True bila Fee/TVL **>= 5%** (atau angkanya tidak ada)."""
     return row_fee_tvl_under(row) is None
+
+
+def il_pct_from_change(change_pct):
+    """Impermanent loss pool 50/50 (CPMM) vs hold, dalam persen, dari perubahan harga.
+
+    ``IL = 2·sqrt(r) / (1 + r) − 1`` dengan ``r = 1 + change/100``. Hasil selalu
+    <= 0; ``None`` bila perubahan harga tidak valid atau ``r <= 0``.
+    """
+    change = _maybe_float(change_pct)
+    if change is None:
+        return None
+    ratio = 1.0 + change / 100.0
+    if ratio <= 0:
+        return None
+    return (2.0 * math.sqrt(ratio) / (1.0 + ratio) - 1.0) * 100.0
+
+
+def row_il_pct(row: dict | None, *, now_ms: float | None = None):
+    """IL (persen) satu baris dari perubahan harga pool 24 jam; ``None`` bila tak terukur.
+
+    Perubahan harga 0 pada pool yang belum genap 24 jam (atau tanpa tanggal
+    pembuatan) dianggap belum terukur, bukan "tidak ada perubahan".
+    """
+    row = row or {}
+    change = _maybe_float(row.get("price_change_pct"))
+    if change is None:
+        return None
+    if change == 0:
+        created = _maybe_float(row.get("pool_created_at"))
+        if created is None:
+            return None
+        now = (time.time() * 1000.0) if now_ms is None else float(now_ms)
+        if now - created < POOL_WINDOW_MS:
+            return None
+    return il_pct_from_change(change)
+
+
+def row_fee_minus_il(row: dict | None, *, now_ms: float | None = None):
+    """Fee-IL satu baris (poin persen) = Fee/TVL (active TVL) + IL; ``None`` bila tak terukur."""
+    fee = row_fee_tvl_pct(row)
+    il = row_il_pct(row, now_ms=now_ms)
+    if fee is None or il is None:
+        return None
+    return fee + il
+
+
+def row_fee_il_gap(row: dict | None, *, now_ms: float | None = None) -> str | None:
+    """Alasan baris gugur dari tampilan Fee/TVL / Fee-IL, ``None`` bila lolos.
+
+    Syarat tampil: Fee/TVL >= :data:`BEST_FEE_TVL_MIN` dan Fee-IL >=
+    :data:`BEST_FEE_MINUS_IL_MIN` (keduanya inklusif). Fee-IL yang tidak
+    terukur ikut gugur karena syarat tidak terbukti.
+    """
+    fee = row_fee_tvl_pct(row)
+    if fee is None:
+        return "Fee/TVL tidak tersedia"
+    under = row_fee_tvl_under(row)
+    if under is not None:
+        return f"Fee/TVL {under:.2f}% < {float(BEST_FEE_TVL_MIN):g}%"
+    gap = row_fee_minus_il(row, now_ms=now_ms)
+    if gap is None:
+        return "Fee-IL tidak terukur (perubahan harga 24 jam belum tersedia)"
+    if gap < float(BEST_FEE_MINUS_IL_MIN):
+        return (f"Fee-IL {gap:+.2f} poin < "
+                f"+{float(BEST_FEE_MINUS_IL_MIN):g}")
+    return None
+
+
+def filter_fee_il_rows(rows: list[dict], *, now_ms: float | None = None):
+    """Return ``(lolos, jumlah_gugur)`` menurut :func:`row_fee_il_gap`."""
+    kept: list[dict] = []
+    dropped = 0
+    for row in rows:
+        if row_fee_il_gap(row, now_ms=now_ms) is None:
+            kept.append(row)
+        else:
+            dropped += 1
+    return kept, dropped
 
 
 def row_lps_count(row: dict | None):
@@ -1240,7 +1335,8 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
 
     Gates are validated in this order: finite F/V inputs, non-zero volatility,
     LP count >= 100, volatility range, F/V >= 10, then Meteora's independent
-    Top-10 supply concentration metric below 25%. Fee/TVL is informational.
+    Top-10 supply concentration metric below 25%. Fee/TVL and Fee-IL are
+    checked separately, after the cheap gates (:func:`filter_fee_il_rows`).
     """
     row = row or {}
     fee = _maybe_float(row.get("fee_active_tvl_ratio"))
@@ -1281,10 +1377,9 @@ def row_best_gaps(row: dict | None, *, lane=None) -> list[str]:
     threshold = minimum * vol
     passed = fee >= threshold if lane_fv_inclusive(normalized) else fee > threshold
     if fee > 0 and passed:
-        # Fee/TVL hanya informasi (filter dinonaktifkan): angka tetap tampil
-        # di kolom dan tetap dipakai untuk pengurutan, tetapi tidak boleh
-        # menggugurkan pool. Saringan terakhir setelah ambang lane adalah
-        # Top10 >= 25%.
+        # Fee/TVL tidak ada di gate ini; saringan Fee/TVL & Fee-IL dipasang
+        # di scan_best_lane (filter_fee_il_rows). Saringan terakhir setelah
+        # ambang lane adalah Top10 >= 25%.
         # Label lane ikut di depan supaya teks "gugur" di tabel disembunyikan
         # konsisten dengan teks F/V.
         over = row_top10_over(row)
@@ -1426,7 +1521,8 @@ def filter_best_rows(rows: list[dict] | None, *, lane=None,
     baris dinilai dari ``timeframe``-nya sendiri. Saringannya: ambang F/V
     tampil 10×, rentang volatility 1%–10%, LPs ``>= BEST_LPS_MIN`` dan Top10
     ``< BEST_TOP10_MAX_PCT`` — semuanya lewat :func:`row_best_gaps`.
-    Fee/TVL sudah menjadi informasi saja. Hitungan kedua hanya memuat baris
+    Fee/TVL dan Fee-IL disaring lebih dulu di scan_best_lane (2026-11-02) dan
+    tidak pernah masuk hitungan ini. Hitungan kedua hanya memuat baris
     yang masih bisa dilihat di listing "dilewati", yaitu F/V minimal 5× tetapi
     masih < 10×, atau alasan non-hard lain bila ada. Bundler+Phishing tidak
     pernah menggugurkan baris, termasuk bila angkanya tinggi/tidak terbaca.
@@ -1523,6 +1619,10 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
     rows = rows_from_pools(pools, timeframe=normalized)
     fetched = len(rows)
     rows, quote_skipped = drop_quote_rows(rows)
+    # Permintaan user 2026-11-02: baris yang Fee/TVL < 5% atau Fee-IL < +5
+    # tidak ditampilkan di mana pun (tabel utama maupun "dilewati"), jadi
+    # disaring sebelum gate lain dan sebelum enrichment pihak ketiga.
+    rows, fee_il_dropped = filter_fee_il_rows(rows)
 
     # Tahap murah lebih dulu (F/V, Fee/TVL, volatility, LPs, Top10). Tidak ada
     # jalur bypass: semua kandidat harus membuktikan seluruh syarat reguler.
@@ -1749,6 +1849,10 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
                    + (f", {dropped_fv} pool F/V < "
                       f"{float(BEST_FV_HIDE_MIN):g}× dibuang"
                       if dropped_fv else "")
+                   + (f", {fee_il_dropped} pool Fee/TVL < "
+                      f"{float(BEST_FEE_TVL_MIN):g}% atau Fee-IL < "
+                      f"+{float(BEST_FEE_MINUS_IL_MIN):g} dibuang"
+                      if fee_il_dropped else "")
                    + (f", {distribution_failed} distribusi tak terbaca/non-SOL"
                       if distribution_failed else "")
                    + (f", {hidden_distribution_failed} Token:SOL pool dilewati "
@@ -1782,6 +1886,8 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
         # F/V di bawah lantai BEST_FV_HIDE_MIN (5×).
         "dropped_fv": dropped_fv,
         "dropped_total": dropped_total,
+        # Baris yang gugur filter Fee/TVL & Fee-IL (tidak ditampilkan).
+        "dropped_fee_il": fee_il_dropped,
         # Compatibility key lama: filter Token:SOL sudah dihapus.
         "failed_liquidity_ratio": failed_liquidity_ratio,
         "liquidity_distribution_failed": distribution_failed,

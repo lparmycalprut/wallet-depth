@@ -32,6 +32,8 @@ def _pool(address, *, fee=80.0, volatility=6.0, lps=150.0):
         "tvl": 150_000.0,
         "active_tvl": 120_000.0,
         "fee_active_tvl_ratio": fee,
+        "pool_price_change_pct": 0.0,
+        "pool_created_at": 1_700_000_000_000,
         "volatility": volatility,
         "total_lps": lps,
         "volume": 2_000_000.0,
