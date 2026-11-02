@@ -217,6 +217,7 @@ class ColumnPlacementTest(unittest.TestCase):
         row = {
             "ca": "MintDiv", "symbol": "DIV", "pool_address": "PoolDiv",
             "fee_active_tvl_ratio": 40.0, "volatility": 6.2,
+            "price_change_pct": 0.0, "pool_created_at": 1_700_000_000_000,
             "rugcheck": {"ok": True, "liquidity_total_usd": 900_000.0,
                          "liquidity_source": "gmgn"},
             "tax_dividend": {"dividend": True, "dividend_known": True,
@@ -226,7 +227,7 @@ class ColumnPlacementTest(unittest.TestCase):
         with mock.patch.dict("sys.modules", {"streamlit": st_palsu}):
             bp._render_best_table([row], lane="24h", mark_tops=False)
         body = "".join(rendered)
-        self.assertEqual(body.count("<th scope=\"col\">"), 16)
+        self.assertEqual(body.count("<th scope=\"col\">"), 17)
         self.assertIn(">Bundler+Phishing<", body)
         self.assertIn(">TAX/DIVIDEND<", body)
         self.assertNotIn(">STRATEGY<", body)

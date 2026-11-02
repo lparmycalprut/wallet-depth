@@ -13,7 +13,8 @@ A pool must satisfy all listing checks:
 - liquidity providers **≥ 100**
 - F/V **≥ 10×** to appear in the main result table
 - F/V **≥ 5×** to remain a Best Pool candidate; **5× to <10×** appears in **pool dilewati**, while **<5×** is dropped
-- Fee/TVL is shown for comparison, but is **not a filter**
+- Fee/TVL **≥ 5%** (active TVL basis, the Fee/TVL column) — this is a filter since 2026-11-02
+- **Fee-IL ≥ +5 points**: Fee/TVL plus the impermanent loss (IL) of a 50/50 pool over the 24-hour price change (`IL = 2√r/(1+r) − 1`, `r = 1 + price change`). IL is ≤ 0, so this also guarantees Fee/TVL ≥ 5%. A pool whose price change cannot be measured (missing, or 0% while younger than 24 h) is hidden. Hidden pools do not appear in the skipped list either; the caption reports how many were hidden.
 - volatility between **1% and 10%**, inclusive
 - Meteora Top-10 supply concentration below **25%**
 
