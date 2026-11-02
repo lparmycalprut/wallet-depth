@@ -48,7 +48,7 @@ def row(**overrides):
 class BestPoolGateTest(unittest.TestCase):
     def test_threshold_constants(self):
         self.assertEqual(ms.BEST_ACTIVE_TVL_MIN, 50_000.0)
-        self.assertEqual(ms.BEST_FV_24H_MIN, 10.0)
+        self.assertEqual(ms.BEST_FV_24H_MIN, 5.0)  # 2026-11-02: 10× → 5×
         self.assertEqual(ms.BEST_FV_HIDE_MIN, 5.0)
         self.assertEqual(ms.BEST_LPS_MIN, 100.0)
         self.assertFalse(hasattr(ms, "BEST_SOL_TOKEN_MAX_RATIO"))
@@ -58,12 +58,15 @@ class BestPoolGateTest(unittest.TestCase):
         self.assertEqual(ms.row_best_gaps(row()), [])
         self.assertEqual(ms.row_best_gaps(row(total_lps=99))[0],
                          "24H: LPs 99 < 100 — LP terlalu sedikit")
-        # F/V = 59.9/6.0 = 9,98× < 10× → gugur ambang lane (baru: 10×).
-        self.assertIn("F/V < 10×", ms.row_best_gaps(
-            row(fee_active_tvl_ratio=59.9, volatility=6.0))[0])
-        # Tepat/di atas 10× lolos: F/V = 60.0/6.0 = 10,00×.
+        # F/V = 29.9/6.0 = 4,98× < 5× → gugur ambang lane (2026-11-02: 5×).
+        self.assertIn("F/V < 5×", ms.row_best_gaps(
+            row(fee_active_tvl_ratio=29.9, volatility=6.0))[0])
+        # Tepat/di atas 5× lolos: F/V = 30.0/6.0 = 5,00×.
         self.assertEqual(ms.row_best_gaps(
-            row(fee_active_tvl_ratio=60.0, volatility=6.0)), [])
+            row(fee_active_tvl_ratio=30.0, volatility=6.0)), [])
+        # F/V 9,98× (dulu gugur di bawah 10×) kini lolos.
+        self.assertEqual(ms.row_best_gaps(
+            row(fee_active_tvl_ratio=59.9, volatility=6.0)), [])
         # row_best_gaps tidak memuat Fee/TVL; saringan Fee/TVL & Fee-IL (2026-11-02)
         # ada di ``filter_fee_il_rows`` (tes: tests/test_best_pool_fee_il.py).
         self.assertEqual(ms.row_best_gaps(
@@ -93,14 +96,14 @@ class BestPoolGateTest(unittest.TestCase):
         self.assertEqual(ms.row_best_final_gaps(unreadable), [])
 
     def test_candidate_fv_floor_controls_skipped_rows(self):
-        # F/V 5× sampai <10× tetap tampil di listing "pool dilewati".
+        # F/V 5× tepat sudah tampil utama (tidak ada lagi rentang "dilewati").
         low = row(fee_active_tvl_ratio=30.0, volatility=6.0)  # F/V = 5×
-        self.assertIn("F/V < 10×", ms.row_best_gaps(low)[0])
+        self.assertEqual(ms.row_best_gaps(low), [])
         self.assertIsNone(ms.row_fv_under_hide(low))
         self.assertFalse(ms.row_best_dropped(low))
         # Di bawah 5× bukan kandidat Best Pool lagi: dibuang total.
         too_low = row(fee_active_tvl_ratio=29.9, volatility=6.0)  # F/V < 5×
-        self.assertIn("F/V < 10×", ms.row_best_gaps(too_low)[0])
+        self.assertIn("F/V < 5×", ms.row_best_gaps(too_low)[0])
         self.assertAlmostEqual(ms.row_fv_under_hide(too_low), 29.9 / 6.0)
         self.assertTrue(ms.row_best_dropped(too_low))
 
@@ -161,8 +164,8 @@ class BestPoolTableTest(unittest.TestCase):
         tip = bp.best_pool_tooltip()
         self.assertIn("$50,000", tip)
         self.assertIn("LPs at least 100", tip)
-        self.assertIn("F/V at least 10×", tip)
-        self.assertIn("at least 5× but below 10×", tip)
+        self.assertIn("F/V at least 5×", tip)
+        self.assertIn("F/V below 5× is dropped", tip)
         self.assertIn("Token:SOL", tip)
         self.assertIn("informational only", tip)
         self.assertIn("never filters a pool", tip)

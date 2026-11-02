@@ -75,9 +75,8 @@ def best_pool_tooltip() -> str:
         "is high or its report is unreadable. High values are marked as a "
         "static risk warning in the column. Reports are fetched for both "
         "visible and skipped rows. "
-        f"Pools with F/V at least {BEST_FV_HIDE_MIN:g}× but below "
-        f"{BEST_FV_24H_MIN:g}× move to the skipped list; below "
-        f"{BEST_FV_HIDE_MIN:g}× they are dropped. Passing rows then receive "
+        f"F/V below {BEST_FV_HIDE_MIN:g}× is dropped; rows that pass the "
+        "other gates then receive "
         "RugCheck and tax/dividend information. "
         "Columns include Active Range (for example -34.5% / +19.0%). "
         "On mobile the full table and all headers remain available by "
@@ -827,8 +826,8 @@ def render_best_pool_scan() -> None:
                            "tinggi atau laporan yang gagal dibaca tidak "
                            "menyaring pool; nilai tinggi diberi penanda risiko. "
                            "Laporan ikut di-fetch untuk pool dilewati. F/V "
-                           f"{BEST_FV_HIDE_MIN:g}× sampai <{BEST_FV_24H_MIN:g}× "
-                           "masuk ke 'pool dilewati'; F/V di bawah lantai itu "
+                           f"F/V minimal {BEST_FV_24H_MIN:g}× masuk tabel "
+                           f"utama; F/V di bawah {BEST_FV_HIDE_MIN:g}× "
                            "dibuang. Tiap pool yang lolos dilengkapi "
                            "laporan RugCheck (verdict rugchecker.cc, angka "
                            "likuiditas GMGN) dan kolom TAX/DIVIDEND di "
@@ -891,9 +890,7 @@ def render_best_pool_scan() -> None:
                     if showing_hidden else f"▶ {hidden} pool dilewati")
             if st.button(view, key=f"best-pool-toggle-hidden-{active}",
                          help=f"Tampilkan kandidat {label} yang di-skip karena "
-                              f"F/V minimal {BEST_FV_HIDE_MIN:g}× tetapi masih "
-                              f"di bawah {BEST_FV_24H_MIN:g}×, atau karena "
-                              "gap pool lainnya. Token:SOL dan "
+                              "gap pool lainnya (bukan F/V). Token:SOL dan "
                               "Bundler+Phishing hanya informasi; keduanya "
                               "tidak menyaring pool.",
                          use_container_width=True):
