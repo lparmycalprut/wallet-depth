@@ -244,8 +244,8 @@ class ColumnDetailTest(unittest.TestCase):
     def test_kolom_fee_il_setelah_fee_tvl(self):
         from best_pool_ui import _lane_titles
         titles = _lane_titles("24h")
-        self.assertEqual(titles[2:4], ["Fee/TVL", "Fee-IL"])
-        self.assertEqual(len(titles), 17)
+        self.assertEqual(titles[2:5], ["Fee/TVL", "Fee-IL", "Total IL"])
+        self.assertEqual(len(titles), 18)
 
     def test_sel_fee_il_menampilkan_harga_dan_il(self):
         import best_pool_ui as bp

@@ -86,14 +86,15 @@ def best_pool_tooltip() -> str:
 
 
 
-# Relative desktop widths for the sixteen base columns (including Fee-IL,
-# Token:SOL and the informational Bundler metric). Urutannya WAJIB sama dengan
-# :func:`_lane_titles` dan urutan sel di :func:`_render_best_table`.
-_COL_SPEC = [1.4, 1.0, 0.75, 0.7, 0.58, 0.95, 0.5, 0.72, 0.9, 0.58,
+# Relative desktop widths for the seventeen base columns (including Fee-IL,
+# Total IL (info), Token:SOL and the informational Bundler metric). Urutannya
+# WAJIB sama dengan :func:`_lane_titles` dan urutan sel di
+# :func:`_render_best_table`.
+_COL_SPEC = [1.4, 1.0, 0.75, 0.7, 0.9, 0.58, 0.95, 0.5, 0.72, 0.9, 0.58,
              0.55, 0.68, 0.8, 0.6, 1.0, 1.05]
 
 #: Indeks kolom **Pool** di ``_COL_SPEC`` (kolom terakhir tabel "dilewati").
-POOL_COL_INDEX = 15
+POOL_COL_INDEX = 16
 
 #: Indeks kolom **TAX/DIVIDEND** — satu-satunya kolom tambahan tabel utama
 #: (tepat di kanan ``POOL_COL_INDEX``). Kolom **STRATEGY** yang dulu berada
@@ -124,9 +125,10 @@ def _lane_titles(lane, *, show_tax_dividend: bool = True) -> list[str]:
     # Token:SOL tepat di kanan LPs (2026-09-26) — angkanya sekarang ditulis
     # satu angka di belakang koma (lihat
     # ``meteora_screener.liquidity_distribution_label``).
-    titles = ["Token", "F/V", "Fee/TVL", "Fee-IL", "Volat", "Active Range", "LPs",
-              "Token:SOL", "Bundler+Phishing", "Fee %", "MC", "A.TVL",
-              "Vol 24h", "Top10", "RugCheck", "Pool"]
+    # Total IL (2026-11-04) tepat di kanan Fee-IL — kolom info, bukan saringan.
+    titles = ["Token", "F/V", "Fee/TVL", "Fee-IL", "Total IL", "Volat",
+              "Active Range", "LPs", "Token:SOL", "Bundler+Phishing", "Fee %",
+              "MC", "A.TVL", "Vol 24h", "Top10", "RugCheck", "Pool"]
     if show_tax_dividend:
         titles.append(TAX_DIVIDEND_COL_TITLE)
     return titles
@@ -465,6 +467,32 @@ def _fv_cell(row: dict, lane: str, *, top: bool = False) -> tuple[str, str, str]
     return shown, sub, tip
 
 
+def _total_il_cell(row: dict) -> tuple[str, str, str]:
+    """Sel **Total IL** 12H/4H/1H (2026-11-04) — (nilai, baris kecil, tooltip).
+
+    IL pool 50/50 atas perubahan harga tiap window, dihitung scan_best_lane
+    (``row["il_windows"]``). Hanya info di sebelah Fee-IL: tidak menyaring
+    dan tidak mengurutkan baris. ``—`` = tidak terukur.
+    """
+    from meteora_screener import IL_INFO_WINDOWS
+
+    il_windows = row.get("il_windows") or {}
+    il_info = {w: _finite_number(il_windows.get(w)) for w in IL_INFO_WINDOWS}
+
+    def _txt(window):
+        value = il_info.get(window)
+        return "—" if value is None else f"{value:.2f}%"
+
+    first_window, other_windows = IL_INFO_WINDOWS[0], IL_INFO_WINDOWS[1:]
+    value = f"{first_window.upper()} {_txt(first_window)}"
+    sub = " · ".join(f"{w.upper()} {_txt(w)}" for w in other_windows)
+    tip = ("Total IL = IL pool 50/50 atas perubahan harga pool per window: "
+           + ", ".join(f"{w.upper()} {_txt(w)}" for w in IL_INFO_WINDOWS)
+           + ". Hanya informasi, tidak menyaring baris. Window 4H dipakai "
+           "karena API Meteora tidak punya 6 jam. — = tidak terukur.")
+    return value, sub, tip
+
+
 def _render_best_table(rows: list, *, lane: str,
                        key_prefix: str = "best-pool",
                        mark_tops: bool = True,
@@ -586,6 +614,7 @@ def _render_best_table(rows: list, *, lane: str,
                         else fee_il_txt)
         fee_il_sub = (f"harga {change_txt} · IL "
                       f"{_num_or_dash(il_value, '.1f')}%")
+        il_info_value, il_info_sub, il_info_tip = _total_il_cell(row)
         fee_il_tip = (
             f"Fee-IL = Fee/TVL {_num_or_dash(ratio, ',.2f')}% + IL "
             f"{_num_or_dash(il_value, ',.2f')}% (pool 50/50 atas perubahan "
@@ -641,6 +670,7 @@ def _render_best_table(rows: list, *, lane: str,
             (fv_value, fv_sub, fv_tip),
             (fee_tvl_value, fee_sub, fee_tvl_tip),
             (fee_il_value, fee_il_sub, fee_il_tip),
+            (il_info_value, il_info_sub, il_info_tip),
             (vol_value, "volat", vol_tip),
             _active_range_cell(row),
             (lps_value, "lps",
@@ -753,7 +783,8 @@ def _run_lane_scan(lane: str) -> dict:
     from meteora_screener import scan_best_lane
 
     try:
-        return scan_best_lane(lane, workers=6, bubblemap=False)
+        return scan_best_lane(lane, workers=6, bubblemap=False,
+                              il_windows=True)
     except Exception as exc:  # noqa: BLE001 - show scanner failure in the card
         return {"rows": [], "hidden_rows": [], "error": str(exc),
                 "fetched": 0, "hidden_metric": 0, "skipped_quote": 0,
