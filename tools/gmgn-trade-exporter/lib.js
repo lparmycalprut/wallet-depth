@@ -18,7 +18,9 @@
   const PAGE_LIMIT = 100;
   const CA_IN_URL_RE = /\/sol\/token\/(?:[^\/?#]*?_)?([1-9A-HJ-NP-Za-km-z]{32,44})(?=[\/?#]|$)/;
   const CA_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
-  const TX_KEYS = ['transaction_hash', 'tx_hash', 'txHash', 'signature', 'hash', 'tx', 'id'];
+  // `id` unik per baris. Satu tx_hash bisa memuat beberapa baris (mis. 2 leg), jadi
+  // dedupe memakai `id`, bukan tx_hash. `next` dari GMGN sama dengan `id` baris terakhir.
+  const TX_KEYS = ['transaction_hash', 'tx_hash', 'txHash', 'signature', 'hash', 'tx'];
 
   // ---------- util waktu ----------
 
@@ -135,6 +137,7 @@
       tokenAmount: num(pick(raw, ['base_amount', 'baseAmount', 'token_amount', 'amount'])),
       quoteAmount: num(pick(raw, ['quote_amount', 'quoteAmount', 'sol_amount'])),
       wallet: String(pick(raw, ['maker', 'wallet', 'maker_info.address', 'address']) || ''),
+      id: String(pick(raw, ['id']) || ''),
       tx: String(pick(raw, TX_KEYS) || ''),
       tags: [...new Set(tags)].join('|'),
     };
@@ -220,7 +223,7 @@
         if (!Number.isFinite(t.ts)) continue;
         oldest = Math.min(oldest, t.ts);
         if (t.ts < fromSec || t.ts >= toSec) continue;
-        const key = t.tx || `${t.ts}|${t.wallet}|${t.side}|${t.tokenAmount}`;
+        const key = t.id || `${t.tx}|${t.ts}|${t.wallet}|${t.side}|${t.tokenAmount}|${t.usd}`;
         if (seen.has(key)) continue;
         seen.add(key);
         trades.push(t);
@@ -229,16 +232,9 @@
 
       if (oldest < fromSec) { complete = true; break; }
 
-      let next = findNextCursor(payload);
-      if (!next) {
-        const lastTx = String(pick(rawList[rawList.length - 1], TX_KEYS) || '');
-        if (rawList.length >= PAGE_LIMIT && lastTx) next = lastTx;
-      }
-      if (!next) {
-        if (rawList.length < PAGE_LIMIT) complete = true;
-        else warning = 'GMGN tidak memberi cursor; pagination berhenti';
-        break;
-      }
+      // Halaman terakhir tidak punya `next`. Halaman penuh biasanya 50 baris (bukan 100).
+      const next = findNextCursor(payload);
+      if (!next) { complete = true; break; }
       if (seenCursors.has(next)) { warning = 'cursor GMGN berulang; pagination berhenti'; break; }
       seenCursors.add(next);
       cursor = next;
@@ -273,7 +269,7 @@
   }
 
   const CSV_HEADER = ['waktu_wib', 'unix_ts', 'side', 'usd', 'price_usd', 'token_amount',
-    'quote_amount', 'wallet', 'tx_hash', 'tags'];
+    'quote_amount', 'wallet', 'tx_hash', 'row_id', 'tags'];
 
   function csvCell(v) {
     if (v === null || v === undefined) return '';
@@ -287,7 +283,7 @@
     const lines = [CSV_HEADER.join(',')];
     for (const t of trades) {
       lines.push([formatWib(t.ts), t.ts, t.side, t.usd, t.price, t.tokenAmount,
-        t.quoteAmount, t.wallet, t.tx, t.tags].map(csvCell).join(','));
+        t.quoteAmount, t.wallet, t.tx, t.id, t.tags].map(csvCell).join(','));
     }
     return '\uFEFF' + lines.join('\r\n') + '\r\n';
   }

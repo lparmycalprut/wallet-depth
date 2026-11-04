@@ -19,13 +19,13 @@ function mockGmgn(all, { useNext = true, failFirst = 0 } = {}) {
     const limit = Number(u.searchParams.get('limit'));
     let start;
     if (cursor === null) start = all.findIndex((t) => t.timestamp < to);
-    else if (/^\d+$/.test(cursor)) start = Number(cursor);
-    else start = all.findIndex((t) => t.tx_hash === cursor) + 1;
+    else start = all.findIndex((t) => t.id === cursor) + 1;
     if (start < 0) start = all.length;
     const page = all.slice(start, start + limit);
     const more = start + limit < all.length;
     const data = { history: page };
-    if (useNext && more) data.next = String(start + limit);
+    // GMGN: `next` = id baris terakhir (terverifikasi dari respons asli)
+    if (useNext && more) data.next = page[page.length - 1].id;
     return { code: 0, msg: 'success', data };
   };
   return { fetchJson, calls };
@@ -36,8 +36,10 @@ function makeTrades() {
   const out = [];
   for (let i = 0; i < 260; i++) {
     out.push({
+      id: `ID${i}`,
       timestamp: 1793734000 + Math.floor(i / 3) * 100,
-      tx_hash: `TX${i}`,
+      // setiap baris ke-7 berbagi tx_hash dengan baris sebelumnya (multi-leg)
+      tx_hash: i % 7 === 6 ? `TX${i - 1}` : `TX${i}`,
       event: i % 2 ? 'buy' : 'sell',
       maker: `W${i % 17}`,
       amount_usd: 50 + i,
@@ -90,6 +92,7 @@ test('normalizeTrade memetakan field GMGN ke baris seragam', () => {
   assert.equal(t.ts, 1793740000);
   assert.equal(t.wallet, 'W1');
   assert.equal(t.tx, 'TX1');
+  assert.equal(G.normalizeTrade({ id: 'ROW1', tx_hash: 'TX1' }).id, 'ROW1');
   assert.equal(t.tags, 'bundler|top_holder');
   assert.equal(G.normalizeTrade({ side: 'SELL', maker_info: { address: 'W2' } }).side, 'sell');
   assert.equal(G.normalizeTrade({ side: 'SELL', maker_info: { address: 'W2' } }).wallet, 'W2');
@@ -112,8 +115,8 @@ test('fetchTradeWindow: semua trade dalam rentang diambil tepat sekali (cursor =
     fetchJson, sleep: async () => {}, pageDelayMs: 0,
   });
   const expected = all.filter((t) => t.timestamp >= FROM && t.timestamp < TO - 10000)
-    .map((t) => t.tx_hash).sort();
-  const got = res.trades.map((t) => t.tx).sort();
+    .map((t) => t.id).sort();
+  const got = res.trades.map((t) => t.id).sort();
   assert.equal(new Set(got).size, got.length, 'tidak ada duplikat');
   assert.deepEqual(got, expected);
   assert.equal(res.complete, true);
@@ -136,16 +139,33 @@ test('fetchTradeWindow: batas atas eksklusif dan tie di batas tidak ikut', async
   assert.equal(res.trades.length, expectedCount);
 });
 
-test('fetchTradeWindow: fallback cursor = tx terakhir bila next tidak ada', async () => {
+test('fetchTradeWindow: baris berbagi tx_hash tetap terhitung (dedupe per id)', async () => {
   const all = makeTrades();
-  const { fetchJson } = mockGmgn(all, { useNext: false });
+  const shared = all.filter((t) => all.some((o) => o !== t && o.tx_hash === t.tx_hash));
+  assert.ok(shared.length > 0, 'fixture harus memuat tx multi-baris');
+  const { fetchJson } = mockGmgn(all, { useNext: true });
   const res = await G.fetchTradeWindow({
     ca: '5ubruMYp' + 'a'.repeat(36), fromSec: FROM, toSec: TO,
     fetchJson, sleep: async () => {}, pageDelayMs: 0,
   });
   const expected = all.filter((t) => t.timestamp >= FROM && t.timestamp < TO).length;
   assert.equal(res.trades.length, expected);
-  assert.equal(new Set(res.trades.map((t) => t.tx)).size, expected);
+  assert.equal(new Set(res.trades.map((t) => t.id)).size, expected);
+  for (const t of shared) {
+    if (t.timestamp >= FROM && t.timestamp < TO) {
+      assert.ok(res.trades.some((r) => r.id === t.id), `baris ${t.id} hilang`);
+    }
+  }
+});
+
+test('fetchTradeWindow: halaman tanpa next dianggap data habis (complete)', async () => {
+  const all = makeTrades();
+  const { fetchJson } = mockGmgn(all, { useNext: false });
+  const res = await G.fetchTradeWindow({
+    ca: '5ubruMYp' + 'a'.repeat(36), fromSec: FROM, toSec: TO,
+    fetchJson, sleep: async () => {}, pageDelayMs: 0,
+  });
+  assert.equal(res.complete, true);
 });
 
 test('fetchTradeWindow: retry saat jaringan gagal sementara', async () => {
@@ -197,12 +217,12 @@ test('filterTrades: side dan minimal USD (nilai absolut)', () => {
 test('toCsv: BOM, header, dan quoting koma/kutip', () => {
   const csv = G.toCsv([{
     ts: FROM, side: 'buy', usd: 187.4, price: 0.00002, tokenAmount: 9000, quoteAmount: 1.1,
-    wallet: 'W1', tx: 'TX,1"x', tags: 'bundler|top_holder',
+    wallet: 'W1', tx: 'TX,1"x', id: 'R1', tags: 'bundler|top_holder',
   }]);
   assert.equal(csv.charCodeAt(0), 0xfeff);
   const lines = csv.slice(1).trimEnd().split('\r\n');
   assert.equal(lines[0], G.CSV_HEADER.join(','));
-  assert.equal(lines[1], `2026-11-04 03:00:00 WIB,${FROM},buy,187.4,0.00002,9000,1.1,W1,"TX,1""x",bundler|top_holder`);
+  assert.equal(lines[1], `2026-11-04 03:00:00 WIB,${FROM},buy,187.4,0.00002,9000,1.1,W1,"TX,1""x",R1,bundler|top_holder`);
 });
 
 test('summarize menghitung buy/sell dan wallet unik', () => {
