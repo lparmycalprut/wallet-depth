@@ -483,9 +483,19 @@ def _total_il_cell(row: dict) -> tuple[str, str, str]:
         value = il_info.get(window)
         return "—" if value is None else f"{value:.2f}%"
 
+    def _colored(window):
+        # Minus = merah, plus = hijau (permintaan user 2026-11-04). IL dari
+        # rumus selalu <= 0, jadi hijau hanya muncul bila nilainya positif.
+        text = f"{window.upper()} {_txt(window)}"
+        value = il_info.get(window)
+        if value is None or value == 0:
+            return text
+        color = "#dc2626" if value < 0 else "#16a34a"
+        return f'<span style="color:{color};font-weight:700;">{text}</span>'
+
     first_window, other_windows = IL_INFO_WINDOWS[0], IL_INFO_WINDOWS[1:]
-    value = f"{first_window.upper()} {_txt(first_window)}"
-    sub = " · ".join(f"{w.upper()} {_txt(w)}" for w in other_windows)
+    value = _colored(first_window)
+    sub = " · ".join(_colored(w) for w in other_windows)
     tip = ("Total IL = IL pool 50/50 atas perubahan harga pool per window: "
            + ", ".join(f"{w.upper()} {_txt(w)}" for w in IL_INFO_WINDOWS)
            + ". Hanya informasi, tidak menyaring baris. Window 4H dipakai "

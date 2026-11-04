@@ -166,6 +166,15 @@ class ColumnOrderTest(unittest.TestCase):
         self.assertIn("4H —", sub)
         self.assertIn("1H -0.11%", sub)
         self.assertIn("tidak menyaring", tip)
+        # Minus merah, plus hijau, tidak terukur tanpa warna.
+        self.assertIn('color:#dc2626', value)
+        self.assertIn('color:#dc2626', sub)
+        pos = dict(row, il_windows={"12h": 3.5, "4h": 0.0, "1h": -0.11})
+        value2, sub2, _ = bp._total_il_cell(pos)
+        self.assertIn('color:#16a34a', value2)
+        self.assertIn("4H 0.00%", sub2)  # nol tanpa warna
+        self.assertNotIn('<span style="color:#16a34a;font-weight:700;">4H', sub2)
+        self.assertIn('<span style="color:#dc2626;font-weight:700;">1H -0.11%</span>', sub2)
 
 
 if __name__ == "__main__":
