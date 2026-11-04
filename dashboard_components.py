@@ -88,24 +88,25 @@ def render_styles() -> None:
       border-bottom:1px solid #e2e8f0;padding:.38rem .32rem;min-width:76px;}
     .bp-table th:last-child,.bp-table td:last-child {border-right:none;}
     .bp-table th {position:sticky;top:0;z-index:1;background:#f8fafc;}
-    /* Urutan kolom: 1 Token · 2 F/V · 3 Fee/TVL · 4 Fee-IL · 5 Volat ·
-       6 Active Range · 7 LPs · 8 Token:SOL · 9 Bundler+Phishing · 10 Fee % ·
-       11 MC · 12 A.TVL · 13 Vol 24h · 14 Top10 · 15 RugCheck · 16 Pool ·
-       17 TAX/DIVIDEND. */
+    /* Urutan kolom: 1 Token · 2 F/V · 3 Fee/TVL · 4 Fee-IL · 5 Total IL ·
+       6 Volat · 7 Active Range · 8 LPs · 9 Token:SOL · 10 Bundler+Phishing ·
+       11 Fee % · 12 MC · 13 A.TVL · 14 Vol 24h · 15 Top10 · 16 RugCheck ·
+       17 Pool · 18 TAX/DIVIDEND. */
     .bp-table th:nth-child(1),.bp-table td:nth-child(1) {width:145px;min-width:145px;}
     .bp-table th:nth-child(2),.bp-table td:nth-child(2) {width:104px;min-width:104px;}
     .bp-table th:nth-child(3),.bp-table td:nth-child(3) {width:88px;min-width:88px;}
     .bp-table th:nth-child(4),.bp-table td:nth-child(4) {width:96px;min-width:96px;}
-    .bp-table th:nth-child(6),.bp-table td:nth-child(6) {width:104px;min-width:104px;}
-    .bp-table th:nth-child(7),.bp-table td:nth-child(7) {width:60px;min-width:60px;}
-    .bp-table th:nth-child(8),.bp-table td:nth-child(8) {width:96px;min-width:96px;}
-    .bp-table th:nth-child(9),.bp-table td:nth-child(9) {width:138px;min-width:138px;}
-    .bp-table th:nth-child(11),.bp-table td:nth-child(11) {width:68px;min-width:68px;}
-    .bp-table th:nth-child(12),.bp-table td:nth-child(12) {width:82px;min-width:82px;}
-    .bp-table th:nth-child(13),.bp-table td:nth-child(13) {width:92px;min-width:92px;}
-    .bp-table th:nth-child(15),.bp-table td:nth-child(15) {width:110px;min-width:110px;}
-    .bp-table th:nth-child(16),.bp-table td:nth-child(16) {width:104px;min-width:104px;}
-    .bp-table th:nth-child(17),.bp-table td:nth-child(17) {width:122px;min-width:122px;}
+    .bp-table th:nth-child(5),.bp-table td:nth-child(5) {width:110px;min-width:110px;}
+    .bp-table th:nth-child(7),.bp-table td:nth-child(7) {width:104px;min-width:104px;}
+    .bp-table th:nth-child(8),.bp-table td:nth-child(8) {width:60px;min-width:60px;}
+    .bp-table th:nth-child(9),.bp-table td:nth-child(9) {width:96px;min-width:96px;}
+    .bp-table th:nth-child(10),.bp-table td:nth-child(10) {width:138px;min-width:138px;}
+    .bp-table th:nth-child(12),.bp-table td:nth-child(12) {width:68px;min-width:68px;}
+    .bp-table th:nth-child(13),.bp-table td:nth-child(13) {width:82px;min-width:82px;}
+    .bp-table th:nth-child(14),.bp-table td:nth-child(14) {width:92px;min-width:92px;}
+    .bp-table th:nth-child(16),.bp-table td:nth-child(16) {width:110px;min-width:110px;}
+    .bp-table th:nth-child(17),.bp-table td:nth-child(17) {width:104px;min-width:104px;}
+    .bp-table th:nth-child(18),.bp-table td:nth-child(18) {width:122px;min-width:122px;}
 
     @media (max-width:768px) {
       .main .block-container {max-width:100% !important;padding:.8rem .65rem 1rem !important;}
@@ -130,7 +131,7 @@ def render_styles() -> None:
          row remain aligned while every column stays available. */
       .bp-table-scroll {overflow-x:auto !important;max-width:100% !important;
         -webkit-overflow-scrolling:touch;scrollbar-width:thin;}
-      .bp-table {width:max-content !important;min-width:1458px !important;}
+      .bp-table {width:max-content !important;min-width:1568px !important;}
       .bp-table th,.bp-table td {padding:.28rem .22rem;}
       .watchlist-symbol {font-size:1rem;}
       .watchlist-pair {font-size:.74rem;}

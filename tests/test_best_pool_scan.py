@@ -120,8 +120,8 @@ class BestPoolTableTest(unittest.TestCase):
     def test_all_columns_and_headers_are_preserved(self):
         titles = bp._lane_titles("24h", show_tax_dividend=True)
         self.assertEqual(titles, [
-            "Token", "F/V", "Fee/TVL", "Fee-IL", "Volat", "Active Range", "LPs",
-            "Token:SOL", "Bundler+Phishing", "Fee %", "MC", "A.TVL",
+            "Token", "F/V", "Fee/TVL", "Fee-IL", "Total IL", "Volat",
+            "Active Range", "LPs", "Token:SOL", "Bundler+Phishing", "Fee %", "MC", "A.TVL",
             "Vol 24h", "Top10", "RugCheck", "Pool", "TAX/DIVIDEND",
         ])
         self.assertEqual(len(titles), len(bp._col_spec(show_tax_dividend=True)))
@@ -147,10 +147,10 @@ class BestPoolTableTest(unittest.TestCase):
         self.assertNotIn("bp-bundler-danger-blink", css)
         self.assertIn("#ff0000", css)
         self.assertIn("overflow-x:auto !important", css)
-        self.assertIn("min-width:1458px", css)
-        self.assertIn(".bp-table th:nth-child(17)", css)
+        self.assertIn("min-width:1568px", css)
+        self.assertIn(".bp-table th:nth-child(18)", css)
         # Bundler ditambahkan tanpa menghidupkan kembali kolom STRATEGY.
-        self.assertNotIn(".bp-table th:nth-child(18)", css)
+        self.assertNotIn(".bp-table th:nth-child(19)", css)
         self.assertNotIn("hawkfi-copy-btn", css)
         self.assertNotIn("bp-strategy-range", css)
         self.assertNotIn("mobile-hide-next", css)
@@ -180,7 +180,8 @@ class BestPoolTableTest(unittest.TestCase):
         expected = {"rows": [], "hidden_rows": []}
         with mock.patch.object(ms, "scan_best_lane", return_value=expected) as scan:
             self.assertIs(bp._run_lane_scan("24h"), expected)
-        scan.assert_called_once_with("24h", workers=6, bubblemap=False)
+        scan.assert_called_once_with("24h", workers=6, bubblemap=False,
+                                     il_windows=True)
 
 
 class AppSurfaceTest(unittest.TestCase):

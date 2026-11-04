@@ -1299,6 +1299,86 @@ def filter_fee_il_rows(rows: list[dict], *, now_ms: float | None = None):
     return kept, dropped
 
 
+# Permintaan user 2026-11-04: kolom info **Total IL** di sebelah Fee-IL — IL
+# pool 50/50 atas perubahan harga 12 jam, 4 jam, dan 1 jam. API Meteora tidak
+# punya window 6 jam (timeframe: 5m, 30m, 1h, 2h, 4h, 12h, 24h), jadi 4 jam
+# dipakai sebagai pengganti (disetujui user). Hanya informasi: tidak pernah
+# menyaring atau mengurutkan baris.
+IL_INFO_WINDOWS = ("12h", "4h", "1h")
+
+
+def fetch_pool_price_change(mint: str, timeframe: str, *,
+                            timeout: int = 25) -> dict:
+    """Pool milik ``mint`` pada ``timeframe`` → ``{pool_address: {...}}``.
+
+    Dicari per mint (``query``) lalu dicocokkan lewat ``pool_address``, bukan
+    lewat daftar top: urutan daftar top berbeda per timeframe, jadi pool yang
+    sama bisa hilang dari salah satu daftar.
+    """
+    params = {"page_size": 50, "timeframe": str(timeframe),
+              "category": "top", "query": str(mint)}
+    payload = _http_get(POOLS_URL, params, timeout=timeout)
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    out: dict = {}
+    for pool in rows if isinstance(rows, list) else []:
+        if not isinstance(pool, dict):
+            continue
+        addr = str(pool.get("pool_address") or "").strip()
+        if addr:
+            out[addr] = {
+                "price_change_pct": _maybe_float(pool.get("pool_price_change_pct")),
+                "pool_created_at": _maybe_float(pool.get("pool_created_at")),
+            }
+    return out
+
+
+def attach_il_windows(rows: list[dict], *, workers: int = 6,
+                      timeout: int = 25, now_ms: float | None = None) -> int:
+    """Isi ``row["il_windows"]`` = ``{"12h": IL%|None, "4h": ..., "1h": ...}``.
+
+    Satu permintaan per (mint, timeframe) unik. Nilai ``None`` berarti tidak
+    terukur (pool tidak ditemukan, perubahan harga tidak ada, atau request
+    gagal). Mengembalikan jumlah baris yang ada window-nya gagal diambil.
+    Informasi saja: tidak mengubah ``rows`` selain menambah field ini.
+    """
+    keys: list[tuple[str, str]] = []
+    for row in rows:
+        ca = str(row.get("ca") or "")
+        for window in IL_INFO_WINDOWS:
+            if ca and (ca, window) not in keys:
+                keys.append((ca, window))
+    fetched: dict = {}
+    with ThreadPoolExecutor(max_workers=max(1, int(workers))) as executor:
+        futures = {executor.submit(fetch_pool_price_change, ca, window,
+                                   timeout=timeout): (ca, window)
+                   for ca, window in keys}
+        for future in as_completed(futures):
+            key = futures[future]
+            try:
+                fetched[key] = future.result()
+            except Exception:  # noqa: BLE001 - informasi opsional
+                fetched[key] = None
+    failed_rows = 0
+    for row in rows:
+        ca = str(row.get("ca") or "")
+        address = str(row.get("pool_address") or "").strip()
+        windows: dict = {}
+        row_failed = False
+        for window in IL_INFO_WINDOWS:
+            data = fetched.get((ca, window))
+            if data is None:
+                row_failed = True
+                windows[window] = None
+                continue
+            pool = data.get(address)
+            windows[window] = (row_il_pct(pool, now_ms=now_ms)
+                               if pool is not None else None)
+        row["il_windows"] = windows
+        if row_failed:
+            failed_rows += 1
+    return failed_rows
+
+
 def row_lps_count(row: dict | None):
     """Jumlah LP pool (``total_lps``) — ``None`` bila tidak ada."""
     return _maybe_float((row or {}).get("total_lps"))
@@ -1584,7 +1664,8 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
                    rugcheck: bool = True,
                    gmgn: bool = True, bundler: bool = True,
                    bubblemap: bool = False,
-                   tax: bool = True) -> dict:
+                   tax: bool = True,
+                   il_windows: bool = False) -> dict:
     """Scan the single 24H Best Pool lane.
 
     Pipeline: listing → cheap metric gates including F/V → informational
@@ -1767,6 +1848,20 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
             bundler_failed = len(bundler_targets)
             hidden_bundler_failed = len(hidden_rows)
 
+    # Total IL 12H/4H/1H (2026-11-04): info saja di sebelah Fee-IL. Hanya baris
+    # yang tampil; tidak pernah menyaring. Mati secara default (tes offline).
+    il_windows_failed = 0
+    if rows and il_windows:
+        try:
+            il_windows_failed = attach_il_windows(
+                rows, workers=workers, timeout=min(int(timeout), 12))
+        except Exception as exc:  # noqa: BLE001 - kolom opsional
+            error = " · ".join(
+                part for part in (error, f"Total IL: {exc}") if part)
+            if _alog:
+                _alog.error("scan-best-pool",
+                            f"Total IL gagal: {str(exc)[:160]}")
+
     # If the caller deliberately disables bundler enrichment (used by some
     # offline tooling), omit the informational report; eligibility is unchanged.
     rug_failed = 0
@@ -1910,6 +2005,8 @@ def scan_best_lane(lane: str = "24h", *, workers: int = 6,
         # jadi angka ini praktis selalu 0; key-nya tetap dikirim supaya
         # pembaca hasil scan lama (cache/session) tidak KeyError.
         "bubblemap_failed": bubblemap_failed,
+        # Total IL 12H/4H/1H (info): baris visible yang salah satu window-nya gagal.
+        "il_windows_failed": il_windows_failed,
         # Mint yang dividend-nya tidak terjawab (kedua sumber gagal). Pajak
         # lokal tetap bisa tampil; strategi tidak diubah. 0 bila fetch
         # dimatikan atau ``tax=False``.
@@ -1930,7 +2027,8 @@ def scan_best_meteora(*, workers: int = 6, timeout: int = 25,
                       gmgn: bool = True,
                       bundler: bool = True,
                       bubblemap: bool = False,
-                      tax: bool = True) -> dict:
+                      tax: bool = True,
+                      il_windows: bool = False) -> dict:
     """Wrapper lama :func:`scan_best_lane` (satu-satunya lane: 24H).
 
     Sejak 2026-09-13 kwarg ``timeframe`` **membatasi fetch**; sejak 2026-09-16
@@ -1944,4 +2042,5 @@ def scan_best_meteora(*, workers: int = 6, timeout: int = 25,
     return scan_best_lane(timeframe, workers=workers,
                           timeout=timeout, page_size=page_size,
                           rugcheck=rugcheck, gmgn=gmgn, bundler=bundler,
-                          bubblemap=bubblemap, tax=tax)
+                          bubblemap=bubblemap, tax=tax,
+                          il_windows=il_windows)

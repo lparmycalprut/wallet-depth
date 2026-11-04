@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "GMGN Trade Exporter",
+  "version": "0.1.0",
+  "description": "Ekspor riwayat trade token Solana dari GMGN ke CSV untuk rentang waktu tertentu (WIB).",
+  "permissions": ["scripting"],
+  "host_permissions": ["https://gmgn.ai/*"],
+  "action": {
+    "default_title": "GMGN Trade Exporter",
+    "default_popup": "popup.html"
+  }
+}

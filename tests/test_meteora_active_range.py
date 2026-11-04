@@ -202,7 +202,7 @@ class ActiveRangeCellTest(unittest.TestCase):
 
 class BestPoolColumnsTest(unittest.TestCase):
     def test_kolom_dan_judul_sinkron(self):
-        """Header, lebar kolom, dan isi sel harus satu jumlah (16/17 kolom).
+        """Header, lebar kolom, dan isi sel harus satu jumlah (17/18 kolom).
 
         Penataan 2026-11-02 (permintaan user: *"terapkan juga detail di tabel"*):
         kolom **Fee-IL** disisipkan tepat di kanan Fee/TVL (indeks 3), sehingga
@@ -229,22 +229,23 @@ class BestPoolColumnsTest(unittest.TestCase):
                 titles = bp._lane_titles(lane)
                 self.assertEqual(len(titles),
                                  len(bp._col_spec(show_tax_dividend=True)))
-                self.assertEqual(len(titles), 17)
+                self.assertEqual(len(titles), 18)
                 self.assertEqual(titles[2], "Fee/TVL")
                 self.assertEqual(titles[3], "Fee-IL")
-                self.assertEqual(titles[5], "Active Range")
-                self.assertEqual(titles[6], "LPs")
-                self.assertEqual(titles[7], "Token:SOL")
-                self.assertEqual(titles[8], "Bundler+Phishing")
-                self.assertEqual(titles[11], "A.TVL")
-                self.assertEqual(titles[13], "Top10")
-                self.assertEqual(titles[14], "RugCheck")
-                self.assertEqual(titles[15], "Pool")
-                self.assertEqual(titles[16], "TAX/DIVIDEND")
+                self.assertEqual(titles[4], "Total IL")
+                self.assertEqual(titles[6], "Active Range")
+                self.assertEqual(titles[7], "LPs")
+                self.assertEqual(titles[8], "Token:SOL")
+                self.assertEqual(titles[9], "Bundler+Phishing")
+                self.assertEqual(titles[12], "A.TVL")
+                self.assertEqual(titles[14], "Top10")
+                self.assertEqual(titles[15], "RugCheck")
+                self.assertEqual(titles[16], "Pool")
+                self.assertEqual(titles[17], "TAX/DIVIDEND")
                 tanpa_tax = bp._lane_titles(lane, show_tax_dividend=False)
                 self.assertEqual(len(tanpa_tax),
                                  len(bp._col_spec(show_tax_dividend=False)))
-                self.assertEqual(len(tanpa_tax), 16)
+                self.assertEqual(len(tanpa_tax), 17)
                 self.assertEqual(tanpa_tax[-1], "Pool")
                 # Dust %MC, kolom ⭐, Bubble Map, dan STRATEGY benar-benar
                 # hilang.

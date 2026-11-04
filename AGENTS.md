@@ -42,6 +42,7 @@ Independent market-risk fields such as Meteora's `top_holders_pct`, GMGN metrics
 - cheap listing filters run before pool-detail or third-party enrichment; only displayable rows (main + skipped) are enriched
 - Token:SOL is informational only; official Meteora values are still calculated as amount × USD price
 - the main table shows the Fee-IL column (`Fee-IL` sub-line: 24 h price change and IL); cached results without the new fields are dropped until a rescan
+- **Total IL** column (2026-11-04, info only) sits right of Fee-IL: IL of a 50/50 pool over the 12 h, 4 h and 1 h price change (`row["il_windows"]`, from `pool_price_change_pct` per timeframe via `fetch_pool_price_change` / `attach_il_windows`, called only when `scan_best_lane(il_windows=True)`, which `_run_lane_scan` passes). It never filters or sorts rows. The Meteora API has no 6 h timeframe (`5m, 30m, 1h, 2h, 4h, 12h, 24h`), so 4 h was chosen (user-approved). Rows scanned before this change show `—`.
 - GMGN bundler + phishing/entrapment is informational only: it never filters a pool, regardless of the combined rate or whether the report can be read
 - the report may be fetched for main rows plus displayable skipped rows; report failures must not affect eligibility
 - risk data uses `top_bundler_trader_percentage` plus `top_entrapment_trader_percentage`
