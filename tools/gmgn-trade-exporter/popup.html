@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <title>GMGN Trade Exporter</title>
+  <style>
+    body { font-family: system-ui, sans-serif; width: 340px; margin: 0; padding: 12px; font-size: 13px; color: #1f2937; }
+    h1 { font-size: 15px; margin: 0 0 8px; }
+    label { display: block; margin-top: 8px; font-weight: 600; }
+    input, select { width: 100%; box-sizing: border-box; padding: 5px; margin-top: 3px; font-size: 13px; }
+    .row { display: flex; gap: 8px; }
+    .row > div { flex: 1; }
+    button { margin-top: 12px; padding: 7px 10px; font-size: 13px; cursor: pointer; width: 100%; }
+    button.secondary { margin-top: 6px; background: #f3f4f6; }
+    button:disabled { opacity: .5; cursor: default; }
+    #status { margin-top: 10px; min-height: 2.5em; white-space: pre-wrap; color: #374151; }
+    #summary { margin-top: 8px; white-space: pre-wrap; background: #f9fafb; padding: 8px; border-radius: 6px; display: none; }
+    .hint { color: #6b7280; font-size: 11.5px; margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <h1>GMGN Trade Exporter</h1>
+  <div class="hint">Buka tab GMGN token (gmgn.ai/sol/token/…) lalu klik ekstensi ini. Waktu dianggap WIB (UTC+7).</div>
+
+  <label for="ca">CA token (Solana)</label>
+  <input id="ca" type="text" placeholder="otomatis dari tab GMGN">
+
+  <div class="row">
+    <div>
+      <label for="from">Dari (WIB)</label>
+      <input id="from" type="datetime-local">
+    </div>
+    <div>
+      <label for="to">Sampai (WIB)</label>
+      <input id="to" type="datetime-local">
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label for="side">Jenis</label>
+      <select id="side">
+        <option value="all">Semua</option>
+        <option value="buy" selected>Buy saja</option>
+        <option value="sell">Sell saja</option>
+      </select>
+    </div>
+    <div>
+      <label for="minUsd">Min USD</label>
+      <input id="minUsd" type="number" min="0" step="any" value="0">
+    </div>
+  </div>
+
+  <button id="run">Ambil &amp; unduh CSV</button>
+  <button id="raw" class="secondary" disabled>Unduh JSON mentah (debug)</button>
+
+  <div id="status"></div>
+  <div id="summary"></div>
+
+  <script src="lib.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
