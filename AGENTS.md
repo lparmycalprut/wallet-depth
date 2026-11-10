@@ -91,3 +91,4 @@ For distribution changes, always run `tests/test_liquidity_distribution_filter.p
 - Cron runs are sparse in practice (2 scheduled runs in the first day after merge), so each job is ~5 h long to cover more time.
 - Workflow runs only from the default branch, so it is inactive until merged to `main`.
 
+- **Cek LP Keluar page** (2026-11-10, user request): `pages/12_🚪_Cek_LP_Keluar.py` renders `lp_exit_ui.py`, which wraps `tools/lp_exit_check/lp_exit_check.py`. It reads `total_deposits`, `total_withdraws`, and `net_deposits` per window (1H/4H/12H/24H) for one pasted CA and flags net < 0 (withdraw > deposit). Read-only, 60 s cache, separate multipage entry; it must not import Best Pool or Sweep modules.
