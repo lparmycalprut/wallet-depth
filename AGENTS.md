@@ -78,6 +78,7 @@ For distribution changes, always run `tests/test_liquidity_distribution_filter.p
 
 ## Early Watcher invariants (2026-10-22)
 
+- **Cek Entri LP page** (2026-11-10, user request): `pages/11_🧭_Cek_Entri_LP.py` renders `lp_entry_ui.py`, which wraps `tools/lp_entry_check/lp_entry_check.py` (stdlib logic, heuristic verdicts, thresholds in its `KONSTANTA` block). Read-only: it fetches Meteora pool data for one pasted CA, caches the result 60 s, and never writes state, touches the watchlist, or sends alerts. It is a separate multipage entry and must not import Best Pool or Sweep modules; `app.py` stays free of it.
 - Separate feature: `early_watch.py` (pure logic), `scripts/early_watch.py` (runner, poll every 120 s; the workflow runs 10 segments of 30 min per job, committing state after each changed segment), `.github/workflows/early-watch.yml`, `early_ui.py` and `pages/10_⚡_Early_Watcher.py` (read-only). State is `early_watch_state.json`; the watchlist is `early_watch_watchlist.json` (5 mints only, requested by the user).
 - Info only. It never changes Sweep verdict, score, `eligible`, filters, or `sweep_state.json`. It does not import from `sweep_screen`, `sweep_scan`, or `sweep_state.json`.
 - Every watchlist mint is polled, even if muted or hidden in Sweep. Nothing is hidden.
