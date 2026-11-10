@@ -11,6 +11,8 @@ python3 tools/lp_entry_check/lp_entry_check.py <CA> --json
 
 Hanya memakai pustaka standar Python 3.9+. Tidak butuh Streamlit atau paket lain.
 
+Versi halaman: **🧭 Cek Entri LP** di app Streamlit (`pages/11_🧭_Cek_Entri_LP.py`), memakai logika yang sama.
+
 ## Verdict
 
 | Verdict | Arti |
