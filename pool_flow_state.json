@@ -10,6 +10,14 @@
         "net_4h": null,
         "net_12h": null,
         "net_24h": 411976.845960388
+      },
+      {
+        "ts": "2026-11-11T18:51:08Z",
+        "tvl": 302249.6197491559,
+        "net_1h": 96225.1187981668,
+        "net_4h": 133283.98964617949,
+        "net_12h": 222554.433329124,
+        "net_24h": 617443.8125714362
       }
     ],
     "9ViFN1A2FG2aL69Uu3dZwVMbcSdKuuMM5PLouZmguK2e": [
@@ -20,6 +28,14 @@
         "net_4h": null,
         "net_12h": null,
         "net_24h": 789854.7777984068
+      },
+      {
+        "ts": "2026-11-11T18:51:08Z",
+        "tvl": 270157.3657132021,
+        "net_1h": 38502.31142782519,
+        "net_4h": -411.86384104320314,
+        "net_12h": 125833.66776206158,
+        "net_24h": 697455.9030370079
       }
     ],
     "5Dc4s9fxxQoPfaMUaxFKB5v1Nh6FPqest7usgyvGXwWw": [
@@ -30,13 +46,42 @@
         "net_4h": null,
         "net_12h": null,
         "net_24h": 316727.1960931085
+      },
+      {
+        "ts": "2026-11-11T18:51:08Z",
+        "tvl": 178045.12313064365,
+        "net_1h": -2951.762260331452,
+        "net_4h": -172333.54763423768,
+        "net_12h": 244564.0893116528,
+        "net_24h": 139604.8140091831
+      }
+    ],
+    "EDaiLFduGDWR3VJuCBxGxJZiYnFbz5QAXTRnMVttBSP1": [
+      {
+        "ts": "2026-11-11T18:51:08Z",
+        "tvl": 78327.39442313938,
+        "net_1h": -55701.65508962431,
+        "net_4h": -3956.228488567285,
+        "net_12h": 230275.80555681884,
+        "net_24h": 226074.82109340373
       }
     ]
   },
   "best_alert": {
-    "next_no": 1,
-    "last_no": {}
+    "next_no": 2,
+    "last_no": {
+      "8N9bUK6zfZFmuGa4dEpeEoj9Cs4VZSxhdMCMtZALHR5z": 1
+    }
   },
   "watch_negative": {},
-  "alerts": []
+  "alerts": [
+    {
+      "no": 1,
+      "kind": "best",
+      "at": "2026-11-11T18:51:08Z",
+      "pools": [
+        "8N9bUK6zfZFmuGa4dEpeEoj9Cs4VZSxhdMCMtZALHR5z"
+      ]
+    }
+  ]
 }
