@@ -163,7 +163,7 @@ class BestAlertTest(unittest.TestCase):
         self.assertIn("🆕", first)
         second = pf.apply_best_alert(state, self._passing(POOL, POOL2))
         self.assertIn("alert #2", second)
-        self.assertIn("sudah pernah muncul di alert #1", second)
+        self.assertIn("sudah pernah · alert #1", second)
         self.assertEqual(state["best_alert"]["next_no"], 3)
         self.assertEqual(len(state["alerts"]), 2)
 
@@ -233,6 +233,73 @@ class AlertScriptTest(unittest.TestCase):
                 # run kedua: masih negatif, tidak boleh kirim lagi
                 alert.main(["--mode", "watch", "--state", str(path)])
             self.assertEqual(len(sent), 1)
+
+
+class AlertLinksTest(unittest.TestCase):
+    def test_alert_best_memuat_ca_dan_empat_link(self):
+        passing = [pf.evaluate_pool(row(POOL), windows(500.0))]
+        text = pf.best_alert_text(1, passing, {})
+        self.assertIn(f"<code>{MINT}</code>", text)
+        self.assertIn("https://gmgn.ai/sol/token/" + MINT, text)
+        self.assertIn("https://dexscreener.com/solana/" + MINT, text)
+        self.assertIn("https://app.meteora.ag/dlmm/" + POOL, text)
+        self.assertIn("https://www.hawkfi.ag/meteora/" + POOL, text)
+
+    def test_alert_watch_memuat_ca_dan_link(self):
+        state = pf.empty_state()
+        checks = [{"pool": POOL, "mint": MINT, "symbol": "X",
+                   "nets": {"1h": -10.0, "4h": 1.0}}]
+        (msg,) = pf.watch_transition_alerts(state, checks)
+        self.assertIn(f"<code>{MINT}</code>", msg)
+        self.assertIn("https://gmgn.ai/sol/token/" + MINT, msg)
+        self.assertIn("https://www.hawkfi.ag/meteora/" + POOL, msg)
+
+    def test_pesan_panjang_dipecah_dan_semua_terkirim(self):
+        text = "\n".join(["baris " + "x" * 120] * 80)  # > 4096 karakter
+        parts = pf.split_for_telegram(text)
+        self.assertGreater(len(parts), 1)
+        self.assertTrue(all(len(p) <= pf.TELEGRAM_CHUNK for p in parts))
+        self.assertEqual("\n".join(parts), text)
+        sent = []
+        with mock.patch.object(pf, "_send_telegram_once",
+                               side_effect=lambda t: (sent.append(t), (True, ""))[1]):
+            ok, _ = pf.send_telegram(text)
+        self.assertTrue(ok)
+        self.assertEqual(len(sent), len(parts))
+
+    def test_kegagalan_satu_bagian_menghentikan_dan_melaporkan(self):
+        with mock.patch.object(pf, "_send_telegram_once", return_value=(False, "HTTP 500")):
+            self.assertEqual(pf.send_telegram("halo"), (False, "HTTP 500"))
+
+
+class TelegramFormatTest(unittest.TestCase):
+    def test_payload_memakai_parse_mode_html(self):
+        import json as _json
+        captured = {}
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_open(request, timeout=None):
+            captured["body"] = _json.loads(request.data.decode("utf-8"))
+            return _Resp()
+
+        env = {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "c"}
+        with mock.patch.dict("os.environ", env, clear=True), \
+                mock.patch("urllib.request.urlopen", side_effect=fake_open):
+            ok, _ = pf.send_telegram("<b>halo</b>")
+        self.assertTrue(ok)
+        self.assertEqual(captured["body"]["parse_mode"], "HTML")
+
+    def test_nama_token_dengan_simbol_html_di_escape(self):
+        passing = [pf.evaluate_pool(row(POOL, symbol="A<B>&C"), windows(500.0))]
+        text = pf.best_alert_text(1, passing, {})
+        self.assertIn("A&lt;B&gt;&amp;C", text)
+        self.assertNotIn("A<B>", text)
 
 
 class SendTelegramTest(unittest.TestCase):

@@ -6,7 +6,10 @@ menyimpan watchlist/riwayat ke ``pool_flow_state.json``.
 """
 from __future__ import annotations
 
+import html as _html
+
 import pool_flow as pf
+from links import external_links_html, pool_links_html
 
 RESULT_KEY = "pool_flow_result"
 BUTTON_LABEL = "SCAN BEST POOL"
@@ -45,8 +48,7 @@ def _render_scan_result(result: dict, state: dict) -> None:
         col.markdown(f"**{title}**")
     for row in passing:
         cols = st.columns(widths)
-        cols[0].markdown(f"**{row['symbol']}** · {row['pool_name'] or row['pool'][:8]}  \n"
-                         f"`{row['pool'][:12]}…`")
+        cols[0].markdown(_token_cell_html(row), unsafe_allow_html=True)
         cols[1].write(pf.fmt_usd(row["tvl"]))
         cols[2].write(f"{row['fee_tier']:g}%" if row["fee_tier"] is not None else "—")
         cols[3].write("—" if row["avg_fee"] is None else f"${row['avg_fee']:,.2f}/menit")
@@ -57,6 +59,22 @@ def _render_scan_result(result: dict, state: dict) -> None:
         elif cols[8].button("＋ Watchlist", key=f"pf_add_{row['pool']}"):
             st.session_state["pf_pending_add"] = row
             st.rerun()
+
+
+def _token_cell_html(row: dict) -> str:
+    """Nama token + pool, lalu CA lengkap dan link di bawahnya."""
+    name = _html.escape(f"{row['symbol']} · {row['pool_name'] or row['pool'][:8]}")
+    ca = _html.escape(row.get("mint") or "")
+    lines = [f"**{name}**"]
+    if ca:
+        lines.append(f"<code style='word-break:break-all'>{ca}</code>")
+    links_html = " &nbsp; ".join(part for part in (
+        external_links_html(row.get("mint") or ""),
+        pool_links_html(row.get("pool") or ""),
+    ) if part)
+    if links_html:
+        lines.append(links_html)
+    return "  \n".join(lines)
 
 
 def _apply_pending_add() -> None:
@@ -113,6 +131,9 @@ def _render_watchlist() -> None:
                  f"{pf.fmt_usd(last.get('net_24h'))}{flag}")
         with st.expander(title):
             st.caption(f"Pool `{item['pool']}` · dicatat {last.get('ts', 'belum ada')}")
+            st.markdown(_token_cell_html({"symbol": item["symbol"], "pool_name": item.get("name", ""),
+                                           "pool": item["pool"], "mint": item["mint"]}),
+                        unsafe_allow_html=True)
             _render_detail(item, history)
             if st.button("🗑️ Hapus dari watchlist", key=f"pf_rm_{item['pool']}"):
                 state = pf.load_state()
