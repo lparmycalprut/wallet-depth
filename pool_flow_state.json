@@ -1,7 +1,38 @@
 {
   "version": 1,
   "watchlist": [],
-  "history": {},
+  "history": {
+    "8N9bUK6zfZFmuGa4dEpeEoj9Cs4VZSxhdMCMtZALHR5z": [
+      {
+        "ts": "2026-11-11T11:23:35Z",
+        "tvl": 187843.05037619243,
+        "net_1h": null,
+        "net_4h": null,
+        "net_12h": null,
+        "net_24h": 411976.845960388
+      }
+    ],
+    "9ViFN1A2FG2aL69Uu3dZwVMbcSdKuuMM5PLouZmguK2e": [
+      {
+        "ts": "2026-11-11T11:23:35Z",
+        "tvl": 264439.2088947912,
+        "net_1h": null,
+        "net_4h": null,
+        "net_12h": null,
+        "net_24h": 789854.7777984068
+      }
+    ],
+    "5Dc4s9fxxQoPfaMUaxFKB5v1Nh6FPqest7usgyvGXwWw": [
+      {
+        "ts": "2026-11-11T11:23:35Z",
+        "tvl": 97159.18081808714,
+        "net_1h": null,
+        "net_4h": null,
+        "net_12h": null,
+        "net_24h": 316727.1960931085
+      }
+    ]
+  },
   "best_alert": {
     "next_no": 1,
     "last_no": {}
