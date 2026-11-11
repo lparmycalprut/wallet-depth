@@ -93,13 +93,13 @@ class PagesAndWorkflowsTest(unittest.TestCase):
     def _load(self, rel):
         return yaml.safe_load((ROOT / rel).read_text(encoding="utf-8"))
 
-    def test_alert_sweep_dan_early_watcher_tidak_terjadwal_dan_tanpa_telegram(self):
-        for rel in (".github/workflows/sweep-scan.yml", ".github/workflows/early-watch.yml"):
-            doc = self._load(rel)
-            self.assertNotIn("schedule", doc[True], rel)
-            text = (ROOT / rel).read_text(encoding="utf-8")
-            self.assertNotIn("TELEGRAM_BOT_TOKEN", text, rel)
-            self.assertNotIn("TELEGRAM_CHAT_ID", text, rel)
+    def test_alert_sweep_dan_early_watcher_sudah_dihapus(self):
+        # Keputusan user (2026-11-11): alert lama dihapus, termasuk workflow
+        # terjadwal dan state alert-nya. Halaman tetap ada di pages_archived/.
+        for rel in (".github/workflows/sweep-scan.yml",
+                    ".github/workflows/early-watch.yml",
+                    "sweep_state.json", "early_watch_state.json"):
+            self.assertFalse((ROOT / rel).exists(), rel)
 
     def test_workflow_pool_flow_terjadwal_30_dan_10_menit(self):
         best = self._load(".github/workflows/pool-flow-best.yml")

@@ -336,15 +336,11 @@ class SurfaceTest(unittest.TestCase):
             self.assertNotIn(module, source)
 
     def test_cron_runner_and_workflow_exist(self):
+        # Workflow sweep-scan.yml dihapus 2026-11-11 (alert Sweep dihentikan).
+        # Runner tetap ada agar halaman yang diarsipkan bisa diaktifkan lagi.
         runner = ROOT / "scripts" / "scan_sweep.py"
-        workflow = ROOT / ".github" / "workflows" / "sweep-scan.yml"
         self.assertTrue(runner.exists(), runner)
-        self.assertTrue(workflow.exists(), workflow)
-        text = workflow.read_text(encoding="utf-8")
-        self.assertIn("SWEEP_STATE_CHANGED", text)
-        # Cron dimatikan 2026-11-11 (alert Telegram sweep dihentikan).
-        self.assertNotIn("schedule:", text)
-        self.assertIn("workflow_dispatch", text)
+        self.assertFalse((ROOT / ".github" / "workflows" / "sweep-scan.yml").exists())
         runner_source = runner.read_text(encoding="utf-8")
         self.assertNotIn("--liq-mc-max", runner_source)
         self.assertNotIn("--holder-max-pct", runner_source)
