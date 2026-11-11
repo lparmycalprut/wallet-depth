@@ -33,9 +33,7 @@ except Exception:  # noqa: BLE001
 ROOT = Path(__file__).resolve().parent.parent
 APP = str(ROOT / "app.py")
 
-import best_pool_ui as bp
 import dashboard_components as dc
-import meteora_screener as ms
 
 BARIS_1 = "STOP DEGEN, GAK BISA"
 BARIS_2 = "SUDAH KALAH BERTUBI2 AKUI KALAU KAMU GAK BISA"

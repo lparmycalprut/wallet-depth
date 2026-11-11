@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import pathlib
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 from unittest import mock
 
-import rugchecker
 import sweep_scan as scan
 import sweep_screen as ss
 import sweep_store as store
@@ -134,22 +133,6 @@ class TokenCriterionDisplayTest(unittest.TestCase):
         self.assertEqual(ss.ELIGIBLE_STRUCTURAL[0], "token_mc")
         self.assertEqual(ss.CRITERIA_KEYS[0][0], "token_mc")
         self.assertNotIn("liq_mc", ss.ELIGIBLE_STRUCTURAL)
-
-
-class WibDisplayTest(unittest.TestCase):
-    def test_rugchecker_time_is_wib(self):
-        # 2026-10-14 00:30 UTC = 07:30 WIB.
-        ts = datetime(2026, 10, 14, 0, 30, tzinfo=timezone.utc).timestamp()
-        self.assertEqual(rugchecker._fmt_wib_hm(ts), "07:30")
-        # Epoch 0 = 00:00 UTC = 07:00 WIB.
-        self.assertEqual(rugchecker._fmt_wib_hm(None), "07:00")
-
-    def test_no_server_local_time_left_in_display_code(self):
-        for name in ("sweep_ui.py", "rugchecker.py"):
-            source = (ROOT / name).read_text(encoding="utf-8")
-            self.assertNotIn("time.localtime", source, name)
-            self.assertNotIn("time.gmtime", source, name)
-            self.assertNotIn("time.strftime('%H:%M:%S')", source, name)
 
 
 if __name__ == "__main__":

@@ -48,7 +48,7 @@ Independent market-risk fields such as Meteora's `top_holders_pct`, GMGN metrics
 - risk data uses `top_bundler_trader_percentage` plus `top_entrapment_trader_percentage`
 - only main-table rows receive RugCheck/tax enrichment
 
-Relevant implementation: `meteora_screener.py`. Relevant UI: `best_pool_ui.py`.
+Catatan 2026-11-11: modul Best Pool lama (`meteora_screener.py`, `best_pool_ui.py`, dan pendukungnya) sudah dihapus. Best Pool sekarang adalah `pool_flow.py` + `pool_flow_ui.py` (net deposit).
 
 ## Mobile UI invariant
 
