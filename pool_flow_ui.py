@@ -103,6 +103,60 @@ def _refresh_watchlist(state: dict) -> None:
     pf.save_state(state)
 
 
+def _render_manual_watch() -> None:
+    """Tambah pool ke watchlist dari CA, tanpa perlu lolos filter Scan."""
+    import streamlit as st
+
+    with st.expander("➕ Tambah watchlist manual (dari CA)"):
+        st.caption("Tempel CA token. Pool dicari lewat Meteora. Penambahan manual "
+                   "tidak wajib lolos filter Scan.")
+        raw = st.text_input("Contract address (CA) Solana", key="pf_manual_ca",
+                            placeholder="contoh: 9VZerdNL1x6EjetDqRnh5bYcdmk1y8sLAGs1ybzGpump")
+        if st.button("🔍 Cari pool", key="pf_manual_find"):
+            try:
+                mint = pf.valid_mint(raw)
+            except ValueError as exc:
+                st.session_state["pf_manual_result"] = {"error": str(exc)}
+            else:
+                try:
+                    with st.spinner("Mencari pool di Meteora…"):
+                        pools = pf.find_pools_for_mint(mint)
+                    st.session_state["pf_manual_result"] = {"mint": mint, "pools": pools}
+                except Exception as exc:  # noqa: BLE001 — tampilkan ke pengguna
+                    st.session_state["pf_manual_result"] = {"error": str(exc)}
+
+        result = st.session_state.get("pf_manual_result")
+        if not result:
+            return
+        if result.get("error"):
+            st.error(result["error"])
+            return
+        pools = result["pools"]
+        if not pools:
+            st.warning("Tidak ada pool Meteora untuk CA ini.")
+            return
+
+        def _label(index: int) -> str:
+            p = pools[index]
+            fee = f"{p['fee_tier']:g}%" if p["fee_tier"] is not None else "—"
+            return (f"{p['symbol']} · {p['name'] or p['pool'][:8]} · "
+                    f"TVL {pf.fmt_usd(p['tvl'])} · fee {fee}")
+
+        index = st.selectbox("Pilih pool", options=list(range(len(pools))),
+                             format_func=_label, key="pf_manual_pick")
+        if st.button("➕ Tambahkan ke watchlist", key="pf_manual_add", type="primary"):
+            chosen = pools[index]
+            state = pf.load_state()
+            if pf.watch_add(state, pool=chosen["pool"], mint=chosen["mint"],
+                            symbol=chosen["symbol"], name=chosen["name"]):
+                pf.save_state(state)
+                st.session_state["pf_manual_result"] = None
+                st.toast(f"{chosen['symbol']} ditambahkan ke watchlist")
+                st.rerun()
+            else:
+                st.info("Pool ini sudah ada di watchlist.")
+
+
 def _render_watchlist() -> None:
     import streamlit as st
 
@@ -111,6 +165,7 @@ def _render_watchlist() -> None:
     st.caption("Alert watchlist (tiap 10 menit) membaca `pool_flow_state.json` di "
                "branch main. Perubahan watchlist di sini baru ikut alert setelah "
                "berkas itu di-commit.")
+    _render_manual_watch()
     if not state["watchlist"]:
         st.info("Watchlist kosong. Tambahkan pool dari hasil SCAN BEST POOL.")
         return

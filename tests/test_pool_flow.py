@@ -238,6 +238,25 @@ class AlertScriptTest(unittest.TestCase):
             self.assertEqual(len(sent), 1)
 
 
+class ManualWatchTest(unittest.TestCase):
+    def test_valid_mint_menerima_ca_dan_menolak_selain_itu(self):
+        self.assertEqual(pf.valid_mint("  " + MINT + " "), MINT)
+        for bad in ("", "abc", "0" * 40, MINT[:-1] + "O", "https://x"):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    pf.valid_mint(bad)
+
+    def test_find_pools_hanya_mint_itu_urut_tvl(self):
+        other = "Dz2wMTCsWKRFLzyaisX97HAqzJDyyPqfETvKQHFJaA8D"
+        rows = [row(POOL, tvl=60_000.0), row(POOL2, tvl=90_000.0),
+                row("POOL3xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", tvl=500.0, mint=other)]
+        with mock.patch.object(pf, "fetch_mint_window", return_value=rows):
+            found = pf.find_pools_for_mint(MINT)
+        self.assertEqual([p["pool"] for p in found], [POOL2, POOL])
+        self.assertEqual(found[0]["symbol"], "X")
+        self.assertEqual(found[0]["tvl"], 90_000.0)
+
+
 class AlertLinksTest(unittest.TestCase):
     def test_alert_best_memuat_ca_dan_empat_link(self):
         passing = [pf.evaluate_pool(row(POOL), windows(500.0))]

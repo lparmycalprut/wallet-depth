@@ -23,6 +23,7 @@ import html as _html
 import json
 import math
 import os
+import re
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -116,6 +117,39 @@ def fetch_top_listing(timeframe: str = "24h", *, max_pages: int = FLOW_MAX_PAGES
             except Exception as exc:  # noqa: BLE001 — catat, lanjut halaman lain
                 errors.append(str(exc) or type(exc).__name__)
     return rows, errors
+
+
+_MINT_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+
+
+def valid_mint(text: str) -> str:
+    """Rapikan spasi lalu pastikan bentuknya alamat token Solana. Raise ValueError bila tidak."""
+    mint = (text or "").strip()
+    if not _MINT_RE.match(mint):
+        raise ValueError(f"Bukan contract address Solana yang valid: {mint!r}")
+    return mint
+
+
+def find_pools_for_mint(mint: str) -> list:
+    """Pool (token non-SOL = ``mint``) untuk tambah watchlist manual, TVL terbesar dulu.
+
+    Tidak memakai filter Scan Best Pool: penambahan manual adalah pilihan user.
+    """
+    seen: dict[str, dict] = {}
+    for row in fetch_mint_window(mint, "24h"):
+        address = str(row.get("pool_address") or "")
+        if not address or address in seen or mint_of_pool(row) != mint:
+            continue
+        symbol, name = token_info(row, mint)
+        seen[address] = {
+            "pool": address,
+            "mint": mint,
+            "symbol": symbol,
+            "name": str(row.get("name") or ""),
+            "tvl": _num(row.get("tvl")),
+            "fee_tier": _num(row.get("fee_pct")),
+        }
+    return sorted(seen.values(), key=lambda p: -(p["tvl"] or 0.0))
 
 
 def fetch_mint_window(mint: str, timeframe: str) -> list:
