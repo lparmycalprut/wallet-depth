@@ -36,7 +36,7 @@ def _render_scan_result(result: dict, state: dict) -> None:
         + (f" · {result['listing_errors']} halaman listing gagal"
            if result.get("listing_errors") else ""))
     if not passing:
-        st.info("Tidak ada pool yang lolos: harus fee tier ≥ 2%, TVL ≥ $50K, "
+        st.info(f"Tidak ada pool yang lolos: harus fee tier ≥ {pf.FLOW_FEE_TIER_MIN:g}%, TVL ≥ $50K, "
                 "fee/menit ≥ $5, dan net deposit positif di H1, H4, H12, dan H24.")
         return
 
