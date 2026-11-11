@@ -9,6 +9,8 @@ import unittest
 
 import early_watch as ew
 
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 MINT = "5ubruMYpgKqw9ip5J1qrXbVGmMdn2VCsMg421B4bpump"
 SOL = "So11111111111111111111111111111111111111112"
 CM = "pumpCmTestQuote1111111111111111111111111111"
@@ -390,28 +392,12 @@ class FingerprintAndRunnerTests(unittest.TestCase):
         ew.run_poll(state, [MINT], 10_060, fetcher=lambda m, a, b: ([dump_trade(10_050)], False))
         self.assertNotEqual(ew.decision_fingerprint(state), before)
 
-    def test_runner_once_offline(self):
-        import early_watch as mod  # noqa: F401 — memastikan modul yang sama
-        import scripts.early_watch as runner
-        orig_fetch, orig_wl = ew.fetch_window, ew.load_watchlist
-        try:
-            # Runner memakai jam nyata; fixture harus relatif terhadap sekarang,
-            # karena dump yang lebih tua dari 15 menit di-prune.
-            t0 = int(time.time()) - 60
-            ew.fetch_window = lambda m, a, b: (with_dump(t0, burst(t0, 6, WALLETS)), False)
-            ew.load_watchlist = lambda *a, **k: [MINT]
-            with tempfile.TemporaryDirectory() as d:
-                path = os.path.join(d, "st.json")
-                buf = io.StringIO()
-                with contextlib.redirect_stdout(buf):
-                    rc = runner.main(["--no-alerts", "--state", path])
-                self.assertEqual(rc, 0)
-                self.assertIn("EARLY_WATCH_CHANGED=1", buf.getvalue().splitlines()[-1])
-                with open(path, encoding="utf-8") as fh:
-                    saved = json.load(fh)
-                self.assertEqual(saved["mints"][MINT]["status"], "AWAL AKTIF")
-        finally:
-            ew.fetch_window, ew.load_watchlist = orig_fetch, orig_wl
+    def test_runner_dan_committer_early_sudah_dihapus(self):
+        # Keputusan user (2026-11-11): Early-Bot dihentikan. Runner dan skrip
+        # commit state dihapus dari repo; modul early_watch.py tetap ada.
+        self.assertFalse(os.path.exists(os.path.join(ROOT, "scripts", "early_watch.py")))
+        self.assertFalse(os.path.exists(os.path.join(ROOT, "scripts", "commit_early_state.sh")))
+        self.assertTrue(os.path.exists(os.path.join(ROOT, "early_watch.py")))
 
 
 class WatchlistTests(unittest.TestCase):

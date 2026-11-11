@@ -20,8 +20,8 @@ Field jumlah token di GMGN adalah `base_amount`. Jumlah USD adalah `amount_usd`.
 ## Komponen
 
 - `early_watch.py`: logika murni. `round_trips`, `window_stats`, `big_sells`, `find_dump`, `evaluate_mint`, `run_poll`, `decision_fingerprint`, `format_alert`, `fetch_window`.
-- `scripts/early_watch.py`: runner. Satu segmen `--duration 1800 --interval 120`. Baris terakhir `EARLY_WATCH_CHANGED=0|1`. `--no-alerts` untuk uji lokal.
-- `.github/workflows/early-watch.yml`: cron `*/30`, grup concurrency `early-watch` (tidak dibatalkan). Satu job = 10 segmen × 30 menit (timeout 360 menit). Setelah tiap segmen yang fingerprint-nya berubah, state di-commit lewat `scripts/commit_early_state.sh`. Halaman tertinggal paling lama ~30 menit.
+- ~~`scripts/early_watch.py`: runner.~~ **Dihapus 2026-11-11** (permintaan user: Early-Bot dihentikan). Dulu: runner. Satu segmen `--duration 1800 --interval 120`. Baris terakhir `EARLY_WATCH_CHANGED=0|1`. `--no-alerts` untuk uji lokal.
+- ~~`.github/workflows/early-watch.yml`~~ dan ~~`scripts/commit_early_state.sh`~~ **dihapus 2026-11-11**. Dulu: cron `*/30`, grup concurrency `early-watch` (tidak dibatalkan). Satu job = 10 segmen × 30 menit (timeout 360 menit). Setelah tiap segmen yang fingerprint-nya berubah, state di-commit lewat `scripts/commit_early_state.sh`. Halaman tertinggal paling lama ~30 menit.
 - `early_ui.py`, `pages/10_⚡_Early_Watcher.py`: halaman read-only dari `early_watch_state.json`.
 - `early_watch_watchlist.json`: 5 mint. Semua dipantau, termasuk yang di-mute atau tersembunyi di Sweep.
 - Tabel dan log di page menampilkan nama koin (`coins` di watchlist, dicatat manual; contoh `Gato (El Gato)`), bukan mint. Mint tanpa entri `coins` tampil sebagai 6 karakter pertama + `…`. Early Watcher tidak membaca `sweep_state.json`.
