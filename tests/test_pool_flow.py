@@ -37,12 +37,15 @@ def windows(net=1000.0, pool=POOL):
 
 
 class FilterTest(unittest.TestCase):
-    def test_fee_tier_di_bawah_2_persen_dilewati(self):
-        ok, reason = pf.base_passes(row(fee_pct=1.0))
+    def test_fee_tier_di_bawah_1_persen_dilewati(self):
+        ok, reason = pf.base_passes(row(fee_pct=0.99))
         self.assertFalse(ok)
         self.assertIn("fee tier", reason)
 
-    def test_fee_tier_tepat_2_persen_lolos(self):
+    def test_fee_tier_tepat_1_persen_lolos(self):
+        self.assertTrue(pf.base_passes(row(fee_pct=1.0))[0])
+
+    def test_fee_tier_2_persen_tetap_lolos(self):
         self.assertTrue(pf.base_passes(row(fee_pct=2.0))[0])
 
     def test_tvl_di_bawah_50k_dilewati(self):

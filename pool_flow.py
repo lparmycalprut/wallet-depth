@@ -2,7 +2,7 @@
 """🏆 Scan Best Pool (net deposit) — logika inti, tanpa Streamlit.
 
 Permintaan user (2026-11-10):
-- Filter minimum: fee tier ≥ 2 %, TVL ≥ 50.000 USD, avg fee/menit ≥ 5 USD
+- Filter minimum: fee tier ≥ 1 %, TVL ≥ 50.000 USD, avg fee/menit ≥ 5 USD
   (fee 24J ÷ 1440; asumsi, dikonfirmasi user).
 - Tampilkan hanya pool yang net deposit-nya POSITIF di semua window
   1H, 4H, 12H, dan 24H.
@@ -36,7 +36,7 @@ HTTP_TIMEOUT = 25
 USER_AGENT = "Mozilla/5.0 (wallet-depth-pool-flow)"
 
 FLOW_WINDOWS = ("1h", "4h", "12h", "24h")
-FLOW_FEE_TIER_MIN = 2.0        # fee tier pool (%), di bawah ini dilewati
+FLOW_FEE_TIER_MIN = 1.0        # fee tier pool (%), di bawah ini dilewati (diubah 2→1, 2026-11-11)
 FLOW_TVL_MIN = 50_000.0        # USD
 FLOW_AVG_FEE_MIN = 5.0         # USD per menit = fee 24J ÷ 1440 (lihat avg_fee_per_min)
 FLOW_LISTING_MINUTES = 24 * 60  # window listing 24H dalam menit
