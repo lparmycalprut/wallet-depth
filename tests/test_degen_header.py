@@ -43,7 +43,7 @@ BARIS_2 = "SUDAH KALAH BERTUBI2 AKUI KALAU KAMU GAK BISA"
 # ter-render di semua halaman yang memanggil render_styles()).
 HEADER_HTML = '<div class="degen-stop-header" role="alert">'
 # Penanda card 🏆 Scan Best Pool — sama dengan pin tests/test_temp_page_ui.py.
-CARD_MARK = ms.BEST_CARD_TITLE + "</span>"
+CARD_MARK = "## 🏆 Scan Best Pool"  # judul card main app (pool_flow_ui, 2026-11-11)
 
 
 def _body(at) -> str:

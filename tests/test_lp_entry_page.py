@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PAGE = ROOT / "pages" / "11_🧭_Cek_Entri_LP.py"
+PAGE = ROOT / "pages_archived" / "11_🧭_Cek_Entri_LP.py"
 HAS_STREAMLIT = importlib.util.find_spec("streamlit") is not None
 
 

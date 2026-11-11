@@ -1,3 +1,6 @@
+# 2026-11-10: alert Telegram dimatikan atas permintaan user. Cron (schedule)
+# dihapus dan secret Telegram tidak lagi diteruskan ke job ini. Jalankan manual
+# hanya bila perlu (workflow_dispatch); tidak ada alert yang terkirim.
 name: Early Watcher
 
 # Early Watcher (permintaan user 2026-10-22): poll tiap 2 menit untuk 5 mint
@@ -9,8 +12,6 @@ name: Early Watcher
 # yang terjadwal mengantre di grup concurrency dan jalan setelah job ini selesai.
 
 on:
-  schedule:
-    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -40,9 +41,6 @@ jobs:
           pip install requests curl_cffi
 
       - name: Watch early activity (10 segmen × 30 menit, poll 2 menit, commit per segmen)
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           git config --global user.name 'Early-Bot'
           git config --global user.email 'bot@noreply.github.com'

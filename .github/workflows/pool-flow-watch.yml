@@ -1,0 +1,55 @@
+name: Pool Flow — Watchlist alert
+
+# Alert watchlist: net deposit H1 + H4 menjadi negatif, dicek tiap 10 menit.
+# Cron GitHub bisa terlambat beberapa menit. Alert hanya saat berubah jadi negatif.
+# di-commit hanya bila berubah.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pool-flow-state
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip requests
+
+      - name: Run watchlist check
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -o pipefail
+          python scripts/pool_flow_alert.py --mode watch | tee /tmp/pool_flow.log
+
+      - name: Commit state
+        if: success()
+        run: |
+          if grep -q 'POOL_FLOW_CHANGED=1' /tmp/pool_flow.log; then
+            git config user.name 'Pool-Flow-Bot'
+            git config user.email 'bot@noreply.github.com'
+            git add pool_flow_state.json
+            git commit -m "pool-flow: update state [skip ci]"
+            git pull --rebase -q origin main
+            git push -q origin HEAD:main
+          else
+            echo "Tidak ada perubahan state."
+          fi

@@ -325,7 +325,7 @@ class SurfaceTest(unittest.TestCase):
     """Permukaan page 🌊 Sweep: entri halaman, runner cron, dan workflow."""
 
     def test_page_entry_exists(self):
-        page = ROOT / "pages" / "8_\U0001f30a_Sweep.py"
+        page = ROOT / "pages_archived" / "8_\U0001f30a_Sweep.py"  # disembunyikan 2026-11-11
         self.assertTrue(page.exists(), page)
         source = page.read_text(encoding="utf-8")
         self.assertIn("render_sweep_page()", source)
@@ -342,7 +342,9 @@ class SurfaceTest(unittest.TestCase):
         self.assertTrue(workflow.exists(), workflow)
         text = workflow.read_text(encoding="utf-8")
         self.assertIn("SWEEP_STATE_CHANGED", text)
-        self.assertIn("*/30 * * * *", text)
+        # Cron dimatikan 2026-11-11 (alert Telegram sweep dihentikan).
+        self.assertNotIn("schedule:", text)
+        self.assertIn("workflow_dispatch", text)
         runner_source = runner.read_text(encoding="utf-8")
         self.assertNotIn("--liq-mc-max", runner_source)
         self.assertNotIn("--holder-max-pct", runner_source)

@@ -1,3 +1,6 @@
+# 2026-11-10: alert Telegram dimatikan atas permintaan user. Cron (schedule)
+# dihapus dan secret Telegram tidak lagi diteruskan ke job ini. Jalankan manual
+# hanya bila perlu (workflow_dispatch); tidak ada alert yang terkirim.
 name: Sweep Screener Scan
 
 # Cron 30 menit untuk page 🌊 Sweep (permintaan user 2026-10-21; sebelumnya 5 menit).
@@ -11,8 +14,6 @@ name: Sweep Screener Scan
 # bergantung pada ketepatan detik.
 
 on:
-  schedule:
-    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -42,11 +43,6 @@ jobs:
 
       - name: Scan sweep watchlist
         id: scan
-        env:
-          # Nama secret sama dengan repo handsoff/prepump_cron_detector.py,
-          # jadi tidak perlu kode kedua.
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           set -o pipefail
           python scripts/scan_sweep.py | tee /tmp/sweep.log
