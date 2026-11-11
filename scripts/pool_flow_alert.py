@@ -40,8 +40,7 @@ def run_watch(state: dict, *, fetch=None) -> list[str]:
             except Exception:  # noqa: BLE001 — satu pool gagal tidak menghentikan yang lain
                 row = None
             nets[window] = pf.net_of(row)
-        checks.append({"pool": item["pool"], "mint": item["mint"],
-                       "symbol": item["symbol"], "nets": nets})
+        checks.append({"pool": item["pool"], "symbol": item["symbol"], "nets": nets})
         pf.record_snapshot(state, item["pool"], nets)
     print(f"watch: {len(checks)} pool dicek")
     return pf.watch_transition_alerts(state, checks)

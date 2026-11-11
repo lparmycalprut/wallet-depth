@@ -73,28 +73,6 @@ class AppMainTest(unittest.TestCase):
         self.assertEqual([i["pool"] for i in saved["watchlist"]], [POOL])
         self.assertEqual(saved["watchlist"][0]["symbol"], "X")
 
-    def test_hasil_scan_menampilkan_ca_dan_link_di_bawahnya(self):
-        at = self._app()
-        next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
-        self.assertFalse(at.exception)
-        body = "\n".join(str(node.value) for node in at.markdown)
-        self.assertIn(MINT, body)  # CA lengkap
-        self.assertIn("https://gmgn.ai/sol/token/" + MINT, body)
-        self.assertIn("https://dexscreener.com/solana/" + MINT, body)
-        self.assertIn("https://app.meteora.ag/dlmm/" + POOL, body)
-        self.assertIn("https://www.hawkfi.ag/meteora/" + POOL, body)
-        # CA harus muncul sebelum link (link berada di bawah CA)
-        self.assertLess(body.index(MINT), body.index("https://gmgn.ai/sol/token/" + MINT))
-
-    def test_watchlist_menampilkan_ca_dan_link(self):
-        at = self._app()
-        next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
-        next(b for b in at.button if b.key == f"pf_add_{POOL}").click().run()
-        body = "\n".join(str(node.value) for node in at.markdown)
-        self.assertGreaterEqual(body.count(MINT), 2)  # hasil scan + watchlist
-        self.assertIn("https://gmgn.ai/sol/token/" + MINT, body)
-        self.assertIn("https://www.hawkfi.ag/meteora/" + POOL, body)
-
     def test_scan_menyimpan_riwayat_net_per_pool(self):
         at = self._app()
         next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()

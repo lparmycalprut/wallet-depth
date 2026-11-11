@@ -19,6 +19,7 @@ setiap kandidat dicek per window memakai ``query=<mint>``.
 """
 from __future__ import annotations
 
+import html as _html
 import json
 import math
 import os
@@ -327,30 +328,50 @@ def record_scan(state: dict, results: list, *, ts: str | None = None) -> int:
 # Alert: pool terbaik (tiap 30 menit)
 # ---------------------------------------------------------------------------
 
-def alert_link_lines(mint: str, pool: str, *, indent: str = "   ") -> list[str]:
-    """CA lengkap + link GMGN, DexScreener, Meteora, dan HawkFi (teks biasa)."""
+def _h(value) -> str:
+    """Escape untuk Telegram HTML."""
+    return _html.escape(str(value or ""), quote=True)
+
+
+def alert_link_lines(mint: str, pool: str) -> list[str]:
+    """Baris CA (tap untuk salin) dan tautan berlabel: GMGN · Dex · Meteora · HawkFi."""
     lines: list[str] = []
     if mint:
-        lines.append(f"{indent}CA: {mint}")
-        lines.append(f"{indent}GMGN: {links.gmgn_token_url(mint)}")
-        lines.append(f"{indent}DexScreener: {links.dexscreener_token_url(mint)}")
+        lines.append(f"🧬 <code>{_h(mint)}</code>")
+    links_row = []
+    if mint:
+        links_row.append(f'<a href="{_h(links.gmgn_token_url(mint))}">GMGN</a>')
+        links_row.append(f'<a href="{_h(links.dexscreener_token_url(mint))}">DexScreener</a>')
     if pool:
-        lines.append(f"{indent}Meteora: {links.meteora_dlmm_url(pool)}")
-        lines.append(f"{indent}HawkFi: {links.hawkfi_meteora_url(pool)}")
+        links_row.append(f'<a href="{_h(links.meteora_dlmm_url(pool))}">Meteora</a>')
+        links_row.append(f'<a href="{_h(links.hawkfi_meteora_url(pool))}">HawkFi</a>')
+    if links_row:
+        lines.append("🔗 " + " · ".join(links_row))
     return lines
 
 
+MEDALS = ("🥇", "🥈", "🥉")
+
+
 def best_alert_text(no: int, passing: list, last_no: dict) -> str:
-    """Teks alert pool terbaik. Pool yang sudah pernah muncul diberi nomor alert terakhirnya."""
-    lines = [f"🏆 Best Pool — alert #{no}",
-             f"Filter: fee ≥ {FLOW_FEE_TIER_MIN:g}% · TVL ≥ ${FLOW_TVL_MIN:,.0f} · "
-             f"avg fee ≥ ${FLOW_AVG_FEE_MIN:g} · net deposit positif H1/H4/H12/H24", ""]
+    """Alert pool terbaik. Pool yang sudah pernah muncul diberi nomor alert terakhirnya."""
+    lines = [
+        f"🏆 <b>BEST POOL</b> · alert #{no}",
+        f"🎯 fee ≥ {FLOW_FEE_TIER_MIN:g}% · 💰 TVL ≥ {fmt_usd(FLOW_TVL_MIN)} · "
+        f"⚡ ≥ {fmt_usd(FLOW_AVG_FEE_MIN)}/mnt",
+        "━━━━━━━━━━━━━━━━━━",
+    ]
     for index, row in enumerate(passing, start=1):
+        rank = MEDALS[index - 1] if index <= len(MEDALS) else f"{index}."
         seen = last_no.get(row["pool"])
-        tag = f" ⟲ sudah pernah muncul di alert #{seen}" if seen else " 🆕"
-        nets = " · ".join(f"{w.upper()} {fmt_usd(row['nets'][w])}" for w in FLOW_WINDOWS)
-        lines.append(f"{index}. {row['symbol']} ({row['pool_name'] or row['pool'][:6]}){tag}")
-        lines.append(f"   TVL {fmt_usd(row['tvl'])} · fee {row['fee_tier']:g}% · {nets}")
+        tag = f"🔁 sudah pernah · alert #{seen}" if seen else "🆕 baru"
+        name = row["pool_name"] or row["pool"][:6]
+        nets = "  ".join(f"{w.upper()} {fmt_signed(row['nets'][w])}" for w in FLOW_WINDOWS)
+        lines.append("")
+        lines.append(f"{rank} <b>{_h(row['symbol'])}</b> · {_h(name)}  {tag}")
+        lines.append(f"💰 TVL {fmt_usd(row['tvl'])} · 🏷 fee {row['fee_tier']:g}% · "
+                     f"⚡ {fmt_usd(row.get('avg_fee'))}/mnt")
+        lines.append(f"📈 {nets}")
         lines.extend(alert_link_lines(row.get("mint") or "", row["pool"]))
     return "\n".join(lines)
 
@@ -399,15 +420,22 @@ def watch_transition_alerts(state: dict, checks: list) -> list[str]:
         is_negative = total < 0
         state["watch_negative"][pool] = is_negative
         if is_negative and not was_negative:
+            h1, h4 = check["nets"].get("1h"), check["nets"].get("4h")
             text_lines = [
-                f"⚠️ Likuiditas ditarik — {check['symbol']}",
-                f"Net deposit H1 + H4 menjadi negatif: {fmt_usd(total)}",
-                f"H1 {fmt_usd(check['nets'].get('1h'))} · "
-                f"H4 {fmt_usd(check['nets'].get('4h'))}",
+                "🚨 <b>LIKUIDITAS DITARIK?</b>",
+                f"🪙 <b>{_h(check['symbol'])}</b>",
+                f"📉 Net H1 + H4 jadi <b>{fmt_signed(total)}</b>",
+                f"   ⏱ H1 {fmt_signed(h1)}  ·  H4 {fmt_signed(h4)}",
             ]
-            text_lines.extend(alert_link_lines(check.get("mint") or "", pool, indent=""))
+            text_lines.extend(alert_link_lines(check.get("mint") or "", pool))
             messages.append("\n".join(text_lines))
     return messages
+
+
+def fmt_signed(value) -> str:
+    """Seperti ``fmt_usd`` tetapi nilai positif diberi tanda +."""
+    text = fmt_usd(value)
+    return f"+{text}" if value is not None and value > 0 else text
 
 
 def fmt_usd(value) -> str:
@@ -463,6 +491,7 @@ def _send_telegram_once(text: str) -> tuple[bool, str]:
         return False, "kredensial Telegram belum dipasang"
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = json.dumps({"chat_id": chat, "text": text,
+                          "parse_mode": "HTML",
                           "disable_web_page_preview": True}).encode("utf-8")
     request = urllib.request.Request(
         url, data=payload, headers={"Content-Type": "application/json"})
