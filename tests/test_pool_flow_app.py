@@ -18,6 +18,7 @@ import pool_flow as pf  # noqa: E402
 POOL = "38hkfLZhhtjhn9t49LhCkconQ297ad5fnoZ3Mj7w5wEk"
 MINT = "9VZerdNL1x6EjetDqRnh5bYcdmk1y8sLAGs1ybzGpump"
 SOL = "So11111111111111111111111111111111111111112"
+POOL2 = "CPWA5ufjXEyC7DTd7g5fVUxJYZ81kxvbC8f9R9XFx1Y8"
 
 
 def _row(pool=POOL, net=800.0):
@@ -103,6 +104,49 @@ class AppMainTest(unittest.TestCase):
         self.assertEqual(saved["history"][POOL][0]["net_24h"], 800.0)
 
 
+class ManualAndLpExitOnMainTest(unittest.TestCase):
+    # Pakai ulang fixture AppMainTest tanpa mewarisi tes-tesnya.
+    setUp = AppMainTest.setUp
+    tearDown = AppMainTest.tearDown
+    _app = AppMainTest._app
+
+    def test_kartu_cek_lp_keluar_manual_ada_di_main(self):
+        at = self._app()
+        self.assertFalse(at.exception)
+        body = "\n".join(str(node.value) for node in at.markdown)
+        self.assertIn("Cek LP Keluar (manual)", body)
+        self.assertIn("🚪 Cek sekarang", [b.label for b in at.button])
+
+    def test_tambah_watchlist_manual_dari_ca(self):
+        def _pool(pool, tvl):
+            return {"pool_address": pool, "name": "X-SOL", "fee_pct": 2.0, "tvl": tvl,
+                    "fee": 6.0 * 1440, "net_deposits": 1.0,
+                    "token_x": {"address": MINT, "symbol": "X", "name": "apeonx"},
+                    "token_y": {"address": SOL, "symbol": "SOL", "name": "Wrapped SOL"}}
+
+        rows = [_pool(POOL, 60_000.0), _pool(POOL2, 90_000.0)]
+        at = self._app()
+        with mock.patch.object(pf, "fetch_mint_window", return_value=rows):
+            at.text_input(key="pf_manual_ca").set_value(MINT).run()
+            next(b for b in at.button if b.label == "🔍 Cari pool").click().run()
+            self.assertFalse(at.exception)
+            self.assertEqual(len(at.selectbox(key="pf_manual_pick").options), 2)
+            next(b for b in at.button if b.label == "➕ Tambahkan ke watchlist").click().run()
+        self.assertFalse(at.exception)
+        saved = json.loads(self.state_path.read_text(encoding="utf-8"))
+        # default pilihan = TVL terbesar (POOL2)
+        self.assertEqual([i["pool"] for i in saved["watchlist"]], [POOL2])
+        self.assertEqual(saved["watchlist"][0]["mint"], MINT)
+
+    def test_ca_tidak_valid_ditolak_tanpa_panggilan_jaringan(self):
+        at = self._app()
+        with mock.patch.object(pf, "fetch_mint_window") as fetch:
+            at.text_input(key="pf_manual_ca").set_value("bukan-ca").run()
+            next(b for b in at.button if b.label == "🔍 Cari pool").click().run()
+        fetch.assert_not_called()
+        self.assertTrue(any("valid" in str(e.value) for e in at.error))
+
+
 class PagesAndWorkflowsTest(unittest.TestCase):
     HIDDEN = ["8_🌊_Sweep.py", "9_🔍_Cek_CA_Sweep.py", "10_⚡_Early_Watcher.py",
               "11_🧭_Cek_Entri_LP.py", "12_🚪_Cek_LP_Keluar.py"]
@@ -133,7 +177,9 @@ class PagesAndWorkflowsTest(unittest.TestCase):
 
     def test_app_utama_tidak_mengimpor_modul_sweep_atau_early(self):
         body = (ROOT / "app.py").read_text(encoding="utf-8")
-        for forbidden in ("sweep", "early", "lp_entry", "lp_exit", "best_pool_ui"):
+        # lp_exit_ui sengaja diimpor (permintaan user 2026-11-11: cek LP keluar
+        # manual di main page). Modul lain tetap dilarang.
+        for forbidden in ("sweep", "early", "lp_entry", "best_pool_ui"):
             self.assertNotIn(forbidden, body.lower(), forbidden)
 
 
