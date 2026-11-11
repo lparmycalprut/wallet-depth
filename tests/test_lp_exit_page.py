@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT / "tools" / "lp_exit_check"))
 import lp_exit_check as lxc  # noqa: E402
 import lp_exit_ui  # noqa: E402
 
-PAGE = ROOT / "pages" / "12_🚪_Cek_LP_Keluar.py"
+PAGE = ROOT / "pages_archived" / "12_🚪_Cek_LP_Keluar.py"
 CA = "9VZerdNL1x6EjetDqRnh5bYcdmk1y8sLAGs1ybzGpump"
 
 

@@ -195,7 +195,8 @@ class AppSurfaceTest(unittest.TestCase):
 
     def test_app_only_renders_best_pool_surface(self):
         source = (ROOT / "app.py").read_text(encoding="utf-8")
-        self.assertIn("render_best_pool_scan()", source)
+        self.assertIn("render_pool_flow_page()", source)
+        self.assertNotIn("render_best_pool_scan()", source)
         self.assertNotIn("page_router", source)
         self.assertNotIn("temp_ui", source)
 

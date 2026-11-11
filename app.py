@@ -1,21 +1,21 @@
 # -*- coding: utf-8 -*-
-"""Wallet Depth — 🏆 Scan Best Pool Meteora."""
+"""Wallet Depth — 🏆 Scan Best Pool (net deposit)."""
 from __future__ import annotations
 
 import streamlit as st
 
 import activity_log
-from best_pool_ui import render_best_pool_scan
 from dashboard_components import render_degen_stop_header, render_styles
+from pool_flow_ui import render_pool_flow_page
 
 
-st.set_page_config(page_title="Wallet Depth — Best Pool Meteora",
+st.set_page_config(page_title="Wallet Depth — Scan Best Pool",
                    page_icon="🏆", layout="wide",
                    initial_sidebar_state="collapsed")
 
 render_styles()
 render_degen_stop_header()
-render_best_pool_scan()
+render_pool_flow_page()
 
 st.divider()
 activity_log.render_activity_log()

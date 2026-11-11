@@ -118,7 +118,7 @@ class PageStaysResponsiveTests(unittest.TestCase):
             gate.wait(10)
             return _outcome(kw["state"], elapsed=1.0)
 
-        page = os.path.join(ROOT, "pages", "8_🌊_Sweep.py")
+        page = os.path.join(ROOT, "pages_archived", "8_🌊_Sweep.py")
         with mock.patch.object(scan, "run_scan", side_effect=slow):
             try:
                 at = AppTest.from_file(page, default_timeout=30)

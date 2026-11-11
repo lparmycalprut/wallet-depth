@@ -268,6 +268,8 @@ class ActiveRangeCardTest(unittest.TestCase):
     def _body(app):
         return "\n".join(node.value for node in app.markdown)
 
+    @unittest.skip("2026-11-11: tabel Best Pool lama dihapus dari main page; "
+                   "main app kini memakai pool_flow_ui (SCAN BEST POOL).")
     def test_tabel_best_pool_menampilkan_active_range(self):
         # Fee/TVL snapshot live CATE-USDC 19,54% di bawah ambang baru 30%
         # (aturan 2026-09-23: "Fee/TVL minimal 30%, dibawah itu jangan show"),
