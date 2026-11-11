@@ -235,6 +235,43 @@ class AlertScriptTest(unittest.TestCase):
             self.assertEqual(len(sent), 1)
 
 
+class AlertLinksTest(unittest.TestCase):
+    def test_alert_best_memuat_ca_dan_empat_link(self):
+        passing = [pf.evaluate_pool(row(POOL), windows(500.0))]
+        text = pf.best_alert_text(1, passing, {})
+        self.assertIn(f"CA: {MINT}", text)
+        self.assertIn("https://gmgn.ai/sol/token/" + MINT, text)
+        self.assertIn("https://dexscreener.com/solana/" + MINT, text)
+        self.assertIn("https://app.meteora.ag/dlmm/" + POOL, text)
+        self.assertIn("https://www.hawkfi.ag/meteora/" + POOL, text)
+
+    def test_alert_watch_memuat_ca_dan_link(self):
+        state = pf.empty_state()
+        checks = [{"pool": POOL, "mint": MINT, "symbol": "X",
+                   "nets": {"1h": -10.0, "4h": 1.0}}]
+        (msg,) = pf.watch_transition_alerts(state, checks)
+        self.assertIn(f"CA: {MINT}", msg)
+        self.assertIn("https://gmgn.ai/sol/token/" + MINT, msg)
+        self.assertIn("https://www.hawkfi.ag/meteora/" + POOL, msg)
+
+    def test_pesan_panjang_dipecah_dan_semua_terkirim(self):
+        text = "\n".join(["baris " + "x" * 120] * 80)  # > 4096 karakter
+        parts = pf.split_for_telegram(text)
+        self.assertGreater(len(parts), 1)
+        self.assertTrue(all(len(p) <= pf.TELEGRAM_CHUNK for p in parts))
+        self.assertEqual("\n".join(parts), text)
+        sent = []
+        with mock.patch.object(pf, "_send_telegram_once",
+                               side_effect=lambda t: (sent.append(t), (True, ""))[1]):
+            ok, _ = pf.send_telegram(text)
+        self.assertTrue(ok)
+        self.assertEqual(len(sent), len(parts))
+
+    def test_kegagalan_satu_bagian_menghentikan_dan_melaporkan(self):
+        with mock.patch.object(pf, "_send_telegram_once", return_value=(False, "HTTP 500")):
+            self.assertEqual(pf.send_telegram("halo"), (False, "HTTP 500"))
+
+
 class SendTelegramTest(unittest.TestCase):
     def test_tanpa_kredensial_tidak_mengirim(self):
         with mock.patch.dict("os.environ", {}, clear=True):

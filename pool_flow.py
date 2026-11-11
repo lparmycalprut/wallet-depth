@@ -28,6 +28,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
+import links
+
 POOLS_URL = "https://pool-discovery-api.datapi.meteora.ag/pools"
 HTTP_TIMEOUT = 25
 USER_AGENT = "Mozilla/5.0 (wallet-depth-pool-flow)"
@@ -325,6 +327,19 @@ def record_scan(state: dict, results: list, *, ts: str | None = None) -> int:
 # Alert: pool terbaik (tiap 30 menit)
 # ---------------------------------------------------------------------------
 
+def alert_link_lines(mint: str, pool: str, *, indent: str = "   ") -> list[str]:
+    """CA lengkap + link GMGN, DexScreener, Meteora, dan HawkFi (teks biasa)."""
+    lines: list[str] = []
+    if mint:
+        lines.append(f"{indent}CA: {mint}")
+        lines.append(f"{indent}GMGN: {links.gmgn_token_url(mint)}")
+        lines.append(f"{indent}DexScreener: {links.dexscreener_token_url(mint)}")
+    if pool:
+        lines.append(f"{indent}Meteora: {links.meteora_dlmm_url(pool)}")
+        lines.append(f"{indent}HawkFi: {links.hawkfi_meteora_url(pool)}")
+    return lines
+
+
 def best_alert_text(no: int, passing: list, last_no: dict) -> str:
     """Teks alert pool terbaik. Pool yang sudah pernah muncul diberi nomor alert terakhirnya."""
     lines = [f"🏆 Best Pool — alert #{no}",
@@ -336,7 +351,7 @@ def best_alert_text(no: int, passing: list, last_no: dict) -> str:
         nets = " · ".join(f"{w.upper()} {fmt_usd(row['nets'][w])}" for w in FLOW_WINDOWS)
         lines.append(f"{index}. {row['symbol']} ({row['pool_name'] or row['pool'][:6]}){tag}")
         lines.append(f"   TVL {fmt_usd(row['tvl'])} · fee {row['fee_tier']:g}% · {nets}")
-        lines.append(f"   https://app.meteora.ag/dlmm/{row['pool']}")
+        lines.extend(alert_link_lines(row.get("mint") or "", row["pool"]))
     return "\n".join(lines)
 
 
@@ -384,12 +399,14 @@ def watch_transition_alerts(state: dict, checks: list) -> list[str]:
         is_negative = total < 0
         state["watch_negative"][pool] = is_negative
         if is_negative and not was_negative:
-            messages.append(
-                f"⚠️ Likuiditas ditarik — {check['symbol']}\n"
-                f"Net deposit H1 + H4 menjadi negatif: {fmt_usd(total)}\n"
+            text_lines = [
+                f"⚠️ Likuiditas ditarik — {check['symbol']}",
+                f"Net deposit H1 + H4 menjadi negatif: {fmt_usd(total)}",
                 f"H1 {fmt_usd(check['nets'].get('1h'))} · "
-                f"H4 {fmt_usd(check['nets'].get('4h'))}\n"
-                f"https://app.meteora.ag/dlmm/{pool}")
+                f"H4 {fmt_usd(check['nets'].get('4h'))}",
+            ]
+            text_lines.extend(alert_link_lines(check.get("mint") or "", pool, indent=""))
+            messages.append("\n".join(text_lines))
     return messages
 
 
@@ -404,8 +421,42 @@ def fmt_usd(value) -> str:
 # Telegram (secret yang sama dengan Sweep: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
 # ---------------------------------------------------------------------------
 
+TELEGRAM_CHUNK = 3800  # batas Telegram 4096 karakter; sisakan ruang
+
+
+def split_for_telegram(text: str, limit: int = TELEGRAM_CHUNK) -> list[str]:
+    """Pecah teks per baris agar tiap bagian ≤ ``limit`` karakter."""
+    parts: list[str] = []
+    current = ""
+    for line in text.split("\n"):
+        while len(line) > limit:  # baris tunggal yang terlalu panjang
+            if current:
+                parts.append(current)
+                current = ""
+            parts.append(line[:limit])
+            line = line[limit:]
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > limit:
+            parts.append(current)
+            current = line
+        else:
+            current = candidate
+    if current:
+        parts.append(current)
+    return parts
+
+
 def send_telegram(text: str) -> tuple[bool, str]:
-    """Kirim pesan. ``(False, alasan)`` bila kredensial belum dipasang atau gagal."""
+    """Kirim pesan (dipecah bila panjang). ``(False, alasan)`` bila gagal."""
+    chunks = split_for_telegram(text)
+    for chunk in chunks:
+        ok, error = _send_telegram_once(chunk)
+        if not ok:
+            return False, error
+    return True, ""
+
+
+def _send_telegram_once(text: str) -> tuple[bool, str]:
     token = (os.environ.get(ENV_TOKEN) or "").strip()
     chat = (os.environ.get(ENV_CHAT) or "").strip()
     if not token or not chat:
