@@ -160,6 +160,54 @@ class ScanTest(unittest.TestCase):
             self.assertIn("fee_pct>=2", params["filter_by"])
 
 
+class PaginationTest(unittest.TestCase):
+    def _pages(self, sizes, errors_at=()):
+        """Fake _get_json: halaman ke-n berisi sizes[n-1] baris (atau raise)."""
+        from unittest import mock
+
+        calls = []
+
+        def fake(params, **kwargs):
+            page = params["page"]
+            calls.append(page)
+            if page in errors_at:
+                raise RuntimeError("boom")
+            size = sizes[page - 1] if page - 1 < len(sizes) else 0
+            return [{"pool_address": f"P{page}-{i}"} for i in range(size)]
+
+        return mock.patch.object(pf, "_get_json", side_effect=fake), calls
+
+    def test_berhenti_di_halaman_pendek(self):
+        patcher, calls = self._pages([50, 50, 3])  # halaman 4+ kosong (akhir listing)
+        with patcher:
+            rows, errors, truncated = pf.fetch_listing(max_pages=10, workers=2)
+        self.assertEqual(len(rows), 103)
+        self.assertEqual(errors, [])
+        self.assertFalse(truncated)
+        # gelombang berisi halaman 3–4; setelahnya tidak ada gelombang baru
+        self.assertEqual(sorted(calls), [1, 2, 3, 4])
+
+    def test_truncated_bila_batas_tercapai_dan_halaman_terakhir_penuh(self):
+        patcher, _ = self._pages([50, 50, 50, 50])
+        with patcher:
+            rows, _, truncated = pf.fetch_listing(max_pages=3, workers=1)
+        self.assertEqual(len(rows), 150)
+        self.assertTrue(truncated)
+
+    def test_error_halaman_dicatat_dan_listing_lanjut(self):
+        patcher, _ = self._pages([50, 4], errors_at=(1,))
+        with patcher:
+            rows, errors, truncated = pf.fetch_listing(max_pages=5, workers=1)
+        self.assertEqual(errors, ["boom"])
+        self.assertEqual(len(rows), 4)
+        self.assertFalse(truncated)
+
+    def test_pool_terakhir_dari_listing_penuh_menandai_truncated_di_scan(self):
+        rows = [_good()] * 0
+        result = pf.scan_pools(listing=(rows, [], True))
+        self.assertTrue(result["truncated"])
+
+
 class AlertTest(unittest.TestCase):
     def _passing(self):
         return pf.scan_pools(listing=(_meteora_rows(), [], False))["passing"]

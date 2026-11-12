@@ -64,6 +64,29 @@ class AppMainTest(unittest.TestCase):
         self.assertNotIn(STANK, body)
         self.assertIn("Timeframe 12H", " ".join(str(c.value) for c in at.caption))
 
+    def test_hasil_scan_berupa_tabel_html_dengan_scroll_horizontal(self):
+        at = self._app()
+        next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
+        body = self._body(at)
+        self.assertIn("overflow-x:auto", body)
+        self.assertIn("<table", body)
+        self.assertIn("min-width:820px", body)
+        for header in ("In-range", "Volatility", "Fee/active TVL"):
+            self.assertIn(header, body)
+        self.assertIn("Geser tabel ke kanan", " ".join(str(c.value) for c in at.caption))
+
+    def test_peringatan_listing_terpotong_muncul_hanya_bila_terpotong(self):
+        at = self._app()
+        with mock.patch.object(pf, "fetch_listing",
+                               side_effect=lambda *a, **k: (_meteora_rows(), [], True)):
+            next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
+        self.assertTrue(any("Listing belum lengkap" in str(w.value) for w in at.warning))
+
+    def test_tanpa_terpotong_tidak_ada_peringatan(self):
+        at = self._app()
+        next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
+        self.assertFalse(any("Listing belum lengkap" in str(w.value) for w in at.warning))
+
     def test_scan_tidak_menulis_state_dan_tidak_ada_tombol_watchlist(self):
         at = self._app()
         next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
