@@ -47,7 +47,7 @@ FLOW_IN_RANGE_MIN = 50.0         # % dari open positions
 # dicek ulang di ``evaluate_pool``.
 FLOW_SERVER_FILTER = (f"pool_type=dlmm&&fee_pct>={FLOW_FEE_TIER_MIN:g}"
                       f"&&fee_active_tvl_ratio>={FLOW_FEE_ACTIVE_TVL_MIN:g}")
-FLOW_MAX_PAGES = 20              # 20 × 50 = 1.000 pool setelah pra-saring
+FLOW_MAX_PAGES = 100             # batas keamanan: 100 × 50 = 5.000 pool setelah pra-saring
 FLOW_PAGE_SIZE = 50
 FLOW_LIST_WORKERS = 8
 FLOW_ALERT_CAP = 300             # riwayat alert yang disimpan
@@ -117,28 +117,33 @@ def fetch_top_page(page: int) -> list:
 
 def fetch_listing(max_pages: int = FLOW_MAX_PAGES, *,
                   workers: int = FLOW_LIST_WORKERS) -> tuple[list, list, bool]:
-    """Ambil halaman 1..max_pages paralel.
+    """Ambil halaman per gelombang (``workers`` halaman paralel) sampai halaman
+    pendek (< FLOW_PAGE_SIZE) muncul atau ``max_pages`` tercapai.
 
-    Kembalikan (rows, errors, truncated). ``truncated`` = halaman terakhir
-    masih berisi data, jadi ada kemungkinan pool yang belum terambil.
+    Kembalikan (rows, errors, truncated). ``truncated`` = batas halaman tercapai
+    dan halaman terakhir masih penuh, jadi masih ada pool yang belum terambil.
     """
     rows: list = []
     errors: list = []
-    last_page_rows = 0
     pages = max(1, max_pages)
+    ended = False
+    page = 1
     with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
-        futures = {page: executor.submit(fetch_top_page, page)
-                   for page in range(1, pages + 1)}
-        for page, future in futures.items():
-            try:
-                page_rows = future.result()
-            except Exception as exc:  # noqa: BLE001 — catat, lanjut halaman lain
-                errors.append(str(exc) or type(exc).__name__)
-                continue
-            rows.extend(page_rows)
-            if page == pages:
-                last_page_rows = len(page_rows)
-    return rows, errors, last_page_rows > 0
+        while page <= pages and not ended:
+            batch = list(range(page, min(page + max(1, workers), pages + 1)))
+            futures = [(p, executor.submit(fetch_top_page, p)) for p in batch]
+            for _, future in futures:
+                try:
+                    page_rows = future.result()
+                except Exception as exc:  # noqa: BLE001 — catat, lanjut halaman lain
+                    errors.append(str(exc) or type(exc).__name__)
+                    continue
+                rows.extend(page_rows)
+                if len(page_rows) < FLOW_PAGE_SIZE:
+                    ended = True
+            page = batch[-1] + 1
+    truncated = (not ended) and bool(rows)
+    return rows, errors, truncated
 
 
 # ---------------------------------------------------------------------------

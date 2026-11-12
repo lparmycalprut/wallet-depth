@@ -3,6 +3,10 @@
 
 Logika ada di ``pool_flow.py``; modul ini hanya menampilkan hasil scan.
 Scan tidak menulis berkas apa pun.
+
+Tabel dibuat HTML dengan lebar minimum dan scroll horizontal (AGENTS.md,
+"Mobile UI invariant": semua kolom tetap ada, tanpa kartu dan tanpa kolom
+yang disembunyikan).
 """
 from __future__ import annotations
 
@@ -13,6 +17,9 @@ from links import external_links_html, pool_links_html
 
 RESULT_KEY = "pool_flow_result"
 BUTTON_LABEL = "SCAN BEST POOL"
+
+TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier", "Open pos.",
+                 "In-range", "Volatility", "Fee/active TVL"]
 
 
 def _filter_caption() -> str:
@@ -34,41 +41,62 @@ def _render_scan_result(result: dict) -> None:
         + (f" · {result['listing_errors']} halaman listing gagal"
            if result.get("listing_errors") else ""))
     if result.get("truncated"):
-        st.warning("Listing terpotong: masih ada pool yang belum terambil.")
+        st.warning(f"Listing belum lengkap: {pf.FLOW_MAX_PAGES} halaman masih penuh, "
+                   "sebagian pool belum terambil.")
     if not passing:
         st.info("Tidak ada pool yang lolos semua filter.")
         return
+    st.caption("Geser tabel ke kanan untuk melihat semua kolom.")
+    st.markdown(_result_table_html(passing), unsafe_allow_html=True)
 
-    widths = [3, 1.2, 1, 1.1, 1.1, 1.1, 1.4]
-    head = st.columns(widths)
-    for col, title in zip(head, ["Token / pool", "TVL", "Fee tier", "Open pos.",
-                                 "In-range", "Volatility", "Fee/active TVL"]):
-        col.markdown(f"**{title}**")
+
+def _result_table_html(passing: list) -> str:
+    """Tabel HTML satu baris per pool. Tanpa baris kosong agar markdown tidak rusak."""
+    head = "".join(
+        "<th style='text-align:left;padding:6px 8px;white-space:nowrap;"
+        "border-bottom:1px solid rgba(128,128,128,.45)'>"
+        f"{_html.escape(title)}</th>"
+        for title in TABLE_HEADERS)
+    body = []
     for row in passing:
-        cols = st.columns(widths)
-        cols[0].markdown(_token_cell_html(row), unsafe_allow_html=True)
-        cols[1].write(pf.fmt_usd(row["tvl"]))
-        cols[2].write(f"{row['fee_tier']:g}%")
-        cols[3].write(f"{row['open_positions']:g}")
-        cols[4].write(pf.fmt_pct(row["in_range"]))
-        cols[5].write(pf.fmt_pct(row["volatility"]))
-        cols[6].write(pf.fmt_pct(row["fee_active_tvl"]))
+        cells = [
+            _cell_token_html(row),
+            _html.escape(pf.fmt_usd(row["tvl"])),
+            _html.escape(f"{row['fee_tier']:g}%"),
+            _html.escape(f"{row['open_positions']:g}"),
+            _html.escape(pf.fmt_pct(row["in_range"])),
+            _html.escape(pf.fmt_pct(row["volatility"])),
+            _html.escape(pf.fmt_pct(row["fee_active_tvl"])),
+        ]
+        tds = "".join(
+            f"<td style='padding:6px 8px;vertical-align:top;border-bottom:1px solid "
+            f"rgba(128,128,128,.2);white-space:{'normal' if i == 0 else 'nowrap'}'>{cell}</td>"
+            for i, cell in enumerate(cells))
+        body.append(f"<tr>{tds}</tr>")
+    return (
+        "<div style='overflow-x:auto;-webkit-overflow-scrolling:touch;"
+        "border:1px solid rgba(128,128,128,.35);border-radius:8px'>"
+        "<table style='border-collapse:collapse;width:100%;min-width:820px;"
+        "font-size:13px;line-height:1.4'>"
+        f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody></table></div>"
+    )
 
 
-def _token_cell_html(row: dict) -> str:
-    """Nama token + pool, lalu CA lengkap dan link di bawahnya."""
+def _cell_token_html(row: dict) -> str:
+    """Nama token + pool, CA lengkap, dan link. Dipakai di dalam sel tabel."""
     name = _html.escape(f"{row['symbol']} · {row['pool_name'] or row['pool'][:8]}")
     ca = _html.escape(row.get("mint") or "")
-    lines = [f"**{name}**"]
+    parts = [f"<b style='font-size:14px'>{name}</b>"]
     if ca:
-        lines.append(f"<code style='word-break:break-all'>{ca}</code>")
+        parts.append(f"<code style='font-size:11px;word-break:break-all;"
+                     f"white-space:normal'>{ca}</code>")
     links_html = " &nbsp; ".join(part for part in (
         external_links_html(row.get("mint") or ""),
         pool_links_html(row.get("pool") or ""),
     ) if part)
     if links_html:
-        lines.append(links_html)
-    return "  \n".join(lines)
+        parts.append(f"<span style='font-size:12px'>{links_html}</span>")
+    return "<br>".join(parts)
 
 
 def render_pool_flow_page() -> None:
