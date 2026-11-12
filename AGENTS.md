@@ -33,22 +33,14 @@ Independent market-risk fields such as Meteora's `top_holders_pct`, GMGN metrics
 
 ## Best Pool invariants
 
-- `BEST_ACTIVE_TVL_MIN = 50_000.0`
-- `BEST_LPS_MIN = 100.0`
-- no POOL BARU/new-pool route or bypass
-- `BEST_FV_24H_MIN = 5.0` for the main table (since 2026-11-02, explicit user request; was 10× from 2026-09-28)
-- `BEST_FV_HIDE_MIN = 5.0`: F/V <5× is dropped; no F/V range is left for `hidden_rows`
-- `BEST_FEE_TVL_MIN = 5.0` (percent, `fee_active_tvl_ratio`) and `BEST_FEE_MINUS_IL_MIN = 5.0` (points): since 2026-11-02 (explicit user request) a row is shown only when Fee/TVL ≥ 5% AND Fee-IL ≥ +5. Fee-IL = Fee/TVL + IL, where IL = `2√r/(1+r) − 1`, `r = 1 + pool_price_change_pct/100` (50/50 CPMM). A zero price change on a pool younger than 24 h, or a missing change, is "not measurable" and drops the row. Dropped rows are removed before cheap gates, so they appear neither in the main table nor in the skipped list (`dropped_fee_il`). This replaces the former "Fee/TVL is not a filter" invariant.
-- cheap listing filters run before pool-detail or third-party enrichment; only displayable rows (main + skipped) are enriched
-- Token:SOL is informational only; official Meteora values are still calculated as amount × USD price
-- the main table shows the Fee-IL column (`Fee-IL` sub-line: 24 h price change and IL); cached results without the new fields are dropped until a rescan
-- **Total IL** column (2026-11-04, info only) sits right of Fee-IL: IL of a 50/50 pool over the 12 h, 4 h and 1 h price change (`row["il_windows"]`, from `pool_price_change_pct` per timeframe via `fetch_pool_price_change` / `attach_il_windows`, called only when `scan_best_lane(il_windows=True)`, which `_run_lane_scan` passes). It never filters or sorts rows. The Meteora API has no 6 h timeframe (`5m, 30m, 1h, 2h, 4h, 12h, 24h`), so 4 h was chosen (user-approved). Rows scanned before this change show `—`.
-- GMGN bundler + phishing/entrapment is informational only: it never filters a pool, regardless of the combined rate or whether the report can be read
-- the report may be fetched for main rows plus displayable skipped rows; report failures must not affect eligibility
-- risk data uses `top_bundler_trader_percentage` plus `top_entrapment_trader_percentage`
-- only main-table rows receive RugCheck/tax enrichment
+Scan Best Pool (2026-11-11, explicit user request) lives in `pool_flow.py` (logic, no Streamlit) and `pool_flow_ui.py` (main-page card). Everything is read from one Meteora `pool-discovery` listing at timeframe **12h**, `category=top`, with a server pre-filter (`pool_type=dlmm`, `fee_pct>=2`, `fee_active_tvl_ratio>=20`) that is only a narrowing step. Every rule is re-checked client-side in `evaluate_pool`.
 
-Catatan 2026-11-11: modul Best Pool lama (`meteora_screener.py`, `best_pool_ui.py`, dan pendukungnya) sudah dihapus. Best Pool sekarang adalah `pool_flow.py` + `pool_flow_ui.py` (net deposit).
+- Rules (all must pass): fee tier ≥ 2 %; `open_positions` ≥ 50; `tvl` ≥ $5,000; `volatility` ≥ 5 %; `fee_active_tvl_ratio` (Fee/Active TVL) ≥ 20 %; in-range = `active_positions / open_positions × 100` ≥ 50 %.
+- Order: in-range % descending, ties broken by Fee/Active TVL descending.
+- Unmeasurable values (missing, or `open_positions` = 0) fail the rule. The in-range % is computed from the raw counts, not from `active_positions_pct`.
+- The scan writes nothing. Only the Telegram best alert (`scripts/pool_flow_alert.py`, every 30 min, `pool-flow-best.yml`) writes `pool_flow_state.json`, and that file keeps only alert numbering (`best_alert`) and `alerts`.
+- The watchlist, net-deposit history, watch alert, and the Cek LP Keluar page/tool were removed on 2026-11-11. Do not reintroduce them without a new user request.
+- Earlier Best Pool rules (Fee-IL, F/V, IL windows, GMGN/RugCheck enrichment) and the modules behind them were removed; the old modules are gone from the repo.
 
 ## Mobile UI invariant
 
@@ -91,4 +83,3 @@ For distribution changes, always run `tests/test_liquidity_distribution_filter.p
 - Cron runs are sparse in practice (2 scheduled runs in the first day after merge), so each job is ~5 h long to cover more time.
 - Workflow runs only from the default branch, so it is inactive until merged to `main`.
 
-- **Cek LP Keluar page** (2026-11-10, user request): `pages/12_🚪_Cek_LP_Keluar.py` renders `lp_exit_ui.py`, which wraps `tools/lp_exit_check/lp_exit_check.py`. It reads `total_deposits`, `total_withdraws`, and `net_deposits` per window (1H/4H/12H/24H) for one pasted CA and flags net < 0 (withdraw > deposit). Read-only, 60 s cache, separate multipage entry; it must not import Best Pool or Sweep modules.

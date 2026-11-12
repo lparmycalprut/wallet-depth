@@ -416,3 +416,10 @@ Yang dikerjakan:
 - Aturan batas rasio ini **dihapus total pada 2026-09-28**: token:SOL kini
   murni informasi, berapa pun rasionya tidak pernah menggugurkan pool.
 - Nilai berasal dari official Meteora pool details: amount × USD price.
+
+## 2026-11-11 — Scan Best Pool: filter 12H baru, watchlist dan Cek LP Keluar dihapus
+
+- Watchlist (termasuk tambah manual dari CA), riwayat net deposit, alert watchlist (`pool-flow-watch.yml`), halaman dan tool 🚪 Cek LP Keluar dihapus atas permintaan user.
+- Filter Scan Best Pool diganti total (timeframe 12H): fee tier ≥ 2%, open positions ≥ 50, TVL ≥ $5.000, volatility ≥ 5%, Fee/Active TVL ≥ 20%, in-range ≥ 50% dari open positions. Urut in-range terbesar.
+- Alert best (tiap 30 menit) memakai filter yang sama dan tetap memberi nomor/tanda pool yang sudah pernah muncul.
+- Verifikasi: 12 pool dari respons Meteora 12H (fixture di `tests/test_pool_flow.py`) — hanya `BxyK` (Dacity-SOL, in-range 62,9%) dan `HcyY` (PUSSY-SOL, in-range 56,2%) yang lolos.

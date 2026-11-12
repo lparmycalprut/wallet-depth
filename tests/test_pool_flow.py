@@ -1,335 +1,221 @@
 # -*- coding: utf-8 -*-
-"""Tes offline logika 🏆 Scan Best Pool (net deposit). Tanpa jaringan."""
+"""Tes logika Scan Best Pool (12H) — murni, tanpa jaringan dan tanpa Streamlit.
+
+Fixture ``METEORA_12H`` adalah 12 pool asli dari respons Meteora (timeframe=12h,
+2026-11-12) yang dikirim user. Hasil yang diharapkan dihitung manual dari aturan:
+hanya BxyK (Dacity-SOL) dan HcyY (PUSSY-SOL) yang lolos.
+"""
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-sys.path.insert(0, str(ROOT / "scripts"))
 
 import pool_flow as pf  # noqa: E402
-import pool_flow_alert as alert  # noqa: E402
 
 SOL = "So11111111111111111111111111111111111111112"
-MINT = "9VZerdNL1x6EjetDqRnh5bYcdmk1y8sLAGs1ybzGpump"
-POOL = "38hkfLZhhtjhn9t49LhCkconQ297ad5fnoZ3Mj7w5wEk"
-POOL2 = "CPWA5ufjXEyC7DTd7g5fVUxJYZ81kxvbC8f9R9XFx1Y8"
 
 
-def row(pool=POOL, *, tvl=60_000.0, fee_pct=2.0, avg_fee=6.0, net=1000.0,
-        mint=MINT, symbol="X", name="X-SOL"):
-    return {
-        "pool_address": pool, "name": name,
-        "token_x": {"address": mint, "symbol": symbol, "name": "apeonx"},
-        "token_y": {"address": SOL, "symbol": "SOL", "name": "Wrapped SOL"},
-        "fee_pct": fee_pct, "tvl": tvl,
-        "fee": avg_fee * pf.FLOW_LISTING_MINUTES,  # fee 24J; avg/menit = fee ÷ 1440
-        "net_deposits": net,
-    }
+def _row(pool, symbol, *, fee, tvl, open_pos, active, vol, fa, mint=None):
+    mint = mint or ("M" + pool[:8].ljust(43, "x"))
+    return {"pool_address": pool, "name": f"{symbol}-SOL", "pool_type": "dlmm",
+            "token_x": {"address": mint, "symbol": symbol, "name": symbol},
+            "token_y": {"address": SOL, "symbol": "SOL", "name": "Wrapped SOL"},
+            "fee_pct": fee, "tvl": tvl, "open_positions": open_pos,
+            "active_positions": active, "volatility": vol, "fee_active_tvl_ratio": fa}
 
 
-def windows(net=1000.0, pool=POOL):
-    return {w: row(pool, net=net) for w in pf.FLOW_WINDOWS}
+def _good(**over):
+    base = dict(fee=2.0, tvl=60_000.0, open_pos=60, active=40, vol=8.0, fa=30.0)
+    base.update(over)
+    return _row("PoolGood" + "1" * 30, "GOOD", **base)
 
 
-class FilterTest(unittest.TestCase):
-    def test_fee_tier_di_bawah_1_persen_dilewati(self):
-        ok, reason = pf.base_passes(row(fee_pct=0.99))
-        self.assertFalse(ok)
-        self.assertIn("fee tier", reason)
+# (pool, symbol, fee, tvl, open, active, volatility, fee/active TVL) — respons Meteora 12H
+METEORA_12H = [
+    ("7xg8P4oQEbUuEfQMTzcNgQRvYWPdze7Fsjbvp9BtHxCz", "Max", 3.0, 15934.53, 42, 14, 16.83, 338.67),
+    ("BoTGzHBpCiMM255GmMUCzLGD4mLeX95g6eJKy7wjCBub", "Max", 3.0, 9918.85, 38, 24, 12.22, 440.51),
+    ("5Dc4s9fxxQoPfaMUaxFKB5v1Nh6FPqest7usgyvGXwWw", "DacityCoin", 2.0, 164176.35, 261, 84, 3.15, 10.00),
+    ("ARwLqJJHRzUwpL4LLTQMykuPLzUTwNSaezP9E85f7yht", "LuckyCoin", 2.0, 6321.82, 25, 21, 7.10, 43.63),
+    ("tXzZcH3i1Ku5H54SNmrRbJYiZYqYto597xd1kWnnvom", "PAYDAY", 2.0, 9286.77, 38, 18, 4.29, 12.81),
+    ("FSb7qz3cMGjYacrLfoKumozoqFibiAtzjDq97FxHivYP", "DacityCoin", 5.0, 11865.37, 39, 14, 4.09, 11.62),
+    ("5WVURqJSLRFNZDVDF2njtjZihRLeALvt5tss3yjt2Vik", "paws", 2.0, 23231.38, 85, 64, 3.30, 9.34),
+    ("HcyYBrZVFDDVBLtLxL5C1HDJND1p86BoNA6m7MjBKE3p", "PUSSY", 2.0, 14860.61, 73, 41, 11.42, 125.29),
+    ("91iHWaWXneUyoNDJhSno7ezxQg1VW5P6PdarNGyFfPCz", "STANK", 2.0, 127366.79, 279, 217, 2.19, 10.66),
+    ("BxyKfpuCn3qVi9gCYHKPYqo8L5mz9MiyAuZfQ7YGHchi", "Dacity", 3.0, 11354.96, 70, 44, 5.20, 46.18),
+    ("C1Xwm4e8UEQRmhsmogn3HYoHLqJu7M7FVG7nrtPvqHVH", "HOLD", 2.0, 6634.68, 46, 21, 4.34, 62.44),
+    ("Apb6s7SHxckEBHuJoKmidjQb6jggR2h8U7dtjZDdwvcV", "timmy", 2.0, 14389.52, 89, 65, 4.27, 14.95),
+]
 
-    def test_fee_tier_tepat_1_persen_lolos(self):
-        self.assertTrue(pf.base_passes(row(fee_pct=1.0))[0])
 
-    def test_fee_tier_2_persen_tetap_lolos(self):
-        self.assertTrue(pf.base_passes(row(fee_pct=2.0))[0])
+def _meteora_rows():
+    return [_row(p, s, fee=f, tvl=t, open_pos=o, active=a, vol=v, fa=fa)
+            for p, s, f, t, o, a, v, fa in METEORA_12H]
 
-    def test_tvl_di_bawah_50k_dilewati(self):
-        ok, reason = pf.base_passes(row(tvl=49_999.0))
-        self.assertFalse(ok)
-        self.assertIn("TVL", reason)
 
-    def test_avg_fee_di_bawah_5_dilewati(self):
-        ok, reason = pf.base_passes(row(avg_fee=4.99))
-        self.assertFalse(ok)
-        self.assertIn("fee/menit", reason)
+class RuleTest(unittest.TestCase):
+    def test_baris_yang_memenuhi_semua_aturan_lolos(self):
+        result = pf.evaluate_pool(_good())
+        self.assertTrue(result["passes"], result["reasons"])
+        self.assertAlmostEqual(result["in_range"], 66.666, places=2)
 
-    def test_evaluasi_lolos_bila_semua_net_positif(self):
-        result = pf.evaluate_pool(row(), windows(net=500.0))
-        self.assertTrue(result["passes"])
-        self.assertEqual(result["reason"], "")
-        self.assertEqual(result["nets"]["12h"], 500.0)
+    def test_setiap_ambang_tepat_di_batas_lolos_dan_di_bawahnya_gagal(self):
+        cases = [
+            ("fee tier", dict(fee=2.0), True), ("fee tier", dict(fee=1.99), False),
+            ("open", dict(open_pos=50), True), ("open", dict(open_pos=49), False),
+            ("tvl", dict(tvl=5_000.0), True), ("tvl", dict(tvl=4_999.0), False),
+            ("vol", dict(vol=5.0), True), ("vol", dict(vol=4.99), False),
+            ("fa", dict(fa=20.0), True), ("fa", dict(fa=19.9), False),
+            ("in-range", dict(open_pos=60, active=30), True),   # 50 % tepat
+            ("in-range", dict(open_pos=60, active=29), False),  # 48,3 %
+        ]
+        for label, over, expected in cases:
+            with self.subTest(rule=label, over=over):
+                self.assertEqual(pf.evaluate_pool(_good(**over))["passes"], expected)
 
-    def test_satu_window_negatif_gugurkan(self):
-        nets = windows(net=500.0)
-        nets["4h"] = row(net=-1.0)
-        result = pf.evaluate_pool(row(), nets)
-        self.assertFalse(result["passes"])
-        self.assertIn("4H", result["reason"])
+    def test_open_positions_nol_atau_hilang_tidak_terukur_dan_gagal(self):
+        for over in (dict(open_pos=0, active=0), dict(open_pos=None, active=None)):
+            with self.subTest(over=over):
+                result = pf.evaluate_pool(_good(**over))
+                self.assertFalse(result["passes"])
+                self.assertIsNone(result["in_range"])
 
-    def test_net_nol_bukan_positif(self):
-        nets = windows(net=0.0)
-        self.assertFalse(pf.evaluate_pool(row(), nets)["passes"])
+    def test_alasan_gagal_menyebut_semua_aturan_yang_dilanggar(self):
+        result = pf.evaluate_pool(_good(fee=1.0, tvl=100.0, vol=1.0, fa=1.0))
+        self.assertEqual(len(result["reasons"]), 4)
+        self.assertTrue(any("fee tier" in r for r in result["reasons"]))
+        self.assertTrue(any("volatility" in r for r in result["reasons"]))
 
-    def test_window_hilang_tidak_terukur(self):
-        nets = windows(net=500.0)
-        nets["12h"] = None
-        result = pf.evaluate_pool(row(), nets)
-        self.assertFalse(result["passes"])
-        self.assertIn("12H", result["reason"])
+    def test_in_range_pakai_active_positions_bukan_pct_dari_server(self):
+        row = _good(open_pos=50, active=25)
+        row["active_positions_pct"] = 99.0  # nilai server diabaikan
+        self.assertAlmostEqual(pf.in_range_pct(row), 50.0)
 
-    def test_net_dihitung_dari_deposit_dikurangi_withdraw(self):
-        r = {"total_deposits": 300.0, "total_withdraws": 120.0}
-        self.assertEqual(pf.net_of(r), 180.0)
-        self.assertIsNone(pf.net_of({"total_deposits": 1.0}))
 
-    def test_candidates_dedupe_dan_filter(self):
-        rows = [row(POOL), row(POOL), row(POOL2, tvl=10.0)]
-        cands = pf.candidates_from_listing(rows)
-        self.assertEqual(list(cands), [POOL])
+class RealResponseTest(unittest.TestCase):
+    """Dua pool yang lolos harus sama dengan hasil hitung manual dari respons Meteora."""
 
-    def test_avg_fee_per_menit_dari_fee_24_jam(self):
-        self.assertAlmostEqual(pf.avg_fee_per_min({"fee": 1440.0}), 1.0)
-        self.assertIsNone(pf.avg_fee_per_min({}))
-        self.assertTrue(pf.base_passes(row(avg_fee=5.0))[0])
+    def test_hanya_dua_pool_yang_lolos_dari_respons_meteora(self):
+        result = pf.scan_pools(listing=(_meteora_rows(), [], False))
+        self.assertEqual(result["candidates"], 12)
+        self.assertEqual(
+            [r["pool"] for r in result["passing"]],
+            ["BxyKfpuCn3qVi9gCYHKPYqo8L5mz9MiyAuZfQ7YGHchi",   # in-range 62,9 %
+             "HcyYBrZVFDDVBLtLxL5C1HDJND1p86BoNA6m7MjBKE3p"],  # in-range 56,2 %
+        )
 
-    def test_mint_non_sol_dan_nama_token(self):
-        r = row()
-        self.assertEqual(pf.mint_of_pool(r), MINT)
-        self.assertEqual(pf.token_info(r, MINT), ("X", "apeonx"))
+    def test_alasan_gagal_pool_terbesar_sesuai_perhitungan_manual(self):
+        results = {r["pool"]: r for r in pf.scan_pools(listing=(_meteora_rows(), [], False))["results"]}
+        stank = results["91iHWaWXneUyoNDJhSno7ezxQg1VW5P6PdarNGyFfPCz"]
+        self.assertFalse(stank["passes"])
+        self.assertTrue(any("volatility" in r for r in stank["reasons"]))
+        self.assertTrue(any("fee/active" in r for r in stank["reasons"]))
+        dacity_5dc = results["5Dc4s9fxxQoPfaMUaxFKB5v1Nh6FPqest7usgyvGXwWw"]
+        self.assertTrue(any("in-range" in r for r in dacity_5dc["reasons"]))  # 32 %
 
 
 class ScanTest(unittest.TestCase):
-    def test_scan_candidates_pakai_listing_dan_per_window(self):
-        listing = ([row(POOL, net=900.0), row(POOL2, net=900.0, tvl=10.0)], [])
+    def test_urut_in_range_terbesar_lalu_fee_active(self):
+        rows = [_good(open_pos=60, active=30, fa=50.0),    # 50 %
+                _good(open_pos=60, active=40, fa=25.0),    # 66,7 %
+                _good(open_pos=60, active=40, fa=90.0)]    # 66,7 %, fee lebih besar
+        rows[0]["pool_address"] = "A" * 44
+        rows[1]["pool_address"] = "B" * 44
+        rows[2]["pool_address"] = "C" * 44
+        passing = pf.scan_pools(listing=(rows, [], False))["passing"]
+        self.assertEqual([r["pool"] for r in passing], ["C" * 44, "B" * 44, "A" * 44])
 
-        def fake_window(mint, pool, window):
-            return row(pool, net=800.0)
-
-        with mock.patch.object(pf, "pool_row_for_window", side_effect=fake_window):
-            result = pf.scan_candidates(listing=listing)
+    def test_pool_duplikat_dihitung_sekali(self):
+        row = _good()
+        result = pf.scan_pools(listing=([row, dict(row)], [], False))
         self.assertEqual(result["candidates"], 1)
         self.assertEqual(len(result["passing"]), 1)
-        self.assertEqual(result["passing"][0]["pool"], POOL)
-        self.assertEqual(result["passing"][0]["nets"]["1h"], 800.0)
 
-    def test_scan_window_gagal_dianggap_tidak_terukur(self):
-        listing = ([row(POOL)], [])
-
-        def boom(mint, pool, window):
-            raise OSError("timeout")
-
-        with mock.patch.object(pf, "pool_row_for_window", side_effect=boom):
-            result = pf.scan_candidates(listing=listing)
+    def test_truncated_dan_error_ikut_dilaporkan(self):
+        result = pf.scan_pools(listing=([], ["timeout"], True))
+        self.assertTrue(result["truncated"])
+        self.assertEqual(result["listing_errors"], 1)
         self.assertEqual(result["passing"], [])
-        self.assertIn("tidak terukur", result["results"][0]["reason"])
+
+    def test_fetch_listing_mengirim_timeframe_dan_pra_saring(self):
+        captured = []
+
+        def fake_get(params, **kwargs):
+            captured.append(params)
+            return []
+
+        from unittest import mock
+        with mock.patch.object(pf, "_get_json", side_effect=fake_get):
+            rows, errors, truncated = pf.fetch_listing(max_pages=2, workers=2)
+        self.assertEqual((rows, errors, truncated), ([], [], False))
+        self.assertEqual(len(captured), 2)
+        for params in captured:
+            self.assertEqual(params["timeframe"], "12h")
+            self.assertEqual(params["category"], "top")
+            self.assertEqual(params["page_size"], 50)
+            self.assertIn("fee_active_tvl_ratio>=20", params["filter_by"])
+            self.assertIn("fee_pct>=2", params["filter_by"])
 
 
-class StateTest(unittest.TestCase):
-    def test_watchlist_tambah_hapus_tanpa_duplikat(self):
-        state = pf.empty_state()
-        self.assertTrue(pf.watch_add(state, pool=POOL, mint=MINT, symbol="X", name="n"))
-        self.assertFalse(pf.watch_add(state, pool=POOL, mint=MINT, symbol="X", name="n"))
-        self.assertTrue(pf.watch_remove(state, POOL))
-        self.assertEqual(state["watchlist"], [])
-
-    def test_riwayat_dipangkas(self):
-        state = pf.empty_state()
-        for _ in range(pf.FLOW_HISTORY_CAP + 5):
-            pf.record_snapshot(state, POOL, {"1h": 1.0})
-        self.assertEqual(len(state["history"][POOL]), pf.FLOW_HISTORY_CAP)
-
-    def test_simpan_dan_muat_ulang(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "s.json"
-            state = pf.empty_state()
-            pf.watch_add(state, pool=POOL, mint=MINT, symbol="X", name="n")
-            pf.save_state(state, path)
-            again = pf.load_state(path)
-            self.assertEqual(again["watchlist"][0]["pool"], POOL)
-            self.assertEqual(pf.load_state(Path(tmp) / "tidak_ada.json")["watchlist"], [])
-            json.loads(path.read_text(encoding="utf-8"))
-
-
-class BestAlertTest(unittest.TestCase):
-    def _passing(self, *pools):
-        return [pf.evaluate_pool(row(p), windows(net=500.0, pool=p)) for p in pools]
-
-    def test_nomor_alert_naik_dan_pool_berulang_diberi_tanda(self):
-        state = pf.empty_state()
-        first = pf.apply_best_alert(state, self._passing(POOL))
-        self.assertIn("alert #1", first)
-        self.assertIn("🆕", first)
-        second = pf.apply_best_alert(state, self._passing(POOL, POOL2))
-        self.assertIn("alert #2", second)
-        self.assertIn("sudah pernah · alert #1", second)
-        self.assertEqual(state["best_alert"]["next_no"], 3)
-        self.assertEqual(len(state["alerts"]), 2)
+class AlertTest(unittest.TestCase):
+    def _passing(self):
+        return pf.scan_pools(listing=(_meteora_rows(), [], False))["passing"]
 
     def test_tanpa_pool_lolos_tidak_ada_alert(self):
         state = pf.empty_state()
         self.assertIsNone(pf.apply_best_alert(state, []))
+        self.assertEqual(state["alerts"], [])
         self.assertEqual(state["best_alert"]["next_no"], 1)
 
-
-class WatchAlertTest(unittest.TestCase):
-    def _check(self, h1, h4):
-        return {"pool": POOL, "symbol": "X", "nets": {"1h": h1, "4h": h4}}
-
-    def test_alert_hanya_saat_berubah_jadi_negatif(self):
+    def test_alert_memberi_nomor_dan_menandai_pool_yang_sudah_pernah_muncul(self):
         state = pf.empty_state()
-        self.assertEqual(pf.watch_transition_alerts(state, [self._check(10.0, 10.0)]), [])
-        msgs = pf.watch_transition_alerts(state, [self._check(-5.0, 1.0)])
-        self.assertEqual(len(msgs), 1)
-        self.assertIn("H1 + H4", msgs[0])
-        # masih negatif: tidak berulang
-        self.assertEqual(pf.watch_transition_alerts(state, [self._check(-6.0, 1.0)]), [])
-        # kembali positif, lalu negatif lagi: alert lagi
-        pf.watch_transition_alerts(state, [self._check(10.0, 10.0)])
-        self.assertEqual(len(pf.watch_transition_alerts(state, [self._check(-1.0, 0.0)])), 1)
+        first = pf.apply_best_alert(state, self._passing())
+        self.assertIn("alert #1", first)
+        self.assertEqual(first.count("🆕 baru"), 2)
+        self.assertEqual(state["best_alert"]["next_no"], 2)
+        second = pf.apply_best_alert(state, self._passing())
+        self.assertIn("alert #2", second)
+        self.assertEqual(second.count("🔁 sudah pernah · alert #1"), 2)
+        self.assertNotIn("🆕 baru", second)
 
-    def test_net_tidak_terukur_dilewati(self):
-        state = pf.empty_state()
-        self.assertEqual(pf.watch_transition_alerts(state, [self._check(None, -5.0)]), [])
+    def test_alert_memuat_tautan_dan_filter(self):
+        text = pf.best_alert_text(1, self._passing(), {})
+        self.assertIn("in-range", text)
+        self.assertIn("gmgn.ai", text)
+        self.assertIn("meteora.ag", text)
+        self.assertIn("12H", text)
 
-
-class AlertScriptTest(unittest.TestCase):
-    def test_mode_best_menulis_state_dan_menandai_perubahan(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "pool_flow_state.json"
-            fake = {"scanned_at": "2026-11-10T00:00:00Z", "listing_rows": 1,
-                    "listing_errors": 0, "candidates": 1, "results": [],
-                    "passing": [pf.evaluate_pool(row(POOL), windows(500.0))]}
-            sent = []
-            with mock.patch.object(pf, "scan_candidates", return_value=fake), \
-                    mock.patch.object(pf, "send_telegram", side_effect=lambda t: (sent.append(t), (True, ""))[1]), \
-                    mock.patch.object(pf, "STATE_PATH", path):
-                code = alert.main(["--mode", "best", "--state", str(path)])
-            self.assertEqual(code, 0)
-            self.assertEqual(len(sent), 1)
-            self.assertIn("alert #1", sent[0])
-            saved = json.loads(path.read_text(encoding="utf-8"))
-            self.assertEqual(saved["best_alert"]["next_no"], 2)
-
-    def test_mode_watch_kirim_alert_saat_negatif_sekali(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "pool_flow_state.json"
-            state = pf.empty_state()
-            pf.watch_add(state, pool=POOL, mint=MINT, symbol="X", name="n")
-            pf.save_state(state, path)
-
-            def fake_row(mint, pool, window):
-                # H1 -10 + H4 +5 = -5 → negatif
-                return row(pool, net=-10.0 if window == "1h" else 5.0)
-
-            sent = []
-            with mock.patch.object(alert.pf, "pool_row_for_window", side_effect=fake_row), \
-                    mock.patch.object(pf, "send_telegram",
-                                      side_effect=lambda t: (sent.append(t), (True, ""))[1]):
-                alert.main(["--mode", "watch", "--state", str(path)])
-                self.assertEqual(len(sent), 1)
-                self.assertIn("H1 + H4", sent[0])
-                # run kedua: masih negatif, tidak boleh kirim lagi
-                alert.main(["--mode", "watch", "--state", str(path)])
-            self.assertEqual(len(sent), 1)
-
-
-class ManualWatchTest(unittest.TestCase):
-    def test_valid_mint_menerima_ca_dan_menolak_selain_itu(self):
-        self.assertEqual(pf.valid_mint("  " + MINT + " "), MINT)
-        for bad in ("", "abc", "0" * 40, MINT[:-1] + "O", "https://x"):
-            with self.subTest(bad=bad):
-                with self.assertRaises(ValueError):
-                    pf.valid_mint(bad)
-
-    def test_find_pools_hanya_mint_itu_urut_tvl(self):
-        other = "Dz2wMTCsWKRFLzyaisX97HAqzJDyyPqfETvKQHFJaA8D"
-        rows = [row(POOL, tvl=60_000.0), row(POOL2, tvl=90_000.0),
-                row("POOL3xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", tvl=500.0, mint=other)]
-        with mock.patch.object(pf, "fetch_mint_window", return_value=rows):
-            found = pf.find_pools_for_mint(MINT)
-        self.assertEqual([p["pool"] for p in found], [POOL2, POOL])
-        self.assertEqual(found[0]["symbol"], "X")
-        self.assertEqual(found[0]["tvl"], 90_000.0)
-
-
-class AlertLinksTest(unittest.TestCase):
-    def test_alert_best_memuat_ca_dan_empat_link(self):
-        passing = [pf.evaluate_pool(row(POOL), windows(500.0))]
-        text = pf.best_alert_text(1, passing, {})
-        self.assertIn(f"<code>{MINT}</code>", text)
-        self.assertIn("https://gmgn.ai/sol/token/" + MINT, text)
-        self.assertIn("https://dexscreener.com/solana/" + MINT, text)
-        self.assertIn("https://app.meteora.ag/dlmm/" + POOL, text)
-        self.assertIn("https://www.hawkfi.ag/meteora/" + POOL, text)
-
-    def test_alert_watch_memuat_ca_dan_link(self):
-        state = pf.empty_state()
-        checks = [{"pool": POOL, "mint": MINT, "symbol": "X",
-                   "nets": {"1h": -10.0, "4h": 1.0}}]
-        (msg,) = pf.watch_transition_alerts(state, checks)
-        self.assertIn(f"<code>{MINT}</code>", msg)
-        self.assertIn("https://gmgn.ai/sol/token/" + MINT, msg)
-        self.assertIn("https://www.hawkfi.ag/meteora/" + POOL, msg)
-
-    def test_pesan_panjang_dipecah_dan_semua_terkirim(self):
-        text = "\n".join(["baris " + "x" * 120] * 80)  # > 4096 karakter
-        parts = pf.split_for_telegram(text)
+    def test_split_telegram_tiap_bagian_di_bawah_batas(self):
+        text = "\n".join("baris " + "x" * 90 for _ in range(200))
+        parts = pf.split_for_telegram(text, limit=500)
         self.assertGreater(len(parts), 1)
-        self.assertTrue(all(len(p) <= pf.TELEGRAM_CHUNK for p in parts))
+        self.assertTrue(all(len(p) <= 500 for p in parts))
         self.assertEqual("\n".join(parts), text)
-        sent = []
-        with mock.patch.object(pf, "_send_telegram_once",
-                               side_effect=lambda t: (sent.append(t), (True, ""))[1]):
-            ok, _ = pf.send_telegram(text)
-        self.assertTrue(ok)
-        self.assertEqual(len(sent), len(parts))
-
-    def test_kegagalan_satu_bagian_menghentikan_dan_melaporkan(self):
-        with mock.patch.object(pf, "_send_telegram_once", return_value=(False, "HTTP 500")):
-            self.assertEqual(pf.send_telegram("halo"), (False, "HTTP 500"))
 
 
-class TelegramFormatTest(unittest.TestCase):
-    def test_payload_memakai_parse_mode_html(self):
-        import json as _json
-        captured = {}
+class StateTest(unittest.TestCase):
+    def test_state_tidak_lagi_menyimpan_watchlist_dan_membuang_kunci_lama(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            path.write_text(json.dumps({"watchlist": [{"pool": "x"}], "history": {"x": []},
+                                        "watch_negative": {}, "best_alert": {"next_no": 3,
+                                        "last_no": {"p": 2}}, "alerts": []}), encoding="utf-8")
+            state = pf.load_state(path)
+            self.assertNotIn("watchlist", state)
+            self.assertNotIn("history", state)
+            self.assertEqual(state["best_alert"]["next_no"], 3)
+            pf.save_state(state, path)
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertNotIn("watchlist", saved)
 
-        class _Resp:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                return False
-
-        def fake_open(request, timeout=None):
-            captured["body"] = _json.loads(request.data.decode("utf-8"))
-            return _Resp()
-
-        env = {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "c"}
-        with mock.patch.dict("os.environ", env, clear=True), \
-                mock.patch("urllib.request.urlopen", side_effect=fake_open):
-            ok, _ = pf.send_telegram("<b>halo</b>")
-        self.assertTrue(ok)
-        self.assertEqual(captured["body"]["parse_mode"], "HTML")
-
-    def test_nama_token_dengan_simbol_html_di_escape(self):
-        passing = [pf.evaluate_pool(row(POOL, symbol="A<B>&C"), windows(500.0))]
-        text = pf.best_alert_text(1, passing, {})
-        self.assertIn("A&lt;B&gt;&amp;C", text)
-        self.assertNotIn("A<B>", text)
-
-
-class SendTelegramTest(unittest.TestCase):
-    def test_tanpa_kredensial_tidak_mengirim(self):
-        with mock.patch.dict("os.environ", {}, clear=True):
-            ok, reason = pf.send_telegram("halo")
-        self.assertFalse(ok)
-        self.assertIn("belum dipasang", reason)
+    def test_scan_tidak_menulis_berkas(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pool_flow_state.json"
+            pf.scan_pools(listing=(_meteora_rows(), [], False))
+            self.assertFalse(path.exists())
 
 
 if __name__ == "__main__":
