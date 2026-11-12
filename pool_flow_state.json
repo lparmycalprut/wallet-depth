@@ -1,131 +1,12 @@
 {
   "version": 1,
-  "watchlist": [],
-  "history": {
-    "8N9bUK6zfZFmuGa4dEpeEoj9Cs4VZSxhdMCMtZALHR5z": [
-      {
-        "ts": "2026-11-11T11:23:35Z",
-        "tvl": 187843.05037619243,
-        "net_1h": null,
-        "net_4h": null,
-        "net_12h": null,
-        "net_24h": 411976.845960388
-      },
-      {
-        "ts": "2026-11-11T18:51:08Z",
-        "tvl": 302249.6197491559,
-        "net_1h": 96225.1187981668,
-        "net_4h": 133283.98964617949,
-        "net_12h": 222554.433329124,
-        "net_24h": 617443.8125714362
-      },
-      {
-        "ts": "2026-11-12T01:24:38Z",
-        "tvl": 196788.75782944728,
-        "net_1h": null,
-        "net_4h": null,
-        "net_12h": null,
-        "net_24h": -49266.9755807966
-      }
-    ],
-    "9ViFN1A2FG2aL69Uu3dZwVMbcSdKuuMM5PLouZmguK2e": [
-      {
-        "ts": "2026-11-11T11:23:35Z",
-        "tvl": 264439.2088947912,
-        "net_1h": null,
-        "net_4h": null,
-        "net_12h": null,
-        "net_24h": 789854.7777984068
-      },
-      {
-        "ts": "2026-11-11T18:51:08Z",
-        "tvl": 270157.3657132021,
-        "net_1h": 38502.31142782519,
-        "net_4h": -411.86384104320314,
-        "net_12h": 125833.66776206158,
-        "net_24h": 697455.9030370079
-      },
-      {
-        "ts": "2026-11-12T01:24:38Z",
-        "tvl": 298336.5382080628,
-        "net_1h": null,
-        "net_4h": null,
-        "net_12h": null,
-        "net_24h": -171149.24416631088
-      }
-    ],
-    "5Dc4s9fxxQoPfaMUaxFKB5v1Nh6FPqest7usgyvGXwWw": [
-      {
-        "ts": "2026-11-11T11:23:35Z",
-        "tvl": 97159.18081808714,
-        "net_1h": null,
-        "net_4h": null,
-        "net_12h": null,
-        "net_24h": 316727.1960931085
-      },
-      {
-        "ts": "2026-11-11T18:51:08Z",
-        "tvl": 178045.12313064365,
-        "net_1h": -2951.762260331452,
-        "net_4h": -172333.54763423768,
-        "net_12h": 244564.0893116528,
-        "net_24h": 139604.8140091831
-      },
-      {
-        "ts": "2026-11-12T01:24:38Z",
-        "tvl": 137985.6049638855,
-        "net_1h": null,
-        "net_4h": null,
-        "net_12h": null,
-        "net_24h": 118738.96805410832
-      }
-    ],
-    "EDaiLFduGDWR3VJuCBxGxJZiYnFbz5QAXTRnMVttBSP1": [
-      {
-        "ts": "2026-11-11T18:51:08Z",
-        "tvl": 78327.39442313938,
-        "net_1h": -55701.65508962431,
-        "net_4h": -3956.228488567285,
-        "net_12h": 230275.80555681884,
-        "net_24h": 226074.82109340373
-      },
-      {
-        "ts": "2026-11-12T01:24:38Z",
-        "tvl": 73893.49836227555,
-        "net_1h": null,
-        "net_4h": null,
-        "net_12h": null,
-        "net_24h": 214831.8033724646
-      }
-    ],
-    "5nwdWtMHvrcUPJpoXSYWcPQv9wkoNzhCME5XJ4KmktzJ": [
-      {
-        "ts": "2026-11-12T01:24:38Z",
-        "tvl": 157365.16913034933,
-        "net_1h": null,
-        "net_4h": null,
-        "net_12h": null,
-        "net_24h": 444064.340804304
-      }
-    ],
-    "EgGACLzNtvTWfjWopkMbbcRsUPAaSCcgPjbNqUCcLUCJ": [
-      {
-        "ts": "2026-11-12T01:24:38Z",
-        "tvl": 74259.19849935647,
-        "net_1h": null,
-        "net_4h": null,
-        "net_12h": null,
-        "net_24h": 122578.03267209348
-      }
-    ]
-  },
   "best_alert": {
-    "next_no": 2,
+    "next_no": 3,
     "last_no": {
-      "8N9bUK6zfZFmuGa4dEpeEoj9Cs4VZSxhdMCMtZALHR5z": 1
+      "8N9bUK6zfZFmuGa4dEpeEoj9Cs4VZSxhdMCMtZALHR5z": 1,
+      "HcyYBrZVFDDVBLtLxL5C1HDJND1p86BoNA6m7MjBKE3p": 2
     }
   },
-  "watch_negative": {},
   "alerts": [
     {
       "no": 1,
@@ -133,6 +14,14 @@
       "at": "2026-11-11T18:51:08Z",
       "pools": [
         "8N9bUK6zfZFmuGa4dEpeEoj9Cs4VZSxhdMCMtZALHR5z"
+      ]
+    },
+    {
+      "no": 2,
+      "kind": "best",
+      "at": "2026-11-12T08:45:46Z",
+      "pools": [
+        "HcyYBrZVFDDVBLtLxL5C1HDJND1p86BoNA6m7MjBKE3p"
       ]
     }
   ]
