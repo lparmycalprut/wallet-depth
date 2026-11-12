@@ -18,6 +18,14 @@
         "net_4h": 133283.98964617949,
         "net_12h": 222554.433329124,
         "net_24h": 617443.8125714362
+      },
+      {
+        "ts": "2026-11-12T01:24:38Z",
+        "tvl": 196788.75782944728,
+        "net_1h": null,
+        "net_4h": null,
+        "net_12h": null,
+        "net_24h": -49266.9755807966
       }
     ],
     "9ViFN1A2FG2aL69Uu3dZwVMbcSdKuuMM5PLouZmguK2e": [
@@ -36,6 +44,14 @@
         "net_4h": -411.86384104320314,
         "net_12h": 125833.66776206158,
         "net_24h": 697455.9030370079
+      },
+      {
+        "ts": "2026-11-12T01:24:38Z",
+        "tvl": 298336.5382080628,
+        "net_1h": null,
+        "net_4h": null,
+        "net_12h": null,
+        "net_24h": -171149.24416631088
       }
     ],
     "5Dc4s9fxxQoPfaMUaxFKB5v1Nh6FPqest7usgyvGXwWw": [
@@ -54,6 +70,14 @@
         "net_4h": -172333.54763423768,
         "net_12h": 244564.0893116528,
         "net_24h": 139604.8140091831
+      },
+      {
+        "ts": "2026-11-12T01:24:38Z",
+        "tvl": 137985.6049638855,
+        "net_1h": null,
+        "net_4h": null,
+        "net_12h": null,
+        "net_24h": 118738.96805410832
       }
     ],
     "EDaiLFduGDWR3VJuCBxGxJZiYnFbz5QAXTRnMVttBSP1": [
@@ -64,6 +88,34 @@
         "net_4h": -3956.228488567285,
         "net_12h": 230275.80555681884,
         "net_24h": 226074.82109340373
+      },
+      {
+        "ts": "2026-11-12T01:24:38Z",
+        "tvl": 73893.49836227555,
+        "net_1h": null,
+        "net_4h": null,
+        "net_12h": null,
+        "net_24h": 214831.8033724646
+      }
+    ],
+    "5nwdWtMHvrcUPJpoXSYWcPQv9wkoNzhCME5XJ4KmktzJ": [
+      {
+        "ts": "2026-11-12T01:24:38Z",
+        "tvl": 157365.16913034933,
+        "net_1h": null,
+        "net_4h": null,
+        "net_12h": null,
+        "net_24h": 444064.340804304
+      }
+    ],
+    "EgGACLzNtvTWfjWopkMbbcRsUPAaSCcgPjbNqUCcLUCJ": [
+      {
+        "ts": "2026-11-12T01:24:38Z",
+        "tvl": 74259.19849935647,
+        "net_1h": null,
+        "net_4h": null,
+        "net_12h": null,
+        "net_24h": 122578.03267209348
       }
     ]
   },
