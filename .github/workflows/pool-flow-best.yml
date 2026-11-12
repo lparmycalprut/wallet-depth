@@ -1,6 +1,6 @@
 name: Pool Flow — Best Pool alert
 
-# Alert pool terbaik (net deposit positif, filter Scan Best Pool) tiap 30 menit.
+# Alert pool terbaik (filter Scan Best Pool, timeframe 12H) tiap 30 menit.
 # Cron GitHub bisa terlambat beberapa menit. State di pool_flow_state.json
 # di-commit hanya bila berubah.
 
@@ -38,7 +38,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           set -o pipefail
-          python scripts/pool_flow_alert.py --mode best | tee /tmp/pool_flow.log
+          python scripts/pool_flow_alert.py | tee /tmp/pool_flow.log
 
       - name: Commit state
         if: success()
