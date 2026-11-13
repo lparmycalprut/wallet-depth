@@ -38,7 +38,7 @@ Scan Best Pool (2026-11-11, explicit user request) lives in `pool_flow.py` (logi
 - Rules (all must pass): fee tier ≥ 2 %; `open_positions` ≥ 50; `tvl` ≥ $5,000; `volatility` ≥ 5 %; `fee_active_tvl_ratio` (Fee/Active TVL) ≥ 20 %; in-range = `active_positions / open_positions × 100` ≥ 50 %.
 - Order: in-range % descending, ties broken by Fee/Active TVL descending.
 - Unmeasurable values (missing, or `open_positions` = 0) fail the rule. The in-range % is computed from the raw counts, not from `active_positions_pct`.
-- The scan writes nothing. Only the Telegram best alert (`scripts/pool_flow_alert.py`, every 30 min, `pool-flow-best.yml`) writes `pool_flow_state.json`, and that file keeps only alert numbering (`best_alert`) and `alerts`.
+- The scan writes nothing. Only the Telegram best alert (`scripts/pool_flow_alert.py`, every 4 hours, `pool-flow-best.yml`) writes `pool_flow_state.json`, and that file keeps only alert numbering (`best_alert`) and `alerts`.
 - The watchlist, net-deposit history, watch alert, and the Cek LP Keluar page/tool were removed on 2026-11-11. Do not reintroduce them without a new user request.
 - Earlier Best Pool rules (Fee-IL, F/V, IL windows, GMGN/RugCheck enrichment) and the modules behind them were removed; the old modules are gone from the repo.
 

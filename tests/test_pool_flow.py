@@ -309,6 +309,91 @@ class AlertTest(unittest.TestCase):
         self.assertEqual("\n".join(parts), text)
 
 
+class TelegramCopyTest(unittest.TestCase):
+    """Tombol 📋 CA (copy_text) pada alert Telegram dan jadwal 4 jam."""
+
+    def _passing(self):
+        return pf.scan_pools(listing=(meteora_rows(), [], False))["passing"]
+
+    def test_satu_tombol_copy_per_pool_dengan_ca_lengkap(self):
+        passing = self._passing()
+        markup = pf.alert_copy_markup(passing)
+        rows = markup["inline_keyboard"]
+        self.assertEqual(len(rows), len(passing))
+        for row, pool in zip(rows, passing):
+            (button,) = row
+            self.assertEqual(button["copy_text"], {"text": pool["mint"]})
+            self.assertIn(pool["symbol"], button["text"])
+            self.assertLessEqual(len(button["copy_text"]["text"]), 256)
+
+    def test_tanpa_pool_atau_tanpa_ca_tidak_ada_tombol(self):
+        self.assertIsNone(pf.alert_copy_markup([]))
+        self.assertIsNone(pf.alert_copy_markup([{"mint": "", "symbol": "X"}]))
+
+    def _capture(self):
+        sent = []
+
+        class Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_urlopen(request, timeout=None):
+            sent.append(json.loads(request.data.decode("utf-8")))
+            return Resp()
+
+        return mock.patch.object(pf.urllib.request, "urlopen", side_effect=fake_urlopen), sent
+
+    def test_payload_menyertakan_reply_markup(self):
+        patcher, sent = self._capture()
+        markup = pf.alert_copy_markup(self._passing())
+        with patcher, mock.patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "t",
+                                                     "TELEGRAM_CHAT_ID": "1"}):
+            ok, error = pf.send_telegram("pendek", reply_markup=markup)
+        self.assertTrue(ok, error)
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0]["reply_markup"], markup)
+        self.assertEqual(sent[0]["parse_mode"], "HTML")
+
+    def test_pesan_terpecah_hanya_bagian_terakhir_punya_tombol(self):
+        patcher, sent = self._capture()
+        markup = pf.alert_copy_markup(self._passing())
+        text = "\n".join("baris " + "x" * 90 for _ in range(200))
+        with patcher, mock.patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "t",
+                                                     "TELEGRAM_CHAT_ID": "1"}):
+            ok, _ = pf.send_telegram(text, reply_markup=markup)
+        self.assertTrue(ok)
+        self.assertGreater(len(sent), 1)
+        self.assertTrue(all("reply_markup" not in body for body in sent[:-1]))
+        self.assertEqual(sent[-1]["reply_markup"], markup)
+
+    def test_tanpa_markup_payload_tidak_berisi_reply_markup(self):
+        patcher, sent = self._capture()
+        with patcher, mock.patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "t",
+                                                     "TELEGRAM_CHAT_ID": "1"}):
+            pf.send_telegram("pendek")
+        self.assertNotIn("reply_markup", sent[0])
+
+    def test_run_best_mengembalikan_teks_dan_tombol(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "pool_flow_alert", ROOT / "scripts" / "pool_flow_alert.py")
+        alert = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(alert)
+        state = pf.empty_state()
+        messages = alert.run_best(state, scan=lambda: pf.scan_pools(
+            listing=(meteora_rows(), [], False)))
+        self.assertEqual(len(messages), 1)
+        text, markup = messages[0]
+        self.assertIn("BEST POOL", text)
+        self.assertEqual(len(markup["inline_keyboard"]), len(self._passing()))
+        self.assertEqual(alert.run_best(pf.empty_state(), scan=lambda: {
+            "passing": [], "listing_rows": 0, "candidates": 0,
+            "listing_errors": 0, "truncated": False}), [])
+
+
 class StateTest(unittest.TestCase):
     def test_state_tidak_lagi_menyimpan_watchlist_dan_membuang_kunci_lama(self):
         with tempfile.TemporaryDirectory() as tmp:
