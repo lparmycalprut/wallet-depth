@@ -16,7 +16,7 @@ from tests.test_pool_flow import meteora_rows  # noqa: E402
 
 CHOO = "9JZrcAScnGQp7DSV4kBWfmGH2ao31sz5JbJ8cnpZ9uwv"
 DACITY_5DC = "5Dc4s9fxxQoPfaMUaxFKB5v1Nh6FPqest7usgyvGXwWw"
-GATO = "DnmL7vYnNTACb8e6a4EpbeeeNDW8hwp1EvQZ4BWKCgjK"
+LMAO = "EWBCL4hKY6VdzZVcCY7pMPvRhG78koHY6nQnt8EW99Br"
 
 
 class AppMainTest(unittest.TestCase):
@@ -61,7 +61,8 @@ class AppMainTest(unittest.TestCase):
         body = self._body(at)
         self.assertIn(CHOO, body)
         self.assertIn(DACITY_5DC, body)
-        self.assertNotIn(GATO, body)
+        self.assertIn("DnmL7vYnNTACb8e6a4EpbeeeNDW8hwp1EvQZ4BWKCgjK", body)  # GATO 2,48x lolos
+        self.assertNotIn(LMAO, body)
         self.assertIn("Timeframe 24H", " ".join(str(c.value) for c in at.caption))
 
     def test_hasil_scan_berupa_tabel_html_dengan_scroll_horizontal(self):

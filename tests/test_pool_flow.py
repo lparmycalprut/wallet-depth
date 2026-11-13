@@ -2,7 +2,7 @@
 """Tes logika Scan Best Pool (24H, volatility vs fee/active TVL) — tanpa jaringan.
 
 ``METEORA_24H`` berisi 14 pool dari respons Meteora timeframe=24h yang dikirim
-user (2026-11-13): enam yang lolos dan delapan yang gagal karena satu aturan.
+user (2026-11-13). Batas volatility 5%, rasio minimal 2x (permintaan user 2026-11-13): sembilan lolos, lima gagal.
 Hasil yang diharapkan dihitung manual dari aturan.
 """
 import json
@@ -51,8 +51,8 @@ METEORA_24H = [
     # gagal:
     ("DnmL7vYnNTACb8e6a4EpbeeeNDW8hwp1EvQZ4BWKCgjK", "GATO", 3.0, 135395.37, 133647.02, 11769, 4969076.57, 1.819463479422516, 4.508445441715985, 183, 158),  # 2,48x
     ("EWBCL4hKY6VdzZVcCY7pMPvRhG78koHY6nQnt8EW99Br", "LMAO!", 2.0, 134591.59, 131647.48, 15791, 1039609.05, 2.942714221664328, 3.6073866134371526, 78, 66),  # 1,23x
-    ("5WVURqJSLRFNZDVDF2njtjZihRLeALvt5tss3yjt2Vik", "paws", 2.0, 47308.20, 46647.47, 2789, 895713.73, 3.346236475355708, 11.025536070549084, 155, 84),  # vol > 3
-    ("FSb7qz3cMGjYacrLfoKumozoqFibiAtzjDq97FxHivYP", "DacityCoin", 5.0, 13452.87, 12153.33, 12435, 4772220.09, 3.0831077573643584, 8.639426602320858, 37, 32),  # vol > 3
+    ("5WVURqJSLRFNZDVDF2njtjZihRLeALvt5tss3yjt2Vik", "paws", 2.0, 47308.20, 46647.47, 2789, 895713.73, 3.346236475355708, 11.025536070549084, 155, 84),  # 3,29x, vol 3,35% (lolos di batas 5%)
+    ("FSb7qz3cMGjYacrLfoKumozoqFibiAtzjDq97FxHivYP", "DacityCoin", 5.0, 13452.87, 12153.33, 12435, 4772220.09, 3.0831077573643584, 8.639426602320858, 37, 32),  # 2,80x (gagal)
     ("2wqaQVQ54bayWCjfsV391BQHA13qiVgjagSRtQPFJ6wu", "PUMPCADE", 2.0, 13964.92, 13611.18, 5189, 16268607.69, 4.6566128730773926e-08, 0.41077066347875446, 18, 18),  # vol ≈ 0
     ("3Keu4gPtDUnkoLpas8HauhPZgpiiADPNtJAB4UDQWbpi", "MET", 5.0, 18357.78, 11461.53, 43957, 163835898.74, 1.6463612699567982e-08, 0.0970318184860885, 45, 2),  # vol ≈ 0
     ("8tp8GJADuYu2czhnaWzXYxpXTq2dwjribGwSav4J4m7e", "xHYPE", 2.0, 104436.62, 100742.69, 6642, 616063.37, 1.0094755398497184, 0.4270554720456035, 106, 39),  # 0,42x
@@ -73,6 +73,9 @@ PASSING_ORDER = [  # rasio terbesar dulu
     "5Dc4s9fxxQoPfaMUaxFKB5v1Nh6FPqest7usgyvGXwWw",  # DacityCoin 3,78x
     "9ViFN1A2FG2aL69Uu3dZwVMbcSdKuuMM5PLouZmguK2e",  # mihao 3,71x
     "BADiqzWTYyZPbcqKgNtgy6KB5ZhmPrgq9qguPnpjXHf8",  # Rocco 3,38x
+    "5WVURqJSLRFNZDVDF2njtjZihRLeALvt5tss3yjt2Vik",  # paws 3,29x
+    "FSb7qz3cMGjYacrLfoKumozoqFibiAtzjDq97FxHivYP",  # DacityCoin FSb7 2,80x
+    "DnmL7vYnNTACb8e6a4EpbeeeNDW8hwp1EvQZ4BWKCgjK",  # GATO 2,48x
 ]
 
 
@@ -89,8 +92,8 @@ class RuleTest(unittest.TestCase):
             ("active TVL", dict(active_tvl=2_000.0), True), ("active TVL", dict(active_tvl=1_999.0), False),
             ("holders", dict(holders=1_500), True), ("holders", dict(holders=1_499), False),
             ("market cap", dict(mcap=100_000.0), True), ("market cap", dict(mcap=99_999.0), False),
-            ("volatilitas", dict(vol=3.0), True), ("volatilitas", dict(vol=3.01), False),
-            ("rasio", dict(fa=9.0, vol=3.0), True), ("rasio", dict(fa=8.99, vol=3.0), False),
+            ("volatilitas", dict(vol=5.0, fa=20.0), True), ("volatilitas", dict(vol=5.01, fa=20.0), False),
+            ("rasio", dict(fa=10.0, vol=5.0), True), ("rasio", dict(fa=9.99, vol=5.0), False),
         ]
         for label, over, expected in cases:
             with self.subTest(rule=label, over=over):
@@ -110,9 +113,9 @@ class RuleTest(unittest.TestCase):
         self.assertIn("fee/active TVL tidak terukur", result["reasons"])
 
     def test_alasan_gagal_menyebut_semua_aturan_yang_dilanggar(self):
-        result = pf.evaluate_pool(_good(fee=1.0, tvl=100.0, vol=5.0, fa=1.0))
+        result = pf.evaluate_pool(_good(fee=1.0, tvl=100.0, vol=6.0, fa=1.0))
         self.assertEqual(len(result["reasons"]), 4)
-        self.assertTrue(any("volatility > 3" in r for r in result["reasons"]))
+        self.assertTrue(any("volatility > 5" in r for r in result["reasons"]))
         self.assertTrue(any("÷ volatility" in r for r in result["reasons"]))
 
     def test_in_range_tetap_dihitung_untuk_tampilan(self):
@@ -120,7 +123,7 @@ class RuleTest(unittest.TestCase):
 
 
 class RealResponseTest(unittest.TestCase):
-    def test_enam_pool_lolos_urut_rasio_dari_respons_meteora(self):
+    def test_sembilan_pool_lolos_urut_rasio_dari_respons_meteora(self):
         result = pf.scan_pools(listing=(meteora_rows(), [], False))
         self.assertEqual(result["candidates"], 14)
         self.assertEqual([r["pool"] for r in result["passing"]], PASSING_ORDER)
@@ -131,10 +134,10 @@ class RealResponseTest(unittest.TestCase):
 
     def test_alasan_gagal_sesuai_hitung_manual(self):
         results = {r["pool"]: r for r in pf.scan_pools(listing=(meteora_rows(), [], False))["results"]}
-        gato = results["DnmL7vYnNTACb8e6a4EpbeeeNDW8hwp1EvQZ4BWKCgjK"]
-        self.assertTrue(any("÷ volatility" in r for r in gato["reasons"]))  # 2,48x
+        lmao = results["EWBCL4hKY6VdzZVcCY7pMPvRhG78koHY6nQnt8EW99Br"]
+        self.assertTrue(any("÷ volatility" in r for r in lmao["reasons"]))  # 1,23x
         paws = results["5WVURqJSLRFNZDVDF2njtjZihRLeALvt5tss3yjt2Vik"]
-        self.assertTrue(any("volatility > 3" in r for r in paws["reasons"]))
+        self.assertTrue(paws["passes"])  # vol 3,35% ≤ 5%, rasio 3,29x
         pump = results["2wqaQVQ54bayWCjfsV391BQHA13qiVgjagSRtQPFJ6wu"]
         self.assertTrue(any("≈ 0" in r for r in pump["reasons"]))
         omfg = results["BiNnErm2VDkbKGiABj9ZRUjybz879NhH2heeWE7m5M6d"]
