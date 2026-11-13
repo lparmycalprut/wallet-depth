@@ -12,11 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import pool_flow as pf  # noqa: E402
-from tests.test_pool_flow import _meteora_rows  # noqa: E402
+from tests.test_pool_flow import meteora_rows  # noqa: E402
 
-PUSSY = "HcyYBrZVFDDVBLtLxL5C1HDJND1p86BoNA6m7MjBKE3p"
-DACITY = "BxyKfpuCn3qVi9gCYHKPYqo8L5mz9MiyAuZfQ7YGHchi"
-STANK = "91iHWaWXneUyoNDJhSno7ezxQg1VW5P6PdarNGyFfPCz"
+CHOO = "9JZrcAScnGQp7DSV4kBWfmGH2ao31sz5JbJ8cnpZ9uwv"
+DACITY_5DC = "5Dc4s9fxxQoPfaMUaxFKB5v1Nh6FPqest7usgyvGXwWw"
+GATO = "DnmL7vYnNTACb8e6a4EpbeeeNDW8hwp1EvQZ4BWKCgjK"
 
 
 class AppMainTest(unittest.TestCase):
@@ -27,7 +27,7 @@ class AppMainTest(unittest.TestCase):
         self._patches = [
             mock.patch.object(pf, "STATE_PATH", self.state_path),
             mock.patch.object(pf, "fetch_listing",
-                              side_effect=lambda *a, **k: (_meteora_rows(), [], False)),
+                              side_effect=lambda *a, **k: (meteora_rows(), [], False)),
         ]
         for p in self._patches:
             p.start()
@@ -54,15 +54,15 @@ class AppMainTest(unittest.TestCase):
         self.assertNotIn("Cek LP Keluar", body)
         self.assertNotIn("Tambah watchlist manual", body)
 
-    def test_scan_menampilkan_dua_pool_lolos_saja(self):
+    def test_scan_menampilkan_pool_lolos_saja(self):
         at = self._app()
         next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
         self.assertFalse(at.exception)
         body = self._body(at)
-        self.assertIn(DACITY, body)
-        self.assertIn(PUSSY, body)
-        self.assertNotIn(STANK, body)
-        self.assertIn("Timeframe 12H", " ".join(str(c.value) for c in at.caption))
+        self.assertIn(CHOO, body)
+        self.assertIn(DACITY_5DC, body)
+        self.assertNotIn(GATO, body)
+        self.assertIn("Timeframe 24H", " ".join(str(c.value) for c in at.caption))
 
     def test_hasil_scan_berupa_tabel_html_dengan_scroll_horizontal(self):
         at = self._app()
@@ -71,14 +71,16 @@ class AppMainTest(unittest.TestCase):
         self.assertIn("overflow-x:auto", body)
         self.assertIn("<table", body)
         self.assertIn("min-width:820px", body)
-        for header in ("In-range", "Volatility", "Fee/active TVL"):
+        for header in ("Volatility", "Fee/active TVL", "Rasio (×)"):
             self.assertIn(header, body)
+        for header in ("Open pos.", "In-range"):
+            self.assertNotIn(header, body)
         self.assertIn("Geser tabel ke kanan", " ".join(str(c.value) for c in at.caption))
 
     def test_peringatan_listing_terpotong_muncul_hanya_bila_terpotong(self):
         at = self._app()
         with mock.patch.object(pf, "fetch_listing",
-                               side_effect=lambda *a, **k: (_meteora_rows(), [], True)):
+                               side_effect=lambda *a, **k: (meteora_rows(), [], True)):
             next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
         self.assertTrue(any("Listing belum lengkap" in str(w.value) for w in at.warning))
 
@@ -119,6 +121,16 @@ class WorkflowAndPagesTest(unittest.TestCase):
         self.assertFalse((ROOT / "lp_exit_ui.py").exists())
         self.assertFalse((ROOT / "tools" / "lp_exit_check").exists())
         self.assertFalse(any("Cek_LP_Keluar" in p.name for p in (ROOT / "pages_archived").iterdir()))
+
+
+class ResultTableTest(unittest.TestCase):
+    def test_tabel_memuat_kolom_rasio_per_pool(self):
+        import pool_flow_ui as ui
+        passing = pf.scan_pools(listing=(meteora_rows(), [], False))["passing"]
+        html = ui._result_table_html(passing[:2])
+        self.assertIn("Rasio (×)", html)
+        self.assertIn(">5,19x</td>", html)
+        self.assertIn(">4,78x</td>", html)
 
 
 if __name__ == "__main__":

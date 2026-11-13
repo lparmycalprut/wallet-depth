@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""UI main app: 🏆 SCAN BEST POOL (timeframe 12H).
+"""UI main app: 🏆 SCAN BEST POOL (timeframe 24H).
 
 Logika ada di ``pool_flow.py``; modul ini hanya menampilkan hasil scan.
 Scan tidak menulis berkas apa pun.
@@ -18,16 +18,17 @@ from links import external_links_html, pool_links_html
 RESULT_KEY = "pool_flow_result"
 BUTTON_LABEL = "SCAN BEST POOL"
 
-TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier", "Open pos.",
-                 "In-range", "Volatility", "Fee/active TVL"]
+TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier",
+                 "Volatility", "Fee/active TVL", "Rasio (×)"]
 
 
 def _filter_caption() -> str:
-    return (f"Timeframe 12H · fee tier ≥ {pf.FLOW_FEE_TIER_MIN:g}% · open positions ≥ "
-            f"{pf.FLOW_OPEN_POSITIONS_MIN} · TVL ≥ {pf.fmt_usd(pf.FLOW_TVL_MIN)} · "
-            f"volatility ≥ {pf.FLOW_VOLATILITY_MIN:g}% · fee/active TVL ≥ "
-            f"{pf.FLOW_FEE_ACTIVE_TVL_MIN:g}% · in-range ≥ {pf.FLOW_IN_RANGE_MIN:g}% "
-            "dari open positions · urut in-range terbesar.")
+    return (f"Timeframe 24H · fee tier ≥ {pf.FLOW_FEE_TIER_MIN:g}% · TVL ≥ "
+            f"{pf.fmt_usd(pf.FLOW_TVL_MIN)} · active TVL ≥ "
+            f"{pf.fmt_usd(pf.FLOW_ACTIVE_TVL_MIN)} · holders ≥ {pf.FLOW_HOLDERS_MIN:,} · "
+            f"market cap ≥ {pf.fmt_usd(pf.FLOW_MARKET_CAP_MIN)} · volatility ≤ "
+            f"{pf.FLOW_VOLATILITY_MAX:g}% · (fee/active TVL ÷ volatility) ≥ "
+            f"{pf.FLOW_MULTIPLE_MIN:g}x · urut rasio terbesar.")
 
 
 def _render_scan_result(result: dict) -> None:
@@ -63,10 +64,9 @@ def _result_table_html(passing: list) -> str:
             _cell_token_html(row),
             _html.escape(pf.fmt_usd(row["tvl"])),
             _html.escape(f"{row['fee_tier']:g}%"),
-            _html.escape(f"{row['open_positions']:g}"),
-            _html.escape(pf.fmt_pct(row["in_range"])),
             _html.escape(pf.fmt_pct(row["volatility"])),
             _html.escape(pf.fmt_pct(row["fee_active_tvl"])),
+            _html.escape(pf.fmt_mult(row["multiple"])),
         ]
         tds = "".join(
             f"<td style='padding:6px 8px;vertical-align:top;border-bottom:1px solid "
@@ -107,7 +107,7 @@ def render_pool_flow_page() -> None:
         st.caption(_filter_caption())
         if st.button(BUTTON_LABEL, type="primary", key="pool_flow_scan",
                      use_container_width=True):
-            with st.spinner("Memindai listing Meteora (12H)…"):
+            with st.spinner("Memindai listing Meteora (24H)…"):
                 result = pf.scan_pools()
             st.session_state[RESULT_KEY] = result
         result = st.session_state.get(RESULT_KEY)
