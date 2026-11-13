@@ -1,16 +1,14 @@
 # -*- coding: utf-8 -*-
 """🏆 Scan Best Pool Meteora — logika inti, tanpa Streamlit.
 
-Request 24H (user, 2026-11-13) + filter volatility vs fee/active TVL:
-- Listing Meteora pool-discovery, timeframe 24h, kategori top, dengan filter
-  dari request user (market cap, holders, TVL, fee tier, active TVL, dlmm).
-- Volatility ≤ 5 %.
-- Fee/Active TVL ≥ 5 %  → tampil (permintaan user 2026-11-13).
-- Rasio = Fee/Active TVL ÷ Volatility ≥ 2×  → tampil.
-- Urutan: rasio terbesar dulu (seri: Fee/Active TVL terbesar).
-
-Volatility di bawah FLOW_VOLATILITY_EPS dianggap tidak terukur (≈ 0), supaya
-rasio tidak meledak. Alert pool terbaik (tiap 4 jam) memakai hasil yang sama.
+Permintaan user (2026-11-13):
+- Listing Meteora pool-discovery, timeframe 12h, kategori top, dengan filter
+  server-side yang diminta user (dlmm, market cap, holders, TVL, active TVL,
+  tanpa konsentrasi/kepemilikan tunggal tinggi). Tidak ada filter lokal lagi.
+- Urutan: avg volume per menit (``avg_volume``) terbesar dulu.
+- Dibagi dua tabel: HIGH RISK (volatility ≥ 5 %) dan LOW RISK (volatility < 5 %).
+  Tiap tabel tetap diurutkan dari avg volume per menit.
+- Alert Telegram (tiap 4 jam) memakai pool teratas dari urutan yang sama.
 """
 from __future__ import annotations
 
@@ -30,20 +28,14 @@ POOLS_URL = "https://pool-discovery-api.datapi.meteora.ag/pools"
 HTTP_TIMEOUT = 25
 USER_AGENT = "Mozilla/5.0 (wallet-depth-pool-flow)"
 
-FLOW_TIMEFRAME = "24h"
-FLOW_TOKEN_TIMEFRAME = "4h"       # pool per token (permintaan user 2026-11-13)
-FLOW_FEE_TIER_MIN = 2.0          # % (fee_pct)
+FLOW_TIMEFRAME = "12h"
+FLOW_TOKEN_TIMEFRAME = "12h"     # pool per token (permintaan user 2026-11-13: 12H)
 FLOW_TVL_MIN = 10_000.0          # USD (tvl)
-FLOW_ACTIVE_TVL_MIN = 2_000.0    # USD (active_tvl)
+FLOW_ACTIVE_TVL_MIN = 10_000.0   # USD (active_tvl)
 FLOW_HOLDERS_MIN = 1_500         # base_token_holders
 FLOW_MARKET_CAP_MIN = 100_000.0  # USD (market cap token base)
-FLOW_VOLATILITY_MAX = 5.0        # % (volatility)
-FLOW_VOLATILITY_EPS = 0.01       # % — di bawah ini dianggap tidak terukur (≈ 0)
-FLOW_FEE_ACTIVE_TVL_MIN = 5.0   # % — fee/active TVL minimal untuk tampil (permintaan user 2026-11-13)
-FLOW_MULTIPLE_MIN = 2.0          # (Fee/Active TVL %) ÷ volatility % (permintaan user 2026-11-13)
-
-# Pra-saring di sisi server (request user 24H). Semua aturan tetap dicek ulang
-# di ``evaluate_pool``, jadi pra-saring hanya memangkas listing.
+FLOW_RISK_VOLATILITY = 5.0       # % — volatility ≥ ini = HIGH RISK, di bawahnya LOW RISK
+# Pra-saring di sisi server (request user 12H). Tidak ada filter lokal lain.
 FLOW_SERVER_FILTER = (
     "base_token_has_high_supply_concentration=false"
     "&&base_token_has_high_single_ownership=false"
@@ -51,7 +43,6 @@ FLOW_SERVER_FILTER = (
     f"&&base_token_market_cap>={FLOW_MARKET_CAP_MIN:g}"
     f"&&base_token_holders>={FLOW_HOLDERS_MIN}"
     f"&&tvl>={FLOW_TVL_MIN:g}"
-    f"&&fee_pct>={FLOW_FEE_TIER_MIN:g}"
     f"&&active_tvl>={FLOW_ACTIVE_TVL_MIN:g}"
 )
 FLOW_MAX_PAGES = 100             # batas keamanan: 100 × 50 = 5.000 pool (cursor after_key)
@@ -131,7 +122,7 @@ def _get_payload(params: dict, *, timeout: int = HTTP_TIMEOUT) -> dict:
 
 
 def fetch_top_page(after_key: str | None = None) -> tuple[list, str | None, bool]:
-    """Satu halaman listing kategori ``top`` pada timeframe 24H.
+    """Satu halaman listing kategori ``top`` pada timeframe 12H.
 
     Meteora memakai cursor: halaman berikutnya diminta dengan ``after_key`` dari
     respons sebelumnya (parameter ``page`` diabaikan API dan selalu memberi
@@ -174,7 +165,7 @@ def fetch_listing(max_pages: int = FLOW_MAX_PAGES) -> tuple[list, list, bool]:
 
 
 def fetch_token_pools(mint: str, max_pages: int = FLOW_TOKEN_MAX_PAGES) -> tuple[list, list, bool]:
-    """Semua pool (semua tipe) yang memuat token ``mint`` pada timeframe 4H.
+    """Semua pool (semua tipe) yang memuat token ``mint`` pada timeframe 12H.
 
     Memakai ``query=<mint>`` dan cursor ``after_key`` seperti listing. Kembalikan
     (rows, errors, truncated), sama seperti ``fetch_listing``.
@@ -223,15 +214,6 @@ def token_info(row: dict, mint: str) -> tuple[str, str]:
     return str(other.get("symbol") or "?"), str(other.get("name") or "")
 
 
-def in_range_pct(row: dict):
-    """Persen posisi aktif (in-range) dari open positions; ``None`` bila tidak terukur."""
-    open_positions = _num(row.get("open_positions"))
-    active_positions = _num(row.get("active_positions"))
-    if open_positions is None or active_positions is None or open_positions <= 0:
-        return None
-    return active_positions / open_positions * 100.0
-
-
 # ---------------------------------------------------------------------------
 # Filter (murni)
 # ---------------------------------------------------------------------------
@@ -241,74 +223,39 @@ def base_market_cap(row: dict):
     return _num((row.get("token_x") or {}).get("market_cap"))
 
 
-def volatility_multiple(fee_active_tvl, volatility):
-    """(Fee/Active TVL %) ÷ volatility %. ``None`` bila volatility tidak terukur."""
-    if fee_active_tvl is None or volatility is None or volatility < FLOW_VOLATILITY_EPS:
-        return None
-    return fee_active_tvl / volatility
+def risk_group(volatility) -> str:
+    """HIGH RISK bila volatility ≥ FLOW_RISK_VOLATILITY %, selain itu LOW RISK.
+
+    Volatility yang tidak terukur (hilang atau 0) masuk LOW RISK.
+    """
+    if volatility is not None and volatility >= FLOW_RISK_VOLATILITY:
+        return "high"
+    return "low"
 
 
 def evaluate_pool(row: dict) -> dict:
-    """Terapkan semua aturan filter pada satu baris pool. Kembalikan hasil lengkap."""
+    """Ambil field tampilan satu baris pool. Filter sudah dilakukan server-side."""
     pool = str(row.get("pool_address") or "")
     mint = mint_of_pool(row)
     symbol, name = token_info(row, mint)
-    fee_tier = _num(row.get("fee_pct"))
-    tvl = _num(row.get("tvl"))
-    active_tvl = _num(row.get("active_tvl"))
-    holders = _num(row.get("base_token_holders"))
-    market_cap = base_market_cap(row)
     volatility = _num(row.get("volatility"))
-    fee_active_tvl = _num(row.get("fee_active_tvl_ratio"))
-    multiple = volatility_multiple(fee_active_tvl, volatility)
-
-    reasons: list[str] = []
-    if fee_tier is None or fee_tier < FLOW_FEE_TIER_MIN:
-        reasons.append(f"fee tier < {FLOW_FEE_TIER_MIN:g}%")
-    if tvl is None or tvl < FLOW_TVL_MIN:
-        reasons.append(f"TVL < {fmt_usd(FLOW_TVL_MIN)}")
-    if active_tvl is None or active_tvl < FLOW_ACTIVE_TVL_MIN:
-        reasons.append(f"active TVL < {fmt_usd(FLOW_ACTIVE_TVL_MIN)}")
-    if holders is None or holders < FLOW_HOLDERS_MIN:
-        reasons.append(f"holders < {FLOW_HOLDERS_MIN:,}".replace(",", "."))
-    if market_cap is None or market_cap < FLOW_MARKET_CAP_MIN:
-        reasons.append(f"market cap < {fmt_usd(FLOW_MARKET_CAP_MIN)}")
-    if volatility is None:
-        reasons.append("volatility tidak terukur")
-    elif volatility < FLOW_VOLATILITY_EPS:
-        reasons.append("volatility ≈ 0 (tidak terukur)")
-    elif volatility > FLOW_VOLATILITY_MAX:
-        reasons.append(f"volatility > {FLOW_VOLATILITY_MAX:g}%")
-    if fee_active_tvl is None:
-        reasons.append("fee/active TVL tidak terukur")
-    elif fee_active_tvl < FLOW_FEE_ACTIVE_TVL_MIN:
-        reasons.append(f"fee/active TVL < {FLOW_FEE_ACTIVE_TVL_MIN:g}%")
-    if multiple is None:
-        if volatility is None or volatility < FLOW_VOLATILITY_EPS or fee_active_tvl is None:
-            pass  # sudah dicatat di atas
-        else:
-            reasons.append("fee/active TVL tidak terukur")
-    elif multiple < FLOW_MULTIPLE_MIN:
-        reasons.append(f"fee/active ÷ volatility < {FLOW_MULTIPLE_MIN:g}x")
-
     return {
         "pool": pool,
         "mint": mint,
         "symbol": symbol,
         "name": name,
         "pool_name": str(row.get("name") or ""),
-        "fee_tier": fee_tier,
-        "tvl": tvl,
-        "active_tvl": active_tvl,
-        "holders": holders,
-        "market_cap": market_cap,
-        "open_positions": _num(row.get("open_positions")),
-        "in_range": in_range_pct(row),
+        "fee_tier": _num(row.get("fee_pct")),
+        "tvl": _num(row.get("tvl")),
+        "active_tvl": _num(row.get("active_tvl")),
+        "holders": _num(row.get("base_token_holders")),
+        "market_cap": base_market_cap(row),
         "volatility": volatility,
-        "fee_active_tvl": fee_active_tvl,
-        "multiple": multiple,
-        "passes": not reasons,
-        "reasons": reasons,
+        "risk": risk_group(volatility),
+        "fee_active_tvl": _num(row.get("fee_active_tvl_ratio")),
+        "avg_volume": _num(row.get("avg_volume")),
+        "passes": True,
+        "reasons": [],
         "activity": pool_activity(row),
     }
 
@@ -319,7 +266,7 @@ def evaluate_pool(row: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def pool_activity(row: dict) -> dict:
-    """Ringkasan aktivitas satu pool (timeframe token, 4H) dari baris Meteora."""
+    """Ringkasan aktivitas satu pool (timeframe 12H) dari baris Meteora."""
     volume = _num(row.get("volume"))
     swaps = _num(row.get("swap_count"))
     avg_swap = volume / swaps if (volume is not None and swaps and swaps > 0) else None
@@ -412,61 +359,56 @@ def enrich_scan_result(result: dict, fetch=None) -> dict:
     return result
 
 
-def pool_item_4h(stats: dict | None, pool: str):
-    """Baris pool (timeframe 4H) dari ``token_stats``; ``None`` bila tidak ada atau hasil fallback 24H."""
+def pool_item_12h(stats: dict | None, pool: str):
+    """Baris pool (timeframe 12H) dari ``token_stats``; ``None`` bila tidak ada atau hasil fallback."""
     if not stats or stats.get("fallback"):
         return None
     return next((item for item in stats["pools"] if item["pool"] == pool), None)
 
 
-def busy_sort(passing: list, token_stats: dict | None) -> list:
-    """Urutan tampilan tabel: pool paling ramai (volume 4H pool) paling atas.
+def sort_key(result: dict):
+    """Urutan tampilan dan alert: avg volume per menit terbesar dulu; seri: volume 12H."""
+    return (-(result["avg_volume"] or 0.0), -(result["activity"]["volume"] or 0.0))
 
-    Seri: rasio, lalu Fee/Active TVL. Pool tanpa data 4H diletakkan di bawah.
-    Alert Telegram tidak memakai urutan ini.
-    """
-    def key(row: dict):
-        item = pool_item_4h((token_stats or {}).get(row.get("mint") or ""), row["pool"])
-        volume = item["volume"] if item and item["volume"] is not None else None
-        return (0 if volume is not None else 1,
-                -(volume or 0.0),
-                -(row["multiple"] or 0.0),
-                -(row["fee_active_tvl"] or 0.0))
 
-    return sorted(passing, key=key)
+def ranked(passing: list) -> list:
+    """Pool diurutkan dari avg volume per menit terbesar (sama untuk tabel dan alert)."""
+    return sorted(passing, key=sort_key)
+
+
+def split_by_risk(passing: list) -> tuple[list, list]:
+    """(HIGH RISK, LOW RISK), masing-masing sudah diurutkan dari avg volume per menit."""
+    ordered = ranked(passing)
+    return ([r for r in ordered if r["risk"] == "high"],
+            [r for r in ordered if r["risk"] == "low"])
 
 
 def most_crowded(result: dict):
-    """Pool paling ramai di hasil scan (baris teratas tabel) beserta total token-nya."""
-    stats = result.get("token_stats") or {}
-    ordered = busy_sort(result.get("passing") or [], stats)
+    """Pool paling ramai = avg volume per menit terbesar di seluruh hasil scan.
+
+    Hanya memakai data listing (tanpa fetch per token), jadi alert tetap ringan.
+    """
+    ordered = ranked(result.get("passing") or [])
     if not ordered:
         return None
     top = ordered[0]
-    item = pool_item_4h(stats.get(top.get("mint") or ""), top["pool"])
-    if item is None or item["volume"] is None:
-        return None
-    token = stats[top["mint"]]
+    activity = top["activity"]
     return {
         "mint": top["mint"],
         "symbol": top["symbol"],
         "pool": top["pool"],
-        "pool_name": item["name"],
-        "pool_volume": item["volume"],
-        "pool_swaps": item["swaps"],
-        "pool_avg_swap": item["avg_swap"],
-        "total": token["total"],
-        "partial": token["partial"],
+        "pool_name": top["pool_name"],
+        "avg_volume": top["avg_volume"],
+        "pool_volume": activity["volume"],
+        "pool_swaps": activity["swaps"],
+        "pool_avg_swap": activity["avg_swap"],
+        "risk": top["risk"],
+        "row": top,
     }
 
 
-def sort_key(result: dict):
-    """Rasio (Fee/Active TVL ÷ volatility) terbesar dulu; seri: Fee/Active TVL terbesar."""
-    return (-(result["multiple"] or 0.0), -(result["fee_active_tvl"] or 0.0))
-
-
 def scan_pools(max_pages: int = FLOW_MAX_PAGES, *, listing: tuple | None = None) -> dict:
-    """Scan lengkap: listing 24H → filter → urutan.
+    """Scan lengkap: listing 12H (filter server-side) → urutan.
 
     ``listing`` = (rows, errors, truncated) bisa diisi untuk tes tanpa jaringan.
     """
@@ -555,58 +497,43 @@ def alert_link_lines(mint: str, pool: str) -> list[str]:
     return lines
 
 
-MEDALS = ("🥇", "🥈", "🥉")
+def _pct_or_dash(value) -> str:
+    return f"{value:g}%" if value is not None else "—"
 
 
-def fmt_mult(value) -> str:
-    if value is None:
-        return "—"
-    return f"{value:.2f}x".replace(".", ",")
-
-
-def filter_summary_text() -> str:
-    return (f"🎯 fee tier ≥ {FLOW_FEE_TIER_MIN:g}% · 💰 TVL ≥ {fmt_usd(FLOW_TVL_MIN)} · "
-            f"🪙 active TVL ≥ {fmt_usd(FLOW_ACTIVE_TVL_MIN)}\n"
-            f"👥 holders ≥ {FLOW_HOLDERS_MIN:,} · 🏦 MC ≥ {fmt_usd(FLOW_MARKET_CAP_MIN)} · "
-            f"⚡ fee/active TVL ≥ {FLOW_FEE_ACTIVE_TVL_MIN:g}% · 〰️ vol ≤ {FLOW_VOLATILITY_MAX:g}% · "
-            f"✖️ fee/active ÷ vol ≥ {FLOW_MULTIPLE_MIN:g}x · ⏱ 24H")
-
-
-def best_alert_text(no: int, passing: list, last_no: dict) -> str:
-    """Alert pool terbaik. Pool yang sudah pernah muncul diberi nomor alert terakhirnya."""
+def crowded_alert_text(no: int, top: dict, seen_no: int | None) -> str:
+    """Alert Telegram: hanya pool paling ramai (avg volume per menit terbesar)."""
+    row = top["row"]
+    tag = f"🔁 sudah pernah · alert #{seen_no}" if seen_no else "🆕 baru"
+    name = top["pool_name"] or top["pool"][:6]
+    band = "HIGH RISK" if top["risk"] == "high" else "LOW RISK"
     lines = [
-        f"🏆 <b>BEST POOL</b> · alert #{no}",
-        filter_summary_text(),
+        f"🔥🔥🔥 <b>POOL PALING RAMAI</b> · alert #{no}",
+        f"🎯 hasil Scan Best Pool (filter 12H) · urut avg volume/menit · {band}",
         "━━━━━━━━━━━━━━━━━━",
+        "",
+        f"🔥 <b>{_h(top['symbol'])}</b> · {_h(name)}  {tag}",
+        f"📊 avg volume/menit {fmt_usd2(top['avg_volume'])} · volume 12H {fmt_usd(top['pool_volume'])}",
+        f"🔁 {fmt_int(top['pool_swaps'])} swap · rata² swap {fmt_usd2(top['pool_avg_swap'])}",
+        f"💰 TVL {fmt_usd(row['tvl'])} · 🏷 fee {_pct_or_dash(row['fee_tier'])} · "
+        f"🪙 active {fmt_usd(row['active_tvl'])}",
+        f"〰️ volatility {fmt_pct(row['volatility'])} · ⚡ fee/active TVL {fmt_pct(row['fee_active_tvl'])}",
     ]
-    for index, row in enumerate(passing, start=1):
-        rank = MEDALS[index - 1] if index <= len(MEDALS) else f"{index}."
-        seen = last_no.get(row["pool"])
-        tag = f"🔁 sudah pernah · alert #{seen}" if seen else "🆕 baru"
-        name = row["pool_name"] or row["pool"][:6]
-        lines.append("")
-        lines.append(f"{rank} <b>{_h(row['symbol'])}</b> · {_h(name)}  {tag}")
-        lines.append(f"💰 TVL {fmt_usd(row['tvl'])} · 🏷 fee {row['fee_tier']:g}% · "
-                     f"🪙 active {fmt_usd(row['active_tvl'])}")
-        lines.append(f"〰️ vol {fmt_pct(row['volatility'])} · "
-                     f"⚡ fee/active TVL {fmt_pct(row['fee_active_tvl'])} · "
-                     f"✖️ {fmt_mult(row['multiple'])}")
-        lines.extend(alert_link_lines(row.get("mint") or "", row["pool"]))
+    lines.extend(alert_link_lines(row.get("mint") or "", top["pool"]))
     return "\n".join(lines)
 
 
-def apply_best_alert(state: dict, passing: list) -> str | None:
-    """Buat teks alert dan perbarui nomor alert. ``None`` bila tidak ada pool lolos."""
-    if not passing:
+def apply_crowded_alert(state: dict, top: dict | None) -> str | None:
+    """Buat teks alert pool paling ramai dan perbarui nomor alert. ``None`` bila tidak ada."""
+    if top is None:
         return None
+    pool = top["pool"]
     no = int(state["best_alert"]["next_no"])
-    last_no = dict(state["best_alert"]["last_no"])
-    text = best_alert_text(no, passing, last_no)
-    for row in passing:
-        state["best_alert"]["last_no"][row["pool"]] = no
+    seen_no = state["best_alert"]["last_no"].get(pool)
+    text = crowded_alert_text(no, top, seen_no)
+    state["best_alert"]["last_no"][pool] = no
     state["best_alert"]["next_no"] = no + 1
-    state["alerts"].append({"no": no, "kind": "best", "at": now_iso(),
-                            "pools": [r["pool"] for r in passing]})
+    state["alerts"].append({"no": no, "kind": "best", "at": now_iso(), "pools": [pool]})
     del state["alerts"][:-FLOW_ALERT_CAP]
     return text
 

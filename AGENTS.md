@@ -2,7 +2,7 @@
 
 ## Product scope
 
-The Streamlit application is a focused **Meteora Best Pool 24H** dashboard. Do not restore the removed wallet-depth Holder system, TEMP page, scheduled Holder workflows, Holder stores, or Holder links without a new explicit product decision.
+The Streamlit application is a focused **Meteora Best Pool 12H** dashboard. Do not restore the removed wallet-depth Holder system, TEMP page, scheduled Holder workflows, Holder stores, or Holder links without a new explicit product decision.
 
 **Telegram alerts are sanctioned again — but only for the 🌊 Sweep page** (explicit product decision, 2026-10-12). **Exception (2026-10-22):** ⚡ Early Watcher (`early_watch.py`, `scripts/early_watch.py`, `.github/workflows/early-watch.yml`) sends alerts too, because the user asked for them; it is separate from Sweep and does not change Sweep verdicts. The Holder-era alert machinery is *not* restored: the sweep feature has its own modules (`sweep_alert.py`, `sweep_store.py`, `sweep_scan.py`, `sweep_ui.py`, `pages/8_🌊_Sweep.py`, `scripts/scan_sweep.py`, `.github/workflows/sweep-scan.yml`). Keep them separate from Best Pool, do not resurrect `telegram_alerts.py` or any Holder store, and keep `app.py` free of sweep imports.
 
@@ -33,14 +33,13 @@ Independent market-risk fields such as Meteora's `top_holders_pct`, GMGN metrics
 
 ## Best Pool invariants
 
-Scan Best Pool (2026-11-11, explicit user request) lives in `pool_flow.py` (logic, no Streamlit) and `pool_flow_ui.py` (main-page card). Everything is read from one Meteora `pool-discovery` listing at timeframe **24h**, `category=top`, with a server pre-filter (`pool_type=dlmm`, `fee_pct>=2`, `tvl>=10000`, `active_tvl>=2000`, holders, market cap) that is only a narrowing step. Pages are fetched by cursor: each request sends `after_key` from the previous response and stops when `has_more` is false. The `page` parameter is ignored by the API and must not be used (it returned the same pools on every page). Every rule is re-checked client-side in `evaluate_pool`.
+Scan Best Pool (2026-11-11, explicit user request; reworked 2026-11-13) lives in `pool_flow.py` (logic, no Streamlit) and `pool_flow_ui.py` (main-page card). Everything is read from one Meteora `pool-discovery` listing at timeframe **12h**, `category=top`, with the server filter the user asked for (`pool_type=dlmm`, `base_token_market_cap>=100000`, `base_token_holders>=1500`, `tvl>=10000`, `active_tvl>=10000`, no high supply concentration, no high single ownership). Pages are fetched by cursor: each request sends `after_key` from the previous response and stops when `has_more` is false. The `page` parameter is ignored by the API and must not be used (it returned the same pools on every page). There are **no client-side filters** any more (2026-11-13 request): the server filter is the only filter.
 
-- Rules (all must pass): fee tier ≥ 2 %; `tvl` ≥ $10,000; `active_tvl` ≥ $2,000; `base_token_holders` ≥ 1,500; base token market cap ≥ $100,000; `volatility` ≤ 5 % (values < 0.01 % are unmeasurable); Fee/Active TVL (`fee_active_tvl_ratio`) ≥ 5 %; ratio = Fee/Active TVL ÷ volatility ≥ 2×.
-- Scan order (`passing`, also used by the Telegram alert): ratio descending, ties broken by Fee/Active TVL descending.
-- Table order (`busy_sort`, UI only): the pool with the largest 4H pool volume first (🔥🔥🔥 on the top row and in its token dropdown), then ratio. Pools without 4H data go last.
-- Unmeasurable values (missing) fail the rule.
-- Per passing token, the scan also fetches every pool of that token (all pool types, `query=<mint>`, `timeframe=4h` via `FLOW_TOKEN_TIMEFRAME`, `after_key` cursor) via `fetch_token_pools` and `enrich_scan_result`. This only feeds the UI: a headline with the most crowded token (largest total 24H volume) and its busiest pool, two extra table columns (token volume and token average swap size = total volume ÷ total swaps), and one `st.expander` per token listing its pools. Trader counts are shown per pool only, never summed. The Telegram alert uses `scan_pools` alone and does not change.
-- The scan writes nothing. Only the Telegram best alert (`scripts/pool_flow_alert.py`, every 4 hours, `pool-flow-best.yml`) writes `pool_flow_state.json`, and that file keeps only alert numbering (`best_alert`) and `alerts`.
+- Ranking (table, Telegram alert, and headline all use it): `avg_volume` (average volume per minute, = 12h volume ÷ 720) descending; ties by 12h volume.
+- Two tables: **HIGH RISK** = `volatility` ≥ 5 %, **LOW RISK** = `volatility` < 5 % (missing or 0 counts as LOW RISK). Each table keeps the same ranking. The headline and the 🔥🔥🔥 row are the top pool across both tables.
+- Per passing token, the scan also fetches every pool of that token (all pool types, `query=<mint>`, `timeframe=12h` via `FLOW_TOKEN_TIMEFRAME`, `after_key` cursor) via `fetch_token_pools` and `enrich_scan_result`. This only feeds the UI: a headline with the most crowded pool, two table columns (token volume and token average swap size = total volume ÷ total swaps), and one `st.expander` per token listing its pools. Trader counts are shown per pool only, never summed.
+- The scan writes nothing. Only the Telegram alert (`scripts/pool_flow_alert.py`, every 4 hours, `pool-flow-best.yml`) writes `pool_flow_state.json`, and that file keeps only alert numbering (`best_alert`) and `alerts`.
+- The Telegram alert sends **one pool only**: the top pool of the ranking above (highest `avg_volume`). It uses `scan_pools` and `most_crowded` only, with **no per-token fetch**, and the message shows the 12h data and its risk band.
 - The watchlist, net-deposit history, watch alert, and the Cek LP Keluar page/tool were removed on 2026-11-11. Do not reintroduce them without a new user request.
 - Earlier Best Pool rules (Fee-IL, F/V, IL windows, GMGN/RugCheck enrichment) and the modules behind them were removed; the old modules are gone from the repo.
 
