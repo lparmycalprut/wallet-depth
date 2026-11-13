@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""UI main app: 🏆 SCAN BEST POOL (timeframe 24H).
+"""UI main app: 🏆 SCAN BEST POOL (timeframe 12H).
 
 Logika ada di ``pool_flow.py``; modul ini hanya menampilkan hasil scan.
 Scan tidak menulis berkas apa pun.
@@ -19,10 +19,10 @@ RESULT_KEY = "pool_flow_result"
 BUTTON_LABEL = "SCAN BEST POOL"
 
 TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier",
-                 "Volatility", "Fee/active TVL", "Rasio (×)",
-                 "Volume 4H (pool)", "Volume 4H (token)", "Rata² swap (token)"]
+                 "Volatility", "Fee/active TVL", "Avg volume/menit (pool)",
+                 "Volume 12H (pool)", "Volume 12H (token)", "Rata² swap (token)"]
 HOT = "🔥🔥🔥"  # tanda pool paling ramai (baris teratas)
-DETAIL_HEADERS = ["Pool", "Tipe", "Fee tier", "TVL", "Active TVL", "Volume 4H",
+DETAIL_HEADERS = ["Pool", "Tipe", "Fee tier", "TVL", "Active TVL", "Volume 12H",
                   "Swap", "Trader unik", "Rata² swap", "Fee/active TVL"]
 
 
@@ -35,13 +35,11 @@ def _md(value) -> str:
 
 
 def _filter_caption() -> str:
-    return (f"Timeframe 24H · fee tier ≥ {pf.FLOW_FEE_TIER_MIN:g}% · TVL ≥ "
-            f"{pf.fmt_usd(pf.FLOW_TVL_MIN)} · active TVL ≥ "
+    return (f"Timeframe 12H · TVL ≥ {pf.fmt_usd(pf.FLOW_TVL_MIN)} · active TVL ≥ "
             f"{pf.fmt_usd(pf.FLOW_ACTIVE_TVL_MIN)} · holders ≥ {pf.FLOW_HOLDERS_MIN:,} · "
-            f"market cap ≥ {pf.fmt_usd(pf.FLOW_MARKET_CAP_MIN)} · volatility ≤ "
-            f"{pf.FLOW_VOLATILITY_MAX:g}% · fee/active TVL ≥ {pf.FLOW_FEE_ACTIVE_TVL_MIN:g}% · "
-            f"(fee/active TVL ÷ volatility) ≥ "
-            f"{pf.FLOW_MULTIPLE_MIN:g}x · urut rasio terbesar.")
+            f"market cap ≥ {pf.fmt_usd(pf.FLOW_MARKET_CAP_MIN)} · dlmm · urut avg volume "
+            f"per menit terbesar · HIGH RISK: volatility ≥ {pf.FLOW_RISK_VOLATILITY:g}%, "
+            f"LOW RISK: volatility < {pf.FLOW_RISK_VOLATILITY:g}%.")
 
 
 def _render_scan_result(result: dict) -> None:
@@ -65,32 +63,41 @@ def _render_scan_result(result: dict) -> None:
         st.info("Tidak ada pool yang lolos semua filter.")
         return
     st.caption("Geser tabel ke kanan untuk melihat semua kolom.")
-    # st.iframe (bukan components.v1.html, yang sudah usang): HTML dirender di iframe
-    # agar tombol copy CA bisa berjalan. Isi tabel sudah di-escape (lihat _result_table_html).
-    st.iframe(_result_document(passing, result.get("token_stats")),
-              height=_result_height(len(passing)), width="stretch")
+    top = pf.most_crowded(result)
+    top_pool = top["pool"] if top else None
+    high, low = pf.split_by_risk(passing)
+    token_stats = result.get("token_stats")
+    groups = (
+        (f"HIGH RISK · volatility ≥ {pf.FLOW_RISK_VOLATILITY:g}%", high),
+        (f"LOW RISK · volatility < {pf.FLOW_RISK_VOLATILITY:g}%", low),
+    )
+    for title, rows in groups:
+        st.markdown(f"**{title}** · {len(rows)} pool")
+        if not rows:
+            st.caption("Tidak ada pool di kelompok ini.")
+            continue
+        # st.iframe (bukan components.v1.html, yang sudah usang): HTML dirender di iframe
+        # agar tombol copy CA bisa berjalan. Isi tabel sudah di-escape (lihat _result_table_html).
+        st.iframe(_result_document(rows, token_stats, top_pool),
+                  height=_result_height(len(rows)), width="stretch")
     _render_token_details(result, passing)
 
 
 def _crowded_text(result: dict) -> str | None:
-    """Headline: pool paling ramai (volume 4H terbesar) = baris teratas tabel."""
+    """Headline: pool paling ramai (avg volume per menit terbesar) = baris teratas."""
     top = pf.most_crowded(result)
     if not top:
         return None
     name = top["pool_name"] or top["pool"][:8]
-    lines = [f"{HOT} **Paling ramai (4H):** {_md(top['symbol'])} · {_md(name)} — volume pool "
-             f"{pf.fmt_usd(top['pool_volume'])}, {pf.fmt_int(top['pool_swaps'])} swap, "
-             f"rata² swap {pf.fmt_usd2(top['pool_avg_swap'])}."]
-    total = top["total"]
-    lines.append(f"Total token 4H: volume {pf.fmt_usd(total['volume'])} dari "
-                 f"{total['pools']} pool.")
-    if top["partial"]:
-        lines.append("⚠️ Data pool token belum lengkap; sebagian ditampilkan dari hasil scan.")
-    return "  \n".join(lines)
+    band = "HIGH RISK" if top["risk"] == "high" else "LOW RISK"
+    return (f"{HOT} **Paling ramai (avg volume/menit):** {_md(top['symbol'])} · {_md(name)} "
+            f"({band}) — avg volume/menit {pf.fmt_usd2(top['avg_volume'])}, volume 12H "
+            f"{pf.fmt_usd(top['pool_volume'])}, {pf.fmt_int(top['pool_swaps'])} swap, "
+            f"rata² swap {pf.fmt_usd2(top['pool_avg_swap'])}.")
 
 
 def _render_token_details(result: dict, passing: list) -> None:
-    """Dropdown per koin: semua pool token (4H) beserta ringkasan total."""
+    """Dropdown per koin: semua pool token (12H) beserta ringkasan total."""
     import streamlit as st
 
     stats_map = result.get("token_stats") or {}
@@ -110,28 +117,26 @@ def _render_token_details(result: dict, passing: list) -> None:
             st.html(_token_detail_html(stats, passing_pools, top_pool))
 
 
-def _result_table_html(passing: list, token_stats: dict | None = None) -> str:
-    """Tabel HTML satu baris per pool, pool paling ramai paling atas. Tanpa baris kosong."""
+def _result_table_html(rows: list, token_stats: dict | None = None,
+                       top_pool: str | None = None) -> str:
+    """Tabel HTML satu baris per pool, urut avg volume per menit (urutan dari pemanggil)."""
     head = "".join(
         "<th style='text-align:left;padding:6px 8px;white-space:nowrap;"
         "border-bottom:1px solid rgba(128,128,128,.45)'>"
         f"{_html.escape(title)}</th>"
         for title in TABLE_HEADERS)
-    top = pf.most_crowded({"passing": passing, "token_stats": token_stats or {}})
-    top_pool = top["pool"] if top else None
     body = []
-    for row in pf.busy_sort(passing, token_stats):
+    for row in rows:
         total = ((token_stats or {}).get(row.get("mint") or "") or {}).get("total") or {}
-        item = pf.pool_item_4h((token_stats or {}).get(row.get("mint") or ""), row["pool"])
         hot = row["pool"] == top_pool
         cells = [
             _cell_token_html(row, hot=hot),
             _html.escape(pf.fmt_usd(row["tvl"])),
-            _html.escape(f"{row['fee_tier']:g}%"),
+            _html.escape(f"{row['fee_tier']:g}%" if row["fee_tier"] is not None else "—"),
             _html.escape(pf.fmt_pct(row["volatility"])),
             _html.escape(pf.fmt_pct(row["fee_active_tvl"])),
-            _html.escape(pf.fmt_mult(row["multiple"])),
-            _html.escape(pf.fmt_usd(item["volume"]) if item else "—"),
+            _html.escape(pf.fmt_usd2(row["avg_volume"])),
+            _html.escape(pf.fmt_usd(row["activity"]["volume"])),
             _html.escape(pf.fmt_usd(total.get("volume"))),
             _html.escape(pf.fmt_usd2(total.get("avg_swap"))),
         ]
@@ -202,15 +207,16 @@ def _copy_button_html(ca: str) -> str:
             f'onclick="copyCa(this)">{COPY_LABEL}</button>')
 
 
-def _result_document(passing: list, token_stats: dict | None = None) -> str:
+def _result_document(rows: list, token_stats: dict | None = None,
+                     top_pool: str | None = None) -> str:
     """Dokumen HTML utuh untuk komponen: tabel + skrip copy CA."""
     return ("<!doctype html><html><head><meta charset=\"utf-8\">"
             f"<style>{_COPY_CSS}</style></head><body>"
-            f"{_result_table_html(passing, token_stats)}{_COPY_SCRIPT}</body></html>")
+            f"{_result_table_html(rows, token_stats, top_pool)}{_COPY_SCRIPT}</body></html>")
 
 
 def _token_detail_html(stats: dict, passing_pools: set, top_pool: str | None = None) -> str:
-    """Isi dropdown satu token: ringkasan total dan semua pool token (4H)."""
+    """Isi dropdown satu token: ringkasan total dan semua pool token (12H)."""
     total = stats["total"]
     notes = []
     if stats["fallback"]:
@@ -219,7 +225,7 @@ def _token_detail_html(stats: dict, passing_pools: set, top_pool: str | None = N
         notes.append(f"{len(stats['errors'])} permintaan pool gagal; data mungkin belum lengkap.")
     if stats["truncated"]:
         notes.append("Daftar pool token terpotong (batas halaman tercapai).")
-    summary = (f"Total 4H: volume {pf.fmt_usd(total['volume'])} · swap {pf.fmt_int(total['swaps'])} · "
+    summary = (f"Total 12H: volume {pf.fmt_usd(total['volume'])} · swap {pf.fmt_int(total['swaps'])} · "
                f"rata² swap {pf.fmt_usd2(total['avg_swap'])} · fee {pf.fmt_usd(total['fee'])} · "
                f"TVL {pf.fmt_usd(total['tvl'])} · active TVL {pf.fmt_usd(total['active_tvl'])}")
     head = "".join(
@@ -296,9 +302,9 @@ def render_pool_flow_page() -> None:
         st.caption(_filter_caption())
         if st.button(BUTTON_LABEL, type="primary", key="pool_flow_scan",
                      use_container_width=True):
-            with st.spinner("Memindai listing Meteora (24H)…"):
+            with st.spinner("Memindai listing Meteora (12H)…"):
                 result = pf.scan_pools()
-            with st.spinner("Mengambil semua pool per token yang lolos (4H)…"):
+            with st.spinner("Mengambil semua pool per token yang lolos (12H)…"):
                 pf.enrich_scan_result(result)
             st.session_state[RESULT_KEY] = result
         result = st.session_state.get(RESULT_KEY)

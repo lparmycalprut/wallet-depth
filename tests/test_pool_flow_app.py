@@ -12,11 +12,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import pool_flow as pf  # noqa: E402
-from tests.test_pool_flow import meteora_rows  # noqa: E402
+from tests.test_pool_flow import DUT_12H, FOOD_12H, REAL_12H  # noqa: E402
 
-CHOO = "9JZrcAScnGQp7DSV4kBWfmGH2ao31sz5JbJ8cnpZ9uwv"
-DACITY_5DC = "5Dc4s9fxxQoPfaMUaxFKB5v1Nh6FPqest7usgyvGXwWw"
-LMAO = "EWBCL4hKY6VdzZVcCY7pMPvRhG78koHY6nQnt8EW99Br"
+FOOD_POOL = FOOD_12H["pool_address"]
+DUT_POOL = DUT_12H["pool_address"]
 
 
 class AppMainTest(unittest.TestCase):
@@ -27,7 +26,7 @@ class AppMainTest(unittest.TestCase):
         self._patches = [
             mock.patch.object(pf, "STATE_PATH", self.state_path),
             mock.patch.object(pf, "fetch_listing",
-                              side_effect=lambda *a, **k: (meteora_rows(), [], False)),
+                              side_effect=lambda *a, **k: (REAL_12H, [], False)),
             # Semua pool per token: offline, dari fixture yang sama dengan listing.
             mock.patch.object(pf, "fetch_token_pools", side_effect=self._token_pools),
         ]
@@ -41,7 +40,7 @@ class AppMainTest(unittest.TestCase):
 
     @staticmethod
     def _token_pools(mint, *a, **k):
-        return ([r for r in meteora_rows() if pf.mint_of_pool(r) == mint], [], False)
+        return ([r for r in REAL_12H if pf.mint_of_pool(r) == mint], [], False)
 
     def _app(self):
         at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
@@ -58,7 +57,7 @@ class AppMainTest(unittest.TestCase):
         at = self._app()
         next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
         self.assertFalse(at.exception)
-        passing = pf.scan_pools(listing=(meteora_rows(), [], False))["passing"]
+        passing = pf.scan_pools(listing=(REAL_12H, [], False))["passing"]
         doc = self._body(at)
         self.assertEqual(doc.count('class="copy-ca"'), len(passing))
         for row in passing:
@@ -79,16 +78,18 @@ class AppMainTest(unittest.TestCase):
         self.assertNotIn("Cek LP Keluar", body)
         self.assertNotIn("Tambah watchlist manual", body)
 
-    def test_scan_menampilkan_pool_lolos_saja(self):
+    def test_scan_menampilkan_semua_pool_dari_listing_dua_tabel_risiko(self):
         at = self._app()
         next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
         self.assertFalse(at.exception)
         body = self._body(at)
-        self.assertIn(CHOO, body)
-        self.assertIn(DACITY_5DC, body)
-        self.assertNotIn("DnmL7vYnNTACb8e6a4EpbeeeNDW8hwp1EvQZ4BWKCgjK", body)  # GATO fee/active 4,5% gagal
-        self.assertNotIn(LMAO, body)
-        self.assertIn("Timeframe 24H", " ".join(str(c.value) for c in at.caption))
+        self.assertIn(FOOD_POOL, body)
+        self.assertIn(DUT_POOL, body)
+        self.assertIn("Timeframe 12H", " ".join(str(c.value) for c in at.caption))
+        markdown = " ".join(str(m.value) for m in at.markdown)
+        self.assertIn("HIGH RISK", markdown)
+        self.assertIn("LOW RISK", markdown)
+        self.assertEqual(len(at.get("iframe")), 2)  # satu tabel per kelompok risiko
 
     def test_hasil_scan_berupa_tabel_html_dengan_scroll_horizontal(self):
         at = self._app()
@@ -97,17 +98,17 @@ class AppMainTest(unittest.TestCase):
         self.assertIn("overflow-x:auto", body)
         self.assertIn("<table", body)
         self.assertIn("min-width:1100px", body)
-        for header in ("Volatility", "Fee/active TVL", "Rasio (×)",
-                       "Volume 4H (pool)", "Volume 4H (token)", "Rata² swap (token)"):
+        for header in ("Volatility", "Fee/active TVL", "Avg volume/menit (pool)",
+                       "Volume 12H (pool)", "Volume 12H (token)", "Rata² swap (token)"):
             self.assertIn(header, body)
-        for header in ("Open pos.", "In-range"):
+        for header in ("Open pos.", "In-range", "Rasio (×)", "4H", "24H"):
             self.assertNotIn(header, body)
         self.assertIn("Geser tabel ke kanan", " ".join(str(c.value) for c in at.caption))
 
     def test_peringatan_listing_terpotong_muncul_hanya_bila_terpotong(self):
         at = self._app()
         with mock.patch.object(pf, "fetch_listing",
-                               side_effect=lambda *a, **k: (meteora_rows(), [], True)):
+                               side_effect=lambda *a, **k: (REAL_12H, [], True)):
             next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
         self.assertTrue(any("Listing belum lengkap" in str(w.value) for w in at.warning))
 
@@ -128,10 +129,9 @@ class AppMainTest(unittest.TestCase):
         next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
         self.assertFalse(at.exception)
         headline = " ".join(str(m.value) for m in at.markdown)
-        self.assertIn("Paling ramai (4H)", headline)
-        self.assertIn("volume pool", headline)
-        self.assertIn("Total token 4H", headline)
-        mints = {row["mint"] for row in pf.scan_pools(listing=(meteora_rows(), [], False))["passing"]}
+        self.assertIn("Paling ramai (avg volume/menit)", headline)
+        self.assertIn("(LOW RISK)", headline)  # FOOD: avg volume/menit terbesar, volatility 3,07%
+        mints = {row["mint"] for row in pf.scan_pools(listing=(REAL_12H, [], False))["passing"]}
         self.assertEqual(len(at.expander), len(mints))
         self.assertTrue(all("pool" in e.label for e in at.expander))
 
@@ -139,11 +139,10 @@ class AppMainTest(unittest.TestCase):
         at = self._app()
         next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
         detail = "\n".join(str(node.proto.body) for node in at.get("html"))
-        self.assertIn("Total 4H", detail)
+        self.assertIn("Total 12H", detail)
         self.assertIn("Trader unik", detail)
-        row = next(r for r in meteora_rows() if r["pool_address"] == CHOO)
-        self.assertIn(f"https://app.meteora.ag/dlmm/{row['pool_address']}", detail)
-        self.assertIn(f"https://www.hawkfi.ag/meteora/{row['pool_address']}", detail)
+        self.assertIn(f"https://app.meteora.ag/dlmm/{FOOD_POOL}", detail)
+        self.assertIn(f"https://www.hawkfi.ag/meteora/{FOOD_POOL}", detail)
         self.assertIn("✅ lolos", detail)
         self.assertNotIn("onclick", detail)  # dropdown tanpa skrip
 
@@ -151,8 +150,11 @@ class AppMainTest(unittest.TestCase):
         at = self._app()
         next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
         body = self._body(at)
-        first_row = body.split("<tbody>", 1)[1].split("</tr>", 1)[0]
+        hot_table = next(str(node.proto.srcdoc) for node in at.get("iframe")
+                         if "🔥🔥🔥" in str(node.proto.srcdoc))
+        first_row = hot_table.split("<tbody>", 1)[1].split("</tr>", 1)[0]
         self.assertIn("🔥🔥🔥", first_row)
+        self.assertIn(FOOD_POOL, first_row)  # avg volume/menit terbesar = FOOD (LOW RISK)
         self.assertEqual(body.count("🔥🔥🔥"), 2)  # headline + baris teratas (dropdown ada di st.html)
         dropdown = "\n".join(str(node.proto.body) for node in at.get("html"))
         self.assertEqual(dropdown.count("🔥🔥🔥"), 1)
@@ -194,13 +196,24 @@ class WorkflowAndPagesTest(unittest.TestCase):
 
 
 class ResultTableTest(unittest.TestCase):
-    def test_tabel_memuat_kolom_rasio_per_pool(self):
+    def test_tabel_memuat_avg_volume_per_menit_per_pool(self):
         import pool_flow_ui as ui
-        passing = pf.scan_pools(listing=(meteora_rows(), [], False))["passing"]
-        html = ui._result_table_html(passing[:2])
-        self.assertIn("Rasio (×)", html)
-        self.assertIn(">5,19x</td>", html)
-        self.assertIn(">4,78x</td>", html)
+        passing = pf.scan_pools(listing=(REAL_12H, [], False))["passing"]
+        html = ui._result_table_html(passing, None, FOOD_POOL)
+        self.assertIn("Avg volume/menit (pool)", html)
+        self.assertIn(">$1.500,59</td>", html)   # FOOD avg_volume
+        self.assertIn(">$494,02</td>", html)     # DutNdX avg_volume
+        self.assertNotIn("Rasio (×)", html)
+        first_row = html.split("<tbody>", 1)[1].split("</tr>", 1)[0]
+        self.assertIn("background:rgba(249,115,22,.14)", first_row)
+
+    def test_tabel_hanya_memuat_baris_yang_diberikan(self):
+        import pool_flow_ui as ui
+        passing = pf.scan_pools(listing=(REAL_12H, [], False))["passing"]
+        high, low = pf.split_by_risk(passing)
+        html = ui._result_table_html(high)
+        self.assertIn(DUT_POOL, html)
+        self.assertNotIn(FOOD_POOL, html)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 name: Pool Flow — Best Pool alert
 
-# Alert pool paling ramai (volume 4H, dari hasil Scan Best Pool) tiap 4 jam (00, 04, 08, ... UTC).
+# Alert pool paling ramai (avg volume per menit 12H, dari hasil Scan Best Pool) tiap 4 jam (00, 04, 08, ... UTC).
 # Cron GitHub bisa terlambat beberapa menit. State di pool_flow_state.json
 # di-commit hanya bila berubah.
 
