@@ -37,8 +37,10 @@ def _md(value) -> str:
 def _filter_caption() -> str:
     return (f"Timeframe 12H · TVL ≥ {pf.fmt_usd(pf.FLOW_TVL_MIN)} · active TVL ≥ "
             f"{pf.fmt_usd(pf.FLOW_ACTIVE_TVL_MIN)} · holders ≥ {pf.FLOW_HOLDERS_MIN:,} · "
-            f"market cap ≥ {pf.fmt_usd(pf.FLOW_MARKET_CAP_MIN)} · dlmm · urut avg volume "
-            f"per menit terbesar · HIGH RISK: volatility ≥ {pf.FLOW_RISK_VOLATILITY:g}%, "
+            f"market cap ≥ {pf.fmt_usd(pf.FLOW_MARKET_CAP_MIN)} · dlmm · fee tier ≥ "
+            f"{pf.FLOW_FEE_TIER_MIN:g}% · fee/active TVL ≥ {pf.FLOW_FEE_ACTIVE_TVL_MIN:g}% · "
+            f"volatility ≥ {pf.FLOW_VOLATILITY_MIN:g}% · urut avg volume per menit terbesar · "
+            f"HIGH RISK: volatility ≥ {pf.FLOW_RISK_VOLATILITY:g}%, "
             f"LOW RISK: volatility < {pf.FLOW_RISK_VOLATILITY:g}%.")
 
 
@@ -52,9 +54,6 @@ def _render_scan_result(result: dict) -> None:
         f"dicatat {result.get('scanned_at', '')}"
         + (f" · {result['listing_errors']} halaman listing gagal"
            if result.get("listing_errors") else ""))
-    crowded = _crowded_text(result)
-    if crowded:
-        st.markdown(crowded)
     if result.get("truncated"):
         st.warning("Listing belum lengkap: pengambilan berhenti sebelum semua halaman "
                    f"terambil (batas {pf.FLOW_MAX_PAGES} halaman atau ada halaman gagal), "
@@ -81,19 +80,6 @@ def _render_scan_result(result: dict) -> None:
         st.iframe(_result_document(rows, token_stats, top_pool),
                   height=_result_height(len(rows)), width="stretch")
     _render_token_details(result, passing)
-
-
-def _crowded_text(result: dict) -> str | None:
-    """Headline: pool paling ramai (avg volume per menit terbesar) = baris teratas."""
-    top = pf.most_crowded(result)
-    if not top:
-        return None
-    name = top["pool_name"] or top["pool"][:8]
-    band = "HIGH RISK" if top["risk"] == "high" else "LOW RISK"
-    return (f"{HOT} **Paling ramai (avg volume/menit):** {_md(top['symbol'])} · {_md(name)} "
-            f"({band}) — avg volume/menit {pf.fmt_usd2(top['avg_volume'])}, volume 12H "
-            f"{pf.fmt_usd(top['pool_volume'])}, {pf.fmt_int(top['pool_swaps'])} swap, "
-            f"rata² swap {pf.fmt_usd2(top['pool_avg_swap'])}.")
 
 
 def _render_token_details(result: dict, passing: list) -> None:

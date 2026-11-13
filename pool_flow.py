@@ -4,7 +4,8 @@
 Permintaan user (2026-11-13):
 - Listing Meteora pool-discovery, timeframe 12h, kategori top, dengan filter
   server-side yang diminta user (dlmm, market cap, holders, TVL, active TVL,
-  tanpa konsentrasi/kepemilikan tunggal tinggi). Tidak ada filter lokal lagi.
+  tanpa konsentrasi/kepemilikan tunggal tinggi). Filter lokal: fee tier, fee/active
+  TVL, dan volatility di bawah 1 % dilewati (2026-11-13).
 - Urutan: avg volume per menit (``avg_volume``) terbesar dulu.
 - Dibagi dua tabel: HIGH RISK (volatility ≥ 5 %) dan LOW RISK (volatility < 5 %).
   Tiap tabel tetap diurutkan dari avg volume per menit.
@@ -35,6 +36,10 @@ FLOW_ACTIVE_TVL_MIN = 10_000.0   # USD (active_tvl)
 FLOW_HOLDERS_MIN = 1_500         # base_token_holders
 FLOW_MARKET_CAP_MIN = 100_000.0  # USD (market cap token base)
 FLOW_RISK_VOLATILITY = 5.0       # % — volatility ≥ ini = HIGH RISK, di bawahnya LOW RISK
+# Pool di bawah ambang ini dilewati (permintaan user 2026-11-13). Nilai tidak terukur juga dilewati.
+FLOW_FEE_TIER_MIN = 1.0          # % (fee_pct)
+FLOW_FEE_ACTIVE_TVL_MIN = 1.0    # % (fee_active_tvl_ratio)
+FLOW_VOLATILITY_MIN = 1.0        # % (volatility)
 # Pra-saring di sisi server (request user 12H). Tidak ada filter lokal lain.
 FLOW_SERVER_FILTER = (
     "base_token_has_high_supply_concentration=false"
@@ -234,28 +239,43 @@ def risk_group(volatility) -> str:
 
 
 def evaluate_pool(row: dict) -> dict:
-    """Ambil field tampilan satu baris pool. Filter sudah dilakukan server-side."""
+    """Ambil field tampilan satu baris pool dan terapkan filter lokal 1 %.
+
+    Filter server (listing) sudah dilakukan Meteora. Di sini hanya dilewati:
+    fee tier < 1 %, fee/active TVL < 1 %, volatility < 1 % (atau tidak terukur).
+    """
     pool = str(row.get("pool_address") or "")
     mint = mint_of_pool(row)
     symbol, name = token_info(row, mint)
+    fee_tier = _num(row.get("fee_pct"))
+    fee_active_tvl = _num(row.get("fee_active_tvl_ratio"))
     volatility = _num(row.get("volatility"))
+
+    reasons: list[str] = []
+    if fee_tier is None or fee_tier < FLOW_FEE_TIER_MIN:
+        reasons.append(f"fee tier < {FLOW_FEE_TIER_MIN:g}%")
+    if fee_active_tvl is None or fee_active_tvl < FLOW_FEE_ACTIVE_TVL_MIN:
+        reasons.append(f"fee/active TVL < {FLOW_FEE_ACTIVE_TVL_MIN:g}%")
+    if volatility is None or volatility < FLOW_VOLATILITY_MIN:
+        reasons.append(f"volatility < {FLOW_VOLATILITY_MIN:g}%")
+
     return {
         "pool": pool,
         "mint": mint,
         "symbol": symbol,
         "name": name,
         "pool_name": str(row.get("name") or ""),
-        "fee_tier": _num(row.get("fee_pct")),
+        "fee_tier": fee_tier,
         "tvl": _num(row.get("tvl")),
         "active_tvl": _num(row.get("active_tvl")),
         "holders": _num(row.get("base_token_holders")),
         "market_cap": base_market_cap(row),
         "volatility": volatility,
         "risk": risk_group(volatility),
-        "fee_active_tvl": _num(row.get("fee_active_tvl_ratio")),
+        "fee_active_tvl": fee_active_tvl,
         "avg_volume": _num(row.get("avg_volume")),
-        "passes": True,
-        "reasons": [],
+        "passes": not reasons,
+        "reasons": reasons,
         "activity": pool_activity(row),
     }
 
