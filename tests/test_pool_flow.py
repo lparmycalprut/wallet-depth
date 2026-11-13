@@ -2,7 +2,7 @@
 """Tes logika Scan Best Pool (24H, volatility vs fee/active TVL) — tanpa jaringan.
 
 ``METEORA_24H`` berisi 14 pool dari respons Meteora timeframe=24h yang dikirim
-user (2026-11-13). Batas volatility 5%, rasio minimal 2x (permintaan user 2026-11-13): sembilan lolos, lima gagal.
+user (2026-11-13). Batas volatility 5%, rasio minimal 2x, fee/active TVL minimal 5% (permintaan user 2026-11-13): tujuh lolos.
 Hasil yang diharapkan dihitung manual dari aturan.
 """
 import json
@@ -69,13 +69,11 @@ def meteora_rows():
 PASSING_ORDER = [  # rasio terbesar dulu
     "91iHWaWXneUyoNDJhSno7ezxQg1VW5P6PdarNGyFfPCz",  # STANK 5,19x
     "9JZrcAScnGQp7DSV4kBWfmGH2ao31sz5JbJ8cnpZ9uwv",  # CHOO 4,78x
-    "GWe6KGwM4tUyBFMWe1xjLYZu7dmmEDex5ScoJ1oiuacY",  # USELESS 3,84x
     "5Dc4s9fxxQoPfaMUaxFKB5v1Nh6FPqest7usgyvGXwWw",  # DacityCoin 3,78x
     "9ViFN1A2FG2aL69Uu3dZwVMbcSdKuuMM5PLouZmguK2e",  # mihao 3,71x
     "BADiqzWTYyZPbcqKgNtgy6KB5ZhmPrgq9qguPnpjXHf8",  # Rocco 3,38x
     "5WVURqJSLRFNZDVDF2njtjZihRLeALvt5tss3yjt2Vik",  # paws 3,29x
     "FSb7qz3cMGjYacrLfoKumozoqFibiAtzjDq97FxHivYP",  # DacityCoin FSb7 2,80x
-    "DnmL7vYnNTACb8e6a4EpbeeeNDW8hwp1EvQZ4BWKCgjK",  # GATO 2,48x
 ]
 
 
@@ -114,16 +112,22 @@ class RuleTest(unittest.TestCase):
 
     def test_alasan_gagal_menyebut_semua_aturan_yang_dilanggar(self):
         result = pf.evaluate_pool(_good(fee=1.0, tvl=100.0, vol=6.0, fa=1.0))
-        self.assertEqual(len(result["reasons"]), 4)
+        self.assertEqual(len(result["reasons"]), 5)  # fee tier, TVL, vol, rasio, fee/active
         self.assertTrue(any("volatility > 5" in r for r in result["reasons"]))
         self.assertTrue(any("÷ volatility" in r for r in result["reasons"]))
+
+    def test_fee_active_tvl_minimal_5_persen(self):
+        self.assertTrue(pf.evaluate_pool(_good(fa=5.0, vol=1.0))["passes"])  # tepat 5% tampil
+        result = pf.evaluate_pool(_good(fa=4.99, vol=1.0))
+        self.assertFalse(result["passes"])
+        self.assertIn("fee/active TVL < 5%", result["reasons"])
 
     def test_in_range_tetap_dihitung_untuk_tampilan(self):
         self.assertAlmostEqual(pf.in_range_pct(_good(open_pos=50, active=25)), 50.0)
 
 
 class RealResponseTest(unittest.TestCase):
-    def test_sembilan_pool_lolos_urut_rasio_dari_respons_meteora(self):
+    def test_tujuh_pool_lolos_urut_rasio_dari_respons_meteora(self):
         result = pf.scan_pools(listing=(meteora_rows(), [], False))
         self.assertEqual(result["candidates"], 14)
         self.assertEqual([r["pool"] for r in result["passing"]], PASSING_ORDER)
@@ -147,7 +151,7 @@ class RealResponseTest(unittest.TestCase):
 class ScanTest(unittest.TestCase):
     def test_urut_rasio_lalu_fee_active(self):
         a = _good(vol=2.0, fa=8.0)     # 4x, fee/active 8
-        b = _good(vol=1.0, fa=4.0)     # 4x, fee/active 4
+        b = _good(vol=1.5, fa=6.0)     # 4x, fee/active 6
         c = _good(vol=1.0, fa=12.0)    # 12x
         a["pool_address"], b["pool_address"], c["pool_address"] = "A" * 44, "B" * 44, "C" * 44
         passing = pf.scan_pools(listing=([a, b, c], [], False))["passing"]

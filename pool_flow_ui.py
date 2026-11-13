@@ -27,7 +27,8 @@ def _filter_caption() -> str:
             f"{pf.fmt_usd(pf.FLOW_TVL_MIN)} · active TVL ≥ "
             f"{pf.fmt_usd(pf.FLOW_ACTIVE_TVL_MIN)} · holders ≥ {pf.FLOW_HOLDERS_MIN:,} · "
             f"market cap ≥ {pf.fmt_usd(pf.FLOW_MARKET_CAP_MIN)} · volatility ≤ "
-            f"{pf.FLOW_VOLATILITY_MAX:g}% · (fee/active TVL ÷ volatility) ≥ "
+            f"{pf.FLOW_VOLATILITY_MAX:g}% · fee/active TVL ≥ {pf.FLOW_FEE_ACTIVE_TVL_MIN:g}% · "
+            f"(fee/active TVL ÷ volatility) ≥ "
             f"{pf.FLOW_MULTIPLE_MIN:g}x · urut rasio terbesar.")
 
 

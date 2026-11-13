@@ -5,6 +5,7 @@ Request 24H (user, 2026-11-13) + filter volatility vs fee/active TVL:
 - Listing Meteora pool-discovery, timeframe 24h, kategori top, dengan filter
   dari request user (market cap, holders, TVL, fee tier, active TVL, dlmm).
 - Volatility ≤ 5 %.
+- Fee/Active TVL ≥ 5 %  → tampil (permintaan user 2026-11-13).
 - Rasio = Fee/Active TVL ÷ Volatility ≥ 2×  → tampil.
 - Urutan: rasio terbesar dulu (seri: Fee/Active TVL terbesar).
 
@@ -37,6 +38,7 @@ FLOW_HOLDERS_MIN = 1_500         # base_token_holders
 FLOW_MARKET_CAP_MIN = 100_000.0  # USD (market cap token base)
 FLOW_VOLATILITY_MAX = 5.0        # % (volatility)
 FLOW_VOLATILITY_EPS = 0.01       # % — di bawah ini dianggap tidak terukur (≈ 0)
+FLOW_FEE_ACTIVE_TVL_MIN = 5.0   # % — fee/active TVL minimal untuk tampil (permintaan user 2026-11-13)
 FLOW_MULTIPLE_MIN = 2.0          # (Fee/Active TVL %) ÷ volatility % (permintaan user 2026-11-13)
 
 # Pra-saring di sisi server (request user 24H). Semua aturan tetap dicek ulang
@@ -227,8 +229,12 @@ def evaluate_pool(row: dict) -> dict:
         reasons.append("volatility ≈ 0 (tidak terukur)")
     elif volatility > FLOW_VOLATILITY_MAX:
         reasons.append(f"volatility > {FLOW_VOLATILITY_MAX:g}%")
+    if fee_active_tvl is None:
+        reasons.append("fee/active TVL tidak terukur")
+    elif fee_active_tvl < FLOW_FEE_ACTIVE_TVL_MIN:
+        reasons.append(f"fee/active TVL < {FLOW_FEE_ACTIVE_TVL_MIN:g}%")
     if multiple is None:
-        if volatility is None or volatility < FLOW_VOLATILITY_EPS:
+        if volatility is None or volatility < FLOW_VOLATILITY_EPS or fee_active_tvl is None:
             pass  # sudah dicatat di atas
         else:
             reasons.append("fee/active TVL tidak terukur")
@@ -351,7 +357,8 @@ def filter_summary_text() -> str:
     return (f"🎯 fee tier ≥ {FLOW_FEE_TIER_MIN:g}% · 💰 TVL ≥ {fmt_usd(FLOW_TVL_MIN)} · "
             f"🪙 active TVL ≥ {fmt_usd(FLOW_ACTIVE_TVL_MIN)}\n"
             f"👥 holders ≥ {FLOW_HOLDERS_MIN:,} · 🏦 MC ≥ {fmt_usd(FLOW_MARKET_CAP_MIN)} · "
-            f"〰️ vol ≤ {FLOW_VOLATILITY_MAX:g}% · ✖️ fee/active ÷ vol ≥ {FLOW_MULTIPLE_MIN:g}x · ⏱ 24H")
+            f"⚡ fee/active TVL ≥ {FLOW_FEE_ACTIVE_TVL_MIN:g}% · 〰️ vol ≤ {FLOW_VOLATILITY_MAX:g}% · "
+            f"✖️ fee/active ÷ vol ≥ {FLOW_MULTIPLE_MIN:g}x · ⏱ 24H")
 
 
 def best_alert_text(no: int, passing: list, last_no: dict) -> str:
