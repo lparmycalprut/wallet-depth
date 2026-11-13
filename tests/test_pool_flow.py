@@ -547,18 +547,48 @@ class TokenActivityTest(unittest.TestCase):
         fake.assert_not_called()
         self.assertEqual(result["token_stats"], {})
 
-    def test_paling_ramai_token_volume_terbesar_dan_pool_terbesarnya(self):
+    def test_paling_ramai_pool_volume_4h_terbesar(self):
+        rows = meteora_rows()
+        result = pf.scan_pools(listing=(rows, [], False))
+        volumes = {rows[0]["pool_address"]: 5.0, rows[3]["pool_address"]: 900_000.0}
+        pf.enrich_scan_result(result, fetch=lambda mint: (
+            [dict(r, volume=volumes.get(r["pool_address"], 10.0))
+             for r in rows if pf.mint_of_pool(r) == mint], [], False))
+        top = pf.most_crowded(result)
+        self.assertEqual(top["pool"], rows[3]["pool_address"])  # volume pool terbesar
+        self.assertEqual(top["symbol"], "DacityCoin")
+        self.assertAlmostEqual(top["pool_volume"], 900_000.0)
+        self.assertAlmostEqual(top["total"]["volume"], 900_000.0)
+        self.assertIsNone(pf.most_crowded({"passing": [], "token_stats": {}}))
+
+    def test_busy_sort_pool_paling_ramai_di_atas_lalu_rasio(self):
+        rows = meteora_rows()
+        result = pf.scan_pools(listing=(rows, [], False))
+        volumes = {rows[3]["pool_address"]: 900.0, rows[1]["pool_address"]: 900.0,
+                   rows[0]["pool_address"]: 50.0}
+        pf.enrich_scan_result(result, fetch=lambda mint: (
+            [dict(r, volume=volumes.get(r["pool_address"], 1.0))
+             for r in rows if pf.mint_of_pool(r) == mint], [], False))
+        ordered = [r["pool"] for r in pf.busy_sort(result["passing"], result["token_stats"])]
+        # volume 900 seri: CHOO (rasio 4,78x) di atas DacityCoin (3,78x); STANK (volume 50) terakhir
+        self.assertEqual(ordered[0], rows[1]["pool_address"])
+        self.assertEqual(ordered[1], rows[3]["pool_address"])
+        self.assertEqual(ordered[2], rows[0]["pool_address"])
+        self.assertEqual(len(ordered), len(result["passing"]))
+
+    def test_busy_sort_pool_tanpa_data_4h_di_bawah(self):
         rows = meteora_rows()
         result = pf.scan_pools(listing=(rows, [], False))
         pf.enrich_scan_result(result, fetch=lambda mint: (
-            [dict(r, volume=(900_000.0 if pf.mint_of_pool(r) == pf.mint_of_pool(rows[3]) else 5.0))
-             for r in rows if pf.mint_of_pool(r) == mint], [], False))
-        top = pf.most_crowded(result)
-        self.assertEqual(top["mint"], pf.mint_of_pool(rows[3]))
-        self.assertEqual(top["symbol"], "DacityCoin")
-        self.assertAlmostEqual(top["total"]["volume"], 900_000.0)
-        self.assertEqual(top["busiest"]["pool"], rows[3]["pool_address"])
-        self.assertIsNone(pf.most_crowded({"passing": [], "token_stats": {}}))
+            [r for r in rows if pf.mint_of_pool(r) == mint and r["pool_address"] == rows[0]["pool_address"]],
+            [], False))
+        ordered = [r["pool"] for r in pf.busy_sort(result["passing"], result["token_stats"])]
+        self.assertEqual(ordered[0], rows[0]["pool_address"])  # satu-satunya dengan data 4H
+
+    def test_fallback_tidak_dianggap_data_4h(self):
+        result = pf.scan_pools(listing=(meteora_rows(), [], False))
+        pf.enrich_scan_result(result, fetch=lambda mint: ([], ["boom"], True))
+        self.assertIsNone(pf.most_crowded(result))  # hasil fallback berisi 24H, bukan 4H
 
     def test_scan_dan_alert_tidak_memuat_token_stats(self):
         result = pf.scan_pools(listing=(meteora_rows(), [], False))

@@ -20,7 +20,8 @@ BUTTON_LABEL = "SCAN BEST POOL"
 
 TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier",
                  "Volatility", "Fee/active TVL", "Rasio (×)",
-                 "Volume 4H (token)", "Rata² swap (token)"]
+                 "Volume 4H (pool)", "Volume 4H (token)", "Rata² swap (token)"]
+HOT = "🔥🔥🔥"  # tanda pool paling ramai (baris teratas)
 DETAIL_HEADERS = ["Pool", "Tipe", "Fee tier", "TVL", "Active TVL", "Volume 4H",
                   "Swap", "Trader unik", "Rata² swap", "Fee/active TVL"]
 
@@ -72,19 +73,17 @@ def _render_scan_result(result: dict) -> None:
 
 
 def _crowded_text(result: dict) -> str | None:
-    """Headline: token dan pool paling ramai (volume 4H terbesar)."""
+    """Headline: pool paling ramai (volume 4H terbesar) = baris teratas tabel."""
     top = pf.most_crowded(result)
     if not top:
         return None
+    name = top["pool_name"] or top["pool"][:8]
+    lines = [f"{HOT} **Paling ramai (4H):** {_md(top['symbol'])} · {_md(name)} — volume pool "
+             f"{pf.fmt_usd(top['pool_volume'])}, {pf.fmt_int(top['pool_swaps'])} swap, "
+             f"rata² swap {pf.fmt_usd2(top['pool_avg_swap'])}."]
     total = top["total"]
-    lines = [f"🔥 **Paling ramai (4H):** {_md(top['symbol'])} — volume "
-             f"{pf.fmt_usd(total['volume'])} dari {total['pools']} pool, "
-             f"{pf.fmt_int(total['swaps'])} swap, rata² swap {pf.fmt_usd2(total['avg_swap'])}."]
-    busiest = top["busiest"]
-    if busiest:
-        name = busiest["name"] or busiest["pool"][:8]
-        lines.append(f"Pool paling ramai: {_md(name)} — volume "
-                     f"{pf.fmt_usd(busiest['volume'])}, {pf.fmt_int(busiest['swaps'])} swap.")
+    lines.append(f"Total token 4H: volume {pf.fmt_usd(total['volume'])} dari "
+                 f"{total['pools']} pool.")
     if top["partial"]:
         lines.append("⚠️ Data pool token belum lengkap; sebagian ditampilkan dari hasil scan.")
     return "  \n".join(lines)
@@ -103,29 +102,36 @@ def _render_token_details(result: dict, passing: list) -> None:
         shown.add(mint)
         stats = stats_map[mint]
         passing_pools = {item["pool"] for item in passing if item.get("mint") == mint}
+        top = pf.most_crowded(result)
+        top_pool = top["pool"] if top else None
         label = (f"{_md(row['symbol'])} · {stats['total']['pools']} pool · volume "
                  f"{pf.fmt_usd(stats['total']['volume'])}")
         with st.expander(label):
-            st.html(_token_detail_html(stats, passing_pools))
+            st.html(_token_detail_html(stats, passing_pools, top_pool))
 
 
 def _result_table_html(passing: list, token_stats: dict | None = None) -> str:
-    """Tabel HTML satu baris per pool. Tanpa baris kosong agar markdown tidak rusak."""
+    """Tabel HTML satu baris per pool, pool paling ramai paling atas. Tanpa baris kosong."""
     head = "".join(
         "<th style='text-align:left;padding:6px 8px;white-space:nowrap;"
         "border-bottom:1px solid rgba(128,128,128,.45)'>"
         f"{_html.escape(title)}</th>"
         for title in TABLE_HEADERS)
+    top = pf.most_crowded({"passing": passing, "token_stats": token_stats or {}})
+    top_pool = top["pool"] if top else None
     body = []
-    for row in passing:
+    for row in pf.busy_sort(passing, token_stats):
         total = ((token_stats or {}).get(row.get("mint") or "") or {}).get("total") or {}
+        item = pf.pool_item_4h((token_stats or {}).get(row.get("mint") or ""), row["pool"])
+        hot = row["pool"] == top_pool
         cells = [
-            _cell_token_html(row),
+            _cell_token_html(row, hot=hot),
             _html.escape(pf.fmt_usd(row["tvl"])),
             _html.escape(f"{row['fee_tier']:g}%"),
             _html.escape(pf.fmt_pct(row["volatility"])),
             _html.escape(pf.fmt_pct(row["fee_active_tvl"])),
             _html.escape(pf.fmt_mult(row["multiple"])),
+            _html.escape(pf.fmt_usd(item["volume"]) if item else "—"),
             _html.escape(pf.fmt_usd(total.get("volume"))),
             _html.escape(pf.fmt_usd2(total.get("avg_swap"))),
         ]
@@ -133,11 +139,12 @@ def _result_table_html(passing: list, token_stats: dict | None = None) -> str:
             f"<td style='padding:6px 8px;vertical-align:top;border-bottom:1px solid "
             f"rgba(128,128,128,.2);white-space:{'normal' if i == 0 else 'nowrap'}'>{cell}</td>"
             for i, cell in enumerate(cells))
-        body.append(f"<tr>{tds}</tr>")
+        row_style = " style='background:rgba(249,115,22,.14)'" if hot else ""
+        body.append(f"<tr{row_style}>{tds}</tr>")
     return (
         "<div style='overflow-x:auto;-webkit-overflow-scrolling:touch;"
         "border:1px solid rgba(128,128,128,.35);border-radius:8px'>"
-        "<table style='border-collapse:collapse;width:100%;min-width:1000px;"
+        "<table style='border-collapse:collapse;width:100%;min-width:1100px;"
         "font-size:13px;line-height:1.4'>"
         f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody></table></div>"
     )
@@ -202,7 +209,7 @@ def _result_document(passing: list, token_stats: dict | None = None) -> str:
             f"{_result_table_html(passing, token_stats)}{_COPY_SCRIPT}</body></html>")
 
 
-def _token_detail_html(stats: dict, passing_pools: set) -> str:
+def _token_detail_html(stats: dict, passing_pools: set, top_pool: str | None = None) -> str:
     """Isi dropdown satu token: ringkasan total dan semua pool token (4H)."""
     total = stats["total"]
     notes = []
@@ -223,6 +230,8 @@ def _token_detail_html(stats: dict, passing_pools: set) -> str:
     for item in stats["pools"]:
         name = item["name"] or item["pool"][:8]
         tag = " ✅ lolos" if item["pool"] in passing_pools else ""
+        if item["pool"] == top_pool:
+            name = f"{HOT} {name}"
         pool_cell = (f"<b>{_html.escape(name)}</b>{_html.escape(tag)}<br>"
                      f"<span style='font-size:12px'>{pool_links_html(item['pool'])}</span>")
         cells = [
@@ -260,9 +269,10 @@ def _result_height(count: int) -> int:
     return min(1200, max(160, 60 + 120 * count))
 
 
-def _cell_token_html(row: dict) -> str:
+def _cell_token_html(row: dict, hot: bool = False) -> str:
     """Nama token + pool, CA lengkap, dan link. Dipakai di dalam sel tabel."""
-    name = _html.escape(f"{row['symbol']} · {row['pool_name'] or row['pool'][:8]}")
+    label = f"{row['symbol']} · {row['pool_name'] or row['pool'][:8]}"
+    name = _html.escape(f"{HOT} {label}" if hot else label)
     ca = _html.escape(row.get("mint") or "")
     parts = [f"<b style='font-size:14px'>{name}</b>"]
     if ca:

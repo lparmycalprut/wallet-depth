@@ -412,26 +412,51 @@ def enrich_scan_result(result: dict, fetch=None) -> dict:
     return result
 
 
-def most_crowded(result: dict):
-    """Token paling ramai (total volume 4H terbesar) dan pool paling ramai di dalamnya."""
-    best = None
-    for mint, item in (result.get("token_stats") or {}).items():
-        volume = item["total"]["volume"]
-        if volume is None:
-            continue
-        if best is None or volume > best[1]["total"]["volume"]:
-            best = (mint, item)
-    if best is None:
+def pool_item_4h(stats: dict | None, pool: str):
+    """Baris pool (timeframe 4H) dari ``token_stats``; ``None`` bila tidak ada atau hasil fallback 24H."""
+    if not stats or stats.get("fallback"):
         return None
-    mint, item = best
-    symbol = next((row.get("symbol") for row in result.get("passing") or []
-                   if row.get("mint") == mint), "?")
+    return next((item for item in stats["pools"] if item["pool"] == pool), None)
+
+
+def busy_sort(passing: list, token_stats: dict | None) -> list:
+    """Urutan tampilan tabel: pool paling ramai (volume 4H pool) paling atas.
+
+    Seri: rasio, lalu Fee/Active TVL. Pool tanpa data 4H diletakkan di bawah.
+    Alert Telegram tidak memakai urutan ini.
+    """
+    def key(row: dict):
+        item = pool_item_4h((token_stats or {}).get(row.get("mint") or ""), row["pool"])
+        volume = item["volume"] if item and item["volume"] is not None else None
+        return (0 if volume is not None else 1,
+                -(volume or 0.0),
+                -(row["multiple"] or 0.0),
+                -(row["fee_active_tvl"] or 0.0))
+
+    return sorted(passing, key=key)
+
+
+def most_crowded(result: dict):
+    """Pool paling ramai di hasil scan (baris teratas tabel) beserta total token-nya."""
+    stats = result.get("token_stats") or {}
+    ordered = busy_sort(result.get("passing") or [], stats)
+    if not ordered:
+        return None
+    top = ordered[0]
+    item = pool_item_4h(stats.get(top.get("mint") or ""), top["pool"])
+    if item is None or item["volume"] is None:
+        return None
+    token = stats[top["mint"]]
     return {
-        "mint": mint,
-        "symbol": symbol,
-        "total": item["total"],
-        "busiest": item["pools"][0] if item["pools"] else None,
-        "partial": item["partial"],
+        "mint": top["mint"],
+        "symbol": top["symbol"],
+        "pool": top["pool"],
+        "pool_name": item["name"],
+        "pool_volume": item["volume"],
+        "pool_swaps": item["swaps"],
+        "pool_avg_swap": item["avg_swap"],
+        "total": token["total"],
+        "partial": token["partial"],
     }
 
 
