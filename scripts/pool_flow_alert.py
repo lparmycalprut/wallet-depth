@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Alert pool terbaik Scan Best Pool (timeframe 24H), dijalankan tiap 4 jam.
+"""Alert pool paling ramai Scan Best Pool (volume 4H), dijalankan tiap 4 jam.
 
 Pemakaian:
     python3 scripts/pool_flow_alert.py [--state berkas.json]
@@ -21,15 +21,25 @@ import pool_flow as pf  # noqa: E402
 
 
 def run_best(state: dict, *, scan=None) -> list[tuple[str, dict | None]]:
-    """Kembalikan daftar (teks, reply_markup) yang akan dikirim."""
+    """Kembalikan daftar (teks, reply_markup) yang akan dikirim.
+
+    Hanya satu pool: yang volume 4H pool-nya paling besar di antara pool yang lolos.
+    Bila volume 4H tidak bisa diambil, kirim peringatan singkat dan state tidak berubah.
+    """
     result = (scan or pf.scan_pools)()
-    text = pf.apply_best_alert(state, result["passing"])
     print(f"best: listing {result['listing_rows']} baris, dievaluasi {result['candidates']}, "
           f"lolos {len(result['passing'])}, error listing {result['listing_errors']}, "
           f"terpotong {result['truncated']}")
-    if not text:
+    if not result["passing"]:
         return []
-    return [(text, pf.alert_copy_markup(result["passing"]))]
+    pf.enrich_scan_result(result)
+    top = pf.most_crowded(result)
+    if top is None:
+        print("best: volume 4H tidak tersedia, peringatan dikirim")
+        return [(pf.crowded_unavailable_text(len(result["passing"])), None)]
+    text = pf.apply_crowded_alert(state, top)
+    print(f"best: pool paling ramai {top['symbol']} ({top['pool']})")
+    return [(text, pf.alert_copy_markup([top["row"]]))]
 
 
 def main(argv: list | None = None) -> int:

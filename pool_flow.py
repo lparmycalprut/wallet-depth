@@ -457,6 +457,7 @@ def most_crowded(result: dict):
         "pool_avg_swap": item["avg_swap"],
         "total": token["total"],
         "partial": token["partial"],
+        "row": top,
     }
 
 
@@ -555,58 +556,53 @@ def alert_link_lines(mint: str, pool: str) -> list[str]:
     return lines
 
 
-MEDALS = ("🥇", "🥈", "🥉")
-
-
 def fmt_mult(value) -> str:
     if value is None:
         return "—"
     return f"{value:.2f}x".replace(".", ",")
 
 
-def filter_summary_text() -> str:
-    return (f"🎯 fee tier ≥ {FLOW_FEE_TIER_MIN:g}% · 💰 TVL ≥ {fmt_usd(FLOW_TVL_MIN)} · "
-            f"🪙 active TVL ≥ {fmt_usd(FLOW_ACTIVE_TVL_MIN)}\n"
-            f"👥 holders ≥ {FLOW_HOLDERS_MIN:,} · 🏦 MC ≥ {fmt_usd(FLOW_MARKET_CAP_MIN)} · "
-            f"⚡ fee/active TVL ≥ {FLOW_FEE_ACTIVE_TVL_MIN:g}% · 〰️ vol ≤ {FLOW_VOLATILITY_MAX:g}% · "
-            f"✖️ fee/active ÷ vol ≥ {FLOW_MULTIPLE_MIN:g}x · ⏱ 24H")
-
-
-def best_alert_text(no: int, passing: list, last_no: dict) -> str:
-    """Alert pool terbaik. Pool yang sudah pernah muncul diberi nomor alert terakhirnya."""
+def crowded_alert_text(no: int, top: dict, seen_no: int | None) -> str:
+    """Alert Telegram: hanya pool paling ramai (volume 4H terbesar) dari hasil scan."""
+    row = top["row"]
+    tag = f"🔁 sudah pernah · alert #{seen_no}" if seen_no else "🆕 baru"
+    name = top["pool_name"] or top["pool"][:6]
+    total = top["total"]
     lines = [
-        f"🏆 <b>BEST POOL</b> · alert #{no}",
-        filter_summary_text(),
+        f"🔥🔥🔥 <b>POOL PALING RAMAI</b> · alert #{no}",
+        "🎯 hasil Scan Best Pool (filter 24H) · ⏱ volume 4H",
         "━━━━━━━━━━━━━━━━━━",
+        "",
+        f"🔥 <b>{_h(top['symbol'])}</b> · {_h(name)}  {tag}",
+        f"📊 volume 4H {fmt_usd(top['pool_volume'])} · 🔁 {fmt_int(top['pool_swaps'])} swap · "
+        f"rata² swap {fmt_usd2(top['pool_avg_swap'])}",
+        f"🪙 total token 4H {fmt_usd(total['volume'])} dari {total['pools']} pool",
+        f"💰 TVL {fmt_usd(row['tvl'])} · 🏷 fee {row['fee_tier']:g}% · "
+        f"🪙 active {fmt_usd(row['active_tvl'])}",
+        f"〰️ vol {fmt_pct(row['volatility'])} · ⚡ fee/active TVL {fmt_pct(row['fee_active_tvl'])} · "
+        f"✖️ {fmt_mult(row['multiple'])}",
     ]
-    for index, row in enumerate(passing, start=1):
-        rank = MEDALS[index - 1] if index <= len(MEDALS) else f"{index}."
-        seen = last_no.get(row["pool"])
-        tag = f"🔁 sudah pernah · alert #{seen}" if seen else "🆕 baru"
-        name = row["pool_name"] or row["pool"][:6]
-        lines.append("")
-        lines.append(f"{rank} <b>{_h(row['symbol'])}</b> · {_h(name)}  {tag}")
-        lines.append(f"💰 TVL {fmt_usd(row['tvl'])} · 🏷 fee {row['fee_tier']:g}% · "
-                     f"🪙 active {fmt_usd(row['active_tvl'])}")
-        lines.append(f"〰️ vol {fmt_pct(row['volatility'])} · "
-                     f"⚡ fee/active TVL {fmt_pct(row['fee_active_tvl'])} · "
-                     f"✖️ {fmt_mult(row['multiple'])}")
-        lines.extend(alert_link_lines(row.get("mint") or "", row["pool"]))
+    lines.extend(alert_link_lines(row.get("mint") or "", top["pool"]))
     return "\n".join(lines)
 
 
-def apply_best_alert(state: dict, passing: list) -> str | None:
-    """Buat teks alert dan perbarui nomor alert. ``None`` bila tidak ada pool lolos."""
-    if not passing:
+def crowded_unavailable_text(passing_count: int) -> str:
+    """Pesan singkat bila pool lolos ada tetapi volume 4H tidak bisa diambil (tidak ada tebakan)."""
+    return (f"⚠️ <b>POOL PALING RAMAI</b> belum bisa ditentukan: volume 4H {passing_count} pool "
+            f"lolos gagal diambil. Alert berikutnya tetap 4 jam lagi.")
+
+
+def apply_crowded_alert(state: dict, top: dict | None) -> str | None:
+    """Buat teks alert pool paling ramai dan perbarui nomor alert. ``None`` bila tidak ada."""
+    if top is None:
         return None
+    pool = top["pool"]
     no = int(state["best_alert"]["next_no"])
-    last_no = dict(state["best_alert"]["last_no"])
-    text = best_alert_text(no, passing, last_no)
-    for row in passing:
-        state["best_alert"]["last_no"][row["pool"]] = no
+    seen_no = state["best_alert"]["last_no"].get(pool)
+    text = crowded_alert_text(no, top, seen_no)
+    state["best_alert"]["last_no"][pool] = no
     state["best_alert"]["next_no"] = no + 1
-    state["alerts"].append({"no": no, "kind": "best", "at": now_iso(),
-                            "pools": [r["pool"] for r in passing]})
+    state["alerts"].append({"no": no, "kind": "best", "at": now_iso(), "pools": [pool]})
     del state["alerts"][:-FLOW_ALERT_CAP]
     return text
 

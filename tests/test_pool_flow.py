@@ -274,34 +274,65 @@ class PaginationTest(unittest.TestCase):
         self.assertTrue(result["truncated"])
 
 
-class AlertTest(unittest.TestCase):
-    def _passing(self):
-        return pf.scan_pools(listing=(meteora_rows(), [], False))["passing"]
+def rows_pool(index: int) -> str:
+    """Alamat pool fixture METEORA_24H ke-index (0-based)."""
+    return METEORA_24H[index][0]
 
-    def test_tanpa_pool_lolos_tidak_ada_alert(self):
+
+def _volume_fetch(volumes: dict, rows: list):
+    """Pengganti ``fetch_token_pools``: volume 4H per pool dari ``volumes`` (default 10)."""
+    def fake(mint, *args, **kwargs):
+        return ([dict(r, volume=volumes.get(r["pool_address"], 10.0))
+                 for r in rows if pf.mint_of_pool(r) == mint], [], False)
+    return fake
+
+
+class AlertTest(unittest.TestCase):
+    """Alert Telegram: hanya pool paling ramai (volume 4H terbesar)."""
+
+    def _enriched(self, volumes):
+        rows = meteora_rows()
+        result = pf.scan_pools(listing=(rows, [], False))
+        pf.enrich_scan_result(result, fetch=_volume_fetch(volumes, rows))
+        return rows, result
+
+    def test_tanpa_pool_paling_ramai_tidak_ada_alert(self):
         state = pf.empty_state()
-        self.assertIsNone(pf.apply_best_alert(state, []))
+        self.assertIsNone(pf.apply_crowded_alert(state, None))
         self.assertEqual(state["alerts"], [])
         self.assertEqual(state["best_alert"]["next_no"], 1)
 
-    def test_alert_memberi_nomor_dan_menandai_pool_yang_sudah_pernah_muncul(self):
+    def test_alert_hanya_memuat_satu_pool_paling_ramai(self):
+        rows, result = self._enriched({rows_pool(3): 900.0})
         state = pf.empty_state()
-        passing = self._passing()
-        first = pf.apply_best_alert(state, passing)
-        self.assertIn("alert #1", first)
-        self.assertEqual(first.count("🆕 baru"), len(passing))
-        self.assertEqual(state["best_alert"]["next_no"], 2)
-        second = pf.apply_best_alert(state, passing)
-        self.assertIn("alert #2", second)
-        self.assertEqual(second.count("🔁 sudah pernah · alert #1"), len(passing))
-        self.assertNotIn("🆕 baru", second)
+        text = pf.apply_crowded_alert(state, pf.most_crowded(result))
+        self.assertIn("POOL PALING RAMAI", text)
+        self.assertIn("DacityCoin", text)
+        for other in ("STANK", "CHOO", "mihao", "Rocco", "paws"):
+            self.assertNotIn(other, text)
+        self.assertEqual(len(state["alerts"]), 1)
+        self.assertEqual(state["alerts"][0]["pools"], [rows_pool(3)])
+        self.assertEqual(list(state["best_alert"]["last_no"]), [rows_pool(3)])
 
-    def test_alert_memuat_tautan_dan_filter_24h(self):
-        text = pf.best_alert_text(1, self._passing(), {})
+    def test_alert_memberi_nomor_dan_tag_sudah_pernah(self):
+        _, result = self._enriched({rows_pool(3): 900.0})
+        state = pf.empty_state()
+        top = pf.most_crowded(result)
+        first = pf.apply_crowded_alert(state, top)
+        self.assertIn("alert #1", first)
+        self.assertIn("🆕 baru", first)
+        second = pf.apply_crowded_alert(state, top)
+        self.assertIn("alert #2", second)
+        self.assertIn("🔁 sudah pernah · alert #1", second)
+        self.assertEqual(state["best_alert"]["next_no"], 3)
+
+    def test_alert_memuat_volume_4h_filter_dan_tautan(self):
+        _, result = self._enriched({rows_pool(3): 900.0})
+        text = pf.apply_crowded_alert(pf.empty_state(), pf.most_crowded(result))
+        self.assertIn("volume 4H", text)
         self.assertIn("24H", text)
-        self.assertIn("÷ vol", text)
-        self.assertIn("gmgn.ai", text)
-        self.assertIn("meteora.ag", text)
+        for host in ("gmgn.ai", "meteora.ag", "hawkfi.ag", "dexscreener.com"):
+            self.assertIn(host, text)
 
     def test_split_telegram_tiap_bagian_di_bawah_batas(self):
         text = "\n".join("baris " + "x" * 90 for _ in range(200))
@@ -378,19 +409,48 @@ class TelegramCopyTest(unittest.TestCase):
             pf.send_telegram("pendek")
         self.assertNotIn("reply_markup", sent[0])
 
-    def test_run_best_mengembalikan_teks_dan_tombol(self):
+    def _alert_module(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location(
             "pool_flow_alert", ROOT / "scripts" / "pool_flow_alert.py")
-        alert = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(alert)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_run_best_satu_pesan_satu_tombol_pool_paling_ramai(self):
+        alert = self._alert_module()
+        rows = meteora_rows()
         state = pf.empty_state()
-        messages = alert.run_best(state, scan=lambda: pf.scan_pools(
-            listing=(meteora_rows(), [], False)))
+        fake = _volume_fetch({rows_pool(3): 900.0}, rows)
+        with mock.patch.object(pf, "fetch_token_pools", side_effect=fake):
+            messages = alert.run_best(state, scan=lambda: pf.scan_pools(
+                listing=(rows, [], False)))
         self.assertEqual(len(messages), 1)
         text, markup = messages[0]
-        self.assertIn("BEST POOL", text)
-        self.assertEqual(len(markup["inline_keyboard"]), len(self._passing()))
+        self.assertIn("POOL PALING RAMAI", text)
+        self.assertIn("DacityCoin", text)
+        self.assertEqual(len(markup["inline_keyboard"]), 1)
+        (button,) = markup["inline_keyboard"][0]
+        self.assertEqual(button["copy_text"]["text"], pf.mint_of_pool(rows[3]))
+        self.assertEqual(state["best_alert"]["next_no"], 2)
+
+    def test_run_best_volume_4h_gagal_kirim_peringatan_tanpa_ubah_state(self):
+        alert = self._alert_module()
+        rows = meteora_rows()
+        state = pf.empty_state()
+        with mock.patch.object(pf, "fetch_token_pools",
+                               side_effect=RuntimeError("timeout")):
+            messages = alert.run_best(state, scan=lambda: pf.scan_pools(
+                listing=(rows, [], False)))
+        self.assertEqual(len(messages), 1)
+        text, markup = messages[0]
+        self.assertIn("belum bisa ditentukan", text)
+        self.assertIsNone(markup)
+        self.assertEqual(state["alerts"], [])
+        self.assertEqual(state["best_alert"]["next_no"], 1)
+
+    def test_run_best_tanpa_pool_lolos_tidak_mengirim(self):
+        alert = self._alert_module()
         self.assertEqual(alert.run_best(pf.empty_state(), scan=lambda: {
             "passing": [], "listing_rows": 0, "candidates": 0,
             "listing_errors": 0, "truncated": False}), [])
