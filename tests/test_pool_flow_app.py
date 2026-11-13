@@ -61,7 +61,7 @@ class AppMainTest(unittest.TestCase):
         body = self._body(at)
         self.assertIn(CHOO, body)
         self.assertIn(DACITY_5DC, body)
-        self.assertIn("DnmL7vYnNTACb8e6a4EpbeeeNDW8hwp1EvQZ4BWKCgjK", body)  # GATO 2,48x lolos
+        self.assertNotIn("DnmL7vYnNTACb8e6a4EpbeeeNDW8hwp1EvQZ4BWKCgjK", body)  # GATO fee/active 4,5% gagal
         self.assertNotIn(LMAO, body)
         self.assertIn("Timeframe 24H", " ".join(str(c.value) for c in at.caption))
 
