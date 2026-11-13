@@ -18,8 +18,8 @@ from links import external_links_html, pool_links_html
 RESULT_KEY = "pool_flow_result"
 BUTTON_LABEL = "SCAN BEST POOL"
 
-TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier", "Open pos.",
-                 "In-range", "Volatility", "Fee/active TVL", "Rasio (×)"]
+TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier",
+                 "Volatility", "Fee/active TVL", "Rasio (×)"]
 
 
 def _filter_caption() -> str:
@@ -64,8 +64,6 @@ def _result_table_html(passing: list) -> str:
             _cell_token_html(row),
             _html.escape(pf.fmt_usd(row["tvl"])),
             _html.escape(f"{row['fee_tier']:g}%"),
-            _html.escape(f"{row['open_positions']:g}"),
-            _html.escape(pf.fmt_pct(row["in_range"])),
             _html.escape(pf.fmt_pct(row["volatility"])),
             _html.escape(pf.fmt_pct(row["fee_active_tvl"])),
             _html.escape(pf.fmt_mult(row["multiple"])),

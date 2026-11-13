@@ -71,8 +71,10 @@ class AppMainTest(unittest.TestCase):
         self.assertIn("overflow-x:auto", body)
         self.assertIn("<table", body)
         self.assertIn("min-width:820px", body)
-        for header in ("In-range", "Volatility", "Fee/active TVL"):
+        for header in ("Volatility", "Fee/active TVL", "Rasio (×)"):
             self.assertIn(header, body)
+        for header in ("Open pos.", "In-range"):
+            self.assertNotIn(header, body)
         self.assertIn("Geser tabel ke kanan", " ".join(str(c.value) for c in at.caption))
 
     def test_peringatan_listing_terpotong_muncul_hanya_bila_terpotong(self):
