@@ -2,7 +2,7 @@
 """Tes logika Scan Best Pool (24H, volatility vs fee/active TVL) — tanpa jaringan.
 
 ``METEORA_24H`` berisi 14 pool dari respons Meteora timeframe=24h yang dikirim
-user (2026-11-13). Batas volatility 5% (permintaan user 2026-11-13): tujuh lolos, tujuh gagal.
+user (2026-11-13). Batas volatility 5%, rasio minimal 2x (permintaan user 2026-11-13): sembilan lolos, lima gagal.
 Hasil yang diharapkan dihitung manual dari aturan.
 """
 import json
@@ -74,6 +74,8 @@ PASSING_ORDER = [  # rasio terbesar dulu
     "9ViFN1A2FG2aL69Uu3dZwVMbcSdKuuMM5PLouZmguK2e",  # mihao 3,71x
     "BADiqzWTYyZPbcqKgNtgy6KB5ZhmPrgq9qguPnpjXHf8",  # Rocco 3,38x
     "5WVURqJSLRFNZDVDF2njtjZihRLeALvt5tss3yjt2Vik",  # paws 3,29x
+    "FSb7qz3cMGjYacrLfoKumozoqFibiAtzjDq97FxHivYP",  # DacityCoin FSb7 2,80x
+    "DnmL7vYnNTACb8e6a4EpbeeeNDW8hwp1EvQZ4BWKCgjK",  # GATO 2,48x
 ]
 
 
@@ -91,7 +93,7 @@ class RuleTest(unittest.TestCase):
             ("holders", dict(holders=1_500), True), ("holders", dict(holders=1_499), False),
             ("market cap", dict(mcap=100_000.0), True), ("market cap", dict(mcap=99_999.0), False),
             ("volatilitas", dict(vol=5.0, fa=20.0), True), ("volatilitas", dict(vol=5.01, fa=20.0), False),
-            ("rasio", dict(fa=15.0, vol=5.0), True), ("rasio", dict(fa=14.99, vol=5.0), False),
+            ("rasio", dict(fa=10.0, vol=5.0), True), ("rasio", dict(fa=9.99, vol=5.0), False),
         ]
         for label, over, expected in cases:
             with self.subTest(rule=label, over=over):
@@ -121,7 +123,7 @@ class RuleTest(unittest.TestCase):
 
 
 class RealResponseTest(unittest.TestCase):
-    def test_tujuh_pool_lolos_urut_rasio_dari_respons_meteora(self):
+    def test_sembilan_pool_lolos_urut_rasio_dari_respons_meteora(self):
         result = pf.scan_pools(listing=(meteora_rows(), [], False))
         self.assertEqual(result["candidates"], 14)
         self.assertEqual([r["pool"] for r in result["passing"]], PASSING_ORDER)
@@ -132,8 +134,8 @@ class RealResponseTest(unittest.TestCase):
 
     def test_alasan_gagal_sesuai_hitung_manual(self):
         results = {r["pool"]: r for r in pf.scan_pools(listing=(meteora_rows(), [], False))["results"]}
-        gato = results["DnmL7vYnNTACb8e6a4EpbeeeNDW8hwp1EvQZ4BWKCgjK"]
-        self.assertTrue(any("÷ volatility" in r for r in gato["reasons"]))  # 2,48x
+        lmao = results["EWBCL4hKY6VdzZVcCY7pMPvRhG78koHY6nQnt8EW99Br"]
+        self.assertTrue(any("÷ volatility" in r for r in lmao["reasons"]))  # 1,23x
         paws = results["5WVURqJSLRFNZDVDF2njtjZihRLeALvt5tss3yjt2Vik"]
         self.assertTrue(paws["passes"])  # vol 3,35% ≤ 5%, rasio 3,29x
         pump = results["2wqaQVQ54bayWCjfsV391BQHA13qiVgjagSRtQPFJ6wu"]
