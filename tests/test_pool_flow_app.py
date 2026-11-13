@@ -12,9 +12,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import pool_flow as pf  # noqa: E402
-from tests.test_pool_flow import DUT_12H, FOOD_12H, REAL_12H  # noqa: E402
+from tests.test_pool_flow import DUT_12H, LOW_12H, PASSING_12H  # noqa: E402
 
-FOOD_POOL = FOOD_12H["pool_address"]
+LOW_POOL = LOW_12H["pool_address"]  # FOOD (fee 2 % untuk uji)
 DUT_POOL = DUT_12H["pool_address"]
 
 
@@ -26,7 +26,7 @@ class AppMainTest(unittest.TestCase):
         self._patches = [
             mock.patch.object(pf, "STATE_PATH", self.state_path),
             mock.patch.object(pf, "fetch_listing",
-                              side_effect=lambda *a, **k: (REAL_12H, [], False)),
+                              side_effect=lambda *a, **k: (PASSING_12H, [], False)),
             # Semua pool per token: offline, dari fixture yang sama dengan listing.
             mock.patch.object(pf, "fetch_token_pools", side_effect=self._token_pools),
         ]
@@ -40,7 +40,7 @@ class AppMainTest(unittest.TestCase):
 
     @staticmethod
     def _token_pools(mint, *a, **k):
-        return ([r for r in REAL_12H if pf.mint_of_pool(r) == mint], [], False)
+        return ([r for r in PASSING_12H if pf.mint_of_pool(r) == mint], [], False)
 
     def _app(self):
         at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
@@ -57,7 +57,7 @@ class AppMainTest(unittest.TestCase):
         at = self._app()
         next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
         self.assertFalse(at.exception)
-        passing = pf.scan_pools(listing=(REAL_12H, [], False))["passing"]
+        passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
         doc = self._body(at)
         self.assertEqual(doc.count('class="copy-ca"'), len(passing))
         for row in passing:
@@ -83,7 +83,7 @@ class AppMainTest(unittest.TestCase):
         next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
         self.assertFalse(at.exception)
         body = self._body(at)
-        self.assertIn(FOOD_POOL, body)
+        self.assertIn(LOW_POOL, body)
         self.assertIn(DUT_POOL, body)
         self.assertIn("Timeframe 12H", " ".join(str(c.value) for c in at.caption))
         markdown = " ".join(str(m.value) for m in at.markdown)
@@ -108,7 +108,7 @@ class AppMainTest(unittest.TestCase):
     def test_peringatan_listing_terpotong_muncul_hanya_bila_terpotong(self):
         at = self._app()
         with mock.patch.object(pf, "fetch_listing",
-                               side_effect=lambda *a, **k: (REAL_12H, [], True)):
+                               side_effect=lambda *a, **k: (PASSING_12H, [], True)):
             next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
         self.assertTrue(any("Listing belum lengkap" in str(w.value) for w in at.warning))
 
@@ -129,9 +129,9 @@ class AppMainTest(unittest.TestCase):
         next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
         self.assertFalse(at.exception)
         headline = " ".join(str(m.value) for m in at.markdown)
-        self.assertIn("Paling ramai (avg volume/menit)", headline)
-        self.assertIn("(LOW RISK)", headline)  # FOOD: avg volume/menit terbesar, volatility 3,07%
-        mints = {row["mint"] for row in pf.scan_pools(listing=(REAL_12H, [], False))["passing"]}
+        self.assertNotIn("Paling ramai", headline)  # headline perhitungan sudah dihapus (2026-11-13)
+        self.assertNotIn("avg volume/menit", headline)
+        mints = {row["mint"] for row in pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]}
         self.assertEqual(len(at.expander), len(mints))
         self.assertTrue(all("pool" in e.label for e in at.expander))
 
@@ -141,8 +141,8 @@ class AppMainTest(unittest.TestCase):
         detail = "\n".join(str(node.proto.body) for node in at.get("html"))
         self.assertIn("Total 12H", detail)
         self.assertIn("Trader unik", detail)
-        self.assertIn(f"https://app.meteora.ag/dlmm/{FOOD_POOL}", detail)
-        self.assertIn(f"https://www.hawkfi.ag/meteora/{FOOD_POOL}", detail)
+        self.assertIn(f"https://app.meteora.ag/dlmm/{LOW_POOL}", detail)
+        self.assertIn(f"https://www.hawkfi.ag/meteora/{LOW_POOL}", detail)
         self.assertIn("✅ lolos", detail)
         self.assertNotIn("onclick", detail)  # dropdown tanpa skrip
 
@@ -154,8 +154,8 @@ class AppMainTest(unittest.TestCase):
                          if "🔥🔥🔥" in str(node.proto.srcdoc))
         first_row = hot_table.split("<tbody>", 1)[1].split("</tr>", 1)[0]
         self.assertIn("🔥🔥🔥", first_row)
-        self.assertIn(FOOD_POOL, first_row)  # avg volume/menit terbesar = FOOD (LOW RISK)
-        self.assertEqual(body.count("🔥🔥🔥"), 2)  # headline + baris teratas (dropdown ada di st.html)
+        self.assertIn(LOW_POOL, first_row)  # avg volume/menit terbesar = FOOD (LOW RISK)
+        self.assertEqual(body.count("🔥🔥🔥"), 1)  # hanya baris teratas tabel (headline sudah dihapus)
         dropdown = "\n".join(str(node.proto.body) for node in at.get("html"))
         self.assertEqual(dropdown.count("🔥🔥🔥"), 1)
         self.assertIn("background:rgba(249,115,22,.14)", first_row)
@@ -198,8 +198,8 @@ class WorkflowAndPagesTest(unittest.TestCase):
 class ResultTableTest(unittest.TestCase):
     def test_tabel_memuat_avg_volume_per_menit_per_pool(self):
         import pool_flow_ui as ui
-        passing = pf.scan_pools(listing=(REAL_12H, [], False))["passing"]
-        html = ui._result_table_html(passing, None, FOOD_POOL)
+        passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
+        html = ui._result_table_html(passing, None, LOW_POOL)
         self.assertIn("Avg volume/menit (pool)", html)
         self.assertIn(">$1.500,59</td>", html)   # FOOD avg_volume
         self.assertIn(">$494,02</td>", html)     # DutNdX avg_volume
@@ -209,11 +209,11 @@ class ResultTableTest(unittest.TestCase):
 
     def test_tabel_hanya_memuat_baris_yang_diberikan(self):
         import pool_flow_ui as ui
-        passing = pf.scan_pools(listing=(REAL_12H, [], False))["passing"]
+        passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
         high, low = pf.split_by_risk(passing)
         html = ui._result_table_html(high)
         self.assertIn(DUT_POOL, html)
-        self.assertNotIn(FOOD_POOL, html)
+        self.assertNotIn(LOW_POOL, html)
 
 
 if __name__ == "__main__":
