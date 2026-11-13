@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Alert pool terbaik Scan Best Pool (timeframe 24H), dijalankan tiap 30 menit.
+"""Alert pool terbaik Scan Best Pool (timeframe 24H), dijalankan tiap 4 jam.
 
 Pemakaian:
     python3 scripts/pool_flow_alert.py [--state berkas.json]
@@ -20,13 +20,16 @@ sys.path.insert(0, str(ROOT))
 import pool_flow as pf  # noqa: E402
 
 
-def run_best(state: dict, *, scan=None) -> list[str]:
+def run_best(state: dict, *, scan=None) -> list[tuple[str, dict | None]]:
+    """Kembalikan daftar (teks, reply_markup) yang akan dikirim."""
     result = (scan or pf.scan_pools)()
     text = pf.apply_best_alert(state, result["passing"])
     print(f"best: listing {result['listing_rows']} baris, dievaluasi {result['candidates']}, "
           f"lolos {len(result['passing'])}, error listing {result['listing_errors']}, "
           f"terpotong {result['truncated']}")
-    return [text] if text else []
+    if not text:
+        return []
+    return [(text, pf.alert_copy_markup(result["passing"]))]
 
 
 def main(argv: list | None = None) -> int:
@@ -39,8 +42,8 @@ def main(argv: list | None = None) -> int:
     state = pf.load_state(path)
     messages = run_best(state)
 
-    for text in messages:
-        ok, error = pf.send_telegram(text)
+    for text, markup in messages:
+        ok, error = pf.send_telegram(text, reply_markup=markup)
         print("telegram:", "terkirim" if ok else f"gagal ({error})")
     pf.save_state(state, path)
     after = path.read_text(encoding="utf-8")

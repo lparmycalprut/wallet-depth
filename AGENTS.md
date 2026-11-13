@@ -33,12 +33,12 @@ Independent market-risk fields such as Meteora's `top_holders_pct`, GMGN metrics
 
 ## Best Pool invariants
 
-Scan Best Pool (2026-11-11, explicit user request) lives in `pool_flow.py` (logic, no Streamlit) and `pool_flow_ui.py` (main-page card). Everything is read from one Meteora `pool-discovery` listing at timeframe **12h**, `category=top`, with a server pre-filter (`pool_type=dlmm`, `fee_pct>=2`, `fee_active_tvl_ratio>=20`) that is only a narrowing step. Every rule is re-checked client-side in `evaluate_pool`.
+Scan Best Pool (2026-11-11, explicit user request) lives in `pool_flow.py` (logic, no Streamlit) and `pool_flow_ui.py` (main-page card). Everything is read from one Meteora `pool-discovery` listing at timeframe **24h**, `category=top`, with a server pre-filter (`pool_type=dlmm`, `fee_pct>=2`, `tvl>=10000`, `active_tvl>=2000`, holders, market cap) that is only a narrowing step. Pages are fetched by cursor: each request sends `after_key` from the previous response and stops when `has_more` is false. The `page` parameter is ignored by the API and must not be used (it returned the same pools on every page). Every rule is re-checked client-side in `evaluate_pool`.
 
 - Rules (all must pass): fee tier ≥ 2 %; `open_positions` ≥ 50; `tvl` ≥ $5,000; `volatility` ≥ 5 %; `fee_active_tvl_ratio` (Fee/Active TVL) ≥ 20 %; in-range = `active_positions / open_positions × 100` ≥ 50 %.
 - Order: in-range % descending, ties broken by Fee/Active TVL descending.
 - Unmeasurable values (missing, or `open_positions` = 0) fail the rule. The in-range % is computed from the raw counts, not from `active_positions_pct`.
-- The scan writes nothing. Only the Telegram best alert (`scripts/pool_flow_alert.py`, every 30 min, `pool-flow-best.yml`) writes `pool_flow_state.json`, and that file keeps only alert numbering (`best_alert`) and `alerts`.
+- The scan writes nothing. Only the Telegram best alert (`scripts/pool_flow_alert.py`, every 4 hours, `pool-flow-best.yml`) writes `pool_flow_state.json`, and that file keeps only alert numbering (`best_alert`) and `alerts`.
 - The watchlist, net-deposit history, watch alert, and the Cek LP Keluar page/tool were removed on 2026-11-11. Do not reintroduce them without a new user request.
 - Earlier Best Pool rules (Fee-IL, F/V, IL windows, GMGN/RugCheck enrichment) and the modules behind them were removed; the old modules are gone from the repo.
 

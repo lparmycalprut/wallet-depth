@@ -1,12 +1,12 @@
 name: Pool Flow — Best Pool alert
 
-# Alert pool terbaik (filter Scan Best Pool, timeframe 12H) tiap 30 menit.
+# Alert pool terbaik (filter Scan Best Pool, timeframe 24H) tiap 4 jam (00, 04, 08, ... UTC).
 # Cron GitHub bisa terlambat beberapa menit. State di pool_flow_state.json
 # di-commit hanya bila berubah.
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "0 */4 * * *"
   workflow_dispatch:
 
 permissions:

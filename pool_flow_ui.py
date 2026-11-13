@@ -43,13 +43,16 @@ def _render_scan_result(result: dict) -> None:
         + (f" · {result['listing_errors']} halaman listing gagal"
            if result.get("listing_errors") else ""))
     if result.get("truncated"):
-        st.warning(f"Listing belum lengkap: {pf.FLOW_MAX_PAGES} halaman masih penuh, "
+        st.warning("Listing belum lengkap: pengambilan berhenti sebelum semua halaman "
+                   f"terambil (batas {pf.FLOW_MAX_PAGES} halaman atau ada halaman gagal), "
                    "sebagian pool belum terambil.")
     if not passing:
         st.info("Tidak ada pool yang lolos semua filter.")
         return
     st.caption("Geser tabel ke kanan untuk melihat semua kolom.")
-    st.markdown(_result_table_html(passing), unsafe_allow_html=True)
+    # st.iframe (bukan components.v1.html, yang sudah usang): HTML dirender di iframe
+    # agar tombol copy CA bisa berjalan. Isi tabel sudah di-escape (lihat _result_table_html).
+    st.iframe(_result_document(passing), height=_result_height(len(passing)), width="stretch")
 
 
 def _result_table_html(passing: list) -> str:
@@ -83,6 +86,70 @@ def _result_table_html(passing: list) -> str:
     )
 
 
+COPY_LABEL = "📋 CA"
+
+# Markdown Streamlit membuang <script>, jadi tabel dirender di dalam komponen HTML
+# (iframe) yang mengizinkan JavaScript. Tombol copy hanya menyalin CA; tidak ada
+# perubahan pada tautan.
+_COPY_SCRIPT = """
+<script>
+function copyCa(btn) {
+  var text = btn.getAttribute('data-ca') || '';
+  function done(ok) {
+    btn.textContent = ok ? '✅ Tersalin' : '❌ Gagal';
+    setTimeout(function () { btn.textContent = '%s'; }, 1500);
+  }
+  function fallback() {
+    var t = document.createElement('textarea');
+    t.value = text;
+    t.setAttribute('readonly', '');
+    t.style.position = 'fixed';
+    t.style.opacity = '0';
+    document.body.appendChild(t);
+    t.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(t);
+    done(ok);
+  }
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(function () { done(true); }, fallback);
+  } else {
+    fallback();
+  }
+}
+</script>
+""" % COPY_LABEL
+
+_COPY_CSS = (
+    "body{margin:0;background:#ffffff;color:#000000;"
+    "font-family:'Source Sans Pro',sans-serif;}"
+    ".copy-ca{font-size:12px;font-weight:700;color:#1d4ed8;background:#eff6ff;"
+    "border:1px solid #93c5fd;border-radius:6px;padding:1px 7px;margin-left:.3rem;"
+    "cursor:pointer;white-space:nowrap;font-family:inherit;}"
+    ".copy-ca:hover{background:#dbeafe;}"
+)
+
+
+def _copy_button_html(ca: str) -> str:
+    if not ca:
+        return ""
+    return (f'<button type="button" class="copy-ca" data-ca="{_html.escape(ca, quote=True)}" '
+            f'onclick="copyCa(this)">{COPY_LABEL}</button>')
+
+
+def _result_document(passing: list) -> str:
+    """Dokumen HTML utuh untuk komponen: tabel + skrip copy CA."""
+    return ("<!doctype html><html><head><meta charset=\"utf-8\">"
+            f"<style>{_COPY_CSS}</style></head><body>"
+            f"{_result_table_html(passing)}{_COPY_SCRIPT}</body></html>")
+
+
+def _result_height(count: int) -> int:
+    """Tinggi iframe: header + perkiraan tinggi tiap baris (token bisa dua-tiga baris)."""
+    return min(1200, max(160, 60 + 120 * count))
+
+
 def _cell_token_html(row: dict) -> str:
     """Nama token + pool, CA lengkap, dan link. Dipakai di dalam sel tabel."""
     name = _html.escape(f"{row['symbol']} · {row['pool_name'] or row['pool'][:8]}")
@@ -95,8 +162,9 @@ def _cell_token_html(row: dict) -> str:
         external_links_html(row.get("mint") or ""),
         pool_links_html(row.get("pool") or ""),
     ) if part)
-    if links_html:
-        parts.append(f"<span style='font-size:12px'>{links_html}</span>")
+    copy_html = _copy_button_html(row.get("mint") or "")
+    if links_html or copy_html:
+        parts.append(f"<span style='font-size:12px'>{links_html}{copy_html}</span>")
     return "<br>".join(parts)
 
 
