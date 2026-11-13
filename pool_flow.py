@@ -20,7 +20,6 @@ import math
 import os
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -53,9 +52,8 @@ FLOW_SERVER_FILTER = (
     f"&&fee_pct>={FLOW_FEE_TIER_MIN:g}"
     f"&&active_tvl>={FLOW_ACTIVE_TVL_MIN:g}"
 )
-FLOW_MAX_PAGES = 100             # batas keamanan: 100 × 50 = 5.000 pool setelah pra-saring
+FLOW_MAX_PAGES = 100             # batas keamanan: 100 × 50 = 5.000 pool (cursor after_key)
 FLOW_PAGE_SIZE = 50
-FLOW_LIST_WORKERS = 8
 FLOW_ALERT_CAP = 300             # riwayat alert yang disimpan
 
 STATE_PATH = Path(__file__).resolve().parent / "pool_flow_state.json"
@@ -104,52 +102,56 @@ def _h(value) -> str:
 # Pengambilan data Meteora
 # ---------------------------------------------------------------------------
 
-def _get_json(params: dict, *, timeout: int = HTTP_TIMEOUT):
+def _get_payload(params: dict, *, timeout: int = HTTP_TIMEOUT) -> dict:
     url = POOLS_URL + "?" + urllib.parse.urlencode(params)
     request = urllib.request.Request(
         url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
     with urllib.request.urlopen(request, timeout=timeout) as response:
         payload = json.load(response)
-    rows = payload.get("data") if isinstance(payload, dict) else None
-    return [row for row in (rows or []) if isinstance(row, dict)]
+    return payload if isinstance(payload, dict) else {}
 
 
-def fetch_top_page(page: int) -> list:
-    """Satu halaman listing kategori ``top`` pada timeframe 24H."""
-    return _get_json({"page_size": FLOW_PAGE_SIZE, "timeframe": FLOW_TIMEFRAME,
-                      "category": "top", "page": page,
-                      "filter_by": FLOW_SERVER_FILTER})
+def fetch_top_page(after_key: str | None = None) -> tuple[list, str | None, bool]:
+    """Satu halaman listing kategori ``top`` pada timeframe 24H.
+
+    Meteora memakai cursor: halaman berikutnya diminta dengan ``after_key`` dari
+    respons sebelumnya (parameter ``page`` diabaikan API dan selalu memberi
+    pool yang sama). Kembalikan (rows, next_after_key, has_more).
+    """
+    params = {"page_size": FLOW_PAGE_SIZE, "timeframe": FLOW_TIMEFRAME,
+              "category": "top", "filter_by": FLOW_SERVER_FILTER}
+    if after_key:
+        params["after_key"] = after_key
+    payload = _get_payload(params)
+    rows = [row for row in (payload.get("data") or []) if isinstance(row, dict)]
+    next_key = payload.get("after_key") or None
+    return rows, (str(next_key) if next_key else None), bool(payload.get("has_more"))
 
 
-def fetch_listing(max_pages: int = FLOW_MAX_PAGES, *,
-                  workers: int = FLOW_LIST_WORKERS) -> tuple[list, list, bool]:
-    """Ambil halaman per gelombang (``workers`` halaman paralel) sampai halaman
-    pendek (< FLOW_PAGE_SIZE) muncul atau ``max_pages`` tercapai.
+def fetch_listing(max_pages: int = FLOW_MAX_PAGES) -> tuple[list, list, bool]:
+    """Ambil seluruh listing lewat cursor ``after_key``, berurutan, sampai
+    ``has_more`` = false.
 
-    Kembalikan (rows, errors, truncated). ``truncated`` = batas halaman tercapai
-    dan halaman terakhir masih penuh, jadi masih ada pool yang belum terambil.
+    Kembalikan (rows, errors, truncated). ``truncated`` = True bila listing belum
+    lengkap: batas ``max_pages`` tercapai selagi masih ada halaman, cursor tidak
+    maju, atau ada halaman yang gagal diambil.
     """
     rows: list = []
     errors: list = []
-    pages = max(1, max_pages)
-    ended = False
-    page = 1
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as executor:
-        while page <= pages and not ended:
-            batch = list(range(page, min(page + max(1, workers), pages + 1)))
-            futures = [(p, executor.submit(fetch_top_page, p)) for p in batch]
-            for _, future in futures:
-                try:
-                    page_rows = future.result()
-                except Exception as exc:  # noqa: BLE001 — catat, lanjut halaman lain
-                    errors.append(str(exc) or type(exc).__name__)
-                    continue
-                rows.extend(page_rows)
-                if len(page_rows) < FLOW_PAGE_SIZE:
-                    ended = True
-            page = batch[-1] + 1
-    truncated = (not ended) and bool(rows)
-    return rows, errors, truncated
+    cursor = None
+    for _ in range(max(1, max_pages)):
+        try:
+            page_rows, next_key, has_more = fetch_top_page(cursor)
+        except Exception as exc:  # noqa: BLE001 — catat; tanpa cursor tidak bisa lanjut
+            errors.append(str(exc) or type(exc).__name__)
+            return rows, errors, True
+        rows.extend(page_rows)
+        if not has_more or not next_key:
+            return rows, errors, False
+        if next_key == cursor:  # cursor macet: hentikan, jangan loop
+            return rows, errors, True
+        cursor = next_key
+    return rows, errors, True
 
 
 # ---------------------------------------------------------------------------

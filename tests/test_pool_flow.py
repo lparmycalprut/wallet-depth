@@ -173,63 +173,99 @@ class ScanTest(unittest.TestCase):
         captured = []
 
         def fake_get(params, **kwargs):
-            captured.append(params)
-            return []
+            captured.append(dict(params))
+            return {"data": [], "has_more": False}
 
-        with mock.patch.object(pf, "_get_json", side_effect=fake_get):
-            rows, errors, truncated = pf.fetch_listing(max_pages=2, workers=2)
+        with mock.patch.object(pf, "_get_payload", side_effect=fake_get):
+            rows, errors, truncated = pf.fetch_listing()
         self.assertEqual((rows, errors, truncated), ([], [], False))
-        self.assertEqual(len(captured), 2)
-        for params in captured:
-            self.assertEqual(params["timeframe"], "24h")
-            self.assertEqual(params["category"], "top")
-            self.assertEqual(params["page_size"], 50)
-            for piece in ("pool_type=dlmm", "base_token_holders>=1500", "tvl>=10000",
-                          "fee_pct>=2", "active_tvl>=2000", "base_token_market_cap>=100000",
-                          "base_token_has_high_supply_concentration=false",
-                          "base_token_has_high_single_ownership=false"):
-                self.assertIn(piece, params["filter_by"])
+        self.assertEqual(len(captured), 1)
+        params = captured[0]
+        self.assertEqual(params["timeframe"], "24h")
+        self.assertEqual(params["category"], "top")
+        self.assertEqual(params["page_size"], 50)
+        self.assertNotIn("after_key", params)
+        self.assertNotIn("page", params)  # page diabaikan API Meteora
+        for piece in ("pool_type=dlmm", "base_token_holders>=1500", "tvl>=10000",
+                      "fee_pct>=2", "active_tvl>=2000", "base_token_market_cap>=100000",
+                      "base_token_has_high_supply_concentration=false",
+                      "base_token_has_high_single_ownership=false"):
+            self.assertIn(piece, params["filter_by"])
 
 
 class PaginationTest(unittest.TestCase):
-    def _pages(self, sizes, errors_at=()):
-        from unittest import mock as m
+    """Paginasi cursor: halaman berikutnya diminta dengan ``after_key``."""
 
+    def _cursor(self, sizes, errors_at=(), stuck=False):
+        """Fake API. ``sizes`` = jumlah baris tiap halaman. Panggilan ke-n (0-based)
+        diidentifikasi dari ``after_key`` = ``k<n>``."""
         calls = []
 
         def fake(params, **kwargs):
-            page = params["page"]
-            calls.append(page)
-            if page in errors_at:
+            key = params.get("after_key")
+            index = 0 if key is None else (0 if stuck and key == "stuck" else int(key[1:]))
+            calls.append(dict(params))
+            if index in errors_at:
                 raise RuntimeError("boom")
-            size = sizes[page - 1] if page - 1 < len(sizes) else 0
-            return [{"pool_address": f"P{page}-{i}"} for i in range(size)]
+            size = sizes[index] if index < len(sizes) else 0
+            has_more = index + 1 < len(sizes)
+            next_key = ("stuck" if stuck else f"k{index + 1}") if has_more else None
+            data = [{"pool_address": f"P{index}-{i}"} for i in range(size)]
+            return {"data": data, "after_key": next_key, "has_more": has_more}
 
-        return m.patch.object(pf, "_get_json", side_effect=fake), calls
+        return mock.patch.object(pf, "_get_payload", side_effect=fake), calls
 
-    def test_berhenti_di_halaman_pendek(self):
-        patcher, calls = self._pages([50, 50, 3])  # halaman 4+ kosong (akhir listing)
+    def test_berhenti_saat_has_more_false(self):
+        patcher, calls = self._cursor([50, 50, 3])
         with patcher:
-            rows, errors, truncated = pf.fetch_listing(max_pages=10, workers=2)
+            rows, errors, truncated = pf.fetch_listing(max_pages=10)
         self.assertEqual(len(rows), 103)
         self.assertEqual(errors, [])
         self.assertFalse(truncated)
-        self.assertEqual(sorted(calls), [1, 2, 3, 4])
+        self.assertEqual(len(calls), 3)
+        self.assertNotIn("after_key", calls[0])
+        self.assertEqual([c.get("after_key") for c in calls[1:]], ["k1", "k2"])
+        self.assertTrue(all("page" not in c for c in calls))
 
-    def test_truncated_bila_batas_tercapai_dan_halaman_terakhir_penuh(self):
-        patcher, _ = self._pages([50, 50, 50, 50])
+    def test_tanpa_pool_tidak_ada_halaman_tambahan(self):
+        patcher, calls = self._cursor([50])
         with patcher:
-            rows, _, truncated = pf.fetch_listing(max_pages=3, workers=1)
+            rows, _, truncated = pf.fetch_listing()
+        self.assertEqual(len(rows), 50)
+        self.assertFalse(truncated)
+        self.assertEqual(len(calls), 1)
+
+    def test_truncated_bila_batas_tercapai_selagi_masih_ada_halaman(self):
+        patcher, calls = self._cursor([50, 50, 50, 50])
+        with patcher:
+            rows, _, truncated = pf.fetch_listing(max_pages=3)
         self.assertEqual(len(rows), 150)
         self.assertTrue(truncated)
+        self.assertEqual(len(calls), 3)
 
-    def test_error_halaman_dicatat_dan_listing_lanjut(self):
-        patcher, _ = self._pages([50, 4], errors_at=(1,))
+    def test_error_halaman_menghentikan_dan_menandai_tidak_lengkap(self):
+        patcher, _ = self._cursor([50, 50, 4], errors_at=(1,))
         with patcher:
-            rows, errors, truncated = pf.fetch_listing(max_pages=5, workers=1)
+            rows, errors, truncated = pf.fetch_listing()
         self.assertEqual(errors, ["boom"])
-        self.assertEqual(len(rows), 4)
-        self.assertFalse(truncated)
+        self.assertEqual(len(rows), 50)
+        self.assertTrue(truncated)
+
+    def test_cursor_macet_dihentikan(self):
+        patcher, calls = self._cursor([50, 50, 50], stuck=True)
+        with patcher:
+            rows, errors, truncated = pf.fetch_listing(max_pages=100)
+        self.assertTrue(truncated)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(errors, [])
+
+    def test_halaman_pertama_gagal_tanpa_baris(self):
+        patcher, _ = self._cursor([50], errors_at=(0,))
+        with patcher:
+            rows, errors, truncated = pf.fetch_listing()
+        self.assertEqual(rows, [])
+        self.assertEqual(errors, ["boom"])
+        self.assertTrue(truncated)
 
     def test_truncated_diteruskan_ke_scan(self):
         result = pf.scan_pools(listing=([], [], True))

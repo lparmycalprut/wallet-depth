@@ -43,7 +43,26 @@ class AppMainTest(unittest.TestCase):
         return at
 
     def _body(self, at):
-        return "\n".join(str(node.value) for node in at.markdown)
+        """Markdown + isi iframe (tabel hasil dirender di st.iframe agar tombol copy jalan)."""
+        parts = [str(node.value) for node in at.markdown]
+        parts += [str(node.proto.srcdoc) for node in at.get("iframe")]
+        return "\n".join(parts)
+
+    def test_tombol_copy_ca_tepat_di_samping_hawkfi(self):
+        at = self._app()
+        next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
+        self.assertFalse(at.exception)
+        passing = pf.scan_pools(listing=(meteora_rows(), [], False))["passing"]
+        doc = self._body(at)
+        self.assertEqual(doc.count('class="copy-ca"'), len(passing))
+        for row in passing:
+            self.assertTrue(row["mint"])
+            self.assertIn(f'data-ca="{row["mint"]}"', doc)
+        self.assertRegex(doc, r'🦅HawkFi</a><button type="button" class="copy-ca" '
+                              r'data-ca="[^"]+" onclick="copyCa\(this\)">📋 CA</button>')
+        self.assertIn("navigator.clipboard.writeText", doc)
+        self.assertIn("execCommand('copy')", doc)
+        self.assertNotIn("<script", str(at.markdown))  # skrip hanya di dalam iframe
 
     def test_halaman_utama_hanya_scan_best_pool(self):
         at = self._app()
