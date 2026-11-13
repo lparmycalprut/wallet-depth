@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Alert pool terbaik Scan Best Pool (timeframe 12H), dijalankan tiap 30 menit.
+"""Alert pool terbaik Scan Best Pool (timeframe 24H), dijalankan tiap 30 menit.
 
 Pemakaian:
     python3 scripts/pool_flow_alert.py [--state berkas.json]

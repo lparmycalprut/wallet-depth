@@ -1,21 +1,15 @@
 # -*- coding: utf-8 -*-
 """🏆 Scan Best Pool Meteora — logika inti, tanpa Streamlit.
 
-Filter (permintaan user 2026-11-11), semua pada timeframe 12H:
-- Fee tier ≥ 2 %
-- Open positions ≥ 50
-- TVL ≥ $5.000
-- Volatility ≥ 5 %
-- Fee/Active TVL ≥ 20 %
-- In-range: posisi aktif ≥ 50 % dari open positions
+Request 24H (user, 2026-11-13) + filter volatility vs fee/active TVL:
+- Listing Meteora pool-discovery, timeframe 24h, kategori top, dengan filter
+  dari request user (market cap, holders, TVL, fee tier, active TVL, dlmm).
+- Volatility ≤ 3 %.
+- Rasio = Fee/Active TVL ÷ Volatility ≥ 3×  → tampil.
+- Urutan: rasio terbesar dulu (seri: Fee/Active TVL terbesar).
 
-Urutan hasil: in-range % terbesar (seri dipecah oleh Fee/Active TVL terbesar).
-
-Alert pool terbaik tiap 30 menit memakai hasil filter yang sama. Watchlist
-dan Cek LP Keluar sudah dihapus (2026-11-11).
-
-Semua angka dari listing Meteora pool-discovery (timeframe 12H); tidak ada
-panggilan tambahan per pool.
+Volatility di bawah FLOW_VOLATILITY_EPS dianggap tidak terukur (≈ 0), supaya
+rasio tidak meledak. Alert pool terbaik (tiap 30 menit) memakai hasil yang sama.
 """
 from __future__ import annotations
 
@@ -35,18 +29,28 @@ POOLS_URL = "https://pool-discovery-api.datapi.meteora.ag/pools"
 HTTP_TIMEOUT = 25
 USER_AGENT = "Mozilla/5.0 (wallet-depth-pool-flow)"
 
-FLOW_TIMEFRAME = "12h"
-FLOW_FEE_TIER_MIN = 2.0          # %
-FLOW_OPEN_POSITIONS_MIN = 50     # posisi terbuka
-FLOW_TVL_MIN = 5_000.0           # USD
-FLOW_VOLATILITY_MIN = 5.0        # %
-FLOW_FEE_ACTIVE_TVL_MIN = 20.0   # % (fee_active_tvl_ratio)
-FLOW_IN_RANGE_MIN = 50.0         # % dari open positions
+FLOW_TIMEFRAME = "24h"
+FLOW_FEE_TIER_MIN = 2.0          # % (fee_pct)
+FLOW_TVL_MIN = 10_000.0          # USD (tvl)
+FLOW_ACTIVE_TVL_MIN = 2_000.0    # USD (active_tvl)
+FLOW_HOLDERS_MIN = 1_500         # base_token_holders
+FLOW_MARKET_CAP_MIN = 100_000.0  # USD (market cap token base)
+FLOW_VOLATILITY_MAX = 3.0        # % (volatility)
+FLOW_VOLATILITY_EPS = 0.01       # % — di bawah ini dianggap tidak terukur (≈ 0)
+FLOW_MULTIPLE_MIN = 3.0          # (Fee/Active TVL %) ÷ volatility %
 
-# Pra-saring di sisi server (hanya memangkas listing). Semua aturan tetap
-# dicek ulang di ``evaluate_pool``.
-FLOW_SERVER_FILTER = (f"pool_type=dlmm&&fee_pct>={FLOW_FEE_TIER_MIN:g}"
-                      f"&&fee_active_tvl_ratio>={FLOW_FEE_ACTIVE_TVL_MIN:g}")
+# Pra-saring di sisi server (request user 24H). Semua aturan tetap dicek ulang
+# di ``evaluate_pool``, jadi pra-saring hanya memangkas listing.
+FLOW_SERVER_FILTER = (
+    "base_token_has_high_supply_concentration=false"
+    "&&base_token_has_high_single_ownership=false"
+    "&&pool_type=dlmm"
+    f"&&base_token_market_cap>={FLOW_MARKET_CAP_MIN:g}"
+    f"&&base_token_holders>={FLOW_HOLDERS_MIN}"
+    f"&&tvl>={FLOW_TVL_MIN:g}"
+    f"&&fee_pct>={FLOW_FEE_TIER_MIN:g}"
+    f"&&active_tvl>={FLOW_ACTIVE_TVL_MIN:g}"
+)
 FLOW_MAX_PAGES = 100             # batas keamanan: 100 × 50 = 5.000 pool setelah pra-saring
 FLOW_PAGE_SIZE = 50
 FLOW_LIST_WORKERS = 8
@@ -109,7 +113,7 @@ def _get_json(params: dict, *, timeout: int = HTTP_TIMEOUT):
 
 
 def fetch_top_page(page: int) -> list:
-    """Satu halaman listing kategori ``top`` pada timeframe 12H."""
+    """Satu halaman listing kategori ``top`` pada timeframe 24H."""
     return _get_json({"page_size": FLOW_PAGE_SIZE, "timeframe": FLOW_TIMEFRAME,
                       "category": "top", "page": page,
                       "filter_by": FLOW_SERVER_FILTER})
@@ -180,31 +184,56 @@ def in_range_pct(row: dict):
 # Filter (murni)
 # ---------------------------------------------------------------------------
 
+def base_market_cap(row: dict):
+    """Market cap token base (token_x, sisi token di listing Meteora)."""
+    return _num((row.get("token_x") or {}).get("market_cap"))
+
+
+def volatility_multiple(fee_active_tvl, volatility):
+    """(Fee/Active TVL %) ÷ volatility %. ``None`` bila volatility tidak terukur."""
+    if fee_active_tvl is None or volatility is None or volatility < FLOW_VOLATILITY_EPS:
+        return None
+    return fee_active_tvl / volatility
+
+
 def evaluate_pool(row: dict) -> dict:
     """Terapkan semua aturan filter pada satu baris pool. Kembalikan hasil lengkap."""
     pool = str(row.get("pool_address") or "")
     mint = mint_of_pool(row)
     symbol, name = token_info(row, mint)
     fee_tier = _num(row.get("fee_pct"))
-    open_positions = _num(row.get("open_positions"))
     tvl = _num(row.get("tvl"))
+    active_tvl = _num(row.get("active_tvl"))
+    holders = _num(row.get("base_token_holders"))
+    market_cap = base_market_cap(row)
     volatility = _num(row.get("volatility"))
     fee_active_tvl = _num(row.get("fee_active_tvl_ratio"))
-    in_range = in_range_pct(row)
+    multiple = volatility_multiple(fee_active_tvl, volatility)
 
     reasons: list[str] = []
     if fee_tier is None or fee_tier < FLOW_FEE_TIER_MIN:
         reasons.append(f"fee tier < {FLOW_FEE_TIER_MIN:g}%")
-    if open_positions is None or open_positions < FLOW_OPEN_POSITIONS_MIN:
-        reasons.append(f"open positions < {FLOW_OPEN_POSITIONS_MIN}")
     if tvl is None or tvl < FLOW_TVL_MIN:
         reasons.append(f"TVL < {fmt_usd(FLOW_TVL_MIN)}")
-    if volatility is None or volatility < FLOW_VOLATILITY_MIN:
-        reasons.append(f"volatility < {FLOW_VOLATILITY_MIN:g}%")
-    if fee_active_tvl is None or fee_active_tvl < FLOW_FEE_ACTIVE_TVL_MIN:
-        reasons.append(f"fee/active TVL < {FLOW_FEE_ACTIVE_TVL_MIN:g}%")
-    if in_range is None or in_range < FLOW_IN_RANGE_MIN:
-        reasons.append(f"in-range < {FLOW_IN_RANGE_MIN:g}%")
+    if active_tvl is None or active_tvl < FLOW_ACTIVE_TVL_MIN:
+        reasons.append(f"active TVL < {fmt_usd(FLOW_ACTIVE_TVL_MIN)}")
+    if holders is None or holders < FLOW_HOLDERS_MIN:
+        reasons.append(f"holders < {FLOW_HOLDERS_MIN:,}".replace(",", "."))
+    if market_cap is None or market_cap < FLOW_MARKET_CAP_MIN:
+        reasons.append(f"market cap < {fmt_usd(FLOW_MARKET_CAP_MIN)}")
+    if volatility is None:
+        reasons.append("volatility tidak terukur")
+    elif volatility < FLOW_VOLATILITY_EPS:
+        reasons.append("volatility ≈ 0 (tidak terukur)")
+    elif volatility > FLOW_VOLATILITY_MAX:
+        reasons.append(f"volatility > {FLOW_VOLATILITY_MAX:g}%")
+    if multiple is None:
+        if volatility is None or volatility < FLOW_VOLATILITY_EPS:
+            pass  # sudah dicatat di atas
+        else:
+            reasons.append("fee/active TVL tidak terukur")
+    elif multiple < FLOW_MULTIPLE_MIN:
+        reasons.append(f"fee/active ÷ volatility < {FLOW_MULTIPLE_MIN:g}x")
 
     return {
         "pool": pool,
@@ -213,23 +242,27 @@ def evaluate_pool(row: dict) -> dict:
         "name": name,
         "pool_name": str(row.get("name") or ""),
         "fee_tier": fee_tier,
-        "open_positions": open_positions,
-        "in_range": in_range,
         "tvl": tvl,
+        "active_tvl": active_tvl,
+        "holders": holders,
+        "market_cap": market_cap,
+        "open_positions": _num(row.get("open_positions")),
+        "in_range": in_range_pct(row),
         "volatility": volatility,
         "fee_active_tvl": fee_active_tvl,
+        "multiple": multiple,
         "passes": not reasons,
         "reasons": reasons,
     }
 
 
 def sort_key(result: dict):
-    """In-range % terbesar dulu; seri dipecah Fee/Active TVL terbesar."""
-    return (-(result["in_range"] or 0.0), -(result["fee_active_tvl"] or 0.0))
+    """Rasio (Fee/Active TVL ÷ volatility) terbesar dulu; seri: Fee/Active TVL terbesar."""
+    return (-(result["multiple"] or 0.0), -(result["fee_active_tvl"] or 0.0))
 
 
 def scan_pools(max_pages: int = FLOW_MAX_PAGES, *, listing: tuple | None = None) -> dict:
-    """Scan lengkap: listing 12H → filter → urutan.
+    """Scan lengkap: listing 24H → filter → urutan.
 
     ``listing`` = (rows, errors, truncated) bisa diisi untuk tes tanpa jaringan.
     """
@@ -308,11 +341,17 @@ def alert_link_lines(mint: str, pool: str) -> list[str]:
 MEDALS = ("🥇", "🥈", "🥉")
 
 
+def fmt_mult(value) -> str:
+    if value is None:
+        return "—"
+    return f"{value:.2f}x".replace(".", ",")
+
+
 def filter_summary_text() -> str:
-    return (f"🎯 fee tier ≥ {FLOW_FEE_TIER_MIN:g}% · 🔢 open ≥ {FLOW_OPEN_POSITIONS_MIN} · "
-            f"💰 TVL ≥ {fmt_usd(FLOW_TVL_MIN)}\n"
-            f"〰️ volatility ≥ {FLOW_VOLATILITY_MIN:g}% · ⚡ fee/active TVL ≥ "
-            f"{FLOW_FEE_ACTIVE_TVL_MIN:g}% · 🎯 in-range ≥ {FLOW_IN_RANGE_MIN:g}% · ⏱ 12H")
+    return (f"🎯 fee tier ≥ {FLOW_FEE_TIER_MIN:g}% · 💰 TVL ≥ {fmt_usd(FLOW_TVL_MIN)} · "
+            f"🪙 active TVL ≥ {fmt_usd(FLOW_ACTIVE_TVL_MIN)}\n"
+            f"👥 holders ≥ {FLOW_HOLDERS_MIN:,} · 🏦 MC ≥ {fmt_usd(FLOW_MARKET_CAP_MIN)} · "
+            f"〰️ vol ≤ {FLOW_VOLATILITY_MAX:g}% · ✖️ fee/active ÷ vol ≥ {FLOW_MULTIPLE_MIN:g}x · ⏱ 24H")
 
 
 def best_alert_text(no: int, passing: list, last_no: dict) -> str:
@@ -330,10 +369,10 @@ def best_alert_text(no: int, passing: list, last_no: dict) -> str:
         lines.append("")
         lines.append(f"{rank} <b>{_h(row['symbol'])}</b> · {_h(name)}  {tag}")
         lines.append(f"💰 TVL {fmt_usd(row['tvl'])} · 🏷 fee {row['fee_tier']:g}% · "
-                     f"🔢 open {row['open_positions']:g}")
-        lines.append(f"🎯 in-range {fmt_pct(row['in_range'])} · "
-                     f"〰️ vol {fmt_pct(row['volatility'])} · "
-                     f"⚡ fee/active TVL {fmt_pct(row['fee_active_tvl'])}")
+                     f"🪙 active {fmt_usd(row['active_tvl'])}")
+        lines.append(f"〰️ vol {fmt_pct(row['volatility'])} · "
+                     f"⚡ fee/active TVL {fmt_pct(row['fee_active_tvl'])} · "
+                     f"✖️ {fmt_mult(row['multiple'])}")
         lines.extend(alert_link_lines(row.get("mint") or "", row["pool"]))
     return "\n".join(lines)
 
