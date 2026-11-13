@@ -4,7 +4,7 @@
 Request 24H (user, 2026-11-13) + filter volatility vs fee/active TVL:
 - Listing Meteora pool-discovery, timeframe 24h, kategori top, dengan filter
   dari request user (market cap, holders, TVL, fee tier, active TVL, dlmm).
-- Volatility ≤ 3 %.
+- Volatility ≤ 5 %.
 - Rasio = Fee/Active TVL ÷ Volatility ≥ 3×  → tampil.
 - Urutan: rasio terbesar dulu (seri: Fee/Active TVL terbesar).
 
@@ -35,7 +35,7 @@ FLOW_TVL_MIN = 10_000.0          # USD (tvl)
 FLOW_ACTIVE_TVL_MIN = 2_000.0    # USD (active_tvl)
 FLOW_HOLDERS_MIN = 1_500         # base_token_holders
 FLOW_MARKET_CAP_MIN = 100_000.0  # USD (market cap token base)
-FLOW_VOLATILITY_MAX = 3.0        # % (volatility)
+FLOW_VOLATILITY_MAX = 5.0        # % (volatility)
 FLOW_VOLATILITY_EPS = 0.01       # % — di bawah ini dianggap tidak terukur (≈ 0)
 FLOW_MULTIPLE_MIN = 3.0          # (Fee/Active TVL %) ÷ volatility %
 
