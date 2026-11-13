@@ -19,7 +19,18 @@ RESULT_KEY = "pool_flow_result"
 BUTTON_LABEL = "SCAN BEST POOL"
 
 TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier",
-                 "Volatility", "Fee/active TVL", "Rasio (×)"]
+                 "Volatility", "Fee/active TVL", "Rasio (×)",
+                 "Volume 24H (token)", "Rata² swap (token)"]
+DETAIL_HEADERS = ["Pool", "Tipe", "Fee tier", "TVL", "Active TVL", "Volume 24H",
+                  "Swap", "Trader unik", "Rata² swap", "Fee/active TVL"]
+
+
+def _md(value) -> str:
+    """Escape karakter markdown agar nama token tampil apa adanya."""
+    text = str(value or "")
+    for char in "\\`*_[]<>#|~":
+        text = text.replace(char, "\\" + char)
+    return text
 
 
 def _filter_caption() -> str:
@@ -42,6 +53,9 @@ def _render_scan_result(result: dict) -> None:
         f"dicatat {result.get('scanned_at', '')}"
         + (f" · {result['listing_errors']} halaman listing gagal"
            if result.get("listing_errors") else ""))
+    crowded = _crowded_text(result)
+    if crowded:
+        st.markdown(crowded)
     if result.get("truncated"):
         st.warning("Listing belum lengkap: pengambilan berhenti sebelum semua halaman "
                    f"terambil (batas {pf.FLOW_MAX_PAGES} halaman atau ada halaman gagal), "
@@ -52,10 +66,50 @@ def _render_scan_result(result: dict) -> None:
     st.caption("Geser tabel ke kanan untuk melihat semua kolom.")
     # st.iframe (bukan components.v1.html, yang sudah usang): HTML dirender di iframe
     # agar tombol copy CA bisa berjalan. Isi tabel sudah di-escape (lihat _result_table_html).
-    st.iframe(_result_document(passing), height=_result_height(len(passing)), width="stretch")
+    st.iframe(_result_document(passing, result.get("token_stats")),
+              height=_result_height(len(passing)), width="stretch")
+    _render_token_details(result, passing)
 
 
-def _result_table_html(passing: list) -> str:
+def _crowded_text(result: dict) -> str | None:
+    """Headline: token dan pool paling ramai (volume 24H terbesar)."""
+    top = pf.most_crowded(result)
+    if not top:
+        return None
+    total = top["total"]
+    lines = [f"🔥 **Paling ramai (24H):** {_md(top['symbol'])} — volume "
+             f"{pf.fmt_usd(total['volume'])} dari {total['pools']} pool, "
+             f"{pf.fmt_int(total['swaps'])} swap, rata² swap {pf.fmt_usd2(total['avg_swap'])}."]
+    busiest = top["busiest"]
+    if busiest:
+        name = busiest["name"] or busiest["pool"][:8]
+        lines.append(f"Pool paling ramai: {_md(name)} — volume "
+                     f"{pf.fmt_usd(busiest['volume'])}, {pf.fmt_int(busiest['swaps'])} swap.")
+    if top["partial"]:
+        lines.append("⚠️ Data pool token belum lengkap; sebagian ditampilkan dari hasil scan.")
+    return "  \n".join(lines)
+
+
+def _render_token_details(result: dict, passing: list) -> None:
+    """Dropdown per koin: semua pool token (24H) beserta ringkasan total."""
+    import streamlit as st
+
+    stats_map = result.get("token_stats") or {}
+    shown: set[str] = set()
+    for row in passing:
+        mint = row.get("mint") or ""
+        if not mint or mint in shown or mint not in stats_map:
+            continue
+        shown.add(mint)
+        stats = stats_map[mint]
+        passing_pools = {item["pool"] for item in passing if item.get("mint") == mint}
+        label = (f"{_md(row['symbol'])} · {stats['total']['pools']} pool · volume "
+                 f"{pf.fmt_usd(stats['total']['volume'])}")
+        with st.expander(label):
+            st.html(_token_detail_html(stats, passing_pools))
+
+
+def _result_table_html(passing: list, token_stats: dict | None = None) -> str:
     """Tabel HTML satu baris per pool. Tanpa baris kosong agar markdown tidak rusak."""
     head = "".join(
         "<th style='text-align:left;padding:6px 8px;white-space:nowrap;"
@@ -64,6 +118,7 @@ def _result_table_html(passing: list) -> str:
         for title in TABLE_HEADERS)
     body = []
     for row in passing:
+        total = ((token_stats or {}).get(row.get("mint") or "") or {}).get("total") or {}
         cells = [
             _cell_token_html(row),
             _html.escape(pf.fmt_usd(row["tvl"])),
@@ -71,6 +126,8 @@ def _result_table_html(passing: list) -> str:
             _html.escape(pf.fmt_pct(row["volatility"])),
             _html.escape(pf.fmt_pct(row["fee_active_tvl"])),
             _html.escape(pf.fmt_mult(row["multiple"])),
+            _html.escape(pf.fmt_usd(total.get("volume"))),
+            _html.escape(pf.fmt_usd2(total.get("avg_swap"))),
         ]
         tds = "".join(
             f"<td style='padding:6px 8px;vertical-align:top;border-bottom:1px solid "
@@ -80,7 +137,7 @@ def _result_table_html(passing: list) -> str:
     return (
         "<div style='overflow-x:auto;-webkit-overflow-scrolling:touch;"
         "border:1px solid rgba(128,128,128,.35);border-radius:8px'>"
-        "<table style='border-collapse:collapse;width:100%;min-width:820px;"
+        "<table style='border-collapse:collapse;width:100%;min-width:1000px;"
         "font-size:13px;line-height:1.4'>"
         f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody></table></div>"
     )
@@ -138,11 +195,64 @@ def _copy_button_html(ca: str) -> str:
             f'onclick="copyCa(this)">{COPY_LABEL}</button>')
 
 
-def _result_document(passing: list) -> str:
+def _result_document(passing: list, token_stats: dict | None = None) -> str:
     """Dokumen HTML utuh untuk komponen: tabel + skrip copy CA."""
     return ("<!doctype html><html><head><meta charset=\"utf-8\">"
             f"<style>{_COPY_CSS}</style></head><body>"
-            f"{_result_table_html(passing)}{_COPY_SCRIPT}</body></html>")
+            f"{_result_table_html(passing, token_stats)}{_COPY_SCRIPT}</body></html>")
+
+
+def _token_detail_html(stats: dict, passing_pools: set) -> str:
+    """Isi dropdown satu token: ringkasan total dan semua pool token (24H)."""
+    total = stats["total"]
+    notes = []
+    if stats["fallback"]:
+        notes.append("Gagal mengambil semua pool token ini; hanya pool hasil scan yang ditampilkan.")
+    elif stats["errors"]:
+        notes.append(f"{len(stats['errors'])} permintaan pool gagal; data mungkin belum lengkap.")
+    if stats["truncated"]:
+        notes.append("Daftar pool token terpotong (batas halaman tercapai).")
+    summary = (f"Total 24H: volume {pf.fmt_usd(total['volume'])} · swap {pf.fmt_int(total['swaps'])} · "
+               f"rata² swap {pf.fmt_usd2(total['avg_swap'])} · fee {pf.fmt_usd(total['fee'])} · "
+               f"TVL {pf.fmt_usd(total['tvl'])} · active TVL {pf.fmt_usd(total['active_tvl'])}")
+    head = "".join(
+        "<th style='text-align:left;padding:6px 8px;white-space:nowrap;"
+        "border-bottom:1px solid rgba(128,128,128,.45)'>"
+        f"{_html.escape(title)}</th>" for title in DETAIL_HEADERS)
+    body = []
+    for item in stats["pools"]:
+        name = item["name"] or item["pool"][:8]
+        tag = " ✅ lolos" if item["pool"] in passing_pools else ""
+        pool_cell = (f"<b>{_html.escape(name)}</b>{_html.escape(tag)}<br>"
+                     f"<span style='font-size:12px'>{pool_links_html(item['pool'])}</span>")
+        cells = [
+            pool_cell,
+            _html.escape(item["pool_type"] or "—"),
+            _html.escape(f"{item['fee_tier']:g}%" if item["fee_tier"] is not None else "—"),
+            _html.escape(pf.fmt_usd(item["tvl"])),
+            _html.escape(pf.fmt_usd(item["active_tvl"])),
+            _html.escape(pf.fmt_usd(item["volume"])),
+            _html.escape(pf.fmt_int(item["swaps"])),
+            _html.escape(pf.fmt_int(item["traders"])),
+            _html.escape(pf.fmt_usd2(item["avg_swap"])),
+            _html.escape(pf.fmt_pct(item["fee_active_tvl"])),
+        ]
+        tds = "".join(
+            f"<td style='padding:6px 8px;vertical-align:top;border-bottom:1px solid "
+            f"rgba(128,128,128,.2);white-space:{'normal' if i == 0 else 'nowrap'}'>{cell}</td>"
+            for i, cell in enumerate(cells))
+        body.append(f"<tr>{tds}</tr>")
+    note_html = "".join(f"<p style='margin:4px 0;color:#b45309'>⚠️ {_html.escape(text)}</p>"
+                        for text in notes)
+    return (
+        "<div style='font-size:13px;line-height:1.4'>"
+        f"<p style='margin:0 0 6px 0'><b>{_html.escape(summary)}</b></p>{note_html}"
+        "<div style='overflow-x:auto;-webkit-overflow-scrolling:touch;"
+        "border:1px solid rgba(128,128,128,.35);border-radius:8px'>"
+        "<table style='border-collapse:collapse;width:100%;min-width:1000px;font-size:13px'>"
+        f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody></table></div>"
+        "<p style='margin:6px 0 0 0;font-size:12px;opacity:.8'>Trader unik tiap pool tidak "
+        "dijumlahkan, karena trader yang sama bisa ada di beberapa pool.</p></div>")
 
 
 def _result_height(count: int) -> int:
@@ -178,6 +288,8 @@ def render_pool_flow_page() -> None:
                      use_container_width=True):
             with st.spinner("Memindai listing Meteora (24H)…"):
                 result = pf.scan_pools()
+            with st.spinner("Mengambil semua pool per token yang lolos (24H)…"):
+                pf.enrich_scan_result(result)
             st.session_state[RESULT_KEY] = result
         result = st.session_state.get(RESULT_KEY)
         if not result:
