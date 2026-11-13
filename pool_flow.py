@@ -20,6 +20,7 @@ import math
 import os
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,6 +31,7 @@ HTTP_TIMEOUT = 25
 USER_AGENT = "Mozilla/5.0 (wallet-depth-pool-flow)"
 
 FLOW_TIMEFRAME = "24h"
+FLOW_TOKEN_TIMEFRAME = "4h"       # pool per token (permintaan user 2026-11-13)
 FLOW_FEE_TIER_MIN = 2.0          # % (fee_pct)
 FLOW_TVL_MIN = 10_000.0          # USD (tvl)
 FLOW_ACTIVE_TVL_MIN = 2_000.0    # USD (active_tvl)
@@ -55,6 +57,9 @@ FLOW_SERVER_FILTER = (
 FLOW_MAX_PAGES = 100             # batas keamanan: 100 × 50 = 5.000 pool (cursor after_key)
 FLOW_PAGE_SIZE = 50
 FLOW_ALERT_CAP = 300             # riwayat alert yang disimpan
+FLOW_TOKEN_PAGE_SIZE = 50       # pool per halaman untuk query per token
+FLOW_TOKEN_MAX_PAGES = 20       # batas keamanan per token (20 × 50 pool)
+FLOW_TOKEN_WORKERS = 4          # permintaan per token berjalan paralel
 
 STATE_PATH = Path(__file__).resolve().parent / "pool_flow_state.json"
 
@@ -85,6 +90,20 @@ def fmt_usd(value) -> str:
         return "—"
     sign = "-" if value < 0 else ""
     return f"{sign}${abs(value):,.0f}".replace(",", ".")
+
+
+def fmt_usd2(value) -> str:
+    if value is None:
+        return "—"
+    sign = "-" if value < 0 else ""
+    text = f"{abs(value):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{sign}${text}"
+
+
+def fmt_int(value) -> str:
+    if value is None:
+        return "—"
+    return f"{int(round(value)):,}".replace(",", ".")
 
 
 def fmt_pct(value) -> str:
@@ -151,6 +170,35 @@ def fetch_listing(max_pages: int = FLOW_MAX_PAGES) -> tuple[list, list, bool]:
         if next_key == cursor:  # cursor macet: hentikan, jangan loop
             return rows, errors, True
         cursor = next_key
+    return rows, errors, True
+
+
+def fetch_token_pools(mint: str, max_pages: int = FLOW_TOKEN_MAX_PAGES) -> tuple[list, list, bool]:
+    """Semua pool (semua tipe) yang memuat token ``mint`` pada timeframe 4H.
+
+    Memakai ``query=<mint>`` dan cursor ``after_key`` seperti listing. Kembalikan
+    (rows, errors, truncated), sama seperti ``fetch_listing``.
+    """
+    rows: list = []
+    errors: list = []
+    cursor = None
+    for _ in range(max(1, max_pages)):
+        params = {"query": mint, "timeframe": FLOW_TOKEN_TIMEFRAME,
+                  "page_size": FLOW_TOKEN_PAGE_SIZE}
+        if cursor:
+            params["after_key"] = cursor
+        try:
+            payload = _get_payload(params)
+        except Exception as exc:  # noqa: BLE001 — catat; tanpa cursor tidak bisa lanjut
+            errors.append(str(exc) or type(exc).__name__)
+            return rows, errors, True
+        rows.extend(row for row in (payload.get("data") or []) if isinstance(row, dict))
+        next_key = payload.get("after_key") or None
+        if not payload.get("has_more") or not next_key:
+            return rows, errors, False
+        if str(next_key) == cursor:  # cursor macet: hentikan, jangan loop
+            return rows, errors, True
+        cursor = str(next_key)
     return rows, errors, True
 
 
@@ -261,6 +309,129 @@ def evaluate_pool(row: dict) -> dict:
         "multiple": multiple,
         "passes": not reasons,
         "reasons": reasons,
+        "activity": pool_activity(row),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Aktivitas per token (permintaan user 2026-11-13). Hanya untuk tampilan scan;
+# alert Telegram tidak memakai bagian ini.
+# ---------------------------------------------------------------------------
+
+def pool_activity(row: dict) -> dict:
+    """Ringkasan aktivitas satu pool (timeframe token, 4H) dari baris Meteora."""
+    volume = _num(row.get("volume"))
+    swaps = _num(row.get("swap_count"))
+    avg_swap = volume / swaps if (volume is not None and swaps and swaps > 0) else None
+    return {
+        "pool": str(row.get("pool_address") or ""),
+        "name": str(row.get("name") or ""),
+        "pool_type": str(row.get("pool_type") or ""),
+        "fee_tier": _num(row.get("fee_pct")),
+        "tvl": _num(row.get("tvl")),
+        "active_tvl": _num(row.get("active_tvl")),
+        "fee": _num(row.get("fee")),
+        "volume": volume,
+        "swaps": swaps,
+        "traders": _num(row.get("unique_traders")),
+        "avg_swap": avg_swap,
+        "fee_active_tvl": _num(row.get("fee_active_tvl_ratio")),
+    }
+
+
+def pools_of_mint(rows: list, mint: str) -> list[dict]:
+    """Pool yang memuat ``mint`` (token_x atau token_y), tanpa duplikat, volume terbesar dulu."""
+    seen: dict[str, dict] = {}
+    for row in rows:
+        address = str(row.get("pool_address") or "")
+        sides = {str((row.get(key) or {}).get("address") or "") for key in ("token_x", "token_y")}
+        if not address or mint not in sides or address in seen:
+            continue
+        seen[address] = pool_activity(row)
+    return sorted(seen.values(), key=lambda item: -(item["volume"] or 0.0))
+
+
+def token_total(pools: list[dict]) -> dict:
+    """Total semua pool token. Rata² swap = total volume ÷ total swap (rata-rata tertimbang).
+
+    Trader unik tidak dijumlahkan karena trader yang sama bisa ada di beberapa pool.
+    """
+    def total(key):
+        values = [item[key] for item in pools if item[key] is not None]
+        return sum(values) if values else None
+
+    volume = total("volume")
+    swaps = total("swaps")
+    avg_swap = volume / swaps if (volume is not None and swaps and swaps > 0) else None
+    return {"pools": len(pools), "volume": volume, "swaps": swaps, "avg_swap": avg_swap,
+            "fee": total("fee"), "tvl": total("tvl"), "active_tvl": total("active_tvl")}
+
+
+def build_token_stats(mint: str, rows: list, errors: list, truncated: bool,
+                      fallback: dict | None = None) -> dict:
+    """Gabungkan hasil fetch satu token. Bila tidak ada pool sama sekali, pakai pool hasil scan."""
+    pools = pools_of_mint(rows, mint)
+    used_fallback = False
+    if not pools and fallback is not None:
+        pools = [fallback]
+        used_fallback = True
+    return {
+        "mint": mint,
+        "pools": pools,
+        "total": token_total(pools),
+        "errors": list(errors),
+        "truncated": bool(truncated),
+        "fallback": used_fallback,
+        "partial": bool(errors) or bool(truncated) or used_fallback,
+    }
+
+
+def enrich_scan_result(result: dict, fetch=None) -> dict:
+    """Ambil semua pool untuk setiap token yang lolos, lalu simpan di ``result['token_stats']``.
+
+    Daftar ``passing`` tidak diubah, jadi alert Telegram tetap sama.
+    """
+    fetch = fetch or fetch_token_pools
+    fallback_by_mint: dict[str, dict] = {}
+    for row in result.get("passing") or []:
+        mint = row.get("mint") or ""
+        if mint:
+            fallback_by_mint.setdefault(mint, row.get("activity"))
+    stats: dict[str, dict] = {}
+    if fallback_by_mint:
+        with ThreadPoolExecutor(max_workers=FLOW_TOKEN_WORKERS) as executor:
+            futures = {mint: executor.submit(fetch, mint) for mint in fallback_by_mint}
+            for mint, future in futures.items():
+                try:
+                    rows, errors, truncated = future.result()
+                except Exception as exc:  # noqa: BLE001
+                    rows, errors, truncated = [], [str(exc) or type(exc).__name__], True
+                stats[mint] = build_token_stats(mint, rows, errors, truncated,
+                                                fallback_by_mint.get(mint))
+    result["token_stats"] = stats
+    return result
+
+
+def most_crowded(result: dict):
+    """Token paling ramai (total volume 4H terbesar) dan pool paling ramai di dalamnya."""
+    best = None
+    for mint, item in (result.get("token_stats") or {}).items():
+        volume = item["total"]["volume"]
+        if volume is None:
+            continue
+        if best is None or volume > best[1]["total"]["volume"]:
+            best = (mint, item)
+    if best is None:
+        return None
+    mint, item = best
+    symbol = next((row.get("symbol") for row in result.get("passing") or []
+                   if row.get("mint") == mint), "?")
+    return {
+        "mint": mint,
+        "symbol": symbol,
+        "total": item["total"],
+        "busiest": item["pools"][0] if item["pools"] else None,
+        "partial": item["partial"],
     }
 
 

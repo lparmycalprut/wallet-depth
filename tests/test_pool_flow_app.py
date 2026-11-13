@@ -28,6 +28,8 @@ class AppMainTest(unittest.TestCase):
             mock.patch.object(pf, "STATE_PATH", self.state_path),
             mock.patch.object(pf, "fetch_listing",
                               side_effect=lambda *a, **k: (meteora_rows(), [], False)),
+            # Semua pool per token: offline, dari fixture yang sama dengan listing.
+            mock.patch.object(pf, "fetch_token_pools", side_effect=self._token_pools),
         ]
         for p in self._patches:
             p.start()
@@ -36,6 +38,10 @@ class AppMainTest(unittest.TestCase):
         for p in self._patches:
             p.stop()
         self._tmp.cleanup()
+
+    @staticmethod
+    def _token_pools(mint, *a, **k):
+        return ([r for r in meteora_rows() if pf.mint_of_pool(r) == mint], [], False)
 
     def _app(self):
         at = AppTest.from_file(str(ROOT / "app.py"), default_timeout=60)
@@ -90,8 +96,9 @@ class AppMainTest(unittest.TestCase):
         body = self._body(at)
         self.assertIn("overflow-x:auto", body)
         self.assertIn("<table", body)
-        self.assertIn("min-width:820px", body)
-        for header in ("Volatility", "Fee/active TVL", "Rasio (×)"):
+        self.assertIn("min-width:1000px", body)
+        for header in ("Volatility", "Fee/active TVL", "Rasio (×)",
+                       "Volume 4H (token)", "Rata² swap (token)"):
             self.assertIn(header, body)
         for header in ("Open pos.", "In-range"):
             self.assertNotIn(header, body)
@@ -115,6 +122,37 @@ class AppMainTest(unittest.TestCase):
         self.assertFalse(at.exception)
         self.assertFalse(self.state_path.exists())
         self.assertFalse([b for b in at.button if str(b.key).startswith("pf_add_")])
+
+    def test_headline_paling_ramai_dan_dropdown_per_token(self):
+        at = self._app()
+        next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
+        self.assertFalse(at.exception)
+        headline = " ".join(str(m.value) for m in at.markdown)
+        self.assertIn("Paling ramai (4H)", headline)
+        self.assertIn("Pool paling ramai", headline)
+        mints = {row["mint"] for row in pf.scan_pools(listing=(meteora_rows(), [], False))["passing"]}
+        self.assertEqual(len(at.expander), len(mints))
+        self.assertTrue(all("pool" in e.label for e in at.expander))
+
+    def test_dropdown_memuat_pool_dan_tautan_tanpa_perubahan(self):
+        at = self._app()
+        next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
+        detail = "\n".join(str(node.proto.body) for node in at.get("html"))
+        self.assertIn("Total 4H", detail)
+        self.assertIn("Trader unik", detail)
+        row = next(r for r in meteora_rows() if r["pool_address"] == CHOO)
+        self.assertIn(f"https://app.meteora.ag/dlmm/{row['pool_address']}", detail)
+        self.assertIn(f"https://www.hawkfi.ag/meteora/{row['pool_address']}", detail)
+        self.assertIn("✅ lolos", detail)
+        self.assertNotIn("onclick", detail)  # dropdown tanpa skrip
+
+    def test_gagal_ambil_pool_token_memberi_peringatan_di_dropdown(self):
+        with mock.patch.object(pf, "fetch_token_pools", side_effect=RuntimeError("timeout")):
+            at = self._app()
+            next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
+        self.assertFalse(at.exception)
+        detail = "\n".join(str(node.proto.body) for node in at.get("html"))
+        self.assertIn("Gagal mengambil semua pool token ini", detail)
 
     def test_app_utama_tidak_mengimpor_watchlist_atau_lp_keluar(self):
         body = (ROOT / "app.py").read_text(encoding="utf-8").lower()
