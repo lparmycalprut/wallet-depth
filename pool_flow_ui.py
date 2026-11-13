@@ -19,7 +19,7 @@ RESULT_KEY = "pool_flow_result"
 BUTTON_LABEL = "SCAN BEST POOL"
 
 TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier", "Open pos.",
-                 "In-range", "Volatility", "Fee/active TVL"]
+                 "In-range", "Volatility", "Fee/active TVL", "Rasio (×)"]
 
 
 def _filter_caption() -> str:
@@ -68,6 +68,7 @@ def _result_table_html(passing: list) -> str:
             _html.escape(pf.fmt_pct(row["in_range"])),
             _html.escape(pf.fmt_pct(row["volatility"])),
             _html.escape(pf.fmt_pct(row["fee_active_tvl"])),
+            _html.escape(pf.fmt_mult(row["multiple"])),
         ]
         tds = "".join(
             f"<td style='padding:6px 8px;vertical-align:top;border-bottom:1px solid "

@@ -121,5 +121,15 @@ class WorkflowAndPagesTest(unittest.TestCase):
         self.assertFalse(any("Cek_LP_Keluar" in p.name for p in (ROOT / "pages_archived").iterdir()))
 
 
+class ResultTableTest(unittest.TestCase):
+    def test_tabel_memuat_kolom_rasio_per_pool(self):
+        import pool_flow_ui as ui
+        passing = pf.scan_pools(listing=(meteora_rows(), [], False))["passing"]
+        html = ui._result_table_html(passing[:2])
+        self.assertIn("Rasio (×)", html)
+        self.assertIn(">5,19x</td>", html)
+        self.assertIn(">4,78x</td>", html)
+
+
 if __name__ == "__main__":
     unittest.main()
