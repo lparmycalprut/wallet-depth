@@ -96,9 +96,9 @@ class AppMainTest(unittest.TestCase):
         body = self._body(at)
         self.assertIn("overflow-x:auto", body)
         self.assertIn("<table", body)
-        self.assertIn("min-width:1000px", body)
+        self.assertIn("min-width:1100px", body)
         for header in ("Volatility", "Fee/active TVL", "Rasio (×)",
-                       "Volume 4H (token)", "Rata² swap (token)"):
+                       "Volume 4H (pool)", "Volume 4H (token)", "Rata² swap (token)"):
             self.assertIn(header, body)
         for header in ("Open pos.", "In-range"):
             self.assertNotIn(header, body)
@@ -129,7 +129,8 @@ class AppMainTest(unittest.TestCase):
         self.assertFalse(at.exception)
         headline = " ".join(str(m.value) for m in at.markdown)
         self.assertIn("Paling ramai (4H)", headline)
-        self.assertIn("Pool paling ramai", headline)
+        self.assertIn("volume pool", headline)
+        self.assertIn("Total token 4H", headline)
         mints = {row["mint"] for row in pf.scan_pools(listing=(meteora_rows(), [], False))["passing"]}
         self.assertEqual(len(at.expander), len(mints))
         self.assertTrue(all("pool" in e.label for e in at.expander))
@@ -145,6 +146,17 @@ class AppMainTest(unittest.TestCase):
         self.assertIn(f"https://www.hawkfi.ag/meteora/{row['pool_address']}", detail)
         self.assertIn("✅ lolos", detail)
         self.assertNotIn("onclick", detail)  # dropdown tanpa skrip
+
+    def test_baris_teratas_paling_ramai_diberi_emoji_bakar(self):
+        at = self._app()
+        next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
+        body = self._body(at)
+        first_row = body.split("<tbody>", 1)[1].split("</tr>", 1)[0]
+        self.assertIn("🔥🔥🔥", first_row)
+        self.assertEqual(body.count("🔥🔥🔥"), 2)  # headline + baris teratas (dropdown ada di st.html)
+        dropdown = "\n".join(str(node.proto.body) for node in at.get("html"))
+        self.assertEqual(dropdown.count("🔥🔥🔥"), 1)
+        self.assertIn("background:rgba(249,115,22,.14)", first_row)
 
     def test_gagal_ambil_pool_token_memberi_peringatan_di_dropdown(self):
         with mock.patch.object(pf, "fetch_token_pools", side_effect=RuntimeError("timeout")):
