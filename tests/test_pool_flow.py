@@ -21,7 +21,8 @@ SOL = "So11111111111111111111111111111111111111112"
 
 
 def _row(pool, symbol, *, fee=2.0, tvl=20_000.0, active_tvl=5_000.0, holders=2_000,
-         mcap=500_000.0, vol=2.0, fa=10.0, open_pos=50, active=40, mint=None):
+         mcap=500_000.0, vol=2.0, fa=10.0, open_pos=50, active=40, mint=None,
+         volume=10_000.0, swaps=500.0, traders=200.0):
     mint = mint or ("M" + pool[:8].ljust(43, "x"))
     return {"pool_address": pool, "name": f"{symbol}-SOL", "pool_type": "dlmm",
             "token_x": {"address": mint, "symbol": symbol, "name": symbol,
@@ -29,7 +30,8 @@ def _row(pool, symbol, *, fee=2.0, tvl=20_000.0, active_tvl=5_000.0, holders=2_0
             "token_y": {"address": SOL, "symbol": "SOL", "name": "Wrapped SOL"},
             "fee_pct": fee, "tvl": tvl, "active_tvl": active_tvl,
             "base_token_holders": holders, "open_positions": open_pos,
-            "active_positions": active, "volatility": vol, "fee_active_tvl_ratio": fa}
+            "active_positions": active, "volatility": vol, "fee_active_tvl_ratio": fa,
+            "volume": volume, "swap_count": swaps, "unique_traders": traders}
 
 
 def _good(**over):
@@ -418,3 +420,155 @@ class StateTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# Aktivitas per token (permintaan user 2026-11-13): semua pool token, timeframe 4H
+# Angka dari respons Meteora query=9sFG…&timeframe=4h (2026-11-13).
+# ---------------------------------------------------------------------------
+
+SAKURA = "9sFGCTjEsBk78uC2bCdxtwuUM1aartbBhe8WQXwRpump"
+
+
+def _sakura(pool, name, pool_type, fee, volume, swaps, traders, mint=SAKURA):
+    return {"pool_address": pool, "name": name, "pool_type": pool_type,
+            "token_x": {"address": mint, "symbol": "Sakura", "name": "Sakura",
+                        "market_cap": 440_665.0},
+            "token_y": {"address": SOL, "symbol": "SOL", "name": "Wrapped SOL"},
+            "fee_pct": fee, "tvl": 1000.0, "active_tvl": 900.0, "fee": volume * fee / 100,
+            "volume": volume, "swap_count": swaps, "unique_traders": traders,
+            "fee_active_tvl_ratio": 10.0, "volatility": 4.0}
+
+
+SAKURA_4H = [  # urutan respons Meteora
+    _sakura("7knRBTadCAP7DDAze3miXbuKcyPvP2MMRWwhcdD5T9fs", "Sakura-SOL", "dlmm", 1.0,
+            243035.45728174096, 5078.0, 1827.0),
+    _sakura("F5vKxvm9Kiziw7ELUFzmfzVE3GKxpzdQ1p3KrkdzmhyH", "Sakura-SOL", "dlmm", 2.0,
+            126552.8887411786, 1961.0, 855.0),
+    _sakura("DutNdXzYJ1bWZk8EnSyi5oCD5fApwnShUaECZgAVwmDR", "Sakura-SOL", "dlmm", 3.0,
+            93248.5597465872, 1337.0, 653.0),
+    _sakura("37BBxNHsTMNuN7N5rAuJjjADaymLKmxChgpwKxJb19nv", "Sakura-SOL", "damm_v2", 6.0,
+            5.030961090181476, 231.0, 40.0),
+]
+
+
+class TokenActivityTest(unittest.TestCase):
+    def test_pools_of_mint_hanya_pool_token_dan_urut_volume(self):
+        other = _sakura("OTHERPOOL" + "1" * 35, "X-SOL", "dlmm", 2.0, 1e9, 1, 1,
+                        mint="Xmint" + "2" * 39)
+        pools = pf.pools_of_mint(SAKURA_4H + [other, SAKURA_4H[0]], SAKURA)
+        self.assertEqual(len(pools), 4)  # duplikat dan token lain dibuang
+        self.assertEqual(pools[0]["pool"], SAKURA_4H[0]["pool_address"])  # 7knRB volume terbesar
+        self.assertEqual([p["volume"] for p in pools],
+                         sorted((p["volume"] for p in pools), reverse=True))
+
+    def test_rata_rata_swap_per_pool(self):
+        pools = {p["pool"]: p for p in pf.pools_of_mint(SAKURA_4H, SAKURA)}
+        self.assertAlmostEqual(pools[SAKURA_4H[0]["pool_address"]]["avg_swap"], 47.86, places=2)
+        self.assertAlmostEqual(pools[SAKURA_4H[1]["pool_address"]]["avg_swap"], 64.53, places=2)
+        self.assertAlmostEqual(pools[SAKURA_4H[2]["pool_address"]]["avg_swap"], 69.74, places=2)
+
+    def test_total_token_dan_rata_rata_tertimbang(self):
+        total = pf.token_total(pf.pools_of_mint(SAKURA_4H, SAKURA))
+        self.assertEqual(total["pools"], 4)
+        self.assertAlmostEqual(total["volume"], 462841.94, places=2)
+        self.assertEqual(total["swaps"], 8607)
+        self.assertAlmostEqual(total["avg_swap"], 462841.9379 / 8607, places=6)
+
+    def test_pool_tanpa_swap_tidak_punya_rata_rata(self):
+        row = _sakura("Z" * 44, "Z-SOL", "dlmm", 2.0, 100.0, 0.0, 0.0)
+        self.assertIsNone(pf.pool_activity(row)["avg_swap"])
+        self.assertIsNone(pf.token_total([pf.pool_activity(row)])["avg_swap"])
+
+    def test_fetch_token_pools_kirim_query_dan_ikuti_cursor(self):
+        pages = [
+            {"data": [SAKURA_4H[0], SAKURA_4H[1]], "after_key": "k1", "has_more": True},
+            {"data": [SAKURA_4H[2], SAKURA_4H[3]], "after_key": None, "has_more": False},
+        ]
+        calls = []
+
+        def fake(params, **kwargs):
+            calls.append(dict(params))
+            return pages[len(calls) - 1]
+
+        with mock.patch.object(pf, "_get_payload", side_effect=fake):
+            rows, errors, truncated = pf.fetch_token_pools(SAKURA)
+        self.assertEqual(len(rows), 4)
+        self.assertEqual((errors, truncated), ([], False))
+        self.assertEqual(calls[0]["query"], SAKURA)
+        self.assertEqual(calls[0]["timeframe"], "4h")  # timeframe pool per token, bukan 24h scan
+        self.assertNotIn("after_key", calls[0])
+        self.assertEqual(calls[1]["after_key"], "k1")
+        self.assertNotIn("filter_by", calls[0])  # semua tipe pool, tanpa pra-saring listing
+
+    def test_fetch_token_pools_error_dan_cursor_macet(self):
+        with mock.patch.object(pf, "_get_payload", side_effect=RuntimeError("boom")):
+            rows, errors, truncated = pf.fetch_token_pools(SAKURA)
+        self.assertEqual((rows, errors, truncated), ([], ["boom"], True))
+
+        stuck = {"data": [SAKURA_4H[0]], "after_key": "same", "has_more": True}
+        with mock.patch.object(pf, "_get_payload", return_value=stuck) as fake:
+            rows, errors, truncated = pf.fetch_token_pools(SAKURA, max_pages=10)
+        self.assertTrue(truncated)
+        self.assertEqual(fake.call_count, 2)
+
+    def test_enrich_mengisi_token_stats_tanpa_mengubah_passing(self):
+        rows = meteora_rows()
+        result = pf.scan_pools(listing=(rows, [], False))
+        passing_before = [r["pool"] for r in result["passing"]]
+
+        def fake(mint):
+            return ([r for r in rows if pf.mint_of_pool(r) == mint], [], False)
+
+        pf.enrich_scan_result(result, fetch=fake)
+        self.assertEqual([r["pool"] for r in result["passing"]], passing_before)
+        self.assertEqual(len(result["token_stats"]), len(passing_before))
+        stats = result["token_stats"][pf.mint_of_pool(rows[0])]
+        self.assertEqual(stats["total"]["pools"], 1)
+        self.assertFalse(stats["partial"])
+
+    def test_enrich_gagal_memakai_pool_hasil_scan_dan_ditandai(self):
+        result = pf.scan_pools(listing=(meteora_rows(), [], False))
+
+        def boom(mint):
+            raise RuntimeError("timeout")
+
+        pf.enrich_scan_result(result, fetch=boom)
+        for mint, stats in result["token_stats"].items():
+            self.assertTrue(stats["fallback"])
+            self.assertTrue(stats["partial"])
+            self.assertEqual(stats["errors"], ["timeout"])
+            self.assertEqual(stats["total"]["pools"], 1)
+
+    def test_enrich_tanpa_passing_tidak_memanggil_jaringan(self):
+        result = pf.scan_pools(listing=([], [], False))
+        with mock.patch.object(pf, "fetch_token_pools") as fake:
+            pf.enrich_scan_result(result)
+        fake.assert_not_called()
+        self.assertEqual(result["token_stats"], {})
+
+    def test_paling_ramai_token_volume_terbesar_dan_pool_terbesarnya(self):
+        rows = meteora_rows()
+        result = pf.scan_pools(listing=(rows, [], False))
+        pf.enrich_scan_result(result, fetch=lambda mint: (
+            [dict(r, volume=(900_000.0 if pf.mint_of_pool(r) == pf.mint_of_pool(rows[3]) else 5.0))
+             for r in rows if pf.mint_of_pool(r) == mint], [], False))
+        top = pf.most_crowded(result)
+        self.assertEqual(top["mint"], pf.mint_of_pool(rows[3]))
+        self.assertEqual(top["symbol"], "DacityCoin")
+        self.assertAlmostEqual(top["total"]["volume"], 900_000.0)
+        self.assertEqual(top["busiest"]["pool"], rows[3]["pool_address"])
+        self.assertIsNone(pf.most_crowded({"passing": [], "token_stats": {}}))
+
+    def test_scan_dan_alert_tidak_memuat_token_stats(self):
+        result = pf.scan_pools(listing=(meteora_rows(), [], False))
+        self.assertNotIn("token_stats", result)  # alert memakai scan_pools tanpa enrichment
+        self.assertNotIn("token_stats", result["passing"][0])
+
+    def test_fmt_usd2_dan_fmt_int(self):
+        self.assertEqual(pf.fmt_usd2(57.08), "$57,08")
+        self.assertEqual(pf.fmt_usd2(1234.5), "$1.234,50")
+        self.assertEqual(pf.fmt_usd2(None), "—")
+        self.assertEqual(pf.fmt_int(13633), "13.633")
+        self.assertEqual(pf.fmt_int(None), "—")
+
