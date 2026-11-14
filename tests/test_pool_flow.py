@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Tes logika Scan Best Pool (timeframe 12H, avg volume per menit, HIGH/LOW RISK) — tanpa jaringan.
+"""Tes logika Scan Best Pool (timeframe 12H, avg volume per menit, satu tabel) — tanpa jaringan.
 
 Filter lokal sudah dihapus (permintaan user 2026-11-13): penyaringan dilakukan server.
 ``PASSING_12H`` berisi dua baris nyata dari respons Meteora timeframe=12h dengan filter user.
@@ -86,7 +86,7 @@ DUT_12H = {  # respons Meteora timeframe=12h (filter user), baris nyata; volatil
 REAL_12H = [FOOD_12H, DUT_12H]
 # FOOD dengan fee 2 % agar lolos filter fee tier 1 % (uji jalur lolos; FOOD asli fee 0,8 % dilewati)
 LOW_12H = dict(FOOD_12H, fee_pct=2.0)
-HIGH_12H = _row("H" * 44, "HIGHX", fa=12.0, vol=5.5, volume=720.0 * 800)  # uji HIGH RISK
+HIGH_12H = _row("H" * 44, "HIGHX", fa=12.0, vol=5.5, volume=720.0 * 800)  # volatility 5,5 %
 PASSING_12H = [LOW_12H, HIGH_12H]
 
 
@@ -139,21 +139,13 @@ class LocalFilterTest(unittest.TestCase):
 
 
 class RiskTest(unittest.TestCase):
-    def test_batas_risiko_5_persen(self):
-        self.assertEqual(pf.risk_group(5.0), "high")   # ≥ 5 % = HIGH RISK
-        self.assertEqual(pf.risk_group(5.01), "high")
-        self.assertEqual(pf.risk_group(4.99), "low")   # < 5 % = LOW RISK
-        self.assertEqual(pf.risk_group(0.0), "low")
-        self.assertEqual(pf.risk_group(None), "low")
-
     def test_tvl_kecil_tidak_difilter_lokal(self):
         row = _row("P" * 44, "SMALLX", tvl=100.0, active_tvl=10.0, holders=10, mcap=1.0)
         self.assertTrue(pf.evaluate_pool(row)["passes"])
 
-    def test_evaluate_pool_membawa_avg_volume_dan_risiko(self):
+    def test_evaluate_pool_membawa_avg_volume(self):
         row = _row("Q" * 44, "HIGHX", vol=5.5, volume=7200.0 * 72)  # avg 720
         result = pf.evaluate_pool(row)
-        self.assertEqual(result["risk"], "high")
         self.assertAlmostEqual(result["avg_volume"], 720.0)
 
 
@@ -164,17 +156,10 @@ class RealResponseTest(unittest.TestCase):
         self.assertEqual([r["symbol"] for r in result["passing"]], ["FOOD", "HIGHX"])
         self.assertEqual(result["candidates"], 2)
 
-    def test_dua_tabel_high_dan_low_risk(self):
-        result = pf.scan_pools(listing=(PASSING_12H, [], False))
-        high, low = pf.split_by_risk(result["passing"])
-        self.assertEqual([r["pool"] for r in high], [HIGH_12H["pool_address"]])  # vol 5,5 %
-        self.assertEqual([r["pool"] for r in low], [LOW_12H["pool_address"]])   # vol 3,07 %
-
     def test_pool_teratas_untuk_alert(self):
         result = pf.scan_pools(listing=(PASSING_12H, [], False))
         top = pf.most_crowded(result)
         self.assertEqual(top["pool"], LOW_12H["pool_address"])
-        self.assertEqual(top["risk"], "low")
 
 
 class ScanTest(unittest.TestCase):
@@ -330,14 +315,14 @@ class AlertTest(unittest.TestCase):
         self.assertEqual(state["alerts"][0]["pools"], [LOW_12H["pool_address"]])
         self.assertEqual(list(state["best_alert"]["last_no"]), [LOW_12H["pool_address"]])
 
-    def test_alert_memilih_avg_volume_terbesar_lintas_risiko(self):
+    def test_alert_memilih_pool_teratas_urutan_fee_active(self):
         rows = [_row("H" * 44, "HIGHX", vol=6.0, volume=720.0 * 900),   # avg 900, HIGH
                 _row("L" * 44, "LOWY", vol=2.0, volume=720.0 * 100)]    # avg 100, LOW
         result = pf.scan_pools(listing=(rows, [], False))
         top = pf.most_crowded(result)
         self.assertEqual(top["symbol"], "HIGHX")
         text = pf.apply_crowded_alert(pf.empty_state(), top)
-        self.assertIn("HIGH RISK", text)
+        self.assertNotIn("RISK", text)
 
     def test_alert_memberi_nomor_dan_tag_sudah_pernah(self):
         result = pf.scan_pools(listing=(PASSING_12H, [], False))
@@ -356,7 +341,7 @@ class AlertTest(unittest.TestCase):
         text = pf.apply_crowded_alert(pf.empty_state(), pf.most_crowded(result))
         self.assertIn("avg volume/menit", text)
         self.assertIn("volume 12H", text)
-        self.assertIn("LOW RISK", text)
+        self.assertNotIn("RISK", text)
         self.assertNotIn("4H", text)
         self.assertNotIn("24H", text)
         for host in ("gmgn.ai", "meteora.ag", "hawkfi.ag", "dexscreener.com"):
@@ -627,15 +612,14 @@ class TokenActivityTest(unittest.TestCase):
         self.assertEqual(top["pool"], LOW_12H["pool_address"])
         self.assertIsNone(pf.most_crowded({"passing": []}))
 
-    def test_split_by_risk_tiap_tabel_tetap_urut(self):
+    def test_satu_daftar_urut_tanpa_pemisah_risiko(self):
         rows = [_row("1" * 44, "H1", vol=5.2, volume=720.0 * 600),
                 _row("2" * 44, "H2", vol=5.8, volume=720.0 * 900),
                 _row("3" * 44, "L1", vol=1.0, volume=720.0 * 1000),
                 _row("4" * 44, "L2", vol=4.9, volume=720.0 * 2000)]
         result = pf.scan_pools(listing=(rows, [], False))
-        high, low = pf.split_by_risk(result["passing"])
-        self.assertEqual([r["symbol"] for r in high], ["H2", "H1"])   # avg 900 lalu 600
-        self.assertEqual([r["symbol"] for r in low], ["L2", "L1"])    # avg 2.000 lalu 1.000
+        # fee/active sama (10 %): seri oleh avg volume, volatility tidak memisahkan
+        self.assertEqual([r["symbol"] for r in result["passing"]], ["L2", "L1", "H2", "H1"])
 
     def test_token_stats_tidak_mengubah_urutan_tabel(self):
         result = pf.scan_pools(listing=(PASSING_12H, [], False))

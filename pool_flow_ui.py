@@ -40,9 +40,7 @@ def _filter_caption() -> str:
             f"market cap ≥ {pf.fmt_usd(pf.FLOW_MARKET_CAP_MIN)} · dlmm · avg volume/menit ≥ "
             f"{pf.fmt_usd(pf.FLOW_AVG_VOLUME_MIN)} · fee/active TVL ≥ "
             f"{pf.FLOW_FEE_ACTIVE_TVL_MIN:g}% · volatility ≤ {pf.FLOW_VOLATILITY_MAX:g}% · "
-            f"urut fee/active TVL terbesar, lalu avg volume/menit · "
-            f"HIGH RISK: volatility ≥ {pf.FLOW_RISK_VOLATILITY:g}%, "
-            f"LOW RISK: volatility < {pf.FLOW_RISK_VOLATILITY:g}%.")
+            f"urut fee/active TVL terbesar, lalu avg volume/menit.")
 
 
 def _render_scan_result(result: dict) -> None:
@@ -65,21 +63,12 @@ def _render_scan_result(result: dict) -> None:
     st.caption("Geser tabel ke kanan untuk melihat semua kolom.")
     top = pf.most_crowded(result)
     top_pool = top["pool"] if top else None
-    high, low = pf.split_by_risk(passing)
     token_stats = result.get("token_stats")
-    groups = (
-        (f"HIGH RISK · volatility ≥ {pf.FLOW_RISK_VOLATILITY:g}%", high),
-        (f"LOW RISK · volatility < {pf.FLOW_RISK_VOLATILITY:g}%", low),
-    )
-    for title, rows in groups:
-        st.markdown(f"**{title}** · {len(rows)} pool")
-        if not rows:
-            st.caption("Tidak ada pool di kelompok ini.")
-            continue
-        # st.iframe (bukan components.v1.html, yang sudah usang): HTML dirender di iframe
-        # agar tombol copy CA bisa berjalan. Isi tabel sudah di-escape (lihat _result_table_html).
-        st.iframe(_result_document(rows, token_stats, top_pool),
-                  height=_result_height(len(rows)), width="stretch")
+    st.markdown(f"**Pool lolos filter** · {len(passing)} pool")
+    # st.iframe (bukan components.v1.html, yang sudah usang): HTML dirender di iframe
+    # agar tombol copy CA bisa berjalan. Isi tabel sudah di-escape (lihat _result_table_html).
+    st.iframe(_result_document(passing, token_stats, top_pool),
+              height=_result_height(len(passing)), width="stretch")
     _render_token_details(result, passing)
 
 
