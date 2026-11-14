@@ -1,7 +1,7 @@
 {
   "version": 1,
   "best_alert": {
-    "next_no": 8,
+    "next_no": 9,
     "last_no": {
       "8N9bUK6zfZFmuGa4dEpeEoj9Cs4VZSxhdMCMtZALHR5z": 1,
       "HcyYBrZVFDDVBLtLxL5C1HDJND1p86BoNA6m7MjBKE3p": 4,
@@ -19,7 +19,8 @@
       "FSb7qz3cMGjYacrLfoKumozoqFibiAtzjDq97FxHivYP": 6,
       "5A15QUc6kMxw9dsVpVUv6ZdTTBeyWBN2scyy1MEQJFQs": 6,
       "8bZKAjGx4H8JGnPU2yd4yb9hYikqviXa6kt9CUtKEQMA": 6,
-      "AsTbb4jVBh1SUEPRHqZ87aM39sdy8DDUZBvCvwBmMyYV": 6
+      "AsTbb4jVBh1SUEPRHqZ87aM39sdy8DDUZBvCvwBmMyYV": 6,
+      "3gH2fgs9XuQiEEnLd7bHp6XqoeHHZgajUeaHAPu1BGQK": 8
     }
   },
   "alerts": [
@@ -99,6 +100,14 @@
       "at": "2026-11-13T21:53:01Z",
       "pools": [
         "91iHWaWXneUyoNDJhSno7ezxQg1VW5P6PdarNGyFfPCz"
+      ]
+    },
+    {
+      "no": 8,
+      "kind": "best",
+      "at": "2026-11-14T05:56:06Z",
+      "pools": [
+        "3gH2fgs9XuQiEEnLd7bHp6XqoeHHZgajUeaHAPu1BGQK"
       ]
     }
   ]
