@@ -122,8 +122,18 @@ class LocalFilterTest(unittest.TestCase):
         self.assertTrue(result["passes"])
         self.assertEqual(result["reasons"], [])
 
-    def test_fee_tier_tidak_lagi_difilter(self):
-        self.assertTrue(pf.evaluate_pool(_row("T" * 44, "TIERX", fee=0.5))["passes"])
+    def test_fee_tier_di_bawah_0_2_dilewati(self):
+        result = pf.evaluate_pool(_row("T" * 44, "TIERX", fee=0.1))
+        self.assertFalse(result["passes"])
+        self.assertIn("fee tier < 0.2%", result["reasons"])
+
+    def test_fee_tier_tepat_0_2_lolos(self):
+        self.assertTrue(pf.evaluate_pool(_row("U" * 44, "TIERY", fee=0.2))["passes"])
+
+    def test_fee_tier_tidak_terukur_dilewati(self):
+        row = _row("V" * 44, "TIERZ")
+        row["fee_pct"] = None
+        self.assertFalse(pf.evaluate_pool(row)["passes"])
 
     def test_dut_12h_dilewati_karena_volatility_6_71(self):
         result = pf.evaluate_pool(DUT_12H)

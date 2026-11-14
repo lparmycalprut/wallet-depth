@@ -4,9 +4,9 @@
 Permintaan user (2026-11-13):
 - Listing Meteora pool-discovery, timeframe 12h, kategori top, dengan filter
   server-side yang diminta user (dlmm, market cap, holders, TVL, active TVL,
-  tanpa konsentrasi/kepemilikan tunggal tinggi). Filter lokal: fee tier, fee/active
-  avg volume/menit < $500, fee/active TVL < 1 %, dan volatility > 6 % dilewati
-  (2026-11-13).
+  tanpa konsentrasi/kepemilikan tunggal tinggi). Filter lokal: fee tier < 0,2 %
+  (2026-11-14), avg volume/menit < $500, fee/active TVL < 1 %, dan volatility > 6 %
+  dilewati.
 - Urutan: fee/active TVL terbesar dulu, seri: avg volume per menit (``avg_volume``) terbesar.
 - Satu tabel saja, tanpa pemisahan risiko (2026-11-14).
 - Alert Telegram (tiap 4 jam) memakai pool teratas dari urutan yang sama.
@@ -38,6 +38,7 @@ FLOW_MARKET_CAP_MIN = 100_000.0  # USD (market cap token base)
 # Filter lokal (permintaan user 2026-11-13, menggantikan semua filter lokal sebelumnya).
 # Nilai yang tidak terukur (hilang) juga dilewati.
 FLOW_AVG_VOLUME_MIN = 500.0      # USD per menit (avg_volume = volume 12H ÷ 720)
+FLOW_FEE_TIER_MIN = 0.2          # % (fee_pct, fee tier pool), permintaan user 2026-11-14
 FLOW_FEE_ACTIVE_TVL_MIN = 1.0    # % (fee_active_tvl_ratio, fee ÷ active TVL)
 FLOW_VOLATILITY_MAX = 6.0        # % (volatility), di atas ini dilewati
 # Pra-saring di sisi server (request user 12H). Tidak ada filter lokal lain.
@@ -229,10 +230,11 @@ def base_market_cap(row: dict):
 
 
 def evaluate_pool(row: dict) -> dict:
-    """Ambil field tampilan satu baris pool dan terapkan filter lokal 1 %.
+    """Ambil field tampilan satu baris pool dan terapkan filter lokal.
 
     Filter server (listing) sudah dilakukan Meteora. Di sini dilewati:
-    avg volume/menit < $500, fee/active TVL < 1 %, volatility > 6 % (atau tidak terukur).
+    fee tier < 0,2 %, avg volume/menit < $500, fee/active TVL < 1 %,
+    volatility > 6 % (atau nilai yang tidak terukur).
     """
     pool = str(row.get("pool_address") or "")
     mint = mint_of_pool(row)
@@ -243,6 +245,8 @@ def evaluate_pool(row: dict) -> dict:
     avg_volume = _num(row.get("avg_volume"))
 
     reasons: list[str] = []
+    if fee_tier is None or fee_tier < FLOW_FEE_TIER_MIN:
+        reasons.append(f"fee tier < {FLOW_FEE_TIER_MIN:g}%")
     if avg_volume is None or avg_volume < FLOW_AVG_VOLUME_MIN:
         reasons.append(f"avg volume/menit < ${FLOW_AVG_VOLUME_MIN:g}")
     if fee_active_tvl is None or fee_active_tvl < FLOW_FEE_ACTIVE_TVL_MIN:
