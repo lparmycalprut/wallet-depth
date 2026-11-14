@@ -20,7 +20,8 @@ BUTTON_LABEL = "SCAN BEST POOL"
 
 TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier",
                  "Volatility", "Fee/active TVL", "Avg volume/menit (pool)",
-                 "Volume 12H (pool)", "Volume 12H (token)", "Rata² swap (token)"]
+                 "Volume 12H (pool)", "Volume 12H (token)", "Rata² swap (token)",
+                 "Peringatan keamanan"]
 HOT = "🔥🔥🔥"  # tanda pool paling ramai (baris teratas)
 DETAIL_HEADERS = ["Pool", "Tipe", "Fee tier", "TVL", "Active TVL", "Volume 12H",
                   "Swap", "Trader unik", "Rata² swap", "Fee/active TVL"]
@@ -61,7 +62,9 @@ def _render_scan_result(result: dict) -> None:
     if not passing:
         st.info("Tidak ada pool yang lolos semua filter.")
         return
-    st.caption("Geser tabel ke kanan untuk melihat semua kolom.")
+    st.caption("Geser tabel ke kanan untuk melihat semua kolom. Keamanan: pool dengan mint/freeze "
+               "authority aktif atau top holders > 30 % dibuang; peringatan muncul bila top holders "
+               "> 15 %, dev > 5 %, atau LP keluar lebih besar dari masuk saat TVL < $50.000.")
     top = pf.most_crowded(result)
     top_pool = top["pool"] if top else None
     token_stats = result.get("token_stats")
@@ -116,6 +119,7 @@ def _result_table_html(rows: list, token_stats: dict | None = None,
             _html.escape(pf.fmt_usd(row["activity"]["volume"])),
             _html.escape(pf.fmt_usd(total.get("volume"))),
             _html.escape(pf.fmt_usd2(total.get("avg_swap"))),
+            _html.escape("; ".join(row.get("warnings") or []) or "—"),
         ]
         tds = "".join(
             f"<td style='padding:6px 8px;vertical-align:top;border-bottom:1px solid "
