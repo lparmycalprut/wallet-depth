@@ -88,6 +88,22 @@ REAL_12H = [FOOD_12H, DUT_12H]
 LOW_12H = dict(FOOD_12H, fee_pct=2.0)
 HIGH_12H = _row("H" * 44, "HIGHX", fa=12.0, vol=5.5, volume=720.0 * 800)  # volatility 5,5 %
 PASSING_12H = [LOW_12H, HIGH_12H]
+# FOOD-SOL pool DQjZ… (fee 2 %), respons Meteora timeframe=12h nyata: LP keluar > masuk, TVL < $50.000
+FOOD2_12H = {
+    "pool_address": "DQjZKw199L4788unoRUf9FMw63suJJ45hc9brXV3oQec", "name": "FOOD-SOL",
+    "token_x": {"address": "FTu55MyigXns96jz4nTCDDiTCjYJjyrHSceCgG9Upump", "symbol": "FOOD",
+                "name": "Foodcoin", "market_cap": 1006687.6790911813,
+                "has_mint_authority": False, "has_freeze_authority": False,
+                "top_holders_pct": 13.328027576488733, "dev_balance_pct": 0.01673305387042115},
+    "token_y": {"address": SOL, "symbol": "SOL", "name": "Wrapped SOL"},
+    "pool_type": "dlmm", "fee_pct": 2.0, "tvl": 23407.6551364514,
+    "active_tvl": 22287.135273606633, "base_token_holders": 7077,
+    "volatility": 3.095570505242116, "fee_active_tvl_ratio": 15.732076557116905,
+    "volume": 142016.8152715878, "avg_volume": 197.2455767660942,
+    "swap_count": 2283.0, "unique_traders": 779.0,
+    "total_deposits": 439629.8261476154, "total_withdraws": 508479.7435556029,
+    "net_deposits": -68849.91740798746,
+}
 
 
 class LocalFilterTest(unittest.TestCase):
@@ -146,6 +162,109 @@ class LocalFilterTest(unittest.TestCase):
         self.assertEqual(result["candidates"], 4)
         self.assertEqual([r["pool"] for r in result["passing"]],
                          [LOW_12H["pool_address"], HIGH_12H["pool_address"]])
+
+
+def _sec(*, tvl=20_000.0, deposits=None, withdraws=None, fa=10.0, avg=None, **token):
+    """Baris lolos filter lokal dengan field keamanan yang diatur tes."""
+    row = _row("S" * 44, "SECX", tvl=tvl, fa=fa)
+    row["token_x"].update(token)
+    if avg is not None:
+        row["avg_volume"] = avg
+    if deposits is not None:
+        row["total_deposits"] = deposits
+    if withdraws is not None:
+        row["total_withdraws"] = withdraws
+    return row
+
+
+class SecurityTest(unittest.TestCase):
+    """Filter keamanan (permintaan user 2026-11-14): blokir vs peringatan."""
+
+    def test_mint_authority_aktif_diblokir(self):
+        result = pf.evaluate_pool(_sec(has_mint_authority=True))
+        self.assertFalse(result["passes"])
+        self.assertIn("keamanan: mint authority masih aktif", result["reasons"])
+
+    def test_freeze_authority_aktif_diblokir(self):
+        result = pf.evaluate_pool(_sec(has_freeze_authority=True))
+        self.assertFalse(result["passes"])
+        self.assertIn("keamanan: freeze authority masih aktif", result["reasons"])
+
+    def test_authority_nonaktif_lolos(self):
+        result = pf.evaluate_pool(_sec(has_mint_authority=False, has_freeze_authority=False))
+        self.assertTrue(result["passes"])
+
+    def test_top_holders_di_atas_30_diblokir(self):
+        self.assertFalse(pf.evaluate_pool(_sec(top_holders_pct=30.5))["passes"])
+
+    def test_top_holders_tepat_30_tidak_diblokir(self):
+        result = pf.evaluate_pool(_sec(top_holders_pct=30.0))
+        self.assertTrue(result["passes"])
+        self.assertEqual(result["warnings"], ["top holders 30,0%"])
+
+    def test_top_holders_16_persen_hanya_peringatan(self):
+        result = pf.evaluate_pool(_sec(top_holders_pct=16.0))
+        self.assertTrue(result["passes"])
+        self.assertEqual(result["warnings"], ["top holders 16,0%"])
+
+    def test_top_holders_tepat_15_tanpa_peringatan(self):
+        result = pf.evaluate_pool(_sec(top_holders_pct=15.0))
+        self.assertEqual(result["warnings"], [])
+
+    def test_dev_di_atas_5_persen_peringatan(self):
+        result = pf.evaluate_pool(_sec(dev_balance_pct=6.0))
+        self.assertTrue(result["passes"])
+        self.assertEqual(result["warnings"], ["dev 6,0%"])
+
+    def test_lp_keluar_di_bawah_50k_peringatan(self):
+        result = pf.evaluate_pool(_sec(tvl=23_000.0, deposits=100.0, withdraws=200.0))
+        self.assertTrue(result["passes"])
+        self.assertTrue(any(w.startswith("LP keluar") for w in result["warnings"]))
+
+    def test_lp_keluar_di_atas_50k_tanpa_peringatan(self):
+        result = pf.evaluate_pool(_sec(tvl=60_000.0, deposits=100.0, withdraws=200.0))
+        self.assertFalse(any(w.startswith("LP keluar") for w in result["warnings"]))
+
+    def test_lp_tidak_keluar_lebih_besar_tanpa_peringatan(self):
+        result = pf.evaluate_pool(_sec(tvl=23_000.0, deposits=300.0, withdraws=200.0))
+        self.assertEqual(result["warnings"], [])
+
+    def test_field_kosong_tidak_dihitung(self):
+        result = pf.evaluate_pool(_row("K" * 44, "NOSEC"))
+        self.assertTrue(result["passes"])
+        self.assertEqual(result["warnings"], [])
+
+    def test_food2_nyata_hanya_peringatan_lp_keluar(self):
+        result = pf.evaluate_pool(FOOD2_12H)
+        self.assertEqual(result["warnings"], ["LP keluar > masuk (TVL < $50.000)"])
+        self.assertEqual(result["reasons"], [r for r in result["reasons"] if r.startswith("avg volume")])
+
+    def test_pool_terblokir_tidak_masuk_hasil_scan(self):
+        blocked = _sec(has_mint_authority=True, fa=50.0, avg=9000.0)
+        result = pf.scan_pools(listing=(PASSING_12H + [blocked], [], False))
+        self.assertNotIn(blocked["pool_address"], [r["pool"] for r in result["passing"]])
+        self.assertIn(blocked["pool_address"], [r["pool"] for r in result["results"]])
+
+    def test_alert_memuat_peringatan_keamanan(self):
+        warned = _sec(top_holders_pct=20.0, fa=50.0, avg=9000.0)
+        result = pf.scan_pools(listing=(PASSING_12H + [warned], [], False))
+        top = pf.most_crowded(result)
+        self.assertEqual(top["pool"], warned["pool_address"])
+        text = pf.crowded_alert_text(1, top, None)
+        self.assertIn("Peringatan keamanan", text)
+        self.assertIn("top holders 20,0%", text)
+
+    def test_alert_tanpa_peringatan_tidak_memuat_baris_keamanan(self):
+        result = pf.scan_pools(listing=(PASSING_12H, [], False))
+        text = pf.crowded_alert_text(1, pf.most_crowded(result), None)
+        self.assertNotIn("Peringatan keamanan", text)
+
+    def test_tabel_memuat_kolom_peringatan_keamanan(self):
+        import pool_flow_ui as ui
+        row = pf.evaluate_pool(FOOD2_12H)
+        html = ui._result_table_html([row])
+        self.assertIn("Peringatan keamanan", html)
+        self.assertIn("LP keluar &gt; masuk", html)
 
 
 class RiskTest(unittest.TestCase):

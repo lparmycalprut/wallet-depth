@@ -7,6 +7,8 @@ Permintaan user (2026-11-13):
   tanpa konsentrasi/kepemilikan tunggal tinggi). Filter lokal: fee tier < 0,2 %
   (2026-11-14), avg volume/menit < $500, fee/active TVL < 1 %, dan volatility > 6 %
   dilewati.
+- Keamanan (2026-11-14): blokir bila mint/freeze authority aktif atau top holders > 30 %;
+  peringatan bila top holders > 15 %, dev > 5 %, atau LP keluar > masuk saat TVL < $50.000.
 - Urutan: fee/active TVL terbesar dulu, seri: avg volume per menit (``avg_volume``) terbesar.
 - Satu tabel saja, tanpa pemisahan risiko (2026-11-14).
 - Alert Telegram (tiap 4 jam) memakai pool teratas dari urutan yang sama.
@@ -41,6 +43,12 @@ FLOW_AVG_VOLUME_MIN = 500.0      # USD per menit (avg_volume = volume 12H ÷ 720
 FLOW_FEE_TIER_MIN = 0.2          # % (fee_pct, fee tier pool), permintaan user 2026-11-14
 FLOW_FEE_ACTIVE_TVL_MIN = 1.0    # % (fee_active_tvl_ratio, fee ÷ active TVL)
 FLOW_VOLATILITY_MAX = 6.0        # % (volatility), di atas ini dilewati
+# Keamanan (permintaan user 2026-11-14). Blokir = pool dibuang dari hasil; peringatan = tetap
+# tampil dengan label. Field kosong tidak dihitung sebagai masalah.
+FLOW_SEC_HOLDERS_BLOCK = 30.0           # % top_holders_pct token dasar, blokir di atas ini
+FLOW_SEC_HOLDERS_WARN = 15.0            # % top_holders_pct, peringatan di atas ini
+FLOW_SEC_DEV_WARN = 5.0                 # % dev_balance_pct, peringatan di atas ini
+FLOW_SEC_LP_OUTFLOW_TVL_MAX = 50_000.0  # USD: peringatan LP keluar hanya bila TVL di bawah ini
 # Pra-saring di sisi server (request user 12H). Tidak ada filter lokal lain.
 FLOW_SERVER_FILTER = (
     "base_token_has_high_supply_concentration=false"
@@ -229,6 +237,38 @@ def base_market_cap(row: dict):
     return _num((row.get("token_x") or {}).get("market_cap"))
 
 
+def security_checks(row: dict) -> tuple[list[str], list[str]]:
+    """(blokir, peringatan) dari field keamanan Meteora. Nilai kosong tidak dihitung.
+
+    Blokir: mint/freeze authority masih aktif, atau top holders > FLOW_SEC_HOLDERS_BLOCK.
+    Peringatan: top holders > FLOW_SEC_HOLDERS_WARN, dev balance > FLOW_SEC_DEV_WARN,
+    atau total_withdraws > total_deposits saat TVL < FLOW_SEC_LP_OUTFLOW_TVL_MAX.
+    """
+    token = row.get("token_x") or {}
+    blocks: list[str] = []
+    warns: list[str] = []
+    if token.get("has_mint_authority") is True:
+        blocks.append("mint authority masih aktif")
+    if token.get("has_freeze_authority") is True:
+        blocks.append("freeze authority masih aktif")
+    holders = _num(token.get("top_holders_pct"))
+    if holders is not None:
+        if holders > FLOW_SEC_HOLDERS_BLOCK:
+            blocks.append(f"top holders > {FLOW_SEC_HOLDERS_BLOCK:g}%")
+        elif holders > FLOW_SEC_HOLDERS_WARN:
+            warns.append(f"top holders {fmt_pct(holders)}")
+    dev = _num(token.get("dev_balance_pct"))
+    if dev is not None and dev > FLOW_SEC_DEV_WARN:
+        warns.append(f"dev {fmt_pct(dev)}")
+    tvl = _num(row.get("tvl"))
+    withdraws = _num(row.get("total_withdraws"))
+    deposits = _num(row.get("total_deposits"))
+    if (tvl is not None and tvl < FLOW_SEC_LP_OUTFLOW_TVL_MAX
+            and withdraws is not None and deposits is not None and withdraws > deposits):
+        warns.append(f"LP keluar > masuk (TVL < {fmt_usd(FLOW_SEC_LP_OUTFLOW_TVL_MAX)})")
+    return blocks, warns
+
+
 def evaluate_pool(row: dict) -> dict:
     """Ambil field tampilan satu baris pool dan terapkan filter lokal.
 
@@ -255,6 +295,8 @@ def evaluate_pool(row: dict) -> dict:
         reasons.append("volatility tidak terukur")
     elif volatility > FLOW_VOLATILITY_MAX:
         reasons.append(f"volatility > {FLOW_VOLATILITY_MAX:g}%")
+    security_blocks, security_warnings = security_checks(row)
+    reasons.extend(f"keamanan: {text}" for text in security_blocks)
 
     return {
         "pool": pool,
@@ -272,6 +314,7 @@ def evaluate_pool(row: dict) -> dict:
         "avg_volume": avg_volume,
         "passes": not reasons,
         "reasons": reasons,
+        "warnings": security_warnings,
         "activity": pool_activity(row),
     }
 
@@ -526,6 +569,8 @@ def crowded_alert_text(no: int, top: dict, seen_no: int | None) -> str:
         f"🪙 active {fmt_usd(row['active_tvl'])}",
         f"〰️ volatility {fmt_pct(row['volatility'])} · ⚡ fee/active TVL {fmt_pct(row['fee_active_tvl'])}",
     ]
+    if top.get("row", {}).get("warnings"):
+        lines.append("⚠️ Peringatan keamanan: " + _h("; ".join(top["row"]["warnings"])))
     lines.extend(alert_link_lines(row.get("mint") or "", top["pool"]))
     return "\n".join(lines)
 
