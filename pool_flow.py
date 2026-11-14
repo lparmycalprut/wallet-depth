@@ -5,10 +5,11 @@ Permintaan user (2026-11-13):
 - Listing Meteora pool-discovery, timeframe 12h, kategori top, dengan filter
   server-side yang diminta user (dlmm, market cap, holders, TVL, active TVL,
   tanpa konsentrasi/kepemilikan tunggal tinggi). Filter lokal: fee tier, fee/active
-  TVL, dan volatility di bawah 1 % dilewati (2026-11-13).
-- Urutan: avg volume per menit (``avg_volume``) terbesar dulu.
+  avg volume/menit < $500, fee/active TVL < 1 %, dan volatility > 6 % dilewati
+  (2026-11-13).
+- Urutan: fee/active TVL terbesar dulu, seri: avg volume per menit (``avg_volume``) terbesar.
 - Dibagi dua tabel: HIGH RISK (volatility ≥ 5 %) dan LOW RISK (volatility < 5 %).
-  Tiap tabel tetap diurutkan dari avg volume per menit.
+  Tiap tabel tetap diurutkan dengan urutan di atas.
 - Alert Telegram (tiap 4 jam) memakai pool teratas dari urutan yang sama.
 """
 from __future__ import annotations
@@ -36,10 +37,11 @@ FLOW_ACTIVE_TVL_MIN = 10_000.0   # USD (active_tvl)
 FLOW_HOLDERS_MIN = 1_500         # base_token_holders
 FLOW_MARKET_CAP_MIN = 100_000.0  # USD (market cap token base)
 FLOW_RISK_VOLATILITY = 5.0       # % — volatility ≥ ini = HIGH RISK, di bawahnya LOW RISK
-# Pool di bawah ambang ini dilewati (permintaan user 2026-11-13). Nilai tidak terukur juga dilewati.
-FLOW_FEE_TIER_MIN = 1.0          # % (fee_pct)
-FLOW_FEE_ACTIVE_TVL_MIN = 1.0    # % (fee_active_tvl_ratio)
-FLOW_VOLATILITY_MIN = 1.0        # % (volatility)
+# Filter lokal (permintaan user 2026-11-13, menggantikan semua filter lokal sebelumnya).
+# Nilai yang tidak terukur (hilang) juga dilewati.
+FLOW_AVG_VOLUME_MIN = 500.0      # USD per menit (avg_volume = volume 12H ÷ 720)
+FLOW_FEE_ACTIVE_TVL_MIN = 1.0    # % (fee_active_tvl_ratio, fee ÷ active TVL)
+FLOW_VOLATILITY_MAX = 6.0        # % (volatility), di atas ini dilewati
 # Pra-saring di sisi server (request user 12H). Tidak ada filter lokal lain.
 FLOW_SERVER_FILTER = (
     "base_token_has_high_supply_concentration=false"
@@ -241,8 +243,8 @@ def risk_group(volatility) -> str:
 def evaluate_pool(row: dict) -> dict:
     """Ambil field tampilan satu baris pool dan terapkan filter lokal 1 %.
 
-    Filter server (listing) sudah dilakukan Meteora. Di sini hanya dilewati:
-    fee tier < 1 %, fee/active TVL < 1 %, volatility < 1 % (atau tidak terukur).
+    Filter server (listing) sudah dilakukan Meteora. Di sini dilewati:
+    avg volume/menit < $500, fee/active TVL < 1 %, volatility > 6 % (atau tidak terukur).
     """
     pool = str(row.get("pool_address") or "")
     mint = mint_of_pool(row)
@@ -250,14 +252,17 @@ def evaluate_pool(row: dict) -> dict:
     fee_tier = _num(row.get("fee_pct"))
     fee_active_tvl = _num(row.get("fee_active_tvl_ratio"))
     volatility = _num(row.get("volatility"))
+    avg_volume = _num(row.get("avg_volume"))
 
     reasons: list[str] = []
-    if fee_tier is None or fee_tier < FLOW_FEE_TIER_MIN:
-        reasons.append(f"fee tier < {FLOW_FEE_TIER_MIN:g}%")
+    if avg_volume is None or avg_volume < FLOW_AVG_VOLUME_MIN:
+        reasons.append(f"avg volume/menit < ${FLOW_AVG_VOLUME_MIN:g}")
     if fee_active_tvl is None or fee_active_tvl < FLOW_FEE_ACTIVE_TVL_MIN:
         reasons.append(f"fee/active TVL < {FLOW_FEE_ACTIVE_TVL_MIN:g}%")
-    if volatility is None or volatility < FLOW_VOLATILITY_MIN:
-        reasons.append(f"volatility < {FLOW_VOLATILITY_MIN:g}%")
+    if volatility is None:
+        reasons.append("volatility tidak terukur")
+    elif volatility > FLOW_VOLATILITY_MAX:
+        reasons.append(f"volatility > {FLOW_VOLATILITY_MAX:g}%")
 
     return {
         "pool": pool,
@@ -273,7 +278,7 @@ def evaluate_pool(row: dict) -> dict:
         "volatility": volatility,
         "risk": risk_group(volatility),
         "fee_active_tvl": fee_active_tvl,
-        "avg_volume": _num(row.get("avg_volume")),
+        "avg_volume": avg_volume,
         "passes": not reasons,
         "reasons": reasons,
         "activity": pool_activity(row),
@@ -387,8 +392,8 @@ def pool_item_12h(stats: dict | None, pool: str):
 
 
 def sort_key(result: dict):
-    """Urutan tampilan dan alert: avg volume per menit terbesar dulu; seri: volume 12H."""
-    return (-(result["avg_volume"] or 0.0), -(result["activity"]["volume"] or 0.0))
+    """Urutan tampilan dan alert: fee/active TVL terbesar dulu, seri: avg volume per menit terbesar."""
+    return (-(result["fee_active_tvl"] or 0.0), -(result["avg_volume"] or 0.0))
 
 
 def ranked(passing: list) -> list:

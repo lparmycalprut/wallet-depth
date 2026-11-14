@@ -12,10 +12,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import pool_flow as pf  # noqa: E402
-from tests.test_pool_flow import DUT_12H, LOW_12H, PASSING_12H  # noqa: E402
+from tests.test_pool_flow import DUT_12H, HIGH_12H, LOW_12H, PASSING_12H  # noqa: E402
 
 LOW_POOL = LOW_12H["pool_address"]  # FOOD (fee 2 % untuk uji)
-DUT_POOL = DUT_12H["pool_address"]
+DUT_POOL = DUT_12H["pool_address"]  # dilewati (volatility 6,71 %)
+HIGH_POOL = HIGH_12H["pool_address"]
 
 
 class AppMainTest(unittest.TestCase):
@@ -84,7 +85,8 @@ class AppMainTest(unittest.TestCase):
         self.assertFalse(at.exception)
         body = self._body(at)
         self.assertIn(LOW_POOL, body)
-        self.assertIn(DUT_POOL, body)
+        self.assertIn(HIGH_POOL, body)
+        self.assertNotIn(DUT_POOL, body)  # volatility 6,71 % > 6 % dilewati
         self.assertIn("Timeframe 12H", " ".join(str(c.value) for c in at.caption))
         markdown = " ".join(str(m.value) for m in at.markdown)
         self.assertIn("HIGH RISK", markdown)
@@ -201,8 +203,8 @@ class ResultTableTest(unittest.TestCase):
         passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
         html = ui._result_table_html(passing, None, LOW_POOL)
         self.assertIn("Avg volume/menit (pool)", html)
-        self.assertIn(">$1.500,59</td>", html)   # FOOD avg_volume
-        self.assertIn(">$494,02</td>", html)     # DutNdX avg_volume
+        self.assertIn(">$1.500,59</td>", html)   # LOW_12H avg_volume
+        self.assertIn(">$800,00</td>", html)     # HIGH_12H avg_volume
         self.assertNotIn("Rasio (×)", html)
         first_row = html.split("<tbody>", 1)[1].split("</tr>", 1)[0]
         self.assertIn("background:rgba(249,115,22,.14)", first_row)
@@ -212,7 +214,7 @@ class ResultTableTest(unittest.TestCase):
         passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
         high, low = pf.split_by_risk(passing)
         html = ui._result_table_html(high)
-        self.assertIn(DUT_POOL, html)
+        self.assertIn(HIGH_POOL, html)
         self.assertNotIn(LOW_POOL, html)
 
 
