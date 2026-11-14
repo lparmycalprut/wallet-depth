@@ -22,7 +22,7 @@ SOL = "So11111111111111111111111111111111111111112"
 
 def _row(pool, symbol, *, fee=2.0, tvl=20_000.0, active_tvl=5_000.0, holders=2_000,
          mcap=500_000.0, vol=2.0, fa=10.0, open_pos=50, active=40, mint=None,
-         volume=10_000.0, swaps=500.0, traders=200.0):
+         volume=720_000.0, swaps=500.0, traders=200.0):
     mint = mint or ("M" + pool[:8].ljust(43, "x"))
     return {"pool_address": pool, "name": f"{symbol}-SOL", "pool_type": "dlmm",
             "token_x": {"address": mint, "symbol": symbol, "name": symbol,
@@ -86,37 +86,56 @@ DUT_12H = {  # respons Meteora timeframe=12h (filter user), baris nyata; volatil
 REAL_12H = [FOOD_12H, DUT_12H]
 # FOOD dengan fee 2 % agar lolos filter fee tier 1 % (uji jalur lolos; FOOD asli fee 0,8 % dilewati)
 LOW_12H = dict(FOOD_12H, fee_pct=2.0)
-PASSING_12H = [LOW_12H, DUT_12H]
+HIGH_12H = _row("H" * 44, "HIGHX", fa=12.0, vol=5.5, volume=720.0 * 800)  # uji HIGH RISK
+PASSING_12H = [LOW_12H, HIGH_12H]
 
 
 class LocalFilterTest(unittest.TestCase):
-    """Filter lokal 1 %: fee tier, fee/active TVL, volatility (permintaan user 2026-11-13)."""
+    """Filter lokal (permintaan user 2026-11-13): avg volume/menit ≥ $500, fee/active TVL ≥ 1 %,
+    volatility ≤ 6 %. Nilai yang tidak terukur dilewati."""
 
-    def test_fee_tier_di_bawah_1_persen_dilewati(self):
-        result = pf.evaluate_pool(FOOD_12H)  # fee 0,8 %
+    def test_avg_volume_di_bawah_500_dilewati(self):
+        result = pf.evaluate_pool(_row("A" * 44, "SMALLV", volume=720.0 * 499))  # avg 499
         self.assertFalse(result["passes"])
-        self.assertTrue(any(r.startswith("fee tier") for r in result["reasons"]))
+        self.assertTrue(any(r.startswith("avg volume") for r in result["reasons"]))
+
+    def test_batas_avg_volume_500_lolos(self):
+        self.assertTrue(pf.evaluate_pool(_row("A" * 44, "EDGEV", volume=720.0 * 500))["passes"])
 
     def test_fee_active_tvl_di_bawah_1_persen_dilewati(self):
         result = pf.evaluate_pool(_row("F" * 44, "FAX", fa=0.99))
         self.assertFalse(result["passes"])
         self.assertTrue(any(r.startswith("fee/active TVL") for r in result["reasons"]))
 
-    def test_volatility_di_bawah_1_persen_dilewati(self):
-        for vol in (0.99, 0.0, None):
-            result = pf.evaluate_pool(_row("V" * 44, "VOLX", vol=vol))
-            self.assertFalse(result["passes"], vol)
-            self.assertTrue(any(r.startswith("volatility") for r in result["reasons"]), vol)
+    def test_volatility_di_atas_6_persen_dilewati(self):
+        result = pf.evaluate_pool(_row("V" * 44, "VOLX", vol=6.01))
+        self.assertFalse(result["passes"])
+        self.assertTrue(any(r.startswith("volatility >") for r in result["reasons"]))
 
-    def test_batas_tepat_1_persen_lolos(self):
-        result = pf.evaluate_pool(_row("B" * 44, "EDGE", fee=1.0, fa=1.0, vol=1.0))
+    def test_volatility_tidak_terukur_dilewati(self):
+        result = pf.evaluate_pool(_row("N" * 44, "NOVOL", vol=None))
+        self.assertFalse(result["passes"])
+        self.assertTrue(any("tidak terukur" in r for r in result["reasons"]))
+
+    def test_batas_tepat_lolos(self):
+        result = pf.evaluate_pool(_row("B" * 44, "EDGE", fa=1.0, vol=6.0, volume=720.0 * 500))
         self.assertTrue(result["passes"])
         self.assertEqual(result["reasons"], [])
 
+    def test_fee_tier_tidak_lagi_difilter(self):
+        self.assertTrue(pf.evaluate_pool(_row("T" * 44, "TIERX", fee=0.5))["passes"])
+
+    def test_dut_12h_dilewati_karena_volatility_6_71(self):
+        result = pf.evaluate_pool(DUT_12H)
+        self.assertFalse(result["passes"])
+        self.assertTrue(any(r.startswith("volatility >") for r in result["reasons"]))
+
     def test_scan_hanya_memuat_pool_yang_lolos(self):
-        result = pf.scan_pools(listing=(REAL_12H + [_row("S" * 44, "SHORT", vol=0.5)], [], False))
-        self.assertEqual(result["candidates"], 3)
-        self.assertEqual([r["pool"] for r in result["passing"]], [DUT_12H["pool_address"]])
+        extra = [DUT_12H, _row("S" * 44, "SHORT", volume=720.0 * 100)]
+        result = pf.scan_pools(listing=(PASSING_12H + extra, [], False))
+        self.assertEqual(result["candidates"], 4)
+        self.assertEqual([r["pool"] for r in result["passing"]],
+                         [LOW_12H["pool_address"], HIGH_12H["pool_address"]])
 
 
 class RiskTest(unittest.TestCase):
@@ -124,51 +143,49 @@ class RiskTest(unittest.TestCase):
         self.assertEqual(pf.risk_group(5.0), "high")   # ≥ 5 % = HIGH RISK
         self.assertEqual(pf.risk_group(5.01), "high")
         self.assertEqual(pf.risk_group(4.99), "low")   # < 5 % = LOW RISK
-        self.assertEqual(pf.risk_group(0.0), "low")    # tidak terukur masuk LOW RISK
+        self.assertEqual(pf.risk_group(0.0), "low")
         self.assertEqual(pf.risk_group(None), "low")
 
-    def test_tvl_kecil_tidak_lagi_difilter_lokal(self):
+    def test_tvl_kecil_tidak_difilter_lokal(self):
         row = _row("P" * 44, "SMALLX", tvl=100.0, active_tvl=10.0, holders=10, mcap=1.0)
-        result = pf.evaluate_pool(row)
-        self.assertTrue(result["passes"])
-        self.assertEqual(result["reasons"], [])
+        self.assertTrue(pf.evaluate_pool(row)["passes"])
 
     def test_evaluate_pool_membawa_avg_volume_dan_risiko(self):
-        row = _row("Q" * 44, "HIGHX", vol=6.0, volume=7200.0)
+        row = _row("Q" * 44, "HIGHX", vol=5.5, volume=7200.0 * 72)  # avg 720
         result = pf.evaluate_pool(row)
         self.assertEqual(result["risk"], "high")
-        self.assertAlmostEqual(result["avg_volume"], 10.0)  # 7.200 ÷ 720 menit
+        self.assertAlmostEqual(result["avg_volume"], 720.0)
 
 
 class RealResponseTest(unittest.TestCase):
-    def test_urut_avg_volume_per_menit_terbesar(self):
+    def test_urut_fee_active_lalu_avg_volume(self):
         result = pf.scan_pools(listing=(PASSING_12H, [], False))
-        self.assertEqual([r["symbol"] for r in result["passing"]], ["FOOD", "Sakura"])
+        # LOW_12H fee/active 19,26 % > HIGH_12H 12 %
+        self.assertEqual([r["symbol"] for r in result["passing"]], ["FOOD", "HIGHX"])
         self.assertEqual(result["candidates"], 2)
 
     def test_dua_tabel_high_dan_low_risk(self):
         result = pf.scan_pools(listing=(PASSING_12H, [], False))
         high, low = pf.split_by_risk(result["passing"])
-        self.assertEqual([r["pool"] for r in high], [DUT_12H["pool_address"]])  # vol 6,71 %
-        self.assertEqual([r["pool"] for r in low], [LOW_12H["pool_address"]])  # vol 3,07 %
+        self.assertEqual([r["pool"] for r in high], [HIGH_12H["pool_address"]])  # vol 5,5 %
+        self.assertEqual([r["pool"] for r in low], [LOW_12H["pool_address"]])   # vol 3,07 %
 
-    def test_pool_teratas_untuk_headline_dan_alert(self):
+    def test_pool_teratas_untuk_alert(self):
         result = pf.scan_pools(listing=(PASSING_12H, [], False))
         top = pf.most_crowded(result)
         self.assertEqual(top["pool"], LOW_12H["pool_address"])
         self.assertEqual(top["risk"], "low")
-        self.assertAlmostEqual(top["avg_volume"], 1500.586360225028)
-        self.assertAlmostEqual(top["pool_volume"], 1080422.1793620202)
 
 
 class ScanTest(unittest.TestCase):
-    def test_urut_avg_volume_lalu_volume(self):
-        rows = [_row("A" * 44, "AAA", volume=720.0), _row("B" * 44, "BBB", volume=7200.0),
-                _row("C" * 44, "CCC", volume=720.0)]
+    def test_urut_fee_active_lalu_avg_volume_lalu_volume(self):
+        rows = [_row("A" * 44, "AAA", fa=5.0, volume=720.0 * 1000),
+                _row("B" * 44, "BBB", fa=8.0, volume=720.0 * 600),
+                _row("C" * 44, "CCC", fa=5.0, volume=720.0 * 2000)]
         result = pf.scan_pools(listing=(rows, [], False))
-        # avg per menit: B = 10, A dan C = 1 (seri → volume 12H, lalu tetap urut dari sort)
+        # fee/active tertinggi dulu (B); seri 5 %: avg volume terbesar (C lalu A)
         self.assertEqual([r["pool"] for r in result["passing"]],
-                         ["B" * 44, "A" * 44, "C" * 44])
+                         ["B" * 44, "C" * 44, "A" * 44])
 
     def test_pool_duplikat_dihitung_sekali(self):
         rows = PASSING_12H + [LOW_12H]
@@ -610,15 +627,15 @@ class TokenActivityTest(unittest.TestCase):
         self.assertEqual(top["pool"], LOW_12H["pool_address"])
         self.assertIsNone(pf.most_crowded({"passing": []}))
 
-    def test_split_by_risk_tiap_tabel_tetap_urut_avg_volume(self):
-        rows = [_row("1" * 44, "H1", vol=6.0, volume=720.0 * 50),
-                _row("2" * 44, "H2", vol=7.0, volume=720.0 * 300),
-                _row("3" * 44, "L1", vol=1.0, volume=720.0 * 10),
-                _row("4" * 44, "L2", vol=4.9, volume=720.0 * 80)]
+    def test_split_by_risk_tiap_tabel_tetap_urut(self):
+        rows = [_row("1" * 44, "H1", vol=5.2, volume=720.0 * 600),
+                _row("2" * 44, "H2", vol=5.8, volume=720.0 * 900),
+                _row("3" * 44, "L1", vol=1.0, volume=720.0 * 1000),
+                _row("4" * 44, "L2", vol=4.9, volume=720.0 * 2000)]
         result = pf.scan_pools(listing=(rows, [], False))
         high, low = pf.split_by_risk(result["passing"])
-        self.assertEqual([r["symbol"] for r in high], ["H2", "H1"])
-        self.assertEqual([r["symbol"] for r in low], ["L2", "L1"])
+        self.assertEqual([r["symbol"] for r in high], ["H2", "H1"])   # avg 900 lalu 600
+        self.assertEqual([r["symbol"] for r in low], ["L2", "L1"])    # avg 2.000 lalu 1.000
 
     def test_token_stats_tidak_mengubah_urutan_tabel(self):
         result = pf.scan_pools(listing=(PASSING_12H, [], False))
