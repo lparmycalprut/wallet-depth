@@ -37,7 +37,8 @@ def _md(value) -> str:
 def _filter_caption() -> str:
     return (f"Timeframe 12H · TVL ≥ {pf.fmt_usd(pf.FLOW_TVL_MIN)} · active TVL ≥ "
             f"{pf.fmt_usd(pf.FLOW_ACTIVE_TVL_MIN)} · holders ≥ {pf.FLOW_HOLDERS_MIN:,} · "
-            f"market cap ≥ {pf.fmt_usd(pf.FLOW_MARKET_CAP_MIN)} · dlmm · avg volume/menit ≥ "
+            f"market cap ≥ {pf.fmt_usd(pf.FLOW_MARKET_CAP_MIN)} · dlmm · fee tier ≥ "
+            f"{pf.FLOW_FEE_TIER_MIN:g}% · avg volume/menit ≥ "
             f"{pf.fmt_usd(pf.FLOW_AVG_VOLUME_MIN)} · fee/active TVL ≥ "
             f"{pf.FLOW_FEE_ACTIVE_TVL_MIN:g}% · volatility ≤ {pf.FLOW_VOLATILITY_MAX:g}% · "
             f"urut fee/active TVL terbesar, lalu avg volume/menit.")
