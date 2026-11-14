@@ -8,8 +8,7 @@ Permintaan user (2026-11-13):
   avg volume/menit < $500, fee/active TVL < 1 %, dan volatility > 6 % dilewati
   (2026-11-13).
 - Urutan: fee/active TVL terbesar dulu, seri: avg volume per menit (``avg_volume``) terbesar.
-- Dibagi dua tabel: HIGH RISK (volatility ≥ 5 %) dan LOW RISK (volatility < 5 %).
-  Tiap tabel tetap diurutkan dengan urutan di atas.
+- Satu tabel saja, tanpa pemisahan risiko (2026-11-14).
 - Alert Telegram (tiap 4 jam) memakai pool teratas dari urutan yang sama.
 """
 from __future__ import annotations
@@ -36,7 +35,6 @@ FLOW_TVL_MIN = 10_000.0          # USD (tvl)
 FLOW_ACTIVE_TVL_MIN = 10_000.0   # USD (active_tvl)
 FLOW_HOLDERS_MIN = 1_500         # base_token_holders
 FLOW_MARKET_CAP_MIN = 100_000.0  # USD (market cap token base)
-FLOW_RISK_VOLATILITY = 5.0       # % — volatility ≥ ini = HIGH RISK, di bawahnya LOW RISK
 # Filter lokal (permintaan user 2026-11-13, menggantikan semua filter lokal sebelumnya).
 # Nilai yang tidak terukur (hilang) juga dilewati.
 FLOW_AVG_VOLUME_MIN = 500.0      # USD per menit (avg_volume = volume 12H ÷ 720)
@@ -230,16 +228,6 @@ def base_market_cap(row: dict):
     return _num((row.get("token_x") or {}).get("market_cap"))
 
 
-def risk_group(volatility) -> str:
-    """HIGH RISK bila volatility ≥ FLOW_RISK_VOLATILITY %, selain itu LOW RISK.
-
-    Volatility yang tidak terukur (hilang atau 0) masuk LOW RISK.
-    """
-    if volatility is not None and volatility >= FLOW_RISK_VOLATILITY:
-        return "high"
-    return "low"
-
-
 def evaluate_pool(row: dict) -> dict:
     """Ambil field tampilan satu baris pool dan terapkan filter lokal 1 %.
 
@@ -276,7 +264,6 @@ def evaluate_pool(row: dict) -> dict:
         "holders": _num(row.get("base_token_holders")),
         "market_cap": base_market_cap(row),
         "volatility": volatility,
-        "risk": risk_group(volatility),
         "fee_active_tvl": fee_active_tvl,
         "avg_volume": avg_volume,
         "passes": not reasons,
@@ -401,13 +388,6 @@ def ranked(passing: list) -> list:
     return sorted(passing, key=sort_key)
 
 
-def split_by_risk(passing: list) -> tuple[list, list]:
-    """(HIGH RISK, LOW RISK), masing-masing sudah diurutkan dari avg volume per menit."""
-    ordered = ranked(passing)
-    return ([r for r in ordered if r["risk"] == "high"],
-            [r for r in ordered if r["risk"] == "low"])
-
-
 def most_crowded(result: dict):
     """Pool paling ramai = avg volume per menit terbesar di seluruh hasil scan.
 
@@ -427,7 +407,6 @@ def most_crowded(result: dict):
         "pool_volume": activity["volume"],
         "pool_swaps": activity["swaps"],
         "pool_avg_swap": activity["avg_swap"],
-        "risk": top["risk"],
         "row": top,
     }
 
@@ -527,14 +506,13 @@ def _pct_or_dash(value) -> str:
 
 
 def crowded_alert_text(no: int, top: dict, seen_no: int | None) -> str:
-    """Alert Telegram: hanya pool paling ramai (avg volume per menit terbesar)."""
+    """Alert Telegram: hanya pool teratas (fee/active TVL terbesar, seri avg volume per menit)."""
     row = top["row"]
     tag = f"🔁 sudah pernah · alert #{seen_no}" if seen_no else "🆕 baru"
     name = top["pool_name"] or top["pool"][:6]
-    band = "HIGH RISK" if top["risk"] == "high" else "LOW RISK"
     lines = [
         f"🔥🔥🔥 <b>POOL PALING RAMAI</b> · alert #{no}",
-        f"🎯 hasil Scan Best Pool (filter 12H) · urut avg volume/menit · {band}",
+        "🎯 hasil Scan Best Pool (filter 12H) · urut fee/active TVL, lalu avg volume/menit",
         "━━━━━━━━━━━━━━━━━━",
         "",
         f"🔥 <b>{_h(top['symbol'])}</b> · {_h(name)}  {tag}",

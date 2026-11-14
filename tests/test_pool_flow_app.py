@@ -79,7 +79,7 @@ class AppMainTest(unittest.TestCase):
         self.assertNotIn("Cek LP Keluar", body)
         self.assertNotIn("Tambah watchlist manual", body)
 
-    def test_scan_menampilkan_semua_pool_dari_listing_dua_tabel_risiko(self):
+    def test_scan_menampilkan_semua_pool_dari_listing_satu_tabel(self):
         at = self._app()
         next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
         self.assertFalse(at.exception)
@@ -89,9 +89,8 @@ class AppMainTest(unittest.TestCase):
         self.assertNotIn(DUT_POOL, body)  # volatility 6,71 % > 6 % dilewati
         self.assertIn("Timeframe 12H", " ".join(str(c.value) for c in at.caption))
         markdown = " ".join(str(m.value) for m in at.markdown)
-        self.assertIn("HIGH RISK", markdown)
-        self.assertIn("LOW RISK", markdown)
-        self.assertEqual(len(at.get("iframe")), 2)  # satu tabel per kelompok risiko
+        self.assertNotIn("RISK", markdown)
+        self.assertEqual(len(at.get("iframe")), 1)  # satu tabel untuk semua pool
 
     def test_hasil_scan_berupa_tabel_html_dengan_scroll_horizontal(self):
         at = self._app()
@@ -156,7 +155,7 @@ class AppMainTest(unittest.TestCase):
                          if "🔥🔥🔥" in str(node.proto.srcdoc))
         first_row = hot_table.split("<tbody>", 1)[1].split("</tr>", 1)[0]
         self.assertIn("🔥🔥🔥", first_row)
-        self.assertIn(LOW_POOL, first_row)  # avg volume/menit terbesar = FOOD (LOW RISK)
+        self.assertIn(LOW_POOL, first_row)  # fee/active TVL terbesar = FOOD
         self.assertEqual(body.count("🔥🔥🔥"), 1)  # hanya baris teratas tabel (headline sudah dihapus)
         dropdown = "\n".join(str(node.proto.body) for node in at.get("html"))
         self.assertEqual(dropdown.count("🔥🔥🔥"), 1)
@@ -212,10 +211,9 @@ class ResultTableTest(unittest.TestCase):
     def test_tabel_hanya_memuat_baris_yang_diberikan(self):
         import pool_flow_ui as ui
         passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
-        high, low = pf.split_by_risk(passing)
-        html = ui._result_table_html(high)
-        self.assertIn(HIGH_POOL, html)
-        self.assertNotIn(LOW_POOL, html)
+        html = ui._result_table_html(passing[:1])
+        self.assertIn(LOW_POOL, html)
+        self.assertNotIn(HIGH_POOL, html)
 
 
 if __name__ == "__main__":
