@@ -502,7 +502,7 @@ class AlertTest(unittest.TestCase):
         result = pf.scan_pools(listing=(PASSING_12H, [], False))
         state = pf.empty_state()
         text = pf.apply_crowded_alert(state, pf.most_crowded(result))
-        self.assertIn("POOL PALING RAMAI", text)
+        self.assertNotIn("POOL PALING RAMAI", text)  # judul dihapus (2026-11-15)
         self.assertNotIn("🔥", text)  # penandaan 🔥 dihapus (2026-11-15)
         self.assertIn("HIGHX", text)
         self.assertNotIn("Sakura", text)
@@ -632,7 +632,8 @@ class TelegramCopyTest(unittest.TestCase):
             listing=(PASSING_12H, [], False)))
         self.assertEqual(len(messages), 1)
         text, markup = messages[0]
-        self.assertIn("POOL PALING RAMAI", text)
+        self.assertNotIn("POOL PALING RAMAI", text)
+        self.assertIn("alert #1", text)
         self.assertEqual(len(markup["inline_keyboard"]), 1)
         (button,) = markup["inline_keyboard"][0]
         self.assertEqual(button["copy_text"]["text"], pf.mint_of_pool(HIGH_12H))  # rasio tertinggi = HIGHX
