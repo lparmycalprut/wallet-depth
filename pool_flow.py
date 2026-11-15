@@ -2,7 +2,7 @@
 """🏆 Scan Best Pool Meteora — logika inti, tanpa Streamlit.
 
 Permintaan user (2026-11-14, terbaru):
-- Listing Meteora pool-discovery, timeframe 12h, category=all, sort_by=volume_tvl_ratio:desc,
+- Listing Meteora pool-discovery, timeframe 12h, category=all,
   dengan filter server-side persis dari request user (FLOW_SERVER_FILTER).
 - Tidak ada filter seleksi lokal (avg volume, fee/active TVL, volatility, fee tier dihapus).
 - Keamanan tetap (2026-11-14): blokir bila mint/freeze authority aktif atau top holders > 30 %;
@@ -30,7 +30,6 @@ USER_AGENT = "Mozilla/5.0 (wallet-depth-pool-flow)"
 FLOW_TIMEFRAME = "12h"
 # Listing = request user 2026-11-14 (12H, category all, urut volume/TVL). Tidak ada filter lokal.
 FLOW_CATEGORY = "all"
-FLOW_SORT_BY = "volume_tvl_ratio:desc"
 # Pemisahan tabel (permintaan user 2026-11-15). Fee/TVL = fee_tvl_ratio (%, 12H),
 # volatility dalam %. Volatility di bawah 0,01 % dianggap tidak terukur (tidak masuk tabel mana pun).
 FLOW_VOLATILITY_MEASURABLE_MIN = 0.01
@@ -49,9 +48,9 @@ FLOW_SERVER_FILTER = (
     "&&base_token_has_high_supply_concentration=false"
     "&&base_token_has_high_single_ownership=false"
     "&&pool_type=dlmm"
-    "&&tvl>=1000"
+    "&&tvl>=10000"
+    "&&fee_tvl_ratio>=2"
     "&&fee_pct>=0.5"
-    "&&fee_active_tvl_ratio>=2"
 )
 FLOW_MAX_PAGES = 100             # batas keamanan: 100 × 50 = 5.000 pool (cursor after_key)
 FLOW_PAGE_SIZE = 50
@@ -152,7 +151,7 @@ def fetch_top_page(after_key: str | None = None) -> tuple[list, str | None, bool
     respons sebelumnya (parameter ``page`` diabaikan API dan selalu memberi
     pool yang sama). Kembalikan (rows, next_after_key, has_more).
     """
-    params = {"page_size": FLOW_PAGE_SIZE, "sort_by": FLOW_SORT_BY,
+    params = {"page_size": FLOW_PAGE_SIZE,
               "timeframe": FLOW_TIMEFRAME, "category": FLOW_CATEGORY,
               "filter_by": FLOW_SERVER_FILTER}
     if after_key:
