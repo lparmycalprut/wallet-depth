@@ -503,6 +503,7 @@ class AlertTest(unittest.TestCase):
         state = pf.empty_state()
         text = pf.apply_crowded_alert(state, pf.most_crowded(result))
         self.assertIn("POOL PALING RAMAI", text)
+        self.assertNotIn("🔥", text)  # penandaan 🔥 dihapus (2026-11-15)
         self.assertIn("HIGHX", text)
         self.assertNotIn("Sakura", text)
         self.assertEqual(len(state["alerts"]), 1)

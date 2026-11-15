@@ -119,17 +119,14 @@ class AppMainTest(unittest.TestCase):
         self.assertFalse(self.state_path.exists())
         self.assertFalse([b for b in at.button if str(b.key).startswith("pf_add_")])
 
-    def test_baris_teratas_paling_ramai_diberi_emoji_bakar(self):
+    def test_tabel_tanpa_penandaan_api_bakar(self):
         at = self._app()
         next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
         body = self._body(at)
-        hot_table = next(str(node.proto.srcdoc) for node in at.get("iframe")
-                         if "🔥🔥🔥" in str(node.proto.srcdoc))
-        first_row = hot_table.split("<tbody>", 1)[1].split("</tr>", 1)[0]
-        self.assertIn("🔥🔥🔥", first_row)
-        self.assertIn(HIGH_POOL, first_row)  # rasio avg volume/menit ÷ TVL terbesar = HIGHX
-        self.assertEqual(body.count("🔥🔥🔥"), 1)  # hanya baris teratas tabel
-        self.assertIn("background:rgba(249,115,22,.14)", first_row)
+        self.assertNotIn("🔥", body)
+        for node in at.get("iframe"):
+            self.assertNotIn("🔥", str(node.proto.srcdoc))
+            self.assertNotIn("rgba(249,115,22", str(node.proto.srcdoc))
 
     def test_app_utama_tidak_mengimpor_watchlist_atau_lp_keluar(self):
         body = (ROOT / "app.py").read_text(encoding="utf-8").lower()
@@ -162,7 +159,7 @@ class ResultTableTest(unittest.TestCase):
     def test_tabel_memuat_avg_volume_per_menit_per_pool(self):
         import pool_flow_ui as ui
         passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
-        html = ui._result_table_html(passing, HIGH_POOL)
+        html = ui._result_table_html(passing)
         self.assertIn("Avg volume/menit (pool)", html)
         self.assertIn(">$1,50K</td>", html)      # LOW_12H avg_volume
         self.assertIn(">$800,00</td>", html)     # HIGH_12H avg_volume
@@ -170,8 +167,7 @@ class ResultTableTest(unittest.TestCase):
         self.assertIn(">4,00%</td>", html)       # HIGH_12H: 800 ÷ 20.000
         self.assertIn(">1,66%</td>", html)       # LOW_12H: 1.500,59 ÷ 90.546,54
         self.assertNotIn("Rasio (×)", html)
-        first_row = html.split("<tbody>", 1)[1].split("</tr>", 1)[0]
-        self.assertIn("background:rgba(249,115,22,.14)", first_row)
+        self.assertNotIn("rgba(249,115,22", html)  # tanpa highlight baris teratas
 
     def test_tabel_hanya_memuat_baris_yang_diberikan(self):
         import pool_flow_ui as ui
