@@ -202,7 +202,7 @@ class ResultTableTest(unittest.TestCase):
         passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
         html = ui._result_table_html(passing, None, LOW_POOL)
         self.assertIn("Avg volume/menit (pool)", html)
-        self.assertIn(">$1.500,59</td>", html)   # LOW_12H avg_volume
+        self.assertIn(">$1,50K</td>", html)      # LOW_12H avg_volume
         self.assertIn(">$800,00</td>", html)     # HIGH_12H avg_volume
         self.assertNotIn("Rasio (×)", html)
         first_row = html.split("<tbody>", 1)[1].split("</tr>", 1)[0]
