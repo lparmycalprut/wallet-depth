@@ -25,8 +25,8 @@ HOT = "🔥🔥🔥"  # tanda pool paling ramai (baris teratas)
 
 
 def _filter_caption() -> str:
-    return (f"Timeframe 12H · kategori all · urut volume/TVL (listing) · dlmm · "
-            f"TVL ≥ {pf.fmt_usd(1000)} · fee ≥ 0.5% · fee/active TVL ≥ 2 · "
+    return (f"Timeframe 12H · kategori all · dlmm · "
+            f"TVL ≥ {pf.fmt_usd(10000)} · fee/TVL ≥ 2 · fee ≥ 0.5% · "
             f"tanpa critical warning · tanpa konsentrasi/kepemilikan tunggal tinggi · "
             f"urut fee/active TVL terbesar, lalu avg volume/menit.")
 
@@ -57,17 +57,19 @@ def _render_scan_result(result: dict) -> None:
     top = pf.most_crowded(result)
     top_pool = top["pool"] if top else None
     fee_printer, band = pf.fee_printer_split(passing)
-    _render_pool_table("FEE PRINTER (SPOT)", "fee/TVL > 2 × volatility", fee_printer, top_pool)
-    _render_pool_table("Fee/TVL 0,5× – 2× volatility", "0,5 × volatility ≤ fee/TVL ≤ 2 × volatility",
-                       band, top_pool)
+    # Tabel FEE PRINTER (SPOT) masih data mentah (belum difilter): tanpa caption penjelasan.
+    st.markdown(f"**FEE PRINTER (SPOT)** · {len(fee_printer)} pool")
+    _render_pool_table(fee_printer, top_pool, "Tidak ada pool untuk FEE PRINTER (SPOT).")
+    st.markdown("**FEE PRINTER**")
+    st.markdown(f"*· {len(band)} pool · 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility*")
+    _render_pool_table(band, top_pool, "Tidak ada pool untuk FEE PRINTER.")
 
 
-def _render_pool_table(title: str, rule: str, rows: list, top_pool) -> None:
+def _render_pool_table(rows: list, top_pool, empty_text: str) -> None:
     import streamlit as st
 
-    st.markdown(f"**{title}** · {len(rows)} pool · {rule}")
     if not rows:
-        st.info(f"Tidak ada pool untuk {title}.")
+        st.info(empty_text)
         return
     # st.iframe (bukan components.v1.html): HTML dirender di iframe agar tombol copy CA bisa berjalan.
     st.iframe(_result_document(rows, top_pool),
