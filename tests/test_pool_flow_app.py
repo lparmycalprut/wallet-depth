@@ -93,7 +93,7 @@ class AppMainTest(unittest.TestCase):
         self.assertIn("overflow-x:auto", body)
         self.assertIn("<table", body)
         self.assertIn("min-width:1100px", body)
-        for header in ("Volatility", "Fee/active TVL", "Avg volume/menit (pool)",
+        for header in ("Volatility", "Avg volume/menit (pool)",
                        "Volume 12H (pool)"):
             self.assertIn(header, body)
         for header in ("Open pos.", "In-range", "Rasio (×)", "4H", "24H"):
@@ -168,6 +168,24 @@ class ResultTableTest(unittest.TestCase):
         self.assertIn(">1,66%</td>", html)       # LOW_12H: 1.500,59 ÷ 90.546,54
         self.assertNotIn("Rasio (×)", html)
         self.assertNotIn("rgba(249,115,22", html)  # tanpa highlight baris teratas
+
+    def test_pool_teratas_diberi_warna_kuning_tanpa_emoji(self):
+        import pool_flow_ui as ui
+        passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
+        html = ui._result_table_html(passing, HIGH_POOL)
+        rows = html.split("<tbody>", 1)[1].split("</tbody>", 1)[0].split("</tr>")
+        high_row = next(r for r in rows if HIGH_POOL in r)
+        low_row = next(r for r in rows if LOW_POOL in r)
+        self.assertIn(ui.TOP_ROW_BG, high_row)
+        self.assertNotIn(ui.TOP_ROW_BG, low_row)
+        self.assertNotIn("🔥", html)
+
+    def test_kolom_fee_active_tvl_dihapus(self):
+        import pool_flow_ui as ui
+        passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
+        html = ui._result_table_html(passing, HIGH_POOL)
+        self.assertNotIn("Fee/active TVL", html)
+        self.assertNotIn("Fee/active TVL", " ".join(ui.TABLE_HEADERS))
 
     def test_tabel_hanya_memuat_baris_yang_diberikan(self):
         import pool_flow_ui as ui
