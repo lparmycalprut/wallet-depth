@@ -119,6 +119,20 @@ class AppMainTest(unittest.TestCase):
         self.assertFalse(self.state_path.exists())
         self.assertFalse([b for b in at.button if str(b.key).startswith("pf_add_")])
 
+    def test_judul_dan_border_tabel_berbeda_warna(self):
+        import pool_flow_ui as ui
+        at = self._app()
+        next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
+        markdown = " ".join(str(m.value) for m in at.markdown)
+        self.assertIn(":red[HIGH RISK FEE PRINTER]", markdown)
+        self.assertIn(":blue[FEE PRINTER]", markdown)
+        passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
+        high = ui._result_table_html(passing, None, ui.HIGH_RISK_BORDER)
+        band = ui._result_table_html(passing, None, ui.FEE_PRINTER_BORDER)
+        self.assertIn(f"border:2px solid {ui.HIGH_RISK_BORDER}", high)
+        self.assertNotIn(ui.FEE_PRINTER_BORDER, high)
+        self.assertIn(f"border:2px solid {ui.FEE_PRINTER_BORDER}", band)
+
     def test_tabel_tanpa_penandaan_api_bakar(self):
         at = self._app()
         next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
