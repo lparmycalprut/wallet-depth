@@ -17,6 +17,12 @@ from links import external_links_html, pool_links_html
 
 RESULT_KEY = "pool_flow_result"
 BUTTON_LABEL = "SCAN BEST POOL"
+# Warna tabel (permintaan user): HIGH RISK merah, FEE PRINTER biru. Nama warna untuk st.markdown.
+HIGH_RISK_COLOR = "red"
+FEE_PRINTER_COLOR = "blue"
+HIGH_RISK_BORDER = "rgba(239,68,68,.85)"
+FEE_PRINTER_BORDER = "rgba(59,130,246,.85)"
+DEFAULT_BORDER = "rgba(128,128,128,.35)"
 
 TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier",
                  "Volatility", "Fee/TVL", "Avg volume/menit (pool)",
@@ -57,26 +63,31 @@ def _render_scan_result(result: dict) -> None:
     # HIGH RISK FEE PRINTER: fee/TVL > 2 × dan < 20 × volatility (permintaan user, filter kedua).
     top = pf.most_crowded(result)
     top_pool = top["pool"] if top else None
-    st.markdown("**HIGH RISK FEE PRINTER**")
+    # Warna per tabel: HIGH RISK merah, FEE PRINTER biru (judul dan border tabel).
+    st.markdown(f"**:{HIGH_RISK_COLOR}[HIGH RISK FEE PRINTER]**")
     st.markdown(f"*· {len(high_risk)} pool · 2 × volatility < fee/TVL < 20 × volatility*")
-    _render_pool_table(high_risk, "Tidak ada pool untuk HIGH RISK FEE PRINTER.", top_pool)
-    st.markdown("**FEE PRINTER**")
+    _render_pool_table(high_risk, "Tidak ada pool untuk HIGH RISK FEE PRINTER.", top_pool,
+                       accent=HIGH_RISK_BORDER)
+    st.markdown(f"**:{FEE_PRINTER_COLOR}[FEE PRINTER]**")
     st.markdown(f"*· {len(band)} pool · 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility*")
-    _render_pool_table(band, "Tidak ada pool untuk FEE PRINTER.", top_pool)
+    _render_pool_table(band, "Tidak ada pool untuk FEE PRINTER.", top_pool,
+                       accent=FEE_PRINTER_BORDER)
 
 
-def _render_pool_table(rows: list, empty_text: str, top_pool: str | None = None) -> None:
+def _render_pool_table(rows: list, empty_text: str, top_pool: str | None = None,
+                       accent: str = DEFAULT_BORDER) -> None:
     import streamlit as st
 
     if not rows:
         st.info(empty_text)
         return
     # st.iframe (bukan components.v1.html): HTML dirender di iframe agar tombol copy CA bisa berjalan.
-    st.iframe(_result_document(rows, top_pool),
+    st.iframe(_result_document(rows, top_pool, accent),
               height=_result_height(len(rows)), width="stretch")
 
 
-def _result_table_html(rows: list, top_pool: str | None = None) -> str:
+def _result_table_html(rows: list, top_pool: str | None = None,
+                       accent: str = DEFAULT_BORDER) -> str:
     """Tabel HTML satu baris per pool, urut rasio avg volume/menit ÷ TVL (urutan dari pemanggil).
 
     Baris pool teratas (``top_pool``) diberi latar kuning; tanpa emoji.
@@ -108,7 +119,7 @@ def _result_table_html(rows: list, top_pool: str | None = None) -> str:
         body.append(f"<tr{highlight}>{tds}</tr>")
     return (
         "<div style='overflow-x:auto;-webkit-overflow-scrolling:touch;"
-        "border:1px solid rgba(128,128,128,.35);border-radius:8px'>"
+        f"border:2px solid {accent};border-radius:8px'>"
         "<table style='border-collapse:collapse;width:100%;min-width:1100px;"
         "font-size:13px;line-height:1.4'>"
         f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody></table></div>"
@@ -168,11 +179,12 @@ def _copy_button_html(ca: str) -> str:
             f'onclick="copyCa(this)">{COPY_LABEL}</button>')
 
 
-def _result_document(rows: list, top_pool: str | None = None) -> str:
+def _result_document(rows: list, top_pool: str | None = None,
+                     accent: str = DEFAULT_BORDER) -> str:
     """Dokumen HTML utuh untuk komponen: tabel + skrip copy CA."""
     return ("<!doctype html><html><head><meta charset=\"utf-8\">"
             f"<style>{_COPY_CSS}</style></head><body>"
-            f"{_result_table_html(rows, top_pool)}{_COPY_SCRIPT}</body></html>")
+            f"{_result_table_html(rows, top_pool, accent)}{_COPY_SCRIPT}</body></html>")
 
 
 def _result_height(count: int) -> int:
