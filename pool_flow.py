@@ -33,7 +33,12 @@ FLOW_TOKEN_TIMEFRAME = "12h"     # pool per token (permintaan user 2026-11-13: 1
 # Listing = request user 2026-11-14 (12H, category all, urut volume/TVL). Tidak ada filter lokal.
 FLOW_CATEGORY = "all"
 FLOW_SORT_BY = "volume_tvl_ratio:desc"
-# Keamanan (permintaan user 2026-11-14). Blokir = pool dibuang dari hasil; peringatan = tetap
+# Pemisahan tabel (permintaan user 2026-11-15). Fee/TVL = fee_tvl_ratio (%, 12H),
+# volatility dalam %. Volatility di bawah 0,01 % dianggap tidak terukur (tidak masuk tabel mana pun).
+FLOW_VOLATILITY_MEASURABLE_MIN = 0.01
+FLOW_FEE_PRINTER_MULT = 2.0   # FEE PRINTER (SPOT): fee/TVL > 2 × volatility
+FLOW_BAND_LOW_MULT = 0.5      # tabel kedua: 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility
+# Peringatan keamanan (label saja, tidak menyaring).
 # tampil dengan label. Field kosong tidak dihitung sebagai masalah.
 FLOW_SEC_HOLDERS_BLOCK = 30.0           # % top_holders_pct token dasar, blokir di atas ini
 FLOW_SEC_HOLDERS_WARN = 15.0            # % top_holders_pct, peringatan di atas ini
@@ -292,6 +297,7 @@ def evaluate_pool(row: dict) -> dict:
         "market_cap": base_market_cap(row),
         "volatility": volatility,
         "fee_active_tvl": fee_active_tvl,
+        "fee_tvl": _num(row.get("fee_tvl_ratio")),
         "avg_volume": avg_volume,
         "passes": not reasons,
         "reasons": reasons,
@@ -409,6 +415,28 @@ def pool_item_12h(stats: dict | None, pool: str):
 def sort_key(result: dict):
     """Urutan tampilan dan alert: fee/active TVL terbesar dulu, seri: avg volume per menit terbesar."""
     return (-(result["fee_active_tvl"] or 0.0), -(result["avg_volume"] or 0.0))
+
+
+def fee_printer_split(passing: list) -> tuple[list, list]:
+    """Pisahkan pool menjadi (fee_printer, band) memakai fee/TVL vs volatility.
+
+    - fee_printer: fee/TVL > 2 × volatility (FEE PRINTER (SPOT)).
+    - band: 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility.
+    Pool tanpa volatility terukur (None atau < 0,01 %) atau tanpa fee/TVL tidak masuk keduanya.
+    Pool dengan fee/TVL < 0,5 × volatility juga tidak masuk keduanya. Urutan: ``sort_key``.
+    """
+    fee_printer: list = []
+    band: list = []
+    for item in passing:
+        vol = item.get("volatility")
+        fee_tvl = item.get("fee_tvl")
+        if vol is None or vol < FLOW_VOLATILITY_MEASURABLE_MIN or fee_tvl is None:
+            continue
+        if fee_tvl > FLOW_FEE_PRINTER_MULT * vol:
+            fee_printer.append(item)
+        elif FLOW_BAND_LOW_MULT * vol <= fee_tvl <= FLOW_FEE_PRINTER_MULT * vol:
+            band.append(item)
+    return sorted(fee_printer, key=sort_key), sorted(band, key=sort_key)
 
 
 def ranked(passing: list) -> list:

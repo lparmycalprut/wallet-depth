@@ -19,7 +19,7 @@ RESULT_KEY = "pool_flow_result"
 BUTTON_LABEL = "SCAN BEST POOL"
 
 TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier",
-                 "Volatility", "Fee/active TVL", "Avg volume/menit (pool)",
+                 "Volatility", "Fee/TVL", "Fee/active TVL", "Avg volume/menit (pool)",
                  "Volume 12H (pool)", "Volume 12H (token)", "Rata² swap (token)",
                  "Peringatan keamanan"]
 HOT = "🔥🔥🔥"  # tanda pool paling ramai (baris teratas)
@@ -59,18 +59,33 @@ def _render_scan_result(result: dict) -> None:
     if not passing:
         st.info("Tidak ada pool dari listing.")
         return
+    st.caption("Dipisah berdasarkan fee/TVL terhadap volatility: FEE PRINTER (SPOT) bila "
+               "fee/TVL > 2 × volatility; tabel kedua bila 0,5 × – 2 × volatility. Pool di bawah "
+               "0,5 × volatility tidak ditampilkan di kedua tabel.")
     st.caption("Geser tabel ke kanan untuk melihat semua kolom. Keamanan: pool dengan mint/freeze "
                "authority aktif atau top holders > 30 % dibuang; peringatan muncul bila top holders "
                "> 15 %, dev > 5 %, atau LP keluar lebih besar dari masuk saat TVL < $50.000.")
     top = pf.most_crowded(result)
     top_pool = top["pool"] if top else None
     token_stats = result.get("token_stats")
-    st.markdown(f"**Pool dari listing** · {len(passing)} pool")
-    # st.iframe (bukan components.v1.html, yang sudah usang): HTML dirender di iframe
-    # agar tombol copy CA bisa berjalan. Isi tabel sudah di-escape (lihat _result_table_html).
-    st.iframe(_result_document(passing, token_stats, top_pool),
-              height=_result_height(len(passing)), width="stretch")
+    fee_printer, band = pf.fee_printer_split(passing)
+    _render_pool_table("FEE PRINTER (SPOT)", "fee/TVL > 2 × volatility", fee_printer,
+                       token_stats, top_pool)
+    _render_pool_table("Fee/TVL 0,5× – 2× volatility", "0,5 × volatility ≤ fee/TVL ≤ 2 × volatility",
+                       band, token_stats, top_pool)
     _render_token_details(result, passing)
+
+
+def _render_pool_table(title: str, rule: str, rows: list, token_stats, top_pool) -> None:
+    import streamlit as st
+
+    st.markdown(f"**{title}** · {len(rows)} pool · {rule}")
+    if not rows:
+        st.info(f"Tidak ada pool untuk {title}.")
+        return
+    # st.iframe (bukan components.v1.html): HTML dirender di iframe agar tombol copy CA bisa berjalan.
+    st.iframe(_result_document(rows, token_stats, top_pool),
+              height=_result_height(len(rows)), width="stretch")
 
 
 def _render_token_details(result: dict, passing: list) -> None:
@@ -111,6 +126,7 @@ def _result_table_html(rows: list, token_stats: dict | None = None,
             _html.escape(pf.fmt_usd(row["tvl"])),
             _html.escape(f"{row['fee_tier']:g}%" if row["fee_tier"] is not None else "—"),
             _html.escape(pf.fmt_pct(row["volatility"])),
+            _html.escape(pf.fmt_pct(row.get("fee_tvl"))),
             _html.escape(pf.fmt_pct(row["fee_active_tvl"])),
             _html.escape(pf.fmt_usd2(row["avg_volume"])),
             _html.escape(pf.fmt_usd(row["activity"]["volume"])),
