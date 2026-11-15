@@ -490,7 +490,7 @@ def crowded_alert_text(no: int, top: dict, seen_no: int | None) -> str:
     tag = f"🔁 sudah pernah · alert #{seen_no}" if seen_no else "🆕 baru"
     name = top["pool_name"] or top["pool"][:6]
     lines = [
-        f"<b>POOL PALING RAMAI</b> · alert #{no}",
+        f"<b>alert #{no}</b>",
         "🎯 hasil Scan Best Pool (filter 12H) · urut avg volume/menit ÷ TVL",
         "━━━━━━━━━━━━━━━━━━",
         "",
