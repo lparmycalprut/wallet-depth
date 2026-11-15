@@ -166,6 +166,9 @@ class ResultTableTest(unittest.TestCase):
         self.assertIn("Avg volume/menit (pool)", html)
         self.assertIn(">$1,50K</td>", html)      # LOW_12H avg_volume
         self.assertIn(">$800,00</td>", html)     # HIGH_12H avg_volume
+        self.assertIn("Avg volume/menit ÷ TVL", html)
+        self.assertIn(">4,00%</td>", html)       # HIGH_12H: 800 ÷ 20.000
+        self.assertIn(">1,66%</td>", html)       # LOW_12H: 1.500,59 ÷ 90.546,54
         self.assertNotIn("Rasio (×)", html)
         first_row = html.split("<tbody>", 1)[1].split("</tr>", 1)[0]
         self.assertIn("background:rgba(249,115,22,.14)", first_row)

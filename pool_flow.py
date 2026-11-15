@@ -7,7 +7,7 @@ Permintaan user (2026-11-14, terbaru):
 - Tidak ada filter seleksi lokal (avg volume, fee/active TVL, volatility, fee tier dihapus).
 - Keamanan tetap (2026-11-14): blokir bila mint/freeze authority aktif atau top holders > 30 %;
   peringatan bila top holders > 15 %, dev > 5 %, atau LP keluar > masuk saat TVL < $50K.
-- Urutan: rasio avg volume per menit ÷ TVL terbesar dulu (permintaan user 2026-11-15); seri: fee/active TVL, lalu avg volume.
+- Urutan: rasio avg volume per menit ÷ TVL terbesar dulu (permintaan user 2026-11-15). Seri: urutan listing.
 - Satu tabel saja. Alert Telegram (tiap 4 jam) memakai pool teratas dari urutan yang sama.
 """
 from __future__ import annotations
@@ -315,6 +315,13 @@ def pool_activity(row: dict) -> dict:
     }
 
 
+def fmt_ratio_pct(value) -> str:
+    """Rasio sebagai persen dengan dua desimal (nilainya kecil, mis. 1,66 %)."""
+    if value is None:
+        return "—"
+    return f"{value * 100:.2f}%".replace(".", ",")
+
+
 def avg_volume_tvl_ratio(result: dict):
     """Rasio avg volume per menit ÷ TVL (``None`` bila salah satu tidak ada atau TVL nol)."""
     avg = result.get("avg_volume")
@@ -327,11 +334,10 @@ def avg_volume_tvl_ratio(result: dict):
 def sort_key(result: dict):
     """Urutan tampilan dan alert: rasio avg volume/menit ÷ TVL terbesar dulu.
 
-    Seri: fee/active TVL terbesar, lalu avg volume/menit terbesar.
+    Pengurutan lama (fee/active TVL, lalu avg volume) sudah dihapus (2026-11-15).
+    Seri: urutan listing (sort stabil).
     """
-    return (-(avg_volume_tvl_ratio(result) or 0.0),
-            -(result["fee_active_tvl"] or 0.0),
-            -(result["avg_volume"] or 0.0))
+    return -(avg_volume_tvl_ratio(result) or 0.0)
 
 
 def fee_printer_split(passing: list) -> tuple[list, list]:

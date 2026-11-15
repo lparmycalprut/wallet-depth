@@ -20,6 +20,7 @@ BUTTON_LABEL = "SCAN BEST POOL"
 
 TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier",
                  "Volatility", "Fee/TVL", "Fee/active TVL", "Avg volume/menit (pool)",
+                 "Avg volume/menit ÷ TVL",
                  "Volume 12H (pool)", "Peringatan keamanan"]
 HOT = "🔥🔥🔥"  # tanda pool paling ramai (baris teratas)
 
@@ -90,6 +91,7 @@ def _result_table_html(rows: list, top_pool: str | None = None) -> str:
             _html.escape(pf.fmt_pct(row.get("fee_tvl"))),
             _html.escape(pf.fmt_pct(row["fee_active_tvl"])),
             _html.escape(pf.fmt_usd2(row["avg_volume"])),
+            _html.escape(pf.fmt_ratio_pct(pf.avg_volume_tvl_ratio(row))),
             _html.escape(pf.fmt_usd(row["activity"]["volume"])),
             _html.escape("; ".join(row.get("warnings") or []) or "—"),
         ]
