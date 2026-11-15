@@ -305,15 +305,16 @@ class FeePrinterSplitTest(unittest.TestCase):
         self.assertEqual(spot, [])
         self.assertEqual([r["pool"] for r in band], ["8" * 44])
 
-    def test_urut_di_tiap_tabel_fee_active_lalu_avg_volume(self):
-        rows = [_fp("A" * 44, fee_tvl=3.0, vol=1.0),
-                _fp("B" * 44, fee_tvl=5.0, vol=1.0),
-                _fp("C" * 44, fee_tvl=1.5, vol=1.0),
-                _fp("D" * 44, fee_tvl=1.0, vol=1.0)]
-        for r, fa in zip(rows, (5.0, 8.0, 5.0, 8.0)):
-            r["fee_active_tvl_ratio"] = fa
+    def test_urut_di_tiap_tabel_rasio_avg_volume_per_tvl(self):
+        # TVL 20.000 untuk semua: rasio = avg volume ÷ 20.000
+        rows = [_fp("A" * 44, fee_tvl=3.0, vol=1.0),   # avg 600  -> 0,030
+                _fp("B" * 44, fee_tvl=5.0, vol=1.0),   # avg 2000 -> 0,100
+                _fp("C" * 44, fee_tvl=1.5, vol=1.0),   # avg 300  -> 0,015
+                _fp("D" * 44, fee_tvl=1.0, vol=1.0)]   # avg 500  -> 0,025
+        for r, avg in zip(rows, (600.0, 2000.0, 300.0, 500.0)):
+            r["avg_volume"] = avg
         spot, band = self._split(*rows)
-        self.assertEqual([r["pool"] for r in spot], ["B" * 44, "A" * 44])  # fee/active 8 dulu
+        self.assertEqual([r["pool"] for r in spot], ["B" * 44, "A" * 44])
         self.assertEqual([r["pool"] for r in band], ["D" * 44, "C" * 44])
 
     def test_pool_terblokir_keamanan_tidak_masuk_tabel(self):
@@ -356,7 +357,7 @@ class RealResponseTest(unittest.TestCase):
 
 
 class ScanTest(unittest.TestCase):
-    def test_urut_rasio_avg_volume_per_tvl_lalu_fee_active(self):
+    def test_urut_rasio_avg_volume_per_tvl(self):
         # rasio = avg volume ÷ TVL (TVL 20.000 untuk ketiganya): C 0,10 > A 0,05 > B 0,03
         rows = [_row("A" * 44, "AAA", fa=5.0, volume=720.0 * 1000),
                 _row("B" * 44, "BBB", fa=8.0, volume=720.0 * 600),
@@ -509,7 +510,7 @@ class AlertTest(unittest.TestCase):
         self.assertEqual(state["alerts"][0]["pools"], [HIGH_12H["pool_address"]])
         self.assertEqual(list(state["best_alert"]["last_no"]), [HIGH_12H["pool_address"]])
 
-    def test_alert_memilih_pool_teratas_urutan_fee_active(self):
+    def test_alert_memilih_pool_teratas_rasio_avg_volume_per_tvl(self):
         rows = [_row("H" * 44, "HIGHX", vol=6.0, volume=720.0 * 900),   # avg 900, HIGH
                 _row("L" * 44, "LOWY", vol=2.0, volume=720.0 * 100)]    # avg 100, LOW
         result = pf.scan_pools(listing=(rows, [], False))
@@ -662,6 +663,11 @@ class FormatTest(unittest.TestCase):
         self.assertEqual(pf.fmt_int(10269), "10,3K")
         self.assertNotIn(".", pf.fmt_usd(1234567) + pf.fmt_usd2(9876.5) + pf.fmt_int(4321))
 
+
+    def test_fmt_ratio_pct(self):
+        self.assertEqual(pf.fmt_ratio_pct(0.04), "4,00%")
+        self.assertEqual(pf.fmt_ratio_pct(1500.586360225028 / 90546.53933826268), "1,66%")
+        self.assertEqual(pf.fmt_ratio_pct(None), "—")
 
     def test_fmt_usd2_dan_fmt_int(self):
         self.assertEqual(pf.fmt_usd2(57.08), "$57,08")
