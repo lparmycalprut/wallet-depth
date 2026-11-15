@@ -514,7 +514,7 @@ def crowded_alert_text(no: int, top: dict, seen_no: int | None) -> str:
         f"🔁 {fmt_int(top['pool_swaps'])} swap · rata² swap {fmt_usd2(top['pool_avg_swap'])}",
         f"💰 TVL {fmt_usd(row['tvl'])} · 🏷 fee {_pct_or_dash(row['fee_tier'])} · "
         f"🪙 active {fmt_usd(row['active_tvl'])}",
-        f"〰️ volatility {fmt_pct(row['volatility'])} · ⚡ fee/active TVL {fmt_pct(row['fee_active_tvl'])}",
+        f"〰️ volatility {fmt_pct(row['volatility'])}",
     ]
     if top.get("row", {}).get("warnings"):
         lines.append("⚠️ Peringatan keamanan: " + _h("; ".join(top["row"]["warnings"])))
