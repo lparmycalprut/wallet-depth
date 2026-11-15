@@ -127,7 +127,7 @@ class AppMainTest(unittest.TestCase):
                          if "🔥🔥🔥" in str(node.proto.srcdoc))
         first_row = hot_table.split("<tbody>", 1)[1].split("</tr>", 1)[0]
         self.assertIn("🔥🔥🔥", first_row)
-        self.assertIn(LOW_POOL, first_row)  # fee/active TVL terbesar = FOOD
+        self.assertIn(HIGH_POOL, first_row)  # rasio avg volume/menit ÷ TVL terbesar = HIGHX
         self.assertEqual(body.count("🔥🔥🔥"), 1)  # hanya baris teratas tabel
         self.assertIn("background:rgba(249,115,22,.14)", first_row)
 
@@ -162,7 +162,7 @@ class ResultTableTest(unittest.TestCase):
     def test_tabel_memuat_avg_volume_per_menit_per_pool(self):
         import pool_flow_ui as ui
         passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
-        html = ui._result_table_html(passing, LOW_POOL)
+        html = ui._result_table_html(passing, HIGH_POOL)
         self.assertIn("Avg volume/menit (pool)", html)
         self.assertIn(">$1,50K</td>", html)      # LOW_12H avg_volume
         self.assertIn(">$800,00</td>", html)     # HIGH_12H avg_volume
@@ -173,7 +173,8 @@ class ResultTableTest(unittest.TestCase):
     def test_tabel_hanya_memuat_baris_yang_diberikan(self):
         import pool_flow_ui as ui
         passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
-        html = ui._result_table_html(passing[:1])
+        only_low = [r for r in passing if r["pool"] == LOW_POOL]
+        html = ui._result_table_html(only_low)
         self.assertIn(LOW_POOL, html)
         self.assertNotIn(HIGH_POOL, html)
 

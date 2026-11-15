@@ -7,7 +7,7 @@ Permintaan user (2026-11-14, terbaru):
 - Tidak ada filter seleksi lokal (avg volume, fee/active TVL, volatility, fee tier dihapus).
 - Keamanan tetap (2026-11-14): blokir bila mint/freeze authority aktif atau top holders > 30 %;
   peringatan bila top holders > 15 %, dev > 5 %, atau LP keluar > masuk saat TVL < $50K.
-- Urutan: fee/active TVL terbesar dulu, seri: avg volume per menit (``avg_volume``) terbesar.
+- Urutan: rasio avg volume per menit ÷ TVL terbesar dulu (permintaan user 2026-11-15); seri: fee/active TVL, lalu avg volume.
 - Satu tabel saja. Alert Telegram (tiap 4 jam) memakai pool teratas dari urutan yang sama.
 """
 from __future__ import annotations
@@ -315,9 +315,23 @@ def pool_activity(row: dict) -> dict:
     }
 
 
+def avg_volume_tvl_ratio(result: dict):
+    """Rasio avg volume per menit ÷ TVL (``None`` bila salah satu tidak ada atau TVL nol)."""
+    avg = result.get("avg_volume")
+    tvl = result.get("tvl")
+    if avg is None or not tvl:
+        return None
+    return avg / tvl
+
+
 def sort_key(result: dict):
-    """Urutan tampilan dan alert: fee/active TVL terbesar dulu, seri: avg volume per menit terbesar."""
-    return (-(result["fee_active_tvl"] or 0.0), -(result["avg_volume"] or 0.0))
+    """Urutan tampilan dan alert: rasio avg volume/menit ÷ TVL terbesar dulu.
+
+    Seri: fee/active TVL terbesar, lalu avg volume/menit terbesar.
+    """
+    return (-(avg_volume_tvl_ratio(result) or 0.0),
+            -(result["fee_active_tvl"] or 0.0),
+            -(result["avg_volume"] or 0.0))
 
 
 def fee_printer_split(passing: list) -> tuple[list, list]:
@@ -465,13 +479,13 @@ def _pct_or_dash(value) -> str:
 
 
 def crowded_alert_text(no: int, top: dict, seen_no: int | None) -> str:
-    """Alert Telegram: hanya pool teratas (fee/active TVL terbesar, seri avg volume per menit)."""
+    """Alert Telegram: hanya pool teratas (rasio avg volume/menit ÷ TVL terbesar)."""
     row = top["row"]
     tag = f"🔁 sudah pernah · alert #{seen_no}" if seen_no else "🆕 baru"
     name = top["pool_name"] or top["pool"][:6]
     lines = [
         f"🔥🔥🔥 <b>POOL PALING RAMAI</b> · alert #{no}",
-        "🎯 hasil Scan Best Pool (filter 12H) · urut fee/active TVL, lalu avg volume/menit",
+        "🎯 hasil Scan Best Pool (filter 12H) · urut avg volume/menit ÷ TVL",
         "━━━━━━━━━━━━━━━━━━",
         "",
         f"🔥 <b>{_h(top['symbol'])}</b> · {_h(name)}  {tag}",
