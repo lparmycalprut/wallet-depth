@@ -54,8 +54,7 @@ def _render_scan_result(result: dict) -> None:
     top = pf.most_crowded(result)
     top_pool = top["pool"] if top else None
     fee_printer, band = pf.fee_printer_split(passing)
-    # Tabel FEE PRINTER (SPOT) masih data mentah (belum difilter): tanpa caption penjelasan.
-    st.markdown(f"**FEE PRINTER (SPOT)** · {len(fee_printer)} pool")
+    # Tabel FEE PRINTER (SPOT) tanpa judul maupun caption (permintaan user 2026-11-15).
     _render_pool_table(fee_printer, top_pool, "Tidak ada pool untuk FEE PRINTER (SPOT).")
     st.markdown("**FEE PRINTER**")
     st.markdown(f"*· {len(band)} pool · 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility*")
