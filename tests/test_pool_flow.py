@@ -22,7 +22,7 @@ SOL = "So11111111111111111111111111111111111111112"
 
 def _row(pool, symbol, *, fee=2.0, tvl=20_000.0, active_tvl=5_000.0, holders=2_000,
          mcap=500_000.0, vol=2.0, fa=10.0, open_pos=50, active=40, mint=None,
-         volume=720_000.0, swaps=500.0, traders=200.0):
+         volume=720_000.0, swaps=500.0, traders=200.0, ftvl=20.0):
     mint = mint or ("M" + pool[:8].ljust(43, "x"))
     return {"pool_address": pool, "name": f"{symbol}-SOL", "pool_type": "dlmm",
             "token_x": {"address": mint, "symbol": symbol, "name": symbol,
@@ -32,7 +32,8 @@ def _row(pool, symbol, *, fee=2.0, tvl=20_000.0, active_tvl=5_000.0, holders=2_0
             "base_token_holders": holders, "open_positions": open_pos,
             "active_positions": active, "volatility": vol, "fee_active_tvl_ratio": fa,
             "volume": volume, "avg_volume": volume / 720.0,
-            "swap_count": swaps, "unique_traders": traders}
+            "swap_count": swaps, "unique_traders": traders,
+            "fee_tvl_ratio": ftvl}  # nilai uji untuk pemisahan tabel (2026-11-15)
 
 
 # pool, symbol, fee, tvl, active_tvl, holders, mcap, volatility, fee/active TVL, open, active
@@ -71,6 +72,7 @@ FOOD_12H = {  # respons Meteora timeframe=12h (filter user), baris nyata
     "volatility": 3.0727226280906574, "fee_active_tvl_ratio": 19.2580460899264,
     "volume": 1080422.1793620202, "avg_volume": 1500.586360225028,
     "swap_count": 10269.0, "unique_traders": 2975.0,
+    "fee_tvl_ratio": 9.5,  # nilai uji (fee/TVL tidak ada di fixture): > 2 × 3,07 % → FEE PRINTER
 }
 DUT_12H = {  # respons Meteora timeframe=12h (filter user), baris nyata; volatility ≥ 5 %
     "pool_address": "DutNdXzYJ1bWZk8EnSyi5oCD5fApwnShUaECZgAVwmDR", "name": "Sakura-SOL",
@@ -82,6 +84,7 @@ DUT_12H = {  # respons Meteora timeframe=12h (filter user), baris nyata; volatil
     "volatility": 6.714632474296901, "fee_active_tvl_ratio": 68.31188525088334,
     "volume": 355696.57481688383, "avg_volume": 494.02302057900533,
     "swap_count": 5360.0, "unique_traders": 1828.0,
+    "fee_tvl_ratio": 20.0,  # nilai uji
 }
 REAL_12H = [FOOD_12H, DUT_12H]
 # FOOD dengan fee 2 % agar lolos filter fee tier 1 % (uji jalur lolos; FOOD asli fee 0,8 % dilewati)
@@ -100,7 +103,7 @@ FOOD2_12H = {
     "active_tvl": 22287.135273606633, "base_token_holders": 7077,
     "volatility": 3.095570505242116, "fee_active_tvl_ratio": 15.732076557116905,
     "volume": 142016.8152715878, "avg_volume": 197.2455767660942,
-    "swap_count": 2283.0, "unique_traders": 779.0,
+    "swap_count": 2283.0, "unique_traders": 779.0, "fee_tvl_ratio": 5.0,  # nilai uji (band 0,5–2×)
     "total_deposits": 439629.8261476154, "total_withdraws": 508479.7435556029,
     "net_deposits": -68849.91740798746,
 }
@@ -251,6 +254,76 @@ class RiskTest(unittest.TestCase):
         row = _row("Q" * 44, "HIGHX", vol=5.5, volume=7200.0 * 72)  # avg 720
         result = pf.evaluate_pool(row)
         self.assertAlmostEqual(result["avg_volume"], 720.0)
+
+
+def _fp(pool, fee_tvl, vol, symbol="FP"):
+    """Baris pool dengan fee/TVL (%) dan volatility (%) yang diatur tes."""
+    row = _row(pool, symbol, vol=vol)
+    row["fee_tvl_ratio"] = fee_tvl
+    return row
+
+
+class FeePrinterSplitTest(unittest.TestCase):
+    """Permintaan user 2026-11-15: FEE PRINTER (SPOT) bila fee/TVL > 2 × volatility;
+    tabel kedua bila 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility."""
+
+    def _split(self, *rows):
+        result = pf.scan_pools(listing=(list(rows), [], False))
+        return pf.fee_printer_split(result["passing"])
+
+    def test_fee_tvl_di_atas_2x_volatility_masuk_fee_printer(self):
+        spot, band = self._split(_fp("1" * 44, fee_tvl=2.5, vol=1.0))
+        self.assertEqual([r["pool"] for r in spot], ["1" * 44])
+        self.assertEqual(band, [])
+
+    def test_batas_tepat_2x_masuk_tabel_kedua(self):
+        # contoh user: volatility 1 %, fee/TVL 2 % -> tabel kedua
+        spot, band = self._split(_fp("2" * 44, fee_tvl=2.0, vol=1.0))
+        self.assertEqual(spot, [])
+        self.assertEqual([r["pool"] for r in band], ["2" * 44])
+
+    def test_batas_tepat_0_5x_masuk_tabel_kedua(self):
+        # contoh user: volatility 1 %, fee/TVL 0,5 % -> tabel kedua
+        spot, band = self._split(_fp("3" * 44, fee_tvl=0.5, vol=1.0))
+        self.assertEqual(spot, [])
+        self.assertEqual([r["pool"] for r in band], ["3" * 44])
+
+    def test_fee_tvl_di_bawah_0_5x_tidak_masuk_tabel_mana_pun(self):
+        spot, band = self._split(_fp("4" * 44, fee_tvl=0.4, vol=1.0))
+        self.assertEqual((spot, band), ([], []))
+
+    def test_volatility_tidak_terukur_tidak_masuk_tabel_mana_pun(self):
+        rows = [_fp("5" * 44, fee_tvl=9.0, vol=None),
+                _fp("6" * 44, fee_tvl=9.0, vol=0.005)]  # di bawah 0,01 %
+        self.assertEqual(self._split(*rows), ([], []))
+
+    def test_fee_tvl_hilang_tidak_masuk_tabel_mana_pun(self):
+        self.assertEqual(self._split(_fp("7" * 44, fee_tvl=None, vol=1.0)), ([], []))
+
+    def test_volatility_0_01_persen_masih_terukur(self):
+        spot, band = self._split(_fp("8" * 44, fee_tvl=0.02, vol=0.01))
+        self.assertEqual(spot, [])
+        self.assertEqual([r["pool"] for r in band], ["8" * 44])
+
+    def test_urut_di_tiap_tabel_fee_active_lalu_avg_volume(self):
+        rows = [_fp("A" * 44, fee_tvl=3.0, vol=1.0),
+                _fp("B" * 44, fee_tvl=5.0, vol=1.0),
+                _fp("C" * 44, fee_tvl=1.5, vol=1.0),
+                _fp("D" * 44, fee_tvl=1.0, vol=1.0)]
+        for r, fa in zip(rows, (5.0, 8.0, 5.0, 8.0)):
+            r["fee_active_tvl_ratio"] = fa
+        spot, band = self._split(*rows)
+        self.assertEqual([r["pool"] for r in spot], ["B" * 44, "A" * 44])  # fee/active 8 dulu
+        self.assertEqual([r["pool"] for r in band], ["D" * 44, "C" * 44])
+
+    def test_pool_terblokir_keamanan_tidak_masuk_tabel(self):
+        blocked = _fp("E" * 44, fee_tvl=9.0, vol=1.0)
+        blocked["token_x"]["has_mint_authority"] = True
+        spot, band = self._split(blocked)
+        self.assertEqual((spot, band), ([], []))
+
+    def test_evaluate_pool_membawa_fee_tvl(self):
+        self.assertEqual(pf.evaluate_pool(_fp("F" * 44, fee_tvl=4.2, vol=1.0))["fee_tvl"], 4.2)
 
 
 class ServerFilterTest(unittest.TestCase):
