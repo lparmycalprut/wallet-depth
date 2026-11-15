@@ -64,7 +64,7 @@ def _render_scan_result(result: dict) -> None:
                "0,5 × volatility tidak ditampilkan di kedua tabel.")
     st.caption("Geser tabel ke kanan untuk melihat semua kolom. Keamanan: pool dengan mint/freeze "
                "authority aktif atau top holders > 30 % dibuang; peringatan muncul bila top holders "
-               "> 15 %, dev > 5 %, atau LP keluar lebih besar dari masuk saat TVL < $50.000.")
+               "> 15 %, dev > 5 %, atau LP keluar lebih besar dari masuk saat TVL < $50K.")
     top = pf.most_crowded(result)
     top_pool = top["pool"] if top else None
     token_stats = result.get("token_stats")

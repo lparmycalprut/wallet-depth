@@ -6,7 +6,7 @@ Permintaan user (2026-11-14, terbaru):
   dengan filter server-side persis dari request user (FLOW_SERVER_FILTER).
 - Tidak ada filter seleksi lokal (avg volume, fee/active TVL, volatility, fee tier dihapus).
 - Keamanan tetap (2026-11-14): blokir bila mint/freeze authority aktif atau top holders > 30 %;
-  peringatan bila top holders > 15 %, dev > 5 %, atau LP keluar > masuk saat TVL < $50.000.
+  peringatan bila top holders > 15 %, dev > 5 %, atau LP keluar > masuk saat TVL < $50K.
 - Urutan: fee/active TVL terbesar dulu, seri: avg volume per menit (``avg_volume``) terbesar.
 - Satu tabel saja. Alert Telegram (tiap 4 jam) memakai pool teratas dari urutan yang sama.
 """
@@ -86,25 +86,44 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def fmt_usd(value) -> str:
+def _compact(value, prefix: str, small_digits: int, big_digits: int) -> str:
+    """Angka ringkas: di bawah 1.000 apa adanya; 1.000–999.999 memakai K; 1.000.000 ke atas memakai M.
+
+    Tanpa pemisah ribuan titik (permintaan user 2026-11-15). Desimal memakai koma.
+    """
     if value is None:
         return "—"
-    sign = "-" if value < 0 else ""
-    return f"{sign}${abs(value):,.0f}".replace(",", ".")
+    number = float(value)
+    sign = "-" if number < 0 else ""
+    size = abs(number)
+    if size >= 1_000_000:
+        scaled, unit, digits = size / 1_000_000, "M", big_digits
+    elif size >= 1_000:
+        scaled, unit, digits = size / 1_000, "K", big_digits
+    else:
+        scaled, unit, digits = size, "", small_digits
+    text = f"{scaled:.{digits}f}"
+    if unit == "" and float(text) >= 1_000:  # pembulatan naik ke ribuan: tampilkan K
+        scaled, unit, digits = size / 1_000, "K", big_digits
+        text = f"{scaled:.{digits}f}"
+    text = text.replace(".", ",")
+    if digits == 1 and text.endswith(",0"):  # 50,0K → 50K
+        text = text[:-2]
+    return f"{sign}{prefix}{text}{unit}"
+
+
+def fmt_usd(value) -> str:
+    return _compact(value, "$", 0, 1)
 
 
 def fmt_usd2(value) -> str:
-    if value is None:
-        return "—"
-    sign = "-" if value < 0 else ""
-    text = f"{abs(value):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    return f"{sign}${text}"
+    return _compact(value, "$", 2, 2)
 
 
 def fmt_int(value) -> str:
     if value is None:
         return "—"
-    return f"{int(round(value)):,}".replace(",", ".")
+    return _compact(round(value), "", 0, 1)
 
 
 def fmt_pct(value) -> str:

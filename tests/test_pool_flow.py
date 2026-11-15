@@ -91,7 +91,7 @@ REAL_12H = [FOOD_12H, DUT_12H]
 LOW_12H = dict(FOOD_12H, fee_pct=2.0)
 HIGH_12H = _row("H" * 44, "HIGHX", fa=12.0, vol=5.5, volume=720.0 * 800)  # volatility 5,5 %
 PASSING_12H = [LOW_12H, HIGH_12H]
-# FOOD-SOL pool DQjZ… (fee 2 %), respons Meteora timeframe=12h nyata: LP keluar > masuk, TVL < $50.000
+# FOOD-SOL pool DQjZ… (fee 2 %), respons Meteora timeframe=12h nyata: LP keluar > masuk, TVL < $50K
 FOOD2_12H = {
     "pool_address": "DQjZKw199L4788unoRUf9FMw63suJJ45hc9brXV3oQec", "name": "FOOD-SOL",
     "token_x": {"address": "FTu55MyigXns96jz4nTCDDiTCjYJjyrHSceCgG9Upump", "symbol": "FOOD",
@@ -213,7 +213,7 @@ class SecurityTest(unittest.TestCase):
 
     def test_food2_nyata_hanya_peringatan_lp_keluar(self):
         result = pf.evaluate_pool(FOOD2_12H)
-        self.assertEqual(result["warnings"], ["LP keluar > masuk (TVL < $50.000)"])
+        self.assertEqual(result["warnings"], ["LP keluar > masuk (TVL < $50K)"])
         self.assertTrue(result["passes"])
         self.assertEqual(result["reasons"], [])
 
@@ -834,10 +834,24 @@ class TokenActivityTest(unittest.TestCase):
         self.assertNotIn("token_stats", result)
         self.assertNotIn("token_stats", result["passing"][0])
 
+    def test_fmt_ringkas_k_dan_m(self):
+        self.assertEqual(pf.fmt_usd(500), "$500")
+        self.assertEqual(pf.fmt_usd(999.4), "$999")
+        self.assertEqual(pf.fmt_usd(999.6), "$1K")          # pembulatan naik ke ribuan
+        self.assertEqual(pf.fmt_usd(23407.65), "$23,4K")
+        self.assertEqual(pf.fmt_usd(50000), "$50K")
+        self.assertEqual(pf.fmt_usd(1_080_422), "$1,1M")
+        self.assertEqual(pf.fmt_usd(-68849.9), "-$68,8K")
+        self.assertEqual(pf.fmt_usd2(1500.59), "$1,50K")
+        self.assertEqual(pf.fmt_usd2(688.33), "$688,33")
+        self.assertEqual(pf.fmt_int(999), "999")
+        self.assertEqual(pf.fmt_int(10269), "10,3K")
+        self.assertNotIn(".", pf.fmt_usd(1234567) + pf.fmt_usd2(9876.5) + pf.fmt_int(4321))
+
     def test_fmt_usd2_dan_fmt_int(self):
         self.assertEqual(pf.fmt_usd2(57.08), "$57,08")
-        self.assertEqual(pf.fmt_usd2(1234.5), "$1.234,50")
+        self.assertEqual(pf.fmt_usd2(1234.5), "$1,23K")
         self.assertEqual(pf.fmt_usd2(None), "—")
-        self.assertEqual(pf.fmt_int(13633), "13.633")
+        self.assertEqual(pf.fmt_int(13633), "13,6K")
         self.assertEqual(pf.fmt_int(None), "—")
 
