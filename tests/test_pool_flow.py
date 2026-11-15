@@ -343,27 +343,34 @@ class ServerFilterTest(unittest.TestCase):
 
 
 class RealResponseTest(unittest.TestCase):
-    def test_urut_fee_active_lalu_avg_volume(self):
+    def test_urut_rasio_avg_volume_per_tvl(self):
         result = pf.scan_pools(listing=(PASSING_12H, [], False))
-        # LOW_12H fee/active 19,26 % > HIGH_12H 12 %
-        self.assertEqual([r["symbol"] for r in result["passing"]], ["FOOD", "HIGHX"])
+        # HIGHX 0,040 (800 ÷ 20.000) > FOOD 0,0166 (1.500,59 ÷ 90.546)
+        self.assertEqual([r["symbol"] for r in result["passing"]], ["HIGHX", "FOOD"])
         self.assertEqual(result["candidates"], 2)
 
     def test_pool_teratas_untuk_alert(self):
         result = pf.scan_pools(listing=(PASSING_12H, [], False))
         top = pf.most_crowded(result)
-        self.assertEqual(top["pool"], LOW_12H["pool_address"])
+        self.assertEqual(top["pool"], HIGH_12H["pool_address"])
 
 
 class ScanTest(unittest.TestCase):
-    def test_urut_fee_active_lalu_avg_volume_lalu_volume(self):
+    def test_urut_rasio_avg_volume_per_tvl_lalu_fee_active(self):
+        # rasio = avg volume ÷ TVL (TVL 20.000 untuk ketiganya): C 0,10 > A 0,05 > B 0,03
         rows = [_row("A" * 44, "AAA", fa=5.0, volume=720.0 * 1000),
                 _row("B" * 44, "BBB", fa=8.0, volume=720.0 * 600),
                 _row("C" * 44, "CCC", fa=5.0, volume=720.0 * 2000)]
         result = pf.scan_pools(listing=(rows, [], False))
-        # fee/active tertinggi dulu (B); seri 5 %: avg volume terbesar (C lalu A)
         self.assertEqual([r["pool"] for r in result["passing"]],
-                         ["B" * 44, "C" * 44, "A" * 44])
+                         ["C" * 44, "A" * 44, "B" * 44])
+
+    def test_rasio_memakai_tvl_bukan_avg_volume_saja(self):
+        # X: avg lebih besar tetapi TVL 10x lebih besar -> rasio lebih kecil
+        rows = [_row("X" * 44, "XXX", tvl=200_000.0, volume=720.0 * 1000),   # 0,005
+                _row("Y" * 44, "YYY", tvl=20_000.0, volume=720.0 * 500)]     # 0,025
+        result = pf.scan_pools(listing=(rows, [], False))
+        self.assertEqual([r["pool"] for r in result["passing"]], ["Y" * 44, "X" * 44])
 
     def test_pool_duplikat_dihitung_sekali(self):
         rows = PASSING_12H + [LOW_12H]
@@ -495,11 +502,12 @@ class AlertTest(unittest.TestCase):
         state = pf.empty_state()
         text = pf.apply_crowded_alert(state, pf.most_crowded(result))
         self.assertIn("POOL PALING RAMAI", text)
-        self.assertIn("FOOD", text)
+        self.assertIn("HIGHX", text)
         self.assertNotIn("Sakura", text)
         self.assertEqual(len(state["alerts"]), 1)
-        self.assertEqual(state["alerts"][0]["pools"], [LOW_12H["pool_address"]])
-        self.assertEqual(list(state["best_alert"]["last_no"]), [LOW_12H["pool_address"]])
+        # rasio avg volume/menit ÷ TVL: HIGHX 0,040 > FOOD 0,0166
+        self.assertEqual(state["alerts"][0]["pools"], [HIGH_12H["pool_address"]])
+        self.assertEqual(list(state["best_alert"]["last_no"]), [HIGH_12H["pool_address"]])
 
     def test_alert_memilih_pool_teratas_urutan_fee_active(self):
         rows = [_row("H" * 44, "HIGHX", vol=6.0, volume=720.0 * 900),   # avg 900, HIGH
@@ -625,7 +633,7 @@ class TelegramCopyTest(unittest.TestCase):
         self.assertIn("POOL PALING RAMAI", text)
         self.assertEqual(len(markup["inline_keyboard"]), 1)
         (button,) = markup["inline_keyboard"][0]
-        self.assertEqual(button["copy_text"]["text"], pf.mint_of_pool(LOW_12H))
+        self.assertEqual(button["copy_text"]["text"], pf.mint_of_pool(HIGH_12H))  # rasio tertinggi = HIGHX
         self.assertEqual(state["best_alert"]["next_no"], 2)
 
     def test_run_best_tanpa_pool_lolos_tidak_mengirim(self):
