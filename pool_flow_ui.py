@@ -36,12 +36,9 @@ def _md(value) -> str:
 
 
 def _filter_caption() -> str:
-    return (f"Timeframe 12H · TVL ≥ {pf.fmt_usd(pf.FLOW_TVL_MIN)} · active TVL ≥ "
-            f"{pf.fmt_usd(pf.FLOW_ACTIVE_TVL_MIN)} · holders ≥ {pf.FLOW_HOLDERS_MIN:,} · "
-            f"market cap ≥ {pf.fmt_usd(pf.FLOW_MARKET_CAP_MIN)} · dlmm · fee tier ≥ "
-            f"{pf.FLOW_FEE_TIER_MIN:g}% · avg volume/menit ≥ "
-            f"{pf.fmt_usd(pf.FLOW_AVG_VOLUME_MIN)} · fee/active TVL ≥ "
-            f"{pf.FLOW_FEE_ACTIVE_TVL_MIN:g}% · volatility ≤ {pf.FLOW_VOLATILITY_MAX:g}% · "
+    return (f"Timeframe 12H · kategori all · urut volume/TVL (listing) · dlmm · "
+            f"TVL ≥ {pf.fmt_usd(1000)} · fee ≥ 0.5% · fee/active TVL ≥ 2 · "
+            f"tanpa critical warning · tanpa konsentrasi/kepemilikan tunggal tinggi · "
             f"urut fee/active TVL terbesar, lalu avg volume/menit.")
 
 
@@ -51,7 +48,7 @@ def _render_scan_result(result: dict) -> None:
     passing = result.get("passing") or []
     st.caption(
         f"Listing {result.get('listing_rows', 0)} baris · pool dievaluasi "
-        f"{result.get('candidates', 0)} · lolos semua filter {len(passing)} · "
+        f"{result.get('candidates', 0)} · ditampilkan {len(passing)} · "
         f"dicatat {result.get('scanned_at', '')}"
         + (f" · {result['listing_errors']} halaman listing gagal"
            if result.get("listing_errors") else ""))
@@ -60,7 +57,7 @@ def _render_scan_result(result: dict) -> None:
                    f"terambil (batas {pf.FLOW_MAX_PAGES} halaman atau ada halaman gagal), "
                    "sebagian pool belum terambil.")
     if not passing:
-        st.info("Tidak ada pool yang lolos semua filter.")
+        st.info("Tidak ada pool dari listing.")
         return
     st.caption("Geser tabel ke kanan untuk melihat semua kolom. Keamanan: pool dengan mint/freeze "
                "authority aktif atau top holders > 30 % dibuang; peringatan muncul bila top holders "
@@ -68,7 +65,7 @@ def _render_scan_result(result: dict) -> None:
     top = pf.most_crowded(result)
     top_pool = top["pool"] if top else None
     token_stats = result.get("token_stats")
-    st.markdown(f"**Pool lolos filter** · {len(passing)} pool")
+    st.markdown(f"**Pool dari listing** · {len(passing)} pool")
     # st.iframe (bukan components.v1.html, yang sudah usang): HTML dirender di iframe
     # agar tombol copy CA bisa berjalan. Isi tabel sudah di-escape (lihat _result_table_html).
     st.iframe(_result_document(passing, token_stats, top_pool),

@@ -1,17 +1,14 @@
 # -*- coding: utf-8 -*-
 """🏆 Scan Best Pool Meteora — logika inti, tanpa Streamlit.
 
-Permintaan user (2026-11-13):
-- Listing Meteora pool-discovery, timeframe 12h, kategori top, dengan filter
-  server-side yang diminta user (dlmm, market cap, holders, TVL, active TVL,
-  tanpa konsentrasi/kepemilikan tunggal tinggi). Filter lokal: fee tier < 0,2 %
-  (2026-11-14), avg volume/menit < $500, fee/active TVL < 1 %, dan volatility > 6 %
-  dilewati.
-- Keamanan (2026-11-14): blokir bila mint/freeze authority aktif atau top holders > 30 %;
+Permintaan user (2026-11-14, terbaru):
+- Listing Meteora pool-discovery, timeframe 12h, category=all, sort_by=volume_tvl_ratio:desc,
+  dengan filter server-side persis dari request user (FLOW_SERVER_FILTER).
+- Tidak ada filter seleksi lokal (avg volume, fee/active TVL, volatility, fee tier dihapus).
+- Keamanan tetap (2026-11-14): blokir bila mint/freeze authority aktif atau top holders > 30 %;
   peringatan bila top holders > 15 %, dev > 5 %, atau LP keluar > masuk saat TVL < $50.000.
 - Urutan: fee/active TVL terbesar dulu, seri: avg volume per menit (``avg_volume``) terbesar.
-- Satu tabel saja, tanpa pemisahan risiko (2026-11-14).
-- Alert Telegram (tiap 4 jam) memakai pool teratas dari urutan yang sama.
+- Satu tabel saja. Alert Telegram (tiap 4 jam) memakai pool teratas dari urutan yang sama.
 """
 from __future__ import annotations
 
@@ -33,31 +30,25 @@ USER_AGENT = "Mozilla/5.0 (wallet-depth-pool-flow)"
 
 FLOW_TIMEFRAME = "12h"
 FLOW_TOKEN_TIMEFRAME = "12h"     # pool per token (permintaan user 2026-11-13: 12H)
-FLOW_TVL_MIN = 10_000.0          # USD (tvl)
-FLOW_ACTIVE_TVL_MIN = 10_000.0   # USD (active_tvl)
-FLOW_HOLDERS_MIN = 1_500         # base_token_holders
-FLOW_MARKET_CAP_MIN = 100_000.0  # USD (market cap token base)
-# Filter lokal (permintaan user 2026-11-13, menggantikan semua filter lokal sebelumnya).
-# Nilai yang tidak terukur (hilang) juga dilewati.
-FLOW_AVG_VOLUME_MIN = 500.0      # USD per menit (avg_volume = volume 12H ÷ 720)
-FLOW_FEE_TIER_MIN = 0.2          # % (fee_pct, fee tier pool), permintaan user 2026-11-14
-FLOW_FEE_ACTIVE_TVL_MIN = 1.0    # % (fee_active_tvl_ratio, fee ÷ active TVL)
-FLOW_VOLATILITY_MAX = 6.0        # % (volatility), di atas ini dilewati
+# Listing = request user 2026-11-14 (12H, category all, urut volume/TVL). Tidak ada filter lokal.
+FLOW_CATEGORY = "all"
+FLOW_SORT_BY = "volume_tvl_ratio:desc"
 # Keamanan (permintaan user 2026-11-14). Blokir = pool dibuang dari hasil; peringatan = tetap
 # tampil dengan label. Field kosong tidak dihitung sebagai masalah.
 FLOW_SEC_HOLDERS_BLOCK = 30.0           # % top_holders_pct token dasar, blokir di atas ini
 FLOW_SEC_HOLDERS_WARN = 15.0            # % top_holders_pct, peringatan di atas ini
 FLOW_SEC_DEV_WARN = 5.0                 # % dev_balance_pct, peringatan di atas ini
 FLOW_SEC_LP_OUTFLOW_TVL_MAX = 50_000.0  # USD: peringatan LP keluar hanya bila TVL di bawah ini
-# Pra-saring di sisi server (request user 12H). Tidak ada filter lokal lain.
+# Filter server (request user 2026-11-14, persis). Satu-satunya filter seleksi pool.
 FLOW_SERVER_FILTER = (
-    "base_token_has_high_supply_concentration=false"
+    "base_token_has_critical_warnings=false"
+    "&&quote_token_has_critical_warnings=false"
+    "&&base_token_has_high_supply_concentration=false"
     "&&base_token_has_high_single_ownership=false"
     "&&pool_type=dlmm"
-    f"&&base_token_market_cap>={FLOW_MARKET_CAP_MIN:g}"
-    f"&&base_token_holders>={FLOW_HOLDERS_MIN}"
-    f"&&tvl>={FLOW_TVL_MIN:g}"
-    f"&&active_tvl>={FLOW_ACTIVE_TVL_MIN:g}"
+    "&&tvl>=1000"
+    "&&fee_pct>=0.5"
+    "&&fee_active_tvl_ratio>=2"
 )
 FLOW_MAX_PAGES = 100             # batas keamanan: 100 × 50 = 5.000 pool (cursor after_key)
 FLOW_PAGE_SIZE = 50
@@ -136,14 +127,15 @@ def _get_payload(params: dict, *, timeout: int = HTTP_TIMEOUT) -> dict:
 
 
 def fetch_top_page(after_key: str | None = None) -> tuple[list, str | None, bool]:
-    """Satu halaman listing kategori ``top`` pada timeframe 12H.
+    """Satu halaman listing (kategori ``all``, timeframe 12H, urut volume/TVL).
 
     Meteora memakai cursor: halaman berikutnya diminta dengan ``after_key`` dari
     respons sebelumnya (parameter ``page`` diabaikan API dan selalu memberi
     pool yang sama). Kembalikan (rows, next_after_key, has_more).
     """
-    params = {"page_size": FLOW_PAGE_SIZE, "timeframe": FLOW_TIMEFRAME,
-              "category": "top", "filter_by": FLOW_SERVER_FILTER}
+    params = {"page_size": FLOW_PAGE_SIZE, "sort_by": FLOW_SORT_BY,
+              "timeframe": FLOW_TIMEFRAME, "category": FLOW_CATEGORY,
+              "filter_by": FLOW_SERVER_FILTER}
     if after_key:
         params["after_key"] = after_key
     payload = _get_payload(params)
@@ -270,11 +262,10 @@ def security_checks(row: dict) -> tuple[list[str], list[str]]:
 
 
 def evaluate_pool(row: dict) -> dict:
-    """Ambil field tampilan satu baris pool dan terapkan filter lokal.
+    """Ambil field tampilan satu baris pool dan terapkan cek keamanan.
 
-    Filter server (listing) sudah dilakukan Meteora. Di sini dilewati:
-    fee tier < 0,2 %, avg volume/menit < $500, fee/active TVL < 1 %,
-    volatility > 6 % (atau nilai yang tidak terukur).
+    Tidak ada filter seleksi lokal (2026-11-14). Pool hanya gagal bila kena blokir
+    keamanan (``reasons`` berisi ``keamanan: …``). Peringatan tetap tampil sebagai label.
     """
     pool = str(row.get("pool_address") or "")
     mint = mint_of_pool(row)
@@ -285,16 +276,6 @@ def evaluate_pool(row: dict) -> dict:
     avg_volume = _num(row.get("avg_volume"))
 
     reasons: list[str] = []
-    if fee_tier is None or fee_tier < FLOW_FEE_TIER_MIN:
-        reasons.append(f"fee tier < {FLOW_FEE_TIER_MIN:g}%")
-    if avg_volume is None or avg_volume < FLOW_AVG_VOLUME_MIN:
-        reasons.append(f"avg volume/menit < ${FLOW_AVG_VOLUME_MIN:g}")
-    if fee_active_tvl is None or fee_active_tvl < FLOW_FEE_ACTIVE_TVL_MIN:
-        reasons.append(f"fee/active TVL < {FLOW_FEE_ACTIVE_TVL_MIN:g}%")
-    if volatility is None:
-        reasons.append("volatility tidak terukur")
-    elif volatility > FLOW_VOLATILITY_MAX:
-        reasons.append(f"volatility > {FLOW_VOLATILITY_MAX:g}%")
     security_blocks, security_warnings = security_checks(row)
     reasons.extend(f"keamanan: {text}" for text in security_blocks)
 

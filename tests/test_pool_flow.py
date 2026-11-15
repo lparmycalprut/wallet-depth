@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Tes logika Scan Best Pool (timeframe 12H, avg volume per menit, satu tabel) — tanpa jaringan.
 
-Filter lokal sudah dihapus (permintaan user 2026-11-13): penyaringan dilakukan server.
+Tidak ada filter seleksi lokal (permintaan user 2026-11-14): seleksi hanya dari filter server.
 ``PASSING_12H`` berisi dua baris nyata dari respons Meteora timeframe=12h dengan filter user.
 ``METEORA_24H`` adalah fixture lama (14 pool) untuk tes paginasi dan alert.
 """
@@ -106,66 +106,40 @@ FOOD2_12H = {
 }
 
 
-class LocalFilterTest(unittest.TestCase):
-    """Filter lokal (permintaan user 2026-11-13): avg volume/menit ≥ $500, fee/active TVL ≥ 1 %,
-    volatility ≤ 6 %. Nilai yang tidak terukur dilewati."""
+class NoLocalFilterTest(unittest.TestCase):
+    """Permintaan user 2026-11-14: semua filter seleksi lokal dihapus. Pool hanya dari listing."""
 
-    def test_avg_volume_di_bawah_500_dilewati(self):
-        result = pf.evaluate_pool(_row("A" * 44, "SMALLV", volume=720.0 * 499))  # avg 499
-        self.assertFalse(result["passes"])
-        self.assertTrue(any(r.startswith("avg volume") for r in result["reasons"]))
+    def test_fee_tier_rendah_tetap_lolos(self):
+        self.assertTrue(pf.evaluate_pool(_row("T" * 44, "TIERX", fee=0.1))["passes"])
 
-    def test_batas_avg_volume_500_lolos(self):
-        self.assertTrue(pf.evaluate_pool(_row("A" * 44, "EDGEV", volume=720.0 * 500))["passes"])
-
-    def test_fee_active_tvl_di_bawah_1_persen_dilewati(self):
-        result = pf.evaluate_pool(_row("F" * 44, "FAX", fa=0.99))
-        self.assertFalse(result["passes"])
-        self.assertTrue(any(r.startswith("fee/active TVL") for r in result["reasons"]))
-
-    def test_volatility_di_atas_6_persen_dilewati(self):
-        result = pf.evaluate_pool(_row("V" * 44, "VOLX", vol=6.01))
-        self.assertFalse(result["passes"])
-        self.assertTrue(any(r.startswith("volatility >") for r in result["reasons"]))
-
-    def test_volatility_tidak_terukur_dilewati(self):
-        result = pf.evaluate_pool(_row("N" * 44, "NOVOL", vol=None))
-        self.assertFalse(result["passes"])
-        self.assertTrue(any("tidak terukur" in r for r in result["reasons"]))
-
-    def test_batas_tepat_lolos(self):
-        result = pf.evaluate_pool(_row("B" * 44, "EDGE", fa=1.0, vol=6.0, volume=720.0 * 500))
+    def test_avg_volume_rendah_tetap_lolos(self):
+        result = pf.evaluate_pool(_row("A" * 44, "SMALLV", volume=720.0 * 10))  # avg 10
         self.assertTrue(result["passes"])
         self.assertEqual(result["reasons"], [])
 
-    def test_fee_tier_di_bawah_0_2_dilewati(self):
-        result = pf.evaluate_pool(_row("T" * 44, "TIERX", fee=0.1))
-        self.assertFalse(result["passes"])
-        self.assertIn("fee tier < 0.2%", result["reasons"])
+    def test_fee_active_tvl_rendah_tetap_lolos(self):
+        self.assertTrue(pf.evaluate_pool(_row("F" * 44, "FAX", fa=0.5))["passes"])
 
-    def test_fee_tier_tepat_0_2_lolos(self):
-        self.assertTrue(pf.evaluate_pool(_row("U" * 44, "TIERY", fee=0.2))["passes"])
+    def test_volatility_tinggi_tetap_lolos(self):
+        self.assertTrue(pf.evaluate_pool(_row("V" * 44, "VOLX", vol=9.5))["passes"])
 
-    def test_fee_tier_tidak_terukur_dilewati(self):
-        row = _row("V" * 44, "TIERZ")
-        row["fee_pct"] = None
-        self.assertFalse(pf.evaluate_pool(row)["passes"])
+    def test_volatility_tidak_terukur_tetap_lolos(self):
+        self.assertTrue(pf.evaluate_pool(_row("N" * 44, "NOVOL", vol=None))["passes"])
 
-    def test_dut_12h_dilewati_karena_volatility_6_71(self):
-        result = pf.evaluate_pool(DUT_12H)
-        self.assertFalse(result["passes"])
-        self.assertTrue(any(r.startswith("volatility >") for r in result["reasons"]))
+    def test_dut_12h_tetap_lolos(self):
+        self.assertTrue(pf.evaluate_pool(DUT_12H)["passes"])
 
-    def test_scan_hanya_memuat_pool_yang_lolos(self):
+    def test_scan_memuat_semua_baris_unik_dari_listing(self):
         extra = [DUT_12H, _row("S" * 44, "SHORT", volume=720.0 * 100)]
         result = pf.scan_pools(listing=(PASSING_12H + extra, [], False))
         self.assertEqual(result["candidates"], 4)
-        self.assertEqual([r["pool"] for r in result["passing"]],
-                         [LOW_12H["pool_address"], HIGH_12H["pool_address"]])
+        self.assertEqual(sorted(r["pool"] for r in result["passing"]),
+                         sorted([LOW_12H["pool_address"], HIGH_12H["pool_address"],
+                                 DUT_12H["pool_address"], "S" * 44]))
 
 
 def _sec(*, tvl=20_000.0, deposits=None, withdraws=None, fa=10.0, avg=None, **token):
-    """Baris lolos filter lokal dengan field keamanan yang diatur tes."""
+    """Baris pool dengan field keamanan yang diatur tes (fa/avg ke baris pool, sisanya ke token_x)."""
     row = _row("S" * 44, "SECX", tvl=tvl, fa=fa)
     row["token_x"].update(token)
     if avg is not None:
@@ -237,7 +211,8 @@ class SecurityTest(unittest.TestCase):
     def test_food2_nyata_hanya_peringatan_lp_keluar(self):
         result = pf.evaluate_pool(FOOD2_12H)
         self.assertEqual(result["warnings"], ["LP keluar > masuk (TVL < $50.000)"])
-        self.assertEqual(result["reasons"], [r for r in result["reasons"] if r.startswith("avg volume")])
+        self.assertTrue(result["passes"])
+        self.assertEqual(result["reasons"], [])
 
     def test_pool_terblokir_tidak_masuk_hasil_scan(self):
         blocked = _sec(has_mint_authority=True, fa=50.0, avg=9000.0)
@@ -276,6 +251,23 @@ class RiskTest(unittest.TestCase):
         row = _row("Q" * 44, "HIGHX", vol=5.5, volume=7200.0 * 72)  # avg 720
         result = pf.evaluate_pool(row)
         self.assertAlmostEqual(result["avg_volume"], 720.0)
+
+
+class ServerFilterTest(unittest.TestCase):
+    def test_filter_server_persis_request_user(self):
+        self.assertEqual(
+            pf.FLOW_SERVER_FILTER,
+            "base_token_has_critical_warnings=false"
+            "&&quote_token_has_critical_warnings=false"
+            "&&base_token_has_high_supply_concentration=false"
+            "&&base_token_has_high_single_ownership=false"
+            "&&pool_type=dlmm"
+            "&&tvl>=1000"
+            "&&fee_pct>=0.5"
+            "&&fee_active_tvl_ratio>=2")
+        self.assertEqual(pf.FLOW_TIMEFRAME, "12h")
+        self.assertEqual(pf.FLOW_CATEGORY, "all")
+        self.assertEqual(pf.FLOW_SORT_BY, "volume_tvl_ratio:desc")
 
 
 class RealResponseTest(unittest.TestCase):
@@ -325,19 +317,12 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(len(captured), 1)
         params = captured[0]
         self.assertEqual(params["timeframe"], "12h")
-        self.assertEqual(params["category"], "top")
+        self.assertEqual(params["category"], "all")
+        self.assertEqual(params["sort_by"], "volume_tvl_ratio:desc")
         self.assertEqual(params["page_size"], 50)
         self.assertNotIn("after_key", params)
         self.assertNotIn("page", params)  # page diabaikan API Meteora
-        self.assertEqual(
-            params["filter_by"],
-            "base_token_has_high_supply_concentration=false"
-            "&&base_token_has_high_single_ownership=false"
-            "&&pool_type=dlmm"
-            "&&base_token_market_cap>=100000"
-            "&&base_token_holders>=1500"
-            "&&tvl>=10000"
-            "&&active_tvl>=10000")
+        self.assertEqual(params["filter_by"], pf.FLOW_SERVER_FILTER)
 
 
 class PaginationTest(unittest.TestCase):
