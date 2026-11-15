@@ -48,9 +48,6 @@ def _render_scan_result(result: dict) -> None:
     if not passing:
         st.info("Tidak ada pool dari listing.")
         return
-    st.caption("Dipisah berdasarkan fee/TVL terhadap volatility: FEE PRINTER (SPOT) bila "
-               "fee/TVL > 2 × volatility; tabel kedua bila 0,5 × – 2 × volatility. Pool di bawah "
-               "0,5 × volatility tidak ditampilkan di kedua tabel.")
     st.caption("Geser tabel ke kanan untuk melihat semua kolom. Keamanan: pool dengan mint/freeze "
                "authority aktif atau top holders > 30 % dibuang; peringatan muncul bila top holders "
                "> 15 %, dev > 5 %, atau LP keluar lebih besar dari masuk saat TVL < $50K.")
