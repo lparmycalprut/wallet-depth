@@ -36,6 +36,7 @@ FLOW_SORT_BY = "fee_tvl_ratio:desc"  # dikembalikan sesuai curl user terbaru
 FLOW_VOLATILITY_MEASURABLE_MIN = 0.01
 FLOW_FEE_PRINTER_MULT = 2.0   # FEE PRINTER (SPOT): fee/TVL > 2 × volatility
 FLOW_BAND_LOW_MULT = 0.5      # tabel kedua: 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility
+FLOW_HIGH_RISK_MAX_MULT = 20.0  # HIGH RISK FEE PRINTER: 2 × volatility < fee/TVL < 20 × volatility
 # Peringatan keamanan (label saja, tidak menyaring).
 # tampil dengan label. Field kosong tidak dihitung sebagai masalah.
 FLOW_SEC_HOLDERS_BLOCK = 30.0           # % top_holders_pct token dasar, blokir di atas ini
@@ -363,6 +364,17 @@ def fee_printer_split(passing: list) -> tuple[list, list]:
         elif FLOW_BAND_LOW_MULT * vol <= fee_tvl <= FLOW_FEE_PRINTER_MULT * vol:
             band.append(item)
     return sorted(fee_printer, key=sort_key), sorted(band, key=sort_key)
+
+
+def fee_printer_high_risk(fee_printer: list) -> list:
+    """Filter kedua di atas FEE PRINTER (SPOT): hanya fee/TVL < 20 × volatility (HIGH RISK FEE PRINTER).
+
+    Input harus hasil ``fee_printer_split`` (sudah fee/TVL > 2 × volatility). Pool dengan
+    fee/TVL ≥ 20 × volatility tidak ditampilkan di tabel ini. Urutan: ``sort_key``.
+    """
+    kept = [item for item in fee_printer
+            if item["fee_tvl"] < FLOW_HIGH_RISK_MAX_MULT * item["volatility"]]
+    return sorted(kept, key=sort_key)
 
 
 def ranked(passing: list) -> list:

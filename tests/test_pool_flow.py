@@ -263,6 +263,37 @@ def _fp(pool, fee_tvl, vol, symbol="FP"):
     return row
 
 
+class HighRiskFeePrinterTest(unittest.TestCase):
+    """HIGH RISK FEE PRINTER: dari FEE PRINTER (SPOT), hanya 2 × < fee/TVL < 20 × volatility."""
+
+    def _high(self, *rows):
+        result = pf.scan_pools(listing=(list(rows), [], False))
+        fee_printer, _band = pf.fee_printer_split(result["passing"])
+        return pf.fee_printer_high_risk(fee_printer)
+
+    def test_hanya_rentang_2_sampai_20_kali_volatility(self):
+        rows = [_fp("A" * 44, fee_tvl=2.5, vol=1.0),    # 2,5× → masuk
+                _fp("B" * 44, fee_tvl=19.9, vol=1.0),   # 19,9× → masuk
+                _fp("C" * 44, fee_tvl=20.0, vol=1.0),   # tepat 20× → tidak masuk
+                _fp("D" * 44, fee_tvl=35.0, vol=1.0),   # > 20× → tidak masuk
+                _fp("E" * 44, fee_tvl=2.0, vol=1.0),    # tepat 2× → bukan FEE PRINTER (SPOT)
+                _fp("F" * 44, fee_tvl=1.5, vol=1.0)]    # band, bukan HIGH RISK
+        high = self._high(*rows)
+        self.assertEqual({r["pool"] for r in high}, {"A" * 44, "B" * 44})
+
+    def test_urut_rasio_avg_volume_per_tvl(self):
+        rows = [_fp("A" * 44, fee_tvl=3.0, vol=1.0),
+                _fp("B" * 44, fee_tvl=5.0, vol=1.0),
+                _fp("C" * 44, fee_tvl=4.0, vol=1.0)]
+        for r, avg in zip(rows, (600.0, 2000.0, 300.0)):
+            r["avg_volume"] = avg
+        self.assertEqual([r["pool"] for r in self._high(*rows)],
+                         ["B" * 44, "A" * 44, "C" * 44])
+
+    def test_pool_tanpa_volatility_terukur_tidak_masuk(self):
+        self.assertEqual(self._high(_fp("G" * 44, fee_tvl=5.0, vol=0.005)), [])
+
+
 class FeePrinterSplitTest(unittest.TestCase):
     """Permintaan user 2026-11-15: FEE PRINTER (SPOT) bila fee/TVL > 2 × volatility;
     tabel kedua bila 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility."""

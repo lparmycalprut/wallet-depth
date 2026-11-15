@@ -52,8 +52,11 @@ def _render_scan_result(result: dict) -> None:
                "authority aktif atau top holders > 30 % dibuang; peringatan muncul bila top holders "
                "> 15 %, dev > 5 %, atau LP keluar lebih besar dari masuk saat TVL < $50K.")
     fee_printer, band = pf.fee_printer_split(passing)
-    # Tabel FEE PRINTER (SPOT) tanpa judul maupun caption (permintaan user 2026-11-15).
-    _render_pool_table(fee_printer, "Tidak ada pool untuk FEE PRINTER (SPOT).")
+    high_risk = pf.fee_printer_high_risk(fee_printer)
+    # HIGH RISK FEE PRINTER: fee/TVL > 2 × dan < 20 × volatility (permintaan user, filter kedua).
+    st.markdown("**HIGH RISK FEE PRINTER**")
+    st.markdown(f"*· {len(high_risk)} pool · 2 × volatility < fee/TVL < 20 × volatility*")
+    _render_pool_table(high_risk, "Tidak ada pool untuk HIGH RISK FEE PRINTER.")
     st.markdown("**FEE PRINTER**")
     st.markdown(f"*· {len(band)} pool · 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility*")
     _render_pool_table(band, "Tidak ada pool untuk FEE PRINTER.")

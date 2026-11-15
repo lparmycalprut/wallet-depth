@@ -83,7 +83,7 @@ class AppMainTest(unittest.TestCase):
         self.assertNotIn(DUT_POOL, body)  # volatility 6,71 % > 6 % dilewati
         self.assertIn("Timeframe 12H", " ".join(str(c.value) for c in at.caption))
         markdown = " ".join(str(m.value) for m in at.markdown)
-        self.assertNotIn("RISK", markdown)
+        self.assertNotIn("LOW RISK", markdown)  # tabel LOW RISK sudah dihapus (2026-11-14)
         self.assertEqual(len(at.get("iframe")), 1)  # satu tabel untuk semua pool
 
     def test_hasil_scan_berupa_tabel_html_dengan_scroll_horizontal(self):
