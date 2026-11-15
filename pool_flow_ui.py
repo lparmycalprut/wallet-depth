@@ -22,7 +22,6 @@ TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier",
                  "Volatility", "Fee/TVL", "Fee/active TVL", "Avg volume/menit (pool)",
                  "Avg volume/menit ÷ TVL",
                  "Volume 12H (pool)", "Peringatan keamanan"]
-HOT = "🔥🔥🔥"  # tanda pool paling ramai (baris teratas)
 
 
 def _filter_caption() -> str:
@@ -52,29 +51,27 @@ def _render_scan_result(result: dict) -> None:
     st.caption("Geser tabel ke kanan untuk melihat semua kolom. Keamanan: pool dengan mint/freeze "
                "authority aktif atau top holders > 30 % dibuang; peringatan muncul bila top holders "
                "> 15 %, dev > 5 %, atau LP keluar lebih besar dari masuk saat TVL < $50K.")
-    top = pf.most_crowded(result)
-    top_pool = top["pool"] if top else None
     fee_printer, band = pf.fee_printer_split(passing)
     # Tabel FEE PRINTER (SPOT) tanpa judul maupun caption (permintaan user 2026-11-15).
-    _render_pool_table(fee_printer, top_pool, "Tidak ada pool untuk FEE PRINTER (SPOT).")
+    _render_pool_table(fee_printer, "Tidak ada pool untuk FEE PRINTER (SPOT).")
     st.markdown("**FEE PRINTER**")
     st.markdown(f"*· {len(band)} pool · 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility*")
-    _render_pool_table(band, top_pool, "Tidak ada pool untuk FEE PRINTER.")
+    _render_pool_table(band, "Tidak ada pool untuk FEE PRINTER.")
 
 
-def _render_pool_table(rows: list, top_pool, empty_text: str) -> None:
+def _render_pool_table(rows: list, empty_text: str) -> None:
     import streamlit as st
 
     if not rows:
         st.info(empty_text)
         return
     # st.iframe (bukan components.v1.html): HTML dirender di iframe agar tombol copy CA bisa berjalan.
-    st.iframe(_result_document(rows, top_pool),
+    st.iframe(_result_document(rows),
               height=_result_height(len(rows)), width="stretch")
 
 
-def _result_table_html(rows: list, top_pool: str | None = None) -> str:
-    """Tabel HTML satu baris per pool, urut avg volume per menit (urutan dari pemanggil)."""
+def _result_table_html(rows: list) -> str:
+    """Tabel HTML satu baris per pool, urut rasio avg volume/menit ÷ TVL (urutan dari pemanggil)."""
     head = "".join(
         "<th style='text-align:left;padding:6px 8px;white-space:nowrap;"
         "border-bottom:1px solid rgba(128,128,128,.45)'>"
@@ -82,9 +79,8 @@ def _result_table_html(rows: list, top_pool: str | None = None) -> str:
         for title in TABLE_HEADERS)
     body = []
     for row in rows:
-        hot = row["pool"] == top_pool
         cells = [
-            _cell_token_html(row, hot=hot),
+            _cell_token_html(row),
             _html.escape(pf.fmt_usd(row["tvl"])),
             _html.escape(f"{row['fee_tier']:g}%" if row["fee_tier"] is not None else "—"),
             _html.escape(pf.fmt_pct(row["volatility"])),
@@ -99,8 +95,7 @@ def _result_table_html(rows: list, top_pool: str | None = None) -> str:
             f"<td style='padding:6px 8px;vertical-align:top;border-bottom:1px solid "
             f"rgba(128,128,128,.2);white-space:{'normal' if i == 0 else 'nowrap'}'>{cell}</td>"
             for i, cell in enumerate(cells))
-        row_style = " style='background:rgba(249,115,22,.14)'" if hot else ""
-        body.append(f"<tr{row_style}>{tds}</tr>")
+        body.append(f"<tr>{tds}</tr>")
     return (
         "<div style='overflow-x:auto;-webkit-overflow-scrolling:touch;"
         "border:1px solid rgba(128,128,128,.35);border-radius:8px'>"
@@ -162,11 +157,11 @@ def _copy_button_html(ca: str) -> str:
             f'onclick="copyCa(this)">{COPY_LABEL}</button>')
 
 
-def _result_document(rows: list, top_pool: str | None = None) -> str:
+def _result_document(rows: list) -> str:
     """Dokumen HTML utuh untuk komponen: tabel + skrip copy CA."""
     return ("<!doctype html><html><head><meta charset=\"utf-8\">"
             f"<style>{_COPY_CSS}</style></head><body>"
-            f"{_result_table_html(rows, top_pool)}{_COPY_SCRIPT}</body></html>")
+            f"{_result_table_html(rows)}{_COPY_SCRIPT}</body></html>")
 
 
 def _result_height(count: int) -> int:
@@ -174,10 +169,9 @@ def _result_height(count: int) -> int:
     return min(1200, max(160, 60 + 120 * count))
 
 
-def _cell_token_html(row: dict, hot: bool = False) -> str:
+def _cell_token_html(row: dict) -> str:
     """Nama token + pool, CA lengkap, dan link. Dipakai di dalam sel tabel."""
-    label = f"{row['symbol']} · {row['pool_name'] or row['pool'][:8]}"
-    name = _html.escape(f"{HOT} {label}" if hot else label)
+    name = _html.escape(f"{row['symbol']} · {row['pool_name'] or row['pool'][:8]}")
     ca = _html.escape(row.get("mint") or "")
     parts = [f"<b style='font-size:14px'>{name}</b>"]
     if ca:
