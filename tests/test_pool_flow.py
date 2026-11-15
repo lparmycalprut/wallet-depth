@@ -336,6 +336,7 @@ class ServerFilterTest(unittest.TestCase):
             "&&base_token_has_high_supply_concentration=false"
             "&&base_token_has_high_single_ownership=false"
             "&&pool_type=dlmm"
+            "&&base_token_created_at<=1794664768938"
             "&&tvl>=10000"
             "&&fee_tvl_ratio>=2"
             "&&fee_pct>=0.5")
@@ -398,7 +399,7 @@ class ScanTest(unittest.TestCase):
         params = captured[0]
         self.assertEqual(params["timeframe"], "12h")
         self.assertEqual(params["category"], "all")
-        self.assertNotIn("sort_by", params)  # curl user 2026-11-15 tanpa sort_by
+        self.assertEqual(params["sort_by"], "fee_tvl_ratio:desc")  # curl user terbaru
         self.assertEqual(params["page_size"], 50)
         self.assertNotIn("after_key", params)
         self.assertNotIn("page", params)  # page diabaikan API Meteora

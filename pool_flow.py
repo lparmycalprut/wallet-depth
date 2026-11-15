@@ -28,8 +28,9 @@ HTTP_TIMEOUT = 25
 USER_AGENT = "Mozilla/5.0 (wallet-depth-pool-flow)"
 
 FLOW_TIMEFRAME = "12h"
-# Listing = request user 2026-11-14 (12H, category all, urut volume/TVL). Tidak ada filter lokal.
+# Listing = curl user terbaru (12H, category all, urut fee/TVL, filter umur token). Tidak ada filter lokal.
 FLOW_CATEGORY = "all"
+FLOW_SORT_BY = "fee_tvl_ratio:desc"  # dikembalikan sesuai curl user terbaru
 # Pemisahan tabel (permintaan user 2026-11-15). Fee/TVL = fee_tvl_ratio (%, 12H),
 # volatility dalam %. Volatility di bawah 0,01 % dianggap tidak terukur (tidak masuk tabel mana pun).
 FLOW_VOLATILITY_MEASURABLE_MIN = 0.01
@@ -41,13 +42,15 @@ FLOW_SEC_HOLDERS_BLOCK = 30.0           # % top_holders_pct token dasar, blokir 
 FLOW_SEC_HOLDERS_WARN = 15.0            # % top_holders_pct, peringatan di atas ini
 FLOW_SEC_DEV_WARN = 5.0                 # % dev_balance_pct, peringatan di atas ini
 FLOW_SEC_LP_OUTFLOW_TVL_MAX = 50_000.0  # USD: peringatan LP keluar hanya bila TVL di bawah ini
-# Filter server (request user 2026-11-14, persis). Satu-satunya filter seleksi pool.
+# Filter server (curl user terbaru, persis). Satu-satunya filter seleksi pool.
+# base_token_created_at <= 1794664768938 ms = 2026-11-14 13:59:28 UTC (token berumur ≥ 12 jam).
 FLOW_SERVER_FILTER = (
     "base_token_has_critical_warnings=false"
     "&&quote_token_has_critical_warnings=false"
     "&&base_token_has_high_supply_concentration=false"
     "&&base_token_has_high_single_ownership=false"
     "&&pool_type=dlmm"
+    "&&base_token_created_at<=1794664768938"
     "&&tvl>=10000"
     "&&fee_tvl_ratio>=2"
     "&&fee_pct>=0.5"
@@ -151,7 +154,7 @@ def fetch_top_page(after_key: str | None = None) -> tuple[list, str | None, bool
     respons sebelumnya (parameter ``page`` diabaikan API dan selalu memberi
     pool yang sama). Kembalikan (rows, next_after_key, has_more).
     """
-    params = {"page_size": FLOW_PAGE_SIZE,
+    params = {"page_size": FLOW_PAGE_SIZE, "sort_by": FLOW_SORT_BY,
               "timeframe": FLOW_TIMEFRAME, "category": FLOW_CATEGORY,
               "filter_by": FLOW_SERVER_FILTER}
     if after_key:
