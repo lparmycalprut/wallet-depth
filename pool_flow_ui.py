@@ -84,7 +84,7 @@ def _render_scan_result(result: dict) -> None:
 def _filter_caption_4h() -> str:
     return ("Timeframe 4H · kategori top · dlmm · MC ≥ $20K · holders ≥ 1.500 · TVL ≥ $10K · "
             "active TVL ≥ $10K · fee/TVL ≥ 1 · fee ≥ 0.5% · tanpa konsentrasi/kepemilikan tunggal tinggi · "
-            "urut avg volume/menit ÷ TVL, lalu avg fee/menit ÷ TVL terbesar.")
+            "avg volume/menit ÷ TVL > 1% · urut avg volume/menit ÷ TVL, lalu avg fee/menit ÷ TVL terbesar.")
 
 
 def _render_4h_result(result: dict) -> None:

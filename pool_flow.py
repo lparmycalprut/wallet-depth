@@ -60,6 +60,8 @@ FLOW_SERVER_FILTER = (
 # avg_volume dan avg_fee per menit = nilai 4H ÷ 240 (dicek: HOGE volume 56.513,30 ÷ 240 = 235,47).
 FLOW_4H_TIMEFRAME = "4h"
 FLOW_4H_CATEGORY = "top"
+# Tabel 4H hanya memuat pool dengan avg volume/menit ÷ TVL di atas ini (permintaan user, 2026-11-15).
+FLOW_4H_MIN_VOLUME_TVL = 0.01  # 1 %, batas eksklusif: tepat 1 % tidak tampil
 FLOW_4H_SERVER_FILTER = (
     "base_token_has_high_supply_concentration=false"
     "&&base_token_has_high_single_ownership=false"
@@ -478,11 +480,16 @@ def scan_pools(max_pages: int = FLOW_MAX_PAGES, *, listing: tuple | None = None)
 def scan_4h(max_pages: int = FLOW_MAX_PAGES, *, listing: tuple | None = None) -> dict:
     """Deteksi 4H: listing 4h (kategori top, filter 4H) → urut avg volume/menit ÷ TVL, lalu avg fee/menit ÷ TVL.
 
-    Aturan keamanan yang sama dengan 12H. ``listing`` untuk tes tanpa jaringan.
+    Aturan keamanan yang sama dengan 12H. Pool hanya tampil bila avg volume/menit ÷ TVL
+    > ``FLOW_4H_MIN_VOLUME_TVL`` (1 %). ``listing`` untuk tes tanpa jaringan.
     """
     rows, errors, truncated = (listing if listing is not None
                                else fetch_listing(max_pages, **LISTING_4H))
-    return _scan(rows, errors, truncated, sort_key_4h, FLOW_4H_TIMEFRAME)
+    result = _scan(rows, errors, truncated, sort_key_4h, FLOW_4H_TIMEFRAME)
+    ratio_ok = [r for r in result["passing"]
+                if (avg_volume_tvl_ratio(r) or 0.0) > FLOW_4H_MIN_VOLUME_TVL]
+    result["passing"] = ratio_ok
+    return result
 
 
 # ---------------------------------------------------------------------------
