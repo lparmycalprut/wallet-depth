@@ -195,9 +195,17 @@ class ResultTableTest(unittest.TestCase):
         self.assertIn(">$800,00</td>", html)     # HIGH_12H avg_volume
         self.assertIn("Avg volume/menit ÷ TVL", html)
         self.assertIn(">4,00%</td>", html)       # HIGH_12H: 800 ÷ 20.000
+        self.assertIn("Avg fee/menit ÷ TVL", html)
+        self.assertIn("Avg volume/menit ÷ TVL", html)
         self.assertIn(">1,66%</td>", html)       # LOW_12H: 1.500,59 ÷ 90.546,54
         self.assertNotIn("Rasio (×)", html)
         self.assertNotIn("rgba(249,115,22", html)  # tanpa highlight baris teratas
+
+    def test_kolom_avg_fee_per_menit_per_tvl_12h(self):
+        import pool_flow_ui as ui
+        row = pf.evaluate_pool(dict(HIGH_12H, avg_fee=8.0))  # 8 ÷ 20.000 = 0,040 %
+        html = ui._result_table_html([row])
+        self.assertIn(">0,040%</td>", html)
 
     def test_pool_teratas_diberi_warna_kuning_tanpa_emoji(self):
         import pool_flow_ui as ui

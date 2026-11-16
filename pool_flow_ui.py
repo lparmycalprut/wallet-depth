@@ -29,7 +29,7 @@ FOUR_H_BORDER = "rgba(139,92,246,.85)"
 
 TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier",
                  "Volatility", "Fee/TVL", "Avg volume/menit (pool)",
-                 "Avg volume/menit ÷ TVL",
+                 "Avg volume/menit ÷ TVL", "Avg fee/menit ÷ TVL",
                  "Volume 12H (pool)", "Peringatan keamanan"]
 TABLE_4H_HEADERS = ["Token / pool", "TVL", "Fee tier",
                     "Avg volume/menit (pool)", "Avg volume/menit ÷ TVL",
@@ -163,6 +163,7 @@ def _result_table_html(rows: list, top_pool: str | None = None,
             _html.escape(pf.fmt_pct(row.get("fee_tvl"))),
             _html.escape(pf.fmt_usd2(row["avg_volume"])),
             _html.escape(pf.fmt_ratio_pct(pf.avg_volume_tvl_ratio(row))),
+            _html.escape(pf.fmt_ratio_pct(pf.avg_fee_tvl_ratio(row), digits=3)),
             _html.escape(pf.fmt_usd(row["activity"]["volume"])),
             _html.escape("; ".join(row.get("warnings") or []) or "—"),
         ]

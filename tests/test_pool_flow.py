@@ -621,6 +621,11 @@ class AlertTest(unittest.TestCase):
         # HIGHX: avg 800 ÷ TVL 20.000 = 4,00 %
         self.assertIn("÷ TVL 4,00%", text)
 
+    def test_alert_12h_memuat_rasio_avg_fee_per_tvl(self):
+        result = pf.scan_pools(listing=([dict(HIGH_12H, avg_fee=8.0)], [], False))
+        text = pf.apply_crowded_alert(pf.empty_state(), pf.most_crowded(result))
+        self.assertIn("💸 avg fee/menit ÷ TVL 0,040%", text)  # 8 ÷ 20.000
+
     def test_alert_hanya_memuat_satu_pool_paling_ramai(self):
         result = pf.scan_pools(listing=(PASSING_12H, [], False))
         state = pf.empty_state()

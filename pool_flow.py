@@ -574,6 +574,7 @@ def crowded_alert_text(no: int, top: dict, seen_no: int | None) -> str:
         f"<b>{_h(top['symbol'])}</b> · {_h(name)}  {tag}",
         f"📊 avg volume/menit {fmt_usd2(top['avg_volume'])} · ÷ TVL {fmt_ratio_pct(avg_volume_tvl_ratio(row))} · "
         f"volume 12H {fmt_usd(top['pool_volume'])}",
+        f"💸 avg fee/menit ÷ TVL {fmt_ratio_pct(avg_fee_tvl_ratio(row), 3)}",
         f"🔁 {fmt_int(top['pool_swaps'])} swap · rata² swap {fmt_usd2(top['pool_avg_swap'])}",
         f"💰 TVL {fmt_usd(row['tvl'])} · 🏷 fee {_pct_or_dash(row['fee_tier'])} · "
         f"🪙 active {fmt_usd(row['active_tvl'])}",
