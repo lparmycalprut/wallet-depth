@@ -56,6 +56,21 @@ FLOW_SERVER_FILTER = (
     "&&fee_tvl_ratio>=2"
     "&&fee_pct>=0.5"
 )
+# Deteksi 4H (curl user terbaru, 2026-11-15): timeframe 4h, category top, TANPA sort_by.
+# avg_volume dan avg_fee per menit = nilai 4H ÷ 240 (dicek: HOGE volume 56.513,30 ÷ 240 = 235,47).
+FLOW_4H_TIMEFRAME = "4h"
+FLOW_4H_CATEGORY = "top"
+FLOW_4H_SERVER_FILTER = (
+    "base_token_has_high_supply_concentration=false"
+    "&&base_token_has_high_single_ownership=false"
+    "&&pool_type=dlmm"
+    "&&base_token_market_cap>=20000"
+    "&&base_token_holders>=1500"
+    "&&tvl>=10000"
+    "&&fee_tvl_ratio>=1"
+    "&&fee_pct>=0.5"
+    "&&active_tvl>=10000"
+)
 FLOW_MAX_PAGES = 100             # batas keamanan: 100 × 50 = 5.000 pool (cursor after_key)
 FLOW_PAGE_SIZE = 50
 FLOW_ALERT_CAP = 300             # riwayat alert yang disimpan
@@ -148,16 +163,25 @@ def _get_payload(params: dict, *, timeout: int = HTTP_TIMEOUT) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def fetch_top_page(after_key: str | None = None) -> tuple[list, str | None, bool]:
-    """Satu halaman listing (kategori ``all``, timeframe 12H, urut volume/TVL).
+LISTING_12H = {"timeframe": FLOW_TIMEFRAME, "category": FLOW_CATEGORY,
+               "server_filter": FLOW_SERVER_FILTER, "sort_by": FLOW_SORT_BY}
+LISTING_4H = {"timeframe": FLOW_4H_TIMEFRAME, "category": FLOW_4H_CATEGORY,
+              "server_filter": FLOW_4H_SERVER_FILTER, "sort_by": None}
+
+
+def fetch_top_page(after_key: str | None = None, *, timeframe: str = FLOW_TIMEFRAME,
+                   category: str = FLOW_CATEGORY, server_filter: str = FLOW_SERVER_FILTER,
+                   sort_by: str | None = FLOW_SORT_BY) -> tuple[list, str | None, bool]:
+    """Satu halaman listing Meteora (default 12H, kategori ``all``).
 
     Meteora memakai cursor: halaman berikutnya diminta dengan ``after_key`` dari
     respons sebelumnya (parameter ``page`` diabaikan API dan selalu memberi
     pool yang sama). Kembalikan (rows, next_after_key, has_more).
     """
-    params = {"page_size": FLOW_PAGE_SIZE, "sort_by": FLOW_SORT_BY,
-              "timeframe": FLOW_TIMEFRAME, "category": FLOW_CATEGORY,
-              "filter_by": FLOW_SERVER_FILTER}
+    params: dict = {"page_size": FLOW_PAGE_SIZE}
+    if sort_by:
+        params["sort_by"] = sort_by
+    params.update({"timeframe": timeframe, "category": category, "filter_by": server_filter})
     if after_key:
         params["after_key"] = after_key
     payload = _get_payload(params)
@@ -166,9 +190,9 @@ def fetch_top_page(after_key: str | None = None) -> tuple[list, str | None, bool
     return rows, (str(next_key) if next_key else None), bool(payload.get("has_more"))
 
 
-def fetch_listing(max_pages: int = FLOW_MAX_PAGES) -> tuple[list, list, bool]:
+def fetch_listing(max_pages: int = FLOW_MAX_PAGES, **listing) -> tuple[list, list, bool]:
     """Ambil seluruh listing lewat cursor ``after_key``, berurutan, sampai
-    ``has_more`` = false.
+    ``has_more`` = false. ``listing`` = argumen ``fetch_top_page`` (default 12H).
 
     Kembalikan (rows, errors, truncated). ``truncated`` = True bila listing belum
     lengkap: batas ``max_pages`` tercapai selagi masih ada halaman, cursor tidak
@@ -179,7 +203,7 @@ def fetch_listing(max_pages: int = FLOW_MAX_PAGES) -> tuple[list, list, bool]:
     cursor = None
     for _ in range(max(1, max_pages)):
         try:
-            page_rows, next_key, has_more = fetch_top_page(cursor)
+            page_rows, next_key, has_more = fetch_top_page(cursor, **listing)
         except Exception as exc:  # noqa: BLE001 — catat; tanpa cursor tidak bisa lanjut
             errors.append(str(exc) or type(exc).__name__)
             return rows, errors, True
@@ -287,6 +311,7 @@ def evaluate_pool(row: dict) -> dict:
         "fee_active_tvl": fee_active_tvl,
         "fee_tvl": _num(row.get("fee_tvl_ratio")),
         "avg_volume": avg_volume,
+        "avg_fee": _num(row.get("avg_fee")),
         "passes": not reasons,
         "reasons": reasons,
         "warnings": security_warnings,
@@ -319,11 +344,11 @@ def pool_activity(row: dict) -> dict:
     }
 
 
-def fmt_ratio_pct(value) -> str:
-    """Rasio sebagai persen dengan dua desimal (nilainya kecil, mis. 1,66 %)."""
+def fmt_ratio_pct(value, digits: int = 2) -> str:
+    """Rasio sebagai persen dengan ``digits`` desimal (nilainya kecil, mis. 1,66 %)."""
     if value is None:
         return "—"
-    return f"{value * 100:.2f}%".replace(".", ",")
+    return f"{value * 100:.{digits}f}%".replace(".", ",")
 
 
 def avg_volume_tvl_ratio(result: dict):
@@ -342,6 +367,20 @@ def sort_key(result: dict):
     Seri: urutan listing (sort stabil).
     """
     return -(avg_volume_tvl_ratio(result) or 0.0)
+
+
+def avg_fee_tvl_ratio(result: dict):
+    """Rasio avg fee per menit ÷ TVL (``None`` bila salah satu tidak ada atau TVL nol)."""
+    avg = result.get("avg_fee")
+    tvl = result.get("tvl")
+    if avg is None or not tvl:
+        return None
+    return avg / tvl
+
+
+def sort_key_4h(result: dict):
+    """Urutan deteksi 4H: avg volume/menit ÷ TVL terbesar dulu, lalu avg fee/menit ÷ TVL terbesar."""
+    return (-(avg_volume_tvl_ratio(result) or 0.0), -(avg_fee_tvl_ratio(result) or 0.0))
 
 
 def fee_printer_split(passing: list) -> tuple[list, list]:
@@ -405,21 +444,17 @@ def most_crowded(result: dict):
     }
 
 
-def scan_pools(max_pages: int = FLOW_MAX_PAGES, *, listing: tuple | None = None) -> dict:
-    """Scan lengkap: listing 12H (filter server-side) → urutan.
-
-    ``listing`` = (rows, errors, truncated) bisa diisi untuk tes tanpa jaringan.
-    """
-    rows, errors, truncated = (listing if listing is not None
-                               else fetch_listing(max_pages))
+def _scan(rows: list, errors: list, truncated: bool, order, timeframe: str) -> dict:
+    """Evaluasi baris listing (tanpa duplikat pool) lalu urutkan dengan ``order``."""
     unique: dict[str, dict] = {}
     for row in rows:
         address = str(row.get("pool_address") or "")
         if address and address not in unique:
             unique[address] = row
     results = [evaluate_pool(row) for row in unique.values()]
-    passing = sorted((r for r in results if r["passes"]), key=sort_key)
+    passing = sorted((r for r in results if r["passes"]), key=order)
     return {
+        "timeframe": timeframe,
         "scanned_at": now_iso(),
         "listing_rows": len(rows),
         "listing_errors": len(errors),
@@ -428,6 +463,26 @@ def scan_pools(max_pages: int = FLOW_MAX_PAGES, *, listing: tuple | None = None)
         "results": results,
         "passing": passing,
     }
+
+
+def scan_pools(max_pages: int = FLOW_MAX_PAGES, *, listing: tuple | None = None) -> dict:
+    """Scan lengkap: listing 12H (filter server-side) → urutan.
+
+    ``listing`` = (rows, errors, truncated) bisa diisi untuk tes tanpa jaringan.
+    """
+    rows, errors, truncated = (listing if listing is not None
+                               else fetch_listing(max_pages, **LISTING_12H))
+    return _scan(rows, errors, truncated, sort_key, FLOW_TIMEFRAME)
+
+
+def scan_4h(max_pages: int = FLOW_MAX_PAGES, *, listing: tuple | None = None) -> dict:
+    """Deteksi 4H: listing 4h (kategori top, filter 4H) → urut avg volume/menit ÷ TVL, lalu avg fee/menit ÷ TVL.
+
+    Aturan keamanan yang sama dengan 12H. ``listing`` untuk tes tanpa jaringan.
+    """
+    rows, errors, truncated = (listing if listing is not None
+                               else fetch_listing(max_pages, **LISTING_4H))
+    return _scan(rows, errors, truncated, sort_key_4h, FLOW_4H_TIMEFRAME)
 
 
 # ---------------------------------------------------------------------------

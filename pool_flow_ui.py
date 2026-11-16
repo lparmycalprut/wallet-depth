@@ -16,6 +16,7 @@ import pool_flow as pf
 from links import external_links_html, pool_links_html
 
 RESULT_KEY = "pool_flow_result"
+RESULT_KEY_4H = "pool_flow_result_4h"
 BUTTON_LABEL = "SCAN BEST POOL"
 # Warna tabel (permintaan user): HIGH RISK merah, FEE PRINTER biru. Nama warna untuk st.markdown.
 HIGH_RISK_COLOR = "red"
@@ -23,11 +24,17 @@ FEE_PRINTER_COLOR = "blue"
 HIGH_RISK_BORDER = "rgba(239,68,68,.85)"
 FEE_PRINTER_BORDER = "rgba(59,130,246,.85)"
 DEFAULT_BORDER = "rgba(128,128,128,.35)"
+FOUR_H_COLOR = "violet"  # bagian Deteksi 4H (permintaan user, 2026-11-15)
+FOUR_H_BORDER = "rgba(139,92,246,.85)"
 
 TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier",
                  "Volatility", "Fee/TVL", "Avg volume/menit (pool)",
                  "Avg volume/menit ÷ TVL",
                  "Volume 12H (pool)", "Peringatan keamanan"]
+TABLE_4H_HEADERS = ["Token / pool", "TVL", "Fee tier",
+                    "Avg volume/menit (pool)", "Avg volume/menit ÷ TVL",
+                    "Avg fee/menit (pool)", "Avg fee/menit ÷ TVL",
+                    "Volume 4H (pool)", "Peringatan keamanan"]
 
 
 def _filter_caption() -> str:
@@ -74,29 +81,78 @@ def _render_scan_result(result: dict) -> None:
                        accent=FEE_PRINTER_BORDER)
 
 
+def _filter_caption_4h() -> str:
+    return ("Timeframe 4H · kategori top · dlmm · MC ≥ $20K · holders ≥ 1.500 · TVL ≥ $10K · "
+            "active TVL ≥ $10K · fee/TVL ≥ 1 · fee ≥ 0.5% · tanpa konsentrasi/kepemilikan tunggal tinggi · "
+            "urut avg volume/menit ÷ TVL, lalu avg fee/menit ÷ TVL terbesar.")
+
+
+def _render_4h_result(result: dict) -> None:
+    import streamlit as st
+
+    passing = result.get("passing") or []
+    st.caption(
+        f"Listing {result.get('listing_rows', 0)} baris · pool dievaluasi "
+        f"{result.get('candidates', 0)} · ditampilkan {len(passing)} · "
+        f"dicatat {result.get('scanned_at', '')}"
+        + (f" · {result['listing_errors']} halaman listing gagal"
+           if result.get("listing_errors") else ""))
+    if result.get("truncated"):
+        st.warning("Listing 4H belum lengkap: pengambilan berhenti sebelum semua halaman "
+                   f"terambil (batas {pf.FLOW_MAX_PAGES} halaman atau ada halaman gagal).")
+    if not passing:
+        st.info("Tidak ada pool dari listing 4H.")
+        return
+    st.caption("Geser tabel ke kanan untuk melihat semua kolom. Keamanan: pool dengan mint/freeze "
+               "authority aktif atau top holders > 30 % dibuang. Baris kuning = pool teratas 4H.")
+    st.markdown(f"**:{FOUR_H_COLOR}[DETEKSI 4H]**")
+    st.markdown(f"*· {len(passing)} pool · urut avg volume/menit ÷ TVL, lalu avg fee/menit ÷ TVL*")
+    _render_pool_table(passing, "Tidak ada pool untuk DETEKSI 4H.", passing[0]["pool"],
+                       accent=FOUR_H_BORDER, builder=_result_table_4h_html)
+
+
 def _render_pool_table(rows: list, empty_text: str, top_pool: str | None = None,
-                       accent: str = DEFAULT_BORDER) -> None:
+                       accent: str = DEFAULT_BORDER, builder=None) -> None:
     import streamlit as st
 
     if not rows:
         st.info(empty_text)
         return
     # st.iframe (bukan components.v1.html): HTML dirender di iframe agar tombol copy CA bisa berjalan.
-    st.iframe(_result_document(rows, top_pool, accent),
+    st.iframe(_result_document(rows, top_pool, accent, builder=builder),
               height=_result_height(len(rows)), width="stretch")
 
 
-def _result_table_html(rows: list, top_pool: str | None = None,
-                       accent: str = DEFAULT_BORDER) -> str:
-    """Tabel HTML satu baris per pool, urut rasio avg volume/menit ÷ TVL (urutan dari pemanggil).
-
-    Baris pool teratas (``top_pool``) diberi latar kuning; tanpa emoji.
-    """
+def _table_html(headers: list, body: list, accent: str) -> str:
+    """Pembungkus tabel HTML. ``body`` = [(sel-sel teks HTML, baris_teratas)]."""
     head = "".join(
         "<th style='text-align:left;padding:6px 8px;white-space:nowrap;"
         "border-bottom:1px solid rgba(128,128,128,.45)'>"
         f"{_html.escape(title)}</th>"
-        for title in TABLE_HEADERS)
+        for title in headers)
+    rows_html = []
+    for cells, is_top in body:
+        tds = "".join(
+            f"<td style='padding:6px 8px;vertical-align:top;border-bottom:1px solid "
+            f"rgba(128,128,128,.2);white-space:{'normal' if i == 0 else 'nowrap'}'>{cell}</td>"
+            for i, cell in enumerate(cells))
+        highlight = (f" style='background:{TOP_ROW_BG};font-weight:600'" if is_top else "")
+        rows_html.append(f"<tr{highlight}>{tds}</tr>")
+    return (
+        "<div style='overflow-x:auto;-webkit-overflow-scrolling:touch;"
+        f"border:2px solid {accent};border-radius:8px'>"
+        "<table style='border-collapse:collapse;width:100%;min-width:1100px;"
+        "font-size:13px;line-height:1.4'>"
+        f"<thead><tr>{head}</tr></thead><tbody>{''.join(rows_html)}</tbody></table></div>"
+    )
+
+
+def _result_table_html(rows: list, top_pool: str | None = None,
+                       accent: str = DEFAULT_BORDER) -> str:
+    """Tabel HTML 12H, satu baris per pool, urut rasio avg volume/menit ÷ TVL (urutan dari pemanggil).
+
+    Baris pool teratas (``top_pool``) diberi latar kuning; tanpa emoji.
+    """
     body = []
     for row in rows:
         cells = [
@@ -110,20 +166,30 @@ def _result_table_html(rows: list, top_pool: str | None = None,
             _html.escape(pf.fmt_usd(row["activity"]["volume"])),
             _html.escape("; ".join(row.get("warnings") or []) or "—"),
         ]
-        tds = "".join(
-            f"<td style='padding:6px 8px;vertical-align:top;border-bottom:1px solid "
-            f"rgba(128,128,128,.2);white-space:{'normal' if i == 0 else 'nowrap'}'>{cell}</td>"
-            for i, cell in enumerate(cells))
-        highlight = (f" style='background:{TOP_ROW_BG};font-weight:600'"
-                     if top_pool is not None and row["pool"] == top_pool else "")
-        body.append(f"<tr{highlight}>{tds}</tr>")
-    return (
-        "<div style='overflow-x:auto;-webkit-overflow-scrolling:touch;"
-        f"border:2px solid {accent};border-radius:8px'>"
-        "<table style='border-collapse:collapse;width:100%;min-width:1100px;"
-        "font-size:13px;line-height:1.4'>"
-        f"<thead><tr>{head}</tr></thead><tbody>{''.join(body)}</tbody></table></div>"
-    )
+        body.append((cells, top_pool is not None and row["pool"] == top_pool))
+    return _table_html(TABLE_HEADERS, body, accent)
+
+
+def _result_table_4h_html(rows: list, top_pool: str | None = None,
+                          accent: str = DEFAULT_BORDER) -> str:
+    """Tabel HTML deteksi 4H: urut avg volume/menit ÷ TVL, lalu avg fee/menit ÷ TVL (urutan dari pemanggil)."""
+    body = []
+    for row in rows:
+        tvl = row["tvl"]
+        fee_ratio = (row["avg_fee"] / tvl) if (row.get("avg_fee") is not None and tvl) else None
+        cells = [
+            _cell_token_html(row),
+            _html.escape(pf.fmt_usd(tvl)),
+            _html.escape(f"{row['fee_tier']:g}%" if row["fee_tier"] is not None else "—"),
+            _html.escape(pf.fmt_usd2(row["avg_volume"])),
+            _html.escape(pf.fmt_ratio_pct(pf.avg_volume_tvl_ratio(row), digits=3)),
+            _html.escape(pf.fmt_usd2(row.get("avg_fee"))),
+            _html.escape(pf.fmt_ratio_pct(fee_ratio, digits=3)),
+            _html.escape(pf.fmt_usd(row["activity"]["volume"])),
+            _html.escape("; ".join(row.get("warnings") or []) or "—"),
+        ]
+        body.append((cells, top_pool is not None and row["pool"] == top_pool))
+    return _table_html(TABLE_4H_HEADERS, body, accent)
 
 
 COPY_LABEL = "📋 CA"
@@ -180,11 +246,12 @@ def _copy_button_html(ca: str) -> str:
 
 
 def _result_document(rows: list, top_pool: str | None = None,
-                     accent: str = DEFAULT_BORDER) -> str:
+                     accent: str = DEFAULT_BORDER, builder=None) -> str:
     """Dokumen HTML utuh untuk komponen: tabel + skrip copy CA."""
+    make_table = builder or _result_table_html
     return ("<!doctype html><html><head><meta charset=\"utf-8\">"
             f"<style>{_COPY_CSS}</style></head><body>"
-            f"{_result_table_html(rows, top_pool, accent)}{_COPY_SCRIPT}</body></html>")
+            f"{make_table(rows, top_pool, accent)}{_COPY_SCRIPT}</body></html>")
 
 
 def _result_height(count: int) -> int:
@@ -226,3 +293,18 @@ def render_pool_flow_page() -> None:
             st.info("Belum di-scan. Tekan SCAN BEST POOL.")
         else:
             _render_scan_result(result)
+
+    # Deteksi 4H: bagian terpisah di paling bawah (permintaan user, 2026-11-15).
+    with st.container(border=True):
+        st.markdown("## 🕓 Deteksi 4H")
+        st.caption(_filter_caption_4h())
+        if st.button("SCAN 4H", type="primary", key="pool_flow_scan_4h",
+                     use_container_width=True):
+            with st.spinner("Memindai listing Meteora (4H)…"):
+                result_4h = pf.scan_4h()
+            st.session_state[RESULT_KEY_4H] = result_4h
+        result_4h = st.session_state.get(RESULT_KEY_4H)
+        if not result_4h:
+            st.info("Belum di-scan. Tekan SCAN 4H.")
+        else:
+            _render_4h_result(result_4h)
