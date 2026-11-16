@@ -18,11 +18,11 @@ from links import external_links_html, pool_links_html
 RESULT_KEY = "pool_flow_result"
 RESULT_KEY_4H = "pool_flow_result_4h"
 BUTTON_LABEL = "SCAN BEST POOL"
-# Warna tabel (permintaan user): HIGH RISK merah, FEE PRINTER biru. Nama warna untuk st.markdown.
+# Warna tabel (permintaan user): HIGH RISK merah, SLOW FEE PRINTER biru. Nama warna untuk st.markdown.
 HIGH_RISK_COLOR = "red"
-FEE_PRINTER_COLOR = "blue"
+SLOW_FEE_PRINTER_COLOR = "blue"
 HIGH_RISK_BORDER = "rgba(239,68,68,.85)"
-FEE_PRINTER_BORDER = "rgba(59,130,246,.85)"
+SLOW_FEE_PRINTER_BORDER = "rgba(59,130,246,.85)"
 DEFAULT_BORDER = "rgba(128,128,128,.35)"
 FOUR_H_COLOR = "violet"  # bagian Deteksi 4H (permintaan user, 2026-11-15)
 FOUR_H_BORDER = "rgba(139,92,246,.85)"
@@ -70,15 +70,15 @@ def _render_scan_result(result: dict) -> None:
     # HIGH RISK FEE PRINTER: fee/TVL > 2 × dan < 20 × volatility (permintaan user, filter kedua).
     top = pf.most_crowded(result)
     top_pool = top["pool"] if top else None
-    # Warna per tabel: HIGH RISK merah, FEE PRINTER biru (judul dan border tabel).
+    # Warna per tabel: HIGH RISK merah, SLOW FEE PRINTER biru (judul dan border tabel).
     st.markdown(f"**:{HIGH_RISK_COLOR}[HIGH RISK FEE PRINTER]**")
     st.markdown(f"*· {len(high_risk)} pool · 2 × volatility < fee/TVL < 20 × volatility*")
     _render_pool_table(high_risk, "Tidak ada pool untuk HIGH RISK FEE PRINTER.", top_pool,
                        accent=HIGH_RISK_BORDER)
-    st.markdown(f"**:{FEE_PRINTER_COLOR}[FEE PRINTER]**")
+    st.markdown(f"**:{SLOW_FEE_PRINTER_COLOR}[SLOW FEE PRINTER]**")
     st.markdown(f"*· {len(band)} pool · 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility*")
-    _render_pool_table(band, "Tidak ada pool untuk FEE PRINTER.", top_pool,
-                       accent=FEE_PRINTER_BORDER)
+    _render_pool_table(band, "Tidak ada pool untuk SLOW FEE PRINTER.", top_pool,
+                       accent=SLOW_FEE_PRINTER_BORDER)
 
 
 def _filter_caption_4h() -> str:
