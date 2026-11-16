@@ -126,13 +126,13 @@ class AppMainTest(unittest.TestCase):
         next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
         markdown = " ".join(str(m.value) for m in at.markdown)
         self.assertIn(":red[HIGH RISK FEE PRINTER]", markdown)
-        self.assertIn(":blue[FEE PRINTER]", markdown)
+        self.assertIn(":blue[SLOW FEE PRINTER]", markdown)
         passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
         high = ui._result_table_html(passing, None, ui.HIGH_RISK_BORDER)
-        band = ui._result_table_html(passing, None, ui.FEE_PRINTER_BORDER)
+        band = ui._result_table_html(passing, None, ui.SLOW_FEE_PRINTER_BORDER)
         self.assertIn(f"border:2px solid {ui.HIGH_RISK_BORDER}", high)
-        self.assertNotIn(ui.FEE_PRINTER_BORDER, high)
-        self.assertIn(f"border:2px solid {ui.FEE_PRINTER_BORDER}", band)
+        self.assertNotIn(ui.SLOW_FEE_PRINTER_BORDER, high)
+        self.assertIn(f"border:2px solid {ui.SLOW_FEE_PRINTER_BORDER}", band)
 
     def test_bagian_deteksi_4h_di_paling_bawah(self):
         at = self._app()

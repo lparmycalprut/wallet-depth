@@ -615,6 +615,12 @@ class AlertTest(unittest.TestCase):
         self.assertEqual(state["alerts"], [])
         self.assertEqual(state["best_alert"]["next_no"], 1)
 
+    def test_alert_12h_memuat_rasio_avg_volume_per_tvl(self):
+        result = pf.scan_pools(listing=(PASSING_12H, [], False))
+        text = pf.apply_crowded_alert(pf.empty_state(), pf.most_crowded(result))
+        # HIGHX: avg 800 ÷ TVL 20.000 = 4,00 %
+        self.assertIn("÷ TVL 4,00%", text)
+
     def test_alert_hanya_memuat_satu_pool_paling_ramai(self):
         result = pf.scan_pools(listing=(PASSING_12H, [], False))
         state = pf.empty_state()
