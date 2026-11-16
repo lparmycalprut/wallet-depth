@@ -501,9 +501,20 @@ class Scan4hTest(unittest.TestCase):
     def test_blokir_keamanan_berlaku_di_4h(self):
         blocked = self._row4h("E" * 44, avg_vol=9000.0, avg_fee=9.0)
         blocked["token_x"]["has_mint_authority"] = True
-        ok = self._row4h("F" * 44, avg_vol=100.0, avg_fee=1.0)
+        ok = self._row4h("F" * 44, avg_vol=300.0, avg_fee=1.0)  # 1,5 % > 1 %
         result = pf.scan_4h(listing=([blocked, ok], [], False))
         self.assertEqual([r["pool"] for r in result["passing"]], ["F" * 44])
+
+    def test_4h_hanya_volume_tvl_di_atas_1_persen(self):
+        rows = [
+            self._row4h("A" * 44, avg_vol=200.0, avg_fee=5.0),    # tepat 1 % (200 ÷ 20.000) → tidak tampil
+            self._row4h("B" * 44, avg_vol=202.0, avg_fee=5.0),    # 1,01 % → tampil
+            self._row4h("C" * 44, avg_vol=50.0, avg_fee=9.0),     # 0,25 % → tidak tampil
+        ]
+        result = pf.scan_4h(listing=(rows, [], False))
+        self.assertEqual([r["pool"] for r in result["passing"]], ["B" * 44])
+        self.assertEqual(result["candidates"], 3)  # pool tetap dievaluasi, hanya tidak tampil
+        self.assertEqual(pf.FLOW_4H_MIN_VOLUME_TVL, 0.01)
 
     def test_avg_fee_tvl_ratio(self):
         self.assertAlmostEqual(pf.avg_fee_tvl_ratio({"avg_fee": 3.0, "tvl": 1500.0}), 0.002)
