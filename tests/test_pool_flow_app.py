@@ -96,8 +96,9 @@ class AppMainTest(unittest.TestCase):
         for header in ("Volatility", "Avg volume/menit (pool)",
                        "Volume 12H (pool)"):
             self.assertIn(header, body)
-        for header in ("Open pos.", "In-range", "Rasio (×)", "4H", "24H"):
+        for header in ("Open pos.", "In-range", "Rasio (×)", "24H"):
             self.assertNotIn(header, body)
+        self.assertNotIn(">4H</th>", body)  # kolom lama 4H; judul bagian Deteksi 4H tidak dihitung
         self.assertIn("Geser tabel ke kanan", " ".join(str(c.value) for c in at.caption))
 
     def test_peringatan_listing_terpotong_muncul_hanya_bila_terpotong(self):
@@ -132,6 +133,21 @@ class AppMainTest(unittest.TestCase):
         self.assertIn(f"border:2px solid {ui.HIGH_RISK_BORDER}", high)
         self.assertNotIn(ui.FEE_PRINTER_BORDER, high)
         self.assertIn(f"border:2px solid {ui.FEE_PRINTER_BORDER}", band)
+
+    def test_bagian_deteksi_4h_di_paling_bawah(self):
+        at = self._app()
+        next(b for b in at.button if b.label == "SCAN 4H").click().run()
+        self.assertFalse(at.exception)
+        markdown = " ".join(str(m.value) for m in at.markdown)
+        self.assertIn("DETEKSI 4H", markdown)
+        self.assertIn(":violet[DETEKSI 4H]", markdown)
+        html_4h = next(str(n.proto.srcdoc) for n in at.get("iframe")
+                       if "Avg fee/menit ÷ TVL" in str(n.proto.srcdoc))
+        self.assertIn("Volume 4H (pool)", html_4h)
+        self.assertIn("Avg volume/menit ÷ TVL", html_4h)
+        first_row = html_4h.split("<tbody>", 1)[1].split("</tr>", 1)[0]
+        import pool_flow_ui as ui
+        self.assertIn(ui.TOP_ROW_BG, first_row)  # pool teratas 4H berwarna kuning
 
     def test_tabel_tanpa_penandaan_api_bakar(self):
         at = self._app()
@@ -212,3 +228,4 @@ class ResultTableTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

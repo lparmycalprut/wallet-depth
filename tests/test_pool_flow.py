@@ -437,6 +437,80 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(params["filter_by"], pf.FLOW_SERVER_FILTER)
 
 
+class Scan4hTest(unittest.TestCase):
+    """Deteksi 4H (curl user terbaru): timeframe 4h, category top, tanpa sort_by."""
+
+    CURL_FILTER_4H = ("base_token_has_high_supply_concentration=false"
+                      "&&base_token_has_high_single_ownership=false"
+                      "&&pool_type=dlmm"
+                      "&&base_token_market_cap>=20000"
+                      "&&base_token_holders>=1500"
+                      "&&tvl>=10000"
+                      "&&fee_tvl_ratio>=1"
+                      "&&fee_pct>=0.5"
+                      "&&active_tvl>=10000")
+
+    def _row4h(self, pool, *, avg_vol, avg_fee, tvl=20_000.0, **over):
+        row = _row(pool, pool[:3], tvl=tvl, **over)
+        row["avg_volume"] = avg_vol
+        row["avg_fee"] = avg_fee
+        return row
+
+    def test_request_4h_sesuai_curl_user(self):
+        captured = []
+
+        def fake_get(params):
+            captured.append(dict(params))
+            return {"data": [], "has_more": False}
+
+        with mock.patch.object(pf, "_get_payload", side_effect=fake_get):
+            rows, errors, truncated = pf.fetch_listing(**pf.LISTING_4H)
+        self.assertEqual((rows, errors, truncated), ([], [], False))
+        params = captured[0]
+        self.assertEqual(list(params), ["page_size", "timeframe", "category", "filter_by"])
+        self.assertEqual(params["page_size"], 50)
+        self.assertEqual(params["timeframe"], "4h")
+        self.assertEqual(params["category"], "top")
+        self.assertEqual(params["filter_by"], self.CURL_FILTER_4H)
+        self.assertEqual(pf.FLOW_4H_SERVER_FILTER, self.CURL_FILTER_4H)
+
+    def test_12h_tetap_memakai_sort_by(self):
+        captured = []
+
+        def fake_get(params):
+            captured.append(dict(params))
+            return {"data": [], "has_more": False}
+
+        with mock.patch.object(pf, "_get_payload", side_effect=fake_get):
+            pf.fetch_listing()
+        self.assertEqual(captured[0]["sort_by"], "fee_tvl_ratio:desc")
+        self.assertEqual(captured[0]["timeframe"], "12h")
+
+    def test_urut_avg_volume_tvl_lalu_avg_fee_tvl(self):
+        rows = [
+            self._row4h("A" * 44, avg_vol=600.0, avg_fee=5.0),        # 0,030 ; fee 0,00025
+            self._row4h("B" * 44, avg_vol=2000.0, avg_fee=1.0),       # 0,100
+            self._row4h("C" * 44, avg_vol=600.0, avg_fee=9.0, tvl=10_000.0),  # 0,060
+            self._row4h("D" * 44, avg_vol=600.0, avg_fee=50.0),       # 0,030 ; fee 0,0025 (lebih besar)
+        ]
+        result = pf.scan_4h(listing=(rows, [], False))
+        self.assertEqual(result["timeframe"], "4h")
+        self.assertEqual([r["pool"] for r in result["passing"]],
+                         ["B" * 44, "C" * 44, "D" * 44, "A" * 44])
+
+    def test_blokir_keamanan_berlaku_di_4h(self):
+        blocked = self._row4h("E" * 44, avg_vol=9000.0, avg_fee=9.0)
+        blocked["token_x"]["has_mint_authority"] = True
+        ok = self._row4h("F" * 44, avg_vol=100.0, avg_fee=1.0)
+        result = pf.scan_4h(listing=([blocked, ok], [], False))
+        self.assertEqual([r["pool"] for r in result["passing"]], ["F" * 44])
+
+    def test_avg_fee_tvl_ratio(self):
+        self.assertAlmostEqual(pf.avg_fee_tvl_ratio({"avg_fee": 3.0, "tvl": 1500.0}), 0.002)
+        self.assertIsNone(pf.avg_fee_tvl_ratio({"avg_fee": None, "tvl": 1500.0}))
+        self.assertIsNone(pf.avg_fee_tvl_ratio({"avg_fee": 3.0, "tvl": 0}))
+
+
 class PaginationTest(unittest.TestCase):
     """Paginasi cursor: halaman berikutnya diminta dengan ``after_key``."""
 
