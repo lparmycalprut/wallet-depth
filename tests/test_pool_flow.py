@@ -501,20 +501,42 @@ class Scan4hTest(unittest.TestCase):
     def test_blokir_keamanan_berlaku_di_4h(self):
         blocked = self._row4h("E" * 44, avg_vol=9000.0, avg_fee=9.0)
         blocked["token_x"]["has_mint_authority"] = True
-        ok = self._row4h("F" * 44, avg_vol=300.0, avg_fee=1.0)  # 1,5 % > 1 %
+        ok = self._row4h("F" * 44, avg_vol=600.0, avg_fee=1.0)  # 3 % > 2 %
         result = pf.scan_4h(listing=([blocked, ok], [], False))
         self.assertEqual([r["pool"] for r in result["passing"]], ["F" * 44])
 
-    def test_4h_hanya_volume_tvl_di_atas_1_persen(self):
+    def test_4h_hanya_volume_tvl_di_atas_2_persen(self):
         rows = [
-            self._row4h("A" * 44, avg_vol=200.0, avg_fee=5.0),    # tepat 1 % (200 ÷ 20.000) → tidak tampil
-            self._row4h("B" * 44, avg_vol=202.0, avg_fee=5.0),    # 1,01 % → tampil
+            self._row4h("A" * 44, avg_vol=400.0, avg_fee=5.0),    # tepat 2 % (400 ÷ 20.000) → tidak tampil
+            self._row4h("B" * 44, avg_vol=404.0, avg_fee=5.0),    # 2,02 % → tampil
             self._row4h("C" * 44, avg_vol=50.0, avg_fee=9.0),     # 0,25 % → tidak tampil
         ]
         result = pf.scan_4h(listing=(rows, [], False))
         self.assertEqual([r["pool"] for r in result["passing"]], ["B" * 44])
         self.assertEqual(result["candidates"], 3)  # pool tetap dievaluasi, hanya tidak tampil
-        self.assertEqual(pf.FLOW_4H_MIN_VOLUME_TVL, 0.01)
+        self.assertEqual(pf.FLOW_4H_MIN_VOLUME_TVL, 0.02)
+
+    def test_ringkasan_best_pool_dan_4h_di_atas_5_persen(self):
+        high = [_fp("G" * 44, fee_tvl=5.0, vol=1.0), _fp("H" * 44, fee_tvl=5.0, vol=1.0),
+                _fp("E" * 44, fee_tvl=5.0, vol=1.0), _fp("Z" * 44, fee_tvl=1.0, vol=1.0)]
+        result_12h = pf.scan_pools(listing=(high, [], False))
+        rows_4h = [
+            self._row4h("G" * 44, avg_vol=1200.0, avg_fee=1.0),  # 6 %, di HIGH RISK → BEST
+            self._row4h("H" * 44, avg_vol=600.0, avg_fee=1.0),   # 3 %, di HIGH RISK → BEST
+            self._row4h("Y" * 44, avg_vol=2000.0, avg_fee=1.0),  # 10 %, tidak di HIGH RISK → 4H > 5 %
+            self._row4h("X" * 44, avg_vol=500.0, avg_fee=1.0),   # 2,5 %, bukan keduanya → tidak masuk
+            self._row4h("E" * 44, avg_vol=200.0, avg_fee=1.0),   # 1 %, di bawah 2 % → tidak tampil di 4H
+        ]
+        result_4h = pf.scan_4h(listing=(rows_4h, [], False))
+        summary = pf.summary_rows(result_12h, result_4h)
+        self.assertEqual([(r["pool"], label) for r, label in summary],
+                         [("G" * 44, pf.SUMMARY_BEST), ("H" * 44, pf.SUMMARY_BEST),
+                          ("Y" * 44, pf.SUMMARY_4H)])
+
+    def test_ringkasan_kosong_tanpa_kecocokan(self):
+        result_12h = pf.scan_pools(listing=([], [], False))
+        result_4h = pf.scan_4h(listing=([self._row4h("X" * 44, avg_vol=500.0, avg_fee=1.0)], [], False))
+        self.assertEqual(pf.summary_rows(result_12h, result_4h), [])
 
     def test_avg_fee_tvl_ratio(self):
         self.assertAlmostEqual(pf.avg_fee_tvl_ratio({"avg_fee": 3.0, "tvl": 1500.0}), 0.002)

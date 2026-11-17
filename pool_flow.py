@@ -61,7 +61,11 @@ FLOW_SERVER_FILTER = (
 FLOW_4H_TIMEFRAME = "4h"
 FLOW_4H_CATEGORY = "top"
 # Tabel 4H hanya memuat pool dengan avg volume/menit ÷ TVL di atas ini (permintaan user, 2026-11-15).
-FLOW_4H_MIN_VOLUME_TVL = 0.01  # 1 %, batas eksklusif: tepat 1 % tidak tampil
+FLOW_4H_MIN_VOLUME_TVL = 0.02  # 2 %, batas eksklusif: tepat 2 % tidak tampil (2026-11-15, user)
+# Ringkasan (permintaan user, 2026-11-15): kriteria 1 = avg volume/menit ÷ TVL 4H di atas 5 %.
+FLOW_SUMMARY_4H_MIN = 0.05
+SUMMARY_BEST = "BEST POOL"
+SUMMARY_4H = "4H > 5%"
 FLOW_4H_SERVER_FILTER = (
     "base_token_has_high_supply_concentration=false"
     "&&base_token_has_high_single_ownership=false"
@@ -385,6 +389,25 @@ def sort_key_4h(result: dict):
     return (-(avg_volume_tvl_ratio(result) or 0.0), -(avg_fee_tvl_ratio(result) or 0.0))
 
 
+def summary_rows(result_12h: dict, result_4h: dict) -> list:
+    """Ringkasan: daftar (row, label), urut seperti tabel 4H.
+
+    - ``BEST POOL``: pool ada di HIGH RISK FEE PRINTER (12H) DAN di tabel 4H (kriteria 2).
+    - ``4H > 5%``: pool di tabel 4H dengan avg volume/menit ÷ TVL di atas 5 % (kriteria 1).
+    Pool yang memenuhi keduanya berlabel BEST POOL. Label BEST POOL tampil lebih dulu.
+    """
+    fee_printer, _band = fee_printer_split(result_12h.get("passing") or [])
+    high_risk_pools = {row["pool"] for row in fee_printer_high_risk(fee_printer)}
+    best: list = []
+    others: list = []
+    for row in result_4h.get("passing") or []:  # tabel 4H: sudah > 2 % dan sudah urut
+        if row["pool"] in high_risk_pools:
+            best.append((row, SUMMARY_BEST))
+        elif (avg_volume_tvl_ratio(row) or 0.0) > FLOW_SUMMARY_4H_MIN:
+            others.append((row, SUMMARY_4H))
+    return best + others
+
+
 def fee_printer_split(passing: list) -> tuple[list, list]:
     """Pisahkan pool menjadi (fee_printer, band) memakai fee/TVL vs volatility.
 
@@ -481,7 +504,7 @@ def scan_4h(max_pages: int = FLOW_MAX_PAGES, *, listing: tuple | None = None) ->
     """Deteksi 4H: listing 4h (kategori top, filter 4H) → urut avg volume/menit ÷ TVL, lalu avg fee/menit ÷ TVL.
 
     Aturan keamanan yang sama dengan 12H. Pool hanya tampil bila avg volume/menit ÷ TVL
-    > ``FLOW_4H_MIN_VOLUME_TVL`` (1 %). ``listing`` untuk tes tanpa jaringan.
+    > ``FLOW_4H_MIN_VOLUME_TVL`` (2 %). ``listing`` untuk tes tanpa jaringan.
     """
     rows, errors, truncated = (listing if listing is not None
                                else fetch_listing(max_pages, **LISTING_4H))
