@@ -523,8 +523,9 @@ class Scan4hTest(unittest.TestCase):
         rows_4h = [
             self._row4h("G" * 44, avg_vol=1200.0, avg_fee=1.0),  # 6 %, di HIGH RISK → BEST
             self._row4h("H" * 44, avg_vol=600.0, avg_fee=1.0),   # 3 %, di HIGH RISK → BEST
-            self._row4h("Y" * 44, avg_vol=2000.0, avg_fee=1.0),  # 10 %, tidak di HIGH RISK → 4H > 5 %
+            self._row4h("Y" * 44, avg_vol=2000.0, avg_fee=1.0),  # 10 %, tepat di batas, tidak di HIGH RISK → 4H ≥ 10 %
             self._row4h("X" * 44, avg_vol=500.0, avg_fee=1.0),   # 2,5 %, bukan keduanya → tidak masuk
+            self._row4h("W" * 44, avg_vol=1800.0, avg_fee=1.0),  # 9 %, di bawah 10 % → tidak masuk
             self._row4h("E" * 44, avg_vol=200.0, avg_fee=1.0),   # 1 %, di bawah 2 % → tidak tampil di 4H
         ]
         result_4h = pf.scan_4h(listing=(rows_4h, [], False))
@@ -532,6 +533,18 @@ class Scan4hTest(unittest.TestCase):
         self.assertEqual([(r["pool"], label) for r, label in summary],
                          [("G" * 44, pf.SUMMARY_BEST), ("H" * 44, pf.SUMMARY_BEST),
                           ("Y" * 44, pf.SUMMARY_4H)])
+
+    def test_ringkasan_4h_batas_minimal_10_persen_inklusif(self):
+        result_12h = pf.scan_pools(listing=([], [], False))
+        rows_4h = [
+            self._row4h("P" * 44, avg_vol=2000.0, avg_fee=1.0),  # tepat 10 % → tampil
+            self._row4h("Q" * 44, avg_vol=1800.0, avg_fee=1.0),  # 9 % → tidak
+        ]
+        result_4h = pf.scan_4h(listing=(rows_4h, [], False))
+        summary = pf.summary_rows(result_12h, result_4h)
+        self.assertEqual([(r["pool"], label) for r, label in summary],
+                         [("P" * 44, pf.SUMMARY_4H)])
+        self.assertEqual(pf.FLOW_SUMMARY_4H_MIN, 0.10)
 
     def test_ringkasan_kosong_tanpa_kecocokan(self):
         result_12h = pf.scan_pools(listing=([], [], False))
