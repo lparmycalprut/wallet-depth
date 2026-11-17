@@ -62,10 +62,10 @@ FLOW_4H_TIMEFRAME = "4h"
 FLOW_4H_CATEGORY = "top"
 # Tabel 4H hanya memuat pool dengan avg volume/menit ÷ TVL di atas ini (permintaan user, 2026-11-15).
 FLOW_4H_MIN_VOLUME_TVL = 0.02  # 2 %, batas eksklusif: tepat 2 % tidak tampil (2026-11-15, user)
-# Ringkasan (permintaan user, 2026-11-15): kriteria 1 = avg volume/menit ÷ TVL 4H di atas 5 %.
-FLOW_SUMMARY_4H_MIN = 0.05
+# Ringkasan (permintaan user): kriteria 1 = avg volume/menit ÷ TVL 4H minimal 10 % (inklusif, 2026-11-18).
+FLOW_SUMMARY_4H_MIN = 0.10
 SUMMARY_BEST = "BEST POOL"
-SUMMARY_4H = "4H > 5%"
+SUMMARY_4H = "4H ≥ 10%"
 FLOW_4H_SERVER_FILTER = (
     "base_token_has_high_supply_concentration=false"
     "&&base_token_has_high_single_ownership=false"
@@ -393,7 +393,7 @@ def summary_rows(result_12h: dict, result_4h: dict) -> list:
     """Ringkasan: daftar (row, label), urut seperti tabel 4H.
 
     - ``BEST POOL``: pool ada di HIGH RISK FEE PRINTER (12H) DAN di tabel 4H (kriteria 2).
-    - ``4H > 5%``: pool di tabel 4H dengan avg volume/menit ÷ TVL di atas 5 % (kriteria 1).
+    - ``4H ≥ 10%``: pool di tabel 4H dengan avg volume/menit ÷ TVL minimal 10 % (kriteria 1).
     Pool yang memenuhi keduanya berlabel BEST POOL. Label BEST POOL tampil lebih dulu.
     """
     fee_printer, _band = fee_printer_split(result_12h.get("passing") or [])
@@ -403,7 +403,7 @@ def summary_rows(result_12h: dict, result_4h: dict) -> list:
     for row in result_4h.get("passing") or []:  # tabel 4H: sudah > 2 % dan sudah urut
         if row["pool"] in high_risk_pools:
             best.append((row, SUMMARY_BEST))
-        elif (avg_volume_tvl_ratio(row) or 0.0) > FLOW_SUMMARY_4H_MIN:
+        elif (avg_volume_tvl_ratio(row) or 0.0) >= FLOW_SUMMARY_4H_MIN:
             others.append((row, SUMMARY_4H))
     return best + others
 
