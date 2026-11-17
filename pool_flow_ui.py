@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""UI main app: 🏆 SCAN BEST POOL (timeframe 12H).
+"""UI main app: 🏆 Scan Best Pool (12H) + 🕓 Deteksi 4H, satu tombol SCAN ALL.
 
 Logika ada di ``pool_flow.py``; modul ini hanya menampilkan hasil scan.
 Scan tidak menulis berkas apa pun.
@@ -17,7 +17,7 @@ from links import external_links_html, pool_links_html
 
 RESULT_KEY = "pool_flow_result"
 RESULT_KEY_4H = "pool_flow_result_4h"
-BUTTON_LABEL = "SCAN BEST POOL"
+BUTTON_LABEL = "SCAN ALL"
 # Warna tabel (permintaan user): HIGH RISK merah, SLOW FEE PRINTER biru. Nama warna untuk st.markdown.
 HIGH_RISK_COLOR = "red"
 SLOW_FEE_PRINTER_COLOR = "blue"
@@ -84,7 +84,7 @@ def _render_scan_result(result: dict) -> None:
 def _filter_caption_4h() -> str:
     return ("Timeframe 4H · kategori top · dlmm · MC ≥ $20K · holders ≥ 1.500 · TVL ≥ $10K · "
             "active TVL ≥ $10K · fee/TVL ≥ 1 · fee ≥ 0.5% · tanpa konsentrasi/kepemilikan tunggal tinggi · "
-            "avg volume/menit ÷ TVL > 1% · urut avg volume/menit ÷ TVL, lalu avg fee/menit ÷ TVL terbesar.")
+            "avg volume/menit ÷ TVL > 2% · urut avg volume/menit ÷ TVL, lalu avg fee/menit ÷ TVL terbesar.")
 
 
 def _render_4h_result(result: dict) -> None:
@@ -109,6 +109,45 @@ def _render_4h_result(result: dict) -> None:
     st.markdown(f"*· {len(passing)} pool · urut avg volume/menit ÷ TVL, lalu avg fee/menit ÷ TVL*")
     _render_pool_table(passing, "Tidak ada pool untuk DETEKSI 4H.", passing[0]["pool"],
                        accent=FOUR_H_BORDER, builder=_result_table_4h_html)
+
+
+SUMMARY_HEADERS = ["Token / pool", "Kriteria", "Avg volume/menit ÷ TVL (4H)"]
+SUMMARY_BORDER = "rgba(34,197,94,.85)"  # hijau: ringkasan (permintaan user, 2026-11-15)
+_SUMMARY_BADGE = {
+    pf.SUMMARY_BEST: "background:rgba(34,197,94,.28);color:inherit",
+    pf.SUMMARY_4H: "background:rgba(139,92,246,.28);color:inherit",
+}
+
+
+def _summary_table_html(entries: list) -> str:
+    body = []
+    for row, label in entries:
+        badge = (f"<span style='{_SUMMARY_BADGE.get(label, '')};padding:2px 10px;"
+                 f"border-radius:999px;font-weight:600;white-space:nowrap'>"
+                 f"{_html.escape(label)}</span>")
+        cells = [
+            _cell_token_html(row),
+            badge,
+            _html.escape(pf.fmt_ratio_pct(pf.avg_volume_tvl_ratio(row), digits=3)),
+        ]
+        body.append((cells, False))
+    return _table_html(SUMMARY_HEADERS, body, SUMMARY_BORDER)
+
+
+def _render_summary(result: dict, result_4h: dict) -> None:
+    import streamlit as st
+
+    entries = pf.summary_rows(result, result_4h)
+    st.markdown("**:green[RINGKASAN]**")
+    st.caption("BEST POOL = ada di HIGH RISK FEE PRINTER (12H) dan di DETEKSI 4H. "
+               "4H > 5% = avg volume/menit ÷ TVL di DETEKSI 4H di atas 5%.")
+    if not entries:
+        st.info("Belum ada pool yang memenuhi kriteria ringkasan.")
+        return
+    document = ("<!doctype html><html><head><meta charset=\"utf-8\">"
+                f"<style>{_COPY_CSS}</style></head><body>"
+                f"{_summary_table_html(entries)}{_COPY_SCRIPT}</body></html>")
+    st.iframe(document, height=_result_height(len(entries)), width="stretch")
 
 
 def _render_pool_table(rows: list, empty_text: str, top_pool: str | None = None,
@@ -286,26 +325,22 @@ def render_pool_flow_page() -> None:
         st.caption(_filter_caption())
         if st.button(BUTTON_LABEL, type="primary", key="pool_flow_scan",
                      use_container_width=True):
-            with st.spinner("Memindai listing Meteora (12H)…"):
-                result = pf.scan_pools()
-            st.session_state[RESULT_KEY] = result
+            with st.spinner("Memindai listing Meteora (12H dan 4H)…"):
+                st.session_state[RESULT_KEY] = pf.scan_pools()
+                st.session_state[RESULT_KEY_4H] = pf.scan_4h()
         result = st.session_state.get(RESULT_KEY)
-        if not result:
-            st.info("Belum di-scan. Tekan SCAN BEST POOL.")
+        result_4h = st.session_state.get(RESULT_KEY_4H)
+        if not result or not result_4h:
+            st.info("Belum di-scan. Tekan SCAN ALL.")
         else:
+            _render_summary(result, result_4h)
             _render_scan_result(result)
 
-    # Deteksi 4H: bagian terpisah di paling bawah (permintaan user, 2026-11-15).
+    # Deteksi 4H: bagian terpisah di paling bawah, tanpa tombol sendiri (SCAN ALL).
     with st.container(border=True):
         st.markdown("## 🕓 Deteksi 4H")
         st.caption(_filter_caption_4h())
-        if st.button("SCAN 4H", type="primary", key="pool_flow_scan_4h",
-                     use_container_width=True):
-            with st.spinner("Memindai listing Meteora (4H)…"):
-                result_4h = pf.scan_4h()
-            st.session_state[RESULT_KEY_4H] = result_4h
-        result_4h = st.session_state.get(RESULT_KEY_4H)
         if not result_4h:
-            st.info("Belum di-scan. Tekan SCAN 4H.")
+            st.info("Belum di-scan. Tekan SCAN ALL.")
         else:
             _render_4h_result(result_4h)

@@ -48,13 +48,33 @@ class AppMainTest(unittest.TestCase):
         parts += [str(node.proto.srcdoc) for node in at.get("iframe")]
         return "\n".join(parts)
 
+    def test_ringkasan_di_bawah_tombol_dan_di_atas_tabel_12h(self):
+        at = self._app()
+        next(b for b in at.button if b.label == "SCAN ALL").click().run()
+        self.assertFalse(at.exception)
+        summary = next(str(n.proto.srcdoc) for n in at.get("iframe")
+                       if "Kriteria" in str(n.proto.srcdoc))
+        self.assertIn("BEST POOL", summary)  # HIGHX: ada di HIGH RISK 12H dan di 4H (4 % > 2 %)
+        self.assertIn(HIGH_POOL, summary)
+        # urutan di halaman: RINGKASAN sebelum HIGH RISK FEE PRINTER, dan Deteksi 4H paling bawah
+        order = [str(m.value) for m in at.markdown]
+        idx = {key: next(i for i, v in enumerate(order) if key in v)
+               for key in ("RINGKASAN", "HIGH RISK FEE PRINTER", "Deteksi 4H")}
+        self.assertLess(idx["RINGKASAN"], idx["HIGH RISK FEE PRINTER"])
+        self.assertLess(idx["HIGH RISK FEE PRINTER"], idx["Deteksi 4H"])
+
     def test_tombol_copy_ca_tepat_di_samping_hawkfi(self):
         at = self._app()
-        next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
+        next(b for b in at.button if b.label == "SCAN ALL").click().run()
         self.assertFalse(at.exception)
         passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
+        passing_4h = pf.scan_4h(listing=(PASSING_12H, [], False))["passing"]
+        summary = pf.summary_rows(pf.scan_pools(listing=(PASSING_12H, [], False)),
+                                  pf.scan_4h(listing=(PASSING_12H, [], False)))
         doc = self._body(at)
-        self.assertEqual(doc.count('class="copy-ca"'), len(passing))
+        # tombol CA: tabel 12H + tabel 4H + ringkasan
+        self.assertEqual(doc.count('class="copy-ca"'),
+                         len(passing) + len(passing_4h) + len(summary))
         for row in passing:
             self.assertTrue(row["mint"])
             self.assertIn(f'data-ca="{row["mint"]}"', doc)
@@ -67,7 +87,7 @@ class AppMainTest(unittest.TestCase):
     def test_halaman_utama_hanya_scan_best_pool(self):
         at = self._app()
         self.assertFalse(at.exception)
-        self.assertIn("SCAN BEST POOL", [b.label for b in at.button])
+        self.assertIn("SCAN ALL", [b.label for b in at.button])
         body = self._body(at)
         self.assertNotIn("Watchlist", body)
         self.assertNotIn("Cek LP Keluar", body)
@@ -75,7 +95,7 @@ class AppMainTest(unittest.TestCase):
 
     def test_scan_menampilkan_semua_pool_dari_listing_satu_tabel(self):
         at = self._app()
-        next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
+        next(b for b in at.button if b.label == "SCAN ALL").click().run()
         self.assertFalse(at.exception)
         body = self._body(at)
         self.assertIn(LOW_POOL, body)
@@ -84,11 +104,12 @@ class AppMainTest(unittest.TestCase):
         self.assertIn("Timeframe 12H", " ".join(str(c.value) for c in at.caption))
         markdown = " ".join(str(m.value) for m in at.markdown)
         self.assertNotIn("LOW RISK", markdown)  # tabel LOW RISK sudah dihapus (2026-11-14)
-        self.assertEqual(len(at.get("iframe")), 1)  # satu tabel untuk semua pool
+        twelve = [n for n in at.get("iframe") if "Volume 12H (pool)" in str(n.proto.srcdoc)]
+        self.assertTrue(twelve)  # tabel 12H (HIGH RISK dan SLOW FEE PRINTER)
 
     def test_hasil_scan_berupa_tabel_html_dengan_scroll_horizontal(self):
         at = self._app()
-        next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
+        next(b for b in at.button if b.label == "SCAN ALL").click().run()
         body = self._body(at)
         self.assertIn("overflow-x:auto", body)
         self.assertIn("<table", body)
@@ -105,17 +126,17 @@ class AppMainTest(unittest.TestCase):
         at = self._app()
         with mock.patch.object(pf, "fetch_listing",
                                side_effect=lambda *a, **k: (PASSING_12H, [], True)):
-            next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
+            next(b for b in at.button if b.label == "SCAN ALL").click().run()
         self.assertTrue(any("Listing belum lengkap" in str(w.value) for w in at.warning))
 
     def test_tanpa_terpotong_tidak_ada_peringatan(self):
         at = self._app()
-        next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
+        next(b for b in at.button if b.label == "SCAN ALL").click().run()
         self.assertFalse(any("Listing belum lengkap" in str(w.value) for w in at.warning))
 
     def test_scan_tidak_menulis_state_dan_tidak_ada_tombol_watchlist(self):
         at = self._app()
-        next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
+        next(b for b in at.button if b.label == "SCAN ALL").click().run()
         self.assertFalse(at.exception)
         self.assertFalse(self.state_path.exists())
         self.assertFalse([b for b in at.button if str(b.key).startswith("pf_add_")])
@@ -123,7 +144,7 @@ class AppMainTest(unittest.TestCase):
     def test_judul_dan_border_tabel_berbeda_warna(self):
         import pool_flow_ui as ui
         at = self._app()
-        next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
+        next(b for b in at.button if b.label == "SCAN ALL").click().run()
         markdown = " ".join(str(m.value) for m in at.markdown)
         self.assertIn(":red[HIGH RISK FEE PRINTER]", markdown)
         self.assertIn(":blue[SLOW FEE PRINTER]", markdown)
@@ -136,13 +157,13 @@ class AppMainTest(unittest.TestCase):
 
     def test_bagian_deteksi_4h_di_paling_bawah(self):
         at = self._app()
-        next(b for b in at.button if b.label == "SCAN 4H").click().run()
+        next(b for b in at.button if b.label == "SCAN ALL").click().run()
         self.assertFalse(at.exception)
         markdown = " ".join(str(m.value) for m in at.markdown)
         self.assertIn("DETEKSI 4H", markdown)
         self.assertIn(":violet[DETEKSI 4H]", markdown)
         html_4h = next(str(n.proto.srcdoc) for n in at.get("iframe")
-                       if "Avg fee/menit ÷ TVL" in str(n.proto.srcdoc))
+                       if "Volume 4H (pool)" in str(n.proto.srcdoc))
         self.assertIn("Volume 4H (pool)", html_4h)
         self.assertIn("Avg volume/menit ÷ TVL", html_4h)
         first_row = html_4h.split("<tbody>", 1)[1].split("</tr>", 1)[0]
@@ -151,7 +172,7 @@ class AppMainTest(unittest.TestCase):
 
     def test_tabel_tanpa_penandaan_api_bakar(self):
         at = self._app()
-        next(b for b in at.button if b.label == "SCAN BEST POOL").click().run()
+        next(b for b in at.button if b.label == "SCAN ALL").click().run()
         body = self._body(at)
         self.assertNotIn("🔥", body)
         for node in at.get("iframe"):
