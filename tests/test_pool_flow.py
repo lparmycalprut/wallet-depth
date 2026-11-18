@@ -286,19 +286,19 @@ class HighRiskFeePrinterTest(unittest.TestCase):
         return pf.fee_printer_high_risk(fee_printer)
 
     def test_hanya_rentang_2_sampai_10_kali_volatility(self):
-        rows = [_fp("A" * 44, fee_tvl=2.5, vol=1.0),    # 2,5× → masuk
-                _fp("B" * 44, fee_tvl=9.9, vol=1.0),    # 9,9× → masuk
-                _fp("C" * 44, fee_tvl=10.0, vol=1.0),   # tepat 10× → tidak masuk
-                _fp("D" * 44, fee_tvl=35.0, vol=1.0),   # > 10× → tidak masuk
-                _fp("E" * 44, fee_tvl=2.0, vol=1.0),    # tepat 2× → bukan FEE PRINTER (SPOT)
-                _fp("F" * 44, fee_tvl=1.5, vol=1.0)]    # band, bukan HIGH RISK
+        rows = [_fp("A" * 44, fee_tvl=25.0, vol=10.0),   # 2,5× → masuk
+                _fp("B" * 44, fee_tvl=99.0, vol=10.0),   # 9,9× → masuk
+                _fp("C" * 44, fee_tvl=100.0, vol=10.0),  # tepat 10× → tidak masuk
+                _fp("D" * 44, fee_tvl=350.0, vol=10.0),  # > 10× → tidak masuk
+                _fp("E" * 44, fee_tvl=20.0, vol=10.0),   # tepat 2× → bukan FEE PRINTER (SPOT)
+                _fp("F" * 44, fee_tvl=15.0, vol=10.0)]   # band, bukan HIGH RISK
         high = self._high(*rows)
         self.assertEqual({r["pool"] for r in high}, {"A" * 44, "B" * 44})
 
     def test_urut_rasio_avg_volume_per_tvl(self):
-        rows = [_fp("A" * 44, fee_tvl=3.0, vol=1.0),
-                _fp("B" * 44, fee_tvl=5.0, vol=1.0),
-                _fp("C" * 44, fee_tvl=4.0, vol=1.0)]
+        rows = [_fp("A" * 44, fee_tvl=30.0, vol=10.0),
+                _fp("B" * 44, fee_tvl=50.0, vol=10.0),
+                _fp("C" * 44, fee_tvl=40.0, vol=10.0)]
         for r, avg in zip(rows, (600.0, 2000.0, 300.0)):
             r["avg_volume"] = avg
         self.assertEqual([r["pool"] for r in self._high(*rows)],
@@ -318,7 +318,7 @@ class SlowFeePrinterAgeTest(unittest.TestCase):
         return pf.fee_printer_split(result["passing"], now_ms=self.NOW)[1]
 
     def _aged(self, pool, hours):
-        row = _fp(pool, fee_tvl=1.0, vol=1.0)  # band: 0,5 ≤ 1 ≤ 2
+        row = _fp(pool, fee_tvl=10.0, vol=10.0)  # band: 0,5 ≤ 1 ≤ 2 (fee ≥ 5 %)
         row["token_x"]["created_at"] = self.NOW - hours * 3_600_000
         return row
 
@@ -332,12 +332,12 @@ class SlowFeePrinterAgeTest(unittest.TestCase):
         self.assertEqual([r["pool"] for r in self._band(self._aged("W" * 44, 25.0))], ["W" * 44])
 
     def test_tanpa_data_umur_tidak_masuk_slow(self):
-        row = _fp("V" * 44, fee_tvl=1.0, vol=1.0)
+        row = _fp("V" * 44, fee_tvl=10.0, vol=10.0)
         row["token_x"].pop("created_at", None)
         self.assertEqual(self._band(row), [])
 
     def test_fee_printer_tidak_terpengaruh_umur(self):
-        young = _fp("U" * 44, fee_tvl=5.0, vol=1.0)  # 5 > 2 × 1 → FEE PRINTER, bukan band
+        young = _fp("U" * 44, fee_tvl=50.0, vol=10.0)  # 50 > 2 × 10 → FEE PRINTER, bukan band
         young["token_x"]["created_at"] = self.NOW - 1 * 3_600_000
         result = pf.scan_pools(listing=([young], [], False))
         spot, band = pf.fee_printer_split(result["passing"], now_ms=self.NOW)
@@ -346,10 +346,10 @@ class SlowFeePrinterAgeTest(unittest.TestCase):
 
     def test_slow_diurutkan_avg_fee_per_menit_per_tvl(self):
         """Urut SLOW: avg fee/menit ÷ TVL terbesar dulu, walau avg volume-nya lebih kecil."""
-        busy = _fp("A" * 44, fee_tvl=1.0, vol=1.0)   # avg volume besar, avg fee kecil
+        busy = _fp("A" * 44, fee_tvl=10.0, vol=10.0)  # avg volume besar, avg fee kecil
         busy["avg_volume"] = 5000.0
         busy["avg_fee"] = 1.0
-        fee_rich = _fp("B" * 44, fee_tvl=1.0, vol=1.0)  # avg volume kecil, avg fee besar
+        fee_rich = _fp("B" * 44, fee_tvl=10.0, vol=10.0)  # avg volume kecil, avg fee besar
         fee_rich["avg_volume"] = 100.0
         fee_rich["avg_fee"] = 50.0
         result = pf.scan_pools(listing=([busy, fee_rich], [], False))
@@ -359,6 +359,37 @@ class SlowFeePrinterAgeTest(unittest.TestCase):
     def test_evaluate_pool_membawa_umur_token(self):
         self.assertEqual(pf.evaluate_pool(_fp("T" * 44, fee_tvl=1.0, vol=1.0))["token_created_at"],
                          OLD_TOKEN_MS)
+
+
+class FeeTvlMinTest(unittest.TestCase):
+    """Tabel 12H hanya pool dengan fee/TVL minimal 5 % (permintaan user, 2026-11-19)."""
+
+    def test_fee_tvl_di_bawah_5_persen_tidak_lolos(self):
+        result = pf.scan_pools(listing=([_row("L" * 44, "LOWF", ftvl=4.9)], [], False))
+        self.assertEqual(result["passing"], [])
+        (item,) = result["results"]
+        self.assertFalse(item["passes"])
+        self.assertIn("fee/TVL di bawah 5%", item["reasons"])
+
+    def test_fee_tvl_tepat_5_persen_tampil(self):
+        result = pf.scan_pools(listing=([_row("E" * 44, "EXACT", ftvl=5.0)], [], False))
+        self.assertEqual([r["symbol"] for r in result["passing"]], ["EXACT"])
+
+    def test_scan_4h_tidak_terpengaruh(self):
+        row = _row("Q" * 44, "QUICK", tvl=20_000.0, ftvl=4.0)
+        row["avg_volume"] = 1000.0  # 5 % > 2 %
+        row["avg_fee"] = 1.0
+        result = pf.scan_4h(listing=([row], [], False))
+        self.assertEqual([r["symbol"] for r in result["passing"]], ["QUICK"])
+
+    def test_pool_di_bawah_5_persen_tidak_jadi_best_pool(self):
+        low = _row("H" * 44, "HILOW", vol=1.0, ftvl=4.9)  # HIGH RISK band, tapi fee < 5 %
+        result_12h = pf.scan_pools(listing=([low], [], False))
+        row_4h = _row("H" * 44, "HILOW", tvl=20_000.0, ftvl=4.9)
+        row_4h["avg_volume"] = 1000.0
+        row_4h["avg_fee"] = 1.0
+        result_4h = pf.scan_4h(listing=([row_4h], [], False))
+        self.assertEqual(pf.summary_rows(result_12h, result_4h), [])
 
 
 class VeryHighRiskTest(unittest.TestCase):
@@ -377,9 +408,9 @@ class VeryHighRiskTest(unittest.TestCase):
         self.assertEqual({r["pool"] for r in self._very(*rows)}, {"A" * 44, "B" * 44})
 
     def test_tidak_tumpang_tindih_dengan_high_risk(self):
-        rows = [_fp("A" * 44, fee_tvl=20.0, vol=1.0),
-                _fp("B" * 44, fee_tvl=9.9, vol=1.0),
-                _fp("C" * 44, fee_tvl=3.0, vol=1.0)]
+        rows = [_fp("A" * 44, fee_tvl=200.0, vol=10.0),
+                _fp("B" * 44, fee_tvl=99.0, vol=10.0),
+                _fp("C" * 44, fee_tvl=30.0, vol=10.0)]
         result = pf.scan_pools(listing=(rows, [], False))
         fee_printer, _band = pf.fee_printer_split(result["passing"])
         high = {r["pool"] for r in pf.fee_printer_high_risk(fee_printer)}
@@ -407,24 +438,24 @@ class FeePrinterSplitTest(unittest.TestCase):
         return pf.fee_printer_split(result["passing"])
 
     def test_fee_tvl_di_atas_2x_volatility_masuk_fee_printer(self):
-        spot, band = self._split(_fp("1" * 44, fee_tvl=2.5, vol=1.0))
+        spot, band = self._split(_fp("1" * 44, fee_tvl=25.0, vol=10.0))
         self.assertEqual([r["pool"] for r in spot], ["1" * 44])
         self.assertEqual(band, [])
 
     def test_batas_tepat_2x_masuk_tabel_kedua(self):
         # contoh user: volatility 1 %, fee/TVL 2 % -> tabel kedua
-        spot, band = self._split(_fp("2" * 44, fee_tvl=2.0, vol=1.0))
+        spot, band = self._split(_fp("2" * 44, fee_tvl=20.0, vol=10.0))
         self.assertEqual(spot, [])
         self.assertEqual([r["pool"] for r in band], ["2" * 44])
 
     def test_batas_tepat_0_5x_masuk_tabel_kedua(self):
         # contoh user: volatility 1 %, fee/TVL 0,5 % -> tabel kedua
-        spot, band = self._split(_fp("3" * 44, fee_tvl=0.5, vol=1.0))
+        spot, band = self._split(_fp("3" * 44, fee_tvl=5.0, vol=10.0))
         self.assertEqual(spot, [])
         self.assertEqual([r["pool"] for r in band], ["3" * 44])
 
     def test_fee_tvl_di_bawah_0_5x_tidak_masuk_tabel_mana_pun(self):
-        spot, band = self._split(_fp("4" * 44, fee_tvl=0.4, vol=1.0))
+        spot, band = self._split(_fp("4" * 44, fee_tvl=8.0, vol=20.0))  # 0,4× < 0,5×
         self.assertEqual((spot, band), ([], []))
 
     def test_volatility_tidak_terukur_tidak_masuk_tabel_mana_pun(self):
@@ -436,16 +467,17 @@ class FeePrinterSplitTest(unittest.TestCase):
         self.assertEqual(self._split(_fp("7" * 44, fee_tvl=None, vol=1.0)), ([], []))
 
     def test_volatility_0_01_persen_masih_terukur(self):
-        spot, band = self._split(_fp("8" * 44, fee_tvl=0.02, vol=0.01))
-        self.assertEqual(spot, [])
-        self.assertEqual([r["pool"] for r in band], ["8" * 44])
+        # volatility tepat 0,01 % terukur → fee 5 % > 2 × 0,01 % masuk FEE PRINTER (SPOT)
+        spot, band = self._split(_fp("8" * 44, fee_tvl=5.0, vol=0.01))
+        self.assertEqual([r["pool"] for r in spot], ["8" * 44])
+        self.assertEqual(band, [])
 
     def test_urut_di_tiap_tabel_rasio_avg_volume_per_tvl(self):
         # TVL 20.000 untuk semua: rasio = avg volume ÷ 20.000
-        rows = [_fp("A" * 44, fee_tvl=3.0, vol=1.0),   # avg 600  -> 0,030
-                _fp("B" * 44, fee_tvl=5.0, vol=1.0),   # avg 2000 -> 0,100
-                _fp("C" * 44, fee_tvl=1.5, vol=1.0),   # avg 300  -> 0,015
-                _fp("D" * 44, fee_tvl=1.0, vol=1.0)]   # avg 500  -> 0,025
+        rows = [_fp("A" * 44, fee_tvl=30.0, vol=10.0),   # avg 600  -> 0,030
+                _fp("B" * 44, fee_tvl=50.0, vol=10.0),   # avg 2000 -> 0,100
+                _fp("C" * 44, fee_tvl=15.0, vol=10.0),   # avg 300  -> 0,015
+                _fp("D" * 44, fee_tvl=10.0, vol=10.0)]   # avg 500  -> 0,025
         for r, avg in zip(rows, (600.0, 2000.0, 300.0, 500.0)):
             r["avg_volume"] = avg
         spot, band = self._split(*rows)

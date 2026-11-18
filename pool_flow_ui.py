@@ -41,7 +41,7 @@ TABLE_4H_HEADERS = ["Token / pool", "TVL", "Fee tier",
 
 def _filter_caption() -> str:
     return (f"Timeframe 12H · kategori all · dlmm · "
-            f"TVL ≥ {pf.fmt_usd(10000)} · fee/TVL ≥ 2 · fee ≥ 0.5% · "
+            f"TVL ≥ {pf.fmt_usd(10000)} · fee/TVL ≥ 5% · fee ≥ 0.5% · "
             f"tanpa critical warning · tanpa konsentrasi/kepemilikan tunggal tinggi · "
             f"urut avg volume/menit ÷ TVL terbesar.")
 

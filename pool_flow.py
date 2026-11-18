@@ -38,6 +38,7 @@ FLOW_VOLATILITY_MEASURABLE_MIN = 0.01
 FLOW_FEE_PRINTER_MULT = 2.0   # FEE PRINTER (SPOT): fee/TVL > 2 × volatility
 FLOW_BAND_LOW_MULT = 0.5      # tabel kedua: 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility
 FLOW_HIGH_RISK_MAX_MULT = 10.0  # HIGH RISK FEE PRINTER: 2 × volatility < fee/TVL < 10 × volatility (2026-11-19, user request)
+FLOW_MIN_FEE_TVL_12H = 5.0  # %: tabel 12H hanya pool dengan fee/TVL minimal 5 % (permintaan user, 2026-11-19)
 FLOW_SLOW_MIN_TOKEN_AGE_HOURS = 24.0  # SLOW FEE PRINTER: umur token dasar minimal 24 jam (permintaan user, 2026-11-19)
 FLOW_VERY_HIGH_MIN_MULT = 20.0  # VERY HIGH RISK POOL / BISA DUMP SEWAKTU2: fee/TVL ≥ 20 × volatility (2026-11-18)
 # Peringatan keamanan (label saja, tidak menyaring).
@@ -547,14 +548,25 @@ def most_crowded(result: dict):
     }
 
 
-def _scan(rows: list, errors: list, truncated: bool, order, timeframe: str) -> dict:
-    """Evaluasi baris listing (tanpa duplikat pool) lalu urutkan dengan ``order``."""
+def _scan(rows: list, errors: list, truncated: bool, order, timeframe: str,
+          min_fee_tvl: float | None = None) -> dict:
+    """Evaluasi baris listing (tanpa duplikat pool) lalu urutkan dengan ``order``.
+
+    ``min_fee_tvl`` (%): pool dengan fee/TVL di bawah ini (atau tanpa nilai) tidak lolos,
+    dengan alasan ``fee/TVL di bawah …%`` di ``reasons``.
+    """
     unique: dict[str, dict] = {}
     for row in rows:
         address = str(row.get("pool_address") or "")
         if address and address not in unique:
             unique[address] = row
     results = [evaluate_pool(row) for row in unique.values()]
+    if min_fee_tvl is not None:
+        for item in results:
+            fee = item.get("fee_tvl")
+            if fee is None or fee < min_fee_tvl:
+                item["reasons"].append(f"fee/TVL di bawah {min_fee_tvl:g}%")
+                item["passes"] = False
     passing = sorted((r for r in results if r["passes"]), key=order)
     return {
         "timeframe": timeframe,
@@ -575,7 +587,8 @@ def scan_pools(max_pages: int = FLOW_MAX_PAGES, *, listing: tuple | None = None)
     """
     rows, errors, truncated = (listing if listing is not None
                                else fetch_listing(max_pages, **LISTING_12H))
-    return _scan(rows, errors, truncated, sort_key, FLOW_TIMEFRAME)
+    return _scan(rows, errors, truncated, sort_key, FLOW_TIMEFRAME,
+                 min_fee_tvl=FLOW_MIN_FEE_TVL_12H)
 
 
 def scan_4h(max_pages: int = FLOW_MAX_PAGES, *, listing: tuple | None = None) -> dict:
