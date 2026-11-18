@@ -8,7 +8,7 @@ Permintaan user (2026-11-14, terbaru):
 - Keamanan tetap (2026-11-14): blokir bila mint/freeze authority aktif atau top holders > 30 %;
   peringatan bila top holders > 15 %, dev > 5 %, atau LP keluar > masuk saat TVL < $50K.
 - Urutan: rasio avg volume per menit ÷ TVL terbesar dulu (permintaan user 2026-11-15). Seri: urutan listing.
-- Satu tabel saja. Alert Telegram (tiap 4 jam) memakai pool teratas dari urutan yang sama.
+- Alert Telegram (tiap jam) berisi RINGKASAN saja: BEST POOL dan 4H ≥ 10 % (2026-11-18).
 """
 from __future__ import annotations
 
@@ -37,6 +37,7 @@ FLOW_VOLATILITY_MEASURABLE_MIN = 0.01
 FLOW_FEE_PRINTER_MULT = 2.0   # FEE PRINTER (SPOT): fee/TVL > 2 × volatility
 FLOW_BAND_LOW_MULT = 0.5      # tabel kedua: 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility
 FLOW_HIGH_RISK_MAX_MULT = 20.0  # HIGH RISK FEE PRINTER: 2 × volatility < fee/TVL < 20 × volatility
+FLOW_VERY_HIGH_MIN_MULT = 20.0  # VERY HIGH RISK POOL / BISA DUMP SEWAKTU2: fee/TVL ≥ 20 × volatility (2026-11-18)
 # Peringatan keamanan (label saja, tidak menyaring).
 # tampil dengan label. Field kosong tidak dihitung sebagai masalah.
 FLOW_SEC_HOLDERS_BLOCK = 30.0           # % top_holders_pct token dasar, blokir di atas ini
@@ -44,14 +45,13 @@ FLOW_SEC_HOLDERS_WARN = 15.0            # % top_holders_pct, peringatan di atas 
 FLOW_SEC_DEV_WARN = 5.0                 # % dev_balance_pct, peringatan di atas ini
 FLOW_SEC_LP_OUTFLOW_TVL_MAX = 50_000.0  # USD: peringatan LP keluar hanya bila TVL di bawah ini
 # Filter server (curl user terbaru, persis). Satu-satunya filter seleksi pool.
-# base_token_created_at <= 1794664768938 ms = 2026-11-14 13:59:28 UTC (token berumur ≥ 12 jam).
+# Tanpa batas umur token (2026-11-18, user request).
 FLOW_SERVER_FILTER = (
     "base_token_has_critical_warnings=false"
     "&&quote_token_has_critical_warnings=false"
     "&&base_token_has_high_supply_concentration=false"
     "&&base_token_has_high_single_ownership=false"
     "&&pool_type=dlmm"
-    "&&base_token_created_at<=1794664768938"
     "&&tvl>=10000"
     "&&fee_tvl_ratio>=2"
     "&&fee_pct>=0.5"
@@ -441,6 +441,23 @@ def fee_printer_high_risk(fee_printer: list) -> list:
     return sorted(kept, key=sort_key)
 
 
+def very_high_risk(passing: list) -> list:
+    """VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (2026-11-18): fee/TVL ≥ 20 × volatility (batas inklusif).
+
+    Volatility harus terukur (≥ 0,01 %). Melengkapi HIGH RISK FEE PRINTER (2× < fee/TVL < 20×),
+    sehingga kedua tabel tidak pernah memuat pool yang sama. Urutan: ``sort_key``.
+    """
+    kept: list = []
+    for item in passing:
+        vol = item.get("volatility")
+        fee_tvl = item.get("fee_tvl")
+        if vol is None or vol < FLOW_VOLATILITY_MEASURABLE_MIN or fee_tvl is None:
+            continue
+        if fee_tvl >= FLOW_VERY_HIGH_MIN_MULT * vol:
+            kept.append(item)
+    return sorted(kept, key=sort_key)
+
+
 def ranked(passing: list) -> list:
     """Pool diurutkan dari avg volume per menit terbesar (sama untuk tabel dan alert)."""
     return sorted(passing, key=sort_key)
@@ -547,7 +564,7 @@ def save_state(state: dict, path: Path | None = None) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Alert: pool terbaik (tiap 4 jam)
+# Alert: RINGKASAN (tiap jam)
 # ---------------------------------------------------------------------------
 
 def alert_copy_markup(passing: list) -> dict | None:
@@ -584,44 +601,44 @@ def _pct_or_dash(value) -> str:
     return f"{value:g}%" if value is not None else "—"
 
 
-def crowded_alert_text(no: int, top: dict, seen_no: int | None) -> str:
-    """Alert Telegram: hanya pool teratas (rasio avg volume/menit ÷ TVL terbesar)."""
-    row = top["row"]
-    tag = f"🔁 sudah pernah · alert #{seen_no}" if seen_no else "🆕 baru"
-    name = top["pool_name"] or top["pool"][:6]
+def summary_alert_text(no: int, entries: list, seen: dict) -> str:
+    """Alert Telegram RINGKASAN (2026-11-18): BEST POOL dan 4H ≥ 10 %, satu blok per pool.
+
+    ``entries`` = hasil ``summary_rows`` (row, label). ``seen`` = ``best_alert.last_no`` sebelum alert ini.
+    """
     lines = [
         f"<b>alert #{no}</b>",
-        "🎯 hasil Scan Best Pool (filter 12H) · urut avg volume/menit ÷ TVL",
+        "📋 RINGKASAN Scan ALL (12H + 4H)",
         "━━━━━━━━━━━━━━━━━━",
-        "",
-        f"<b>{_h(top['symbol'])}</b> · {_h(name)}  {tag}",
-        f"📊 avg volume/menit {fmt_usd2(top['avg_volume'])} · ÷ TVL {fmt_ratio_pct(avg_volume_tvl_ratio(row))} · "
-        f"volume 12H {fmt_usd(top['pool_volume'])}",
-        f"💸 avg fee/menit ÷ TVL {fmt_ratio_pct(avg_fee_tvl_ratio(row), 3)}",
-        f"🔁 {fmt_int(top['pool_swaps'])} swap · rata² swap {fmt_usd2(top['pool_avg_swap'])}",
-        f"💰 TVL {fmt_usd(row['tvl'])} · 🏷 fee {_pct_or_dash(row['fee_tier'])} · "
-        f"🪙 active {fmt_usd(row['active_tvl'])}",
-        f"〰️ volatility {fmt_pct(row['volatility'])}",
     ]
-    if top.get("row", {}).get("warnings"):
-        lines.append("⚠️ Peringatan keamanan: " + _h("; ".join(top["row"]["warnings"])))
-    lines.extend(alert_link_lines(row.get("mint") or "", top["pool"]))
+    for row, label in entries:
+        pool = row["pool"]
+        seen_no = seen.get(pool)
+        tag = f"🔁 sudah pernah · alert #{seen_no}" if seen_no else "🆕 baru"
+        name = row.get("pool_name") or pool[:6]
+        lines.append("")
+        lines.append(f"<b>{_h(row['symbol'])}</b> · {_h(name)}  [{_h(label)}]  {tag}")
+        lines.append(f"📊 avg volume/menit ÷ TVL 4H {fmt_ratio_pct(avg_volume_tvl_ratio(row))}")
+        if row.get("warnings"):
+            lines.append("⚠️ Peringatan keamanan: " + _h("; ".join(row["warnings"])))
+        lines.extend(alert_link_lines(row.get("mint") or "", pool))
     return "\n".join(lines)
 
 
-def apply_crowded_alert(state: dict, top: dict | None) -> str | None:
-    """Buat teks alert pool paling ramai dan perbarui nomor alert. ``None`` bila tidak ada."""
-    if top is None:
-        return None
-    pool = top["pool"]
+def apply_summary_alert(state: dict, entries: list) -> tuple[str | None, dict | None]:
+    """Teks RINGKASAN + tombol 📋 CA per pool. ``(None, None)`` bila tidak ada pool yang memenuhi kriteria."""
+    if not entries:
+        return None, None
     no = int(state["best_alert"]["next_no"])
-    seen_no = state["best_alert"]["last_no"].get(pool)
-    text = crowded_alert_text(no, top, seen_no)
-    state["best_alert"]["last_no"][pool] = no
+    seen = state["best_alert"]["last_no"]
+    text = summary_alert_text(no, entries, seen)
+    pools = [row["pool"] for row, _label in entries]
+    for pool in pools:
+        seen[pool] = no
     state["best_alert"]["next_no"] = no + 1
-    state["alerts"].append({"no": no, "kind": "best", "at": now_iso(), "pools": [pool]})
+    state["alerts"].append({"no": no, "kind": "summary", "at": now_iso(), "pools": pools})
     del state["alerts"][:-FLOW_ALERT_CAP]
-    return text
+    return text, alert_copy_markup([row for row, _label in entries])
 
 
 # ---------------------------------------------------------------------------
