@@ -38,7 +38,9 @@ FLOW_VOLATILITY_MEASURABLE_MIN = 0.01
 FLOW_FEE_PRINTER_MULT = 2.0   # FEE PRINTER (SPOT): fee/TVL > 2 × volatility
 FLOW_BAND_LOW_MULT = 0.75     # SLOW FEE PRINTER: 0,75 × volatility ≤ fee/TVL ≤ 1,5 × volatility (permintaan user, 2026-11-19)
 FLOW_BAND_HIGH_MULT = 1.5     # batas atas SLOW FEE PRINTER (inklusif)
-FLOW_HIGH_RISK_MAX_MULT = 10.0  # HIGH RISK FEE PRINTER: 2 × volatility < fee/TVL < 10 × volatility (2026-11-19, user request)
+FLOW_HIGH_RISK_MIN_MULT = 3.0   # HIGH RISK FEE PRINTER: 3 × volatility < fee/TVL (permintaan user, 2026-11-19)
+FLOW_HIGH_RISK_MAX_MULT = 10.0  # HIGH RISK FEE PRINTER: fee/TVL < 10 × volatility (2026-11-19, user request)
+FLOW_HIGH_RISK_MIN_FEE_TVL = 10.0  # %: HIGH RISK FEE PRINTER hanya fee/TVL minimal 10 % (permintaan user, 2026-11-19)
 FLOW_MIN_FEE_TVL_12H = 5.0  # %: tabel 12H hanya pool dengan fee/TVL minimal 5 % (permintaan user, 2026-11-19)
 FLOW_SLOW_MIN_TOKEN_AGE_HOURS = 24.0  # SLOW FEE PRINTER: umur token dasar minimal 24 jam (permintaan user, 2026-11-19)
 FLOW_VERY_HIGH_MIN_MULT = 20.0  # VERY HIGH RISK POOL / BISA DUMP SEWAKTU2: fee/TVL ≥ 20 × volatility (2026-11-18)
@@ -497,13 +499,16 @@ def fee_printer_split(passing: list, now_ms: float | None = None) -> tuple[list,
 
 
 def fee_printer_high_risk(fee_printer: list) -> list:
-    """Filter kedua di atas FEE PRINTER (SPOT): hanya fee/TVL < 10 × volatility (HIGH RISK FEE PRINTER, 2026-11-19).
+    """Filter kedua di atas FEE PRINTER (SPOT) untuk HIGH RISK FEE PRINTER (2026-11-19, user request):
 
-    Input harus hasil ``fee_printer_split`` (sudah fee/TVL > 2 × volatility). Pool dengan
-    fee/TVL ≥ 10 × volatility tidak ditampilkan di tabel ini. Urutan: ``sort_key``.
+    3 × volatility < fee/TVL < 10 × volatility, dan fee/TVL ≥ 10 % (batas bawah inklusif).
+    Input harus hasil ``fee_printer_split`` (sudah fee/TVL > 2 × volatility). Pool di 2–3 ×
+    atau dengan fee/TVL ≥ 10 × volatility tidak ditampilkan di tabel ini. Urutan: ``sort_key``.
     """
     kept = [item for item in fee_printer
-            if item["fee_tvl"] < FLOW_HIGH_RISK_MAX_MULT * item["volatility"]]
+            if item["fee_tvl"] > FLOW_HIGH_RISK_MIN_MULT * item["volatility"]
+            and item["fee_tvl"] >= FLOW_HIGH_RISK_MIN_FEE_TVL
+            and item["fee_tvl"] < FLOW_HIGH_RISK_MAX_MULT * item["volatility"]]
     return sorted(kept, key=sort_key)
 
 
