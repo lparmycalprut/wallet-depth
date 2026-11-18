@@ -8,7 +8,7 @@ Permintaan user (2026-11-14, terbaru):
 - Keamanan tetap (2026-11-14): blokir bila mint/freeze authority aktif atau top holders > 30 %;
   peringatan bila top holders > 15 %, dev > 5 %, atau LP keluar > masuk saat TVL < $50K.
 - Urutan: rasio avg volume per menit ÷ TVL terbesar dulu (permintaan user 2026-11-15). Seri: urutan listing.
-- Alert Telegram (tiap jam) berisi RINGKASAN saja: BEST POOL (HIGH RISK) dan 4H ≥ 10 % (2026-11-18).
+- Alert Telegram (tiap jam) berisi RINGKASAN saja: BEST POOL (HIGH RISK) dan 4H ≥ 10% (CURVE) SL OOR (2026-11-18).
 """
 from __future__ import annotations
 
@@ -65,7 +65,7 @@ FLOW_4H_MIN_VOLUME_TVL = 0.02  # 2 %, batas eksklusif: tepat 2 % tidak tampil (2
 # Ringkasan (permintaan user): kriteria 1 = avg volume/menit ÷ TVL 4H minimal 10 % (inklusif, 2026-11-18).
 FLOW_SUMMARY_4H_MIN = 0.10
 SUMMARY_BEST = "BEST POOL (HIGH RISK)"
-SUMMARY_4H = "4H ≥ 10%"
+SUMMARY_4H = "4H ≥ 10% (CURVE) SL OOR"
 FLOW_4H_SERVER_FILTER = (
     "base_token_has_high_supply_concentration=false"
     "&&base_token_has_high_single_ownership=false"
@@ -393,7 +393,7 @@ def summary_rows(result_12h: dict, result_4h: dict) -> list:
     """Ringkasan: daftar (row, label), urut seperti tabel 4H.
 
     - ``BEST POOL (HIGH RISK)``: pool ada di HIGH RISK FEE PRINTER (12H) DAN di tabel 4H (kriteria 2).
-    - ``4H ≥ 10%``: pool di tabel 4H dengan avg volume/menit ÷ TVL minimal 10 % (kriteria 1).
+    - ``4H ≥ 10% (CURVE) SL OOR``: pool di tabel 4H dengan avg volume/menit ÷ TVL minimal 10 % (kriteria 1).
     Pool yang memenuhi keduanya berlabel BEST POOL (HIGH RISK). Label itu tampil lebih dulu.
     """
     fee_printer, _band = fee_printer_split(result_12h.get("passing") or [])
@@ -602,7 +602,7 @@ def _pct_or_dash(value) -> str:
 
 
 def summary_alert_text(no: int, entries: list, seen: dict) -> str:
-    """Alert Telegram RINGKASAN (2026-11-18): BEST POOL (HIGH RISK) dan 4H ≥ 10 %, satu blok per pool.
+    """Alert Telegram RINGKASAN (2026-11-18): BEST POOL (HIGH RISK) dan 4H ≥ 10% (CURVE) SL OOR, satu blok per pool.
 
     ``entries`` = hasil ``summary_rows`` (row, label). ``seen`` = ``best_alert.last_no`` sebelum alert ini.
     """
