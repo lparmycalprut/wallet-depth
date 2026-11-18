@@ -8,7 +8,7 @@ Permintaan user (verbatim, 2026-09-17): *"tambahkan header di page app"* —
 Yang di-pin di sini:
 
 - header benar-benar dirender di halaman utama dan berada **di atas** card
-  🏆 Scan Best Pool (posisi "header");
+  🏆 Scan ALL (posisi "header");
 - kedua kalimat tampil **verbatim** (termasuk "BERTUBI2") + emoticon warning
   🚨/⚠️ di kiri-kanan tiap baris;
 - gayanya = tulisan **biru** menyala (``#3b82f6`` + glow biru) di panel
@@ -40,8 +40,8 @@ BARIS_2 = "SUDAH KALAH BERTUBI2 AKUI KALAU KAMU GAK BISA"
 # Penanda blok header (elemen HTML-nya, bukan selector CSS: CSS-nya ikut
 # ter-render di semua halaman yang memanggil render_styles()).
 HEADER_HTML = '<div class="degen-stop-header" role="alert">'
-# Penanda card 🏆 Scan Best Pool — sama dengan pin tests/test_temp_page_ui.py.
-CARD_MARK = "## 🏆 Scan Best Pool"  # judul card main app (pool_flow_ui, 2026-11-11)
+# Penanda card 🏆 Scan ALL — sama dengan pin tests/test_temp_page_ui.py.
+CARD_MARK = "## 🏆 Scan ALL"  # judul card main app (pool_flow_ui; diganti dari Scan Best Pool, 2026-11-18)
 
 
 def _body(at) -> str:
@@ -62,7 +62,7 @@ class DegenHeaderPageTest(unittest.TestCase):
         self.assertIn(HEADER_HTML, body)
         self.assertIn('role="alert"', body)      # ditandai peringatan
         self.assertLess(body.index(HEADER_HTML), body.index(CARD_MARK),
-                        "header harus di ATAS card 🏆 Scan Best Pool")
+                        "header harus di ATAS card 🏆 Scan ALL")
 
     def test_dua_baris_verbatim_dengan_emoticon_warning(self):
         """Kalimat user dipin apa adanya (jangan dirapikan/diparafrase)."""
