@@ -39,7 +39,7 @@ FLOW_FEE_PRINTER_MULT = 2.0   # FEE PRINTER (SPOT): fee/TVL > 2 × volatility
 FLOW_BAND_LOW_MULT = 0.75     # SLOW FEE PRINTER: 0,75 × volatility ≤ fee/TVL ≤ 1,5 × volatility (permintaan user, 2026-11-19)
 FLOW_BAND_HIGH_MULT = 1.5     # batas atas SLOW FEE PRINTER (inklusif)
 FLOW_HIGH_RISK_MIN_MULT = 2.5   # HIGH RISK FEE PRINTER: 2,5 × volatility ≤ fee/TVL (permintaan user, 2026-11-20, inklusif)
-FLOW_HIGH_RISK_MAX_MULT = 3.5   # HIGH RISK FEE PRINTER: fee/TVL ≤ 3,5 × volatility (permintaan user, 2026-11-20, inklusif)
+FLOW_HIGH_RISK_MAX_MULT = 20.0  # HIGH RISK FEE PRINTER: fee/TVL < 20 × volatility (permintaan user, 2026-11-20; tepat 20 × masuk VERY HIGH)
 FLOW_HIGH_RISK_MIN_FEE_TVL = 10.0  # %: HIGH RISK FEE PRINTER hanya fee/TVL minimal 10 % (permintaan user, 2026-11-19)
 FLOW_MIN_FEE_TVL_12H = 5.0  # %: tabel 12H hanya pool dengan fee/TVL minimal 5 % (permintaan user, 2026-11-19)
 FLOW_SLOW_MIN_TOKEN_AGE_HOURS = 24.0  # SLOW FEE PRINTER: umur token dasar minimal 24 jam (permintaan user, 2026-11-19)
@@ -472,13 +472,14 @@ def fee_printer_split(passing: list, now_ms: float | None = None) -> tuple[list,
 def fee_printer_high_risk(fee_printer: list) -> list:
     """Filter kedua di atas FEE PRINTER (SPOT) untuk HIGH RISK FEE PRINTER (permintaan user, 2026-11-20):
 
-    2,5 × volatility ≤ fee/TVL ≤ 3,5 × volatility (kedua batas inklusif), dan fee/TVL ≥ 10 %.
+    2,5 × volatility ≤ fee/TVL < 20 × volatility (batas bawah inklusif, batas atas eksklusif:
+    tepat 20 × masuk VERY HIGH), dan fee/TVL ≥ 10 %.
     Input harus hasil ``fee_printer_split`` (sudah fee/TVL > 2 × volatility). Pool di luar rentang
     ini tidak ditampilkan di tabel ini. Urutan: ``sort_key``.
     """
     kept = [item for item in fee_printer
             if FLOW_HIGH_RISK_MIN_MULT * item["volatility"] <= item["fee_tvl"]
-            <= FLOW_HIGH_RISK_MAX_MULT * item["volatility"]
+            < FLOW_HIGH_RISK_MAX_MULT * item["volatility"]
             and item["fee_tvl"] >= FLOW_HIGH_RISK_MIN_FEE_TVL]
     return sorted(kept, key=sort_key)
 

@@ -276,21 +276,21 @@ def _fp(pool, fee_tvl, vol, symbol="FP"):
 
 
 class HighRiskFeePrinterTest(unittest.TestCase):
-    """HIGH RISK FEE PRINTER (2026-11-20): 2,5 × ≤ fee/TVL ≤ 3,5 × volatility dan fee/TVL ≥ 10 %."""
+    """HIGH RISK FEE PRINTER (2026-11-20): 2,5 × ≤ fee/TVL < 20 × volatility dan fee/TVL ≥ 10 %."""
 
     def _high(self, *rows):
         result = pf.scan_pools(listing=(list(rows), [], False))
         fee_printer, _band = pf.fee_printer_split(result["passing"])
         return pf.fee_printer_high_risk(fee_printer)
 
-    def test_hanya_rentang_2_5_sampai_3_5_kali_volatility(self):
+    def test_hanya_rentang_2_5_sampai_kurang_dari_20_kali_volatility(self):
         rows = [_fp("A" * 44, fee_tvl=25.0, vol=10.0),   # tepat 2,5× → masuk (inklusif)
-                _fp("B" * 44, fee_tvl=30.0, vol=10.0),   # 3× → masuk
-                _fp("C" * 44, fee_tvl=35.0, vol=10.0),   # tepat 3,5× → masuk (inklusif)
-                _fp("D" * 44, fee_tvl=24.9, vol=10.0),   # 2,49× → tidak masuk
-                _fp("E" * 44, fee_tvl=35.1, vol=10.0),   # 3,51× → tidak masuk
-                _fp("F" * 44, fee_tvl=99.0, vol=10.0),   # 9,9× → tidak masuk (sebelumnya masuk)
-                _fp("G" * 44, fee_tvl=20.0, vol=10.0),   # 2× → tidak masuk (bukan SPOT)
+                _fp("B" * 44, fee_tvl=35.0, vol=10.0),   # 3,5× → masuk
+                _fp("C" * 44, fee_tvl=199.0, vol=10.0),  # 19,9× → masuk
+                _fp("D" * 44, fee_tvl=200.0, vol=10.0),  # tepat 20× → tidak (VERY HIGH)
+                _fp("E" * 44, fee_tvl=350.0, vol=10.0),  # 35× → tidak (VERY HIGH)
+                _fp("F" * 44, fee_tvl=24.9, vol=10.0),   # 2,49× → tidak
+                _fp("G" * 44, fee_tvl=20.0, vol=10.0),   # 2× → tidak (bukan SPOT)
                 _fp("H" * 44, fee_tvl=15.0, vol=10.0)]   # band SLOW, bukan HIGH RISK
         high = self._high(*rows)
         self.assertEqual({r["pool"] for r in high}, {"A" * 44, "B" * 44, "C" * 44})
@@ -435,7 +435,7 @@ class VeryHighRiskTest(unittest.TestCase):
         high = {r["pool"] for r in pf.fee_printer_high_risk(fee_printer)}
         very = {r["pool"] for r in pf.very_high_risk(result["passing"])}
         self.assertEqual(very, {"A" * 44})
-        self.assertEqual(high, {"B" * 44, "C" * 44})  # 2,5–3,5 ×
+        self.assertEqual(high, {"B" * 44, "C" * 44})  # 3 × dan 3,5 × (keduanya di 2,5 – < 20 ×)
         self.assertEqual(high & very, set())
 
     def test_urut_rasio_avg_volume_per_tvl(self):
