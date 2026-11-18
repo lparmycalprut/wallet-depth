@@ -69,12 +69,12 @@ def _render_scan_result(result: dict) -> None:
                "Baris kuning = pool teratas (avg volume/menit ÷ TVL terbesar).")
     fee_printer, band = pf.fee_printer_split(passing)
     high_risk = pf.fee_printer_high_risk(fee_printer)
-    # HIGH RISK FEE PRINTER: fee/TVL > 3 × dan < 10 × volatility, dan ≥ 10 % (permintaan user, 2026-11-19).
+    # HIGH RISK FEE PRINTER: 2,5 × ≤ fee/TVL ≤ 3,5 × volatility, dan ≥ 10 % (permintaan user, 2026-11-20).
     top = pf.most_crowded(result)
     top_pool = top["pool"] if top else None
     # Warna per tabel: HIGH RISK merah, SLOW FEE PRINTER biru (judul dan border tabel).
     st.markdown(f"**:{HIGH_RISK_COLOR}[HIGH RISK FEE PRINTER]**")
-    st.markdown(f"*· {len(high_risk)} pool · 3 × volatility < fee/TVL < 10 × volatility · fee/TVL ≥ 10%*")
+    st.markdown(f"*· {len(high_risk)} pool · 2,5 × volatility ≤ fee/TVL ≤ 3,5 × volatility · fee/TVL ≥ 10%*")
     _render_pool_table(high_risk, "Tidak ada pool untuk HIGH RISK FEE PRINTER.", top_pool,
                        accent=HIGH_RISK_BORDER)
     # VERY HIGH RISK POOL / BISA DUMP SEWAKTU2: fee/TVL ≥ 20 × volatility (permintaan user, 2026-11-18).

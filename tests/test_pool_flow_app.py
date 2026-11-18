@@ -140,7 +140,7 @@ class AppMainTest(unittest.TestCase):
         next(b for b in at.button if b.label == "SCAN ALL").click().run()
         self.assertFalse(at.exception)
         body = self._body(at)
-        # FOOD (LOW_POOL) 2,98× volatility → di luar HIGH RISK (3×) dan SLOW (1,5×): tidak tampil
+        # FOOD fee/TVL 9,5 % < 10 % → tidak masuk HIGH RISK (dan tidak di SLOW)
         self.assertNotIn(LOW_POOL, body)
         self.assertIn(HIGH_POOL, body)
         self.assertNotIn(DUT_POOL, body)  # volatility 6,71 % > 6 % dilewati
