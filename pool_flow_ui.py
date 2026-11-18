@@ -77,9 +77,9 @@ def _render_scan_result(result: dict) -> None:
     st.markdown(f"*· {len(high_risk)} pool · 2,5 × volatility ≤ fee/TVL ≤ 3,5 × volatility · fee/TVL ≥ 10%*")
     _render_pool_table(high_risk, "Tidak ada pool untuk HIGH RISK FEE PRINTER.", top_pool,
                        accent=HIGH_RISK_BORDER)
-    # VERY HIGH RISK POOL / BISA DUMP SEWAKTU2: fee/TVL ≥ 20 × volatility (permintaan user, 2026-11-18).
+    # VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1): fee/TVL ≥ 20 × volatility (permintaan user, 2026-11-18).
     very_high = pf.very_high_risk(passing)
-    st.markdown(f"**:{VERY_HIGH_RISK_COLOR}[VERY HIGH RISK POOL / BISA DUMP SEWAKTU2]**")
+    st.markdown(f"**:{VERY_HIGH_RISK_COLOR}[VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1)]**")
     st.markdown(f"*· {len(very_high)} pool · fee/TVL ≥ 20 × volatility*")
     _render_pool_table(very_high, "Tidak ada pool untuk VERY HIGH RISK POOL.", top_pool,
                        accent=VERY_HIGH_RISK_BORDER)

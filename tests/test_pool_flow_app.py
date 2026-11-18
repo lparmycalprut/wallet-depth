@@ -226,7 +226,7 @@ class AppMainTest(unittest.TestCase):
             return next(i for i, v in enumerate(order) if key in v)
 
         high = index_of("HIGH RISK FEE PRINTER")
-        very_at = index_of("VERY HIGH RISK POOL / BISA DUMP SEWAKTU2")
+        very_at = index_of("VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1)")
         slow = index_of("SLOW FEE PRINTER")
         self.assertLess(high, very_at)
         self.assertLess(very_at, slow)
