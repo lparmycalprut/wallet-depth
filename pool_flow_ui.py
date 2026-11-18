@@ -84,9 +84,10 @@ def _render_scan_result(result: dict) -> None:
     _render_pool_table(very_high, "Tidak ada pool untuk VERY HIGH RISK POOL.", top_pool,
                        accent=VERY_HIGH_RISK_BORDER)
     st.markdown(f"**:{SLOW_FEE_PRINTER_COLOR}[SLOW FEE PRINTER]**")
-    st.markdown(f"*· {len(band)} pool · 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility · umur token ≥ 24 jam · urut avg fee/menit ÷ TVL*")
+    st.markdown(f"*· {len(band)} pool · 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility · umur token ≥ 24 jam · "
+                f"urut avg fee/menit ÷ TVL · Fee/TVL ÷ volatility 1× = seimbang*")
     _render_pool_table(band, "Tidak ada pool untuk SLOW FEE PRINTER.", top_pool,
-                       accent=SLOW_FEE_PRINTER_BORDER)
+                       accent=SLOW_FEE_PRINTER_BORDER, builder=_slow_table_html)
 
 
 def _filter_caption_4h() -> str:
@@ -195,8 +196,11 @@ def _table_html(headers: list, body: list, accent: str) -> str:
     )
 
 
+BALANCE_HEADERS = ["Fee/TVL ÷ volatility", "Selisih fee/TVL − volatility"]  # tabel SLOW saja (2026-11-19)
+
+
 def _result_table_html(rows: list, top_pool: str | None = None,
-                       accent: str = DEFAULT_BORDER) -> str:
+                       accent: str = DEFAULT_BORDER, *, balance: bool = False) -> str:
     """Tabel HTML 12H, satu baris per pool, urut rasio avg volume/menit ÷ TVL (urutan dari pemanggil).
 
     Baris pool teratas (``top_pool``) diberi latar kuning; tanpa emoji.
@@ -215,8 +219,19 @@ def _result_table_html(rows: list, top_pool: str | None = None,
             _html.escape(pf.fmt_usd(row["activity"]["volume"])),
             _html.escape("; ".join(row.get("warnings") or []) or "—"),
         ]
+        if balance:  # kolom keseimbangan setelah Fee/TVL (indeks 4), sebelum Avg volume/menit (pool)
+            cells[5:5] = [
+                _html.escape(pf.fmt_times(pf.fee_volatility_ratio(row))),
+                _html.escape(pf.fmt_signed_pct(pf.fee_volatility_diff(row))),
+            ]
         body.append((cells, top_pool is not None and row["pool"] == top_pool))
-    return _table_html(TABLE_HEADERS, body, accent)
+    headers = TABLE_HEADERS[:5] + BALANCE_HEADERS + TABLE_HEADERS[5:] if balance else TABLE_HEADERS
+    return _table_html(headers, body, accent)
+
+
+def _slow_table_html(rows: list, top_pool: str | None = None, accent: str = DEFAULT_BORDER) -> str:
+    """Tabel SLOW FEE PRINTER: tabel 12H ditambah kolom keseimbangan volatility vs fee/TVL."""
+    return _result_table_html(rows, top_pool, accent, balance=True)
 
 
 def _result_table_4h_html(rows: list, top_pool: str | None = None,
