@@ -703,7 +703,7 @@ class AlertTest(unittest.TestCase):
                          [("HIGHX", pf.SUMMARY_BEST)])
         text, markup = pf.apply_summary_alert(pf.empty_state(), entries)
         self.assertIn("RINGKASAN", text)
-        self.assertIn("[BEST POOL]", text)
+        self.assertIn("[BEST POOL (HIGH RISK)]", text)
         self.assertIn("÷ TVL 4H 4,00%", text)  # HIGHX: 800 ÷ 20.000
         for host in ("gmgn.ai", "meteora.ag", "hawkfi.ag", "dexscreener.com"):
             self.assertIn(host, text)
@@ -718,7 +718,7 @@ class AlertTest(unittest.TestCase):
         self.assertEqual([(r["symbol"], label) for r, label in entries],
                          [("HIGHX", pf.SUMMARY_BEST), ("YYY", pf.SUMMARY_4H)])
         text, _markup = pf.apply_summary_alert(pf.empty_state(), entries)
-        self.assertIn("[BEST POOL]", text)
+        self.assertIn("[BEST POOL (HIGH RISK)]", text)
         self.assertIn("[4H ≥ 10%]", text)
 
     def test_alert_memberi_nomor_dan_tag_sudah_pernah(self):
