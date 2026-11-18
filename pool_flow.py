@@ -36,7 +36,8 @@ FLOW_SORT_BY = "fee_tvl_ratio:desc"  # dikembalikan sesuai curl user terbaru
 # volatility dalam %. Volatility di bawah 0,01 % dianggap tidak terukur (tidak masuk tabel mana pun).
 FLOW_VOLATILITY_MEASURABLE_MIN = 0.01
 FLOW_FEE_PRINTER_MULT = 2.0   # FEE PRINTER (SPOT): fee/TVL > 2 × volatility
-FLOW_BAND_LOW_MULT = 0.5      # tabel kedua: 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility
+FLOW_BAND_LOW_MULT = 0.75     # SLOW FEE PRINTER: 0,75 × volatility ≤ fee/TVL ≤ 1,5 × volatility (permintaan user, 2026-11-19)
+FLOW_BAND_HIGH_MULT = 1.5     # batas atas SLOW FEE PRINTER (inklusif)
 FLOW_HIGH_RISK_MAX_MULT = 10.0  # HIGH RISK FEE PRINTER: 2 × volatility < fee/TVL < 10 × volatility (2026-11-19, user request)
 FLOW_MIN_FEE_TVL_12H = 5.0  # %: tabel 12H hanya pool dengan fee/TVL minimal 5 % (permintaan user, 2026-11-19)
 FLOW_SLOW_MIN_TOKEN_AGE_HOURS = 24.0  # SLOW FEE PRINTER: umur token dasar minimal 24 jam (permintaan user, 2026-11-19)
@@ -424,11 +425,14 @@ def fmt_signed_pct(value) -> str:
 
 
 def sort_key_slow(result: dict):
-    """Urutan SLOW FEE PRINTER (2026-11-19, user request): avg fee/menit ÷ TVL terbesar dulu.
+    """Urutan SLOW FEE PRINTER (permintaan user): selisih |fee/TVL − volatility| terkecil dulu,
+    yaitu pool yang paling seimbang.
 
-    Seri: urutan listing (sort stabil). Pool tanpa rasio fee dianggap 0 (paling bawah).
+    Nilai absolut dipakai karena selisih negatif (fee/TVL di bawah volatility) juga tidak seimbang.
+    Seri: urutan listing (sort stabil). Pool tanpa selisih dianggap paling belakang.
     """
-    return -(avg_fee_tvl_ratio(result) or 0.0)
+    diff = fee_volatility_diff(result)
+    return float("inf") if diff is None else abs(diff)
 
 
 def sort_key_4h(result: dict):
@@ -471,11 +475,11 @@ def fee_printer_split(passing: list, now_ms: float | None = None) -> tuple[list,
     """Pisahkan pool menjadi (fee_printer, band) memakai fee/TVL vs volatility.
 
     - fee_printer: fee/TVL > 2 × volatility (FEE PRINTER (SPOT)).
-    - band (SLOW FEE PRINTER): 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility, dan umur token
+    - band (SLOW FEE PRINTER): 0,75 × volatility ≤ fee/TVL ≤ 1,5 × volatility, dan umur token
       minimal 24 jam (2026-11-19). Pool yang lebih muda hanya tidak masuk band; fee_printer tidak berubah.
     Pool tanpa volatility terukur (None atau < 0,01 %) atau tanpa fee/TVL tidak masuk keduanya.
-    Pool dengan fee/TVL < 0,5 × volatility juga tidak masuk keduanya. Urutan fee_printer: ``sort_key``;
-    band (SLOW): ``sort_key_slow`` (avg fee/menit ÷ TVL, 2026-11-19).
+    Pool dengan fee/TVL di luar band (mis. 1,5–2 × atau < 0,75 × volatility) tidak masuk keduanya.
+    Urutan fee_printer: ``sort_key``; band (SLOW): ``sort_key_slow`` (|selisih| terkecil dulu).
     """
     fee_printer: list = []
     band: list = []
@@ -486,7 +490,7 @@ def fee_printer_split(passing: list, now_ms: float | None = None) -> tuple[list,
             continue
         if fee_tvl > FLOW_FEE_PRINTER_MULT * vol:
             fee_printer.append(item)
-        elif (FLOW_BAND_LOW_MULT * vol <= fee_tvl <= FLOW_FEE_PRINTER_MULT * vol
+        elif (FLOW_BAND_LOW_MULT * vol <= fee_tvl <= FLOW_BAND_HIGH_MULT * vol
               and token_old_enough(item, now_ms)):
             band.append(item)
     return sorted(fee_printer, key=sort_key), sorted(band, key=sort_key_slow)

@@ -318,7 +318,7 @@ class SlowFeePrinterAgeTest(unittest.TestCase):
         return pf.fee_printer_split(result["passing"], now_ms=self.NOW)[1]
 
     def _aged(self, pool, hours):
-        row = _fp(pool, fee_tvl=10.0, vol=10.0)  # band: 0,5 ≤ 1 ≤ 2 (fee ≥ 5 %)
+        row = _fp(pool, fee_tvl=10.0, vol=10.0)  # band: 0,75 ≤ 1 ≤ 1,5 (fee ≥ 5 %)
         row["token_x"]["created_at"] = self.NOW - hours * 3_600_000
         return row
 
@@ -344,17 +344,34 @@ class SlowFeePrinterAgeTest(unittest.TestCase):
         self.assertEqual([r["pool"] for r in spot], ["U" * 44])
         self.assertEqual(band, [])
 
-    def test_slow_diurutkan_avg_fee_per_menit_per_tvl(self):
-        """Urut SLOW: avg fee/menit ÷ TVL terbesar dulu, walau avg volume-nya lebih kecil."""
-        busy = _fp("A" * 44, fee_tvl=10.0, vol=10.0)  # avg volume besar, avg fee kecil
-        busy["avg_volume"] = 5000.0
-        busy["avg_fee"] = 1.0
-        fee_rich = _fp("B" * 44, fee_tvl=10.0, vol=10.0)  # avg volume kecil, avg fee besar
-        fee_rich["avg_volume"] = 100.0
-        fee_rich["avg_fee"] = 50.0
-        result = pf.scan_pools(listing=([busy, fee_rich], [], False))
+    def test_slow_diurutkan_selisih_fee_volatility_terkecil(self):
+        """Urut SLOW (2026-11-19): |fee/TVL − volatility| terkecil dulu = paling seimbang.
+
+        Selisih: Y −0,5; X +1; W −2,4; Z +4. Nilai absolut: Y 0,5 < X 1 < W 2,4 < Z 4.
+        """
+        x = _fp("X" * 44, fee_tvl=11.0, vol=10.0)   # +1
+        y = _fp("Y" * 44, fee_tvl=9.5, vol=10.0)    # −0,5 (paling seimbang)
+        z = _fp("Z" * 44, fee_tvl=14.0, vol=10.0)   # +4
+        w = _fp("W" * 44, fee_tvl=7.6, vol=10.0)    # −2,4
+        result = pf.scan_pools(listing=([z, w, x, y], [], False))
         _spot, band = pf.fee_printer_split(result["passing"], now_ms=self.NOW)
-        self.assertEqual([r["pool"] for r in band], ["B" * 44, "A" * 44])
+        self.assertEqual([r["pool"] for r in band],
+                         ["Y" * 44, "X" * 44, "W" * 44, "Z" * 44])
+
+    def test_slow_selisih_negatif_tidak_didahulukan_hanya_karena_negatif(self):
+        """Selisih −2,4 (|2,4|) tidak boleh di atas selisih +1 (|1|) walau nilainya lebih kecil."""
+        neg = _fp("N" * 44, fee_tvl=7.6, vol=10.0)  # −2,4
+        pos = _fp("P" * 44, fee_tvl=11.0, vol=10.0)  # +1
+        result = pf.scan_pools(listing=([neg, pos], [], False))
+        _spot, band = pf.fee_printer_split(result["passing"], now_ms=self.NOW)
+        self.assertEqual([r["pool"] for r in band], ["P" * 44, "N" * 44])
+
+    def test_slow_seri_selisih_ikut_urutan_listing(self):
+        a = _fp("A" * 44, fee_tvl=11.0, vol=10.0)  # +1
+        b = _fp("B" * 44, fee_tvl=9.0, vol=10.0)   # −1
+        result = pf.scan_pools(listing=([a, b], [], False))
+        _spot, band = pf.fee_printer_split(result["passing"], now_ms=self.NOW)
+        self.assertEqual([r["pool"] for r in band], ["A" * 44, "B" * 44])
 
     def test_evaluate_pool_membawa_umur_token(self):
         self.assertEqual(pf.evaluate_pool(_fp("T" * 44, fee_tvl=1.0, vol=1.0))["token_created_at"],
@@ -430,8 +447,8 @@ class VeryHighRiskTest(unittest.TestCase):
 
 
 class FeePrinterSplitTest(unittest.TestCase):
-    """Permintaan user 2026-11-15: FEE PRINTER (SPOT) bila fee/TVL > 2 × volatility;
-    tabel kedua bila 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility."""
+    """FEE PRINTER (SPOT) bila fee/TVL > 2 × volatility; SLOW FEE PRINTER bila
+    0,75 × volatility ≤ fee/TVL ≤ 1,5 × volatility (permintaan user, 2026-11-19)."""
 
     def _split(self, *rows):
         result = pf.scan_pools(listing=(list(rows), [], False))
@@ -442,20 +459,25 @@ class FeePrinterSplitTest(unittest.TestCase):
         self.assertEqual([r["pool"] for r in spot], ["1" * 44])
         self.assertEqual(band, [])
 
-    def test_batas_tepat_2x_masuk_tabel_kedua(self):
-        # contoh user: volatility 1 %, fee/TVL 2 % -> tabel kedua
-        spot, band = self._split(_fp("2" * 44, fee_tvl=20.0, vol=10.0))
+    def test_batas_tepat_1_5x_masuk_slow(self):
+        # volatility 1 %, fee/TVL 1,5 % -> SLOW (batas atas inklusif)
+        spot, band = self._split(_fp("2" * 44, fee_tvl=15.0, vol=10.0))
         self.assertEqual(spot, [])
         self.assertEqual([r["pool"] for r in band], ["2" * 44])
 
-    def test_batas_tepat_0_5x_masuk_tabel_kedua(self):
-        # contoh user: volatility 1 %, fee/TVL 0,5 % -> tabel kedua
-        spot, band = self._split(_fp("3" * 44, fee_tvl=5.0, vol=10.0))
+    def test_batas_tepat_0_75x_masuk_slow(self):
+        # volatility 1 %, fee/TVL 0,75 % -> SLOW (batas bawah inklusif)
+        spot, band = self._split(_fp("3" * 44, fee_tvl=7.5, vol=10.0))
         self.assertEqual(spot, [])
         self.assertEqual([r["pool"] for r in band], ["3" * 44])
 
-    def test_fee_tvl_di_bawah_0_5x_tidak_masuk_tabel_mana_pun(self):
-        spot, band = self._split(_fp("4" * 44, fee_tvl=8.0, vol=20.0))  # 0,4× < 0,5×
+    def test_antara_1_5x_dan_2x_tidak_masuk_tabel_mana_pun(self):
+        # 1,6× > 1,5× (bukan SLOW) dan ≤ 2× (bukan SPOT): sementara tidak ada tabel
+        self.assertEqual(self._split(_fp("8" * 44, fee_tvl=16.0, vol=10.0)), ([], []))
+        self.assertEqual(self._split(_fp("9" * 44, fee_tvl=20.0, vol=10.0)), ([], []))
+
+    def test_fee_tvl_di_bawah_0_75x_tidak_masuk_tabel_mana_pun(self):
+        spot, band = self._split(_fp("4" * 44, fee_tvl=7.4, vol=10.0))  # 0,74× < 0,75×
         self.assertEqual((spot, band), ([], []))
 
     def test_volatility_tidak_terukur_tidak_masuk_tabel_mana_pun(self):
