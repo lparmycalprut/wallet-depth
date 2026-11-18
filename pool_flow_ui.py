@@ -22,6 +22,8 @@ BUTTON_LABEL = "SCAN ALL"
 HIGH_RISK_COLOR = "red"
 SLOW_FEE_PRINTER_COLOR = "blue"
 HIGH_RISK_BORDER = "rgba(239,68,68,.85)"
+VERY_HIGH_RISK_COLOR = "red"
+VERY_HIGH_RISK_BORDER = "rgba(127,29,29,.95)"  # merah tua: lebih berisiko dari HIGH RISK (2026-11-18)
 SLOW_FEE_PRINTER_BORDER = "rgba(59,130,246,.85)"
 DEFAULT_BORDER = "rgba(128,128,128,.35)"
 FOUR_H_COLOR = "violet"  # bagian Deteksi 4H (permintaan user, 2026-11-15)
@@ -38,7 +40,7 @@ TABLE_4H_HEADERS = ["Token / pool", "TVL", "Fee tier",
 
 
 def _filter_caption() -> str:
-    return (f"Timeframe 12H · kategori all · dlmm · token dibuat sebelum 14 Nov 2026 13:59 UTC · "
+    return (f"Timeframe 12H · kategori all · dlmm · "
             f"TVL ≥ {pf.fmt_usd(10000)} · fee/TVL ≥ 2 · fee ≥ 0.5% · "
             f"tanpa critical warning · tanpa konsentrasi/kepemilikan tunggal tinggi · "
             f"urut avg volume/menit ÷ TVL terbesar.")
@@ -75,6 +77,12 @@ def _render_scan_result(result: dict) -> None:
     st.markdown(f"*· {len(high_risk)} pool · 2 × volatility < fee/TVL < 20 × volatility*")
     _render_pool_table(high_risk, "Tidak ada pool untuk HIGH RISK FEE PRINTER.", top_pool,
                        accent=HIGH_RISK_BORDER)
+    # VERY HIGH RISK POOL / BISA DUMP SEWAKTU2: fee/TVL ≥ 20 × volatility (permintaan user, 2026-11-18).
+    very_high = pf.very_high_risk(passing)
+    st.markdown(f"**:{VERY_HIGH_RISK_COLOR}[VERY HIGH RISK POOL / BISA DUMP SEWAKTU2]**")
+    st.markdown(f"*· {len(very_high)} pool · fee/TVL ≥ 20 × volatility*")
+    _render_pool_table(very_high, "Tidak ada pool untuk VERY HIGH RISK POOL.", top_pool,
+                       accent=VERY_HIGH_RISK_BORDER)
     st.markdown(f"**:{SLOW_FEE_PRINTER_COLOR}[SLOW FEE PRINTER]**")
     st.markdown(f"*· {len(band)} pool · 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility*")
     _render_pool_table(band, "Tidak ada pool untuk SLOW FEE PRINTER.", top_pool,

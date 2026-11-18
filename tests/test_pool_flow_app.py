@@ -155,6 +155,34 @@ class AppMainTest(unittest.TestCase):
         self.assertNotIn(ui.SLOW_FEE_PRINTER_BORDER, high)
         self.assertIn(f"border:2px solid {ui.SLOW_FEE_PRINTER_BORDER}", band)
 
+    def test_tabel_very_high_risk_antara_high_risk_dan_slow_fee_printer(self):
+        from tests.test_pool_flow import _fp
+        very = _fp("V" * 44, fee_tvl=50.0, vol=1.0, symbol="VHX")  # 50 × volatility → VERY HIGH
+        very["avg_volume"] = 900.0
+        listing_12h = PASSING_12H + [very]
+
+        def fake_listing(*_args, **kwargs):
+            if kwargs.get("timeframe") == pf.FLOW_TIMEFRAME:
+                return (listing_12h, [], False)
+            return (PASSING_12H, [], False)
+
+        with mock.patch.object(pf, "fetch_listing", side_effect=fake_listing):
+            at = self._app()
+            next(b for b in at.button if b.label == "SCAN ALL").click().run()
+        self.assertFalse(at.exception)
+        order = [str(m.value) for m in at.markdown]
+
+        def index_of(key):
+            return next(i for i, v in enumerate(order) if key in v)
+
+        high = index_of("HIGH RISK FEE PRINTER")
+        very_at = index_of("VERY HIGH RISK POOL / BISA DUMP SEWAKTU2")
+        slow = index_of("SLOW FEE PRINTER")
+        self.assertLess(high, very_at)
+        self.assertLess(very_at, slow)
+        table_html = "\n".join(str(n.proto.srcdoc) for n in at.get("iframe"))
+        self.assertIn("VHX", table_html)
+
     def test_bagian_deteksi_4h_di_paling_bawah(self):
         at = self._app()
         next(b for b in at.button if b.label == "SCAN ALL").click().run()
@@ -189,9 +217,9 @@ class WorkflowAndPagesTest(unittest.TestCase):
     def _load(self, rel):
         return yaml.safe_load((ROOT / rel).read_text(encoding="utf-8"))
 
-    def test_alert_best_terjadwal_tiap_4_jam_tanpa_mode(self):
+    def test_alert_ringkasan_terjadwal_tiap_jam_tanpa_mode(self):
         best = self._load(".github/workflows/pool-flow-best.yml")
-        self.assertEqual(best[True]["schedule"][0]["cron"], "0 */4 * * *")
+        self.assertEqual(best[True]["schedule"][0]["cron"], "0 * * * *")
         text = (ROOT / ".github/workflows/pool-flow-best.yml").read_text(encoding="utf-8")
         self.assertIn("scripts/pool_flow_alert.py", text)
         self.assertNotIn("--mode", text)
