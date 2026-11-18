@@ -278,18 +278,18 @@ def _fp(pool, fee_tvl, vol, symbol="FP"):
 
 
 class HighRiskFeePrinterTest(unittest.TestCase):
-    """HIGH RISK FEE PRINTER: dari FEE PRINTER (SPOT), hanya 2 × < fee/TVL < 20 × volatility."""
+    """HIGH RISK FEE PRINTER: dari FEE PRINTER (SPOT), hanya 2 × < fee/TVL < 10 × volatility (2026-11-19)."""
 
     def _high(self, *rows):
         result = pf.scan_pools(listing=(list(rows), [], False))
         fee_printer, _band = pf.fee_printer_split(result["passing"])
         return pf.fee_printer_high_risk(fee_printer)
 
-    def test_hanya_rentang_2_sampai_20_kali_volatility(self):
+    def test_hanya_rentang_2_sampai_10_kali_volatility(self):
         rows = [_fp("A" * 44, fee_tvl=2.5, vol=1.0),    # 2,5× → masuk
-                _fp("B" * 44, fee_tvl=19.9, vol=1.0),   # 19,9× → masuk
-                _fp("C" * 44, fee_tvl=20.0, vol=1.0),   # tepat 20× → tidak masuk
-                _fp("D" * 44, fee_tvl=35.0, vol=1.0),   # > 20× → tidak masuk
+                _fp("B" * 44, fee_tvl=9.9, vol=1.0),    # 9,9× → masuk
+                _fp("C" * 44, fee_tvl=10.0, vol=1.0),   # tepat 10× → tidak masuk
+                _fp("D" * 44, fee_tvl=35.0, vol=1.0),   # > 10× → tidak masuk
                 _fp("E" * 44, fee_tvl=2.0, vol=1.0),    # tepat 2× → bukan FEE PRINTER (SPOT)
                 _fp("F" * 44, fee_tvl=1.5, vol=1.0)]    # band, bukan HIGH RISK
         high = self._high(*rows)
@@ -371,14 +371,14 @@ class VeryHighRiskTest(unittest.TestCase):
     def test_hanya_fee_tvl_minimal_20_kali_volatility(self):
         rows = [_fp("A" * 44, fee_tvl=20.0, vol=1.0),     # tepat 20× → masuk
                 _fp("B" * 44, fee_tvl=35.0, vol=1.0),     # > 20× → masuk
-                _fp("C" * 44, fee_tvl=19.9, vol=1.0),     # 19,9× → tidak (HIGH RISK)
+                _fp("C" * 44, fee_tvl=19.9, vol=1.0),     # 19,9× → tidak (belum ≥ 20×; di atas HIGH RISK)
                 _fp("D" * 44, fee_tvl=50.0, vol=0.005),   # volatility tidak terukur → tidak
                 _fp("E" * 44, fee_tvl=None, vol=1.0)]     # fee/TVL kosong → tidak
         self.assertEqual({r["pool"] for r in self._very(*rows)}, {"A" * 44, "B" * 44})
 
     def test_tidak_tumpang_tindih_dengan_high_risk(self):
         rows = [_fp("A" * 44, fee_tvl=20.0, vol=1.0),
-                _fp("B" * 44, fee_tvl=19.9, vol=1.0),
+                _fp("B" * 44, fee_tvl=9.9, vol=1.0),
                 _fp("C" * 44, fee_tvl=3.0, vol=1.0)]
         result = pf.scan_pools(listing=(rows, [], False))
         fee_printer, _band = pf.fee_printer_split(result["passing"])
