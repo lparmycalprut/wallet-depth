@@ -54,7 +54,7 @@ class AppMainTest(unittest.TestCase):
         self.assertFalse(at.exception)
         summary = next(str(n.proto.srcdoc) for n in at.get("iframe")
                        if "Kriteria" in str(n.proto.srcdoc))
-        self.assertIn("BEST POOL", summary)  # HIGHX: ada di HIGH RISK 12H dan di 4H (4 % > 2 %)
+        self.assertIn("BEST POOL (HIGH RISK)", summary)  # HIGHX: ada di HIGH RISK 12H dan di 4H (4 % > 2 %)
         self.assertIn(HIGH_POOL, summary)
         # urutan di halaman: RINGKASAN sebelum HIGH RISK FEE PRINTER, dan Deteksi 4H paling bawah
         order = [str(m.value) for m in at.markdown]

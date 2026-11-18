@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Alert RINGKASAN Scan ALL (BEST POOL dan 4H ≥ 10 %), dijalankan tiap jam.
+"""Alert RINGKASAN Scan ALL (BEST POOL (HIGH RISK) dan 4H ≥ 10 %), dijalankan tiap jam.
 
 Pemakaian:
     python3 scripts/pool_flow_alert.py [--state berkas.json]
@@ -23,7 +23,7 @@ import pool_flow as pf  # noqa: E402
 def run_summary(state: dict, *, scan=None, scan_4h=None) -> list[tuple[str, dict | None]]:
     """Kembalikan daftar (teks, reply_markup) yang akan dikirim: RINGKASAN saja (2026-11-18).
 
-    Isi = ``pool_flow.summary_rows``: BEST POOL (HIGH RISK 12H dan DETEKSI 4H) dan
+    Isi = ``pool_flow.summary_rows``: BEST POOL (HIGH RISK) (12H HIGH RISK dan DETEKSI 4H) dan
     4H ≥ 10 % avg volume/menit ÷ TVL. Tidak ada fetch per token.
     """
     result = (scan or pf.scan_pools)()
