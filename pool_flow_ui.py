@@ -155,7 +155,7 @@ def _render_summary(result: dict, result_4h: dict) -> None:
     document = ("<!doctype html><html><head><meta charset=\"utf-8\">"
                 f"<style>{_COPY_CSS}</style></head><body>"
                 f"{_summary_table_html(entries)}{_COPY_SCRIPT}</body></html>")
-    st.iframe(document, height=_result_height(len(entries)), width="stretch")
+    st.iframe(document, height="content", width="stretch")
 
 
 def _render_pool_table(rows: list, empty_text: str, top_pool: str | None = None,
@@ -166,8 +166,9 @@ def _render_pool_table(rows: list, empty_text: str, top_pool: str | None = None,
         st.info(empty_text)
         return
     # st.iframe (bukan components.v1.html): HTML dirender di iframe agar tombol copy CA bisa berjalan.
+    # height="content": iframe mengikuti tinggi tabel (tanpa ruang kosong di bawah tabel, 2026-11-18).
     st.iframe(_result_document(rows, top_pool, accent, builder=builder),
-              height=_result_height(len(rows)), width="stretch")
+              height="content", width="stretch")
 
 
 def _table_html(headers: list, body: list, accent: str) -> str:
@@ -300,11 +301,6 @@ def _result_document(rows: list, top_pool: str | None = None,
     return ("<!doctype html><html><head><meta charset=\"utf-8\">"
             f"<style>{_COPY_CSS}</style></head><body>"
             f"{make_table(rows, top_pool, accent)}{_COPY_SCRIPT}</body></html>")
-
-
-def _result_height(count: int) -> int:
-    """Tinggi iframe: header + perkiraan tinggi tiap baris (token bisa dua-tiga baris)."""
-    return min(1200, max(160, 60 + 120 * count))
 
 
 def _cell_token_html(row: dict) -> str:

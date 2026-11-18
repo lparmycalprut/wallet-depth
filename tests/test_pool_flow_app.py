@@ -155,6 +155,13 @@ class AppMainTest(unittest.TestCase):
         self.assertNotIn(ui.SLOW_FEE_PRINTER_BORDER, high)
         self.assertIn(f"border:2px solid {ui.SLOW_FEE_PRINTER_BORDER}", band)
 
+    def test_tanpa_panel_log_aktivitas(self):
+        at = self._app()
+        next(b for b in at.button if b.label == "SCAN ALL").click().run()
+        self.assertFalse(at.exception)
+        markdown = " ".join(str(m.value) for m in at.markdown)
+        self.assertNotIn("Log Aktivitas", markdown)  # panel dihapus dari halaman utama (2026-11-18)
+
     def test_tabel_very_high_risk_antara_high_risk_dan_slow_fee_printer(self):
         from tests.test_pool_flow import _fp
         very = _fp("V" * 44, fee_tvl=50.0, vol=1.0, symbol="VHX")  # 50 × volatility → VERY HIGH
