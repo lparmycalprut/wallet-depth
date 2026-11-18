@@ -37,7 +37,7 @@ FLOW_SORT_BY = "fee_tvl_ratio:desc"  # dikembalikan sesuai curl user terbaru
 FLOW_VOLATILITY_MEASURABLE_MIN = 0.01
 FLOW_FEE_PRINTER_MULT = 2.0   # FEE PRINTER (SPOT): fee/TVL > 2 × volatility
 FLOW_BAND_LOW_MULT = 0.5      # tabel kedua: 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility
-FLOW_HIGH_RISK_MAX_MULT = 20.0  # HIGH RISK FEE PRINTER: 2 × volatility < fee/TVL < 20 × volatility
+FLOW_HIGH_RISK_MAX_MULT = 10.0  # HIGH RISK FEE PRINTER: 2 × volatility < fee/TVL < 10 × volatility (2026-11-19, user request)
 FLOW_SLOW_MIN_TOKEN_AGE_HOURS = 24.0  # SLOW FEE PRINTER: umur token dasar minimal 24 jam (permintaan user, 2026-11-19)
 FLOW_VERY_HIGH_MIN_MULT = 20.0  # VERY HIGH RISK POOL / BISA DUMP SEWAKTU2: fee/TVL ≥ 20 × volatility (2026-11-18)
 # Peringatan keamanan (label saja, tidak menyaring).
@@ -457,10 +457,10 @@ def fee_printer_split(passing: list, now_ms: float | None = None) -> tuple[list,
 
 
 def fee_printer_high_risk(fee_printer: list) -> list:
-    """Filter kedua di atas FEE PRINTER (SPOT): hanya fee/TVL < 20 × volatility (HIGH RISK FEE PRINTER).
+    """Filter kedua di atas FEE PRINTER (SPOT): hanya fee/TVL < 10 × volatility (HIGH RISK FEE PRINTER, 2026-11-19).
 
     Input harus hasil ``fee_printer_split`` (sudah fee/TVL > 2 × volatility). Pool dengan
-    fee/TVL ≥ 20 × volatility tidak ditampilkan di tabel ini. Urutan: ``sort_key``.
+    fee/TVL ≥ 10 × volatility tidak ditampilkan di tabel ini. Urutan: ``sort_key``.
     """
     kept = [item for item in fee_printer
             if item["fee_tvl"] < FLOW_HIGH_RISK_MAX_MULT * item["volatility"]]
@@ -470,7 +470,7 @@ def fee_printer_high_risk(fee_printer: list) -> list:
 def very_high_risk(passing: list) -> list:
     """VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (2026-11-18): fee/TVL ≥ 20 × volatility (batas inklusif).
 
-    Volatility harus terukur (≥ 0,01 %). Melengkapi HIGH RISK FEE PRINTER (2× < fee/TVL < 20×),
+    Volatility harus terukur (≥ 0,01 %). Melengkapi HIGH RISK FEE PRINTER (2× < fee/TVL < 10×),
     sehingga kedua tabel tidak pernah memuat pool yang sama. Urutan: ``sort_key``.
     """
     kept: list = []
