@@ -20,13 +20,16 @@ import pool_flow as pf  # noqa: E402
 SOL = "So11111111111111111111111111111111111111112"
 
 
+OLD_TOKEN_MS = 1_700_000_000_000  # token berumur > 24 jam untuk tes umur (ms)
+
+
 def _row(pool, symbol, *, fee=2.0, tvl=20_000.0, active_tvl=5_000.0, holders=2_000,
          mcap=500_000.0, vol=2.0, fa=10.0, open_pos=50, active=40, mint=None,
          volume=720_000.0, swaps=500.0, traders=200.0, ftvl=20.0):
     mint = mint or ("M" + pool[:8].ljust(43, "x"))
     return {"pool_address": pool, "name": f"{symbol}-SOL", "pool_type": "dlmm",
             "token_x": {"address": mint, "symbol": symbol, "name": symbol,
-                        "market_cap": mcap},
+                        "market_cap": mcap, "created_at": OLD_TOKEN_MS},
             "token_y": {"address": SOL, "symbol": "SOL", "name": "Wrapped SOL"},
             "fee_pct": fee, "tvl": tvl, "active_tvl": active_tvl,
             "base_token_holders": holders, "open_positions": open_pos,
@@ -303,6 +306,47 @@ class HighRiskFeePrinterTest(unittest.TestCase):
 
     def test_pool_tanpa_volatility_terukur_tidak_masuk(self):
         self.assertEqual(self._high(_fp("G" * 44, fee_tvl=5.0, vol=0.005)), [])
+
+
+class SlowFeePrinterAgeTest(unittest.TestCase):
+    """SLOW FEE PRINTER hanya untuk token berumur ≥ 24 jam (permintaan user, 2026-11-19)."""
+
+    NOW = 1_800_000_000_000  # ms, titik waktu tetap untuk tes
+
+    def _band(self, *rows):
+        result = pf.scan_pools(listing=(list(rows), [], False))
+        return pf.fee_printer_split(result["passing"], now_ms=self.NOW)[1]
+
+    def _aged(self, pool, hours):
+        row = _fp(pool, fee_tvl=1.0, vol=1.0)  # band: 0,5 ≤ 1 ≤ 2
+        row["token_x"]["created_at"] = self.NOW - hours * 3_600_000
+        return row
+
+    def test_umur_di_bawah_24_jam_tidak_masuk_slow(self):
+        self.assertEqual(self._band(self._aged("Y" * 44, 23.0)), [])
+
+    def test_umur_tepat_24_jam_masuk_slow(self):
+        self.assertEqual([r["pool"] for r in self._band(self._aged("Z" * 44, 24.0))], ["Z" * 44])
+
+    def test_umur_di_atas_24_jam_masuk_slow(self):
+        self.assertEqual([r["pool"] for r in self._band(self._aged("W" * 44, 25.0))], ["W" * 44])
+
+    def test_tanpa_data_umur_tidak_masuk_slow(self):
+        row = _fp("V" * 44, fee_tvl=1.0, vol=1.0)
+        row["token_x"].pop("created_at", None)
+        self.assertEqual(self._band(row), [])
+
+    def test_fee_printer_tidak_terpengaruh_umur(self):
+        young = _fp("U" * 44, fee_tvl=5.0, vol=1.0)  # 5 > 2 × 1 → FEE PRINTER, bukan band
+        young["token_x"]["created_at"] = self.NOW - 1 * 3_600_000
+        result = pf.scan_pools(listing=([young], [], False))
+        spot, band = pf.fee_printer_split(result["passing"], now_ms=self.NOW)
+        self.assertEqual([r["pool"] for r in spot], ["U" * 44])
+        self.assertEqual(band, [])
+
+    def test_evaluate_pool_membawa_umur_token(self):
+        self.assertEqual(pf.evaluate_pool(_fp("T" * 44, fee_tvl=1.0, vol=1.0))["token_created_at"],
+                         OLD_TOKEN_MS)
 
 
 class VeryHighRiskTest(unittest.TestCase):
