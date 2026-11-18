@@ -1,6 +1,6 @@
 name: Pool Flow — Ringkasan alert
 
-# Alert RINGKASAN Scan ALL (BEST POOL dan 4H ≥ 10 %) tiap jam (00:00, 01:00, ... UTC).
+# Alert RINGKASAN Scan ALL (semua pool dari tiga tabel 12H) tiap jam (00:00, 01:00, ... UTC).
 # Cron GitHub bisa terlambat beberapa menit. State di pool_flow_state.json
 # di-commit hanya bila berubah.
 

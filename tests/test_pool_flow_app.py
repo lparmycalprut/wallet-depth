@@ -92,15 +92,14 @@ class AppMainTest(unittest.TestCase):
         next(b for b in at.button if b.label == "SCAN ALL").click().run()
         self.assertFalse(at.exception)
         summary = next(str(n.proto.srcdoc) for n in at.get("iframe")
-                       if "Kriteria" in str(n.proto.srcdoc))
-        self.assertIn("BEST POOL (HIGH RISK)", summary)  # HIGHX: ada di HIGH RISK 12H dan di 4H (4 % > 2 %)
+                       if "Asal tabel" in str(n.proto.srcdoc))
+        self.assertIn(">HIGH RISK FEE PRINTER</span>", summary)  # HIGHX: badge asal tabel
         self.assertIn(HIGH_POOL, summary)
-        # urutan di halaman: RINGKASAN sebelum HIGH RISK FEE PRINTER, dan Deteksi 4H paling bawah
+        # urutan di halaman: RINGKASAN sebelum HIGH RISK FEE PRINTER (tanpa Deteksi 4H)
         order = [str(m.value) for m in at.markdown]
         idx = {key: next(i for i, v in enumerate(order) if key in v)
-               for key in ("RINGKASAN", "HIGH RISK FEE PRINTER", "Deteksi 4H")}
+               for key in ("RINGKASAN", "HIGH RISK FEE PRINTER")}
         self.assertLess(idx["RINGKASAN"], idx["HIGH RISK FEE PRINTER"])
-        self.assertLess(idx["HIGH RISK FEE PRINTER"], idx["Deteksi 4H"])
 
     def test_tombol_copy_ca_tepat_di_samping_hawkfi(self):
         at = self._app()
@@ -110,13 +109,10 @@ class AppMainTest(unittest.TestCase):
         fee_printer, band = pf.fee_printer_split(passing)
         # pool yang tampil di tabel 12H (HIGH RISK, VERY HIGH, SLOW); FOOD tidak tampil di mana pun
         shown_12h = pf.fee_printer_high_risk(fee_printer) + pf.very_high_risk(passing) + band
-        passing_4h = pf.scan_4h(listing=(PASSING_12H, [], False))["passing"]
-        summary = pf.summary_rows(pf.scan_pools(listing=(PASSING_12H, [], False)),
-                                  pf.scan_4h(listing=(PASSING_12H, [], False)))
+        summary = pf.summary_rows(pf.scan_pools(listing=(PASSING_12H, [], False)))
         doc = self._body(at)
-        # tombol CA: tabel 12H + tabel 4H + ringkasan
-        self.assertEqual(doc.count('class="copy-ca"'),
-                         len(shown_12h) + len(passing_4h) + len(summary))
+        # tombol CA: tabel 12H + baris RINGKASAN (satu per pool yang tampil di tabel 12H)
+        self.assertEqual(doc.count('class="copy-ca"'), len(shown_12h) + len(summary))
         for row in shown_12h:
             self.assertTrue(row["mint"])
             self.assertIn(f'data-ca="{row["mint"]}"', doc)
@@ -211,12 +207,7 @@ class AppMainTest(unittest.TestCase):
         very["avg_volume"] = 900.0
         listing_12h = PASSING_12H + [very]
 
-        def fake_listing(*_args, **kwargs):
-            if kwargs.get("timeframe") == pf.FLOW_TIMEFRAME:
-                return (listing_12h, [], False)
-            return (PASSING_12H, [], False)
-
-        with mock.patch.object(pf, "fetch_listing", side_effect=fake_listing):
+        with mock.patch.object(pf, "fetch_listing", side_effect=lambda *_a, **_k: (listing_12h, [], False)):
             at = self._app()
             next(b for b in at.button if b.label == "SCAN ALL").click().run()
         self.assertFalse(at.exception)
@@ -233,20 +224,13 @@ class AppMainTest(unittest.TestCase):
         table_html = "\n".join(str(n.proto.srcdoc) for n in at.get("iframe"))
         self.assertIn("VHX", table_html)
 
-    def test_bagian_deteksi_4h_di_paling_bawah(self):
+    def test_tanpa_bagian_deteksi_4h(self):
         at = self._app()
         next(b for b in at.button if b.label == "SCAN ALL").click().run()
         self.assertFalse(at.exception)
         markdown = " ".join(str(m.value) for m in at.markdown)
-        self.assertIn("DETEKSI 4H", markdown)
-        self.assertIn(":violet[DETEKSI 4H]", markdown)
-        html_4h = next(str(n.proto.srcdoc) for n in at.get("iframe")
-                       if "Volume 4H (pool)" in str(n.proto.srcdoc))
-        self.assertIn("Volume 4H (pool)", html_4h)
-        self.assertIn("Avg volume/menit ÷ TVL", html_4h)
-        first_row = html_4h.split("<tbody>", 1)[1].split("</tr>", 1)[0]
-        import pool_flow_ui as ui
-        self.assertIn(ui.TOP_ROW_BG, first_row)  # pool teratas 4H berwarna kuning
+        self.assertNotIn("DETEKSI 4H", markdown)  # bagian Deteksi 4H dihapus (2026-11-20)
+        self.assertNotIn("Volume 4H (pool)", self._body(at))
 
     def test_tabel_tanpa_penandaan_api_bakar(self):
         at = self._app()

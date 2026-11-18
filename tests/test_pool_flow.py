@@ -157,18 +157,16 @@ def _sec(*, tvl=20_000.0, deposits=None, withdraws=None, fa=10.0, avg=None, **to
     return row
 
 
-def _row4h_pool(pool, symbol, avg_vol, tvl=20_000.0):
-    """Baris 4H dengan avg volume per menit yang diatur tes (untuk ringkasan)."""
-    row = _row(pool, symbol, tvl=tvl)
-    row["avg_volume"] = avg_vol
-    row["avg_fee"] = 1.0
+def _summary_entries(rows_12h):
+    """Hasil ``summary_rows`` dari listing 12H tiruan (tanpa jaringan)."""
+    return pf.summary_rows(pf.scan_pools(listing=(rows_12h, [], False)))
+
+
+def _high_pool(row):
+    """Baris yang masuk HIGH RISK FEE PRINTER: fee/TVL 10 % = 2,86 × volatility 3,5 %."""
+    row["fee_tvl_ratio"] = 10.0
+    row["volatility"] = 3.5
     return row
-
-
-def _summary_entries(rows_12h, rows_4h):
-    """Hasil ``summary_rows`` dari listing 12H dan 4H tiruan (tanpa jaringan)."""
-    return pf.summary_rows(pf.scan_pools(listing=(rows_12h, [], False)),
-                           pf.scan_4h(listing=(rows_4h, [], False)))
 
 
 class SecurityTest(unittest.TestCase):
@@ -241,14 +239,14 @@ class SecurityTest(unittest.TestCase):
         self.assertIn(blocked["pool_address"], [r["pool"] for r in result["results"]])
 
     def test_alert_memuat_peringatan_keamanan(self):
-        warned = _sec(top_holders_pct=20.0, fa=50.0, avg=9000.0)  # 4H 45 % → masuk ringkasan
-        text, _markup = pf.apply_summary_alert(pf.empty_state(), _summary_entries([], [warned]))
+        warned = _high_pool(_sec(top_holders_pct=20.0, fa=50.0, avg=9000.0))  # HIGH RISK → masuk ringkasan
+        text, _markup = pf.apply_summary_alert(pf.empty_state(), _summary_entries([warned]))
         self.assertIn("Peringatan keamanan", text)
         self.assertIn("top holders 20,0%", text)
 
     def test_alert_tanpa_peringatan_tidak_memuat_baris_keamanan(self):
-        clean = _sec(fa=50.0, avg=9000.0)
-        text, _markup = pf.apply_summary_alert(pf.empty_state(), _summary_entries([], [clean]))
+        clean = _high_pool(_sec(fa=50.0, avg=9000.0))
+        text, _markup = pf.apply_summary_alert(pf.empty_state(), _summary_entries([clean]))
         self.assertNotIn("Peringatan keamanan", text)
 
     def test_tabel_memuat_kolom_peringatan_keamanan(self):
@@ -401,21 +399,16 @@ class FeeTvlMinTest(unittest.TestCase):
         result = pf.scan_pools(listing=([_row("E" * 44, "EXACT", ftvl=5.0)], [], False))
         self.assertEqual([r["symbol"] for r in result["passing"]], ["EXACT"])
 
-    def test_scan_4h_tidak_terpengaruh(self):
-        row = _row("Q" * 44, "QUICK", tvl=20_000.0, ftvl=4.0)
-        row["avg_volume"] = 1000.0  # 5 % > 2 %
-        row["avg_fee"] = 1.0
-        result = pf.scan_4h(listing=([row], [], False))
-        self.assertEqual([r["symbol"] for r in result["passing"]], ["QUICK"])
+    def test_pool_di_bawah_5_persen_tidak_masuk_ringkasan(self):
+        # volatility 4 %, fee/TVL 4,9 % → rasio 1,2× (band SLOW), tetapi fee di bawah 5 % → tidak lolos
+        low = _row("H" * 44, "HILOW", vol=4.0, ftvl=4.9)
+        self.assertEqual(pf.summary_rows(pf.scan_pools(listing=([low], [], False))), [])
 
-    def test_pool_di_bawah_5_persen_tidak_jadi_best_pool(self):
-        low = _row("H" * 44, "HILOW", vol=1.0, ftvl=4.9)  # HIGH RISK band, tapi fee < 5 %
-        result_12h = pf.scan_pools(listing=([low], [], False))
-        row_4h = _row("H" * 44, "HILOW", tvl=20_000.0, ftvl=4.9)
-        row_4h["avg_volume"] = 1000.0
-        row_4h["avg_fee"] = 1.0
-        result_4h = pf.scan_4h(listing=([row_4h], [], False))
-        self.assertEqual(pf.summary_rows(result_12h, result_4h), [])
+    def test_pool_tepat_5_persen_masuk_ringkasan(self):
+        ok = _row("I" * 44, "OKAYX", vol=4.0, ftvl=5.0)  # 1,25× (band SLOW), fee tepat 5 %
+        entries = pf.summary_rows(pf.scan_pools(listing=([ok], [], False)))
+        self.assertEqual([(r["symbol"], label) for r, label in entries],
+                         [("OKAYX", pf.SUMMARY_LABEL_SLOW)])
 
 
 class VeryHighRiskTest(unittest.TestCase):
@@ -603,126 +596,6 @@ class ScanTest(unittest.TestCase):
         self.assertEqual(params["filter_by"], pf.FLOW_SERVER_FILTER)
 
 
-class Scan4hTest(unittest.TestCase):
-    """Deteksi 4H (curl user terbaru): timeframe 4h, category top, tanpa sort_by."""
-
-    CURL_FILTER_4H = ("base_token_has_high_supply_concentration=false"
-                      "&&base_token_has_high_single_ownership=false"
-                      "&&pool_type=dlmm"
-                      "&&base_token_market_cap>=20000"
-                      "&&base_token_holders>=1500"
-                      "&&tvl>=10000"
-                      "&&fee_tvl_ratio>=1"
-                      "&&fee_pct>=0.5"
-                      "&&active_tvl>=10000")
-
-    def _row4h(self, pool, *, avg_vol, avg_fee, tvl=20_000.0, **over):
-        row = _row(pool, pool[:3], tvl=tvl, **over)
-        row["avg_volume"] = avg_vol
-        row["avg_fee"] = avg_fee
-        return row
-
-    def test_request_4h_sesuai_curl_user(self):
-        captured = []
-
-        def fake_get(params):
-            captured.append(dict(params))
-            return {"data": [], "has_more": False}
-
-        with mock.patch.object(pf, "_get_payload", side_effect=fake_get):
-            rows, errors, truncated = pf.fetch_listing(**pf.LISTING_4H)
-        self.assertEqual((rows, errors, truncated), ([], [], False))
-        params = captured[0]
-        self.assertEqual(list(params), ["page_size", "timeframe", "category", "filter_by"])
-        self.assertEqual(params["page_size"], 50)
-        self.assertEqual(params["timeframe"], "4h")
-        self.assertEqual(params["category"], "top")
-        self.assertEqual(params["filter_by"], self.CURL_FILTER_4H)
-        self.assertEqual(pf.FLOW_4H_SERVER_FILTER, self.CURL_FILTER_4H)
-
-    def test_12h_tetap_memakai_sort_by(self):
-        captured = []
-
-        def fake_get(params):
-            captured.append(dict(params))
-            return {"data": [], "has_more": False}
-
-        with mock.patch.object(pf, "_get_payload", side_effect=fake_get):
-            pf.fetch_listing()
-        self.assertEqual(captured[0]["sort_by"], "fee_tvl_ratio:desc")
-        self.assertEqual(captured[0]["timeframe"], "12h")
-
-    def test_urut_avg_volume_tvl_lalu_avg_fee_tvl(self):
-        rows = [
-            self._row4h("A" * 44, avg_vol=600.0, avg_fee=5.0),        # 0,030 ; fee 0,00025
-            self._row4h("B" * 44, avg_vol=2000.0, avg_fee=1.0),       # 0,100
-            self._row4h("C" * 44, avg_vol=600.0, avg_fee=9.0, tvl=10_000.0),  # 0,060
-            self._row4h("D" * 44, avg_vol=600.0, avg_fee=50.0),       # 0,030 ; fee 0,0025 (lebih besar)
-        ]
-        result = pf.scan_4h(listing=(rows, [], False))
-        self.assertEqual(result["timeframe"], "4h")
-        self.assertEqual([r["pool"] for r in result["passing"]],
-                         ["B" * 44, "C" * 44, "D" * 44, "A" * 44])
-
-    def test_blokir_keamanan_berlaku_di_4h(self):
-        blocked = self._row4h("E" * 44, avg_vol=9000.0, avg_fee=9.0)
-        blocked["token_x"]["has_mint_authority"] = True
-        ok = self._row4h("F" * 44, avg_vol=600.0, avg_fee=1.0)  # 3 % > 2 %
-        result = pf.scan_4h(listing=([blocked, ok], [], False))
-        self.assertEqual([r["pool"] for r in result["passing"]], ["F" * 44])
-
-    def test_4h_hanya_volume_tvl_di_atas_2_persen(self):
-        rows = [
-            self._row4h("A" * 44, avg_vol=400.0, avg_fee=5.0),    # tepat 2 % (400 ÷ 20.000) → tidak tampil
-            self._row4h("B" * 44, avg_vol=404.0, avg_fee=5.0),    # 2,02 % → tampil
-            self._row4h("C" * 44, avg_vol=50.0, avg_fee=9.0),     # 0,25 % → tidak tampil
-        ]
-        result = pf.scan_4h(listing=(rows, [], False))
-        self.assertEqual([r["pool"] for r in result["passing"]], ["B" * 44])
-        self.assertEqual(result["candidates"], 3)  # pool tetap dievaluasi, hanya tidak tampil
-        self.assertEqual(pf.FLOW_4H_MIN_VOLUME_TVL, 0.02)
-
-    def test_ringkasan_best_pool_dan_4h_di_atas_5_persen(self):
-        high = [_fp("G" * 44, fee_tvl=15.0, vol=5.0), _fp("H" * 44, fee_tvl=15.0, vol=5.0),  # 3× → HIGH RISK
-                _fp("E" * 44, fee_tvl=15.0, vol=5.0), _fp("Z" * 44, fee_tvl=1.0, vol=1.0)]
-        result_12h = pf.scan_pools(listing=(high, [], False))
-        rows_4h = [
-            self._row4h("G" * 44, avg_vol=1200.0, avg_fee=1.0),  # 6 %, di HIGH RISK → BEST
-            self._row4h("H" * 44, avg_vol=600.0, avg_fee=1.0),   # 3 %, di HIGH RISK → BEST
-            self._row4h("Y" * 44, avg_vol=2000.0, avg_fee=1.0),  # 10 %, tepat di batas, tidak di HIGH RISK → 4H ≥ 10% (CURVE) SL OOR
-            self._row4h("X" * 44, avg_vol=500.0, avg_fee=1.0),   # 2,5 %, bukan keduanya → tidak masuk
-            self._row4h("W" * 44, avg_vol=1800.0, avg_fee=1.0),  # 9 %, di bawah 10 % → tidak masuk
-            self._row4h("E" * 44, avg_vol=200.0, avg_fee=1.0),   # 1 %, di bawah 2 % → tidak tampil di 4H
-        ]
-        result_4h = pf.scan_4h(listing=(rows_4h, [], False))
-        summary = pf.summary_rows(result_12h, result_4h)
-        self.assertEqual([(r["pool"], label) for r, label in summary],
-                         [("G" * 44, pf.SUMMARY_BEST), ("H" * 44, pf.SUMMARY_BEST),
-                          ("Y" * 44, pf.SUMMARY_4H)])
-
-    def test_ringkasan_4h_batas_minimal_10_persen_inklusif(self):
-        result_12h = pf.scan_pools(listing=([], [], False))
-        rows_4h = [
-            self._row4h("P" * 44, avg_vol=2000.0, avg_fee=1.0),  # tepat 10 % → tampil
-            self._row4h("Q" * 44, avg_vol=1800.0, avg_fee=1.0),  # 9 % → tidak
-        ]
-        result_4h = pf.scan_4h(listing=(rows_4h, [], False))
-        summary = pf.summary_rows(result_12h, result_4h)
-        self.assertEqual([(r["pool"], label) for r, label in summary],
-                         [("P" * 44, pf.SUMMARY_4H)])
-        self.assertEqual(pf.FLOW_SUMMARY_4H_MIN, 0.10)
-
-    def test_ringkasan_kosong_tanpa_kecocokan(self):
-        result_12h = pf.scan_pools(listing=([], [], False))
-        result_4h = pf.scan_4h(listing=([self._row4h("X" * 44, avg_vol=500.0, avg_fee=1.0)], [], False))
-        self.assertEqual(pf.summary_rows(result_12h, result_4h), [])
-
-    def test_avg_fee_tvl_ratio(self):
-        self.assertAlmostEqual(pf.avg_fee_tvl_ratio({"avg_fee": 3.0, "tvl": 1500.0}), 0.002)
-        self.assertIsNone(pf.avg_fee_tvl_ratio({"avg_fee": None, "tvl": 1500.0}))
-        self.assertIsNone(pf.avg_fee_tvl_ratio({"avg_fee": 3.0, "tvl": 0}))
-
-
 class PaginationTest(unittest.TestCase):
     """Paginasi cursor: halaman berikutnya diminta dengan ``after_key``."""
 
@@ -808,40 +681,46 @@ def rows_pool(index: int) -> str:
 
 
 class AlertTest(unittest.TestCase):
-    """Alert Telegram (2026-11-18): RINGKASAN saja — BEST POOL dan 4H ≥ 10% (CURVE) SL OOR."""
+    """Alert Telegram (2026-11-20): RINGKASAN saja — semua pool dari ketiga tabel 12H dengan label asal."""
 
     def test_tanpa_pool_ringkasan_tidak_ada_alert(self):
         state = pf.empty_state()
+        self.assertEqual(_summary_entries([]), [])
         self.assertEqual(pf.apply_summary_alert(state, []), (None, None))
         self.assertEqual(state["alerts"], [])
         self.assertEqual(state["best_alert"]["next_no"], 1)
 
-    def test_ringkasan_memuat_label_rasio_dan_tautan(self):
-        entries = _summary_entries(PASSING_12H, PASSING_12H)
+    def test_ringkasan_memuat_label_asal_rasio_dan_tautan(self):
+        entries = _summary_entries(PASSING_12H)
         self.assertEqual([(r["symbol"], label) for r, label in entries],
-                         [("HIGHX", pf.SUMMARY_BEST)])
+                         [("HIGHX", pf.SUMMARY_LABEL_HIGH)])
         text, markup = pf.apply_summary_alert(pf.empty_state(), entries)
         self.assertIn("RINGKASAN", text)
-        self.assertIn("[BEST POOL (HIGH RISK)]", text)
-        self.assertIn("÷ TVL 4H 4,00%", text)  # HIGHX: 800 ÷ 20.000
+        self.assertIn("[HIGH RISK FEE PRINTER]", text)
+        self.assertIn("fee/TVL 16,5% · volatility 5,5%", text)  # HIGHX
         for host in ("gmgn.ai", "meteora.ag", "hawkfi.ag", "dexscreener.com"):
             self.assertIn(host, text)
-        self.assertNotIn("SLOW FEE PRINTER", text)
         self.assertNotIn("POOL PALING RAMAI", text)
+        self.assertNotIn("4H", text)  # tidak ada lagi kriteria 4H
         self.assertEqual(markup["inline_keyboard"][0][0]["copy_text"]["text"],
                          pf.mint_of_pool(HIGH_12H))
 
-    def test_ringkasan_memuat_kedua_kriteria(self):
-        yyy = _row4h_pool("Y" * 44, "YYY", 2000.0)  # 10 %, tepat batas → 4H ≥ 10% (CURVE) SL OOR
-        entries = _summary_entries(PASSING_12H, PASSING_12H + [yyy])
+    def test_ringkasan_memuat_ketiga_tabel_dengan_label_asal(self):
+        from tests.test_pool_flow import _fp
+        very = _fp("V" * 44, fee_tvl=50.0, vol=1.0, symbol="VHX")  # 50 × → VERY HIGH
+        slow = _fp("S" * 44, fee_tvl=10.0, vol=10.0, symbol="SLW")  # 1 × → SLOW
+        entries = _summary_entries(PASSING_12H + [very, slow])
         self.assertEqual([(r["symbol"], label) for r, label in entries],
-                         [("HIGHX", pf.SUMMARY_BEST), ("YYY", pf.SUMMARY_4H)])
+                         [("HIGHX", pf.SUMMARY_LABEL_HIGH),
+                          ("VHX", pf.SUMMARY_LABEL_VERY_HIGH),
+                          ("SLW", pf.SUMMARY_LABEL_SLOW)])
         text, _markup = pf.apply_summary_alert(pf.empty_state(), entries)
-        self.assertIn("[BEST POOL (HIGH RISK)]", text)
-        self.assertIn("[4H ≥ 10% (CURVE) SL OOR]", text)
+        self.assertIn("[HIGH RISK FEE PRINTER]", text)
+        self.assertIn("[VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1)]", text)
+        self.assertIn("[SLOW FEE PRINTER]", text)
 
     def test_alert_memberi_nomor_dan_tag_sudah_pernah(self):
-        entries = _summary_entries(PASSING_12H, PASSING_12H)
+        entries = _summary_entries(PASSING_12H)
         state = pf.empty_state()
         first, _ = pf.apply_summary_alert(state, entries)
         self.assertIn("alert #1", first)
@@ -939,8 +818,7 @@ class TelegramCopyTest(unittest.TestCase):
         state = pf.empty_state()
         messages = alert.run_summary(
             state,
-            scan=lambda: pf.scan_pools(listing=(PASSING_12H, [], False)),
-            scan_4h=lambda: pf.scan_4h(listing=(PASSING_12H, [], False)))
+            scan=lambda: pf.scan_pools(listing=(PASSING_12H, [], False)))
         self.assertEqual(len(messages), 1)
         text, markup = messages[0]
         self.assertIn("RINGKASAN", text)
@@ -954,8 +832,7 @@ class TelegramCopyTest(unittest.TestCase):
         state = pf.empty_state()
         self.assertEqual(alert.run_summary(
             state,
-            scan=lambda: pf.scan_pools(listing=([], [], False)),
-            scan_4h=lambda: pf.scan_4h(listing=([], [], False))), [])
+            scan=lambda: pf.scan_pools(listing=([], [], False))), [])
         self.assertEqual(state["alerts"], [])
 
 class FormatTest(unittest.TestCase):
