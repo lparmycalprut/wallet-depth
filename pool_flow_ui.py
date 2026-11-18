@@ -148,7 +148,7 @@ def _render_summary(result: dict, result_4h: dict) -> None:
     entries = pf.summary_rows(result, result_4h)
     st.markdown("**:green[RINGKASAN]**")
     st.caption("BEST POOL (HIGH RISK) = ada di HIGH RISK FEE PRINTER (12H) dan di DETEKSI 4H. "
-               "4H ≥ 10% = avg volume/menit ÷ TVL di DETEKSI 4H minimal 10%.")
+               "4H ≥ 10% (CURVE) SL OOR = avg volume/menit ÷ TVL di DETEKSI 4H minimal 10%.")
     if not entries:
         st.info("Belum ada pool yang memenuhi kriteria ringkasan.")
         return

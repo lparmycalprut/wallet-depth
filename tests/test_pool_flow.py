@@ -570,7 +570,7 @@ class Scan4hTest(unittest.TestCase):
         rows_4h = [
             self._row4h("G" * 44, avg_vol=1200.0, avg_fee=1.0),  # 6 %, di HIGH RISK → BEST
             self._row4h("H" * 44, avg_vol=600.0, avg_fee=1.0),   # 3 %, di HIGH RISK → BEST
-            self._row4h("Y" * 44, avg_vol=2000.0, avg_fee=1.0),  # 10 %, tepat di batas, tidak di HIGH RISK → 4H ≥ 10 %
+            self._row4h("Y" * 44, avg_vol=2000.0, avg_fee=1.0),  # 10 %, tepat di batas, tidak di HIGH RISK → 4H ≥ 10% (CURVE) SL OOR
             self._row4h("X" * 44, avg_vol=500.0, avg_fee=1.0),   # 2,5 %, bukan keduanya → tidak masuk
             self._row4h("W" * 44, avg_vol=1800.0, avg_fee=1.0),  # 9 %, di bawah 10 % → tidak masuk
             self._row4h("E" * 44, avg_vol=200.0, avg_fee=1.0),   # 1 %, di bawah 2 % → tidak tampil di 4H
@@ -689,7 +689,7 @@ def rows_pool(index: int) -> str:
 
 
 class AlertTest(unittest.TestCase):
-    """Alert Telegram (2026-11-18): RINGKASAN saja — BEST POOL dan 4H ≥ 10 %."""
+    """Alert Telegram (2026-11-18): RINGKASAN saja — BEST POOL dan 4H ≥ 10% (CURVE) SL OOR."""
 
     def test_tanpa_pool_ringkasan_tidak_ada_alert(self):
         state = pf.empty_state()
@@ -713,13 +713,13 @@ class AlertTest(unittest.TestCase):
                          pf.mint_of_pool(HIGH_12H))
 
     def test_ringkasan_memuat_kedua_kriteria(self):
-        yyy = _row4h_pool("Y" * 44, "YYY", 2000.0)  # 10 %, tepat batas → 4H ≥ 10 %
+        yyy = _row4h_pool("Y" * 44, "YYY", 2000.0)  # 10 %, tepat batas → 4H ≥ 10% (CURVE) SL OOR
         entries = _summary_entries(PASSING_12H, PASSING_12H + [yyy])
         self.assertEqual([(r["symbol"], label) for r, label in entries],
                          [("HIGHX", pf.SUMMARY_BEST), ("YYY", pf.SUMMARY_4H)])
         text, _markup = pf.apply_summary_alert(pf.empty_state(), entries)
         self.assertIn("[BEST POOL (HIGH RISK)]", text)
-        self.assertIn("[4H ≥ 10%]", text)
+        self.assertIn("[4H ≥ 10% (CURVE) SL OOR]", text)
 
     def test_alert_memberi_nomor_dan_tag_sudah_pernah(self):
         entries = _summary_entries(PASSING_12H, PASSING_12H)
