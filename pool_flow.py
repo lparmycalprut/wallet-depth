@@ -8,7 +8,7 @@ Permintaan user (2026-11-14, terbaru):
 - Keamanan tetap (2026-11-14): blokir bila mint/freeze authority aktif atau top holders > 30 %;
   peringatan bila top holders > 15 %, dev > 5 %, atau LP keluar > masuk saat TVL < $50K.
 - Urutan: rasio avg volume per menit ÷ TVL terbesar dulu (permintaan user 2026-11-15). Seri: urutan listing.
-- Alert Telegram (tiap jam) berisi RINGKASAN saja: semua pool dari tiga tabel 12H dengan label asal tabel (2026-11-20).
+- Alert Telegram (tiap jam) berisi RINGKASAN saja: pool dari tabel SLOW FEE PRINTER (2026-11-20).
 """
 from __future__ import annotations
 
@@ -63,9 +63,7 @@ FLOW_SERVER_FILTER = (
     "&&fee_pct>=0.5"
 )
 # RINGKASAN (permintaan user, 2026-11-20): label asal tabel, sama dengan judul tabel di halaman.
-SUMMARY_LABEL_HIGH = "HIGH RISK FEE PRINTER"
-SUMMARY_LABEL_VERY_HIGH = "VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1)"
-SUMMARY_LABEL_SLOW = "SLOW FEE PRINTER"
+SUMMARY_LABEL_SLOW = "SLOW FEE PRINTER"  # RINGKASAN hanya memuat pool dari tabel SLOW (2026-11-20)
 FLOW_MAX_PAGES = 100             # batas keamanan: 100 × 50 = 5.000 pool (cursor after_key)
 FLOW_PAGE_SIZE = 50
 FLOW_ALERT_CAP = 300             # riwayat alert yang disimpan
@@ -419,17 +417,14 @@ def sort_key_slow(result: dict):
 
 
 def summary_rows(result_12h: dict) -> list:
-    """RINGKASAN (permintaan user, 2026-11-20): semua pool dari ketiga tabel 12H, dengan label asal tabel.
+    """RINGKASAN (permintaan user, 2026-11-20): hanya pool dari tabel SLOW FEE PRINTER.
 
-    Urut seperti di halaman: HIGH RISK FEE PRINTER, lalu VERY HIGH RISK, lalu SLOW FEE PRINTER.
-    Tiap pool hanya ada di satu tabel. Daftar (row, label).
+    Urut seperti tabel SLOW (``sort_key_slow``). HIGH RISK dan VERY HIGH RISK tidak masuk.
+    Daftar (row, label), label selalu ``SUMMARY_LABEL_SLOW``.
     """
     passing = result_12h.get("passing") or []
-    fee_printer, band = fee_printer_split(passing)
-    entries = [(row, SUMMARY_LABEL_HIGH) for row in fee_printer_high_risk(fee_printer)]
-    entries += [(row, SUMMARY_LABEL_VERY_HIGH) for row in very_high_risk(passing)]
-    entries += [(row, SUMMARY_LABEL_SLOW) for row in band]
-    return entries
+    _fee_printer, band = fee_printer_split(passing)
+    return [(row, SUMMARY_LABEL_SLOW) for row in band]
 
 
 def token_old_enough(item: dict, now_ms: float | None = None) -> bool:
@@ -637,7 +632,7 @@ def alert_link_lines(mint: str, pool: str) -> list[str]:
 
 
 def summary_alert_text(no: int, entries: list, seen: dict) -> str:
-    """Alert Telegram RINGKASAN (2026-11-20): semua pool dari ketiga tabel 12H, satu blok per pool.
+    """Alert Telegram RINGKASAN (2026-11-20): pool dari tabel SLOW FEE PRINTER, satu blok per pool.
 
     Tiap blok: nama, label asal tabel, tag baru/sudah pernah, fee/TVL dan volatility, peringatan, tautan.
     ``entries`` = hasil ``summary_rows`` (row, label). ``seen`` = ``best_alert.last_no`` sebelum alert ini.

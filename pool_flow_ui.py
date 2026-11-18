@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""UI main app: 🏆 Scan ALL (12H) dengan RINGKASAN di atas tiga tabel, satu tombol SCAN ALL.
+"""UI main app: 🏆 Scan ALL (12H) dengan RINGKASAN (pool SLOW FEE PRINTER) di atas tiga tabel, satu tombol SCAN ALL.
 
 Logika ada di ``pool_flow.py``; modul ini hanya menampilkan hasil scan.
 Scan tidak menulis berkas apa pun.
@@ -86,8 +86,6 @@ SUMMARY_HEADERS = ["Token / pool", "Asal tabel", "Fee/TVL", "Volatility"]
 SUMMARY_BORDER = "rgba(34,197,94,.85)"  # hijau: RINGKASAN (permintaan user, 2026-11-15)
 # Badge asal tabel: warna sama dengan judul/border tabel di halaman.
 _SUMMARY_BADGE = {
-    pf.SUMMARY_LABEL_HIGH: "background:rgba(239,68,68,.28);color:inherit",
-    pf.SUMMARY_LABEL_VERY_HIGH: "background:rgba(127,29,29,.35);color:inherit",
     pf.SUMMARY_LABEL_SLOW: "background:rgba(59,130,246,.28);color:inherit",
 }
 
@@ -114,9 +112,7 @@ def _render_summary(result: dict) -> None:
 
     entries = pf.summary_rows(result)
     st.markdown("**:green[RINGKASAN]**")
-    st.caption("Semua pool dari tiga tabel di bawah, satu baris per pool. Asal tabel: "
-               "HIGH RISK FEE PRINTER, VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1), "
-               "atau SLOW FEE PRINTER.")
+    st.caption("Hanya pool dari tabel SLOW FEE PRINTER (di bawah), satu baris per pool.")
     if not entries:
         st.info("Belum ada pool yang memenuhi kriteria ringkasan.")
         return

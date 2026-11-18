@@ -88,14 +88,19 @@ class AppMainTest(unittest.TestCase):
         return "\n".join(parts)
 
     def test_ringkasan_di_bawah_tombol_dan_di_atas_tabel_12h(self):
-        at = self._app()
-        next(b for b in at.button if b.label == "SCAN ALL").click().run()
+        from tests.test_pool_flow import _fp
+        slow = _fp("S" * 44, fee_tvl=10.0, vol=10.0, symbol="SLW")  # SLOW FEE PRINTER
+        listing = PASSING_12H + [slow]  # HIGHX (HIGH RISK) tidak masuk RINGKASAN
+        with mock.patch.object(pf, "fetch_listing", side_effect=lambda *a, **k: (listing, [], False)):
+            at = self._app()
+            next(b for b in at.button if b.label == "SCAN ALL").click().run()
         self.assertFalse(at.exception)
         summary = next(str(n.proto.srcdoc) for n in at.get("iframe")
                        if "Asal tabel" in str(n.proto.srcdoc))
-        self.assertIn(">HIGH RISK FEE PRINTER</span>", summary)  # HIGHX: badge asal tabel
-        self.assertIn(HIGH_POOL, summary)
-        # urutan di halaman: RINGKASAN sebelum HIGH RISK FEE PRINTER (tanpa Deteksi 4H)
+        self.assertIn(">SLOW FEE PRINTER</span>", summary)  # badge asal tabel
+        self.assertIn(slow["pool_address"], summary)
+        self.assertNotIn(HIGH_POOL, summary)
+        # urutan di halaman: RINGKASAN sebelum HIGH RISK FEE PRINTER
         order = [str(m.value) for m in at.markdown]
         idx = {key: next(i for i, v in enumerate(order) if key in v)
                for key in ("RINGKASAN", "HIGH RISK FEE PRINTER")}

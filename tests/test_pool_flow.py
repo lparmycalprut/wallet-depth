@@ -162,11 +162,16 @@ def _summary_entries(rows_12h):
     return pf.summary_rows(pf.scan_pools(listing=(rows_12h, [], False)))
 
 
-def _high_pool(row):
-    """Baris yang masuk HIGH RISK FEE PRINTER: fee/TVL 10 % = 2,86 × volatility 3,5 %."""
+def _slow_pool(row):
+    """Baris yang masuk SLOW FEE PRINTER: fee/TVL 10 % = 1 × volatility 10 %."""
     row["fee_tvl_ratio"] = 10.0
-    row["volatility"] = 3.5
+    row["volatility"] = 10.0
     return row
+
+
+def _slow_row(symbol="SLW"):
+    """Pool di band SLOW FEE PRINTER (token berumur > 24 jam), untuk RINGKASAN."""
+    return _fp("S" * 44, fee_tvl=10.0, vol=10.0, symbol=symbol)
 
 
 class SecurityTest(unittest.TestCase):
@@ -239,13 +244,13 @@ class SecurityTest(unittest.TestCase):
         self.assertIn(blocked["pool_address"], [r["pool"] for r in result["results"]])
 
     def test_alert_memuat_peringatan_keamanan(self):
-        warned = _high_pool(_sec(top_holders_pct=20.0, fa=50.0, avg=9000.0))  # HIGH RISK → masuk ringkasan
+        warned = _slow_pool(_sec(top_holders_pct=20.0, fa=50.0, avg=9000.0))  # SLOW → masuk ringkasan
         text, _markup = pf.apply_summary_alert(pf.empty_state(), _summary_entries([warned]))
         self.assertIn("Peringatan keamanan", text)
         self.assertIn("top holders 20,0%", text)
 
     def test_alert_tanpa_peringatan_tidak_memuat_baris_keamanan(self):
-        clean = _high_pool(_sec(fa=50.0, avg=9000.0))
+        clean = _slow_pool(_sec(fa=50.0, avg=9000.0))
         text, _markup = pf.apply_summary_alert(pf.empty_state(), _summary_entries([clean]))
         self.assertNotIn("Peringatan keamanan", text)
 
@@ -691,36 +696,35 @@ class AlertTest(unittest.TestCase):
         self.assertEqual(state["best_alert"]["next_no"], 1)
 
     def test_ringkasan_memuat_label_asal_rasio_dan_tautan(self):
-        entries = _summary_entries(PASSING_12H)
+        entries = _summary_entries([_slow_row()])
         self.assertEqual([(r["symbol"], label) for r, label in entries],
-                         [("HIGHX", pf.SUMMARY_LABEL_HIGH)])
+                         [("SLW", pf.SUMMARY_LABEL_SLOW)])
         text, markup = pf.apply_summary_alert(pf.empty_state(), entries)
         self.assertIn("RINGKASAN", text)
-        self.assertIn("[HIGH RISK FEE PRINTER]", text)
-        self.assertIn("fee/TVL 16,5% · volatility 5,5%", text)  # HIGHX
+        self.assertIn("[SLOW FEE PRINTER]", text)
+        self.assertIn("fee/TVL 10,0% · volatility 10,0%", text)
         for host in ("gmgn.ai", "meteora.ag", "hawkfi.ag", "dexscreener.com"):
             self.assertIn(host, text)
         self.assertNotIn("POOL PALING RAMAI", text)
         self.assertNotIn("4H", text)  # tidak ada lagi kriteria 4H
         self.assertEqual(markup["inline_keyboard"][0][0]["copy_text"]["text"],
-                         pf.mint_of_pool(HIGH_12H))
+                         pf.mint_of_pool(_slow_row()))
 
-    def test_ringkasan_memuat_ketiga_tabel_dengan_label_asal(self):
+    def test_ringkasan_hanya_slow_fee_printer(self):
         from tests.test_pool_flow import _fp
-        very = _fp("V" * 44, fee_tvl=50.0, vol=1.0, symbol="VHX")  # 50 × → VERY HIGH
-        slow = _fp("S" * 44, fee_tvl=10.0, vol=10.0, symbol="SLW")  # 1 × → SLOW
-        entries = _summary_entries(PASSING_12H + [very, slow])
+        very = _fp("V" * 44, fee_tvl=50.0, vol=1.0, symbol="VHX")  # VERY HIGH
+        entries = _summary_entries(PASSING_12H + [very, _slow_row()])  # HIGHX = HIGH RISK
         self.assertEqual([(r["symbol"], label) for r, label in entries],
-                         [("HIGHX", pf.SUMMARY_LABEL_HIGH),
-                          ("VHX", pf.SUMMARY_LABEL_VERY_HIGH),
-                          ("SLW", pf.SUMMARY_LABEL_SLOW)])
+                         [("SLW", pf.SUMMARY_LABEL_SLOW)])
         text, _markup = pf.apply_summary_alert(pf.empty_state(), entries)
-        self.assertIn("[HIGH RISK FEE PRINTER]", text)
-        self.assertIn("[VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1)]", text)
         self.assertIn("[SLOW FEE PRINTER]", text)
+        self.assertNotIn("HIGHX", text)
+        self.assertNotIn("VHX", text)
+        self.assertNotIn("HIGH RISK FEE PRINTER", text)
+        self.assertNotIn("VERY HIGH RISK", text)
 
     def test_alert_memberi_nomor_dan_tag_sudah_pernah(self):
-        entries = _summary_entries(PASSING_12H)
+        entries = _summary_entries([_slow_row()])
         state = pf.empty_state()
         first, _ = pf.apply_summary_alert(state, entries)
         self.assertIn("alert #1", first)
@@ -818,13 +822,13 @@ class TelegramCopyTest(unittest.TestCase):
         state = pf.empty_state()
         messages = alert.run_summary(
             state,
-            scan=lambda: pf.scan_pools(listing=(PASSING_12H, [], False)))
+            scan=lambda: pf.scan_pools(listing=([_slow_row()], [], False)))
         self.assertEqual(len(messages), 1)
         text, markup = messages[0]
         self.assertIn("RINGKASAN", text)
         self.assertIn("alert #1", text)
         self.assertEqual(markup["inline_keyboard"][0][0]["copy_text"]["text"],
-                         pf.mint_of_pool(HIGH_12H))
+                         pf.mint_of_pool(_slow_row()))
         self.assertEqual(state["best_alert"]["next_no"], 2)
 
     def test_run_summary_tanpa_kriteria_tidak_mengirim(self):
