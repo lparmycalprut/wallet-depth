@@ -84,7 +84,7 @@ def _render_scan_result(result: dict) -> None:
     _render_pool_table(very_high, "Tidak ada pool untuk VERY HIGH RISK POOL.", top_pool,
                        accent=VERY_HIGH_RISK_BORDER)
     st.markdown(f"**:{SLOW_FEE_PRINTER_COLOR}[SLOW FEE PRINTER]**")
-    st.markdown(f"*· {len(band)} pool · 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility · umur token ≥ 24 jam*")
+    st.markdown(f"*· {len(band)} pool · 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility · umur token ≥ 24 jam · urut avg fee/menit ÷ TVL*")
     _render_pool_table(band, "Tidak ada pool untuk SLOW FEE PRINTER.", top_pool,
                        accent=SLOW_FEE_PRINTER_BORDER)
 

@@ -344,6 +344,18 @@ class SlowFeePrinterAgeTest(unittest.TestCase):
         self.assertEqual([r["pool"] for r in spot], ["U" * 44])
         self.assertEqual(band, [])
 
+    def test_slow_diurutkan_avg_fee_per_menit_per_tvl(self):
+        """Urut SLOW: avg fee/menit ÷ TVL terbesar dulu, walau avg volume-nya lebih kecil."""
+        busy = _fp("A" * 44, fee_tvl=1.0, vol=1.0)   # avg volume besar, avg fee kecil
+        busy["avg_volume"] = 5000.0
+        busy["avg_fee"] = 1.0
+        fee_rich = _fp("B" * 44, fee_tvl=1.0, vol=1.0)  # avg volume kecil, avg fee besar
+        fee_rich["avg_volume"] = 100.0
+        fee_rich["avg_fee"] = 50.0
+        result = pf.scan_pools(listing=([busy, fee_rich], [], False))
+        _spot, band = pf.fee_printer_split(result["passing"], now_ms=self.NOW)
+        self.assertEqual([r["pool"] for r in band], ["B" * 44, "A" * 44])
+
     def test_evaluate_pool_membawa_umur_token(self):
         self.assertEqual(pf.evaluate_pool(_fp("T" * 44, fee_tvl=1.0, vol=1.0))["token_created_at"],
                          OLD_TOKEN_MS)
