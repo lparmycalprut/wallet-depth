@@ -321,7 +321,7 @@ def render_pool_flow_page() -> None:
     import streamlit as st
 
     with st.container(border=True):
-        st.markdown("## 🏆 Scan Best Pool")
+        st.markdown("## 🏆 Scan ALL")
         st.caption(_filter_caption())
         if st.button(BUTTON_LABEL, type="primary", key="pool_flow_scan",
                      use_container_width=True):
