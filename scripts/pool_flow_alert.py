@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Alert RINGKASAN Scan ALL (BEST POOL (HIGH RISK) dan 4H ≥ 10% (CURVE) SL OOR), dijalankan tiap jam.
+"""Alert RINGKASAN Scan ALL (semua pool dari HIGH RISK, VERY HIGH RISK, dan SLOW FEE PRINTER), dijalankan tiap jam.
 
 Pemakaian:
     python3 scripts/pool_flow_alert.py [--state berkas.json]
@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,27 +21,25 @@ sys.path.insert(0, str(ROOT))
 import pool_flow as pf  # noqa: E402
 
 
-def run_summary(state: dict, *, scan=None, scan_4h=None) -> list[tuple[str, dict | None]]:
-    """Kembalikan daftar (teks, reply_markup) yang akan dikirim: RINGKASAN saja (2026-11-18).
+def run_summary(state: dict, *, scan=None) -> list[tuple[str, dict | None]]:
+    """Kembalikan daftar (teks, reply_markup) yang akan dikirim: RINGKASAN saja (2026-11-20).
 
-    Isi = ``pool_flow.summary_rows``: BEST POOL (HIGH RISK) (12H HIGH RISK dan DETEKSI 4H) dan
-    4H ≥ 10% (CURVE) SL OOR avg volume/menit ÷ TVL. Tidak ada fetch per token.
+    Isi = ``pool_flow.summary_rows``: pool dari ketiga tabel 12H, dengan label asal tabel.
+    Tidak ada fetch per token dan tidak ada scan 4H (bagian Deteksi 4H dihapus 2026-11-20).
     """
     result = (scan or pf.scan_pools)()
-    result_4h = (scan_4h or pf.scan_4h)()
     print(f"12H: listing {result['listing_rows']} baris, dievaluasi {result['candidates']}, "
           f"lolos {len(result['passing'])}, error listing {result['listing_errors']}, "
           f"terpotong {result['truncated']}")
-    print(f"4H: listing {result_4h['listing_rows']} baris, dievaluasi {result_4h['candidates']}, "
-          f"tampil {len(result_4h['passing'])}, error listing {result_4h['listing_errors']}, "
-          f"terpotong {result_4h['truncated']}")
-    entries = pf.summary_rows(result, result_4h)
+    entries = pf.summary_rows(result)
     text, markup = pf.apply_summary_alert(state, entries)
     if text is None:
         print("ringkasan: tidak ada pool yang memenuhi kriteria, tidak ada alert")
         return []
-    best = sum(1 for _row, label in entries if label == pf.SUMMARY_BEST)
-    print(f"ringkasan: {len(entries)} pool ({best} BEST POOL)")
+    per_table = Counter(label for _row, label in entries)
+    print(f"ringkasan: {len(entries)} pool (HIGH RISK {per_table[pf.SUMMARY_LABEL_HIGH]}, "
+          f"VERY HIGH {per_table[pf.SUMMARY_LABEL_VERY_HIGH]}, "
+          f"SLOW {per_table[pf.SUMMARY_LABEL_SLOW]})")
     return [(text, markup)]
 
 

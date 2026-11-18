@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""UI main app: 🏆 Scan Best Pool (12H) + 🕓 Deteksi 4H, satu tombol SCAN ALL.
+"""UI main app: 🏆 Scan ALL (12H) dengan RINGKASAN di atas tiga tabel, satu tombol SCAN ALL.
 
 Logika ada di ``pool_flow.py``; modul ini hanya menampilkan hasil scan.
 Scan tidak menulis berkas apa pun.
@@ -16,7 +16,6 @@ import pool_flow as pf
 from links import external_links_html, pool_links_html
 
 RESULT_KEY = "pool_flow_result"
-RESULT_KEY_4H = "pool_flow_result_4h"
 BUTTON_LABEL = "SCAN ALL"
 # Warna tabel (permintaan user): HIGH RISK merah, SLOW FEE PRINTER biru. Nama warna untuk st.markdown.
 HIGH_RISK_COLOR = "red"
@@ -26,18 +25,11 @@ VERY_HIGH_RISK_COLOR = "red"
 VERY_HIGH_RISK_BORDER = "rgba(127,29,29,.95)"  # merah tua: lebih berisiko dari HIGH RISK (2026-11-18)
 SLOW_FEE_PRINTER_BORDER = "rgba(59,130,246,.85)"
 DEFAULT_BORDER = "rgba(128,128,128,.35)"
-FOUR_H_COLOR = "violet"  # bagian Deteksi 4H (permintaan user, 2026-11-15)
-FOUR_H_BORDER = "rgba(139,92,246,.85)"
 
 TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier",
                  "Volatility", "Fee/TVL", "Avg volume/menit (pool)",
                  "Avg volume/menit ÷ TVL", "Avg fee/menit ÷ TVL",
                  "Volume 12H (pool)", "Peringatan keamanan"]
-TABLE_4H_HEADERS = ["Token / pool", "TVL", "Fee tier",
-                    "Avg volume/menit (pool)", "Avg volume/menit ÷ TVL",
-                    "Avg fee/menit (pool)", "Avg fee/menit ÷ TVL",
-                    "Volume 4H (pool)", "Peringatan keamanan"]
-
 
 def _filter_caption() -> str:
     return (f"Timeframe 12H · kategori all · dlmm · "
@@ -90,45 +82,18 @@ def _render_scan_result(result: dict) -> None:
                        accent=SLOW_FEE_PRINTER_BORDER, builder=_slow_table_html)
 
 
-def _filter_caption_4h() -> str:
-    return ("Timeframe 4H · kategori top · dlmm · MC ≥ $20K · holders ≥ 1.500 · TVL ≥ $10K · "
-            "active TVL ≥ $10K · fee/TVL ≥ 1 · fee ≥ 0.5% · tanpa konsentrasi/kepemilikan tunggal tinggi · "
-            "avg volume/menit ÷ TVL > 2% · urut avg volume/menit ÷ TVL, lalu avg fee/menit ÷ TVL terbesar.")
-
-
-def _render_4h_result(result: dict) -> None:
-    import streamlit as st
-
-    passing = result.get("passing") or []
-    st.caption(
-        f"Listing {result.get('listing_rows', 0)} baris · pool dievaluasi "
-        f"{result.get('candidates', 0)} · ditampilkan {len(passing)} · "
-        f"dicatat {result.get('scanned_at', '')}"
-        + (f" · {result['listing_errors']} halaman listing gagal"
-           if result.get("listing_errors") else ""))
-    if result.get("truncated"):
-        st.warning("Listing 4H belum lengkap: pengambilan berhenti sebelum semua halaman "
-                   f"terambil (batas {pf.FLOW_MAX_PAGES} halaman atau ada halaman gagal).")
-    if not passing:
-        st.info("Tidak ada pool dari listing 4H.")
-        return
-    st.caption("Geser tabel ke kanan untuk melihat semua kolom. Keamanan: pool dengan mint/freeze "
-               "authority aktif atau top holders > 30 % dibuang. Baris kuning = pool teratas 4H.")
-    st.markdown(f"**:{FOUR_H_COLOR}[DETEKSI 4H]**")
-    st.markdown(f"*· {len(passing)} pool · urut avg volume/menit ÷ TVL, lalu avg fee/menit ÷ TVL*")
-    _render_pool_table(passing, "Tidak ada pool untuk DETEKSI 4H.", passing[0]["pool"],
-                       accent=FOUR_H_BORDER, builder=_result_table_4h_html)
-
-
-SUMMARY_HEADERS = ["Token / pool", "Kriteria", "Avg volume/menit ÷ TVL (4H)"]
-SUMMARY_BORDER = "rgba(34,197,94,.85)"  # hijau: ringkasan (permintaan user, 2026-11-15)
+SUMMARY_HEADERS = ["Token / pool", "Asal tabel", "Fee/TVL", "Volatility"]
+SUMMARY_BORDER = "rgba(34,197,94,.85)"  # hijau: RINGKASAN (permintaan user, 2026-11-15)
+# Badge asal tabel: warna sama dengan judul/border tabel di halaman.
 _SUMMARY_BADGE = {
-    pf.SUMMARY_BEST: "background:rgba(34,197,94,.28);color:inherit",
-    pf.SUMMARY_4H: "background:rgba(139,92,246,.28);color:inherit",
+    pf.SUMMARY_LABEL_HIGH: "background:rgba(239,68,68,.28);color:inherit",
+    pf.SUMMARY_LABEL_VERY_HIGH: "background:rgba(127,29,29,.35);color:inherit",
+    pf.SUMMARY_LABEL_SLOW: "background:rgba(59,130,246,.28);color:inherit",
 }
 
 
 def _summary_table_html(entries: list) -> str:
+    """RINGKASAN compact: token/pool, asal tabel, Fee/TVL, volatility (permintaan user, 2026-11-20)."""
     body = []
     for row, label in entries:
         badge = (f"<span style='{_SUMMARY_BADGE.get(label, '')};padding:2px 10px;"
@@ -137,19 +102,21 @@ def _summary_table_html(entries: list) -> str:
         cells = [
             _cell_token_html(row),
             badge,
-            _html.escape(pf.fmt_ratio_pct(pf.avg_volume_tvl_ratio(row), digits=3)),
+            _html.escape(pf.fmt_pct(row.get("fee_tvl"))),
+            _html.escape(pf.fmt_pct(row.get("volatility"))),
         ]
         body.append((cells, False))
     return _table_html(SUMMARY_HEADERS, body, SUMMARY_BORDER)
 
 
-def _render_summary(result: dict, result_4h: dict) -> None:
+def _render_summary(result: dict) -> None:
     import streamlit as st
 
-    entries = pf.summary_rows(result, result_4h)
+    entries = pf.summary_rows(result)
     st.markdown("**:green[RINGKASAN]**")
-    st.caption("BEST POOL (HIGH RISK) = ada di HIGH RISK FEE PRINTER (12H) dan di DETEKSI 4H. "
-               "4H ≥ 10% (CURVE) SL OOR = avg volume/menit ÷ TVL di DETEKSI 4H minimal 10%.")
+    st.caption("Semua pool dari tiga tabel di bawah, satu baris per pool. Asal tabel: "
+               "HIGH RISK FEE PRINTER, VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1), "
+               "atau SLOW FEE PRINTER.")
     if not entries:
         st.info("Belum ada pool yang memenuhi kriteria ringkasan.")
         return
@@ -232,28 +199,6 @@ def _result_table_html(rows: list, top_pool: str | None = None,
 def _slow_table_html(rows: list, top_pool: str | None = None, accent: str = DEFAULT_BORDER) -> str:
     """Tabel SLOW FEE PRINTER: tabel 12H ditambah kolom keseimbangan volatility vs fee/TVL."""
     return _result_table_html(rows, top_pool, accent, balance=True)
-
-
-def _result_table_4h_html(rows: list, top_pool: str | None = None,
-                          accent: str = DEFAULT_BORDER) -> str:
-    """Tabel HTML deteksi 4H: urut avg volume/menit ÷ TVL, lalu avg fee/menit ÷ TVL (urutan dari pemanggil)."""
-    body = []
-    for row in rows:
-        tvl = row["tvl"]
-        fee_ratio = (row["avg_fee"] / tvl) if (row.get("avg_fee") is not None and tvl) else None
-        cells = [
-            _cell_token_html(row),
-            _html.escape(pf.fmt_usd(tvl)),
-            _html.escape(f"{row['fee_tier']:g}%" if row["fee_tier"] is not None else "—"),
-            _html.escape(pf.fmt_usd2(row["avg_volume"])),
-            _html.escape(pf.fmt_ratio_pct(pf.avg_volume_tvl_ratio(row), digits=3)),
-            _html.escape(pf.fmt_usd2(row.get("avg_fee"))),
-            _html.escape(pf.fmt_ratio_pct(fee_ratio, digits=3)),
-            _html.escape(pf.fmt_usd(row["activity"]["volume"])),
-            _html.escape("; ".join(row.get("warnings") or []) or "—"),
-        ]
-        body.append((cells, top_pool is not None and row["pool"] == top_pool))
-    return _table_html(TABLE_4H_HEADERS, body, accent)
 
 
 COPY_LABEL = "📋 CA"
@@ -344,22 +289,11 @@ def render_pool_flow_page() -> None:
         st.caption(_filter_caption())
         if st.button(BUTTON_LABEL, type="primary", key="pool_flow_scan",
                      use_container_width=True):
-            with st.spinner("Memindai listing Meteora (12H dan 4H)…"):
+            with st.spinner("Memindai listing Meteora (12H)…"):
                 st.session_state[RESULT_KEY] = pf.scan_pools()
-                st.session_state[RESULT_KEY_4H] = pf.scan_4h()
         result = st.session_state.get(RESULT_KEY)
-        result_4h = st.session_state.get(RESULT_KEY_4H)
-        if not result or not result_4h:
+        if not result:
             st.info("Belum di-scan. Tekan SCAN ALL.")
         else:
-            _render_summary(result, result_4h)
+            _render_summary(result)
             _render_scan_result(result)
-
-    # Deteksi 4H: bagian terpisah di paling bawah, tanpa tombol sendiri (SCAN ALL).
-    with st.container(border=True):
-        st.markdown("## 🕓 Deteksi 4H")
-        st.caption(_filter_caption_4h())
-        if not result_4h:
-            st.info("Belum di-scan. Tekan SCAN ALL.")
-        else:
-            _render_4h_result(result_4h)

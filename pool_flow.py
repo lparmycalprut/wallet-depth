@@ -8,7 +8,7 @@ Permintaan user (2026-11-14, terbaru):
 - Keamanan tetap (2026-11-14): blokir bila mint/freeze authority aktif atau top holders > 30 %;
   peringatan bila top holders > 15 %, dev > 5 %, atau LP keluar > masuk saat TVL < $50K.
 - Urutan: rasio avg volume per menit ÷ TVL terbesar dulu (permintaan user 2026-11-15). Seri: urutan listing.
-- Alert Telegram (tiap jam) berisi RINGKASAN saja: BEST POOL (HIGH RISK) dan 4H ≥ 10% (CURVE) SL OOR (2026-11-18).
+- Alert Telegram (tiap jam) berisi RINGKASAN saja: semua pool dari tiga tabel 12H dengan label asal tabel (2026-11-20).
 """
 from __future__ import annotations
 
@@ -62,27 +62,10 @@ FLOW_SERVER_FILTER = (
     "&&fee_tvl_ratio>=2"
     "&&fee_pct>=0.5"
 )
-# Deteksi 4H (curl user terbaru, 2026-11-15): timeframe 4h, category top, TANPA sort_by.
-# avg_volume dan avg_fee per menit = nilai 4H ÷ 240 (dicek: HOGE volume 56.513,30 ÷ 240 = 235,47).
-FLOW_4H_TIMEFRAME = "4h"
-FLOW_4H_CATEGORY = "top"
-# Tabel 4H hanya memuat pool dengan avg volume/menit ÷ TVL di atas ini (permintaan user, 2026-11-15).
-FLOW_4H_MIN_VOLUME_TVL = 0.02  # 2 %, batas eksklusif: tepat 2 % tidak tampil (2026-11-15, user)
-# Ringkasan (permintaan user): kriteria 1 = avg volume/menit ÷ TVL 4H minimal 10 % (inklusif, 2026-11-18).
-FLOW_SUMMARY_4H_MIN = 0.10
-SUMMARY_BEST = "BEST POOL (HIGH RISK)"
-SUMMARY_4H = "4H ≥ 10% (CURVE) SL OOR"
-FLOW_4H_SERVER_FILTER = (
-    "base_token_has_high_supply_concentration=false"
-    "&&base_token_has_high_single_ownership=false"
-    "&&pool_type=dlmm"
-    "&&base_token_market_cap>=20000"
-    "&&base_token_holders>=1500"
-    "&&tvl>=10000"
-    "&&fee_tvl_ratio>=1"
-    "&&fee_pct>=0.5"
-    "&&active_tvl>=10000"
-)
+# RINGKASAN (permintaan user, 2026-11-20): label asal tabel, sama dengan judul tabel di halaman.
+SUMMARY_LABEL_HIGH = "HIGH RISK FEE PRINTER"
+SUMMARY_LABEL_VERY_HIGH = "VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1)"
+SUMMARY_LABEL_SLOW = "SLOW FEE PRINTER"
 FLOW_MAX_PAGES = 100             # batas keamanan: 100 × 50 = 5.000 pool (cursor after_key)
 FLOW_PAGE_SIZE = 50
 FLOW_ALERT_CAP = 300             # riwayat alert yang disimpan
@@ -177,8 +160,6 @@ def _get_payload(params: dict, *, timeout: int = HTTP_TIMEOUT) -> dict:
 
 LISTING_12H = {"timeframe": FLOW_TIMEFRAME, "category": FLOW_CATEGORY,
                "server_filter": FLOW_SERVER_FILTER, "sort_by": FLOW_SORT_BY}
-LISTING_4H = {"timeframe": FLOW_4H_TIMEFRAME, "category": FLOW_4H_CATEGORY,
-              "server_filter": FLOW_4H_SERVER_FILTER, "sort_by": None}
 
 
 def fetch_top_page(after_key: str | None = None, *, timeframe: str = FLOW_TIMEFRAME,
@@ -437,28 +418,18 @@ def sort_key_slow(result: dict):
     return float("inf") if diff is None else abs(diff)
 
 
-def sort_key_4h(result: dict):
-    """Urutan deteksi 4H: avg volume/menit ÷ TVL terbesar dulu, lalu avg fee/menit ÷ TVL terbesar."""
-    return (-(avg_volume_tvl_ratio(result) or 0.0), -(avg_fee_tvl_ratio(result) or 0.0))
+def summary_rows(result_12h: dict) -> list:
+    """RINGKASAN (permintaan user, 2026-11-20): semua pool dari ketiga tabel 12H, dengan label asal tabel.
 
-
-def summary_rows(result_12h: dict, result_4h: dict) -> list:
-    """Ringkasan: daftar (row, label), urut seperti tabel 4H.
-
-    - ``BEST POOL (HIGH RISK)``: pool ada di HIGH RISK FEE PRINTER (12H) DAN di tabel 4H (kriteria 2).
-    - ``4H ≥ 10% (CURVE) SL OOR``: pool di tabel 4H dengan avg volume/menit ÷ TVL minimal 10 % (kriteria 1).
-    Pool yang memenuhi keduanya berlabel BEST POOL (HIGH RISK). Label itu tampil lebih dulu.
+    Urut seperti di halaman: HIGH RISK FEE PRINTER, lalu VERY HIGH RISK, lalu SLOW FEE PRINTER.
+    Tiap pool hanya ada di satu tabel. Daftar (row, label).
     """
-    fee_printer, _band = fee_printer_split(result_12h.get("passing") or [])
-    high_risk_pools = {row["pool"] for row in fee_printer_high_risk(fee_printer)}
-    best: list = []
-    others: list = []
-    for row in result_4h.get("passing") or []:  # tabel 4H: sudah > 2 % dan sudah urut
-        if row["pool"] in high_risk_pools:
-            best.append((row, SUMMARY_BEST))
-        elif (avg_volume_tvl_ratio(row) or 0.0) >= FLOW_SUMMARY_4H_MIN:
-            others.append((row, SUMMARY_4H))
-    return best + others
+    passing = result_12h.get("passing") or []
+    fee_printer, band = fee_printer_split(passing)
+    entries = [(row, SUMMARY_LABEL_HIGH) for row in fee_printer_high_risk(fee_printer)]
+    entries += [(row, SUMMARY_LABEL_VERY_HIGH) for row in very_high_risk(passing)]
+    entries += [(row, SUMMARY_LABEL_SLOW) for row in band]
+    return entries
 
 
 def token_old_enough(item: dict, now_ms: float | None = None) -> bool:
@@ -600,21 +571,6 @@ def scan_pools(max_pages: int = FLOW_MAX_PAGES, *, listing: tuple | None = None)
                  min_fee_tvl=FLOW_MIN_FEE_TVL_12H)
 
 
-def scan_4h(max_pages: int = FLOW_MAX_PAGES, *, listing: tuple | None = None) -> dict:
-    """Deteksi 4H: listing 4h (kategori top, filter 4H) → urut avg volume/menit ÷ TVL, lalu avg fee/menit ÷ TVL.
-
-    Aturan keamanan yang sama dengan 12H. Pool hanya tampil bila avg volume/menit ÷ TVL
-    > ``FLOW_4H_MIN_VOLUME_TVL`` (2 %). ``listing`` untuk tes tanpa jaringan.
-    """
-    rows, errors, truncated = (listing if listing is not None
-                               else fetch_listing(max_pages, **LISTING_4H))
-    result = _scan(rows, errors, truncated, sort_key_4h, FLOW_4H_TIMEFRAME)
-    ratio_ok = [r for r in result["passing"]
-                if (avg_volume_tvl_ratio(r) or 0.0) > FLOW_4H_MIN_VOLUME_TVL]
-    result["passing"] = ratio_ok
-    return result
-
-
 # ---------------------------------------------------------------------------
 # State (hanya riwayat alert)
 # ---------------------------------------------------------------------------
@@ -680,18 +636,15 @@ def alert_link_lines(mint: str, pool: str) -> list[str]:
     return lines
 
 
-def _pct_or_dash(value) -> str:
-    return f"{value:g}%" if value is not None else "—"
-
-
 def summary_alert_text(no: int, entries: list, seen: dict) -> str:
-    """Alert Telegram RINGKASAN (2026-11-18): BEST POOL (HIGH RISK) dan 4H ≥ 10% (CURVE) SL OOR, satu blok per pool.
+    """Alert Telegram RINGKASAN (2026-11-20): semua pool dari ketiga tabel 12H, satu blok per pool.
 
+    Tiap blok: nama, label asal tabel, tag baru/sudah pernah, fee/TVL dan volatility, peringatan, tautan.
     ``entries`` = hasil ``summary_rows`` (row, label). ``seen`` = ``best_alert.last_no`` sebelum alert ini.
     """
     lines = [
         f"<b>alert #{no}</b>",
-        "📋 RINGKASAN Scan ALL (12H + 4H)",
+        "📋 RINGKASAN Scan ALL (12H)",
         "━━━━━━━━━━━━━━━━━━",
     ]
     for row, label in entries:
@@ -701,7 +654,7 @@ def summary_alert_text(no: int, entries: list, seen: dict) -> str:
         name = row.get("pool_name") or pool[:6]
         lines.append("")
         lines.append(f"<b>{_h(row['symbol'])}</b> · {_h(name)}  [{_h(label)}]  {tag}")
-        lines.append(f"📊 avg volume/menit ÷ TVL 4H {fmt_ratio_pct(avg_volume_tvl_ratio(row))}")
+        lines.append(f"📊 fee/TVL {fmt_pct(row.get('fee_tvl'))} · volatility {fmt_pct(row.get('volatility'))}")
         if row.get("warnings"):
             lines.append("⚠️ Peringatan keamanan: " + _h("; ".join(row["warnings"])))
         lines.extend(alert_link_lines(row.get("mint") or "", pool))
