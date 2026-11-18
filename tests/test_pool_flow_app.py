@@ -107,14 +107,17 @@ class AppMainTest(unittest.TestCase):
         next(b for b in at.button if b.label == "SCAN ALL").click().run()
         self.assertFalse(at.exception)
         passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
+        fee_printer, band = pf.fee_printer_split(passing)
+        # pool yang tampil di tabel 12H (HIGH RISK, VERY HIGH, SLOW); FOOD tidak tampil di mana pun
+        shown_12h = pf.fee_printer_high_risk(fee_printer) + pf.very_high_risk(passing) + band
         passing_4h = pf.scan_4h(listing=(PASSING_12H, [], False))["passing"]
         summary = pf.summary_rows(pf.scan_pools(listing=(PASSING_12H, [], False)),
                                   pf.scan_4h(listing=(PASSING_12H, [], False)))
         doc = self._body(at)
         # tombol CA: tabel 12H + tabel 4H + ringkasan
         self.assertEqual(doc.count('class="copy-ca"'),
-                         len(passing) + len(passing_4h) + len(summary))
-        for row in passing:
+                         len(shown_12h) + len(passing_4h) + len(summary))
+        for row in shown_12h:
             self.assertTrue(row["mint"])
             self.assertIn(f'data-ca="{row["mint"]}"', doc)
         self.assertRegex(doc, r'🦅HawkFi</a><button type="button" class="copy-ca" '
@@ -137,7 +140,8 @@ class AppMainTest(unittest.TestCase):
         next(b for b in at.button if b.label == "SCAN ALL").click().run()
         self.assertFalse(at.exception)
         body = self._body(at)
-        self.assertIn(LOW_POOL, body)
+        # FOOD (LOW_POOL) 2,98× volatility → di luar HIGH RISK (3×) dan SLOW (1,5×): tidak tampil
+        self.assertNotIn(LOW_POOL, body)
         self.assertIn(HIGH_POOL, body)
         self.assertNotIn(DUT_POOL, body)  # volatility 6,71 % > 6 % dilewati
         self.assertIn("Timeframe 12H", " ".join(str(c.value) for c in at.caption))
