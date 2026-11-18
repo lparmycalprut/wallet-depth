@@ -419,7 +419,7 @@ class FeeTvlMinTest(unittest.TestCase):
 
 
 class VeryHighRiskTest(unittest.TestCase):
-    """VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (2026-11-18): fee/TVL ≥ 20 × volatility, batas inklusif."""
+    """VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1) (2026-11-18): fee/TVL ≥ 20 × volatility, batas inklusif."""
 
     def _very(self, *rows):
         result = pf.scan_pools(listing=(list(rows), [], False))
