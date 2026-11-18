@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Alert RINGKASAN Scan ALL (semua pool dari HIGH RISK, VERY HIGH RISK, dan SLOW FEE PRINTER), dijalankan tiap jam.
+"""Alert RINGKASAN Scan ALL (pool dari SLOW FEE PRINTER), dijalankan tiap jam.
 
 Pemakaian:
     python3 scripts/pool_flow_alert.py [--state berkas.json]
@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,7 +23,7 @@ import pool_flow as pf  # noqa: E402
 def run_summary(state: dict, *, scan=None) -> list[tuple[str, dict | None]]:
     """Kembalikan daftar (teks, reply_markup) yang akan dikirim: RINGKASAN saja (2026-11-20).
 
-    Isi = ``pool_flow.summary_rows``: pool dari ketiga tabel 12H, dengan label asal tabel.
+    Isi = ``pool_flow.summary_rows``: pool dari tabel SLOW FEE PRINTER saja.
     Tidak ada fetch per token dan tidak ada scan 4H (bagian Deteksi 4H dihapus 2026-11-20).
     """
     result = (scan or pf.scan_pools)()
@@ -36,10 +35,7 @@ def run_summary(state: dict, *, scan=None) -> list[tuple[str, dict | None]]:
     if text is None:
         print("ringkasan: tidak ada pool yang memenuhi kriteria, tidak ada alert")
         return []
-    per_table = Counter(label for _row, label in entries)
-    print(f"ringkasan: {len(entries)} pool (HIGH RISK {per_table[pf.SUMMARY_LABEL_HIGH]}, "
-          f"VERY HIGH {per_table[pf.SUMMARY_LABEL_VERY_HIGH]}, "
-          f"SLOW {per_table[pf.SUMMARY_LABEL_SLOW]})")
+    print(f"ringkasan: {len(entries)} pool (SLOW FEE PRINTER)")
     return [(text, markup)]
 
 
