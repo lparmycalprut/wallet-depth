@@ -387,6 +387,41 @@ def avg_fee_tvl_ratio(result: dict):
     return avg / tvl
 
 
+def fee_volatility_ratio(row: dict):
+    """Fee/TVL ÷ volatility (kali). 1 = seimbang (fee/TVL sama dengan volatility). ``None`` bila tidak ada/0.
+
+    Permintaan user (2026-11-19): mencari pool dengan keseimbangan volatility dan fee/TVL (fee printer).
+    """
+    fee_tvl = row.get("fee_tvl")
+    vol = row.get("volatility")
+    if fee_tvl is None or not vol:
+        return None
+    return fee_tvl / vol
+
+
+def fee_volatility_diff(row: dict):
+    """Fee/TVL − volatility dalam poin persen. 0 = seimbang; positif = fee/TVL di atas volatility."""
+    fee_tvl = row.get("fee_tvl")
+    vol = row.get("volatility")
+    if fee_tvl is None or vol is None:
+        return None
+    return fee_tvl - vol
+
+
+def fmt_times(value) -> str:
+    """Rasio kali dengan 2 desimal, mis. ``1,50×``."""
+    if value is None:
+        return "—"
+    return f"{value:.2f}×".replace(".", ",")
+
+
+def fmt_signed_pct(value) -> str:
+    """Selisih persen dengan tanda, mis. ``+2,00%`` / ``−1,25%``."""
+    if value is None:
+        return "—"
+    return f"{value:+.2f}%".replace("-", "−").replace(".", ",")
+
+
 def sort_key_slow(result: dict):
     """Urutan SLOW FEE PRINTER (2026-11-19, user request): avg fee/menit ÷ TVL terbesar dulu.
 

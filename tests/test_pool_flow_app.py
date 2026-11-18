@@ -19,6 +19,45 @@ DUT_POOL = DUT_12H["pool_address"]  # dilewati (volatility 6,71 %)
 HIGH_POOL = HIGH_12H["pool_address"]
 
 
+class SlowBalanceColumnsTest(unittest.TestCase):
+    """Kolom keseimbangan hanya di tabel SLOW (permintaan user, 2026-11-19)."""
+
+    def _row(self, fee_tvl, vol):
+        from tests.test_pool_flow import _fp
+        row = _fp("S" * 44, fee_tvl=fee_tvl, vol=vol)
+        row["token_x"]["created_at"] = 1_700_000_000_000
+        return pf.scan_pools(listing=([row], [], False))["passing"][0]
+
+    def test_rasio_dan_selisih(self):
+        row = self._row(fee_tvl=6.0, vol=4.0)
+        self.assertAlmostEqual(pf.fee_volatility_ratio(row), 1.5)
+        self.assertAlmostEqual(pf.fee_volatility_diff(row), 2.0)
+        self.assertEqual(pf.fmt_times(1.5), "1,50×")
+        self.assertEqual(pf.fmt_signed_pct(2.0), "+2,00%")
+        self.assertEqual(pf.fmt_signed_pct(-1.25), "−1,25%")
+        self.assertEqual(pf.fmt_times(None), "—")
+
+    def test_tabel_slow_memuat_kolom_keseimbangan(self):
+        import pool_flow_ui as ui
+        row = self._row(fee_tvl=6.0, vol=4.0)
+        html_slow = ui._slow_table_html([row])
+        self.assertIn("Fee/TVL ÷ volatility", html_slow)
+        self.assertIn("Selisih fee/TVL − volatility", html_slow)
+        self.assertIn("1,50×", html_slow)
+        self.assertIn("+2,00%", html_slow)
+        # urutan kolom: keseimbangan tepat setelah Fee/TVL, sebelum Avg volume/menit (pool)
+        header = html_slow.split("<thead>", 1)[1].split("</thead>", 1)[0]
+        titles = [t.split("</th>")[0].split(">")[-1] for t in header.split("<th")[1:]]
+        self.assertEqual(titles.index("Fee/TVL ÷ volatility"), titles.index("Fee/TVL") + 1)
+        self.assertEqual(titles.index("Avg volume/menit (pool)"), titles.index("Selisih fee/TVL − volatility") + 1)
+
+    def test_tabel_lain_tanpa_kolom_keseimbangan(self):
+        import pool_flow_ui as ui
+        plain = ui._result_table_html([self._row(fee_tvl=6.0, vol=4.0)])
+        self.assertNotIn("Fee/TVL ÷ volatility", plain)
+        self.assertNotIn("Selisih fee/TVL", plain)
+
+
 class AppMainTest(unittest.TestCase):
     def setUp(self):
         import tempfile
