@@ -387,6 +387,14 @@ def avg_fee_tvl_ratio(result: dict):
     return avg / tvl
 
 
+def sort_key_slow(result: dict):
+    """Urutan SLOW FEE PRINTER (2026-11-19, user request): avg fee/menit ÷ TVL terbesar dulu.
+
+    Seri: urutan listing (sort stabil). Pool tanpa rasio fee dianggap 0 (paling bawah).
+    """
+    return -(avg_fee_tvl_ratio(result) or 0.0)
+
+
 def sort_key_4h(result: dict):
     """Urutan deteksi 4H: avg volume/menit ÷ TVL terbesar dulu, lalu avg fee/menit ÷ TVL terbesar."""
     return (-(avg_volume_tvl_ratio(result) or 0.0), -(avg_fee_tvl_ratio(result) or 0.0))
@@ -430,7 +438,8 @@ def fee_printer_split(passing: list, now_ms: float | None = None) -> tuple[list,
     - band (SLOW FEE PRINTER): 0,5 × volatility ≤ fee/TVL ≤ 2 × volatility, dan umur token
       minimal 24 jam (2026-11-19). Pool yang lebih muda hanya tidak masuk band; fee_printer tidak berubah.
     Pool tanpa volatility terukur (None atau < 0,01 %) atau tanpa fee/TVL tidak masuk keduanya.
-    Pool dengan fee/TVL < 0,5 × volatility juga tidak masuk keduanya. Urutan: ``sort_key``.
+    Pool dengan fee/TVL < 0,5 × volatility juga tidak masuk keduanya. Urutan fee_printer: ``sort_key``;
+    band (SLOW): ``sort_key_slow`` (avg fee/menit ÷ TVL, 2026-11-19).
     """
     fee_printer: list = []
     band: list = []
@@ -444,7 +453,7 @@ def fee_printer_split(passing: list, now_ms: float | None = None) -> tuple[list,
         elif (FLOW_BAND_LOW_MULT * vol <= fee_tvl <= FLOW_FEE_PRINTER_MULT * vol
               and token_old_enough(item, now_ms)):
             band.append(item)
-    return sorted(fee_printer, key=sort_key), sorted(band, key=sort_key)
+    return sorted(fee_printer, key=sort_key), sorted(band, key=sort_key_slow)
 
 
 def fee_printer_high_risk(fee_printer: list) -> list:
