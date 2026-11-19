@@ -170,7 +170,7 @@ def _slow_pool(row):
 
 
 def _slow_row(symbol="SLW"):
-    """Pool di band SLOW FEE PRINTER (token berumur > 24 jam), untuk RINGKASAN."""
+    """Pool di band SLOW FEE PRINTER, untuk RINGKASAN."""
     return _fp("S" * 44, fee_tvl=10.0, vol=10.0, symbol=symbol)
 
 
@@ -320,41 +320,14 @@ class HighRiskFeePrinterTest(unittest.TestCase):
         self.assertEqual(self._high(_fp("G" * 44, fee_tvl=5.0, vol=0.005)), [])
 
 
-class SlowFeePrinterAgeTest(unittest.TestCase):
-    """SLOW FEE PRINTER hanya untuk token berumur ≥ 24 jam (permintaan user, 2026-11-19)."""
+class SlowFeePrinterBandTest(unittest.TestCase):
+    """SLOW FEE PRINTER: band fee/TVL dan urutannya. Syarat umur token dihapus (permintaan user, 2026-11-22)."""
 
     NOW = 1_800_000_000_000  # ms, titik waktu tetap untuk tes
 
     def _band(self, *rows):
         result = pf.scan_pools(listing=(list(rows), [], False))
         return pf.fee_printer_split(result["passing"], now_ms=self.NOW)[1]
-
-    def _aged(self, pool, hours):
-        row = _fp(pool, fee_tvl=10.0, vol=10.0)  # band: 0,75 ≤ 1 ≤ 1,5 (fee ≥ 5 %)
-        row["token_x"]["created_at"] = self.NOW - hours * 3_600_000
-        return row
-
-    def test_umur_di_bawah_24_jam_tidak_masuk_slow(self):
-        self.assertEqual(self._band(self._aged("Y" * 44, 23.0)), [])
-
-    def test_umur_tepat_24_jam_masuk_slow(self):
-        self.assertEqual([r["pool"] for r in self._band(self._aged("Z" * 44, 24.0))], ["Z" * 44])
-
-    def test_umur_di_atas_24_jam_masuk_slow(self):
-        self.assertEqual([r["pool"] for r in self._band(self._aged("W" * 44, 25.0))], ["W" * 44])
-
-    def test_tanpa_data_umur_tidak_masuk_slow(self):
-        row = _fp("V" * 44, fee_tvl=10.0, vol=10.0)
-        row["token_x"].pop("created_at", None)
-        self.assertEqual(self._band(row), [])
-
-    def test_fee_printer_tidak_terpengaruh_umur(self):
-        young = _fp("U" * 44, fee_tvl=50.0, vol=10.0)  # 50 > 2 × 10 → FEE PRINTER, bukan band
-        young["token_x"]["created_at"] = self.NOW - 1 * 3_600_000
-        result = pf.scan_pools(listing=([young], [], False))
-        spot, band = pf.fee_printer_split(result["passing"], now_ms=self.NOW)
-        self.assertEqual([r["pool"] for r in spot], ["U" * 44])
-        self.assertEqual(band, [])
 
     def test_slow_diurutkan_selisih_fee_volatility_terkecil(self):
         """Urut SLOW (2026-11-19): |fee/TVL − volatility| terkecil dulu = paling seimbang.
