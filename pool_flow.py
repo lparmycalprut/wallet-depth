@@ -16,7 +16,6 @@ import html as _html
 import json
 import math
 import os
-import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -42,7 +41,6 @@ FLOW_HIGH_RISK_MIN_MULT = 2.5   # HIGH RISK FEE PRINTER: 2,5 × volatility ≤ f
 FLOW_HIGH_RISK_MAX_MULT = 3.5   # HIGH RISK FEE PRINTER: fee/TVL ≤ 3,5 × volatility (permintaan user, 2026-11-20, inklusif)
 FLOW_HIGH_RISK_MIN_FEE_TVL = 10.0  # %: HIGH RISK FEE PRINTER hanya fee/TVL minimal 10 % (permintaan user, 2026-11-19)
 FLOW_MIN_FEE_TVL_12H = 5.0  # %: tabel 12H hanya pool dengan fee/TVL minimal 5 % (permintaan user, 2026-11-19)
-FLOW_SLOW_MIN_TOKEN_AGE_HOURS = 24.0  # SLOW FEE PRINTER: umur token dasar minimal 24 jam (permintaan user, 2026-11-19)
 FLOW_VERY_HIGH_MIN_MULT = 20.0  # VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1): fee/TVL ≥ 20 × volatility (2026-11-18)
 # Peringatan keamanan (label saja, tidak menyaring).
 # tampil dengan label. Field kosong tidak dihitung sebagai masalah.
@@ -427,24 +425,11 @@ def summary_rows(result_12h: dict) -> list:
     return [(row, SUMMARY_LABEL_SLOW) for row in band]
 
 
-def token_old_enough(item: dict, now_ms: float | None = None) -> bool:
-    """Umur token dasar ≥ ``FLOW_SLOW_MIN_TOKEN_AGE_HOURS`` jam (batas inklusif).
-
-    ``token_created_at`` dari Meteora dalam milidetik. Tanpa data umur: tidak lolos.
-    """
-    created = item.get("token_created_at")
-    if created is None:
-        return False
-    now = now_ms if now_ms is not None else time.time() * 1000
-    return now - created >= FLOW_SLOW_MIN_TOKEN_AGE_HOURS * 3_600_000
-
-
 def fee_printer_split(passing: list, now_ms: float | None = None) -> tuple[list, list]:
     """Pisahkan pool menjadi (fee_printer, band) memakai fee/TVL vs volatility.
 
     - fee_printer: fee/TVL > 2 × volatility (FEE PRINTER (SPOT)).
-    - band (SLOW FEE PRINTER): 0,75 × volatility ≤ fee/TVL ≤ 1,5 × volatility, dan umur token
-      minimal 24 jam (2026-11-19). Pool yang lebih muda hanya tidak masuk band; fee_printer tidak berubah.
+    - band (SLOW FEE PRINTER): 0,75 × volatility ≤ fee/TVL ≤ 1,5 × volatility (tanpa syarat umur).
     Pool tanpa volatility terukur (None atau < 0,01 %) atau tanpa fee/TVL tidak masuk keduanya.
     Pool dengan fee/TVL di luar band (mis. 1,5–2 × atau < 0,75 × volatility) tidak masuk keduanya.
     Urutan fee_printer: ``sort_key``; band (SLOW): ``sort_key_slow`` (|selisih| terkecil dulu).
@@ -458,8 +443,7 @@ def fee_printer_split(passing: list, now_ms: float | None = None) -> tuple[list,
             continue
         if fee_tvl > FLOW_FEE_PRINTER_MULT * vol:
             fee_printer.append(item)
-        elif (FLOW_BAND_LOW_MULT * vol <= fee_tvl <= FLOW_BAND_HIGH_MULT * vol
-              and token_old_enough(item, now_ms)):
+        elif FLOW_BAND_LOW_MULT * vol <= fee_tvl <= FLOW_BAND_HIGH_MULT * vol:
             band.append(item)
     return sorted(fee_printer, key=sort_key), sorted(band, key=sort_key_slow)
 
