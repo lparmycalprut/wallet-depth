@@ -1,7 +1,7 @@
 {
   "version": 1,
   "best_alert": {
-    "next_no": 23,
+    "next_no": 24,
     "last_no": {
       "8N9bUK6zfZFmuGa4dEpeEoj9Cs4VZSxhdMCMtZALHR5z": 1,
       "HcyYBrZVFDDVBLtLxL5C1HDJND1p86BoNA6m7MjBKE3p": 4,
@@ -29,7 +29,7 @@
       "FwQvad1BpVKbqLbByp9Fn2SpJMz9KteqVifeB3oSSnZo": 18,
       "GAfi45KUZHSmMf1q6xMCRV2dQSMxEX7qiNrQcQhaL5fG": 19,
       "7Vf8HRDdfUdKLh1GKnchWPwSJ5t3n7aSbFK1imC5rb77": 21,
-      "9iPNEVC3DuqDoCkpAVUayHjSHqDcW8Pb2HfcEJfiGjye": 22,
+      "9iPNEVC3DuqDoCkpAVUayHjSHqDcW8Pb2HfcEJfiGjye": 23,
       "7iJ4TQikwJMZE93nsJanYTuYhpyGoaxKVH4Y8zf9CG63": 22,
       "38XwbJPewvxWkcaW78YtLyVg6ZUUWttkALTykmUmSiWk": 22
     }
@@ -233,6 +233,14 @@
         "9iPNEVC3DuqDoCkpAVUayHjSHqDcW8Pb2HfcEJfiGjye",
         "7iJ4TQikwJMZE93nsJanYTuYhpyGoaxKVH4Y8zf9CG63",
         "38XwbJPewvxWkcaW78YtLyVg6ZUUWttkALTykmUmSiWk"
+      ]
+    },
+    {
+      "no": 23,
+      "kind": "summary",
+      "at": "2026-11-20T01:44:01Z",
+      "pools": [
+        "9iPNEVC3DuqDoCkpAVUayHjSHqDcW8Pb2HfcEJfiGjye"
       ]
     }
   ]
