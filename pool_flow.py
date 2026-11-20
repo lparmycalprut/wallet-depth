@@ -37,6 +37,8 @@ FLOW_VOLATILITY_MEASURABLE_MIN = 0.01
 FLOW_FEE_PRINTER_MULT = 2.0   # FEE PRINTER (SPOT): fee/TVL > 2 × volatility
 FLOW_BAND_LOW_MULT = 0.75     # SLOW FEE PRINTER: 0,75 × volatility ≤ fee/TVL ≤ 1,5 × volatility (permintaan user, 2026-11-19)
 FLOW_BAND_HIGH_MULT = 1.5     # batas atas SLOW FEE PRINTER (inklusif)
+FLOW_SLOW_MIN_VOLATILITY = 5.0  # %: SLOW FEE PRINTER hanya volatility minimal 5 % (permintaan user, 2026-11-23, inklusif)
+FLOW_SLOW_MIN_FEE_TVL = 5.0     # %: SLOW FEE PRINTER hanya fee/TVL minimal 5 % (permintaan user, 2026-11-23, inklusif)
 FLOW_HIGH_RISK_MIN_MULT = 2.5   # HIGH RISK FEE PRINTER: 2,5 × volatility ≤ fee/TVL (permintaan user, 2026-11-20, inklusif)
 FLOW_HIGH_RISK_MAX_MULT = 3.5   # HIGH RISK FEE PRINTER: fee/TVL ≤ 3,5 × volatility (permintaan user, 2026-11-20, inklusif)
 FLOW_HIGH_RISK_MIN_FEE_TVL = 10.0  # %: HIGH RISK FEE PRINTER hanya fee/TVL minimal 10 % (permintaan user, 2026-11-19)
@@ -429,7 +431,8 @@ def fee_printer_split(passing: list, now_ms: float | None = None) -> tuple[list,
     """Pisahkan pool menjadi (fee_printer, band) memakai fee/TVL vs volatility.
 
     - fee_printer: fee/TVL > 2 × volatility (FEE PRINTER (SPOT)).
-    - band (SLOW FEE PRINTER): 0,75 × volatility ≤ fee/TVL ≤ 1,5 × volatility (tanpa syarat umur).
+    - band (SLOW FEE PRINTER): 0,75 × volatility ≤ fee/TVL ≤ 1,5 × volatility, volatility ≥ 5 %, dan
+      fee/TVL ≥ 5 % (permintaan user, 2026-11-23; kedua batas inklusif).
     Pool tanpa volatility terukur (None atau < 0,01 %) atau tanpa fee/TVL tidak masuk keduanya.
     Pool dengan fee/TVL di luar band (mis. 1,5–2 × atau < 0,75 × volatility) tidak masuk keduanya.
     Urutan fee_printer: ``sort_key``; band (SLOW): ``sort_key_slow`` (|selisih| terkecil dulu).
@@ -443,7 +446,8 @@ def fee_printer_split(passing: list, now_ms: float | None = None) -> tuple[list,
             continue
         if fee_tvl > FLOW_FEE_PRINTER_MULT * vol:
             fee_printer.append(item)
-        elif FLOW_BAND_LOW_MULT * vol <= fee_tvl <= FLOW_BAND_HIGH_MULT * vol:
+        elif (FLOW_BAND_LOW_MULT * vol <= fee_tvl <= FLOW_BAND_HIGH_MULT * vol
+              and vol >= FLOW_SLOW_MIN_VOLATILITY and fee_tvl >= FLOW_SLOW_MIN_FEE_TVL):
             band.append(item)
     return sorted(fee_printer, key=sort_key), sorted(band, key=sort_key_slow)
 

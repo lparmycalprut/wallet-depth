@@ -329,6 +329,23 @@ class SlowFeePrinterBandTest(unittest.TestCase):
         result = pf.scan_pools(listing=(list(rows), [], False))
         return pf.fee_printer_split(result["passing"], now_ms=self.NOW)[1]
 
+    def test_volatility_di_bawah_5_persen_tidak_masuk_slow(self):
+        self.assertEqual(self._band(_fp("J" * 44, fee_tvl=5.0, vol=4.99)), [])
+
+    def test_volatility_tepat_5_persen_masuk_slow(self):
+        self.assertEqual([r["pool"] for r in self._band(_fp("K" * 44, fee_tvl=5.0, vol=5.0))], ["K" * 44])
+
+    def test_fee_tvl_di_bawah_5_persen_tidak_masuk_slow_langsung(self):
+        """Lantai fee/TVL SLOW diuji langsung (scan_pools sudah membuang fee/TVL < 5 % lebih dulu)."""
+        item = {"pool": "L" * 44, "volatility": 5.0, "fee_tvl": 4.99}
+        self.assertEqual(pf.fee_printer_split([item], now_ms=self.NOW)[1], [])
+
+    def test_fee_printer_spot_tidak_terpengaruh_lantai_slow(self):
+        """Volatility 4 %, fee/TVL 9 %: FEE PRINTER (SPOT) tetap, bukan SLOW."""
+        spot, band = pf.fee_printer_split(pf.scan_pools(listing=([_fp("P" * 44, fee_tvl=9.0, vol=4.0)], [], False))["passing"], now_ms=self.NOW)
+        self.assertEqual([r["pool"] for r in spot], ["P" * 44])
+        self.assertEqual(band, [])
+
     def test_slow_diurutkan_selisih_fee_volatility_terkecil(self):
         """Urut SLOW (2026-11-19): |fee/TVL − volatility| terkecil dulu = paling seimbang.
 
@@ -378,12 +395,12 @@ class FeeTvlMinTest(unittest.TestCase):
         self.assertEqual([r["symbol"] for r in result["passing"]], ["EXACT"])
 
     def test_pool_di_bawah_5_persen_tidak_masuk_ringkasan(self):
-        # volatility 4 %, fee/TVL 4,9 % → rasio 1,2× (band SLOW), tetapi fee di bawah 5 % → tidak lolos
-        low = _row("H" * 44, "HILOW", vol=4.0, ftvl=4.9)
+        # volatility 5 %, fee/TVL 4,9 % → rasio 0,98× (band SLOW), tetapi fee di bawah 5 % → tidak lolos
+        low = _row("H" * 44, "HILOW", vol=5.0, ftvl=4.9)
         self.assertEqual(pf.summary_rows(pf.scan_pools(listing=([low], [], False))), [])
 
     def test_pool_tepat_5_persen_masuk_ringkasan(self):
-        ok = _row("I" * 44, "OKAYX", vol=4.0, ftvl=5.0)  # 1,25× (band SLOW), fee tepat 5 %
+        ok = _row("I" * 44, "OKAYX", vol=5.0, ftvl=5.0)  # 1× (band SLOW), volatility dan fee tepat 5 %
         entries = pf.summary_rows(pf.scan_pools(listing=([ok], [], False)))
         self.assertEqual([(r["symbol"], label) for r, label in entries],
                          [("OKAYX", pf.SUMMARY_LABEL_SLOW)])
