@@ -112,7 +112,7 @@ class AppMainTest(unittest.TestCase):
         self.assertFalse(at.exception)
         summary = next(str(n.proto.srcdoc) for n in at.get("iframe")
                        if "Asal tabel" in str(n.proto.srcdoc))
-        self.assertIn(">SLOW FEE PRINTER</span>", summary)  # badge asal tabel
+        self.assertIn(">FEE PRINTER</span>", summary)  # badge asal tabel
         self.assertIn(slow["pool_address"], summary)
         self.assertNotIn(HIGH_POOL, summary)
         # urutan di halaman: RINGKASAN sebelum HIGH RISK FEE PRINTER
@@ -206,7 +206,7 @@ class AppMainTest(unittest.TestCase):
         next(b for b in at.button if b.label == "SCAN ALL").click().run()
         markdown = " ".join(str(m.value) for m in at.markdown)
         self.assertIn(":red[HIGH RISK FEE PRINTER]", markdown)
-        self.assertIn(":blue[SLOW FEE PRINTER]", markdown)
+        self.assertIn('<span class="fee-printer-title">FEE PRINTER</span>', markdown)  # judul hijau tua
         passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
         high = ui._result_table_html(passing, None, ui.HIGH_RISK_BORDER)
         band = ui._result_table_html(passing, None, ui.SLOW_FEE_PRINTER_BORDER)
@@ -251,7 +251,7 @@ class AppMainTest(unittest.TestCase):
 
         high = index_of("HIGH RISK FEE PRINTER")
         very_at = index_of("VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1)")
-        slow = index_of("SLOW FEE PRINTER")
+        slow = index_of('class="fee-printer-title">FEE PRINTER')  # judul tabel, bukan blok CSS
         self.assertLess(high, very_at)
         self.assertLess(very_at, slow)
         table_html = "\n".join(str(n.proto.srcdoc) for n in at.get("iframe"))

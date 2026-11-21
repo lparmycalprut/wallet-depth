@@ -691,7 +691,7 @@ class AlertTest(unittest.TestCase):
                          [("SLW", pf.SUMMARY_LABEL_SLOW)])
         text, markup = pf.apply_summary_alert(pf.empty_state(), entries)
         self.assertIn("RINGKASAN", text)
-        self.assertIn("[SLOW FEE PRINTER]", text)
+        self.assertIn("[FEE PRINTER]", text)
         self.assertIn("fee/TVL 10,0% · volatility 10,0%", text)
         for host in ("gmgn.ai", "meteora.ag", "hawkfi.ag", "dexscreener.com"):
             self.assertIn(host, text)
@@ -707,7 +707,7 @@ class AlertTest(unittest.TestCase):
         self.assertEqual([(r["symbol"], label) for r, label in entries],
                          [("SLW", pf.SUMMARY_LABEL_SLOW)])
         text, _markup = pf.apply_summary_alert(pf.empty_state(), entries)
-        self.assertIn("[SLOW FEE PRINTER]", text)
+        self.assertIn("[FEE PRINTER]", text)
         self.assertNotIn("HIGHX", text)
         self.assertNotIn("VHX", text)
         self.assertNotIn("HIGH RISK FEE PRINTER", text)

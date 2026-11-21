@@ -63,7 +63,7 @@ FLOW_SERVER_FILTER = (
     "&&fee_pct>=0.5"
 )
 # RINGKASAN (permintaan user, 2026-11-20): label asal tabel, sama dengan judul tabel di halaman.
-SUMMARY_LABEL_SLOW = "SLOW FEE PRINTER"  # RINGKASAN hanya memuat pool dari tabel SLOW (2026-11-20)
+SUMMARY_LABEL_SLOW = "FEE PRINTER"  # label tampilan tabel SLOW (dulu "SLOW FEE PRINTER", diganti 2026-11-24); RINGKASAN hanya pool dari tabel ini
 FLOW_MAX_PAGES = 100             # batas keamanan: 100 × 50 = 5.000 pool (cursor after_key)
 FLOW_PAGE_SIZE = 50
 FLOW_ALERT_CAP = 300             # riwayat alert yang disimpan

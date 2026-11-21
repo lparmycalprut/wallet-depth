@@ -19,7 +19,8 @@ RESULT_KEY = "pool_flow_result"
 BUTTON_LABEL = "SCAN ALL"
 # Warna tabel (permintaan user): HIGH RISK merah, SLOW FEE PRINTER biru. Nama warna untuk st.markdown.
 HIGH_RISK_COLOR = "red"
-SLOW_FEE_PRINTER_COLOR = "blue"
+SLOW_FEE_PRINTER_COLOR = "blue"  # warna border tabel (tidak dipakai untuk judul lagi)
+FEE_PRINTER_TITLE_CLASS = "fee-printer-title"  # judul FEE PRINTER: hijau tua menyala, lihat dashboard_components.render_styles
 HIGH_RISK_BORDER = "rgba(239,68,68,.85)"
 VERY_HIGH_RISK_COLOR = "red"
 VERY_HIGH_RISK_BORDER = "rgba(127,29,29,.95)"  # merah tua: lebih berisiko dari HIGH RISK (2026-11-18)
@@ -77,10 +78,10 @@ def _render_scan_result(result: dict) -> None:
         st.caption("fee/TVL ≥ 20 × volatility")
         _render_pool_table(very_high, "Tidak ada pool untuk VERY HIGH RISK POOL.", top_pool,
                            accent=VERY_HIGH_RISK_BORDER)
-    st.markdown(f"**:{SLOW_FEE_PRINTER_COLOR}[SLOW FEE PRINTER]**")
+    st.markdown(f'<span class="{FEE_PRINTER_TITLE_CLASS}">FEE PRINTER</span>', unsafe_allow_html=True)
     st.markdown(f"*· {len(band)} pool · 0,75 × volatility ≤ fee/TVL ≤ 1,5 × volatility · volatility ≥ 5% · fee/TVL ≥ 5% · "
                 f"urut selisih fee/TVL − volatility terkecil · Fee/TVL ÷ volatility 1× = seimbang*")
-    _render_pool_table(band, "Tidak ada pool untuk SLOW FEE PRINTER.", top_pool,
+    _render_pool_table(band, "Tidak ada pool untuk FEE PRINTER.", top_pool,
                        accent=SLOW_FEE_PRINTER_BORDER, builder=_slow_table_html)
 
 
@@ -88,7 +89,9 @@ SUMMARY_HEADERS = ["Token / pool", "Asal tabel", "Fee/TVL", "Volatility"]
 SUMMARY_BORDER = "rgba(34,197,94,.85)"  # hijau: RINGKASAN (permintaan user, 2026-11-15)
 # Badge asal tabel: warna sama dengan judul/border tabel di halaman.
 _SUMMARY_BADGE = {
-    pf.SUMMARY_LABEL_SLOW: "background:rgba(59,130,246,.28);color:inherit",
+    # Badge FEE PRINTER: teks hijau tua menyala (iframe tidak memakai CSS app, jadi gaya inline).
+    pf.SUMMARY_LABEL_SLOW: ("background:rgba(59,130,246,.28);color:#14532d;font-weight:800;"
+                            "text-shadow:0 0 6px rgba(34,197,94,.85),0 0 14px rgba(22,163,74,.5)"),
 }
 
 
@@ -114,7 +117,7 @@ def _render_summary(result: dict) -> None:
 
     entries = pf.summary_rows(result)
     st.markdown("**:green[RINGKASAN]**")
-    st.caption("Hanya pool dari tabel SLOW FEE PRINTER (di bawah), satu baris per pool.")
+    st.caption("Hanya pool dari tabel FEE PRINTER (di bawah), satu baris per pool.")
     if not entries:
         st.info("Belum ada pool yang memenuhi kriteria ringkasan.")
         return

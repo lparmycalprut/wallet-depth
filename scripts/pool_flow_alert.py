@@ -35,7 +35,7 @@ def run_summary(state: dict, *, scan=None) -> list[tuple[str, dict | None]]:
     if text is None:
         print("ringkasan: tidak ada pool yang memenuhi kriteria, tidak ada alert")
         return []
-    print(f"ringkasan: {len(entries)} pool (SLOW FEE PRINTER)")
+    print(f"ringkasan: {len(entries)} pool (FEE PRINTER)")
     return [(text, markup)]
 
 
