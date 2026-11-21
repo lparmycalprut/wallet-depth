@@ -1,12 +1,14 @@
 name: Pool Flow — Ringkasan alert
 
-# Alert RINGKASAN Scan ALL (pool SLOW FEE PRINTER) tiap jam (00:00, 01:00, ... UTC).
-# Cron GitHub bisa terlambat beberapa menit. State di pool_flow_state.json
-# di-commit hanya bila berubah.
+# Alert RINGKASAN Scan ALL (pool FEE PRINTER) tiap 15 menit (permintaan user, 2026-11-24).
+# Menit 7, 22, 37, 52 (bukan :00) supaya tidak berebut dengan beban jadwal tiap jam GitHub.
+# Cron GitHub bisa terlambat atau dilewati; cek riwayat run di tab Actions.
+# Tiap run mengirim pesan: RINGKASAN bila ada pool, heartbeat bila tidak ada.
+# State di pool_flow_state.json di-commit hanya bila berubah dan pengiriman berhasil.
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "7,22,37,52 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -19,7 +21,7 @@ concurrency:
 jobs:
   best:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,9 +30,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install dependencies
-        run: python -m pip install --upgrade pip requests
 
       - name: Run best pool check
         env:
@@ -48,8 +47,15 @@ jobs:
             git config user.email 'bot@noreply.github.com'
             git add pool_flow_state.json
             git commit -m "pool-flow: update state [skip ci]"
-            git pull --rebase -q origin main
-            git push -q origin HEAD:main
+            for attempt in 1 2 3; do
+              if git pull --rebase -q origin main && git push -q origin HEAD:main; then
+                echo "State terkirim (percobaan $attempt)."
+                exit 0
+              fi
+              sleep 5
+            done
+            echo "Gagal push state setelah 3 percobaan."
+            exit 1
           else
             echo "Tidak ada perubahan state."
           fi

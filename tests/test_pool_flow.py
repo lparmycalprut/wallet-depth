@@ -821,13 +821,117 @@ class TelegramCopyTest(unittest.TestCase):
                          pf.mint_of_pool(_slow_row()))
         self.assertEqual(state["best_alert"]["next_no"], 2)
 
-    def test_run_summary_tanpa_kriteria_tidak_mengirim(self):
+    def test_run_summary_tanpa_kriteria_kirim_heartbeat(self):
+        """Permintaan user (2026-11-24): tanpa pool tetap ada pesan, supaya terlihat cron jalan."""
         alert = self._alert_module()
         state = pf.empty_state()
-        self.assertEqual(alert.run_summary(
+        messages = alert.run_summary(
             state,
-            scan=lambda: pf.scan_pools(listing=([], [], False))), [])
-        self.assertEqual(state["alerts"], [])
+            scan=lambda: pf.scan_pools(listing=([], [], False)))
+        self.assertEqual(len(messages), 1)
+        text, markup = messages[0]
+        self.assertIn("Pool Flow cron jalan", text)
+        self.assertIn("FEE PRINTER: 0 pool", text)
+        self.assertIsNone(markup)
+        self.assertEqual(state["alerts"], [])          # heartbeat tidak mengubah state
+        self.assertEqual(state["best_alert"]["next_no"], 1)
+
+    def test_run_summary_listing_terpotong_diberi_peringatan(self):
+        alert = self._alert_module()
+        messages = alert.run_summary(
+            pf.empty_state(),
+            scan=lambda: pf.scan_pools(listing=([_slow_row()], [], True)))
+        self.assertIn("listing belum lengkap", messages[0][0])
+
+
+def _alert_main():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "pool_flow_alert_main", ROOT / "scripts" / "pool_flow_alert.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class AlertCronTest(unittest.TestCase):
+    """Cron 15 menit (permintaan user, 2026-11-24): kirim alert, state hanya tersimpan bila berhasil."""
+
+    CREDS = {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "1"}
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self._tmp.name) / "pool_flow_state.json"
+        self.alert = _alert_main()
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _run(self, *, scan_rows=None, scan_error=None, send=(True, ""), env=None):
+        sent = []
+
+        def fake_send(text, reply_markup=None):
+            sent.append(text)
+            return send
+
+        real_scan = pf.scan_pools  # sebelum di-patch; jangan memanggil nama yang di-patch (rekursi)
+
+        def fake_scan(*_a, **_k):
+            if scan_error is not None:
+                raise RuntimeError(scan_error)
+            return real_scan(listing=(scan_rows or [], [], False))
+
+        environ = dict(self.CREDS) if env is None else env
+        with mock.patch.dict("os.environ", environ, clear=True), \
+                mock.patch.object(pf, "scan_pools", side_effect=fake_scan), \
+                mock.patch.object(pf, "send_telegram", side_effect=fake_send):
+            code = self.alert.main(["--state", str(self.path)])
+        return code, sent
+
+    def test_tanpa_pool_kirim_heartbeat_dan_exit_0(self):
+        code, sent = self._run(scan_rows=[])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(sent), 1)
+        self.assertIn("Pool Flow cron jalan", sent[0])
+
+    def test_ada_pool_kirim_ringkasan_dan_simpan_state(self):
+        code, sent = self._run(scan_rows=[_slow_row()])
+        self.assertEqual(code, 0)
+        self.assertIn("RINGKASAN", sent[0])
+        saved = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(len(saved["alerts"]), 1)
+
+    def test_telegram_gagal_exit_1_dan_state_tidak_disimpan(self):
+        code, _sent = self._run(scan_rows=[_slow_row()], send=(False, "HTTP 500"))
+        self.assertEqual(code, 1)
+        self.assertFalse(self.path.exists())  # alert belum terkirim, jangan dianggap sudah
+
+    def test_kredensial_kosong_exit_1_tanpa_mengirim(self):
+        code, sent = self._run(scan_rows=[_slow_row()], env={})
+        self.assertEqual(code, 1)
+        self.assertEqual(sent, [])
+        self.assertFalse(self.path.exists())
+
+    def test_scan_gagal_kirim_pesan_error_dan_exit_1(self):
+        code, sent = self._run(scan_error="listing timeout")
+        self.assertEqual(code, 1)
+        self.assertIn("Scan gagal", sent[0])
+        self.assertIn("listing timeout", sent[0])
+        self.assertFalse(self.path.exists())
+
+    def test_heartbeat_menampilkan_error_listing(self):
+        text = pf.heartbeat_text(
+            {"listing_rows": 0, "candidates": 0, "passing": [], "listing_errors": 2, "truncated": True})
+        self.assertIn("halaman listing gagal: 2", text)
+        self.assertIn("listing belum lengkap", text)
+
+    def test_jadwal_workflow_15_menit_dan_di_luar_menit_nol(self):
+        import yaml
+        best = yaml.safe_load((ROOT / ".github/workflows/pool-flow-best.yml").read_text(encoding="utf-8"))
+        cron = best[True]["schedule"][0]["cron"]
+        self.assertEqual(cron, "7,22,37,52 * * * *")
+        minutes = [int(m) for m in cron.split()[0].split(",")]
+        self.assertEqual(sorted((b - a) % 60 for a, b in zip(minutes, minutes[1:] + minutes[:1])), [15, 15, 15, 15])
+        self.assertNotIn(0, minutes)
 
 class FormatTest(unittest.TestCase):
     """Format angka ringkas (K/M, tanpa pemisah ribuan titik)."""
