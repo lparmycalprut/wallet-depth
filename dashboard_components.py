@@ -26,29 +26,6 @@ def render_styles() -> None:
     [data-testid="stMetricLabel"], [data-testid="stMetricValue"],
     [data-testid="stWidgetLabel"] p {color:#000000 !important;}
 
-    .degen-stop-header {margin:.1rem 0 .9rem;padding:.75rem .9rem;
-      border:3px solid #2563eb;border-radius:14px;background:#450a0a;
-      background-image:linear-gradient(180deg,#450a0a 0%,#7f1d1d 55%,#450a0a 100%);
-      box-shadow:0 0 14px rgba(37,99,235,.6),0 0 34px rgba(29,78,216,.4);
-      animation:degen-stop-glow 1s ease-in-out infinite;}
-    .degen-stop-line {display:block;font-size:clamp(1.4rem,3.6vw,2.6rem);
-      font-weight:900;letter-spacing:.045em;line-height:1.18;color:#3b82f6;
-      text-shadow:0 0 8px rgba(59,130,246,.95),0 0 20px rgba(37,99,235,.75),
-      0 0 42px rgba(29,78,216,.55);animation:degen-stop-blink 1s ease-in-out infinite;}
-    .degen-stop-line + .degen-stop-line {margin-top:.4rem;}
-    .degen-stop-emoji {margin:0 .45rem;}
-    @keyframes degen-stop-blink {
-      0%,100% {opacity:1;text-shadow:0 0 8px rgba(59,130,246,.95),
-        0 0 20px rgba(37,99,235,.75),0 0 42px rgba(29,78,216,.55);}
-      50% {opacity:.3;text-shadow:0 0 4px rgba(37,99,235,.45);}}
-    @keyframes degen-stop-glow {
-      0%,100% {box-shadow:0 0 14px rgba(37,99,235,.6),0 0 34px rgba(29,78,216,.4)}
-      50% {box-shadow:0 0 4px rgba(37,99,235,.2)}}
-    @media (prefers-reduced-motion:reduce) {
-      .degen-stop-header,.degen-stop-line {
-        animation:none;opacity:1}}
-
-
     .lp-head {display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;padding:.5rem 0 .1rem;}
     .lp-title {font-size:1.15rem;font-weight:800;color:#000000;}
     .lp-title[title],.md-title-tip[title] {cursor:help;}
@@ -113,8 +90,6 @@ def render_styles() -> None:
       h1 {font-size:clamp(1.35rem,5vw,1.7rem) !important;line-height:1.2 !important;}
       h2 {font-size:clamp(1.15rem,4vw,1.4rem) !important;line-height:1.25 !important;}
       h3 {font-size:clamp(1.02rem,3.6vw,1.2rem) !important;}
-      .degen-stop-header {padding:.55rem .5rem;}
-      .degen-stop-line {font-size:clamp(1.05rem,5vw,1.45rem);}
       .lp-head {gap:.4rem;padding:.35rem 0 .15rem;}
       .lp-title {font-size:1.02rem;}
       .lp-count,.lp-warn {font-size:.68rem;padding:.18rem .44rem;}
@@ -144,23 +119,6 @@ def render_styles() -> None:
     @media print {.main .block-container {max-width:none !important;}}
     </style>
     """, unsafe_allow_html=True)
-
-
-DEGEN_STOP_LINES = (
-    ("STOP DEGEN, GAK BISA", "🚨"),
-    ("SUDAH KALAH BERTUBI2 AKUI KALAU KAMU GAK BISA", "⚠️"),
-)
-
-
-def render_degen_stop_header() -> None:
-    """Render the existing stop-degen warning above the scanner."""
-    lines = "".join(
-        f'<span class="degen-stop-line"><span class="degen-stop-emoji">{icon}</span>'
-        f'{html.escape(text)}<span class="degen-stop-emoji">{icon}</span></span>'
-        for text, icon in DEGEN_STOP_LINES
-    )
-    st.markdown(f'<div class="degen-stop-header" role="alert">{lines}</div>',
-                unsafe_allow_html=True)
 
 
 def _number(value, pattern: str = ".1f") -> str:
