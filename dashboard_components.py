@@ -26,6 +26,8 @@ def render_styles() -> None:
     [data-testid="stMetricLabel"], [data-testid="stMetricValue"],
     [data-testid="stWidgetLabel"] p {color:#000000 !important;}
 
+    .fee-printer-title {font-weight:800;color:#14532d;text-shadow:0 0 6px rgba(34,197,94,.85),
+      0 0 14px rgba(22,163,74,.5);}
     .lp-head {display:flex;flex-wrap:wrap;align-items:center;gap:.6rem;padding:.5rem 0 .1rem;}
     .lp-title {font-size:1.15rem;font-weight:800;color:#000000;}
     .lp-title[title],.md-title-tip[title] {cursor:help;}
