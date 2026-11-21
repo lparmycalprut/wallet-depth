@@ -66,15 +66,17 @@ def _render_scan_result(result: dict) -> None:
     top_pool = top["pool"] if top else None
     # Warna per tabel: HIGH RISK merah, SLOW FEE PRINTER biru (judul dan border tabel).
     st.markdown(f"**:{HIGH_RISK_COLOR}[HIGH RISK FEE PRINTER]**")
-    st.markdown(f"*· {len(high_risk)} pool · 2,5 × volatility ≤ fee/TVL ≤ 3,5 × volatility · fee/TVL ≥ 10%*")
-    _render_pool_table(high_risk, "Tidak ada pool untuk HIGH RISK FEE PRINTER.", top_pool,
-                       accent=HIGH_RISK_BORDER)
+    with st.expander(f"Tabel dan detail · {len(high_risk)} pool"):
+        st.caption("2,5 × volatility ≤ fee/TVL ≤ 3,5 × volatility · fee/TVL ≥ 10%")
+        _render_pool_table(high_risk, "Tidak ada pool untuk HIGH RISK FEE PRINTER.", top_pool,
+                           accent=HIGH_RISK_BORDER)
     # VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1): fee/TVL ≥ 20 × volatility (permintaan user, 2026-11-18).
     very_high = pf.very_high_risk(passing)
     st.markdown(f"**:{VERY_HIGH_RISK_COLOR}[VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1)]**")
-    st.markdown(f"*· {len(very_high)} pool · fee/TVL ≥ 20 × volatility*")
-    _render_pool_table(very_high, "Tidak ada pool untuk VERY HIGH RISK POOL.", top_pool,
-                       accent=VERY_HIGH_RISK_BORDER)
+    with st.expander(f"Tabel dan detail · {len(very_high)} pool"):
+        st.caption("fee/TVL ≥ 20 × volatility")
+        _render_pool_table(very_high, "Tidak ada pool untuk VERY HIGH RISK POOL.", top_pool,
+                           accent=VERY_HIGH_RISK_BORDER)
     st.markdown(f"**:{SLOW_FEE_PRINTER_COLOR}[SLOW FEE PRINTER]**")
     st.markdown(f"*· {len(band)} pool · 0,75 × volatility ≤ fee/TVL ≤ 1,5 × volatility · volatility ≥ 5% · fee/TVL ≥ 5% · "
                 f"urut selisih fee/TVL − volatility terkecil · Fee/TVL ÷ volatility 1× = seimbang*")
@@ -135,20 +137,50 @@ def _render_pool_table(rows: list, empty_text: str, top_pool: str | None = None,
               height="content", width="stretch")
 
 
-def _table_html(headers: list, body: list, accent: str) -> str:
-    """Pembungkus tabel HTML. ``body`` = [(sel-sel teks HTML, baris_teratas)]."""
+def _table_html(headers: list, body: list, accent: str, *, align: list | None = None,
+                readable: bool = False) -> str:
+    """Pembungkus tabel HTML. ``body`` = [(sel-sel teks HTML, baris_teratas)].
+
+    ``readable`` (tabel SLOW, permintaan user 2026-11-23): judul boleh turun baris, angka rata
+    kanan dengan digit sejajar, kolom Token menempel saat digeser, dan baris belang.
+    """
+    align = align or ["left"] * len(headers)
+    if readable:
+        head_bg, zebra_bg = "#f1f5f9", "#f8fafc"
+        th_base = ("padding:8px 10px;font-weight:600;vertical-align:bottom;white-space:normal;"
+                   "min-width:78px;border-bottom:2px solid rgba(128,128,128,.45);background:"
+                   + head_bg)  # latar judul; sel Token (sticky) memakai latar yang sama
+    else:
+        th_base = ("padding:6px 8px;white-space:nowrap;"
+                   "border-bottom:1px solid rgba(128,128,128,.45)")
+
+    def th_style(i: int) -> str:
+        style = f"text-align:{align[i]};{th_base}"
+        if readable and i == 0:
+            style += ";position:sticky;left:0;z-index:2"
+        return style
+
     head = "".join(
-        "<th style='text-align:left;padding:6px 8px;white-space:nowrap;"
-        "border-bottom:1px solid rgba(128,128,128,.45)'>"
-        f"{_html.escape(title)}</th>"
-        for title in headers)
+        f"<th style='{th_style(i)}'>{_html.escape(title)}</th>"
+        for i, title in enumerate(headers))
     rows_html = []
-    for cells, is_top in body:
-        tds = "".join(
-            f"<td style='padding:6px 8px;vertical-align:top;border-bottom:1px solid "
-            f"rgba(128,128,128,.2);white-space:{'normal' if i == 0 else 'nowrap'}'>{cell}</td>"
-            for i, cell in enumerate(cells))
-        highlight = (f" style='background:{TOP_ROW_BG};font-weight:600'" if is_top else "")
+    for r, (cells, is_top) in enumerate(body):
+        if readable:
+            bg = TOP_ROW_SOLID if is_top else (zebra_bg if r % 2 else "#ffffff")
+            tds = "".join(
+                f"<td style='padding:8px 10px;vertical-align:top;text-align:{align[i]};"
+                f"border-bottom:1px solid rgba(128,128,128,.2);font-variant-numeric:tabular-nums;"
+                f"white-space:{'normal' if i == 0 else 'nowrap'};background:{bg}"
+                + (";position:sticky;left:0;z-index:1" if i == 0 else "")
+                + f"'>{cell}</td>"
+                for i, cell in enumerate(cells))
+            highlight = " style='font-weight:600'" if is_top else ""
+        else:
+            tds = "".join(
+                f"<td style='padding:6px 8px;vertical-align:top;border-bottom:1px solid "
+                f"rgba(128,128,128,.2);white-space:{'normal' if i == 0 else 'nowrap'}'>{cell}</td>"
+                for i, cell in enumerate(cells))
+            highlight = (f" style='background:{TOP_ROW_BG};font-weight:600'" if is_top else "")
         rows_html.append(f"<tr{highlight}>{tds}</tr>")
     return (
         "<div style='overflow-x:auto;-webkit-overflow-scrolling:touch;"
@@ -163,7 +195,8 @@ BALANCE_HEADERS = ["Fee/TVL ÷ volatility", "Selisih fee/TVL − volatility"]  #
 
 
 def _result_table_html(rows: list, top_pool: str | None = None,
-                       accent: str = DEFAULT_BORDER, *, balance: bool = False) -> str:
+                       accent: str = DEFAULT_BORDER, *, balance: bool = False,
+                       readable: bool = False) -> str:
     """Tabel HTML 12H, satu baris per pool, urut rasio avg volume/menit ÷ TVL (urutan dari pemanggil).
 
     Baris pool teratas (``top_pool``) diberi latar kuning; tanpa emoji.
@@ -189,16 +222,22 @@ def _result_table_html(rows: list, top_pool: str | None = None,
             ]
         body.append((cells, top_pool is not None and row["pool"] == top_pool))
     headers = TABLE_HEADERS[:5] + BALANCE_HEADERS + TABLE_HEADERS[5:] if balance else TABLE_HEADERS
-    return _table_html(headers, body, accent)
+    # Readable: angka rata kanan; Token dan Peringatan keamanan rata kiri.
+    align = (["left"] + ["right"] * (len(headers) - 2) + ["left"]) if readable else None
+    return _table_html(headers, body, accent, align=align, readable=readable)
 
 
 def _slow_table_html(rows: list, top_pool: str | None = None, accent: str = DEFAULT_BORDER) -> str:
-    """Tabel SLOW FEE PRINTER: tabel 12H ditambah kolom keseimbangan volatility vs fee/TVL."""
-    return _result_table_html(rows, top_pool, accent, balance=True)
+    """Tabel SLOW FEE PRINTER: tabel 12H ditambah kolom keseimbangan volatility vs fee/TVL.
+
+    Tampilan dibuat lebih mudah dibaca (permintaan user, 2026-11-23); semua kolom tetap ada.
+    """
+    return _result_table_html(rows, top_pool, accent, balance=True, readable=True)
 
 
 COPY_LABEL = "📋 CA"
 TOP_ROW_BG = "rgba(250,204,21,.28)"  # kuning: pool teratas (permintaan user, 2026-11-15)
+TOP_ROW_SOLID = "#fef1be"  # TOP_ROW_BG di atas putih, untuk sel yang menempel (sticky)
 
 # Markdown Streamlit membuang <script>, jadi tabel dirender di dalam komponen HTML
 # (iframe) yang mengizinkan JavaScript. Tombol copy hanya menyalin CA; tidak ada

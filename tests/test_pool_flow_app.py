@@ -51,6 +51,21 @@ class SlowBalanceColumnsTest(unittest.TestCase):
         self.assertEqual(titles.index("Fee/TVL ÷ volatility"), titles.index("Fee/TVL") + 1)
         self.assertEqual(titles.index("Avg volume/menit (pool)"), titles.index("Selisih fee/TVL − volatility") + 1)
 
+    def test_tabel_slow_dibuat_lebih_mudah_dibaca(self):
+        """Permintaan user (2026-11-23): tabel SLOW dirapikan; semua kolom tetap ada."""
+        import pool_flow_ui as ui
+        row = self._row(fee_tvl=6.0, vol=4.0)
+        slow = ui._slow_table_html([row])
+        self.assertIn("position:sticky;left:0", slow)        # kolom Token menempel saat digeser
+        self.assertIn("font-variant-numeric:tabular-nums", slow)
+        self.assertIn("text-align:right", slow)              # angka rata kanan
+        self.assertIn("background:#f8fafc", ui._slow_table_html([row, row]))  # baris belang
+        plain = ui._result_table_html([row])
+        self.assertNotIn("position:sticky", plain)           # tabel lain tidak berubah
+        self.assertNotIn("text-align:right", plain)
+        header = slow.split("<thead>", 1)[1].split("</thead>", 1)[0]
+        self.assertEqual(header.count("<th"), len(ui.TABLE_HEADERS) + len(ui.BALANCE_HEADERS))
+
     def test_tabel_lain_tanpa_kolom_keseimbangan(self):
         import pool_flow_ui as ui
         plain = ui._result_table_html([self._row(fee_tvl=6.0, vol=4.0)])
@@ -198,6 +213,19 @@ class AppMainTest(unittest.TestCase):
         self.assertIn(f"border:2px solid {ui.HIGH_RISK_BORDER}", high)
         self.assertNotIn(ui.SLOW_FEE_PRINTER_BORDER, high)
         self.assertIn(f"border:2px solid {ui.SLOW_FEE_PRINTER_BORDER}", band)
+
+    def test_high_risk_dan_very_high_tabel_di_dropdown_tertutup(self):
+        """Permintaan user (2026-11-23): tabel dan detail HIGH RISK dan VERY HIGH ada di dropdown."""
+        at = self._app()
+        next(b for b in at.button if b.label == "SCAN ALL").click().run()
+        self.assertFalse(at.exception)
+        labels = [e.label for e in at.expander]
+        self.assertEqual(labels.count("Tabel dan detail · 1 pool"), 1)  # HIGH RISK (HIGH_12H)
+        self.assertEqual(labels.count("Tabel dan detail · 0 pool"), 1)  # VERY HIGH (tidak ada di PASSING_12H)
+        for exp in at.expander:
+            self.assertFalse(exp.proto.expanded)  # tertutup sejak awal
+        high_exp = next(e for e in at.expander if e.label == "Tabel dan detail · 1 pool")
+        self.assertIn("Volume 12H (pool)", " ".join(str(f.proto.srcdoc) for f in high_exp.get("iframe")))
 
     def test_tanpa_panel_log_aktivitas(self):
         at = self._app()
