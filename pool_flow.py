@@ -644,6 +644,25 @@ def summary_alert_text(no: int, entries: list, seen: dict) -> str:
     return "\n".join(lines)
 
 
+def heartbeat_text(result: dict | None = None, error: str | None = None, now: str | None = None) -> str:
+    """Pesan cron (permintaan user, 2026-11-24): dikirim tiap run bila tidak ada pool FEE PRINTER,
+    atau saat scan gagal. Tujuannya agar user tahu cron berjalan. Tidak mengubah state.
+    """
+    lines = [f"💓 <b>Pool Flow cron jalan</b> · {_h(now or now_iso())}"]
+    if error is not None:
+        lines.append(f"❌ Scan gagal: {_h(error)}")
+        return "\n".join(lines)
+    result = result or {}
+    lines.append(f"📡 listing 12H: {result.get('listing_rows', 0)} baris · "
+                 f"dievaluasi {result.get('candidates', 0)} · lolos {len(result.get('passing') or [])}")
+    lines.append("🔎 FEE PRINTER: 0 pool (tidak ada yang memenuhi kriteria)")
+    if result.get("listing_errors"):
+        lines.append(f"⚠️ halaman listing gagal: {result['listing_errors']}")
+    if result.get("truncated"):
+        lines.append("⚠️ listing belum lengkap (terpotong)")
+    return "\n".join(lines)
+
+
 def apply_summary_alert(state: dict, entries: list) -> tuple[str | None, dict | None]:
     """Teks RINGKASAN + tombol 📋 CA per pool. ``(None, None)`` bila tidak ada pool yang memenuhi kriteria."""
     if not entries:

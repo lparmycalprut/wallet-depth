@@ -284,9 +284,9 @@ class WorkflowAndPagesTest(unittest.TestCase):
     def _load(self, rel):
         return yaml.safe_load((ROOT / rel).read_text(encoding="utf-8"))
 
-    def test_alert_ringkasan_terjadwal_tiap_jam_tanpa_mode(self):
+    def test_alert_ringkasan_terjadwal_tiap_15_menit_tanpa_mode(self):
         best = self._load(".github/workflows/pool-flow-best.yml")
-        self.assertEqual(best[True]["schedule"][0]["cron"], "0 * * * *")
+        self.assertEqual(best[True]["schedule"][0]["cron"], "7,22,37,52 * * * *")  # tiap 15 menit
         text = (ROOT / ".github/workflows/pool-flow-best.yml").read_text(encoding="utf-8")
         self.assertIn("scripts/pool_flow_alert.py", text)
         self.assertNotIn("--mode", text)

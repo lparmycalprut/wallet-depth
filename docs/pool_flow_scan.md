@@ -134,8 +134,9 @@ Contoh hitung (dari tes):
   dengan urutan yang sama seperti tabel. Kolom: Token/pool, Asal tabel (selalu "FEE PRINTER"),
   Fee/TVL, Volatility.
 - **Alert Telegram** (`scripts/pool_flow_alert.py`) memakai daftar yang sama.
-  - Jadwal: GitHub Actions `.github/workflows/pool-flow-best.yml`, cron `0 * * * *` (tiap jam, UTC).
-  - Tidak ada pesan bila band kosong.
+  - Jadwal: GitHub Actions `.github/workflows/pool-flow-best.yml`, cron `7,22,37,52 * * * *` (tiap 15 menit, UTC).
+  - Bila band kosong, kirim heartbeat `💓 Pool Flow cron jalan` (tanpa mengubah state), supaya terlihat cron berjalan.
+  - Scan gagal: pesan `❌ Scan gagal`, exit 1. Telegram gagal atau kredensial kosong: exit 1 dan state tidak disimpan.
   - Setiap pesan: nama, label `[FEE PRINTER]`, tag `🆕 baru` atau `🔁 sudah pernah · alert #N`,
     fee/TVL, volatility, peringatan keamanan, tautan, dan tombol 📋 CA.
   - Status tersimpan di `pool_flow_state.json`: `best_alert.next_no`, `best_alert.last_no[pool]`,
