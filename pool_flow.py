@@ -40,6 +40,7 @@ FLOW_BAND_LOW_MULT = 0.75     # SLOW FEE PRINTER: 0,75 × volatility ≤ fee/TVL
 FLOW_BAND_HIGH_MULT = 1.5     # batas atas SLOW FEE PRINTER (inklusif)
 FLOW_SLOW_MIN_VOLATILITY = 3.0  # %: FEE PRINTER (band) hanya volatility minimal 3 %, di 12H dan 4H (permintaan user, 2026-11-22, inklusif)
 FLOW_SLOW_MIN_TVL = 20_000.0    # USD: FEE PRINTER (band) hanya TVL minimal ini (permintaan user, 2026-11-22, inklusif)
+FLOW_SLOW_MIN_VOLUME_TVL_12H = 100.0  # %: FEE PRINTER (band) volume/TVL 12H minimal 100 % (permintaan user, 2026-11-22, inklusif)
 FLOW_CONFIRM_TIMEFRAME = "4h"  # FEE PRINTER (band): volatility dan fee/TVL juga harus lolos di 4H (permintaan user, 2026-11-22)
 FLOW_SLOW_MIN_FEE_TVL = 5.0     # %: FEE PRINTER (band) hanya fee/TVL minimal 5 % (permintaan user, 2026-11-23, inklusif)
 FLOW_SLOW_MIN_POOL_AGE_HOURS = 12.0  # FEE PRINTER (tabel band): umur pool (pool_created_at) minimal 12 jam (permintaan user, 2026-11-22)
@@ -309,6 +310,7 @@ def evaluate_pool(row: dict) -> dict:
         "token_created_at": _num((row.get("token_x") or {}).get("created_at")),  # ms sejak epoch
         "pool_created_at": _num(row.get("pool_created_at")),  # ms sejak epoch (umur pool)
         "fee_tvl": _num(row.get("fee_tvl_ratio")),
+        "volume_tvl_12h": _num(row.get("volume_tvl_ratio")),  # % (volume 12H ÷ TVL × 100)
         "avg_volume": avg_volume,
         "avg_fee": _num(row.get("avg_fee")),
         "passes": not reasons,
@@ -448,14 +450,15 @@ def pool_old_enough(item: dict, now_ms: float | None = None) -> bool:
 
 def band_12h_ok(item: dict) -> bool:
     """Syarat metrik FEE PRINTER (band) di 12H: 0,75 × ≤ fee/TVL ≤ 1,5 × volatility (inklusif),
-    volatility ≥ 3 %, fee/TVL ≥ 5 %, dan TVL ≥ 20.000 USD. Umur pool dicek di ``fee_printer_split``."""
+    volatility ≥ 3 %, fee/TVL ≥ 5 %, TVL ≥ 20.000 USD, dan volume/TVL ≥ 100 % (2026-11-22). Umur pool dicek di ``fee_printer_split``."""
     vol = item.get("volatility")
     fee_tvl = item.get("fee_tvl")
     if vol is None or fee_tvl is None or vol < FLOW_VOLATILITY_MEASURABLE_MIN:
         return False
     return (FLOW_BAND_LOW_MULT * vol <= fee_tvl <= FLOW_BAND_HIGH_MULT * vol
             and vol >= FLOW_SLOW_MIN_VOLATILITY and fee_tvl >= FLOW_SLOW_MIN_FEE_TVL
-            and (item.get("tvl") or 0) >= FLOW_SLOW_MIN_TVL)
+            and (item.get("tvl") or 0) >= FLOW_SLOW_MIN_TVL
+            and (item.get("volume_tvl_12h") or 0) >= FLOW_SLOW_MIN_VOLUME_TVL_12H)
 
 
 def band_4h_ok(tf4h: dict | None) -> bool:

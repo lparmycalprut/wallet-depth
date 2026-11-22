@@ -93,13 +93,13 @@ Pool dengan `v < 0,01` atau `v` kosong tidak masuk tabel mana pun.
 |---|---|---|
 | **VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1)** | `r ≥ 20` (inklusif) | Tabel sendiri, dropdown tertutup |
 | **HIGH RISK FEE PRINTER** | `f > 2v` (FEE PRINTER SPOT) **dan** `2,5 ≤ r ≤ 3,5` (inklusif) **dan** `f ≥ 10 %` | Tabel sendiri, dropdown tertutup |
-| **FEE PRINTER** (tabel SLOW, dulu "SLOW FEE PRINTER") | `0,75 ≤ r ≤ 1,5` (inklusif) di 12H **dan** di 4H, **dan** `v ≥ 3 %` di 12H **dan** 4H, **dan** `f ≥ 5 %`, **dan** TVL `≥ $20.000`, **dan** umur pool `≥ 12 jam` (`pool_created_at`, 2026-11-22) | Tabel sendiri **dan RINGKASAN + alert Telegram** |
+| **FEE PRINTER** (tabel SLOW, dulu "SLOW FEE PRINTER") | `0,75 ≤ r ≤ 1,5` (inklusif) di 12H **dan** di 4H, **dan** `v ≥ 3 %` di 12H **dan** 4H, **dan** `f ≥ 5 %`, **dan** TVL `≥ $20.000`, **dan** volume/TVL 12H `≥ 100 %` (`volume_tvl_ratio`), **dan** umur pool `≥ 12 jam` (`pool_created_at`, 2026-11-22) | Tabel sendiri **dan RINGKASAN + alert Telegram** |
 | FEE PRINTER (SPOT), internal | `r > 2` (induk pemisahan) | Tidak ditampilkan |
 | (tidak tampil) | `1,5 < r < 2`; `r` 2–3,5 tapi `f < 10 %`; `3,5 < r < 20` | Tidak ditampilkan di mana pun |
 
 Urutan pengecekan di kode (`fee_printer_split`):
 1. Jika `r > 2` → FEE PRINTER (SPOT). HIGH RISK diambil dari sini (`fee_printer_high_risk`).
-2. Else jika `0,75 ≤ r ≤ 1,5` dan `v ≥ 3` dan `f ≥ 5` dan TVL `≥ 20.000` (12H), dan umur pool `≥ 12 jam` (`pool_created_at` ms; tanpa data = tidak lolos), dan rasio 4H `0,75 ≤ r4 ≤ 1,5` dengan `v4 ≥ 3` (data 4H dari listing 4H; tanpa data = tidak lolos) → FEE PRINTER (band).
+2. Else jika `0,75 ≤ r ≤ 1,5` dan `v ≥ 3` dan `f ≥ 5` dan TVL `≥ 20.000` (12H), dan volume/TVL 12H `≥ 100 %` (`volume_tvl_ratio`), dan umur pool `≥ 12 jam` (`pool_created_at` ms; tanpa data = tidak lolos), dan rasio 4H `0,75 ≤ r4 ≤ 1,5` dengan `v4 ≥ 3` (data 4H dari listing 4H; tanpa data = tidak lolos) → FEE PRINTER (band).
 3. VERY HIGH diambil dari `passing` langsung (`very_high_risk`), bukan dari SPOT. Karena
    `r ≥ 20` selalu `> 2`, kategori ini dan HIGH RISK tidak pernah tumpang tindih.
 
@@ -163,7 +163,7 @@ Contoh hitung (dari tes):
 4. Buang pool dengan `fee_tvl_ratio < 5` atau kosong.
 5. `r = fee_tvl_ratio / volatility`. Buang pool dengan `volatility < 0,01` atau kosong.
 6. Klasifikasi sesuai bagian 4.
-7. FEE PRINTER (band) = `0,75 ≤ r ≤ 1,5`, `volatility ≥ 3`, `fee_tvl_ratio ≥ 5`, TVL ≥ 20.000, umur pool ≥ 12 jam, dan cek yang sama di 4H (`volatility4h ≥ 3`, `0,75 ≤ r4 ≤ 1,5`).
+7. FEE PRINTER (band) = `0,75 ≤ r ≤ 1,5`, `volatility ≥ 3`, `fee_tvl_ratio ≥ 5`, TVL ≥ 20.000, volume/TVL 12H ≥ 100 %, umur pool ≥ 12 jam, dan cek yang sama di 4H (`volatility4h ≥ 3`, `0,75 ≤ r4 ≤ 1,5`).
    Urut `|fee_tvl_ratio − volatility|` terkecil dulu. Baris pertama = pool terbaik.
 8. Tampilkan atau kirim hanya pool FEE PRINTER. Jangan memasukkan HIGH RISK atau VERY HIGH
    ke RINGKASAN.

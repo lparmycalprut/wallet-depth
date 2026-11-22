@@ -34,6 +34,7 @@ def _row(pool, symbol, *, fee=2.0, tvl=20_000.0, active_tvl=5_000.0, holders=2_0
             "token_y": {"address": SOL, "symbol": "SOL", "name": "Wrapped SOL"},
             "fee_pct": fee, "tvl": tvl, "active_tvl": active_tvl,
             "pool_created_at": OLD_POOL_MS,
+            "volume_tvl_ratio": (volume / tvl * 100) if tvl else None,
             "base_token_holders": holders, "open_positions": open_pos,
             "active_positions": active, "volatility": vol, "fee_active_tvl_ratio": fa,
             "volume": volume, "avg_volume": volume / 720.0,
@@ -345,6 +346,21 @@ class SlowFeePrinterBandTest(unittest.TestCase):
     def test_tvl_di_bawah_20k_tidak_masuk_slow(self):
         row = _fp("T" * 44, fee_tvl=5.0, vol=3.4)
         row["tvl"] = 19_999.0
+        self.assertEqual(self._band(row), [])
+
+    def test_volume_tvl_12h_di_bawah_100_persen_tidak_masuk_slow(self):
+        row = _fp("V" * 44, fee_tvl=5.0, vol=3.4)
+        row["volume_tvl_ratio"] = 99.9
+        self.assertEqual(self._band(row), [])
+
+    def test_volume_tvl_12h_tepat_100_persen_masuk_slow(self):
+        row = _fp("W" * 44, fee_tvl=5.0, vol=3.4)
+        row["volume_tvl_ratio"] = 100.0
+        self.assertEqual([r["pool"] for r in self._band(row)], ["W" * 44])
+
+    def test_volume_tvl_12h_tanpa_data_tidak_masuk_slow(self):
+        row = _fp("X" * 44, fee_tvl=5.0, vol=3.4)
+        row["volume_tvl_ratio"] = None
         self.assertEqual(self._band(row), [])
 
     def test_tvl_tepat_20k_masuk_slow(self):
