@@ -107,7 +107,8 @@ class AppMainTest(unittest.TestCase):
     def test_ringkasan_di_bawah_tombol_dan_di_atas_tabel_12h(self):
         from tests.test_pool_flow import _fp
         slow = _fp("S" * 44, fee_tvl=10.0, vol=10.0, symbol="SLW")  # SLOW FEE PRINTER
-        listing = PASSING_12H + [slow]  # HIGHX (HIGH RISK) tidak masuk RINGKASAN
+        high_only = _fp("J" * 44, fee_tvl=16.0, vol=5.0, symbol="HIGHO")  # 3,2 × = HIGH RISK saja
+        listing = PASSING_12H + [slow, high_only]
         with mock.patch.object(pf, "fetch_listing", side_effect=lambda *a, **k: (listing, [], False)):
             at = self._app()
             next(b for b in at.button if b.label == "SCAN ALL").click().run()
@@ -116,7 +117,7 @@ class AppMainTest(unittest.TestCase):
                        if "Asal tabel" in str(n.proto.srcdoc))
         self.assertIn(">FEE PRINTER</span>", summary)  # badge asal tabel
         self.assertIn(slow["pool_address"], summary)
-        self.assertNotIn(HIGH_POOL, summary)
+        self.assertNotIn(high_only["pool_address"], summary)  # HIGH RISK saja tidak di RINGKASAN
         # urutan di halaman: RINGKASAN sebelum HIGH RISK FEE PRINTER
         order = [str(m.value) for m in at.markdown]
         idx = {key: next(i for i, v in enumerate(order) if key in v)
