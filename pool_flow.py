@@ -38,8 +38,11 @@ FLOW_VOLATILITY_MEASURABLE_MIN = 0.01
 FLOW_FEE_PRINTER_MULT = 2.0   # FEE PRINTER (SPOT): fee/TVL > 2 × volatility
 FLOW_BAND_LOW_MULT = 0.75     # SLOW FEE PRINTER: 0,75 × volatility ≤ fee/TVL ≤ 1,5 × volatility (permintaan user, 2026-11-19)
 FLOW_BAND_HIGH_MULT = 1.5     # batas atas SLOW FEE PRINTER (inklusif)
-FLOW_SLOW_MIN_VOLATILITY = 5.0  # %: SLOW FEE PRINTER hanya volatility minimal 5 % (permintaan user, 2026-11-23, inklusif)
-FLOW_SLOW_MIN_FEE_TVL = 5.0     # %: SLOW FEE PRINTER hanya fee/TVL minimal 5 % (permintaan user, 2026-11-23, inklusif)
+FLOW_SLOW_MIN_VOLATILITY = 3.0  # %: FEE PRINTER (band) hanya volatility minimal 3 %, di 12H dan 4H (permintaan user, 2026-11-22, inklusif)
+FLOW_SLOW_MIN_TVL = 20_000.0    # USD: FEE PRINTER (band) hanya TVL minimal ini (permintaan user, 2026-11-22, inklusif)
+FLOW_SLOW_MIN_VOLUME_TVL_12H = 100.0  # %: FEE PRINTER (band) volume/TVL 12H minimal 100 % (permintaan user, 2026-11-22, inklusif)
+FLOW_CONFIRM_TIMEFRAME = "4h"  # FEE PRINTER (band): volatility dan fee/TVL juga harus lolos di 4H (permintaan user, 2026-11-22)
+FLOW_SLOW_MIN_FEE_TVL = 5.0     # %: FEE PRINTER (band) hanya fee/TVL minimal 5 % (permintaan user, 2026-11-23, inklusif)
 FLOW_SLOW_MIN_POOL_AGE_HOURS = 12.0  # FEE PRINTER (tabel band): umur pool (pool_created_at) minimal 12 jam (permintaan user, 2026-11-22)
 FLOW_HIGH_RISK_MIN_MULT = 2.5   # HIGH RISK FEE PRINTER: 2,5 × volatility ≤ fee/TVL (permintaan user, 2026-11-20, inklusif)
 FLOW_HIGH_RISK_MAX_MULT = 3.5   # HIGH RISK FEE PRINTER: fee/TVL ≤ 3,5 × volatility (permintaan user, 2026-11-20, inklusif)
@@ -160,6 +163,8 @@ def _get_payload(params: dict, *, timeout: int = HTTP_TIMEOUT) -> dict:
 
 LISTING_12H = {"timeframe": FLOW_TIMEFRAME, "category": FLOW_CATEGORY,
                "server_filter": FLOW_SERVER_FILTER, "sort_by": FLOW_SORT_BY}
+# Listing 4H dengan filter server yang sama. Pool FEE PRINTER yang lolos 12H dicek ulang di sini.
+LISTING_4H = {**LISTING_12H, "timeframe": FLOW_CONFIRM_TIMEFRAME}
 
 
 def fetch_top_page(after_key: str | None = None, *, timeframe: str = FLOW_TIMEFRAME,
@@ -305,6 +310,7 @@ def evaluate_pool(row: dict) -> dict:
         "token_created_at": _num((row.get("token_x") or {}).get("created_at")),  # ms sejak epoch
         "pool_created_at": _num(row.get("pool_created_at")),  # ms sejak epoch (umur pool)
         "fee_tvl": _num(row.get("fee_tvl_ratio")),
+        "volume_tvl_12h": _num(row.get("volume_tvl_ratio")),  # % (volume 12H ÷ TVL × 100)
         "avg_volume": avg_volume,
         "avg_fee": _num(row.get("avg_fee")),
         "passes": not reasons,
@@ -442,6 +448,33 @@ def pool_old_enough(item: dict, now_ms: float | None = None) -> bool:
     return now - created >= FLOW_SLOW_MIN_POOL_AGE_HOURS * 3_600_000
 
 
+def band_12h_ok(item: dict) -> bool:
+    """Syarat metrik FEE PRINTER (band) di 12H: 0,75 × ≤ fee/TVL ≤ 1,5 × volatility (inklusif),
+    volatility ≥ 3 %, fee/TVL ≥ 5 %, TVL ≥ 20.000 USD, dan volume/TVL ≥ 100 % (2026-11-22). Umur pool dicek di ``fee_printer_split``."""
+    vol = item.get("volatility")
+    fee_tvl = item.get("fee_tvl")
+    if vol is None or fee_tvl is None or vol < FLOW_VOLATILITY_MEASURABLE_MIN:
+        return False
+    return (FLOW_BAND_LOW_MULT * vol <= fee_tvl <= FLOW_BAND_HIGH_MULT * vol
+            and vol >= FLOW_SLOW_MIN_VOLATILITY and fee_tvl >= FLOW_SLOW_MIN_FEE_TVL
+            and (item.get("tvl") or 0) >= FLOW_SLOW_MIN_TVL
+            and (item.get("volume_tvl_12h") or 0) >= FLOW_SLOW_MIN_VOLUME_TVL_12H)
+
+
+def band_4h_ok(tf4h: dict | None) -> bool:
+    """Syarat FEE PRINTER (band) di 4H: 0,75 × ≤ fee/TVL ≤ 1,5 × volatility (inklusif) dan volatility ≥ 3 %.
+
+    ``tf4h`` = {volatility, fee_tvl} dari listing 4H. Tanpa data 4H: tidak lolos."""
+    if not tf4h:
+        return False
+    vol = tf4h.get("volatility")
+    fee_tvl = tf4h.get("fee_tvl")
+    if vol is None or fee_tvl is None or vol < FLOW_VOLATILITY_MEASURABLE_MIN:
+        return False
+    return (FLOW_BAND_LOW_MULT * vol <= fee_tvl <= FLOW_BAND_HIGH_MULT * vol
+            and vol >= FLOW_SLOW_MIN_VOLATILITY)
+
+
 def fee_printer_split(passing: list, now_ms: float | None = None) -> tuple[list, list]:
     """Pisahkan pool menjadi (fee_printer, band) memakai fee/TVL vs volatility.
 
@@ -461,9 +494,8 @@ def fee_printer_split(passing: list, now_ms: float | None = None) -> tuple[list,
             continue
         if fee_tvl > FLOW_FEE_PRINTER_MULT * vol:
             fee_printer.append(item)
-        elif (FLOW_BAND_LOW_MULT * vol <= fee_tvl <= FLOW_BAND_HIGH_MULT * vol
-              and vol >= FLOW_SLOW_MIN_VOLATILITY and fee_tvl >= FLOW_SLOW_MIN_FEE_TVL
-              and pool_old_enough(item, now_ms)):
+        elif (band_12h_ok(item) and pool_old_enough(item, now_ms)
+              and band_4h_ok(item.get("tf4h"))):
             band.append(item)
     return sorted(fee_printer, key=sort_key), sorted(band, key=sort_key_slow)
 
@@ -559,15 +591,38 @@ def _scan(rows: list, errors: list, truncated: bool, order, timeframe: str,
     }
 
 
-def scan_pools(max_pages: int = FLOW_MAX_PAGES, *, listing: tuple | None = None) -> dict:
-    """Scan lengkap: listing 12H (filter server-side) → urutan.
+def scan_pools(max_pages: int = FLOW_MAX_PAGES, *, listing: tuple | None = None,
+               listing_4h: tuple | None = None) -> dict:
+    """Scan lengkap: listing 12H (filter server-side) → urutan → cek 4H untuk kandidat FEE PRINTER.
 
-    ``listing`` = (rows, errors, truncated) bisa diisi untuk tes tanpa jaringan.
+    ``listing`` = (rows, errors, truncated) dan ``listing_4h`` bisa diisi untuk tes tanpa jaringan.
+    Bila ``listing`` diisi tetapi ``listing_4h`` tidak, data 4H diambil dari ``listing`` yang sama.
+    Tiap pool lolos 12H diberi ``tf4h`` = {volatility, fee_tvl} dari listing 4H (None bila tidak ada).
     """
     rows, errors, truncated = (listing if listing is not None
                                else fetch_listing(max_pages, **LISTING_12H))
-    return _scan(rows, errors, truncated, sort_key, FLOW_TIMEFRAME,
-                 min_fee_tvl=FLOW_MIN_FEE_TVL_12H)
+    result = _scan(rows, errors, truncated, sort_key, FLOW_TIMEFRAME,
+                   min_fee_tvl=FLOW_MIN_FEE_TVL_12H)
+    result["listing_4h_errors"] = 0
+    result["listing_4h_truncated"] = False
+    if any(band_12h_ok(item) for item in result["passing"]):
+        if listing_4h is not None:
+            rows4, errors4, truncated4 = listing_4h
+        elif listing is not None:
+            rows4, errors4, truncated4 = rows, [], False
+        else:
+            rows4, errors4, truncated4 = fetch_listing(max_pages, **LISTING_4H)
+        by_pool: dict = {}
+        for row in rows4:
+            address = str(row.get("pool_address") or "")
+            if address and address not in by_pool:
+                by_pool[address] = {"volatility": _num(row.get("volatility")),
+                                    "fee_tvl": _num(row.get("fee_tvl_ratio"))}
+        for item in result["passing"]:
+            item["tf4h"] = by_pool.get(item["pool"])
+        result["listing_4h_errors"] = len(errors4)
+        result["listing_4h_truncated"] = bool(truncated4)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -654,6 +709,9 @@ def summary_alert_text(no: int, entries: list, seen: dict) -> str:
         lines.append("")
         lines.append(f"<b>{_h(row['symbol'])}</b> · {_h(name)}  [{_h(label)}]  {tag}")
         lines.append(f"📊 fee/TVL {fmt_pct(row.get('fee_tvl'))} · volatility {fmt_pct(row.get('volatility'))}")
+        tf4h = row.get("tf4h")
+        if tf4h:
+            lines.append(f"📊 4H: fee/TVL {fmt_pct(tf4h.get('fee_tvl'))} · volatility {fmt_pct(tf4h.get('volatility'))}")
         if row.get("warnings"):
             lines.append("⚠️ Peringatan keamanan: " + _h("; ".join(row["warnings"])))
         lines.extend(alert_link_lines(row.get("mint") or "", pool))

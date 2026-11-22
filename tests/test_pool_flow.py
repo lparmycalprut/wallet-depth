@@ -34,6 +34,7 @@ def _row(pool, symbol, *, fee=2.0, tvl=20_000.0, active_tvl=5_000.0, holders=2_0
             "token_y": {"address": SOL, "symbol": "SOL", "name": "Wrapped SOL"},
             "fee_pct": fee, "tvl": tvl, "active_tvl": active_tvl,
             "pool_created_at": OLD_POOL_MS,
+            "volume_tvl_ratio": (volume / tvl * 100) if tvl else None,
             "base_token_holders": holders, "open_positions": open_pos,
             "active_positions": active, "volatility": vol, "fee_active_tvl_ratio": fa,
             "volume": volume, "avg_volume": volume / 720.0,
@@ -331,11 +332,41 @@ class SlowFeePrinterBandTest(unittest.TestCase):
         result = pf.scan_pools(listing=(list(rows), [], False))
         return pf.fee_printer_split(result["passing"], now_ms=self.NOW)[1]
 
-    def test_volatility_di_bawah_5_persen_tidak_masuk_slow(self):
-        self.assertEqual(self._band(_fp("J" * 44, fee_tvl=5.0, vol=4.99)), [])
+    def test_volatility_di_bawah_3_persen_tidak_masuk_slow(self):
+        self.assertEqual(self._band(_fp("J" * 44, fee_tvl=4.0, vol=2.99)), [])
 
-    def test_volatility_tepat_5_persen_masuk_slow(self):
-        self.assertEqual([r["pool"] for r in self._band(_fp("K" * 44, fee_tvl=5.0, vol=5.0))], ["K" * 44])
+    def test_volatility_3_34_persen_dengan_fee_5_persen_masuk_slow(self):
+        """Batas 1,5 × volatility dan lantai fee/TVL 5 %: 1,5 × 3,34 = 5,01 %, jadi 3,34 % adalah batas efektif."""
+        self.assertEqual([r["pool"] for r in self._band(_fp("K" * 44, fee_tvl=5.0, vol=3.34))], ["K" * 44])
+
+    def test_volatility_3_2_persen_tidak_bisa_masuk_karena_lantai_fee(self):
+        """1,5 × 3,2 = 4,8 % < 5 %: volatility di bawah 3,34 % tidak pernah lolos (lantai fee/TVL 5 %)."""
+        self.assertEqual(self._band(_fp("M" * 44, fee_tvl=5.0, vol=3.2)), [])
+
+    def test_tvl_di_bawah_20k_tidak_masuk_slow(self):
+        row = _fp("T" * 44, fee_tvl=5.0, vol=3.4)
+        row["tvl"] = 19_999.0
+        self.assertEqual(self._band(row), [])
+
+    def test_volume_tvl_12h_di_bawah_100_persen_tidak_masuk_slow(self):
+        row = _fp("V" * 44, fee_tvl=5.0, vol=3.4)
+        row["volume_tvl_ratio"] = 99.9
+        self.assertEqual(self._band(row), [])
+
+    def test_volume_tvl_12h_tepat_100_persen_masuk_slow(self):
+        row = _fp("W" * 44, fee_tvl=5.0, vol=3.4)
+        row["volume_tvl_ratio"] = 100.0
+        self.assertEqual([r["pool"] for r in self._band(row)], ["W" * 44])
+
+    def test_volume_tvl_12h_tanpa_data_tidak_masuk_slow(self):
+        row = _fp("X" * 44, fee_tvl=5.0, vol=3.4)
+        row["volume_tvl_ratio"] = None
+        self.assertEqual(self._band(row), [])
+
+    def test_tvl_tepat_20k_masuk_slow(self):
+        row = _fp("U" * 44, fee_tvl=5.0, vol=3.4)
+        row["tvl"] = 20_000.0
+        self.assertEqual([r["pool"] for r in self._band(row)], ["U" * 44])
 
     def test_fee_tvl_di_bawah_5_persen_tidak_masuk_slow_langsung(self):
         """Lantai fee/TVL SLOW diuji langsung (scan_pools sudah membuang fee/TVL < 5 % lebih dulu)."""
@@ -410,6 +441,41 @@ class SlowFeePrinterBandTest(unittest.TestCase):
         young["pool_created_at"] = self.NOW - 3_600_000
         result = pf.scan_pools(listing=([young], [], False))
         self.assertEqual(pf.summary_rows({"passing": result["passing"]}), [])
+
+    def _band_with_4h(self, row12, row4):
+        result = pf.scan_pools(listing=([row12], [], False), listing_4h=([row4], [], False))
+        return pf.fee_printer_split(result["passing"], now_ms=self.NOW)[1]
+
+    def test_4h_lolos_dan_12h_lolos_masuk_slow(self):
+        self.assertEqual([r["pool"] for r in self._band_with_4h(_fp("A" * 44, fee_tvl=5.0, vol=3.4),
+                                                                 _fp("A" * 44, fee_tvl=5.0, vol=3.5))],
+                         ["A" * 44])
+
+    def test_4h_volatility_di_bawah_3_persen_tidak_masuk(self):
+        self.assertEqual(self._band_with_4h(_fp("B" * 44, fee_tvl=5.0, vol=3.4),
+                                            _fp("B" * 44, fee_tvl=4.0, vol=2.9)), [])
+
+    def test_4h_rasio_fee_di_luar_band_tidak_masuk(self):
+        """4H fee/TVL 8 % > 1,5 × volatility 3,4 % (→ 5,1 %): tidak masuk walau 12H lolos."""
+        self.assertEqual(self._band_with_4h(_fp("C" * 44, fee_tvl=5.0, vol=3.4),
+                                            _fp("C" * 44, fee_tvl=8.0, vol=3.4)), [])
+
+    def test_pool_tanpa_data_4h_tidak_masuk(self):
+        result = pf.scan_pools(listing=([_fp("D" * 44, fee_tvl=5.0, vol=3.4)], [], False),
+                               listing_4h=([], [], False))
+        self.assertIsNone(result["passing"][0]["tf4h"])
+        self.assertEqual(pf.fee_printer_split(result["passing"], now_ms=self.NOW)[1], [])
+
+    def test_listing_4h_terpotong_ditandai(self):
+        result = pf.scan_pools(listing=([_fp("E" * 44, fee_tvl=5.0, vol=3.4)], [], False),
+                               listing_4h=([], [], True))
+        self.assertTrue(result["listing_4h_truncated"])
+
+    def test_hanya_pool_lolos_12h_yang_dicek_4h(self):
+        """Pool di luar band 12H tidak mendapat data 4H (tidak ada permintaan tambahan)."""
+        spot = _fp("S" * 44, fee_tvl=20.0, vol=3.4)  # SPOT (> 2 × volatility), bukan kandidat band
+        result = pf.scan_pools(listing=([spot], [], False), listing_4h=([], [], False))
+        self.assertIsNone(result["passing"][0].get("tf4h"))
 
 
 class FeeTvlMinTest(unittest.TestCase):
@@ -728,7 +794,7 @@ class AlertTest(unittest.TestCase):
         for host in ("gmgn.ai", "meteora.ag", "hawkfi.ag", "dexscreener.com"):
             self.assertIn(host, text)
         self.assertNotIn("POOL PALING RAMAI", text)
-        self.assertNotIn("4H", text)  # tidak ada lagi kriteria 4H
+        self.assertIn("📊 4H: fee/TVL 10,0% · volatility 10,0%", text)  # baris 4H ikut tampil
         self.assertEqual(markup["inline_keyboard"][0][0]["copy_text"]["text"],
                          pf.mint_of_pool(_slow_row()))
 
