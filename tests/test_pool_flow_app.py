@@ -290,6 +290,7 @@ class WorkflowAndPagesTest(unittest.TestCase):
         text = (ROOT / ".github/workflows/pool-flow-best.yml").read_text(encoding="utf-8")
         self.assertIn("scripts/pool_flow_alert.py", text)
         self.assertNotIn("--mode", text)
+        self.assertIn("workflow_dispatch:", text)  # pemicu eksternal (cron luar) lewat API
 
     def test_workflow_watchlist_sudah_dihapus(self):
         self.assertFalse((ROOT / ".github/workflows/pool-flow-watch.yml").exists())

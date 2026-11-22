@@ -93,13 +93,13 @@ Pool dengan `v < 0,01` atau `v` kosong tidak masuk tabel mana pun.
 |---|---|---|
 | **VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1)** | `r ≥ 20` (inklusif) | Tabel sendiri, dropdown tertutup |
 | **HIGH RISK FEE PRINTER** | `f > 2v` (FEE PRINTER SPOT) **dan** `2,5 ≤ r ≤ 3,5` (inklusif) **dan** `f ≥ 10 %` | Tabel sendiri, dropdown tertutup |
-| **FEE PRINTER** (tabel SLOW, dulu "SLOW FEE PRINTER") | `0,75 ≤ r ≤ 1,5` (inklusif) **dan** `v ≥ 5 %` **dan** `f ≥ 5 %` | Tabel sendiri **dan RINGKASAN + alert Telegram** |
+| **FEE PRINTER** (tabel SLOW, dulu "SLOW FEE PRINTER") | `0,75 ≤ r ≤ 1,5` (inklusif) **dan** `v ≥ 5 %` **dan** `f ≥ 5 %` **dan** umur pool `≥ 12 jam` (`pool_created_at`, 2026-11-22) | Tabel sendiri **dan RINGKASAN + alert Telegram** |
 | FEE PRINTER (SPOT), internal | `r > 2` (induk pemisahan) | Tidak ditampilkan |
 | (tidak tampil) | `1,5 < r < 2`; `r` 2–3,5 tapi `f < 10 %`; `3,5 < r < 20` | Tidak ditampilkan di mana pun |
 
 Urutan pengecekan di kode (`fee_printer_split`):
 1. Jika `r > 2` → FEE PRINTER (SPOT). HIGH RISK diambil dari sini (`fee_printer_high_risk`).
-2. Else jika `0,75 ≤ r ≤ 1,5` dan `v ≥ 5` dan `f ≥ 5` → FEE PRINTER (band).
+2. Else jika `0,75 ≤ r ≤ 1,5` dan `v ≥ 5` dan `f ≥ 5` dan umur pool `≥ 12 jam` (`pool_created_at` ms; tanpa data = tidak lolos) → FEE PRINTER (band).
 3. VERY HIGH diambil dari `passing` langsung (`very_high_risk`), bukan dari SPOT. Karena
    `r ≥ 20` selalu `> 2`, kategori ini dan HIGH RISK tidak pernah tumpang tindih.
 
@@ -135,6 +135,7 @@ Contoh hitung (dari tes):
   Fee/TVL, Volatility.
 - **Alert Telegram** (`scripts/pool_flow_alert.py`) memakai daftar yang sama.
   - Jadwal: GitHub Actions `.github/workflows/pool-flow-best.yml`, cron `7,22,37,52 * * * *` (tiap 15 menit, UTC).
+  - Pemicu utama: cron eksternal memanggil `workflow_dispatch` (GitHub API, ref `main`) tiap 15 menit. Jadwal GitHub di atas hanya cadangan karena sering terlewat.
   - Bila band kosong, kirim heartbeat `💓 Pool Flow cron jalan` (tanpa mengubah state), supaya terlihat cron berjalan.
   - Scan gagal: pesan `❌ Scan gagal`, exit 1. Telegram gagal atau kredensial kosong: exit 1 dan state tidak disimpan.
   - Setiap pesan: nama, label `[FEE PRINTER]`, tag `🆕 baru` atau `🔁 sudah pernah · alert #N`,
@@ -162,7 +163,7 @@ Contoh hitung (dari tes):
 4. Buang pool dengan `fee_tvl_ratio < 5` atau kosong.
 5. `r = fee_tvl_ratio / volatility`. Buang pool dengan `volatility < 0,01` atau kosong.
 6. Klasifikasi sesuai bagian 4.
-7. FEE PRINTER (band) = `0,75 ≤ r ≤ 1,5`, `volatility ≥ 5`, `fee_tvl_ratio ≥ 5`.
+7. FEE PRINTER (band) = `0,75 ≤ r ≤ 1,5`, `volatility ≥ 5`, `fee_tvl_ratio ≥ 5`, umur pool ≥ 12 jam.
    Urut `|fee_tvl_ratio − volatility|` terkecil dulu. Baris pertama = pool terbaik.
 8. Tampilkan atau kirim hanya pool FEE PRINTER. Jangan memasukkan HIGH RISK atau VERY HIGH
    ke RINGKASAN.

@@ -21,6 +21,7 @@ SOL = "So11111111111111111111111111111111111111112"
 
 
 OLD_TOKEN_MS = 1_700_000_000_000  # token berumur > 24 jam untuk tes umur (ms)
+OLD_POOL_MS = 1_700_000_000_000  # pool berumur > 12 jam terhadap NOW tes (ms)
 
 
 def _row(pool, symbol, *, fee=2.0, tvl=20_000.0, active_tvl=5_000.0, holders=2_000,
@@ -32,6 +33,7 @@ def _row(pool, symbol, *, fee=2.0, tvl=20_000.0, active_tvl=5_000.0, holders=2_0
                         "market_cap": mcap, "created_at": OLD_TOKEN_MS},
             "token_y": {"address": SOL, "symbol": "SOL", "name": "Wrapped SOL"},
             "fee_pct": fee, "tvl": tvl, "active_tvl": active_tvl,
+            "pool_created_at": OLD_POOL_MS,
             "base_token_holders": holders, "open_positions": open_pos,
             "active_positions": active, "volatility": vol, "fee_active_tvl_ratio": fa,
             "volume": volume, "avg_volume": volume / 720.0,
@@ -378,6 +380,36 @@ class SlowFeePrinterBandTest(unittest.TestCase):
     def test_evaluate_pool_membawa_umur_token(self):
         self.assertEqual(pf.evaluate_pool(_fp("T" * 44, fee_tvl=1.0, vol=1.0))["token_created_at"],
                          OLD_TOKEN_MS)
+
+    def test_evaluate_pool_membawa_umur_pool(self):
+        self.assertEqual(pf.evaluate_pool(_fp("U" * 44, fee_tvl=1.0, vol=1.0))["pool_created_at"], OLD_POOL_MS)
+
+    def test_pool_lebih_muda_dari_12_jam_tidak_masuk_fee_printer(self):
+        """Pool 11 jam 59 menit: tidak masuk band (tapi tetap bisa jadi SPOT bila fee/TVL > 2 × volatility)."""
+        young = _fp("Y" * 44, fee_tvl=10.0, vol=10.0)
+        young["pool_created_at"] = self.NOW - (12 * 3_600_000 - 60_000)
+        result = pf.scan_pools(listing=([young], [], False))
+        self.assertEqual(pf.fee_printer_split(result["passing"], now_ms=self.NOW)[1], [])
+
+    def test_pool_tepat_12_jam_masuk_fee_printer(self):
+        """Batas umur pool inklusif: tepat 12 jam masuk band."""
+        edge = _fp("E" * 44, fee_tvl=10.0, vol=10.0)
+        edge["pool_created_at"] = self.NOW - 12 * 3_600_000
+        result = pf.scan_pools(listing=([edge], [], False))
+        self.assertEqual([r["pool"] for r in pf.fee_printer_split(result["passing"], now_ms=self.NOW)[1]],
+                         ["E" * 44])
+
+    def test_pool_tanpa_umur_tidak_masuk_fee_printer(self):
+        no_age = _fp("Z" * 44, fee_tvl=10.0, vol=10.0)
+        no_age["pool_created_at"] = None
+        result = pf.scan_pools(listing=([no_age], [], False))
+        self.assertEqual(pf.fee_printer_split(result["passing"], now_ms=self.NOW)[1], [])
+
+    def test_pool_muda_tidak_masuk_ringkasan(self):
+        young = _fp("R" * 44, fee_tvl=10.0, vol=10.0)
+        young["pool_created_at"] = self.NOW - 3_600_000
+        result = pf.scan_pools(listing=([young], [], False))
+        self.assertEqual(pf.summary_rows({"passing": result["passing"]}), [])
 
 
 class FeeTvlMinTest(unittest.TestCase):
