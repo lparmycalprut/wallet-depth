@@ -44,9 +44,6 @@ FLOW_SLOW_MIN_VOLUME_TVL_12H = 100.0  # %: FEE PRINTER (band) volume/TVL 12H min
 FLOW_CONFIRM_TIMEFRAME = "4h"  # FEE PRINTER (band): volatility dan fee/TVL juga harus lolos di 4H (permintaan user, 2026-11-22)
 FLOW_SLOW_MIN_FEE_TVL = 5.0     # %: FEE PRINTER (band) hanya fee/TVL minimal 5 % (permintaan user, 2026-11-23, inklusif)
 FLOW_SLOW_MIN_POOL_AGE_HOURS = 12.0  # FEE PRINTER (tabel band): umur pool (pool_created_at) minimal 12 jam (permintaan user, 2026-11-22)
-FLOW_HIGH_RISK_MIN_MULT = 2.5   # HIGH RISK FEE PRINTER: 2,5 × volatility ≤ fee/TVL (permintaan user, 2026-11-20, inklusif)
-FLOW_HIGH_RISK_MAX_MULT = 3.5   # HIGH RISK FEE PRINTER: fee/TVL ≤ 3,5 × volatility (permintaan user, 2026-11-20, inklusif)
-FLOW_HIGH_RISK_MIN_FEE_TVL = 10.0  # %: HIGH RISK FEE PRINTER hanya fee/TVL minimal 10 % (permintaan user, 2026-11-19)
 FLOW_MIN_FEE_TVL_12H = 5.0  # %: tabel 12H hanya pool dengan fee/TVL minimal 5 % (permintaan user, 2026-11-19)
 # Peringatan keamanan (label saja, tidak menyaring).
 # tampil dengan label. Field kosong tidak dihitung sebagai masalah.
@@ -427,7 +424,7 @@ def sort_key_slow(result: dict):
 def summary_rows(result_12h: dict) -> list:
     """RINGKASAN (permintaan user, 2026-11-20): hanya pool dari tabel SLOW FEE PRINTER.
 
-    Urut seperti tabel SLOW (``sort_key_slow``). HIGH RISK tidak masuk.
+    Urut seperti tabel SLOW (``sort_key_slow``).
     Daftar (row, label), label selalu ``SUMMARY_LABEL_SLOW``.
     """
     passing = result_12h.get("passing") or []
@@ -479,7 +476,7 @@ def fee_printer_split(passing: list, now_ms: float | None = None) -> tuple[list,
 
     - band (FEE PRINTER): 1 × volatility ≤ fee/TVL ≤ 3 × volatility (12H dan 4H), volatility ≥ 3 %, fee/TVL ≥ 5 %
       (kedua batas inklusif), dan umur pool ≥ 12 jam. Dicek lebih dulu (permintaan user, 2026-11-23).
-    - fee_printer (SPOT): fee/TVL > 2 × volatility, semua pool. Induk HIGH RISK, tidak berubah.
+    - fee_printer (SPOT): fee/TVL > 2 × volatility, semua pool. Tidak ditampilkan (HIGH RISK dihapus 2026-11-23); hanya internal.
       Pool di 2–3 × yang lolos band juga ada di fee_printer, sehingga bisa tampil di kedua tabel.
     Pool tanpa volatility terukur (None atau < 0,01 %) atau tanpa fee/TVL tidak masuk keduanya.
     Pool dengan fee/TVL di bawah 1 × volatility tidak masuk band.
@@ -498,20 +495,6 @@ def fee_printer_split(passing: list, now_ms: float | None = None) -> tuple[list,
                 and band_4h_ok(item.get("tf4h"))):
             band.append(item)
     return sorted(fee_printer, key=sort_key), sorted(band, key=sort_key_slow)
-
-
-def fee_printer_high_risk(fee_printer: list) -> list:
-    """Filter kedua di atas FEE PRINTER (SPOT) untuk HIGH RISK FEE PRINTER (permintaan user, 2026-11-20):
-
-    2,5 × volatility ≤ fee/TVL ≤ 3,5 × volatility (kedua batas inklusif), dan fee/TVL ≥ 10 %.
-    Input harus hasil ``fee_printer_split`` (sudah fee/TVL > 2 × volatility). Pool di luar rentang
-    ini tidak ditampilkan di tabel ini. Urutan: ``sort_key``.
-    """
-    kept = [item for item in fee_printer
-            if FLOW_HIGH_RISK_MIN_MULT * item["volatility"] <= item["fee_tvl"]
-            <= FLOW_HIGH_RISK_MAX_MULT * item["volatility"]
-            and item["fee_tvl"] >= FLOW_HIGH_RISK_MIN_FEE_TVL]
-    return sorted(kept, key=sort_key)
 
 
 def ranked(passing: list) -> list:

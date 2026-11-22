@@ -95,7 +95,7 @@ DUT_12H = {  # respons Meteora timeframe=12h (filter user), baris nyata; volatil
 REAL_12H = [FOOD_12H, DUT_12H]
 # FOOD dengan fee 2 % agar lolos filter fee tier 1 % (uji jalur lolos; FOOD asli fee 0,8 % dilewati)
 LOW_12H = dict(FOOD_12H, fee_pct=2.0)
-HIGH_12H = _row("H" * 44, "HIGHX", fa=12.0, vol=5.5, volume=720.0 * 800, ftvl=16.5)  # volatility 5,5 %, fee/TVL 3× (HIGH RISK)
+HIGH_12H = _row("H" * 44, "HIGHX", fa=12.0, vol=5.5, volume=720.0 * 800, ftvl=16.5)  # volatility 5,5 %, fee/TVL 3× (band 1–3 ×)
 PASSING_12H = [LOW_12H, HIGH_12H]
 # FOOD-SOL pool DQjZ… (fee 2 %), respons Meteora timeframe=12h nyata: LP keluar > masuk, TVL < $50K
 FOOD2_12H = {
@@ -282,45 +282,6 @@ def _fp(pool, fee_tvl, vol, symbol="FP"):
     row["fee_tvl_ratio"] = fee_tvl
     return row
 
-
-class HighRiskFeePrinterTest(unittest.TestCase):
-    """HIGH RISK FEE PRINTER (2026-11-20): 2,5 × ≤ fee/TVL ≤ 3,5 × volatility dan fee/TVL ≥ 10 %."""
-
-    def _high(self, *rows):
-        result = pf.scan_pools(listing=(list(rows), [], False))
-        fee_printer, _band = pf.fee_printer_split(result["passing"])
-        return pf.fee_printer_high_risk(fee_printer)
-
-    def test_hanya_rentang_2_5_sampai_3_5_kali_volatility(self):
-        rows = [_fp("A" * 44, fee_tvl=25.0, vol=10.0),   # tepat 2,5× → masuk (inklusif)
-                _fp("B" * 44, fee_tvl=30.0, vol=10.0),   # 3× → masuk
-                _fp("C" * 44, fee_tvl=35.0, vol=10.0),   # tepat 3,5× → masuk (inklusif)
-                _fp("D" * 44, fee_tvl=24.9, vol=10.0),   # 2,49× → tidak masuk
-                _fp("E" * 44, fee_tvl=35.1, vol=10.0),   # 3,51× → tidak masuk
-                _fp("F" * 44, fee_tvl=99.0, vol=10.0),   # 9,9× → tidak masuk (sebelumnya masuk)
-                _fp("G" * 44, fee_tvl=20.0, vol=10.0),   # 2× → tidak masuk (bukan SPOT)
-                _fp("H" * 44, fee_tvl=15.0, vol=10.0)]   # band SLOW, bukan HIGH RISK
-        high = self._high(*rows)
-        self.assertEqual({r["pool"] for r in high}, {"A" * 44, "B" * 44, "C" * 44})
-
-    def test_fee_tvl_minimal_10_persen_inklusif(self):
-        # 2,5× volatility tapi fee/TVL di bawah 10 % → tidak masuk
-        self.assertEqual(self._high(_fp("J" * 44, fee_tvl=5.0, vol=2.0)), [])
-        # tepat 10 % dan 2,5× volatility → masuk
-        self.assertEqual([r["pool"] for r in self._high(_fp("K" * 44, fee_tvl=10.0, vol=4.0))],
-                         ["K" * 44])
-
-    def test_urut_rasio_avg_volume_per_tvl(self):
-        rows = [_fp("A" * 44, fee_tvl=30.0, vol=10.0),
-                _fp("B" * 44, fee_tvl=35.0, vol=10.0),
-                _fp("C" * 44, fee_tvl=30.0, vol=10.0)]
-        for r, avg in zip(rows, (600.0, 2000.0, 300.0)):
-            r["avg_volume"] = avg
-        self.assertEqual([r["pool"] for r in self._high(*rows)],
-                         ["B" * 44, "A" * 44, "C" * 44])
-
-    def test_pool_tanpa_volatility_terukur_tidak_masuk(self):
-        self.assertEqual(self._high(_fp("G" * 44, fee_tvl=5.0, vol=0.005)), [])
 
 
 class SlowFeePrinterBandTest(unittest.TestCase):
@@ -519,7 +480,7 @@ class FeePrinterSplitTest(unittest.TestCase):
         self.assertEqual(band, [])
 
     def test_antara_2x_dan_3x_masuk_band_dan_spot(self):
-        # 2,5 × : di band (1–3 ×) dan di SPOT (> 2 ×). HIGH RISK tetap diambil dari SPOT.
+        # 2,5 × : di band (1–3 ×) dan di SPOT (> 2 ×, internal).
         spot, band = self._split(_fp("1" * 44, fee_tvl=25.0, vol=10.0))
         self.assertEqual([r["pool"] for r in spot], ["1" * 44])
         self.assertEqual([r["pool"] for r in band], ["1" * 44])
@@ -783,7 +744,7 @@ class AlertTest(unittest.TestCase):
     def test_ringkasan_hanya_slow_fee_printer(self):
         from tests.test_pool_flow import _fp
         very = _fp("V" * 44, fee_tvl=50.0, vol=1.0, symbol="VHX")  # 50 × volatility: di atas 3 ×, bukan band
-        high_only = _fp("J" * 44, fee_tvl=16.0, vol=5.0, symbol="HIGHO")  # 3,2 × = HIGH RISK saja
+        high_only = _fp("J" * 44, fee_tvl=16.0, vol=5.0, symbol="HIGHO")  # 3,2 × = di atas band, tidak tampil
         entries = _summary_entries(PASSING_12H + [very, high_only, _slow_row()])
         # HIGHX (HIGH_12H, tepat 3 ×) masuk band 1–3 × sehingga ikut RINGKASAN; urut |selisih|
         self.assertEqual([(r["symbol"], label) for r, label in entries],

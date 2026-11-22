@@ -117,21 +117,21 @@ class AppMainTest(unittest.TestCase):
                        if "Asal tabel" in str(n.proto.srcdoc))
         self.assertIn(">FEE PRINTER</span>", summary)  # badge asal tabel
         self.assertIn(slow["pool_address"], summary)
-        self.assertNotIn(high_only["pool_address"], summary)  # HIGH RISK saja tidak di RINGKASAN
-        # urutan di halaman: RINGKASAN sebelum HIGH RISK FEE PRINTER
+        self.assertNotIn(high_only["pool_address"], summary)  # di atas band: tidak di RINGKASAN
+        # urutan di halaman: RINGKASAN sebelum tabel FEE PRINTER
         order = [str(m.value) for m in at.markdown]
-        idx = {key: next(i for i, v in enumerate(order) if key in v)
-               for key in ("RINGKASAN", "HIGH RISK FEE PRINTER")}
-        self.assertLess(idx["RINGKASAN"], idx["HIGH RISK FEE PRINTER"])
+        title = 'class="fee-printer-title">FEE PRINTER'
+        idx = {key: next(i for i, v in enumerate(order) if key in v) for key in ("RINGKASAN", title)}
+        self.assertLess(idx["RINGKASAN"], idx[title])
 
     def test_tombol_copy_ca_tepat_di_samping_hawkfi(self):
         at = self._app()
         next(b for b in at.button if b.label == "SCAN ALL").click().run()
         self.assertFalse(at.exception)
         passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
-        fee_printer, band = pf.fee_printer_split(passing)
-        # pool yang tampil di tabel 12H (HIGH RISK, FEE PRINTER band); FOOD tidak tampil di mana pun
-        shown_12h = pf.fee_printer_high_risk(fee_printer) + band
+        _fee_printer, band = pf.fee_printer_split(passing)
+        # pool yang tampil di tabel 12H (FEE PRINTER band); FOOD tidak tampil di mana pun
+        shown_12h = band
         summary = pf.summary_rows(pf.scan_pools(listing=(PASSING_12H, [], False)))
         doc = self._body(at)
         # tombol CA: tabel 12H + baris RINGKASAN (satu per pool yang tampil di tabel 12H)
@@ -159,7 +159,7 @@ class AppMainTest(unittest.TestCase):
         next(b for b in at.button if b.label == "SCAN ALL").click().run()
         self.assertFalse(at.exception)
         body = self._body(at)
-        # FOOD fee/TVL 9,5 % < 10 % → tidak masuk HIGH RISK (dan tidak di SLOW)
+        # FOOD fee/TVL 9,5 % = 3,1 × volatility → di atas band 1–3 ×, tidak tampil
         self.assertNotIn(LOW_POOL, body)
         self.assertIn(HIGH_POOL, body)
         self.assertNotIn(DUT_POOL, body)  # volatility 6,71 % > 6 % dilewati
@@ -167,7 +167,7 @@ class AppMainTest(unittest.TestCase):
         markdown = " ".join(str(m.value) for m in at.markdown)
         self.assertNotIn("LOW RISK", markdown)  # tabel LOW RISK sudah dihapus (2026-11-14)
         twelve = [n for n in at.get("iframe") if "Volume 12H (pool)" in str(n.proto.srcdoc)]
-        self.assertTrue(twelve)  # tabel 12H (HIGH RISK dan SLOW FEE PRINTER)
+        self.assertTrue(twelve)  # tabel 12H (FEE PRINTER)
 
     def test_hasil_scan_berupa_tabel_html_dengan_scroll_horizontal(self):
         at = self._app()
@@ -208,27 +208,11 @@ class AppMainTest(unittest.TestCase):
         at = self._app()
         next(b for b in at.button if b.label == "SCAN ALL").click().run()
         markdown = " ".join(str(m.value) for m in at.markdown)
-        self.assertIn(":red[HIGH RISK FEE PRINTER]", markdown)
+        self.assertNotIn("HIGH RISK FEE PRINTER", markdown)  # tabel dihapus dari deteksi (2026-11-23)
         self.assertIn('<span class="fee-printer-title">FEE PRINTER</span>', markdown)  # judul hijau tua
         passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
-        high = ui._result_table_html(passing, None, ui.HIGH_RISK_BORDER)
         band = ui._result_table_html(passing, None, ui.SLOW_FEE_PRINTER_BORDER)
-        self.assertIn(f"border:2px solid {ui.HIGH_RISK_BORDER}", high)
-        self.assertNotIn(ui.SLOW_FEE_PRINTER_BORDER, high)
         self.assertIn(f"border:2px solid {ui.SLOW_FEE_PRINTER_BORDER}", band)
-
-    def test_high_risk_tabel_di_dropdown_tertutup(self):
-        """Permintaan user (2026-11-23): tabel dan detail HIGH RISK ada di dropdown tertutup."""
-        at = self._app()
-        next(b for b in at.button if b.label == "SCAN ALL").click().run()
-        self.assertFalse(at.exception)
-        labels = [e.label for e in at.expander]
-        self.assertEqual(labels.count("Tabel dan detail · 1 pool"), 1)  # HIGH RISK (HIGH_12H)
-        self.assertEqual(len(labels), 1)  # VERY HIGH sudah dihapus dari deteksi (2026-11-23)
-        for exp in at.expander:
-            self.assertFalse(exp.proto.expanded)  # tertutup sejak awal
-        high_exp = next(e for e in at.expander if e.label == "Tabel dan detail · 1 pool")
-        self.assertIn("Volume 12H (pool)", " ".join(str(f.proto.srcdoc) for f in high_exp.get("iframe")))
 
     def test_tanpa_panel_log_aktivitas(self):
         at = self._app()
@@ -253,7 +237,6 @@ class AppMainTest(unittest.TestCase):
         def index_of(key):
             return next(i for i, v in enumerate(order) if key in v)
 
-        self.assertLess(index_of("HIGH RISK FEE PRINTER"), index_of('class="fee-printer-title">FEE PRINTER'))
         table_html = "\n".join(str(n.proto.srcdoc) for n in at.get("iframe"))
         self.assertNotIn("VHX", table_html)
         self.assertNotIn("VERY HIGH", " ".join(order))
