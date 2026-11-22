@@ -36,8 +36,8 @@ FLOW_SORT_BY = "fee_tvl_ratio:desc"  # dikembalikan sesuai curl user terbaru
 # volatility dalam %. Volatility di bawah 0,01 % dianggap tidak terukur (tidak masuk tabel mana pun).
 FLOW_VOLATILITY_MEASURABLE_MIN = 0.01
 FLOW_FEE_PRINTER_MULT = 2.0   # FEE PRINTER (SPOT): fee/TVL > 2 × volatility
-FLOW_BAND_LOW_MULT = 0.75     # SLOW FEE PRINTER: 0,75 × volatility ≤ fee/TVL ≤ 1,5 × volatility (permintaan user, 2026-11-19)
-FLOW_BAND_HIGH_MULT = 1.5     # batas atas SLOW FEE PRINTER (inklusif)
+FLOW_BAND_LOW_MULT = 1.0      # FEE PRINTER (band): 1 × volatility ≤ fee/TVL (12H dan 4H), permintaan user 2026-11-22 (sebelumnya 0,75)
+FLOW_BAND_HIGH_MULT = 2.0     # batas atas FEE PRINTER (band), inklusif; sama dengan batas SPOT (> 2 ×). Permintaan user 2026-11-22 (sebelumnya 1,5)
 FLOW_SLOW_MIN_VOLATILITY = 3.0  # %: FEE PRINTER (band) hanya volatility minimal 3 %, di 12H dan 4H (permintaan user, 2026-11-22, inklusif)
 FLOW_SLOW_MIN_TVL = 20_000.0    # USD: FEE PRINTER (band) hanya TVL minimal ini (permintaan user, 2026-11-22, inklusif)
 FLOW_SLOW_MIN_VOLUME_TVL_12H = 100.0  # %: FEE PRINTER (band) volume/TVL 12H minimal 100 % (permintaan user, 2026-11-22, inklusif)
@@ -449,7 +449,7 @@ def pool_old_enough(item: dict, now_ms: float | None = None) -> bool:
 
 
 def band_12h_ok(item: dict) -> bool:
-    """Syarat metrik FEE PRINTER (band) di 12H: 0,75 × ≤ fee/TVL ≤ 1,5 × volatility (inklusif),
+    """Syarat metrik FEE PRINTER (band) di 12H: 1 × ≤ fee/TVL ≤ 2 × volatility (inklusif),
     volatility ≥ 3 %, fee/TVL ≥ 5 %, TVL ≥ 20.000 USD, dan volume/TVL ≥ 100 % (2026-11-22). Umur pool dicek di ``fee_printer_split``."""
     vol = item.get("volatility")
     fee_tvl = item.get("fee_tvl")
@@ -462,7 +462,7 @@ def band_12h_ok(item: dict) -> bool:
 
 
 def band_4h_ok(tf4h: dict | None) -> bool:
-    """Syarat FEE PRINTER (band) di 4H: 0,75 × ≤ fee/TVL ≤ 1,5 × volatility (inklusif) dan volatility ≥ 3 %.
+    """Syarat FEE PRINTER (band) di 4H: 1 × ≤ fee/TVL ≤ 2 × volatility (inklusif) dan volatility ≥ 3 %.
 
     ``tf4h`` = {volatility, fee_tvl} dari listing 4H. Tanpa data 4H: tidak lolos."""
     if not tf4h:
@@ -479,10 +479,10 @@ def fee_printer_split(passing: list, now_ms: float | None = None) -> tuple[list,
     """Pisahkan pool menjadi (fee_printer, band) memakai fee/TVL vs volatility.
 
     - fee_printer: fee/TVL > 2 × volatility (FEE PRINTER (SPOT)).
-    - band (SLOW FEE PRINTER): 0,75 × volatility ≤ fee/TVL ≤ 1,5 × volatility, volatility ≥ 5 %, fee/TVL ≥ 5 %
+    - band (FEE PRINTER): 1 × volatility ≤ fee/TVL ≤ 2 × volatility (12H dan 4H), volatility ≥ 3 %, fee/TVL ≥ 5 %
       (permintaan user, 2026-11-23; kedua batas inklusif), dan umur pool ≥ 12 jam (permintaan user, 2026-11-22).
     Pool tanpa volatility terukur (None atau < 0,01 %) atau tanpa fee/TVL tidak masuk keduanya.
-    Pool dengan fee/TVL di luar band (mis. 1,5–2 × atau < 0,75 × volatility) tidak masuk keduanya.
+    Pool dengan fee/TVL di bawah 1 × volatility tidak masuk keduanya. Batas atas band = batas SPOT, jadi tidak ada pool di dua tabel.
     Urutan fee_printer: ``sort_key``; band (SLOW): ``sort_key_slow`` (|selisih| terkecil dulu).
     """
     fee_printer: list = []

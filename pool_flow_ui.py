@@ -81,7 +81,7 @@ def _render_scan_result(result: dict) -> None:
         _render_pool_table(very_high, "Tidak ada pool untuk VERY HIGH RISK POOL.", top_pool,
                            accent=VERY_HIGH_RISK_BORDER)
     st.markdown(f'<span class="{FEE_PRINTER_TITLE_CLASS}">FEE PRINTER</span>', unsafe_allow_html=True)
-    st.markdown(f"*· {len(band)} pool · 0,75 × volatility ≤ fee/TVL ≤ 1,5 × volatility (12H dan 4H) · volatility ≥ 3% (12H dan 4H) · "
+    st.markdown(f"*· {len(band)} pool · {pf.FLOW_BAND_LOW_MULT:g} × volatility ≤ fee/TVL ≤ {pf.FLOW_BAND_HIGH_MULT:g} × volatility (12H dan 4H) · volatility ≥ 3% (12H dan 4H) · "
                 f"TVL ≥ $20.000 · volume/TVL 12H ≥ 100% · fee/TVL ≥ 5% · umur pool ≥ 12 jam · "
                 f"urut selisih fee/TVL − volatility terkecil · Fee/TVL ÷ volatility 1× = seimbang*")
     _render_pool_table(band, "Tidak ada pool untuk FEE PRINTER.", top_pool,
