@@ -53,6 +53,8 @@ def _render_scan_result(result: dict) -> None:
         st.warning("Listing belum lengkap: pengambilan berhenti sebelum semua halaman "
                    f"terambil (batas {pf.FLOW_MAX_PAGES} halaman atau ada halaman gagal), "
                    "sebagian pool belum terambil.")
+    if result.get("listing_4h_truncated") or result.get("listing_4h_errors"):
+        st.warning("Listing 4H belum lengkap: pool FEE PRINTER yang butuh cek 4H bisa belum tampil.")
     if not passing:
         st.info("Tidak ada pool dari listing.")
         return
@@ -79,7 +81,8 @@ def _render_scan_result(result: dict) -> None:
         _render_pool_table(very_high, "Tidak ada pool untuk VERY HIGH RISK POOL.", top_pool,
                            accent=VERY_HIGH_RISK_BORDER)
     st.markdown(f'<span class="{FEE_PRINTER_TITLE_CLASS}">FEE PRINTER</span>', unsafe_allow_html=True)
-    st.markdown(f"*· {len(band)} pool · 0,75 × volatility ≤ fee/TVL ≤ 1,5 × volatility · volatility ≥ 5% · fee/TVL ≥ 5% · umur pool ≥ 12 jam · "
+    st.markdown(f"*· {len(band)} pool · 0,75 × volatility ≤ fee/TVL ≤ 1,5 × volatility (12H dan 4H) · volatility ≥ 3% (12H dan 4H) · "
+                f"TVL ≥ $20.000 · fee/TVL ≥ 5% · umur pool ≥ 12 jam · "
                 f"urut selisih fee/TVL − volatility terkecil · Fee/TVL ÷ volatility 1× = seimbang*")
     _render_pool_table(band, "Tidak ada pool untuk FEE PRINTER.", top_pool,
                        accent=SLOW_FEE_PRINTER_BORDER, builder=_slow_table_html)
@@ -199,7 +202,7 @@ BALANCE_HEADERS = ["Fee/TVL ÷ volatility", "Selisih fee/TVL − volatility"]  #
 
 def _result_table_html(rows: list, top_pool: str | None = None,
                        accent: str = DEFAULT_BORDER, *, balance: bool = False,
-                       readable: bool = False) -> str:
+                       readable: bool = False, tf4h: bool = False) -> str:
     """Tabel HTML 12H, satu baris per pool, urut rasio avg volume/menit ÷ TVL (urutan dari pemanggil).
 
     Baris pool teratas (``top_pool``) diberi latar kuning; tanpa emoji.
@@ -223,8 +226,16 @@ def _result_table_html(rows: list, top_pool: str | None = None,
                 _html.escape(pf.fmt_times(pf.fee_volatility_ratio(row))),
                 _html.escape(pf.fmt_signed_pct(pf.fee_volatility_diff(row))),
             ]
+        if tf4h:  # kolom 4H sebelum Peringatan keamanan (kolom terakhir)
+            v4 = (row.get("tf4h") or {})
+            cells[-1:-1] = [
+                _html.escape(pf.fmt_pct(v4.get("volatility"))),
+                _html.escape(pf.fmt_pct(v4.get("fee_tvl"))),
+            ]
         body.append((cells, top_pool is not None and row["pool"] == top_pool))
     headers = TABLE_HEADERS[:5] + BALANCE_HEADERS + TABLE_HEADERS[5:] if balance else TABLE_HEADERS
+    if tf4h:
+        headers = headers[:-1] + ["Volatility 4H", "Fee/TVL 4H"] + headers[-1:]
     # Readable: angka rata kanan; Token dan Peringatan keamanan rata kiri.
     align = (["left"] + ["right"] * (len(headers) - 2) + ["left"]) if readable else None
     return _table_html(headers, body, accent, align=align, readable=readable)
@@ -235,7 +246,7 @@ def _slow_table_html(rows: list, top_pool: str | None = None, accent: str = DEFA
 
     Tampilan dibuat lebih mudah dibaca (permintaan user, 2026-11-23); semua kolom tetap ada.
     """
-    return _result_table_html(rows, top_pool, accent, balance=True, readable=True)
+    return _result_table_html(rows, top_pool, accent, balance=True, readable=True, tf4h=True)
 
 
 COPY_LABEL = "📋 CA"

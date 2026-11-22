@@ -64,7 +64,9 @@ class SlowBalanceColumnsTest(unittest.TestCase):
         self.assertNotIn("position:sticky", plain)           # tabel lain tidak berubah
         self.assertNotIn("text-align:right", plain)
         header = slow.split("<thead>", 1)[1].split("</thead>", 1)[0]
-        self.assertEqual(header.count("<th"), len(ui.TABLE_HEADERS) + len(ui.BALANCE_HEADERS))
+        self.assertEqual(header.count("<th"), len(ui.TABLE_HEADERS) + len(ui.BALANCE_HEADERS) + 2)
+        self.assertIn("Volatility 4H", header)  # kolom 4H (permintaan user, 2026-11-22)
+        self.assertIn("Fee/TVL 4H", header)
 
     def test_tabel_lain_tanpa_kolom_keseimbangan(self):
         import pool_flow_ui as ui
