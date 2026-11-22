@@ -503,42 +503,6 @@ class FeeTvlMinTest(unittest.TestCase):
                          [("OKAYX", pf.SUMMARY_LABEL_SLOW)])
 
 
-class VeryHighRiskTest(unittest.TestCase):
-    """VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1) (2026-11-18): fee/TVL ≥ 20 × volatility, batas inklusif."""
-
-    def _very(self, *rows):
-        result = pf.scan_pools(listing=(list(rows), [], False))
-        return pf.very_high_risk(result["passing"])
-
-    def test_hanya_fee_tvl_minimal_20_kali_volatility(self):
-        rows = [_fp("A" * 44, fee_tvl=20.0, vol=1.0),     # tepat 20× → masuk
-                _fp("B" * 44, fee_tvl=35.0, vol=1.0),     # > 20× → masuk
-                _fp("C" * 44, fee_tvl=19.9, vol=1.0),     # 19,9× → tidak (belum ≥ 20×; di atas HIGH RISK)
-                _fp("D" * 44, fee_tvl=50.0, vol=0.005),   # volatility tidak terukur → tidak
-                _fp("E" * 44, fee_tvl=None, vol=1.0)]     # fee/TVL kosong → tidak
-        self.assertEqual({r["pool"] for r in self._very(*rows)}, {"A" * 44, "B" * 44})
-
-    def test_tidak_tumpang_tindih_dengan_high_risk(self):
-        rows = [_fp("A" * 44, fee_tvl=200.0, vol=10.0),  # 20× → VERY HIGH
-                _fp("B" * 44, fee_tvl=30.0, vol=10.0),   # 3× → HIGH RISK
-                _fp("C" * 44, fee_tvl=35.0, vol=10.0)]   # 3,5× → HIGH RISK
-        result = pf.scan_pools(listing=(rows, [], False))
-        fee_printer, _band = pf.fee_printer_split(result["passing"])
-        high = {r["pool"] for r in pf.fee_printer_high_risk(fee_printer)}
-        very = {r["pool"] for r in pf.very_high_risk(result["passing"])}
-        self.assertEqual(very, {"A" * 44})
-        self.assertEqual(high, {"B" * 44, "C" * 44})  # 2,5–3,5 ×
-        self.assertEqual(high & very, set())
-
-    def test_urut_rasio_avg_volume_per_tvl(self):
-        rows = [_fp("A" * 44, fee_tvl=30.0, vol=1.0),
-                _fp("B" * 44, fee_tvl=40.0, vol=1.0),
-                _fp("C" * 44, fee_tvl=25.0, vol=1.0)]
-        for r, avg in zip(rows, (600.0, 2000.0, 300.0)):
-            r["avg_volume"] = avg
-        self.assertEqual([r["pool"] for r in self._very(*rows)],
-                         ["B" * 44, "A" * 44, "C" * 44])
-
 
 class FeePrinterSplitTest(unittest.TestCase):
     """FEE PRINTER (SPOT) bila fee/TVL > 2 × volatility; FEE PRINTER (band) bila
@@ -818,7 +782,7 @@ class AlertTest(unittest.TestCase):
 
     def test_ringkasan_hanya_slow_fee_printer(self):
         from tests.test_pool_flow import _fp
-        very = _fp("V" * 44, fee_tvl=50.0, vol=1.0, symbol="VHX")  # VERY HIGH
+        very = _fp("V" * 44, fee_tvl=50.0, vol=1.0, symbol="VHX")  # 50 × volatility: di atas 3 ×, bukan band
         high_only = _fp("J" * 44, fee_tvl=16.0, vol=5.0, symbol="HIGHO")  # 3,2 × = HIGH RISK saja
         entries = _summary_entries(PASSING_12H + [very, high_only, _slow_row()])
         # HIGHX (HIGH_12H, tepat 3 ×) masuk band 1–3 × sehingga ikut RINGKASAN; urut |selisih|
@@ -829,7 +793,6 @@ class AlertTest(unittest.TestCase):
         self.assertNotIn("HIGHO", text)
         self.assertNotIn("VHX", text)
         self.assertNotIn("HIGH RISK FEE PRINTER", text)
-        self.assertNotIn("VERY HIGH RISK", text)
 
     def test_alert_memberi_nomor_dan_tag_sudah_pernah(self):
         entries = _summary_entries([_slow_row()])

@@ -48,7 +48,6 @@ FLOW_HIGH_RISK_MIN_MULT = 2.5   # HIGH RISK FEE PRINTER: 2,5 × volatility ≤ f
 FLOW_HIGH_RISK_MAX_MULT = 3.5   # HIGH RISK FEE PRINTER: fee/TVL ≤ 3,5 × volatility (permintaan user, 2026-11-20, inklusif)
 FLOW_HIGH_RISK_MIN_FEE_TVL = 10.0  # %: HIGH RISK FEE PRINTER hanya fee/TVL minimal 10 % (permintaan user, 2026-11-19)
 FLOW_MIN_FEE_TVL_12H = 5.0  # %: tabel 12H hanya pool dengan fee/TVL minimal 5 % (permintaan user, 2026-11-19)
-FLOW_VERY_HIGH_MIN_MULT = 20.0  # VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1): fee/TVL ≥ 20 × volatility (2026-11-18)
 # Peringatan keamanan (label saja, tidak menyaring).
 # tampil dengan label. Field kosong tidak dihitung sebagai masalah.
 FLOW_SEC_HOLDERS_BLOCK = 30.0           # % top_holders_pct token dasar, blokir di atas ini
@@ -428,7 +427,7 @@ def sort_key_slow(result: dict):
 def summary_rows(result_12h: dict) -> list:
     """RINGKASAN (permintaan user, 2026-11-20): hanya pool dari tabel SLOW FEE PRINTER.
 
-    Urut seperti tabel SLOW (``sort_key_slow``). HIGH RISK dan VERY HIGH RISK tidak masuk.
+    Urut seperti tabel SLOW (``sort_key_slow``). HIGH RISK tidak masuk.
     Daftar (row, label), label selalu ``SUMMARY_LABEL_SLOW``.
     """
     passing = result_12h.get("passing") or []
@@ -512,23 +511,6 @@ def fee_printer_high_risk(fee_printer: list) -> list:
             if FLOW_HIGH_RISK_MIN_MULT * item["volatility"] <= item["fee_tvl"]
             <= FLOW_HIGH_RISK_MAX_MULT * item["volatility"]
             and item["fee_tvl"] >= FLOW_HIGH_RISK_MIN_FEE_TVL]
-    return sorted(kept, key=sort_key)
-
-
-def very_high_risk(passing: list) -> list:
-    """VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1) (2026-11-18): fee/TVL ≥ 20 × volatility (batas inklusif).
-
-    Volatility harus terukur (≥ 0,01 %). Melengkapi HIGH RISK FEE PRINTER (2× < fee/TVL < 10×),
-    sehingga kedua tabel tidak pernah memuat pool yang sama. Urutan: ``sort_key``.
-    """
-    kept: list = []
-    for item in passing:
-        vol = item.get("volatility")
-        fee_tvl = item.get("fee_tvl")
-        if vol is None or vol < FLOW_VOLATILITY_MEASURABLE_MIN or fee_tvl is None:
-            continue
-        if fee_tvl >= FLOW_VERY_HIGH_MIN_MULT * vol:
-            kept.append(item)
     return sorted(kept, key=sort_key)
 
 

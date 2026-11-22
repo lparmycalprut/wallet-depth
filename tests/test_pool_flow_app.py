@@ -130,8 +130,8 @@ class AppMainTest(unittest.TestCase):
         self.assertFalse(at.exception)
         passing = pf.scan_pools(listing=(PASSING_12H, [], False))["passing"]
         fee_printer, band = pf.fee_printer_split(passing)
-        # pool yang tampil di tabel 12H (HIGH RISK, VERY HIGH, SLOW); FOOD tidak tampil di mana pun
-        shown_12h = pf.fee_printer_high_risk(fee_printer) + pf.very_high_risk(passing) + band
+        # pool yang tampil di tabel 12H (HIGH RISK, FEE PRINTER band); FOOD tidak tampil di mana pun
+        shown_12h = pf.fee_printer_high_risk(fee_printer) + band
         summary = pf.summary_rows(pf.scan_pools(listing=(PASSING_12H, [], False)))
         doc = self._body(at)
         # tombol CA: tabel 12H + baris RINGKASAN (satu per pool yang tampil di tabel 12H)
@@ -217,14 +217,14 @@ class AppMainTest(unittest.TestCase):
         self.assertNotIn(ui.SLOW_FEE_PRINTER_BORDER, high)
         self.assertIn(f"border:2px solid {ui.SLOW_FEE_PRINTER_BORDER}", band)
 
-    def test_high_risk_dan_very_high_tabel_di_dropdown_tertutup(self):
-        """Permintaan user (2026-11-23): tabel dan detail HIGH RISK dan VERY HIGH ada di dropdown."""
+    def test_high_risk_tabel_di_dropdown_tertutup(self):
+        """Permintaan user (2026-11-23): tabel dan detail HIGH RISK ada di dropdown tertutup."""
         at = self._app()
         next(b for b in at.button if b.label == "SCAN ALL").click().run()
         self.assertFalse(at.exception)
         labels = [e.label for e in at.expander]
         self.assertEqual(labels.count("Tabel dan detail · 1 pool"), 1)  # HIGH RISK (HIGH_12H)
-        self.assertEqual(labels.count("Tabel dan detail · 0 pool"), 1)  # VERY HIGH (tidak ada di PASSING_12H)
+        self.assertEqual(len(labels), 1)  # VERY HIGH sudah dihapus dari deteksi (2026-11-23)
         for exp in at.expander:
             self.assertFalse(exp.proto.expanded)  # tertutup sejak awal
         high_exp = next(e for e in at.expander if e.label == "Tabel dan detail · 1 pool")
@@ -237,9 +237,10 @@ class AppMainTest(unittest.TestCase):
         markdown = " ".join(str(m.value) for m in at.markdown)
         self.assertNotIn("Log Aktivitas", markdown)  # panel dihapus dari halaman utama (2026-11-18)
 
-    def test_tabel_very_high_risk_antara_high_risk_dan_slow_fee_printer(self):
+    def test_pool_di_atas_3x_tidak_tampil_di_tabel_manapun(self):
+        """VERY HIGH sudah dihapus (2026-11-23): pool 50 × volatility tidak tampil di tabel mana pun."""
         from tests.test_pool_flow import _fp
-        very = _fp("V" * 44, fee_tvl=50.0, vol=1.0, symbol="VHX")  # 50 × volatility → VERY HIGH
+        very = _fp("V" * 44, fee_tvl=50.0, vol=1.0, symbol="VHX")
         very["avg_volume"] = 900.0
         listing_12h = PASSING_12H + [very]
 
@@ -252,13 +253,10 @@ class AppMainTest(unittest.TestCase):
         def index_of(key):
             return next(i for i, v in enumerate(order) if key in v)
 
-        high = index_of("HIGH RISK FEE PRINTER")
-        very_at = index_of("VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1)")
-        slow = index_of('class="fee-printer-title">FEE PRINTER')  # judul tabel, bukan blok CSS
-        self.assertLess(high, very_at)
-        self.assertLess(very_at, slow)
+        self.assertLess(index_of("HIGH RISK FEE PRINTER"), index_of('class="fee-printer-title">FEE PRINTER'))
         table_html = "\n".join(str(n.proto.srcdoc) for n in at.get("iframe"))
-        self.assertIn("VHX", table_html)
+        self.assertNotIn("VHX", table_html)
+        self.assertNotIn("VERY HIGH", " ".join(order))
 
     def test_tanpa_bagian_deteksi_4h(self):
         at = self._app()

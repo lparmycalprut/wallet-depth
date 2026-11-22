@@ -22,8 +22,6 @@ HIGH_RISK_COLOR = "red"
 SLOW_FEE_PRINTER_COLOR = "blue"  # warna border tabel (tidak dipakai untuk judul lagi)
 FEE_PRINTER_TITLE_CLASS = "fee-printer-title"  # judul FEE PRINTER: hijau tua menyala, lihat dashboard_components.render_styles
 HIGH_RISK_BORDER = "rgba(239,68,68,.85)"
-VERY_HIGH_RISK_COLOR = "red"
-VERY_HIGH_RISK_BORDER = "rgba(127,29,29,.95)"  # merah tua: lebih berisiko dari HIGH RISK (2026-11-18)
 SLOW_FEE_PRINTER_BORDER = "rgba(59,130,246,.85)"
 DEFAULT_BORDER = "rgba(128,128,128,.35)"
 
@@ -73,13 +71,6 @@ def _render_scan_result(result: dict) -> None:
         st.caption("2,5 × volatility ≤ fee/TVL ≤ 3,5 × volatility · fee/TVL ≥ 10%")
         _render_pool_table(high_risk, "Tidak ada pool untuk HIGH RISK FEE PRINTER.", top_pool,
                            accent=HIGH_RISK_BORDER)
-    # VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1): fee/TVL ≥ 20 × volatility (permintaan user, 2026-11-18).
-    very_high = pf.very_high_risk(passing)
-    st.markdown(f"**:{VERY_HIGH_RISK_COLOR}[VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1)]**")
-    with st.expander(f"Tabel dan detail · {len(very_high)} pool"):
-        st.caption("fee/TVL ≥ 20 × volatility")
-        _render_pool_table(very_high, "Tidak ada pool untuk VERY HIGH RISK POOL.", top_pool,
-                           accent=VERY_HIGH_RISK_BORDER)
     st.markdown(f'<span class="{FEE_PRINTER_TITLE_CLASS}">FEE PRINTER</span>', unsafe_allow_html=True)
     st.markdown(f"*· {len(band)} pool · {pf.FLOW_BAND_LOW_MULT:g} × volatility ≤ fee/TVL ≤ {pf.FLOW_BAND_HIGH_MULT:g} × volatility (12H dan 4H) · volatility ≥ 3% (12H dan 4H) · "
                 f"TVL ≥ $20.000 · volume/TVL 12H ≥ 100% · fee/TVL ≥ 5% · umur pool ≥ 12 jam · "
