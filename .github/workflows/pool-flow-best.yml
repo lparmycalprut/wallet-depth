@@ -2,7 +2,10 @@ name: Pool Flow — Ringkasan alert
 
 # Alert RINGKASAN Scan ALL (pool FEE PRINTER) tiap 15 menit (permintaan user, 2026-11-24).
 # Menit 7, 22, 37, 52 (bukan :00) supaya tidak berebut dengan beban jadwal tiap jam GitHub.
-# Cron GitHub bisa terlambat atau dilewati; cek riwayat run di tab Actions.
+# Cron GitHub bisa terlambat atau dilewati (dokumentasi GitHub: event schedule bisa tertunda
+# atau dibuang saat beban tinggi). Karena itu pemicu utama adalah cron eksternal yang memanggil
+# workflow_dispatch lewat GitHub API tiap 15 menit (menit 7,22,37,52). Jadwal di bawah tetap
+# dipakai sebagai cadangan. Riwayat run ada di tab Actions.
 # Tiap run mengirim pesan: RINGKASAN bila ada pool, heartbeat bila tidak ada.
 # State di pool_flow_state.json di-commit hanya bila berubah dan pengiriman berhasil.
 

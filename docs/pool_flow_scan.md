@@ -135,6 +135,7 @@ Contoh hitung (dari tes):
   Fee/TVL, Volatility.
 - **Alert Telegram** (`scripts/pool_flow_alert.py`) memakai daftar yang sama.
   - Jadwal: GitHub Actions `.github/workflows/pool-flow-best.yml`, cron `7,22,37,52 * * * *` (tiap 15 menit, UTC).
+  - Pemicu utama: cron eksternal memanggil `workflow_dispatch` (GitHub API, ref `main`) tiap 15 menit. Jadwal GitHub di atas hanya cadangan karena sering terlewat.
   - Bila band kosong, kirim heartbeat `💓 Pool Flow cron jalan` (tanpa mengubah state), supaya terlihat cron berjalan.
   - Scan gagal: pesan `❌ Scan gagal`, exit 1. Telegram gagal atau kredensial kosong: exit 1 dan state tidak disimpan.
   - Setiap pesan: nama, label `[FEE PRINTER]`, tag `🆕 baru` atau `🔁 sudah pernah · alert #N`,
