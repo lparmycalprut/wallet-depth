@@ -91,17 +91,14 @@ Pool dengan `v < 0,01` atau `v` kosong tidak masuk tabel mana pun.
 
 | Kategori (nama di UI) | Syarat | Tampil di |
 |---|---|---|
-| **VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1)** | `r ≥ 20` (inklusif) | Tabel sendiri, dropdown tertutup |
 | **HIGH RISK FEE PRINTER** | `f > 2v` (FEE PRINTER SPOT) **dan** `2,5 ≤ r ≤ 3,5` (inklusif) **dan** `f ≥ 10 %` | Tabel sendiri, dropdown tertutup |
-| **FEE PRINTER** (tabel SLOW, dulu "SLOW FEE PRINTER") | `1 ≤ r ≤ 2` (inklusif) di 12H **dan** di 4H (2026-11-22), **dan** `v ≥ 3 %` di 12H **dan** 4H, **dan** `f ≥ 5 %`, **dan** TVL `≥ $20.000`, **dan** volume/TVL 12H `≥ 100 %` (`volume_tvl_ratio`), **dan** umur pool `≥ 12 jam` (`pool_created_at`, 2026-11-22) | Tabel sendiri **dan RINGKASAN + alert Telegram** |
-| FEE PRINTER (SPOT), internal | `r > 2` (induk pemisahan) | Tidak ditampilkan |
-| (tidak tampil) | `r` 2–3,5 tapi `f < 10 %`; `3,5 < r < 20` | Tidak ditampilkan di mana pun |
+| **FEE PRINTER** (tabel SLOW, dulu "SLOW FEE PRINTER") | `1 ≤ r ≤ 3` (inklusif) di 12H **dan** di 4H (2026-11-23), **dan** `v ≥ 3 %` di 12H **dan** 4H, **dan** `f ≥ 5 %`, **dan** TVL `≥ $20.000`, **dan** volume/TVL 12H `≥ 100 %` (`volume_tvl_ratio`), **dan** umur pool `≥ 12 jam` (`pool_created_at`, 2026-11-22) | Tabel sendiri **dan RINGKASAN + alert Telegram** |
+| FEE PRINTER (SPOT), internal | `r > 2` (induk HIGH RISK) | Tidak ditampilkan |
+| (tidak tampil) | `r` 2–3,5 tapi `f < 10 %`; `r > 3,5` | Tidak ditampilkan di mana pun |
 
 Urutan pengecekan di kode (`fee_printer_split`):
-1. Jika `r > 2` → FEE PRINTER (SPOT). HIGH RISK diambil dari sini (`fee_printer_high_risk`).
-2. Else jika `1 ≤ r ≤ 2` dan `v ≥ 3` dan `f ≥ 5` dan TVL `≥ 20.000` (12H), dan volume/TVL 12H `≥ 100 %` (`volume_tvl_ratio`), dan umur pool `≥ 12 jam` (`pool_created_at` ms; tanpa data = tidak lolos), dan rasio 4H `1 ≤ r4 ≤ 2` dengan `v4 ≥ 3` (data 4H dari listing 4H; tanpa data = tidak lolos) → FEE PRINTER (band).
-3. VERY HIGH diambil dari `passing` langsung (`very_high_risk`), bukan dari SPOT. Karena
-   `r ≥ 20` selalu `> 2`, kategori ini dan HIGH RISK tidak pernah tumpang tindih.
+1. Jika `r > 2` → FEE PRINTER (SPOT), daftar penuh. HIGH RISK diambil dari sini (`fee_printer_high_risk`). Berdiri sendiri: pool di 2–3 × bisa juga masuk band (langkah 2).
+2. Jika `1 ≤ r ≤ 3` dan `v ≥ 3` dan `f ≥ 5` dan TVL `≥ 20.000` (12H), dan volume/TVL 12H `≥ 100 %` (`volume_tvl_ratio`), dan umur pool `≥ 12 jam` (`pool_created_at` ms; tanpa data = tidak lolos), dan rasio 4H `1 ≤ r4 ≤ 3` dengan `v4 ≥ 3` (data 4H dari listing 4H; tanpa data = tidak lolos) → FEE PRINTER (band).
 
 Contoh hitung (dari tes):
 - `f = 10`, `v = 10` → `r = 1` → FEE PRINTER (band). Lolos.
@@ -111,7 +108,7 @@ Contoh hitung (dari tes):
 
 ## 5. Pengurutan
 
-- **Tabel HIGH RISK, VERY HIGH, dan listing umum:** `sort_key` = `−(avg_volume ÷ tvl)`.
+- **Tabel HIGH RISK dan listing umum:** `sort_key` = `−(avg_volume ÷ tvl)`.
   Terbesar dulu. Seri mengikuti urutan listing (sort stabil).
 - **Tabel FEE PRINTER (band) dan RINGKASAN:** `sort_key_slow` = `|f − v|` (selisih persen poin),
   **terkecil dulu**. Artinya pool yang paling seimbang (fee/TVL paling dekat volatility) di atas.
@@ -152,7 +149,7 @@ Contoh hitung (dari tes):
   volatility accumulator on-chain.
 - **`avg_volume` dan `avg_fee` "per menit"** dipakai apa adanya sesuai label UI. Pembagian
   menit untuk window 12H tidak diverifikasi ulang di sini.
-- **Angka ambang** (2×, 1×, 2,5×, 3,5×, 20×, 5 % untuk fee/TVL dan volatility, 10 % untuk HIGH RISK) adalah
+- **Angka ambang** (2×, 1×, 3×, 2,5×, 3,5×, 5 % untuk fee/TVL dan volatility, 10 % untuk HIGH RISK) adalah
   keputusan pengguna. Ubah hanya bila pengguna meminta.
 
 ## 9. Ringkas: langkah untuk AI lain
@@ -163,15 +160,15 @@ Contoh hitung (dari tes):
 4. Buang pool dengan `fee_tvl_ratio < 5` atau kosong.
 5. `r = fee_tvl_ratio / volatility`. Buang pool dengan `volatility < 0,01` atau kosong.
 6. Klasifikasi sesuai bagian 4.
-7. FEE PRINTER (band) = `1 ≤ r ≤ 2` (12H dan 4H), `volatility ≥ 3`, `fee_tvl_ratio ≥ 5`, TVL ≥ 20.000, volume/TVL 12H ≥ 100 %, umur pool ≥ 12 jam, dan cek yang sama di 4H (`volatility4h ≥ 3`, `1 ≤ r4 ≤ 2`).
+7. FEE PRINTER (band) = `1 ≤ r ≤ 3` (12H dan 4H), `volatility ≥ 3`, `fee_tvl_ratio ≥ 5`, TVL ≥ 20.000, volume/TVL 12H ≥ 100 %, umur pool ≥ 12 jam, dan cek yang sama di 4H (`volatility4h ≥ 3`, `1 ≤ r4 ≤ 3`).
    Urut `|fee_tvl_ratio − volatility|` terkecil dulu. Baris pertama = pool terbaik.
-8. Tampilkan atau kirim hanya pool FEE PRINTER. Jangan memasukkan HIGH RISK atau VERY HIGH
+8. Tampilkan atau kirim hanya pool FEE PRINTER. Jangan memasukkan HIGH RISK
    ke RINGKASAN.
 
 ## 10. Lokasi kode dan tes
 
 - Logika: `pool_flow.py` (`FLOW_*`, `evaluate_pool`, `fee_printer_split`, `fee_printer_high_risk`,
-  `very_high_risk`, `sort_key`, `sort_key_slow`, `summary_rows`, `summary_alert_text`).
+  `sort_key`, `sort_key_slow`, `summary_rows`, `summary_alert_text`).
 - Tampilan: `pool_flow_ui.py` (`render_pool_flow_page`, `_render_scan_result`, `_render_summary`).
 - Alert: `scripts/pool_flow_alert.py`, `.github/workflows/pool-flow-best.yml`.
 - Tes: `tests/test_pool_flow.py` (logika), `tests/test_pool_flow_app.py` (halaman dan tabel).

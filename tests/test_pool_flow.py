@@ -336,11 +336,11 @@ class SlowFeePrinterBandTest(unittest.TestCase):
         self.assertEqual(self._band(_fp("J" * 44, fee_tvl=4.0, vol=2.99)), [])
 
     def test_volatility_3_34_persen_dengan_fee_5_persen_masuk_slow(self):
-        """Volatility 3,34 % dan fee/TVL 5 % (1,5 × volatility) masuk band 1–2 ×."""
+        """Volatility 3,34 % dan fee/TVL 5 % (1,5 × volatility) masuk band 1–3 ×."""
         self.assertEqual([r["pool"] for r in self._band(_fp("K" * 44, fee_tvl=5.0, vol=3.34))], ["K" * 44])
 
     def test_volatility_3_2_persen_dengan_fee_5_persen_masuk_slow(self):
-        """Volatility 3,2 % (≥ 3 %), fee/TVL 5 % = 1,56 × volatility: masuk band 1–2 ×."""
+        """Volatility 3,2 % (≥ 3 %), fee/TVL 5 % = 1,56 × volatility: masuk band 1–3 ×."""
         self.assertEqual([r["pool"] for r in self._band(_fp("M" * 44, fee_tvl=5.0, vol=3.2))], ["M" * 44])
 
     def test_tvl_di_bawah_20k_tidak_masuk_slow(self):
@@ -374,8 +374,8 @@ class SlowFeePrinterBandTest(unittest.TestCase):
         self.assertEqual(pf.fee_printer_split([item], now_ms=self.NOW)[1], [])
 
     def test_fee_printer_spot_tidak_terpengaruh_lantai_slow(self):
-        """Volatility 4 %, fee/TVL 9 %: FEE PRINTER (SPOT) tetap, bukan SLOW."""
-        spot, band = pf.fee_printer_split(pf.scan_pools(listing=([_fp("P" * 44, fee_tvl=9.0, vol=4.0)], [], False))["passing"], now_ms=self.NOW)
+        """Volatility 4 %, fee/TVL 13 % (3,25 × > 3 ×): FEE PRINTER (SPOT) saja, bukan band."""
+        spot, band = pf.fee_printer_split(pf.scan_pools(listing=([_fp("P" * 44, fee_tvl=13.0, vol=4.0)], [], False))["passing"], now_ms=self.NOW)
         self.assertEqual([r["pool"] for r in spot], ["P" * 44])
         self.assertEqual(band, [])
 
@@ -455,9 +455,9 @@ class SlowFeePrinterBandTest(unittest.TestCase):
                                             _fp("B" * 44, fee_tvl=4.0, vol=2.9)), [])
 
     def test_4h_rasio_fee_di_luar_band_tidak_masuk(self):
-        """4H fee/TVL 8 % > 2 × volatility 3,4 % (→ 6,8 %): tidak masuk walau 12H lolos."""
+        """4H fee/TVL 11 % = 3,24 × volatility 3,4 % (di atas 3 ×): tidak masuk walau 12H lolos."""
         self.assertEqual(self._band_with_4h(_fp("C" * 44, fee_tvl=5.0, vol=3.4),
-                                            _fp("C" * 44, fee_tvl=8.0, vol=3.4)), [])
+                                            _fp("C" * 44, fee_tvl=11.0, vol=3.4)), [])
 
     def test_pool_tanpa_data_4h_tidak_masuk(self):
         result = pf.scan_pools(listing=([_fp("D" * 44, fee_tvl=5.0, vol=3.4)], [], False),
@@ -503,55 +503,26 @@ class FeeTvlMinTest(unittest.TestCase):
                          [("OKAYX", pf.SUMMARY_LABEL_SLOW)])
 
 
-class VeryHighRiskTest(unittest.TestCase):
-    """VERY HIGH RISK POOL / BISA DUMP SEWAKTU2 (Bid-Ask Limit 94.1) (2026-11-18): fee/TVL ≥ 20 × volatility, batas inklusif."""
-
-    def _very(self, *rows):
-        result = pf.scan_pools(listing=(list(rows), [], False))
-        return pf.very_high_risk(result["passing"])
-
-    def test_hanya_fee_tvl_minimal_20_kali_volatility(self):
-        rows = [_fp("A" * 44, fee_tvl=20.0, vol=1.0),     # tepat 20× → masuk
-                _fp("B" * 44, fee_tvl=35.0, vol=1.0),     # > 20× → masuk
-                _fp("C" * 44, fee_tvl=19.9, vol=1.0),     # 19,9× → tidak (belum ≥ 20×; di atas HIGH RISK)
-                _fp("D" * 44, fee_tvl=50.0, vol=0.005),   # volatility tidak terukur → tidak
-                _fp("E" * 44, fee_tvl=None, vol=1.0)]     # fee/TVL kosong → tidak
-        self.assertEqual({r["pool"] for r in self._very(*rows)}, {"A" * 44, "B" * 44})
-
-    def test_tidak_tumpang_tindih_dengan_high_risk(self):
-        rows = [_fp("A" * 44, fee_tvl=200.0, vol=10.0),  # 20× → VERY HIGH
-                _fp("B" * 44, fee_tvl=30.0, vol=10.0),   # 3× → HIGH RISK
-                _fp("C" * 44, fee_tvl=35.0, vol=10.0)]   # 3,5× → HIGH RISK
-        result = pf.scan_pools(listing=(rows, [], False))
-        fee_printer, _band = pf.fee_printer_split(result["passing"])
-        high = {r["pool"] for r in pf.fee_printer_high_risk(fee_printer)}
-        very = {r["pool"] for r in pf.very_high_risk(result["passing"])}
-        self.assertEqual(very, {"A" * 44})
-        self.assertEqual(high, {"B" * 44, "C" * 44})  # 2,5–3,5 ×
-        self.assertEqual(high & very, set())
-
-    def test_urut_rasio_avg_volume_per_tvl(self):
-        rows = [_fp("A" * 44, fee_tvl=30.0, vol=1.0),
-                _fp("B" * 44, fee_tvl=40.0, vol=1.0),
-                _fp("C" * 44, fee_tvl=25.0, vol=1.0)]
-        for r, avg in zip(rows, (600.0, 2000.0, 300.0)):
-            r["avg_volume"] = avg
-        self.assertEqual([r["pool"] for r in self._very(*rows)],
-                         ["B" * 44, "A" * 44, "C" * 44])
-
 
 class FeePrinterSplitTest(unittest.TestCase):
     """FEE PRINTER (SPOT) bila fee/TVL > 2 × volatility; FEE PRINTER (band) bila
-    1 × volatility ≤ fee/TVL ≤ 2 × volatility (permintaan user, 2026-11-22)."""
+    1 × volatility ≤ fee/TVL ≤ 3 × volatility (permintaan user, 2026-11-23)."""
 
     def _split(self, *rows):
         result = pf.scan_pools(listing=(list(rows), [], False))
         return pf.fee_printer_split(result["passing"])
 
-    def test_fee_tvl_di_atas_2x_volatility_masuk_fee_printer(self):
-        spot, band = self._split(_fp("1" * 44, fee_tvl=25.0, vol=10.0))
+    def test_fee_tvl_di_atas_3x_volatility_hanya_spot(self):
+        # 3,5 × > 3 × (batas band): hanya SPOT
+        spot, band = self._split(_fp("1" * 44, fee_tvl=35.0, vol=10.0))
         self.assertEqual([r["pool"] for r in spot], ["1" * 44])
         self.assertEqual(band, [])
+
+    def test_antara_2x_dan_3x_masuk_band_dan_spot(self):
+        # 2,5 × : di band (1–3 ×) dan di SPOT (> 2 ×). HIGH RISK tetap diambil dari SPOT.
+        spot, band = self._split(_fp("1" * 44, fee_tvl=25.0, vol=10.0))
+        self.assertEqual([r["pool"] for r in spot], ["1" * 44])
+        self.assertEqual([r["pool"] for r in band], ["1" * 44])
 
     def test_batas_tepat_1_5x_masuk_slow(self):
         # volatility 1 %, fee/TVL 1,5 % -> SLOW (batas atas inklusif)
@@ -572,12 +543,12 @@ class FeePrinterSplitTest(unittest.TestCase):
         self.assertEqual([r["pool"] for r in band], ["0" * 44])
 
     def test_antara_1x_dan_2x_masuk_fee_printer(self):
-        # 1,6× dan 1,99× berada di dalam band 1–2 × (permintaan user, 2026-11-22)
+        # 1,6× dan 1,99× berada di dalam band 1–3 × (permintaan user, 2026-11-23)
         self.assertEqual(self._split(_fp("8" * 44, fee_tvl=16.0, vol=10.0))[1][0]["pool"], "8" * 44)
         self.assertEqual(self._split(_fp("9" * 44, fee_tvl=19.9, vol=10.0))[1][0]["pool"], "9" * 44)
 
-    def test_di_atas_2x_bukan_band_melainkan_spot(self):
-        spot, band = self._split(_fp("Q" * 44, fee_tvl=21.0, vol=10.0))  # 2,1 × > 2 ×
+    def test_di_atas_3x_bukan_band_melainkan_spot(self):
+        spot, band = self._split(_fp("Q" * 44, fee_tvl=31.0, vol=10.0))  # 3,1 × > 3 ×
         self.assertEqual([r["pool"] for r in spot], ["Q" * 44])
         self.assertEqual(band, [])
 
@@ -608,8 +579,9 @@ class FeePrinterSplitTest(unittest.TestCase):
         for r, avg in zip(rows, (600.0, 2000.0, 300.0, 500.0)):
             r["avg_volume"] = avg
         spot, band = self._split(*rows)
-        self.assertEqual([r["pool"] for r in spot], ["B" * 44, "A" * 44])
-        self.assertEqual([r["pool"] for r in band], ["D" * 44, "C" * 44])
+        self.assertEqual([r["pool"] for r in spot], ["B" * 44, "A" * 44])  # > 2 ×
+        # band 1–3 × urut |selisih|: D (0), C (5), A (20); B (5 ×) di luar band
+        self.assertEqual([r["pool"] for r in band], ["D" * 44, "C" * 44, "A" * 44])
 
     def test_pool_terblokir_keamanan_tidak_masuk_tabel(self):
         blocked = _fp("E" * 44, fee_tvl=9.0, vol=1.0)
@@ -810,16 +782,17 @@ class AlertTest(unittest.TestCase):
 
     def test_ringkasan_hanya_slow_fee_printer(self):
         from tests.test_pool_flow import _fp
-        very = _fp("V" * 44, fee_tvl=50.0, vol=1.0, symbol="VHX")  # VERY HIGH
-        entries = _summary_entries(PASSING_12H + [very, _slow_row()])  # HIGHX = HIGH RISK
+        very = _fp("V" * 44, fee_tvl=50.0, vol=1.0, symbol="VHX")  # 50 × volatility: di atas 3 ×, bukan band
+        high_only = _fp("J" * 44, fee_tvl=16.0, vol=5.0, symbol="HIGHO")  # 3,2 × = HIGH RISK saja
+        entries = _summary_entries(PASSING_12H + [very, high_only, _slow_row()])
+        # HIGHX (HIGH_12H, tepat 3 ×) masuk band 1–3 × sehingga ikut RINGKASAN; urut |selisih|
         self.assertEqual([(r["symbol"], label) for r, label in entries],
-                         [("SLW", pf.SUMMARY_LABEL_SLOW)])
+                         [("SLW", pf.SUMMARY_LABEL_SLOW), ("HIGHX", pf.SUMMARY_LABEL_SLOW)])
         text, _markup = pf.apply_summary_alert(pf.empty_state(), entries)
         self.assertIn("[FEE PRINTER]", text)
-        self.assertNotIn("HIGHX", text)
+        self.assertNotIn("HIGHO", text)
         self.assertNotIn("VHX", text)
         self.assertNotIn("HIGH RISK FEE PRINTER", text)
-        self.assertNotIn("VERY HIGH RISK", text)
 
     def test_alert_memberi_nomor_dan_tag_sudah_pernah(self):
         entries = _summary_entries([_slow_row()])
