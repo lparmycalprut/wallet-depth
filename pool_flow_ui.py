@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""UI main app: 🏆 Scan ALL (12H) dengan RINGKASAN (pool SLOW FEE PRINTER) di atas tiga tabel, satu tombol SCAN ALL.
+"""UI main app: 🏆 Scan ALL (24H) dengan RINGKASAN (pool FEE PRINTER) di atas tabel FEE PRINTER, satu tombol SCAN ALL.
 
 Logika ada di ``pool_flow.py``; modul ini hanya menampilkan hasil scan.
 Scan tidak menulis berkas apa pun.
@@ -24,15 +24,17 @@ SLOW_FEE_PRINTER_BORDER = "rgba(59,130,246,.85)"
 DEFAULT_BORDER = "rgba(128,128,128,.35)"
 
 TABLE_HEADERS = ["Token / pool", "TVL", "Fee tier",
-                 "Volatility", "Fee/TVL", "Avg volume/menit (pool)",
+                 "Volatility", "Fee/TVL", "Fee/active TVL", "Net deposit",
+                 "Fee/active TVL × volatility", "Avg volume/menit (pool)",
                  "Avg volume/menit ÷ TVL", "Avg fee/menit ÷ TVL",
-                 "Volume 12H (pool)", "Peringatan keamanan"]
+                 "Volume 24H (pool)", "Peringatan keamanan"]
 
 def _filter_caption() -> str:
-    return (f"Timeframe 12H · kategori all · dlmm · "
-            f"TVL ≥ {pf.fmt_usd(10000)} · fee/TVL ≥ 5% · fee ≥ 0.5% · "
-            f"tanpa critical warning · tanpa konsentrasi/kepemilikan tunggal tinggi · "
-            f"urut avg volume/menit ÷ TVL terbesar.")
+    return ("Timeframe 24H · kategori top · dlmm · "
+            "market cap ≥ $20.000 · holders ≥ 1.500 · TVL ≥ $30.000 · active TVL ≥ $10.000 · "
+            "fee/TVL ≥ 1 · fee ≥ 0.5% · pool dibuat ≥ 24 jam lalu · "
+            "tanpa konsentrasi/kepemilikan tunggal tinggi · "
+            "FEE PRINTER: volatility ≤ 3% · fee/active TVL ≥ 2 × volatility · net deposit ≥ $10.000.")
 
 
 def _render_scan_result(result: dict) -> None:
@@ -49,8 +51,6 @@ def _render_scan_result(result: dict) -> None:
         st.warning("Listing belum lengkap: pengambilan berhenti sebelum semua halaman "
                    f"terambil (batas {pf.FLOW_MAX_PAGES} halaman atau ada halaman gagal), "
                    "sebagian pool belum terambil.")
-    if result.get("listing_4h_truncated") or result.get("listing_4h_errors"):
-        st.warning("Listing 4H belum lengkap: pool FEE PRINTER yang butuh cek 4H bisa belum tampil.")
     if not passing:
         st.info("Tidak ada pool dari listing.")
         return
@@ -58,29 +58,28 @@ def _render_scan_result(result: dict) -> None:
                "authority aktif atau top holders > 30 % dibuang; peringatan muncul bila top holders "
                "> 15 %, dev > 5 %, atau LP keluar lebih besar dari masuk saat TVL < $50K. "
                "Baris kuning = pool teratas (avg volume/menit ÷ TVL terbesar).")
-    _fee_printer, band = pf.fee_printer_split(passing)  # SPOT tidak ditampilkan (HIGH RISK dihapus 2026-11-23)
+    rows = pf.fee_printer_rows(passing)
     top = pf.most_crowded(result)
     top_pool = top["pool"] if top else None
     st.markdown(f'<span class="{FEE_PRINTER_TITLE_CLASS}">FEE PRINTER</span>', unsafe_allow_html=True)
-    st.markdown(f"*· {len(band)} pool · {pf.FLOW_BAND_LOW_MULT:g} × volatility ≤ fee/TVL ≤ {pf.FLOW_BAND_HIGH_MULT:g} × volatility (12H dan 4H) · volatility ≥ 3% (12H dan 4H) · "
-                f"TVL ≥ $20.000 · volume/TVL 12H ≥ 100% · fee/TVL ≥ 5% · umur pool ≥ 12 jam · "
-                f"urut selisih fee/TVL − volatility terkecil · Fee/TVL ÷ volatility 1× = seimbang*")
-    _render_pool_table(band, "Tidak ada pool untuk FEE PRINTER.", top_pool,
-                       accent=SLOW_FEE_PRINTER_BORDER, builder=_slow_table_html)
+    st.markdown(f"*· {len(rows)} pool · volatility 0,01–3 % · fee/active TVL ≥ 2 × volatility · "
+                f"net deposit ≥ $10.000 · urut fee/active TVL × volatility terbesar dulu*")
+    _render_pool_table(rows, "Tidak ada pool untuk FEE PRINTER.", top_pool,
+                       accent=SLOW_FEE_PRINTER_BORDER, builder=_fee_printer_table_html)
 
 
-SUMMARY_HEADERS = ["Token / pool", "Asal tabel", "Fee/TVL", "Volatility"]
+SUMMARY_HEADERS = ["Token / pool", "Asal tabel", "Fee/active TVL", "Volatility", "Fee/active TVL × volatility"]
 SUMMARY_BORDER = "rgba(34,197,94,.85)"  # hijau: RINGKASAN (permintaan user, 2026-11-15)
 # Badge asal tabel: warna sama dengan judul/border tabel di halaman.
 _SUMMARY_BADGE = {
     # Badge FEE PRINTER: teks hijau tua menyala (iframe tidak memakai CSS app, jadi gaya inline).
-    pf.SUMMARY_LABEL_SLOW: ("background:rgba(59,130,246,.28);color:#14532d;font-weight:800;"
+    pf.SUMMARY_LABEL: ("background:rgba(59,130,246,.28);color:#14532d;font-weight:800;"
                             "text-shadow:0 0 6px rgba(34,197,94,.85),0 0 14px rgba(22,163,74,.5)"),
 }
 
 
 def _summary_table_html(entries: list) -> str:
-    """RINGKASAN compact: token/pool, asal tabel, Fee/TVL, volatility (permintaan user, 2026-11-20)."""
+    """RINGKASAN compact: token/pool, asal tabel, fee/active TVL, volatility, perkalian (2026-11-24)."""
     body = []
     for row, label in entries:
         badge = (f"<span style='{_SUMMARY_BADGE.get(label, '')};padding:2px 10px;"
@@ -89,8 +88,9 @@ def _summary_table_html(entries: list) -> str:
         cells = [
             _cell_token_html(row),
             badge,
-            _html.escape(pf.fmt_pct(row.get("fee_tvl"))),
-            _html.escape(pf.fmt_pct(row.get("volatility"))),
+            _html.escape(pf.fmt_pct2(row.get("fee_active_tvl"))),
+            _html.escape(pf.fmt_pct2(row.get("volatility"))),
+            _html.escape(pf.fmt_times_plain(pf.fee_active_volatility_product(row))),
         ]
         body.append((cells, False))
     return _table_html(SUMMARY_HEADERS, body, SUMMARY_BORDER)
@@ -178,15 +178,11 @@ def _table_html(headers: list, body: list, accent: str, *, align: list | None = 
     )
 
 
-BALANCE_HEADERS = ["Fee/TVL ÷ volatility", "Selisih fee/TVL − volatility"]  # tabel SLOW saja (2026-11-19)
+def _fee_printer_table_html(rows: list, top_pool: str | None = None, accent: str = DEFAULT_BORDER) -> str:
+    """Tabel FEE PRINTER (24H). Satu baris per pool, urut perkalian fee/active TVL × volatility (urutan dari pemanggil).
 
-
-def _result_table_html(rows: list, top_pool: str | None = None,
-                       accent: str = DEFAULT_BORDER, *, balance: bool = False,
-                       readable: bool = False, tf4h: bool = False) -> str:
-    """Tabel HTML 12H, satu baris per pool, urut rasio avg volume/menit ÷ TVL (urutan dari pemanggil).
-
-    Baris pool teratas (``top_pool``) diberi latar kuning; tanpa emoji.
+    Baris pool teratas (``top_pool``, avg volume/menit ÷ TVL terbesar) diberi latar kuning.
+    Judul boleh turun baris; angka rata kanan; kolom Token menempel saat digeser.
     """
     body = []
     for row in rows:
@@ -194,40 +190,20 @@ def _result_table_html(rows: list, top_pool: str | None = None,
             _cell_token_html(row),
             _html.escape(pf.fmt_usd(row["tvl"])),
             _html.escape(f"{row['fee_tier']:g}%" if row["fee_tier"] is not None else "—"),
-            _html.escape(pf.fmt_pct(row["volatility"])),
-            _html.escape(pf.fmt_pct(row.get("fee_tvl"))),
+            _html.escape(pf.fmt_pct2(row["volatility"])),
+            _html.escape(pf.fmt_pct2(row.get("fee_tvl"))),
+            _html.escape(pf.fmt_pct2(row.get("fee_active_tvl"))),
+            _html.escape(pf.fmt_usd(row.get("net_deposits"))),
+            _html.escape(pf.fmt_times_plain(pf.fee_active_volatility_product(row))),
             _html.escape(pf.fmt_usd2(row["avg_volume"])),
             _html.escape(pf.fmt_ratio_pct(pf.avg_volume_tvl_ratio(row))),
             _html.escape(pf.fmt_ratio_pct(pf.avg_fee_tvl_ratio(row), digits=3)),
             _html.escape(pf.fmt_usd(row["activity"]["volume"])),
             _html.escape("; ".join(row.get("warnings") or []) or "—"),
         ]
-        if balance:  # kolom keseimbangan setelah Fee/TVL (indeks 4), sebelum Avg volume/menit (pool)
-            cells[5:5] = [
-                _html.escape(pf.fmt_times(pf.fee_volatility_ratio(row))),
-                _html.escape(pf.fmt_signed_pct(pf.fee_volatility_diff(row))),
-            ]
-        if tf4h:  # kolom 4H sebelum Peringatan keamanan (kolom terakhir)
-            v4 = (row.get("tf4h") or {})
-            cells[-1:-1] = [
-                _html.escape(pf.fmt_pct(v4.get("volatility"))),
-                _html.escape(pf.fmt_pct(v4.get("fee_tvl"))),
-            ]
         body.append((cells, top_pool is not None and row["pool"] == top_pool))
-    headers = TABLE_HEADERS[:5] + BALANCE_HEADERS + TABLE_HEADERS[5:] if balance else TABLE_HEADERS
-    if tf4h:
-        headers = headers[:-1] + ["Volatility 4H", "Fee/TVL 4H"] + headers[-1:]
-    # Readable: angka rata kanan; Token dan Peringatan keamanan rata kiri.
-    align = (["left"] + ["right"] * (len(headers) - 2) + ["left"]) if readable else None
-    return _table_html(headers, body, accent, align=align, readable=readable)
-
-
-def _slow_table_html(rows: list, top_pool: str | None = None, accent: str = DEFAULT_BORDER) -> str:
-    """Tabel SLOW FEE PRINTER: tabel 12H ditambah kolom keseimbangan volatility vs fee/TVL.
-
-    Tampilan dibuat lebih mudah dibaca (permintaan user, 2026-11-23); semua kolom tetap ada.
-    """
-    return _result_table_html(rows, top_pool, accent, balance=True, readable=True, tf4h=True)
+    align = ["left"] + ["right"] * (len(TABLE_HEADERS) - 2) + ["left"]
+    return _table_html(TABLE_HEADERS, body, accent, align=align, readable=True)
 
 
 COPY_LABEL = "📋 CA"
@@ -287,7 +263,7 @@ def _copy_button_html(ca: str) -> str:
 def _result_document(rows: list, top_pool: str | None = None,
                      accent: str = DEFAULT_BORDER, builder=None) -> str:
     """Dokumen HTML utuh untuk komponen: tabel + skrip copy CA."""
-    make_table = builder or _result_table_html
+    make_table = builder or _fee_printer_table_html
     return ("<!doctype html><html><head><meta charset=\"utf-8\">"
             f"<style>{_COPY_CSS}</style></head><body>"
             f"{make_table(rows, top_pool, accent)}{_COPY_SCRIPT}</body></html>")
@@ -319,7 +295,7 @@ def render_pool_flow_page() -> None:
         st.caption(_filter_caption())
         if st.button(BUTTON_LABEL, type="primary", key="pool_flow_scan",
                      use_container_width=True):
-            with st.spinner("Memindai listing Meteora (12H)…"):
+            with st.spinner("Memindai listing Meteora (24H)…"):
                 st.session_state[RESULT_KEY] = pf.scan_pools()
         result = st.session_state.get(RESULT_KEY)
         if not result:

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Tes logika Scan Best Pool (timeframe 12H, avg volume per menit, satu tabel) — tanpa jaringan.
+"""Tes logika Scan ALL, FEE PRINTER (timeframe 24H) — tanpa jaringan.
 
-Tidak ada filter seleksi lokal (permintaan user 2026-11-14): seleksi hanya dari filter server.
-``PASSING_12H`` berisi dua baris nyata dari respons Meteora timeframe=12h dengan filter user.
-``METEORA_24H`` adalah fixture lama (14 pool) untuk tes paginasi dan alert.
+Aturan (permintaan user, 2026-11-24): volatility 0,01–3 %, fee/active TVL ≥ 2 × volatility,
+net deposit ≥ +10.000 USD. Urut fee/active TVL × volatility terbesar dulu.
+Filter server = curl user (urutan parameter persis), dua batas waktu dihitung dari waktu scan.
 """
 import json
 import sys
@@ -19,14 +19,29 @@ import pool_flow as pf  # noqa: E402
 
 SOL = "So11111111111111111111111111111111111111112"
 
+OLD_TOKEN_MS = 1_700_000_000_000  # token berumur > 24 jam untuk tes (ms)
+OLD_POOL_MS = 1_700_000_000_000  # pool berumur > 24 jam terhadap waktu tes (ms)
 
-OLD_TOKEN_MS = 1_700_000_000_000  # token berumur > 24 jam untuk tes umur (ms)
-OLD_POOL_MS = 1_700_000_000_000  # pool berumur > 12 jam terhadap NOW tes (ms)
+CURL_USER_FILTER = (
+    "base_token_has_high_supply_concentration=false"
+    "&&base_token_has_high_single_ownership=false"
+    "&&pool_type=dlmm"
+    "&&base_token_market_cap>=20000"
+    "&&base_token_created_at<=1795484047775"
+    "&&base_token_holders>=1500"
+    "&&pool_created_at<=1795397647775"
+    "&&tvl>=30000"
+    "&&fee_tvl_ratio>=1"
+    "&&fee_pct>=0.5"
+    "&&active_tvl>=10000"
+)
 
 
-def _row(pool, symbol, *, fee=2.0, tvl=20_000.0, active_tvl=5_000.0, holders=2_000,
-         mcap=500_000.0, vol=2.0, fa=10.0, open_pos=50, active=40, mint=None,
-         volume=720_000.0, swaps=500.0, traders=200.0, ftvl=20.0):
+def _row(pool, symbol, *, fee=2.0, tvl=50_000.0, active_tvl=20_000.0, holders=2_000,
+         mcap=500_000.0, vol=2.0, fa=10.0, net=20_000.0, ftvl=10.0,
+         volume=720_000.0, swaps=500.0, traders=200.0, mint=None, open_pos=50, active=40):
+    """Baris listing 24H tiruan. ``fa`` = fee_active_tvl_ratio (%), ``vol`` = volatility (%),
+    ``net`` = net_deposits (USD)."""
     mint = mint or ("M" + pool[:8].ljust(43, "x"))
     return {"pool_address": pool, "name": f"{symbol}-SOL", "pool_type": "dlmm",
             "token_x": {"address": mint, "symbol": symbol, "name": symbol,
@@ -37,9 +52,19 @@ def _row(pool, symbol, *, fee=2.0, tvl=20_000.0, active_tvl=5_000.0, holders=2_0
             "volume_tvl_ratio": (volume / tvl * 100) if tvl else None,
             "base_token_holders": holders, "open_positions": open_pos,
             "active_positions": active, "volatility": vol, "fee_active_tvl_ratio": fa,
+            "net_deposits": net,
             "volume": volume, "avg_volume": volume / 720.0,
             "swap_count": swaps, "unique_traders": traders,
-            "fee_tvl_ratio": ftvl}  # nilai uji untuk pemisahan tabel (2026-11-15)
+            "fee_tvl_ratio": ftvl}
+
+
+def _fp(pool, fa, vol, *, net=20_000.0, symbol="FP", mint=None):
+    """Baris yang lolos FEE PRINTER bila ``fa`` ≥ 2 × ``vol``, 0,01 ≤ vol ≤ 3, dan net ≥ 10.000."""
+    return _row(pool, symbol, fa=fa, vol=vol, net=net, mint=mint)
+
+
+def _scan(rows):
+    return pf.scan_pools(listing=(rows, [], False))
 
 
 # pool, symbol, fee, tvl, active_tvl, holders, mcap, volatility, fee/active TVL, open, active
@@ -114,37 +139,6 @@ FOOD2_12H = {
     "net_deposits": -68849.91740798746,
 }
 
-
-class NoLocalFilterTest(unittest.TestCase):
-    """Permintaan user 2026-11-14: semua filter seleksi lokal dihapus. Pool hanya dari listing."""
-
-    def test_fee_tier_rendah_tetap_lolos(self):
-        self.assertTrue(pf.evaluate_pool(_row("T" * 44, "TIERX", fee=0.1))["passes"])
-
-    def test_avg_volume_rendah_tetap_lolos(self):
-        result = pf.evaluate_pool(_row("A" * 44, "SMALLV", volume=720.0 * 10))  # avg 10
-        self.assertTrue(result["passes"])
-        self.assertEqual(result["reasons"], [])
-
-    def test_fee_active_tvl_rendah_tetap_lolos(self):
-        self.assertTrue(pf.evaluate_pool(_row("F" * 44, "FAX", fa=0.5))["passes"])
-
-    def test_volatility_tinggi_tetap_lolos(self):
-        self.assertTrue(pf.evaluate_pool(_row("V" * 44, "VOLX", vol=9.5))["passes"])
-
-    def test_volatility_tidak_terukur_tetap_lolos(self):
-        self.assertTrue(pf.evaluate_pool(_row("N" * 44, "NOVOL", vol=None))["passes"])
-
-    def test_dut_12h_tetap_lolos(self):
-        self.assertTrue(pf.evaluate_pool(DUT_12H)["passes"])
-
-    def test_scan_memuat_semua_baris_unik_dari_listing(self):
-        extra = [DUT_12H, _row("S" * 44, "SHORT", volume=720.0 * 100)]
-        result = pf.scan_pools(listing=(PASSING_12H + extra, [], False))
-        self.assertEqual(result["candidates"], 4)
-        self.assertEqual(sorted(r["pool"] for r in result["passing"]),
-                         sorted([LOW_12H["pool_address"], HIGH_12H["pool_address"],
-                                 DUT_12H["pool_address"], "S" * 44]))
 
 
 def _sec(*, tvl=20_000.0, deposits=None, withdraws=None, fa=10.0, avg=None, **token):
@@ -234,403 +228,6 @@ class SecurityTest(unittest.TestCase):
         self.assertTrue(result["passes"])
         self.assertEqual(result["warnings"], [])
 
-    def test_food2_nyata_hanya_peringatan_lp_keluar(self):
-        result = pf.evaluate_pool(FOOD2_12H)
-        self.assertEqual(result["warnings"], ["LP keluar > masuk (TVL < $50K)"])
-        self.assertTrue(result["passes"])
-        self.assertEqual(result["reasons"], [])
-
-    def test_pool_terblokir_tidak_masuk_hasil_scan(self):
-        blocked = _sec(has_mint_authority=True, fa=50.0, avg=9000.0)
-        result = pf.scan_pools(listing=(PASSING_12H + [blocked], [], False))
-        self.assertNotIn(blocked["pool_address"], [r["pool"] for r in result["passing"]])
-        self.assertIn(blocked["pool_address"], [r["pool"] for r in result["results"]])
-
-    def test_alert_memuat_peringatan_keamanan(self):
-        warned = _slow_pool(_sec(top_holders_pct=20.0, fa=50.0, avg=9000.0))  # SLOW → masuk ringkasan
-        text, _markup = pf.apply_summary_alert(pf.empty_state(), _summary_entries([warned]))
-        self.assertIn("Peringatan keamanan", text)
-        self.assertIn("top holders 20,0%", text)
-
-    def test_alert_tanpa_peringatan_tidak_memuat_baris_keamanan(self):
-        clean = _slow_pool(_sec(fa=50.0, avg=9000.0))
-        text, _markup = pf.apply_summary_alert(pf.empty_state(), _summary_entries([clean]))
-        self.assertNotIn("Peringatan keamanan", text)
-
-    def test_tabel_memuat_kolom_peringatan_keamanan(self):
-        import pool_flow_ui as ui
-        row = pf.evaluate_pool(FOOD2_12H)
-        html = ui._result_table_html([row])
-        self.assertIn("Peringatan keamanan", html)
-        self.assertIn("LP keluar &gt; masuk", html)
-
-
-class RiskTest(unittest.TestCase):
-    def test_tvl_kecil_tidak_difilter_lokal(self):
-        row = _row("P" * 44, "SMALLX", tvl=100.0, active_tvl=10.0, holders=10, mcap=1.0)
-        self.assertTrue(pf.evaluate_pool(row)["passes"])
-
-    def test_evaluate_pool_membawa_avg_volume(self):
-        row = _row("Q" * 44, "HIGHX", vol=5.5, volume=7200.0 * 72)  # avg 720
-        result = pf.evaluate_pool(row)
-        self.assertAlmostEqual(result["avg_volume"], 720.0)
-
-
-def _fp(pool, fee_tvl, vol, symbol="FP"):
-    """Baris pool dengan fee/TVL (%) dan volatility (%) yang diatur tes."""
-    row = _row(pool, symbol, vol=vol)
-    row["fee_tvl_ratio"] = fee_tvl
-    return row
-
-
-
-class SlowFeePrinterBandTest(unittest.TestCase):
-    """SLOW FEE PRINTER: band fee/TVL dan urutannya. Syarat umur token dihapus (permintaan user, 2026-11-22)."""
-
-    NOW = 1_800_000_000_000  # ms, titik waktu tetap untuk tes
-
-    def _band(self, *rows):
-        result = pf.scan_pools(listing=(list(rows), [], False))
-        return pf.fee_printer_split(result["passing"], now_ms=self.NOW)[1]
-
-    def test_volatility_di_bawah_3_persen_tidak_masuk_slow(self):
-        self.assertEqual(self._band(_fp("J" * 44, fee_tvl=4.0, vol=2.99)), [])
-
-    def test_volatility_3_34_persen_dengan_fee_5_persen_masuk_slow(self):
-        """Volatility 3,34 % dan fee/TVL 5 % (1,5 × volatility) masuk band 1–3 ×."""
-        self.assertEqual([r["pool"] for r in self._band(_fp("K" * 44, fee_tvl=5.0, vol=3.34))], ["K" * 44])
-
-    def test_volatility_3_2_persen_dengan_fee_5_persen_masuk_slow(self):
-        """Volatility 3,2 % (≥ 3 %), fee/TVL 5 % = 1,56 × volatility: masuk band 1–3 ×."""
-        self.assertEqual([r["pool"] for r in self._band(_fp("M" * 44, fee_tvl=5.0, vol=3.2))], ["M" * 44])
-
-    def test_tvl_di_bawah_20k_tidak_masuk_slow(self):
-        row = _fp("T" * 44, fee_tvl=5.0, vol=3.4)
-        row["tvl"] = 19_999.0
-        self.assertEqual(self._band(row), [])
-
-    def test_volume_tvl_12h_di_bawah_100_persen_tidak_masuk_slow(self):
-        row = _fp("V" * 44, fee_tvl=5.0, vol=3.4)
-        row["volume_tvl_ratio"] = 99.9
-        self.assertEqual(self._band(row), [])
-
-    def test_volume_tvl_12h_tepat_100_persen_masuk_slow(self):
-        row = _fp("W" * 44, fee_tvl=5.0, vol=3.4)
-        row["volume_tvl_ratio"] = 100.0
-        self.assertEqual([r["pool"] for r in self._band(row)], ["W" * 44])
-
-    def test_volume_tvl_12h_tanpa_data_tidak_masuk_slow(self):
-        row = _fp("X" * 44, fee_tvl=5.0, vol=3.4)
-        row["volume_tvl_ratio"] = None
-        self.assertEqual(self._band(row), [])
-
-    def test_tvl_tepat_20k_masuk_slow(self):
-        row = _fp("U" * 44, fee_tvl=5.0, vol=3.4)
-        row["tvl"] = 20_000.0
-        self.assertEqual([r["pool"] for r in self._band(row)], ["U" * 44])
-
-    def test_fee_tvl_di_bawah_5_persen_tidak_masuk_slow_langsung(self):
-        """Lantai fee/TVL SLOW diuji langsung (scan_pools sudah membuang fee/TVL < 5 % lebih dulu)."""
-        item = {"pool": "L" * 44, "volatility": 5.0, "fee_tvl": 4.99}
-        self.assertEqual(pf.fee_printer_split([item], now_ms=self.NOW)[1], [])
-
-    def test_fee_printer_spot_tidak_terpengaruh_lantai_slow(self):
-        """Volatility 4 %, fee/TVL 13 % (3,25 × > 3 ×): FEE PRINTER (SPOT) saja, bukan band."""
-        spot, band = pf.fee_printer_split(pf.scan_pools(listing=([_fp("P" * 44, fee_tvl=13.0, vol=4.0)], [], False))["passing"], now_ms=self.NOW)
-        self.assertEqual([r["pool"] for r in spot], ["P" * 44])
-        self.assertEqual(band, [])
-
-    def test_slow_diurutkan_selisih_fee_volatility_terkecil(self):
-        """Urut FEE PRINTER (2026-11-19): |fee/TVL − volatility| terkecil dulu = paling seimbang.
-
-        Volatility 10 %. Selisih (semua positif, karena band mulai 1 × volatility):
-        Y +0,5; X +1; W +2,4; Z +4.
-        """
-        x = _fp("X" * 44, fee_tvl=11.0, vol=10.0)   # +1
-        y = _fp("Y" * 44, fee_tvl=10.5, vol=10.0)   # +0,5 (paling seimbang)
-        z = _fp("Z" * 44, fee_tvl=14.0, vol=10.0)   # +4
-        w = _fp("W" * 44, fee_tvl=12.4, vol=10.0)   # +2,4
-        result = pf.scan_pools(listing=([z, w, x, y], [], False))
-        _spot, band = pf.fee_printer_split(result["passing"], now_ms=self.NOW)
-        self.assertEqual([r["pool"] for r in band],
-                         ["Y" * 44, "X" * 44, "W" * 44, "Z" * 44])
-
-    def test_fee_di_bawah_1x_volatility_tidak_masuk_fee_printer(self):
-        """Fee/TVL 9,5 % < 1 × volatility 10 %: tidak masuk band (batas bawah 1 ×, 2026-11-22)."""
-        below = _fp("N" * 44, fee_tvl=9.5, vol=10.0)
-        result = pf.scan_pools(listing=([below], [], False))
-        self.assertEqual(pf.fee_printer_split(result["passing"], now_ms=self.NOW)[1], [])
-
-    def test_slow_seri_selisih_ikut_urutan_listing(self):
-        a = _fp("A" * 44, fee_tvl=11.0, vol=10.0)  # +1
-        b = _fp("B" * 44, fee_tvl=11.0, vol=10.0)  # +1 (seri)
-        result = pf.scan_pools(listing=([a, b], [], False))
-        _spot, band = pf.fee_printer_split(result["passing"], now_ms=self.NOW)
-        self.assertEqual([r["pool"] for r in band], ["A" * 44, "B" * 44])
-
-    def test_evaluate_pool_membawa_umur_token(self):
-        self.assertEqual(pf.evaluate_pool(_fp("T" * 44, fee_tvl=1.0, vol=1.0))["token_created_at"],
-                         OLD_TOKEN_MS)
-
-    def test_evaluate_pool_membawa_umur_pool(self):
-        self.assertEqual(pf.evaluate_pool(_fp("U" * 44, fee_tvl=1.0, vol=1.0))["pool_created_at"], OLD_POOL_MS)
-
-    def test_pool_lebih_muda_dari_12_jam_tidak_masuk_fee_printer(self):
-        """Pool 11 jam 59 menit: tidak masuk band (tapi tetap bisa jadi SPOT bila fee/TVL > 2 × volatility)."""
-        young = _fp("Y" * 44, fee_tvl=10.0, vol=10.0)
-        young["pool_created_at"] = self.NOW - (12 * 3_600_000 - 60_000)
-        result = pf.scan_pools(listing=([young], [], False))
-        self.assertEqual(pf.fee_printer_split(result["passing"], now_ms=self.NOW)[1], [])
-
-    def test_pool_tepat_12_jam_masuk_fee_printer(self):
-        """Batas umur pool inklusif: tepat 12 jam masuk band."""
-        edge = _fp("E" * 44, fee_tvl=10.0, vol=10.0)
-        edge["pool_created_at"] = self.NOW - 12 * 3_600_000
-        result = pf.scan_pools(listing=([edge], [], False))
-        self.assertEqual([r["pool"] for r in pf.fee_printer_split(result["passing"], now_ms=self.NOW)[1]],
-                         ["E" * 44])
-
-    def test_pool_tanpa_umur_tidak_masuk_fee_printer(self):
-        no_age = _fp("Z" * 44, fee_tvl=10.0, vol=10.0)
-        no_age["pool_created_at"] = None
-        result = pf.scan_pools(listing=([no_age], [], False))
-        self.assertEqual(pf.fee_printer_split(result["passing"], now_ms=self.NOW)[1], [])
-
-    def test_pool_muda_tidak_masuk_ringkasan(self):
-        young = _fp("R" * 44, fee_tvl=10.0, vol=10.0)
-        young["pool_created_at"] = self.NOW - 3_600_000
-        result = pf.scan_pools(listing=([young], [], False))
-        self.assertEqual(pf.summary_rows({"passing": result["passing"]}), [])
-
-    def _band_with_4h(self, row12, row4):
-        result = pf.scan_pools(listing=([row12], [], False), listing_4h=([row4], [], False))
-        return pf.fee_printer_split(result["passing"], now_ms=self.NOW)[1]
-
-    def test_4h_lolos_dan_12h_lolos_masuk_slow(self):
-        self.assertEqual([r["pool"] for r in self._band_with_4h(_fp("A" * 44, fee_tvl=5.0, vol=3.4),
-                                                                 _fp("A" * 44, fee_tvl=5.0, vol=3.5))],
-                         ["A" * 44])
-
-    def test_4h_volatility_di_bawah_3_persen_tidak_masuk(self):
-        self.assertEqual(self._band_with_4h(_fp("B" * 44, fee_tvl=5.0, vol=3.4),
-                                            _fp("B" * 44, fee_tvl=4.0, vol=2.9)), [])
-
-    def test_4h_rasio_fee_di_luar_band_tidak_masuk(self):
-        """4H fee/TVL 11 % = 3,24 × volatility 3,4 % (di atas 3 ×): tidak masuk walau 12H lolos."""
-        self.assertEqual(self._band_with_4h(_fp("C" * 44, fee_tvl=5.0, vol=3.4),
-                                            _fp("C" * 44, fee_tvl=11.0, vol=3.4)), [])
-
-    def test_pool_tanpa_data_4h_tidak_masuk(self):
-        result = pf.scan_pools(listing=([_fp("D" * 44, fee_tvl=5.0, vol=3.4)], [], False),
-                               listing_4h=([], [], False))
-        self.assertIsNone(result["passing"][0]["tf4h"])
-        self.assertEqual(pf.fee_printer_split(result["passing"], now_ms=self.NOW)[1], [])
-
-    def test_listing_4h_terpotong_ditandai(self):
-        result = pf.scan_pools(listing=([_fp("E" * 44, fee_tvl=5.0, vol=3.4)], [], False),
-                               listing_4h=([], [], True))
-        self.assertTrue(result["listing_4h_truncated"])
-
-    def test_hanya_pool_lolos_12h_yang_dicek_4h(self):
-        """Pool di luar band 12H tidak mendapat data 4H (tidak ada permintaan tambahan)."""
-        spot = _fp("S" * 44, fee_tvl=20.0, vol=3.4)  # SPOT (> 2 × volatility), bukan kandidat band
-        result = pf.scan_pools(listing=([spot], [], False), listing_4h=([], [], False))
-        self.assertIsNone(result["passing"][0].get("tf4h"))
-
-
-class FeeTvlMinTest(unittest.TestCase):
-    """Tabel 12H hanya pool dengan fee/TVL minimal 5 % (permintaan user, 2026-11-19)."""
-
-    def test_fee_tvl_di_bawah_5_persen_tidak_lolos(self):
-        result = pf.scan_pools(listing=([_row("L" * 44, "LOWF", ftvl=4.9)], [], False))
-        self.assertEqual(result["passing"], [])
-        (item,) = result["results"]
-        self.assertFalse(item["passes"])
-        self.assertIn("fee/TVL di bawah 5%", item["reasons"])
-
-    def test_fee_tvl_tepat_5_persen_tampil(self):
-        result = pf.scan_pools(listing=([_row("E" * 44, "EXACT", ftvl=5.0)], [], False))
-        self.assertEqual([r["symbol"] for r in result["passing"]], ["EXACT"])
-
-    def test_pool_di_bawah_5_persen_tidak_masuk_ringkasan(self):
-        # volatility 5 %, fee/TVL 4,9 % → rasio 0,98× (band SLOW), tetapi fee di bawah 5 % → tidak lolos
-        low = _row("H" * 44, "HILOW", vol=5.0, ftvl=4.9)
-        self.assertEqual(pf.summary_rows(pf.scan_pools(listing=([low], [], False))), [])
-
-    def test_pool_tepat_5_persen_masuk_ringkasan(self):
-        ok = _row("I" * 44, "OKAYX", vol=5.0, ftvl=5.0)  # 1× (band SLOW), volatility dan fee tepat 5 %
-        entries = pf.summary_rows(pf.scan_pools(listing=([ok], [], False)))
-        self.assertEqual([(r["symbol"], label) for r, label in entries],
-                         [("OKAYX", pf.SUMMARY_LABEL_SLOW)])
-
-
-
-class FeePrinterSplitTest(unittest.TestCase):
-    """FEE PRINTER (SPOT) bila fee/TVL > 2 × volatility; FEE PRINTER (band) bila
-    1 × volatility ≤ fee/TVL ≤ 3 × volatility (permintaan user, 2026-11-23)."""
-
-    def _split(self, *rows):
-        result = pf.scan_pools(listing=(list(rows), [], False))
-        return pf.fee_printer_split(result["passing"])
-
-    def test_fee_tvl_di_atas_3x_volatility_hanya_spot(self):
-        # 3,5 × > 3 × (batas band): hanya SPOT
-        spot, band = self._split(_fp("1" * 44, fee_tvl=35.0, vol=10.0))
-        self.assertEqual([r["pool"] for r in spot], ["1" * 44])
-        self.assertEqual(band, [])
-
-    def test_antara_2x_dan_3x_masuk_band_dan_spot(self):
-        # 2,5 × : di band (1–3 ×) dan di SPOT (> 2 ×, internal).
-        spot, band = self._split(_fp("1" * 44, fee_tvl=25.0, vol=10.0))
-        self.assertEqual([r["pool"] for r in spot], ["1" * 44])
-        self.assertEqual([r["pool"] for r in band], ["1" * 44])
-
-    def test_batas_tepat_1_5x_masuk_slow(self):
-        # volatility 1 %, fee/TVL 1,5 % -> SLOW (batas atas inklusif)
-        spot, band = self._split(_fp("2" * 44, fee_tvl=15.0, vol=10.0))
-        self.assertEqual(spot, [])
-        self.assertEqual([r["pool"] for r in band], ["2" * 44])
-
-    def test_batas_tepat_1x_masuk_slow(self):
-        # volatility 10 %, fee/TVL 10 % -> FEE PRINTER band (batas bawah 1 × inklusif)
-        spot, band = self._split(_fp("3" * 44, fee_tvl=10.0, vol=10.0))
-        self.assertEqual(spot, [])
-        self.assertEqual([r["pool"] for r in band], ["3" * 44])
-
-    def test_batas_tepat_2x_masuk_slow_bukan_spot(self):
-        # volatility 10 %, fee/TVL 20 % -> band (batas atas 2 × inklusif, bukan SPOT)
-        spot, band = self._split(_fp("0" * 44, fee_tvl=20.0, vol=10.0))
-        self.assertEqual(spot, [])
-        self.assertEqual([r["pool"] for r in band], ["0" * 44])
-
-    def test_antara_1x_dan_2x_masuk_fee_printer(self):
-        # 1,6× dan 1,99× berada di dalam band 1–3 × (permintaan user, 2026-11-23)
-        self.assertEqual(self._split(_fp("8" * 44, fee_tvl=16.0, vol=10.0))[1][0]["pool"], "8" * 44)
-        self.assertEqual(self._split(_fp("9" * 44, fee_tvl=19.9, vol=10.0))[1][0]["pool"], "9" * 44)
-
-    def test_di_atas_3x_bukan_band_melainkan_spot(self):
-        spot, band = self._split(_fp("Q" * 44, fee_tvl=31.0, vol=10.0))  # 3,1 × > 3 ×
-        self.assertEqual([r["pool"] for r in spot], ["Q" * 44])
-        self.assertEqual(band, [])
-
-    def test_fee_tvl_di_bawah_1x_tidak_masuk_tabel_mana_pun(self):
-        spot, band = self._split(_fp("4" * 44, fee_tvl=9.9, vol=10.0))  # 0,99× < 1×
-        self.assertEqual((spot, band), ([], []))
-
-    def test_volatility_tidak_terukur_tidak_masuk_tabel_mana_pun(self):
-        rows = [_fp("5" * 44, fee_tvl=9.0, vol=None),
-                _fp("6" * 44, fee_tvl=9.0, vol=0.005)]  # di bawah 0,01 %
-        self.assertEqual(self._split(*rows), ([], []))
-
-    def test_fee_tvl_hilang_tidak_masuk_tabel_mana_pun(self):
-        self.assertEqual(self._split(_fp("7" * 44, fee_tvl=None, vol=1.0)), ([], []))
-
-    def test_volatility_0_01_persen_masih_terukur(self):
-        # volatility tepat 0,01 % terukur → fee 5 % > 2 × 0,01 % masuk FEE PRINTER (SPOT)
-        spot, band = self._split(_fp("8" * 44, fee_tvl=5.0, vol=0.01))
-        self.assertEqual([r["pool"] for r in spot], ["8" * 44])
-        self.assertEqual(band, [])
-
-    def test_urut_di_tiap_tabel_rasio_avg_volume_per_tvl(self):
-        # TVL 20.000 untuk semua: rasio = avg volume ÷ 20.000
-        rows = [_fp("A" * 44, fee_tvl=30.0, vol=10.0),   # avg 600  -> 0,030
-                _fp("B" * 44, fee_tvl=50.0, vol=10.0),   # avg 2000 -> 0,100
-                _fp("C" * 44, fee_tvl=15.0, vol=10.0),   # avg 300  -> 0,015
-                _fp("D" * 44, fee_tvl=10.0, vol=10.0)]   # avg 500  -> 0,025
-        for r, avg in zip(rows, (600.0, 2000.0, 300.0, 500.0)):
-            r["avg_volume"] = avg
-        spot, band = self._split(*rows)
-        self.assertEqual([r["pool"] for r in spot], ["B" * 44, "A" * 44])  # > 2 ×
-        # band 1–3 × urut |selisih|: D (0), C (5), A (20); B (5 ×) di luar band
-        self.assertEqual([r["pool"] for r in band], ["D" * 44, "C" * 44, "A" * 44])
-
-    def test_pool_terblokir_keamanan_tidak_masuk_tabel(self):
-        blocked = _fp("E" * 44, fee_tvl=9.0, vol=1.0)
-        blocked["token_x"]["has_mint_authority"] = True
-        spot, band = self._split(blocked)
-        self.assertEqual((spot, band), ([], []))
-
-    def test_evaluate_pool_membawa_fee_tvl(self):
-        self.assertEqual(pf.evaluate_pool(_fp("F" * 44, fee_tvl=4.2, vol=1.0))["fee_tvl"], 4.2)
-
-
-class ServerFilterTest(unittest.TestCase):
-    def test_filter_server_persis_request_user(self):
-        self.assertEqual(
-            pf.FLOW_SERVER_FILTER,
-            "base_token_has_critical_warnings=false"
-            "&&quote_token_has_critical_warnings=false"
-            "&&base_token_has_high_supply_concentration=false"
-            "&&base_token_has_high_single_ownership=false"
-            "&&pool_type=dlmm"
-            "&&tvl>=10000"
-            "&&fee_tvl_ratio>=2"
-            "&&fee_pct>=0.5")
-        self.assertEqual(pf.FLOW_TIMEFRAME, "12h")
-        self.assertEqual(pf.FLOW_CATEGORY, "all")
-
-
-class RealResponseTest(unittest.TestCase):
-    def test_urut_rasio_avg_volume_per_tvl(self):
-        result = pf.scan_pools(listing=(PASSING_12H, [], False))
-        # HIGHX 0,040 (800 ÷ 20.000) > FOOD 0,0166 (1.500,59 ÷ 90.546)
-        self.assertEqual([r["symbol"] for r in result["passing"]], ["HIGHX", "FOOD"])
-        self.assertEqual(result["candidates"], 2)
-
-    def test_pool_teratas_untuk_alert(self):
-        result = pf.scan_pools(listing=(PASSING_12H, [], False))
-        top = pf.most_crowded(result)
-        self.assertEqual(top["pool"], HIGH_12H["pool_address"])
-
-
-class ScanTest(unittest.TestCase):
-    def test_urut_rasio_avg_volume_per_tvl(self):
-        # rasio = avg volume ÷ TVL (TVL 20.000 untuk ketiganya): C 0,10 > A 0,05 > B 0,03
-        rows = [_row("A" * 44, "AAA", fa=5.0, volume=720.0 * 1000),
-                _row("B" * 44, "BBB", fa=8.0, volume=720.0 * 600),
-                _row("C" * 44, "CCC", fa=5.0, volume=720.0 * 2000)]
-        result = pf.scan_pools(listing=(rows, [], False))
-        self.assertEqual([r["pool"] for r in result["passing"]],
-                         ["C" * 44, "A" * 44, "B" * 44])
-
-    def test_rasio_memakai_tvl_bukan_avg_volume_saja(self):
-        # X: avg lebih besar tetapi TVL 10x lebih besar -> rasio lebih kecil
-        rows = [_row("X" * 44, "XXX", tvl=200_000.0, volume=720.0 * 1000),   # 0,005
-                _row("Y" * 44, "YYY", tvl=20_000.0, volume=720.0 * 500)]     # 0,025
-        result = pf.scan_pools(listing=(rows, [], False))
-        self.assertEqual([r["pool"] for r in result["passing"]], ["Y" * 44, "X" * 44])
-
-    def test_pool_duplikat_dihitung_sekali(self):
-        rows = PASSING_12H + [LOW_12H]
-        result = pf.scan_pools(listing=(rows, [], False))
-        self.assertEqual(result["candidates"], 2)
-        self.assertEqual(len(result["passing"]), 2)
-
-    def test_truncated_dan_error_ikut_dilaporkan(self):
-        result = pf.scan_pools(listing=(PASSING_12H, ["gagal"], True))
-        self.assertTrue(result["truncated"])
-        self.assertEqual(result["listing_errors"], 1)
-
-    def test_fetch_listing_mengirim_request_12h_sesuai_curl_user(self):
-        captured = []
-
-        def fake_get(params, **kwargs):
-            captured.append(dict(params))
-            return {"data": [], "has_more": False}
-
-        with mock.patch.object(pf, "_get_payload", side_effect=fake_get):
-            rows, errors, truncated = pf.fetch_listing()
-        self.assertEqual((rows, errors, truncated), ([], [], False))
-        self.assertEqual(len(captured), 1)
-        params = captured[0]
-        self.assertEqual(params["timeframe"], "12h")
-        self.assertEqual(params["category"], "all")
-        self.assertEqual(params["sort_by"], "fee_tvl_ratio:desc")  # curl user terbaru
-        self.assertEqual(params["page_size"], 50)
-        self.assertNotIn("after_key", params)
-        self.assertNotIn("page", params)  # page diabaikan API Meteora
-        self.assertEqual(params["filter_by"], pf.FLOW_SERVER_FILTER)
-
 
 class PaginationTest(unittest.TestCase):
     """Paginasi cursor: halaman berikutnya diminta dengan ``after_key``."""
@@ -711,269 +308,6 @@ class PaginationTest(unittest.TestCase):
         self.assertTrue(result["truncated"])
 
 
-def rows_pool(index: int) -> str:
-    """Alamat pool fixture METEORA_24H ke-index (0-based)."""
-    return METEORA_24H[index][0]
-
-
-class AlertTest(unittest.TestCase):
-    """Alert Telegram (2026-11-20): RINGKASAN saja — semua pool dari ketiga tabel 12H dengan label asal."""
-
-    def test_tanpa_pool_ringkasan_tidak_ada_alert(self):
-        state = pf.empty_state()
-        self.assertEqual(_summary_entries([]), [])
-        self.assertEqual(pf.apply_summary_alert(state, []), (None, None))
-        self.assertEqual(state["alerts"], [])
-        self.assertEqual(state["best_alert"]["next_no"], 1)
-
-    def test_ringkasan_memuat_label_asal_rasio_dan_tautan(self):
-        entries = _summary_entries([_slow_row()])
-        self.assertEqual([(r["symbol"], label) for r, label in entries],
-                         [("SLW", pf.SUMMARY_LABEL_SLOW)])
-        text, markup = pf.apply_summary_alert(pf.empty_state(), entries)
-        self.assertIn("RINGKASAN", text)
-        self.assertIn("[FEE PRINTER]", text)
-        self.assertIn("fee/TVL 10,0% · volatility 10,0%", text)
-        for host in ("gmgn.ai", "meteora.ag", "hawkfi.ag", "dexscreener.com"):
-            self.assertIn(host, text)
-        self.assertNotIn("POOL PALING RAMAI", text)
-        self.assertIn("📊 4H: fee/TVL 10,0% · volatility 10,0%", text)  # baris 4H ikut tampil
-        self.assertEqual(markup["inline_keyboard"][0][0]["copy_text"]["text"],
-                         pf.mint_of_pool(_slow_row()))
-
-    def test_ringkasan_hanya_slow_fee_printer(self):
-        from tests.test_pool_flow import _fp
-        very = _fp("V" * 44, fee_tvl=50.0, vol=1.0, symbol="VHX")  # 50 × volatility: di atas 3 ×, bukan band
-        high_only = _fp("J" * 44, fee_tvl=16.0, vol=5.0, symbol="HIGHO")  # 3,2 × = di atas band, tidak tampil
-        entries = _summary_entries(PASSING_12H + [very, high_only, _slow_row()])
-        # HIGHX (HIGH_12H, tepat 3 ×) masuk band 1–3 × sehingga ikut RINGKASAN; urut |selisih|
-        self.assertEqual([(r["symbol"], label) for r, label in entries],
-                         [("SLW", pf.SUMMARY_LABEL_SLOW), ("HIGHX", pf.SUMMARY_LABEL_SLOW)])
-        text, _markup = pf.apply_summary_alert(pf.empty_state(), entries)
-        self.assertIn("[FEE PRINTER]", text)
-        self.assertNotIn("HIGHO", text)
-        self.assertNotIn("VHX", text)
-        self.assertNotIn("HIGH RISK FEE PRINTER", text)
-
-    def test_alert_memberi_nomor_dan_tag_sudah_pernah(self):
-        entries = _summary_entries([_slow_row()])
-        state = pf.empty_state()
-        first, _ = pf.apply_summary_alert(state, entries)
-        self.assertIn("alert #1", first)
-        self.assertIn("🆕 baru", first)
-        second, _ = pf.apply_summary_alert(state, entries)
-        self.assertIn("alert #2", second)
-        self.assertIn("🔁 sudah pernah · alert #1", second)
-        self.assertEqual(state["best_alert"]["next_no"], 3)
-        self.assertEqual([a["kind"] for a in state["alerts"]], ["summary", "summary"])
-
-    def test_split_telegram_tiap_bagian_di_bawah_batas(self):
-        long_text = "\n".join(["baris panjang " * 20] * 400)
-        parts = pf.split_for_telegram(long_text)
-        self.assertGreater(len(parts), 1)
-        self.assertTrue(all(len(part) <= pf.TELEGRAM_CHUNK for part in parts))
-
-
-class TelegramCopyTest(unittest.TestCase):
-    """Tombol 📋 CA (copy_text) pada alert Telegram dan jadwal tiap jam."""
-
-    def _passing(self):
-        return pf.scan_pools(listing=(meteora_rows(), [], False))["passing"]
-
-    def test_satu_tombol_copy_per_pool_dengan_ca_lengkap(self):
-        passing = self._passing()
-        markup = pf.alert_copy_markup(passing)
-        rows = markup["inline_keyboard"]
-        self.assertEqual(len(rows), len(passing))
-        for row, pool in zip(rows, passing):
-            (button,) = row
-            self.assertEqual(button["copy_text"], {"text": pool["mint"]})
-            self.assertIn(pool["symbol"], button["text"])
-            self.assertLessEqual(len(button["copy_text"]["text"]), 256)
-
-    def test_tanpa_pool_atau_tanpa_ca_tidak_ada_tombol(self):
-        self.assertIsNone(pf.alert_copy_markup([]))
-        self.assertIsNone(pf.alert_copy_markup([{"mint": "", "symbol": "X"}]))
-
-    def _capture(self):
-        sent = []
-
-        class Resp:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                return False
-
-        def fake_urlopen(request, timeout=None):
-            sent.append(json.loads(request.data.decode("utf-8")))
-            return Resp()
-
-        return mock.patch.object(pf.urllib.request, "urlopen", side_effect=fake_urlopen), sent
-
-    def test_payload_menyertakan_reply_markup(self):
-        patcher, sent = self._capture()
-        markup = pf.alert_copy_markup(self._passing())
-        with patcher, mock.patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "t",
-                                                     "TELEGRAM_CHAT_ID": "1"}):
-            ok, error = pf.send_telegram("pendek", reply_markup=markup)
-        self.assertTrue(ok, error)
-        self.assertEqual(len(sent), 1)
-        self.assertEqual(sent[0]["reply_markup"], markup)
-        self.assertEqual(sent[0]["parse_mode"], "HTML")
-
-    def test_pesan_terpecah_hanya_bagian_terakhir_punya_tombol(self):
-        patcher, sent = self._capture()
-        markup = pf.alert_copy_markup(self._passing())
-        text = "\n".join("baris " + "x" * 90 for _ in range(200))
-        with patcher, mock.patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "t",
-                                                     "TELEGRAM_CHAT_ID": "1"}):
-            ok, _ = pf.send_telegram(text, reply_markup=markup)
-        self.assertTrue(ok)
-        self.assertGreater(len(sent), 1)
-        self.assertTrue(all("reply_markup" not in body for body in sent[:-1]))
-        self.assertEqual(sent[-1]["reply_markup"], markup)
-
-    def test_tanpa_markup_payload_tidak_berisi_reply_markup(self):
-        patcher, sent = self._capture()
-        with patcher, mock.patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "t",
-                                                     "TELEGRAM_CHAT_ID": "1"}):
-            pf.send_telegram("pendek")
-        self.assertNotIn("reply_markup", sent[0])
-
-    def _alert_module(self):
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "pool_flow_alert", ROOT / "scripts" / "pool_flow_alert.py")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-
-    def test_run_summary_satu_pesan_tombol_per_pool(self):
-        alert = self._alert_module()
-        state = pf.empty_state()
-        messages = alert.run_summary(
-            state,
-            scan=lambda: pf.scan_pools(listing=([_slow_row()], [], False)))
-        self.assertEqual(len(messages), 1)
-        text, markup = messages[0]
-        self.assertIn("RINGKASAN", text)
-        self.assertIn("alert #1", text)
-        self.assertEqual(markup["inline_keyboard"][0][0]["copy_text"]["text"],
-                         pf.mint_of_pool(_slow_row()))
-        self.assertEqual(state["best_alert"]["next_no"], 2)
-
-    def test_run_summary_tanpa_kriteria_kirim_heartbeat(self):
-        """Permintaan user (2026-11-24): tanpa pool tetap ada pesan, supaya terlihat cron jalan."""
-        alert = self._alert_module()
-        state = pf.empty_state()
-        messages = alert.run_summary(
-            state,
-            scan=lambda: pf.scan_pools(listing=([], [], False)))
-        self.assertEqual(len(messages), 1)
-        text, markup = messages[0]
-        self.assertIn("Pool Flow cron jalan", text)
-        self.assertIn("FEE PRINTER: 0 pool", text)
-        self.assertIsNone(markup)
-        self.assertEqual(state["alerts"], [])          # heartbeat tidak mengubah state
-        self.assertEqual(state["best_alert"]["next_no"], 1)
-
-    def test_run_summary_listing_terpotong_diberi_peringatan(self):
-        alert = self._alert_module()
-        messages = alert.run_summary(
-            pf.empty_state(),
-            scan=lambda: pf.scan_pools(listing=([_slow_row()], [], True)))
-        self.assertIn("listing belum lengkap", messages[0][0])
-
-
-def _alert_main():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "pool_flow_alert_main", ROOT / "scripts" / "pool_flow_alert.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-class AlertCronTest(unittest.TestCase):
-    """Cron 15 menit (permintaan user, 2026-11-24): kirim alert, state hanya tersimpan bila berhasil."""
-
-    CREDS = {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "1"}
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.path = Path(self._tmp.name) / "pool_flow_state.json"
-        self.alert = _alert_main()
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def _run(self, *, scan_rows=None, scan_error=None, send=(True, ""), env=None):
-        sent = []
-
-        def fake_send(text, reply_markup=None):
-            sent.append(text)
-            return send
-
-        real_scan = pf.scan_pools  # sebelum di-patch; jangan memanggil nama yang di-patch (rekursi)
-
-        def fake_scan(*_a, **_k):
-            if scan_error is not None:
-                raise RuntimeError(scan_error)
-            return real_scan(listing=(scan_rows or [], [], False))
-
-        environ = dict(self.CREDS) if env is None else env
-        with mock.patch.dict("os.environ", environ, clear=True), \
-                mock.patch.object(pf, "scan_pools", side_effect=fake_scan), \
-                mock.patch.object(pf, "send_telegram", side_effect=fake_send):
-            code = self.alert.main(["--state", str(self.path)])
-        return code, sent
-
-    def test_tanpa_pool_kirim_heartbeat_dan_exit_0(self):
-        code, sent = self._run(scan_rows=[])
-        self.assertEqual(code, 0)
-        self.assertEqual(len(sent), 1)
-        self.assertIn("Pool Flow cron jalan", sent[0])
-
-    def test_ada_pool_kirim_ringkasan_dan_simpan_state(self):
-        code, sent = self._run(scan_rows=[_slow_row()])
-        self.assertEqual(code, 0)
-        self.assertIn("RINGKASAN", sent[0])
-        saved = json.loads(self.path.read_text(encoding="utf-8"))
-        self.assertEqual(len(saved["alerts"]), 1)
-
-    def test_telegram_gagal_exit_1_dan_state_tidak_disimpan(self):
-        code, _sent = self._run(scan_rows=[_slow_row()], send=(False, "HTTP 500"))
-        self.assertEqual(code, 1)
-        self.assertFalse(self.path.exists())  # alert belum terkirim, jangan dianggap sudah
-
-    def test_kredensial_kosong_exit_1_tanpa_mengirim(self):
-        code, sent = self._run(scan_rows=[_slow_row()], env={})
-        self.assertEqual(code, 1)
-        self.assertEqual(sent, [])
-        self.assertFalse(self.path.exists())
-
-    def test_scan_gagal_kirim_pesan_error_dan_exit_1(self):
-        code, sent = self._run(scan_error="listing timeout")
-        self.assertEqual(code, 1)
-        self.assertIn("Scan gagal", sent[0])
-        self.assertIn("listing timeout", sent[0])
-        self.assertFalse(self.path.exists())
-
-    def test_heartbeat_menampilkan_error_listing(self):
-        text = pf.heartbeat_text(
-            {"listing_rows": 0, "candidates": 0, "passing": [], "listing_errors": 2, "truncated": True})
-        self.assertIn("halaman listing gagal: 2", text)
-        self.assertIn("listing belum lengkap", text)
-
-    def test_jadwal_workflow_15_menit_dan_di_luar_menit_nol(self):
-        import yaml
-        best = yaml.safe_load((ROOT / ".github/workflows/pool-flow-best.yml").read_text(encoding="utf-8"))
-        cron = best[True]["schedule"][0]["cron"]
-        self.assertEqual(cron, "7,22,37,52 * * * *")
-        minutes = [int(m) for m in cron.split()[0].split(",")]
-        self.assertEqual(sorted((b - a) % 60 for a, b in zip(minutes, minutes[1:] + minutes[:1])), [15, 15, 15, 15])
-        self.assertNotIn(0, minutes)
 
 class FormatTest(unittest.TestCase):
     """Format angka ringkas (K/M, tanpa pemisah ribuan titik)."""
@@ -1007,6 +341,302 @@ class FormatTest(unittest.TestCase):
 
 
 
+
+
+class FeePrinterRuleTest(unittest.TestCase):
+    """Syarat FEE PRINTER (permintaan user, 2026-11-24)."""
+
+    def _ok(self, **kw):
+        return pf.fee_printer_ok(pf.evaluate_pool(_fp("F" * 44, **kw)))
+
+    def test_volatility_3_persen_lolos(self):
+        self.assertTrue(self._ok(fa=6.0, vol=3.0))
+
+    def test_volatility_di_atas_3_persen_tidak_lolos(self):
+        self.assertFalse(self._ok(fa=20.0, vol=3.01))
+
+    def test_volatility_0_01_persen_masih_terukur(self):
+        self.assertTrue(self._ok(fa=0.02, vol=0.01))
+
+    def test_volatility_di_bawah_0_01_persen_tidak_terukur(self):
+        self.assertFalse(self._ok(fa=1.0, vol=0.005))
+
+    def test_volatility_nol_tidak_lolos(self):
+        self.assertFalse(self._ok(fa=5.0, vol=0.0))
+
+    def test_fee_active_tepat_2x_volatility_lolos(self):
+        self.assertTrue(self._ok(fa=4.0, vol=2.0))
+
+    def test_fee_active_di_bawah_2x_volatility_tidak_lolos(self):
+        self.assertFalse(self._ok(fa=3.99, vol=2.0))
+
+    def test_net_deposit_tepat_10000_lolos(self):
+        self.assertTrue(self._ok(fa=8.0, vol=2.0, net=10_000.0))
+
+    def test_net_deposit_di_bawah_10000_tidak_lolos(self):
+        self.assertFalse(self._ok(fa=8.0, vol=2.0, net=9_999.99))
+
+    def test_net_deposit_negatif_tidak_lolos(self):
+        self.assertFalse(self._ok(fa=8.0, vol=2.0, net=-7_708.0))
+
+    def test_tanpa_net_deposit_tidak_lolos(self):
+        self.assertFalse(self._ok(fa=8.0, vol=2.0, net=None))
+
+    def test_tanpa_volatility_atau_fee_active_tidak_lolos(self):
+        self.assertFalse(self._ok(fa=8.0, vol=None))
+        self.assertFalse(self._ok(fa=None, vol=2.0))
+
+    def test_pool_lolos_filter_tapi_keamanan_diblokir_tidak_masuk(self):
+        bad = _fp("K" * 44, fa=8.0, vol=2.0, mint="K" * 44)
+        bad["token_x"]["has_mint_authority"] = True
+        result = _scan([bad])
+        self.assertEqual(pf.fee_printer_rows(result["passing"]), [])
+        self.assertEqual(pf.summary_rows(result), [])
+
+    def test_fee_printer_tidak_tergantung_avg_volume(self):
+        """Avg volume dan TVL tidak menentukan lolos (filter baru hanya tiga syarat)."""
+        row = _fp("V" * 44, fa=8.0, vol=2.0, net=10_000.0)
+        row["avg_volume"] = 0.0
+        self.assertTrue(pf.fee_printer_ok(pf.evaluate_pool(row)))
+
+
+class FeePrinterOrderTest(unittest.TestCase):
+    def test_urut_perkalian_terbesar_dulu(self):
+        # perkalian fee/active TVL × volatility: A = 8, B = 9, C = 18
+        rows = [_fp("A" * 44, fa=4.0, vol=2.0, symbol="A"),
+                _fp("B" * 44, fa=9.0, vol=1.0, symbol="B"),
+                _fp("C" * 44, fa=6.0, vol=3.0, symbol="C")]
+        result = _scan(rows)
+        ordered = [r["symbol"] for r in pf.fee_printer_rows(result["passing"])]
+        self.assertEqual(ordered, ["C", "B", "A"])
+
+    def test_seri_ikut_urutan_listing(self):
+        rows = [_fp("X" * 44, fa=4.0, vol=2.0, symbol="XX"),   # 8
+                _fp("Y" * 44, fa=8.0, vol=1.0, symbol="YY")]   # 8
+        result = _scan(rows)
+        ordered = [r["symbol"] for r in pf.fee_printer_rows(result["passing"])]
+        self.assertEqual(ordered, ["XX", "YY"])
+
+    def test_perkalian_dihitung_fee_active_kali_volatility(self):
+        row = pf.evaluate_pool(_fp("P" * 44, fa=8.0, vol=2.5))
+        self.assertAlmostEqual(pf.fee_active_volatility_product(row), 20.0)
+
+    def test_summary_hanya_pool_fee_printer_dengan_label(self):
+        ok = _fp("S" * 44, fa=8.0, vol=2.0, symbol="OKK")
+        low_fee = _fp("L" * 44, fa=3.0, vol=2.0, symbol="LOW")
+        result = _scan([low_fee, ok])
+        entries = pf.summary_rows(result)
+        self.assertEqual([(row["symbol"], label) for row, label in entries],
+                         [("OKK", "FEE PRINTER")])
+
+    def test_aturan_lama_sudah_dihapus(self):
+        for name in ("LISTING_4H", "LISTING_12H", "band_12h_ok", "band_4h_ok", "fee_printer_split",
+                     "sort_key_slow", "fee_volatility_ratio", "FLOW_BAND_LOW_MULT",
+                     "FLOW_BAND_HIGH_MULT", "FLOW_SERVER_FILTER", "FLOW_CONFIRM_TIMEFRAME",
+                     "FLOW_MIN_FEE_TVL_12H", "FLOW_FEE_PRINTER_MULT", "SUMMARY_LABEL_SLOW"):
+            self.assertFalse(hasattr(pf, name), name)
+
+
+class ServerFilterTest(unittest.TestCase):
+    def test_filter_server_sama_persis_curl_user(self):
+        self.assertEqual(pf.flow_server_filter(1795484047775), CURL_USER_FILTER)
+
+    def test_batas_waktu_mengikuti_waktu_scan(self):
+        now = 1_800_000_000_000
+        text = pf.flow_server_filter(now)
+        self.assertIn(f"base_token_created_at<={now}", text)
+        self.assertIn(f"pool_created_at<={now - 86_400_000}", text)
+        self.assertNotIn("1795484047775", text)  # nilai tetap dari curl tidak dipakai di scan
+
+    def test_fetch_listing_mengirim_24h_top_tanpa_sort(self):
+        captured = []
+
+        def fake_get(params, **kwargs):
+            captured.append(dict(params))
+            return {"data": [], "has_more": False}
+
+        with mock.patch.object(pf, "_get_payload", side_effect=fake_get):
+            rows, errors, truncated = pf.fetch_listing()
+        self.assertEqual((rows, errors, truncated), ([], [], False))
+        params = captured[0]
+        self.assertEqual(params["timeframe"], "24h")
+        self.assertEqual(params["category"], "top")
+        self.assertEqual(params["page_size"], 50)
+        self.assertNotIn("sort_by", params)
+        self.assertNotIn("after_key", params)
+        self.assertNotIn("page", params)
+        self.assertTrue(params["filter_by"].startswith(
+            "base_token_has_high_supply_concentration=false"))
+        self.assertIn("active_tvl>=10000", params["filter_by"])
+
+
+class ScanTest(unittest.TestCase):
+    def test_pool_duplikat_dihitung_sekali(self):
+        row = _fp("D" * 44, fa=8.0, vol=2.0)
+        result = _scan([row, dict(row)])
+        self.assertEqual(result["candidates"], 1)
+        self.assertEqual(len(result["passing"]), 1)
+
+    def test_truncated_dan_error_ikut_dilaporkan(self):
+        result = pf.scan_pools(listing=([_fp("T" * 44, fa=8.0, vol=2.0)], ["gagal"], True))
+        self.assertTrue(result["truncated"])
+        self.assertEqual(result["listing_errors"], 1)
+
+    def test_scan_tidak_menulis_berkas(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "pool_flow_state.json"
+            _scan([_fp("W" * 44, fa=8.0, vol=2.0)])
+            self.assertFalse(path.exists())
+
+
+class AlertTest(unittest.TestCase):
+    def test_ringkasan_memuat_label_rumus_dan_tautan(self):
+        row = pf.evaluate_pool(_fp("A" * 44, fa=8.0, vol=2.0, net=25_000.0, symbol="ALP"))
+        text = pf.summary_alert_text(1, [(row, "FEE PRINTER")], {})
+        self.assertIn("RINGKASAN Scan ALL (24H)", text)
+        self.assertIn("[FEE PRINTER]", text)
+        self.assertIn("fee/active TVL 8,00%", text)
+        self.assertIn("volatility 2,00%", text)
+        self.assertIn("net $25K", text)
+        self.assertIn("perkalian 16,00", text)
+        self.assertIn("🆕 baru", text)
+        self.assertNotIn("12H", text)
+
+    def test_alert_memberi_nomor_dan_tag_sudah_pernah(self):
+        state = pf.empty_state()
+        entries = [(pf.evaluate_pool(_fp("A" * 44, fa=8.0, vol=2.0)), "FEE PRINTER")]
+        text1, _ = pf.apply_summary_alert(state, entries)
+        self.assertIn("<b>alert #1</b>", text1)
+        text2, _ = pf.apply_summary_alert(state, entries)
+        self.assertIn("<b>alert #2</b>", text2)
+        self.assertIn("sudah pernah · alert #1", text2)
+        self.assertEqual(state["best_alert"]["next_no"], 3)
+
+    def test_tanpa_pool_tidak_ada_alert(self):
+        state = pf.empty_state()
+        self.assertEqual(pf.apply_summary_alert(state, []), (None, None))
+        self.assertEqual(state["alerts"], [])
+
+    def test_heartbeat_menyebut_jumlah_dan_tanpa_fee_printer(self):
+        result = _scan([_fp("H" * 44, fa=1.0, vol=2.0)])
+        text = pf.heartbeat_text(result, now="2026-11-24T02:00:00Z")
+        self.assertIn("Pool Flow cron jalan", text)
+        self.assertIn("listing 24H: 1 baris", text)
+        self.assertIn("FEE PRINTER: 0 pool", text)
+
+    def test_heartbeat_scan_gagal(self):
+        text = pf.heartbeat_text(error="timeout")
+        self.assertIn("❌ Scan gagal: timeout", text)
+
+
+class TelegramCopyTest(unittest.TestCase):
+    def test_satu_tombol_copy_per_pool_dengan_ca_lengkap(self):
+        rows = [pf.evaluate_pool(_fp("A" * 44, fa=8.0, vol=2.0, mint="MINTA" + "a" * 39)),
+                pf.evaluate_pool(_fp("B" * 44, fa=8.0, vol=2.0, mint="MINTB" + "b" * 39))]
+        markup = pf.alert_copy_markup(rows)
+        buttons = [btn for row in markup["inline_keyboard"] for btn in row]
+        self.assertEqual([b["copy_text"]["text"] for b in buttons],
+                         [r["mint"] for r in rows])
+
+    def test_pesan_terpecah_hanya_bagian_terakhir_punya_tombol(self):
+        markup = {"inline_keyboard": [[{"text": "x", "copy_text": {"text": "y"}}]]}
+        sent = []
+
+        def fake_send(chunk, reply_markup=None):
+            sent.append(reply_markup)
+            return True, ""
+
+        long_text = "\n".join(["baris " + "x" * 200] * 60)
+        with mock.patch.object(pf, "_send_telegram_once", side_effect=fake_send):
+            ok, _ = pf.send_telegram(long_text, reply_markup=markup)
+        self.assertTrue(ok)
+        self.assertGreater(len(sent), 1)
+        self.assertTrue(all(m is None for m in sent[:-1]))
+        self.assertEqual(sent[-1], markup)
+
+    def test_split_tiap_bagian_di_bawah_limit(self):
+        parts = pf.split_for_telegram("a" * 9000)
+        self.assertTrue(all(len(p) <= pf.TELEGRAM_CHUNK for p in parts))
+        self.assertEqual("".join(parts), "a" * 9000)
+
+
+def _alert_main():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "pool_flow_alert_main", ROOT / "scripts" / "pool_flow_alert.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class AlertCronTest(unittest.TestCase):
+    """Cron tiap 15 menit: RINGKASAN bila ada pool, heartbeat bila tidak; state hanya tersimpan bila berhasil."""
+
+    CREDS = {"TELEGRAM_BOT_TOKEN": "t", "TELEGRAM_CHAT_ID": "1"}
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self._tmp.name) / "pool_flow_state.json"
+        self.alert = _alert_main()
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_ada_pool_kirim_ringkasan(self):
+        messages = self.alert.run_summary(
+            pf.empty_state(),
+            scan=lambda: _scan([_fp("R" * 44, fa=8.0, vol=2.0, symbol="RNG")]))
+        self.assertEqual(len(messages), 1)
+        self.assertIn("RINGKASAN", messages[0][0])
+        self.assertIn("RNG", messages[0][0])
+        self.assertIsNotNone(messages[0][1])
+
+    def test_tanpa_pool_kirim_heartbeat(self):
+        messages = self.alert.run_summary(pf.empty_state(), scan=lambda: _scan([]))
+        self.assertEqual(len(messages), 1)
+        self.assertIn("Pool Flow cron jalan", messages[0][0])
+        self.assertNotIn("RINGKASAN", messages[0][0])
+        self.assertIsNone(messages[0][1])
+
+    def test_listing_terpotong_diberi_peringatan(self):
+        messages = self.alert.run_summary(
+            pf.empty_state(),
+            scan=lambda: pf.scan_pools(listing=([_fp("Z" * 44, fa=8.0, vol=2.0)], [], True)))
+        self.assertIn("listing belum lengkap", messages[0][0])
+
+    def _main(self, rows, send=(True, "")):
+        with mock.patch.dict("os.environ", self.CREDS), \
+                mock.patch.object(pf, "fetch_listing", side_effect=lambda *a, **k: (rows, [], False)), \
+                mock.patch.object(pf, "send_telegram", return_value=send) as sender:
+            code = self.alert.main(["--state", str(self.path)])
+        return code, sender
+
+    def test_main_ada_pool_simpan_state_dan_tandai_berubah(self):
+        rows = [_fp("M" * 44, fa=8.0, vol=2.0, symbol="MAIN")]
+        code, sender = self._main(rows)
+        self.assertEqual(code, 0)
+        self.assertTrue(self.path.exists())
+        self.assertEqual(sender.call_count, 1)
+        self.assertIn("RINGKASAN", sender.call_args[0][0])
+
+    def test_main_tanpa_pool_tidak_menulis_state(self):
+        code, sender = self._main([])
+        self.assertEqual(code, 0)
+        self.assertFalse(self.path.exists())
+        self.assertIn("Pool Flow cron jalan", sender.call_args[0][0])
+
+    def test_main_kirim_gagal_state_tidak_disimpan(self):
+        code, _sender = self._main([_fp("G" * 44, fa=8.0, vol=2.0)], send=(False, "jaringan"))
+        self.assertEqual(code, 1)
+        self.assertFalse(self.path.exists())
+
+    def test_main_tanpa_kredensial_exit_1(self):
+        with mock.patch.dict("os.environ", {}, clear=True):
+            code = self.alert.main(["--state", str(self.path)])
+        self.assertEqual(code, 1)
+        self.assertFalse(self.path.exists())
+
+
 class StateTest(unittest.TestCase):
     def test_state_tidak_lagi_menyimpan_watchlist_dan_membuang_kunci_lama(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1022,19 +652,7 @@ class StateTest(unittest.TestCase):
             saved = json.loads(path.read_text(encoding="utf-8"))
             self.assertNotIn("watchlist", saved)
 
-    def test_scan_tidak_menulis_berkas(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "pool_flow_state.json"
-            pf.scan_pools(listing=(meteora_rows(), [], False))
-            self.assertFalse(path.exists())
 
 
 if __name__ == "__main__":
     unittest.main()
-
-
-# ---------------------------------------------------------------------------
-# Aktivitas per token (permintaan user 2026-11-13): semua pool token, timeframe 4H
-# Angka dari respons Meteora query=9sFG…&timeframe=4h (2026-11-13).
-# ---------------------------------------------------------------------------
-
