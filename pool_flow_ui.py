@@ -17,11 +17,9 @@ from links import external_links_html, pool_links_html
 
 RESULT_KEY = "pool_flow_result"
 BUTTON_LABEL = "SCAN ALL"
-# Warna tabel (permintaan user): HIGH RISK merah, SLOW FEE PRINTER biru. Nama warna untuk st.markdown.
-HIGH_RISK_COLOR = "red"
+# Warna tabel (permintaan user): FEE PRINTER biru. Nama warna untuk st.markdown.
 SLOW_FEE_PRINTER_COLOR = "blue"  # warna border tabel (tidak dipakai untuk judul lagi)
 FEE_PRINTER_TITLE_CLASS = "fee-printer-title"  # judul FEE PRINTER: hijau tua menyala, lihat dashboard_components.render_styles
-HIGH_RISK_BORDER = "rgba(239,68,68,.85)"
 SLOW_FEE_PRINTER_BORDER = "rgba(59,130,246,.85)"
 DEFAULT_BORDER = "rgba(128,128,128,.35)"
 
@@ -60,17 +58,9 @@ def _render_scan_result(result: dict) -> None:
                "authority aktif atau top holders > 30 % dibuang; peringatan muncul bila top holders "
                "> 15 %, dev > 5 %, atau LP keluar lebih besar dari masuk saat TVL < $50K. "
                "Baris kuning = pool teratas (avg volume/menit ÷ TVL terbesar).")
-    fee_printer, band = pf.fee_printer_split(passing)
-    high_risk = pf.fee_printer_high_risk(fee_printer)
-    # HIGH RISK FEE PRINTER: 2,5 × ≤ fee/TVL ≤ 3,5 × volatility, dan ≥ 10 % (permintaan user, 2026-11-20).
+    _fee_printer, band = pf.fee_printer_split(passing)  # SPOT tidak ditampilkan (HIGH RISK dihapus 2026-11-23)
     top = pf.most_crowded(result)
     top_pool = top["pool"] if top else None
-    # Warna per tabel: HIGH RISK merah, SLOW FEE PRINTER biru (judul dan border tabel).
-    st.markdown(f"**:{HIGH_RISK_COLOR}[HIGH RISK FEE PRINTER]**")
-    with st.expander(f"Tabel dan detail · {len(high_risk)} pool"):
-        st.caption("2,5 × volatility ≤ fee/TVL ≤ 3,5 × volatility · fee/TVL ≥ 10%")
-        _render_pool_table(high_risk, "Tidak ada pool untuk HIGH RISK FEE PRINTER.", top_pool,
-                           accent=HIGH_RISK_BORDER)
     st.markdown(f'<span class="{FEE_PRINTER_TITLE_CLASS}">FEE PRINTER</span>', unsafe_allow_html=True)
     st.markdown(f"*· {len(band)} pool · {pf.FLOW_BAND_LOW_MULT:g} × volatility ≤ fee/TVL ≤ {pf.FLOW_BAND_HIGH_MULT:g} × volatility (12H dan 4H) · volatility ≥ 3% (12H dan 4H) · "
                 f"TVL ≥ $20.000 · volume/TVL 12H ≥ 100% · fee/TVL ≥ 5% · umur pool ≥ 12 jam · "
