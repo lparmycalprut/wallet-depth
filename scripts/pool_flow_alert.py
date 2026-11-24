@@ -12,12 +12,13 @@ Aturan (permintaan user, 2026-11-24):
 - Telegram gagal atau kredensial kosong: exit 1 dan state TIDAK disimpan,
   supaya alert tidak dianggap sudah terkirim.
 
-Keluaran: mencetak ``POOL_FLOW_CHANGED=1`` bila ``pool_flow_state.json`` berubah,
-supaya workflow hanya meng-commit saat perlu.
+Keluaran: mencetak ``POOL_FLOW_CHANGED=1`` bila ``pool_flow_state.json`` ditulis ulang
+(hanya saat ada alert baru), supaya workflow hanya meng-commit saat perlu.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -36,7 +37,7 @@ def run_summary(state: dict, *, scan=None) -> list[tuple[str, dict | None]]:
     setelah pengiriman berhasil.
     """
     result = (scan or pf.scan_pools)()
-    print(f"12H: listing {result['listing_rows']} baris, dievaluasi {result['candidates']}, "
+    print(f"24H: listing {result['listing_rows']} baris, dievaluasi {result['candidates']}, "
           f"lolos {len(result['passing'])}, error listing {result['listing_errors']}, "
           f"terpotong {result['truncated']}")
     entries = pf.summary_rows(result)
@@ -61,8 +62,8 @@ def main(argv: list | None = None) -> int:
         return 1
 
     path = Path(args.state) if args.state else pf.STATE_PATH
-    before = path.read_text(encoding="utf-8") if path.exists() else None
     state = pf.load_state(path)
+    before = json.dumps(state, sort_keys=True)
 
     scan_failed = False
     try:
@@ -83,9 +84,9 @@ def main(argv: list | None = None) -> int:
     if scan_failed:
         return 1
 
-    pf.save_state(state, path)
-    after = path.read_text(encoding="utf-8")
-    if after != before:
+    # State hanya ditulis bila ada alert baru (heartbeat tidak mengubah state).
+    if json.dumps(state, sort_keys=True) != before:
+        pf.save_state(state, path)
         print("POOL_FLOW_CHANGED=1")
     return 0
 

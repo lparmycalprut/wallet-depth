@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Wallet Depth — 🏆 Scan Best Pool (12H)."""
+"""Wallet Depth — 🏆 Scan ALL (24H)."""
 from __future__ import annotations
 
 import streamlit as st
