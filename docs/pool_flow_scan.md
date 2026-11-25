@@ -76,7 +76,8 @@ Setiap elemen `data` adalah satu pool. Field yang dipakai:
 4. **Syarat FEE PRINTER** (`fee_printer_ok`), semua inklusif:
    - `0,01 ≤ volatility ≤ 3` (di bawah 0,01 % dianggap tidak terukur),
    - `fee_active_tvl_ratio ≥ 2 × volatility`,
-   - `net_deposits ≥ 10.000`.
+   - `net_deposits ≥ 10.000`,
+   - `fee/volume − tarif dasar ≤ 0,25` poin persentase (inklusif, ditambah 2026-11-25; `fee_volume_excess`).
    Pool tanpa salah satu nilai itu tidak lolos.
 5. **Urutan** (`fee_printer_rows`): rasio `fee_active_tvl_ratio ÷ volatility`,
    **terbesar dulu** (permintaan user, 2026-11-24, sesuai saran asisten). Seri mengikuti urutan listing (sort stabil).
@@ -133,7 +134,7 @@ Hasil langkah 5 = tabel FEE PRINTER dan isi RINGKASAN. Tidak ada tabel atau labe
 1. `GET` listing 24H dengan curl di bagian 1 (`NOW_MS` = sekarang). Ikuti `after_key` sampai `has_more = false`.
 2. Buang duplikat `pool_address`.
 3. Buang pool dengan mint/freeze authority aktif atau `top_holders_pct > 30`.
-4. Ambil pool dengan `0,01 ≤ volatility ≤ 3`, `fee_active_tvl_ratio ≥ 2 × volatility`, dan `net_deposits ≥ 10.000`.
+4. Ambil pool dengan `0,01 ≤ volatility ≤ 3`, `fee_active_tvl_ratio ≥ 2 × volatility`, `net_deposits ≥ 10.000`, dan `fee/volume − tarif dasar ≤ 0,25`.
 5. Urut `fee_active_tvl_ratio ÷ volatility` terbesar dulu.
 6. Tampilkan atau kirim hanya pool FEE PRINTER tersebut. Jangan memasukkan pool lain ke RINGKASAN.
 

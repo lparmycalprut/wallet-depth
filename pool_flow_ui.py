@@ -34,7 +34,7 @@ def _filter_caption() -> str:
             "market cap ≥ $20.000 · holders ≥ 1.500 · TVL ≥ $30.000 · active TVL ≥ $10.000 · "
             "fee/TVL ≥ 1 · fee ≥ 0.5% · pool dibuat ≥ 24 jam lalu · "
             "tanpa konsentrasi/kepemilikan tunggal tinggi · "
-            "FEE PRINTER: volatility ≤ 3% · fee/active TVL ≥ 2 × volatility · net deposit ≥ $10.000.")
+            "FEE PRINTER: volatility ≤ 3% · fee/active TVL ≥ 2 × volatility · net deposit ≥ $10.000 · fee/volume − tarif dasar ≤ 0,25.")
 
 
 def _render_scan_result(result: dict) -> None:
@@ -63,7 +63,7 @@ def _render_scan_result(result: dict) -> None:
     top_pool = top["pool"] if top else None
     st.markdown(f'<span class="{FEE_PRINTER_TITLE_CLASS}">FEE PRINTER</span>', unsafe_allow_html=True)
     st.markdown(f"*· {len(rows)} pool · volatility 0,01–3 % · fee/active TVL ≥ 2 × volatility · "
-                f"net deposit ≥ $10.000 · urut fee/active TVL ÷ volatility terbesar dulu*")
+                f"net deposit ≥ $10.000 · fee/volume − tarif dasar ≤ 0,25 · urut fee/active TVL ÷ volatility terbesar dulu*")
     _render_pool_table(rows, "Tidak ada pool untuk FEE PRINTER.", top_pool,
                        accent=SLOW_FEE_PRINTER_BORDER, builder=_fee_printer_table_html)
 

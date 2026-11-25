@@ -1,5 +1,13 @@
 # Kegiatan
 
+## 2026-11-25 — Selisih fee/volume jadi syarat FEE PRINTER
+
+Permintaan user: ambang selisih fee/volume − tarif dasar 0,25 poin dijadikan syarat FEE PRINTER. Pool di atas ambang tidak tampil di tabel, RINGKASAN, maupun alert.
+
+- `pool_flow.FLOW_MAX_FEE_VOLUME_EXCESS = 0.25` (inklusif), `fee_volume_excess` = `fee_volume_pct − fee_tier`.
+- Hasil scan 25 Nov: Huss-SOL (0,086) dan BTC-SOL (0,221) lolos. mihao-SOL (0,386) gugur.
+- Tes: `tests/test_pool_flow.py` (FeeVolumeExcessRuleTest). Teks filter di tabel dan caption diperbarui.
+
 ## 2026-11-25 — RINGKASAN: peringatan keamanan
 
 - Tabel RINGKASAN menampilkan kolom "Peringatan keamanan" di akhir, sama seperti tabel FEE PRINTER.
