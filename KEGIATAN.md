@@ -1,5 +1,10 @@
 # Kegiatan
 
+## 2026-11-25 — RINGKASAN: peringatan keamanan
+
+- Tabel RINGKASAN menampilkan kolom "Peringatan keamanan" di akhir, sama seperti tabel FEE PRINTER.
+- Tes: `tests/test_pool_flow_app.py` (SummaryWarningTest).
+
 ## 2026-11-25 — Tabel RINGKASAN: tambah Fee tier, Fee/volume, dan Net deposit
 
 Permintaan user: tampilkan Net deposit, Fee tier, dan Fee/volume di tabel ringkasan.
