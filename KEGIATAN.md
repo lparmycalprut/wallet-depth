@@ -1,5 +1,12 @@
 # Kegiatan
 
+## 2026-11-25 — Selisih fee/volume di tabel RINGKASAN
+
+Permintaan user: selisih fee/volume − tarif dasar ditampilkan di tabel RINGKASAN.
+
+- Kolom "Selisih fee/volume − tarif" ditambahkan setelah Fee/volume. Nilainya `fee_volume_excess` dengan format persen 2 desimal.
+- Tes: `tests/test_pool_flow_app.py` (SummarySelisihTest).
+
 ## 2026-11-25 — Selisih fee/volume jadi syarat FEE PRINTER
 
 Permintaan user: ambang selisih fee/volume − tarif dasar 0,25 poin dijadikan syarat FEE PRINTER. Pool di atas ambang tidak tampil di tabel, RINGKASAN, maupun alert.
