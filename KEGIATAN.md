@@ -1,5 +1,12 @@
 # Kegiatan
 
+## 2026-11-25 — RINGKASAN: sembunyikan net deposit minus
+
+Permintaan user: pool dengan net deposit negatif tidak ditampilkan. Berlaku untuk pool SELISIH BESAR di RINGKASAN. FEE PRINTER sudah mensyaratkan net ≥ $10.000.
+
+- `pool_flow.excess_rows` melewati pool dengan `net_deposits` < 0. Net kosong tidak dihitung negatif.
+- Tes: `tests/test_pool_flow.py` (ExcessRowsTest).
+
 ## 2026-11-25 — RINGKASAN: label SELISIH BESAR
 
 Permintaan user: pool dengan selisih fee/volume − tarif dasar > 0,25 ikut tampil di tabel RINGKASAN, tanpa filter lain, dengan label **SELISIH BESAR** (merah).

@@ -474,13 +474,20 @@ def summary_rows(result: dict) -> list:
 
 def excess_rows(result: dict) -> list:
     """Pool dengan fee/volume − tarif dasar > ``FLOW_MAX_FEE_VOLUME_EXCESS``, tanpa filter lain
-    (volatility, fee/active TVL, net deposit, dan blokir keamanan tidak dipakai). Urut selisih terbesar dulu.
+    (volatility, fee/active TVL, dan blokir keamanan tidak dipakai). Urut selisih terbesar dulu.
+
+    Pengecualian (permintaan user, 2026-11-25): pool dengan net deposit negatif tidak ditampilkan.
+    Net deposit yang kosong tidak dihitung sebagai negatif.
     """
     rows = []
     for item in result.get("results") or []:
         excess = fee_volume_excess(item)
-        if excess is not None and excess > FLOW_MAX_FEE_VOLUME_EXCESS:
-            rows.append(item)
+        net = item.get("net_deposits")
+        if excess is None or excess <= FLOW_MAX_FEE_VOLUME_EXCESS:
+            continue
+        if net is not None and net < 0:
+            continue
+        rows.append(item)
     return sorted(rows, key=lambda item: -fee_volume_excess(item))
 
 

@@ -100,7 +100,7 @@ Hasil langkah 5 = tabel FEE PRINTER dan isi RINGKASAN. Tidak ada tabel atau labe
 
 ## 6. RINGKASAN dan alert Telegram
 
-- **RINGKASAN** di halaman = `summary_table_rows(result)`: pool FEE PRINTER dulu (urutan sama dengan tabel), lalu pool **SELISIH BESAR** (`excess_rows`: fee/volume − tarif dasar > 0,25, tanpa filter lain, urut selisih terbesar). Label SELISIH BESAR berwarna merah. Pool SELISIH BESAR bisa gugur di aturan lain (volatility, net deposit, keamanan); alasan keamanan muncul di kolom Peringatan keamanan.
+- **RINGKASAN** di halaman = `summary_table_rows(result)`: pool FEE PRINTER dulu (urutan sama dengan tabel), lalu pool **SELISIH BESAR** (`excess_rows`: fee/volume − tarif dasar > 0,25, tanpa filter lain kecuali net deposit negatif yang dikeluarkan, urut selisih terbesar). Label SELISIH BESAR berwarna merah. Pool SELISIH BESAR bisa gugur di aturan lain (volatility, net deposit, keamanan); alasan keamanan muncul di kolom Peringatan keamanan.
   Kolom: Token/pool, Asal tabel, Fee tier, Fee/volume, Selisih fee/volume − tarif, Net deposit, Fee/active TVL, Volatility, fee/active ÷ volatility, Peringatan keamanan.
 - **Alert Telegram** (`scripts/pool_flow_alert.py`) memakai `summary_rows(result)`: hanya pool FEE PRINTER, tidak memuat SELISIH BESAR (2026-11-25).
   - Jadwal: GitHub Actions `.github/workflows/pool-flow-best.yml`, cron `7,22,37,52 * * * *` (tiap 15 menit, UTC).

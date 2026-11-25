@@ -726,7 +726,7 @@ class ExcessRowsTest(unittest.TestCase):
 
     def test_selisih_besar_urut_terbesar_dan_tanpa_filter_lain(self):
         symbols = [r["symbol"] for r in pf.excess_rows(self._result())]
-        self.assertEqual(symbols, ["JIMMY", "ANSEM", "MIHAO"])
+        self.assertEqual(symbols, ["JIMMY", "ANSEM"])  # MIHAO (net negatif) tidak ditampilkan
 
     def test_ringkasan_halaman_fee_printer_dulu_lalu_selisih_besar(self):
         pairs = [(r["symbol"], label) for r, label in pf.summary_table_rows(self._result())]
@@ -734,12 +734,18 @@ class ExcessRowsTest(unittest.TestCase):
                                  ("KECIL", pf.SUMMARY_LABEL),
                                  ("PAS", pf.SUMMARY_LABEL),
                                  ("JIMMY", pf.SUMMARY_LABEL_EXCESS),
-                                 ("ANSEM", pf.SUMMARY_LABEL_EXCESS),
-                                 ("MIHAO", pf.SUMMARY_LABEL_EXCESS)])
+                                 ("ANSEM", pf.SUMMARY_LABEL_EXCESS)])
 
     def test_alert_tetap_fee_printer_saja(self):
         pairs = [(r["symbol"], label) for r, label in pf.summary_rows(self._result())]
         self.assertEqual(pairs, [("FP", pf.SUMMARY_LABEL), ("KECIL", pf.SUMMARY_LABEL), ("PAS", pf.SUMMARY_LABEL)])
+
+    def test_net_negatif_tidak_ditampilkan_net_kosong_tetap(self):
+        neg = self._ex("I" * 44, "NEG", 0.90, net=-5_000.0)
+        kosong = self._ex("J" * 44, "KOSONG", 0.70)
+        kosong["net_deposits"] = None
+        symbols = [r["symbol"] for r in pf.excess_rows(_scan([neg, kosong]))]
+        self.assertEqual(symbols, ["KOSONG"])
 
     def test_tanpa_data_selisih_tidak_masuk(self):
         row = self._ex("G" * 44, "NOFEE", 0.5)
