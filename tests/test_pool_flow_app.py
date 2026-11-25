@@ -29,7 +29,7 @@ class FeePrinterTableTest(unittest.TestCase):
         import pool_flow_ui as ui
         html = ui._fee_printer_table_html(pf.fee_printer_rows(_scan_result()["passing"]))
         header = html.split("<thead>", 1)[1].split("</thead>", 1)[0]
-        for title in ("Volatility", "Fee/active TVL", "Net deposit",
+        for title in ("Fee/volume", "Volatility", "Fee/active TVL", "Net deposit",
                       "Fee/active TVL ÷ volatility", "Volume 24H (pool)"):
             self.assertIn(title, header)
         for title in ("Volume 12H", "Fee/TVL ÷ volatility", "Selisih fee/TVL", "Volatility 4H",

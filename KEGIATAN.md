@@ -1,5 +1,13 @@
 # Kegiatan
 
+## 2026-11-25 — Kolom Fee/volume di tabel FEE PRINTER
+
+Permintaan user: tambahkan Fee/volume ke tabel dan pastikan data tabel lengkap.
+
+- Kolom baru "Fee/volume" = fee 24H ÷ volume 24H × 100, diletakkan setelah "Fee tier" (`pool_flow.fee_volume_pct`).
+- Tidak ada perubahan filter, urutan, atau blokir keamanan.
+- Tes: `tests/test_pool_flow.py` (FeeVolumeTest) dan `tests/test_pool_flow_app.py` (header). pool-flow 84 lolos, suite penuh 704 lolos, 1 gagal pre-existing.
+
 ## 2026-11-24 — Filter FEE PRINTER baru (listing 24H)
 
 Permintaan user: ubah filter Scan ALL dan hapus total filter FEE PRINTER lama.
