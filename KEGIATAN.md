@@ -1,5 +1,13 @@
 # Kegiatan
 
+## 2026-11-25 — Tabel RINGKASAN: tambah Fee tier, Fee/volume, dan Net deposit
+
+Permintaan user: tampilkan Net deposit, Fee tier, dan Fee/volume di tabel ringkasan.
+
+- Tabel RINGKASAN (`pool_flow_ui._summary_table_html`) sekarang berisi: Token/pool, Asal tabel, Fee tier, Fee/volume, Net deposit, Fee/active TVL, Volatility, Fee/active TVL ÷ volatility.
+- Teks alert Telegram belum diubah.
+- Tes: `tests/test_pool_flow_app.py` (SummaryTableColumnsTest).
+
 ## 2026-11-25 — Kolom Fee/volume di tabel FEE PRINTER
 
 Permintaan user: tambahkan Fee/volume ke tabel dan pastikan data tabel lengkap.

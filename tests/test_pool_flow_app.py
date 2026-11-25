@@ -212,3 +212,16 @@ class WorkflowAndPagesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SummaryTableColumnsTest(unittest.TestCase):
+    def test_ringkasan_memuat_fee_tier_fee_volume_dan_net_deposit(self):
+        import pool_flow_ui as ui
+        rows = pf.summary_rows(_scan_result())
+        html = ui._summary_table_html(rows)
+        header = html.split("<thead>", 1)[1].split("</thead>", 1)[0]
+        for title in ("Fee tier", "Fee/volume", "Net deposit", "Fee/active TVL ÷ volatility"):
+            self.assertIn(title, header)
+        self.assertIn(">2%</td>", html)        # fee tier ALPHA
+        self.assertIn(">2,00%</td>", html)     # fee/volume ALPHA (fee_pct 2 → 2,00 %)
+        self.assertIn(">$25K</td>", html)      # net deposit ALPHA
