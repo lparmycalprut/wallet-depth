@@ -77,6 +77,8 @@ _SUMMARY_BADGE = {
     # Badge FEE PRINTER: teks hijau tua menyala (iframe tidak memakai CSS app, jadi gaya inline).
     pf.SUMMARY_LABEL: ("background:rgba(59,130,246,.28);color:#14532d;font-weight:800;"
                             "text-shadow:0 0 6px rgba(34,197,94,.85),0 0 14px rgba(22,163,74,.5)"),
+    # Badge SELISIH BESAR: merah, fee/volume − tarif dasar di atas 0,25 poin (permintaan user, 2026-11-25).
+    pf.SUMMARY_LABEL_EXCESS: "background:rgba(239,68,68,.25);color:#7f1d1d;font-weight:800",
 }
 
 
@@ -97,7 +99,7 @@ def _summary_table_html(entries: list) -> str:
             _html.escape(pf.fmt_pct2(row.get("fee_active_tvl"))),
             _html.escape(pf.fmt_pct2(row.get("volatility"))),
             _html.escape(pf.fmt_times_plain(pf.fee_active_per_volatility(row))),
-            _html.escape("; ".join(row.get("warnings") or []) or "—"),
+            _html.escape("; ".join([*(row.get("reasons") or []), *(row.get("warnings") or [])]) or "—"),
         ]
         body.append((cells, False))
     return _table_html(SUMMARY_HEADERS, body, SUMMARY_BORDER)
@@ -106,9 +108,9 @@ def _summary_table_html(entries: list) -> str:
 def _render_summary(result: dict) -> None:
     import streamlit as st
 
-    entries = pf.summary_rows(result)
+    entries = pf.summary_table_rows(result)
     st.markdown("**:green[RINGKASAN]**")
-    st.caption("Hanya pool dari tabel FEE PRINTER (di bawah), satu baris per pool.")
+    st.caption("Pool FEE PRINTER (di bawah) dan pool SELISIH BESAR (fee/volume − tarif dasar > 0,25, tanpa filter lain). Satu baris per pool.")
     if not entries:
         st.info("Belum ada pool yang memenuhi kriteria ringkasan.")
         return

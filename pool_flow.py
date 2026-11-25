@@ -55,6 +55,7 @@ FLOW_SEC_LP_OUTFLOW_TVL_MAX = 50_000.0  # USD: peringatan LP keluar hanya bila T
 
 # RINGKASAN: label asal, sama dengan judul tabel di halaman.
 SUMMARY_LABEL = "FEE PRINTER"
+SUMMARY_LABEL_EXCESS = "SELISIH BESAR"  # RINGKASAN di halaman: fee/volume − tarif dasar > 0,25 (permintaan user, 2026-11-25)
 FLOW_MAX_PAGES = 100             # batas keamanan: 100 × 50 = 5.000 pool (cursor after_key)
 FLOW_PAGE_SIZE = 50
 FLOW_ALERT_CAP = 300             # riwayat alert yang disimpan
@@ -467,8 +468,29 @@ def fee_printer_rows(passing: list) -> list:
 
 
 def summary_rows(result: dict) -> list:
-    """RINGKASAN: hanya pool dari tabel FEE PRINTER. Daftar (row, label), label ``SUMMARY_LABEL``."""
+    """RINGKASAN untuk alert Telegram: hanya pool dari tabel FEE PRINTER. Daftar (row, label), label ``SUMMARY_LABEL``."""
     return [(row, SUMMARY_LABEL) for row in fee_printer_rows(result.get("passing") or [])]
+
+
+def excess_rows(result: dict) -> list:
+    """Pool dengan fee/volume − tarif dasar > ``FLOW_MAX_FEE_VOLUME_EXCESS``, tanpa filter lain
+    (volatility, fee/active TVL, net deposit, dan blokir keamanan tidak dipakai). Urut selisih terbesar dulu.
+    """
+    rows = []
+    for item in result.get("results") or []:
+        excess = fee_volume_excess(item)
+        if excess is not None and excess > FLOW_MAX_FEE_VOLUME_EXCESS:
+            rows.append(item)
+    return sorted(rows, key=lambda item: -fee_volume_excess(item))
+
+
+def summary_table_rows(result: dict) -> list:
+    """Isi tabel RINGKASAN di halaman: pool FEE PRINTER dulu, lalu pool SELISIH BESAR. Daftar (row, label).
+
+    Alert Telegram tetap memakai ``summary_rows`` (FEE PRINTER saja).
+    """
+    return ([(row, SUMMARY_LABEL) for row in fee_printer_rows(result.get("passing") or [])]
+            + [(row, SUMMARY_LABEL_EXCESS) for row in excess_rows(result)])
 
 
 def ranked(passing: list) -> list:

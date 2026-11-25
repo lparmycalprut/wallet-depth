@@ -1,5 +1,14 @@
 # Kegiatan
 
+## 2026-11-25 — RINGKASAN: label SELISIH BESAR
+
+Permintaan user: pool dengan selisih fee/volume − tarif dasar > 0,25 ikut tampil di tabel RINGKASAN, tanpa filter lain, dengan label **SELISIH BESAR** (merah).
+
+- `pool_flow.excess_rows` (urut selisih terbesar), `summary_table_rows` (FEE PRINTER dulu, lalu SELISIH BESAR).
+- Kolom Peringatan keamanan di RINGKASAN juga memuat blokir keamanan (mis. top holders > 30 %).
+- Alert Telegram tetap FEE PRINTER saja (`summary_rows`).
+- Tes: `tests/test_pool_flow.py` (ExcessRowsTest), `tests/test_pool_flow_app.py` (SummarySelisihBesarTest).
+
 ## 2026-11-25 — Selisih fee/volume di tabel RINGKASAN
 
 Permintaan user: selisih fee/volume − tarif dasar ditampilkan di tabel RINGKASAN.
